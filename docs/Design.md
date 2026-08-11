@@ -1,0 +1,736 @@
+# Project Backyard (PB) 設計書
+
+> 本書は `Requirements.md`（要件・構想）を受けた**全体設計書**である。
+> システム全体の構造と、領域別設計書への振り分けを担う。
+>
+> - 対象読者：実装者（人間およびAIエージェント）
+> - 状態：策定中。第6章（認証・認可）を本書の正本として保持し、DB・API・画面は領域別設計書へ委譲
+> - 最終更新：2026-08-11（rev.5 要件文書を Requirements.md へ改称）
+
+## 文書体系
+
+```
+Requirements.md   要件・構想（何を作るか・なぜ作るか）
+      │
+      ▼
+Design.md         全体設計（本書）── システム構成・技術選定・認証認可・開発フェーズ
+      │
+      ├── DbDesign.md    データベース設計   ← スキーマ・マイグレーション・DB実行環境の正本
+      ├── ApiDesign.md   REST API 設計     ← エンドポイント仕様の正本
+      └── GuiDesign.md   GUI 設計          ← 画面・遷移・配色の正本
+```
+
+| 領域 | 正本 | 本書での扱い |
+|---|---|---|
+| 要件・AI駆動開発の構想 | `Requirements.md` | 参照元 |
+| システム構成・技術選定 | **本書 2〜4章** | — |
+| データベース | `DbDesign.md` | 5章で概要のみ |
+| 認証・認可 | **本書 6章** | — |
+| REST API | `ApiDesign.md` | 7章で概要のみ |
+| MCPサーバ | 本書 8章（未着手） | — |
+| 画面・UI | `GuiDesign.md` | 9章で概要のみ |
+| 開発フェーズ | **本書 11章** | — |
+
+**記述が食い違った場合は、各領域の正本を優先する。**
+
+---
+
+## 目次
+
+| 章 | 内容 | 状態 |
+|---|---|---|
+| 1 | 本書の位置づけと設計原則 | 記述済 |
+| 2 | システム構成 | 記述済 |
+| 3 | 技術スタックと実行環境 | 記述済 |
+| 4 | リポジトリ・ディレクトリ構成 | 記述済 |
+| 5 | データベース設計 | → `DbDesign.md` |
+| **6** | **認証・認可設計** | **記述済（本書が正本）** |
+| 7 | REST API 設計 | → `ApiDesign.md` |
+| 8 | MCPサーバ設計 | 未着手 |
+| 9 | 画面設計 | → `GuiDesign.md` |
+| 10 | 非機能・運用設計 | 一部記述 |
+| 11 | 開発フェーズと実装順序 | 記述済 |
+
+---
+
+# 1. 本書の位置づけと設計原則
+
+## 1.1 設計原則
+
+| # | 原則 | 具体的な帰結 |
+|---|---|---|
+| 1 | **段階的に育てられる構造** | Phase 1 で作るテーブルを Phase 2/3 で作り直さない。拡張は列追加とテーブル追加のみで行う |
+| 2 | **スキーマを設計資産として扱う** | DDL は人が読んで判断できる形で管理する。ORM の自動マイグレーション生成に委ねない（`DbDesign.md` 5.1） |
+| 3 | **人間とエージェントを同じ型で扱う** | 担当者・作成者・承認者はすべて `actor` を参照する。エージェント追加時に既存テーブルを変更しない |
+| 4 | **認証方式を差し替え可能にする** | ローカルID/PW・OIDC・SAML を同一の `user_identity` 抽象の下に置く（6.2） |
+| 5 | **権限はデータで定義する** | 画面・機能の可否をコードに埋め込まず、permission カタログとして DB に持つ（6.4） |
+| 6 | **AIは提案し、確定は人間が行う** | エージェントの出力は `proposal` テーブルを必ず経由し、本体テーブルを直接更新しない |
+| 7 | **秘密をモデルのコンテキストに入れない** | エージェント向けの経路は MCP に一本化し、資格情報を含むコマンドを組み立てさせない（`Requirements.md` 10.10.1） |
+
+**原則2 は rev.1 の「DB依存を薄く保つ（SQLite/PostgreSQL両対応）」を置き換えたものである。** PostgreSQL 前提へ変更したことで移植性の制約が不要になり、代わりに「スキーマそのものを設計資産として管理する」ことを原則に据えた。経緯は `DbDesign.md` 2章に記録している。
+
+## 1.2 本書と要件定義の対応
+
+| 本書 | `Requirements.md` の該当箇所 |
+|---|---|
+| 2〜4. 構成・技術選定 | 1章（コンセプト・技術スタック）、8章（軽量性維持） |
+| 6. 認証・認可設計 | 10.10（セキュリティとガードレール） |
+| 8. MCPサーバ設計 | 10.3（MCPサーバ仕様）、10.4（コンテキストパック） |
+| 11. 開発フェーズ | 10.12（MVPスコープ） |
+
+---
+
+# 2. システム構成
+
+## 2.1 コンポーネント
+
+```
+┌─ ローカル端末（開発マシン） ─────────────────────────────┐
+│                                                          │
+│  ブラウザ ──HTTP──▶ ┌──────────────────────────────┐      │
+│                     │  PB Server (コンテナ)          │      │
+│  Claude Code ──MCP─▶│  ├ 静的配信 (Vue SPA)         │      │
+│  VS Code    ──MCP─▶ │  ├ REST API  /api/v1/*        │      │
+│                     │  ├ MCP       /mcp/<projectKey>│      │
+│                     │  └ 認証・認可ミドルウェア        │      │
+│                     └───────────┬──────────────────┘      │
+│                                 │                          │
+│                     ┌───────────▼──────────────────┐      │
+│                     │  PostgreSQL 17 (コンテナ)      │      │
+│                     │  + pgcrypto/citext/pg_trgm    │      │
+│                     └──────────────────────────────┘      │
+│                                                            │
+│  docker compose もしくは Kubernetes 上で動作               │
+└──────────────────────────────────────────────────────────┘
+```
+
+構成の詳細（compose定義、DBロール、K8sマニフェスト）は `DbDesign.md` 3章に記載する。
+
+## 2.2 Phase 1 の到達点
+
+Phase 1（当面の実装対象）は以下を成立させる。
+
+- `docker compose up` で PB と PostgreSQL が起動し、マイグレーションが適用される
+- ローカルID/PW でログインでき、セッションが維持される
+- オペレータ／アドミニストレータで見える画面・使える機能が変わる
+- プロジェクトとチケットを作成・編集・一覧表示できる
+- ユーザーの追加・権限設定が管理画面から行える
+
+MCP サーバ、AI機能、ガント描画は Phase 1 では実装しない（テーブル・列のみ先行定義するものは `DbDesign.md` 6章・8章を参照）。
+
+---
+
+# 3. 技術スタックと実行環境
+
+## 3.1 採用技術
+
+| 層 | 採用 | 備考 |
+|---|---|---|
+| **サーバ言語** | **Go 1.24 以上** | `Requirements.md` 1章の候補（Rust / Go）から確定。ビルドの速さ、単一バイナリ配布、学習コストの低さを優先 |
+| HTTPルータ | **chi v5** | `net/http` 互換。ミドルウェア連鎖とルートグループのみを足す薄い層 |
+| DBドライバ | **pgx v5**（`database/sql` を経由しない） | `timestamptz` `jsonb` `inet` をネイティブに扱えるため |
+| クエリ | **sqlc**（pgx/v5 モード） | SQLを書くとGoの型付き関数が生成される。設計原則2と一致 |
+| マイグレーション | **goose v3** | SQLファイルベース。アドバイザリロック対応（`DbDesign.md` 5.3） |
+| パスワード | `golang.org/x/crypto/argon2` | PHC文字列の入出力は `alexedwards/argon2id` を利用 |
+| ID生成 | `oklog/ulid/v2` | ULID（`DbDesign.md` 4.2） |
+| ログ | **`log/slog`**（標準ライブラリ、JSONハンドラ） | 外部ライブラリを増やさない |
+| 設定 | 環境変数＋`*_FILE` 展開（自前、数十行） | `DbDesign.md` 3.2 |
+| 入力検証 | `go-playground/validator` v10 | `ApiDesign.md` 2.5 のエラー形式へ変換する層を挟む |
+| テスト | 標準 `testing` ＋ compose のDBに対する統合テスト | testcontainers は導入しない（起動が重く原則と衝突） |
+| DB | **PostgreSQL 17** | `DbDesign.md` 2章。SQLite 先行案は廃止 |
+| DB拡張 | `pgcrypto` / `citext` / `pg_trgm`（Phase 1）、`vector`（Phase 3） | `DbDesign.md` 3.1 |
+| フロント | Vue 3 + TypeScript + Vite | SPA。サーバから静的配信 |
+| UIコンポーネント | 未確定（自前の軽量実装で開始） | `GuiDesign.md` 1.1 |
+| 実行形態 | docker compose（既定）／ Kubernetes | `DbDesign.md` 3.2〜3.3 |
+
+## 3.2 sqlc と goose を組み合わせる理由
+
+**sqlc は `migrations/` のDDLを読んでスキーマを推論する。** したがって、
+
+- `DbDesign.md` のDDLをマイグレーションに落とせば、**Goの構造体と型が自動的にスキーマと一致する**
+- 手書きしたSQLは `sqlc generate` の時点で検証され、列名の誤りやスキーマとのずれがコンパイル前に露見する
+- ORM を使わないため、実行されるSQLが常に目に見える（設計原則2）
+
+**マイグレーションが唯一のスキーマ定義**になり、モデル定義とDDLの二重管理が発生しない。この点が Go を選んだ場合の最大の利点になる。
+
+## 3.3 OpenAPI の扱い
+
+`docs/openapi.yaml` は**手書きで保守する**。サーバ側のハンドラも手書きとし、コード生成は**TypeScriptクライアントのみ**（`openapi-typescript`）に限定する。
+
+サーバ側までコード生成（`oapi-codegen` 等）に寄せると、生成物の制約に設計が引きずられる。Phase 1 のエンドポイント数（約20）では手書きの負担が小さく、`ApiDesign.md` の記述をそのままハンドラに落とす方が読み取りやすい。
+
+## 3.4 Webクライアントの配信とビルド
+
+**Vue のビルド成果物を Go バイナリに埋め込み（`embed`）、単一プロセスで配信する。** Nginx 等の別サーバを立てない。
+
+| 場面 | 構成 |
+|---|---|
+| 開発時 | Vite 開発サーバ（`:5173`）＋ `/api` `/mcp` を `:8080` へプロキシ。HMR が効く |
+| 配布時 | `client/dist` を `server/internal/webui/dist/` へコピー → `//go:embed` で取り込み、単一バイナリから配信 |
+
+**実装上の注意**
+
+- `//go:embed` は**自パッケージのディレクトリ配下しか参照できない**。`../../client/dist` は書けないため、ビルド前にコピーする手順を Makefile に入れる
+- 埋め込み対象のディレクトリが存在しないとコンパイルが通らない。`server/internal/webui/dist/index.html` にプレースホルダを1つコミットしておく（実ビルド時に上書きされる）
+- SPA のため、`/api` `/mcp` 以外で未知のパスは `index.html` を返す（フォールバック）
+- キャッシュ制御：ハッシュ付きアセットは `immutable`、`index.html` は `no-cache`
+
+**バイナリは `CGO_ENABLED=0` で静的リンクできる。** pgx が pure Go 実装であるため C ライブラリに依存せず、distroless / scratch イメージで動作する。クロスコンパイルも `GOOS` / `GOARCH` の指定だけで済む（`Design.md` 4.2）。
+
+## 3.5 PostgreSQL を初期から使う理由
+
+`DbDesign.md` 2.1 に記載する。要点は、①移行が確実に来るなら最初から移行後の姿で作る方が安い、②Phase 2 でエージェントが並行書き込みするため単一ライタ制約が問題になる、③pgvector と `LISTEN/NOTIFY` が使える、の3点。
+
+---
+
+# 4. リポジトリ・ディレクトリ構成
+
+## 4.1 全体
+
+```
+ProjectBackyard/
+├── README.md                      ← プロジェクト概要（初見の人向け）
+├── CLAUDE.md                      ← エージェント向け常時コンテキスト（ポインタのみ）
+├── Makefile                       ← 開発・ビルドの入口
+├── .claude/commands/              ← 実装ステップ用のスラッシュコマンド
+│
+├── docs/                          ← 設計・運用に関する文書はすべてここ
+│   ├── README.md                  ← 文書索引と主要な設計判断
+│   ├── Requirements.md            ← 要件・構想
+│   ├── Design.md                  ← 本書（全体設計）
+│   ├── DbDesign.md                ← データベース設計
+│   ├── ApiDesign.md               ← REST API 設計
+│   ├── GuiDesign.md               ← GUI 設計
+│   ├── Development.md             ← 開発環境の立ち上げ・デバッグ手順
+│   ├── Deploy.md                  ← 環境別のデプロイ手順
+│   ├── PROGRESS.md                ← 実装進捗
+│   ├── openapi.yaml               ← ApiDesign.md の機械可読版（手書き）
+│   └── adr/                       ← 個別の設計判断の記録
+│
+├── server/                        ← Go（APIサーバ + MCPサーバ + 静的配信）
+│   ├── go.mod
+│   ├── sqlc.yaml                  ← migrations/ をスキーマ源として参照
+│   ├── cmd/pb/main.go             ← serve / admin create などのサブコマンド
+│   ├── migrations/                ← goose。唯一のスキーマ定義（3.2）
+│   │   ├── 0001_extensions_and_functions.sql
+│   │   └── …                      ← Phase 1 は 0010 まで（DbDesign 5.2）
+│   ├── internal/
+│   │   ├── config/                ← 環境変数と *_FILE の読み込み
+│   │   ├── httpapi/               ← REST（ApiDesign.md）
+│   │   │   ├── middleware/        ← 認証・認可・CSRF・レート制限・request_id
+│   │   │   ├── apierr/            ← ApiDesign 2.5 のエラー形式
+│   │   │   └── v1/                ← エンドポイント実装
+│   │   ├── auth/                  ← 認証・認可のドメインロジック（本書6章）
+│   │   ├── domain/                ← エンティティとビジネスルール
+│   │   ├── store/
+│   │   │   ├── queries/*.sql      ← 手書きSQL（sqlc の入力）
+│   │   │   ├── gen/               ← sqlc 生成物（コミットする）
+│   │   │   └── search/            ← 全文検索の実装を隔離（DbDesign 4.5）
+│   │   ├── webui/                 ← 静的配信（3.4）
+│   │   │   ├── embed.go           ← //go:embed all:dist
+│   │   │   └── dist/              ← client のビルド成果物（.gitignore、雛形のみコミット）
+│   │   ├── mcpsrv/                ← MCPサーバ（Phase 2）
+│   │   └── ulidgen/
+│   └── testdata/
+│
+├── client/                        ← Vue 3 + TypeScript + Vite
+│   ├── package.json
+│   ├── vite.config.ts             ← /api /mcp を server へプロキシ（開発時）
+│   ├── src/
+│   │   ├── pages/ components/ stores/
+│   │   └── api/                   ← openapi.yaml から生成する型付きクライアント
+│   └── dist/                      ← .gitignore
+│
+└── deploy/                        ← 環境別の実行設定
+    ├── Dockerfile                 ← マルチステージ（client build → server build → 実行）
+    ├── base/                      ← 全環境で共通のもの（4.3）
+    │   ├── compose.yaml
+    │   ├── initdb/01_roles.sql    ← DBロール分離（DbDesign 3.4）
+    │   └── env.example
+    ├── dev/                       ← 開発検証環境
+    │   ├── compose.yaml           ← base への上書き
+    │   └── secrets/               ← .gitignore（.example のみコミット）
+    ├── stg/                       ← ステージング（当面は空でよい。4.4）
+    └── prod/                      ← 配布用
+        ├── compose.yaml
+        └── build-release.sh       ← クロスコンパイル／マルチアーキイメージ
+```
+
+## 4.2 client と server を分けたまま単一プロセスで動かす
+
+**フォルダは分離したまま、成果物だけを統合する。** 開発時の関心事（依存管理、ビルドツール、テスト）が Go と Node で全く異なるため、ソースツリーを混ぜる利点がない。一方、実行時は 3.4 のとおり `embed` で1バイナリにまとめるため、Nginx を別に立てる必要はない。
+
+```
+開発時                              配布時
+┌──────────┐  /api  ┌──────────┐   ┌────────────────────────┐
+│ Vite     │───────▶│ Go       │   │ Go バイナリ              │
+│ :5173    │        │ :8080    │   │  ├ /api/v1/*           │
+│ (HMR)    │◀───────│          │   │  ├ /mcp/*              │
+└──────────┘  HTML  └──────────┘   │  └ /* → embed した dist │
+                                    └────────────────────────┘
+```
+
+**Makefile が両者を繋ぐ。**
+
+```make
+build-client:                       # client/dist を生成
+	cd client && npm ci && npm run build
+
+sync-webui: build-client            # embed 対象へコピー（//go:embed は親を辿れない）
+	rm -rf server/internal/webui/dist && mkdir -p server/internal/webui/dist
+	cp -R client/dist/. server/internal/webui/dist/
+
+build: sync-webui                   # 単一バイナリ
+	cd server && CGO_ENABLED=0 go build -trimpath -o ../bin/pb ./cmd/pb
+```
+
+## 4.3 deploy/base に置くもの
+
+「全環境で同じ」ものを `base/` に集約し、環境ごとの差分のみを `dev/` `stg/` `prod/` に置く。docker compose は複数ファイルの重ね合わせに対応している。
+
+```
+docker compose -f deploy/base/compose.yaml -f deploy/dev/compose.yaml up -d
+```
+
+| 置き場所 | 内容 |
+|---|---|
+| `base/compose.yaml` | `db` と `app` のサービス定義、ボリューム、ヘルスチェック、依存関係 |
+| `base/initdb/` | DBロール作成（`DbDesign.md` 3.4）。環境によらず同一 |
+| `base/env.example` | 必要な環境変数の一覧と説明 |
+| `dev/compose.yaml` | ポートを `127.0.0.1` に公開、ログ詳細化、ソースのバインドマウント、開発用シード |
+| `prod/compose.yaml` | イメージタグ固定、バインドマウントなし、`restart: always`、リソース制限 |
+
+**`base/` の中身が育つまでは、`dev/compose.yaml` 単体で始めてよい。** 環境が1つしかない段階で共通化を先取りすると、共通部分の判断材料がないまま構造だけが増える。
+
+## 4.4 stg の扱い
+
+Phase 1〜2 は開発端末での動作が中心であり、**`stg/` は当面 `.gitkeep` のみで構わない**。ステージングが実際に必要になる（他者に触ってもらう、外部公開する）段階で、`dev` と `prod` の差分を見てから内容を決める方が無駄がない。
+
+## 4.5 ビルドとクロスコンパイル
+
+| 目的 | 方法 |
+|---|---|
+| 開発端末で動かす | `make run`（`go run`）または `make build` |
+| コンテナで動かす | `deploy/Dockerfile`（マルチステージ）。**ビルドもコンテナ内で行うため、ホストのアーキテクチャに依存しない** |
+| 他アーキテクチャ向けイメージ | `docker buildx build --platform linux/amd64,linux/arm64` |
+| ネイティブバイナリ配布 | `deploy/prod/build-release.sh` で `GOOS`/`GOARCH` を回す |
+
+```bash
+# build-release.sh の骨子
+for target in darwin/arm64 linux/amd64 linux/arm64; do
+  GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 \
+    go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+    -o "dist/pb_${GOOS}_${GOARCH}" ./cmd/pb
+done
+```
+
+**`CGO_ENABLED=0` で静的バイナリになる。** pgx が pure Go 実装であるため C ライブラリに依存せず、`scratch` や distroless イメージで動作する。開発端末（arm64 macOS）から Linux/amd64 向けを出すのもフラグ指定のみで済む。
+
+## 4.6 その他の規約
+
+- **`internal/` に置くことで外部からの import を禁止する。** 単一アプリケーションであり、パッケージを公開する予定がないため
+- **`store/gen/` はコミットする。** 生成物だが、`sqlc generate` を実行しなくてもビルドが通る状態を保ち、レビュー時に生成結果の差分が見えるようにする
+- **`store/search/` に全文検索を隔離する。** 日本語検索の方式（`pg_trgm` → `pg_bigm`）を将来変更した際、影響範囲をこの層に閉じ込めるため（`DbDesign.md` 4.5）
+- **秘密は `deploy/<env>/secrets/` に置き、`.gitignore` する。** `.example` ファイルのみコミットする
+
+---
+
+# 5. データベース設計
+
+**正本は `DbDesign.md`。** 本章は全体像の把握のための要約に留める。スキーマ定義・マイグレーション・DB実行環境・初期データはすべて `DbDesign.md` を参照すること。
+
+## 5.1 主要エンティティの関係
+
+```
+        actor ──┬── app_user ── user_identity ── local_credential
+                │                    │
+                │                    └── auth_provider
+                └── agent
+                  │
+                  │ (assignee / author / created_by として全テーブルから参照)
+                  ▼
+project ──┬── ticket ──┬── comment
+          │            ├── dod_item
+          │            ├── ticket_link (self join)
+          │            ├── task_lease
+          │            └── agent_run ── agent_report
+          ├── workflow ── workflow_status ── workflow_transition
+          ├── knowledge ── knowledge_revision
+          ├── proposal          （すべての「AIの提案」がここを通る）
+          ├── project_event
+          └── project_member
+```
+
+## 5.2 テーブル一覧とPhase
+
+| Phase | 領域 | テーブル | 詳細 |
+|---|---|---|---|
+| **1** | アクター・認証 | `actor` `app_user` `auth_provider` `user_identity` `local_credential` `access_token` | `DbDesign.md` 6.2 |
+| **1** | 認可 | `permission` `role` `role_permission` `project_member` | 6.3 |
+| **1** | プロジェクト | `project` `project_counter` | 6.4 |
+| **1** | ワークフロー | `workflow` `workflow_status` `workflow_transition` | 6.5 |
+| **1** | チケット | `ticket` `ticket_link` | 6.6 |
+| **1** | コメント・添付 | `comment` `attachment` | 6.7 |
+| **1** | 履歴 | `activity` `audit_log` | 6.8 |
+| **1** | アジャイル | `sprint` | 6.9 |
+| **2** | エージェント連携 | `agent` `task_lease` `dod_item` `agent_run` `agent_report` `context_pack_log` | 8.1 |
+| **2** | 知識還流 | `knowledge` `knowledge_revision` `proposal` | 8.2 |
+| **3** | AI・分析 | `comment_signal` `embedding` `project_event` `estimate_record` `contribution` | 8.3 |
+
+## 5.3 設計上の要点（3点のみ）
+
+本書の設計原則と直結する3点を挙げる。それ以外は `DbDesign.md` を参照すること。
+
+1. **`actor` が人間とエージェントの共通基底になっている**（原則3）。`ticket.assignee_id` などはすべて `actor(id)` を参照するため、Phase 2 でエージェントを導入しても既存テーブルの変更が不要
+2. **`app_user` と `user_identity` を分離している**（原則4）。Phase 3 で OIDC/SAML を追加する際、既存ユーザーを作り直さずに行の追加だけで済む
+3. **`proposal` がAIの提案の唯一の入口**（原則6）。エージェントは本体テーブルを直接更新せず、承認を経て反映される
+
+---
+
+# 6. 認証・認可設計
+
+**本章が認証・認可の正本である。** 対応するテーブル定義は `DbDesign.md` 6.2〜6.3、APIは `ApiDesign.md` 3〜4章・6〜7章を参照。
+
+## 6.1 全体方針
+
+| 項目 | Phase 1 | Phase 3（将来） |
+|---|---|---|
+| 認証方式 | ローカル ID（メール）/ パスワード | + OIDC / SAML |
+| セッション | HttpOnly Cookie + 不透明トークン | 同左（IdP はログイン時のみ） |
+| API アクセス | Bearer トークン | 同左 |
+| 権限 | システムロール2種＋プロジェクトロール | + IdP グループからのロールマッピング |
+
+**将来の IdP 連携でコードの大部分を変えないための鍵は、`user_identity` 抽象である。** 認証処理を「① 認証手段が subject を特定する → ② subject から `user_identity` を引く → ③ `app_user` を得てセッションを発行する」の3段に分離しておけば、OIDC / SAML の追加は①のアダプタ実装のみで済む。
+
+## 6.2 認証フロー
+
+### 6.2.1 ローカル ID/PW ログイン（Phase 1）
+
+```
+1. POST /api/v1/auth/login  { email, password }
+2. app_user を email で検索（citext のため大文字小文字を区別しない）
+3. user_identity を (provider_key='local', subject=email) で検索
+4. local_credential.locked_until を確認 → ロック中なら 423 を返す
+5. Argon2id で password_hash を検証
+   ├─ 失敗 → failed_attempts++ 、閾値超過で locked_until を設定
+   │          audit_log('login.failure') を記録し 401 を返す
+   └─ 成功 → failed_attempts=0
+             ハッシュパラメータが旧世代なら再ハッシュして更新
+6. access_token を発行（token_type='session'）
+   ├─ 平文トークン = "pb_sess_" + base64url(random 32 bytes)
+   └─ DB には SHA-256 ハッシュのみ保存
+7. Set-Cookie: pb_session=<平文>; HttpOnly; SameSite=Lax; Secure(本番); Path=/
+8. audit_log('login.success') を記録
+```
+
+**平文トークンは Cookie にのみ存在し、DB にもログにも残さない。**
+
+ユーザーが存在しない場合もダミーハッシュを検証し、応答時間を揃える（タイミング攻撃対策）。
+
+### 6.2.2 リクエスト時の認証
+
+```
+Cookie(pb_session) または Authorization: Bearer <token>
+  → SHA-256 でハッシュ化
+  → access_token を token_hash（UNIQUE索引）で検索
+  → revoked_at IS NULL かつ expires_at > now() を確認
+  → last_used_at を更新（書き込み負荷軽減のため1分粒度で間引く）
+  → actor をロードしてリクエストコンテキストに載せる
+```
+
+**JWT を採用しない理由**は、①即時失効が必要（エージェントの暴走時にトークンを止めたい）、②スコープ変更を即時反映したい、の2点。
+
+### 6.2.3 OIDC / SAML（Phase 3 の差し込み点）
+
+Phase 1 の実装時点で、以下の**インターフェースだけ**を定義しておく。
+
+```go
+type AuthProvider interface {
+    Key() string
+    Kind() ProviderKind // Local | OIDC | SAML
+    // ブラウザをIdPへ飛ばす（Local では利用しない）
+    Start(state string) (redirectURL string, ok bool)
+    // コールバックを検証し、subject と属性を返す
+    Verify(ctx context.Context, in VerifyInput) (VerifiedIdentity, error)
+}
+
+type VerifiedIdentity struct {
+    Subject       string            // OIDC: sub / SAML: NameID / Local: email
+    Email         string
+    DisplayName   string
+    Groups        []string          // ロールマッピングの入力
+    RawAttributes map[string]any
+}
+```
+
+`verify()` 以降（`user_identity` 検索 → セッション発行）は**全プロバイダで共通**にする。この共通化ができていれば、OIDC 追加時の作業は以下に限定される。
+
+1. `AuthProvider` の OIDC 実装を追加する
+2. `auth_provider` テーブルに1行 INSERT する
+3. ログイン画面のボタンは `GET /api/v1/auth/providers` の結果から自動生成される（`ApiDesign.md` 3.3）ため**フロントの改修が不要**
+
+**JIT プロビジョニング**は `auth_provider.is_jit_provisioning` で制御する。有効時は `default_system_role` で `app_user` を作成し、`role_mapping` に従って `project_member` を付与する。
+
+**アカウントリンク**：既存のローカルユーザーが後から IdP を使う場合、同一 `user_id` に対して `user_identity` を追加する。メールアドレス一致による自動リンクは**なりすましのリスクがあるため既定で無効**とし、管理者による明示的リンクか、ログイン中ユーザーによる自己リンクのみを許す。
+
+## 6.3 パスワードとアカウント保護（Phase 1）
+
+| 項目 | 方針 |
+|---|---|
+| ハッシュ | Argon2id、PHC 文字列で保存。パラメータは `m=64MiB, t=3, p=4` を初期値とする |
+| 最小長 | 12文字。複雑性要件（記号必須等）は課さず長さを優先する |
+| 自動生成パスワード | 語句連結方式（`quiet-harbor-4172-mint`）。口頭・チャットでの伝達誤りを減らす（`ApiDesign.md` 6.2） |
+| 既知の漏洩パスワード | Phase 1 では未対応（オフライン動作を優先） |
+| ログイン失敗 | 5回連続で15分ロック。`failed_attempts` / `locked_until` で管理 |
+| レート制限 | IP単位・アカウント単位の両方（`ApiDesign.md` 2.9） |
+| エラーメッセージ | 「メールアドレスまたはパスワードが正しくありません」で統一し、アカウント存在を漏らさない |
+| 初期管理者 | 初回起動時に `pb admin create` で対話的に作成。**既定パスワードをシードに埋め込まない**（`DbDesign.md` 7.5） |
+| パスワード変更 | 変更時に当該ユーザーのセッションを全失効（現在のセッションを除く） |
+
+## 6.4 認可モデル
+
+### 6.4.1 三層構造
+
+権限は**3つの層の積**として決まる。
+
+```
+実効権限 = ( システムロールの権限 ∪ プロジェクトロールの権限 ) ∩ トークンのスコープ
+```
+
+| 層 | 保持場所 | 役割 |
+|---|---|---|
+| システムロール | `app_user.system_role` | インスタンス全体に対する役割。**オペレータ／アドミニストレータ** |
+| プロジェクトロール | `project_member.role_key` | 個別プロジェクトに対する役割。PM／メンバー／閲覧者 |
+| トークンスコープ | `access_token.scopes` | **権限の上限**。ロールが持つ権限を超えることはできず、縮小のみ可能 |
+
+**トークンスコープを「縮小のみ」と定義することが重要である。** エージェント用トークンに `ticket:read, ticket:write` だけを与えれば、そのトークンで実行される限り、たとえ紐づくアクターが管理者であっても他の操作はできない（`Requirements.md` 10.10.3）。
+
+### 6.4.2 権限カタログ
+
+権限をコードのif文ではなく**データとして定義**する（原則5）。カタログは28件で、`DbDesign.md` 7.2 のシードが正本。
+
+| カテゴリ | 権限キー |
+|---|---|
+| project | `project.view` `project.create` `project.edit` `project.archive` |
+| ticket | `ticket.view` `ticket.create` `ticket.edit` `ticket.transition` `ticket.close` `ticket.assign` `ticket.delete` |
+| comment | `comment.create` `comment.edit_own` `comment.delete_any` |
+| knowledge | `knowledge.view` `knowledge.propose` `knowledge.approve` |
+| proposal | `proposal.review` |
+| agent | `agent.register` `agent.token.issue` `agent.run` |
+| admin | `user.manage` `role.manage` `authprovider.manage` `auditlog.view` `system.settings` |
+| export | `export.excel` `share.publiclink` |
+
+### 6.4.3 組み込みロール
+
+5種類（システム2＋プロジェクト3）。**割り当ての正本は `DbDesign.md` 7.3 のシード**であり、以下は要約。
+
+| ロール | scope | 概要 |
+|---|---|---|
+| **operator** | system | プロジェクト・チケットの閲覧と編集、コメント、知識の提案、Excel出力 |
+| **administrator** | system | **全権限**。ユーザー管理・認証設定・監査ログ・プロジェクト作成を含む |
+| project_admin | project | 当該プロジェクトの全操作＋承認（`knowledge.approve` `proposal.review`）＋エージェント管理 |
+| project_member | project | 当該プロジェクトのチケット作成・編集・遷移、コメント |
+| project_viewer | project | 閲覧のみ |
+
+**Phase 1 ではシステムロール2種のみをUIで扱う**。プロジェクトロールはテーブルとシード投入まで行い、画面は後回しにする（`GuiDesign.md` 5.6.3）。
+
+### 6.4.4 画面・機能の制限方式
+
+**サーバとフロントの二重で制御する。**
+
+**サーバ側（本体）**：全 API ハンドラに必要権限を宣言し、ミドルウェアで検証する。
+
+```go
+r.With(RequirePermission("ticket.close")).
+  Post("/projects/{key}/tickets/{seq}/close", h.CloseTicket)
+```
+
+**権限は chi のミドルウェアとしてルート定義に宣言する。** ハンドラ本体に権限チェックを書くと、新しいエンドポイントで書き忘れても気づけない。ルート定義に並べれば、`routes.go` を眺めるだけで全エンドポイントの必要権限を確認でき、テストで網羅も検証できる。
+
+**フロント側（表示制御）**：ログイン時に実効権限の一覧を返し、ストアに保持する（`ApiDesign.md` 4.1）。
+
+```
+GET /api/v1/me
+→ { actor: {...}, permissions: [...], projects: [{ key, role, permissions }] }
+```
+
+- **ルーターガード**：ページごとに必要権限を定義し、不足時は 403 ページへ
+- **コンポーネント**：`v-if="can('ticket.close')"` でボタンを出し分ける
+
+フロントの制御は**利便性のためのものであり、セキュリティ境界ではない**。権限判定の正本は常にサーバ側に置く。
+
+### 6.4.5 権限判定の実装上の注意
+
+- ログインごとに実効権限を計算し、セッションにキャッシュする。ロール変更時は当該ユーザーのキャッシュを無効化する
+- 権限不足は `403` を返し、`audit_log('permission.denied')` に記録する。**存在を隠したい資源（他プロジェクト）は `404` を返す**
+- **不変条件をAPI側で守る**：自分自身のロール変更・無効化・削除の禁止、最後のアドミニストレータの降格禁止（`ApiDesign.md` 6.4）。UIだけで防ぐと、直接APIを叩いた際に誰もログインできないインスタンスが生まれうる
+- エージェントからの操作は、権限に加えて①ワークフローの `is_agent_reachable`、②サーキットブレーカーの状態、③リースの保有、を追加で検証する
+
+## 6.5 エージェントの認証（Phase 2）
+
+人間ユーザーとは別系統として設計する。
+
+| 項目 | 方針 |
+|---|---|
+| principal | `actor(kind='agent')` + `agent` テーブル。人間アカウントの借用をしない |
+| トークン | `access_token(token_type='agent')`。プロジェクトスコープ必須、有効期限必須 |
+| 発行 | プロジェクト設定画面から。**発行時に一度だけ全文表示**（`Requirements.md` 10.9.1） |
+| スコープ既定 | `ticket:read` `context:read` `ticket:claim` `note:write` `result:submit` `proposal:create` |
+| 禁止 | `ticket.close`、`knowledge` の直接更新、他プロジェクトへのアクセス |
+| 信頼度 | `agent.trust_level` に応じて既定スコープを段階的に拡大（`Requirements.md` 10.10.3） |
+| 失効 | 管理画面から即時失効。サーキットブレーカー作動時は自動失効も選択可 |
+
+**エージェントによるクローズ禁止はDBレベルでも担保する。** ワークフローの `done` ステータスは `is_agent_reachable = false`、遷移の `allowed_actor_kinds` は `["user"]`（`DbDesign.md` 7.4）。
+
+## 6.6 ネットワークと転送（Phase 1）
+
+- アプリは既定で `127.0.0.1` にのみ公開する。コンテナ内は `0.0.0.0:8080` で待ち受け、公開範囲は compose の `ports` で制御する（`DbDesign.md` 3.2）
+- Cookie は `HttpOnly` `SameSite=Lax`。HTTPS 提供時は `Secure` を付与
+- CSRF：Cookie 認証の状態変更系リクエストに CSRF トークンを要求する。Bearer トークン認証の場合は不要（`ApiDesign.md` 2.4）
+- CORS：既定で同一オリジンのみ許可
+- **DBはアプリ実行時ロール `pb_app`（DML のみ）で接続する。** DDL権限を持つ `pb_owner` と分離し、実行時のSQLインジェクションでテーブルを落とせないようにする（`DbDesign.md` 3.4）
+
+---
+
+# 7. REST API 設計
+
+**正本は `ApiDesign.md`。** 本章は方針の要約に留める。
+
+## 7.1 方針
+
+| # | 方針 |
+|---|---|
+| 1 | リソース指向。動詞は状態遷移など名詞で表せない操作のみ `POST /:id/<action>` |
+| 2 | 権限判定はサーバが正本。全エンドポイントに必要権限を宣言する |
+| 3 | 画面の1表示 = 1リクエストを目指す。N+1 の往復を作らない |
+| 4 | エラーは `code` で機械可読に。メッセージ文字列でのマッチングを不要にする |
+| 5 | 権限のないリソースは 403 ではなく 404 |
+| 6 | 秘密（パスワード・トークンの平文）は発行応答に1回だけ含める |
+
+## 7.2 定義済みの範囲
+
+| 領域 | エンドポイント | 状態 |
+|---|---|---|
+| 認証・セッション | `/auth/login` `/auth/logout` `/auth/providers` | 確定 |
+| 自分自身 | `/me` `/me/password` `/me/sessions` `/me/tokens` | 確定 |
+| プロジェクト | `/projects` `/projects/check-key` `/projects/:key` | 確定 |
+| ユーザー管理 | `/admin/users` 系 | 確定 |
+| ロール・権限 | `/roles` `/permissions` | 確定 |
+| チケット | `/projects/:key/tickets` 系 | **未着手**（`ApiDesign.md` 9章） |
+
+機械可読版は `docs/openapi.yaml` として保守し、**本書・`ApiDesign.md` と食い違った場合は OpenAPI を正とする**（実装が参照するため）。
+
+---
+
+# 8. MCPサーバ設計
+
+未着手。`Requirements.md` 10.3（ツール一覧）・10.4（コンテキストパック）が入力となる。
+
+- ツールの入出力スキーマ定義
+- ツール description の文面設計（`Requirements.md` 10.13 の検討事項）
+- コンテキストパックの生成アルゴリズムとトークン予算配分
+- REST 層との責務分担
+
+**エージェントから見える面は MCP のみとする**（原則7）。REST API を直接叩かせる設計は採らない。
+
+---
+
+# 9. 画面設計
+
+**正本は `GuiDesign.md`。** 本章は Phase 1 の画面と必要権限の一覧に留める。
+
+| 画面 | パス | 必要権限 |
+|---|---|---|
+| ログイン | `/login` | 不要 |
+| プロジェクト一覧（ログイン後の初期画面） | `/projects` | `project.view` |
+| プロジェクトダッシュボード | `/p/:key` | `project.view` |
+| チケット一覧 | `/p/:key/tickets` | `ticket.view` |
+| チケット詳細 | `/p/:key/tickets/:seq` | `ticket.view` |
+| プロジェクト設定 | `/p/:key/settings` | `project.edit` |
+| ユーザー / 権限管理 | `/admin/users` | `user.manage` |
+| 監査ログ | `/admin/audit` | `auditlog.view` |
+| 自分の設定・トークン | `/me` `/me/tokens` | 本人 |
+
+UI の基本構成として、**アプリ共通ヘッダを持たない**（ノートPCでの縦方向の可用領域を優先）。ナビゲーションはメインメニューペインに集約する。詳細は `GuiDesign.md` 2章。
+
+---
+
+# 10. 非機能・運用設計
+
+DB に関する運用（バックアップ、ログ、データ量見積り）は `DbDesign.md` 9章に記載する。本章では以下を今後扱う。
+
+- アプリケーションログの形式（構造化JSON、`request_id` による `audit_log` との突き合わせ）
+- メトリクスとヘルスチェックエンドポイント
+- コンテナイメージのビルドと配布
+- `Requirements.md` 8章の「KEDAでスケール0」構成の可否（PostgreSQL 常駐との兼ね合い）
+
+---
+
+# 11. 開発フェーズと実装順序
+
+## Phase 1 — 認証とチケットの基礎（ローカル動作確認まで）
+
+```
+ 1. deploy/base/compose.yaml と initdb（DBロール分離）  ← DbDesign 3.2, 3.4
+ 2. server/migrations/ 0001〜0010 の作成と適用       ← DbDesign 6, 7
+ 3. pb admin create による初期管理者作成            ← DbDesign 7.5
+ 4. 共通基盤：エラー形式、ページネーション、認証ミドルウェア、監査ログ
+ 5. POST /auth/login、/auth/logout、GET /me         ← ここでログインが通る
+ 6. 認可ミドルウェア（require_permission）
+ 7. GET/POST /projects、check-key                  ← プロジェクト一覧が動く
+ 8. GET/PATCH /projects/:key、archive
+ 9. GET/POST /admin/users                          ← ユーザー管理が動く
+10. GET/PATCH/DELETE /admin/users/:id、password-reset、memberships
+11. GET /roles、GET /permissions                    ← 権限マトリクスが出る
+12. GET /me/sessions、/me/tokens、PATCH /me、POST /me/password
+13. client の雛形（Vite + Pinia + ルーター）と embed 経路の疎通
+14. フロント：ログイン画面、プロジェクト一覧、ユーザー管理
+15. フロント：ロールによるメニュー・ボタンの出し分け
+16. チケット API と画面（ApiDesign 9章の確定後）
+```
+
+**手順5で「ログインできる」、手順7で「プロジェクト一覧が見える」、手順9で「ユーザーを追加できる」、手順13で「ブラウザから画面が出る」**という区切りになる。それぞれで動作確認を挟める順序にしてある。
+
+## Phase 2 — エージェント連携
+
+```
+17. マイグレーション 0011〜0014                     ← DbDesign 8.1, 8.2
+18. agent / access_token(agent) / task_lease
+19. MCP サーバと read 系ツール
+20. コンテキストパック生成（初期は単純な選定でよい）
+21. dod_item と agent_report
+22. proposal と承認キューUI
+23. セットアップ画面と設定ファイル生成（`Requirements.md` 10.9）
+```
+
+## Phase 3 — AI機能・分析
+
+```
+24. マイグレーション 0015〜0018                     ← DbDesign 8.3
+25. Readiness 判定、DoD ドラフト生成
+26. コメント分類・重要度スコアリング
+27. ベクトル検索、プロジェクトヒストリー
+28. OIDC / SAML 連携
+29. カスタムロールの編集UI
+```
+
+---
+
+## 付録A. 本書に関する未解決の検討事項
+
+各領域固有の検討事項は、それぞれの設計書の末尾に記載している（`DbDesign.md` 10章、`ApiDesign.md` 10.2、`GuiDesign.md` 11章）。本書に残るのは以下。
+
+- MCPサーバとREST APIの責務分担（8章の着手時に確定）
+- `Requirements.md` 8章の「KEDAでスケール0」を PostgreSQL 常駐構成でどう扱うか
+- アプリケーションログと `audit_log` の使い分け（何を両方に書き、何を片方に留めるか）
+- PB自身の開発に PB を使う（ドッグフーディング）時期。Phase 2 のMCPサーバ完成が前提になる
+
+### 解決済みとして削除した項目（rev.1 から）
+
+| 項目 | 結論 |
+|---|---|
+| SQLite の単一ライタ制約下でのエージェント並行アクセス | PostgreSQL 前提化により解消（`DbDesign.md` 2.1） |
+| PostgreSQL 移行時のデータ移送手順とダウンタイム | 移行そのものが不要になった |
+| `permission` カタログの粒度 | 28件で確定（`DbDesign.md` 7.2） |
+| プロジェクトロールのUIをどの段階で入れるか | Phase 3（`GuiDesign.md` 5.6.3） |
+| サーバ言語の確定（Rust / Go） | **Go** に確定（3.1） |
