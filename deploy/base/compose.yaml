@@ -1,0 +1,72 @@
+# deploy/base/compose.yaml
+#
+# 正本: DbDesign.md 3.2（compose 構成）/ 3.4（DBロールと権限）
+# 全環境で共通のものだけを置く。環境差分は deploy/<env>/compose.yaml で重ねる（Design.md 4.3）。
+# 変更が必要になったら、先に設計文書の修正案を出すこと。
+
+name: project-backyard
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pb
+      POSTGRES_USER: pb_owner
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: UTC
+      PGTZ: UTC
+    secrets:
+      - db_password
+      - app_db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro       # 3.4 のロール作成
+    ports:
+      - "127.0.0.1:5432:5432"        # ホストからの接続はローカルのみ
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - max_connections=50
+      - -c
+      - log_min_duration_statement=200ms
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pb_owner -d pb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    image: project-backyard:dev
+    build:
+      context: ../..                 # リポジトリルート（client/ と server/ を含む）
+      dockerfile: deploy/Dockerfile  # Design.md 4.1。手順13以降で作成する
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PB_BIND: "0.0.0.0:8080"
+      PB_DATABASE_URL_FILE: /run/secrets/app_database_url
+      PB_LOG_FORMAT: json
+      TZ: UTC
+    secrets:
+      - app_database_url
+    ports:
+      - "127.0.0.1:8080:8080"        # Requirements.md 10.10.2：127.0.0.1 のみ
+
+volumes:
+  pgdata:
+
+secrets:
+  db_password:
+    file: ../dev/secrets/db_password
+  app_db_password:
+    file: ../dev/secrets/app_db_password
+  app_database_url:
+    file: ../dev/secrets/app_database_url

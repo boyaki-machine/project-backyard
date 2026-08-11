@@ -668,6 +668,34 @@ DB に関する運用（バックアップ、ログ、データ量見積り）�
 
 # 11. 開発フェーズと実装順序
 
+## 11.0 ブランチ運用
+
+```
+main ← develop ← feature/*
+```
+
+| ブランチ | 役割 |
+|---|---|
+| `main` | リリース可能な状態のみ |
+| `develop` | 統合先。ここから feature を切り、ここへ戻す |
+| `feature/step-<2桁>-<スラッグ>` | 本章の手順1つ分の作業 |
+| `feature/<スラッグ>` | 手順に属さない実装（不具合修正など） |
+| `docs/<スラッグ>` | 設計文書のみの修正 |
+
+**`develop` に直接コミットしない。** 手順ごとに feature ブランチを切り、完了後に `--no-ff` で `develop` へマージする。`--no-ff` を使うのは、**手順の区切りをマージコミットとして履歴に残す**ためである。後から「どの手順でどこまで入ったか」を `git log --first-parent develop` で辿れる。
+
+```bash
+git switch develop && git pull
+git switch -c feature/step-02-migrations
+# 実装・検証・docs/PROGRESS.md 更新
+git commit -m "step 2: マイグレーション 0001〜0010 を追加"
+git switch develop && git merge --no-ff feature/step-02-migrations
+```
+
+**`docs/PROGRESS.md` の更新は実装と同じブランチに含める。** 別コミットにすると、マージ前のブランチだけを見たときに「完了したのか途中なのか」が判断できなくなる。
+
+**マージ・push・ブランチ削除はエージェントに独断で行わせない**（`CLAUDE.md` のブランチ運用、`.claude/commands/pb-step.md` の手順8）。
+
 ## Phase 1 — 認証とチケットの基礎（ローカル動作確認まで）
 
 ```
