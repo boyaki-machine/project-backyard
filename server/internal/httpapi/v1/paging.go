@@ -1,6 +1,9 @@
-// Package httpapi は REST API のルータと、エンドポイント共通の約束事を持つ
-// （ApiDesign.md 2章）。
-package httpapi
+// Package v1 は /api/v1 のエンドポイント実装と、その共通の約束事を持つ
+// （Design.md 4.1 の httpapi/v1/、ApiDesign.md 2章）。
+//
+// ページネーション（2.6）と一覧エンベロープは /api/v1 の規約であるため、
+// バージョンの外にある /healthcheck（2.11）とは分けて本パッケージに置く。
+package v1
 
 import (
 	"encoding/json"

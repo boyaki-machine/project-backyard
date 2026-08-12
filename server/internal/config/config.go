@@ -25,6 +25,15 @@ type Config struct {
 	// GET /healthcheck にバージョンを含めるか（ApiDesign.md 2.11）。
 	// 既定を false にするのは、未認証の呼び出し元への情報開示になるため。
 	HealthShowVersion bool
+
+	// CookieSecure は PB_COOKIE_SECURE。
+	// pb_session / pb_csrf に Secure 属性を付けるか（Design.md 6.2.1 手順7
+	// 「Secure(本番)」、6.6）。
+	//
+	// リクエストの TLS 有無から自動判定しない。リバースプロキシで TLS を
+	// 終端する構成ではアプリに平文で届くため、自動判定は「HTTPS で公開して
+	// いるのに Secure が付かない」を招く。既定は false（開発端末の http）。
+	CookieSecure bool
 }
 
 const (
@@ -80,12 +89,18 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	cookieSecure, err := lookupBool("PB_COOKIE_SECURE")
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Bind:              bind,
 		DatabaseURL:       dbURL,
 		LogFormat:         logFormat,
 		LogLevel:          logLevel,
 		HealthShowVersion: showVersion,
+		CookieSecure:      cookieSecure,
 	}, nil
 }
 

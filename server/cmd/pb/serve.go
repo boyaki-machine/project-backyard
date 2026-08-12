@@ -50,6 +50,7 @@ func serve(ctx context.Context) error {
 			Pool:              pool,
 			Version:           version,
 			HealthShowVersion: cfg.HealthShowVersion,
+			CookieSecure:      cfg.CookieSecure,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,

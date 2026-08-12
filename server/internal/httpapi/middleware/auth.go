@@ -71,6 +71,14 @@ func Authenticate(q gen.Querier) func(http.Handler) http.Handler {
 
 			touchLastUsed(r.Context(), q, row.TokenID)
 
+			// expires_at は NULL 許容。NULL のまま nil を載せ、
+			// GET /me の expires_at も null になる（ApiDesign.md 4.5）。
+			var expiresAt *time.Time
+			if row.ExpiresAt.Valid {
+				t := row.ExpiresAt.Time
+				expiresAt = &t
+			}
+
 			p := &auth.Principal{
 				ActorID:     row.ActorID,
 				ActorKind:   row.ActorKind,
@@ -81,6 +89,7 @@ func Authenticate(q gen.Querier) func(http.Handler) http.Handler {
 				TokenType:   row.TokenType,
 				Scopes:      scopes,
 				ProjectID:   row.ProjectID.String,
+				ExpiresAt:   expiresAt,
 				Source:      source,
 			}
 			next.ServeHTTP(w, r.WithContext(auth.NewPrincipalContext(r.Context(), p)))

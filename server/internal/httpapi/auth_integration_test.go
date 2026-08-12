@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
+	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
@@ -78,16 +79,19 @@ func TestAuthenticateIntegration(t *testing.T) {
 		t.Fatalf("access_token を作れない: %v", err)
 	}
 
+	// ルータ全体ではなく Authenticate だけを通す。ここで確かめたいのは
+	// queries/auth.sql の SQL とミドルウェアの判定であり、ルート定義ではない
+	// （/api/v1 の疎通は v1 パッケージの結合テストが見る）。
 	var got *auth.Principal
-	r := newRouter(Deps{Queries: q}, func(ar chi.Router) {
-		ar.Get("/probe", func(w http.ResponseWriter, req *http.Request) {
-			got = auth.PrincipalFromContext(req.Context())
-			w.WriteHeader(http.StatusNoContent)
-		})
+	r := chi.NewRouter()
+	r.Use(middleware.Authenticate(q))
+	r.Get("/probe", func(w http.ResponseWriter, req *http.Request) {
+		got = auth.PrincipalFromContext(req.Context())
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	call := func(cookie string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, BasePath+"/probe", nil)
+		req := httptest.NewRequest(http.MethodGet, "/probe", nil)
 		req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: cookie})
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)

@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 )
 
 // Code は ApiDesign.md 2.5.1 のエラーコード。表の13件と一対一で対応する。
@@ -88,10 +89,18 @@ type Detail struct {
 // Error は 2.5 のエラー本体。error インターフェースを満たすので、
 // ハンドラから素の error として返して呼び出し側で Write できる。
 type Error struct {
-	Code      Code     `json:"code"`
-	Message   string   `json:"message"`
-	Details   []Detail `json:"details,omitempty"`
-	RequestID string   `json:"request_id,omitempty"`
+	Code    Code     `json:"code"`
+	Message string   `json:"message"`
+	Details []Detail `json:"details,omitempty"`
+	// RetryAfterSec は再試行までの秒数。account_locked（ApiDesign.md 3.1）と
+	// rate_limited（2.9）で使う。0 なら出さない。
+	//
+	// details ではなく本体の任意フィールドに置くのは、details が
+	// {field, code, message} の配列であり（2.5）、数値を載せる場所が
+	// 無いためである。フロントが「あと N 分」を組み立てられるよう、
+	// 文言ではなく数値のまま返す。
+	RetryAfterSec int    `json:"retry_after_sec,omitempty"`
+	RequestID     string `json:"request_id,omitempty"`
 
 	// cause は応答には出さず、サーバログにのみ残す内部原因。
 	cause error
@@ -119,6 +128,17 @@ func (e *Error) WithMessage(msg string) *Error {
 // WithDetails はフィールド単位のエラーを足す。
 func (e *Error) WithDetails(details ...Detail) *Error {
 	e.Details = append(e.Details, details...)
+	return e
+}
+
+// WithRetryAfter は再試行までの秒数を添える。
+//
+// 応答本体の retry_after_sec と、ApiDesign.md 2.9 が定める Retry-After ヘッダの
+// 両方になる。0以下なら何もしない。
+func (e *Error) WithRetryAfter(sec int) *Error {
+	if sec > 0 {
+		e.RetryAfterSec = sec
+	}
 	return e
 }
 
@@ -181,6 +201,10 @@ func Write(w http.ResponseWriter, r *http.Request, e *Error) {
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	// ApiDesign.md 2.9 の Retry-After。標準ヘッダなので本体と併せて出す。
+	if e.RetryAfterSec > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(e.RetryAfterSec))
+	}
 	w.WriteHeader(status)
 	// 応答本文の書き込み失敗（クライアント切断など）は回復手段がないため握りつぶす。
 	_ = json.NewEncoder(w).Encode(envelope{Error: e})

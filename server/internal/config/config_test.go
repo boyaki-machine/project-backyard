@@ -123,3 +123,37 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Fatal("存在しない *_FILE を指してもエラーにならなかった")
 	}
 }
+
+// PB_COOKIE_SECURE は既定 false。書き誤りはエラーにする
+// （Design.md 6.2.1 手順7「Secure(本番)」）。
+func TestLoadCookieSecure(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+		ok    bool
+	}{
+		{"", false, true}, // 既定は false（開発端末の http）
+		{"true", true, true},
+		{"false", false, true},
+		{"on", false, false}, // ParseBool が受け付けない
+	}
+	for _, tt := range cases {
+		t.Setenv("PB_DATABASE_URL", "postgres://pb_app@127.0.0.1:5432/pb")
+		t.Setenv("PB_COOKIE_SECURE", tt.value)
+
+		got, err := Load()
+		if !tt.ok {
+			if err == nil {
+				t.Errorf("PB_COOKIE_SECURE=%q: エラーにならなかった", tt.value)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("PB_COOKIE_SECURE=%q: %v", tt.value, err)
+			continue
+		}
+		if got.CookieSecure != tt.want {
+			t.Errorf("PB_COOKIE_SECURE=%q: %v, want %v", tt.value, got.CookieSecure, tt.want)
+		}
+	}
+}
