@@ -680,6 +680,7 @@ main ← develop ← feature/*
 | `develop` | 統合先。ここから feature を切り、ここへ戻す |
 | `feature/step-<2桁>-<スラッグ>` | 本章の手順1つ分の作業 |
 | `feature/<スラッグ>` | 手順に属さない実装（不具合修正など） |
+| `fix/<スラッグ>` | 機能を変えない修正（不具合修正・hotfix）。**マイナーバージョンを上げない**（11.1） |
 | `docs/<スラッグ>` | 設計文書のみの修正 |
 
 **`develop` に直接コミットしない。** 手順ごとに feature ブランチを切り、完了後に `--no-ff` で `develop` へマージする。`--no-ff` を使うのは、**手順の区切りをマージコミットとして履歴に残す**ためである。後から「どの手順でどこまで入ったか」を `git log --first-parent develop` で辿れる。
@@ -695,6 +696,67 @@ git switch develop && git merge --no-ff feature/step-02-migrations
 **`docs/PROGRESS.md` の更新は実装と同じブランチに含める。** 別コミットにすると、マージ前のブランチだけを見たときに「完了したのか途中なのか」が判断できなくなる。
 
 **マージ・push・ブランチ削除はエージェントに独断で行わせない**（`CLAUDE.md` のブランチ運用、`.claude/commands/pb-step.md` の手順8）。
+
+## 11.1 バージョン番号とリリースタグ
+
+リリースタグは **`vX1.X2.X3`** 形式とする（例：`v1.2.4`）。
+
+| 桁 | 名称 | 意味 | 上がる条件 |
+|---|---|---|---|
+| X1 | メジャー | 機能のまとまり | **開発者が判断して上げる。** 当面 1 |
+| X2 | マイナー | メジャー内での機能実装数 | `feature/*` のマージ。**メジャーを上げたとき 0 に戻る** |
+| X3 | ビルド | `develop` へのマージ回数 | **すべてのマージ**。リセットしない |
+
+**`fix/*` と `docs/*` のマージではマイナーを上げず、ビルド番号だけを上げる。** リリース後の小さな修正は、マイナーを据え置いたままビルド番号の違いで識別する。逆に言えば、**マイナーが同じでビルドが異なる版は「同じ機能セットの別ビルド」**を意味する。
+
+### 正本と検証
+
+**`VERSION`（リポジトリ直下）が正本。** ビルド時は `-X main.version=$(VERSION)` で単一バイナリへ埋め込む（4.5）。
+
+これとは別に、ビルド番号は git からも導出できる。
+
+```bash
+git rev-list --count --first-parent --merges develop
+```
+
+**マージコミットのみを数える**（`--merges`）。`--first-parent` だけで全コミットを数えると、`develop` 上で `VERSION` を更新するたびにビルド番号が動いてしまい、値が自分自身を追い越して収束しない。マージ回数で数えれば、`develop` への直接コミットがあってもビルド番号は動かない。
+
+`make version-check` がこの実測値と `VERSION` を突き合わせる。ずれていれば失敗する。
+
+### 更新の手順
+
+**`VERSION` の更新は feature ブランチ側で行う。** `develop` へ直接コミットしないという原則（11.0）を保つため、マージの中に含める。
+
+```bash
+git switch -c feature/<スラッグ>
+# 実装・検証・docs/PROGRESS.md 更新
+
+make bump-minor          # 機能追加のとき。fix/* と docs/* は make bump-build
+git add -A && git commit -m "..."
+
+git switch develop && git merge --no-ff feature/<スラッグ>
+make version-check       # VERSION と git 実測が一致することを確認する
+```
+
+`bump-*` は **これからマージする前提**で、現在のマージ回数に 1 を足した値をビルド番号に書く。したがって feature ブランチ上で実行し、マージ後に `version-check` が通る状態にしておく。
+
+| コマンド | 用途 | 例 |
+|---|---|---|
+| `make version` | 現在値と git 実測の表示 | |
+| `make version-check` | 両者の一致を検証（マージ後に実行） | |
+| `make bump-build` | `fix/*`・`docs/*` のマージ | `1.2.4` → `1.2.5` |
+| `make bump-minor` | `feature/*` のマージ | `1.2.4` → `1.3.5` |
+| `make bump-major` | メジャーを上げる。マイナーは 0 へ | `1.2.4` → `2.0.5` |
+| `make release-tag` | `develop` 上で `v<VERSION>` の注釈付きタグを作る。**push は手動** | |
+
+### 起点
+
+| ビルド | 内容 |
+|---|---|
+| 1 | 手順2（`feature/step-02-migrations`）のマージ。**`--no-ff` マージの1回目** |
+| 2 | 本節の導入（`feature/versioning`）のマージ |
+
+**手順1以前の2コミットはマージではないため数えない。** 手順1は 11.0 の規約が固まる前に `develop` へ直接コミットされており、feature ブランチを経ていない。
 
 ## Phase 1 — 認証とチケットの基礎（ローカル動作確認まで）
 
