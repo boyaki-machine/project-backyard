@@ -122,6 +122,7 @@ services:
       PGTZ: UTC
     secrets:
       - db_password
+      - app_db_password              # 3.4 の initdb がロール作成時に読む
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d:ro       # 3.4 のロール作成
@@ -145,7 +146,9 @@ services:
 
   app:
     image: project-backyard:dev
-    build: .
+    build:
+      context: ../..                 # リポジトリルート（client/ と server/ を含む）
+      dockerfile: deploy/Dockerfile  # `Design.md` 4.1
     restart: unless-stopped
     depends_on:
       db:
@@ -166,6 +169,8 @@ volumes:
 secrets:
   db_password:
     file: ../dev/secrets/db_password
+  app_db_password:
+    file: ../dev/secrets/app_db_password
   app_database_url:
     file: ../dev/secrets/app_database_url
 ```
@@ -177,12 +182,23 @@ secrets:
 - パスワードは環境変数に直接書かず `*_FILE` で渡す。**`docker inspect` や `ps` で見えないようにするため**
 - `deploy/<env>/secrets/` は `.gitignore` に含める（`.example` のみコミット）
 - `healthcheck` + `depends_on: condition: service_healthy` により、DB起動前のマイグレーション失敗を防ぐ
+- **`build.context` はリポジトリルートを指す。** compose ファイルの位置（`deploy/base/`）ではない。`deploy/Dockerfile` は `client/` と `server/` の双方をマルチステージでビルドするため、両方を含むルートを渡す必要がある（`Design.md` 4.1、4.5）
 
-`deploy/dev/secrets/app_database_url` の内容例：
+`deploy/dev/secrets/` に置くファイル：
+
+| ファイル | 内容 |
+|---|---|
+| `db_password` | `pb_owner`（スキーマ所有者）のパスワード |
+| `app_db_password` | `pb_app`（実行時ロール）のパスワード。3.4 の initdb が読む |
+| `app_database_url` | `pb_app` での接続文字列 |
+
+`app_database_url` の内容例：
 
 ```
-postgres://pb_app:<password>@db:5432/pb?sslmode=disable&application_name=pb
+postgres://pb_app:<app_db_password と同じ値>@db:5432/pb?sslmode=disable&application_name=pb
 ```
+
+**`app_db_password` と `app_database_url` のパスワードは同じ値にする。** 食い違っても起動時には失敗せず、アプリがDBへ接続する時点で初めて認証エラーになる。
 
 ## 3.3 Kubernetes（任意）
 
@@ -223,11 +239,22 @@ spec:
 
 **アプリケーションを DB オーナーで動かさない。** DDL権限を持つロールと、実行時に使うロールを分離する。
 
-```sql
--- deploy/base/initdb/01_roles.sql（コンテナ初回起動時に実行される）
+**パスワードをSQLにリテラルで書かない。** initdb を `.sql` ではなくシェルスクリプトにし、secret ファイルから読んで psql 変数として渡す。
+
+```bash
+#!/bin/bash
+# deploy/base/initdb/01_roles.sh（コンテナ初回起動時に一度だけ実行される）
+set -euo pipefail
+
+app_password="$(cat /run/secrets/app_db_password)"
+
+psql -v ON_ERROR_STOP=1 \
+     --username "$POSTGRES_USER" \
+     --dbname "$POSTGRES_DB" \
+     -v app_password="$app_password" <<'SQL'
 
 -- 実行時ロール：DMLのみ。DDLは実行できない
-CREATE ROLE pb_app LOGIN PASSWORD 'change-me-via-secret';
+CREATE ROLE pb_app LOGIN PASSWORD :'app_password';
 
 -- スキーマの使用権
 GRANT CONNECT ON DATABASE pb TO pb_app;
@@ -245,6 +272,11 @@ ALTER DEFAULT PRIVILEGES FOR ROLE pb_owner IN SCHEMA public
 
 -- public スキーマへの CREATE 権限を一般ロールから剥奪（PG15以降は既定で剥奪済み）
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+-- 実行時ロールの既定のステートメントタイムアウト（3.5）
+ALTER ROLE pb_app SET statement_timeout = '15s';
+
+SQL
 ```
 
 | ロール | 用途 | 権限 |
@@ -254,6 +286,12 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 
 **この分離により、実行時のSQLインジェクションが成立してもテーブルを落とせない。** 監査ログの改ざんについては `audit_log` の `DELETE` / `UPDATE` 権限も外すことを検討する（10章）。
 
+**運用上の注意**
+
+- **スクリプトには実行ビットを立てる。** `:ro` マウントでもホスト側のファイルモードがそのまま使われる。立っていない場合は entrypoint がシェルに読み込む（source する）挙動になる
+- **initdb が走るのは `pgdata` ボリュームが空の初回起動時のみ。** ロール定義を変えた場合、既存の環境には反映されない。開発端末では `docker compose -f deploy/base/compose.yaml down -v` でボリュームごと作り直す
+- ヒアドキュメントは `<<'SQL'` とクォートする。シェルによる変数展開を止め、パスワードは psql の `:'app_password'` 経由でのみ渡す
+
 ## 3.5 接続プール
 
 | 項目 | 値 |
@@ -261,7 +299,7 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 | アプリ側プール | 最小 2 / 最大 10（`sqlx::PgPoolOptions` 等） |
 | `max_connections`（DB側） | 50 |
 | `application_name` | `pb`。`pg_stat_activity` での識別に使う |
-| ステートメントタイムアウト | 実行時ロールに `SET statement_timeout = '15s'` を既定として付与 |
+| ステートメントタイムアウト | 実行時ロールに `SET statement_timeout = '15s'` を既定として付与（3.4 の initdb で `ALTER ROLE` する） |
 
 PgBouncer は Phase 1 では不要。単一プロセス・少人数利用のため。
 
@@ -360,16 +398,42 @@ Phase 1 は `pg_trgm` とし、実運用で不足が確認された時点で `pg
 
 ## 5.1 ツール
 
-SQLファイルベースのマイグレーションツールを使う（`sqlx-cli` / `golang-migrate` / `atlas`）。**ORM の自動マイグレーション生成は使わない。**
+SQLファイルベースのマイグレーションツールとして **goose v3** を使う（`Design.md` 3.1）。**ORM の自動マイグレーション生成は使わない。**
 
 理由：生成されるDDLがレビュー困難で、意図しないテーブル再作成を招くことがある。PBはスキーマそのものが設計資産であり、SQLを直接管理する。
 
 **PostgreSQL はDDLがトランザクショナル**であるため、各マイグレーションは全体が成功するか全体が巻き戻るかのいずれかになる。中途半端な適用状態が生まれない。
 
+### goose の導入と実行
+
+**goose のバージョンは `server/go.mod` の `tool` ディレクティブで固定する。** 開発者ごとに `go install` したバージョンがばらつくと、生成される `goose_db_version` の扱いや注釈の解釈が環境間でずれるため。
+
+```
+# server/go.mod
+tool github.com/pressly/goose/v3/cmd/goose
+```
+
+```make
+# Makefile
+migrate:
+	@cd server && GOOSE_DRIVER=postgres GOOSE_DBSTRING="$(GOOSE_DBSTRING_OWNER)" \
+		go tool goose -dir migrations up
+```
+
+| 項目 | 内容 |
+|---|---|
+| 接続ロール | **`pb_owner`**。DDL を実行するため（3.4）。`pb_app` では実行できない |
+| 接続文字列 | `deploy/dev/secrets/db_password` を Makefile の recipe 内で読んで組み立てる。**Makefile にも `ps` の argv にも平文を残さない**ため、レシピは `@` 付きで実行する |
+| 権限の伝播 | 3.4 の `ALTER DEFAULT PRIVILEGES FOR ROLE pb_owner` により、goose が作ったテーブルにも `pb_app` の DML 権限が自動で付く。マイグレーション後に `GRANT` を流す必要はない |
+
+**各ファイルの冒頭に `-- +goose Up` を置く。** `down` は書かない（5.3）。`set_updated_at()` のように本体に `;` を含む定義は、goose のパーサがステートメント境界を誤らないよう `-- +goose StatementBegin` / `-- +goose StatementEnd` で囲む。
+
+**注釈以外に、本書 6〜7章のDDLへ手を入れてはならない。** goose の注釈はツールの要件であって設計判断ではない。
+
 ## 5.2 ファイル構成
 
 ```
-migrations/
+server/migrations/                      ← Design.md 4.1。sqlc がスキーマ源として読む
 ├── 0001_extensions_and_functions.sql   拡張、set_updated_at()
 ├── 0002_actor_auth.sql                 actor, app_user, auth_provider,
 │                                       user_identity, local_credential, access_token
@@ -1020,7 +1084,96 @@ ON CONFLICT DO NOTHING;
 
 **`done` は `is_agent_reachable = false`、遷移の `allowed_actor_kinds` も `["user"]`。** エージェントは自分でチケットをクローズできない（`Requirements.md` 10.8.5 の禁止事項をDBレベルで担保する）。
 
-`with_review`（+ レビュー中）と `with_approval`（承認フロー付き）も同様に定義する。テンプレートIDは固定ULIDとし、マイグレーションの再実行で重複しないようにする。
+```sql
+-- with_review：未着手 / 進行中 / レビュー中 / 完了
+INSERT INTO workflow (id, project_id, name, is_template, template_key, definition)
+VALUES ('01JZZZZZZZZZZZZZZZZZZZZZW2', NULL, 'レビューあり', true, 'with_review', '{}'::jsonb)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO workflow_status
+  (id, workflow_id, key, name, category, sort_order,
+   requires_human_approval, is_agent_reachable) VALUES
+  ('01JZZZZZZZZZZZZZZZZZZZZZS4','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'todo','未着手','todo',1,false,true),
+  ('01JZZZZZZZZZZZZZZZZZZZZZS5','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'in_progress','進行中','in_progress',2,false,true),
+  ('01JZZZZZZZZZZZZZZZZZZZZZS6','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'review','レビュー中','review',3,false,true),
+  ('01JZZZZZZZZZZZZZZZZZZZZZS7','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'done','完了','done',4,true,false)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO workflow_transition
+  (id, workflow_id, from_status_key, to_status_key,
+   required_permission, allowed_actor_kinds) VALUES
+  ('01JZZZZZZZZZZZZZZZZZZZZZT4','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'todo','in_progress','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZT5','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'in_progress','review','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZT6','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'review','in_progress','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZT7','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'review','done','ticket.close','["user"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZT8','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'in_progress','todo','ticket.transition','["user","agent"]'::jsonb)
+ON CONFLICT DO NOTHING;
+
+-- with_approval：未着手 / 進行中 / レビュー中 / 承認待ち / 完了
+INSERT INTO workflow (id, project_id, name, is_template, template_key, definition)
+VALUES ('01JZZZZZZZZZZZZZZZZZZZZZW3', NULL, '承認フロー付き', true, 'with_approval', '{}'::jsonb)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO workflow_status
+  (id, workflow_id, key, name, category, sort_order,
+   requires_human_approval, is_agent_reachable) VALUES
+  ('01JZZZZZZZZZZZZZZZZZZZZZS8','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'todo','未着手','todo',1,false,true),
+  ('01JZZZZZZZZZZZZZZZZZZZZZS9','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'in_progress','進行中','in_progress',2,false,true),
+  ('01JZZZZZZZZZZZZZZZZZZZZZSA','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'review','レビュー中','review',3,false,true),
+  ('01JZZZZZZZZZZZZZZZZZZZZZSB','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'approval','承認待ち','review',4,true,false),
+  ('01JZZZZZZZZZZZZZZZZZZZZZSC','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'done','完了','done',5,true,false)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO workflow_transition
+  (id, workflow_id, from_status_key, to_status_key,
+   required_permission, allowed_actor_kinds) VALUES
+  ('01JZZZZZZZZZZZZZZZZZZZZZT9','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'todo','in_progress','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTA','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'in_progress','review','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTB','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'review','in_progress','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTC','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'review','approval','ticket.transition','["user"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTD','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'approval','in_progress','ticket.transition','["user"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTE','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'approval','done','ticket.close','["user"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTF','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'in_progress','todo','ticket.transition','["user","agent"]'::jsonb)
+ON CONFLICT DO NOTHING;
+```
+
+3テンプレートの比較：
+
+| | simple | with_review | with_approval |
+|---|---|---|---|
+| ステータス数 | 3 | 4 | 5 |
+| 遷移数 | 3 | 5 | 7 |
+| エージェントが到達できる最終地点 | `in_progress` | **`review`** | **`review`** |
+| 人間限定の遷移 | `→done` | `→done` | `→approval`、`→done`、`approval→in_progress` |
+
+**`approval`（承認待ち）の `category` は `review` とする。** `workflow_status.category` の `CHECK` は `todo / in_progress / review / done` の4値であり（6.5）、承認待ちは「完了していないが作業も止まっている」状態なので `review` に含める。**カテゴリはボードの列やバーンダウンの集計単位であり、承認待ちをレビュー中と同じ列に置くのが実態に合う。**
+
+**`with_review` は `in_progress → review` をエージェントに許す。** これがテンプレートを分ける最大の意味で、**エージェントが作業を終えて人間のレビューに載せるところまでを自律的に行える**。一方 `with_approval` では `review → approval` を人間限定にしており、承認ゲートの手前へエージェントが自分で進むことを禁じている（`Requirements.md` 10.10.4）。
+
+**差し戻し遷移（`review → in_progress`、`approval → in_progress`）を必ず持たせる。** これが無いと、レビューで問題が見つかったチケットを前進させるしか手がなくなり、承認ゲートが実質的に骨抜きになる。
+
+テンプレートIDは固定ULIDとし、マイグレーションの再実行で重複しないようにする。採番は `…W<n>`（workflow）、`…S<n>`（status）、`…T<n>`（transition）の連番で、`n` は Crockford Base32（`0-9A-Z` から `I L O U` を除く）1文字。**テンプレートを追加する場合も既存のIDを再利用しない。**
 
 ## 7.5 初期管理者
 
