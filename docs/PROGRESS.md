@@ -13,7 +13,8 @@
 | 4b | 共通基盤その2（認証ミドルウェア・監査ログ） | 完了 | 2026-08-12 | `go test ./internal/httpapi/...` が通る。`PB_TEST_DATABASE_URL` を与えると実DBに対する認証の結合テストも通る |
 | 5a | `POST /auth/login`・`/auth/logout`・`GET /me`・実効権限の計算 | 完了 | 2026-08-12 | `curl -i -X POST .../auth/login` で Set-Cookie が2種返り、`GET /me` が権限28件を返す。`PB_TEST_DATABASE_URL` を与えると実DBに対する結合テストも通る |
 | 5b | CSRF ミドルウェア（2.4）・レート制限（2.9） | 完了 | 2026-08-12 | Cookie 認証の POST に `X-PB-CSRF` が無いと 403、ログインを1分に11回叩くと 429 |
-| 6 | 認可ミドルウェア（`RequirePermission`） | 未着手 | | オペレータで `/admin/users` を叩くと 403 |
+| 6a | 認可ミドルウェア（`RequirePermission` / `RequireProjectPermission`） | 完了 | 2026-08-13 | 実DBのシードで operator→403 / administrator→200、非メンバー→404、`permission.denied` が記録される。`/admin/users` での実地確認は手順9 |
+| 6b | 実効権限のセッションキャッシュ（マイグレーション 0012、`Design.md` 6.4.5） | 未着手 | | ロール変更後に当該ユーザーのキャッシュが無効化され、次のリクエストで権限が変わる |
 | 7 | `GET/POST /projects`、`check-key` | 未着手 | | プロジェクトを作成し、一覧に件数と進捗が出る |
 | 8 | `GET/PATCH /projects/:key`、archive | 未着手 | | `If-Match` 不一致で 409 |
 | 9 | `GET/POST /admin/users` | 未着手 | | ユーザーを作成し、初期パスワードが1回だけ返る |
@@ -47,6 +48,10 @@
 | ビルド3 | 手順3（`feature/step-03-admin-create`）のマージ |
 | ビルド4 | 手順4a・4b（`feature/step-04a-http-foundation`）のマージ |
 | ビルド5 | 手順5a・5b（`feature/step-05-auth-session`）のマージ **← これから** |
+
+手順 6a と 6b は**同じブランチ（`feature/step-06-authz-middleware`）に載せて1回のマージにする**
+（ユーザーの選択、2026-08-13）。`make bump-minor` は **6b の完了時に実行する**。
+6a の時点では `VERSION` を触っていない（5a と同じ扱い）。
 
 手順 5a と 5b は**同じブランチ（`feature/step-05-auth-session`）に載せて1回のマージにする**
 （ユーザーの選択、2026-08-12）。`make bump-minor` は **5b の完了時に実行済み**（`1.4.4` → `1.5.5`）。
@@ -151,6 +156,17 @@
 | 2026-08-12 | 5b | 2.4 は対象を「POST/PATCH/PUT/DELETE」と列挙しているが、他のメソッドが来たときの扱いが無い | **「安全なメソッド（GET/HEAD/OPTIONS/TRACE）以外は検証する」と裏返して実装した。** 列挙側で持つと、将来ハンドラを増やしたときに列挙から漏れたメソッドが素通りする |
 | 2026-08-12 | 5b | `POST /auth/logout` を CSRF の対象にするか | **対象にする。** 2.4 に例外の記述が無い。手順14 のフロントは `pb_csrf` を読んで `X-PB-CSRF` に載せる必要がある（5a で 2つの Cookie の `Max-Age` を揃えた理由がこれ）。既存のテストヘッダ（`authed` / `callWithCookie`）にも CSRF を足した |
 | 2026-08-12 | 5b | CSRF の失敗理由を応答で区別するか | **区別しない。** 「Cookie が無い」「ヘッダが無い」「不一致」をすべて 403 `csrf_failed` に倒し、理由は `WithCause` でサーバログにのみ出す（認証ミドルウェアの 401 と同じ方針）。比較は `crypto/subtle.ConstantTimeCompare` |
+| 2026-08-13 | 6a | 手順6の分量（ミドルウェア2種＋マイグレーション＋キャッシュ生成・無効化＋設計文書3件の修正）が1セッションに多い | **6a / 6b に分割することをユーザーが選択。** 6a は認可の判定そのもの（本ステップ）、6b がセッションキャッシュ。1ブランチ・1マージは 4a/4b・5a/5b と同じ |
+| 2026-08-13 | 6a | **`PROGRESS.md` の検証欄「オペレータで `/admin/users` を叩くと 403」が手順6では実行できない。** `/admin/users` は手順9のエンドポイントで、手順6の時点では権限を要求するルートが1本も無い（login は認証不要、logout と `/me` は「認証済み・本人」） | **本番のルート定義を変えず、テスト内で組み立てたルータで検証することをユーザーが選択。** 実DBに対する結合テスト（`authz_integration_test.go`）で `role_permission` のシードごと確かめている。検証欄をその内容に書き換えた。`/admin/users` での実地確認は手順9 |
+| 2026-08-13 | 6a | プロジェクトスコープの権限判定（`/projects/:key` 配下）を手順6に含めるか | **含めることをユーザーが選択**（当初は手順7・8へ回す案を推奨していた）。`RequireProjectPermission` を同時に作った。URL パラメータ名は `ApiDesign.md` 5.4 の `:key` に従う（`ProjectKeyURLParam`） |
+| 2026-08-13 | 6a | **`ApiDesign.md` 5.1「自分がメンバーであるプロジェクトのみ返る。管理者は全件」と 5.4「`project.view`（メンバーでない場合は 404）」が食い違って読める。** アドミニストレータは全権限を持つため、5.4 を「`project.view` の有無」で実装すると 5.1 と矛盾する | **到達可否で切る方式をユーザーが承認。** 非メンバーかつ非アドミニストレータ → 404、到達できるが要求権限が無い → 403。**`project.view` の有無では判定しない**（オペレータもシステムロールとして `project.view` を持つ。`DbDesign.md` 7.3）。`project.view` は「プロジェクトを閲覧する能力」であって「どのプロジェクトか」を決めない。この解釈は 5.1・5.4・`Design.md` 6.4.5 のすべてと整合するため、**設計文書の修正は不要** |
+| 2026-08-13 | 6a | 「プロジェクトが存在しない」と「在るが見えない」を応答で区別するか | **どちらも 404 `not_found` に倒す。** 区別できるとキーを変えながら叩いてプロジェクト一覧を復元できる。テストで固定した（`TestRequireProjectPermissionUnknownProjectAndHiddenLookAlike`）。判定に必要な事実（0行＝不在／`role_key` NULL＝非メンバー）はクエリ側が返し、倒す判断はアプリ側に置いた |
+| 2026-08-13 | 6a | 404 で返す拒否も `audit_log` に残すか（`Design.md` 6.4.5 は「権限不足は 403 を返し `permission.denied` に記録する」としか書いていない） | **残す。** 存在を隠すのは呼び出し元に対してであって、運用者に対してではない。誰がどのプロジェクトを突いたかが監査から消えると、探索行為を検知できなくなる。`RecordOrLog` を使い、監査DBの一時障害で拒否そのものを返せなくなる事態は避ける（4b の方針どおり） |
+| 2026-08-13 | 6a | 認証ミドルウェアより前に `RequirePermission` を置いた場合の応答 | **500 `internal_error`。** 401 にすると、ルート定義の誤りが「未認証」に見えて発見が遅れる。`{key}` を含まないルートに `RequireProjectPermission` を置いた場合も同じ。どちらもテストで固定した |
+| 2026-08-13 | 6a | エージェント（`app_user` の行が無く `system_role` を持たない）の扱い | **権限0件として 403。** `system_role` が空のときは `ListRolePermissions` を呼ばない（テストで呼び出し回数0を確認）。Phase 2 でエージェントに権限を与える経路はプロジェクトロール（`project_member`）になる |
+| 2026-08-13 | 6a | 実効権限をリクエスト内で使い回すか | **コンテキストに載せて1リクエスト1回に抑えた**（`auth.NewSystemPermissionsContext` / `NewProjectAuthzContext`）。跨リクエストのキャッシュではない（それが 6b）。`RequireProjectPermission` はシステムロール側の結果を再利用する。( A ∪ B ) ∩ S = ( A ∩ S ) ∪ ( B ∩ S ) であり S との積は冪等なので、6.4.1 の式と同じ結果になる |
+| 2026-08-13 | 6a | `ProjectAuthzFromContext` が保持するのは1プロジェクト分のみ | キーを照合して返す。1リクエストが2つのプロジェクトに触れる経路（将来のチケット移動など）で、別プロジェクトの判定結果を誤って使わないため。Phase 1 のルートはすべて単一プロジェクト |
+| 2026-08-13 | 6a | 実効権限を読めなかったとき（DB障害）の応答 | **500。** 403 や 404 に倒すと、障害が「権限が無い」「存在しない」として利用者に伝わる。`scopes` が壊れていたときに 500 にする 4b の判断と同じ方針 |
 
 ### 設計文書へ反映済みの修正（2026-08-11、承認のうえ適用）
 
@@ -496,6 +512,69 @@
 `audit_log` を先に消してから `actor` を消している（`actor_id` は `ON DELETE SET NULL` のため）。
 残る `app_user` は手順3以来の `tanaka@example.com` 1件。
 
+### 設計文書との差異（手順6a、2026-08-13）
+
+**設計文書の修正は不要だった。** 上の差異表に挙げた10件のうち、文書間の食い違いに見えた
+`ApiDesign.md` 5.1 と 5.4 の関係は、**「到達可否」と「権限」を別の軸として読めば矛盾しない**
+ことが分かったため、記述を変えていない。
+
+- 5.1「自分がメンバーであるプロジェクトのみ返る。管理者は全件」＝ **到達可否**の規則
+- 5.4「`project.view`（メンバーでない場合は 404）」＝ 到達できないものを 404 に倒す規則
+- `Design.md` 6.4.5「存在を隠したい資源（他プロジェクト）は 404」＝ 同じことの一般形
+
+`project.view` は権限カタログ上「プロジェクトを閲覧する能力」であって、**どのプロジェクトを
+見てよいかは決めない**。オペレータもシステムロールとしてこれを持つ（`DbDesign.md` 7.3）以上、
+`project.view` の有無で到達可否を判定してはならない。この読み方を `auth.ProjectAuthz.Reachable`
+のコメントに残した。
+
+ただし次の1点は、**手順7で `/projects` を実装する際に文書へ書き足すか判断が要る。**
+
+- **5.4 の「メンバーでない場合は `404`」に、アドミニストレータの例外が明記されていない。**
+  5.1 の「管理者は全件」から導けるが、5.4 だけを読んで実装すると管理者が締め出される。
+  実装は 5.1 に合わせてある
+
+手順6b では `DbDesign.md` 6.2（`access_token` へのキャッシュ列）・8章（Phase 2/3 の採番を
+`0013〜0020` へずらす）・`Design.md` 11章（手順17・24）・6.4.5（TTL）の修正が発生する。
+
+### 手順6aで作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/httpapi/middleware/authz.go` | `RequirePermission`（システムロール層）と `RequireProjectPermission`（プロジェクト層）。`ProjectKeyURLParam`、403/404 の切り分け、`permission.denied` の記録 |
+| `server/internal/httpapi/middleware/authz_test.go` | 22件。許可・拒否・スコープ縮小・非メンバー404・不在404・両者の区別不能・監査記録・DB障害500・ルート定義の誤り500・リクエスト内キャッシュ |
+| `server/internal/httpapi/authz_integration_test.go` | 実DBに対する認可の結合テスト（7サブテスト）。`role_permission` のシードと `FindProjectAuthzByKey` の SQL を実際に通す |
+| `server/internal/auth/permissions.go` | `ProjectAuthz` 型と、実効権限のコンテキスト受け渡し4関数を追加（変更）。`EffectivePermissions` / `HasPermission` の本体は変更なし |
+| `server/internal/store/queries/authz.sql` | `FindProjectAuthzByKey` を追加（変更）。`project` を起点にした LEFT JOIN で、不在（0行）と非メンバー（`role_key` NULL）を区別する |
+| `server/internal/store/gen/authz.sql.go` `querier.go` | sqlc 生成物（変更） |
+| `server/internal/httpapi/v1/routes.go` | コメントのみ更新（変更）。**ルート定義は変えていない** |
+
+**新しい依存は追加していない。** マイグレーションも追加していない（DDL の変更は 6b）。
+`internal/domain/` は引き続き作っていない。
+
+### 手順6aの検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `gofmt -l` / `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト227件、8パッケージすべて ok。5b の205件から22件増） |
+| `go test ./internal/httpapi/... -race` | 4パッケージとも通る |
+| `make sqlc` の再現性 | 2回実行して `internal/store/gen/` のハッシュが一致 |
+| **オペレータ → `user.manage`** | **`403` ＋ `{"error":{"code":"forbidden","message":"この操作を行う権限がありません"}}`**（実DBのシード。`role_permission` の operator 12件に `user.manage` が無い） |
+| **アドミニストレータ → `user.manage`** | **`204`**（全権限） |
+| **非メンバーのオペレータ → `GET /projects/{key}`** | **`404`。** システムロールとして `project.view` を持っていても通さない |
+| 非メンバーのアドミニストレータ → 同 | `204`（`ApiDesign.md` 5.1「管理者は全件」と整合） |
+| 存在しないプロジェクト → 同 | `404`。**「在るが見えない」と応答が1バイトも変わらない**（status もエラーコードも一致することをテストで固定） |
+| `project_viewer` として参加後 | `GET` は `204`、`PATCH`（`project.edit`）は `403`。到達できるので 404 ではない |
+| システムロールとプロジェクトロールの和 | `project_viewer`（`ticket.close` 無し）＋ オペレータ（`ticket.close` 有り）で `204`。6.4.1 の ∪ が効いている |
+| トークンスコープによる縮小 | 管理者のトークンでも `scopes=["ticket.view"]` なら `user.manage` は `403`。プロジェクト側も同様 |
+| `permission.denied` の記録 | 403・404 のいずれでも1行。`result='failure'`、`detail.required_permission` / `detail.path` / `detail.project_key`、プロジェクトが特定できる場合は `target_type='project'` / `target_id` |
+| `system_role` を持たないアクター | `403`。`ListRolePermissions` の呼び出し回数が **0**（テストで確認） |
+| DB障害 | `ListRolePermissions` / `FindProjectAuthzByKey` のいずれが落ちても `500`。403・404 に倒れない |
+| ルート定義の誤り | `Authenticate` より前に置く／`{key}` の無いルートに置く、どちらも `500` |
+| リクエスト内キャッシュ | ミドルウェアを2つ重ねても `ListRolePermissions` と `FindProjectAuthzByKey` は各1回 |
+| 既存の挙動（`make run` 相当、:8099） | `/healthcheck` `200`、`GET /api/v1/nope` `404`、`GET /api/v1/auth/login` `405`、未認証 `GET /me` `401 unauthenticated`。手順5b から不変 |
+| ログ | stdout のみ（stderr は0バイト）。graceful shutdown も 5b から不変 |
+| 検証用データの後始末 | 結合テストの `t.Cleanup` で `audit_log` → `project` → `actor` の順に削除。実行後の `project` / `project_member` / `permission.denied` はいずれも **0件**、`actor` は手順3以来の1件のみ |
+
 ## 環境メモ
 
 実際に動かして分かったこと（バージョンの相性、ハマった点、回避策）を追記する。
@@ -516,6 +595,16 @@
   `-c` で保存した Cookie jar はタブ区切りで、値は7列目にある。Bearer 認証なら CSRF は不要
 - **レート制限のカウンタはプロセス内メモリにある**（手順5b）。`make run` を再起動すると消えるため、
   429 を再現する検証は**サーバを起動したまま**続けて叩くこと。ログインは IPあたり 10回/分
+- **パスワードを知らないアカウントでログインを試すと `failed_attempts` が増える**（手順6a の疎通確認で
+  `tanaka@example.com` に1回記録した）。5回で15分ロックされ、次のセッションの検証を妨げる。
+  検証で失敗ログインを打ったら戻しておくこと：
+
+  ```
+  UPDATE local_credential SET failed_attempts = 0, locked_until = NULL;
+  ```
+
+- **プロジェクトキーには CHECK 制約がある**（`DbDesign.md` 6.4）。`^[a-z0-9][a-z0-9-]{1,19}$` で
+  **2〜20文字**。テストで ULID をそのまま使うと長さ超過で INSERT が落ちる（末尾6文字を小文字化して使った）
 - **`.claude/settings.json` の deny は Read ツールにしか効かない。** `Read(./deploy/*/secrets/**)` を deny していても、`allow` にある `Bash(cat:*)` 経由では読めてしまう（手順4b の検証で `app_db_password` を実際にそう読んだ）。秘密を機械的に守りたい場合は Bash 側にも `deny` を足す必要がある
 - **DBを使うテストは `PB_TEST_DATABASE_URL` で切り替える**（手順4b で導入）。未設定ならスキップするので `make test` は DB 無しでも通る。実行例：
 

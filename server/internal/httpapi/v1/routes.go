@@ -34,8 +34,15 @@ type Deps struct {
 // Mount は /api/v1 のルートを r に並べる。
 //
 // **必要権限はルート定義に宣言する**（Design.md 6.4.4）。本関数を眺めるだけで
-// 全エンドポイントの認証・認可要件が読み取れる状態を保つこと。認可
-// （RequirePermission）は手順6で、ここに .With(...) として足す。
+// 全エンドポイントの認証・認可要件が読み取れる状態を保つこと。
+//
+//	middleware.RequirePermission(deps.Queries, "user.manage")        システムロール層
+//	middleware.RequireProjectPermission(deps.Queries, "ticket.close") プロジェクト層（{key} が要る）
+//
+// 現時点で .With(...) が付いているルートは無い。ここにある3本は
+// ApiDesign.md 3.1 / 3.2 / 4.1 のいずれも「必要権限：不要」または
+// 「認証済み・本人」であり、権限キーを要求しないためである。権限を要求する
+// 最初のエンドポイントは手順7の /projects になる。
 func Mount(r chi.Router, deps Deps) {
 	h := &handler{q: deps.Queries, cookieSecure: deps.CookieSecure}
 
