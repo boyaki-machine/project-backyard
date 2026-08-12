@@ -9,9 +9,65 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
+	"time"
 )
+
+// PermissionCacheTTL は、セッションにキャッシュした実効権限の寿命
+// （Design.md 6.4.5）。
+//
+// **主たる無効化はロール変更時の明示的な破棄である**（6.4.5、
+// InvalidateActorPermissionCache）。TTL はそれで拾えない変更に対する
+// 安全弁として置く。拾えないのは「ロールの割り当てそのものを変えた」場合で、
+// 具体的には role_permission のシードをマイグレーションで書き換えたときである。
+// 変わったのは当該ユーザーではなくロールの定義なので、6.4.5 の規定
+// （当該ユーザーのキャッシュを無効化する）では届かない。
+//
+// 5分としたのは、権限を絞る変更が反映されるまでの最大の遅れをその程度に
+// 抑えるためである。短くするほどDBへの書き戻しが増える。
+const PermissionCacheTTL = 5 * time.Minute
+
+// EncodeCachedPermissions は access_token.cached_permissions に入れる jsonb を作る。
+//
+// nil でも JSON の null ではなく空配列 [] にする。列における NULL は
+// 「キャッシュが無い」を意味し、[] の「権限0件」とは別の状態だからである。
+func EncodeCachedPermissions(permissions []string) ([]byte, error) {
+	if permissions == nil {
+		permissions = []string{}
+	}
+	b, err := json.Marshal(permissions)
+	if err != nil {
+		return nil, fmt.Errorf("access_token.cached_permissions を JSON にできない: %w", err)
+	}
+	return b, nil
+}
+
+// DecodeCachedPermissions は access_token.cached_permissions を読む。
+//
+// 列が NULL のとき raw は空になり、(nil, nil) を返す。呼び出し側は
+// permissions_cached_at と併せて「キャッシュが無い」と解釈する。
+//
+// **解釈できなくてもエラーに倒すだけでよい。** DecodeScopes（スコープ）とは
+// 扱いが違う。スコープを空に読み替えると絞り込みが消えて権限が広がるが、
+// キャッシュを読めない場合はロールから計算し直すだけであり、得られる集合は
+// 正本と同じものになる。呼び出し側はキャッシュ不在として扱ってよい。
+func DecodeCachedPermissions(raw []byte) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var permissions []string
+	if err := json.Unmarshal(raw, &permissions); err != nil {
+		return nil, fmt.Errorf("access_token.cached_permissions を解釈できない: %w", err)
+	}
+	if permissions == nil {
+		// jsonb に JSON の null が入っていた場合。空配列と同じに扱う。
+		permissions = []string{}
+	}
+	return permissions, nil
+}
 
 // EffectivePermissions は 6.4.1 の式を計算し、重複を除いて昇順で返す。
 //

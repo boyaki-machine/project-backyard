@@ -42,16 +42,12 @@ const ProjectKeyURLParam = "key"
 func RequirePermission(q gen.Querier, permission string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			p := auth.PrincipalFromContext(r.Context())
+			p := requirePrincipal(w, r, fmt.Sprintf("RequirePermission(%s)", permission))
 			if p == nil {
-				// 認証必須グループの外にこのミドルウェアを置いた場合にだけ起きる。
-				// 401 にすると設定の誤りが「未認証」に見えて発見が遅れる。
-				apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(
-					fmt.Errorf("RequirePermission(%s) が Authenticate より前に置かれている", permission)))
 				return
 			}
 
-			permissions, ctx, err := systemPermissions(r.Context(), q, p)
+			permissions, ctx, err := SystemPermissions(r.Context(), q, p)
 			if err != nil {
 				apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 				return
@@ -92,10 +88,8 @@ func RequirePermission(q gen.Querier, permission string) func(http.Handler) http
 func RequireProjectPermission(q gen.Querier, permission string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			p := auth.PrincipalFromContext(r.Context())
+			p := requirePrincipal(w, r, fmt.Sprintf("RequireProjectPermission(%s)", permission))
 			if p == nil {
-				apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(
-					fmt.Errorf("RequireProjectPermission(%s) が Authenticate より前に置かれている", permission)))
 				return
 			}
 
@@ -141,30 +135,6 @@ func RequireProjectPermission(q gen.Querier, permission string) func(http.Handle
 	}
 }
 
-// systemPermissions はシステムロール由来の実効権限を返す。
-//
-// 同一リクエスト内では1回しか計算しない。結果を載せたコンテキストを併せて返し、
-// 呼び出し側が後続へ渡す。
-func systemPermissions(ctx context.Context, q gen.Querier, p *auth.Principal) ([]string, context.Context, error) {
-	if cached, ok := auth.SystemPermissionsFromContext(ctx); ok {
-		return cached, ctx, nil
-	}
-
-	var rolePermissions []string
-	if p.SystemRole != "" {
-		// システムロールを持たないアクター（エージェント）は空のまま。
-		// 権限0件になり、RequirePermission はすべて 403 になる。
-		var err error
-		rolePermissions, err = q.ListRolePermissions(ctx, p.SystemRole)
-		if err != nil {
-			return nil, ctx, fmt.Errorf("システムロール %q の権限を読めない: %w", p.SystemRole, err)
-		}
-	}
-
-	permissions := auth.EffectivePermissions(rolePermissions, nil, p.Scopes)
-	return permissions, auth.NewSystemPermissionsContext(ctx, permissions), nil
-}
-
 // projectAuthz は key が指すプロジェクトの認可結果を組み立てる。
 // プロジェクトが存在しなければ nil を返す（エラーではない）。
 func projectAuthz(ctx context.Context, q gen.Querier, p *auth.Principal, key string) (*auth.ProjectAuthz, context.Context, error) {
@@ -196,7 +166,7 @@ func projectAuthz(ctx context.Context, q gen.Querier, p *auth.Principal, key str
 	// そこに入っているのは既にスコープと積を取った後の集合だが、
 	// ( A ∪ B ) ∩ S = ( A ∩ S ) ∪ ( B ∩ S ) であり、S との積は冪等なので
 	// 6.4.1 の式と同じ結果になる。DBを引く回数を1回減らせる。
-	systemPerms, ctx, err := systemPermissions(ctx, q, p)
+	systemPerms, ctx, err := SystemPermissions(ctx, q, p)
 	if err != nil {
 		return nil, ctx, err
 	}

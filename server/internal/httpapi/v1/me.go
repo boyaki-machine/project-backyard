@@ -15,6 +15,7 @@ import (
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
+	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 )
 
 // actorView は応答の actor 部分（ApiDesign.md 3.1）。
@@ -109,7 +110,17 @@ func (h *handler) me(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	view, err := h.buildSessionView(r.Context(), prof, p.Scopes, p.ExpiresAt)
+	// 認可ミドルウェアと同じ経路でシステムロール層を解決する
+	// （キャッシュ優先。Design.md 6.4.5）。**両者で解決の仕方を変えない。**
+	// /me が新しい権限を返すのにミドルウェアが古い権限で拒むと、画面が
+	// 出したボタンが 403 になる。
+	systemPerms, _, err := middleware.SystemPermissions(r.Context(), h.q, p)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+		return
+	}
+
+	view, err := h.buildSessionView(r.Context(), prof, systemPerms, p.Scopes, p.ExpiresAt)
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return
@@ -123,16 +134,17 @@ func (h *handler) me(w http.ResponseWriter, r *http.Request) {
 //
 // permissions はシステムロール由来のみ、projects[].permissions は当該
 // プロジェクトでの実効権限とする（ApiDesign.md 4.1）。
+//
+// systemPerms は解決済みのシステムロール層（スコープとの積を取った後）を
+// 受け取る。ログインは計算した値を、GET /me はキャッシュ優先で解決した値を
+// 渡す（6.4.5）。**プロジェクト層はキャッシュしない**（0012 の説明を参照）
+// ため、ここでは毎回引く。
 func (h *handler) buildSessionView(
-	ctx context.Context, prof profile, scopes []string, expiresAt *time.Time,
+	ctx context.Context, prof profile, systemPerms, scopes []string, expiresAt *time.Time,
 ) (sessionView, error) {
-	var rolePermissions []string
-	if prof.SystemRole != "" {
-		var err error
-		rolePermissions, err = h.q.ListRolePermissions(ctx, prof.SystemRole)
-		if err != nil {
-			return sessionView{}, fmt.Errorf("システムロール %q の権限を読めない: %w", prof.SystemRole, err)
-		}
+	if systemPerms == nil {
+		// permissions を JSON の null にしない。権限0件は [] で表す。
+		systemPerms = []string{}
 	}
 
 	rows, err := h.q.ListProjectMembershipsByActor(ctx, prof.ActorID)
@@ -165,10 +177,13 @@ func (h *handler) buildSessionView(
 		}
 	}
 
+	// systemPerms は既にスコープと積を取った後の集合だが、
+	// ( A ∪ B ) ∩ S = ( A ∩ S ) ∪ ( B ∩ S ) であり S との積は冪等なので、
+	// もう一度積を取っても 6.4.1 の式と同じ結果になる（手順6a と同じ議論）。
 	projects := make([]projectView, 0, len(order))
 	for _, id := range order {
 		a := byID[id]
-		a.view.Permissions = auth.EffectivePermissions(rolePermissions, a.perms, scopes)
+		a.view.Permissions = auth.EffectivePermissions(systemPerms, a.perms, scopes)
 		projects = append(projects, a.view)
 	}
 
@@ -183,7 +198,7 @@ func (h *handler) buildSessionView(
 			Timezone:           nullable(prof.Timezone),
 			MustChangePassword: prof.MustChangePassword,
 		},
-		Permissions: auth.EffectivePermissions(rolePermissions, nil, scopes),
+		Permissions: systemPerms,
 		Projects:    projects,
 		ExpiresAt:   apiTime(expiresAt),
 	}, nil

@@ -31,6 +31,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/audit"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
+	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
@@ -213,6 +214,15 @@ func (h *handler) completeLogin(
 		Detail:     map[string]any{"provider_key": "local"},
 	})
 
+	// Design.md 6.4.5「ログインごとに実効権限を計算し、セッションにキャッシュする」。
+	// 発行したばかりのトークンにキャッシュは無いので、必ずDBから計算する。
+	systemPerms, err := middleware.ComputeSystemPermissions(ctx, h.q, row.SystemRole, nil)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+		return
+	}
+	middleware.SaveSystemPermissionCache(ctx, h.q, session.TokenID, systemPerms)
+
 	// ログイン応答は GET /me と同じ内容を返す（ApiDesign.md 3.1）。
 	// 新しいセッションは scopes を持たないため、縮小は起きない。
 	view, err := h.buildSessionView(ctx, profile{
@@ -224,7 +234,7 @@ func (h *handler) completeLogin(
 		Locale:             row.Locale,
 		Timezone:           row.Timezone,
 		MustChangePassword: row.MustChange,
-	}, nil, &session.ExpiresAt)
+	}, systemPerms, nil, &session.ExpiresAt)
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return

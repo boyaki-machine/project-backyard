@@ -3,9 +3,10 @@
 // 「actor をロードしてリクエストコンテキストに載せる」の実体。認証ミドルウェアが
 // 載せ、ハンドラ・認可ミドルウェア・監査ログが読む。
 //
-// **実効権限（Design.md 6.4.1）はここに持たせない。** 権限の計算とキャッシュは
-// 手順6の RequirePermission のスコープである。本型が持つのは、その計算の
-// 入力になる素材（システムロール・トークンスコープ・プロジェクト）までとする。
+// 本型が持つのは、実効権限（Design.md 6.4.1）の計算に要る素材
+// （システムロール・トークンスコープ・プロジェクト）と、**セッションに
+// キャッシュ済みの実効権限**である。後者は手順6b で足した。計算そのものは
+// 引き続き持たず、permissions.go と認可ミドルウェアが行う。
 package auth
 
 import (
@@ -82,6 +83,37 @@ type Principal struct {
 	ExpiresAt *time.Time
 	// Source は資格情報の送出経路。CSRF の要否判定に使う。
 	Source CredentialSource
+
+	// CachedPermissions は access_token.cached_permissions（Design.md 6.4.5）。
+	//
+	// 入っているのは 6.4.1 の式のうち**システムロールの層**、すなわち
+	// システムロールの権限 ∩ トークンのスコープ である。スコープとの積を
+	// 取った後の値を入れてよいのは、トークンのスコープが発行後に変わらず、
+	// かつ ( A ∪ B ) ∩ S = ( A ∩ S ) ∪ ( B ∩ S ) が成り立つためである
+	// （プロジェクト層と合成しても 6.4.1 と同じ結果になる）。
+	//
+	// nil は「キャッシュが無い」。空スライスは「権限0件」であり別の状態。
+	CachedPermissions []string
+	// PermissionsCachedAt は access_token.permissions_cached_at。
+	// nil ならキャッシュが無い。PermissionCacheTTL の起点になる。
+	PermissionsCachedAt *time.Time
+}
+
+// FreshPermissions は、使えるキャッシュがあればそれを返す（Design.md 6.4.5）。
+//
+// 2つ目の戻り値が偽なら、呼び出し側はロールから計算し直す。
+//
+// permissions_cached_at はDBの now() で書かれ、ここでの now はアプリの時計に
+// なる。両者がずれてもキャッシュが有効に見える時間が TTL ± ずれ幅で収まる
+// だけで、破綻はしない。**ずれを気にして期限を長く取らない。**
+func (p *Principal) FreshPermissions(now time.Time) ([]string, bool) {
+	if p == nil || p.CachedPermissions == nil || p.PermissionsCachedAt == nil {
+		return nil, false
+	}
+	if now.Sub(*p.PermissionsCachedAt) >= PermissionCacheTTL {
+		return nil, false
+	}
+	return p.CachedPermissions, true
 }
 
 // IsUser は人間ユーザーかどうかを返す。

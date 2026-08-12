@@ -60,6 +60,7 @@ type fakeQuerier struct {
 	profileErr  error
 	permissions map[string][]string
 	memberships []gen.ListProjectMembershipsByActorRow
+	roleCalls   int
 
 	// 書き込みの記録
 	created      []gen.CreateAccessTokenParams
@@ -69,12 +70,15 @@ type fakeQuerier struct {
 	revoked      []string
 	touchedLogin []string
 	audits       []gen.InsertAuditLogParams
+	cacheSaves   []gen.SaveTokenPermissionCacheParams
 
 	// 故意に失敗させる
 	createErr error
 	resetErr  error
 	failErr   error
 	revokeErr error
+	// cacheSaveErr は実効権限のキャッシュ書き戻しを失敗させる（手順6b）。
+	cacheSaveErr error
 }
 
 func (q *fakeQuerier) FindLocalLoginByEmail(_ context.Context, email string) (gen.FindLocalLoginByEmailRow, error) {
@@ -106,6 +110,7 @@ func (q *fakeQuerier) GetActorProfile(_ context.Context, actorID string) (gen.Ge
 }
 
 func (q *fakeQuerier) ListRolePermissions(_ context.Context, roleKey string) ([]string, error) {
+	q.roleCalls++
 	return q.permissions[roleKey], nil
 }
 
@@ -152,6 +157,14 @@ func (q *fakeQuerier) RevokeAccessToken(_ context.Context, id string) error {
 
 func (q *fakeQuerier) TouchLastLoginAt(_ context.Context, actorID string) error {
 	q.touchedLogin = append(q.touchedLogin, actorID)
+	return nil
+}
+
+func (q *fakeQuerier) SaveTokenPermissionCache(_ context.Context, arg gen.SaveTokenPermissionCacheParams) error {
+	if q.cacheSaveErr != nil {
+		return q.cacheSaveErr
+	}
+	q.cacheSaves = append(q.cacheSaves, arg)
 	return nil
 }
 

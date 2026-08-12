@@ -77,3 +77,45 @@ LEFT JOIN role_permission rp
        ON rp.role_key = pm.role_key
 WHERE p.key = @project_key
 ORDER BY rp.permission_key;
+
+-- ── 実効権限のセッションキャッシュ（Design.md 6.4.5、手順6b） ──────────
+--
+-- 「ログインごとに実効権限を計算し、セッションにキャッシュする。
+--   ロール変更時は当該ユーザーのキャッシュを無効化する」
+--
+-- 置き場は access_token の cached_permissions / permissions_cached_at
+-- （0012、DbDesign.md 6.2）。入るのはシステムロールの層のみである。
+
+-- SaveTokenPermissionCache は1つのトークンにキャッシュを書く。
+--
+-- permissions_cached_at はDBの now() で入れる。アプリ側の時刻を渡さないのは、
+-- 複数プロセスから書いても TTL の起点が1つの時計に揃うようにするためである。
+--
+-- name: SaveTokenPermissionCache :exec
+UPDATE access_token
+SET cached_permissions    = @cached_permissions,
+    permissions_cached_at = now()
+WHERE id = @id;
+
+-- InvalidateActorPermissionCache は、あるアクターの**全トークン**の
+-- キャッシュを捨てる（Design.md 6.4.5「ロール変更時は当該ユーザーの
+-- キャッシュを無効化する」）。
+--
+-- **トークン単位ではなくアクター単位で消す。** 権限を変えられた本人は
+-- 複数のセッション（PC・スマートフォン）とAPIトークンを持ちうるので、
+-- 1つだけ消しても他の経路から古い権限で通れてしまう。
+--
+-- 呼び出し側は ApiDesign.md 6.4 の PATCH /admin/users/:id（system_role の
+-- 変更）と、メンバーシップの操作である。**いずれも手順10 のエンドポイント**
+-- であり、Phase 1 の現時点では呼び出し元がまだ無い。
+--
+-- 権限を消す操作なので、失敗したら業務処理ごと失敗させること（RecordOrLog
+-- ではなく Record と同じ扱い）。消せなかったまま成功を返すと、降格したはずの
+-- 利用者が TTL の間だけ旧権限で動く。
+--
+-- name: InvalidateActorPermissionCache :exec
+UPDATE access_token
+SET cached_permissions    = NULL,
+    permissions_cached_at = NULL
+WHERE actor_id = @actor_id
+  AND permissions_cached_at IS NOT NULL;

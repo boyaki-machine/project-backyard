@@ -32,6 +32,10 @@ type authzQuerier struct {
 	roleCalls    int
 	projectCalls int
 	audits       []gen.InsertAuditLogParams
+
+	// 実効権限のセッションキャッシュ（手順6b）。
+	cacheSaves   []gen.SaveTokenPermissionCacheParams
+	cacheSaveErr error
 }
 
 func (q *authzQuerier) ListRolePermissions(_ context.Context, roleKey string) ([]string, error) {
@@ -50,6 +54,16 @@ func (q *authzQuerier) FindProjectAuthzByKey(
 		return nil, q.projectErr
 	}
 	return q.projectRows[arg.ProjectKey], nil
+}
+
+func (q *authzQuerier) SaveTokenPermissionCache(
+	_ context.Context, arg gen.SaveTokenPermissionCacheParams,
+) error {
+	if q.cacheSaveErr != nil {
+		return q.cacheSaveErr
+	}
+	q.cacheSaves = append(q.cacheSaves, arg)
+	return nil
 }
 
 func (q *authzQuerier) InsertAuditLog(_ context.Context, arg gen.InsertAuditLogParams) error {
