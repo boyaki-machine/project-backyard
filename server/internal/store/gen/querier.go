@@ -17,6 +17,30 @@ type Querier interface {
 	CreateLocalCredential(ctx context.Context, arg CreateLocalCredentialParams) error
 	CreateUserActor(ctx context.Context, arg CreateUserActorParams) error
 	CreateUserIdentity(ctx context.Context, arg CreateUserIdentityParams) error
+	// 認証に関するクエリ（Design.md 6.2.2、DbDesign.md 6.2）。
+	// FindAccessTokenByHash は受け取った平文の SHA-256 で access_token を引く。
+	//
+	// **有効性（revoked_at / expires_at / actor.is_active）を WHERE で絞らない。**
+	// 絞ると「そんなトークンは無い」と「失効している」を区別できず、サーバログに
+	// 理由を残せなくなるため。応答はいずれも 401 で統一する（存在を漏らさない）が、
+	// 運用者が原因を追えるようにする。判定は呼び出し側で行う。
+	//
+	// app_user を LEFT JOIN にしているのは、エージェント（Phase 2）とシステムの
+	// アクターが app_user の行を持たないため。
+	//
+	FindAccessTokenByHash(ctx context.Context, tokenHash string) (FindAccessTokenByHashRow, error)
+	// 監査ログ（ApiDesign.md 2.10、DbDesign.md 6.8）。
+	//
+	// 読み出し（GET /admin/audit、auditlog.view）は手順11以降で足す。
+	// 手順4b では書き込みの共通基盤のみを用意する。
+	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error
+	// TouchAccessTokenLastUsed は last_used_at を更新する。
+	//
+	// **1分粒度で間引く**（Design.md 6.2.2）。リクエストのたびに UPDATE すると、
+	// 認証という最も高頻度な経路で毎回行ロックと WAL を発生させることになる。
+	// 直近1分以内に更新済みなら WHERE が外れ、no-op で返る。
+	//
+	TouchAccessTokenLastUsed(ctx context.Context, id string) error
 }
 
 var _ Querier = (*Queries)(nil)

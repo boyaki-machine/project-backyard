@@ -128,7 +128,7 @@ Header:  X-PB-CSRF: <同じ値>
 
 - `message` は**そのまま画面に出せる日本語**とする。フロントで文言を組み立てない
 - `details` はフィールド単位のエラー。フォームの各入力欄に紐づける
-- `request_id` は `audit_log.id` および構造化ログと突き合わせられる
+- `request_id` は `audit_log.request_id`（`DbDesign.md` 6.8）および構造化ログ（`Design.md` 10.1）と突き合わせられる
 
 ### 2.5.1 HTTPステータスとエラーコード
 

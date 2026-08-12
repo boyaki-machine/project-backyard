@@ -223,6 +223,7 @@ ProjectBackyard/
 │   │   │   ├── apierr/            ← ApiDesign 2.5 のエラー形式
 │   │   │   └── v1/                ← エンドポイント実装
 │   │   ├── auth/                  ← 認証・認可のドメインロジック（本書6章）
+│   │   ├── audit/                 ← audit_log への記録（ApiDesign 2.10）
 │   │   ├── domain/                ← エンティティとビジネスルール
 │   │   ├── store/
 │   │   │   ├── queries/*.sql      ← 手書きSQL（sqlc の入力）
@@ -838,7 +839,7 @@ make version-check       # VERSION と git 実測が一致することを確認�
 ## Phase 2 — エージェント連携
 
 ```
-17. マイグレーション 0011〜0014                     ← DbDesign 8.1, 8.2
+17. マイグレーション 0012〜0015                     ← DbDesign 8.1, 8.2
 18. agent / access_token(agent) / task_lease
 19. MCP サーバと read 系ツール
 20. コンテキストパック生成（初期は単純な選定でよい）
@@ -850,7 +851,7 @@ make version-check       # VERSION と git 実測が一致することを確認�
 ## Phase 3 — AI機能・分析
 
 ```
-24. マイグレーション 0015〜0018                     ← DbDesign 8.3
+24. マイグレーション 0016〜0019                     ← DbDesign 8.3
 25. Readiness 判定、DoD ドラフト生成
 26. コメント分類・重要度スコアリング
 27. ベクトル検索、プロジェクトヒストリー

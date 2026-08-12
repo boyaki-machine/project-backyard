@@ -94,6 +94,7 @@ type AuditLog struct {
 	TargetID   pgtype.Text
 	Result     string
 	Detail     []byte
+	RequestID  pgtype.Text
 }
 
 type AuthProvider struct {

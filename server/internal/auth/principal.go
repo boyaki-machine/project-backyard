@@ -1,0 +1,151 @@
+// 認証済みプリンシパルと、そのコンテキスト受け渡し（Design.md 6.2.2）。
+//
+// 「actor をロードしてリクエストコンテキストに載せる」の実体。認証ミドルウェアが
+// 載せ、ハンドラ・認可ミドルウェア・監査ログが読む。
+//
+// **実効権限（Design.md 6.4.1）はここに持たせない。** 権限の計算とキャッシュは
+// 手順6の RequirePermission のスコープである。本型が持つのは、その計算の
+// 入力になる素材（システムロール・トークンスコープ・プロジェクト）までとする。
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+)
+
+// アクター種別（DbDesign.md 6.2 actor.kind の CHECK 制約）。
+const (
+	ActorKindUser   = "user"
+	ActorKindAgent  = "agent"
+	ActorKindSystem = "system"
+)
+
+// トークン種別（DbDesign.md 6.2 access_token.token_type の CHECK 制約）。
+const (
+	TokenTypeSession = "session"
+	TokenTypeAPI     = "api"
+	TokenTypeAgent   = "agent"
+)
+
+// CredentialSource は、どの経路で資格情報が送られてきたかを表す。
+//
+// CSRF の要否がこれで決まる。ApiDesign.md 2.4 は「Cookie 認証の状態変更系
+// リクエストにのみ CSRF トークンを要求する。Bearer 認証では不要」としており、
+// 手順5の CSRF ミドルウェアはトークン種別ではなく**この値**で判定する。
+// api トークンを Cookie に入れて送ることも技術的には可能なので、
+// token_type で代用してはならない。
+type CredentialSource string
+
+const (
+	SourceCookie CredentialSource = "cookie"
+	SourceBearer CredentialSource = "bearer"
+)
+
+// SessionCookieName は Cookie 認証で使う名前（ApiDesign.md 2.3）。
+const SessionCookieName = "pb_session"
+
+// CSRFCookieName は CSRF トークンの Cookie 名（ApiDesign.md 2.4）。
+// HttpOnly ではない（JS から読んで X-PB-CSRF に載せるため）。手順5で発行する。
+const CSRFCookieName = "pb_csrf"
+
+// CSRFHeaderName は CSRF トークンを載せるヘッダ名（ApiDesign.md 2.4）。
+const CSRFHeaderName = "X-PB-CSRF"
+
+// Principal は認証を通ったリクエストの主体。
+type Principal struct {
+	// ActorID は actor.id。監査ログの actor_id になる。
+	ActorID string
+	// ActorKind は user / agent / system。
+	ActorKind string
+	// DisplayName は actor.display_name。
+	DisplayName string
+	// Email は app_user.email。user 以外では空。
+	Email string
+	// SystemRole は app_user.system_role（operator / administrator）。
+	// user 以外では空になる。認可の第1層（Design.md 6.4.1）。
+	SystemRole string
+
+	// TokenID は access_token.id。監査ログの token_id になる。
+	TokenID string
+	// TokenType は session / api / agent。
+	TokenType string
+	// Scopes は access_token.scopes。**権限の上限**であり、空スライスは
+	// 「絞り込みなし（ロールの権限をそのまま使う）」を意味する（Design.md 6.4.1）。
+	Scopes []string
+	// ProjectID は access_token.project_id。空文字は全プロジェクト。
+	ProjectID string
+	// Source は資格情報の送出経路。CSRF の要否判定に使う。
+	Source CredentialSource
+}
+
+// IsUser は人間ユーザーかどうかを返す。
+func (p *Principal) IsUser() bool { return p != nil && p.ActorKind == ActorKindUser }
+
+// IsAdministrator はシステムロールがアドミニストレータかどうかを返す。
+func (p *Principal) IsAdministrator() bool {
+	return p != nil && p.SystemRole == SystemRoleAdministrator
+}
+
+// システムロール（DbDesign.md 6.2 app_user.system_role の CHECK 制約）。
+const (
+	SystemRoleOperator      = "operator"
+	SystemRoleAdministrator = "administrator"
+)
+
+// AuditLabel は audit_log.actor_label に入れる文字列を返す。
+//
+// actor を消した後も「誰の操作か」を追えるようにするための非正規化列であり
+// （DbDesign.md 6.8、ApiDesign.md 6.5）、表示名とメールの両方を残す。
+func (p *Principal) AuditLabel() string {
+	if p == nil {
+		return ""
+	}
+	if p.Email == "" {
+		return p.DisplayName
+	}
+	return p.DisplayName + " <" + p.Email + ">"
+}
+
+// DecodeScopes は access_token.scopes（jsonb の文字列配列）を読む。
+//
+// **解釈できなければエラーを返す。** 空スライスに倒してはならない。
+// スコープは「権限の上限」であり、空は「絞り込みなし」＝ロールの全権限を
+// 意味するため（Design.md 6.4.1）、壊れた値を黙って空に読み替えると
+// 絞ったはずのエージェントトークンが全権限で通ってしまう。
+func DecodeScopes(raw []byte) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var scopes []string
+	if err := json.Unmarshal(raw, &scopes); err != nil {
+		return nil, fmt.Errorf("access_token.scopes を解釈できない: %w", err)
+	}
+	return scopes, nil
+}
+
+// EncodeScopes は access_token.scopes に入れる jsonb を作る。
+// nil でも JSON の null ではなく空配列 [] にする（列は NOT NULL）。
+func EncodeScopes(scopes []string) ([]byte, error) {
+	if scopes == nil {
+		scopes = []string{}
+	}
+	b, err := json.Marshal(scopes)
+	if err != nil {
+		return nil, fmt.Errorf("access_token.scopes を JSON にできない: %w", err)
+	}
+	return b, nil
+}
+
+type principalContextKey struct{}
+
+// NewPrincipalContext はプリンシパルを載せたコンテキストを返す。
+func NewPrincipalContext(ctx context.Context, p *Principal) context.Context {
+	return context.WithValue(ctx, principalContextKey{}, p)
+}
+
+// PrincipalFromContext はプリンシパルを取り出す。未認証なら nil を返す。
+func PrincipalFromContext(ctx context.Context) *Principal {
+	p, _ := ctx.Value(principalContextKey{}).(*Principal)
+	return p
+}

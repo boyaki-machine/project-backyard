@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/term"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/audit"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
@@ -31,6 +32,9 @@ const localProviderKey = "local"
 
 // displayNameMaxLen は actor.display_name の CHECK 制約に対応する（DbDesign.md 6.2）。
 const displayNameMaxLen = 60
+
+// cliAuditLabel は audit_log.actor_label に残す実行経路（DbDesign.md 6.8）。
+const cliAuditLabel = "pb admin create (CLI)"
 
 func adminCreate(ctx context.Context) error {
 	cfg, err := config.Load()
@@ -137,6 +141,28 @@ func insertAdmin(ctx context.Context, pool *pgxpool.Pool, displayName, email, pa
 	})
 	if err != nil {
 		return "", wrapInsertErr("local_credential", err)
+	}
+
+	// user.create を同じトランザクションで残す（ApiDesign.md 2.10）。
+	// actor_id は NULL、actor_kind は 'system'。端末の操作者にはまだ
+	// アカウントが無いため、作成された本人を actor に据えると偽の帰属になる
+	// （audit.FromCLI の説明を参照）。
+	//
+	// Record を使い、失敗したらユーザー作成ごとロールバックする。
+	// 監査記録を伴わない管理者アカウントが生まれるのを避けるためで、
+	// 認証イベントとは扱いを変えている（監査ログの共通基盤、手順4b）。
+	err = audit.FromCLI(cliAuditLabel).Record(ctx, q, audit.Entry{
+		Action:     audit.UserCreate,
+		Result:     audit.Success,
+		TargetType: "app_user",
+		TargetID:   actorID,
+		Detail: map[string]any{
+			"system_role": "administrator",
+			"via":         "pb admin create",
+		},
+	})
+	if err != nil {
+		return "", err
 	}
 
 	if err := tx.Commit(ctx); err != nil {

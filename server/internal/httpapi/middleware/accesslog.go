@@ -2,10 +2,10 @@ package middleware
 
 import (
 	"log/slog"
-	"net"
 	"net/http"
 	"time"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/audit"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 )
 
@@ -77,15 +77,14 @@ func (rec *recorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// clientIP は接続元アドレスからポートを落とす。
+// clientIP は接続元アドレスを文字列で返す。
 //
-// audit_log.ip（inet 型）と同じ値にする。プロキシ経由の実IP解決
-// （X-Forwarded-For 等）は Phase 1 では行わない。詐称可能なヘッダを
-// 検証なしに信じると、監査ログの発信元が偽装できてしまうため。
+// **audit_log.ip と同一の値にする**という規約（Design.md 10.1）のため、
+// 解決そのものは audit.ClientIP に委ねて実装を1つに保つ。解釈できない
+// アドレス（Unix ドメインソケット等）は RemoteAddr をそのまま出す。
 func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+	if addr := audit.ClientIP(r); addr.IsValid() {
+		return addr.String()
 	}
-	return host
+	return r.RemoteAddr
 }

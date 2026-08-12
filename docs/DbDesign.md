@@ -461,7 +461,8 @@ server/migrations/                      ← Design.md 4.1。sqlc がスキーマ
 ├── 0007_comment_attachment.sql         comment, attachment
 ├── 0008_history.sql                    activity, audit_log
 ├── 0009_sprint.sql                     sprint
-└── 0010_seed_phase1.sql                権限カタログ、ロール、ワークフローテンプレート
+├── 0010_seed_phase1.sql                権限カタログ、ロール、ワークフローテンプレート
+└── 0011_audit_log_request_id.sql       audit_log.request_id を追加（6.8）
 ```
 
 `project.workflow_id` と `ticket.sprint_id` は後続テーブルを参照するため、**FK制約のみ後から `ALTER TABLE ... ADD CONSTRAINT` で付与する**（0005 / 0009 の末尾）。PostgreSQL は前方参照を許さないためである。
@@ -915,7 +916,8 @@ CREATE TABLE audit_log (
   target_type text,
   target_id   char(26) COLLATE "C",
   result      text NOT NULL CHECK (result IN ('success','failure')),
-  detail      jsonb NOT NULL DEFAULT '{}'::jsonb
+  detail      jsonb NOT NULL DEFAULT '{}'::jsonb,
+  request_id  char(26) COLLATE "C"   -- 0011 で追加。activity と同じ形
 );
 CREATE INDEX idx_audit_time   ON audit_log (occurred_at DESC);
 CREATE INDEX idx_audit_action ON audit_log (action, occurred_at DESC);
@@ -925,6 +927,14 @@ CREATE INDEX idx_audit_actor  ON audit_log (actor_id, occurred_at DESC);
 **`ip` に `inet` 型を使う。** PostgreSQL 採用により、IPアドレスの正規化とサブネット検索がDB側でできるようになった。
 
 `actor_label` を持たせるのは、**ユーザー削除後に「誰を消したか」を追えなくなることを防ぐ**ため（`ApiDesign.md` 6.5）。
+
+**`request_id` は `activity` と同じ意味・同じ型で持つ。** `ApiDesign.md` 2.5 のエラー応答と `Design.md` 10.1 のアプリケーションログを、同一リクエストの監査記録と突き合わせるための列である。
+
+`audit_log.id` を `request_id` と同じ値にする案は採らない。**1リクエストが複数の監査行を書く**ためである（例：`POST /me/password` は `password.change` と `session.revoke` の2行。`Design.md` 6.3「パスワード変更時に当該ユーザーのセッションを全失効」）。主キーでは表現できない。
+
+CLI（`pb admin create`）由来の記録には HTTP リクエストが存在しないため `request_id` は NULL になる。`ip` / `user_agent` / `token_id` も同様。
+
+**この列は 0011 で追加した**（`audit_log` 自体の作成は 0008）。手順4b で監査ログの共通基盤を実装した時点で、上記の突き合わせ手段が無いことが判明したためである。前進のみの規則（5.3）に従い、0008 は編集していない。
 
 ## 6.9 スプリント（0009）
 
@@ -1215,15 +1225,17 @@ $ pb admin create
 Phase 1 のテーブルは変更せず、**テーブル追加のみ**で拡張する。本章のDDLは構成案であり、各Phase着手時に確定させる。
 
 ```
-0011_agent.sql            agent, task_lease
-0012_dod.sql              dod_item
-0013_agent_run.sql        agent_run, agent_report, context_pack_log
-0014_knowledge.sql        knowledge, knowledge_revision, proposal
-0015_comment_signal.sql   comment_signal
-0016_embedding.sql        vector 拡張 + embedding
-0017_project_event.sql    project_event
-0018_analytics.sql        estimate_record, contribution
+0012_agent.sql            agent, task_lease
+0013_dod.sql              dod_item
+0014_agent_run.sql        agent_run, agent_report, context_pack_log
+0015_knowledge.sql        knowledge, knowledge_revision, proposal
+0016_comment_signal.sql   comment_signal
+0017_embedding.sql        vector 拡張 + embedding
+0018_project_event.sql    project_event
+0019_analytics.sql        estimate_record, contribution
 ```
+
+採番が 0012 から始まるのは、Phase 1 の手順4b で 0011（`audit_log.request_id` の追加、6.8）を使ったためである。
 
 ## 8.1 エージェント連携（Phase 2）
 
