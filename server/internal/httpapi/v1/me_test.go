@@ -38,10 +38,11 @@ func validToken(q *fakeQuerier, scopes string) string {
 	return plaintext
 }
 
-// authed は Cookie 認証で1リクエスト投げる。
+// authed は Cookie 認証で1リクエスト投げる。CSRF トークンも付ける。
 func authed(q gen.Querier, method, path, token string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, nil)
 	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: token})
+	addCSRF(req)
 	rec := httptest.NewRecorder()
 	router(q).ServeHTTP(rec, req)
 	return rec

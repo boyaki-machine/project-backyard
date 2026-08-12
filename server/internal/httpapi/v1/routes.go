@@ -1,10 +1,24 @@
 package v1
 
 import (
+	"time"
+
 	"github.com/go-chi/chi/v5"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
+)
+
+// レート制限の上限と窓（ApiDesign.md 2.9）。
+//
+// 表のもう1行「アカウントあたり 5回/15分（超過で account_locked）」は
+// Design.md 6.3 のロックそのもので、local_credential の failed_attempts /
+// locked_until として login.go に実装済みである。
+const (
+	loginRateLimit  = 10
+	loginRateWindow = time.Minute
+	actorRateLimit  = 600
+	actorRateWindow = time.Minute
 )
 
 // Deps は /api/v1 のハンドラが必要とする外部資源と設定。
@@ -27,13 +41,22 @@ func Mount(r chi.Router, deps Deps) {
 
 	// ── 認証不要 ────────────────────────────────
 	// ログインは認証を通れない状態で叩くもののため、認証必須グループの外に置く。
-	// CSRF とレート制限（ApiDesign.md 2.4 / 2.9）は手順5b でここに足す。
-	r.Post("/auth/login", h.login)
+	// CSRF（2.4）の対象にもならない。Cookie 認証ではないためである。
+	// IP 単位のレート制限だけを掛ける（2.9）。
+	r.With(middleware.RateLimit(loginRateLimit, loginRateWindow, middleware.ClientIPKey)).
+		Post("/auth/login", h.login)
 
 	// ── 認証必須 ────────────────────────────────
 	// Cookie か Bearer での認証を必須とする（Design.md 6.2.2）。
+	//
+	// 連鎖の順は 認証 → レート制限 → CSRF とする。レート制限を CSRF より
+	// 前に置くのは、CSRF に失敗し続けるリクエストも「送られた回数」として
+	// 数えるためである。どちらもアクターが確定していないと判定できないので、
+	// 認証より前には置けない。
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Authenticate(deps.Queries))
+		r.Use(middleware.RateLimit(actorRateLimit, actorRateWindow, middleware.ActorKey))
+		r.Use(middleware.RequireCSRF)
 
 		r.Post("/auth/logout", h.logout)
 		r.Get("/me", h.me)

@@ -214,6 +214,19 @@ func routerWithDeps(deps Deps) http.Handler {
 
 func router(q gen.Querier) http.Handler { return routerWithDeps(Deps{Queries: q}) }
 
+// testCSRFToken はテストで使う CSRF トークン。値そのものに意味は無く、
+// Cookie とヘッダで同じ値を送れば 2.4 の double-submit を満たす。
+const testCSRFToken = "test-csrf-token-01K2F8QW"
+
+// addCSRF は pb_csrf Cookie と X-PB-CSRF ヘッダを同じ値で付ける（ApiDesign.md 2.4）。
+//
+// Cookie 認証の状態変更系は CSRF ミドルウェアを通るため、ブラウザが行うのと
+// 同じことをテスト側でも行う。安全なメソッドでは検証されないので害は無い。
+func addCSRF(req *http.Request) {
+	req.AddCookie(&http.Cookie{Name: auth.CSRFCookieName, Value: testCSRFToken})
+	req.Header.Set(auth.CSRFHeaderName, testCSRFToken)
+}
+
 // call はルータへ1リクエスト投げる。body が空なら本文なし。
 func call(r http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	var req *http.Request

@@ -216,9 +216,13 @@ func seedLocalUser(
 	}
 }
 
+// callWithCookie は Cookie 認証で1リクエスト投げる。
+// 状態変更系は CSRF ミドルウェア（ApiDesign.md 2.4）を通るため、
+// ブラウザと同じく pb_csrf Cookie と X-PB-CSRF ヘッダを揃えて送る。
 func callWithCookie(r http.Handler, method, path, token string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, nil)
 	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: token})
+	addCSRF(req)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	return rec

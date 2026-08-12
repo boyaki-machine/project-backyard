@@ -12,7 +12,7 @@
 | 4a | 共通基盤その1（sqlc導入・エラー形式・ページネーション・request_id・アクセスログ・ヘルスチェック・serve骨格） | 完了 | 2026-08-12 | `go test ./internal/httpapi/...` が通り、`make run` 後に `/healthcheck` が `{"status":"OK"}`、未知パスが 2.5 形式の 404 を返す |
 | 4b | 共通基盤その2（認証ミドルウェア・監査ログ） | 完了 | 2026-08-12 | `go test ./internal/httpapi/...` が通る。`PB_TEST_DATABASE_URL` を与えると実DBに対する認証の結合テストも通る |
 | 5a | `POST /auth/login`・`/auth/logout`・`GET /me`・実効権限の計算 | 完了 | 2026-08-12 | `curl -i -X POST .../auth/login` で Set-Cookie が2種返り、`GET /me` が権限28件を返す。`PB_TEST_DATABASE_URL` を与えると実DBに対する結合テストも通る |
-| 5b | CSRF ミドルウェア（2.4）・レート制限（2.9） | 未着手 | | Cookie 認証の POST に `X-PB-CSRF` が無いと 403、ログインを1分に11回叩くと 429 |
+| 5b | CSRF ミドルウェア（2.4）・レート制限（2.9） | 完了 | 2026-08-12 | Cookie 認証の POST に `X-PB-CSRF` が無いと 403、ログインを1分に11回叩くと 429 |
 | 6 | 認可ミドルウェア（`RequirePermission`） | 未着手 | | オペレータで `/admin/users` を叩くと 403 |
 | 7 | `GET/POST /projects`、`check-key` | 未着手 | | プロジェクトを作成し、一覧に件数と進捗が出る |
 | 8 | `GET/PATCH /projects/:key`、archive | 未着手 | | `If-Match` 不一致で 409 |
@@ -40,15 +40,16 @@
 
 | | 値 |
 |---|---|
-| 現在 | **v1.4.4**（マージ前。マージ後に `make version-check` が通る） |
-| 内訳 | メジャー1 / マイナー4 / ビルド4 |
+| 現在 | **v1.5.5**（マージ前。マージ後に `make version-check` が通る） |
+| 内訳 | メジャー1 / マイナー5 / ビルド5 |
 | ビルド1 | 手順2（`feature/step-02-migrations`）のマージ |
 | ビルド2 | バージョン運用の導入（`feature/versioning`）のマージ |
 | ビルド3 | 手順3（`feature/step-03-admin-create`）のマージ |
 | ビルド4 | 手順4a・4b（`feature/step-04a-http-foundation`）のマージ |
+| ビルド5 | 手順5a・5b（`feature/step-05-auth-session`）のマージ **← これから** |
 
-手順 5a と 5b も**同じブランチ（`feature/step-05-auth-session`）に載せて1回のマージにする**
-（ユーザーの選択、2026-08-12）。`make bump-minor` は 5b を終えてマージする直前に実行する。
+手順 5a と 5b は**同じブランチ（`feature/step-05-auth-session`）に載せて1回のマージにする**
+（ユーザーの選択、2026-08-12）。`make bump-minor` は **5b の完了時に実行済み**（`1.4.4` → `1.5.5`）。
 5a の時点では `VERSION` を触っていない。
 
 手順 4a と 4b は**同じブランチに載せて1回のマージにする**（ユーザーの選択、2026-08-12）。
@@ -138,6 +139,18 @@
 | 2026-08-12 | 5a | JSON 本文の読み取り上限が文書に無い | 実装側の安全弁として **1MiB** を置いた（`login.go` の `maxRequestBodyBytes`）。認証前に叩けるエンドポイントで無制限に読むと1本のリクエストでメモリを食い潰せるため。4a のHTTPタイムアウトと同じ扱い |
 | 2026-08-12 | 5a | `GET /auth/providers`（`ApiDesign.md` 3.3）を手順5に含めるか | **含めていない。** `Design.md` 11章 手順5は login / logout / me のみ。ログイン画面（手順14）の直前で足すのが自然 |
 | 2026-08-12 | 5a | 入力の形式誤り（メール未入力など）の応答が 3.1 の表に無い | **422 `validation_failed`＋`details`** とした（2.5.1 のとおり）。資格情報の誤り（401）と区別する。**`ApiDesign.md` 3.1 の応答表に1行追記済み** |
+| 2026-08-12 | 5b | **レート制限のカウンタをどこに置くかが `ApiDesign.md` 2.9 に無い。** Redis 等を足すと依存追加（絶対規則2）にあたる | **プロセス内メモリ。ユーザーの承認済み**（2026-08-12）。PB はローカル端末で単一プロセスとして動く前提（`Design.md` 4.3）。再起動でカウンタは消えるが、総当たり対策の本体であるアカウント単位のロックは DB（`local_credential`）に残る。**外部ストア（Redis 等）は、複数プロセスで動かす必要が出た時点の課題としてユーザーが保留した。** 設計文書は変更していない（2.9 は上限を定めるだけで実現手段に踏み込んでいないため） |
+| 2026-08-12 | 5b | アルゴリズム（固定窓 / スライディング窓 / トークンバケット）が 2.9 に無い | **スライディングウィンドウ**（キーごとに試行時刻を保持）。①固定窓は境界で上限の2倍を通す ②`Retry-After` を「最古の試行が窓から出るまで」として正確に出せる。上限が 10回/分・600回/分と小さく、キーあたり最大でも limit 個の `time.Time` で足りる |
+| 2026-08-12 | 5b | **2.9 の「アカウントあたり 5回/15分（超過で `account_locked`）」は 5b で作るものが無い** | `Design.md` 6.3 の「5回連続で15分ロック」と同一で、`local_credential` の `failed_attempts` / `locked_until` として **5a で実装済み**。5b で新規に作ったのは **IPあたり 10回/分** と **アクターあたり 600回/分** の2つ。この対応を `routes.go` のコメントに残した |
+| 2026-08-12 | 5b | `X-RateLimit-*` を成功応答にも付けるか（2.9 は「応答ヘッダ」とだけ書く） | **対象リクエストの全応答に `X-RateLimit-Limit` / `X-RateLimit-Remaining` を付ける。** 429 になってから初めて分かるのでは手遅れなため。`Retry-After` は 429 のときだけ（`apierr` が `retry_after_sec` と同じ値で書く） |
+| 2026-08-12 | 5b | ログイン試行を成否で区別して数えるか | **成否によらず数える。** ミドルウェアはハンドラより前段にあり結果を知らずに判定する。「送った回数」そのものが 2.9 の制限対象である。テストで固定した（`TestLoginIsRateLimitedPerIP` は 400 を並べて数えられることを確かめる） |
+| 2026-08-12 | 5b | キーが無制限に増えるとメモリを食い潰せる（文書に記載なし） | 窓ごとに1回の掃除と、**キー数の上限 10,000**（`maxRateLimitKeys`）を実装側の安全弁として置いた。上限到達時は**新しいキーを拒む**。古いキーを追い出す方式にすると、送信元を変え続けるだけで正規の利用者のカウンタを追い出せてしまうため |
+| 2026-08-12 | 5b | 429 を `audit_log` に残すか | **残さない。** `ApiDesign.md` 2.10 が列挙する15アクションに該当が無い。痕跡はアクセスログと、`WithCause` が出す WARN 行に残る（`Design.md` 10.1）。実測でも 429 の分だけ `audit_log` が増えないことを確認した |
+| 2026-08-12 | 5b | レート制限を無効化する設定を足すか | **足さない。** ミドルウェアが上限と窓幅を引数で受けるため、テストは値を変えて組み立てられる。`PB_*` を増やさずに済む |
+| 2026-08-12 | 5b | 認証必須グループでの CSRF とレート制限の順序（文書に記載なし） | **認証 → レート制限 → CSRF。** CSRF に失敗し続けるリクエストも「送られた回数」として数えるため。どちらもアクターが確定しないと判定できないので認証より前には置けない |
+| 2026-08-12 | 5b | 2.4 は対象を「POST/PATCH/PUT/DELETE」と列挙しているが、他のメソッドが来たときの扱いが無い | **「安全なメソッド（GET/HEAD/OPTIONS/TRACE）以外は検証する」と裏返して実装した。** 列挙側で持つと、将来ハンドラを増やしたときに列挙から漏れたメソッドが素通りする |
+| 2026-08-12 | 5b | `POST /auth/logout` を CSRF の対象にするか | **対象にする。** 2.4 に例外の記述が無い。手順14 のフロントは `pb_csrf` を読んで `X-PB-CSRF` に載せる必要がある（5a で 2つの Cookie の `Max-Age` を揃えた理由がこれ）。既存のテストヘッダ（`authed` / `callWithCookie`）にも CSRF を足した |
+| 2026-08-12 | 5b | CSRF の失敗理由を応答で区別するか | **区別しない。** 「Cookie が無い」「ヘッダが無い」「不一致」をすべて 403 `csrf_failed` に倒し、理由は `WithCause` でサーバログにのみ出す（認証ミドルウェアの 401 と同じ方針）。比較は `crypto/subtle.ConstantTimeCompare` |
 
 ### 設計文書へ反映済みの修正（2026-08-11、承認のうえ適用）
 
@@ -422,11 +435,87 @@
 | サーバログ | 平文トークンの出現0件。stderr は0バイトのまま |
 | `last_login_at` | ログインごとに更新される |
 
+### 設計文書との差異（手順5b、2026-08-12）
+
+**設計文書の修正は不要だった。** 手順5b で加えた変更は `ApiDesign.md` 2.4 / 2.9 の記述の
+範囲に収まっており、文書を書き換えた箇所は無い。上の差異表に挙げた11件は、いずれも
+2.4 / 2.9 が**定めていない実装上の判断**（カウンタの置き場・アルゴリズム・ヘッダの付与範囲・
+ミドルウェアの順序など）であり、文書に書くべき仕様ではないと判断した。
+
+ただし次の2点は、外部ストアを導入する段階で 2.9 に追記する必要がある。
+
+1. **カウンタの保存先。** 複数プロセスで動かすと、プロセス内メモリでは実効の上限が
+   プロセス数倍になる。Phase 1 の単一プロセス前提（`Design.md` 4.3）を外すときに顕在化する
+2. **スコープ（IP単位の制限をリバースプロキシ側で行うか、アプリ側で行うか）。**
+   現在は `X-Forwarded-For` を見ないため、プロキシ配下では全リクエストが同一IPに見える
+
+### 手順5bで作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/httpapi/middleware/csrf.go` | `RequireCSRF`（`ApiDesign.md` 2.4）。Cookie 認証の状態変更系に `X-PB-CSRF` を要求する |
+| `server/internal/httpapi/middleware/csrf_test.go` | 10件 |
+| `server/internal/httpapi/middleware/ratelimit.go` | `RateLimit` と `limiter`（2.9）。スライディングウィンドウ、`ClientIPKey` / `ActorKey` |
+| `server/internal/httpapi/middleware/ratelimit_test.go` | 11件（`-race` で並行性も検証） |
+| `server/internal/httpapi/v1/routes_test.go` | 6件。ルート定義に CSRF とレート制限が並んでいることをルータ越しに検証 |
+| `server/internal/httpapi/v1/routes.go` | ログインに IP 制限、認証必須グループにアクター制限と CSRF を挿した（変更） |
+| `server/internal/httpapi/v1/fake_test.go` | `addCSRF` ヘルパを追加（変更） |
+| `server/internal/httpapi/v1/me_test.go` | `authed` が CSRF を付けるよう変更 |
+| `server/internal/httpapi/v1/auth_integration_test.go` | `callWithCookie` が CSRF を付けるよう変更 |
+| `VERSION` | `make bump-minor` で `1.4.4` → `1.5.5`（手順5の完了。マージ前に実行する規約） |
+
+**新しい依存は追加していない**（`crypto/subtle`・`sync`・`time` はいずれも標準ライブラリ）。
+`internal/domain/` は引き続き作っていない。
+
+### 手順5bの検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `gofmt -l` / `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト205件、8パッケージすべて ok。5a の180件から25件増） |
+| `go test ./internal/httpapi/... -race` | 通る。`limiter` の並行アクセス（200 goroutine で上限50）でも競合を検出しない |
+| 結合テスト（実DB） | `TestLoginIntegration` / `TestAuthenticateIntegration` とも通る。ログアウトが CSRF ヘッダ込みで 204 |
+| **`POST /auth/logout`（`X-PB-CSRF` 無し）** | **`403` ＋ `{"error":{"code":"csrf_failed",…}}`。** トークンは失効していない |
+| `POST /auth/logout`（値が食い違う `X-PB-CSRF`） | `403`。理由はサーバログ側でのみ「一致しない」と区別される |
+| `POST /auth/logout`（正しい `X-PB-CSRF`） | `204`。以後、同じ Cookie の `GET /me` は `401` |
+| `GET /me`（CSRF ヘッダ無し） | `200`。安全なメソッドは対象外 |
+| Bearer 認証の `POST /auth/logout` | `204`。CSRF を要求しない（単体テストで検証） |
+| **ログインを1分に11回** | 1〜10回目が `200`（`X-RateLimit-Remaining` が 9→0）、**11回目が `429 rate_limited`** ＋ `retry_after_sec: 40` ＋ `Retry-After: 40` |
+| `Retry-After` の値 | 40秒。窓の残り（60秒）ではなく**最古の試行が窓から出るまで**になっている（スライディングの確認） |
+| 認証済みリクエストのヘッダ | `X-RateLimit-Limit: 600` / `X-RateLimit-Remaining: 596`。ログインの制限（10）とは別に数えている |
+| `/healthcheck` | 15回連続で `200`。`X-RateLimit-*` は付かない（`ApiDesign.md` 2.11 のとおり制限の対象外） |
+| 未知パス・405 | `GET /api/v1/nope` が `404`、`GET /api/v1/auth/login` が `405`。5a から不変 |
+| 監査ログ | 成功10件（`login.success`）＋ `logout` 1件のみ。**429 と CSRF 失敗の分は増えない**（2.10 に該当アクションが無いため） |
+| 拒否のサーバログ | `csrf_failed`（`X-PB-CSRF ヘッダが無い` / `一致しない`）と `rate_limited`（`key=127.0.0.1、上限 10回/1m0s`）が WARN で残る |
+| graceful shutdown | SIGINT で「停止信号を受け取った」→「サーバを停止した」。5a から不変 |
+
+**検証は :8099 で行った。** 前のセッションが起動したままの `pb` が :8080 を占有しており、
+他人のプロセスを落とさずに済ませるため `PB_BIND` を変えた。`make run` の設定との差は
+待受アドレスのみ。
+
+**検証用に作った管理者（`csrf-5b@example.com`）は検証後に削除した。**
+`audit_log` を先に消してから `actor` を消している（`actor_id` は `ON DELETE SET NULL` のため）。
+残る `app_user` は手順3以来の `tanaka@example.com` 1件。
+
 ## 環境メモ
 
 実際に動かして分かったこと（バージョンの相性、ハマった点、回避策）を追記する。
 ここに書いた内容は、後から `CLAUDE.md` や設計文書へ昇格させることを検討する。
 
+- **`make run` を止め忘れると次のセッションで `bind: address already in use` になる。** 手順5b の検証時に、
+  前のセッションの `pb` が :8080 を掴んだままだった。他人のプロセスを落とさずに済ませるには
+  `PB_BIND=127.0.0.1:8099` のように待受を変えて起動する（`make run` の recipe を書き換える必要はない）。
+  占有しているのが自分の残骸かどうかは `lsof -nP -iTCP:8080 -sTCP:LISTEN` で確かめる
+- **Cookie 認証で状態変更系を叩くテストは `X-PB-CSRF` が要る**（手順5b で導入）。curl での手順：
+
+  ```
+  curl -s -c cj.txt -X POST .../api/v1/auth/login -d '{"email":"…","password":"…"}'
+  CSRF=$(grep pb_csrf cj.txt | awk '{print $7}')
+  curl -s -b cj.txt -X POST -H "X-PB-CSRF: ${CSRF}" .../api/v1/auth/logout
+  ```
+
+  `-c` で保存した Cookie jar はタブ区切りで、値は7列目にある。Bearer 認証なら CSRF は不要
+- **レート制限のカウンタはプロセス内メモリにある**（手順5b）。`make run` を再起動すると消えるため、
+  429 を再現する検証は**サーバを起動したまま**続けて叩くこと。ログインは IPあたり 10回/分
 - **`.claude/settings.json` の deny は Read ツールにしか効かない。** `Read(./deploy/*/secrets/**)` を deny していても、`allow` にある `Bash(cat:*)` 経由では読めてしまう（手順4b の検証で `app_db_password` を実際にそう読んだ）。秘密を機械的に守りたい場合は Bash 側にも `deny` を足す必要がある
 - **DBを使うテストは `PB_TEST_DATABASE_URL` で切り替える**（手順4b で導入）。未設定ならスキップするので `make test` は DB 無しでも通る。実行例：
 
