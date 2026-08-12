@@ -73,6 +73,8 @@ make sqlc        # sqlc generate（server/migrations/ からスキーマを推�
 make run         # サーバをローカル起動（:8080）
 make dev-client  # Vite 開発サーバ（:5173、/api を :8080 へプロキシ）
 make build       # client をビルドして embed し、単一バイナリを作る
+make version     # 現在のバージョンと develop へのマージ回数を表示
+make bump-minor  # 機能追加のマージ前に実行（fix/ docs/ は bump-build）
 make test
 make psql        # DBコンソール
 ```
@@ -101,14 +103,18 @@ main ← develop ← feature/*
 - 分岐前に `git switch develop && git pull` で最新化する
 - 命名規約
 
-  | 種別 | 形式 | 例 |
-  |---|---|---|
-  | 手順の実装 | `feature/step-<2桁>-<英小文字スラッグ>` | `feature/step-02-migrations` |
-  | 手順外の実装 | `feature/<英小文字スラッグ>` | `feature/fix-token-expiry` |
-  | 設計文書のみの修正 | `docs/<英小文字スラッグ>` | `docs/ticket-api` |
+  | 種別 | 形式 | 例 | マージ時 |
+  |---|---|---|---|
+  | 手順の実装 | `feature/step-<2桁>-<英小文字スラッグ>` | `feature/step-02-migrations` | `make bump-minor` |
+  | 手順外の機能実装 | `feature/<英小文字スラッグ>` | `feature/excel-export` | `make bump-minor` |
+  | 機能を変えない修正 | `fix/<英小文字スラッグ>` | `fix/token-expiry` | `make bump-build` |
+  | 設計文書のみの修正 | `docs/<英小文字スラッグ>` | `docs/ticket-api` | `make bump-build` |
+
+  **不具合修正は `feature/` ではなく `fix/` を使う。** この接頭辞でマイナーバージョンを上げるかどうかが決まる（`docs/Design.md` 11.1）
 
 - コミットメッセージの先頭に手順番号を入れる（例：`step 2: マイグレーション 0001〜0010 を追加`）
 - ステップ完了時は、`docs/PROGRESS.md` の更新も**同じブランチに含めてから**コミットする
+- **マージ前に feature ブランチ上で `make bump-minor` / `make bump-build` を実行し、`VERSION` の更新を同じブランチに含める。** マージ後に `make version-check` が通ること（`docs/Design.md` 11.1）
 - **マージ・push・ブランチ削除はエージェントが勝手に行わない。** 完了時に以下を提案するに留め、実行はユーザーの承認後とする
 
   ```
