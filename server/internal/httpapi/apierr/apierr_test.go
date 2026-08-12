@@ -1,12 +1,22 @@
 package apierr
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
+
+// エラーログがテスト出力を埋めないよう、既定ロガーを捨てる。
+func TestMain(m *testing.M) {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	os.Exit(m.Run())
+}
 
 // ApiDesign.md 2.5.1 の表をそのまま写したもの。実装との対応を1件ずつ照合する。
 var table = []struct {
@@ -19,6 +29,7 @@ var table = []struct {
 	{Forbidden, 403},
 	{CSRFFailed, 403},
 	{NotFound, 404},
+	{MethodNotAllowed, 405},
 	{Conflict, 409},
 	{LastAdministrator, 409},
 	{SelfModificationForbidden, 409},
@@ -134,6 +145,30 @@ func TestWriteDoesNotLeakCause(t *testing.T) {
 	}
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", rec.Code)
+	}
+}
+
+// 内部原因を持たないエラーはログ行を出さない。
+// ステータスとパスはアクセスログが1行で記録しているため（Design.md 10.1）。
+func TestWriteLogsOnlyWhenCausePresent(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prev)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+
+	Write(httptest.NewRecorder(), req, New(NotFound))
+	if buf.Len() != 0 {
+		t.Errorf("cause 無しでログが出ている: %s", buf.String())
+	}
+
+	Write(httptest.NewRecorder(), req, New(InternalError).WithCause(errors.New("pool exhausted")))
+	if buf.Len() == 0 {
+		t.Error("cause 有りでログが出ていない")
+	}
+	if !contains(buf.String(), "pool exhausted") {
+		t.Errorf("cause がログに出ていない: %s", buf.String())
 	}
 }
 

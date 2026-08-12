@@ -28,6 +28,7 @@ const (
 	Forbidden                 Code = "forbidden"
 	CSRFFailed                Code = "csrf_failed"
 	NotFound                  Code = "not_found"
+	MethodNotAllowed          Code = "method_not_allowed"
 	Conflict                  Code = "conflict"
 	LastAdministrator         Code = "last_administrator"
 	SelfModificationForbidden Code = "self_modification_forbidden"
@@ -45,6 +46,7 @@ var statuses = map[Code]int{
 	Forbidden:                 http.StatusForbidden,
 	CSRFFailed:                http.StatusForbidden,
 	NotFound:                  http.StatusNotFound,
+	MethodNotAllowed:          http.StatusMethodNotAllowed,
 	Conflict:                  http.StatusConflict,
 	LastAdministrator:         http.StatusConflict,
 	SelfModificationForbidden: http.StatusConflict,
@@ -66,6 +68,7 @@ var messages = map[Code]string{
 	Forbidden:                 "この操作を行う権限がありません",
 	CSRFFailed:                "セッションが無効です。画面を再読み込みしてからやり直してください",
 	NotFound:                  "対象が見つかりません",
+	MethodNotAllowed:          "この操作は許可されていません",
 	Conflict:                  "他の変更と競合しました。最新の状態を読み込んでからやり直してください",
 	LastAdministrator:         "最後のアドミニストレータのため、この操作はできません",
 	SelfModificationForbidden: "自分自身に対してこの操作はできません",
@@ -157,20 +160,24 @@ func Write(w http.ResponseWriter, r *http.Request, e *Error) {
 	}
 
 	status := e.Status()
-	attrs := []any{
-		slog.String("request_id", e.RequestID),
-		slog.String("code", string(e.Code)),
-		slog.Int("status", status),
-		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path),
-	}
+
+	// 内部原因を持つものだけを別行で出す（Design.md 10.1 エラーログ）。
+	// ステータスとパスはアクセスログ側が1リクエスト1行で記録しているため、
+	// ここで出すのは応答本文に含められない情報がある場合に限る。
 	if e.cause != nil {
-		attrs = append(attrs, slog.String("cause", e.cause.Error()))
-	}
-	if status >= http.StatusInternalServerError {
-		slog.Error("リクエスト処理に失敗した", attrs...)
-	} else {
-		slog.Debug("リクエストを拒否した", attrs...)
+		attrs := []any{
+			slog.String("request_id", e.RequestID),
+			slog.String("code", string(e.Code)),
+			slog.Int("status", status),
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.String("cause", e.cause.Error()),
+		}
+		if status >= http.StatusInternalServerError {
+			slog.Error("リクエスト処理に失敗した", attrs...)
+		} else {
+			slog.Warn("リクエストを拒否した", attrs...)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

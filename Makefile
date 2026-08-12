@@ -69,8 +69,11 @@ sqlc:
 # Design.md 6.6 の既定（127.0.0.1 のみ）に合わせるため。
 # コンテナ内では 0.0.0.0:8080 で待ち受け、公開範囲は compose の ports で制御する。
 # @ を付けて実行するのは、パスワードを含むコマンドをエコーさせないため。
+# PB_HEALTH_SHOW_VERSION を開発時だけ true にするのは、起動しているバイナリの
+# バージョンを /healthcheck で確かめられるようにするため。既定は false（ApiDesign.md 2.11）。
 run:
-	@cd server && PB_BIND=127.0.0.1:8080 PB_DATABASE_URL="$(PB_DATABASE_URL_APP)" \
+	@cd server && PB_BIND=127.0.0.1:8080 PB_HEALTH_SHOW_VERSION=true \
+		PB_DATABASE_URL="$(PB_DATABASE_URL_APP)" \
 		go run -ldflags "-X main.version=$(VERSION)" ./cmd/pb serve
 
 ## 初期管理者を対話的に作成する（DbDesign.md 7.5）

@@ -2,12 +2,21 @@ package httpapi
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/oklog/ulid/v2"
 )
+
+// アクセスログがテスト出力を埋めないよう、既定ロガーを捨てる。
+func TestMain(m *testing.M) {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	os.Exit(m.Run())
+}
 
 type errBody struct {
 	Error struct {
@@ -66,5 +75,22 @@ func TestContentType(t *testing.T) {
 	rec, _ := do(t, http.MethodGet, "/api/v1/nope")
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
 		t.Errorf("Content-Type = %q", ct)
+	}
+}
+
+// パスは存在するがメソッドが違う場合は 405 method_not_allowed（ApiDesign.md 2.5.1）。
+// /healthcheck は GET のみを受け付ける。
+func TestMethodNotAllowed(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodDelete, http.MethodPatch} {
+		rec, body := do(t, method, HealthPath)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s: status = %d, want 405", method, HealthPath, rec.Code)
+		}
+		if body.Error.Code != "method_not_allowed" {
+			t.Errorf("%s: code = %q", method, body.Error.Code)
+		}
+		if body.Error.RequestID == "" {
+			t.Errorf("%s: request_id が空", method)
+		}
 	}
 }

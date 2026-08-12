@@ -35,7 +35,7 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	initLogger(cfg.LogFormat)
+	initLogger(cfg.LogFormat, cfg.LogLevel)
 
 	pool, err := store.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -44,8 +44,12 @@ func serve(ctx context.Context) error {
 	defer pool.Close()
 
 	srv := &http.Server{
-		Addr:              cfg.Bind,
-		Handler:           httpapi.NewRouter(httpapi.Deps{Pool: pool}),
+		Addr: cfg.Bind,
+		Handler: httpapi.NewRouter(httpapi.Deps{
+			Pool:              pool,
+			Version:           version,
+			HealthShowVersion: cfg.HealthShowVersion,
+		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
@@ -82,14 +86,35 @@ func serve(ctx context.Context) error {
 	return nil
 }
 
-// initLogger は log/slog の既定ロガーを差し替える（Design.md 3.1）。
+// initLogger は log/slog の既定ロガーを差し替える（Design.md 10.1）。
+//
+// 出力先は標準出力に一本化する。stderr は「異常」の含意を持ち、正常な
+// アクセスログを流すと収集基盤で誤って error 扱いされやすいため。
+// また2ストリームに分けると行の到着順が保証されない。
 // PB_LOG_FORMAT が json 以外なら人間が読みやすいテキスト形式にする。
-func initLogger(format string) {
+func initLogger(format, level string) {
+	opts := &slog.HandlerOptions{Level: parseLevel(level)}
+
 	var h slog.Handler
 	if format == "json" {
-		h = slog.NewJSONHandler(os.Stderr, nil)
+		h = slog.NewJSONHandler(os.Stdout, opts)
 	} else {
-		h = slog.NewTextHandler(os.Stderr, nil)
+		h = slog.NewTextHandler(os.Stdout, opts)
 	}
 	slog.SetDefault(slog.New(h))
+}
+
+// parseLevel は PB_LOG_LEVEL を slog.Level に写す。
+// 値の検証は config.Load が済ませているため、ここでは既定へ倒すだけでよい。
+func parseLevel(level string) slog.Level {
+	switch level {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

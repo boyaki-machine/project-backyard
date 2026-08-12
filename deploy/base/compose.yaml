@@ -53,7 +53,9 @@ services:
     environment:
       PB_BIND: "0.0.0.0:8080"
       PB_DATABASE_URL_FILE: /run/secrets/app_database_url
-      PB_LOG_FORMAT: json
+      PB_LOG_FORMAT: json             # 標準出力へ構造化JSON（Design.md 10.1）
+      PB_LOG_LEVEL: info
+      PB_HEALTH_SHOW_VERSION: "false" # ApiDesign.md 2.11
       TZ: UTC
     secrets:
       - app_database_url

@@ -9,7 +9,7 @@
 | 1 | deploy/base/compose.yaml と initdb（DBロール分離） | 完了 | 2026-08-11 | `make up` でDBが起動し、`pb_app` ロールが存在する |
 | 2 | server/migrations/ 0001〜0010 の作成と適用 | 完了 | 2026-08-11 | `make migrate` 後、テーブル23個と権限28件・ロール5件が存在する |
 | 3 | `pb admin create` による初期管理者作成 | 完了 | 2026-08-12 | 作成した管理者が `app_user` に `system_role='administrator'` で入る |
-| 4a | 共通基盤その1（sqlc導入・エラー形式・ページネーション・request_id・serve骨格） | 完了 | 2026-08-12 | `go test ./internal/httpapi/...` が通り、`make run` 後に未知パスが 2.5 形式の 404 を返す |
+| 4a | 共通基盤その1（sqlc導入・エラー形式・ページネーション・request_id・アクセスログ・ヘルスチェック・serve骨格） | 完了 | 2026-08-12 | `go test ./internal/httpapi/...` が通り、`make run` 後に `/healthcheck` が `{"status":"OK"}`、未知パスが 2.5 形式の 404 を返す |
 | 4b | 共通基盤その2（認証ミドルウェア・監査ログ） | 未着手 | | `go test ./internal/httpapi/...` が通る |
 | 5 | `POST /auth/login`・`/auth/logout`・`GET /me` | 未着手 | | `curl -i -X POST .../auth/login` で Set-Cookie が返り、`GET /me` が権限一覧を返す |
 | 6 | 認可ミドルウェア（`RequirePermission`） | 未着手 | | オペレータで `/admin/users` を叩くと 403 |
@@ -85,13 +85,19 @@
 | 2026-08-12 | 4a | **sqlc を `server/go.mod` の tool ディレクティブに足すと、indirect が 59→83 件に増え、さらに go ディレクティブが 1.25.0 へ引き上げられる**（`Design.md` 3.1 の「Go 1.24 以上」と衝突）。手順2で予告していた分岐点 | **goose と sqlc を `server/tools/go.mod` へ隔離することをユーザーが承認。** `server/go.mod` は実依存5件＋indirect 8件に戻った。**`DbDesign.md` 5.1 と `Design.md` 4.1 に反映済み**（2026-08-12） |
 | 2026-08-12 | 4a | `pb serve` の骨格を手順4に含めるか。`PROGRESS.md` の検証欄は `go test` のみだった | **含めることをユーザーが選択。** エンドポイントは1つも定義せず、ミドルウェア連鎖と 2.5 形式の 404 のみ。`Design.md` 4.1 に serve の記載があり `PB_BIND` も config に実装済みのため、新しい仕様の発明にはならない |
 | 2026-08-12 | 4a | CSRF（`ApiDesign.md` 2.4）とレート制限（2.9）を手順4に含めるか。`Design.md` 4.1 は両方を `middleware/` 配下に置いている | **含めないことをユーザーが選択。** どちらも手順5のログインで初めて必要になり（CSRF は `pb_csrf` の発行と対、レート制限は失敗回数と対）、手順5で実装するほうが検証しやすい |
-| 2026-08-12 | 4a | **`ApiDesign.md` 2.5.1 の表に 405（Method Not Allowed）の行が無い。** chi の既定は本文なしの 405 を返すため、`CLAUDE.md`「エラー応答は 2.5 の形式に統一する」に反する | **405 を返さず 404 `not_found` に寄せた。** 表に無いコードを実装側で発明しないことを優先した。**代案として 2.5.1 に `405 / method_not_allowed` の行を足す修正が考えられる**（ルート定義の誤りを切り分けやすくなる）。文書修正の提案として残す |
+| 2026-08-12 | 4a | **`ApiDesign.md` 2.5.1 の表に 405（Method Not Allowed）の行が無い。** chi の既定は本文なしの 405 を返すため、`CLAUDE.md`「エラー応答は 2.5 の形式に統一する」に反する | **`405 / method_not_allowed` を 2.5.1 に追加することをユーザーが承認**（2026-08-12）。実装も 405 を返す。コードは14件になった。**`ApiDesign.md` 2.5.1 に反映済み** |
 | 2026-08-12 | 4a | **2.5.1 の13コードのうち、文言が設計文書にあるのは2件のみ**（`validation_failed` は 2.5、`invalid_credentials` は `Design.md` 6.3） | 残る11件の既定文言を実装側で定めた（`apierr.messages`）。方針は「アカウントの存在を漏らさない」「原因ではなく利用者の次の行動を書く」。**文言を設計文書側に持たせたい場合は 2.5.1 に message 列を足す修正を提案する** |
-| 2026-08-12 | 4a | **`ApiDesign.md` 2.6 が、不正な `page` / `per_page` / `sort` / `order` を受けたときの挙動を定めていない**（既定へ丸めるのか、エラーにするのか） | **422 `validation_failed` を返し、`details` に項目ごとの誤りを載せる。** 黙って別の値へ読み替えると呼び出し側の誤りが表に出ないため。`per_page` の「上限200」も丸めずエラーとした。**2.6 に1行足す修正を提案したい** |
+| 2026-08-12 | 4a | **`ApiDesign.md` 2.6 が、不正な `page` / `per_page` / `sort` / `order` を受けたときの挙動を定めていない**（既定へ丸めるのか、エラーにするのか） | **422 `validation_failed` を返し `details` に項目ごとの誤りを載せる方針をユーザーが承認**（2026-08-12）。`per_page` の上限超過も丸めない。入力と応答の対応表つきで **`ApiDesign.md` 2.6 に反映済み** |
 | 2026-08-12 | 4a | `request_id` をコンテキストへ出し入れする関数の置き場所。`middleware` に置くと `apierr` → `middleware` の依存が生まれ、`middleware` は 404 応答のため `apierr` を必要とするので循環する | **`apierr` パッケージに置いた。** `request_id` は 2.5 のエラー本体のフィールドであり、描画するのが `apierr` の責務のため。`Design.md` 4.1 のディレクトリ構成を変えずに済む（新しいパッケージを足していない） |
 | 2026-08-12 | 4a | HTTPサーバのタイムアウト値が設計文書のどこにも無い | 実装側の既定として ReadHeader 10s / Read 30s / Write 60s / Idle 120s / Shutdown 猶予 15s を置いた（`serve.go` に定数として明記）。**`Design.md` 10章「メトリクスとヘルスチェックエンドポイント」を扱う際に、あわせて文書化を提案する** |
-| 2026-08-12 | 4a | アクセスログ（1リクエスト1行）を出すかどうか。`Design.md` 10章は「アプリケーションログの形式」を**今後扱う**としている | **出していない。** 形式が未確定のまま作ると後で全面的に書き直しになるため。現状ログに出るのは、起動・停止と `apierr.Write` が出すエラー（5xx は Error、4xx は Debug）のみ |
-| 2026-08-12 | 4a | ヘルスチェックエンドポイントを作るか | **作っていない。** `Design.md` 10章が「今後扱う」としており、`ApiDesign.md` にも定義が無いため。疎通確認は未知パスへの 404 で足りる |
+| 2026-08-12 | 4a | アクセスログ（1リクエスト1行）を出すかどうか。`Design.md` 10章は「アプリケーションログの形式」を**今後扱う**としていた | **ユーザーの指示により形式を確定し実装した。** コンテナ前提のため**標準出力へ構造化JSON**（12-factor）。`stderr` から `stdout` へ変更。アクセスログとエラーログは**別行**とし、1行の意味を「1リクエストの結果」に保つ。**`Design.md` 10.1 に反映済み** |
+| 2026-08-12 | 4a | ログ出力先を stdout / stderr のどちらにするか。k8s / CRI はどちらも同じログストリームへ集約するため、`kubectl logs` からはどちらでも見える | **stdout に一本化した。** ①`stderr` は「異常」の含意を持ち、正常なアクセスログを流すと収集基盤（Fluent Bit / Loki 等）で誤って error 扱いする設定を誘発しやすい ②2ストリームに分けると行の到着順が保証されない。`stderr` はロガー初期化前の致命的エラーと CLI の利用者向けメッセージにのみ使う |
+| 2026-08-12 | 4a | ヘルスチェックエンドポイントを作るか。`Design.md` 10章が「今後扱う」としており `ApiDesign.md` にも定義が無かった | **ユーザーの指示により `GET /healthcheck` を新設した**（認証不要・副作用なし・DB非依存・固定応答）。**`ApiDesign.md` 2.11 / `Design.md` 10.2 に反映済み** |
+| 2026-08-12 | 4a | `/healthcheck` に**バージョンを含めるか。** 未認証の呼び出し元への情報開示になる | **設定 `PB_HEALTH_SHOW_VERSION` で切り替える方式をユーザーが指示。既定は false**（既知の脆弱性との突き合わせを許さないため）。`make run` では true にして開発時のデプロイ確認に使えるようにした |
+| 2026-08-12 | 4a | `/healthcheck` を `/api/v1` の下に置くか、ルート直下か | **ユーザーの指示によりルート直下 `/healthcheck`。** 監視・オーケストレータから叩くものでありAPIのバージョニングに従わせる意味がないため。**`Design.md` 3.4 の SPA フォールバック（`/api` `/mcp` 以外は index.html）の例外**にあたるので、3.4 と 2.11 の双方に明記した。**手順13 で embed 経路を作る際に取りこぼさないこと** |
+| 2026-08-12 | 4a | probe が短間隔で叩く `/healthcheck` のアクセスログが1日数千行のノイズになる | **成功時のみ DEBUG に落とす。** 当初はパス一致だけで黙らせていたが、**`POST /healthcheck` の 405 まで消えることを実測で発見**したため、`status < 400` の条件を足した。probe の設定誤りに気づけなくなるのを避ける |
+| 2026-08-12 | 4a | 設定項目が2つ増えた（`PB_LOG_LEVEL` / `PB_HEALTH_SHOW_VERSION`） | `config.go`・`deploy/base/env.example`・`deploy/base/compose.yaml`・`DbDesign.md` 3.2 の4か所を揃えた。**不正な値は既定へ倒さずエラーにする**（設定の書き誤りを黙って無視しないため） |
+| 2026-08-12 | 4a | compose の `app` サービスに `healthcheck` を足すか | **足していない。** distroless / scratch イメージには curl も shell も無く、`healthcheck` の実行手段が `deploy/Dockerfile` の作り方に依存するため。**手順13 で Dockerfile とセットで決める**（`pb healthcheck` サブコマンドを足す案がある） |
 
 ### 設計文書へ反映済みの修正（2026-08-11、承認のうえ適用）
 
@@ -202,6 +208,14 @@
    `server/tools/go.mod` の go ディレクティブを 1.24 に保つ注意を記載
 2. **`Design.md` 4.1** — ディレクトリ図に `server/tools/go.mod` を追加し、
    `server/go.mod` に「アプリの依存のみ」と注記
+3. **`ApiDesign.md` 2.5.1** — `| 405 | method_not_allowed | パスは存在するが、そのメソッドを受け付けない |` を追加（コードは13→14件）
+4. **`ApiDesign.md` 2.6** — 不正な値を既定へ丸めず 422 `validation_failed` とする段落と、入力→応答の対応表を追加
+5. **`ApiDesign.md` 2.11（新設）** — ヘルスチェック `GET /healthcheck`。認証不要・副作用なし・DB非依存、
+   `PB_HEALTH_SHOW_VERSION` によるバージョン表示、SPAフォールバックの例外である旨
+6. **`Design.md` 3.4** — SPAフォールバックの除外パスに `/healthcheck` を追加
+7. **`Design.md` 10章** — 「今後扱う」から **10.1 アプリケーションログ**（出力先・形式・レベル・
+   アクセスログ・エラーログ）、**10.2 ヘルスチェック**、**10.3 今後扱うもの** に再構成。目次の状態も更新
+8. **`DbDesign.md` 3.2** — compose の `app` サービスに `PB_LOG_LEVEL` と `PB_HEALTH_SHOW_VERSION` を追加
 
 ### 手順4aで作成したファイル
 
@@ -212,15 +226,19 @@
 | `server/internal/store/db.go` | pgxpool（Min 2 / Max 10、`application_name=pb`。`DbDesign.md` 3.5） |
 | `server/internal/store/queries/user.sql` | 手順3の5クエリ（COUNT 1・INSERT 4）を sqlc へ移植 |
 | `server/internal/store/gen/*.go` | sqlc 生成物4ファイル（`db.go` / `models.go` / `querier.go` / `user.sql.go`） |
-| `server/internal/httpapi/apierr/apierr.go` | `ApiDesign.md` 2.5 のエラー形式、2.5.1 の13コードとステータス対応、`request_id` のコンテキスト受け渡し |
+| `server/internal/httpapi/apierr/apierr.go` | `ApiDesign.md` 2.5 のエラー形式、2.5.1 の14コードとステータス対応、`request_id` のコンテキスト受け渡し |
 | `server/internal/httpapi/paging.go` | 2.6 のパラメータ解析（`ParsePage`）、一覧エンベロープ（`List[T]`）、`WriteJSON` |
-| `server/internal/httpapi/router.go` | chi v5 のルータ組み立て。`/api/v1` の階層と 2.5 形式の 404 |
+| `server/internal/httpapi/router.go` | chi v5 のルータ組み立て。`/api/v1` の階層、`/healthcheck`、2.5 形式の 404 / 405 |
+| `server/internal/httpapi/health.go` | `GET /healthcheck`（`ApiDesign.md` 2.11） |
 | `server/internal/httpapi/middleware/requestid.go` | リクエストごとの ULID 発行 |
-| `server/cmd/pb/serve.go` | `pb serve`。slog 初期化・プール生成・待受・graceful shutdown |
-| 各 `*_test.go` | apierr 8件 / paging 7件 / router 4件 / middleware 2件 |
+| `server/internal/httpapi/middleware/accesslog.go` | 1リクエスト1行のアクセスログ（`Design.md` 10.1） |
+| `server/cmd/pb/serve.go` | `pb serve`。slog 初期化（stdout・レベル）・プール生成・待受・graceful shutdown |
+| 各 `*_test.go` | apierr 9件 / paging 7件 / router 5件 / health 4件 / middleware 7件 / config 3件追加 |
 | `server/cmd/pb/admin_create.go` | 直書き pgx → sqlc へ差し替え（変更） |
 | `server/cmd/pb/main.go` | `serve` の振り分けと usage（変更） |
+| `server/internal/config/config.go` | `PB_LOG_LEVEL` / `PB_HEALTH_SHOW_VERSION` を追加（変更） |
 | `Makefile` | `sqlc` / `run` を追加、`migrate` を `server/tools` から実行するよう変更 |
+| `deploy/base/env.example` `deploy/base/compose.yaml` | 追加した設定2件を反映（変更） |
 
 **`internal/domain/` は作っていない。** ビジネスルールを持つ型が現れる手順以降で作る。
 
@@ -228,7 +246,7 @@
 
 | 検証 | 結果 |
 |---|---|
-| `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト21件追加、全パッケージ ok） |
+| `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト35件追加、全パッケージ ok） |
 | `go test ./internal/httpapi/...` | 3パッケージとも ok |
 | `server/go.mod` の依存 | 実依存5件（pgx / argon2id / ulid / term / chi）＋ **indirect 8件**。goose 隔離前は 59件 |
 | go ディレクティブ | `server/go.mod` `server/tools/go.mod` とも **1.24 のまま** |
@@ -240,6 +258,13 @@
 | `make run` | `{"level":"INFO","msg":"サーバを起動した","bind":"127.0.0.1:8080","version":"1.3.3"}`。slog の JSON と `-X main.version` が効いている |
 | 未知パスの応答 | `GET /api/v1/nope`・`GET /`・`POST /` のいずれも `404` ＋ `{"error":{"code":"not_found","message":"対象が見つかりません","request_id":"01KZT…"}}`。`Content-Type: application/json; charset=utf-8` |
 | `request_id` | 26文字の ULID。リクエストごとに変わる。クライアントの `X-Request-Id` は採用しない |
+| `GET /healthcheck` | `200` ＋ `{"status":"OK"}`。`PB_HEALTH_SHOW_VERSION=true`（`make run`）では `{"status":"OK","version":"1.4.4"}` |
+| `POST /healthcheck` | `405` ＋ `{"error":{"code":"method_not_allowed",…}}` |
+| `GET /api/v1/healthcheck` | `404`。`/healthcheck` は `/api/v1` の外にある |
+| ログ出力先 | **stdout のみ**。サーバ起動から停止まで stderr は空 |
+| アクセスログ | `{"level":"INFO","msg":"request","request_id":"01KZTC…","method":"GET","path":"/api/v1/nope","status":404,"duration_ms":0.026,"bytes":116,"ip":"127.0.0.1"}`。クエリ文字列は出ない |
+| `/healthcheck` のログ抑止 | 既定レベルでは 200 が出ず、`POST`（405）は出る。`PB_LOG_LEVEL=debug` にすると 200 も `DEBUG` で出る |
+| 設定値の検証 | `PB_LOG_LEVEL=verbose` と `PB_HEALTH_SHOW_VERSION=yes` はいずれも起動時にエラーで停止する |
 | 接続プール | `pg_stat_activity` に `application_name=pb` / `usename=pb_app` で3接続（Max 10 以内） |
 | graceful shutdown | SIGINT で「停止信号を受け取った」→「サーバを停止した」の順にログが出て、プロセスが残らない |
 
