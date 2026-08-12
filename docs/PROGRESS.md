@@ -73,7 +73,7 @@
 | 2026-08-12 | 3 | sqlc をこのステップで導入するか判断が要った。`admin create` のSQLは INSERT 4本と SELECT 1本のみ | **手順4へ回すことをユーザーが選択。** 手順3は pgx で直接クエリを書き、`internal/store/` を作っていない。移植対象は5クエリで小さい |
 | 2026-08-12 | 3 | `deploy/dev/secrets/app_database_url` はコンテナ内から見た `db:5432` を指すため、ホストで動かす `pb admin create` から接続できない | `make admin-create` が `app_db_password` から `127.0.0.1:5432` 向けの接続文字列を recipe 内で組み立てる。既存の `migrate`（`db_password` から `pb_owner` 用を組み立て）と同じ方式で、新しい secret ファイルは増やしていない |
 | 2026-08-12 | 3 | `<KEY>` と `<KEY>_FILE` の両方が設定された場合の優先順位が `DbDesign.md` 3.2 にも `env.example` にも無い | **`*_FILE` を優先**とした。より秘密を漏らしにくい経路のため。`config.go` にコメントで明記。異論があれば 3.2 に優先順位を1行足したい |
-| 2026-08-12 | 3 | `app_user.email` は `citext`（大小区別なし）だが `user_identity.subject` は `text`（区別あり）。`Design.md` 6.2.1 のログインは ①email で `app_user` を引く → ②`(local, subject=email)` で `user_identity` を引く、という順序のため、格納時と入力時で大小が違うと②で外れる | 入力メールを**小文字に正規化**して両方に格納した。**手順5のログイン実装でも同じ正規化が要る**（`app_user.email` の値をそのまま subject 検索に使えば安全） |
+| 2026-08-12 | 3 | `app_user.email` は `citext`（比較時のみ大小を無視）だが `user_identity.subject` は `text`（区別あり）。`Design.md` 6.2.1 のログインは ①email で `app_user` を引く → ②`(local, subject=email)` で `user_identity` を引く、という順序のため、**①は通るのに②で外れる**という非対称が生まれる。実測で「①1件 / ②0件」を再現した | **入力された表記のまま両列に格納する**（RFC 5321 §2.4「ローカル部の大小は保存せよ」）。照合の大小無視は citext に委ねる。**手順5のログインは、利用者の入力ではなく①で引き当てた `app_user.email` の値で②を引くこと。** 実装当初は小文字へ正規化していたが、RFC の保存要求に反するうえ citext があれば不要なため取りやめた（下記の検討経緯を参照） |
 | 2026-08-12 | 3 | 7.5 のCLI例はパスワードを1回しか尋ねていない。だが唯一の管理者を打ち間違えると誰もログインできないインスタンスができる | **確認のため2回入力させた。** 文書の変更は提案しない（画面遷移ではなくCLIのUX詳細のため）。不要であれば削る |
 | 2026-08-12 | 3 | 管理者作成を `audit_log` に記録するかが 7.5 に無い | **記録していない。** 監査ログの共通基盤は手順4のスコープ。手順4で「CLI由来の操作をどう記録するか（`actor_id` は作成された本人か、それとも NULL か）」を決める必要がある |
 | 2026-08-12 | 3 | `Makefile` の `LDFLAGS` が `-X main.version` を指しているのに `main` パッケージが存在しなかった（`-X` は存在しないシンボルを黙って無視する） | `cmd/pb/main.go` に `var version = "dev"` と `pb version` サブコマンドを置いた。`go run -ldflags "-X main.version=1.2.2"` で `pb v1.2.2` が出ることを確認済み |
@@ -124,6 +124,33 @@
 
 1. **`Design.md` 3.1** — 採用技術表に `| 対話入力 | golang.org/x/term | pb admin create のパスワードを非表示で読む（DbDesign.md 7.5） |` を追加
 
+### メールアドレスの大小の扱い（手順3、2026-08-12 に検討・結論）
+
+**結論：`citext` を維持する。値は入力された表記のまま保存し、照合のみ大小を無視する。**
+
+`citext` を採用した理由は `DbDesign.md` 3.1 / 4.1 に「大文字小文字を区別しない一意制約」とあるが、
+**なぜそれが要るかは文書化されていない。** 手順3で下記を検討したため、結論と根拠を残す。
+
+| 論点 | 確認したこと |
+|---|---|
+| RFC 5321 §2.4 | ドメイン部は大小を区別しない。**ローカル部は区別する（MUST）**が、それを活用することは相互運用性を損なうとして discouraged。ローカル部の意味を解釈できるのは受信ホストのみ（§2.3.11） |
+| したがって `A@hoge.com` と `a@hoge.com` は | **仕様上「同じ」とは言えない。** 別ユーザーとして扱う設計も正当であり、その場合 `text` に揃えれば型の非対称も解消する |
+| `citext` の実際の挙動（実測） | `Tanaka@Example.com` は**そのまま格納される**。`TANAKA@EXAMPLE.COM` で検索すると引ける。`tanaka@example.com` の追加は UNIQUE 違反で拒否。※ このDBは `locale=C` のため**非ASCIIは同一視されない**（`Á` ≠ `á`） |
+| `subject` を `citext` にする案 | **採らない。** OIDC の `sub` / SAML の NameID を入れる列であり、それらは大小を区別する識別子のため |
+
+**判断の分かれ目は「失敗に気づけるか」に置いた。**
+
+- `citext`：本当に別人の2人がいた場合、2人目の登録が「既に登録されています」で**明示的に失敗する**。管理者がエイリアスを払い出せば回避できる
+- `text`：同一人物が別アカウントに分裂しても、ログインできなくても、`Design.md` 6.3 がエラーを
+  「メールアドレスまたはパスワードが正しくありません」に統一しているため**原因を特定できない**
+
+加えて、大小で人を識別する運用は口頭・名刺・他SaaS で表記を保てず、主要なメールサービス
+（Microsoft 365 / Google Workspace）ではそもそも大小違いのメールボックスを作れない。
+
+**`text` に変更する場合に必要なもの**（今回は採らなかったが、再検討時のために記録）：
+`DbDesign.md` 3.1 / 4.1 / 6.2 と `Design.md` 6.2.1 の修正案、マイグレーション 0011（前進のみ、
+`ALTER TABLE app_user ALTER COLUMN email TYPE text`）、`citext` 拡張を残すかの判断。
+
 ### 手順3で作成したファイル
 
 | ファイル | 内容 |
@@ -143,7 +170,10 @@
 | 検証 | 結果 |
 |---|---|
 | `go build ./...` / `go vet ./...` / `make test` | いずれも通る |
-| `make admin-create`（初回） | `actor` / `app_user` / `user_identity` / `local_credential` に各1行。`system_role='administrator'`、`kind='user'`、`provider_key='local'`、`subject` = 小文字化したメール |
+| `make admin-create`（初回） | `actor` / `app_user` / `user_identity` / `local_credential` に各1行。`system_role='administrator'`、`kind='user'`、`provider_key='local'` |
+| メールの大小の保存 | `Suzuki@Example.com` で作成 → `app_user.email` と `user_identity.subject` の**両方が入力どおりの表記**で、かつ完全一致 |
+| ログイン経路の再現 | 全小文字 `suzuki@example.com` で `app_user` を引き、その `email` の値で `subject` を引くと `Suzuki@Example.com` が取れる（`Design.md` 6.2.1 の①→②が通る） |
+| `ON DELETE CASCADE` | 検証用レコードを `DELETE FROM actor` で1行消すと、`app_user` / `user_identity` / `local_credential` も連動して消える |
 | `password_hash` | `$argon2id$v=19$m=65536,t=3,p=4$` で始まり全長97文字（ソルト16→22 + キー32→43）。PHC 文字列が欠けずに格納されている |
 | 既に管理者がいる状態での再実行 | 「アドミニストレータが既に 1 件存在します」と警告し `[y/N]` で確認。既定 no で中止し、行数が変わらない |
 | 重複メールでの作成 | `actor` の INSERT が成功した後に `app_user` で一意制約違反 → **全体がロールバックされ `actor` の残骸が残らない**（1/1/1/1 のまま） |

@@ -229,9 +229,15 @@ func (p *prompter) askEmail() (string, error) {
 			fmt.Fprintln(p.out, "  メールアドレスの形式が正しくありません。")
 			continue
 		}
-		// app_user.email は citext だが user_identity.subject は text のため、
-		// 双方で同じ値になるよう小文字へ正規化して格納する。
-		return strings.ToLower(addr.Address), nil
+		// RFC 5321 §2.4 は「ローカル部の大小を保存せよ」と定めるため、
+		// 入力された表記のまま格納する。大小を無視した照合と一意制約は
+		// app_user.email の citext が担う（DbDesign.md 3.1 / 4.1）。
+		//
+		// user_identity.subject は text（大小を区別する）。OIDC の sub や
+		// SAML の NameID を入れる列であり、こちらを citext にはできない。
+		// そのため手順5のログインは、利用者が入力した文字列ではなく
+		// citext が引き当てた app_user.email の値で subject を引くこと。
+		return addr.Address, nil
 	}
 }
 
