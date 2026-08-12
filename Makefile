@@ -34,7 +34,7 @@ GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(DB_PASSWORD_FILE))@127.0.0.1
 APP_DB_PASSWORD_FILE := $(CURDIR)/deploy/dev/secrets/app_db_password
 PB_DATABASE_URL_APP = postgres://pb_app:$$(cat $(APP_DB_PASSWORD_FILE))@127.0.0.1:5432/pb?sslmode=disable&application_name=pb
 
-.PHONY: up down psql migrate admin-create test version version-check bump-build bump-minor bump-major release-tag
+.PHONY: up down psql migrate sqlc run admin-create test version version-check bump-build bump-minor bump-major release-tag
 
 ## DB を起動する
 # TODO(手順13以降): deploy/Dockerfile 作成後、`up -d` に戻して app も起動対象にする
@@ -50,11 +50,28 @@ psql:
 	$(COMPOSE) exec db psql -U pb_owner -d pb
 
 ## マイグレーションを適用する（goose v3。前進のみ。DbDesign.md 5.3）
-# goose のバージョンは server/go.mod の tool ディレクティブで固定している。
+# goose と sqlc のバージョンは server/tools/go.mod の tool ディレクティブで固定している。
+# ツールを別モジュールに隔離しているのは、server/go.mod にツールの推移依存
+# （indirect 80件超）を持ち込まないため（DbDesign.md 5.1）。
 # @ を付けて実行するのは、パスワードを含むコマンドをエコーさせないため。
 migrate:
-	@cd server && GOOSE_DRIVER=postgres GOOSE_DBSTRING="$(GOOSE_DBSTRING_OWNER)" \
-		go tool goose -dir migrations up
+	@cd server/tools && GOOSE_DRIVER=postgres GOOSE_DBSTRING="$(GOOSE_DBSTRING_OWNER)" \
+		go tool goose -dir ../migrations up
+
+## sqlc でクエリからGoコードを生成する（Design.md 3.2）
+# 生成物 server/internal/store/gen/ はコミットする（Design.md 4.6）。
+# パスは server/sqlc.yaml からの相対で解決される。
+sqlc:
+	cd server/tools && go tool sqlc -f ../sqlc.yaml generate
+
+## APIサーバをローカル起動する
+# 待受を 127.0.0.1 に固定するのは、ホストで直接動かす場合の公開範囲を
+# Design.md 6.6 の既定（127.0.0.1 のみ）に合わせるため。
+# コンテナ内では 0.0.0.0:8080 で待ち受け、公開範囲は compose の ports で制御する。
+# @ を付けて実行するのは、パスワードを含むコマンドをエコーさせないため。
+run:
+	@cd server && PB_BIND=127.0.0.1:8080 PB_DATABASE_URL="$(PB_DATABASE_URL_APP)" \
+		go run -ldflags "-X main.version=$(VERSION)" ./cmd/pb serve
 
 ## 初期管理者を対話的に作成する（DbDesign.md 7.5）
 # シードに管理者を含めないため、初回起動時に一度だけ実行する。

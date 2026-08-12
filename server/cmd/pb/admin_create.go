@@ -15,12 +15,14 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/term"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
+	"github.com/boyaki-machine/project-backyard/server/internal/store"
+	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
 )
 
@@ -36,19 +38,17 @@ func adminCreate(ctx context.Context) error {
 		return err
 	}
 
-	conn, err := pgx.Connect(ctx, cfg.DatabaseURL)
+	pool, err := store.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
-		return fmt.Errorf("DBに接続できない: %w", err)
+		return err
 	}
-	defer conn.Close(context.WithoutCancel(ctx))
+	defer pool.Close()
 
+	q := gen.New(pool)
 	p := newPrompter(os.Stdin, os.Stdout)
 
 	// 既に管理者が存在する場合は警告を出して確認を求める（DbDesign.md 7.5）。
-	var admins int
-	err = conn.QueryRow(ctx,
-		`SELECT count(*) FROM app_user WHERE system_role = 'administrator'`,
-	).Scan(&admins)
+	admins, err := q.CountAdministrators(ctx)
 	if err != nil {
 		return fmt.Errorf("既存の管理者を確認できない: %w", err)
 	}
@@ -82,7 +82,7 @@ func adminCreate(ctx context.Context) error {
 		return err
 	}
 
-	actorID, err := insertAdmin(ctx, conn, displayName, email, passwordHash)
+	actorID, err := insertAdmin(ctx, pool, displayName, email, passwordHash)
 	if err != nil {
 		return err
 	}
@@ -92,42 +92,49 @@ func adminCreate(ctx context.Context) error {
 }
 
 // insertAdmin は4テーブルへの INSERT を1トランザクションで実行し、作成した actor.id を返す。
-func insertAdmin(ctx context.Context, conn *pgx.Conn, displayName, email, passwordHash string) (string, error) {
-	tx, err := conn.Begin(ctx)
+func insertAdmin(ctx context.Context, pool *pgxpool.Pool, displayName, email, passwordHash string) (string, error) {
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return "", fmt.Errorf("トランザクションを開始できない: %w", err)
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // Commit 済みなら no-op
 
+	q := gen.New(tx)
 	actorID := ulidgen.New()
 	identityID := ulidgen.New()
 
-	_, err = tx.Exec(ctx,
-		`INSERT INTO actor (id, kind, display_name) VALUES ($1, 'user', $2)`,
-		actorID, displayName)
+	err = q.CreateUserActor(ctx, gen.CreateUserActorParams{
+		ID:          actorID,
+		DisplayName: displayName,
+	})
 	if err != nil {
 		return "", wrapInsertErr("actor", err)
 	}
 
-	_, err = tx.Exec(ctx,
-		`INSERT INTO app_user (actor_id, email, system_role) VALUES ($1, $2, 'administrator')`,
-		actorID, email)
+	err = q.CreateAdministrator(ctx, gen.CreateAdministratorParams{
+		ActorID: actorID,
+		Email:   email,
+	})
 	if err != nil {
 		return "", wrapInsertErr("app_user", err)
 	}
 
-	// subject には正規化済みのメールを入れる（Design.md 6.2.1 のログイン経路が
-	// (provider_key='local', subject=email) で引くため）。
-	_, err = tx.Exec(ctx,
-		`INSERT INTO user_identity (id, user_id, provider_key, subject) VALUES ($1, $2, $3, $4)`,
-		identityID, actorID, localProviderKey, email)
+	// subject には app_user.email と同じ表記をそのまま入れる（Design.md 6.2.1 の
+	// ログイン経路が (provider_key='local', subject=email) で引くため）。
+	err = q.CreateUserIdentity(ctx, gen.CreateUserIdentityParams{
+		ID:          identityID,
+		UserID:      actorID,
+		ProviderKey: localProviderKey,
+		Subject:     email,
+	})
 	if err != nil {
 		return "", wrapInsertErr("user_identity", err)
 	}
 
-	_, err = tx.Exec(ctx,
-		`INSERT INTO local_credential (identity_id, password_hash) VALUES ($1, $2)`,
-		identityID, passwordHash)
+	err = q.CreateLocalCredential(ctx, gen.CreateLocalCredentialParams{
+		IdentityID:   identityID,
+		PasswordHash: passwordHash,
+	})
 	if err != nil {
 		return "", wrapInsertErr("local_credential", err)
 	}

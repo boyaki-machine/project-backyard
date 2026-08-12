@@ -209,8 +209,9 @@ ProjectBackyard/
 │   └── adr/                       ← 個別の設計判断の記録
 │
 ├── server/                        ← Go（APIサーバ + MCPサーバ + 静的配信）
-│   ├── go.mod
+│   ├── go.mod                     ← アプリの依存のみ
 │   ├── sqlc.yaml                  ← migrations/ をスキーマ源として参照
+│   ├── tools/go.mod               ← goose / sqlc のバージョン固定（DbDesign 5.1）
 │   ├── cmd/pb/main.go             ← serve / admin create などのサブコマンド
 │   ├── migrations/                ← goose。唯一のスキーマ定義（3.2）
 │   │   ├── 0001_extensions_and_functions.sql

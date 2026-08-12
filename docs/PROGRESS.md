@@ -9,7 +9,8 @@
 | 1 | deploy/base/compose.yaml と initdb（DBロール分離） | 完了 | 2026-08-11 | `make up` でDBが起動し、`pb_app` ロールが存在する |
 | 2 | server/migrations/ 0001〜0010 の作成と適用 | 完了 | 2026-08-11 | `make migrate` 後、テーブル23個と権限28件・ロール5件が存在する |
 | 3 | `pb admin create` による初期管理者作成 | 完了 | 2026-08-12 | 作成した管理者が `app_user` に `system_role='administrator'` で入る |
-| 4 | 共通基盤（エラー形式・ページネーション・認証ミドルウェア・監査ログ） | 未着手 | | `go test ./internal/httpapi/...` が通る |
+| 4a | 共通基盤その1（sqlc導入・エラー形式・ページネーション・request_id・serve骨格） | 完了 | 2026-08-12 | `go test ./internal/httpapi/...` が通り、`make run` 後に未知パスが 2.5 形式の 404 を返す |
+| 4b | 共通基盤その2（認証ミドルウェア・監査ログ） | 未着手 | | `go test ./internal/httpapi/...` が通る |
 | 5 | `POST /auth/login`・`/auth/logout`・`GET /me` | 未着手 | | `curl -i -X POST .../auth/login` で Set-Cookie が返り、`GET /me` が権限一覧を返す |
 | 6 | 認可ミドルウェア（`RequirePermission`） | 未着手 | | オペレータで `/admin/users` を叩くと 403 |
 | 7 | `GET/POST /projects`、`check-key` | 未着手 | | プロジェクトを作成し、一覧に件数と進捗が出る |
@@ -37,11 +38,12 @@
 
 | | 値 |
 |---|---|
-| 現在 | **v1.3.3** |
-| 内訳 | メジャー1 / マイナー3 / ビルド3 |
+| 現在 | **v1.4.4**（マージ前。マージ後に `make version-check` が通る） |
+| 内訳 | メジャー1 / マイナー4 / ビルド4 |
 | ビルド1 | 手順2（`feature/step-02-migrations`）のマージ |
 | ビルド2 | バージョン運用の導入（`feature/versioning`）のマージ |
 | ビルド3 | 手順3（`feature/step-03-admin-create`）のマージ |
+| ビルド4 | 手順4a（`feature/step-04a-http-foundation`）のマージ |
 
 規約は `Design.md` 11.1。**マージ前に feature ブランチ上で `make bump-minor`（`fix/*`・`docs/*` は `make bump-build`）を実行し、`VERSION` の更新を同じブランチに含める。**
 
@@ -79,6 +81,17 @@
 | 2026-08-12 | 3 | `Makefile` の `LDFLAGS` が `-X main.version` を指しているのに `main` パッケージが存在しなかった（`-X` は存在しないシンボルを黙って無視する） | `cmd/pb/main.go` に `var version = "dev"` と `pb version` サブコマンドを置いた。`go run -ldflags "-X main.version=1.2.2"` で `pb v1.2.2` が出ることを確認済み |
 | 2026-08-12 | 3 | `CLAUDE.md` に `make test` があるのに Makefile に未定義だった（手順3で初めてGoのテストが入る） | `test` ターゲットを追加した（`cd server && go test ./...`） |
 | 2026-08-12 | 3 | `go get` が `go.mod` の go ディレクティブを 1.24 → 1.25.0 に自動で引き上げた。`x/term` の最新（v0.45.0）が go 1.25 を要求するため。`Design.md` 3.1 の「Go 1.24 以上」と衝突する | goose と同じ扱いで、`golang.org/x/term` を **v0.33.0**、`golang.org/x/sys` を **v0.34.0** に固定し、go ディレクティブを 1.24 に戻した。`go build` / `go mod tidy` 後も 1.24 のまま保たれることを確認済み |
+| 2026-08-12 | 4a | 手順4の分量（sqlc導入＋HTTP規約2種＋DBを引くミドルウェア2種）が1セッションに多い | **4a / 4b に分割することをユーザーが選択。** 4a はDBを読まない層まで（本ステップ）、4b が認証ミドルウェアと監査ログ。`PROGRESS.md` の手順4行も 4a / 4b に分けた |
+| 2026-08-12 | 4a | **sqlc を `server/go.mod` の tool ディレクティブに足すと、indirect が 59→83 件に増え、さらに go ディレクティブが 1.25.0 へ引き上げられる**（`Design.md` 3.1 の「Go 1.24 以上」と衝突）。手順2で予告していた分岐点 | **goose と sqlc を `server/tools/go.mod` へ隔離することをユーザーが承認。** `server/go.mod` は実依存5件＋indirect 8件に戻った。**`DbDesign.md` 5.1 と `Design.md` 4.1 に反映済み**（2026-08-12） |
+| 2026-08-12 | 4a | `pb serve` の骨格を手順4に含めるか。`PROGRESS.md` の検証欄は `go test` のみだった | **含めることをユーザーが選択。** エンドポイントは1つも定義せず、ミドルウェア連鎖と 2.5 形式の 404 のみ。`Design.md` 4.1 に serve の記載があり `PB_BIND` も config に実装済みのため、新しい仕様の発明にはならない |
+| 2026-08-12 | 4a | CSRF（`ApiDesign.md` 2.4）とレート制限（2.9）を手順4に含めるか。`Design.md` 4.1 は両方を `middleware/` 配下に置いている | **含めないことをユーザーが選択。** どちらも手順5のログインで初めて必要になり（CSRF は `pb_csrf` の発行と対、レート制限は失敗回数と対）、手順5で実装するほうが検証しやすい |
+| 2026-08-12 | 4a | **`ApiDesign.md` 2.5.1 の表に 405（Method Not Allowed）の行が無い。** chi の既定は本文なしの 405 を返すため、`CLAUDE.md`「エラー応答は 2.5 の形式に統一する」に反する | **405 を返さず 404 `not_found` に寄せた。** 表に無いコードを実装側で発明しないことを優先した。**代案として 2.5.1 に `405 / method_not_allowed` の行を足す修正が考えられる**（ルート定義の誤りを切り分けやすくなる）。文書修正の提案として残す |
+| 2026-08-12 | 4a | **2.5.1 の13コードのうち、文言が設計文書にあるのは2件のみ**（`validation_failed` は 2.5、`invalid_credentials` は `Design.md` 6.3） | 残る11件の既定文言を実装側で定めた（`apierr.messages`）。方針は「アカウントの存在を漏らさない」「原因ではなく利用者の次の行動を書く」。**文言を設計文書側に持たせたい場合は 2.5.1 に message 列を足す修正を提案する** |
+| 2026-08-12 | 4a | **`ApiDesign.md` 2.6 が、不正な `page` / `per_page` / `sort` / `order` を受けたときの挙動を定めていない**（既定へ丸めるのか、エラーにするのか） | **422 `validation_failed` を返し、`details` に項目ごとの誤りを載せる。** 黙って別の値へ読み替えると呼び出し側の誤りが表に出ないため。`per_page` の「上限200」も丸めずエラーとした。**2.6 に1行足す修正を提案したい** |
+| 2026-08-12 | 4a | `request_id` をコンテキストへ出し入れする関数の置き場所。`middleware` に置くと `apierr` → `middleware` の依存が生まれ、`middleware` は 404 応答のため `apierr` を必要とするので循環する | **`apierr` パッケージに置いた。** `request_id` は 2.5 のエラー本体のフィールドであり、描画するのが `apierr` の責務のため。`Design.md` 4.1 のディレクトリ構成を変えずに済む（新しいパッケージを足していない） |
+| 2026-08-12 | 4a | HTTPサーバのタイムアウト値が設計文書のどこにも無い | 実装側の既定として ReadHeader 10s / Read 30s / Write 60s / Idle 120s / Shutdown 猶予 15s を置いた（`serve.go` に定数として明記）。**`Design.md` 10章「メトリクスとヘルスチェックエンドポイント」を扱う際に、あわせて文書化を提案する** |
+| 2026-08-12 | 4a | アクセスログ（1リクエスト1行）を出すかどうか。`Design.md` 10章は「アプリケーションログの形式」を**今後扱う**としている | **出していない。** 形式が未確定のまま作ると後で全面的に書き直しになるため。現状ログに出るのは、起動・停止と `apierr.Write` が出すエラー（5xx は Error、4xx は Debug）のみ |
+| 2026-08-12 | 4a | ヘルスチェックエンドポイントを作るか | **作っていない。** `Design.md` 10章が「今後扱う」としており、`ApiDesign.md` にも定義が無いため。疎通確認は未知パスへの 404 で足りる |
 
 ### 設計文書へ反映済みの修正（2026-08-11、承認のうえ適用）
 
@@ -181,19 +194,73 @@
 | 端末での非表示入力 | `expect` で疑似端末から実行し、表示名とメールは表示され、パスワード2行は表示されないことを確認 |
 | `pb version` | `go run -ldflags "-X main.version=1.2.2"` で `pb v1.2.2`、未指定で `pb vdev` |
 
+### 設計文書へ反映済みの修正（手順4a、2026-08-12、承認のうえ適用）
+
+1. **`DbDesign.md` 5.1** — 「goose の導入と実行」を「**goose・sqlc の導入と実行**」に改題し、
+   ツールを `server/tools/go.mod` へ隔離する方針、隔離する理由（推移依存と go ディレクティブ）、
+   ディレクトリ図、`migrate` / `sqlc` の recipe、生成物をコミットする旨、
+   `server/tools/go.mod` の go ディレクティブを 1.24 に保つ注意を記載
+2. **`Design.md` 4.1** — ディレクトリ図に `server/tools/go.mod` を追加し、
+   `server/go.mod` に「アプリの依存のみ」と注記
+
+### 手順4aで作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/tools/go.mod` `go.sum` | goose v3.26.0 / sqlc v1.30.0 を tool ディレクティブで固定する専用モジュール |
+| `server/sqlc.yaml` | pgx/v5 モード。`migrations/` をスキーマ源に、`internal/store/gen/` へ生成 |
+| `server/internal/store/db.go` | pgxpool（Min 2 / Max 10、`application_name=pb`。`DbDesign.md` 3.5） |
+| `server/internal/store/queries/user.sql` | 手順3の5クエリ（COUNT 1・INSERT 4）を sqlc へ移植 |
+| `server/internal/store/gen/*.go` | sqlc 生成物4ファイル（`db.go` / `models.go` / `querier.go` / `user.sql.go`） |
+| `server/internal/httpapi/apierr/apierr.go` | `ApiDesign.md` 2.5 のエラー形式、2.5.1 の13コードとステータス対応、`request_id` のコンテキスト受け渡し |
+| `server/internal/httpapi/paging.go` | 2.6 のパラメータ解析（`ParsePage`）、一覧エンベロープ（`List[T]`）、`WriteJSON` |
+| `server/internal/httpapi/router.go` | chi v5 のルータ組み立て。`/api/v1` の階層と 2.5 形式の 404 |
+| `server/internal/httpapi/middleware/requestid.go` | リクエストごとの ULID 発行 |
+| `server/cmd/pb/serve.go` | `pb serve`。slog 初期化・プール生成・待受・graceful shutdown |
+| 各 `*_test.go` | apierr 8件 / paging 7件 / router 4件 / middleware 2件 |
+| `server/cmd/pb/admin_create.go` | 直書き pgx → sqlc へ差し替え（変更） |
+| `server/cmd/pb/main.go` | `serve` の振り分けと usage（変更） |
+| `Makefile` | `sqlc` / `run` を追加、`migrate` を `server/tools` から実行するよう変更 |
+
+**`internal/domain/` は作っていない。** ビジネスルールを持つ型が現れる手順以降で作る。
+
+### 手順4aの検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト21件追加、全パッケージ ok） |
+| `go test ./internal/httpapi/...` | 3パッケージとも ok |
+| `server/go.mod` の依存 | 実依存5件（pgx / argon2id / ulid / term / chi）＋ **indirect 8件**。goose 隔離前は 59件 |
+| go ディレクティブ | `server/go.mod` `server/tools/go.mod` とも **1.24 のまま** |
+| `make migrate`（新しい実行位置） | `no migrations to run. current version: 10`。`server/tools` からの `-dir ../migrations` が効いている |
+| `make sqlc` の再現性 | 再実行しても `internal/store/gen/` に差分が出ない |
+| `make admin-create`（sqlc 移植後） | 4テーブルに各1行。`kind='user'` / `system_role='administrator'` / `provider_key='local'`、`password_hash` が `$argon2id$v=19$m=65536,t=3,p=4` |
+| メールの大小の保存 | `SqlcTest@Example.com` が `app_user.email` と `user_identity.subject` の両方に入力どおりの表記で入る（手順3から不変） |
+| 重複メールでのロールバック | `sqlctest@example.com`（小文字）で一意制約違反 → 全体がロールバックし `actor` の残骸が残らない。citext の大小無視も維持 |
+| `make run` | `{"level":"INFO","msg":"サーバを起動した","bind":"127.0.0.1:8080","version":"1.3.3"}`。slog の JSON と `-X main.version` が効いている |
+| 未知パスの応答 | `GET /api/v1/nope`・`GET /`・`POST /` のいずれも `404` ＋ `{"error":{"code":"not_found","message":"対象が見つかりません","request_id":"01KZT…"}}`。`Content-Type: application/json; charset=utf-8` |
+| `request_id` | 26文字の ULID。リクエストごとに変わる。クライアントの `X-Request-Id` は採用しない |
+| 接続プール | `pg_stat_activity` に `application_name=pb` / `usename=pb_app` で3接続（Max 10 以内） |
+| graceful shutdown | SIGINT で「停止信号を受け取った」→「サーバを停止した」の順にログが出て、プロセスが残らない |
+
 ## 環境メモ
 
 実際に動かして分かったこと（バージョンの相性、ハマった点、回避策）を追記する。
 ここに書いた内容は、後から `CLAUDE.md` や設計文書へ昇格させることを検討する。
 
-- Go の直接依存（手順3時点）: `jackc/pgx/v5 v5.7.5` / `oklog/ulid/v2 v2.1.2` / `alexedwards/argon2id v1.0.0` / `golang.org/x/term v0.33.0`
+- Go の直接依存（手順4a時点）: `jackc/pgx/v5 v5.7.5` / `oklog/ulid/v2 v2.1.2` / `alexedwards/argon2id v1.0.0` / `golang.org/x/term v0.33.0` / `go-chi/chi/v5 v5.3.1`
   - **`x/term` と `x/sys` はバージョンを上げないこと。** 最新版は go 1.25 を要求し、`go get` が go ディレクティブを勝手に 1.25.0 へ引き上げる（`Design.md` 3.1 と衝突）。上げる際は 3.1 の最低バージョンとセットで見直す
   - `go get` 後は `head -3 server/go.mod` で go ディレクティブが `1.24` のままか確認する
 - **パスワード入力のエコー抑止には競合窓がある。** プロンプトを出してから `term.ReadPassword` が echo を切るまでの数マイクロ秒に文字が届くと、その分だけ端末に表示される。`expect` から遅延なしで送ると再現するが、人間の入力では起こらない（`sudo` や `ssh` も同じ挙動）
   - 端末ありの検証は `expect` に `sleep 0.4` を入れて行う。`printf ... | script -q /dev/null` は stdin を即座に閉じるため `EOF` になり検証に使えない
-- goose のバージョン: **v3.26.0**（`server/go.mod` の tool ディレクティブで固定）
+- goose のバージョン: **v3.26.0**（手順4a から `server/tools/go.mod` の tool ディレクティブで固定）
   - v3.27.3 以降は `go 1.25.7` を要求し、`Design.md` 3.1 の「Go 1.24 以上」と衝突するため上げていない
-- （記入例）sqlc のバージョン: v1.x
+- sqlc のバージョン: **v1.30.0**（`server/tools/go.mod`）
+  - v1.31.1 は `go 1.26.0` を要求するため上げていない。v1.30.0 自体は `go 1.23.0` 要求
+  - **`go get -tool` は実行順で結果が変わる。** `tools/go.mod` に sqlc → goose の順で入れると go ディレクティブが 1.24 のまま保たれるが、goose → sqlc の順だと `x/*` が最新へ上がって 1.25.0 に書き換えられる。ツールを足したら必ず `head -3 server/tools/go.mod` を見る
+  - 初回の `go tool sqlc` はビルドに20秒ほどかかる（2回目以降はキャッシュ）。cgo は不要だった
+  - `citext` は sqlc が既定の対応を持たないため、`sqlc.yaml` の `overrides` で `string` に写している。`inet` は `*netip.Addr`、NULL 許容列は `pgtype.*` になる
+- **ツールは `server/tools/go.mod` に隔離してある。** `make migrate` / `make sqlc` は `cd server/tools` してから `go tool` を呼ぶ。`server/go.mod` にツールを足さないこと（indirect が80件超に膨らみ、go ディレクティブも 1.25 へ上がる）
 - ホストの Go: 1.26.5（Homebrew。手順2で導入）。`make migrate` / 手順3以降の `make run` / `make build` に必要
 - `go tool goose` は初回のみモジュールをダウンロードする（60秒程度）。2回目以降はキャッシュが効く
 - 手順1の検証環境: Docker 29.1.3 / Docker Compose v5.3.1 / macOS (darwin 25.6.0, arm64)

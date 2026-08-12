@@ -404,20 +404,32 @@ SQLファイルベースのマイグレーションツールとして **goose v3
 
 **PostgreSQL はDDLがトランザクショナル**であるため、各マイグレーションは全体が成功するか全体が巻き戻るかのいずれかになる。中途半端な適用状態が生まれない。
 
-### goose の導入と実行
+### goose・sqlc の導入と実行
 
-**goose のバージョンは `server/go.mod` の `tool` ディレクティブで固定する。** 開発者ごとに `go install` したバージョンがばらつくと、生成される `goose_db_version` の扱いや注釈の解釈が環境間でずれるため。
+**開発ツール（goose と sqlc）は `server/tools/go.mod` という専用モジュールに隔離し、そこの `tool` ディレクティブでバージョンを固定する。**
+
+バージョンを固定するのは、開発者ごとに `go install` したバージョンがばらつくと、`goose_db_version` の扱いや注釈の解釈、sqlc の生成結果が環境間でずれるため。
+
+**アプリ本体の `server/go.mod` に置かないのは、ツールの推移依存がアプリの依存として並んでしまうため。** goose は対応する全DBドライバ（clickhouse / mssql / ydb / sqlite / vertica 等）を、sqlc は構文解析器とプラグイン基盤を引き込む。両方を `server/go.mod` に入れると `// indirect` が80件を超え、さらに `go` ディレクティブが 1.25 へ引き上げられて `Design.md` 3.1 の「Go 1.24 以上」と衝突する。隔離すれば `server/go.mod` は実依存4件＋indirect 8件に収まり、**リリースビルドが読む依存グラフとツールの依存グラフが混ざらない。**
 
 ```
-# server/go.mod
-tool github.com/pressly/goose/v3/cmd/goose
+server/
+├── go.mod          ← アプリの依存のみ（pgx / argon2id / ulid / term / chi）
+├── sqlc.yaml       ← 生成設定。パスはこのファイルからの相対で解決される
+├── migrations/
+└── tools/
+    ├── go.mod      ← tool ( goose v3.26.0, sqlc v1.30.0 )
+    └── go.sum
 ```
 
 ```make
 # Makefile
 migrate:
-	@cd server && GOOSE_DRIVER=postgres GOOSE_DBSTRING="$(GOOSE_DBSTRING_OWNER)" \
-		go tool goose -dir migrations up
+	@cd server/tools && GOOSE_DRIVER=postgres GOOSE_DBSTRING="$(GOOSE_DBSTRING_OWNER)" \
+		go tool goose -dir ../migrations up
+
+sqlc:
+	cd server/tools && go tool sqlc -f ../sqlc.yaml generate
 ```
 
 | 項目 | 内容 |
@@ -425,6 +437,9 @@ migrate:
 | 接続ロール | **`pb_owner`**。DDL を実行するため（3.4）。`pb_app` では実行できない |
 | 接続文字列 | `deploy/dev/secrets/db_password` を Makefile の recipe 内で読んで組み立てる。**Makefile にも `ps` の argv にも平文を残さない**ため、レシピは `@` 付きで実行する |
 | 権限の伝播 | 3.4 の `ALTER DEFAULT PRIVILEGES FOR ROLE pb_owner` により、goose が作ったテーブルにも `pb_app` の DML 権限が自動で付く。マイグレーション後に `GRANT` を流す必要はない |
+| 生成物 | `server/internal/store/gen/` は**コミットする**（`Design.md` 4.6）。sqlc を導入していない環境でもビルドが通る状態を保つ |
+
+**`server/tools/go.mod` の `go` ディレクティブは 1.24 に保つ。** `go get -tool` は依存を最新へ引き上げる際にこの値も書き換えることがあり、そうなると Go 1.24 の環境で `make migrate` が動かなくなる。ツールを追加・更新したら `head -3 server/tools/go.mod` で確認する。
 
 **各ファイルの冒頭に `-- +goose Up` を置く。** `down` は書かない（5.3）。`set_updated_at()` のように本体に `;` を含む定義は、goose のパーサがステートメント境界を誤らないよう `-- +goose StatementBegin` / `-- +goose StatementEnd` で囲む。
 
