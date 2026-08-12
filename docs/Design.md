@@ -132,6 +132,7 @@ MCP サーバ、AI機能、ガント描画は Phase 1 では実装しない（�
 | クエリ | **sqlc**（pgx/v5 モード） | SQLを書くとGoの型付き関数が生成される。設計原則2と一致 |
 | マイグレーション | **goose v3** | SQLファイルベース。アドバイザリロック対応（`DbDesign.md` 5.3） |
 | パスワード | `golang.org/x/crypto/argon2` | PHC文字列の入出力は `alexedwards/argon2id` を利用 |
+| 対話入力 | `golang.org/x/term` | `pb admin create` のパスワードを非表示で読む（`DbDesign.md` 7.5） |
 | ID生成 | `oklog/ulid/v2` | ULID（`DbDesign.md` 4.2） |
 | ログ | **`log/slog`**（標準ライブラリ、JSONハンドラ） | 外部ライブラリを増やさない |
 | 設定 | 環境変数＋`*_FILE` 展開（自前、数十行） | `DbDesign.md` 3.2 |

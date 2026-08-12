@@ -28,7 +28,13 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 DB_PASSWORD_FILE := $(CURDIR)/deploy/dev/secrets/db_password
 GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(DB_PASSWORD_FILE))@127.0.0.1:5432/pb?sslmode=disable
 
-.PHONY: up down psql migrate version version-check bump-build bump-minor bump-major release-tag
+# アプリ（および pb admin create）は実行時ロール pb_app で接続する（DbDesign.md 3.4）。
+# deploy/dev/secrets/app_database_url はコンテナ内から見た db:5432 を指すため、
+# ホストで動かすターゲットでは app_db_password から 127.0.0.1 向けに組み立てる。
+APP_DB_PASSWORD_FILE := $(CURDIR)/deploy/dev/secrets/app_db_password
+PB_DATABASE_URL_APP = postgres://pb_app:$$(cat $(APP_DB_PASSWORD_FILE))@127.0.0.1:5432/pb?sslmode=disable&application_name=pb
+
+.PHONY: up down psql migrate admin-create test version version-check bump-build bump-minor bump-major release-tag
 
 ## DB を起動する
 # TODO(手順13以降): deploy/Dockerfile 作成後、`up -d` に戻して app も起動対象にする
@@ -49,6 +55,16 @@ psql:
 migrate:
 	@cd server && GOOSE_DRIVER=postgres GOOSE_DBSTRING="$(GOOSE_DBSTRING_OWNER)" \
 		go tool goose -dir migrations up
+
+## 初期管理者を対話的に作成する（DbDesign.md 7.5）
+# シードに管理者を含めないため、初回起動時に一度だけ実行する。
+# @ を付けて実行するのは、パスワードを含むコマンドをエコーさせないため。
+admin-create:
+	@cd server && PB_DATABASE_URL="$(PB_DATABASE_URL_APP)" go run ./cmd/pb admin create
+
+## テストを実行する
+test:
+	@cd server && go test ./...
 
 # ── バージョン操作（Design.md 11.1）────────────────────────────
 
