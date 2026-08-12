@@ -122,6 +122,7 @@ services:
       PGTZ: UTC
     secrets:
       - db_password
+      - app_db_password              # 3.4 の initdb がロール作成時に読む
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d:ro       # 3.4 のロール作成
@@ -145,7 +146,9 @@ services:
 
   app:
     image: project-backyard:dev
-    build: .
+    build:
+      context: ../..                 # リポジトリルート（client/ と server/ を含む）
+      dockerfile: deploy/Dockerfile  # `Design.md` 4.1
     restart: unless-stopped
     depends_on:
       db:
@@ -166,6 +169,8 @@ volumes:
 secrets:
   db_password:
     file: ../dev/secrets/db_password
+  app_db_password:
+    file: ../dev/secrets/app_db_password
   app_database_url:
     file: ../dev/secrets/app_database_url
 ```
@@ -177,12 +182,23 @@ secrets:
 - パスワードは環境変数に直接書かず `*_FILE` で渡す。**`docker inspect` や `ps` で見えないようにするため**
 - `deploy/<env>/secrets/` は `.gitignore` に含める（`.example` のみコミット）
 - `healthcheck` + `depends_on: condition: service_healthy` により、DB起動前のマイグレーション失敗を防ぐ
+- **`build.context` はリポジトリルートを指す。** compose ファイルの位置（`deploy/base/`）ではない。`deploy/Dockerfile` は `client/` と `server/` の双方をマルチステージでビルドするため、両方を含むルートを渡す必要がある（`Design.md` 4.1、4.5）
 
-`deploy/dev/secrets/app_database_url` の内容例：
+`deploy/dev/secrets/` に置くファイル：
+
+| ファイル | 内容 |
+|---|---|
+| `db_password` | `pb_owner`（スキーマ所有者）のパスワード |
+| `app_db_password` | `pb_app`（実行時ロール）のパスワード。3.4 の initdb が読む |
+| `app_database_url` | `pb_app` での接続文字列 |
+
+`app_database_url` の内容例：
 
 ```
-postgres://pb_app:<password>@db:5432/pb?sslmode=disable&application_name=pb
+postgres://pb_app:<app_db_password と同じ値>@db:5432/pb?sslmode=disable&application_name=pb
 ```
+
+**`app_db_password` と `app_database_url` のパスワードは同じ値にする。** 食い違っても起動時には失敗せず、アプリがDBへ接続する時点で初めて認証エラーになる。
 
 ## 3.3 Kubernetes（任意）
 
@@ -223,11 +239,22 @@ spec:
 
 **アプリケーションを DB オーナーで動かさない。** DDL権限を持つロールと、実行時に使うロールを分離する。
 
-```sql
--- deploy/base/initdb/01_roles.sql（コンテナ初回起動時に実行される）
+**パスワードをSQLにリテラルで書かない。** initdb を `.sql` ではなくシェルスクリプトにし、secret ファイルから読んで psql 変数として渡す。
+
+```bash
+#!/bin/bash
+# deploy/base/initdb/01_roles.sh（コンテナ初回起動時に一度だけ実行される）
+set -euo pipefail
+
+app_password="$(cat /run/secrets/app_db_password)"
+
+psql -v ON_ERROR_STOP=1 \
+     --username "$POSTGRES_USER" \
+     --dbname "$POSTGRES_DB" \
+     -v app_password="$app_password" <<'SQL'
 
 -- 実行時ロール：DMLのみ。DDLは実行できない
-CREATE ROLE pb_app LOGIN PASSWORD 'change-me-via-secret';
+CREATE ROLE pb_app LOGIN PASSWORD :'app_password';
 
 -- スキーマの使用権
 GRANT CONNECT ON DATABASE pb TO pb_app;
@@ -245,6 +272,11 @@ ALTER DEFAULT PRIVILEGES FOR ROLE pb_owner IN SCHEMA public
 
 -- public スキーマへの CREATE 権限を一般ロールから剥奪（PG15以降は既定で剥奪済み）
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+-- 実行時ロールの既定のステートメントタイムアウト（3.5）
+ALTER ROLE pb_app SET statement_timeout = '15s';
+
+SQL
 ```
 
 | ロール | 用途 | 権限 |
@@ -254,6 +286,12 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 
 **この分離により、実行時のSQLインジェクションが成立してもテーブルを落とせない。** 監査ログの改ざんについては `audit_log` の `DELETE` / `UPDATE` 権限も外すことを検討する（10章）。
 
+**運用上の注意**
+
+- **スクリプトには実行ビットを立てる。** `:ro` マウントでもホスト側のファイルモードがそのまま使われる。立っていない場合は entrypoint がシェルに読み込む（source する）挙動になる
+- **initdb が走るのは `pgdata` ボリュームが空の初回起動時のみ。** ロール定義を変えた場合、既存の環境には反映されない。開発端末では `docker compose -f deploy/base/compose.yaml down -v` でボリュームごと作り直す
+- ヒアドキュメントは `<<'SQL'` とクォートする。シェルによる変数展開を止め、パスワードは psql の `:'app_password'` 経由でのみ渡す
+
 ## 3.5 接続プール
 
 | 項目 | 値 |
@@ -261,7 +299,7 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 | アプリ側プール | 最小 2 / 最大 10（`sqlx::PgPoolOptions` 等） |
 | `max_connections`（DB側） | 50 |
 | `application_name` | `pb`。`pg_stat_activity` での識別に使う |
-| ステートメントタイムアウト | 実行時ロールに `SET statement_timeout = '15s'` を既定として付与 |
+| ステートメントタイムアウト | 実行時ロールに `SET statement_timeout = '15s'` を既定として付与（3.4 の initdb で `ALTER ROLE` する） |
 
 PgBouncer は Phase 1 では不要。単一プロセス・少人数利用のため。
 
