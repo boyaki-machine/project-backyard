@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -204,4 +205,48 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// retry_after_sec は応答本体と Retry-After ヘッダの両方に出る
+// （ApiDesign.md 3.1 / 2.9）。
+func TestWithRetryAfter(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	Write(rec, req, New(AccountLocked).WithRetryAfter(842))
+
+	if rec.Code != http.StatusLocked {
+		t.Fatalf("status = %d, want 423", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "842" {
+		t.Errorf("Retry-After = %q, want 842", got)
+	}
+
+	var body struct {
+		Error struct {
+			Code          string `json:"code"`
+			RetryAfterSec int    `json:"retry_after_sec"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("応答が JSON でない: %v", err)
+	}
+	if body.Error.RetryAfterSec != 842 {
+		t.Errorf("retry_after_sec = %d, want 842", body.Error.RetryAfterSec)
+	}
+}
+
+// 0以下は無視し、フィールドもヘッダも出さない。
+func TestWithRetryAfterIgnoresNonPositive(t *testing.T) {
+	for _, sec := range []int{0, -1} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+		Write(rec, req, New(RateLimited).WithRetryAfter(sec))
+
+		if got := rec.Header().Get("Retry-After"); got != "" {
+			t.Errorf("sec=%d: Retry-After = %q, want 空", sec, got)
+		}
+		if strings.Contains(rec.Body.String(), "retry_after_sec") {
+			t.Errorf("sec=%d: retry_after_sec が出ている: %s", sec, rec.Body.String())
+		}
+	}
 }

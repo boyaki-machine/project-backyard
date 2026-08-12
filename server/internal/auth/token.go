@@ -49,6 +49,14 @@ func NewToken(prefix string) (string, error) {
 	return prefix + base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// NewCSRFToken は CSRF トークンを生成する（ApiDesign.md 2.4）。
+//
+// 接頭辞を付けないのは、DB にも保存せず「Cookie とヘッダの値が一致するか」
+// だけを見る値であり、漏れた文字列から種別を判別する意味がないためである。
+func NewCSRFToken() (string, error) {
+	return NewToken("")
+}
+
 // HashToken は平文トークンを SHA-256 の小文字16進（64文字）にする。
 //
 // access_token.token_hash に入れる値であり、**この関数の出力だけが DB に載る**。

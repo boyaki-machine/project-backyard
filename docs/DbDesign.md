@@ -159,6 +159,7 @@ services:
       PB_LOG_FORMAT: json            # 標準出力へ構造化JSON（`Design.md` 10.1）
       PB_LOG_LEVEL: info
       PB_HEALTH_SHOW_VERSION: "false" # `ApiDesign.md` 2.11
+      PB_COOKIE_SECURE: "false"       # HTTPS 提供時は true（`Design.md` 6.2.1）
       TZ: UTC
     secrets:
       - app_database_url

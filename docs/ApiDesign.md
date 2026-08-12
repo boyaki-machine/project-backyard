@@ -129,6 +129,23 @@ Header:  X-PB-CSRF: <同じ値>
 - `message` は**そのまま画面に出せる日本語**とする。フロントで文言を組み立てない
 - `details` はフィールド単位のエラー。フォームの各入力欄に紐づける
 - `request_id` は `audit_log.request_id`（`DbDesign.md` 6.8）および構造化ログ（`Design.md` 10.1）と突き合わせられる
+- `retry_after_sec`（整数、任意）は再試行までの秒数。`account_locked`（3.1）と `rate_limited`（2.9）で返す
+
+```json
+{
+  "error": {
+    "code": "account_locked",
+    "message": "ログインの失敗が続いたため、アカウントを一時的にロックしました。しばらくしてからやり直してください",
+    "retry_after_sec": 842,
+    "request_id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S"
+  }
+}
+```
+
+**再試行までの秒数を `details` ではなく本体の任意フィールドに置く。** `details` は
+`{field, code, message}` の配列であり、特定の入力欄に紐づかない数値を載せる場所がない。
+フロントが「あと N 分」を自前で組み立てられるよう、文言ではなく数値のまま返す。
+同じ値を `Retry-After` ヘッダ（2.9）にも入れる。
 
 ### 2.5.1 HTTPステータスとエラーコード
 
@@ -294,16 +311,22 @@ GET /healthcheck
 
 ```
 Set-Cookie: pb_session=pb_sess_...; HttpOnly; SameSite=Lax; Path=/; Max-Age=1209600
-Set-Cookie: pb_csrf=...; SameSite=Lax; Path=/
+Set-Cookie: pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
 ```
 
 **ログイン応答に `GET /me` と同じ内容を含める。** ログイン直後に必ず権限が必要になるため、往復を1回減らす（設計方針3）。
 
+**2つの Cookie の `Max-Age` は揃える。** `pb_csrf` をセッションCookie（`Max-Age` なし）に
+すると、ブラウザを閉じた時点で `pb_csrf` だけが消え、14日残る `pb_session` に対して
+CSRF トークンが無い状態になる。以後すべての状態変更系が `403 csrf_failed`（2.4）になる。
+
 | 状況 | 応答 |
 |---|---|
+| 入力の形式誤り（メール未入力・形式不正など） | `422 validation_failed`（`details` に項目ごとの誤り） |
 | 認証失敗 | `401 invalid_credentials`「メールアドレスまたはパスワードが正しくありません」 |
 | アカウント無効 | 同上（**存在を漏らさないため区別しない**） |
-| ロック中 | `423 account_locked`（`retry_after_sec` を `details` に含める） |
+| ロック中 | `423 account_locked`（`error.retry_after_sec` と `Retry-After` ヘッダに残り秒数。2.5） |
+| 失敗が閾値に達した回 | 同上。**その要求からロック中として扱う**（`Design.md` 6.3 の「5回連続で15分ロック」を満たした時点で `locked_until` が入るため） |
 | 要パスワード変更 | `200` だが `must_change_password: true`。フロントは変更画面へ誘導する |
 
 `Design.md` 6.2.1 のフロー（ダミーハッシュ検証によるタイミング攻撃対策、成功時の再ハッシュ）に従う。

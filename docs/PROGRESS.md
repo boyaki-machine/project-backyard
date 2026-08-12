@@ -11,7 +11,8 @@
 | 3 | `pb admin create` による初期管理者作成 | 完了 | 2026-08-12 | 作成した管理者が `app_user` に `system_role='administrator'` で入る |
 | 4a | 共通基盤その1（sqlc導入・エラー形式・ページネーション・request_id・アクセスログ・ヘルスチェック・serve骨格） | 完了 | 2026-08-12 | `go test ./internal/httpapi/...` が通り、`make run` 後に `/healthcheck` が `{"status":"OK"}`、未知パスが 2.5 形式の 404 を返す |
 | 4b | 共通基盤その2（認証ミドルウェア・監査ログ） | 完了 | 2026-08-12 | `go test ./internal/httpapi/...` が通る。`PB_TEST_DATABASE_URL` を与えると実DBに対する認証の結合テストも通る |
-| 5 | `POST /auth/login`・`/auth/logout`・`GET /me` | 未着手 | | `curl -i -X POST .../auth/login` で Set-Cookie が返り、`GET /me` が権限一覧を返す |
+| 5a | `POST /auth/login`・`/auth/logout`・`GET /me`・実効権限の計算 | 完了 | 2026-08-12 | `curl -i -X POST .../auth/login` で Set-Cookie が2種返り、`GET /me` が権限28件を返す。`PB_TEST_DATABASE_URL` を与えると実DBに対する結合テストも通る |
+| 5b | CSRF ミドルウェア（2.4）・レート制限（2.9） | 未着手 | | Cookie 認証の POST に `X-PB-CSRF` が無いと 403、ログインを1分に11回叩くと 429 |
 | 6 | 認可ミドルウェア（`RequirePermission`） | 未着手 | | オペレータで `/admin/users` を叩くと 403 |
 | 7 | `GET/POST /projects`、`check-key` | 未着手 | | プロジェクトを作成し、一覧に件数と進捗が出る |
 | 8 | `GET/PATCH /projects/:key`、archive | 未着手 | | `If-Match` 不一致で 409 |
@@ -45,6 +46,10 @@
 | ビルド2 | バージョン運用の導入（`feature/versioning`）のマージ |
 | ビルド3 | 手順3（`feature/step-03-admin-create`）のマージ |
 | ビルド4 | 手順4a・4b（`feature/step-04a-http-foundation`）のマージ |
+
+手順 5a と 5b も**同じブランチ（`feature/step-05-auth-session`）に載せて1回のマージにする**
+（ユーザーの選択、2026-08-12）。`make bump-minor` は 5b を終えてマージする直前に実行する。
+5a の時点では `VERSION` を触っていない。
 
 手順 4a と 4b は**同じブランチに載せて1回のマージにする**（ユーザーの選択、2026-08-12）。
 4b は 4a の成果物（`apierr` / `middleware` / `store/gen` / `router`）の上に積むため、
@@ -117,6 +122,22 @@
 | 2026-08-12 | 4b | フェイクの `gen.Querier` でテストすると `queries/auth.sql` の SQL が一度も実行されない（列名・JOIN の向き・`last_used_at` の間引き条件が未検証のまま残る） | **`PB_TEST_DATABASE_URL` があるときだけ走る結合テストを追加した**（`internal/httpapi/auth_integration_test.go`）。未設定ならスキップするため `make test` は DB 無しでも通る。**DBを使うテストの作法として文書化するかは要判断**（現状 `Design.md` に記述が無い） |
 | 2026-08-12 | 4b | `audit_log.ip` とアクセスログの `ip` を同じ値にする規約（`Design.md` 10.1）に対し、実装が2か所に分かれていた | `audit.ClientIP` に一本化し、`middleware.clientIP` はそれを呼ぶだけにした（スコープ外の変更だが、規約が求める同一性を保つために必要）。あわせて IPv4-mapped IPv6（`::ffff:127.0.0.1`）を IPv4 に畳むようにした。`inet` 列に同じ相手が2通りで入るのを避けるため |
 | 2026-08-12 | 4b | 実効権限（`Design.md` 6.4.1）を `Principal` に持たせるか | **持たせない。** 権限の計算とセッションへのキャッシュ（6.4.5）は手順6の `RequirePermission` のスコープ。`Principal` が持つのはその入力になる素材（`system_role` / `scopes` / `project_id`）まで |
+| 2026-08-12 | 5a | 手順5の分量（login / logout / me ＋ CSRF ＋ レート制限）が1セッションに多い | **5a / 5b に分割することをユーザーが選択。** 5a は認証コア（本ステップ）、5b が CSRF 検証とレート制限。`pb_csrf` の**発行**は 5a（3.1 の Set-Cookie に含まれるため）、**検証**は 5b。`PROGRESS.md` の手順5行も 5a / 5b に分けた。1ブランチ・1マージは 4a/4b と同じ |
+| 2026-08-12 | 5a | **`Design.md` 4.1 は `httpapi/v1/` を「エンドポイント実装」と定めるが、4a で作った `paging.go`（`WriteJSON`）が `httpapi` パッケージにあり、v1 から使うとパッケージ循環になる**（`httpapi` → `v1` → `httpapi`） | **`v1/` を作り `paging.go` `paging_test.go` を移すことをユーザーが承認。** ページネーション（2.6）と一覧エンベロープは `/api/v1` の規約であり v1 に属する。`/healthcheck` は 2.11 が「唯一 `/api/v1` の外」と定めるため、`health.go` は自前で3行の JSON 書き出しを持つ。**文書の変更は不要**（4.1 のとおりになった） |
+| 2026-08-12 | 5a | **`ApiDesign.md` 3.1 は 423 の `retry_after_sec` を「`details` に含める」とするが、2.5 の `details` は `{field, code, message}` の配列で数値を載せる場所が無い** | **2.5 のエラー本体に任意フィールド `retry_after_sec`（整数）を足すことをユーザーが承認。** あわせて 2.9 が定める `Retry-After` ヘッダにも同じ値を入れる。**`ApiDesign.md` 2.5 / 3.1 に反映済み** |
+| 2026-08-12 | 5a | **`ApiDesign.md` 3.1 の `pb_csrf` に `Max-Age` が無い。** そのままだとブラウザを閉じた時点で消え、14日残る `pb_session` に対して CSRF トークンだけが失われる（5b の検証が必ず失敗する） | **`pb_session` と同じ `Max-Age=1209600` を付けることをユーザーが承認。** **`ApiDesign.md` 3.1 に反映済み**（理由も併記） |
+| 2026-08-12 | 5a | ロックがかかった回（5回目の失敗）の応答を 401 と 423 のどちらにするか。`Design.md` 6.3 は「5回連続で15分ロック」、`ApiDesign.md` 3.1 は「ロック中 → 423」 | **その回から 423 にした。** `locked_until` を設定した時点で既にロック中であり、401 を返すと利用者は理由が分からないまま次で 423 に当たる。存在の露出は「6回目で 423」でも同じ（3.1 が 423 を別扱いする時点で織り込み済み）。**`ApiDesign.md` 3.1 の応答表に1行追記済み** |
+| 2026-08-12 | 5a | `locked_until` が過去になったときに `failed_attempts` をどう扱うか（文書に記載なし） | **照合前に 0 起点へ戻す。** 6.3 の「5回**連続**で」を満たすため。戻さないと、ロックが明けた直後の1回の失敗で再ロックが続く |
+| 2026-08-12 | 5a | `app_user.last_login_at` をログイン時に更新するか（`Design.md` 6.2.1 のフローに無い） | **更新する。** 列が存在し（`DbDesign.md` 6.2）、`ApiDesign.md` 6.1 の一覧が返す値のため、書かなければ永久に NULL になる。付随情報なので失敗しても認証は通し WARN を残す |
+| 2026-08-12 | 5a | **トークンスコープ（`Design.md` 6.5 の `ticket:read` 等）と権限キー（`ticket.view` 等）の対応表が設計文書に無い。** 6.4.1 は「実効権限 = ( ... ) ∩ スコープ」と定めるが、写像が未定義では計算できない | **権限キーとの完全一致で絞る（一致しない語彙は権限を与えない）。** スコープは「縮小のみ」であり、解釈できない語彙を通すと絞ったはずのトークンが広い権限で通る。Phase 1 のセッションは `scopes=[]`（絞り込みなし）なので実害はない。**語彙の対応表は Phase 2（エージェントトークン）で定義すること** |
+| 2026-08-12 | 5a | `Design.md` 6.4.5「ログインごとに実効権限を計算し、セッションにキャッシュする」のキャッシュ置き場が文書に無い（`access_token` に列も無い） | **キャッシュしていない。** ログインと `GET /me` のたびに DB から計算する（`role_permission` と `project_member` の2クエリ）。キャッシュを持つと 6.4.5 の「ロール変更時は当該ユーザーのキャッシュを無効化する」が要る。**必要になったら手順6の `RequirePermission` とセットで設計すること** |
+| 2026-08-12 | 5a | `Secure` 属性（`Design.md` 6.2.1 手順7「Secure(本番)」）の判定手段が文書に無い | **設定 `PB_COOKIE_SECURE`（既定 false）を追加した。** `r.TLS != nil` による自動判定は採らない。リバースプロキシで TLS を終端する構成ではアプリに平文で届き、「HTTPS なのに Secure が付かない」を招くため。`config.go`・`env.example`・`compose.yaml`・`DbDesign.md` 3.2 の4か所を揃えた |
+| 2026-08-12 | 5a | `access_token.client_info` に何を入れるか（`ApiDesign.md` 4.4 は「Chrome / macOS」と表示する） | **User-Agent をそのまま格納した。** 整形は `GET /me/sessions`（手順12）の役割。ログイン時に残さないと後から取れない |
+| 2026-08-12 | 5a | `GET /me` に必要な `locale` / `timezone` / `must_change_password` が `Principal` に無い | **`GetActorProfile` を足して `/me` の中で引く。** 認証の判定に要らない値をトークン検証の経路に足すと全リクエストで読むことになるため。`expires_at` だけは `Principal` に足した（認証ミドルウェアが既に読んでいる行にあり、追加のクエリが要らないため） |
+| 2026-08-12 | 5a | `GET /me` の `projects[]` にアーカイブ済みプロジェクトを含めるか（文書に記載なし） | **含める。** この一覧はフロントの権限判定に使うもので（`Design.md` 6.4.4）、表示用の絞り込みは `GET /projects`（手順7）の役割 |
+| 2026-08-12 | 5a | JSON 本文の読み取り上限が文書に無い | 実装側の安全弁として **1MiB** を置いた（`login.go` の `maxRequestBodyBytes`）。認証前に叩けるエンドポイントで無制限に読むと1本のリクエストでメモリを食い潰せるため。4a のHTTPタイムアウトと同じ扱い |
+| 2026-08-12 | 5a | `GET /auth/providers`（`ApiDesign.md` 3.3）を手順5に含めるか | **含めていない。** `Design.md` 11章 手順5は login / logout / me のみ。ログイン画面（手順14）の直前で足すのが自然 |
+| 2026-08-12 | 5a | 入力の形式誤り（メール未入力など）の応答が 3.1 の表に無い | **422 `validation_failed`＋`details`** とした（2.5.1 のとおり）。資格情報の誤り（401）と区別する。**`ApiDesign.md` 3.1 の応答表に1行追記済み** |
 
 ### 設計文書へ反映済みの修正（2026-08-11、承認のうえ適用）
 
@@ -339,6 +360,67 @@
 | 平文トークンの非保存 | `access_token.token_hash` は全件が64文字の16進で `pb_` 始まりが0件。サーバログにも平文が出ない |
 | `make run` | 起動・`/healthcheck` 200・未知パス 404・graceful shutdown が手順4a から不変。stderr は空のまま |
 | アクセスログの `ip` | `audit.ClientIP` へ一本化した後も `127.0.0.1`。`X-Forwarded-For` は採らない（テストで固定） |
+
+### 設計文書へ反映済みの修正（手順5a、2026-08-12、承認のうえ適用）
+
+1. **`ApiDesign.md` 2.5** — エラー本体の任意フィールド `retry_after_sec`（整数）を追加。
+   `account_locked` の応答例、`details` に置かない理由、`Retry-After` ヘッダにも同じ値を
+   入れる旨を記載
+2. **`ApiDesign.md` 3.1** — `pb_csrf` の Set-Cookie に `Max-Age=1209600` を追加し、
+   2つの Cookie の寿命を揃える理由を明記。応答表に「入力の形式誤り → 422」と
+   「失敗が閾値に達した回 → その要求から 423」の2行を追加。`retry_after_sec` の
+   記述を「`details` に含める」から「`error.retry_after_sec` と `Retry-After` ヘッダ」へ修正
+3. **`DbDesign.md` 3.2** — compose の `app` サービスに `PB_COOKIE_SECURE` を追加
+
+`Design.md` 4.1 のディレクトリ構成は**変更していない**。`httpapi/v1/` は 4.1 に
+既に書かれており、今回それに合わせて実装を置いた。
+
+### 手順5aで作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/httpapi/v1/routes.go` | `/api/v1` のルート定義（認証不要／認証必須の2群）と `Deps`・`handler` |
+| `server/internal/httpapi/v1/login.go` | `POST /auth/login`。`Design.md` 6.2.1 の8手順、ロック（6.3）、入力検証、監査記録 |
+| `server/internal/httpapi/v1/logout.go` | `POST /auth/logout`。失効・Cookie削除・監査記録 |
+| `server/internal/httpapi/v1/me.go` | `GET /me` と、3.1 / 4.1 で共通の応答組み立て（実効権限の計算を含む） |
+| `server/internal/httpapi/v1/session.go` | セッション発行、`pb_session` / `pb_csrf` の付与・削除 |
+| `server/internal/httpapi/v1/apitime.go` | 応答の日時を ISO8601 UTC・秒精度に固定する型（`ApiDesign.md` 2.2） |
+| `server/internal/auth/permissions.go` | 6.4.1 の式（`EffectivePermissions` / `HasPermission`） |
+| `server/internal/store/queries/authz.sql` | `ListRolePermissions`、`ListProjectMembershipsByActor` |
+| `server/internal/httpapi/v1/auth_integration_test.go` | 実DBに対するログイン〜ログアウトの結合テスト |
+| 各 `*_test.go` | v1 は 41件（login 22 / me 8 / logout 3 / paging 7 / 結合1）、auth に permissions 8件・password 5件、apierr 2件、config 1件を追加 |
+| `server/internal/httpapi/v1/paging.go` `paging_test.go` | 4a で `httpapi` に作ったものを**移動**（`package v1`。内容は変えていない） |
+| `server/internal/httpapi/router.go` | `v1.Mount` を呼ぶ形に変更。テスト用の `newRouter`（extra 注入）を削除（変更） |
+| `server/internal/httpapi/health.go` | `WriteJSON` 依存を外し自前で書き出す（変更） |
+| `server/internal/httpapi/apierr/apierr.go` | `RetryAfterSec` と `WithRetryAfter`、`Retry-After` ヘッダ（変更） |
+| `server/internal/auth/password.go` | `NeedsRehash` / `VerifyAgainstDummy` を追加（変更） |
+| `server/internal/auth/token.go` | `NewCSRFToken` を追加（変更） |
+| `server/internal/auth/principal.go` | `ExpiresAt` を追加（変更） |
+| `server/internal/httpapi/middleware/auth.go` | `Principal.ExpiresAt` を載せる（変更） |
+| `server/internal/store/queries/auth.sql` | ログイン用に7クエリを追加（変更） |
+| `server/internal/config/config.go` | `PB_COOKIE_SECURE` を追加（変更） |
+| `server/cmd/pb/serve.go` `deploy/base/env.example` `deploy/base/compose.yaml` | 設定1件を反映（変更） |
+
+**`internal/domain/` は引き続き作っていない。**
+
+### 手順5aの検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `gofmt -l` / `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト180件、8パッケージすべて ok） |
+| `make sqlc` の再現性 | 2回実行して `internal/store/gen/` のハッシュが一致 |
+| 結合テスト（実DB） | `TestLoginIntegration` / `TestAuthenticateIntegration` とも通る。`authz.sql` の JOIN と `user_identity.subject = app_user.email` が実際に引けている |
+| ログイン（大小の非対称） | `LoginTest@Example.com` で作成 → **小文字 `logintest@example.com` でログイン成功**。応答の `actor.email` は保存された表記のまま |
+| ログイン応答 | `Set-Cookie` 2種（`pb_session` は HttpOnly、`pb_csrf` は非 HttpOnly、どちらも `Max-Age=1209600` / `SameSite=Lax` / `Path=/`）。本体に `actor` / `permissions`（**28件**）/ `projects`（`[]`）/ `expires_at`（14日後） |
+| `GET /me` | ログイン応答と同一構造・同一内容。キー構成の一致をテストで固定 |
+| `POST /auth/logout` | `204` ＋ 2つの Cookie の削除指示。同じ Cookie での `GET /me` は `401 unauthenticated` |
+| ログイン失敗 | 1〜4回目が `401 invalid_credentials`、**5回目が `423 account_locked`**（`retry_after_sec: 900` ＋ `Retry-After: 900`）。以降は正しいパスワードでも `423` |
+| 未登録メール | `401 invalid_credentials`（ダミーハッシュ検証を通してから返す） |
+| 入力検証 | 空のメール・パスワードで `422 validation_failed` ＋ `details` 2件。壊れた JSON は `400`、`GET /auth/login` は `405` |
+| 監査ログ | `login.success`（`detail.provider_key=local`、`token_id` は発行したトークン）/ `logout` / `login.failure`（`reason` が `unknown_email` / `wrong_password` / `wrong_password_locked` / `locked`）がすべて `request_id` と `ip` 付きで残る |
+| 平文トークンの非保存 | `access_token.token_hash` は64文字の16進で `pb_` 始まりが0件。`token_prefix='pb_sess_'`、`client_info='curl/8.7.1'`、`scopes='[]'`、`expires_at` は非 NULL |
+| サーバログ | 平文トークンの出現0件。stderr は0バイトのまま |
+| `last_login_at` | ログインごとに更新される |
 
 ## 環境メモ
 

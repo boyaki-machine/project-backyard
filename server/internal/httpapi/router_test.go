@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/oklog/ulid/v2"
 
@@ -86,36 +86,45 @@ func TestContentType(t *testing.T) {
 // 認証必須グループに置いたルートは、資格情報が無ければハンドラへ届かず
 // 401 unauthenticated になる（Design.md 6.2.2）。
 //
-// 手順4b の時点でグループに属するルートは無いため、テスト側で1本足して
-// ミドルウェアがルータへ確かに繋がっていることを確かめる。
-func TestAuthenticatedGroupRejectsAnonymous(t *testing.T) {
-	var reached bool
-	r := newRouter(Deps{Queries: emptyQuerier{}}, func(auth chi.Router) {
-		auth.Get("/probe", func(w http.ResponseWriter, _ *http.Request) {
-			reached = true
-			w.WriteHeader(http.StatusNoContent)
-		})
-	})
+// v1.Mount が並べる実際のルートで確かめる。ここが 404 になるようなら
+// マウントの経路が切れている。
+func TestAuthenticatedRoutesRejectAnonymous(t *testing.T) {
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/me"},
+		{http.MethodPost, "/auth/logout"},
+	} {
+		rec := httptest.NewRecorder()
+		NewRouter(Deps{Queries: emptyQuerier{}}).
+			ServeHTTP(rec, httptest.NewRequest(route.method, BasePath+route.path, nil))
 
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: status = %d, want 401（body=%s）",
+				route.method, route.path, rec.Code, rec.Body.String())
+		}
+
+		var body errBody
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("応答が 2.5 の JSON 形式でない: %v (%s)", err, rec.Body.String())
+		}
+		if body.Error.Code != "unauthenticated" {
+			t.Errorf("%s: code = %q, want unauthenticated", route.path, body.Error.Code)
+		}
+		if body.Error.RequestID == "" {
+			t.Errorf("%s: request_id が空。ミドルウェアの順序が崩れている", route.path)
+		}
+	}
+}
+
+// ログインは認証必須グループの外にある（ApiDesign.md 3.1「必要権限：不要」）。
+// 資格情報なしで叩いて 401 になるようでは、誰もログインできない。
+func TestLoginIsOutsideAuthentication(t *testing.T) {
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, BasePath+"/probe", nil))
+	req := httptest.NewRequest(http.MethodPost, BasePath+"/auth/login",
+		strings.NewReader(`{"email":"","password":""}`))
+	NewRouter(Deps{Queries: emptyQuerier{}}).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401（body=%s）", rec.Code, rec.Body.String())
-	}
-	if reached {
-		t.Error("未認証のリクエストがハンドラへ到達した")
-	}
-
-	var body errBody
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("応答が 2.5 の JSON 形式でない: %v (%s)", err, rec.Body.String())
-	}
-	if body.Error.Code != "unauthenticated" {
-		t.Errorf("code = %q, want unauthenticated", body.Error.Code)
-	}
-	if body.Error.RequestID == "" {
-		t.Error("request_id が空。ミドルウェアの順序が崩れている")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422（認証を要求してはならない。body=%s）", rec.Code, rec.Body.String())
 	}
 }
 

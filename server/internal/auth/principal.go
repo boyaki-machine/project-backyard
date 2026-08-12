@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // アクター種別（DbDesign.md 6.2 actor.kind の CHECK 制約）。
@@ -75,6 +76,10 @@ type Principal struct {
 	Scopes []string
 	// ProjectID は access_token.project_id。空文字は全プロジェクト。
 	ProjectID string
+	// ExpiresAt は access_token.expires_at。nil は無期限（APIトークンは
+	// 期限が任意のため。ApiDesign.md 4.5）。GET /me が返す expires_at に
+	// なるため（4.1 は「3.1 と同一構造」）、認証の時点で載せておく。
+	ExpiresAt *time.Time
 	// Source は資格情報の送出経路。CSRF の要否判定に使う。
 	Source CredentialSource
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
+	v1 "github.com/boyaki-machine/project-backyard/server/internal/httpapi/v1"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
@@ -23,6 +24,10 @@ type Deps struct {
 	Version string
 	// HealthShowVersion が false なら version を返さない。既定は false。
 	HealthShowVersion bool
+
+	// CookieSecure は pb_session / pb_csrf に Secure を付けるか
+	// （PB_COOKIE_SECURE、Design.md 6.2.1 手順7）。
+	CookieSecure bool
 }
 
 // BasePath は API のベースパス（ApiDesign.md 2.1）。
@@ -30,20 +35,10 @@ const BasePath = "/api/v1"
 
 // NewRouter はルータを組み立てる。
 //
-// 権限は chi のミドルウェアとしてルート定義に宣言する規約のため、
-// エンドポイントは本関数の Route ブロックに並べる（Design.md 6.4.4）。
-// 手順4b の時点では /healthcheck 以外のエンドポイントを定義していない。
+// /api/v1 のエンドポイントは v1 パッケージが持つ（Design.md 4.1）。
+// 本関数が並べるのは、バージョンの外にある /healthcheck と、
+// 全リクエストに共通のミドルウェア連鎖・エラー形式だけである。
 func NewRouter(deps Deps) http.Handler {
-	return newRouter(deps, nil)
-}
-
-// newRouter は認証必須グループへ追加のルートを差し込めるようにした本体。
-//
-// extra は同一パッケージのテストが「グループに属するルートが実際に
-// Authenticate を通るか」を確かめるためだけに使う。手順5以降の実運用の
-// ルートは、テストからの注入ではなく下の Group ブロックに直接並べること
-// （routes を1か所に集めるのが Design.md 6.4.4 の狙いのため）。
-func newRouter(deps Deps, extra func(chi.Router)) http.Handler {
 	q := deps.Queries
 	if q == nil {
 		q = gen.New(deps.Pool)
@@ -67,22 +62,9 @@ func newRouter(deps Deps, extra func(chi.Router)) http.Handler {
 	r.Get(HealthPath, health(deps.Version, deps.HealthShowVersion))
 
 	r.Route(BasePath, func(r chi.Router) {
-		// ── 認証不要 ────────────────────────────────
-		// POST /auth/login、GET /auth/providers は手順5でここに置く
-		// （ApiDesign.md 3.1 / 3.3）。CSRF とレート制限も手順5で入る。
-
-		// ── 認証必須 ────────────────────────────────
-		// 以降のエンドポイントは Cookie か Bearer での認証を必須とする
-		// （Design.md 6.2.2）。認可（RequirePermission）は手順6で、
-		// ルートごとの宣言として個別に足す（Design.md 6.4.4）。
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.Authenticate(q))
-
-			// 手順5以降でエンドポイントを追加する。
-			// 現時点で所属するルートは無く、外形上の挙動は 404 のままである。
-			if extra != nil {
-				extra(r)
-			}
+		v1.Mount(r, v1.Deps{
+			Queries:      q,
+			CookieSecure: deps.CookieSecure,
 		})
 	})
 

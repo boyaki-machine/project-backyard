@@ -13,6 +13,11 @@ type Querier interface {
 	//
 	// 手順3で pb admin create が直接書いていたSQLを sqlc へ移したもの。
 	CountAdministrators(ctx context.Context) (int64, error)
+	// CreateAccessToken はセッション・APIトークン・エージェントトークンを発行する
+	// （DbDesign.md 6.2）。**平文は渡さない。** token_hash は SHA-256、
+	// token_prefix は一覧表示用の先頭8文字である。
+	//
+	CreateAccessToken(ctx context.Context, arg CreateAccessTokenParams) error
 	CreateAdministrator(ctx context.Context, arg CreateAdministratorParams) error
 	CreateLocalCredential(ctx context.Context, arg CreateLocalCredentialParams) error
 	CreateUserActor(ctx context.Context, arg CreateUserActorParams) error
@@ -29,11 +34,83 @@ type Querier interface {
 	// アクターが app_user の行を持たないため。
 	//
 	FindAccessTokenByHash(ctx context.Context, tokenHash string) (FindAccessTokenByHashRow, error)
+	// ── ローカル ID/PW ログイン（Design.md 6.2.1、手順5） ────────────────
+	// FindLocalLoginByEmail は Design.md 6.2.1 の手順2〜3を1文で行う。
+	//
+	//   2. app_user を email で検索（citext のため大文字小文字を区別しない）
+	//   3. user_identity を (provider_key='local', subject=email) で検索
+	//
+	// **subject は入力されたメールではなく、手順2で引き当てた app_user.email と
+	// 突き合わせる。** user_identity.subject は text（大小を区別する）であり、
+	// 利用者が入力した表記でそのまま引くと、手順2は通るのに手順3で外れる
+	// （PROGRESS.md「メールアドレスの大小の扱い」）。JOIN 条件に u.email を
+	// 使えば、比較の対象は常にDBに保存された表記そのものになる。
+	//
+	// **有効性（actor.is_active / locked_until）を WHERE で絞らない。**
+	// 絞ると行が取れず、ダミーハッシュ検証（下記）と応答時間が揃わなくなる。
+	// 判定は呼び出し側で行う。
+	//
+	FindLocalLoginByEmail(ctx context.Context, email string) (FindLocalLoginByEmailRow, error)
+	// GetActorProfile は GET /me（ApiDesign.md 4.1）が返す actor 部分を引く。
+	//
+	// 認証ミドルウェアが載せる Principal（Design.md 6.2.2）には locale / timezone /
+	// must_change_password が無い。認証の判定に要らない値をトークン検証の経路に
+	// 足すと、全リクエストで読むことになるためである。/me はこのクエリで補う。
+	//
+	// **すべて LEFT JOIN にする。** エージェント（Phase 2）は app_user を持たず、
+	// 将来の OIDC 専用ユーザーは local_credential を持たない。行が返らないことと
+	// 「そのアクターが存在しない」ことを取り違えないようにする。
+	//
+	GetActorProfile(ctx context.Context, actorID string) (GetActorProfileRow, error)
 	// 監査ログ（ApiDesign.md 2.10、DbDesign.md 6.8）。
 	//
 	// 読み出し（GET /admin/audit、auditlog.view）は手順11以降で足す。
 	// 手順4b では書き込みの共通基盤のみを用意する。
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error
+	// ListProjectMembershipsByActor は所属プロジェクトと、そこでの
+	// プロジェクトロール由来の権限キーを返す（ApiDesign.md 3.1 の projects[]）。
+	//
+	// **プロジェクトごとに複数行が返る**（権限の数だけ）。呼び出し側で畳む。
+	// role_permission を LEFT JOIN にしているのは、権限を1件も持たないロールが
+	// 割り当てられていても、プロジェクトの行自体は返すため。
+	//
+	// app_user ではなく actor で引くのは、エージェントもプロジェクトのメンバーに
+	// なれるため（DbDesign.md 6.3）。
+	//
+	// アーカイブ済みプロジェクトも返す。この一覧はフロントの権限判定に使うもので
+	// （Design.md 6.4.4）、表示用の絞り込みは GET /projects 側の役割である。
+	//
+	ListProjectMembershipsByActor(ctx context.Context, actorID string) ([]ListProjectMembershipsByActorRow, error)
+	// 認可（実効権限の材料）に関するクエリ（Design.md 6.4.1、DbDesign.md 6.3）。
+	//
+	// 権限は「コードのif文ではなくデータとして定義する」（Design.md 6.4.2）ため、
+	// 判定に使う権限キーは必ずこの2本でDBから取る。Go 側に権限の割り当てを
+	// 書き写さない。写すと DbDesign.md 7.2 / 7.3 のシードと二重管理になる。
+	// ListRolePermissions はロール1つに割り当てられた権限キーを返す。
+	//
+	// app_user.system_role（'operator' / 'administrator'）は role.key と同じ
+	// 語彙であるため、システムロールの権限もこのクエリで引ける（DbDesign.md 7.3）。
+	//
+	ListRolePermissions(ctx context.Context, roleKey string) ([]string, error)
+	// RecordLoginFailure は失敗回数とロック期限を書く（Design.md 6.2.1 手順5、6.3）。
+	// 閾値の判定はアプリ側で行い、その結果をそのまま反映する。
+	//
+	RecordLoginFailure(ctx context.Context, arg RecordLoginFailureParams) error
+	// RehashPassword はハッシュパラメータが旧世代のときに再ハッシュ結果を書く
+	// （Design.md 6.2.1 手順5）。
+	//
+	// **password_updated_at は変更しない。** パスワードそのものは変わっておらず、
+	// 「いつ利用者がパスワードを変えたか」の意味を壊さないため。
+	//
+	RehashPassword(ctx context.Context, arg RehashPasswordParams) error
+	// ResetLoginFailure はログイン成功時に失敗回数とロックを消す
+	// （Design.md 6.2.1 手順5 の「成功 → failed_attempts=0」）。
+	//
+	ResetLoginFailure(ctx context.Context, identityID string) error
+	// RevokeAccessToken は失効させる（ApiDesign.md 3.2 のログアウト）。
+	// 既に失効済みなら no-op で返り、revoked_at を上書きしない。
+	//
+	RevokeAccessToken(ctx context.Context, id string) error
 	// TouchAccessTokenLastUsed は last_used_at を更新する。
 	//
 	// **1分粒度で間引く**（Design.md 6.2.2）。リクエストのたびに UPDATE すると、
@@ -41,6 +118,13 @@ type Querier interface {
 	// 直近1分以内に更新済みなら WHERE が外れ、no-op で返る。
 	//
 	TouchAccessTokenLastUsed(ctx context.Context, id string) error
+	// TouchLastLoginAt はログイン成功日時を記録する。
+	//
+	// Design.md 6.2.1 のフローには現れないが、app_user.last_login_at 列が存在し
+	// （DbDesign.md 6.2）、ApiDesign.md 6.1 のユーザー一覧がこの値を返すため、
+	// ログイン時に書かなければ永久に NULL のままになる。
+	//
+	TouchLastLoginAt(ctx context.Context, actorID string) error
 }
 
 var _ Querier = (*Queries)(nil)

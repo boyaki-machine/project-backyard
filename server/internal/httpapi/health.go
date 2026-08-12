@@ -1,6 +1,13 @@
+// Package httpapi は REST API のルータと、/api/v1 の外にある
+// エンドポイントを持つ（ApiDesign.md 2章）。
+//
+// /api/v1 配下のエンドポイントは v1 パッケージにある（Design.md 4.1）。
 package httpapi
 
-import "net/http"
+import (
+	"encoding/json"
+	"net/http"
+)
 
 // HealthPath は唯一 /api/v1 の外に置くエンドポイント（ApiDesign.md 2.11）。
 // 監視・オーケストレータから叩くものであり、APIのバージョニングに従わせない。
@@ -23,6 +30,11 @@ func health(version string, showVersion bool) http.HandlerFunc {
 		body.Version = version
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		WriteJSON(w, http.StatusOK, body)
+		// v1.WriteJSON を使わないのは、/healthcheck が「唯一 /api/v1 の外に置く
+		// エンドポイント」（ApiDesign.md 2.11）であり、ルータを持つ本パッケージが
+		// v1 を import する向きを保つため（逆向きにすると循環する）。
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(body)
 	}
 }
