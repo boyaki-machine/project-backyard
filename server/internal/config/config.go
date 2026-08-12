@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -18,12 +19,22 @@ type Config struct {
 	Bind        string // PB_BIND        待受アドレス
 	DatabaseURL string // PB_DATABASE_URL 接続文字列（pb_app）
 	LogFormat   string // PB_LOG_FORMAT  log/slog の出力形式
+	LogLevel    string // PB_LOG_LEVEL   log/slog の最低レベル
+
+	// HealthShowVersion は PB_HEALTH_SHOW_VERSION。
+	// GET /healthcheck にバージョンを含めるか（ApiDesign.md 2.11）。
+	// 既定を false にするのは、未認証の呼び出し元への情報開示になるため。
+	HealthShowVersion bool
 }
 
 const (
 	defaultBind      = "0.0.0.0:8080"
 	defaultLogFormat = "json"
+	defaultLogLevel  = "info"
 )
+
+// logLevels は PB_LOG_LEVEL に指定できる値（Design.md 10.1）。
+var logLevels = map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 
 // Load は環境変数を読んで Config を組み立てる。
 // DatabaseURL は必須で、未設定ならエラーを返す。
@@ -52,7 +63,47 @@ func Load() (Config, error) {
 		logFormat = defaultLogFormat
 	}
 
-	return Config{Bind: bind, DatabaseURL: dbURL, LogFormat: logFormat}, nil
+	logLevel, err := lookup("PB_LOG_LEVEL")
+	if err != nil {
+		return Config{}, err
+	}
+	if logLevel == "" {
+		logLevel = defaultLogLevel
+	}
+	logLevel = strings.ToLower(logLevel)
+	if !logLevels[logLevel] {
+		return Config{}, fmt.Errorf("PB_LOG_LEVEL は debug / info / warn / error のいずれかを指定してください（%q）", logLevel)
+	}
+
+	showVersion, err := lookupBool("PB_HEALTH_SHOW_VERSION")
+	if err != nil {
+		return Config{}, err
+	}
+
+	return Config{
+		Bind:              bind,
+		DatabaseURL:       dbURL,
+		LogFormat:         logFormat,
+		LogLevel:          logLevel,
+		HealthShowVersion: showVersion,
+	}, nil
+}
+
+// lookupBool は真偽値の設定を読む。未設定なら false。
+// 解釈できない値は既定へ倒さずエラーにする（設定の書き誤りを黙って無視しないため）。
+func lookupBool(key string) (bool, error) {
+	v, err := lookup(key)
+	if err != nil {
+		return false, err
+	}
+	if v == "" {
+		return false, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("%s は true / false で指定してください（%q）", key, v)
+	}
+	return b, nil
 }
 
 // lookup は <key>_FILE が指すファイルの内容を優先して返し、

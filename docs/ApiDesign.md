@@ -128,7 +128,7 @@ Header:  X-PB-CSRF: <同じ値>
 
 - `message` は**そのまま画面に出せる日本語**とする。フロントで文言を組み立てない
 - `details` はフィールド単位のエラー。フォームの各入力欄に紐づける
-- `request_id` は `audit_log.id` および構造化ログと突き合わせられる
+- `request_id` は `audit_log.request_id`（`DbDesign.md` 6.8）および構造化ログ（`Design.md` 10.1）と突き合わせられる
 
 ### 2.5.1 HTTPステータスとエラーコード
 
@@ -140,6 +140,7 @@ Header:  X-PB-CSRF: <同じ値>
 | 403 | `forbidden` | 権限不足 |
 | 403 | `csrf_failed` | CSRFトークン不一致 |
 | 404 | `not_found` | 資源なし、または閲覧権限なし（1.2-5） |
+| 405 | `method_not_allowed` | パスは存在するが、そのメソッドを受け付けない |
 | 409 | `conflict` | 一意制約違反、状態競合 |
 | 409 | `last_administrator` | 最後の管理者を降格・無効化・削除しようとした |
 | 409 | `self_modification_forbidden` | 自分自身のロール変更・削除 |
@@ -172,6 +173,16 @@ GET /api/v1/projects?page=1&per_page=25
 | 総件数 | 常に返す。Phase 1 の規模では `COUNT(*)` のコストは問題にならない |
 
 **カーソルページネーションは採らない。** 対象データ量が小さく、画面が「48件中 1-25件」のような表示を必要とするため（`GuiDesign.md` 5.4）。
+
+**範囲外・解釈不能な値は既定値へ丸めず、422 `validation_failed` を返す。** `details` に項目ごとの誤りを載せ、フォームの各入力欄へ紐づけられるようにする（2.5）。`per_page` の上限超過も同様に扱い、黙って 200 へ丸めない。**呼び出し側の誤りが表に出ないまま動き続けることを避ける**ためである。未指定の項目のみ既定値を使う。
+
+| 入力 | 応答 |
+|---|---|
+| `?page=0` `?page=-1` `?per_page=0` | 422。`details[].field` に `page` / `per_page` |
+| `?per_page=201` | 422（200 へ丸めない） |
+| `?page=abc` | 422 |
+| `?sort=<許可リスト外>` `?order=<asc,desc 以外>` | 422 |
+| 未指定 | 既定値（`page=1` / `per_page=25` / エンドポイントごとの既定 `sort`・`order`） |
 
 ## 2.7 差分取得（ETag）
 
@@ -214,6 +225,37 @@ If-Match: "3"
 `login.success` / `login.failure` / `logout` / `password.change` / `password.reset` /
 `token.issue` / `token.revoke` / `session.revoke` / `user.create` / `user.update` /
 `user.delete` / `role.change` / `project.create` / `project.archive` / `permission.denied`
+
+## 2.11 ヘルスチェック
+
+```
+GET /healthcheck
+```
+
+```json
+{ "status": "OK" }
+```
+
+**唯一 `/api/v1` の外に置くエンドポイントである。** 監視・オーケストレータから叩くものであり、APIのバージョニング（2.1）に従わせる意味がないため。
+
+| 項目 | 規約 |
+|---|---|
+| 認証 | **不要**。CSRF・レート制限・認可の対象外 |
+| 副作用 | 無し。**DBへは接続しない** |
+| 応答 | 常に `200` と `{"status":"OK"}`。異常時はプロセスが応答しないことで検知する |
+| バージョン | 設定 `PB_HEALTH_SHOW_VERSION=true` のときのみ `version` を加える。**既定は false** |
+| 用途 | compose の `healthcheck`、Kubernetes の `livenessProbe` |
+| アクセスログ | 既定では出さない（`Design.md` 10.1） |
+
+```json
+{ "status": "OK", "version": "1.4.4" }   ← PB_HEALTH_SHOW_VERSION=true のとき
+```
+
+**バージョンを既定で返さないのは、未認証の呼び出し元に対する情報開示だからである。** 稼働中のバージョンを知られると、既知の脆弱性との突き合わせを許す。デプロイ後の確認に使いたい環境でのみ有効にする。
+
+**DBの疎通は見ない。** DB断でプロセスを再起動しても復旧しないため、liveness で落とすと不要な再起動ループを招く。DBを含む可用性確認が必要になった時点で `/ready` を別に足す（Phase 1 では作らない）。
+
+**SPAフォールバックの例外にあたる。** `Design.md` 3.4 は「`/api` `/mcp` 以外で未知のパスは `index.html` を返す」としているため、`/healthcheck` を明示的な例外として扱う。
 
 ---
 

@@ -38,6 +38,8 @@ func run(ctx context.Context, args []string) error {
 	}
 
 	switch args[0] {
+	case "serve":
+		return serve(ctx)
 	case "admin":
 		return runAdmin(ctx, args[1:])
 	case "version":
@@ -56,13 +58,18 @@ func usage() {
 	fmt.Fprint(os.Stderr, `pb — Project Backyard
 
 使い方:
+  pb serve          APIサーバを起動する
   pb admin create   初期管理者（アドミニストレータ）を対話的に作成する
   pb version        バージョンを表示する
   pb help           このヘルプを表示する
 
 環境変数:
-  PB_DATABASE_URL       接続文字列（pb_app）
-  PB_DATABASE_URL_FILE  同上をファイル経由で渡す場合のパス（こちらを優先）
+  PB_BIND                  待受アドレス（既定 0.0.0.0:8080）
+  PB_DATABASE_URL          接続文字列（pb_app）
+  PB_DATABASE_URL_FILE     同上をファイル経由で渡す場合のパス（こちらを優先）
+  PB_LOG_FORMAT            ログ形式（json / text。既定 json）
+  PB_LOG_LEVEL             ログレベル（debug / info / warn / error。既定 info）
+  PB_HEALTH_SHOW_VERSION   /healthcheck にバージョンを含める（true / false。既定 false）
 `)
 }
 

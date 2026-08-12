@@ -1,0 +1,32 @@
+# sqlc の設定（Design.md 3.2 / 4.1）。
+#
+# スキーマ源は migrations/ であり、モデル定義とDDLの二重管理を作らない。
+# 生成物 internal/store/gen/ はコミットする（Design.md 4.6）。
+#
+# 実行は make sqlc。sqlc 本体のバージョンは server/tools/go.mod で固定している
+# （DbDesign.md 5.1）。パスはこのファイルからの相対で解決される。
+version: "2"
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: internal/store/queries
+    gen:
+      go:
+        package: gen
+        out: internal/store/gen
+        sql_package: pgx/v5
+
+        # Querier インターフェースを出す。ミドルウェアのテストで
+        # DB を立てずに差し替えられるようにするため。
+        emit_interface: true
+
+        # :many が0件のとき nil ではなく空スライスを返す。
+        # 一覧応答の items が JSON の null にならないようにするため（ApiDesign.md 2.6）。
+        emit_empty_slices: true
+
+        overrides:
+          # citext は拡張型のため sqlc が既定の対応を持たない。
+          # 値は通常の文字列として扱い、大小を無視した照合はDB側に委ねる
+          # （DbDesign.md 3.1 / 4.1、PROGRESS.md「メールアドレスの大小の扱い」）。
+          - db_type: citext
+            go_type: string

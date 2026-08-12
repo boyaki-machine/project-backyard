@@ -156,7 +156,9 @@ services:
     environment:
       PB_BIND: "0.0.0.0:8080"
       PB_DATABASE_URL_FILE: /run/secrets/app_database_url
-      PB_LOG_FORMAT: json
+      PB_LOG_FORMAT: json            # 標準出力へ構造化JSON（`Design.md` 10.1）
+      PB_LOG_LEVEL: info
+      PB_HEALTH_SHOW_VERSION: "false" # `ApiDesign.md` 2.11
       TZ: UTC
     secrets:
       - app_database_url
@@ -404,20 +406,32 @@ SQLファイルベースのマイグレーションツールとして **goose v3
 
 **PostgreSQL はDDLがトランザクショナル**であるため、各マイグレーションは全体が成功するか全体が巻き戻るかのいずれかになる。中途半端な適用状態が生まれない。
 
-### goose の導入と実行
+### goose・sqlc の導入と実行
 
-**goose のバージョンは `server/go.mod` の `tool` ディレクティブで固定する。** 開発者ごとに `go install` したバージョンがばらつくと、生成される `goose_db_version` の扱いや注釈の解釈が環境間でずれるため。
+**開発ツール（goose と sqlc）は `server/tools/go.mod` という専用モジュールに隔離し、そこの `tool` ディレクティブでバージョンを固定する。**
+
+バージョンを固定するのは、開発者ごとに `go install` したバージョンがばらつくと、`goose_db_version` の扱いや注釈の解釈、sqlc の生成結果が環境間でずれるため。
+
+**アプリ本体の `server/go.mod` に置かないのは、ツールの推移依存がアプリの依存として並んでしまうため。** goose は対応する全DBドライバ（clickhouse / mssql / ydb / sqlite / vertica 等）を、sqlc は構文解析器とプラグイン基盤を引き込む。両方を `server/go.mod` に入れると `// indirect` が80件を超え、さらに `go` ディレクティブが 1.25 へ引き上げられて `Design.md` 3.1 の「Go 1.24 以上」と衝突する。隔離すれば `server/go.mod` は実依存4件＋indirect 8件に収まり、**リリースビルドが読む依存グラフとツールの依存グラフが混ざらない。**
 
 ```
-# server/go.mod
-tool github.com/pressly/goose/v3/cmd/goose
+server/
+├── go.mod          ← アプリの依存のみ（pgx / argon2id / ulid / term / chi）
+├── sqlc.yaml       ← 生成設定。パスはこのファイルからの相対で解決される
+├── migrations/
+└── tools/
+    ├── go.mod      ← tool ( goose v3.26.0, sqlc v1.30.0 )
+    └── go.sum
 ```
 
 ```make
 # Makefile
 migrate:
-	@cd server && GOOSE_DRIVER=postgres GOOSE_DBSTRING="$(GOOSE_DBSTRING_OWNER)" \
-		go tool goose -dir migrations up
+	@cd server/tools && GOOSE_DRIVER=postgres GOOSE_DBSTRING="$(GOOSE_DBSTRING_OWNER)" \
+		go tool goose -dir ../migrations up
+
+sqlc:
+	cd server/tools && go tool sqlc -f ../sqlc.yaml generate
 ```
 
 | 項目 | 内容 |
@@ -425,6 +439,9 @@ migrate:
 | 接続ロール | **`pb_owner`**。DDL を実行するため（3.4）。`pb_app` では実行できない |
 | 接続文字列 | `deploy/dev/secrets/db_password` を Makefile の recipe 内で読んで組み立てる。**Makefile にも `ps` の argv にも平文を残さない**ため、レシピは `@` 付きで実行する |
 | 権限の伝播 | 3.4 の `ALTER DEFAULT PRIVILEGES FOR ROLE pb_owner` により、goose が作ったテーブルにも `pb_app` の DML 権限が自動で付く。マイグレーション後に `GRANT` を流す必要はない |
+| 生成物 | `server/internal/store/gen/` は**コミットする**（`Design.md` 4.6）。sqlc を導入していない環境でもビルドが通る状態を保つ |
+
+**`server/tools/go.mod` の `go` ディレクティブは 1.24 に保つ。** `go get -tool` は依存を最新へ引き上げる際にこの値も書き換えることがあり、そうなると Go 1.24 の環境で `make migrate` が動かなくなる。ツールを追加・更新したら `head -3 server/tools/go.mod` で確認する。
 
 **各ファイルの冒頭に `-- +goose Up` を置く。** `down` は書かない（5.3）。`set_updated_at()` のように本体に `;` を含む定義は、goose のパーサがステートメント境界を誤らないよう `-- +goose StatementBegin` / `-- +goose StatementEnd` で囲む。
 
@@ -444,7 +461,8 @@ server/migrations/                      ← Design.md 4.1。sqlc がスキーマ
 ├── 0007_comment_attachment.sql         comment, attachment
 ├── 0008_history.sql                    activity, audit_log
 ├── 0009_sprint.sql                     sprint
-└── 0010_seed_phase1.sql                権限カタログ、ロール、ワークフローテンプレート
+├── 0010_seed_phase1.sql                権限カタログ、ロール、ワークフローテンプレート
+└── 0011_audit_log_request_id.sql       audit_log.request_id を追加（6.8）
 ```
 
 `project.workflow_id` と `ticket.sprint_id` は後続テーブルを参照するため、**FK制約のみ後から `ALTER TABLE ... ADD CONSTRAINT` で付与する**（0005 / 0009 の末尾）。PostgreSQL は前方参照を許さないためである。
@@ -898,7 +916,8 @@ CREATE TABLE audit_log (
   target_type text,
   target_id   char(26) COLLATE "C",
   result      text NOT NULL CHECK (result IN ('success','failure')),
-  detail      jsonb NOT NULL DEFAULT '{}'::jsonb
+  detail      jsonb NOT NULL DEFAULT '{}'::jsonb,
+  request_id  char(26) COLLATE "C"   -- 0011 で追加。activity と同じ形
 );
 CREATE INDEX idx_audit_time   ON audit_log (occurred_at DESC);
 CREATE INDEX idx_audit_action ON audit_log (action, occurred_at DESC);
@@ -908,6 +927,14 @@ CREATE INDEX idx_audit_actor  ON audit_log (actor_id, occurred_at DESC);
 **`ip` に `inet` 型を使う。** PostgreSQL 採用により、IPアドレスの正規化とサブネット検索がDB側でできるようになった。
 
 `actor_label` を持たせるのは、**ユーザー削除後に「誰を消したか」を追えなくなることを防ぐ**ため（`ApiDesign.md` 6.5）。
+
+**`request_id` は `activity` と同じ意味・同じ型で持つ。** `ApiDesign.md` 2.5 のエラー応答と `Design.md` 10.1 のアプリケーションログを、同一リクエストの監査記録と突き合わせるための列である。
+
+`audit_log.id` を `request_id` と同じ値にする案は採らない。**1リクエストが複数の監査行を書く**ためである（例：`POST /me/password` は `password.change` と `session.revoke` の2行。`Design.md` 6.3「パスワード変更時に当該ユーザーのセッションを全失効」）。主キーでは表現できない。
+
+CLI（`pb admin create`）由来の記録には HTTP リクエストが存在しないため `request_id` は NULL になる。`ip` / `user_agent` / `token_id` も同様。
+
+**この列は 0011 で追加した**（`audit_log` 自体の作成は 0008）。手順4b で監査ログの共通基盤を実装した時点で、上記の突き合わせ手段が無いことが判明したためである。前進のみの規則（5.3）に従い、0008 は編集していない。
 
 ## 6.9 スプリント（0009）
 
@@ -1198,15 +1225,17 @@ $ pb admin create
 Phase 1 のテーブルは変更せず、**テーブル追加のみ**で拡張する。本章のDDLは構成案であり、各Phase着手時に確定させる。
 
 ```
-0011_agent.sql            agent, task_lease
-0012_dod.sql              dod_item
-0013_agent_run.sql        agent_run, agent_report, context_pack_log
-0014_knowledge.sql        knowledge, knowledge_revision, proposal
-0015_comment_signal.sql   comment_signal
-0016_embedding.sql        vector 拡張 + embedding
-0017_project_event.sql    project_event
-0018_analytics.sql        estimate_record, contribution
+0012_agent.sql            agent, task_lease
+0013_dod.sql              dod_item
+0014_agent_run.sql        agent_run, agent_report, context_pack_log
+0015_knowledge.sql        knowledge, knowledge_revision, proposal
+0016_comment_signal.sql   comment_signal
+0017_embedding.sql        vector 拡張 + embedding
+0018_project_event.sql    project_event
+0019_analytics.sql        estimate_record, contribution
 ```
+
+採番が 0012 から始まるのは、Phase 1 の手順4b で 0011（`audit_log.request_id` の追加、6.8）を使ったためである。
 
 ## 8.1 エージェント連携（Phase 2）
 

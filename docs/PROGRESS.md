@@ -9,7 +9,8 @@
 | 1 | deploy/base/compose.yaml と initdb（DBロール分離） | 完了 | 2026-08-11 | `make up` でDBが起動し、`pb_app` ロールが存在する |
 | 2 | server/migrations/ 0001〜0010 の作成と適用 | 完了 | 2026-08-11 | `make migrate` 後、テーブル23個と権限28件・ロール5件が存在する |
 | 3 | `pb admin create` による初期管理者作成 | 完了 | 2026-08-12 | 作成した管理者が `app_user` に `system_role='administrator'` で入る |
-| 4 | 共通基盤（エラー形式・ページネーション・認証ミドルウェア・監査ログ） | 未着手 | | `go test ./internal/httpapi/...` が通る |
+| 4a | 共通基盤その1（sqlc導入・エラー形式・ページネーション・request_id・アクセスログ・ヘルスチェック・serve骨格） | 完了 | 2026-08-12 | `go test ./internal/httpapi/...` が通り、`make run` 後に `/healthcheck` が `{"status":"OK"}`、未知パスが 2.5 形式の 404 を返す |
+| 4b | 共通基盤その2（認証ミドルウェア・監査ログ） | 完了 | 2026-08-12 | `go test ./internal/httpapi/...` が通る。`PB_TEST_DATABASE_URL` を与えると実DBに対する認証の結合テストも通る |
 | 5 | `POST /auth/login`・`/auth/logout`・`GET /me` | 未着手 | | `curl -i -X POST .../auth/login` で Set-Cookie が返り、`GET /me` が権限一覧を返す |
 | 6 | 認可ミドルウェア（`RequirePermission`） | 未着手 | | オペレータで `/admin/users` を叩くと 403 |
 | 7 | `GET/POST /projects`、`check-key` | 未着手 | | プロジェクトを作成し、一覧に件数と進捗が出る |
@@ -32,16 +33,23 @@
 | 内容 | 状態 | 完了日 | ブランチ | 検証方法 |
 |---|---|---|---|---|
 | バージョン番号とビルド番号の運用（`Design.md` 11.1） | 完了 | 2026-08-12 | `feature/versioning` | マージ後に `make version-check` が通る |
+| エージェントの実行権限の整理（`.claude/settings.json`）と `CLAUDE.md` 絶対規則2の具体化 | 完了 | 2026-08-12 | `feature/step-04-http-foundation-auth` | 読み取り系コマンドが確認なしで通り、`rm` / `git merge` / `git push` などは確認を求める |
 
 ## バージョンの現況
 
 | | 値 |
 |---|---|
-| 現在 | **v1.3.3** |
-| 内訳 | メジャー1 / マイナー3 / ビルド3 |
+| 現在 | **v1.4.4**（マージ前。マージ後に `make version-check` が通る） |
+| 内訳 | メジャー1 / マイナー4 / ビルド4 |
 | ビルド1 | 手順2（`feature/step-02-migrations`）のマージ |
 | ビルド2 | バージョン運用の導入（`feature/versioning`）のマージ |
 | ビルド3 | 手順3（`feature/step-03-admin-create`）のマージ |
+| ビルド4 | 手順4a・4b（`feature/step-04a-http-foundation`）のマージ |
+
+手順 4a と 4b は**同じブランチに載せて1回のマージにする**（ユーザーの選択、2026-08-12）。
+4b は 4a の成果物（`apierr` / `middleware` / `store/gen` / `router`）の上に積むため、
+4a を `develop` に出さないまま 4b を始める場合、`develop` から切ると土台が無い。
+マージ回数は1回のままなのでビルド番号は4で変わらない。
 
 規約は `Design.md` 11.1。**マージ前に feature ブランチ上で `make bump-minor`（`fix/*`・`docs/*` は `make bump-build`）を実行し、`VERSION` の更新を同じブランチに含める。**
 
@@ -79,6 +87,36 @@
 | 2026-08-12 | 3 | `Makefile` の `LDFLAGS` が `-X main.version` を指しているのに `main` パッケージが存在しなかった（`-X` は存在しないシンボルを黙って無視する） | `cmd/pb/main.go` に `var version = "dev"` と `pb version` サブコマンドを置いた。`go run -ldflags "-X main.version=1.2.2"` で `pb v1.2.2` が出ることを確認済み |
 | 2026-08-12 | 3 | `CLAUDE.md` に `make test` があるのに Makefile に未定義だった（手順3で初めてGoのテストが入る） | `test` ターゲットを追加した（`cd server && go test ./...`） |
 | 2026-08-12 | 3 | `go get` が `go.mod` の go ディレクティブを 1.24 → 1.25.0 に自動で引き上げた。`x/term` の最新（v0.45.0）が go 1.25 を要求するため。`Design.md` 3.1 の「Go 1.24 以上」と衝突する | goose と同じ扱いで、`golang.org/x/term` を **v0.33.0**、`golang.org/x/sys` を **v0.34.0** に固定し、go ディレクティブを 1.24 に戻した。`go build` / `go mod tidy` 後も 1.24 のまま保たれることを確認済み |
+| 2026-08-12 | 4a | 手順4の分量（sqlc導入＋HTTP規約2種＋DBを引くミドルウェア2種）が1セッションに多い | **4a / 4b に分割することをユーザーが選択。** 4a はDBを読まない層まで（本ステップ）、4b が認証ミドルウェアと監査ログ。`PROGRESS.md` の手順4行も 4a / 4b に分けた |
+| 2026-08-12 | 4a | **sqlc を `server/go.mod` の tool ディレクティブに足すと、indirect が 59→83 件に増え、さらに go ディレクティブが 1.25.0 へ引き上げられる**（`Design.md` 3.1 の「Go 1.24 以上」と衝突）。手順2で予告していた分岐点 | **goose と sqlc を `server/tools/go.mod` へ隔離することをユーザーが承認。** `server/go.mod` は実依存5件＋indirect 8件に戻った。**`DbDesign.md` 5.1 と `Design.md` 4.1 に反映済み**（2026-08-12） |
+| 2026-08-12 | 4a | `pb serve` の骨格を手順4に含めるか。`PROGRESS.md` の検証欄は `go test` のみだった | **含めることをユーザーが選択。** エンドポイントは1つも定義せず、ミドルウェア連鎖と 2.5 形式の 404 のみ。`Design.md` 4.1 に serve の記載があり `PB_BIND` も config に実装済みのため、新しい仕様の発明にはならない |
+| 2026-08-12 | 4a | CSRF（`ApiDesign.md` 2.4）とレート制限（2.9）を手順4に含めるか。`Design.md` 4.1 は両方を `middleware/` 配下に置いている | **含めないことをユーザーが選択。** どちらも手順5のログインで初めて必要になり（CSRF は `pb_csrf` の発行と対、レート制限は失敗回数と対）、手順5で実装するほうが検証しやすい |
+| 2026-08-12 | 4a | **`ApiDesign.md` 2.5.1 の表に 405（Method Not Allowed）の行が無い。** chi の既定は本文なしの 405 を返すため、`CLAUDE.md`「エラー応答は 2.5 の形式に統一する」に反する | **`405 / method_not_allowed` を 2.5.1 に追加することをユーザーが承認**（2026-08-12）。実装も 405 を返す。コードは14件になった。**`ApiDesign.md` 2.5.1 に反映済み** |
+| 2026-08-12 | 4a | **2.5.1 の13コードのうち、文言が設計文書にあるのは2件のみ**（`validation_failed` は 2.5、`invalid_credentials` は `Design.md` 6.3） | 残る11件の既定文言を実装側で定めた（`apierr.messages`）。方針は「アカウントの存在を漏らさない」「原因ではなく利用者の次の行動を書く」。**文言を設計文書側に持たせたい場合は 2.5.1 に message 列を足す修正を提案する** |
+| 2026-08-12 | 4a | **`ApiDesign.md` 2.6 が、不正な `page` / `per_page` / `sort` / `order` を受けたときの挙動を定めていない**（既定へ丸めるのか、エラーにするのか） | **422 `validation_failed` を返し `details` に項目ごとの誤りを載せる方針をユーザーが承認**（2026-08-12）。`per_page` の上限超過も丸めない。入力と応答の対応表つきで **`ApiDesign.md` 2.6 に反映済み** |
+| 2026-08-12 | 4a | `request_id` をコンテキストへ出し入れする関数の置き場所。`middleware` に置くと `apierr` → `middleware` の依存が生まれ、`middleware` は 404 応答のため `apierr` を必要とするので循環する | **`apierr` パッケージに置いた。** `request_id` は 2.5 のエラー本体のフィールドであり、描画するのが `apierr` の責務のため。`Design.md` 4.1 のディレクトリ構成を変えずに済む（新しいパッケージを足していない） |
+| 2026-08-12 | 4a | HTTPサーバのタイムアウト値が設計文書のどこにも無い | 実装側の既定として ReadHeader 10s / Read 30s / Write 60s / Idle 120s / Shutdown 猶予 15s を置いた（`serve.go` に定数として明記）。**`Design.md` 10章「メトリクスとヘルスチェックエンドポイント」を扱う際に、あわせて文書化を提案する** |
+| 2026-08-12 | 4a | アクセスログ（1リクエスト1行）を出すかどうか。`Design.md` 10章は「アプリケーションログの形式」を**今後扱う**としていた | **ユーザーの指示により形式を確定し実装した。** コンテナ前提のため**標準出力へ構造化JSON**（12-factor）。`stderr` から `stdout` へ変更。アクセスログとエラーログは**別行**とし、1行の意味を「1リクエストの結果」に保つ。**`Design.md` 10.1 に反映済み** |
+| 2026-08-12 | 4a | ログ出力先を stdout / stderr のどちらにするか。k8s / CRI はどちらも同じログストリームへ集約するため、`kubectl logs` からはどちらでも見える | **stdout に一本化した。** ①`stderr` は「異常」の含意を持ち、正常なアクセスログを流すと収集基盤（Fluent Bit / Loki 等）で誤って error 扱いする設定を誘発しやすい ②2ストリームに分けると行の到着順が保証されない。`stderr` はロガー初期化前の致命的エラーと CLI の利用者向けメッセージにのみ使う |
+| 2026-08-12 | 4a | ヘルスチェックエンドポイントを作るか。`Design.md` 10章が「今後扱う」としており `ApiDesign.md` にも定義が無かった | **ユーザーの指示により `GET /healthcheck` を新設した**（認証不要・副作用なし・DB非依存・固定応答）。**`ApiDesign.md` 2.11 / `Design.md` 10.2 に反映済み** |
+| 2026-08-12 | 4a | `/healthcheck` に**バージョンを含めるか。** 未認証の呼び出し元への情報開示になる | **設定 `PB_HEALTH_SHOW_VERSION` で切り替える方式をユーザーが指示。既定は false**（既知の脆弱性との突き合わせを許さないため）。`make run` では true にして開発時のデプロイ確認に使えるようにした |
+| 2026-08-12 | 4a | `/healthcheck` を `/api/v1` の下に置くか、ルート直下か | **ユーザーの指示によりルート直下 `/healthcheck`。** 監視・オーケストレータから叩くものでありAPIのバージョニングに従わせる意味がないため。**`Design.md` 3.4 の SPA フォールバック（`/api` `/mcp` 以外は index.html）の例外**にあたるので、3.4 と 2.11 の双方に明記した。**手順13 で embed 経路を作る際に取りこぼさないこと** |
+| 2026-08-12 | 4a | probe が短間隔で叩く `/healthcheck` のアクセスログが1日数千行のノイズになる | **成功時のみ DEBUG に落とす。** 当初はパス一致だけで黙らせていたが、**`POST /healthcheck` の 405 まで消えることを実測で発見**したため、`status < 400` の条件を足した。probe の設定誤りに気づけなくなるのを避ける |
+| 2026-08-12 | 4a | 設定項目が2つ増えた（`PB_LOG_LEVEL` / `PB_HEALTH_SHOW_VERSION`） | `config.go`・`deploy/base/env.example`・`deploy/base/compose.yaml`・`DbDesign.md` 3.2 の4か所を揃えた。**不正な値は既定へ倒さずエラーにする**（設定の書き誤りを黙って無視しないため） |
+| 2026-08-12 | 4a | compose の `app` サービスに `healthcheck` を足すか | **足していない。** distroless / scratch イメージには curl も shell も無く、`healthcheck` の実行手段が `deploy/Dockerfile` の作り方に依存するため。**手順13 で Dockerfile とセットで決める**（`pb healthcheck` サブコマンドを足す案がある） |
+| 2026-08-12 | 4b | **`ApiDesign.md` 2.5 は「`request_id` は `audit_log.id` と突き合わせられる」、`Design.md` 10.1 は「`request_id` で突き合わせる」と書くが、`DbDesign.md` 6.8 の `audit_log` に `request_id` 列が無い**（`activity` には有る）。`audit_log.id = request_id` と読む案は成立しない。`POST /me/password` が `password.change` と `session.revoke` の2行を書く（`Design.md` 6.3）ため主キーが衝突する | **マイグレーション 0011 で `request_id char(26) COLLATE "C"` を追加することをユーザーが承認**（2026-08-12）。`activity` と同じ形・同じ意味。索引は `activity` 同様に張らない。**`DbDesign.md` 6.8 / 5.2 と `ApiDesign.md` 2.5 に反映済み** |
+| 2026-08-12 | 4b | 0011 は `DbDesign.md` 8章で Phase 2 の `agent.sql` に予約されていた | **Phase 2 / 3 の採番を 0012〜0019 へ1つずらした。** **`DbDesign.md` 8章と `Design.md` 11章（手順17・24）に反映済み**。ずらした理由も 8章に1行残した |
+| 2026-08-12 | 4b | **CLI（`pb admin create`）由来の操作を `audit_log` に残すか**、`actor_id` に誰を入れるか（手順3の積み残し） | **`actor_id=NULL` / `actor_kind='system'` / `actor_label='pb admin create (CLI)'` で記録することをユーザーが承認**（2026-08-12）。端末の操作者にはまだアカウントが無いため、作成された本人を actor に据えると偽の帰属になる。誰を作ったかは `target_type='app_user'` / `target_id` に残る。`ip` / `user_agent` / `request_id` は NULL |
+| 2026-08-12 | 4b | 監査ログの書き込みが失敗したとき、業務処理も失敗させるか（文書に記載なし） | **業務トランザクションを持つ操作は同一 tx で一緒に失敗させる（`Record`）。認証イベント（`login.*` / `logout`）は ERROR ログを残して続行する（`RecordOrLog`）。** 監査DBの一時障害でログイン不能にすると、可用性の低下が監査の欠落より重い被害になるため。`pb admin create` は前者を使い、監査記録を伴わない管理者アカウントが生まれないようにした（実測でロールバックを確認） |
+| 2026-08-12 | 4b | `RecordOrLog` がリクエストのキャンセルを引き継ぐと、クライアントが接続を切るだけで `login.failure` の記録を落とせる | **`context.WithoutCancel` ＋ 5秒のタイムアウトで書く。** 総当たりの痕跡を攻撃者側から消せる状態にしないため。テストで再現している（`TestRecordOrLogIgnoresCanceledContext`） |
+| 2026-08-12 | 4b | `actor.is_active=false` のトークンを受けたときの応答（`Design.md` 6.2.2 は `revoked_at` / `expires_at` しか書いていない） | **401 `unauthenticated`。** `ApiDesign.md` 3.1 が「アカウント無効も認証失敗と区別しない」としており揃えた。403 にすると「そのアカウントは存在する」と漏れる |
+| 2026-08-12 | 4b | `access_token.expires_at` が NULL のときの扱い（6.2.2 は `expires_at > now()` としか書いていない。SQL では NULL は false になる） | **NULL は無期限として通す。** API トークン（`ApiDesign.md` 4.5）は `expires_in_days` が任意のため。**セッションには手順5で必ず期限を設定すること**（`ApiDesign.md` 3.1 の `Max-Age=1209600` = 14日） |
+| 2026-08-12 | 4b | Cookie と `Authorization: Bearer` の両方が付いたときにどちらを採るか（文書に記載なし） | **Cookie を優先する。** `ApiDesign.md` 2.4 の CSRF は「Cookie 認証のときだけ要求する」規約であり、Cookie が付いているのに Bearer 側を採ると CSRF の対象外になってしまう。あわせて `Principal.Source`（`cookie` / `bearer`）を持たせた。**手順5の CSRF ミドルウェアは `token_type` ではなくこの値で判定すること**（api トークンを Cookie に載せることも技術的には可能なため） |
+| 2026-08-12 | 4b | `access_token.scopes`（jsonb）が壊れていた場合の扱い | **500 にして通さない。** 空スライスに倒すと「絞り込みなし」＝ロールの全権限を意味してしまい（`Design.md` 6.4.1）、絞ったはずのエージェントトークンが全権限で通る |
+| 2026-08-12 | 4b | 認証ミドルウェアをこの手順でルータに組み込むか | **組み込むことをユーザーが承認。** `/api/v1` 配下に認証必須の `r.Group` を置いた。所属するルートが0件なので外形上の挙動は変わらない。手順5は「login はグループの外、`/me` は中」と置くだけになる |
+| 2026-08-12 | 4b | フェイクの `gen.Querier` でテストすると `queries/auth.sql` の SQL が一度も実行されない（列名・JOIN の向き・`last_used_at` の間引き条件が未検証のまま残る） | **`PB_TEST_DATABASE_URL` があるときだけ走る結合テストを追加した**（`internal/httpapi/auth_integration_test.go`）。未設定ならスキップするため `make test` は DB 無しでも通る。**DBを使うテストの作法として文書化するかは要判断**（現状 `Design.md` に記述が無い） |
+| 2026-08-12 | 4b | `audit_log.ip` とアクセスログの `ip` を同じ値にする規約（`Design.md` 10.1）に対し、実装が2か所に分かれていた | `audit.ClientIP` に一本化し、`middleware.clientIP` はそれを呼ぶだけにした（スコープ外の変更だが、規約が求める同一性を保つために必要）。あわせて IPv4-mapped IPv6（`::ffff:127.0.0.1`）を IPv4 に畳むようにした。`inet` 列に同じ相手が2通りで入るのを避けるため |
+| 2026-08-12 | 4b | 実効権限（`Design.md` 6.4.1）を `Principal` に持たせるか | **持たせない。** 権限の計算とセッションへのキャッシュ（6.4.5）は手順6の `RequirePermission` のスコープ。`Principal` が持つのはその入力になる素材（`system_role` / `scopes` / `project_id`）まで |
 
 ### 設計文書へ反映済みの修正（2026-08-11、承認のうえ適用）
 
@@ -181,19 +219,155 @@
 | 端末での非表示入力 | `expect` で疑似端末から実行し、表示名とメールは表示され、パスワード2行は表示されないことを確認 |
 | `pb version` | `go run -ldflags "-X main.version=1.2.2"` で `pb v1.2.2`、未指定で `pb vdev` |
 
+### 設計文書へ反映済みの修正（手順4a、2026-08-12、承認のうえ適用）
+
+1. **`DbDesign.md` 5.1** — 「goose の導入と実行」を「**goose・sqlc の導入と実行**」に改題し、
+   ツールを `server/tools/go.mod` へ隔離する方針、隔離する理由（推移依存と go ディレクティブ）、
+   ディレクトリ図、`migrate` / `sqlc` の recipe、生成物をコミットする旨、
+   `server/tools/go.mod` の go ディレクティブを 1.24 に保つ注意を記載
+2. **`Design.md` 4.1** — ディレクトリ図に `server/tools/go.mod` を追加し、
+   `server/go.mod` に「アプリの依存のみ」と注記
+3. **`ApiDesign.md` 2.5.1** — `| 405 | method_not_allowed | パスは存在するが、そのメソッドを受け付けない |` を追加（コードは13→14件）
+4. **`ApiDesign.md` 2.6** — 不正な値を既定へ丸めず 422 `validation_failed` とする段落と、入力→応答の対応表を追加
+5. **`ApiDesign.md` 2.11（新設）** — ヘルスチェック `GET /healthcheck`。認証不要・副作用なし・DB非依存、
+   `PB_HEALTH_SHOW_VERSION` によるバージョン表示、SPAフォールバックの例外である旨
+6. **`Design.md` 3.4** — SPAフォールバックの除外パスに `/healthcheck` を追加
+7. **`Design.md` 10章** — 「今後扱う」から **10.1 アプリケーションログ**（出力先・形式・レベル・
+   アクセスログ・エラーログ）、**10.2 ヘルスチェック**、**10.3 今後扱うもの** に再構成。目次の状態も更新
+8. **`DbDesign.md` 3.2** — compose の `app` サービスに `PB_LOG_LEVEL` と `PB_HEALTH_SHOW_VERSION` を追加
+
+### 手順4aで作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/tools/go.mod` `go.sum` | goose v3.26.0 / sqlc v1.30.0 を tool ディレクティブで固定する専用モジュール |
+| `server/sqlc.yaml` | pgx/v5 モード。`migrations/` をスキーマ源に、`internal/store/gen/` へ生成 |
+| `server/internal/store/db.go` | pgxpool（Min 2 / Max 10、`application_name=pb`。`DbDesign.md` 3.5） |
+| `server/internal/store/queries/user.sql` | 手順3の5クエリ（COUNT 1・INSERT 4）を sqlc へ移植 |
+| `server/internal/store/gen/*.go` | sqlc 生成物4ファイル（`db.go` / `models.go` / `querier.go` / `user.sql.go`） |
+| `server/internal/httpapi/apierr/apierr.go` | `ApiDesign.md` 2.5 のエラー形式、2.5.1 の14コードとステータス対応、`request_id` のコンテキスト受け渡し |
+| `server/internal/httpapi/paging.go` | 2.6 のパラメータ解析（`ParsePage`）、一覧エンベロープ（`List[T]`）、`WriteJSON` |
+| `server/internal/httpapi/router.go` | chi v5 のルータ組み立て。`/api/v1` の階層、`/healthcheck`、2.5 形式の 404 / 405 |
+| `server/internal/httpapi/health.go` | `GET /healthcheck`（`ApiDesign.md` 2.11） |
+| `server/internal/httpapi/middleware/requestid.go` | リクエストごとの ULID 発行 |
+| `server/internal/httpapi/middleware/accesslog.go` | 1リクエスト1行のアクセスログ（`Design.md` 10.1） |
+| `server/cmd/pb/serve.go` | `pb serve`。slog 初期化（stdout・レベル）・プール生成・待受・graceful shutdown |
+| 各 `*_test.go` | apierr 9件 / paging 7件 / router 5件 / health 4件 / middleware 7件 / config 3件追加 |
+| `server/cmd/pb/admin_create.go` | 直書き pgx → sqlc へ差し替え（変更） |
+| `server/cmd/pb/main.go` | `serve` の振り分けと usage（変更） |
+| `server/internal/config/config.go` | `PB_LOG_LEVEL` / `PB_HEALTH_SHOW_VERSION` を追加（変更） |
+| `Makefile` | `sqlc` / `run` を追加、`migrate` を `server/tools` から実行するよう変更 |
+| `deploy/base/env.example` `deploy/base/compose.yaml` | 追加した設定2件を反映（変更） |
+
+**`internal/domain/` は作っていない。** ビジネスルールを持つ型が現れる手順以降で作る。
+
+### 手順4aの検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト35件追加、全パッケージ ok） |
+| `go test ./internal/httpapi/...` | 3パッケージとも ok |
+| `server/go.mod` の依存 | 実依存5件（pgx / argon2id / ulid / term / chi）＋ **indirect 8件**。goose 隔離前は 59件 |
+| go ディレクティブ | `server/go.mod` `server/tools/go.mod` とも **1.24 のまま** |
+| `make migrate`（新しい実行位置） | `no migrations to run. current version: 10`。`server/tools` からの `-dir ../migrations` が効いている |
+| `make sqlc` の再現性 | 再実行しても `internal/store/gen/` に差分が出ない |
+| `make admin-create`（sqlc 移植後） | 4テーブルに各1行。`kind='user'` / `system_role='administrator'` / `provider_key='local'`、`password_hash` が `$argon2id$v=19$m=65536,t=3,p=4` |
+| メールの大小の保存 | `SqlcTest@Example.com` が `app_user.email` と `user_identity.subject` の両方に入力どおりの表記で入る（手順3から不変） |
+| 重複メールでのロールバック | `sqlctest@example.com`（小文字）で一意制約違反 → 全体がロールバックし `actor` の残骸が残らない。citext の大小無視も維持 |
+| `make run` | `{"level":"INFO","msg":"サーバを起動した","bind":"127.0.0.1:8080","version":"1.3.3"}`。slog の JSON と `-X main.version` が効いている |
+| 未知パスの応答 | `GET /api/v1/nope`・`GET /`・`POST /` のいずれも `404` ＋ `{"error":{"code":"not_found","message":"対象が見つかりません","request_id":"01KZT…"}}`。`Content-Type: application/json; charset=utf-8` |
+| `request_id` | 26文字の ULID。リクエストごとに変わる。クライアントの `X-Request-Id` は採用しない |
+| `GET /healthcheck` | `200` ＋ `{"status":"OK"}`。`PB_HEALTH_SHOW_VERSION=true`（`make run`）では `{"status":"OK","version":"1.4.4"}` |
+| `POST /healthcheck` | `405` ＋ `{"error":{"code":"method_not_allowed",…}}` |
+| `GET /api/v1/healthcheck` | `404`。`/healthcheck` は `/api/v1` の外にある |
+| ログ出力先 | **stdout のみ**。サーバ起動から停止まで stderr は空 |
+| アクセスログ | `{"level":"INFO","msg":"request","request_id":"01KZTC…","method":"GET","path":"/api/v1/nope","status":404,"duration_ms":0.026,"bytes":116,"ip":"127.0.0.1"}`。クエリ文字列は出ない |
+| `/healthcheck` のログ抑止 | 既定レベルでは 200 が出ず、`POST`（405）は出る。`PB_LOG_LEVEL=debug` にすると 200 も `DEBUG` で出る |
+| 設定値の検証 | `PB_LOG_LEVEL=verbose` と `PB_HEALTH_SHOW_VERSION=yes` はいずれも起動時にエラーで停止する |
+| 接続プール | `pg_stat_activity` に `application_name=pb` / `usename=pb_app` で3接続（Max 10 以内） |
+| graceful shutdown | SIGINT で「停止信号を受け取った」→「サーバを停止した」の順にログが出て、プロセスが残らない |
+
+### 設計文書へ反映済みの修正（手順4b、2026-08-12、承認のうえ適用）
+
+1. **`DbDesign.md` 6.8** — `audit_log` の DDL に `request_id char(26) COLLATE "C"` を追加。
+   `activity` と同じ意味で持つ旨、`audit_log.id = request_id` 案を採らない理由
+   （1リクエストが複数行を書く）、CLI 由来では NULL になる旨、0011 で足した旨を追記
+2. **`DbDesign.md` 5.2** — ファイル構成に `0011_audit_log_request_id.sql` を追加
+3. **`DbDesign.md` 8章** — Phase 2 / 3 の採番を `0011〜0018` から **`0012〜0019`** へずらし、
+   ずらした理由を1行追記
+4. **`Design.md` 11章** — 手順17 を `0012〜0015`、手順24 を `0016〜0019` に修正
+5. **`ApiDesign.md` 2.5** — 「`request_id` は `audit_log.id` …」を
+   **「`audit_log.request_id`（`DbDesign.md` 6.8）および構造化ログ（`Design.md` 10.1）」** に修正
+6. **`Design.md` 4.1** — ディレクトリ図に `internal/audit/` を追加
+
+### 手順4bで作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/migrations/0011_audit_log_request_id.sql` | `audit_log` に `request_id` を追加（前進のみ。0008 は編集していない） |
+| `server/internal/auth/token.go` | 平文トークンの生成（`pb_sess_` / `pb_api_` + base64url 32バイト）、SHA-256（小文字16進64文字）、`token_prefix`、`Authorization: Bearer` の解析 |
+| `server/internal/auth/principal.go` | `Principal` 型とコンテキスト受け渡し、`CredentialSource`、Cookie / ヘッダ名の定数、`scopes` の JSON 変換、`AuditLabel` |
+| `server/internal/store/queries/auth.sql` | `FindAccessTokenByHash`（`actor` と JOIN、`app_user` は LEFT JOIN）、`TouchAccessTokenLastUsed`（1分粒度） |
+| `server/internal/store/queries/audit.sql` | `InsertAuditLog` |
+| `server/internal/store/gen/auth.sql.go` `audit.sql.go` | sqlc 生成物 |
+| `server/internal/audit/audit.go` | 監査ログの共通基盤。15アクションの定数、`FromRequest` / `FromCLI`、`Record` / `RecordOrLog`、`ClientIP` |
+| `server/internal/httpapi/middleware/auth.go` | `Authenticate`。Cookie / Bearer → SHA-256 → 検証 → `Principal` をコンテキストへ |
+| `server/internal/httpapi/auth_integration_test.go` | 実DBに対する認証経路の結合テスト（`PB_TEST_DATABASE_URL` 未設定ならスキップ） |
+| 各 `*_test.go` | auth 21件 / audit 13件 / middleware 13件 / router 2件追加（全体で121件） |
+| `server/internal/httpapi/router.go` | 認証必須グループを追加。`Deps.Queries` を追加（変更） |
+| `server/internal/httpapi/middleware/accesslog.go` | `clientIP` を `audit.ClientIP` に委譲（変更） |
+| `server/cmd/pb/admin_create.go` | `user.create` の監査記録を同一トランザクションで追加（変更） |
+| `server/cmd/pb/serve.go` | 先頭コメントの更新のみ（変更） |
+
+**`internal/domain/` は引き続き作っていない。** CSRF・レート制限・`RequirePermission` は手順5・6。
+
+### 手順4bの検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `gofmt -l` / `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト121件、7パッケージすべて ok） |
+| `go test ./internal/httpapi/...` | 3パッケージとも ok |
+| `make sqlc` の再現性 | 再実行しても `internal/store/gen/` に差分が出ない |
+| `make migrate` | `0011_audit_log_request_id.sql` が適用され version 11。再実行は `no migrations to run` |
+| `audit_log` の列 | `request_id | character(26) | C | nullable` が末尾に付き、`activity` と同じ形。既存の3索引と CHECK は不変 |
+| 認証の結合テスト（実DB） | 有効トークンで通り、`system_role`（LEFT JOIN）と `scopes`（jsonb）が載る。失効後は 401、未知トークンも 401 |
+| `last_used_at` の間引き | 1回目で記録され、直後の2回目では**変わらない**。2分前に巻き戻すと3回目で更新される（`Design.md` 6.2.2 の1分粒度） |
+| ミドルウェア単体 | Cookie / Bearer / 両方（Cookie 優先）/ 空 Cookie / 資格情報なし / 未知 / 失効 / 期限切れ / 無効アクター / `expires_at` NULL / DB障害 / 壊れた scopes / touch 失敗 の13ケース |
+| 401 の応答 | 「無い」「失効」「期限切れ」「無効アクター」がすべて `{"error":{"code":"unauthenticated",…}}`。理由は `WithCause` でサーバログにのみ出る |
+| `make admin-create` の監査記録 | `action='user.create'` / `actor_id=NULL` / `actor_kind='system'` / `actor_label='pb admin create (CLI)'` / `target_id`=作成した actor / `detail={"via":"pb admin create","system_role":"administrator"}` / `ip`・`user_agent`・`request_id` は NULL |
+| 監査記録のロールバック | 重複メールで作成すると `actor` / `app_user` / `audit_log` のいずれも増えない（1トランザクション） |
+| 平文トークンの非保存 | `access_token.token_hash` は全件が64文字の16進で `pb_` 始まりが0件。サーバログにも平文が出ない |
+| `make run` | 起動・`/healthcheck` 200・未知パス 404・graceful shutdown が手順4a から不変。stderr は空のまま |
+| アクセスログの `ip` | `audit.ClientIP` へ一本化した後も `127.0.0.1`。`X-Forwarded-For` は採らない（テストで固定） |
+
 ## 環境メモ
 
 実際に動かして分かったこと（バージョンの相性、ハマった点、回避策）を追記する。
 ここに書いた内容は、後から `CLAUDE.md` や設計文書へ昇格させることを検討する。
 
-- Go の直接依存（手順3時点）: `jackc/pgx/v5 v5.7.5` / `oklog/ulid/v2 v2.1.2` / `alexedwards/argon2id v1.0.0` / `golang.org/x/term v0.33.0`
+- **`.claude/settings.json` の deny は Read ツールにしか効かない。** `Read(./deploy/*/secrets/**)` を deny していても、`allow` にある `Bash(cat:*)` 経由では読めてしまう（手順4b の検証で `app_db_password` を実際にそう読んだ）。秘密を機械的に守りたい場合は Bash 側にも `deny` を足す必要がある
+- **DBを使うテストは `PB_TEST_DATABASE_URL` で切り替える**（手順4b で導入）。未設定ならスキップするので `make test` は DB 無しでも通る。実行例：
+
+  ```
+  PW=$(cat deploy/dev/secrets/app_db_password)
+  cd server && PB_TEST_DATABASE_URL="postgres://pb_app:${PW}@127.0.0.1:5432/pb" go test ./internal/httpapi/ -run Integration -v
+  ```
+
+  接続は `pb_app`（DML のみ）で行う。実運用と同じ権限で通ることを確かめるため
+- **`t.Cleanup` は `defer` より後に走る。** 結合テストで `defer pool.Close()` と `t.Cleanup(削除)` を併用すると、後片付けの時点でプールが閉じていて `closed pool` になる。プールの close も `t.Cleanup` で登録し、LIFO の順序を使うこと
+- Go の直接依存（手順4b時点）: `jackc/pgx/v5 v5.7.5` / `oklog/ulid/v2 v2.1.2` / `alexedwards/argon2id v1.0.0` / `golang.org/x/term v0.33.0` / `go-chi/chi/v5 v5.3.1`（手順4a から**増えていない**。トークンのハッシュと乱数は標準ライブラリの `crypto/sha256` / `crypto/rand` で足りる）
   - **`x/term` と `x/sys` はバージョンを上げないこと。** 最新版は go 1.25 を要求し、`go get` が go ディレクティブを勝手に 1.25.0 へ引き上げる（`Design.md` 3.1 と衝突）。上げる際は 3.1 の最低バージョンとセットで見直す
   - `go get` 後は `head -3 server/go.mod` で go ディレクティブが `1.24` のままか確認する
 - **パスワード入力のエコー抑止には競合窓がある。** プロンプトを出してから `term.ReadPassword` が echo を切るまでの数マイクロ秒に文字が届くと、その分だけ端末に表示される。`expect` から遅延なしで送ると再現するが、人間の入力では起こらない（`sudo` や `ssh` も同じ挙動）
   - 端末ありの検証は `expect` に `sleep 0.4` を入れて行う。`printf ... | script -q /dev/null` は stdin を即座に閉じるため `EOF` になり検証に使えない
-- goose のバージョン: **v3.26.0**（`server/go.mod` の tool ディレクティブで固定）
+- goose のバージョン: **v3.26.0**（手順4a から `server/tools/go.mod` の tool ディレクティブで固定）
   - v3.27.3 以降は `go 1.25.7` を要求し、`Design.md` 3.1 の「Go 1.24 以上」と衝突するため上げていない
-- （記入例）sqlc のバージョン: v1.x
+- sqlc のバージョン: **v1.30.0**（`server/tools/go.mod`）
+  - v1.31.1 は `go 1.26.0` を要求するため上げていない。v1.30.0 自体は `go 1.23.0` 要求
+  - **`go get -tool` は実行順で結果が変わる。** `tools/go.mod` に sqlc → goose の順で入れると go ディレクティブが 1.24 のまま保たれるが、goose → sqlc の順だと `x/*` が最新へ上がって 1.25.0 に書き換えられる。ツールを足したら必ず `head -3 server/tools/go.mod` を見る
+  - 初回の `go tool sqlc` はビルドに20秒ほどかかる（2回目以降はキャッシュ）。cgo は不要だった
+  - `citext` は sqlc が既定の対応を持たないため、`sqlc.yaml` の `overrides` で `string` に写している。`inet` は `*netip.Addr`、NULL 許容列は `pgtype.*` になる
+- **ツールは `server/tools/go.mod` に隔離してある。** `make migrate` / `make sqlc` は `cd server/tools` してから `go tool` を呼ぶ。`server/go.mod` にツールを足さないこと（indirect が80件超に膨らみ、go ディレクティブも 1.25 へ上がる）
 - ホストの Go: 1.26.5（Homebrew。手順2で導入）。`make migrate` / 手順3以降の `make run` / `make build` に必要
 - `go tool goose` は初回のみモジュールをダウンロードする（60秒程度）。2回目以降はキャッシュが効く
 - 手順1の検証環境: Docker 29.1.3 / Docker Compose v5.3.1 / macOS (darwin 25.6.0, arm64)
