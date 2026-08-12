@@ -3,10 +3,6 @@
 --
 -- シードは冪等（ON CONFLICT DO NOTHING / DO UPDATE、DbDesign.md 5.3）。
 -- 初期管理者はシードに含めない。CLI `pb admin create` で作る（DbDesign.md 7.5、手順3）。
---
--- ワークフローテンプレートは simple のみ。DbDesign.md 7.4 は with_review / with_approval も
--- 「同様に定義する」としているが、ステータス構成・遷移・権限が未定義のため実装していない。
--- 詳細は docs/PROGRESS.md の積み残しを参照。
 
 -- +goose Up
 
@@ -134,5 +130,77 @@ INSERT INTO workflow_transition
   ('01JZZZZZZZZZZZZZZZZZZZZZT2','01JZZZZZZZZZZZZZZZZZZZZZW1',
    'in_progress','done','ticket.close','["user"]'::jsonb),
   ('01JZZZZZZZZZZZZZZZZZZZZZT3','01JZZZZZZZZZZZZZZZZZZZZZW1',
+   'in_progress','todo','ticket.transition','["user","agent"]'::jsonb)
+ON CONFLICT DO NOTHING;
+
+-- with_review：未着手 / 進行中 / レビュー中 / 完了
+INSERT INTO workflow (id, project_id, name, is_template, template_key, definition)
+VALUES ('01JZZZZZZZZZZZZZZZZZZZZZW2', NULL, 'レビューあり', true, 'with_review', '{}'::jsonb)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO workflow_status
+  (id, workflow_id, key, name, category, sort_order,
+   requires_human_approval, is_agent_reachable) VALUES
+  ('01JZZZZZZZZZZZZZZZZZZZZZS4','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'todo','未着手','todo',1,false,true),
+  ('01JZZZZZZZZZZZZZZZZZZZZZS5','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'in_progress','進行中','in_progress',2,false,true),
+  ('01JZZZZZZZZZZZZZZZZZZZZZS6','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'review','レビュー中','review',3,false,true),
+  ('01JZZZZZZZZZZZZZZZZZZZZZS7','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'done','完了','done',4,true,false)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO workflow_transition
+  (id, workflow_id, from_status_key, to_status_key,
+   required_permission, allowed_actor_kinds) VALUES
+  ('01JZZZZZZZZZZZZZZZZZZZZZT4','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'todo','in_progress','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZT5','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'in_progress','review','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZT6','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'review','in_progress','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZT7','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'review','done','ticket.close','["user"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZT8','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'in_progress','todo','ticket.transition','["user","agent"]'::jsonb)
+ON CONFLICT DO NOTHING;
+
+-- with_approval：未着手 / 進行中 / レビュー中 / 承認待ち / 完了
+INSERT INTO workflow (id, project_id, name, is_template, template_key, definition)
+VALUES ('01JZZZZZZZZZZZZZZZZZZZZZW3', NULL, '承認フロー付き', true, 'with_approval', '{}'::jsonb)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO workflow_status
+  (id, workflow_id, key, name, category, sort_order,
+   requires_human_approval, is_agent_reachable) VALUES
+  ('01JZZZZZZZZZZZZZZZZZZZZZS8','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'todo','未着手','todo',1,false,true),
+  ('01JZZZZZZZZZZZZZZZZZZZZZS9','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'in_progress','進行中','in_progress',2,false,true),
+  ('01JZZZZZZZZZZZZZZZZZZZZZSA','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'review','レビュー中','review',3,false,true),
+  ('01JZZZZZZZZZZZZZZZZZZZZZSB','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'approval','承認待ち','review',4,true,false),
+  ('01JZZZZZZZZZZZZZZZZZZZZZSC','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'done','完了','done',5,true,false)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO workflow_transition
+  (id, workflow_id, from_status_key, to_status_key,
+   required_permission, allowed_actor_kinds) VALUES
+  ('01JZZZZZZZZZZZZZZZZZZZZZT9','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'todo','in_progress','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTA','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'in_progress','review','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTB','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'review','in_progress','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTC','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'review','approval','ticket.transition','["user"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTD','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'approval','in_progress','ticket.transition','["user"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTE','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'approval','done','ticket.close','["user"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTF','01JZZZZZZZZZZZZZZZZZZZZZW3',
    'in_progress','todo','ticket.transition','["user","agent"]'::jsonb)
 ON CONFLICT DO NOTHING;

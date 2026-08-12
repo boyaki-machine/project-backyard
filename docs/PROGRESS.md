@@ -37,10 +37,11 @@
 | 2026-08-11 | 1 | `DbDesign.md` 3.5 の「実行時ロールに `SET statement_timeout = '15s'` を既定として付与」が 3.4 の SQL に反映されていなかった | `ALTER ROLE pb_app SET statement_timeout = '15s'` を initdb に追加。**`DbDesign.md` 3.4 / 3.5 に反映済み**（2026-08-11） |
 | 2026-08-11 | 1 | `deploy/Dockerfile` が未作成のため `docker compose up -d` が app のビルドで失敗する | compose には `Design.md` 4.3 どおり `app` を定義したうえで、`make up` の対象を当面 `db` のみとした。Makefile に TODO を記載。手順13以降で全サービスに戻す |
 | 2026-08-11 | 1 | `deploy/dev/compose.yaml` は作成していない。base に 127.0.0.1 公開・ログ設定が入っており dev 固有の差分が現時点で無いため（`Design.md` 4.3 末尾の方針） | 差分が生じた手順で追加する。それまで起動は `-f deploy/base/compose.yaml` 単体 |
-| 2026-08-11 | 2 | **`DbDesign.md` 7.4 が `with_review`（+レビュー中）と `with_approval`（承認フロー付き）を「同様に定義する」と書くのみで、ステータス構成・遷移・`required_permission`・`allowed_actor_kinds` が未定義。** 推測で実装できない | 0010 には `simple` のみ投入した。**`DbDesign.md` 7.4 への追記が必要**（下記1）。テンプレート追加は前進のみの後続マイグレーション（0011 以降）で行えるため、スキーマ本体への影響はない |
-| 2026-08-11 | 2 | `DbDesign.md` 5.1 がマイグレーションツールを「`sqlx-cli` / `golang-migrate` / `atlas`」としているが、採用は **goose v3**（`Design.md` 3.1、`CLAUDE.md`）。Rust 前提時代の記述が残っている | 実装は goose。**`DbDesign.md` 5.1 の修正が必要**（下記2） |
-| 2026-08-11 | 2 | `DbDesign.md` 5.2 のファイル構成が `migrations/` と書かれているが、実体は `server/migrations/`（`Design.md` 4.1 / 11章 手順2） | `server/migrations/` に作成。**`DbDesign.md` 5.2 のパス修正が必要**（下記3） |
-| 2026-08-11 | 2 | **goose の実行方法（インストール・接続文字列の渡し方）が設計文書のどこにも書かれていない。** ホストに Go も goose も入っていなかった | `server/go.mod` の `tool` ディレクティブで goose を固定し、`make migrate` から `go tool goose` で呼ぶ方式を**ユーザー承認のうえ採用**。**`DbDesign.md` 5.1 への追記が必要**（下記2） |
+| 2026-08-11 | 2 | **`DbDesign.md` 7.4 が `with_review`（+レビュー中）と `with_approval`（承認フロー付き）を「同様に定義する」と書くのみで、ステータス構成・遷移・`required_permission`・`allowed_actor_kinds` が未定義。** 推測で実装できない | 3テンプレートの定義をユーザー承認のうえ確定。**`DbDesign.md` 7.4 に反映済み**（2026-08-12）。0010 も3テンプレートに更新した |
+| 2026-08-11 | 2 | `DbDesign.md` 5.1 がマイグレーションツールを「`sqlx-cli` / `golang-migrate` / `atlas`」としているが、採用は **goose v3**（`Design.md` 3.1、`CLAUDE.md`）。Rust 前提時代の記述が残っている | **`DbDesign.md` 5.1 に反映済み**（2026-08-12） |
+| 2026-08-11 | 2 | `DbDesign.md` 5.2 のファイル構成が `migrations/` と書かれているが、実体は `server/migrations/`（`Design.md` 4.1 / 11章 手順2） | **`DbDesign.md` 5.2 に反映済み**（2026-08-12） |
+| 2026-08-11 | 2 | **goose の実行方法（インストール・接続文字列の渡し方）が設計文書のどこにも書かれていない。** ホストに Go も goose も入っていなかった | `server/go.mod` の `tool` ディレクティブで goose を固定し、`make migrate` から `go tool goose` で呼ぶ方式を**ユーザー承認のうえ採用**。**`DbDesign.md` 5.1「goose の導入と実行」に反映済み**（2026-08-12） |
+| 2026-08-12 | 2 | 7.4 の確定に伴い、適用済みの 0010 を編集した（`DbDesign.md` 5.3「適用済みファイルを編集しない」に形式上抵触する） | **0010 は `develop` へ出ておらず、検証用のローカルDB1環境にしか当たっていない**ため、環境間の不整合は起こり得ないと判断した。ボリュームごと作り直して 0001〜0010 を再適用し、全検証をやり直している。`develop` へマージした後は、テンプレート追加も含めて前進のみ（0011 以降）とする |
 | 2026-08-11 | 2 | goose 最新の v3.27.3 は `go 1.25.7` を要求し、`Design.md` 3.1 の「Go 1.24 以上」と衝突する | goose を **v3.26.0**（`go 1.23.0` 要求）に固定し、`server/go.mod` の go ディレクティブは `1.24` を維持した。goose を上げる際は `Design.md` 3.1 の最低バージョンとセットで見直す |
 | 2026-08-11 | 2 | goose を tool 依存にすると、goose が対応する全DBドライバ（clickhouse / mssql / ydb / sqlite / vertica 等）が `server/go.mod` に indirect 60件として載る。`Design.md` 3.1 の「外部ライブラリを増やさない」方針と見た目が衝突する | ビルド対象ではなくツール依存であり実行バイナリには入らないため、現状のまま進める。手順4で実依存が入った際に `// indirect` の量が問題になるようなら、goose を別モジュール（`server/tools/go.mod`）へ隔離する案を出す |
 | 2026-08-11 | 2 | 設計文書のDDLには goose の注釈（`-- +goose Up`、`-- +goose StatementBegin`）が無い | goose のパーサ要件であり設計判断ではないため、注釈のみ機械的に付加した。`set_updated_at()` は本体に `;` を含むため `StatementBegin` / `StatementEnd` で囲む必要がある。**DDL 本体は 6〜7章と1文字も変えていない**（下記の照合結果） |
@@ -56,32 +57,35 @@
 
 設計文書のコードブロックと実装の一致は、コメントを除いた差分で確認済み（`deploy/base/compose.yaml`、`deploy/base/initdb/01_roles.sh`）。
 
-### 設計文書への修正提案（手順2、未反映）
+### 設計文書へ反映済みの修正（手順2、2026-08-12、承認のうえ適用）
 
-1. **`DbDesign.md` 7.4** — `with_review` と `with_approval` のDDLを書き切る。必要なのは各テンプレートの
-   固定ULID、`workflow_status`（`key` / `name` / `category` / `sort_order` / `requires_human_approval` /
-   `is_agent_reachable`）、`workflow_transition`（`from` / `to` / `required_permission` /
-   `allowed_actor_kinds`）。`simple` と同じ粒度で確定すれば、そのまま 0011 に落とせる
-2. **`DbDesign.md` 5.1** — ツール名を goose v3 に直し（現状は `sqlx-cli` / `golang-migrate` / `atlas`）、
-   実行方法を追記する。実装は以下を採った
-
-   ```
-   server/go.mod   tool github.com/pressly/goose/v3/cmd/goose （v3.26.0 を固定）
-   make migrate    cd server && GOOSE_DRIVER=postgres GOOSE_DBSTRING=<pb_owner の接続文字列> \
-                     go tool goose -dir migrations up
-   ```
-
-   接続文字列は `deploy/dev/secrets/db_password` を recipe 内で読んで組み立てる。Makefile にも
-   `ps` の argv にも平文を残さないため、レシピは `@` 付きで実行する
-3. **`DbDesign.md` 5.2** — ファイル構成のパスを `migrations/` から `server/migrations/` に直す
+1. **`DbDesign.md` 7.4** — `with_review`（4ステータス／5遷移）と `with_approval`（5ステータス／7遷移）の
+   DDLを追記。3テンプレートの比較表、`approval` を `category='review'` とした理由、
+   差し戻し遷移を必須とする理由、固定ULIDの採番規約（`…W<n>` / `…S<n>` / `…T<n>`）も明記した
+2. **`DbDesign.md` 5.1** — ツール名を **goose v3** に修正し、「goose の導入と実行」を追記。
+   `tool` ディレクティブによるバージョン固定、接続は `pb_owner`、接続文字列を recipe 内で組み立てて
+   `ps` の argv に残さないこと、`+goose Up` / `StatementBegin` の扱い、**注釈以外にDDLへ手を入れない**旨
+3. **`DbDesign.md` 5.2** — ファイル構成のパスを `migrations/` から `server/migrations/` に修正
 
 ### 手順2の照合結果
 
 `DbDesign.md` 6.1〜6.9 と 7.1〜7.4 の `sql` ブロックを抽出し、`server/migrations/*.sql` から
-コメントと goose 注釈を除いたものと機械的に比較した。**コメントを除くSQL 462行が完全一致**。
+コメントと goose 注釈を除いたものと機械的に比較した。**コメントを除くSQL 526行が完全一致**。
 
 差分として出るのは 6.4.1（チケット採番の `UPDATE ... RETURNING`）のみで、これはアプリが実行する
 クエリでありDDLではないため、マイグレーションに含まれないのが正しい。
+
+適用結果（`down -v` でボリュームごと作り直したうえで再検証）：
+
+| 項目 | 実測 |
+|---|---|
+| テーブル | 23（業務22 + `goose_db_version`） |
+| `permission` / `role` / `role_permission` | 28 / 5 / 75 |
+| ワークフローテンプレート | `simple` 3ステータス3遷移、`with_review` 4/5、`with_approval` 5/7 |
+| エージェント到達不可のステータス | `simple.done` / `with_review.done` / `with_approval.approval` / `with_approval.done` |
+| 固定ULID | 30件すべて26文字・Crockford Base32 適合 |
+| `pb_app` | `SELECT` 可、`CREATE TABLE` / `DROP TABLE` は拒否、`statement_timeout=15s` |
+| 冪等性 | `make migrate` 再実行が no-op。0010 の直接再適用でも件数不変 |
 
 ## 環境メモ
 
