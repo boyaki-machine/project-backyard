@@ -33,6 +33,7 @@
 | 内容 | 状態 | 完了日 | ブランチ | 検証方法 |
 |---|---|---|---|---|
 | バージョン番号とビルド番号の運用（`Design.md` 11.1） | 完了 | 2026-08-12 | `feature/versioning` | マージ後に `make version-check` が通る |
+| エージェントの実行権限の整理（`.claude/settings.json`）と `CLAUDE.md` 絶対規則2の具体化 | 完了 | 2026-08-12 | `feature/step-04-http-foundation-auth` | 読み取り系コマンドが確認なしで通り、`rm` / `git merge` / `git push` などは確認を求める |
 
 ## バージョンの現況
 
@@ -344,6 +345,7 @@
 実際に動かして分かったこと（バージョンの相性、ハマった点、回避策）を追記する。
 ここに書いた内容は、後から `CLAUDE.md` や設計文書へ昇格させることを検討する。
 
+- **`.claude/settings.json` の deny は Read ツールにしか効かない。** `Read(./deploy/*/secrets/**)` を deny していても、`allow` にある `Bash(cat:*)` 経由では読めてしまう（手順4b の検証で `app_db_password` を実際にそう読んだ）。秘密を機械的に守りたい場合は Bash 側にも `deny` を足す必要がある
 - **DBを使うテストは `PB_TEST_DATABASE_URL` で切り替える**（手順4b で導入）。未設定ならスキップするので `make test` は DB 無しでも通る。実行例：
 
   ```
