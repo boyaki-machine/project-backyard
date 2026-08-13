@@ -3,6 +3,7 @@ package middleware
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -174,8 +175,9 @@ func TestSystemPermissionsSurvivesCacheWriteFailure(t *testing.T) {
 }
 
 // システムロールを持たないアクター（エージェント）は DB を引かない。
-// 空の結果をキャッシュへ書きに行くこともしない。
-func TestSystemPermissionsNoRoleDoesNotQuery(t *testing.T) {
+// **空の結果をキャッシュへ書きに行くこともしない。** 計算にDBを引いていない以上、
+// キャッシュしても次回に節約できるものが無く、TTL ごとの無駄な UPDATE になる。
+func TestSystemPermissionsNoRoleTouchesNothing(t *testing.T) {
 	q := seededQuerier()
 
 	w, _ := serveAuthz(principal(""), "/x", "/x", RequirePermission(q, "ticket.view"))
@@ -185,6 +187,115 @@ func TestSystemPermissionsNoRoleDoesNotQuery(t *testing.T) {
 	}
 	if q.roleCalls != 0 {
 		t.Errorf("ListRolePermissions の呼び出し = %d回, want 0", q.roleCalls)
+	}
+	if len(q.cacheSaves) != 0 {
+		t.Errorf("キャッシュの書き込み = %d回, want 0（空配列を書きに行っている）", len(q.cacheSaves))
+	}
+}
+
+// 書き戻しには「計算に使ったロール」が載る。
+// これが無いと、無効化を追い越して旧権限を復活させられる（queries/authz.sql）。
+func TestSystemPermissionsSavesWithComputingRole(t *testing.T) {
+	q := seededQuerier()
+
+	serveAuthz(principal(auth.SystemRoleOperator), "/x", "/x", RequirePermission(q, "user.manage"))
+
+	if len(q.cacheSaves) != 1 {
+		t.Fatalf("キャッシュの書き込み = %d回, want 1", len(q.cacheSaves))
+	}
+	if got := q.cacheSaves[0].SystemRole; got != auth.SystemRoleOperator {
+		t.Errorf("書き込みに載ったロール = %q, want %q", got, auth.SystemRoleOperator)
+	}
+}
+
+// ── トークンのプロジェクト限定（DbDesign.md 6.2、Design.md 6.5） ──────────
+
+// pinnedTo は access_token.project_id が入ったトークンのプリンシパルを返す。
+func pinnedTo(p *auth.Principal, projectID string) *auth.Principal {
+	p.ProjectID = projectID
+	return p
+}
+
+// **別プロジェクトに紐づくトークンでは 404。** メンバーであっても通さない。
+// Design.md 6.5 がエージェントトークンに禁じる「他プロジェクトへのアクセス」の実施点。
+func TestRequireProjectPermissionRejectsTokenPinnedElsewhere(t *testing.T) {
+	q := seededQuerier().withMember("my-app", "project_admin")
+	p := pinnedTo(principal(auth.SystemRoleOperator), "01OTHERPROJECT0000000000AA")
+
+	w, reached := serveAuthz(p, "/projects/{key}", "/projects/my-app",
+		RequireProjectPermission(q, "project.view"))
+
+	if w.Code != http.StatusNotFound || reached {
+		t.Fatalf("code = %d, reached = %v, want 404（body=%s）", w.Code, reached, w.Body.String())
+	}
+	// 存在を隠すのは呼び出し元に対してだけ。監査には理由が残る（手順6a の方針）。
+	if len(q.audits) != 1 {
+		t.Fatalf("permission.denied = %d件, want 1", len(q.audits))
+	}
+	if reason, _ := auditDetail(t, q.audits[0])["reason"].(string); !strings.Contains(reason, "別のプロジェクト") {
+		t.Errorf("reason = %q。非メンバーと区別できていない", reason)
+	}
+}
+
+// アドミニストレータでも、トークンが別プロジェクトに紐づいていれば通さない。
+// **トークンによる限定はロールより強い**（6.4.1 のスコープと同じ「縮小のみ」の性質）。
+func TestRequireProjectPermissionPinnedTokenBeatsAdministrator(t *testing.T) {
+	q := seededQuerier().withMember("my-app", "")
+	p := pinnedTo(principal(auth.SystemRoleAdministrator), "01OTHERPROJECT0000000000AA")
+
+	if w, _ := serveAuthz(p, "/projects/{key}", "/projects/my-app",
+		RequireProjectPermission(q, "project.view")); w.Code != http.StatusNotFound {
+		t.Errorf("code = %d, want 404", w.Code)
+	}
+}
+
+// 紐づく先が当のプロジェクトなら、通常どおり判定する。
+func TestRequireProjectPermissionAllowsMatchingPinnedToken(t *testing.T) {
+	q := seededQuerier().withMember("my-app", "project_admin")
+	p := pinnedTo(principal(auth.SystemRoleOperator), testProjectID)
+
+	w, reached := serveAuthz(p, "/projects/{key}", "/projects/my-app",
+		RequireProjectPermission(q, "project.view"))
+
+	if w.Code != http.StatusNoContent || !reached {
+		t.Errorf("code = %d, reached = %v, want 204（body=%s）", w.Code, reached, w.Body.String())
+	}
+}
+
+// project_id が空（全プロジェクト）のトークンは従来どおり。
+func TestRequireProjectPermissionUnpinnedTokenIsUnaffected(t *testing.T) {
+	q := seededQuerier().withMember("my-app", "project_admin")
+
+	if w, _ := serveAuthz(principal(auth.SystemRoleOperator), "/projects/{key}", "/projects/my-app",
+		RequireProjectPermission(q, "project.view")); w.Code != http.StatusNoContent {
+		t.Errorf("code = %d, want 204", w.Code)
+	}
+}
+
+// コンテキストに載る ProjectAuthz にも限定が反映される。
+// 後続の読み手が Reachable を見て「見えている」と誤解しないようにするため。
+func TestPinnedTokenMakesProjectUnreachableInContext(t *testing.T) {
+	q := seededQuerier().withMember("my-app", "project_admin")
+	p := pinnedTo(principal(auth.SystemRoleOperator), "01OTHERPROJECT0000000000AA")
+
+	var seen *auth.ProjectAuthz
+	mw := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			a, ctx, err := projectAuthz(r.Context(), q, p, "my-app")
+			if err != nil {
+				t.Fatalf("projectAuthz: %v", err)
+			}
+			seen = a
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+	serveAuthz(p, "/projects/{key}", "/projects/my-app", mw)
+
+	if seen == nil {
+		t.Fatal("ProjectAuthz が組み立てられていない")
+	}
+	if seen.Reachable {
+		t.Error("Reachable = true。トークンの限定が畳み込まれていない")
 	}
 }
 

@@ -119,6 +119,15 @@ func RequireProjectPermission(q gen.Querier, permission string) func(http.Handle
 				}
 			}
 
+			// トークンが別のプロジェクトに紐づいている場合を先に見る。
+			// Reachable にも畳み込んであるが（projectAuthz を参照）、
+			// 監査に残す理由を「非メンバー」と取り違えないよう分けて判定する。
+			if !p.CanReachProject(a.ProjectID) {
+				denyNotFound(w, r, q, permission, a.ProjectID, key,
+					"トークンが別のプロジェクトに紐づいている（access_token.project_id）")
+				return
+			}
+
 			if !a.Reachable {
 				denyNotFound(w, r, q, permission, a.ProjectID, key,
 					"プロジェクトのメンバーではなく、アドミニストレータでもない")
@@ -171,7 +180,9 @@ func projectAuthz(ctx context.Context, q gen.Querier, p *auth.Principal, key str
 		return nil, ctx, err
 	}
 
-	a.Reachable = a.RoleKey != "" || p.IsAdministrator()
+	// 到達可否は「当人が見てよいか」と「このトークンで触れてよいか」の積。
+	// 後者は access_token.project_id による限定である（Principal.CanReachProject）。
+	a.Reachable = (a.RoleKey != "" || p.IsAdministrator()) && p.CanReachProject(a.ProjectID)
 	a.Permissions = auth.EffectivePermissions(systemPerms, projectPermissions, p.Scopes)
 	return a, auth.NewProjectAuthzContext(ctx, a), nil
 }

@@ -91,11 +91,33 @@ ORDER BY rp.permission_key;
 -- permissions_cached_at はDBの now() で入れる。アプリ側の時刻を渡さないのは、
 -- 複数プロセスから書いても TTL の起点が1つの時計に揃うようにするためである。
 --
+-- **@system_role は「この権限を計算したときのロール」であり、書き込みの条件になる。**
+-- 無条件の UPDATE にすると、次の順序で無効化を追い越す。
+--
+--   1. リクエストR が role_permission を読む（旧ロールの権限）
+--   2. 管理者がロールを変更し InvalidateActorPermissionCache を実行
+--   3. リクエストR が旧権限を書き戻す ← 無効化が成功を返したのに旧権限が TTL ぶん復活する
+--
+-- 降格の場合、高いほうの権限が残ることになる。EXISTS でロールを照合すれば
+-- 2 を経た書き込みは0行更新で落ちる。**落ちても良い**（次のリクエストが計算し直す）。
+--
+-- ロールの割り当てそのものを変えた場合（role_permission のシードをマイグレーションで
+-- 書き換えた場合）はこの条件を通り抜けるが、そちらは TTL が拾う（Design.md 6.4.5）。
+--
+-- app_user を持たないアクター（エージェント）では EXISTS が常に偽になる。
+-- 呼び出し側がシステムロールを持たないアクターを除いているため、ここへは来ない。
+--
 -- name: SaveTokenPermissionCache :exec
 UPDATE access_token
 SET cached_permissions    = @cached_permissions,
     permissions_cached_at = now()
-WHERE id = @id;
+WHERE id = @id
+  AND EXISTS (
+    SELECT 1
+    FROM app_user u
+    WHERE u.actor_id    = access_token.actor_id
+      AND u.system_role = @system_role
+  );
 
 -- InvalidateActorPermissionCache は、あるアクターの**全トークン**の
 -- キャッシュを捨てる（Design.md 6.4.5「ロール変更時は当該ユーザーの

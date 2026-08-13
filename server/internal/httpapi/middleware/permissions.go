@@ -52,7 +52,15 @@ func SystemPermissions(ctx context.Context, q gen.Querier, p *auth.Principal) ([
 	if err != nil {
 		return nil, ctx, err
 	}
-	SaveSystemPermissionCache(ctx, q, p.TokenID, permissions)
+
+	// **システムロールを持たないアクター（エージェント）には書かない。**
+	// 計算にDBを引いていないので、キャッシュしても次回に節約できるものが無い。
+	// 書けば TTL ごとに空配列を UPDATE し続けるだけになる。Phase 2 で
+	// エージェントに権限を与える経路はプロジェクトロールであり、
+	// そちらはそもそもキャッシュの対象外である（0012 の説明）。
+	if p.SystemRole != "" {
+		SaveSystemPermissionCache(ctx, q, p.TokenID, p.SystemRole, permissions)
+	}
 
 	return permissions, auth.NewSystemPermissionsContext(ctx, permissions), nil
 }
@@ -79,13 +87,21 @@ func ComputeSystemPermissions(
 
 // SaveSystemPermissionCache は実効権限をセッションへ書き戻す（Design.md 6.4.5）。
 //
+// systemRole は permissions を計算したときのロールである。**書き込みの条件になる**
+// （queries/authz.sql を参照）。この間にロールが変わっていれば0行更新で落ち、
+// 無効化を追い越して旧権限を復活させることがない。
+//
 // **失敗しても処理は続ける。** 書けなければ次のリクエストで計算し直すだけで、
 // 応答の中身は変わらない。キャッシュが1回書けなかったためにリクエストを
-// 落とす価値はない（last_used_at と同じ扱い）。
+// 落とす価値はない（last_used_at と同じ扱い）。0行更新も失敗と区別しない。
 //
-// リクエストのキャンセルを引き継がないのは、応答を返した後の後片付けとして
-// 走らせるためである。
-func SaveSystemPermissionCache(ctx context.Context, q gen.Querier, tokenID string, permissions []string) {
+// **本関数はミドルウェアの中で同期的に走る**（認可の判定より前）。応答後の
+// 後片付けではない。それでもリクエストのキャンセルを引き継がないのは、
+// 計算が既に済んでおり、捨てると次のリクエストでもう一度DBを引くことになる
+// ためである。同期的である以上は長く待てないので、上限を短く切る。
+func SaveSystemPermissionCache(
+	ctx context.Context, q gen.Querier, tokenID, systemRole string, permissions []string,
+) {
 	raw, err := auth.EncodeCachedPermissions(permissions)
 	if err != nil {
 		warnPermissionCache(ctx, tokenID, err)
@@ -97,6 +113,7 @@ func SaveSystemPermissionCache(ctx context.Context, q gen.Querier, tokenID strin
 
 	if err := q.SaveTokenPermissionCache(saveCtx, gen.SaveTokenPermissionCacheParams{
 		ID:                tokenID,
+		SystemRole:        systemRole,
 		CachedPermissions: raw,
 	}); err != nil {
 		warnPermissionCache(ctx, tokenID, err)

@@ -221,7 +221,7 @@ func (h *handler) completeLogin(
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return
 	}
-	middleware.SaveSystemPermissionCache(ctx, h.q, session.TokenID, systemPerms)
+	middleware.SaveSystemPermissionCache(ctx, h.q, session.TokenID, row.SystemRole, systemPerms)
 
 	// ログイン応答は GET /me と同じ内容を返す（ApiDesign.md 3.1）。
 	// 新しいセッションは scopes を持たないため、縮小は起きない。

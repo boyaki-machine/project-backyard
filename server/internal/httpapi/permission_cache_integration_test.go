@@ -172,7 +172,10 @@ func TestPermissionCacheIntegration(t *testing.T) {
 
 	t.Run("無効化すると次のリクエストで権限が変わる", func(t *testing.T) {
 		// api トークン側にもキャッシュを作っておく。アクター単位で消えることの確認用。
-		middleware.SaveSystemPermissionCache(ctx, q, apiTokenID, []string{"project.view"})
+		// 直前のサブテストで administrator へ変えてあるので、書き込みの条件
+		// （@system_role の照合）に合わせる。
+		middleware.SaveSystemPermissionCache(ctx, q, apiTokenID,
+			auth.SystemRoleAdministrator, []string{"project.view"})
 		if _, ok := cacheOf(t, apiTokenID); !ok {
 			t.Fatal("検証の前提が崩れている（api トークンにキャッシュが無い）")
 		}
@@ -224,6 +227,49 @@ func TestPermissionCacheIntegration(t *testing.T) {
 		if auth.HasPermission(got, "user.manage") {
 			t.Errorf("キャッシュ = %v。計算し直した結果で上書きされていない", got)
 		}
+	})
+
+	// **書き戻しが無効化を追い越さないこと。**
+	//
+	//   1. リクエストR が旧ロールの権限を計算する
+	//   2. 管理者がロールを変更し、キャッシュを無効化する
+	//   3. リクエストR が書き戻そうとする ← ここで落ちなければ旧権限が TTL ぶん復活する
+	//
+	// 手順10 で無効化を呼ぶようになると実際に起こりうる順序である。
+	t.Run("ロールが変わった後の書き戻しは落ちる", func(t *testing.T) {
+		setRole(t, auth.SystemRoleOperator)
+		if err := q.InvalidateActorPermissionCache(ctx, actorID); err != nil {
+			t.Fatalf("InvalidateActorPermissionCache: %v", err)
+		}
+
+		// 1. オペレータとして計算した、という状況を作る。
+		stale := []string{"project.view", "ticket.view"}
+
+		// 2. 昇格し、無効化する。
+		setRole(t, auth.SystemRoleAdministrator)
+		if err := q.InvalidateActorPermissionCache(ctx, actorID); err != nil {
+			t.Fatalf("InvalidateActorPermissionCache: %v", err)
+		}
+
+		// 3. 遅れて届いた書き戻し。
+		middleware.SaveSystemPermissionCache(ctx, q, sessionTokenID, auth.SystemRoleOperator, stale)
+
+		if got, ok := cacheOf(t, sessionTokenID); ok {
+			t.Errorf("キャッシュ = %v。無効化を追い越して書き込まれている", got)
+		}
+
+		// 現在のロールで書けば通る（条件が厳しすぎて常に落ちるわけではない）。
+		middleware.SaveSystemPermissionCache(ctx, q, sessionTokenID,
+			auth.SystemRoleAdministrator, []string{"user.manage"})
+		if _, ok := cacheOf(t, sessionTokenID); !ok {
+			t.Error("現在のロールでの書き戻しまで落ちている")
+		}
+
+		// 後片付け。次のサブテストの件数を狂わせない。
+		if err := q.InvalidateActorPermissionCache(ctx, actorID); err != nil {
+			t.Fatalf("InvalidateActorPermissionCache: %v", err)
+		}
+		setRole(t, auth.SystemRoleOperator)
 	})
 
 	t.Run("拒否は permission.denied に残る", func(t *testing.T) {

@@ -124,6 +124,24 @@ func (p *Principal) IsAdministrator() bool {
 	return p != nil && p.SystemRole == SystemRoleAdministrator
 }
 
+// CanReachProject は、このトークンで projectID に触れてよいかを返す。
+//
+// access_token.project_id は「NULL = 全プロジェクト」（DbDesign.md 6.2）であり、
+// 値が入っているトークンは**そのプロジェクト専用**である。Design.md 6.5 は
+// エージェントトークンの禁止事項に「他プロジェクトへのアクセス」を挙げており、
+// その実施点が RequireProjectPermission になる。
+//
+// **ロールや権限とは独立した軸である。** 当人がプロジェクトBのメンバーであっても、
+// プロジェクトAに紐づくトークンで送られたリクエストはBに触れられない。
+// トークンスコープ（6.4.1）が「何をしてよいか」を絞るのに対し、こちらは
+// 「どのプロジェクトに対してか」を絞る。
+func (p *Principal) CanReachProject(projectID string) bool {
+	if p == nil {
+		return false
+	}
+	return p.ProjectID == "" || p.ProjectID == projectID
+}
+
 // システムロール（DbDesign.md 6.2 app_user.system_role の CHECK 制約）。
 const (
 	SystemRoleOperator      = "operator"
