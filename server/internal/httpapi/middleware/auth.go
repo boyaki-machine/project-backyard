@@ -79,18 +79,22 @@ func Authenticate(q gen.Querier) func(http.Handler) http.Handler {
 				expiresAt = &t
 			}
 
+			cached, cachedAt := permissionCache(r.Context(), row)
+
 			p := &auth.Principal{
-				ActorID:     row.ActorID,
-				ActorKind:   row.ActorKind,
-				DisplayName: row.DisplayName,
-				Email:       row.Email.String,
-				SystemRole:  row.SystemRole.String,
-				TokenID:     row.TokenID,
-				TokenType:   row.TokenType,
-				Scopes:      scopes,
-				ProjectID:   row.ProjectID.String,
-				ExpiresAt:   expiresAt,
-				Source:      source,
+				ActorID:             row.ActorID,
+				ActorKind:           row.ActorKind,
+				DisplayName:         row.DisplayName,
+				Email:               row.Email.String,
+				SystemRole:          row.SystemRole.String,
+				TokenID:             row.TokenID,
+				TokenType:           row.TokenType,
+				Scopes:              scopes,
+				ProjectID:           row.ProjectID.String,
+				ExpiresAt:           expiresAt,
+				Source:              source,
+				CachedPermissions:   cached,
+				PermissionsCachedAt: cachedAt,
 			}
 			next.ServeHTTP(w, r.WithContext(auth.NewPrincipalContext(r.Context(), p)))
 		})
@@ -131,6 +135,32 @@ func invalidReason(row gen.FindAccessTokenByHashRow) string {
 		return "アクターが無効化されている（actor.is_active=false）"
 	}
 	return ""
+}
+
+// permissionCache は実効権限のセッションキャッシュを取り出す（Design.md 6.4.5）。
+//
+// 両方が揃っているときだけキャッシュとして扱う。片方だけが入っている行は
+// 想定していないが（書き込みも無効化も2列を同時に扱う）、そうなっていたら
+// キャッシュ不在として計算し直す。
+//
+// **解釈できなくても認証は通す。** キャッシュを読めなかった場合はロールから
+// 計算し直すだけで、得られる権限は正本と同じものになる。壊れた scopes を
+// 500 にする（安全側に倒れないため）のとは事情が違う。
+func permissionCache(ctx context.Context, row gen.FindAccessTokenByHashRow) ([]string, *time.Time) {
+	if !row.PermissionsCachedAt.Valid || len(row.CachedPermissions) == 0 {
+		return nil, nil
+	}
+	permissions, err := auth.DecodeCachedPermissions(row.CachedPermissions)
+	if err != nil {
+		slog.WarnContext(ctx, "実効権限のキャッシュを解釈できなかった。計算し直す",
+			slog.String("request_id", apierr.RequestIDFromContext(ctx)),
+			slog.String("token_id", row.TokenID),
+			slog.String("cause", err.Error()),
+		)
+		return nil, nil
+	}
+	cachedAt := row.PermissionsCachedAt.Time
+	return permissions, &cachedAt
 }
 
 // touchLastUsed は last_used_at を更新する。失敗しても認証は通す。

@@ -463,7 +463,9 @@ server/migrations/                      ← Design.md 4.1。sqlc がスキーマ
 ├── 0008_history.sql                    activity, audit_log
 ├── 0009_sprint.sql                     sprint
 ├── 0010_seed_phase1.sql                権限カタログ、ロール、ワークフローテンプレート
-└── 0011_audit_log_request_id.sql       audit_log.request_id を追加（6.8）
+├── 0011_audit_log_request_id.sql       audit_log.request_id を追加（6.8）
+└── 0012_access_token_permission_cache.sql
+                                        access_token に実効権限のキャッシュ2列を追加（6.2）
 ```
 
 `project.workflow_id` と `ticket.sprint_id` は後続テーブルを参照するため、**FK制約のみ後から `ALTER TABLE ... ADD CONSTRAINT` で付与する**（0005 / 0009 の末尾）。PostgreSQL は前方参照を許さないためである。
@@ -599,7 +601,9 @@ CREATE TABLE access_token (
   expires_at   timestamptz,
   last_used_at timestamptz,
   revoked_at   timestamptz,
-  client_info  text
+  client_info  text,
+  cached_permissions    jsonb,       -- 0012 で追加。実効権限のキャッシュ
+  permissions_cached_at timestamptz  -- 同上。TTL の起点
 );
 CREATE INDEX idx_access_token_actor  ON access_token (actor_id);
 CREATE INDEX idx_access_token_active ON access_token (expires_at)
@@ -607,6 +611,14 @@ CREATE INDEX idx_access_token_active ON access_token (expires_at)
 ```
 
 **`token_hash` に `UNIQUE` を張ることが、認証の主経路になる。** 受け取った平文をSHA-256にして1回のインデックス探索で引く（`ApiDesign.md` 3.2）。
+
+**`cached_permissions` は `Design.md` 6.4.5 が求める「セッションへのキャッシュ」の置き場である。** 入るのは 6.4.1 の式のうち**システムロールの層のみ**（`システムロールの権限 ∩ トークンのスコープ`）で、プロジェクトロールの層は入れない。プロジェクト個別の判定は「そのプロジェクトが在るか・当人がメンバーか」を同じクエリで確かめる必要があり、権限だけをキャッシュしてもクエリが1本も減らないためである。
+
+この列を `access_token` に置いたことで、**認可のためにクエリが1本も増えない。** 認証は全リクエストが通る経路であり（6.2.2）、そこで引く行にキャッシュが載っていれば `RequirePermission` は追加のDBアクセスなしで判定できる。
+
+両列とも `NULL` は「キャッシュが無い（未計算、またはロール変更で無効化済み）」を意味する。`'[]'` は「権限0件」であって別の状態である。無効化は**アクター単位で全トークンを対象に**行う。権限を変えられた本人は複数のセッションとAPIトークンを持ちうるので、1本だけ消しても残りの経路から旧権限で通れてしまう。
+
+**この2列は 0012 で追加した**（`access_token` 自体の作成は 0002）。前進のみの規則（5.3）に従い、0002 は編集していない。
 
 ## 6.3 認可（0003）
 
@@ -1226,17 +1238,17 @@ $ pb admin create
 Phase 1 のテーブルは変更せず、**テーブル追加のみ**で拡張する。本章のDDLは構成案であり、各Phase着手時に確定させる。
 
 ```
-0012_agent.sql            agent, task_lease
-0013_dod.sql              dod_item
-0014_agent_run.sql        agent_run, agent_report, context_pack_log
-0015_knowledge.sql        knowledge, knowledge_revision, proposal
-0016_comment_signal.sql   comment_signal
-0017_embedding.sql        vector 拡張 + embedding
-0018_project_event.sql    project_event
-0019_analytics.sql        estimate_record, contribution
+0013_agent.sql            agent, task_lease
+0014_dod.sql              dod_item
+0015_agent_run.sql        agent_run, agent_report, context_pack_log
+0016_knowledge.sql        knowledge, knowledge_revision, proposal
+0017_comment_signal.sql   comment_signal
+0018_embedding.sql        vector 拡張 + embedding
+0019_project_event.sql    project_event
+0020_analytics.sql        estimate_record, contribution
 ```
 
-採番が 0012 から始まるのは、Phase 1 の手順4b で 0011（`audit_log.request_id` の追加、6.8）を使ったためである。
+採番が 0013 から始まるのは、Phase 1 が 0012 まで使ったためである。手順4b で 0011（`audit_log.request_id` の追加、6.8）、手順6b で 0012（`access_token` の実効権限キャッシュ、6.2）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる。** 本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 ## 8.1 エージェント連携（Phase 2）
 

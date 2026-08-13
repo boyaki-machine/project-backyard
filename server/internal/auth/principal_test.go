@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestPrincipalContextRoundTrip(t *testing.T) {
@@ -129,5 +130,103 @@ func TestEncodeScopes(t *testing.T) {
 	}
 	if !reflect.DeepEqual(back, []string{"ticket:read"}) {
 		t.Errorf("往復後 = %v", back)
+	}
+}
+
+// ── FreshPermissions（Design.md 6.4.5、手順6b） ──────────
+
+func TestFreshPermissions(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) *time.Time {
+		t := now.Add(d)
+		return &t
+	}
+
+	tests := []struct {
+		name      string
+		p         *Principal
+		want      []string
+		wantFresh bool
+	}{
+		{
+			name:      "キャッシュが無い",
+			p:         &Principal{},
+			wantFresh: false,
+		},
+		{
+			name: "書いた直後",
+			p: &Principal{
+				CachedPermissions:   []string{"ticket.view"},
+				PermissionsCachedAt: at(0),
+			},
+			want:      []string{"ticket.view"},
+			wantFresh: true,
+		},
+		{
+			name: "TTL の直前",
+			p: &Principal{
+				CachedPermissions:   []string{"ticket.view"},
+				PermissionsCachedAt: at(-PermissionCacheTTL + time.Second),
+			},
+			want:      []string{"ticket.view"},
+			wantFresh: true,
+		},
+		{
+			name: "TTL ちょうどで期限切れ",
+			p: &Principal{
+				CachedPermissions:   []string{"ticket.view"},
+				PermissionsCachedAt: at(-PermissionCacheTTL),
+			},
+			wantFresh: false,
+		},
+		{
+			// 権限0件と「キャッシュが無い」は別物。0件のキャッシュは有効である。
+			name: "権限0件のキャッシュ",
+			p: &Principal{
+				CachedPermissions:   []string{},
+				PermissionsCachedAt: at(0),
+			},
+			want:      []string{},
+			wantFresh: true,
+		},
+		{
+			// 無効化は2列を同時に消すので起きないはずだが、片方だけ
+			// 残っていたら計算し直す側へ倒す。
+			name: "時刻だけある",
+			p: &Principal{
+				PermissionsCachedAt: at(0),
+			},
+			wantFresh: false,
+		},
+		{
+			// DBの時計がアプリより進んでいる場合。有効に見えるだけで破綻しない。
+			name: "未来の時刻",
+			p: &Principal{
+				CachedPermissions:   []string{"ticket.view"},
+				PermissionsCachedAt: at(time.Minute),
+			},
+			want:      []string{"ticket.view"},
+			wantFresh: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, fresh := tt.p.FreshPermissions(now)
+			if fresh != tt.wantFresh {
+				t.Fatalf("fresh = %v, want %v", fresh, tt.wantFresh)
+			}
+			if fresh && !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// nil レシーバでも落ちない（未認証の経路から呼ばれても安全にする）。
+func TestFreshPermissionsNilPrincipal(t *testing.T) {
+	var p *Principal
+	if _, fresh := p.FreshPermissions(time.Now()); fresh {
+		t.Error("nil のプリンシパルがキャッシュを持っていることになっている")
 	}
 }

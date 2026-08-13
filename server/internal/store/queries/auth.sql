@@ -19,6 +19,12 @@ SELECT
   t.expires_at,
   t.revoked_at,
   t.last_used_at,
+  -- 実効権限のセッションキャッシュ（Design.md 6.4.5、0012 で追加）。
+  -- **認可のためにクエリを1本足さない**ことがこの設計の要点である。
+  -- 認証は全リクエストが通る経路であり、その行に相乗りすれば
+  -- RequirePermission は追加のDBアクセス無しで判定できる。
+  t.cached_permissions,
+  t.permissions_cached_at,
   a.id           AS actor_id,
   a.kind         AS actor_kind,
   a.display_name,

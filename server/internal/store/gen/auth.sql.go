@@ -63,6 +63,12 @@ SELECT
   t.expires_at,
   t.revoked_at,
   t.last_used_at,
+  -- 実効権限のセッションキャッシュ（Design.md 6.4.5、0012 で追加）。
+  -- **認可のためにクエリを1本足さない**ことがこの設計の要点である。
+  -- 認証は全リクエストが通る経路であり、その行に相乗りすれば
+  -- RequirePermission は追加のDBアクセス無しで判定できる。
+  t.cached_permissions,
+  t.permissions_cached_at,
   a.id           AS actor_id,
   a.kind         AS actor_kind,
   a.display_name,
@@ -76,19 +82,21 @@ WHERE t.token_hash = $1
 `
 
 type FindAccessTokenByHashRow struct {
-	TokenID     string
-	TokenType   string
-	Scopes      []byte
-	ProjectID   pgtype.Text
-	ExpiresAt   pgtype.Timestamptz
-	RevokedAt   pgtype.Timestamptz
-	LastUsedAt  pgtype.Timestamptz
-	ActorID     string
-	ActorKind   string
-	DisplayName string
-	IsActive    bool
-	SystemRole  pgtype.Text
-	Email       pgtype.Text
+	TokenID             string
+	TokenType           string
+	Scopes              []byte
+	ProjectID           pgtype.Text
+	ExpiresAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+	LastUsedAt          pgtype.Timestamptz
+	CachedPermissions   []byte
+	PermissionsCachedAt pgtype.Timestamptz
+	ActorID             string
+	ActorKind           string
+	DisplayName         string
+	IsActive            bool
+	SystemRole          pgtype.Text
+	Email               pgtype.Text
 }
 
 // 認証に関するクエリ（Design.md 6.2.2、DbDesign.md 6.2）。
@@ -112,6 +120,8 @@ func (q *Queries) FindAccessTokenByHash(ctx context.Context, tokenHash string) (
 		&i.ExpiresAt,
 		&i.RevokedAt,
 		&i.LastUsedAt,
+		&i.CachedPermissions,
+		&i.PermissionsCachedAt,
 		&i.ActorID,
 		&i.ActorKind,
 		&i.DisplayName,

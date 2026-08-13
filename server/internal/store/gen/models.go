@@ -11,19 +11,21 @@ import (
 )
 
 type AccessToken struct {
-	ID          string
-	ActorID     string
-	TokenType   string
-	TokenHash   string
-	TokenPrefix pgtype.Text
-	Name        pgtype.Text
-	ProjectID   pgtype.Text
-	Scopes      []byte
-	IssuedAt    pgtype.Timestamptz
-	ExpiresAt   pgtype.Timestamptz
-	LastUsedAt  pgtype.Timestamptz
-	RevokedAt   pgtype.Timestamptz
-	ClientInfo  pgtype.Text
+	ID                  string
+	ActorID             string
+	TokenType           string
+	TokenHash           string
+	TokenPrefix         pgtype.Text
+	Name                pgtype.Text
+	ProjectID           pgtype.Text
+	Scopes              []byte
+	IssuedAt            pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	LastUsedAt          pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+	ClientInfo          pgtype.Text
+	CachedPermissions   []byte
+	PermissionsCachedAt pgtype.Timestamptz
 }
 
 type Activity struct {

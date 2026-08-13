@@ -97,3 +97,71 @@ func TestHasPermission(t *testing.T) {
 		t.Error("持っていない権限が通った")
 	}
 }
+
+// ── 実効権限のセッションキャッシュ（Design.md 6.4.5、手順6b） ──────────
+
+// NULL（空の raw）と空配列を取り違えないこと。
+// 列の NULL は「キャッシュが無い」、[] は「権限0件」で別の状態である。
+func TestDecodeCachedPermissionsNullAndEmptyDiffer(t *testing.T) {
+	got, err := DecodeCachedPermissions(nil)
+	if err != nil {
+		t.Fatalf("DecodeCachedPermissions(nil): %v", err)
+	}
+	if got != nil {
+		t.Errorf("NULL = %v, want nil（キャッシュ不在）", got)
+	}
+
+	got, err = DecodeCachedPermissions([]byte(`[]`))
+	if err != nil {
+		t.Fatalf("DecodeCachedPermissions([]): %v", err)
+	}
+	if got == nil {
+		t.Fatal("[] が nil になった。権限0件とキャッシュ不在を区別できない")
+	}
+	if len(got) != 0 {
+		t.Errorf("[] = %v, want 長さ0", got)
+	}
+}
+
+// jsonb に JSON の null が入っていたら空配列と同じに扱う。
+func TestDecodeCachedPermissionsJSONNull(t *testing.T) {
+	got, err := DecodeCachedPermissions([]byte(`null`))
+	if err != nil {
+		t.Fatalf("DecodeCachedPermissions(null): %v", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Errorf("null = %v, want 長さ0の非 nil", got)
+	}
+}
+
+func TestDecodeCachedPermissionsBroken(t *testing.T) {
+	if _, err := DecodeCachedPermissions([]byte(`{"a":1}`)); err == nil {
+		t.Error("壊れた値がエラーにならなかった")
+	}
+}
+
+// nil でも列には [] を書く。NULL は「キャッシュが無い」の意味に予約する。
+func TestEncodeCachedPermissionsNil(t *testing.T) {
+	got, err := EncodeCachedPermissions(nil)
+	if err != nil {
+		t.Fatalf("EncodeCachedPermissions(nil): %v", err)
+	}
+	if string(got) != "[]" {
+		t.Errorf("EncodeCachedPermissions(nil) = %q, want %q", got, "[]")
+	}
+}
+
+func TestCachedPermissionsRoundTrip(t *testing.T) {
+	want := []string{"project.view", "ticket.view"}
+	raw, err := EncodeCachedPermissions(want)
+	if err != nil {
+		t.Fatalf("EncodeCachedPermissions: %v", err)
+	}
+	got, err := DecodeCachedPermissions(raw)
+	if err != nil {
+		t.Fatalf("DecodeCachedPermissions: %v", err)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("往復後 = %v, want %v", got, want)
+	}
+}
