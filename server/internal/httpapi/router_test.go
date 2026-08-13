@@ -43,9 +43,12 @@ func do(t *testing.T, method, path string) (*httptest.ResponseRecorder, errBody)
 	return rec, body
 }
 
-// 未知のパスは 2.5 の形式で 404 を返す。chi の既定（本文なし）ではない。
-func TestUnknownPathReturnsApiErrorShape(t *testing.T) {
-	for _, path := range []string{"/api/v1/nope", "/", "/nope"} {
+// API の未知のパスは 2.5 の形式で 404 を返す。chi の既定（本文なし）ではない。
+//
+// SPA のフォールバック（Design.md 3.4）が効くのは /api /mcp の外だけであり、
+// 綴りを誤った API 呼び出しに index.html を返してはならない。
+func TestUnknownAPIPathReturnsApiErrorShape(t *testing.T) {
+	for _, path := range []string{"/api/v1/nope", "/api", "/api/", "/mcp/nope"} {
 		rec, body := do(t, http.MethodGet, path)
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s: status = %d, want 404", path, rec.Code)
@@ -56,6 +59,33 @@ func TestUnknownPathReturnsApiErrorShape(t *testing.T) {
 		if body.Error.Message == "" {
 			t.Errorf("%s: message が空", path)
 		}
+	}
+}
+
+// API 以外の未知のパスは SPA の index.html を返す（Design.md 3.4）。
+// 画面のルーティングはクライアント側にあり、サーバは経路を知らない。
+func TestUnknownScreenPathFallsBackToSPA(t *testing.T) {
+	for _, path := range []string{"/", "/projects", "/p/my-app/tickets/31", "/404"} {
+		rec := httptest.NewRecorder()
+		NewRouter(Deps{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s: status = %d, want 200", path, rec.Code)
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("%s: Content-Type = %q, want text/html", path, ct)
+		}
+	}
+}
+
+// 画面のパスへの POST に index.html を返さない。
+func TestSPAFallbackIsGetOnly(t *testing.T) {
+	rec, body := do(t, http.MethodPost, "/projects")
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", rec.Code)
+	}
+	if body.Error.Code != "method_not_allowed" {
+		t.Errorf("code = %q", body.Error.Code)
 	}
 }
 

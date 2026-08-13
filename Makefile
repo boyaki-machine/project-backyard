@@ -20,7 +20,7 @@ MERGES_ON_DEVELOP = $(shell git rev-list --count --first-parent --merges develop
 # bump-* は feature ブランチ上で「これからマージする」前提で走らせるため +1 する。
 NEXT_BUILD = $$(( $(MERGES_ON_DEVELOP) + 1 ))
 
-# 手順13以降の make build / build-release.sh が使う（Design.md 4.5）。
+# make build と、手順18以降の build-release.sh が使う（Design.md 4.5）。
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 # マイグレーションは DDL を実行するため pb_owner で接続する（DbDesign.md 3.4）。
@@ -34,7 +34,9 @@ GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(DB_PASSWORD_FILE))@127.0.0.1
 APP_DB_PASSWORD_FILE := $(CURDIR)/deploy/dev/secrets/app_db_password
 PB_DATABASE_URL_APP = postgres://pb_app:$$(cat $(APP_DB_PASSWORD_FILE))@127.0.0.1:5432/pb?sslmode=disable&application_name=pb
 
-.PHONY: up down psql migrate sqlc run admin-create test version version-check bump-build bump-minor bump-major release-tag
+.PHONY: up down psql migrate sqlc run admin-create test \
+	dev-client build-client sync-webui build clean-webui \
+	version version-check bump-build bump-minor bump-major release-tag
 
 ## DB を起動する
 # TODO(手順13以降): deploy/Dockerfile 作成後、`up -d` に戻して app も起動対象にする
@@ -85,6 +87,33 @@ admin-create:
 ## テストを実行する
 test:
 	@cd server && go test ./...
+
+# ── client とビルド（Design.md 3.4 / 4.2）──────────────────────
+
+## Vite 開発サーバを起動する（:5173。/api と /mcp を :8080 へプロキシ）
+# HMR を効かせながら画面を作るときはこちらを使う。API は make run で別に立てる。
+dev-client:
+	cd client && npm run dev
+
+## client をビルドする（client/dist を生成）
+build-client:
+	cd client && npm ci && npm run build
+
+## embed 対象へコピーする（//go:embed は親ディレクトリを辿れない。Design.md 3.4）
+sync-webui: build-client
+	rm -rf server/internal/webui/dist && mkdir -p server/internal/webui/dist
+	cp -R client/dist/. server/internal/webui/dist/
+
+## client を埋め込んだ単一バイナリを作る（bin/pb）
+build: sync-webui
+	cd server && CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o ../bin/pb ./cmd/pb
+
+## embed 対象をコミット済みのプレースホルダだけに戻す
+# make build はビルド成果物で dist/index.html を上書きするため、
+# コミット前にこれを実行して作業ツリーを綺麗にする。
+clean-webui:
+	git -C $(CURDIR) clean -fdxq server/internal/webui/dist
+	git -C $(CURDIR) restore server/internal/webui/dist/index.html
 
 # ── バージョン操作（Design.md 11.1）────────────────────────────
 

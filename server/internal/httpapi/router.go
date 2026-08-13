@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -10,6 +11,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	v1 "github.com/boyaki-machine/project-backyard/server/internal/httpapi/v1"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
+	"github.com/boyaki-machine/project-backyard/server/internal/webui"
 )
 
 // Deps はルータが必要とする外部資源と設定。
@@ -51,8 +53,22 @@ func NewRouter(deps Deps) http.Handler {
 	r.Use(middleware.AccessLog(HealthPath))
 
 	// chi の既定は本文なしの 404 / 405 を返すため、2.5 の形式に置き換える。
+	//
+	// ただし API 以外の未知パスは SPA のフォールバック先になる（Design.md 3.4）。
+	// /healthcheck は下で登録済みのためここへは来ない（ApiDesign.md 2.11 の例外）。
+	spa := webui.Handler()
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		apierr.WriteCode(w, r, apierr.NotFound)
+		if isAPIPath(r.URL.Path) {
+			apierr.WriteCode(w, r, apierr.NotFound)
+			return
+		}
+		// 画面の取得は GET / HEAD に限る。POST に index.html を返すと、
+		// 綴りを誤った API 呼び出しが 200 で返ってきて発見が遅れる。
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			apierr.WriteCode(w, r, apierr.MethodNotAllowed)
+			return
+		}
+		spa.ServeHTTP(w, r)
 	})
 	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 		apierr.WriteCode(w, r, apierr.MethodNotAllowed)
@@ -69,4 +85,17 @@ func NewRouter(deps Deps) http.Handler {
 	})
 
 	return r
+}
+
+// isAPIPath は SPA のフォールバック対象外とするパスかを返す。
+//
+// 対象は REST（/api）と MCP（/mcp、Phase 2）の2つ。ここに該当するパスは、
+// 未定義であっても index.html ではなく 2.5 形式の 404 を返す。
+func isAPIPath(p string) bool {
+	for _, prefix := range []string{"/api", "/mcp"} {
+		if p == prefix || strings.HasPrefix(p, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
