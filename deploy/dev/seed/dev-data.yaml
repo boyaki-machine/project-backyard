@@ -1,0 +1,26 @@
+# 開発端末での動作確認用。本番には投入されない（DbDesign.md 7.6.3 のガード）。
+password: pbdev-password        # 全デモアカウント共通
+
+users:
+  - email: admin@example.com
+    display_name: 開発管理者
+    system_role: administrator
+  - email: pm@example.com
+    display_name: 開発PM
+    system_role: operator
+  - email: member@example.com
+    display_name: 開発メンバー
+    system_role: operator
+  - email: viewer@example.com
+    display_name: 開発閲覧者
+    system_role: operator
+
+projects:
+  - key: demo
+    name: デモプロジェクト
+    description: 動作確認用のサンプルプロジェクト
+    workflow_template: simple
+    members:
+      - { email: pm@example.com,     role: project_admin }
+      - { email: member@example.com, role: project_member }
+      - { email: viewer@example.com, role: project_viewer }

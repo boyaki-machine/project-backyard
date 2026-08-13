@@ -83,6 +83,9 @@ make version     # 現在のバージョンと develop へのマージ回数を�
 make bump-minor  # 機能追加のマージ前に実行（fix/ docs/ は bump-build）
 make test
 make psql        # DBコンソール
+make dev-reset   # 開発用：DBを作り直してデモデータを投入（手順7.5以降）
+make dev-seed    # 開発用：デモデータのみ投入（冪等）
+make dev-info    # 開発用：URL とデモアカウント一覧を表示
 ```
 
 ## 進捗と作業の進め方

@@ -6,22 +6,42 @@ package gen
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
+	AddProjectMember(ctx context.Context, arg AddProjectMemberParams) error
 	// アクターとユーザーに関するクエリ（DbDesign.md 6.2）。
 	//
 	// 手順3で pb admin create が直接書いていたSQLを sqlc へ移したもの。
 	CountAdministrators(ctx context.Context) (int64, error)
+	// 以下は pb dev seed（DbDesign.md 7.6）が使う。
+	CountAppUsers(ctx context.Context) (int64, error)
 	// CreateAccessToken はセッション・APIトークン・エージェントトークンを発行する
 	// （DbDesign.md 6.2）。**平文は渡さない。** token_hash は SHA-256、
 	// token_prefix は一覧表示用の先頭8文字である。
 	//
 	CreateAccessToken(ctx context.Context, arg CreateAccessTokenParams) error
 	CreateAdministrator(ctx context.Context, arg CreateAdministratorParams) error
+	// system_role を引数に取る点だけが CreateAdministrator と違う。
+	CreateAppUser(ctx context.Context, arg CreateAppUserParams) error
 	CreateLocalCredential(ctx context.Context, arg CreateLocalCredentialParams) error
+	// workflow_id は後から埋める。非テンプレートの workflow は project_id が
+	// NOT NULL 相当（ck_workflow_template）で、プロジェクトより先に作れないため。
+	CreateProject(ctx context.Context, arg CreateProjectParams) error
+	CreateProjectCounter(ctx context.Context, projectID string) error
+	CreateProjectWorkflow(ctx context.Context, arg CreateProjectWorkflowParams) error
 	CreateUserActor(ctx context.Context, arg CreateUserActorParams) error
 	CreateUserIdentity(ctx context.Context, arg CreateUserIdentityParams) error
+	CreateWorkflowStatus(ctx context.Context, arg CreateWorkflowStatusParams) error
+	CreateWorkflowTransition(ctx context.Context, arg CreateWorkflowTransitionParams) error
+	// actor を消せば app_user / user_identity / local_credential /
+	// project_member / access_token は ON DELETE CASCADE で追従する（DbDesign.md 6.2 / 6.3）。
+	DeleteActorByEmail(ctx context.Context, email string) (int64, error)
+	// project_counter / project_member / workflow（と配下の status・transition）は
+	// ON DELETE CASCADE で追従する（DbDesign.md 6.4 / 6.5）。
+	DeleteProjectByKey(ctx context.Context, key string) (int64, error)
 	// 認証に関するクエリ（Design.md 6.2.2、DbDesign.md 6.2）。
 	// FindAccessTokenByHash は受け取った平文の SHA-256 で access_token を引く。
 	//
@@ -34,6 +54,7 @@ type Querier interface {
 	// アクターが app_user の行を持たないため。
 	//
 	FindAccessTokenByHash(ctx context.Context, tokenHash string) (FindAccessTokenByHashRow, error)
+	FindActorIDByEmail(ctx context.Context, email string) (string, error)
 	// ── ローカル ID/PW ログイン（Design.md 6.2.1、手順5） ────────────────
 	// FindLocalLoginByEmail は Design.md 6.2.1 の手順2〜3を1文で行う。
 	//
@@ -73,6 +94,14 @@ type Querier interface {
 	// 不可視にするものではない（ApiDesign.md 5.6）。
 	//
 	FindProjectAuthzByKey(ctx context.Context, arg FindProjectAuthzByKeyParams) ([]FindProjectAuthzByKeyRow, error)
+	// プロジェクトとワークフローに関するクエリ（DbDesign.md 6.4 / 6.5）。
+	//
+	// 手順7.5（pb dev seed）で必要になった分だけを置いている。
+	// テンプレートの複製は POST /projects（ApiDesign.md 5.2）と同じ手順であり、
+	// 手順9はここのクエリを再利用する。
+	FindProjectIDByKey(ctx context.Context, key string) (string, error)
+	// ── テンプレートの複製（ApiDesign.md 5.2）─────────────────────
+	FindWorkflowTemplate(ctx context.Context, templateKey pgtype.Text) (FindWorkflowTemplateRow, error)
 	// GetActorProfile は GET /me（ApiDesign.md 4.1）が返す actor 部分を引く。
 	//
 	// 認証ミドルウェアが載せる Principal（Design.md 6.2.2）には locale / timezone /
@@ -106,6 +135,9 @@ type Querier interface {
 	// 利用者が TTL の間だけ旧権限で動く。
 	//
 	InvalidateActorPermissionCache(ctx context.Context, actorID string) error
+	// ロールの妥当性はDBに問い合わせる。Go 側に 'project_admin' などを
+	// 書き写すと 0010 のシード（DbDesign.md 7.3）と二重管理になるため。
+	IsProjectScopedRole(ctx context.Context, key string) (bool, error)
 	// ListProjectMembershipsByActor は所属プロジェクトと、そこでの
 	// プロジェクトロール由来の権限キーを返す（ApiDesign.md 3.1 の projects[]）。
 	//
@@ -131,6 +163,8 @@ type Querier interface {
 	// 語彙であるため、システムロールの権限もこのクエリで引ける（DbDesign.md 7.3）。
 	//
 	ListRolePermissions(ctx context.Context, roleKey string) ([]string, error)
+	ListWorkflowStatuses(ctx context.Context, workflowID string) ([]ListWorkflowStatusesRow, error)
+	ListWorkflowTransitions(ctx context.Context, workflowID string) ([]ListWorkflowTransitionsRow, error)
 	// RecordLoginFailure は失敗回数とロック期限を書く（Design.md 6.2.1 手順5、6.3）。
 	// 閾値の判定はアプリ側で行い、その結果をそのまま反映する。
 	//
@@ -179,6 +213,7 @@ type Querier interface {
 	// 呼び出し側がシステムロールを持たないアクターを除いているため、ここへは来ない。
 	//
 	SaveTokenPermissionCache(ctx context.Context, arg SaveTokenPermissionCacheParams) error
+	SetProjectWorkflow(ctx context.Context, arg SetProjectWorkflowParams) error
 	// TouchAccessTokenLastUsed は last_used_at を更新する。
 	//
 	// **1分粒度で間引く**（Design.md 6.2.2）。リクエストのたびに UPDATE すると、

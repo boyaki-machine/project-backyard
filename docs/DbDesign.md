@@ -1233,6 +1233,103 @@ $ pb admin create
 
 ---
 
+## 7.6 開発用デモデータ（dev seed）
+
+**7.1〜7.5 の初期データ（本番シード）とは完全に分ける。** 権限カタログやワークフローテンプレートはどの環境でも必要だが、デモユーザーやサンプルプロジェクトは開発端末でしか使わない。
+
+**マイグレーションに含めてはならない。** マイグレーションは前進のみで本番にも適用されるため、デモデータが混入すると取り除けなくなる。
+
+### 7.6.1 CLI で投入する理由
+
+パスワードは Argon2id でハッシュ化する必要があり（`Design.md` 6.3）、**SQL だけでは投入できない**。事前計算したハッシュを SQL に埋め込む方法は、ハッシュパラメータを変更した時点で無効になるうえ、秘密をリポジトリに書かない方針とも整合しない。
+
+したがって `pb dev seed` サブコマンドを設け、アプリと同じ経路でハッシュ化・ULID生成・トランザクション制御を行う。
+
+### 7.6.2 コマンド
+
+```
+pb dev seed [--file deploy/dev/seed/dev-data.yaml] [--reset-demo]
+```
+
+| 項目 | 仕様 |
+|---|---|
+| 冪等性 | **再実行しても壊れない。** 既存のメール／プロジェクトキーは作成せずスキップし、結果を件数で報告する |
+| `--reset-demo` | シードで作ったデモデータのみ削除してから投入し直す。**`--reset-demo` は `dev-data.yaml` に定義された対象しか消さない**（手動で作ったデータには触れない） |
+| トランザクション | 全体を1トランザクションで実行する。途中で失敗したら何も入らない |
+| 出力 | 作成／スキップした件数と、**ログイン用のアカウント一覧**を表示する |
+
+### 7.6.3 安全装置
+
+本番DBに対して実行される事故を防ぐため、**二重のガード**を設ける。いずれかに掛かったら何もせず終了する。
+
+1. 環境変数 `PB_ALLOW_DEV_SEED=1` が設定されていること
+2. 接続先ホストが `localhost` / `127.0.0.1` / `db`（compose のサービス名）のいずれかであること
+
+加えて、`app_user` の既存件数が 50 を超えている場合は「開発環境ではない可能性が高い」と判断して中断する。
+
+### 7.6.4 定義ファイル
+
+`deploy/dev/seed/dev-data.yaml` を宣言的な定義とする。**Go を触らずにユーザーやプロジェクトを増やせる**ようにするためである。このファイルはコミットする（`deploy/*/secrets/` 配下ではない）。
+
+```yaml
+# deploy/dev/seed/dev-data.yaml
+# 開発端末での動作確認用。本番には投入されない（7.6.3 のガード）。
+password: pbdev-password        # 全デモアカウント共通
+
+users:
+  - email: admin@example.com
+    display_name: 開発管理者
+    system_role: administrator
+  - email: pm@example.com
+    display_name: 開発PM
+    system_role: operator
+  - email: member@example.com
+    display_name: 開発メンバー
+    system_role: operator
+  - email: viewer@example.com
+    display_name: 開発閲覧者
+    system_role: operator
+
+projects:
+  - key: demo
+    name: デモプロジェクト
+    description: 動作確認用のサンプルプロジェクト
+    workflow_template: simple
+    members:
+      - { email: pm@example.com,     role: project_admin }
+      - { email: member@example.com, role: project_member }
+      - { email: viewer@example.com, role: project_viewer }
+```
+
+**`password` を平文で書いているのは意図的である。** `deploy/base/env.example` と同じく「公開前提の既定値」であり、7.6.3 のガードにより本番へ入らない。`CLAUDE.md` 絶対規則6（秘密を書かない）の対象外として扱う。
+
+### 7.6.5 デモアカウントの構成
+
+**権限による画面の出し分けを検証できる組み合わせ**にしてある。
+
+| アカウント | システムロール | `demo` での役割 | 確認できること |
+|---|---|---|---|
+| `admin@example.com` | administrator | — | 「管理」セクションが表示される。ユーザー管理・監査ログに入れる |
+| `pm@example.com` | operator | project_admin | 管理セクションが出ない。プロジェクト設定が触れる |
+| `member@example.com` | operator | project_member | プロジェクト設定が触れない |
+| `viewer@example.com` | operator | project_viewer | 閲覧のみ |
+
+**プロジェクトロールのUIは Phase 3 だが、`project_member` テーブルは Phase 1 に存在し `GET /me` の `projects[].role` に反映される**（`ApiDesign.md` 4.1）。したがって Phase 1 の手順8（メニュー出し分け）の検証にそのまま使える。
+
+### 7.6.6 Makefile ターゲット
+
+```
+make dev-reset   # コンテナとボリュームを破棄 → 起動 → migrate → dev seed
+make dev-seed    # デモデータのみ投入（冪等）
+make dev-info    # URL とデモアカウント一覧を表示
+```
+
+`dev-reset` は `deploy/dev/reset.sh` に処理を置き、Makefile からは呼ぶだけにする。**`docker compose down -v` を含むため、実行前に確認を求める**（`.claude/settings.json` でも `docker compose down` は `ask` にしてある）。
+
+`dev-info` を用意するのは、パスワードや URL を探す時間をなくすためである。実装後は `docs/Development.md` からも参照する。
+
+---
+
 # 8. Phase 2 / 3 の拡張
 
 Phase 1 のテーブルは変更せず、**テーブル追加のみ**で拡張する。本章のDDLは構成案であり、各Phase着手時に確定させる。

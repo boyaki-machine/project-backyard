@@ -24,6 +24,19 @@ func (q *Queries) CountAdministrators(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countAppUsers = `-- name: CountAppUsers :one
+
+SELECT count(*) FROM app_user
+`
+
+// 以下は pb dev seed（DbDesign.md 7.6）が使う。
+func (q *Queries) CountAppUsers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countAppUsers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAdministrator = `-- name: CreateAdministrator :exec
 INSERT INTO app_user (actor_id, email, system_role) VALUES ($1, $2, 'administrator')
 `
@@ -35,6 +48,23 @@ type CreateAdministratorParams struct {
 
 func (q *Queries) CreateAdministrator(ctx context.Context, arg CreateAdministratorParams) error {
 	_, err := q.db.Exec(ctx, createAdministrator, arg.ActorID, arg.Email)
+	return err
+}
+
+const createAppUser = `-- name: CreateAppUser :exec
+INSERT INTO app_user (actor_id, email, system_role)
+VALUES ($1, $2, $3)
+`
+
+type CreateAppUserParams struct {
+	ActorID    string
+	Email      string
+	SystemRole string
+}
+
+// system_role を引数に取る点だけが CreateAdministrator と違う。
+func (q *Queries) CreateAppUser(ctx context.Context, arg CreateAppUserParams) error {
+	_, err := q.db.Exec(ctx, createAppUser, arg.ActorID, arg.Email, arg.SystemRole)
 	return err
 }
 
@@ -86,4 +116,29 @@ func (q *Queries) CreateUserIdentity(ctx context.Context, arg CreateUserIdentity
 		arg.Subject,
 	)
 	return err
+}
+
+const deleteActorByEmail = `-- name: DeleteActorByEmail :execrows
+DELETE FROM actor WHERE id = (SELECT actor_id FROM app_user WHERE email = $1)
+`
+
+// actor を消せば app_user / user_identity / local_credential /
+// project_member / access_token は ON DELETE CASCADE で追従する（DbDesign.md 6.2 / 6.3）。
+func (q *Queries) DeleteActorByEmail(ctx context.Context, email string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteActorByEmail, email)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const findActorIDByEmail = `-- name: FindActorIDByEmail :one
+SELECT actor_id FROM app_user WHERE email = $1
+`
+
+func (q *Queries) FindActorIDByEmail(ctx context.Context, email string) (string, error) {
+	row := q.db.QueryRow(ctx, findActorIDByEmail, email)
+	var actor_id string
+	err := row.Scan(&actor_id)
+	return actor_id, err
 }

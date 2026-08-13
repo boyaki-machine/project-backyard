@@ -35,6 +35,7 @@ APP_DB_PASSWORD_FILE := $(CURDIR)/deploy/dev/secrets/app_db_password
 PB_DATABASE_URL_APP = postgres://pb_app:$$(cat $(APP_DB_PASSWORD_FILE))@127.0.0.1:5432/pb?sslmode=disable&application_name=pb
 
 .PHONY: up down psql migrate sqlc run admin-create test \
+	dev-reset dev-seed dev-info \
 	dev-client build-client sync-webui build clean-webui \
 	version version-check bump-build bump-minor bump-major release-tag
 
@@ -87,6 +88,30 @@ admin-create:
 ## テストを実行する
 test:
 	@cd server && go test ./...
+
+# ── 開発用デモデータ（DbDesign.md 7.6）────────────────────────
+# 本番シード（マイグレーション 0010）とは別物。開発端末でしか使わない。
+
+DEV_SEED_FILE := $(CURDIR)/deploy/dev/seed/dev-data.yaml
+
+## 開発用：DBを作り直してデモデータを投入する（docker compose down -v を含む）
+# 確認と待ち合わせを含む手続きなので deploy/dev/reset.sh に置いている（DbDesign.md 7.6.6）。
+dev-reset:
+	@COMPOSE="$(COMPOSE)" bash $(CURDIR)/deploy/dev/reset.sh
+
+## 開発用：デモデータのみ投入する（冪等）
+# PB_ALLOW_DEV_SEED をここで与えるのは、make が開発端末専用の入口だからである
+# （DbDesign.md 7.6.3 の安全装置その1）。配布したバイナリを本番で直接叩いた場合は
+# 環境変数が無いので止まり、あっても接続先ホストの検査（安全装置その2）が残る。
+# @ を付けて実行するのは、パスワードを含むコマンドをエコーさせないため。
+dev-seed:
+	@cd server && PB_ALLOW_DEV_SEED=1 PB_DATABASE_URL="$(PB_DATABASE_URL_APP)" \
+		go run ./cmd/pb dev seed --file "$(DEV_SEED_FILE)"
+
+## 開発用：URL とデモアカウント一覧を表示する
+# DBには接続しない。パスワードや URL を探す時間をなくすためのもの（DbDesign.md 7.6.6）。
+dev-info:
+	@cd server && go run ./cmd/pb dev info --file "$(DEV_SEED_FILE)"
 
 # ── client とビルド（Design.md 3.4 / 4.2）──────────────────────
 
