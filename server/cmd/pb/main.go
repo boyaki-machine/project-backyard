@@ -42,6 +42,8 @@ func run(ctx context.Context, args []string) error {
 		return serve(ctx)
 	case "admin":
 		return runAdmin(ctx, args[1:])
+	case "dev":
+		return runDev(ctx, args[1:])
 	case "version":
 		fmt.Println("pb v" + version)
 		return nil
@@ -60,11 +62,14 @@ func usage() {
 使い方:
   pb serve          APIサーバを起動する
   pb admin create   初期管理者（アドミニストレータ）を対話的に作成する
+  pb dev seed       開発用デモデータを投入する（DbDesign.md 7.6）
+  pb dev info       URL とデモアカウント一覧を表示する
   pb version        バージョンを表示する
   pb help           このヘルプを表示する
 
 環境変数:
   PB_BIND                  待受アドレス（既定 0.0.0.0:8080）
+  PB_ALLOW_DEV_SEED        pb dev seed の実行を許可する（1 のときのみ）
   PB_DATABASE_URL          接続文字列（pb_app）
   PB_DATABASE_URL_FILE     同上をファイル経由で渡す場合のパス（こちらを優先）
   PB_LOG_FORMAT            ログ形式（json / text。既定 json）

@@ -1,0 +1,657 @@
+// pb dev seed / pb dev info — 開発用デモデータ（DbDesign.md 7.6）。
+//
+// 本番シード（7.1〜7.4、マイグレーション 0010）とは完全に分ける。権限カタログや
+// ワークフローテンプレートはどの環境でも要るが、デモユーザーとサンプルプロジェクトは
+// 開発端末でしか使わないため、マイグレーションには載せない。
+//
+// SQL ではなく CLI で投入するのは、パスワードを Argon2id でハッシュ化する必要が
+// あるためである（7.6.1）。事前計算したハッシュを SQL に埋め込む方法は、
+// ハッシュパラメータを変えた時点で無効になる。
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net/mail"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"gopkg.in/yaml.v3"
+
+	"github.com/boyaki-machine/project-backyard/server/internal/audit"
+	"github.com/boyaki-machine/project-backyard/server/internal/auth"
+	"github.com/boyaki-machine/project-backyard/server/internal/config"
+	"github.com/boyaki-machine/project-backyard/server/internal/store"
+	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
+	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
+)
+
+const (
+	// defaultDevDataFile は定義ファイルの既定パス（DbDesign.md 7.6.2）。
+	// リポジトリルートからの相対。make 経由では絶対パスが渡る。
+	defaultDevDataFile = "deploy/dev/seed/dev-data.yaml"
+
+	// devSeedAllowEnv は 7.6.3 の安全装置その1。
+	devSeedAllowEnv = "PB_ALLOW_DEV_SEED"
+
+	// maxAppUserForDevSeed は 7.6.3 の「50件を超えていたら開発環境ではない」判定。
+	maxAppUserForDevSeed = 50
+
+	// devSeedAuditLabel は audit_log.actor_label に残す実行経路（手順4b の規約）。
+	devSeedAuditLabel = "pb dev seed (CLI)"
+
+	// devAppURL は dev info が案内する URL。make run の PB_BIND に合わせている。
+	devAppURL = "http://127.0.0.1:8080"
+)
+
+// devSeedAllowedHosts は 7.6.3 の安全装置その2。
+// db は compose のサービス名（コンテナ内から実行した場合）。
+var devSeedAllowedHosts = map[string]bool{
+	"localhost": true,
+	"127.0.0.1": true,
+	"db":        true,
+}
+
+// devSystemRoles は app_user.system_role の CHECK 制約（DbDesign.md 6.2）。
+var devSystemRoles = map[string]bool{"operator": true, "administrator": true}
+
+// devData は deploy/dev/seed/dev-data.yaml の形（DbDesign.md 7.6.4）。
+//
+// 宣言的な定義ファイルにしてあるのは、Go を触らずにユーザーやプロジェクトを
+// 増やせるようにするためである。
+type devData struct {
+	Password string       `yaml:"password"`
+	Users    []devUser    `yaml:"users"`
+	Projects []devProject `yaml:"projects"`
+}
+
+type devUser struct {
+	Email       string `yaml:"email"`
+	DisplayName string `yaml:"display_name"`
+	SystemRole  string `yaml:"system_role"`
+}
+
+type devProject struct {
+	Key              string      `yaml:"key"`
+	Name             string      `yaml:"name"`
+	Description      string      `yaml:"description"`
+	WorkflowTemplate string      `yaml:"workflow_template"`
+	Members          []devMember `yaml:"members"`
+}
+
+type devMember struct {
+	Email string `yaml:"email"`
+	Role  string `yaml:"role"`
+}
+
+// runDev は dev サブコマンドを振り分ける。
+func runDev(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return errors.New("dev のサブコマンドを指定してください（seed / info）")
+	}
+	switch args[0] {
+	case "seed":
+		return devSeed(ctx, args[1:])
+	case "info":
+		return devInfo(args[1:])
+	default:
+		return fmt.Errorf("未知のサブコマンド: dev %s", args[0])
+	}
+}
+
+// devSeed はデモデータを投入する。
+//
+// 全体を1トランザクションで実行し、途中で失敗したら何も入らない（7.6.2）。
+func devSeed(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("dev seed", flag.ContinueOnError)
+	file := fs.String("file", defaultDevDataFile, "定義ファイルのパス")
+	resetDemo := fs.Bool("reset-demo", false, "定義ファイルに載っているデモデータを削除してから投入し直す")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	data, err := loadDevData(*file)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if err := checkDevSeedAllowed(cfg.DatabaseURL); err != nil {
+		return err
+	}
+
+	pool, err := store.NewPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	// 件数によるガードはトランザクションの外で見る（7.6.3）。
+	users, err := gen.New(pool).CountAppUsers(ctx)
+	if err != nil {
+		return fmt.Errorf("app_user の件数を取得できない: %w", err)
+	}
+	if users > maxAppUserForDevSeed {
+		return fmt.Errorf("app_user が %d 件あります。開発環境ではない可能性が高いため中止しました（上限 %d 件）",
+			users, maxAppUserForDevSeed)
+	}
+
+	result, err := applyDevData(ctx, pool, data, *resetDemo)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stdout, "定義ファイル: %s\n\n", *file)
+	result.print(os.Stdout)
+	fmt.Fprintln(os.Stdout)
+	printDevAccounts(os.Stdout, data)
+	return nil
+}
+
+// devInfo は URL とデモアカウントの一覧を表示する（7.6.6）。
+// パスワードや URL を探す時間をなくすためのもので、DBには接続しない。
+func devInfo(args []string) error {
+	fs := flag.NewFlagSet("dev info", flag.ContinueOnError)
+	file := fs.String("file", defaultDevDataFile, "定義ファイルのパス")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	data, err := loadDevData(*file)
+	if err != nil {
+		return err
+	}
+	printDevAccounts(os.Stdout, data)
+	return nil
+}
+
+// loadDevData は定義ファイルを読んで検証する。
+func loadDevData(path string) (*devData, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		abs, _ := filepath.Abs(path)
+		return nil, fmt.Errorf("定義ファイルを読めない（%s）: %w", abs, err)
+	}
+
+	var data devData
+	// KnownFields で綴り違いのキーを黙って捨てないようにする。
+	dec := yaml.NewDecoder(strings.NewReader(string(b)))
+	dec.KnownFields(true)
+	if err := dec.Decode(&data); err != nil {
+		return nil, fmt.Errorf("定義ファイルを解釈できない（%s）: %w", path, err)
+	}
+	if err := data.validate(); err != nil {
+		return nil, fmt.Errorf("定義ファイルの内容が不正（%s）: %w", path, err)
+	}
+	return &data, nil
+}
+
+// validate は投入前に定義ファイルを検証する。
+//
+// DBの制約でも弾けるが、そちらのエラーは何行目の何が悪いのかが分からない。
+// ロールとワークフローテンプレートの存在確認はDBに問い合わせる（二重管理を避けるため）。
+func (d *devData) validate() error {
+	if err := auth.ValidatePassword(d.Password); err != nil {
+		return fmt.Errorf("password: %w", err)
+	}
+	if len(d.Users) == 0 {
+		return errors.New("users が空です")
+	}
+
+	seen := make(map[string]bool, len(d.Users))
+	for i, u := range d.Users {
+		where := fmt.Sprintf("users[%d]", i)
+		if _, err := mail.ParseAddress(u.Email); err != nil {
+			return fmt.Errorf("%s: メールアドレスの形式が正しくありません（%q）", where, u.Email)
+		}
+		if seen[strings.ToLower(u.Email)] {
+			return fmt.Errorf("%s: メールアドレスが重複しています（%q）", where, u.Email)
+		}
+		seen[strings.ToLower(u.Email)] = true
+
+		if u.DisplayName == "" {
+			return fmt.Errorf("%s: display_name が空です", where)
+		}
+		if !devSystemRoles[u.SystemRole] {
+			return fmt.Errorf("%s: system_role は operator か administrator です（%q）", where, u.SystemRole)
+		}
+	}
+
+	keys := make(map[string]bool, len(d.Projects))
+	for i, p := range d.Projects {
+		where := fmt.Sprintf("projects[%d]", i)
+		if p.Key == "" || keys[p.Key] {
+			return fmt.Errorf("%s: key が空か重複しています（%q）", where, p.Key)
+		}
+		keys[p.Key] = true
+
+		if p.Name == "" {
+			return fmt.Errorf("%s: name が空です", where)
+		}
+		if p.WorkflowTemplate == "" {
+			return fmt.Errorf("%s: workflow_template が空です", where)
+		}
+		for j, m := range p.Members {
+			if !seen[strings.ToLower(m.Email)] {
+				return fmt.Errorf("%s.members[%d]: users に定義されていないメールアドレスです（%q）", where, j, m.Email)
+			}
+			if m.Role == "" {
+				return fmt.Errorf("%s.members[%d]: role が空です", where, j)
+			}
+		}
+	}
+	return nil
+}
+
+// checkDevSeedAllowed は 7.6.3 の二重のガードを掛ける。
+// いずれかに掛かったら何もせず終了する。
+func checkDevSeedAllowed(databaseURL string) error {
+	if os.Getenv(devSeedAllowEnv) != "1" {
+		return fmt.Errorf("%s=1 が設定されていないため中止しました（開発用デモデータの投入。DbDesign.md 7.6.3）", devSeedAllowEnv)
+	}
+
+	host, err := databaseHost(databaseURL)
+	if err != nil {
+		return err
+	}
+	if !devSeedAllowedHosts[host] {
+		return fmt.Errorf("接続先 %q は開発用として許可されていないため中止しました（許可: localhost / 127.0.0.1 / db）", host)
+	}
+	return nil
+}
+
+// databaseHost は接続文字列からホスト名を取り出す。
+//
+// 判定できない形式（keyword/value 形式の DSN など）はエラーにする。
+// ガードは判定不能を「たぶん開発環境」に倒してはならない。
+func databaseHost(databaseURL string) (string, error) {
+	u, err := url.Parse(databaseURL)
+	if err != nil {
+		return "", errors.New("PB_DATABASE_URL の接続先ホストを判定できないため中止しました")
+	}
+	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
+		return "", fmt.Errorf("PB_DATABASE_URL が postgres:// 形式でないため接続先を判定できません（scheme=%q）", u.Scheme)
+	}
+	if u.Hostname() == "" {
+		return "", errors.New("PB_DATABASE_URL にホストが含まれていないため中止しました")
+	}
+	return u.Hostname(), nil
+}
+
+// seedResult は投入結果の件数（7.6.2 の「作成／スキップした件数」）。
+type seedResult struct {
+	usersCreated    int
+	usersSkipped    int
+	usersDeleted    int
+	projectsCreated int
+	projectsSkipped int
+	projectsDeleted int
+	membersAdded    int
+}
+
+func (r seedResult) print(w io.Writer) {
+	if r.usersDeleted > 0 || r.projectsDeleted > 0 {
+		fmt.Fprintf(w, "削除       : ユーザー %d / プロジェクト %d\n", r.usersDeleted, r.projectsDeleted)
+	}
+	fmt.Fprintf(w, "ユーザー   : 作成 %d / スキップ %d\n", r.usersCreated, r.usersSkipped)
+	fmt.Fprintf(w, "プロジェクト: 作成 %d / スキップ %d（メンバー登録 %d）\n",
+		r.projectsCreated, r.projectsSkipped, r.membersAdded)
+}
+
+// applyDevData は削除と投入を1トランザクションで実行する（7.6.2）。
+func applyDevData(ctx context.Context, pool *pgxpool.Pool, data *devData, resetDemo bool) (seedResult, error) {
+	var result seedResult
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return result, fmt.Errorf("トランザクションを開始できない: %w", err)
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // Commit 済みなら no-op
+
+	q := gen.New(tx)
+	rec := audit.FromCLI(devSeedAuditLabel)
+
+	if resetDemo {
+		if err := resetDemoData(ctx, q, rec, data, &result); err != nil {
+			return result, err
+		}
+	}
+
+	// パスワードは全アカウント共通なので1回だけハッシュ化する（Argon2id は重い）。
+	passwordHash, err := auth.HashPassword(data.Password)
+	if err != nil {
+		return result, err
+	}
+
+	actorIDs := make(map[string]string, len(data.Users)) // 小文字のメール → actor.id
+	for _, u := range data.Users {
+		actorID, created, err := seedUser(ctx, q, rec, u, passwordHash)
+		if err != nil {
+			return result, err
+		}
+		actorIDs[strings.ToLower(u.Email)] = actorID
+		if created {
+			result.usersCreated++
+		} else {
+			result.usersSkipped++
+		}
+	}
+
+	for _, p := range data.Projects {
+		if err := seedProject(ctx, q, rec, p, actorIDs, &result); err != nil {
+			return result, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return result, fmt.Errorf("コミットに失敗した: %w", err)
+	}
+	return result, nil
+}
+
+// resetDemoData は定義ファイルに載っている対象だけを削除する（7.6.2）。
+// 手で作ったデータには触れない。
+func resetDemoData(ctx context.Context, q gen.Querier, rec *audit.Recorder, data *devData, result *seedResult) error {
+	for _, p := range data.Projects {
+		n, err := q.DeleteProjectByKey(ctx, p.Key)
+		if err != nil {
+			return fmt.Errorf("プロジェクト %s を削除できない: %w", p.Key, err)
+		}
+		result.projectsDeleted += int(n)
+		// プロジェクトの削除は監査ログに残さない。ApiDesign.md 2.10 のアクション
+		// 一覧に project.delete が無く（project.create / project.archive のみ）、
+		// 一覧外のアクションは audit パッケージが弾くため。
+	}
+
+	for _, u := range data.Users {
+		n, err := q.DeleteActorByEmail(ctx, u.Email)
+		if err != nil {
+			return fmt.Errorf("ユーザー %s を削除できない: %w", u.Email, err)
+		}
+		if n == 0 {
+			continue
+		}
+		result.usersDeleted += int(n)
+		if err := rec.Record(ctx, q, audit.Entry{
+			Action:     audit.UserDelete,
+			Result:     audit.Success,
+			TargetType: "app_user",
+			Detail:     map[string]any{"email": u.Email, "via": "pb dev seed --reset-demo"},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// seedUser は1アカウントを作る。既に同じメールがあれば作らず、その actor.id を返す。
+//
+// actor → app_user → user_identity → local_credential の4テーブルを作るのは
+// pb admin create と同じ経路（DbDesign.md 7.5）。違うのは system_role を
+// 定義ファイルから受け取る点である。
+func seedUser(ctx context.Context, q gen.Querier, rec *audit.Recorder, u devUser, passwordHash string) (string, bool, error) {
+	actorID, err := q.FindActorIDByEmail(ctx, u.Email)
+	if err == nil {
+		return actorID, false, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", false, fmt.Errorf("ユーザー %s を確認できない: %w", u.Email, err)
+	}
+
+	actorID = ulidgen.New()
+	identityID := ulidgen.New()
+
+	if err := q.CreateUserActor(ctx, gen.CreateUserActorParams{
+		ID:          actorID,
+		DisplayName: u.DisplayName,
+	}); err != nil {
+		return "", false, fmt.Errorf("actor を作成できない（%s）: %w", u.Email, err)
+	}
+	if err := q.CreateAppUser(ctx, gen.CreateAppUserParams{
+		ActorID:    actorID,
+		Email:      u.Email,
+		SystemRole: u.SystemRole,
+	}); err != nil {
+		return "", false, fmt.Errorf("app_user を作成できない（%s）: %w", u.Email, err)
+	}
+	// subject には app_user.email と同じ表記をそのまま入れる（手順3の判断。
+	// ログインは citext が引き当てた app_user.email の値で subject を引く）。
+	if err := q.CreateUserIdentity(ctx, gen.CreateUserIdentityParams{
+		ID:          identityID,
+		UserID:      actorID,
+		ProviderKey: localProviderKey,
+		Subject:     u.Email,
+	}); err != nil {
+		return "", false, fmt.Errorf("user_identity を作成できない（%s）: %w", u.Email, err)
+	}
+	if err := q.CreateLocalCredential(ctx, gen.CreateLocalCredentialParams{
+		IdentityID:   identityID,
+		PasswordHash: passwordHash,
+	}); err != nil {
+		return "", false, fmt.Errorf("local_credential を作成できない（%s）: %w", u.Email, err)
+	}
+
+	if err := rec.Record(ctx, q, audit.Entry{
+		Action:     audit.UserCreate,
+		Result:     audit.Success,
+		TargetType: "app_user",
+		TargetID:   actorID,
+		Detail: map[string]any{
+			"system_role": u.SystemRole,
+			"via":         "pb dev seed",
+		},
+	}); err != nil {
+		return "", false, err
+	}
+	return actorID, true, nil
+}
+
+// seedProject は1プロジェクトを作り、メンバーを登録する。
+//
+// 既に同じキーがあればプロジェクトの作成はスキップするが、メンバーの登録は
+// 毎回行う（ON CONFLICT DO NOTHING）。定義ファイルにメンバーを足して
+// 流し直したときに反映されるようにするためである。
+func seedProject(ctx context.Context, q gen.Querier, rec *audit.Recorder, p devProject, actorIDs map[string]string, result *seedResult) error {
+	projectID, err := q.FindProjectIDByKey(ctx, p.Key)
+	switch {
+	case err == nil:
+		result.projectsSkipped++
+	case errors.Is(err, pgx.ErrNoRows):
+		projectID, err = createProject(ctx, q, rec, p, actorIDs)
+		if err != nil {
+			return err
+		}
+		result.projectsCreated++
+	default:
+		return fmt.Errorf("プロジェクト %s を確認できない: %w", p.Key, err)
+	}
+
+	for _, m := range p.Members {
+		ok, err := q.IsProjectScopedRole(ctx, m.Role)
+		if err != nil {
+			return fmt.Errorf("ロール %s を確認できない: %w", m.Role, err)
+		}
+		if !ok {
+			return fmt.Errorf("プロジェクト %s のメンバー %s: %q はプロジェクトロールではありません",
+				p.Key, m.Email, m.Role)
+		}
+		if err := q.AddProjectMember(ctx, gen.AddProjectMemberParams{
+			ProjectID: projectID,
+			ActorID:   actorIDs[strings.ToLower(m.Email)],
+			RoleKey:   m.Role,
+		}); err != nil {
+			return fmt.Errorf("プロジェクト %s に %s を追加できない: %w", p.Key, m.Email, err)
+		}
+		result.membersAdded++
+	}
+	return nil
+}
+
+// createProject は project / project_counter とワークフローを作り、project.id を返す。
+//
+// 手順は POST /projects（ApiDesign.md 5.2）と同じ。「project 作成、project_counter
+// 初期化、テンプレートから workflow / workflow_status / workflow_transition を複製」。
+// 作成者を project_admin として登録する部分だけは、CLI に実行者がいないため
+// 定義ファイルの project_admin をもって created_by とする。
+func createProject(ctx context.Context, q gen.Querier, rec *audit.Recorder, p devProject, actorIDs map[string]string) (string, error) {
+	projectID := ulidgen.New()
+
+	if err := q.CreateProject(ctx, gen.CreateProjectParams{
+		ID:          projectID,
+		Key:         p.Key,
+		Name:        p.Name,
+		Description: nullText(p.Description),
+		CreatedBy:   nullText(projectCreator(p, actorIDs)),
+	}); err != nil {
+		return "", fmt.Errorf("プロジェクト %s を作成できない: %w", p.Key, err)
+	}
+	if err := q.CreateProjectCounter(ctx, projectID); err != nil {
+		return "", fmt.Errorf("プロジェクト %s のカウンタを作成できない: %w", p.Key, err)
+	}
+	if err := copyWorkflowTemplate(ctx, q, projectID, p); err != nil {
+		return "", err
+	}
+
+	if err := rec.Record(ctx, q, audit.Entry{
+		Action:     audit.ProjectCreate,
+		Result:     audit.Success,
+		TargetType: "project",
+		TargetID:   projectID,
+		Detail: map[string]any{
+			"key":               p.Key,
+			"workflow_template": p.WorkflowTemplate,
+			"via":               "pb dev seed",
+		},
+	}); err != nil {
+		return "", err
+	}
+	return projectID, nil
+}
+
+// copyWorkflowTemplate はテンプレートをプロジェクト固有のワークフローへ複製する。
+//
+// workflow は project より後に作る。非テンプレートの workflow は project_id が
+// 必須で（ck_workflow_template、DbDesign.md 6.5）、プロジェクトより先に作れない。
+// そのため project.workflow_id は複製後に埋める。
+func copyWorkflowTemplate(ctx context.Context, q gen.Querier, projectID string, p devProject) error {
+	tpl, err := q.FindWorkflowTemplate(ctx, nullText(p.WorkflowTemplate))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("ワークフローテンプレート %q が見つかりません（DbDesign.md 7.4 のシードが未適用の可能性があります）", p.WorkflowTemplate)
+	}
+	if err != nil {
+		return fmt.Errorf("ワークフローテンプレート %s を取得できない: %w", p.WorkflowTemplate, err)
+	}
+
+	workflowID := ulidgen.New()
+	if err := q.CreateProjectWorkflow(ctx, gen.CreateProjectWorkflowParams{
+		ID:         workflowID,
+		ProjectID:  nullText(projectID),
+		Name:       tpl.Name,
+		Definition: tpl.Definition,
+	}); err != nil {
+		return fmt.Errorf("プロジェクト %s のワークフローを作成できない: %w", p.Key, err)
+	}
+
+	statuses, err := q.ListWorkflowStatuses(ctx, tpl.ID)
+	if err != nil {
+		return fmt.Errorf("テンプレート %s のステータスを取得できない: %w", p.WorkflowTemplate, err)
+	}
+	for _, s := range statuses {
+		if err := q.CreateWorkflowStatus(ctx, gen.CreateWorkflowStatusParams{
+			ID:                    ulidgen.New(),
+			WorkflowID:            workflowID,
+			Key:                   s.Key,
+			Name:                  s.Name,
+			Category:              s.Category,
+			SortOrder:             s.SortOrder,
+			RequiresHumanApproval: s.RequiresHumanApproval,
+			IsAgentReachable:      s.IsAgentReachable,
+		}); err != nil {
+			return fmt.Errorf("ステータス %s を複製できない: %w", s.Key, err)
+		}
+	}
+
+	transitions, err := q.ListWorkflowTransitions(ctx, tpl.ID)
+	if err != nil {
+		return fmt.Errorf("テンプレート %s の遷移を取得できない: %w", p.WorkflowTemplate, err)
+	}
+	for _, t := range transitions {
+		if err := q.CreateWorkflowTransition(ctx, gen.CreateWorkflowTransitionParams{
+			ID:                 ulidgen.New(),
+			WorkflowID:         workflowID,
+			FromStatusKey:      t.FromStatusKey,
+			ToStatusKey:        t.ToStatusKey,
+			RequiredPermission: t.RequiredPermission,
+			AllowedActorKinds:  t.AllowedActorKinds,
+		}); err != nil {
+			return fmt.Errorf("遷移 %s→%s を複製できない: %w", t.FromStatusKey, t.ToStatusKey, err)
+		}
+	}
+
+	if err := q.SetProjectWorkflow(ctx, gen.SetProjectWorkflowParams{
+		ID:         projectID,
+		WorkflowID: nullText(workflowID),
+	}); err != nil {
+		return fmt.Errorf("プロジェクト %s にワークフローを紐づけられない: %w", p.Key, err)
+	}
+	return nil
+}
+
+// projectCreator は project.created_by に入れる actor.id を返す。
+//
+// POST /projects では作成者が project_admin になる（ApiDesign.md 5.2）ので、
+// 定義ファイルで project_admin を与えられたメンバーを作成者とみなす。
+// 該当が無ければ空文字（＝ NULL）。
+func projectCreator(p devProject, actorIDs map[string]string) string {
+	for _, m := range p.Members {
+		if m.Role == "project_admin" {
+			return actorIDs[strings.ToLower(m.Email)]
+		}
+	}
+	return ""
+}
+
+// printDevAccounts はログイン用のアカウント一覧を表示する（7.6.2 / 7.6.6）。
+func printDevAccounts(w io.Writer, data *devData) {
+	fmt.Fprintf(w, "URL: %s\n", devAppURL)
+	fmt.Fprintf(w, "共通パスワード: %s\n\n", data.Password)
+
+	// 見出しは1行の凡例にする。全角を含む文字列を %-22s で揃えても、
+	// 表示幅は端末側で2桁になるため列がずれる。行のほうは ASCII のみ。
+	fmt.Fprintln(w, "  メールアドレス / システムロール / プロジェクトでの役割")
+	for _, u := range data.Users {
+		fmt.Fprintf(w, "  %-22s %-14s %s\n", u.Email, u.SystemRole, projectRolesOf(u.Email, data.Projects))
+	}
+}
+
+// projectRolesOf は「demo: project_admin」のような表示用の文字列を組み立てる。
+func projectRolesOf(email string, projects []devProject) string {
+	var roles []string
+	for _, p := range projects {
+		for _, m := range p.Members {
+			if strings.EqualFold(m.Email, email) {
+				roles = append(roles, p.Key+": "+m.Role)
+			}
+		}
+	}
+	if len(roles) == 0 {
+		return "—"
+	}
+	return strings.Join(roles, ", ")
+}
+
+// nullText は空文字を NULL として渡す。
+func nullText(s string) pgtype.Text {
+	return pgtype.Text{String: s, Valid: s != ""}
+}

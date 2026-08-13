@@ -16,6 +16,7 @@
 | 6a | 認可ミドルウェア（`RequirePermission` / `RequireProjectPermission`） | 完了 | 2026-08-13 | 実DBのシードで operator→403 / administrator→200、非メンバー→404、`permission.denied` が記録される。`/admin/users` での実地確認は手順9 |
 | 6b | 実効権限のセッションキャッシュ（マイグレーション 0012、`Design.md` 6.4.5） | 完了 | 2026-08-13 | 実サーバでオペレータ（12件）→ 管理者へ昇格しても 12件のまま → キャッシュ破棄後に 28件。TTL 超過でも計算し直す。無効化はアクターの全トークンに効く |
 | 7 | client 雛形（Vite + Pinia + router + デザイントークン）と embed 疎通 | 完了 | 2026-08-13 | `make build` した単一バイナリの `/` で Vue が起動し、プロジェクト一覧のプレースホルダが描画される（ヘッドレス Chrome で確認）。SPA のパスは index.html にフォールバックし、`/api` `/mcp` は 2.5 形式の 404 のまま。`make dev-client` の :5173 から :8080 へのプロキシも通る |
+| 7.5 | 開発用デモデータ（`pb dev seed`）・`make dev-reset` / `dev-seed` / `dev-info` | 完了 | 2026-08-13 | `make dev-reset` で作り直し後、4アカウントとデモプロジェクト（ワークフロー複製つき）が投入される。2回目は作成0／スキップ全件で壊れない。`PB_ALLOW_DEV_SEED` なし・開発端末以外のホストのいずれでも中断する。実サーバで4アカウントともログインでき、`GET /me` が admin=28権限・他=12権限、`projects[].role` が定義どおり（`DbDesign.md` 7.6） |
 | 8 | ログイン画面・auth ストア・ルーターガード・メニュー出し分け | 未着手 | | ブラウザでログイン→`/projects` へ遷移。オペレータで「管理」セクションが出ない。ログアウトでログイン画面へ戻る |
 | 9 | `GET/POST /projects`、`check-key` | 未着手 | | プロジェクトを作成し、一覧に件数と進捗が出る |
 | 10 | プロジェクト一覧画面・新規作成モーダル | 未着手 | | ブラウザでプロジェクトを作成でき、一覧に反映される。キー重複で 409 のメッセージが出る |
@@ -59,8 +60,8 @@
 
 | | 値 |
 |---|---|
-| 現在 | **v1.7.9**（マージ前。マージ後に `make version-check` が通る） |
-| 内訳 | メジャー1 / マイナー7 / ビルド9 |
+| 現在 | **v1.8.10**（マージ前。マージ後に `make version-check` が通る） |
+| 内訳 | メジャー1 / マイナー8 / ビルド10 |
 | ビルド1 | 手順2（`feature/step-02-migrations`）のマージ |
 | ビルド2 | バージョン運用の導入（`feature/versioning`）のマージ |
 | ビルド3 | 手順3（`feature/step-03-admin-create`）のマージ |
@@ -69,7 +70,12 @@
 | ビルド6 | 手順6a・6b（`feature/step-06-authz-middleware`）のマージ |
 | ビルド7 | 手順7（`feature/step-07-client-scaffold`）のマージ |
 | ビルド8 | `GuiDesign.md` 3.2 への `/` の行の追加（`docs/routing-root-path`）のマージ |
-| ビルド9 | `openapi.yaml` の役割の再定義（`docs/openapi-role`）のマージ **← これから** |
+| ビルド9 | `openapi.yaml` の役割の再定義（`docs/openapi-role`）のマージ |
+| ビルド10 | 手順7.5（`feature/step-07-5-dev-seed`）のマージ **← これから** |
+
+手順7.5 は `pb dev seed` というサブコマンドの追加（成果物の振る舞いが増える）ため
+`make bump-minor`（`1.7.9` → `1.8.10`）。ブランチ名は手順番号が2桁でないため
+`feature/step-07-5-dev-seed` とした（`CLAUDE.md` の `feature/step-<2桁>-<スラッグ>` からの逸脱）。
 
 手順7は client の雛形と embed の疎通であり、成果物（単一バイナリ）が画面を配信するようになる
 機能追加のため `make bump-minor` を実行した（`1.6.6` → `1.7.7`）。
@@ -232,6 +238,15 @@
 | 2026-08-13 | 7 | `ui` ストアの `localStorage` キー名が文書に無い | `pb.theme` / `pb.hue` とした。**保存先をユーザー設定（`app_user`）へ移すのは手順17**（`GuiDesign.md` 8.11 は両方に保存すると定めている） |
 | 2026-08-13 | 7 | **OKLCH の hex フォールバック（`GuiDesign.md` 8.5 末尾「念のためビルド時に hex フォールバックを生成する」）を実装していない** | **PostCSS プラグインの採用可否が `GuiDesign.md` 11章の未解決事項として残っているため、手を付けなかった。** Vite は追加設定なしで PostCSS を通せる。必要になった時点で 11章の項目とセットで決める |
 | 2026-08-13 | 7 | Vite の proxy に `/healthcheck` を含めるか | **含めない。** 画面からは呼ばない（監視・オーケストレータ用。`ApiDesign.md` 2.11）。`Design.md` 4.1 も `/api` `/mcp` の2つだけを挙げている |
+| 2026-08-13 | 7.5 | **`DbDesign.md` 7.6.4 が YAML の定義ファイルを求めるが、`server/go.mod` に YAML パーサが無く `Design.md` 3.1 の採用技術表にも記載が無い** | **`gopkg.in/yaml.v3` の追加をユーザーが承認**（2026-08-13）。**`Design.md` 3.1 に反映済み**（用途を dev seed に限定し、設定ファイルの形式として一般化しないことも明記） |
+| 2026-08-13 | 7.5 | `go mod tidy` が go ディレクティブを 1.24 → 1.25 に引き上げた。yaml.v3 のテスト経由で入る `rogpeppe/go-internal v1.16.0` が go 1.25 を要求するため（`Design.md` 3.1 の「Go 1.24 以上」と衝突） | goose・`x/term` と同じ扱いで **`rogpeppe/go-internal` を v1.14.1 に固定**し、`go mod tidy -go=1.24` で戻した。増えた indirect は2件（`kr/text` / `go-internal`。いずれもテスト専用で実行バイナリに入らない） |
+| 2026-08-13 | 7.5 | `pb dev seed` の作成・削除を `audit_log` に残すか（7.6 に記載なし） | **残すことをユーザーが承認**（2026-08-13）。`pb admin create` と同じ `actor_id=NULL` / `actor_kind='system'`、`actor_label='pb dev seed (CLI)'`。手順4b の「監査記録を伴わない管理者アカウントを作らない」と揃える |
+| 2026-08-13 | 7.5 | **`--reset-demo` のプロジェクト削除を監査ログに残せない。`ApiDesign.md` 2.10 のアクション一覧に `project.delete` が無い**（`project.create` / `project.archive` のみ） | **ユーザーの削除（`user.delete`）だけを記録し、プロジェクトの削除は記録していない。** アクション一覧に無いものは `audit` パッケージが弾くため。プロジェクトの物理削除は Phase 1 のAPIに存在せず（アーカイブのみ）、開発用CLIのためだけに 2.10 を増やすのは筋が悪いと判断した。**APIで物理削除を扱うことになったら 2.10 に `project.delete` を足す提案を出す** |
+| 2026-08-13 | 7.5 | ワークフローテンプレートの複製ロジックの置き場所（手順9の `POST /projects` でも要る） | **SQL を `internal/store/queries/project.sql` に置き、40行ほどの組み立ては `cmd/pb/dev_seed.go` に書く方針をユーザーが承認**（2026-08-13）。**手順9でAPIが必要になった時点で `internal/domain/` へ切り出す**（`Design.md` 4.1 が予定しているディレクトリ）。再利用される部分（クエリ）は先に共通化してある |
+| 2026-08-13 | 7.5 | `project.created_by` に何を入れるか（CLI には実行者がいない） | **定義ファイルで `project_admin` を与えたメンバーを作成者とする。** `ApiDesign.md` 5.2 が「作成者を `project_member`（`project_admin`）として登録する」と定めており、逆に辿れば `project_admin` が作成者に相当する。該当が無ければ NULL |
+| 2026-08-13 | 7.5 | 7.6.3 の安全装置その1（`PB_ALLOW_DEV_SEED=1`）を Makefile が与えると、ガードとして働かないのではないか | **`make dev-seed` では与える。** make は開発端末専用の入口であり、ここで要求すると毎回 export が要って `dev-seed` の意味が無くなる。**配布したバイナリを直接叩く経路（本番）では環境変数が無いので止まり、あっても安全装置その2（接続先ホストの検査）が残る。** ホストを判定できない接続文字列は「たぶん開発環境」に倒さずエラーにしている |
+| 2026-08-13 | 7.5 | **`DbDesign.md` 7.6.6 が「実装後は `docs/Development.md` からも参照する」とするが、`docs/Development.md` がまだ存在しない**（`Design.md` 4.1 には予定として載っている） | **作っていない。** 開発環境の立ち上げ手順全体を書く文書であり、手順7.5のスコープを超える。**`make up` → `make migrate` → `make dev-reset` → `make run` の流れが揃った今が書き時**なので、手順8の前後で独立した作業として起こすことを提案する |
+| 2026-08-13 | 7.5 | 定義ファイルに載っているプロジェクトが既に在るとき、メンバー登録もスキップするか | **プロジェクトの作成だけスキップし、メンバーは毎回登録する**（`ON CONFLICT DO NOTHING`）。定義ファイルにメンバーを足して流し直したときに反映されるほうが、冪等性の要求（7.6.2）と両立して使いやすいため |
 
 ### 設計文書へ反映済みの修正（2026-08-11、承認のうえ適用）
 

@@ -5,7 +5,7 @@
 >
 > - 対象読者：実装者（人間およびAIエージェント）
 > - 状態：策定中。第6章（認証・認可）を本書の正本として保持し、DB・API・画面は領域別設計書へ委譲
-> - 最終更新：2026-08-11（rev.6 Phase 1 手順7以降を API と画面の交互実装へ再編）
+> - 最終更新：2026-08-11（rev.7 手順7.5「開発用デモデータ」を追加）
 
 ## 文書体系
 
@@ -133,6 +133,7 @@ MCP サーバ、AI機能、ガント描画は Phase 1 では実装しない（�
 | マイグレーション | **goose v3** | SQLファイルベース。アドバイザリロック対応（`DbDesign.md` 5.3） |
 | パスワード | `golang.org/x/crypto/argon2` | PHC文字列の入出力は `alexedwards/argon2id` を利用 |
 | 対話入力 | `golang.org/x/term` | `pb admin create` のパスワードを非表示で読む（`DbDesign.md` 7.5） |
+| YAML | `gopkg.in/yaml.v3` | `pb dev seed` の定義ファイルを読むためだけに使う（`DbDesign.md` 7.6.4）。実行時の推移依存を持たない。**設定ファイルの形式として一般化しない**（設定は環境変数＋`*_FILE`） |
 | ID生成 | `oklog/ulid/v2` | ULID（`DbDesign.md` 4.2） |
 | ログ | **`log/slog`**（標準ライブラリ、JSONハンドラ） | 外部ライブラリを増やさない |
 | 設定 | 環境変数＋`*_FILE` 展開（自前、数十行） | `DbDesign.md` 3.2 |
@@ -260,6 +261,8 @@ ProjectBackyard/
     │   └── env.example
     ├── dev/                       ← 開発検証環境
     │   ├── compose.yaml           ← base への上書き
+    │   ├── reset.sh               ← DBを作り直してデモを投入（DbDesign 7.6.6）
+    │   ├── seed/dev-data.yaml     ← デモデータの定義（DbDesign 7.6.4。コミットする）
     │   └── secrets/               ← .gitignore（.example のみコミット）
     ├── stg/                       ← ステージング（当面は空でよい。4.4）
     └── prod/                      ← 配布用
@@ -836,6 +839,8 @@ make version-check       # VERSION と git 実測が一致することを確認�
  6. 認可ミドルウェア（RequirePermission）
 ─────────────────────────── ここまで完了 ───────────────────────────
  7. client 雛形（Vite + Pinia + router + デザイントークン）と embed 疎通   [TS]
+7.5 開発用デモデータ（pb dev seed）と dev-reset / dev-info            [Go+sh]
+      ← 権限の違う4アカウントが揃い、手順8の出し分けを検証できる
  8. ログイン画面・auth ストア・ルーターガード・メニュー出し分け             [TS]
       ← ブラウザでログインでき、権限でメニューが変わる
  9. GET/POST /projects、check-key                                    [Go]
@@ -865,6 +870,12 @@ make version-check       # VERSION と git 実測が一致することを確認�
 | `GET /me` の応答形状 | **フロントが必要とする情報に過不足がないか** |
 
 特に最後の項目は、`GET /me` の唯一の消費者が Pinia の `auth` ストアであるため、**ルーターガードとメニュー出し分けを実際に書くまで過不足が判明しない**。API を先に積み上げると、判明した時点で後続の実装がすべて同じ前提の上に載っている。
+
+### 11.1.1 手順7.5 を挟む理由
+
+手順8（メニュー出し分け）の検証には、**システムロールとプロジェクトロールが異なる複数のアカウント**が必要になる。`pb admin create` で1人ずつ対話的に作るのは現実的でなく、権限の組み合わせを毎回手で再現することになる。
+
+デモデータの投入は Go とシェルで完結し、TypeScript を含まないため、手順8とは別ステップとする（11.2）。仕様は `DbDesign.md` 7.6。
 
 ### 11.2 1ステップ = 1言語
 
