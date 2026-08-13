@@ -1,0 +1,108 @@
+/*
+ * デザイントークン（GuiDesign.md 8.5 の転記）
+ *
+ * 本ファイルは設計文書 8.5 の css ブロックをそのまま写したものである。
+ * 値の追加・変更は設計文書側を先に直すこと（CLAUDE.md 絶対規則3）。
+ *
+ * コンポーネントは --pb-1〜--pb-12 を直接参照せず、
+ * セマンティック別名（--pb-border 等）を使う。
+ */
+
+:root {
+  /* ── ベース色相（blue=245 / green=135）と彩度係数 ─────── */
+  --pb-hue: 245;
+  --pb-c:   1;
+
+  /* ── ベーススケール（light）──────────────────────────── */
+  --pb-1:  oklch(0.990 calc(0.004 * var(--pb-c)) var(--pb-hue));  /* アプリ背景       */
+  --pb-2:  oklch(0.975 calc(0.007 * var(--pb-c)) var(--pb-hue));  /* 面（subtle）     */
+  --pb-3:  oklch(0.950 calc(0.011 * var(--pb-c)) var(--pb-hue));  /* UI要素の背景     */
+  --pb-4:  oklch(0.922 calc(0.015 * var(--pb-c)) var(--pb-hue));  /* hover           */
+  --pb-5:  oklch(0.893 calc(0.019 * var(--pb-c)) var(--pb-hue));  /* active          */
+  --pb-6:  oklch(0.858 calc(0.023 * var(--pb-c)) var(--pb-hue));  /* 境界（弱）       */
+  --pb-7:  oklch(0.812 calc(0.029 * var(--pb-c)) var(--pb-hue));  /* 境界            */
+  --pb-8:  oklch(0.740 calc(0.042 * var(--pb-c)) var(--pb-hue));  /* 境界（強）/focus */
+  --pb-9:  oklch(0.550 calc(0.115 * var(--pb-c)) var(--pb-hue));  /* solid           */
+  --pb-10: oklch(0.500 calc(0.118 * var(--pb-c)) var(--pb-hue));  /* solid hover     */
+  --pb-11: oklch(0.500 calc(0.080 * var(--pb-c)) var(--pb-hue));  /* 文字（弱）       */
+  --pb-12: oklch(0.245 calc(0.038 * var(--pb-c)) var(--pb-hue));  /* 文字（強）       */
+
+  /* ── 意味色（有彩色はこの3つのみ）───────────────────── */
+  --pb-danger:         oklch(0.555 0.155  25);
+  --pb-danger-text:    oklch(0.470 0.130  25);
+  --pb-danger-bg:      oklch(0.960 0.022  25);
+  --pb-danger-border:  oklch(0.870 0.045  25);
+
+  --pb-warning:        oklch(0.865 0.165  92);  /* 面として使う（明るい黄） */
+  --pb-warning-text:   oklch(0.480 0.098  92);  /* 使用は最小限に          */
+  --pb-warning-bg:     oklch(0.968 0.038  92);
+  --pb-warning-border: oklch(0.880 0.085  92);
+  --pb-on-warning:     var(--pb-12);            /* 黄の面に載せる文字      */
+
+  --pb-ai:             oklch(0.555 0.155 300);
+  --pb-ai-text:        oklch(0.470 0.130 300);
+  --pb-ai-bg:          oklch(0.960 0.022 300);
+  --pb-ai-border:      oklch(0.870 0.045 300);
+
+  /* ── セマンティック別名（コンポーネントはこちらを参照する）── */
+  --pb-bg:          var(--pb-1);
+  --pb-surface:     var(--pb-2);
+  --pb-elevated:    var(--pb-3);
+  --pb-hover:       var(--pb-4);
+  --pb-active:      var(--pb-5);
+  --pb-line:        var(--pb-6);
+  --pb-border:      var(--pb-7);
+  --pb-focus:       var(--pb-8);
+  --pb-accent:      var(--pb-9);
+  --pb-accent-hover:var(--pb-10);
+  --pb-text-muted:  var(--pb-11);
+  --pb-text:        var(--pb-12);
+  --pb-on-accent:   oklch(0.99 0.004 var(--pb-hue));  /* solid上の文字 */
+
+  /* ── レイアウト ─────────────────────────────────────── */
+  --pb-menu-w:            240px;
+  --pb-menu-w-collapsed:   56px;
+  --pb-pageheader-h:       48px;
+  --pb-row-h:              40px;
+
+  /* ── 余白（4pxグリッド）──────────────────────────────── */
+  --pb-space-1: 4px;  --pb-space-2:  8px; --pb-space-3: 12px;
+  --pb-space-4: 16px; --pb-space-6: 24px;
+
+  /* ── 角丸・影 ───────────────────────────────────────── */
+  --pb-radius:   6px;
+  --pb-shadow-1: 0 1px 2px oklch(0.245 0.038 var(--pb-hue) / 0.06);
+  --pb-shadow-2: 0 4px 12px oklch(0.245 0.038 var(--pb-hue) / 0.10);
+}
+
+/* ── グリーンテーマ（新緑・茶葉）───────────────────────── */
+[data-hue="green"] { --pb-hue: 135; --pb-c: 1.12; }
+
+/* ── ダークテーマ（ベーススケールと意味色の一部を差し替え）── */
+[data-theme="dark"] {
+  --pb-1:  oklch(0.170 calc(0.012 * var(--pb-c)) var(--pb-hue));
+  --pb-2:  oklch(0.200 calc(0.016 * var(--pb-c)) var(--pb-hue));
+  --pb-3:  oklch(0.240 calc(0.022 * var(--pb-c)) var(--pb-hue));
+  --pb-4:  oklch(0.272 calc(0.027 * var(--pb-c)) var(--pb-hue));
+  --pb-5:  oklch(0.300 calc(0.031 * var(--pb-c)) var(--pb-hue));
+  --pb-6:  oklch(0.340 calc(0.035 * var(--pb-c)) var(--pb-hue));
+  --pb-7:  oklch(0.400 calc(0.042 * var(--pb-c)) var(--pb-hue));
+  --pb-8:  oklch(0.480 calc(0.052 * var(--pb-c)) var(--pb-hue));
+  --pb-9:  oklch(0.640 calc(0.115 * var(--pb-c)) var(--pb-hue));
+  --pb-10: oklch(0.700 calc(0.108 * var(--pb-c)) var(--pb-hue));
+  --pb-11: oklch(0.740 calc(0.070 * var(--pb-c)) var(--pb-hue));
+  --pb-12: oklch(0.950 calc(0.018 * var(--pb-c)) var(--pb-hue));
+  --pb-on-accent: oklch(0.17 0.012 var(--pb-hue));   /* 暗い文字を載せる */
+
+  --pb-danger-text:    oklch(0.760 0.110  25);
+  --pb-danger-bg:      oklch(0.255 0.035  25);
+  --pb-danger-border:  oklch(0.380 0.060  25);
+  --pb-warning:        oklch(0.820 0.160  92);
+  --pb-warning-text:   oklch(0.790 0.115  92);
+  --pb-warning-bg:     oklch(0.265 0.042  92);
+  --pb-warning-border: oklch(0.400 0.070  92);
+  --pb-on-warning:     oklch(0.170 0.012 var(--pb-hue));
+  --pb-ai-text:        oklch(0.760 0.110 300);
+  --pb-ai-bg:          oklch(0.255 0.035 300);
+  --pb-ai-border:      oklch(0.380 0.060 300);
+}

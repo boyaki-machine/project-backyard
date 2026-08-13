@@ -15,7 +15,7 @@
 | 5b | CSRF ミドルウェア（2.4）・レート制限（2.9） | 完了 | 2026-08-12 | Cookie 認証の POST に `X-PB-CSRF` が無いと 403、ログインを1分に11回叩くと 429 |
 | 6a | 認可ミドルウェア（`RequirePermission` / `RequireProjectPermission`） | 完了 | 2026-08-13 | 実DBのシードで operator→403 / administrator→200、非メンバー→404、`permission.denied` が記録される。`/admin/users` での実地確認は手順9 |
 | 6b | 実効権限のセッションキャッシュ（マイグレーション 0012、`Design.md` 6.4.5） | 完了 | 2026-08-13 | 実サーバでオペレータ（12件）→ 管理者へ昇格しても 12件のまま → キャッシュ破棄後に 28件。TTL 超過でも計算し直す。無効化はアクターの全トークンに効く |
-| 7 | client 雛形（Vite + Pinia + router + デザイントークン）と embed 疎通 | 未着手 | | `make build` した単一バイナリで `/` に Vue の初期画面が出る。プレースホルダページも表示できる |
+| 7 | client 雛形（Vite + Pinia + router + デザイントークン）と embed 疎通 | 完了 | 2026-08-13 | `make build` した単一バイナリの `/` で Vue が起動し、プロジェクト一覧のプレースホルダが描画される（ヘッドレス Chrome で確認）。SPA のパスは index.html にフォールバックし、`/api` `/mcp` は 2.5 形式の 404 のまま。`make dev-client` の :5173 から :8080 へのプロキシも通る |
 | 8 | ログイン画面・auth ストア・ルーターガード・メニュー出し分け | 未着手 | | ブラウザでログイン→`/projects` へ遷移。オペレータで「管理」セクションが出ない。ログアウトでログイン画面へ戻る |
 | 9 | `GET/POST /projects`、`check-key` | 未着手 | | プロジェクトを作成し、一覧に件数と進捗が出る |
 | 10 | プロジェクト一覧画面・新規作成モーダル | 未着手 | | ブラウザでプロジェクトを作成でき、一覧に反映される。キー重複で 409 のメッセージが出る |
@@ -57,14 +57,18 @@
 
 | | 値 |
 |---|---|
-| 現在 | **v1.6.6**（マージ前。マージ後に `make version-check` が通る） |
-| 内訳 | メジャー1 / マイナー6 / ビルド6 |
+| 現在 | **v1.7.7**（マージ前。マージ後に `make version-check` が通る） |
+| 内訳 | メジャー1 / マイナー7 / ビルド7 |
 | ビルド1 | 手順2（`feature/step-02-migrations`）のマージ |
 | ビルド2 | バージョン運用の導入（`feature/versioning`）のマージ |
 | ビルド3 | 手順3（`feature/step-03-admin-create`）のマージ |
 | ビルド4 | 手順4a・4b（`feature/step-04a-http-foundation`）のマージ |
 | ビルド5 | 手順5a・5b（`feature/step-05-auth-session`）のマージ |
-| ビルド6 | 手順6a・6b（`feature/step-06-authz-middleware`）のマージ **← これから** |
+| ビルド6 | 手順6a・6b（`feature/step-06-authz-middleware`）のマージ |
+| ビルド7 | 手順7（`feature/step-07-client-scaffold`）のマージ **← これから** |
+
+手順7は client の雛形と embed の疎通であり、成果物（単一バイナリ）が画面を配信するようになる
+機能追加のため `make bump-minor` を実行した（`1.6.6` → `1.7.7`）。
 
 手順 6a と 6b は**同じブランチ（`feature/step-06-authz-middleware`）に載せて1回のマージにする**
 （ユーザーの選択、2026-08-13）。`make bump-minor` は **6b の完了時に実行済み**（`1.5.5` → `1.6.6`）。
@@ -200,6 +204,22 @@
 | 2026-08-13 | 6b | **レビューで発見：`SaveSystemPermissionCache` のコメントが「応答を返した後の後片付けとして走らせる」と書いていたが、実際はミドルウェアの中で同期的に、認可の判定より前に走る。** `touchLastUsed` の説明をそのまま持ってきていた | **コメントを実態に合わせた。** `context.WithoutCancel` を残す理由も書き直した（応答後だからではなく、計算が既に済んでおり捨てると次のリクエストでもう一度DBを引くことになるため。同期的である以上は長く待てないので上限を短く切る） |
 | 2026-08-13 | 6b | `project_id` が入ったトークンで、プロジェクトに紐づかないエンドポイント（`/admin/users` など）を叩けるか | **止めていない。** 設計文書に規定が無く、エージェントに対しては**トークンスコープが実施点になる**（`Design.md` 6.5 の既定スコープに `user.manage` 等は含まれない）。プロジェクト限定は `RequireProjectPermission` の軸として実装した。止める必要があるなら 6.4.5 に規定を足す提案からになる |
 | 2026-08-13 | 6b | `permissions_cached_at` をアプリの時計とDBの時計のどちらで入れるか | **DBの `now()`。** 複数プロセスから書いても TTL の起点が1つの時計に揃う。読み出し側の比較はアプリの時計になるが、ずれても有効に見える時間が TTL ± ずれ幅で収まるだけで破綻しない（テストで未来時刻の場合も固定した） |
+| 2026-08-13 | 7 | ルート定義をどこまで先に置くか | **`GuiDesign.md` 3.2 の全ルート（Phase 2/3 を含む21本）をプレースホルダで定義することをユーザーが選択。** `Design.md` 11.3 の「Phase 2/3 の全画面もプレースホルダ」に従う。実装時は `component` を差し替えて `meta.placeholder` を消すだけになる |
+| 2026-08-13 | 7 | client の依存をどこまで入れるか | **最小構成をユーザーが選択**（vue / vue-router / pinia ＋ vite / @vitejs/plugin-vue / typescript / vue-tsc）。UIライブラリと Tailwind は入れない（`GuiDesign.md` 1.1 の暫定方針「まず自前」）。ESLint / Prettier / Vitest も入れていない。**採用する場合は `Design.md` 3.1 への追記提案とセットにする** |
+| 2026-08-13 | 7 | **`npm install` が入れた TypeScript 7.0.2 が vue-tsc 3.3.9 と非互換**（`typescript/package.json` の exports に `./lib/tsc` が無く、`npm run build` が `ERR_PACKAGE_PATH_NOT_EXPORTED` で落ちる） | **`typescript` を `^5` に固定した。** goose / `x/term` と同じ「ツール側の対応が追いつくまで上限を切る」扱い。vue-tsc が TS 7 に対応した時点で見直す |
+| 2026-08-13 | 7 | **`make build` が追跡対象の `server/internal/webui/dist/index.html` を実成果物で上書きし、作業ツリーが汚れる**（`Design.md` 3.4 が「プレースホルダを1つコミットしておく」としているため必然的に起きる） | **3.4 のまま `make clean-webui` を足すことをユーザーが選択**（`dist/` を丸ごと ignore する案もあった）。`git clean` ＋ `git restore` で**コミット済みの内容**に戻す。設計文書の変更は不要 |
+| 2026-08-13 | 7 | **`GuiDesign.md` 3.2 のルーティング表に `/` の行が無い。** ログイン後の初期画面は `/projects`（3.1 / 5.2） | **`/` → `/projects` のリダイレクトとして実装した。** 遷移図から導けるが表には無い。**3.2 に `/` の行を1行足す修正を提案したい**（`Design.md` 11.3 のプレースホルダ一覧と同じく、ルーティングの正本は3.2であるべきため） |
+| 2026-08-13 | 7 | `/403` `/404` は 3.2 で「実装」だが、画面の内容が 5.x に無い | **最小の自前ページにした**（コード・見出し・説明・プロジェクト一覧への導線）。プレースホルダにはしない。ガードの遷移先として手順8で使うため |
+| 2026-08-13 | 7 | 3.2 の「必要権限：不要」をルート定義でどう表すか（`/me` の「本人」と区別が要る） | `meta.public`（未認証で到達してよい）と `meta.permission`（権限キー）の2つに分けた。権限キーが無く public でもないルートは「認証のみ」＝「本人」。**手順8のガードはこの2つだけを見る** |
+| 2026-08-13 | 7 | SPA フォールバックの対象メソッド（`Design.md` 3.4 は「未知のパスは index.html」としか書いていない） | **GET / HEAD のみ。それ以外は 405 `method_not_allowed`。** 綴りを誤った API 呼び出しに 200 で index.html を返すと発見が遅れる。`/api` `/mcp` は完全一致か `/` 区切りの前方一致で判定し、`/apifoo` のような別パスを巻き込まない |
+| 2026-08-13 | 7 | 3.4 のキャッシュ制御は「ハッシュ付きアセットは `immutable`、`index.html` は `no-cache`」の2つしか定めていない。favicon など**ハッシュを持たない実ファイル**の扱いが無い | **`assets/` 配下のみ `immutable`、それ以外はすべて `no-cache`** とした（安全側）。名前が変わらないファイルを1年キャッシュさせると差し替えが届かない |
+| 2026-08-13 | 7 | 埋め込みファイルは更新時刻を持たない（`embed.FS` は常にゼロ値を返す） | `index.html` は起動時に一度だけメモリへ読み、`Last-Modified` に**プロセスの起動時刻**を入れる。ゼロ値のまま `http.ServeContent` に渡すとヘッダが出ない |
+| 2026-08-13 | 7 | **`client/src/api/`（`Design.md` 4.1 の「openapi.yaml から生成する型付きクライアント」）を作っていない。** `docs/openapi.yaml` が存在せず、手順7ではAPIを1本も呼ばない | **手順8で `POST /auth/login` と `GET /me` を呼ぶ時点で方式を決める。** 生成器を入れる（依存追加）か、当面は手書きの薄い fetch ラッパにするかの判断が要る。**openapi.yaml が無い以上、4.1 の記述をそのまま実行できない** |
+| 2026-08-13 | 7 | デザイントークン（`GuiDesign.md` 8.5）の転記 | **css ブロックを機械的に抜き出して `tokens.css` にし、`diff` で完全一致を確認した**（手順2の DDL と同じやり方）。値を1つも変えていない。フォント（8.10）は `--pb-*` トークンを増やさずに `base.css` の宣言として書いた |
+| 2026-08-13 | 7 | ダークテーマ時にスクロールバー等のネイティブUIが明るいまま残る | `base.css` に `color-scheme`（light / `[data-theme="dark"]` で dark）を足した。8.5 のトークンは増やしていない |
+| 2026-08-13 | 7 | `ui` ストアの `localStorage` キー名が文書に無い | `pb.theme` / `pb.hue` とした。**保存先をユーザー設定（`app_user`）へ移すのは手順17**（`GuiDesign.md` 8.11 は両方に保存すると定めている） |
+| 2026-08-13 | 7 | **OKLCH の hex フォールバック（`GuiDesign.md` 8.5 末尾「念のためビルド時に hex フォールバックを生成する」）を実装していない** | **PostCSS プラグインの採用可否が `GuiDesign.md` 11章の未解決事項として残っているため、手を付けなかった。** Vite は追加設定なしで PostCSS を通せる。必要になった時点で 11章の項目とセットで決める |
+| 2026-08-13 | 7 | Vite の proxy に `/healthcheck` を含めるか | **含めない。** 画面からは呼ばない（監視・オーケストレータ用。`ApiDesign.md` 2.11）。`Design.md` 4.1 も `/api` `/mcp` の2つだけを挙げている |
 
 ### 設計文書へ反映済みの修正（2026-08-11、承認のうえ適用）
 
@@ -686,11 +706,79 @@
    （`access_token.project_id`）は他プロジェクトを 404 とする**ことを追記。6.5 の
    「他プロジェクトへのアクセス」禁止の実施点がここであることを明示した（レビュー指摘1）
 
+### 手順7で作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/package.json` / `package-lock.json` | 依存は7つのみ（vue / vue-router / pinia ＋ vite / @vitejs/plugin-vue / typescript / vue-tsc）。`npm run build` は `vue-tsc --noEmit` を通してから `vite build` |
+| `client/vite.config.ts` | `:5173`（`strictPort`）、`/api` と `/mcp` を `127.0.0.1:8080` へプロキシ（`Design.md` 3.4） |
+| `client/tsconfig.json` / `env.d.ts` / `index.html` | strict。`@types/node` を足さずに済むよう、パスエイリアスを使わず相対 import にしている |
+| `client/src/main.ts` / `App.vue` | Pinia と router を登録し、描画前にテーマを `<html>` へ当てる。`App.vue` は `<RouterView/>` のみ（`AppShell` は手順8） |
+| `client/src/styles/tokens.css` | **`GuiDesign.md` 8.5 の css ブロックの機械的な転記**（`--pb-1`〜`--pb-12`、意味色、セマンティック別名、`[data-hue="green"]`、`[data-theme="dark"]`） |
+| `client/src/styles/base.css` | 最小のリセットと 8.10 のタイポグラフィ（システムフォント・14px/1.7・等幅）。`color-scheme` も |
+| `client/src/router/index.ts` | `createWebHistory`。ガード（7.2）は手順8で足す |
+| `client/src/router/routes.ts` | **`GuiDesign.md` 3.2 の全21ルート**と `RouteMeta` の型（`permission` / `public` / `placeholder`） |
+| `client/src/pages/PlaceholderPage.vue` | `GuiDesign.md` 6.5 のプレースホルダ。内容は `meta.placeholder` から受ける（画面ごとにファイルを作らない） |
+| `client/src/pages/ForbiddenPage.vue` / `NotFoundPage.vue` | `/403` `/404` |
+| `client/src/stores/ui.ts` | テーマ（system/light/dark）と色相（blue/green）。`localStorage` と `<html data-theme/data-hue>` |
+| `server/internal/webui/embed.go` | `//go:embed all:dist` |
+| `server/internal/webui/handler.go` | 実在ファイルの配信、SPA フォールバック、キャッシュ制御 |
+| `server/internal/webui/handler_test.go` | 8件。アセット配信・キャッシュ制御・フォールバック・dist 外への脱出・index 欠落時の 500・埋め込み済み dist の疎通 |
+| `server/internal/webui/dist/index.html`（変更） | embed のプレースホルダを「client 未ビルド」の案内ページに差し替え（従来は `// PlaceHolder` の1行で、HTML として成立していなかった） |
+| `server/internal/httpapi/router.go`（変更） | `NotFound` を分岐。`/api` `/mcp` は 2.5 形式の 404、それ以外の GET/HEAD は SPA、他メソッドは 405 |
+| `server/internal/httpapi/router_test.go`（変更） | 未知パスのテストを API 用と画面用に分割し、POST の 405 を追加 |
+| `Makefile`（変更） | `dev-client` / `build-client` / `sync-webui` / `build` / `clean-webui` を追加（`Design.md` 4.2 のとおり） |
+
+### 手順7の検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `npm run build`（`vue-tsc --noEmit` 込み） | 通る。`dist/index.html` 0.39 kB、`assets/*.css` 6.16 kB、`assets/*.js` 101.93 kB（gzip 39.80 kB） |
+| `gofmt -l` / `go build ./...` / `go vet ./...` / `make test` | いずれも通る（9パッケージすべて ok。`internal/webui` が増えた） |
+| `tokens.css` と `GuiDesign.md` 8.5 | `diff` で**完全一致**（98行） |
+| `make build` | `bin/pb` が生成され、`client/dist` が `server/internal/webui/dist/` に入る |
+| **`/`（ヘッドレス Chrome）** | **`/projects` へリダイレクトし、プロジェクト一覧のプレースホルダが描画される。** `<html>` に `data-theme="light"` / `data-hue="blue"`（ui ストアが効いている） |
+| `/p/my-app/tickets/31`（同） | チケット詳細のプレースホルダ。`予定している内容` は 5.5 の転記、`ルート` は定義側の `/p/:key/tickets/:seq` |
+| `/nowhere`（同） | catch-all で 404 画面。`/403` も表示できる |
+| SPA フォールバック（curl） | `/projects` `/p/my-app/tickets/31` `/admin/users` `/404` がいずれも `200 text/html` |
+| キャッシュ制御 | `assets/*.js` `assets/*.css` は `public, max-age=31536000, immutable`、`index.html` は `no-cache` |
+| API を巻き込んでいないこと | `GET /api/v1/nope` `GET /api` `GET /api/` `GET /mcp/nope` はすべて 2.5 形式の `404 not_found` |
+| `POST /projects` | `405 method_not_allowed`（画面のパスに index.html を返さない） |
+| `/healthcheck` | `{"status":"OK","version":"1.6.6"}`。SPA フォールバックの例外として残っている（`ApiDesign.md` 2.11） |
+| **`make dev-client`（:5173）** | `/` `/projects` が Vite から返り、`/api/v1/nope` は `:8080` の 404、`POST /api/v1/auth/login` は 422 `validation_failed`。**プロキシが通っている** |
+| `make clean-webui` | ビルド成果物が消え、`dist/` がコミット済みの `index.html` 1つに戻る |
+| 検証用リソースの後始末 | `make run` と Vite 開発サーバは停止済み。`bin/` と `client/dist` は `.gitignore` 済み。DBには一切触っていない（`audit_log` も増えていない） |
+
+**ブラウザでの見え方（配色・余白）は目視で確認していない。** ヘッドレスで確認したのは
+DOM とテーマ属性までである。手順8でログイン画面を作る際に、実ブラウザで合わせて見ること。
+
 ## 環境メモ
 
 実際に動かして分かったこと（バージョンの相性、ハマった点、回避策）を追記する。
 ここに書いた内容は、後から `CLAUDE.md` や設計文書へ昇格させることを検討する。
 
+- ホストの Node: **v24.14.0** / npm **11.9.0**（手順7の時点）。`make build-client` は `npm ci` を使うため
+  `client/package-lock.json` をコミットしている
+- client の依存（手順7時点）: `vue` / `vue-router` / `pinia` ＋ dev に `vite` / `@vitejs/plugin-vue` /
+  `typescript` / `vue-tsc` の7つのみ
+  - **`typescript` は `^5` に固定すること。** `npm install -D typescript` は 7.x を入れるが、
+    vue-tsc 3.3.9 が `typescript/lib/tsc` を require できず `ERR_PACKAGE_PATH_NOT_EXPORTED` で落ちる
+  - `npm run build` は型検査（`vue-tsc --noEmit`）を通してから `vite build` する。型エラーは
+    ビルドを止める
+- **`make build` の後は `make clean-webui` を実行してからコミットする。** ビルド成果物が
+  追跡対象の `server/internal/webui/dist/index.html` を上書きするため。`clean-webui` は
+  **コミット済みの内容**へ戻すので、プレースホルダ自体を書き換えたときは先に `git add` すること
+- **画面の描画はヘッドレス Chrome で確認できる**（手順7で使用。Playwright 等は入れていない）。
+
+  ```
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --disable-gpu \
+    --virtual-time-budget=3000 --user-data-dir=<一時ディレクトリ> --dump-dom http://localhost:8080/
+  ```
+
+  `--user-data-dir` は**呼び出しごとに別のディレクトリにする**。同じものを使い回すと
+  プロファイルのロックで2回目以降が固まる。`--virtual-time-budget` は SPA のマウントを待つため
+- **Vite 開発サーバは `:5173`（`strictPort`）。** ポートが空いていなければ黙ってずらさずに失敗する。
+  API は別途 `make run` で `:8080` に立てる（`/api` `/mcp` だけがプロキシされる）
 - **`make run` を止め忘れると次のセッションで `bind: address already in use` になる。** 手順5b の検証時に、
   前のセッションの `pb` が :8080 を掴んだままだった。他人のプロセスを落とさずに済ませるには
   `PB_BIND=127.0.0.1:8099` のように待受を変えて起動する（`make run` の recipe を書き換える必要はない）。
