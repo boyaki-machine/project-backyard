@@ -52,23 +52,29 @@
 |---|---|---|---|---|
 | バージョン番号とビルド番号の運用（`Design.md` 11.1） | 完了 | 2026-08-12 | `feature/versioning` | マージ後に `make version-check` が通る |
 | エージェントの実行権限の整理（`.claude/settings.json`）と `CLAUDE.md` 絶対規則2の具体化 | 完了 | 2026-08-12 | `feature/step-04-http-foundation-auth` | 読み取り系コマンドが確認なしで通り、`rm` / `git merge` / `git push` などは確認を求める |
+| `GuiDesign.md` 3.2 のルーティング表に `/` の行を追加（手順7の積み残し） | 完了 | 2026-08-13 | `docs/routing-root-path` | 表の記述（`/projects` へリダイレクト・必要権限なし）が `client/src/router/routes.ts` の実装と一致する。コードは変更していない |
 
 ## バージョンの現況
 
 | | 値 |
 |---|---|
-| 現在 | **v1.7.7**（マージ前。マージ後に `make version-check` が通る） |
-| 内訳 | メジャー1 / マイナー7 / ビルド7 |
+| 現在 | **v1.7.8**（マージ前。マージ後に `make version-check` が通る） |
+| 内訳 | メジャー1 / マイナー7 / ビルド8 |
 | ビルド1 | 手順2（`feature/step-02-migrations`）のマージ |
 | ビルド2 | バージョン運用の導入（`feature/versioning`）のマージ |
 | ビルド3 | 手順3（`feature/step-03-admin-create`）のマージ |
 | ビルド4 | 手順4a・4b（`feature/step-04a-http-foundation`）のマージ |
 | ビルド5 | 手順5a・5b（`feature/step-05-auth-session`）のマージ |
 | ビルド6 | 手順6a・6b（`feature/step-06-authz-middleware`）のマージ |
-| ビルド7 | 手順7（`feature/step-07-client-scaffold`）のマージ **← これから** |
+| ビルド7 | 手順7（`feature/step-07-client-scaffold`）のマージ |
+| ビルド8 | `GuiDesign.md` 3.2 への `/` の行の追加（`docs/routing-root-path`）のマージ **← これから** |
 
 手順7は client の雛形と embed の疎通であり、成果物（単一バイナリ）が画面を配信するようになる
 機能追加のため `make bump-minor` を実行した（`1.6.6` → `1.7.7`）。
+
+`docs/routing-root-path` は文書のみの修正のため `make bump-build`（`1.7.7` → `1.7.8`）。
+**これがマイナーとビルドが初めてずれた回**である。ここまでの7回はすべて `feature/*` の
+マージだったため、たまたま同じ値が続いていた（`Design.md` 11.1）。
 
 手順 6a と 6b は**同じブランチ（`feature/step-06-authz-middleware`）に載せて1回のマージにする**
 （ユーザーの選択、2026-08-13）。`make bump-minor` は **6b の完了時に実行済み**（`1.5.5` → `1.6.6`）。
@@ -208,7 +214,7 @@
 | 2026-08-13 | 7 | client の依存をどこまで入れるか | **最小構成をユーザーが選択**（vue / vue-router / pinia ＋ vite / @vitejs/plugin-vue / typescript / vue-tsc）。UIライブラリと Tailwind は入れない（`GuiDesign.md` 1.1 の暫定方針「まず自前」）。ESLint / Prettier / Vitest も入れていない。**採用する場合は `Design.md` 3.1 への追記提案とセットにする** |
 | 2026-08-13 | 7 | **`npm install` が入れた TypeScript 7.0.2 が vue-tsc 3.3.9 と非互換**（`typescript/package.json` の exports に `./lib/tsc` が無く、`npm run build` が `ERR_PACKAGE_PATH_NOT_EXPORTED` で落ちる） | **`typescript` を `^5` に固定した。** goose / `x/term` と同じ「ツール側の対応が追いつくまで上限を切る」扱い。vue-tsc が TS 7 に対応した時点で見直す |
 | 2026-08-13 | 7 | **`make build` が追跡対象の `server/internal/webui/dist/index.html` を実成果物で上書きし、作業ツリーが汚れる**（`Design.md` 3.4 が「プレースホルダを1つコミットしておく」としているため必然的に起きる） | **3.4 のまま `make clean-webui` を足すことをユーザーが選択**（`dist/` を丸ごと ignore する案もあった）。`git clean` ＋ `git restore` で**コミット済みの内容**に戻す。設計文書の変更は不要 |
-| 2026-08-13 | 7 | **`GuiDesign.md` 3.2 のルーティング表に `/` の行が無い。** ログイン後の初期画面は `/projects`（3.1 / 5.2） | **`/` → `/projects` のリダイレクトとして実装した。** 遷移図から導けるが表には無い。**3.2 に `/` の行を1行足す修正を提案したい**（`Design.md` 11.3 のプレースホルダ一覧と同じく、ルーティングの正本は3.2であるべきため） |
+| 2026-08-13 | 7 | **`GuiDesign.md` 3.2 のルーティング表に `/` の行が無い。** ログイン後の初期画面は `/projects`（3.1 / 5.2） | **`/` → `/projects` のリダイレクトとして実装した。** 遷移図から導けるが表には無い。**`GuiDesign.md` 3.2 に反映済み**（2026-08-13、`docs/routing-root-path`）。行に加えて「URL設計の判断」にも、`/` が画面を持たず権限判定をリダイレクト先で行う旨を1行足した |
 | 2026-08-13 | 7 | `/403` `/404` は 3.2 で「実装」だが、画面の内容が 5.x に無い | **最小の自前ページにした**（コード・見出し・説明・プロジェクト一覧への導線）。プレースホルダにはしない。ガードの遷移先として手順8で使うため |
 | 2026-08-13 | 7 | 3.2 の「必要権限：不要」をルート定義でどう表すか（`/me` の「本人」と区別が要る） | `meta.public`（未認証で到達してよい）と `meta.permission`（権限キー）の2つに分けた。権限キーが無く public でもないルートは「認証のみ」＝「本人」。**手順8のガードはこの2つだけを見る** |
 | 2026-08-13 | 7 | SPA フォールバックの対象メソッド（`Design.md` 3.4 は「未知のパスは index.html」としか書いていない） | **GET / HEAD のみ。それ以外は 405 `method_not_allowed`。** 綴りを誤った API 呼び出しに 200 で index.html を返すと発見が遅れる。`/api` `/mcp` は完全一致か `/` 区切りの前方一致で判定し、`/apifoo` のような別パスを巻き込まない |
