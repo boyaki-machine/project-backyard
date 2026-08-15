@@ -1,6 +1,7 @@
 import type { RouteRecordRaw } from 'vue-router'
 
 import ForbiddenPage from '../pages/ForbiddenPage.vue'
+import LoginPage from '../pages/LoginPage.vue'
 import NotFoundPage from '../pages/NotFoundPage.vue'
 import PlaceholderPage from '../pages/PlaceholderPage.vue'
 
@@ -42,26 +43,8 @@ export const routes: RouteRecordRaw[] = [
   // ログイン後の初期画面は /projects（GuiDesign.md 3.1 / 5.2）。
   { path: '/', redirect: '/projects' },
 
-  {
-    path: '/login',
-    component: PlaceholderPage,
-    meta: {
-      public: true,
-      placeholder: {
-        title: 'ログイン',
-        docRef: 'GuiDesign.md 5.1',
-        status: 'Phase 1・手順8で実装',
-        planned: [
-          'メールアドレスとパスワードによるログイン（POST /api/v1/auth/login）',
-          '成功時は GET /api/v1/me で権限を取得してから /projects へ遷移',
-          '未認証で保護ページへ来た場合の ?redirect= による復帰',
-          'エラーは「メールアドレスまたはパスワードが正しくありません」で統一',
-          'ロックアウト（423）時のみ「一定時間ロックされています」を表示',
-          'IdPボタンは GET /api/v1/auth/providers から動的生成（Phase 1 は非表示）',
-        ],
-      },
-    },
-  },
+  // メインメニューを出さない唯一の画面（GuiDesign.md 5.1 のレイアウト例外）。
+  { path: '/login', component: LoginPage, meta: { public: true } },
 
   {
     path: '/projects',

@@ -3,7 +3,7 @@ import { RouterLink } from 'vue-router'
 </script>
 
 <template>
-  <!-- 権限が無いルートへ入ろうとしたときの遷移先（GuiDesign.md 7.2 手順2） -->
+  <!-- 権限が無いルートへ入ろうとしたときの遷移先（GuiDesign.md 7.2 手順3） -->
   <div class="error-page">
     <p class="code">403</p>
     <h1 class="title">このページを表示する権限がありません</h1>

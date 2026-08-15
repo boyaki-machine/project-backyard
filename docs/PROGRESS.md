@@ -17,7 +17,8 @@
 | 6b | 実効権限のセッションキャッシュ（マイグレーション 0012、`Design.md` 6.4.5） | 完了 | 2026-08-13 | 実サーバでオペレータ（12件）→ 管理者へ昇格しても 12件のまま → キャッシュ破棄後に 28件。TTL 超過でも計算し直す。無効化はアクターの全トークンに効く |
 | 7 | client 雛形（Vite + Pinia + router + デザイントークン）と embed 疎通 | 完了 | 2026-08-13 | `make build` した単一バイナリの `/` で Vue が起動し、プロジェクト一覧のプレースホルダが描画される（ヘッドレス Chrome で確認）。SPA のパスは index.html にフォールバックし、`/api` `/mcp` は 2.5 形式の 404 のまま。`make dev-client` の :5173 から :8080 へのプロキシも通る |
 | 7.5 | 開発用デモデータ（`pb dev seed`）・`make dev-reset` / `dev-seed` / `dev-info` | 完了 | 2026-08-13 | `make dev-reset` で作り直し後、4アカウントとデモプロジェクト（ワークフロー複製つき）が投入される。2回目は作成0／スキップ全件で壊れない。`PB_ALLOW_DEV_SEED` なし・開発端末以外のホストのいずれでも中断する。実サーバで4アカウントともログインでき、`GET /me` が admin=28権限・他=12権限、`projects[].role` が定義どおり（`DbDesign.md` 7.6） |
-| 8 | ログイン画面・auth ストア・ルーターガード・メニュー出し分け | 未着手 | | ブラウザでログイン→`/projects` へ遷移。オペレータで「管理」セクションが出ない。ログアウトでログイン画面へ戻る |
+| 8a | `openapi.yaml` 初版・ドリフト検出テスト・API層・auth ストア・ログイン画面・ルーターガード | 完了 | 2026-08-15 | ブラウザ（ヘッドレス Chrome）で16件：ログイン→`/projects`、未認証で保護ページ→`/login?redirect=`→ログイン後に復帰、オペレータで `/admin/users`→`/403`、非メンバーのプロジェクト→`/404`、ログアウト後は `/login`。`go test ./...` にドリフト検出（`chi.Walk` と yaml の突き合わせ）が入る |
+| 8b | AppShell・メインメニュー・権限による出し分け・ユーザーメニュー | 完了 | 2026-08-15 | ブラウザで39件：管理者に「管理」セクションが出て**オペレータでは見出しごと出ない**、プロジェクト選択中のみプロジェクト領域、`project.edit` の無い閲覧者に「プロジェクト設定」が出ない、テーマ切替、折りたたみ（`[` キー・`localStorage`・2.4 のブレークポイント）、ログアウトでログイン画面へ戻る |
 | 9 | `GET/POST /projects`、`check-key` | 未着手 | | プロジェクトを作成し、一覧に件数と進捗が出る |
 | 10 | プロジェクト一覧画面・新規作成モーダル | 未着手 | | ブラウザでプロジェクトを作成でき、一覧に反映される。キー重複で 409 のメッセージが出る |
 | 11 | `GET/PATCH /projects/:key`、archive、プロジェクト設定画面 | 未着手 | | `If-Match` 不一致で 409。設定画面から名前を変更できる |
@@ -60,8 +61,8 @@
 
 | | 値 |
 |---|---|
-| 現在 | **v1.8.10**（マージ前。マージ後に `make version-check` が通る） |
-| 内訳 | メジャー1 / マイナー8 / ビルド10 |
+| 現在 | **v1.9.11**（マージ前。マージ後に `make version-check` が通る） |
+| 内訳 | メジャー1 / マイナー9 / ビルド11 |
 | ビルド1 | 手順2（`feature/step-02-migrations`）のマージ |
 | ビルド2 | バージョン運用の導入（`feature/versioning`）のマージ |
 | ビルド3 | 手順3（`feature/step-03-admin-create`）のマージ |
@@ -71,7 +72,12 @@
 | ビルド7 | 手順7（`feature/step-07-client-scaffold`）のマージ |
 | ビルド8 | `GuiDesign.md` 3.2 への `/` の行の追加（`docs/routing-root-path`）のマージ |
 | ビルド9 | `openapi.yaml` の役割の再定義（`docs/openapi-role`）のマージ |
-| ビルド10 | 手順7.5（`feature/step-07-5-dev-seed`）のマージ **← これから** |
+| ビルド10 | 手順7.5（`feature/step-07-5-dev-seed`）のマージ |
+| ビルド11 | 手順8a・8b（`feature/step-08-login-and-menu`）のマージ **← これから** |
+
+手順8 はブラウザでログインでき、権限で画面とメニューが変わるようになる機能追加のため
+`make bump-minor`（`1.8.10` → `1.9.11`）。8a と 8b は**同じブランチに載せて1回のマージ**
+にする（4a/4b・5a/5b・6a/6b と同じ扱い）。
 
 手順7.5 は `pb dev seed` というサブコマンドの追加（成果物の振る舞いが増える）ため
 `make bump-minor`（`1.7.9` → `1.8.10`）。ブランチ名は手順番号が2桁でないため
@@ -247,6 +253,27 @@
 | 2026-08-13 | 7.5 | 7.6.3 の安全装置その1（`PB_ALLOW_DEV_SEED=1`）を Makefile が与えると、ガードとして働かないのではないか | **`make dev-seed` では与える。** make は開発端末専用の入口であり、ここで要求すると毎回 export が要って `dev-seed` の意味が無くなる。**配布したバイナリを直接叩く経路（本番）では環境変数が無いので止まり、あっても安全装置その2（接続先ホストの検査）が残る。** ホストを判定できない接続文字列は「たぶん開発環境」に倒さずエラーにしている |
 | 2026-08-13 | 7.5 | **`DbDesign.md` 7.6.6 が「実装後は `docs/Development.md` からも参照する」とするが、`docs/Development.md` がまだ存在しない**（`Design.md` 4.1 には予定として載っている） | **作っていない。** 開発環境の立ち上げ手順全体を書く文書であり、手順7.5のスコープを超える。**`make up` → `make migrate` → `make dev-reset` → `make run` の流れが揃った今が書き時**なので、手順8の前後で独立した作業として起こすことを提案する |
 | 2026-08-13 | 7.5 | 定義ファイルに載っているプロジェクトが既に在るとき、メンバー登録もスキップするか | **プロジェクトの作成だけスキップし、メンバーは毎回登録する**（`ON CONFLICT DO NOTHING`）。定義ファイルにメンバーを足して流し直したときに反映されるほうが、冪等性の要求（7.6.2）と両立して使いやすいため |
+| 2026-08-15 | 8 | 手順8の分量（openapi.yaml の初版＋ドリフト検出＋API層＋ストア＋ログイン画面＋ガード＋メニュー一式）が1セッションに多い | **8a / 8b に分割することをユーザーが選択。** 8a は認証の縦切り（API層・ストア・ログイン画面・ガード）、8b が AppShell とメニュー出し分け。1ブランチ・1マージは 4a/4b・5a/5b・6a/6b と同じ |
+| 2026-08-15 | 8a | **`GuiDesign.md` 7.2 のガード順（1 未認証 → 2 権限 → 3 プロジェクト到達可否）だと、非メンバーのプロジェクトで先に権限判定が当たって 403 になり、404 に倒した意味が失われる。** サーバ側は手順6a で「非メンバーかつ非アドミニストレータ → 404」と決めている | **到達可否を権限より先に判定する（順序を入れ替える）ことをユーザーが承認**（2026-08-15）。**`GuiDesign.md` 7.2 に反映済み**（順序の理由と、`meta.permission` の照合相手を `:key` の有無で切り替えることも明記）。手順7で作った `/403` `/404` のコメント中の手順番号も揃えた |
+| 2026-08-15 | 8a | client の API 型を生成器で作るか手書きにするか（手順7からの積み残し） | **`openapi-typescript` を devDependency に追加することをユーザーが承認**（2026-08-15）。`Design.md` 3.3 が「コード生成は TypeScript クライアントのみ」と名指ししている方式そのもの。**生成するのは型だけ**（`client/src/api/schema.d.ts`、コミットする）で、呼び出しは手書きの薄いラッパ（`client/src/api/client.ts`）が持つ。`make gen-api` を追加し `CLAUDE.md` の開発コマンドにも載せた |
+| 2026-08-15 | 8a | `docs/openapi.yaml` の初版（手順7からの積み残し） | **実装済みの4本**（`/api/v1/auth/login`・`/auth/logout`・`/me`・`/healthcheck`）のみを記述した。`servers` を `/` にして paths に完全なパスを書いている。`/healthcheck` が唯一 `/api/v1` の外にある（`ApiDesign.md` 2.11）ためで、こうするとドリフト検出も例外リストなしで済む。`info.version` は固定の `1.0.0` |
+| 2026-08-15 | 8a | 更新漏れの検出（`Design.md` 3.3、手順外の積み残し） | **`server/internal/httpapi/openapi_drift_test.go` を追加。** `chi.Walk` のルート一覧と yaml の `paths` を突き合わせ、**実装にあって yaml に無い／yaml にあって実装に無い**の両方向を報告する。パーサは dev seed で既に入れた `yaml.v3`（依存追加なし）。検出できることを、yaml を一時的に壊して両方向とも確認済み |
+| 2026-08-15 | 8a | `GET /auth/providers`（`ApiDesign.md` 3.3）を呼ぶか。`GuiDesign.md` 5.1 は IdP ボタンをこの API から動的生成すると定める | **呼んでいない。** Phase 1 の認証手段は `local` のみで 5.1 自身が「非表示」としており、**API も未実装**（手順5a で見送り）。手順8は TypeScript のみのステップ（`Design.md` 11.2）なので Go を混ぜない。**Phase 3 で OIDC/SAML を足すときに、API とボタンをセットで実装する** |
+| 2026-08-15 | 8a | 画面に出すバージョン（5.1 のフッタ・4.2 のユーザーメニューの「PB v0.1.0」）の取得元が設計文書に無い | **ビルド時に `VERSION` を埋める方式をユーザーが承認**（2026-08-15）。`client/src/version.ts` が `../../VERSION?raw`（Vite の機能。型は `vite/client` に含まれ依存を増やさない）で読む。`/healthcheck` から取らないのは、**既定でバージョンを返さない設定**（`PB_HEALTH_SHOW_VERSION=false`、2.11）と衝突するため。`vite.config.ts` に `server.fs.allow: ['..']` を足した |
+| 2026-08-15 | 8a | セッション失効（401）を受けたときの共通処理の置き場所 | **`api/client.ts` にハンドラの登録口だけ置き、`main.ts` で結ぶ。** ストアやルータを client.ts から import すると循環する。起動時の `GET /me` は「未ログインなら 401 が正常」なので、`allowUnauthenticated` を付けて共通処理を走らせない |
+| 2026-08-15 | 8a | 2.5 の形式で返ってこないエラー（通信不能・プロキシ由来の応答）の文言 | **この2か所だけ画面側が文言を持つ**（`ApiError` の生成箇所）。サーバから `message` が来ないため。それ以外は**必ずサーバの `message` をそのまま出す**（`ApiDesign.md` 2.5、`CLAUDE.md` の規約） |
+| 2026-08-15 | 8a | 認証済みで `/login` を開いたときの挙動（文書に記載なし） | **`/projects` へ送る**（`GuiDesign.md` 3.1 の遷移図。ログインは未認証の入口であり、認証済みで留まる意味がない） |
+| 2026-08-15 | 8a | `?redirect=` に外部URLを入れられると、ログイン直後に別サイトへ飛ばせる（オープンリダイレクト） | **`/` で始まり `//` で始まらない値だけを受け付ける**（`safeRedirect`）。`//example.com` はプロトコル相対URLとして外部へ飛ぶ |
+| 2026-08-15 | 8a | `must_change_password: true` の誘導（`ApiDesign.md` 3.1 は「変更画面へ誘導する」とする） | **ストアに持つだけで遷移は変えていない。** 誘導先のパスワード変更画面は `/me`（手順17）でまだプレースホルダである。デモの4アカウントはいずれも false で、動作を確かめる手段も無い。**手順17 で誘導を足すこと** |
+| 2026-08-15 | 8b | メニューのプロジェクト領域を何から作るか。`GET /projects`（手順9）はまだ無い | **`GET /me` の `projects[]`**（`ApiDesign.md` 4.1）から作った。切替に必要な `key` / `name` / `permissions` が揃っており、新しいAPIを発明していない。**所属していないプロジェクトを見ているアドミニストレータでは一覧が空になる**ため、空状態の文言を出している（`GuiDesign.md` 6.2）。手順9以降で `GET /projects` に差し替えるかは、そのとき判断する |
+| 2026-08-15 | 8b | 「選択中のプロジェクト」をどこで持つか（`GuiDesign.md` 7.1 は `project` ストアを挙げる） | **URL の `:key` から導出し、`project` ストアを作っていない。** 一覧のキャッシュ（7.1）は `GET /projects` が要るため手順10のスコープ。URL を正とすれば、リロードや直リンクでも選択状態がずれない |
+| 2026-08-15 | 8b | チケットの未完了件数バッジ（4.1 の `[12]`）を出すか | **出していない。** 供給するAPIが手順18（チケット）であり、`/me` にも件数が無い。**数字を出さないことで「0件」との誤読も起きない** |
+| 2026-08-15 | 8b | 4.2 のテーマ切替が「ライト / ダーク」の2つに見えるが、8.11 は3値（ライト／ダーク／システムに従う、既定はシステム） | **3値をそのまま出した。** 2値にすると**既定の「システムに従う」へ戻せない**。色相（ブルー／グリーン）の切替は 8.11 が `/me` の画面と定めているためメニューに置いていない（手順17） |
+| 2026-08-15 | 8b | 折りたたみ状態（2.3.3 の永続化）と、幅による既定（2.4）のどちらが優先するか | **利用者が明示的に選んだ状態が優先。** 未選択の間だけ幅で決める（≥1280px は展開、768〜1279px は折りたたみ）。2.4 の「既定」は選んでいない場合の値であり、選択を上書きすると 2.3.3 の「次回も維持する」が成り立たない。両方をブラウザで固定した |
+| 2026-08-15 | 8b | 768px 未満（2.4）でメニューをどう出すか | **オーバーレイ＋左上の浮遊ボタン（案B）＋スクリム**。2.4 が「この幅でのみ案Bを採る」としている。リロードで解除する（保存しない）。Phase 1 は「破綻しない」水準に留める方針のまま |
+| 2026-08-15 | 8b | ショートカット（9.1）をどこまで実装するか | **`[`（メニューの折りたたみ）のみ。** 手順8で作ったのはメニューであり、`g p` / `g t` / `c` / `j` `k` は遷移先や一覧が実装された手順で足すのが自然。入力欄にフォーカスがあるときは横取りしない |
+| 2026-08-15 | 8b | `PageHeader` / `PermissionGate`（`GuiDesign.md` 6.1 のコンポーネント一覧）を作るか | **作っていない。** 手順8で描く実画面はログイン画面だけで、ページヘッダはプレースホルダが自前で持っている。**最初に必要になる実画面（手順10 のプロジェクト一覧）で切り出す**。前倒しで作ると、利用側が1つも無いまま形が決まる |
+| 2026-08-15 | 8b | `/403` `/404` をメインメニューの中に出すか（5.1 の例外規定はログイン画面のみ） | **認証済みならメニューの中、未認証なら素で描く。** 未認証だと `/me` が無くメニューを組み立てられない。ガードが弾いた先で「どこにも行けない画面」にしないため、認証済みでは導線を残す |
 
 ### 設計文書へ反映済みの修正（2026-08-11、承認のうえ適用）
 
@@ -778,6 +805,52 @@
 
 **ブラウザでの見え方（配色・余白）は目視で確認していない。** ヘッドレスで確認したのは
 DOM とテーマ属性までである。手順8でログイン画面を作る際に、実ブラウザで合わせて見ること。
+→ **手順8で解消した**（スクリーンショットを撮って目視。下記「手順8の検証結果」）。
+
+### 手順8で作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `docs/openapi.yaml` | **実装済み4本**（login / logout / me / healthcheck）と 2.5 のエラー形式・Cookie/CSRF の securityScheme。`servers` は `/` |
+| `server/internal/httpapi/openapi_drift_test.go` | `chi.Walk` と yaml の `paths` の突き合わせ。欠落・余剰の両方向を報告する（`Design.md` 3.3） |
+| `client/src/api/schema.d.ts` | `openapi-typescript` の生成物（`make gen-api`）。**コミットする** |
+| `client/src/api/client.ts` | fetch の薄いラッパ。CSRF ヘッダ（2.4）・Cookie の送出・2.5 のエラー→`ApiError`・401 の共通処理の登録口 |
+| `client/src/api/auth.ts` | `login` / `logout` / `me`。型は生成物をそのまま使う |
+| `client/src/stores/auth.ts` | アクター・実効権限・所属プロジェクト。`restore()`（起動時の `GET /me`、多重呼び出しを1本化）・`can` / `canInProject` / `canReachProject` |
+| `client/src/router/guards.ts` | `beforeEach`（7.2 の4段）と `safeRedirect` |
+| `client/src/pages/LoginPage.vue` | `GuiDesign.md` 5.1。エラーはサーバの `message`、422 の `details` は入力欄に紐づける |
+| `client/src/version.ts` | `VERSION` をビルド時に埋める（`?raw`） |
+| `client/src/components/AppShell.vue` | メニュー＋コンテンツペインの2枚（2.2）。`[` のショートカット（9.1）、768px 未満のオーバーレイ（2.4） |
+| `client/src/components/SideMenu.vue` | 4.1 の構造と 4.3 の出し分け |
+| `client/src/components/SideMenuToggle.vue` | 2.3 の案A（メニュー最上行に内包） |
+| `client/src/components/UserMenu.vue` | 4.2。自分の設定／トークン／テーマ／バージョン／ログアウト |
+| `client/src/components/ProjectSwitcher.vue` | 4.4。10件超で絞り込み入力。切替時は同じ画面種別を維持 |
+| `client/src/stores/ui.ts`（変更） | 折りたたみ状態（2.3.3）とブレークポイント（2.4）を追加 |
+| `client/src/App.vue`（変更） | 認証済みは AppShell で包む。`/login` は素で描く（5.1 の例外） |
+| `client/src/router/index.ts` / `routes.ts`（変更） | `beforeEach` の登録、`/login` を実コンポーネントへ |
+| `client/src/main.ts`（変更） | 401 ハンドラの登録（client.ts ↔ ストア／ルータの循環を避けるため） |
+| `client/package.json` / `vite.config.ts`（変更） | `openapi-typescript`（devDependency）と `gen:api`、`server.fs.allow` |
+| `Makefile` / `CLAUDE.md`（変更） | `make gen-api` の追加 |
+| `docs/GuiDesign.md`（変更） | 7.2 のガード順の入れ替えと理由（上記の差異表） |
+
+### 手順8の検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `npm run build`（`vue-tsc --noEmit` 込み） | 通る。`assets/*.css` 13.4 kB、`assets/*.js` 121 kB（gzip 45.9 kB） |
+| `gofmt -l` / `go vet ./...` / `make test` | いずれも通る（**openapi ドリフト検出を含む**） |
+| ドリフト検出が効くこと | yaml から `/healthcheck` を落とし、実装に無い `/api/v1/projects` を足した状態で**両方向とも FAIL する**ことを確認（確認後に復元） |
+| `POST /auth/login`（curl） | Set-Cookie が2種（`pb_session` は HttpOnly、`pb_csrf` は非 HttpOnly、`Max-Age` は同じ 1209600） |
+| **ブラウザ（ヘッドレス Chrome、1440×900）8a：16件** | 未認証で `/admin/users` → `/login?redirect=/admin/users` ／ 401 の文言はサーバの `message` ／ 422 の `details` が出る ／ ログイン後に `redirect` 先へ復帰 ／ 認証済みで `/login` → `/projects` ／ リロードで復元 ／ オペレータが `/admin/users` → `/403` ／ 非メンバーのプロジェクト → **`/404`** ／ メンバーのプロジェクトへは到達 ／ `POST /auth/logout` が 204（CSRF ヘッダあり）／ ログアウト後は `/login` |
+| **ブラウザ 8b：39件** | 管理者に「管理」セクション ／ **オペレータでは見出しごと出ない** ／ プロジェクト未選択ならプロジェクト領域を出さない ／ 選択中は ダッシュボード・チケット・（`project.edit` があれば）プロジェクト設定 ／ 閲覧者に「プロジェクト設定」が出ない ／ ユーザーメニューの5項目とバージョン ／ テーマ切替が `<html data-theme>` に効く ／ 折りたたみ 240px↔56px・`localStorage`・`[` キー ／ 幅ごとの既定（1024px→56px、1440px→240px）と**選択の優先** ／ 768px 未満のオーバーレイと浮遊 ☰・スクリムで閉じる ／ ログアウトでログイン画面 |
+| **実ブラウザでの見え方（目視）** | ログイン画面・シェル（ライト／ダーク）・ユーザーメニュー・プロジェクト切替・折りたたみの6枚を撮って確認。**2件を直した**（①ユーザーメニューのテーマ行が 240px 幅で折り返していた → ラベルと選択肢を2行に ②折りたたみ時にレールへ横スクロールバーが出ていた → `overflow-x: hidden`） |
+| `make dev-client`（:5173） | `/login` が返り、`/api/v1/auth/login` のプロキシが 200。`VERSION?raw` も `/@fs/...` 経由で解決する |
+| `make build` の単一バイナリ | 上記のブラウザ検証はすべて **`bin/pb serve`（embed 済み）** に対して実施した |
+| 検証用リソースの後始末 | `make run` と Vite 開発サーバは停止済み。ヘッドレス Chrome のプロファイルと検証スクリプトはスクラッチパッド（リポジトリ外）。DB は `make dev-reset` を実行しておらず、手順7.5 のデモデータのままで、追加・削除していない |
+
+**ドライバは CDP（Chrome DevTools Protocol）を直接叩く自作スクリプト**（Python 標準ライブラリのみ）。
+Playwright / Puppeteer は入れていない。スクリプトはリポジトリに入れていないため、
+**次に画面を検証するときは書き直しになる。** 常設するなら `Design.md` 3.1 への追記提案とセットにする。
 
 ## 環境メモ
 
@@ -786,8 +859,8 @@ DOM とテーマ属性までである。手順8でログイン画面を作る際
 
 - ホストの Node: **v24.14.0** / npm **11.9.0**（手順7の時点）。`make build-client` は `npm ci` を使うため
   `client/package-lock.json` をコミットしている
-- client の依存（手順7時点）: `vue` / `vue-router` / `pinia` ＋ dev に `vite` / `@vitejs/plugin-vue` /
-  `typescript` / `vue-tsc` の7つのみ
+- client の依存（手順8時点）: `vue` / `vue-router` / `pinia` ＋ dev に `vite` / `@vitejs/plugin-vue` /
+  `typescript` / `vue-tsc` / **`openapi-typescript`**（手順8で追加。型生成のみで実行時には入らない）
   - **`typescript` は `^5` に固定すること。** `npm install -D typescript` は 7.x を入れるが、
     vue-tsc 3.3.9 が `typescript/lib/tsc` を require できず `ERR_PACKAGE_PATH_NOT_EXPORTED` で落ちる
   - `npm run build` は型検査（`vue-tsc --noEmit`）を通してから `vite build` する。型エラーは
@@ -804,6 +877,17 @@ DOM とテーマ属性までである。手順8でログイン画面を作る際
 
   `--user-data-dir` は**呼び出しごとに別のディレクトリにする**。同じものを使い回すと
   プロファイルのロックで2回目以降が固まる。`--virtual-time-budget` は SPA のマウントを待つため
+  - **フォーム入力やクリックを伴う検証には `--dump-dom` では足りない。** 手順8では
+    `--headless=new --remote-debugging-port=9222` で起動し、**CDP を WebSocket で直接叩く
+    使い捨てスクリプト**（Python 標準ライブラリのみ。`Runtime.evaluate` / `Page.navigate` /
+    `Page.captureScreenshot` / `Emulation.setDeviceMetricsOverride`）を書いた
+  - **ウィンドウ幅を必ず指定する（`--window-size=1440,900`）。** 既定のままだと 768px 未満と
+    判定され、メニューがオーバーレイ（`GuiDesign.md` 2.4）になって「メニューが出ない」と誤読する
+  - `v-model` の入力欄に値を入れるときは、`el.value = v` ではなく
+    **ネイティブの value セッターを呼んでから `input` イベントを発火**する。前者では Vue が気づかない
+- **コンテナランタイムは Rancher Desktop**（`docker` は `~/.rd/bin/docker`）。停止していると
+  `make up` が `failed to connect to the docker API` で落ちる。`open -a "Rancher Desktop"` で
+  起動し、`docker info` が通るまで待つ（手順8では約30秒）
 - **Vite 開発サーバは `:5173`（`strictPort`）。** ポートが空いていなければ黙ってずらさずに失敗する。
   API は別途 `make run` で `:8080` に立てる（`/api` `/mcp` だけがプロキシされる）
 - **`make run` を止め忘れると次のセッションで `bind: address already in use` になる。** 手順5b の検証時に、

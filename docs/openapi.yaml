@@ -1,0 +1,426 @@
+# Project Backyard — 実装済みAPIの現状
+#
+# 本ファイルは設計の写しではなく **実装されているAPIの記述** である（ApiDesign.md 1.3）。
+# 設計の正本は ApiDesign.md にあり、まだ実装されていないエンドポイントはここに書かない。
+#
+# - 生成器を通さずに保守する（Design.md 3.3）。コード生成は client の TypeScript 型のみ
+# - APIを追加・変更したステップの成果物に本ファイルの更新を含める
+# - 実装との食い違いは server/internal/httpapi/openapi_drift_test.go が検出する
+#   （chi.Walk のルート一覧と本ファイルの paths を突き合わせる）
+#
+# info.version は /api/v1 の契約バージョンであり、リポジトリの VERSION とは連動させない。
+
+openapi: 3.1.0
+
+info:
+  title: Project Backyard API
+  version: 1.0.0
+  description: |
+    人間とAIエージェントが共同で使うプロジェクト管理ツールの REST API。
+
+    実装済みの範囲のみを記述する。設計の正本は `docs/ApiDesign.md`。
+
+servers:
+  # /healthcheck は唯一 /api/v1 の外にあるため（ApiDesign.md 2.11）、
+  # ベースをルートに置き、paths 側に完全なパスを書く。
+  - url: /
+    description: 同一オリジン
+
+tags:
+  - name: auth
+    description: 認証（ApiDesign.md 3章）
+  - name: me
+    description: 自分自身（ApiDesign.md 4章）
+  - name: ops
+    description: 監視（ApiDesign.md 2.11）
+
+paths:
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: ログイン
+      operationId: login
+      description: |
+        メールアドレスとパスワードで認証し、セッションを発行する（ApiDesign.md 3.1）。
+
+        応答本文は `GET /api/v1/me` と同じ内容を含む。ログイン直後に必ず権限が必要になるため、
+        往復を1回減らしている。
+
+        認証不要。IPあたり 10回/分のレート制限が掛かる（ApiDesign.md 2.9）。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: |
+            認証成功。`pb_session` と `pb_csrf` の2つの Cookie を発行する。
+            **両者の Max-Age は揃える**（ApiDesign.md 3.1）。
+          headers:
+            Set-Cookie:
+              description: |
+                ```
+                pb_session=pb_sess_...; HttpOnly; SameSite=Lax; Path=/; Max-Age=1209600
+                pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
+                ```
+                `Secure` は設定 `PB_COOKIE_SECURE` が true のときに付く。
+              schema:
+                type: string
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/XRateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/XRateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: |
+            認証失敗。**ユーザー不在・誤パスワード・アカウント無効を区別しない**
+            （`invalid_credentials`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '423':
+          description: |
+            ログイン失敗が続いたことによるロック中（`account_locked`）。
+            残り秒数を `error.retry_after_sec` と `Retry-After` ヘッダに入れる。
+            **閾値に達した回から**この応答になる（ApiDesign.md 3.1）。
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: ログアウト
+      operationId: logout
+      description: |
+        現在のセッショントークンを失効させ（`revoked_at` を設定）、Cookie を削除する
+        （ApiDesign.md 3.2）。Cookie 認証のため `X-PB-CSRF` が必要（2.4）。
+      responses:
+        '204':
+          description: |
+            失効済み。`pb_session` と `pb_csrf` を削除する Set-Cookie を返す。
+          headers:
+            Set-Cookie:
+              description: 2つの Cookie を `Max-Age=-1` で削除する。
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CSRFFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/me:
+    get:
+      tags: [me]
+      summary: 自分自身と実効権限
+      operationId: getMe
+      description: |
+        認証中のアクターと実効権限を返す（ApiDesign.md 4.1）。
+
+        `permissions` はシステムロール由来の実効権限、`projects[].permissions` は
+        当該プロジェクトでの実効権限（システムロール ∪ プロジェクトロール ∩ スコープ。
+        Design.md 6.4.1）。`projects[]` にはアーカイブ済みのプロジェクトも含む。
+      responses:
+        '200':
+          description: 認証中のアクター。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /healthcheck:
+    get:
+      tags: [ops]
+      summary: ヘルスチェック
+      operationId: healthcheck
+      description: |
+        監視・オーケストレータ用（ApiDesign.md 2.11）。**唯一 `/api/v1` の外にある。**
+        認証・CSRF・レート制限・認可の対象外で、DBへは接続しない。
+      security: []
+      responses:
+        '200':
+          description: 常に `{"status":"OK"}`。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: pb_session
+      description: |
+        ブラウザ（Web UI）用。HttpOnly / SameSite=Lax（ApiDesign.md 2.3）。
+        **状態変更系（POST/PATCH/PUT/DELETE）では `X-PB-CSRF` も必要**（2.4）。
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: 'CLI・スクリプト用（`Authorization: Bearer pb_api_...`。ApiDesign.md 2.3）。'
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-PB-CSRF
+      description: |
+        `pb_csrf` Cookie と同じ値を送る（double submit。ApiDesign.md 2.4）。
+        Cookie 認証の状態変更系でのみ要求する。Bearer 認証では不要。
+
+  # 既定では Cookie か Bearer のいずれかを要求する。
+  # 認証不要のエンドポイントは security: [] で個別に打ち消す。
+  headers:
+    RetryAfter:
+      description: 再試行までの秒数。`error.retry_after_sec` と同じ値（ApiDesign.md 2.5）。
+      schema:
+        type: integer
+    XRateLimitLimit:
+      description: 窓あたりの上限回数（ApiDesign.md 2.9）。
+      schema:
+        type: integer
+    XRateLimitRemaining:
+      description: 窓の残り回数（ApiDesign.md 2.9）。
+      schema:
+        type: integer
+
+  responses:
+    BadRequest:
+      description: 形式不正・パースエラー（`bad_request`）。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthenticated:
+      description: 未認証・トークン失効・アカウント無効（`unauthenticated`）。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    CSRFFailed:
+      description: |
+        CSRF トークンの不一致（`csrf_failed`）。Cookie 欠落・ヘッダ欠落・不一致を区別しない。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ValidationFailed:
+      description: 入力値の検証エラー（`validation_failed`）。`details` を伴う。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: レート制限（`rate_limited`。ApiDesign.md 2.9）。
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+        X-RateLimit-Limit:
+          $ref: '#/components/headers/XRateLimitLimit'
+        X-RateLimit-Remaining:
+          $ref: '#/components/headers/XRateLimitRemaining'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: サーバ内部エラー（`internal_error`）。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          examples: ['tanaka@example.com']
+        password:
+          type: string
+          format: password
+      additionalProperties: false
+
+    Session:
+      description: |
+        `POST /auth/login` と `GET /me` が返す共通の本体。**片方だけ形を変えない。**
+      type: object
+      required: [actor, permissions, projects, expires_at]
+      properties:
+        actor:
+          $ref: '#/components/schemas/Actor'
+        permissions:
+          description: システムロール由来の実効権限。権限0件は空配列で表す。
+          type: array
+          items:
+            type: string
+          examples: [['project.view', 'ticket.view']]
+        projects:
+          description: 所属プロジェクトと、そこでの実効権限。`key` の昇順。
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionProject'
+        expires_at:
+          description: 現在のトークンの有効期限。無期限の API トークンでは null。
+          type: [string, 'null']
+          format: date-time
+
+    Actor:
+      type: object
+      required:
+        [id, kind, display_name, email, system_role, locale, timezone, must_change_password]
+      properties:
+        id:
+          description: ULID 26文字。
+          type: string
+          examples: ['01K2F8QW3H7YRJ4M5N6P7Q8R9S']
+        kind:
+          type: string
+          enum: [user, agent]
+        display_name:
+          type: string
+        email:
+          description: エージェントは null（ApiDesign.md 6.1。フィールド自体は省略しない）。
+          type: [string, 'null']
+        system_role:
+          description: 同上。
+          type: [string, 'null']
+          enum: [administrator, operator, null]
+        locale:
+          type: [string, 'null']
+          examples: ['ja']
+        timezone:
+          type: [string, 'null']
+          examples: ['Asia/Tokyo']
+        must_change_password:
+          description: true のときフロントはパスワード変更画面へ誘導する（ApiDesign.md 3.1）。
+          type: boolean
+
+    SessionProject:
+      type: object
+      required: [id, key, name, role, permissions]
+      properties:
+        id:
+          type: string
+        key:
+          type: string
+          examples: ['my-app']
+        name:
+          type: string
+        role:
+          description: プロジェクトロールのキー（DbDesign.md 7.3）。
+          type: string
+          examples: ['project_admin']
+        permissions:
+          description: 当該プロジェクトでの実効権限。
+          type: array
+          items:
+            type: string
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: OK
+        version:
+          description: '`PB_HEALTH_SHOW_VERSION=true` のときだけ出る（既定は出ない）。'
+          type: string
+
+    Error:
+      description: |
+        全エンドポイント共通のエラー形式（ApiDesign.md 2.5）。
+        `message` はそのまま画面に出せる日本語。**フロントで文言を組み立てない。**
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              $ref: '#/components/schemas/ErrorCode'
+            message:
+              type: string
+              examples: ['メールアドレスまたはパスワードが正しくありません']
+            details:
+              description: フィールド単位のエラー。フォームの入力欄に紐づける。
+              type: array
+              items:
+                $ref: '#/components/schemas/ErrorDetail'
+            retry_after_sec:
+              description: |
+                再試行までの秒数。`account_locked` と `rate_limited` で返す。
+                同じ値が `Retry-After` ヘッダにも入る。
+              type: integer
+            request_id:
+              description: |
+                `audit_log.request_id`（DbDesign.md 6.8）および構造化ログ
+                （Design.md 10.1）と突き合わせられる。
+              type: string
+              examples: ['01K2F8QW3H7YRJ4M5N6P7Q8R9S']
+
+    ErrorDetail:
+      type: object
+      required: [field, code, message]
+      properties:
+        field:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+
+    ErrorCode:
+      description: ApiDesign.md 2.5.1 の14コード。
+      type: string
+      enum:
+        - bad_request
+        - unauthenticated
+        - invalid_credentials
+        - forbidden
+        - csrf_failed
+        - not_found
+        - method_not_allowed
+        - conflict
+        - last_administrator
+        - self_modification_forbidden
+        - validation_failed
+        - account_locked
+        - rate_limited
+        - internal_error
+
+security:
+  - cookieAuth: []
+    csrfToken: []
+  - bearerAuth: []
