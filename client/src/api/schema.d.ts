@@ -74,6 +74,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * プロジェクト一覧
+         * @description 自分がメンバーであるプロジェクトを返す。アドミニストレータは全件（ApiDesign.md 5.1）。
+         *
+         *     **必要権限は `project.view`。** ただしこの権限は「どのプロジェクトが見えるか」を
+         *     決めない（オペレータもシステムロールとして持つ）。可視範囲はメンバーシップで絞る。
+         *
+         *     `ticket_count` / `closed_count` / `progress` を含めるのは、プロジェクトごとに
+         *     件数を問い合わせる N+1 を避けるためである（5.1）。
+         */
+        get: operations["listProjects"];
+        put?: never;
+        /**
+         * プロジェクトの作成
+         * @description プロジェクトを作成する（ApiDesign.md 5.3）。必要権限は `project.create`
+         *     （Phase 1 = アドミニストレータのみ）。
+         *
+         *     サーバ側は `project` 作成・`project_counter` 初期化・テンプレートからの
+         *     ワークフロー複製・作成者の `project_admin` 登録・`audit_log` への記録を
+         *     **単一トランザクション**で行う。
+         *
+         *     キー重複の検出はDBの `UNIQUE` 制約に委ねる（`check-key` の結果は信頼しない）。
+         */
+        post: operations["createProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/check-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * プロジェクトキーの利用可否
+         * @description 新規作成モーダルの即時検証に使う（ApiDesign.md 5.2）。
+         *
+         *     判定の順は 形式 → 予約語 → 既存。**この結果は作成時の重複検出には使わない**
+         *     （5.3。競合検出はDBの `UNIQUE` 制約に委ねる）。
+         *
+         *     必要権限は作成と同じ `project.create`。
+         */
+        get: operations["checkProjectKey"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthcheck": {
         parameters: {
             query?: never;
@@ -160,6 +222,130 @@ export interface components {
             /** @description 当該プロジェクトでの実効権限。 */
             permissions: string[];
         };
+        /** @description 一覧の共通エンベロープ（ApiDesign.md 2.6）。 */
+        ProjectList: {
+            items: components["schemas"]["ProjectListItem"][];
+            page: number;
+            per_page: number;
+            total: number;
+            /** @description 切り上げ。総件数0のときは0。 */
+            total_pages: number;
+        };
+        ProjectListItem: {
+            id: string;
+            /** @example my-app */
+            key: string;
+            name: string;
+            description: string | null;
+            /** @enum {string} */
+            status: "active" | "archived";
+            ticket_count: number;
+            /** @description `ticket.closed_at IS NOT NULL` の件数（DbDesign.md 6.6）。 */
+            closed_count: number;
+            /**
+             * @description `closed_count / ticket_count`。**サーバで計算する**（定義をフロントに散らさないため）。
+             *     `ticket_count = 0` のときは `0`（null にしない。ApiDesign.md 5.1）。
+             * @example 0.75
+             */
+            progress: number;
+            /**
+             * @description 当該プロジェクトでのプロジェクトロール。
+             *     **メンバーでないアドミニストレータでは null**（5.1 の「管理者は全件」で返る行）。
+             * @example project_admin
+             */
+            my_role: string | null;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CreateProjectRequest: {
+            /**
+             * @description `^[a-z0-9][a-z0-9-]{1,19}$`。予約語（`admin` `api` `mcp` `login` `logout`
+             *     `me` `p` `new` `projects` `static` `assets`）は使えない。**作成後は変更不可。**
+             * @example my-app
+             */
+            key: string;
+            name: string;
+            description?: string;
+            /**
+             * @description 実体は DbDesign.md 7.4 のテンプレート。
+             * @default simple
+             * @enum {string}
+             */
+            workflow_template: "simple" | "with_review" | "with_approval";
+        };
+        /**
+         * @description `POST /projects` と（手順11以降の）`GET /projects/:key` が返す共通の本体
+         *     （ApiDesign.md 5.4）。**片方だけ形を変えない。**
+         */
+        ProjectDetail: {
+            id: string;
+            key: string;
+            name: string;
+            description: string | null;
+            /** @enum {string} */
+            status: "active" | "archived";
+            /** @description `project.workflow_id` が NULL のときは null。 */
+            workflow: components["schemas"]["Workflow"] | null;
+            members: components["schemas"]["ProjectMember"][];
+            /** @description メンバーでないアドミニストレータでは null。 */
+            my_role: string | null;
+            /**
+             * @description 当該プロジェクトでの実効権限
+             *     （システムロール ∪ プロジェクトロール ∩ スコープ。Design.md 6.4.1）。
+             */
+            my_permissions: string[];
+            /** @description `project.settings`（jsonb）をそのまま返す。 */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** @description 楽観ロック用（ApiDesign.md 2.8）。作成直後は 1。 */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        Workflow: {
+            id: string;
+            name: string;
+            /** @description `sort_order` の昇順。 */
+            statuses: components["schemas"]["WorkflowStatus"][];
+        };
+        WorkflowStatus: {
+            /** @example todo */
+            key: string;
+            /** @example 未着手 */
+            name: string;
+            /** @enum {string} */
+            category: "todo" | "in_progress" | "review" | "done";
+            sort_order: number;
+            /** @description 人間の承認を要するステータス（Requirements.md 10.10.4）。 */
+            requires_human_approval: boolean;
+            /** @description エージェントが遷移させてよいか。 */
+            is_agent_reachable: boolean;
+        };
+        ProjectMember: {
+            actor_id: string;
+            /**
+             * @description エージェントもプロジェクトのメンバーになれる（DbDesign.md 6.3）。
+             * @enum {string}
+             */
+            kind: "user" | "agent" | "system";
+            display_name: string;
+            /** @example project_admin */
+            role: string;
+            /** Format: date-time */
+            joined_at: string;
+        };
+        CheckKeyResult: {
+            key: string;
+            available: boolean;
+            /**
+             * @description `available: false` のときだけ現れる（ApiDesign.md 5.2）。
+             * @enum {string}
+             */
+            reason?: "reserved" | "already_exists" | "invalid_format";
+        };
         Health: {
             /** @constant */
             status: "OK";
@@ -196,10 +382,10 @@ export interface components {
             message: string;
         };
         /**
-         * @description ApiDesign.md 2.5.1 の14コード。
+         * @description ApiDesign.md 2.5.1 の15コード。
          * @enum {string}
          */
-        ErrorCode: "bad_request" | "unauthenticated" | "invalid_credentials" | "forbidden" | "csrf_failed" | "not_found" | "method_not_allowed" | "conflict" | "last_administrator" | "self_modification_forbidden" | "validation_failed" | "account_locked" | "rate_limited" | "internal_error";
+        ErrorCode: "bad_request" | "unauthenticated" | "invalid_credentials" | "forbidden" | "csrf_failed" | "not_found" | "method_not_allowed" | "conflict" | "already_exists" | "last_administrator" | "self_modification_forbidden" | "validation_failed" | "account_locked" | "rate_limited" | "internal_error";
     };
     responses: {
         /** @description 形式不正・パースエラー（`bad_request`）。 */
@@ -213,6 +399,15 @@ export interface components {
         };
         /** @description 未認証・トークン失効・アカウント無効（`unauthenticated`）。 */
         Unauthenticated: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 権限不足（`forbidden`）。`audit_log` に `permission.denied` が残る（Design.md 6.4.5）。 */
+        Forbidden: {
             headers: {
                 [name: string]: unknown;
             };
@@ -384,6 +579,119 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthenticated"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listProjects: {
+        parameters: {
+            query?: {
+                /** @description 既定は `active`。 */
+                status?: "active" | "archived" | "all";
+                sort?: "name" | "key" | "updated_at" | "ticket_count" | "progress";
+                order?: "asc" | "desc";
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 1ページ分のプロジェクト。 */
+            200: {
+                headers: {
+                    /**
+                     * @description 弱い検証子 `W/"proj-<件数>-<MAX(updated_at) のナノ秒>"`（ApiDesign.md 2.7）。
+                     *     **Phase 1 では `If-None-Match` を解釈しない**（304 を返さない）。
+                     */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description 作成された。応答は `GET /projects/:key` と同形式（5.4）。 */
+            201: {
+                headers: {
+                    /** @description `/api/v1/projects/<key>` */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description プロジェクトキーが既に使われている（`already_exists`。ApiDesign.md 5.3）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    checkProjectKey: {
+        parameters: {
+            query: {
+                key: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 判定結果。**使えない場合も 200 で返す**（エラーではない）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckKeyResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };
