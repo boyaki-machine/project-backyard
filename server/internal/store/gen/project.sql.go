@@ -172,9 +172,9 @@ SELECT id FROM project WHERE key = $1
 
 // プロジェクトとワークフローに関するクエリ（DbDesign.md 6.4 / 6.5）。
 //
-// 手順7.5（pb dev seed）で必要になった分だけを置いている。
-// テンプレートの複製は POST /projects（ApiDesign.md 5.2）と同じ手順であり、
-// 手順9はここのクエリを再利用する。
+// 手順7.5（pb dev seed）で必要になった分から始まり、手順9で
+// GET/POST /projects と check-key（ApiDesign.md 5.1〜5.3）が加わった。
+// テンプレートの複製は pb dev seed と POST /projects で同じ手順を通る。
 func (q *Queries) FindProjectIDByKey(ctx context.Context, key string) (string, error) {
 	row := q.db.QueryRow(ctx, findProjectIDByKey, key)
 	var id string
@@ -194,11 +194,65 @@ type FindWorkflowTemplateRow struct {
 	Definition []byte
 }
 
-// ── テンプレートの複製（ApiDesign.md 5.2）─────────────────────
+// ── テンプレートの複製（ApiDesign.md 5.3）─────────────────────
 func (q *Queries) FindWorkflowTemplate(ctx context.Context, templateKey pgtype.Text) (FindWorkflowTemplateRow, error) {
 	row := q.db.QueryRow(ctx, findWorkflowTemplate, templateKey)
 	var i FindWorkflowTemplateRow
 	err := row.Scan(&i.ID, &i.Name, &i.Definition)
+	return i, err
+}
+
+const getProjectByKey = `-- name: GetProjectByKey :one
+
+SELECT
+  p.id, p.key, p.name, p.description, p.status, p.settings,
+  p.version, p.created_at, p.updated_at,
+  w.id   AS workflow_id,
+  w.name AS workflow_name
+FROM project p
+LEFT JOIN workflow w ON w.id = p.workflow_id
+WHERE p.key = $1
+`
+
+type GetProjectByKeyRow struct {
+	ID           string
+	Key          string
+	Name         string
+	Description  pgtype.Text
+	Status       string
+	Settings     []byte
+	Version      int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	WorkflowID   pgtype.Text
+	WorkflowName pgtype.Text
+}
+
+// ── 詳細（ApiDesign.md 5.4。POST /projects の応答も同じ形）───────
+// GetProjectByKey は1プロジェクトの本体とワークフローの見出しを返す。
+//
+// workflow を LEFT JOIN にしているのは、project.workflow_id が NULL 可能で
+// あり（DbDesign.md 6.4、ON DELETE SET NULL）、ワークフローを持たない
+// プロジェクトでも本体は返す必要があるため。
+//
+// **可視性で絞らない。** 到達可否の判定は認可ミドルウェア
+// （RequireProjectPermission）と呼び出し側の責務である。
+func (q *Queries) GetProjectByKey(ctx context.Context, key string) (GetProjectByKeyRow, error) {
+	row := q.db.QueryRow(ctx, getProjectByKey, key)
+	var i GetProjectByKeyRow
+	err := row.Scan(
+		&i.ID,
+		&i.Key,
+		&i.Name,
+		&i.Description,
+		&i.Status,
+		&i.Settings,
+		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.WorkflowID,
+		&i.WorkflowName,
+	)
 	return i, err
 }
 
@@ -213,6 +267,191 @@ func (q *Queries) IsProjectScopedRole(ctx context.Context, key string) (bool, er
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const listProjectMembers = `-- name: ListProjectMembers :many
+SELECT
+  a.id AS actor_id,
+  a.kind,
+  a.display_name,
+  pm.role_key,
+  pm.joined_at
+FROM project_member pm
+JOIN actor a ON a.id = pm.actor_id
+WHERE pm.project_id = $1
+ORDER BY pm.joined_at, a.id
+`
+
+type ListProjectMembersRow struct {
+	ActorID     string
+	Kind        string
+	DisplayName string
+	RoleKey     string
+	JoinedAt    pgtype.Timestamptz
+}
+
+// ListProjectMembers は 5.4 の members[] を返す。
+//
+// actor を JOIN するのは kind と display_name のため。エージェントも
+// プロジェクトのメンバーになれる（DbDesign.md 6.3）。
+func (q *Queries) ListProjectMembers(ctx context.Context, projectID string) ([]ListProjectMembersRow, error) {
+	rows, err := q.db.Query(ctx, listProjectMembers, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProjectMembersRow{}
+	for rows.Next() {
+		var i ListProjectMembersRow
+		if err := rows.Scan(
+			&i.ActorID,
+			&i.Kind,
+			&i.DisplayName,
+			&i.RoleKey,
+			&i.JoinedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjects = `-- name: ListProjects :many
+
+WITH visible AS (
+  SELECT
+    p.id,
+    p.key,
+    p.name,
+    p.description,
+    p.status,
+    p.updated_at,
+    pm.role_key AS my_role,
+    t.ticket_count,
+    t.closed_count,
+    (CASE WHEN t.ticket_count = 0 THEN 0
+          ELSE t.closed_count::double precision / t.ticket_count::double precision
+     END)::double precision AS progress
+  FROM project p
+  LEFT JOIN project_member pm
+         ON pm.project_id = p.id AND pm.actor_id = $5
+  CROSS JOIN LATERAL (
+    SELECT
+      count(*)                                         AS ticket_count,
+      count(*) FILTER (WHERE tk.closed_at IS NOT NULL) AS closed_count
+    FROM ticket tk
+    WHERE tk.project_id = p.id
+  ) t
+  WHERE (pm.actor_id IS NOT NULL OR $6::boolean)
+    AND ($7::text = 'all' OR p.status = $7::text)
+)
+SELECT
+  v.id, v.key, v.name, v.description, v.status, v.updated_at,
+  v.my_role, v.ticket_count, v.closed_count, v.progress
+FROM visible v
+ORDER BY
+  CASE WHEN $1::text = 'name'         AND $2::text = 'asc'  THEN v.name COLLATE "ja-JP-x-icu" END ASC,
+  CASE WHEN $1::text = 'name'         AND $2::text = 'desc' THEN v.name COLLATE "ja-JP-x-icu" END DESC,
+  CASE WHEN $1::text = 'key'          AND $2::text = 'asc'  THEN v.key END ASC,
+  CASE WHEN $1::text = 'key'          AND $2::text = 'desc' THEN v.key END DESC,
+  CASE WHEN $1::text = 'updated_at'   AND $2::text = 'asc'  THEN v.updated_at END ASC,
+  CASE WHEN $1::text = 'updated_at'   AND $2::text = 'desc' THEN v.updated_at END DESC,
+  CASE WHEN $1::text = 'ticket_count' AND $2::text = 'asc'  THEN v.ticket_count END ASC,
+  CASE WHEN $1::text = 'ticket_count' AND $2::text = 'desc' THEN v.ticket_count END DESC,
+  CASE WHEN $1::text = 'progress'     AND $2::text = 'asc'  THEN v.progress END ASC,
+  CASE WHEN $1::text = 'progress'     AND $2::text = 'desc' THEN v.progress END DESC,
+  v.id ASC
+LIMIT $4 OFFSET $3
+`
+
+type ListProjectsParams struct {
+	Sort            string
+	SortOrder       string
+	PageOffset      int32
+	PageLimit       int32
+	ActorID         string
+	IsAdministrator bool
+	StatusFilter    string
+}
+
+type ListProjectsRow struct {
+	ID          string
+	Key         string
+	Name        string
+	Description pgtype.Text
+	Status      string
+	UpdatedAt   pgtype.Timestamptz
+	MyRole      pgtype.Text
+	TicketCount int64
+	ClosedCount int64
+	Progress    float64
+}
+
+// ── 一覧（ApiDesign.md 5.1）─────────────────────────────────
+// ListProjects は GET /projects の1ページ分を返す。
+//
+// **可視範囲**：自分がメンバーであるプロジェクトのみ。ただし
+// アドミニストレータは全件（5.1）。判定は @is_administrator で受け取る。
+// 「project.view を持つか」では絞らない。オペレータもシステムロールとして
+// project.view を持つため、それでは全件が見えてしまう（手順6a の判断）。
+//
+// **件数と進捗を一覧に含める**（5.1）。プロジェクトごとに問い合わせる N+1 を
+// 避けるためであり、LATERAL の集約1回で ticket_count / closed_count を得る。
+// idx_ticket_project_status が project_id 側から効く。
+//
+// **完了は closed_at IS NOT NULL で数える**（DbDesign.md 6.6）。
+// workflow_status.category = 'done' を経由すると、ワークフローを差し替えた
+// プロジェクトで過去のチケットが数えられなくなる（status_key は論理参照）。
+//
+// progress は「完了数 ÷ 全数」。定義をフロントに散らさないためサーバで計算し、
+// ticket_count = 0 のときは 0 を返す（null にしない。5.1）。
+//
+// 並び替えは CASE 式で静的に書く。sqlc は動的な ORDER BY を組み立てられず、
+// 文字列連結で作ると SQL インジェクションの経路になるため。許可する項目は
+// 5.1 の5つで、呼び出し側（paging.go の SortSpec）が値を検証済みである。
+// 最後の v.id は同値のときの並びを固定するためのタイブレーカ。
+// name の比較に ICU collation を指定するのは DbDesign.md 4.4 の規約。
+func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]ListProjectsRow, error) {
+	rows, err := q.db.Query(ctx, listProjects,
+		arg.Sort,
+		arg.SortOrder,
+		arg.PageOffset,
+		arg.PageLimit,
+		arg.ActorID,
+		arg.IsAdministrator,
+		arg.StatusFilter,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProjectsRow{}
+	for rows.Next() {
+		var i ListProjectsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Key,
+			&i.Name,
+			&i.Description,
+			&i.Status,
+			&i.UpdatedAt,
+			&i.MyRole,
+			&i.TicketCount,
+			&i.ClosedCount,
+			&i.Progress,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listWorkflowStatuses = `-- name: ListWorkflowStatuses :many
@@ -293,6 +532,23 @@ func (q *Queries) ListWorkflowTransitions(ctx context.Context, workflowID string
 	return items, nil
 }
 
+const projectKeyExists = `-- name: ProjectKeyExists :one
+
+SELECT EXISTS (SELECT 1 FROM project WHERE key = $1)
+`
+
+// ── キーの重複確認（ApiDesign.md 5.2）───────────────────────
+// ProjectKeyExists は check-key の判定に使う。
+//
+// **作成時の重複検出には使わない。** 5.3 が「競合検出はDBの UNIQUE 制約に
+// 委ね、check-key の結果を信頼しない」と定めている（TOCTOU 対策）。
+func (q *Queries) ProjectKeyExists(ctx context.Context, key string) (bool, error) {
+	row := q.db.QueryRow(ctx, projectKeyExists, key)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const setProjectWorkflow = `-- name: SetProjectWorkflow :exec
 UPDATE project SET workflow_id = $1 WHERE id = $2
 `
@@ -305,4 +561,39 @@ type SetProjectWorkflowParams struct {
 func (q *Queries) SetProjectWorkflow(ctx context.Context, arg SetProjectWorkflowParams) error {
 	_, err := q.db.Exec(ctx, setProjectWorkflow, arg.WorkflowID, arg.ID)
 	return err
+}
+
+const summarizeProjects = `-- name: SummarizeProjects :one
+SELECT
+  count(*)::bigint            AS total,
+  max(p.updated_at)::timestamptz AS last_updated_at
+FROM project p
+LEFT JOIN project_member pm
+       ON pm.project_id = p.id AND pm.actor_id = $1
+WHERE (pm.actor_id IS NOT NULL OR $2::boolean)
+  AND ($3::text = 'all' OR p.status = $3::text)
+`
+
+type SummarizeProjectsParams struct {
+	ActorID         string
+	IsAdministrator bool
+	StatusFilter    string
+}
+
+type SummarizeProjectsRow struct {
+	Total         int64
+	LastUpdatedAt pgtype.Timestamptz
+}
+
+// SummarizeProjects は ListProjects と同じ可視範囲・同じ絞り込みに対する
+// 総件数と最終更新日時を返す。
+//
+// total は 2.6 の「総件数は常に返す」。last_updated_at は 2.7 の ETag の材料
+// （「プロジェクト集合の MAX(updated_at) と件数から生成する」）。**同じ WHERE を
+// 2回書かないよう1文にまとめてある。** 0件のとき last_updated_at は NULL。
+func (q *Queries) SummarizeProjects(ctx context.Context, arg SummarizeProjectsParams) (SummarizeProjectsRow, error) {
+	row := q.db.QueryRow(ctx, summarizeProjects, arg.ActorID, arg.IsAdministrator, arg.StatusFilter)
+	var i SummarizeProjectsRow
+	err := row.Scan(&i.Total, &i.LastUpdatedAt)
+	return i, err
 }

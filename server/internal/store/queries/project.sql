@@ -1,8 +1,8 @@
 -- プロジェクトとワークフローに関するクエリ（DbDesign.md 6.4 / 6.5）。
 --
--- 手順7.5（pb dev seed）で必要になった分だけを置いている。
--- テンプレートの複製は POST /projects（ApiDesign.md 5.2）と同じ手順であり、
--- 手順9はここのクエリを再利用する。
+-- 手順7.5（pb dev seed）で必要になった分から始まり、手順9で
+-- GET/POST /projects と check-key（ApiDesign.md 5.1〜5.3）が加わった。
+-- テンプレートの複製は pb dev seed と POST /projects で同じ手順を通る。
 
 -- name: FindProjectIDByKey :one
 SELECT id FROM project WHERE key = @key;
@@ -34,7 +34,7 @@ ON CONFLICT (project_id, actor_id) DO NOTHING;
 -- name: DeleteProjectByKey :execrows
 DELETE FROM project WHERE key = @key;
 
--- ── テンプレートの複製（ApiDesign.md 5.2）─────────────────────
+-- ── テンプレートの複製（ApiDesign.md 5.3）─────────────────────
 
 -- name: FindWorkflowTemplate :one
 SELECT id, name, definition FROM workflow
@@ -69,3 +69,140 @@ INSERT INTO workflow_transition (
   @id, @workflow_id, @from_status_key, @to_status_key,
   @required_permission, @allowed_actor_kinds
 );
+
+-- ── 一覧（ApiDesign.md 5.1）─────────────────────────────────
+
+-- ListProjects は GET /projects の1ページ分を返す。
+--
+-- **可視範囲**：自分がメンバーであるプロジェクトのみ。ただし
+-- アドミニストレータは全件（5.1）。判定は @is_administrator で受け取る。
+-- 「project.view を持つか」では絞らない。オペレータもシステムロールとして
+-- project.view を持つため、それでは全件が見えてしまう（手順6a の判断）。
+--
+-- **件数と進捗を一覧に含める**（5.1）。プロジェクトごとに問い合わせる N+1 を
+-- 避けるためであり、LATERAL の集約1回で ticket_count / closed_count を得る。
+-- idx_ticket_project_status が project_id 側から効く。
+--
+-- **完了は closed_at IS NOT NULL で数える**（DbDesign.md 6.6）。
+-- workflow_status.category = 'done' を経由すると、ワークフローを差し替えた
+-- プロジェクトで過去のチケットが数えられなくなる（status_key は論理参照）。
+--
+-- progress は「完了数 ÷ 全数」。定義をフロントに散らさないためサーバで計算し、
+-- ticket_count = 0 のときは 0 を返す（null にしない。5.1）。
+--
+-- 並び替えは CASE 式で静的に書く。sqlc は動的な ORDER BY を組み立てられず、
+-- 文字列連結で作ると SQL インジェクションの経路になるため。許可する項目は
+-- 5.1 の5つで、呼び出し側（paging.go の SortSpec）が値を検証済みである。
+-- 最後の v.id は同値のときの並びを固定するためのタイブレーカ。
+-- name の比較に ICU collation を指定するのは DbDesign.md 4.4 の規約。
+--
+-- name: ListProjects :many
+WITH visible AS (
+  SELECT
+    p.id,
+    p.key,
+    p.name,
+    p.description,
+    p.status,
+    p.updated_at,
+    pm.role_key AS my_role,
+    t.ticket_count,
+    t.closed_count,
+    (CASE WHEN t.ticket_count = 0 THEN 0
+          ELSE t.closed_count::double precision / t.ticket_count::double precision
+     END)::double precision AS progress
+  FROM project p
+  LEFT JOIN project_member pm
+         ON pm.project_id = p.id AND pm.actor_id = @actor_id
+  CROSS JOIN LATERAL (
+    SELECT
+      count(*)                                         AS ticket_count,
+      count(*) FILTER (WHERE tk.closed_at IS NOT NULL) AS closed_count
+    FROM ticket tk
+    WHERE tk.project_id = p.id
+  ) t
+  WHERE (pm.actor_id IS NOT NULL OR @is_administrator::boolean)
+    AND (@status_filter::text = 'all' OR p.status = @status_filter::text)
+)
+SELECT
+  v.id, v.key, v.name, v.description, v.status, v.updated_at,
+  v.my_role, v.ticket_count, v.closed_count, v.progress
+FROM visible v
+ORDER BY
+  CASE WHEN @sort::text = 'name'         AND @sort_order::text = 'asc'  THEN v.name COLLATE "ja-JP-x-icu" END ASC,
+  CASE WHEN @sort::text = 'name'         AND @sort_order::text = 'desc' THEN v.name COLLATE "ja-JP-x-icu" END DESC,
+  CASE WHEN @sort::text = 'key'          AND @sort_order::text = 'asc'  THEN v.key END ASC,
+  CASE WHEN @sort::text = 'key'          AND @sort_order::text = 'desc' THEN v.key END DESC,
+  CASE WHEN @sort::text = 'updated_at'   AND @sort_order::text = 'asc'  THEN v.updated_at END ASC,
+  CASE WHEN @sort::text = 'updated_at'   AND @sort_order::text = 'desc' THEN v.updated_at END DESC,
+  CASE WHEN @sort::text = 'ticket_count' AND @sort_order::text = 'asc'  THEN v.ticket_count END ASC,
+  CASE WHEN @sort::text = 'ticket_count' AND @sort_order::text = 'desc' THEN v.ticket_count END DESC,
+  CASE WHEN @sort::text = 'progress'     AND @sort_order::text = 'asc'  THEN v.progress END ASC,
+  CASE WHEN @sort::text = 'progress'     AND @sort_order::text = 'desc' THEN v.progress END DESC,
+  v.id ASC
+LIMIT @page_limit OFFSET @page_offset;
+
+-- SummarizeProjects は ListProjects と同じ可視範囲・同じ絞り込みに対する
+-- 総件数と最終更新日時を返す。
+--
+-- total は 2.6 の「総件数は常に返す」。last_updated_at は 2.7 の ETag の材料
+-- （「プロジェクト集合の MAX(updated_at) と件数から生成する」）。**同じ WHERE を
+-- 2回書かないよう1文にまとめてある。** 0件のとき last_updated_at は NULL。
+--
+-- name: SummarizeProjects :one
+SELECT
+  count(*)::bigint            AS total,
+  max(p.updated_at)::timestamptz AS last_updated_at
+FROM project p
+LEFT JOIN project_member pm
+       ON pm.project_id = p.id AND pm.actor_id = @actor_id
+WHERE (pm.actor_id IS NOT NULL OR @is_administrator::boolean)
+  AND (@status_filter::text = 'all' OR p.status = @status_filter::text);
+
+-- ── 詳細（ApiDesign.md 5.4。POST /projects の応答も同じ形）───────
+
+-- GetProjectByKey は1プロジェクトの本体とワークフローの見出しを返す。
+--
+-- workflow を LEFT JOIN にしているのは、project.workflow_id が NULL 可能で
+-- あり（DbDesign.md 6.4、ON DELETE SET NULL）、ワークフローを持たない
+-- プロジェクトでも本体は返す必要があるため。
+--
+-- **可視性で絞らない。** 到達可否の判定は認可ミドルウェア
+-- （RequireProjectPermission）と呼び出し側の責務である。
+--
+-- name: GetProjectByKey :one
+SELECT
+  p.id, p.key, p.name, p.description, p.status, p.settings,
+  p.version, p.created_at, p.updated_at,
+  w.id   AS workflow_id,
+  w.name AS workflow_name
+FROM project p
+LEFT JOIN workflow w ON w.id = p.workflow_id
+WHERE p.key = @key;
+
+-- ListProjectMembers は 5.4 の members[] を返す。
+--
+-- actor を JOIN するのは kind と display_name のため。エージェントも
+-- プロジェクトのメンバーになれる（DbDesign.md 6.3）。
+--
+-- name: ListProjectMembers :many
+SELECT
+  a.id AS actor_id,
+  a.kind,
+  a.display_name,
+  pm.role_key,
+  pm.joined_at
+FROM project_member pm
+JOIN actor a ON a.id = pm.actor_id
+WHERE pm.project_id = @project_id
+ORDER BY pm.joined_at, a.id;
+
+-- ── キーの重複確認（ApiDesign.md 5.2）───────────────────────
+
+-- ProjectKeyExists は check-key の判定に使う。
+--
+-- **作成時の重複検出には使わない。** 5.3 が「競合検出はDBの UNIQUE 制約に
+-- 委ね、check-key の結果を信頼しない」と定めている（TOCTOU 対策）。
+--
+-- name: ProjectKeyExists :one
+SELECT EXISTS (SELECT 1 FROM project WHERE key = @key);

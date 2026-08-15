@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"context"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,10 +22,23 @@ const (
 	actorRateWindow = time.Minute
 )
 
+// TxRunner は複数の書き込みを1トランザクションで実行する。
+//
+// 実装は store.NewTxRunner（プール）。**インターフェースとして受け取るのは、
+// ハンドラのテストが実DBを立てずに差し替えられるようにするため**であり、
+// Queries を gen.Querier で受けているのと同じ理由による。
+type TxRunner interface {
+	RunInTx(ctx context.Context, fn func(gen.Querier) error) error
+}
+
 // Deps は /api/v1 のハンドラが必要とする外部資源と設定。
 type Deps struct {
 	// Queries は sqlc の問い合わせ口。
 	Queries gen.Querier
+
+	// Tx はトランザクションの実行口。POST /projects（ApiDesign.md 5.3）のように
+	// 複数の書き込みが不可分である操作が使う。
+	Tx TxRunner
 
 	// CookieSecure は pb_session / pb_csrf に Secure 属性を付けるか
 	// （PB_COOKIE_SECURE、Design.md 6.2.1 手順7）。
@@ -39,12 +53,11 @@ type Deps struct {
 //	middleware.RequirePermission(deps.Queries, "user.manage")        システムロール層
 //	middleware.RequireProjectPermission(deps.Queries, "ticket.close") プロジェクト層（{key} が要る）
 //
-// 現時点で .With(...) が付いているルートは無い。ここにある3本は
-// ApiDesign.md 3.1 / 3.2 / 4.1 のいずれも「必要権限：不要」または
-// 「認証済み・本人」であり、権限キーを要求しないためである。権限を要求する
-// 最初のエンドポイントは手順7の /projects になる。
+// 認証・自分自身の3本（ApiDesign.md 3.1 / 3.2 / 4.1）に .With(...) が
+// 付いていないのは、いずれも「必要権限：不要」または「認証済み・本人」で
+// あり、権限キーを要求しないためである。
 func Mount(r chi.Router, deps Deps) {
-	h := &handler{q: deps.Queries, cookieSecure: deps.CookieSecure}
+	h := &handler{q: deps.Queries, tx: deps.Tx, cookieSecure: deps.CookieSecure}
 
 	// ── 認証不要 ────────────────────────────────
 	// ログインは認証を通れない状態で叩くもののため、認証必須グループの外に置く。
@@ -67,11 +80,29 @@ func Mount(r chi.Router, deps Deps) {
 
 		r.Post("/auth/logout", h.logout)
 		r.Get("/me", h.me)
+
+		// ── プロジェクト（ApiDesign.md 5章）──────────────────
+		//
+		// 一覧が要求するのは project.view であり、**どのプロジェクトが見えるかは
+		// 決めない**（オペレータもシステムロールとして project.view を持つ）。
+		// 可視範囲の絞り込みはハンドラ側のクエリが行う（5.1、手順6a の判断）。
+		r.With(middleware.RequirePermission(deps.Queries, "project.view")).
+			Get("/projects", h.listProjects)
+		// check-key は作成前の確認であり、作成と同じ権限を要求する（5.2）。
+		// 誰でも叩けると、キーの当たりを付けてプロジェクトの存在を探れる。
+		r.With(middleware.RequirePermission(deps.Queries, "project.create")).
+			Get("/projects/check-key", h.checkProjectKey)
+		// Phase 1 では project.create を持つのはアドミニストレータのみ（5.3、
+		// DbDesign.md 7.3）。ここで役割を名指ししないのは、権限の割り当てが
+		// role_permission のデータ側で決まるためである（Design.md 6.4.2）。
+		r.With(middleware.RequirePermission(deps.Queries, "project.create")).
+			Post("/projects", h.createProject)
 	})
 }
 
 // handler は /api/v1 のハンドラが共有する依存。
 type handler struct {
 	q            gen.Querier
+	tx           TxRunner
 	cookieSecure bool
 }
