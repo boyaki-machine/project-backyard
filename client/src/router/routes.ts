@@ -13,8 +13,15 @@ import ProjectsPage from '../pages/ProjectsPage.vue'
  * 実装時はルート定義の component を差し替え、meta.placeholder を削除する。
  */
 export interface PlaceholderMeta {
-  /** 画面名。見出しは「<title>のページ予定」になる */
+  /** 画面名。カード内の「<title>のページ予定」に使う */
   title: string
+  /**
+   * ページヘッダを「<プロジェクト名> <この文字列>」にする（`GuiDesign.md` 5.3）。
+   *
+   * ダッシュボードだけが持つ。他のプロジェクト配下の画面は画面名のみを出す。
+   * 実画面へ差し替えるときは、同じ見出しをその画面が組み立てる。
+   */
+  projectHeading?: string
   /** 対応する設計文書の章番号。未定義なら「設計未確定」と明記する */
   docRef: string
   /** 予定している内容（設計文書からの転記） */
@@ -62,6 +69,7 @@ export const routes: RouteRecordRaw[] = [
       permission: 'project.view',
       placeholder: {
         title: 'プロジェクトダッシュボード',
+        projectHeading: 'ダッシュボード',
         docRef: 'GuiDesign.md 5.3',
         status: 'Phase 1・未着手（docs/PROGRESS.md 手順18以降）',
         planned: [

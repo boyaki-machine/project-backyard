@@ -2,6 +2,9 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
+import PageHeader from '../components/PageHeader.vue'
+import { useAuthStore } from '../stores/auth'
+
 /**
  * 未実装・設計未確定の画面に出すプレースホルダ（GuiDesign.md 6.5）。
  *
@@ -9,8 +12,24 @@ import { useRoute } from 'vue-router'
  * 画面ごとにファイルを作らない。
  */
 const route = useRoute()
+const auth = useAuthStore()
 
 const placeholder = computed(() => route.meta.placeholder)
+
+/**
+ * ページヘッダの見出し。
+ *
+ * ダッシュボードだけは「<プロジェクト名> ダッシュボード」になる（GuiDesign.md 5.3）。
+ * プロジェクト名は `GET /me` の `projects[]` から引く。メンバーでない
+ * アドミニストレータでは名前が無いため、5.3 のとおりキーで代替する。
+ */
+const heading = computed(() => {
+  const p = placeholder.value
+  if (!p) return ''
+  if (p.projectHeading === undefined) return p.title
+  const key = typeof route.params.key === 'string' ? route.params.key : ''
+  return `${auth.projectByKey(key)?.name ?? key} ${p.projectHeading}`
+})
 
 /** 定義側のパス（/p/:key）を出す。実際のURLではなくルートの形を示すため */
 const routePath = computed(() => route.matched[route.matched.length - 1]?.path ?? route.path)
@@ -18,9 +37,7 @@ const routePath = computed(() => route.matched[route.matched.length - 1]?.path ?
 
 <template>
   <div v-if="placeholder" class="page">
-    <header class="page-header">
-      <h1 class="page-title">{{ placeholder.title }}</h1>
-    </header>
+    <PageHeader :title="heading" />
 
     <div class="page-body">
       <div class="card">
@@ -53,22 +70,6 @@ const routePath = computed(() => route.matched[route.matched.length - 1]?.path ?
   display: flex;
   flex-direction: column;
   height: 100%;
-}
-
-.page-header {
-  position: sticky;
-  top: 0;
-  display: flex;
-  align-items: center;
-  height: var(--pb-pageheader-h);
-  padding: 0 var(--pb-space-6);
-  border-bottom: 1px solid var(--pb-line);
-  background: var(--pb-bg);
-}
-
-.page-title {
-  font-size: 18px;
-  font-weight: 600;
 }
 
 .page-body {
