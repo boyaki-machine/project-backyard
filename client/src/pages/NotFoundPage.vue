@@ -5,7 +5,7 @@ import { RouterLink } from 'vue-router'
 <template>
   <!--
     存在しないURL、および「在るが到達できない」プロジェクトの遷移先。
-    403 ではなく 404 に倒すのは Design.md 6.4.5 の方針による（GuiDesign.md 7.2 手順3）。
+    403 ではなく 404 に倒すのは Design.md 6.4.5 の方針による（GuiDesign.md 7.2 手順2）。
   -->
   <div class="error-page">
     <p class="code">404</p>

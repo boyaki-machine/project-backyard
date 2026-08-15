@@ -78,6 +78,7 @@ make migrate     # goose によるマイグレーション適用
 make sqlc        # sqlc generate（server/migrations/ からスキーマを推論）
 make run         # サーバをローカル起動（:8080）
 make dev-client  # Vite 開発サーバ（:5173、/api を :8080 へプロキシ）
+make gen-api     # docs/openapi.yaml から client の型を生成（Design.md 3.3）
 make build       # client をビルドして embed し、単一バイナリを作る
 make version     # 現在のバージョンと develop へのマージ回数を表示
 make bump-minor  # 機能追加のマージ前に実行（fix/ docs/ は bump-build）

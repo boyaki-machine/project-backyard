@@ -7,6 +7,11 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     port: 5173,
+    fs: {
+      // リポジトリ直下の VERSION を ?raw で読む（client/src/version.ts）。
+      // 既定でも許可されることが多いが、判定に依存させない。
+      allow: ['..'],
+    },
     // 別のポートへ黙ってずれると Cookie の送り先が変わるため、空いていなければ失敗させる。
     strictPort: true,
     proxy: {

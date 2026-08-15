@@ -36,7 +36,7 @@ PB_DATABASE_URL_APP = postgres://pb_app:$$(cat $(APP_DB_PASSWORD_FILE))@127.0.0.
 
 .PHONY: up down psql migrate sqlc run admin-create test \
 	dev-reset dev-seed dev-info \
-	dev-client build-client sync-webui build clean-webui \
+	dev-client gen-api build-client sync-webui build clean-webui \
 	version version-check bump-build bump-minor bump-major release-tag
 
 ## DB を起動する
@@ -119,6 +119,12 @@ dev-info:
 # HMR を効かせながら画面を作るときはこちらを使う。API は make run で別に立てる。
 dev-client:
 	cd client && npm run dev
+
+## docs/openapi.yaml から client の型を生成する（Design.md 3.3）
+# 生成するのは型だけで、呼び出しは client/src/api/client.ts が持つ。
+# openapi.yaml を更新したら実行し、生成物（schema.d.ts）もコミットする。
+gen-api:
+	cd client && npm run gen:api
 
 ## client をビルドする（client/dist を生成）
 build-client:
