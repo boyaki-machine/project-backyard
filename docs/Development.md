@@ -6,6 +6,12 @@
 - **実装済みの範囲だけを書く。** 未実装の手順は書かない（`docs/PROGRESS.md` の進捗と揃える）
 - 実装の進捗そのものと「いつ何を判断したか」は `docs/PROGRESS.md` にある
 
+> **本書のコマンドは、断りがない限りすべてリポジトリ直下で実行する。**
+> `make` はカレントディレクトリの Makefile しか見ないため、下位ディレクトリで叩くと
+> `No rule to make target` や `no makefile found` になる。どこからでも叩きたい場合は
+> `make -C <リポジトリのパス> <ターゲット>` を使う。
+> 例外は `cd client && npm ...` のように、明示的に `cd` を書いてあるものだけ。
+
 ## 目次
 
 ```
@@ -52,8 +58,10 @@
 | `app_database_url` | `pb_app` での接続文字列。**`app_db_password` と同じ値を埋め込む** |
 
 ```
-cd deploy/dev/secrets
-for f in db_password app_db_password app_database_url; do cp "$f.example" "$f"; done
+# リポジトリ直下で実行する（cd しない。次の 2.2 も直下で叩く）
+for f in db_password app_db_password app_database_url; do
+  cp "deploy/dev/secrets/$f.example" "deploy/dev/secrets/$f"
+done
 # それぞれ中身を実際の値に書き換える
 ```
 
@@ -315,6 +323,7 @@ DBを丸ごと作り直してよい場面では、**個別に戻すより `make 
 
 | 症状 | 原因と対処 |
 |---|---|
+| `make: *** No rule to make target 'migrate'` / `no makefile found` | **リポジトリ直下以外で実行している。** `make` は親ディレクトリを探しに行かない。`pwd` を確認して直下へ戻るか、`make -C <リポジトリのパス> migrate` と書く |
 | `make up` が `failed to connect to the docker API` | コンテナランタイムが停止している。Rancher Desktop を起動し、`docker info` が通るまで待つ（約30秒） |
 | `make run` が `bind: address already in use` | 前のセッションの `pb` が :8080 を掴んでいる。`lsof -nP -iTCP:8080 -sTCP:LISTEN` で確認する。他人のプロセスを落とさずに済ませるなら `PB_BIND=127.0.0.1:8099` のように待受を変えて起動する |
 | `make migrate` が認証に失敗する | `deploy/dev/secrets/db_password` と DB の実際のパスワードがずれている。initdb は**初回起動時にしか走らない**ため、後から `.example` を書き換えても反映されない。`make dev-reset` で作り直す |
