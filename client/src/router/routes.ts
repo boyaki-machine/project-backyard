@@ -4,6 +4,7 @@ import ForbiddenPage from '../pages/ForbiddenPage.vue'
 import LoginPage from '../pages/LoginPage.vue'
 import NotFoundPage from '../pages/NotFoundPage.vue'
 import PlaceholderPage from '../pages/PlaceholderPage.vue'
+import ProjectsPage from '../pages/ProjectsPage.vue'
 
 /**
  * プレースホルダページに渡す内容（GuiDesign.md 6.5）。
@@ -46,25 +47,12 @@ export const routes: RouteRecordRaw[] = [
   // メインメニューを出さない唯一の画面（GuiDesign.md 5.1 のレイアウト例外）。
   { path: '/login', component: LoginPage, meta: { public: true } },
 
+  // 新規作成モーダルは URL を持つ唯一のモーダル（GuiDesign.md 3.2 の `?new=1`）。
+  // モーダル本体は手順10b。
   {
     path: '/projects',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'project.view',
-      placeholder: {
-        title: 'プロジェクト一覧',
-        docRef: 'GuiDesign.md 5.2',
-        status: 'Phase 1・手順10で実装（API は手順9）',
-        planned: [
-          'プロジェクト名（＋説明）、全タスク数、完了数、進捗率、最終更新日時の一覧',
-          '行クリックで /p/:key へ遷移',
-          '「+ 新規プロジェクト」（project.create を持つ場合のみ表示）',
-          '新規プロジェクト作成モーダル（5.2.1）',
-          '空状態の案内',
-          'アーカイブ済みの表示切替',
-        ],
-      },
-    },
+    component: ProjectsPage,
+    meta: { permission: 'project.view' },
   },
 
   {

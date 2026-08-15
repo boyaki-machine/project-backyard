@@ -96,7 +96,7 @@ function switchTo(key: string) {
         <RouterLink class="item" to="/projects" @click="close">
           <span class="mark" aria-hidden="true">⌂</span> プロジェクト一覧
         </RouterLink>
-        <!-- 新規作成モーダルは手順10。ここでは 3.2 の /projects?new=1 へ送るに留める -->
+        <!-- 3.2 が唯一 URL を許すモーダル。開く処理は手順10b で /projects に載る -->
         <RouterLink
           v-if="auth.can('project.create')"
           class="item"
