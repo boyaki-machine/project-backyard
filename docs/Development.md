@@ -15,33 +15,51 @@
 ## 目次
 
 ```
-1. 前提（必要なもの）
+1. 前提（必要なもの）        ← 確認コマンド。足りなければ付録A へ
 2. 初回セットアップ
-3. 日々の開発
+3. 日々の開発                ← 起動と止め方、make build が要る場面
 4. 開発用デモデータ
 5. コード生成（sqlc / openapi-typescript）
 6. テスト
 7. ビルドとバージョン
 8. 画面の動作確認
-9. つまずいたとき
+9. つまずいたとき            ← 症状から引く
+付録A. 環境の構築            ← 端末に一度だけ入れるもの
 ```
 
 ---
 
 # 1. 前提（必要なもの）
 
-| 必要なもの | 最低要件 | 検証した版 |
+**まず4つを確認する。** どれかが無ければ**付録A**へ。
+
+| 必要なもの | 確認コマンド | 期待する結果 | 無いとき |
+|---|---|---|---|
+| コンテナランタイム | `docker info` | エラーにならない（起動している） | 付録 A.1 |
+| Go | `go version` | **`go1.24` 以上**（`Design.md` 3.1） | 付録 A.2 |
+| Node.js / npm | `node -v && npm -v` | 表示される（client のビルドに必要） | 付録 A.3 |
+| Google Chrome | `ls "/Applications/Google Chrome.app"` | 存在する（**画面の動作確認（8章）に使うだけ。任意**） | 付録 A.4 |
+
+まとめて確認するなら:
+
+```
+docker info > /dev/null 2>&1 && echo "docker: ok" || echo "docker: NG（付録 A.1）"
+go version
+node -v && npm -v
+```
+
+**検証した組み合わせ**（この版で動くことを確認済み。より新しい版でも動く可能性は高い）
+
+| | 版 | 導入方法 |
 |---|---|---|
-| コンテナランタイム | `docker compose` が使えること | Rancher Desktop（`docker` は `~/.rd/bin/docker`） |
-| Go | **1.24 以上**（`Design.md` 3.1） | 1.26.5 |
-| Node.js / npm | client のビルドに必要 | v24.14.0 / npm 11.9.0 |
-| Google Chrome | 画面の動作確認（8章）。任意 | — |
+| コンテナランタイム | Rancher Desktop（`docker` は `~/.rd/bin/docker`） | アプリとして導入 |
+| Go | 1.26.5 | Homebrew |
+| Node / npm | v24.14.0 / 11.9.0 | nvm |
 
-`goose`（マイグレーション）と `sqlc`（クエリ生成）は**別途インストールしない**。`server/tools/go.mod` の `tool` ディレクティブでバージョンを固定してあり、`make migrate` / `make sqlc` が `go tool` 経由で呼ぶ（`DbDesign.md` 5.1）。
+`goose`（マイグレーション）と `sqlc`（クエリ生成）は**別途インストールしない**。`server/tools/go.mod` の `tool` ディレクティブでバージョンを固定してあり、`make migrate` / `make sqlc` が `go tool` 経由で呼ぶ（`DbDesign.md` 5.1）。同様に、client の依存は `make build-client` が `npm ci` で入れるので、手で `npm install` する必要はない。
 
-**コンテナランタイムを起動しておくこと。** 停止していると `make up` が
-`failed to connect to the docker API` で落ちる。Rancher Desktop なら `open -a "Rancher Desktop"`
-のあと `docker info` が通るまで待つ（実測で約30秒）。
+**コンテナランタイムは起動しておくこと。** 停止していると `make up` が
+`failed to connect to the docker API` で落ちる（付録 A.1）。
 
 ---
 
@@ -104,18 +122,58 @@ make dev-info    # URL と4アカウントを表示する
 
 # 3. 日々の開発
 
-## 3.1 サーバだけ動かす（画面は embed 済みのものを使う）
+## 3.1 1プロセスで動かす（画面は embed 済みのものを使う）
 
 ```
 make up
+make build     # client を作り直してバイナリへ埋め込む（画面を直したときは必須）
 make run       # :8080。PB_HEALTH_SHOW_VERSION=true で起動する
 ```
 
 `http://127.0.0.1:8080/` を開くと、**バイナリに埋め込まれた** client が返る。
-埋め込みの中身は最後に `make build` した時点のものなので、画面を直したときは
-`make build` し直すか、次の 3.2 を使う。
+
+**`make build` が要るのは client を直したときだけである。**
+
+| 直した対象 | 必要な操作 |
+|---|---|
+| **client**（`client/` 配下） | `make build` → `make run` を起動し直す。埋め込みの中身は最後に `make build` した時点のもので、`make run` では更新されない |
+| **server**（`server/` 配下） | `make run` を起動し直すだけでよい。`make run` は `go run` なので**毎回ソースからコンパイルし直す** |
+
+迷ったら `make build` → `make run` の順に叩けば必ず最新になる（server の変更も `make build`
+の中でコンパイルされる）。画面を続けて直すなら、毎回ビルドを待たずに済む 3.2 のほうが速い。
+
+**`make build` の後は `make clean-webui`（7.1）を忘れないこと。** ビルド成果物が
+追跡対象のファイルを上書きしたままコミットしてしまう。
+
+### 止め方
+
+**`Ctrl + C`（`make run` を実行した端末で）。** これが正しい止め方である。
+`SIGINT` / `SIGTERM` を受けると**処理中のリクエストの完了を待ってから**終了する
+（graceful shutdown。猶予15秒）。ログに次の2行が出れば正常に落ちている。
+
+```
+{"level":"INFO","msg":"停止信号を受け取った。処理中のリクエストの完了を待つ"}
+{"level":"INFO","msg":"サーバを停止した"}
+```
+
+そのあと `make` が `Interrupt` や `Error 1` を表示することがあるが、**上の2行が出ていれば
+異常ではない**。`go run` が「シグナルで終了した子プロセス」を失敗として扱うためである。
+
+止まったかどうかは待受ポートで確かめる。**`make run` は `go run` → 実バイナリの親子構成**
+なので、親だけを殺すと子が :8080 を掴んだまま残ることがある。
+
+```
+lsof -nP -iTCP:8080 -sTCP:LISTEN     # 何も出なければ停止できている
+```
+
+残っていたら、その PID を `kill <PID>`（`-9` は不要。graceful に落ちる）。
 
 ## 3.2 画面を直す（HMR を効かせる）
+
+> **HMR**（Hot Module Replacement）とは、**ソースを保存した瞬間に、変更した部分だけを
+> 動いているページに差し替える**仕組み。ページ全体を再読み込みしないので、
+> **入力途中の値や開いているメニューといった画面の状態が保たれたまま**見た目が変わる。
+> Vite の機能で、`make build` を待つ必要がなくなる（保存から反映までおよそ1秒未満）。
 
 **2つ立てる。** Vite（:5173）が画面を配信し、`/api` と `/mcp` だけを Go（:8080）へ中継する。
 
@@ -124,7 +182,12 @@ make run          # 別の端末で。API は :8080
 make dev-client   # :5173。ブラウザで開くのはこちら
 ```
 
-`/healthcheck` は中継していない（監視用であり画面からは呼ばないため。`ApiDesign.md` 2.11）。
+**ブラウザで開くのは :5173 のほう。** :8080 を開くと embed 済みの古い画面が出る（3.1）。
+この構成では **client の変更に `make build` は要らない**。server を直したときだけ
+`make run` を起動し直す。
+
+`make dev-client` の止め方も `Ctrl + C`。`/healthcheck` は中継していない（監視用であり
+画面からは呼ばないため。`ApiDesign.md` 2.11）。
 
 ## 3.3 よく使うもの
 
@@ -333,6 +396,70 @@ DBを丸ごと作り直してよい場面では、**個別に戻すより `make 
 | 画面が「メニューが出ない」ように見える | ヘッドレスのウィンドウ幅が 768px 未満（8.2）。または未認証（ログイン画面はメニューを出さない。`GuiDesign.md` 5.1） |
 | `make dev-reset` が「中止しました」で終わる | 非対話で実行している。`PB_YES=1` を付ける（4章） |
 | Vite が :5173 以外で起動しない | `strictPort` にしてある。**ポートが空いていなければ黙ってずらさずに失敗する**（Cookie の送り先が変わるのを防ぐため） |
+| `Ctrl + C` の後に `make: *** [run] Error 1` が出る | **異常ではない**（3.1 の「止め方」）。`go run` がシグナル終了を失敗として扱うため。`停止信号を受け取った` → `サーバを停止した` の2行が出ていれば正常 |
+| 画面を直したのに反映されない | :8080 は embed 済みの画面を返す。`make build` し直すか、:5173（`make dev-client`）で見る（3.1 / 3.2） |
+| `go version` が 1.24 未満 | 付録 A.2。goose / sqlc も Go 経由で動くため、ここが古いとマイグレーションから先に進めない |
+
+---
+
+# 付録A. 環境の構築
+
+1章の確認で足りなかったものを入れる。**PB のリポジトリ側の設定ではなく、端末に一度だけ入れるもの。**
+
+## A.1 コンテナランタイム
+
+DB（PostgreSQL）を compose で動かすために要る（`DbDesign.md` 3.2）。**`docker compose` が使えれば
+実装は問わない**（Rancher Desktop / Docker Desktop / colima など）。検証は Rancher Desktop で行っている。
+
+```
+docker info      # エラーにならなければ導入・起動できている
+```
+
+- **入っているのに落ちる場合は、起動していないだけのことが多い。** Rancher Desktop なら
+  `open -a "Rancher Desktop"` のあと `docker info` が通るまで待つ（実測で約30秒）
+- 入っていない場合は各製品の配布ページから導入する。導入後、`docker compose version` も確認する
+  （**Compose V2 が要る**。`docker-compose`（V1、ハイフンあり）ではない）
+
+## A.2 Go
+
+**1.24 以上**（`Design.md` 3.1）。サーバ本体に加えて、`goose`（マイグレーション）と
+`sqlc`（コード生成）も `go tool` 経由で動くため、これが無いと 2.2 から先へ進めない。
+
+```
+go version       # go1.24 以上であること
+```
+
+macOS なら Homebrew（検証環境もこれ。`brew install go`）。公式配布の pkg でもよい。
+
+**上げるときは注意する。** ライブラリの都合で go ディレクティブが勝手に上がる問題を避けるため、
+`go.mod` は `1.24` に固定してある（`PROGRESS.md` の環境メモ）。Go 本体を新しくするのは構わないが、
+`go get` の後は `head -3 server/go.mod` で `1.24` のままか確認すること。
+
+## A.3 Node.js / npm
+
+client のビルド（`make build` / `make dev-client`）に要る。**サーバだけ触るなら無くても
+`make run` は動く**（embed 済みの画面が返るため）。
+
+```
+node -v && npm -v
+```
+
+検証環境は nvm で入れた v24.14.0 / npm 11.9.0。公式インストーラでも Homebrew でもよい。
+**client の依存を手で入れる必要はない**（`make build-client` が `npm ci` で入れる）。
+
+## A.4 Google Chrome
+
+**任意。** 8章のヘッドレスでの画面確認に使うだけで、開発そのものには要らない。
+普段使いのブラウザで画面を見るぶんには何でもよい。
+
+```
+ls "/Applications/Google Chrome.app"
+```
+
+## A.5 このリポジトリ側の準備
+
+端末側が揃ったら 2章へ戻る（秘密ファイルの配置 → `make up` → `make migrate` → `make dev-reset`）。
+**リポジトリ側で追加インストールするものは無い。**
 
 ---
 
