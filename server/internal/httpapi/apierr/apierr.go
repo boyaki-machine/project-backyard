@@ -19,7 +19,7 @@ import (
 	"strconv"
 )
 
-// Code は ApiDesign.md 2.5.1 のエラーコード。表の13件と一対一で対応する。
+// Code は ApiDesign.md 2.5.1 のエラーコード。表の15件と一対一で対応する。
 type Code string
 
 const (
@@ -31,6 +31,7 @@ const (
 	NotFound                  Code = "not_found"
 	MethodNotAllowed          Code = "method_not_allowed"
 	Conflict                  Code = "conflict"
+	AlreadyExists             Code = "already_exists"
 	LastAdministrator         Code = "last_administrator"
 	SelfModificationForbidden Code = "self_modification_forbidden"
 	ValidationFailed          Code = "validation_failed"
@@ -49,6 +50,7 @@ var statuses = map[Code]int{
 	NotFound:                  http.StatusNotFound,
 	MethodNotAllowed:          http.StatusMethodNotAllowed,
 	Conflict:                  http.StatusConflict,
+	AlreadyExists:             http.StatusConflict,
 	LastAdministrator:         http.StatusConflict,
 	SelfModificationForbidden: http.StatusConflict,
 	ValidationFailed:          http.StatusUnprocessableEntity,
@@ -71,6 +73,7 @@ var messages = map[Code]string{
 	NotFound:                  "対象が見つかりません",
 	MethodNotAllowed:          "この操作は許可されていません",
 	Conflict:                  "他の変更と競合しました。最新の状態を読み込んでからやり直してください",
+	AlreadyExists:             "その値は既に使われています。別の値を指定してください",
 	LastAdministrator:         "最後のアドミニストレータのため、この操作はできません",
 	SelfModificationForbidden: "自分自身に対してこの操作はできません",
 	ValidationFailed:          "入力内容に誤りがあります",

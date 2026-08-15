@@ -32,6 +32,7 @@ var table = []struct {
 	{NotFound, 404},
 	{MethodNotAllowed, 405},
 	{Conflict, 409},
+	{AlreadyExists, 409},
 	{LastAdministrator, 409},
 	{SelfModificationForbidden, 409},
 	{ValidationFailed, 422},

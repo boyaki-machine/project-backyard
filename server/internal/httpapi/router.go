@@ -10,6 +10,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	v1 "github.com/boyaki-machine/project-backyard/server/internal/httpapi/v1"
+	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/webui"
 )
@@ -21,6 +22,10 @@ type Deps struct {
 	// Queries は sqlc の問い合わせ口。nil なら Pool から作る。
 	// テストが DB を立てずに差し替えられるよう、インターフェースで受ける。
 	Queries gen.Querier
+
+	// Tx はトランザクションの実行口。nil なら Pool から作る。
+	// Pool も nil の場合（ルート一覧を取るだけのテストなど）は nil のまま渡る。
+	Tx v1.TxRunner
 
 	// Version は GET /healthcheck が返すバージョン（ApiDesign.md 2.11）。
 	Version string
@@ -44,6 +49,10 @@ func NewRouter(deps Deps) http.Handler {
 	q := deps.Queries
 	if q == nil {
 		q = gen.New(deps.Pool)
+	}
+	tx := deps.Tx
+	if tx == nil && deps.Pool != nil {
+		tx = store.NewTxRunner(deps.Pool)
 	}
 
 	r := chi.NewRouter()
@@ -80,6 +89,7 @@ func NewRouter(deps Deps) http.Handler {
 	r.Route(BasePath, func(r chi.Router) {
 		v1.Mount(r, v1.Deps{
 			Queries:      q,
+			Tx:           tx,
 			CookieSecure: deps.CookieSecure,
 		})
 	})

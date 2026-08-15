@@ -179,7 +179,8 @@ Header:  X-PB-CSRF: <同じ値>
 | 403 | `csrf_failed` | CSRFトークン不一致 |
 | 404 | `not_found` | 資源なし、または閲覧権限なし（1.2-5） |
 | 405 | `method_not_allowed` | パスは存在するが、そのメソッドを受け付けない |
-| 409 | `conflict` | 一意制約違反、状態競合 |
+| 409 | `conflict` | 状態競合（`If-Match` 不一致など。2.8） |
+| 409 | `already_exists` | 一意なキーが既に使われている（プロジェクトキーなど。5.3） |
 | 409 | `last_administrator` | 最後の管理者を降格・無効化・削除しようとした |
 | 409 | `self_modification_forbidden` | 自分自身のロール変更・削除 |
 | 422 | `validation_failed` | 入力値の検証エラー（`details` を伴う） |

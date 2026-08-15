@@ -96,11 +96,11 @@ type Querier interface {
 	FindProjectAuthzByKey(ctx context.Context, arg FindProjectAuthzByKeyParams) ([]FindProjectAuthzByKeyRow, error)
 	// プロジェクトとワークフローに関するクエリ（DbDesign.md 6.4 / 6.5）。
 	//
-	// 手順7.5（pb dev seed）で必要になった分だけを置いている。
-	// テンプレートの複製は POST /projects（ApiDesign.md 5.2）と同じ手順であり、
-	// 手順9はここのクエリを再利用する。
+	// 手順7.5（pb dev seed）で必要になった分から始まり、手順9で
+	// GET/POST /projects と check-key（ApiDesign.md 5.1〜5.3）が加わった。
+	// テンプレートの複製は pb dev seed と POST /projects で同じ手順を通る。
 	FindProjectIDByKey(ctx context.Context, key string) (string, error)
-	// ── テンプレートの複製（ApiDesign.md 5.2）─────────────────────
+	// ── テンプレートの複製（ApiDesign.md 5.3）─────────────────────
 	FindWorkflowTemplate(ctx context.Context, templateKey pgtype.Text) (FindWorkflowTemplateRow, error)
 	// GetActorProfile は GET /me（ApiDesign.md 4.1）が返す actor 部分を引く。
 	//
@@ -113,6 +113,17 @@ type Querier interface {
 	// 「そのアクターが存在しない」ことを取り違えないようにする。
 	//
 	GetActorProfile(ctx context.Context, actorID string) (GetActorProfileRow, error)
+	// ── 詳細（ApiDesign.md 5.4。POST /projects の応答も同じ形）───────
+	// GetProjectByKey は1プロジェクトの本体とワークフローの見出しを返す。
+	//
+	// workflow を LEFT JOIN にしているのは、project.workflow_id が NULL 可能で
+	// あり（DbDesign.md 6.4、ON DELETE SET NULL）、ワークフローを持たない
+	// プロジェクトでも本体は返す必要があるため。
+	//
+	// **可視性で絞らない。** 到達可否の判定は認可ミドルウェア
+	// （RequireProjectPermission）と呼び出し側の責務である。
+	//
+	GetProjectByKey(ctx context.Context, key string) (GetProjectByKeyRow, error)
 	// 監査ログ（ApiDesign.md 2.10、DbDesign.md 6.8）。
 	//
 	// 読み出し（GET /admin/audit、auditlog.view）は手順11以降で足す。
@@ -138,6 +149,12 @@ type Querier interface {
 	// ロールの妥当性はDBに問い合わせる。Go 側に 'project_admin' などを
 	// 書き写すと 0010 のシード（DbDesign.md 7.3）と二重管理になるため。
 	IsProjectScopedRole(ctx context.Context, key string) (bool, error)
+	// ListProjectMembers は 5.4 の members[] を返す。
+	//
+	// actor を JOIN するのは kind と display_name のため。エージェントも
+	// プロジェクトのメンバーになれる（DbDesign.md 6.3）。
+	//
+	ListProjectMembers(ctx context.Context, projectID string) ([]ListProjectMembersRow, error)
 	// ListProjectMembershipsByActor は所属プロジェクトと、そこでの
 	// プロジェクトロール由来の権限キーを返す（ApiDesign.md 3.1 の projects[]）。
 	//
@@ -152,6 +169,32 @@ type Querier interface {
 	// （Design.md 6.4.4）、表示用の絞り込みは GET /projects 側の役割である。
 	//
 	ListProjectMembershipsByActor(ctx context.Context, actorID string) ([]ListProjectMembershipsByActorRow, error)
+	// ── 一覧（ApiDesign.md 5.1）─────────────────────────────────
+	// ListProjects は GET /projects の1ページ分を返す。
+	//
+	// **可視範囲**：自分がメンバーであるプロジェクトのみ。ただし
+	// アドミニストレータは全件（5.1）。判定は @is_administrator で受け取る。
+	// 「project.view を持つか」では絞らない。オペレータもシステムロールとして
+	// project.view を持つため、それでは全件が見えてしまう（手順6a の判断）。
+	//
+	// **件数と進捗を一覧に含める**（5.1）。プロジェクトごとに問い合わせる N+1 を
+	// 避けるためであり、LATERAL の集約1回で ticket_count / closed_count を得る。
+	// idx_ticket_project_status が project_id 側から効く。
+	//
+	// **完了は closed_at IS NOT NULL で数える**（DbDesign.md 6.6）。
+	// workflow_status.category = 'done' を経由すると、ワークフローを差し替えた
+	// プロジェクトで過去のチケットが数えられなくなる（status_key は論理参照）。
+	//
+	// progress は「完了数 ÷ 全数」。定義をフロントに散らさないためサーバで計算し、
+	// ticket_count = 0 のときは 0 を返す（null にしない。5.1）。
+	//
+	// 並び替えは CASE 式で静的に書く。sqlc は動的な ORDER BY を組み立てられず、
+	// 文字列連結で作ると SQL インジェクションの経路になるため。許可する項目は
+	// 5.1 の5つで、呼び出し側（paging.go の SortSpec）が値を検証済みである。
+	// 最後の v.id は同値のときの並びを固定するためのタイブレーカ。
+	// name の比較に ICU collation を指定するのは DbDesign.md 4.4 の規約。
+	//
+	ListProjects(ctx context.Context, arg ListProjectsParams) ([]ListProjectsRow, error)
 	// 認可（実効権限の材料）に関するクエリ（Design.md 6.4.1、DbDesign.md 6.3）。
 	//
 	// 権限は「コードのif文ではなくデータとして定義する」（Design.md 6.4.2）ため、
@@ -165,6 +208,13 @@ type Querier interface {
 	ListRolePermissions(ctx context.Context, roleKey string) ([]string, error)
 	ListWorkflowStatuses(ctx context.Context, workflowID string) ([]ListWorkflowStatusesRow, error)
 	ListWorkflowTransitions(ctx context.Context, workflowID string) ([]ListWorkflowTransitionsRow, error)
+	// ── キーの重複確認（ApiDesign.md 5.2）───────────────────────
+	// ProjectKeyExists は check-key の判定に使う。
+	//
+	// **作成時の重複検出には使わない。** 5.3 が「競合検出はDBの UNIQUE 制約に
+	// 委ね、check-key の結果を信頼しない」と定めている（TOCTOU 対策）。
+	//
+	ProjectKeyExists(ctx context.Context, key string) (bool, error)
 	// RecordLoginFailure は失敗回数とロック期限を書く（Design.md 6.2.1 手順5、6.3）。
 	// 閾値の判定はアプリ側で行い、その結果をそのまま反映する。
 	//
@@ -214,6 +264,14 @@ type Querier interface {
 	//
 	SaveTokenPermissionCache(ctx context.Context, arg SaveTokenPermissionCacheParams) error
 	SetProjectWorkflow(ctx context.Context, arg SetProjectWorkflowParams) error
+	// SummarizeProjects は ListProjects と同じ可視範囲・同じ絞り込みに対する
+	// 総件数と最終更新日時を返す。
+	//
+	// total は 2.6 の「総件数は常に返す」。last_updated_at は 2.7 の ETag の材料
+	// （「プロジェクト集合の MAX(updated_at) と件数から生成する」）。**同じ WHERE を
+	// 2回書かないよう1文にまとめてある。** 0件のとき last_updated_at は NULL。
+	//
+	SummarizeProjects(ctx context.Context, arg SummarizeProjectsParams) (SummarizeProjectsRow, error)
 	// TouchAccessTokenLastUsed は last_used_at を更新する。
 	//
 	// **1分粒度で間引く**（Design.md 6.2.2）。リクエストのたびに UPDATE すると、

@@ -62,6 +62,35 @@ type fakeQuerier struct {
 	memberships []gen.ListProjectMembershipsByActorRow
 	roleCalls   int
 
+	// プロジェクト（手順9）
+	projectRows    []gen.ListProjectsRow
+	projectSummary gen.SummarizeProjectsRow
+	listParams     []gen.ListProjectsParams
+	summaryParams  []gen.SummarizeProjectsParams
+	keyExists      bool
+	keyChecked     []string
+	listErr        error
+
+	// プロジェクトの作成（手順9）。opLog に呼び出し順を残し、
+	// 5.3 の「単一トランザクションで行う手順」をテストから固定する。
+	opLog               []string
+	createdProjects     []gen.CreateProjectParams
+	createdCounters     []string
+	createdWorkflows    []gen.CreateProjectWorkflowParams
+	createdStatuses     []gen.CreateWorkflowStatusParams
+	createdTransitions  []gen.CreateWorkflowTransitionParams
+	linkedWorkflows     []gen.SetProjectWorkflowParams
+	addedMembers        []gen.AddProjectMemberParams
+	templateRow         gen.FindWorkflowTemplateRow
+	templateErr         error
+	templateStatuses    []gen.ListWorkflowStatusesRow
+	templateTransitions []gen.ListWorkflowTransitionsRow
+	detailRow           gen.GetProjectByKeyRow
+	detailErr           error
+	memberRows          []gen.ListProjectMembersRow
+	createProjectErr    error
+	auditErr            error
+
 	// 書き込みの記録
 	created      []gen.CreateAccessTokenParams
 	failures     []gen.RecordLoginFailureParams
@@ -169,8 +198,138 @@ func (q *fakeQuerier) SaveTokenPermissionCache(_ context.Context, arg gen.SaveTo
 }
 
 func (q *fakeQuerier) InsertAuditLog(_ context.Context, arg gen.InsertAuditLogParams) error {
+	q.opLog = append(q.opLog, "InsertAuditLog")
+	if q.auditErr != nil {
+		return q.auditErr
+	}
 	q.audits = append(q.audits, arg)
 	return nil
+}
+
+func (q *fakeQuerier) CreateProject(_ context.Context, arg gen.CreateProjectParams) error {
+	q.opLog = append(q.opLog, "CreateProject")
+	if q.createProjectErr != nil {
+		return q.createProjectErr
+	}
+	q.createdProjects = append(q.createdProjects, arg)
+	return nil
+}
+
+func (q *fakeQuerier) CreateProjectCounter(_ context.Context, projectID string) error {
+	q.opLog = append(q.opLog, "CreateProjectCounter")
+	q.createdCounters = append(q.createdCounters, projectID)
+	return nil
+}
+
+func (q *fakeQuerier) FindWorkflowTemplate(_ context.Context, key pgtype.Text) (gen.FindWorkflowTemplateRow, error) {
+	q.opLog = append(q.opLog, "FindWorkflowTemplate")
+	if q.templateErr != nil {
+		return gen.FindWorkflowTemplateRow{}, q.templateErr
+	}
+	row := q.templateRow
+	if row.ID == "" {
+		row.ID = "01K2F8QW3H7YRJ4M5N6P7Q8TPL"
+		row.Name = "シンプル（" + key.String + "）"
+		row.Definition = []byte(`{}`)
+	}
+	return row, nil
+}
+
+func (q *fakeQuerier) CreateProjectWorkflow(_ context.Context, arg gen.CreateProjectWorkflowParams) error {
+	q.opLog = append(q.opLog, "CreateProjectWorkflow")
+	q.createdWorkflows = append(q.createdWorkflows, arg)
+	return nil
+}
+
+func (q *fakeQuerier) ListWorkflowStatuses(context.Context, string) ([]gen.ListWorkflowStatusesRow, error) {
+	q.opLog = append(q.opLog, "ListWorkflowStatuses")
+	return q.templateStatuses, nil
+}
+
+func (q *fakeQuerier) CreateWorkflowStatus(_ context.Context, arg gen.CreateWorkflowStatusParams) error {
+	q.opLog = append(q.opLog, "CreateWorkflowStatus")
+	q.createdStatuses = append(q.createdStatuses, arg)
+	return nil
+}
+
+func (q *fakeQuerier) ListWorkflowTransitions(context.Context, string) ([]gen.ListWorkflowTransitionsRow, error) {
+	q.opLog = append(q.opLog, "ListWorkflowTransitions")
+	return q.templateTransitions, nil
+}
+
+func (q *fakeQuerier) CreateWorkflowTransition(_ context.Context, arg gen.CreateWorkflowTransitionParams) error {
+	q.opLog = append(q.opLog, "CreateWorkflowTransition")
+	q.createdTransitions = append(q.createdTransitions, arg)
+	return nil
+}
+
+func (q *fakeQuerier) SetProjectWorkflow(_ context.Context, arg gen.SetProjectWorkflowParams) error {
+	q.opLog = append(q.opLog, "SetProjectWorkflow")
+	q.linkedWorkflows = append(q.linkedWorkflows, arg)
+	return nil
+}
+
+func (q *fakeQuerier) AddProjectMember(_ context.Context, arg gen.AddProjectMemberParams) error {
+	q.opLog = append(q.opLog, "AddProjectMember")
+	q.addedMembers = append(q.addedMembers, arg)
+	return nil
+}
+
+func (q *fakeQuerier) GetProjectByKey(_ context.Context, key string) (gen.GetProjectByKeyRow, error) {
+	q.opLog = append(q.opLog, "GetProjectByKey")
+	if q.detailErr != nil {
+		return gen.GetProjectByKeyRow{}, q.detailErr
+	}
+	row := q.detailRow
+	if row.Key == "" {
+		row.Key = key
+	}
+	return row, nil
+}
+
+func (q *fakeQuerier) ListProjectMembers(context.Context, string) ([]gen.ListProjectMembersRow, error) {
+	q.opLog = append(q.opLog, "ListProjectMembers")
+	return q.memberRows, nil
+}
+
+// fakeTxRunner は fn をそのまま呼ぶ TxRunner。
+//
+// コミットの有無だけを記録する。**fn がエラーを返したらコミットしない**という
+// 実装（store.TxRunner）の約束をテストから確かめるためである。
+type fakeTxRunner struct {
+	q         gen.Querier
+	calls     int
+	committed bool
+}
+
+func (t *fakeTxRunner) RunInTx(ctx context.Context, fn func(gen.Querier) error) error {
+	t.calls++
+	if err := fn(t.q); err != nil {
+		return err
+	}
+	t.committed = true
+	return nil
+}
+
+func (q *fakeQuerier) ListProjects(_ context.Context, arg gen.ListProjectsParams) ([]gen.ListProjectsRow, error) {
+	q.listParams = append(q.listParams, arg)
+	if q.listErr != nil {
+		return nil, q.listErr
+	}
+	return q.projectRows, nil
+}
+
+func (q *fakeQuerier) SummarizeProjects(_ context.Context, arg gen.SummarizeProjectsParams) (gen.SummarizeProjectsRow, error) {
+	q.summaryParams = append(q.summaryParams, arg)
+	if q.listErr != nil {
+		return gen.SummarizeProjectsRow{}, q.listErr
+	}
+	return q.projectSummary, nil
+}
+
+func (q *fakeQuerier) ProjectKeyExists(_ context.Context, key string) (bool, error) {
+	q.keyChecked = append(q.keyChecked, key)
+	return q.keyExists, nil
 }
 
 // auditActions は記録された監査アクションを順に返す。
