@@ -56,13 +56,15 @@
 | エージェントの実行権限の整理（`.claude/settings.json`）と `CLAUDE.md` 絶対規則2の具体化 | 完了 | 2026-08-12 | `feature/step-04-http-foundation-auth` | 読み取り系コマンドが確認なしで通り、`rm` / `git merge` / `git push` などは確認を求める |
 | `GuiDesign.md` 3.2 のルーティング表に `/` の行を追加（手順7の積み残し） | 完了 | 2026-08-13 | `docs/routing-root-path` | 表の記述（`/projects` へリダイレクト・必要権限なし）が `client/src/router/routes.ts` の実装と一致する。コードは変更していない |
 | `openapi.yaml` の役割の再定義（設計の写し → **実装済みAPIの現状**）と 3.3 の文言の書き直し | 完了 | 2026-08-13 | `docs/openapi-role` | `ApiDesign.md` 1.3 に食い違い時の行動表がある。`Design.md` 3.3 から「手書き」の語が消え、採らない3方式とその理由が表になっている。`pb-step.md` の実装の節に openapi.yaml の更新が入っている |
+| **`docs/Development.md` の作成**（手順7.5 の積み残し。`Design.md` 4.1 が予定し `DbDesign.md` 7.6.6 が参照を約束していた） | 完了 | 2026-08-15 | `docs/development-guide` | 初回セットアップ（秘密3ファイル → `make up` → `migrate` → `dev-reset`）から**実際にログインできる**ところまでを、書かれたとおりに実行して確認した。`docs/README.md` と `CLAUDE.md` から参照が張られている。`PROGRESS.md` の環境メモは手順を移し、記録とポインタだけ残した。**利用者が実際に上から順にたどったフィードバックで4点を追補**（前提の確認コマンドと付録A、`make build` が要る場面、サーバの止め方、HMR の説明） |
+| `GuiDesign.md` 4.2 / 5.1 の図の追従（バージョン表記とテーマの選択肢） | 完了 | 2026-08-15 | `docs/development-guide` | 図から `v0.1.0` が消え、`PB v<version>` になっている。実装が出すのは `VERSION` の値（現在 `1.9.12`） |
 
 ## バージョンの現況
 
 | | 値 |
 |---|---|
-| 現在 | **v1.9.11**（マージ前。マージ後に `make version-check` が通る） |
-| 内訳 | メジャー1 / マイナー9 / ビルド11 |
+| 現在 | **v1.9.12**（マージ前。マージ後に `make version-check` が通る） |
+| 内訳 | メジャー1 / マイナー9 / ビルド12 |
 | ビルド1 | 手順2（`feature/step-02-migrations`）のマージ |
 | ビルド2 | バージョン運用の導入（`feature/versioning`）のマージ |
 | ビルド3 | 手順3（`feature/step-03-admin-create`）のマージ |
@@ -73,7 +75,10 @@
 | ビルド8 | `GuiDesign.md` 3.2 への `/` の行の追加（`docs/routing-root-path`）のマージ |
 | ビルド9 | `openapi.yaml` の役割の再定義（`docs/openapi-role`）のマージ |
 | ビルド10 | 手順7.5（`feature/step-07-5-dev-seed`）のマージ |
-| ビルド11 | 手順8a・8b（`feature/step-08-login-and-menu`）のマージ **← これから** |
+| ビルド11 | 手順8a・8b（`feature/step-08-login-and-menu`）のマージ |
+| ビルド12 | `docs/Development.md` の作成（`docs/development-guide`）のマージ **← これから** |
+
+`docs/development-guide` は文書のみの追加のため `make bump-build`（`1.9.11` → `1.9.12`）。
 
 手順8 はブラウザでログインでき、権限で画面とメニューが変わるようになる機能追加のため
 `make bump-minor`（`1.8.10` → `1.9.11`）。8a と 8b は**同じブランチに載せて1回のマージ**
@@ -259,7 +264,7 @@
 | 2026-08-15 | 8a | `docs/openapi.yaml` の初版（手順7からの積み残し） | **実装済みの4本**（`/api/v1/auth/login`・`/auth/logout`・`/me`・`/healthcheck`）のみを記述した。`servers` を `/` にして paths に完全なパスを書いている。`/healthcheck` が唯一 `/api/v1` の外にある（`ApiDesign.md` 2.11）ためで、こうするとドリフト検出も例外リストなしで済む。`info.version` は固定の `1.0.0` |
 | 2026-08-15 | 8a | 更新漏れの検出（`Design.md` 3.3、手順外の積み残し） | **`server/internal/httpapi/openapi_drift_test.go` を追加。** `chi.Walk` のルート一覧と yaml の `paths` を突き合わせ、**実装にあって yaml に無い／yaml にあって実装に無い**の両方向を報告する。パーサは dev seed で既に入れた `yaml.v3`（依存追加なし）。検出できることを、yaml を一時的に壊して両方向とも確認済み |
 | 2026-08-15 | 8a | `GET /auth/providers`（`ApiDesign.md` 3.3）を呼ぶか。`GuiDesign.md` 5.1 は IdP ボタンをこの API から動的生成すると定める | **呼んでいない。** Phase 1 の認証手段は `local` のみで 5.1 自身が「非表示」としており、**API も未実装**（手順5a で見送り）。手順8は TypeScript のみのステップ（`Design.md` 11.2）なので Go を混ぜない。**Phase 3 で OIDC/SAML を足すときに、API とボタンをセットで実装する** |
-| 2026-08-15 | 8a | 画面に出すバージョン（5.1 のフッタ・4.2 のユーザーメニューの「PB v0.1.0」）の取得元が設計文書に無い | **ビルド時に `VERSION` を埋める方式をユーザーが承認**（2026-08-15）。`client/src/version.ts` が `../../VERSION?raw`（Vite の機能。型は `vite/client` に含まれ依存を増やさない）で読む。`/healthcheck` から取らないのは、**既定でバージョンを返さない設定**（`PB_HEALTH_SHOW_VERSION=false`、2.11）と衝突するため。`vite.config.ts` に `server.fs.allow: ['..']` を足した |
+| 2026-08-15 | 8a | 画面に出すバージョン（5.1 のフッタ・4.2 のユーザーメニューの「PB v0.1.0」）の取得元が設計文書に無い。**図の `v0.1.0` は 11.1 の採番規約（メジャーは当面 1、`VERSION` が正本）より前の記述で、実際に 0.x だったことは一度もない**（`VERSION` の初出は `1.2.2`）。ユーザーが画面の `PB v1.9.12` を見て食い違いに気づいた | **ビルド時に `VERSION` を埋める方式をユーザーが承認**（2026-08-15）。`client/src/version.ts` が `../../VERSION?raw`（Vite の機能。型は `vite/client` に含まれ依存を増やさない）で読む。`/healthcheck` から取らないのは、**既定でバージョンを返さない設定**（`PB_HEALTH_SHOW_VERSION=false`、2.11）と衝突するため。`vite.config.ts` に `server.fs.allow: ['..']` を足した。**図の側は `PB v<version>` のプレースホルダ表記に直した**（2026-08-15、`GuiDesign.md` 4.2 / 5.1）。具体値を書くとバージョンを上げるたびに図の修正が要るため。**メジャーは上げない**（11.1 の「当面 1」のまま。ユーザーの判断、2026-08-15） |
 | 2026-08-15 | 8a | セッション失効（401）を受けたときの共通処理の置き場所 | **`api/client.ts` にハンドラの登録口だけ置き、`main.ts` で結ぶ。** ストアやルータを client.ts から import すると循環する。起動時の `GET /me` は「未ログインなら 401 が正常」なので、`allowUnauthenticated` を付けて共通処理を走らせない |
 | 2026-08-15 | 8a | 2.5 の形式で返ってこないエラー（通信不能・プロキシ由来の応答）の文言 | **この2か所だけ画面側が文言を持つ**（`ApiError` の生成箇所）。サーバから `message` が来ないため。それ以外は**必ずサーバの `message` をそのまま出す**（`ApiDesign.md` 2.5、`CLAUDE.md` の規約） |
 | 2026-08-15 | 8a | 認証済みで `/login` を開いたときの挙動（文書に記載なし） | **`/projects` へ送る**（`GuiDesign.md` 3.1 の遷移図。ログインは未認証の入口であり、認証済みで留まる意味がない） |
@@ -268,7 +273,7 @@
 | 2026-08-15 | 8b | メニューのプロジェクト領域を何から作るか。`GET /projects`（手順9）はまだ無い | **`GET /me` の `projects[]`**（`ApiDesign.md` 4.1）から作った。切替に必要な `key` / `name` / `permissions` が揃っており、新しいAPIを発明していない。**所属していないプロジェクトを見ているアドミニストレータでは一覧が空になる**ため、空状態の文言を出している（`GuiDesign.md` 6.2）。手順9以降で `GET /projects` に差し替えるかは、そのとき判断する |
 | 2026-08-15 | 8b | 「選択中のプロジェクト」をどこで持つか（`GuiDesign.md` 7.1 は `project` ストアを挙げる） | **URL の `:key` から導出し、`project` ストアを作っていない。** 一覧のキャッシュ（7.1）は `GET /projects` が要るため手順10のスコープ。URL を正とすれば、リロードや直リンクでも選択状態がずれない |
 | 2026-08-15 | 8b | チケットの未完了件数バッジ（4.1 の `[12]`）を出すか | **出していない。** 供給するAPIが手順18（チケット）であり、`/me` にも件数が無い。**数字を出さないことで「0件」との誤読も起きない** |
-| 2026-08-15 | 8b | 4.2 のテーマ切替が「ライト / ダーク」の2つに見えるが、8.11 は3値（ライト／ダーク／システムに従う、既定はシステム） | **3値をそのまま出した。** 2値にすると**既定の「システムに従う」へ戻せない**。色相（ブルー／グリーン）の切替は 8.11 が `/me` の画面と定めているためメニューに置いていない（手順17） |
+| 2026-08-15 | 8b | 4.2 のテーマ切替が「ライト / ダーク」の2つに見えるが、8.11 は3値（ライト／ダーク／システムに従う、既定はシステム） | **3値をそのまま出した。** 2値にすると**既定の「システムに従う」へ戻せない**。色相（ブルー／グリーン）の切替は 8.11 が `/me` の画面と定めているためメニューに置いていない（手順17）。→ **`GuiDesign.md` 4.2 に反映済み**（2026-08-15、図と本文の両方） |
 | 2026-08-15 | 8b | 折りたたみ状態（2.3.3 の永続化）と、幅による既定（2.4）のどちらが優先するか | **利用者が明示的に選んだ状態が優先。** 未選択の間だけ幅で決める（≥1280px は展開、768〜1279px は折りたたみ）。2.4 の「既定」は選んでいない場合の値であり、選択を上書きすると 2.3.3 の「次回も維持する」が成り立たない。両方をブラウザで固定した |
 | 2026-08-15 | 8b | 768px 未満（2.4）でメニューをどう出すか | **オーバーレイ＋左上の浮遊ボタン（案B）＋スクリム**。2.4 が「この幅でのみ案Bを採る」としている。リロードで解除する（保存しない）。Phase 1 は「破綻しない」水準に留める方針のまま |
 | 2026-08-15 | 8b | ショートカット（9.1）をどこまで実装するか | **`[`（メニューの折りたたみ）のみ。** 手順8で作ったのはメニューであり、`g p` / `g t` / `c` / `j` `k` は遷移先や一覧が実装された手順で足すのが自然。入力欄にフォーカスがあるときは横取りしない |
@@ -855,74 +860,44 @@ Playwright / Puppeteer は入れていない。スクリプトはリポジトリ
 ## 環境メモ
 
 実際に動かして分かったこと（バージョンの相性、ハマった点、回避策）を追記する。
-ここに書いた内容は、後から `CLAUDE.md` や設計文書へ昇格させることを検討する。
+
+> **再現できる手順は `docs/Development.md` に移した**（2026-08-15、`docs/development-guide`）。
+> 起動・セットアップ・検証のやり方を知りたいときはそちらを見ること。**ここに残すのは
+> 「いつ・どの手順で・何を見つけたか」の記録**であり、手順の正本ではない。
+> 新しく分かったことは、まずここに書き、再現手順として使えるものは `Development.md` へ写す。
 
 - ホストの Node: **v24.14.0** / npm **11.9.0**（手順7の時点）。`make build-client` は `npm ci` を使うため
   `client/package-lock.json` をコミットしている
 - client の依存（手順8時点）: `vue` / `vue-router` / `pinia` ＋ dev に `vite` / `@vitejs/plugin-vue` /
   `typescript` / `vue-tsc` / **`openapi-typescript`**（手順8で追加。型生成のみで実行時には入らない）
-  - **`typescript` は `^5` に固定すること。** `npm install -D typescript` は 7.x を入れるが、
-    vue-tsc 3.3.9 が `typescript/lib/tsc` を require できず `ERR_PACKAGE_PATH_NOT_EXPORTED` で落ちる
+  - **`typescript` は `^5` に固定すること**（手順7で判明。vue-tsc 3.3.9 が TS 7 の
+    `typescript/lib/tsc` を require できない）→ 症状と対処は `Development.md` 9章
   - `npm run build` は型検査（`vue-tsc --noEmit`）を通してから `vite build` する。型エラーは
     ビルドを止める
-- **`make build` の後は `make clean-webui` を実行してからコミットする。** ビルド成果物が
-  追跡対象の `server/internal/webui/dist/index.html` を上書きするため。`clean-webui` は
-  **コミット済みの内容**へ戻すので、プレースホルダ自体を書き換えたときは先に `git add` すること
-- **画面の描画はヘッドレス Chrome で確認できる**（手順7で使用。Playwright 等は入れていない）。
-
-  ```
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --disable-gpu \
-    --virtual-time-budget=3000 --user-data-dir=<一時ディレクトリ> --dump-dom http://localhost:8080/
-  ```
-
-  `--user-data-dir` は**呼び出しごとに別のディレクトリにする**。同じものを使い回すと
-  プロファイルのロックで2回目以降が固まる。`--virtual-time-budget` は SPA のマウントを待つため
-  - **フォーム入力やクリックを伴う検証には `--dump-dom` では足りない。** 手順8では
-    `--headless=new --remote-debugging-port=9222` で起動し、**CDP を WebSocket で直接叩く
-    使い捨てスクリプト**（Python 標準ライブラリのみ。`Runtime.evaluate` / `Page.navigate` /
-    `Page.captureScreenshot` / `Emulation.setDeviceMetricsOverride`）を書いた
-  - **ウィンドウ幅を必ず指定する（`--window-size=1440,900`）。** 既定のままだと 768px 未満と
-    判定され、メニューがオーバーレイ（`GuiDesign.md` 2.4）になって「メニューが出ない」と誤読する
-  - `v-model` の入力欄に値を入れるときは、`el.value = v` ではなく
-    **ネイティブの value セッターを呼んでから `input` イベントを発火**する。前者では Vue が気づかない
-- **コンテナランタイムは Rancher Desktop**（`docker` は `~/.rd/bin/docker`）。停止していると
-  `make up` が `failed to connect to the docker API` で落ちる。`open -a "Rancher Desktop"` で
-  起動し、`docker info` が通るまで待つ（手順8では約30秒）
+- **`make build` の後は `make clean-webui` を実行してからコミットする**（手順7で判明）
+  → `Development.md` 7.1
+- **画面の描画はヘッドレス Chrome で確認できる**（手順7で導入、手順8で CDP 経由の操作まで拡張）
+  → 呼び出し方と注意点は `Development.md` 8章。Playwright / Puppeteer は入れていない
+  - 手順8で気づいた2点（**ウィンドウ幅を指定しないと 768px 未満と判定される** ／
+    `v-model` にはネイティブの value セッター＋`input` イベントが要る）も 8章に書いた
+- **コンテナランタイムは Rancher Desktop**（`docker` は `~/.rd/bin/docker`）。手順8の開始時に
+  停止しており `make up` が落ちた → 起動手順は `Development.md` 1章・9章
 - **Vite 開発サーバは `:5173`（`strictPort`）。** ポートが空いていなければ黙ってずらさずに失敗する。
   API は別途 `make run` で `:8080` に立てる（`/api` `/mcp` だけがプロキシされる）
-- **`make run` を止め忘れると次のセッションで `bind: address already in use` になる。** 手順5b の検証時に、
-  前のセッションの `pb` が :8080 を掴んだままだった。他人のプロセスを落とさずに済ませるには
-  `PB_BIND=127.0.0.1:8099` のように待受を変えて起動する（`make run` の recipe を書き換える必要はない）。
-  占有しているのが自分の残骸かどうかは `lsof -nP -iTCP:8080 -sTCP:LISTEN` で確かめる
-- **Cookie 認証で状態変更系を叩くテストは `X-PB-CSRF` が要る**（手順5b で導入）。curl での手順：
-
-  ```
-  curl -s -c cj.txt -X POST .../api/v1/auth/login -d '{"email":"…","password":"…"}'
-  CSRF=$(grep pb_csrf cj.txt | awk '{print $7}')
-  curl -s -b cj.txt -X POST -H "X-PB-CSRF: ${CSRF}" .../api/v1/auth/logout
-  ```
-
-  `-c` で保存した Cookie jar はタブ区切りで、値は7列目にある。Bearer 認証なら CSRF は不要
+- **`make run` を止め忘れると次のセッションで `bind: address already in use` になる**（手順5b で発生）
+  → 確認と回避は `Development.md` 9章
+- **Cookie 認証で状態変更系を叩くテストは `X-PB-CSRF` が要る**（手順5b で導入）
+  → curl の手順は `Development.md` 8.3
 - **レート制限のカウンタはプロセス内メモリにある**（手順5b）。`make run` を再起動すると消えるため、
   429 を再現する検証は**サーバを起動したまま**続けて叩くこと。ログインは IPあたり 10回/分
 - **パスワードを知らないアカウントでログインを試すと `failed_attempts` が増える**（手順6a の疎通確認で
-  `tanaka@example.com` に1回記録した）。5回で15分ロックされ、次のセッションの検証を妨げる。
-  検証で失敗ログインを打ったら戻しておくこと：
-
-  ```
-  UPDATE local_credential SET failed_attempts = 0, locked_until = NULL;
-  ```
-
+  `tanaka@example.com` に1回記録した）。5回で15分ロックされ、次のセッションの検証を妨げる
+  → 戻し方は `Development.md` 8.4
 - **プロジェクトキーには CHECK 制約がある**（`DbDesign.md` 6.4）。`^[a-z0-9][a-z0-9-]{1,19}$` で
   **2〜20文字**。テストで ULID をそのまま使うと長さ超過で INSERT が落ちる（末尾6文字を小文字化して使った）
 - **`.claude/settings.json` の deny は Read ツールにしか効かない。** `Read(./deploy/*/secrets/**)` を deny していても、`allow` にある `Bash(cat:*)` 経由では読めてしまう（手順4b の検証で `app_db_password` を実際にそう読んだ）。秘密を機械的に守りたい場合は Bash 側にも `deny` を足す必要がある
-- **DBを使うテストは `PB_TEST_DATABASE_URL` で切り替える**（手順4b で導入）。未設定ならスキップするので `make test` は DB 無しでも通る。実行例：
-
-  ```
-  PW=$(cat deploy/dev/secrets/app_db_password)
-  cd server && PB_TEST_DATABASE_URL="postgres://pb_app:${PW}@127.0.0.1:5432/pb" go test ./internal/httpapi/ -run Integration -v
-  ```
-
+- **DBを使うテストは `PB_TEST_DATABASE_URL` で切り替える**（手順4b で導入）。未設定ならスキップするので
+  `make test` は DB 無しでも通る → 実行例は `Development.md` 6.1。
   接続は `pb_app`（DML のみ）で行う。実運用と同じ権限で通ることを確かめるため
 - **`t.Cleanup` は `defer` より後に走る。** 結合テストで `defer pool.Close()` と `t.Cleanup(削除)` を併用すると、後片付けの時点でプールが閉じていて `closed pool` になる。プールの close も `t.Cleanup` で登録し、LIFO の順序を使うこと
 - **可変長引数を渡さないと `nil` スライスになる**（`[]string{}` ではない）。実効権限のキャッシュは
@@ -935,7 +910,7 @@ Playwright / Puppeteer は入れていない。スクリプトはリポジトリ
   ハッシュのパラメータは `server/internal/auth/password.go` の `hashParams`
   （m=65536, t=3, p=4, salt=16, key=32）に合わせること
 - **検証で `login.failure` を1件でも出したら消しておく。** `audit_log` に残り、次のセッションの
-  件数の検証を狂わせる。`actor_id` が NULL の行（未登録メールでの失敗）は `detail->>'email'` で特定する
+  件数の検証を狂わせる → あとしまつの一覧は `Development.md` 8.4
 - Go の直接依存（手順4b時点）: `jackc/pgx/v5 v5.7.5` / `oklog/ulid/v2 v2.1.2` / `alexedwards/argon2id v1.0.0` / `golang.org/x/term v0.33.0` / `go-chi/chi/v5 v5.3.1`（手順4a から**増えていない**。トークンのハッシュと乱数は標準ライブラリの `crypto/sha256` / `crypto/rand` で足りる）
   - **`x/term` と `x/sys` はバージョンを上げないこと。** 最新版は go 1.25 を要求し、`go get` が go ディレクティブを勝手に 1.25.0 へ引き上げる（`Design.md` 3.1 と衝突）。上げる際は 3.1 の最低バージョンとセットで見直す
   - `go get` 後は `head -3 server/go.mod` で go ディレクティブが `1.24` のままか確認する

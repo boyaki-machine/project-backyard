@@ -16,6 +16,7 @@
 | 画面・遷移・配色 | `docs/GuiDesign.md` |
 | 要件・背景・AI駆動開発の構想 | `docs/Requirements.md` |
 | 文書の索引と主要な設計判断 | `docs/README.md` |
+| 開発環境の立ち上げ・検証手順（**設計ではなく手順**） | `docs/Development.md` |
 
 **全文を読み込まないこと。** 各文書は数百〜1400行ある。目次から必要な章を特定して、その章だけを読む。
 
@@ -88,6 +89,9 @@ make dev-reset   # 開発用：DBを作り直してデモデータを投入（�
 make dev-seed    # 開発用：デモデータのみ投入（冪等）
 make dev-info    # 開発用：URL とデモアカウント一覧を表示
 ```
+
+**セットアップ・検証・つまずいたときの対処は `docs/Development.md`。** 秘密ファイルの配置、
+結合テストの走らせ方、ヘッドレス Chrome での画面確認、`make build` 後の `make clean-webui` など。
 
 ## 進捗と作業の進め方
 

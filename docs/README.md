@@ -13,6 +13,8 @@ Design.md         全体設計 ── システム構成・技術選定・認証
       ├── DbDesign.md    データベース設計   ← スキーマ・マイグレーション・DB実行環境
       ├── ApiDesign.md   REST API 設計     ← エンドポイント仕様
       └── GuiDesign.md   GUI 設計          ← 画面・遷移・配色
+
+Development.md     開発環境ガイド ── 上記を実際に動かす手順（設計ではない）
 ```
 
 | 文書 | 内容 | 状態 |
@@ -22,8 +24,13 @@ Design.md         全体設計 ── システム構成・技術選定・認証
 | [DbDesign.md](DbDesign.md) | Phase 1 の完全なDDL・マイグレーション・初期データ・docker compose 構成 | Phase 1 確定 |
 | [ApiDesign.md](ApiDesign.md) | 認証・プロジェクト・ユーザー管理APIを確定。チケットAPIは未着手 | Phase 1 前半確定 |
 | [GuiDesign.md](GuiDesign.md) | 画面遷移・ワイヤーフレーム・モノクロマティック配色体系 | Phase 1 確定 |
+| [Development.md](Development.md) | **開発環境の立ち上げ・デバッグ手順。** 設計ではなく、実装済みの範囲を動かす手順 | 実装に追従 |
 
 **記述が食い違った場合は、各領域の正本を優先する。**
+
+**`Development.md` は設計文書ではない。** 設計と食い違ったら設計側（上の4文書）が正しく、
+`Development.md` の側を直す。手順が実装に追いつかなくなるのが唯一の失敗の形なので、
+コマンドやターゲットを増やしたステップの成果物にこの文書の更新を含める。
 
 ## 領域と正本の対応
 
@@ -38,6 +45,7 @@ Design.md         全体設計 ── システム構成・技術選定・認証
 | 画面・UI・配色 | `GuiDesign.md` |
 | 開発フェーズ・実装順序 | `Design.md` 11章 |
 | ブランチ運用・バージョン番号 | `Design.md` 11.0〜11.1 |
+| 開発環境の立ち上げ・デバッグ手順 | `Development.md` |
 
 ## 主要な設計判断
 
