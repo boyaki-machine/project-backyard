@@ -17,7 +17,7 @@
 ```
 1. 前提（必要なもの）        ← 確認コマンド。足りなければ付録A へ
 2. 初回セットアップ
-3. 日々の開発                ← 起動と止め方、make build が要る場面
+3. 日々の開発                ← 起動と止め方、make build が要る場面、終わり方（3.4）
 4. 開発用デモデータ
 5. コード生成（sqlc / openapi-typescript）
 6. テスト
@@ -196,7 +196,55 @@ make dev-client   # :5173。ブラウザで開くのはこちら
 | `make psql` | DBコンソール（`pb_owner` で接続） |
 | `make dev-info` | URL とデモアカウントの一覧。**パスワードを探す時間をなくすためのもの** |
 | `make test` | Go のテスト |
-| `make down` | コンテナを停止する。**`pgdata` ボリュームは残る**ので、次の `make up` でデータは戻る |
+| `make down` | コンテナを停止する。**`pgdata` ボリュームは残る**ので、次の `make up` でデータは戻る（3.4） |
+
+## 3.4 作業を終える／再開する（端末のリソースを解放する）
+
+**開発端末を他の用途にも使うなら、作業の終わりに解放しておく。** PB が端末に残すものは
+次の3つで、上から順に止める。
+
+| 動いているもの | 止め方 | 残るもの |
+|---|---|---|
+| `make run` のサーバ（:8080） | `Ctrl + C`（3.1「止め方」） | 何も残らない |
+| `make dev-client` の Vite（:5173） | `Ctrl + C` | 何も残らない |
+| DB コンテナ | **`make down`** | **`pgdata` ボリューム（＝データ）は残る** |
+
+```
+make down     # docker compose down。コンテナとネットワークを破棄する
+```
+
+**再開はこれだけでよい。**
+
+```
+make up       # 同じデータで戻る。migrate も dev-seed も要らない
+```
+
+`make down` は **`-v` を付けない**ので、ボリューム `project-backyard_pgdata` は消えない。
+デモデータもログイン済みのアカウントもそのまま戻る（実測：`make down` → `make up` の後も
+ユーザー4件・プロジェクト1件が残っている）。
+
+**データごと捨てたいときだけ `make dev-reset`** を使う（`down -v` を含む。4章）。
+`make down` と `make dev-reset` の違いはここだけである。
+
+### どこまで解放されるか
+
+| 操作 | 解放されるもの | 実測の目安 |
+|---|---|---|
+| `make down` | PB の DB コンテナ | 約 36 MiB |
+| コンテナランタイム自体の終了（Rancher Desktop を終了する等） | ランタイムの常駐プロセスと VM | 数百 MB 規模 |
+
+**`make down` だけではランタイムの VM は動いたままである。** Rancher Desktop のように
+Kubernetes を同梱する製品では、PB と無関係なコンテナ（coredns / traefik など）も
+動き続ける。**端末のメモリをしっかり空けたいなら、ランタイムのアプリごと終了する。**
+次に開発するときは、A.1 のとおり起動して `docker info` が通るのを待ってから `make up` する。
+
+数値は実測の一例で、環境によって変わる。自分の環境で見るには:
+
+```
+docker stats --no-stream        # コンテナごとの使用量
+docker compose -f deploy/base/compose.yaml ps    # PB のコンテナが動いているか
+lsof -nP -iTCP:8080 -sTCP:LISTEN                 # サーバが残っていないか
+```
 
 ---
 
@@ -207,7 +255,7 @@ make dev-client   # :5173。ブラウザで開くのはこちら
 
 | コマンド | 動作 |
 |---|---|
-| `make dev-reset` | `docker compose down -v`（**ボリュームごと破棄**）→ 起動 → `migrate` → `dev-seed`。実行前に確認を求める |
+| `make dev-reset` | `docker compose down -v`（**ボリュームごと破棄**）→ 起動 → `migrate` → `dev-seed`。実行前に確認を求める。**日々の停止は `make down`**（データが残る。3.4） |
 | `make dev-seed` | デモデータのみ投入。**冪等**（既存のメール／プロジェクトキーはスキップして件数を報告する） |
 | `make dev-info` | URL とアカウント一覧を表示。DBには接続しない |
 
@@ -399,6 +447,8 @@ DBを丸ごと作り直してよい場面では、**個別に戻すより `make 
 | `Ctrl + C` の後に `make: *** [run] Error 1` が出る | **異常ではない**（3.1 の「止め方」）。`go run` がシグナル終了を失敗として扱うため。`停止信号を受け取った` → `サーバを停止した` の2行が出ていれば正常 |
 | 画面を直したのに反映されない | :8080 は embed 済みの画面を返す。`make build` し直すか、:5173（`make dev-client`）で見る（3.1 / 3.2） |
 | `go version` が 1.24 未満 | 付録 A.2。goose / sqlc も Go 経由で動くため、ここが古いとマイグレーションから先に進めない |
+| `make down` したらデータも消えたのでは、と不安になる | 消えていない。`-v` を付けていないのでボリュームは残る（3.4）。`docker volume ls \| grep backyard` に `project-backyard_pgdata` があれば無事 |
+| 端末が重い。PB を止めたのにメモリが空かない | `make down` はコンテナだけ。**コンテナランタイムの VM は動いたまま**（3.4）。アプリごと終了する |
 
 ---
 
