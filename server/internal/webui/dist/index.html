@@ -1,23 +1,13 @@
 <!doctype html>
-<!--
-  embed のプレースホルダ（Design.md 3.4）。
-
-  埋め込み対象のディレクトリが空だとコンパイルが通らないため、このファイルだけを
-  コミットしている。make build（sync-webui）が client/dist の実成果物で上書きする。
-  コミット前に戻すには make clean-webui を実行する（コミット済みの内容へ戻る）。
--->
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Project Backyard</title>
+    <script type="module" crossorigin src="/assets/index-B0C3Ppn1.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DY7E2ZMx.css">
   </head>
   <body>
-    <h1>Project Backyard</h1>
-    <p>Webクライアントがまだビルドされていません。</p>
-    <ul>
-      <li>単一バイナリを作る場合は <code>make build</code></li>
-      <li>開発中は <code>make dev-client</code>（Vite 開発サーバ :5173）</li>
-    </ul>
+    <div id="app"></div>
   </body>
 </html>
