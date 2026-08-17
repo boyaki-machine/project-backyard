@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import EmptyState from '../components/EmptyState.vue'
+import NewProjectModal from '../components/NewProjectModal.vue'
 import PageHeader from '../components/PageHeader.vue'
-import type { ProjectListItem, ProjectSort } from '../api/projects'
+import type { ProjectDetail, ProjectListItem, ProjectSort } from '../api/projects'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
 
@@ -16,17 +17,51 @@ import { useProjectStore } from '../stores/project'
  *
  * 4状態（読み込み中・空・エラー・正常）をすべて持つ（6.2）。
  *
- * 新規作成モーダル（5.2.1）は手順10b。ここでは `+ 新規プロジェクト` が
- * 3.2 の `/projects?new=1` へ遷移するところまでを作る。
+ * 新規作成モーダル（5.2.1）は `/projects?new=1` で開く。**モーダルはURLを
+ * 持たないのが原則で、これだけが例外**（3.2。直リンクで開けるようにするため）。
  */
 const auth = useAuthStore()
 const store = useProjectStore()
+const route = useRoute()
 const router = useRouter()
 
 /** 副次アクションの `⋯`（2.5）。今は「アーカイブを表示」だけが入る */
 const menuOpen = ref(false)
 
 const canCreate = computed(() => auth.can('project.create'))
+
+/**
+ * 新規作成モーダルの開閉（3.2 の `/projects?new=1`）。
+ *
+ * `project.create` を持たない利用者には、URL を直接叩かれても開かない。
+ * サーバも 403 を返すが、出せない操作の画面を見せない（6.4.4）。
+ */
+const showNewModal = computed(() => canCreate.value && route.query.new === '1')
+
+function closeNewModal() {
+  void router.replace({ path: '/projects' })
+}
+
+/**
+ * 作成できたらプロジェクトダッシュボードへ送る（3.1 の遷移図
+ * 「新規作成モーダル ──作成──▶ プロジェクトダッシュボード」）。
+ *
+ * 遷移の前に `GET /me` を取り直す。作成者は `project_admin` として
+ * メンバーに入る（`ApiDesign.md` 5.3）ので、取り直さないとメニューの
+ * プロジェクト切替（4.4）にも遷移先の見出しにも新しいプロジェクトが出ない。
+ * 失敗しても遷移は続ける（次のリロードで揃う）。
+ *
+ * 一覧をここで取り直す必要はない。戻ってくれば再マウントで取り直され、
+ * 既定の並び（最終更新の降順）で先頭に出る。
+ */
+async function onCreated(project: ProjectDetail) {
+  try {
+    await auth.refresh()
+  } catch {
+    // 一覧・見出しの表示が古くなるだけで、作成そのものは済んでいる
+  }
+  await router.replace(`/p/${project.key}`)
+}
 
 /**
  * 列の定義。`sort` を持つ列だけがソート可能である。
@@ -100,6 +135,8 @@ function openRow(item: ProjectListItem, e: MouseEvent) {
 function onKeydown(e: KeyboardEvent) {
   if (e.key !== 'j' && e.key !== 'k') return
   if (e.metaKey || e.ctrlKey || e.altKey) return
+  // モーダルが開いている間は背後の一覧へフォーカスを移さない（9.2 のトラップ）
+  if (showNewModal.value) return
   const el = e.target as HTMLElement | null
   // 入力中は横取りしない（AppShell の `[` と同じ扱い）
   if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return
@@ -283,6 +320,8 @@ async function retry() {
         </button>
       </div>
     </div>
+
+    <NewProjectModal v-if="showNewModal" @close="closeNewModal" @created="onCreated" />
   </div>
 </template>
 
