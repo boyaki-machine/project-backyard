@@ -6,6 +6,7 @@ import NotFoundPage from '../pages/NotFoundPage.vue'
 import PlaceholderPage from '../pages/PlaceholderPage.vue'
 import ProjectSettingsPage from '../pages/ProjectSettingsPage.vue'
 import ProjectsPage from '../pages/ProjectsPage.vue'
+import UsersPage from '../pages/UsersPage.vue'
 
 /**
  * プレースホルダページに渡す内容（GuiDesign.md 6.5）。
@@ -132,23 +133,12 @@ export const routes: RouteRecordRaw[] = [
     meta: { permission: 'project.edit' },
   },
 
+  // 実画面（GuiDesign.md 5.6）。手順12b でプレースホルダから差し替えた。
+  // 行の操作メニュー（`[⋯]`）と「ロールと権限」タブの中身は手順13・14
   {
     path: '/admin/users',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'user.manage',
-      placeholder: {
-        title: 'ユーザー / 権限管理',
-        docRef: 'GuiDesign.md 5.6',
-        status: 'Phase 1・手順12で実装（API は 12a、画面は 12b）',
-        planned: [
-          'ユーザーとエージェントの一覧（名前・メール・ロール・状態）',
-          'ユーザー追加モーダル（5.6.1）',
-          '行の操作メニュー（編集／パスワードをリセット／セッションを全失効／無効化／削除）',
-          '「ロールと権限」タブ（5.6.3、Phase 1 は参照のみ）',
-        ],
-      },
-    },
+    component: UsersPage,
+    meta: { permission: 'user.manage' },
   },
 
   {

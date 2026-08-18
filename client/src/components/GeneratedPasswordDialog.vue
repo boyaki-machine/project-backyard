@@ -1,0 +1,202 @@
+<script setup lang="ts">
+/**
+ * 初期パスワードの1回表示（`GuiDesign.md` 5.6.1）。
+ *
+ * **`generated_password` はユーザー作成の応答でのみ返る**（`ApiDesign.md` 6.2）。
+ * 再表示する API は無く、監査ログにも残らない。そのため
+ *
+ * - 再表示できない旨を明記する
+ * - コピーボタンを置く（`ApiDesign.md` 4.5 のトークン発行と同じ扱い）
+ * - **コピーに失敗しても値は画面に出したままにする**（手で写せるように）
+ *
+ * `password_mode=manual` のときは呼び出し側が平文を持っているのでこの
+ * ダイアログを出さない。開閉の判断は `UsersPage` にある。
+ */
+import { ref, useTemplateRef } from 'vue'
+
+import Modal from './Modal.vue'
+
+defineProps<{ displayName: string; email: string; password: string }>()
+
+const emit = defineEmits<{ close: [] }>()
+
+const passwordEl = useTemplateRef<HTMLElement>('passwordEl')
+
+/** コピーの結果。`manual` は「自分で選択してコピーしてほしい」状態 */
+const copied = ref<'idle' | 'ok' | 'manual'>('idle')
+
+/**
+ * 値を選択状態にする。
+ *
+ * `navigator.clipboard` は安全なコンテキスト（https / localhost）でしか
+ * 使えず、権限や利用者の設定で失敗もする。**失敗したら選択だけ済ませて
+ * ⌘C に委ねる**。ダイアログを閉じると二度と出せない値なので、
+ * コピーできなかったことを理由に何も渡さない状態にはしない。
+ */
+function selectPassword() {
+  const el = passwordEl.value
+  if (!el) return
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+}
+
+async function copy(password: string) {
+  try {
+    if (!navigator.clipboard) throw new Error('clipboard unavailable')
+    await navigator.clipboard.writeText(password)
+    copied.value = 'ok'
+  } catch {
+    copied.value = 'manual'
+    selectPassword()
+  }
+}
+</script>
+
+<template>
+  <Modal title="初期パスワード" @close="emit('close')">
+    <div class="body">
+      <p class="lead">
+        <strong>{{ displayName }}</strong> を追加しました。
+      </p>
+
+      <!-- warning は「面」で表す（8.4.1）。文字色はベースのまま -->
+      <p class="warn">⚠ このパスワードはこの画面でしか確認できません。閉じると再表示できません。</p>
+
+      <dl class="fields">
+        <dt>メールアドレス</dt>
+        <dd>{{ email }}</dd>
+        <dt>初期パスワード</dt>
+        <dd>
+          <div class="password-line">
+            <code ref="passwordEl" class="password">{{ password }}</code>
+            <button type="button" class="secondary" @click="copy(password)">コピー</button>
+          </div>
+          <!-- 状態を色だけで示さない（9.2）ので記号か文言を必ず添える -->
+          <p v-if="copied === 'ok'" class="note" role="status">✓ コピーしました</p>
+          <p v-else-if="copied === 'manual'" class="note" role="status">
+            自動でコピーできませんでした。選択した状態にしたので ⌘C（Ctrl+C）でコピーしてください。
+          </p>
+        </dd>
+      </dl>
+
+      <p class="hint">
+        本人には、このパスワードと初回ログイン後に変更する必要があることを伝えてください。
+      </p>
+    </div>
+
+    <template #footer>
+      <button type="button" class="primary" @click="emit('close')">閉じる</button>
+    </template>
+  </Modal>
+</template>
+
+<style scoped>
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-4);
+}
+
+.lead {
+  margin: 0;
+}
+
+.warn {
+  margin: 0;
+  padding: var(--pb-space-2) var(--pb-space-3);
+  border-left: 3px solid var(--pb-warning);
+  background: var(--pb-warning-bg);
+  color: var(--pb-text);
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-1);
+  margin: 0;
+}
+
+dt {
+  color: var(--pb-text-muted);
+  font-size: 13px;
+}
+
+dd {
+  margin: 0 0 var(--pb-space-3);
+}
+
+dd:last-child {
+  margin-bottom: 0;
+}
+
+.password-line {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+}
+
+/* 読み上げ・転記しやすい語句連結方式（`ApiDesign.md` 6.2.1）。等幅で出して
+   `l` と `1`、`0` と `O` を見分けられるようにする */
+.password {
+  flex: 1;
+  min-width: 0;
+  padding: var(--pb-space-2) var(--pb-space-3);
+  overflow-x: auto;
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  user-select: all;
+}
+
+.note {
+  margin: var(--pb-space-1) 0 0;
+  color: var(--pb-text-muted);
+  font-size: 13px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--pb-text-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.primary,
+.secondary {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 32px;
+  padding: 0 var(--pb-space-4);
+  border-radius: var(--pb-radius);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.primary {
+  border: 1px solid var(--pb-accent);
+  background: var(--pb-accent);
+  color: var(--pb-on-accent);
+}
+
+.primary:hover {
+  border-color: var(--pb-accent-hover);
+  background: var(--pb-accent-hover);
+}
+
+.secondary {
+  border: 1px solid var(--pb-border);
+  background: var(--pb-surface);
+  color: inherit;
+}
+
+.secondary:hover {
+  background: var(--pb-hover);
+}
+</style>

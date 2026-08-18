@@ -637,7 +637,7 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 |---|---|---|
 | `kind` | `all` | `user` / `agent` / `all`。`GuiDesign.md` 5.6 は人間とエージェントを同一一覧に並べる。**`kind='system'` の actor は返さない**（`DbDesign.md` 6.2 の3種目。利用者が管理する対象ではない） |
 | `is_active` | `all` | `true` / `false` / `all`。**真偽値ではなく3値の文字列**として扱う（未指定と `false` を区別するため） |
-| `q` | — | 表示名・メールの部分一致（**ユーザー数20件超のときのみUIに表示**。APIは常に受け付ける）。**`%` と `_` はサーバ側でエスケープするため、ワイルドカードとしては働かない** |
+| `q` | — | 表示名・メールの部分一致。**`%` と `_` はサーバ側でエスケープするため、ワイルドカードとしては働かない** |
 | `sort` | `display_name` | `display_name` / `email` / `last_login_at` / `created_at` |
 | `order` | `asc` | `asc` / `desc`（2.6 の共通仕様）。**名簿は昇順で読むため、`GET /projects` の既定（`desc`）とは違う** |
 
