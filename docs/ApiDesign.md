@@ -567,12 +567,16 @@ GET /api/v1/projects/check-key?key=my-app
 
 `:key` はプロジェクトキー（ULIDではない）。URL・チケット番号と一致させ、開発時のデバッグを容易にする。
 
+`settings` は `project.settings`（jsonb）をそのまま返す。**Phase 1 が定義するキーは `repositories` のみ**で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は Phase 2）。
+
 ## 5.5 `PATCH /api/v1/projects/:key`
 
 **必要権限**：`project.edit`
 
 変更可能：`name` `description` `settings`。**送られたフィールドだけを更新する**（部分更新）。
 検証は 5.3 の表と同じ（`name` 1〜100文字、`description` 0〜1000文字）。
+
+**`settings` は丸ごと置き換える**（部分更新ではない）。サーバは JSON オブジェクトであることだけを確かめ、中身は検証しない。**呼び出し側は取得した `settings` を保持し、変更するキーだけ差し替えて全体を送ること。** 知らないキーを落とすと、他の機能の設定が消える。
 
 **`key` は含められない。** 送られた場合は `422`、`details` に
 `{ "field": "key", "code": "immutable_field" }` を載せる。`immutable_field` は

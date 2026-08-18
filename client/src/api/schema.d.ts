@@ -399,8 +399,11 @@ export interface components {
              */
             description?: string | null;
             /**
-             * @description `project.settings`（jsonb）をそのまま置き換える。Phase 1 では中身の
-             *     構造を定めていない（5.4 の例にある `max_concurrent_agents` は Phase 2）。
+             * @description `project.settings`（jsonb）をそのまま置き換える。**部分更新ではない**ので、
+             *     取得した値を保持し、変更するキーだけ差し替えて全体を送ること。
+             *
+             *     サーバは JSON オブジェクトであることしか検証しない。Phase 1 の画面が
+             *     使うキーは `repositories` のみで、構造の正本は DbDesign.md 6.4 にある。
              */
             settings?: {
                 [key: string]: unknown;
@@ -428,7 +431,10 @@ export interface components {
              *     （システムロール ∪ プロジェクトロール ∩ スコープ。Design.md 6.4.1）。
              */
             my_permissions: string[];
-            /** @description `project.settings`（jsonb）をそのまま返す。 */
+            /**
+             * @description `project.settings`（jsonb）をそのまま返す。Phase 1 の画面が使うキーは
+             *     `repositories` のみで、構造の正本は DbDesign.md 6.4 にある。
+             */
             settings: {
                 [key: string]: unknown;
             };

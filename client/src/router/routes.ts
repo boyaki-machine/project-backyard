@@ -4,6 +4,7 @@ import ForbiddenPage from '../pages/ForbiddenPage.vue'
 import LoginPage from '../pages/LoginPage.vue'
 import NotFoundPage from '../pages/NotFoundPage.vue'
 import PlaceholderPage from '../pages/PlaceholderPage.vue'
+import ProjectSettingsPage from '../pages/ProjectSettingsPage.vue'
 import ProjectsPage from '../pages/ProjectsPage.vue'
 
 /**
@@ -124,18 +125,11 @@ export const routes: RouteRecordRaw[] = [
     },
   },
 
+  // 実画面（GuiDesign.md 5.9）。手順11b でプレースホルダから差し替えた
   {
     path: '/p/:key/settings',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'project.edit',
-      placeholder: {
-        title: 'プロジェクト設定',
-        docRef: '設計未確定（GuiDesign.md 3.2 にルートのみ）',
-        status: 'Phase 1・手順11で実装',
-        planned: ['一般', 'メンバー'],
-      },
-    },
+    component: ProjectSettingsPage,
+    meta: { permission: 'project.edit' },
   },
 
   {

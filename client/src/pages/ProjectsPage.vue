@@ -6,6 +6,7 @@ import EmptyState from '../components/EmptyState.vue'
 import NewProjectModal from '../components/NewProjectModal.vue'
 import PageHeader from '../components/PageHeader.vue'
 import type { ProjectDetail, ProjectListItem, ProjectSort } from '../api/projects'
+import { formatDateTime } from '../lib/datetime'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
 
@@ -101,19 +102,6 @@ function sortBy(sort?: ProjectSort) {
 /** 進捗は数値のみを出す。プログレスバーは置かない（5.2） */
 function percent(progress: number): string {
   return `${Math.round(progress * 100)}%`
-}
-
-/**
- * 日時の表示（`2026-08-11 09:12`）。
- *
- * API は ISO8601 UTC で返す（`ApiDesign.md` 2.2）。ここでは端末のローカル時刻へ
- * 直して出す。`app_user.timezone` の反映は自分の設定（手順17）で扱う。
- */
-function formatDateTime(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 /**

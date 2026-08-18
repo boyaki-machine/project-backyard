@@ -80,6 +80,15 @@ export interface RequestOptions {
    * 走らせると、ログイン画面へ来ただけで失効の扱いになる。
    */
   allowUnauthenticated?: boolean
+
+  /**
+   * このリクエストにだけ載せるヘッダ。
+   *
+   * 今の用途は楽観ロックの `If-Match`（`ApiDesign.md` 2.8）ひとつである。
+   * **`Content-Type` と `X-PB-CSRF` は共通処理が決めるので、ここで上書きしない**
+   * （呼び出し側ごとに CSRF の付け方が変わると 2.4 の規約が崩れる）。
+   */
+  headers?: Record<string, string>
 }
 
 /** Cookie を読む。`pb_csrf` は HttpOnly ではない（2.4 の double submit のため） */
@@ -141,6 +150,12 @@ async function request<T>(
     if (csrf) headers[CSRF_HEADER] = csrf
   }
 
+  // 呼び出し側のヘッダは最後に載せる。ただし共通規約（Content-Type・CSRF）は
+  // 上で決めた値を残すため、既にあるキーは触らない。
+  for (const [k, v] of Object.entries(options.headers ?? {})) {
+    if (!(k in headers)) headers[k] = v
+  }
+
   let res: Response
   try {
     res = await fetch(BASE_PATH + path, {
@@ -175,4 +190,6 @@ export const api = {
   get: <T>(path: string, options?: RequestOptions) => request<T>('GET', path, undefined, options),
   post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>('POST', path, body, options),
+  patch: <T>(path: string, body?: unknown, options?: RequestOptions) =>
+    request<T>('PATCH', path, body, options),
 }

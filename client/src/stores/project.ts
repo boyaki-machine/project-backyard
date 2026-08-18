@@ -1,10 +1,9 @@
 /**
- * プロジェクト一覧の取得状態（`GuiDesign.md` 7.1 の project ストア）。
+ * プロジェクトの状態（`GuiDesign.md` 7.1 の project ストア）。
  *
- * 7.1 は「選択中プロジェクト、プロジェクト一覧のキャッシュ」を持つと定めるが、
- * 手順10a で要るのは一覧のみである。選択中プロジェクトは `/p/:key` の実画面
- * （手順18以降）で必要になった時点で足す。現状の切替メニュー（4.4）は
- * `GET /me` の `projects[]` とルートの `:key` で足りている。
+ * 7.1 が定める「選択中プロジェクト、プロジェクト一覧のキャッシュ」の両方を持つ。
+ * 一覧は手順10a、選択中プロジェクトは手順11b（プロジェクト設定画面）で足した。
+ * **2つは独立している**——一覧を取り直しても選択中は変わらないし、その逆も同じ。
  *
  * 4状態（読み込み中・空・エラー・正常）を持つのは `GuiDesign.md` 6.2 の規約。
  */
@@ -12,7 +11,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import * as projectsApi from '../api/projects'
-import type { ProjectListItem, ProjectSort, SortOrder } from '../api/projects'
+import type { ProjectDetail, ProjectListItem, ProjectSort, SortOrder } from '../api/projects'
 import { ApiError } from '../api/client'
 
 /** 1ページの件数。`ApiDesign.md` 2.6 / 5.1 のサーバ既定と同じ値を明示する */
@@ -116,6 +115,71 @@ export const useProjectStore = defineStore('project', () => {
     void fetch()
   }
 
+  // ── 選択中プロジェクト（`GuiDesign.md` 7.1）────────────────────────
+  //
+  // `GET /projects/:key`（5.4）の応答をそのまま持つ。ワークフローもメンバーも
+  // 自分の実効権限も同じ応答に入るため、設定画面はこの1件で描ける。
+
+  const current = ref<ProjectDetail | null>(null)
+  const currentLoading = ref(false)
+  const currentError = ref<ApiError | null>(null)
+
+  /** 取得済みの `current` がどのキーのものか。ルートの `:key` と突き合わせる */
+  const currentKey = computed(() => current.value?.key ?? null)
+
+  /** 一覧と同じ追い越し対策。プロジェクトを続けて切り替えたときに古い応答で上書きしない */
+  let currentSeq = 0
+
+  /**
+   * 選択中プロジェクトを取得する。
+   *
+   * 常に問い合わせる（キャッシュを返さない）。設定画面は `version` を持ち帰って
+   * 楽観ロックに使うため、**古い値を掴んだまま保存すると必ず 409 になる**。
+   */
+  async function fetchCurrent(key: string): Promise<void> {
+    const mine = ++currentSeq
+    currentLoading.value = true
+    currentError.value = null
+    try {
+      const res = await projectsApi.getProject(key)
+      if (mine !== currentSeq) return
+      current.value = res
+    } catch (e: unknown) {
+      if (mine !== currentSeq) return
+      currentError.value =
+        e instanceof ApiError
+          ? e
+          : new ApiError({
+              status: 0,
+              code: 'internal_error',
+              message: '予期しないエラーが発生しました',
+            })
+      current.value = null
+    } finally {
+      if (mine === currentSeq) currentLoading.value = false
+    }
+  }
+
+  /**
+   * 更新系の応答（5.4 と同形式）で選択中を差し替える。
+   *
+   * **進行中の取得より新しい**ので、通し番号を進めて追い越しを止める。
+   * これをしないと、保存の直後に遅れて届いた取得結果が古い `version` を戻す。
+   */
+  function setCurrent(next: ProjectDetail): void {
+    currentSeq++
+    current.value = next
+    currentError.value = null
+  }
+
+  /** 画面を離れるときに捨てる。次に開いたとき前のプロジェクトが一瞬見えないように */
+  function clearCurrent(): void {
+    currentSeq++
+    current.value = null
+    currentError.value = null
+    currentLoading.value = false
+  }
+
   return {
     items,
     page,
@@ -133,5 +197,12 @@ export const useProjectStore = defineStore('project', () => {
     toggleSort,
     setIncludeArchived,
     goToPage,
+    current,
+    currentKey,
+    currentLoading,
+    currentError,
+    fetchCurrent,
+    setCurrent,
+    clearCurrent,
   }
 })
