@@ -138,6 +138,10 @@ func insertAdmin(ctx context.Context, pool *pgxpool.Pool, displayName, email, pa
 	err = q.CreateLocalCredential(ctx, gen.CreateLocalCredentialParams{
 		IdentityID:   identityID,
 		PasswordHash: passwordHash,
+		// 初期管理者は自分でパスワードを決めて入力しているため、初回変更を
+		// 要求しない（DbDesign.md 7.5）。手順12a で must_change を明示引数に
+		// したので、既定値任せにせずここで false と書く。
+		MustChange: false,
 	})
 	if err != nil {
 		return "", wrapInsertErr("local_credential", err)

@@ -19,7 +19,7 @@ import { useUiStore } from '../stores/ui'
  *
  * 「P2」「P3」の項目（ボード・ガント・承認キュー・システム設定）は
  * Phase 1 では表示しない（4.1）。チケットの件数バッジは、供給する API が
- * 手順18 のため出していない。
+ * 手順16 のため出していない。
  */
 const auth = useAuthStore()
 const ui = useUiStore()

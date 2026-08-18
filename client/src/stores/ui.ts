@@ -8,7 +8,7 @@ import { computed, ref } from 'vue'
  * 集中モード（2.3.2）は Phase 2 のため持たない。
  *
  * 保存先は localStorage のみ。ユーザー設定（app_user）への保存は
- * /me の API と画面（手順17）で対応する。
+ * /me の API と画面（手順15）で対応する。
  */
 
 /** テーマの選択値。既定は「システムに従う」（GuiDesign.md 8.11） */

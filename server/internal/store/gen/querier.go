@@ -26,6 +26,10 @@ type Querier interface {
 	CreateAdministrator(ctx context.Context, arg CreateAdministratorParams) error
 	// system_role を引数に取る点だけが CreateAdministrator と違う。
 	CreateAppUser(ctx context.Context, arg CreateAppUserParams) error
+	// must_change を明示で受ける（DbDesign.md 6.2 の既定は false）。
+	// POST /admin/users（ApiDesign.md 6.2）が must_change_password: true を
+	// 既定とするため、列の既定値任せにできない。**既定に頼らず呼び出し側に
+	// 書かせる**ことで、どの経路が初回変更を要求するのかが読めるようにする。
 	CreateLocalCredential(ctx context.Context, arg CreateLocalCredentialParams) error
 	// workflow_id は後から埋める。非テンプレートの workflow は project_id が
 	// NOT NULL 相当（ck_workflow_template）で、プロジェクトより先に作れないため。
@@ -150,6 +154,32 @@ type Querier interface {
 	// ロールの妥当性はDBに問い合わせる。Go 側に 'project_admin' などを
 	// 書き写すと 0010 のシード（DbDesign.md 7.3）と二重管理になるため。
 	IsProjectScopedRole(ctx context.Context, key string) (bool, error)
+	// ── ユーザー管理（ApiDesign.md 6章、手順12a）─────────────────────
+	// ListAdminUsers は GET /admin/users の1ページ分を返す（ApiDesign.md 6.1）。
+	//
+	// **人間とエージェントを同じ一覧に並べる**（GuiDesign.md 5.6、DbDesign.md 6.2 の
+	// actor 統合設計）。したがって起点は app_user ではなく actor で、app_user は
+	// LEFT JOIN になる。エージェントは app_user の行を持たないため、email と
+	// system_role と last_login_at は NULL で返る（6.1 の「意味を持たない
+	// フィールドは null」に一致する）。
+	//
+	// **kind = 'system' の actor は除く。** 6.1 が列挙するのは user / agent / all の
+	// 3つで、システムアクター（バッチ等が使う DbDesign.md 6.2 の3種目）は
+	// 利用者が管理する対象ではない。Phase 1 のシードは system アクターを作らないが、
+	// 将来作られても一覧に紛れ込まないようにここで落とす。
+	//
+	// **project_count は project_member の行数**で、アーカイブ済みプロジェクトも
+	// 数える。除くと詳細画面（6.3 の memberships）に並ぶ件数と食い違うため。
+	//
+	// q は呼び出し側で LIKE のメタ文字をエスケープ済みのパターンを受け取る
+	// （空文字なら絞り込まない）。SQL 側で escape すると入れ子が深くなり、
+	// どの層でエスケープしたのかが読めなくなる。
+	//
+	// 並び替えを CASE 式で静的に書く理由は ListProjects と同じ（sqlc は動的な
+	// ORDER BY を組み立てられない）。display_name の比較に ICU collation を
+	// 指定するのは DbDesign.md 4.4 の規約。
+	//
+	ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) ([]ListAdminUsersRow, error)
 	// ListProjectMembers は 5.4 の members[] を返す。
 	//
 	// actor を JOIN するのは kind と display_name のため。エージェントも
@@ -280,6 +310,17 @@ type Querier interface {
 	//
 	SetProjectStatus(ctx context.Context, arg SetProjectStatusParams) (int64, error)
 	SetProjectWorkflow(ctx context.Context, arg SetProjectWorkflowParams) error
+	// SummarizeAdminUsers は ListAdminUsers と同じ絞り込みに対する総件数と
+	// 最終更新日時を返す。total は 2.6、last_updated_at は 2.7 の ETag の材料。
+	//
+	// **WHERE は ListAdminUsers と一字一句そろえる。** 片方だけ直すと、total が
+	// items と食い違ったページャが出る。
+	//
+	// **updated_at は actor と app_user の新しいほうを採る。** システムロールの
+	// 変更は app_user の行だけを更新し（trg_app_user_updated）、actor.updated_at は
+	// 動かない。actor だけを見ると、ロールを変えても ETag が変わらない。
+	//
+	SummarizeAdminUsers(ctx context.Context, arg SummarizeAdminUsersParams) (SummarizeAdminUsersRow, error)
 	// SummarizeProjects は ListProjects と同じ可視範囲・同じ絞り込みに対する
 	// 総件数と最終更新日時を返す。
 	//

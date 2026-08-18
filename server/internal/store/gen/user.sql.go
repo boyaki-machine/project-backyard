@@ -7,6 +7,8 @@ package gen
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countAdministrators = `-- name: CountAdministrators :one
@@ -69,16 +71,22 @@ func (q *Queries) CreateAppUser(ctx context.Context, arg CreateAppUserParams) er
 }
 
 const createLocalCredential = `-- name: CreateLocalCredential :exec
-INSERT INTO local_credential (identity_id, password_hash) VALUES ($1, $2)
+INSERT INTO local_credential (identity_id, password_hash, must_change)
+VALUES ($1, $2, $3)
 `
 
 type CreateLocalCredentialParams struct {
 	IdentityID   string
 	PasswordHash string
+	MustChange   bool
 }
 
+// must_change を明示で受ける（DbDesign.md 6.2 の既定は false）。
+// POST /admin/users（ApiDesign.md 6.2）が must_change_password: true を
+// 既定とするため、列の既定値任せにできない。**既定に頼らず呼び出し側に
+// 書かせる**ことで、どの経路が初回変更を要求するのかが読めるようにする。
 func (q *Queries) CreateLocalCredential(ctx context.Context, arg CreateLocalCredentialParams) error {
-	_, err := q.db.Exec(ctx, createLocalCredential, arg.IdentityID, arg.PasswordHash)
+	_, err := q.db.Exec(ctx, createLocalCredential, arg.IdentityID, arg.PasswordHash, arg.MustChange)
 	return err
 }
 
@@ -141,4 +149,172 @@ func (q *Queries) FindActorIDByEmail(ctx context.Context, email string) (string,
 	var actor_id string
 	err := row.Scan(&actor_id)
 	return actor_id, err
+}
+
+const listAdminUsers = `-- name: ListAdminUsers :many
+
+WITH filtered AS (
+  SELECT
+    a.id,
+    a.kind,
+    a.display_name,
+    a.is_active,
+    a.created_at,
+    u.email,
+    u.system_role,
+    u.last_login_at,
+    (SELECT count(*) FROM project_member pm WHERE pm.actor_id = a.id) AS project_count
+  FROM actor a
+  LEFT JOIN app_user u ON u.actor_id = a.id
+  WHERE a.kind <> 'system'
+    AND ($5::text = 'all' OR a.kind = $5::text)
+    AND ($6::text = 'all' OR a.is_active = ($6::text = 'true'))
+    AND (
+      $7::text = ''
+      OR a.display_name ILIKE $7::text
+      OR u.email::text ILIKE $7::text
+    )
+)
+SELECT
+  f.id, f.kind, f.display_name, f.email, f.system_role,
+  f.is_active, f.last_login_at, f.project_count, f.created_at
+FROM filtered f
+ORDER BY
+  CASE WHEN $1::text = 'display_name'  AND $2::text = 'asc'  THEN f.display_name COLLATE "ja-JP-x-icu" END ASC,
+  CASE WHEN $1::text = 'display_name'  AND $2::text = 'desc' THEN f.display_name COLLATE "ja-JP-x-icu" END DESC,
+  CASE WHEN $1::text = 'email'         AND $2::text = 'asc'  THEN f.email END ASC,
+  CASE WHEN $1::text = 'email'         AND $2::text = 'desc' THEN f.email END DESC,
+  CASE WHEN $1::text = 'last_login_at' AND $2::text = 'asc'  THEN f.last_login_at END ASC,
+  CASE WHEN $1::text = 'last_login_at' AND $2::text = 'desc' THEN f.last_login_at END DESC,
+  CASE WHEN $1::text = 'created_at'    AND $2::text = 'asc'  THEN f.created_at END ASC,
+  CASE WHEN $1::text = 'created_at'    AND $2::text = 'desc' THEN f.created_at END DESC,
+  f.id ASC
+LIMIT $4 OFFSET $3
+`
+
+type ListAdminUsersParams struct {
+	Sort         string
+	SortOrder    string
+	PageOffset   int32
+	PageLimit    int32
+	KindFilter   string
+	ActiveFilter string
+	QPattern     string
+}
+
+type ListAdminUsersRow struct {
+	ID           string
+	Kind         string
+	DisplayName  string
+	Email        pgtype.Text
+	SystemRole   pgtype.Text
+	IsActive     bool
+	LastLoginAt  pgtype.Timestamptz
+	ProjectCount int64
+	CreatedAt    pgtype.Timestamptz
+}
+
+// ── ユーザー管理（ApiDesign.md 6章、手順12a）─────────────────────
+// ListAdminUsers は GET /admin/users の1ページ分を返す（ApiDesign.md 6.1）。
+//
+// **人間とエージェントを同じ一覧に並べる**（GuiDesign.md 5.6、DbDesign.md 6.2 の
+// actor 統合設計）。したがって起点は app_user ではなく actor で、app_user は
+// LEFT JOIN になる。エージェントは app_user の行を持たないため、email と
+// system_role と last_login_at は NULL で返る（6.1 の「意味を持たない
+// フィールドは null」に一致する）。
+//
+// **kind = 'system' の actor は除く。** 6.1 が列挙するのは user / agent / all の
+// 3つで、システムアクター（バッチ等が使う DbDesign.md 6.2 の3種目）は
+// 利用者が管理する対象ではない。Phase 1 のシードは system アクターを作らないが、
+// 将来作られても一覧に紛れ込まないようにここで落とす。
+//
+// **project_count は project_member の行数**で、アーカイブ済みプロジェクトも
+// 数える。除くと詳細画面（6.3 の memberships）に並ぶ件数と食い違うため。
+//
+// q は呼び出し側で LIKE のメタ文字をエスケープ済みのパターンを受け取る
+// （空文字なら絞り込まない）。SQL 側で escape すると入れ子が深くなり、
+// どの層でエスケープしたのかが読めなくなる。
+//
+// 並び替えを CASE 式で静的に書く理由は ListProjects と同じ（sqlc は動的な
+// ORDER BY を組み立てられない）。display_name の比較に ICU collation を
+// 指定するのは DbDesign.md 4.4 の規約。
+func (q *Queries) ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) ([]ListAdminUsersRow, error) {
+	rows, err := q.db.Query(ctx, listAdminUsers,
+		arg.Sort,
+		arg.SortOrder,
+		arg.PageOffset,
+		arg.PageLimit,
+		arg.KindFilter,
+		arg.ActiveFilter,
+		arg.QPattern,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAdminUsersRow{}
+	for rows.Next() {
+		var i ListAdminUsersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.DisplayName,
+			&i.Email,
+			&i.SystemRole,
+			&i.IsActive,
+			&i.LastLoginAt,
+			&i.ProjectCount,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const summarizeAdminUsers = `-- name: SummarizeAdminUsers :one
+SELECT
+  count(*)                                                    AS total,
+  max(GREATEST(a.updated_at, COALESCE(u.updated_at, a.updated_at)))::timestamptz AS last_updated_at
+FROM actor a
+LEFT JOIN app_user u ON u.actor_id = a.id
+WHERE a.kind <> 'system'
+  AND ($1::text = 'all' OR a.kind = $1::text)
+  AND ($2::text = 'all' OR a.is_active = ($2::text = 'true'))
+  AND (
+    $3::text = ''
+    OR a.display_name ILIKE $3::text
+    OR u.email::text ILIKE $3::text
+  )
+`
+
+type SummarizeAdminUsersParams struct {
+	KindFilter   string
+	ActiveFilter string
+	QPattern     string
+}
+
+type SummarizeAdminUsersRow struct {
+	Total         int64
+	LastUpdatedAt pgtype.Timestamptz
+}
+
+// SummarizeAdminUsers は ListAdminUsers と同じ絞り込みに対する総件数と
+// 最終更新日時を返す。total は 2.6、last_updated_at は 2.7 の ETag の材料。
+//
+// **WHERE は ListAdminUsers と一字一句そろえる。** 片方だけ直すと、total が
+// items と食い違ったページャが出る。
+//
+// **updated_at は actor と app_user の新しいほうを採る。** システムロールの
+// 変更は app_user の行だけを更新し（trg_app_user_updated）、actor.updated_at は
+// 動かない。actor だけを見ると、ロールを変えても ETag が変わらない。
+func (q *Queries) SummarizeAdminUsers(ctx context.Context, arg SummarizeAdminUsersParams) (SummarizeAdminUsersRow, error) {
+	row := q.db.QueryRow(ctx, summarizeAdminUsers, arg.KindFilter, arg.ActiveFilter, arg.QPattern)
+	var i SummarizeAdminUsersRow
+	err := row.Scan(&i.Total, &i.LastUpdatedAt)
+	return i, err
 }

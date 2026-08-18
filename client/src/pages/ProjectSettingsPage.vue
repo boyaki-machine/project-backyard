@@ -33,7 +33,7 @@ const MAX_REPOSITORIES = 10
 /**
  * プロジェクトロールの表示名（`DbDesign.md` 7.3 の `display_name`）。
  *
- * `GET /projects/:key` はロールをキーでしか返さない。**`GET /roles`（手順16）を
+ * `GET /projects/:key` はロールをキーでしか返さない。**`GET /roles`（手順14）を
  * 実装した時点でこの表を捨てる。** それまでは画面が持つ。
  */
 const ROLE_LABELS: Record<string, string> = {

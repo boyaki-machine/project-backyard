@@ -117,6 +117,18 @@ func Mount(r chi.Router, deps Deps) {
 			Post("/projects/{key}/archive", h.archiveProject)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.archive")).
 			Post("/projects/{key}/unarchive", h.unarchiveProject)
+
+		// ── ユーザー管理（ApiDesign.md 6章）────────────────────
+		//
+		// **6章はすべてアドミニストレータ専用**（同章の前書き）。プロジェクト層は
+		// 関係しないので RequirePermission で足りる。user.manage を持つのは
+		// Phase 1 ではアドミニストレータのみ（DbDesign.md 7.3）だが、ここで
+		// 役割を名指ししないのは割り当てが role_permission のデータ側で
+		// 決まるためである（Design.md 6.4.2）。
+		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
+			Get("/admin/users", h.listUsers)
+		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
+			Post("/admin/users", h.createUser)
 	})
 }
 

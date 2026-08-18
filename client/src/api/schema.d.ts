@@ -248,6 +248,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ユーザー一覧
+         * @description 人間とエージェントを同じ一覧に返す（ApiDesign.md 6.1、DbDesign.md 6.2 の
+         *     `actor` 統合設計）。**必要権限は `user.manage`**（Phase 1 = アドミニストレータのみ）。
+         *
+         *     `kind` によって意味を持たないフィールドは `null` を返し、フィールド自体を
+         *     省略しない。**`agent` は Phase 1 では常に `null`**（中身にあたる
+         *     `agent` テーブルは Phase 2 で作られる）。
+         *
+         *     `kind = 'system'` の actor は返さない。
+         *
+         *     `project_count` は `project_member` の行数で、アーカイブ済みプロジェクトも数える。
+         */
+        get: operations["listUsers"];
+        put?: never;
+        /**
+         * ユーザーの作成
+         * @description ユーザーを作成する（ApiDesign.md 6.2）。必要権限は `user.manage`。
+         *
+         *     サーバ側は `actor` → `app_user` → `user_identity`（`provider_key='local'`,
+         *     `subject=email`）→ `local_credential` と `audit_log` への記録を
+         *     **単一トランザクション**で行う（DbDesign.md 6.2）。
+         *
+         *     メール重複の検出はDBの `UNIQUE` 制約に委ねる。
+         *
+         *     **`generated_password` はこの応答でのみ返る。** 再表示できず、監査ログにも残さない。
+         */
+        post: operations["createUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthcheck": {
         parameters: {
             query?: never;
@@ -333,6 +374,117 @@ export interface components {
             role: string;
             /** @description 当該プロジェクトでの実効権限。 */
             permissions: string[];
+        };
+        /** @description 一覧の共通エンベロープ（ApiDesign.md 2.6）。 */
+        UserList: {
+            items: components["schemas"]["UserListItem"][];
+            page: number;
+            per_page: number;
+            total: number;
+            /** @description 切り上げ。総件数0のときは0。 */
+            total_pages: number;
+        };
+        /**
+         * @description 一覧の1行（ApiDesign.md 6.1）。**`kind` によって意味を持たないフィールドは
+         *     `null` を返し、フィールド自体を省略しない。** フロントの分岐を単純にするため。
+         */
+        UserListItem: {
+            /** @description ULID（`actor.id`）。 */
+            id: string;
+            /** @enum {string} */
+            kind: "user" | "agent";
+            display_name: string;
+            /** @description エージェントは `null`。 */
+            email: string | null;
+            /**
+             * @description エージェントは `null`。
+             * @enum {string|null}
+             */
+            system_role: "operator" | "administrator" | null;
+            /**
+             * @description **Phase 1 では常に `null`。** 中身（`client_kind` / `model_name` /
+             *     `project_key` / `trust_level`）は DbDesign.md 8.1 の `agent` テーブルの列で、
+             *     そのテーブルは Phase 2 で作られる。
+             */
+            agent: components["schemas"]["AgentInfo"] | null;
+            is_active: boolean;
+            /**
+             * Format: date-time
+             * @description 一度もログインしていなければ `null`。
+             */
+            last_login_at: string | null;
+            /**
+             * @description `project_member` の行数。**アーカイブ済みプロジェクトも数える**
+             *     （詳細画面の memberships と食い違わせないため）。
+             */
+            project_count: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /**
+         * @description エージェントの付帯情報（ApiDesign.md 6.1）。**Phase 1 では返らない**
+         *     （対応する `agent` テーブルが Phase 2 で作られるため）。
+         */
+        AgentInfo: {
+            client_kind: string;
+            model_name: string;
+            project_key: string;
+            trust_level: number;
+        };
+        /** @description ユーザーの作成（ApiDesign.md 6.2）。 */
+        CreateUserRequest: {
+            /** @description 1〜60文字（`actor.display_name` の CHECK 制約と同じ）。前後の空白は落とす。 */
+            display_name: string;
+            /**
+             * Format: email
+             * @description 254文字以内（RFC 5321 4.5.3.1.3）。表示名付き（`山田 <a@example.com>`）は受け付けない。
+             *     既に使われていれば `409 already_exists`。
+             */
+            email: string;
+            /**
+             * @description 省略時は `operator`。
+             * @default operator
+             * @enum {string}
+             */
+            system_role: "operator" | "administrator";
+            /**
+             * @description 省略時は `generate`（GuiDesign.md 5.6.1 の初期選択）。
+             * @default generate
+             * @enum {string}
+             */
+            password_mode: "generate" | "manual";
+            /**
+             * @description `password_mode=manual` のときのみ必須。12文字以上（Design.md 6.3）。
+             *     `generate` のときに送られても無視する（モード切替でフォームに残った値を弾かない）。
+             */
+            password?: string | null;
+            /**
+             * @description 省略時は `true`（GuiDesign.md 5.6.1 のチェックボックスが既定でオン）。
+             * @default true
+             */
+            must_change_password: boolean;
+        };
+        /**
+         * @description 作成された利用者（ApiDesign.md 6.2 の 201）。一覧の要素（`UserListItem`）とは別で、
+         *     作成直後に確定している値だけを返す。
+         */
+        CreatedUser: {
+            /** @description ULID（`actor.id`）。 */
+            id: string;
+            /** @enum {string} */
+            kind: "user";
+            display_name: string;
+            email: string;
+            /** @enum {string} */
+            system_role: "operator" | "administrator";
+            is_active: boolean;
+            /**
+             * @description **この応答でのみ返る。** 再表示できず、監査ログにも残さない。
+             *     形式は `<形容詞>-<名詞>-<4桁数字>`（例 `quiet-harbor-4172`）で、
+             *     読み上げ・転記しやすい語句連結方式（ApiDesign.md 6.2）。
+             *     `password_mode=manual` のときは `null`（呼び出し側が既に平文を持っているため）。
+             */
+            generated_password: string | null;
         };
         /** @description 一覧の共通エンベロープ（ApiDesign.md 2.6）。 */
         ProjectList: {
@@ -1046,6 +1198,105 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listUsers: {
+        parameters: {
+            query?: {
+                /** @description 既定は `all`。 */
+                kind?: "user" | "agent" | "all";
+                /** @description 既定は `all`。**真偽値ではなく3値の文字列**（未指定と false を区別する）。 */
+                is_active?: "true" | "false" | "all";
+                /**
+                 * @description 表示名・メールアドレスの部分一致。`%` と `_` はサーバ側でエスケープするため
+                 *     ワイルドカードとしては働かない。**画面は利用者20件超のときにのみ入力欄を出す**
+                 *     （GuiDesign.md 5.6）が、APIは常に受け付ける。
+                 */
+                q?: string;
+                sort?: "display_name" | "email" | "last_login_at" | "created_at";
+                /**
+                 * @description 既定は `asc`。名簿は昇順で読むためで、他の一覧（`GET /projects` は `desc`）とは
+                 *     既定が違う。
+                 */
+                order?: "asc" | "desc";
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 1ページ分のユーザー。 */
+            200: {
+                headers: {
+                    /**
+                     * @description 弱い検証子 `W/"user-<件数>-<MAX(updated_at) のナノ秒>"`（ApiDesign.md 2.7）。
+                     *     `updated_at` は `actor` と `app_user` の新しいほうを採る。
+                     *     **Phase 1 では `If-None-Match` を解釈しない**（304 を返さない）。
+                     */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUserRequest"];
+            };
+        };
+        responses: {
+            /** @description 作成された。 */
+            201: {
+                headers: {
+                    /** @description `/api/v1/admin/users/<id>` */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedUser"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description メールアドレスが既に使われている（`already_exists`。ApiDesign.md 6.2）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };
