@@ -24,6 +24,7 @@
 7. ビルドとバージョン
 8. 画面の動作確認
 9. つまずいたとき            ← 症状から引く
+10. 依存とツールのバージョン  ← 固定しているものと、その理由
 付録A. 環境の構築            ← 端末に一度だけ入れるもの
 ```
 
@@ -105,6 +106,11 @@ app サービスは compose に定義してあっても起動対象から外し�
 `pb_app` は DDL を実行できず、それがロール分離の目的である（`DbDesign.md` 3.4）。
 また **initdb（ロール作成）が走るのは `pgdata` ボリュームが空の初回起動時だけ**なので、
 ロール定義や秘密を変えたら `make dev-reset`（ボリュームごと作り直す）が要る。
+
+**`deploy/base/initdb/01_roles.sh` は実行ビットを立てておくこと。** `:ro` でマウントしても
+ホスト側のファイルモードがそのまま使われるため、ビットが落ちていると initdb が
+このスクリプトを実行せず、`pb_app` ロールが作られないまま起動してしまう
+（`ls -l deploy/base/initdb/` で確認できる）。
 
 ## 2.3 ログインできる状態にする
 
@@ -323,7 +329,23 @@ PB_TEST_DATABASE_URL='postgres://pb_app:<password>@127.0.0.1:5432/pb?sslmode=dis
 フェイクで差し替えたテストでは `queries/*.sql` が一度も実行されないため、
 列名・JOIN の向き・条件の取りこぼしが検出できない。それを埋めるためのものである。
 
-## 6.2 openapi.yaml のドリフト検出
+## 6.2 テストを書くときの落とし穴
+
+実際に踏んだものだけを挙げる。
+
+| 落とし穴 | 対処 |
+|---|---|
+| **`t.Cleanup` は `defer` より後に走る。** 結合テストで `defer pool.Close()` と `t.Cleanup(削除)` を併用すると、後片付けの時点でプールが閉じていて `closed pool` になる | プールの close も `t.Cleanup` で登録し、LIFO の順序を使う |
+| **可変長引数を渡さないと `nil` スライスになる**（`[]string{}` ではない）。実効権限のキャッシュは `nil`（キャッシュ不在）と長さ0（権限0件）を区別するため、ヘルパで `f()` と書くと意図せず「不在」になる | `append([]string{}, xs...)` のように空スライスを明示する |
+| **プロジェクトキーには CHECK 制約がある**（`DbDesign.md` 6.4）。`^[a-z0-9][a-z0-9-]{1,19}$` で**2〜20文字**。ULID をそのまま使うと長さ超過で INSERT が落ちる | ULID の末尾6〜8文字を小文字化して使う |
+| **レート制限のカウンタはプロセス内メモリにある。** `make run` を再起動すると消える | 429 を再現する検証は**サーバを起動したまま**続けて叩く。ログインは IPあたり 10回/分 |
+| **状態を変える検証スクリプトは、途中で落ちると副作用だけが残る** | 現在値（`version` など）は毎回読み直し、本文とステータスを同じ出力へ混ぜない。まず1件だけ通してから全体を回す |
+| **パスワード入力のエコー抑止には競合窓がある。** プロンプトを出してから `term.ReadPassword` が echo を切るまでの数マイクロ秒に文字が届くと、その分だけ端末に表示される（`sudo` や `ssh` も同じ） | 端末ありの検証は `expect` に `sleep 0.4` を入れる。`printf ... \| script -q /dev/null` は stdin を即座に閉じるため `EOF` になり使えない |
+
+結合テストの接続は **`pb_app`（DML のみ）** で行う。実運用と同じ権限で通ることを確かめるためで、
+DDL が要るなら `pb_owner` を使うのではなくマイグレーションを足す（`DbDesign.md` 3.4）。
+
+## 6.3 openapi.yaml のドリフト検出
 
 `make test` に含まれる（`server/internal/httpapi/openapi_drift_test.go`）。
 `chi.Walk` で得た実装のルート一覧と `docs/openapi.yaml` の `paths` を突き合わせ、
@@ -452,6 +474,60 @@ DBを丸ごと作り直してよい場面では、**個別に戻すより `make 
 
 ---
 
+# 10. 依存とツールのバージョン
+
+**ここに挙げたものは意図して固定してある。** 上げると `Design.md` 3.1 の
+「Go 1.24 以上」と衝突する、あるいはビルドが壊れる。**上げる場合は 3.1 の
+最低バージョンとセットで見直すこと。**
+
+## 10.1 固定しているもの
+
+| 対象 | 版 | 上げない理由 |
+|---|---|---|
+| goose | **v3.26.0**（`server/tools/go.mod`） | v3.27.3 以降は `go 1.25.7` を要求する |
+| sqlc | **v1.30.0**（同上） | v1.31.1 は `go 1.26.0` を要求する（v1.30.0 自体は `go 1.23.0` 要求） |
+| `golang.org/x/term` / `x/sys` | `v0.33.0` 系 | 最新版は go 1.25 を要求し、`go get` が go ディレクティブを勝手に `1.25.0` へ引き上げる |
+| `typescript`（client） | **`^5`** | vue-tsc 3.3.9 が TS 7 の `typescript/lib/tsc` を require できない（症状は9章） |
+
+**`go get` の後は `head -3 server/go.mod` と `head -3 server/tools/go.mod` を見て、
+go ディレクティブが `1.24` のままか確認する。**
+
+## 10.2 ツールは server/tools/go.mod に隔離してある
+
+`make migrate` / `make sqlc` は `cd server/tools` してから `go tool` を呼ぶ。
+**`server/go.mod` にツールを足さないこと**（indirect が80件超に膨らみ、
+go ディレクティブも 1.25 へ上がる）。
+
+**`go get -tool` は実行順で結果が変わる。** `tools/go.mod` に sqlc → goose の順で
+入れると go ディレクティブが 1.24 のまま保たれるが、goose → sqlc の順だと `x/*` が
+最新へ上がって `1.25.0` に書き換えられる。**ツールを足したら必ず
+`head -3 server/tools/go.mod` を見る。**
+
+## 10.3 sqlc の型の写し方
+
+`server/sqlc.yaml` の `overrides` にある。
+
+- `citext` は sqlc が既定の対応を持たないため **`string`** に写している
+- `inet` は **`*netip.Addr`**
+- NULL 許容列は **`pgtype.*`**
+
+## 10.4 実行時の依存
+
+**Go（`server/go.mod` の直接依存）**：`jackc/pgx/v5` / `oklog/ulid/v2` /
+`alexedwards/argon2id` / `golang.org/x/term` / `go-chi/chi/v5` の5つ。
+トークンのハッシュと乱数は標準ライブラリ（`crypto/sha256` / `crypto/rand`）で足りる。
+
+**client（`client/package.json`）**：`vue` / `vue-router` / `pinia` の3つ。
+dev に `vite` / `@vitejs/plugin-vue` / `typescript` / `vue-tsc` / `openapi-typescript`。
+**`openapi-typescript` は型生成のみで実行時には入らない。**
+`npm run build` は型検査（`vue-tsc --noEmit`）を通してから `vite build` する
+（型エラーはビルドを止める）。`make build-client` は `npm ci` を使うため
+`client/package-lock.json` をコミットしている。
+
+**依存を足す・置き換えるのはユーザーの承認が要る**（`CLAUDE.md` 絶対規則2）。
+
+---
+
 # 付録A. 環境の構築
 
 1章の確認で足りなかったものを入れる。**PB のリポジトリ側の設定ではなく、端末に一度だけ入れるもの。**
@@ -482,7 +558,7 @@ go version       # go1.24 以上であること
 macOS なら Homebrew（検証環境もこれ。`brew install go`）。公式配布の pkg でもよい。
 
 **上げるときは注意する。** ライブラリの都合で go ディレクティブが勝手に上がる問題を避けるため、
-`go.mod` は `1.24` に固定してある（`PROGRESS.md` の環境メモ）。Go 本体を新しくするのは構わないが、
+`go.mod` は `1.24` に固定してある（10.1）。Go 本体を新しくするのは構わないが、
 `go get` の後は `head -3 server/go.mod` で `1.24` のままか確認すること。
 
 ## A.3 Node.js / npm

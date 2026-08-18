@@ -26,7 +26,8 @@
 | 9b | `POST /projects`（テンプレート複製・単一トランザクション・5.4 形式の応答） | 完了 | 2026-08-15 | 201＋複製＋監査ログ、重複で 409、operator は 403 |
 | 10a | プロジェクト一覧画面（表・ソート・ページング・4状態・アーカイブ切替） | 完了 | 2026-08-15 | ブラウザ53件（ソート・ページャ・4状態） |
 | 10b | 新規プロジェクト作成モーダル（`check-key` の即時検証・作成・409） | 完了 | 2026-08-18 | ブラウザ32件（即時検証・debounce・409・3テンプレート） |
-| 11 | `GET/PATCH /projects/:key`、archive、プロジェクト設定画面 | 未着手 | | `If-Match` 不一致で 409。設定画面から名前を変更できる |
+| 11a | `GET/PATCH /projects/:key`、`archive`/`unarchive`（API のみ） | 完了 | 2026-08-18 | 実DB結合テスト＋実サーバで 409 / 422 / 403 / 404 と冪等な archive |
+| 11b | プロジェクト設定画面（`/p/:key/settings`。**`GuiDesign.md` の節の追加から**） | 未着手 | | 設定画面から名前を変更でき、アーカイブできる |
 | 12 | `GET/POST /admin/users` | 未着手 | | ユーザーを作成し、初期パスワードが1回だけ返る |
 | 13 | ユーザー管理画面（一覧・追加モーダル） | 未着手 | | ブラウザでユーザーを追加でき、初期パスワードが1回だけ表示される |
 | 14 | `GET/PATCH/DELETE /admin/users/:id`、password-reset、memberships | 未着手 | | 自分自身のロール変更が 409、最後の管理者の降格が 409 |
@@ -66,14 +67,16 @@
 | **進め方の振り返りと `LEARNINGS.md` の導入**（ループエンジニアリング。利用者からの指摘） | 完了 | 2026-08-18 | `docs/session-learnings` | `pb-step.md` の振り返りを**成果物（手順7）と進め方（手順8）の2種類**にし、番号を 9=記録 / 10=マージ提案へ繰り下げた。`LEARNINGS.md`（44行・5.2KB）を新設し、**セッション開始時に読む**導線を `CLAUDE.md` と手順1に張った。**個人のセッション履歴から抽出した内容を含むため `.gitignore` の対象**とし、履歴にも残していない（無ければ各自が作り直す）。初期値は**過去16セッションの JSONL から利用者の発話119件を抽出・分析**して得た9件。**2回ルール**（同じことが2回起きてから規約へ昇格）で増え続けないようにした |
 | **セッションの振り返りフローの導入**（マージ提案の直前に行う。利用者からの指摘） | 完了 | 2026-08-18 | `docs/progress-archive` | `pb-step.md` に手順7を新設（11項目・該当なしも述べる）。番号を繰り下げ、`Design.md` 11.0 の参照（手順8→9）も直した。**直前の手順10bのセッションに当てて空振りしないことを確認**：`Modal.vue` の再利用前提・`PROGRESS.md` の肥大化・ビルド成果物の汚れ・検証資源の後始末を拾えた |
 | **`PROGRESS.md` の分割**（毎セッションの読み込み量の削減。利用者からの指摘） | 完了 | 2026-08-18 | `docs/progress-archive` | 182KB → 27KB（15%）。**1行も削除せず `docs/history/` へ移動**した（機械的に切り出し、行の欠落が無いことを sort ＋ diff で確認）。未消化の約束は「次の手順への引き継ぎ」に20行で抜き出した。`pb-step.md` に記録の書き分け表を入れ、再肥大化を防いだ |
+| **`PROGRESS.md` の環境メモの整理**（30KB 超過。`pb-step.md` 手順7の閾値による） | 完了 | 2026-08-18 | `feature/step-11-project-detail-api` | 243行/31.9KB → **192行/25.1KB**。**1件も捨てず**、テストの落とし穴を `Development.md` 6.2、依存とツールの固定版を同 10章（新設）、initdb の実行ビットを同 2.2 へ写し、役目を終えた回避策（Argon2id での検証用ユーザー作成）を `history/steps.md` へ移した。環境メモに残したのは**手順書に落とせない制約4件**のみ。移動漏れが無いことは旧ブロックの全項目を `Development.md` に対して grep して確認した |
+| **`docs/ApiDesign.md` のヘッダの「最終更新」が更新されていない**（`2026-08-11（rev.2 文書間の整合）` のまま。手順5a・9・11a で内容が変わっている。11a で気づいたが、本文書だけ直すと他の設計文書と扱いが揃わないため見送った） | 未着手 | | 全設計文書（`Design.md` / `DbDesign.md` / `ApiDesign.md` / `GuiDesign.md`）で、この行を維持するか撤去するかを決めて揃える |
 | ダッシュボードのページヘッダを「プロジェクト名 ＋ 画面名」にする（`GuiDesign.md` 5.3。利用者からの指摘） | 完了 | 2026-08-15 | `feature/step-10-projects-page` | ブラウザで5件：メンバーは `デモプロジェクト ダッシュボード`、demo に未所属の管理者は `demo ダッシュボード`（キーで代替）、チケット一覧は `チケット一覧` のまま、プレースホルダのカード内は `プロジェクトダッシュボードのページ予定` のまま（6.5 の規約を保つ） |
 
 ## バージョンの現況
 
 | | 値 |
 |---|---|
-| 現在 | **v1.12.15**（手順10b のマージ前に `make bump-minor`。マージ後に `make version-check` すること） |
-| 内訳 | メジャー1 / マイナー12 / ビルド15 |
+| 現在 | **v1.13.18**（手順11a のマージ前に `make bump-minor` 済み。マージ後に `make version-check` すること） |
+| 内訳 | メジャー1 / マイナー13 / ビルド18 |
 | ビルド1 | 手順2（`feature/step-02-migrations`）のマージ |
 | ビルド2 | バージョン運用の導入（`feature/versioning`）のマージ |
 | ビルド3 | 手順3（`feature/step-03-admin-create`）のマージ |
@@ -89,6 +92,14 @@
 | ビルド13 | 手順9a・9b（`feature/step-09-projects-api`）のマージ |
 | ビルド14 | 手順10a（`feature/step-10-projects-page`）のマージ |
 | ビルド15 | 手順10b（`feature/step-10-projects-page`。同じブランチの2回目のマージ）|
+| ビルド16 | `PROGRESS.md` の分割（`docs/progress-archive`）のマージ |
+| ビルド17 | 進め方の振り返りと `LEARNINGS.md` の導入（`docs/session-learnings`）のマージ |
+| ビルド18 | 手順11a（`feature/step-11-project-detail-api`）のマージ |
+
+**ビルド番号は `git rev-list --count --first-parent --merges develop` の実測**であり、手で数えない
+（`make version` で確認できる）。**ビルド16・17 は 2026-08-18 の手順外の2マージで、この表への
+記入が漏れていた**（`VERSION` 自体は `bump-build` で正しく進んでいた）。表とバージョンが
+食い違ったら、正しいのは `make version-check` のほうである。
 
 手順10 は当初 10a と 10b を1回のマージにする予定だったが、**10a の完了時点でマージすることを
 ユーザーが指示した**（2026-08-15）。したがって `make bump-minor` は 10a で実行し（`1.10.13` →
@@ -111,13 +122,17 @@
 
 | 効いてくる手順 | 内容 | 出典（`history/decisions.md`） |
 |---|---|---|
-| 11 | **`ApiDesign.md` 2.7 の ETag の例 `"W/proj-…"` が RFC 9110 違反**（`W/` は引用符の外）。9a の実装は `W/"proj-<件数>-<ナノ秒>"` で正しい。**例の修正提案が未提出**。`If-Match` を扱う手順11でまとめて出す | 2026-08-15 / 9 |
-| 11 | `project` ストアは一覧の状態しか持っていない。`GuiDesign.md` 7.1 の「選択中プロジェクト」は、実画面が要求した時点で足す | 2026-08-15 / 10a |
+| 11b | **`GuiDesign.md` にプロジェクト設定画面の節が無い**（3.1 の遷移図・3.2 のルーティング表・4.3 の表示条件に名前があるだけ）。**11b は `GuiDesign.md` 5.x の追加提案から始める。** 遷移図が挙げるタブは「一般」「メンバー」（ワークフローとエージェント連携は Phase 2）。アーカイブの確認ダイアログは 6.3 が定める | 2026-08-18 / 11a |
+| 11b | `project` ストアは一覧の状態しか持っていない。`GuiDesign.md` 7.1 の「選択中プロジェクト」は、実画面が要求した時点で足す | 2026-08-15 / 10a |
+| 11b | **`client/src/api/client.ts` に `patch` と任意ヘッダ（`If-Match`）の口が無い。** 現状は `get` / `post` のみ。`api/projects.ts` の `getProject` / `updateProject` / `archiveProject` / `unarchiveProject` とあわせて 11b で足す | 2026-08-18 / 11a |
+| 11b | **トースト（`GuiDesign.md` 6.4）が設定画面の保存で要るかもしれない。** 6.4 は「保存操作は楽観的更新を行わず、サーバ応答後に反映する」と定める。下の手順13の行と同じ部品なので、**先に要ったほうで作る** | 2026-08-18 / 11a |
+| 11a を使う手順 | **`projectRequestContext` / `writeProjectDetailError`（`projects_get.go`）は `/projects/{key}` 配下で共有する前提**で作った。チケットAPI（手順18）も同じ取り出しと 404 の倒し方を通ること | 2026-08-18 / 11a |
+| 17 | **`Design.md` 11.2 の「手順11・16・17 は画面が小さいので Go+TS を1ステップにする」は手順11では成り立たなかった**（11a/11b に分割）。17（`/me` 系 API ＋ 自分の設定 ＋ トークン管理）も着手時に分量を見積もること | 2026-08-18 / 11a |
 | 12・13 | **`DataTable`（`GuiDesign.md` 6.1）の抽出を提案する。** 10a は消費者が1つのため `ProjectsPage` に直接書いた。ユーザー一覧が2つ目の消費者になる | 2026-08-15 / 10a |
 | 13 | 日時整形（`formatDateTime`）も同じ理由で `ProjectsPage` 内にある。2つ目の消費者が出たら共通化を提案する | 2026-08-15 / 10a |
 | 13 | **トースト通知（`GuiDesign.md` 6.4）はまだ作っていない。** 削除・パスワードリセットのように画面遷移を伴わない操作が出る手順13以降で作る | 2026-08-15 / 10a |
 | 13 | `Modal.vue` はユーザー追加モーダル（`GuiDesign.md` 5.6.1）で再利用する前提で汎用にしてある | 2026-08-18 / 10b |
-| 13以降 | **`deploy/Dockerfile` が未作成のため `make up` の対象を `db` のみにしている**（Makefile に TODO）。全サービスへ戻すときに、compose の `app` に `healthcheck` を足すか（`pb healthcheck` サブコマンド案）も同時に決める。**`/healthcheck` は SPA フォールバックの例外**なので embed 経路で取りこぼさないこと | 2026-08-11 / 1、2026-08-12 / 4a |
+| 13以降 | **`deploy/Dockerfile` を作り、`make up` の対象を全サービスへ戻す**（Makefile に TODO）。そのとき compose の `app` に `healthcheck` を足すか（`pb healthcheck` サブコマンド案）も同時に決める。**`/healthcheck` は SPA フォールバックの例外**なので embed 経路で取りこぼさないこと | 2026-08-11 / 1、2026-08-12 / 4a |
 | 17 | テーマ・色相の保存先を `localStorage`（`pb.theme` / `pb.hue`）から `app_user` へ移す（`GuiDesign.md` 8.11 は両方に保存すると定める） | 2026-08-13 / 7 |
 | 17 | 日時は端末のローカル時刻で出している。`app_user.timezone` の反映は自分の設定で扱う | 2026-08-15 / 10a |
 | 17 | `must_change_password: true` の誘導先（パスワード変更画面）が未実装。8a はストアに持つだけで遷移を変えていない | 2026-08-15 / 8a |
@@ -129,89 +144,29 @@
 | 未定 | `ApiDesign.md` 2.5.1 の11コードの既定文言が実装側（`apierr.messages`）にしかない。文書に持たせるなら 2.5.1 に message 列を足す | 2026-08-12 / 4a |
 | 未定 | HTTPサーバのタイムアウト値が実装（`serve.go`）にしかない。`Design.md` 10章を扱うときに文書化を提案する | 2026-08-12 / 4a |
 | 未定 | OKLCH の hex フォールバック（`GuiDesign.md` 8.5）が未実装。PostCSS の採用可否が 11章の未解決事項のまま | 2026-08-13 / 7 |
-| 未定 | DBを使うテストの作法（`PB_TEST_DATABASE_URL`）を `Design.md` に書くかは要判断 | 2026-08-12 / 4b |
+| 未定 | DBを使うテストの作法は `Development.md` 6.1 / 6.2 にある（手順書）。**`Design.md` に設計として書くかは未判断のまま** | 2026-08-12 / 4b、2026-08-18 / 11a |
 | 随時 | **プロジェクト作成の手順が `cmd/pb/dev_seed.go` と `httpapi/v1/projects_create.go` の2か所にある。** 片方だけ直すと差が開く。共通化は見送っている | 2026-08-15 / 9b |
-| 次に閾値を超えたとき | **本文書は 230行 / 28KB で、振り返りの閾値（250行 / 30KB）に近い。** 次に超えたら、残る最大の塊である「環境メモ」から**再現手順になるものを `Development.md` へ寄せる**（制約だけを残す） | 2026-08-18 / 手順外 |
+| 次に閾値を超えたとき | **本文書は 192行 / 25KB**（2026-08-18 / 11a で環境メモを整理した後）。閾値は 250行 / 30KB。次に超えたら、**最大の塊である「次の手順への引き継ぎ」を消化状況で見直す**（`Phase 2` 以降の行は Phase 1 の完了時に `history/decisions.md` へ移してよい） | 2026-08-18 / 11a |
 | Phase 1 完了時 | `LEARNINGS.md` の棚卸し（一度も再発していないエントリの退役、昇格候補の判断） | 2026-08-18 / 手順外 |
 | 保留中の検討 | **`CLAUDE.md` の規約強化**を今回は見送った——①自律の線引き（止まる／進めて報告／黙って進める）②実現したい価値・世界観の明文化 ③手順番号ではなく目的で指示を受ける入口。**2回ルールに従い、必要性が再度現れたときに判断する** | 2026-08-18 / 手順外 |
 
 ## 環境メモ
 
-実際に動かして分かったこと（バージョンの相性、ハマった点、回避策）を追記する。
+**ここに残すのは、いま効いていて、かつ手順書に落とせない制約だけ**である。
 
-> **再現できる手順は `docs/Development.md` に移した**（2026-08-15、`docs/development-guide`）。
-> 起動・セットアップ・検証のやり方を知りたいときはそちらを見ること。**ここに残すのは
-> 「いつ・どの手順で・何を見つけたか」の記録**であり、手順の正本ではない。
-> 新しく分かったことは、まずここに書き、再現手順として使えるものは `Development.md` へ写す。
+再現できる手順（起動・セットアップ・テスト・画面確認・あとしまつ）は
+`docs/Development.md`、依存とツールの固定版は同 10章にある。**新しく分かったことは、
+まずここに書き、手順として使えるものは `Development.md` へ写して、ここからは消す。**
 
-- **セッションの会話は `~/.claude/projects/<リポジトリの絶対パスの / を - に置き換えたもの>/<UUID>.jsonl` に残る**
-  （2026-08-18 時点で16セッション・24MB。`gitBranch` が入るので手順と対応づけられる）。
-  **既定30日で自動削除される**（`~/.claude/settings.json` の `cleanupPeriodDays`。未設定なら既定値）。
-  過去セッションを掘り起こすなら期限内に行う。リポジトリには含まれない
-- ホストの Node: **v24.14.0** / npm **11.9.0**（手順7の時点）。`make build-client` は `npm ci` を使うため
-  `client/package-lock.json` をコミットしている
-- client の依存（手順8時点）: `vue` / `vue-router` / `pinia` ＋ dev に `vite` / `@vitejs/plugin-vue` /
-  `typescript` / `vue-tsc` / **`openapi-typescript`**（手順8で追加。型生成のみで実行時には入らない）
-  - **`typescript` は `^5` に固定すること**（手順7で判明。vue-tsc 3.3.9 が TS 7 の
-    `typescript/lib/tsc` を require できない）→ 症状と対処は `Development.md` 9章
-  - `npm run build` は型検査（`vue-tsc --noEmit`）を通してから `vite build` する。型エラーは
-    ビルドを止める
-- **`make build` の後は `make clean-webui` を実行してからコミットする**（手順7で判明）
-  → `Development.md` 7.1
-- **画面の描画はヘッドレス Chrome で確認できる**（手順7で導入、手順8で CDP 経由の操作まで拡張）
-  → 呼び出し方と注意点は `Development.md` 8章。Playwright / Puppeteer は入れていない
-  - 手順8で気づいた2点（**ウィンドウ幅を指定しないと 768px 未満と判定される** ／
-    `v-model` にはネイティブの value セッター＋`input` イベントが要る）も 8章に書いた
-- **コンテナランタイムは Rancher Desktop**（`docker` は `~/.rd/bin/docker`）。手順8の開始時に
-  停止しており `make up` が落ちた → 起動手順は `Development.md` 1章・9章
-- **Vite 開発サーバは `:5173`（`strictPort`）。** ポートが空いていなければ黙ってずらさずに失敗する。
-  API は別途 `make run` で `:8080` に立てる（`/api` `/mcp` だけがプロキシされる）
-- **`make run` を止め忘れると次のセッションで `bind: address already in use` になる**（手順5b で発生）
-  → 確認と回避は `Development.md` 9章
-- **Cookie 認証で状態変更系を叩くテストは `X-PB-CSRF` が要る**（手順5b で導入）
-  → curl の手順は `Development.md` 8.3
-- **レート制限のカウンタはプロセス内メモリにある**（手順5b）。`make run` を再起動すると消えるため、
-  429 を再現する検証は**サーバを起動したまま**続けて叩くこと。ログインは IPあたり 10回/分
-- **パスワードを知らないアカウントでログインを試すと `failed_attempts` が増える**（手順6a の疎通確認で
-  `tanaka@example.com` に1回記録した）。5回で15分ロックされ、次のセッションの検証を妨げる
-  → 戻し方は `Development.md` 8.4
-- **プロジェクトキーには CHECK 制約がある**（`DbDesign.md` 6.4）。`^[a-z0-9][a-z0-9-]{1,19}$` で
-  **2〜20文字**。テストで ULID をそのまま使うと長さ超過で INSERT が落ちる（末尾6文字を小文字化して使った）
-- **`.claude/settings.json` の deny は Read ツールにしか効かない。** `Read(./deploy/*/secrets/**)` を deny していても、`allow` にある `Bash(cat:*)` 経由では読めてしまう（手順4b の検証で `app_db_password` を実際にそう読んだ）。秘密を機械的に守りたい場合は Bash 側にも `deny` を足す必要がある
-- **DBを使うテストは `PB_TEST_DATABASE_URL` で切り替える**（手順4b で導入）。未設定ならスキップするので
-  `make test` は DB 無しでも通る → 実行例は `Development.md` 6.1。
-  接続は `pb_app`（DML のみ）で行う。実運用と同じ権限で通ることを確かめるため
-- **`t.Cleanup` は `defer` より後に走る。** 結合テストで `defer pool.Close()` と `t.Cleanup(削除)` を併用すると、後片付けの時点でプールが閉じていて `closed pool` になる。プールの close も `t.Cleanup` で登録し、LIFO の順序を使うこと
-- **可変長引数を渡さないと `nil` スライスになる**（`[]string{}` ではない）。実効権限のキャッシュは
-  `nil`（キャッシュ不在）と長さ0（権限0件）を区別するため、テストヘルパで `f()` と書くと
-  意図せず「不在」になる。手順6b で `append([]string{}, xs...)` に直して気づいた
-- **実サーバでのログイン検証にはパスワードの分かるアカウントが要る。** 手順3で作った
-  `tanaka@example.com` のパスワードは記録されていない。手順6b では Argon2id ハッシュを
-  スクラッチパッドの小さなモジュールで生成し、`actor` → `app_user` → `user_identity` →
-  `local_credential` を直接 INSERT して検証用ユーザーを作った（検証後に削除）。
-  ハッシュのパラメータは `server/internal/auth/password.go` の `hashParams`
-  （m=65536, t=3, p=4, salt=16, key=32）に合わせること
-- **検証で `login.failure` を1件でも出したら消しておく。** `audit_log` に残り、次のセッションの
-  件数の検証を狂わせる → あとしまつの一覧は `Development.md` 8.4
-- Go の直接依存（手順4b時点）: `jackc/pgx/v5 v5.7.5` / `oklog/ulid/v2 v2.1.2` / `alexedwards/argon2id v1.0.0` / `golang.org/x/term v0.33.0` / `go-chi/chi/v5 v5.3.1`（手順4a から**増えていない**。トークンのハッシュと乱数は標準ライブラリの `crypto/sha256` / `crypto/rand` で足りる）
-  - **`x/term` と `x/sys` はバージョンを上げないこと。** 最新版は go 1.25 を要求し、`go get` が go ディレクティブを勝手に 1.25.0 へ引き上げる（`Design.md` 3.1 と衝突）。上げる際は 3.1 の最低バージョンとセットで見直す
-  - `go get` 後は `head -3 server/go.mod` で go ディレクティブが `1.24` のままか確認する
-- **パスワード入力のエコー抑止には競合窓がある。** プロンプトを出してから `term.ReadPassword` が echo を切るまでの数マイクロ秒に文字が届くと、その分だけ端末に表示される。`expect` から遅延なしで送ると再現するが、人間の入力では起こらない（`sudo` や `ssh` も同じ挙動）
-  - 端末ありの検証は `expect` に `sleep 0.4` を入れて行う。`printf ... | script -q /dev/null` は stdin を即座に閉じるため `EOF` になり検証に使えない
-- goose のバージョン: **v3.26.0**（手順4a から `server/tools/go.mod` の tool ディレクティブで固定）
-  - v3.27.3 以降は `go 1.25.7` を要求し、`Design.md` 3.1 の「Go 1.24 以上」と衝突するため上げていない
-- sqlc のバージョン: **v1.30.0**（`server/tools/go.mod`）
-  - v1.31.1 は `go 1.26.0` を要求するため上げていない。v1.30.0 自体は `go 1.23.0` 要求
-  - **`go get -tool` は実行順で結果が変わる。** `tools/go.mod` に sqlc → goose の順で入れると go ディレクティブが 1.24 のまま保たれるが、goose → sqlc の順だと `x/*` が最新へ上がって 1.25.0 に書き換えられる。ツールを足したら必ず `head -3 server/tools/go.mod` を見る
-  - `citext` は sqlc が既定の対応を持たないため、`sqlc.yaml` の `overrides` で `string` に写している。`inet` は `*netip.Addr`、NULL 許容列は `pgtype.*` になる
-- **ツールは `server/tools/go.mod` に隔離してある。** `make migrate` / `make sqlc` は `cd server/tools` してから `go tool` を呼ぶ。`server/go.mod` にツールを足さないこと（indirect が80件超に膨らみ、go ディレクティブも 1.25 へ上がる）
-- ホストの Go: 1.26.5（Homebrew。手順2で導入）。`make migrate` / 手順3以降の `make run` / `make build` に必要
-- ホストに `psql` が入っていないため、`make psql` は `docker compose exec db psql` でコンテナ内に入る
-- `initdb/01_roles.sh` は**実行ビットを立てておくこと**。`:ro` マウントでもホスト側のファイルモードがそのまま使われる
-- initdb スクリプトが走るのは `pgdata` ボリュームが空の初回起動時のみ。ロール定義を変えたら `docker compose -f deploy/base/compose.yaml down -v` でボリュームごと作り直す
-- 秘密の実ファイルは `deploy/dev/secrets/` に3つ必要（`db_password` / `app_db_password` / `app_database_url`）。`app_database_url` に埋め込むパスワードは `app_db_password` と同じ値にする
-- **マイグレーションは `pb_owner` で接続する。** `pb_app` はDDLを実行できない（それが 3.4 のロール分離の目的）。`make migrate` は `db_password` から接続文字列を組み立てている
-- initdb の `ALTER DEFAULT PRIVILEGES FOR ROLE pb_owner` により、goose が作ったテーブルにも `pb_app` の DML 権限が自動で付く。マイグレーション後に GRANT を流す必要はない（`goose_db_version` も同様）
+| 制約 | 効いてくる場面 |
+|---|---|
+| **セッションの会話は `~/.claude/projects/<リポジトリの絶対パスの / を - に置き換えたもの>/<UUID>.jsonl` に残るが、既定30日で自動削除される**（`~/.claude/settings.json` の `cleanupPeriodDays`）。リポジトリには含まれない | 過去セッションの発話を掘り起こす作業（`LEARNINGS.md` の初期値づくりなど）は期限内にしかできない |
+| **`.claude/settings.json` の `deny` は Read ツールにしか効かない。** `Read(./deploy/*/secrets/**)` を deny していても、`allow` にある `Bash(cat:*)` 経由では読めてしまう（手順4b の検証で `app_db_password` を実際にそう読んだ） | 秘密を仕組みで守りたいなら Bash 側にも `deny` を足す必要がある |
+| **`deploy/Dockerfile` が未作成のため `make up` の対象は `db` のみ**（Makefile に TODO） | 全サービスへ戻す作業は「次の手順への引き継ぎ」の手順13以降の行にある |
+| **プロジェクト作成の手順が `cmd/pb/dev_seed.go` と `httpapi/v1/projects_create.go` の2か所にある** | 片方だけ直すと差が開く。共通化は見送っている（同じく引き継ぎの「随時」の行） |
+
+**手順3で作った `tanaka@example.com` のパスワードは記録されていない。** 実サーバの検証には
+`make dev-seed` の4アカウント（共通パスワード。`make dev-info` で表示）を使う。
 
 ## 過去の記録
 
@@ -234,5 +189,7 @@
 | **次の手順以降に持ち越す約束** | 本文書の「次の手順への引き継ぎ」 |
 | 判断の経緯・設計文書との食い違いとその対応 | `history/decisions.md` の表の末尾 |
 | 作ったファイルの一覧・検証結果の全文 | `history/steps.md` の末尾 |
-| いま効いている環境の制約 | 本文書の「環境メモ」 |
-| 再現できる手順 | `docs/Development.md`（設計文書ではなく手順書） |
+| いま効いている環境の制約で、**手順書に落とせないもの** | 本文書の「環境メモ」 |
+| 再現できる手順（起動・テスト・画面確認・あとしまつ） | `docs/Development.md`（設計文書ではなく手順書） |
+| 依存・ツールの固定版とその理由 | `docs/Development.md` 10章 |
+| 役目を終えた回避策 | `history/steps.md`（消さずに「もう使わない」と書いて残す） |

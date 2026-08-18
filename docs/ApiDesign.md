@@ -229,13 +229,15 @@ GET /api/v1/projects?page=1&per_page=25
 
 ```
 → GET /api/v1/projects
-← 200 OK / ETag: "W/proj-01K2F8-1723372992"
+← 200 OK / ETag: W/"proj-3-1723372992000000000"
 
-→ GET /api/v1/projects / If-None-Match: "W/proj-01K2F8-1723372992"
+→ GET /api/v1/projects / If-None-Match: W/"proj-3-1723372992000000000"
 ← 304 Not Modified
 ```
 
 ETag はプロジェクト集合の `MAX(updated_at)` と件数から生成する。Phase 1 ではポーリングを実装しないが、**応答ヘッダだけ先に用意しておく**（後から追加すると全エンドポイントの改修になるため）。
+
+**弱い検証子の `W/` は引用符の外に置く**（RFC 9110 8.8.3 の `entity-tag = [ weak ] opaque-tag`）。`"W/proj-…"` と内側に書くと、値そのものが `W/proj-…` という文字列の**強い**検証子になり、弱い比較の意味を失う。
 
 ## 2.8 楽観ロック
 
@@ -247,6 +249,14 @@ If-Match: "3"
 ```
 
 不一致時は `409 conflict`。Phase 1 で対象とするのは `project` と `app_user` のみ。チケットは9章で扱う。
+
+**`If-Match` を伴わない更新は受け付けない。** 省略時は `422 validation_failed` とし、`details` に
+`{ "field": "If-Match", "code": "required" }` を載せる。ヘッダを付け忘れた実装が黙って上書きできると、
+楽観ロックが「掛かっているつもり」の状態になるため。`GET` の応答が `version` を返しているので、
+呼び出し側が値を持っていないことはない。
+
+**状態を切り替えるだけの操作（5.6 の archive / unarchive）は `If-Match` を要求しない。** 冪等であり、
+競合しても失われる編集内容がないためである。ただし `version` は他の更新と同じく +1 する。
 
 ## 2.9 レート制限
 
@@ -501,7 +511,11 @@ GET /api/v1/projects/check-key?key=my-app
 
 新規作成モーダルの即時検証に使う（`GuiDesign.md` 5.2.1）。debounce 400ms でフロントから呼ぶ。
 
-**予約語**：`admin` `api` `mcp` `login` `logout` `me` `p` `new` `projects` `static` `assets`（ルーティングと衝突するため）
+**予約語**：`admin` `api` `mcp` `login` `logout` `me` `p` `new` `projects` `static` `assets` `check-key`（ルーティングと衝突するため）
+
+`check-key` を含めるのは、これが `/api/v1/projects/` 直下の兄弟パスだからである。`check-key` という
+キーのプロジェクトを作れてしまうと、`GET /projects/check-key`（5.4）が本エンドポイントに吸われて
+そのプロジェクトへ到達できなくなる。
 
 ## 5.3 `POST /api/v1/projects`
 
@@ -557,15 +571,48 @@ GET /api/v1/projects/check-key?key=my-app
 
 **必要権限**：`project.edit`
 
-変更可能：`name` `description` `settings`。**`key` は含められない**（送られた場合 `422`、`code: "immutable_field"`）。
+変更可能：`name` `description` `settings`。**送られたフィールドだけを更新する**（部分更新）。
+検証は 5.3 の表と同じ（`name` 1〜100文字、`description` 0〜1000文字）。
 
-`If-Match: "3"` による楽観ロック。
+**`key` は含められない。** 送られた場合は `422`、`details` に
+`{ "field": "key", "code": "immutable_field" }` を載せる。`immutable_field` は
+**`details[].code` の値**であって 2.5.1 の `error.code` ではない（`error.code` は
+`validation_failed`）。2.5.1 のコード表は本体の `code` だけを列挙している。
+
+`If-Match: "3"` による楽観ロック（2.8）。**成功すると `version` が +1 される。**
+応答は 5.4 と同形式で、更新後の値を返す。
+
+### 5.5.1 応答
+
+| 状況 | 応答 |
+|---|---|
+| 更新できた | `200` ＋ 5.4 形式 |
+| `If-Match` が無い | `422 validation_failed`（`details[].field = "If-Match"`、`code = "required"`） |
+| `If-Match` が現在の `version` と違う | `409 conflict` |
+| `key` が送られた | `422 validation_failed`（`details[].code = "immutable_field"`） |
+| メンバーでない | `404 not_found`（存在を隠す。`Design.md` 6.4.5） |
+| メンバーだが `project.edit` が無い | `403 forbidden` |
 
 ## 5.6 `POST /api/v1/projects/:key/archive` / `POST /api/v1/projects/:key/unarchive`
 
 **必要権限**：`project.archive`
 
 `status` を切り替える。**物理削除のAPIは Phase 1 では提供しない。** チケット・コメント・監査記録を巻き込むため、必要になった時点で「削除の確認方法」と併せて設計する。
+
+| | archive | unarchive |
+|---|---|---|
+| `status` | `archived` | `active` |
+| `archived_at`（`DbDesign.md` 6.4） | `now()` | `NULL` |
+| `version` | +1 | +1 |
+
+**応答は `200` ＋ 5.4 形式**（更新後のプロジェクト）。`204` にしないのは、画面が `status` と
+`version` を1往復で更新できるようにするためである。リクエスト本文は取らない。
+
+**既にその状態なら何も変えずに `200` を返す**（冪等）。二重送信やブラウザの戻る操作で
+`version` だけが進むのを避ける。
+
+`If-Match` は要求しない（2.8）。**監査ログは archive / unarchive のどちらも `project.archive`
+として記録し**（2.10 のカタログにこの1つしかない）、`detail` に遷移後の `status` を入れて区別する。
 
 ---
 

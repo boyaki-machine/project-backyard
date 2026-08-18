@@ -33,6 +33,8 @@ const (
 	testActorID  = "01K2F8QW3H7YRJ4M5N6P7Q8R9S"
 	testIdentity = "01K2F8QW3H7YRJ4M5N6P7Q8R9I"
 	testEmail    = "tanaka@example.com"
+	// testProjectID は認可ミドルウェアが返すプロジェクトの ULID（手順11）。
+	testProjectID = "01K2F8QW3H7YRJ4M5N6P7Q8PRJ"
 )
 
 func ts(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }
@@ -90,6 +92,22 @@ type fakeQuerier struct {
 	memberRows          []gen.ListProjectMembersRow
 	createProjectErr    error
 	auditErr            error
+
+	// プロジェクトの更新（手順11。ApiDesign.md 5.5 / 5.6）
+	//
+	// updateRows / statusRows は UPDATE の影響行数を決める。0 が
+	// 「version 不一致 または 行が無い」と「既にその状態」を表し、
+	// ハンドラがそれを 409 / 404 / 冪等な 200 に分ける様子を試せる。
+	updateParams []gen.UpdateProjectParams
+	updateRows   int64
+	updateErr    error
+	statusParams []gen.SetProjectStatusParams
+	statusRows   int64
+	statusErr    error
+
+	// 認可ミドルウェア（RequireProjectPermission）が引く行。
+	// key ごとに「プロジェクトの存在・自分のロール・その権限」を持つ。
+	projectAuthzRows map[string][]gen.FindProjectAuthzByKeyRow
 
 	// 書き込みの記録
 	created      []gen.CreateAccessTokenParams
@@ -328,8 +346,60 @@ func (q *fakeQuerier) SummarizeProjects(_ context.Context, arg gen.SummarizeProj
 }
 
 func (q *fakeQuerier) ProjectKeyExists(_ context.Context, key string) (bool, error) {
+	q.opLog = append(q.opLog, "ProjectKeyExists")
 	q.keyChecked = append(q.keyChecked, key)
 	return q.keyExists, nil
+}
+
+func (q *fakeQuerier) UpdateProject(_ context.Context, arg gen.UpdateProjectParams) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateProject")
+	q.updateParams = append(q.updateParams, arg)
+	if q.updateErr != nil {
+		return 0, q.updateErr
+	}
+	return q.updateRows, nil
+}
+
+func (q *fakeQuerier) SetProjectStatus(_ context.Context, arg gen.SetProjectStatusParams) (int64, error) {
+	q.opLog = append(q.opLog, "SetProjectStatus")
+	q.statusParams = append(q.statusParams, arg)
+	if q.statusErr != nil {
+		return 0, q.statusErr
+	}
+	return q.statusRows, nil
+}
+
+func (q *fakeQuerier) FindProjectAuthzByKey(
+	_ context.Context, arg gen.FindProjectAuthzByKeyParams,
+) ([]gen.FindProjectAuthzByKeyRow, error) {
+	return q.projectAuthzRows[arg.ProjectKey], nil
+}
+
+// withProjectMember は、key のプロジェクトに role のメンバーとして
+// 属している状態を作る（RequireProjectPermission が引く行）。
+//
+// role が空文字なら「プロジェクトは在るが非メンバー」（LEFT JOIN の NULL 行）。
+// key ごと登録しなければ「プロジェクトが無い」＝ 0 行になる。
+func (q *fakeQuerier) withProjectMember(key, role string) *fakeQuerier {
+	if q.projectAuthzRows == nil {
+		q.projectAuthzRows = map[string][]gen.FindProjectAuthzByKeyRow{}
+	}
+	if role == "" {
+		q.projectAuthzRows[key] = []gen.FindProjectAuthzByKeyRow{{
+			ProjectID: testProjectID, ProjectKey: key, ProjectStatus: "active",
+		}}
+		return q
+	}
+	rows := make([]gen.FindProjectAuthzByKeyRow, 0, len(q.permissions[role]))
+	for _, perm := range q.permissions[role] {
+		rows = append(rows, gen.FindProjectAuthzByKeyRow{
+			ProjectID: testProjectID, ProjectKey: key, ProjectStatus: "active",
+			RoleKey:       txt(role),
+			PermissionKey: txt(perm),
+		})
+	}
+	q.projectAuthzRows[key] = rows
+	return q
 }
 
 // auditActions は記録された監査アクションを順に返す。

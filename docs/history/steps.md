@@ -438,6 +438,43 @@ Playwright / Puppeteer は入れていない。スクリプトはリポジトリ
 **次に画面を検証するときは書き直しになる。** 常設するなら `Design.md` 3.1 への追記提案とセットにする。
 
 
+## 手順11a（2026-08-18、`feature/step-11-project-detail-api`）
+
+`GET`/`PATCH /projects/:key` と `archive`/`unarchive`（`ApiDesign.md` 5.4〜5.6）。
+**手順11 のうち Go だけ**を扱い、プロジェクト設定画面は 11b とした。
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/httpapi/v1/projects_get.go` | `GET /projects/{key}`（5.4）。組み立ては既存の `buildProjectDetail` を呼ぶだけ。`projectRequestContext`（プリンシパルと `{key}` の取り出し）と `writeProjectDetailError`（`pgx.ErrNoRows` → 404）は**`/projects/{key}` 配下で共有する** |
+| `server/internal/httpapi/v1/projects_update.go` | `PATCH`（5.5）と `archive`/`unarchive`（5.6）。`parseIfMatch`・`buildUpdateProjectParams`・`parseDescriptionField`・`classifyUpdateMiss`・`writeProjectUpdateError`。archive と unarchive は `setProjectStatus` 1つに集約し、渡す `status` だけが違う |
+| `server/internal/httpapi/v1/projects_update_test.go` | 単体16件。5.4 の形・非メンバーの 404・部分更新・`null` の区別・`If-Match` の必須と 409・`immutable_field`・冪等な archive・403・`check-key` の予約 |
+| `server/internal/httpapi/v1/projects_update_integration_test.go` | **実DBに対する結合テスト。** `COALESCE`/`sqlc.narg` の据え置き、`version` の照合と +1、`archived_at` の CASE、`status <> @status` の冪等、`trg_project_updated` による `updated_at` の前進 |
+| `server/internal/store/queries/project.sql`（変更） | `UpdateProject`（`:execrows`）と `SetProjectStatus`（`:execrows`）を追加。影響行数で 409 / 404 / 冪等を呼び出し側へ伝える |
+| `server/internal/httpapi/v1/routes.go`（変更） | 4ルートを `RequireProjectPermission` 付きで宣言（`project.view` / `project.edit` / `project.archive` × 2） |
+| `server/internal/httpapi/v1/projects.go`（変更） | `reservedProjectKeys` に `check-key` を追加。`projectsETag` のコメントを、2.7 を直した後の状態に書き換え |
+| `server/internal/httpapi/v1/fake_test.go`（変更） | `UpdateProject` / `SetProjectStatus` / `FindProjectAuthzByKey` と `withProjectMember` ヘルパ。**`FindProjectAuthzByKey` は v1 のフェイクに初めて入った**（プロジェクト層の認可を通るルートが手順11で初めて出たため） |
+| `docs/openapi.yaml`（変更） | 4オペレーション、`components.parameters.ProjectKey`、`responses.ProjectStatusChanged`、`schemas.UpdateProjectRequest` |
+| `client/src/api/schema.d.ts`（変更） | `make gen-api` の生成物。**API層（`api/projects.ts`）への追加は 11b** |
+| `docs/ApiDesign.md`（変更） | 2.7 / 2.8 / 5.2 / 5.5 / 5.5.1（新設）/ 5.6 |
+
+### 手順11a の検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `gofmt -l` / `go vet ./...` / `make test` | いずれも通る（**openapi ドリフト検出を含む**） |
+| ドリフト検出が効くこと | 実装を先に足した時点で **4件すべてを「実装にあって yaml に無い」と報告**した（意図した検出。yaml を書いて解消） |
+| 単体テスト（`-run 'Project'`） | 16件が通る |
+| **実DB結合テスト**（`PB_TEST_DATABASE_URL`） | `TestProjectUpdateIntegration` が通る。`name` だけ送ると `description` が据え置かれる／古い `version` で 409 かつ値が書き換わらない／`"description":null` で列が NULL になる／`settings` の置き換えで `name` は据え置き／`archived_at` が入り、unarchive で NULL に戻る／2回目の archive で `version` が進まず監査も増えない／`updated_at` がトリガで進む |
+| **実サーバ（`make run` ＋ `make dev-reset` のデモ4アカウント）** | `GET /projects/demo`（pm＝`project_admin`）が `workflow` 3ステータス・`members` 3件・`my_permissions` 22件を返す ／ `member`（`project_member`）は GET 200 だが **PATCH 403**（メンバーなので 404 ではない）／ 古い `If-Match` → 409 `conflict` ／ `If-Match` 省略 → 422 `If-Match/required` ／ `key` 送信 → 422 `key/immutable_field` ／ CSRF ヘッダ無し → 403 `csrf_failed` ／ archive → `archived` かつ `version` +1、2回目は据え置き、unarchive で `active` ／ `viewer`（`project_viewer`）の archive → 403 ／ 存在しないキー → 404 |
+| `audit_log` | `project.archive` が2件（archive と unarchive）で `detail.status` が `archived` / `active`。**冪等な2回目は記録されていない** |
+| 検証用リソースの後始末 | `make run` を停止（`:8080` の解放を確認）／ `PB_YES=1 make dev-reset` でデモデータを初期状態に戻した（`version=1`・`description` 復元・`audit_log` の `project.archive` 0件）／ `make down` でコンテナとネットワークを削除 ／ スクラッチパッドを空にした。**`make build` は実行していない**ため `make clean-webui` は不要 |
+
+**実サーバの確認は使い捨てシェルスクリプトで行い、リポジトリには入れていない。**
+本文とステータスを別々に受け取り（`-o` と `-w`）、`version` は毎回 `GET` で読み直すため
+何度実行しても同じ判定になる作りにした。**次に同じ確認をするときは書き直しになる。**
+
 ---
 
 ## 進捗表から移した検証内容（手順1〜10b）
@@ -467,6 +504,21 @@ Playwright / Puppeteer は入れていない。スクリプトはリポジトリ
 | 10b | 2026-08-18 | ブラウザで32件：`+ 新規プロジェクト` で `/projects?new=1` になりモーダルが開く。名前 `Riders High 2026` から `riders-high-2026` が自動入力され、日本語名では空のまま。キーを手で編集したら名前に追随しない。`My_App`→`invalid_format` / `admin`→`reserved` / `demo`→`already_exists` / `my-app`→`✓ 使用可能です`。14文字を連続入力しても `check-key` は1回（debounce 400ms）。作成すると `/p/my-app` へ遷移して見出しがプロジェクト名になり、一覧へ戻ると先頭に `0 / 0 / 0%` で出る。`check-key` を待たずに既存キーで送ると 409 のメッセージがキー欄に出てモーダルは開いたまま。3テンプレートで `workflow_status` が 3 / 4 / 5 件複製され、作成者が `project_admin` で入り `audit_log` に `project.create` が残る。`Esc` で閉じてフォーカスが `+ 新規プロジェクト` に戻る。オペレータにはボタンが出ず `?new=1` を直接開いてもモーダルが出ない |
 
 ---
+
+## 環境メモから移した記録（2026-08-18、その2・`feature/step-11-project-detail-api`）
+
+`PROGRESS.md` が 30KB を超えたため、環境メモを**「いま効いていて、かつ手順書に落とせない
+制約」だけ**に絞った（2026-08-18、11a）。再現手順は `docs/Development.md` へ写し
+（テストの落とし穴＝6.2、依存とツールの固定版＝10章、initdb の実行ビット＝2.2）、
+**役目を終えた回避策だけをここへ移した。**
+
+- **検証用ユーザーを Argon2id ハッシュから手作りする方法**（手順6b）。当時は実サーバの
+  ログイン検証にパスワードの分かるアカウントが無く、スクラッチパッドの小さなモジュールで
+  ハッシュを生成し、`actor` → `app_user` → `user_identity` → `local_credential` を直接
+  INSERT して作った（検証後に削除）。パラメータは `server/internal/auth/password.go` の
+  `hashParams`（m=65536, t=3, p=4, salt=16, key=32）に合わせる必要があった。
+  **手順7.5 の `make dev-seed` で共通パスワードの4アカウントが入るようになったため、
+  この手順はもう使わない**（`make dev-info` で一覧できる）
 
 ## 環境メモから移した記録（2026-08-18）
 
