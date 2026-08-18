@@ -521,4 +521,6 @@ ls "/Applications/Google Chrome.app"
 | DBの実行環境・スキーマ・初期データ・デモデータの仕様 | `DbDesign.md` 3章・5〜7章 |
 | API の規約（エラー形式・CSRF・レート制限） | `ApiDesign.md` 2章 |
 | 画面の構造・配色・ルーティング | `GuiDesign.md` |
-| どこまで実装したか・過去の判断 | `docs/PROGRESS.md` |
+| どこまで実装したか・次の手順への引き継ぎ・環境メモ | `docs/PROGRESS.md` |
+| 過去の判断の経緯 | `docs/history/decisions.md` |
+| どの手順で何を作ったか・当時の検証内容 | `docs/history/steps.md` |

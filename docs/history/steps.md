@@ -1,0 +1,478 @@
+# 手順ごとの記録（Phase 1・手順2〜8）
+
+`docs/PROGRESS.md` から分割した**過去の記録**（2026-08-18、`docs/progress-archive`）。
+各手順で「何を作ったか（ファイル一覧）」と「どう検証したか（検証結果）」を、
+実施当時のまま保管している。**毎セッションで読む文書ではない。**
+既存コードの由来や過去の検証手順を調べたいときに grep して、必要な節だけを読むこと。
+
+手順9以降はこの形式の節を作っていない（`PROGRESS.md` の進捗表と
+`history/decisions.md` に記録がある）。新しい手順の記録はこの文書の末尾に追記する。
+
+---
+
+### 手順2の照合結果
+
+`DbDesign.md` 6.1〜6.9 と 7.1〜7.4 の `sql` ブロックを抽出し、`server/migrations/*.sql` から
+コメントと goose 注釈を除いたものと機械的に比較した。**コメントを除くSQL 526行が完全一致**。
+
+差分として出るのは 6.4.1（チケット採番の `UPDATE ... RETURNING`）のみで、これはアプリが実行する
+クエリでありDDLではないため、マイグレーションに含まれないのが正しい。
+
+適用結果（`down -v` でボリュームごと作り直したうえで再検証）：
+
+| 項目 | 実測 |
+|---|---|
+| テーブル | 23（業務22 + `goose_db_version`） |
+| `permission` / `role` / `role_permission` | 28 / 5 / 75 |
+| ワークフローテンプレート | `simple` 3ステータス3遷移、`with_review` 4/5、`with_approval` 5/7 |
+| エージェント到達不可のステータス | `simple.done` / `with_review.done` / `with_approval.approval` / `with_approval.done` |
+| 固定ULID | 30件すべて26文字・Crockford Base32 適合 |
+| `pb_app` | `SELECT` 可、`CREATE TABLE` / `DROP TABLE` は拒否、`statement_timeout=15s` |
+| 冪等性 | `make migrate` 再実行が no-op。0010 の直接再適用でも件数不変 |
+
+### 手順3で作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/cmd/pb/main.go` | サブコマンド振り分け（`admin` / `version` / `help`）。`serve` は手順5以降 |
+| `server/cmd/pb/admin_create.go` | 対話入力と、4テーブルへの INSERT を1トランザクションで実行 |
+| `server/internal/config/config.go` | 環境変数と `*_FILE` 展開（`PB_BIND` / `PB_DATABASE_URL` / `PB_LOG_FORMAT`） |
+| `server/internal/auth/password.go` | Argon2id（`m=64MiB, t=3, p=4`）と最小長12の検証 |
+| `server/internal/ulidgen/ulidgen.go` | ULID 生成 |
+| 各 `*_test.go` | config 3件 / auth 4件 / ulidgen 1件 |
+| `Makefile` | `admin-create` と `test` を追加 |
+
+`internal/store/` は作っていない（sqlc とあわせて手順4）。
+
+### 手順3の検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `go build ./...` / `go vet ./...` / `make test` | いずれも通る |
+| `make admin-create`（初回） | `actor` / `app_user` / `user_identity` / `local_credential` に各1行。`system_role='administrator'`、`kind='user'`、`provider_key='local'` |
+| メールの大小の保存 | `Suzuki@Example.com` で作成 → `app_user.email` と `user_identity.subject` の**両方が入力どおりの表記**で、かつ完全一致 |
+| ログイン経路の再現 | 全小文字 `suzuki@example.com` で `app_user` を引き、その `email` の値で `subject` を引くと `Suzuki@Example.com` が取れる（`Design.md` 6.2.1 の①→②が通る） |
+| `ON DELETE CASCADE` | 検証用レコードを `DELETE FROM actor` で1行消すと、`app_user` / `user_identity` / `local_credential` も連動して消える |
+| `password_hash` | `$argon2id$v=19$m=65536,t=3,p=4$` で始まり全長97文字（ソルト16→22 + キー32→43）。PHC 文字列が欠けずに格納されている |
+| 既に管理者がいる状態での再実行 | 「アドミニストレータが既に 1 件存在します」と警告し `[y/N]` で確認。既定 no で中止し、行数が変わらない |
+| 重複メールでの作成 | `actor` の INSERT が成功した後に `app_user` で一意制約違反 → **全体がロールバックされ `actor` の残骸が残らない**（1/1/1/1 のまま） |
+| 入力検証 | 空の表示名・61文字以上・メール形式不正・12文字未満のパスワード・確認との不一致で、いずれも再入力を促す |
+| 端末での非表示入力 | `expect` で疑似端末から実行し、表示名とメールは表示され、パスワード2行は表示されないことを確認 |
+| `pb version` | `go run -ldflags "-X main.version=1.2.2"` で `pb v1.2.2`、未指定で `pb vdev` |
+
+### 手順4aで作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/tools/go.mod` `go.sum` | goose v3.26.0 / sqlc v1.30.0 を tool ディレクティブで固定する専用モジュール |
+| `server/sqlc.yaml` | pgx/v5 モード。`migrations/` をスキーマ源に、`internal/store/gen/` へ生成 |
+| `server/internal/store/db.go` | pgxpool（Min 2 / Max 10、`application_name=pb`。`DbDesign.md` 3.5） |
+| `server/internal/store/queries/user.sql` | 手順3の5クエリ（COUNT 1・INSERT 4）を sqlc へ移植 |
+| `server/internal/store/gen/*.go` | sqlc 生成物4ファイル（`db.go` / `models.go` / `querier.go` / `user.sql.go`） |
+| `server/internal/httpapi/apierr/apierr.go` | `ApiDesign.md` 2.5 のエラー形式、2.5.1 の14コードとステータス対応、`request_id` のコンテキスト受け渡し |
+| `server/internal/httpapi/paging.go` | 2.6 のパラメータ解析（`ParsePage`）、一覧エンベロープ（`List[T]`）、`WriteJSON` |
+| `server/internal/httpapi/router.go` | chi v5 のルータ組み立て。`/api/v1` の階層、`/healthcheck`、2.5 形式の 404 / 405 |
+| `server/internal/httpapi/health.go` | `GET /healthcheck`（`ApiDesign.md` 2.11） |
+| `server/internal/httpapi/middleware/requestid.go` | リクエストごとの ULID 発行 |
+| `server/internal/httpapi/middleware/accesslog.go` | 1リクエスト1行のアクセスログ（`Design.md` 10.1） |
+| `server/cmd/pb/serve.go` | `pb serve`。slog 初期化（stdout・レベル）・プール生成・待受・graceful shutdown |
+| 各 `*_test.go` | apierr 9件 / paging 7件 / router 5件 / health 4件 / middleware 7件 / config 3件追加 |
+| `server/cmd/pb/admin_create.go` | 直書き pgx → sqlc へ差し替え（変更） |
+| `server/cmd/pb/main.go` | `serve` の振り分けと usage（変更） |
+| `server/internal/config/config.go` | `PB_LOG_LEVEL` / `PB_HEALTH_SHOW_VERSION` を追加（変更） |
+| `Makefile` | `sqlc` / `run` を追加、`migrate` を `server/tools` から実行するよう変更 |
+| `deploy/base/env.example` `deploy/base/compose.yaml` | 追加した設定2件を反映（変更） |
+
+**`internal/domain/` は作っていない。** ビジネスルールを持つ型が現れる手順以降で作る。
+
+### 手順4aの検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト35件追加、全パッケージ ok） |
+| `go test ./internal/httpapi/...` | 3パッケージとも ok |
+| `server/go.mod` の依存 | 実依存5件（pgx / argon2id / ulid / term / chi）＋ **indirect 8件**。goose 隔離前は 59件 |
+| go ディレクティブ | `server/go.mod` `server/tools/go.mod` とも **1.24 のまま** |
+| `make migrate`（新しい実行位置） | `no migrations to run. current version: 10`。`server/tools` からの `-dir ../migrations` が効いている |
+| `make sqlc` の再現性 | 再実行しても `internal/store/gen/` に差分が出ない |
+| `make admin-create`（sqlc 移植後） | 4テーブルに各1行。`kind='user'` / `system_role='administrator'` / `provider_key='local'`、`password_hash` が `$argon2id$v=19$m=65536,t=3,p=4` |
+| メールの大小の保存 | `SqlcTest@Example.com` が `app_user.email` と `user_identity.subject` の両方に入力どおりの表記で入る（手順3から不変） |
+| 重複メールでのロールバック | `sqlctest@example.com`（小文字）で一意制約違反 → 全体がロールバックし `actor` の残骸が残らない。citext の大小無視も維持 |
+| `make run` | `{"level":"INFO","msg":"サーバを起動した","bind":"127.0.0.1:8080","version":"1.3.3"}`。slog の JSON と `-X main.version` が効いている |
+| 未知パスの応答 | `GET /api/v1/nope`・`GET /`・`POST /` のいずれも `404` ＋ `{"error":{"code":"not_found","message":"対象が見つかりません","request_id":"01KZT…"}}`。`Content-Type: application/json; charset=utf-8` |
+| `request_id` | 26文字の ULID。リクエストごとに変わる。クライアントの `X-Request-Id` は採用しない |
+| `GET /healthcheck` | `200` ＋ `{"status":"OK"}`。`PB_HEALTH_SHOW_VERSION=true`（`make run`）では `{"status":"OK","version":"1.4.4"}` |
+| `POST /healthcheck` | `405` ＋ `{"error":{"code":"method_not_allowed",…}}` |
+| `GET /api/v1/healthcheck` | `404`。`/healthcheck` は `/api/v1` の外にある |
+| ログ出力先 | **stdout のみ**。サーバ起動から停止まで stderr は空 |
+| アクセスログ | `{"level":"INFO","msg":"request","request_id":"01KZTC…","method":"GET","path":"/api/v1/nope","status":404,"duration_ms":0.026,"bytes":116,"ip":"127.0.0.1"}`。クエリ文字列は出ない |
+| `/healthcheck` のログ抑止 | 既定レベルでは 200 が出ず、`POST`（405）は出る。`PB_LOG_LEVEL=debug` にすると 200 も `DEBUG` で出る |
+| 設定値の検証 | `PB_LOG_LEVEL=verbose` と `PB_HEALTH_SHOW_VERSION=yes` はいずれも起動時にエラーで停止する |
+| 接続プール | `pg_stat_activity` に `application_name=pb` / `usename=pb_app` で3接続（Max 10 以内） |
+| graceful shutdown | SIGINT で「停止信号を受け取った」→「サーバを停止した」の順にログが出て、プロセスが残らない |
+
+### 手順4bで作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/migrations/0011_audit_log_request_id.sql` | `audit_log` に `request_id` を追加（前進のみ。0008 は編集していない） |
+| `server/internal/auth/token.go` | 平文トークンの生成（`pb_sess_` / `pb_api_` + base64url 32バイト）、SHA-256（小文字16進64文字）、`token_prefix`、`Authorization: Bearer` の解析 |
+| `server/internal/auth/principal.go` | `Principal` 型とコンテキスト受け渡し、`CredentialSource`、Cookie / ヘッダ名の定数、`scopes` の JSON 変換、`AuditLabel` |
+| `server/internal/store/queries/auth.sql` | `FindAccessTokenByHash`（`actor` と JOIN、`app_user` は LEFT JOIN）、`TouchAccessTokenLastUsed`（1分粒度） |
+| `server/internal/store/queries/audit.sql` | `InsertAuditLog` |
+| `server/internal/store/gen/auth.sql.go` `audit.sql.go` | sqlc 生成物 |
+| `server/internal/audit/audit.go` | 監査ログの共通基盤。15アクションの定数、`FromRequest` / `FromCLI`、`Record` / `RecordOrLog`、`ClientIP` |
+| `server/internal/httpapi/middleware/auth.go` | `Authenticate`。Cookie / Bearer → SHA-256 → 検証 → `Principal` をコンテキストへ |
+| `server/internal/httpapi/auth_integration_test.go` | 実DBに対する認証経路の結合テスト（`PB_TEST_DATABASE_URL` 未設定ならスキップ） |
+| 各 `*_test.go` | auth 21件 / audit 13件 / middleware 13件 / router 2件追加（全体で121件） |
+| `server/internal/httpapi/router.go` | 認証必須グループを追加。`Deps.Queries` を追加（変更） |
+| `server/internal/httpapi/middleware/accesslog.go` | `clientIP` を `audit.ClientIP` に委譲（変更） |
+| `server/cmd/pb/admin_create.go` | `user.create` の監査記録を同一トランザクションで追加（変更） |
+| `server/cmd/pb/serve.go` | 先頭コメントの更新のみ（変更） |
+
+**`internal/domain/` は引き続き作っていない。** CSRF・レート制限・`RequirePermission` は手順5・6。
+
+### 手順4bの検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `gofmt -l` / `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト121件、7パッケージすべて ok） |
+| `go test ./internal/httpapi/...` | 3パッケージとも ok |
+| `make sqlc` の再現性 | 再実行しても `internal/store/gen/` に差分が出ない |
+| `make migrate` | `0011_audit_log_request_id.sql` が適用され version 11。再実行は `no migrations to run` |
+| `audit_log` の列 | `request_id | character(26) | C | nullable` が末尾に付き、`activity` と同じ形。既存の3索引と CHECK は不変 |
+| 認証の結合テスト（実DB） | 有効トークンで通り、`system_role`（LEFT JOIN）と `scopes`（jsonb）が載る。失効後は 401、未知トークンも 401 |
+| `last_used_at` の間引き | 1回目で記録され、直後の2回目では**変わらない**。2分前に巻き戻すと3回目で更新される（`Design.md` 6.2.2 の1分粒度） |
+| ミドルウェア単体 | Cookie / Bearer / 両方（Cookie 優先）/ 空 Cookie / 資格情報なし / 未知 / 失効 / 期限切れ / 無効アクター / `expires_at` NULL / DB障害 / 壊れた scopes / touch 失敗 の13ケース |
+| 401 の応答 | 「無い」「失効」「期限切れ」「無効アクター」がすべて `{"error":{"code":"unauthenticated",…}}`。理由は `WithCause` でサーバログにのみ出る |
+| `make admin-create` の監査記録 | `action='user.create'` / `actor_id=NULL` / `actor_kind='system'` / `actor_label='pb admin create (CLI)'` / `target_id`=作成した actor / `detail={"via":"pb admin create","system_role":"administrator"}` / `ip`・`user_agent`・`request_id` は NULL |
+| 監査記録のロールバック | 重複メールで作成すると `actor` / `app_user` / `audit_log` のいずれも増えない（1トランザクション） |
+| 平文トークンの非保存 | `access_token.token_hash` は全件が64文字の16進で `pb_` 始まりが0件。サーバログにも平文が出ない |
+| `make run` | 起動・`/healthcheck` 200・未知パス 404・graceful shutdown が手順4a から不変。stderr は空のまま |
+| アクセスログの `ip` | `audit.ClientIP` へ一本化した後も `127.0.0.1`。`X-Forwarded-For` は採らない（テストで固定） |
+
+### 手順5aで作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/httpapi/v1/routes.go` | `/api/v1` のルート定義（認証不要／認証必須の2群）と `Deps`・`handler` |
+| `server/internal/httpapi/v1/login.go` | `POST /auth/login`。`Design.md` 6.2.1 の8手順、ロック（6.3）、入力検証、監査記録 |
+| `server/internal/httpapi/v1/logout.go` | `POST /auth/logout`。失効・Cookie削除・監査記録 |
+| `server/internal/httpapi/v1/me.go` | `GET /me` と、3.1 / 4.1 で共通の応答組み立て（実効権限の計算を含む） |
+| `server/internal/httpapi/v1/session.go` | セッション発行、`pb_session` / `pb_csrf` の付与・削除 |
+| `server/internal/httpapi/v1/apitime.go` | 応答の日時を ISO8601 UTC・秒精度に固定する型（`ApiDesign.md` 2.2） |
+| `server/internal/auth/permissions.go` | 6.4.1 の式（`EffectivePermissions` / `HasPermission`） |
+| `server/internal/store/queries/authz.sql` | `ListRolePermissions`、`ListProjectMembershipsByActor` |
+| `server/internal/httpapi/v1/auth_integration_test.go` | 実DBに対するログイン〜ログアウトの結合テスト |
+| 各 `*_test.go` | v1 は 41件（login 22 / me 8 / logout 3 / paging 7 / 結合1）、auth に permissions 8件・password 5件、apierr 2件、config 1件を追加 |
+| `server/internal/httpapi/v1/paging.go` `paging_test.go` | 4a で `httpapi` に作ったものを**移動**（`package v1`。内容は変えていない） |
+| `server/internal/httpapi/router.go` | `v1.Mount` を呼ぶ形に変更。テスト用の `newRouter`（extra 注入）を削除（変更） |
+| `server/internal/httpapi/health.go` | `WriteJSON` 依存を外し自前で書き出す（変更） |
+| `server/internal/httpapi/apierr/apierr.go` | `RetryAfterSec` と `WithRetryAfter`、`Retry-After` ヘッダ（変更） |
+| `server/internal/auth/password.go` | `NeedsRehash` / `VerifyAgainstDummy` を追加（変更） |
+| `server/internal/auth/token.go` | `NewCSRFToken` を追加（変更） |
+| `server/internal/auth/principal.go` | `ExpiresAt` を追加（変更） |
+| `server/internal/httpapi/middleware/auth.go` | `Principal.ExpiresAt` を載せる（変更） |
+| `server/internal/store/queries/auth.sql` | ログイン用に7クエリを追加（変更） |
+| `server/internal/config/config.go` | `PB_COOKIE_SECURE` を追加（変更） |
+| `server/cmd/pb/serve.go` `deploy/base/env.example` `deploy/base/compose.yaml` | 設定1件を反映（変更） |
+
+**`internal/domain/` は引き続き作っていない。**
+
+### 手順5aの検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `gofmt -l` / `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト180件、8パッケージすべて ok） |
+| `make sqlc` の再現性 | 2回実行して `internal/store/gen/` のハッシュが一致 |
+| 結合テスト（実DB） | `TestLoginIntegration` / `TestAuthenticateIntegration` とも通る。`authz.sql` の JOIN と `user_identity.subject = app_user.email` が実際に引けている |
+| ログイン（大小の非対称） | `LoginTest@Example.com` で作成 → **小文字 `logintest@example.com` でログイン成功**。応答の `actor.email` は保存された表記のまま |
+| ログイン応答 | `Set-Cookie` 2種（`pb_session` は HttpOnly、`pb_csrf` は非 HttpOnly、どちらも `Max-Age=1209600` / `SameSite=Lax` / `Path=/`）。本体に `actor` / `permissions`（**28件**）/ `projects`（`[]`）/ `expires_at`（14日後） |
+| `GET /me` | ログイン応答と同一構造・同一内容。キー構成の一致をテストで固定 |
+| `POST /auth/logout` | `204` ＋ 2つの Cookie の削除指示。同じ Cookie での `GET /me` は `401 unauthenticated` |
+| ログイン失敗 | 1〜4回目が `401 invalid_credentials`、**5回目が `423 account_locked`**（`retry_after_sec: 900` ＋ `Retry-After: 900`）。以降は正しいパスワードでも `423` |
+| 未登録メール | `401 invalid_credentials`（ダミーハッシュ検証を通してから返す） |
+| 入力検証 | 空のメール・パスワードで `422 validation_failed` ＋ `details` 2件。壊れた JSON は `400`、`GET /auth/login` は `405` |
+| 監査ログ | `login.success`（`detail.provider_key=local`、`token_id` は発行したトークン）/ `logout` / `login.failure`（`reason` が `unknown_email` / `wrong_password` / `wrong_password_locked` / `locked`）がすべて `request_id` と `ip` 付きで残る |
+| 平文トークンの非保存 | `access_token.token_hash` は64文字の16進で `pb_` 始まりが0件。`token_prefix='pb_sess_'`、`client_info='curl/8.7.1'`、`scopes='[]'`、`expires_at` は非 NULL |
+| サーバログ | 平文トークンの出現0件。stderr は0バイトのまま |
+| `last_login_at` | ログインごとに更新される |
+
+### 手順5bで作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/httpapi/middleware/csrf.go` | `RequireCSRF`（`ApiDesign.md` 2.4）。Cookie 認証の状態変更系に `X-PB-CSRF` を要求する |
+| `server/internal/httpapi/middleware/csrf_test.go` | 10件 |
+| `server/internal/httpapi/middleware/ratelimit.go` | `RateLimit` と `limiter`（2.9）。スライディングウィンドウ、`ClientIPKey` / `ActorKey` |
+| `server/internal/httpapi/middleware/ratelimit_test.go` | 11件（`-race` で並行性も検証） |
+| `server/internal/httpapi/v1/routes_test.go` | 6件。ルート定義に CSRF とレート制限が並んでいることをルータ越しに検証 |
+| `server/internal/httpapi/v1/routes.go` | ログインに IP 制限、認証必須グループにアクター制限と CSRF を挿した（変更） |
+| `server/internal/httpapi/v1/fake_test.go` | `addCSRF` ヘルパを追加（変更） |
+| `server/internal/httpapi/v1/me_test.go` | `authed` が CSRF を付けるよう変更 |
+| `server/internal/httpapi/v1/auth_integration_test.go` | `callWithCookie` が CSRF を付けるよう変更 |
+| `VERSION` | `make bump-minor` で `1.4.4` → `1.5.5`（手順5の完了。マージ前に実行する規約） |
+
+**新しい依存は追加していない**（`crypto/subtle`・`sync`・`time` はいずれも標準ライブラリ）。
+`internal/domain/` は引き続き作っていない。
+
+### 手順5bの検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `gofmt -l` / `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト205件、8パッケージすべて ok。5a の180件から25件増） |
+| `go test ./internal/httpapi/... -race` | 通る。`limiter` の並行アクセス（200 goroutine で上限50）でも競合を検出しない |
+| 結合テスト（実DB） | `TestLoginIntegration` / `TestAuthenticateIntegration` とも通る。ログアウトが CSRF ヘッダ込みで 204 |
+| **`POST /auth/logout`（`X-PB-CSRF` 無し）** | **`403` ＋ `{"error":{"code":"csrf_failed",…}}`。** トークンは失効していない |
+| `POST /auth/logout`（値が食い違う `X-PB-CSRF`） | `403`。理由はサーバログ側でのみ「一致しない」と区別される |
+| `POST /auth/logout`（正しい `X-PB-CSRF`） | `204`。以後、同じ Cookie の `GET /me` は `401` |
+| `GET /me`（CSRF ヘッダ無し） | `200`。安全なメソッドは対象外 |
+| Bearer 認証の `POST /auth/logout` | `204`。CSRF を要求しない（単体テストで検証） |
+| **ログインを1分に11回** | 1〜10回目が `200`（`X-RateLimit-Remaining` が 9→0）、**11回目が `429 rate_limited`** ＋ `retry_after_sec: 40` ＋ `Retry-After: 40` |
+| `Retry-After` の値 | 40秒。窓の残り（60秒）ではなく**最古の試行が窓から出るまで**になっている（スライディングの確認） |
+| 認証済みリクエストのヘッダ | `X-RateLimit-Limit: 600` / `X-RateLimit-Remaining: 596`。ログインの制限（10）とは別に数えている |
+| `/healthcheck` | 15回連続で `200`。`X-RateLimit-*` は付かない（`ApiDesign.md` 2.11 のとおり制限の対象外） |
+| 未知パス・405 | `GET /api/v1/nope` が `404`、`GET /api/v1/auth/login` が `405`。5a から不変 |
+| 監査ログ | 成功10件（`login.success`）＋ `logout` 1件のみ。**429 と CSRF 失敗の分は増えない**（2.10 に該当アクションが無いため） |
+| 拒否のサーバログ | `csrf_failed`（`X-PB-CSRF ヘッダが無い` / `一致しない`）と `rate_limited`（`key=127.0.0.1、上限 10回/1m0s`）が WARN で残る |
+| graceful shutdown | SIGINT で「停止信号を受け取った」→「サーバを停止した」。5a から不変 |
+
+**検証は :8099 で行った。** 前のセッションが起動したままの `pb` が :8080 を占有しており、
+他人のプロセスを落とさずに済ませるため `PB_BIND` を変えた。`make run` の設定との差は
+待受アドレスのみ。
+
+**検証用に作った管理者（`csrf-5b@example.com`）は検証後に削除した。**
+`audit_log` を先に消してから `actor` を消している（`actor_id` は `ON DELETE SET NULL` のため）。
+残る `app_user` は手順3以来の `tanaka@example.com` 1件。
+
+### 手順6aで作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/httpapi/middleware/authz.go` | `RequirePermission`（システムロール層）と `RequireProjectPermission`（プロジェクト層）。`ProjectKeyURLParam`、403/404 の切り分け、`permission.denied` の記録 |
+| `server/internal/httpapi/middleware/authz_test.go` | 22件。許可・拒否・スコープ縮小・非メンバー404・不在404・両者の区別不能・監査記録・DB障害500・ルート定義の誤り500・リクエスト内キャッシュ |
+| `server/internal/httpapi/authz_integration_test.go` | 実DBに対する認可の結合テスト（7サブテスト）。`role_permission` のシードと `FindProjectAuthzByKey` の SQL を実際に通す |
+| `server/internal/auth/permissions.go` | `ProjectAuthz` 型と、実効権限のコンテキスト受け渡し4関数を追加（変更）。`EffectivePermissions` / `HasPermission` の本体は変更なし |
+| `server/internal/store/queries/authz.sql` | `FindProjectAuthzByKey` を追加（変更）。`project` を起点にした LEFT JOIN で、不在（0行）と非メンバー（`role_key` NULL）を区別する |
+| `server/internal/store/gen/authz.sql.go` `querier.go` | sqlc 生成物（変更） |
+| `server/internal/httpapi/v1/routes.go` | コメントのみ更新（変更）。**ルート定義は変えていない** |
+
+**新しい依存は追加していない。** マイグレーションも追加していない（DDL の変更は 6b）。
+`internal/domain/` は引き続き作っていない。
+
+### 手順6aの検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `gofmt -l` / `go build ./...` / `go vet ./...` / `make test` | いずれも通る（テスト227件、8パッケージすべて ok。5b の205件から22件増） |
+| `go test ./internal/httpapi/... -race` | 4パッケージとも通る |
+| `make sqlc` の再現性 | 2回実行して `internal/store/gen/` のハッシュが一致 |
+| **オペレータ → `user.manage`** | **`403` ＋ `{"error":{"code":"forbidden","message":"この操作を行う権限がありません"}}`**（実DBのシード。`role_permission` の operator 12件に `user.manage` が無い） |
+| **アドミニストレータ → `user.manage`** | **`204`**（全権限） |
+| **非メンバーのオペレータ → `GET /projects/{key}`** | **`404`。** システムロールとして `project.view` を持っていても通さない |
+| 非メンバーのアドミニストレータ → 同 | `204`（`ApiDesign.md` 5.1「管理者は全件」と整合） |
+| 存在しないプロジェクト → 同 | `404`。**「在るが見えない」と応答が1バイトも変わらない**（status もエラーコードも一致することをテストで固定） |
+| `project_viewer` として参加後 | `GET` は `204`、`PATCH`（`project.edit`）は `403`。到達できるので 404 ではない |
+| システムロールとプロジェクトロールの和 | `project_viewer`（`ticket.close` 無し）＋ オペレータ（`ticket.close` 有り）で `204`。6.4.1 の ∪ が効いている |
+| トークンスコープによる縮小 | 管理者のトークンでも `scopes=["ticket.view"]` なら `user.manage` は `403`。プロジェクト側も同様 |
+| `permission.denied` の記録 | 403・404 のいずれでも1行。`result='failure'`、`detail.required_permission` / `detail.path` / `detail.project_key`、プロジェクトが特定できる場合は `target_type='project'` / `target_id` |
+| `system_role` を持たないアクター | `403`。`ListRolePermissions` の呼び出し回数が **0**（テストで確認） |
+| DB障害 | `ListRolePermissions` / `FindProjectAuthzByKey` のいずれが落ちても `500`。403・404 に倒れない |
+| ルート定義の誤り | `Authenticate` より前に置く／`{key}` の無いルートに置く、どちらも `500` |
+| リクエスト内キャッシュ | ミドルウェアを2つ重ねても `ListRolePermissions` と `FindProjectAuthzByKey` は各1回 |
+| 既存の挙動（`make run` 相当、:8099） | `/healthcheck` `200`、`GET /api/v1/nope` `404`、`GET /api/v1/auth/login` `405`、未認証 `GET /me` `401 unauthenticated`。手順5b から不変 |
+| ログ | stdout のみ（stderr は0バイト）。graceful shutdown も 5b から不変 |
+| 検証用データの後始末 | 結合テストの `t.Cleanup` で `audit_log` → `project` → `actor` の順に削除。実行後の `project` / `project_member` / `permission.denied` はいずれも **0件**、`actor` は手順3以来の1件のみ |
+
+### 手順6bで作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/migrations/0012_access_token_permission_cache.sql` | `access_token` に `cached_permissions jsonb` / `permissions_cached_at timestamptz` を追加 |
+| `server/internal/httpapi/middleware/permissions.go` | `SystemPermissions`（コンテキスト → キャッシュ → DB の3段）、`ComputeSystemPermissions`、`SaveSystemPermissionCache`、`requirePrincipal`。6a で `authz.go` にあった `systemPermissions` をここへ移した |
+| `server/internal/httpapi/middleware/permissions_test.go` | 17件。キャッシュ命中でDBを引かない・期限切れで計算し直す・空のキャッシュも有効・スコープで縮小・書き戻し1回・書き戻し失敗でも判定不変・プロジェクト層は跨いでキャッシュしない・ロール無しは何も書かない・書き戻しに計算時のロールが載る・トークンのプロジェクト限定5件 |
+| `server/internal/httpapi/v1/permission_cache_test.go` | 6件。ログインがキャッシュを書く／書けなくてもログインは成立する／`GET /me` がキャッシュを使う・期限切れで引き直す・スコープで縮小する |
+| `server/internal/httpapi/permission_cache_integration_test.go` | 実DBに対する結合テスト（6サブテスト）。**`Authenticate` から通し、0012 の列と2本の SQL を実際に実行する。** 書き戻しが無効化を追い越さないことも含む |
+| `server/internal/store/queries/authz.sql` | `SaveTokenPermissionCache` / `InvalidateActorPermissionCache` を追加（変更） |
+| `server/internal/store/queries/auth.sql` | `FindAccessTokenByHash` に2列を追加（変更） |
+| `server/internal/store/gen/*` | sqlc 生成物（変更） |
+| `server/internal/auth/permissions.go` | `PermissionCacheTTL`（5分）と `EncodeCachedPermissions` / `DecodeCachedPermissions` を追加（変更） |
+| `server/internal/auth/principal.go` | `CachedPermissions` / `PermissionsCachedAt` と `FreshPermissions`、`CanReachProject` を追加（変更）。冒頭コメントの「実効権限は持たせない」を 6b の結論に更新 |
+| `server/internal/httpapi/middleware/auth.go` | `permissionCache` を追加し、読んだ2列を `Principal` に載せる（変更） |
+| `server/internal/httpapi/middleware/authz.go` | `SystemPermissions` を呼ぶ形に変更。プリンシパル不在の 500 を `requirePrincipal` に集約（変更） |
+| `server/internal/httpapi/v1/login.go` | ログイン時に実効権限を計算してキャッシュへ書く（変更。6.4.5「ログインごとに」） |
+| `server/internal/httpapi/v1/me.go` | `buildSessionView` が解決済みの集合を引数で受け取る形に変更。`/me` は `middleware.SystemPermissions` で解決する（変更） |
+| `server/internal/auth/permissions_test.go` `principal_test.go` `httpapi/v1/fake_test.go` `middleware/authz_test.go` | 既存テストへの追加（変更） |
+| `VERSION` | `make bump-minor` で `1.5.5` → `1.6.6`（手順6の完了。マージ前に実行する規約） |
+
+**新しい依存は追加していない。** `internal/domain/` は引き続き作っていない。
+
+### 手順6bの検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `gofmt -l` / `go build ./...` / `go vet ./...` / `make test` | いずれも通る（8パッケージすべて ok）。`go test ./... -v` の `=== RUN` は **267件**（DB無し・サブテスト込み）、`PB_TEST_DATABASE_URL` を与えると **280件**。6b で足したテスト関数は **30件**（middleware 16・v1 6・auth 7・結合テスト1） |
+| `go test ./internal/httpapi/... -race` | 4パッケージとも通る |
+| `make sqlc` の再現性 | 2回実行して `internal/store/gen/` のハッシュが一致 |
+| `make migrate` | 0012 が適用され `access_token` が15列になる。**再実行は no-op**（`no migrations to run. current version: 12`） |
+| **ログイン（実サーバ、:8099）** | オペレータで `permissions` **12件**が返り、同時に `access_token.cached_permissions` に**同じ12件**が入る |
+| **ロール変更だけでは反映されない** | `system_role` を administrator に直接変えても `GET /me` は **12件のまま**。`actor.system_role` は administrator と表示される。**これが 6.4.5 が無効化を要求する理由そのもの** |
+| **無効化すると次のリクエストで変わる** | 2列を NULL にした直後の `GET /me` が **28件**（全権限）。キャッシュも28件で書き直される |
+| 無効化の範囲 | `InvalidateActorPermissionCache` は**アクターの全トークン**を消す。session と api の2本を作り、両方から消えることを結合テストで確認 |
+| TTL | `permissions_cached_at` を6分前に戻すと計算し直す。0012 の列を直接操作して結合テストで確認 |
+| キャッシュ命中時のクエリ | `ListRolePermissions` の呼び出し **0回**（単体テスト）。**認可のためにクエリが1本も増えない** |
+| 権限0件のキャッシュ | `'[]'` はキャッシュとして有効。`NULL`（未計算）と区別され、計算し直さない |
+| スコープとの積 | キャッシュに `user.manage` があってもトークンの `scopes` に無ければ `403`。読むときにも積を取っている |
+| 書き戻しの失敗 | 403/204 の判定も `/me` の応答も変わらない。WARN のみ残る |
+| `permission.denied` の記録 | 403 を返した回数と一致（結合テストで3件を確認）。6a から不変 |
+| 既存の挙動（実サーバ、:8099） | `/healthcheck` `200`、`GET /api/v1/nope` `404`、`GET /api/v1/auth/login` `405`、未認証 `GET /me` `401`、`POST /me` `405`、未登録メールのログイン `401`。手順6a から不変 |
+| ログ | stdout のみ（stderr は0バイト） |
+| 検証用データの後始末 | 検証用ユーザー（`pbstep6b@example.com`）と、疎通で出た `login.failure` 1件を削除。実行後は `actor` 1件（手順3の `tanaka@example.com`）・`access_token` 0件・`audit_log` 2件（手順3の `user.create`）で**セッション開始前と同じ**。`local_credential.failed_attempts` も 0 |
+
+### 手順6bのレビューで見つけて直したもの（2026-08-13）
+
+コミット後に `/code-review` を掛けて4件見つかった。いずれもコードの側を直している。
+
+| # | 内容 | 到達可能性 |
+|---|---|---|
+| 1 | `access_token.project_id` を読むコードが1つも無かった（`Design.md` 6.5 の「他プロジェクトへのアクセス」禁止が未実施） | Phase 1 では NULL のみのため実害なし。**Phase 2 で顕在化する前に塞いだ** |
+| 2 | キャッシュの書き戻しが無効化を追い越し、旧権限を TTL ぶん復活させられた | 無効化を呼ぶのは手順10。**そのとき顕在化する前に塞いだ** |
+| 3 | システムロールを持たないアクターにも `'[]'` を書き込んでいた（テストのコメントは「書かない」と嘘をついていた） | 実害は無駄な UPDATE のみ。**検証されていない宣言が残るほうが問題** |
+| 4 | `SaveSystemPermissionCache` のコメントが実際の実行タイミングと違っていた | 動作に影響なし。読み手を誤らせる |
+
+**1 と 3 は「テストが通っているのに実装が無い／宣言と違う」型である。** 単体テストのフェイクは
+呼ばれなかったメソッドを検出しないため、`Principal.ProjectID` のように**誰も読まないフィールド**は
+テストが緑のまま残る。同じ型の見落としを避けるには、`Principal` に足したフィールドごとに
+「読み手はどこか」を確かめるのが早い。
+
+### 手順7で作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/package.json` / `package-lock.json` | 依存は7つのみ（vue / vue-router / pinia ＋ vite / @vitejs/plugin-vue / typescript / vue-tsc）。`npm run build` は `vue-tsc --noEmit` を通してから `vite build` |
+| `client/vite.config.ts` | `:5173`（`strictPort`）、`/api` と `/mcp` を `127.0.0.1:8080` へプロキシ（`Design.md` 3.4） |
+| `client/tsconfig.json` / `env.d.ts` / `index.html` | strict。`@types/node` を足さずに済むよう、パスエイリアスを使わず相対 import にしている |
+| `client/src/main.ts` / `App.vue` | Pinia と router を登録し、描画前にテーマを `<html>` へ当てる。`App.vue` は `<RouterView/>` のみ（`AppShell` は手順8） |
+| `client/src/styles/tokens.css` | **`GuiDesign.md` 8.5 の css ブロックの機械的な転記**（`--pb-1`〜`--pb-12`、意味色、セマンティック別名、`[data-hue="green"]`、`[data-theme="dark"]`） |
+| `client/src/styles/base.css` | 最小のリセットと 8.10 のタイポグラフィ（システムフォント・14px/1.7・等幅）。`color-scheme` も |
+| `client/src/router/index.ts` | `createWebHistory`。ガード（7.2）は手順8で足す |
+| `client/src/router/routes.ts` | **`GuiDesign.md` 3.2 の全21ルート**と `RouteMeta` の型（`permission` / `public` / `placeholder`） |
+| `client/src/pages/PlaceholderPage.vue` | `GuiDesign.md` 6.5 のプレースホルダ。内容は `meta.placeholder` から受ける（画面ごとにファイルを作らない） |
+| `client/src/pages/ForbiddenPage.vue` / `NotFoundPage.vue` | `/403` `/404` |
+| `client/src/stores/ui.ts` | テーマ（system/light/dark）と色相（blue/green）。`localStorage` と `<html data-theme/data-hue>` |
+| `server/internal/webui/embed.go` | `//go:embed all:dist` |
+| `server/internal/webui/handler.go` | 実在ファイルの配信、SPA フォールバック、キャッシュ制御 |
+| `server/internal/webui/handler_test.go` | 8件。アセット配信・キャッシュ制御・フォールバック・dist 外への脱出・index 欠落時の 500・埋め込み済み dist の疎通 |
+| `server/internal/webui/dist/index.html`（変更） | embed のプレースホルダを「client 未ビルド」の案内ページに差し替え（従来は `// PlaceHolder` の1行で、HTML として成立していなかった） |
+| `server/internal/httpapi/router.go`（変更） | `NotFound` を分岐。`/api` `/mcp` は 2.5 形式の 404、それ以外の GET/HEAD は SPA、他メソッドは 405 |
+| `server/internal/httpapi/router_test.go`（変更） | 未知パスのテストを API 用と画面用に分割し、POST の 405 を追加 |
+| `Makefile`（変更） | `dev-client` / `build-client` / `sync-webui` / `build` / `clean-webui` を追加（`Design.md` 4.2 のとおり） |
+
+### 手順7の検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `npm run build`（`vue-tsc --noEmit` 込み） | 通る。`dist/index.html` 0.39 kB、`assets/*.css` 6.16 kB、`assets/*.js` 101.93 kB（gzip 39.80 kB） |
+| `gofmt -l` / `go build ./...` / `go vet ./...` / `make test` | いずれも通る（9パッケージすべて ok。`internal/webui` が増えた） |
+| `tokens.css` と `GuiDesign.md` 8.5 | `diff` で**完全一致**（98行） |
+| `make build` | `bin/pb` が生成され、`client/dist` が `server/internal/webui/dist/` に入る |
+| **`/`（ヘッドレス Chrome）** | **`/projects` へリダイレクトし、プロジェクト一覧のプレースホルダが描画される。** `<html>` に `data-theme="light"` / `data-hue="blue"`（ui ストアが効いている） |
+| `/p/my-app/tickets/31`（同） | チケット詳細のプレースホルダ。`予定している内容` は 5.5 の転記、`ルート` は定義側の `/p/:key/tickets/:seq` |
+| `/nowhere`（同） | catch-all で 404 画面。`/403` も表示できる |
+| SPA フォールバック（curl） | `/projects` `/p/my-app/tickets/31` `/admin/users` `/404` がいずれも `200 text/html` |
+| キャッシュ制御 | `assets/*.js` `assets/*.css` は `public, max-age=31536000, immutable`、`index.html` は `no-cache` |
+| API を巻き込んでいないこと | `GET /api/v1/nope` `GET /api` `GET /api/` `GET /mcp/nope` はすべて 2.5 形式の `404 not_found` |
+| `POST /projects` | `405 method_not_allowed`（画面のパスに index.html を返さない） |
+| `/healthcheck` | `{"status":"OK","version":"1.6.6"}`。SPA フォールバックの例外として残っている（`ApiDesign.md` 2.11） |
+| **`make dev-client`（:5173）** | `/` `/projects` が Vite から返り、`/api/v1/nope` は `:8080` の 404、`POST /api/v1/auth/login` は 422 `validation_failed`。**プロキシが通っている** |
+| `make clean-webui` | ビルド成果物が消え、`dist/` がコミット済みの `index.html` 1つに戻る |
+| 検証用リソースの後始末 | `make run` と Vite 開発サーバは停止済み。`bin/` と `client/dist` は `.gitignore` 済み。DBには一切触っていない（`audit_log` も増えていない） |
+
+**ブラウザでの見え方（配色・余白）は目視で確認していない。** ヘッドレスで確認したのは
+DOM とテーマ属性までである。手順8でログイン画面を作る際に、実ブラウザで合わせて見ること。
+→ **手順8で解消した**（スクリーンショットを撮って目視。下記「手順8の検証結果」）。
+
+### 手順8で作成したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `docs/openapi.yaml` | **実装済み4本**（login / logout / me / healthcheck）と 2.5 のエラー形式・Cookie/CSRF の securityScheme。`servers` は `/` |
+| `server/internal/httpapi/openapi_drift_test.go` | `chi.Walk` と yaml の `paths` の突き合わせ。欠落・余剰の両方向を報告する（`Design.md` 3.3） |
+| `client/src/api/schema.d.ts` | `openapi-typescript` の生成物（`make gen-api`）。**コミットする** |
+| `client/src/api/client.ts` | fetch の薄いラッパ。CSRF ヘッダ（2.4）・Cookie の送出・2.5 のエラー→`ApiError`・401 の共通処理の登録口 |
+| `client/src/api/auth.ts` | `login` / `logout` / `me`。型は生成物をそのまま使う |
+| `client/src/stores/auth.ts` | アクター・実効権限・所属プロジェクト。`restore()`（起動時の `GET /me`、多重呼び出しを1本化）・`can` / `canInProject` / `canReachProject` |
+| `client/src/router/guards.ts` | `beforeEach`（7.2 の4段）と `safeRedirect` |
+| `client/src/pages/LoginPage.vue` | `GuiDesign.md` 5.1。エラーはサーバの `message`、422 の `details` は入力欄に紐づける |
+| `client/src/version.ts` | `VERSION` をビルド時に埋める（`?raw`） |
+| `client/src/components/AppShell.vue` | メニュー＋コンテンツペインの2枚（2.2）。`[` のショートカット（9.1）、768px 未満のオーバーレイ（2.4） |
+| `client/src/components/SideMenu.vue` | 4.1 の構造と 4.3 の出し分け |
+| `client/src/components/SideMenuToggle.vue` | 2.3 の案A（メニュー最上行に内包） |
+| `client/src/components/UserMenu.vue` | 4.2。自分の設定／トークン／テーマ／バージョン／ログアウト |
+| `client/src/components/ProjectSwitcher.vue` | 4.4。10件超で絞り込み入力。切替時は同じ画面種別を維持 |
+| `client/src/stores/ui.ts`（変更） | 折りたたみ状態（2.3.3）とブレークポイント（2.4）を追加 |
+| `client/src/App.vue`（変更） | 認証済みは AppShell で包む。`/login` は素で描く（5.1 の例外） |
+| `client/src/router/index.ts` / `routes.ts`（変更） | `beforeEach` の登録、`/login` を実コンポーネントへ |
+| `client/src/main.ts`（変更） | 401 ハンドラの登録（client.ts ↔ ストア／ルータの循環を避けるため） |
+| `client/package.json` / `vite.config.ts`（変更） | `openapi-typescript`（devDependency）と `gen:api`、`server.fs.allow` |
+| `Makefile` / `CLAUDE.md`（変更） | `make gen-api` の追加 |
+| `docs/GuiDesign.md`（変更） | 7.2 のガード順の入れ替えと理由（上記の差異表） |
+
+### 手順8の検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `npm run build`（`vue-tsc --noEmit` 込み） | 通る。`assets/*.css` 13.4 kB、`assets/*.js` 121 kB（gzip 45.9 kB） |
+| `gofmt -l` / `go vet ./...` / `make test` | いずれも通る（**openapi ドリフト検出を含む**） |
+| ドリフト検出が効くこと | yaml から `/healthcheck` を落とし、実装に無い `/api/v1/projects` を足した状態で**両方向とも FAIL する**ことを確認（確認後に復元） |
+| `POST /auth/login`（curl） | Set-Cookie が2種（`pb_session` は HttpOnly、`pb_csrf` は非 HttpOnly、`Max-Age` は同じ 1209600） |
+| **ブラウザ（ヘッドレス Chrome、1440×900）8a：16件** | 未認証で `/admin/users` → `/login?redirect=/admin/users` ／ 401 の文言はサーバの `message` ／ 422 の `details` が出る ／ ログイン後に `redirect` 先へ復帰 ／ 認証済みで `/login` → `/projects` ／ リロードで復元 ／ オペレータが `/admin/users` → `/403` ／ 非メンバーのプロジェクト → **`/404`** ／ メンバーのプロジェクトへは到達 ／ `POST /auth/logout` が 204（CSRF ヘッダあり）／ ログアウト後は `/login` |
+| **ブラウザ 8b：39件** | 管理者に「管理」セクション ／ **オペレータでは見出しごと出ない** ／ プロジェクト未選択ならプロジェクト領域を出さない ／ 選択中は ダッシュボード・チケット・（`project.edit` があれば）プロジェクト設定 ／ 閲覧者に「プロジェクト設定」が出ない ／ ユーザーメニューの5項目とバージョン ／ テーマ切替が `<html data-theme>` に効く ／ 折りたたみ 240px↔56px・`localStorage`・`[` キー ／ 幅ごとの既定（1024px→56px、1440px→240px）と**選択の優先** ／ 768px 未満のオーバーレイと浮遊 ☰・スクリムで閉じる ／ ログアウトでログイン画面 |
+| **実ブラウザでの見え方（目視）** | ログイン画面・シェル（ライト／ダーク）・ユーザーメニュー・プロジェクト切替・折りたたみの6枚を撮って確認。**2件を直した**（①ユーザーメニューのテーマ行が 240px 幅で折り返していた → ラベルと選択肢を2行に ②折りたたみ時にレールへ横スクロールバーが出ていた → `overflow-x: hidden`） |
+| `make dev-client`（:5173） | `/login` が返り、`/api/v1/auth/login` のプロキシが 200。`VERSION?raw` も `/@fs/...` 経由で解決する |
+| `make build` の単一バイナリ | 上記のブラウザ検証はすべて **`bin/pb serve`（embed 済み）** に対して実施した |
+| 検証用リソースの後始末 | `make run` と Vite 開発サーバは停止済み。ヘッドレス Chrome のプロファイルと検証スクリプトはスクラッチパッド（リポジトリ外）。DB は `make dev-reset` を実行しておらず、手順7.5 のデモデータのままで、追加・削除していない |
+
+**ドライバは CDP（Chrome DevTools Protocol）を直接叩く自作スクリプト**（Python 標準ライブラリのみ）。
+Playwright / Puppeteer は入れていない。スクリプトはリポジトリに入れていないため、
+**次に画面を検証するときは書き直しになる。** 常設するなら `Design.md` 3.1 への追記提案とセットにする。
+
+
+---
+
+## 進捗表から移した検証内容（手順1〜10b）
+
+`PROGRESS.md` の Phase 1 表は、完了した手順の「検証方法」欄を1行に要約してある
+（2026-08-18、`docs/progress-archive`）。**要約前の全文をここに保管する。**
+過去にどこまで確認したかを正確に知りたいときはこちらを見ること。
+
+| 手順 | 完了日 | 検証内容（当時の記述のまま） |
+|---|---|---|
+| 1 | 2026-08-11 | `make up` でDBが起動し、`pb_app` ロールが存在する |
+| 2 | 2026-08-11 | `make migrate` 後、テーブル23個と権限28件・ロール5件が存在する |
+| 3 | 2026-08-12 | 作成した管理者が `app_user` に `system_role='administrator'` で入る |
+| 4a | 2026-08-12 | `go test ./internal/httpapi/...` が通り、`make run` 後に `/healthcheck` が `{"status":"OK"}`、未知パスが 2.5 形式の 404 を返す |
+| 4b | 2026-08-12 | `go test ./internal/httpapi/...` が通る。`PB_TEST_DATABASE_URL` を与えると実DBに対する認証の結合テストも通る |
+| 5a | 2026-08-12 | `curl -i -X POST .../auth/login` で Set-Cookie が2種返り、`GET /me` が権限28件を返す。`PB_TEST_DATABASE_URL` を与えると実DBに対する結合テストも通る |
+| 5b | 2026-08-12 | Cookie 認証の POST に `X-PB-CSRF` が無いと 403、ログインを1分に11回叩くと 429 |
+| 6a | 2026-08-13 | 実DBのシードで operator→403 / administrator→200、非メンバー→404、`permission.denied` が記録される。**実サーバでの実地確認は手順9b で完了**（`POST /projects` にオペレータで 403） |
+| 6b | 2026-08-13 | 実サーバでオペレータ（12件）→ 管理者へ昇格しても 12件のまま → キャッシュ破棄後に 28件。TTL 超過でも計算し直す。無効化はアクターの全トークンに効く |
+| 7 | 2026-08-13 | `make build` した単一バイナリの `/` で Vue が起動し、プロジェクト一覧のプレースホルダが描画される（ヘッドレス Chrome で確認）。SPA のパスは index.html にフォールバックし、`/api` `/mcp` は 2.5 形式の 404 のまま。`make dev-client` の :5173 から :8080 へのプロキシも通る |
+| 7.5 | 2026-08-13 | `make dev-reset` で作り直し後、4アカウントとデモプロジェクト（ワークフロー複製つき）が投入される。2回目は作成0／スキップ全件で壊れない。`PB_ALLOW_DEV_SEED` なし・開発端末以外のホストのいずれでも中断する。実サーバで4アカウントともログインでき、`GET /me` が admin=28権限・他=12権限、`projects[].role` が定義どおり（`DbDesign.md` 7.6） |
+| 8a | 2026-08-15 | ブラウザ（ヘッドレス Chrome）で16件：ログイン→`/projects`、未認証で保護ページ→`/login?redirect=`→ログイン後に復帰、オペレータで `/admin/users`→`/403`、非メンバーのプロジェクト→`/404`、ログアウト後は `/login`。`go test ./...` にドリフト検出（`chi.Walk` と yaml の突き合わせ）が入る |
+| 8b | 2026-08-15 | ブラウザで39件：管理者に「管理」セクションが出て**オペレータでは見出しごと出ない**、プロジェクト選択中のみプロジェクト領域、`project.edit` の無い閲覧者に「プロジェクト設定」が出ない、テーマ切替、折りたたみ（`[` キー・`localStorage`・2.4 のブレークポイント）、ログアウトでログイン画面へ戻る |
+| 9a | 2026-08-15 | 実サーバで管理者が一覧を取得でき、`ETag` が付く。オペレータには所属プロジェクトのみ返る。`?status=deleted&per_page=201` が `details` 2件の 422。`check-key` が未使用→`available:true`、`admin`→`reserved`、`My_App`→`invalid_format`、既存→`already_exists` |
+| 9b | 2026-08-15 | 実サーバで作成すると 201・`Location`・`with_review` の4ステータスが複製され、作成者が `project_admin` で入り `audit_log` に `project.create` が残る。同じキーで 409 `already_exists`。オペレータは 403（**手順6a の積み残しだった実地確認**）。チケット4件（うち3件クローズ）で一覧が `4 / 3 / 0.75` を返す |
+| 10a | 2026-08-15 | ブラウザで53件：管理者に30件が25行＋ページャで出て、`48 / 36 / 75%` が `GuiDesign.md` 5.2 の図と一致する。列ヘッダでソートが変わり「完了」だけソート不可。`⋯` の「アーカイブを表示」で31件になり `アーカイブ済み` が文字で出る。行のセルクリックで `/p/:key`、`j`/`k` で行を移動。オペレータには所属プロジェクトのみ・`+ 新規プロジェクト` が出ない。読み込み中はスケルトン、サーバ停止時は原因＋再試行、空状態は権限で2種類に分かれる |
+| 10b | 2026-08-18 | ブラウザで32件：`+ 新規プロジェクト` で `/projects?new=1` になりモーダルが開く。名前 `Riders High 2026` から `riders-high-2026` が自動入力され、日本語名では空のまま。キーを手で編集したら名前に追随しない。`My_App`→`invalid_format` / `admin`→`reserved` / `demo`→`already_exists` / `my-app`→`✓ 使用可能です`。14文字を連続入力しても `check-key` は1回（debounce 400ms）。作成すると `/p/my-app` へ遷移して見出しがプロジェクト名になり、一覧へ戻ると先頭に `0 / 0 / 0%` で出る。`check-key` を待たずに既存キーで送ると 409 のメッセージがキー欄に出てモーダルは開いたまま。3テンプレートで `workflow_status` が 3 / 4 / 5 件複製され、作成者が `project_admin` で入り `audit_log` に `project.create` が残る。`Esc` で閉じてフォーカスが `+ 新規プロジェクト` に戻る。オペレータにはボタンが出ず `?new=1` を直接開いてもモーダルが出ない |
+
+---
+
+## 環境メモから移した記録（2026-08-18）
+
+`PROGRESS.md` の環境メモは**現在も効いている制約だけ**を残し、実施当時の事実は
+ここへ移した。
+
+- 初回の `go tool sqlc` はビルドに20秒ほどかかる（2回目以降はキャッシュ）。cgo は不要だった
+- `go tool goose` は初回のみモジュールをダウンロードする（60秒程度）。2回目以降はキャッシュが効く
+- 手順1の検証環境: Docker 29.1.3 / Docker Compose v5.3.1 / macOS (darwin 25.6.0, arm64)

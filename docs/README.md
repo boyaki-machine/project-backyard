@@ -15,6 +15,9 @@ Design.md         全体設計 ── システム構成・技術選定・認証
       └── GuiDesign.md   GUI 設計          ← 画面・遷移・配色
 
 Development.md     開発環境ガイド ── 上記を実際に動かす手順（設計ではない）
+
+PROGRESS.md        実装進捗（現況のみ）
+      └── history/  完了した手順の記録（毎セッションでは読まない。必要なときに grep する）
 ```
 
 | 文書 | 内容 | 状態 |
@@ -25,6 +28,8 @@ Development.md     開発環境ガイド ── 上記を実際に動かす手�
 | [ApiDesign.md](ApiDesign.md) | 認証・プロジェクト・ユーザー管理APIを確定。チケットAPIは未着手 | Phase 1 前半確定 |
 | [GuiDesign.md](GuiDesign.md) | 画面遷移・ワイヤーフレーム・モノクロマティック配色体系 | Phase 1 確定 |
 | [Development.md](Development.md) | **開発環境の立ち上げ・デバッグ手順。** 設計ではなく、実装済みの範囲を動かす手順 | 実装に追従 |
+| [PROGRESS.md](PROGRESS.md) | 実装進捗・次の手順への引き継ぎ・環境メモ。**現況のみを持つ** | 実装に追従 |
+| [history/decisions.md](history/decisions.md) [history/steps.md](history/steps.md) | 完了した手順の記録（判断の経緯／作ったファイルと検証結果）。**参照専用** | 追記のみ |
 
 **記述が食い違った場合は、各領域の正本を優先する。**
 
