@@ -21,6 +21,7 @@ import { ApiError } from '../api/client'
 import * as projectsApi from '../api/projects'
 import type { ProjectDetail, ProjectRepository, UpdateProjectRequest } from '../api/projects'
 import { formatDate } from '../lib/datetime'
+import { projectRoleLabel } from '../lib/roles'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
 
@@ -29,18 +30,6 @@ const MAX_NAME = 100
 const MAX_DESCRIPTION = 1000
 /** リポジトリの上限（5.9.1）。1件ごとの検証は `RepositoryModal` が持つ */
 const MAX_REPOSITORIES = 10
-
-/**
- * プロジェクトロールの表示名（`DbDesign.md` 7.3 の `display_name`）。
- *
- * `GET /projects/:key` はロールをキーでしか返さない。**`GET /roles`（手順14）を
- * 実装した時点でこの表を捨てる。** それまでは画面が持つ。
- */
-const ROLE_LABELS: Record<string, string> = {
-  project_admin: 'プロジェクト管理者',
-  project_member: 'メンバー',
-  project_viewer: '閲覧者',
-}
 
 const auth = useAuthStore()
 const store = useProjectStore()
@@ -326,8 +315,11 @@ async function runArchiveToggle(): Promise<void> {
 }
 
 // ── メンバータブ（5.9.2）─────────────────────────────────────
+//
+// ロールの表示名は `lib/roles.ts` が持つ（`GuiDesign.md` 5.6「同じものは全画面で
+// 同じ表記にする」）。手順12b でユーザー管理画面と共有するため、画面から出した。
 function roleLabel(role: string): string {
-  return ROLE_LABELS[role] ?? role
+  return projectRoleLabel(role)
 }
 
 /** 人間とエージェントを同じ一覧に並べる（設計原則5、`DbDesign.md` 6.2） */

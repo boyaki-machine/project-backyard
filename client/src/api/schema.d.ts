@@ -1211,8 +1211,7 @@ export interface operations {
                 is_active?: "true" | "false" | "all";
                 /**
                  * @description 表示名・メールアドレスの部分一致。`%` と `_` はサーバ側でエスケープするため
-                 *     ワイルドカードとしては働かない。**画面は利用者20件超のときにのみ入力欄を出す**
-                 *     （GuiDesign.md 5.6）が、APIは常に受け付ける。
+                 *     ワイルドカードとしては働かない。**画面は検索欄を常時表示する**（GuiDesign.md 5.6）。
                  */
                 q?: string;
                 sort?: "display_name" | "email" | "last_login_at" | "created_at";
