@@ -213,7 +213,8 @@ ProjectBackyard/
 │   ├── GuiDesign.md               ← GUI 設計
 │   ├── Development.md             ← 開発環境の立ち上げ・デバッグ手順
 │   ├── Deploy.md                  ← 環境別のデプロイ手順
-│   ├── PROGRESS.md                ← 実装進捗
+│   ├── PROGRESS.md                ← 実装進捗（現況のみ）
+│   ├── history/                   ← 完了した手順の記録（decisions.md / steps.md）
 │   ├── openapi.yaml               ← 実装済みAPIの現状（ApiDesign.md 1.3）
 │   └── adr/                       ← 個別の設計判断の記録
 │
@@ -758,14 +759,16 @@ main ← develop ← feature/*
 ```bash
 git switch develop && git pull
 git switch -c feature/step-02-migrations
-# 実装・検証・docs/PROGRESS.md 更新
+# 実装・検証・振り返り・記録の更新（PROGRESS.md と docs/history/）
 git commit -m "step 2: マイグレーション 0001〜0010 を追加"
 git switch develop && git merge --no-ff feature/step-02-migrations
 ```
 
 **`docs/PROGRESS.md` の更新は実装と同じブランチに含める。** 別コミットにすると、マージ前のブランチだけを見たときに「完了したのか途中なのか」が判断できなくなる。
 
-**マージ・push・ブランチ削除はエージェントに独断で行わせない**（`CLAUDE.md` のブランチ運用、`.claude/commands/pb-step.md` の手順8）。
+**マージを提案する前にセッションの振り返りを行う**（`.claude/commands/pb-step.md` の手順7）。消化した引き継ぎを消し、生まれた約束を足し、判断と検証の記録を `docs/history/` へ入れ、検証で作った資源を片付ける。**振り返りの結果もコミットに含める**ため、コミットの前に行う。
+
+**マージ・push・ブランチ削除はエージェントに独断で行わせない**（`CLAUDE.md` のブランチ運用、`.claude/commands/pb-step.md` の手順9）。
 
 ## 11.1 バージョン番号とリリースタグ
 
@@ -799,7 +802,7 @@ git rev-list --count --first-parent --merges develop
 
 ```bash
 git switch -c feature/<スラッグ>
-# 実装・検証・docs/PROGRESS.md 更新
+# 実装・検証・振り返り・記録の更新（PROGRESS.md と docs/history/）
 
 make bump-minor          # 機能追加のとき。fix/* と docs/* は make bump-build
 git add -A && git commit -m "..."
