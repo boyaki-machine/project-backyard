@@ -39,7 +39,13 @@ func detailFake(t *testing.T) (*fakeQuerier, *fakeTxRunner) {
 	}
 	q.memberRows = []gen.ListProjectMembersRow{{
 		ActorID: testActorID, Kind: auth.ActorKindUser, DisplayName: "田中",
+		Email:   txt("tanaka@example.com"),
 		RoleKey: "project_admin", JoinedAt: ts(time.Date(2026, 8, 15, 3, 4, 5, 0, time.UTC)),
+	}, {
+		// エージェントは app_user を持たないため email が NULL になる（5.4）。
+		ActorID: "01K2F8QW3H7YRJ4M5N6P7Q8AGT", Kind: auth.ActorKindAgent,
+		DisplayName: "claude-code",
+		RoleKey:     "project_member", JoinedAt: ts(time.Date(2026, 8, 16, 1, 2, 3, 0, time.UTC)),
 	}}
 	q.updateRows = 1
 	q.statusRows = 1
@@ -101,8 +107,18 @@ func TestGetProjectReturnsDetail(t *testing.T) {
 	if _, ok := view["workflow"].(map[string]any); !ok {
 		t.Errorf("workflow = %v, want オブジェクト", view["workflow"])
 	}
-	if members, ok := view["members"].([]any); !ok || len(members) != 1 {
-		t.Errorf("members = %v, want 1件", view["members"])
+	members, ok := view["members"].([]any)
+	if !ok || len(members) != 2 {
+		t.Fatalf("members = %v, want 2件", view["members"])
+	}
+	// email は app_user 由来。**エージェントは app_user を持たないので null**（5.4）。
+	user, _ := members[0].(map[string]any)
+	agent, _ := members[1].(map[string]any)
+	if user["email"] != "tanaka@example.com" {
+		t.Errorf("members[0].email = %v, want tanaka@example.com", user["email"])
+	}
+	if _, present := agent["email"]; !present || agent["email"] != nil {
+		t.Errorf("members[1].email = %v, want null（キーは必ず出す）", agent["email"])
 	}
 	// 実効権限は「システムロール ∪ プロジェクトロール」（Design.md 6.4.1）。
 	perms, _ := view["my_permissions"].([]any)

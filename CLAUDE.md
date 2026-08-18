@@ -83,6 +83,7 @@ make down
 make migrate     # goose によるマイグレーション適用
 make sqlc        # sqlc generate（server/migrations/ からスキーマを推論）
 make run         # サーバをローカル起動（:8080）
+make restart     # 停止→ビルド→DB起動→サーバ起動をまとめて行う（画面を直したとき）
 make dev-client  # Vite 開発サーバ（:5173、/api を :8080 へプロキシ）
 make gen-api     # docs/openapi.yaml から client の型を生成（Design.md 3.3）
 make build       # client をビルドして embed し、単一バイナリを作る

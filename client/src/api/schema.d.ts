@@ -472,6 +472,12 @@ export interface components {
              */
             kind: "user" | "agent" | "system";
             display_name: string;
+            /**
+             * @description `app_user.email`（DbDesign.md 6.2）。**エージェントとシステムアクターは
+             *     `app_user` の行を持たないため null**。キーは常に返す。
+             * @example tanaka@example.com
+             */
+            email: string | null;
             /** @example project_admin */
             role: string;
             /** Format: date-time */

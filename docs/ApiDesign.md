@@ -556,6 +556,7 @@ GET /api/v1/projects/check-key?key=my-app
                                 "sort_order": 1, "requires_human_approval": false,
                                 "is_agent_reachable": true } ] },
   "members": [ { "actor_id": "01K2...", "kind": "user", "display_name": "田中",
+                 "email": "tanaka@example.com",
                  "role": "project_admin", "joined_at": "..." } ],
   "my_role": "project_admin",
   "my_permissions": ["ticket.close", "..."],
@@ -568,6 +569,8 @@ GET /api/v1/projects/check-key?key=my-app
 `:key` はプロジェクトキー（ULIDではない）。URL・チケット番号と一致させ、開発時のデバッグを容易にする。
 
 `settings` は `project.settings`（jsonb）をそのまま返す。**Phase 1 が定義するキーは `repositories` のみ**で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は Phase 2）。
+
+`members[].email` は `app_user.email`（`DbDesign.md` 6.2）。**エージェントとシステムアクターは `app_user` の行を持たないため `null`** になる。キーは常に返す（省略しない）。`display_name` とは別物で、画面はログイン名として並べて表示する（`GuiDesign.md` 5.9.2）。
 
 ## 5.5 `PATCH /api/v1/projects/:key`
 

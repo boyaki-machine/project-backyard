@@ -35,12 +35,17 @@ type workflowView struct {
 }
 
 // projectMemberView は 5.4 の members[] 要素。
+//
+// Email は app_user.email。**エージェントとシステムアクターは null になる**
+// （app_user の行を持たない。ApiDesign.md 5.4）。表示名とは別物であり、
+// 画面はログイン名として出す（GuiDesign.md 5.9.2）。
 type projectMemberView struct {
-	ActorID     string `json:"actor_id"`
-	Kind        string `json:"kind"`
-	DisplayName string `json:"display_name"`
-	Role        string `json:"role"`
-	JoinedAt    Time   `json:"joined_at"`
+	ActorID     string  `json:"actor_id"`
+	Kind        string  `json:"kind"`
+	DisplayName string  `json:"display_name"`
+	Email       *string `json:"email"`
+	Role        string  `json:"role"`
+	JoinedAt    Time    `json:"joined_at"`
 }
 
 // projectDetailView は 5.4 の応答本体。
@@ -122,10 +127,16 @@ func buildProjectDetail(
 	view.Members = make([]projectMemberView, 0, len(members))
 	var myRole string
 	for _, m := range members {
+		var email *string
+		if m.Email.Valid {
+			v := m.Email.String
+			email = &v
+		}
 		view.Members = append(view.Members, projectMemberView{
 			ActorID:     m.ActorID,
 			Kind:        m.Kind,
 			DisplayName: m.DisplayName,
+			Email:       email,
 			Role:        m.RoleKey,
 			JoinedAt:    Time(m.JoinedAt.Time),
 		})

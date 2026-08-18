@@ -34,7 +34,7 @@ GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(DB_PASSWORD_FILE))@127.0.0.1
 APP_DB_PASSWORD_FILE := $(CURDIR)/deploy/dev/secrets/app_db_password
 PB_DATABASE_URL_APP = postgres://pb_app:$$(cat $(APP_DB_PASSWORD_FILE))@127.0.0.1:5432/pb?sslmode=disable&application_name=pb
 
-.PHONY: up down psql migrate sqlc run admin-create test \
+.PHONY: up down stop-server restart psql migrate sqlc run admin-create test \
 	dev-reset dev-seed dev-info \
 	dev-client gen-api build-client sync-webui build clean-webui \
 	version version-check bump-build bump-minor bump-major release-tag
@@ -47,6 +47,25 @@ up:
 ## コンテナを停止する（pgdata ボリュームは残す）
 down:
 	$(COMPOSE) down
+
+## :8080 を掴んでいるサーバを止める（コンテナではないので down では落ちない）
+# make run は go run → 実バイナリの親子構成であり、親だけを殺すと子が
+# ポートを掴んだまま残る（Development.md 3.1「止め方」）。PID で確実に止める。
+# -sTCP:LISTEN を必ず付ける。付けないと ESTABLISHED も拾い、8080 へ接続中の
+# ブラウザや curl の PID まで kill してしまう。
+stop-server:
+	@pids=$$(lsof -ti tcp:8080 -sTCP:LISTEN 2>/dev/null); \
+	if [ -n "$$pids" ]; then \
+		echo "サーバを停止する（PID: $${pids}）"; kill $$pids; sleep 1; \
+	else \
+		echo ":8080 を掴んでいるプロセスは無い"; \
+	fi
+
+## 作り直して起動し直す（停止 → ビルド → DB起動 → サーバ起動）
+# 画面を直したあとに1コマンドで確かめるためのもの。**client の変更は
+# make build を通さないと反映されない**（embed。Design.md 3.4）ため、
+# サーバを再起動するだけでは古い画面が出続ける。
+restart: stop-server down build up run
 
 ## DBコンソールを開く
 psql:

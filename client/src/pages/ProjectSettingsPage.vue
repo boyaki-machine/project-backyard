@@ -16,6 +16,7 @@ import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
+import RepositoryModal from '../components/RepositoryModal.vue'
 import { ApiError } from '../api/client'
 import * as projectsApi from '../api/projects'
 import type { ProjectDetail, ProjectRepository, UpdateProjectRequest } from '../api/projects'
@@ -26,10 +27,8 @@ import { useProjectStore } from '../stores/project'
 /** 入力の上限（`ApiDesign.md` 5.3 の検証表と `GuiDesign.md` 5.9.1）。正本はサーバ側 */
 const MAX_NAME = 100
 const MAX_DESCRIPTION = 1000
-/** リポジトリの上限（5.9.1）。`settings` はサーバが検証しないので画面が持つ */
+/** リポジトリの上限（5.9.1）。1件ごとの検証は `RepositoryModal` が持つ */
 const MAX_REPOSITORIES = 10
-const MAX_URL = 1000
-const MAX_REPO_DESCRIPTION = 200
 
 /**
  * プロジェクトロールの表示名（`DbDesign.md` 7.3 の `display_name`）。
@@ -157,37 +156,14 @@ const nameError = computed(() => {
 })
 
 /**
- * リポジトリ1件ごとの誤り。`null` は誤り無し。
+ * 保存してよい状態か。
  *
- * **何も入力していない行はエラーにしない。** `[+ 追加]` を押した直後の空行で
- * 保存全体が止まると、**別の欄（名前・説明）の編集まで保存できなくなる**。
- * 空行は保存時に落ちるだけで、失われる入力が無い（`mergeRepositories`）。
- *
- * 表示名か説明だけが埋まっている行は誤りとして出す。黙って捨てると、
- * 入力したつもりの内容が消える。
+ * **リポジトリ1件ごとの検証は `RepositoryModal` が持つ**（5.9.1）。不正な行を
+ * 一覧へ入れない作りにしてあるので、ここで行を見る必要がない。一覧側で弾くと、
+ * 1行の不備が名前・説明の保存まで止める（手順11b の実機確認で起きた）。
  */
-const repoErrors = computed(() =>
-  repositories.value.map((r) => {
-    const url = r.url.trim()
-    const name = (r.name ?? '').trim()
-    const description = (r.description ?? '').trim()
-    if (url === '') {
-      if (name === '' && description === '') return null
-      return 'URLを入力してください'
-    }
-    if (url.length > MAX_URL) return `URLは${MAX_URL}文字以内で入力してください`
-    if (description.length > MAX_REPO_DESCRIPTION) {
-      return `説明は${MAX_REPO_DESCRIPTION}文字以内で入力してください`
-    }
-    return null
-  }),
-)
-
 const valid = computed(
-  () =>
-    nameError.value === null &&
-    description.value.trim().length <= MAX_DESCRIPTION &&
-    repoErrors.value.every((e) => e === null),
+  () => nameError.value === null && description.value.trim().length <= MAX_DESCRIPTION,
 )
 
 const canSave = computed(() => dirty.value && valid.value && !saving.value)
@@ -260,9 +236,33 @@ async function reload(): Promise<void> {
 }
 
 // ── リポジトリ（5.9.1）───────────────────────────────────────
+//
+// 一覧は表、追加と編集はモーダル。**確定しても画面上の一覧が変わるだけ**で、
+// サーバへ送るのは一般タブの `[保存]` である。
+
+/** 編集中の位置。`null` は閉じている、`-1` は新規追加 */
+const editingIndex = ref<number | null>(null)
+const editingDraft = ref<ProjectRepository>({ url: '' })
+
+const isNewRepository = computed(() => editingIndex.value === -1)
+
 function addRepository(): void {
   if (repositories.value.length >= MAX_REPOSITORIES) return
-  repositories.value.push({ url: '', name: '', description: '' })
+  editingDraft.value = { url: '' }
+  editingIndex.value = -1
+}
+
+function editRepository(index: number): void {
+  // 複製を渡す。キャンセルで元へ戻せるようにする
+  editingDraft.value = { ...repositories.value[index]! }
+  editingIndex.value = index
+}
+
+function applyRepository(next: ProjectRepository): void {
+  if (editingIndex.value === null) return
+  if (editingIndex.value === -1) repositories.value.push(next)
+  else repositories.value[editingIndex.value] = next
+  editingIndex.value = null
 }
 
 function removeRepository(index: number): void {
@@ -445,70 +445,53 @@ function kindIcon(kind: string): string {
                 エージェントがMCP経由でプロジェクトの情報として受け取ります。
               </p>
 
-              <!-- 必須の URL を先頭に、任意の項目をその下に積む（5.9.1）。
-                   横に並べると狭い幅で URL が読めなくなる -->
-              <div v-for="(repo, i) in repositories" :key="i" class="repo">
-                <div class="repo-head">
-                  <span class="label">URL <span class="required">*</span></span>
-                  <span class="repo-actions">
-                    <!-- ブラウザで開けるものだけリンクにする。SSH形式は文字列のまま -->
-                    <a
-                      v-if="isWebUrl(repo.url)"
-                      class="open"
-                      :href="repo.url.trim()"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      開く ↗
-                    </a>
-                    <button
-                      type="button"
-                      class="link-button"
-                      :disabled="saving"
-                      @click="removeRepository(i)"
-                    >
-                      削除
-                    </button>
-                  </span>
-                </div>
-                <input
-                  v-model="repo.url"
-                  type="text"
-                  class="repo-url"
-                  placeholder="https://… または git@host:org/repo.git"
-                  aria-label="リポジトリのURL"
-                  autocapitalize="off"
-                  autocomplete="off"
-                  spellcheck="false"
-                  :maxlength="MAX_URL"
-                  :aria-invalid="repoErrors[i] !== null"
-                  :disabled="saving"
-                />
-                <span v-if="repoErrors[i]" class="detail">✕ {{ repoErrors[i] }}</span>
-
-                <label class="sub-field">
-                  <span class="label">表示名</span>
-                  <input
-                    v-model="repo.name"
-                    type="text"
-                    class="repo-name"
-                    aria-label="リポジトリの表示名"
-                    :disabled="saving"
-                  />
-                </label>
-
-                <label class="sub-field">
-                  <span class="label">説明</span>
-                  <input
-                    v-model="repo.description"
-                    type="text"
-                    class="repo-description"
-                    aria-label="リポジトリの説明"
-                    :maxlength="MAX_REPO_DESCRIPTION"
-                    :disabled="saving"
-                  />
-                </label>
-              </div>
+              <!-- 一覧は表。編集はモーダル（5.9.1）。入力欄を並べると
+                   件数ぶん縦に伸び、他の設定が画面から押し出される -->
+              <table v-if="repositories.length > 0" class="table repos">
+                <thead>
+                  <tr>
+                    <th scope="col">URL</th>
+                    <th scope="col">表示名</th>
+                    <th scope="col">説明</th>
+                    <th scope="col"><span class="sr-only">操作</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="(repo, i) in repositories"
+                    :key="i"
+                    class="row"
+                    @click="editRepository(i)"
+                  >
+                    <td class="url-cell">
+                      <!-- ブラウザで開けるものだけリンクにする。行クリック（編集）と
+                           競合しないよう伝播を止める -->
+                      <a
+                        v-if="isWebUrl(repo.url)"
+                        :href="repo.url.trim()"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        @click.stop
+                      >
+                        {{ repo.url }}
+                      </a>
+                      <span v-else>{{ repo.url }}</span>
+                    </td>
+                    <td>{{ repo.name || '—' }}</td>
+                    <td class="muted">{{ repo.description || '—' }}</td>
+                    <td class="actions-cell">
+                      <button
+                        type="button"
+                        class="link-button"
+                        :disabled="saving"
+                        @click.stop="removeRepository(i)"
+                      >
+                        削除
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
 
               <p v-if="repositories.length >= MAX_REPOSITORIES" class="hint">
                 登録できるのは{{ MAX_REPOSITORIES }}件までです。
@@ -578,6 +561,7 @@ function kindIcon(kind: string): string {
                 <tr>
                   <th scope="col" class="icon-col"><span class="sr-only">種別</span></th>
                   <th scope="col">名前</th>
+                  <th scope="col">メール</th>
                   <th scope="col">ロール</th>
                   <th scope="col">参加日</th>
                 </tr>
@@ -590,6 +574,8 @@ function kindIcon(kind: string): string {
                     </span>
                   </td>
                   <td>{{ m.display_name }}</td>
+                  <!-- エージェントとシステムは app_user を持たないため null（5.9.2） -->
+                  <td class="muted">{{ m.email ?? '—' }}</td>
                   <td>{{ roleLabel(m.role) }}</td>
                   <td class="date">{{ formatDate(m.joined_at) }}</td>
                 </tr>
@@ -602,6 +588,14 @@ function kindIcon(kind: string): string {
         </div>
       </template>
     </div>
+
+    <RepositoryModal
+      v-if="editingIndex !== null"
+      :repository="editingDraft"
+      :is-new="isNewRepository"
+      @save="applyRepository"
+      @close="editingIndex = null"
+    />
 
     <ConfirmDialog
       v-if="confirmOpen"
@@ -769,55 +763,47 @@ textarea:disabled {
   font-size: 13px;
 }
 
-/* ── リポジトリ（5.9.1）─────────────────────────────────
-   入力は縦に積む。横並びにすると、狭い幅で URL が読めなくなる。
-   **クラスに幅を指定しても `input[type='text']` のほうが詳細度が高く
-   （属性セレクタ＋型 = 0,1,1 対 クラス = 0,1,0）勝つ**ので、
-   幅はここで奪い合わない形にしてある */
-.repo {
-  display: flex;
-  flex-direction: column;
-  gap: var(--pb-space-1);
-  padding: var(--pb-space-3) 0;
-  border-top: 1px solid var(--pb-line);
+/* ── リポジトリ（5.9.1）───────────────────────────────── */
+.repos {
+  table-layout: fixed;
 }
 
-.repo-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--pb-space-3);
+.repos th:nth-child(1) {
+  width: 45%;
 }
 
-.repo-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--pb-space-3);
+.repos th:nth-child(2) {
+  width: 20%;
 }
 
-.sub-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--pb-space-1);
-  min-width: 0;
-  margin-top: var(--pb-space-2);
+.repos th:nth-child(4) {
+  width: 64px;
 }
 
-.repo-url {
+.repos td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.url-cell {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
 }
 
-.open {
-  flex: none;
+.url-cell a {
   color: var(--pb-accent);
-  font-size: 13px;
-  white-space: nowrap;
+}
+
+.muted {
+  color: var(--pb-text-muted);
+}
+
+.actions-cell {
+  text-align: right;
 }
 
 .link-button {
-  flex: none;
   padding: 0;
   border: 0;
   background: none;
@@ -831,6 +817,14 @@ textarea:disabled {
 
 .link-button:hover:not(:disabled) {
   color: var(--pb-text);
+}
+
+.row {
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--pb-hover);
 }
 
 /* ── 保存 ─────────────────────────────────────────────── */

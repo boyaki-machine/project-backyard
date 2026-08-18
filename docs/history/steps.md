@@ -542,6 +542,32 @@ CDP を話す最小クライアント（`cdp.py`）と検証本体（`verify.py`
 **このとき利用者が `demo` に入れていた検証用の説明文（複数行）は、開始時に控えて `finally` で
 そのまま書き戻している**（検証スクリプトが現在値を読み直す作りになっているため）。
 
+### 手順11b の追補（2026-08-18、実機確認の第2ラウンド）
+
+利用者の指摘5件のうち、**4件を同じブランチで実装**した（1件は Phase 2 へ）。
+ブランチを分けなかったのは利用者の判断（`history/decisions.md`）。
+
+| 追補 | 作った・直したもの |
+|---|---|
+| メンバーのメール表示（**API変更**） | `project.sql` に `LEFT JOIN app_user`、`project_view.go` に `Email *string`、`ApiDesign.md` 5.4 と `openapi.yaml` の `ProjectMember`、`projects_update_test.go` に**エージェントの email が null になる**表明、メンバータブに列追加 |
+| リポジトリの表形式 | `client/src/components/RepositoryModal.vue`（新規。`Modal.vue` を再利用）、`ProjectSettingsPage.vue` を表＋モーダルへ |
+| プロジェクト一覧の省略記号 | `ProjectsPage.vue` を `table-layout: fixed` にし、数値・日時列へ固定幅。`GuiDesign.md` 5.2 に規約を明記 |
+| `make restart` | `Makefile` に `stop-server` と `restart`、`Development.md` 3.1 / 3.3、`CLAUDE.md` の開発コマンド |
+
+**検証（43件、すべて PASS）**
+
+| | 件数 | 内容 |
+|---|---|---|
+| 既存の回帰 | 26 | 手順11b の検証をリポジトリの新UIに合わせて書き換えて再実行 |
+| 追補 | 17 | 一覧が横に伸びない（表 1152px ≦ ペイン 1200px・横スクロール無し・説明が省略）／追加モーダル（URL 未入力では確定できない）／表に2行増える／`https` で始まる行だけリンク／**説明を編集したままリポジトリ操作をしても保存が有効**（前回の不具合の回帰確認）／保存されて `repositories` に入る／行クリックで編集モーダルが開き値が入っている／更新が表に反映／メンバー3件・メール3件・列が5つ（種別/名前/メール/ロール/参加日）／`GET /projects/:key` が `email` を返す |
+
+`make restart` は**実際に実行して確認**した（`stop-server` → `down` → `build` → `up` → `run` が
+順に走り、`/healthcheck` が新しいバイナリで応答する）。`make stop-server` は
+**2回続けて実行**し、1回目は PID を出して停止、2回目は「掴んでいるプロセスは無い」を出すことを確認した。
+
+**利用者が `demo` に入れていた検証データ（複数行の説明・`サンプリリポジトリ`）は、
+開始時に控えて `finally` で書き戻している。**
+
 ### 手順11b の検証で残ったもの・戻したもの
 
 | | |

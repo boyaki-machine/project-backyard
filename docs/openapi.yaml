@@ -934,7 +934,7 @@ components:
 
     ProjectMember:
       type: object
-      required: [actor_id, kind, display_name, role, joined_at]
+      required: [actor_id, kind, display_name, email, role, joined_at]
       properties:
         actor_id:
           type: string
@@ -944,6 +944,12 @@ components:
           enum: [user, agent, system]
         display_name:
           type: string
+        email:
+          description: |
+            `app_user.email`（DbDesign.md 6.2）。**エージェントとシステムアクターは
+            `app_user` の行を持たないため null**。キーは常に返す。
+          type: [string, 'null']
+          examples: ['tanaka@example.com']
         role:
           type: string
           examples: ['project_admin']
