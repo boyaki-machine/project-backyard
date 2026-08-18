@@ -630,15 +630,16 @@ GET /api/v1/projects/check-key?key=my-app
 ## 6.1 `GET /api/v1/admin/users`
 
 ```
-GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&page=1&per_page=25
+GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=1&per_page=25
 ```
 
 | パラメータ | 既定 | 説明 |
 |---|---|---|
-| `kind` | `all` | `user` / `agent` / `all`。`GuiDesign.md` 5.6 は人間とエージェントを同一一覧に並べる |
-| `is_active` | `all` | `true` / `false` / `all` |
-| `q` | — | 表示名・メールの部分一致（**ユーザー数20件超のときのみUIに表示**） |
+| `kind` | `all` | `user` / `agent` / `all`。`GuiDesign.md` 5.6 は人間とエージェントを同一一覧に並べる。**`kind='system'` の actor は返さない**（`DbDesign.md` 6.2 の3種目。利用者が管理する対象ではない） |
+| `is_active` | `all` | `true` / `false` / `all`。**真偽値ではなく3値の文字列**として扱う（未指定と `false` を区別するため） |
+| `q` | — | 表示名・メールの部分一致（**ユーザー数20件超のときのみUIに表示**。APIは常に受け付ける）。**`%` と `_` はサーバ側でエスケープするため、ワイルドカードとしては働かない** |
 | `sort` | `display_name` | `display_name` / `email` / `last_login_at` / `created_at` |
+| `order` | `asc` | `asc` / `desc`（2.6 の共通仕様）。**名簿は昇順で読むため、`GET /projects` の既定（`desc`）とは違う** |
 
 ```json
 {
@@ -660,6 +661,12 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&page=1&per_page
 
 **`kind` によって意味を持たないフィールドは `null` を返し、フィールド自体を省略しない。** フロントの分岐を単純にするため。
 
+**`agent` は Phase 1 では常に `null` である。** 中身（`client_kind` / `model_name` / `project_key` / `trust_level`）は `DbDesign.md` 8.1 の `agent` テーブルの列で、そのテーブルは Phase 2 のマイグレーションで作られる。Phase 1 のスキーマから埋められる値が1つも無いため、**キーだけを返して中身は推測しない**。上の例はエージェントを作れるようになった後の姿である。
+
+**`project_count` は `project_member` の行数**で、アーカイブ済みプロジェクトも数える。除くと 6.3 の `memberships` に並ぶ件数と食い違うため。
+
+一覧は `ETag` を返す（2.7）。`W/"user-<件数>-<MAX(updated_at) のナノ秒>"` で、**`updated_at` は `actor` と `app_user` の新しいほうを採る**。システムロールの変更は `app_user` の行だけを更新するため、`actor` だけを見るとロールを変えても値が変わらない。
+
 ## 6.2 `POST /api/v1/admin/users`
 
 ```json
@@ -675,24 +682,35 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&page=1&per_page
 
 | フィールド | 検証 |
 |---|---|
-| `display_name` | 必須。1〜60文字 |
-| `email` | 必須。形式検証＋未使用（`409 conflict` / `already_exists`） |
+| `display_name` | 必須。1〜60文字（`actor.display_name` の CHECK 制約と同じ。前後の空白は落とす） |
+| `email` | 必須。形式検証＋未使用（`409 conflict` / `already_exists`）。**254文字以内**（RFC 5321 4.5.3.1.3）。**表示名付き（`山田 <a@example.com>`）は受け付けない** |
 | `system_role` | `operator` / `administrator`。既定 `operator` |
-| `password_mode` | `generate` / `manual` |
-| `password` | `manual` のとき必須。12文字以上 |
+| `password_mode` | `generate` / `manual`。**既定 `generate`**（`GuiDesign.md` 5.6.1 の初期選択） |
+| `password` | `manual` のとき必須。12文字以上。**`generate` のときに送られても無視する**（モードを切り替えるフォームが前の入力を残したまま送るのは自然な作りであり、それを誤りとして弾くと画面側が余計な制御を持つ） |
+| `must_change_password` | **既定 `true`**（`GuiDesign.md` 5.6.1 のチェックボックスが既定でオン）。管理者が決めたパスワードを本人が使い続ける状態を既定にしない |
 
 ```json
 // 201 Created — generated_password は「この応答でのみ」返る
 {
   "id": "01K2...", "kind": "user", "display_name": "山田 太郎",
   "email": "yamada@example.com", "system_role": "operator", "is_active": true,
-  "generated_password": "quiet-harbor-4172-mint"
+  "generated_password": "quiet-harbor-4172"
 }
 ```
 
+**`password_mode=manual` のときは `generated_password: null` を返す**（キーは省略しない）。呼び出し側が既に平文を持っており、返す意味がないため。
+
 **サーバ側の処理**：`actor` → `app_user` → `user_identity`（`provider_key='local'`, `subject=email`）→ `local_credential` を単一トランザクションで作成する（`DbDesign.md` 6.2）。
 
-自動生成パスワードは**読み上げ・転記しやすい語句連結方式**とする。ランダム英数字は電話やチャットでの伝達時に誤りが生じやすいため。
+作成時は `audit_log` に `user.create` を記録する（2.10）。`target_type='app_user'` / `target_id=<actor_id>`、`detail` は `email` / `system_role` / `password_mode` / `must_change_password`。**平文のパスワードは `detail` に入れない**——`audit_log` は長期保存される記録であり、残ると「この応答でのみ返る」が崩れる。
+
+### 6.2.1 自動生成パスワード
+
+**読み上げ・転記しやすい語句連結方式**とする。ランダム英数字は電話やチャットでの伝達時に誤りが生じやすいため。
+
+形式は **`<形容詞>-<名詞>-<4桁数字>`**（例 `quiet-harbor-4172`）。語彙は形容詞16語・名詞16語で、いずれも英小文字のみ・4文字以上とし、連結が常に最小長（12文字、`Design.md` 6.3）を超えるようにする。乱数は暗号論的擬似乱数から採る。
+
+**この強度（約21ビット）は暫定である。** Phase 1 の開発中は生成された値を手で打ち込んで動作確認するため、**長さと打ちやすさを優先**している。単発の初期パスワードであり、`must_change_password` が既定で `true`、かつアカウントロック（5回/15分、`Design.md` 6.3）が効くため、オンラインでの推測は現実的でない。**セキュリティ監査の時点で語彙数または要素数を増やす**（`docs/PROGRESS.md`「手順外の作業」に起票済み）。
 
 ## 6.3 `GET /api/v1/admin/users/:id`
 

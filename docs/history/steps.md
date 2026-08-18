@@ -741,3 +741,58 @@ CDP を話す最小クライアント（`cdp.py`）と検証本体（`verify.py`
 
 `audit_log` に `user.create` の孤児（`actor_id IS NULL`）が4件あるが、これは
 **`pb dev seed` が CLI として書いたもの**でテストの残骸ではない（CLI は actor を持たない）。
+
+---
+
+## 手順外の作業（完了分）
+
+`docs/PROGRESS.md` の「手順外の作業」表から、**完了して今後の手順に不要になった行**を
+移したもの（2026-08-18、`pb-step.md` 手順7 の掃除）。未着手の行は `PROGRESS.md` に残っている。
+
+| 内容 | 状態 | 完了日 | ブランチ | 検証方法 |
+|---|---|---|---|---|
+| バージョン番号とビルド番号の運用（`Design.md` 11.1） | 完了 | 2026-08-12 | `feature/versioning` | マージ後に `make version-check` が通る |
+| エージェントの実行権限の整理（`.claude/settings.json`）と `CLAUDE.md` 絶対規則2の具体化 | 完了 | 2026-08-12 | `feature/step-04-http-foundation-auth` | 読み取り系コマンドが確認なしで通り、`rm` / `git merge` / `git push` などは確認を求める |
+| `GuiDesign.md` 3.2 のルーティング表に `/` の行を追加（手順7の積み残し） | 完了 | 2026-08-13 | `docs/routing-root-path` | 表の記述（`/projects` へリダイレクト・必要権限なし）が `client/src/router/routes.ts` の実装と一致する。コードは変更していない |
+| `openapi.yaml` の役割の再定義（設計の写し → **実装済みAPIの現状**）と 3.3 の文言の書き直し | 完了 | 2026-08-13 | `docs/openapi-role` | `ApiDesign.md` 1.3 に食い違い時の行動表がある。`Design.md` 3.3 から「手書き」の語が消え、採らない3方式とその理由が表になっている。`pb-step.md` の実装の節に openapi.yaml の更新が入っている |
+| **`docs/Development.md` の作成**（手順7.5 の積み残し。`Design.md` 4.1 が予定し `DbDesign.md` 7.6.6 が参照を約束していた） | 完了 | 2026-08-15 | `docs/development-guide` | 初回セットアップ（秘密3ファイル → `make up` → `migrate` → `dev-reset`）から**実際にログインできる**ところまでを、書かれたとおりに実行して確認した。`docs/README.md` と `CLAUDE.md` から参照が張られている。`PROGRESS.md` の環境メモは手順を移し、記録とポインタだけ残した。**利用者が実際に上から順にたどったフィードバックで4点を追補**（前提の確認コマンドと付録A、`make build` が要る場面、サーバの止め方、HMR の説明） |
+| `GuiDesign.md` 4.2 / 5.1 の図の追従（バージョン表記とテーマの選択肢） | 完了 | 2026-08-15 | `docs/development-guide` | 図から `v0.1.0` が消え、`PB v<version>` になっている。実装が出すのは `VERSION` の値（現在 `1.9.12`） |
+| **進め方の振り返りと `LEARNINGS.md` の導入**（ループエンジニアリング。利用者からの指摘） | 完了 | 2026-08-18 | `docs/session-learnings` | `pb-step.md` の振り返りを**成果物（手順7）と進め方（手順8）の2種類**にし、番号を 9=記録 / 10=マージ提案へ繰り下げた。`LEARNINGS.md`（44行・5.2KB）を新設し、**セッション開始時に読む**導線を `CLAUDE.md` と手順1に張った。**個人のセッション履歴から抽出した内容を含むため `.gitignore` の対象**とし、履歴にも残していない（無ければ各自が作り直す）。初期値は**過去16セッションの JSONL から利用者の発話119件を抽出・分析**して得た9件。**2回ルール**（同じことが2回起きてから規約へ昇格）で増え続けないようにした |
+| **セッションの振り返りフローの導入**（マージ提案の直前に行う。利用者からの指摘） | 完了 | 2026-08-18 | `docs/progress-archive` | `pb-step.md` に手順7を新設（11項目・該当なしも述べる）。番号を繰り下げ、`Design.md` 11.0 の参照（手順8→9）も直した。**直前の手順10bのセッションに当てて空振りしないことを確認**：`Modal.vue` の再利用前提・`PROGRESS.md` の肥大化・ビルド成果物の汚れ・検証資源の後始末を拾えた |
+| **`PROGRESS.md` の分割**（毎セッションの読み込み量の削減。利用者からの指摘） | 完了 | 2026-08-18 | `docs/progress-archive` | 182KB → 27KB（15%）。**1行も削除せず `docs/history/` へ移動**した（機械的に切り出し、行の欠落が無いことを sort ＋ diff で確認）。未消化の約束は「次の手順への引き継ぎ」に20行で抜き出した。`pb-step.md` に記録の書き分け表を入れ、再肥大化を防いだ |
+| **`PROGRESS.md` の環境メモの整理**（30KB 超過。`pb-step.md` 手順7の閾値による） | 完了 | 2026-08-18 | `feature/step-11-project-detail-api` | 243行/31.9KB → **192行/25.1KB**。**1件も捨てず**、テストの落とし穴を `Development.md` 6.2、依存とツールの固定版を同 10章（新設）、initdb の実行ビットを同 2.2 へ写し、役目を終えた回避策（Argon2id での検証用ユーザー作成）を `history/steps.md` へ移した。環境メモに残したのは**手順書に落とせない制約4件**のみ。移動漏れが無いことは旧ブロックの全項目を `Development.md` に対して grep して確認した |
+| **`make restart` / `make stop-server` の追加**（利用者からの要望。画面を直したあと1コマンドで確かめる） | 完了 | 2026-08-18 | `feature/step-11-project-settings-page` | 実行して `stop-server → down → build → up → run` が順に走り、新しいバイナリで `/healthcheck` が応答する。`stop-server` は待受（`-sTCP:LISTEN`）だけを止める |
+| **プロジェクト一覧で長い説明が表を横に伸ばす不具合**（利用者からの指摘） | 完了 | 2026-08-18 | `feature/step-11-project-settings-page` | 表 4046px → ペイン幅に収まり、説明が省略記号で切れる。`GuiDesign.md` 5.2 に「横幅を伸ばさず縦スクロールのみ」を明記 |
+| ダッシュボードのページヘッダを「プロジェクト名 ＋ 画面名」にする（`GuiDesign.md` 5.3。利用者からの指摘） | 完了 | 2026-08-15 | `feature/step-10-projects-page` | ブラウザで5件：メンバーは `デモプロジェクト ダッシュボード`、demo に未所属の管理者は `demo ダッシュボード`（キーで代替）、チケット一覧は `チケット一覧` のまま、プレースホルダのカード内は `プロジェクトダッシュボードのページ予定` のまま（6.5 の規約を保つ） |
+
+## ビルド番号とマージの対応（1〜20）
+
+`docs/PROGRESS.md` から移した（2026-08-18）。**正本は `make version` / `make version-check`**
+（`git rev-list --count --first-parent --merges develop` の実測）であり、この表は経緯の記録にすぎない。
+実際に記入漏れ（ビルド16・17）が起きたため、`PROGRESS.md` 側では一覧を持たないことにした。
+
+| | |
+|---|---|
+| ビルド1 | 手順2（`feature/step-02-migrations`）のマージ |
+| ビルド2 | バージョン運用の導入（`feature/versioning`）のマージ |
+| ビルド3 | 手順3（`feature/step-03-admin-create`）のマージ |
+| ビルド4 | 手順4a・4b（`feature/step-04a-http-foundation`）のマージ |
+| ビルド5 | 手順5a・5b（`feature/step-05-auth-session`）のマージ |
+| ビルド6 | 手順6a・6b（`feature/step-06-authz-middleware`）のマージ |
+| ビルド7 | 手順7（`feature/step-07-client-scaffold`）のマージ |
+| ビルド8 | `GuiDesign.md` 3.2 への `/` の行の追加（`docs/routing-root-path`）のマージ |
+| ビルド9 | `openapi.yaml` の役割の再定義（`docs/openapi-role`）のマージ |
+| ビルド10 | 手順7.5（`feature/step-07-5-dev-seed`）のマージ |
+| ビルド11 | 手順8a・8b（`feature/step-08-login-and-menu`）のマージ |
+| ビルド12 | `docs/Development.md` の作成（`docs/development-guide`）のマージ |
+| ビルド13 | 手順9a・9b（`feature/step-09-projects-api`）のマージ |
+| ビルド14 | 手順10a（`feature/step-10-projects-page`）のマージ |
+| ビルド15 | 手順10b（`feature/step-10-projects-page`。同じブランチの2回目のマージ）|
+| ビルド16 | `PROGRESS.md` の分割（`docs/progress-archive`）のマージ |
+| ビルド17 | 進め方の振り返りと `LEARNINGS.md` の導入（`docs/session-learnings`）のマージ |
+| ビルド18 | 手順11a（`feature/step-11-project-detail-api`）のマージ |
+| ビルド19 | 手順11b（`feature/step-11-project-settings-page`）のマージ |
+| ビルド20 | 手順12a（`feature/step-12-users-api`）のマージ |
+
+**手順1以前の2コミットはマージではないため数えない。** 手順1は `Design.md` 11.0 の規約が
+固まる前に `develop` へ直接コミットされており、feature ブランチを経ていない。
