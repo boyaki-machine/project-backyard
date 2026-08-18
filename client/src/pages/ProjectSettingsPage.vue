@@ -156,12 +156,27 @@ const nameError = computed(() => {
   return null
 })
 
+/**
+ * リポジトリ1件ごとの誤り。`null` は誤り無し。
+ *
+ * **何も入力していない行はエラーにしない。** `[+ 追加]` を押した直後の空行で
+ * 保存全体が止まると、**別の欄（名前・説明）の編集まで保存できなくなる**。
+ * 空行は保存時に落ちるだけで、失われる入力が無い（`mergeRepositories`）。
+ *
+ * 表示名か説明だけが埋まっている行は誤りとして出す。黙って捨てると、
+ * 入力したつもりの内容が消える。
+ */
 const repoErrors = computed(() =>
   repositories.value.map((r) => {
     const url = r.url.trim()
-    if (url === '') return 'URLを入力してください'
+    const name = (r.name ?? '').trim()
+    const description = (r.description ?? '').trim()
+    if (url === '') {
+      if (name === '' && description === '') return null
+      return 'URLを入力してください'
+    }
     if (url.length > MAX_URL) return `URLは${MAX_URL}文字以内で入力してください`
-    if ((r.description ?? '').trim().length > MAX_REPO_DESCRIPTION) {
+    if (description.length > MAX_REPO_DESCRIPTION) {
       return `説明は${MAX_REPO_DESCRIPTION}文字以内で入力してください`
     }
     return null
