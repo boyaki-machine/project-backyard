@@ -700,6 +700,28 @@ ALTER TABLE access_token
 
 **`key` の形式検証をDBの `CHECK` にも置く。** アプリ側（`ApiDesign.md` 5.3）と二重になるが、URLとMCPエンドポイントに直結する値であり、不正値が入ると経路そのものが壊れるため。
 
+**`settings` で Phase 1 が定義するキーは `repositories` のみ**である。
+
+```jsonc
+{
+  "repositories": [
+    { "name": "本体", "url": "https://github.com/org/project-backyard",
+      "description": "サーバとフロントの実装。コミットに PB-123 を書く" }
+  ]
+}
+```
+
+| | |
+|---|---|
+| `url` | 必須。`https://…` と `git@host:org/repo.git` の双方を受ける |
+| `name` | 任意。画面に出す表示名。省略時は URL をそのまま見せる |
+| `description` | 任意。**そのリポジトリとプロジェクトの関係**を利用者が書く（「これは〇〇のリポジトリ」） |
+| 並び順 | 配列の順 |
+
+**列にせず `settings` に置くのは、用途がまだ「画面にリンクを出す」「MCP がプロジェクト情報として返す」に限られるためである。** どちらも値を読んで返すだけで、一意制約・並び替え・結合を必要としない。リポジトリ単位のトークン発行や横断検索（`Requirements.md` 10.9）が要件になった時点で、`project_repository` テーブルへ移す。**逆にテーブルを先に作ると、要らなかったときに戻せない。**
+
+**検証はフロントのみで、サーバは JSON オブジェクトであることしか見ない**（`ApiDesign.md` 5.5）。`settings` は Phase 1 では自由形式だからである。
+
 ### 6.4.1 チケット採番
 
 ```sql

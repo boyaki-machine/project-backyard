@@ -155,6 +155,10 @@ type Querier interface {
 	// actor を JOIN するのは kind と display_name のため。エージェントも
 	// プロジェクトのメンバーになれる（DbDesign.md 6.3）。
 	//
+	// **app_user は LEFT JOIN にする。** エージェントとシステムアクターは
+	// app_user の行を持たないため、INNER にするとメンバー一覧から消える。
+	// email が NULL になるのはその2種別である（ApiDesign.md 5.4）。
+	//
 	ListProjectMembers(ctx context.Context, projectID string) ([]ListProjectMembersRow, error)
 	// ListProjectMembershipsByActor は所属プロジェクトと、そこでの
 	// プロジェクトロール由来の権限キーを返す（ApiDesign.md 3.1 の projects[]）。

@@ -475,6 +475,110 @@ Playwright / Puppeteer は入れていない。スクリプトはリポジトリ
 本文とステータスを別々に受け取り（`-o` と `-w`）、`version` は毎回 `GET` で読み直すため
 何度実行しても同じ判定になる作りにした。**次に同じ確認をするときは書き直しになる。**
 
+## 手順11b（2026-08-18、`feature/step-11-project-settings-page`）
+
+プロジェクト設定画面（`GuiDesign.md` 5.9）。**手順11 のうち TypeScript だけ**を扱った。
+設計文書に節が無かったため、**5.9 の執筆と承認から始めた**（11a からの引き継ぎ）。
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/src/pages/ProjectSettingsPage.vue` | 本体。一般／メンバーの2タブ、基本情報（キーは読み取り専用・名前・説明・リポジトリ）、ワークフロー（参照のみ）、プロジェクトの状態。4状態（6.2）・変更検出・409 の復帰・確認ダイアログを持つ |
+| `client/src/components/ConfirmDialog.vue` | 破壊的操作の確認（6.3）。`Modal.vue` に乗せ、足しているのは実行ボタンの意味づけ（`danger`）と処理中の二重押下防止だけ |
+| `client/src/lib/datetime.ts` | `formatDateTime` / `formatDate`。`ProjectsPage.vue` から出した（10a の引き継ぎ「2つ目の消費者が出たら共通化」の消化） |
+| `client/src/api/client.ts`（変更） | `patch` と、リクエストごとのヘッダ（`If-Match`）。**`Content-Type` と `X-PB-CSRF` は共通処理の値を優先**し、呼び出し側から上書きさせない |
+| `client/src/api/projects.ts`（変更） | `getProject` / `updateProject` / `archiveProject` / `unarchiveProject` と、`readRepositories` / `mergeRepositories`（`settings` の読み書き） |
+| `client/src/stores/project.ts`（変更） | 選択中プロジェクト（`GuiDesign.md` 7.1）。`current` / `fetchCurrent` / `setCurrent` / `clearCurrent`。**一覧とは独立**で、更新系の応答は `setCurrent` で入れる（通し番号を進めて、遅れて届いた取得結果が古い `version` を戻さないようにする） |
+| `client/src/pages/ProjectsPage.vue`（変更） | ローカルの `formatDateTime` を消して `lib/datetime` を使う。**変更はこの1点のみ** |
+| `client/src/router/routes.ts`（変更） | `/p/:key/settings` をプレースホルダから実画面へ差し替え、`meta.placeholder` を削除 |
+| `client/src/api/schema.d.ts`（変更） | `make gen-api` の生成物（`openapi.yaml` の description 変更に追随。型は変わっていない） |
+| `docs/GuiDesign.md` / `DbDesign.md` / `ApiDesign.md` / `openapi.yaml`（変更） | 5.9 の新設、6.4 の差し替え、`settings.repositories` の定義（`history/decisions.md` の「設計文書へ反映済みの修正（手順11b）」） |
+
+### 手順11b の検証結果
+
+| 検証 | 結果 |
+|---|---|
+| `npm run typecheck`（vue-tsc） | 通る |
+| `make test` | 通る（**`openapi.yaml` のドリフト検出を含む**。API は 11a から変えていないので検出も無し） |
+| `make build` | 単一バイナリ（1.13.18）が作られ、`/healthcheck` が応答する |
+| **ブラウザ（ヘッドレス Chrome ＋ CDP、`Development.md` 8.2）** | **26件すべて PASS**（下記） |
+
+**ブラウザ検証26件の内訳**（`pm@example.com`＝`project_admin` を主に使用）
+
+1. `/p/demo/settings` が開く ／ 2. タブが2つ ／ 3. キーが読み取り専用で警告が出る ／
+4. ワークフローが `未着手 ─ 進行中 ─ 完了` で出る ／ 5. 未変更では `[保存]` が無効 ／
+6. 変更すると有効 ／ 7. 保存の結果が**その場に**出る（`✓ 保存しました`。トーストではない）／
+8. サーバに反映され `version` が +1 ／ 9. 改名がダッシュボードの見出しに反映される
+（`auth.refresh()`）／ 10. `https` だけがリンクになり `git@…` はならない ／
+11. `settings.repositories` に2件保存される ／ 12. 空の `name` / `description` は保存されない ／
+13. 再読込で残る ／ 14. URL未入力の行があると保存できず `✕ URLを入力してください` が出る ／
+15. **409** でサーバの message（`他の利用者がこのプロジェクトを更新しました…`）がそのまま出る ／
+16. `[最新の内容を取得]` で最新が入力欄に入る ／ 17. アーカイブで確認ダイアログが出る ／
+18. アーカイブ後は `● アーカイブ済み` になりボタンが `アーカイブを解除` に変わる ／
+19. サーバも `archived` ／ 20. 解除は確認なしで戻る ／ 21. メンバーが3件 ／
+22. ロールが日本語（プロジェクト管理者・メンバー・閲覧者）／ 23. 追加・変更の導線を案内する ／
+24. `member@example.com` のメニューに「プロジェクト設定」が出ない ／ 25. URL直打ちで `/403` ／
+26. 到達できないプロジェクトは `/404`（403 ではない）
+
+**検証スクリプトは使い捨てで、リポジトリには入れていない。** Python の標準ライブラリだけで
+CDP を話す最小クライアント（`cdp.py`）と検証本体（`verify.py`）に分け、**開始時に現在値を
+控えて `finally` で必ず戻す**作りにした。409 を作るために、画面とは別経路の API セッション
+（`urllib` ＋ cookiejar）から先に `PATCH` している。**まずスモーク（ログイン→設定画面を開いて
+本文を出す）だけを通してから全体を回した**（`pb-step.md` 手順6）。
+
+### 手順11b の実機確認で見つかった不具合（2026-08-18、マージ前）
+
+**利用者が実際に画面を触って3点を指摘した。** いずれも同じブランチで直し、26件を再実行した。
+
+| 指摘 | 原因と対応 |
+|---|---|
+| リポジトリの **URL 入力欄が画面の右外に出て、見ることも編集することもできない** | **CSS の詳細度。** `.repo-name { width: 160px }`（0,1,0）より `input[type='text'] { width: 100% }`（0,1,1）が強く、表示名の欄が1行（846px）を占有して URL を押し出していた。**入力欄を縦積みにして幅の奪い合いをなくした。** 1440 / 1280 / 1024 / 820px で、3つの欄がブロック内に収まり横スクロールが出ないことを実測 |
+| リポジトリの並びが「表示名 → URL → 説明」で、**必須の URL が任意項目の後ろ** | `URL`（必須）→ `表示名` → `説明` に変更し、各欄にラベルを付けた |
+| 基本情報の**先頭がプロジェクトキー**だった | プロジェクト名を先頭へ。キーは一意に指すための識別子だが、プロジェクトの一属性にすぎない |
+| 説明欄の文言「このリポジトリとプロジェクトの関係（任意）」が用途を狭めている | ラベルを `説明` に。意図は設計文書側（5.9.1）に残した |
+
+**再検証**：`npm run typecheck` ／ ブラウザ26件が再び全 PASS ／ 幅4種でレイアウトを実測。
+**このとき利用者が `demo` に入れていた検証用の説明文（複数行）は、開始時に控えて `finally` で
+そのまま書き戻している**（検証スクリプトが現在値を読み直す作りになっているため）。
+
+### 手順11b の追補（2026-08-18、実機確認の第2ラウンド）
+
+利用者の指摘5件のうち、**4件を同じブランチで実装**した（1件は Phase 2 へ）。
+ブランチを分けなかったのは利用者の判断（`history/decisions.md`）。
+
+| 追補 | 作った・直したもの |
+|---|---|
+| メンバーのメール表示（**API変更**） | `project.sql` に `LEFT JOIN app_user`、`project_view.go` に `Email *string`、`ApiDesign.md` 5.4 と `openapi.yaml` の `ProjectMember`、`projects_update_test.go` に**エージェントの email が null になる**表明、メンバータブに列追加 |
+| リポジトリの表形式 | `client/src/components/RepositoryModal.vue`（新規。`Modal.vue` を再利用）、`ProjectSettingsPage.vue` を表＋モーダルへ |
+| プロジェクト一覧の省略記号 | `ProjectsPage.vue` を `table-layout: fixed` にし、数値・日時列へ固定幅。`GuiDesign.md` 5.2 に規約を明記 |
+| `make restart` | `Makefile` に `stop-server` と `restart`、`Development.md` 3.1 / 3.3、`CLAUDE.md` の開発コマンド |
+
+**検証（43件、すべて PASS）**
+
+| | 件数 | 内容 |
+|---|---|---|
+| 既存の回帰 | 26 | 手順11b の検証をリポジトリの新UIに合わせて書き換えて再実行 |
+| 追補 | 17 | 一覧が横に伸びない（表 1152px ≦ ペイン 1200px・横スクロール無し・説明が省略）／追加モーダル（URL 未入力では確定できない）／表に2行増える／`https` で始まる行だけリンク／**説明を編集したままリポジトリ操作をしても保存が有効**（前回の不具合の回帰確認）／保存されて `repositories` に入る／行クリックで編集モーダルが開き値が入っている／更新が表に反映／メンバー3件・メール3件・列が5つ（種別/名前/メール/ロール/参加日）／`GET /projects/:key` が `email` を返す |
+
+`make restart` は**実際に実行して確認**した（`stop-server` → `down` → `build` → `up` → `run` が
+順に走り、`/healthcheck` が新しいバイナリで応答する）。`make stop-server` は
+**2回続けて実行**し、1回目は PID を出して停止、2回目は「掴んでいるプロセスは無い」を出すことを確認した。
+
+**利用者が `demo` に入れていた検証データ（複数行の説明・`サンプリリポジトリ`）は、
+開始時に控えて `finally` で書き戻している。**
+
+### 手順11b の検証で残ったもの・戻したもの
+
+| | |
+|---|---|
+| 戻した | `demo` の `name` / `description` / `settings` を検証前の値へ（`finally` で実行し、復元後の値を出力して確認）。`status` も `active` に戻した |
+| 止めた | `make run` のサーバ（`/healthcheck` が応答しないことを確認）、ヘッドレス Chrome、Chrome のプロファイル（削除） |
+| 消した | `client/dist` と `server/internal/webui/dist`（`make clean-webui`）、スクラッチパッド |
+| **残っているもの** | `demo` の `project.version` が検証のぶん進んでいる（1 → 15 前後）。`updated_at` も検証時刻になっている。`audit_log` に検証中の `project.archive` が数件残る。**いずれも値としては正常で、次の手順の妨げにならないため `make dev-reset` はしていない**（実行すれば消えるが、開発DBの他のデータも作り直しになるため独断では行わなかった） |
+
+---
+
 ---
 
 ## 進捗表から移した検証内容（手順1〜10b）

@@ -145,8 +145,8 @@ make run       # :8080。PB_HEALTH_SHOW_VERSION=true で起動する
 | **client**（`client/` 配下） | `make build` → `make run` を起動し直す。埋め込みの中身は最後に `make build` した時点のもので、`make run` では更新されない |
 | **server**（`server/` 配下） | `make run` を起動し直すだけでよい。`make run` は `go run` なので**毎回ソースからコンパイルし直す** |
 
-迷ったら `make build` → `make run` の順に叩けば必ず最新になる（server の変更も `make build`
-の中でコンパイルされる）。画面を続けて直すなら、毎回ビルドを待たずに済む 3.2 のほうが速い。
+迷ったら **`make restart`**（下記）で確実に最新になる。画面を続けて直すなら、毎回ビルドを
+待たずに済む 3.2 のほうが速い。
 
 **`make build` の後は `make clean-webui`（7.1）を忘れないこと。** ビルド成果物が
 追跡対象のファイルを上書きしたままコミットしてしまう。
@@ -173,6 +173,27 @@ lsof -nP -iTCP:8080 -sTCP:LISTEN     # 何も出なければ停止できてい�
 ```
 
 残っていたら、その PID を `kill <PID>`（`-9` は不要。graceful に落ちる）。
+**`make stop-server` が同じことをする**（`lsof` で PID を引いて `kill` する）。
+
+### 作り直して起動し直す（`make restart`）
+
+**画面を直したら `make restart` を使う。** 停止 → ビルド → DB起動 → サーバ起動を1コマンドで行う。
+
+```
+make restart
+```
+
+```
+stop-server → down → build → up → run
+```
+
+**`make run` を止めて起動し直すだけでは、client の変更は反映されない。** 画面は
+Go バイナリに埋め込まれており（`Design.md` 3.4）、`make build` を通さない限り
+古いものが出続ける。`make restart` はこれを手順として含んでいる。
+
+先頭の `stop-server` が要るのは、**`make run` のサーバがコンテナではない**ためである。
+`make down` はコンテナしか落とさないので、ポートを掴んだままのプロセスが残っていると
+`run` が `address already in use` で即座に終わる。
 
 ## 3.2 画面を直す（HMR を効かせる）
 
@@ -202,6 +223,8 @@ make dev-client   # :5173。ブラウザで開くのはこちら
 | `make psql` | DBコンソール（`pb_owner` で接続） |
 | `make dev-info` | URL とデモアカウントの一覧。**パスワードを探す時間をなくすためのもの** |
 | `make test` | Go のテスト |
+| **`make restart`** | **停止 → ビルド → DB起動 → サーバ起動をまとめて行う**（3.1）。画面を直したあとはこれ1つでよい |
+| `make stop-server` | :8080 を掴んでいるサーバを PID で止める（3.1「止め方」） |
 | `make down` | コンテナを停止する。**`pgdata` ボリュームは残る**ので、次の `make up` でデータは戻る（3.4） |
 
 ## 3.4 作業を終える／再開する（端末のリソースを解放する）

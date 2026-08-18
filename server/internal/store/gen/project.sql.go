@@ -275,10 +275,12 @@ SELECT
   a.id AS actor_id,
   a.kind,
   a.display_name,
+  u.email,
   pm.role_key,
   pm.joined_at
 FROM project_member pm
 JOIN actor a ON a.id = pm.actor_id
+LEFT JOIN app_user u ON u.actor_id = a.id
 WHERE pm.project_id = $1
 ORDER BY pm.joined_at, a.id
 `
@@ -287,6 +289,7 @@ type ListProjectMembersRow struct {
 	ActorID     string
 	Kind        string
 	DisplayName string
+	Email       pgtype.Text
 	RoleKey     string
 	JoinedAt    pgtype.Timestamptz
 }
@@ -295,6 +298,10 @@ type ListProjectMembersRow struct {
 //
 // actor を JOIN するのは kind と display_name のため。エージェントも
 // プロジェクトのメンバーになれる（DbDesign.md 6.3）。
+//
+// **app_user は LEFT JOIN にする。** エージェントとシステムアクターは
+// app_user の行を持たないため、INNER にするとメンバー一覧から消える。
+// email が NULL になるのはその2種別である（ApiDesign.md 5.4）。
 func (q *Queries) ListProjectMembers(ctx context.Context, projectID string) ([]ListProjectMembersRow, error) {
 	rows, err := q.db.Query(ctx, listProjectMembers, projectID)
 	if err != nil {
@@ -308,6 +315,7 @@ func (q *Queries) ListProjectMembers(ctx context.Context, projectID string) ([]L
 			&i.ActorID,
 			&i.Kind,
 			&i.DisplayName,
+			&i.Email,
 			&i.RoleKey,
 			&i.JoinedAt,
 		); err != nil {

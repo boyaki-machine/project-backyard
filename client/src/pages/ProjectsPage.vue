@@ -6,6 +6,7 @@ import EmptyState from '../components/EmptyState.vue'
 import NewProjectModal from '../components/NewProjectModal.vue'
 import PageHeader from '../components/PageHeader.vue'
 import type { ProjectDetail, ProjectListItem, ProjectSort } from '../api/projects'
+import { formatDateTime } from '../lib/datetime'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
 
@@ -101,19 +102,6 @@ function sortBy(sort?: ProjectSort) {
 /** 進捗は数値のみを出す。プログレスバーは置かない（5.2） */
 function percent(progress: number): string {
   return `${Math.round(progress * 100)}%`
-}
-
-/**
- * 日時の表示（`2026-08-11 09:12`）。
- *
- * API は ISO8601 UTC で返す（`ApiDesign.md` 2.2）。ここでは端末のローカル時刻へ
- * 直して出す。`app_user.timezone` の反映は自分の設定（手順17）で扱う。
- */
-function formatDateTime(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 /**
@@ -414,9 +402,27 @@ async function retry() {
 }
 
 /* ── 一覧 ──────────────────────────────────────────────── */
+/*
+ * table-layout: fixed にするのは、**説明の長さで表が横へ伸びるのを止める**ため
+ * （GuiDesign.md 5.2）。auto のままだと <td> が内容の幅まで広がり、
+ * text-overflow: ellipsis が働かない。数値・日時の列に固定幅を与え、
+ * 残りをすべて名前の列へ渡すことで、説明に使える幅が画面幅に追従する。
+ */
 .table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
+}
+
+/* 名前の列は幅を指定しない（残りを受け取る）。数字は桁数、日時は形式で決まる */
+th:nth-child(2),
+th:nth-child(3),
+th:nth-child(4) {
+  width: 88px;
+}
+
+th:nth-child(5) {
+  width: 160px;
 }
 
 th {
@@ -479,12 +485,16 @@ td.num {
   display: flex;
   align-items: baseline;
   gap: var(--pb-space-2);
+  min-width: 0;
 }
 
 .name {
+  overflow: hidden;
   color: var(--pb-text);
   font-weight: 600;
   text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .name:hover {
@@ -493,6 +503,7 @@ td.num {
 
 /* キーは URL・チケット番号・MCP のパスに出るため、名前の隣に併記する */
 .key {
+  flex: none;
   color: var(--pb-text-muted);
   font-size: 13px;
 }
