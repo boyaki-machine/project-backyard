@@ -106,6 +106,18 @@ export const useAuthStore = defineStore('auth', () => {
     return restoring
   }
 
+  /**
+   * `GET /me` を取り直す。
+   *
+   * `restore` と違い、復元済みでも必ず問い合わせる。プロジェクトを作ると
+   * 作成者が `project_admin` として `project_member` に入る（`ApiDesign.md` 5.3）
+   * ため、ログイン時点の写しのままでは所属プロジェクトが古いままになる
+   * （メニューの切替（`GuiDesign.md` 4.4）とプロジェクト配下の画面の判定に効く）。
+   */
+  async function refresh(): Promise<void> {
+    setSession(await authApi.me())
+  }
+
   /** ログイン。応答は `GET /me` と同じ内容なので、そのままストアになる */
   async function login(email: string, password: string): Promise<void> {
     setSession(await authApi.login(email, password))
@@ -138,6 +150,7 @@ export const useAuthStore = defineStore('auth', () => {
     canInProject,
     canReachProject,
     restore,
+    refresh,
     login,
     logout,
     clear,

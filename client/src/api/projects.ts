@@ -2,15 +2,18 @@
  * プロジェクトのエンドポイント（`ApiDesign.md` 5.1〜5.3）。
  *
  * 型は `docs/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない。
- *
- * 手順10a で使うのは一覧のみ。`check-key`（5.2）と作成（5.3）は
- * 新規作成モーダルとともに手順10b で足す。
  */
 import { api } from './client'
 import type { components } from './schema'
 
 export type ProjectList = components['schemas']['ProjectList']
 export type ProjectListItem = components['schemas']['ProjectListItem']
+export type ProjectDetail = components['schemas']['ProjectDetail']
+export type CheckKeyResult = components['schemas']['CheckKeyResult']
+export type CreateProjectRequest = components['schemas']['CreateProjectRequest']
+
+/** ワークフローテンプレート（`DbDesign.md` 7.4）。既定は `simple` */
+export type WorkflowTemplate = CreateProjectRequest['workflow_template']
 
 /** `status` の3値（`ApiDesign.md` 5.1）。未指定は `active` */
 export type ProjectStatusFilter = 'active' | 'archived' | 'all'
@@ -44,4 +47,27 @@ export function listProjects(query: ListProjectsQuery = {}): Promise<ProjectList
   }
   const qs = params.toString()
   return api.get<ProjectList>(`/projects${qs === '' ? '' : `?${qs}`}`)
+}
+
+/**
+ * プロジェクトキーの利用可否（`ApiDesign.md` 5.2）。
+ *
+ * 判定の順は 形式 → 予約語 → 既存。**使えない場合も 200 で返る**（エラーではない）。
+ *
+ * 形式と予約語の判定はサーバだけが持つ。**フロントに正規表現や予約語一覧を
+ * 複製しない**（二重管理になり、片方だけ変わると食い違う）。
+ *
+ * この結果は作成時の重複検出には使わない（5.3。競合検出はDBの `UNIQUE` 制約）。
+ */
+export function checkProjectKey(key: string): Promise<CheckKeyResult> {
+  return api.get<CheckKeyResult>(`/projects/check-key?key=${encodeURIComponent(key)}`)
+}
+
+/**
+ * プロジェクトの作成（`ApiDesign.md` 5.3）。必要権限は `project.create`。
+ *
+ * 応答は `GET /projects/:key` と同形式（5.4）。キー重複は 409 `already_exists`。
+ */
+export function createProject(body: CreateProjectRequest): Promise<ProjectDetail> {
+  return api.post<ProjectDetail>('/projects', body)
 }
