@@ -95,12 +95,12 @@ Makefile が `app_db_password` から `127.0.0.1:5432` 向けの接続文字列�
 ## 2.2 DBを起動してスキーマを作る
 
 ```
-make up        # docker compose up -d db（現状は db のみ。app は手順13以降）
+make up        # docker compose up -d db（現状は db のみ。app は手順12b以降）
 make migrate   # goose で 0001〜 を適用する。前進のみ（DbDesign.md 5.3）
 ```
 
 `make up` が起動するのは **db だけ**である。`deploy/Dockerfile` が未作成のため、
-app サービスは compose に定義してあっても起動対象から外してある（手順13以降で戻す）。
+app サービスは compose に定義してあっても起動対象から外してある（手順12b以降で戻す）。
 
 **`make migrate` は `pb_owner` で接続する**（`db_password` から組み立てる）。実行時ロールの
 `pb_app` は DDL を実行できず、それがロール分離の目的である（`DbDesign.md` 3.4）。

@@ -72,7 +72,7 @@ export const routes: RouteRecordRaw[] = [
         title: 'プロジェクトダッシュボード',
         projectHeading: 'ダッシュボード',
         docRef: 'GuiDesign.md 5.3',
-        status: 'Phase 1・未着手（docs/PROGRESS.md 手順18以降）',
+        status: 'Phase 1・未着手（docs/PROGRESS.md 手順16以降）',
         planned: [
           'ステータス別チケット件数',
           '自分の担当（未完了 上位5件）',
@@ -92,7 +92,7 @@ export const routes: RouteRecordRaw[] = [
       placeholder: {
         title: 'チケット一覧',
         docRef: 'GuiDesign.md 5.4',
-        status: 'Phase 1・未着手（docs/PROGRESS.md 手順18）',
+        status: 'Phase 1・未着手（docs/PROGRESS.md 手順16）',
         planned: [
           '状態・種別・担当・優先度によるフィルタ（条件はURLクエリに反映）',
           'ID・タイトル・状態・優先度・担当・期限の一覧',
@@ -112,7 +112,7 @@ export const routes: RouteRecordRaw[] = [
       placeholder: {
         title: 'チケット詳細',
         docRef: 'GuiDesign.md 5.5',
-        status: 'Phase 1・未着手（docs/PROGRESS.md 手順18）',
+        status: 'Phase 1・未着手（docs/PROGRESS.md 手順16）',
         planned: [
           '説明（Markdownソース＋ライブプレビュー）',
           '完了条件（DoD、Phase 1 は manual 型のみ）',
@@ -140,7 +140,7 @@ export const routes: RouteRecordRaw[] = [
       placeholder: {
         title: 'ユーザー / 権限管理',
         docRef: 'GuiDesign.md 5.6',
-        status: 'Phase 1・手順13で実装（API は手順12）',
+        status: 'Phase 1・手順12で実装（API は 12a、画面は 12b）',
         planned: [
           'ユーザーとエージェントの一覧（名前・メール・ロール・状態）',
           'ユーザー追加モーダル（5.6.1）',
@@ -159,7 +159,7 @@ export const routes: RouteRecordRaw[] = [
       placeholder: {
         title: 'ユーザー詳細・編集',
         docRef: 'GuiDesign.md 5.6.2',
-        status: 'Phase 1・手順15で実装（API は手順14）',
+        status: 'Phase 1・手順13で実装（API と画面は同じ手順）',
         planned: [
           '基本情報（表示名・メール・状態・最終ログイン・作成日）',
           'システムロールの変更',
@@ -197,7 +197,7 @@ export const routes: RouteRecordRaw[] = [
       placeholder: {
         title: '自分の設定',
         docRef: 'GuiDesign.md 5.8',
-        status: 'Phase 1・手順17で実装',
+        status: 'Phase 1・手順15で実装',
         planned: [
           'プロフィール（表示名・メール・言語・タイムゾーン）',
           'テーマの切替（ライト／ダーク／システムに従う）',
@@ -214,7 +214,7 @@ export const routes: RouteRecordRaw[] = [
       placeholder: {
         title: 'アクセストークン管理',
         docRef: 'GuiDesign.md 5.8',
-        status: 'Phase 1・手順17で実装',
+        status: 'Phase 1・手順15で実装',
         planned: [
           'アクセストークンの一覧と失効',
           'api 種別トークンの発行（Phase 1 は CLI 用のみ）',
