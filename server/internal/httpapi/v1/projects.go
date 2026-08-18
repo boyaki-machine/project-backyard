@@ -44,10 +44,15 @@ var projectKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,19}$`)
 
 // reservedProjectKeys は予約語（ApiDesign.md 5.2）。
 // ルーティングと衝突するため、プロジェクトキーとして使わせない。
+//
+// **check-key を含めるのは /api/v1/projects/ 直下の兄弟パスだから**である
+// （手順11で追加）。chi は静的ルートを {key} より優先するため、check-key という
+// キーのプロジェクトを作れてしまうと GET /projects/check-key（5.4）が
+// 本エンドポイントに吸われ、そのプロジェクトへ到達できなくなる。
 var reservedProjectKeys = map[string]bool{
 	"admin": true, "api": true, "mcp": true, "login": true, "logout": true,
 	"me": true, "p": true, "new": true, "projects": true, "static": true,
-	"assets": true,
+	"assets": true, "check-key": true,
 }
 
 // projectListItem は 5.1 の items[] 要素。
@@ -240,9 +245,10 @@ func mergeValidationErrors(errs ...*apierr.Error) *apierr.Error {
 // 「プロジェクト集合の MAX(updated_at) と件数から生成する」に従う。件数は
 // 呼び出した利用者に見える集合のものなので、同じURLでも利用者ごとに変わる。
 //
-// **弱い検証子として W/"..." の形で書く。** 2.7 の例は `"W/proj-…"` と
-// 引用符の内側に W/ を置いているが、これは RFC 9110 8.8.3 の構文では
-// 弱い ETag にならない（値そのものが `W/proj-…` という文字列になる）。
+// **弱い検証子として W/"..." の形で書く**（RFC 9110 8.8.3）。2.7 の例は
+// 当初 `"W/proj-…"` と引用符の内側に W/ を置いていたが、それでは弱い ETag に
+// ならない（値そのものが `W/proj-…` という文字列になる）ため、手順11で
+// 文書側の例を実装に合わせて直した。
 //
 // 秒ではなくナノ秒まで含める。同一秒内の更新で値が変わらないと、
 // 変わっていない一覧を「変わっていない」と誤って扱えてしまうため。

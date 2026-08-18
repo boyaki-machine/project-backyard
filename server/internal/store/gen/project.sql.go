@@ -173,7 +173,8 @@ SELECT id FROM project WHERE key = $1
 // プロジェクトとワークフローに関するクエリ（DbDesign.md 6.4 / 6.5）。
 //
 // 手順7.5（pb dev seed）で必要になった分から始まり、手順9で
-// GET/POST /projects と check-key（ApiDesign.md 5.1〜5.3）が加わった。
+// GET/POST /projects と check-key（ApiDesign.md 5.1〜5.3）、手順11で
+// GET/PATCH /projects/:key と archive/unarchive（5.4〜5.6）が加わった。
 // テンプレートの複製は pb dev seed と POST /projects で同じ手順を通る。
 func (q *Queries) FindProjectIDByKey(ctx context.Context, key string) (string, error) {
 	row := q.db.QueryRow(ctx, findProjectIDByKey, key)
@@ -549,6 +550,36 @@ func (q *Queries) ProjectKeyExists(ctx context.Context, key string) (bool, error
 	return exists, err
 }
 
+const setProjectStatus = `-- name: SetProjectStatus :execrows
+UPDATE project SET
+  status      = $1::text,
+  archived_at = CASE WHEN $1::text = 'archived' THEN now() ELSE NULL END,
+  version     = version + 1
+WHERE key = $2 AND status <> $1::text
+`
+
+type SetProjectStatusParams struct {
+	Status string
+	Key    string
+}
+
+// SetProjectStatus は archive / unarchive を1文で行う（5.6）。
+//
+// archived_at は archive で now()、unarchive で NULL（5.6 の表）。
+// 分岐を Go 側に持たず、@status から導く。両方の呼び出しで同じ文を通るため、
+// 片方だけ archived_at を更新し忘れることがない。
+//
+// **既にその状態なら 0 行になる**（WHERE の status <> @status）。5.6 の
+// 「既にその状態なら何も変えずに 200 を返す」を、行数で呼び出し側へ伝える。
+// version が二重送信で進まないのもこの条件による。
+func (q *Queries) SetProjectStatus(ctx context.Context, arg SetProjectStatusParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setProjectStatus, arg.Status, arg.Key)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setProjectWorkflow = `-- name: SetProjectWorkflow :exec
 UPDATE project SET workflow_id = $1 WHERE id = $2
 `
@@ -596,4 +627,53 @@ func (q *Queries) SummarizeProjects(ctx context.Context, arg SummarizeProjectsPa
 	var i SummarizeProjectsRow
 	err := row.Scan(&i.Total, &i.LastUpdatedAt)
 	return i, err
+}
+
+const updateProject = `-- name: UpdateProject :execrows
+
+UPDATE project SET
+  name        = COALESCE($1, name),
+  description = CASE WHEN $2::boolean THEN $3
+                     ELSE description END,
+  settings    = COALESCE($4, settings),
+  version     = version + 1
+WHERE key = $5 AND version = $6
+`
+
+type UpdateProjectParams struct {
+	Name           pgtype.Text
+	DescriptionSet bool
+	Description    pgtype.Text
+	Settings       []byte
+	Key            string
+	Version        int32
+}
+
+// ── 更新（ApiDesign.md 5.5 / 5.6）───────────────────────────
+// UpdateProject は PATCH /projects/:key を1文で行う（5.5）。
+//
+// **部分更新**：送られなかったフィールドは現在値のままにする。sqlc.narg は
+// NULL 可能な引数になるので、name / settings は COALESCE で「NULL なら据え置き」
+// にできる。description だけは **NULL への更新が正当な操作**（説明を消す）なので
+// COALESCE では表せず、「送られたか」を @description_set で別に受け取る。
+//
+// **楽観ロック**は WHERE の version 照合で行う（2.8）。不一致なら 0 行になり、
+// 呼び出し側が 409 と 404 を区別する。version は +1 し、updated_at は
+// trg_project_updated が埋める（0004）。
+//
+// **RETURNING を使わない。** 応答は buildProjectDetail が GetProjectByKey から
+// 組み立てる（5.5 の応答は 5.4 と同形式）。同じ形を2か所で作らないため。
+func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateProject,
+		arg.Name,
+		arg.DescriptionSet,
+		arg.Description,
+		arg.Settings,
+		arg.Key,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

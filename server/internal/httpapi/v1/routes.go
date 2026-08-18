@@ -97,6 +97,26 @@ func Mount(r chi.Router, deps Deps) {
 		// role_permission のデータ側で決まるためである（Design.md 6.4.2）。
 		r.With(middleware.RequirePermission(deps.Queries, "project.create")).
 			Post("/projects", h.createProject)
+
+		// ── プロジェクト個別（5.4〜5.6）────────────────────────
+		//
+		// **ここから先は RequireProjectPermission を使う。** システムロールだけを
+		// 見る RequirePermission では、非メンバーのオペレータ（system_role として
+		// project.view を持つ）が他人のプロジェクトを読めてしまう。到達できない
+		// プロジェクトは 404 に倒す（Design.md 6.4.5）。
+		//
+		// **{key} は check-key より後に並べても効く。** chi は静的なセグメントを
+		// パラメータより優先するため、/projects/check-key は必ず上の行に届く。
+		// 逆に check-key というキーのプロジェクトは到達不能になるので、
+		// 5.2 の予約語に入れてある（reservedProjectKeys）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).
+			Get("/projects/{key}", h.getProject)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Patch("/projects/{key}", h.patchProject)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.archive")).
+			Post("/projects/{key}/archive", h.archiveProject)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.archive")).
+			Post("/projects/{key}/unarchive", h.unarchiveProject)
 	})
 }
 

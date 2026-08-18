@@ -136,6 +136,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * プロジェクトの詳細
+         * @description 1プロジェクトの本体・ワークフロー・メンバー・自分の実効権限を返す
+         *     （ApiDesign.md 5.4）。必要権限は `project.view`。
+         *
+         *     **メンバーでなければ 404**（403 ではない。Design.md 6.4.5）。403 で返すと
+         *     「そのキーのプロジェクトは在る」と漏れ、キーを変えながら叩けば
+         *     プロジェクトの一覧を復元できてしまう。アドミニストレータは全件に到達できる。
+         *
+         *     `my_permissions` は認可ミドルウェアと同じ集合から作る
+         *     （( システムロール ∪ プロジェクトロール ) ∩ スコープ。Design.md 6.4.1）。
+         */
+        get: operations["getProject"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * プロジェクトの更新
+         * @description `name` / `description` / `settings` を更新する（ApiDesign.md 5.5）。
+         *     必要権限は `project.edit`。
+         *
+         *     **送られたフィールドだけを更新する**（部分更新）。`"description": null` は
+         *     「説明を消す」であり、`description` を送らない（据え置く）とは区別する。
+         *
+         *     **`key` は変更できない。** 送られた場合は 422 で、`details[].code` が
+         *     `immutable_field` になる（`error.code` は `validation_failed`）。
+         *
+         *     **`If-Match` は必須**（2.8）。省略すると 422（`details[].field` が
+         *     `If-Match`）、現在の `version` と食い違えば 409。成功すると `version` が +1 される。
+         */
+        patch: operations["updateProject"];
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * プロジェクトのアーカイブ
+         * @description `status` を `archived` にし、`archived_at` に現在時刻を入れる
+         *     （ApiDesign.md 5.6）。必要権限は `project.archive`。
+         *
+         *     リクエスト本文は取らない。**`If-Match` は要求しない**（2.8）。冪等であり、
+         *     競合しても失われる編集内容がないためである。ただし `version` は +1 する。
+         *
+         *     **既にアーカイブ済みなら何も変えずに 200 を返す。** そのとき `version` は
+         *     進まず、監査ログにも残さない（空振りで本当の切り替えが埋もれるため）。
+         *
+         *     監査は `project.archive` として記録し、`detail.status` で unarchive と区別する。
+         */
+        post: operations["archiveProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * プロジェクトのアーカイブ解除
+         * @description `status` を `active` に戻し、`archived_at` を `null` にする
+         *     （ApiDesign.md 5.6）。archive と同じ経路を通り、渡す `status` だけが違う。
+         *
+         *     必要権限・冪等性・監査の扱いは archive と同じ。
+         */
+        post: operations["unarchiveProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthcheck": {
         parameters: {
             query?: never;
@@ -260,7 +372,8 @@ export interface components {
         CreateProjectRequest: {
             /**
              * @description `^[a-z0-9][a-z0-9-]{1,19}$`。予約語（`admin` `api` `mcp` `login` `logout`
-             *     `me` `p` `new` `projects` `static` `assets`）は使えない。**作成後は変更不可。**
+             *     `me` `p` `new` `projects` `static` `assets` `check-key`）は使えない。
+             *     **作成後は変更不可。**
              * @example my-app
              */
             key: string;
@@ -274,8 +387,29 @@ export interface components {
             workflow_template: "simple" | "with_review" | "with_approval";
         };
         /**
-         * @description `POST /projects` と（手順11以降の）`GET /projects/:key` が返す共通の本体
-         *     （ApiDesign.md 5.4）。**片方だけ形を変えない。**
+         * @description `PATCH /projects/:key` の本文（ApiDesign.md 5.5）。**送られたフィールドだけを
+         *     更新する**ため required は無い。`key` は受け付けず、送ると 422
+         *     （`details[].code` が `immutable_field`）になる。
+         */
+        UpdateProjectRequest: {
+            name?: string;
+            /**
+             * @description `null` を明示すると説明を消す。フィールドごと送らなければ据え置く。
+             *     空文字は `null` と同じ扱い（`POST /projects` に合わせる）。
+             */
+            description?: string | null;
+            /**
+             * @description `project.settings`（jsonb）をそのまま置き換える。Phase 1 では中身の
+             *     構造を定めていない（5.4 の例にある `max_concurrent_agents` は Phase 2）。
+             */
+            settings?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * @description `POST /projects`・`GET /projects/:key`・`PATCH /projects/:key`・
+         *     archive / unarchive が返す共通の本体（ApiDesign.md 5.4）。
+         *     **どれか1つだけ形を変えない。**
          */
         ProjectDetail: {
             id: string;
@@ -433,6 +567,18 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /**
+         * @description 切り替え後のプロジェクト（5.4 と同形式）。**既にその状態でも 200 を返す**
+         *     （ApiDesign.md 5.6 の冪等）。
+         */
+        ProjectStatusChanged: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ProjectDetail"];
+            };
+        };
         /** @description レート制限（`rate_limited`。ApiDesign.md 2.9）。 */
         RateLimited: {
             headers: {
@@ -455,7 +601,18 @@ export interface components {
             };
         };
     };
-    parameters: never;
+    parameters: {
+        /**
+         * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+         *     一致させ、開発時のデバッグを容易にするため。
+         */
+        ProjectKey: string;
+        /**
+         * @description `pb_csrf` Cookie と同じ値を送る（double submit。ApiDesign.md 2.4）。
+         *     Cookie 認証の状態変更系でのみ要求する。Bearer 認証では不要。
+         */
+        csrfToken: string;
+    };
     requestBodies: never;
     headers: {
         /** @description 再試行までの秒数。`error.retry_after_sec` と同じ値（ApiDesign.md 2.5）。 */
@@ -692,6 +849,191 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description プロジェクトの詳細。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectDetail"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /**
+             * @description プロジェクトが存在しない、または到達できない（`not_found`）。
+             *     **両者を区別しない**（Design.md 6.4.5）。
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateProject: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 取得時の `version`。`"3"` のように引用符で囲む（RFC 9110 8.8.3）。 */
+                "If-Match": string;
+            };
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後のプロジェクト（5.4 と同形式）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description プロジェクトが存在しない、または到達できない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `If-Match` が現在の `version` と一致しない（`conflict`。ApiDesign.md 2.8）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    archiveProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["ProjectStatusChanged"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description プロジェクトが存在しない、または到達できない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    unarchiveProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["ProjectStatusChanged"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description プロジェクトが存在しない、または到達できない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

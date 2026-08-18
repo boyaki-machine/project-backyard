@@ -324,6 +324,192 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    get:
+      tags: [projects]
+      summary: プロジェクトの詳細
+      operationId: getProject
+      description: |
+        1プロジェクトの本体・ワークフロー・メンバー・自分の実効権限を返す
+        （ApiDesign.md 5.4）。必要権限は `project.view`。
+
+        **メンバーでなければ 404**（403 ではない。Design.md 6.4.5）。403 で返すと
+        「そのキーのプロジェクトは在る」と漏れ、キーを変えながら叩けば
+        プロジェクトの一覧を復元できてしまう。アドミニストレータは全件に到達できる。
+
+        `my_permissions` は認可ミドルウェアと同じ集合から作る
+        （( システムロール ∪ プロジェクトロール ) ∩ スコープ。Design.md 6.4.1）。
+      responses:
+        '200':
+          description: プロジェクトの詳細。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDetail'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: |
+            プロジェクトが存在しない、または到達できない（`not_found`）。
+            **両者を区別しない**（Design.md 6.4.5）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [projects]
+      summary: プロジェクトの更新
+      operationId: updateProject
+      description: |
+        `name` / `description` / `settings` を更新する（ApiDesign.md 5.5）。
+        必要権限は `project.edit`。
+
+        **送られたフィールドだけを更新する**（部分更新）。`"description": null` は
+        「説明を消す」であり、`description` を送らない（据え置く）とは区別する。
+
+        **`key` は変更できない。** 送られた場合は 422 で、`details[].code` が
+        `immutable_field` になる（`error.code` は `validation_failed`）。
+
+        **`If-Match` は必須**（2.8）。省略すると 422（`details[].field` が
+        `If-Match`）、現在の `version` と食い違えば 409。成功すると `version` が +1 される。
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          description: 取得時の `version`。`"3"` のように引用符で囲む（RFC 9110 8.8.3）。
+          schema:
+            type: string
+          examples:
+            current:
+              value: '"3"'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
+      responses:
+        '200':
+          description: 更新後のプロジェクト（5.4 と同形式）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: プロジェクトが存在しない、または到達できない（`not_found`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: |
+            `If-Match` が現在の `version` と一致しない（`conflict`。ApiDesign.md 2.8）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/archive:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    post:
+      tags: [projects]
+      summary: プロジェクトのアーカイブ
+      operationId: archiveProject
+      description: |
+        `status` を `archived` にし、`archived_at` に現在時刻を入れる
+        （ApiDesign.md 5.6）。必要権限は `project.archive`。
+
+        リクエスト本文は取らない。**`If-Match` は要求しない**（2.8）。冪等であり、
+        競合しても失われる編集内容がないためである。ただし `version` は +1 する。
+
+        **既にアーカイブ済みなら何も変えずに 200 を返す。** そのとき `version` は
+        進まず、監査ログにも残さない（空振りで本当の切り替えが埋もれるため）。
+
+        監査は `project.archive` として記録し、`detail.status` で unarchive と区別する。
+      responses:
+        '200':
+          $ref: '#/components/responses/ProjectStatusChanged'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: プロジェクトが存在しない、または到達できない（`not_found`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/unarchive:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    post:
+      tags: [projects]
+      summary: プロジェクトのアーカイブ解除
+      operationId: unarchiveProject
+      description: |
+        `status` を `active` に戻し、`archived_at` を `null` にする
+        （ApiDesign.md 5.6）。archive と同じ経路を通り、渡す `status` だけが違う。
+
+        必要権限・冪等性・監査の扱いは archive と同じ。
+      responses:
+        '200':
+          $ref: '#/components/responses/ProjectStatusChanged'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: プロジェクトが存在しない、または到達できない（`not_found`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /healthcheck:
     get:
       tags: [ops]
@@ -354,6 +540,21 @@ components:
       type: http
       scheme: bearer
       description: 'CLI・スクリプト用（`Authorization: Bearer pb_api_...`。ApiDesign.md 2.3）。'
+
+  parameters:
+    ProjectKey:
+      name: key
+      in: path
+      required: true
+      description: |
+        プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+        一致させ、開発時のデバッグを容易にするため。
+      schema:
+        type: string
+        pattern: '^[a-z0-9][a-z0-9-]{1,19}$'
+      examples:
+        demo:
+          value: my-app
     csrfToken:
       type: apiKey
       in: header
@@ -411,6 +612,14 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    ProjectStatusChanged:
+      description: |
+        切り替え後のプロジェクト（5.4 と同形式）。**既にその状態でも 200 を返す**
+        （ApiDesign.md 5.6 の冪等）。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProjectDetail'
     RateLimited:
       description: レート制限（`rate_limited`。ApiDesign.md 2.9）。
       headers:
@@ -585,7 +794,8 @@ components:
         key:
           description: |
             `^[a-z0-9][a-z0-9-]{1,19}$`。予約語（`admin` `api` `mcp` `login` `logout`
-            `me` `p` `new` `projects` `static` `assets`）は使えない。**作成後は変更不可。**
+            `me` `p` `new` `projects` `static` `assets` `check-key`）は使えない。
+            **作成後は変更不可。**
           type: string
           pattern: '^[a-z0-9][a-z0-9-]{1,19}$'
           examples: ['my-app']
@@ -602,10 +812,35 @@ components:
           enum: [simple, with_review, with_approval]
           default: simple
 
+    UpdateProjectRequest:
+      description: |
+        `PATCH /projects/:key` の本文（ApiDesign.md 5.5）。**送られたフィールドだけを
+        更新する**ため required は無い。`key` は受け付けず、送ると 422
+        （`details[].code` が `immutable_field`）になる。
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          description: |
+            `null` を明示すると説明を消す。フィールドごと送らなければ据え置く。
+            空文字は `null` と同じ扱い（`POST /projects` に合わせる）。
+          type: [string, 'null']
+          maxLength: 1000
+        settings:
+          description: |
+            `project.settings`（jsonb）をそのまま置き換える。Phase 1 では中身の
+            構造を定めていない（5.4 の例にある `max_concurrent_agents` は Phase 2）。
+          type: object
+          additionalProperties: true
+
     ProjectDetail:
       description: |
-        `POST /projects` と（手順11以降の）`GET /projects/:key` が返す共通の本体
-        （ApiDesign.md 5.4）。**片方だけ形を変えない。**
+        `POST /projects`・`GET /projects/:key`・`PATCH /projects/:key`・
+        archive / unarchive が返す共通の本体（ApiDesign.md 5.4）。
+        **どれか1つだけ形を変えない。**
       type: object
       required:
         [id, key, name, description, status, workflow, members, my_role,
