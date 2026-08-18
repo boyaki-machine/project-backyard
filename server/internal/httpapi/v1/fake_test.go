@@ -105,6 +105,18 @@ type fakeQuerier struct {
 	statusRows   int64
 	statusErr    error
 
+	// ユーザー管理（手順12a。ApiDesign.md 6.1 / 6.2）
+	userRows      []gen.ListAdminUsersRow
+	userSummary   gen.SummarizeAdminUsersRow
+	userListParam []gen.ListAdminUsersParams
+	userSumParam  []gen.SummarizeAdminUsersParams
+	userListErr   error
+	createdActors []gen.CreateUserActorParams
+	createdUsers  []gen.CreateAppUserParams
+	createdIdents []gen.CreateUserIdentityParams
+	createdCreds  []gen.CreateLocalCredentialParams
+	createUserErr error
+
 	// 認可ミドルウェア（RequireProjectPermission）が引く行。
 	// key ごとに「プロジェクトの存在・自分のロール・その権限」を持つ。
 	projectAuthzRows map[string][]gen.FindProjectAuthzByKeyRow
@@ -536,3 +548,51 @@ func pgBool(b bool) pgtype.Bool { return pgtype.Bool{Bool: b, Valid: true} }
 
 // pgNull は NULL を表す pgtype.Text。
 func pgNull() pgtype.Text { return pgtype.Text{} }
+
+// ── ユーザー管理（手順12a）────────────────────────────────
+
+func (q *fakeQuerier) ListAdminUsers(_ context.Context, arg gen.ListAdminUsersParams) ([]gen.ListAdminUsersRow, error) {
+	q.userListParam = append(q.userListParam, arg)
+	if q.userListErr != nil {
+		return nil, q.userListErr
+	}
+	return q.userRows, nil
+}
+
+func (q *fakeQuerier) SummarizeAdminUsers(_ context.Context, arg gen.SummarizeAdminUsersParams) (gen.SummarizeAdminUsersRow, error) {
+	q.userSumParam = append(q.userSumParam, arg)
+	if q.userListErr != nil {
+		return gen.SummarizeAdminUsersRow{}, q.userListErr
+	}
+	return q.userSummary, nil
+}
+
+// 以下の4本は opLog に順を残す。6.2 の「単一トランザクションで
+// actor → app_user → user_identity → local_credential」をテストから固定するため。
+
+func (q *fakeQuerier) CreateUserActor(_ context.Context, arg gen.CreateUserActorParams) error {
+	q.opLog = append(q.opLog, "CreateUserActor")
+	q.createdActors = append(q.createdActors, arg)
+	return nil
+}
+
+func (q *fakeQuerier) CreateAppUser(_ context.Context, arg gen.CreateAppUserParams) error {
+	q.opLog = append(q.opLog, "CreateAppUser")
+	if q.createUserErr != nil {
+		return q.createUserErr
+	}
+	q.createdUsers = append(q.createdUsers, arg)
+	return nil
+}
+
+func (q *fakeQuerier) CreateUserIdentity(_ context.Context, arg gen.CreateUserIdentityParams) error {
+	q.opLog = append(q.opLog, "CreateUserIdentity")
+	q.createdIdents = append(q.createdIdents, arg)
+	return nil
+}
+
+func (q *fakeQuerier) CreateLocalCredential(_ context.Context, arg gen.CreateLocalCredentialParams) error {
+	q.opLog = append(q.opLog, "CreateLocalCredential")
+	q.createdCreds = append(q.createdCreds, arg)
+	return nil
+}

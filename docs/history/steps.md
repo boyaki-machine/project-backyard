@@ -632,3 +632,112 @@ CDP を話す最小クライアント（`cdp.py`）と検証本体（`verify.py`
 - 初回の `go tool sqlc` はビルドに20秒ほどかかる（2回目以降はキャッシュ）。cgo は不要だった
 - `go tool goose` は初回のみモジュールをダウンロードする（60秒程度）。2回目以降はキャッシュが効く
 - 手順1の検証環境: Docker 29.1.3 / Docker Compose v5.3.1 / macOS (darwin 25.6.0, arm64)
+
+---
+
+## 手順12a（2026-08-18）— `GET/POST /admin/users`
+
+`ApiDesign.md` 6.1 / 6.2。**手順12 の前半**で、画面は 12b（`Design.md` 11.2.1 の分割規約）。
+ブランチ `feature/step-12-users-api`。
+
+### 先行して行った設計改訂（同ブランチの最初のコミット）
+
+会話でのみ合意していた承認済みの改訂を、実装前にコミットした（`LEARNINGS.md` の申し送り）。
+
+| ファイル | 内容 |
+|---|---|
+| `docs/Design.md` | 11.1 の見出しを「API と画面を同じ手順で進める」へ。11.2 を「1ステップ = ブラウザで確認できる単位」へ全面改訂。**11.2.1 を新設**（セッションを a/b に分けるときの規約）。Phase 1 手順一覧を統合し番号を詰めた。11.4 に rev.7 の対応表 |
+| `.claude/commands/pb-step.md` | 手順3 に「分けるなら a で止まる。止まらないなら分けない。既定は分けない」 |
+| `docs/PROGRESS.md` | Phase 1 表・プレースホルダ表・引き継ぎの番号を rev.7 へ |
+| `client/src/router/routes.ts` ほか6ファイル | コメントと `status` 文言の番号（17→15、18→16、13→12b など） |
+| `docs/Development.md` | L98 / L103 の「手順13以降」→「手順12b以降」 |
+
+### 作ったファイル
+
+| ファイル | 役割 |
+|---|---|
+| `server/internal/httpapi/v1/users.go` | `GET /admin/users`（6.1）。絞り込み・並び替え・ページング・ETag・`likePattern` |
+| `server/internal/httpapi/v1/users_create.go` | `POST /admin/users`（6.2）。検証・単一トランザクション・409 の分岐 |
+| `server/internal/auth/genpassword.go` | 初期パスワードの生成（語句連結方式）。語彙は形容詞16・名詞16 |
+| `server/internal/httpapi/v1/users_test.go` | 単体。既定値・絞り込み・422・生成・manual・409・メール検証 |
+| `server/internal/httpapi/v1/users_integration_test.go` | 実DB。4表のトランザクション・citext の衝突・並び替え・ETag・403 |
+
+### 変えたファイル
+
+| ファイル | 変更 |
+|---|---|
+| `server/internal/store/queries/user.sql` | `ListAdminUsers` / `SummarizeAdminUsers` を追加。**`CreateLocalCredential` に `must_change` を追加** |
+| `server/internal/store/gen/*` | `make sqlc` の生成物 |
+| `server/internal/httpapi/v1/routes.go` | `user.manage` 付きで2本を登録 |
+| `server/internal/httpapi/v1/apitime.go` | `apiTimestamptz`（nullable な timestamptz → 応答）を追加 |
+| `server/internal/httpapi/v1/fake_test.go` | ユーザー管理のフェイク（`opLog` に呼び出し順を残す） |
+| `server/cmd/pb/admin_create.go` / `dev_seed.go` | `MustChange: false` を明示（理由をコメント） |
+| `docs/openapi.yaml` | `/api/v1/admin/users` の GET / POST と `UserList` / `UserListItem` / `AgentInfo` / `CreateUserRequest` / `CreatedUser` |
+| `client/src/api/schema.d.ts` | `make gen-api` の生成物（+251行） |
+
+### 検証結果
+
+**1. `make sqlc` / `go build` / `gofmt`** — すべて通る。
+
+**2. `go test ./...`（server 全体）** — 全パッケージ PASS。
+**ドリフト検出テストが期待どおり効いた**：`openapi.yaml` を書く前は
+`GET /api/v1/admin/users が実装されているが docs/openapi.yaml に無い` で落ちた。
+
+**3. `make gen-api`** — `client/src/api/schema.d.ts` に +251行。`npx vue-tsc --noEmit` が通る。
+
+**4. 実DB結合テスト**（`PB_TEST_DATABASE_URL` あり）— 6件すべて PASS。
+
+| 項目 | 確認したこと |
+|---|---|
+| 作成した4表が単一トランザクションで入る | `actor` / `app_user` / `user_identity` / `local_credential` が各1行。`must_change=true`。**返された初期パスワードで実際にログインでき、`GET /me` の `actor.must_change_password` が true**。監査ログが同トランザクションで入り、`detail` に平文が無い |
+| メール重複は409で1行も残さない | **大文字にしても衝突する**（citext）。`already_exists`。失敗した側の actor が0行 |
+| 一覧の絞り込みと並び替え | `q` が表示名・メールの両方に当たる。**`_` がワイルドカードとして働かない**（0件）。`kind=agent` は0件。`asc` の先頭と `desc` の末尾が一致 |
+| ETagは総件数と更新で変わる | `W/"user-…"` で始まり、ユーザーを増やすと値が変わる |
+| project_countはメンバーシップの件数 | プロジェクト未所属の管理者が 0 |
+| operatorは403 | GET / POST とも 403。403 のあと actor が0行 |
+
+**5. 実サーバ**（`make restart` → curl。再実行可能なスクリプトで 22件）— **全 PASS**。
+
+```
+== 1. 一覧の既定と並び順 ==      PASS 既定の一覧 (200) / 総件数 4 / ETag W/"user-4-…"
+== 2. 作成（generate）==         PASS 201 / generated_password = rapid-maple-1786 / PASS 形式
+== 3. 返された初期パスワードでログインできる ==
+                                 PASS 新ユーザーでログイン / PASS GET /me (200)
+                                 PASS actor.must_change_password (True)
+== 4. 作成（manual）==           PASS 201 / PASS manual の generated_password (null)
+== 5. 重複と検証エラー ==        PASS 409 / PASS already_exists
+                                 PASS 422（details = ['display_name','email']）
+                                 PASS per_page=201 / PASS kind=system / PASS sort=password
+== 6. 絞り込みと ETag の変化 ==  PASS q（メール）で2件 / PASS q（表示名）で2件
+                                 PASS kind=agent は0件 / PASS ETag が変わった
+== 7. operator は 403 ==         PASS GET / PASS POST
+== 8. CSRF なしは 403 ==         PASS X-PB-CSRF なし
+== 後始末 ==                     PASS 総件数が元に戻った (4)
+=== PASS 22 / FAIL 0 ===
+```
+
+**検証スクリプトは再実行可能にした**（`pb-step.md` 手順6）。総件数と CSRF は毎回読み直し、
+作ったユーザーは末尾で削除して件数が戻ることまで確かめる。**最初に一覧1件だけの
+スモークを通してから全体を回した**ため、2回の不備（下記）は副作用を残さずに直せた。
+
+### 検証で見つかった「検証側」の誤り2件（実装は正しかった）
+
+`LEARNINGS.md` #14 のとおり、まず検証側を疑って正解だった。
+
+1. **`must_change_password` をトップレベルで読んでいた。** 実際は `actor` の下
+   （`ApiDesign.md` 3.1 の応答構造。4.1 は同一構造）
+2. **`q=verify-<stamp>` が2件当たると想定していた。** `verify-man-<stamp>` は
+   `verify-<stamp>` を含まないので1件が正しい。`q=<stamp>` に変えた
+3. （スクリプトの不備）`"$BEFORE（…"` と書き、bash が変数名を切り損ねた。
+   **多バイト文字が続くときは `${BEFORE}` と書く**（11b の `${pids}` と同じ轍）
+
+### 片付けた資源
+
+- 実サーバ（`make stop-server` で待受のみ停止。停止後 `/healthcheck` が無応答であることを確認）
+- 検証で作ったユーザー（スクリプトの後始末で削除。`actor` は4件のデモアカウントのみに戻った）
+- スクラッチパッドの検証スクリプト3本（削除）
+- `make clean-webui`（`make restart` が `make build` を含むため）
+- **DBコンテナは起動したまま残した**（12b で続けて使う。`make down` で畳める）
+
+`audit_log` に `user.create` の孤児（`actor_id IS NULL`）が4件あるが、これは
+**`pb dev seed` が CLI として書いたもの**でテストの残骸ではない（CLI は actor を持たない）。

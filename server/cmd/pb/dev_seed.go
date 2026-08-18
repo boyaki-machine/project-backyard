@@ -438,6 +438,9 @@ func seedUser(ctx context.Context, q gen.Querier, rec *audit.Recorder, u devUser
 	if err := q.CreateLocalCredential(ctx, gen.CreateLocalCredentialParams{
 		IdentityID:   identityID,
 		PasswordHash: passwordHash,
+		// デモアカウントは共通パスワードで何度もログインし直すため、
+		// 初回変更を要求しない（DbDesign.md 7.6.5）。
+		MustChange: false,
 	}); err != nil {
 		return "", false, fmt.Errorf("local_credential を作成できない（%s）: %w", u.Email, err)
 	}
