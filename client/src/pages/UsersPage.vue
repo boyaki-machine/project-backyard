@@ -27,7 +27,6 @@ import type {
   CreatedUser,
   SortOrder,
   UserActiveFilter,
-  UserKindFilter,
   UserListItem,
   UserSort,
 } from '../api/users'
@@ -45,7 +44,7 @@ const PER_PAGE = 25
 
 const router = useRouter()
 
-type Tab = 'users' | 'roles'
+type Tab = 'users' | 'agents' | 'roles'
 const tab = ref<Tab>('users')
 
 // ── 一覧の状態（4状態は 6.2 の規約）───────────────────────────
@@ -64,15 +63,12 @@ const order = ref<SortOrder>('asc')
 
 // ── 検索と絞り込み（5.6。件数によらず常時表示する）──────────────
 const q = ref('')
-const kind = ref<UserKindFilter>('all')
 const isActive = ref<UserActiveFilter>('all')
 
 /** サーバへ送っている検索語。debounce の途中は `q` と食い違う */
 const appliedQ = ref('')
 
-const filtered = computed(
-  () => appliedQ.value !== '' || kind.value !== 'all' || isActive.value !== 'all',
-)
+const filtered = computed(() => appliedQ.value !== '' || isActive.value !== 'all')
 
 // ── 追加（5.6.1）──────────────────────────────────────────────
 const addOpen = ref(false)
@@ -95,7 +91,10 @@ async function fetchUsers(): Promise<void> {
   error.value = null
   try {
     const res = await usersApi.listUsers({
-      kind: kind.value,
+      // **タブが種別を決める**（5.6）。エージェントは別タブで、実装は Phase 2。
+      // Phase 1 にエージェントは1件も存在しないが、`all` ではなく `user` を送るのは
+      // タブの意味と一致させるためで、Phase 2 で増えても混ざらない。
+      kind: 'user',
       is_active: isActive.value,
       q: appliedQ.value === '' ? undefined : appliedQ.value,
       sort: sort.value,
@@ -144,13 +143,12 @@ watch(q, (next) => {
   }, SEARCH_DEBOUNCE_MS)
 })
 
-watch([kind, isActive], () => reload())
+watch(isActive, () => reload())
 
 function clearFilters(): void {
   clearTimeout(timer)
   q.value = ''
   appliedQ.value = ''
-  kind.value = 'all'
   isActive.value = 'all'
   reload()
 }
@@ -159,15 +157,82 @@ function clearFilters(): void {
 //
 // ソートできるのは `ApiDesign.md` 6.1 の `sort` が受ける4つだけである。
 // **ロールと状態はAPIが受けない**ので、押せる見た目にしない。
-const columns: { label: string; sort?: UserSort; className?: string }[] = [
-  { label: '', className: 'kind' },
-  { label: '名前', sort: 'display_name', className: 'name-col' },
-  { label: 'メール', sort: 'email', className: 'email' },
-  { label: 'ロール', className: 'role' },
-  { label: '状態', className: 'status' },
-  { label: '最終ログイン', sort: 'last_login_at', className: 'datetime' },
-  { label: '作成', sort: 'created_at', className: 'date' },
+//
+// **すべての列が既定幅と下限を持つ**（5.6）。「余りを1列に渡す」作りにすると、
+// 窓が狭いときにその列だけが 0 まで潰れる（実際そうなっていた。窓 900px で
+// メールが1文字も見えなかった）。表の幅は幅の合計で、領域を超えたら横スクロールする。
+interface Column {
+  key: string
+  label: string
+  sort?: UserSort
+  className?: string
+  /** 既定の幅。読み直すとここへ戻る（保存しない） */
+  width: number
+  /** ドラッグで縮められる下限。ここを割ると内容が読めなくなる */
+  min: number
+}
+
+const COLUMNS: Column[] = [
+  { key: 'kind', label: '', className: 'kind', width: 40, min: 32 },
+  { key: 'name', label: '名前', sort: 'display_name', className: 'name-col', width: 240, min: 100 },
+  { key: 'email', label: 'メール', sort: 'email', className: 'email', width: 260, min: 100 },
+  { key: 'role', label: 'ロール', className: 'role', width: 150, min: 90 },
+  { key: 'status', label: '状態', className: 'status', width: 70, min: 56 },
+  { key: 'last', label: '最終ログイン', sort: 'last_login_at', className: 'datetime', width: 150, min: 110 },
+  { key: 'created', label: '作成', sort: 'created_at', className: 'date', width: 110, min: 90 },
 ]
+
+/**
+ * 列ごとの現在の幅。**保存しない**（`GuiDesign.md` 5.6）。
+ *
+ * 読み直せば既定へ戻り、それが幅を戻す手段でもある。専用のリセット操作は
+ * 置かない（原則3）。
+ */
+const widths = ref<Record<string, number>>(
+  Object.fromEntries(COLUMNS.map((c) => [c.key, c.width])),
+)
+
+/** 表の幅は列幅の合計。領域より広ければ、表だけが横スクロールする */
+const tableWidth = computed(() =>
+  COLUMNS.reduce((sum, c) => sum + (widths.value[c.key] ?? c.width), 0),
+)
+
+/**
+ * 列幅のドラッグ（`GuiDesign.md` 5.6）。
+ *
+ * **キーボードでは操作できない**——9.2 の例外として明記してある（利用者の判断）。
+ * 幅は表示上の都合であり、列の内容は横スクロールで到達できる。
+ */
+let dragging: { key: string; startX: number; startWidth: number; min: number } | null = null
+
+function onResizeStart(col: Column, e: MouseEvent): void {
+  dragging = {
+    key: col.key,
+    startX: e.clientX,
+    startWidth: widths.value[col.key] ?? col.width,
+    min: col.min,
+  }
+  // ドラッグ中に行や見出しの文字が選択されるのを止める。
+  // scoped CSS は body に効かないので、クラスではなく style を直接触る
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'col-resize'
+  window.addEventListener('mousemove', onResizeMove)
+  window.addEventListener('mouseup', onResizeEnd)
+}
+
+function onResizeMove(e: MouseEvent): void {
+  if (dragging === null) return
+  const next = dragging.startWidth + (e.clientX - dragging.startX)
+  widths.value[dragging.key] = Math.max(dragging.min, Math.round(next))
+}
+
+function onResizeEnd(): void {
+  dragging = null
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
+  window.removeEventListener('mousemove', onResizeMove)
+  window.removeEventListener('mouseup', onResizeEnd)
+}
 
 function ariaSort(target?: UserSort): 'ascending' | 'descending' | 'none' | undefined {
   if (target === undefined) return undefined
@@ -262,6 +327,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   clearTimeout(timer)
+  // ドラッグ中に画面を離れても、body の style と listener を残さない
+  if (dragging !== null) onResizeEnd()
 })
 
 /**
@@ -309,6 +376,16 @@ async function retry(): Promise<void> {
           type="button"
           role="tab"
           class="tab"
+          :class="{ selected: tab === 'agents' }"
+          :aria-selected="tab === 'agents'"
+          @click="tab = 'agents'"
+        >
+          エージェント
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="tab"
           :class="{ selected: tab === 'roles' }"
           :aria-selected="tab === 'roles'"
           @click="tab = 'roles'"
@@ -332,15 +409,6 @@ async function retry(): Promise<void> {
               autocomplete="off"
               spellcheck="false"
             />
-          </label>
-
-          <label class="filter">
-            <span class="filter-label">種別</span>
-            <select v-model="kind">
-              <option value="all">すべて</option>
-              <option value="user">ユーザー</option>
-              <option value="agent">エージェント</option>
-            </select>
           </label>
 
           <label class="filter">
@@ -372,65 +440,89 @@ async function retry(): Promise<void> {
           </template>
         </EmptyState>
 
-        <table v-else-if="loading || !isEmpty" class="table">
-          <thead>
-            <tr>
-              <th
-                v-for="(col, i) in columns"
-                :key="col.label + i"
-                scope="col"
-                :class="col.className"
-                :aria-sort="ariaSort(col.sort)"
+        <!-- 列幅の合計が領域を超えたら、**表だけ**が横スクロールする（5.6）。
+             ページ全体を横に流さない -->
+        <div v-else-if="loading || !isEmpty" class="table-scroll">
+          <table class="table" :style="{ width: `${tableWidth}px` }">
+            <colgroup>
+              <col v-for="col in COLUMNS" :key="col.key" :style="{ width: `${widths[col.key]}px` }" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th
+                  v-for="col in COLUMNS"
+                  :key="col.key"
+                  scope="col"
+                  :class="col.className"
+                  :aria-sort="ariaSort(col.sort)"
+                >
+                  <button v-if="col.sort" type="button" class="sort" @click="sortBy(col.sort)">
+                    {{ col.label }}
+                    <span class="caret" aria-hidden="true">
+                      {{ sort === col.sort ? (order === 'asc' ? '▴' : '▾') : '' }}
+                    </span>
+                  </button>
+                  <span v-else>{{ col.label }}</span>
+
+                  <!-- 幅を変えるつまみ。**ドラッグのみ**（9.2 の例外として明記済み）。
+                       見出しのソートを誘発しないよう、クリックはここで止める -->
+                  <span
+                    class="resizer"
+                    aria-hidden="true"
+                    @mousedown.stop.prevent="onResizeStart(col, $event)"
+                    @click.stop
+                  ></span>
+                </th>
+              </tr>
+            </thead>
+
+            <!-- 読み込み中はスケルトン。実際の行の形を模す（6.2） -->
+            <tbody v-if="loading" aria-busy="true">
+              <tr v-for="n in skeletonRows" :key="n" class="skeleton-row">
+                <td v-for="col in COLUMNS" :key="col.key" :class="col.className">
+                  <span class="skeleton"></span>
+                </td>
+              </tr>
+            </tbody>
+
+            <tbody v-else>
+              <!-- 無効なユーザーは背面へ下げる（8.2）。状態列の「無効」という
+                   文字は残す（9.2） -->
+              <tr
+                v-for="u in items"
+                :key="u.id"
+                class="row"
+                :class="{ inactive: !u.is_active }"
+                @click="openRow(u, $event)"
               >
-                <button v-if="col.sort" type="button" class="sort" @click="sortBy(col.sort)">
-                  {{ col.label }}
-                  <span class="caret" aria-hidden="true">
-                    {{ sort === col.sort ? (order === 'asc' ? '▴' : '▾') : '' }}
-                  </span>
-                </button>
-                <span v-else>{{ col.label }}</span>
-              </th>
-            </tr>
-          </thead>
-
-          <!-- 読み込み中はスケルトン。実際の行の形を模す（6.2） -->
-          <tbody v-if="loading" aria-busy="true">
-            <tr v-for="n in skeletonRows" :key="n" class="skeleton-row">
-              <td v-for="(col, i) in columns" :key="col.label + i" :class="col.className">
-                <span class="skeleton"></span>
-              </td>
-            </tr>
-          </tbody>
-
-          <tbody v-else>
-            <tr v-for="u in items" :key="u.id" class="row" @click="openRow(u, $event)">
-              <td class="kind">
-                <!-- 種別は記号だけにしない。読み上げ用の文字を添える（9.2） -->
-                <span aria-hidden="true">{{ kindIcon(u.kind) }}</span>
-                <span class="visually-hidden">{{
-                  u.kind === 'agent' ? 'エージェント' : 'ユーザー'
-                }}</span>
-              </td>
-              <td class="name-col">
-                <!-- 実体の <a> を自前で描くのは、j/k の移動で focus() を呼ぶため
-                     （ProjectsPage と同じ理由）。custom の navigate は修飾キー付きの
-                     クリックを素通しするので、Ctrl/⌘+クリックは新規タブになる -->
-                <RouterLink v-slot="{ href, navigate }" :to="`/admin/users/${u.id}`" custom>
-                  <a ref="rowLink" class="name" :href="href" @click.stop="navigate">
-                    {{ u.display_name }}
-                  </a>
-                </RouterLink>
-              </td>
-              <td class="email">{{ u.email ?? '—' }}</td>
-              <td class="role">{{ userRoleLabel(u.kind, u.system_role) }}</td>
-              <td class="status">{{ activeLabel(u.is_active) }}</td>
-              <td class="datetime">
-                {{ u.last_login_at === null ? '—' : formatDateTime(u.last_login_at) }}
-              </td>
-              <td class="date">{{ formatDate(u.created_at) }}</td>
-            </tr>
-          </tbody>
-        </table>
+                <td class="kind">
+                  <!-- 種別は記号だけにしない。読み上げ用の文字を添える（9.2） -->
+                  <span aria-hidden="true">{{ kindIcon(u.kind) }}</span>
+                  <span class="visually-hidden">{{
+                    u.kind === 'agent' ? 'エージェント' : 'ユーザー'
+                  }}</span>
+                </td>
+                <td class="name-col">
+                  <!-- 実体の <a> を自前で描くのは、j/k の移動で focus() を呼ぶため
+                       （ProjectsPage と同じ理由）。custom の navigate は修飾キー付きの
+                       クリックを素通しするので、Ctrl/⌘+クリックは新規タブになる -->
+                  <RouterLink v-slot="{ href, navigate }" :to="`/admin/users/${u.id}`" custom>
+                    <a ref="rowLink" class="name" :href="href" @click.stop="navigate">
+                      {{ u.display_name }}
+                    </a>
+                  </RouterLink>
+                </td>
+                <td class="email">{{ u.email ?? '—' }}</td>
+                <td class="role">{{ userRoleLabel(u.kind, u.system_role) }}</td>
+                <td class="status">{{ activeLabel(u.is_active) }}</td>
+                <td class="datetime">
+                  {{ u.last_login_at === null ? '—' : formatDateTime(u.last_login_at) }}
+                </td>
+                <td class="date">{{ formatDate(u.created_at) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <!-- 空（6.2）。絞り込みの結果かどうかで次の行動が変わる -->
         <EmptyState
@@ -479,6 +571,20 @@ async function retry(): Promise<void> {
             </button>
           </template>
         </div>
+      </div>
+
+      <!-- ── エージェントタブ（5.6。実装は Phase 2）────────────── -->
+      <!-- `agent` テーブルは Phase 2 のマイグレーションで作られるため、Phase 1 には
+           1件も存在しない。人間と持つ情報が違うのでタブを分けてある -->
+      <div v-else-if="tab === 'agents'" class="placeholder" role="tabpanel">
+        <p class="placeholder-title">エージェントのページ予定</p>
+        <p class="placeholder-doc">GuiDesign.md 5.6 / ApiDesign.md 6.1</p>
+        <ul class="placeholder-list">
+          <li>登録済みエージェントの一覧（名前・クライアント種別・モデル・プロジェクト・信頼度）</li>
+          <li>人間とは持つ情報が違うため、ユーザータブとは別の列構成にする</li>
+          <li>行の操作メニューも異なる（パスワードのリセットは無い）</li>
+        </ul>
+        <p class="placeholder-status">Phase 2 で実装（agent テーブルの作成後）</p>
       </div>
 
       <!-- ── ロールと権限タブ（5.6.3）──────────────────────── -->
@@ -653,49 +759,67 @@ async function retry(): Promise<void> {
 }
 
 /* ── 一覧 ──────────────────────────────────────────────── */
-/* table-layout: fixed の理由は ProjectsPage と同じ。長いメールで表が
-   横へ伸びるのを止め、残りの幅を名前の列へ渡す */
+/* 列幅の合計が領域を超えたら、**表だけ**を横スクロールさせる（5.6）。
+   ページ全体が横に流れると、メニューやページヘッダまでずれる */
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* 幅は <colgroup> が持つ（列ごとの状態）。table-layout: fixed で
+   その指定がそのまま効くようにする */
 .table {
-  width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
 }
 
 th {
+  position: relative;
   padding: var(--pb-space-2) var(--pb-space-3);
+  overflow: hidden;
   border-bottom: 1px solid var(--pb-border);
   color: var(--pb-text-muted);
   font-size: 13px;
   font-weight: 600;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* 幅を指定しないのはメールの列だけで、そこが余りを受け取る。
-   **長くなりうるのはメール**（254文字。`ApiDesign.md` 6.2）で、表示名は
-   60文字までかつ実際には短い。名前に余りを渡すと右側が間延びする */
 th.kind {
-  width: 40px;
   padding-right: 0;
 }
 
-th.name-col {
-  width: 280px;
+/* 列幅を変えるつまみ（5.6）。**ドラッグのみ**（9.2 の例外）。
+   掴みやすさのために見た目の線より広く取り、線は ::after で細く描く */
+.resizer {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: -4px;
+  width: 9px;
+  height: 100%;
+  cursor: col-resize;
 }
 
-th.role {
-  width: 150px;
+.resizer::after {
+  position: absolute;
+  top: 25%;
+  left: 4px;
+  width: 1px;
+  height: 50%;
+  background: var(--pb-border);
+  content: '';
 }
 
-th.status {
-  width: 70px;
+.resizer:hover::after {
+  top: 0;
+  height: 100%;
+  background: var(--pb-accent);
 }
 
-th.datetime {
-  width: 150px;
-}
-
-th.date {
-  width: 110px;
+/* 最後の列の右端は掴めない（表の外へはみ出す） */
+th:last-child .resizer {
+  display: none;
 }
 
 .sort {
@@ -746,6 +870,25 @@ td.date {
 
 .row:hover {
   background: var(--pb-hover);
+}
+
+/* 無効なユーザーは背面へ下げる（8.2）。文字は `--pb-text-muted`（8.3 の11段＝
+   文字・弱）で**輝度の階層を一段下げ**、アイコンは彩度を落とす。11段は12段より
+   背景に近いが彩度は高いので、「行全体の彩度を下げる」ことは 8.3 の固定スケールでは
+   できない。**独自の色は作らない。** 状態列の「無効」という文字は残すので、
+   色だけで示していることにもならない（9.2） */
+.row.inactive {
+  color: var(--pb-text-muted);
+}
+
+.row.inactive .name {
+  color: inherit;
+  font-weight: 500;
+}
+
+.row.inactive td.kind {
+  filter: grayscale(1);
+  opacity: 0.55;
 }
 
 .name {
