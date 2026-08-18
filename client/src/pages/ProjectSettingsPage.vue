@@ -375,13 +375,8 @@ function kindIcon(kind: string): string {
           <form class="block" @submit.prevent="save">
             <h2 class="block-title">基本情報</h2>
 
-            <div class="field">
-              <span class="label">プロジェクトキー</span>
-              <p class="static-value">{{ store.current.key }}</p>
-              <!-- warning は「面」で表す（8.4.1）。理由は 5.2.1 にある -->
-              <p class="warn">⚠ キーは変更できません</p>
-            </div>
-
+            <!-- 名前が先頭。キーは「一意に指すための識別子」であって
+                 プロジェクトの一属性にすぎない（5.9.1） -->
             <label class="field">
               <span class="label">プロジェクト名 <span class="required">*</span></span>
               <input
@@ -395,6 +390,13 @@ function kindIcon(kind: string): string {
               <span v-if="nameDetail" class="detail">{{ nameDetail.message }}</span>
               <span v-else-if="nameError && dirty" class="detail">✕ {{ nameError }}</span>
             </label>
+
+            <div class="field">
+              <span class="label">プロジェクトキー</span>
+              <p class="static-value">{{ store.current.key }}</p>
+              <!-- warning は「面」で表す（8.4.1）。理由は 5.2.1 にある -->
+              <p class="warn">⚠ キーは変更できません</p>
+            </div>
 
             <label class="field">
               <span class="label">説明</span>
@@ -428,59 +430,69 @@ function kindIcon(kind: string): string {
                 エージェントがMCP経由でプロジェクトの情報として受け取ります。
               </p>
 
-              <!-- 1件を2行で見せる（5.9.1）。5.2 の名前＋説明と同じ形 -->
+              <!-- 必須の URL を先頭に、任意の項目をその下に積む（5.9.1）。
+                   横に並べると狭い幅で URL が読めなくなる -->
               <div v-for="(repo, i) in repositories" :key="i" class="repo">
-                <div class="repo-line">
+                <div class="repo-head">
+                  <span class="label">URL <span class="required">*</span></span>
+                  <span class="repo-actions">
+                    <!-- ブラウザで開けるものだけリンクにする。SSH形式は文字列のまま -->
+                    <a
+                      v-if="isWebUrl(repo.url)"
+                      class="open"
+                      :href="repo.url.trim()"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      開く ↗
+                    </a>
+                    <button
+                      type="button"
+                      class="link-button"
+                      :disabled="saving"
+                      @click="removeRepository(i)"
+                    >
+                      削除
+                    </button>
+                  </span>
+                </div>
+                <input
+                  v-model="repo.url"
+                  type="text"
+                  class="repo-url"
+                  placeholder="https://… または git@host:org/repo.git"
+                  aria-label="リポジトリのURL"
+                  autocapitalize="off"
+                  autocomplete="off"
+                  spellcheck="false"
+                  :maxlength="MAX_URL"
+                  :aria-invalid="repoErrors[i] !== null"
+                  :disabled="saving"
+                />
+                <span v-if="repoErrors[i]" class="detail">✕ {{ repoErrors[i] }}</span>
+
+                <label class="sub-field">
+                  <span class="label">表示名</span>
                   <input
                     v-model="repo.name"
                     type="text"
                     class="repo-name"
-                    placeholder="表示名（任意）"
                     aria-label="リポジトリの表示名"
                     :disabled="saving"
                   />
+                </label>
+
+                <label class="sub-field">
+                  <span class="label">説明</span>
                   <input
-                    v-model="repo.url"
+                    v-model="repo.description"
                     type="text"
-                    class="repo-url"
-                    placeholder="https://… または git@host:org/repo.git"
-                    aria-label="リポジトリのURL"
-                    autocapitalize="off"
-                    autocomplete="off"
-                    spellcheck="false"
-                    :maxlength="MAX_URL"
-                    :aria-invalid="repoErrors[i] !== null"
+                    class="repo-description"
+                    aria-label="リポジトリの説明"
+                    :maxlength="MAX_REPO_DESCRIPTION"
                     :disabled="saving"
                   />
-                  <!-- ブラウザで開けるものだけリンクにする。SSH形式は文字列のまま -->
-                  <a
-                    v-if="isWebUrl(repo.url)"
-                    class="open"
-                    :href="repo.url.trim()"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    開く ↗
-                  </a>
-                  <button
-                    type="button"
-                    class="link-button"
-                    :disabled="saving"
-                    @click="removeRepository(i)"
-                  >
-                    削除
-                  </button>
-                </div>
-                <input
-                  v-model="repo.description"
-                  type="text"
-                  class="repo-description"
-                  placeholder="このリポジトリとプロジェクトの関係（任意）"
-                  aria-label="リポジトリの説明"
-                  :maxlength="MAX_REPO_DESCRIPTION"
-                  :disabled="saving"
-                />
-                <span v-if="repoErrors[i]" class="detail">✕ {{ repoErrors[i] }}</span>
+                </label>
               </div>
 
               <p v-if="repositories.length >= MAX_REPOSITORIES" class="hint">
@@ -742,35 +754,43 @@ textarea:disabled {
   font-size: 13px;
 }
 
-/* ── リポジトリ（5.9.1）───────────────────────────────── */
+/* ── リポジトリ（5.9.1）─────────────────────────────────
+   入力は縦に積む。横並びにすると、狭い幅で URL が読めなくなる。
+   **クラスに幅を指定しても `input[type='text']` のほうが詳細度が高く
+   （属性セレクタ＋型 = 0,1,1 対 クラス = 0,1,0）勝つ**ので、
+   幅はここで奪い合わない形にしてある */
 .repo {
   display: flex;
   flex-direction: column;
   gap: var(--pb-space-1);
-  padding: var(--pb-space-2) 0;
+  padding: var(--pb-space-3) 0;
   border-top: 1px solid var(--pb-line);
 }
 
-.repo-line {
+.repo-head {
   display: flex;
   align-items: center;
-  gap: var(--pb-space-2);
+  justify-content: space-between;
+  gap: var(--pb-space-3);
 }
 
-.repo-name {
+.repo-actions {
+  display: flex;
   flex: none;
-  width: 160px;
+  align-items: center;
+  gap: var(--pb-space-3);
+}
+
+.sub-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-1);
+  min-width: 0;
+  margin-top: var(--pb-space-2);
 }
 
 .repo-url {
-  flex: 1;
-  min-width: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-}
-
-.repo-description {
-  color: var(--pb-text-muted);
   font-size: 13px;
 }
 
