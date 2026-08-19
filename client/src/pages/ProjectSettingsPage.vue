@@ -575,7 +575,7 @@ function kindIcon(kind: string): string {
             </table>
 
             <p class="count">{{ store.current.members.length }}件</p>
-            <p class="hint">ⓘ メンバーの追加・変更は「ユーザー / 権限」から行います。</p>
+            <p class="hint">ⓘ メンバーの追加・変更は「アカウント / 権限」から行います。</p>
           </section>
         </div>
       </template>

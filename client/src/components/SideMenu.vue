@@ -86,10 +86,10 @@ const showAdmin = computed(() => auth.can('user.manage') || auth.can('auditlog.v
           v-if="auth.can('user.manage')"
           class="item"
           to="/admin/users"
-          title="ユーザー / 権限"
+          title="アカウント / 権限"
         >
           <span class="icon" aria-hidden="true">⚇</span>
-          <span v-if="!ui.menuCollapsed" class="label">ユーザー / 権限</span>
+          <span v-if="!ui.menuCollapsed" class="label">アカウント / 権限</span>
         </RouterLink>
         <RouterLink
           v-if="auth.can('auditlog.view')"

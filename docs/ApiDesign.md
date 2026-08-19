@@ -38,7 +38,7 @@
 |---|---|
 | ログイン（5.1） | 3章 |
 | プロジェクト一覧・新規作成（5.2） | 5章 |
-| ユーザー / 権限管理（5.6） | 6章・7章 |
+| アカウント / 権限管理（5.6） | 6章・7章 |
 
 加えて、全画面が起動時に依存する `GET /api/v1/me`（4章）を定義する。
 
@@ -859,10 +859,10 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | プロジェクト一覧 | `GET /projects?status=active` |
 | 新規プロジェクトモーダル | `GET /projects/check-key`（入力時）<br>`POST /projects`（作成） |
 | プロジェクトダッシュボード | `GET /projects/:key`<br>（統計・自分の担当・最近の動きはチケットAPI。9章） |
-| ユーザー / 権限（ユーザータブ） | `GET /admin/users` |
+| アカウント / 権限（ユーザータブ） | `GET /admin/users` |
 | ユーザー追加モーダル | `POST /admin/users` |
 | ユーザー詳細・編集 | `GET /admin/users/:id`<br>`PATCH /admin/users/:id`<br>`PUT|DELETE /admin/users/:id/memberships/:key`<br>`POST /admin/users/:id/password-reset`<br>`POST /admin/users/:id/sessions/revoke` |
-| ユーザー / 権限（ロールタブ） | `GET /roles` + `GET /permissions` |
+| アカウント / 権限（ロールタブ） | `GET /roles` + `GET /permissions` |
 | 自分の設定 | `PATCH /me`<br>`POST /me/password`<br>`GET|DELETE /me/sessions` |
 | アクセストークン | `GET|POST|DELETE /me/tokens` |
 

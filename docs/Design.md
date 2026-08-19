@@ -667,7 +667,7 @@ GET /api/v1/me
 | チケット一覧 | `/p/:key/tickets` | `ticket.view` |
 | チケット詳細 | `/p/:key/tickets/:seq` | `ticket.view` |
 | プロジェクト設定 | `/p/:key/settings` | `project.edit` |
-| ユーザー / 権限管理 | `/admin/users` | `user.manage` |
+| アカウント / 権限管理 | `/admin/users` | `user.manage` |
 | 監査ログ | `/admin/audit` | `auditlog.view` |
 | 自分の設定・トークン | `/me` `/me/tokens` | 本人 |
 
