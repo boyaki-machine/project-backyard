@@ -40,8 +40,14 @@ const (
 // **既定を display_name の昇順にする。** 6.1 は sort の既定を display_name と
 // 定めるが order には触れていない。名簿は昇順で読むものであり、GuiDesign.md
 // 5.6 の作例も名前順に並んでいる（手順12a の判断。6.1 へ order 行の追加を提案済み）。
+//
+// system_role と is_active は手順12c で足した（GuiDesign.md 5.6 の全列で
+// 並べ替えたいという要望）。**並びの意味づけは SQL 側のコメントにある**
+// （system_role は role.sort_order 順・エージェントは末尾、is_active は無効が先）。
 var userSortSpec = SortSpec{
-	Allowed:      []string{"display_name", "email", "last_login_at", "created_at"},
+	Allowed: []string{
+		"display_name", "email", "system_role", "is_active", "last_login_at", "created_at",
+	},
 	DefaultSort:  "display_name",
 	DefaultOrder: OrderAsc,
 }
@@ -177,6 +183,11 @@ func parseUserActiveFilter(r *http.Request) (string, *apierr.Error) {
 }
 
 // likePattern は部分一致検索の q を ILIKE のパターンへ変える（ApiDesign.md 6.1）。
+//
+// 当てる先は表示名・メール・**ロールの表示名**（role.display_name）である。
+// ロールを含めたのは手順12c で、画面に出ている文字列で探せることが目的
+// （「アドミニストレータ」で絞れる）。**画面に出ないキー（administrator）は
+// 対象にしない。** どの列に当てるかは SQL 側（ListAdminUsers）が持つ。
 //
 // **メタ文字をここでエスケープする。** `%` や `_` をそのまま通すと、利用者の
 // 入力がワイルドカードとして働き、意図しない行が当たる（`_` は1文字の

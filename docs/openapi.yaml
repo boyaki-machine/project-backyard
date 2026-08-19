@@ -546,15 +546,21 @@ paths:
         - name: q
           in: query
           description: |
-            表示名・メールアドレスの部分一致。`%` と `_` はサーバ側でエスケープするため
+            表示名・メールアドレス・**ロールの表示名**の部分一致。ロールは `role.display_name`
+            （「アドミニストレータ」「オペレータ」）と比べる。**画面に出ないキー
+            （`administrator`）は対象にしない。** `%` と `_` はサーバ側でエスケープするため
             ワイルドカードとしては働かない。**画面は検索欄を常時表示する**（GuiDesign.md 5.6）。
           schema:
             type: string
         - name: sort
           in: query
+          description: |
+            `system_role` は `role.sort_order` の順（オペレータ → アドミニストレータ）で、
+            表示名の五十音順ではない。**ロールを持たない行（エージェント）は昇順・降順とも末尾。**
+            `is_active` の昇順は無効が先（`false < true`）。
           schema:
             type: string
-            enum: [display_name, email, last_login_at, created_at]
+            enum: [display_name, email, system_role, is_active, last_login_at, created_at]
             default: display_name
         - name: order
           in: query

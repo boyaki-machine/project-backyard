@@ -637,8 +637,8 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 |---|---|---|
 | `kind` | `all` | `user` / `agent` / `all`。`GuiDesign.md` 5.6 は人間とエージェントを同一一覧に並べる。**`kind='system'` の actor は返さない**（`DbDesign.md` 6.2 の3種目。利用者が管理する対象ではない） |
 | `is_active` | `all` | `true` / `false` / `all`。**真偽値ではなく3値の文字列**として扱う（未指定と `false` を区別するため） |
-| `q` | — | 表示名・メールの部分一致。**`%` と `_` はサーバ側でエスケープするため、ワイルドカードとしては働かない** |
-| `sort` | `display_name` | `display_name` / `email` / `last_login_at` / `created_at` |
+| `q` | — | 表示名・メール・**ロールの表示名**の部分一致。ロールは `role.display_name`（`DbDesign.md` 7.3 のシード。「アドミニストレータ」「オペレータ」）と比べる——**画面に出ている文字列で探せることが目的**なので、画面に出ないキー（`administrator`）は対象にしない。**`%` と `_` はサーバ側でエスケープするため、ワイルドカードとしては働かない** |
+| `sort` | `display_name` | `display_name` / `email` / `system_role` / `is_active` / `last_login_at` / `created_at` |
 | `order` | `asc` | `asc` / `desc`（2.6 の共通仕様）。**名簿は昇順で読むため、`GET /projects` の既定（`desc`）とは違う** |
 
 ```json
@@ -660,6 +660,10 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 ```
 
 **`kind` によって意味を持たないフィールドは `null` を返し、フィールド自体を省略しない。** フロントの分岐を単純にするため。
+
+**`sort=system_role` は `role.sort_order` で並べる**（`DbDesign.md` 7.3 のシード。オペレータ 10 → アドミニストレータ 20）。表示名の五十音順ではない——シードが意図して序列を持っており、Phase 3 でカスタムロールが増えたときに表示名順では意味のない並びになるため。**`system_role` を持たない行（エージェント）は昇順・降順とも末尾に置く**（`NULLS LAST`）。ロールを持たない行が先頭に来ると、ロールで並べた意味が薄れる。
+
+**`sort=is_active` の昇順は無効が先**（`false < true`）。状態で並べ替える動機は「無効な利用者を探す」ことが多いため、そのままにしている。
 
 **`agent` は Phase 1 では常に `null` である。** 中身（`client_kind` / `model_name` / `project_key` / `trust_level`）は `DbDesign.md` 8.1 の `agent` テーブルの列で、そのテーブルは Phase 2 のマイグレーションで作られる。Phase 1 のスキーマから埋められる値が1つも無いため、**キーだけを返して中身は推測しない**。上の例はエージェントを作れるようになった後の姿である。
 

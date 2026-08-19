@@ -248,6 +248,84 @@ func TestAdminUsersIntegration(t *testing.T) {
 		}
 	})
 
+	// 手順12c で足したソートと検索（ApiDesign.md 6.1）。
+	//
+	// **行の順そのものを確かめる。** CASE 式は「クエリ層へ値が渡ったか」では
+	// 検証できず、実際にDBが並べた結果でしか分からない。全体の並びは他の
+	// テストデータに左右されるので、**自分で作った行どうしの前後関係**を見る。
+	t.Run("ロールと状態での並び替え・ロール名での検索", func(t *testing.T) {
+		// 位置を引くための索引。per_page=200 で全件を採る。
+		indexOf := func(query string) map[string]int {
+			items := listUsersAs(t, r, adminSession, query+"&per_page=200")
+			at := make(map[string]int, len(items))
+			for i, it := range items {
+				at[it.(map[string]any)["id"].(string)] = i
+			}
+			return at
+		}
+
+		// ── sort=system_role（role.sort_order の順。オペレータ 10 → アドミン 20）──
+		asc := indexOf("?sort=system_role&order=asc")
+		if asc[operatorID] > asc[adminID] {
+			t.Errorf("昇順でオペレータ(%d)がアドミニストレータ(%d)より後ろにある。"+
+				"role.sort_order の順（10→20）になっていない", asc[operatorID], asc[adminID])
+		}
+		desc := indexOf("?sort=system_role&order=desc")
+		if desc[adminID] > desc[operatorID] {
+			t.Errorf("降順でアドミニストレータ(%d)がオペレータ(%d)より後ろにある",
+				desc[adminID], desc[operatorID])
+		}
+
+		// ── sort=is_active（昇順は無効が先）─────────────────────
+		// 無効化のAPIは手順13 なので、ここだけDBを直接倒す。
+		rec := postWithCookie(r, "/api/v1/admin/users", adminSession,
+			`{"display_name":"zzinactive`+uniq+`","email":"inactive-`+uniq+`@example.com"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201（body=%s）", rec.Code, rec.Body.String())
+		}
+		inactiveID := viewOf(t, rec)["id"].(string)
+		cleanupActor(inactiveID)
+		if _, err := pool.Exec(ctx, `UPDATE actor SET is_active = false WHERE id = $1`, inactiveID); err != nil {
+			t.Fatalf("is_active を倒せない: %v", err)
+		}
+
+		activeAsc := indexOf("?sort=is_active&order=asc")
+		if activeAsc[inactiveID] > activeAsc[adminID] {
+			t.Errorf("昇順で無効(%d)が有効(%d)より後ろにある。false < true になっていない",
+				activeAsc[inactiveID], activeAsc[adminID])
+		}
+		activeDesc := indexOf("?sort=is_active&order=desc")
+		if activeDesc[adminID] > activeDesc[inactiveID] {
+			t.Errorf("降順で有効(%d)が無効(%d)より後ろにある",
+				activeDesc[adminID], activeDesc[inactiveID])
+		}
+
+		// ── q がロールの表示名に当たる（画面に出ている文字列で探せる）──
+		hit := listUsersAs(t, r, adminSession, "?q=アドミニストレータ&per_page=200")
+		var foundAdmin, foundOperator bool
+		for _, it := range hit {
+			switch it.(map[string]any)["id"] {
+			case adminID:
+				foundAdmin = true
+			case operatorID:
+				foundOperator = true
+			}
+		}
+		if !foundAdmin {
+			t.Errorf("q=アドミニストレータ でアドミニストレータが当たらない（%d件）", len(hit))
+		}
+		if foundOperator {
+			t.Error("q=アドミニストレータ でオペレータまで当たっている")
+		}
+
+		// **キーでは当てない**（画面に出ない文字列。6.1）。
+		for _, it := range listUsersAs(t, r, adminSession, "?q=administrator&per_page=200") {
+			if it.(map[string]any)["id"] == adminID {
+				t.Error("q=administrator（キー）で当たっている。6.1 は表示名だけを対象と定める")
+			}
+		}
+	})
+
 	t.Run("ETagは総件数と更新で変わる", func(t *testing.T) {
 		before := listRecorderUsers(r, adminSession, "").Header().Get("ETag")
 		if before == "" {

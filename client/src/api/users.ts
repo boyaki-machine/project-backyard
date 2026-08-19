@@ -12,8 +12,20 @@ export type UserListItem = components['schemas']['UserListItem']
 export type CreateUserRequest = components['schemas']['CreateUserRequest']
 export type CreatedUser = components['schemas']['CreatedUser']
 
-/** ソート可能な列（6.1）。ロール・状態は**含まれない** */
-export type UserSort = 'display_name' | 'email' | 'last_login_at' | 'created_at'
+/**
+ * ソート可能な列（6.1）。**種別以外のすべての列**が対象である。
+ *
+ * `system_role` は `role.sort_order` の順（オペレータ → アドミニストレータ）で、
+ * 表示名の五十音順ではない。`is_active` の昇順は無効が先。**並びの意味づけは
+ * サーバが持つ**ので、画面はキーを送るだけでよい。
+ */
+export type UserSort =
+  | 'display_name'
+  | 'email'
+  | 'system_role'
+  | 'is_active'
+  | 'last_login_at'
+  | 'created_at'
 
 export type SortOrder = 'asc' | 'desc'
 

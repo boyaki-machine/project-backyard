@@ -155,8 +155,9 @@ function clearFilters(): void {
 
 // ── 列とソート ────────────────────────────────────────────────
 //
-// ソートできるのは `ApiDesign.md` 6.1 の `sort` が受ける4つだけである。
-// **ロールと状態はAPIが受けない**ので、押せる見た目にしない。
+// 種別以外のすべての列で並べ替えられる（`ApiDesign.md` 6.1）。ロールと状態は
+// 手順12c で加わった。**並びの意味づけはサーバが持つ**——ロールは
+// `role.sort_order` の順、状態は昇順で無効が先である。
 //
 // **すべての列が既定幅と下限を持つ**（5.6）。「余りを1列に渡す」作りにすると、
 // 窓が狭いときにその列だけが 0 まで潰れる（実際そうなっていた。窓 900px で
@@ -176,8 +177,8 @@ const COLUMNS: Column[] = [
   { key: 'kind', label: '', className: 'kind', width: 40, min: 32 },
   { key: 'name', label: '名前', sort: 'display_name', className: 'name-col', width: 240, min: 100 },
   { key: 'email', label: 'メール', sort: 'email', className: 'email', width: 260, min: 100 },
-  { key: 'role', label: 'ロール', className: 'role', width: 150, min: 90 },
-  { key: 'status', label: '状態', className: 'status', width: 70, min: 56 },
+  { key: 'role', label: 'ロール', sort: 'system_role', className: 'role', width: 150, min: 90 },
+  { key: 'status', label: '状態', sort: 'is_active', className: 'status', width: 70, min: 56 },
   { key: 'last', label: '最終ログイン', sort: 'last_login_at', className: 'datetime', width: 150, min: 110 },
   { key: 'created', label: '作成', sort: 'created_at', className: 'date', width: 110, min: 90 },
 ]
@@ -243,16 +244,20 @@ function ariaSort(target?: UserSort): 'ascending' | 'descending' | 'none' | unde
 /**
  * ソート列を選ぶ。同じ列なら向きを反転する。
  *
- * 列を切り替えたときの初期の向きは、名前・メールが昇順、日時が降順。
- * 一覧ストア（`stores/project.ts`）と同じ規則にそろえてある。
+ * 列を切り替えたときの初期の向きは、**日時だけが降順**で他は昇順。
+ * 一覧ストア（`stores/project.ts`）と同じ規則である（文字列は昇順、日時は
+ * 新しい順）。**状態は昇順＝無効が先**——並べ替える動機は「無効な利用者を
+ * 探す」ことが多く、探したいものが上に来る（`ApiDesign.md` 6.1）。
  */
+const DESC_FIRST: UserSort[] = ['last_login_at', 'created_at']
+
 function sortBy(target?: UserSort): void {
   if (target === undefined) return
   if (sort.value === target) {
     order.value = order.value === 'asc' ? 'desc' : 'asc'
   } else {
     sort.value = target
-    order.value = target === 'display_name' || target === 'email' ? 'asc' : 'desc'
+    order.value = DESC_FIRST.includes(target) ? 'desc' : 'asc'
   }
   reload()
 }

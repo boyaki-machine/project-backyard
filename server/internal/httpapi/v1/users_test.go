@@ -163,6 +163,31 @@ func TestListUsersFilters(t *testing.T) {
 }
 
 // 解釈できない値は既定へ丸めず 422（ApiDesign.md 2.6）。
+// 6.1 が許可するソート項目をすべて受け付ける（手順12c で system_role と
+// is_active が加わった）。**並びの正しさはDBが決める**ので、ここでは
+// クエリ層へそのまま渡ることだけを見る（実際の行順は結合テスト）。
+func TestListUsersAcceptsAllSortFields(t *testing.T) {
+	for _, sort := range []string{
+		"display_name", "email", "system_role", "is_active", "last_login_at", "created_at",
+	} {
+		t.Run(sort, func(t *testing.T) {
+			q := &fakeQuerier{}
+			rec := httptest.NewRecorder()
+			newUserListHandler(q).listUsers(rec,
+				httptest.NewRequest(http.MethodGet, "/api/v1/admin/users?sort="+sort+"&order=desc", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("状態コード = %d, want 200 (%s)", rec.Code, rec.Body.String())
+			}
+			if len(q.userListParam) != 1 {
+				t.Fatalf("クエリ回数 = %d, want 1", len(q.userListParam))
+			}
+			if got := q.userListParam[0]; got.Sort != sort || got.SortOrder != "desc" {
+				t.Errorf("並び = %s %s, want %s desc", got.Sort, got.SortOrder, sort)
+			}
+		})
+	}
+}
+
 func TestListUsersInvalidQuery(t *testing.T) {
 	tests := []struct {
 		name  string
