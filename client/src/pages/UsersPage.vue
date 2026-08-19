@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * ユーザー / 権限管理（`GuiDesign.md` 5.6）。必要権限は `user.manage`。
+ * アカウント / 権限管理（`GuiDesign.md` 5.6）。必要権限は `user.manage`。
  *
  * **人間とエージェントを同じ一覧に並べる**（`DbDesign.md` 6.2 の `actor` 統合設計）。
  * 種別で意味を持たない列は「—」で埋め、行の形は変えない。
@@ -199,19 +199,59 @@ const tableWidth = computed(() =>
 )
 
 /**
+ * 表示領域の幅に総幅を合わせる（`GuiDesign.md` 5.6）。
+ *
+ * **余りは最後の列が受け取る**（表の右に空きを作らない）。狭くなったぶんも
+ * 最後の列から削り、下限に達したらそれ以上は削らない——そのときだけ総幅が
+ * 表示領域を超え、表が横スクロールする。
+ *
+ * 1px 未満のずれでは動かさない。スクロールバーの出入りで領域幅が微妙に
+ * 揺れると、調整と再計測が交互に走り続けるため。
+ */
+const scroller = useTemplateRef<HTMLElement>('scroller')
+
+function fitToContainer(): void {
+  const el = scroller.value
+  if (el === null) return
+  const available = el.clientWidth
+  if (available <= 0) return
+
+  const last = COLUMNS[COLUMNS.length - 1]!
+  const others = COLUMNS.slice(0, -1).reduce((sum, c) => sum + (widths.value[c.key] ?? c.width), 0)
+  const next = Math.max(last.min, available - others)
+  if (Math.abs(next - (widths.value[last.key] ?? last.width)) < 1) return
+  widths.value[last.key] = next
+}
+
+/**
  * 列幅のドラッグ（`GuiDesign.md` 5.6）。
+ *
+ * **右隣の列と融通する。総幅は変わらない。** 動く列を1つに絞ると結果が
+ * 予測できるためで、全列へ按分すると1つ広げたつもりが表全体の見た目を変える。
+ * 右隣が下限に達したらそこで止まる。
  *
  * **キーボードでは操作できない**——9.2 の例外として明記してある（利用者の判断）。
  * 幅は表示上の都合であり、列の内容は横スクロールで到達できる。
  */
-let dragging: { key: string; startX: number; startWidth: number; min: number } | null = null
+let dragging:
+  | { key: string; nextKey: string; startX: number; startWidth: number; startNextWidth: number
+      min: number; nextMin: number }
+  | null = null
 
 function onResizeStart(col: Column, e: MouseEvent): void {
+  const i = COLUMNS.findIndex((c) => c.key === col.key)
+  const neighbour = COLUMNS[i + 1]
+  // 最後の列にはつまみを出していない（融通する相手がいない）
+  if (neighbour === undefined) return
+
   dragging = {
     key: col.key,
+    nextKey: neighbour.key,
     startX: e.clientX,
     startWidth: widths.value[col.key] ?? col.width,
+    startNextWidth: widths.value[neighbour.key] ?? neighbour.width,
     min: col.min,
+    nextMin: neighbour.min,
   }
   // ドラッグ中に行や見出しの文字が選択されるのを止める。
   // scoped CSS は body に効かないので、クラスではなく style を直接触る
@@ -222,9 +262,15 @@ function onResizeStart(col: Column, e: MouseEvent): void {
 }
 
 function onResizeMove(e: MouseEvent): void {
-  if (dragging === null) return
-  const next = dragging.startWidth + (e.clientX - dragging.startX)
-  widths.value[dragging.key] = Math.max(dragging.min, Math.round(next))
+  const d = dragging
+  if (d === null) return
+  // 両側の下限で挟む。**始点からの差分で計算する**ので、途中で下限に当たって
+  // 止まった後に戻しても、掴んだ位置との関係がずれない
+  const min = d.min - d.startWidth
+  const max = d.startNextWidth - d.nextMin
+  const dx = Math.round(Math.min(Math.max(e.clientX - d.startX, min), max))
+  widths.value[d.key] = d.startWidth + dx
+  widths.value[d.nextKey] = d.startNextWidth - dx
 }
 
 function onResizeEnd(): void {
@@ -289,7 +335,7 @@ function goToPage(next: number): void {
 }
 
 /**
- * 行クリック（3.1 の遷移図「ユーザー/権限管理 ──▶ ユーザー詳細・編集」）。
+ * 行クリック（3.1 の遷移図「アカウント/権限管理 ──▶ ユーザー詳細・編集」）。
  *
  * 名前のリンクを直接押した場合はブラウザ既定の動作に任せる（`@click.stop`）。
  * こちらへ来るのは、行の余白やセルを押したときである。
@@ -325,13 +371,35 @@ function onKeydown(e: KeyboardEvent): void {
   links[next]?.focus()
 }
 
+/**
+ * 表示領域の幅を見張る（5.6「ウィンドウ幅が変わったら最後の列が吸収する」）。
+ *
+ * `window` の resize ではなく要素を見るのは、**メニューの折りたたみ（`[`）でも
+ * 表示領域が変わる**ためである。ウィンドウ幅は変わらないので resize は起きない。
+ */
+let observer: ResizeObserver | null = null
+
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
+  observer = new ResizeObserver(() => fitToContainer())
   void fetchUsers()
 })
+
+// 表は読み込み中・空・エラーで付け外しされる。**現れたときに監視を張り直す**
+// （`scroller` が null の間は張れない）。あわせて幅も合わせ直す。
+watch(scroller, (el) => {
+  observer?.disconnect()
+  if (el !== null) {
+    observer?.observe(el)
+    fitToContainer()
+  }
+})
+
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   clearTimeout(timer)
+  observer?.disconnect()
+  observer = null
   // ドラッグ中に画面を離れても、body の style と listener を残さない
   if (dragging !== null) onResizeEnd()
 })
@@ -359,7 +427,7 @@ async function retry(): Promise<void> {
 
 <template>
   <div class="page">
-    <PageHeader title="ユーザー / 権限">
+    <PageHeader title="アカウント / 権限">
       <template #actions>
         <button type="button" class="primary" @click="addOpen = true">+ ユーザー追加</button>
       </template>
@@ -447,7 +515,7 @@ async function retry(): Promise<void> {
 
         <!-- 列幅の合計が領域を超えたら、**表だけ**が横スクロールする（5.6）。
              ページ全体を横に流さない -->
-        <div v-else-if="loading || !isEmpty" class="table-scroll">
+        <div v-else-if="loading || !isEmpty" ref="scroller" class="table-scroll">
           <table class="table" :style="{ width: `${tableWidth}px` }">
             <colgroup>
               <col v-for="col in COLUMNS" :key="col.key" :style="{ width: `${widths[col.key]}px` }" />
