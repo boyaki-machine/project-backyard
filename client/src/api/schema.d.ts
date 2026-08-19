@@ -1210,11 +1210,18 @@ export interface operations {
                 /** @description 既定は `all`。**真偽値ではなく3値の文字列**（未指定と false を区別する）。 */
                 is_active?: "true" | "false" | "all";
                 /**
-                 * @description 表示名・メールアドレスの部分一致。`%` と `_` はサーバ側でエスケープするため
+                 * @description 表示名・メールアドレス・**ロールの表示名**の部分一致。ロールは `role.display_name`
+                 *     （「アドミニストレータ」「オペレータ」）と比べる。**画面に出ないキー
+                 *     （`administrator`）は対象にしない。** `%` と `_` はサーバ側でエスケープするため
                  *     ワイルドカードとしては働かない。**画面は検索欄を常時表示する**（GuiDesign.md 5.6）。
                  */
                 q?: string;
-                sort?: "display_name" | "email" | "last_login_at" | "created_at";
+                /**
+                 * @description `system_role` は `role.sort_order` の順（オペレータ → アドミニストレータ）で、
+                 *     表示名の五十音順ではない。**ロールを持たない行（エージェント）は昇順・降順とも末尾。**
+                 *     `is_active` の昇順は無効が先（`false < true`）。
+                 */
+                sort?: "display_name" | "email" | "system_role" | "is_active" | "last_login_at" | "created_at";
                 /**
                  * @description 既定は `asc`。名簿は昇順で読むためで、他の一覧（`GET /projects` は `desc`）とは
                  *     既定が違う。

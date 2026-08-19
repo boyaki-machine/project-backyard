@@ -28,8 +28,9 @@ type Querier interface {
 	CreateAppUser(ctx context.Context, arg CreateAppUserParams) error
 	// must_change を明示で受ける（DbDesign.md 6.2 の既定は false）。
 	// POST /admin/users（ApiDesign.md 6.2）が must_change_password: true を
-	// 既定とするため、列の既定値任せにできない。**既定に頼らず呼び出し側に
-	// 書かせる**ことで、どの経路が初回変更を要求するのかが読めるようにする。
+	// 既定とするため、列の既定値任せにできない。**呼び出し側は Go の
+	// ゼロ値に頼らず明示的に書く**こと。どの経路が初回変更を要求するのかを
+	// 呼び出し箇所だけで読めるようにするためである。
 	CreateLocalCredential(ctx context.Context, arg CreateLocalCredentialParams) error
 	// workflow_id は後から埋める。非テンプレートの workflow は project_id が
 	// NOT NULL 相当（ck_workflow_template）で、プロジェクトより先に作れないため。
@@ -178,6 +179,19 @@ type Querier interface {
 	// 並び替えを CASE 式で静的に書く理由は ListProjects と同じ（sqlc は動的な
 	// ORDER BY を組み立てられない）。display_name の比較に ICU collation を
 	// 指定するのは DbDesign.md 4.4 の規約。
+	//
+	// **system_role は role.sort_order で並べる**（ApiDesign.md 6.1）。表示名の
+	// 五十音順ではない——シードが意図して序列を持っており（オペレータ 10 →
+	// アドミニストレータ 20。DbDesign.md 7.3）、Phase 3 でカスタムロールが増えたとき
+	// 表示名順では意味のない並びになる。**ロールを持たない行（エージェント）は
+	// 昇順・降順とも末尾に置く**（NULLS LAST を両方に明示する。Postgres の既定は
+	// DESC で NULLS FIRST であり、明示しないと先頭へ来る）。
+	//
+	// **is_active の昇順は無効が先**（false < true をそのまま使う）。状態で並べ替える
+	// 動機は「無効な利用者を探す」ことが多いため。
+	//
+	// **q はロールの表示名にも当てる**（同 6.1）。画面に出ている文字列で探せることが
+	// 目的なので、画面に出ないキー（administrator）は対象にしない。
 	//
 	ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) ([]ListAdminUsersRow, error)
 	// ListProjectMembers は 5.4 の members[] を返す。

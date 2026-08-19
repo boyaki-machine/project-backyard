@@ -870,10 +870,68 @@ DELETE FROM actor WHERE id IN (SELECT actor_id FROM app_user
 
 ---
 
+## 手順12c（2026-08-19）— ユーザー一覧のソートと検索を広げる
+
+`ApiDesign.md` 6.1。**利用者の実機確認（12b）から出た要望**で、`Design.md` 11章の手順ではなく
+`PROGRESS.md`「手順外の作業」に 12c として起票したもの。ブランチ `feature/step-12-users-sort-search`。
+
+### 先行して行った設計改訂（`CLAUDE.md` 絶対規則3）
+
+| ファイル | 内容 |
+|---|---|
+| `docs/ApiDesign.md` 6.1 | `sort` に `system_role` / `is_active` を追加。`q` の対象に `role.display_name`。**並び順の規則**（`sort_order` 基準・エージェントは末尾・無効が先）を本文に明記 |
+| `docs/GuiDesign.md` 5.6 | 「ソートできるのは4列」→「種別以外のすべての列」。検索がロール名に当たること、**「エージェント」表示は画面が作る文字列なので当たらない**ことを明記 |
+| `docs/openapi.yaml` | `sort` の enum と `q` の説明。`make gen-api` まで実施 |
+
+### 変えたファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/store/queries/user.sql` | `role` を LEFT JOIN（`key = system_role AND scope='system'`）。`ORDER BY` に2組（`NULLS LAST` を両方向に明示）。`WHERE` は `ListAdminUsers` と `SummarizeAdminUsers` で一字一句そろえた |
+| `server/internal/store/gen/*` | `make sqlc` の生成物 |
+| `server/internal/httpapi/v1/users.go` | `userSortSpec.Allowed` に2値。`likePattern` のコメントに対象列 |
+| `server/internal/httpapi/v1/users_test.go` | `TestListUsersAcceptsAllSortFields`（6つの `sort` がクエリ層へ渡る） |
+| `server/internal/httpapi/v1/users_integration_test.go` | `ロールと状態での並び替え・ロール名での検索`（実DBでの行順とロール名検索） |
+| `client/src/api/users.ts` | `UserSort` に2値 |
+| `client/src/pages/UsersPage.vue` | ロール列・状態列に `sort`。初期方向は `DESC_FIRST`（日時2列）だけ降順 |
+
+### 検証結果
+
+`go test ./...`（実DB付き、`-count=1`）と `npm run typecheck` が通ること。画面はヘッドレス
+Chrome ＋ CDP で **24件**（12c の本体12件＋回帰12件）。
+
+| 区分 | 主な内容 |
+|---|---|
+| 結合テスト | **行の前後関係そのもの**を確認——昇順でオペレータがアドミニストレータより前、降順で逆。無効な行が昇順で先。`q=アドミニストレータ` でアドミンが当たりオペレータは当たらない。**`q=administrator`（キー）では当たらない** |
+| ブラウザ（12件） | 押せる列が6つになったこと、ロール昇順が `role.sort_order` の順（オペレータ→アドミン）、降順が逆、**画面の並びが API の応答と一致すること**、ロール名での絞り込み、キーでは当たらないこと |
+| ブラウザ（回帰12件） | 無効な行が昇順で先頭・降順で末尾に来ること、**無効な行の表現（12b）が壊れていないこと**、名前・メール・最終ログイン・作成のソートが API と一致すること、タブ3つ・絞り込み1つ・列幅のつまみ・件数表示 |
+
+**並び順の検証は「API の応答と突き合わせる」形に統一した**（`LEARNINGS.md` #25）。並び順の正本は
+サーバであり、検証側で並べ直すと `ja-JP-x-icu` や `sort_order` と食い違って誤検知する。
+
+### 検証で見つけた「検証側」の誤り
+
+`document.querySelector(...)` の戻り値をそのまま真偽に使っていた。**CDP は DOM 要素を `{}` に
+直列化し、Python では偽になる**ため、件数表示（実物は「5件」と出ている）が FAIL した。
+テキストを返す形に直した。
+
+### 片付けた資源
+
+- 状態の並びを見るため `viewer@example.com` を一時的に `is_active=false` にし、**元の値に戻した**（変更前の値を記録してから）
+- 結合テストが作る行は `t.Cleanup` で消える（`usr-%` / `search-%` / `inactive-%` が0件であることを確認）
+- `make stop-server` / `make clean-webui` 済み。**DBコンテナは起動したまま**（利用者が Rancher Desktop を起動したところなので畳まない）
+- **スクラッチパッドは日付をまたいで消えていた**ため、CDP ドライバ（`cdp.py` / `common.py`）を作り直した
+
+---
+
 ## 手順外の作業（完了分）
 
 `docs/PROGRESS.md` の「手順外の作業」表から、**完了して今後の手順に不要になった行**を
 移したもの（2026-08-18、`pb-step.md` 手順7 の掃除）。未着手の行は `PROGRESS.md` に残っている。
+
+| 内容 | 完了日 | ブランチ | 検証 |
+|---|---|---|---|
+| **12c：ユーザー一覧のソートと検索を広げる**（ロール・状態でのソート、検索語がロール名に当たること）。12b の実機確認から出た要望で、`Design.md` 11章の手順ではないため手順外として起票した | 2026-08-19 | `feature/step-12-users-sort-search` | 実DBの結合テスト（行の前後関係とロール名検索）＋ブラウザ24件。詳細は上の「手順12c」 |
 
 | 内容 | 状態 | 完了日 | ブランチ | 検証方法 |
 |---|---|---|---|---|

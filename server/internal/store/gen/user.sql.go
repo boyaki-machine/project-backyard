@@ -83,8 +83,9 @@ type CreateLocalCredentialParams struct {
 
 // must_change を明示で受ける（DbDesign.md 6.2 の既定は false）。
 // POST /admin/users（ApiDesign.md 6.2）が must_change_password: true を
-// 既定とするため、列の既定値任せにできない。**既定に頼らず呼び出し側に
-// 書かせる**ことで、どの経路が初回変更を要求するのかが読めるようにする。
+// 既定とするため、列の既定値任せにできない。**呼び出し側は Go の
+// ゼロ値に頼らず明示的に書く**こと。どの経路が初回変更を要求するのかを
+// 呼び出し箇所だけで読めるようにするためである。
 func (q *Queries) CreateLocalCredential(ctx context.Context, arg CreateLocalCredentialParams) error {
 	_, err := q.db.Exec(ctx, createLocalCredential, arg.IdentityID, arg.PasswordHash, arg.MustChange)
 	return err
@@ -163,9 +164,11 @@ WITH filtered AS (
     u.email,
     u.system_role,
     u.last_login_at,
+    r.sort_order AS role_sort_order,
     (SELECT count(*) FROM project_member pm WHERE pm.actor_id = a.id) AS project_count
   FROM actor a
   LEFT JOIN app_user u ON u.actor_id = a.id
+  LEFT JOIN role r ON r.key = u.system_role AND r.scope = 'system'
   WHERE a.kind <> 'system'
     AND ($5::text = 'all' OR a.kind = $5::text)
     AND ($6::text = 'all' OR a.is_active = ($6::text = 'true'))
@@ -173,6 +176,7 @@ WITH filtered AS (
       $7::text = ''
       OR a.display_name ILIKE $7::text
       OR u.email::text ILIKE $7::text
+      OR r.display_name ILIKE $7::text
     )
 )
 SELECT
@@ -184,6 +188,10 @@ ORDER BY
   CASE WHEN $1::text = 'display_name'  AND $2::text = 'desc' THEN f.display_name COLLATE "ja-JP-x-icu" END DESC,
   CASE WHEN $1::text = 'email'         AND $2::text = 'asc'  THEN f.email END ASC,
   CASE WHEN $1::text = 'email'         AND $2::text = 'desc' THEN f.email END DESC,
+  CASE WHEN $1::text = 'system_role'   AND $2::text = 'asc'  THEN f.role_sort_order END ASC  NULLS LAST,
+  CASE WHEN $1::text = 'system_role'   AND $2::text = 'desc' THEN f.role_sort_order END DESC NULLS LAST,
+  CASE WHEN $1::text = 'is_active'     AND $2::text = 'asc'  THEN f.is_active END ASC,
+  CASE WHEN $1::text = 'is_active'     AND $2::text = 'desc' THEN f.is_active END DESC,
   CASE WHEN $1::text = 'last_login_at' AND $2::text = 'asc'  THEN f.last_login_at END ASC,
   CASE WHEN $1::text = 'last_login_at' AND $2::text = 'desc' THEN f.last_login_at END DESC,
   CASE WHEN $1::text = 'created_at'    AND $2::text = 'asc'  THEN f.created_at END ASC,
@@ -238,6 +246,19 @@ type ListAdminUsersRow struct {
 // 並び替えを CASE 式で静的に書く理由は ListProjects と同じ（sqlc は動的な
 // ORDER BY を組み立てられない）。display_name の比較に ICU collation を
 // 指定するのは DbDesign.md 4.4 の規約。
+//
+// **system_role は role.sort_order で並べる**（ApiDesign.md 6.1）。表示名の
+// 五十音順ではない——シードが意図して序列を持っており（オペレータ 10 →
+// アドミニストレータ 20。DbDesign.md 7.3）、Phase 3 でカスタムロールが増えたとき
+// 表示名順では意味のない並びになる。**ロールを持たない行（エージェント）は
+// 昇順・降順とも末尾に置く**（NULLS LAST を両方に明示する。Postgres の既定は
+// DESC で NULLS FIRST であり、明示しないと先頭へ来る）。
+//
+// **is_active の昇順は無効が先**（false < true をそのまま使う）。状態で並べ替える
+// 動機は「無効な利用者を探す」ことが多いため。
+//
+// **q はロールの表示名にも当てる**（同 6.1）。画面に出ている文字列で探せることが
+// 目的なので、画面に出ないキー（administrator）は対象にしない。
 func (q *Queries) ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) ([]ListAdminUsersRow, error) {
 	rows, err := q.db.Query(ctx, listAdminUsers,
 		arg.Sort,
@@ -282,6 +303,7 @@ SELECT
   max(GREATEST(a.updated_at, COALESCE(u.updated_at, a.updated_at)))::timestamptz AS last_updated_at
 FROM actor a
 LEFT JOIN app_user u ON u.actor_id = a.id
+LEFT JOIN role r ON r.key = u.system_role AND r.scope = 'system'
 WHERE a.kind <> 'system'
   AND ($1::text = 'all' OR a.kind = $1::text)
   AND ($2::text = 'all' OR a.is_active = ($2::text = 'true'))
@@ -289,6 +311,7 @@ WHERE a.kind <> 'system'
     $3::text = ''
     OR a.display_name ILIKE $3::text
     OR u.email::text ILIKE $3::text
+    OR r.display_name ILIKE $3::text
   )
 `
 
