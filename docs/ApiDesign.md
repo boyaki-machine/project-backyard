@@ -755,11 +755,15 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 | 自分自身の `system_role` 変更 | `409 self_modification_forbidden` |
 | 自分自身の `is_active: false` | `409 self_modification_forbidden` |
 | 最後の有効なアドミニストレータの降格・無効化 | `409 last_administrator` |
-| `email` 重複 | `409 conflict` |
+| `email` 重複 | `409 already_exists` |
 
 **この3つのガードをAPI側に置くことが重要である。** UIだけで防ぐと、直接APIを叩いた場合に**誰もログインできないインスタンス**が生まれうる。
 
 `system_role` 変更時は当該ユーザーの権限キャッシュを無効化する（`Design.md` 6.4.5）。
+
+**`email` を変更したときは、同じトランザクションで `user_identity.subject` も更新する**（`provider_key='local'` の行のみ）。ログインは `user_identity` を `(provider_key='local', subject=app_user.email)` で引き当てるため（`Design.md` 6.2.1 手順2〜3）、`app_user.email` だけを変えると**当人がログインできなくなる**。OIDC/SAML の `subject` は IdP が払い出す識別子であり（`DbDesign.md` 6.2）、メールとは無関係に不変であるべきなので対象にしない。
+
+**`version` は `app_user` の列だが、`display_name` と `is_active`（`actor` の列）だけを変えた場合も +1 する。** ユーザー1人につき `version` は1つ、という約束にしないと、`actor` 側だけを変えた直後に古い `version` でもう一度更新が通ってしまう。
 
 ## 6.5 `DELETE /api/v1/admin/users/:id`
 
@@ -770,8 +774,10 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 | ガード | 応答 |
 |---|---|
 | 自分自身 | `409 self_modification_forbidden` |
-| 最後のアドミニストレータ | `409 last_administrator` |
+| 最後の有効なアドミニストレータ | `409 last_administrator` |
 | 有効な `task_lease` を保持中（Phase 2） | `409 conflict` |
+
+**「最後の有効なアドミニストレータ」は 6.4 と同じ数え方をする**——`system_role='administrator'` かつ `actor.is_active` の人数で判定する。無効なアドミニストレータは認証を通れないため、管理者として「残っている」ことにならない。
 
 削除前に `audit_log` へ `user.delete` を記録し、`detail` に削除時点の表示名・メールを保存する。**削除後に「誰を消したか」を追えなくなることを防ぐ。**
 
@@ -780,22 +786,33 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 ## 6.6 `POST /api/v1/admin/users/:id/password-reset`
 
 ```json
-// Request
+// Request（本文そのものを省略してもよい。2項目とも既定を持つ）
 { "mode": "generate", "must_change_password": true }
 ```
 
 ```json
 // 200 OK
-{ "generated_password": "clear-meadow-8821-sage" }
+{ "generated_password": "quiet-harbor-4172" }
 ```
 
-当該ユーザーの `local_credential` を更新し、`failed_attempts` と `locked_until` をリセット。**全セッションを失効**する。
+| フィールド | 既定 | 説明 |
+|---|---|---|
+| `mode` | `generate` | **Phase 1 は `generate` のみ受け付ける**（他は `422`）。応答が `generated_password` しか持たず、管理者が手で決めた値を返す意味が無いため。必要になれば 6.2 と同じ `password_mode` / `password` を足す |
+| `must_change_password` | `true` | 6.2 と同じ既定。管理者が決めたパスワードを本人が使い続ける状態を既定にしない |
+
+**生成される値の形式は 6.2.1 と同一である**（`<形容詞>-<名詞>-<4桁数字>`）。作成とリセットで生成器を2つ持たない。
+
+当該ユーザーの `local_credential` を更新し、`failed_attempts` と `locked_until` をリセット。**全セッションを失効**する。ロックされた利用者を救うのがこの操作の主な用途であり、パスワードだけ変えてロックが残ると目的を果たさない。
+
+監査は `password.reset` の1件のみとし、**あわせて行う失効を `session.revoke` として別に記録しない**（2.10）。1つの操作が2行になると、監査ログの読み手が二重に数える。失効した本数は `detail` に入れる。`session.revoke` を記録するのは 6.7 の単独の失効だけである。
 
 `local_credential` を持たないユーザー（IdP のみ、Phase 3）に対しては `409 conflict`。
 
 ## 6.7 `POST /api/v1/admin/users/:id/sessions/revoke`
 
-全セッションを失効。`204`。エージェントのトークンにも適用される（`kind='agent'` の場合）。
+全セッションを失効。`204`。エージェントのトークンにも適用される（`kind='agent'` の場合）。**冪等**であり、有効なトークンが1本も無くても `204` を返す。
+
+**個別のセッションだけを失効させるAPIは Phase 1 では持たない。** 管理者が他人の1セッションを選んで切る場面は考えにくく、怪しいセッションが1つあるなら全部を切るのが実務の動きである。本人が自分のセッションを1つ切る手段は 4.4（`DELETE /me/sessions/:id`）にある。要望が出た時点で `DELETE /admin/users/:id/sessions/:sid` を足す。
 
 ## 6.8 プロジェクトメンバーシップ
 
