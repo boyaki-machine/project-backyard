@@ -11,6 +11,47 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const appUserExists = `-- name: AppUserExists :one
+SELECT EXISTS (SELECT 1 FROM app_user WHERE actor_id = $1)
+`
+
+// AppUserExists は UpdateAdminUserProfile が 0 行だった理由を切り分ける。
+//
+// 行が在れば version 不一致（409 conflict）、無ければ削除済み（404）。
+// 一律に 409 と返すと、消えたユーザーに「競合している」という誤った説明を返す。
+func (q *Queries) AppUserExists(ctx context.Context, actorID string) (bool, error) {
+	row := q.db.QueryRow(ctx, appUserExists, actorID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const countActiveAdministrators = `-- name: CountActiveAdministrators :one
+SELECT count(*)
+FROM app_user u
+JOIN actor a ON a.id = u.actor_id
+WHERE u.system_role = 'administrator' AND a.is_active
+`
+
+// CountActiveAdministrators は「最後のアドミニストレータ」の判定に使う
+// （ApiDesign.md 6.4 / 6.5 の last_administrator）。
+//
+// **無効なアドミニストレータは数えない。** actor.is_active が false の
+// アクターは認証を通れず（Authenticate が is_active を見る）、管理者として
+// 「残っている」ことにならない。6.4 は「最後の**有効な**アドミニストレータ」と
+// 書き、6.5 は「最後のアドミニストレータ」と書いているが、**両方ともこの数え方に
+// 揃える**（手順13a の判断。6.5 の表現をそろえる提案を出す）。
+//
+// 既存の CountAdministrators（pb admin create が「管理者が1人も居ないこと」の
+// 確認に使う）とは別に置く。あちらは is_active を見ない——初期化の判定では
+// 無効な管理者も「居る」に数えるべきであり、条件が違う。
+func (q *Queries) CountActiveAdministrators(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveAdministrators)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countAdministrators = `-- name: CountAdministrators :one
 
 SELECT count(*) FROM app_user WHERE system_role = 'administrator'
@@ -34,6 +75,25 @@ SELECT count(*) FROM app_user
 // 以下は pb dev seed（DbDesign.md 7.6）が使う。
 func (q *Queries) CountAppUsers(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countAppUsers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countCommentsByAuthor = `-- name: CountCommentsByAuthor :one
+
+SELECT count(*) FROM comment WHERE author_id = $1
+`
+
+// ── 削除（ApiDesign.md 6.5）─────────────────────────────────
+// CountCommentsByAuthor は付け替えが要るかを判定する（DbDesign.md 6.7）。
+//
+// comment.author_id は NOT NULL かつ ON DELETE RESTRICT である。**DBが
+// 「システムアクターへ付け替えてからでないと消せない」という順序を強制する。**
+// Phase 1 は comment を作る経路が無い（チケットAPIは手順16）ため常に0件だが、
+// 実装は先に通しておく。
+func (q *Queries) CountCommentsByAuthor(ctx context.Context, authorID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countCommentsByAuthor, authorID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -91,6 +151,24 @@ func (q *Queries) CreateLocalCredential(ctx context.Context, arg CreateLocalCred
 	return err
 }
 
+const createSystemActor = `-- name: CreateSystemActor :exec
+INSERT INTO actor (id, kind, display_name) VALUES ($1, 'system', $2)
+`
+
+type CreateSystemActorParams struct {
+	ID          string
+	DisplayName string
+}
+
+// CreateSystemActor はシステムアクターを1件作る。
+//
+// **シードで先に置かず、最初に必要になった削除で作る**（手順13a の判断）。
+// Phase 1 に comment を作る経路が無く、置いても一度も参照されないため。
+func (q *Queries) CreateSystemActor(ctx context.Context, arg CreateSystemActorParams) error {
+	_, err := q.db.Exec(ctx, createSystemActor, arg.ID, arg.DisplayName)
+	return err
+}
+
 const createUserActor = `-- name: CreateUserActor :exec
 INSERT INTO actor (id, kind, display_name) VALUES ($1, 'user', $2)
 `
@@ -141,6 +219,48 @@ func (q *Queries) DeleteActorByEmail(ctx context.Context, email string) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const deleteActorByID = `-- name: DeleteActorByID :execrows
+DELETE FROM actor WHERE id = $1 AND kind = 'user'
+`
+
+// DeleteActorByID は物理削除（ApiDesign.md 6.5、DbDesign.md 4.6）。
+//
+// app_user / user_identity / local_credential / access_token / project_member は
+// ON DELETE CASCADE で追従する。ticket.assignee_id は ON DELETE SET NULL の
+// ため**チケットは残る**（担当者不在のチケットは意味を持つ）。
+//
+// **kind = 'user' に限る。** 6章が扱うのは人間のアカウントであり、
+// 万一システムアクターの ID を渡されても消さない。
+func (q *Queries) DeleteActorByID(ctx context.Context, actorID string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteActorByID, actorID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteProjectMember = `-- name: DeleteProjectMember :execrows
+DELETE FROM project_member WHERE project_id = $1 AND actor_id = $2
+`
+
+type DeleteProjectMemberParams struct {
+	ProjectID string
+	ActorID   string
+}
+
+// DeleteProjectMember は DELETE /admin/users/:id/memberships/:project_key。
+//
+// **0 行は「元から居ない」**。6.8 は PUT を冪等と定めるだけで DELETE には
+// 触れていないが、削除は本来冪等な操作であり、呼び出し側は 0 行でも 204 を
+// 返す（何度呼んでも「居ない」状態に収束する）。
+func (q *Queries) DeleteProjectMember(ctx context.Context, arg DeleteProjectMemberParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProjectMember, arg.ProjectID, arg.ActorID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const findActorIDByEmail = `-- name: FindActorIDByEmail :one
 SELECT actor_id FROM app_user WHERE email = $1
 `
@@ -150,6 +270,146 @@ func (q *Queries) FindActorIDByEmail(ctx context.Context, email string) (string,
 	var actor_id string
 	err := row.Scan(&actor_id)
 	return actor_id, err
+}
+
+const findDeletedUserActor = `-- name: FindDeletedUserActor :one
+SELECT id FROM actor
+WHERE kind = 'system' AND display_name = $1
+ORDER BY created_at, id
+LIMIT 1
+`
+
+// FindDeletedUserActor は「削除されたユーザー」のシステムアクターを引く。
+//
+// **display_name で引いている。** kind='system' のアクターに一意なキー列が
+// 無いためである（DbDesign.md 6.2 の actor には key に相当する列がない）。
+// Phase 1 でシステムアクターはこの1件しか作られないので成り立つが、
+// **Phase 2 でシステムアクターが増えるなら識別子を決める必要がある**
+// （docs/PROGRESS.md の引き継ぎに起票済み）。
+func (q *Queries) FindDeletedUserActor(ctx context.Context, displayName string) (string, error) {
+	row := q.db.QueryRow(ctx, findDeletedUserActor, displayName)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const findLocalCredentialByActor = `-- name: FindLocalCredentialByActor :one
+
+SELECT c.identity_id
+FROM user_identity i
+JOIN local_credential c ON c.identity_id = i.id
+WHERE i.user_id = $1 AND i.provider_key = 'local'
+`
+
+// ── パスワードリセットとセッション失効（ApiDesign.md 6.6 / 6.7）──
+// FindLocalCredentialByActor はリセット対象の資格情報を引く。
+//
+// 行が無い＝local_credential を持たない（IdP のみ、Phase 3）で、
+// 6.6 はこれを 409 conflict と定める。
+func (q *Queries) FindLocalCredentialByActor(ctx context.Context, userID string) (string, error) {
+	row := q.db.QueryRow(ctx, findLocalCredentialByActor, userID)
+	var identity_id string
+	err := row.Scan(&identity_id)
+	return identity_id, err
+}
+
+const getAdminUser = `-- name: GetAdminUser :one
+
+SELECT
+  a.id,
+  a.kind,
+  a.display_name,
+  a.is_active,
+  a.created_at,
+  u.email,
+  u.system_role,
+  u.last_login_at,
+  u.version
+FROM actor a
+JOIN app_user u ON u.actor_id = a.id
+WHERE a.id = $1 AND a.kind = 'user'
+`
+
+type GetAdminUserRow struct {
+	ID          string
+	Kind        string
+	DisplayName string
+	IsActive    bool
+	CreatedAt   pgtype.Timestamptz
+	Email       string
+	SystemRole  string
+	LastLoginAt pgtype.Timestamptz
+	Version     int32
+}
+
+// ── ユーザー詳細・編集（ApiDesign.md 6.3〜6.8、手順13）───────────
+// GetAdminUser は GET /admin/users/:id の本体を引く（ApiDesign.md 6.3）。
+//
+// **kind = 'user' に限る**（手順13a の判断）。6.3 の応答は version を持ち、
+// その列は app_user にしかない。app_user の行を持たないアクター
+// （エージェント・システム）を 200 で返すと、PATCH（6.4）の楽観ロックが
+// 成立しないものを画面に開かせることになる。エージェントの詳細は
+// agent テーブル（DbDesign.md 8.1）ができる Phase 2 で列構成ごと設計する。
+//
+// したがって app_user は LEFT ではなく INNER JOIN であり、
+// **行が返らない＝404** となる（ApiDesign.md 1.2-5）。
+func (q *Queries) GetAdminUser(ctx context.Context, actorID string) (GetAdminUserRow, error) {
+	row := q.db.QueryRow(ctx, getAdminUser, actorID)
+	var i GetAdminUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.DisplayName,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.Email,
+		&i.SystemRole,
+		&i.LastLoginAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const getProjectMembership = `-- name: GetProjectMembership :one
+SELECT
+  p.id   AS project_id,
+  p.key  AS project_key,
+  p.name AS project_name,
+  pm.role_key,
+  pm.joined_at
+FROM project_member pm
+JOIN project p ON p.id = pm.project_id
+WHERE pm.project_id = $1 AND pm.actor_id = $2
+`
+
+type GetProjectMembershipParams struct {
+	ProjectID string
+	ActorID   string
+}
+
+type GetProjectMembershipRow struct {
+	ProjectID   string
+	ProjectKey  string
+	ProjectName string
+	RoleKey     string
+	JoinedAt    pgtype.Timestamptz
+}
+
+// GetProjectMembership は PUT の 200 応答（6.3 の要素と同形）を引く。
+//
+// 更新と同じトランザクションから読む。別トランザクションで読むと、
+// 返した role が既に古いことがありうる（UpdateProject と同じ考え方）。
+func (q *Queries) GetProjectMembership(ctx context.Context, arg GetProjectMembershipParams) (GetProjectMembershipRow, error) {
+	row := q.db.QueryRow(ctx, getProjectMembership, arg.ProjectID, arg.ActorID)
+	var i GetProjectMembershipRow
+	err := row.Scan(
+		&i.ProjectID,
+		&i.ProjectKey,
+		&i.ProjectName,
+		&i.RoleKey,
+		&i.JoinedAt,
+	)
+	return i, err
 }
 
 const listAdminUsers = `-- name: ListAdminUsers :many
@@ -297,6 +557,250 @@ func (q *Queries) ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) 
 	return items, nil
 }
 
+const listUserIdentities = `-- name: ListUserIdentities :many
+SELECT
+  i.id,
+  i.provider_key,
+  p.type AS provider_type,
+  i.subject,
+  i.linked_at,
+  i.last_used_at,
+  c.password_updated_at
+FROM user_identity i
+JOIN auth_provider p ON p.key = i.provider_key
+LEFT JOIN local_credential c ON c.identity_id = i.id
+WHERE i.user_id = $1
+ORDER BY p.sort_order, i.provider_key, i.id
+`
+
+type ListUserIdentitiesRow struct {
+	ID                string
+	ProviderKey       string
+	ProviderType      string
+	Subject           string
+	LinkedAt          pgtype.Timestamptz
+	LastUsedAt        pgtype.Timestamptz
+	PasswordUpdatedAt pgtype.Timestamptz
+}
+
+// ListUserIdentities は 6.3 の identities[] を引く。
+//
+// **配列であることが Phase 3 の IdP 連携をそのまま受け入れる**（ApiDesign.md 6.3、
+// DbDesign.md 6.2）。OIDC を足しても要素が1つ増えるだけで、応答の形は変わらない。
+//
+// password_updated_at は local_credential の列で、ローカル以外のプロバイダでは
+// NULL になる。**LEFT JOIN にするのはそのため**で、INNER にすると Phase 3 の
+// OIDC identity が一覧から消える。
+//
+// provider_type は auth_provider.type（DbDesign.md 6.2、7.1 のシード）。
+// 画面が「ローカルパスワード」と出すか IdP 名を出すかをこの値で決める。
+func (q *Queries) ListUserIdentities(ctx context.Context, userID string) ([]ListUserIdentitiesRow, error) {
+	rows, err := q.db.Query(ctx, listUserIdentities, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUserIdentitiesRow{}
+	for rows.Next() {
+		var i ListUserIdentitiesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProviderKey,
+			&i.ProviderType,
+			&i.Subject,
+			&i.LinkedAt,
+			&i.LastUsedAt,
+			&i.PasswordUpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserProjectMemberships = `-- name: ListUserProjectMemberships :many
+SELECT
+  p.id   AS project_id,
+  p.key  AS project_key,
+  p.name AS project_name,
+  pm.role_key,
+  pm.joined_at
+FROM project_member pm
+JOIN project p ON p.id = pm.project_id
+WHERE pm.actor_id = $1
+ORDER BY p.key
+`
+
+type ListUserProjectMembershipsRow struct {
+	ProjectID   string
+	ProjectKey  string
+	ProjectName string
+	RoleKey     string
+	JoinedAt    pgtype.Timestamptz
+}
+
+// ListUserProjectMemberships は 6.3 の project_memberships[] を引く。
+//
+// **アーカイブ済みプロジェクトも返す。** 除くと 6.1 の project_count
+// （project_member の行数）と件数が食い違う。
+//
+// 並びは project.key の昇順。画面（GuiDesign.md 5.6.2）が縦に並べるだけで、
+// 利用者が並べ替える手段を持たないため、安定した順序を1つ決めておく。
+func (q *Queries) ListUserProjectMemberships(ctx context.Context, actorID string) ([]ListUserProjectMembershipsRow, error) {
+	rows, err := q.db.Query(ctx, listUserProjectMemberships, actorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUserProjectMembershipsRow{}
+	for rows.Next() {
+		var i ListUserProjectMembershipsRow
+		if err := rows.Scan(
+			&i.ProjectID,
+			&i.ProjectKey,
+			&i.ProjectName,
+			&i.RoleKey,
+			&i.JoinedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserSessions = `-- name: ListUserSessions :many
+SELECT
+  t.id,
+  t.client_info,
+  t.issued_at,
+  t.last_used_at,
+  t.expires_at
+FROM access_token t
+WHERE t.actor_id = $1
+  AND t.token_type = 'session'
+  AND t.revoked_at IS NULL
+  AND (t.expires_at IS NULL OR t.expires_at > now())
+ORDER BY t.issued_at DESC
+`
+
+type ListUserSessionsRow struct {
+	ID         string
+	ClientInfo pgtype.Text
+	IssuedAt   pgtype.Timestamptz
+	LastUsedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
+// ListUserSessions は 6.3 の sessions[]（**有効なセッション**）を引く。
+//
+// 「有効」の条件は認証側（FindAccessTokenByHash を使う Authenticate）と
+// 揃える——失効しておらず、期限切れでもないもの。**token_type = 'session' に
+// 限る**のは、6.3 のブロックが GuiDesign.md 5.6.2 の「有効なセッション」で
+// あり、APIトークン（4.5、Phase 1 では発行経路が無い）は別の話だからである。
+//
+// expires_at が NULL のトークンは期限なし（4.5）。セッションには必ず入るが、
+// 条件から落ちないよう明示的に許す。
+func (q *Queries) ListUserSessions(ctx context.Context, actorID string) ([]ListUserSessionsRow, error) {
+	rows, err := q.db.Query(ctx, listUserSessions, actorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUserSessionsRow{}
+	for rows.Next() {
+		var i ListUserSessionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ClientInfo,
+			&i.IssuedAt,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const reassignComments = `-- name: ReassignComments :execrows
+UPDATE comment SET author_id = $1 WHERE author_id = $2
+`
+
+type ReassignCommentsParams struct {
+	NewAuthorID string
+	OldAuthorID string
+}
+
+// ReassignComments は投稿者を付け替える（DbDesign.md 6.7、ApiDesign.md 6.5）。
+func (q *Queries) ReassignComments(ctx context.Context, arg ReassignCommentsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reassignComments, arg.NewAuthorID, arg.OldAuthorID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resetLocalCredential = `-- name: ResetLocalCredential :exec
+UPDATE local_credential SET
+  password_hash       = $1,
+  password_updated_at = now(),
+  must_change         = $2,
+  failed_attempts     = 0,
+  locked_until        = NULL
+WHERE identity_id = $3
+`
+
+type ResetLocalCredentialParams struct {
+	PasswordHash string
+	MustChange   bool
+	IdentityID   string
+}
+
+// ResetLocalCredential は 6.6 の更新を1文で行う。
+//
+// **failed_attempts と locked_until も戻す**（6.6）。ロックされた利用者を
+// 救うのがこの操作の主な用途であり、パスワードだけ変えてロックが残ると
+// 目的を果たさない。password_updated_at を now() にするのは、6.3 の
+// identities[].password_updated_at が「最終更新」として画面に出るためである。
+func (q *Queries) ResetLocalCredential(ctx context.Context, arg ResetLocalCredentialParams) error {
+	_, err := q.db.Exec(ctx, resetLocalCredential, arg.PasswordHash, arg.MustChange, arg.IdentityID)
+	return err
+}
+
+const revokeActorSessions = `-- name: RevokeActorSessions :execrows
+UPDATE access_token
+SET revoked_at = now()
+WHERE actor_id = $1 AND revoked_at IS NULL
+`
+
+// RevokeActorSessions は 6.6 の「全セッションを失効」と 6.7 の本体。
+//
+// **token_type で絞らない。** 6.7 が「エージェントのトークンにも適用される」と
+// 定めており、セッションだけを消すとAPIトークンで入り続けられる。
+// 失効済みの行は WHERE で落ちるので、revoked_at を上書きしない
+// （RevokeAccessToken と同じ扱い）。
+//
+// 返す行数が「何本切ったか」で、監査ログの detail に入れる。
+func (q *Queries) RevokeActorSessions(ctx context.Context, actorID string) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeActorSessions, actorID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const summarizeAdminUsers = `-- name: SummarizeAdminUsers :one
 SELECT
   count(*)                                                    AS total,
@@ -340,4 +844,124 @@ func (q *Queries) SummarizeAdminUsers(ctx context.Context, arg SummarizeAdminUse
 	var i SummarizeAdminUsersRow
 	err := row.Scan(&i.Total, &i.LastUpdatedAt)
 	return i, err
+}
+
+const updateAdminUserActor = `-- name: UpdateAdminUserActor :exec
+UPDATE actor SET
+  display_name = COALESCE($1, display_name),
+  is_active    = COALESCE($2, is_active)
+WHERE id = $3
+`
+
+type UpdateAdminUserActorParams struct {
+	DisplayName pgtype.Text
+	IsActive    pgtype.Bool
+	ActorID     string
+}
+
+// UpdateAdminUserActor は PATCH /admin/users/:id の actor 側を更新する。
+//
+// display_name と is_active は actor の列である（DbDesign.md 6.2）。
+// **UpdateAdminUserProfile と同じトランザクションで呼ぶ**こと。片方だけ
+// 成功すると、表示名は変わったのに version が進んでいない状態が残る。
+func (q *Queries) UpdateAdminUserActor(ctx context.Context, arg UpdateAdminUserActorParams) error {
+	_, err := q.db.Exec(ctx, updateAdminUserActor, arg.DisplayName, arg.IsActive, arg.ActorID)
+	return err
+}
+
+const updateAdminUserProfile = `-- name: UpdateAdminUserProfile :execrows
+
+UPDATE app_user SET
+  email       = COALESCE($1::citext, email),
+  system_role = COALESCE($2, system_role),
+  version     = version + 1
+WHERE actor_id = $3 AND version = $4
+`
+
+type UpdateAdminUserProfileParams struct {
+	Email      pgtype.Text
+	SystemRole pgtype.Text
+	ActorID    string
+	Version    int32
+}
+
+// ── 更新（ApiDesign.md 6.4）─────────────────────────────────
+// UpdateAdminUserProfile は PATCH /admin/users/:id の app_user 側を更新する。
+//
+// **楽観ロックはこの1文だけが持つ**（2.8）。version は app_user にしかない列で
+// あり、actor 側（display_name / is_active）を変えただけでも version を +1 する。
+// **ユーザー1人につき version は1つ**という約束にしないと、actor だけを変えた
+// 直後に古い version でもう一度 PATCH が通ってしまう。したがって呼び出し側は
+// **どのフィールドを変えるときも必ずこの文を通す**こと。
+//
+// 部分更新は sqlc.narg + COALESCE（UpdateProject と同じ）。email も
+// system_role も NULL への更新は無く（どちらも NOT NULL 列）、
+// description のような「送られたか」を別に受ける必要はない。
+//
+// 不一致・不在はどちらも 0 行になる。呼び出し側が行の有無を引いて
+// 409（conflict）と 404（not_found）を分ける。
+func (q *Queries) UpdateAdminUserProfile(ctx context.Context, arg UpdateAdminUserProfileParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateAdminUserProfile,
+		arg.Email,
+		arg.SystemRole,
+		arg.ActorID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateLocalIdentitySubject = `-- name: UpdateLocalIdentitySubject :exec
+UPDATE user_identity
+SET subject = $1
+WHERE user_id = $2 AND provider_key = 'local'
+`
+
+type UpdateLocalIdentitySubjectParams struct {
+	Subject string
+	UserID  string
+}
+
+// UpdateLocalIdentitySubject はメール変更に user_identity.subject を追随させる。
+//
+// **設計文書に無い操作だが、無いと当人がログインできなくなる**（手順13a の判断。
+// ApiDesign.md 6.4 へ追記する提案を出す）。ログインは
+// FindLocalLoginByEmail が `i.subject = u.email` で突き合わせており
+// （Design.md 6.2.1 手順2〜3）、app_user.email だけを変えるとこの結合が外れる。
+//
+// **local プロバイダに限る。** OIDC/SAML の subject は IdP が払い出す識別子で
+// あり（DbDesign.md 6.2）、メールとは無関係に不変であるべきものである。
+func (q *Queries) UpdateLocalIdentitySubject(ctx context.Context, arg UpdateLocalIdentitySubjectParams) error {
+	_, err := q.db.Exec(ctx, updateLocalIdentitySubject, arg.Subject, arg.UserID)
+	return err
+}
+
+const upsertProjectMember = `-- name: UpsertProjectMember :exec
+
+INSERT INTO project_member (project_id, actor_id, role_key)
+VALUES ($1, $2, $3)
+ON CONFLICT (project_id, actor_id) DO UPDATE SET role_key = $3
+`
+
+type UpsertProjectMemberParams struct {
+	ProjectID string
+	ActorID   string
+	RoleKey   string
+}
+
+// ── プロジェクトメンバーシップ（ApiDesign.md 6.8）───────────────
+// UpsertProjectMember は PUT /admin/users/:id/memberships/:project_key。
+//
+// **追加と変更を兼ねる（冪等）**（6.8）。AddProjectMember が
+// DO NOTHING なのに対し、こちらは DO UPDATE でロールを上書きする。
+// 用途が違う——あちらはプロジェクト作成時に作成者を入れるもので、
+// 既に居るなら何もしないのが正しい。
+//
+// **joined_at は上書きしない。** ロールを変えただけで参加日が動くと、
+// 6.3 の project_memberships[].joined_at が意味を失う。
+func (q *Queries) UpsertProjectMember(ctx context.Context, arg UpsertProjectMemberParams) error {
+	_, err := q.db.Exec(ctx, upsertProjectMember, arg.ProjectID, arg.ActorID, arg.RoleKey)
+	return err
 }

@@ -974,6 +974,113 @@ Chrome ＋ CDP で **24件**（12c の本体12件＋回帰12件）。
 
 ---
 
+## 手順13a（2026-08-20）— ユーザー詳細・編集 API（`ApiDesign.md` 6.3〜6.8）
+
+手順13 を **13a（API）/ 13b（画面）** に分けた1回目。ブランチ `feature/step-13-user-detail-api`。
+**手順13 の完了条件（ブラウザでロール変更・無効化・パスワードリセットができる）は 13b で満たす。**
+
+実装したエンドポイントは7本。すべて `user.manage`（6章の前書き）。
+
+| | |
+|---|---|
+| `GET /admin/users/{id}` | 6.3。本体＋`identities` / `project_memberships` / `sessions` を1回で返す |
+| `PATCH /admin/users/{id}` | 6.4。`If-Match` 必須。3つのガード |
+| `DELETE /admin/users/{id}` | 6.5。物理削除。監査を先に書く |
+| `POST /admin/users/{id}/password-reset` | 6.6。生成のみ。全セッション失効つき |
+| `POST /admin/users/{id}/sessions/revoke` | 6.7。冪等 |
+| `PUT /admin/users/{id}/memberships/{key}` | 6.8。追加と変更を兼ねる |
+| `DELETE /admin/users/{id}/memberships/{key}` | 6.8。冪等 |
+
+### 変えたファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/store/queries/user.sql` | 21本追加（詳細4本・更新4本・削除5本・資格情報3本・メンバーシップ3本・件数2本） |
+| `server/internal/store/gen/*` | `make sqlc` の生成物 |
+| `server/internal/httpapi/v1/users_get.go` | 6.3。**`buildUserDetail` を PATCH と共有**（5.5 が 5.4 と同形式であるのと同じ扱い）。`userIDFromRequest` / `adminUserContext` を `/admin/users/{id}` 配下の共通の取り出しとして置いた |
+| `server/internal/httpapi/v1/users_update.go` | 6.4 / 6.5。ガード3つ・`nargText` / `nargBool`・`classifyUserUpdateMiss`（409 と 404 の切り分け）・`writeUserUpdateError` |
+| `server/internal/httpapi/v1/users_credentials.go` | 6.6 / 6.7。`decodeOptionalJSON`（空の本文を誤りとしない） |
+| `server/internal/httpapi/v1/users_memberships.go` | 6.8。`resolveMembershipProject` / `recordMembershipChange` |
+| `server/internal/httpapi/v1/routes.go` | 7本の宣言。**プロジェクト個別（5.4〜5.6）と違い `RequirePermission` のまま**——誰のアカウントを触るかで必要権限が変わらない |
+| `server/internal/httpapi/v1/fake_test.go` | 新クエリ22本のフェイク実装とフィールド |
+| `server/internal/httpapi/v1/users_detail_test.go` | 単体39件（新規） |
+| `server/internal/httpapi/v1/users_detail_integration_test.go` | 実DB結合13件（新規） |
+| `docs/openapi.yaml` | 7本のパスと8スキーマ（`UserDetail` / `UserIdentity` / `UserMembership` / `UserSession` / `UpdateUserRequest` / `PasswordResetRequest` / `GeneratedPassword` / `MembershipRequest`）、パラメータ `UserID` |
+| `client/src/api/schema.d.ts` | `make gen-api` の生成物 |
+
+**再利用したもの**（引き継ぎのとおり）：`validateEmail` / `isEmailConflict` / `adminUsersPath`
+（12a）、`parseIfMatch` / `errVersionConflict`（11a）、`InvalidateActorPermissionCache`（6b、
+初めての呼び出し元）、`auth.GeneratePassword`（12a）。
+
+**画面と `client/src/api/users.ts` のラッパは 13b。** 消費者と同じセッションに入れる。
+
+### 検証結果
+
+| 区分 | 件数 | 内容 |
+|---|---|---|
+| `make test` | 全パッケージ | ビルド・単体・**OpenAPI ドリフト検出**（7本の未記載を実際に検出させてから `openapi.yaml` を書いた） |
+| 単体（`users_detail_test.go`） | **39件** | 応答の形・ガードの分岐・監査に何を書くか。`nil` ではなく空配列・`role` というキー名・`token_hash` が漏れないこと |
+| 実DB結合（`users_detail_integration_test.go`） | **13件** | 楽観ロック・`subject` の追随・CASCADE・冪等な `joined_at`・管理者の数え方・レート制限を消費しない作り |
+| 実サーバ（curl） | **42件** | 下表 |
+| `vue-tsc --noEmit` | — | 生成された型で client がコンパイルできること |
+
+実サーバ検証（`scratchpad/verify13.sh`）の内訳。**スモーク（ログイン＋`GET /me`）を先に通してから
+全体を回した**（`LEARNINGS.md` #21）。対象ユーザーは毎回新しく作り、`trap` で必ず消す。
+
+| 区分 | 主な内容 |
+|---|---|
+| 6.3 | 200 と4ブロック、存在しない `id` は 404 |
+| 6.4 | 表示名の更新／**`actor` だけ変えても `version` が進む**（1→2）／`If-Match` 省略で 422／古い `version` で 409／メール重複で 409 `already_exists`／不正な `system_role` で 422／**メール変更後にそのメールでログインできる**／自分のロール変更・無効化で 409 かつ **409 のとき `version` が進まない** |
+| 6.6 | 生成パスワードが `^[a-z]+-[a-z]+-[0-9]{4}$`／**旧セッションが 401**／新パスワードでログイン／`mode=manual` は 422／本文なしでも 200 |
+| 6.7 | 204 と冪等（2回目も 204） |
+| 6.8 | 付与→ロール変更で **`joined_at` が動かない**／不正なロールは 422／存在しないプロジェクトは 404／剥奪と冪等な2回目 |
+| 認可 | operator が7本すべてで 403、CSRF 無しで 403 |
+| 6.5 | 自分の削除は 409、削除は 204、削除後は 404 |
+
+監査ログを実DBで確認（対象1人ぶん）。**設計どおりの13行**だった。
+
+```
+user.create 1 / user.update 3 / role.change 4 / password.reset 2 / session.revoke 2 / user.delete 1
+```
+
+`role.change` 4件の内訳は、`system_role` の変更1＋メンバーシップの PUT 2＋DELETE 1。
+**パスワードリセット2回は `session.revoke` を増やしていない**（1操作を2行にしない判断が効いている）。
+`user.delete` の `detail` に削除時点の表示名・メール・ロールが残っていることも確認した。
+
+### 検証で見つけた「検証側」の誤り（実装は正しかった）
+
+**結合テストで `failed_attempts = 0` を期待して FAIL した。** 原因は測る順序で、
+**旧パスワードで故意にログインを失敗させた直後に読んでいた**（失敗は正しく1に増える）。
+しかも**リセット前が0でないことを一度も確かめておらず、通っても意味のない検証**だった。
+
+直し方は2つ。①ロックされた状態を **SQL で先に作る**（`failed_attempts=3` / `locked_until`）——
+6.6 の主な用途は「ロックされた利用者を救う」ことなので、これでようやく「戻った」ことを測れる。
+②**リセットの直後に読む**（後続のログイン試行より前）。
+
+**ログインで作らなかったのは、レート制限（2.9、IP あたり10回/分）を消費するため。**
+`httptest.NewRequest` は固定の `RemoteAddr` を入れるので、同じ窓の11回目が 429 になる。
+既存のテストは**ちょうど10回**で通っており、1件足すだけで無関係な検証が落ちる状態だった。
+`loginAsWith` が呼び出しごとに違う擬似 IP（RFC 5737 の `198.51.100.0/24`）を使うようにした。
+
+もう1件、`最後の有効なアドミニストレータを守る` は当初 `t.Skip` で逃げていた（同じDBに
+利用者のアカウントが居るため1人にできない）。**スキップは検証していないのと同じ**なので、
+`CountActiveAdministrators` の数え方そのものを測る形に書き換えた（上の判断表を参照）。
+
+### 片付けた資源
+
+- **検証で作ったユーザーは検証自身が消す**（`trap` と `t.Cleanup`）。`step13-%` / `dtl-%` /
+  `mailchg-%` / `詳細テスト%` / `手順13%` と `kind='system'` の actor がいずれも0件、
+  `dtl-%` のプロジェクトも0件であることを確認した
+- **削除済みユーザーを指す `audit_log` 13行を消した**（もう存在しないアクターへの参照）
+- **残したもの**：デモアカウント（`admin@` / `viewer@`）の `login.success` 9行と
+  `permission.denied` 7行。**これらは通常の利用と区別がつかず、監査ログが本来残すべき種類の記録**
+  であるため消していない
+- `make stop-server` 済み（`:8080` が空いていることを確認）。**DBコンテナは起動したまま**
+- **Rancher Desktop が停止していたので起動した**（`make up` の前提）。畳んでいない
+- スクラッチパッドの `smoke.sh` / `verify13.sh` は残した（13b の回帰確認に使えるため）
+
+---
+
 ## 手順外の作業（完了分）
 
 `docs/PROGRESS.md` の「手順外の作業」表から、**完了して今後の手順に不要になった行**を

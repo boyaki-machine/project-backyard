@@ -12,12 +12,41 @@ import (
 
 type Querier interface {
 	AddProjectMember(ctx context.Context, arg AddProjectMemberParams) error
+	// AppUserExists は UpdateAdminUserProfile が 0 行だった理由を切り分ける。
+	//
+	// 行が在れば version 不一致（409 conflict）、無ければ削除済み（404）。
+	// 一律に 409 と返すと、消えたユーザーに「競合している」という誤った説明を返す。
+	//
+	AppUserExists(ctx context.Context, actorID string) (bool, error)
+	// CountActiveAdministrators は「最後のアドミニストレータ」の判定に使う
+	// （ApiDesign.md 6.4 / 6.5 の last_administrator）。
+	//
+	// **無効なアドミニストレータは数えない。** actor.is_active が false の
+	// アクターは認証を通れず（Authenticate が is_active を見る）、管理者として
+	// 「残っている」ことにならない。6.4 は「最後の**有効な**アドミニストレータ」と
+	// 書き、6.5 は「最後のアドミニストレータ」と書いているが、**両方ともこの数え方に
+	// 揃える**（手順13a の判断。6.5 の表現をそろえる提案を出す）。
+	//
+	// 既存の CountAdministrators（pb admin create が「管理者が1人も居ないこと」の
+	// 確認に使う）とは別に置く。あちらは is_active を見ない——初期化の判定では
+	// 無効な管理者も「居る」に数えるべきであり、条件が違う。
+	//
+	CountActiveAdministrators(ctx context.Context) (int64, error)
 	// アクターとユーザーに関するクエリ（DbDesign.md 6.2）。
 	//
 	// 手順3で pb admin create が直接書いていたSQLを sqlc へ移したもの。
 	CountAdministrators(ctx context.Context) (int64, error)
 	// 以下は pb dev seed（DbDesign.md 7.6）が使う。
 	CountAppUsers(ctx context.Context) (int64, error)
+	// ── 削除（ApiDesign.md 6.5）─────────────────────────────────
+	// CountCommentsByAuthor は付け替えが要るかを判定する（DbDesign.md 6.7）。
+	//
+	// comment.author_id は NOT NULL かつ ON DELETE RESTRICT である。**DBが
+	// 「システムアクターへ付け替えてからでないと消せない」という順序を強制する。**
+	// Phase 1 は comment を作る経路が無い（チケットAPIは手順16）ため常に0件だが、
+	// 実装は先に通しておく。
+	//
+	CountCommentsByAuthor(ctx context.Context, authorID string) (int64, error)
 	// CreateAccessToken はセッション・APIトークン・エージェントトークンを発行する
 	// （DbDesign.md 6.2）。**平文は渡さない。** token_hash は SHA-256、
 	// token_prefix は一覧表示用の先頭8文字である。
@@ -37,6 +66,12 @@ type Querier interface {
 	CreateProject(ctx context.Context, arg CreateProjectParams) error
 	CreateProjectCounter(ctx context.Context, projectID string) error
 	CreateProjectWorkflow(ctx context.Context, arg CreateProjectWorkflowParams) error
+	// CreateSystemActor はシステムアクターを1件作る。
+	//
+	// **シードで先に置かず、最初に必要になった削除で作る**（手順13a の判断）。
+	// Phase 1 に comment を作る経路が無く、置いても一度も参照されないため。
+	//
+	CreateSystemActor(ctx context.Context, arg CreateSystemActorParams) error
 	CreateUserActor(ctx context.Context, arg CreateUserActorParams) error
 	CreateUserIdentity(ctx context.Context, arg CreateUserIdentityParams) error
 	CreateWorkflowStatus(ctx context.Context, arg CreateWorkflowStatusParams) error
@@ -44,9 +79,26 @@ type Querier interface {
 	// actor を消せば app_user / user_identity / local_credential /
 	// project_member / access_token は ON DELETE CASCADE で追従する（DbDesign.md 6.2 / 6.3）。
 	DeleteActorByEmail(ctx context.Context, email string) (int64, error)
+	// DeleteActorByID は物理削除（ApiDesign.md 6.5、DbDesign.md 4.6）。
+	//
+	// app_user / user_identity / local_credential / access_token / project_member は
+	// ON DELETE CASCADE で追従する。ticket.assignee_id は ON DELETE SET NULL の
+	// ため**チケットは残る**（担当者不在のチケットは意味を持つ）。
+	//
+	// **kind = 'user' に限る。** 6章が扱うのは人間のアカウントであり、
+	// 万一システムアクターの ID を渡されても消さない。
+	//
+	DeleteActorByID(ctx context.Context, actorID string) (int64, error)
 	// project_counter / project_member / workflow（と配下の status・transition）は
 	// ON DELETE CASCADE で追従する（DbDesign.md 6.4 / 6.5）。
 	DeleteProjectByKey(ctx context.Context, key string) (int64, error)
+	// DeleteProjectMember は DELETE /admin/users/:id/memberships/:project_key。
+	//
+	// **0 行は「元から居ない」**。6.8 は PUT を冪等と定めるだけで DELETE には
+	// 触れていないが、削除は本来冪等な操作であり、呼び出し側は 0 行でも 204 を
+	// 返す（何度呼んでも「居ない」状態に収束する）。
+	//
+	DeleteProjectMember(ctx context.Context, arg DeleteProjectMemberParams) (int64, error)
 	// 認証に関するクエリ（Design.md 6.2.2、DbDesign.md 6.2）。
 	// FindAccessTokenByHash は受け取った平文の SHA-256 で access_token を引く。
 	//
@@ -60,6 +112,22 @@ type Querier interface {
 	//
 	FindAccessTokenByHash(ctx context.Context, tokenHash string) (FindAccessTokenByHashRow, error)
 	FindActorIDByEmail(ctx context.Context, email string) (string, error)
+	// FindDeletedUserActor は「削除されたユーザー」のシステムアクターを引く。
+	//
+	// **display_name で引いている。** kind='system' のアクターに一意なキー列が
+	// 無いためである（DbDesign.md 6.2 の actor には key に相当する列がない）。
+	// Phase 1 でシステムアクターはこの1件しか作られないので成り立つが、
+	// **Phase 2 でシステムアクターが増えるなら識別子を決める必要がある**
+	// （docs/PROGRESS.md の引き継ぎに起票済み）。
+	//
+	FindDeletedUserActor(ctx context.Context, displayName string) (string, error)
+	// ── パスワードリセットとセッション失効（ApiDesign.md 6.6 / 6.7）──
+	// FindLocalCredentialByActor はリセット対象の資格情報を引く。
+	//
+	// 行が無い＝local_credential を持たない（IdP のみ、Phase 3）で、
+	// 6.6 はこれを 409 conflict と定める。
+	//
+	FindLocalCredentialByActor(ctx context.Context, userID string) (string, error)
 	// ── ローカル ID/PW ログイン（Design.md 6.2.1、手順5） ────────────────
 	// FindLocalLoginByEmail は Design.md 6.2.1 の手順2〜3を1文で行う。
 	//
@@ -119,6 +187,19 @@ type Querier interface {
 	// 「そのアクターが存在しない」ことを取り違えないようにする。
 	//
 	GetActorProfile(ctx context.Context, actorID string) (GetActorProfileRow, error)
+	// ── ユーザー詳細・編集（ApiDesign.md 6.3〜6.8、手順13）───────────
+	// GetAdminUser は GET /admin/users/:id の本体を引く（ApiDesign.md 6.3）。
+	//
+	// **kind = 'user' に限る**（手順13a の判断）。6.3 の応答は version を持ち、
+	// その列は app_user にしかない。app_user の行を持たないアクター
+	// （エージェント・システム）を 200 で返すと、PATCH（6.4）の楽観ロックが
+	// 成立しないものを画面に開かせることになる。エージェントの詳細は
+	// agent テーブル（DbDesign.md 8.1）ができる Phase 2 で列構成ごと設計する。
+	//
+	// したがって app_user は LEFT ではなく INNER JOIN であり、
+	// **行が返らない＝404** となる（ApiDesign.md 1.2-5）。
+	//
+	GetAdminUser(ctx context.Context, actorID string) (GetAdminUserRow, error)
 	// ── 詳細（ApiDesign.md 5.4。POST /projects の応答も同じ形）───────
 	// GetProjectByKey は1プロジェクトの本体とワークフローの見出しを返す。
 	//
@@ -130,6 +211,12 @@ type Querier interface {
 	// （RequireProjectPermission）と呼び出し側の責務である。
 	//
 	GetProjectByKey(ctx context.Context, key string) (GetProjectByKeyRow, error)
+	// GetProjectMembership は PUT の 200 応答（6.3 の要素と同形）を引く。
+	//
+	// 更新と同じトランザクションから読む。別トランザクションで読むと、
+	// 返した role が既に古いことがありうる（UpdateProject と同じ考え方）。
+	//
+	GetProjectMembership(ctx context.Context, arg GetProjectMembershipParams) (GetProjectMembershipRow, error)
 	// 監査ログ（ApiDesign.md 2.10、DbDesign.md 6.8）。
 	//
 	// 読み出し（GET /admin/audit、auditlog.view）は手順11以降で足す。
@@ -255,6 +342,39 @@ type Querier interface {
 	// 語彙であるため、システムロールの権限もこのクエリで引ける（DbDesign.md 7.3）。
 	//
 	ListRolePermissions(ctx context.Context, roleKey string) ([]string, error)
+	// ListUserIdentities は 6.3 の identities[] を引く。
+	//
+	// **配列であることが Phase 3 の IdP 連携をそのまま受け入れる**（ApiDesign.md 6.3、
+	// DbDesign.md 6.2）。OIDC を足しても要素が1つ増えるだけで、応答の形は変わらない。
+	//
+	// password_updated_at は local_credential の列で、ローカル以外のプロバイダでは
+	// NULL になる。**LEFT JOIN にするのはそのため**で、INNER にすると Phase 3 の
+	// OIDC identity が一覧から消える。
+	//
+	// provider_type は auth_provider.type（DbDesign.md 6.2、7.1 のシード）。
+	// 画面が「ローカルパスワード」と出すか IdP 名を出すかをこの値で決める。
+	//
+	ListUserIdentities(ctx context.Context, userID string) ([]ListUserIdentitiesRow, error)
+	// ListUserProjectMemberships は 6.3 の project_memberships[] を引く。
+	//
+	// **アーカイブ済みプロジェクトも返す。** 除くと 6.1 の project_count
+	// （project_member の行数）と件数が食い違う。
+	//
+	// 並びは project.key の昇順。画面（GuiDesign.md 5.6.2）が縦に並べるだけで、
+	// 利用者が並べ替える手段を持たないため、安定した順序を1つ決めておく。
+	//
+	ListUserProjectMemberships(ctx context.Context, actorID string) ([]ListUserProjectMembershipsRow, error)
+	// ListUserSessions は 6.3 の sessions[]（**有効なセッション**）を引く。
+	//
+	// 「有効」の条件は認証側（FindAccessTokenByHash を使う Authenticate）と
+	// 揃える——失効しておらず、期限切れでもないもの。**token_type = 'session' に
+	// 限る**のは、6.3 のブロックが GuiDesign.md 5.6.2 の「有効なセッション」で
+	// あり、APIトークン（4.5、Phase 1 では発行経路が無い）は別の話だからである。
+	//
+	// expires_at が NULL のトークンは期限なし（4.5）。セッションには必ず入るが、
+	// 条件から落ちないよう明示的に許す。
+	//
+	ListUserSessions(ctx context.Context, actorID string) ([]ListUserSessionsRow, error)
 	ListWorkflowStatuses(ctx context.Context, workflowID string) ([]ListWorkflowStatusesRow, error)
 	ListWorkflowTransitions(ctx context.Context, workflowID string) ([]ListWorkflowTransitionsRow, error)
 	// ── キーの重複確認（ApiDesign.md 5.2）───────────────────────
@@ -264,6 +384,9 @@ type Querier interface {
 	// 委ね、check-key の結果を信頼しない」と定めている（TOCTOU 対策）。
 	//
 	ProjectKeyExists(ctx context.Context, key string) (bool, error)
+	// ReassignComments は投稿者を付け替える（DbDesign.md 6.7、ApiDesign.md 6.5）。
+	//
+	ReassignComments(ctx context.Context, arg ReassignCommentsParams) (int64, error)
 	// RecordLoginFailure は失敗回数とロック期限を書く（Design.md 6.2.1 手順5、6.3）。
 	// 閾値の判定はアプリ側で行い、その結果をそのまま反映する。
 	//
@@ -275,6 +398,14 @@ type Querier interface {
 	// 「いつ利用者がパスワードを変えたか」の意味を壊さないため。
 	//
 	RehashPassword(ctx context.Context, arg RehashPasswordParams) error
+	// ResetLocalCredential は 6.6 の更新を1文で行う。
+	//
+	// **failed_attempts と locked_until も戻す**（6.6）。ロックされた利用者を
+	// 救うのがこの操作の主な用途であり、パスワードだけ変えてロックが残ると
+	// 目的を果たさない。password_updated_at を now() にするのは、6.3 の
+	// identities[].password_updated_at が「最終更新」として画面に出るためである。
+	//
+	ResetLocalCredential(ctx context.Context, arg ResetLocalCredentialParams) error
 	// ResetLoginFailure はログイン成功時に失敗回数とロックを消す
 	// （Design.md 6.2.1 手順5 の「成功 → failed_attempts=0」）。
 	//
@@ -283,6 +414,16 @@ type Querier interface {
 	// 既に失効済みなら no-op で返り、revoked_at を上書きしない。
 	//
 	RevokeAccessToken(ctx context.Context, id string) error
+	// RevokeActorSessions は 6.6 の「全セッションを失効」と 6.7 の本体。
+	//
+	// **token_type で絞らない。** 6.7 が「エージェントのトークンにも適用される」と
+	// 定めており、セッションだけを消すとAPIトークンで入り続けられる。
+	// 失効済みの行は WHERE で落ちるので、revoked_at を上書きしない
+	// （RevokeAccessToken と同じ扱い）。
+	//
+	// 返す行数が「何本切ったか」で、監査ログの detail に入れる。
+	//
+	RevokeActorSessions(ctx context.Context, actorID string) (int64, error)
 	// ── 実効権限のセッションキャッシュ（Design.md 6.4.5、手順6b） ──────────
 	//
 	// 「ログインごとに実効権限を計算し、セッションにキャッシュする。
@@ -357,6 +498,41 @@ type Querier interface {
 	// ログイン時に書かなければ永久に NULL のままになる。
 	//
 	TouchLastLoginAt(ctx context.Context, actorID string) error
+	// UpdateAdminUserActor は PATCH /admin/users/:id の actor 側を更新する。
+	//
+	// display_name と is_active は actor の列である（DbDesign.md 6.2）。
+	// **UpdateAdminUserProfile と同じトランザクションで呼ぶ**こと。片方だけ
+	// 成功すると、表示名は変わったのに version が進んでいない状態が残る。
+	//
+	UpdateAdminUserActor(ctx context.Context, arg UpdateAdminUserActorParams) error
+	// ── 更新（ApiDesign.md 6.4）─────────────────────────────────
+	// UpdateAdminUserProfile は PATCH /admin/users/:id の app_user 側を更新する。
+	//
+	// **楽観ロックはこの1文だけが持つ**（2.8）。version は app_user にしかない列で
+	// あり、actor 側（display_name / is_active）を変えただけでも version を +1 する。
+	// **ユーザー1人につき version は1つ**という約束にしないと、actor だけを変えた
+	// 直後に古い version でもう一度 PATCH が通ってしまう。したがって呼び出し側は
+	// **どのフィールドを変えるときも必ずこの文を通す**こと。
+	//
+	// 部分更新は sqlc.narg + COALESCE（UpdateProject と同じ）。email も
+	// system_role も NULL への更新は無く（どちらも NOT NULL 列）、
+	// description のような「送られたか」を別に受ける必要はない。
+	//
+	// 不一致・不在はどちらも 0 行になる。呼び出し側が行の有無を引いて
+	// 409（conflict）と 404（not_found）を分ける。
+	//
+	UpdateAdminUserProfile(ctx context.Context, arg UpdateAdminUserProfileParams) (int64, error)
+	// UpdateLocalIdentitySubject はメール変更に user_identity.subject を追随させる。
+	//
+	// **設計文書に無い操作だが、無いと当人がログインできなくなる**（手順13a の判断。
+	// ApiDesign.md 6.4 へ追記する提案を出す）。ログインは
+	// FindLocalLoginByEmail が `i.subject = u.email` で突き合わせており
+	// （Design.md 6.2.1 手順2〜3）、app_user.email だけを変えるとこの結合が外れる。
+	//
+	// **local プロバイダに限る。** OIDC/SAML の subject は IdP が払い出す識別子で
+	// あり（DbDesign.md 6.2）、メールとは無関係に不変であるべきものである。
+	//
+	UpdateLocalIdentitySubject(ctx context.Context, arg UpdateLocalIdentitySubjectParams) error
 	// ── 更新（ApiDesign.md 5.5 / 5.6）───────────────────────────
 	// UpdateProject は PATCH /projects/:key を1文で行う（5.5）。
 	//
@@ -373,6 +549,18 @@ type Querier interface {
 	// 組み立てる（5.5 の応答は 5.4 と同形式）。同じ形を2か所で作らないため。
 	//
 	UpdateProject(ctx context.Context, arg UpdateProjectParams) (int64, error)
+	// ── プロジェクトメンバーシップ（ApiDesign.md 6.8）───────────────
+	// UpsertProjectMember は PUT /admin/users/:id/memberships/:project_key。
+	//
+	// **追加と変更を兼ねる（冪等）**（6.8）。AddProjectMember が
+	// DO NOTHING なのに対し、こちらは DO UPDATE でロールを上書きする。
+	// 用途が違う——あちらはプロジェクト作成時に作成者を入れるもので、
+	// 既に居るなら何もしないのが正しい。
+	//
+	// **joined_at は上書きしない。** ロールを変えただけで参加日が動くと、
+	// 6.3 の project_memberships[].joined_at が意味を失う。
+	//
+	UpsertProjectMember(ctx context.Context, arg UpsertProjectMemberParams) error
 }
 
 var _ Querier = (*Queries)(nil)
