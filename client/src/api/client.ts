@@ -192,4 +192,9 @@ export const api = {
     request<T>('POST', path, body, options),
   patch: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>('PATCH', path, body, options),
+  put: <T>(path: string, body?: unknown, options?: RequestOptions) =>
+    request<T>('PUT', path, body, options),
+  // `delete` は予約語なので名前を変える。呼び出し側は `api.del(...)` と書く
+  del: <T>(path: string, options?: RequestOptions) =>
+    request<T>('DELETE', path, undefined, options),
 }

@@ -6,6 +6,7 @@ import NotFoundPage from '../pages/NotFoundPage.vue'
 import PlaceholderPage from '../pages/PlaceholderPage.vue'
 import ProjectSettingsPage from '../pages/ProjectSettingsPage.vue'
 import ProjectsPage from '../pages/ProjectsPage.vue'
+import UserDetailPage from '../pages/UserDetailPage.vue'
 import UsersPage from '../pages/UsersPage.vue'
 
 /**
@@ -134,31 +135,19 @@ export const routes: RouteRecordRaw[] = [
   },
 
   // 実画面（GuiDesign.md 5.6）。手順12b でプレースホルダから差し替えた。
-  // 行の操作メニュー（`[⋯]`）と「ロールと権限」タブの中身は手順13・14
+  // 行の操作メニュー（`[⋯]`）は手順13b で足した。「ロールと権限」タブの
+  // 中身は手順14（`GET /roles` / `GET /permissions`）
   {
     path: '/admin/users',
     component: UsersPage,
     meta: { permission: 'user.manage' },
   },
 
+  // 実画面（GuiDesign.md 5.6.2）。手順13b でプレースホルダから差し替えた
   {
     path: '/admin/users/:id',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'user.manage',
-      placeholder: {
-        title: 'ユーザー詳細・編集',
-        docRef: 'GuiDesign.md 5.6.2',
-        status: 'Phase 1・手順13で実装（API と画面は同じ手順）',
-        planned: [
-          '基本情報（表示名・メール・状態・最終ログイン・作成日）',
-          'システムロールの変更',
-          'プロジェクトごとの権限の付与・削除',
-          '認証手段（ローカルパスワードのリセット）',
-          '有効なセッションの一覧と失効',
-        ],
-      },
-    },
+    component: UserDetailPage,
+    meta: { permission: 'user.manage' },
   },
 
   {

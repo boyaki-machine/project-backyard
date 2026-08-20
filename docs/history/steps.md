@@ -1081,6 +1081,82 @@ user.create 1 / user.update 3 / role.change 4 / password.reset 2 / session.revok
 
 ---
 
+## 手順13b（2026-08-21）— ユーザー詳細・編集画面と一覧の `[⋯]`（`GuiDesign.md` 5.6 / 5.6.2）
+
+ブランチ `feature/step-13-user-detail-screen`。**手順13 の完了条件（ブラウザでロール変更・
+無効化・パスワードリセット・プロジェクト権限の付与ができる）をここで満たした。**
+
+API は 13a で実装済みで、13b は**画面と API ラッパだけ**である（`docs/openapi.yaml` は触っていない）。
+
+### 実装前に一括で確認した設計判断（12件）
+
+利用者の回答で4件が変わった（`[⋯]` はメニューアイコンのプレースホルダ／詳細のメニューは
+「詳細画面に無い操作」の置き場／有効化は管理者が当該ユーザーのメニューから／ヘッダは1行）。
+残り8件は推奨どおり。経緯は `decisions.md` の 2026-08-21 の行。
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/src/pages/UserDetailPage.vue` | 詳細・編集（5.6.2 の5ブロック）。約860行 |
+| `client/src/components/UserActionsMenu.vue` | `[⋯]`。**項目を配列で受け取る**。`<Teleport>` + `position: fixed` で祖先の `overflow` に切られない |
+| `client/src/components/DeleteUserDialog.vue` | 削除の確認（6.3 が名前の入力を求める唯一の操作） |
+| `client/src/components/MembershipModal.vue` | プロジェクト権限の付与（候補は `GET /projects?per_page=200&sort=key&order=asc&status=all`） |
+
+### 変えたファイル
+
+| ファイル | 変更 |
+|---|---|
+| `client/src/api/users.ts` | 6.3〜6.8 のラッパ7本（`getUser` / `updateUser` / `deleteUser` / `resetUserPassword` / `revokeUserSessions` / `putMembership` / `deleteMembership`） |
+| `client/src/api/client.ts` | `put` / `del` を追加（`delete` は予約語なので `del`） |
+| `client/src/pages/UsersPage.vue` | 操作列（固定44px・幅調整の対象外）、`[⋯]` の5項目、通知欄の使い回し（`createdNotice` → `notice`）、削除後の通知の受け取り |
+| `client/src/components/PageHeader.vue` | `#lead` / `#subtitle` スロット（48px 1行を崩さない） |
+| `client/src/components/GeneratedPasswordDialog.vue` | `title` / `leadSuffix` を prop 化し、作成とリセットで共用 |
+| `client/src/lib/roles.ts` | `SYSTEM_ROLES` / `PROJECT_ROLES`（キー・表示名・説明。`DbDesign.md` 7.3 の写し） |
+| `client/src/styles/base.css` | `.primary` / `.secondary` / `.danger` の正本（既存の写しは撤去せず起票） |
+| `client/src/router/routes.ts` | `/admin/users/:id` をプレースホルダから実画面へ |
+| `docs/GuiDesign.md` | 5.6（操作列は幅調整の対象外・`⋯` は暫定表示・有効化・編集の行き先）、5.6.2（ヘッダ1行・`[⋯]` の4項目・結果の出し先）、6.3（確認を挟む操作を2行追加） |
+
+### 検証結果（68件・すべて PASS）
+
+`npm run typecheck` / `npm run build` / `make test` に加えて、ヘッドレス Chrome + CDP
+（`Development.md` 8.2）で通した。**検証用ユーザー3人を API で作り、API で消した**
+（`make dev-reset` は打っていない。利用者のデータが同じDBにある）。
+
+| 群 | 件数 | 内容 |
+|---|---|---|
+| A 列と幅 | 8 | 操作列が最後・44px 固定・つまみ無し・つまみは6本・総幅＝表示領域・900px でメール列が下限を割らない |
+| B メニュー | 7 | 5項目・他人の行では全部押せる・自分の行では無効化と削除が `disabled` で理由が読める・Esc で閉じる |
+| C 一覧からの操作 | 19 | 失効／リセット（生成値の形式）／無効化（行が背面へ下がる）／有効化（確認なし）／削除（名前が一致するまで押せない）と、結果が表の直上に出ること |
+| D 詳細（前半） | 20 | ヘッダ 48px 1行・4要素が同じ行・5ブロックの順・編集で2欄・保存で `version` +1・`user_identity.subject` の追随・メール重複は欄の下・楽観ロック 409 と `[最新の内容を取得]` |
+| E〜H 詳細（後半） | 32 | ロール変更と自分自身の `disabled`・メンバーシップの追加/変更/剥奪（`joined_at` が動かない）・リセット後のパスワードでログイン・**セッションを1本作ってから**の失効（「1件のセッションを失効しました」）・詳細からの削除と一覧への着地・再読み込みで通知が復活しない |
+| I ガード | 1 | operator は `/admin/users/:id` で `/403` へ |
+| K 文言 | 1 | 日本語の途中に空白が入らない（下記） |
+
+**スクリーンショットを6枚撮って自分で見た**（1440px と 900px、メニューを開いた状態、編集中）。
+自動検証が全 PASS のあとに**1件直した**——`プロジェクトの権限がありません。…メンバーでなくても すべての…`
+と、テンプレートの改行位置に空白が入っていた（日本語は行を折り返すとその位置が空白になる）。
+
+### 検証で見つけた「検証側」の誤り5件（実装は正しかった）
+
+| 誤り | 実際 |
+|---|---|
+| つまみの本数を「5本」と手で置いた | 全8列 − 操作列 − 作成列 = **6本**。期待値を規則から計算していなかった（`LEARNINGS.md` #33） |
+| `.notice` / `.ok` の文字を `startswith` で見た | 閉じるボタンの `✕` や先頭の `✓` が混じる。**要素の直下のテキストだけを読む**ようにした（#25） |
+| メール重複のエラーを `.error` に探した | サーバは `details[].field='email'` を返すので**欄の下**に出る（2.5）。実装が正しい |
+| `PATCH` を `If-Match` なしで送って 422 | 2.8 は必須。検証用の API ヘルパに `if_match` を足した |
+| 2つ目の Chrome を同じデバッグポート（9222）で起動 | 1つ目の DevTools へつながり、**同じプロファイルの Cookie を書き換えて管理者のセッションを取り違えた**。インスタンスごとに空きポートを取るようにした |
+
+### 片付けた資源
+
+| 資源 | 扱い |
+|---|---|
+| 検証用ユーザー3人 | API で削除（`verify13b-*`）。残り0件を API で確認 |
+| ヘッドレス Chrome・プロファイル・Cookie | すべて終了・削除（プロファイルは呼び出しごとに別ディレクトリ） |
+| スクラッチパッドの検証スクリプトとスクリーンショット | 削除（セッションをまたいで残らない前提。`LEARNINGS.md` #31） |
+| `audit_log` の21行 | **意図して残した。** 管理者が実際に行った操作の記録で、6.5 が「誰を消したか追えるように」と定めている当のものである。`login.failure` もロックも作っていない |
+| `server/internal/webui/dist` | `make clean-webui` でプレースホルダへ戻した |
+
 ## 手順外の作業（完了分）
 
 `docs/PROGRESS.md` の「手順外の作業」表から、**完了して今後の手順に不要になった行**を

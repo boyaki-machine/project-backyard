@@ -438,12 +438,24 @@ Playwright / Puppeteer は入れていない（`Design.md` 3.1 の採用技術�
   呼んでから `input` イベントを発火**する。前者では Vue が変更に気づかない
 
 ```js
-const set = (el, v) => {
+window.set = window.set || function (el, v) {
   const proto = Object.getPrototypeOf(el)
   Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v)
   el.dispatchEvent(new Event('input', { bubbles: true }))
 }
 ```
+
+**`const` で宣言しない。** 同じページで2回以上 `Runtime.evaluate` に流すと
+「Identifier has already been declared」で落ちる（ページを移動するまで同じスコープが続く）。
+`window.<名前> = window.<名前> || …` にしておけば何度流してもよい。
+
+- **`--remote-debugging-port` は Chrome のインスタンスごとに別の番号にする。**
+  固定にすると2つ目の Chrome が bind に失敗し、**1つ目の DevTools につながる**。
+  同じプロファイルの Cookie を書き換えるため、管理者のセッションで検証していたつもりが
+  別の利用者のセッションに変わる（手順13b で実際に起きた）。空きポートは
+  `socket.bind(('127.0.0.1', 0))` で取る
+- **`Runtime.evaluate` から返すのは値だけにする**（真偽・数・文字列）。DOM 要素は `{}` に
+  直列化され、Python 側では偽になる
 
 ## 8.3 Cookie 認証で状態変更系を叩く（curl）
 

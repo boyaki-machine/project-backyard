@@ -18,9 +18,13 @@ import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vu
 import { useRouter } from 'vue-router'
 
 import AddUserModal from '../components/AddUserModal.vue'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
+import DeleteUserDialog from '../components/DeleteUserDialog.vue'
 import EmptyState from '../components/EmptyState.vue'
 import GeneratedPasswordDialog from '../components/GeneratedPasswordDialog.vue'
 import PageHeader from '../components/PageHeader.vue'
+import UserActionsMenu from '../components/UserActionsMenu.vue'
+import type { ActionItem } from '../components/UserActionsMenu.vue'
 import { ApiError } from '../api/client'
 import * as usersApi from '../api/users'
 import type {
@@ -32,6 +36,7 @@ import type {
 } from '../api/users'
 import { formatDate, formatDateTime } from '../lib/datetime'
 import { userRoleLabel } from '../lib/roles'
+import { useAuthStore } from '../stores/auth'
 
 /**
  * 検索の debounce。`ApiDesign.md` 5.2 の `check-key` と同じ値にそろえる。
@@ -43,6 +48,7 @@ const SEARCH_DEBOUNCE_MS = 400
 const PER_PAGE = 25
 
 const router = useRouter()
+const auth = useAuthStore()
 
 type Tab = 'users' | 'agents' | 'roles'
 const tab = ref<Tab>('users')
@@ -74,8 +80,14 @@ const filtered = computed(() => appliedQ.value !== '' || isActive.value !== 'all
 const addOpen = ref(false)
 /** 生成パスワードの1回表示。`manual` では `generated_password` が null で出さない */
 const created = ref<CreatedUser | null>(null)
-/** 6.4「結果は操作した場所に出す」。表の直上に残す */
-const createdNotice = ref<string | null>(null)
+/**
+ * 6.4「結果は操作した場所に出す」。表の直上に残す。
+ *
+ * 追加だけでなく `[⋯]` の操作の結果もここへ出す。**同じ場所に2つ目の通知欄を
+ * 作らない。** 詳細画面で削除したときの結果もここへ着地する（画面が消えるため、
+ * 操作した場所ではなく**次に着地する場所**へ渡す）。
+ */
+const notice = ref<string | null>(null)
 
 /**
  * 応答の追い越しを防ぐ通し番号。
@@ -171,6 +183,15 @@ interface Column {
   width: number
   /** ドラッグで縮められる下限。ここを割ると内容が読めなくなる */
   min: number
+  /**
+   * 幅調整の対象外にする（手順13b）。
+   *
+   * **操作列（`[⋯]`）だけが該当する。** 内容の長さに依存しないので広げる動機が
+   * なく、可変にすると窓を広げるたびにメニューの周りだけ空きが増える。
+   * 5.6 の4つの規則は、この列を除いた並びの上でそのまま成り立つ——余りを
+   * 受け取るのは変わらず「作成」である。
+   */
+  fixed?: boolean
 }
 
 const COLUMNS: Column[] = [
@@ -181,7 +202,27 @@ const COLUMNS: Column[] = [
   { key: 'status', label: '状態', sort: 'is_active', className: 'status', width: 70, min: 56 },
   { key: 'last', label: '最終ログイン', sort: 'last_login_at', className: 'datetime', width: 150, min: 110 },
   { key: 'created', label: '作成', sort: 'created_at', className: 'date', width: 110, min: 90 },
+  // `⋯` の記号は暫定の表示（利用者の判断、2026-08-21。5.6 のワイヤーの `[⋯]` は
+  // メニューアイコンのプレースホルダである）。見出しの文字は持たない
+  { key: 'actions', label: '', className: 'actions-col', width: 44, min: 44, fixed: true },
 ]
+
+/** 幅調整に参加する列。**操作列を除いた並び**が 5.6 の規則の対象になる */
+const FLEX_COLUMNS = COLUMNS.filter((c) => c.fixed !== true)
+
+/** 余りを受け取る列（5.6）。操作列を足した後も「作成」のままである */
+const LAST_FLEX = FLEX_COLUMNS[FLEX_COLUMNS.length - 1]!
+
+/**
+ * つまみを出す列。
+ *
+ * **右隣と融通する**ので、右隣が無い列と、右隣が幅調整の対象外である列には
+ * 出さない（5.6「最後の列につまみは無い」）。
+ */
+function resizable(col: Column): boolean {
+  const i = FLEX_COLUMNS.findIndex((c) => c.key === col.key)
+  return i >= 0 && i < FLEX_COLUMNS.length - 1
+}
 
 /**
  * 列ごとの現在の幅。**保存しない**（`GuiDesign.md` 5.6）。
@@ -216,11 +257,14 @@ function fitToContainer(): void {
   const available = el.clientWidth
   if (available <= 0) return
 
-  const last = COLUMNS[COLUMNS.length - 1]!
-  const others = COLUMNS.slice(0, -1).reduce((sum, c) => sum + (widths.value[c.key] ?? c.width), 0)
-  const next = Math.max(last.min, available - others)
-  if (Math.abs(next - (widths.value[last.key] ?? last.width)) < 1) return
-  widths.value[last.key] = next
+  // 操作列は固定幅なので、その幅を差し引いた残りを配る
+  const others = COLUMNS.filter((c) => c.key !== LAST_FLEX.key).reduce(
+    (sum, c) => sum + (widths.value[c.key] ?? c.width),
+    0,
+  )
+  const next = Math.max(LAST_FLEX.min, available - others)
+  if (Math.abs(next - (widths.value[LAST_FLEX.key] ?? LAST_FLEX.width)) < 1) return
+  widths.value[LAST_FLEX.key] = next
 }
 
 /**
@@ -239,9 +283,9 @@ let dragging:
   | null = null
 
 function onResizeStart(col: Column, e: MouseEvent): void {
-  const i = COLUMNS.findIndex((c) => c.key === col.key)
-  const neighbour = COLUMNS[i + 1]
-  // 最後の列にはつまみを出していない（融通する相手がいない）
+  const i = FLEX_COLUMNS.findIndex((c) => c.key === col.key)
+  const neighbour = i < 0 ? undefined : FLEX_COLUMNS[i + 1]
+  // 最後の列と操作列にはつまみを出していない（融通する相手がいない）
   if (neighbour === undefined) return
 
   dragging = {
@@ -349,12 +393,128 @@ function openRow(item: UserListItem, e: MouseEvent): void {
   void router.push(path)
 }
 
+// ── 行の操作メニュー（5.6 の `[⋯]`）──────────────────────────
+//
+// 5項目とも `ApiDesign.md` 6.4〜6.7 のAPIを呼ぶ。**押せない項目は消さずに
+// `disabled` で出す**（5.6.2。自分自身へのロール変更・無効化・削除）。
+//
+// 「編集」は詳細画面へ送る。表示名とメールの編集は詳細の「基本情報」ブロックが
+// 担っており（5.6.2）、一覧に2つ目の編集の入口を作らない。
+
+type PendingAction = 'password-reset' | 'revoke-sessions' | 'toggle-active' | 'delete'
+
+/** リセットで生成されたパスワード。**この応答でしか手に入らない**（6.6） */
+const resetResult = ref<{ user: UserListItem; password: string } | null>(null)
+
+/** 操作の対象。ダイアログはこの値を見て開く */
+const target = ref<UserListItem | null>(null)
+const pending = ref<PendingAction | null>(null)
+const actionBusy = ref(false)
+const actionError = ref<ApiError | null>(null)
+
+/** ダイアログが開いているか。`j` / `k` を横取りしないために見る（9.2） */
+const dialogOpen = computed(
+  () => addOpen.value || created.value !== null || pending.value !== null,
+)
+
+function menuItems(u: UserListItem): ActionItem[] {
+  const self = auth.actor?.id === u.id
+  return [
+    { key: 'edit', label: '編集' },
+    { key: 'password-reset', label: 'パスワードをリセット' },
+    { key: 'revoke-sessions', label: 'セッションを全失効' },
+    {
+      key: 'toggle-active',
+      label: u.is_active ? '無効化' : '有効化',
+      disabled: self && u.is_active,
+      reason: '自分自身は無効化できません',
+    },
+    { key: 'delete', label: '削除', danger: true, disabled: self, reason: '自分自身は削除できません' },
+  ]
+}
+
+function onMenuSelect(u: UserListItem, key: string): void {
+  notice.value = null
+  actionError.value = null
+
+  if (key === 'edit') {
+    void router.push(`/admin/users/${u.id}`)
+    return
+  }
+  target.value = u
+  // 有効化だけ確認を挟まない（失うものが無い）。他は取り消せないか本人に影響が出る
+  if (key === 'toggle-active' && !u.is_active) {
+    pending.value = 'toggle-active'
+    void runAction()
+    return
+  }
+  pending.value = key as PendingAction
+}
+
+function closeAction(): void {
+  pending.value = null
+  target.value = null
+  actionError.value = null
+}
+
+/**
+ * 選んだ操作を実行する。
+ *
+ * **一覧の行は `version` を持たない**（`ApiDesign.md` 6.1）。`PATCH` は
+ * `If-Match` が必須なので、状態を変える操作だけ詳細を1回引いてから送る。
+ * 引いた時点の値で送るため、他の誰かが先に更新していれば 409 で止まる。
+ */
+async function runAction(): Promise<void> {
+  const u = target.value
+  const action = pending.value
+  if (u === null || action === null || actionBusy.value) return
+
+  actionBusy.value = true
+  actionError.value = null
+  try {
+    if (action === 'password-reset') {
+      const res = await usersApi.resetUserPassword(u.id)
+      resetResult.value = { user: u, password: res.generated_password }
+      notice.value = `${u.display_name} のパスワードをリセットしました`
+    } else if (action === 'revoke-sessions') {
+      await usersApi.revokeUserSessions(u.id)
+      notice.value = `${u.display_name} のセッションをすべて失効しました`
+    } else if (action === 'toggle-active') {
+      const detail = await usersApi.getUser(u.id)
+      await usersApi.updateUser(detail.id, detail.version, { is_active: !detail.is_active })
+      notice.value = `${u.display_name} を${detail.is_active ? '無効化' : '有効化'}しました`
+    } else {
+      await usersApi.deleteUser(u.id)
+      notice.value = `${u.display_name} を削除しました`
+    }
+    closeAction()
+    void fetchUsers()
+  } catch (e: unknown) {
+    const err =
+      e instanceof ApiError
+        ? e
+        : new ApiError({
+            status: 0,
+            code: 'internal_error',
+            message: '予期しないエラーが発生しました',
+          })
+    actionError.value = err
+    // 削除は入力欄のあるダイアログの中で伝える。他はダイアログを閉じて表の上に出す
+    if (action !== 'delete') {
+      pending.value = null
+      target.value = null
+    }
+  } finally {
+    actionBusy.value = false
+  }
+}
+
 /** `j` / `k` で行を上下移動する（9.1）。`Enter` はリンクの既定動作 */
 function onKeydown(e: KeyboardEvent): void {
   if (e.key !== 'j' && e.key !== 'k') return
   if (e.metaKey || e.ctrlKey || e.altKey) return
   // モーダルが開いている間は背後の一覧へフォーカスを移さない（9.2 のトラップ）
-  if (addOpen.value || created.value !== null) return
+  if (dialogOpen.value || resetResult.value !== null) return
   const el = e.target as HTMLElement | null
   // 入力中は横取りしない。**検索欄に `j` を打てなくなる**（AppShell の `[` と同じ扱い）
   if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return
@@ -382,6 +542,16 @@ let observer: ResizeObserver | null = null
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   observer = new ResizeObserver(() => fitToContainer())
+
+  // 詳細画面で削除したときの結果を受け取る（6.4。操作した画面が消えるため、
+  // 着地するこの一覧へ渡している）。**読んだら履歴から消す**——再読み込みで
+  // 古い通知が復活しないようにする
+  const state = window.history.state as { notice?: string } | null
+  if (state?.notice) {
+    notice.value = state.notice
+    window.history.replaceState({ ...state, notice: undefined }, '')
+  }
+
   void fetchUsers()
 })
 
@@ -413,7 +583,7 @@ onUnmounted(() => {
  */
 function onCreated(user: CreatedUser): void {
   addOpen.value = false
-  createdNotice.value = `${user.display_name} を追加しました`
+  notice.value = `${user.display_name} を追加しました`
   if (user.generated_password !== null) created.value = user
   // 追加したユーザーが見えるように、絞り込みは触らず現在の条件で取り直す
   void fetchUsers()
@@ -495,9 +665,22 @@ async function retry(): Promise<void> {
         </div>
 
         <!-- 追加の結果は操作した場所（一覧の直上）に出す（6.4） -->
-        <p v-if="createdNotice" class="notice" role="status">
-          <span aria-hidden="true">✓</span> {{ createdNotice }}
-          <button type="button" class="notice-close" aria-label="閉じる" @click="createdNotice = null">
+        <p v-if="notice" class="notice" role="status">
+          <span aria-hidden="true">✓</span> {{ notice }}
+          <button type="button" class="notice-close" aria-label="閉じる" @click="notice = null">
+            ✕
+          </button>
+        </p>
+
+        <!-- `[⋯]` の操作が失敗したとき。一覧そのものは出したままにする -->
+        <p v-if="actionError" class="alert" role="alert">
+          <span aria-hidden="true">✕</span> {{ actionError.message }}
+          <button
+            type="button"
+            class="notice-close"
+            aria-label="閉じる"
+            @click="actionError = null"
+          >
             ✕
           </button>
         </p>
@@ -538,8 +721,10 @@ async function retry(): Promise<void> {
                   <span v-else>{{ col.label }}</span>
 
                   <!-- 幅を変えるつまみ。**ドラッグのみ**（9.2 の例外として明記済み）。
-                       見出しのソートを誘発しないよう、クリックはここで止める -->
+                       見出しのソートを誘発しないよう、クリックはここで止める。
+                       右隣と融通するので、最後の列と操作列には出さない（5.6） -->
                   <span
+                    v-if="resizable(col)"
                     class="resizer"
                     aria-hidden="true"
                     @mousedown.stop.prevent="onResizeStart(col, $event)"
@@ -592,6 +777,15 @@ async function retry(): Promise<void> {
                   {{ u.last_login_at === null ? '—' : formatDateTime(u.last_login_at) }}
                 </td>
                 <td class="date">{{ formatDate(u.created_at) }}</td>
+                <!-- 行クリック（詳細へ遷移）を誘発しない。メニュー側でも止めている -->
+                <td class="actions-col" @click.stop>
+                  <UserActionsMenu
+                    :items="menuItems(u)"
+                    :label="`${u.display_name} の操作メニュー`"
+                    compact
+                    @select="onMenuSelect(u, $event)"
+                  />
+                </td>
               </tr>
             </tbody>
           </table>
@@ -684,6 +878,62 @@ async function retry(): Promise<void> {
       :email="created.email"
       :password="created.generated_password"
       @close="created = null"
+    />
+
+    <!-- ── `[⋯]` の確認（6.3）─────────────────────────────── -->
+    <ConfirmDialog
+      v-if="pending === 'password-reset' && target"
+      title="パスワードをリセット"
+      :message="`${target.display_name} のパスワードを新しく生成します。\n現在のパスワードは使えなくなり、有効なセッションはすべて失効します。`"
+      confirm-label="リセットする"
+      danger
+      :busy="actionBusy"
+      @confirm="runAction"
+      @cancel="closeAction"
+    />
+
+    <ConfirmDialog
+      v-if="pending === 'revoke-sessions' && target"
+      title="すべてのセッションを失効"
+      :message="`${target.display_name} のログイン中のセッションとアクセストークンをすべて失効します。\n本人は次のリクエストからログインし直す必要があります。`"
+      confirm-label="失効する"
+      danger
+      :busy="actionBusy"
+      @confirm="runAction"
+      @cancel="closeAction"
+    />
+
+    <ConfirmDialog
+      v-if="pending === 'toggle-active' && target"
+      title="ユーザーを無効化"
+      :message="`${target.display_name} を無効化します。\n本人は次のリクエストからログインできなくなります。`"
+      confirm-label="無効化する"
+      danger
+      :busy="actionBusy"
+      @confirm="runAction"
+      @cancel="closeAction"
+    />
+
+    <!-- 削除だけは名前の入力を求める（6.3） -->
+    <DeleteUserDialog
+      v-if="pending === 'delete' && target"
+      :display-name="target.display_name"
+      :email="target.email ?? ''"
+      :busy="actionBusy"
+      :error-message="actionError?.message ?? null"
+      @confirm="runAction"
+      @cancel="closeAction"
+    />
+
+    <!-- リセットで生成された値は、この1回しか出せない（6.6） -->
+    <GeneratedPasswordDialog
+      v-if="resetResult"
+      title="パスワードをリセットしました"
+      lead-suffix="のパスワードを再発行しました。"
+      :display-name="resetResult.user.display_name"
+      :email="resetResult.user.email ?? ''"
+      :password="resetResult.password"
+      @close="resetResult = null"
     />
   </div>
 </template>
@@ -1053,6 +1303,26 @@ td.date {
   color: var(--pb-text-muted);
   font-size: 13px;
   line-height: 1.8;
+}
+
+/* 操作列（5.6 の `[⋯]`）。幅は固定で、余白を詰めてメニューだけを置く */
+.actions-col {
+  padding: 0;
+  text-align: center;
+}
+
+/* `[⋯]` の操作が失敗したときの帯。一覧は出したままにする（6.2 の正常状態） */
+.alert {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+  margin: 0 0 var(--pb-space-3);
+  padding: var(--pb-space-2) var(--pb-space-3);
+  border: 1px solid var(--pb-danger-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-danger-bg);
+  color: var(--pb-danger-text);
+  font-size: 13px;
 }
 
 /* 読み上げ専用（9.2）。記号だけの列に文字を添えるために使う */
