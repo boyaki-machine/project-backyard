@@ -289,6 +289,212 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * ユーザーの詳細
+         * @description 1ユーザーの本体・認証手段・プロジェクトごとの権限・有効なセッションを
+         *     1回で返す（ApiDesign.md 6.3）。必要権限は `user.manage`。
+         *     `GuiDesign.md` 5.6.2 の詳細画面が必要とする情報がここに揃う。
+         *
+         *     **`kind='user'` のアクターだけを返す。** エージェント・システムアクターは
+         *     404 になる（手順13a の判断）。応答の `version` は `app_user` の列であり、
+         *     `app_user` の行を持たないアクターでは 6.4 の楽観ロックが成立しないため。
+         *     エージェントの詳細は `agent` テーブル（DbDesign.md 8.1）ができる
+         *     Phase 2 で、列構成ごと設計する。
+         *
+         *     **一覧（6.1）と違い `ETag` は返さない。** 鮮度は本体の `version` が表す。
+         */
+        get: operations["getUser"];
+        put?: never;
+        post?: never;
+        /**
+         * ユーザーの削除
+         * @description 物理削除する（ApiDesign.md 6.5、DbDesign.md 4.6）。必要権限は `user.manage`。
+         *
+         *     `actor` の削除により `app_user` / `user_identity` / `local_credential` /
+         *     `access_token` / `project_member` が CASCADE で消える。
+         *     `ticket.assignee_id` は `ON DELETE SET NULL` のため**チケットは残る**。
+         *
+         *     `comment.author_id` は `NOT NULL` かつ `ON DELETE RESTRICT` のため、
+         *     **削除前にシステムアクター（`kind='system'` の「削除されたユーザー」）へ
+         *     付け替える**（DbDesign.md 6.7）。このアクターはシードに無く、**最初に
+         *     必要になった削除で作る**（手順13a の判断。Phase 1 は `comment` を作る
+         *     経路が無いため、実際には作られない）。
+         *
+         *     削除前に `audit_log` へ `user.delete` を記録し、`detail` に削除時点の
+         *     表示名・メール・ロールを保存する。
+         *
+         *     **`If-Match` は要求しない**（2.8）。失われる編集内容が無く、競合しても
+         *     「消えている」に収束するため。無効化のみ行いたい場合は 6.4 の
+         *     `is_active: false` を使う。
+         */
+        delete: operations["deleteUser"];
+        options?: never;
+        head?: never;
+        /**
+         * ユーザーの更新
+         * @description `display_name` / `email` / `system_role` / `is_active` を更新する
+         *     （ApiDesign.md 6.4）。必要権限は `user.manage`。
+         *
+         *     **送られたフィールドだけを更新する**（部分更新）。
+         *
+         *     **`If-Match` は必須**（2.8）。省略すると 422、現在の `version` と
+         *     食い違えば 409。`display_name` や `is_active`（`actor` の列）だけを
+         *     変えた場合も `version` は +1 される——**ユーザー1人につき `version` は1つ**
+         *     という約束にしないと、直後に古い `version` でもう一度更新が通ってしまう。
+         *
+         *     **`email` を変えると `user_identity.subject`（`provider_key='local'`）も
+         *     追随する。** ログインは `subject = app_user.email` で突き合わせるため
+         *     （Design.md 6.2.1 手順2〜3）、片方だけ変えると当人がログインできなくなる。
+         *
+         *     `system_role` を変えたときは当該アクターの権限キャッシュを無効化する
+         *     （Design.md 6.4.5）。監査には常に `user.update` を、ロールが変わったときは
+         *     加えて `role.change` を記録する。
+         *
+         *     **3つのガードは API 側にある**（6.4）。UIだけで防ぐと、直接APIを叩いた
+         *     場合に誰もログインできないインスタンスが生まれうる。
+         */
+        patch: operations["updateUser"];
+        trace?: never;
+    };
+    "/api/v1/admin/users/{id}/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * パスワードのリセット
+         * @description 当該ユーザーの `local_credential` を差し替える（ApiDesign.md 6.6）。
+         *     必要権限は `user.manage`。
+         *
+         *     `failed_attempts` と `locked_until` をリセットし、**全セッションを失効**する。
+         *     ロックされた利用者を救うのがこの操作の主な用途であり、パスワードだけ
+         *     変えてロックが残ると目的を果たさない。
+         *
+         *     **`mode` は `generate` のみ受け付ける**（手順13a の判断）。応答が
+         *     `generated_password` しか持たず、管理者が手で決めた値を返す意味が無いため。
+         *     本文そのものを省略してもよい（`mode=generate` / `must_change_password=true`）。
+         *
+         *     **`generated_password` はこの応答でのみ返る。** 監査ログにも残さない。
+         */
+        post: operations["resetUserPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{id}/sessions/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 全セッションの失効
+         * @description 当該アクターの全トークンを失効する（ApiDesign.md 6.7）。必要権限は `user.manage`。
+         *
+         *     **`token_type` で絞らない。** 6.7 が「エージェントのトークンにも適用される」と
+         *     定めており、セッションだけを消すとAPIトークンで入り続けられる。
+         *
+         *     **冪等である。** 有効なトークンが1本も無くても 204 を返す。
+         *
+         *     **個別のセッションを失効させる API は Phase 1 では持たない**
+         *     （GuiDesign.md 5.6.2 の行ごとの `[失効]` は出さない。手順13a の判断）。
+         */
+        post: operations["revokeUserSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{id}/memberships/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * プロジェクトメンバーシップの付与・変更
+         * @description ユーザーにプロジェクトロールを与える（ApiDesign.md 6.8）。必要権限は `user.manage`。
+         *     `GuiDesign.md` 5.6.2 の「プロジェクトごとの権限」ブロックに対応する。
+         *
+         *     **追加と変更を兼ねる（冪等）。** 既にメンバーならロールを上書きし、
+         *     `joined_at` は最初の1回のまま動かない。
+         *
+         *     ロールの妥当性はDB（`role.scope='project'`）に問い合わせる。
+         *     メンバーシップは実効権限の第2層であるため、変更後に権限キャッシュを
+         *     無効化する（Design.md 6.4.1 / 6.4.5）。監査は `role.change`
+         *     （`target_type='project_member'`）。
+         *
+         *     **Phase 2 で `POST /projects/:key/members` が同じ状態を変えるようになる。**
+         *     6.8 が定めるとおり、内部実装は共通の1関数に集約すること。
+         */
+        put: operations["putUserMembership"];
+        post?: never;
+        /**
+         * プロジェクトメンバーシップの剥奪
+         * @description ユーザーをプロジェクトから外す（ApiDesign.md 6.8）。必要権限は `user.manage`。
+         *
+         *     **冪等である。** 元からメンバーでなくても 204 を返す。ただし監査
+         *     （`role.change`）は実際に消えたときだけ書く——空振りを記録すると
+         *     本当の剥奪が埋もれるため。
+         */
+        delete: operations["deleteUserMembership"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthcheck": {
         parameters: {
             query?: never;
@@ -485,6 +691,177 @@ export interface components {
              *     `password_mode=manual` のときは `null`（呼び出し側が既に平文を持っているため）。
              */
             generated_password: string | null;
+        };
+        /**
+         * @description 1ユーザーの詳細（ApiDesign.md 6.3）。**5.6.2 の詳細画面が必要とする情報を
+         *     1回で返す。** 一覧の要素（`UserListItem`）とは別で、`project_count` を持たず
+         *     代わりに `version` と3つの配列を持つ。
+         */
+        UserDetail: {
+            /** @description ULID（`actor.id`）。 */
+            id: string;
+            /**
+             * @description **Phase 1 は `user` のみ。** エージェントは 404 になる。
+             * @enum {string}
+             */
+            kind: "user";
+            display_name: string;
+            email: string;
+            /** @enum {string} */
+            system_role: "operator" | "administrator";
+            is_active: boolean;
+            /**
+             * Format: date-time
+             * @description 一度もログインしていなければ `null`。
+             */
+            last_login_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * @description 楽観ロック用（`app_user.version`。ApiDesign.md 2.8）。`PATCH` の
+             *     `If-Match` にこの値を入れる。**`display_name` や `is_active` を
+             *     変えた場合も +1 される。**
+             */
+            version: number;
+            /**
+             * @description 認証手段（`DbDesign.md` 6.2 の `user_identity`）。**この配列が Phase 3 の
+             *     IdP 連携をそのまま受け入れる**——OIDC を追加しても要素が1つ増えるだけで、
+             *     応答構造もUIも変わらない。
+             */
+            identities: components["schemas"]["UserIdentity"][];
+            /**
+             * @description プロジェクトごとの権限。**アーカイブ済みプロジェクトも含む**
+             *     （6.1 の `project_count` と件数を食い違わせないため）。
+             */
+            project_memberships: components["schemas"]["UserMembership"][];
+            /**
+             * @description 有効なセッション（`access_token` の `token_type='session'` のうち、
+             *     失効しておらず期限内のもの）。
+             */
+            sessions: components["schemas"]["UserSession"][];
+        };
+        /** @description 認証手段1件（ApiDesign.md 6.3 の `identities[]`）。 */
+        UserIdentity: {
+            id: string;
+            /** @description Phase 1 は `local` のみ（DbDesign.md 7.1 のシード）。 */
+            provider_key: string;
+            /** @enum {string} */
+            provider_type: "local" | "oidc" | "saml";
+            /**
+             * @description `local` では `app_user.email` と同じ文字列。**メールを変更すると
+             *     この値も追随する**（そうしないとログインできなくなる）。
+             */
+            subject: string;
+            /** Format: date-time */
+            linked_at: string;
+            /** Format: date-time */
+            last_used_at: string | null;
+            /**
+             * Format: date-time
+             * @description `local_credential` の列。ローカル以外のプロバイダでは `null`。
+             *     画面（5.6.2 の「認証手段」ブロック）が「最終更新」として出す。
+             */
+            password_updated_at: string | null;
+        };
+        /**
+         * @description プロジェクトメンバーシップ1件（ApiDesign.md 6.3 の `project_memberships[]`）。
+         *     6.8 の `PUT` もこの形を返す。
+         */
+        UserMembership: {
+            project_id: string;
+            project_key: string;
+            project_name: string;
+            /**
+             * @description プロジェクトロールのキー（`project_member.role_key`。
+             *     `project_admin` / `project_member` / `project_viewer`。DbDesign.md 7.3）。
+             */
+            role: string;
+            /**
+             * Format: date-time
+             * @description **ロールを変えても動かない。**
+             */
+            joined_at: string;
+        };
+        /**
+         * @description 有効なセッション1件（ApiDesign.md 6.3 の `sessions[]`）。
+         *     **平文のトークンも `token_hash` も載せない。**
+         */
+        UserSession: {
+            id: string;
+            /** @description 発行時の User-Agent（`access_token.client_info`）。 */
+            client_info: string | null;
+            /** Format: date-time */
+            issued_at: string;
+            /**
+             * Format: date-time
+             * @description 一度も使われていなければ `null`。**1分粒度で間引いて更新される**（Design.md 6.2.2）。
+             */
+            last_used_at: string | null;
+            /**
+             * Format: date-time
+             * @description 無期限なら `null`（Phase 1 のセッションは必ず入る）。
+             */
+            expires_at: string | null;
+        };
+        /**
+         * @description ユーザーの更新（ApiDesign.md 6.4）。**送られたフィールドだけを更新する。**
+         *     4項目とも `null` への更新は無い。
+         */
+        UpdateUserRequest: {
+            /** @description 1〜60文字。前後の空白は落とす（作成時と同じ検証）。 */
+            display_name?: string;
+            /**
+             * Format: email
+             * @description 254文字以内。既に使われていれば `409 already_exists`。
+             *     **変更すると `user_identity.subject` も追随する。**
+             */
+            email?: string;
+            /**
+             * @description 変更すると権限キャッシュが無効化される（Design.md 6.4.5）。
+             *     自分自身の変更は `409 self_modification_forbidden`、最後の有効な
+             *     アドミニストレータの降格は `409 last_administrator`。
+             * @enum {string}
+             */
+            system_role?: "operator" | "administrator";
+            /**
+             * @description `false` にすると次のリクエストから認証を通れなくなる（`Authenticate` が
+             *     `actor.is_active` を見る）。**セッションは失効させない**——必要なら
+             *     6.7 を別に呼ぶ。自分自身の無効化は `409 self_modification_forbidden`。
+             */
+            is_active?: boolean;
+        };
+        /** @description パスワードのリセット（ApiDesign.md 6.6）。**本文そのものを省略してもよい。** */
+        PasswordResetRequest: {
+            /**
+             * @description **`generate` のみ受け付ける。** 省略時も `generate`。
+             * @default generate
+             * @enum {string}
+             */
+            mode: "generate";
+            /**
+             * @description 省略時は `true`。
+             * @default true
+             */
+            must_change_password: boolean;
+        };
+        /** @description 生成された初期パスワード（ApiDesign.md 6.6 の 200）。 */
+        GeneratedPassword: {
+            /**
+             * @description **この応答でのみ返る。** 再表示できず、監査ログにも残さない。
+             *     形式は `<形容詞>-<名詞>-<4桁数字>`（例 `quiet-harbor-4172`。
+             *     ApiDesign.md 6.2.1）。
+             */
+            generated_password: string;
+        };
+        /** @description プロジェクトメンバーシップの付与・変更（ApiDesign.md 6.8）。 */
+        MembershipRequest: {
+            /**
+             * @description プロジェクトロールのキー。妥当性はDB（`role.scope='project'`）に
+             *     問い合わせるため、ここでは列挙しない——`enum` に書き写すと
+             *     DbDesign.md 7.3 のシードと二重管理になる。
+             * @example project_admin
+             */
+            role: string;
         };
         /** @description 一覧の共通エンベロープ（ApiDesign.md 2.6）。 */
         ProjectList: {
@@ -766,6 +1143,12 @@ export interface components {
         };
     };
     parameters: {
+        /**
+         * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+         *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+         *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+         */
+        UserID: string;
         /**
          * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
          *     一致させ、開発時のデバッグを容易にするため。
@@ -1303,6 +1686,402 @@ export interface operations {
                 };
             };
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ユーザーの詳細。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserDetail"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /**
+             * @description ユーザーが存在しない、または `kind` が `user` ではない（`not_found`）。
+             *     **両者を区別しない**（ApiDesign.md 1.2-5）。
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除された。本文は無い。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description ユーザーが存在しない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description 自分自身（`self_modification_forbidden`）、または最後の有効な
+             *     アドミニストレータ（`last_administrator`）。ApiDesign.md 6.5。
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 取得時の `version`。`"3"` のように引用符で囲む（RFC 9110 8.8.3）。 */
+                "If-Match": string;
+            };
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUserRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後のユーザー（6.3 と同形式）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description ユーザーが存在しない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description 次のいずれか（ApiDesign.md 6.4）。
+             *
+             *     - `conflict` — `If-Match` が現在の `version` と一致しない（2.8）
+             *     - `already_exists` — `email` が既に使われている
+             *     - `self_modification_forbidden` — 自分自身のロール変更・無効化
+             *     - `last_administrator` — 最後の有効なアドミニストレータの降格・無効化
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resetUserPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PasswordResetRequest"];
+            };
+        };
+        responses: {
+            /** @description リセットされた。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GeneratedPassword"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description ユーザーが存在しない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description `local_credential` を持たないユーザー（IdP のみ、Phase 3）に対する
+             *     リセット（`conflict`。ApiDesign.md 6.6）。
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    revokeUserSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 失効した。本文は無い。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description ユーザーが存在しない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    putUserMembership: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipRequest"];
+            };
+        };
+        responses: {
+            /** @description 付与・変更後のメンバーシップ（6.3 の `project_memberships[]` と同形）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserMembership"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description ユーザーまたはプロジェクトが存在しない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteUserMembership: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 剥奪された（または元からメンバーではなかった）。本文は無い。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description ユーザーまたはプロジェクトが存在しない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

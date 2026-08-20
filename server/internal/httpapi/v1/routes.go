@@ -129,6 +129,31 @@ func Mount(r chi.Router, deps Deps) {
 			Get("/admin/users", h.listUsers)
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
 			Post("/admin/users", h.createUser)
+
+		// ── ユーザー個別（6.3〜6.8）────────────────────────────
+		//
+		// **プロジェクト個別（5.4〜5.6）と違い RequirePermission のままでよい。**
+		// 誰のアカウントを触るかによって必要権限が変わらないためである
+		// （6章はすべて user.manage）。自分自身や最後のアドミニストレータを
+		// 守るのは認可ではなく業務のガードであり、ハンドラ側にある（6.4 / 6.5）。
+		//
+		// **{id} は静的なセグメントより後に並べても効く。** chi は静的な
+		// セグメントをパラメータより優先するため、/admin/users への
+		// GET / POST は上の2行に届く。
+		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
+			Get("/admin/users/{id}", h.getUser)
+		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
+			Patch("/admin/users/{id}", h.patchUser)
+		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
+			Delete("/admin/users/{id}", h.deleteUser)
+		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
+			Post("/admin/users/{id}/password-reset", h.resetUserPassword)
+		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
+			Post("/admin/users/{id}/sessions/revoke", h.revokeUserSessions)
+		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
+			Put("/admin/users/{id}/memberships/{key}", h.putUserMembership)
+		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
+			Delete("/admin/users/{id}/memberships/{key}", h.deleteUserMembership)
 	})
 }
 

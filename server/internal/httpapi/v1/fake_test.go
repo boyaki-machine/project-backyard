@@ -117,6 +117,38 @@ type fakeQuerier struct {
 	createdCreds  []gen.CreateLocalCredentialParams
 	createUserErr error
 
+	// ユーザー詳細・編集（手順13a。ApiDesign.md 6.3〜6.8）
+	//
+	// detailUser が GetAdminUser の戻り。detailUserErr に pgx.ErrNoRows を
+	// 入れると「居ない（または kind が user でない）」を表せる。
+	detailUser        gen.GetAdminUserRow
+	detailUserErr     error
+	identityRows      []gen.ListUserIdentitiesRow
+	membershipRows    []gen.ListUserProjectMembershipsRow
+	sessionRows       []gen.ListUserSessionsRow
+	activeAdmins      int64
+	updateUserParams  []gen.UpdateAdminUserProfileParams
+	updateUserRows    int64
+	updateUserErr     error
+	updateActorParams []gen.UpdateAdminUserActorParams
+	subjectUpdates    []gen.UpdateLocalIdentitySubjectParams
+	appUserExists     bool
+	commentCount      int64
+	deletedActors     []string
+	deleteUserRows    int64
+	credentialID      string
+	credentialErr     error
+	credentialResets  []gen.ResetLocalCredentialParams
+	revokedActors     []string
+	revokedSessions   int64
+	upsertedMembers   []gen.UpsertProjectMemberParams
+	membershipRow     gen.GetProjectMembershipRow
+	deletedMembers    []gen.DeleteProjectMemberParams
+	deleteMemberRows  int64
+	invalidatedCaches []string
+	projectIDByKey    map[string]string
+	projectRoles      map[string]bool
+
 	// 認可ミドルウェア（RequireProjectPermission）が引く行。
 	// key ごとに「プロジェクトの存在・自分のロール・その権限」を持つ。
 	projectAuthzRows map[string][]gen.FindProjectAuthzByKeyRow
@@ -595,4 +627,126 @@ func (q *fakeQuerier) CreateLocalCredential(_ context.Context, arg gen.CreateLoc
 	q.opLog = append(q.opLog, "CreateLocalCredential")
 	q.createdCreds = append(q.createdCreds, arg)
 	return nil
+}
+
+// ── ユーザー詳細・編集（手順13a）──────────────────────────────
+
+func (q *fakeQuerier) GetAdminUser(_ context.Context, actorID string) (gen.GetAdminUserRow, error) {
+	q.opLog = append(q.opLog, "GetAdminUser")
+	if q.detailUserErr != nil {
+		return gen.GetAdminUserRow{}, q.detailUserErr
+	}
+	row := q.detailUser
+	if row.ID == "" {
+		row.ID = actorID
+	}
+	return row, nil
+}
+
+func (q *fakeQuerier) ListUserIdentities(context.Context, string) ([]gen.ListUserIdentitiesRow, error) {
+	return q.identityRows, nil
+}
+
+func (q *fakeQuerier) ListUserProjectMemberships(context.Context, string) ([]gen.ListUserProjectMembershipsRow, error) {
+	return q.membershipRows, nil
+}
+
+func (q *fakeQuerier) ListUserSessions(context.Context, string) ([]gen.ListUserSessionsRow, error) {
+	return q.sessionRows, nil
+}
+
+func (q *fakeQuerier) CountActiveAdministrators(context.Context) (int64, error) {
+	return q.activeAdmins, nil
+}
+
+func (q *fakeQuerier) UpdateAdminUserProfile(_ context.Context, arg gen.UpdateAdminUserProfileParams) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateAdminUserProfile")
+	q.updateUserParams = append(q.updateUserParams, arg)
+	if q.updateUserErr != nil {
+		return 0, q.updateUserErr
+	}
+	return q.updateUserRows, nil
+}
+
+func (q *fakeQuerier) UpdateAdminUserActor(_ context.Context, arg gen.UpdateAdminUserActorParams) error {
+	q.opLog = append(q.opLog, "UpdateAdminUserActor")
+	q.updateActorParams = append(q.updateActorParams, arg)
+	return nil
+}
+
+func (q *fakeQuerier) UpdateLocalIdentitySubject(_ context.Context, arg gen.UpdateLocalIdentitySubjectParams) error {
+	q.opLog = append(q.opLog, "UpdateLocalIdentitySubject")
+	q.subjectUpdates = append(q.subjectUpdates, arg)
+	return nil
+}
+
+func (q *fakeQuerier) AppUserExists(context.Context, string) (bool, error) {
+	return q.appUserExists, nil
+}
+
+func (q *fakeQuerier) InvalidateActorPermissionCache(_ context.Context, actorID string) error {
+	q.opLog = append(q.opLog, "InvalidateActorPermissionCache")
+	q.invalidatedCaches = append(q.invalidatedCaches, actorID)
+	return nil
+}
+
+func (q *fakeQuerier) CountCommentsByAuthor(context.Context, string) (int64, error) {
+	return q.commentCount, nil
+}
+
+func (q *fakeQuerier) DeleteActorByID(_ context.Context, actorID string) (int64, error) {
+	q.opLog = append(q.opLog, "DeleteActorByID")
+	q.deletedActors = append(q.deletedActors, actorID)
+	return q.deleteUserRows, nil
+}
+
+func (q *fakeQuerier) FindLocalCredentialByActor(context.Context, string) (string, error) {
+	if q.credentialErr != nil {
+		return "", q.credentialErr
+	}
+	return q.credentialID, nil
+}
+
+func (q *fakeQuerier) ResetLocalCredential(_ context.Context, arg gen.ResetLocalCredentialParams) error {
+	q.opLog = append(q.opLog, "ResetLocalCredential")
+	q.credentialResets = append(q.credentialResets, arg)
+	return nil
+}
+
+func (q *fakeQuerier) RevokeActorSessions(_ context.Context, actorID string) (int64, error) {
+	q.opLog = append(q.opLog, "RevokeActorSessions")
+	q.revokedActors = append(q.revokedActors, actorID)
+	return q.revokedSessions, nil
+}
+
+func (q *fakeQuerier) FindProjectIDByKey(_ context.Context, key string) (string, error) {
+	id, ok := q.projectIDByKey[key]
+	if !ok {
+		return "", pgx.ErrNoRows
+	}
+	return id, nil
+}
+
+func (q *fakeQuerier) IsProjectScopedRole(_ context.Context, key string) (bool, error) {
+	return q.projectRoles[key], nil
+}
+
+func (q *fakeQuerier) UpsertProjectMember(_ context.Context, arg gen.UpsertProjectMemberParams) error {
+	q.opLog = append(q.opLog, "UpsertProjectMember")
+	q.upsertedMembers = append(q.upsertedMembers, arg)
+	return nil
+}
+
+func (q *fakeQuerier) GetProjectMembership(_ context.Context, arg gen.GetProjectMembershipParams) (gen.GetProjectMembershipRow, error) {
+	row := q.membershipRow
+	if row.ProjectID == "" {
+		row.ProjectID = arg.ProjectID
+	}
+	return row, nil
+}
+
+func (q *fakeQuerier) DeleteProjectMember(_ context.Context, arg gen.DeleteProjectMemberParams) (int64, error) {
+	q.opLog = append(q.opLog, "DeleteProjectMember")
+	q.deletedMembers = append(q.deletedMembers, arg)
+	return q.deleteMemberRows, nil
 }
