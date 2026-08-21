@@ -80,3 +80,119 @@ export function listUsers(query: ListUsersQuery = {}): Promise<UserList> {
 export function createUser(body: CreateUserRequest): Promise<CreatedUser> {
   return api.post<CreatedUser>('/admin/users', body)
 }
+
+// ── ユーザー詳細・編集（`ApiDesign.md` 6.3〜6.8）────────────────────
+//
+// **API は手順13a で実装済み**で、ここに足すのは呼び出しのラッパだけである
+// （消費者と同じセッションに入れるため 13a では書かなかった）。
+
+export type UserDetail = components['schemas']['UserDetail']
+export type UserIdentity = components['schemas']['UserIdentity']
+export type UserMembership = components['schemas']['UserMembership']
+export type UserSession = components['schemas']['UserSession']
+export type UpdateUserRequest = components['schemas']['UpdateUserRequest']
+export type PasswordResetRequest = components['schemas']['PasswordResetRequest']
+export type GeneratedPassword = components['schemas']['GeneratedPassword']
+export type MembershipRequest = components['schemas']['MembershipRequest']
+
+/**
+ * ユーザーの詳細（`ApiDesign.md` 6.3）。
+ *
+ * 本体・認証手段・プロジェクトごとの権限・有効なセッションが1回で返るので、
+ * 詳細画面（`GuiDesign.md` 5.6.2）はこの1本で描ける（設計方針3）。
+ *
+ * **`kind='user'` のアクターだけを返す**。エージェント・システムアクターは 404
+ * になる（13a の判断）。**一覧と違い `ETag` は返らない**——鮮度は `version` が表す。
+ */
+export function getUser(id: string): Promise<UserDetail> {
+  return api.get<UserDetail>(`/admin/users/${encodeURIComponent(id)}`)
+}
+
+/**
+ * ユーザーの更新（`ApiDesign.md` 6.4）。
+ *
+ * **送るのは変更したフィールドだけ**（部分更新）。`version` は取得時の値を
+ * `If-Match` に載せる（2.8）。食い違えば 409 で、成功すると +1 される。
+ * **`display_name` や `is_active` だけを変えた場合も +1 される**——ユーザー1人に
+ * つき `version` は1つ、という約束にしないと古い値で二度目が通ってしまう。
+ *
+ * 409 は4種類ありうる（`conflict` / `already_exists` /
+ * `self_modification_forbidden` / `last_administrator`）。**画面は
+ * `message` をそのまま出す**ので、コードで分岐するのは楽観ロックの
+ * `conflict`（再取得を促す）だけでよい。
+ */
+export function updateUser(
+  id: string,
+  version: number,
+  body: UpdateUserRequest,
+): Promise<UserDetail> {
+  return api.patch<UserDetail>(`/admin/users/${encodeURIComponent(id)}`, body, {
+    // RFC 9110 8.8.3 の entity-tag。引用符で囲む（`projects.ts` と同じ）
+    headers: { 'If-Match': `"${version}"` },
+  })
+}
+
+/**
+ * ユーザーの削除（`ApiDesign.md` 6.5）。物理削除で `204`。
+ *
+ * **`If-Match` は要求しない**（2.8）。失われる編集内容が無く、競合しても
+ * 「消えている」に収束するため。自分自身と最後の有効なアドミニストレータは 409。
+ */
+export function deleteUser(id: string): Promise<void> {
+  return api.del<void>(`/admin/users/${encodeURIComponent(id)}`)
+}
+
+/**
+ * パスワードのリセット（`ApiDesign.md` 6.6）。
+ *
+ * **本文そのものを省略してよい**（`mode=generate` / `must_change_password=true`）。
+ * `mode` は `generate` のみ受け付けるので、画面から選ばせるものが無い。
+ *
+ * `local_credential` を差し替え、`failed_attempts` と `locked_until` をリセットし、
+ * **全セッションを失効**する。**`generated_password` はこの応答でのみ返る**
+ * （再表示できず、監査ログにも残らない）。
+ */
+export function resetUserPassword(id: string): Promise<GeneratedPassword> {
+  return api.post<GeneratedPassword>(`/admin/users/${encodeURIComponent(id)}/password-reset`)
+}
+
+/**
+ * 全セッションの失効（`ApiDesign.md` 6.7）。`204`。
+ *
+ * **冪等**で、有効なトークンが1本も無くても `204` を返す。
+ * **個別のセッションを失効させる API は Phase 1 では持たない**——一覧は参照のみ
+ * で、行ごとの `[失効]` は出さない（`GuiDesign.md` 5.6.2、13a の判断）。
+ */
+export function revokeUserSessions(id: string): Promise<void> {
+  return api.post<void>(`/admin/users/${encodeURIComponent(id)}/sessions/revoke`)
+}
+
+/**
+ * プロジェクトメンバーシップの付与・変更（`ApiDesign.md` 6.8）。
+ *
+ * **追加と変更を兼ねる（冪等）。** 既にメンバーならロールを上書きし、
+ * `joined_at` は最初の1回のまま動かない。応答は 6.3 の
+ * `project_memberships[]` の要素と同形。
+ */
+export function putMembership(
+  id: string,
+  projectKey: string,
+  role: string,
+): Promise<UserMembership> {
+  const body: MembershipRequest = { role }
+  return api.put<UserMembership>(
+    `/admin/users/${encodeURIComponent(id)}/memberships/${encodeURIComponent(projectKey)}`,
+    body,
+  )
+}
+
+/**
+ * プロジェクトメンバーシップの剥奪（`ApiDesign.md` 6.8）。`204`。
+ *
+ * **冪等**で、元からメンバーでなくても `204` を返す。
+ */
+export function deleteMembership(id: string, projectKey: string): Promise<void> {
+  return api.del<void>(
+    `/admin/users/${encodeURIComponent(id)}/memberships/${encodeURIComponent(projectKey)}`,
+  )
+}

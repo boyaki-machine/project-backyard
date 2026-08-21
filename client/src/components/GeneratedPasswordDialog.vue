@@ -1,22 +1,37 @@
 <script setup lang="ts">
 /**
- * 初期パスワードの1回表示（`GuiDesign.md` 5.6.1）。
+ * 生成されたパスワードの1回表示（`GuiDesign.md` 5.6.1）。
  *
- * **`generated_password` はユーザー作成の応答でのみ返る**（`ApiDesign.md` 6.2）。
- * 再表示する API は無く、監査ログにも残らない。そのため
+ * **`generated_password` は生成した応答でのみ返る**（`ApiDesign.md` 6.2 の作成、
+ * 6.6 のリセット）。再表示する API は無く、監査ログにも残らない。そのため
  *
  * - 再表示できない旨を明記する
  * - コピーボタンを置く（`ApiDesign.md` 4.5 のトークン発行と同じ扱い）
  * - **コピーに失敗しても値は画面に出したままにする**（手で写せるように）
  *
+ * **作成とリセットで同じ部品を使う**（手順13b）。値の性質——1回だけ・再表示不可・
+ * コピーして渡す——が同じで、違うのは見出しと導入の1文だけである。そこだけを
+ * 呼び出し側から渡す。
+ *
  * `password_mode=manual` のときは呼び出し側が平文を持っているのでこの
- * ダイアログを出さない。開閉の判断は `UsersPage` にある。
+ * ダイアログを出さない。開閉の判断は呼び出し側にある。
  */
 import { ref, useTemplateRef } from 'vue'
 
 import Modal from './Modal.vue'
 
-defineProps<{ displayName: string; email: string; password: string }>()
+withDefaults(
+  defineProps<{
+    displayName: string
+    email: string
+    password: string
+    /** 見出し。リセットでは「パスワードをリセットしました」になる */
+    title?: string
+    /** 導入の1文。`<strong>` で囲む表示名の後ろに続く文言 */
+    leadSuffix?: string
+  }>(),
+  { title: '初期パスワード', leadSuffix: 'を追加しました。' },
+)
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -56,11 +71,9 @@ async function copy(password: string) {
 </script>
 
 <template>
-  <Modal title="初期パスワード" @close="emit('close')">
+  <Modal :title="title" @close="emit('close')">
     <div class="body">
-      <p class="lead">
-        <strong>{{ displayName }}</strong> を追加しました。
-      </p>
+      <p class="lead"><strong>{{ displayName }}</strong> {{ leadSuffix }}</p>
 
       <!-- warning は「面」で表す（8.4.1）。文字色はベースのまま -->
       <p class="warn">⚠ このパスワードはこの画面でしか確認できません。閉じると再表示できません。</p>
@@ -83,7 +96,7 @@ async function copy(password: string) {
       </dl>
 
       <p class="hint">
-        本人には、このパスワードと初回ログイン後に変更する必要があることを伝えてください。
+        本人には、このパスワードと次回ログイン後に変更する必要があることを伝えてください。
       </p>
     </div>
 

@@ -23,6 +23,52 @@ const PROJECT_ROLE_LABELS: Record<string, string> = {
 }
 
 /**
+ * 選択肢として出すロール（`DbDesign.md` 7.3 の `sort_order` の順）。
+ *
+ * **並びも表示名もDBのシードが正本**である。手順14 で `GET /roles` を
+ * 実装したら、この配列ごと応答に置き換わる。
+ */
+export interface RoleChoice {
+  key: string
+  label: string
+  /** `role.description`。選択肢の下に添えて、選ぶ前に違いが読めるようにする */
+  description: string
+}
+
+/** システムロール（`sort_order` 10 / 20） */
+export const SYSTEM_ROLES: RoleChoice[] = [
+  {
+    key: 'operator',
+    label: 'オペレータ',
+    description: 'プロジェクトとチケットの閲覧・編集ができます',
+  },
+  {
+    key: 'administrator',
+    label: 'アドミニストレータ',
+    description: 'ユーザー管理・システム設定を含む全操作ができます',
+  },
+]
+
+/** プロジェクトロール（`sort_order` 30 / 40 / 50） */
+export const PROJECT_ROLES: RoleChoice[] = [
+  {
+    key: 'project_admin',
+    label: 'プロジェクト管理者',
+    description: '当該プロジェクトの全操作と承認ができます',
+  },
+  {
+    key: 'project_member',
+    label: 'メンバー',
+    description: '当該プロジェクトのチケットを作成・編集できます',
+  },
+  {
+    key: 'project_viewer',
+    label: '閲覧者',
+    description: '当該プロジェクトを閲覧のみできます',
+  },
+]
+
+/**
  * 未知のキーはそのまま返す。
  *
  * 対応表はDBのシードの写しであり、片方だけ増えることがありうる
