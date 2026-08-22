@@ -86,12 +86,14 @@ type Querier interface {
 	CreateProject(ctx context.Context, arg CreateProjectParams) error
 	CreateProjectCounter(ctx context.Context, projectID string) error
 	CreateProjectWorkflow(ctx context.Context, arg CreateProjectWorkflowParams) error
+	CreateSprint(ctx context.Context, arg CreateSprintParams) error
 	// CreateSystemActor はシステムアクターを1件作る。
 	//
 	// **シードで先に置かず、最初に必要になった削除で作る**（手順13a の判断）。
 	// Phase 1 に comment を作る経路が無く、置いても一度も参照されないため。
 	//
 	CreateSystemActor(ctx context.Context, arg CreateSystemActorParams) error
+	CreateTag(ctx context.Context, arg CreateTagParams) error
 	CreateUserActor(ctx context.Context, arg CreateUserActorParams) error
 	CreateUserIdentity(ctx context.Context, arg CreateUserIdentityParams) error
 	CreateWorkflowStatus(ctx context.Context, arg CreateWorkflowStatusParams) error
@@ -119,6 +121,13 @@ type Querier interface {
 	// 返す（何度呼んでも「居ない」状態に収束する）。
 	//
 	DeleteProjectMember(ctx context.Context, arg DeleteProjectMemberParams) (int64, error)
+	// ticket.sprint_id は fk_ticket_sprint の ON DELETE SET NULL で外れる
+	// （DbDesign.md 6.9）。チケットは消えず、スプリント未設定に戻る。
+	DeleteSprint(ctx context.Context, arg DeleteSprintParams) (int64, error)
+	// ticket_tag は ON DELETE CASCADE で追従する（DbDesign.md 6.10）。
+	// 使用中でも削除できる。禁止すると、要らなくなった分類を消すために
+	// 全チケットから手で外すことになる（ApiDesign.md 9.11）。
+	DeleteTag(ctx context.Context, arg DeleteTagParams) (int64, error)
 	// 認証に関するクエリ（Design.md 6.2.2、DbDesign.md 6.2）。
 	// FindAccessTokenByHash は受け取った平文の SHA-256 で access_token を引く。
 	//
@@ -263,6 +272,10 @@ type Querier interface {
 	// 返した role が既に古いことがありうる（UpdateProject と同じ考え方）。
 	//
 	GetProjectMembership(ctx context.Context, arg GetProjectMembershipParams) (GetProjectMembershipRow, error)
+	// 1件だけ返す形。POST / PATCH の応答（B-2）で使う。
+	GetSprintByID(ctx context.Context, arg GetSprintByIDParams) (GetSprintByIDRow, error)
+	// 1件だけ返す形。POST / PATCH の応答（ApiDesign.md 9.11、B-2）で使う。
+	GetTagByID(ctx context.Context, arg GetTagByIDParams) (GetTagByIDRow, error)
 	// 監査ログ（ApiDesign.md 2.10、DbDesign.md 6.8）。
 	//
 	// 読み出し（GET /admin/audit、auditlog.view）は手順11以降で足す。
@@ -448,6 +461,37 @@ type Querier interface {
 	// 同着のときは key で並べ、応答が呼ぶたびに入れ替わらないようにする。
 	//
 	ListRoles(ctx context.Context, scopeFilter string) ([]Role, error)
+	// スプリントに関するクエリ（DbDesign.md 6.9、ApiDesign.md 9.12）。
+	//
+	// 手順16a で追加。プロジェクト設定のスプリントタブ（GuiDesign.md 5.9.5）が
+	// 消費者で、手順17 のチケット詳細サイドバーが選択肢として同じ一覧を読む。
+	//
+	// **Phase 1 で開けるのは定義だけ**である。バーンダウン・ベロシティを含む
+	// スプリント管理画面は Phase 2（GuiDesign.md 10章）。
+	// items[] は start_date 降順（NULL は末尾）、同値は created_at 降順
+	// （ApiDesign.md 9.12）。新しいものが上に来る並びで、5.9.5 の図と一致する。
+	//
+	// closed_count は closed_at IS NOT NULL で数える。status_category = 'done'
+	// では数えない——9.13 の open / overdue が closed_at を基準にしており、
+	// closed_at は遷移の副作用としてのみ動く（DbDesign.md 6.6）ため、
+	// ワークフローの定義が違うプロジェクトでも意味が変わらない。
+	ListSprintsByProject(ctx context.Context, projectID string) ([]ListSprintsByProjectRow, error)
+	// タグに関するクエリ（DbDesign.md 6.10、ApiDesign.md 9.11）。
+	//
+	// 手順16a で追加。プロジェクト設定のタグタブ（GuiDesign.md 5.9.4）が消費者で、
+	// 手順16b のバックログがグループ化の軸として同じ一覧を読む。
+	//
+	// **すべてのクエリが project_id で閉じている。** タグはプロジェクトの資源であり、
+	// 他プロジェクトの ID を渡されても行が返らないようにするためである。到達可否
+	// （メンバーか）の判定は RequireProjectPermission が済ませている（Design.md 6.4.5）。
+	// items[] は sort_order 昇順、同値は name 昇順（ApiDesign.md 9.11）。
+	// 第2キーを置くのは、sort_order が重複したときに順序が実行ごとに揺れないため。
+	// name は ja-JP-x-icu で比較する（DbDesign.md 4.4 の既定照合順）。
+	//
+	// ticket_count は削除確認ダイアログが出す「12件のチケットで使われています」
+	// （GuiDesign.md 5.9.4 / 6.3）。LEFT JOIN + COUNT ではなく相関副問い合わせに
+	// するのは、タグが数十件で、行ごとに1回引いても差が出ないためである。
+	ListTagsByProject(ctx context.Context, projectID string) ([]ListTagsByProjectRow, error)
 	// ListUserIdentities は 6.3 の identities[] を引く。
 	//
 	// **配列であることが Phase 3 の IdP 連携をそのまま受け入れる**（ApiDesign.md 6.3、
@@ -484,6 +528,9 @@ type Querier interface {
 	ListUserSessions(ctx context.Context, actorID string) ([]ListUserSessionsRow, error)
 	ListWorkflowStatuses(ctx context.Context, workflowID string) ([]ListWorkflowStatusesRow, error)
 	ListWorkflowTransitions(ctx context.Context, workflowID string) ([]ListWorkflowTransitionsRow, error)
+	// sort_order 省略時の既定（現在の最大値 + 10）。行が無ければ 10 から始める。
+	// 10刻みにするのは、並べ替え（9.11.1）が同じ間隔で振り直すためである。
+	NextTagSortOrder(ctx context.Context, projectID string) (int32, error)
 	// ── キーの重複確認（ApiDesign.md 5.2）───────────────────────
 	// ProjectKeyExists は check-key の判定に使う。
 	//
@@ -712,6 +759,14 @@ type Querier interface {
 	// 組み立てる（5.5 の応答は 5.4 と同形式）。同じ形を2か所で作らないため。
 	//
 	UpdateProject(ctx context.Context, arg UpdateProjectParams) (int64, error)
+	// COALESCE による部分更新。goal / start_date / end_date は NULL を
+	// 「値として設定する」ことがある（欄を空にする操作）ため、送られたかどうかを
+	// COALESCE では区別できない。**明示的なフラグ引数で分ける**
+	// （users_update.go の同種の扱いに揃える）。
+	UpdateSprint(ctx context.Context, arg UpdateSprintParams) (int64, error)
+	// COALESCE による部分更新。sqlc.narg は NULL 可の引数を作る（PATCH の
+	// 「送られたフィールドだけ変える」を1文で表すため。users_update と同じ型）。
+	UpdateTag(ctx context.Context, arg UpdateTagParams) (int64, error)
 	// ── プロジェクトメンバーシップ（ApiDesign.md 6.8）───────────────
 	// UpsertProjectMember は PUT /admin/users/:id/memberships/:project_key。
 	//

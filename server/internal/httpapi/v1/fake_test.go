@@ -57,6 +57,27 @@ type fakeQuerier struct {
 	tokenRow gen.FindAccessTokenByHashRow
 	tokenErr error
 
+	// タグ・スプリント（手順16a）
+	tagRows              []gen.ListTagsByProjectRow
+	tagByID              map[string]gen.GetTagByIDRow
+	tagErr               error
+	tagListProjectIDs    []string
+	nextTagSortOrder     int32
+	createdTags          []gen.CreateTagParams
+	createTagErr         error
+	updatedTags          []gen.UpdateTagParams
+	updateTagErr         error
+	deletedTags          []gen.DeleteTagParams
+	sprintRows           []gen.ListSprintsByProjectRow
+	sprintByID           map[string]gen.GetSprintByIDRow
+	sprintErr            error
+	sprintListProjectIDs []string
+	createdSprints       []gen.CreateSprintParams
+	createSprintErr      error
+	updatedSprints       []gen.UpdateSprintParams
+	updateSprintErr      error
+	deletedSprints       []gen.DeleteSprintParams
+
 	// プロフィールと権限
 	profileRow  gen.GetActorProfileRow
 	profileErr  error
@@ -887,4 +908,151 @@ func (q *fakeQuerier) ListPermissions(context.Context) ([]gen.Permission, error)
 		return nil, q.catalogErr
 	}
 	return q.catalogPerms, nil
+}
+
+// ── タグ・スプリント（手順16a。ApiDesign.md 9.11 / 9.12）──────────
+//
+// **1件取得は ID をキーにした map で持つ。** ハンドラが「書いてから読み直す」
+// 形（ticket_count を応答に載せるため）なので、書き込みの結果が読み取りに
+// 反映されないと、作成・更新の応答を検証できない。
+
+func (q *fakeQuerier) ListTagsByProject(_ context.Context, projectID string) ([]gen.ListTagsByProjectRow, error) {
+	q.opLog = append(q.opLog, "ListTagsByProject")
+	q.tagListProjectIDs = append(q.tagListProjectIDs, projectID)
+	if q.tagErr != nil {
+		return nil, q.tagErr
+	}
+	return q.tagRows, nil
+}
+
+func (q *fakeQuerier) GetTagByID(_ context.Context, arg gen.GetTagByIDParams) (gen.GetTagByIDRow, error) {
+	q.opLog = append(q.opLog, "GetTagByID")
+	row, ok := q.tagByID[arg.ID]
+	if !ok {
+		return gen.GetTagByIDRow{}, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+func (q *fakeQuerier) NextTagSortOrder(_ context.Context, _ string) (int32, error) {
+	q.opLog = append(q.opLog, "NextTagSortOrder")
+	return q.nextTagSortOrder, nil
+}
+
+func (q *fakeQuerier) CreateTag(_ context.Context, arg gen.CreateTagParams) error {
+	q.opLog = append(q.opLog, "CreateTag")
+	q.createdTags = append(q.createdTags, arg)
+	if q.createTagErr != nil {
+		return q.createTagErr
+	}
+	if q.tagByID == nil {
+		q.tagByID = map[string]gen.GetTagByIDRow{}
+	}
+	q.tagByID[arg.ID] = gen.GetTagByIDRow{
+		ID: arg.ID, Name: arg.Name, SortOrder: arg.SortOrder,
+	}
+	return nil
+}
+
+func (q *fakeQuerier) UpdateTag(_ context.Context, arg gen.UpdateTagParams) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateTag")
+	q.updatedTags = append(q.updatedTags, arg)
+	if q.updateTagErr != nil {
+		return 0, q.updateTagErr
+	}
+	row, ok := q.tagByID[arg.ID]
+	if !ok {
+		return 0, nil
+	}
+	if arg.Name.Valid {
+		row.Name = arg.Name.String
+	}
+	if arg.SortOrder.Valid {
+		row.SortOrder = arg.SortOrder.Int32
+	}
+	q.tagByID[arg.ID] = row
+	return 1, nil
+}
+
+func (q *fakeQuerier) DeleteTag(_ context.Context, arg gen.DeleteTagParams) (int64, error) {
+	q.opLog = append(q.opLog, "DeleteTag")
+	q.deletedTags = append(q.deletedTags, arg)
+	if _, ok := q.tagByID[arg.ID]; !ok {
+		return 0, nil
+	}
+	delete(q.tagByID, arg.ID)
+	return 1, nil
+}
+
+func (q *fakeQuerier) ListSprintsByProject(_ context.Context, projectID string) ([]gen.ListSprintsByProjectRow, error) {
+	q.opLog = append(q.opLog, "ListSprintsByProject")
+	q.sprintListProjectIDs = append(q.sprintListProjectIDs, projectID)
+	if q.sprintErr != nil {
+		return nil, q.sprintErr
+	}
+	return q.sprintRows, nil
+}
+
+func (q *fakeQuerier) GetSprintByID(_ context.Context, arg gen.GetSprintByIDParams) (gen.GetSprintByIDRow, error) {
+	q.opLog = append(q.opLog, "GetSprintByID")
+	row, ok := q.sprintByID[arg.ID]
+	if !ok {
+		return gen.GetSprintByIDRow{}, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+func (q *fakeQuerier) CreateSprint(_ context.Context, arg gen.CreateSprintParams) error {
+	q.opLog = append(q.opLog, "CreateSprint")
+	q.createdSprints = append(q.createdSprints, arg)
+	if q.createSprintErr != nil {
+		return q.createSprintErr
+	}
+	if q.sprintByID == nil {
+		q.sprintByID = map[string]gen.GetSprintByIDRow{}
+	}
+	q.sprintByID[arg.ID] = gen.GetSprintByIDRow{
+		ID: arg.ID, Name: arg.Name, Goal: arg.Goal,
+		StartDate: arg.StartDate, EndDate: arg.EndDate, Status: arg.Status,
+	}
+	return nil
+}
+
+func (q *fakeQuerier) UpdateSprint(_ context.Context, arg gen.UpdateSprintParams) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateSprint")
+	q.updatedSprints = append(q.updatedSprints, arg)
+	if q.updateSprintErr != nil {
+		return 0, q.updateSprintErr
+	}
+	row, ok := q.sprintByID[arg.ID]
+	if !ok {
+		return 0, nil
+	}
+	if arg.Name.Valid {
+		row.Name = arg.Name.String
+	}
+	if arg.Status.Valid {
+		row.Status = arg.Status.String
+	}
+	if arg.SetGoal {
+		row.Goal = arg.Goal
+	}
+	if arg.SetStartDate {
+		row.StartDate = arg.StartDate
+	}
+	if arg.SetEndDate {
+		row.EndDate = arg.EndDate
+	}
+	q.sprintByID[arg.ID] = row
+	return 1, nil
+}
+
+func (q *fakeQuerier) DeleteSprint(_ context.Context, arg gen.DeleteSprintParams) (int64, error) {
+	q.opLog = append(q.opLog, "DeleteSprint")
+	q.deletedSprints = append(q.deletedSprints, arg)
+	if _, ok := q.sprintByID[arg.ID]; !ok {
+		return 0, nil
+	}
+	delete(q.sprintByID, arg.ID)
+	return 1, nil
 }

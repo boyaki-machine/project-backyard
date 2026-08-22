@@ -129,6 +129,22 @@ type Comment struct {
 	DeletedAt  pgtype.Timestamptz
 }
 
+type DodItem struct {
+	ID          string
+	TicketID    string
+	SortOrder   int32
+	Type        string
+	Body        string
+	Config      []byte
+	IsSatisfied bool
+	SatisfiedAt pgtype.Timestamptz
+	SatisfiedBy pgtype.Text
+	Evidence    pgtype.Text
+	Origin      string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type LocalCredential struct {
 	IdentityID        string
 	PasswordHash      string
@@ -200,6 +216,15 @@ type Sprint struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type Tag struct {
+	ID        string
+	ProjectID string
+	Name      string
+	SortOrder int32
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type Ticket struct {
 	ID              string
 	ProjectID       string
@@ -242,6 +267,11 @@ type TicketLink struct {
 	Confidence     pgtype.Float8
 	CreatedBy      pgtype.Text
 	CreatedAt      pgtype.Timestamptz
+}
+
+type TicketTag struct {
+	TicketID string
+	TagID    string
 }
 
 type UserIdentity struct {

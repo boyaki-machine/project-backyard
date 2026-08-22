@@ -20,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -85,12 +87,36 @@ type devProject struct {
 	Description      string      `yaml:"description"`
 	WorkflowTemplate string      `yaml:"workflow_template"`
 	Members          []devMember `yaml:"members"`
+	Tags             []devTag    `yaml:"tags"`
+	Sprints          []devSprint `yaml:"sprints"`
 }
 
 type devMember struct {
 	Email string `yaml:"email"`
 	Role  string `yaml:"role"`
 }
+
+// devTag はタグの定義（DbDesign.md 6.10、手順16a）。
+//
+// **色を持たない**（GuiDesign.md 8.6）。プロジェクト内で name が一意。
+type devTag struct {
+	Name      string `yaml:"name"`
+	SortOrder int32  `yaml:"sort_order"`
+}
+
+// devSprint はスプリントの定義（DbDesign.md 6.9、手順16a）。
+//
+// 日付は YYYY-MM-DD。status は planned / active / completed。
+type devSprint struct {
+	Name      string `yaml:"name"`
+	Goal      string `yaml:"goal"`
+	StartDate string `yaml:"start_date"`
+	EndDate   string `yaml:"end_date"`
+	Status    string `yaml:"status"`
+}
+
+// devSprintStatuses は sprint.status の CHECK 制約（DbDesign.md 6.9）。
+var devSprintStatuses = map[string]bool{"planned": true, "active": true, "completed": true}
 
 // runDev は dev サブコマンドを振り分ける。
 func runDev(ctx context.Context, args []string) error {
@@ -250,6 +276,56 @@ func (d *devData) validate() error {
 				return fmt.Errorf("%s.members[%d]: role が空です", where, j)
 			}
 		}
+
+		// タグは name がプロジェクト内で一意（DbDesign.md 6.10 の uq_tag_project_name）。
+		// DBの制約でも弾けるが、そちらのエラーは何行目が悪いのかが分からない。
+		tagNames := make(map[string]bool, len(p.Tags))
+		for j, tag := range p.Tags {
+			at := fmt.Sprintf("%s.tags[%d]", where, j)
+			if tag.Name == "" {
+				return fmt.Errorf("%s: name が空です", at)
+			}
+			if n := utf8.RuneCountInString(tag.Name); n > 30 {
+				return fmt.Errorf("%s: name は30文字以内です（%d文字）", at, n)
+			}
+			if tagNames[tag.Name] {
+				return fmt.Errorf("%s: name が重複しています（%q）", at, tag.Name)
+			}
+			tagNames[tag.Name] = true
+		}
+
+		// **スプリントは name の重複そのものは許す**（6.9 に一意制約が無い）。
+		// ただし投入の冪等性を名前で判定しているため、定義ファイルの中で
+		// 重複していると2回目以降に作られない行ができる。定義側は弾く。
+		sprintNames := make(map[string]bool, len(p.Sprints))
+		for j, sp := range p.Sprints {
+			at := fmt.Sprintf("%s.sprints[%d]", where, j)
+			if sp.Name == "" {
+				return fmt.Errorf("%s: name が空です", at)
+			}
+			if n := utf8.RuneCountInString(sp.Name); n > 50 {
+				return fmt.Errorf("%s: name は50文字以内です（%d文字）", at, n)
+			}
+			if sprintNames[sp.Name] {
+				return fmt.Errorf("%s: name が重複しています（%q。冪等性の判定に使うため定義側では許さない）", at, sp.Name)
+			}
+			sprintNames[sp.Name] = true
+
+			if sp.Status != "" && !devSprintStatuses[sp.Status] {
+				return fmt.Errorf("%s: status は planned / active / completed です（%q）", at, sp.Status)
+			}
+			start, err := devDate(sp.StartDate)
+			if err != nil {
+				return fmt.Errorf("%s.start_date: %w", at, err)
+			}
+			end, err := devDate(sp.EndDate)
+			if err != nil {
+				return fmt.Errorf("%s.end_date: %w", at, err)
+			}
+			if start.Valid && end.Valid && start.Time.After(end.Time) {
+				return fmt.Errorf("%s: end_date は start_date 以降にしてください（ck_sprint_dates）", at)
+			}
+		}
 	}
 	return nil
 }
@@ -298,6 +374,10 @@ type seedResult struct {
 	projectsSkipped int
 	projectsDeleted int
 	membersAdded    int
+	tagsCreated     int
+	tagsSkipped     int
+	sprintsCreated  int
+	sprintsSkipped  int
 }
 
 func (r seedResult) print(w io.Writer) {
@@ -307,6 +387,10 @@ func (r seedResult) print(w io.Writer) {
 	fmt.Fprintf(w, "ユーザー   : 作成 %d / スキップ %d\n", r.usersCreated, r.usersSkipped)
 	fmt.Fprintf(w, "プロジェクト: 作成 %d / スキップ %d（メンバー登録 %d）\n",
 		r.projectsCreated, r.projectsSkipped, r.membersAdded)
+	if r.tagsCreated+r.tagsSkipped+r.sprintsCreated+r.sprintsSkipped > 0 {
+		fmt.Fprintf(w, "タグ       : 作成 %d / スキップ %d\n", r.tagsCreated, r.tagsSkipped)
+		fmt.Fprintf(w, "スプリント : 作成 %d / スキップ %d\n", r.sprintsCreated, r.sprintsSkipped)
+	}
 }
 
 // applyDevData は削除と投入を1トランザクションで実行する（7.6.2）。
@@ -498,7 +582,108 @@ func seedProject(ctx context.Context, q gen.Querier, rec *audit.Recorder, p devP
 		}
 		result.membersAdded++
 	}
+
+	if err := seedTags(ctx, q, projectID, p, result); err != nil {
+		return err
+	}
+	return seedSprints(ctx, q, projectID, p, result)
+}
+
+// seedTags はプロジェクトのタグを投入する（DbDesign.md 6.10 / 7.6.4）。
+//
+// **冪等**（7.6.2）。既にある名前は作らずスキップする。判定を名前で行うのは、
+// uq_tag_project_name がその単位で一意を保証しているためである。
+func seedTags(ctx context.Context, q gen.Querier, projectID string, p devProject, result *seedResult) error {
+	if len(p.Tags) == 0 {
+		return nil
+	}
+	rows, err := q.ListTagsByProject(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("プロジェクト %s のタグを読めない: %w", p.Key, err)
+	}
+	existing := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		existing[row.Name] = true
+	}
+
+	for _, tag := range p.Tags {
+		if existing[tag.Name] {
+			result.tagsSkipped++
+			continue
+		}
+		if err := q.CreateTag(ctx, gen.CreateTagParams{
+			ID:        ulidgen.New(),
+			ProjectID: projectID,
+			Name:      tag.Name,
+			SortOrder: tag.SortOrder,
+		}); err != nil {
+			return fmt.Errorf("プロジェクト %s にタグ %s を作れない: %w", p.Key, tag.Name, err)
+		}
+		result.tagsCreated++
+	}
 	return nil
+}
+
+// seedSprints はプロジェクトのスプリントを投入する（DbDesign.md 6.9 / 7.6.4）。
+//
+// **冪等**（7.6.2）。**sprint には name の一意制約が無い**（6.9）ため、
+// 名前で突き合わせないと再実行のたびに増える。
+func seedSprints(ctx context.Context, q gen.Querier, projectID string, p devProject, result *seedResult) error {
+	if len(p.Sprints) == 0 {
+		return nil
+	}
+	rows, err := q.ListSprintsByProject(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("プロジェクト %s のスプリントを読めない: %w", p.Key, err)
+	}
+	existing := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		existing[row.Name] = true
+	}
+
+	for _, sp := range p.Sprints {
+		if existing[sp.Name] {
+			result.sprintsSkipped++
+			continue
+		}
+		start, err := devDate(sp.StartDate)
+		if err != nil {
+			return fmt.Errorf("スプリント %s の start_date: %w", sp.Name, err)
+		}
+		end, err := devDate(sp.EndDate)
+		if err != nil {
+			return fmt.Errorf("スプリント %s の end_date: %w", sp.Name, err)
+		}
+		status := sp.Status
+		if status == "" {
+			status = "planned"
+		}
+		if err := q.CreateSprint(ctx, gen.CreateSprintParams{
+			ID:        ulidgen.New(),
+			ProjectID: projectID,
+			Name:      sp.Name,
+			Goal:      nullText(sp.Goal),
+			StartDate: start,
+			EndDate:   end,
+			Status:    status,
+		}); err != nil {
+			return fmt.Errorf("プロジェクト %s にスプリント %s を作れない: %w", p.Key, sp.Name, err)
+		}
+		result.sprintsCreated++
+	}
+	return nil
+}
+
+// devDate は YYYY-MM-DD を date 列へ写す。空文字は NULL。
+func devDate(s string) (pgtype.Date, error) {
+	if s == "" {
+		return pgtype.Date{}, nil
+	}
+	t, err := time.Parse(time.DateOnly, s)
+	if err != nil {
+		return pgtype.Date{}, fmt.Errorf("日付は YYYY-MM-DD で書いてください（%q）", s)
+	}
+	return pgtype.Date{Time: t, Valid: true}, nil
 }
 
 // createProject は project / project_counter とワークフローを作り、project.id を返す。

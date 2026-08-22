@@ -1230,7 +1230,90 @@ API は 13a で実装済みで、13b は**画面と API ラッパだけ**であ�
 
 読み取りのみで、サーバの状態を変えていない。結合テストが作ったアカウントは `t.Cleanup` で消えており、残存0件を確認した。`make clean-webui` と `make stop-server` を実行済み。
 
+## 手順16a — タグAPI・スプリントAPI とプロジェクト設定の2タブ（2026-08-23、`feature/step-16a-tags-sprints`）
+
+`Design.md` 11章 Phase 1 の手順16 を着手時に 16a / 16b へ分けた（`Design.md` 11.2.1）。
+16a は**タグとスプリントの定義**——16b のバックログがフィルタとグループ化の軸として消費する語彙を先に作る。
+
+### 設計文書の改訂（実装より先に当てた）
+
+| 文書 | 内容 |
+|---|---|
+| `GuiDesign.md` 5.9 | 本文の「タブは一般・メンバーの2つ」→「4つ」。3.2 と 5.9.1 のワイヤーに食い違っていた。API の表にタグ・スプリントの2行を追加し、「そのタブを開いたときに取得する」を明記 |
+| `ApiDesign.md` 9.11 | 並び順（`sort_order, name`）・トリム・大小の区別・ページャと `ETag` を持たない理由・`If-Match` 不要を追記。**9.11.1「並べ替え」を新設** |
+| `ApiDesign.md` 9.12 | 並び順（`start_date DESC NULLS LAST, created_at DESC`）・`ticket_count` / `closed_count` の定義・`name` に一意制約が無いこと・トリムを追記 |
+| `ApiDesign.md` 9.1.1 | タグ・スプリントの定義変更を `activity` にも `audit_log` にも記録しないことと、その限界（タグ削除を追えない）を追記 |
+| `ApiDesign.md` 10.2 | 未解決事項に2件追加（タグ並べ替えの原子性／タグ・スプリントの `activity` 記録） |
+
+### 作ったファイル
+
+| 種別 | ファイル |
+|---|---|
+| マイグレーション | `server/migrations/0013_tag.sql`（`tag` / `ticket_tag`）、`0014_dod.sql`（`dod_item`。**使うのは手順18**） |
+| クエリ | `server/internal/store/queries/tag.sql`、`sprint.sql` → `make sqlc` で `gen/tag.sql.go`・`gen/sprint.sql.go` |
+| ハンドラ | `server/internal/httpapi/v1/tags.go`、`sprints.go` |
+| 共通 | `projects_get.go` に `projectScopeContext`（`project_id` まで解決する子資源用の取り出し）、`apitime.go` に `Date` / `apiDate` / `parseAPIDate` |
+| ルート | `routes.go` に8本（一覧は `ticket.view`、変更は `project.edit`） |
+| テスト | `tags_test.go`（20）、`sprints_test.go`（18）、`routes_test.go` に認可4件、`tags_sprints_integration_test.go`（実DB） |
+| デモデータ | `deploy/dev/seed/dev-data.yaml` に `tags:` 4件・`sprints:` 4件、`cmd/pb/dev_seed.go` に `seedTags` / `seedSprints` / `devDate` と検証 |
+| API定義 | `docs/openapi.yaml` に4パス・2パラメータ・4レスポンス・8スキーマ → `make gen-api` |
+| クライアント | `client/src/api/tags.ts`（`reorderTags` を含む）、`sprints.ts`、`components/SprintModal.vue`、`lib/datetime.ts` に `formatPlainDate`、`pages/ProjectSettingsPage.vue` にタグ・スプリントの2タブ |
+
+### 検証結果
+
+| 種別 | 結果 |
+|---|---|
+| `make test` | 全 PASS。**`openapi.yaml` のドリフト検出が新設8本すべてを検出**し、追記して解消した |
+| 単体 | タグ20件・スプリント18件（検証・応答の形・404 / 409・`null` と据え置きの区別・境界値30/50文字） |
+| ルート認可 | 4件（`ticket.view` だけのメンバーは一覧のみ／`project.edit` を持つ管理者は変更可／非メンバーは 404／CSRF 無しは 403） |
+| 実DB結合（`make test-db`） | **全74件 PASS**。うち `TestTagsSprintsIntegration` が11項目——並び順・一意制約の 409・大小の区別・`sort_order` の既定・`ticket_count`・改名・タグ削除で `ticket_tag` が CASCADE してもチケットは残ること・スプリント削除で `sprint_id` が SET NULL になること・他プロジェクトの ID が 404 になり**かつ実際に消えていない**こと |
+| 実サーバ（curl） | 8件（重複 409／空名 422／CSRF 無し 403／存在しない ID 404／閲覧者は一覧 200・作成 403／スプリント作成も 403／日付逆転 422） |
+| ブラウザ（CDP） | **68件 PASS**——タグ27（一覧が API の並びと一致・追加・重複の 409・改名・削除確認の件数・1440/900px の実測）、スプリント31（3状態の出し分け・`—` 表示・進捗 `完了/総数`・モーダルの5項目・日付逆転をその場で止める・追加/編集/削除・実測）、並べ替え10（`⠿` のドラッグ→`sort_order` が10刻みで振り直る→**元の並びへ復元**） |
+| 目視 | 1440px と 900px のスクリーンショットを確認。**自動検証が全 PASS のまま2件の欠陥を見つけた**（下記） |
+| 冪等性 | `make dev-seed` を2回実行し、2回目は「タグ 作成0 / スキップ4」「スプリント 作成0 / スキップ4」 |
+
+### 自動検証を通り抜けた欠陥2件
+
+| 欠陥 | なぜ実測で拾えないか |
+|---|---|
+| **表の行の区切り線が操作列の手前で切れる**（`th` / `td` に `display: flex` を掛けたため表のレイアウトから外れた） | `getBoundingClientRect()` は妥当な箱を返す。**スクリーンショットを見て気づいた** |
+| **`date` 列を `formatDate` に通すと UTC より西の地域で前日へずれる** | 検証端末が Asia/Tokyo なので再現しない。`TZ=America/New_York node -e ...` で実測して確認した |
+
+### あとしまつ
+
+検証で作ったタグ・スプリントはすべて削除し、並べ替えは元の `sort_order` へ復元した。
+実DB結合テストが作るプロジェクトとユーザーは `t.Cleanup` で消える（DB を数えて0件を確認）。
+サーバ停止・`make clean-webui`・Cookie jar の削除まで実施。
+
+---
+
 ## 手順外の作業（完了分）
+
+### `ApiDesign.md` 9章（チケットAPI）の確定とチケット領域の情報設計（2026-08-22、`docs/ticket-api`）
+
+`PROGRESS.md` から移した（2026-08-23、手順16a の掃除。結果が確定してもう変わらないため）。
+
+①9章を13行から約600行へ書き起こし ②グルーピングを「階層＋フラットなタグ」に決めて
+`tag` / `ticket_tag` を追加（`DbDesign.md` 6.10） ③メインメニューをチケットの「視点」
+（バックログ／カンバン／ガント／検索／分析）の並びに組み替え、`/p/:key/backlog` を新設
+④バックログをページングしない設計にして `GuiDesign.md` 11章の未解決事項1件を解消
+⑤**文書間の食い違い2件を解決**（DoD は Phase 1 へ前倒し、スプリントCRUD を Phase 1 に追加）
+⑥旧手順16 を 16〜19 に展開し Phase 2/3 を繰り下げ（`Design.md` 11.4 rev.8）。
+
+**コードとマイグレーションは書いていない**（絶対規則3）。検証は相互参照の grep・
+旧手順番号の洗い出し・`make test`・`/p/<key>/backlog` が 404 のまま（＝スコープが文書に閉じている）。
+
+### 設計文書の棚卸し（2026-08-23、`docs/ticket-api`）
+
+`PROGRESS.md` から移した（2026-08-23、手順16a の掃除）。
+
+進行によって不要になった記述の整理。①4設計文書の**ヘッダの「最終更新」行を撤去**
+（4文書とも `2026-08-11` で止まり、手で書いた日付は腐ると実証されたため。正確な最終更新は
+git が持つ）②「状態」行を現況へ更新 ③役目を終えた4件を削除（`DbDesign.md` 2.2 解除される制約／
+`Design.md` 11.4 rev.5対応表／`ApiDesign.md` 10.1 実装順序＝`Design.md` 11章との重複／
+`Requirements.md` 9章の決着済み3項目）④`ApiDesign.md` 10.2 の未解決2件を決着済みとして削除。
+
+検証は相互参照の再検証＋`make test`。
 
 ### `make build` が作業ツリーを汚す問題（2026-08-22、`fix/webui-dist-placeholder`）
 
