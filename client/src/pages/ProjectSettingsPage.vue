@@ -2,13 +2,16 @@
 /**
  * プロジェクト設定（`GuiDesign.md` 5.9）。必要権限は `project.edit`。
  *
- * タブは「一般」「メンバー」の2つ。**タブはURLを持たない**（3.2 のルーティング表が
- * 持つのは `/p/:key/settings` の1行だけである）。
+ * タブは「一般」「メンバー」「タグ」「スプリント」の4つ。**タブはURLを持たない**
+ * （3.2 のルーティング表が持つのは `/p/:key/settings` の1行だけである）。
  *
- * 表示は `GET /projects/:key` の1本で足りる（5.4）。ワークフローもメンバーも
- * 自分の実効権限も同じ応答に入っている。
+ * 一般とメンバーは `GET /projects/:key` の1本で足りる（5.4）。ワークフローも
+ * メンバーも自分の実効権限も同じ応答に入っている。**タグとスプリントは別の
+ * エンドポイント**（`ApiDesign.md` 9.11 / 9.12）で、**そのタブを最初に開いた
+ * ときに取りに行く**——一般タブしか見ない利用者に、使わない2本を払わせない。
  *
- * **操作の結果はトーストではなく、操作した場所に出す**（6.4）。
+ * **操作の結果はトーストではなく、操作した場所に出す**（6.4）。タグとスプリントは
+ * それぞれのタブの見出しの下に1つ欄を持ち、追加・改名・削除の結果を使い回す。
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -17,10 +20,16 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
 import RepositoryModal from '../components/RepositoryModal.vue'
+import SprintModal from '../components/SprintModal.vue'
 import { ApiError } from '../api/client'
 import * as projectsApi from '../api/projects'
 import type { ProjectDetail, ProjectRepository, UpdateProjectRequest } from '../api/projects'
-import { formatDate } from '../lib/datetime'
+import * as tagsApi from '../api/tags'
+import type { Tag } from '../api/tags'
+import * as sprintsApi from '../api/sprints'
+import { sprintStatusLabels } from '../api/sprints'
+import type { CreateSprintRequest, Sprint } from '../api/sprints'
+import { formatDate, formatPlainDate } from '../lib/datetime'
 import { useRolesStore } from '../stores/roles'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
@@ -36,7 +45,7 @@ const store = useProjectStore()
 const route = useRoute()
 const router = useRouter()
 
-type Tab = 'general' | 'members'
+type Tab = 'general' | 'members' | 'tags' | 'sprints'
 const tab = ref<Tab>('general')
 
 const projectKey = computed(() => {
@@ -105,10 +114,302 @@ watch(projectKey, () => {
   saveError.value = null
   saved.value = false
   archiveError.value = null
+  // **タグとスプリントは持ち越さない。** プロジェクトごとに違う値であり、
+  // 取得済みフラグを残すと切替先で前のプロジェクトのタグが出る。
+  resetTagsAndSprints()
   void load()
 })
 
 onUnmounted(() => store.clearCurrent())
+
+// ── タグ（5.9.4。`ApiDesign.md` 9.11）────────────────────────────
+
+/** プロジェクト切替時に、タグとスプリントの状態を捨てる */
+function resetTagsAndSprints(): void {
+  tags.value = []
+  tagsLoaded.value = false
+  tagsError.value = null
+  tagResult.value = ''
+  newTagName.value = null
+  renamingTagId.value = null
+  deletingTag.value = null
+
+  sprints.value = []
+  sprintsLoaded.value = false
+  sprintsError.value = null
+  sprintResult.value = ''
+  editingSprint.value = null
+  deletingSprint.value = null
+}
+
+//
+// **一覧を1つ持ち、操作のたびに取り直さない。** 応答が1件分返るので手元を
+// 差し替えれば足り、往復を1回減らせる。並べ替えだけは複数行が動くので
+// 取り直す（原子的でないため、失敗したときにサーバの実際の順序へ戻す）。
+
+const tags = ref<Tag[]>([])
+const tagsLoaded = ref(false)
+const tagsLoading = ref(false)
+const tagsError = ref<ApiError | null>(null)
+/** 追加・改名・削除・並べ替えの結果を1つの欄で使い回す（6.4） */
+const tagResult = ref('')
+const tagBusy = ref(false)
+
+/** 追加行の入力。null なら行を出さない */
+const newTagName = ref<string | null>(null)
+const newTagError = ref<string | null>(null)
+
+/** 改名中のタグ ID と入力値。null なら誰も編集していない */
+const renamingTagId = ref<string | null>(null)
+const renamingTagName = ref('')
+const renameTagError = ref<string | null>(null)
+
+/** 削除確認の対象 */
+const deletingTag = ref<Tag | null>(null)
+
+/** ドラッグ中のタグ ID（`⠿` の並べ替え） */
+const draggingTagId = ref<string | null>(null)
+
+async function loadTags(): Promise<void> {
+  tagsLoading.value = true
+  tagsError.value = null
+  try {
+    tags.value = (await tagsApi.listTags(projectKey.value)).items
+    tagsLoaded.value = true
+  } catch (e) {
+    tagsError.value = toApiError(e)
+  } finally {
+    tagsLoading.value = false
+  }
+}
+
+function startAddTag(): void {
+  newTagName.value = ''
+  newTagError.value = null
+  tagResult.value = ''
+}
+
+async function submitNewTag(): Promise<void> {
+  const name = (newTagName.value ?? '').trim()
+  if (name === '') {
+    newTagError.value = 'タグ名を入力してください'
+    return
+  }
+  tagBusy.value = true
+  newTagError.value = null
+  try {
+    const created = await tagsApi.createTag(projectKey.value, { name })
+    // 応答は1件。並び（sort_order 昇順・同値は name 昇順）を手元でも保つ。
+    tags.value = [...tags.value, created].sort(compareTags)
+    newTagName.value = null
+    tagResult.value = `✓ タグ「${created.name}」を追加しました`
+  } catch (e) {
+    const err = toApiError(e)
+    newTagError.value = err.message
+  } finally {
+    tagBusy.value = false
+  }
+}
+
+function startRenameTag(tag: Tag): void {
+  renamingTagId.value = tag.id
+  renamingTagName.value = tag.name
+  renameTagError.value = null
+  tagResult.value = ''
+}
+
+async function submitRenameTag(tag: Tag): Promise<void> {
+  const name = renamingTagName.value.trim()
+  if (name === '') {
+    renameTagError.value = 'タグ名を入力してください'
+    return
+  }
+  if (name === tag.name) {
+    renamingTagId.value = null
+    return
+  }
+  tagBusy.value = true
+  renameTagError.value = null
+  try {
+    const updated = await tagsApi.updateTag(projectKey.value, tag.id, { name })
+    tags.value = tags.value.map((t) => (t.id === updated.id ? updated : t)).sort(compareTags)
+    renamingTagId.value = null
+    tagResult.value = `✓ タグ「${updated.name}」に変更しました`
+  } catch (e) {
+    renameTagError.value = toApiError(e).message
+  } finally {
+    tagBusy.value = false
+  }
+}
+
+async function confirmDeleteTag(): Promise<void> {
+  const tag = deletingTag.value
+  if (tag === null) return
+  tagBusy.value = true
+  try {
+    await tagsApi.deleteTag(projectKey.value, tag.id)
+    tags.value = tags.value.filter((t) => t.id !== tag.id)
+    deletingTag.value = null
+    tagResult.value = `✓ タグ「${tag.name}」を削除しました`
+  } catch (e) {
+    tagsError.value = toApiError(e)
+    deletingTag.value = null
+  } finally {
+    tagBusy.value = false
+  }
+}
+
+/** 一覧の並び（`ApiDesign.md` 9.11）。サーバと同じ規則を手元でも使う */
+function compareTags(a: Tag, b: Tag): number {
+  if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
+  return a.name.localeCompare(b.name, 'ja')
+}
+
+/**
+ * `⠿` のドラッグで並べ替える（5.9.4、`ApiDesign.md` 9.11.1）。
+ *
+ * **画面を先に動かし、サーバへは変わった行だけ送る。** 失敗したら一覧を
+ * 取り直して戻す——この操作は原子的ではなく、途中まで反映された状態が
+ * 実際に起こりうるためである。
+ */
+async function dropTag(targetId: string): Promise<void> {
+  const sourceId = draggingTagId.value
+  draggingTagId.value = null
+  if (sourceId === null || sourceId === targetId) return
+
+  const from = tags.value.findIndex((t) => t.id === sourceId)
+  const to = tags.value.findIndex((t) => t.id === targetId)
+  if (from < 0 || to < 0) return
+
+  const next = [...tags.value]
+  const [moved] = next.splice(from, 1)
+  next.splice(to, 0, moved)
+  const before = tags.value
+  tags.value = next
+
+  tagBusy.value = true
+  try {
+    const sent = await tagsApi.reorderTags(projectKey.value, next)
+    if (sent > 0) await loadTags()
+    tagResult.value = '✓ 並び順を変更しました'
+  } catch (e) {
+    tags.value = before
+    tagsError.value = toApiError(e)
+    await loadTags()
+  } finally {
+    tagBusy.value = false
+  }
+}
+
+// ── スプリント（5.9.5。`ApiDesign.md` 9.12）──────────────────────
+
+const sprints = ref<Sprint[]>([])
+const sprintsLoaded = ref(false)
+const sprintsLoading = ref(false)
+const sprintsError = ref<ApiError | null>(null)
+const sprintResult = ref('')
+const sprintBusy = ref(false)
+
+/** モーダルの状態。`'new'` は追加、Sprint は編集、null は閉じている */
+const editingSprint = ref<Sprint | 'new' | null>(null)
+const sprintFieldErrors = ref<Record<string, string>>({})
+
+/** 削除確認の対象 */
+const deletingSprint = ref<Sprint | null>(null)
+
+async function loadSprints(): Promise<void> {
+  sprintsLoading.value = true
+  sprintsError.value = null
+  try {
+    sprints.value = (await sprintsApi.listSprints(projectKey.value)).items
+    sprintsLoaded.value = true
+  } catch (e) {
+    sprintsError.value = toApiError(e)
+  } finally {
+    sprintsLoading.value = false
+  }
+}
+
+function openSprintModal(target: Sprint | 'new'): void {
+  editingSprint.value = target
+  sprintFieldErrors.value = {}
+  sprintResult.value = ''
+}
+
+async function saveSprint(body: CreateSprintRequest): Promise<void> {
+  const target = editingSprint.value
+  if (target === null) return
+
+  sprintBusy.value = true
+  sprintFieldErrors.value = {}
+  try {
+    if (target === 'new') {
+      await sprintsApi.createSprint(projectKey.value, body)
+      sprintResult.value = `✓ スプリント「${body.name}」を追加しました`
+    } else {
+      await sprintsApi.updateSprint(projectKey.value, target.id, body)
+      sprintResult.value = `✓ スプリント「${body.name}」を更新しました`
+    }
+    editingSprint.value = null
+    // 並びが start_date に依るので、作成・更新のたびに取り直す。
+    // 1件分の応答を差し込むだけでは、日付を変えたときに位置がずれる。
+    await loadSprints()
+  } catch (e) {
+    const err = toApiError(e)
+    if (err.status === 422 && err.details) {
+      const map: Record<string, string> = {}
+      for (const d of err.details) {
+        if (d.field) map[d.field] = d.message
+      }
+      sprintFieldErrors.value = map
+    } else {
+      sprintsError.value = err
+      editingSprint.value = null
+    }
+  } finally {
+    sprintBusy.value = false
+  }
+}
+
+async function confirmDeleteSprint(): Promise<void> {
+  const sprint = deletingSprint.value
+  if (sprint === null) return
+  sprintBusy.value = true
+  try {
+    await sprintsApi.deleteSprint(projectKey.value, sprint.id)
+    sprints.value = sprints.value.filter((s) => s.id !== sprint.id)
+    deletingSprint.value = null
+    sprintResult.value = `✓ スプリント「${sprint.name}」を削除しました`
+  } catch (e) {
+    sprintsError.value = toApiError(e)
+    deletingSprint.value = null
+  } finally {
+    sprintBusy.value = false
+  }
+}
+
+/**
+ * 期間の表示（5.9.5 の `8/05 — 8/18`）。片方だけでも読める形にする。
+ *
+ * **`formatDate` ではなく `formatPlainDate` を使う。** `start_date` /
+ * `end_date` は `date` 列で時刻を持たず、タイムゾーンの変換を通すと
+ * UTC より西の地域で前日へずれる（`lib/datetime.ts`）。
+ */
+function sprintPeriod(s: Sprint): string {
+  if (!s.start_date && !s.end_date) return '—'
+  const from = s.start_date ? formatPlainDate(s.start_date) : '未定'
+  const to = s.end_date ? formatPlainDate(s.end_date) : '未定'
+  return `${from} — ${to}`
+}
+
+// ── タブの切り替えで初回だけ取りに行く ──────────────────────────
+//
+// 一般タブしか見ない利用者に、使わない2本を払わせない（5.9）。
+watch(tab, (next) => {
+  if (next === 'tags' && !tagsLoaded.value && !tagsLoading.value) void loadTags()
+  if (next === 'sprints' && !sprintsLoaded.value && !sprintsLoading.value) void loadSprints()
+})
+
 
 // ── 変更の検出 ────────────────────────────────────────────────
 const current = computed(() => store.current)
@@ -387,6 +688,26 @@ function kindIcon(kind: string): string {
           >
             メンバー
           </button>
+          <button
+            type="button"
+            role="tab"
+            class="tab"
+            :class="{ selected: tab === 'tags' }"
+            :aria-selected="tab === 'tags'"
+            @click="tab = 'tags'"
+          >
+            タグ
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="tab"
+            :class="{ selected: tab === 'sprints' }"
+            :aria-selected="tab === 'sprints'"
+            @click="tab = 'sprints'"
+          >
+            スプリント
+          </button>
         </div>
 
         <!-- ── 一般タブ（5.9.1）──────────────────────────────── -->
@@ -558,7 +879,7 @@ function kindIcon(kind: string): string {
         </div>
 
         <!-- ── メンバータブ（5.9.2）─────────────────────────── -->
-        <div v-else class="blocks" role="tabpanel">
+        <div v-else-if="tab === 'members'" class="blocks" role="tabpanel">
           <section class="block">
             <table class="table">
               <thead>
@@ -590,6 +911,228 @@ function kindIcon(kind: string): string {
             <p class="hint">ⓘ メンバーの追加・変更は「アカウント / 権限」から行います。</p>
           </section>
         </div>
+
+        <!-- ── タグタブ（5.9.4）──────────────────────────────── -->
+        <div v-else-if="tab === 'tags'" class="blocks" role="tabpanel">
+          <section class="block">
+            <div class="block-head">
+              <h2 class="block-title">タグ</h2>
+              <button
+                type="button"
+                class="secondary"
+                :disabled="tagBusy || newTagName !== null"
+                @click="startAddTag"
+              >
+                + 追加
+              </button>
+            </div>
+
+            <!-- 操作の結果は操作した場所に出す（6.4）。追加・改名・削除・
+                 並べ替えで1つの欄を使い回す -->
+            <p v-if="tagResult" class="ok" role="status">{{ tagResult }}</p>
+            <p v-if="tagsError" class="alert" role="alert">✕ {{ tagsError.message }}</p>
+
+            <div v-if="tagsLoading && !tagsLoaded" class="loading" aria-busy="true">
+              <span class="skeleton"></span>
+              <span class="skeleton short"></span>
+            </div>
+
+            <table v-else-if="tags.length > 0 || newTagName !== null" class="table tags">
+              <thead>
+                <tr>
+                  <th scope="col" class="grip-col"><span class="sr-only">並べ替え</span></th>
+                  <th scope="col">名前</th>
+                  <th scope="col" class="count-col">使用中</th>
+                  <th scope="col" class="actions-col"><span class="sr-only">操作</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="tag in tags"
+                  :key="tag.id"
+                  :class="{ dragging: draggingTagId === tag.id }"
+                  @dragover.prevent
+                  @drop.prevent="dropTag(tag.id)"
+                >
+                  <td class="grip-col">
+                    <span
+                      class="grip"
+                      draggable="true"
+                      role="button"
+                      :aria-label="`${tag.name} を並べ替える`"
+                      @dragstart="draggingTagId = tag.id"
+                      @dragend="draggingTagId = null"
+                      >⠿</span
+                    >
+                  </td>
+                  <td class="name-col">
+                    <template v-if="renamingTagId === tag.id">
+                      <form class="inline-edit" @submit.prevent="submitRenameTag(tag)">
+                        <input
+                          v-model="renamingTagName"
+                          type="text"
+                          class="tag-name-input"
+                          :maxlength="30"
+                          :aria-label="`${tag.name} の新しい名前`"
+                          @keydown.esc="renamingTagId = null"
+                        />
+                        <button type="submit" class="primary small" :disabled="tagBusy">
+                          変更
+                        </button>
+                        <button
+                          type="button"
+                          class="secondary small"
+                          :disabled="tagBusy"
+                          @click="renamingTagId = null"
+                        >
+                          取消
+                        </button>
+                      </form>
+                      <span v-if="renameTagError" class="detail">✕ {{ renameTagError }}</span>
+                    </template>
+                    <template v-else>{{ tag.name }}</template>
+                  </td>
+                  <td class="count-col">{{ tag.ticket_count }}件</td>
+                  <td class="actions-col">
+                    <div class="row-actions">
+                      <button
+                        type="button"
+                        class="secondary small"
+                        :disabled="tagBusy || renamingTagId === tag.id"
+                        @click="startRenameTag(tag)"
+                      >
+                        名前を変更
+                      </button>
+                      <button
+                        type="button"
+                        class="danger small"
+                        :disabled="tagBusy"
+                        @click="deletingTag = tag"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+
+                <!-- 追加は行内（編集できるのが名前1つなので、モーダルは重い） -->
+                <tr v-if="newTagName !== null" class="new-row">
+                  <td class="grip-col"></td>
+                  <td class="name-col">
+                    <form class="inline-edit" @submit.prevent="submitNewTag">
+                      <input
+                        v-model="newTagName"
+                        type="text"
+                        class="tag-name-input"
+                        :maxlength="30"
+                        aria-label="新しいタグの名前"
+                        placeholder="タグ名"
+                        @keydown.esc="newTagName = null"
+                      />
+                      <button type="submit" class="primary small" :disabled="tagBusy">追加</button>
+                      <button
+                        type="button"
+                        class="secondary small"
+                        :disabled="tagBusy"
+                        @click="newTagName = null"
+                      >
+                        取消
+                      </button>
+                    </form>
+                    <span v-if="newTagError" class="detail">✕ {{ newTagError }}</span>
+                  </td>
+                  <td class="count-col"></td>
+                  <td class="actions-col"></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <EmptyState
+              v-else
+              title="タグがありません"
+              message="タグはチケットを横断的に分類します。[+ 追加] から作成してください。"
+            />
+
+            <p class="hint">
+              ⓘ タグはチケットを横断的に分類します。「どの大きな仕事の一部か」はチケットの親子関係で表します
+            </p>
+          </section>
+        </div>
+
+        <!-- ── スプリントタブ（5.9.5）───────────────────────── -->
+        <div v-else class="blocks" role="tabpanel">
+          <section class="block">
+            <div class="block-head">
+              <h2 class="block-title">スプリント</h2>
+              <button
+                type="button"
+                class="secondary"
+                :disabled="sprintBusy"
+                @click="openSprintModal('new')"
+              >
+                + 追加
+              </button>
+            </div>
+
+            <p v-if="sprintResult" class="ok" role="status">{{ sprintResult }}</p>
+            <p v-if="sprintsError" class="alert" role="alert">✕ {{ sprintsError.message }}</p>
+
+            <div v-if="sprintsLoading && !sprintsLoaded" class="loading" aria-busy="true">
+              <span class="skeleton"></span>
+              <span class="skeleton short"></span>
+            </div>
+
+            <table v-else-if="sprints.length > 0" class="table sprints">
+              <thead>
+                <tr>
+                  <th scope="col">名前</th>
+                  <th scope="col">期間</th>
+                  <th scope="col" class="status-col">状態</th>
+                  <th scope="col" class="count-col">進捗</th>
+                  <th scope="col" class="actions-col"><span class="sr-only">操作</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="s in sprints" :key="s.id">
+                  <td class="name-col">
+                    {{ s.name }}
+                    <span v-if="s.goal" class="goal">{{ s.goal }}</span>
+                  </td>
+                  <td class="period">{{ sprintPeriod(s) }}</td>
+                  <td class="status-col">{{ sprintStatusLabels[s.status] }}</td>
+                  <!-- グラフは出さない（バーンダウンは Phase 2 の /p/:key/sprints） -->
+                  <td class="count-col">{{ s.closed_count }}/{{ s.ticket_count }}</td>
+                  <td class="actions-col">
+                    <div class="row-actions">
+                      <button
+                        type="button"
+                        class="secondary small"
+                        :disabled="sprintBusy"
+                        @click="openSprintModal(s)"
+                      >
+                        編集
+                      </button>
+                      <button
+                        type="button"
+                        class="danger small"
+                        :disabled="sprintBusy"
+                        @click="deletingSprint = s"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <EmptyState
+              v-else
+              title="スプリントがありません"
+              message="[+ 追加] から作成すると、チケットに割り当てられるようになります。"
+            />
+          </section>
+        </div>
       </template>
     </div>
 
@@ -609,6 +1152,45 @@ function kindIcon(kind: string): string {
       :busy="archiving"
       @confirm="runArchiveToggle"
       @cancel="confirmOpen = false"
+    />
+
+    <!-- タグの削除（6.3）。**使用中の件数を出す**——使用中でも消せるが、
+         何件から外れるのかを知ったうえで押せるようにする -->
+    <ConfirmDialog
+      v-if="deletingTag"
+      title="タグを削除"
+      :message="`タグ「${deletingTag.name}」を削除します。\n${
+        deletingTag.ticket_count > 0
+          ? `${deletingTag.ticket_count}件のチケットで使われています。チケットは消えず、このタグが外れます。`
+          : 'このタグはどのチケットでも使われていません。'
+      }`"
+      confirm-label="削除する"
+      danger
+      :busy="tagBusy"
+      @confirm="confirmDeleteTag"
+      @cancel="deletingTag = null"
+    />
+
+    <!-- スプリントの削除（6.3）。**チケットは消えない**旨を明記する -->
+    <ConfirmDialog
+      v-if="deletingSprint"
+      title="スプリントを削除"
+      :message="`スプリント「${deletingSprint.name}」を削除します。\n割り当てられている${deletingSprint.ticket_count}件のチケットは消えず、スプリント未設定に戻ります。`"
+      confirm-label="削除する"
+      danger
+      :busy="sprintBusy"
+      @confirm="confirmDeleteSprint"
+      @cancel="deletingSprint = null"
+    />
+
+    <SprintModal
+      v-if="editingSprint"
+      :key="editingSprint === 'new' ? 'new' : editingSprint.id"
+      :sprint="editingSprint === 'new' ? null : editingSprint"
+      :busy="sprintBusy"
+      :field-errors="sprintFieldErrors"
+      @save="saveSprint"
+      @close="editingSprint = null"
     />
   </div>
 </template>
@@ -984,5 +1566,141 @@ td {
 
 .skeleton.short {
   width: 60%;
+}
+
+/* ── タグ・スプリント（5.9.4 / 5.9.5）──────────────────── */
+
+/* 見出しと [+ 追加] を1行に並べる */
+.block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pb-space-3);
+}
+
+.block-head .block-title {
+  margin: 0;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-2);
+}
+
+/* `⠿` のドラッグ列。掴む対象だと分かるようにカーソルを変える */
+.grip-col {
+  width: 32px;
+}
+
+.grip {
+  display: inline-block;
+  color: var(--pb-text-muted);
+  cursor: grab;
+  user-select: none;
+}
+
+.grip:active {
+  cursor: grabbing;
+}
+
+tr.dragging {
+  opacity: 0.5;
+}
+
+.name-col {
+  /* 名前を優先して伸ばす。他の列は内容ぶんで足りる */
+  width: 100%;
+}
+
+/* ゴールは名前の下に小さく添える（別の列にすると横幅を食う） */
+.goal {
+  display: block;
+  margin-top: 2px;
+  color: var(--pb-text-muted);
+  font-size: 13px;
+}
+
+.count-col,
+.status-col {
+  width: 1%;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 数える列は右寄せ。桁が揃って読み比べられる */
+.count-col {
+  text-align: right;
+}
+
+.period {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * **セルに display:flex を掛けない。** th / td を flex にすると表の
+ * レイアウトから外れ、行の区切り線が操作列の手前で切れる（1440px と 900px の
+ * どちらでも起きた）。getBoundingClientRect() は妥当な箱を返すので、
+ * 実測では拾えない——スクリーンショットを見て気づいた崩れである。
+ * 並べるのは中の入れ物の役目にする。
+ */
+.actions-col {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  gap: var(--pb-space-2);
+  justify-content: flex-end;
+}
+
+/* 行内編集（タグは編集できるのが名前1つなのでモーダルにしない） */
+.inline-edit {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+}
+
+/*
+ * **要素セレクタに勝てる詳細度で書く。** 上の `input[type='text']` は
+ * (0,1,1) で `width: 100%` を持ち、クラス1つ (0,1,0) では負ける。
+ * ここは flex の中なので 100% だとボタンを押し出してしまう。
+ */
+.inline-edit input[type='text'] {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+}
+
+.new-row td {
+  background: var(--pb-hover);
+}
+
+.primary.small,
+.danger.small {
+  height: 28px;
+  font-size: 13px;
+}
+
+.danger {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 32px;
+  padding: 0 var(--pb-space-3);
+  border: 1px solid var(--pb-danger-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+  color: var(--pb-danger-text);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.danger:hover:not(:disabled) {
+  background: var(--pb-danger-bg);
 }
 </style>

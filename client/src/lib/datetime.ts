@@ -35,3 +35,18 @@ export function formatDate(iso: string): string {
   if (t === null) return iso
   return `${t.y}-${p2(t.mo)}-${p2(t.d)}`
 }
+
+/**
+ * `2026-08-11`。**`date` 列（時刻を持たない日付）専用**（`ApiDesign.md` 9.12）。
+ *
+ * **`formatDate` に通してはならない。** `new Date('2026-08-19')` は仕様上
+ * **UTC の 0時**として解釈される一方、`getDate()` は端末のローカル時刻を返す。
+ * UTC より西の地域では前日へずれる（`America/New_York` で `2026-08-18` になる）。
+ * スプリントの期限は「その日」であって「その瞬間」ではないので、
+ * **タイムゾーンの変換を通さずそのまま出す。**
+ *
+ * サーバは `YYYY-MM-DD` で返す（`apitime.go` の `Date`）。形が違えばそのまま返す。
+ */
+export function formatPlainDate(date: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : date
+}

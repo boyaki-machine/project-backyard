@@ -379,6 +379,196 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * タグ一覧
+         * @description プロジェクトのタグを返す（ApiDesign.md 9.11）。**必要権限は `ticket.view`**
+         *     （メンバーでない場合はプロジェクトごと 404）。
+         *
+         *     `items[]` は `sort_order` 昇順、同値は `name` 昇順。第2キーを置くのは、
+         *     `sort_order` が重複したときに順序が実行ごとに揺れないようにするためである。
+         *
+         *     **ページネーションも `ETag` も持たない。** バックログのグループ化は全タグを
+         *     セクションの順序に使うため（GuiDesign.md 5.4.1）、ページングすると2ページ目の
+         *     タグがグループ化に現れず、設計上そもそも使えない。
+         *
+         *     `ticket_count` は削除確認ダイアログが出す「12件のチケットで使われています」
+         *     （GuiDesign.md 6.3）。
+         */
+        get: operations["listTags"];
+        put?: never;
+        /**
+         * タグの作成
+         * @description タグを1件作る（ApiDesign.md 9.11）。**必要権限は `project.edit`**——タグの定義は
+         *     「プロジェクトの分類軸を決める」行為であり、チケットへの付与（`ticket.edit`）とは
+         *     別の権限で扱う。
+         *
+         *     `name` は前後の空白を取り除いてから検証する。**同一プロジェクト内で一意**で、
+         *     重複は 409 `already_exists`。**大文字と小文字は区別する**（`uq_tag_project_name` が
+         *     `text` の一意制約であり `citext` ではない。DbDesign.md 6.10）。
+         *
+         *     `sort_order` を省略すると末尾（現在の最大値 + 10）に置く。
+         */
+        post: operations["createTag"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tags/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description タグの ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。
+                 *     タグは `seq` に相当する連番を持たない。
+                 */
+                id: components["parameters"]["TagID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * タグの削除
+         * @description タグを消す（ApiDesign.md 9.11）。必要権限は `project.edit`。
+         *
+         *     `ticket_tag` の行は `CASCADE` で消える（DbDesign.md 6.10）。**チケットは消えず、
+         *     タグが外れるだけである。**
+         *
+         *     **使用中でも削除できる。** 禁止すると、要らなくなった分類を消すために全チケットから
+         *     手で外すことになる。画面は確認ダイアログに使用中の件数を出す（GuiDesign.md 6.3）。
+         */
+        delete: operations["deleteTag"];
+        options?: never;
+        head?: never;
+        /**
+         * タグの更新
+         * @description タグの `name` / `sort_order` を変える（ApiDesign.md 9.11）。必要権限は `project.edit`。
+         *
+         *     **`If-Match` を要求しない。** 2.8 の楽観ロックの対象は `project` と `app_user` で、
+         *     `tag` は `version` 列を持たない。
+         *
+         *     **並べ替え（9.11.1）もこのエンドポイントで表現する。** クライアントはドロップの
+         *     確定時に新しい並びへ `10, 20, 30, …` を割り当て直し、値が変わった行だけ送る。
+         *     専用の move は設けていない——`sort_order` は単なる整数で、チケットの `sort_key`
+         *     （LexoRank）のような生成規則を持たないためである。
+         *
+         *     送られなかった項目は据え置く。何も送られていない場合は現在の値をそのまま返す。
+         */
+        patch: operations["patchTag"];
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/sprints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * スプリント一覧
+         * @description プロジェクトのスプリントを返す（ApiDesign.md 9.12）。**必要権限は `ticket.view`**。
+         *
+         *     `items[]` は `start_date` 降順（`null` は末尾）、同値は `created_at` 降順。
+         *     新しいものが上に来る並びで、GuiDesign.md 5.9.5 の図と一致する。
+         *
+         *     `ticket_count` は `ticket.sprint_id` が当該スプリントを指す行数、`closed_count` は
+         *     そのうち `closed_at IS NOT NULL` の行数。**`status_category = 'done'` では数えない**
+         *     ——9.13 の `open` / `overdue` が `closed_at` を基準にしており、そちらへ揃える。
+         *
+         *     タグ（9.11）と同じくページネーションも `ETag` も持たない。
+         */
+        get: operations["listSprints"];
+        put?: never;
+        /**
+         * スプリントの作成
+         * @description スプリントを1件作る（ApiDesign.md 9.12）。**必要権限は `project.edit`**。
+         *
+         *     **Phase 1 で開けるのは定義だけである。** バーンダウン・ベロシティを含む運用画面は
+         *     Phase 2（GuiDesign.md 10章）。定義を Phase 1 に置くのは、作る手段が無いと
+         *     チケット詳細のスプリント欄が常に空のドロップダウンになるためである。
+         *
+         *     **`name` に一意制約は無い**（DbDesign.md 6.9）。同名のスプリントを作れる。
+         *     `start_date` と `end_date` の両方があるとき `start_date <= end_date`
+         *     （`ck_sprint_dates`）。
+         */
+        post: operations["createSprint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/sprints/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /** @description スプリントの ULID（ApiDesign.md 9.1）。 */
+                id: components["parameters"]["SprintID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * スプリントの削除
+         * @description スプリントを消す（ApiDesign.md 9.12）。必要権限は `project.edit`。
+         *
+         *     **チケットは消えない。** `fk_ticket_sprint` の `ON DELETE SET NULL` により
+         *     `ticket.sprint_id` が外れ、スプリント未設定に戻る（DbDesign.md 6.9）。
+         *     画面は確認ダイアログにその旨を明記する（GuiDesign.md 6.3）。
+         */
+        delete: operations["deleteSprint"];
+        options?: never;
+        head?: never;
+        /**
+         * スプリントの更新
+         * @description スプリントの各項目を変える（ApiDesign.md 9.12）。必要権限は `project.edit`。
+         *     タグと同じく **`If-Match` は要求しない**（`sprint` は `version` 列を持たない）。
+         *
+         *     送られなかった項目は据え置く。**`goal` / `start_date` / `end_date` は `null` を
+         *     送ると値を消す**（キーが無い場合の「据え置き」と区別する）。
+         *
+         *     `ck_sprint_dates` は更新後の2列の関係を見る制約であり、片方だけを送る場合は
+         *     送られなかった側の現在値と突き合わせて検証する。違反は 422 で返す。
+         */
+        patch: operations["patchSprint"];
+        trace?: never;
+    };
     "/api/v1/admin/users": {
         parameters: {
             query?: never;
@@ -1477,6 +1667,126 @@ export interface components {
             message: string;
         };
         /**
+         * @description タグ1件（ApiDesign.md 9.11）。**色を持たない**——GuiDesign.md 8.6 が
+         *     ラベルへの任意色を許さない（ユーザーごとに色の意味が食い違い、一覧が
+         *     虹色になって輝度による階層が崩れるため）。
+         */
+        Tag: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /** @example 設計 */
+            name: string;
+            /**
+             * Format: int32
+             * @description バックログのグループ化セクションの順序（GuiDesign.md 5.9.4）。
+             * @example 10
+             */
+            sort_order: number;
+            /**
+             * Format: int64
+             * @description このタグが付いているチケットの件数。削除確認ダイアログが
+             *     「12件のチケットで使われています」を出すために使う（GuiDesign.md 6.3）。
+             * @example 12
+             */
+            ticket_count: number;
+        };
+        /**
+         * @description タグの一覧（ApiDesign.md 9.11）。**`page` / `per_page` / `total` を持たない**
+         *     ——バックログのグループ化が全件を必要とするため。
+         */
+        TagList: {
+            items: components["schemas"]["Tag"][];
+        };
+        CreateTagRequest: {
+            /**
+             * @description 前後の空白は取り除かれる。同一プロジェクト内で一意。
+             * @example 設計
+             */
+            name: string;
+            /**
+             * Format: int32
+             * @description 省略時は末尾（現在の最大値 + 10）。
+             */
+            sort_order?: number;
+        };
+        /** @description 送られた項目だけを変える。何も送らない場合は現在の値をそのまま返す。 */
+        PatchTagRequest: {
+            name?: string;
+            /**
+             * Format: int32
+             * @description 並べ替え（ApiDesign.md 9.11.1）はこの項目で表現する。
+             */
+            sort_order?: number;
+        };
+        /** @description スプリント1件（ApiDesign.md 9.12）。 */
+        Sprint: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /** @example Sprint 3 */
+            name: string;
+            /** @example 認証を通す */
+            goal: string | null;
+            /**
+             * Format: date
+             * @example 2026-08-05
+             */
+            start_date: string | null;
+            /**
+             * Format: date
+             * @example 2026-08-18
+             */
+            end_date: string | null;
+            status: components["schemas"]["SprintStatus"];
+            /**
+             * Format: int64
+             * @description このスプリントに割り当てられたチケットの件数。
+             * @example 12
+             */
+            ticket_count: number;
+            /**
+             * Format: int64
+             * @description そのうち `closed_at IS NOT NULL` の件数。**`status_category = 'done'` では
+             *     数えない**（ApiDesign.md 9.12）。画面は `5/12` の形で出す。
+             * @example 5
+             */
+            closed_count: number;
+        };
+        /**
+         * @description DbDesign.md 6.9 の CHECK と同じ3値。
+         * @enum {string}
+         */
+        SprintStatus: "planned" | "active" | "completed";
+        /** @description スプリントの一覧（ApiDesign.md 9.12）。タグと同じくページャを持たない。 */
+        SprintList: {
+            items: components["schemas"]["Sprint"][];
+        };
+        CreateSprintRequest: {
+            /** @description 前後の空白は取り除かれる。**一意制約は無い**（同名を作れる）。 */
+            name: string;
+            goal?: string | null;
+            /** Format: date */
+            start_date?: string | null;
+            /**
+             * Format: date
+             * @description `start_date` があるとき `start_date <= end_date`。
+             */
+            end_date?: string | null;
+            status?: components["schemas"]["SprintStatus"];
+        };
+        /**
+         * @description 送られた項目だけを変える。**`goal` / `start_date` / `end_date` は `null` を
+         *     送ると値を消す**（キーが無い場合の「据え置き」と区別する）。
+         */
+        PatchSprintRequest: {
+            name?: string;
+            goal?: string | null;
+            /** Format: date */
+            start_date?: string | null;
+            /** Format: date */
+            end_date?: string | null;
+            status?: components["schemas"]["SprintStatus"];
+        };
+        /**
          * @description ApiDesign.md 2.5.1 の15コード。
          * @enum {string}
          */
@@ -1540,6 +1850,48 @@ export interface components {
                 "application/json": components["schemas"]["ProjectDetail"];
             };
         };
+        /**
+         * @description プロジェクトが存在しない、または到達できない（`not_found`）。
+         *     **非メンバーには 403 ではなく 404 を返す**（Design.md 6.4.5「存在を隠す」）。
+         */
+        ProjectNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
+         * @description タグが存在しない（`not_found`）。**他プロジェクトのタグ ID も同じ 404 に寄せる**
+         *     ——クエリの `WHERE` が `project_id` を含むため区別が付かず、区別する必要もない。
+         */
+        TagNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 同じ名前のタグが既にある（`already_exists`。`uq_tag_project_name`）。 */
+        TagAlreadyExists: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description スプリントが存在しない（`not_found`）。TagNotFound と同じ扱い。 */
+        SprintNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description レート制限（`rate_limited`。ApiDesign.md 2.9）。 */
         RateLimited: {
             headers: {
@@ -1574,6 +1926,13 @@ export interface components {
          *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
          */
         TokenID: string;
+        /**
+         * @description タグの ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。
+         *     タグは `seq` に相当する連番を持たない。
+         */
+        TagID: string;
+        /** @description スプリントの ULID（ApiDesign.md 9.1）。 */
+        SprintID: string;
         /**
          * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
          *     一致させ、開発時のデバッグを容易にするため。
@@ -2211,6 +2570,294 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listTags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description タグの一覧。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TagList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createTag: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTagRequest"];
+            };
+        };
+        responses: {
+            /** @description 作成されたタグ。`Location` に作成先のURLを返す。 */
+            201: {
+                headers: {
+                    /** @example /api/v1/projects/my-app/tags/01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tag"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            409: components["responses"]["TagAlreadyExists"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteTag: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description タグの ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。
+                 *     タグは `seq` に相当する連番を持たない。
+                 */
+                id: components["parameters"]["TagID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除された（本文なし）。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TagNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    patchTag: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description タグの ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。
+                 *     タグは `seq` に相当する連番を持たない。
+                 */
+                id: components["parameters"]["TagID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchTagRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後のタグ。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tag"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TagNotFound"];
+            409: components["responses"]["TagAlreadyExists"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSprints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description スプリントの一覧。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SprintList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createSprint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSprintRequest"];
+            };
+        };
+        responses: {
+            /** @description 作成されたスプリント。`Location` に作成先のURLを返す。 */
+            201: {
+                headers: {
+                    /** @example /api/v1/projects/my-app/sprints/01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Sprint"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteSprint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /** @description スプリントの ULID（ApiDesign.md 9.1）。 */
+                id: components["parameters"]["SprintID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除された（本文なし）。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SprintNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    patchSprint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /** @description スプリントの ULID（ApiDesign.md 9.1）。 */
+                id: components["parameters"]["SprintID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchSprintRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後のスプリント。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Sprint"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SprintNotFound"];
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

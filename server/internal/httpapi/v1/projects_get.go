@@ -21,6 +21,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
+	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
 // getProject は GET /api/v1/projects/{key} を処理する（ApiDesign.md 5.4）。
@@ -84,4 +85,28 @@ func writeProjectDetailError(w http.ResponseWriter, r *http.Request, key string,
 	}
 	apierr.Write(w, r, apierr.New(apierr.InternalError).
 		WithCause(fmt.Errorf("プロジェクト %q を読めない: %w", key, err)))
+}
+
+// projectScopeContext は /projects/{key} 配下の**子資源**のハンドラが行う取り出し。
+//
+// projectRequestContext がプリンシパルと {key} を返すのに対し、こちらは
+// **プロジェクトの ID まで解決して返す**。タグ（9.11）・スプリント（9.12）・
+// チケット（9.2〜）はいずれも project_id で行を絞るためである。
+//
+// 到達可否（メンバーか）の判定は RequireProjectPermission が済ませている
+// （Design.md 6.4.5）。ここで ErrNoRows になるのは、認可の直後に他者が
+// プロジェクトを削除した場合だけで、writeProjectDetailError と同じく 404 に倒す。
+func projectScopeContext(
+	w http.ResponseWriter, r *http.Request, q gen.Querier, route string,
+) (*auth.Principal, string, string, bool) {
+	p, key, ok := projectRequestContext(w, r, route)
+	if !ok {
+		return nil, "", "", false
+	}
+	projectID, err := q.FindProjectIDByKey(r.Context(), key)
+	if err != nil {
+		writeProjectDetailError(w, r, key, err)
+		return nil, "", "", false
+	}
+	return p, key, projectID, true
 }

@@ -24,3 +24,35 @@ projects:
       - { email: pm@example.com,     role: project_admin }
       - { email: member@example.com, role: project_member }
       - { email: viewer@example.com, role: project_viewer }
+
+    # タグ（DbDesign.md 6.10、手順16a）。バックログのグループ化の軸になる。
+    # 色は持たない（GuiDesign.md 8.6）。sort_order がセクションの並び順。
+    tags:
+      - { name: 設計,   sort_order: 10 }
+      - { name: GUI,    sort_order: 20 }
+      - { name: API,    sort_order: 30 }
+      - { name: MCP連携, sort_order: 40 }
+
+    # スプリント（DbDesign.md 6.9、手順16a）。**3つの状態をすべて置く**
+    # ——プロジェクト設定のスプリントタブ（GuiDesign.md 5.9.5）が
+    # planned / active / completed を出し分けられるかを目で確かめるため。
+    # 日付の無い1件も置く（並び順の NULLS LAST を確かめる）。
+    sprints:
+      - name: Sprint 1
+        goal: ログインを通す
+        start_date: '2026-07-22'
+        end_date: '2026-08-04'
+        status: completed
+      - name: Sprint 2
+        goal: プロジェクト管理をひととおり動かす
+        start_date: '2026-08-05'
+        end_date: '2026-08-18'
+        status: active
+      - name: Sprint 3
+        goal: チケットを扱えるようにする
+        start_date: '2026-08-19'
+        end_date: '2026-09-01'
+        status: planned
+      - name: 未定
+        goal: 日程が決まっていないもの置き場
+        status: planned

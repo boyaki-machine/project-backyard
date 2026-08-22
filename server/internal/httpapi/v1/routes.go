@@ -140,6 +140,36 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.archive")).
 			Post("/projects/{key}/unarchive", h.unarchiveProject)
 
+		// ── タグ・スプリント（ApiDesign.md 9.11 / 9.12）──────────
+		//
+		// **読みと書きで必要権限が違う。** 一覧は ticket.view（バックログと
+		// チケット詳細が選択肢として読む）、定義の変更は project.edit
+		// （「プロジェクトの分類軸・区切りを決める」行為であり、ワークフローと
+		// 同じ性格を持つ）。権限カタログは増やしていない——DbDesign.md 7.2 の
+		// 28件は Design.md 付録Aで確定済みであり、既存権限の内側に収まる。
+		//
+		// **どちらもプロジェクトの子資源なので RequireProjectPermission を通す。**
+		// 非メンバーには 404 が返る（Design.md 6.4.5）。{id} で指す行も
+		// project_id で絞ってあり（tag.sql / sprint.sql）、他プロジェクトの
+		// タグを指しても「見つからない」に寄る。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tags", h.listTags)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Post("/projects/{key}/tags", h.createTag)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Patch("/projects/{key}/tags/{id}", h.patchTag)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Delete("/projects/{key}/tags/{id}", h.deleteTag)
+
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/sprints", h.listSprints)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Post("/projects/{key}/sprints", h.createSprint)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Patch("/projects/{key}/sprints/{id}", h.patchSprint)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Delete("/projects/{key}/sprints/{id}", h.deleteSprint)
+
 		// ── ロール・権限カタログ（ApiDesign.md 7章）──────────────
 		//
 		// **GET /roles だけ必要権限が scope で変わる**（7.1）。?scope=project は
