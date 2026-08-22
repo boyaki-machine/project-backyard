@@ -30,7 +30,7 @@ clone 直後には存在しないので、各自が作り直す。
 | [Requirements.md](Requirements.md) | 要件・構想。1〜9章がチケット管理ツールとしての仕様、**10章がAI駆動開発への拡張** | 記述済 |
 | [Design.md](Design.md) | 全体設計。**6章（認証・認可）が本書の正本**。他領域は各設計書へ委譲 | 策定中 |
 | [DbDesign.md](DbDesign.md) | Phase 1 の完全なDDL・マイグレーション・初期データ・docker compose 構成 | Phase 1 確定 |
-| [ApiDesign.md](ApiDesign.md) | 認証・プロジェクト・ユーザー管理APIを確定。チケットAPIは未着手 | Phase 1 前半確定 |
+| [ApiDesign.md](ApiDesign.md) | 認証・プロジェクト・ユーザー管理API、および**チケットAPI（9章）を確定**。9章は未実装（手順16〜19） | Phase 1 確定 |
 | [GuiDesign.md](GuiDesign.md) | 画面遷移・ワイヤーフレーム・モノクロマティック配色体系 | Phase 1 確定 |
 | [Development.md](Development.md) | **開発環境の立ち上げ・デバッグ手順。** 設計ではなく、実装済みの範囲を動かす手順 | 実装に追従 |
 | [PROGRESS.md](PROGRESS.md) | 実装進捗・次の手順への引き継ぎ・環境メモ。**現況のみを持つ** | 実装に追従 |
@@ -69,6 +69,10 @@ clone 直後には存在しないので、各自が作り直す。
 | `app_user` と `user_identity` を分離しOIDC/SAMLに備える | `Design.md` 6.2.3 |
 | 権限をコードではなくデータ（permissionカタログ）で定義する | `Design.md` 6.4、`DbDesign.md` 7.2 |
 | AIの提案はすべて `proposal` テーブルを経由させる | `DbDesign.md` 8.2.2 |
+| **チケットのグルーピングは2軸**——分解は親子階層、分類はタグ。1軸に混ぜない | `DbDesign.md` 6.10 |
+| **チケットは「視点」（バックログ／カンバン／ガント）で見る。** 同一データを別の描き方で出し、グループ化軸を共有する | `GuiDesign.md` 4.1.1 |
+| **バックログはページングしない。** グループ化・階層・並べ替えがページ境界をまたげないため | `ApiDesign.md` 9.2.3 |
+| チケットは API でも `seq`（プロジェクト内連番）で指す。ULID は返すが指定には使わない | `ApiDesign.md` 9.1 |
 | アプリ共通ヘッダを持たない（縦方向の可用領域を優先） | `GuiDesign.md` 2.1 |
 | モノクロマティック配色。有彩色は危険・警告・AIの3つのみ | `GuiDesign.md` 8章 |
 | 紫は「AI由来」ではなく「未確認のAI出力」を意味する | `GuiDesign.md` 8.4.2 |
