@@ -31,7 +31,7 @@ import * as projectsApi from '../api/projects'
 import * as usersApi from '../api/users'
 import type { UserDetail } from '../api/users'
 import { formatDate, formatDateTime } from '../lib/datetime'
-import { PROJECT_ROLES, SYSTEM_ROLES, projectRoleLabel } from '../lib/roles'
+import { useRolesStore } from '../stores/roles'
 import { useAuthStore } from '../stores/auth'
 
 /** 入力の上限（`ApiDesign.md` 6.2 の検証表と同じ。正本はサーバ側） */
@@ -99,7 +99,20 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(() => void load())
+/**
+ * ロールの選択肢と表示名（`ApiDesign.md` 7.1）。**画面は対応表を持たない**
+ * （`GuiDesign.md` 5.6。正本は `DbDesign.md` 7.3 のシード）。
+ *
+ * この画面は `user.manage` を要するので全件を読める。
+ */
+const rolesStore = useRolesStore()
+const systemRoles = computed(() => rolesStore.systemRoles)
+const projectRoles = computed(() => rolesStore.projectRoles)
+
+onMounted(() => {
+  void load()
+  void rolesStore.ensureRoles('all')
+})
 
 // 一覧から別の行を開くとコンポーネントは再生成されないことがある（同じルート）。
 // `:id` だけが変わる場合に備えて取り直す。
@@ -342,7 +355,7 @@ async function changeMembershipRole(projectKey: string, role: string): Promise<v
   membershipNotice.value = null
   try {
     await usersApi.putMembership(u.id, projectKey, role)
-    membershipNotice.value = `${projectKey} のロールを ${projectRoleLabel(role)} に変更しました`
+    membershipNotice.value = `${projectKey} のロールを ${rolesStore.roleLabel(role)} に変更しました`
     await reloadDetail()
   } catch (e: unknown) {
     membershipError.value = toApiError(e)
@@ -694,7 +707,7 @@ function onMenuSelect(key: string): void {
           <h2 class="block-title">システムロール</h2>
 
           <div class="choices" role="radiogroup" aria-label="システムロール">
-            <label v-for="r in SYSTEM_ROLES" :key="r.key" class="choice">
+            <label v-for="r in systemRoles" :key="r.key" class="choice">
               <input
                 v-model="roleDraft"
                 type="radio"
@@ -703,7 +716,7 @@ function onMenuSelect(key: string): void {
                 :disabled="savingRole || isSelf"
               />
               <span class="choice-body">
-                <span class="choice-label">{{ r.label }}</span>
+                <span class="choice-label">{{ r.display_name }}</span>
                 <span class="choice-description">{{ r.description }}</span>
               </span>
             </label>
@@ -778,8 +791,8 @@ function onMenuSelect(key: string): void {
                       )
                     "
                   >
-                    <option v-for="r in PROJECT_ROLES" :key="r.key" :value="r.key">
-                      {{ r.label }}
+                    <option v-for="r in projectRoles" :key="r.key" :value="r.key">
+                      {{ r.display_name }}
                     </option>
                   </select>
                 </td>

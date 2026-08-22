@@ -1041,6 +1041,92 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/roles:
+    get:
+      tags: [roles]
+      summary: ロール一覧
+      operationId: listRoles
+      description: |
+        組み込みロールのカタログ（ApiDesign.md 7.1、正本は DbDesign.md 7.3 のシード）。
+        GuiDesign.md 5.6.3 の権限マトリクスと、画面がロールの表示名を引くために使う。
+
+        **必要権限は `scope` によって変わる。**
+
+        | 要求 | 返すもの | 必要権限 |
+        |---|---|---|
+        | `?scope=project` | `scope='project'` の3件 | **不要**（認証済みであればよい） |
+        | `?scope=system` | `scope='system'` の2件 | `user.manage` |
+        | 未指定 | 全5件 | `user.manage` |
+
+        OpenAPI の `security` は操作単位でしか宣言できず、クエリの値ごとに分けられない。
+        ここでは**認証必須**として宣言してある。`?scope=project` 以外で `user.manage` を
+        持たない場合は `403` になる。
+
+        `?scope=project` を開放しているのは、プロジェクト設定のメンバータブ
+        （GuiDesign.md 5.9.2）がプロジェクト管理者の開く画面でありながら、
+        ロールの表示名を必要とするためである。**これは暫定で、画面構成が固まった時点で
+        権限の全体像を再整理する**（7.1）。
+
+        `items[]` は `role.sort_order` 昇順、`permissions[]` は `permission.sort_order` 昇順。
+        **ページネーションも ETag も持たない**（件数がシードで固定のため）。
+      parameters:
+        - name: scope
+          in: query
+          description: |
+            未指定は全件。`role.scope` そのものであり、**プロジェクトIDやユーザIDは
+            受け付けない**（`role` テーブルは `project_id` を持たない。7.1）。
+            解釈できない値は `422`。
+          schema:
+            type: string
+            enum: [system, project]
+      responses:
+        '200':
+          description: ロールのカタログ。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/permissions:
+    get:
+      tags: [roles]
+      summary: 権限カタログ
+      operationId: listPermissions
+      description: |
+        権限カタログの28件（ApiDesign.md 7.2、正本は DbDesign.md 7.2 のシード）。
+        **必要権限は `user.manage`。**
+
+        7.1 と違い開放しないのは、消費者が GuiDesign.md 5.6.3 の権限マトリクスだけで、
+        そのタブが `user.manage` を要する画面（`/admin/users`）の中にあるためである。
+
+        `items[]` は `permission.sort_order` 昇順。`category` は同じ番号帯で連続しており、
+        画面はこれで行を区切る。**ページネーションも ETag も持たない。**
+      responses:
+        '200':
+          description: 権限のカタログ。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /healthcheck:
     get:
       tags: [ops]
@@ -1272,6 +1358,87 @@ components:
           type: array
           items:
             type: string
+
+    RoleList:
+      type: object
+      required: [items]
+      description: |
+        ApiDesign.md 7.1。**2.6 のページネーション項目を持たない**——件数が
+        シードで固定されており、page / per_page / total のいずれも意味を持たない。
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Role'
+
+    Role:
+      type: object
+      required: [key, scope, display_name, description, is_builtin, sort_order, permissions]
+      properties:
+        key:
+          description: ロールのキー（DbDesign.md 7.3）。
+          type: string
+          examples: ['project_admin']
+        scope:
+          description: |
+            権限の効く範囲（Design.md 6.4.1 の三層構造）。`system` はインスタンス全体、
+            `project` は個別プロジェクトに対する役割。
+          type: string
+          enum: [system, project]
+        display_name:
+          description: |
+            画面に出す名前。**画面ごとに略さない**（GuiDesign.md 5.6）。
+          type: string
+          examples: ['プロジェクト管理者']
+        description:
+          description: 選択肢の下に添える説明。`role.description` は NULL 許容。
+          type: string
+          nullable: true
+        is_builtin:
+          description: |
+            組み込みロールか。Phase 1 は常に `true`。カスタムロール（`false`）の
+            作成は Phase 3（ApiDesign.md 7.3）。
+          type: boolean
+        sort_order:
+          description: 並び順。表示名の五十音順ではない（GuiDesign.md 5.6）。
+          type: integer
+        permissions:
+          description: |
+            割り当てられた権限キー。`permission.sort_order` の昇順。
+            **権限を1件も持たないロールでも `[]` を返し、`null` にしない。**
+          type: array
+          items:
+            type: string
+
+    PermissionList:
+      type: object
+      required: [items]
+      description: ApiDesign.md 7.2。RoleList と同じくページネーション項目を持たない。
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Permission'
+
+    Permission:
+      type: object
+      required: [key, category, description, sort_order]
+      properties:
+        key:
+          description: 権限キー（Design.md 6.4.2 の権限カタログ）。
+          type: string
+          examples: ['ticket.close']
+        category:
+          description: |
+            権限の分類。GuiDesign.md 5.6.3 のマトリクスはこれで行を区切る。
+          type: string
+          examples: ['ticket']
+        description:
+          description: 権限の説明。マトリクスではキーの下に副見出しとして出す。
+          type: string
+          examples: ['チケットのクローズ']
+        sort_order:
+          type: integer
 
     UserList:
       description: 一覧の共通エンベロープ（ApiDesign.md 2.6）。

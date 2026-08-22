@@ -526,3 +526,85 @@ func TestRequireProjectPermissionWithoutPrincipal(t *testing.T) {
 		t.Fatalf("status = %d, want 500（body=%s）", w.Code, w.Body.String())
 	}
 }
+
+// ── RequirePermissionUnlessQuery（ApiDesign.md 7.1 の GET /roles）────
+//
+// scope によって必要権限が変わることを、ルート定義の側で表せているかを見る。
+
+// exempt に一致する要求は、権限を持たない利用者でも素通しする。
+func TestRequirePermissionUnlessQueryExemptsMatchingValue(t *testing.T) {
+	q := seededQuerier()
+
+	w, reached := serveAuthz(principal(auth.SystemRoleOperator), "/roles", "/roles?scope=project",
+		RequirePermissionUnlessQuery(q, "user.manage", "scope", "project"))
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204（body=%s）", w.Code, w.Body.String())
+	}
+	if !reached {
+		t.Error("?scope=project はオペレータでも通ること（ApiDesign.md 7.1）")
+	}
+	if len(q.audits) != 0 {
+		t.Errorf("素通ししたのに監査ログが %d 件書かれている", len(q.audits))
+	}
+}
+
+// exempt 以外は permission を要求する。未指定・別の値・**解釈できない値**も含む。
+func TestRequirePermissionUnlessQueryGuardsOtherValues(t *testing.T) {
+	// 最後の2つは v1.parseRoleScopeFilter が 422 にする値だが、**認可のほうが
+	// 先に走る**（7.1 の但し書き）。権限を持たない呼び出し元は project 以外を
+	// 要求できないため、値の正しさは判定の後で足りる。
+	for _, target := range []string{
+		"/roles",
+		"/roles?scope=system",
+		"/roles?scope=all",
+		"/roles?scope=SYSTEM",
+		"/roles?scope=projects",
+	} {
+		q := seededQuerier()
+		w, reached := serveAuthz(principal(auth.SystemRoleOperator), "/roles", target,
+			RequirePermissionUnlessQuery(q, "user.manage", "scope", "project"))
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s: status = %d, want 403（body=%s）", target, w.Code, w.Body.String())
+		}
+		if reached {
+			t.Errorf("%s: 403 なのにハンドラへ到達している", target)
+		}
+	}
+}
+
+// 権限を持つ利用者は exempt 以外でも通る。
+func TestRequirePermissionUnlessQueryAllowsPermittedActor(t *testing.T) {
+	for _, target := range []string{"/roles", "/roles?scope=system", "/roles?scope=project"} {
+		q := seededQuerier()
+		w, reached := serveAuthz(principal(auth.SystemRoleAdministrator), "/roles", target,
+			RequirePermissionUnlessQuery(q, "user.manage", "scope", "project"))
+
+		if w.Code != http.StatusNoContent {
+			t.Errorf("%s: status = %d, want 204（body=%s）", target, w.Code, w.Body.String())
+		}
+		if !reached {
+			t.Errorf("%s: ハンドラに到達していない", target)
+		}
+	}
+}
+
+// **素通しは値の完全一致に限る。** 前方一致や大文字小文字の揺れで通ると、
+// 認可がクエリの綴りしだいで外れることになる。
+func TestRequirePermissionUnlessQueryMatchesExactly(t *testing.T) {
+	for _, target := range []string{
+		"/roles?scope=Project",
+		"/roles?scope=project2",
+		"/roles?scope=%20project",
+		"/roles?other=project",
+	} {
+		q := seededQuerier()
+		w, _ := serveAuthz(principal(auth.SystemRoleOperator), "/roles", target,
+			RequirePermissionUnlessQuery(q, "user.manage", "scope", "project"))
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s: status = %d, want 403（完全一致のみ素通しすること）", target, w.Code)
+		}
+	}
+}

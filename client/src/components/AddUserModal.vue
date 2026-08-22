@@ -11,13 +11,13 @@
  *
  * **モーダルはURLを持たない**（3.2）。開閉は `UsersPage` が持つ。
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import Modal from './Modal.vue'
 import { ApiError } from '../api/client'
 import * as usersApi from '../api/users'
 import type { CreatedUser } from '../api/users'
-import { systemRoleLabel } from '../lib/roles'
+import { useRolesStore } from '../stores/roles'
 
 const emit = defineEmits<{ close: []; created: [user: CreatedUser] }>()
 
@@ -27,21 +27,39 @@ const MAX_EMAIL = 254
 /** `Design.md` 6.3 の最低長。サーバも同じ値で弾く */
 const MIN_PASSWORD = 12
 
-type SystemRole = 'operator' | 'administrator'
 type PasswordMode = 'generate' | 'manual'
 
 const displayName = ref('')
 const email = ref('')
-const systemRole = ref<SystemRole>('operator')
+/**
+ * 送るのは `CreateUserRequest.system_role`（`ApiDesign.md` 6.2）で、値域は
+ * `operator` / `administrator` の2つ。**選択肢そのものは `GET /roles` から
+ * 来る**（下の roles）が、送信の型は openapi の生成物に合わせる。
+ *
+ * Phase 3 でカスタムのシステムロールを作れるようにするなら、6.2 の enum を
+ * 広げる改訂が先に要る。ここで `string` へ緩めて先回りしない。
+ */
+type SystemRoleKey = NonNullable<usersApi.CreateUserRequest['system_role']>
+const systemRole = ref<SystemRoleKey>('operator')
 const passwordMode = ref<PasswordMode>('generate')
 const password = ref('')
 const mustChangePassword = ref(true)
 
-/** ロールの説明は 5.6.1 の図のまま。表示名は `lib/roles.ts` と共有する */
-const roles: { value: SystemRole; description: string }[] = [
-  { value: 'operator', description: 'プロジェクトとチケットの閲覧・編集ができます' },
-  { value: 'administrator', description: 'ユーザー管理・システム設定を含む全操作' },
-]
+/**
+ * 選択肢は `GET /roles` が返すシステムロール（`ApiDesign.md` 7.1）。
+ *
+ * **表示名も説明も、並びも DBのシードが正本**である（`DbDesign.md` 7.3）。
+ * 手順14 より前はこのファイルが独自の配列を持っていたが、`lib/roles.ts` の
+ * 対応表もろとも廃止した——同じものが3か所にあると、片方だけ直る。
+ *
+ * このモーダルは `user.manage` を要する画面から開くので、全件を読める。
+ */
+const rolesStore = useRolesStore()
+const roles = computed(() => rolesStore.systemRoles)
+
+onMounted(() => {
+  void rolesStore.ensureRoles('all')
+})
 
 const submitting = ref(false)
 const error = ref<ApiError | null>(null)
@@ -135,16 +153,16 @@ async function submit() {
 
       <fieldset class="field">
         <legend class="label">システムロール <span class="required">*</span></legend>
-        <label v-for="r in roles" :key="r.value" class="choice">
+        <label v-for="r in roles" :key="r.key" class="choice">
           <input
             v-model="systemRole"
             type="radio"
             name="system_role"
-            :value="r.value"
+            :value="r.key"
             :disabled="submitting"
           />
           <span class="choice-body">
-            <span class="choice-label">{{ systemRoleLabel(r.value) }}</span>
+            <span class="choice-label">{{ r.display_name }}</span>
             <span class="choice-description">{{ r.description }}</span>
           </span>
         </label>

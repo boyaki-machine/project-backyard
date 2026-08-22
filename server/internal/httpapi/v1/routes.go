@@ -52,6 +52,8 @@ type Deps struct {
 //
 //	middleware.RequirePermission(deps.Queries, "user.manage")        システムロール層
 //	middleware.RequireProjectPermission(deps.Queries, "ticket.close") プロジェクト層（{key} が要る）
+//	middleware.RequirePermissionUnlessQuery(deps.Queries, "user.manage", "scope", "project")
+//	                                        クエリの値で素通しする例外（7.1 の GET /roles だけ）
 //
 // 認証・自分自身の3本（ApiDesign.md 3.1 / 3.2 / 4.1）に .With(...) が
 // 付いていないのは、いずれも「必要権限：不要」または「認証済み・本人」で
@@ -117,6 +119,24 @@ func Mount(r chi.Router, deps Deps) {
 			Post("/projects/{key}/archive", h.archiveProject)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.archive")).
 			Post("/projects/{key}/unarchive", h.unarchiveProject)
+
+		// ── ロール・権限カタログ（ApiDesign.md 7章）──────────────
+		//
+		// **GET /roles だけ必要権限が scope で変わる**（7.1）。?scope=project は
+		// 権限を要さず、それ以外（system・未指定）は user.manage を要する。
+		// プロジェクト設定のメンバータブ（GuiDesign.md 5.9.2）はプロジェクト
+		// 管理者が開く画面でありながら、ロールの表示名を必要とするためである。
+		//
+		// **この振り分けをハンドラへ移さない。** ルート定義を眺めて必要権限が
+		// 読めなくなる（Design.md 6.4.4）。
+		r.With(middleware.RequirePermissionUnlessQuery(
+			deps.Queries, "user.manage", "scope", roleScopeProject)).
+			Get("/roles", h.listRoles)
+		// 権限カタログは 7.1 と違い user.manage のまま。消費者が
+		// GuiDesign.md 5.6.3 の権限マトリクスだけで、そのタブは user.manage を
+		// 要する画面（/admin/users）の中にある。
+		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
+			Get("/permissions", h.listPermissions)
 
 		// ── ユーザー管理（ApiDesign.md 6章）────────────────────
 		//

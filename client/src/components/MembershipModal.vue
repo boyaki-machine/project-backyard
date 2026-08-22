@@ -17,10 +17,10 @@ export interface ProjectChoice {
  * （13a の引き継ぎ）。**既に権限を持つプロジェクトは候補から外して渡す**——
  * ロールの変更は一覧の行でできるので、ここに出すと入口が2つになる。
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import Modal from './Modal.vue'
-import { PROJECT_ROLES } from '../lib/roles'
+import { useRolesStore } from '../stores/roles'
 
 const props = withDefaults(
   defineProps<{
@@ -53,9 +53,20 @@ function submit(): void {
   emit('submit', { projectKey: projectKey.value, role: role.value })
 }
 
-const roleDescription = computed(
-  () => PROJECT_ROLES.find((r) => r.key === role.value)?.description ?? '',
-)
+/**
+ * 選択肢は `GET /roles?scope=project`（`ApiDesign.md` 7.1）。表示名・説明・
+ * 並びとも `DbDesign.md` 7.3 のシードが正本である。
+ *
+ * このモーダルは `user.manage` を要する画面（ユーザー詳細）から開くので、
+ * 呼び出し側が全件を読み込んでいる。
+ */
+const rolesStore = useRolesStore()
+const projectRoles = computed(() => rolesStore.projectRoles)
+const roleDescription = computed(() => rolesStore.roleDescription(role.value))
+
+onMounted(() => {
+  void rolesStore.ensureRoles('all')
+})
 </script>
 
 <template>
@@ -79,7 +90,9 @@ const roleDescription = computed(
       <label class="field">
         <span class="label">ロール <span class="required">*</span></span>
         <select v-model="role" name="role" :disabled="busy">
-          <option v-for="r in PROJECT_ROLES" :key="r.key" :value="r.key">{{ r.label }}</option>
+          <option v-for="r in projectRoles" :key="r.key" :value="r.key">
+            {{ r.display_name }}
+          </option>
         </select>
         <span class="hint">{{ roleDescription }}</span>
       </label>

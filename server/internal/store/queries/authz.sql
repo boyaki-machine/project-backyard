@@ -141,3 +141,59 @@ SET cached_permissions    = NULL,
     permissions_cached_at = NULL
 WHERE actor_id = @actor_id
   AND permissions_cached_at IS NOT NULL;
+
+-- ── ロール・権限カタログ（ApiDesign.md 7.1 / 7.2、手順14）─────────────
+--
+-- GuiDesign.md 5.6.3 の権限マトリクスと、画面がロールの表示名を引くための
+-- 問い合わせ。**マトリクス専用のクエリは作らない**——7.1 と 7.2 の2つを
+-- 組み合わせて画面が組み立てる（7.2 末尾）。
+
+-- ListRoles はロールのカタログを返す（ApiDesign.md 7.1）。
+--
+-- @scope_filter は 'system' / 'project' / 'all'。ListAdminUsers の
+-- kind_filter と同じ書き方で、'all' のときだけ絞り込みを外す。
+--
+-- **並びは role.sort_order である**（7.1、GuiDesign.md 5.6）。表示名の
+-- 五十音順ではない。シードが意図して序列を持っており（DbDesign.md 7.3、
+-- オペレータ 10 → アドミニストレータ 20 → プロジェクト管理者 30 → …）、
+-- Phase 3 でカスタムロールが増えたときに表示名順では意味のない並びになる。
+-- 同着のときは key で並べ、応答が呼ぶたびに入れ替わらないようにする。
+--
+-- name: ListRoles :many
+SELECT key, scope, display_name, description, is_builtin, sort_order
+FROM role
+WHERE @scope_filter::text = 'all' OR scope = @scope_filter::text
+ORDER BY sort_order, key;
+
+-- ListRolePermissionAssignments は、ListRoles と同じ絞り込みに対する
+-- ロールと権限の割り当てを (role_key, permission_key) の対で返す
+-- （ApiDesign.md 7.1 の permissions[]）。
+--
+-- **ロール1件ずつ問い合わせない。** ロールの数だけ往復すると N+1 になる
+-- （ApiDesign.md 1.2 の設計方針3）。呼び出し側が role_key で畳む。
+--
+-- **既存の ListRolePermissions（キーの昇順）とは別に置く。** あちらは
+-- 認可判定の材料で、並びに意味が無い。こちらは画面に出る順序であり、
+-- permission.sort_order でなければマトリクスの行の並びと食い違う。
+--
+-- **WHERE は ListRoles と一字一句そろえる。** 片方だけ直すと、返らない
+-- ロールの権限だけが応答に混ざる。
+--
+-- name: ListRolePermissionAssignments :many
+SELECT rp.role_key, rp.permission_key
+FROM role_permission rp
+JOIN role r       ON r.key = rp.role_key
+JOIN permission p ON p.key = rp.permission_key
+WHERE @scope_filter::text = 'all' OR r.scope = @scope_filter::text
+ORDER BY r.sort_order, r.key, p.sort_order, p.key;
+
+-- ListPermissions は権限カタログを返す（ApiDesign.md 7.2）。
+--
+-- 正本は DbDesign.md 7.2 のシード（28件）。並びは permission.sort_order で、
+-- category ごとに連続するよう採番されている（project 10番台 / ticket 20番台
+-- / …）。GuiDesign.md 5.6.3 がカテゴリで行を区切れるのはこのためである。
+--
+-- name: ListPermissions :many
+SELECT key, category, description, sort_order
+FROM permission
+ORDER BY sort_order, key;

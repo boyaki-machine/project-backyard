@@ -64,6 +64,17 @@ type fakeQuerier struct {
 	memberships []gen.ListProjectMembershipsByActorRow
 	roleCalls   int
 
+	// ロール・権限カタログ（手順14。ApiDesign.md 7.1 / 7.2）
+	//
+	// catalogScopes に ListRoles / ListRolePermissionAssignments が受けた
+	// scope を順に残す。**両者が同じ値で呼ばれること**を試験が確かめる
+	// （片方だけ絞ると、返らないロールの権限が応答に混ざる）。
+	catalogRoles       []gen.Role
+	catalogAssignments []gen.RolePermission
+	catalogPerms       []gen.Permission
+	catalogScopes      []string
+	catalogErr         error
+
 	// プロジェクト（手順9）
 	projectRows    []gen.ListProjectsRow
 	projectSummary gen.SummarizeProjectsRow
@@ -749,4 +760,29 @@ func (q *fakeQuerier) DeleteProjectMember(_ context.Context, arg gen.DeleteProje
 	q.opLog = append(q.opLog, "DeleteProjectMember")
 	q.deletedMembers = append(q.deletedMembers, arg)
 	return q.deleteMemberRows, nil
+}
+
+// ── ロール・権限カタログ（手順14。ApiDesign.md 7.1 / 7.2）─────────
+
+func (q *fakeQuerier) ListRoles(_ context.Context, scope string) ([]gen.Role, error) {
+	q.catalogScopes = append(q.catalogScopes, scope)
+	if q.catalogErr != nil {
+		return nil, q.catalogErr
+	}
+	return q.catalogRoles, nil
+}
+
+func (q *fakeQuerier) ListRolePermissionAssignments(_ context.Context, scope string) ([]gen.RolePermission, error) {
+	q.catalogScopes = append(q.catalogScopes, scope)
+	if q.catalogErr != nil {
+		return nil, q.catalogErr
+	}
+	return q.catalogAssignments, nil
+}
+
+func (q *fakeQuerier) ListPermissions(context.Context) ([]gen.Permission, error) {
+	if q.catalogErr != nil {
+		return nil, q.catalogErr
+	}
+	return q.catalogPerms, nil
 }

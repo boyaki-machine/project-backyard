@@ -35,7 +35,8 @@ import type {
   UserSort,
 } from '../api/users'
 import { formatDate, formatDateTime } from '../lib/datetime'
-import { userRoleLabel } from '../lib/roles'
+import RolePermissionMatrix from '../components/RolePermissionMatrix.vue'
+import { useRolesStore } from '../stores/roles'
 import { useAuthStore } from '../stores/auth'
 
 /**
@@ -49,6 +50,16 @@ const PER_PAGE = 25
 
 const router = useRouter()
 const auth = useAuthStore()
+
+/**
+ * ロールの表示名（`GuiDesign.md` 5.6）。**画面は対応表を持たない**——
+ * 正本は `DbDesign.md` 7.3 のシードで、`GET /roles` から取る（手順14 で
+ * `lib/roles.ts` を廃止した）。
+ *
+ * この画面は `user.manage` を要するので全件（`all`）を読める。読み込みが
+ * 終わるまではキーがそのまま出る。
+ */
+const rolesStore = useRolesStore()
 
 type Tab = 'users' | 'agents' | 'roles'
 const tab = ref<Tab>('users')
@@ -553,6 +564,9 @@ onMounted(() => {
   }
 
   void fetchUsers()
+  // ロール列の表示名に要る。**一覧の取得と直列にしない**——表示名が無くても
+  // キーで行は読めるので、一覧を待たせる理由が無い。
+  void rolesStore.ensureRoles('all')
 })
 
 // 表は読み込み中・空・エラーで付け外しされる。**現れたときに監視を張り直す**
@@ -599,7 +613,11 @@ async function retry(): Promise<void> {
   <div class="page">
     <PageHeader title="アカウント / 権限">
       <template #actions>
-        <button type="button" class="primary" @click="addOpen = true">+ ユーザー追加</button>
+        <!-- 追加できるのはユーザータブだけ。エージェント（Phase 2）とロールと権限
+             （Phase 1 は参照のみ。5.6.3）では、押しても行き先が無い -->
+        <button v-if="tab === 'users'" type="button" class="primary" @click="addOpen = true">
+          + ユーザー追加
+        </button>
       </template>
     </PageHeader>
 
@@ -771,7 +789,7 @@ async function retry(): Promise<void> {
                   </RouterLink>
                 </td>
                 <td class="email">{{ u.email ?? '—' }}</td>
-                <td class="role">{{ userRoleLabel(u.kind, u.system_role) }}</td>
+                <td class="role">{{ rolesStore.userRoleLabel(u.kind, u.system_role) }}</td>
                 <td class="status">{{ activeLabel(u.is_active) }}</td>
                 <td class="datetime">
                   {{ u.last_login_at === null ? '—' : formatDateTime(u.last_login_at) }}
@@ -855,18 +873,10 @@ async function retry(): Promise<void> {
       </div>
 
       <!-- ── ロールと権限タブ（5.6.3）──────────────────────── -->
-      <!-- 中身は `GET /roles` / `GET /permissions`（`ApiDesign.md` 7.1 / 7.2）が要る。
-           3.2 のルーティング表に無いタブなので PlaceholderPage は使えないが、
-           空白にせず予定を出すのは 6.5 と同じ考え方である -->
-      <div v-else class="placeholder" role="tabpanel">
-        <p class="placeholder-title">ロールと権限のページ予定</p>
-        <p class="placeholder-doc">GuiDesign.md 5.6.3</p>
-        <ul class="placeholder-list">
-          <li>権限カタログとロールの対応表（Design.md 6.4.2、正本は DbDesign.md 7.2 のシード）</li>
-          <li>オペレータ / アドミニストレータ / PJ管理者 / PJメンバー の4列</li>
-          <li>Phase 1 は参照のみ。カスタムロールの作成と権限の編集は Phase 3</li>
-        </ul>
-        <p class="placeholder-status">Phase 1・手順14で実装（docs/PROGRESS.md）</p>
+      <!-- 材料は `GET /roles` と `GET /permissions`（`ApiDesign.md` 7.1 / 7.2）。
+           3.2 のルーティング表に無いタブなので、URL は `/admin/users` のまま -->
+      <div v-else role="tabpanel">
+        <RolePermissionMatrix />
       </div>
     </div>
 
