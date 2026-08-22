@@ -52,7 +52,7 @@ const roles = computed(() => rolesStore.roles)
  * 変えたときに見出しと列がずれる。
  */
 const scopeGroups = computed(() => {
-  const groups: { scope: string; label: string; count: number }[] = []
+  const groups: { scope: string; label: string; count: number; boundary: boolean }[] = []
   for (const role of roles.value) {
     const last = groups[groups.length - 1]
     if (last && last.scope === role.scope) {
@@ -63,6 +63,8 @@ const scopeGroups = computed(() => {
       scope: role.scope,
       label: role.scope === 'system' ? 'システム' : 'プロジェクト',
       count: 1,
+      // 2つ目以降の群は、左端に縦罫を引いて切れ目を示す
+      boundary: groups.length > 0,
     })
   }
   return groups
@@ -98,6 +100,18 @@ const granted = computed(() => {
 
 function has(roleKey: string, permissionKey: string): boolean {
   return granted.value.get(roleKey)?.has(permissionKey) ?? false
+}
+
+/**
+ * その列が群（`role.scope`）の先頭か。
+ *
+ * **中央寄せの見出しだけでは、どこまでが「システム」か読めない**（利用者の
+ * 実機確認、2026-08-22）。境目に縦罫を1本引いて示す。先頭の群には引かない
+ * ——左隣は権限列で、そちらは既に右罫を持つ。
+ */
+function isGroupStart(index: number): boolean {
+  if (index === 0) return false
+  return roles.value[index].scope !== roles.value[index - 1].scope
 }
 
 async function load() {
@@ -160,13 +174,20 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureHead))
               :key="g.scope"
               scope="colgroup"
               class="group"
+              :class="{ 'group-start': g.boundary }"
               :colspan="g.count"
             >
               {{ g.label }}
             </th>
           </tr>
           <tr>
-            <th v-for="r in roles" :key="r.key" scope="col" class="role">
+            <th
+              v-for="(r, i) in roles"
+              :key="r.key"
+              scope="col"
+              class="role"
+              :class="{ 'group-start': isGroupStart(i) }"
+            >
               {{ r.display_name }}
             </th>
           </tr>
@@ -176,7 +197,12 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureHead))
           <template v-for="c in categories" :key="c.name">
             <tr class="category-row">
               <th scope="row" class="perm category">{{ c.name }}</th>
-              <td v-for="r in roles" :key="r.key" class="category-fill"></td>
+              <td
+                v-for="(r, i) in roles"
+                :key="r.key"
+                class="category-fill"
+                :class="{ 'group-start': isGroupStart(i) }"
+              ></td>
             </tr>
             <tr v-for="p in c.items" :key="p.key" class="perm-row">
               <th scope="row" class="perm">
@@ -184,7 +210,12 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureHead))
                 <span class="perm-desc">{{ p.description }}</span>
               </th>
               <!-- 記号だけにしない。読み上げ用の文字を添える（9.2） -->
-              <td v-for="r in roles" :key="r.key" class="mark">
+              <td
+                v-for="(r, i) in roles"
+                :key="r.key"
+                class="mark"
+                :class="{ 'group-start': isGroupStart(i) }"
+              >
                 <span class="mark-glyph" aria-hidden="true">{{ has(r.key, p.key) ? '✓' : '—' }}</span>
                 <span class="visually-hidden">{{ has(r.key, p.key) ? 'あり' : 'なし' }}</span>
               </td>
@@ -301,6 +332,26 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureHead))
   text-align: center;
   color: var(--pb-text-muted);
   font-size: 12px;
+  /*
+   * **見出しの下罫を一段強くする**（`--pb-line` → `--pb-border`）。ラベルが
+   * 自分の列を覆っていることを、線の伸びる範囲そのもので示す。
+   */
+  border-bottom: 1px solid var(--pb-border);
+}
+
+/*
+ * 群（`role.scope`）の境目に縦罫を1本入れる（利用者の実機確認、2026-08-22）。
+ *
+ * **1本だけにする。** 全列に引くと格子になり、一覧（`GuiDesign.md` 5.6）や
+ * メンバー表（5.9.2）が横罫だけで組まれているのと見た目が揃わない。読みたいのは
+ * 「どこまでがシステムか」であって、隣り合う列の区切りではない。
+ *
+ * ヘッダから本体まで通しで引く。ヘッダだけだと、下までスクロールしたときに
+ * 切れ目が分からなくなる（ヘッダ行を固定したのと同じ理由）。
+ */
+.matrix th.group-start,
+.matrix td.group-start {
+  border-left: 1px solid var(--pb-border);
 }
 
 .matrix th.role {
