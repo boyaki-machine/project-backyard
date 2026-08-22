@@ -293,19 +293,16 @@ func seedTickets(t *testing.T, ctx context.Context, pool *pgxpool.Pool, projectI
 	// project の CASCADE でチケットも落ちるため、個別の後始末は登録しない。
 }
 
-// loginAs はログインしてセッショントークンを返す。
+// loginAs はログインしてセッショントークンを返す（パスワードは testPassword 固定）。
+//
+// **呼び出しごとに違う RemoteAddr を使う**（loginAsWith に委ねる）。ログインは
+// IP 単位のレート制限を受け（ApiDesign.md 2.9、10回/分）、固定のアドレスで
+// 束ねると**1つのテストがログインを1回足しただけで、無関係な検証が 429 で
+// 落ちる**。手順15b で実際に起きた——TestMeSettingsIntegration が14回
+// ログインしており、11回目から先の6件が落ちていた。
 func loginAs(t *testing.T, r http.Handler, email string) string {
 	t.Helper()
-	rec := call(r, http.MethodPost, "/api/v1/auth/login",
-		`{"email":"`+email+`","password":"`+testPassword+`"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("%s のログイン status = %d（body=%s）", email, rec.Code, rec.Body.String())
-	}
-	c := cookieOf(rec, auth.SessionCookieName)
-	if c == nil {
-		t.Fatalf("%s のログインで pb_session が返らない", email)
-	}
-	return c.Value
+	return loginAsWith(t, r, email, testPassword)
 }
 
 func getWithCookie(r http.Handler, path, token string) *httptest.ResponseRecorder {

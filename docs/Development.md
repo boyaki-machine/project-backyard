@@ -344,9 +344,17 @@ make test      # cd server && go test ./...
 DBが無くても `make test` は通る。
 
 ```
-cd server
-PB_TEST_DATABASE_URL='postgres://pb_app:<password>@127.0.0.1:5432/pb?sslmode=disable' \
-  go test ./internal/httpapi/ -run Integration -v
+make up          # DB が動いていること
+make test-db     # 結合テスト（-run Integration）をすべて走らせる
+```
+
+**接続文字列を手で書かない。** `make test-db` が `deploy/dev/secrets/app_db_password` から
+recipe 内で組み立てる（`make run` と同じ作法）。秘密は argv にも Makefile にも残らない。
+
+1つに絞りたいときは `RUN=` を渡す。
+
+```
+make test-db RUN=TestMeTokensIntegration
 ```
 
 フェイクで差し替えたテストでは `queries/*.sql` が一度も実行されないため、
@@ -362,6 +370,7 @@ PB_TEST_DATABASE_URL='postgres://pb_app:<password>@127.0.0.1:5432/pb?sslmode=dis
 | **可変長引数を渡さないと `nil` スライスになる**（`[]string{}` ではない）。実効権限のキャッシュは `nil`（キャッシュ不在）と長さ0（権限0件）を区別するため、ヘルパで `f()` と書くと意図せず「不在」になる | `append([]string{}, xs...)` のように空スライスを明示する |
 | **プロジェクトキーには CHECK 制約がある**（`DbDesign.md` 6.4）。`^[a-z0-9][a-z0-9-]{1,19}$` で**2〜20文字**。ULID をそのまま使うと長さ超過で INSERT が落ちる | ULID の末尾6〜8文字を小文字化して使う |
 | **レート制限のカウンタはプロセス内メモリにある。** `make run` を再起動すると消える | 429 を再現する検証は**サーバを起動したまま**続けて叩く。ログインは IPあたり 10回/分 |
+| **ログインは IP あたり 10回/分**（`ApiDesign.md` 2.9）。`httptest.NewRequest` は固定のアドレスを入れるため、1つの結合テストがログインを11回すると自分で 429 を踏む | ログインは `loginAs` / `loginAsWith` を通す。**呼び出しごとに違う擬似 IP** を入れてある（`nextTestClientIP`）。生の `call(..., "/api/v1/auth/login", ...)` を書かない |
 | **状態を変える検証スクリプトは、途中で落ちると副作用だけが残る** | 現在値（`version` など）は毎回読み直し、本文とステータスを同じ出力へ混ぜない。まず1件だけ通してから全体を回す |
 | **パスワード入力のエコー抑止には競合窓がある。** プロンプトを出してから `term.ReadPassword` が echo を切るまでの数マイクロ秒に文字が届くと、その分だけ端末に表示される（`sudo` や `ssh` も同じ） | 端末ありの検証は `expect` に `sleep 0.4` を入れる。`printf ... \| script -q /dev/null` は stdin を即座に閉じるため `EOF` になり使えない |
 

@@ -96,6 +96,12 @@ func Mount(r chi.Router, deps Deps) {
 		r.Get("/me", h.me)
 		r.Patch("/me", h.patchMe)
 		r.Post("/me/password", h.changeMyPassword)
+		// アクセストークン（4.4）。**扱うのは token_type='api' だけ**であり、
+		// 対象の絞り込みはクエリ側（me.sql）にある。他人のトークンとセッションは
+		// 「見つからない」に寄せるため、認可ミドルウェアでは表現できない。
+		r.Get("/me/tokens", h.listMyTokens)
+		r.Post("/me/tokens", h.createMyToken)
+		r.Delete("/me/tokens/{id}", h.deleteMyToken)
 
 		// ── プロジェクト（ApiDesign.md 5章）──────────────────
 		//

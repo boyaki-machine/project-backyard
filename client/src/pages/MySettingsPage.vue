@@ -21,6 +21,7 @@ import { computed, ref, watch } from 'vue'
 import { ApiError } from '../api/client'
 import * as meApi from '../api/me'
 import type { UpdateMeRequest } from '../api/me'
+import MeTabs from '../components/MeTabs.vue'
 import PageHeader from '../components/PageHeader.vue'
 import { useAuthStore } from '../stores/auth'
 import type { Hue, ThemePreference } from '../stores/ui'
@@ -221,12 +222,7 @@ function asApiError(e: unknown): ApiError {
     <PageHeader title="自分の設定" />
 
     <div class="page-body">
-      <!-- タブは `/me` と `/me/tokens` の2ルートに対応する（3.2）。
-           プロジェクト設定（5.9）と違い、切替が URL の遷移になる -->
-      <nav class="tabs" aria-label="設定の種類">
-        <RouterLink to="/me" class="tab selected" aria-current="page">一般</RouterLink>
-        <RouterLink to="/me/tokens" class="tab">アクセストークン</RouterLink>
-      </nav>
+      <MeTabs current="general" />
 
       <div class="blocks">
         <!-- ── 基本情報 ──────────────────────────────────── -->
@@ -419,33 +415,6 @@ function asApiError(e: unknown): ApiError {
   flex: 1;
   overflow: auto;
   padding: var(--pb-space-6);
-}
-
-/* ── タブ（5.8）────────────────────────────────────────── */
-.tabs {
-  display: flex;
-  gap: var(--pb-space-1);
-  margin-bottom: var(--pb-space-4);
-  border-bottom: 1px solid var(--pb-border);
-}
-
-.tab {
-  padding: var(--pb-space-2) var(--pb-space-4);
-  border-bottom: 2px solid transparent;
-  color: var(--pb-text-muted);
-  font: inherit;
-  text-decoration: none;
-}
-
-.tab:hover {
-  color: var(--pb-text);
-}
-
-/* 選択中を色だけで示さない（9.2）。下線の太さでも区別できるようにする */
-.tab.selected {
-  border-bottom-color: var(--pb-accent);
-  color: var(--pb-text);
-  font-weight: 600;
 }
 
 /* ── ブロック ──────────────────────────────────────────── */

@@ -124,6 +124,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 自分のアクセストークン一覧
+         * @description CLI・スクリプト用の Bearer トークンを一覧する（ApiDesign.md 4.4.1）。
+         *     必要権限は「本人」。
+         *
+         *     **`token_type='api'` の行だけを返す。** ブラウザのセッションは現れない
+         *     （本人が自分のセッションを見る画面を持たないため。GuiDesign.md 5.8）。
+         *
+         *     **平文（`token`）は返さない。** 返すのは `token_prefix`（先頭8文字）だけで、
+         *     再表示する経路は存在しない。
+         *
+         *     **失効済みは返さない。期限切れは返す**（`status` が `expired`）——更新が要る
+         *     ことに本人が気づく必要があり、上限5本を占めているためである。
+         *
+         *     ページネーションも ETag も持たない（1人5本が上限）。
+         */
+        get: operations["listMyTokens"];
+        put?: never;
+        /**
+         * アクセストークンを発行
+         * @description 自分のアクセストークンを発行する（ApiDesign.md 4.4.2）。必要権限は「本人」。
+         *
+         *     **`token`（平文）はこの応答でのみ返る。** DB には SHA-256 のハッシュしか
+         *     残らず、再表示する API は無い（DbDesign.md 6.2）。
+         *
+         *     **`scopes` の語彙は権限カタログのキー**（`ticket.view` 等28件。Design.md
+         *     6.4.2）。カタログに無い値は 422。空配列は「絞り込みなし」＝本人の実効権限
+         *     そのままで、Phase 1 の画面は常にこれで発行する。
+         *
+         *     **失効していないトークンが既に5本あると 409。** 期限切れも数える
+         *     （`GET /me/tokens` が返す行と一致させるため）。
+         */
+        post: operations["createMyToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description アクセストークンの ULID（`access_token.id`。ApiDesign.md 4.4.3）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["TokenID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * アクセストークンを失効
+         * @description 自分のアクセストークンを失効させる（ApiDesign.md 4.4.3）。必要権限は「本人」。
+         *
+         *     **行は消さず `revoked_at` を立てる。** 監査ログの `token_id` から辿れる先を
+         *     残すためである。
+         *
+         *     **冪等。** 既に失効済みでも 204 を返し、`revoked_at` を上書きしない。
+         *
+         *     **他人のトークン・存在しない `id`・`token_type` が `api` でないものは 404**
+         *     （403 にしない。存在を漏らさないため。Design.md 6.4.5）。現在のセッションは
+         *     `token_type='session'` なので、この経路では切れない。
+         */
+        delete: operations["deleteMyToken"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -740,6 +821,101 @@ export interface components {
              * @enum {string}
              */
             system_role?: "administrator" | "operator";
+        };
+        /**
+         * @description ApiDesign.md 4.4.1。ページネーションも ETag も持たない（1人5本が上限で、
+         *     絞り込みも差分取得も意味を持たないため。7.1 / 7.2 と同じ扱い）。
+         */
+        AccessTokenList: {
+            items: components["schemas"]["AccessToken"][];
+        };
+        /**
+         * @description `token_type='api'` の access_token 1行（ApiDesign.md 4.4.1）。
+         *     **平文は含まない。**
+         */
+        AccessToken: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /**
+             * @description 発行時に本人が付けた名前。どの端末・どの用途かの唯一の手がかり。
+             * @example CLI (MacBook)
+             */
+            name: string;
+            /**
+             * @description 平文の先頭8文字（DbDesign.md 6.2）。行を見分けるためのもので、検索キーではない。
+             * @example pb_api_9
+             */
+            token_prefix: string;
+            /**
+             * @description 権限カタログのキー（Design.md 6.4.2）。**空配列は「絞り込みなし」**であって
+             *     「権限0件」ではない。
+             * @example []
+             */
+            scopes: string[];
+            /** Format: date-time */
+            issued_at: string;
+            /**
+             * Format: date-time
+             * @description 一度も使われていなければ null。更新は1分粒度（Design.md 6.2.2）。
+             */
+            last_used_at?: string | null;
+            /**
+             * Format: date-time
+             * @description Phase 1 は必ず入る（無期限を許さない。ApiDesign.md 4.4.2）。列としては
+             *     NULL を許すため nullable にしてある。
+             */
+            expires_at?: string | null;
+            /**
+             * @description `active`（有効）／ `expired`（`expires_at` を過ぎた）。
+             * @enum {string}
+             */
+            status: "active" | "expired";
+        };
+        /**
+         * @description 発行直後の応答（ApiDesign.md 4.4.2）。**`token` を持つ唯一の形**で、
+         *     AccessToken に平文を1項目足したものである。
+         */
+        IssuedAccessToken: {
+            id: string;
+            /** @example CLI (MacBook) */
+            name: string;
+            /**
+             * @description **平文。この応答でしか得られない。** 画面は1回だけ全文を出す
+             *     （GuiDesign.md 5.8.1）。
+             * @example pb_api_9f3c1d2e...
+             */
+            token: string;
+            /** @example pb_api_9 */
+            token_prefix: string;
+            scopes: string[];
+            /** Format: date-time */
+            issued_at: string;
+            /** Format: date-time */
+            expires_at?: string | null;
+            /** @enum {string} */
+            status: "active" | "expired";
+        };
+        /** @description ApiDesign.md 4.4.2。 */
+        CreateTokenRequest: {
+            /**
+             * @description 1〜100文字（`project.name` と同じ上限。`access_token.name` に DB の
+             *     CHECK は無く、アプリ側が持つ）。前後の空白は取り除かれる。
+             * @example CLI (MacBook)
+             */
+            name: string;
+            /**
+             * @description 1〜365。**無期限は許さない**——失効操作でしか消えないトークンが残り、
+             *     置き忘れを検出できなくなるため（Design.md 6.5 がエージェントトークンに
+             *     課す「有効期限必須」と揃える）。
+             * @example 90
+             */
+            expires_in_days: number;
+            /**
+             * @description 権限カタログのキー（Design.md 6.4.2 の28件）。カタログに無い値は 422。
+             *     省略時と空配列は「絞り込みなし」。**Phase 1 の画面は常に空で送る。**
+             * @example []
+             */
+            scopes?: string[];
         };
         /** @description ApiDesign.md 4.3。 */
         ChangePasswordRequest: {
@@ -1394,6 +1570,11 @@ export interface components {
          */
         UserID: string;
         /**
+         * @description アクセストークンの ULID（`access_token.id`。ApiDesign.md 4.4.3）。
+         *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+         */
+        TokenID: string;
+        /**
          * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
          *     一致させ、開発時のデバッグを容易にするため。
          */
@@ -1633,6 +1814,105 @@ export interface operations {
                 };
             };
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listMyTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 失効していないアクセストークン。`issued_at` の降順。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessTokenList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createMyToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description 発行したトークン。**`token` を返す唯一の応答**。 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedAccessToken"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["CSRFFailed"];
+            /** @description 失効していないトークンが既に5本ある（`conflict`）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteMyToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description アクセストークンの ULID（`access_token.id`。ApiDesign.md 4.4.3）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["TokenID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 失効させた（既に失効済みでも同じ）。本文を持たない。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["CSRFFailed"];
+            /** @description 自分の `api` トークンとして見つからない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

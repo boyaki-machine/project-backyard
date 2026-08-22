@@ -1292,6 +1292,21 @@ API は 13a で実装済みで、13b は**画面と API ラッパだけ**であ�
 | **プロジェクト一覧で長い説明が表を横に伸ばす不具合**（利用者からの指摘） | 完了 | 2026-08-18 | `feature/step-11-project-settings-page` | 表 4046px → ペイン幅に収まり、説明が省略記号で切れる。`GuiDesign.md` 5.2 に「横幅を伸ばさず縦スクロールのみ」を明記 |
 | ダッシュボードのページヘッダを「プロジェクト名 ＋ 画面名」にする（`GuiDesign.md` 5.3。利用者からの指摘） | 完了 | 2026-08-15 | `feature/step-10-projects-page` | ブラウザで5件：メンバーは `デモプロジェクト ダッシュボード`、demo に未所属の管理者は `demo ダッシュボード`（キーで代替）、チケット一覧は `チケット一覧` のまま、プレースホルダのカード内は `プロジェクトダッシュボードのページ予定` のまま（6.5 の規約を保つ） |
 
+
+### `make test-db`（2026-08-22、`feature/step-15b-me-tokens` に同梱）
+
+**結合テストを走らせる make ターゲットが無かった。** `Development.md` 6.1 は
+`PB_TEST_DATABASE_URL` に接続文字列を手で書く手順を載せていたが、
+`deploy/dev/secrets/app_db_password` は `.claude/settings.json` の `deny` により
+**エージェントからは読めない**。そのため 15a の実DB結合テストは一度も走らなかった。
+
+`Makefile` に既にあった `PB_DATABASE_URL_APP`（`make run` と同じ組み立て）を使う
+`test-db` ターゲットを足し、`Development.md` 6.1 をそれに差し替えた。`RUN=` で
+個別のテストへ絞れる。秘密は recipe の中でだけ読まれ、argv にも Makefile にも残らない。
+
+**手順15b に同梱したのは、15b 自身の検証がこれに依存したためである**（引き継ぎ
+「次に着手する人が最初に」の解消と一体だった）。
+
 ## ビルド番号とマージの対応（1〜20）
 
 `docs/PROGRESS.md` から移した（2026-08-18）。**正本は `make version` / `make version-check`**
@@ -1419,3 +1434,66 @@ timezone・`Local` を弾く・`UTC` は通す・表示名・メール形式）�
 `viewer@example.com` の表示名・タイムゾーン・テーマ・色相は元の値へ戻した。Cookie jar と
 ヘッドレス Chrome のプロファイルを削除。`make stop-server` と `make clean-webui` を実行。
 
+
+## 手順15b — `GET|POST /me/tokens`・`DELETE /me/tokens/:id` とアクセストークン管理画面（2026-08-22）
+
+ブランチ `feature/step-15b-me-tokens`。`ApiDesign.md` 4.4、`GuiDesign.md` 5.8.1。
+
+**設計文書を先に全部当ててからコードへ入った**（15a で効いた型の2回目）。実装中の設計相談はゼロ。
+
+### 設計文書（先に当てた分）
+
+| ファイル | 変更 |
+|---|---|
+| `docs/ApiDesign.md` | **4.4 を節として書き下ろした**（4.4.1 一覧 / 4.4.2 発行 / 4.4.3 失効 / 4.4.4 監査）。従来は JSON 例2つだけで、パス・必要権限・応答形状・状況別の応答・スコープ語彙・`token_type` の絞り込みのいずれも無かった。8章の対応表を `DELETE /me/tokens/:id` に修正 |
+| `docs/GuiDesign.md` | **5.8.1「アクセストークンタブ」を新設**（ワイヤー3枚＝一覧・発行モーダル・1回表示、列の説明、上限に達したときの見せ方、失効の確認） |
+| `docs/Design.md` | 6.4.1 に**スコープの語彙は権限カタログのキー**であることを追記。6.5 の既定スコープに「この語彙は権限カタログに対応していない」と注記 |
+| `docs/openapi.yaml` | `/api/v1/me/tokens`（GET / POST）と `/api/v1/me/tokens/{id}`（DELETE）、`AccessToken` / `AccessTokenList` / `IssuedAccessToken` / `CreateTokenRequest`、`TokenID` パラメータ |
+| `docs/Development.md` | 6.1 を `make test-db` に差し替え。6.2 の落とし穴表に「ログインは IP あたり10回/分」を追加 |
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/httpapi/v1/me_tokens.go` | 3ハンドラ、`accessTokenView` / `issuedAccessTokenView`、値域の検証、スコープのカタログ照合、監査 |
+| `server/internal/httpapi/v1/me_tokens_test.go` | 単体18件（一覧・平文の非露出・上限の境界・422 の6通り・スコープ語彙・監査・冪等・404） |
+| `server/internal/httpapi/v1/me_tokens_integration_test.go` | 実DB結合9件 |
+| `client/src/pages/MyTokensPage.vue` | 一覧・発行モーダル・失効の確認・結果表示 |
+| `client/src/components/IssuedTokenDialog.vue` | 1回だけの平文表示 |
+| `client/src/components/MeTabs.vue` | `/me` と `/me/tokens` で共有するタブ |
+| `client/src/lib/clipboard.ts` | `copySecret` / `selectContents`（`GeneratedPasswordDialog` と共有） |
+
+### 直したファイル
+
+`server/internal/store/queries/me.sql`（`ListMyAPITokens` / `CountMyAPITokens` / `FindMyAPIToken` /
+`RevokeMyAPIToken`。発行は既存の `CreateAccessToken` を流用）、`routes.go`（3行）、`fake_test.go`、
+`client/src/api/me.ts`、`router/routes.ts`（プレースホルダの差し替え）、`MySettingsPage.vue`
+（タブを `MeTabs` へ）、`GeneratedPasswordDialog.vue`（コピーを `lib/clipboard.ts` へ）、
+`Makefile`（`test-db`）、`projects_integration_test.go`（`loginAs` の擬似 IP）。
+
+古い節番号の参照を直した（`4.5` → `4.4`）：`auth/token.go`、`session.go`、`user.sql`、
+`GeneratedPasswordDialog.vue`。
+
+### 検証
+
+| 種類 | 件数 | 内容 |
+|---|---|---|
+| 単体（`make test`） | 18件 + 既存全部 | ドリフト検出テストを含めて全 PASS |
+| 実DB結合（`make test-db`） | 9件 | **発行した平文で Bearer 認証が通り、失効すると 401**／一覧が `api` だけ／失効済みは出ず期限切れは出る／上限5本と枠の解放／スコープ語彙／他人のトークンは 404 で失効もされない／冪等（`revoked_at` を上書きしない・監査は1件）／セッションの ID は 404／パスワード変更で API トークンも失効 |
+| 実サーバ（curl） | 19件 | 上記に加えて Cookie 認証で CSRF 無しは 403、Bearer は CSRF 不要（GET も POST も） |
+| ブラウザ（CDP） | 36件 | 発行モーダル（既定90日・スコープ欄が無い・期日の表示・空名で `disabled`）、1回表示、一覧7列、上限5本での `disabled` と理由の表示、失効の確認（復元不可・401）、タブの往復 |
+| レイアウト実測 | 17件 | 1440px と 900px で文書が横に流れない・全列が 1px 以上・`[失効]` が `elementFromPoint` で押せる・モーダルの入力欄が画面内・ラジオが横1行。900px の1回表示でトークンが折り返して全文出る |
+
+**端から端まで**：ブラウザで発行した平文を控え、`curl -H "Authorization: Bearer …"` で
+`GET /me`（200、`display_name` が「開発メンバー」）と `GET /projects`（200）を確認した。
+一覧の「最終利用」にその時刻が載ることも見た。
+
+**スクリーンショット9枚を目視。** 自動検証36件が全 PASS の状態で
+**トークンが横スクロールの箱に収まっていた**のを見つけて折り返しへ直した。
+
+### 後始末
+
+検証で作った `api` トークンは画面と curl で全て失効させ、`member@example.com` の
+`access_token`（`token_type='api'`）17行と `token.issue` / `token.revoke` の監査ログ34行を
+DB から削除した（有効・失効済みとも0件を確認）。Cookie jar と発行した平文を書いたファイルを削除。
+ヘッドレス Chrome のプロファイルはスクリプトが毎回消す。`make stop-server` と `make clean-webui` を実行。

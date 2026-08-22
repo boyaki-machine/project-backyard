@@ -57,6 +57,16 @@ type Querier interface {
 	// 実装は先に通しておく。
 	//
 	CountCommentsByAuthor(ctx context.Context, authorID string) (int64, error)
+	// CountMyAPITokens は発行本数の上限（1人5本。ApiDesign.md 4.4.2）を判定する。
+	//
+	// **数え方は ListMyAPITokens と同一にする**（失効していないもの。期限切れを含む）。
+	// 揃えないと、一覧に7行出ているのに「上限5本」と言われ、どれを失効させれば
+	// 発行できるのかが画面から読めなくなる。
+	//
+	// **呼び出し側は CreateAccessToken と同じトランザクションで使うこと。** 別々に
+	// 実行すると、同時に2本 POST されたときに上限を超える。
+	//
+	CountMyAPITokens(ctx context.Context, actorID string) (int64, error)
 	// CreateAccessToken はセッション・APIトークン・エージェントトークンを発行する
 	// （DbDesign.md 6.2）。**平文は渡さない。** token_hash は SHA-256、
 	// token_prefix は一覧表示用の先頭8文字である。
@@ -155,6 +165,16 @@ type Querier interface {
 	// 判定は呼び出し側で行う。
 	//
 	FindLocalLoginByEmail(ctx context.Context, email string) (FindLocalLoginByEmailRow, error)
+	// FindMyAPIToken は DELETE /me/tokens/:id の対象を引く（ApiDesign.md 4.4.3）。
+	//
+	// **actor_id と token_type を条件に含めるのが要点である。** 他人のトークンや
+	// セッションを 403 ではなく 404 に倒すため（Design.md 6.4.5「存在を隠す」）、
+	// 「見つからない」1つの結果に寄せる。
+	//
+	// revoked_at を返すのは、既に失効済みかどうかを呼び出し側が知るためである
+	// （冪等に 204 を返すが、監査ログは二重に書かない）。
+	//
+	FindMyAPIToken(ctx context.Context, arg FindMyAPITokenParams) (FindMyAPITokenRow, error)
 	// FindMyLocalCredential は POST /me/password が現在のパスワードを検証するために
 	// 資格情報を引く。
 	//
@@ -307,6 +327,27 @@ type Querier interface {
 	// 目的なので、画面に出ないキー（administrator）は対象にしない。
 	//
 	ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) ([]ListAdminUsersRow, error)
+	// ── アクセストークン（ApiDesign.md 4.4）──────────────────────────────
+	//
+	// **いずれも token_type = 'api' に限る。** ブラウザのセッション
+	// （token_type='session'）とエージェント用（'agent'、Phase 2）を混ぜない。
+	// 本人が自分のセッションを見る・切る画面を持たないと決めており
+	// （GuiDesign.md 5.8）、混ぜると「一覧に出ているのに失効させられない行」が
+	// 生まれる。DELETE の対象からも外れるので、現在のセッションを /me/tokens 経由で
+	// 切ることはできない。
+	//
+	// 発行そのものは auth.sql の CreateAccessToken を使う（セッションと同じ1文）。
+	// ListMyAPITokens は GET /me/tokens の本体（ApiDesign.md 4.4.1）。
+	//
+	// **失効済みは返さない。期限切れは返す。** 失効は本人が消したものであり、
+	// 残すと増え続けて読めなくなる（記録は監査ログの token.revoke にある）。
+	// 期限切れは「更新しないと使えない」と本人が気づく必要があり、かつ発行本数の
+	// 上限5本を占めている。
+	//
+	// **ListUserSessions（user.sql、6.3 の管理者向け）と条件が違う。** あちらは
+	// 認証側と揃えて期限切れを落とすが、こちらは本人が管理するための一覧である。
+	//
+	ListMyAPITokens(ctx context.Context, actorID string) ([]ListMyAPITokensRow, error)
 	// ListPermissions は権限カタログを返す（ApiDesign.md 7.2）。
 	//
 	// 正本は DbDesign.md 7.2 のシード（28件）。並びは permission.sort_order で、
@@ -434,7 +475,8 @@ type Querier interface {
 	// 「有効」の条件は認証側（FindAccessTokenByHash を使う Authenticate）と
 	// 揃える——失効しておらず、期限切れでもないもの。**token_type = 'session' に
 	// 限る**のは、6.3 のブロックが GuiDesign.md 5.6.2 の「有効なセッション」で
-	// あり、APIトークン（4.5、Phase 1 では発行経路が無い）は別の話だからである。
+	// あり、APIトークン（4.4）は別の話だからである。**4.4 の一覧は本人が
+	// 自分で引くもの**で、条件も違う（あちらは期限切れを残す）。
 	//
 	// expires_at が NULL のトークンは期限なし（4.5）。セッションには必ず入るが、
 	// 条件から落ちないよう明示的に許す。
@@ -489,6 +531,15 @@ type Querier interface {
 	// 返す行数が「何本切ったか」で、監査ログの detail に入れる。
 	//
 	RevokeActorSessions(ctx context.Context, actorID string) (int64, error)
+	// RevokeMyAPIToken は失効させる（ApiDesign.md 4.4.3）。
+	//
+	// **行は消さない。** audit_log.token_id から辿れる先を残すためである。
+	// 既に失効済みなら WHERE が外れ、revoked_at を上書きしない（冪等）。
+	//
+	// auth.sql の RevokeAccessToken（ログアウト）と条件が違う。あちらは id だけで
+	// 引く——認証を通ったトークン自身を切るので、持ち主の確認が済んでいる。
+	//
+	RevokeMyAPIToken(ctx context.Context, arg RevokeMyAPITokenParams) (int64, error)
 	// RevokeMyOtherSessions は現在のトークン以外を失効させる（ApiDesign.md 4.3、
 	// Design.md 6.3「変更時に当該ユーザーのセッションを全失効（現在のセッションを除く）」）。
 	//
@@ -622,8 +673,10 @@ type Querier interface {
 	UpdateMyDisplayName(ctx context.Context, arg UpdateMyDisplayNameParams) error
 	// 自分自身に関するAPI（ApiDesign.md 4章）が使う問い合わせ。
 	//
-	//   PATCH /api/v1/me           4.2
-	//   POST  /api/v1/me/password  4.3
+	//   PATCH  /api/v1/me              4.2
+	//   POST   /api/v1/me/password     4.3
+	//   GET    /api/v1/me/tokens       4.4.1
+	//   DELETE /api/v1/me/tokens/:id   4.4.3
 	//
 	// **6章（ユーザー管理）のクエリと分けてある。** 更新できる列が違うためである
 	// ——本人は locale / timezone / theme / hue を変えられるが system_role は

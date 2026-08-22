@@ -6,7 +6,7 @@
  * 6.6 のリセット）。再表示する API は無く、監査ログにも残らない。そのため
  *
  * - 再表示できない旨を明記する
- * - コピーボタンを置く（`ApiDesign.md` 4.5 のトークン発行と同じ扱い）
+ * - コピーボタンを置く（`ApiDesign.md` 4.4.2 のトークン発行と同じ扱い）
  * - **コピーに失敗しても値は画面に出したままにする**（手で写せるように）
  *
  * **作成とリセットで同じ部品を使う**（手順13b）。値の性質——1回だけ・再表示不可・
@@ -18,6 +18,8 @@
  */
 import { ref, useTemplateRef } from 'vue'
 
+import type { CopyState } from '../lib/clipboard'
+import { copySecret } from '../lib/clipboard'
 import Modal from './Modal.vue'
 
 withDefaults(
@@ -37,36 +39,17 @@ const emit = defineEmits<{ close: [] }>()
 
 const passwordEl = useTemplateRef<HTMLElement>('passwordEl')
 
-/** コピーの結果。`manual` は「自分で選択してコピーしてほしい」状態 */
-const copied = ref<'idle' | 'ok' | 'manual'>('idle')
-
 /**
- * 値を選択状態にする。
+ * コピーの結果。
  *
- * `navigator.clipboard` は安全なコンテキスト（https / localhost）でしか
- * 使えず、権限や利用者の設定で失敗もする。**失敗したら選択だけ済ませて
- * ⌘C に委ねる**。ダイアログを閉じると二度と出せない値なので、
- * コピーできなかったことを理由に何も渡さない状態にはしない。
+ * **作法は `lib/clipboard.ts` にある**（手順15b で切り出した）。
+ * アクセストークンの1回表示（`IssuedTokenDialog`）と同じ扱いにするためで、
+ * 「失敗したら選択して ⌘C に委ねる」を2か所で書き分けない。
  */
-function selectPassword() {
-  const el = passwordEl.value
-  if (!el) return
-  const range = document.createRange()
-  range.selectNodeContents(el)
-  const selection = window.getSelection()
-  selection?.removeAllRanges()
-  selection?.addRange(range)
-}
+const copied = ref<CopyState>('idle')
 
 async function copy(password: string) {
-  try {
-    if (!navigator.clipboard) throw new Error('clipboard unavailable')
-    await navigator.clipboard.writeText(password)
-    copied.value = 'ok'
-  } catch {
-    copied.value = 'manual'
-    selectPassword()
-  }
+  copied.value = await copySecret(password, passwordEl.value)
 }
 </script>
 

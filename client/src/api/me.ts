@@ -39,3 +39,45 @@ export function updateMe(body: UpdateMeRequest): Promise<Session> {
 export function changePassword(body: ChangePasswordRequest): Promise<void> {
   return api.post<void>('/me/password', body)
 }
+
+// ── アクセストークン（`ApiDesign.md` 4.4）────────────────────────
+
+/** `GET /me/tokens` が返す1行（`ApiDesign.md` 4.4.1）。**平文を含まない** */
+export type AccessToken = components['schemas']['AccessToken']
+
+/** `POST /me/tokens` の 201（`ApiDesign.md` 4.4.2）。**`token` を持つ唯一の形** */
+export type IssuedAccessToken = components['schemas']['IssuedAccessToken']
+
+/** `POST /me/tokens` のリクエスト本体 */
+export type CreateTokenRequest = components['schemas']['CreateTokenRequest']
+
+/**
+ * 自分のアクセストークンを一覧する（`ApiDesign.md` 4.4.1）。
+ *
+ * **失効済みは返らない。期限切れは返る**（`status` が `expired`）。
+ * ページネーションが無いので、返った配列がそのまま全件である。
+ */
+export function listTokens(): Promise<{ items: AccessToken[] }> {
+  return api.get<{ items: AccessToken[] }>('/me/tokens')
+}
+
+/**
+ * アクセストークンを発行する（`ApiDesign.md` 4.4.2）。
+ *
+ * **`token`（平文）はこの応答でしか得られない。** 呼び出し側は1回だけ
+ * 画面に出し、再取得できないことを明記すること（`GuiDesign.md` 5.8.1）。
+ *
+ * 失効していないトークンが既に5本あると 409。
+ */
+export function createToken(body: CreateTokenRequest): Promise<IssuedAccessToken> {
+  return api.post<IssuedAccessToken>('/me/tokens', body)
+}
+
+/**
+ * アクセストークンを失効させる（`ApiDesign.md` 4.4.3）。
+ *
+ * **冪等。** 既に失効済みでも 204 が返る。自分のものでなければ 404。
+ */
+export function revokeToken(id: string): Promise<void> {
+  return api.del<void>(`/me/tokens/${encodeURIComponent(id)}`)
+}
