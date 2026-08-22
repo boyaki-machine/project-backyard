@@ -4,6 +4,7 @@ import ForbiddenPage from '../pages/ForbiddenPage.vue'
 import LoginPage from '../pages/LoginPage.vue'
 import NotFoundPage from '../pages/NotFoundPage.vue'
 import PlaceholderPage from '../pages/PlaceholderPage.vue'
+import MySettingsPage from '../pages/MySettingsPage.vue'
 import ProjectSettingsPage from '../pages/ProjectSettingsPage.vue'
 import ProjectsPage from '../pages/ProjectsPage.vue'
 import UserDetailPage from '../pages/UserDetailPage.vue'
@@ -169,21 +170,14 @@ export const routes: RouteRecordRaw[] = [
     },
   },
 
+  // 実画面（GuiDesign.md 5.8）。手順15 でプレースホルダから差し替えた。
+  //
+  // **meta.permission を持たない。** 必要権限は「本人」であり、権限キーで
+  // 判定するものではない（3.2）。サーバ側も 4章に認可ミドルウェアを
+  // 付けていない（routes.go）。
   {
     path: '/me',
-    component: PlaceholderPage,
-    meta: {
-      placeholder: {
-        title: '自分の設定',
-        docRef: 'GuiDesign.md 5.8',
-        status: 'Phase 1・手順15で実装',
-        planned: [
-          'プロフィール（表示名・メール・言語・タイムゾーン）',
-          'テーマの切替（ライト／ダーク／システムに従う）',
-          'パスワードの変更',
-        ],
-      },
-    },
+    component: MySettingsPage,
   },
 
   {
@@ -193,7 +187,7 @@ export const routes: RouteRecordRaw[] = [
       placeholder: {
         title: 'アクセストークン管理',
         docRef: 'GuiDesign.md 5.8',
-        status: 'Phase 1・手順15で実装',
+        status: 'Phase 1・手順15b で実装',
         planned: [
           'アクセストークンの一覧と失効',
           'api 種別トークンの発行（Phase 1 は CLI 用のみ）',

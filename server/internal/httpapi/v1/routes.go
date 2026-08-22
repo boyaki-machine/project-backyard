@@ -81,7 +81,21 @@ func Mount(r chi.Router, deps Deps) {
 		r.Use(middleware.RequireCSRF)
 
 		r.Post("/auth/logout", h.logout)
+
+		// ── 自分自身（ApiDesign.md 4章）────────────────────────
+		//
+		// **4章はすべて「認証済み・本人」であり、権限キーを要求しない。**
+		// 対象が常に自分自身なので、誰のアカウントを触るかで必要権限が
+		// 変わることがない。オペレータでもアドミニストレータでも同じ経路を
+		// 通り、触れる範囲はハンドラが p.ActorID で閉じている。
+		//
+		// **6章（管理者によるユーザー管理）と混ぜない。** あちらは他人を
+		// 触るため user.manage を要し、system_role と is_active を変えられる。
+		// こちらは locale / timezone / theme / hue を変えられる代わりに、
+		// system_role が送られたら 422 で弾く（4.2）。
 		r.Get("/me", h.me)
+		r.Patch("/me", h.patchMe)
+		r.Post("/me/password", h.changeMyPassword)
 
 		// ── プロジェクト（ApiDesign.md 5章）──────────────────
 		//

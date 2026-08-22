@@ -71,6 +71,56 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        /**
+         * 自分のプロフィールを更新
+         * @description 認証中の本人のプロフィールと見た目の設定を更新する（ApiDesign.md 4.2）。
+         *     必要権限は「本人」であり、権限キーを要求しない。
+         *
+         *     **応答は `GET /me` と同一構造**（Session）。画面はこの応答で表示を
+         *     差し替える（GuiDesign.md 6.4）。
+         *
+         *     **`system_role` は変更できない。** 送られた場合は無視せず 422 で、
+         *     `details[].code` が `not_allowed` になる。
+         *
+         *     **`email` は変更できる。** この列はログインIDでもあるため、サーバは
+         *     `user_identity.subject` を同じトランザクションで追随させる。他の
+         *     ユーザーが使っているメールなら 409 `already_exists`。
+         *
+         *     **`If-Match` は要求しない**（2.8）。自分の設定を同時に2箇所から編集する
+         *     状況が実質無く、課すと `GET /me` に ETag が要る。`version` は加算され、
+         *     管理者側（6.4）の楽観ロックは壊れない。
+         */
+        patch: operations["patchMe"];
+        trace?: never;
+    };
+    "/api/v1/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 自分のパスワードを変更
+         * @description 現在のパスワードを検証したうえで、新しいパスワードに差し替える
+         *     （ApiDesign.md 4.3）。必要権限は「本人」。
+         *
+         *     **成功すると、現在のセッションを除く全セッションが失効する**
+         *     （Design.md 6.3）。API トークン（token_type='api'）も対象に含む。
+         *
+         *     **`must_change` を false にする。** 要パスワード変更で入った利用者が
+         *     変更しても誘導が消えない状態を避けるためである。
+         *
+         *     **現在のパスワードの検証に失敗しても `failed_attempts` は増えない。**
+         *     既にセッションを持つ本人の操作であり、ここで数えると自分で自分を
+         *     締め出せる。連打はアクター単位のレート制限（2.9）が抑える。
+         */
+        post: operations["changeMyPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
         patch?: never;
         trace?: never;
     };
@@ -633,8 +683,73 @@ export interface components {
             locale: string | null;
             /** @example Asia/Tokyo */
             timezone: string | null;
+            /**
+             * @description テーマ（GuiDesign.md 8.11）。エージェントは null。**サーバが返さないと
+             *     別の端末で同じ見た目にならない**——8.11 が app_user と localStorage の
+             *     両方に保存すると定めた目的がそれである。
+             * @enum {string|null}
+             */
+            theme: "light" | "dark" | "system" | null;
+            /**
+             * @description ベース色相（GuiDesign.md 8.3）。エージェントは null。
+             * @enum {string|null}
+             */
+            hue: "blue" | "green" | null;
             /** @description true のときフロントはパスワード変更画面へ誘導する（ApiDesign.md 3.1）。 */
             must_change_password: boolean;
+        };
+        /**
+         * @description ApiDesign.md 4.2。**送らなかった項目は変更しない**（部分更新）。
+         *     すべて省略可だが、少なくとも1つを送ること自体は必須にしていない——
+         *     空の `{}` は「何も変えない」として 200 を返す。
+         *
+         *     `system_role` は**受け口としてだけ**定義してある。送られたら 422 で
+         *     弾くためであり、黙って捨てると呼び出し側が権限が上がったと誤解する。
+         */
+        UpdateMeRequest: {
+            /**
+             * @description 1〜60文字。前後の空白は取り除かれる。
+             * @example 田中
+             */
+            display_name?: string;
+            /**
+             * Format: email
+             * @description **ログインIDでもある**（ApiDesign.md 4.2）。画面では「ログインID」と
+             *     「メールアドレス」の2行に分かれるが、Phase 1 ではどちらも本項目を指す。
+             * @example tanaka@example.com
+             */
+            email?: string;
+            /**
+             * @description Phase 1 は `ja` のみ。
+             * @enum {string}
+             */
+            locale?: "ja";
+            /**
+             * @description IANA のタイムゾーン名。サーバは `time.LoadLocation` で解決できるかを
+             *     見る（値の一覧を持たない）。`Local` は弾く——誰のローカルかがサーバの
+             *     設定に依存し、端末をまたぐと意味が変わるため。
+             * @example Asia/Tokyo
+             */
+            timezone?: string;
+            /** @enum {string} */
+            theme?: "light" | "dark" | "system";
+            /** @enum {string} */
+            hue?: "blue" | "green";
+            /**
+             * @description **変更できない。** 送られると 422（`details[].code` が `not_allowed`）。
+             * @enum {string}
+             */
+            system_role?: "administrator" | "operator";
+        };
+        /** @description ApiDesign.md 4.3。 */
+        ChangePasswordRequest: {
+            /**
+             * @description 現在のパスワード。不一致は 401 `invalid_credentials`。
+             *     **失敗しても `failed_attempts` は増えない**（4.3）。
+             */
+            current_password: string;
+            /** @description 12文字以上（Design.md 6.3）。複雑性要件は課さない。 */
+            new_password: string;
         };
         SessionProject: {
             id: string;
@@ -1412,6 +1527,112 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthenticated"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    patchMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMeRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後の自分自身（4.1 と同形式）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description メールアドレスが他のユーザーに使われている（`already_exists`）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    changeMyPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description 変更した。本文を持たない。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            /**
+             * @description 未認証（`unauthenticated`）、または現在のパスワードが正しくない
+             *     （`invalid_credentials`）。
+             */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description パスワード認証を使っていないアカウント（`conflict`）。
+             *     IdP のみのユーザー（Phase 3）が該当する。
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

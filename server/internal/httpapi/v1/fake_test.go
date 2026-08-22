@@ -160,6 +160,20 @@ type fakeQuerier struct {
 	projectIDByKey    map[string]string
 	projectRoles      map[string]bool
 
+	// 自分自身（手順15。ApiDesign.md 4.2 / 4.3）
+	//
+	// **6章のフィールドと分けて持つ。** 同じ名前を使い回すと、/me の
+	// テストが admin 側の既定値に引きずられて「なぜ通ったか」が読めなくなる。
+	myProfileParams  []gen.UpdateMyProfileParams
+	myProfileRows    int64
+	myProfileErr     error
+	myNameParams     []gen.UpdateMyDisplayNameParams
+	myCredential     gen.FindMyLocalCredentialRow
+	myCredentialErr  error
+	myPasswordParams []gen.ChangeMyPasswordParams
+	myRevokeParams   []gen.RevokeMyOtherSessionsParams
+	myRevokedCount   int64
+
 	// 認可ミドルウェア（RequireProjectPermission）が引く行。
 	// key ごとに「プロジェクトの存在・自分のロール・その権限」を持つ。
 	projectAuthzRows map[string][]gen.FindProjectAuthzByKeyRow
@@ -728,6 +742,42 @@ func (q *fakeQuerier) RevokeActorSessions(_ context.Context, actorID string) (in
 	q.opLog = append(q.opLog, "RevokeActorSessions")
 	q.revokedActors = append(q.revokedActors, actorID)
 	return q.revokedSessions, nil
+}
+
+// ── 自分自身（手順15。ApiDesign.md 4.2 / 4.3）─────────────────
+
+func (q *fakeQuerier) UpdateMyProfile(_ context.Context, arg gen.UpdateMyProfileParams) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateMyProfile")
+	q.myProfileParams = append(q.myProfileParams, arg)
+	if q.myProfileErr != nil {
+		return 0, q.myProfileErr
+	}
+	return q.myProfileRows, nil
+}
+
+func (q *fakeQuerier) UpdateMyDisplayName(_ context.Context, arg gen.UpdateMyDisplayNameParams) error {
+	q.opLog = append(q.opLog, "UpdateMyDisplayName")
+	q.myNameParams = append(q.myNameParams, arg)
+	return nil
+}
+
+func (q *fakeQuerier) FindMyLocalCredential(context.Context, string) (gen.FindMyLocalCredentialRow, error) {
+	if q.myCredentialErr != nil {
+		return gen.FindMyLocalCredentialRow{}, q.myCredentialErr
+	}
+	return q.myCredential, nil
+}
+
+func (q *fakeQuerier) ChangeMyPassword(_ context.Context, arg gen.ChangeMyPasswordParams) error {
+	q.opLog = append(q.opLog, "ChangeMyPassword")
+	q.myPasswordParams = append(q.myPasswordParams, arg)
+	return nil
+}
+
+func (q *fakeQuerier) RevokeMyOtherSessions(_ context.Context, arg gen.RevokeMyOtherSessionsParams) (int64, error) {
+	q.opLog = append(q.opLog, "RevokeMyOtherSessions")
+	q.myRevokeParams = append(q.myRevokeParams, arg)
+	return q.myRevokedCount, nil
 }
 
 func (q *fakeQuerier) FindProjectIDByKey(_ context.Context, key string) (string, error) {

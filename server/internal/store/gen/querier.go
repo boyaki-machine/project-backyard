@@ -18,6 +18,17 @@ type Querier interface {
 	// 一律に 409 と返すと、消えたユーザーに「競合している」という誤った説明を返す。
 	//
 	AppUserExists(ctx context.Context, actorID string) (bool, error)
+	// ChangeMyPassword は POST /me/password の書き込み（ApiDesign.md 4.3）。
+	//
+	// **must_change を false に落とす。** これをしないと、要パスワード変更で
+	// 入った利用者が変更しても誘導が消えず、変更画面へ戻され続ける。
+	//
+	// **failed_attempts と locked_until には触らない。** 4.3 の失敗を
+	// アカウントロックの対象にしないと決めており（既にセッションを持つ本人の
+	// 操作であり、ここで数えると自分で自分を締め出せる）、成功時にリセットする
+	// 意味も無い。ログインの失敗回数は ResetLoginFailure がログイン成功時に消す。
+	//
+	ChangeMyPassword(ctx context.Context, arg ChangeMyPasswordParams) error
 	// CountActiveAdministrators は「最後のアドミニストレータ」の判定に使う
 	// （ApiDesign.md 6.4 / 6.5 の last_administrator）。
 	//
@@ -144,6 +155,17 @@ type Querier interface {
 	// 判定は呼び出し側で行う。
 	//
 	FindLocalLoginByEmail(ctx context.Context, email string) (FindLocalLoginByEmailRow, error)
+	// FindMyLocalCredential は POST /me/password が現在のパスワードを検証するために
+	// 資格情報を引く。
+	//
+	// **local プロバイダに限る。** OIDC/SAML のみのユーザー（Phase 3）は行が
+	// 返らず、呼び出し側が 409 conflict に倒す（ApiDesign.md 4.3）。
+	//
+	// **結合条件は FindLocalLoginByEmail と揃える**（i.subject = u.email）。
+	// 揃えないと、メール変更で subject が追随していない行をこちらだけが拾い、
+	// 「パスワードは変えられるのにログインできない」という食い違いが起きる。
+	//
+	FindMyLocalCredential(ctx context.Context, actorID string) (FindMyLocalCredentialRow, error)
 	// FindProjectAuthzByKey は、プロジェクトキー1つに対する認可の材料を返す。
 	// RequireProjectPermission（Design.md 6.4.4）が使う。
 	//
@@ -178,8 +200,13 @@ type Querier interface {
 	// GetActorProfile は GET /me（ApiDesign.md 4.1）が返す actor 部分を引く。
 	//
 	// 認証ミドルウェアが載せる Principal（Design.md 6.2.2）には locale / timezone /
-	// must_change_password が無い。認証の判定に要らない値をトークン検証の経路に
-	// 足すと、全リクエストで読むことになるためである。/me はこのクエリで補う。
+	// theme / hue / must_change_password が無い。認証の判定に要らない値を
+	// トークン検証の経路に足すと、全リクエストで読むことになるためである。
+	// /me はこのクエリで補う。
+	//
+	// theme / hue は GuiDesign.md 8.11 のテーマ設定（手順15 で足した）。**サーバに
+	// 保存しても GET /me が返さなければ、別の端末で同じ見た目にならない**——
+	// 8.11 が app_user と localStorage の両方に保存すると定めた目的がそれである。
 	//
 	// **すべて LEFT JOIN にする。** エージェント（Phase 2）は app_user を持たず、
 	// 将来の OIDC 専用ユーザーは local_credential を持たない。行が返らないことと
@@ -462,6 +489,17 @@ type Querier interface {
 	// 返す行数が「何本切ったか」で、監査ログの detail に入れる。
 	//
 	RevokeActorSessions(ctx context.Context, actorID string) (int64, error)
+	// RevokeMyOtherSessions は現在のトークン以外を失効させる（ApiDesign.md 4.3、
+	// Design.md 6.3「変更時に当該ユーザーのセッションを全失効（現在のセッションを除く）」）。
+	//
+	// **token_type で絞らない。** CLI用のAPIトークン（4.4）も切る。パスワードが
+	// 漏れた疑いで変更する場面を想定すると、ブラウザだけ切って Bearer トークンを
+	// 残す理由が無い。RevokeActorSessions（user.sql、管理者による全失効）と同じ
+	// 考え方で、違いは「現在のトークンを残すか」の1点だけである。
+	//
+	// 返す行数が「何本切ったか」で、監査ログの detail に入れる。
+	//
+	RevokeMyOtherSessions(ctx context.Context, arg RevokeMyOtherSessionsParams) (int64, error)
 	// ── 実効権限のセッションキャッシュ（Design.md 6.4.5、手順6b） ──────────
 	//
 	// 「ログインごとに実効権限を計算し、セッションにキャッシュする。
@@ -571,6 +609,40 @@ type Querier interface {
 	// あり（DbDesign.md 6.2）、メールとは無関係に不変であるべきものである。
 	//
 	UpdateLocalIdentitySubject(ctx context.Context, arg UpdateLocalIdentitySubjectParams) error
+	// UpdateMyDisplayName は PATCH /me の actor 側を更新する。
+	//
+	// display_name は actor の列である（DbDesign.md 6.2）。**UpdateMyProfile と
+	// 同じトランザクションで呼ぶ**こと。片方だけ成功すると、表示名は変わったのに
+	// version が進んでいない状態が残る。
+	//
+	// **is_active を持たない点が UpdateAdminUserActor との違いである。**
+	// 本人が自分を無効化する経路を作らない（6.4 が self_modification_forbidden で
+	// 弾いているものを、/me から回り込めるようにしない）。
+	//
+	UpdateMyDisplayName(ctx context.Context, arg UpdateMyDisplayNameParams) error
+	// 自分自身に関するAPI（ApiDesign.md 4章）が使う問い合わせ。
+	//
+	//   PATCH /api/v1/me           4.2
+	//   POST  /api/v1/me/password  4.3
+	//
+	// **6章（ユーザー管理）のクエリと分けてある。** 更新できる列が違うためである
+	// ——本人は locale / timezone / theme / hue を変えられるが system_role は
+	// 変えられず、管理者はその逆である（is_active と system_role を変え、
+	// 見た目の設定は触らない）。1つの UPDATE に両方の列を並べると、どちらの
+	// 経路からでも全列が書ける形になり、4.2 と 6.4 の境界が SQL から読めなくなる。
+	// UpdateMyProfile は PATCH /me の app_user 側を更新する。
+	//
+	// **email を含む。** この列はログインIDでもあるため、呼び出し側は
+	// UpdateLocalIdentitySubject（user.sql）を同じトランザクションで呼ぶこと。
+	// 追随させないと当人がログインできなくなる（Design.md 6.2.1 手順2〜3）。
+	//
+	// **version は加算するが、条件には使わない**（ApiDesign.md 4.2）。
+	// 自分の設定に楽観ロックを課さないためである。加算だけ行うのは、
+	// 管理画面側（6.4 の If-Match）が同じ行を見ており、そちらの検出を
+	// 壊さないようにするため。**したがって :exec でよい**——0行になる
+	// 理由が「消えた」しか無く、version 不一致と切り分ける必要がない。
+	//
+	UpdateMyProfile(ctx context.Context, arg UpdateMyProfileParams) (int64, error)
 	// ── 更新（ApiDesign.md 5.5 / 5.6）───────────────────────────
 	// UpdateProject は PATCH /projects/:key を1文で行う（5.5）。
 	//

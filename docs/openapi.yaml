@@ -161,6 +161,122 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+    patch:
+      tags: [me]
+      summary: 自分のプロフィールを更新
+      operationId: patchMe
+      description: |
+        認証中の本人のプロフィールと見た目の設定を更新する（ApiDesign.md 4.2）。
+        必要権限は「本人」であり、権限キーを要求しない。
+
+        **応答は `GET /me` と同一構造**（Session）。画面はこの応答で表示を
+        差し替える（GuiDesign.md 6.4）。
+
+        **`system_role` は変更できない。** 送られた場合は無視せず 422 で、
+        `details[].code` が `not_allowed` になる。
+
+        **`email` は変更できる。** この列はログインIDでもあるため、サーバは
+        `user_identity.subject` を同じトランザクションで追随させる。他の
+        ユーザーが使っているメールなら 409 `already_exists`。
+
+        **`If-Match` は要求しない**（2.8）。自分の設定を同時に2箇所から編集する
+        状況が実質無く、課すと `GET /me` に ETag が要る。`version` は加算され、
+        管理者側（6.4）の楽観ロックは壊れない。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMeRequest'
+      responses:
+        '200':
+          description: 更新後の自分自身（4.1 と同形式）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: CSRF トークンの不一致（`csrf_failed`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: |
+            メールアドレスが他のユーザーに使われている（`already_exists`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/me/password:
+    post:
+      tags: [me]
+      summary: 自分のパスワードを変更
+      operationId: changeMyPassword
+      description: |
+        現在のパスワードを検証したうえで、新しいパスワードに差し替える
+        （ApiDesign.md 4.3）。必要権限は「本人」。
+
+        **成功すると、現在のセッションを除く全セッションが失効する**
+        （Design.md 6.3）。API トークン（token_type='api'）も対象に含む。
+
+        **`must_change` を false にする。** 要パスワード変更で入った利用者が
+        変更しても誘導が消えない状態を避けるためである。
+
+        **現在のパスワードの検証に失敗しても `failed_attempts` は増えない。**
+        既にセッションを持つ本人の操作であり、ここで数えると自分で自分を
+        締め出せる。連打はアクター単位のレート制限（2.9）が抑える。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '204':
+          description: 変更した。本文を持たない。
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: |
+            未認証（`unauthenticated`）、または現在のパスワードが正しくない
+            （`invalid_credentials`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: CSRF トークンの不一致（`csrf_failed`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: |
+            パスワード認証を使っていないアカウント（`conflict`）。
+            IdP のみのユーザー（Phase 3）が該当する。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects:
     get:
       tags: [projects]
@@ -1310,7 +1426,18 @@ components:
     Actor:
       type: object
       required:
-        [id, kind, display_name, email, system_role, locale, timezone, must_change_password]
+        [
+          id,
+          kind,
+          display_name,
+          email,
+          system_role,
+          locale,
+          timezone,
+          theme,
+          hue,
+          must_change_password,
+        ]
       properties:
         id:
           description: ULID 26文字。
@@ -1334,9 +1461,83 @@ components:
         timezone:
           type: [string, 'null']
           examples: ['Asia/Tokyo']
+        theme:
+          description: |
+            テーマ（GuiDesign.md 8.11）。エージェントは null。**サーバが返さないと
+            別の端末で同じ見た目にならない**——8.11 が app_user と localStorage の
+            両方に保存すると定めた目的がそれである。
+          type: [string, 'null']
+          enum: [light, dark, system, null]
+        hue:
+          description: ベース色相（GuiDesign.md 8.3）。エージェントは null。
+          type: [string, 'null']
+          enum: [blue, green, null]
         must_change_password:
           description: true のときフロントはパスワード変更画面へ誘導する（ApiDesign.md 3.1）。
           type: boolean
+
+    UpdateMeRequest:
+      type: object
+      description: |
+        ApiDesign.md 4.2。**送らなかった項目は変更しない**（部分更新）。
+        すべて省略可だが、少なくとも1つを送ること自体は必須にしていない——
+        空の `{}` は「何も変えない」として 200 を返す。
+
+        `system_role` は**受け口としてだけ**定義してある。送られたら 422 で
+        弾くためであり、黙って捨てると呼び出し側が権限が上がったと誤解する。
+      properties:
+        display_name:
+          description: 1〜60文字。前後の空白は取り除かれる。
+          type: string
+          minLength: 1
+          maxLength: 60
+          examples: ['田中']
+        email:
+          description: |
+            **ログインIDでもある**（ApiDesign.md 4.2）。画面では「ログインID」と
+            「メールアドレス」の2行に分かれるが、Phase 1 ではどちらも本項目を指す。
+          type: string
+          format: email
+          maxLength: 254
+          examples: ['tanaka@example.com']
+        locale:
+          description: Phase 1 は `ja` のみ。
+          type: string
+          enum: [ja]
+        timezone:
+          description: |
+            IANA のタイムゾーン名。サーバは `time.LoadLocation` で解決できるかを
+            見る（値の一覧を持たない）。`Local` は弾く——誰のローカルかがサーバの
+            設定に依存し、端末をまたぐと意味が変わるため。
+          type: string
+          maxLength: 64
+          examples: ['Asia/Tokyo']
+        theme:
+          type: string
+          enum: [light, dark, system]
+        hue:
+          type: string
+          enum: [blue, green]
+        system_role:
+          description: |
+            **変更できない。** 送られると 422（`details[].code` が `not_allowed`）。
+          type: string
+          enum: [administrator, operator]
+
+    ChangePasswordRequest:
+      type: object
+      description: ApiDesign.md 4.3。
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          description: |
+            現在のパスワード。不一致は 401 `invalid_credentials`。
+            **失敗しても `failed_attempts` は増えない**（4.3）。
+          type: string
+        new_password:
+          description: 12文字以上（Design.md 6.3）。複雑性要件は課さない。
+          type: string
+          minLength: 12
 
     SessionProject:
       type: object

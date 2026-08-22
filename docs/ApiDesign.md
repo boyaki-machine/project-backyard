@@ -330,6 +330,8 @@ GET /healthcheck
     "system_role": "administrator",
     "locale": "ja",
     "timezone": "Asia/Tokyo",
+    "theme": "dark",
+    "hue": "blue",
     "must_change_password": false
   },
   "permissions": ["project.view", "project.create", "ticket.view", "..."],
@@ -404,13 +406,34 @@ Phase 1 では `local` の1件のみ。**Phase 3 で OIDC/SAML を追加して�
 **必要権限**：本人
 
 ```json
-{ "display_name": "田中", "locale": "ja", "timezone": "Asia/Tokyo",
+{ "display_name": "田中", "email": "tanaka@example.com",
+  "locale": "ja", "timezone": "Asia/Tokyo",
   "theme": "dark", "hue": "green" }
 ```
 
-`theme` / `hue` は `GuiDesign.md` 8.11 のテーマ設定。`app_user` に列を追加して保持する。
+`theme` / `hue` は `GuiDesign.md` 8.11 のテーマ設定。`app_user` の列に保持する。
 
-**`email` と `system_role` は変更不可**（管理者が 6.4 で変更する）。送られた場合は無視せず `422` を返す。
+**`system_role` は変更不可**（管理者が 6.4 で変更する）。送られた場合は無視せず `422` を返す。
+
+**`email` は本人が変更できる。** この列はログインIDでもあるため（`Design.md` 6.2.1 手順2〜3 が
+`user_identity.subject` と突き合わせる）、変更時は `subject` も同じトランザクションで
+追随させる。追随させないと当人がログインできなくなる。**現在のパスワードの再入力は求めない**
+——既にセッションを持つ本人の操作であり、Phase 1 で再認証を求める箇所を他に持たないためである。
+
+| 状況 | 応答 |
+|---|---|
+| 成功 | `200`。本体は `GET /me`（4.1）と**同一構造**。画面はこの応答で表示を差し替える（`GuiDesign.md` 6.4） |
+| 他のユーザーが同じメールを使っている | `409 already_exists`（6.4 と同じ） |
+| 形式誤り・`system_role` の送信 | `422 validation_failed` |
+
+**楽観ロック（2.8）は課さない。** 自分の設定を同時に2箇所から編集する状況が実質無く、
+課すと `GET /me` に `ETag` が要る——`GET /me` は全画面の起動時に呼ばれるため、影響が広い。
+ただし `app_user.version` は加算し、6.4 の楽観ロックが壊れないようにする。
+
+**画面上は「ログインID」と「メールアドレス」の2行に分かれている**（`GuiDesign.md` 5.8）が、
+Phase 1 ではどちらも本列を指す。ログインIDは読み取り専用で、メールアドレス欄の変更に追随する。
+**ログインIDと連絡先を別々に登録できるようにするのは、必要になった時点でのスキーマ変更を伴う**
+（利用者の判断、2026-08-22）。
 
 ## 4.3 `POST /api/v1/me/password`
 
@@ -422,20 +445,17 @@ Phase 1 では `local` の1件のみ。**Phase 3 で OIDC/SAML を追加して�
 
 - 現在のパスワード検証に失敗 → `401 invalid_credentials`
 - ポリシー違反（12文字未満等） → `422 validation_failed`
+- `local_credential` を持たないユーザー（IdP のみ、Phase 3） → `409 conflict`（6.6 と同じ）
 - 成功 → `204`。**現在のセッションを除く全セッションを失効**（`Design.md` 6.3）
 
-## 4.4 `GET /api/v1/me/sessions` / `DELETE /api/v1/me/sessions/:id`
+**成功時に `local_credential.must_change` を `false` にする。** これをしないと、
+`must_change_password: true` で入った利用者が変更しても誘導が消えず、変更画面へ戻され続ける。
 
-```json
-{ "items": [
-  { "id": "01K2...", "client_info": "Chrome / macOS", "issued_at": "...",
-    "last_used_at": "...", "expires_at": "...", "is_current": true }
-]}
-```
+**現在のパスワードの検証に失敗しても `failed_attempts` は増やさない**（＝アカウントロックの
+対象にしない）。既にセッションを持つ本人の操作であり、ここで数えると自分で自分を締め出せる。
+連打はアクター単位のレート制限（2.9、600回/分）が抑える。
 
-`DELETE` で個別失効。`DELETE /api/v1/me/sessions`（IDなし）で現在のセッション以外を全失効。
-
-## 4.5 `GET|POST|DELETE /api/v1/me/tokens`
+## 4.4 `GET|POST|DELETE /api/v1/me/tokens`
 
 CLI用のAPIトークン管理（`GuiDesign.md` 5.8）。
 
@@ -812,7 +832,11 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 
 全セッションを失効。`204`。エージェントのトークンにも適用される（`kind='agent'` の場合）。**冪等**であり、有効なトークンが1本も無くても `204` を返す。
 
-**個別のセッションだけを失効させるAPIは Phase 1 では持たない。** 管理者が他人の1セッションを選んで切る場面は考えにくく、怪しいセッションが1つあるなら全部を切るのが実務の動きである。本人が自分のセッションを1つ切る手段は 4.4（`DELETE /me/sessions/:id`）にある。要望が出た時点で `DELETE /admin/users/:id/sessions/:sid` を足す。
+**個別のセッションだけを失効させるAPIは Phase 1 では持たない。** 管理者が他人の1セッションを選んで切る場面は考えにくく、怪しいセッションが1つあるなら全部を切るのが実務の動きである。要望が出た時点で `DELETE /admin/users/:id/sessions/:sid` を足す。
+
+**本人が自分のセッションを一覧・失効させるAPIも持たない**（利用者の判断、2026-08-22）。
+セッションの管理は管理者の作業であり、6.3 の一覧と本節の全失効で足りる。本人が他の端末を
+締め出したい場合は、パスワードの変更（4.3）が現在のセッション以外を全失効させる。
 
 ## 6.8 プロジェクトメンバーシップ
 
@@ -914,7 +938,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | ユーザー追加モーダル | `POST /admin/users` |
 | ユーザー詳細・編集 | `GET /admin/users/:id`<br>`PATCH /admin/users/:id`<br>`PUT|DELETE /admin/users/:id/memberships/:key`<br>`POST /admin/users/:id/password-reset`<br>`POST /admin/users/:id/sessions/revoke` |
 | アカウント / 権限（ロールタブ） | `GET /roles` + `GET /permissions` |
-| 自分の設定 | `PATCH /me`<br>`POST /me/password`<br>`GET|DELETE /me/sessions` |
+| 自分の設定 | `PATCH /me`<br>`POST /me/password` |
 | アクセストークン | `GET|POST|DELETE /me/tokens` |
 
 **各画面が起動時に呼ぶAPIは1〜2本に収まっている。** 設計方針3が満たされていることの確認になる。
@@ -950,7 +974,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 7.  GET /admin/users/:id、PATCH、DELETE、password-reset
 8.  memberships、sessions/revoke
 9.  GET /roles、GET /permissions                             ← 権限マトリクスが出る
-10. GET /me/sessions、/me/tokens、PATCH /me、POST /me/password
+10. PATCH /me、POST /me/password、/me/tokens
 ```
 
 **手順2の完了時点で「ログインできる」、手順4で「プロジェクト一覧が見える」、手順6で「ユーザーを追加できる」という区切りになる。** それぞれで動作確認を挟める順序にしてある。

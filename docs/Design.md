@@ -635,7 +635,7 @@ GET /api/v1/me
 | 領域 | エンドポイント | 状態 |
 |---|---|---|
 | 認証・セッション | `/auth/login` `/auth/logout` `/auth/providers` | 確定 |
-| 自分自身 | `/me` `/me/password` `/me/sessions` `/me/tokens` | 確定 |
+| 自分自身 | `/me` `/me/password` `/me/tokens` | 確定 |
 | プロジェクト | `/projects` `/projects/check-key` `/projects/:key` | 確定 |
 | ユーザー管理 | `/admin/users` 系 | 確定 |
 | ロール・権限 | `/roles` `/permissions` | 確定 |
@@ -872,7 +872,7 @@ make version-check       # VERSION と git 実測が一致することを確認�
 14. GET /roles、GET /permissions とロールと権限タブ
       ← ブラウザで権限マトリクスが見える
 15. /me 系 API と自分の設定・トークン管理画面
-      ← ブラウザでパスワード変更とテーマ切替ができる
+      ← ブラウザでパスワード変更・テーマ切替とCLIトークンの発行ができる
 16. チケット API と画面（ApiDesign 9章の確定後）
 ```
 
