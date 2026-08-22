@@ -464,9 +464,13 @@ server/migrations/                      ← Design.md 4.1。sqlc がスキーマ
 ├── 0009_sprint.sql                     sprint
 ├── 0010_seed_phase1.sql                権限カタログ、ロール、ワークフローテンプレート
 ├── 0011_audit_log_request_id.sql       audit_log.request_id を追加（6.8）
-└── 0012_access_token_permission_cache.sql
-                                        access_token に実効権限のキャッシュ2列を追加（6.2）
+├── 0012_access_token_permission_cache.sql
+│                                       access_token に実効権限のキャッシュ2列を追加（6.2）
+├── 0013_tag.sql                        tag, ticket_tag（6.10）           ← 手順16
+└── 0014_dod.sql                        dod_item（6.11）                  ← 手順18
 ```
+
+**0013・0014 は未適用である**（`ApiDesign.md` 9章の確定にともなって設計だけを先に決めた。手順16 / 18 の成果物となる）。
 
 `project.workflow_id` と `ticket.sprint_id` は後続テーブルを参照するため、**FK制約のみ後から `ALTER TABLE ... ADD CONSTRAINT` で付与する**（0005 / 0009 の末尾）。PostgreSQL は前方参照を許さないためである。
 
@@ -871,6 +875,12 @@ CREATE INDEX idx_ticket_link_target ON ticket_link (target_ticket_id);
 
 **`title` / `body_md` の trigram インデックス**が 4.5 の部分一致検索を支える。
 
+**`sort_key` はサーバが LexoRank 方式で採番する。** 値の生成規則をアプリの1か所に閉じ込め、クライアント（Web・MCP・将来のCLI）には書かせない。並べ替えは専用のエンドポイント `POST /tickets/:seq/move` で行う（`ApiDesign.md` 9.4）。**順序はプロジェクト内で1本**であり、バックログのグループ化（親・タグ・スプリント）は表示上の区切りにすぎない。
+
+**`parent_id` の循環禁止はアプリ層で検証する。** `ck_ticket_not_self_parent` が防げるのは自己参照（A→A）だけで、A→B→A のような循環は `CHECK` では表現できない。`ApiDesign.md` 9.5.2 が `parent_cycle` として `422` を返す。**階層の深さに上限は設けない**（表示側が5段でインデントを打ち切る。`GuiDesign.md` 5.4）。
+
+**`closed_at` はステータス遷移の副作用としてのみ動く。** 遷移先の `workflow_status.category` が `done` なら設定し、`done` 以外へ戻したら `NULL` へ戻す（`ApiDesign.md` 9.6）。直接更新させないことで、一覧の「未完了」フィルタ（`closed_at IS NULL`）と集計が食い違わないようにする。
+
 ## 6.7 コメントと添付（0007）
 
 ```sql
@@ -996,6 +1006,77 @@ ALTER TABLE ticket
   ADD CONSTRAINT fk_ticket_sprint
   FOREIGN KEY (sprint_id) REFERENCES sprint(id) ON DELETE SET NULL;
 ```
+
+**スプリントの CRUD は Phase 1 で開ける**（`ApiDesign.md` 9.12）。表だけあって作る手段が無いと、チケット詳細のスプリント欄が常に空のドロップダウンになるためである。バーンダウン・ベロシティを含むスプリント管理画面は Phase 2（`GuiDesign.md` 10章）で、Phase 1 は**定義のみ**をプロジェクト設定のスプリントタブで行う。
+
+## 6.10 タグ（0013）
+
+```sql
+CREATE TABLE tag (
+  id         char(26) COLLATE "C" PRIMARY KEY,
+  project_id char(26) COLLATE "C" NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  name       text        NOT NULL CHECK (length(name) BETWEEN 1 AND 30),
+  sort_order integer     NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT uq_tag_project_name UNIQUE (project_id, name)
+);
+CREATE INDEX idx_tag_project ON tag (project_id, sort_order);
+CREATE TRIGGER trg_tag_updated BEFORE UPDATE ON tag
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE ticket_tag (
+  ticket_id char(26) COLLATE "C" NOT NULL REFERENCES ticket(id) ON DELETE CASCADE,
+  tag_id    char(26) COLLATE "C" NOT NULL REFERENCES tag(id)    ON DELETE CASCADE,
+  PRIMARY KEY (ticket_id, tag_id)
+);
+CREATE INDEX idx_ticket_tag_tag ON ticket_tag (tag_id);
+```
+
+**タグは階層とは別の軸である。** 「この仕事はどの大きな仕事の一部か」には `ticket.parent_id` が答え、答えは必ず1つになる。「この仕事はどういう性質のものか」にはタグが答え、答えは0個から複数になる。前者は分解（WBS・進捗のロールアップ）を、後者は横断的な分類（「GUI系」「設計」「MCP系」）を担う。
+
+**1つの軸に混ぜない理由。** 「ログイン画面のCSS」は *認証エピックの一部* であると同時に *GUI系* でもある。階層1本に押し込むと、機能エピックの配下に置くか領域エピックの配下に置くかを毎回選ぶことになり、どちらか一方の見え方が失われる。他ツールでエピックが「分解の単位」と「分類ラベル」を兼ねて破綻するのは、この1軸化が原因である。
+
+**`epic` / `story` は `ticket.type` に残す**（6.6）。種別はアイコンと語彙のためのものであり、グルーピングの機能は持たない。グルーピングは階層とタグが担う。
+
+| 判断 | 理由 |
+|---|---|
+| **色の列を持たない** | `GuiDesign.md` 8.6 が「ラベルに任意色を許さない」と定めている。ユーザーごとに色の意味が食い違い、一覧が虹色になって輝度による階層が崩れる |
+| **`description` を持たない** | 30文字の名前で足りる範囲から始める（`GuiDesign.md` 設計原則3） |
+| **`tag_group` を作らない** | 「領域」「工程」のような**タグの軸**を導入すると、軸ごとに単一選択を強制でき、グループ化で重複表示が起きなくなる。ただしその必要性は、バックログを実際に使ってみるまで分からない。**フラットなタグから移行するには `tag.group_id` を足す前進マイグレーション1本で済むが、逆は難しい**（10章） |
+| **`ticket_tag` に `id` を持たない** | 複合主キーで足りる。付け外しは常に `(ticket_id, tag_id)` の組で行い、行そのものを参照する箇所がない |
+
+**`ticket_tag` の付け外しは `ticket.updated_at` を動かす。** これはアプリ側の責務である（`ticket_tag` への更新は `ticket` のトリガでは拾えない）。動かさないと、タグだけを変えた場合に一覧の ETag が変わらず `304` が返り続ける（`ApiDesign.md` 9.2.5）。
+
+## 6.11 完了条件（0014）
+
+```sql
+CREATE TABLE dod_item (
+  id           char(26) COLLATE "C" PRIMARY KEY,
+  ticket_id    char(26) COLLATE "C" NOT NULL REFERENCES ticket(id) ON DELETE CASCADE,
+  sort_order   integer NOT NULL,
+  type         text    NOT NULL
+               CHECK (type IN ('manual','task_ref','assertion','artifact','review')),
+  body         text    NOT NULL,
+  config       jsonb   NOT NULL DEFAULT '{}'::jsonb,
+  is_satisfied boolean NOT NULL DEFAULT false,
+  satisfied_at timestamptz,
+  satisfied_by char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  evidence     text,
+  origin       text    NOT NULL DEFAULT 'human' CHECK (origin IN ('human','ai_suggested')),
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_dod_ticket ON dod_item (ticket_id, sort_order);
+CREATE TRIGGER trg_dod_updated BEFORE UPDATE ON dod_item
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+`config` の例：`task_ref` は `{"ticket_id":"01K2..."}`、`assertion` は `{"command":"pytest tests/auth/","expect":"pass"}`。
+
+**この表は本改訂で 8.1.3（Phase 2）から移した。** `GuiDesign.md` 5.5 は「完了条件は Phase 1 で `manual` 型のみ実装」と定めているのに、その置き場所が Phase 2 にあり、文書どうしが食い違っていた。手動のチェックリストは AI 抜きでも人間だけで価値があり、`Requirements.md` 10.1.1「チケットは依頼メモから実行契約へ」の土台にもなるため、**Phase 1 側に合わせた**。
+
+**列と `CHECK` は Phase 2 の形のまま作り、API が受け付ける `type` だけを `manual` に絞る**（`ApiDesign.md` 9.9）。後から列を足すより、使わない列を持つほうが安い。`assertion`（コマンド実行）・`artifact`（成果物の存在確認）・`review`・`task_ref` は Phase 2 で開ける（`Requirements.md` 10.5.2）。
 
 ---
 
@@ -1323,6 +1404,8 @@ projects:
       - { email: viewer@example.com, role: project_viewer }
 ```
 
+**手順16 でチケット・タグ・スプリントを足す。** バックログ（`GuiDesign.md` 5.4）の検証には、**階層を持つチケット・複数タグの付いたチケット・タグの無いチケット**が揃っている必要がある。グループ化と階層インデントは、それらが無いと目で確かめられない。定義は同じ `dev-data.yaml` に `tags:` / `sprints:` / `tickets:`（`parent` を `seq` ではなく YAML 内の参照名で書く）として足す。実データは手順16 の成果物とする。
+
 **`password` を平文で書いているのは意図的である。** `deploy/base/env.example` と同じく「公開前提の既定値」であり、7.6.3 のガードにより本番へ入らない。`CLAUDE.md` 絶対規則6（秘密を書かない）の対象外として扱う。
 
 ### 7.6.5 デモアカウントの構成
@@ -1357,17 +1440,18 @@ make dev-info    # URL とデモアカウント一覧を表示
 Phase 1 のテーブルは変更せず、**テーブル追加のみ**で拡張する。本章のDDLは構成案であり、各Phase着手時に確定させる。
 
 ```
-0013_agent.sql            agent, task_lease
-0014_dod.sql              dod_item
-0015_agent_run.sql        agent_run, agent_report, context_pack_log
-0016_knowledge.sql        knowledge, knowledge_revision, proposal
-0017_comment_signal.sql   comment_signal
-0018_embedding.sql        vector 拡張 + embedding
-0019_project_event.sql    project_event
-0020_analytics.sql        estimate_record, contribution
+0015_agent.sql            agent, task_lease
+0016_agent_run.sql        agent_run, agent_report, context_pack_log
+0017_knowledge.sql        knowledge, knowledge_revision, proposal
+0018_comment_signal.sql   comment_signal
+0019_embedding.sql        vector 拡張 + embedding
+0020_project_event.sql    project_event
+0021_analytics.sql        estimate_record, contribution
 ```
 
-採番が 0013 から始まるのは、Phase 1 が 0012 まで使ったためである。手順4b で 0011（`audit_log.request_id` の追加、6.8）、手順6b で 0012（`access_token` の実効権限キャッシュ、6.2）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる。** 本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0015 から始まるのは、Phase 1 が 0014 まで使うためである。手順4b で 0011（`audit_log.request_id` の追加、6.8）、手順6b で 0012（`access_token` の実効権限キャッシュ、6.2）、`ApiDesign.md` 9章の確定にともなって 0013（タグ、6.10）と 0014（完了条件、6.11）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる。** 本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+
+**`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 
 ## 8.1 エージェント連携（Phase 2）
 
@@ -1413,31 +1497,9 @@ CREATE INDEX idx_task_lease_expiry ON task_lease (expires_at) WHERE released_at 
 
 **部分一意インデックスで「1チケットに有効なリースは1つ」をDBレベルで保証する。** アプリ側の排他制御に依存しないため、エージェントが並行して claim しても破綻しない。
 
-### 8.1.3 `dod_item` — 機械可読な完了条件
+### 8.1.3 `dod_item` — 6.11 へ移動
 
-```sql
-CREATE TABLE dod_item (
-  id           char(26) COLLATE "C" PRIMARY KEY,
-  ticket_id    char(26) COLLATE "C" NOT NULL REFERENCES ticket(id) ON DELETE CASCADE,
-  sort_order   integer NOT NULL,
-  type         text    NOT NULL
-               CHECK (type IN ('manual','task_ref','assertion','artifact','review')),
-  body         text    NOT NULL,
-  config       jsonb   NOT NULL DEFAULT '{}'::jsonb,
-  is_satisfied boolean NOT NULL DEFAULT false,
-  satisfied_at timestamptz,
-  satisfied_by char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
-  evidence     text,
-  origin       text    NOT NULL DEFAULT 'human' CHECK (origin IN ('human','ai_suggested')),
-  created_at   timestamptz NOT NULL DEFAULT now(),
-  updated_at   timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_dod_ticket ON dod_item (ticket_id, sort_order);
-CREATE TRIGGER trg_dod_updated BEFORE UPDATE ON dod_item
-  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-```
-
-`config` の例：`task_ref` は `{"ticket_id":"01K2..."}`、`assertion` は `{"command":"pytest tests/auth/","expect":"pass"}`。
+**Phase 1 へ前倒しした。** `GuiDesign.md` 5.5 が完了条件を Phase 1 の実装対象としており、置き場所だけが Phase 2 に残っていた。DDL と判断根拠は 6.11 にある。Phase 2 で開けるのは `manual` 以外の `type`（`assertion` / `artifact` / `review` / `task_ref`）であり、**テーブルの追加は要らない**。
 
 ### 8.1.4 `agent_run` / `agent_report`
 
@@ -1724,7 +1786,8 @@ docker compose exec -T db pg_dump -U pb_owner -Fc pb > backup/pb_$(date +%Y%m%d)
 - `audit_log` に対する `UPDATE` / `DELETE` 権限を `pb_app` から剥奪するか（改ざん防止と、保持期間ポリシーによる削除運用の両立）
 - `comment.author_id` の `NOT NULL` とユーザー削除の整合。「削除されたユーザー」システムアクターの生成タイミング（マイグレーションでの事前作成か、初回削除時の遅延生成か）
 - `activity` の粒度。チケット1回の更新で何行増えるか、まとめ方（1リクエスト＝1行にJSONで差分を持つ案との比較）
-- `sort_key`（LexoRank）の実装方式と再採番が必要になる境界条件
+- `sort_key`（LexoRank）の実装方式と再採番が必要になる境界条件。再採番が起きたことは `ApiDesign.md` 9.4 の `rebalanced` で呼び出し側へ伝える
+- **タグを軸（`tag_group`）へ拡張するかの判断時期**（6.10）。フラットなタグは「1チケットが複数タグを持つ」ため、タグでグループ化すると複数のセクションに重複表示される。「領域」「工程」のような軸を導入して軸ごとに単一選択とすれば重複は消えるが、必要性はバックログを使ってみるまで分からない。**判断はバックログ（手順16）を実運用に載せてから**行う
 - ワークフローの `definition`（jsonb 原本）と正規化テーブルの同期方法。どちらを正とするか
 - 日本語検索を `pg_trgm` から `pg_bigm` へ移行する判断基準（データ量・検索頻度・精度の不満）
 - Phase 2 でエージェントが並行書き込みする際のトランザクション分離レベル（既定の Read Committed で足りるか、`task_lease` 取得時に `SELECT FOR UPDATE` が必要か）

@@ -23,7 +23,7 @@
 | **6** | **ユーザー管理API** | **確定** |
 | **7** | **ロール・権限API** | **確定** |
 | 8 | 画面とAPIの対応 | 確定 |
-| 9 | チケットAPI | 未着手 |
+| **9** | **チケットAPI** | **確定**（未実装。手順16〜19） |
 | 10 | 実装順序と未解決事項 | 確定 |
 
 ---
@@ -1058,30 +1058,602 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | アプリ起動時 | `GET /me` |
 | プロジェクト一覧 | `GET /projects?status=active` |
 | 新規プロジェクトモーダル | `GET /projects/check-key`（入力時）<br>`POST /projects`（作成） |
-| プロジェクトダッシュボード | `GET /projects/:key`<br>（統計・自分の担当・最近の動きはチケットAPI。9章） |
+| プロジェクトダッシュボード | `GET /projects/:key/stats`<br>`GET /projects/:key/activity`<br>`GET /projects/:key/tickets?assignee=me&open=true` |
+| バックログ | `GET /projects/:key/tickets`（＋ `GET /projects/:key/tags`）<br>`POST /projects/:key/tickets/:seq/move`（並べ替え） |
+| 新規チケットモーダル | `POST /projects/:key/tickets` |
+| チケット詳細 | `GET /projects/:key/tickets/:seq`<br>`GET /projects/:key/tickets/:seq/comments`<br>（遷移先はドロップダウンを開いたときに `GET .../transitions`） |
 | アカウント / 権限（ユーザータブ） | `GET /admin/users` |
 | ユーザー追加モーダル | `POST /admin/users` |
 | ユーザー詳細・編集 | `GET /admin/users/:id`<br>`PATCH /admin/users/:id`<br>`PUT|DELETE /admin/users/:id/memberships/:key`<br>`POST /admin/users/:id/password-reset`<br>`POST /admin/users/:id/sessions/revoke` |
 | アカウント / 権限（ロールタブ） | `GET /roles` + `GET /permissions` |
 | 自分の設定 | `PATCH /me`<br>`POST /me/password` |
 | アクセストークン | `GET|POST /me/tokens`<br>`DELETE /me/tokens/:id` |
+| プロジェクト設定（タグタブ） | `GET|POST /projects/:key/tags`<br>`PATCH|DELETE /projects/:key/tags/:id` |
+| プロジェクト設定（スプリントタブ） | `GET|POST /projects/:key/sprints`<br>`PATCH|DELETE /projects/:key/sprints/:id` |
 
 **各画面が起動時に呼ぶAPIは1〜2本に収まっている。** 設計方針3が満たされていることの確認になる。
 
+**唯一の例外がプロジェクトダッシュボードで、4本を呼ぶ。** 4本は互いに独立で並列に投げられ、いずれも小さい。「自分の担当」「期限が近い」を `stats` に畳み込まないのは、それがチケットの応答形をもう1つ作ることになるためである（`GuiDesign.md` 5.3）。設計方針3が避けたいのは N+1 の往復であって、独立した4本ではない。
+
 ---
 
-# 9. チケットAPI（未着手）
+# 9. チケットAPI
 
-以下を次の改訂で定義する。
+チケットは PB の中心にある資源であり、**同じデータをバックログ・カンバン・ガント・WBS のどの形式でも描ける**ことがデータモデルの前提である（`Requirements.md` 2章）。本章はその前提を API の形に落とす。
 
-- `GET|POST /projects/:key/tickets`、`GET|PATCH /projects/:key/tickets/:seq`
-- `POST /projects/:key/tickets/:seq/transition`（ステータス遷移。`workflow_transition` と `is_agent_reachable` を検証）
-- `GET|POST /projects/:key/tickets/:seq/comments`
-- `GET|POST|PATCH /projects/:key/tickets/:seq/dod`
-- `GET|POST|DELETE /projects/:key/tickets/:seq/links`
-- `GET /projects/:key/stats`、`GET /projects/:key/activity`（ダッシュボード用）
-- チケット採番（`project_counter` の行ロック）とその並行制御
-- 一覧のフィルタ・ソート・階層表示の表現方法
+本章のエンドポイントは手順16〜19 に分かれて実装される（9.15）。
+
+## 9.1 チケットの識別とURL
+
+```
+/api/v1/projects/:key/tickets/:seq
+                  ↑            ↑
+          プロジェクトキー   プロジェクト内連番（integer）
+```
+
+| | |
+|---|---|
+| `:key` | プロジェクトキー（`^[a-z0-9][a-z0-9-]{1,19}$`）。5.4 と同じ |
+| `:seq` | `ticket.seq`。`UNIQUE (project_id, seq)`（`DbDesign.md` 6.6）が一意性を保証する |
+
+**チケットを指すのは常に `seq` であり、ULID ではない。** 応答は `id`（ULID）も返すが、**リクエストでチケットを指定する箇所はすべて `seq`** とする。親は `parent_seq`、リンク先は `target_seq` である。
+
+理由は3つ。
+
+1. 親もリンク先も**同一プロジェクト内に限る**（Phase 1）。プロジェクトが URL で決まっているため、`seq` だけで一意に定まる
+2. `GuiDesign.md` 3.2 が既にルーティングを `seq` で決めている。画面が ULID を別に持ち回らずに済む
+3. MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる（`Requirements.md` 10.3）。人が読める番号のまま API を組み立てられる
+
+`id` を応答に残すのは、`activity.entity_id`（`DbDesign.md` 6.8）との突き合わせと、Phase 2 以降のエージェント連携（`task_lease.ticket_id` 等）が ULID を使うためである。
+
+**完全形 `my-app-31` はサーバが組み立てない。** プロジェクトキーは URL に含まれており、フロントが `${key}-${seq}` を組める。応答に冗長な文字列を載せない（`GuiDesign.md` 5.4 は一覧で `-31` とだけ表示し、コピー時のみ完全形にする）。
+
+**チケット以外の子資源（コメント・DoD項目・リンク・タグ・スプリント）は ULID で指す。** これらは `seq` に相当する連番を持たない。パスは `/tickets/:seq/comments/:id` のように、チケットまでを `seq`、その先を ULID とする。
+
+### 9.1.1 監査ログではなく `activity` に記録する
+
+チケットの作成・更新・遷移・削除、およびコメント・DoD・リンクの変更は **`activity`（`DbDesign.md` 6.8）に記録し、`audit_log` には書かない。**
+
+2.10 が `audit_log` の対象としているのは認証・権限・トークン・ユーザー管理であり、いずれも**インスタンス管理者が追うべき事象**である。チケットの変更は業務履歴であり、読み手はプロジェクトのメンバー（`GuiDesign.md` 5.5 の「変更履歴」）である。両者を混ぜると、監査ログがチケット更新で埋まって本来の用途に使えなくなる。
+
+## 9.2 `GET /api/v1/projects/:key/tickets`
+
+**必要権限**：`ticket.view`（メンバーでない場合はプロジェクトごと `404`。1.2-5）
+
+バックログ画面（`GuiDesign.md` 5.4）の唯一のデータ源であり、カンバン・ガント（Phase 2）も同じエンドポイントを使う。
+
+### 9.2.1 クエリパラメータ
+
+| パラメータ | 既定 | 説明 |
+|---|---|---|
+| `status` | — | ワークフローのステータスキー。カンマ区切りで複数指定は OR |
+| `status_category` | — | `todo` / `in_progress` / `review` / `done`。カンマ区切りは OR |
+| `type` | — | `epic` / `story` / `task` / `bug` / `phase` / `wbs`。カンマ区切りは OR |
+| `assignee` | — | 担当者の ULID。`me` で自分、`none` で未割当。カンマ区切りは OR |
+| `priority` | — | `lowest` 〜 `highest`。カンマ区切りは OR |
+| `tag` | — | タグの ULID（9.11）。`none` で未分類。カンマ区切りは OR |
+| `sprint` | — | スプリントの ULID（9.12）。`none` で未割当。カンマ区切りは OR |
+| `open` | — | `true` で `closed_at IS NULL` のもののみ。`false` で完了のみ |
+| `due_within` | — | `7d` 形式。**今日から N 日以内に期限があるもの（期限超過を含む）**。`due_date IS NULL` は除外 |
+| `parent` | — | `seq` を指定すると、そのチケットとその全子孫（部分木）に限る |
+| `sort` | `sort_key` | `sort_key` / `seq` / `title` / `status` / `priority` / `due_date` / `created_at` / `updated_at` |
+| `order` | `asc` | `asc` / `desc` |
+| `page` | `1` | 2.6 |
+| `per_page` | **`200`** | 2.6。上限は 2.6 と同じ 200 |
+
+**異なる種類の条件どうしは AND、同じ条件の複数指定は OR** とする（`?type=bug&priority=high,highest` は「バグ、かつ優先度が高以上」）。
+
+**`per_page` の既定が他の一覧（25）と違う。** バックログはページャを持たず、フィルタ後の全件を1回で取り切る画面だからである（9.2.3）。**`sort` の既定が `sort_key` であることも本エンドポイント固有**で、これは人が手で並べた順序（9.4）を既定の見え方にするためである。
+
+**`q`（全文検索）は Phase 1 では受け付けない。** `GuiDesign.md` 5.4 が「全文検索は Phase 1 では実装しない」と決めている。部分一致検索を支える trigram インデックスは `DbDesign.md` 6.6 に既にあるが、専用画面 `/p/:key/search`（Phase 2）と同時に開ける。
+
+**`status` と `status_category` の使い分け。** 画面のフィルタは `status`（プロジェクトのワークフローに定義されたキー）を使う。`status_category` は**ワークフローが違うプロジェクトを跨いでも意味が変わらない4値**であり、ダッシュボードの集計（9.13）とカンバンの列（Phase 2）が使う。
+
+### 9.2.2 応答
+
+```json
+{
+  "items": [
+    {
+      "id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S",
+      "seq": 31,
+      "type": "task",
+      "title": "認証APIの実装",
+      "status": { "key": "in_progress", "name": "進行中", "category": "in_progress" },
+      "priority": "high",
+      "assignee": { "id": "01K2...", "kind": "user", "display_name": "田中" },
+      "reporter": { "id": "01K2...", "kind": "user", "display_name": "田中" },
+      "parent_seq": null,
+      "has_children": true,
+      "sort_key": "0|hzzzzz:",
+      "tags": [ { "id": "01K2...", "name": "設計" } ],
+      "sprint": { "id": "01K2...", "name": "Sprint 3" },
+      "estimate_point": 5,
+      "estimate_hours": null,
+      "actual_hours": 3.5,
+      "start_date": "2026-08-09",
+      "due_date": "2026-08-14",
+      "closed_at": null,
+      "version": 3,
+      "created_at": "2026-08-09T01:00:00Z",
+      "updated_at": "2026-08-11T00:12:44Z"
+    }
+  ],
+  "page": 1, "per_page": 200, "total": 48, "total_pages": 1
+}
+```
+
+**`tags[]` と `parent_seq` / `has_children` を一覧に含めるのが本エンドポイントの要点である。** グループ化（タグ）と階層のインデント表示（親子）を、追加のリクエストなしに描けるようにする（設計方針3）。これらを含めないと、バックログは1画面あたり `1 + タグ数 + 階層の深さ` 回の往復を必要とする。
+
+**`body_md` は含めない。** 一覧は本文を表示せず（`GuiDesign.md` 5.4）、200件分の Markdown は応答を数十倍にする。本文が要るのは詳細（9.5）だけである。
+
+**`execution_mode` / `readiness` / `readiness_note` / `scope` / `custom_fields` も含めない。** 列は `DbDesign.md` 6.6 に先行定義されているが、`GuiDesign.md` 5.5 が「Phase 1 では非表示」と決めている。**画面が使わない項目を応答に載せない**（載せると、使われないまま形が固まる）。Phase 2 で有効化する際に足す。
+
+`assignee` / `reporter` は担当者不在のとき `null`。`kind` は `user` / `agent` / `system` で、**画面はこれを見てエージェントに 🤖 バッジを付ける**（`GuiDesign.md` 5.4、設計原則5）。
+
+### 9.2.3 ページャを画面に出さない
+
+2.6 の `page` / `per_page` / `total` / `total_pages` は**規約どおり返す**。画面がページャを出さないだけである（`GuiDesign.md` 5.4）。
+
+**理由は、グループ化・階層のインデント・ドラッグ&ドロップの並べ替えがいずれもページ境界をまたげないことにある。** 25件目と26件目の間で親子が切れると、子だけが孤立して2ページ目の先頭に現れる。これは `GuiDesign.md` 11章に「チケット一覧の階層表示とページングの相性」として未解決事項に挙げられていた問題であり、**バックログについてはページングを持たないことで解決する**。
+
+`total > per_page` になったとき、画面は件数とともに「フィルタで絞り込んでください」を表示する。**サーバは 200 件で打ち切るだけで、エラーにはしない。**
+
+**全件を返す専用のモード（`per_page=all` 等）は設けない。** 上限を外すと、応答サイズが利用者の入力ではなくデータ量で決まるようになり、性能の予測が立たなくなる。Phase 1〜2 の規模で 200 件を超えるプロジェクトは、フィルタを使うか、ビューを分ける（スプリント・タグ）べき段階にある。
+
+### 9.2.4 フィルタで親が落ちた子の扱い
+
+**フィルタは行単位で適用し、サーバは親を補完しない。** 親がフィルタに合致しない場合、その子は `parent_seq` を保ったまま返る。画面は「親が結果に含まれていない子」をトップレベルに並べる（`GuiDesign.md` 5.4）。
+
+親を補完すると、**フィルタに合致しない行が一覧に現れ、`total` と表示件数が食い違う**。「進行中だけを見たい」ときに未着手の親が混ざるのは、フィルタの意味を壊す。
+
+### 9.2.5 ETag
+
+2.7 に従い `ETag` を返す。値は **①フィルタ条件を正規化した文字列のハッシュ ②結果の件数 ③結果の `MAX(updated_at)`** から生成する。
+
+```
+ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
+```
+
+**フィルタ条件をハッシュに混ぜるのは本エンドポイント固有である。** 5.1 の `/projects` と違い、条件の組み合わせが多く、「件数と最終更新が同じで内容が違う結果」が現実に起こりうる（`?type=bug` と `?type=task` が偶然どちらも12件で最終更新が同じ、など）。
+
+**`ticket_tag` の付け外しは `ticket.updated_at` を動かす。** これはアプリ側の責務である（`ticket_tag` に対する更新は `ticket` のトリガでは拾えない）。動かさないと、タグだけを変えた場合に ETag が変わらず、`304` が返り続ける。
+
+## 9.3 `POST /api/v1/projects/:key/tickets`
+
+**必要権限**：`ticket.create`
+
+```json
+{
+  "type": "task",
+  "title": "認証APIの実装",
+  "body_md": "ローカルID/PW認証のAPIを実装する。",
+  "priority": "high",
+  "assignee_id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S",
+  "parent_seq": 12,
+  "tag_ids": ["01K2..."],
+  "sprint_id": "01K2...",
+  "estimate_point": 5,
+  "start_date": "2026-08-09",
+  "due_date": "2026-08-14"
+}
+```
+
+| フィールド | 検証 |
+|---|---|
+| `type` | 必須。`epic` / `story` / `task` / `bug` / `phase` / `wbs` |
+| `title` | 必須。1〜200文字 |
+| `body_md` | 任意 |
+| `priority` | 任意。`lowest` 〜 `highest` |
+| `assignee_id` | 任意。**当該プロジェクトの `project_member` であること**。違えば `422`（`details[].code = "not_a_member"`） |
+| `parent_seq` | 任意。同一プロジェクトに存在すること |
+| `tag_ids` | 任意。すべて当該プロジェクトのタグであること |
+| `sprint_id` | 任意。当該プロジェクトのスプリントであること |
+| `estimate_point` / `estimate_hours` | 任意。0以上 |
+| `start_date` / `due_date` | 任意。両方あるとき `start_date <= due_date`（`DbDesign.md` 6.6 の `ck_ticket_dates`） |
+
+**サーバが決めるもの（リクエストに含められない）**
+
+| 項目 | 決め方 |
+|---|---|
+| `seq` | `project_counter` の1文 `UPDATE ... RETURNING`（`DbDesign.md` 6.4.1） |
+| `status_key` | プロジェクトのワークフローのうち **`category='todo'` かつ `sort_order` 最小**のステータス。該当が無ければ `sort_order` 最小のステータス |
+| `sort_key` | 現在の末尾の次（9.4 の LexoRank） |
+| `reporter_id` | 呼び出し元のアクター |
+| `version` | `1` |
+
+`201 Created`（`Location: /api/v1/projects/my-app/tickets/31`）。応答は 9.5 の `GET` と同形式。
+
+**採番・ワークフロー解決・タグ付与・`activity` 記録は単一トランザクションで行う。** 5.3 の `POST /projects` と同じ方針である。
+
+**初期ステータスをリクエストで指定できないようにしている。** ワークフローの入口は `workflow_transition` に定義されておらず（遷移元が無い）、任意のステータスで作成できると 9.6 の遷移検証を素通りできてしまう。作成後に遷移させれば同じ状態に到達でき、その経路は検証を通る。
+
+## 9.4 `POST /api/v1/projects/:key/tickets/:seq/move`
+
+**必要権限**：`ticket.edit`
+
+バックログのドラッグ&ドロップによる並べ替え（`GuiDesign.md` 5.4）。
+
+```json
+{ "after_seq": 44 }
+```
+
+| 指定 | 意味 |
+|---|---|
+| `{"after_seq": 44}` | 44 の直後へ |
+| `{"before_seq": 44}` | 44 の直前へ |
+| `{"after_seq": 44, "before_seq": 12}` | 44 と 12 の間へ |
+| `{"position": "first"}` | 先頭へ |
+| `{"position": "last"}` | 末尾へ |
+
+`position` と `after_seq` / `before_seq` の同時指定は `422`。いずれも無い場合も `422`。
+
+```json
+{ "seq": 31, "sort_key": "0|hzzzr:", "version": 4, "rebalanced": false }
+```
+
+**`PATCH` で `sort_key` を直接書かせない。** LexoRank の桁生成規則をクライアントに持たせると、Web・MCP・将来の CLI がそれぞれ同じ規則を実装することになり、1つでもずれると順序が壊れる。**順序キーの生成はサーバに1つだけ置く**（5.1 で `progress` をサーバ計算にしたのと同じ理由）。設計方針1の「状態遷移など名詞で表せない操作のみ `POST /:id/<action>` を許す」に当たる。
+
+**`rebalanced`** は、隣接する2つのキーの間に新しいキーを作れず、プロジェクト全体の `sort_key` を振り直したことを示す。`true` のとき、**クライアントは一覧を取り直す**（手元の `sort_key` がすべて古くなっているため）。
+
+**`If-Match` は要求しない。** 2.8 の archive / unarchive と同じく、競合しても失われる編集内容が無い（`sort_key` はフォームで編集する項目ではない）。ただし**`version` は他の更新と同じく +1 する**。並べ替えの直後に詳細画面が `409` を返す可能性があるが、規約を1本に保つことを優先する。実運用で不都合が出たら 2.8 ごと見直す（10.2）。
+
+**並び順はプロジェクト内で1本である。** グループ化（親・タグ・スプリント）は表示上の区切りにすぎず、グループを切り替えても `sort_key` は変わらない。グループごとに別の順序を持たせると、軸を変えるたびに順序が失われる。
+
+## 9.5 `GET | PATCH | DELETE /api/v1/projects/:key/tickets/:seq`
+
+### 9.5.1 `GET`
+
+**必要権限**：`ticket.view`
+
+チケット詳細画面（`GuiDesign.md` 5.5）のデータ源。9.2 の `items[]` に以下を加えたものを返す。
+
+| 追加項目 | 内容 |
+|---|---|
+| `body_md` | 本文（Markdown ソース） |
+| `parent` | 親の `{seq, title, type, status}`。無ければ `null` |
+| `children` | 直下の子の `[{seq, title, type, status, assignee}]`（孫は含めない） |
+| `dod` | 完了条件の配列（9.9） |
+| `links` | 関連リンクの配列（9.10） |
+| `comment_count` | コメント件数（本文は含めない） |
+
+**コメント本体と変更履歴は含めない。** コメントはページングを持ち（9.8）、履歴は既定で畳まれている（`GuiDesign.md` 5.5）。画面は起動時に本エンドポイントと `GET .../comments` の**2本**を呼ぶ。履歴は開いたときに3本目を遅延で呼ぶ。8章の「起動時1〜2本」に収まる。
+
+### 9.5.2 `PATCH`
+
+**必要権限**：`ticket.edit`。ただし `assignee_id` を変える場合は `ticket.assign` も必要
+
+`If-Match: "3"` による楽観ロック（2.8）。**省略時は `422`**。成功すると `version` が +1 される。送られたフィールドだけを更新する。
+
+変更可能：`type` `title` `body_md` `priority` `assignee_id` `parent_seq` `tag_ids` `sprint_id` `estimate_point` `estimate_hours` `actual_hours` `start_date` `due_date`
+
+**含められないフィールド**
+
+| フィールド | `details[].code` | 理由 |
+|---|---|---|
+| `id` `seq` `version` `created_at` `updated_at` `reporter_id` | `immutable_field` | サーバが決める（5.5 と同じ扱い） |
+| `sort_key` | `use_move_endpoint` | 9.4 |
+| `status_key` `closed_at` | `use_transition_endpoint` | 9.6 |
+
+`immutable_field` / `use_move_endpoint` / `use_transition_endpoint` はいずれも **`details[].code` の値**であって 2.5.1 の `error.code` ではない（`error.code` は `validation_failed`）。5.5 と同じ規約である。
+
+**`tag_ids` は丸ごと置き換える**（部分更新ではない）。`settings` と同じ方針（5.5）。空配列でタグを全て外す。
+
+**`parent_seq` に `null` を送ると親を外す。** 自分自身または自分の子孫を親に指定した場合は `422 validation_failed`、`details[].code = "parent_cycle"`。**循環検出はアプリ層で行う**（DBの `ck_ticket_not_self_parent` は自己参照しか防げない。`DbDesign.md` 6.6）。
+
+応答は 9.5.1 と同形式。
+
+### 9.5.3 `DELETE`
+
+**必要権限**：`ticket.delete`
+
+物理削除（`DbDesign.md` 4.6 の既定）。`204 No Content`。
+
+**子チケットは削除しない。** `ticket.parent_id` は `ON DELETE SET NULL` であり、子は親を失ってトップレベルへ上がる。**この挙動を確認ダイアログに明示する**（`GuiDesign.md` 6.3。「3件の子チケットは削除されず、親のないチケットになります」）。
+
+コメント・DoD・リンク・タグ付けは `ON DELETE CASCADE` で消える。`activity` は `entity_id` で残るが、参照先のチケットは存在しなくなる。
+
+**本節を定義したのは、`ticket.delete` 権限が `DbDesign.md` 7.2 の権限カタログに存在するのに、対応するエンドポイントがどこにも無かったためである。**
+
+## 9.6 `POST /api/v1/projects/:key/tickets/:seq/transition`
+
+**必要権限**：`ticket.transition`。加えて `workflow_transition.required_permission` が設定されていればその権限も必要
+
+```json
+{ "to": "in_review", "comment": "レビューをお願いします" }
+```
+
+**検証の順序**（`DbDesign.md` 6.5）
+
+| # | 検証 | 失敗時 |
+|---|---|---|
+| 1 | `to` がプロジェクトのワークフローに存在するステータスか | `422 validation_failed`（`details[].code = "unknown_status"`） |
+| 2 | 現在のステータスから `to` への `workflow_transition` が定義されているか | `409 invalid_transition` |
+| 3 | 呼び出し元の `actor.kind` が `allowed_actor_kinds` に含まれるか | `403 forbidden` |
+| 4 | 遷移先の `is_agent_reachable` が `false` で、呼び出し元がエージェントか | `403 forbidden` |
+| 5 | `required_permission` を呼び出し元が持つか | `403 forbidden` |
+
+3〜5 が `Requirements.md` 10.10.4「承認ゲートをAPIレベルで強制する」の実体である。**画面側の制御に依存しない。**
+
+**`closed_at` の規則**
+
+| 遷移先の `category` | `closed_at` |
+|---|---|
+| `done` | `now()` を設定 |
+| `done` 以外 | `NULL` へ戻す |
+
+**`closed_at` は遷移の副作用としてのみ動く。** これにより 9.2 の `?open=true`（`closed_at IS NULL`）が「完了していないもの」と一致することが保証される。`PATCH` で直接書けないようにしているのは（9.5.2）、両者がずれると一覧と集計が食い違うためである。
+
+`comment` が付いていれば、**同じトランザクションで `kind='progress'` のコメントを作る**（`DbDesign.md` 6.7）。`activity` には `action='transition'` で記録する。
+
+応答は 9.5.1 と同形式。**`version` は +1 される。**
+
+**`If-Match` は要求しない。** 2.8 の archive / unarchive と同じ理由に加え、**遷移そのものが競合を検出する**ためである。2人が同時に「進行中 → レビュー」を実行した場合、後発は「レビュー → レビュー」の遷移を要求することになり、`workflow_transition` に定義が無いため検証2で `409 invalid_transition` になる。ヘッダによる保護を足す必要がない。
+
+## 9.7 `GET /api/v1/projects/:key/tickets/:seq/transitions`
+
+**必要権限**：`ticket.view`
+
+現在のステータスから遷移可能な先の一覧。詳細画面のステータスドロップダウン（`GuiDesign.md` 5.5）に出す選択肢を決める。
+
+```
+GET /api/v1/projects/my-app/tickets/31/transitions
+```
+
+```json
+{
+  "current": { "key": "in_progress", "name": "進行中", "category": "in_progress" },
+  "items": [
+    { "key": "in_review", "name": "レビュー", "category": "review", "allowed": true },
+    { "key": "done", "name": "完了", "category": "done", "allowed": false,
+      "reason": "ticket.close 権限が必要です" }
+  ]
+}
+```
+
+**遷移できない先も `allowed: false` と `reason` を付けて返す。** 設計原則4「権限で見えないを作る」は**メニュー項目**についての規則であり、ここでは適用しない。ステータスは業務上の到達点であり、存在ごと隠すと「なぜ完了にできないのか」が分からなくなる。`reason` はそのまま画面に出せる日本語とする（2.5 と同じ方針）。
+
+**このエンドポイントを別に置くのは、9.5.1 の詳細応答に埋めると `PATCH` のたびに再計算が要るためである。** ドロップダウンを開いたときにだけ呼べばよい。
+
+## 9.8 コメント
+
+```
+GET|POST    /api/v1/projects/:key/tickets/:seq/comments
+PATCH|DELETE /api/v1/projects/:key/tickets/:seq/comments/:id
+```
+
+| メソッド | 必要権限 | 備考 |
+|---|---|---|
+| `GET` | `ticket.view` | 既定 `sort=created_at`・`order=asc`・`per_page=50` |
+| `POST` | `comment.create` | |
+| `PATCH` | `comment.edit_own`（自分のもののみ） | 他人のものは `403` |
+| `DELETE` | `comment.delete_any`、または `comment.edit_own` かつ自分のもの | |
+
+`POST` / `PATCH` の本体：
+
+| フィールド | 検証 |
+|---|---|
+| `body_md` | 必須。1文字以上 |
+| `kind` | `discussion`（既定） / `decision` / `artifact` / `caveat` / `reference` / `progress` |
+| `in_reply_to` | 任意。同じチケットのコメントの ULID |
+
+**削除は論理削除**（`DbDesign.md` 4.6 / 6.7 の `deleted_at`）。削除済みも `items` に残し、`body_md` を `null`、`deleted_at` を設定した形で返す。画面は「削除されました」と表示する。
+
+**`origin` は応答に含める**（`human` / `agent`）。`GuiDesign.md` 5.5 が、エージェントのコメントをアバターの形（角丸四角）で人間と区別すると定めている。**リクエストでは指定できない**（呼び出し元のアクター種別から決まる）。
+
+## 9.9 完了条件（DoD）
+
+```
+GET|POST     /api/v1/projects/:key/tickets/:seq/dod
+PATCH|DELETE /api/v1/projects/:key/tickets/:seq/dod/:id
+```
+
+**必要権限**：`GET` は `ticket.view`、更新系は `ticket.edit`
+
+| フィールド | 検証 |
+|---|---|
+| `type` | **Phase 1 は `manual` のみ**。他の値は `422`（`details[].code = "phase_2_only"`） |
+| `body` | 必須。完了条件の文 |
+| `is_satisfied` | 真偽値。`PATCH` でチェックを付け外しする |
+| `sort_order` | 並び順。省略時は末尾 |
+
+`is_satisfied` を `true` にしたとき、サーバが `satisfied_at` と `satisfied_by`（呼び出し元）を設定する。`false` に戻すと両方 `NULL` へ戻す。
+
+`assertion`（コマンド実行）・`artifact`（成果物の存在確認）・`review`・`task_ref` は Phase 2（`Requirements.md` 10.5.2、`GuiDesign.md` 5.5）。**表とその列は Phase 1 から `DbDesign.md` 6.11 の形で作り、API が受け付ける `type` だけを絞る。** 後から列を足すより、使わない列を持つほうが安い。
+
+## 9.10 関連リンク
+
+```
+GET|POST /api/v1/projects/:key/tickets/:seq/links
+DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
+```
+
+**必要権限**：`GET` は `ticket.view`、更新系は `ticket.edit`
+
+```json
+{ "target_seq": 12, "link_type": "blocks", "lag_days": 0 }
+```
+
+| フィールド | 検証 |
+|---|---|
+| `target_seq` | 必須。**同一プロジェクト内**に存在すること。自分自身は `422` |
+| `link_type` | `FS` / `SS` / `FF` / `SF`（ガント用の依存）、`relates` / `duplicates` / `blocks` |
+| `lag_days` | 整数。既定 `0`。`FS`〜`SF` のときのみ意味を持つ |
+
+`GET` の応答は、**当該チケットが `source` である行と `target` である行の両方**を返し、`direction` を付けて区別する。
+
+```json
+{
+  "items": [
+    { "id": "01K2...", "direction": "outgoing", "link_type": "blocks",
+      "ticket": { "seq": 45, "title": "ticketテーブル定義", "status": {...} },
+      "lag_days": 0, "origin": "human" },
+    { "id": "01K2...", "direction": "incoming", "link_type": "blocks",
+      "ticket": { "seq": 12, "title": "DB設計", "status": {...} },
+      "lag_days": 0, "origin": "human" }
+  ]
+}
+```
+
+**双方向を1本の `GET` で返す。** `GuiDesign.md` 5.5 の「関連」欄は「ブロック元」と「ブロック先」を同じリストに並べる。2回問い合わせると N+1 になる（設計方針3）。
+
+**プロジェクトを跨ぐリンクは Phase 1 では作れない。** `DbDesign.md` 6.6 の `ticket_link` に制約は無いが、API が `target_seq` で受ける以上、同一プロジェクトに閉じる（9.1）。跨ぐ必要が出た時点で `target` の指定方法ごと設計する（10.2）。
+
+`origin` は `human` / `ai_suggested`。**Phase 1 は `human` のみ作られる**（AI提案の採用・却下は Phase 2。`GuiDesign.md` 5.5）。
+
+## 9.11 タグAPI
+
+```
+GET|POST     /api/v1/projects/:key/tags
+PATCH|DELETE /api/v1/projects/:key/tags/:id
+```
+
+| メソッド | 必要権限 |
+|---|---|
+| `GET` | `ticket.view` |
+| `POST` / `PATCH` / `DELETE` | **`project.edit`** |
+
+```json
+{
+  "items": [
+    { "id": "01K2...", "name": "GUI", "sort_order": 10, "ticket_count": 12 },
+    { "id": "01K2...", "name": "設計", "sort_order": 20, "ticket_count": 8 }
+  ]
+}
+```
+
+| フィールド | 検証 |
+|---|---|
+| `name` | 必須。1〜30文字。**同一プロジェクト内で一意**（重複は `409 already_exists`） |
+| `sort_order` | 整数。省略時は末尾 |
+
+**タグは「チケットの横断的な分類」を担う。** 「どの大きな仕事の一部か」は親子関係（`parent_seq`）が答え、「どういう性質の仕事か」はタグが答える。1つのチケットは親を1つしか持てないが、タグは複数持てる。この2軸の分離が、`Requirements.md` 2章の「アジャイル/ウォーターフォール/ハイブリッドを単一の体系で扱う」を支える。
+
+**権限を増やさない。** タグの定義は「プロジェクトの分類軸を決める」行為であり `project.edit`、チケットへの付与は「チケットの属性を変える」行為であり `ticket.edit`（9.5.2 の `tag_ids`）で足りる。`DbDesign.md` 7.2 の28件は `Design.md` 付録Aで確定済みとされており、既存権限の内側に収まるものでカタログを増やさない。
+
+**`ticket_count` を一覧に含める。** プロジェクト設定のタグタブ（`GuiDesign.md` 5.9）が削除時に「12件のチケットで使われています」を出す（設計原則：破壊的操作の確認、6.3）。
+
+`DELETE` は `ticket_tag` の行を `CASCADE` で消す。**使用中でも削除できる**（確認ダイアログで件数を示したうえで）。使用中の削除を禁止すると、要らなくなった分類を消すために全チケットを手で外すことになる。
+
+**色を持たせない。** `GuiDesign.md` 8.6 が「ラベルに任意色を許さない」と定めている。ユーザーごとに色の意味が食い違い、一覧が虹色になって輝度による階層が崩れるためである。
+
+## 9.12 スプリントAPI
+
+```
+GET|POST     /api/v1/projects/:key/sprints
+PATCH|DELETE /api/v1/projects/:key/sprints/:id
+```
+
+| メソッド | 必要権限 |
+|---|---|
+| `GET` | `ticket.view` |
+| `POST` / `PATCH` / `DELETE` | **`project.edit`** |
+
+```json
+{
+  "items": [
+    { "id": "01K2...", "name": "Sprint 3", "goal": "認証を通す",
+      "start_date": "2026-08-05", "end_date": "2026-08-18",
+      "status": "active", "ticket_count": 12, "closed_count": 5 }
+  ]
+}
+```
+
+| フィールド | 検証 |
+|---|---|
+| `name` | 必須。1〜50文字 |
+| `goal` | 任意 |
+| `start_date` / `end_date` | 任意。両方あるとき `start_date <= end_date`（`DbDesign.md` 6.9 の `ck_sprint_dates`） |
+| `status` | `planned`（既定） / `active` / `completed` |
+
+`DELETE` は `ticket.sprint_id` を `SET NULL` にする（`DbDesign.md` 6.9 の `fk_ticket_sprint`）。**チケットは消えない。**
+
+**Phase 1 でスプリントの CRUD を定義する理由。** `sprint` 表は Phase 1（0009）にあり、`GuiDesign.md` 5.5 のチケット詳細サイドバーもスプリント欄を Phase 1 として並べている。**作る手段が無いまま選択欄だけを置くと、常に空のドロップダウンになる。** バーンダウン・ベロシティを含むスプリント管理画面（`/p/:key/sprints`、Phase 2）とは別に、**定義だけをプロジェクト設定のスプリントタブで行う**（`GuiDesign.md` 5.9）。
+
+## 9.13 `GET /projects/:key/stats` / `GET /projects/:key/activity`
+
+プロジェクトダッシュボード（`GuiDesign.md` 5.3）のデータ源。**必要権限**：`project.view`
+
+### 9.13.1 `GET /api/v1/projects/:key/stats`
+
+```json
+{
+  "by_category": { "todo": 18, "in_progress": 8, "review": 4, "done": 36 },
+  "total": 66,
+  "open": 30,
+  "overdue": 2,
+  "stale": { "count": 3, "threshold_days": 14 },
+  "unassigned": 5
+}
+```
+
+**`status_category` で集計する**（`status` ではない）。ワークフローがプロジェクトごとに違っても4つのカードの意味が変わらないようにするためである（9.2.1）。
+
+`overdue` は `due_date < 今日` かつ `closed_at IS NULL`。`stale` は `updated_at` が `threshold_days` 日より前で `closed_at IS NULL`。**閾値はサーバが持ち、応答に含めて返す**（画面に「14日以上」と出すため。文言をフロントで組み立てない）。
+
+### 9.13.2 `GET /api/v1/projects/:key/activity`
+
+```
+GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
+```
+
+| パラメータ | 説明 |
+|---|---|
+| `entity` | `ticket:31` の形。省略時はプロジェクト全体（ダッシュボードの「最近の動き」） |
+| `action` | `create` / `update` / `delete` / `transition` |
+| `page` / `per_page` | 2.6。既定 `per_page=20` |
+
+```json
+{
+  "items": [
+    { "id": "01K2...", "entity_type": "ticket", "entity_id": "01K2...",
+      "entity_seq": 31, "entity_title": "認証APIの実装",
+      "actor": { "id": "01K2...", "kind": "user", "display_name": "田中" },
+      "action": "transition", "field": "status_key",
+      "old_value": "todo", "new_value": "in_progress",
+      "occurred_at": "2026-08-11T00:12:44Z" }
+  ],
+  "page": 1, "per_page": 20, "total": 142, "total_pages": 8
+}
+```
+
+**`entity_seq` と `entity_title` を非正規化して返す。** `activity` は `entity_id`（ULID）しか持たない（`DbDesign.md` 6.8）。画面は「`my-app-31` を『進行中』に変更」と表示するため、行ごとにチケットを引くと N+1 になる（設計方針3）。**サーバは `activity` と `ticket` を1回の JOIN で取る。**
+
+**削除されたチケットの行は `entity_seq` / `entity_title` が `null` になる**（9.5.3 が物理削除であるため）。画面は「削除されたチケット」と表示する。
+
+**`old_value` / `new_value` は `text` のまま返す**（`DbDesign.md` 6.8 の列がそうであるため）。ステータスの表示名への変換は画面が行う。ワークフローの定義は既に `GET /projects/:key`（5.4）で手元にある。
+
+## 9.14 チケット固有のエラーコード
+
+2.5.1 の表に加わるもの。
+
+| Status | `error.code` | 意味 |
+|---|---|---|
+| 409 | `invalid_transition` | 現在のステータスから要求された遷移が `workflow_transition` に定義されていない（9.6） |
+
+`details[].code`（`error.code` は `validation_failed`）として加わるもの。
+
+| `details[].code` | 意味 |
+|---|---|
+| `parent_cycle` | 自分自身または自分の子孫を親に指定した（9.5.2） |
+| `unknown_status` | 遷移先がプロジェクトのワークフローに存在しない（9.6） |
+| `not_a_member` | 担当者に指定したアクターがプロジェクトのメンバーでない（9.3） |
+| `use_move_endpoint` | `sort_key` を `PATCH` で変えようとした（9.5.2） |
+| `use_transition_endpoint` | `status_key` / `closed_at` を `PATCH` で変えようとした（9.5.2） |
+| `phase_2_only` | Phase 2 でのみ有効な値を指定した（DoD の `type` など。9.9） |
+
+## 9.15 実装手順との対応
+
+`Design.md` 11章 Phase 1 の手順16〜19 に対応する。
+
+| 手順 | 本章の節 | 完了時にブラウザでできること |
+|---|---|---|
+| **16** | 9.2 / 9.3 / 9.4 / 9.11 / 9.12 | チケットを一覧・作成・並べ替え・グループ化できる |
+| **17** | 9.5 / 9.6 / 9.7 | チケットを編集し、ワークフローに沿って状態を進められる |
+| **18** | 9.8 / 9.9 / 9.10 | コメントを投稿し、完了条件と関連チケットを管理できる |
+| **19** | 9.13 | プロジェクトの現況が見える |
+
+9.1 / 9.14 は全手順に共通する規約であり、手順16 で確立する。
 
 ---
 
@@ -1100,14 +1672,25 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 8.  memberships、sessions/revoke
 9.  GET /roles、GET /permissions                             ← 権限マトリクスが出る
 10. PATCH /me、POST /me/password、/me/tokens
+─────────────────────────── ここまで実装済み ───────────────────────────
+11. GET/POST /projects/:key/tickets、move、/tags、/sprints  ← バックログが動く
+12. GET/PATCH/DELETE /tickets/:seq、transition、transitions
+13. comments、dod、links
+14. GET /projects/:key/stats、/activity                    ← ダッシュボードが動く
 ```
 
 **手順2の完了時点で「ログインできる」、手順4で「プロジェクト一覧が見える」、手順6で「ユーザーを追加できる」という区切りになる。** それぞれで動作確認を挟める順序にしてある。
+
+上の 11〜14 は 9章の実装順序であり、`Design.md` 11章の手順16〜19 に対応する（9.15）。**11 が先に来るのは、一覧・作成が無いと以降のエンドポイントを検証するデータを作れないため**である。タグとスプリントを 11 に含めているのは、バックログのグループ化がこの2つを軸に使うからである（9.11 / 9.12）。
 
 ## 10.2 未解決の検討事項
 
 - **`GET /me` のキャッシュ戦略**。ロール変更が他セッションへ反映されるまでの許容遅延をどう決めるか（毎リクエスト検証はコスト、長期キャッシュは権限剥奪が効かない）
 - 一覧APIの `total` を返し続けるコストが問題になる規模の見極め（Phase 2 のチケット一覧で再検討）
+- **`POST /tickets/:seq/move` が `version` を +1 することの是非**（9.4）。並べ替えの直後に詳細画面の `PATCH` が `409` を返す。2.8 の規約を1本に保つことを優先したが、ドラッグ&ドロップの頻度によっては 2.8 ごと「順序の変更は `version` を動かさない」へ見直す
+- **バックログの 200 件上限に達したときのフィルタ誘導が実運用で足りるか**（9.2.3）。足りなければ、スプリント・タグによるビューの分割か、`sort_key` に沿った範囲取得を検討する
+- **プロジェクトを跨ぐチケットリンク**（9.10）。`target_seq` は同一プロジェクトに閉じている。跨ぐ必要が出たときの指定方法（`{project_key, seq}` か ULID か）
+- **`ticket.custom_fields` を API でどう開けるか**（`DbDesign.md` 6.6）。列はあるが Phase 1 の応答に含めていない。カスタムフィールドの定義（どのキーが存在するか）をプロジェクト設定に持たせるかどうかから決める必要がある
 - `PATCH` における「フィールド省略」と「明示的 null」の扱いを、サーバ実装（serde の `Option<Option<T>>` 等）でどう表現するか
 - エラーメッセージの多言語化。Phase 1 は日本語固定とするが、`code` を機械可読にしてあるためフロント側での差し替えは可能
 - `POST /projects` のワークフローテンプレート定義を、コードに埋め込むかDBのシードとして持つか

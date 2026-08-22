@@ -371,8 +371,11 @@ done
 project ──┬── ticket ──┬── comment
           │            ├── dod_item
           │            ├── ticket_link (self join)
+          │            ├── ticket_tag ── tag
           │            ├── task_lease
           │            └── agent_run ── agent_report
+          ├── sprint
+          ├── tag
           ├── workflow ── workflow_status ── workflow_transition
           ├── knowledge ── knowledge_revision
           ├── proposal          （すべての「AIの提案」がここを通る）
@@ -392,7 +395,9 @@ project ──┬── ticket ──┬── comment
 | **1** | コメント・添付 | `comment` `attachment` | 6.7 |
 | **1** | 履歴 | `activity` `audit_log` | 6.8 |
 | **1** | アジャイル | `sprint` | 6.9 |
-| **2** | エージェント連携 | `agent` `task_lease` `dod_item` `agent_run` `agent_report` `context_pack_log` | 8.1 |
+| **1** | タグ | `tag` `ticket_tag` | 6.10 |
+| **1** | 完了条件 | `dod_item` | 6.11 |
+| **2** | エージェント連携 | `agent` `task_lease` `agent_run` `agent_report` `context_pack_log` | 8.1 |
 | **2** | 知識還流 | `knowledge` `knowledge_revision` `proposal` | 8.2 |
 | **3** | AI・分析 | `comment_signal` `embedding` `project_event` `estimate_record` `contribution` | 8.3 |
 
@@ -671,9 +676,9 @@ GET /api/v1/me
 | ログイン | `/login` | 不要 |
 | プロジェクト一覧（ログイン後の初期画面） | `/projects` | `project.view` |
 | プロジェクトダッシュボード | `/p/:key` | `project.view` |
-| チケット一覧 | `/p/:key/tickets` | `ticket.view` |
+| バックログ | `/p/:key/backlog` | `ticket.view` |
 | チケット詳細 | `/p/:key/tickets/:seq` | `ticket.view` |
-| プロジェクト設定 | `/p/:key/settings` | `project.edit` |
+| プロジェクト設定（一般／メンバー／タグ／スプリント） | `/p/:key/settings` | `project.edit` |
 | アカウント / 権限管理 | `/admin/users` | `user.manage` |
 | 監査ログ | `/admin/audit` | `auditlog.view` |
 | 自分の設定・トークン | `/me` `/me/tokens` | 本人 |
@@ -877,8 +882,19 @@ make version-check       # VERSION と git 実測が一致することを確認�
       ← ブラウザで権限マトリクスが見える
 15. /me 系 API と自分の設定・トークン管理画面
       ← ブラウザでパスワード変更・テーマ切替とCLIトークンの発行ができる
-16. チケット API と画面（ApiDesign 9章の確定後）
+16. チケット一覧・作成API、タグAPI、スプリントAPI とバックログ画面
+      ← ブラウザでチケットを一覧・作成・並べ替え・グループ化できる
+17. チケット詳細・更新・削除・ステータス遷移API とチケット詳細画面
+      ← ブラウザでチケットを編集し、ワークフローに沿って状態を進められる
+18. コメント・DoD・関連リンクのAPI と詳細画面への組み込み
+      ← ブラウザでコメントを投稿し、完了条件と関連チケットを管理できる
+19. stats / activity API とプロジェクトダッシュボード
+      ← ブラウザでプロジェクトの現況が見える
 ```
+
+**手順16〜19 は本改訂（rev.8）で、旧手順16「チケット API と画面（ApiDesign 9章の確定後）」を展開したものである。** `ApiDesign.md` 9章の確定によって範囲が見えたため、11.2 の「1ステップ = ブラウザで確認できる単位」に従って4つに割った。各手順の対応表は同 9.15 にある。
+
+手順16 でスキーマが2つ増える（`0013_tag.sql`・`0014_dod.sql`。`DbDesign.md` 6.10 / 6.11）。**0014 が使われるのは手順18 だが、マイグレーションは手順16 でまとめて当てる**——2回に分けても手順18 の直前で `make migrate` を打つだけであり、分ける利得がない。
 
 ### 11.1 API と画面を同じ手順で進める
 
@@ -938,11 +954,23 @@ rev.6 では「1ステップ = 1言語」とし、Go と TypeScript を別の手
 - **プレースホルダ自体が「この画面をどう作るか」を議論するときの参照点になる**。画面名・設計文書の章番号・予定内容が画面上に出ているため、それを見ながら会話できる
 - 権限（`meta.permission`）は実画面と同じにする。プレースホルダのうちにルーターガードとメニュー出し分けを検証できる
 
-Phase 1 で最初からプレースホルダとするのは、プロジェクトダッシュボード・チケット一覧・チケット詳細・監査ログ、および Phase 2/3 の全画面（`GuiDesign.md` 3.2 の一覧を参照）。
+Phase 1 で最初からプレースホルダとするのは、プロジェクトダッシュボード・バックログ・チケット詳細・監査ログ、および Phase 2/3 の全画面（`GuiDesign.md` 3.2 の一覧を参照）。
 
 ### 11.4 旧番号との対応
 
-手順一覧は2度再編している。**新しいほうから読む。**
+手順一覧は3度再編している。**新しいほうから読む。**
+
+#### rev.8（`ApiDesign.md` 9章の確定にともなう展開）
+
+旧手順16「チケット API と画面」を、9章が定まったことで4つに割った。**手順15 までは変わらない。**
+
+| rev.7 | rev.8 | 備考 |
+|---|---|---|
+| 16 | **16・17・18・19** | チケット（バックログ／詳細／コメント・DoD・リンク／ダッシュボード） |
+| 17〜23 | **20〜26** | Phase 2 を6つ繰り下げ |
+| 24〜29 | **27〜30・32・33** | Phase 3 を繰り下げ、31 に進捗分析画面を新設 |
+
+**Phase 3 だけ単純な繰り下げになっていない。** `GuiDesign.md` 10章に進捗分析画面（`/p/:key/insights`）を足したため、31 が新規で、旧28・29（OIDC/SAML、カスタムロール）が 32・33 になる。
 
 #### rev.7（11.2 の改訂にともなう統合）
 
@@ -976,24 +1004,27 @@ API の手順と対応する画面の手順を1つにまとめ、以降の番号
 ## Phase 2 — エージェント連携
 
 ```
-17. マイグレーション 0013〜0016                     ← DbDesign 8.1, 8.2
-18. agent / access_token(agent) / task_lease
-19. MCP サーバと read 系ツール
-20. コンテキストパック生成（初期は単純な選定でよい）
-21. dod_item と agent_report
-22. proposal と承認キューUI
-23. セットアップ画面と設定ファイル生成（`Requirements.md` 10.9）
+20. マイグレーション 0015〜0017                     ← DbDesign 8.1, 8.2
+21. agent / access_token(agent) / task_lease
+22. MCP サーバと read 系ツール
+23. コンテキストパック生成（初期は単純な選定でよい）
+24. DoD の machine 型（assertion / artifact / review）と agent_report
+25. proposal と承認キューUI
+26. セットアップ画面と設定ファイル生成（`Requirements.md` 10.9）
 ```
+
+旧手順21 は「`dod_item` と `agent_report`」だった。**`dod_item` は Phase 1（手順18）へ前倒しした**ため、Phase 2 に残るのは `manual` 以外の型を開けることだけになる（`DbDesign.md` 6.11 / 8.1.3）。
 
 ## Phase 3 — AI機能・分析
 
 ```
-24. マイグレーション 0017〜0020                     ← DbDesign 8.3
-25. Readiness 判定、DoD ドラフト生成
-26. コメント分類・重要度スコアリング
-27. ベクトル検索、プロジェクトヒストリー
-28. OIDC / SAML 連携
-29. カスタムロールの編集UI
+27. マイグレーション 0018〜0021                     ← DbDesign 8.3
+28. Readiness 判定、DoD ドラフト生成
+29. コメント分類・重要度スコアリング
+30. ベクトル検索、プロジェクトヒストリー
+31. 進捗分析画面（消化状況・残存チケット・ベロシティ）  ← GuiDesign 10章
+32. OIDC / SAML 連携
+33. カスタムロールの編集UI
 ```
 
 ---
