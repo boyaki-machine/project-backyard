@@ -1157,6 +1157,75 @@ API は 13a で実装済みで、13b は**画面と API ラッパだけ**であ�
 | `audit_log` の21行 | **意図して残した。** 管理者が実際に行った操作の記録で、6.5 が「誰を消したか追えるように」と定めている当のものである。`login.failure` もロックも作っていない |
 | `server/internal/webui/dist` | `make clean-webui` でプレースホルダへ戻した |
 
+## 手順14（2026-08-22）— ロールと権限（`ApiDesign.md` 7.1 / 7.2、`GuiDesign.md` 5.6.3）
+
+ブランチ `feature/step-14-roles-permissions`。**API 2本・画面1枚・`lib/roles.ts` の全廃を1セッションで行った**（分割せず）。
+
+### 設計文書の改訂（実装より先に当てた）
+
+| 文書 | 内容 |
+|---|---|
+| `ApiDesign.md` 7.1 | `scope` クエリ（値域 `system` / `project`、それ以外は 422）と **scope 別の必要権限**。開放の理由・暫定である旨・値域を閉じる理由を追記 |
+| `ApiDesign.md` 7.2 | `user.manage` のまま据え置く理由、並びとエンベロープ |
+| `GuiDesign.md` 5.6.3 | ワイヤーを**5列**へ。グループ見出し・カテゴリ区切り・キー＋説明・**表の規則（権限列の固定）**を追記 |
+| `GuiDesign.md` 5.6 / 5.9.2 | 「画面が対応表を持つ」記述を撤去 |
+| `Design.md` 6.4.3 | 「Phase 1 ではシステムロール2種のみをUIで扱う」を撤去（**13b の時点で実装と食い違っていた**） |
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/store/queries/authz.sql`（追記） | `ListRoles` / `ListRolePermissionAssignments` / `ListPermissions`。**既存の `ListRolePermissions`（キー順・認可判定用）は触らない** |
+| `server/internal/httpapi/v1/roles.go` | `listRoles` / `listPermissions`、`catalog[T]` エンベロープ、`parseRoleScopeFilter` |
+| `server/internal/httpapi/middleware/authz.go`（追記） | **`RequirePermissionUnlessQuery`**。1本のルートでクエリの値により必要権限が変わる場合に宣言をルート定義へ残す |
+| `server/internal/httpapi/v1/routes.go` | `GET /roles` / `GET /permissions` の2行 |
+| `server/internal/httpapi/v1/roles_test.go` | 単体8件 |
+| `server/internal/httpapi/middleware/authz_test.go`（追記） | 単体4件（素通し・それ以外は要権限・完全一致のみ） |
+| `server/internal/httpapi/v1/roles_integration_test.go` | 実DB結合8件 |
+| `docs/openapi.yaml` | 2パス＋`RoleList` / `Role` / `PermissionList` / `Permission` |
+| `client/src/api/roles.ts` | `getRoles(scope)` / `getPermissions()` |
+| `client/src/stores/roles.ts` | **表示名の唯一の供給元**。`ensureRoles(scope)` / `ensurePermissions()` / `roleLabel` / `userRoleLabel` |
+| `client/src/components/RolePermissionMatrix.vue` | 5.6.3 のマトリクス |
+| `client/src/lib/roles.ts` | **削除**（消費者5つをストアへ移した） |
+| `client/src/pages/UsersPage.vue` | プレースホルダ→マトリクス、ロール列、`[+ ユーザー追加]` をユーザータブ限定に |
+| `client/src/components/AddUserModal.vue` | 独自配列を捨て `GET /roles` へ。`SystemRole` 型を openapi 生成物から取る |
+| `client/src/components/MembershipModal.vue` / `pages/UserDetailPage.vue` / `pages/ProjectSettingsPage.vue` | ストア経由へ |
+
+### 検証結果
+
+**Go（`make test` 全パッケージ通過）**
+
+- 単体12件（`roles_test.go` 8・`authz_test.go` 4）
+- 実DB結合8件：シード5ロールが `sort_order` 順／権限28件と category／`permissions[]` が `permission.sort_order` 順／administrator 28件・project_viewer 3件／`scope` の絞り込みが**2本のクエリに同じく効く**／オペレータは `?scope=project` だけ通る／`all` と不正値は 422／未認証は 401
+
+**実サーバ（`make restart` 後、デモの4アカウント）**
+
+| 利用者 | `/roles` | `?scope=system` | `?scope=project` | `/permissions` |
+|---|---|---|---|---|
+| admin（administrator） | 200（5件） | 200（2件） | 200（3件） | 200（28件） |
+| pm（operator／PJ管理者） | 403 | 403 | **200（3件）** | 403 |
+| member（operator／メンバー） | 403 | 403 | **200（3件）** | 403 |
+
+`scope=SYSTEM` / `all` / `projects` / ULID はいずれも 422（`details[].field = "scope"`）。応答のキーは `items` のみ、`ETag` なし。
+
+**ブラウザ（ヘッドレス Chrome / CDP、34件すべて PASS）**
+
+- マトリクス13件：ⓘ の注意書き／5列／見出しが `display_name` と一致／グループ見出しの `colspan`／カテゴリ8つ／28行／キー＋説明／**140マスすべてが `GET /roles` の `permissions` と一致**／`✓` の総数／タブ別の `[+ ユーザー追加]`／一覧のロール列
+- レイアウト14件（**1440px と 900px の両方**）：ページ全体が横に流れない／ヘッダ2段目が1段目の実測の高さに貼り付く／**横スクロールしても権限列が動かない**／ロール列は実際に動く／**固定した権限列の帯に何が描かれているか**（`elementFromPoint`）／縦スクロールでロール名の行が残る／中央寄せの実効値
+- 回帰7件：追加モーダルの選択肢と説明／ユーザー詳細のシステムロールとメンバーシップ／**pm（`user.manage` なし）でプロジェクト設定のメンバータブにロール表示名が出る**
+
+**実装を直した3件（いずれも検証が見つけた）**
+
+| 見つけ方 | 内容 |
+|---|---|
+| 実サーバのAPI検証 | `?scope=all` が 200 だった（7.1 の値域は `system` / `project`）→ 実装を直した |
+| 900px の実測 | **文書が横に7px流れていた。** はみ出しは中身のない空白で、入れ子のスクロール容器が自前の縦スクロールバーを持つときに生じる → `contain: paint` |
+| スクリーンショットの目視 | 表より枠が広く右に空白 → `width: max-content`。**横スクロール時にロール名が固定列の上へはみ出す** → `.corner` の `z-index` が `.matrix thead th` に詳細度で負けていた。**`text-align: center` も同じ理由で効いておらず、ロール名も `✓` も左寄せのままだった** |
+
+### 検証で作った資源
+
+読み取りのみで、サーバの状態を変えていない。結合テストが作ったアカウントは `t.Cleanup` で消えており、残存0件を確認した。`make clean-webui` と `make stop-server` を実行済み。
+
 ## 手順外の作業（完了分）
 
 `docs/PROGRESS.md` の「手順外の作業」表から、**完了して今後の手順に不要になった行**を

@@ -64,6 +64,44 @@ func RequirePermission(q gen.Querier, permission string) func(http.Handler) http
 	}
 }
 
+// RequirePermissionUnlessQuery は RequirePermission と同じ判定を行うが、
+// クエリパラメータ param が exempt と一致する要求だけは素通しする。
+//
+//	r.With(middleware.RequirePermissionUnlessQuery(q, "user.manage", "scope", "project")).
+//	  Get("/roles", h.listRoles)
+//
+// ApiDesign.md 7.1 の GET /roles が、scope によって必要権限を変えるために使う
+// （?scope=project は権限不要、それ以外は user.manage）。
+//
+// **1本のルートで権限が変わる場合にも、宣言をルート定義に残すためのものである。**
+// 判定をハンドラ本体へ移すと、routes.go を眺めてもこの行だけ必要権限が読めなく
+// なる。Design.md 6.4.4 が権限をミドルウェアとして宣言せよと定めるのは、
+// 書き忘れに気づけるようにするためであり、その防御を1本だけ外さない。
+//
+// **読み取り専用で、素通しする部分集合を意図して公開しているエンドポイントに
+// だけ使うこと。** 書き込みの認可をクエリパラメータで緩めてはならない。呼び出し側が
+// パラメータを付け替えるだけで通ってしまう。
+//
+// **認可が値の検証より先に走る。** exempt 以外の値（不正な値を含む）はすべて
+// permission を要求するため、権限を持たない呼び出し元が解釈できない値を送ると
+// 422 ではなく 403 が返る。**意図した順序である**——その呼び出し元は exempt 以外を
+// 要求できないのだから、値が正しいかどうかは判定の後で足りる。
+//
+// **Authenticate の後に置くこと。** プリンシパルが無いと判定できない。
+func RequirePermissionUnlessQuery(q gen.Querier, permission, param, exempt string) func(http.Handler) http.Handler {
+	guard := RequirePermission(q, permission)
+	return func(next http.Handler) http.Handler {
+		guarded := guard(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get(param) == exempt {
+				next.ServeHTTP(w, r)
+				return
+			}
+			guarded.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RequireProjectPermission は、URL の :key が指すプロジェクトに対して
 // permission を要求する（Design.md 6.4.1 / 6.4.4）。
 //
