@@ -6,8 +6,7 @@
 >
 > - 対象読者：サーバ／フロントエンド実装者（人間およびAIエージェント）
 > - 関連：`DbDesign.md`（スキーマ）、`GuiDesign.md`（画面）、`Design.md` 6章（認証・認可）
-> - 状態：**Phase 1 前半のAPIを確定**。チケット系・MCP系は未着手
-> - 最終更新：2026-08-11（rev.2 文書間の整合）
+> - 状態：**Phase 1 のAPIを確定**（チケットAPI＝9章を含む）。MCP系は未着手（`Design.md` 8章）
 
 ---
 
@@ -24,7 +23,7 @@
 | **7** | **ロール・権限API** | **確定** |
 | 8 | 画面とAPIの対応 | 確定 |
 | **9** | **チケットAPI** | **確定**（未実装。手順16〜19） |
-| 10 | 実装順序と未解決事項 | 確定 |
+| 10 | 未解決の検討事項 | 確定 |
 
 ---
 
@@ -1657,31 +1656,18 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 
 ---
 
-# 10. 実装順序と未解決事項
+# 10. 未解決の検討事項
 
-## 10.1 実装順序
+## 10.1 実装順序 → `Design.md` 11章
 
-```
-1.  共通基盤：エラー形式、ページネーション、認証ミドルウェア、監査ログ
-2.  POST /auth/login、POST /auth/logout、GET /me            ← ここでログインが通る
-3.  認可ミドルウェア（require_permission）と権限カタログのシード
-4.  GET /projects、POST /projects、GET /projects/check-key   ← プロジェクト一覧が動く
-5.  GET /projects/:key、PATCH、archive
-6.  GET /admin/users、POST /admin/users                      ← ユーザー管理が動く
-7.  GET /admin/users/:id、PATCH、DELETE、password-reset
-8.  memberships、sessions/revoke
-9.  GET /roles、GET /permissions                             ← 権限マトリクスが出る
-10. PATCH /me、POST /me/password、/me/tokens
-─────────────────────────── ここまで実装済み ───────────────────────────
-11. GET/POST /projects/:key/tickets、move、/tags、/sprints  ← バックログが動く
-12. GET/PATCH/DELETE /tickets/:seq、transition、transitions
-13. comments、dod、links
-14. GET /projects/:key/stats、/activity                    ← ダッシュボードが動く
-```
+**本節にあった独自の実装順序（1〜10）は本改訂で削除した**（2026-08-23）。`Design.md` 11章 Phase 1 の手順一覧と**同じ順序を2か所に持っており、片方だけ古くなる状態**だった（実際、rev.7 で手順番号が詰められた後も本節は追従していなかった）。
 
-**手順2の完了時点で「ログインできる」、手順4で「プロジェクト一覧が見える」、手順6で「ユーザーを追加できる」という区切りになる。** それぞれで動作確認を挟める順序にしてある。
+APIの実装順序は次の2か所を見る。
 
-上の 11〜14 は 9章の実装順序であり、`Design.md` 11章の手順16〜19 に対応する（9.15）。**11 が先に来るのは、一覧・作成が無いと以降のエンドポイントを検証するデータを作れないため**である。タグとスプリントを 11 に含めているのは、バックログのグループ化がこの2つを軸に使うからである（9.11 / 9.12）。
+| 見るもの | 場所 |
+|---|---|
+| 全体の手順（APIと画面を含む） | `Design.md` 11章 Phase 1 |
+| 9章のエンドポイントと手順16〜19 の対応 | 本書 9.15 |
 
 ## 10.2 未解決の検討事項
 
@@ -1691,8 +1677,6 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 - **バックログの 200 件上限に達したときのフィルタ誘導が実運用で足りるか**（9.2.3）。足りなければ、スプリント・タグによるビューの分割か、`sort_key` に沿った範囲取得を検討する
 - **プロジェクトを跨ぐチケットリンク**（9.10）。`target_seq` は同一プロジェクトに閉じている。跨ぐ必要が出たときの指定方法（`{project_key, seq}` か ULID か）
 - **`ticket.custom_fields` を API でどう開けるか**（`DbDesign.md` 6.6）。列はあるが Phase 1 の応答に含めていない。カスタムフィールドの定義（どのキーが存在するか）をプロジェクト設定に持たせるかどうかから決める必要がある
-- `PATCH` における「フィールド省略」と「明示的 null」の扱いを、サーバ実装（serde の `Option<Option<T>>` 等）でどう表現するか
 - エラーメッセージの多言語化。Phase 1 は日本語固定とするが、`code` を機械可読にしてあるためフロント側での差し替えは可能
-- `POST /projects` のワークフローテンプレート定義を、コードに埋め込むかDBのシードとして持つか
 - エージェント用トークンの発行API（Phase 2）を `/me/tokens` と統合するか、プロジェクト配下（`/projects/:key/agents`）に置くか
 - 削除操作の監査における個人情報の保持期間（`audit_log.detail` と `actor_label` に残した表示名・メールをいつ消すか）
