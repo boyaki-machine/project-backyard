@@ -62,15 +62,20 @@ func TestUnknownAPIPathReturnsApiErrorShape(t *testing.T) {
 	}
 }
 
-// API 以外の未知のパスは SPA の index.html を返す（Design.md 3.4）。
+// API 以外の未知のパスは SPA へ渡す（Design.md 3.4）。
 // 画面のルーティングはクライアント側にあり、サーバは経路を知らない。
+//
+// **ここで見たいのは経路であって、client がビルド済みかではない。**
+// 未ビルドなら 503 でプレースホルダが返る（webui/handler.go）。どちらでも
+// 「webui ハンドラに届いた」ことは示せるので、200 か 503 のいずれかを許す。
+// 200 に固定すると、素の作業ツリー（プレースホルダだけ）で落ちる。
 func TestUnknownScreenPathFallsBackToSPA(t *testing.T) {
 	for _, path := range []string{"/", "/projects", "/p/my-app/tickets/31", "/404"} {
 		rec := httptest.NewRecorder()
 		NewRouter(Deps{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 
-		if rec.Code != http.StatusOK {
-			t.Errorf("%s: status = %d, want 200", path, rec.Code)
+		if rec.Code != http.StatusOK && rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s: status = %d, want 200（ビルド済み）か 503（未ビルド）", path, rec.Code)
 		}
 		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 			t.Errorf("%s: Content-Type = %q, want text/html", path, ct)

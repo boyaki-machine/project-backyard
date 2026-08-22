@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Project Backyard — 画面が未ビルドです</title>
+    <!--
+      **このファイルは自己完結でなければならない**（Design.md 3.4）。
+      外部のスクリプトやスタイルを参照すると、それらは埋め込まれていないため
+      SPA フォールバックが HTML を返し、画面が真っ白になる。
+    -->
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0; min-height: 100vh;
+        display: flex; align-items: center; justify-content: center;
+        font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+        line-height: 1.8; color: #22252b; background: #f7f8fa;
+      }
+      main { max-width: 46rem; padding: 2rem; }
+      h1 { margin: 0 0 .5rem; font-size: 1.25rem; }
+      p { margin: 0 0 1rem; }
+      code {
+        padding: .1em .4em; border-radius: .25em;
+        background: rgba(127, 127, 127, .18);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .95em;
+      }
+      dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: .4rem 1rem; }
+      dt { white-space: nowrap; }
+      dd { margin: 0; color: #5a6070; }
+      .note { margin-top: 1.5rem; color: #5a6070; font-size: .95em; }
+      @media (prefers-color-scheme: dark) {
+        body { color: #e6e8ec; background: #16181d; }
+        dd, .note { color: #a2a8b6; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>画面がまだビルドされていません</h1>
+      <!-- **画面に出す日本語をソース上で折り返さない。** 折り返した位置に空白が入る -->
+      <p>サーバは動いていますが、埋め込まれた Web UI がありません。次のいずれかを実行してください。</p>
+      <dl>
+        <dt><code>make build</code></dt>
+        <dd>client をビルドして単一バイナリに埋め込む</dd>
+        <dt><code>make restart</code></dt>
+        <dd>停止 → ビルド → DB起動 → サーバ起動をまとめて行う</dd>
+        <dt><code>make dev-client</code></dt>
+        <dd>Vite 開発サーバ（:5173）を使う。画面を直しながら試すとき</dd>
+      </dl>
+      <p class="note">手順は <code>docs/Development.md</code> 3章にあります。</p>
+    </main>
+  </body>
+</html>

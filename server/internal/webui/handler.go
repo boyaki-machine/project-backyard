@@ -13,6 +13,16 @@ const (
 	distDir   = "dist"
 	indexFile = "index.html"
 
+	// placeholderFile は client を未ビルドのときに返すページ。
+	//
+	// **自己完結でなければならない**（外部のスクリプトやスタイルを参照しない）。
+	// 参照すると、そのファイルは埋め込まれていないので SPA フォールバックが
+	// HTML を返し、`<script type="module">` が HTML を受け取って画面が真っ白になる。
+	//
+	// **index.html とは別名にしてある。** 実ビルドが index.html を出力するため、
+	// 同じ名前だと make build のたびに追跡対象が書き換わる（embed.go）。
+	placeholderFile = "placeholder.html"
+
 	// Vite は assets/ 配下のファイル名に内容のハッシュを含める（index-DdMrV5xD.js）。
 	// 内容が変われば名前も変わるため、恒久的にキャッシュしてよい（Design.md 3.4）。
 	assetsDir = "assets"
@@ -39,15 +49,21 @@ func Handler() http.Handler {
 
 func newHandler(fsys fs.FS) http.Handler {
 	// index.html は全リクエストのフォールバック先であり、内容は起動中変わらない。
-	// 読めない場合でもここでは落とさず、フォールバック時に 500 を返す。
+	//
+	// **無ければ placeholder.html へ倒す**（client が未ビルド）。どちらも読めない
+	// 場合でもここでは落とさず、フォールバック時に 500 を返す。
 	index, err := fs.ReadFile(fsys, indexFile)
-	if err != nil {
-		index = nil
+	built := err == nil
+	if !built {
+		if index, err = fs.ReadFile(fsys, placeholderFile); err != nil {
+			index = nil
+		}
 	}
 	return &handler{
 		fsys:    fsys,
 		files:   http.FileServer(http.FS(fsys)),
 		index:   index,
+		built:   built,
 		started: time.Now(),
 	}
 }
@@ -56,6 +72,9 @@ type handler struct {
 	fsys  fs.FS
 	files http.Handler
 	index []byte
+	// built は index が実ビルドのものか（false なら placeholder.html）。
+	// 応答のステータスを分けるために持つ。
+	built bool
 	// started は index.html の Last-Modified に使う。埋め込みファイルは
 	// 更新時刻を持たないため（embed.FS は常にゼロ値を返す）、起動時刻で代用する。
 	started time.Time
@@ -82,10 +101,21 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 	if h.index == nil {
+		// placeholder.html すら読めない。埋め込みが壊れている。
 		http.Error(w, "web client is not built", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Cache-Control", revalidateCacheControl)
+
+	if !h.built {
+		// **未ビルドは 503 で返す。** 200 にすると、監視や自動確認から見て
+		// 「画面が出ている」と区別が付かない。本文は自己完結の HTML なので、
+		// ブラウザではそのまま案内が読める。
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write(h.index)
+		return
+	}
 	http.ServeContent(w, r, indexFile, h.started, bytes.NewReader(h.index))
 }
 

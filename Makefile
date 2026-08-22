@@ -150,8 +150,12 @@ build-client:
 	cd client && npm ci && npm run build
 
 ## embed 対象へコピーする（//go:embed は親ディレクトリを辿れない。Design.md 3.4）
+# **placeholder.html だけは消さない。** 追跡対象であり、消すと作業ツリーが汚れる。
+# rm -rf ではなく find にしているのはそのため。古い成果物は残さず一掃する
+# （ハッシュ付きのファイル名は毎ビルド変わるので、残すと binary に溜まり続ける）。
 sync-webui: build-client
-	rm -rf server/internal/webui/dist && mkdir -p server/internal/webui/dist
+	mkdir -p server/internal/webui/dist
+	find server/internal/webui/dist -mindepth 1 ! -name placeholder.html -delete
 	cp -R client/dist/. server/internal/webui/dist/
 
 ## client を埋め込んだ単一バイナリを作る（bin/pb）
@@ -159,11 +163,11 @@ build: sync-webui
 	cd server && CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o ../bin/pb ./cmd/pb
 
 ## embed 対象をコミット済みのプレースホルダだけに戻す
-# make build はビルド成果物で dist/index.html を上書きするため、
-# コミット前にこれを実行して作業ツリーを綺麗にする。
+# **コミット前の必須手順ではない**（make build は追跡対象を上書きしないため、
+# 作業ツリーは汚れない）。ビルド成果物でディスクを塞ぎたくないときに使う。
+# git clean は追跡済みの placeholder.html を消さない。
 clean-webui:
 	git -C $(CURDIR) clean -fdxq server/internal/webui/dist
-	git -C $(CURDIR) restore server/internal/webui/dist/index.html
 
 # ── バージョン操作（Design.md 11.1）────────────────────────────
 
