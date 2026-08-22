@@ -1232,6 +1232,43 @@ API は 13a で実装済みで、13b は**画面と API ラッパだけ**であ�
 
 ## 手順外の作業（完了分）
 
+### `make build` が作業ツリーを汚す問題（2026-08-22、`fix/webui-dist-placeholder`）
+
+**症状**：`make build` / `make restart` のたびに `server/internal/webui/dist/index.html` が
+変更済みになり、コミット前に `make clean-webui` を実行しないと差分に紛れ込む。
+
+**原因**：`//go:embed all:dist` はコンパイル時に最低1ファイルの存在を要求するため、
+プレースホルダを1つコミットしてある。**その名前が `index.html` で、実ビルドの出力と
+同じだった**ため、毎回上書きされていた。
+
+**あわせて見つかった問題**：コミット済みのプレースホルダは step 10a で紛れ込んだ
+古いビルド成果物で、`/assets/index-B0C3Ppn1.js` という**追跡されていないファイル**を
+指していた。未ビルドで起動すると SPA フォールバックが `/assets/*` にも HTML を返し、
+`<script type="module">` が HTML を受け取って**画面が真っ白**になっていた
+（`PROGRESS.md` に引き継ぎ済みの項目）。
+
+**直したこと**
+
+| 対象 | 内容 |
+|---|---|
+| `dist/placeholder.html` | 新規・追跡対象。**自己完結**の「画面がまだビルドされていません」ページ（外部参照0件）。`make build` / `make restart` / `make dev-client` を案内する |
+| `dist/index.html` | 追跡から外した（`git rm --cached`）。`.gitignore` の例外を `placeholder.html` に変更 |
+| `Makefile` `sync-webui` | `rm -rf dist` をやめ、`find dist -mindepth 1 ! -name placeholder.html -delete` に。追跡対象を消さず、古い成果物は一掃する |
+| `Makefile` `clean-webui` | `git restore index.html` を外した。**コミット前の必須手順ではなくなった**（ディスクを空ける用途のみ） |
+| `webui/handler.go` | `index.html` が無ければ `placeholder.html` へ倒し、**`503 Service Unavailable`** で返す。`200` にすると監視や自動確認から「画面が出ている」と区別が付かない。両方無ければ従来どおり 500 |
+| `webui/handler_test.go` | 9件（プレースホルダの 503・`index.html` の優先・**コミット済みプレースホルダが自己完結であること**を含む） |
+| `httpapi/router_test.go` | SPA フォールバックの試験が 200 固定だった。**見たいのは経路であって client のビルド状態ではない**ので 200 か 503 を許す |
+| `Design.md` 3.4 / `Development.md` 7.1・9章 | 記述を更新 |
+
+**検証**
+
+- `make build` の前後で `git status` に新しい差分が出ないこと（実測）
+- `git check-ignore`：`dist/index.html` と `dist/assets/` は無視、`placeholder.html` は追跡
+- 未ビルドで `make run`：`/`・`/admin/users`・`/assets/*` が **503 + `text/html`**、`/healthcheck` は 200、`/api/v1/me` は 401
+- ヘッドレス Chrome でページを表示し、**外部参照0件**と文面を目視で確認
+- `make test` を**未ビルド・ビルド済みの両方**で実行して全パッケージ通過
+
+
 `docs/PROGRESS.md` の「手順外の作業」表から、**完了して今後の手順に不要になった行**を
 移したもの（2026-08-18、`pb-step.md` 手順7 の掃除）。未着手の行は `PROGRESS.md` に残っている。
 

@@ -387,10 +387,16 @@ make build        # client をビルド → embed 対象へコピー → bin/pb
 make clean-webui  # ← コミット前に必ず実行する
 ```
 
-**`make build` は追跡対象の `server/internal/webui/dist/index.html` を実成果物で上書きする。**
-`//go:embed` の対象ディレクトリが空だとコンパイルが通らないため、プレースホルダを1つ
-コミットしてある構造上、必ず起きる（`Design.md` 3.4）。`make clean-webui` は
-**コミット済みの内容**へ戻すので、プレースホルダ自体を書き換えたときは先に `git add` すること。
+**`make build` は作業ツリーを汚さない。** 生成物（`index.html` と `assets/`）は
+`.gitignore` の対象で、追跡しているのは `server/internal/webui/dist/placeholder.html`
+だけである。`//go:embed` の対象ディレクトリが空だとコンパイルが通らないため、
+**実ビルドが出力しない名前**のファイルを1つ置いてある（`Design.md` 3.4）。
+
+`make clean-webui` はビルド成果物を消してディスクを空けるためのもので、
+**コミット前の必須手順ではない**。
+
+**client を未ビルドのまま `make run` すると、画面は `503` でプレースホルダを返す**
+（「画面がまだビルドされていません」）。`/healthcheck` と `/api` は影響を受けない。
 
 ## 7.2 バージョン
 
@@ -497,7 +503,7 @@ DBを丸ごと作り直してよい場面では、**個別に戻すより `make 
 | `make migrate` が認証に失敗する | `deploy/dev/secrets/db_password` と DB の実際のパスワードがずれている。initdb は**初回起動時にしか走らない**ため、後から `.example` を書き換えても反映されない。`make dev-reset` で作り直す |
 | アプリだけDBに繋がらない | `app_db_password` と `app_database_url` のパスワードが不一致（2.1） |
 | `npm run build` が `ERR_PACKAGE_PATH_NOT_EXPORTED` | `typescript` が 7.x になっている。**`^5` に固定すること**（vue-tsc 3.3.9 が `typescript/lib/tsc` を require できない） |
-| コミットしたら `server/internal/webui/dist/index.html` が汚れていた | `make build` の後に `make clean-webui` を忘れている（7.1） |
+| 画面に「画面がまだビルドされていません」と出る（503） | **client が未ビルド。** `make build` するか、:5173（`make dev-client`）で見る（3.1 / 3.2） |
 | 画面が「メニューが出ない」ように見える | ヘッドレスのウィンドウ幅が 768px 未満（8.2）。または未認証（ログイン画面はメニューを出さない。`GuiDesign.md` 5.1） |
 | `make dev-reset` が「中止しました」で終わる | 非対話で実行している。`PB_YES=1` を付ける（4章） |
 | Vite が :5173 以外で起動しない | `strictPort` にしてある。**ポートが空いていなければ黙ってずらさずに失敗する**（Cookie の送り先が変わるのを防ぐため） |

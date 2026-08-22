@@ -3,8 +3,13 @@
 // //go:embed は自パッケージのディレクトリ配下しか参照できないため、
 // client/dist を直接は指せない。make sync-webui が dist/ へコピーする（Design.md 4.2）。
 //
-// dist/index.html はコンパイルを通すためのプレースホルダとしてコミットしてある。
-// 実ビルドでは上書きされる。コミット前に戻すには make clean-webui を使う。
+// dist/placeholder.html をコミットしてある。//go:embed は対象ディレクトリが
+// 空だとコンパイルが通らないため、最低1つのファイルが要る。
+//
+// **index.html という名前にしない。** 実ビルドが同じ名前を出力するので、
+// make build のたびに追跡対象が書き換わり作業ツリーが汚れる（2026-08-22 に
+// 名前を分けた）。index.html が無いときは handler が placeholder.html を
+// 返す（handler.go の serveIndex）。
 package webui
 
 import "embed"

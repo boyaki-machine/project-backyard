@@ -19,9 +19,11 @@ deploy/*/secrets/*
 /dist/
 client/dist/
 # webui/dist は embed の対象。実ビルド成果物は無視し、
-# コンパイルを通すためのプレースホルダのみコミットする
+# コンパイルを通すためのプレースホルダのみコミットする。
+# **index.html ではなく別名にしてある**——同じ名前だと make build が
+# 毎回上書きし、作業ツリーが汚れる（Design.md 3.4）
 server/internal/webui/dist/*
-!server/internal/webui/dist/index.html
+!server/internal/webui/dist/placeholder.html
 
 # ─────────────────────────────────────────────
 # Go
