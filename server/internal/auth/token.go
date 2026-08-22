@@ -24,7 +24,7 @@ import (
 const (
 	// SessionTokenPrefix はブラウザのセッション（Design.md 6.2.1 手順6）。
 	SessionTokenPrefix = "pb_sess_"
-	// APITokenPrefix は CLI・スクリプト用の Bearer トークン（ApiDesign.md 4.5）。
+	// APITokenPrefix は CLI・スクリプト用の Bearer トークン（ApiDesign.md 4.4）。
 	APITokenPrefix = "pb_api_"
 )
 

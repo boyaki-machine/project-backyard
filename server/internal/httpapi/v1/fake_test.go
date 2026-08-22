@@ -174,6 +174,21 @@ type fakeQuerier struct {
 	myRevokeParams   []gen.RevokeMyOtherSessionsParams
 	myRevokedCount   int64
 
+	// アクセストークン（手順15b。ApiDesign.md 4.4）
+	//
+	// myTokenCount は「いま何本あるか」で、上限5本の判定に効く。
+	// myTokenFindErr に pgx.ErrNoRows を入れると「他人のトークン・
+	// セッション・存在しない ID」のいずれも表せる（4.4.3 はこの3つを
+	// 区別せず 404 に寄せる）。
+	myTokenRows        []gen.ListMyAPITokensRow
+	myTokenListErr     error
+	myTokenCount       int64
+	myTokenCountErr    error
+	myTokenRow         gen.FindMyAPITokenRow
+	myTokenFindErr     error
+	myTokenRevokes     []gen.RevokeMyAPITokenParams
+	myTokenRevokedRows int64
+
 	// 認可ミドルウェア（RequireProjectPermission）が引く行。
 	// key ごとに「プロジェクトの存在・自分のロール・その権限」を持つ。
 	projectAuthzRows map[string][]gen.FindProjectAuthzByKeyRow
@@ -778,6 +793,43 @@ func (q *fakeQuerier) RevokeMyOtherSessions(_ context.Context, arg gen.RevokeMyO
 	q.opLog = append(q.opLog, "RevokeMyOtherSessions")
 	q.myRevokeParams = append(q.myRevokeParams, arg)
 	return q.myRevokedCount, nil
+}
+
+// ── アクセストークン（手順15b。ApiDesign.md 4.4）──────────────────
+
+func (q *fakeQuerier) ListMyAPITokens(_ context.Context, actorID string) ([]gen.ListMyAPITokensRow, error) {
+	q.opLog = append(q.opLog, "ListMyAPITokens")
+	if q.myTokenListErr != nil {
+		return nil, q.myTokenListErr
+	}
+	_ = actorID
+	return q.myTokenRows, nil
+}
+
+func (q *fakeQuerier) CountMyAPITokens(context.Context, string) (int64, error) {
+	q.opLog = append(q.opLog, "CountMyAPITokens")
+	if q.myTokenCountErr != nil {
+		return 0, q.myTokenCountErr
+	}
+	return q.myTokenCount, nil
+}
+
+func (q *fakeQuerier) FindMyAPIToken(_ context.Context, arg gen.FindMyAPITokenParams) (gen.FindMyAPITokenRow, error) {
+	q.opLog = append(q.opLog, "FindMyAPIToken")
+	if q.myTokenFindErr != nil {
+		return gen.FindMyAPITokenRow{}, q.myTokenFindErr
+	}
+	row := q.myTokenRow
+	if row.ID == "" {
+		row.ID = arg.ID
+	}
+	return row, nil
+}
+
+func (q *fakeQuerier) RevokeMyAPIToken(_ context.Context, arg gen.RevokeMyAPITokenParams) (int64, error) {
+	q.opLog = append(q.opLog, "RevokeMyAPIToken")
+	q.myTokenRevokes = append(q.myTokenRevokes, arg)
+	return q.myTokenRevokedRows, nil
 }
 
 func (q *fakeQuerier) FindProjectIDByKey(_ context.Context, key string) (string, error) {

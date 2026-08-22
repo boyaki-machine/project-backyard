@@ -38,6 +38,72 @@ func (q *Queries) ChangeMyPassword(ctx context.Context, arg ChangeMyPasswordPara
 	return err
 }
 
+const countMyAPITokens = `-- name: CountMyAPITokens :one
+SELECT count(*) FROM access_token
+WHERE actor_id = $1
+  AND token_type = 'api'
+  AND revoked_at IS NULL
+`
+
+// CountMyAPITokens は発行本数の上限（1人5本。ApiDesign.md 4.4.2）を判定する。
+//
+// **数え方は ListMyAPITokens と同一にする**（失効していないもの。期限切れを含む）。
+// 揃えないと、一覧に7行出ているのに「上限5本」と言われ、どれを失効させれば
+// 発行できるのかが画面から読めなくなる。
+//
+// **呼び出し側は CreateAccessToken と同じトランザクションで使うこと。** 別々に
+// 実行すると、同時に2本 POST されたときに上限を超える。
+func (q *Queries) CountMyAPITokens(ctx context.Context, actorID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countMyAPITokens, actorID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const findMyAPIToken = `-- name: FindMyAPIToken :one
+SELECT
+  t.id,
+  t.name,
+  t.token_prefix,
+  t.revoked_at
+FROM access_token t
+WHERE t.id = $1
+  AND t.actor_id = $2
+  AND t.token_type = 'api'
+`
+
+type FindMyAPITokenParams struct {
+	ID      string
+	ActorID string
+}
+
+type FindMyAPITokenRow struct {
+	ID          string
+	Name        pgtype.Text
+	TokenPrefix pgtype.Text
+	RevokedAt   pgtype.Timestamptz
+}
+
+// FindMyAPIToken は DELETE /me/tokens/:id の対象を引く（ApiDesign.md 4.4.3）。
+//
+// **actor_id と token_type を条件に含めるのが要点である。** 他人のトークンや
+// セッションを 403 ではなく 404 に倒すため（Design.md 6.4.5「存在を隠す」）、
+// 「見つからない」1つの結果に寄せる。
+//
+// revoked_at を返すのは、既に失効済みかどうかを呼び出し側が知るためである
+// （冪等に 204 を返すが、監査ログは二重に書かない）。
+func (q *Queries) FindMyAPIToken(ctx context.Context, arg FindMyAPITokenParams) (FindMyAPITokenRow, error) {
+	row := q.db.QueryRow(ctx, findMyAPIToken, arg.ID, arg.ActorID)
+	var i FindMyAPITokenRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.TokenPrefix,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const findMyLocalCredential = `-- name: FindMyLocalCredential :one
 SELECT
   i.id AS identity_id,
@@ -70,6 +136,109 @@ func (q *Queries) FindMyLocalCredential(ctx context.Context, actorID string) (Fi
 	var i FindMyLocalCredentialRow
 	err := row.Scan(&i.IdentityID, &i.PasswordHash)
 	return i, err
+}
+
+const listMyAPITokens = `-- name: ListMyAPITokens :many
+
+SELECT
+  t.id,
+  t.name,
+  t.token_prefix,
+  t.scopes,
+  t.issued_at,
+  t.last_used_at,
+  t.expires_at
+FROM access_token t
+WHERE t.actor_id = $1
+  AND t.token_type = 'api'
+  AND t.revoked_at IS NULL
+ORDER BY t.issued_at DESC
+`
+
+type ListMyAPITokensRow struct {
+	ID          string
+	Name        pgtype.Text
+	TokenPrefix pgtype.Text
+	Scopes      []byte
+	IssuedAt    pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+	ExpiresAt   pgtype.Timestamptz
+}
+
+// ── アクセストークン（ApiDesign.md 4.4）──────────────────────────────
+//
+// **いずれも token_type = 'api' に限る。** ブラウザのセッション
+// （token_type='session'）とエージェント用（'agent'、Phase 2）を混ぜない。
+// 本人が自分のセッションを見る・切る画面を持たないと決めており
+// （GuiDesign.md 5.8）、混ぜると「一覧に出ているのに失効させられない行」が
+// 生まれる。DELETE の対象からも外れるので、現在のセッションを /me/tokens 経由で
+// 切ることはできない。
+//
+// 発行そのものは auth.sql の CreateAccessToken を使う（セッションと同じ1文）。
+// ListMyAPITokens は GET /me/tokens の本体（ApiDesign.md 4.4.1）。
+//
+// **失効済みは返さない。期限切れは返す。** 失効は本人が消したものであり、
+// 残すと増え続けて読めなくなる（記録は監査ログの token.revoke にある）。
+// 期限切れは「更新しないと使えない」と本人が気づく必要があり、かつ発行本数の
+// 上限5本を占めている。
+//
+// **ListUserSessions（user.sql、6.3 の管理者向け）と条件が違う。** あちらは
+// 認証側と揃えて期限切れを落とすが、こちらは本人が管理するための一覧である。
+func (q *Queries) ListMyAPITokens(ctx context.Context, actorID string) ([]ListMyAPITokensRow, error) {
+	rows, err := q.db.Query(ctx, listMyAPITokens, actorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMyAPITokensRow{}
+	for rows.Next() {
+		var i ListMyAPITokensRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.TokenPrefix,
+			&i.Scopes,
+			&i.IssuedAt,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const revokeMyAPIToken = `-- name: RevokeMyAPIToken :execrows
+UPDATE access_token
+SET revoked_at = now()
+WHERE id = $1
+  AND actor_id = $2
+  AND token_type = 'api'
+  AND revoked_at IS NULL
+`
+
+type RevokeMyAPITokenParams struct {
+	ID      string
+	ActorID string
+}
+
+// RevokeMyAPIToken は失効させる（ApiDesign.md 4.4.3）。
+//
+// **行は消さない。** audit_log.token_id から辿れる先を残すためである。
+// 既に失効済みなら WHERE が外れ、revoked_at を上書きしない（冪等）。
+//
+// auth.sql の RevokeAccessToken（ログアウト）と条件が違う。あちらは id だけで
+// 引く——認証を通ったトークン自身を切るので、持ち主の確認が済んでいる。
+func (q *Queries) RevokeMyAPIToken(ctx context.Context, arg RevokeMyAPITokenParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeMyAPIToken, arg.ID, arg.ActorID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const revokeMyOtherSessions = `-- name: RevokeMyOtherSessions :execrows
@@ -150,8 +319,10 @@ type UpdateMyProfileParams struct {
 
 // 自分自身に関するAPI（ApiDesign.md 4章）が使う問い合わせ。
 //
-//	PATCH /api/v1/me           4.2
-//	POST  /api/v1/me/password  4.3
+//	PATCH  /api/v1/me              4.2
+//	POST   /api/v1/me/password     4.3
+//	GET    /api/v1/me/tokens       4.4.1
+//	DELETE /api/v1/me/tokens/:id   4.4.3
 //
 // **6章（ユーザー管理）のクエリと分けてある。** 更新できる列が違うためである
 // ——本人は locale / timezone / theme / hue を変えられるが system_role は

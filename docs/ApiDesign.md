@@ -457,21 +457,146 @@ Phase 1 ではどちらも本列を指す。ログインIDは読み取り専用�
 
 ## 4.4 `GET|POST|DELETE /api/v1/me/tokens`
 
-CLI用のAPIトークン管理（`GuiDesign.md` 5.8）。
+**必要権限**：本人
+
+CLI・スクリプトから API を呼ぶための Bearer トークンを、本人が発行・一覧・失効する
+（`GuiDesign.md` 5.8、`DbDesign.md` 6.2 の `access_token`）。
+
+**扱うのは `token_type='api'` の行だけである。** ブラウザのセッション
+（`token_type='session'`）はこの3本のどれにも現れない。本人が自分のセッションを
+見る・切る画面を持たないと決めており（`GuiDesign.md` 5.8）、混ぜると
+「一覧に出ているのに失効させられない行」が生まれる。エージェント用
+（`token_type='agent'`）はプロジェクト設定側から発行する（`Design.md` 6.5、Phase 2）。
+
+### 4.4.1 `GET /api/v1/me/tokens`
 
 ```json
-// POST Request
-{ "name": "CLI (MacBook)", "expires_in_days": 90, "scopes": ["ticket:read", "ticket:write"] }
+{
+  "items": [
+    { "id": "01K2...", "name": "CLI (MacBook)", "token_prefix": "pb_api_9",
+      "scopes": [], "issued_at": "2026-08-22T09:03:12Z",
+      "last_used_at": "2026-08-22T10:41:00Z", "expires_at": "2026-11-20T09:03:12Z",
+      "status": "active" }
+  ]
+}
+```
+
+**`token`（平文）は返さない。** 返すのは `token_prefix`（先頭8文字。`pb_api_` + 1文字）だけで、
+これは一覧で行を見分けるためのものであり、検索キーではない。
+
+`items[]` は `issued_at` の降順。
+
+| 項目 | 内容 |
+|---|---|
+| `status` | `active`（有効）／ `expired`（`expires_at` を過ぎた） |
+| `scopes` | 空配列は「絞り込みなし」＝本人の実効権限そのまま（`Design.md` 6.4.1） |
+| `last_used_at` | 一度も使われていなければ `null`。更新は1分粒度（`Design.md` 6.2.2） |
+
+**失効済み（`revoked_at IS NOT NULL`）は返さない。** 失効は本人が消したものであり、
+残すと増え続けて読めなくなる。記録は監査ログの `token.revoke` にある。
+**期限切れは返す**——「更新しないと使えない」と本人が気づく必要がある情報だからである。
+
+**ページネーションも `ETag` も持たない**（7.1 / 7.2 と同じ）。1人あたり5本が上限であり、
+絞り込みも差分取得も意味を持たない。
+
+### 4.4.2 `POST /api/v1/me/tokens`
+
+```json
+// Request
+{ "name": "CLI (MacBook)", "expires_in_days": 90, "scopes": [] }
 ```
 
 ```json
 // 201 Created — token は「この応答でのみ」返る
 { "id": "01K2...", "name": "CLI (MacBook)", "token": "pb_api_9f3c...",
-  "scopes": ["ticket:read","ticket:write"], "expires_at": "2026-11-09T09:03:12Z" }
+  "token_prefix": "pb_api_9", "scopes": [], "issued_at": "2026-08-22T09:03:12Z",
+  "expires_at": "2026-11-20T09:03:12Z", "status": "active" }
 ```
 
-`GET` の一覧では `token` を返さず、`token_prefix`（先頭8文字）のみ表示する。
+**`token` を返すのはこの応答だけである。** 再表示するAPIは無く、DBにはSHA-256の
+ハッシュしか残らない（`DbDesign.md` 6.2）。画面は1回だけ全文を出す（`GuiDesign.md` 5.8）。
 
+| 項目 | 規則 |
+|---|---|
+| `name` | **必須**。1〜100文字（`project.name` と同じ上限。`access_token.name` にDBの CHECK は無く、アプリ側が持つ） |
+| `expires_in_days` | **必須**。1〜365 の整数。無期限は許さない |
+| `scopes` | 省略可。既定は `[]`（絞り込みなし） |
+
+**無期限を許さない理由。** `Design.md` 6.5 はエージェントトークンについて「有効期限必須」と
+定めており、CLI トークンだけ例外にする理由が無い。`access_token.expires_at` の NULL を
+許すと、失効操作でしか消えないトークンが残り、置き忘れを検出できなくなる。
+
+#### スコープの語彙は権限キーである
+
+**`scopes[]` に入るのは権限カタログのキー**（`ticket.view` / `user.manage` 等28件。
+`Design.md` 6.4.2、`DbDesign.md` 7.2 のシードが正本）。カタログに無い値は `422`。
+
+`Design.md` 6.4.1 の実効権限は
+
+```
+( システムロールの権限 ∪ プロジェクトロールの権限 ) ∩ トークンのスコープ
+```
+
+であり、**この積は権限キーどうしの完全一致で取る**。別の語彙を混ぜると、絞ったつもりの
+トークンが権限0件になるか、解釈できない語彙を通して逆に広がるかのどちらかになる。
+
+`Design.md` 6.5 がエージェントの既定スコープとして挙げる `ticket:read` / `ticket:claim` /
+`result:submit` / `context:read` は、**権限カタログに対応するキーを持たない**。
+エージェントの操作そのものが Phase 2 で設計されるため、対応表を先取りしない。
+
+**Phase 1 の画面はスコープを選ばせない**（`GuiDesign.md` 5.8）。常に `[]` で発行するため、
+発行されたトークンは本人の権限をそのまま持つ。どの権限をまとめて選ばせるかは、
+トークンで実際に何をするか（Phase 2 の MCP 連携）が決まってから設計する。
+
+**スコープを使い始めたら、この3本自身をスコープの対象にする必要がある。** 4章は権限キーを
+要求しないため、**絞ったトークンで `POST /me/tokens` を叩き、絞っていないトークンを
+発行し直せる**。Phase 1 では常に `[]` なので昇格にならない（そのトークンは既に本人の
+全権を持つ）が、スコープが意味を持った時点で経路として残る。
+
+#### 発行本数の上限
+
+**1人あたり5本まで。** 超えると `409 conflict`。
+
+数えるのは**失効していないもの**であり、**期限切れも含む**——4.4.1 が返す行と一致させる。
+一致させないと、一覧に7行出ているのに「上限5本」と言われ、どれを失効させれば発行できるのかが
+画面から読めなくなる。
+
+上限を置くのは、**どこからアクセスしているのかを本人が把握できる本数に留める**ためである
+（利用者の判断、2026-08-22）。大量に発行するユースケースが無く、増えるほど失効し忘れが残る。
+
+| 状況 | 応答 |
+|---|---|
+| 成功 | `201`。上の本体 |
+| `name` / `expires_in_days` / `scopes` の形式誤り | `422 validation_failed` |
+| 失効していないトークンが既に5本ある | `409 conflict` |
+
+### 4.4.3 `DELETE /api/v1/me/tokens/:id`
+
+失効させる（`access_token.revoked_at` を立てる）。行は消さない——監査ログの `token_id` から
+辿れる先を残すためである。
+
+| 状況 | 応答 |
+|---|---|
+| 成功 | `204` |
+| 既に失効済み | `204`（**冪等**。`revoked_at` は上書きしない） |
+| 他人のトークン・存在しない `id`・`token_type` が `api` でない | `404 not_found` |
+
+**他人のトークンを 403 ではなく 404 に倒す。** 存在を漏らさないためである
+（`Design.md` 6.4.5）。
+
+**現在のセッションはこの経路で切れない。** `token_type='session'` を対象外にしてあるため、
+`id` にセッションのトークンを渡しても 404 になる。ログアウトは 3.2 が担う。
+
+### 4.4.4 監査（2.10）
+
+| 操作 | `action` | `detail` |
+|---|---|---|
+| 発行 | `token.issue` | `name` / `scopes` / `expires_at`。**平文は入れない** |
+| 失効 | `token.revoke` | `name` / `token_prefix` |
+
+いずれも `target_type='access_token'`、`target_id` はトークンの ID。
+`audit_log.token_id` は**操作に使ったトークン**（通常はブラウザのセッション）であり、
+発行・失効の対象とは別である。
 ---
 
 # 5. プロジェクトAPI
@@ -939,7 +1064,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | ユーザー詳細・編集 | `GET /admin/users/:id`<br>`PATCH /admin/users/:id`<br>`PUT|DELETE /admin/users/:id/memberships/:key`<br>`POST /admin/users/:id/password-reset`<br>`POST /admin/users/:id/sessions/revoke` |
 | アカウント / 権限（ロールタブ） | `GET /roles` + `GET /permissions` |
 | 自分の設定 | `PATCH /me`<br>`POST /me/password` |
-| アクセストークン | `GET|POST|DELETE /me/tokens` |
+| アクセストークン | `GET|POST /me/tokens`<br>`DELETE /me/tokens/:id` |
 
 **各画面が起動時に呼ぶAPIは1〜2本に収まっている。** 設計方針3が満たされていることの確認になる。
 

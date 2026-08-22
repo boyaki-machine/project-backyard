@@ -34,7 +34,7 @@ GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(DB_PASSWORD_FILE))@127.0.0.1
 APP_DB_PASSWORD_FILE := $(CURDIR)/deploy/dev/secrets/app_db_password
 PB_DATABASE_URL_APP = postgres://pb_app:$$(cat $(APP_DB_PASSWORD_FILE))@127.0.0.1:5432/pb?sslmode=disable&application_name=pb
 
-.PHONY: up down stop-server restart psql migrate sqlc run admin-create test \
+.PHONY: up down stop-server restart psql migrate sqlc run admin-create test test-db \
 	dev-reset dev-seed dev-info \
 	dev-client gen-api build-client sync-webui build clean-webui \
 	version version-check bump-build bump-minor bump-major release-tag
@@ -107,6 +107,19 @@ admin-create:
 ## テストを実行する
 test:
 	@cd server && go test ./...
+
+## 実DBを使う結合テストを実行する（Development.md 6.1）
+# PB_TEST_DATABASE_URL が無いとテスト側が SKIP するため、通常の make test では
+# 走らない。**秘密を argv にも Makefile にも残さない**ため、接続文字列は
+# recipe 内で app_db_password から組み立て、@ でエコーを抑止する。
+#
+# 対象を -run Integration に絞るのは、結合テストの命名規約がこれであるため
+# （Development.md 6.1）。RUN= で individual なテストへ絞れる。
+#   make test-db RUN=TestMeTokensIntegration
+RUN ?= Integration
+test-db:
+	@cd server && PB_TEST_DATABASE_URL="$(PB_DATABASE_URL_APP)" \
+		go test ./internal/httpapi/... -run '$(RUN)' -count=1 -v
 
 # ── 開発用デモデータ（DbDesign.md 7.6）────────────────────────
 # 本番シード（マイグレーション 0010）とは別物。開発端末でしか使わない。

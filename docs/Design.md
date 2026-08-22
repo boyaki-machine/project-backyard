@@ -522,7 +522,11 @@ type VerifiedIdentity struct {
 | プロジェクトロール | `project_member.role_key` | 個別プロジェクトに対する役割。PM／メンバー／閲覧者 |
 | トークンスコープ | `access_token.scopes` | **権限の上限**。ロールが持つ権限を超えることはできず、縮小のみ可能 |
 
-**トークンスコープを「縮小のみ」と定義することが重要である。** エージェント用トークンに `ticket:read, ticket:write` だけを与えれば、そのトークンで実行される限り、たとえ紐づくアクターが管理者であっても他の操作はできない（`Requirements.md` 10.10.3）。
+**トークンスコープを「縮小のみ」と定義することが重要である。** エージェント用トークンに読み取りだけを与えれば、そのトークンで実行される限り、たとえ紐づくアクターが管理者であっても他の操作はできない（`Requirements.md` 10.10.3）。
+
+**スコープの語彙は権限カタログのキーそのものである**（6.4.2 の28件。`ApiDesign.md` 4.4.2）。上の積は権限キーどうしの完全一致で取るため、別の語彙を混ぜると、絞ったつもりのトークンが権限0件になるか、解釈できない語彙を通して逆に広がるかのどちらかになる。**空配列は「絞り込みなし」であって「権限0件」ではない。**
+
+6.5 がエージェントの既定スコープとして挙げる `ticket:read` / `ticket:claim` / `result:submit` / `context:read` は、**この語彙ではない**。権限カタログに対応するキーを持たないものを含んでおり、対応表は Phase 2 でエージェントの操作を設計するときに決める。
 
 ### 6.4.2 権限カタログ
 
@@ -598,7 +602,7 @@ GET /api/v1/me
 | principal | `actor(kind='agent')` + `agent` テーブル。人間アカウントの借用をしない |
 | トークン | `access_token(token_type='agent')`。プロジェクトスコープ必須、有効期限必須 |
 | 発行 | プロジェクト設定画面から。**発行時に一度だけ全文表示**（`Requirements.md` 10.9.1） |
-| スコープ既定 | `ticket:read` `context:read` `ticket:claim` `note:write` `result:submit` `proposal:create` |
+| スコープ既定 | `ticket:read` `context:read` `ticket:claim` `note:write` `result:submit` `proposal:create`。**この語彙は権限カタログのキー（6.4.2）に対応していない。** 対応表は Phase 2 で決める（6.4.1） |
 | 禁止 | `ticket.close`、`knowledge` の直接更新、他プロジェクトへのアクセス |
 | 信頼度 | `agent.trust_level` に応じて既定スコープを段階的に拡大（`Requirements.md` 10.10.3） |
 | 失効 | 管理画面から即時失効。サーキットブレーカー作動時は自動失効も選択可 |

@@ -67,8 +67,9 @@ func (h *handler) issueSession(ctx context.Context, actorID, clientInfo string) 
 		TokenPrefix: pgtype.Text{String: auth.TokenPrefix(plaintext), Valid: true},
 		Scopes:      scopes,
 		ExpiresAt:   pgtype.Timestamptz{Time: s.ExpiresAt, Valid: true},
-		// GET /me/sessions（手順12）が「Chrome / macOS」を出すための素材。
-		// ここで残さないと後から取れないため、User-Agent をそのまま入れる。
+		// GET /admin/users/:id の sessions[]（ApiDesign.md 6.3）が
+		// 「Chrome / macOS」を出すための素材。ここで残さないと後から取れない
+		// ため、User-Agent をそのまま入れる。
 		ClientInfo: text(clientInfo),
 	})
 	if err != nil {
