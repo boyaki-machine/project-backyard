@@ -2,11 +2,12 @@
  * ルーターガード（`GuiDesign.md` 7.2）。
  *
  *   1. 未認証 かつ 保護ルート        → /login?redirect=<元のパス>
- *   2. :key のプロジェクトに到達できない → /404（403 ではない）
- *   3. meta.permission を持たない      → /403
- *   4. 通過
+ *   2. 要パスワード変更               → /me（変更するまで他へ行かせない）
+ *   3. :key のプロジェクトに到達できない → /404（403 ではない）
+ *   4. meta.permission を持たない      → /403
+ *   5. 通過
  *
- * **判定2を判定3より先に置く。** 逆にすると非メンバーのプロジェクトで
+ * **判定3を判定4より先に置く。** 逆にすると非メンバーのプロジェクトで
  * 「権限が無い」が先に当たって 403 になり、存在を隠す意味が失われる。
  * サーバ側 `RequireProjectPermission` も同じ順序である（`Design.md` 6.4.5）。
  *
@@ -32,6 +33,17 @@ export const authGuard: NavigationGuardWithThis<undefined> = async (to) => {
 
   // 認証済みでログイン画面へ来たら初期画面へ送る（`GuiDesign.md` 3.1）。
   if (to.path === '/login') return { path: '/projects' }
+
+  // **要パスワード変更は他のどの判定より先に効く**（`ApiDesign.md` 3.1
+  // 「フロントは変更画面へ誘導する」、`GuiDesign.md` 5.8）。
+  //
+  // 管理者が決めたパスワードを本人が使い続ける状態を既定にしない、という
+  // `ApiDesign.md` 6.2 の目的は、**移動を止めて初めて満たされる**。帯を出す
+  // だけ・1回誘導するだけでは、そのまま使い続けられる。
+  //
+  // **専用の画面は作らない。** 変更する場所が 5.8 のセキュリティセクション
+  // ただ1つであり、同じ内容の画面を2つ持つ理由がない。
+  if (auth.mustChangePassword && to.path !== '/me') return { path: '/me' }
 
   const key = projectKey(to)
   if (key !== null && !auth.canReachProject(key)) return { path: '/404' }

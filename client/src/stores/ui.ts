@@ -7,8 +7,16 @@ import { computed, ref } from 'vue'
  * テーマとベース色相（8.11）に加えて、メニューの折りたたみ状態（2.3.3）を持つ。
  * 集中モード（2.3.2）は Phase 2 のため持たない。
  *
- * 保存先は localStorage のみ。ユーザー設定（app_user）への保存は
- * /me の API と画面（手順15）で対応する。
+ * **保存先は localStorage と app_user の両方**（8.11）。localStorage だけでは
+ * 端末をまたげず、サーバだけでは応答が届くまでの間に既定のテーマで一瞬描画される。
+ *
+ *   起動時   `GET /me` の値を正とし、localStorage へ写す（syncFromServer）
+ *   描画前   localStorage の値で先に `<html>` を塗る（init）
+ *   切替時   即座に反映 → localStorage → `PATCH /me`（setTheme / setHue）
+ *
+ * **サーバへの保存に失敗しても画面の見た目は戻さない。** 見た目は既に
+ * 変わっており、そこだけ巻き戻すと「押したのに戻った」という挙動になる。
+ * 失敗は呼び出し側（自分の設定画面）が受け取って、その場に出す（6.4）。
  */
 
 /** テーマの選択値。既定は「システムに従う」（GuiDesign.md 8.11） */
@@ -99,6 +107,14 @@ export const useUiStore = defineStore('ui', () => {
     root.dataset.hue = hue.value
   }
 
+  /**
+   * テーマを切り替える。**サーバへは送らない。**
+   *
+   * メインメニューのユーザーメニュー（4.2）と自分の設定（5.8）の両方から
+   * 呼ばれるが、`PATCH /me` を投げるかどうかは呼び出し側が決める——
+   * `syncFromServer` が起動時に呼ぶ経路でも同じ関数を通るため、ここで
+   * 送ると読み込んだ直後に書き戻すことになる。
+   */
   function setTheme(next: ThemePreference) {
     theme.value = next
     localStorage.setItem(THEME_KEY, next)
@@ -109,6 +125,25 @@ export const useUiStore = defineStore('ui', () => {
     hue.value = next
     localStorage.setItem(HUE_KEY, next)
     apply()
+  }
+
+  /**
+   * `GET /me` の値を反映する（`GuiDesign.md` 8.11）。
+   *
+   * **サーバ側を正とする。** 別の端末で変えた設定がこちらにも効くように
+   * するのが 8.11 の目的であり、localStorage は描画のちらつきを防ぐための
+   * 写しにすぎない。
+   *
+   * `null`（エージェント。`ApiDesign.md` 6.1 で app_user を持たない）や
+   * 未知の値は無視して、いま表示している設定を保つ。
+   */
+  function syncFromServer(nextTheme: string | null, nextHue: string | null) {
+    if (nextTheme === 'light' || nextTheme === 'dark' || nextTheme === 'system') {
+      setTheme(nextTheme)
+    }
+    if (nextHue === 'blue' || nextHue === 'green') {
+      setHue(nextHue)
+    }
   }
 
   /** 起動時に一度だけ呼ぶ（main.ts） */
@@ -143,6 +178,7 @@ export const useUiStore = defineStore('ui', () => {
     resolvedTheme,
     setTheme,
     setHue,
+    syncFromServer,
     menuCollapsed,
     narrow,
     overlayOpen,

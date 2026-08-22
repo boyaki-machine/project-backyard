@@ -1323,3 +1323,99 @@ API は 13a で実装済みで、13b は**画面と API ラッパだけ**であ�
 
 **手順1以前の2コミットはマージではないため数えない。** 手順1は `Design.md` 11.0 の規約が
 固まる前に `develop` へ直接コミットされており、feature ブランチを経ていない。
+
+## 手順15a — `PATCH /me`・`POST /me/password` と自分の設定画面（2026-08-22）
+
+ブランチ `feature/step-15-me-settings`。**手順15 を機能で 15a / 15b に分けた**うちの前半
+（`Design.md` 11.2.1）。15b はアクセストークン（`GET|POST|DELETE /me/tokens` と `/me/tokens` 画面）。
+
+### 設計文書の改訂（実装より先に全部当てた）
+
+| 文書 | 改訂 |
+|---|---|
+| `ApiDesign.md` 3.1 / 4.1 | 応答例の `actor` に `theme` / `hue` を追加 |
+| `ApiDesign.md` 4.2 | **`email` を変更可**に改訂（`system_role` のみ不可）。応答は 4.1 と同一構造・楽観ロックなし・重複は 409。ログインIDと画面の2行の関係を明記 |
+| `ApiDesign.md` 4.3 | `must_change` を false にする／`local_credential` 無しは 409／`failed_attempts` を増やさない、を追記 |
+| `ApiDesign.md` 4.4 | **`GET\|DELETE /me/sessions` を削除。** 旧 4.5（トークン）を 4.4 へ繰り上げ |
+| `ApiDesign.md` 6.7 | 「本人が 4.4 で切れる」という根拠を差し替え |
+| `ApiDesign.md` 8章 / 10.1 | 対応表・実装順序から `/me/sessions` を削除 |
+| `Design.md` 7.2 | 定義済みの範囲から `/me/sessions` を削除 |
+| `Design.md` 11章 | 手順15 の完了条件にトークン発行を追加 |
+| `GuiDesign.md` 5.8 | **全面改訂。** タブ `[一般][アクセストークン]`、3セクション（基本情報／デザイン／セキュリティ）、ログインID行、保存の単位、セッション一覧を置かない理由、要パスワード変更の誘導 |
+| `GuiDesign.md` 5.6.2 | 「本人が 5.8 で切れる」の1文を差し替え |
+| `GuiDesign.md` 818行 | `ApiDesign.md 4.5` → `4.4` |
+
+### 作ったファイル
+
+| ファイル | 中身 |
+|---|---|
+| `server/internal/store/queries/me.sql` | 新規。`UpdateMyProfile` / `UpdateMyDisplayName` / `FindMyLocalCredential` / `ChangeMyPassword` / `RevokeMyOtherSessions` |
+| `server/internal/httpapi/v1/me_update.go` | 新規。`PATCH /me`（検証・監査・`subject` の追随・409 への写し） |
+| `server/internal/httpapi/v1/me_password.go` | 新規。`POST /me/password`（現在値の検証・`must_change` のクリア・他セッションの失効） |
+| `server/internal/httpapi/v1/me_settings_test.go` | 新規。単体19件 |
+| `server/internal/httpapi/v1/me_settings_integration_test.go` | 新規。実DB結合12件 |
+| `server/internal/store/gen/me.sql.go` | `make sqlc` の生成物 |
+| `client/src/api/me.ts` | 新規。`updateMe` / `changePassword` |
+| `client/src/pages/MySettingsPage.vue` | 新規。3セクションの画面 |
+
+### 変更したファイル
+
+| ファイル | 変更 |
+|---|---|
+| `server/internal/store/queries/auth.sql` | `GetActorProfile` と `FindLocalLoginByEmail` に `theme` / `hue` |
+| `server/internal/httpapi/v1/me.go` | `actorView` / `profile` に `theme` / `hue`。**`buildSessionView` が `gen.Querier` を引数で受けるようにした**（`PATCH /me` がトランザクションの中で応答を組み立てるため） |
+| `server/internal/httpapi/v1/login.go` | `profile` の詰め替えに `theme` / `hue` |
+| `server/internal/httpapi/v1/routes.go` | `PATCH /me` と `POST /me/password`。**4章に権限キーを要求しない理由**をコメントで明示 |
+| `client/src/api/client.ts` | **401 を `error.code` で分けた**（`unauthenticated` だけを失効として扱う） |
+| `client/src/stores/auth.ts` | `setSession` を公開し、そこから `ui` ストアへ `theme` / `hue` を流す。`mustChangePassword` を追加 |
+| `client/src/stores/ui.ts` | `syncFromServer` を追加 |
+| `client/src/router/guards.ts` | 要パスワード変更なら `/me` から出さない判定を追加（判定2） |
+| `client/src/router/routes.ts` | `/me` を実画面へ差し替え |
+| `docs/openapi.yaml` | `PATCH /me` / `POST /me/password` / `UpdateMeRequest` / `ChangePasswordRequest`、`Actor` に `theme` / `hue` |
+
+### 検証結果
+
+**単体 19件**（`go test ./internal/httpapi/v1/ -run "TestPatchMe|TestChangeMyPassword"`）
+
+応答が 4.1 と同一構造／送った項目だけが narg に載る／メール変更で `subject` が追随する・
+送らなければ触らない／`system_role` は 422 で DB を触らない／値域（theme・hue・locale・
+timezone・`Local` を弾く・`UTC` は通す・表示名・メール形式）／すべての項目を見てから返す／
+409 への写し／行が消えたら 401／監査は変更した項目だけ／空の PATCH は監査を書かない／
+平文を保存しない・監査に残さない／現在のセッションだけ残す／誤ったパスワードで
+`failed_attempts` を増やさない・何も書き換えない／`local_credential` 無しは 409／
+監査は `password.change` 1件のみ／書き込みの順序（変更 → 失効 → 監査）
+
+**実DB結合 12件（書いたが、まだ一度も実行していない）**
+
+`-run TestMeSettingsIntegration`。`PB_TEST_DATABASE_URL` に接続文字列が要り、
+`deploy/dev/secrets/app_db_password` は `deny` によりエージェントから読めないため、
+**このセッションでは走らせられなかった**（`SKIP` のまま）。`go vet` は通っている。
+**次にこの手順へ触る人が最初に実行すること。** 内容は以下を意図している。
+
+プロフィールと見た目の更新が `GET /me` でも読める／**メール変更後に新しいメールでログインでき、
+古いメールでは入れない**／他人のメールは 409／`version` が加算される／`If-Match` を要求しない／
+**パスワード変更で他のセッションだけが 401 になり、操作したセッションは残る**／新パスワードで
+入れて旧パスワードでは入れない／誤ったパスワードでは何も変わらない／**5回失敗してもロック
+されない**／`must_change_password` が下りる／未認証は 401／CSRF 無しは 403／オペレータでも通る
+
+**ブラウザ 59件**（ヘッドレス Chrome + CDP。`Development.md` 8.2）
+
+- レイアウト 32件：タブ2つ・3セクション・基本情報の5項目の並び・ログインIDが入力欄でない・
+  テーマ3／色相2のラジオ・パスワード欄2つが `type=password`・**1440px と 900px の両方**で
+  各欄の幅と位置を実測・横スクロールしない・狭い窓で言語とタイムゾーンが潰れない
+- 操作 19件：保存ボタンの活性・保存結果がそのセクションに出る・メニューの表示名が追随する・
+  読み直しても残る・422 が欄に紐づく・409 のメッセージ・**別のブラウザで同じテーマと色相になる**・
+  12文字未満は 422・**誤ったパスワードで 401 が出てもログイン画面へ飛ばされない**
+- 要パスワード変更 8件：ログイン直後に `/me` へ着く・`/projects` へ行こうとしても戻される・
+  変更すると警告が消えて他画面へ行ける・新パスワードで入り直せる
+
+**スクリーンショット 4枚を目視**（1440px 上下・900px・ダーク）。自動検証が全 PASS の状態で
+**ラジオが縦積みになっていた**のを見つけて直した（`.field` の `flex-direction: column` を
+`.choices` が受けていた。5.8 のワイヤーは横1行）。
+
+### 後始末
+
+検証で使った使い捨てユーザーは削除（再取得で `not_found` を確認）。デモアカウント
+`viewer@example.com` の表示名・タイムゾーン・テーマ・色相は元の値へ戻した。Cookie jar と
+ヘッドレス Chrome のプロファイルを削除。`make stop-server` と `make clean-webui` を実行。
+

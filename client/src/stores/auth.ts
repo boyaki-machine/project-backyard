@@ -13,6 +13,7 @@ import { computed, ref } from 'vue'
 import * as authApi from '../api/auth'
 import type { Session, SessionProject } from '../api/auth'
 import { ApiError } from '../api/client'
+import { useUiStore } from './ui'
 
 export const useAuthStore = defineStore('auth', () => {
   /** null は未認証。`GET /me` を試すまでは分からない（Cookie は HttpOnly のため読めない） */
@@ -34,6 +35,15 @@ export const useAuthStore = defineStore('auth', () => {
   const projects = computed<SessionProject[]>(() => session.value?.projects ?? [])
 
   const isAdministrator = computed(() => actor.value?.system_role === 'administrator')
+
+  /**
+   * 要パスワード変更か（`ApiDesign.md` 3.1）。
+   *
+   * 立っている間はルーターガードが `/me` から出さない（`GuiDesign.md` 5.8）。
+   * **未認証のときは false。** ログイン画面まで巻き戻す判定はガード側の
+   * 別の分岐が持っており、ここで真を返すと `/login` へも行けなくなる。
+   */
+  const mustChangePassword = computed(() => actor.value?.must_change_password === true)
 
   function projectByKey(key: string): SessionProject | undefined {
     return projects.value.find((p) => p.key === key)
@@ -67,9 +77,22 @@ export const useAuthStore = defineStore('auth', () => {
     return isAdministrator.value || projectByKey(key) !== undefined
   }
 
+  /**
+   * セッションを差し替える。
+   *
+   * **`PATCH /me` の応答をそのまま渡せる**（`ApiDesign.md` 4.2 が `GET /me` と
+   * 同一構造を返す）。表示名やテーマを変えた直後に、メニューのアバター名や
+   * 権限の出し分けが古い値のまま残ることを防ぐ。
+   *
+   * **見た目の設定をここで `ui` ストアへ流す**（`GuiDesign.md` 8.11）。
+   * セッションが入ってくる口はログイン・復元・再取得・`PATCH /me` の4つ
+   * あり、そのすべてでサーバ側の値を正としたい。呼び出し側に任せると、
+   * どれか1つで書き忘れて「別の端末で変えたテーマが効かない」が起きる。
+   */
   function setSession(next: Session): void {
     session.value = next
     loaded.value = true
+    useUiStore().syncFromServer(next.actor.theme, next.actor.hue)
   }
 
   /** ストアを未認証の状態へ戻す。画面遷移はしない（呼び出し側の責務） */
@@ -145,6 +168,7 @@ export const useAuthStore = defineStore('auth', () => {
     permissions,
     projects,
     isAdministrator,
+    mustChangePassword,
     projectByKey,
     can,
     canInProject,
@@ -153,6 +177,7 @@ export const useAuthStore = defineStore('auth', () => {
     refresh,
     login,
     logout,
+    setSession,
     clear,
   }
 })

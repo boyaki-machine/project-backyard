@@ -175,9 +175,22 @@ async function request<T>(
     })
   }
 
-  if (res.status === 401 && !options.allowUnauthenticated) onUnauthorized()
-
-  if (!res.ok) throw await toApiError(res)
+  if (!res.ok) {
+    const error = await toApiError(res)
+    // **401 のうち「セッションが死んだ」のは `unauthenticated` だけである**
+    // （`ApiDesign.md` 2.5.1）。`invalid_credentials` は「いま打った資格情報が
+    // 違う」であって、セッションは生きている。
+    //
+    // 手順15 まではこの区別が要らなかった——`invalid_credentials` を返すのは
+    // `POST /auth/login` だけで、そもそもセッションを持たずに叩くものだった。
+    // `POST /me/password`（4.3）が**認証済みで叩いてこのコードを返す最初の
+    // エンドポイント**であり、区別しないと現在のパスワードを打ち間違えた人が
+    // ログイン画面へ飛ばされる。
+    if (res.status === 401 && !options.allowUnauthenticated && error.code === 'unauthenticated') {
+      onUnauthorized()
+    }
+    throw error
+  }
 
   // 204 No Content（ログアウト）と本文なしの応答。
   if (res.status === 204 || res.headers.get('Content-Length') === '0') {

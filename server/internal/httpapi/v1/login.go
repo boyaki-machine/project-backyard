@@ -225,7 +225,7 @@ func (h *handler) completeLogin(
 
 	// ログイン応答は GET /me と同じ内容を返す（ApiDesign.md 3.1）。
 	// 新しいセッションは scopes を持たないため、縮小は起きない。
-	view, err := h.buildSessionView(ctx, profile{
+	view, err := h.buildSessionView(ctx, h.q, profile{
 		ActorID:            row.ActorID,
 		Kind:               auth.ActorKindUser,
 		DisplayName:        row.DisplayName,
@@ -233,6 +233,8 @@ func (h *handler) completeLogin(
 		SystemRole:         row.SystemRole,
 		Locale:             row.Locale,
 		Timezone:           row.Timezone,
+		Theme:              row.Theme,
+		Hue:                row.Hue,
 		MustChangePassword: row.MustChange,
 	}, systemPerms, nil, &session.ExpiresAt)
 	if err != nil {

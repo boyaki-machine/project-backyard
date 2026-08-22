@@ -16,6 +16,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
+	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
 // actorView は応答の actor 部分（ApiDesign.md 3.1）。
@@ -25,13 +26,20 @@ import (
 // 「kind によって意味を持たないフィールドは null を返し、フィールド自体を
 // 省略しない」（ApiDesign.md 6.1）に従う。
 type actorView struct {
-	ID                 string  `json:"id"`
-	Kind               string  `json:"kind"`
-	DisplayName        string  `json:"display_name"`
-	Email              *string `json:"email"`
-	SystemRole         *string `json:"system_role"`
-	Locale             *string `json:"locale"`
-	Timezone           *string `json:"timezone"`
+	ID          string  `json:"id"`
+	Kind        string  `json:"kind"`
+	DisplayName string  `json:"display_name"`
+	Email       *string `json:"email"`
+	SystemRole  *string `json:"system_role"`
+	Locale      *string `json:"locale"`
+	Timezone    *string `json:"timezone"`
+	// Theme / Hue は GuiDesign.md 8.11 のテーマ設定（手順15 で足した）。
+	//
+	// **サーバが返さないと、別の端末でログインしたときに同じ見た目にならない。**
+	// 8.11 が app_user と localStorage の両方に保存すると定めた目的がそれで
+	// あり、localStorage だけでは端末をまたげない。
+	Theme              *string `json:"theme"`
+	Hue                *string `json:"hue"`
 	MustChangePassword bool    `json:"must_change_password"`
 }
 
@@ -67,6 +75,8 @@ type profile struct {
 	SystemRole         string
 	Locale             string
 	Timezone           string
+	Theme              string
+	Hue                string
 	MustChangePassword bool
 }
 
@@ -106,6 +116,8 @@ func (h *handler) me(w http.ResponseWriter, r *http.Request) {
 			SystemRole:         row.SystemRole.String,
 			Locale:             row.Locale.String,
 			Timezone:           row.Timezone.String,
+			Theme:              row.Theme.String,
+			Hue:                row.Hue.String,
 			MustChangePassword: row.MustChange.Bool,
 		}
 	}
@@ -120,7 +132,7 @@ func (h *handler) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	view, err := h.buildSessionView(r.Context(), prof, systemPerms, p.Scopes, p.ExpiresAt)
+	view, err := h.buildSessionView(r.Context(), h.q, prof, systemPerms, p.Scopes, p.ExpiresAt)
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return
@@ -139,15 +151,21 @@ func (h *handler) me(w http.ResponseWriter, r *http.Request) {
 // 受け取る。ログインは計算した値を、GET /me はキャッシュ優先で解決した値を
 // 渡す（6.4.5）。**プロジェクト層はキャッシュしない**（0012 の説明を参照）
 // ため、ここでは毎回引く。
+//
+// **問い合わせ口を引数で受ける。** PATCH /me（4.2）はトランザクションの中で
+// 応答を組み立てるため、h.q ではなくそのトランザクションの Querier を渡す
+// 必要がある。プールの側を使うと、まだコミットしていない更新が応答に
+// 載らない（buildUserDetail が同じ理由で q を受けているのと同じ）。
 func (h *handler) buildSessionView(
-	ctx context.Context, prof profile, systemPerms, scopes []string, expiresAt *time.Time,
+	ctx context.Context, q gen.Querier, prof profile,
+	systemPerms, scopes []string, expiresAt *time.Time,
 ) (sessionView, error) {
 	if systemPerms == nil {
 		// permissions を JSON の null にしない。権限0件は [] で表す。
 		systemPerms = []string{}
 	}
 
-	rows, err := h.q.ListProjectMembershipsByActor(ctx, prof.ActorID)
+	rows, err := q.ListProjectMembershipsByActor(ctx, prof.ActorID)
 	if err != nil {
 		return sessionView{}, fmt.Errorf("所属プロジェクトを読めない: %w", err)
 	}
@@ -196,6 +214,8 @@ func (h *handler) buildSessionView(
 			SystemRole:         nullable(prof.SystemRole),
 			Locale:             nullable(prof.Locale),
 			Timezone:           nullable(prof.Timezone),
+			Theme:              nullable(prof.Theme),
+			Hue:                nullable(prof.Hue),
 			MustChangePassword: prof.MustChangePassword,
 		},
 		Permissions: systemPerms,

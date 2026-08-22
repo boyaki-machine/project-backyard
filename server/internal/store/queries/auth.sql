@@ -74,6 +74,8 @@ SELECT
   u.system_role,
   u.locale,
   u.timezone,
+  u.theme,
+  u.hue,
   i.id            AS identity_id,
   c.password_hash,
   c.must_change,
@@ -153,8 +155,13 @@ WHERE actor_id = @actor_id;
 -- GetActorProfile は GET /me（ApiDesign.md 4.1）が返す actor 部分を引く。
 --
 -- 認証ミドルウェアが載せる Principal（Design.md 6.2.2）には locale / timezone /
--- must_change_password が無い。認証の判定に要らない値をトークン検証の経路に
--- 足すと、全リクエストで読むことになるためである。/me はこのクエリで補う。
+-- theme / hue / must_change_password が無い。認証の判定に要らない値を
+-- トークン検証の経路に足すと、全リクエストで読むことになるためである。
+-- /me はこのクエリで補う。
+--
+-- theme / hue は GuiDesign.md 8.11 のテーマ設定（手順15 で足した）。**サーバに
+-- 保存しても GET /me が返さなければ、別の端末で同じ見た目にならない**——
+-- 8.11 が app_user と localStorage の両方に保存すると定めた目的がそれである。
 --
 -- **すべて LEFT JOIN にする。** エージェント（Phase 2）は app_user を持たず、
 -- 将来の OIDC 専用ユーザーは local_credential を持たない。行が返らないことと
@@ -169,6 +176,8 @@ SELECT
   u.system_role,
   u.locale,
   u.timezone,
+  u.theme,
+  u.hue,
   c.must_change
 FROM actor a
 LEFT JOIN app_user u ON u.actor_id = a.id
