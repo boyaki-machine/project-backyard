@@ -56,3 +56,138 @@ projects:
       - name: 未定
         goal: 日程が決まっていないもの置き場
         status: planned
+
+    # チケット（DbDesign.md 6.6、手順16b）。バックログ画面（GuiDesign.md 5.4）が
+    # 「見て確かめられる」状態を作るための組み合わせを揃えてある。
+    #
+    #   階層2段        親子のインデント表示（└）と has_children
+    #   タグ複数持ち   タグでグループ化したとき同じ行が2つのセクションに出る（5.4.1）
+    #   タグ無し       「未分類」セクション
+    #   期限超過       ⚠ と赤字（5.4）。日付は seed の実行日より前に置く
+    #   未割当         担当の「—」表示
+    #   完了済み       open フィルタと、スプリントの進捗（5.9.5 の 5/12）
+    #   スプリント3種  グループ化の軸の切り替え
+    #   優先度5段      ▲▲ 〜 ▽▽ と無表示（8.7）
+    #
+    # **parent は自分より前に書いたタイトルを指すこと**（前から順に作るため）。
+    # status は simple ワークフローの todo / in_progress / done。
+    tickets:
+      - title: 認証基盤を通す
+        type: epic
+        status: done
+        priority: highest
+        assignee: pm@example.com
+        tags: [設計]
+        sprint: Sprint 1
+        start_date: '2026-07-22'
+        due_date: '2026-08-04'
+        estimate_point: 13
+        body_md: ローカルID/PW認証でログインできるところまで。
+      - title: ログインAPIの実装
+        type: task
+        parent: 認証基盤を通す
+        status: done
+        priority: high
+        assignee: member@example.com
+        tags: [API, 設計]
+        sprint: Sprint 1
+        estimate_point: 5
+      - title: ログイン画面
+        type: task
+        parent: 認証基盤を通す
+        status: done
+        priority: medium
+        assignee: member@example.com
+        tags: [GUI]
+        sprint: Sprint 1
+        estimate_point: 3
+
+      - title: プロジェクト管理をひととおり動かす
+        type: epic
+        status: in_progress
+        priority: high
+        assignee: pm@example.com
+        tags: [設計]
+        sprint: Sprint 2
+        start_date: '2026-08-05'
+        due_date: '2026-08-18'
+        estimate_point: 21
+      - title: プロジェクト一覧・作成
+        type: story
+        parent: プロジェクト管理をひととおり動かす
+        status: done
+        priority: medium
+        assignee: member@example.com
+        tags: [GUI, API]
+        sprint: Sprint 2
+        estimate_point: 8
+      # 期限超過（⚠ の確認）。担当は未割当。
+      - title: プロジェクト設定の権限まわりを詰める
+        type: task
+        parent: プロジェクト管理をひととおり動かす
+        status: in_progress
+        priority: highest
+        tags: [設計]
+        sprint: Sprint 2
+        start_date: '2026-08-10'
+        due_date: '2026-08-14'
+        estimate_point: 5
+      - title: アーカイブの冪等性が怪しい
+        type: bug
+        parent: プロジェクト管理をひととおり動かす
+        status: todo
+        priority: low
+        assignee: member@example.com
+        tags: [API]
+        sprint: Sprint 2
+
+      - title: チケットを扱えるようにする
+        type: epic
+        status: in_progress
+        priority: highest
+        assignee: pm@example.com
+        tags: [設計, API]
+        sprint: Sprint 3
+        start_date: '2026-08-19'
+        due_date: '2026-09-01'
+        estimate_point: 21
+      - title: チケット一覧API
+        type: task
+        parent: チケットを扱えるようにする
+        status: in_progress
+        priority: high
+        assignee: member@example.com
+        tags: [API]
+        sprint: Sprint 3
+        due_date: '2026-08-26'
+        estimate_point: 8
+      - title: バックログ画面
+        type: task
+        parent: チケットを扱えるようにする
+        status: todo
+        priority: high
+        tags: [GUI]
+        sprint: Sprint 3
+        due_date: '2026-08-28'
+        estimate_point: 8
+      # タグの無いチケット（「未分類」セクションの確認）。
+      - title: 並べ替えの操作感を見る
+        type: task
+        parent: チケットを扱えるようにする
+        status: todo
+        priority: lowest
+        sprint: Sprint 3
+
+      # トップレベルで、親を持たず日付も持たないもの。
+      - title: MCP サーバの足場を作る
+        type: phase
+        status: todo
+        priority: medium
+        tags: [MCP連携, 設計]
+        sprint: 未定
+        estimate_point: 13
+      # タグもスプリントも担当も無い（「未分類」「スプリント未設定」「未割当」）。
+      - title: ドキュメントの棚卸し
+        type: task
+        status: todo
+        priority: lowest

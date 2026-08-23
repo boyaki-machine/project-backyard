@@ -170,6 +170,34 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
 			Delete("/projects/{key}/sprints/{id}", h.deleteSprint)
 
+		// ── チケット（ApiDesign.md 9.2 / 9.3 / 9.4）──────────────
+		//
+		// **3本とも必要権限が違う。** 読みは ticket.view、作成は ticket.create、
+		// 並べ替えは ticket.edit（9.4 が「並べ替えは編集である」と定める）。
+		//
+		// **ただし Phase 1 に「作成できない人」は実在しない。** 実効権限は
+		// システムロール ∪ プロジェクトロール（Design.md 6.4.1）で、Phase 1 の
+		// システムロールは administrator と operator の2つしかなく、operator は
+		// ticket.create と ticket.edit を持つ（migration 0010）。project_viewer 側で
+		// 絞っても、システムロール側から通る。**この宣言が効くのは、権限の
+		// 全体像を見直して operator の持ち物を減らしたときである**
+		// （PROGRESS.md「権限の全体像を再整理する」）。
+		//
+		// **子資源なので RequireProjectPermission を通す。** 非メンバーには
+		// 404 が返る（Design.md 6.4.5）。{seq} で指す行も project_id で
+		// 絞ってあり（ticket.sql）、他プロジェクトの番号を指しても
+		// 「見つからない」に寄る。
+		//
+		// **{seq}/move は静的なセグメントを含むので、他のチケットのルートと
+		// 並べても衝突しない。** GET / PATCH / DELETE の /tickets/{seq}
+		// そのものは手順17 で足す。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets", h.listTickets)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+			Post("/projects/{key}/tickets", h.createTicket)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+			Post("/projects/{key}/tickets/{seq}/move", h.moveTicket)
+
 		// ── ロール・権限カタログ（ApiDesign.md 7章）──────────────
 		//
 		// **GET /roles だけ必要権限が scope で変わる**（7.1）。?scope=project は

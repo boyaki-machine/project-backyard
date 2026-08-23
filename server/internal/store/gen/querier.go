@@ -18,6 +18,7 @@ type Querier interface {
 	// 一律に 409 と返すと、消えたユーザーに「競合している」という誤った説明を返す。
 	//
 	AppUserExists(ctx context.Context, actorID string) (bool, error)
+	AttachTicketTag(ctx context.Context, arg AttachTicketTagParams) error
 	// ChangeMyPassword は POST /me/password の書き込み（ApiDesign.md 4.3）。
 	//
 	// **must_change を false に落とす。** これをしないと、要パスワード変更で
@@ -67,6 +68,9 @@ type Querier interface {
 	// 実行すると、同時に2本 POST されたときに上限を超える。
 	//
 	CountMyAPITokens(ctx context.Context, actorID string) (int64, error)
+	// CountProjectTagsByIDs は tag_ids がすべて当該プロジェクトのものかを数える（9.3）。
+	// 渡した件数と一致しなければ、他プロジェクトのタグか存在しない ID が混ざっている。
+	CountProjectTagsByIDs(ctx context.Context, arg CountProjectTagsByIDsParams) (int64, error)
 	// CreateAccessToken はセッション・APIトークン・エージェントトークンを発行する
 	// （DbDesign.md 6.2）。**平文は渡さない。** token_hash は SHA-256、
 	// token_prefix は一覧表示用の先頭8文字である。
@@ -94,6 +98,7 @@ type Querier interface {
 	//
 	CreateSystemActor(ctx context.Context, arg CreateSystemActorParams) error
 	CreateTag(ctx context.Context, arg CreateTagParams) error
+	CreateTicket(ctx context.Context, arg CreateTicketParams) error
 	CreateUserActor(ctx context.Context, arg CreateUserActorParams) error
 	CreateUserIdentity(ctx context.Context, arg CreateUserIdentityParams) error
 	CreateWorkflowStatus(ctx context.Context, arg CreateWorkflowStatusParams) error
@@ -224,6 +229,9 @@ type Querier interface {
 	// GET/PATCH /projects/:key と archive/unarchive（5.4〜5.6）が加わった。
 	// テンプレートの複製は pb dev seed と POST /projects で同じ手順を通る。
 	FindProjectIDByKey(ctx context.Context, key string) (string, error)
+	// FindTicketIDBySeq は parent_seq（9.3）の解決に使う。**同一プロジェクトに
+	// 限る**——親もリンク先も同一プロジェクト内に限るのが Phase 1 の前提である（9.1）。
+	FindTicketIDBySeq(ctx context.Context, arg FindTicketIDBySeqParams) (string, error)
 	// ── テンプレートの複製（ApiDesign.md 5.3）─────────────────────
 	FindWorkflowTemplate(ctx context.Context, templateKey pgtype.Text) (FindWorkflowTemplateRow, error)
 	// GetActorProfile は GET /me（ApiDesign.md 4.1）が返す actor 部分を引く。
@@ -276,6 +284,25 @@ type Querier interface {
 	GetSprintByID(ctx context.Context, arg GetSprintByIDParams) (GetSprintByIDRow, error)
 	// 1件だけ返す形。POST / PATCH の応答（ApiDesign.md 9.11、B-2）で使う。
 	GetTagByID(ctx context.Context, arg GetTagByIDParams) (GetTagByIDRow, error)
+	// GetTicketBrief は 9.5.1 の parent（親の要約）を引く。
+	GetTicketBrief(ctx context.Context, id string) (GetTicketBriefRow, error)
+	// ── 詳細（ApiDesign.md 9.5.1。手順16b では POST の応答にだけ使う）────
+	// GetTicketBySeq は 9.5 形式の本体を1件引く。列は ListTickets とそろえてある
+	// （9.5.1 が「9.2 の items[] に body_md 等を加えたもの」と定めているため）。
+	GetTicketBySeq(ctx context.Context, arg GetTicketBySeqParams) (GetTicketBySeqRow, error)
+	// ── 並べ替え（ApiDesign.md 9.4）─────────────────────────────
+	// GetTicketSortRow は move の対象を引く。
+	GetTicketSortRow(ctx context.Context, arg GetTicketSortRowParams) (GetTicketSortRowRow, error)
+	// 業務履歴（ApiDesign.md 9.1.1、DbDesign.md 6.8 の activity）。
+	//
+	// **audit_log とは読み手が違う。** audit_log は認証・権限・トークン・ユーザー管理を
+	// インスタンス管理者が追うためのもので、activity はチケットの変更をプロジェクトの
+	// メンバーが読むためのものである（GuiDesign.md 5.5 の「変更履歴」）。混ぜると
+	// 監査ログがチケット更新で埋まって本来の用途に使えなくなる。
+	//
+	// 読み出し（GET /projects/:key/activity）は手順19 で足す。手順16b では
+	// チケット作成の記録だけを書く。
+	InsertActivity(ctx context.Context, arg InsertActivityParams) error
 	// 監査ログ（ApiDesign.md 2.10、DbDesign.md 6.8）。
 	//
 	// 読み出し（GET /admin/audit、auditlog.view）は手順11以降で足す。
@@ -298,6 +325,8 @@ type Querier interface {
 	// 利用者が TTL の間だけ旧権限で動く。
 	//
 	InvalidateActorPermissionCache(ctx context.Context, actorID string) error
+	// IsProjectMember は assignee_id の検証に使う（9.3 の not_a_member）。
+	IsProjectMember(ctx context.Context, arg IsProjectMemberParams) (bool, error)
 	// ロールの妥当性はDBに問い合わせる。Go 側に 'project_admin' などを
 	// 書き写すと 0010 のシード（DbDesign.md 7.3）と二重管理になるため。
 	IsProjectScopedRole(ctx context.Context, key string) (bool, error)
@@ -492,6 +521,60 @@ type Querier interface {
 	// （GuiDesign.md 5.9.4 / 6.3）。LEFT JOIN + COUNT ではなく相関副問い合わせに
 	// するのは、タグが数十件で、行ごとに1回引いても差が出ないためである。
 	ListTagsByProject(ctx context.Context, projectID string) ([]ListTagsByProjectRow, error)
+	// ListTagsForTickets は一覧の tags[] を一括で引く（9.2.2）。
+	//
+	// **チケット1件ごとに引かない。** 一覧は最大200件で、行ごとに1回引くと
+	// 200往復になる。並びはタグの sort_order であり、バックログのグループ化の
+	// セクション順（GuiDesign.md 5.4.1）と同じ根拠を使う。
+	ListTagsForTickets(ctx context.Context, ticketIds []string) ([]ListTagsForTicketsRow, error)
+	// ListTicketChildrenBrief は 9.5.1 の children（直下の子だけ。孫は含めない）。
+	ListTicketChildrenBrief(ctx context.Context, parentID pgtype.Text) ([]ListTicketChildrenBriefRow, error)
+	// ListTicketIDsInSortOrder は振り直し（9.4 の rebalanced）の対象を現在の並びで返す。
+	// sort_key が NULL の行も含める——振り直しはそれを埋める機会でもある。
+	ListTicketIDsInSortOrder(ctx context.Context, projectID string) ([]string, error)
+	// ── 開発用デモデータ（pb dev seed。DbDesign.md 7.6.4）──────────
+	// ListTicketTitlesByProject は投入の冪等判定と親の解決に使う。
+	//
+	// **API からは使わない。** ticket には title の一意制約が無い（DbDesign.md 6.6）ので、
+	// 名前で突き合わせるのは定義ファイルから投入する場面に限る。
+	ListTicketTitlesByProject(ctx context.Context, projectID string) ([]ListTicketTitlesByProjectRow, error)
+	// チケットに関するクエリ（DbDesign.md 6.6、ApiDesign.md 9.2 / 9.3 / 9.4）。
+	//
+	// 手順16b で追加。消費者はバックログ画面（GuiDesign.md 5.4、手順16c）と、
+	// Phase 2 のカンバン・ガントである。いずれも同じ ListTickets を読む。
+	//
+	// **すべてのクエリが project_id で閉じている。** チケットはプロジェクトの資源で
+	// あり、他プロジェクトの ID を渡されても行が返らないようにするためである。到達
+	// 可否（メンバーか）の判定は RequireProjectPermission が済ませている
+	// （Design.md 6.4.5）。
+	//
+	// **sort_key の比較には必ず COLLATE "C" を付ける。** ticket.sort_key は照合順の
+	// 指定を持たない text 列で、DBの既定は ja-JP-x-icu である（DbDesign.md 4.4）。
+	// LexoRank（internal/lexorank）が仮定しているのはバイト順なので、ICU の言語規則で
+	// 比較されると並びが崩れる。ORDER BY も比較演算子も明示する。
+	// ── 一覧（ApiDesign.md 9.2）─────────────────────────────────
+	// ListTickets はバックログの唯一のデータ源（9.2）。
+	//
+	// **総件数と最終更新を同じクエリの窓関数で返す。** 2.6 の total と 2.7 の ETag の
+	// 材料であり、別クエリにすると WHERE を二重に持つことになる。フィルタが13種類
+	// あるため、写しが片方だけ古くなる危険が現実的に高い（user.sql の
+	// ListAdminUsers / SummarizeAdminUsers は「一字一句そろえる」と注記して2本に
+	// 分けているが、あちらは条件が3つである）。窓関数は WHERE の後・LIMIT の前に
+	// 評価されるので、ページを切っても総件数は絞り込み全体のものになる。
+	//
+	// **異なる種類の条件どうしは AND、同じ条件の複数指定は OR**（9.2.1）。
+	// 「指定なし」は空配列で表す。none（未割当・未分類）は別のフラグに分けてある
+	// ——配列の中に 'none' という値を混ぜると、その ULID を持つ行と区別できない。
+	//
+	// **フィルタは行単位で適用し、親を補完しない**（9.2.4）。親が条件に合わない子は
+	// parent_seq を保ったまま返り、画面がトップレベルに並べる。補完すると、条件に
+	// 合致しない行が一覧に現れて total と表示件数が食い違う。
+	//
+	// has_children は「プロジェクト内に子がいるか」であって「結果の中に子がいるか」
+	// ではない（利用者の判断、2026-08-23）。結果の中で数えると、親が絞り込みで
+	// 落ちた瞬間に子の有無まで消える。
+	//
+	ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error)
 	// ListUserIdentities は 6.3 の identities[] を引く。
 	//
 	// **配列であることが Phase 3 の IdP 連携をそのまま受け入れる**（ApiDesign.md 6.3、
@@ -528,9 +611,22 @@ type Querier interface {
 	ListUserSessions(ctx context.Context, actorID string) ([]ListUserSessionsRow, error)
 	ListWorkflowStatuses(ctx context.Context, workflowID string) ([]ListWorkflowStatusesRow, error)
 	ListWorkflowTransitions(ctx context.Context, workflowID string) ([]ListWorkflowTransitionsRow, error)
+	MaxTicketSortKey(ctx context.Context, projectID string) (string, error)
+	// 以下4本が「どのキーとどのキーの間へ入れるか」を決める。**空文字は境界**
+	// （先頭より前／末尾より後）を表し、lexorank.Between の引数の約束と同じである。
+	MinTicketSortKey(ctx context.Context, projectID string) (string, error)
+	// MoveTicket は動かした1件の sort_key を書き、version を +1 する（9.4）。
+	MoveTicket(ctx context.Context, arg MoveTicketParams) (MoveTicketRow, error)
 	// sort_order 省略時の既定（現在の最大値 + 10）。行が無ければ 10 から始める。
 	// 10刻みにするのは、並べ替え（9.11.1）が同じ間隔で振り直すためである。
 	NextTagSortOrder(ctx context.Context, projectID string) (int32, error)
+	// ── 作成（ApiDesign.md 9.3）─────────────────────────────────
+	// NextTicketSeq は DbDesign.md 6.4.1 の1文。行ロックと採番が同時に完了する。
+	//
+	// **シーケンスを使わない。** トランザクションが巻き戻っても値を消費するため
+	// 欠番が出る。チケット番号は人が読む識別子であり、my-app-31 の次が my-app-33
+	// になるのは望ましくない（同 6.4.1）。
+	NextTicketSeq(ctx context.Context, projectID string) (int32, error)
 	// ── キーの重複確認（ApiDesign.md 5.2）───────────────────────
 	// ProjectKeyExists は check-key の判定に使う。
 	//
@@ -564,6 +660,13 @@ type Querier interface {
 	// （Design.md 6.2.1 手順5 の「成功 → failed_attempts=0」）。
 	//
 	ResetLoginFailure(ctx context.Context, identityID string) error
+	// ResolveInitialStatusKey は 9.3 の「category='todo' かつ sort_order 最小。
+	// 該当が無ければ sort_order 最小」をそのまま1文で表す。
+	//
+	// 初期ステータスをリクエストで指定させないのは、ワークフローの入口が
+	// workflow_transition に定義されておらず、任意のステータスで作成できると
+	// 9.6 の遷移検証を素通りできてしまうためである（9.3）。
+	ResolveInitialStatusKey(ctx context.Context, projectID string) (string, error)
 	// RevokeAccessToken は失効させる（ApiDesign.md 3.2 のログアウト）。
 	// 既に失効済みなら no-op で返り、revoked_at を上書きしない。
 	//
@@ -639,6 +742,22 @@ type Querier interface {
 	//
 	SetProjectStatus(ctx context.Context, arg SetProjectStatusParams) (int64, error)
 	SetProjectWorkflow(ctx context.Context, arg SetProjectWorkflowParams) error
+	// SetTicketClosedAt は完了済みのデモチケットを作るためだけのもの。
+	//
+	// **本来 closed_at はステータス遷移の副作用としてのみ動く**（DbDesign.md 6.6、
+	// ApiDesign.md 9.6）。その経路は手順17 で実装するため、それまでの間、
+	// デモデータが「完了したチケット」を持てるようにここで直接書く。
+	// 一覧の open フィルタ（9.2.1）とスプリントの進捗（9.12 の closed_count）が
+	// closed_at を基準にしており、NULL のままでは目で確かめられない。
+	SetTicketClosedAt(ctx context.Context, arg SetTicketClosedAtParams) error
+	// SetTicketSortKey は振り直しの1行ぶん。
+	//
+	// **version を上げない。** 振り直しはプロジェクトの全行に触るので、上げると
+	// 開いている詳細画面がすべて 409 になる。動かしたい1件だけが MoveTicket で
+	// 上がる（9.4）。updated_at はトリガで動くため、一覧の ETag は変わる
+	// ——rebalanced=true を受けた画面が取り直すのと同じ結果になる。
+	SetTicketSortKey(ctx context.Context, arg SetTicketSortKeyParams) error
+	SprintExistsInProject(ctx context.Context, arg SprintExistsInProjectParams) (bool, error)
 	// SummarizeAdminUsers は ListAdminUsers と同じ絞り込みに対する総件数と
 	// 最終更新日時を返す。total は 2.6、last_updated_at は 2.7 の ETag の材料。
 	//
@@ -658,6 +777,8 @@ type Querier interface {
 	// 2回書かないよう1文にまとめてある。** 0件のとき last_updated_at は NULL。
 	//
 	SummarizeProjects(ctx context.Context, arg SummarizeProjectsParams) (SummarizeProjectsRow, error)
+	TicketSortKeyAfter(ctx context.Context, arg TicketSortKeyAfterParams) (string, error)
+	TicketSortKeyBefore(ctx context.Context, arg TicketSortKeyBeforeParams) (string, error)
 	// TouchAccessTokenLastUsed は last_used_at を更新する。
 	//
 	// **1分粒度で間引く**（Design.md 6.2.2）。リクエストのたびに UPDATE すると、
