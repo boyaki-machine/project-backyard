@@ -31,6 +31,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/audit"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
+	"github.com/boyaki-machine/project-backyard/server/internal/lexorank"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
@@ -89,6 +90,7 @@ type devProject struct {
 	Members          []devMember `yaml:"members"`
 	Tags             []devTag    `yaml:"tags"`
 	Sprints          []devSprint `yaml:"sprints"`
+	Tickets          []devTicket `yaml:"tickets"`
 }
 
 type devMember struct {
@@ -117,6 +119,42 @@ type devSprint struct {
 
 // devSprintStatuses は sprint.status の CHECK 制約（DbDesign.md 6.9）。
 var devSprintStatuses = map[string]bool{"planned": true, "active": true, "completed": true}
+
+// devTicket はチケットの定義（DbDesign.md 6.6 / 7.6.4、手順16b）。
+//
+// **参照はすべて名前で書く。** parent はチケットのタイトル、assignee はメール、
+// tags はタグ名、sprint はスプリント名で指す。定義ファイルに ULID を書かせない
+// ためで、タグ・スプリントと同じ考え方である。
+//
+// status は**プロジェクトのワークフローに定義されたキー**（省略すると入口の
+// ステータス）。API は初期ステータスを選ばせない（ApiDesign.md 9.3）が、
+// デモデータは「進行中」「完了」が並んだ画面を作れないと意味が無いため、
+// ここだけは指定できるようにしてある。
+type devTicket struct {
+	Title         string   `yaml:"title"`
+	Type          string   `yaml:"type"`
+	Status        string   `yaml:"status"`
+	Priority      string   `yaml:"priority"`
+	Assignee      string   `yaml:"assignee"`
+	Parent        string   `yaml:"parent"`
+	Tags          []string `yaml:"tags"`
+	Sprint        string   `yaml:"sprint"`
+	BodyMd        string   `yaml:"body_md"`
+	EstimatePoint float64  `yaml:"estimate_point"`
+	StartDate     string   `yaml:"start_date"`
+	DueDate       string   `yaml:"due_date"`
+}
+
+// devTicketTypes / devTicketPriorities は ticket の CHECK 制約（DbDesign.md 6.6）。
+var (
+	devTicketTypes = map[string]bool{
+		"epic": true, "story": true, "task": true,
+		"bug": true, "phase": true, "wbs": true,
+	}
+	devTicketPriorities = map[string]bool{
+		"lowest": true, "low": true, "medium": true, "high": true, "highest": true,
+	}
+)
 
 // runDev は dev サブコマンドを振り分ける。
 func runDev(ctx context.Context, args []string) error {
@@ -326,6 +364,70 @@ func (d *devData) validate() error {
 				return fmt.Errorf("%s: end_date は start_date 以降にしてください（ck_sprint_dates）", at)
 			}
 		}
+
+		// チケット（手順16b）。**参照は定義ファイルの中で閉じている必要がある**
+		// ——parent はここまでに現れたタイトル、tags / sprint はこのプロジェクトの
+		// 定義、assignee は members に居ること。DBの FK でも弾けるが、そちらの
+		// エラーは何行目が悪いのかが分からない。
+		members := make(map[string]bool, len(p.Members))
+		for _, m := range p.Members {
+			members[strings.ToLower(m.Email)] = true
+		}
+		ticketTitles := make(map[string]bool, len(p.Tickets))
+		for j, tk := range p.Tickets {
+			at := fmt.Sprintf("%s.tickets[%d]", where, j)
+			if tk.Title == "" {
+				return fmt.Errorf("%s: title が空です", at)
+			}
+			if n := utf8.RuneCountInString(tk.Title); n > 200 {
+				return fmt.Errorf("%s: title は200文字以内です（%d文字）", at, n)
+			}
+			// **タイトルは冪等性の判定に使う**（ticket に title の一意制約は無い）。
+			if ticketTitles[tk.Title] {
+				return fmt.Errorf("%s: title が重複しています（%q。冪等性の判定に使うため定義側では許さない）", at, tk.Title)
+			}
+			ticketTitles[tk.Title] = true
+
+			if !devTicketTypes[tk.Type] {
+				return fmt.Errorf("%s: type は epic / story / task / bug / phase / wbs です（%q）", at, tk.Type)
+			}
+			if tk.Priority != "" && !devTicketPriorities[tk.Priority] {
+				return fmt.Errorf("%s: priority は lowest 〜 highest です（%q）", at, tk.Priority)
+			}
+			// **親は自分より前に書かれていること。** 前から順に作るので、
+			// 後ろを指されると解決できない（循環も同時に防げる）。
+			if tk.Parent != "" && !ticketTitles[tk.Parent] {
+				return fmt.Errorf("%s: parent は自分より前のチケットの title を指してください（%q）", at, tk.Parent)
+			}
+			if tk.Parent == tk.Title {
+				return fmt.Errorf("%s: parent が自分自身です（ck_ticket_not_self_parent）", at)
+			}
+			if tk.Assignee != "" && !members[strings.ToLower(tk.Assignee)] {
+				return fmt.Errorf("%s: assignee は members に居るメールアドレスにしてください（%q）", at, tk.Assignee)
+			}
+			for k, name := range tk.Tags {
+				if !tagNames[name] {
+					return fmt.Errorf("%s.tags[%d]: このプロジェクトに定義の無いタグです（%q）", at, k, name)
+				}
+			}
+			if tk.Sprint != "" && !sprintNames[tk.Sprint] {
+				return fmt.Errorf("%s: このプロジェクトに定義の無いスプリントです（%q）", at, tk.Sprint)
+			}
+			if tk.EstimatePoint < 0 {
+				return fmt.Errorf("%s: estimate_point は0以上です（%v）", at, tk.EstimatePoint)
+			}
+			start, err := devDate(tk.StartDate)
+			if err != nil {
+				return fmt.Errorf("%s.start_date: %w", at, err)
+			}
+			due, err := devDate(tk.DueDate)
+			if err != nil {
+				return fmt.Errorf("%s.due_date: %w", at, err)
+			}
+			if start.Valid && due.Valid && start.Time.After(due.Time) {
+				return fmt.Errorf("%s: due_date は start_date 以降にしてください（ck_ticket_dates）", at)
+			}
+		}
 	}
 	return nil
 }
@@ -378,6 +480,8 @@ type seedResult struct {
 	tagsSkipped     int
 	sprintsCreated  int
 	sprintsSkipped  int
+	ticketsCreated  int
+	ticketsSkipped  int
 }
 
 func (r seedResult) print(w io.Writer) {
@@ -390,6 +494,9 @@ func (r seedResult) print(w io.Writer) {
 	if r.tagsCreated+r.tagsSkipped+r.sprintsCreated+r.sprintsSkipped > 0 {
 		fmt.Fprintf(w, "タグ       : 作成 %d / スキップ %d\n", r.tagsCreated, r.tagsSkipped)
 		fmt.Fprintf(w, "スプリント : 作成 %d / スキップ %d\n", r.sprintsCreated, r.sprintsSkipped)
+	}
+	if r.ticketsCreated+r.ticketsSkipped > 0 {
+		fmt.Fprintf(w, "チケット   : 作成 %d / スキップ %d\n", r.ticketsCreated, r.ticketsSkipped)
 	}
 }
 
@@ -586,7 +693,10 @@ func seedProject(ctx context.Context, q gen.Querier, rec *audit.Recorder, p devP
 	if err := seedTags(ctx, q, projectID, p, result); err != nil {
 		return err
 	}
-	return seedSprints(ctx, q, projectID, p, result)
+	if err := seedSprints(ctx, q, projectID, p, result); err != nil {
+		return err
+	}
+	return seedTickets(ctx, q, projectID, p, actorIDs, result)
 }
 
 // seedTags はプロジェクトのタグを投入する（DbDesign.md 6.10 / 7.6.4）。
@@ -672,6 +782,233 @@ func seedSprints(ctx context.Context, q gen.Querier, projectID string, p devProj
 		result.sprintsCreated++
 	}
 	return nil
+}
+
+// seedTickets はプロジェクトのチケットを投入する（DbDesign.md 6.6 / 7.6.4、手順16b）。
+//
+// **冪等**（7.6.2）。既にあるタイトルは作らずスキップする。ticket に title の
+// 一意制約は無いが、定義ファイル側で重複を禁じている（validate）ので、
+// この単位で突き合わせられる。
+//
+// **API（ApiDesign.md 9.3）と同じ順で組み立てる**——採番・ワークフロー解決・
+// sort_key の採番・タグ付与。違うのは3点で、①CLI に実行者がいないため
+// reporter を project_admin に据える ②status をデモの都合で指定できる
+// ③完了済みを表すために closed_at を直接書く（本来は遷移の副作用。手順17）。
+//
+// **activity には記録しない。** デモデータの投入は業務上の出来事ではなく、
+// 変更履歴に「開発PMが48件作成した」が並んでも読み手の役に立たない。
+func seedTickets(
+	ctx context.Context, q gen.Querier, projectID string, p devProject,
+	actorIDs map[string]string, result *seedResult,
+) error {
+	if len(p.Tickets) == 0 {
+		return nil
+	}
+
+	existing, err := q.ListTicketTitlesByProject(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("プロジェクト %s のチケットを読めない: %w", p.Key, err)
+	}
+	// タイトル → ticket.id。親の解決にも使う（既にある行の子を作れるようにする）。
+	idByTitle := make(map[string]string, len(existing)+len(p.Tickets))
+	for _, row := range existing {
+		idByTitle[row.Title] = row.ID
+	}
+
+	statuses, err := projectStatuses(ctx, q, p.Key)
+	if err != nil {
+		return err
+	}
+	tagIDs, err := projectTagIDs(ctx, q, projectID, p.Key)
+	if err != nil {
+		return err
+	}
+	sprintIDs, err := projectSprintIDs(ctx, q, projectID, p.Key)
+	if err != nil {
+		return err
+	}
+	reporterID := actorIDs[strings.ToLower(projectCreator(p, actorIDs))]
+
+	// sort_key は定義ファイルの並び順で、末尾へ足していく（ApiDesign.md 9.4）。
+	sortKey, err := q.MaxTicketSortKey(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("プロジェクト %s の並び順を読めない: %w", p.Key, err)
+	}
+
+	for _, tk := range p.Tickets {
+		if _, ok := idByTitle[tk.Title]; ok {
+			result.ticketsSkipped++
+			continue
+		}
+
+		status, ok := statuses[tk.Status]
+		if tk.Status == "" {
+			status, ok = entryStatus(statuses), true
+		}
+		if !ok {
+			return fmt.Errorf("プロジェクト %s のチケット %q: ワークフローに %q というステータスがありません",
+				p.Key, tk.Title, tk.Status)
+		}
+
+		next, ok := lexorank.Between(sortKey, "")
+		if !ok {
+			return fmt.Errorf("プロジェクト %s のチケット %q: 並び順のキーを作れません（末尾=%q）",
+				p.Key, tk.Title, sortKey)
+		}
+		sortKey = next
+
+		seq, err := q.NextTicketSeq(ctx, projectID)
+		if err != nil {
+			return fmt.Errorf("プロジェクト %s のチケット番号を採番できない: %w", p.Key, err)
+		}
+
+		start, err := devDate(tk.StartDate)
+		if err != nil {
+			return fmt.Errorf("チケット %q の start_date: %w", tk.Title, err)
+		}
+		due, err := devDate(tk.DueDate)
+		if err != nil {
+			return fmt.Errorf("チケット %q の due_date: %w", tk.Title, err)
+		}
+
+		var parentID pgtype.Text
+		if tk.Parent != "" {
+			id, ok := idByTitle[tk.Parent]
+			if !ok {
+				return fmt.Errorf("チケット %q の parent %q が見つかりません", tk.Title, tk.Parent)
+			}
+			parentID = pgtype.Text{String: id, Valid: true}
+		}
+		var assigneeID pgtype.Text
+		if tk.Assignee != "" {
+			assigneeID = nullText(actorIDs[strings.ToLower(tk.Assignee)])
+		}
+		var estimate pgtype.Float8
+		if tk.EstimatePoint > 0 {
+			estimate = pgtype.Float8{Float64: tk.EstimatePoint, Valid: true}
+		}
+
+		ticketID := ulidgen.New()
+		if err := q.CreateTicket(ctx, gen.CreateTicketParams{
+			ID:            ticketID,
+			ProjectID:     projectID,
+			Seq:           seq,
+			ParentID:      parentID,
+			Type:          tk.Type,
+			Title:         tk.Title,
+			BodyMd:        nullText(tk.BodyMd),
+			StatusKey:     status.key,
+			Priority:      nullText(tk.Priority),
+			AssigneeID:    assigneeID,
+			ReporterID:    nullText(reporterID),
+			EstimatePoint: estimate,
+			StartDate:     start,
+			DueDate:       due,
+			SprintID:      nullText(sprintIDs[tk.Sprint]),
+			SortKey:       pgtype.Text{String: sortKey, Valid: true},
+		}); err != nil {
+			return fmt.Errorf("プロジェクト %s にチケット %q を作れない: %w", p.Key, tk.Title, err)
+		}
+
+		for _, name := range tk.Tags {
+			if err := q.AttachTicketTag(ctx, gen.AttachTicketTagParams{
+				TicketID: ticketID, TagID: tagIDs[name],
+			}); err != nil {
+				return fmt.Errorf("チケット %q にタグ %q を付けられない: %w", tk.Title, name, err)
+			}
+		}
+
+		// 完了ステータスなら closed_at を入れる。一覧の open フィルタ（9.2.1）と
+		// スプリントの進捗（9.12）が closed_at を基準にしているため。
+		if status.category == "done" {
+			if err := q.SetTicketClosedAt(ctx, gen.SetTicketClosedAtParams{
+				ID: ticketID, ClosedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			}); err != nil {
+				return fmt.Errorf("チケット %q を完了にできない: %w", tk.Title, err)
+			}
+		}
+
+		idByTitle[tk.Title] = ticketID
+		result.ticketsCreated++
+	}
+	return nil
+}
+
+// devStatus はワークフローのステータス1件（キーと分類）。
+type devStatus struct {
+	key      string
+	category string
+	order    int32
+}
+
+// projectStatuses はプロジェクトのワークフローのステータスをキー引きで返す。
+func projectStatuses(
+	ctx context.Context, q gen.Querier, key string,
+) (map[string]devStatus, error) {
+	project, err := q.GetProjectByKey(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("プロジェクト %s を読めない: %w", key, err)
+	}
+	if !project.WorkflowID.Valid {
+		return nil, fmt.Errorf("プロジェクト %s にワークフローがありません", key)
+	}
+	rows, err := q.ListWorkflowStatuses(ctx, project.WorkflowID.String)
+	if err != nil {
+		return nil, fmt.Errorf("プロジェクト %s のワークフローを読めない: %w", key, err)
+	}
+	out := make(map[string]devStatus, len(rows))
+	for _, row := range rows {
+		out[row.Key] = devStatus{key: row.Key, category: row.Category, order: row.SortOrder}
+	}
+	return out, nil
+}
+
+// entryStatus は status 省略時の既定。ApiDesign.md 9.3 と同じ決め方
+// （category='todo' かつ sort_order 最小。該当が無ければ sort_order 最小）。
+func entryStatus(statuses map[string]devStatus) devStatus {
+	var best devStatus
+	found := false
+	for _, s := range statuses {
+		if !found || betterEntry(s, best) {
+			best, found = s, true
+		}
+	}
+	return best
+}
+
+// betterEntry は入口としてふさわしいほうを選ぶ。
+// todo を優先し、同じ分類なら sort_order の小さいほうを採る。
+func betterEntry(a, b devStatus) bool {
+	if (a.category == "todo") != (b.category == "todo") {
+		return a.category == "todo"
+	}
+	return a.order < b.order
+}
+
+// projectTagIDs はタグ名 → tag.id。
+func projectTagIDs(ctx context.Context, q gen.Querier, projectID, key string) (map[string]string, error) {
+	rows, err := q.ListTagsByProject(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("プロジェクト %s のタグを読めない: %w", key, err)
+	}
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		out[row.Name] = row.ID
+	}
+	return out, nil
+}
+
+// projectSprintIDs はスプリント名 → sprint.id。
+func projectSprintIDs(ctx context.Context, q gen.Querier, projectID, key string) (map[string]string, error) {
+	rows, err := q.ListSprintsByProject(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("プロジェクト %s のスプリントを読めない: %w", key, err)
+	}
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		out[row.Name] = row.ID
+	}
+	return out, nil
 }
 
 // devDate は YYYY-MM-DD を date 列へ写す。空文字は NULL。

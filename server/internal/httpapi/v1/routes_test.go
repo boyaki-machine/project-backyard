@@ -182,7 +182,10 @@ func callAsMember(q *fakeQuerier, method, path, body string) *httptest.ResponseR
 		addCSRF(req)
 	}
 	rec := httptest.NewRecorder()
-	router(q).ServeHTTP(rec, req)
+	// **Tx を渡す。** チケットの作成・並べ替え（手順16b）は単一トランザクションで
+	// 行うため、Deps.Tx が nil だとハンドラが nil を呼ぶ。タグ・スプリントは
+	// 使わないので、渡しても振る舞いは変わらない。
+	routerWithDeps(Deps{Queries: q, Tx: &fakeTxRunner{q: q}}).ServeHTTP(rec, req)
 	return rec
 }
 
@@ -262,5 +265,116 @@ func TestTagWriteRequiresCSRF(t *testing.T) {
 	}
 	if len(q.createdTags) != 0 {
 		t.Error("CSRF に失敗したのにタグを作った")
+	}
+}
+
+// ── チケットの認可（手順16b。ApiDesign.md 9.2 / 9.3 / 9.4）─────────
+//
+// **3本とも必要権限が違う**（読み ticket.view / 作成 ticket.create /
+// 並べ替え ticket.edit）。タグ・スプリントと同じく、ルータ越しに確かめるのは
+// 振り分けがルート定義に宣言されていること（Design.md 6.4.4）そのものが
+// 検証の対象だからである。
+
+// ticketRouteFake は tagRouteFake と同じ土台に、チケットの読み書きに要る
+// 最小限の状態を足す。**project_viewer は ticket.view だけ**を持つ。
+func ticketRouteFake(t *testing.T, projectRole string, perms ...string) *fakeQuerier {
+	t.Helper()
+	q := tagRouteFake(t, projectRole)
+	// **権限を差し替えたら withProjectMember を呼び直す。** あの補助は呼んだ時点の
+	// q.permissions を読んで projectAuthzRows を組み立てるので、後から書き換えても
+	// 反映されない（そのまま進めると「非メンバー」の 404 になる）。
+	if len(perms) > 0 && projectRole != "" {
+		q.permissions[projectRole] = perms
+		q.withProjectMember("demo", projectRole)
+	}
+	q.ticket.bySeq = map[int32]gen.GetTicketBySeqRow{}
+	q.ticket.briefByID = map[string]gen.GetTicketBriefRow{}
+	q.ticket.idBySeq = map[int32]string{}
+	q.ticket.sortRowBySeq = map[int32]gen.GetTicketSortRowRow{
+		31: {ID: testTicketID, SortKey: txt("0|n:"), Version: 1},
+		44: {ID: testTicketID2, SortKey: txt("0|u:"), Version: 1},
+	}
+	q.ticket.initialStatusKey = "todo"
+	q.ticket.nextSeq = 31
+	return q
+}
+
+// ticket.view しか持たない閲覧者は、一覧は読めるが作成も並べ替えもできない。
+func TestTicketRoutesSplitPermissions(t *testing.T) {
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		want   int
+	}{
+		{"一覧は読める", http.MethodGet, "/api/v1/projects/demo/tickets", "", http.StatusOK},
+		{"作れない", http.MethodPost, "/api/v1/projects/demo/tickets",
+			`{"type":"task","title":"x"}`, http.StatusForbidden},
+		{"並べ替えられない", http.MethodPost, "/api/v1/projects/demo/tickets/31/move",
+			`{"position":"last"}`, http.StatusForbidden},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q := ticketRouteFake(t, "project_viewer", "ticket.view")
+			rec := callAsMember(q, c.method, c.path, c.body)
+			if rec.Code != c.want {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+// ticket.create を持つメンバーは作れる。並べ替えは ticket.edit が要る。
+func TestTicketRoutesAllowCreateForMember(t *testing.T) {
+	q := ticketRouteFake(t, "project_member", "ticket.view", "ticket.create")
+	rec := callAsMember(q, http.MethodPost, "/api/v1/projects/demo/tickets",
+		`{"type":"task","title":"作れる"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+
+	// ticket.edit を持たないので並べ替えは 403
+	q2 := ticketRouteFake(t, "project_member", "ticket.view", "ticket.create")
+	rec2 := callAsMember(q2, http.MethodPost, "/api/v1/projects/demo/tickets/31/move",
+		`{"position":"last"}`)
+	if rec2.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (%s)", rec2.Code, rec2.Body.String())
+	}
+}
+
+func TestTicketRoutesAllowMoveWithTicketEdit(t *testing.T) {
+	q := ticketRouteFake(t, "project_admin", "ticket.view", "ticket.create", "ticket.edit")
+	rec := callAsMember(q, http.MethodPost, "/api/v1/projects/demo/tickets/31/move",
+		`{"position":"last"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// **非メンバーには 404**（Design.md 6.4.5「存在を隠す」）。403 ではない。
+func TestTicketRoutesHideProjectFromNonMember(t *testing.T) {
+	q := ticketRouteFake(t, "") // プロジェクトは在るが非メンバー
+	rec := callAsMember(q, http.MethodGet, "/api/v1/projects/demo/tickets", "")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// 状態変更系は CSRF を要求する（2.4）。
+func TestTicketWriteRequiresCSRF(t *testing.T) {
+	q := ticketRouteFake(t, "project_member", "ticket.view", "ticket.create")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/demo/tickets",
+		strings.NewReader(`{"type":"task","title":"x"}`))
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: tokenAs(q, auth.SystemRoleOperator)})
+	// CSRF を付けない。
+	rec := httptest.NewRecorder()
+	router(q).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorOf(t, rec).Code; got != "csrf_failed" {
+		t.Errorf("error.code = %q, want csrf_failed", got)
 	}
 }

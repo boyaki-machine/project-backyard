@@ -581,11 +581,13 @@ CDP を話す最小クライアント（`cdp.py`）と検証本体（`verify.py`
 
 ---
 
-## 進捗表から移した検証内容（手順1〜10b）
+## 進捗表から移した検証内容（手順1〜16a）
 
 `PROGRESS.md` の Phase 1 表は、完了した手順の「検証方法」欄を1行に要約してある
 （2026-08-18、`docs/progress-archive`）。**要約前の全文をここに保管する。**
 過去にどこまで確認したかを正確に知りたいときはこちらを見ること。
+**手順11a〜16a のぶんは 2026-08-23（16b 完了時）に移した**——`PROGRESS.md` が 40KB の
+閾値を超えたため（`pb-step.md` 手順7 の掃除①「完了して今後の手順に不要な情報を移す」）。
 
 | 手順 | 完了日 | 検証内容（当時の記述のまま） |
 |---|---|---|
@@ -1580,3 +1582,70 @@ timezone・`Local` を弾く・`UTC` は通す・表示名・メール形式）�
 `access_token`（`token_type='api'`）17行と `token.issue` / `token.revoke` の監査ログ34行を
 DB から削除した（有効・失効済みとも0件を確認）。Cookie jar と発行した平文を書いたファイルを削除。
 ヘッドレス Chrome のプロファイルはスクリプトが毎回消す。`make stop-server` と `make clean-webui` を実行。
+
+### 手順11a〜16a（2026-08-23 に移動）
+
+| 手順 | 完了日 | 検証内容（当時の記述のまま） |
+|---|---|---|
+| 11a | 2026-08-18 | 実DB結合テスト＋実サーバで 409 / 422 / 403 / 404 と冪等な archive |
+| 11b | 2026-08-18 | ブラウザ43件（保存・409・アーカイブ・リポジトリ表形式・メンバー・権限の出し分け・一覧の省略） |
+| 12a | 2026-08-18 | 実DB結合テスト6件＋実サーバ22件（作成・409・422・403・CSRF・ETag・生成パスワードでのログイン） |
+| 12b | 2026-08-18 | ブラウザ128件（一覧・ソート4列・検索・絞り込み・列幅ドラッグ・ページャ・追加・1回表示・409・403）。**利用者の実機確認の指摘6件を反映済み** |
+| 13a | 2026-08-20 | 単体39件＋実DB結合13件＋実サーバ42件（楽観ロック・3つのガード・メール変更後のログイン・リセット後の失効・冪等なメンバーシップ・operator は 403） |
+| 14 | 2026-08-22 | 単体12件＋実DB結合8件＋実サーバ（認可12通り・並び・422）＋ブラウザ34件（マトリクス13・レイアウト14・回帰7）。`?scope=project` は権限不要 |
+| 15a | 2026-08-22 | 単体28件＋ブラウザ59件（保存・409・422・401・テーマと色相の端末間同期・要パスワード変更の誘導）。**実DB結合12件は書いたが未実行**（下記「次の手順への引き継ぎ」） |
+| 15b | 2026-08-22 | 単体18件＋実DB結合9件＋実サーバ19件（Bearer 認証・CSRF・上限5本・冪等な失効）＋ブラウザ53件（一覧・発行・1回表示・失効・タブ・1440/900px の実測）。**画面で発行した平文で `curl -H 'Authorization: Bearer …'` が通ることを確認** |
+| 16a | 2026-08-23 | 単体38件＋実DB結合（`make test-db` 全74件 PASS）＋実サーバ8件（409・422・403・404・権限の読み書き分離）＋ブラウザ68件（タグ27・スプリント31・並べ替え10。1440/900px の実測とスクリーンショット確認） |
+
+## 手順16b — チケットAPI（一覧・作成・並べ替え）と dev seed のチケット（2026-08-23、`feature/step-16b-ticket-api`）
+
+**手順16 の3分割のうち2つめ。** サーバ側だけを扱い、`client/` は生成物（`schema.d.ts`）以外
+触っていない。バックログ画面は 16c。
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/lexorank/lexorank.go` ＋ `_test.go` | `sort_key` の生成（`Between` / `Rebalance` / `Valid`）。`0|<a〜zの26進>:`。**本体に数字を使わない**（終端 `:` が `9` より大きいため）。末尾追加だけ中点法をやめて桁を1つ進める（`appendBody`） |
+| `server/internal/activity/activity.go` | `activity` への記録口。`internal/audit` と同じ形（`FromRequest` → `Record`）。**`Field` / `OldValue` / `NewValue` はポインタ**——「送られていない」と「空にした」を区別するため |
+| `server/internal/store/queries/ticket.sql` | 一覧（フィルタ13種＋窓関数の総件数）・詳細・採番・作成・タグ付与・並べ替えの近傍取得・振り直し・dev seed 用の2本 |
+| `server/internal/store/queries/activity.sql` | `InsertActivity` |
+| `server/internal/httpapi/v1/tickets.go` | `GET /projects/{key}/tickets`（9.2）。フィルタの解析と `ETag` |
+| `server/internal/httpapi/v1/tickets_create.go` | `POST /projects/{key}/tickets`（9.3）。単一トランザクション |
+| `server/internal/httpapi/v1/tickets_move.go` | `POST /projects/{key}/tickets/{seq}/move`（9.4）。振り直しを含む |
+| `server/internal/httpapi/v1/ticket_view.go` | 9.2.2 / 9.5.1 の応答の組み立て。`ticketDetailView` が `ticketListItem` を埋め込む |
+| `server/internal/httpapi/v1/tickets_test.go` | 単体26件（フィルタ・422・ETag・作成・並べ替えの境界） |
+| `server/internal/httpapi/v1/tickets_integration_test.go` | 実DB結合（フィルタ・COLLATE・採番・再帰CTE・窓関数・activity） |
+
+### 変更したファイル
+
+`routes.go`（3ルートと必要権限の宣言）／`routes_test.go`（認可5件）／`fake_test.go`（チケットの
+フェイク。**並び順は固定値ではなく `sortRowBySeq` から計算する**——振り直しでキーが変わることを
+再現するため）／`paging.go`（`SortSpec.DefaultPerPage`。バックログだけ既定が 200）／
+`cmd/pb/dev_seed.go` と `deploy/dev/seed/dev-data.yaml`（チケット13件）／`docs/openapi.yaml`（3本＋
+`Ticket` 系スキーマ12個）／`client/src/api/schema.d.ts`（`make gen-api` の生成物）。
+
+### 検証結果
+
+| 種別 | 件数 | 内容 |
+|---|---|---|
+| 単体（`make test`） | 全 PASS | チケット26件（フィルタの解析・422 の8通り・ETag の可変性・作成の5件・並べ替えの境界5件）＋ LexoRank 10件＋ 認可5件 |
+| 実DB結合（`make test-db`） | **全94件 PASS**（16a の 74件から +20） | フィルタ16通り・COLLATE "C" での並び・意味の順のソート・採番の連番性・再帰CTE の部分木・窓関数の総件数・`activity` 5件と `audit_log` 0件・`sort_key` が NULL の行からの回復・他プロジェクトの資源を指したときの 422 |
+| 実サーバ（curl） | **50件 PASS / 0 FAIL** | 一覧の既定（`per_page=200` / `sort=sort_key`）・フィルタ12通り・422 の7通り・ETag の一致と差異・非メンバーの 404・作成の 201 と `Location` と 9.5 形式・422 の5通り・CSRF 403・並べ替え（`first` / `last` / `after_seq` / `before_seq`）と 422 の4通り・404 |
+| ブラウザ | 4件 PASS | **seed のチケットで 16a の画面が実データになること**——タグタブの「使用中」が `設計 6件 / GUI 3件 / API 5件 / MCP連携 1件`、スプリントタブの「進捗」が `Sprint 1 3/3 / Sprint 2 1/4 / Sprint 3 0/4 / 未定 0/1`。1440px と 900px でスクリーンショットを確認し、崩れが無いことを目で見た |
+
+### 検証で見つけた実装の欠陥（1件）
+
+**優先度が未設定のチケットがあると一覧が 500 になった。** 並べ替えの順位を
+`CASE … END::int AS priority_rank` として SELECT の列に出したため、sqlc がキャストから
+NOT NULL と推論し、NULL を読めなかった。**単体テストはフェイクを返すので通り、結合テストも
+「優先度を持つチケット」しか作っていなかった。** `ORDER BY` に `array_position` を直接書く形へ
+直し、結合テストに「優先度を決めていない仕事」を1件足した。
+
+### 検証で作った資源の後始末
+
+検証用プロジェクト（`v16b-*`）と `__verify16b__` で始まるチケットは削除した。demo の
+チケットは **seed の13件（`seq` 1〜13、`sort_key` は `0|n:` 〜 `0|z:`）に戻してある**——16c の
+バックログ画面がそのまま使う。サーバは停止し、`make clean-webui` で `webui/dist` を戻し、
+検証で作った Cookie jar（セッショントークンの平文）は削除した。
+

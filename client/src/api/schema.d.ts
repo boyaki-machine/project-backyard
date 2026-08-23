@@ -569,6 +569,143 @@ export interface paths {
         patch: operations["patchSprint"];
         trace?: never;
     };
+    "/api/v1/projects/{key}/tickets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * チケット一覧
+         * @description プロジェクトのチケットを返す（ApiDesign.md 9.2）。**必要権限は `ticket.view`**
+         *     （メンバーでない場合はプロジェクトごと 404）。
+         *
+         *     バックログ画面（GuiDesign.md 5.4）の唯一のデータ源であり、Phase 2 のカンバン・
+         *     ガントも同じエンドポイントから描く。
+         *
+         *     **既定が他の一覧と2か所ちがう**（9.2.1）。
+         *
+         *     - `per_page` の既定が **200**（他は 25）。この画面はページャを持たず、
+         *       フィルタ後の全件を1回で取り切る（9.2.3）
+         *     - `sort` の既定が **`sort_key`**（他は `updated_at`）。人が手で並べた順序（9.4）を
+         *       既定の見え方にする
+         *
+         *     **異なる種類の条件どうしは AND、同じ条件の複数指定は OR**
+         *     （`?type=bug&priority=high,highest` は「バグ、かつ優先度が高以上」）。
+         *
+         *     `items[]` は `tags[]` と `parent_seq` / `has_children` を含む。グループ化（タグ）と
+         *     階層のインデント表示（親子）を追加のリクエストなしに描けるようにするためである。
+         *     含めないと、バックログは1画面あたり `1 + タグ数 + 階層の深さ` 回の往復を要する。
+         *
+         *     **`has_children` は「プロジェクト内に子がいるか」**であって「結果の中に子がいるか」
+         *     ではない。フィルタは行単位で適用し、サーバは親を補完しない（9.2.4）ため、
+         *     結果の中で数えると親が絞り込みで落ちた瞬間に子の有無まで消える。
+         *
+         *     **`body_md` は含めない**（9.2.2）。一覧は本文を表示せず、200件分の Markdown は
+         *     応答を数十倍にする。`execution_mode` / `readiness` / `scope` / `custom_fields` も
+         *     同じ理由で含めない（GuiDesign.md 5.5 が「Phase 1 では非表示」と決めている）。
+         *
+         *     **`q`（全文検索）は Phase 1 では受け付けない**（9.2.1）。専用画面
+         *     `/p/:key/search`（Phase 2）と同時に開ける。
+         *
+         *     `ETag` は「フィルタ条件を正規化した文字列のハッシュ・件数・`MAX(updated_at)`」から
+         *     作る（9.2.5）。**`sort` / `order` / `page` / `per_page` も混ぜる**——ETag は応答本文を
+         *     指す検証子であり、並び順やページが違えば本文も違う。
+         *     **Phase 1 では `If-None-Match` を解釈しない**（304 を返さない）。
+         */
+        get: operations["listTickets"];
+        put?: never;
+        /**
+         * チケットの作成
+         * @description チケットを1件作る（ApiDesign.md 9.3）。**必要権限は `ticket.create`**。
+         *
+         *     **サーバが決めるものはリクエストに含められない。**
+         *
+         *     | 項目 | 決め方 |
+         *     |---|---|
+         *     | `seq` | `project_counter` の1文 `UPDATE ... RETURNING`（DbDesign.md 6.4.1） |
+         *     | `status_key` | ワークフローのうち `category='todo'` かつ `sort_order` 最小。該当が無ければ `sort_order` 最小 |
+         *     | `sort_key` | 現在の末尾の次（9.4 の LexoRank） |
+         *     | `reporter_id` | 呼び出し元のアクター |
+         *     | `version` | `1` |
+         *
+         *     **初期ステータスを指定させない。** ワークフローの入口は `workflow_transition` に
+         *     定義されておらず（遷移元が無い）、任意のステータスで作成できると 9.6 の遷移検証を
+         *     素通りできてしまう。作成後に遷移させれば同じ状態に到達でき、その経路は検証を通る。
+         *
+         *     **採番・ワークフロー解決・タグ付与・`activity` 記録は単一トランザクションで行う。**
+         *
+         *     検証に失敗したときの `details[].code` は次のとおり。
+         *
+         *     | `code` | 意味 |
+         *     |---|---|
+         *     | `not_a_member` | `assignee_id` に指定したアクターがプロジェクトのメンバーでない（9.14） |
+         *     | `not_found` | `parent_seq` / `tag_ids` / `sprint_id` の参照先がこのプロジェクトに無い |
+         *     | `required` / `invalid` / `too_long` / `out_of_range` | 2.5 の一般の検証エラー |
+         */
+        post: operations["createTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * チケットの並べ替え
+         * @description バックログのドラッグ&ドロップによる並べ替え（ApiDesign.md 9.4、GuiDesign.md 5.4）。
+         *     **必要権限は `ticket.edit`**。
+         *
+         *     **`PATCH` で `sort_key` を直接書かせない。** LexoRank の桁生成規則をクライアントに
+         *     持たせると、Web・MCP・将来の CLI がそれぞれ同じ規則を実装することになり、1つでも
+         *     ずれると順序が壊れる。**順序キーの生成はサーバに1つだけ置く。**
+         *
+         *     **`If-Match` は要求しない**（9.4）。競合しても失われる編集内容が無い（`sort_key` は
+         *     フォームで編集する項目ではない）。ただし **`version` は他の更新と同じく +1 する**。
+         *
+         *     **並び順はプロジェクト内で1本である。** グループ化（親・タグ・スプリント）は表示上の
+         *     区切りにすぎず、グループを切り替えても `sort_key` は変わらない。
+         *
+         *     **`activity` には記録しない。** `sort_key` だけの更新であり、記録するとチケット詳細の
+         *     変更履歴が並べ替えで埋まる（利用者の判断、2026-08-23）。
+         *
+         *     `position` と `after_seq` / `before_seq` の同時指定は 422。いずれも無い場合も 422。
+         */
+        post: operations["moveTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users": {
         parameters: {
             query?: never;
@@ -1787,6 +1924,270 @@ export interface components {
             status?: components["schemas"]["SprintStatus"];
         };
         /**
+         * @description アクターの参照（担当者・報告者。ApiDesign.md 9.2.2）。**`kind` を必ず返す**
+         *     ——画面はこれを見てエージェントに 🤖 バッジを付ける（GuiDesign.md 5.4、設計原則5）。
+         */
+        ActorRef: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /** @enum {string} */
+            kind: "user" | "agent" | "system";
+            /** @example 田中 */
+            display_name: string;
+        };
+        /**
+         * @description チケットのステータス（ApiDesign.md 9.2.2）。`name` は画面に出す日本語、
+         *     `category` はバッジの見た目を決める4値（GuiDesign.md 8.7）。
+         */
+        TicketStatus: {
+            /** @example in_progress */
+            key: string;
+            /** @example 進行中 */
+            name: string;
+            /** @enum {string} */
+            category: "todo" | "in_progress" | "review" | "done";
+        };
+        /** @description チケットに付いているタグ（ApiDesign.md 9.2.2）。**色を持たない**（GuiDesign.md 8.6）。 */
+        TicketTagRef: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /** @example 設計 */
+            name: string;
+        };
+        /** @description チケットが属するスプリント（ApiDesign.md 9.2.2）。 */
+        TicketSprintRef: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /** @example Sprint 3 */
+            name: string;
+        };
+        /**
+         * @description チケット1件（ApiDesign.md 9.2.2 の `items[]`）。
+         *
+         *     **`body_md` を持たない。** 一覧は本文を表示せず、200件分の Markdown は応答を
+         *     数十倍にする。本文が要るのは詳細（9.5）だけである。
+         *     **`execution_mode` / `readiness` / `readiness_note` / `scope` / `custom_fields` も
+         *     持たない**——列は DbDesign.md 6.6 に先行定義されているが、GuiDesign.md 5.5 が
+         *     「Phase 1 では非表示」と決めている。画面が使わない項目を応答に載せない
+         *     （載せると、使われないまま形が固まる）。
+         *
+         *     **完全形 `my-app-31` はサーバが組み立てない**（9.1）。プロジェクトキーは URL に
+         *     含まれており、フロントが `${key}-${seq}` を組める。
+         */
+        Ticket: {
+            /**
+             * @description ULID。**リクエストでチケットを指定する箇所はすべて `seq`** であり、この項目は
+             *     `activity.entity_id` との突き合わせと Phase 2 のエージェント連携が使う（9.1）。
+             * @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+             */
+            id: string;
+            /**
+             * Format: int32
+             * @example 31
+             */
+            seq: number;
+            /** @enum {string} */
+            type: "epic" | "story" | "task" | "bug" | "phase" | "wbs";
+            /** @example 認証APIの実装 */
+            title: string;
+            status: components["schemas"]["TicketStatus"];
+            /** @enum {string|null} */
+            priority: "lowest" | "low" | "medium" | "high" | "highest" | null;
+            /** @description 担当者不在のとき null。 */
+            assignee: components["schemas"]["ActorRef"] | null;
+            reporter: components["schemas"]["ActorRef"] | null;
+            /**
+             * Format: int32
+             * @description 親チケットの `seq`。**フィルタで親が結果から落ちても保たれる**（9.2.4）。
+             *     画面は「親が結果に含まれていない子」をトップレベルに並べる。
+             */
+            parent_seq: number | null;
+            /** @description **プロジェクト内に子がいるか**であって「結果の中に子がいるか」ではない。 */
+            has_children: boolean;
+            /**
+             * @description LexoRank 方式の並び順（9.4）。**クライアントはこの値を作らない。**
+             *     並べ替えは `POST /tickets/:seq/move` で行う。
+             * @example 0|hzzzzz:
+             */
+            sort_key: string | null;
+            tags: components["schemas"]["TicketTagRef"][];
+            sprint: components["schemas"]["TicketSprintRef"] | null;
+            /** Format: double */
+            estimate_point: number | null;
+            /** Format: double */
+            estimate_hours: number | null;
+            /** Format: double */
+            actual_hours: number | null;
+            /**
+             * Format: date
+             * @description **`date` 列であって時刻を持たない**（DbDesign.md 6.6）。画面は
+             *     `new Date()` を通さずに整形すること——UTC より西の地域で前日へずれる。
+             * @example 2026-08-09
+             */
+            start_date: string | null;
+            /**
+             * Format: date
+             * @example 2026-08-14
+             */
+            due_date: string | null;
+            /**
+             * Format: date-time
+             * @description **ステータス遷移の副作用としてのみ動く**（DbDesign.md 6.6）。直接は更新できない。
+             */
+            closed_at: string | null;
+            /** Format: int32 */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description **`ticket_tag` の付け外しでも動く**（9.2.5）。動かさないと、タグだけを
+             *     変えた場合に一覧の `ETag` が変わらない。
+             */
+            updated_at: string;
+        };
+        /**
+         * @description チケットの一覧（ApiDesign.md 9.2.2）。**`page` / `per_page` / `total` /
+         *     `total_pages` は規約どおり返す**（2.6）。画面がページャを出さないだけである
+         *     （9.2.3）。`total > per_page` になったとき、画面は件数とともに
+         *     「フィルタで絞り込んでください」を表示する。**サーバは 200 件で打ち切るだけで、
+         *     エラーにはしない。**
+         */
+        TicketList: {
+            items: components["schemas"]["Ticket"][];
+            page: number;
+            per_page: number;
+            total: number;
+            total_pages: number;
+        };
+        /** @description 親チケットの要約（ApiDesign.md 9.5.1 の `parent`）。 */
+        TicketBrief: {
+            /** Format: int32 */
+            seq: number;
+            title: string;
+            /** @enum {string} */
+            type: "epic" | "story" | "task" | "bug" | "phase" | "wbs";
+            status: components["schemas"]["TicketStatus"];
+        };
+        /** @description 直下の子の要約（ApiDesign.md 9.5.1 の `children`）。**孫は含めない。** */
+        TicketChild: {
+            /** Format: int32 */
+            seq: number;
+            title: string;
+            /** @enum {string} */
+            type: "epic" | "story" | "task" | "bug" | "phase" | "wbs";
+            status: components["schemas"]["TicketStatus"];
+            assignee: components["schemas"]["ActorRef"] | null;
+        };
+        /**
+         * @description チケット1件の詳細（ApiDesign.md 9.5.1）。**9.2 の `items[]` に6項目を加えたもの。**
+         *     手順16b では `POST /tickets` の応答として返る（9.3 が「応答は 9.5 の `GET` と
+         *     同形式」と定めるため）。`GET /tickets/:seq` そのものは手順17 で足す。
+         *
+         *     **`dod` / `links` / `comment_count` は手順18 まで空・0 である。** 中身を作るのは
+         *     9.9 / 9.10 / 9.8 だが、作りたてのチケットではいずれも空・0 が正しい値であり、
+         *     手順18 で項目が生えたように見せないほうが消費者にとって安定する。
+         */
+        TicketDetail: components["schemas"]["Ticket"] & {
+            /** @description 本文（Markdown ソース）。 */
+            body_md: string | null;
+            parent: components["schemas"]["TicketBrief"] | null;
+            children: components["schemas"]["TicketChild"][];
+            /** @description 完了条件（ApiDesign.md 9.9）。**要素の形は手順18 で決まる。** */
+            dod: unknown[];
+            /** @description 関連リンク（ApiDesign.md 9.10）。**要素の形は手順18 で決まる。** */
+            links: unknown[];
+            /**
+             * Format: int64
+             * @description コメント件数（本文は含めない。ApiDesign.md 9.8）。
+             */
+            comment_count: number;
+        };
+        /**
+         * @description チケットの作成（ApiDesign.md 9.3）。**`status_key` / `sort_key` / `seq` /
+         *     `reporter_id` / `version` は含められない**——いずれもサーバが決める。
+         */
+        CreateTicketRequest: {
+            /** @enum {string} */
+            type: "epic" | "story" | "task" | "bug" | "phase" | "wbs";
+            /** @description 前後の空白は取り除かれる。 */
+            title: string;
+            body_md?: string;
+            /** @enum {string} */
+            priority?: "lowest" | "low" | "medium" | "high" | "highest";
+            /**
+             * @description **当該プロジェクトの `project_member` であること。** 違えば 422
+             *     （`details[].code = "not_a_member"`）。
+             */
+            assignee_id?: string;
+            /**
+             * Format: int32
+             * @description 同一プロジェクトに存在すること（9.1）。
+             */
+            parent_seq?: number;
+            /** @description すべて当該プロジェクトのタグであること。重複は畳まれる。 */
+            tag_ids?: string[];
+            /** @description 当該プロジェクトのスプリントであること。 */
+            sprint_id?: string;
+            /** Format: double */
+            estimate_point?: number;
+            /** Format: double */
+            estimate_hours?: number;
+            /**
+             * Format: date
+             * @description `YYYY-MM-DD`。時刻つきの文字列は受け付けない。
+             */
+            start_date?: string;
+            /**
+             * Format: date
+             * @description `start_date` と両方あるとき `start_date <= due_date`
+             *     （DbDesign.md 6.6 の `ck_ticket_dates`）。
+             */
+            due_date?: string;
+        };
+        /**
+         * @description 並べ替えの指定（ApiDesign.md 9.4）。
+         *
+         *     | 指定 | 意味 |
+         *     |---|---|
+         *     | `{"after_seq": 44}` | 44 の直後へ |
+         *     | `{"before_seq": 44}` | 44 の直前へ |
+         *     | `{"after_seq": 44, "before_seq": 12}` | 44 と 12 の間へ |
+         *     | `{"position": "first"}` | 先頭へ |
+         *     | `{"position": "last"}` | 末尾へ |
+         *
+         *     `position` と `after_seq` / `before_seq` の同時指定は 422。いずれも無い場合も 422。
+         *     **動かすチケット自身を基準にはできない**（422）。
+         */
+        MoveTicketRequest: {
+            /** Format: int32 */
+            after_seq?: number;
+            /** Format: int32 */
+            before_seq?: number;
+            /** @enum {string} */
+            position?: "first" | "last";
+        };
+        /** @description 並べ替えの結果（ApiDesign.md 9.4）。 */
+        MoveTicketResult: {
+            /** Format: int32 */
+            seq: number;
+            /** @example 0|hzzzr: */
+            sort_key: string;
+            /**
+             * Format: int32
+             * @description **`If-Match` を要求しないが、`version` は +1 される**（9.4）。
+             */
+            version: number;
+            /**
+             * @description 隣接する2つのキーの間に新しいキーを作れず、プロジェクト全体の `sort_key` を
+             *     振り直したことを示す。**`true` のとき、クライアントは一覧を取り直す**
+             *     （手元の `sort_key` がすべて古くなっている）。
+             *     **振り直しは他のチケットの `version` を上げない**——全行に触るので、
+             *     上げると開いている詳細画面がすべて 409 になる。
+             */
+            rebalanced: boolean;
+        };
+        /**
          * @description ApiDesign.md 2.5.1 の15コード。
          * @enum {string}
          */
@@ -1892,6 +2293,19 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /**
+         * @description チケットが存在しない（`not_found`）。**他プロジェクトの番号も同じ 404 に寄せる**
+         *     ——クエリの `WHERE` が `project_id` を含むため区別が付かず、区別する必要もない
+         *     （Design.md 6.4.5）。
+         */
+        TicketNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description レート制限（`rate_limited`。ApiDesign.md 2.9）。 */
         RateLimited: {
             headers: {
@@ -1933,6 +2347,13 @@ export interface components {
         TagID: string;
         /** @description スプリントの ULID（ApiDesign.md 9.1）。 */
         SprintID: string;
+        /**
+         * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+         *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+         *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+         *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+         */
+        TicketSeq: number;
         /**
          * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
          *     一致させ、開発時のデバッグを容易にするため。
@@ -2857,6 +3278,181 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["SprintNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listTickets: {
+        parameters: {
+            query?: {
+                /**
+                 * @description ワークフローのステータスキー。カンマ区切りで複数指定は OR。
+                 * @example todo,in_progress
+                 */
+                status?: string;
+                /**
+                 * @description `todo` / `in_progress` / `review` / `done`。カンマ区切りは OR。
+                 *     **ワークフローが違うプロジェクトを跨いでも意味が変わらない4値**であり、
+                 *     ダッシュボードの集計とカンバンの列が使う（9.2.1）。
+                 * @example todo,in_progress
+                 */
+                status_category?: string;
+                /**
+                 * @description `epic` / `story` / `task` / `bug` / `phase` / `wbs`。カンマ区切りは OR。
+                 * @example task,bug
+                 */
+                type?: string;
+                /**
+                 * @description 担当者の ULID。`me` で自分、`none` で未割当。カンマ区切りは OR。
+                 * @example me,none
+                 */
+                assignee?: string;
+                /**
+                 * @description `lowest` 〜 `highest`。カンマ区切りは OR。
+                 * @example high,highest
+                 */
+                priority?: string;
+                /** @description タグの ULID（9.11）。`none` で未分類。カンマ区切りは OR。 */
+                tag?: string;
+                /** @description スプリントの ULID（9.12）。`none` で未割当。カンマ区切りは OR。 */
+                sprint?: string;
+                /** @description `true` で `closed_at IS NULL` のもののみ。`false` で完了のみ。 */
+                open?: "true" | "false";
+                /**
+                 * @description `7d` 形式。**今日から N 日以内に期限があるもの（期限超過を含む）**。
+                 *     `due_date IS NULL` は除外する。上限は `3650d`。
+                 * @example 7d
+                 */
+                due_within?: string;
+                /** @description `seq` を指定すると、そのチケットとその全子孫（部分木）に限る。 */
+                parent?: number;
+                /**
+                 * @description 既定は `sort_key`。**`priority` と `status` は意味の順で並ぶ**——
+                 *     `priority` は `lowest`→`highest`、`status` はワークフローの `sort_order` で、
+                 *     キーの辞書順ではない（`high` が `lowest` より前に来ると「優先度で並べた」と
+                 *     読めないため）。
+                 */
+                sort?: "sort_key" | "seq" | "title" | "status" | "priority" | "due_date" | "created_at" | "updated_at";
+                order?: "asc" | "desc";
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description チケットの一覧。 */
+            200: {
+                headers: {
+                    /**
+                     * @description 弱い検証子（`W/"tkt-<ハッシュ>-<件数>-<最終更新>"`。ApiDesign.md 9.2.5）。
+                     * @example W/"tkt-a3f19c2b-48-1723372992000000000"
+                     */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTicketRequest"];
+            };
+        };
+        responses: {
+            /** @description 作成されたチケット（9.5 の `GET` と同形式）。`Location` に作成先のURLを返す。 */
+            201: {
+                headers: {
+                    /** @example /api/v1/projects/my-app/tickets/31 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    moveTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveTicketRequest"];
+            };
+        };
+        responses: {
+            /**
+             * @description 動かした結果。**`rebalanced` が `true` のときはクライアントが一覧を取り直す**
+             *     ——手元の `sort_key` がすべて古くなっている。
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MoveTicketResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];

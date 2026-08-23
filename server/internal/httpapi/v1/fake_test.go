@@ -57,6 +57,9 @@ type fakeQuerier struct {
 	tokenRow gen.FindAccessTokenByHashRow
 	tokenErr error
 
+	// チケット（手順16b）
+	ticket ticketFakeState
+
 	// タグ・スプリント（手順16a）
 	tagRows              []gen.ListTagsByProjectRow
 	tagByID              map[string]gen.GetTagByIDRow
@@ -1055,4 +1058,254 @@ func (q *fakeQuerier) DeleteSprint(_ context.Context, arg gen.DeleteSprintParams
 	}
 	delete(q.sprintByID, arg.ID)
 	return 1, nil
+}
+
+// ── チケット（手順16b。ApiDesign.md 9.2 / 9.3 / 9.4）────────────────
+//
+// **書いてから読み直す形をフェイクでも保つ。** POST /tickets の応答は
+// 9.5 形式であり、ハンドラは作成後に GetTicketBySeq で読み直す（9.3）。
+// 書き込みが読み取りに反映されないと、作成の応答を検証できない。
+
+// ticketFakeState はチケット系のフェイクが持つ状態。
+// fakeQuerier の項目が増えすぎるのを避けてひとまとめにしてある。
+type ticketFakeState struct {
+	rows       []gen.ListTicketsRow
+	listParams []gen.ListTicketsParams
+	listErr    error
+
+	tagRows  []gen.ListTagsForTicketsRow
+	tagIDsIn [][]string
+
+	bySeq     map[int32]gen.GetTicketBySeqRow
+	briefByID map[string]gen.GetTicketBriefRow
+	children  []gen.ListTicketChildrenBriefRow
+	idBySeq   map[int32]string
+
+	nextSeq          int32
+	initialStatusKey string
+	created          []gen.CreateTicketParams
+	createErr        error
+	attached         []gen.AttachTicketTagParams
+
+	projectTagCount int64
+	sprintExists    bool
+	isMember        bool
+
+	// 並び順は sortRowBySeq から計算する（固定値を持たない）。
+	sortRowBySeq map[int32]gen.GetTicketSortRowRow
+	idsInOrder   []string
+
+	moved      []gen.MoveTicketParams
+	setSortKey []gen.SetTicketSortKeyParams
+
+	activities []gen.InsertActivityParams
+}
+
+func (q *fakeQuerier) ListTickets(_ context.Context, arg gen.ListTicketsParams) ([]gen.ListTicketsRow, error) {
+	q.opLog = append(q.opLog, "ListTickets")
+	q.ticket.listParams = append(q.ticket.listParams, arg)
+	if q.ticket.listErr != nil {
+		return nil, q.ticket.listErr
+	}
+	return q.ticket.rows, nil
+}
+
+func (q *fakeQuerier) ListTagsForTickets(_ context.Context, ids []string) ([]gen.ListTagsForTicketsRow, error) {
+	q.opLog = append(q.opLog, "ListTagsForTickets")
+	q.ticket.tagIDsIn = append(q.ticket.tagIDsIn, ids)
+	return q.ticket.tagRows, nil
+}
+
+func (q *fakeQuerier) GetTicketBySeq(_ context.Context, arg gen.GetTicketBySeqParams) (gen.GetTicketBySeqRow, error) {
+	q.opLog = append(q.opLog, "GetTicketBySeq")
+	row, ok := q.ticket.bySeq[arg.Seq]
+	if !ok {
+		return gen.GetTicketBySeqRow{}, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+func (q *fakeQuerier) GetTicketBrief(_ context.Context, id string) (gen.GetTicketBriefRow, error) {
+	q.opLog = append(q.opLog, "GetTicketBrief")
+	row, ok := q.ticket.briefByID[id]
+	if !ok {
+		return gen.GetTicketBriefRow{}, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+func (q *fakeQuerier) ListTicketChildrenBrief(context.Context, pgtype.Text) ([]gen.ListTicketChildrenBriefRow, error) {
+	q.opLog = append(q.opLog, "ListTicketChildrenBrief")
+	return q.ticket.children, nil
+}
+
+func (q *fakeQuerier) FindTicketIDBySeq(_ context.Context, arg gen.FindTicketIDBySeqParams) (string, error) {
+	q.opLog = append(q.opLog, "FindTicketIDBySeq")
+	id, ok := q.ticket.idBySeq[arg.Seq]
+	if !ok {
+		return "", pgx.ErrNoRows
+	}
+	return id, nil
+}
+
+func (q *fakeQuerier) NextTicketSeq(context.Context, string) (int32, error) {
+	q.opLog = append(q.opLog, "NextTicketSeq")
+	return q.ticket.nextSeq, nil
+}
+
+func (q *fakeQuerier) ResolveInitialStatusKey(context.Context, string) (string, error) {
+	q.opLog = append(q.opLog, "ResolveInitialStatusKey")
+	return q.ticket.initialStatusKey, nil
+}
+
+func (q *fakeQuerier) CreateTicket(_ context.Context, arg gen.CreateTicketParams) error {
+	q.opLog = append(q.opLog, "CreateTicket")
+	q.ticket.created = append(q.ticket.created, arg)
+	if q.ticket.createErr != nil {
+		return q.ticket.createErr
+	}
+	if q.ticket.bySeq == nil {
+		q.ticket.bySeq = map[int32]gen.GetTicketBySeqRow{}
+	}
+	q.ticket.bySeq[arg.Seq] = gen.GetTicketBySeqRow{
+		ID: arg.ID, Seq: arg.Seq, Type: arg.Type, Title: arg.Title,
+		BodyMd: arg.BodyMd, StatusKey: arg.StatusKey, Priority: arg.Priority,
+		AssigneeID: arg.AssigneeID, ReporterID: arg.ReporterID,
+		EstimatePoint: arg.EstimatePoint, EstimateHours: arg.EstimateHours,
+		StartDate: arg.StartDate, DueDate: arg.DueDate,
+		SprintID: arg.SprintID, SortKey: arg.SortKey,
+		Version: 1, CreatedAt: ts(time.Now()), UpdatedAt: ts(time.Now()),
+	}
+	return nil
+}
+
+func (q *fakeQuerier) AttachTicketTag(_ context.Context, arg gen.AttachTicketTagParams) error {
+	q.opLog = append(q.opLog, "AttachTicketTag")
+	q.ticket.attached = append(q.ticket.attached, arg)
+	return nil
+}
+
+func (q *fakeQuerier) CountProjectTagsByIDs(_ context.Context, _ gen.CountProjectTagsByIDsParams) (int64, error) {
+	q.opLog = append(q.opLog, "CountProjectTagsByIDs")
+	return q.ticket.projectTagCount, nil
+}
+
+func (q *fakeQuerier) SprintExistsInProject(context.Context, gen.SprintExistsInProjectParams) (bool, error) {
+	q.opLog = append(q.opLog, "SprintExistsInProject")
+	return q.ticket.sprintExists, nil
+}
+
+func (q *fakeQuerier) IsProjectMember(context.Context, gen.IsProjectMemberParams) (bool, error) {
+	q.opLog = append(q.opLog, "IsProjectMember")
+	return q.ticket.isMember, nil
+}
+
+// 並び順を引く4本は、固定値ではなく sortRowBySeq から計算する。
+//
+// **振り直し（rebalance）の後にキーが変わることを再現するため**である。固定値を
+// 返すフェイクだと、振り直してももう一度同じ隣が返り、実装が回復するかどうかを
+// 測れない（LEARNINGS #14「検証が意図と違うものを見ていた」）。
+// 空文字は SQL 側の COALESCE(..., '') と同じく「該当なし」を表す。
+
+func (q *fakeQuerier) MinTicketSortKey(context.Context, string) (string, error) {
+	q.opLog = append(q.opLog, "MinTicketSortKey")
+	min := ""
+	for _, key := range q.ticketSortKeys() {
+		if min == "" || key < min {
+			min = key
+		}
+	}
+	return min, nil
+}
+
+func (q *fakeQuerier) MaxTicketSortKey(context.Context, string) (string, error) {
+	q.opLog = append(q.opLog, "MaxTicketSortKey")
+	max := ""
+	for _, key := range q.ticketSortKeys() {
+		if key > max {
+			max = key
+		}
+	}
+	return max, nil
+}
+
+func (q *fakeQuerier) TicketSortKeyAfter(_ context.Context, arg gen.TicketSortKeyAfterParams) (string, error) {
+	q.opLog = append(q.opLog, "TicketSortKeyAfter")
+	out := ""
+	for _, key := range q.ticketSortKeys() {
+		if key > arg.After && (out == "" || key < out) {
+			out = key
+		}
+	}
+	return out, nil
+}
+
+func (q *fakeQuerier) TicketSortKeyBefore(_ context.Context, arg gen.TicketSortKeyBeforeParams) (string, error) {
+	q.opLog = append(q.opLog, "TicketSortKeyBefore")
+	out := ""
+	for _, key := range q.ticketSortKeys() {
+		if key < arg.Before && key > out {
+			out = key
+		}
+	}
+	return out, nil
+}
+
+// ticketSortKeys は登録済みの行が持つ空でない sort_key を返す。
+func (q *fakeQuerier) ticketSortKeys() []string {
+	keys := make([]string, 0, len(q.ticket.sortRowBySeq))
+	for _, row := range q.ticket.sortRowBySeq {
+		if row.SortKey.Valid && row.SortKey.String != "" {
+			keys = append(keys, row.SortKey.String)
+		}
+	}
+	return keys
+}
+
+func (q *fakeQuerier) GetTicketSortRow(_ context.Context, arg gen.GetTicketSortRowParams) (gen.GetTicketSortRowRow, error) {
+	q.opLog = append(q.opLog, "GetTicketSortRow")
+	row, ok := q.ticket.sortRowBySeq[arg.Seq]
+	if !ok {
+		return gen.GetTicketSortRowRow{}, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+func (q *fakeQuerier) ListTicketIDsInSortOrder(context.Context, string) ([]string, error) {
+	q.opLog = append(q.opLog, "ListTicketIDsInSortOrder")
+	return q.ticket.idsInOrder, nil
+}
+
+func (q *fakeQuerier) SetTicketSortKey(_ context.Context, arg gen.SetTicketSortKeyParams) error {
+	q.opLog = append(q.opLog, "SetTicketSortKey")
+	q.ticket.setSortKey = append(q.ticket.setSortKey, arg)
+	// 振り直しの結果を読み取りへ反映する（上の4本が新しいキーを見るため）。
+	for seq, row := range q.ticket.sortRowBySeq {
+		if row.ID == arg.ID {
+			row.SortKey = arg.SortKey
+			q.ticket.sortRowBySeq[seq] = row
+		}
+	}
+	return nil
+}
+
+func (q *fakeQuerier) MoveTicket(_ context.Context, arg gen.MoveTicketParams) (gen.MoveTicketRow, error) {
+	q.opLog = append(q.opLog, "MoveTicket")
+	q.ticket.moved = append(q.ticket.moved, arg)
+	// 実装は RETURNING で seq / version を返す。フェイクでは登録済みの行から引く。
+	// **version は +1 する**（9.4。振り直しの SetTicketSortKey とはここが違う）。
+	for seq, r := range q.ticket.sortRowBySeq {
+		if r.ID == arg.ID {
+			r.SortKey, r.Version = arg.SortKey, r.Version+1
+			q.ticket.sortRowBySeq[seq] = r
+			return gen.MoveTicketRow{Seq: seq, SortKey: arg.SortKey, Version: r.Version}, nil
+		}
+	}
+	return gen.MoveTicketRow{SortKey: arg.SortKey, Version: 1}, nil
+}
+
+func (q *fakeQuerier) InsertActivity(_ context.Context, arg gen.InsertActivityParams) error {
+	q.opLog = append(q.opLog, "InsertActivity")
+	q.ticket.activities = append(q.ticket.activities, arg)
+	return nil
 }

@@ -35,6 +35,13 @@ type SortSpec struct {
 	Allowed      []string // 受け付ける sort の値
 	DefaultSort  string   // sort 未指定時に使う値
 	DefaultOrder string   // order 未指定時に使う値。空なら desc
+
+	// DefaultPerPage は per_page 未指定時に使う値。0 なら 2.6 の既定（25）。
+	//
+	// **エンドポイントごとに変えられるようにしてある**のは、バックログの
+	// GET /projects/:key/tickets だけ既定が 200 だからである（ApiDesign.md 9.2.1）。
+	// あの画面はページャを持たず、フィルタ後の全件を1回で取り切る（9.2.3）。
+	DefaultPerPage int
 }
 
 // Page は解析済みのページネーション指定。
@@ -107,7 +114,10 @@ func ParsePage(r *http.Request, spec SortSpec) (Page, *apierr.Error) {
 		}
 	}
 
-	perPage := DefaultPerPage
+	perPage := spec.DefaultPerPage
+	if perPage == 0 {
+		perPage = DefaultPerPage
+	}
 	if v := q.Get("per_page"); v != "" {
 		n, err := strconv.Atoi(v)
 		switch {
