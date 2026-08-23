@@ -17,9 +17,14 @@ import { useUiStore } from '../stores/ui'
  * 出し分けは 4.3 の表に従う。**オペレータには「管理」セクションの見出しごと
  * 表示しない**（押せないメニューによる混乱を避ける）。
  *
- * 「P2」「P3」の項目（ボード・ガント・承認キュー・システム設定）は
- * Phase 1 では表示しない（4.1）。チケットの件数バッジは、供給する API が
- * 手順16 のため出していない。
+ * 「P2」「P3」の項目（カンバン・ガント・チケット検索・進捗分析・承認キュー・
+ * システム設定）は Phase 1 では表示しない（4.1）。**チケットを見る視点は
+ * 5つあるが（4.1.1）、Phase 1 で実装するのはバックログだけ**である。
+ *
+ * チケットの未完了件数バッジ（4.1 の `[12]`）は出していない。供給は
+ * `GET /tickets?assignee=me&open=true&per_page=1` で可能だが、メニューは
+ * 全画面に出るのでプロジェクトを開くたびに1往復増える。**軽い供給源
+ * （手順19 の `stats`）が入ってから足す**（利用者の判断、2026-08-23）。
  */
 const auth = useAuthStore()
 const ui = useUiStore()
@@ -63,9 +68,14 @@ const showAdmin = computed(() => auth.can('user.manage') || auth.can('auditlog.v
           <span class="icon" aria-hidden="true">▤</span>
           <span v-if="!ui.menuCollapsed" class="label">ダッシュボード</span>
         </RouterLink>
-        <RouterLink class="item" :to="`/p/${projectKey}/tickets`" title="チケット">
-          <span class="icon" aria-hidden="true">☑</span>
-          <span v-if="!ui.menuCollapsed" class="label">チケット</span>
+        <RouterLink
+          v-if="auth.canInProject(projectKey, 'ticket.view')"
+          class="item"
+          :to="`/p/${projectKey}/backlog`"
+          title="バックログ"
+        >
+          <span class="icon" aria-hidden="true">≡</span>
+          <span v-if="!ui.menuCollapsed" class="label">バックログ</span>
         </RouterLink>
         <RouterLink
           v-if="auth.canInProject(projectKey, 'project.edit')"

@@ -1649,3 +1649,80 @@ NOT NULL と推論し、NULL を読めなかった。**単体テストはフェ�
 バックログ画面がそのまま使う。サーバは停止し、`make clean-webui` で `webui/dist` を戻し、
 検証で作った Cookie jar（セッショントークンの平文）は削除した。
 
+
+## 手順16c（バックログ画面）— 2026-08-23
+
+`feature/step-16c-backlog-page`。`GuiDesign.md` 5.4 のバックログ画面を作り、
+ルートを付け替えた。**手順16 の完了条件（一覧・作成・並べ替え・グループ化）をここで満たす。**
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/src/api/tickets.ts` | `listTickets` / `createTicket` / `moveTicket`。種別アイコン・優先度記号・ステータス記号・表示名のマップ（`GuiDesign.md` 5.4 / 8.7 の転記） |
+| `client/src/pages/BacklogPage.vue` | 本体。フィルタ6種・グループ化6軸・ツリー・D&D・4状態・キーボード（`c` / `j` / `k`） |
+| `client/src/components/NewTicketModal.vue` | 新規チケット（5.4.3）。状態の欄を持たない |
+
+### 変更したファイル
+
+| ファイル | 変更 |
+|---|---|
+| `client/src/router/routes.ts` | `/p/:key/backlog` を新設（実画面）／`/p/:key/tickets` をプレースホルダから**クエリを保つリダイレクト**へ／`/p/:key/search`（Phase 2）と `/p/:key/insights`（Phase 3）のプレースホルダを追加／`/p/:key` と `/p/:key/tickets/:seq` の `status` を手順19・17 へ振り直し |
+| `client/src/components/SideMenu.vue` | `☑ チケット` → `≡ バックログ`。リンク先を `/backlog` へ。`ticket.view` で出し分け（4.3）。件数バッジを出さない理由を doc コメントへ |
+| `client/src/components/ProjectSwitcher.vue` | doc コメントの「チケット一覧を見ていたら」→「バックログを見ていたら」 |
+| `client/src/lib/datetime.ts` | `todayPlainDate()` を追加（期限超過の判定用。`toISOString()` を使わない） |
+| `docs/GuiDesign.md` | 5.4 に「期限」「フィルタ」「`[解除]`」の行を新設、「階層表示」「並べ替え」「ソート」「API」を改訂、ワイヤーへの注記を追加。5.4.1 にグループ化中は親子を畳まない旨、5.4.3 に「選択肢の出どころ」の表 |
+| `docs/ApiDesign.md` | 9.14 の `details[].code` に `not_found` を追加 |
+
+**`docs/openapi.yaml` は変更なし**——16c は `client/` だけを触り、API を追加・変更していない。
+
+### 検証結果
+
+| 種別 | 件数 | 内容 |
+|---|---|---|
+| 型・ビルド | PASS | `vue-tsc --noEmit` / `vite build` / `make build`（単一バイナリ） |
+| 単体（`make test`） | 全 PASS（11パッケージ） | `openapi.yaml` のドリフト検出を含む |
+| 実DB結合（`make test-db`） | **全95件 PASS** | 16b から回帰なし |
+| ブラウザ・読み取り（`verify_backlog.py`） | **92件 PASS / 0 FAIL** | ルーティング6・メニュー4・一覧の中身26・階層7・ソート8・フィルタ13・グループ化17・レイアウト実測8（1440px / 900px） |
+| ブラウザ・状態変更（`verify_mutate.py`） | **27件 PASS / 0 FAIL** | モーダルからの作成14・検証エラー3・インデントの打ち切り1・並べ替え9 |
+| タイムゾーン | PASS | `TZ=Asia/Tokyo` / `America/New_York` / `Pacific/Kiritimati` の3つで node により実測。`formatPlainDate` は不変、`new Date()` 経由は New York で前日へずれる、`todayPlainDate()` は Kiritimati で正しく翌日を返す |
+| 目視 | 実施 | 1440px と 900px で6枚（一覧・グループ化・モーダル・空状態・畳んだセクション） |
+
+**期待値は seed の13件から数え上げて書いた**（`type=bug` 1件、`type=epic` 3件、
+`priority=highest` 3件、`assignee=none` 5件、`tag=none` 2件、`status=done` 4件、
+タグのセクションが `設計6 / GUI3 / API5 / MCP連携1 / 未分類2` で表示17行・実数13件）。
+**並び順は API の応答と突き合わせた**——検証側で並べ直さない（`LEARNINGS.md` #25）。
+
+### 検証で見つけた実装の欠陥（3件）
+
+1. **`⠿` のドロップが一度も効かなかった。** `dropOn` が `draggingSeq` を消してから
+   判定関数を呼び、判定側が同じ ref を読み直して必ず `null` を見ていた。掴んだ `seq` を
+   引数で渡す形へ直した。**周囲の3件が「意味のない PASS」になっていた**——何も動かないので
+   「元に戻る」も「別の親へは動かない」も通る
+2. **`.section` というクラス名が `SideMenu.vue`（「管理」の見出し）と衝突した。**
+   scoped スタイルは DOM のクラス名を分けないので、検証の `querySelectorAll('.section')` が
+   両方に当たり **11件が同時に FAIL**。バックログ側を `.group-section` へ改名した
+3. **グループの見出しが「どこまでを覆うか」読めなかった**（自動検証92件は全 PASS）。
+   見出しを地より一段明るい帯（`--pb-elevated`）にした
+
+あわせて**新規チケットモーダルの見積・開始日・期限が折り返し、期限だけが幅いっぱいで
+下に残っていた**のをスクリーンショットで見つけ、見積の基準幅を 130px に固定して1行へ収めた
+（1440px / 900px の両方で3つの `top` が一致することを実測）。
+
+### 検証できなかったこと（2件）
+
+- **権限による出し分け**（`[+ 新規チケット]` は `ticket.create`、`⠿` は `ticket.edit`）。
+  Phase 1 の operator が両方を持つため、**seed の4アカウントすべてが満たす**。
+  実装は入れたが、ブラウザでは負の側を確かめられない
+- **`ProjectSwitcher` の「同じ画面種別を維持する」**（4.4）。seed のプロジェクトが
+  `demo` 1つしかなく、切り替え先が無い。16c では実装を触っていない（コメントのみ）
+
+### 検証で作った資源の後始末
+
+検証が作ったチケット（`seq` 14 以降、2回の実行で計24件）と、それに紐づく `activity` の行を
+削除した。**`activity` は多相参照で FK を持たない**ため、同じトランザクションで消している。
+並べ替えで動いた `seq` 2・3 の `sort_key` と `version` は、**検証前に取った控えと突き合わせて
+元の値へ戻した**（`0|o:` / `0|p:`、version 1）。`diff` で差分ゼロを確認ずみで、demo の
+チケットは seed 直後と同一である。サーバは停止し、`make clean-webui` を実行した。
+スクラッチパッド（検証スクリプト・スクリーンショット・Chrome のプロファイル）はセッションの
+作業領域にあり、リポジトリには残っていない。

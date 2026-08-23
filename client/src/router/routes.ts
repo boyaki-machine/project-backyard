@@ -1,5 +1,6 @@
 import type { RouteRecordRaw } from 'vue-router'
 
+import BacklogPage from '../pages/BacklogPage.vue'
 import ForbiddenPage from '../pages/ForbiddenPage.vue'
 import LoginPage from '../pages/LoginPage.vue'
 import NotFoundPage from '../pages/NotFoundPage.vue'
@@ -76,7 +77,7 @@ export const routes: RouteRecordRaw[] = [
         title: 'プロジェクトダッシュボード',
         projectHeading: 'ダッシュボード',
         docRef: 'GuiDesign.md 5.3',
-        status: 'Phase 1・未着手（docs/PROGRESS.md 手順16以降）',
+        status: 'Phase 1・未着手（docs/PROGRESS.md 手順19）',
         planned: [
           'ステータス別チケット件数',
           '自分の担当（未完了 上位5件）',
@@ -88,24 +89,25 @@ export const routes: RouteRecordRaw[] = [
     },
   },
 
+  // 実画面（GuiDesign.md 5.4）。手順16c で新設した。
+  //
+  // **チケットを見る「視点」はパスで分ける**（3.2）。`?view=` にしないのは、
+  // 視点ごとにメニュー項目・権限・件数バッジを持てるようにするためである。
+  {
+    path: '/p/:key/backlog',
+    component: BacklogPage,
+    meta: { permission: 'ticket.view' },
+  },
+
+  // 画面を持たず /p/:key/backlog へリダイレクトする（GuiDesign.md 3.2）。
+  //
+  // 改訂前はここがチケット一覧だった。**リダイレクトを残すのは、既存の
+  // ブックマークと docs/history/ の記録を壊さないため**である。
+  // **クエリは引き継ぐ**——5.4 のフィルタ条件は URL に載っており、
+  // 落とすと共有されたリンクが素の状態で開く。
   {
     path: '/p/:key/tickets',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'ticket.view',
-      placeholder: {
-        title: 'チケット一覧',
-        docRef: 'GuiDesign.md 5.4',
-        status: 'Phase 1・未着手（docs/PROGRESS.md 手順16）',
-        planned: [
-          '状態・種別・担当・優先度によるフィルタ（条件はURLクエリに反映）',
-          'ID・タイトル・状態・優先度・担当・期限の一覧',
-          '親子関係のインデント表示',
-          '行クリックでチケット詳細へ遷移',
-          '列ヘッダのクリックによるソートとページング',
-        ],
-      },
-    },
+    redirect: (to) => ({ path: `/p/${String(to.params.key)}/backlog`, query: to.query }),
   },
 
   {
@@ -116,7 +118,7 @@ export const routes: RouteRecordRaw[] = [
       placeholder: {
         title: 'チケット詳細',
         docRef: 'GuiDesign.md 5.5',
-        status: 'Phase 1・未着手（docs/PROGRESS.md 手順16）',
+        status: 'Phase 1・未着手（docs/PROGRESS.md 手順17）',
         planned: [
           '説明（Markdownソース＋ライブプレビュー）',
           '完了条件（DoD、Phase 1 は manual 型のみ）',
@@ -238,6 +240,24 @@ export const routes: RouteRecordRaw[] = [
   },
 
   {
+    path: '/p/:key/search',
+    component: PlaceholderPage,
+    meta: {
+      permission: 'ticket.view',
+      placeholder: {
+        title: 'チケット検索',
+        docRef: 'GuiDesign.md 10章',
+        status: 'Phase 2',
+        planned: [
+          '全文検索（DbDesign.md 4.5 の trigram インデックス）',
+          'バックログのフィルタでは辿り着けない「1件を探す」用途に限る',
+          'ApiDesign.md 9.2 に q を足して開ける',
+        ],
+      },
+    },
+  },
+
+  {
     path: '/p/:key/sprints',
     component: PlaceholderPage,
     meta: {
@@ -303,6 +323,27 @@ export const routes: RouteRecordRaw[] = [
   },
 
   // ── Phase 3（GuiDesign.md 10章）─────────────────────────────
+  //
+  // **必要権限は project.view**（3.2）。チケット個々を見ずに集計だけを読む
+  // 画面のため、ticket.view ではない（4.3）。
+  {
+    path: '/p/:key/insights',
+    component: PlaceholderPage,
+    meta: {
+      permission: 'project.view',
+      placeholder: {
+        title: '進捗分析',
+        docRef: 'GuiDesign.md 10章',
+        status: 'Phase 3',
+        planned: [
+          'チケットの消化状況・残存チケットの傾向',
+          'バックログ・カンバン・ガントが「いま何があるか」を見せるのに対し、この画面だけが「どう進んでいるか」を集計で答える',
+          'Requirements.md 3章のベロシティ・見積り精度トラッキング',
+        ],
+      },
+    },
+  },
+
   {
     path: '/p/:key/history',
     component: PlaceholderPage,

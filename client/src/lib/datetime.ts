@@ -50,3 +50,18 @@ export function formatDate(iso: string): string {
 export function formatPlainDate(date: string): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : date
 }
+
+/**
+ * 端末のローカル時刻での今日（`YYYY-MM-DD`）。
+ *
+ * **`toISOString().slice(0, 10)` を使ってはならない。** UTC へ直すため、
+ * UTC より東の地域（Asia/Tokyo を含む）では日付が1日進む。期限超過の判定
+ * （`GuiDesign.md` 5.4）は「利用者にとっての今日」と `date` 列を比べるもの
+ * なので、ローカルの年月日から組み立てる。
+ *
+ * 比較相手はサーバが返す `YYYY-MM-DD` であり、文字列のまま辞書順で比べられる。
+ */
+export function todayPlainDate(): string {
+  const t = new Date()
+  return `${t.getFullYear()}-${p2(t.getMonth() + 1)}-${p2(t.getDate())}`
+}

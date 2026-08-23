@@ -1674,6 +1674,7 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 | `parent_cycle` | 自分自身または自分の子孫を親に指定した（9.5.2） |
 | `unknown_status` | 遷移先がプロジェクトのワークフローに存在しない（9.6） |
 | `not_a_member` | 担当者に指定したアクターがプロジェクトのメンバーでない（9.3） |
+| `not_found` | `parent_seq` / `tag_ids` / `sprint_id` の参照先がこのプロジェクトに無い（9.3） |
 | `use_move_endpoint` | `sort_key` を `PATCH` で変えようとした（9.5.2） |
 | `use_transition_endpoint` | `status_key` / `closed_at` を `PATCH` で変えようとした（9.5.2） |
 | `phase_2_only` | Phase 2 でのみ有効な値を指定した（DoD の `type` など。9.9） |
