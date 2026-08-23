@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vu
 import { useRoute, useRouter } from 'vue-router'
 
 import EmptyState from '../components/EmptyState.vue'
+import EpicFilter from '../components/EpicFilter.vue'
 import NewTicketModal from '../components/NewTicketModal.vue'
 import type { NewTicketDefaults } from '../components/NewTicketModal.vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -13,6 +14,7 @@ import * as tagsApi from '../api/tags'
 import type { Tag } from '../api/tags'
 import * as ticketsApi from '../api/tickets'
 import {
+  backlogTicketTypes,
   priorityLabels,
   priorityMarks,
   priorityOrder,
@@ -22,10 +24,10 @@ import {
 } from '../api/tickets'
 import type {
   CreateTicketRequest,
+  MoveTicketRequest,
   Ticket,
   TicketPriority,
   TicketSort,
-  TicketType,
   SortOrder,
 } from '../api/tickets'
 import { formatPlainDate, todayPlainDate } from '../lib/datetime'
@@ -37,6 +39,13 @@ import { useProjectStore } from '../stores/project'
  *
  * チケットを見る5つの視点（4.1.1）のうち Phase 1 で実装する唯一のもので、
  * **全体を並び順・階層・グループで見て、次に何をやるかを決める**画面である。
+ *
+ * **上下二段**（5.4「二段」）。上が**オンステージ**（いま仕掛り中で、直近の
+ * スプリントで消化すべきもの）、下が**バックログ**（行うべき仕事の保管庫）で、
+ * 段の実体は `ticket.staged_at` である。**行は片方にしか出ない。**
+ *
+ * **エピックは行として出さない**（5.4「エピックをフィルタにする」）。複数選択
+ * できるフィルタになり、絞り込みの実体は `parent`（部分木）である。
  *
  * **ページャを持たない**（5.4.2）。グループ化・階層のインデント・D&D の
  * 並べ替えがいずれもページ境界をまたげないためで、フィルタ後の全件（上限
@@ -87,7 +96,7 @@ const SORTS: TicketSort[] = [
   'updated_at',
 ]
 
-/** フィルタのキー。**API のクエリ名をそのまま使う**（5.4） */
+/** ドロップダウンで選ぶフィルタ。**API のクエリ名をそのまま使う**（5.4） */
 const FILTER_KEYS = ['status', 'type', 'assignee', 'priority', 'tag', 'sprint'] as const
 type FilterKey = (typeof FILTER_KEYS)[number]
 
@@ -101,7 +110,7 @@ function queryValue(name: string): string {
  *
  * `ApiDesign.md` 9.2.1 はカンマ区切りの OR を受け付けるが、5.4 のワイヤーの
  * フィルタ行は `[すべて ▾]` の単一ドロップダウンで、複数選択のUIを持たない。
- * 必要になったらここを配列にすれば API 側の変更は要らない。
+ * **複数選択を持つのはエピックだけ**（下の `epicSeqs`）。
  */
 const filters = computed<Record<FilterKey, string>>(() => ({
   status: queryValue('status'),
@@ -111,6 +120,19 @@ const filters = computed<Record<FilterKey, string>>(() => ({
   tag: queryValue('tag'),
   sprint: queryValue('sprint'),
 }))
+
+/**
+ * エピックフィルタの選択（5.4「エピックをフィルタにする」）。
+ *
+ * **URL 上の実体は `parent` のカンマ区切り**である（`ApiDesign.md` 9.2.1）。
+ * 種別ではなく部分木で絞るので、`epic` という専用パラメータは持たない。
+ */
+const epicSeqs = computed<number[]>(() =>
+  queryValue('parent')
+    .split(',')
+    .map((v) => Number(v))
+    .filter((n) => Number.isInteger(n) && n > 0),
+)
 
 const sort = computed<TicketSort>(() => {
   const v = queryValue('sort') as TicketSort
@@ -128,6 +150,7 @@ const group = computed<GroupAxis>(() => {
 const isPristine = computed(
   () =>
     FILTER_KEYS.every((k) => filters.value[k] === '') &&
+    epicSeqs.value.length === 0 &&
     group.value === '' &&
     sort.value === 'sort_key' &&
     order.value === 'asc',
@@ -189,6 +212,8 @@ const error = ref<ApiError | null>(null)
 
 const tags = ref<Tag[]>([])
 const sprints = ref<Sprint[]>([])
+/** エピックの選択肢（5.4「フィルタ」）。タグ・スプリントと同じ「語彙の取得」である */
+const epics = ref<Ticket[]>([])
 
 /** 操作の結果は操作した場所に出す（6.4）。作成と並べ替えで1つの欄を使い回す */
 const result = ref('')
@@ -217,6 +242,11 @@ async function loadTickets(): Promise<void> {
   try {
     const res = await ticketsApi.listTickets(projectKey.value, {
       ...filters.value,
+      // **種別が「すべて」のときは `story,task` を送る**（5.4）。エピックを
+      // 画面側で捨てると、下部に出す総件数（サーバの `total`）と食い違う。
+      type: filters.value.type === '' ? backlogTicketTypes.join(',') : filters.value.type,
+      // エピックフィルタの実体（9.2.1）。空なら `listTickets` がキーごと落とす
+      parent: epicSeqs.value.join(','),
       sort: sort.value,
       order: order.value,
     })
@@ -242,12 +272,34 @@ async function loadTickets(): Promise<void> {
  * **一覧の取得と直列にしない**——タグ名が無くても行は読めるので、
  * 一覧を待たせる理由が無い（`UsersPage` のロール取得と同じ扱い）。
  * 失敗しても画面は止めず、その軸の選択肢が空になるだけにする。
+ *
+ * **エピックだけは一覧と同じエンドポイントから取る**（5.4）。他のフィルタを
+ * 掛けない——絞り込みの結果に関わらず、選択肢は常に全エピックである。
  */
 async function loadVocabulary(): Promise<void> {
   const key = projectKey.value
-  const [t, s] = await Promise.allSettled([tagsApi.listTags(key), sprintsApi.listSprints(key)])
+  const [t, s, e] = await Promise.allSettled([
+    tagsApi.listTags(key),
+    sprintsApi.listSprints(key),
+    ticketsApi.listTickets(key, { type: 'epic' }),
+  ])
   if (t.status === 'fulfilled') tags.value = t.value.items
   if (s.status === 'fulfilled') sprints.value = s.value.items
+  if (e.status === 'fulfilled') epics.value = e.value.items
+}
+
+const epicSeqSet = computed(() => new Set(epics.value.map((e) => e.seq)))
+
+/**
+ * 段に置けるか（`ApiDesign.md` 9.4.1）。**表示上のトップレベルだけ**——
+ * 親を持たないもの、または**親がエピックのもの**。
+ *
+ * サーバも同じ検証をして 422 `not_stageable` を返すが、ここで見るのは
+ * **落とせない行の上でカーソルを禁止の形にする**ためである。
+ * 判定に親の種別が要るので、エピック一覧（語彙）を使う。
+ */
+function isStageable(t: Ticket): boolean {
+  return t.parent_seq === null || epicSeqSet.value.has(t.parent_seq)
 }
 
 // ── 行の組み立て ─────────────────────────────────────────────
@@ -256,16 +308,29 @@ interface Row {
   ticket: Ticket
   /** インデントの段数。0 がトップレベル */
   depth: number
+  /**
+   * **結果の中に子がいるか。** `has_children`（プロジェクト内に子がいるか）は
+   * 使わない——絞り込みで子が落ちた行に、押しても何も起きないキャレットが出る。
+   */
+  hasChildren: boolean
 }
 
 interface Section {
   key: string
   label: string
   rows: Row[]
+  /** **二段のときだけ値を持つ。** `true` がオンステージ、`false` がバックログ */
+  stage?: boolean
 }
 
 /** インデントは5段までで打ち切る（5.4）。それ以深は同じ深さに置く */
 const MAX_DEPTH = 5
+
+/**
+ * 二段で出すか（5.4「二段」）。**グループ化を選んだら1つの表に戻す**（5.4.1）
+ * ——二段とセクションの入れ子は、上下どちらのセクションへ落としたかが読めない。
+ */
+const twoTier = computed(() => group.value === '')
 
 /**
  * ツリーに組み直すのは**グループ化が「なし」かつソートが `sort_key` の昇順**の
@@ -280,11 +345,58 @@ const treeMode = computed(
 )
 
 /**
+ * 段ごとに振り分ける（5.4「二段」）。
+ *
+ * **上げた行の配下は、どちらの段にも行として出さない**（5.4「配下の行き先」。
+ * 利用者の判断、2026-08-23）。親と一緒に運ばれた以上、片方の段にだけ子が
+ * 残ると上下を見比べる作業がここで復活する。**グループ化に切り替えると
+ * 段の軸が消えるので、伏せた行もふたたび出る。**
+ */
+function splitByStage(items: Ticket[]): { staged: Ticket[]; backlog: Ticket[] } {
+  const childrenOf = new Map<number, Ticket[]>()
+  for (const t of items) {
+    if (t.parent_seq === null) continue
+    const siblings = childrenOf.get(t.parent_seq)
+    if (siblings) siblings.push(t)
+    else childrenOf.set(t.parent_seq, [t])
+  }
+
+  const carried = new Set<number>()
+  const bury = (seq: number): void => {
+    for (const kid of childrenOf.get(seq) ?? []) {
+      if (carried.has(kid.seq)) continue
+      carried.add(kid.seq)
+      bury(kid.seq)
+    }
+  }
+  for (const t of items) if (t.staged_at !== null) bury(t.seq)
+
+  const staged: Ticket[] = []
+  const backlog: Ticket[] = []
+  for (const t of items) {
+    if (carried.has(t.seq)) continue
+    if (t.staged_at !== null) staged.push(t)
+    else backlog.push(t)
+  }
+  return { staged, backlog }
+}
+
+const staged = computed(() => splitByStage(tickets.value))
+
+/** 出していない配下の件数。総件数との差を画面で説明するために数える */
+const carriedCount = computed(() =>
+  twoTier.value
+    ? tickets.value.length - staged.value.staged.length - staged.value.backlog.length
+    : 0,
+)
+
+/**
  * `parent_seq` からツリーを組む。
  *
  * **親が結果に含まれていない子はトップレベルに並べる**（`ApiDesign.md` 9.2.4）。
  * サーバはフィルタを行単位で適用し、親を補完しない——補完すると、フィルタに
- * 合致しない行が一覧に現れて `total` と表示件数が食い違う。
+ * 合致しない行が一覧に現れて `total` と表示件数が食い違う。**エピックを行から
+ * 外す帰結として、エピック配下のチケットはここでトップレベルになる。**
  */
 function buildTree(items: Ticket[]): Row[] {
   const present = new Set(items.map((t) => t.seq))
@@ -302,14 +414,28 @@ function buildTree(items: Ticket[]): Row[] {
   }
 
   const rows: Row[] = []
-  const emitted = new Set<number>()
+  // **「行として出した」と「根から辿り着けた」を分けて持つ。** 畳んだ行の
+  // 配下は出さないが辿り着けてはいるので、末尾の取りこぼし救済に混ぜない。
+  const reached = new Set<number>()
+
+  const markReached = (list: Ticket[]): void => {
+    for (const t of list) {
+      if (reached.has(t.seq)) continue
+      reached.add(t.seq)
+      const kids = childrenOf.get(t.seq)
+      if (kids) markReached(kids)
+    }
+  }
+
   const walk = (list: Ticket[], depth: number): void => {
     for (const t of list) {
-      if (emitted.has(t.seq)) continue
-      emitted.add(t.seq)
-      rows.push({ ticket: t, depth: Math.min(depth, MAX_DEPTH) })
+      if (reached.has(t.seq)) continue
+      reached.add(t.seq)
       const kids = childrenOf.get(t.seq)
-      if (kids) walk(kids, depth + 1)
+      rows.push({ ticket: t, depth: Math.min(depth, MAX_DEPTH), hasChildren: kids !== undefined })
+      if (kids === undefined) continue
+      if (treeCollapsed.value.has(t.seq)) markReached(kids)
+      else walk(kids, depth + 1)
     }
   }
   walk(roots, 0)
@@ -317,16 +443,15 @@ function buildTree(items: Ticket[]): Row[] {
   // 親子が輪になっていると根から辿り着けない。サーバは `parent_cycle` で
   // 弾いている（9.5.2）が、**行を落として件数と食い違わせない**ようにする。
   for (const t of items) {
-    if (!emitted.has(t.seq)) rows.push({ ticket: t, depth: 0 })
+    if (!reached.has(t.seq)) rows.push({ ticket: t, depth: 0, hasChildren: false })
   }
   return rows
 }
 
-const rows = computed<Row[]>(() =>
-  treeMode.value
-    ? buildTree(tickets.value)
-    : tickets.value.map((t) => ({ ticket: t, depth: 0 })),
-)
+/** ツリーを組まないときの行。インデントもキャレットも持たない */
+function flatRows(items: Ticket[]): Row[] {
+  return items.map((t) => ({ ticket: t, depth: 0, hasChildren: false }))
+}
 
 /**
  * グループ化の軸ごとに、行がどのセクションへ入るかを返す。
@@ -366,12 +491,13 @@ function sectionsOf(t: Ticket): { key: string; label: string }[] {
 /**
  * 親チケットの見出し。
  *
- * **フィルタで親が落ちているとタイトルが手元に無い。** その場合は一覧と同じ
- * `-12` の形（9.1）で出す——「不明」と書くより、詳細を開ける番号のほうが役に立つ。
+ * **エピックは一覧に出ないが、語彙として手元にある**ので名前を引ける。
+ * どちらにも無い場合は完全形の ID で出す（5.4「ID列」）——「不明」と書くより、
+ * 詳細を開ける番号のほうが役に立つ。
  */
 function parentLabel(seq: number): string {
-  const parent = tickets.value.find((t) => t.seq === seq)
-  return parent ? parent.title : `-${seq}`
+  const parent = tickets.value.find((t) => t.seq === seq) ?? epics.value.find((e) => e.seq === seq)
+  return parent ? parent.title : `${projectKey.value}-${seq}`
 }
 
 /**
@@ -382,7 +508,7 @@ function parentLabel(seq: number): string {
 function sectionOrder(): string[] {
   switch (group.value) {
     case 'parent':
-      return ['top', ...tickets.value.map((t) => String(t.seq))]
+      return ['top', ...epics.value.map((e) => String(e.seq)), ...tickets.value.map((t) => String(t.seq))]
     case 'tag':
       return [...tags.value.map((t) => t.id), 'none']
     case 'sprint':
@@ -397,11 +523,23 @@ function sectionOrder(): string[] {
 }
 
 const sections = computed<Section[]>(() => {
-  if (group.value === '') return [{ key: '', label: '', rows: rows.value }]
+  // 二段（5.4）。**オンステージはフラットな消化順リスト**で、ツリーを組まない
+  // ——段に置けるのは表示上のトップレベルだけなので、子の行がそもそも来ない。
+  if (twoTier.value) {
+    return [
+      { key: 'staged', label: 'オンステージ', rows: flatRows(staged.value.staged), stage: true },
+      {
+        key: 'backlog',
+        label: 'バックログ',
+        rows: treeMode.value ? buildTree(staged.value.backlog) : flatRows(staged.value.backlog),
+        stage: false,
+      },
+    ]
+  }
 
   const buckets = new Map<string, Section>()
   const seen: string[] = []
-  for (const row of rows.value) {
+  for (const row of flatRows(tickets.value)) {
     for (const { key, label } of sectionsOf(row.ticket)) {
       const bucket = buckets.get(key)
       if (bucket) {
@@ -424,27 +562,36 @@ const sections = computed<Section[]>(() => {
 
 const COLLAPSE_KEY = 'pb.backlog_collapsed'
 
-/** 開閉はプロジェクトと軸の組ごとに覚える。軸を変えるとセクションの顔ぶれが変わる */
+/**
+ * 開閉はプロジェクトと軸の組ごとに覚える。軸を変えるとセクションの顔ぶれが
+ * 変わるためで、**二段（軸「なし」）の `staged` / `backlog` も同じ器に入る。**
+ */
 const collapseScope = computed(() => `${projectKey.value}:${group.value}`)
 
 const collapsed = ref<Set<string>>(new Set())
 
-function readCollapseStore(): Record<string, string[]> {
+function readStore(key: string): Record<string, unknown> {
   try {
-    const raw = localStorage.getItem(COLLAPSE_KEY)
+    const raw = localStorage.getItem(key)
     const parsed: unknown = raw === null ? {} : JSON.parse(raw)
-    return typeof parsed === 'object' && parsed !== null
-      ? (parsed as Record<string, string[]>)
-      : {}
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {}
   } catch {
     // 壊れた値が入っていても画面は開く。開閉は失われてよい情報である
     return {}
   }
 }
 
+function writeStore(key: string, value: Record<string, unknown>): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // 保存できなくても画面の開閉は効いている（プライベートモード等）
+  }
+}
+
 function loadCollapsed(): void {
-  const stored = readCollapseStore()[collapseScope.value]
-  collapsed.value = new Set(Array.isArray(stored) ? stored : [])
+  const stored = readStore(COLLAPSE_KEY)[collapseScope.value]
+  collapsed.value = new Set(Array.isArray(stored) ? (stored as string[]) : [])
 }
 
 function toggleSection(key: string): void {
@@ -453,13 +600,38 @@ function toggleSection(key: string): void {
   else next.add(key)
   collapsed.value = next
 
-  const store = readCollapseStore()
+  const store = readStore(COLLAPSE_KEY)
   store[collapseScope.value] = [...next]
-  try {
-    localStorage.setItem(COLLAPSE_KEY, JSON.stringify(store))
-  } catch {
-    // 保存できなくても画面の開閉は効いている（プライベートモード等）
-  }
+  writeStore(COLLAPSE_KEY, store)
+}
+
+// ── ツリーの折りたたみ（5.4「折りたたみ」）───────────────────
+
+/**
+ * **セクションの開閉とは別のキーに置く**（5.4「折りたたみ」）。セクションは
+ * グループ化の軸ごとに顔ぶれが変わるが、**ツリーの開閉は軸に依らない**。
+ * 1つに混ぜると、軸を変えたときにツリーの開閉まで巻き添えになる。
+ */
+const TREE_COLLAPSE_KEY = 'pb.backlog_tree_collapsed'
+
+const treeCollapsed = ref<Set<number>>(new Set())
+
+function loadTreeCollapsed(): void {
+  const stored = readStore(TREE_COLLAPSE_KEY)[projectKey.value]
+  treeCollapsed.value = new Set(
+    Array.isArray(stored) ? stored.filter((v): v is number => typeof v === 'number') : [],
+  )
+}
+
+function toggleTree(seq: number): void {
+  const next = new Set(treeCollapsed.value)
+  if (next.has(seq)) next.delete(seq)
+  else next.add(seq)
+  treeCollapsed.value = next
+
+  const store = readStore(TREE_COLLAPSE_KEY)
+  store[projectKey.value] = [...next]
+  writeStore(TREE_COLLAPSE_KEY, store)
 }
 
 // ── 表示のための小さな関数 ───────────────────────────────────
@@ -483,6 +655,11 @@ function assigneeMark(t: Ticket): string {
 /** 件数は端末の設定に依らない形で区切る（`ja-JP` を明示する） */
 function withComma(n: number): string {
   return n.toLocaleString('ja-JP')
+}
+
+/** チケットIDは**完全形**で出す（5.4「ID列」）。`-31` は負の数に見える */
+function fullId(t: Ticket): string {
+  return `${projectKey.value}-${t.seq}`
 }
 
 const skeletonRows = computed(() => Math.min(Math.max(tickets.value.length, 5), 10))
@@ -510,39 +687,56 @@ function openRow(t: Ticket, e: MouseEvent): void {
   void router.push(path)
 }
 
-/**
- * ID 列は `-31` と接尾だけを表示し、**コピー時は `my-app-31` の完全形**にする（5.4）。
- *
- * 表示を長くせずに、貼り付け先（チャット・コミットメッセージ）で通じる形を渡す。
- */
-function onCopyId(t: Ticket, e: ClipboardEvent): void {
-  e.clipboardData?.setData('text/plain', `${projectKey.value}-${t.seq}`)
-  e.preventDefault()
-}
-
-// ── 並べ替え（`⠿` のドラッグ。`ApiDesign.md` 9.4）────────────
+// ── 並べ替えと段の行き来（`⠿` のドラッグ。`ApiDesign.md` 9.4）─
 
 /**
  * 掴めるのは**ソートが `sort_key` の昇順のとき**だけである（5.4）。
  * 他の並びでは、画面上の位置と `after_seq` の意味が一致しない。
  */
-const canReorder = computed(() => canEdit.value && sort.value === 'sort_key' && order.value === 'asc')
+const canReorder = computed(
+  () => canEdit.value && sort.value === 'sort_key' && order.value === 'asc',
+)
 
 const draggingSeq = ref<number | null>(null)
 
+function sourceOf(seq: number | null): Ticket | undefined {
+  return seq === null ? undefined : tickets.value.find((t) => t.seq === seq)
+}
+
 /**
- * ドロップを受けてよい相手か。
+ * 行の上へ落としてよいか。
  *
- * `move` は `sort_key` だけを変えて親子は変えない（9.4）ので、**別の親の下へ
- * 落としても表示は動かない**。ツリー表示中は同じ親を持つ行、グループ化中は
- * 同じセクション内の行に限る。
+ * | 場面 | 落とせる相手 |
+ * |---|---|
+ * | 同じ段のオンステージ | どの行でもよい（全行が表示上のトップレベルで、親を問わない） |
+ * | 同じ段のバックログ | **同じ親を持つ行**——`move` は `sort_key` だけを変えて親子は変えない（9.4） |
+ * | 段をまたぐ | **段に置ける行**だけ、かつ着地先は移動先の段の**トップレベルの行** |
+ * | グループ化中 | **同じセクション内の行** |
  */
-function canDropOn(sourceSeq: number | null, target: Ticket, sectionKey: string): boolean {
-  if (sourceSeq === null || sourceSeq === target.seq) return false
-  const source = tickets.value.find((t) => t.seq === sourceSeq)
-  if (source === undefined) return false
-  if (treeMode.value) return source.parent_seq === target.parent_seq
-  return sectionsOf(source).some((s) => s.key === sectionKey)
+function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolean {
+  const source = sourceOf(sourceSeq)
+  if (source === undefined || source.seq === row.ticket.seq) return false
+
+  if (section.stage !== undefined) {
+    if ((source.staged_at !== null) === section.stage) {
+      return section.stage ? true : source.parent_seq === row.ticket.parent_seq
+    }
+    return isStageable(source) && row.depth === 0
+  }
+  return sectionsOf(source).some((s) => s.key === section.key)
+}
+
+/**
+ * 段そのもの（見出しと末尾の帯）へ落としてよいか。**その段の末尾へ置く。**
+ *
+ * 空の段には基準にできる行が無いので、この落とし場所が無いと最初の1件を
+ * 上げられない（`ApiDesign.md` 9.4.1 が `position` を段の中で解釈する理由）。
+ */
+function canDropOnSection(sourceSeq: number | null, section: Section): boolean {
+  const source = sourceOf(sourceSeq)
+  if (source === undefined || section.stage === undefined) return false
+  if ((source.staged_at !== null) === section.stage) return true
+  return isStageable(source)
 }
 
 /**
@@ -552,51 +746,55 @@ function canDropOn(sourceSeq: number | null, target: Ticket, sectionKey: string)
  * これで**落とせない行の上ではカーソルが禁止の形になる**。すべて受け取って
  * から弾くと、落とせるように見えて何も起きない。
  */
-function onDragOver(e: DragEvent, target: Ticket, sectionKey: string): void {
-  if (canDropOn(draggingSeq.value, target, sectionKey)) e.preventDefault()
+function onDragOverRow(e: DragEvent, row: Row, section: Section): void {
+  if (canDropOn(draggingSeq.value, row, section)) e.preventDefault()
+}
+
+function onDragOverSection(e: DragEvent, section: Section): void {
+  if (canDropOnSection(draggingSeq.value, section)) e.preventDefault()
+}
+
+function moveMessage(t: Ticket, stagedChange: boolean | undefined): string {
+  const id = `${fullId(t)}「${t.title}」`
+  if (stagedChange === true) return `✓ ${id}をオンステージへ上げました`
+  if (stagedChange === false) return `✓ ${id}をバックログへ戻しました`
+  return `✓ ${id}の並び順を変更しました`
 }
 
 /**
- * 並べ替えを確定する。
+ * `move` を送って結果を反映する。
  *
- * **画面を先に動かし、サーバの応答で `sort_key` を書き戻す**（タグの
- * 並べ替え、5.9.4 と同じ形）。`rebalanced` が返ったときだけ一覧を取り直す
- * ——プロジェクト全体の `sort_key` が振り直されており、手元の値がすべて
- * 古くなっているためである（9.4）。
+ * **`optimistic` を渡したときだけ画面を先に動かす**（タグの並べ替え、5.9.4 と
+ * 同じ形）。段の末尾へ置く操作は手元で正しい位置を作れない——`position` は
+ * 段の中で解釈される（9.4.1）のに `sort_key` は二段で1本だからで、
+ * その場合は取り直して合わせる。
+ *
+ * `rebalanced` が返ったときも取り直す——プロジェクト全体の `sort_key` が
+ * 振り直されており、手元の値がすべて古くなっているためである（9.4）。
  */
-async function dropOn(target: Ticket, sectionKey: string): Promise<void> {
-  // **掴んでいた seq を先に控える。** `draggingSeq` を消してから判定に渡すと、
-  // 判定側が null を見て必ず false になる（ドロップが一切効かなくなる）。
-  const seq = draggingSeq.value
-  draggingSeq.value = null
-  if (!canDropOn(seq, target, sectionKey)) return
-
-  const from = tickets.value.findIndex((t) => t.seq === seq)
-  const to = tickets.value.findIndex((t) => t.seq === target.seq)
-  if (from < 0 || to < 0) return
-
-  // 下へ動かすなら相手の後ろ、上へ動かすなら相手の前。掴んだ行が
-  // 落とした行を「越えた」向きがそのまま指定になる。
-  const body = from < to ? { after_seq: target.seq } : { before_seq: target.seq }
-
+async function runMove(
+  source: Ticket,
+  body: MoveTicketRequest,
+  optimistic: Ticket[] | null,
+  stagedChange: boolean | undefined,
+): Promise<void> {
   const before = tickets.value
-  const next = [...tickets.value]
-  const [moved] = next.splice(from, 1)
-  next.splice(to, 0, moved!)
-  tickets.value = next
+  if (optimistic !== null) tickets.value = optimistic
 
   busy.value = true
   result.value = ''
   try {
-    const res = await ticketsApi.moveTicket(projectKey.value, moved!.seq, body)
-    if (res.rebalanced) {
+    const res = await ticketsApi.moveTicket(projectKey.value, source.seq, body)
+    if (res.rebalanced || optimistic === null) {
       await loadTickets()
     } else {
       tickets.value = tickets.value.map((t) =>
-        t.seq === res.seq ? { ...t, sort_key: res.sort_key, version: res.version } : t,
+        t.seq === res.seq
+          ? { ...t, sort_key: res.sort_key, staged_at: res.staged_at, version: res.version }
+          : t,
       )
     }
-    result.value = `✓ ${projectKey.value}-${moved!.seq}「${moved!.title}」の並び順を変更しました`
+    result.value = moveMessage(source, stagedChange)
   } catch (e) {
     tickets.value = before
     error.value = toApiError(e)
@@ -606,6 +804,66 @@ async function dropOn(target: Ticket, sectionKey: string): Promise<void> {
   }
 }
 
+/**
+ * 行の上へ落とす。**下へ動かすなら相手の後ろ、上へ動かすなら相手の前。**
+ * 掴んだ行が落とした行を「越えた」向きがそのまま指定になる。
+ *
+ * 段をまたぐときも同じ規則で決める。`sort_key` は二段で1本なので（9.4）、
+ * どちらの段の行を基準にしても位置は一意に定まる。
+ */
+async function dropOnRow(row: Row, section: Section): Promise<void> {
+  // **掴んでいた seq を先に控える。** `draggingSeq` を消してから判定に渡すと、
+  // 判定側が null を見て必ず false になる（ドロップが一切効かなくなる）。
+  const seq = draggingSeq.value
+  draggingSeq.value = null
+  if (!canDropOn(seq, row, section)) return
+
+  const from = tickets.value.findIndex((t) => t.seq === seq)
+  const to = tickets.value.findIndex((t) => t.seq === row.ticket.seq)
+  if (from < 0 || to < 0) return
+  const source = tickets.value[from]!
+
+  const stagedChange =
+    section.stage !== undefined && (source.staged_at !== null) !== section.stage
+      ? section.stage
+      : undefined
+
+  const body: MoveTicketRequest =
+    from < to ? { after_seq: row.ticket.seq } : { before_seq: row.ticket.seq }
+  if (stagedChange !== undefined) body.staged = stagedChange
+
+  const next = [...tickets.value]
+  next.splice(from, 1)
+  next.splice(to, 0, {
+    ...source,
+    // 段の見た目を先に変える。正しい値はサーバ応答で上書きする
+    staged_at:
+      stagedChange === undefined
+        ? source.staged_at
+        : stagedChange
+          ? new Date().toISOString()
+          : null,
+  })
+
+  await runMove(source, body, next, stagedChange)
+}
+
+/** 段の見出しか末尾の帯へ落とす。**その段の末尾へ置く**（9.4.1） */
+async function dropOnSection(section: Section): Promise<void> {
+  const seq = draggingSeq.value
+  draggingSeq.value = null
+  if (!canDropOnSection(seq, section)) return
+
+  const source = sourceOf(seq)
+  if (source === undefined || section.stage === undefined) return
+
+  const stagedChange = (source.staged_at !== null) === section.stage ? undefined : section.stage
+  const body: MoveTicketRequest = { position: 'last' }
+  if (stagedChange !== undefined) body.staged = stagedChange
+
+  await runMove(source, body, null, stagedChange)
+}
+
 // ── 新規チケット（5.4.3）───────────────────────────────────
 
 const showNewModal = ref(false)
@@ -613,18 +871,43 @@ const newDefaults = ref<NewTicketDefaults>({})
 const newFieldErrors = ref<Record<string, string>>({})
 
 /**
+ * 親の選択肢（5.4.3）。**いま一覧に出ているチケット**から選ぶ。
+ *
+ * **エピックで絞り込み中は「そのエピック配下かつ未完了」に絞る**——絞り込んで
+ * 作業しているときに、視野の外のチケットを親に選べても選ぶ理由がない。
+ * **選択中のエピック自身も候補に入れる**（直下にストーリーを足すのが普通の
+ * 操作であり、エピックは行として出ないのでここでしか選べない）。
+ */
+const parentCandidates = computed<Ticket[]>(() => {
+  if (epicSeqs.value.length === 0) return tickets.value
+  const selected = epics.value.filter((e) => epicSeqs.value.includes(e.seq))
+  return [...selected, ...tickets.value.filter((t) => t.closed_at === null)]
+})
+
+/**
  * グループ化中にセクション内から作成した場合、**その軸の値を初期値に入れる**（5.4.3）。
  *
  * 状態の軸だけは初期値を持たない——ワークフローの入口はサーバが決めるため、
  * モーダルに状態の欄そのものが無い（9.3）。
+ *
+ * **エピックを1つだけ選んでいるときは、そのエピックが親の初期値になる**（5.4）。
+ * 2つ以上のときは入れない——どちらの配下に作るのかを決められない。
  */
 function openNewModal(sectionKey?: string): void {
   const defaults: NewTicketDefaults = {}
-  if (sectionKey !== undefined && sectionKey !== 'none' && sectionKey !== 'top') {
+  if (
+    sectionKey !== undefined &&
+    group.value !== '' &&
+    sectionKey !== 'none' &&
+    sectionKey !== 'top'
+  ) {
     if (group.value === 'parent') defaults.parent_seq = Number(sectionKey)
     if (group.value === 'tag') defaults.tag_ids = [sectionKey]
     if (group.value === 'sprint') defaults.sprint_id = sectionKey
     if (group.value === 'assignee') defaults.assignee_id = sectionKey
+  }
+  if (defaults.parent_seq === undefined && epicSeqs.value.length === 1) {
+    defaults.parent_seq = epicSeqs.value[0]
   }
   newDefaults.value = defaults
   newFieldErrors.value = {}
@@ -696,7 +979,8 @@ function onKeydown(e: KeyboardEvent): void {
 
 // ── 起動と追随 ───────────────────────────────────────────────
 
-const typeOptions = Object.keys(ticketTypeLabels) as TicketType[]
+/** **種別の選択肢にエピックを出さない**（5.4）。行として出ないものは絞れない */
+const typeOptions = backlogTicketTypes
 /** 優先度は高い順に出す。走査するとき上から強いものを見たい */
 const priorityOptions = [...priorityOrder].reverse() as TicketPriority[]
 
@@ -713,6 +997,7 @@ async function retry(): Promise<void> {
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   loadCollapsed()
+  loadTreeCollapsed()
   void projectStore.fetchCurrent(projectKey.value)
   void loadVocabulary()
   void loadTickets()
@@ -741,6 +1026,8 @@ watch(projectKey, (key) => {
   result.value = ''
   tags.value = []
   sprints.value = []
+  epics.value = []
+  loadTreeCollapsed()
   void projectStore.fetchCurrent(key)
   void loadVocabulary()
 })
@@ -835,6 +1122,17 @@ watch(projectKey, (key) => {
           </select>
         </label>
 
+        <!-- エピックだけは複数選択（5.4）。URL 上の実体は `parent` である -->
+        <div class="filter">
+          <span class="filter-label" aria-hidden="true">エピック</span>
+          <EpicFilter
+            :epics="epics"
+            :selected="epicSeqs"
+            :project-key="projectKey"
+            @update="setQuery({ parent: $event.join(',') })"
+          />
+        </div>
+
         <!-- グループ化と解除は右端に寄せる（5.4 のワイヤー） -->
         <label class="filter push">
           <span class="filter-label">グループ化</span>
@@ -859,7 +1157,7 @@ watch(projectKey, (key) => {
         </button>
       </div>
 
-      <!-- 操作の結果は操作した場所に出す（6.4）。作成と並べ替えで使い回す -->
+      <!-- 操作の結果は操作した場所に出す（6.4）。作成・並べ替え・段の行き来で使い回す -->
       <p v-if="result" class="ok" role="status">{{ result }}</p>
 
       <!-- エラー（6.2）。原因はサーバが返した message をそのまま出す -->
@@ -904,9 +1202,14 @@ watch(projectKey, (key) => {
 
       <template v-else>
         <div v-for="section in sections" :key="section.key" class="group-section">
-          <!-- セクション見出し。件数は**表示されている行数**であり、タグの
-               重複を含む（5.4.1）。下部の総件数とは一致しないことがある -->
-          <div v-if="group !== ''" class="section-head">
+          <!-- 見出し。件数は**そのセクションに表示されている行数**であり、タグの
+               重複を含む（5.4.1）。下部の総件数とは一致しないことがある。
+               **段そのものが末尾への落とし場所を兼ねる**（9.4.1 の position） -->
+          <div
+            class="section-head"
+            @dragover="onDragOverSection($event, section)"
+            @drop.prevent="dropOnSection(section)"
+          >
             <button
               type="button"
               class="section-toggle"
@@ -919,8 +1222,11 @@ watch(projectKey, (key) => {
               <span class="section-name">{{ section.label }}</span>
               <span class="section-count">({{ section.rows.length }})</span>
             </button>
+            <!-- 段の見出しには `[+]` を置かない。**作ったチケットは必ず
+                 バックログに入る**（9.3）ので、オンステージから作れるように
+                 見せると嘘になる -->
             <button
-              v-if="canCreate"
+              v-if="canCreate && section.stage === undefined"
               type="button"
               class="secondary small"
               :aria-label="`${section.label} にチケットを追加`"
@@ -930,173 +1236,220 @@ watch(projectKey, (key) => {
             </button>
           </div>
 
-          <table v-if="!collapsed.has(section.key)" class="table">
-            <thead>
-              <tr>
-                <th scope="col" class="grip-col" :aria-sort="ariaSort('sort_key')">
-                  <!-- `⠿` 列のヘッダが `sort_key` へ戻すボタンを兼ねる（5.4） -->
-                  <button
-                    type="button"
-                    class="sort grip-sort"
-                    aria-label="手動の並び順にする"
-                    title="手動の並び順にする"
-                    @click="sortBy('sort_key')"
-                  >
-                    ⠿
-                  </button>
-                </th>
-                <th scope="col" class="id-col" :aria-sort="ariaSort('seq')">
-                  <button type="button" class="sort" @click="sortBy('seq')">
-                    ID
-                    <span class="caret" aria-hidden="true">{{
-                      sort === 'seq' ? (order === 'asc' ? '▴' : '▾') : ''
-                    }}</span>
-                  </button>
-                </th>
-                <th scope="col" :aria-sort="ariaSort('title')">
-                  <button type="button" class="sort" @click="sortBy('title')">
-                    タイトル
-                    <span class="caret" aria-hidden="true">{{
-                      sort === 'title' ? (order === 'asc' ? '▴' : '▾') : ''
-                    }}</span>
-                  </button>
-                </th>
-                <th scope="col" class="status-col" :aria-sort="ariaSort('status')">
-                  <button type="button" class="sort" @click="sortBy('status')">
-                    状態
-                    <span class="caret" aria-hidden="true">{{
-                      sort === 'status' ? (order === 'asc' ? '▴' : '▾') : ''
-                    }}</span>
-                  </button>
-                </th>
-                <th scope="col" class="priority-col" :aria-sort="ariaSort('priority')">
-                  <button type="button" class="sort" @click="sortBy('priority')">
-                    優先
-                    <span class="caret" aria-hidden="true">{{
-                      sort === 'priority' ? (order === 'asc' ? '▴' : '▾') : ''
-                    }}</span>
-                  </button>
-                </th>
-                <!-- 担当だけソートできない（`ApiDesign.md` 9.2.1 の sort に無い） -->
-                <th scope="col" class="assignee-col">担当</th>
-                <th scope="col" class="due-col" :aria-sort="ariaSort('due_date')">
-                  <button type="button" class="sort" @click="sortBy('due_date')">
-                    期限
-                    <span class="caret" aria-hidden="true">{{
-                      sort === 'due_date' ? (order === 'asc' ? '▴' : '▾') : ''
-                    }}</span>
-                  </button>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in section.rows"
-                :key="`${section.key}:${row.ticket.seq}`"
-                class="row"
-                :class="{ dragging: draggingSeq === row.ticket.seq }"
-                @click="openRow(row.ticket, $event)"
-                @dragover="onDragOver($event, row.ticket, section.key)"
-                @drop.prevent="dropOn(row.ticket, section.key)"
-              >
-                <td class="grip-col">
-                  <span
-                    v-if="canReorder"
-                    class="grip"
-                    draggable="true"
-                    role="button"
-                    :aria-label="`${row.ticket.title} を並べ替える`"
-                    @click.stop
-                    @dragstart="draggingSeq = row.ticket.seq"
-                    @dragend="draggingSeq = null"
-                    >⠿</span
-                  >
-                  <span class="type-icon" :title="ticketTypeLabels[row.ticket.type]">
-                    {{ ticketTypeIcons[row.ticket.type] }}
-                  </span>
-                </td>
-
-                <!-- 接尾のみ表示、コピー時は完全形（5.4） -->
-                <td class="id-col">
-                  <code class="seq" @copy="onCopyId(row.ticket, $event)">-{{ row.ticket.seq }}</code>
-                </td>
-
-                <td class="title-col">
-                  <span class="title-line" :style="{ paddingLeft: `${row.depth * 20}px` }">
-                    <span v-if="row.depth > 0" class="branch" aria-hidden="true">└</span>
-                    <RouterLink
-                      v-slot="{ href, navigate }"
-                      :to="`/p/${projectKey}/tickets/${row.ticket.seq}`"
-                      custom
+          <template v-if="!collapsed.has(section.key)">
+            <table v-if="section.rows.length > 0" class="table">
+              <thead>
+                <tr>
+                  <th scope="col" class="grip-col" :aria-sort="ariaSort('sort_key')">
+                    <!-- `⠿` 列のヘッダが `sort_key` へ戻すボタンを兼ねる（5.4） -->
+                    <button
+                      type="button"
+                      class="sort grip-sort"
+                      aria-label="手動の並び順にする"
+                      title="手動の並び順にする"
+                      @click="sortBy('sort_key')"
                     >
-                      <a ref="rowLink" class="title" :href="href" @click.stop="navigate">
-                        {{ row.ticket.title }}
-                      </a>
-                    </RouterLink>
-                    <!-- タグは枠線＋文字（8.6）。色は使わない -->
-                    <span v-for="tag in row.ticket.tags" :key="tag.id" class="tag">{{
-                      tag.name
-                    }}</span>
-                  </span>
-                </td>
+                      ⠿
+                    </button>
+                  </th>
+                  <th scope="col" class="id-col" :aria-sort="ariaSort('seq')">
+                    <button type="button" class="sort" @click="sortBy('seq')">
+                      ID
+                      <span class="caret" aria-hidden="true">{{
+                        sort === 'seq' ? (order === 'asc' ? '▴' : '▾') : ''
+                      }}</span>
+                    </button>
+                  </th>
+                  <th scope="col" :aria-sort="ariaSort('title')">
+                    <button type="button" class="sort" @click="sortBy('title')">
+                      タイトル
+                      <span class="caret" aria-hidden="true">{{
+                        sort === 'title' ? (order === 'asc' ? '▴' : '▾') : ''
+                      }}</span>
+                    </button>
+                  </th>
+                  <th scope="col" class="status-col" :aria-sort="ariaSort('status')">
+                    <button type="button" class="sort" @click="sortBy('status')">
+                      状態
+                      <span class="caret" aria-hidden="true">{{
+                        sort === 'status' ? (order === 'asc' ? '▴' : '▾') : ''
+                      }}</span>
+                    </button>
+                  </th>
+                  <th scope="col" class="priority-col" :aria-sort="ariaSort('priority')">
+                    <button type="button" class="sort" @click="sortBy('priority')">
+                      優先
+                      <span class="caret" aria-hidden="true">{{
+                        sort === 'priority' ? (order === 'asc' ? '▴' : '▾') : ''
+                      }}</span>
+                    </button>
+                  </th>
+                  <!-- 担当だけソートできない（`ApiDesign.md` 9.2.1 の sort に無い） -->
+                  <th scope="col" class="assignee-col">担当</th>
+                  <th scope="col" class="due-col" :aria-sort="ariaSort('due_date')">
+                    <button type="button" class="sort" @click="sortBy('due_date')">
+                      期限
+                      <span class="caret" aria-hidden="true">{{
+                        sort === 'due_date' ? (order === 'asc' ? '▴' : '▾') : ''
+                      }}</span>
+                    </button>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="row in section.rows"
+                  :key="`${section.key}:${row.ticket.seq}`"
+                  class="row"
+                  :class="{ dragging: draggingSeq === row.ticket.seq }"
+                  @click="openRow(row.ticket, $event)"
+                  @dragover="onDragOverRow($event, row, section)"
+                  @drop.prevent="dropOnRow(row, section)"
+                >
+                  <td class="grip-col">
+                    <span class="grip-line">
+                      <span
+                        v-if="canReorder"
+                        class="grip"
+                        draggable="true"
+                        role="button"
+                        :aria-label="`${row.ticket.title} を並べ替える`"
+                        @click.stop
+                        @dragstart="draggingSeq = row.ticket.seq"
+                        @dragend="draggingSeq = null"
+                        >⠿</span
+                      >
+                      <!-- 折りたたみ（5.4）。**結果の中に子がいる行にだけ出す。**
+                           場所は常に取っておき、行ごとにアイコンの位置がずれないようにする -->
+                      <button
+                        v-if="row.hasChildren"
+                        type="button"
+                        class="tree-toggle"
+                        :aria-expanded="!treeCollapsed.has(row.ticket.seq)"
+                        :aria-label="`${row.ticket.title} の配下を開閉する`"
+                        @click.stop="toggleTree(row.ticket.seq)"
+                      >
+                        {{ treeCollapsed.has(row.ticket.seq) ? '▸' : '▾' }}
+                      </button>
+                      <span v-else class="tree-spacer" aria-hidden="true"></span>
+                      <span class="type-icon" :title="ticketTypeLabels[row.ticket.type]">
+                        {{ ticketTypeIcons[row.ticket.type] }}
+                      </span>
+                    </span>
+                  </td>
 
-                <td class="status-col">
-                  <span class="status" :class="row.ticket.status.category">
-                    <span class="status-mark" aria-hidden="true">{{
-                      statusMarks[row.ticket.status.category]
-                    }}</span>
-                    {{ row.ticket.status.name }}
-                  </span>
-                </td>
+                  <!-- **完全形で出す**（5.4「ID列」）。`-31` は負の数に見える -->
+                  <td class="id-col">
+                    <code class="seq">{{ fullId(row.ticket) }}</code>
+                  </td>
 
-                <!-- 優先度は色を使わず記号のみ。中は無表示（8.7） -->
-                <td class="priority-col">
-                  <span
-                    v-if="row.ticket.priority"
-                    class="priority"
-                    :title="priorityLabels[row.ticket.priority]"
-                    >{{ priorityMarks[row.ticket.priority] }}</span
-                  >
-                </td>
+                  <td class="title-col">
+                    <span class="title-line" :style="{ paddingLeft: `${row.depth * 20}px` }">
+                      <span v-if="row.depth > 0" class="branch" aria-hidden="true">└</span>
+                      <RouterLink
+                        v-slot="{ href, navigate }"
+                        :to="`/p/${projectKey}/tickets/${row.ticket.seq}`"
+                        custom
+                      >
+                        <a ref="rowLink" class="title" :href="href" @click.stop="navigate">
+                          {{ row.ticket.title }}
+                        </a>
+                      </RouterLink>
+                      <!-- タグは枠線＋文字（8.6）。色は使わない -->
+                      <span v-for="tag in row.ticket.tags" :key="tag.id" class="tag">{{
+                        tag.name
+                      }}</span>
+                    </span>
+                  </td>
 
-                <td class="assignee-col">
-                  <template v-if="row.ticket.assignee">
-                    <span class="actor-mark" aria-hidden="true">{{
-                      assigneeMark(row.ticket)
-                    }}</span
-                    >{{ row.ticket.assignee.display_name }}
-                  </template>
-                  <span v-else class="muted">—</span>
-                </td>
+                  <td class="status-col">
+                    <span class="status" :class="row.ticket.status.category">
+                      <span class="status-mark" aria-hidden="true">{{
+                        statusMarks[row.ticket.status.category]
+                      }}</span>
+                      {{ row.ticket.status.name }}
+                    </span>
+                  </td>
 
-                <td class="due-col">
-                  <span v-if="row.ticket.due_date" :class="{ overdue: isOverdue(row.ticket) }">
-                    <span v-if="isOverdue(row.ticket)" aria-hidden="true">⚠ </span>
-                    {{ formatPlainDate(row.ticket.due_date) }}
-                  </span>
-                  <span v-else class="muted">—</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                  <!-- 優先度は色を使わず記号のみ。中は無表示（8.7） -->
+                  <td class="priority-col">
+                    <span
+                      v-if="row.ticket.priority"
+                      class="priority"
+                      :title="priorityLabels[row.ticket.priority]"
+                      >{{ priorityMarks[row.ticket.priority] }}</span
+                    >
+                  </td>
+
+                  <td class="assignee-col">
+                    <template v-if="row.ticket.assignee">
+                      <span class="actor-mark" aria-hidden="true">{{
+                        assigneeMark(row.ticket)
+                      }}</span
+                      >{{ row.ticket.assignee.display_name }}
+                    </template>
+                    <span v-else class="muted">—</span>
+                  </td>
+
+                  <td class="due-col">
+                    <span v-if="row.ticket.due_date" :class="{ overdue: isOverdue(row.ticket) }">
+                      <span v-if="isOverdue(row.ticket)" aria-hidden="true">⚠ </span>
+                      {{ formatPlainDate(row.ticket.due_date) }}
+                    </span>
+                    <span v-else class="muted">—</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- 空の段（5.4）。**見出しごと消さない**——落とし場所が無くなると、
+                 最初の1件をオンステージへ上げられない -->
+            <p
+              v-if="section.rows.length === 0"
+              class="stage-empty"
+              @dragover="onDragOverSection($event, section)"
+              @drop.prevent="dropOnSection(section)"
+            >
+              <template v-if="section.stage === true && canReorder">
+                いま取りかかるものを ⠿ でここへドラッグすると、オンステージへ上がります
+              </template>
+              <template v-else>この段にチケットはありません</template>
+            </p>
+
+            <!-- 掴んでいる間だけ出す末尾の帯。段の末尾へ置くための落とし場所である -->
+            <p
+              v-else-if="draggingSeq !== null && section.stage !== undefined"
+              class="stage-tail"
+              @dragover="onDragOverSection($event, section)"
+              @drop.prevent="dropOnSection(section)"
+            >
+              {{ section.label }}の末尾へ
+            </p>
+          </template>
         </div>
 
-        <!-- 総件数は**チケットの実数**で、タグの重複を含まない（5.4.1） -->
+        <!-- 総件数は**チケットの実数**で、タグの重複を含まない（5.4.1）。
+             **出していない配下を含む**ので、上下の件数の合計とは一致しない
+             ことがある（5.4「配下の行き先」） -->
         <p class="total">
           <template v-if="truncated">
             {{ withComma(total) }}件中 {{ withComma(perPage) }}件を表示しています。フィルタで絞り込んでください
           </template>
           <template v-else>{{ withComma(total) }}件</template>
+          <span v-if="carriedCount > 0" class="carried">
+            （うち{{ withComma(carriedCount) }}件はオンステージの配下として出していません）
+          </span>
         </p>
       </template>
     </div>
 
     <NewTicketModal
       v-if="showNewModal"
+      :project-key="projectKey"
       :members="members"
       :tags="tags"
       :sprints="sprints"
-      :candidates="tickets"
+      :candidates="parentCandidates"
       :defaults="newDefaults"
       :busy="busy"
       :field-errors="newFieldErrors"
@@ -1162,7 +1515,7 @@ watch(projectKey, (key) => {
   color: var(--pb-text);
 }
 
-/* ── セクション（グループ化）───────────────────────────── */
+/* ── セクション（二段とグループ化）─────────────────────── */
 
 /* **`.section` にしない。** `SideMenu.vue` が「管理」の見出しに同じ名前を
    使っており、scoped スタイルは見た目を分けても DOM のクラス名は分けない。
@@ -1208,6 +1561,21 @@ watch(projectKey, (key) => {
 .section-count {
   flex: none;
   color: var(--pb-text-muted);
+}
+
+/* 空の段と末尾の帯。**破線で「落とせる場所」だと分かるようにする**（色は使わない） */
+.stage-empty,
+.stage-tail {
+  margin: 0;
+  padding: var(--pb-space-3) var(--pb-space-2);
+  border: 1px dashed var(--pb-border);
+  border-top: none;
+  color: var(--pb-text-muted);
+  font-size: 13px;
+}
+
+.stage-tail {
+  padding: var(--pb-space-2);
 }
 
 /* ── 表 ───────────────────────────────────────────────── */
@@ -1280,41 +1648,77 @@ watch(projectKey, (key) => {
 }
 
 /* ── 列幅 ─────────────────────────────────────────────── */
+
+/* `⠿` ＋ 折りたたみ ＋ 種別アイコンの3つが入る */
 .grip-col {
-  width: 56px;
+  width: 68px;
 }
 
+/* **完全形の ID を出す**（5.4）。`my-app-31` が入る幅にする */
 .id-col {
-  width: 72px;
+  width: 116px;
 }
 
 .status-col {
-  width: 110px;
+  width: 104px;
 }
 
 .priority-col {
-  width: 64px;
+  width: 56px;
 }
 
+/* `👤 開発メンバー` が 1440px で切れない幅。**狭い窓ではタイトルを優先する**が、
+   それは `.title` の下限（`min-width`）が担うので、ここは固定値のままにする
+   ——メディアクエリを1つ足すより、下限を1か所に置くほうが読める */
 .assignee-col {
-  width: 140px;
+  width: 130px;
 }
 
+/* `⚠ 2026-08-14` が入る幅。**年を省かない**（5.4）ので、`⚠` の分まで数える */
 .due-col {
-  width: 116px;
+  width: 120px;
 }
 
 /* ── セルの中身 ───────────────────────────────────────── */
 
-/* `⠿` は掴む対象だと分かるようにカーソルを変える。種別アイコンと同居する */
+/* セルは表レイアウトの構成要素なので display を変えない。並べるのは
+   中の入れ物の役目である（手順16a の教訓） */
+.grip-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* `⠿` は掴む対象だと分かるようにカーソルを変える */
 .grip {
-  margin-right: var(--pb-space-1);
   color: var(--pb-text-muted);
   cursor: grab;
 }
 
 .grip-sort {
   color: var(--pb-text-muted);
+}
+
+/* 子を持たない行でも場所を取る。**行ごとに種別アイコンの位置がずれない** */
+.tree-toggle,
+.tree-spacer {
+  display: inline-block;
+  width: 16px;
+  text-align: center;
+}
+
+.tree-toggle {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--pb-text-muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tree-toggle:hover {
+  color: var(--pb-text);
 }
 
 .type-icon {
@@ -1326,8 +1730,6 @@ watch(projectKey, (key) => {
   font-size: 13px;
 }
 
-/* タイトルセルは表レイアウトの構成要素なので display を変えない。
-   並べるのは中の入れ物の役目である（手順16a の教訓） */
 .title-line {
   display: inline-flex;
   align-items: center;
@@ -1341,7 +1743,13 @@ watch(projectKey, (key) => {
   color: var(--pb-text-muted);
 }
 
+/* **タイトルはタグより先に縮まない。** `flex` を指定しないと `0 1 auto` に
+   なり、`flex: none` のタグが残ったままタイトルだけが0幅まで潰れる（900px で
+   実測。タグは出ているのに何のチケットか読めなくなる）。下限を置いて、
+   あふれるのはタグの側にする——td が `overflow: hidden` なので外へは出ない */
 .title {
+  flex: 1 1 auto;
+  min-width: 6em;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -1417,5 +1825,9 @@ watch(projectKey, (key) => {
 .total {
   margin-top: var(--pb-space-4);
   color: var(--pb-text-muted);
+}
+
+.carried {
+  font-size: 13px;
 }
 </style>

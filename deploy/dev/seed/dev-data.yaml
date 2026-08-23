@@ -62,7 +62,10 @@ projects:
     # チケット（DbDesign.md 6.6、手順16b）。バックログ画面（GuiDesign.md 5.4）が
     # 「見て確かめられる」状態を作るための組み合わせを揃えてある。
     #
-    #   階層2段        親子のインデント表示（└）と has_children
+    #   階層2段        親子のインデント表示（└）と折りたたみ（5.4）。
+    #                  **エピック配下では足りない**——エピックは行として
+    #                  出ないので、その子は表示上のトップレベルになる。
+    #                  story / task どうしの親子を別に1組置く（手順16d-b）
     #   タグ複数持ち   タグでグループ化したとき同じ行が2つのセクションに出る（5.4.1）
     #   タグ無し       「未分類」セクション
     #   期限超過       ⚠ と赤字（5.4）。日付は seed の実行日より前に置く
@@ -193,6 +196,11 @@ projects:
 
       # トップレベルで、親を持たず日付も持たないもの。
       # **旧 type: phase**（手順16d で廃止）。親を持たないトップレベルのまま。
+      # **配下を2件持つ**（手順16d-b）——エピックを行から外すと、エピック配下の
+      # チケットは表示上のトップレベルになるため、**エピックを介さない親子が
+      # 1組も無いとツリーのインデントも折りたたみも画面に現れない**。
+      # この行は親を持たないので段にも置ける。上げると配下ごとバックログから
+      # 消えることを確かめられる（GuiDesign.md 5.4「配下の行き先」）。
       - title: MCP サーバの足場を作る
         type: task
         status: todo
@@ -200,6 +208,25 @@ projects:
         tags: [MCP連携, 設計]
         sprint: 未定
         estimate_point: 13
+      - title: MCP のツール定義を決める
+        type: task
+        parent: MCP サーバの足場を作る
+        status: todo
+        priority: medium
+        tags: [MCP連携]
+        sprint: 未定
+        estimate_point: 5
+      # 親を持つので段に置けない（ApiDesign.md 9.4.1 の not_stageable）。
+      # 段をまたぐドラッグが弾かれることを画面で確かめる行でもある。
+      - title: MCP の認証をトークンに寄せる
+        type: task
+        parent: MCP サーバの足場を作る
+        status: in_progress
+        priority: low
+        assignee: member@example.com
+        tags: [MCP連携, 設計]
+        sprint: 未定
+        estimate_point: 3
       # タグもスプリントも担当も無い（「未分類」「スプリント未設定」「未割当」）。
       - title: ドキュメントの棚卸し
         type: task

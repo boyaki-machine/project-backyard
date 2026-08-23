@@ -471,6 +471,14 @@ window.set = window.set || function (el, v) {
   `socket.bind(('127.0.0.1', 0))` で取る
 - **`Runtime.evaluate` から返すのは値だけにする**（真偽・数・文字列）。DOM 要素は `{}` に
   直列化され、Python 側では偽になる
+- **`Page.captureScreenshot` の `captureBeyondViewport: true` では `position: fixed` の要素が写らない。**
+  文書全体を1枚に収めるモードなので、画面に固定した要素（`<Teleport>` で body へ出した
+  ドロップダウンやメニュー）が抜ける。**開いたパネルを撮るときは `false` にする**
+  （手順16d-b で、パネルが出ているのにスクリーンショットに無いという形で踏んだ）
+- **ドラッグ&ドロップは `DragEvent` を自分で発火して確かめられる**（`dragstart` → `dragover` → `drop`）。
+  ただし**「落とせるか」は `drop` を投げて判定しない**——合成イベントには「既定を止めた要素だけが
+  ドロップ先になる」という規約が効かず、落とせないはずの相手でもハンドラが動く。
+  **`dragover` を投げて `defaultPrevented` を見る**のが、実際のブラウザと同じ判定である
 
 ## 8.3 Cookie 認証で状態変更系を叩く（curl）
 

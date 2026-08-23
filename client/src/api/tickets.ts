@@ -73,6 +73,18 @@ export const ticketTypeLabels: Record<TicketType, string> = {
 export const backlogTicketTypes: TicketType[] = ['story', 'task']
 
 /**
+ * 新規チケットの説明欄に入れる初期値（`GuiDesign.md` 5.4.3）。
+ *
+ * **`placeholder` ではなく本文の初期値である。** placeholder は1文字打つと
+ * 消えるため、**書かせたい項目には機能しない**（見出しごと消える）。本文に
+ * 入れておけば、書きたい欄から埋めて残りを消せる。
+ *
+ * **プロジェクトごとに変えられるようにはしない**（同 5.4.3。`project.settings`
+ * に置く案は見送った）。必要になってから決める。
+ */
+export const newTicketBodyTemplate = '# 概要\n\n# ゴール条件\n\n# 制約条件\n'
+
+/**
  * 優先度の記号（`GuiDesign.md` 8.7）。**色を使わず記号のみ。**
  *
  * **`medium` は無表示。** 一覧上で目に入るのが高いものと低いものだけになり、
@@ -126,7 +138,11 @@ export interface ListTicketsQuery {
   sprint?: string
   open?: 'true' | 'false'
   due_within?: string
-  parent?: number
+  /**
+   * 部分木で絞る（9.2.1）。**カンマ区切りで複数指定は OR** なので数値ではなく
+   * 文字列である。バックログのエピックフィルタがこれを使う（`GuiDesign.md` 5.4）。
+   */
+  parent?: string
   sort?: TicketSort
   order?: SortOrder
   page?: number
