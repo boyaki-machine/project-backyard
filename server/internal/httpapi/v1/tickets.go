@@ -32,9 +32,16 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
+// ticketTypeEpic は種別「エピック」（DbDesign.md 6.6）。
+//
+// **3値のうちこれだけが名前で参照される。** エピックはバックログに行として出さず
+// フィルタになるため（GuiDesign.md 5.4）、画面もサーバも「エピックかどうか」を
+// 見る箇所がある。story と task は値域の一員としてしか出てこない。
+const ticketTypeEpic = "epic"
+
 // チケットの値域（ApiDesign.md 9.2.1 / 9.3、DbDesign.md 6.6 の CHECK と同じ）。
 var (
-	ticketTypes        = []string{"epic", "story", "task", "bug", "phase", "wbs"}
+	ticketTypes        = []string{"epic", "story", "task"}
 	ticketPriorities   = []string{"lowest", "low", "medium", "high", "highest"}
 	ticketStatusCatego = []string{"todo", "in_progress", "review", "done"}
 )
@@ -83,7 +90,7 @@ type ticketFilters struct {
 	sprintNone       bool
 	openFilter       string
 	dueWithinDays    int32
-	parentSeq        int32
+	parentSeqs       []int32
 
 	// normalized は ETag の材料（9.2.5）。解析後の値から作るので、
 	// 同じ意味の違う書き方（?type=bug,task と ?type=task,bug）が同じ値になる。
@@ -120,7 +127,7 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		SprintNone:       filters.sprintNone,
 		OpenFilter:       filters.openFilter,
 		DueWithinDays:    filters.dueWithinDays,
-		ParentSeq:        filters.parentSeq,
+		ParentSeqs:       filters.parentSeqs,
 		Sort:             page.Sort,
 		SortOrder:        page.Order,
 		PageLimit:        int32(page.Limit()),
@@ -176,8 +183,13 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 		assigneeIDs:      []string{},
 		tagIDs:           []string{},
 		sprintIDs:        []string{},
-		openFilter:       filterAll,
-		dueWithinDays:    -1,
+		// **nil にしない。** pgx は nil スライスを SQL の NULL として送るため、
+		// cardinality(NULL) = NULL となり「指定なし」の判定が偽になって
+		// 1件も返らなくなる。他の配列フィルタが splitFilter の空スライスで
+		// 埋まっているのと同じ理由である。
+		parentSeqs:    []int32{},
+		openFilter:    filterAll,
+		dueWithinDays: -1,
 	}
 	var parts []string
 	add := func(name string, values []string) {
@@ -279,16 +291,35 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 		}
 	}
 
-	if v := q.Get("parent"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			details = append(details, apierr.Detail{
-				Field: "parent", Code: "invalid",
-				Message: "parent はチケット番号（1以上の整数）で指定してください",
-			})
-		} else {
-			f.parentSeq = int32(n)
-			parts = append(parts, "parent="+strconv.Itoa(n))
+	// parent は**カンマ区切りで複数指定できる**（9.2.1）。それぞれの部分木の
+	// OR になる。バックログのエピックフィルタがこれを使う（GuiDesign.md 5.4）。
+	//
+	// **正規化では数値として並べ替える。** 他のフィルタは ULID や語なので
+	// 文字列の並べ替えでよいが、seq は数なので "10" < "9" になってしまい、
+	// ?parent=9,10 と ?parent=10,9 が別の ETag になる（9.2.5）。
+	if raw := q.Get("parent"); raw != "" {
+		seqs := make([]int32, 0, 4)
+		for _, v := range splitFilter(raw) {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				details = append(details, apierr.Detail{
+					Field: "parent", Code: "invalid",
+					Message: "parent はチケット番号（1以上の整数）で指定してください",
+				})
+				continue
+			}
+			if !slices.Contains(seqs, int32(n)) {
+				seqs = append(seqs, int32(n))
+			}
+		}
+		if len(seqs) > 0 {
+			slices.Sort(seqs)
+			f.parentSeqs = seqs
+			labels := make([]string, len(seqs))
+			for i, n := range seqs {
+				labels[i] = strconv.Itoa(int(n))
+			}
+			parts = append(parts, "parent="+strings.Join(labels, ","))
 		}
 	}
 

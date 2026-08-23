@@ -292,6 +292,15 @@ type Querier interface {
 	GetTicketBySeq(ctx context.Context, arg GetTicketBySeqParams) (GetTicketBySeqRow, error)
 	// ── 並べ替え（ApiDesign.md 9.4）─────────────────────────────
 	// GetTicketSortRow は move の対象を引く。
+	//
+	// staged_at と parent_type を一緒に返すのは、9.4.1 の2つの判定に要るためである。
+	//
+	//   - position を「段の中」で解釈する（staged 省略時は現在の段）
+	//   - 段に置けるのは表示上のトップレベルだけ（親を持たない、または親がエピック）。
+	//     **エピック自身は除く**——どちらの段にも行として出ないので、上げても
+	//     見えない（GuiDesign.md 5.4）。判定に自分の type も要る。
+	//
+	// parent_type は親がいなければ NULL になる。
 	GetTicketSortRow(ctx context.Context, arg GetTicketSortRowParams) (GetTicketSortRowRow, error)
 	// 業務履歴（ApiDesign.md 9.1.1、DbDesign.md 6.8 の activity）。
 	//
@@ -611,11 +620,26 @@ type Querier interface {
 	ListUserSessions(ctx context.Context, actorID string) ([]ListUserSessionsRow, error)
 	ListWorkflowStatuses(ctx context.Context, workflowID string) ([]ListWorkflowStatusesRow, error)
 	ListWorkflowTransitions(ctx context.Context, workflowID string) ([]ListWorkflowTransitionsRow, error)
+	// MaxTicketSortKey はプロジェクト全体の末尾。**作成時の採番だけが使う**
+	// （9.3。新規チケットは必ずバックログへ入るので、段で絞る意味がない）。
 	MaxTicketSortKey(ctx context.Context, projectID string) (string, error)
-	// 以下4本が「どのキーとどのキーの間へ入れるか」を決める。**空文字は境界**
+	MaxTicketSortKeyInStage(ctx context.Context, arg MaxTicketSortKeyInStageParams) (string, error)
+	// 以下5本が「どのキーとどのキーの間へ入れるか」を決める。**空文字は境界**
 	// （先頭より前／末尾より後）を表し、lexorank.Between の引数の約束と同じである。
-	MinTicketSortKey(ctx context.Context, projectID string) (string, error)
-	// MoveTicket は動かした1件の sort_key を書き、version を +1 する（9.4）。
+	// MinTicketSortKeyInStage / MaxTicketSortKeyInStage は position の解決に使う。
+	//
+	// **段の中で解釈する**（9.4.1）。"first" は「オンステージの先頭」であって
+	// 「プロジェクト全体の先頭」ではない。**空の段へ最初の1件を落とすとき、
+	// 基準にできる行が無い**ため、この2本が要る。
+	MinTicketSortKeyInStage(ctx context.Context, arg MinTicketSortKeyInStageParams) (string, error)
+	// MoveTicket は動かした1件の sort_key と段を書き、version を +1 する（9.4）。
+	//
+	// **段と位置を1文で書く**（9.4.1）。ドラッグ&ドロップの1操作で両方が同時に
+	// 決まるため、2文に分けると途中で失敗したときに「段は移ったが位置は末尾」と
+	// いう中途半端な状態が残る。
+	//
+	// change_stage が false のとき staged_at は現在値のままで、並べ替えだけを行う
+	// （リクエストで staged を省略した場合）。
 	MoveTicket(ctx context.Context, arg MoveTicketParams) (MoveTicketRow, error)
 	// sort_order 省略時の既定（現在の最大値 + 10）。行が無ければ 10 から始める。
 	// 10刻みにするのは、並べ替え（9.11.1）が同じ間隔で振り直すためである。
@@ -757,6 +781,12 @@ type Querier interface {
 	// 上がる（9.4）。updated_at はトリガで動くため、一覧の ETag は変わる
 	// ——rebalanced=true を受けた画面が取り直すのと同じ結果になる。
 	SetTicketSortKey(ctx context.Context, arg SetTicketSortKeyParams) error
+	// SetTicketStagedAt はデモデータをオンステージに置くためだけのもの。
+	//
+	// **本来 staged_at は move の副作用としてのみ動く**（ApiDesign.md 9.4.1）。
+	// ただし二段の画面（GuiDesign.md 5.4）は、seed 直後にオンステージが空だと
+	// 「動いていること」を目で確かめられない。SetTicketClosedAt と同じ扱いである。
+	SetTicketStagedAt(ctx context.Context, arg SetTicketStagedAtParams) error
 	SprintExistsInProject(ctx context.Context, arg SprintExistsInProjectParams) (bool, error)
 	// SummarizeAdminUsers は ListAdminUsers と同じ絞り込みに対する総件数と
 	// 最終更新日時を返す。total は 2.6、last_updated_at は 2.7 の ETag の材料。
@@ -777,6 +807,8 @@ type Querier interface {
 	// 2回書かないよう1文にまとめてある。** 0件のとき last_updated_at は NULL。
 	//
 	SummarizeProjects(ctx context.Context, arg SummarizeProjectsParams) (SummarizeProjectsRow, error)
+	// TicketSortKeyAfter / TicketSortKeyBefore は**段を問わない**（9.4.1）。
+	// sort_key はプロジェクト内で1本であり、どの行の隣を指定しても位置は一意に定まる。
 	TicketSortKeyAfter(ctx context.Context, arg TicketSortKeyAfterParams) (string, error)
 	TicketSortKeyBefore(ctx context.Context, arg TicketSortKeyBeforeParams) (string, error)
 	// TouchAccessTokenLastUsed は last_used_at を更新する。

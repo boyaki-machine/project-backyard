@@ -1726,3 +1726,73 @@ NOT NULL と推論し、NULL を読めなかった。**単体テストはフェ�
 チケットは seed 直後と同一である。サーバは停止し、`make clean-webui` を実行した。
 スクラッチパッド（検証スクリプト・スクリーンショット・Chrome のプロファイル）はセッションの
 作業領域にあり、リポジトリには残っていない。
+
+## 手順16d-a（種別の3値化とオンステージ）— 2026-08-23
+
+**ブランチ**：`feature/step-16d-a-ticket-types-and-stage`
+
+**16c の実機確認で出た5件の指摘のうち、サーバと設計文書に属する部分を当てた。**
+画面の作り直しは 16d-b。**設計文書の改訂をコードより先に当てきったので、
+実装中の設計相談はゼロだった**（`LEARNINGS.md` #43 の型の3回目）。
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/migrations/0015_ticket_type_and_stage.sql` | ①`type` の `CHECK` を3値へ（既存行を `task` へ移してから張り替え）②`staged_at timestamptz` と部分索引 `idx_ticket_staged` |
+
+### 変更したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `docs/DbDesign.md` | 6.6（種別3値の意味の表・`staged_at`・二段が `sort_key` を共有する理由・進捗と独立した軸）、6.10（グルーピングの実体は `parent_id`／エピックだけ画面が特別扱いする／バグはタグ）、5.2（0015 を追加）、8章（Phase 2 の採番を 0016 起点へ） |
+| `docs/ApiDesign.md` | 9.1（一覧も完全形で出す）、9.2.1（`type` 3値・`parent` の複数指定・`staged` フィルタを持たない理由）、9.2.2（`staged_at`）、9.3（`type` 3値・作成は必ずバックログ）、9.4＋**新設 9.4.1**（`staged`・`position` は段の中・`after`/`before` は段を問わない・`not_stageable`）、9.5.2（`staged_at` も `use_move_endpoint`）、9.14（`not_stageable`） |
+| `docs/GuiDesign.md` | 5.4 のワイヤーを**二段に描き直し**（全角幅を計算して全行82桁に揃えた）、仕様表（種別アイコン3つ・ID完全形・折りたたみ・フィルタ7つ・エピック行）、**新設「二段（オンステージとバックログ）」「エピックをフィルタにする」**、5.4.1（グループ化中は二段をやめる・ツリーの開閉は別に持つ）、5.4.3（種別2択・段を出さない・説明欄テンプレート・親をエピック配下に絞る） |
+| `docs/Requirements.md` | 2章の種別の写しを3値へ（経緯つき。利用者の判断） |
+| `docs/openapi.yaml` | `type` の enum 4か所、`type`/`parent` クエリ、`Ticket.staged_at`（`required` にも）、`MoveTicketRequest.staged`、`MoveTicketResult.staged_at`、move の `details[].code` |
+| `server/internal/store/queries/ticket.sql` | `ListTickets`（`parent_seqs::int[]`・再帰CTEを `UNION` へ・`staged_at`）、`GetTicketBySeq`（`staged_at`）、`GetTicketSortRow`（`type`・`staged_at`・`parent_type`）、`MinTicketSortKeyInStage`／`MaxTicketSortKeyInStage` を新設し `MinTicketSortKey` を廃止、`MoveTicket`（段も書く）、`SetTicketStagedAt`（seed 用） |
+| `server/internal/httpapi/v1/tickets.go` | `ticketTypes` を3値へ、`ticketTypeEpic` 定数、`parent` のカンマ区切り解析（**正規化は数として並べ替える**）、`parentSeqs` を**空スライスで初期化**（nil だと pgx が NULL を送り `cardinality(NULL)` で全件落ちる） |
+| `server/internal/httpapi/v1/ticket_view.go` | `staged_at` を一覧・詳細の両方へ |
+| `server/internal/httpapi/v1/tickets_move.go` | `staged`（ポインタで省略と false を区別）、段の決定、`stageable()`、`not_stageable`、`position` を段で解決、応答に `staged_at` |
+| `server/cmd/pb/dev_seed.go` | 種別3値、`staged` 項目、段に置ける条件の検証、`SetTicketStagedAt` の呼び出し |
+| `deploy/dev/seed/dev-data.yaml` | タグ「バグ」追加、`bug`→`task`＋タグ「バグ」、`phase`→`task`、オンステージ2件（うち1件は `todo`） |
+| `client/src/api/tickets.ts` | 種別の語彙を3つへ、`backlogTicketTypes`（`['story','task']`）を新設 |
+| `client/src/api/schema.d.ts` | `make gen-api` の生成物 |
+| テスト | `tickets_test.go`（オンステージ6件・ETag の `parent` 2件・`parentSeqs` の nil 検査を追加、`moveRespJSON` を新設）、`tickets_integration_test.go`（オンステージ一式・`parent` の OR 2件）、`fake_test.go`（`*InStage` 2本・段を書く `MoveTicket`）、`dev_seed_test.go`（`TestDevDataValidateStaged` と実ファイルの検査） |
+
+### 検証結果
+
+| 層 | 件数 | 結果 |
+|---|---|---|
+| マイグレーション | — | `make migrate` で 0015 適用。**実DBの `bug` 2件・`phase` 2件・`wbs` 1件が `task` へ移り**、`CHECK` が3値・`staged_at` 列・`idx_ticket_staged` を確認 |
+| 単体（`make test`） | 全パッケージ PASS（チケット関連65件） | ドリフト検出 `TestOpenAPIMatchesRoutes` を含む |
+| 実DB結合（`make test-db`） | **97件 PASS / 0 FAIL** | 16c の95件 + `部分木の複数指定は OR` / `部分木の複数指定（重なる）` |
+| 実サーバ（curl） | **24件 PASS / 0 FAIL** | 廃止種別 422×3、`parent` の OR、`staged_at` の往復、`not_stageable`、`position` が段で絞れていること、作成は必ずバックログ |
+| seed | — | `make dev-reset` 後、種別3値・seq 7 がタグ「バグ」付き `task`・seq 9/10 がオンステージ（**10 は `todo`＝未着手**）を実データで確認 |
+| ブラウザ（CDP） | **7件 PASS / 0 FAIL** | 種別フィルタ4項目・廃止種別なし・`◈`/`▦` が出ない・タグ「バグ」表示・13行・新規モーダルの種別・900px で横に流れない |
+| スクリーンショット | 3枚 | `backlog-1440` / `newticket-1440` / `backlog-900` を**目で確認**。崩れなし |
+
+### 実装中に見つけて直したこと（1件）
+
+**エピック自身が段に置けてしまう状態だった。** `stageable()` を「親を持たない、または
+親がエピック」だけで書いたため、**エピックは親を持たないので通ってしまう**。実DBの
+デモデータを見ていて気づいた。エピックはどちらの段にも行として出ないので、上げると
+**見えないのに段に居る**状態になる。`GetTicketSortRow` に自分の `type` を足し、API・
+`pb dev seed` の検証・`ApiDesign.md` 9.4.1 の3か所を揃えた。
+
+### 検証側の誤りだったもの（2件）
+
+- **ETag の検証で `base` と比較対象を同じ値にした**（`type=bug` を機械的に `type=task` へ
+  置換した結果、「フィルタが違うのに ETag が同じ」を測れなくなった）。`base` を `type=story` へ
+  変えて意味を戻した。**テストデータを変えたら、そのテストが何を測っているかを数え直す**
+- **種別フィルタの選択肢にアイコンが前置されることを数え落とした**（`⚑ エピック`）。実装が正
+
+### 検証で作った資源の後始末
+
+| 資源 | 扱い |
+|---|---|
+| 実サーバ検証が作ったチケット1件（demo seq=38） | 削除。**孤児になった `activity` 1行も削除**（16b と同じ経路） |
+| `sort_key` / `staged_at` / `version` の変更 | 検証前に生成した `UPDATE` 13文で復元し、**`diff` で差分ゼロを確認** |
+| Cookie jar・Chrome プロファイル・検証スクリプト | スクラッチパッドに置き、削除 |
+| `make build` の成果物 | `make clean-webui` |
+| デモDB | `make dev-reset` で作り直した（利用者の承認。`tic` プロジェクトは消えた） |

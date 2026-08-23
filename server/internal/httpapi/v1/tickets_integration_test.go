@@ -124,7 +124,7 @@ func TestTicketsIntegration(t *testing.T) {
 	grandchild := createTicketIT(t, r, session, base,
 		`{"type":"task","title":"孫の仕事","priority":"medium","parent_seq":2}`)
 	loner := createTicketIT(t, r, session, base,
-		`{"type":"bug","title":"独りの仕事","priority":"lowest"}`)
+		`{"type":"story","title":"独りの仕事","priority":"lowest"}`)
 	// **優先度を持たないチケットを必ず1件混ぜる。** 一覧の SELECT に順位の列を
 	// 出していた版では、この行があると NULL を読めずに 500 になった（実サーバの
 	// 検証で気づいた）。単体テストはフェイクを返すので、この経路を通らない。
@@ -193,8 +193,8 @@ func TestTicketsIntegration(t *testing.T) {
 		query string
 		want  []int
 	}{
-		{"種別", "?type=bug", []int{4}},
-		{"種別の複数指定は OR", "?type=bug,epic", []int{1, 4}},
+		{"種別", "?type=story", []int{4}},
+		{"種別の複数指定は OR", "?type=story,epic", []int{1, 4}},
 		{"種別と優先度は AND", "?type=task&priority=low", []int{2}},
 		{"優先度が未設定のものは priority で絞ると出ない", "?priority=lowest,low,medium,high,highest", []int{1, 2, 3, 4}},
 		{"担当（me）", "?assignee=me", []int{2}},
@@ -210,6 +210,9 @@ func TestTicketsIntegration(t *testing.T) {
 		// 再帰CTE：1 の部分木は 1・2・3（孫まで届く）
 		{"部分木", "?parent=1", []int{1, 2, 3}},
 		{"部分木（葉）", "?parent=3", []int{3}},
+		// **複数の部分木は OR**（9.2.1）。バックログのエピックフィルタが使う。
+		{"部分木の複数指定は OR", "?parent=1,4", []int{1, 2, 3, 4}},
+		{"部分木の複数指定（重なる）", "?parent=1,2", []int{1, 2, 3}},
 		// due_within は期限超過を含み、due_date が NULL のものは除く
 		{"期限あり", "?due_within=3650d", []int{1}},
 	}
@@ -222,7 +225,7 @@ func TestTicketsIntegration(t *testing.T) {
 	}
 
 	// ── ⑥ 窓関数の total と ETag ────────────────────────────
-	rec = getWithCookie(r, base+"/tickets?type=bug", session)
+	rec = getWithCookie(r, base+"/tickets?type=story", session)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("一覧の status = %d（body=%s）", rec.Code, rec.Body.String())
 	}
@@ -286,6 +289,87 @@ func TestTicketsIntegration(t *testing.T) {
 	}
 	if got := ticketSeqs(t, r, session, base, ""); !equalInts(got, []int{1, 4, 3, 2, 5}) {
 		t.Errorf("before_seq 後の並び = %v, want [1 4 3 2 5]", got)
+	}
+
+	// ── ⑧-2 オンステージ（9.4.1）──────────────────────────
+	//
+	// **チケットの構成**：1=epic（親なし）／2=task（親は 1＝エピック）／
+	// 3=task（親は 2＝タスク）／4=story（親なし）／5=task（親なし）。
+	//
+	// **「上げられる」ことを先に確かめてから「上げられない」を測る**
+	// （LEARNINGS #35）。順序を逆にすると、実装が常に弾いていてもガードの
+	// 検証が通ってしまう。
+
+	// 作成直後はバックログ（staged_at が null。9.3）
+	for _, item := range ticketItems(t, r, session, base, "") {
+		if item["staged_at"] != nil {
+			t.Errorf("seq=%v の staged_at = %v（作成直後はバックログ）", item["seq"], item["staged_at"])
+		}
+	}
+
+	// 親を持たない 5 を上げる
+	rec = postWithCookie(r, base+"/tickets/5/move", session, `{"staged":true,"position":"last"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("オンステージへの移動の status = %d（body=%s）", rec.Code, rec.Body.String())
+	}
+	if viewOf(t, rec)["staged_at"] == nil {
+		t.Error("staged_at が null（上げたのに時刻が入っていない）")
+	}
+
+	// **親がエピックなら上げられる**（表示上のトップレベルであるため）
+	rec = postWithCookie(r, base+"/tickets/2/move", session, `{"staged":true,"position":"first"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("エピック直下の移動の status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+	}
+
+	// **親がタスクなら上げられない**（9.4.1 の not_stageable）
+	rec = postWithCookie(r, base+"/tickets/3/move", session, `{"staged":true,"position":"last"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("配下の移動の status = %d, want 422（body=%s）", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "not_stageable") {
+		t.Errorf("details に not_stageable が無い: %s", body)
+	}
+
+	// **エピック自身も上げられない**（親を持たないが行として出ないため）
+	rec = postWithCookie(r, base+"/tickets/1/move", session, `{"staged":true,"position":"last"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("エピックの移動の status = %d, want 422（body=%s）", rec.Code, rec.Body.String())
+	}
+
+	// 段は一覧の staged_at で読める。**いま上がっているのは 2 と 5 だけ**
+	staged := map[int]bool{}
+	for _, item := range ticketItems(t, r, session, base, "") {
+		if item["staged_at"] != nil {
+			staged[int(item["seq"].(float64))] = true
+		}
+	}
+	if len(staged) != 2 || !staged[2] || !staged[5] {
+		t.Errorf("オンステージの顔ぶれ = %v, want {2,5}", staged)
+	}
+
+	// **staged を省略すると段は変わらない**（9.4.1）
+	rec = postWithCookie(r, base+"/tickets/5/move", session, `{"position":"first"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("並べ替えのみの status = %d（body=%s）", rec.Code, rec.Body.String())
+	}
+	if viewOf(t, rec)["staged_at"] == nil {
+		t.Error("staged を省略したのに段が落ちた（9.4.1）")
+	}
+
+	// バックログへ戻すと null に戻る
+	rec = postWithCookie(r, base+"/tickets/2/move", session, `{"staged":false,"position":"last"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("バックログへ戻す status = %d（body=%s）", rec.Code, rec.Body.String())
+	}
+	if got := viewOf(t, rec)["staged_at"]; got != nil {
+		t.Errorf("staged_at = %v, want null（戻したら消えること）", got)
+	}
+
+	// **sort_key は二段で1本を共有する**（9.4）。段を行き来しても並びの軸は同じで、
+	// 全件の並びに 2 と 5 が含まれたままであること（消えない）。
+	if got := ticketSeqs(t, r, session, base, ""); len(got) != 5 {
+		t.Errorf("段の出し入れで件数が変わった: %v", got)
 	}
 
 	// **sort_key が NULL の行があっても回復する。** 直接 INSERT した行や
@@ -405,6 +489,25 @@ func ticketSeqs(t *testing.T, r http.Handler, session, base, query string) []int
 	for _, it := range items {
 		m, _ := it.(map[string]any)
 		out = append(out, int(m["seq"].(float64)))
+	}
+	return out
+}
+
+// ticketItems は一覧を引いて items[] をそのまま返す。
+//
+// seq だけでは足りない検証（staged_at のように行の属性を見るもの）に使う。
+// **並びはサーバの応答のまま**で、検証側で並べ直さない（ticketSeqs と同じ）。
+func ticketItems(t *testing.T, r http.Handler, session, base, query string) []map[string]any {
+	t.Helper()
+	rec := getWithCookie(r, base+"/tickets"+query, session)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("一覧の status = %d（body=%s）", rec.Code, rec.Body.String())
+	}
+	items, _ := viewOf(t, rec)["items"].([]any)
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		out = append(out, m)
 	}
 	return out
 }

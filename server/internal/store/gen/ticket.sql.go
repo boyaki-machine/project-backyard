@@ -171,6 +171,7 @@ SELECT
   ra.display_name AS reporter_name,
   pt.seq AS parent_seq,
   EXISTS (SELECT 1 FROM ticket ch WHERE ch.parent_id = t.id) AS has_children,
+  t.staged_at,
   t.sort_key,
   t.sprint_id,
   sp.name AS sprint_name,
@@ -216,6 +217,7 @@ type GetTicketBySeqRow struct {
 	ReporterName   pgtype.Text
 	ParentSeq      pgtype.Int4
 	HasChildren    bool
+	StagedAt       pgtype.Timestamptz
 	SortKey        pgtype.Text
 	SprintID       pgtype.Text
 	SprintName     pgtype.Text
@@ -254,6 +256,7 @@ func (q *Queries) GetTicketBySeq(ctx context.Context, arg GetTicketBySeqParams) 
 		&i.ReporterName,
 		&i.ParentSeq,
 		&i.HasChildren,
+		&i.StagedAt,
 		&i.SortKey,
 		&i.SprintID,
 		&i.SprintName,
@@ -272,8 +275,10 @@ func (q *Queries) GetTicketBySeq(ctx context.Context, arg GetTicketBySeqParams) 
 
 const getTicketSortRow = `-- name: GetTicketSortRow :one
 
-SELECT id, sort_key, version FROM ticket
- WHERE project_id = $1 AND seq = $2
+SELECT t.id, t.type, t.sort_key, t.staged_at, t.version, pt.type AS parent_type
+  FROM ticket t
+  LEFT JOIN ticket pt ON pt.id = t.parent_id
+ WHERE t.project_id = $1 AND t.seq = $2
 `
 
 type GetTicketSortRowParams struct {
@@ -282,17 +287,36 @@ type GetTicketSortRowParams struct {
 }
 
 type GetTicketSortRowRow struct {
-	ID      string
-	SortKey pgtype.Text
-	Version int32
+	ID         string
+	Type       string
+	SortKey    pgtype.Text
+	StagedAt   pgtype.Timestamptz
+	Version    int32
+	ParentType pgtype.Text
 }
 
 // ── 並べ替え（ApiDesign.md 9.4）─────────────────────────────
 // GetTicketSortRow は move の対象を引く。
+//
+// staged_at と parent_type を一緒に返すのは、9.4.1 の2つの判定に要るためである。
+//
+//   - position を「段の中」で解釈する（staged 省略時は現在の段）
+//   - 段に置けるのは表示上のトップレベルだけ（親を持たない、または親がエピック）。
+//     **エピック自身は除く**——どちらの段にも行として出ないので、上げても
+//     見えない（GuiDesign.md 5.4）。判定に自分の type も要る。
+//
+// parent_type は親がいなければ NULL になる。
 func (q *Queries) GetTicketSortRow(ctx context.Context, arg GetTicketSortRowParams) (GetTicketSortRowRow, error) {
 	row := q.db.QueryRow(ctx, getTicketSortRow, arg.ProjectID, arg.Seq)
 	var i GetTicketSortRowRow
-	err := row.Scan(&i.ID, &i.SortKey, &i.Version)
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.SortKey,
+		&i.StagedAt,
+		&i.Version,
+		&i.ParentType,
+	)
 	return i, err
 }
 
@@ -477,11 +501,17 @@ const listTickets = `-- name: ListTickets :many
 
 
 WITH RECURSIVE subtree AS (
-  -- parent 指定（9.2.1）。そのチケットと全子孫に限る。
-  -- 未指定（@parent_seq <= 0）のときは起点が無いので空になる。
+  -- parent 指定（9.2.1）。そのチケットと全子孫に限る。**カンマ区切りで
+  -- 複数指定でき、いずれかの部分木に含まれるものが OR で返る**——バックログの
+  -- エピックフィルタがこれを使う（GuiDesign.md 5.4「エピックをフィルタにする」）。
+  -- 未指定（空配列）のときは起点が無いので空になる。
+  --
+  -- **UNION ALL ではなく UNION を使う。** 起点が複数あると、あるエピックと
+  -- その配下のエピックを同時に選んだときに同じ行が2度出る。IN で使う限り
+  -- 結果は変わらないが、重複を運ぶ意味がない。
   SELECT id FROM ticket
-   WHERE project_id = $5::text AND seq = $6::int
-  UNION ALL
+   WHERE project_id = $5::text AND seq = ANY($6::int[])
+  UNION
   SELECT c.id FROM ticket c JOIN subtree s ON c.parent_id = s.id
 ),
 filtered AS (
@@ -504,6 +534,7 @@ filtered AS (
     pt.seq AS parent_seq,
     EXISTS (SELECT 1 FROM ticket ch WHERE ch.parent_id = t.id) AS has_children,
     t.sort_key,
+    t.staged_at,
     t.sprint_id,
     sp.name AS sprint_name,
     t.estimate_point,
@@ -557,10 +588,10 @@ filtered AS (
     AND ($18::int < 0
          OR (t.due_date IS NOT NULL
              AND t.due_date <= CURRENT_DATE + $18::int))
-    AND ($6::int <= 0 OR t.id IN (SELECT id FROM subtree))
+    AND (cardinality($6::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
 )
 SELECT
-  f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.parent_seq, f.has_children, f.sort_key, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at,
+  f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at,
   count(*) OVER ()                        AS total,
   (max(f.updated_at) OVER ())::timestamptz AS last_updated_at
 FROM filtered f
@@ -604,7 +635,7 @@ type ListTicketsParams struct {
 	PageOffset       int32
 	PageLimit        int32
 	ProjectID        string
-	ParentSeq        int32
+	ParentSeqs       []int32
 	StatusKeys       []string
 	StatusCategories []string
 	Types            []string
@@ -638,6 +669,7 @@ type ListTicketsRow struct {
 	ParentSeq       pgtype.Int4
 	HasChildren     bool
 	SortKey         pgtype.Text
+	StagedAt        pgtype.Timestamptz
 	SprintID        pgtype.Text
 	SprintName      pgtype.Text
 	EstimatePoint   pgtype.Float8
@@ -695,7 +727,7 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 		arg.PageOffset,
 		arg.PageLimit,
 		arg.ProjectID,
-		arg.ParentSeq,
+		arg.ParentSeqs,
 		arg.StatusKeys,
 		arg.StatusCategories,
 		arg.Types,
@@ -735,6 +767,7 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 			&i.ParentSeq,
 			&i.HasChildren,
 			&i.SortKey,
+			&i.StagedAt,
 			&i.SprintID,
 			&i.SprintName,
 			&i.EstimatePoint,
@@ -764,6 +797,8 @@ SELECT COALESCE(max(sort_key COLLATE "C"), '')::text FROM ticket
  WHERE project_id = $1
 `
 
+// MaxTicketSortKey はプロジェクト全体の末尾。**作成時の採番だけが使う**
+// （9.3。新規チケットは必ずバックログへ入るので、段で絞る意味がない）。
 func (q *Queries) MaxTicketSortKey(ctx context.Context, projectID string) (string, error) {
 	row := q.db.QueryRow(ctx, maxTicketSortKey, projectID)
 	var column_1 string
@@ -771,43 +806,95 @@ func (q *Queries) MaxTicketSortKey(ctx context.Context, projectID string) (strin
 	return column_1, err
 }
 
-const minTicketSortKey = `-- name: MinTicketSortKey :one
-SELECT COALESCE(min(sort_key COLLATE "C"), '')::text FROM ticket
- WHERE project_id = $1
+const maxTicketSortKeyInStage = `-- name: MaxTicketSortKeyInStage :one
+SELECT COALESCE(max(sort_key COLLATE "C"), '')::text FROM ticket
+ WHERE project_id = $1 AND (staged_at IS NOT NULL) = $2::boolean
 `
 
-// 以下4本が「どのキーとどのキーの間へ入れるか」を決める。**空文字は境界**
+type MaxTicketSortKeyInStageParams struct {
+	ProjectID string
+	Staged    bool
+}
+
+func (q *Queries) MaxTicketSortKeyInStage(ctx context.Context, arg MaxTicketSortKeyInStageParams) (string, error) {
+	row := q.db.QueryRow(ctx, maxTicketSortKeyInStage, arg.ProjectID, arg.Staged)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const minTicketSortKeyInStage = `-- name: MinTicketSortKeyInStage :one
+
+SELECT COALESCE(min(sort_key COLLATE "C"), '')::text FROM ticket
+ WHERE project_id = $1 AND (staged_at IS NOT NULL) = $2::boolean
+`
+
+type MinTicketSortKeyInStageParams struct {
+	ProjectID string
+	Staged    bool
+}
+
+// 以下5本が「どのキーとどのキーの間へ入れるか」を決める。**空文字は境界**
 // （先頭より前／末尾より後）を表し、lexorank.Between の引数の約束と同じである。
-func (q *Queries) MinTicketSortKey(ctx context.Context, projectID string) (string, error) {
-	row := q.db.QueryRow(ctx, minTicketSortKey, projectID)
+// MinTicketSortKeyInStage / MaxTicketSortKeyInStage は position の解決に使う。
+//
+// **段の中で解釈する**（9.4.1）。"first" は「オンステージの先頭」であって
+// 「プロジェクト全体の先頭」ではない。**空の段へ最初の1件を落とすとき、
+// 基準にできる行が無い**ため、この2本が要る。
+func (q *Queries) MinTicketSortKeyInStage(ctx context.Context, arg MinTicketSortKeyInStageParams) (string, error) {
+	row := q.db.QueryRow(ctx, minTicketSortKeyInStage, arg.ProjectID, arg.Staged)
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
 }
 
 const moveTicket = `-- name: MoveTicket :one
-UPDATE ticket SET sort_key = $1, version = version + 1
- WHERE project_id = $2 AND id = $3
-RETURNING seq, sort_key, version
+UPDATE ticket SET
+   sort_key  = $1,
+   staged_at = CASE WHEN $2::boolean THEN $3 ELSE staged_at END,
+   version   = version + 1
+ WHERE project_id = $4 AND id = $5
+RETURNING seq, sort_key, staged_at, version
 `
 
 type MoveTicketParams struct {
-	SortKey   pgtype.Text
-	ProjectID string
-	ID        string
+	SortKey     pgtype.Text
+	ChangeStage bool
+	StagedAt    pgtype.Timestamptz
+	ProjectID   string
+	ID          string
 }
 
 type MoveTicketRow struct {
-	Seq     int32
-	SortKey pgtype.Text
-	Version int32
+	Seq      int32
+	SortKey  pgtype.Text
+	StagedAt pgtype.Timestamptz
+	Version  int32
 }
 
-// MoveTicket は動かした1件の sort_key を書き、version を +1 する（9.4）。
+// MoveTicket は動かした1件の sort_key と段を書き、version を +1 する（9.4）。
+//
+// **段と位置を1文で書く**（9.4.1）。ドラッグ&ドロップの1操作で両方が同時に
+// 決まるため、2文に分けると途中で失敗したときに「段は移ったが位置は末尾」と
+// いう中途半端な状態が残る。
+//
+// change_stage が false のとき staged_at は現在値のままで、並べ替えだけを行う
+// （リクエストで staged を省略した場合）。
 func (q *Queries) MoveTicket(ctx context.Context, arg MoveTicketParams) (MoveTicketRow, error) {
-	row := q.db.QueryRow(ctx, moveTicket, arg.SortKey, arg.ProjectID, arg.ID)
+	row := q.db.QueryRow(ctx, moveTicket,
+		arg.SortKey,
+		arg.ChangeStage,
+		arg.StagedAt,
+		arg.ProjectID,
+		arg.ID,
+	)
 	var i MoveTicketRow
-	err := row.Scan(&i.Seq, &i.SortKey, &i.Version)
+	err := row.Scan(
+		&i.Seq,
+		&i.SortKey,
+		&i.StagedAt,
+		&i.Version,
+	)
 	return i, err
 }
 
@@ -895,6 +982,25 @@ func (q *Queries) SetTicketSortKey(ctx context.Context, arg SetTicketSortKeyPara
 	return err
 }
 
+const setTicketStagedAt = `-- name: SetTicketStagedAt :exec
+UPDATE ticket SET staged_at = $1 WHERE id = $2
+`
+
+type SetTicketStagedAtParams struct {
+	StagedAt pgtype.Timestamptz
+	ID       string
+}
+
+// SetTicketStagedAt はデモデータをオンステージに置くためだけのもの。
+//
+// **本来 staged_at は move の副作用としてのみ動く**（ApiDesign.md 9.4.1）。
+// ただし二段の画面（GuiDesign.md 5.4）は、seed 直後にオンステージが空だと
+// 「動いていること」を目で確かめられない。SetTicketClosedAt と同じ扱いである。
+func (q *Queries) SetTicketStagedAt(ctx context.Context, arg SetTicketStagedAtParams) error {
+	_, err := q.db.Exec(ctx, setTicketStagedAt, arg.StagedAt, arg.ID)
+	return err
+}
+
 const sprintExistsInProject = `-- name: SprintExistsInProject :one
 SELECT EXISTS (
   SELECT 1 FROM sprint WHERE project_id = $1 AND id = $2
@@ -923,6 +1029,8 @@ type TicketSortKeyAfterParams struct {
 	After     string
 }
 
+// TicketSortKeyAfter / TicketSortKeyBefore は**段を問わない**（9.4.1）。
+// sort_key はプロジェクト内で1本であり、どの行の隣を指定しても位置は一意に定まる。
 func (q *Queries) TicketSortKeyAfter(ctx context.Context, arg TicketSortKeyAfterParams) (string, error) {
 	row := q.db.QueryRow(ctx, ticketSortKeyAfter, arg.ProjectID, arg.After)
 	var column_1 string

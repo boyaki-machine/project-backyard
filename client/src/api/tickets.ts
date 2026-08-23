@@ -45,16 +45,14 @@ export type SortOrder = 'asc' | 'desc'
 /**
  * 種別のアイコン（`GuiDesign.md` 5.4）。**色を使わず形状で区別する**（8.6）。
  *
- * `phase` と `wbs` が同じ記号なのは設計文書のとおりである
- * （「`▦` フェーズ／WBS」）。
+ * **種別は3つだけである**（`DbDesign.md` 6.6。手順16d で `bug` / `phase` / `wbs`
+ * を廃止した）。使い分けの定義がどの設計文書にも無く、実機で選べなかったため。
+ * **バグは種別ではなくタグで表す**（6.10）。
  */
 export const ticketTypeIcons: Record<TicketType, string> = {
   epic: '⚑',
   story: '▤',
   task: '☑',
-  bug: '◈',
-  phase: '▦',
-  wbs: '▦',
 }
 
 /** 種別の表示名。サーバはキーしか返さないので、日本語は画面が持つ */
@@ -62,10 +60,17 @@ export const ticketTypeLabels: Record<TicketType, string> = {
   epic: 'エピック',
   story: 'ストーリー',
   task: 'タスク',
-  bug: 'バグ',
-  phase: 'フェーズ',
-  wbs: 'WBS',
 }
+
+/**
+ * バックログの行として出す種別（`GuiDesign.md` 5.4）。
+ *
+ * **エピックを含まない。** エピックはグルーピング専用で、行として並ぶと
+ * 「やるべき仕事」の数に混ざるため、複数選択できるフィルタになる。
+ * **一覧を取るときこの値を `type` に送る**——画面側で捨てると、下部に出す
+ * 総件数（サーバが返す `total`）と食い違う。
+ */
+export const backlogTicketTypes: TicketType[] = ['story', 'task']
 
 /**
  * 優先度の記号（`GuiDesign.md` 8.7）。**色を使わず記号のみ。**

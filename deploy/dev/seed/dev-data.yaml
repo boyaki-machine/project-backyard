@@ -32,6 +32,8 @@ projects:
       - { name: GUI,    sort_order: 20 }
       - { name: API,    sort_order: 30 }
       - { name: MCP連携, sort_order: 40 }
+      # **バグは種別ではなくタグで表す**（手順16d。DbDesign.md 6.10）。
+      - { name: バグ,   sort_order: 50 }
 
     # スプリント（DbDesign.md 6.9、手順16a）。**3つの状態をすべて置く**
     # ——プロジェクト設定のスプリントタブ（GuiDesign.md 5.9.5）が
@@ -68,6 +70,9 @@ projects:
     #   完了済み       open フィルタと、スプリントの進捗（5.9.5 の 5/12）
     #   スプリント3種  グループ化の軸の切り替え
     #   優先度5段      ▲▲ 〜 ▽▽ と無表示（8.7）
+    #   オンステージ2件 上下二段（5.4）。**片方は未着手**で、進捗とは独立した
+    #                  軸であることが目で分かる（DbDesign.md 6.6）
+    #   エピック3件    行として出さず、フィルタの選択肢になる（5.4）
     #
     # **parent は自分より前に書いたタイトルを指すこと**（前から順に作るため）。
     # status は simple ワークフローの todo / in_progress / done。
@@ -132,13 +137,15 @@ projects:
         start_date: '2026-08-10'
         due_date: '2026-08-14'
         estimate_point: 5
+      # **旧 type: bug**。種別を3値へ減らしたので、タスク＋タグ「バグ」で表す
+      # （手順16d。DbDesign.md 6.6 / 6.10）。
       - title: アーカイブの冪等性が怪しい
-        type: bug
+        type: task
         parent: プロジェクト管理をひととおり動かす
         status: todo
         priority: low
         assignee: member@example.com
-        tags: [API]
+        tags: [API, バグ]
         sprint: Sprint 2
 
       - title: チケットを扱えるようにする
@@ -151,6 +158,8 @@ projects:
         start_date: '2026-08-19'
         due_date: '2026-09-01'
         estimate_point: 21
+      # **オンステージ**（GuiDesign.md 5.4、手順16d）。親がエピックなので
+      # 表示上のトップレベルであり、段に置ける（ApiDesign.md 9.4.1）。
       - title: チケット一覧API
         type: task
         parent: チケットを扱えるようにする
@@ -161,6 +170,9 @@ projects:
         sprint: Sprint 3
         due_date: '2026-08-26'
         estimate_point: 8
+        staged: true
+      # **オンステージ、かつ未着手。** 進捗とオンステージが独立した軸である
+      # ことを画面で確かめられるようにする（DbDesign.md 6.6）。
       - title: バックログ画面
         type: task
         parent: チケットを扱えるようにする
@@ -170,6 +182,7 @@ projects:
         sprint: Sprint 3
         due_date: '2026-08-28'
         estimate_point: 8
+        staged: true
       # タグの無いチケット（「未分類」セクションの確認）。
       - title: 並べ替えの操作感を見る
         type: task
@@ -179,8 +192,9 @@ projects:
         sprint: Sprint 3
 
       # トップレベルで、親を持たず日付も持たないもの。
+      # **旧 type: phase**（手順16d で廃止）。親を持たないトップレベルのまま。
       - title: MCP サーバの足場を作る
-        type: phase
+        type: task
         status: todo
         priority: medium
         tags: [MCP連携, 設計]

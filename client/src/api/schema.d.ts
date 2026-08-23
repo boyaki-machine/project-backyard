@@ -693,11 +693,23 @@ export interface paths {
          *
          *     **並び順はプロジェクト内で1本である。** グループ化（親・タグ・スプリント）は表示上の
          *     区切りにすぎず、グループを切り替えても `sort_key` は変わらない。
+         *     **二段（バックログ／オンステージ）も同じ1本を共有する**（9.4、DbDesign.md 6.6）。
          *
          *     **`activity` には記録しない。** `sort_key` だけの更新であり、記録するとチケット詳細の
          *     変更履歴が並べ替えで埋まる（利用者の判断、2026-08-23）。
          *
          *     `position` と `after_seq` / `before_seq` の同時指定は 422。いずれも無い場合も 422。
+         *
+         *     **`staged` で段を出し入れする**（9.4.1）。段と位置を1回のリクエストで決めるのは、
+         *     ドラッグ&ドロップの1操作で両方が同時に決まるためで、2本に分けると途中で失敗した
+         *     ときに「段は移ったが位置は末尾」という中途半端な状態が残る。
+         *
+         *     検証に失敗したときの `details[].code` は次のとおり。
+         *
+         *     | `code` | 意味 |
+         *     |---|---|
+         *     | `not_stageable` | 表示上のトップレベルでないチケットを `staged: true` で上げようとした（9.4.1） |
+         *     | `invalid` / `required` | `position` と `after_seq` / `before_seq` の指定の誤り |
          */
         post: operations["moveTicket"];
         delete?: never;
@@ -1987,7 +1999,7 @@ export interface components {
              */
             seq: number;
             /** @enum {string} */
-            type: "epic" | "story" | "task" | "bug" | "phase" | "wbs";
+            type: "epic" | "story" | "task";
             /** @example 認証APIの実装 */
             title: string;
             status: components["schemas"]["TicketStatus"];
@@ -2010,6 +2022,15 @@ export interface components {
              * @example 0|hzzzzz:
              */
             sort_key: string | null;
+            /**
+             * Format: date-time
+             * @description 「オンステージ」（9.2.2、DbDesign.md 6.6）。`null` がバックログ、
+             *     値が入っているものがオンステージで、値は**いつ上げたか**である。
+             *     バックログ画面はこの1項目で上下二段に振り分ける（GuiDesign.md 5.4）。
+             *     **進捗（`status`）とは独立した軸**で、「未着手だがオンステージ」を表せる。
+             *     **段の出し入れは `POST /tickets/:seq/move`** で行う（9.4.1）。
+             */
+            staged_at: string | null;
             tags: components["schemas"]["TicketTagRef"][];
             sprint: components["schemas"]["TicketSprintRef"] | null;
             /** Format: double */
@@ -2066,7 +2087,7 @@ export interface components {
             seq: number;
             title: string;
             /** @enum {string} */
-            type: "epic" | "story" | "task" | "bug" | "phase" | "wbs";
+            type: "epic" | "story" | "task";
             status: components["schemas"]["TicketStatus"];
         };
         /** @description 直下の子の要約（ApiDesign.md 9.5.1 の `children`）。**孫は含めない。** */
@@ -2075,7 +2096,7 @@ export interface components {
             seq: number;
             title: string;
             /** @enum {string} */
-            type: "epic" | "story" | "task" | "bug" | "phase" | "wbs";
+            type: "epic" | "story" | "task";
             status: components["schemas"]["TicketStatus"];
             assignee: components["schemas"]["ActorRef"] | null;
         };
@@ -2109,7 +2130,7 @@ export interface components {
          */
         CreateTicketRequest: {
             /** @enum {string} */
-            type: "epic" | "story" | "task" | "bug" | "phase" | "wbs";
+            type: "epic" | "story" | "task";
             /** @description 前後の空白は取り除かれる。 */
             title: string;
             body_md?: string;
@@ -2153,11 +2174,17 @@ export interface components {
          *     | `{"after_seq": 44}` | 44 の直後へ |
          *     | `{"before_seq": 44}` | 44 の直前へ |
          *     | `{"after_seq": 44, "before_seq": 12}` | 44 と 12 の間へ |
-         *     | `{"position": "first"}` | 先頭へ |
-         *     | `{"position": "last"}` | 末尾へ |
+         *     | `{"position": "first"}` | 段の先頭へ |
+         *     | `{"position": "last"}` | 段の末尾へ |
+         *     | `{"staged": true, "position": "first"}` | **オンステージ**へ上げ、その先頭に置く |
+         *     | `{"staged": false, "after_seq": 44}` | **バックログ**へ戻し、44 の直後に置く |
          *
          *     `position` と `after_seq` / `before_seq` の同時指定は 422。いずれも無い場合も 422。
          *     **動かすチケット自身を基準にはできない**（422）。
+         *
+         *     **`position` は段の中で解釈する**（9.4.1）。`"first"` は「オンステージの先頭」で
+         *     あって「プロジェクト全体の先頭」ではない。**`after_seq` / `before_seq` は段を
+         *     問わない**——`sort_key` はプロジェクト内で1本だからである。
          */
         MoveTicketRequest: {
             /** Format: int32 */
@@ -2166,6 +2193,14 @@ export interface components {
             before_seq?: number;
             /** @enum {string} */
             position?: "first" | "last";
+            /**
+             * @description 段を変える（9.4.1）。`true` でオンステージ、`false` でバックログへ戻す。
+             *     **省略すると段は変わらない**（並べ替えだけを行う）。
+             *     **段に置けるのは表示上のトップレベルだけ**——親を持たないもの、または
+             *     親がエピックのもの。それ以外に `true` を送ると 422
+             *     （`details[].code = "not_stageable"`）。
+             */
+            staged?: boolean;
         };
         /** @description 並べ替えの結果（ApiDesign.md 9.4）。 */
         MoveTicketResult: {
@@ -2173,6 +2208,11 @@ export interface components {
             seq: number;
             /** @example 0|hzzzr: */
             sort_key: string;
+            /**
+             * Format: date-time
+             * @description 移動後の段（9.4.1）。`null` がバックログ。
+             */
+            staged_at: string | null;
             /**
              * Format: int32
              * @description **`If-Match` を要求しないが、`version` は +1 される**（9.4）。
@@ -3299,7 +3339,7 @@ export interface operations {
                  */
                 status_category?: string;
                 /**
-                 * @description `epic` / `story` / `task` / `bug` / `phase` / `wbs`。カンマ区切りは OR。
+                 * @description `epic` / `story` / `task`。カンマ区切りは OR。
                  * @example task,bug
                  */
                 type?: string;
@@ -3325,8 +3365,13 @@ export interface operations {
                  * @example 7d
                  */
                 due_within?: string;
-                /** @description `seq` を指定すると、そのチケットとその全子孫（部分木）に限る。 */
-                parent?: number;
+                /**
+                 * @description `seq` を指定すると、そのチケットとその全子孫（部分木）に限る。
+                 *     **カンマ区切りで複数指定は OR**（いずれかの部分木に含まれるもの）。
+                 *     バックログのエピックフィルタがこれを使う（GuiDesign.md 5.4）。
+                 * @example 12,30
+                 */
+                parent?: string;
                 /**
                  * @description 既定は `sort_key`。**`priority` と `status` は意味の順で並ぶ**——
                  *     `priority` は `lowest`→`highest`、`status` はワークフローの `sort_order` で、

@@ -74,8 +74,12 @@ type ticketListItem struct {
 	ParentSeq   *int32           `json:"parent_seq"`
 	HasChildren bool             `json:"has_children"`
 	SortKey     *string          `json:"sort_key"`
-	Tags        []ticketTagRef   `json:"tags"`
-	Sprint      *sprintRef       `json:"sprint"`
+	// StagedAt は「オンステージ」（9.2.2、DbDesign.md 6.6）。null がバックログ、
+	// 値が入っているものがオンステージで、値は「いつ上げたか」である。
+	// **進捗（status）とは独立した軸**で、「未着手だがオンステージ」を表せる。
+	StagedAt *Time          `json:"staged_at"`
+	Tags     []ticketTagRef `json:"tags"`
+	Sprint   *sprintRef     `json:"sprint"`
 
 	EstimatePoint *float64 `json:"estimate_point"`
 	EstimateHours *float64 `json:"estimate_hours"`
@@ -140,6 +144,7 @@ func buildTicketListItem(row gen.ListTicketsRow, tags []ticketTagRef) ticketList
 		ParentSeq:     int4Ptr(row.ParentSeq),
 		HasChildren:   row.HasChildren,
 		SortKey:       textPtr(row.SortKey),
+		StagedAt:      apiTimestamptz(row.StagedAt),
 		Tags:          tags,
 		Sprint:        sprintRefOf(row.SprintID, row.SprintName),
 		EstimatePoint: float8Ptr(row.EstimatePoint),
@@ -185,6 +190,7 @@ func buildTicketDetail(
 			ParentSeq:     int4Ptr(row.ParentSeq),
 			HasChildren:   row.HasChildren,
 			SortKey:       textPtr(row.SortKey),
+			StagedAt:      apiTimestamptz(row.StagedAt),
 			Tags:          tagsOrEmpty(tags[row.ID]),
 			Sprint:        sprintRefOf(row.SprintID, row.SprintName),
 			EstimatePoint: float8Ptr(row.EstimatePoint),

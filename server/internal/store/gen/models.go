@@ -255,6 +255,7 @@ type Ticket struct {
 	Version         int32
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+	StagedAt        pgtype.Timestamptz
 }
 
 type TicketLink struct {
