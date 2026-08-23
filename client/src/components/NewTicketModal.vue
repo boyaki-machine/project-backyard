@@ -34,6 +34,8 @@ import Modal from './Modal.vue'
 import type { Sprint } from '../api/sprints'
 import type { Tag } from '../api/tags'
 import {
+  backlogTicketTypes,
+  newTicketBodyTemplate,
   priorityLabels,
   priorityOrder,
   ticketTypeIcons,
@@ -43,6 +45,8 @@ import type { CreateTicketRequest, Ticket, TicketPriority, TicketType } from '..
 import type { ProjectMember } from '../api/projects'
 
 const props = defineProps<{
+  /** ID を完全形で出すために要る（`GuiDesign.md` 5.4「ID列」） */
+  projectKey: string
   members: ProjectMember[]
   tags: Tag[]
   sprints: Sprint[]
@@ -59,11 +63,21 @@ const emit = defineEmits<{ close: []; save: [body: CreateTicketRequest] }>()
 /** 上限（`ApiDesign.md` 9.3）。正本はサーバ側 */
 const MAX_TITLE = 200
 
-const types = Object.keys(ticketTypeLabels) as TicketType[]
+/**
+ * **選択肢はストーリーとタスクの2つ**（`GuiDesign.md` 5.4.3）。
+ * エピックはフィルタであり、ここからは作らない。
+ */
+const types: TicketType[] = backlogTicketTypes
 
 const type = ref<TicketType>('task')
 const title = ref('')
-const bodyMd = ref('')
+
+/**
+ * **説明欄はテンプレートで始める**（5.4.3）。`placeholder` にしないのは、
+ * 1文字打つと見出しごと消えてしまい、書かせたい項目に機能しないためである。
+ * 触らずに作成した場合もそのまま本文として送る（初期値であるとはそういう意味）。
+ */
+const bodyMd = ref(newTicketBodyTemplate)
 const priority = ref<TicketPriority | ''>('')
 const assigneeId = ref(props.defaults?.assignee_id ?? '')
 const parentSeq = ref(props.defaults?.parent_seq !== undefined ? String(props.defaults.parent_seq) : '')
@@ -116,12 +130,13 @@ function toggleTag(id: string): void {
 }
 
 /**
- * 親の候補ラベル。一覧と同じ `-12 DB設計` の形で出す（5.4）。
+ * 親の候補ラベル。**一覧と同じ完全形 `my-app-12 DB設計` の形で出す**（5.4「ID列」）。
  *
- * プロジェクトキーは URL から自明なので接尾だけを見せる（9.1）。
+ * 接尾だけの `-12` は負の数に見える（実機で判明。利用者の指摘、2026-08-23）。
+ * 組み立てはフロントが行う（`ApiDesign.md` 9.1。サーバは組み立てない）。
  */
 function candidateLabel(t: Ticket): string {
-  return `-${t.seq} ${t.title}`
+  return `${props.projectKey}-${t.seq} ${t.title}`
 }
 
 /**
@@ -181,7 +196,7 @@ function submit(): void {
         <span class="label">説明</span>
         <!-- Markdown のライブプレビューはチケット詳細（5.5）の役目。
              ここは素の textarea に留める -->
-        <textarea v-model="bodyMd" rows="4" placeholder="Markdown で書けます"></textarea>
+        <textarea v-model="bodyMd" rows="7" placeholder="Markdown で書けます"></textarea>
       </label>
 
       <div class="row">
