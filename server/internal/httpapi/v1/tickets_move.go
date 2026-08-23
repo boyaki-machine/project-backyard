@@ -26,9 +26,11 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/lexorank"
@@ -42,10 +44,14 @@ const (
 )
 
 // moveTicketRequest は 9.4 のリクエスト。
+//
+// Staged は段を変える（9.4.1）。**省略すると段は変わらない**ので、ポインタで
+// 「送られなかった」と「false が送られた」を区別する。
 type moveTicketRequest struct {
 	AfterSeq  *int32 `json:"after_seq"`
 	BeforeSeq *int32 `json:"before_seq"`
 	Position  string `json:"position"`
+	Staged    *bool  `json:"staged"`
 }
 
 // moveTicketResponse は 9.4 の応答。
@@ -56,6 +62,7 @@ type moveTicketRequest struct {
 type moveTicketResponse struct {
 	Seq        int32  `json:"seq"`
 	SortKey    string `json:"sort_key"`
+	StagedAt   *Time  `json:"staged_at"`
 	Version    int32  `json:"version"`
 	Rebalanced bool   `json:"rebalanced"`
 }
@@ -102,7 +109,29 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("チケット %d を読めない: %w", seq, err)
 		}
 
-		prev, next, usable, e := resolveMoveNeighbors(ctx, q, projectID, seq, req)
+		// **移動先の段を先に決める**（9.4.1）。staged を省略した場合は
+		// 現在の段のままで、position もその段の中で解釈される。
+		targetStaged := row.StagedAt.Valid
+		if req.Staged != nil {
+			targetStaged = *req.Staged
+		}
+
+		// **段に置けるのは表示上のトップレベルだけ**（9.4.1、GuiDesign.md 5.4）
+		// ——親を持たないもの、または親がエピックのもの。配下は親と一緒に運ばれる
+		// ので、子を個別に上げる操作は意味を持たない。**バックログへ戻すのは
+		// 常に許す**（段から降ろすだけなので、置ける条件を問う理由がない）。
+		if targetStaged && !row.StagedAt.Valid && !stageable(row.Type, row.ParentType) {
+			message := "配下のチケットはオンステージへ上げられません。親のチケットを上げてください"
+			if row.Type == ticketTypeEpic {
+				message = "エピックはオンステージへ上げられません。配下のチケットを上げてください"
+			}
+			moveErr = apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+				Field: "staged", Code: "not_stageable", Message: message,
+			})
+			return errTicketReference
+		}
+
+		prev, next, usable, e := resolveMoveNeighbors(ctx, q, projectID, seq, req, targetStaged)
 		if e != nil {
 			moveErr = e
 			return errTicketReference
@@ -118,7 +147,7 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 			}
 			resp.Rebalanced = true
 
-			prev, next, _, e = resolveMoveNeighbors(ctx, q, projectID, seq, req)
+			prev, next, _, e = resolveMoveNeighbors(ctx, q, projectID, seq, req, targetStaged)
 			if e != nil {
 				moveErr = e
 				return errTicketReference
@@ -135,16 +164,32 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// staged_at は「いつ上げたか」を持つ（DbDesign.md 6.6）。**既にオンステージの
+		// ものを並べ替えただけで時刻を打ち直さない**——上げた順で読みたいときに、
+		// 並べ替えのたびに新しくなると意味を失う。
+		stagedAt := row.StagedAt
+		changeStage := req.Staged != nil && targetStaged != row.StagedAt.Valid
+		if changeStage {
+			if targetStaged {
+				stagedAt = nowTimestamptz()
+			} else {
+				stagedAt = pgtype.Timestamptz{}
+			}
+		}
+
 		moved, err := q.MoveTicket(ctx, gen.MoveTicketParams{
-			ProjectID: projectID,
-			ID:        row.ID,
-			SortKey:   text(key),
+			ProjectID:   projectID,
+			ID:          row.ID,
+			SortKey:     text(key),
+			ChangeStage: changeStage,
+			StagedAt:    stagedAt,
 		})
 		if err != nil {
 			return fmt.Errorf("チケット %d の並び順を更新できない: %w", seq, err)
 		}
 		resp.Seq = moved.Seq
 		resp.SortKey = moved.SortKey.String
+		resp.StagedAt = apiTimestamptz(moved.StagedAt)
 		resp.Version = moved.Version
 		return nil
 	})
@@ -160,6 +205,29 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, resp)
+}
+
+// stageable は「段に置けるか」を返す（9.4.1、GuiDesign.md 5.4）。
+//
+// **表示上のトップレベルだけが置ける**——親を持たないもの（parentType が無効）、
+// または**親がエピックのもの**。エピックはバックログに行として出さずフィルタに
+// なるので（DbDesign.md 6.10）、その直下のチケットは画面上のトップレベルである。
+// 親を持たないものだけに絞ると、実運用では大半の仕事がエピック配下に入るため
+// オンステージがほとんど空になる。
+//
+// **エピック自身は置けない。** 親を持たないので上の条件だけでは通ってしまうが、
+// エピックはどちらの段にも行として出ないため、上げても見えない状態になる
+// （GuiDesign.md 5.4）。dev seed の検証（cmd/pb/dev_seed.go）と同じ規則である。
+func stageable(ownType string, parentType pgtype.Text) bool {
+	if ownType == ticketTypeEpic {
+		return false
+	}
+	return !parentType.Valid || parentType.String == ticketTypeEpic
+}
+
+// nowTimestamptz は staged_at に入れる「いつ上げたか」。
+func nowTimestamptz() pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: time.Now(), Valid: true}
 }
 
 // validateMoveTarget は 9.4 の「position と after_seq / before_seq の同時指定は
@@ -197,19 +265,30 @@ func validateMoveTarget(req moveTicketRequest) *apierr.Error {
 // 基準にすると空文字（＝境界）と区別が付かず、「44 の直後へ」と言われたのに
 // 先頭へ置いてしまうためである。position 指定にはこの問題が無い（境界そのものを
 // 指しているので、空文字が正しい意味を持つ）。
+//
+// **targetStaged は position を解釈する段**（9.4.1）。"first" は「移動先の段の
+// 先頭」であって「プロジェクト全体の先頭」ではない。空の段へ最初の1件を落とす
+// ときに基準となる行が無いため、段で絞った min / max が要る。**after_seq /
+// before_seq は段を問わない**——sort_key はプロジェクト内で1本であり、どの行の
+// 隣を指定しても位置は一意に定まる。
 func resolveMoveNeighbors(
-	ctx context.Context, q gen.Querier, projectID string, seq int32, req moveTicketRequest,
+	ctx context.Context, q gen.Querier, projectID string, seq int32,
+	req moveTicketRequest, targetStaged bool,
 ) (string, string, bool, *apierr.Error) {
 	switch {
 	case req.Position == positionFirst:
-		next, err := q.MinTicketSortKey(ctx, projectID)
+		next, err := q.MinTicketSortKeyInStage(ctx, gen.MinTicketSortKeyInStageParams{
+			ProjectID: projectID, Staged: targetStaged,
+		})
 		if err != nil {
 			return "", "", false, internalMoveError("先頭の並び順を読めない", err)
 		}
 		return "", next, true, nil
 
 	case req.Position == positionLast:
-		prev, err := q.MaxTicketSortKey(ctx, projectID)
+		prev, err := q.MaxTicketSortKeyInStage(ctx, gen.MaxTicketSortKeyInStageParams{
+			ProjectID: projectID, Staged: targetStaged,
+		})
 		if err != nil {
 			return "", "", false, internalMoveError("末尾の並び順を読めない", err)
 		}

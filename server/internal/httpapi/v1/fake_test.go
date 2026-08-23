@@ -1229,6 +1229,35 @@ func (q *fakeQuerier) MaxTicketSortKey(context.Context, string) (string, error) 
 	return max, nil
 }
 
+// MinTicketSortKeyInStage / MaxTicketSortKeyInStage は position の解決に使う
+// （9.4.1）。**段で絞る**——"first" は「移動先の段の先頭」であって
+// 「プロジェクト全体の先頭」ではない。
+func (q *fakeQuerier) MinTicketSortKeyInStage(
+	_ context.Context, arg gen.MinTicketSortKeyInStageParams,
+) (string, error) {
+	q.opLog = append(q.opLog, "MinTicketSortKeyInStage")
+	min := ""
+	for _, key := range q.ticketSortKeysInStage(arg.Staged) {
+		if min == "" || key < min {
+			min = key
+		}
+	}
+	return min, nil
+}
+
+func (q *fakeQuerier) MaxTicketSortKeyInStage(
+	_ context.Context, arg gen.MaxTicketSortKeyInStageParams,
+) (string, error) {
+	q.opLog = append(q.opLog, "MaxTicketSortKeyInStage")
+	max := ""
+	for _, key := range q.ticketSortKeysInStage(arg.Staged) {
+		if key > max {
+			max = key
+		}
+	}
+	return max, nil
+}
+
 func (q *fakeQuerier) TicketSortKeyAfter(_ context.Context, arg gen.TicketSortKeyAfterParams) (string, error) {
 	q.opLog = append(q.opLog, "TicketSortKeyAfter")
 	out := ""
@@ -1255,6 +1284,21 @@ func (q *fakeQuerier) TicketSortKeyBefore(_ context.Context, arg gen.TicketSortK
 func (q *fakeQuerier) ticketSortKeys() []string {
 	keys := make([]string, 0, len(q.ticket.sortRowBySeq))
 	for _, row := range q.ticket.sortRowBySeq {
+		if row.SortKey.Valid && row.SortKey.String != "" {
+			keys = append(keys, row.SortKey.String)
+		}
+	}
+	return keys
+}
+
+// ticketSortKeysInStage は片方の段に属する行の sort_key だけを返す。
+// SQL 側の `(staged_at IS NOT NULL) = @staged` と同じ判定である。
+func (q *fakeQuerier) ticketSortKeysInStage(staged bool) []string {
+	keys := make([]string, 0, len(q.ticket.sortRowBySeq))
+	for _, row := range q.ticket.sortRowBySeq {
+		if row.StagedAt.Valid != staged {
+			continue
+		}
 		if row.SortKey.Valid && row.SortKey.String != "" {
 			keys = append(keys, row.SortKey.String)
 		}
@@ -1297,8 +1341,14 @@ func (q *fakeQuerier) MoveTicket(_ context.Context, arg gen.MoveTicketParams) (g
 	for seq, r := range q.ticket.sortRowBySeq {
 		if r.ID == arg.ID {
 			r.SortKey, r.Version = arg.SortKey, r.Version+1
+			// change_stage が false のとき staged_at は現在値のまま（9.4.1）。
+			if arg.ChangeStage {
+				r.StagedAt = arg.StagedAt
+			}
 			q.ticket.sortRowBySeq[seq] = r
-			return gen.MoveTicketRow{Seq: seq, SortKey: arg.SortKey, Version: r.Version}, nil
+			return gen.MoveTicketRow{
+				Seq: seq, SortKey: arg.SortKey, StagedAt: r.StagedAt, Version: r.Version,
+			}, nil
 		}
 	}
 	return gen.MoveTicketRow{SortKey: arg.SortKey, Version: 1}, nil

@@ -454,11 +454,13 @@ server/migrations/                      ← Design.md 4.1。sqlc がスキーマ
 ├── 0011_audit_log_request_id.sql       audit_log.request_id を追加（6.8）
 ├── 0012_access_token_permission_cache.sql
 │                                       access_token に実効権限のキャッシュ2列を追加（6.2）
-├── 0013_tag.sql                        tag, ticket_tag（6.10）           ← 手順16
-└── 0014_dod.sql                        dod_item（6.11）                  ← 手順18
+├── 0013_tag.sql                        tag, ticket_tag（6.10）           ← 手順16a
+├── 0014_dod.sql                        dod_item（6.11）                  ← 手順18
+└── 0015_ticket_type_and_stage.sql      ticket.type を3値へ縮小、
+                                        ticket.staged_at を追加（6.6）    ← 手順16d
 ```
 
-**0013・0014 は未適用である**（`ApiDesign.md` 9章の確定にともなって設計だけを先に決めた。手順16 / 18 の成果物となる）。
+**0014 は未適用である**（`ApiDesign.md` 9章の確定にともなって設計だけを先に決めた。手順18 の成果物となる）。
 
 `project.workflow_id` と `ticket.sprint_id` は後続テーブルを参照するため、**FK制約のみ後から `ALTER TABLE ... ADD CONSTRAINT` で付与する**（0005 / 0009 の末尾）。PostgreSQL は前方参照を許さないためである。
 
@@ -789,8 +791,8 @@ CREATE TABLE ticket (
   project_id     char(26) COLLATE "C" NOT NULL REFERENCES project(id) ON DELETE CASCADE,
   seq            integer NOT NULL,
   parent_id      char(26) COLLATE "C" REFERENCES ticket(id) ON DELETE SET NULL,
-  type           text    NOT NULL
-                 CHECK (type IN ('epic','story','task','bug','phase','wbs')),
+  type           text    NOT NULL          -- 0015 で3値へ縮小
+                 CHECK (type IN ('epic','story','task')),
   title          text    NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
   body_md        text,
   status_key     text    NOT NULL,          -- workflow_status.key への論理参照
@@ -806,6 +808,7 @@ CREATE TABLE ticket (
   due_date       date,
   sprint_id      char(26) COLLATE "C",
   sort_key       text,                      -- LexoRank 方式の並び順
+  staged_at      timestamptz,               -- 0015 で追加。NULL＝バックログ
 
   -- エージェント連携（Phase 1 で列のみ先行定義）
   execution_mode text    NOT NULL DEFAULT 'human_only'
@@ -837,6 +840,8 @@ CREATE INDEX idx_ticket_updated        ON ticket (project_id, updated_at DESC);
 CREATE INDEX idx_ticket_title_trgm     ON ticket USING gin (title gin_trgm_ops);
 CREATE INDEX idx_ticket_body_trgm      ON ticket USING gin (body_md gin_trgm_ops);
 CREATE INDEX idx_ticket_custom_fields  ON ticket USING gin (custom_fields);
+CREATE INDEX idx_ticket_staged         ON ticket (project_id, staged_at)
+                                       WHERE staged_at IS NOT NULL;  -- 0015 で追加
 CREATE TRIGGER trg_ticket_updated BEFORE UPDATE ON ticket
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
@@ -858,6 +863,24 @@ CREATE TABLE ticket_link (
 CREATE INDEX idx_ticket_link_source ON ticket_link (source_ticket_id);
 CREATE INDEX idx_ticket_link_target ON ticket_link (target_ticket_id);
 ```
+
+**`type` は `epic` / `story` / `task` の3値である**（0015 で縮小した）。
+
+| 値 | 意味 |
+|---|---|
+| `task` | **最小の仕事単位。** 多段にできる（タスクの下にタスクを置いてよい） |
+| `story` | **配下に複数のタスクを含むことを示す。** 機能上の差は無く、アイコンだけが違う（`GuiDesign.md` 5.4）。**子を持たない `story` を許す**——作りかけの状態として自然であり、子の有無で種別が入れ替わると履歴とフィルタが揺れる |
+| `epic` | **グルーピング専用。** バックログに行として出さず、複数選択できるフィルタになる（6.10、`GuiDesign.md` 5.4） |
+
+**`bug` / `phase` / `wbs` は 0015 で廃止した**（利用者の判断、2026-08-23）。**使い分けの定義が本書にもどこにも無く**、実機で使うと選べないことが分かったためである。**バグは種別ではなくタグで表す**（6.10）。0015 は**既存行を `task` へ移してから `CHECK` を張り替える**。前進のみの規則（5.3）に従い 0006 は編集していない。
+
+**`staged_at` は「オンステージ」を表す**（0015 で追加）。バックログ画面は上下二段で、**下＝バックログ（プロジェクトが行うべき仕事すべての保管庫）／上＝オンステージ（いま仕掛り中で、直近のスプリントで消化すべきもの）**である（`GuiDesign.md` 5.4）。`NULL` がバックログ、値が入っているものがオンステージで、値そのものは**いつ上げたか**を持つ。
+
+**二段は `sort_key` を共有する。** 同じ「消化順」の部分集合であり、順序キーを2本持つと段を行き来するたびにどちらを更新するかを決めることになり、**戻したときの位置が失われる**（`ApiDesign.md` 9.4）。
+
+**オンステージは進捗（`status_key`）とは独立した軸である。** 「未着手だがオンステージ」が表せる必要があるため、ステータスやスプリントでは代用しない。**段に置けるのは表示上のトップレベル**（親を持たないもの、または親がエピックのもの）だけで、配下は親と一緒に運ばれる（`GuiDesign.md` 5.4）。
+
+**この2つの変更は 0015 で行った**（`ticket` 自体の作成は 0006）。手順16c の実機確認で、種別の使い分けが定義されていないことと、バックログに「いま仕掛り中」を表す軸が無いことが判明したためである。
 
 **`status_key` を物理FKにしない。** ワークフロー定義を差し替えた際に既存チケットが更新不能になるのを避けるため、整合性はアプリ層で検証する（本書 6.6）。
 
@@ -1025,7 +1048,9 @@ CREATE INDEX idx_ticket_tag_tag ON ticket_tag (tag_id);
 
 **1つの軸に混ぜない理由。** 「ログイン画面のCSS」は *認証エピックの一部* であると同時に *GUI系* でもある。階層1本に押し込むと、機能エピックの配下に置くか領域エピックの配下に置くかを毎回選ぶことになり、どちらか一方の見え方が失われる。他ツールでエピックが「分解の単位」と「分類ラベル」を兼ねて破綻するのは、この1軸化が原因である。
 
-**`epic` / `story` は `ticket.type` に残す**（6.6）。種別はアイコンと語彙のためのものであり、グルーピングの機能は持たない。グルーピングは階層とタグが担う。
+**グルーピングの実体は `ticket.parent_id` とタグであり、`ticket.type` ではない**（6.6）。**ただし `type='epic'` だけは画面が特別扱いする**——バックログに行として出さず、複数選択できるフィルタになる（`GuiDesign.md` 5.4）。エピックを選んで絞り込むと、その部分木に限られる（`ApiDesign.md` 9.2.1 の `parent`）。**絞り込みの実体は `parent_id` のまま**であり、この特別扱いは**表示の規約であってデータモデルの変更ではない**。
+
+**バグは種別ではなくタグで表す**（0015 で `bug` を廃止した。6.6）。「この仕事はどういう性質のものか」に答えるのはタグであり、上の「1つの軸に混ぜない理由」がそのまま当てはまる。バグを種別に持たせると、「GUI のバグ」を種別・階層・タグのどれで表すかを毎回選ぶことになる。
 
 | 判断 | 理由 |
 |---|---|
@@ -1428,16 +1453,16 @@ make dev-info    # URL とデモアカウント一覧を表示
 Phase 1 のテーブルは変更せず、**テーブル追加のみ**で拡張する。本章のDDLは構成案であり、各Phase着手時に確定させる。
 
 ```
-0015_agent.sql            agent, task_lease
-0016_agent_run.sql        agent_run, agent_report, context_pack_log
-0017_knowledge.sql        knowledge, knowledge_revision, proposal
-0018_comment_signal.sql   comment_signal
-0019_embedding.sql        vector 拡張 + embedding
-0020_project_event.sql    project_event
-0021_analytics.sql        estimate_record, contribution
+0016_agent.sql            agent, task_lease
+0017_agent_run.sql        agent_run, agent_report, context_pack_log
+0018_knowledge.sql        knowledge, knowledge_revision, proposal
+0019_comment_signal.sql   comment_signal
+0020_embedding.sql        vector 拡張 + embedding
+0021_project_event.sql    project_event
+0022_analytics.sql        estimate_record, contribution
 ```
 
-採番が 0015 から始まるのは、Phase 1 が 0014 まで使うためである。手順4b で 0011（`audit_log.request_id` の追加、6.8）、手順6b で 0012（`access_token` の実効権限キャッシュ、6.2）、`ApiDesign.md` 9章の確定にともなって 0013（タグ、6.10）と 0014（完了条件、6.11）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる。** 本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0016 から始まるのは、Phase 1 が 0015 まで使うためである。手順4b で 0011（`audit_log.request_id` の追加、6.8）、手順6b で 0012（`access_token` の実効権限キャッシュ、6.2）、`ApiDesign.md` 9章の確定にともなって 0013（タグ、6.10）と 0014（完了条件、6.11）を、手順16d で 0015（種別の縮小と `staged_at`、6.6）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる。** 本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 

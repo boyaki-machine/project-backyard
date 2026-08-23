@@ -1105,7 +1105,9 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 `id` を応答に残すのは、`activity.entity_id`（`DbDesign.md` 6.8）との突き合わせと、Phase 2 以降のエージェント連携（`task_lease.ticket_id` 等）が ULID を使うためである。
 
-**完全形 `my-app-31` はサーバが組み立てない。** プロジェクトキーは URL に含まれており、フロントが `${key}-${seq}` を組める。応答に冗長な文字列を載せない（`GuiDesign.md` 5.4 は一覧で `-31` とだけ表示し、コピー時のみ完全形にする）。
+**完全形 `my-app-31` はサーバが組み立てない。** プロジェクトキーは URL に含まれており、フロントが `${key}-${seq}` を組める。応答に冗長な文字列を載せない。
+
+**組み立て方は変えないが、画面が出す形は変わった。** `GuiDesign.md` 5.4 は当初「一覧では `-31` と接尾のみ表示（プロジェクトが自明なため）」としていたが、実機で**負の数に見える**ことが分かり、**一覧でも完全形 `my-app-31` を出す**ことにした（利用者の指摘、2026-08-23）。サーバ側の規約は変わらない。
 
 **チケット以外の子資源（コメント・DoD項目・リンク・タグ・スプリント）は ULID で指す。** これらは `seq` に相当する連番を持たない。パスは `/tickets/:seq/comments/:id` のように、チケットまでを `seq`、その先を ULID とする。
 
@@ -1131,20 +1133,24 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 |---|---|---|
 | `status` | — | ワークフローのステータスキー。カンマ区切りで複数指定は OR |
 | `status_category` | — | `todo` / `in_progress` / `review` / `done`。カンマ区切りは OR |
-| `type` | — | `epic` / `story` / `task` / `bug` / `phase` / `wbs`。カンマ区切りは OR |
+| `type` | — | `epic` / `story` / `task`。カンマ区切りは OR |
 | `assignee` | — | 担当者の ULID。`me` で自分、`none` で未割当。カンマ区切りは OR |
 | `priority` | — | `lowest` 〜 `highest`。カンマ区切りは OR |
 | `tag` | — | タグの ULID（9.11）。`none` で未分類。カンマ区切りは OR |
 | `sprint` | — | スプリントの ULID（9.12）。`none` で未割当。カンマ区切りは OR |
 | `open` | — | `true` で `closed_at IS NULL` のもののみ。`false` で完了のみ |
 | `due_within` | — | `7d` 形式。**今日から N 日以内に期限があるもの（期限超過を含む）**。`due_date IS NULL` は除外 |
-| `parent` | — | `seq` を指定すると、そのチケットとその全子孫（部分木）に限る |
+| `parent` | — | `seq` を指定すると、そのチケットとその全子孫（部分木）に限る。**カンマ区切りで複数指定は OR**（いずれかの部分木に含まれるもの） |
 | `sort` | `sort_key` | `sort_key` / `seq` / `title` / `status` / `priority` / `due_date` / `created_at` / `updated_at` |
 | `order` | `asc` | `asc` / `desc` |
 | `page` | `1` | 2.6 |
 | `per_page` | **`200`** | 2.6。上限は 2.6 と同じ 200 |
 
-**異なる種類の条件どうしは AND、同じ条件の複数指定は OR** とする（`?type=bug&priority=high,highest` は「バグ、かつ優先度が高以上」）。
+**異なる種類の条件どうしは AND、同じ条件の複数指定は OR** とする（`?type=task&priority=high,highest` は「タスク、かつ優先度が高以上」）。
+
+**バックログのエピックフィルタは `parent` を使う**（`GuiDesign.md` 5.4）。エピックは行として出さず、複数選択できるフィルタになるが、**絞り込みの実体は部分木であって種別ではない**（`DbDesign.md` 6.10）。`?parent=12,30` は「12 の部分木または 30 の部分木」で、エピック自身も部分木に含まれる（画面が行として捨てる）。**`epic` という専用パラメータを作らない**——作ると API が種別に依存し、グルーピングの実体が `parent_id` であるという定義と食い違う。
+
+**`staged`（オンステージ）で絞るパラメータは持たない。** バックログ画面は**フィルタ後の全件を1回で取り切り、二段を手元で分ける**（9.2.3、`GuiDesign.md` 5.4）。2本に分けると、件数表示・`ETag`・並べ替え後の再取得がすべて2本になる。段は応答の `staged_at` で判別できる。
 
 **`per_page` の既定が他の一覧（25）と違う。** バックログはページャを持たず、フィルタ後の全件を1回で取り切る画面だからである（9.2.3）。**`sort` の既定が `sort_key` であることも本エンドポイント固有**で、これは人が手で並べた順序（9.4）を既定の見え方にするためである。
 
@@ -1169,6 +1175,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
       "parent_seq": null,
       "has_children": true,
       "sort_key": "0|hzzzzz:",
+      "staged_at": null,
       "tags": [ { "id": "01K2...", "name": "設計" } ],
       "sprint": { "id": "01K2...", "name": "Sprint 3" },
       "estimate_point": 5,
@@ -1187,6 +1194,8 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 ```
 
 **`tags[]` と `parent_seq` / `has_children` を一覧に含めるのが本エンドポイントの要点である。** グループ化（タグ）と階層のインデント表示（親子）を、追加のリクエストなしに描けるようにする（設計方針3）。これらを含めないと、バックログは1画面あたり `1 + タグ数 + 階層の深さ` 回の往復を必要とする。
+
+**`staged_at` は「オンステージ」を表す**（`DbDesign.md` 6.6）。`null` がバックログ、値が入っているものがオンステージで、値は**いつ上げたか**である。バックログ画面はこの1項目で上下二段に振り分ける。**進捗（`status`）とは独立した軸**であり、「未着手だがオンステージ」が表せる。
 
 **`body_md` は含めない。** 一覧は本文を表示せず（`GuiDesign.md` 5.4）、200件分の Markdown は応答を数十倍にする。本文が要るのは詳細（9.5）だけである。
 
@@ -1244,7 +1253,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 
 | フィールド | 検証 |
 |---|---|
-| `type` | 必須。`epic` / `story` / `task` / `bug` / `phase` / `wbs` |
+| `type` | 必須。`epic` / `story` / `task`（`DbDesign.md` 6.6） |
 | `title` | 必須。1〜200文字 |
 | `body_md` | 任意 |
 | `priority` | 任意。`lowest` 〜 `highest` |
@@ -1263,11 +1272,14 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 | `status_key` | プロジェクトのワークフローのうち **`category='todo'` かつ `sort_order` 最小**のステータス。該当が無ければ `sort_order` 最小のステータス |
 | `sort_key` | 現在の末尾の次（9.4 の LexoRank） |
 | `reporter_id` | 呼び出し元のアクター |
+| `staged_at` | **常に `NULL`**（バックログへ入る）。オンステージへ上げるのは 9.4 の `move` である |
 | `version` | `1` |
 
 `201 Created`（`Location: /api/v1/projects/my-app/tickets/31`）。応答は 9.5 の `GET` と同形式。
 
 **採番・ワークフロー解決・タグ付与・`activity` 記録は単一トランザクションで行う。** 5.3 の `POST /projects` と同じ方針である。
+
+**作成したチケットは必ずバックログに入る。** オンステージは「いま仕掛り中で、直近のスプリントで消化すべきもの」（`DbDesign.md` 6.6）であり、**上げる操作は人が段へドラッグしたときだけ**にする。作成時に指定できると、新規チケットが黙って仕掛りに混ざる。
 
 **初期ステータスをリクエストで指定できないようにしている。** ワークフローの入口は `workflow_transition` に定義されておらず（遷移元が無い）、任意のステータスで作成できると 9.6 の遷移検証を素通りできてしまう。作成後に遷移させれば同じ状態に到達でき、その経路は検証を通る。
 
@@ -1286,14 +1298,31 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 | `{"after_seq": 44}` | 44 の直後へ |
 | `{"before_seq": 44}` | 44 の直前へ |
 | `{"after_seq": 44, "before_seq": 12}` | 44 と 12 の間へ |
-| `{"position": "first"}` | 先頭へ |
-| `{"position": "last"}` | 末尾へ |
+| `{"position": "first"}` | 段の先頭へ |
+| `{"position": "last"}` | 段の末尾へ |
+| `{"staged": true, "position": "first"}` | **オンステージ**へ上げ、その先頭に置く |
+| `{"staged": false, "after_seq": 44}` | **バックログ**へ戻し、44 の直後に置く |
 
 `position` と `after_seq` / `before_seq` の同時指定は `422`。いずれも無い場合も `422`。
 
 ```json
-{ "seq": 31, "sort_key": "0|hzzzr:", "version": 4, "rebalanced": false }
+{ "seq": 31, "sort_key": "0|hzzzr:", "staged_at": "2026-08-23T11:20:00Z",
+  "version": 4, "rebalanced": false }
 ```
+
+### 9.4.1 `staged` — 段を変える
+
+**`staged` は任意で、省略すると段は変わらない**（並べ替えだけを行う）。`true` でオンステージへ、`false` でバックログへ戻す。`staged_at` は `true` のとき `now()`、`false` のとき `NULL` になる（`DbDesign.md` 6.6）。
+
+**段と位置を1回のリクエストで決める。** ドラッグ&ドロップの1操作で両方が同時に決まるためで、2本のエンドポイントに分けると、途中で失敗したときに「段は移ったが位置は末尾」という中途半端な状態が残る。
+
+**`position` は段の中で解釈する**（`staged` を伴うときは移動先の段、省略したときは現在の段）。`"first"` は「オンステージの先頭」であって「プロジェクト全体の先頭」ではない。**空の段へ最初の1件を落とすとき、基準にできる行が無い**ためこの解釈が要る。
+
+**`after_seq` / `before_seq` の基準は段を問わない。** `sort_key` はプロジェクト内で1本であり（9.4）、どの行の隣を指定しても位置は一意に定まる。
+
+**段に置けるのは表示上のトップレベルだけである**——親を持たないもの、または**親がエピックのもの**（`GuiDesign.md` 5.4）。それ以外に `staged: true` を送ると `422`（`details[].code = "not_stageable"`）。配下は親と一緒に運ばれるので、子を個別に上げる操作は意味を持たない。
+
+**エピック自身も置けない。** 親を持たないので上の条件だけでは通ってしまうが、**エピックはどちらの段にも行として出ない**ため、上げても見えない状態になる（`GuiDesign.md` 5.4）。同じ規則を `pb dev seed` の定義ファイル検証も持つ。
 
 **`PATCH` で `sort_key` を直接書かせない。** LexoRank の桁生成規則をクライアントに持たせると、Web・MCP・将来の CLI がそれぞれ同じ規則を実装することになり、1つでもずれると順序が壊れる。**順序キーの生成はサーバに1つだけ置く**（5.1 で `progress` をサーバ計算にしたのと同じ理由）。設計方針1の「状態遷移など名詞で表せない操作のみ `POST /:id/<action>` を許す」に当たる。
 
@@ -1302,6 +1331,8 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 **`If-Match` は要求しない。** 2.8 の archive / unarchive と同じく、競合しても失われる編集内容が無い（`sort_key` はフォームで編集する項目ではない）。ただし**`version` は他の更新と同じく +1 する**。並べ替えの直後に詳細画面が `409` を返す可能性があるが、規約を1本に保つことを優先する。実運用で不都合が出たら 2.8 ごと見直す（10.2）。
 
 **並び順はプロジェクト内で1本である。** グループ化（親・タグ・スプリント）は表示上の区切りにすぎず、グループを切り替えても `sort_key` は変わらない。グループごとに別の順序を持たせると、軸を変えるたびに順序が失われる。
+
+**二段（バックログ／オンステージ）も同じ1本を共有する。** 2つの表は同じ「消化順」の部分集合であり、順序キーを段ごとに持つと、**段を行き来するたびにどちらを更新するかを決めることになり、戻したときの位置が失われる**（`DbDesign.md` 6.6）。
 
 ## 9.5 `GET | PATCH | DELETE /api/v1/projects/:key/tickets/:seq`
 
@@ -1335,7 +1366,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 | フィールド | `details[].code` | 理由 |
 |---|---|---|
 | `id` `seq` `version` `created_at` `updated_at` `reporter_id` | `immutable_field` | サーバが決める（5.5 と同じ扱い） |
-| `sort_key` | `use_move_endpoint` | 9.4 |
+| `sort_key` `staged_at` | `use_move_endpoint` | 9.4（段の出し入れも `move` が行う） |
 | `status_key` `closed_at` | `use_transition_endpoint` | 9.6 |
 
 `immutable_field` / `use_move_endpoint` / `use_transition_endpoint` はいずれも **`details[].code` の値**であって 2.5.1 の `error.code` ではない（`error.code` は `validation_failed`）。5.5 と同じ規約である。
@@ -1675,7 +1706,8 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 | `unknown_status` | 遷移先がプロジェクトのワークフローに存在しない（9.6） |
 | `not_a_member` | 担当者に指定したアクターがプロジェクトのメンバーでない（9.3） |
 | `not_found` | `parent_seq` / `tag_ids` / `sprint_id` の参照先がこのプロジェクトに無い（9.3） |
-| `use_move_endpoint` | `sort_key` を `PATCH` で変えようとした（9.5.2） |
+| `use_move_endpoint` | `sort_key` / `staged_at` を `PATCH` で変えようとした（9.5.2） |
+| `not_stageable` | 表示上のトップレベルでないチケットを `staged: true` で上げようとした（9.4.1） |
 | `use_transition_endpoint` | `status_key` / `closed_at` を `PATCH` で変えようとした（9.5.2） |
 | `phase_2_only` | Phase 2 でのみ有効な値を指定した（DoD の `type` など。9.9） |
 

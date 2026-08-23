@@ -54,6 +54,42 @@ func TestLoadDevDataRepositoryFile(t *testing.T) {
 			t.Errorf("%s の demo での役割は %q のはず。実際は %q", email, role, got[email])
 		}
 	}
+
+	// **定義ファイルそのものが規則を満たすこと**（手順16d）。ここを通しておくと、
+	// dev-data.yaml を書き換えたときに make test で気づける——DBを触らずに済む。
+	if err := data.validate(); err != nil {
+		t.Fatalf("定義ファイルが検証を通らない: %v", err)
+	}
+
+	tickets := data.Projects[0].Tickets
+	stagedCount, typeCount := 0, map[string]int{}
+	for _, tk := range tickets {
+		typeCount[tk.Type]++
+		if tk.Staged {
+			stagedCount++
+		}
+	}
+	// 種別は3値だけ（DbDesign.md 6.6）。bug / phase / wbs は廃止した。
+	for _, gone := range []string{"bug", "phase", "wbs"} {
+		if typeCount[gone] > 0 {
+			t.Errorf("廃止した種別 %q が %d 件残っている", gone, typeCount[gone])
+		}
+	}
+	// **オンステージが空だと二段が動いていることを画面で確かめられない**
+	// （GuiDesign.md 5.4）。
+	if stagedCount == 0 {
+		t.Error("staged: true のチケットが1件も無い（二段を目で確かめられない）")
+	}
+	// **バグはタグで表す**（DbDesign.md 6.10）。受け皿のタグが要る。
+	hasBugTag := false
+	for _, tg := range data.Projects[0].Tags {
+		if tg.Name == "バグ" {
+			hasBugTag = true
+		}
+	}
+	if !hasBugTag {
+		t.Error("タグ「バグ」が定義されていない（種別 bug の受け皿。DbDesign.md 6.10）")
+	}
 }
 
 func TestLoadDevDataRejectsUnknownKey(t *testing.T) {
@@ -121,6 +157,80 @@ func TestDevDataValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// オンステージと種別3値の検証（手順16d。ApiDesign.md 9.4.1、DbDesign.md 6.6）。
+//
+// **「置ける」ことを先に確かめてから「置けない」を測る**（LEARNINGS #35）。
+// 順序を逆にすると、実装が常に弾いていてもガードの検証が通ってしまう。
+func TestDevDataValidateStaged(t *testing.T) {
+	base := func(tickets ...devTicket) devData {
+		return devData{
+			Password: "pbdev-password",
+			Users: []devUser{
+				{Email: "admin@example.com", DisplayName: "管理者", SystemRole: "administrator"},
+			},
+			Projects: []devProject{{
+				Key: "demo", Name: "デモ", WorkflowTemplate: "simple",
+				Tickets: tickets,
+			}},
+		}
+	}
+
+	t.Run("親を持たないものは置ける", func(t *testing.T) {
+		d := base(devTicket{Title: "単独", Type: "task", Staged: true})
+		if err := d.validate(); err != nil {
+			t.Fatalf("置けるはずのものが弾かれた: %v", err)
+		}
+	})
+
+	t.Run("親がエピックなら置ける", func(t *testing.T) {
+		d := base(
+			devTicket{Title: "まとまり", Type: "epic"},
+			devTicket{Title: "配下", Type: "task", Parent: "まとまり", Staged: true},
+		)
+		if err := d.validate(); err != nil {
+			t.Fatalf("置けるはずのものが弾かれた: %v", err)
+		}
+	})
+
+	t.Run("親がタスクなら置けない", func(t *testing.T) {
+		d := base(
+			devTicket{Title: "親", Type: "task"},
+			devTicket{Title: "子", Type: "task", Parent: "親", Staged: true},
+		)
+		err := d.validate()
+		if err == nil {
+			t.Fatal("エラーになるはず")
+		}
+		if !strings.Contains(err.Error(), "staged") {
+			t.Errorf("エラーに staged を含むはず。実際: %v", err)
+		}
+	})
+
+	t.Run("エピック自身は置けない", func(t *testing.T) {
+		d := base(devTicket{Title: "まとまり", Type: "epic", Staged: true})
+		err := d.validate()
+		if err == nil {
+			t.Fatal("エラーになるはず")
+		}
+		if !strings.Contains(err.Error(), "エピック") {
+			t.Errorf("エラーに理由が無い: %v", err)
+		}
+	})
+
+	t.Run("廃止した種別は受け付けない", func(t *testing.T) {
+		for _, typ := range []string{"bug", "phase", "wbs"} {
+			d := base(devTicket{Title: "旧種別", Type: typ})
+			err := d.validate()
+			if err == nil {
+				t.Fatalf("type=%q が通ってしまう（3値に減らした。DbDesign.md 6.6）", typ)
+			}
+			if !strings.Contains(err.Error(), "epic / story / task") {
+				t.Errorf("type=%q のエラー文言が古い: %v", typ, err)
+			}
+		}
+	})
 }
 
 // 7.6.3 の安全装置。いずれかに掛かったら何もせず終了する。

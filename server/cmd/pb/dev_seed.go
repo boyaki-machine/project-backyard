@@ -143,13 +143,16 @@ type devTicket struct {
 	EstimatePoint float64  `yaml:"estimate_point"`
 	StartDate     string   `yaml:"start_date"`
 	DueDate       string   `yaml:"due_date"`
+	// Staged は「オンステージ」に置くか（GuiDesign.md 5.4、手順16d）。
+	// **表示上のトップレベルにしか置けない**——親を持たないもの、または
+	// 親がエピックのもの（ApiDesign.md 9.4.1）。検証は validateSeedData で行う。
+	Staged bool `yaml:"staged"`
 }
 
 // devTicketTypes / devTicketPriorities は ticket の CHECK 制約（DbDesign.md 6.6）。
 var (
 	devTicketTypes = map[string]bool{
 		"epic": true, "story": true, "task": true,
-		"bug": true, "phase": true, "wbs": true,
 	}
 	devTicketPriorities = map[string]bool{
 		"lowest": true, "low": true, "medium": true, "high": true, "highest": true,
@@ -374,6 +377,8 @@ func (d *devData) validate() error {
 			members[strings.ToLower(m.Email)] = true
 		}
 		ticketTitles := make(map[string]bool, len(p.Tickets))
+		// 種別をタイトル引きで覚える。staged の判定に親の種別が要る。
+		ticketTypes := make(map[string]string, len(p.Tickets))
 		for j, tk := range p.Tickets {
 			at := fmt.Sprintf("%s.tickets[%d]", where, j)
 			if tk.Title == "" {
@@ -387,9 +392,10 @@ func (d *devData) validate() error {
 				return fmt.Errorf("%s: title が重複しています（%q。冪等性の判定に使うため定義側では許さない）", at, tk.Title)
 			}
 			ticketTitles[tk.Title] = true
+			ticketTypes[tk.Title] = tk.Type
 
 			if !devTicketTypes[tk.Type] {
-				return fmt.Errorf("%s: type は epic / story / task / bug / phase / wbs です（%q）", at, tk.Type)
+				return fmt.Errorf("%s: type は epic / story / task です（%q）", at, tk.Type)
 			}
 			if tk.Priority != "" && !devTicketPriorities[tk.Priority] {
 				return fmt.Errorf("%s: priority は lowest 〜 highest です（%q）", at, tk.Priority)
@@ -401,6 +407,18 @@ func (d *devData) validate() error {
 			}
 			if tk.Parent == tk.Title {
 				return fmt.Errorf("%s: parent が自分自身です（ck_ticket_not_self_parent）", at)
+			}
+			// **段に置けるのは表示上のトップレベルだけ**（ApiDesign.md 9.4.1）
+			// ——親を持たないもの、または親がエピックのもの。エピック自身も
+			// 置けない（バックログに行として出さないため。GuiDesign.md 5.4）。
+			if tk.Staged {
+				switch {
+				case tk.Type == "epic":
+					return fmt.Errorf("%s: エピックはオンステージに置けません（行として出さないため）", at)
+				case tk.Parent != "" && ticketTypes[tk.Parent] != "epic":
+					return fmt.Errorf("%s: staged にできるのは親を持たないものか、親がエピックのものだけです（親=%q はエピックではありません）",
+						at, tk.Parent)
+				}
 			}
 			if tk.Assignee != "" && !members[strings.ToLower(tk.Assignee)] {
 				return fmt.Errorf("%s: assignee は members に居るメールアドレスにしてください（%q）", at, tk.Assignee)
@@ -925,6 +943,16 @@ func seedTickets(
 				ID: ticketID, ClosedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			}); err != nil {
 				return fmt.Errorf("チケット %q を完了にできない: %w", tk.Title, err)
+			}
+		}
+
+		// オンステージ（GuiDesign.md 5.4）。seed 直後にここが空だと、
+		// 二段が動いていることを画面で確かめられない。
+		if tk.Staged {
+			if err := q.SetTicketStagedAt(ctx, gen.SetTicketStagedAtParams{
+				ID: ticketID, StagedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			}); err != nil {
+				return fmt.Errorf("チケット %q をオンステージにできない: %w", tk.Title, err)
 			}
 		}
 

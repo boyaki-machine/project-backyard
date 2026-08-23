@@ -27,6 +27,8 @@ import (
 const (
 	testTicketID  = "01K2TKT00000000000000031"
 	testTicketID2 = "01K2TKT00000000000000044"
+	testTicketID3 = "01K2TKT00000000000000045"
+	testTicketID4 = "01K2TKT00000000000000012"
 )
 
 // ticketReq は /projects/{key}/tickets 系のリクエストを組み立てる。
@@ -218,8 +220,14 @@ func TestListTicketsDefaults(t *testing.T) {
 	if p.Sort != "sort_key" || p.SortOrder != "asc" {
 		t.Errorf("sort/order の既定 = %s/%s（9.2.1 は sort_key/asc）", p.Sort, p.SortOrder)
 	}
-	if p.OpenFilter != "all" || p.DueWithinDays != -1 || p.ParentSeq != 0 {
+	if p.OpenFilter != "all" || p.DueWithinDays != -1 || len(p.ParentSeqs) != 0 {
 		t.Errorf("未指定のフィルタが効いている: %+v", p)
+	}
+	// **nil を送らない**（tickets.go の parseTicketFilters）。pgx は nil スライスを
+	// SQL の NULL にするため cardinality(NULL) = NULL となり、「指定なし」の
+	// 判定が偽になって1件も返らなくなる。
+	if p.ParentSeqs == nil {
+		t.Error("parent 未指定のとき ParentSeqs が nil（空スライスであること）")
 	}
 }
 
@@ -229,9 +237,9 @@ func TestListTicketsFilters(t *testing.T) {
 	h, _ := ticketHandler(q)
 	rec := httptest.NewRecorder()
 	h.listTickets(rec, ticketReq(http.MethodGet,
-		"/projects/demo/tickets?type=bug,task&priority=high,highest"+
+		"/projects/demo/tickets?type=story,task&priority=high,highest"+
 			"&assignee=me,none&tag=01K2TAG00000000000000001,none&sprint=none"+
-			"&open=true&due_within=7d&parent=12&status=todo,in_progress"+
+			"&open=true&due_within=7d&parent=12,30&status=todo,in_progress"+
 			"&status_category=todo", "", ""))
 
 	if rec.Code != http.StatusOK {
@@ -251,8 +259,12 @@ func TestListTicketsFilters(t *testing.T) {
 	if len(p.SprintIds) != 0 || !p.SprintNone {
 		t.Errorf("sprint=none の解釈が違う: ids=%v none=%v", p.SprintIds, p.SprintNone)
 	}
-	if p.OpenFilter != "open" || p.DueWithinDays != 7 || p.ParentSeq != 12 {
-		t.Errorf("open/due_within/parent の解釈が違う: %+v", p)
+	if p.OpenFilter != "open" || p.DueWithinDays != 7 {
+		t.Errorf("open/due_within の解釈が違う: %+v", p)
+	}
+	// parent は**カンマ区切りで複数指定できる**（9.2.1）。エピックフィルタが使う。
+	if len(p.ParentSeqs) != 2 || p.ParentSeqs[0] != 12 || p.ParentSeqs[1] != 30 {
+		t.Errorf("parent=12,30 の解釈が違う: %v", p.ParentSeqs)
 	}
 }
 
@@ -318,21 +330,29 @@ func TestTicketsETagVariesByFilterAndPage(t *testing.T) {
 		return rec.Header().Get("ETag")
 	}
 
-	base := etag("type=bug")
+	base := etag("type=story")
 	if !strings.HasPrefix(base, `W/"tkt-`) {
 		t.Errorf("ETag が弱い検証子の形になっていない: %q", base)
 	}
 	if other := etag("type=task"); other == base {
 		t.Errorf("フィルタが違うのに ETag が同じ: %q", base)
 	}
-	if other := etag("type=bug&page=2"); other == base {
+	if other := etag("type=story&page=2"); other == base {
 		t.Errorf("ページが違うのに ETag が同じ: %q", base)
 	}
-	if other := etag("type=bug&order=desc"); other == base {
+	if other := etag("type=story&order=desc"); other == base {
 		t.Errorf("並びが違うのに ETag が同じ: %q", base)
 	}
+	// parent の複数指定も ETag に混ざる（9.2.5）。**数として並べ替えている**ので
+	// 順番違いは同じ値になり、9 と 10 の前後が文字列比較で逆にならない。
+	if a, b := etag("parent=9,10"), etag("parent=10,9"); a != b {
+		t.Errorf("parent の順番違いで ETag が変わった: %q vs %q", a, b)
+	}
+	if a, b := etag("parent=9,10"), etag("parent=9"); a == b {
+		t.Errorf("parent の件数が違うのに ETag が同じ: %q", a)
+	}
 	// 同じ意味の違う書き方は同じ ETag（正規化して混ぜているため）
-	if a, b := etag("type=bug,task"), etag("type=task,bug"); a != b {
+	if a, b := etag("type=story,task"), etag("type=task,story"); a != b {
 		t.Errorf("順序違いの同じ条件で ETag が変わった: %q vs %q", a, b)
 	}
 }
@@ -385,7 +405,7 @@ func TestCreateTicketRespondsWithDetailShape(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	h.createTicket(rec, ticketReq(http.MethodPost, "/projects/demo/tickets",
-		`{"type":"bug","title":"落ちる"}`, ""))
+		`{"type":"task","title":"落ちる"}`, ""))
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -571,9 +591,22 @@ func moveFake() *fakeQuerier {
 	return q
 }
 
-func decodeMove(t *testing.T, rec *httptest.ResponseRecorder) moveTicketResponse {
+// moveRespJSON は move の応答を読み戻すための型。
+//
+// **moveTicketResponse をそのまま使えない。** staged_at は v1.Time で、応答を
+// 1つの表記に固定するための「書く側」の型であり UnmarshalJSON を持たない
+// （apitime.go）。ticketItemJSON と同じ理由・同じ扱いである。
+type moveRespJSON struct {
+	Seq        int32   `json:"seq"`
+	SortKey    string  `json:"sort_key"`
+	StagedAt   *string `json:"staged_at"`
+	Version    int32   `json:"version"`
+	Rebalanced bool    `json:"rebalanced"`
+}
+
+func decodeMove(t *testing.T, rec *httptest.ResponseRecorder) moveRespJSON {
 	t.Helper()
-	var v moveTicketResponse
+	var v moveRespJSON
 	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 		t.Fatalf("応答を読めない: %v (%s)", err, rec.Body.String())
 	}
@@ -759,6 +792,217 @@ func TestMoveTicketDoesNotRecordActivity(t *testing.T) {
 	}
 	if len(q.ticket.activities) != 0 {
 		t.Errorf("並べ替えを activity に記録している: %+v", q.ticket.activities)
+	}
+}
+
+// ── オンステージ（手順16d。ApiDesign.md 9.4.1）────────────────
+
+// stageFake は段の検証用。
+//
+//   - 31 … task。親を持たない（段に置ける）。バックログ
+//   - 44 … task。親がエピック（段に置ける）。**既にオンステージ**
+//   - 45 … task。親がタスク（段に置けない）。バックログ
+//   - 12 … epic。親を持たないが**エピック自身なので置けない**
+func stageFake() *fakeQuerier {
+	q := ticketFake()
+	staged := ts(time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
+	q.ticket.sortRowBySeq = map[int32]gen.GetTicketSortRowRow{
+		31: {ID: testTicketID, Type: "task", SortKey: txt("0|n:"), Version: 3},
+		44: {ID: testTicketID2, Type: "task", SortKey: txt("0|u:"), Version: 1,
+			StagedAt: staged, ParentType: txt("epic")},
+		45: {ID: testTicketID3, Type: "task", SortKey: txt("0|w:"), Version: 1,
+			ParentType: txt("task")},
+		12: {ID: testTicketID4, Type: "epic", SortKey: txt("0|g:"), Version: 1},
+	}
+	return q
+}
+
+// **エピック自身は段に置けない**（9.4.1）。親を持たないので親の種別だけでは
+// 通ってしまうが、どちらの段にも行として出ないため上げても見えない
+// （GuiDesign.md 5.4）。dev seed の検証と同じ規則である。
+func TestMoveTicketRejectsStagingEpic(t *testing.T) {
+	q := stageFake()
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.moveTicket(rec, ticketReq(http.MethodPost,
+		"/projects/demo/tickets/12/move", `{"staged":true,"position":"last"}`, "12"))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d（422 であること）, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "not_stageable") {
+		t.Errorf("details に not_stageable が無い: %s", body)
+	}
+	if !strings.Contains(body, "エピック") {
+		t.Errorf("エピック固有の理由になっていない: %s", body)
+	}
+	if len(q.ticket.moved) != 0 {
+		t.Errorf("弾いたのに更新している: %+v", q.ticket.moved)
+	}
+}
+
+// staged:true でオンステージへ上がり、staged_at が入る（9.4.1）。
+func TestMoveTicketStagesTicket(t *testing.T) {
+	q := stageFake()
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.moveTicket(rec, ticketReq(http.MethodPost,
+		"/projects/demo/tickets/31/move", `{"staged":true,"position":"last"}`, "31"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	resp := decodeMove(t, rec)
+	if resp.StagedAt == nil {
+		t.Fatal("staged_at が null（オンステージへ上げたのに時刻が入っていない）")
+	}
+	if len(q.ticket.moved) != 1 || !q.ticket.moved[0].ChangeStage {
+		t.Errorf("change_stage が立っていない: %+v", q.ticket.moved)
+	}
+	if !q.ticket.moved[0].StagedAt.Valid {
+		t.Error("staged_at に値を書いていない")
+	}
+}
+
+// staged:false でバックログへ戻り、staged_at が NULL になる（9.4.1）。
+func TestMoveTicketUnstagesTicket(t *testing.T) {
+	q := stageFake()
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.moveTicket(rec, ticketReq(http.MethodPost,
+		"/projects/demo/tickets/44/move", `{"staged":false,"position":"first"}`, "44"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if resp := decodeMove(t, rec); resp.StagedAt != nil {
+		t.Errorf("staged_at = %v（バックログへ戻したら null）", resp.StagedAt)
+	}
+	if len(q.ticket.moved) != 1 || !q.ticket.moved[0].ChangeStage {
+		t.Fatalf("change_stage が立っていない: %+v", q.ticket.moved)
+	}
+	if q.ticket.moved[0].StagedAt.Valid {
+		t.Error("staged_at を NULL にしていない")
+	}
+}
+
+// staged を省略すると段は変わらない（9.4.1）。並べ替えだけを行う。
+func TestMoveTicketWithoutStagedKeepsStage(t *testing.T) {
+	q := stageFake()
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.moveTicket(rec, ticketReq(http.MethodPost,
+		"/projects/demo/tickets/44/move", `{"position":"first"}`, "44"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.moved) != 1 || q.ticket.moved[0].ChangeStage {
+		t.Errorf("staged を省略したのに段を書き換えている: %+v", q.ticket.moved)
+	}
+	// 元がオンステージなので、応答も入ったままであること
+	if decodeMove(t, rec).StagedAt == nil {
+		t.Error("staged_at が消えた（省略時は現在値のまま。9.4.1）")
+	}
+}
+
+// position は段の中で解釈する（9.4.1）。
+//
+// **「効く」ことを先に確かめてから「段で絞れている」ことを見る**
+// （LEARNINGS #35）。31 をオンステージの先頭へ入れると、オンステージに居る
+// 44（0|u:）より前でありながら、バックログの 45（0|w:）は基準にならない。
+func TestMoveTicketPositionIsScopedToStage(t *testing.T) {
+	q := stageFake()
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.moveTicket(rec, ticketReq(http.MethodPost,
+		"/projects/demo/tickets/31/move", `{"staged":true,"position":"last"}`, "31"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	got := decodeMove(t, rec).SortKey
+	// オンステージの末尾は 44（0|u:）なので、その後ろに入る。
+	if got <= "0|u:" {
+		t.Errorf("sort_key = %q（オンステージの末尾 0|u: より後ろに入らない）", got)
+	}
+	// **バックログの 45（0|w:）を末尾として使っていないこと。** 段で絞らずに
+	// プロジェクト全体の max を取ると 0|w: より後ろへ入ってしまう。
+	if got >= "0|w:" {
+		t.Errorf("sort_key = %q（バックログの行を基準にしている。段で絞れていない）", got)
+	}
+	if countOps(q.opLog, "MaxTicketSortKeyInStage") != 1 {
+		t.Errorf("段で絞った max を引いていない: %v", q.opLog)
+	}
+}
+
+// 表示上のトップレベルでないものは段に置けない（9.4.1 の not_stageable）。
+func TestMoveTicketRejectsStagingChild(t *testing.T) {
+	q := stageFake()
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.moveTicket(rec, ticketReq(http.MethodPost,
+		"/projects/demo/tickets/45/move", `{"staged":true,"position":"last"}`, "45"))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d（422 であること）, body = %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "not_stageable") {
+		t.Errorf("details に not_stageable が無い: %s", body)
+	}
+	if len(q.ticket.moved) != 0 {
+		t.Errorf("弾いたのに更新している: %+v", q.ticket.moved)
+	}
+}
+
+// **親がエピックなら段に置ける**（9.4.1）。
+//
+// 上の「置けない」を測る前提として、**置ける側が通ることを先に確かめる**
+// ——これが無いと、実装が常に弾いていても not_stageable の検証は通る
+// （LEARNINGS #35）。
+func TestMoveTicketAllowsStagingChildOfEpic(t *testing.T) {
+	q := stageFake()
+	// 44 をいったんバックログへ落としてから、上げ直せることを見る
+	row := q.ticket.sortRowBySeq[44]
+	row.StagedAt = pgtype.Timestamptz{}
+	q.ticket.sortRowBySeq[44] = row
+
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.moveTicket(rec, ticketReq(http.MethodPost,
+		"/projects/demo/tickets/44/move", `{"staged":true,"position":"last"}`, "44"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d（親がエピックなら置ける）, body = %s", rec.Code, rec.Body.String())
+	}
+	if decodeMove(t, rec).StagedAt == nil {
+		t.Error("staged_at が入っていない")
+	}
+}
+
+// **バックログへ戻すのは常に許す**（9.4.1）。段から降ろすだけなので、
+// 置ける条件を問う理由がない。
+func TestMoveTicketUnstageIsAlwaysAllowed(t *testing.T) {
+	q := stageFake()
+	// 45（親がタスク）が何らかの理由でオンステージに居る状態を作る
+	row := q.ticket.sortRowBySeq[45]
+	row.StagedAt = ts(time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
+	q.ticket.sortRowBySeq[45] = row
+
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.moveTicket(rec, ticketReq(http.MethodPost,
+		"/projects/demo/tickets/45/move", `{"staged":false,"position":"last"}`, "45"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d（降ろすのは常に許す）, body = %s", rec.Code, rec.Body.String())
 	}
 }
 
