@@ -11,8 +11,8 @@ import { useAuthStore } from '../stores/auth'
  * `GET /projects`（手順9）はまだ無いが、切替に必要な key と name は
  * `/me` が返しており、手順8の時点で作れる。
  *
- * 切替時は**同じ画面種別を維持する**（4.4）。チケット一覧を見ていたら
- * 切替先でもチケット一覧になる。
+ * 切替時は**同じ画面種別を維持する**（4.4）。バックログを見ていたら
+ * 切替先でもバックログになる。
  */
 const props = defineProps<{ currentKey: string }>()
 
