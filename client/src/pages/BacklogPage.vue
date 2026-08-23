@@ -313,6 +313,15 @@ interface Row {
    * 使わない——絞り込みで子が落ちた行に、押しても何も起きないキャレットが出る。
    */
   hasChildren: boolean
+  /**
+   * **表示上の親**（5.4「並べ替えられる相手」）。`parent_seq` の指す行が結果の中に
+   * 居ればその `seq`、居なければ `null`（＝この行は根として並んでいる）。
+   *
+   * **`parent_seq` をそのまま使わない。** エピックを行として出さなくなったので、
+   * エピック配下のチケットは `parent_seq` を持ったまま**根として並ぶ**。
+   * `parent_seq` で判定すると、**画面上で同じ深さに見える行どうしが入れ替えられない**。
+   */
+  parentKey: number | null
 }
 
 interface Section {
@@ -432,7 +441,12 @@ function buildTree(items: Ticket[]): Row[] {
       if (reached.has(t.seq)) continue
       reached.add(t.seq)
       const kids = childrenOf.get(t.seq)
-      rows.push({ ticket: t, depth: Math.min(depth, MAX_DEPTH), hasChildren: kids !== undefined })
+      rows.push({
+        ticket: t,
+        depth: Math.min(depth, MAX_DEPTH),
+        hasChildren: kids !== undefined,
+        parentKey: depth === 0 ? null : t.parent_seq,
+      })
       if (kids === undefined) continue
       if (treeCollapsed.value.has(t.seq)) markReached(kids)
       else walk(kids, depth + 1)
@@ -443,14 +457,14 @@ function buildTree(items: Ticket[]): Row[] {
   // 親子が輪になっていると根から辿り着けない。サーバは `parent_cycle` で
   // 弾いている（9.5.2）が、**行を落として件数と食い違わせない**ようにする。
   for (const t of items) {
-    if (!reached.has(t.seq)) rows.push({ ticket: t, depth: 0, hasChildren: false })
+    if (!reached.has(t.seq)) rows.push({ ticket: t, depth: 0, hasChildren: false, parentKey: null })
   }
   return rows
 }
 
 /** ツリーを組まないときの行。インデントもキャレットも持たない */
 function flatRows(items: Ticket[]): Row[] {
-  return items.map((t) => ({ ticket: t, depth: 0, hasChildren: false }))
+  return items.map((t) => ({ ticket: t, depth: 0, hasChildren: false, parentKey: null }))
 }
 
 /**
@@ -699,44 +713,91 @@ const canReorder = computed(
 
 const draggingSeq = ref<number | null>(null)
 
-function sourceOf(seq: number | null): Ticket | undefined {
-  return seq === null ? undefined : tickets.value.find((t) => t.seq === seq)
+/**
+ * 落ちる位置の目印（5.4「ドロップ先の見せ方」）。
+ *
+ * `seq` が行の上、`null` が段そのもの（見出し＝先頭／末尾の帯＝末尾）。
+ * **掴んでいる間だけ値を持ち、落とせない相手の上では `null` に戻す**——
+ * 線が残っていると、落ちない場所に落ちるように見える。
+ */
+type DropSide = 'before' | 'after' | 'first' | 'last'
+
+const dropHint = ref<{ key: string; seq: number | null; side: DropSide } | null>(null)
+
+function endDrag(): void {
+  draggingSeq.value = null
+  dropHint.value = null
 }
 
+/** 表示中の行を `seq` から引く。**表示上の親**の判定に要る */
+const rowIndex = computed(() => {
+  const m = new Map<number, Row>()
+  for (const section of sections.value) {
+    for (const row of section.rows) if (!m.has(row.ticket.seq)) m.set(row.ticket.seq, row)
+  }
+  return m
+})
+
 /**
- * 行の上へ落としてよいか。
+ * 行の上へ落としてよいか（5.4「並べ替えられる相手」）。
  *
  * | 場面 | 落とせる相手 |
  * |---|---|
- * | 同じ段のオンステージ | どの行でもよい（全行が表示上のトップレベルで、親を問わない） |
- * | 同じ段のバックログ | **同じ親を持つ行**——`move` は `sort_key` だけを変えて親子は変えない（9.4） |
- * | 段をまたぐ | **段に置ける行**だけ、かつ着地先は移動先の段の**トップレベルの行** |
+ * | 同じ段のオンステージ | どの行でもよい（全行が表示上の根である） |
+ * | 同じ段のバックログ | **同じ「表示上の親」を持つ行**——根どうしは自由、インデントされた行は兄弟だけ |
+ * | 段をまたぐ | **段に置ける行**だけ、かつ着地先は移動先の段の**根** |
  * | グループ化中 | **同じセクション内の行** |
+ *
+ * **`parent_seq` で比べない。** エピックを行として出さないので、エピック配下の
+ * チケットは `parent_seq` を持ったまま根として並ぶ。`parent_seq` で比べると
+ * 画面上で同じ深さに見える行どうしが入れ替えられなくなる（実機で判明。
+ * 利用者の指摘、2026-08-23）。**表示が動かないのはインデントされた行だけ**で、
+ * 根は `sort_key` の順に並ぶので `move` の結果がそのまま出る。
  */
 function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolean {
-  const source = sourceOf(sourceSeq)
-  if (source === undefined || source.seq === row.ticket.seq) return false
+  if (sourceSeq === null || sourceSeq === row.ticket.seq) return false
+  const sourceRow = rowIndex.value.get(sourceSeq)
+  if (sourceRow === undefined) return false
+  const source = sourceRow.ticket
 
   if (section.stage !== undefined) {
     if ((source.staged_at !== null) === section.stage) {
-      return section.stage ? true : source.parent_seq === row.ticket.parent_seq
+      return sourceRow.parentKey === row.parentKey
     }
-    return isStageable(source) && row.depth === 0
+    return isStageable(source) && row.parentKey === null
   }
   return sectionsOf(source).some((s) => s.key === section.key)
 }
 
 /**
- * 段そのもの（見出しと末尾の帯）へ落としてよいか。**その段の末尾へ置く。**
+ * 段そのもの（見出し＝先頭、末尾の帯＝末尾）へ落としてよいか。
  *
  * 空の段には基準にできる行が無いので、この落とし場所が無いと最初の1件を
  * 上げられない（`ApiDesign.md` 9.4.1 が `position` を段の中で解釈する理由）。
+ *
+ * **掴んでいるのが表示上の根のときだけ受け取る。** インデントされた行は段の中の
+ * 位置を持たない——`position: "last"` を送っても、その行は親の下で兄弟の末尾へ
+ * 動くだけで、「バックログの末尾へ」という表示と食い違う。
  */
 function canDropOnSection(sourceSeq: number | null, section: Section): boolean {
-  const source = sourceOf(sourceSeq)
-  if (source === undefined || section.stage === undefined) return false
-  if ((source.staged_at !== null) === section.stage) return true
-  return isStageable(source)
+  if (sourceSeq === null || section.stage === undefined) return false
+  const sourceRow = rowIndex.value.get(sourceSeq)
+  if (sourceRow === undefined || sourceRow.parentKey !== null) return false
+  if ((sourceRow.ticket.staged_at !== null) === section.stage) return true
+  return isStageable(sourceRow.ticket)
+}
+
+/**
+ * ポインタが行のどちら半分を指しているか（5.4「ドロップ先の見せ方」）。
+ *
+ * **掴んだ行がどこから来たかに依らない。** 「越えた向き」で決める方式は、
+ * 行の下半分を指しても上に入ることがあり、線を出した意味がなくなる。
+ */
+function sideOf(e: DragEvent): 'before' | 'after' {
+  const el = e.currentTarget as HTMLElement | null
+  if (el === null) return 'after'
+  const r = el.getBoundingClientRect()
+  return e.clientY < r.top + r.height / 2 ? 'before' : 'after'
 }
 
 /**
@@ -747,11 +808,32 @@ function canDropOnSection(sourceSeq: number | null, section: Section): boolean {
  * から弾くと、落とせるように見えて何も起きない。
  */
 function onDragOverRow(e: DragEvent, row: Row, section: Section): void {
-  if (canDropOn(draggingSeq.value, row, section)) e.preventDefault()
+  if (!canDropOn(draggingSeq.value, row, section)) {
+    dropHint.value = null
+    return
+  }
+  e.preventDefault()
+  dropHint.value = { key: section.key, seq: row.ticket.seq, side: sideOf(e) }
 }
 
-function onDragOverSection(e: DragEvent, section: Section): void {
-  if (canDropOnSection(draggingSeq.value, section)) e.preventDefault()
+function onDragOverSection(e: DragEvent, section: Section, side: 'first' | 'last'): void {
+  if (!canDropOnSection(draggingSeq.value, section)) {
+    dropHint.value = null
+    return
+  }
+  e.preventDefault()
+  dropHint.value = { key: section.key, seq: null, side }
+}
+
+/** 目印を出すか。`dropHint` は1つしか持たないので、線も同時に1本しか出ない */
+function hintsRow(row: Row, section: Section, side: 'before' | 'after'): boolean {
+  const h = dropHint.value
+  return h !== null && h.key === section.key && h.seq === row.ticket.seq && h.side === side
+}
+
+function hintsSection(section: Section, side: 'first' | 'last'): boolean {
+  const h = dropHint.value
+  return h !== null && h.key === section.key && h.seq === null && h.side === side
 }
 
 function moveMessage(t: Ticket, stagedChange: boolean | undefined): string {
@@ -804,63 +886,79 @@ async function runMove(
   }
 }
 
+/** 段が変わるか。変わらないときは `undefined`（`move` に `staged` を送らない） */
+function stageChangeOf(source: Ticket, section: Section): boolean | undefined {
+  if (section.stage === undefined) return undefined
+  return (source.staged_at !== null) === section.stage ? undefined : section.stage
+}
+
+/** 段の見た目を先に変えるための行。正しい値はサーバ応答で上書きする */
+function optimisticRow(source: Ticket, stagedChange: boolean | undefined): Ticket {
+  if (stagedChange === undefined) return source
+  return { ...source, staged_at: stagedChange ? new Date().toISOString() : null }
+}
+
 /**
- * 行の上へ落とす。**下へ動かすなら相手の後ろ、上へ動かすなら相手の前。**
- * 掴んだ行が落とした行を「越えた」向きがそのまま指定になる。
+ * 行の上へ落とす。**ポインタが指した半分がそのまま前後になる**
+ * （5.4「ドロップ先の見せ方」）——出した挿入線と着地を一致させるためで、
+ * 掴んだ行がどこから来たかには依らない。
  *
  * 段をまたぐときも同じ規則で決める。`sort_key` は二段で1本なので（9.4）、
  * どちらの段の行を基準にしても位置は一意に定まる。
  */
-async function dropOnRow(row: Row, section: Section): Promise<void> {
+async function dropOnRow(e: DragEvent, row: Row, section: Section): Promise<void> {
   // **掴んでいた seq を先に控える。** `draggingSeq` を消してから判定に渡すと、
   // 判定側が null を見て必ず false になる（ドロップが一切効かなくなる）。
   const seq = draggingSeq.value
-  draggingSeq.value = null
+  const side = sideOf(e)
+  endDrag()
   if (!canDropOn(seq, row, section)) return
 
   const from = tickets.value.findIndex((t) => t.seq === seq)
-  const to = tickets.value.findIndex((t) => t.seq === row.ticket.seq)
-  if (from < 0 || to < 0) return
+  if (from < 0) return
   const source = tickets.value[from]!
-
-  const stagedChange =
-    section.stage !== undefined && (source.staged_at !== null) !== section.stage
-      ? section.stage
-      : undefined
+  const stagedChange = stageChangeOf(source, section)
 
   const body: MoveTicketRequest =
-    from < to ? { after_seq: row.ticket.seq } : { before_seq: row.ticket.seq }
+    side === 'before' ? { before_seq: row.ticket.seq } : { after_seq: row.ticket.seq }
   if (stagedChange !== undefined) body.staged = stagedChange
 
+  // **掴んだ行を抜いてから相手の位置を数え直す。** 抜く前の添字で挿入すると、
+  // 下へ動かしたときだけ1つ手前に入る。
   const next = [...tickets.value]
   next.splice(from, 1)
-  next.splice(to, 0, {
-    ...source,
-    // 段の見た目を先に変える。正しい値はサーバ応答で上書きする
-    staged_at:
-      stagedChange === undefined
-        ? source.staged_at
-        : stagedChange
-          ? new Date().toISOString()
-          : null,
-  })
+  const to = next.findIndex((t) => t.seq === row.ticket.seq)
+  if (to < 0) return
+  const insertAt = side === 'before' ? to : to + 1
 
+  // 位置も段も変わらないなら送らない。**`version` を無駄に上げない**
+  // （`If-Match` を使う画面が 409 になる。9.4）
+  if (insertAt === from && stagedChange === undefined) return
+
+  next.splice(insertAt, 0, optimisticRow(source, stagedChange))
   await runMove(source, body, next, stagedChange)
 }
 
-/** 段の見出しか末尾の帯へ落とす。**その段の末尾へ置く**（9.4.1） */
-async function dropOnSection(section: Section): Promise<void> {
+/**
+ * 段そのものへ落とす（5.4「ドロップ先の見せ方」）。
+ *
+ * **見出し＝その段の先頭、末尾の帯＝その段の末尾。** 見出しは段の上端にあるので、
+ * ここへ落として末尾へ飛ぶと、見えている場所と着地が食い違う。
+ */
+async function dropOnSection(section: Section, position: 'first' | 'last'): Promise<void> {
   const seq = draggingSeq.value
-  draggingSeq.value = null
+  endDrag()
   if (!canDropOnSection(seq, section)) return
 
-  const source = sourceOf(seq)
+  const source = rowIndex.value.get(seq!)?.ticket
   if (source === undefined || section.stage === undefined) return
 
-  const stagedChange = (source.staged_at !== null) === section.stage ? undefined : section.stage
-  const body: MoveTicketRequest = { position: 'last' }
+  const stagedChange = stageChangeOf(source, section)
+  const body: MoveTicketRequest = { position }
   if (stagedChange !== undefined) body.staged = stagedChange
 
+  // 段の中の先頭・末尾は手元で正しい位置を作れない——`position` は段の中で
+  // 解釈される（9.4.1）のに `sort_key` は二段で1本だからで、取り直して合わせる。
   await runMove(source, body, null, stagedChange)
 }
 
@@ -1207,8 +1305,9 @@ watch(projectKey, (key) => {
                **段そのものが末尾への落とし場所を兼ねる**（9.4.1 の position） -->
           <div
             class="section-head"
-            @dragover="onDragOverSection($event, section)"
-            @drop.prevent="dropOnSection(section)"
+            :class="{ 'drop-first': hintsSection(section, 'first') }"
+            @dragover="onDragOverSection($event, section, 'first')"
+            @drop.prevent="dropOnSection(section, 'first')"
           >
             <button
               type="button"
@@ -1301,10 +1400,14 @@ watch(projectKey, (key) => {
                   v-for="row in section.rows"
                   :key="`${section.key}:${row.ticket.seq}`"
                   class="row"
-                  :class="{ dragging: draggingSeq === row.ticket.seq }"
+                  :class="{
+                    dragging: draggingSeq === row.ticket.seq,
+                    'drop-before': hintsRow(row, section, 'before'),
+                    'drop-after': hintsRow(row, section, 'after'),
+                  }"
                   @click="openRow(row.ticket, $event)"
                   @dragover="onDragOverRow($event, row, section)"
-                  @drop.prevent="dropOnRow(row, section)"
+                  @drop.prevent="dropOnRow($event, row, section)"
                 >
                   <td class="grip-col">
                     <span class="grip-line">
@@ -1316,7 +1419,7 @@ watch(projectKey, (key) => {
                         :aria-label="`${row.ticket.title} を並べ替える`"
                         @click.stop
                         @dragstart="draggingSeq = row.ticket.seq"
-                        @dragend="draggingSeq = null"
+                        @dragend="endDrag()"
                         >⠿</span
                       >
                       <!-- 折りたたみ（5.4）。**結果の中に子がいる行にだけ出す。**
@@ -1407,8 +1510,9 @@ watch(projectKey, (key) => {
             <p
               v-if="section.rows.length === 0"
               class="stage-empty"
-              @dragover="onDragOverSection($event, section)"
-              @drop.prevent="dropOnSection(section)"
+              :class="{ 'drop-last': hintsSection(section, 'last') }"
+              @dragover="onDragOverSection($event, section, 'last')"
+              @drop.prevent="dropOnSection(section, 'last')"
             >
               <template v-if="section.stage === true && canReorder">
                 いま取りかかるものを ⠿ でここへドラッグすると、オンステージへ上がります
@@ -1416,12 +1520,15 @@ watch(projectKey, (key) => {
               <template v-else>この段にチケットはありません</template>
             </p>
 
-            <!-- 掴んでいる間だけ出す末尾の帯。段の末尾へ置くための落とし場所である -->
+            <!-- 掴んでいる間だけ出す末尾の帯。段の末尾へ置くための落とし場所である。
+                 **受け取れないときは出さない**——「末尾へ」と書いてあるのに何も
+                 起きない帯が残ると、落とせるように見えて嘘になる -->
             <p
-              v-else-if="draggingSeq !== null && section.stage !== undefined"
+              v-else-if="canDropOnSection(draggingSeq, section)"
               class="stage-tail"
-              @dragover="onDragOverSection($event, section)"
-              @drop.prevent="dropOnSection(section)"
+              :class="{ 'drop-last': hintsSection(section, 'last') }"
+              @dragover="onDragOverSection($event, section, 'last')"
+              @drop.prevent="dropOnSection(section, 'last')"
             >
               {{ section.label }}の末尾へ
             </p>
@@ -1578,6 +1685,14 @@ watch(projectKey, (key) => {
   padding: var(--pb-space-2);
 }
 
+/* 帯そのものが落とし場所なので、枠を実線にして受け取る状態を示す */
+.stage-empty.drop-last,
+.stage-tail.drop-last {
+  border-color: var(--pb-accent);
+  border-style: solid;
+  color: var(--pb-text);
+}
+
 /* ── 表 ───────────────────────────────────────────────── */
 .table {
   width: 100%;
@@ -1633,6 +1748,26 @@ watch(projectKey, (key) => {
 
 .row.dragging {
   opacity: 0.5;
+}
+
+/* ── ドロップ先の挿入線（5.4「ドロップ先の見せ方」）───────
+   **罫線ではなく `box-shadow` の内側で描く。** `border` を足すと行の高さが
+   2px 変わり、掴んで動かすたびに表全体が上下にずれる。
+   **行を面で塗らない**——塗ると「その行**に**入る」（親子にする）と読めるが、
+   `move` は `sort_key` だけを変えて親子を変えない（`ApiDesign.md` 9.4）。
+   色は `--pb-accent`（進行中バッジや主ボタンと同じ操作の色。8.6 が禁じるのは
+   danger / warning / ai の意味色である） */
+.row.drop-before td {
+  box-shadow: inset 0 2px 0 0 var(--pb-accent);
+}
+
+.row.drop-after td {
+  box-shadow: inset 0 -2px 0 0 var(--pb-accent);
+}
+
+/* 見出しは「その段の先頭へ」なので、線は見出しの下端に引く */
+.section-head.drop-first {
+  box-shadow: inset 0 -2px 0 0 var(--pb-accent);
 }
 
 .skeleton-row td {
