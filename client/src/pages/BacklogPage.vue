@@ -711,6 +711,16 @@ const canReorder = computed(
   () => canEdit.value && sort.value === 'sort_key' && order.value === 'asc',
 )
 
+/**
+ * 掴んでいる行。
+ *
+ * **この値をきっかけに要素を差し込んではいけない。** `dragstart` の直後に
+ * 掴んだ行の位置がずれると、**Chrome はドラッグを取り消す**（`dragstart` の
+ * 1ms 後に `dragend` が来る）。手順16d-b では「〜の末尾へ」の帯を掴んだ瞬間に
+ * 出しており、オンステージ側の帯がバックログ表の上に入るため、
+ * **バックログの行だけ一度もドラッグできなかった**（利用者の実機確認、2026-08-24）。
+ * 見た目だけを変える（`opacity` など）のは安全である。
+ */
 const draggingSeq = ref<number | null>(null)
 
 /**
@@ -1520,18 +1530,6 @@ watch(projectKey, (key) => {
               <template v-else>この段にチケットはありません</template>
             </p>
 
-            <!-- 掴んでいる間だけ出す末尾の帯。段の末尾へ置くための落とし場所である。
-                 **受け取れないときは出さない**——「末尾へ」と書いてあるのに何も
-                 起きない帯が残ると、落とせるように見えて嘘になる -->
-            <p
-              v-else-if="canDropOnSection(draggingSeq, section)"
-              class="stage-tail"
-              :class="{ 'drop-last': hintsSection(section, 'last') }"
-              @dragover="onDragOverSection($event, section, 'last')"
-              @drop.prevent="dropOnSection(section, 'last')"
-            >
-              {{ section.label }}の末尾へ
-            </p>
           </template>
         </div>
 
@@ -1670,9 +1668,8 @@ watch(projectKey, (key) => {
   color: var(--pb-text-muted);
 }
 
-/* 空の段と末尾の帯。**破線で「落とせる場所」だと分かるようにする**（色は使わない） */
-.stage-empty,
-.stage-tail {
+/* 空の段。**破線で「落とせる場所」だと分かるようにする**（色は使わない） */
+.stage-empty {
   margin: 0;
   padding: var(--pb-space-3) var(--pb-space-2);
   border: 1px dashed var(--pb-border);
@@ -1681,13 +1678,8 @@ watch(projectKey, (key) => {
   font-size: 13px;
 }
 
-.stage-tail {
-  padding: var(--pb-space-2);
-}
-
 /* 帯そのものが落とし場所なので、枠を実線にして受け取る状態を示す */
-.stage-empty.drop-last,
-.stage-tail.drop-last {
+.stage-empty.drop-last {
   border-color: var(--pb-accent);
   border-style: solid;
   color: var(--pb-text);

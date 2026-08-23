@@ -475,10 +475,24 @@ window.set = window.set || function (el, v) {
   文書全体を1枚に収めるモードなので、画面に固定した要素（`<Teleport>` で body へ出した
   ドロップダウンやメニュー）が抜ける。**開いたパネルを撮るときは `false` にする**
   （手順16d-b で、パネルが出ているのにスクリーンショットに無いという形で踏んだ）
-- **ドラッグ&ドロップは `DragEvent` を自分で発火して確かめられる**（`dragstart` → `dragover` → `drop`）。
-  ただし**「落とせるか」は `drop` を投げて判定しない**——合成イベントには「既定を止めた要素だけが
-  ドロップ先になる」という規約が効かず、落とせないはずの相手でもハンドラが動く。
-  **`dragover` を投げて `defaultPrevented` を見る**のが、実際のブラウザと同じ判定である
+- **ドラッグ&ドロップを合成した `DragEvent` で確かめてはいけない。**
+  `dispatchEvent(new DragEvent('dragstart'))` はハンドラを呼ぶだけで、**Chrome の
+  ドラッグ機構を一度も通らない**。ドラッグが実際に始まるか、途中で取り消されないかを
+  測れず、**手順16d-b では「32件 PASS」のままバックログの行が一度も掴めない欠陥を見逃した**
+  （利用者の実機確認で判明、2026-08-24）。**測っていたのは自分のハンドラであって、画面ではない。**
+  本物で回すには `Input` ドメインを使う。
+
+  ```
+  Input.setInterceptDrags {enabled: true}
+  Input.dispatchMouseEvent {type: 'mousePressed' / 'mouseMoved' …}   ← ここでドラッグが始まる
+  ← Input.dragIntercepted が来れば「始まった」。**来なければ取り消されている**
+  Input.dispatchDragEvent {type: 'dragEnter' / 'dragOver' / 'drop', data: <intercepted の data>}
+  ```
+
+- **`dragstart` を機に落とし場所を描き足すと、Chrome がドラッグを取り消す。**
+  掴んだ行の位置が直後にずれるためで、症状は「`dragstart` の 1〜2ms 後に `dragend` が来て、
+  `dragover` が一度も起きない」。**落とし場所は掴む前から画面にあるものに限る**
+  （`GuiDesign.md` 5.4「掴んだ瞬間に要素を差し込まない」）
 
 ## 8.3 Cookie 認証で状態変更系を叩く（curl）
 
