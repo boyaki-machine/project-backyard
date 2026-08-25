@@ -114,9 +114,13 @@ type ticketChildBrief struct {
 // ticketDetailView は 9.5.1 の応答。手順16b では POST /tickets が返す
 // （9.3 が「応答は 9.5 の GET と同形式」と定めるため）。
 //
-// **dod / links / comment_count は空で返す。** 中身を作るのは手順18（9.9 / 9.10 /
-// 9.8）だが、作りたてのチケットではいずれも空・0が正しい値であり、手順18 で
-// 項目が生えたように見せないほうが消費者にとって安定する。
+// **dod / links は空で返す。** 中身を作るのは手順18（9.9 / 9.10）だが、
+// 作りたてのチケットではどちらも空が正しい値であり、手順18 で項目が生えたように
+// 見せないほうが消費者にとって安定する。
+//
+// **comment_count は手順17a から実数である。** 9.6 の遷移が kind='progress' の
+// コメントを作る（DbDesign.md 6.7）ので、0 を固定で返すと事実と食い違う。
+// コメントAPI（9.8）そのものは手順18 だが、件数の供給元は先に要る。
 type ticketDetailView struct {
 	ticketListItem
 	BodyMd       *string            `json:"body_md"`
@@ -177,6 +181,13 @@ func buildTicketDetail(
 		return ticketDetailView{}, err
 	}
 
+	// 9.5.1 の comment_count。**本文は引かない**——コメント本体は 9.8 の
+	// 別エンドポイントであり、詳細は件数だけで 5.5 の見出し「コメント (4)」を作る。
+	commentCount, err := q.CountTicketComments(ctx, row.ID)
+	if err != nil {
+		return ticketDetailView{}, fmt.Errorf("コメント件数を読めない: %w", err)
+	}
+
 	view := ticketDetailView{
 		ticketListItem: ticketListItem{
 			ID:            row.ID,
@@ -205,10 +216,10 @@ func buildTicketDetail(
 		},
 		BodyMd:   textPtr(row.BodyMd),
 		Children: []ticketChildBrief{},
-		// 手順18 で中身が入る（9.8 / 9.9 / 9.10）。作りたては空・0 が正しい。
+		// 手順18 で中身が入る（9.9 / 9.10）。作りたては空が正しい。
 		DoD:          []any{},
 		Links:        []any{},
-		CommentCount: 0,
+		CommentCount: commentCount,
 	}
 
 	if row.ParentSeq.Valid {

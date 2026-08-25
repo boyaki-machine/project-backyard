@@ -415,3 +415,99 @@ UPDATE ticket SET closed_at = @closed_at WHERE id = @id;
 -- 「動いていること」を目で確かめられない。SetTicketClosedAt と同じ扱いである。
 -- name: SetTicketStagedAt :exec
 UPDATE ticket SET staged_at = @staged_at WHERE id = @id;
+
+-- ── 更新・削除・遷移（ApiDesign.md 9.5.2 / 9.5.3 / 9.6。手順17a）──────
+
+-- UpdateTicket は 9.5.2 の部分更新。**送られたフィールドだけを更新する。**
+--
+-- **2つの書き方を使い分けている**（project.sql の UpdateProject と同じ形）。
+--
+--   NOT NULL の列（type / title）  COALESCE(sqlc.narg(…), 現在値)
+--   NULL にできる列               CASE WHEN @…_set THEN sqlc.narg(…) ELSE 現在値 END
+--
+-- COALESCE では「NULL を送って空にする」を表せない。assignee_id を外す・親を
+-- 外す・期限を消すはいずれも 9.5.2 が認めている操作なので、_set のフラグで
+-- 「送られていない」と「NULL が送られた」を区別する。
+--
+-- **status_key / closed_at / sort_key / staged_at は含めない**（9.5.2）。
+-- 前2つは 9.6 の遷移、後2つは 9.4 の move が書く。
+--
+-- **updated_at はトリガが動かす**（trg_ticket_updated。DbDesign.md 6.6）。
+-- タグだけを付け外しした場合もこの文を通るので、9.2.5 の ETag が必ず変わる。
+--
+-- name: UpdateTicket :execrows
+UPDATE ticket SET
+  type           = COALESCE(sqlc.narg('type'), type),
+  title          = COALESCE(sqlc.narg('title'), title),
+  body_md        = CASE WHEN @body_md_set::boolean        THEN sqlc.narg('body_md')        ELSE body_md END,
+  priority       = CASE WHEN @priority_set::boolean       THEN sqlc.narg('priority')       ELSE priority END,
+  assignee_id    = CASE WHEN @assignee_id_set::boolean    THEN sqlc.narg('assignee_id')    ELSE assignee_id END,
+  parent_id      = CASE WHEN @parent_id_set::boolean      THEN sqlc.narg('parent_id')      ELSE parent_id END,
+  sprint_id      = CASE WHEN @sprint_id_set::boolean      THEN sqlc.narg('sprint_id')      ELSE sprint_id END,
+  estimate_point = CASE WHEN @estimate_point_set::boolean THEN sqlc.narg('estimate_point') ELSE estimate_point END,
+  estimate_hours = CASE WHEN @estimate_hours_set::boolean THEN sqlc.narg('estimate_hours') ELSE estimate_hours END,
+  actual_hours   = CASE WHEN @actual_hours_set::boolean   THEN sqlc.narg('actual_hours')   ELSE actual_hours END,
+  start_date     = CASE WHEN @start_date_set::boolean     THEN sqlc.narg('start_date')     ELSE start_date END,
+  due_date       = CASE WHEN @due_date_set::boolean       THEN sqlc.narg('due_date')       ELSE due_date END,
+  version        = version + 1
+WHERE project_id = @project_id AND seq = @seq AND version = @version;
+
+-- GetTicketTypeByID は 9.5.2 のオンステージ判定に使う。
+--
+-- **新しい親の種別が要る。** 「段に置けるのは親を持たないもの、または親が
+-- エピックのもの」（9.4.1）を、変更後の値で判定するためである。
+-- name: GetTicketTypeByID :one
+SELECT type FROM ticket WHERE id = @id;
+
+-- IsTicketDescendant は 9.5.2 の parent_cycle 検出。
+--
+-- **自分自身を含む。** 起点をそのまま UNION の第1項に置いてあるので、
+-- 「自分自身または自分の子孫を親に指定した」（9.5.2）を1文で判定できる。
+-- DBの ck_ticket_not_self_parent は自己参照しか防げない（DbDesign.md 6.6）。
+--
+-- UNION ALL ではなく UNION を使うのは ListTickets の subtree と同じ理由で、
+-- 重複を運ぶ意味がないためである。
+-- name: IsTicketDescendant :one
+WITH RECURSIVE subtree AS (
+  SELECT root.id FROM ticket root WHERE root.id = @ancestor_id
+  UNION
+  SELECT c.id FROM ticket c JOIN subtree s ON c.parent_id = s.id
+)
+SELECT (count(t.id) > 0)::boolean AS is_descendant
+  FROM ticket t
+ WHERE t.id = @candidate_id AND t.id IN (SELECT id FROM subtree);
+
+-- DetachTicketTags は 9.5.2 の tag_ids の置き換えに使う（丸ごと消してから付け直す）。
+--
+-- **差分を計算しない。** 9.5.2 は「tag_ids は丸ごと置き換える」と定めており、
+-- 消してから AttachTicketTag で付け直すほうが、付ける側と外す側の2本の集合演算を
+-- 持つより読み違えが少ない。件数はチケット1件ぶんで、多くても数件である。
+-- name: DetachTicketTags :exec
+DELETE FROM ticket_tag WHERE ticket_id = @ticket_id;
+
+-- DeleteTicket は 9.5.3 の物理削除。
+--
+-- **子は消えない**（ticket.parent_id が ON DELETE SET NULL）。親を失って
+-- トップレベルへ上がる。コメント・DoD・リンク・タグ付けは CASCADE で消える。
+-- **activity は残る**——entity_id は多相参照で FK を持てず、9.13.2 が
+-- 「削除されたチケットの行」を表示する前提で組まれている（9.5.3）。
+-- name: DeleteTicket :execrows
+DELETE FROM ticket WHERE project_id = @project_id AND seq = @seq;
+
+-- SetTicketStatus は 9.6 の遷移。**closed_at を同じ文で決める。**
+--
+-- 遷移先の category が 'done' なら now()、それ以外なら NULL へ戻す（9.6 の表）。
+-- **closed_at が動くのはこの経路だけである**——PATCH で直接書けないようにして
+-- あるので（9.5.2）、9.2.1 の ?open=true（closed_at IS NULL）が「完了していない
+-- もの」と一致することが保証される。
+--
+-- **If-Match による version の照合をしない**（9.6）。遷移そのものが競合を検出する
+-- ——2人が同時に同じ遷移を実行すると、後発は「同じ状態から同じ状態へ」を
+-- 要求することになり、workflow_transition に定義が無いため 409 になる。
+-- name: SetTicketStatus :one
+UPDATE ticket SET
+  status_key = @status_key,
+  closed_at  = CASE WHEN @closing::boolean THEN now() ELSE NULL END,
+  version    = version + 1
+WHERE project_id = @project_id AND seq = @seq
+RETURNING version;

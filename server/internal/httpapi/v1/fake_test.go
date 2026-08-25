@@ -369,6 +369,9 @@ func (q *fakeQuerier) CreateProjectWorkflow(_ context.Context, arg gen.CreatePro
 
 func (q *fakeQuerier) ListWorkflowStatuses(context.Context, string) ([]gen.ListWorkflowStatusesRow, error) {
 	q.opLog = append(q.opLog, "ListWorkflowStatuses")
+	if q.ticket.workflowStatuses != nil {
+		return q.ticket.workflowStatuses, nil
+	}
 	return q.templateStatuses, nil
 }
 
@@ -380,6 +383,9 @@ func (q *fakeQuerier) CreateWorkflowStatus(_ context.Context, arg gen.CreateWork
 
 func (q *fakeQuerier) ListWorkflowTransitions(context.Context, string) ([]gen.ListWorkflowTransitionsRow, error) {
 	q.opLog = append(q.opLog, "ListWorkflowTransitions")
+	if q.ticket.workflowTransitions != nil {
+		return q.ticket.workflowTransitions, nil
+	}
 	return q.templateTransitions, nil
 }
 
@@ -1099,6 +1105,28 @@ type ticketFakeState struct {
 	setSortKey []gen.SetTicketSortKeyParams
 
 	activities []gen.InsertActivityParams
+
+	// ── 手順17a（9.5.2 / 9.5.3 / 9.6 / 9.7）─────────────────────
+	//
+	// **ワークフローは template* と別に持つ。** あちらはテンプレートの複製
+	// （5.3 のプロジェクト作成）が読むもので、こちらはプロジェクトに
+	// ひも付いた定義である。同じ入れ物を使うと、どちらの経路を測っているか
+	// テストから読めなくなる。設定されていなければ template* に落ちる。
+	workflowID          pgtype.Text
+	workflowStatuses    []gen.ListWorkflowStatusesRow
+	workflowTransitions []gen.ListWorkflowTransitionsRow
+
+	updated    []gen.UpdateTicketParams
+	updateRows int64
+	deleted    []gen.DeleteTicketParams
+	deleteRows int64
+	detached   []string
+	descendant bool
+	typeByID   map[string]string
+	statusSet  []gen.SetTicketStatusParams
+	comments   []gen.CreateCommentParams
+	commentNum int64
+	updateErr  error
 }
 
 func (q *fakeQuerier) ListTickets(_ context.Context, arg gen.ListTicketsParams) ([]gen.ListTicketsRow, error) {
@@ -1358,4 +1386,124 @@ func (q *fakeQuerier) InsertActivity(_ context.Context, arg gen.InsertActivityPa
 	q.opLog = append(q.opLog, "InsertActivity")
 	q.ticket.activities = append(q.ticket.activities, arg)
 	return nil
+}
+
+// ── チケット1件（手順17a。ApiDesign.md 9.5 / 9.6 / 9.7）───────────────
+//
+// **書いてから読み直す形をここでも保つ。** PATCH と遷移の応答は 9.5.1 形式で
+// あり、ハンドラは更新後に GetTicketBySeq で読み直す。書き込みが bySeq に
+// 反映されないと、応答が「更新前の値」になっていても気づけない。
+
+func (q *fakeQuerier) CountTicketComments(_ context.Context, _ string) (int64, error) {
+	q.opLog = append(q.opLog, "CountTicketComments")
+	return q.ticket.commentNum, nil
+}
+
+func (q *fakeQuerier) CreateComment(_ context.Context, arg gen.CreateCommentParams) error {
+	q.opLog = append(q.opLog, "CreateComment")
+	q.ticket.comments = append(q.ticket.comments, arg)
+	q.ticket.commentNum++
+	return nil
+}
+
+func (q *fakeQuerier) FindProjectWorkflowID(context.Context, string) (pgtype.Text, error) {
+	q.opLog = append(q.opLog, "FindProjectWorkflowID")
+	return q.ticket.workflowID, nil
+}
+
+func (q *fakeQuerier) GetTicketTypeByID(_ context.Context, id string) (string, error) {
+	q.opLog = append(q.opLog, "GetTicketTypeByID")
+	t, ok := q.ticket.typeByID[id]
+	if !ok {
+		return "", pgx.ErrNoRows
+	}
+	return t, nil
+}
+
+func (q *fakeQuerier) IsTicketDescendant(context.Context, gen.IsTicketDescendantParams) (bool, error) {
+	q.opLog = append(q.opLog, "IsTicketDescendant")
+	return q.ticket.descendant, nil
+}
+
+func (q *fakeQuerier) DetachTicketTags(_ context.Context, ticketID string) error {
+	q.opLog = append(q.opLog, "DetachTicketTags")
+	q.ticket.detached = append(q.ticket.detached, ticketID)
+	return nil
+}
+
+// UpdateTicket は **bySeq へ書き戻す**。応答を読み直す経路を通すため。
+func (q *fakeQuerier) UpdateTicket(_ context.Context, arg gen.UpdateTicketParams) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateTicket")
+	q.ticket.updated = append(q.ticket.updated, arg)
+	if q.ticket.updateErr != nil {
+		return 0, q.ticket.updateErr
+	}
+	if q.ticket.updateRows == 0 {
+		return 0, nil
+	}
+	row, ok := q.ticket.bySeq[arg.Seq]
+	if !ok {
+		return q.ticket.updateRows, nil
+	}
+	if arg.Type.Valid {
+		row.Type = arg.Type.String
+	}
+	if arg.Title.Valid {
+		row.Title = arg.Title.String
+	}
+	if arg.BodyMdSet {
+		row.BodyMd = arg.BodyMd
+	}
+	if arg.PrioritySet {
+		row.Priority = arg.Priority
+	}
+	if arg.AssigneeIDSet {
+		row.AssigneeID = arg.AssigneeID
+	}
+	if arg.SprintIDSet {
+		row.SprintID = arg.SprintID
+	}
+	if arg.EstimatePointSet {
+		row.EstimatePoint = arg.EstimatePoint
+	}
+	if arg.EstimateHoursSet {
+		row.EstimateHours = arg.EstimateHours
+	}
+	if arg.ActualHoursSet {
+		row.ActualHours = arg.ActualHours
+	}
+	if arg.StartDateSet {
+		row.StartDate = arg.StartDate
+	}
+	if arg.DueDateSet {
+		row.DueDate = arg.DueDate
+	}
+	row.Version++
+	q.ticket.bySeq[arg.Seq] = row
+	return q.ticket.updateRows, nil
+}
+
+func (q *fakeQuerier) DeleteTicket(_ context.Context, arg gen.DeleteTicketParams) (int64, error) {
+	q.opLog = append(q.opLog, "DeleteTicket")
+	q.ticket.deleted = append(q.ticket.deleted, arg)
+	return q.ticket.deleteRows, nil
+}
+
+// SetTicketStatus は status_key と closed_at を bySeq へ書き戻す（9.6）。
+func (q *fakeQuerier) SetTicketStatus(_ context.Context, arg gen.SetTicketStatusParams) (int32, error) {
+	q.opLog = append(q.opLog, "SetTicketStatus")
+	q.ticket.statusSet = append(q.ticket.statusSet, arg)
+	row, ok := q.ticket.bySeq[arg.Seq]
+	if !ok {
+		return 0, pgx.ErrNoRows
+	}
+	row.StatusKey = arg.StatusKey
+	if arg.Closing {
+		row.ClosedAt = ts(time.Now())
+	} else {
+		row.ClosedAt = pgtype.Timestamptz{}
+	}
+	row.Version++
+	q.ticket.bySeq[arg.Seq] = row
+	return row.Version, nil
 }

@@ -100,6 +100,43 @@ func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) erro
 	return err
 }
 
+const deleteTicket = `-- name: DeleteTicket :execrows
+DELETE FROM ticket WHERE project_id = $1 AND seq = $2
+`
+
+type DeleteTicketParams struct {
+	ProjectID string
+	Seq       int32
+}
+
+// DeleteTicket は 9.5.3 の物理削除。
+//
+// **子は消えない**（ticket.parent_id が ON DELETE SET NULL）。親を失って
+// トップレベルへ上がる。コメント・DoD・リンク・タグ付けは CASCADE で消える。
+// **activity は残る**——entity_id は多相参照で FK を持てず、9.13.2 が
+// 「削除されたチケットの行」を表示する前提で組まれている（9.5.3）。
+func (q *Queries) DeleteTicket(ctx context.Context, arg DeleteTicketParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTicket, arg.ProjectID, arg.Seq)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const detachTicketTags = `-- name: DetachTicketTags :exec
+DELETE FROM ticket_tag WHERE ticket_id = $1
+`
+
+// DetachTicketTags は 9.5.2 の tag_ids の置き換えに使う（丸ごと消してから付け直す）。
+//
+// **差分を計算しない。** 9.5.2 は「tag_ids は丸ごと置き換える」と定めており、
+// 消してから AttachTicketTag で付け直すほうが、付ける側と外す側の2本の集合演算を
+// 持つより読み違えが少ない。件数はチケット1件ぶんで、多くても数件である。
+func (q *Queries) DetachTicketTags(ctx context.Context, ticketID string) error {
+	_, err := q.db.Exec(ctx, detachTicketTags, ticketID)
+	return err
+}
+
 const findTicketIDBySeq = `-- name: FindTicketIDBySeq :one
 SELECT id FROM ticket WHERE project_id = $1 AND seq = $2
 `
@@ -320,6 +357,21 @@ func (q *Queries) GetTicketSortRow(ctx context.Context, arg GetTicketSortRowPara
 	return i, err
 }
 
+const getTicketTypeByID = `-- name: GetTicketTypeByID :one
+SELECT type FROM ticket WHERE id = $1
+`
+
+// GetTicketTypeByID は 9.5.2 のオンステージ判定に使う。
+//
+// **新しい親の種別が要る。** 「段に置けるのは親を持たないもの、または親が
+// エピックのもの」（9.4.1）を、変更後の値で判定するためである。
+func (q *Queries) GetTicketTypeByID(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, getTicketTypeByID, id)
+	var type_ string
+	err := row.Scan(&type_)
+	return type_, err
+}
+
 const isProjectMember = `-- name: IsProjectMember :one
 SELECT EXISTS (
   SELECT 1 FROM project_member WHERE project_id = $1 AND actor_id = $2
@@ -337,6 +389,37 @@ func (q *Queries) IsProjectMember(ctx context.Context, arg IsProjectMemberParams
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const isTicketDescendant = `-- name: IsTicketDescendant :one
+WITH RECURSIVE subtree AS (
+  SELECT root.id FROM ticket root WHERE root.id = $2
+  UNION
+  SELECT c.id FROM ticket c JOIN subtree s ON c.parent_id = s.id
+)
+SELECT (count(t.id) > 0)::boolean AS is_descendant
+  FROM ticket t
+ WHERE t.id = $1 AND t.id IN (SELECT id FROM subtree)
+`
+
+type IsTicketDescendantParams struct {
+	CandidateID string
+	AncestorID  string
+}
+
+// IsTicketDescendant は 9.5.2 の parent_cycle 検出。
+//
+// **自分自身を含む。** 起点をそのまま UNION の第1項に置いてあるので、
+// 「自分自身または自分の子孫を親に指定した」（9.5.2）を1文で判定できる。
+// DBの ck_ticket_not_self_parent は自己参照しか防げない（DbDesign.md 6.6）。
+//
+// UNION ALL ではなく UNION を使うのは ListTickets の subtree と同じ理由で、
+// 重複を運ぶ意味がないためである。
+func (q *Queries) IsTicketDescendant(ctx context.Context, arg IsTicketDescendantParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isTicketDescendant, arg.CandidateID, arg.AncestorID)
+	var is_descendant bool
+	err := row.Scan(&is_descendant)
+	return is_descendant, err
 }
 
 const listTagsForTickets = `-- name: ListTagsForTickets :many
@@ -1001,6 +1084,44 @@ func (q *Queries) SetTicketStagedAt(ctx context.Context, arg SetTicketStagedAtPa
 	return err
 }
 
+const setTicketStatus = `-- name: SetTicketStatus :one
+UPDATE ticket SET
+  status_key = $1,
+  closed_at  = CASE WHEN $2::boolean THEN now() ELSE NULL END,
+  version    = version + 1
+WHERE project_id = $3 AND seq = $4
+RETURNING version
+`
+
+type SetTicketStatusParams struct {
+	StatusKey string
+	Closing   bool
+	ProjectID string
+	Seq       int32
+}
+
+// SetTicketStatus は 9.6 の遷移。**closed_at を同じ文で決める。**
+//
+// 遷移先の category が 'done' なら now()、それ以外なら NULL へ戻す（9.6 の表）。
+// **closed_at が動くのはこの経路だけである**——PATCH で直接書けないようにして
+// あるので（9.5.2）、9.2.1 の ?open=true（closed_at IS NULL）が「完了していない
+// もの」と一致することが保証される。
+//
+// **If-Match による version の照合をしない**（9.6）。遷移そのものが競合を検出する
+// ——2人が同時に同じ遷移を実行すると、後発は「同じ状態から同じ状態へ」を
+// 要求することになり、workflow_transition に定義が無いため 409 になる。
+func (q *Queries) SetTicketStatus(ctx context.Context, arg SetTicketStatusParams) (int32, error) {
+	row := q.db.QueryRow(ctx, setTicketStatus,
+		arg.StatusKey,
+		arg.Closing,
+		arg.ProjectID,
+		arg.Seq,
+	)
+	var version int32
+	err := row.Scan(&version)
+	return version, err
+}
+
 const sprintExistsInProject = `-- name: SprintExistsInProject :one
 SELECT EXISTS (
   SELECT 1 FROM sprint WHERE project_id = $1 AND id = $2
@@ -1053,4 +1174,102 @@ func (q *Queries) TicketSortKeyBefore(ctx context.Context, arg TicketSortKeyBefo
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const updateTicket = `-- name: UpdateTicket :execrows
+
+UPDATE ticket SET
+  type           = COALESCE($1, type),
+  title          = COALESCE($2, title),
+  body_md        = CASE WHEN $3::boolean        THEN $4        ELSE body_md END,
+  priority       = CASE WHEN $5::boolean       THEN $6       ELSE priority END,
+  assignee_id    = CASE WHEN $7::boolean    THEN $8    ELSE assignee_id END,
+  parent_id      = CASE WHEN $9::boolean      THEN $10      ELSE parent_id END,
+  sprint_id      = CASE WHEN $11::boolean      THEN $12      ELSE sprint_id END,
+  estimate_point = CASE WHEN $13::boolean THEN $14 ELSE estimate_point END,
+  estimate_hours = CASE WHEN $15::boolean THEN $16 ELSE estimate_hours END,
+  actual_hours   = CASE WHEN $17::boolean   THEN $18   ELSE actual_hours END,
+  start_date     = CASE WHEN $19::boolean     THEN $20     ELSE start_date END,
+  due_date       = CASE WHEN $21::boolean       THEN $22       ELSE due_date END,
+  version        = version + 1
+WHERE project_id = $23 AND seq = $24 AND version = $25
+`
+
+type UpdateTicketParams struct {
+	Type             pgtype.Text
+	Title            pgtype.Text
+	BodyMdSet        bool
+	BodyMd           pgtype.Text
+	PrioritySet      bool
+	Priority         pgtype.Text
+	AssigneeIDSet    bool
+	AssigneeID       pgtype.Text
+	ParentIDSet      bool
+	ParentID         pgtype.Text
+	SprintIDSet      bool
+	SprintID         pgtype.Text
+	EstimatePointSet bool
+	EstimatePoint    pgtype.Float8
+	EstimateHoursSet bool
+	EstimateHours    pgtype.Float8
+	ActualHoursSet   bool
+	ActualHours      pgtype.Float8
+	StartDateSet     bool
+	StartDate        pgtype.Date
+	DueDateSet       bool
+	DueDate          pgtype.Date
+	ProjectID        string
+	Seq              int32
+	Version          int32
+}
+
+// ── 更新・削除・遷移（ApiDesign.md 9.5.2 / 9.5.3 / 9.6。手順17a）──────
+// UpdateTicket は 9.5.2 の部分更新。**送られたフィールドだけを更新する。**
+//
+// **2つの書き方を使い分けている**（project.sql の UpdateProject と同じ形）。
+//
+//	NOT NULL の列（type / title）  COALESCE(sqlc.narg(…), 現在値)
+//	NULL にできる列               CASE WHEN @…_set THEN sqlc.narg(…) ELSE 現在値 END
+//
+// COALESCE では「NULL を送って空にする」を表せない。assignee_id を外す・親を
+// 外す・期限を消すはいずれも 9.5.2 が認めている操作なので、_set のフラグで
+// 「送られていない」と「NULL が送られた」を区別する。
+//
+// **status_key / closed_at / sort_key / staged_at は含めない**（9.5.2）。
+// 前2つは 9.6 の遷移、後2つは 9.4 の move が書く。
+//
+// **updated_at はトリガが動かす**（trg_ticket_updated。DbDesign.md 6.6）。
+// タグだけを付け外しした場合もこの文を通るので、9.2.5 の ETag が必ず変わる。
+func (q *Queries) UpdateTicket(ctx context.Context, arg UpdateTicketParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateTicket,
+		arg.Type,
+		arg.Title,
+		arg.BodyMdSet,
+		arg.BodyMd,
+		arg.PrioritySet,
+		arg.Priority,
+		arg.AssigneeIDSet,
+		arg.AssigneeID,
+		arg.ParentIDSet,
+		arg.ParentID,
+		arg.SprintIDSet,
+		arg.SprintID,
+		arg.EstimatePointSet,
+		arg.EstimatePoint,
+		arg.EstimateHoursSet,
+		arg.EstimateHours,
+		arg.ActualHoursSet,
+		arg.ActualHours,
+		arg.StartDateSet,
+		arg.StartDate,
+		arg.DueDateSet,
+		arg.DueDate,
+		arg.ProjectID,
+		arg.Seq,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
