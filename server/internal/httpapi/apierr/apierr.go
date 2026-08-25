@@ -38,6 +38,12 @@ const (
 	AccountLocked             Code = "account_locked"
 	RateLimited               Code = "rate_limited"
 	InternalError             Code = "internal_error"
+
+	// InvalidTransition は 2.5.1 の表に**チケットが足すもの**（ApiDesign.md 9.14）。
+	// 現在のステータスから要求された遷移が workflow_transition に定義されていない
+	// （9.6 の検証2）。**Conflict と分けてあるのは、利用者が取る行動が違うため**
+	// ——競合は読み直せば済むが、こちらは順路そのものが存在しない。
+	InvalidTransition Code = "invalid_transition"
 )
 
 // statuses は ApiDesign.md 2.5.1 の Status 列。
@@ -57,6 +63,7 @@ var statuses = map[Code]int{
 	AccountLocked:             http.StatusLocked,
 	RateLimited:               http.StatusTooManyRequests,
 	InternalError:             http.StatusInternalServerError,
+	InvalidTransition:         http.StatusConflict,
 }
 
 // messages は各コードの既定文言。
@@ -80,6 +87,9 @@ var messages = map[Code]string{
 	AccountLocked:             "ログインの失敗が続いたため、アカウントを一時的にロックしました。しばらくしてからやり直してください",
 	RateLimited:               "リクエストが多すぎます。しばらくしてからやり直してください",
 	InternalError:             "サーバ内部でエラーが発生しました",
+	// 遷移の既定文言は使われないことが多い。9.6 の検証2 は「進行中から完了へは
+	// 直接進められません」のように、ワークフローの名前を入れた文言で上書きする。
+	InvalidTransition: "現在の状態からこの状態へは進められません",
 }
 
 // Detail はフィールド単位のエラー。フォームの各入力欄に紐づける（ApiDesign.md 2.5）。

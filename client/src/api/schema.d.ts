@@ -657,6 +657,248 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/tickets/{seq}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        /**
+         * チケットの詳細
+         * @description チケット詳細画面（GuiDesign.md 5.5）のデータ源（ApiDesign.md 9.5.1）。
+         *     **必要権限は `ticket.view`**。
+         *
+         *     **9.2 の `items[]` に6項目を加えたもの**を返す（`body_md` / `parent` / `children` /
+         *     `dod` / `links` / `comment_count`）。一覧と同じ型を埋め込んでいるので、片方だけ
+         *     項目が増えて JSON の形が割れることがない。
+         *
+         *     **コメント本体と変更履歴は含めない。** コメントはページングを持ち（9.8）、履歴は
+         *     既定で畳まれている。画面は起動時に本エンドポイントと `GET .../comments` の
+         *     **2本**を呼ぶ。
+         *
+         *     **`dod` / `links` は手順18 まで空の配列である。** `comment_count` は
+         *     **手順17 から実数**——9.6 の遷移が `kind='progress'` のコメントを作るため、
+         *     0 を固定で返すと事実と食い違う。
+         *
+         *     **`ETag` を返さない。** 2.7 の `ETag` は一覧（9.2.5）のためのもので、1件の詳細は
+         *     軽く、競合検出は 9.5.2 の楽観ロック（`version` + `If-Match`）が担う。同じ資源に
+         *     2つの競合検出手段を置くと、どちらが正本か読めなくなる。
+         */
+        get: operations["getTicket"];
+        put?: never;
+        post?: never;
+        /**
+         * チケットの削除
+         * @description 物理削除（ApiDesign.md 9.5.3、DbDesign.md 4.6 の既定）。
+         *     **必要権限は `ticket.delete`**。
+         *
+         *     **Phase 1 で「持たない人」が実在する唯一のチケット権限である**——`operator`
+         *     （システムロール）は `ticket.delete` を持たず、持つのは `administrator` と
+         *     `project_admin` だけである（migration 0010）。
+         *
+         *     **子チケットは削除しない。** `ticket.parent_id` は `ON DELETE SET NULL` であり、
+         *     子は親を失って表示上のトップレベルへ上がる。**この挙動を確認ダイアログに明示する**
+         *     （GuiDesign.md 6.3。件数は 9.5.1 の `children` から数える）。
+         *
+         *     コメント・DoD・リンク・タグ付けは `ON DELETE CASCADE` で消える。
+         *
+         *     **`activity` は消さず、`action='delete'` を1行足す。** `entity_id` は多相参照で
+         *     FK を持てず（DbDesign.md 6.8）、9.13.2 は「削除されたチケットの行は `entity_seq` /
+         *     `entity_title` が `null` になる」と定めている——**残る前提の設計**であり、消すと
+         *     「誰がどのチケットを消したか」が追えなくなる。
+         *
+         *     **`If-Match` は要求しない**（2.8 が求めるのは「編集内容が失われる更新」であり、
+         *     削除には失われる編集内容が無い）。
+         */
+        delete: operations["deleteTicket"];
+        options?: never;
+        head?: never;
+        /**
+         * チケットの更新
+         * @description 部分更新（ApiDesign.md 9.5.2）。**必要権限は `ticket.edit`。ただし
+         *     `assignee_id` を変える場合は `ticket.assign` も必要**——この追加分だけは
+         *     リクエスト本文の内容で決まるため、ルート定義の宣言ではなくハンドラ内で見ている。
+         *
+         *     **送られたフィールドだけを更新する。** `null` を送るとその項目を空にする
+         *     （担当を外す・親を外す・期限を消す）。キーごと送らなければ据え置く。
+         *
+         *     **`If-Match` は必須**（2.8）。省略すると 422（`details[].field` が `If-Match`）、
+         *     現在の `version` と食い違えば 409。成功すると `version` が +1 される。
+         *
+         *     **`tag_ids` は丸ごと置き換える**（部分更新ではない）。空配列でタグを全て外す。
+         *     **タグだけを変えた場合も `version` と `updated_at` が動く**ので、一覧（9.2.5）の
+         *     `ETag` が必ず変わる。
+         *
+         *     **受け付けないフィールドは 422 で、`details[].code` が3系統に分かれる**
+         *     （`error.code` はいずれも `validation_failed`）。**値が現在と同じでも弾く**
+         *     ——「送れば通ることがある」という曖昧な仕様にしないため。
+         *
+         *     | `details[].code` | 対象 | 代わりに使うもの |
+         *     |---|---|---|
+         *     | `immutable_field` | `id` `seq` `version` `created_at` `updated_at` `reporter_id` | — （サーバが決める） |
+         *     | `use_move_endpoint` | `sort_key` `staged_at` | `POST .../move`（9.4） |
+         *     | `use_transition_endpoint` | `status_key` `closed_at` | `POST .../transition`（9.6） |
+         *
+         *     そのほかの `details[].code`。
+         *
+         *     | `code` | 意味 |
+         *     |---|---|
+         *     | `parent_cycle` | 自分自身または自分の子孫を親に指定した |
+         *     | `not_stageable` | **オンステージのチケットを、段に置けなくなる `type` / `parent_seq` へ変えようとした** |
+         *     | `not_a_member` | 担当者に指定したアクターがプロジェクトのメンバーでない |
+         *     | `not_found` | `parent_seq` / `tag_ids` / `sprint_id` の参照先がこのプロジェクトに無い |
+         *
+         *     **`not_stageable` は 9.4.1 が `move` で弾いている条件と同じものである。**
+         *     `staged_at` が入っている行を `epic` にする、またはエピック以外の子にすると、
+         *     「段に置けるのは表示上のトップレベルだけ」という規則を `PATCH` から迂回できて
+         *     しまう。**自動で段から降ろす方式は採らない**——種別や親を変えただけのつもりの
+         *     利用者が、オンステージから消えたことに気づく手段がないためである。
+         *
+         *     **`activity` は変更した項目ごとに1行**（`field` / `old_value` / `new_value`）。
+         *     **`body_md` だけは値を載せず `field` のみ記録する**——9.13.2 は `per_page=20` の
+         *     一覧APIで、20件ぶんの Markdown を載せると応答が重くなる。値が現在と同じだった
+         *     項目は「変更が生じていない」ので記録しない（`version` は規約どおり +1 する）。
+         */
+        patch: operations["updateTicket"];
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/transition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * ステータスの遷移
+         * @description ワークフローに沿ってステータスを進める（ApiDesign.md 9.6）。
+         *     **必要権限は `ticket.transition`。加えて `workflow_transition.required_permission`
+         *     が設定されていればその権限も必要**（プロジェクトごとに変わる値なので、ルート定義の
+         *     宣言ではなくDBから読む）。
+         *
+         *     **検証の順序**（DbDesign.md 6.5）。
+         *
+         *     | # | 検証 | 失敗時 |
+         *     |---|---|---|
+         *     | 1 | `to` がプロジェクトのワークフローに存在するか | 422（`details[].code = "unknown_status"`） |
+         *     | 2 | 現在のステータスから `to` への遷移が定義されているか | 409 `invalid_transition` |
+         *     | 3 | 呼び出し元の `actor.kind` が `allowed_actor_kinds` に含まれるか | 403 |
+         *     | 4 | 遷移先の `is_agent_reachable` が `false` で、呼び出し元がエージェントか | 403 |
+         *     | 5 | `required_permission` を呼び出し元が持つか | 403 |
+         *
+         *     **3〜5 が Requirements.md 10.10.4「承認ゲートをAPIレベルで強制する」の実体である。**
+         *     画面側の制御に依存しない。
+         *
+         *     **`closed_at` はこの経路だけが動かす。** 遷移先の `category` が `done` なら `now()`、
+         *     それ以外なら `NULL` へ戻す。`PATCH` で直接書けないようにしてあるので（9.5.2）、
+         *     9.2.1 の `?open=true`（`closed_at IS NULL`）が「完了していないもの」と一致することが
+         *     保証される。
+         *
+         *     `comment` が付いていれば、**同じトランザクションで `kind='progress'` のコメントを
+         *     作る**（DbDesign.md 6.7）。`activity` には `action='transition'` で記録し、`field` は
+         *     `status_key`、値はキーのまま入れる（表示名への変換は画面が行う。9.13.2）。
+         *
+         *     **`If-Match` は要求しない**（9.6）。**遷移そのものが競合を検出する**——2人が同時に
+         *     「進行中 → レビュー」を実行すると、後発は「レビュー → レビュー」を要求することに
+         *     なり、定義が無いため検証2 で 409 になる。ただし `version` は +1 される。
+         */
+        post: operations["transitionTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/transitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 遷移先の一覧
+         * @description 詳細画面のステータスドロップダウン（GuiDesign.md 5.5）に出す選択肢
+         *     （ApiDesign.md 9.7）。**必要権限は `ticket.view`**。
+         *
+         *     **`items[]` はワークフローの全ステータス（現在のものを除く）である。**
+         *     遷移が定義されている先だけに絞らない。
+         *
+         *     **遷移できない先も `allowed: false` と `reason` を付けて返す。** 設計原則4
+         *     「権限で見えないを作る」は**メニュー項目**についての規則であり、ここでは適用しない。
+         *     ステータスは業務上の到達点であり、存在ごと隠すと「なぜ完了にできないのか」が
+         *     分からなくなる。**この理由は定義が無い先にこそ強く効く**——`with_review` では
+         *     `in_progress → done` の定義が無く、隠すとレビューを通す必要があること自体が
+         *     画面から読めない。
+         *
+         *     `reason` は 9.6 の検証2〜5 に対応する（検証1 は `items[]` をワークフローから
+         *     組み立てるため起こらない）。**複数に当たる場合は先の検証の理由を返す**——
+         *     利用者が最初に取り除くべき障害がそれだからである。
+         *
+         *     | 9.6 の検証 | `reason` |
+         *     |---|---|
+         *     | 2（定義が無い） | `<現在の名前>から<遷移先の名前>へは直接進められません` |
+         *     | 3（`allowed_actor_kinds`） | `この状態への変更は<種別>からは行えません` |
+         *     | 4（`is_agent_reachable`） | `この状態へはエージェントから変更できません` |
+         *     | 5（`required_permission`） | `<権限キー> 権限が必要です` |
+         *
+         *     **このエンドポイントを 9.5.1 の詳細応答に埋めないのは、`PATCH` のたびに再計算が
+         *     要るためである。** ドロップダウンを開いたときにだけ呼べばよい。
+         *
+         *     ワークフローを持たないプロジェクト（`project.workflow_id` が `NULL`）では
+         *     `items` が空になる。
+         */
+        get: operations["listTicketTransitions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{key}/tickets/{seq}/move": {
         parameters: {
             query?: never;
@@ -2125,6 +2367,112 @@ export interface components {
             comment_count: number;
         };
         /**
+         * @description チケットの部分更新（ApiDesign.md 9.5.2）。**送られたフィールドだけを更新する。**
+         *
+         *     **`null` は「その項目を空にする」を意味する**（キーごと送らないのとは区別する）。
+         *     `nullable: true` を付けてあるのはそのためで、担当を外す・親を外す・期限を消す
+         *     といった操作はこの形でしか表せない。
+         *
+         *     **`status_key` / `closed_at` / `sort_key` / `staged_at` / `id` / `seq` / `version` /
+         *     `created_at` / `updated_at` / `reporter_id` は含められない。** 送ると 422 になる
+         *     （`details[].code` はパスの説明にある3系統）。`additionalProperties: false` を
+         *     付けていないのは、**サーバがそれらを「黙って無視」ではなく「明示的に弾く」ため**
+         *     で、どの項目がなぜ書けないかを `details` で返す。
+         * @example {
+         *       "title": "認証APIの実装（改）",
+         *       "priority": "high",
+         *       "assignee_id": null
+         *     }
+         */
+        UpdateTicketRequest: {
+            /**
+             * @description **オンステージのチケットを `epic` にすると 422**（`not_stageable`）。
+             *     エピックはどちらの段にも行として出ないため（9.4.1）。
+             * @enum {string}
+             */
+            type?: "epic" | "story" | "task";
+            title?: string;
+            /** @description 本文（Markdown ソース）。`null` または空文字で消す。 */
+            body_md?: string | null;
+            /** @enum {string|null} */
+            priority?: "lowest" | "low" | "medium" | "high" | "highest" | null;
+            /**
+             * @description 担当者の `actor.id`。**変更には `ticket.assign` 権限も要る**（9.5.2）。
+             *     プロジェクトのメンバーでなければ 422（`not_a_member`）。`null` で担当を外す。
+             */
+            assignee_id?: string | null;
+            /**
+             * Format: int32
+             * @description 親チケットの `seq`（同一プロジェクト内）。`null` で親を外す。
+             *     **自分自身または自分の子孫を指定すると 422**（`parent_cycle`）。
+             *     **オンステージのチケットをエピック以外の子にすると 422**（`not_stageable`）。
+             */
+            parent_seq?: number | null;
+            /** @description **丸ごと置き換える**（部分更新ではない）。空配列または `null` で全て外す。 */
+            tag_ids?: string[] | null;
+            sprint_id?: string | null;
+            /** Format: double */
+            estimate_point?: number | null;
+            /** Format: double */
+            estimate_hours?: number | null;
+            /** Format: double */
+            actual_hours?: number | null;
+            /**
+             * Format: date
+             * @description `YYYY-MM-DD`。**時刻つきは受け付けない**（date 列であり、通すと タイムゾーンによって前日へずれる）。
+             */
+            start_date?: string | null;
+            /**
+             * Format: date
+             * @description `YYYY-MM-DD`。開始日より前だと 422。
+             */
+            due_date?: string | null;
+        };
+        /** @description ステータスの遷移（ApiDesign.md 9.6）。 */
+        TransitionTicketRequest: {
+            /**
+             * @description 遷移先の `workflow_status.key`。プロジェクトのワークフローに無ければ 422
+             *     （`unknown_status`）、定義が無い遷移なら 409（`invalid_transition`）。
+             * @example in_review
+             */
+            to: string;
+            /**
+             * @description 添えるコメント。**同じトランザクションで `kind='progress'` のコメントが作られる**
+             *     （DbDesign.md 6.7）。**長さの上限は置いていない**——コメントAPI（9.8）は
+             *     手順18 であり、先にここだけ決めると2か所で食い違う。
+             * @example レビューをお願いします
+             */
+            comment?: string;
+        };
+        /** @description 遷移先の候補1件（ApiDesign.md 9.7）。 */
+        TicketTransitionOption: {
+            key: string;
+            /** @description 画面に出す日本語（`workflow_status.name`）。 */
+            name: string;
+            /** @enum {string} */
+            category: "todo" | "in_progress" | "review" | "done";
+            /**
+             * @description 9.6 の検証2〜5 をすべて通るか。**`false` でも項目は返る**——ステータスを
+             *     存在ごと隠すと「なぜ完了にできないのか」が分からなくなる。
+             */
+            allowed: boolean;
+            /** @description `allowed` が `false` のときだけ在る。**そのまま画面に出せる日本語**（2.5）。 */
+            reason?: string;
+        };
+        /**
+         * @description 遷移先の一覧（ApiDesign.md 9.7）。**ページングを持たない**——ワークフローの
+         *     ステータスは高々数件で、2.6 の枠組みに載せる意味がない。
+         */
+        TicketTransitionList: {
+            /**
+             * @description 現在のステータス。**ワークフローに無いキーでも返す**——ワークフローを
+             *     差し替えた後の孤立した `status_key` がありうるため。
+             */
+            current: components["schemas"]["TicketStatus"] | null;
+            /** @description ワークフローの全ステータスから現在のものを除いたもの。 */
+            items: components["schemas"]["TicketTransitionOption"][];
+        };
+        /**
          * @description チケットの作成（ApiDesign.md 9.3）。**`status_key` / `sort_key` / `seq` /
          *     `reporter_id` / `version` は含められない**——いずれもサーバが決める。
          */
@@ -3452,6 +3800,262 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["ProjectNotFound"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description チケット1件（9.5.1）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketDetail"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除した。本文は無い。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            404: components["responses"]["TicketNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateTicket: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 取得時の `version`。`"3"` のように引用符で囲む（RFC 9110 8.8.3）。 */
+                "If-Match": string;
+            };
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTicketRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後のチケット（9.5.1 と同形式）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /**
+             * @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。
+             *     **`assignee_id` を送ったが `ticket.assign` を持たない場合もここへ来る。**
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            404: components["responses"]["TicketNotFound"];
+            /** @description `If-Match` が現在の `version` と一致しない（`conflict`。ApiDesign.md 2.8）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    transitionTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransitionTicketRequest"];
+            };
+        };
+        responses: {
+            /** @description 遷移後のチケット（9.5.1 と同形式）。**`version` は +1 されている。** */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /**
+             * @description 検証3〜5 のいずれか、または CSRF トークンの不一致（`csrf_failed`）。
+             *     `message` はそのまま画面に出せる日本語である（2.5）。
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            404: components["responses"]["TicketNotFound"];
+            /**
+             * @description 現在のステータスから要求された遷移が `workflow_transition` に定義されていない
+             *     （`invalid_transition`。ApiDesign.md 9.14）。**`conflict` と分けてあるのは、
+             *     利用者が取る行動が違うため**——競合は読み直せば済むが、こちらは順路そのものが
+             *     存在しない。
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listTicketTransitions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 現在のステータスと遷移先の候補（9.7）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketTransitionList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

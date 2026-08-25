@@ -71,6 +71,13 @@ type Querier interface {
 	// CountProjectTagsByIDs は tag_ids がすべて当該プロジェクトのものかを数える（9.3）。
 	// 渡した件数と一致しなければ、他プロジェクトのタグか存在しない ID が混ざっている。
 	CountProjectTagsByIDs(ctx context.Context, arg CountProjectTagsByIDsParams) (int64, error)
+	// CountTicketComments は 9.5.1 の comment_count。
+	//
+	// **手順17 から実数を返す**（それまでは 0 固定だった）。9.6 の遷移がコメントを
+	// 作る以上、0 を返し続けると事実と食い違う。本文は含めない——9.5.1 が
+	// 「コメント本体は含めない」と定めており、件数だけで 5.5 の見出し
+	// 「コメント (4)」が作れる。
+	CountTicketComments(ctx context.Context, ticketID string) (int64, error)
 	// CreateAccessToken はセッション・APIトークン・エージェントトークンを発行する
 	// （DbDesign.md 6.2）。**平文は渡さない。** token_hash は SHA-256、
 	// token_prefix は一覧表示用の先頭8文字である。
@@ -79,6 +86,23 @@ type Querier interface {
 	CreateAdministrator(ctx context.Context, arg CreateAdministratorParams) error
 	// system_role を引数に取る点だけが CreateAdministrator と違う。
 	CreateAppUser(ctx context.Context, arg CreateAppUserParams) error
+	// コメントに関するクエリ（DbDesign.md 6.7、ApiDesign.md 9.8）。
+	//
+	// 手順17a で追加。**コメントAPI（9.8）そのものは手順18 だが、9.6 の遷移が
+	// kind='progress' のコメントを作る**ため、投入と件数だけを先に置く。
+	// 手順18 は本ファイルに一覧・更新・削除を足す形になる。
+	//
+	// **deleted_at は論理削除である**（DbDesign.md 6.7）。数えるときも読むときも
+	// deleted_at IS NULL で絞る。
+	// CreateComment は 9.6 の遷移コメントが使う。
+	//
+	// **kind は呼び出し側が決める。** 遷移は 'progress'、手順18 の 9.8 は投稿時に
+	// 利用者が選ぶ（discussion / decision / …）。既定値に頼らず明示で渡すのは、
+	// 「既定で作られたのか意図して選ばれたのか」が行から読めなくなるためである。
+	//
+	// **origin は呼び出し元の actor.kind から決める**（human / agent）。
+	// Phase 1 にエージェントは実在しないので常に 'human' になる。
+	CreateComment(ctx context.Context, arg CreateCommentParams) error
 	// must_change を明示で受ける（DbDesign.md 6.2 の既定は false）。
 	// POST /admin/users（ApiDesign.md 6.2）が must_change_password: true を
 	// 既定とするため、列の既定値任せにできない。**呼び出し側は Go の
@@ -133,6 +157,19 @@ type Querier interface {
 	// 使用中でも削除できる。禁止すると、要らなくなった分類を消すために
 	// 全チケットから手で外すことになる（ApiDesign.md 9.11）。
 	DeleteTag(ctx context.Context, arg DeleteTagParams) (int64, error)
+	// DeleteTicket は 9.5.3 の物理削除。
+	//
+	// **子は消えない**（ticket.parent_id が ON DELETE SET NULL）。親を失って
+	// トップレベルへ上がる。コメント・DoD・リンク・タグ付けは CASCADE で消える。
+	// **activity は残る**——entity_id は多相参照で FK を持てず、9.13.2 が
+	// 「削除されたチケットの行」を表示する前提で組まれている（9.5.3）。
+	DeleteTicket(ctx context.Context, arg DeleteTicketParams) (int64, error)
+	// DetachTicketTags は 9.5.2 の tag_ids の置き換えに使う（丸ごと消してから付け直す）。
+	//
+	// **差分を計算しない。** 9.5.2 は「tag_ids は丸ごと置き換える」と定めており、
+	// 消してから AttachTicketTag で付け直すほうが、付ける側と外す側の2本の集合演算を
+	// 持つより読み違えが少ない。件数はチケット1件ぶんで、多くても数件である。
+	DetachTicketTags(ctx context.Context, ticketID string) error
 	// 認証に関するクエリ（Design.md 6.2.2、DbDesign.md 6.2）。
 	// FindAccessTokenByHash は受け取った平文の SHA-256 で access_token を引く。
 	//
@@ -229,6 +266,23 @@ type Querier interface {
 	// GET/PATCH /projects/:key と archive/unarchive（5.4〜5.6）が加わった。
 	// テンプレートの複製は pb dev seed と POST /projects で同じ手順を通る。
 	FindProjectIDByKey(ctx context.Context, key string) (string, error)
+	// ワークフローの解決（DbDesign.md 6.5、ApiDesign.md 9.6 / 9.7）。
+	//
+	// 手順17a で追加。消費者はステータス遷移（9.6）と遷移先の一覧（9.7）で、
+	// どちらもチケット詳細画面（GuiDesign.md 5.5）のステータスドロップダウンが使う。
+	//
+	// **本ファイルには1本しか置かない。** ステータスと遷移そのものを引くクエリは
+	// project.sql に既にある（ListWorkflowStatuses / ListWorkflowTransitions。
+	// 手順9b がプロジェクト詳細 5.4 のために作った）。同じものを project_id 起点で
+	// 作り直すと、片方だけ列が増えたときに応答が割れる。**足りなかったのは
+	// 「プロジェクトからワークフローへの1段」だけ**なので、それだけを足す。
+	// FindProjectWorkflowID は project_id からワークフローを引く。
+	//
+	// **NULL になりうる。** project.workflow_id は ON DELETE SET NULL であり
+	// （DbDesign.md 6.5 末尾）、ワークフローを持たないプロジェクトが存在しうる。
+	// そのとき 9.6 の遷移はすべて 422 unknown_status（検証1）に倒れ、9.7 は
+	// 空の items[] を返す——どちらも「行ける先が無い」という同じ事実を表す。
+	FindProjectWorkflowID(ctx context.Context, projectID string) (pgtype.Text, error)
 	// FindTicketIDBySeq は parent_seq（9.3）の解決に使う。**同一プロジェクトに
 	// 限る**——親もリンク先も同一プロジェクト内に限るのが Phase 1 の前提である（9.1）。
 	FindTicketIDBySeq(ctx context.Context, arg FindTicketIDBySeqParams) (string, error)
@@ -302,6 +356,11 @@ type Querier interface {
 	//
 	// parent_type は親がいなければ NULL になる。
 	GetTicketSortRow(ctx context.Context, arg GetTicketSortRowParams) (GetTicketSortRowRow, error)
+	// GetTicketTypeByID は 9.5.2 のオンステージ判定に使う。
+	//
+	// **新しい親の種別が要る。** 「段に置けるのは親を持たないもの、または親が
+	// エピックのもの」（9.4.1）を、変更後の値で判定するためである。
+	GetTicketTypeByID(ctx context.Context, id string) (string, error)
 	// 業務履歴（ApiDesign.md 9.1.1、DbDesign.md 6.8 の activity）。
 	//
 	// **audit_log とは読み手が違う。** audit_log は認証・権限・トークン・ユーザー管理を
@@ -339,6 +398,15 @@ type Querier interface {
 	// ロールの妥当性はDBに問い合わせる。Go 側に 'project_admin' などを
 	// 書き写すと 0010 のシード（DbDesign.md 7.3）と二重管理になるため。
 	IsProjectScopedRole(ctx context.Context, key string) (bool, error)
+	// IsTicketDescendant は 9.5.2 の parent_cycle 検出。
+	//
+	// **自分自身を含む。** 起点をそのまま UNION の第1項に置いてあるので、
+	// 「自分自身または自分の子孫を親に指定した」（9.5.2）を1文で判定できる。
+	// DBの ck_ticket_not_self_parent は自己参照しか防げない（DbDesign.md 6.6）。
+	//
+	// UNION ALL ではなく UNION を使うのは ListTickets の subtree と同じ理由で、
+	// 重複を運ぶ意味がないためである。
+	IsTicketDescendant(ctx context.Context, arg IsTicketDescendantParams) (bool, error)
 	// ── ユーザー管理（ApiDesign.md 6章、手順12a）─────────────────────
 	// ListAdminUsers は GET /admin/users の1ページ分を返す（ApiDesign.md 6.1）。
 	//
@@ -787,6 +855,17 @@ type Querier interface {
 	// ただし二段の画面（GuiDesign.md 5.4）は、seed 直後にオンステージが空だと
 	// 「動いていること」を目で確かめられない。SetTicketClosedAt と同じ扱いである。
 	SetTicketStagedAt(ctx context.Context, arg SetTicketStagedAtParams) error
+	// SetTicketStatus は 9.6 の遷移。**closed_at を同じ文で決める。**
+	//
+	// 遷移先の category が 'done' なら now()、それ以外なら NULL へ戻す（9.6 の表）。
+	// **closed_at が動くのはこの経路だけである**——PATCH で直接書けないようにして
+	// あるので（9.5.2）、9.2.1 の ?open=true（closed_at IS NULL）が「完了していない
+	// もの」と一致することが保証される。
+	//
+	// **If-Match による version の照合をしない**（9.6）。遷移そのものが競合を検出する
+	// ——2人が同時に同じ遷移を実行すると、後発は「同じ状態から同じ状態へ」を
+	// 要求することになり、workflow_transition に定義が無いため 409 になる。
+	SetTicketStatus(ctx context.Context, arg SetTicketStatusParams) (int32, error)
 	SprintExistsInProject(ctx context.Context, arg SprintExistsInProjectParams) (bool, error)
 	// SummarizeAdminUsers は ListAdminUsers と同じ絞り込みに対する総件数と
 	// 最終更新日時を返す。total は 2.6、last_updated_at は 2.7 の ETag の材料。
@@ -920,6 +999,25 @@ type Querier interface {
 	// COALESCE による部分更新。sqlc.narg は NULL 可の引数を作る（PATCH の
 	// 「送られたフィールドだけ変える」を1文で表すため。users_update と同じ型）。
 	UpdateTag(ctx context.Context, arg UpdateTagParams) (int64, error)
+	// ── 更新・削除・遷移（ApiDesign.md 9.5.2 / 9.5.3 / 9.6。手順17a）──────
+	// UpdateTicket は 9.5.2 の部分更新。**送られたフィールドだけを更新する。**
+	//
+	// **2つの書き方を使い分けている**（project.sql の UpdateProject と同じ形）。
+	//
+	//   NOT NULL の列（type / title）  COALESCE(sqlc.narg(…), 現在値)
+	//   NULL にできる列               CASE WHEN @…_set THEN sqlc.narg(…) ELSE 現在値 END
+	//
+	// COALESCE では「NULL を送って空にする」を表せない。assignee_id を外す・親を
+	// 外す・期限を消すはいずれも 9.5.2 が認めている操作なので、_set のフラグで
+	// 「送られていない」と「NULL が送られた」を区別する。
+	//
+	// **status_key / closed_at / sort_key / staged_at は含めない**（9.5.2）。
+	// 前2つは 9.6 の遷移、後2つは 9.4 の move が書く。
+	//
+	// **updated_at はトリガが動かす**（trg_ticket_updated。DbDesign.md 6.6）。
+	// タグだけを付け外しした場合もこの文を通るので、9.2.5 の ETag が必ず変わる。
+	//
+	UpdateTicket(ctx context.Context, arg UpdateTicketParams) (int64, error)
 	// ── プロジェクトメンバーシップ（ApiDesign.md 6.8）───────────────
 	// UpsertProjectMember は PUT /admin/users/:id/memberships/:project_key。
 	//

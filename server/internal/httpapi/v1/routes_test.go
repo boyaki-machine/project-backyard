@@ -378,3 +378,151 @@ func TestTicketWriteRequiresCSRF(t *testing.T) {
 		t.Errorf("error.code = %q, want csrf_failed", got)
 	}
 }
+
+// ── チケット1件のルート（手順17a。ApiDesign.md 9.5 / 9.6 / 9.7）──────
+//
+// **ここで見るのはルート定義の宣言だけ**である（Design.md 6.4.4）。中身の
+// 検証は tickets_detail_test.go にある。
+
+// detailRouteFake は seq=31 が読める状態にした routes 用のフェイク。
+func detailRouteFake(t *testing.T, projectRole string, perms ...string) *fakeQuerier {
+	t.Helper()
+	q := ticketRouteFake(t, projectRole, perms...)
+	q.ticket.bySeq[31] = ticketDetailRow()
+	q.ticket.idBySeq[31] = testTicketID
+	q.ticket.typeByID = map[string]string{}
+	q.ticket.updateRows = 1
+	q.ticket.deleteRows = 1
+	withReviewWorkflow(q)
+	return q
+}
+
+// ticket.view しか持たない閲覧者は、詳細は読めるが編集・削除・遷移はできない。
+func TestTicketDetailRoutesSplitPermissions(t *testing.T) {
+	const path = "/api/v1/projects/demo/tickets/31"
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		want   int
+	}{
+		{"詳細は読める", http.MethodGet, path, "", http.StatusOK},
+		{"遷移先も読める", http.MethodGet, path + "/transitions", "", http.StatusOK},
+		{"編集できない", http.MethodPatch, path, `{"title":"x"}`, http.StatusForbidden},
+		{"削除できない", http.MethodDelete, path, "", http.StatusForbidden},
+		{"遷移できない", http.MethodPost, path + "/transition",
+			`{"to":"review"}`, http.StatusForbidden},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q := detailRouteFake(t, "project_viewer", "ticket.view")
+			req := detailRouteReq(q, c.method, c.path, c.body)
+			rec := httptest.NewRecorder()
+			routerWithDeps(Deps{Queries: q, Tx: &fakeTxRunner{q: q}}).ServeHTTP(rec, req)
+			if rec.Code != c.want {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+// **ticket.delete だけは Phase 1 に「持たない人」が実在する**——operator は
+// 持たず、administrator と project_admin だけが持つ（migration 0010）。
+// ここでは編集・遷移が通ることと、削除だけが 403 になることを並べて見る。
+func TestTicketDeleteNeedsItsOwnPermission(t *testing.T) {
+	const path = "/api/v1/projects/demo/tickets/31"
+	perms := []string{"ticket.view", "ticket.edit", "ticket.transition", "ticket.assign"}
+
+	// **まず「編集と遷移は通る」ことを確かめる。** これを測らないと、
+	// 下の 403 は「何をやっても 403」の実装でも緑になる。
+	q := detailRouteFake(t, "project_member", perms...)
+	rec := httptest.NewRecorder()
+	routerWithDeps(Deps{Queries: q, Tx: &fakeTxRunner{q: q}}).
+		ServeHTTP(rec, detailRouteReq(q, http.MethodPatch, path, `{"title":"編集できる"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+
+	q2 := detailRouteFake(t, "project_member", perms...)
+	rec2 := httptest.NewRecorder()
+	routerWithDeps(Deps{Queries: q2, Tx: &fakeTxRunner{q: q2}}).
+		ServeHTTP(rec2, detailRouteReq(q2, http.MethodPost, path+"/transition", `{"to":"review"}`))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("transition status = %d, want 200 (%s)", rec2.Code, rec2.Body.String())
+	}
+
+	// ticket.delete を持たないので削除だけ 403。
+	q3 := detailRouteFake(t, "project_member", perms...)
+	rec3 := httptest.NewRecorder()
+	routerWithDeps(Deps{Queries: q3, Tx: &fakeTxRunner{q: q3}}).
+		ServeHTTP(rec3, detailRouteReq(q3, http.MethodDelete, path, ""))
+	if rec3.Code != http.StatusForbidden {
+		t.Fatalf("DELETE status = %d, want 403 (%s)", rec3.Code, rec3.Body.String())
+	}
+
+	// 持たせれば通る。
+	q4 := detailRouteFake(t, "project_member", append(perms, "ticket.delete")...)
+	rec4 := httptest.NewRecorder()
+	routerWithDeps(Deps{Queries: q4, Tx: &fakeTxRunner{q: q4}}).
+		ServeHTTP(rec4, detailRouteReq(q4, http.MethodDelete, path, ""))
+	if rec4.Code != http.StatusNoContent {
+		t.Fatalf("DELETE status = %d, want 204 (%s)", rec4.Code, rec4.Body.String())
+	}
+}
+
+// **/tickets/{seq} と /tickets/{seq}/move が衝突していないこと**（routes.go）。
+// chi は静的なセグメントをパラメータより先に照合するが、宣言の順序を変えた
+// ときに気づけるよう明示で測る。
+func TestTicketSeqAndSubroutesDoNotCollide(t *testing.T) {
+	q := detailRouteFake(t, "project_admin",
+		"ticket.view", "ticket.edit", "ticket.transition", "ticket.delete")
+	q.ticket.sortRowBySeq[31] = gen.GetTicketSortRowRow{
+		ID: testTicketID, Type: "task", SortKey: txt("0|n:"), Version: 1,
+	}
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		want   int
+	}{
+		{"詳細", http.MethodGet, "/api/v1/projects/demo/tickets/31", "", http.StatusOK},
+		{"move", http.MethodPost, "/api/v1/projects/demo/tickets/31/move",
+			`{"position":"last"}`, http.StatusOK},
+		{"transitions", http.MethodGet, "/api/v1/projects/demo/tickets/31/transitions",
+			"", http.StatusOK},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			routerWithDeps(Deps{Queries: q, Tx: &fakeTxRunner{q: q}}).
+				ServeHTTP(rec, detailRouteReq(q, c.method, c.path, c.body))
+			if rec.Code != c.want {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+// detailRouteReq は callAsMember と同じ組み立てに If-Match を足したもの。
+//
+// **PATCH は If-Match が無いと 422 になり、認可の判定に届かない**（2.8）。
+// 権限の宣言を測るテストが、ヘッダの欠落で落ちないようにする。
+func detailRouteReq(q *fakeQuerier, method, path, body string) *http.Request {
+	var req *http.Request
+	if body == "" {
+		req = httptest.NewRequest(method, path, nil)
+	} else {
+		req = httptest.NewRequest(method, path, strings.NewReader(body))
+	}
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: tokenAs(q, auth.SystemRoleOperator)})
+	if method != http.MethodGet {
+		addCSRF(req)
+	}
+	if method == http.MethodPatch {
+		req.Header.Set("If-Match", `"3"`)
+	}
+	return req
+}

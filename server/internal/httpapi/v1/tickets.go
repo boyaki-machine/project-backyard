@@ -39,6 +39,19 @@ import (
 // 見る箇所がある。story と task は値域の一員としてしか出てこない。
 const ticketTypeEpic = "epic"
 
+// チケットの権限キー（DbDesign.md 7.2 の権限カタログ）。
+//
+// **ルート定義で宣言するものはここに置かない**（routes.go に文字列で並べる方が、
+// 眺めたときに必要権限が読める。Design.md 6.4.4）。ここに在るのは
+// **本文の内容によって追加で要る権限**で、宣言では表せないものだけである。
+const (
+	// permTicketAssign は assignee_id を変えるときに追加で要る（ApiDesign.md 9.5.2）。
+	//
+	// **遷移（9.6）の required_permission はここに置かない。** あちらは
+	// workflow_transition の列から読む値であり、プロジェクトごとに変わる。
+	permTicketAssign = "ticket.assign"
+)
+
 // チケットの値域（ApiDesign.md 9.2.1 / 9.3、DbDesign.md 6.6 の CHECK と同じ）。
 var (
 	ticketTypes        = []string{"epic", "story", "task"}

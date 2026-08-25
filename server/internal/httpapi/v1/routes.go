@@ -188,15 +188,46 @@ func Mount(r chi.Router, deps Deps) {
 		// 絞ってあり（ticket.sql）、他プロジェクトの番号を指しても
 		// 「見つからない」に寄る。
 		//
-		// **{seq}/move は静的なセグメントを含むので、他のチケットのルートと
-		// 並べても衝突しない。** GET / PATCH / DELETE の /tickets/{seq}
-		// そのものは手順17 で足す。
+		// **{seq}/move と {seq}/transition(s) は静的なセグメントを含むので、
+		// /tickets/{seq} そのものと並べても衝突しない**（chi は静的な
+		// セグメントをパラメータより先に照合する）。
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets", h.listTickets)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
 			Post("/projects/{key}/tickets", h.createTicket)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
 			Post("/projects/{key}/tickets/{seq}/move", h.moveTicket)
+
+		// ── チケット1件（ApiDesign.md 9.5 / 9.6 / 9.7。手順17a）─────
+		//
+		// **4つとも必要権限が違う。** 読みは ticket.view、編集は ticket.edit、
+		// 削除は ticket.delete、遷移は ticket.transition。
+		//
+		// **ticket.delete だけは Phase 1 に「持たない人」が実在する**——
+		// operator（システムロール）は ticket.delete を持たず、持つのは
+		// administrator と project_admin だけである（migration 0010）。
+		// 他の3つは operator が持つため、宣言が効き始めるのは権限の全体像を
+		// 見直してからになる（PROGRESS.md「権限の全体像を再整理する」）。
+		//
+		// **PATCH の assignee_id だけは、これに加えて ticket.assign を要する**
+		// （9.5.2）。必要権限がリクエスト本文の内容で変わるため、ミドルウェアの
+		// 宣言では表せず、ハンドラ内で見ている（tickets_update.go）。
+		// **例外はここ1か所に留める**——ルート定義を眺めて必要権限が読めなく
+		// なるのを避けるため（Design.md 6.4.4）。
+		//
+		// **遷移は ticket.transition に加えて workflow_transition の
+		// required_permission も要る**（9.6 の検証5）。こちらはプロジェクトごとに
+		// 変わる値なので、宣言ではなくDBから読む（ticket_workflow.go）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}", h.getTicket)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+			Patch("/projects/{key}/tickets/{seq}", h.updateTicket)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.delete")).
+			Delete("/projects/{key}/tickets/{seq}", h.deleteTicket)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).
+			Post("/projects/{key}/tickets/{seq}/transition", h.transitionTicket)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/transitions", h.listTicketTransitions)
 
 		// ── ロール・権限カタログ（ApiDesign.md 7章）──────────────
 		//

@@ -1922,3 +1922,72 @@ NOT NULL と推論し、NULL を読めなかった。**単体テストはフェ�
 | Cookie jar・Chrome プロファイル・検証スクリプト | スクラッチパッドに置き、削除 |
 | `make build` の成果物 | `make clean-webui` |
 | デモDB | **作り直していない**（`make dev-seed` で2件足しただけ。利用者のデータを消していない） |
+
+## 手順17a（チケット1件のAPI）— 2026-08-26
+
+`ApiDesign.md` 9.5 / 9.6 / 9.7 の5本。**画面（`GuiDesign.md` 5.5）は 17b。**
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/store/queries/workflow.sql` | 新規。`FindProjectWorkflowID` の1本だけ。**ステータスと遷移そのものは `project.sql` の `ListWorkflowStatuses` / `ListWorkflowTransitions` を再利用した**（手順9b が 5.4 のために作ったもの）。project_id 起点で作り直すと、片方だけ列が増えたときに応答が割れる |
+| `server/internal/store/queries/comment.sql` | 新規。`CreateComment` / `CountTicketComments`。**コメントAPI（9.8）は手順18 だが、9.6 の遷移が `kind='progress'` を作るので投入と件数だけ先に置いた** |
+| `server/internal/httpapi/v1/tickets_get.go` | `GET`（9.5.1）。組み立ては `buildTicketDetail` に任せる薄い層 |
+| `server/internal/httpapi/v1/tickets_update.go` | `PATCH`（9.5.2）。約620行で本手順の中心 |
+| `server/internal/httpapi/v1/tickets_delete.go` | `DELETE`（9.5.3） |
+| `server/internal/httpapi/v1/ticket_workflow.go` | 遷移の判定。**9.6 と 9.7 が同じ `denyTransition` を通る**——2か所に別々の条件を書くと、画面が出した選択肢が押した瞬間に断られる |
+| `server/internal/httpapi/v1/tickets_transition.go` | `POST .../transition`（9.6） |
+| `server/internal/httpapi/v1/tickets_transitions.go` | `GET .../transitions`（9.7） |
+| `server/internal/httpapi/v1/tickets_detail_test.go` | 単体71件 |
+| `server/internal/httpapi/v1/tickets_detail_integration_test.go` | 実DB結合12件 |
+
+### 直したファイル
+
+`ticket.sql`（`UpdateTicket` / `DeleteTicket` / `SetTicketStatus` / `IsTicketDescendant` /
+`DetachTicketTags` / `GetTicketTypeByID`）、`ticket_view.go`（`comment_count` を実数へ）、
+`routes.go`（5本の宣言）、`tickets.go`（`permTicketAssign`）、`apierr.go`（`invalid_transition`）、
+`fake_test.go`・`routes_test.go`・`apierr_test.go`、
+`docs/ApiDesign.md`（9.5.1 / 9.5.2 / 9.5.3 / 9.7 / 9.14 / 10.2）、`docs/openapi.yaml`（5パス＋4スキーマ）、
+`client/src/api/schema.d.ts`（`make gen-api` の生成物）。
+
+### `PATCH` を `map[string]json.RawMessage` で受けた理由
+
+9.5.2 は「送られたフィールドだけを更新する」と「`null` で項目を空にする」の両方を求める。
+**`*T` のポインタでは、キーが無い場合と `null` が送られた場合がどちらも `nil` になり、
+「担当を外す」を表せない。** そのため生の JSON を受けてから `optional[T]{Set, Null, Value}`
+へ解いている。SQL 側は `project.sql` の `UpdateProject` と同じ2通りの書き方で受ける——
+NOT NULL の列は `COALESCE(sqlc.narg(…), 現在値)`、NULL にできる列は
+`CASE WHEN @…_set THEN sqlc.narg(…) ELSE 現在値 END`。
+
+### 検証結果
+
+| 層 | 件数 | 内容 |
+|---|---|---|
+| 単体 | **71件 PASS** | 楽観ロック3種・不変フィールド10種・形の検証11種・`null` の撃ち分け・タグの置換・`parent_cycle`・オンステージの規則4件・`ticket.assign` の4件・`activity` の粒度3件・遷移の5段階・`transitions` の4件 |
+| ルート宣言 | **9件 PASS** | `routes_test.go`。`ticket.view` / `edit` / `delete` / `transition` の出し分けと、`{seq}` と `{seq}/move` `{seq}/transitions` が衝突しないこと |
+| 実DB結合 | **`make test-db` 全110件 PASS**（うち手順17a は12件） | `COALESCE` と `CASE WHEN` の撃ち分け・`WHERE version =` の楽観ロック・再帰CTEが孫まで届くこと・**タグ変更で一覧の `ETag` が変わること**・`closed_at` の往復・**子が `ON DELETE SET NULL` で残ること**・`activity` と `comment` の同時確定 |
+| 実サーバ | **62件 PASS**（46＋16） | 5本すべてを Cookie 認証で通した。**`ticket.delete` は `viewer` / `member` で 403、`admin` で 204** を実データで実測（Phase 1 に負の側が実在する唯一のチケット権限）。9.7 は seed の3ステータスすべてで `items` の中身を読み上げた |
+
+**検証側の誤りが2件あった。**
+
+1. 「タグだけ変えても `updated_at` が動く」を**応答の `updated_at` で測っていた**。2.2 に従って
+   秒精度で出しているので、同じ秒のうちに更新すると文字列が変わらない。**要件は
+   「一覧の `ETag` が変わること」なので、`ETag` そのものを突き合わせる形に直した**
+   （`ETag` は `UnixNano` を使う）。実装は最初から正しかった
+2. `transitions` の `items` を印字する行が、シェル内の入れ子引用符で空を出していた。
+   **「現在のステータスは出ない」が PASS していたが、その根拠を読めていなかった。**
+   読み取りだけの追加検証（16件）を書いて中身を測り直した
+
+### 検証で作った資源とその後始末
+
+| 残るもの | 対応 |
+|---|---|
+| 検証用チケット1件（`[verify17a]`） | API で削除（204） |
+| そのチケットの `activity` 10件 | **設計どおり残る**（9.5.3）ので、使い捨ての検証ぶんとして `DELETE` した。`activity` は 1件（検証前と同じ）に戻した |
+| `comment` 1件 | チケット削除の `CASCADE` で消えた（0件。検証前と同じ） |
+| seed のチケット16件 | **JSON で控えを取り、`diff` で差分ゼロを確認**（`sort_key` が `\|` を含むため区切り文字を使わない。LEARNINGS #74） |
+| `project_counter.last_ticket_seq` | **17→18 のまま戻していない。** チケット番号は人が読む識別子であり、欠番は出てよいが再利用してはならない（`DbDesign.md` 6.4.1） |
+| Cookie jar・検証スクリプト・サーバログ | スクラッチパッドに置き、Cookie jar は削除。サーバは `make stop-server` |
+| `develop` の一時 worktree | `TestExpiresAtFormat` の切り分けに使い、`git worktree remove` |
+| `make build` の成果物 | **`make build` していない**（API のみのため）。`make clean-webui` は不要 |

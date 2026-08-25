@@ -41,13 +41,31 @@ var table = []struct {
 	{InternalError, 500},
 }
 
+// 領域ごとの追加コード。**2.5.1 の表に「加わるもの」**として、章ごとに定義される。
+//
+// いまは 9.14（チケット）の1件だけである。ここへ足すときは、必ず設計文書側の
+// 表にも同じ行があること——**実装だけに在るコードは、消費者が知りようがない。**
+var domainTable = []struct {
+	code   Code
+	status int
+	docRef string
+}{
+	{InvalidTransition, 409, "ApiDesign.md 9.14"},
+}
+
 func TestStatusMatchesApiDesign(t *testing.T) {
-	if len(statuses) != len(table) {
-		t.Fatalf("コード数が 2.5.1 の表と一致しない: 実装 %d 件 / 表 %d 件", len(statuses), len(table))
+	if want := len(table) + len(domainTable); len(statuses) != want {
+		t.Fatalf("コード数が設計文書の表と一致しない: 実装 %d 件 / 表 %d 件（2.5.1 が %d 件・領域ごとの追加が %d 件）",
+			len(statuses), want, len(table), len(domainTable))
 	}
 	for _, tt := range table {
 		if got := New(tt.code).Status(); got != tt.status {
 			t.Errorf("%s: status = %d, want %d", tt.code, got, tt.status)
+		}
+	}
+	for _, tt := range domainTable {
+		if got := New(tt.code).Status(); got != tt.status {
+			t.Errorf("%s（%s）: status = %d, want %d", tt.code, tt.docRef, got, tt.status)
 		}
 	}
 }
@@ -57,6 +75,11 @@ func TestEveryCodeHasJapaneseMessage(t *testing.T) {
 		msg := New(tt.code).Message
 		if msg == "" {
 			t.Errorf("%s: 既定メッセージが空", tt.code)
+		}
+	}
+	for _, tt := range domainTable {
+		if msg := New(tt.code).Message; msg == "" {
+			t.Errorf("%s（%s）: 既定メッセージが空", tt.code, tt.docRef)
 		}
 	}
 }
