@@ -1348,12 +1348,15 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 | `parent` | 親の `{seq, title, type, status}`。無ければ `null` |
 | `children` | 直下の子の `[{seq, title, type, status, assignee}]`（孫は含めない） |
 | `dod` | 完了条件の配列（9.9） |
-| `links` | 関連リンクの配列（9.10） |
+| `links` | 関連リンクの配列（9.10.1） |
+| `references` | 外部参照の配列（9.10.2）。`kind` の昇順、同じ `kind` の中は `sort_order` → `created_at` の昇順 |
 | `comment_count` | コメント件数（本文は含めない）。`deleted_at IS NULL` のものを数える |
 
 **コメント本体と変更履歴は含めない。** コメントはページングを持ち（9.8）、履歴は既定で畳まれている（`GuiDesign.md` 5.5）。画面は起動時に本エンドポイントと `GET .../comments` の**2本**を呼ぶ。履歴は開いたときに3本目を遅延で呼ぶ。8章の「起動時1〜2本」に収まる。
 
-**`dod` / `links` は手順18 まで空の配列である**（9.9 / 9.10 の実装がまだ無い）。**`comment_count` は手順17 から実数を返す**——9.6 の遷移が `kind='progress'` のコメントを作るため、0 を固定で返すと事実と食い違う。
+**`dod` / `links` は手順18 まで、`references` は手順17c まで空の配列である**（9.9 / 9.10.1 / 9.10.2 の実装がまだ無い）。**`comment_count` は手順17 から実数を返す**——9.6 の遷移が `kind='progress'` のコメントを作るため、0 を固定で返すと事実と食い違う。
+
+**`references` を別の `GET` に切らず詳細応答へ入れるのは、`dod` / `links` と同じ理由である**（8章の「起動時1〜2本」）。件数は1チケットあたり数件で、遷移先の一覧（9.7）のように**開いたときだけ要るもの**ではない——画面を開いた時点で見えている（`GuiDesign.md` 5.5）。
 
 ### 9.5.2 `PATCH`
 
@@ -1542,7 +1545,20 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/dod/:id
 
 `assertion`（コマンド実行）・`artifact`（成果物の存在確認）・`review`・`task_ref` は Phase 2（`Requirements.md` 10.5.2、`GuiDesign.md` 5.5）。**表とその列は Phase 1 から `DbDesign.md` 6.11 の形で作り、API が受け付ける `type` だけを絞る。** 後から列を足すより、使わない列を持つほうが安い。
 
-## 9.10 関連リンク
+## 9.10 関連リンクと外部参照
+
+**チケットから何かを指す仕組みは2つある。区別は「指す先が PB の中か外か」である。**
+
+| 節 | 指す先 | 表 | 実装手順 |
+|---|---|---|---|
+| 9.10.1 | 同じプロジェクトの別のチケット | `ticket_link`（`DbDesign.md` 6.6） | 18 |
+| 9.10.2 | リポジトリ・コミット・仕様書（**PB の外**） | `ticket_reference`（`DbDesign.md` 6.12） | **17c** |
+
+**分けるのは、指す先に FK を張れるかどうかが違うためである。** チケット間リンクは
+`target_ticket_id` の FK で整合性を DB が保証できるが、外部参照が指す先は PB の管理外にあり、
+**URL が生きているかを PB は知らない。** 同じ表に混ぜると、片方にしか効かない制約が並ぶ。
+
+### 9.10.1 チケット間リンク
 
 ```
 GET|POST /api/v1/projects/:key/tickets/:seq/links
@@ -1576,11 +1592,82 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 }
 ```
 
-**双方向を1本の `GET` で返す。** `GuiDesign.md` 5.5 の「関連」欄は「ブロック元」と「ブロック先」を同じリストに並べる。2回問い合わせると N+1 になる（設計方針3）。
+**双方向を1本の `GET` で返す。** `GuiDesign.md` 5.5 の「関連チケット」は「ブロック元」と「ブロック先」を同じリストに並べる。2回問い合わせると N+1 になる（設計方針3）。
 
 **プロジェクトを跨ぐリンクは Phase 1 では作れない。** `DbDesign.md` 6.6 の `ticket_link` に制約は無いが、API が `target_seq` で受ける以上、同一プロジェクトに閉じる（9.1）。跨ぐ必要が出た時点で `target` の指定方法ごと設計する（10.2）。
 
 `origin` は `human` / `ai_suggested`。**Phase 1 は `human` のみ作られる**（AI提案の採用・却下は Phase 2。`GuiDesign.md` 5.5）。
+
+### 9.10.2 外部参照
+
+```
+GET|POST     /api/v1/projects/:key/tickets/:seq/references
+PATCH|DELETE /api/v1/projects/:key/tickets/:seq/references/:id
+```
+
+**必要権限**：`GET` は `ticket.view`、更新系は `ticket.edit`
+
+表は `ticket_reference`（`DbDesign.md` 6.12）。`kind` は `code` と `doc` の2つで、**必須の項目が違う。**
+
+```json
+{ "kind": "code", "repository": "my-app", "branch": "pb/31",
+  "commit_sha": "a1b2c3d4e5", "url": "https://github.com/…/commit/a1b2c3d4e5",
+  "label": "認証ハンドラを追加", "note": null }
+```
+
+```json
+{ "kind": "doc", "url": "https://…/auth-design.md", "label": "認証設計メモ", "note": null }
+```
+
+| フィールド | 検証 |
+|---|---|
+| `kind` | 必須。`code` / `doc`。**作成後は変えられない**（`details[].code = "immutable_field"`） |
+| `repository` | **`kind='code'` のとき必須**。1〜200文字。**`project.settings` の `repositories`（5.9.1）と突き合わせない**（`DbDesign.md` 6.12） |
+| `branch` | 任意。255文字まで |
+| `commit_sha` | 任意。64文字まで。**短縮形を許す**——書き手が `git rev-parse --short` の出力をそのまま入れられるようにする |
+| `url` | **`kind='doc'` のとき必須**。1〜1000文字（5.9.1 のリポジトリURLと同じ上限） |
+| `label` | 任意。200文字まで |
+| `note` | 任意。500文字まで |
+| `sort_order` | 整数。省略時は末尾（現在の最大値 + 10） |
+
+**URL の形式は検証しない**（空でないことのみ）。5.9.1 のリポジトリと同じ方針である。
+**`https://` で始まるものだけを画面がリンクにする**（`GuiDesign.md` 5.5）。
+
+```json
+{
+  "items": [
+    { "id": "01K2...", "kind": "code", "repository": "my-app", "branch": "pb/31",
+      "commit_sha": "a1b2c3d4e5", "url": "https://github.com/…/commit/a1b2c3d4e5",
+      "label": "認証ハンドラを追加", "note": null, "sort_order": 0,
+      "created_by": { "id": "01K2...", "kind": "agent", "display_name": "claude-code" },
+      "created_at": "2026-08-27T02:10:00Z", "updated_at": "2026-08-27T02:10:00Z" }
+  ]
+}
+```
+
+**`items[]` は `kind` 昇順（`code` → `doc`）、同じ `kind` の中は `sort_order` → `created_at` の昇順。**
+第2・第3キーを置くのは、9.11 と同じく**順序が実行ごとに揺れないようにする**ためである。
+
+**`created_by` を返すのが本エンドポイントの要点である。** `actor.kind`（`user` / `agent` /
+`system`）が入るので、**画面は人が書いた行とエージェントが書いた行を見分けられる**
+（設計原則5、`GuiDesign.md` 5.5）。`ticket_reference` が `origin` 列を持たないのは
+このためで、**「誰が書いたか」の答えは1か所にしかない**（`DbDesign.md` 6.12）。
+
+**ページネーション・`ETag`・`If-Match` はいずれも持たない。** 9.11 のタグと同じ扱いで、
+1チケットあたり数件に収まり、2.8 の楽観ロックの対象は `project` と `app_user` に限られる。
+**親チケットの `version` も動かさない**——参照の増減は `ticket` の列を変えないため、
+`ticket.updated_at` にも触れない（`ticket_tag` を動かす 9.2.5 とはここが違う）。
+
+`DELETE` は `204 No Content`。
+
+**`kind='code'` は積み上がる。** エージェントが作業の経過として「このブランチで始めた」
+「このコミットを積んだ」を残していくため、1チケットに複数行が並ぶ
+（`Requirements.md` 10.6.1 の `artifacts` の Phase 1 版）。
+
+**Phase 1 の書き手は `/me/tokens` の API トークンを持つクライアントである**（4.4）。
+エージェント用のアクターと MCP は Phase 2（`Design.md` 11章 手順21・22）であり、
+**それまでは人のトークンで叩く**。画面は `code` の追加を持たず、表示と削除だけを行う
+（`GuiDesign.md` 5.5）——誤って積まれた行を人が始末できる必要があるためである。
 
 ## 9.11 タグAPI
 
@@ -1682,7 +1769,7 @@ PATCH|DELETE /api/v1/projects/:key/sprints/:id
 
 `DELETE` は `ticket.sprint_id` を `SET NULL` にする（`DbDesign.md` 6.9 の `fk_ticket_sprint`）。**チケットは消えない。**
 
-**Phase 1 でスプリントの CRUD を定義する理由。** `sprint` 表は Phase 1（0009）にあり、`GuiDesign.md` 5.5 のチケット詳細サイドバーもスプリント欄を Phase 1 として並べている。**作る手段が無いまま選択欄だけを置くと、常に空のドロップダウンになる。** バーンダウン・ベロシティを含むスプリント管理画面（`/p/:key/sprints`、Phase 2）とは別に、**定義だけをプロジェクト設定のスプリントタブで行う**（`GuiDesign.md` 5.9）。
+**Phase 1 でスプリントの CRUD を定義する理由。** `sprint` 表は Phase 1（0009）にあり、`GuiDesign.md` 5.5 のチケット詳細もスプリント欄を Phase 1 のメタ情報として並べている。**作る手段が無いまま選択欄だけを置くと、常に空のドロップダウンになる。** バーンダウン・ベロシティを含むスプリント管理画面（`/p/:key/sprints`、Phase 2）とは別に、**定義だけをプロジェクト設定のスプリントタブで行う**（`GuiDesign.md` 5.9）。
 
 ## 9.13 `GET /projects/:key/stats` / `GET /projects/:key/activity`
 
@@ -1766,10 +1853,14 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 |---|---|---|
 | **16** | 9.2 / 9.3 / 9.4 / 9.11 / 9.12 | チケットを一覧・作成・並べ替え・グループ化できる |
 | **17** | 9.5 / 9.6 / 9.7 | チケットを編集し、ワークフローに沿って状態を進められる |
-| **18** | 9.8 / 9.9 / 9.10 | コメントを投稿し、完了条件と関連チケットを管理できる |
+| **17c** | **9.10.2** | チケットにリポジトリ・コミット・仕様書へのリンクが並ぶ |
+| **18** | 9.8 / 9.9 / **9.10.1** | コメントを投稿し、完了条件と関連チケットを管理できる |
 | **19** | 9.13 | プロジェクトの現況が見える |
 
 9.1 / 9.14 は全手順に共通する規約であり、手順16 で確立する。
+
+**手順17 は 17a（API）/ 17b（画面）/ 17c（外部参照）に分かれている**（`Design.md` 11章）。
+本表の 9.5 / 9.6 / 9.7 は 17a で実装済みで、17b は画面だけを作るため本章に対応する節を持たない。
 
 ---
 
@@ -1793,7 +1884,7 @@ APIの実装順序は次の2か所を見る。
 - **`POST /tickets/:seq/move` が `version` を +1 することの是非**（9.4）。並べ替えの直後に詳細画面の `PATCH` が `409` を返す。2.8 の規約を1本に保つことを優先したが、ドラッグ&ドロップの頻度によっては 2.8 ごと「順序の変更は `version` を動かさない」へ見直す
 - **バックログの 200 件上限に達したときのフィルタ誘導が実運用で足りるか**（9.2.3）。足りなければ、スプリント・タグによるビューの分割か、`sort_key` に沿った範囲取得を検討する
 - **チケット本文（`body_md`）の版管理**（9.5.2）。`activity` は「いつ誰が本文を変えたか」までを記録し、本文そのものは持たない（一覧APIの応答が重くなるため）。「前の説明に戻したい」が要件になったら、`activity` の拡張ではなく別の仕組みとして設計する
-- **プロジェクトを跨ぐチケットリンク**（9.10）。`target_seq` は同一プロジェクトに閉じている。跨ぐ必要が出たときの指定方法（`{project_key, seq}` か ULID か）
+- **プロジェクトを跨ぐチケットリンク**（9.10.1）。`target_seq` は同一プロジェクトに閉じている。跨ぐ必要が出たときの指定方法（`{project_key, seq}` か ULID か）
 - **`ticket.custom_fields` を API でどう開けるか**（`DbDesign.md` 6.6）。列はあるが Phase 1 の応答に含めていない。カスタムフィールドの定義（どのキーが存在するか）をプロジェクト設定に持たせるかどうかから決める必要がある
 - **タグの並べ替えに原子性が要るか**（9.11.1）。いまは `PATCH /tags/:id` を複数回送る形で、途中で失敗すると順序が中途半端に残る。必要になったら ID の配列を受ける一括更新を足す
 - **タグ・スプリントの定義変更を `activity` に残すか**（9.1.1）。読む画面が無いため Phase 1 では記録しない。タグ削除の追跡が運用上必要になった時点で `entity_type` を足す
