@@ -7,7 +7,7 @@
 > - 対象読者：サーバ実装者（人間およびAIエージェント）
 > - **方針変更**：SQLite先行をやめ、**初期から PostgreSQL を前提とする**（2章）
 > - 関連：`Design.md`（全体設計・認証設計）、`ApiDesign.md`、`GuiDesign.md`、`Requirements.md`
-> - 状態：Phase 1 のDDL・シードを確定（0001〜0014）。Phase 2/3 はテーブル構成案
+> - 状態：Phase 1 のDDL・シードを確定（0001〜0016）。Phase 2/3 はテーブル構成案
 
 **`Design.md` 旧第5章「データベース設計」は本書に統合された。** 以降、DBに関する記述は本書を正とする。
 
@@ -57,7 +57,7 @@
 
 旧方針が課していた制約（日時を `TEXT`、真偽を `INTEGER`、`jsonb` の内部検索を禁止、トリガ禁止、`RETURNING` 回避、配列型の禁止など）は**すべて解除された**。現在の型と規約は 4.1（型の対応）と6章のDDLが正本である。
 
-**解除された制約の一覧は本改訂で削除した**（2026-08-23）。0001〜0014 のすべてが PostgreSQL 前提で書かれ、実装も手順15 まで進んだ段階で、**もう存在しない制約を読ませる意味がなくなった**ためである。
+**解除された制約の一覧は本改訂で削除した**（2026-08-23）。0001〜0016 のすべてが PostgreSQL 前提で書かれ、実装も手順15 まで進んだ段階で、**もう存在しない制約を読ませる意味がなくなった**ためである。
 
 ## 2.2 維持する規約
 
@@ -456,11 +456,12 @@ server/migrations/                      ← Design.md 4.1。sqlc がスキーマ
 │                                       access_token に実効権限のキャッシュ2列を追加（6.2）
 ├── 0013_tag.sql                        tag, ticket_tag（6.10）           ← 手順16a
 ├── 0014_dod.sql                        dod_item（6.11）                  ← 手順18
-└── 0015_ticket_type_and_stage.sql      ticket.type を3値へ縮小、
-                                        ticket.staged_at を追加（6.6）    ← 手順16d
+├── 0015_ticket_type_and_stage.sql      ticket.type を3値へ縮小、
+│                                       ticket.staged_at を追加（6.6）    ← 手順16d
+└── 0016_ticket_reference.sql           ticket_reference（6.12）          ← 手順17c
 ```
 
-**0014 は未適用である**（`ApiDesign.md` 9章の確定にともなって設計だけを先に決めた。手順18 の成果物となる）。
+**0014 と 0016 は未適用である。** 0014 は `ApiDesign.md` 9章の確定にともなって設計だけを先に決めたもので手順18 の成果物、0016 は手順17c の成果物である。
 
 `project.workflow_id` と `ticket.sprint_id` は後続テーブルを参照するため、**FK制約のみ後から `ALTER TABLE ... ADD CONSTRAINT` で付与する**（0005 / 0009 の末尾）。PostgreSQL は前方参照を許さないためである。
 
@@ -1091,6 +1092,66 @@ CREATE TRIGGER trg_dod_updated BEFORE UPDATE ON dod_item
 
 **列と `CHECK` は Phase 2 の形のまま作り、API が受け付ける `type` だけを `manual` に絞る**（`ApiDesign.md` 9.9）。後から列を足すより、使わない列を持つほうが安い。`assertion`（コマンド実行）・`artifact`（成果物の存在確認）・`review`・`task_ref` は Phase 2 で開ける（`Requirements.md` 10.5.2）。
 
+## 6.12 チケットの外部参照（0016）
+
+```sql
+CREATE TABLE ticket_reference (
+  id          char(26) COLLATE "C" PRIMARY KEY,
+  ticket_id   char(26) COLLATE "C" NOT NULL REFERENCES ticket(id) ON DELETE CASCADE,
+  kind        text NOT NULL CHECK (kind IN ('code','doc')),
+  label       text,
+  url         text,
+  repository  text,
+  branch      text,
+  commit_sha  text,
+  note        text,
+  created_by  char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  sort_order  integer NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT ck_ticket_reference_doc  CHECK (kind <> 'doc'  OR url        IS NOT NULL),
+  CONSTRAINT ck_ticket_reference_code CHECK (kind <> 'code' OR repository IS NOT NULL)
+);
+CREATE INDEX idx_ticket_reference_ticket ON ticket_reference (ticket_id, kind, sort_order, created_at);
+CREATE TRIGGER trg_ticket_reference_updated BEFORE UPDATE ON ticket_reference
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+**チケットから「外」を指す参照を1つの表にまとめる。** `ticket_link`（6.6）が
+**チケットどうし**をつなぐのに対し、こちらは**リポジトリ・コミット・仕様書**のように
+PB の外にあるものを指す。`ticket_link` は `target_ticket_id` に FK を持つため、
+外部URLを入れる余地がそもそも無い。
+
+| `kind` | 何を指すか | 必須 | 書き手 |
+|---|---|---|---|
+| `code` | リポジトリ・ブランチ・コミット | `repository` | **エージェント**（`GuiDesign.md` 5.5） |
+| `doc` | 仕様書などのURL | `url` | 人 |
+
+**1つの表にする。** 画面では隣り合って並び（`GuiDesign.md` 5.5）、API も1本で足りる。
+2つに分けると API・クエリ・画面のセクションがすべて2系統になり、得られるのは
+型の厳密さだけである。**その代償として `kind` ごとに使わない列が NULL になる**ので、
+**必須項目は `CHECK` で DB に守らせる**（アプリ側の検証と二重にする）。
+
+**`origin` 列は持たない。** 書き手は `created_by` から `actor.kind`（`user` / `agent` /
+`system`。6.1）で分かる。`ticket_link` と `dod_item` は `origin` を持つが、あちらが表すのは
+**「AI の提案か、確定した事実か」**という別の軸である（`ai_suggested` は承認待ちを意味する）。
+ここに同じ列を置くと、**「誰が書いたか」を2か所に持つことになり、必ずずれる。**
+
+**`kind='code'` は追記されて積み上がる。** エージェントが作業の経過として
+「このブランチで始めた」「このコミットを積んだ」を残していくため、1チケットに複数行が並ぶ
+（`Requirements.md` 10.6.1 の構造化完了レポートにある `artifacts` の Phase 1 版にあたる）。
+**並びは `sort_order` ではなく `created_at` が実質の軸**になるので、索引に両方を入れてある。
+
+**`repository` はリポジトリを識別する文字列であり、FK ではない。** リポジトリの定義は
+`project.settings` の `repositories`（6.4）に jsonb で置かれており、**参照できる主キーが無い**。
+表記を突き合わせる責務はアプリ側にも置かない——**プロジェクト設定に無いリポジトリ名を
+書いても受け付ける**。エージェントが作業した事実のほうが、設定の登録漏れより優先する。
+
+**Phase 1 では画面から `code` を追加できない。** エージェント用のアクターと MCP は
+Phase 2（`Design.md` 11章 手順21・22）であり、Phase 1 の書き手は
+**`/me/tokens` で発行した API トークンを持つクライアント**である（手順15b）。
+画面が持つのは**表示と削除**だけで、誤って積まれた行を人が始末できるようにする
+（`GuiDesign.md` 5.5）。`doc` は Phase 1 から人が画面で追加・編集できる。
 ---
 
 # 7. 初期データ（0010）
@@ -1453,16 +1514,16 @@ make dev-info    # URL とデモアカウント一覧を表示
 Phase 1 のテーブルは変更せず、**テーブル追加のみ**で拡張する。本章のDDLは構成案であり、各Phase着手時に確定させる。
 
 ```
-0016_agent.sql            agent, task_lease
-0017_agent_run.sql        agent_run, agent_report, context_pack_log
-0018_knowledge.sql        knowledge, knowledge_revision, proposal
-0019_comment_signal.sql   comment_signal
-0020_embedding.sql        vector 拡張 + embedding
-0021_project_event.sql    project_event
-0022_analytics.sql        estimate_record, contribution
+0017_agent.sql            agent, task_lease
+0018_agent_run.sql        agent_run, agent_report, context_pack_log
+0019_knowledge.sql        knowledge, knowledge_revision, proposal
+0020_comment_signal.sql   comment_signal
+0021_embedding.sql        vector 拡張 + embedding
+0022_project_event.sql    project_event
+0023_analytics.sql        estimate_record, contribution
 ```
 
-採番が 0016 から始まるのは、Phase 1 が 0015 まで使うためである。手順4b で 0011（`audit_log.request_id` の追加、6.8）、手順6b で 0012（`access_token` の実効権限キャッシュ、6.2）、`ApiDesign.md` 9章の確定にともなって 0013（タグ、6.10）と 0014（完了条件、6.11）を、手順16d で 0015（種別の縮小と `staged_at`、6.6）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる。** 本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。手順4b で 0011（`audit_log.request_id` の追加、6.8）、手順6b で 0012（`access_token` の実効権限キャッシュ、6.2）、`ApiDesign.md` 9章の確定にともなって 0013（タグ、6.10）と 0014（完了条件、6.11）を、手順16d で 0015（種別の縮小と `staged_at`、6.6）を、手順17c で 0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 
