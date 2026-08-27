@@ -229,6 +229,30 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}/transitions", h.listTicketTransitions)
 
+		// ── チケットの外部参照（ApiDesign.md 9.10.2。手順17c）───────
+		//
+		// **読みは ticket.view、更新系は ticket.edit**（9.10.2）。参照を足す
+		// ことはチケットを編集することであり、新しい権限は増やしていない
+		// （DbDesign.md 7.2 の28件は Design.md 付録Aで確定済み）。
+		//
+		// **Phase 1 の書き手は /me/tokens の API トークンを持つクライアント
+		// である**（9.10.2）。エージェント用のアクターと MCP は Phase 2
+		// （手順21・22）で、それまでは人のトークンで叩く。画面は kind='code'
+		// の追加を持たず、表示と削除だけを行う（GuiDesign.md 5.5）——つまり
+		// POST の主な呼び手はブラウザではない。
+		//
+		// **{seq}/references は静的なセグメントを含むので、/tickets/{seq} や
+		// {seq}/transitions と並べても衝突しない**（chi は静的なセグメントを
+		// パラメータより先に照合する）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/references", h.listTicketReferences)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+			Post("/projects/{key}/tickets/{seq}/references", h.createTicketReference)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+			Patch("/projects/{key}/tickets/{seq}/references/{id}", h.patchTicketReference)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+			Delete("/projects/{key}/tickets/{seq}/references/{id}", h.deleteTicketReference)
+
 		// ── ロール・権限カタログ（ApiDesign.md 7章）──────────────
 		//
 		// **GET /roles だけ必要権限が scope で変わる**（7.1）。?scope=project は

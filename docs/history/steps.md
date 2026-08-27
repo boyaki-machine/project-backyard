@@ -2153,3 +2153,93 @@ NOT NULL の列は `COALESCE(sqlc.narg(…), 現在値)`、NULL にできる列�
 | 検証用に作って消したチケット2件 | 削除まで検証の一部。控えに無い `seq` を落とす復元スクリプトでも二重に担保 |
 | ヘッドレス Chrome のプロファイル・検証スクリプト・スクリーンショット | スクラッチパッド。セッション終了で消える |
 | `make build` の埋め込み成果物 | `make clean-webui` |
+
+---
+
+## 手順17c（チケットの外部参照と子チケットの追加）— 2026-08-27、`feature/step-17c-ticket-references`
+
+`DbDesign.md` 6.12 の `ticket_reference` を新設し、`ApiDesign.md` 9.10.2 の4本と、
+`GuiDesign.md` 5.5 の「コード」「参考リンク」の2セクションを実装した。
+**利用者の要望で「子チケットを追加」も同じ手順に含めた**（新しい API は不要で、
+9.3 の `POST /tickets` に `parent_seq` を添えるだけ）。
+
+**設計文書の改訂を先に9件当てきってからコードへ入り、実装中の設計相談ゼロで通した**
+（#43 の型。7回目）。
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/migrations/0016_ticket_reference.sql` | `DbDesign.md` 6.12 のDDLを転記。`kind` の CHECK と、`code`→`repository` / `doc`→`url` の必須2本 |
+| `server/internal/store/queries/reference.sql` | List / Get / Create / Update / Delete / NextSortOrder の6本。**NULL 可の項目は `CASE WHEN <列>_set`**（`UpdateTicket` と同じ形） |
+| `server/internal/httpapi/v1/references.go` | 4ハンドラ＋検証＋`activity` の記録＋要約の組み立て |
+| `server/internal/httpapi/v1/references_test.go` | 単体33件（検証・404・`immutable_field`・要約・詳細への同梱） |
+| `server/internal/httpapi/v1/references_integration_test.go` | 実DB結合。**CHECK の実在をアプリ迂回の直 INSERT で見る**・並び順・CASCADE・`version` 不変 |
+| `client/src/api/references.ts` | 4本のエンドポイントと `codeSummary` / `docSummary`（**サーバが `activity` に載せる要約と同じ形**） |
+| `client/src/components/ReferenceModal.vue` | 参考リンクの追加・編集（`RepositoryModal` と同じ型。`doc` だけを扱う） |
+| `client/src/lib/url.ts` | `isWebUrl` の**正本**。5.5 の外部参照と 5.9.1 のリポジトリが共有する |
+
+### 変えたファイル
+
+| ファイル | 変更 |
+|---|---|
+| `server/internal/httpapi/v1/ticket_view.go` | `ticketDetailView.References` を足し、`buildTicketDetail` が `ticketReferencesFor` を通す（一覧APIと同じ関数） |
+| `server/internal/httpapi/v1/routes.go` | 4本を登録。`GET` は `ticket.view`、更新系は `ticket.edit` |
+| `server/internal/httpapi/v1/fake_test.go` | `ticketFakeState` に参照を足し、**create / update / delete をスライスへ実際に適用する**（「書いてから読み直す」形を測るため） |
+| `server/cmd/pb/dev_seed.go` | `devReference` と `seedTicketReferences`、`validate` に `kind` ごとの必須検証 |
+| `deploy/dev/seed/dev-data.yaml` | demo-9 に `code` 3件＋`doc` 1件、demo-10 に `doc` 2件（**うち1件は SSH 形式**でリンクにならない側） |
+| `client/src/components/TicketDetailPane.vue` | 2セクション・`[⋯]` の3項目・子チケット追加。`members` の型を `ProjectMember` へ広げた |
+| `client/src/components/NewTicketModal.vue` | `lockParent`（親を固定し「なし」を出さない） |
+| `client/src/pages/ProjectSettingsPage.vue` | ローカルの `isWebUrl` を消して共有関数へ差し替え（2行） |
+| `docs/openapi.yaml` | 4本のパス、`TicketReference` 系4スキーマ、`TicketReferenceID` / `TicketReferenceNotFound`、`TicketDetail.references` |
+
+### 設計文書の改訂（コードより先に当てた9件）
+
+| | 対象 |
+|---|---|
+| D-1 | `GuiDesign.md` 5.5 の表に**編集**列。行操作を `[編集]` / `[削除]` の文字列に |
+| D-2 | `GuiDesign.md` 6.3 に「外部参照の削除」 |
+| D-3 | `GuiDesign.md` 5.5 / 5.9.1 のリンク規則を `https://` または `http://` へ。正本は `lib/url.ts` |
+| D-4 | `DbDesign.md` 5.2 の「0014 と 0016 は未適用」→「当たっているが、まだ使われない」 |
+| D-5 | `ApiDesign.md` 9.5.1 の「`references` は 17c まで空」→ 実数 |
+| D-6 | `GuiDesign.md` 5.5 に「子チケットの追加」と「`[⋯]` メニューの項目」、ワイヤーの更新 |
+| D-7 | `GuiDesign.md` 5.5 と設計原則6 の表から**書き手のアイコンを削除** |
+| D-8 | `ApiDesign.md` 9.1.1 / 9.10.2 に `activity` への記録（`action='update'`、`field='reference.*'`） |
+| D-9 | `ApiDesign.md` 9.10.2 の `created_by` の位置づけを弱め、**committer ではない**と明記 |
+
+### 検証結果
+
+| 層 | 結果 |
+|---|---|
+| `make test` | `TestExpiresAtFormat` 以外すべて PASS。**同じ失敗が `develop` でも出ることを一時 worktree で確認**（起票済みの時限式テスト。#77 の型） |
+| `make test-db` | **129件 PASS / FAIL 0**（うち `TestTicketReferenceIntegration` が18件） |
+| 実サーバ（Bearer） | **27件 PASS。** `/me/tokens` のトークンで `code` を積む経路を通した——**画面に追加の導線が無いのはこの経路だけが書き手だから**（9.10.2）。作った行は最後にすべて削除し、件数が検証前へ戻ったことを確認 |
+| ブラウザ（読み取り） | **32件 PASS。** 1440 / 1100 / 900px の3幅で `getBoundingClientRect()` 実測。セクションの出し分け・`[削除]`/`[編集]` の並び・リンクの `target`/`rel`・アイコン非表示・`[⋯]` の3項目・下線の位置 |
+| ブラウザ（状態変更） | **22件 PASS。** 追加 → 編集 → 削除（**キャンセルで消えないことを先に確認**してから削除）→ `[⋯]` からの追加 → 子チケットの作成 |
+| スクリーンショット | **10枚を目で確認**（1440 / 900px × 3チケット、モーダル2枚、メニュー1枚、状態変更後2枚） |
+
+### 検証が拾った実装の欠陥（2件）
+
+| 欠陥 | 気づいた場所 |
+|---|---|
+| **空白だけの `repository` が列に入る。** `optionalStringField` は空文字だけを null と同じ扱いにするので `"  "` が素通りし、DB の `CHECK` は `NOT NULL` しか見ない | 単体テスト（`PATCH は必須項目を空にできない` の空白ケース） |
+| **子チケットの追加で親を「なし」に変えられた。** 子を作るつもりで開いてトップレベルのチケットができる | ブラウザ（状態変更）の「親はこのチケットに固定されている」 |
+
+### 検証側の誤り（2件。実装は正しかった）
+
+| 誤り | |
+|---|---|
+| **期待値に `子チケット (0)` を含めた。** seq=9 は子を持たず、5.5 どおりセクションごと出ない | #33（対象を数え上げてから期待値を書く）の再発 |
+| **`?.click() \|\| …` でメニューを開いて閉じていた。** `click()` は `undefined` を返すので2つ目の式も評価される | #46 の系統。**1回だけ押す形に書き直した** |
+
+### 片付けた資源
+
+| 残るもの | 戻し方 |
+|---|---|
+| 検証で作った外部参照7件 | スクリプトが最後に全部 DELETE し、件数が検証前（seed の6件）へ戻ったことを確認 |
+| 検証で作った子チケット2件 | API で削除。`ticket` は seed の15件へ戻った |
+| 検証が書いた `activity` 9行 | **seed は `activity` を書かない**ので `field LIKE 'reference%'` と孤児の `create` 行を削除。0行へ戻した |
+| 検証で発行した API トークン1本・ログインセッション9本 | トークンは API で失効、セッションは `revoked_at` を立てた |
+| Cookie jar・トークンの平文ファイル | 削除（セッショントークンの平文が残るため） |
+| **前セッション（17b）が置き忘れたヘッドレス Chrome** | プロファイル名 `pb-cdp-` で完全一致させて終了。プロファイルのディレクトリも削除 |
+| `make build` の埋め込み成果物 | `make clean-webui` |

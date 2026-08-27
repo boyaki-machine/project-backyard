@@ -114,9 +114,14 @@ type ticketChildBrief struct {
 // ticketDetailView は 9.5.1 の応答。手順16b では POST /tickets が返す
 // （9.3 が「応答は 9.5 の GET と同形式」と定めるため）。
 //
-// **dod / links は空で返す。** 中身を作るのは手順18（9.9 / 9.10）だが、
+// **dod / links は空で返す。** 中身を作るのは手順18（9.9 / 9.10.1）だが、
 // 作りたてのチケットではどちらも空が正しい値であり、手順18 で項目が生えたように
 // 見せないほうが消費者にとって安定する。
+//
+// **references は手順17c から実数である**（9.5.1 / 9.10.2）。別の GET に切らず
+// 詳細応答へ入れるのは dod / links と同じ理由で、画面を開いた時点で見えている
+// ものだからである（GuiDesign.md 5.5）。遷移先の一覧（9.7）のように「開いた
+// ときだけ要るもの」ではない。
 //
 // **comment_count は手順17a から実数である。** 9.6 の遷移が kind='progress' の
 // コメントを作る（DbDesign.md 6.7）ので、0 を固定で返すと事実と食い違う。
@@ -128,6 +133,7 @@ type ticketDetailView struct {
 	Children     []ticketChildBrief `json:"children"`
 	DoD          []any              `json:"dod"`
 	Links        []any              `json:"links"`
+	References   []referenceView    `json:"references"`
 	CommentCount int64              `json:"comment_count"`
 }
 
@@ -188,6 +194,13 @@ func buildTicketDetail(
 		return ticketDetailView{}, fmt.Errorf("コメント件数を読めない: %w", err)
 	}
 
+	// 9.5.1 の references（手順17c）。**一覧APIと同じ関数を通す**ので、
+	// 並び順の規則を2か所で書き分けない（references.go）。
+	references, err := ticketReferencesFor(ctx, q, row.ID)
+	if err != nil {
+		return ticketDetailView{}, err
+	}
+
 	view := ticketDetailView{
 		ticketListItem: ticketListItem{
 			ID:            row.ID,
@@ -216,9 +229,10 @@ func buildTicketDetail(
 		},
 		BodyMd:   textPtr(row.BodyMd),
 		Children: []ticketChildBrief{},
-		// 手順18 で中身が入る（9.9 / 9.10）。作りたては空が正しい。
+		// 手順18 で中身が入る（9.9 / 9.10.1）。作りたては空が正しい。
 		DoD:          []any{},
 		Links:        []any{},
+		References:   references,
 		CommentCount: commentCount,
 	}
 

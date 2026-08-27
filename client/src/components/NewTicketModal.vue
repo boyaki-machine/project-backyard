@@ -53,6 +53,14 @@ const props = defineProps<{
   /** 親の選択肢。バックログがいま表示しているチケット（5.4.3） */
   candidates: Ticket[]
   defaults?: NewTicketDefaults
+  /**
+   * 親を `defaults.parent_seq` に固定する（`GuiDesign.md` 5.5、手順17c）。
+   *
+   * チケット詳細の「子チケットを追加」から開くときに真にする。**「なし」を
+   * 選べる状態のままにすると、子を作るつもりで開いたのにトップレベルの
+   * チケットができる**——欄は出したまま、選び直せない形にする。
+   */
+  lockParent?: boolean
   busy?: boolean
   /** サーバが返した検証エラー（`details[].field` → メッセージ） */
   fieldErrors?: Record<string, string>
@@ -223,8 +231,10 @@ function submit(): void {
       <div class="row">
         <label class="field grow">
           <span class="label">親チケット</span>
-          <select v-model="parentSeq">
-            <option value="">なし</option>
+          <!-- **固定するときは「なし」を出さない。** 出したまま選べなくすると
+               「選べるのに選べない」に見える（5.5、手順17c） -->
+          <select v-model="parentSeq" :disabled="lockParent">
+            <option v-if="!lockParent" value="">なし</option>
             <option v-for="c in candidates" :key="c.seq" :value="String(c.seq)">
               {{ candidateLabel(c) }}
             </option>
@@ -360,6 +370,14 @@ select {
   background: var(--pb-bg);
   color: inherit;
   font: inherit;
+}
+
+/* 親を固定したとき（`lockParent`）。**読めることを優先し、薄くしすぎない**
+   ——この欄は「何の子を作っているか」を伝える唯一の表示である */
+select:disabled {
+  background: var(--pb-surface);
+  color: var(--pb-text-muted);
+  cursor: default;
 }
 
 textarea {

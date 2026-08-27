@@ -838,6 +838,131 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/tickets/{seq}/references": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 外部参照の一覧
+         * @description チケットから PB の外を指す参照（ApiDesign.md 9.10.2）。**必要権限は `ticket.view`**。
+         *
+         *     `kind` は `code`（リポジトリ・ブランチ・コミット）と `doc`（仕様書などのURL）の
+         *     2つで、**必須の項目が違う**。`ticket_link`（9.10.1）が同じプロジェクトの別の
+         *     チケットを指すのに対し、こちらは PB の管理外にあるものを指す。
+         *
+         *     **`items[]` は `kind` 昇順（`code` → `doc`）、同じ `kind` の中は `sort_order` →
+         *     `created_at` の昇順。** 第2・第3キーを置くのは、順序が実行ごとに揺れない
+         *     ようにするためである。
+         *
+         *     **ページネーションも `ETag` も持たない。** 1チケットあたり数件に収まり、
+         *     画面は開いた時点で全件を出す（GuiDesign.md 5.5）。**同じ内容が 9.5.1 の
+         *     詳細応答の `references` にも入る**ので、詳細画面はこのエンドポイントを
+         *     呼ばない。
+         */
+        get: operations["listTicketReferences"];
+        put?: never;
+        /**
+         * 外部参照の追加
+         * @description 外部参照を1件足す（ApiDesign.md 9.10.2）。**必要権限は `ticket.edit`**。
+         *
+         *     **`kind='code'` の主な書き手はエージェントである。** Phase 1 ではエージェント用の
+         *     アクターも MCP も無い（Design.md 11章 手順21・22）ため、書き手は `/me/tokens` で
+         *     発行した API トークンを持つクライアントになる。**画面は `code` の追加を持たず、
+         *     表示と削除だけを行う**（GuiDesign.md 5.5）。`doc` は Phase 1 から人が画面で
+         *     追加・編集できる。
+         *
+         *     必須は `kind` と、`kind` に応じて `repository`（`code`）または `url`（`doc`）。
+         *     **URL の形式は検証しない**（空でないことのみ）。`sort_order` を省くと末尾
+         *     （現在の最大値 + 10）に置かれる。
+         *
+         *     **親チケットの `version` も `updated_at` も動かさない**——参照の増減は `ticket` の
+         *     列を変えないためで、`ticket_tag` を動かす 9.2.5 とはここが違う。
+         *
+         *     **変更は `activity` に記録する**（9.1.1）。`action` は `update`、`field` は
+         *     `reference.code` / `reference.doc` で、`new_value` に画面と同じ形の要約が入る。
+         */
+        post: operations["createTicketReference"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/references/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /**
+                 * @description 外部参照の ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。
+                 *     外部参照は `seq` に相当する連番を持たない。
+                 */
+                id: components["parameters"]["TicketReferenceID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 外部参照の削除
+         * @description 外部参照を1件消す（ApiDesign.md 9.10.2）。**必要権限は `ticket.edit`**。
+         *
+         *     **`code` にも削除を置く**（GuiDesign.md 5.5）。画面に追加の導線が無いぶん、
+         *     誤って積まれた行を人が始末できないと詰むためである。
+         *
+         *     削除も `activity` に記録する（`old_value` に要約、`new_value` は `null`）。
+         */
+        delete: operations["deleteTicketReference"];
+        options?: never;
+        head?: never;
+        /**
+         * 外部参照の更新
+         * @description 外部参照を部分更新する（ApiDesign.md 9.10.2）。**必要権限は `ticket.edit`**。
+         *
+         *     **`kind` は作成後に変えられない。** 送ると 422 `validation_failed` で、
+         *     `details[].code` は `immutable_field` である。
+         *
+         *     **`null` は「その項目を空にする」を意味する**（キーごと送らないのとは区別する）。
+         *     ただし**更新後の行が必須の条件を満たすこと**——`kind='doc'` の `url` や
+         *     `kind='code'` の `repository` を空にする要求は 422 `required` で弾く
+         *     （DbDesign.md 6.12 の `CHECK` と同じ条件をアプリ側でも持つ）。
+         *
+         *     **`If-Match` は要らない**（`ticket_reference` は `version` 列を持たない。2.8）。
+         *
+         *     **値が実際に変わったときだけ `activity` に記録する**（9.5.2 と同じ扱い）。
+         */
+        patch: operations["patchTicketReference"];
+        trace?: never;
+    };
     "/api/v1/projects/{key}/tickets/{seq}/transitions": {
         parameters: {
             query?: never;
@@ -2347,9 +2472,10 @@ export interface components {
          *     手順16b では `POST /tickets` の応答として返る（9.3 が「応答は 9.5 の `GET` と
          *     同形式」と定めるため）。`GET /tickets/:seq` そのものは手順17 で足す。
          *
-         *     **`dod` / `links` / `comment_count` は手順18 まで空・0 である。** 中身を作るのは
-         *     9.9 / 9.10 / 9.8 だが、作りたてのチケットではいずれも空・0 が正しい値であり、
-         *     手順18 で項目が生えたように見せないほうが消費者にとって安定する。
+         *     **`dod` / `links` は手順18 まで空である。** 中身を作るのは 9.9 / 9.10.1 だが、
+         *     作りたてのチケットではどちらも空が正しい値であり、手順18 で項目が生えたように
+         *     見せないほうが消費者にとって安定する。**`references` は手順17c から、
+         *     `comment_count` は手順17a から実数である。**
          */
         TicketDetail: components["schemas"]["Ticket"] & {
             /** @description 本文（Markdown ソース）。 */
@@ -2358,13 +2484,121 @@ export interface components {
             children: components["schemas"]["TicketChild"][];
             /** @description 完了条件（ApiDesign.md 9.9）。**要素の形は手順18 で決まる。** */
             dod: unknown[];
-            /** @description 関連リンク（ApiDesign.md 9.10）。**要素の形は手順18 で決まる。** */
+            /** @description 関連リンク（ApiDesign.md 9.10.1）。**要素の形は手順18 で決まる。** */
             links: unknown[];
+            /**
+             * @description 外部参照（ApiDesign.md 9.10.2）。**手順17c から実数を返す。**
+             *     `kind` 昇順、同じ `kind` の中は `sort_order` → `created_at` の昇順。
+             *
+             *     **別の `GET` に切らず詳細応答へ入れる**のは、画面を開いた時点で
+             *     見えているものだからである（GuiDesign.md 5.5）。遷移先の一覧（9.7）の
+             *     ように「開いたときだけ要るもの」ではない。
+             */
+            references: components["schemas"]["TicketReference"][];
             /**
              * Format: int64
              * @description コメント件数（本文は含めない。ApiDesign.md 9.8）。
              */
             comment_count: number;
+        };
+        /**
+         * @description チケットから PB の外を指す参照（ApiDesign.md 9.10.2、DbDesign.md 6.12）。
+         *
+         *     **`kind` ごとに埋まる項目が違う。** `code` は `repository` が必須で `branch` /
+         *     `commit_sha` を伴い、`doc` は `url` が必須である。1つの表にまとめてあるので、
+         *     使わない項目は `null` になる。
+         *
+         *     **`created_by` は返すが Phase 1 の画面は使わない**（GuiDesign.md 5.5）。この
+         *     セクションが表すのは「チケットの成果物としてリポジトリ・ブランチ・コミットが
+         *     紐づいている」という関係であって、行を登録したのが誰かではない。**コミットの
+         *     committer でもない**——PB はリポジトリへ問い合わせない。それでも返して DB にも
+         *     残すのは、将来エージェントの書いた行を区別したくなったときに遡れるようにするため。
+         */
+        TicketReference: {
+            /** @description ULID。 */
+            id: string;
+            /**
+             * @description `code` はリポジトリ・コミット、`doc` は仕様書などのURL。
+             * @enum {string}
+             */
+            kind: "code" | "doc";
+            /**
+             * @description リポジトリを識別する文字列（`kind='code'` では必須）。**FK ではない**
+             *     ——リポジトリの定義は `project.settings` の `repositories` に jsonb で
+             *     置かれており、参照できる主キーが無い。**プロジェクト設定に無い名前を
+             *     書いても受け付ける**（DbDesign.md 6.12）。
+             */
+            repository: string | null;
+            branch: string | null;
+            /** @description **短縮形を許す**——`git rev-parse --short` の出力をそのまま入れられる。 */
+            commit_sha: string | null;
+            /**
+             * @description `kind='doc'` では必須。**形式は検証しない**（空でないことのみ）。
+             *     画面は `https://` または `http://` で始まるものだけをリンクにする
+             *     （GuiDesign.md 5.5）。
+             */
+            url: string | null;
+            label: string | null;
+            note: string | null;
+            /** Format: int32 */
+            sort_order: number;
+            /** @description 書き手。`actor` の削除に `ON DELETE SET NULL` で追従するため `null` になりうる。 */
+            created_by: components["schemas"]["ActorRef"] | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /**
+         * @description 外部参照の一覧（ApiDesign.md 9.10.2）。**ページネーションを持たない**
+         *     ——1チケットあたり数件に収まる。
+         */
+        TicketReferenceList: {
+            items: components["schemas"]["TicketReference"][];
+        };
+        /**
+         * @description 外部参照の作成（ApiDesign.md 9.10.2）。**必須は `kind` と、`kind` に応じて
+         *     `repository`（`code`）または `url`（`doc`）。**
+         *
+         *     文字数の上限は `repository` 200 / `branch` 255 / `commit_sha` 64 /
+         *     `url` 1000 / `label` 200 / `note` 500。**前後の空白は取り除いてから見る**。
+         *     空文字は `null` と同じ「値なし」として扱う。
+         */
+        CreateTicketReferenceRequest: {
+            /** @enum {string} */
+            kind: "code" | "doc";
+            repository?: string | null;
+            branch?: string | null;
+            commit_sha?: string | null;
+            url?: string | null;
+            label?: string | null;
+            note?: string | null;
+            /**
+             * Format: int32
+             * @description 省略すると末尾（現在の最大値 + 10）。
+             */
+            sort_order?: number;
+        };
+        /**
+         * @description 外部参照の部分更新（ApiDesign.md 9.10.2）。**送られたフィールドだけを更新する。**
+         *
+         *     **`null` は「その項目を空にする」を意味する**（キーごと送らないのとは区別する）。
+         *     ただし**更新後の行が必須の条件を満たすこと**——`kind='doc'` の `url` や
+         *     `kind='code'` の `repository` を空にする要求は 422 `required` になる。
+         *
+         *     **`kind` は含められない**（送ると 422 `immutable_field`）。`additionalProperties`
+         *     を `false` にしていないのは、`kind` を送ったときに 2.5 の形式で理由を返すためである
+         *     （UpdateTicketRequest と同じ扱い）。
+         */
+        PatchTicketReferenceRequest: {
+            repository?: string | null;
+            branch?: string | null;
+            commit_sha?: string | null;
+            url?: string | null;
+            label?: string | null;
+            note?: string | null;
+            /** Format: int32 */
+            sort_order?: number;
         };
         /**
          * @description チケットの部分更新（ApiDesign.md 9.5.2）。**送られたフィールドだけを更新する。**
@@ -2682,6 +2916,19 @@ export interface components {
             };
         };
         /**
+         * @description 外部参照が存在しない（`not_found`）。**他チケットの参照も同じ 404 に寄せる**
+         *     ——クエリの `WHERE` が `ticket_id` を含むため区別が付かず、区別する必要も
+         *     ない（Design.md 6.4.5）。チケットそのものが無い場合は TicketNotFound になる。
+         */
+        TicketReferenceNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
          * @description チケットが存在しない（`not_found`）。**他プロジェクトの番号も同じ 404 に寄せる**
          *     ——クエリの `WHERE` が `project_id` を含むため区別が付かず、区別する必要もない
          *     （Design.md 6.4.5）。
@@ -2735,6 +2982,11 @@ export interface components {
         TagID: string;
         /** @description スプリントの ULID（ApiDesign.md 9.1）。 */
         SprintID: string;
+        /**
+         * @description 外部参照の ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。
+         *     外部参照は `seq` に相当する連番を持たない。
+         */
+        TicketReferenceID: string;
         /**
          * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
          *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
@@ -4017,6 +4269,178 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listTicketReferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 外部参照の一覧。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketReferenceList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createTicketReference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTicketReferenceRequest"];
+            };
+        };
+        responses: {
+            /** @description 作成した外部参照。 */
+            201: {
+                headers: {
+                    /** @description 作成した参照の URL。 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketReference"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteTicketReference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /**
+                 * @description 外部参照の ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。
+                 *     外部参照は `seq` に相当する連番を持たない。
+                 */
+                id: components["parameters"]["TicketReferenceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除した（本文なし）。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketReferenceNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    patchTicketReference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /**
+                 * @description 外部参照の ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。
+                 *     外部参照は `seq` に相当する連番を持たない。
+                 */
+                id: components["parameters"]["TicketReferenceID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchTicketReferenceRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後の外部参照。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketReference"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketReferenceNotFound"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];

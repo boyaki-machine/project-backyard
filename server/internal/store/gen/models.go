@@ -270,6 +270,22 @@ type TicketLink struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type TicketReference struct {
+	ID         string
+	TicketID   string
+	Kind       string
+	Label      pgtype.Text
+	Url        pgtype.Text
+	Repository pgtype.Text
+	Branch     pgtype.Text
+	CommitSha  pgtype.Text
+	Note       pgtype.Text
+	CreatedBy  pgtype.Text
+	SortOrder  int32
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type TicketTag struct {
 	TicketID string
 	TagID    string
