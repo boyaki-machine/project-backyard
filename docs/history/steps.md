@@ -2243,3 +2243,68 @@ NOT NULL の列は `COALESCE(sqlc.narg(…), 現在値)`、NULL にできる列�
 | Cookie jar・トークンの平文ファイル | 削除（セッショントークンの平文が残るため） |
 | **前セッション（17b）が置き忘れたヘッドレス Chrome** | プロファイル名 `pb-cdp-` で完全一致させて終了。プロファイルのディレクトリも削除 |
 | `make build` の埋め込み成果物 | `make clean-webui` |
+
+## 手順18a — コメント・DoD・チケット間リンクのAPI（2026-08-27、`feature/step-18a-comment-dod-link-api`）
+
+`ApiDesign.md` 9.8 / 9.9 / 9.10.1 の実装と、9.5.1 の `dod` / `links` の実体化。**API のみ**で、
+画面（`GuiDesign.md` 5.5 の3セクション）は 18b。**マイグレーションは不要**だった——
+`comment`（0007）・`ticket_link`（0006）・`dod_item`（0014）はいずれも適用済み。
+
+### 設計文書の改訂（コードより先に当てきった）
+
+| 文書 | 改訂 |
+|---|---|
+| `ApiDesign.md` 9.8 | **応答の JSON 例を新設**（それまでフィールドの定義が無かった）。ページネーションと `ETag`、削除済みの扱い、`PATCH` の不変フィールド、`activity` の粒度 |
+| `ApiDesign.md` 9.9 | 同上（DoD の応答例）。`config` / `evidence` / `origin` を返さない理由、`done` への遷移を止めない理由 |
+| `ApiDesign.md` 9.10.1 | 重複の `409 already_exists`、`incoming` の削除、`ticket` に `type` を含めること、`PATCH` を持たない理由、画面が3種に絞ること |
+| `ApiDesign.md` 9.14 | `self_link` を追加。`not_found` に `target_seq` / `in_reply_to` を追記。`immutable_field` を明記 |
+| `ApiDesign.md` 9.15 | 手順18 を 18a / 18b へ展開 |
+| `ApiDesign.md` 9.5.1 | 「`dod` / `links` は手順18 まで空」→「手順18a から実数」 |
+| `Design.md` 11章 | 18a / 18b の分割と、横に割った理由（縦に割る案を却下した経緯を含む） |
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/store/queries/comment.sql` | **追記**。一覧（窓関数で `total` と `MAX(updated_at)` を同時取得）・0件用の要約・1件取得・返信先の検証・部分更新・論理削除。`CreateComment` に `in_reply_to` を追加 |
+| `server/internal/store/queries/dod.sql` | **新規**。一覧・1件取得・次の `sort_order`・作成・部分更新（`satisfied_set` で3列を束ねる）・削除 |
+| `server/internal/store/queries/link.sql` | **新規**。双方向の一覧（`UNION ALL` ＋ `direction_rank`）・1件取得・作成・重複検査・削除 |
+| `server/internal/httpapi/v1/ticket_scope.go` | **新規**。子資源の共通の入口（`{key}` → `project_id` → `{seq}` → `ticket_id`）と `origin` の決め方 |
+| `server/internal/httpapi/v1/comments.go` | **新規**。`GET`/`POST`/`PATCH`/`DELETE`、`ETag`、要約の組み立て |
+| `server/internal/httpapi/v1/dod.go` | **新規**。`GET`/`POST`/`PATCH`/`DELETE`、`phase_2_only` の弾き分け |
+| `server/internal/httpapi/v1/links.go` | **新規**。`GET`/`POST`/`DELETE`、`self_link` と重複の 409 |
+| `server/internal/httpapi/middleware/authz.go` | **`RequireAnyProjectPermission` を新設**（OR）。`RequireProjectPermission` は共通関数へ委譲（振る舞いは不変） |
+| `server/internal/httpapi/v1/routes.go` | ルート11本 |
+| `server/internal/httpapi/v1/ticket_view.go` | `dod` / `links` を `[]any{}` から実体へ |
+| `server/cmd/pb/dev_seed.go` | `devDoDItem` / `devComment` / `devLink` と検証・投入の3関数 |
+| `deploy/dev/seed/dev-data.yaml` | コメント5件・DoD 6件・リンク2件 |
+| `docs/openapi.yaml` | パス6本・パラメータ3・応答4・スキーマ12（約620行） |
+| テスト | `comments_test.go`（26）/ `dod_test.go`（17）/ `links_test.go`（13）/ `comment_dod_link_integration_test.go`（26のサブテスト） |
+
+### 検証結果
+
+| 層 | 結果 |
+|---|---|
+| `make sqlc` / `go build` / `go vet` | 通過 |
+| 単体（`make test`） | **新規56関数・実行64件が PASS。** 失敗は `TestExpiresAtFormat` 1件のみで、**`git worktree add <tmp> develop` で `develop` でも同じく落ちることを確認**（起票済みの時限式。私の変更と無関係） |
+| 実DB結合（`make test-db`） | **全156件 PASS**（うち新規26件）。実DBでしか測れないもの——`ORDER BY`/`LIMIT`/`OFFSET`、`UNION ALL` の双方向、`uq_ticket_link`、`ck_ticket_link_diff`、`satisfied_set` の3列、3表の `CASCADE`、`trg_comment_updated` が論理削除で動くこと |
+| 実サーバ（curl） | **41件 PASS**。4つのデモアカウントで権限差を実測。CSRF・論理削除・双方向リンク・重複の409・許可外 `sort` の422 |
+| seed | `make dev-reset` を実行（利用者の承認）。コメント5・DoD 6・リンク2 が入り、**API 経由で定義順に並ぶことと、`demo-9` に `outgoing` と `incoming` が1つのリストで返ることを実測** |
+| `npm run typecheck` | `make gen-api` で型を生成し直して通過 |
+
+### 検証で作った資源の後始末
+
+| 資源 | 後始末 |
+|---|---|
+| 実サーバ検証が作ったチケット2件と、その配下のコメント・DoD・リンク | スクリプトの `finally` で毎回削除（子資源は `CASCADE`）。実行後に `comment` 5 / `dod_item` 6 / `ticket_link` 2＝seed のままであることを確認 |
+| 結合テストが作ったプロジェクト（`cdl-*`） | `t.Cleanup` で削除。実行後に `key LIKE 'cdl-%'` が 0件であることを確認 |
+| 切り分け用の一時 worktree（`develop`） | `git worktree remove` で削除。`git worktree list` が1件であることを確認 |
+| ローカルサーバ（:8080） | `make stop-server` |
+| スクラッチパッド（検証スクリプト・ログ） | セッションをまたいで残らないため放置。**`verify_18a.py` は 18b で使い回せる形にしていない**（画面の検証は別物） |
+| `make build` の埋め込み成果物 | **該当なし**（18a は `client/` を触らないのでビルドしていない） |
+
+### 未検証のまま残ったこと
+
+- **`comment.create` / `ticket.edit` の負の側**——seed の4アカウントはすべてシステムロールが operator 以上で、
+  実効権限の和にこの2つが必ず入る（`DbDesign.md` 7.3）。**16c から続く同じ制約**である。
+  **`comment.delete_any` だけは負の側を作れており**（pm は持ち member は持たない）、OR の必要権限はそこで測れている

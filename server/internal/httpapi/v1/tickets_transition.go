@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/activity"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
@@ -149,6 +150,8 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 				BodyMd:   body,
 				Kind:     commentKindProgress,
 				Origin:   origin,
+				// **遷移コメントは返信ではない**（手順18a で in_reply_to を足した）。
+				InReplyTo: pgtype.Text{},
 			}); err != nil {
 				return fmt.Errorf("遷移コメントを作成できない: %w", err)
 			}

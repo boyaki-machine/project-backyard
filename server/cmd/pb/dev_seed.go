@@ -153,6 +153,57 @@ type devTicket struct {
 	// **1件も無いと画面に何も出ない。** kind='code' は画面から追加できず
 	// （GuiDesign.md 5.5）、seed が唯一の供給源である。
 	References []devReference `yaml:"references"`
+
+	// ── 手順18a（ApiDesign.md 9.8 / 9.9 / 9.10.1）──────────────
+	//
+	// **手順18b の画面が「何も無い」状態から始まらないようにする。**
+	// 3セクション（完了条件・関連チケット・コメント）はどれも空のときの
+	// 見え方が別に決まっており（GuiDesign.md 5.5）、**中身のある状態と
+	// 空の状態の両方が seed に無いと、片方しか画面で確かめられない。**
+
+	// DoD は完了条件（DbDesign.md 6.11）。satisfied を立てた行を混ぜると、
+	// チェック済みと未チェックの見分けを画面で確かめられる。
+	DoD []devDoDItem `yaml:"dod"`
+
+	// Comments はコメント（DbDesign.md 6.7）。**author は必須**
+	// （comment.author_id が NOT NULL のため）。
+	Comments []devComment `yaml:"comments"`
+
+	// Links は関連チケット（DbDesign.md 6.6）。**target は同じプロジェクトの
+	// チケットのタイトル**で書く——定義ファイルに ULID も seq も書かせない
+	// （seq は投入するまで決まらない）。
+	Links []devLink `yaml:"links"`
+}
+
+// devDoDItem はチケットの完了条件（DbDesign.md 6.11、手順18a）。
+//
+// **type を書かせない。** Phase 1 が受け付けるのは manual だけであり
+// （ApiDesign.md 9.9）、選べない項目を定義ファイルに置くと「他も書ける」に見える。
+type devDoDItem struct {
+	Body string `yaml:"body"`
+	// Satisfied は充足済みか。**満たした人は投入しない**——seed は
+	// 「誰が」を持たない（satisfied_by は ON DELETE SET NULL で NULL 可）。
+	Satisfied bool `yaml:"satisfied"`
+}
+
+// devComment はチケットのコメント（DbDesign.md 6.7、手順18a）。
+//
+// **origin は書かせない。** 呼び出し元のアクター種別から決まる規則
+// （ApiDesign.md 9.8）を seed でも守り、author のメールから引く。
+// Phase 1 のデモアカウントはすべて人なので human になる。
+type devComment struct {
+	Author string `yaml:"author"`
+	Kind   string `yaml:"kind"`
+	Body   string `yaml:"body"`
+}
+
+// devLink はチケット間リンク（DbDesign.md 6.6、手順18a）。
+//
+// **当該チケットが常に source になる**（ApiDesign.md 9.10.1）。incoming の行は
+// 相手側のチケットに書けば作られるので、定義ファイルに向きの概念を持たせない。
+type devLink struct {
+	Target string `yaml:"target"`
+	Type   string `yaml:"type"`
 }
 
 // devReference はチケットの外部参照（DbDesign.md 6.12、手順17c）。
@@ -176,6 +227,21 @@ type devReference struct {
 
 // devReferenceKinds は ticket_reference.kind の CHECK（DbDesign.md 6.12）。
 var devReferenceKinds = map[string]bool{"code": true, "doc": true}
+
+// devCommentKinds は comment.kind の CHECK（DbDesign.md 6.7、手順18a）。
+var devCommentKinds = map[string]bool{
+	"discussion": true, "decision": true, "artifact": true,
+	"caveat": true, "reference": true, "progress": true,
+}
+
+// devLinkTypes は ticket_link.link_type の CHECK（DbDesign.md 6.6、手順18a）。
+//
+// **7種すべてを許す。** 画面が3種に絞るのは GuiDesign.md 5.5 の話であり、
+// seed は API と同じ値域で書ける（ApiDesign.md 9.10.1）。
+var devLinkTypes = map[string]bool{
+	"FS": true, "SS": true, "FF": true, "SF": true,
+	"relates": true, "duplicates": true, "blocks": true,
+}
 
 // devTicketTypes / devTicketPriorities は ticket の CHECK 制約（DbDesign.md 6.6）。
 var (
@@ -486,6 +552,49 @@ func (d *devData) validate() error {
 				}
 				if ref.Kind == "doc" && ref.URL == "" {
 					return fmt.Errorf("%s: kind=doc には url が要ります（ck_ticket_reference_doc）", refAt)
+				}
+			}
+
+			// 完了条件（手順18a）。**body は必須**（dod_item.body が NOT NULL）。
+			for k, item := range tk.DoD {
+				if strings.TrimSpace(item.Body) == "" {
+					return fmt.Errorf("%s.dod[%d]: body が空です", at, k)
+				}
+			}
+
+			// コメント（手順18a）。**author は必須**（comment.author_id が
+			// NOT NULL かつ ON DELETE RESTRICT。DbDesign.md 6.7）。
+			for k, c := range tk.Comments {
+				cAt := fmt.Sprintf("%s.comments[%d]", at, k)
+				if strings.TrimSpace(c.Body) == "" {
+					return fmt.Errorf("%s: body が空です", cAt)
+				}
+				if c.Author == "" {
+					return fmt.Errorf("%s: author が空です（comment.author_id は NOT NULL）", cAt)
+				}
+				if !members[strings.ToLower(c.Author)] {
+					return fmt.Errorf("%s: author %q がこのプロジェクトの members に居ません", cAt, c.Author)
+				}
+				if c.Kind != "" && !devCommentKinds[c.Kind] {
+					return fmt.Errorf("%s: kind が不正です（%q）", cAt, c.Kind)
+				}
+			}
+
+			// 関連チケット（手順18a）。**target は同じプロジェクトの、自分より前に
+			// 書かれたチケットのタイトル**である。前から順に作るので後ろは解決
+			// できない——parent と同じ制約で、**逆向きが要るなら相手側に書く**
+			// （incoming の行は source 側から作られる。ApiDesign.md 9.10.1）。
+			// 自分自身は指せない（ck_ticket_link_diff）。
+			for k, l := range tk.Links {
+				lAt := fmt.Sprintf("%s.links[%d]", at, k)
+				if !devLinkTypes[l.Type] {
+					return fmt.Errorf("%s: type が不正です（%q）", lAt, l.Type)
+				}
+				if l.Target == tk.Title {
+					return fmt.Errorf("%s: 自分自身は指せません（ck_ticket_link_diff）", lAt)
+				}
+				if !ticketTitles[l.Target] {
+					return fmt.Errorf("%s: target は自分より前のチケットの title を指してください（%q）", lAt, l.Target)
 				}
 			}
 		}
@@ -1002,6 +1111,15 @@ func seedTickets(
 		if err := seedTicketReferences(ctx, q, ticketID, tk, reporterID); err != nil {
 			return err
 		}
+		if err := seedTicketDoD(ctx, q, ticketID, tk); err != nil {
+			return err
+		}
+		if err := seedTicketComments(ctx, q, ticketID, tk, actorIDs); err != nil {
+			return err
+		}
+		if err := seedTicketLinks(ctx, q, ticketID, tk, idByTitle, reporterID); err != nil {
+			return err
+		}
 
 		idByTitle[tk.Title] = ticketID
 		result.ticketsCreated++
@@ -1035,6 +1153,103 @@ func seedTicketReferences(
 			SortOrder:  int32((i + 1) * 10),
 		}); err != nil {
 			return fmt.Errorf("チケット %q に外部参照を足せない: %w", tk.Title, err)
+		}
+	}
+	return nil
+}
+
+// seedTicketDoD はチケットの完了条件を投入する（DbDesign.md 6.11、手順18a）。
+//
+// **チケットを作った直後にだけ呼ぶ**（seedTicketReferences と同じ）。冪等の
+// 単位はチケットであり、DoD だけを後から突き合わせる手段は持たない。
+//
+// **satisfied_by は入れない。** 定義ファイルは「誰が満たしたか」を持たず、
+// 列は NULL 可である（ON DELETE SET NULL）——条件を満たした事実は残り、
+// 誰が満たしたかだけが分からない状態になる。
+//
+// sort_order は定義ファイルの並び順で 10 刻み。API が省略時に使う既定
+// （現在の最大値 + 10。ApiDesign.md 9.9）と同じ間隔に揃えてある。
+func seedTicketDoD(
+	ctx context.Context, q gen.Querier, ticketID string, tk devTicket,
+) error {
+	for i, item := range tk.DoD {
+		if err := q.CreateDoDItem(ctx, gen.CreateDoDItemParams{
+			ID:          ulidgen.New(),
+			TicketID:    ticketID,
+			Type:        "manual",
+			Body:        item.Body,
+			SortOrder:   int32((i + 1) * 10),
+			IsSatisfied: item.Satisfied,
+		}); err != nil {
+			return fmt.Errorf("チケット %q に完了条件を足せない: %w", tk.Title, err)
+		}
+	}
+	return nil
+}
+
+// seedTicketComments はチケットのコメントを投入する（DbDesign.md 6.7、手順18a）。
+//
+// **origin は author のアクター種別から決まる**（ApiDesign.md 9.8）。Phase 1 の
+// デモアカウントはすべて人なので human になるが、**規則そのものを seed でも
+// 守る**——ここで固定値を書くと、エージェントが増えたときに嘘になる。
+//
+// **kind を省略したら discussion**（DbDesign.md 6.7 の DEFAULT と同じ）。
+// 既定に頼らず明示で渡すのは comment.sql の方針に揃えたためである。
+func seedTicketComments(
+	ctx context.Context, q gen.Querier, ticketID string, tk devTicket,
+	actorIDs map[string]string,
+) error {
+	for _, c := range tk.Comments {
+		authorID := actorIDs[strings.ToLower(c.Author)]
+		if authorID == "" {
+			return fmt.Errorf("チケット %q のコメントの author %q を解決できない", tk.Title, c.Author)
+		}
+		kind := c.Kind
+		if kind == "" {
+			kind = "discussion"
+		}
+		if err := q.CreateComment(ctx, gen.CreateCommentParams{
+			ID:       ulidgen.New(),
+			TicketID: ticketID,
+			AuthorID: authorID,
+			BodyMd:   c.Body,
+			Kind:     kind,
+			Origin:   "human",
+		}); err != nil {
+			return fmt.Errorf("チケット %q にコメントを足せない: %w", tk.Title, err)
+		}
+	}
+	return nil
+}
+
+// seedTicketLinks はチケット間リンクを投入する（DbDesign.md 6.6、手順18a）。
+//
+// **当該チケットが常に source になる**（ApiDesign.md 9.10.1）。相手は
+// idByTitle から引く——定義ファイルの検証が「自分より前」を要求しているので、
+// ここまでに必ず入っている。
+//
+// **origin は human 固定である。** ticket_link.origin の値域は
+// human / ai_suggested で、ai_suggested は「AIが提案し人がまだ採用していない」
+// という状態を表す（Phase 2）。書き手の種別ではないので、comment とは違う。
+func seedTicketLinks(
+	ctx context.Context, q gen.Querier, ticketID string, tk devTicket,
+	idByTitle map[string]string, reporterID string,
+) error {
+	for _, l := range tk.Links {
+		targetID := idByTitle[l.Target]
+		if targetID == "" {
+			return fmt.Errorf("チケット %q の関連先 %q を解決できない", tk.Title, l.Target)
+		}
+		if err := q.CreateTicketLink(ctx, gen.CreateTicketLinkParams{
+			ID:             ulidgen.New(),
+			SourceTicketID: ticketID,
+			TargetTicketID: targetID,
+			LinkType:       l.Type,
+			LagDays:        0,
+			Origin:         "human",
+			CreatedBy:      nullText(reporterID),
+		}); err != nil {
+			return fmt.Errorf("チケット %q に関連チケットを足せない: %w", tk.Title, err)
 		}
 	}
 	return nil

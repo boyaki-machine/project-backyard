@@ -253,6 +253,53 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
 			Delete("/projects/{key}/tickets/{seq}/references/{id}", h.deleteTicketReference)
 
+		// ── コメント（ApiDesign.md 9.8）── 手順18a ────────────────
+		//
+		// **メソッドごとに必要権限が違う唯一の資源である**（9.8）。読むのは
+		// ticket.view、投稿は comment.create、編集は comment.edit_own、
+		// 削除は comment.delete_any **または** comment.edit_own である。
+		//
+		// **DELETE だけ OR なので RequireAnyProjectPermission を使う。**
+		// 「自分のものか」は行を読まないと決まらないためハンドラ側で見るが、
+		// **どの権限で通りうるかはここに残す**（Design.md 6.4.4）。
+		//
+		// **PATCH の「自分のもののみ」も同じ形である。** 宣言は
+		// comment.edit_own で、所有者の照合は comments.go が行う。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/comments", h.listTicketComments)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "comment.create")).
+			Post("/projects/{key}/tickets/{seq}/comments", h.createTicketComment)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "comment.edit_own")).
+			Patch("/projects/{key}/tickets/{seq}/comments/{id}", h.patchTicketComment)
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries,
+			"comment.delete_any", "comment.edit_own")).
+			Delete("/projects/{key}/tickets/{seq}/comments/{id}", h.deleteTicketComment)
+
+		// ── 完了条件（DoD）（ApiDesign.md 9.9）── 手順18a ─────────
+		//
+		// **更新系はすべて ticket.edit である**（9.9）。完了条件はチケットの
+		// 内容そのものであり、コメントのように「自分が書いたもの」という
+		// 概念を持たない——誰が足した条件でも、担当が変われば直す。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/dod", h.listTicketDoD)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+			Post("/projects/{key}/tickets/{seq}/dod", h.createDoDItem)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+			Patch("/projects/{key}/tickets/{seq}/dod/{id}", h.patchDoDItem)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+			Delete("/projects/{key}/tickets/{seq}/dod/{id}", h.deleteDoDItem)
+
+		// ── チケット間リンク（ApiDesign.md 9.10.1）── 手順18a ─────
+		//
+		// **PATCH を持たない**（9.10.1）。一意制約が (source, target, link_type)
+		// である以上、link_type の変更は別の行になるのと同じである。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/links", h.listTicketLinks)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+			Post("/projects/{key}/tickets/{seq}/links", h.createTicketLink)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+			Delete("/projects/{key}/tickets/{seq}/links/{id}", h.deleteTicketLink)
+
 		// ── ロール・権限カタログ（ApiDesign.md 7章）──────────────
 		//
 		// **GET /roles だけ必要権限が scope で変わる**（7.1）。?scope=project は

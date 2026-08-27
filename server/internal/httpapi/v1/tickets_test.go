@@ -398,7 +398,8 @@ func TestCreateTicketServerDecidesSeqStatusSortKeyAndReporter(t *testing.T) {
 	}
 }
 
-// 作成は 9.5 形式で返す。dod / links / comment_count は空・0（手順18 まで）。
+// 作成は 9.5 形式で返す。**作りたては dod / links が空、comment_count が0**
+// ——手順18a で実数を返すようになった後も、作成直後の正しい値は空である。
 func TestCreateTicketRespondsWithDetailShape(t *testing.T) {
 	q := ticketFake()
 	h, _ := ticketHandler(q)
@@ -420,7 +421,10 @@ func TestCreateTicketRespondsWithDetailShape(t *testing.T) {
 		}
 	}
 	if arr, ok := body["dod"].([]any); !ok || len(arr) != 0 {
-		t.Errorf("dod = %v（手順18 までは空配列）", body["dod"])
+		t.Errorf("dod = %v（作りたては空配列）", body["dod"])
+	}
+	if arr, ok := body["links"].([]any); !ok || len(arr) != 0 {
+		t.Errorf("links = %v（作りたては空配列）", body["links"])
 	}
 	if n, ok := body["comment_count"].(float64); !ok || n != 0 {
 		t.Errorf("comment_count = %v（作りたては0）", body["comment_count"])

@@ -232,6 +232,37 @@ projects:
           - kind: doc
             url: https://example.com/pb/api-design
             label: API設計メモ（9.2 のフィルタ一覧）
+        # **完了条件**（GuiDesign.md 5.5、手順18a）。**済みと未の両方を混ぜる**
+        # ——チェックの見分けが画面で確かめられるようにするため。
+        dod:
+          - { body: 'GET /projects/:key/tickets が 200 を返す', satisfied: true }
+          - { body: 'page / per_page / total / total_pages を規約どおり返す', satisfied: true }
+          - { body: 'ETag がフィルタ条件を混ぜたハッシュになっている', satisfied: false }
+          - { body: '結合テストでフィルタ13種すべてを通す', satisfied: false }
+        # **コメント**（GuiDesign.md 5.5、手順18a）。**kind を散らす**——
+        # 情報の類型（Requirements.md 6.5）が画面で見分けられるかを確かめる。
+        comments:
+          - author: pm@example.com
+            kind: decision
+            body: |
+              総件数は窓関数で同じクエリから返す方針にした。
+              件数だけ別クエリにすると、**フィルタと件数がずれる瞬間**が生まれるため。
+          - author: member@example.com
+            kind: progress
+            body: フィルタ13種のうち11種まで実装。残りは `staged` と `open`。
+          - author: member@example.com
+            kind: caveat
+            body: |
+              `sort_key` の比較は `COLLATE "C"` を明示すること。
+              省略すると照合順がロケール依存になり、並びが端末で変わる。
+          - author: pm@example.com
+            kind: discussion
+            body: ETag にページ番号を混ぜないと、2ページ目が1ページ目と同じ値になりませんか？
+        # **関連チケット**（GuiDesign.md 5.5、手順18a）。**target は自分より前に
+        # 書かれたチケット**である（前から順に作るため）。逆向き（incoming）は
+        # 相手側から自動的に見える——1本の GET が双方向を返す（9.10.1）。
+        links:
+          - { target: ログインAPIの実装, type: relates }
       # **オンステージ、かつ未着手。** 進捗とオンステージが独立した軸である
       # ことを画面で確かめられるようにする（DbDesign.md 6.6）。
       - title: バックログ画面
@@ -258,6 +289,22 @@ projects:
             url: git@example.com:org/project-backyard.git
             label: リポジトリ（SSH）
             note: ブラウザからは開けないのでリンクにしない
+        # **すべて未チェックの完了条件。** 「1件も満たしていない」状態の
+        # 見え方を画面で確かめる（上の「チケット一覧API」は一部が済み）。
+        dod:
+          - { body: '二段（オンステージとバックログ）が出る', satisfied: false }
+          - { body: 'ドラッグ&ドロップで段を移せる', satisfied: false }
+        # **コメントが1件だけのチケット。** 件数の見出し「コメント (1)」と
+        # 複数件の並びの両方を確かめられるようにする。
+        comments:
+          - author: viewer@example.com
+            kind: discussion
+            body: 一覧の右にペインで開く形だと、狭い窓ではどうなりますか？
+        # **blocks を張る。** 相手（チケット一覧API）側からは incoming として
+        # 見える——**双方向が1本の GET で返ることを画面で確かめられる**
+        # （ApiDesign.md 9.10.1）。
+        links:
+          - { target: チケット一覧API, type: blocks }
       # タグの無いチケット（「未分類」セクションの確認）。
       - title: 並べ替えの操作感を見る
         type: task

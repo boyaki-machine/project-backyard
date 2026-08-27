@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1072,6 +1073,12 @@ func (q *fakeQuerier) DeleteSprint(_ context.Context, arg gen.DeleteSprintParams
 // 9.5 形式であり、ハンドラは作成後に GetTicketBySeq で読み直す（9.3）。
 // 書き込みが読み取りに反映されないと、作成の応答を検証できない。
 
+// fakeNow は書き込みのフェイクが埋める時刻。
+//
+// **固定値にする。** created_at / updated_at / satisfied_at が実行のたびに
+// 変わると、応答の比較に時刻を含められない（手順18a で足した）。
+var fakeNow = time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
+
 // ticketFakeState はチケット系のフェイクが持つ状態。
 // fakeQuerier の項目が増えすぎるのを避けてひとまとめにしてある。
 type ticketFakeState struct {
@@ -1143,6 +1150,75 @@ type ticketFakeState struct {
 	refCreated    []gen.CreateTicketReferenceParams
 	refUpdated    []gen.UpdateTicketReferenceParams
 	refDeleted    []gen.DeleteTicketReferenceParams
+
+	// ── 手順18a（9.8 のコメント / 9.9 の DoD / 9.10.1 のリンク）──────
+	//
+	// **外部参照と同じ方針で、書き込みをスライスへ実際に適用する。** どれも
+	// 「書いてから読み直す」形なので、反映されないと応答が更新前の値でも
+	// 気づけない。
+	//
+	// **comments（CreateComment の引数）は 17a から在る**ので、そちらは
+	// 触らない。commentRows は 9.8 の一覧が返す行で、別に持つ——17a の
+	// comments は「遷移が何を作ったか」を測るためのもので、役割が違う。
+	commentRows   []gen.GetTicketCommentRow
+	commentErr    error
+	commentUpdate []gen.UpdateCommentParams
+	commentDelete []gen.SoftDeleteCommentParams
+	repliable     map[string]bool
+
+	dodRows    []gen.GetTicketDoDItemRow
+	dodErr     error
+	dodNextSrt int32
+	dodCreated []gen.CreateDoDItemParams
+	dodUpdated []gen.UpdateDoDItemParams
+	dodDeleted []gen.DeleteDoDItemParams
+
+	linkRows    []gen.ListTicketLinksRow
+	linkErr     error
+	linkExists  bool
+	linkCreated []gen.CreateTicketLinkParams
+	linkDeleted []gen.DeleteTicketLinkParams
+}
+
+// findComment は id で1件引く。見つからなければ -1。
+func (t *ticketFakeState) findComment(id string) int {
+	for i, row := range t.commentRows {
+		if row.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// findDoD は id で1件引く。見つからなければ -1。
+func (t *ticketFakeState) findDoD(id string) int {
+	for i, row := range t.dodRows {
+		if row.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// seqOf は idBySeq を逆に引く。**リンクの相手は id で渡ってくる**が、
+// 応答と要約が要るのは seq のほうである（9.10.1）。
+func (t *ticketFakeState) seqOf(id string) int32 {
+	for seq, v := range t.idBySeq {
+		if v == id {
+			return seq
+		}
+	}
+	return 0
+}
+
+// findLink は id で1件引く。見つからなければ -1。
+func (t *ticketFakeState) findLink(id string) int {
+	for i, row := range t.linkRows {
+		if row.ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 // findReference は id で1件引く。見つからなければ -1。
@@ -1526,10 +1602,306 @@ func (q *fakeQuerier) CountTicketComments(_ context.Context, _ string) (int64, e
 	return q.ticket.commentNum, nil
 }
 
+// ── コメント（手順18a。ApiDesign.md 9.8）───────────────────────
+
+// ListTicketComments は並べ替えとページングを**実際に適用する**。
+//
+// **SQL の ORDER BY / LIMIT / OFFSET を写しているのは、9.8 の既定
+// （created_at 昇順・per_page=50）がハンドラから渡っていることを測るため**で
+// ある。フェイクが常に全件を同じ順で返すと、order=desc を送っても通ってしまう。
+func (q *fakeQuerier) ListTicketComments(
+	_ context.Context, arg gen.ListTicketCommentsParams,
+) ([]gen.ListTicketCommentsRow, error) {
+	q.opLog = append(q.opLog, "ListTicketComments")
+	if q.ticket.commentErr != nil {
+		return nil, q.ticket.commentErr
+	}
+
+	sorted := slices.Clone(q.ticket.commentRows)
+	slices.SortStableFunc(sorted, func(a, b gen.GetTicketCommentRow) int {
+		c := a.CreatedAt.Time.Compare(b.CreatedAt.Time)
+		if c == 0 {
+			c = strings.Compare(a.ID, b.ID)
+		}
+		if arg.SortOrder == OrderDesc {
+			return -c
+		}
+		return c
+	})
+
+	total := int64(len(sorted))
+	var lastUpdated pgtype.Timestamptz
+	for _, row := range q.ticket.commentRows {
+		if !lastUpdated.Valid || row.UpdatedAt.Time.After(lastUpdated.Time) {
+			lastUpdated = row.UpdatedAt
+		}
+	}
+
+	lo := min(int(arg.PageOffset), len(sorted))
+	hi := min(lo+int(arg.PageLimit), len(sorted))
+
+	out := make([]gen.ListTicketCommentsRow, 0, hi-lo)
+	for _, row := range sorted[lo:hi] {
+		out = append(out, gen.ListTicketCommentsRow{
+			ID: row.ID, BodyMd: row.BodyMd, Kind: row.Kind,
+			InReplyTo: row.InReplyTo, Origin: row.Origin,
+			CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
+			AuthorID: row.AuthorID, AuthorKind: row.AuthorKind, AuthorName: row.AuthorName,
+			Total: total, LastUpdatedAt: lastUpdated,
+		})
+	}
+	return out, nil
+}
+
+func (q *fakeQuerier) SummarizeTicketComments(
+	_ context.Context, _ string,
+) (gen.SummarizeTicketCommentsRow, error) {
+	q.opLog = append(q.opLog, "SummarizeTicketComments")
+	if q.ticket.commentErr != nil {
+		return gen.SummarizeTicketCommentsRow{}, q.ticket.commentErr
+	}
+	var lastUpdated pgtype.Timestamptz
+	for _, row := range q.ticket.commentRows {
+		if !lastUpdated.Valid || row.UpdatedAt.Time.After(lastUpdated.Time) {
+			lastUpdated = row.UpdatedAt
+		}
+	}
+	return gen.SummarizeTicketCommentsRow{
+		Total: int64(len(q.ticket.commentRows)), LastUpdatedAt: lastUpdated,
+	}, nil
+}
+
+func (q *fakeQuerier) GetTicketComment(
+	_ context.Context, arg gen.GetTicketCommentParams,
+) (gen.GetTicketCommentRow, error) {
+	q.opLog = append(q.opLog, "GetTicketComment")
+	i := q.ticket.findComment(arg.ID)
+	if i < 0 {
+		return gen.GetTicketCommentRow{}, pgx.ErrNoRows
+	}
+	return q.ticket.commentRows[i], nil
+}
+
+func (q *fakeQuerier) CommentRepliableInTicket(
+	_ context.Context, arg gen.CommentRepliableInTicketParams,
+) (bool, error) {
+	q.opLog = append(q.opLog, "CommentRepliableInTicket")
+	return q.ticket.repliable[arg.ReplyToID], nil
+}
+
+// UpdateComment は COALESCE の意味どおりに適用する。
+//
+// **deleted_at IS NULL の条件も写す**（comment.sql）。削除済みへの PATCH が
+// 行数0 で返ることを、フェイクの上でも確かめられるようにするため。
+func (q *fakeQuerier) UpdateComment(
+	_ context.Context, arg gen.UpdateCommentParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateComment")
+	q.ticket.commentUpdate = append(q.ticket.commentUpdate, arg)
+	i := q.ticket.findComment(arg.ID)
+	if i < 0 || q.ticket.commentRows[i].DeletedAt.Valid {
+		return 0, nil
+	}
+	row := &q.ticket.commentRows[i]
+	if arg.BodyMd.Valid {
+		row.BodyMd = arg.BodyMd.String
+	}
+	if arg.Kind.Valid {
+		row.Kind = arg.Kind.String
+	}
+	return 1, nil
+}
+
+func (q *fakeQuerier) SoftDeleteComment(
+	_ context.Context, arg gen.SoftDeleteCommentParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "SoftDeleteComment")
+	q.ticket.commentDelete = append(q.ticket.commentDelete, arg)
+	i := q.ticket.findComment(arg.ID)
+	if i < 0 || q.ticket.commentRows[i].DeletedAt.Valid {
+		return 0, nil
+	}
+	q.ticket.commentRows[i].DeletedAt = pgtype.Timestamptz{Time: fakeNow, Valid: true}
+	return 1, nil
+}
+
+// ── 完了条件（手順18a。ApiDesign.md 9.9）───────────────────────
+
+func (q *fakeQuerier) ListTicketDoD(
+	_ context.Context, _ string,
+) ([]gen.ListTicketDoDRow, error) {
+	q.opLog = append(q.opLog, "ListTicketDoD")
+	if q.ticket.dodErr != nil {
+		return nil, q.ticket.dodErr
+	}
+	out := make([]gen.ListTicketDoDRow, 0, len(q.ticket.dodRows))
+	for _, row := range q.ticket.dodRows {
+		out = append(out, gen.ListTicketDoDRow(row))
+	}
+	return out, nil
+}
+
+func (q *fakeQuerier) GetTicketDoDItem(
+	_ context.Context, arg gen.GetTicketDoDItemParams,
+) (gen.GetTicketDoDItemRow, error) {
+	q.opLog = append(q.opLog, "GetTicketDoDItem")
+	i := q.ticket.findDoD(arg.ID)
+	if i < 0 {
+		return gen.GetTicketDoDItemRow{}, pgx.ErrNoRows
+	}
+	return q.ticket.dodRows[i], nil
+}
+
+func (q *fakeQuerier) NextDoDSortOrder(_ context.Context, _ string) (int32, error) {
+	q.opLog = append(q.opLog, "NextDoDSortOrder")
+	if q.ticket.dodNextSrt == 0 {
+		return 10, nil
+	}
+	return q.ticket.dodNextSrt, nil
+}
+
+func (q *fakeQuerier) CreateDoDItem(_ context.Context, arg gen.CreateDoDItemParams) error {
+	q.opLog = append(q.opLog, "CreateDoDItem")
+	q.ticket.dodCreated = append(q.ticket.dodCreated, arg)
+	q.ticket.dodRows = append(q.ticket.dodRows, gen.GetTicketDoDItemRow{
+		ID: arg.ID, Type: arg.Type, Body: arg.Body,
+		IsSatisfied: arg.IsSatisfied, SortOrder: arg.SortOrder,
+		CreatedAt: pgtype.Timestamptz{Time: fakeNow, Valid: true},
+		UpdatedAt: pgtype.Timestamptz{Time: fakeNow, Valid: true},
+	})
+	return nil
+}
+
+// UpdateDoDItem は satisfied_set の束ねを実装と同じ形で写す。
+//
+// **is_satisfied / satisfied_at / satisfied_by が3つ同時に動くこと**を、
+// フェイクの上でも確かめられるようにするためである（dod.sql）。
+func (q *fakeQuerier) UpdateDoDItem(
+	_ context.Context, arg gen.UpdateDoDItemParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateDoDItem")
+	q.ticket.dodUpdated = append(q.ticket.dodUpdated, arg)
+	i := q.ticket.findDoD(arg.ID)
+	if i < 0 {
+		return 0, nil
+	}
+	row := &q.ticket.dodRows[i]
+	if arg.Body.Valid {
+		row.Body = arg.Body.String
+	}
+	if arg.SortOrder.Valid {
+		row.SortOrder = arg.SortOrder.Int32
+	}
+	if arg.SatisfiedSet {
+		row.IsSatisfied = arg.IsSatisfied
+		if arg.IsSatisfied {
+			row.SatisfiedAt = pgtype.Timestamptz{Time: fakeNow, Valid: true}
+			row.SatisfiedBy = arg.SatisfiedBy
+		} else {
+			row.SatisfiedAt = pgtype.Timestamptz{}
+			row.SatisfiedBy = pgtype.Text{}
+		}
+	}
+	return 1, nil
+}
+
+func (q *fakeQuerier) DeleteDoDItem(
+	_ context.Context, arg gen.DeleteDoDItemParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "DeleteDoDItem")
+	q.ticket.dodDeleted = append(q.ticket.dodDeleted, arg)
+	i := q.ticket.findDoD(arg.ID)
+	if i < 0 {
+		return 0, nil
+	}
+	q.ticket.dodRows = append(q.ticket.dodRows[:i], q.ticket.dodRows[i+1:]...)
+	return 1, nil
+}
+
+// ── チケット間リンク（手順18a。ApiDesign.md 9.10.1）─────────────
+
+func (q *fakeQuerier) ListTicketLinks(
+	_ context.Context, _ string,
+) ([]gen.ListTicketLinksRow, error) {
+	q.opLog = append(q.opLog, "ListTicketLinks")
+	if q.ticket.linkErr != nil {
+		return nil, q.ticket.linkErr
+	}
+	return q.ticket.linkRows, nil
+}
+
+func (q *fakeQuerier) GetTicketLink(
+	_ context.Context, arg gen.GetTicketLinkParams,
+) (gen.GetTicketLinkRow, error) {
+	q.opLog = append(q.opLog, "GetTicketLink")
+	i := q.ticket.findLink(arg.ID)
+	if i < 0 {
+		return gen.GetTicketLinkRow{}, pgx.ErrNoRows
+	}
+	row := q.ticket.linkRows[i]
+	return gen.GetTicketLinkRow{
+		ID: row.ID, LinkType: row.LinkType, LagDays: row.LagDays,
+		Origin: row.Origin, CreatedAt: row.CreatedAt,
+		Direction: row.Direction, TicketSeq: row.TicketSeq, TicketTitle: row.TicketTitle,
+	}, nil
+}
+
+func (q *fakeQuerier) TicketLinkExists(
+	_ context.Context, _ gen.TicketLinkExistsParams,
+) (bool, error) {
+	q.opLog = append(q.opLog, "TicketLinkExists")
+	return q.ticket.linkExists, nil
+}
+
+func (q *fakeQuerier) CreateTicketLink(_ context.Context, arg gen.CreateTicketLinkParams) error {
+	q.opLog = append(q.opLog, "CreateTicketLink")
+	q.ticket.linkCreated = append(q.ticket.linkCreated, arg)
+	// **応答は一覧から拾う**（links.go）ので、行を足しておかないと
+	// 「作成したリンクを読めない」で落ちる。相手の要約は seq から作る。
+	q.ticket.linkRows = append(q.ticket.linkRows, gen.ListTicketLinksRow{
+		ID: arg.ID, DirectionRank: 0, Direction: "outgoing",
+		LinkType: arg.LinkType, LagDays: arg.LagDays, Origin: arg.Origin,
+		CreatedAt:       pgtype.Timestamptz{Time: fakeNow, Valid: true},
+		TicketSeq:       q.ticket.seqOf(arg.TargetTicketID),
+		TicketTitle:     q.ticket.briefByID[arg.TargetTicketID].Title,
+		TicketType:      q.ticket.briefByID[arg.TargetTicketID].Type,
+		TicketStatusKey: q.ticket.briefByID[arg.TargetTicketID].StatusKey,
+	})
+	return nil
+}
+
+func (q *fakeQuerier) DeleteTicketLink(
+	_ context.Context, arg gen.DeleteTicketLinkParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "DeleteTicketLink")
+	q.ticket.linkDeleted = append(q.ticket.linkDeleted, arg)
+	i := q.ticket.findLink(arg.ID)
+	if i < 0 {
+		return 0, nil
+	}
+	q.ticket.linkRows = append(q.ticket.linkRows[:i], q.ticket.linkRows[i+1:]...)
+	return 1, nil
+}
+
+// CreateComment は 17a（遷移コメント）と 18a（9.8 の投稿）の両方が通る。
+//
+// **comments と commentRows の両方へ書く。** 前者は「遷移が何を作ったか」を
+// 測るための記録（17a から在る）、後者は 9.8 が読み直す行である——
+// **書き込みが読み取りに反映されないと、POST の応答を検証できない。**
+//
+// author の表示名はフェイクが知らないので固定値を入れる。名前そのものを
+// 測るテストは commentRows を直接組み立てる（sampleComment）。
 func (q *fakeQuerier) CreateComment(_ context.Context, arg gen.CreateCommentParams) error {
 	q.opLog = append(q.opLog, "CreateComment")
 	q.ticket.comments = append(q.ticket.comments, arg)
 	q.ticket.commentNum++
+	q.ticket.commentRows = append(q.ticket.commentRows, gen.GetTicketCommentRow{
+		ID: arg.ID, BodyMd: arg.BodyMd, Kind: arg.Kind,
+		InReplyTo: arg.InReplyTo, Origin: arg.Origin,
+		CreatedAt: pgtype.Timestamptz{Time: fakeNow, Valid: true},
+		UpdatedAt: pgtype.Timestamptz{Time: fakeNow, Valid: true},
+		AuthorID:  arg.AuthorID, AuthorKind: "user", AuthorName: "田中",
+	})
 	return nil
 }
 

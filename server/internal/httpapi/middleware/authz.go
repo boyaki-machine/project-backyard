@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -124,17 +126,54 @@ func RequirePermissionUnlessQuery(q gen.Querier, permission, param, exempt strin
 //
 // **Authenticate の後、かつ chi のルートパターンに {key} を含むルートで使うこと。**
 func RequireProjectPermission(q gen.Querier, permission string) func(http.Handler) http.Handler {
+	return requireProjectPermissions(q, "RequireProjectPermission", permission)
+}
+
+// RequireAnyProjectPermission は、列挙した権限の**いずれか1つ**を要求する
+// （手順18a）。
+//
+//	r.With(middleware.RequireAnyProjectPermission(q,
+//	     "comment.delete_any", "comment.edit_own")).
+//	  Delete("/projects/{key}/tickets/{seq}/comments/{id}", h.deleteTicketComment)
+//
+// **ApiDesign.md 9.8 のコメント削除だけが OR の必要権限を持つ**——
+// 「comment.delete_any、または comment.edit_own かつ自分のもの」である。
+// 「自分のものか」は行を読まないと決まらないのでハンドラ側で見るが、
+// **どの権限で通りうるかはルート定義に残す**（Design.md 6.4.4 の
+// 「routes.go を眺めるだけで必要権限が分かる」）。
+//
+// **AND ではなく OR である。** 追加の条件を AND で重ねたいときは、
+// RequireProjectPermission を .With で並べれば済む。
+func RequireAnyProjectPermission(q gen.Querier, permissions ...string) func(http.Handler) http.Handler {
+	return requireProjectPermissions(q, "RequireAnyProjectPermission", permissions...)
+}
+
+// requireProjectPermissions は上2つの共通部分。permissions のいずれか1つを
+// 満たせば通す（1つだけ渡せば RequireProjectPermission と同じ意味になる）。
+//
+// name は内部エラーと監査に載せる呼び出し元の名前である。
+func requireProjectPermissions(q gen.Querier, name string, permissions ...string) func(http.Handler) http.Handler {
+	// 監査（permission.denied）に載せる表記。OR であることが読めるように
+	// 区切りを入れる——required_permission が1語でないことは、記録を読む人に
+	// とって「どちらでもよかった」という情報である。
+	label := strings.Join(permissions, " or ")
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			p := requirePrincipal(w, r, fmt.Sprintf("RequireProjectPermission(%s)", permission))
+			p := requirePrincipal(w, r, fmt.Sprintf("%s(%s)", name, label))
 			if p == nil {
+				return
+			}
+			if len(permissions) == 0 {
+				apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(
+					fmt.Errorf("%s に権限が1つも渡されていない", name)))
 				return
 			}
 
 			key := chi.URLParam(r, ProjectKeyURLParam)
 			if key == "" {
 				apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(
-					fmt.Errorf("RequireProjectPermission(%s) のルートに {%s} が無い", permission, ProjectKeyURLParam)))
+					fmt.Errorf("%s(%s) のルートに {%s} が無い", name, label, ProjectKeyURLParam)))
 				return
 			}
 
@@ -152,7 +191,7 @@ func RequireProjectPermission(q gen.Querier, permission string) func(http.Handle
 					// プロジェクトそのものが無い。存在しないことは隠さなくてよいが、
 					// 到達不可のときと同じ応答にしておかないと、応答の違いで
 					// 「在るが見えない」と「無い」を区別できてしまう。
-					denyNotFound(w, r, q, permission, "", key, "プロジェクトが存在しない")
+					denyNotFound(w, r, q, label, "", key, "プロジェクトが存在しない")
 					return
 				}
 			}
@@ -161,19 +200,22 @@ func RequireProjectPermission(q gen.Querier, permission string) func(http.Handle
 			// Reachable にも畳み込んであるが（projectAuthz を参照）、
 			// 監査に残す理由を「非メンバー」と取り違えないよう分けて判定する。
 			if !p.CanReachProject(a.ProjectID) {
-				denyNotFound(w, r, q, permission, a.ProjectID, key,
+				denyNotFound(w, r, q, label, a.ProjectID, key,
 					"トークンが別のプロジェクトに紐づいている（access_token.project_id）")
 				return
 			}
 
 			if !a.Reachable {
-				denyNotFound(w, r, q, permission, a.ProjectID, key,
+				denyNotFound(w, r, q, label, a.ProjectID, key,
 					"プロジェクトのメンバーではなく、アドミニストレータでもない")
 				return
 			}
 
-			if !auth.HasPermission(a.Permissions, permission) {
-				denyForbidden(w, r, q, permission, a.ProjectID, key)
+			granted := slices.ContainsFunc(permissions, func(perm string) bool {
+				return auth.HasPermission(a.Permissions, perm)
+			})
+			if !granted {
+				denyForbidden(w, r, q, label, a.ProjectID, key)
 				return
 			}
 

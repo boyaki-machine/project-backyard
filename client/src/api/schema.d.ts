@@ -963,6 +963,364 @@ export interface paths {
         patch: operations["patchTicketReference"];
         trace?: never;
     };
+    "/api/v1/projects/{key}/tickets/{seq}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        /**
+         * コメントの一覧
+         * @description チケットのコメント（ApiDesign.md 9.8）。**必要権限は `ticket.view`**。
+         *
+         *     **チケットの子資源で唯一 2.6 のページネーションと 2.7 の `ETag` を持つ。**
+         *     DoD（9.9）・リンク（9.10.1）・外部参照（9.10.2）は1チケットあたり数件に
+         *     収まるが、**コメントは議論の量だけ増える**。`ETag` は Phase 2 の
+         *     エージェントが「新しいコメントが付いたか」を安く見る口になる。
+         *
+         *     **許可する `sort` は `created_at` だけ**で、既定は `asc`・`per_page=50`。
+         *
+         *     **削除済みも `items` に残る**（`body_md` が `null`、`deleted_at` に値）。
+         *     画面は「削除されました」と表示する（GuiDesign.md 5.5）。**`total` にも数える**
+         *     ——`items` に残す以上、外すとページの件数と合わない。**9.5.1 の
+         *     `comment_count` だけは `deleted_at IS NULL` で数える**（読めるコメントの件数）。
+         *
+         *     Phase 1 は `If-None-Match` を解釈せず、ヘッダだけ出す（9.2.5 と同じ）。
+         */
+        get: operations["listTicketComments"];
+        put?: never;
+        /**
+         * コメントの投稿
+         * @description コメントを1件投稿する（ApiDesign.md 9.8）。**必要権限は `comment.create`**。
+         *
+         *     **`origin` はリクエストで指定できない**——呼び出し元のアクター種別
+         *     （`user` / `agent`）から決まる。人が `agent` を名乗れると、
+         *     GuiDesign.md 5.5 の「エージェントのコメントを角丸四角で区別する」が
+         *     意味を失う。
+         *
+         *     **`in_reply_to` の相手は同じチケットの、削除されていないコメントであること。**
+         *     満たさない場合は 422 `validation_failed`、`details[].code` は `not_found`。
+         *     **存在しない ID・他チケットの ID・削除済みを区別しない**（Design.md 6.4.5）。
+         *
+         *     **親チケットの `version` と `updated_at` は動かない**（9.10.2 と同じ）。
+         *
+         *     投稿は `activity` に記録する（`action='update'` / `field='comment'`、
+         *     `new_value` は `<kind の表示名>: <本文の先頭40字>`）。
+         */
+        post: operations["createTicketComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/comments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /** @description コメントの ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。 */
+                id: components["parameters"]["TicketCommentID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * コメントの削除
+         * @description コメントを論理削除する（ApiDesign.md 9.8、DbDesign.md 4.6 / 6.7）。
+         *
+         *     **必要権限は OR である**——`comment.delete_any`、**または** `comment.edit_own`
+         *     かつ自分のもの。ルート定義には両方を並べ（`RequireAnyProjectPermission`）、
+         *     どちらか一方でも持っていればミドルウェアを通す。**「自分のものか」は行を
+         *     読まないと決まらない**ので、その判定だけをハンドラで行う——
+         *     `comment.delete_any` を持たない呼び出し元が他人のコメントを消そうとした
+         *     場合は 403 `forbidden`。
+         *
+         *     **削除しても行は残る。** `GET` の `items` に `body_md: null` と
+         *     `deleted_at` を持つ形で並び続ける。**二重削除は 404**——`204` で通ると
+         *     `activity` に同じ削除が2行並んで履歴が読めなくなる。
+         *
+         *     削除も `activity` に記録する（`old_value` に要約、`new_value` は `null`）。
+         */
+        delete: operations["deleteTicketComment"];
+        options?: never;
+        head?: never;
+        /**
+         * コメントの更新
+         * @description コメントを部分更新する（ApiDesign.md 9.8）。**必要権限は `comment.edit_own`
+         *     で、自分が投稿したものだけ**——他人のものは 403 `forbidden`（404 に倒さない。
+         *     同じコメント欄に並んで見えている行であり、存在を隠す意味がない）。
+         *
+         *     **変えられるのは `body_md` と `kind` だけである。** `in_reply_to` を送ると
+         *     422 `validation_failed`、`details[].code` は `immutable_field`——返信先を
+         *     後から付け替えるとスレッドの形が変わり、既に読まれた並びが崩れる。
+         *
+         *     **削除済みへの `PATCH` は 404**（論理削除でも「もう無い」として扱う）。
+         *
+         *     **`If-Match` は要らない**（`comment` は `version` 列を持たない。2.8）。
+         *
+         *     **値が実際に変わったときだけ `activity` に記録する**（9.5.2 と同じ扱い）。
+         */
+        patch: operations["patchTicketComment"];
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/dod": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 完了条件（DoD）の一覧
+         * @description チケットの完了条件（ApiDesign.md 9.9、DbDesign.md 6.11）。**必要権限は
+         *     `ticket.view`**。
+         *
+         *     **このチケットを「終わった」と言うための条件の一覧である。** 人が列挙して
+         *     チェックし、Phase 2 でエージェントが `assertion` / `artifact` により自動
+         *     判定する土台になる（Requirements.md 10.5.2）。
+         *
+         *     **`items[]` は `sort_order` → `created_at` の昇順。**
+         *
+         *     **ページネーションも `ETag` も持たない。** 1チケットあたり数件に収まり、
+         *     **同じ内容が 9.5.1 の詳細応答の `dod` にも入る**ので、詳細画面はこの
+         *     エンドポイントを呼ばない。
+         */
+        get: operations["listTicketDoD"];
+        put?: never;
+        /**
+         * 完了条件の追加
+         * @description 完了条件を1件足す（ApiDesign.md 9.9）。**必要権限は `ticket.edit`**。
+         *
+         *     **Phase 1 が受け付ける `type` は `manual` だけである**（省略時も `manual`）。
+         *     `task_ref` / `assertion` / `artifact` / `review` は 422 `validation_failed`、
+         *     `details[].code` は `phase_2_only`。**綴り違いは `invalid`** で返し分ける
+         *     ——「今後使える」と「正しくない」は、呼び出し元が取る行動が違う。
+         *
+         *     **`sort_order` を省略すると末尾**（現在の最大値 + 10。9.10.2 と同じ採番）。
+         *
+         *     **`is_satisfied` を `true` で作ると、満たした人も同時に記録する**
+         *     ——「満たしたのに満たした人がいない」行を作らない。
+         */
+        post: operations["createDoDItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/dod/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /** @description 完了条件の ULID（ApiDesign.md 9.1）。 */
+                id: components["parameters"]["TicketDoDID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 完了条件の削除
+         * @description 完了条件を1件消す（ApiDesign.md 9.9）。**必要権限は `ticket.edit`**。
+         *
+         *     削除も `activity` に記録する（`old_value` に要約、`new_value` は `null`）。
+         */
+        delete: operations["deleteDoDItem"];
+        options?: never;
+        head?: never;
+        /**
+         * 完了条件の更新
+         * @description 完了条件を部分更新する（ApiDesign.md 9.9）。**必要権限は `ticket.edit`**。
+         *
+         *     **`is_satisfied` を `true` にすると、サーバが `satisfied_at` と
+         *     `satisfied_by`（呼び出し元）を設定する。`false` に戻すと両方 `null` へ戻る。**
+         *     3つは同時に動き、別々には送れない。
+         *
+         *     **`type` は作成後に変えられない**（422 `immutable_field`）。Phase 1 で
+         *     取りうる値が1つしかない以上、変更を受け付けても何も起こせない。
+         *
+         *     **`If-Match` は要らない**（`dod_item` は `version` 列を持たない。2.8）。
+         *
+         *     **並び順だけの変更は `activity` に記録しない**（`move`（9.4）を記録しない
+         *     のと同じ理由）。
+         */
+        patch: operations["patchDoDItem"];
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 関連チケットの一覧
+         * @description チケット間リンク（ApiDesign.md 9.10.1、DbDesign.md 6.6）。**必要権限は
+         *     `ticket.view`**。
+         *
+         *     **双方向を1本で返す**——当該チケットが `source` である行（`outgoing`）と
+         *     `target` である行（`incoming`）の両方。GuiDesign.md 5.5 の「関連チケット」は
+         *     「ブロック元」と「ブロック先」を同じリストに並べるため、2回問い合わせると
+         *     N+1 になる（設計方針3）。
+         *
+         *     **`ticket` に入るのは常に相手であって自分ではない。**
+         *
+         *     **`items[]` は `direction`（`outgoing` → `incoming`）、同じ向きの中は
+         *     `link_type` → 相手の `seq` の昇順。**
+         *
+         *     **ページネーションも `ETag` も持たない。** **同じ内容が 9.5.1 の詳細応答の
+         *     `links` にも入る**ので、詳細画面はこのエンドポイントを呼ばない。
+         */
+        get: operations["listTicketLinks"];
+        put?: never;
+        /**
+         * 関連チケットの追加
+         * @description リンクを1件足す（ApiDesign.md 9.10.1）。**必要権限は `ticket.edit`**。
+         *
+         *     **当該チケットが常に `source` になる。** `incoming` の行を直接作る手段は
+         *     置かない——相手側のチケットから `outgoing` として作れば同じ行になる。
+         *
+         *     **`target_seq` は同一プロジェクト内に存在すること**（無ければ 422、
+         *     `details[].code` は `not_found`）。**自分自身は 422 `self_link`**。
+         *
+         *     **同じ `(source, target, link_type)` が既にあれば 409 `already_exists`**
+         *     （`uq_ticket_link`）。`conflict` は使わない——あちらは `If-Match` 不一致の
+         *     ような**状態**の競合で、こちらは**値**が既存の行と衝突している。
+         *
+         *     **`link_type` は7種すべて受ける。** ただし**Phase 1 の画面が出すのは
+         *     `relates` / `duplicates` / `blocks` の3つだけ**である（GuiDesign.md 5.5）
+         *     ——`FS` / `SS` / `FF` / `SF` と `lag_days` はガントの依存線のためのもので、
+         *     ガントは Phase 2。**API を絞らないのは、MCP とエージェントがガント用の
+         *     依存を先に積むことを妨げないためである。**
+         *
+         *     **親チケットの `version` と `updated_at` は動かない。相手側も動かない。**
+         */
+        post: operations["createTicketLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/links/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /**
+                 * @description チケット間リンクの ULID（ApiDesign.md 9.1）。**`direction` を問わない**
+                 *     ——`incoming` の行の id もここへ渡せる（9.10.1）。
+                 */
+                id: components["parameters"]["TicketLinkID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 関連チケットの削除
+         * @description リンクを1件消す（ApiDesign.md 9.10.1）。**必要権限は `ticket.edit`**。
+         *
+         *     **`direction` を問わない。** `incoming` の行——相手のチケットが `source` で
+         *     ある行——もここから消せる。GuiDesign.md 5.5 が両方を同じリストに並べる
+         *     以上、**片方だけ消せないと画面に「消せない行」が混ざる。**
+         *
+         *     削除も `activity` に記録する（`old_value` は `<link_type> <相手の完全形ID>`、
+         *     `new_value` は `null`）。**相手のチケットの履歴には書かない**——1回の操作で
+         *     2行増えると、同じ出来事が二重に見える。
+         *
+         *     **`PATCH` は無い。** 一意制約が `(source, target, link_type)` である以上、
+         *     `link_type` の変更は別の行になるのと同じである。
+         */
+        delete: operations["deleteTicketLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{key}/tickets/{seq}/transitions": {
         parameters: {
             query?: never;
@@ -2472,20 +2830,26 @@ export interface components {
          *     手順16b では `POST /tickets` の応答として返る（9.3 が「応答は 9.5 の `GET` と
          *     同形式」と定めるため）。`GET /tickets/:seq` そのものは手順17 で足す。
          *
-         *     **`dod` / `links` は手順18 まで空である。** 中身を作るのは 9.9 / 9.10.1 だが、
-         *     作りたてのチケットではどちらも空が正しい値であり、手順18 で項目が生えたように
-         *     見せないほうが消費者にとって安定する。**`references` は手順17c から、
-         *     `comment_count` は手順17a から実数である。**
+         *     **`dod` / `links` は手順18a から実数である**（9.9 / 9.10.1）。それまでは
+         *     空配列を返していた——作りたてのチケットではどちらも空が正しい値であり、
+         *     実装が入ったときに項目が生えたように見せないためである。
+         *     **`references` は手順17c から、`comment_count` は手順17a から実数である。**
          */
         TicketDetail: components["schemas"]["Ticket"] & {
             /** @description 本文（Markdown ソース）。 */
             body_md: string | null;
             parent: components["schemas"]["TicketBrief"] | null;
             children: components["schemas"]["TicketChild"][];
-            /** @description 完了条件（ApiDesign.md 9.9）。**要素の形は手順18 で決まる。** */
-            dod: unknown[];
-            /** @description 関連リンク（ApiDesign.md 9.10.1）。**要素の形は手順18 で決まる。** */
-            links: unknown[];
+            /**
+             * @description 完了条件（ApiDesign.md 9.9）。**手順18a から実数を返す。**
+             *     `sort_order` → `created_at` の昇順。
+             */
+            dod: components["schemas"]["TicketDoDItem"][];
+            /**
+             * @description 関連チケット（ApiDesign.md 9.10.1）。**手順18a から実数を返す。**
+             *     **双方向**（`outgoing` → `incoming`）で、`ticket` に入るのは相手である。
+             */
+            links: components["schemas"]["TicketLink"][];
             /**
              * @description 外部参照（ApiDesign.md 9.10.2）。**手順17c から実数を返す。**
              *     `kind` 昇順、同じ `kind` の中は `sort_order` → `created_at` の昇順。
@@ -2500,6 +2864,249 @@ export interface components {
              * @description コメント件数（本文は含めない。ApiDesign.md 9.8）。
              */
             comment_count: number;
+        };
+        /**
+         * @description チケットのコメント（ApiDesign.md 9.8、DbDesign.md 6.7）。**人とエージェントが
+         *     読み書きする一次資料である**（Requirements.md 6.5 / 10章）。
+         */
+        TicketComment: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /**
+             * @description 本文（Markdown ソース）。**削除済みは `null`**——行は `items` に残り、
+             *     画面は「削除されました」と表示する（GuiDesign.md 5.5）。
+             *     **DB には本文が残っている**（列が NOT NULL のため）。
+             * @example レビューをお願いします
+             */
+            body_md: string | null;
+            /**
+             * @description 情報の類型（Requirements.md 6.5）。Phase 3 の LLM 分類・要約がこの列を
+             *     土台にする。**`progress` は 9.6 の遷移コメントが使う。**
+             * @enum {string}
+             */
+            kind: "discussion" | "decision" | "artifact" | "caveat" | "reference" | "progress";
+            /**
+             * @description 返信先のコメントの ULID。**作成後は変えられない**（`PATCH` で送ると
+             *     422 `immutable_field`）。
+             */
+            in_reply_to: string | null;
+            /**
+             * @description **呼び出し元のアクター種別から決まる**（リクエストでは指定できない）。
+             *     画面はエージェントのコメントをアバターの形（角丸四角）で人間と区別する
+             *     （GuiDesign.md 5.5）。
+             * @enum {string}
+             */
+            origin: "human" | "agent";
+            /**
+             * @description 投稿者。**`null` にならない**——`comment.author_id` は NOT NULL かつ
+             *     `ON DELETE RESTRICT` で、投稿者不在のコメントを DB が許さない
+             *     （DbDesign.md 6.7）。
+             */
+            author: components["schemas"]["ActorRef"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * Format: date-time
+             * @description 論理削除の時刻（DbDesign.md 4.6 / 6.7）。未削除なら `null`。
+             */
+            deleted_at: string | null;
+        };
+        /**
+         * @description コメントの一覧（ApiDesign.md 9.8）。**チケットの子資源で唯一 2.6 の
+         *     ページネーションを持つ**——コメントは議論の量だけ増えるためである。
+         */
+        TicketCommentList: {
+            items: components["schemas"]["TicketComment"][];
+            page: number;
+            per_page: number;
+            /**
+             * @description **削除済みも数える**（`items` に残す以上、外すとページの件数と合わない）。
+             *     **9.5.1 の `comment_count` とは答えが違う**——あちらは
+             *     `deleted_at IS NULL` で数え、「読めるコメントが何件あるか」を答える。
+             */
+            total: number;
+            total_pages: number;
+        };
+        /** @description コメントの投稿（ApiDesign.md 9.8）。 */
+        CreateTicketCommentRequest: {
+            /** @description 本文（Markdown ソース）。空白だけは 422 `required`。 */
+            body_md: string;
+            /**
+             * @default discussion
+             * @enum {string}
+             */
+            kind: "discussion" | "decision" | "artifact" | "caveat" | "reference" | "progress";
+            /**
+             * @description **同じチケットの、削除されていないコメントの ULID であること。**
+             *     満たさない場合は 422 `validation_failed`、`details[].code` は `not_found`。
+             */
+            in_reply_to?: string | null;
+        };
+        /**
+         * @description コメントの部分更新（ApiDesign.md 9.8）。**送られたフィールドだけを更新する。**
+         *     **`in_reply_to` を含めると 422 `immutable_field`。**
+         */
+        PatchTicketCommentRequest: {
+            body_md?: string;
+            /** @enum {string} */
+            kind?: "discussion" | "decision" | "artifact" | "caveat" | "reference" | "progress";
+        };
+        /**
+         * @description チケットの完了条件（ApiDesign.md 9.9、DbDesign.md 6.11）。
+         *
+         *     **`config` / `evidence` / `origin` は返さない**（列としては残る）。いずれも
+         *     Phase 2 の型と AI提案のためのもので、**Phase 1 の API が受け付けない値を
+         *     応答に並べると「使える」ように見える。**
+         */
+        TicketDoDItem: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /**
+             * @description **Phase 1 は `manual` のみ。** `task_ref` / `assertion` / `artifact` /
+             *     `review` は Phase 2（Requirements.md 10.5.2）で、`DbDesign.md` 6.11 の
+             *     `CHECK` には既に含まれている。
+             * @enum {string}
+             */
+            type: "manual";
+            /** @example ユニットテストが通ること */
+            body: string;
+            is_satisfied: boolean;
+            /**
+             * Format: date-time
+             * @description `is_satisfied` を `true` にした時刻。`false` に戻すと `null`。
+             */
+            satisfied_at: string | null;
+            /**
+             * @description チェックした人。**`ON DELETE SET NULL`** なので、その人を消した後は
+             *     `null` になる——**条件を満たした事実は消えず、誰が満たしたかだけが
+             *     分からなくなる。**
+             */
+            satisfied_by: components["schemas"]["ActorRef"] | null;
+            /** Format: int32 */
+            sort_order: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /**
+         * @description 完了条件の一覧（ApiDesign.md 9.9）。**ページネーションも `ETag` も持たない**
+         *     ——1チケットあたり数件に収まり、詳細応答（9.5.1）にも同じ一覧が入る。
+         */
+        TicketDoDList: {
+            items: components["schemas"]["TicketDoDItem"][];
+        };
+        /** @description 完了条件の追加（ApiDesign.md 9.9）。 */
+        CreateTicketDoDRequest: {
+            /**
+             * @description **Phase 2 の型を送ると 422 `phase_2_only`**、綴り違いは `invalid`。
+             * @default manual
+             * @enum {string}
+             */
+            type: "manual";
+            body: string;
+            /**
+             * @description **`true` で作ると、満たした人（呼び出し元）も同時に記録する**
+             *     ——「満たしたのに満たした人がいない」行を作らない。
+             * @default false
+             */
+            is_satisfied: boolean;
+            /**
+             * Format: int32
+             * @description 省略時は末尾（現在の最大値 + 10）。
+             */
+            sort_order?: number;
+        };
+        /**
+         * @description 完了条件の部分更新（ApiDesign.md 9.9）。**`type` を含めると 422
+         *     `immutable_field`。**
+         */
+        PatchTicketDoDRequest: {
+            body?: string;
+            /**
+             * @description **`satisfied_at` と `satisfied_by` が同時に動く。** `true` でサーバが
+             *     両方を設定し、`false` で両方 `null` へ戻す。
+             */
+            is_satisfied?: boolean;
+            /**
+             * Format: int32
+             * @description **これだけを変えた場合、`activity` に記録しない**（`move`（9.4）を
+             *     記録しないのと同じ理由）。
+             */
+            sort_order?: number;
+        };
+        /**
+         * @description リンクの相手のチケット（ApiDesign.md 9.10.1）。**9.5.1 の `parent` と同じ形**
+         *     で、`type` を持つのは画面が行の先頭に種別アイコンを出すためである
+         *     （GuiDesign.md 5.4 / 5.5）。
+         */
+        TicketLinkTicketRef: {
+            /** Format: int32 */
+            seq: number;
+            title: string;
+            /** @enum {string} */
+            type: "epic" | "story" | "task";
+            status: components["schemas"]["TicketStatus"];
+        };
+        /** @description チケット間リンク（ApiDesign.md 9.10.1、DbDesign.md 6.6）。 */
+        TicketLink: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /**
+             * @description **「相手がどちら側か」を表す**——`outgoing` なら `ticket` が `target`、
+             *     `incoming` なら `ticket` が `source`。どちらの場合も `ticket` に入るのは
+             *     **相手**であり、自分は入らない。
+             * @enum {string}
+             */
+            direction: "outgoing" | "incoming";
+            /**
+             * @description **`FS` / `SS` / `FF` / `SF` はガント用の依存**（Phase 2）。
+             *     **Phase 1 の画面が出すのは `relates` / `duplicates` / `blocks` の3つだけ**
+             *     である（GuiDesign.md 5.5）が、**API は7種すべて受ける**。
+             * @enum {string}
+             */
+            link_type: "FS" | "SS" | "FF" | "SF" | "relates" | "duplicates" | "blocks";
+            ticket: components["schemas"]["TicketLinkTicketRef"];
+            /**
+             * Format: int32
+             * @description `FS`〜`SF` のときのみ意味を持つ。Phase 1 に読む画面は無い。
+             */
+            lag_days: number;
+            /**
+             * @description **Phase 1 は `human` のみ作られる**（AI提案の採用・却下は Phase 2）。
+             *     **`comment.origin` とは値域が違う**——あちらは書き手の種別
+             *     （`human` / `agent`）で、こちらは「AIが提案し人がまだ採用していない」
+             *     という状態である。
+             * @enum {string}
+             */
+            origin: "human" | "ai_suggested";
+            /** Format: date-time */
+            created_at: string;
+        };
+        /** @description 関連チケットの一覧（ApiDesign.md 9.10.1）。**双方向を1本で返す。** */
+        TicketLinkList: {
+            items: components["schemas"]["TicketLink"][];
+        };
+        /**
+         * @description 関連チケットの追加（ApiDesign.md 9.10.1）。**当該チケットが常に `source`
+         *     になる。**
+         */
+        CreateTicketLinkRequest: {
+            /**
+             * Format: int32
+             * @description 相手のチケットの `seq`。**同一プロジェクト内に存在すること**（無ければ
+             *     422 `not_found`）。**自分自身は 422 `self_link`。**
+             */
+            target_seq: number;
+            /** @enum {string} */
+            link_type: "FS" | "SS" | "FF" | "SF" | "relates" | "duplicates" | "blocks";
+            /**
+             * Format: int32
+             * @default 0
+             */
+            lag_days: number;
         };
         /**
          * @description チケットから PB の外を指す参照（ApiDesign.md 9.10.2、DbDesign.md 6.12）。
@@ -2929,6 +3536,56 @@ export interface components {
             };
         };
         /**
+         * @description コメントが存在しない（`not_found`）。**削除済みもここへ合流する**
+         *     （ApiDesign.md 9.8）——論理削除でも「もう無い」として扱い、二重削除が
+         *     204 で通らないようにする。他チケットのコメントも同じ 404 に寄せる。
+         */
+        TicketCommentNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
+         * @description 完了条件が存在しない（`not_found`）。他チケットの完了条件も同じ 404 に
+         *     寄せる（Design.md 6.4.5）。
+         */
+        TicketDoDNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
+         * @description 関連チケットのリンクが存在しない（`not_found`）。**このチケットが
+         *     `source` でも `target` でもない行も同じ 404 に寄せる**（ApiDesign.md 9.10.1）。
+         */
+        TicketLinkNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
+         * @description 同じ `(source, target, link_type)` のリンクが既にある（`already_exists`。
+         *     `uq_ticket_link`）。**`conflict` ではない**——あちらは `If-Match` 不一致の
+         *     ような状態の競合で、こちらは値が既存の行と衝突している（ApiDesign.md 9.10.1）。
+         */
+        TicketLinkAlreadyExists: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
          * @description チケットが存在しない（`not_found`）。**他プロジェクトの番号も同じ 404 に寄せる**
          *     ——クエリの `WHERE` が `project_id` を含むため区別が付かず、区別する必要もない
          *     （Design.md 6.4.5）。
@@ -2987,6 +3644,15 @@ export interface components {
          *     外部参照は `seq` に相当する連番を持たない。
          */
         TicketReferenceID: string;
+        /** @description コメントの ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。 */
+        TicketCommentID: string;
+        /** @description 完了条件の ULID（ApiDesign.md 9.1）。 */
+        TicketDoDID: string;
+        /**
+         * @description チケット間リンクの ULID（ApiDesign.md 9.1）。**`direction` を問わない**
+         *     ——`incoming` の行の id もここへ渡せる（9.10.1）。
+         */
+        TicketLinkID: string;
         /**
          * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
          *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
@@ -4442,6 +5108,476 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["TicketReferenceNotFound"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listTicketComments: {
+        parameters: {
+            query?: {
+                page?: number;
+                /** @description 既定 50、上限 200（ApiDesign.md 9.8 / 2.6）。 */
+                per_page?: number;
+                /** @description **`created_at` のみ**（9.8）。他の値は 422。 */
+                sort?: "created_at";
+                order?: "asc" | "desc";
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description コメントの一覧。 */
+            200: {
+                headers: {
+                    /**
+                     * @description `W/"cmt-<page>-<per_page>-<order>-<件数>-<MAX(updated_at) のナノ秒>"`。
+                     *     **論理削除も `updated_at` を動かす**ので、削除が 304 に埋もれない。
+                     */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketCommentList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createTicketComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTicketCommentRequest"];
+            };
+        };
+        responses: {
+            /** @description 作成したコメント。 */
+            201: {
+                headers: {
+                    /** @description 作成したコメントの URL。 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketComment"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteTicketComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /** @description コメントの ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。 */
+                id: components["parameters"]["TicketCommentID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除した（本文なし）。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketCommentNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    patchTicketComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /** @description コメントの ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。 */
+                id: components["parameters"]["TicketCommentID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchTicketCommentRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後のコメント。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketComment"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketCommentNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listTicketDoD: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 完了条件の一覧。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketDoDList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createDoDItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTicketDoDRequest"];
+            };
+        };
+        responses: {
+            /** @description 作成した完了条件。 */
+            201: {
+                headers: {
+                    /** @description 作成した完了条件の URL。 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketDoDItem"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteDoDItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /** @description 完了条件の ULID（ApiDesign.md 9.1）。 */
+                id: components["parameters"]["TicketDoDID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除した（本文なし）。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketDoDNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    patchDoDItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /** @description 完了条件の ULID（ApiDesign.md 9.1）。 */
+                id: components["parameters"]["TicketDoDID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchTicketDoDRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後の完了条件。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketDoDItem"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketDoDNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listTicketLinks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 関連チケットの一覧（双方向）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketLinkList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createTicketLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTicketLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description 作成したリンク。 */
+            201: {
+                headers: {
+                    /** @description 作成したリンクの URL。 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketLink"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            409: components["responses"]["TicketLinkAlreadyExists"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteTicketLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /**
+                 * @description チケット間リンクの ULID（ApiDesign.md 9.1）。**`direction` を問わない**
+                 *     ——`incoming` の行の id もここへ渡せる（9.10.1）。
+                 */
+                id: components["parameters"]["TicketLinkID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除した（本文なし）。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketLinkNotFound"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

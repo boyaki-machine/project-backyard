@@ -672,11 +672,12 @@ func TestTicketDetailIncludesReferences(t *testing.T) {
 	if first["kind"] != "code" || second["kind"] != "doc" {
 		t.Errorf("kind の並び = %v, %v, want code, doc", first["kind"], second["kind"])
 	}
-	// **dod / links は手順18 まで空のまま**（references だけが実数になった）。
+	// **dod / links は手順18a から実数になった。** この素材では入れていないので
+	// 空配列だが、null ではない（消費者にとって形が安定する）。
 	dod, _ := view["dod"].([]any)
 	links, _ := view["links"].([]any)
 	if len(dod) != 0 || len(links) != 0 {
-		t.Errorf("dod = %d件 / links = %d件, want 0 / 0", len(dod), len(links))
+		t.Errorf("dod = %d件 / links = %d件, want 0 / 0（素材に入れていない）", len(dod), len(links))
 	}
 }
 
