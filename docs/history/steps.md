@@ -2308,3 +2308,99 @@ NOT NULL の列は `COALESCE(sqlc.narg(…), 現在値)`、NULL にできる列�
 - **`comment.create` / `ticket.edit` の負の側**——seed の4アカウントはすべてシステムロールが operator 以上で、
   実効権限の和にこの2つが必ず入る（`DbDesign.md` 7.3）。**16c から続く同じ制約**である。
   **`comment.delete_any` だけは負の側を作れており**（pm は持ち member は持たない）、OR の必要権限はそこで測れている
+
+## 手順18b — チケット詳細の3セクションと遷移コメント欄（2026-08-27、`feature/step-18b-ticket-detail-sections`）
+
+**`client/` だけの手順。** API は 18a ですべて通してあり、**新しいエンドポイントは1本も足していない**
+（`docs/openapi.yaml` 不変、`server/` 不変）。生成ずみの型（`schema.d.ts`）をそのまま使った。
+
+### 設計文書の改訂（コードより先に当てきった）
+
+| 文書 | 内容 |
+|---|---|
+| `GuiDesign.md` 5.5 | **「完了条件（DoD）」「関連チケット」「コメント」の3小節を新設**。それまでワイヤーフレームの1行と対応表の1行しか無かった。`link_type` の日本語ラベル表（関連／重複／自先行／自後行）、`kind` の表示名表、返信の両向きリンク、0件のときの扱いを書いた |
+| `GuiDesign.md` 5.5 | 「状態のドロップダウン」の末尾にあった「遷移にコメントを添える欄は手順17b では置かない」を、**「遷移にコメントを添える」小節**へ書き換えた |
+| `GuiDesign.md` 5.5 | ワイヤーフレームの `← 手順18` マーカーを3つ外し、対応表の手順欄を `18` → `18b` に。「まだ実装していないセクションは見出しごと出さない」を**「実装済みは0件でも見出しを出す。ただしコードと子チケットだけは0件で消す」**の基準とともに書き直した |
+| `GuiDesign.md` 6.3 | 破壊的操作の表に**3行**追加（コメント／完了条件／関連チケットの削除） |
+| `GuiDesign.md` 6.1 | `Avatar` を実体化した旨と、**`TicketComments.vue` を切り出した基準**（自己完結の単位か、親が配列を所有しているか）を追記 |
+| `Development.md` 8.2 | 検証の道具の落とし穴を**2件**追記（下記「新しく分かった環境の制約」） |
+
+### 作ったファイル
+
+| ファイル | 中身 |
+|---|---|
+| `client/src/api/comments.ts` | 9.8 の4本＋`commentKindLabels`（サーバの `commentKindLabels` と同じ語）・`commentKindOptions`・`defaultCommentKind` |
+| `client/src/api/dod.ts` | 9.9 の4本。**一覧を呼ぶ画面は無い**（詳細応答の `dod` を使う）——`references.ts` と同じ位置づけ |
+| `client/src/api/links.ts` | 9.10.1 の3本＋`linkLabel()` / `linkLabelTitle()` / `linkChoices`（画面の4択と API の3種の対応） |
+| `client/src/components/Avatar.vue` | 人＝円／エージェント＝角丸四角（8.4.2）。表示名の先頭1文字。**サロゲートペアで割らない** |
+| `client/src/components/TicketComments.vue` | コメントの取得・ページング・投稿・編集・削除・返信の両向きリンク。**自己完結の単位** |
+| `client/src/components/TicketLinkModal.vue` | 関係の4択（2列グリッド）＋候補の絞り込み一覧。**編集は無い**（9.10.1 が `PATCH` を持たない） |
+| `client/src/components/TransitionModal.vue` | 「`<from>` → `<to>` へ変更します。」＋任意のコメント欄 |
+
+### 変更したファイル
+
+| ファイル | 変更 |
+|---|---|
+| `client/src/components/TicketDetailPane.vue` | 3セクションの追加（完了条件・関連チケット・コメント）、遷移の確認モーダル化、`comment_count` の足し引き |
+| `client/src/components/StatusDropdown.vue` | `select` の payload を `key` から **`TicketTransitionOption` そのもの**へ（モーダルが遷移先の `name` を要るため）。**選んでも即座には遷移しなくなった** |
+
+### 検証
+
+| 種類 | 結果 |
+|---|---|
+| `vue-tsc --noEmit` | 通過 |
+| `make test`（Go） | `TestExpiresAtFormat` のみ FAIL。**`git worktree add <tmp> develop` で `develop` でも落ちることを確認**（起票ずみ・18b と無関係） |
+| `make test-db` | **156件 PASS / 0 FAIL**（18a と同数。`server/` 不変なので変わらないことの確認） |
+| ブラウザ（読み取り） | **48件 PASS / 0 FAIL** |
+| ブラウザ（変更） | **49件 PASS / 0 FAIL** |
+| スクリーンショット | 8枚を目で確認（1440 / 1100 / 900px の3幅、モーダル4種） |
+
+**読み取り系で見たもの**——3セクションの見出しが1つずつ出る／完了条件は件数を出さない／コメントの見出しは
+`comment_count`／DoD のチェック状態と並び／関連チケットの双方向とラベル（`関連` / `自後行`）と
+主語つき `title`／相手側（demo-10）から見ると `自先行` になる／コメントの古い順・書き手・類型・
+Markdown 描画・見出しの3段下げ／投稿欄が閉じた1行であること／0件のときの1行（demo-11）／
+履歴の見出しをまだ出さないこと／**セクションの並びを2通りで確認**（子あり・コードなしの demo-8、
+子なし・コードありの demo-9）／状態を選んでも即遷移せずモーダルが開くこと／`Esc` で状態が変わらないこと。
+
+**変更系で見たもの**——DoD の追加（末尾に付く・追加欄が空へ戻る）／チェックの付け外しで
+**`satisfied_at` と `satisfied_by` が API で入り、外すと NULL へ戻る**（画面に出さないので API を実測）／
+本文のその場編集／関連の追加（`outgoing`）・**重複は 409 でモーダルに残る**（「同じ関連はすでに登録されています」）・
+**`自後行` が相手側の `blocks` として入り、相手（demo-7）からは `自先行` に見える**／コメントの投稿・
+類型の選択・末尾に並ぶこと・見出しの件数が増えること／**返信の両向きリンク**（`↩ 返信先:` と `返信 1件:`）と
+押したときの強調／編集と「（編集済み）」／**遷移コメントが `経過` として並ぶこと**・コメント無しの遷移は
+コメントを作らないこと／**論理削除で行が残り「削除されました」になり、見出しの件数だけ1つ減ること**。
+
+**権限の負の側を16c 以来はじめて実測した。** `member@example.com`（project_member ＋ システム operator）は
+`comment.delete_any` を持たないため、**他人のコメントに `[編集]` も `[削除]` も出ず、`[返信]` だけが出る**。
+自分のコメントには3つとも出る。**`GET /me` から実効権限を組み立ててから期待値を書いた**（18a の反省）。
+
+**`activity` が手順19 のために積むものを実測した**（検証の片づけ前に確認）。
+
+| `action` | `field` | 件数 | 要約の例 |
+|---|---|---|---|
+| `update` | `comment` | 4 | `議論: PB18BVERIFY 返信のコメント（直した）` |
+| `update` | `dod` | 4 | `済: PB18BVERIFY 追加した条件` |
+| `update` | `link` | 2 | `relates demo-3` |
+| `transition` | `status_key` | 2 | `todo` |
+
+**遷移にコメントを添えても `activity` は `transition` の1行だけ**で、コメントの行は増えない
+（`ApiDesign.md` 9.8 の規定どおり）。
+
+### 検証で作った資源の片づけ
+
+**検証の前に DB を JSON で控え、終了後に差分ゼロを確認した**（`dod_item` / `comment` / `ticket_link` の13行）。
+
+- 作った DoD・コメント・リンク・`activity` を削除（`cleanup.sh <cutoff>` として書いた。何度でも走る）
+- `demo-11` の `status_key` は検証内で `todo` へ戻した
+- **戻せなかったもの：`ticket.version`**（demo-11 が 5 → 7）。遷移2回ぶんの単調増加で、
+  **楽観ロックのカウンタなので実害は無い**（`sort_key` を戻せない 16c と同じ性質）
+- ヘッドレス Chrome のプロファイル（セッショントークンの平文を含む）は `Chrome.close()` で毎回削除
+- `make stop-server` / `make clean-webui` を実行し、`lsof -sTCP:LISTEN` で 8080 が空くことを確認
+
+### 新しく分かった環境の制約（`Development.md` 8.2 へ写した）
+
+1. **値を入れる `Runtime.evaluate` と押す `Runtime.evaluate` を分ける。** Vue は `:disabled` の DOM 反映を
+   nextTick で行うので、**同じ evaluate で入力してすぐ押すと、まだ `disabled` のボタンを押す**。
+   症状は「追加されない」で、**実装は正しいのに FAIL になる**（スモークで捕まえた）
+2. **`Input.insertText` はカーソル位置へ入る。** CodeMirror を開いた直後のカーソルは**先頭**なので、
+   追記したつもりの文字が本文の**前**に付く。置き換えたいときは `commands: ["selectAll"]` を先に送る

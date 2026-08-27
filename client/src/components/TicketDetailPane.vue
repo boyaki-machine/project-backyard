@@ -16,9 +16,15 @@
  * **画面全体を編集モードにしない**（5.5「編集の単位」）。選べるものは選んだ時点で
  * `PATCH`、文字・数値・日付はその領域をクリックして編集モードに入る。
  *
- * **まだ出さないセクションは見出しごと出さない**（5.5）——DoD・関連チケット・
- * コメント（18）、履歴（19）。空の枠を置くと「実装済みで中身が無い」に見え、
+ * **まだ出さないセクションは見出しごと出さない**（5.5）——Phase 1 で残っている
+ * のは履歴（19）だけである。空の枠を置くと「実装済みで中身が無い」に見え、
  * `comment_count` が実数を返すぶん誤解が強くなる。
+ *
+ * **完了条件・関連チケット・コメントは手順18b で足した**（5.5、`ApiDesign.md`
+ * 9.9 / 9.10.1 / 9.8）。**新しいエンドポイントは1本も要らなかった**——18a で
+ * すべて通してある。完了条件と関連チケットは詳細応答（9.5.1）の `dod` / `links`
+ * をここが所有し、**コメントだけが別の `GET` とページングを持つ**ので
+ * `TicketComments.vue` に切り出した。
  *
  * **コードと参考リンクは手順17c で足した**（5.5、`ApiDesign.md` 9.10.2）。
  * 0件のときの扱いは2つで違う——**コードは見出しごと出さず**（画面から追加できず、
@@ -33,9 +39,17 @@ import MarkdownEditor from './MarkdownEditor.vue'
 import NewTicketModal from './NewTicketModal.vue'
 import ReferenceModal from './ReferenceModal.vue'
 import StatusDropdown from './StatusDropdown.vue'
+import TicketComments from './TicketComments.vue'
+import TicketLinkModal from './TicketLinkModal.vue'
+import TransitionModal from './TransitionModal.vue'
 import UserActionsMenu from './UserActionsMenu.vue'
 import type { ActionItem } from './UserActionsMenu.vue'
 import { ApiError } from '../api/client'
+import * as dodApi from '../api/dod'
+import type { TicketDoDItem } from '../api/dod'
+import * as linksApi from '../api/links'
+import { linkLabel, linkLabelTitle } from '../api/links'
+import type { LinkChoice, TicketLink } from '../api/links'
 import type { ProjectMember } from '../api/projects'
 import * as referencesApi from '../api/references'
 import { codeSummary, docSummary } from '../api/references'
@@ -54,6 +68,7 @@ import type {
   Ticket,
   TicketDetail,
   TicketPriority,
+  TicketTransitionOption,
   TicketType,
   UpdateTicketRequest,
 } from '../api/tickets'
@@ -301,19 +316,37 @@ async function loadTransitions(): Promise<void> {
 }
 
 /**
- * 遷移させる（9.6）。**`comment` は送らない**（5.5）——投稿したコメントを
- * 表示する場所が手順18 まで無く、**送ったのに見えない**状態になる。
+ * 選ばれた遷移先。**入っている間だけ確認モーダルが出る**（5.5「遷移にコメントを
+ * 添える」。手順18b で足した——それまでは選んだ時点で即座に遷移していた）。
  */
-async function transition(to: string): Promise<void> {
+const pendingTransition = ref<TicketTransitionOption | null>(null)
+
+/**
+ * 遷移させる（9.6）。**`comment` を送れるようになった**（手順18b）——
+ * 投稿したコメントを表示する場所（コメントセクション）がこの手順で出たため。
+ *
+ * サーバは**同じトランザクションで `kind='progress'` のコメントを作る**ので、
+ * **成功したらコメント一覧を取り直す**——応答（9.5.1 と同形式）は
+ * `comment_count` を持つが**本文は持たない**（9.8 の別エンドポイント）。
+ */
+async function transition(comment: string | null): Promise<void> {
   const t = ticket.value
-  if (t === null) return
+  const to = pendingTransition.value
+  if (t === null || to === null) return
   busy.value = true
   fieldError.value = null
   try {
-    const next = await ticketsApi.transitionTicket(props.projectKey, t.seq, { to })
+    const next = await ticketsApi.transitionTicket(props.projectKey, t.seq, {
+      to: to.key,
+      // **空なら送らない**（空文字だと本文の無いコメントが1件生まれる）
+      ...(comment === null ? {} : { comment }),
+    })
     ticket.value = next
+    pendingTransition.value = null
     emit('updated', next)
+    if (comment !== null) await commentsRef.value?.reload()
   } catch (e) {
+    pendingTransition.value = null
     fieldError.value = { field: 'status', message: toApiError(e).message }
   } finally {
     busy.value = false
@@ -511,6 +544,265 @@ const deleteReferenceMessage = computed(() => {
     ? `${head}\nコードは画面から追加できないため、消すと入れ直せません。`
     : head
 })
+
+// ── 完了条件（5.5、`ApiDesign.md` 9.9）。手順18b ──────────────
+
+/**
+ * **詳細応答（9.5.1）の `dod` をそのまま使う。** `GET .../dod` は呼ばない
+ * ——同じ一覧が入っており、画面を開いた時点で見えているものだからである
+ * （8章の「起動時1〜2本」）。サーバが `sort_order` → `created_at` の昇順で
+ * 返すので、**画面で並べ替え直さない。**
+ */
+const dodItems = computed(() => ticket.value?.dod ?? [])
+
+/** 追加欄。**セクション末尾に常設する**——列挙するときは続けて何件も打つ（5.5） */
+const newDoD = ref('')
+const dodError = ref('')
+
+/** 本文の編集。**その場で編集に入る**（「編集の単位」の文字欄と同じ） */
+const dodEditingId = ref<string | null>(null)
+const dodDraft = ref('')
+
+/** 削除の確認（6.3）。物理削除で戻せない */
+const dodToDelete = ref<TicketDoDItem | null>(null)
+
+async function addDoD(): Promise<void> {
+  const t = ticket.value
+  const body = newDoD.value.trim()
+  if (t === null || body === '' || busy.value) return
+  busy.value = true
+  dodError.value = ''
+  try {
+    // **`sort_order` は送らない**——省くと末尾に置かれ（9.9）、画面は
+    // 並べ替えを持たない。`type` と `is_satisfied` は**生成された型が
+    // 必須にしている**（既定値を持つ項目は省略可にならない）ので、
+    // **サーバの既定と同じ値を明示して送る**——挙動は省いたときと変わらない
+    const created = await dodApi.createDoD(props.projectKey, t.seq, {
+      type: 'manual',
+      body,
+      is_satisfied: false,
+    })
+    t.dod = [...t.dod, created]
+    newDoD.value = ''
+    emit('updated', t)
+  } catch (e) {
+    dodError.value = toApiError(e).message
+  } finally {
+    busy.value = false
+  }
+}
+
+function startDoDEdit(item: TicketDoDItem): void {
+  if (!canEdit.value) return
+  dodEditingId.value = item.id
+  dodDraft.value = item.body
+  dodError.value = ''
+}
+
+function cancelDoDEdit(): void {
+  dodEditingId.value = null
+  dodDraft.value = ''
+}
+
+async function commitDoDEdit(): Promise<void> {
+  const id = dodEditingId.value
+  const body = dodDraft.value.trim()
+  const item = dodItems.value.find((d) => d.id === id)
+  if (id === null || item === undefined || busy.value) return
+  // **変わっていないなら送らない**（5.5「編集の単位」）
+  if (body === '' || body === item.body) {
+    cancelDoDEdit()
+    return
+  }
+  await patchDoD(id, { body })
+  cancelDoDEdit()
+}
+
+/**
+ * チェックの付け外し。**付けた時点で `PATCH`**（選択式と同じ扱い）。
+ *
+ * **サーバが `satisfied_at` と `satisfied_by` を同時に動かす**ので、
+ * 応答の1件をそのまま入れ替える（手元で組み立てない）。
+ */
+async function toggleDoD(item: TicketDoDItem, next: boolean): Promise<void> {
+  await patchDoD(item.id, { is_satisfied: next })
+}
+
+async function patchDoD(
+  id: string,
+  patch: Parameters<typeof dodApi.updateDoD>[3],
+): Promise<void> {
+  const t = ticket.value
+  if (t === null || busy.value) return
+  busy.value = true
+  dodError.value = ''
+  try {
+    const updated = await dodApi.updateDoD(props.projectKey, t.seq, id, patch)
+    const i = t.dod.findIndex((d) => d.id === id)
+    if (i >= 0) t.dod[i] = updated
+    emit('updated', t)
+  } catch (e) {
+    dodError.value = toApiError(e).message
+  } finally {
+    busy.value = false
+  }
+}
+
+async function runDeleteDoD(): Promise<void> {
+  const t = ticket.value
+  const target = dodToDelete.value
+  if (t === null || target === null) return
+  busy.value = true
+  dodError.value = ''
+  try {
+    await dodApi.deleteDoD(props.projectKey, t.seq, target.id)
+    t.dod = t.dod.filter((d) => d.id !== target.id)
+    emit('updated', t)
+  } catch (e) {
+    dodError.value = toApiError(e).message
+  } finally {
+    dodToDelete.value = null
+    busy.value = false
+  }
+}
+
+// ── 関連チケット（5.5、`ApiDesign.md` 9.10.1）。手順18b ───────
+
+/**
+ * **詳細応答の `links` をそのまま使う**（`dod` と同じ理由）。
+ *
+ * **双方向が1本で返る。** `direction`（`outgoing` → `incoming`）、同じ向きの
+ * 中は `link_type` → 相手の `seq` の昇順で、**画面で並べ替え直さない。**
+ * **`ticket` に入るのは常に相手であって自分ではない。**
+ */
+const links = computed(() => ticket.value?.links ?? [])
+
+const showLinkModal = ref(false)
+const linkFieldErrors = ref<Record<string, string>>({})
+/** 欄に紐づかない誤り（409 `already_exists`）。**モーダルの中に留める**（6.4） */
+const linkFormError = ref('')
+const linkError = ref('')
+const linkToDelete = ref<TicketLink | null>(null)
+
+/** 相手の候補。**自分自身は落とす**——サーバも 422 `self_link` で弾く（5.5） */
+const linkCandidates = computed(() =>
+  props.candidates.filter((c) => c.seq !== props.seq),
+)
+
+function openLinkModal(): void {
+  linkFieldErrors.value = {}
+  linkFormError.value = ''
+  showLinkModal.value = true
+}
+
+/**
+ * リンクを1件足す（9.10.1）。
+ *
+ * **`自後行` は API に無い。** `POST .../links` は**呼んだチケットが常に
+ * `source`** になるので、`incoming` の行は直接作れない——**相手のチケットに
+ * 対して `blocks` を作る**ことで同じ関係になる（5.5「追加のモーダル」）。
+ *
+ * その場合、応答は**相手側から見た `outgoing` の行**なので手元へは入れられない。
+ * **詳細を取り直す**——この1つの場合だけ、往復が1回増える。
+ */
+async function saveLink(body: { targetSeq: number; choice: LinkChoice['value'] }): Promise<void> {
+  const t = ticket.value
+  if (t === null) return
+  busy.value = true
+  linkFieldErrors.value = {}
+  linkFormError.value = ''
+  try {
+    if (body.choice === 'blocks_in') {
+      await linksApi.createLink(props.projectKey, body.targetSeq, {
+        target_seq: t.seq,
+        link_type: 'blocks',
+        // 既定と同じ値。**`FS`〜`SF` のときしか意味を持たない**（9.10.1）
+        lag_days: 0,
+      })
+      await load()
+    } else {
+      const created = await linksApi.createLink(props.projectKey, t.seq, {
+        target_seq: body.targetSeq,
+        link_type: body.choice === 'blocks_out' ? 'blocks' : body.choice,
+        lag_days: 0,
+      })
+      t.links = [...t.links, created].sort(compareLinks)
+      emit('updated', t)
+    }
+    showLinkModal.value = false
+  } catch (e) {
+    const err = toApiError(e)
+    if (err.details.length > 0) {
+      linkFieldErrors.value = Object.fromEntries(
+        err.details.map((d) => [d.field, d.message]),
+      )
+    } else {
+      // 409 `already_exists` はここに来る。**閉じずにモーダルの中へ出す**
+      linkFormError.value = err.message
+    }
+  } finally {
+    busy.value = false
+  }
+}
+
+/** `direction`（`outgoing` → `incoming`）→ `link_type` → 相手の `seq`（9.10.1 と同じ順序） */
+function compareLinks(a: TicketLink, b: TicketLink): number {
+  if (a.direction !== b.direction) return a.direction === 'outgoing' ? -1 : 1
+  if (a.link_type !== b.link_type) return a.link_type < b.link_type ? -1 : 1
+  return a.ticket.seq - b.ticket.seq
+}
+
+async function runDeleteLink(): Promise<void> {
+  const t = ticket.value
+  const target = linkToDelete.value
+  if (t === null || target === null) return
+  busy.value = true
+  linkError.value = ''
+  try {
+    // **`direction` を問わず消せる**（9.10.1）
+    await linksApi.deleteLink(props.projectKey, t.seq, target.id)
+    t.links = t.links.filter((l) => l.id !== target.id)
+    emit('updated', t)
+  } catch (e) {
+    linkError.value = toApiError(e).message
+  } finally {
+    linkToDelete.value = null
+    busy.value = false
+  }
+}
+
+/**
+ * 削除の確認文（6.3）。**`incoming` は相手の詳細へ行かないと作り直せない**
+ * ——`POST .../links` はこのチケットを常に `source` にするためである。
+ */
+const deleteLinkMessage = computed(() => {
+  const l = linkToDelete.value
+  if (l === null) return ''
+  const label = linkLabel(l.link_type, l.direction)
+  const head = `「${label}」の関連（${props.projectKey}-${l.ticket.seq}「${l.ticket.title}」）を解除します。`
+  return l.direction === 'incoming'
+    ? `${head}\n相手のチケットが起点の関連なので、戻すには ${props.projectKey}-${l.ticket.seq} を開く必要があります。`
+    : head
+})
+
+// ── コメント（5.5、`ApiDesign.md` 9.8）。手順18b ──────────────
+
+const commentsRef = useTemplateRef<InstanceType<typeof TicketComments>>('commentsRef')
+
+/**
+ * 見出しの `(4)` に使う数を足し引きする。
+ *
+ * **`comment_count` は詳細応答が持つ**（`deleted_at IS NULL` で数える）。
+ * `TicketComments` が持つ `total` は**削除済みも数える**ので答えが違う——
+ * **同じ表を数えて違う答えを返すのは意図的である**（9.8）。取り直さずに
+ * 足し引きするのは、コメントの増減が親チケットの `version` を動かさないため。
+ */
+function onCommentCountDelta(delta: number): void {
+  const t = ticket.value
+  if (t === null) return
+  t.comment_count = Math.max(0, t.comment_count + delta)
+  emit('updated', t)
+}
 
 // ── 子チケットの追加（5.5「子チケット」）。手順17c ────────────
 
@@ -739,7 +1031,7 @@ function errorFor(field: string): string {
                 :can-transition="canTransition"
                 :busy="busy"
                 @open="loadTransitions"
-                @select="transition"
+                @select="pendingTransition = $event"
               />
               <p v-if="errorFor('status')" class="field-error" role="alert">
                 {{ errorFor('status') }}
@@ -1270,6 +1562,136 @@ function errorFor(field: string): string {
           </p>
         </section>
 
+        <!-- 完了条件（5.5「完了条件（DoD）」）。**0件でも見出しを出す**——
+             追加の入口がこのセクションの中にあり、隠すと到達できない -->
+        <section class="block">
+          <h3 class="block-title">完了条件 (DoD)</h3>
+          <ul v-if="dodItems.length > 0" class="dod-list">
+            <li v-for="d in dodItems" :key="d.id" class="dod-row">
+              <!-- **付け外した時点で `PATCH`**（選択式と同じ扱い。5.5） -->
+              <input
+                :id="`dod-${d.id}`"
+                type="checkbox"
+                class="dod-check"
+                :checked="d.is_satisfied"
+                :disabled="!canEdit || busy"
+                :aria-label="`完了条件「${d.body}」を満たした`"
+                @change="toggleDoD(d, ($event.target as HTMLInputElement).checked)"
+              />
+
+              <!-- 本文をクリックするとその場で編集に入る（「編集の単位」） -->
+              <template v-if="dodEditingId === d.id">
+                <input
+                  v-model="dodDraft"
+                  type="text"
+                  class="dod-input"
+                  aria-label="完了条件の本文"
+                  :disabled="busy"
+                  @keydown.enter.prevent="commitDoDEdit"
+                  @keydown.escape="cancelDoDEdit"
+                  @blur="commitDoDEdit"
+                />
+              </template>
+              <button
+                v-else-if="canEdit"
+                type="button"
+                class="dod-body editable"
+                :class="{ satisfied: d.is_satisfied }"
+                @click="startDoDEdit(d)"
+              >
+                {{ d.body }}
+              </button>
+              <span v-else class="dod-body" :class="{ satisfied: d.is_satisfied }">
+                {{ d.body }}
+              </span>
+
+              <button
+                v-if="canEdit"
+                type="button"
+                class="ref-action ref-danger"
+                @click="dodToDelete = d"
+              >
+                削除
+              </button>
+            </li>
+          </ul>
+          <p v-else class="ref-empty">完了条件はまだありません</p>
+
+          <!-- **追加はモーダルにしない**（5.5）。列挙するときは続けて何件も打つ -->
+          <form v-if="canEdit" class="dod-add" @submit.prevent="addDoD">
+            <input
+              v-model="newDoD"
+              type="text"
+              class="dod-input"
+              placeholder="完了条件を追加…"
+              aria-label="完了条件を追加"
+              :disabled="busy"
+            />
+            <button type="submit" class="secondary" :disabled="newDoD.trim() === '' || busy">
+              追加
+            </button>
+          </form>
+          <p v-if="dodError" class="field-error" role="alert">{{ dodError }}</p>
+        </section>
+
+        <!-- 関連チケット（5.5「関連チケット」）。**双方向を1つのリストに混ぜる**
+             ——サーバが `outgoing` と `incoming` の両方を1本で返す（9.10.1） -->
+        <section class="block">
+          <div class="block-head">
+            <h3 class="block-title">関連チケット</h3>
+            <button v-if="canEdit" type="button" class="block-add" @click="openLinkModal">
+              + 追加
+            </button>
+          </div>
+          <ul v-if="links.length > 0" class="rel-list">
+            <li v-for="l in links" :key="l.id" class="rel-row">
+              <!-- **`blocks` だけ主語を書く**（5.5）。行に出ているのは常に相手なので、
+                   「先行」だけだとその行のチケットが先行だと読める -->
+              <span
+                class="rel-kind"
+                :title="linkLabelTitle(l.link_type, l.direction)"
+              >
+                {{ linkLabel(l.link_type, l.direction) }}
+              </span>
+              <!-- 行クリックでその相手の詳細を開く（子チケットと同じ） -->
+              <RouterLink class="rel-main" :to="`/p/${projectKey}/tickets/${l.ticket.seq}`">
+                <span
+                  class="type-icon"
+                  :title="ticketTypeLabels[l.ticket.type]"
+                  aria-hidden="true"
+                >
+                  {{ ticketTypeIcons[l.ticket.type] }}
+                </span>
+                <code class="child-id">{{ projectKey }}-{{ l.ticket.seq }}</code>
+                <span class="child-title">{{ l.ticket.title }}</span>
+                <span class="child-status">{{ l.ticket.status.name }}</span>
+              </RouterLink>
+              <button
+                v-if="canEdit"
+                type="button"
+                class="ref-action ref-danger"
+                @click="linkToDelete = l"
+              >
+                削除
+              </button>
+            </li>
+          </ul>
+          <p v-else class="ref-empty">関連チケットはまだありません</p>
+          <p v-if="linkError" class="field-error" role="alert">{{ linkError }}</p>
+        </section>
+
+        <!-- コメント（5.5「コメント」）。**見出しの数は `comment_count`**
+             （`deleted_at IS NULL`）で、一覧の `total` ではない（9.8） -->
+        <section class="block">
+          <h3 class="block-title">コメント ({{ ticket.comment_count }})</h3>
+          <TicketComments
+            ref="commentsRef"
+            :project-key="projectKey"
+            :seq="ticket.seq"
+            @count-delta="onCommentCountDelta"
+          />
+        </section>
+
         <p v-if="errorFor('children')" class="field-error" role="alert">
           {{ errorFor('children') }}
         </p>
@@ -1321,6 +1743,49 @@ function errorFor(field: string): string {
       :busy="busy"
       @cancel="confirmDelete = false"
       @confirm="runDelete"
+    />
+
+    <!-- 状態の変更（5.5「遷移にコメントを添える」）。手順18b -->
+    <TransitionModal
+      v-if="pendingTransition && ticket"
+      :from-name="ticket.status.name"
+      :to-name="pendingTransition.name"
+      :busy="busy"
+      @close="pendingTransition = null"
+      @confirm="transition"
+    />
+
+    <TicketLinkModal
+      v-if="showLinkModal"
+      :project-key="projectKey"
+      :candidates="linkCandidates"
+      :busy="busy"
+      :field-errors="linkFieldErrors"
+      :form-error="linkFormError"
+      @close="showLinkModal = false"
+      @save="saveLink"
+    />
+
+    <ConfirmDialog
+      v-if="dodToDelete"
+      title="完了条件を削除しますか？"
+      :message="`「${dodToDelete.body}」を削除します。元に戻せません。`"
+      confirm-label="削除する"
+      danger
+      :busy="busy"
+      @cancel="dodToDelete = null"
+      @confirm="runDeleteDoD"
+    />
+
+    <ConfirmDialog
+      v-if="linkToDelete"
+      title="関連を解除しますか？"
+      :message="deleteLinkMessage"
+      confirm-label="解除する"
+      danger
+      :busy="busy"
+      @cancel="linkToDelete = null"
+      @confirm="runDeleteLink"
     />
   </section>
 </template>
@@ -1826,6 +2291,134 @@ function errorFor(field: string): string {
   padding: var(--pb-space-1) var(--pb-space-2);
   color: var(--pb-text-muted);
   font-size: 13px;
+}
+
+/* ── 完了条件（5.5「完了条件（DoD）」）。手順18b ─────────────── */
+
+.dod-list {
+  list-style: none;
+}
+
+.dod-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+  min-width: 0;
+  padding: var(--pb-space-1) var(--pb-space-2);
+  border-radius: var(--pb-radius);
+}
+
+.dod-row:hover {
+  background: var(--pb-hover);
+}
+
+.dod-check {
+  flex: none;
+  margin: 0;
+}
+
+/* **主役には `flex: 1 1 auto` と `min-width` を添える**（6.7）。
+   添えないと `flex: none` のチェックと `[削除]` が残って本文が先に潰れる */
+.dod-body {
+  flex: 1 1 auto;
+  min-width: 6em;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  /* **折り返す。** 完了条件は文であって識別子ではないので、省略すると読めない */
+  overflow-wrap: anywhere;
+}
+
+.dod-body.editable {
+  cursor: text;
+}
+
+.dod-body.editable:hover {
+  text-decoration: underline dotted;
+}
+
+/* 満たしたものは淡くする。**取り消し線は引かない**——条件は「消えた」のではなく
+   「満たされた」であり、後から読み返す対象として残る */
+.dod-body.satisfied {
+  color: var(--pb-text-muted);
+}
+
+.dod-input {
+  flex: 1 1 auto;
+  min-width: 6em;
+  height: 30px;
+  padding: 0 var(--pb-space-2);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-bg);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+
+.dod-add {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+  min-width: 0;
+  margin-top: var(--pb-space-2);
+  /* 一覧の行と左端をそろえる（行は `padding` を持つ） */
+  padding: 0 var(--pb-space-2);
+}
+
+/* ── 関連チケット（5.5「関連チケット」）。手順18b ─────────────── */
+
+.rel-list {
+  list-style: none;
+}
+
+.rel-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+  min-width: 0;
+  padding: var(--pb-space-1) var(--pb-space-2);
+  border-radius: var(--pb-radius);
+}
+
+.rel-row:hover {
+  background: var(--pb-hover);
+}
+
+/* 関係のチップ。**枠線＋文字で表す**（8.6。有彩色を使わない）。
+   **幅をそろえる**——4種のラベルが2〜3文字で、そろえないと ID の列が段違いになる */
+.rel-kind {
+  flex: none;
+  min-width: 3.6em;
+  padding: 1px var(--pb-space-2);
+  border: 1px solid var(--pb-border);
+  border-radius: 999px;
+  color: var(--pb-text-muted);
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* 行の本体。**`.child-*` の見た目をそのまま使う**（子チケットと同じ並びなので、
+   別々に書くと同じものが2通りに見える） */
+.rel-main {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--pb-space-2);
+  min-width: 8em;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+}
+
+.rel-main:hover .child-title {
+  text-decoration: underline;
 }
 
 /* ── 共通 ─────────────────────────────────────────────────── */

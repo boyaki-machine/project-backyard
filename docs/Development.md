@@ -482,6 +482,23 @@ window.set = window.set || function (el, v) {
   `GuiDesign.md` 5.5 のインライン編集（「別の領域をクリックしてフォーカスを外す」＝保存）は
   これに当たり、呼ばないと**実装は正しいのに「保存されない」という FAIL**になる
   （手順17b で実際に踏んだ）。`activeElement` は正しく入るので、そちらだけ見ても気づけない
+- **値を入れる `Runtime.evaluate` と、押す `Runtime.evaluate` を分ける。**
+  Vue は `:disabled` の DOM 反映を **nextTick で行う**ので、**同じ evaluate の中で
+  入力してすぐ送信ボタンを押すと、まだ `disabled` のボタンを押す**ことになり
+  何も起きない。症状は「追加されない」で、**実装は正しいのに FAIL になる**
+  （手順18b で実際に踏んだ）。押す前に `!btn.disabled` を待つとさらに固い。
+
+  ```python
+  c.js("pbset(document.querySelector('#x'), '値'); return 1;")   # 入れる
+  c.wait_for("!document.querySelector('#save').disabled")         # 反映を待つ
+  c.js("document.querySelector('#save').click(); return 1;")      # 押す
+  ```
+
+- **`Input.insertText` は「いまのカーソル位置」へ入る。** CodeMirror を開いた直後の
+  カーソルは**先頭**なので、そのまま打つと本文の**前**に付く（手順18b で、追記した
+  つもりの文字列が前に付き、印による後片付けが空振りした）。**置き換えたいときは
+  全選択してから入れる**——`Input.dispatchKeyEvent` に `commands: ["selectAll"]` を添える。
+
 - **`Page.captureScreenshot` の `captureBeyondViewport: true` では `position: fixed` の要素が写らない。**
   文書全体を1枚に収めるモードなので、画面に固定した要素（`<Teleport>` で body へ出した
   ドロップダウンやメニュー）が抜ける。**開いたパネルを撮るときは `false` にする**
