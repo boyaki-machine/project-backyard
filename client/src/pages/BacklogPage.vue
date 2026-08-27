@@ -7,6 +7,8 @@ import EpicFilter from '../components/EpicFilter.vue'
 import NewTicketModal from '../components/NewTicketModal.vue'
 import type { NewTicketDefaults } from '../components/NewTicketModal.vue'
 import PageHeader from '../components/PageHeader.vue'
+import SplitPane from '../components/SplitPane.vue'
+import TicketDetailPane from '../components/TicketDetailPane.vue'
 import { ApiError } from '../api/client'
 import * as sprintsApi from '../api/sprints'
 import type { Sprint } from '../api/sprints'
@@ -26,6 +28,7 @@ import type {
   CreateTicketRequest,
   MoveTicketRequest,
   Ticket,
+  TicketDetail,
   TicketPriority,
   TicketSort,
   SortOrder,
@@ -55,6 +58,12 @@ import { useProjectStore } from '../stores/project'
  * ストアを持たないのは、リロードと共有で同じ画面が再現できることが要件
  * だからである。パラメータ名は `ApiDesign.md` 9.2.1 と同じにし、グループ化の
  * 軸だけ `group` を足す。
+ *
+ * **チケット詳細（5.5）もこの画面が持つ**（手順17b）。詳細は画面を置き換えず、
+ * **一覧の右に3枚目のペインとして開く**（2.2.1）。`/p/:key/backlog` と
+ * `/p/:key/tickets/:seq` は**同じコンポーネントを指す**ルートで、行をクリックしても
+ * この画面は再マウントされない——だから**一覧の取得結果・折りたたみ・スクロール
+ * 位置がそのまま残る**（5.4「戻したときに保つもの」）。
  */
 const route = useRoute()
 const router = useRouter()
@@ -68,6 +77,81 @@ const projectKey = computed(() => {
 
 const canCreate = computed(() => auth.canInProject(projectKey.value, 'ticket.create'))
 const canEdit = computed(() => auth.canInProject(projectKey.value, 'ticket.edit'))
+
+// ── 詳細ペイン（2.2.1 / 5.5）─────────────────────────────────
+
+/**
+ * 開いているチケットの `seq`。**URL が持つ**（3.2）。
+ *
+ * `/p/:key/tickets/31?status=in_progress&group=tag` の形で、**バックログの
+ * フィルタをそのまま持ち回る**。詳細を開いた瞬間にクエリを捨てるとフィルタが
+ * 共有できなくなり、逆にバックログの URL のまま詳細を表すとチケット単体の
+ * リンクが作れなくなる（3.2「URL設計の判断」）。
+ */
+const detailSeq = computed<number | null>(() => {
+  const raw = route.params.seq
+  const n = typeof raw === 'string' ? Number(raw) : Number.NaN
+  return Number.isInteger(n) && n > 0 ? n : null
+})
+
+/**
+ * 詳細を開いている間、一覧は約450pxへ縮み**列が3つになる**
+ * （5.4「詳細を開いているときの一覧」）。
+ *
+ * **落ちる列はいずれも詳細側に出ているもの**で、残すのは「次にどれを開くか」を
+ * 決めるのに要るものだけ。`状態` を残すのは、この作業が**進捗を順に確認して
+ * いく**ものだからである（2.2.1）。
+ *
+ * **並ぶかどうかは `SplitPane` が幅で決める**（2.4）。並ばない幅では詳細が全幅に
+ * なって一覧が隠れるので、そのときこの値が何であっても表は描かれない。
+ */
+const shrunk = computed(() => detailSeq.value !== null)
+
+/** 縮小中のフィルタ行は `[絞り込み ▾]` の1行に畳む（5.4）。押すとその場で開く */
+const filtersOpen = ref(false)
+
+/** 一覧の現在のフィルタを保ったまま行き先を作る。**クエリを落とさない**（3.2） */
+function withQuery(path: string): { path: string; query: typeof route.query } {
+  return { path, query: route.query }
+}
+
+/**
+ * 詳細を閉じて一覧を全幅へ戻す（5.4「一覧へ戻る導線」）。
+ *
+ * **URL も `/p/:key/backlog?<フィルタ>` へ戻す。** `replace` を使うのは、
+ * 開く・閉じるが履歴に積まれると「戻る」でバックログから出られなくなるため
+ * ——フィルタの操作（`setQuery`）と同じ扱いである。
+ */
+function closeDetail(): void {
+  void router.replace(withQuery(`/p/${projectKey.value}/backlog`))
+}
+
+/**
+ * 詳細で変更が確定した。**一覧の該当行だけ差し替える**（5.4「戻したときに保つもの」の
+ * 「詳細で変更した内容を反映した行」）。
+ *
+ * **取り直さない。** 編集のたびに並びが組み直されると、いま見ている行が動いて
+ * 「次の行をクリックする」作業が壊れる。並び順が実際に変わるのは取り直した
+ * ときで、それは利用者が明示的にソートやフィルタを触ったときでよい。
+ */
+function onDetailUpdated(next: TicketDetail): void {
+  // **`TicketDetail` は `Ticket` に6項目を足したもの**（9.5.1）なので、そのまま
+  // 一覧の行として使える。`sort_key` / `staged_at` はサーバの値をそのまま採る
+  // ——`PATCH` では動かないが（9.5.2 の `use_move_endpoint`）、他の誰かが
+  // `move` していれば応答のほうが新しい
+  tickets.value = tickets.value.map((t) => (t.seq === next.seq ? { ...t, ...next } : t))
+}
+
+/** 削除された（9.5.3）。**画面が消える操作なので、結果は着地する一覧へ渡す**（6.4） */
+function onDetailDeleted(seq: number, title: string): void {
+  tickets.value = tickets.value.filter((t) => t.seq !== seq)
+  total.value = Math.max(total.value - 1, 0)
+  result.value = `✓ ${projectKey.value}-${seq}「${title}」を削除しました`
+  closeDetail()
+  // **子は消えず親を失ってトップレベルへ上がる**（9.5.3）。手元の行では
+  // 親子の付け替えが起きているので、そこだけ取り直す
+  void loadTickets()
+}
 
 // ── URL クエリ ───────────────────────────────────────────────
 
@@ -686,19 +770,24 @@ const truncated = computed(() => total.value > perPage.value)
 const rowLinks = useTemplateRef<HTMLAnchorElement[]>('rowLink')
 
 /**
- * 行クリックでチケット詳細へ（5.4）。`Ctrl/⌘+クリック` で新規タブ。
+ * 行クリックで**右の詳細ペインを開く**（5.4「行クリック」）。画面は遷移せず、
+ * 一覧は縮んで残る（2.2.1）。`Ctrl/⌘+クリック` で新規タブ。
  *
  * **文字を選択しただけのときは遷移しない。** ID をなぞってコピーしようと
  * すると mouseup のあとに click が来るため、そのまま遷移してしまう。
+ *
+ * **`replace` を使う。** 行をたどるたびに履歴が積まれると、「戻る」で
+ * 見終わったチケットを逆順に開き直すことになる。フィルタの操作（`setQuery`）と
+ * 同じ扱いにそろえる。
  */
 function openRow(t: Ticket, e: MouseEvent): void {
   if ((window.getSelection()?.toString() ?? '') !== '') return
-  const path = `/p/${projectKey.value}/tickets/${t.seq}`
+  const to = withQuery(`/p/${projectKey.value}/tickets/${t.seq}`)
   if (e.metaKey || e.ctrlKey || e.shiftKey) {
-    window.open(router.resolve(path).href, '_blank', 'noopener')
+    window.open(router.resolve(to).href, '_blank', 'noopener')
     return
   }
-  void router.push(path)
+  void router.replace(to)
 }
 
 // ── 並べ替えと段の行き来（`⠿` のドラッグ。`ApiDesign.md` 9.4）─
@@ -708,7 +797,7 @@ function openRow(t: Ticket, e: MouseEvent): void {
  * 他の並びでは、画面上の位置と `after_seq` の意味が一致しない。
  */
 const canReorder = computed(
-  () => canEdit.value && sort.value === 'sort_key' && order.value === 'asc',
+  () => canEdit.value && !shrunk.value && sort.value === 'sort_key' && order.value === 'asc',
 )
 
 /**
@@ -1119,14 +1208,28 @@ onUnmounted(() => {
 // フィルタ・ソート・グループ化は URL に載っている。**クエリが変わったら
 // 取り直す**——グループ化だけはサーバへ送らないので取り直しは要らないが、
 // 判定を分けるより1本にしたほうが取りこぼさない。
-watch(
-  () => route.fullPath,
-  () => {
-    if (route.params.key === undefined) return
-    loadCollapsed()
-    void loadTickets()
-  },
+//
+// **`fullPath` を見てはいけない。** 詳細ペインを開くとパスが
+// `/p/:key/tickets/:seq` へ変わるので、**行をクリックするたびに一覧を
+// 取り直すことになる**（5.4「戻したときに保つもの」が保つと定めている
+// スクロール位置と選択が、そのたびに作り直される）。見るのはクエリだけでよい。
+//
+// **`route.query` そのものを見てもいけない。** navigation のたびに新しい
+// オブジェクトが作られるので、参照で比べる `watch` は中身が同じでも発火する
+// ——`fullPath` を見るのと結果が変わらない。**正規化した文字列**にして比べる。
+const queryKey = computed(() =>
+  Object.entries(route.query)
+    .filter((e): e is [string, string] => typeof e[1] === 'string')
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('&'),
 )
+
+watch(queryKey, () => {
+  if (route.params.key === undefined) return
+  loadCollapsed()
+  void loadTickets()
+})
 
 // プロジェクトを切り替えたら語彙とプロジェクト詳細も取り直す（4.4）
 watch(projectKey, (key) => {
@@ -1142,18 +1245,53 @@ watch(projectKey, (key) => {
 </script>
 
 <template>
-  <div class="page">
-    <PageHeader title="バックログ">
-      <template #actions>
-        <button v-if="canCreate" type="button" class="primary" @click="openNewModal()">
-          + 新規チケット
-        </button>
-      </template>
-    </PageHeader>
+  <!-- 一覧と詳細のマスター・ディテール（2.2.1）。**押し込む形で、重ねない。**
+       並ぶかどうかは窓の幅ではなく**コンテンツペインの幅**で決まる（2.4） -->
+  <SplitPane :open="shrunk" storage-key="pb.detail_pane_w" class="page">
+    <template #primary>
+      <!-- **縮小中はこのヘッダの左側全体が「全幅へ戻す」の当たり所になる**
+           （5.4「一覧へ戻る導線」）。新しい帯を差し込まず、既にある 48px を使う
+           ——足すと行の縦位置がずれる。**全幅のときはボタンにしない**
+           （押しても何も起きないものをボタンに見せない） -->
+      <PageHeader
+        title="バックログ"
+        :title-action-label="shrunk ? 'バックログを全幅に戻す' : undefined"
+        :title-action-icon="shrunk ? '⤢' : undefined"
+        @title-click="closeDetail"
+      >
+        <template #actions>
+          <!-- 縮小中はラベルが入らないのでアイコンのみにし、`aria-label` を付ける（9.2） -->
+          <button
+            v-if="canCreate"
+            type="button"
+            class="primary"
+            :class="{ 'icon-only': shrunk }"
+            :aria-label="shrunk ? '新規チケット' : undefined"
+            :title="shrunk ? '新規チケット' : undefined"
+            @click="openNewModal()"
+          >
+            {{ shrunk ? '+' : '+ 新規チケット' }}
+          </button>
+        </template>
+      </PageHeader>
 
-    <div class="page-body">
+    <div class="page-body" :class="{ shrunk }">
+      <!-- 縮小中はフィルタ行を1行に畳む（5.4「詳細を開いているときの一覧」）。
+           押すとその場で開く -->
+      <button
+        v-if="shrunk"
+        type="button"
+        class="filters-toggle"
+        :aria-expanded="filtersOpen"
+        @click="filtersOpen = !filtersOpen"
+      >
+        絞り込み
+        <span class="caret" aria-hidden="true">{{ filtersOpen ? '▾' : '▸' }}</span>
+        <span v-if="!isPristine" class="filters-dot" aria-label="絞り込み中">●</span>
+      </button>
+
       <!-- フィルタ行（5.4）。条件は URL のクエリに載る -->
-      <div class="filters">
+      <div v-if="!shrunk || filtersOpen" class="filters">
         <label class="filter">
           <span class="filter-label">状態</span>
           <select
@@ -1283,7 +1421,7 @@ watch(projectKey, (key) => {
       <table v-else-if="loading && !loaded" class="table" aria-busy="true">
         <tbody>
           <tr v-for="n in skeletonRows" :key="n" class="skeleton-row">
-            <td v-for="c in 7" :key="c"><span class="skeleton"></span></td>
+            <td v-for="c in shrunk ? 3 : 7" :key="c"><span class="skeleton"></span></td>
           </tr>
         </tbody>
       </table>
@@ -1349,7 +1487,14 @@ watch(projectKey, (key) => {
             <table v-if="section.rows.length > 0" class="table">
               <thead>
                 <tr>
-                  <th scope="col" class="grip-col" :aria-sort="ariaSort('sort_key')">
+                  <!-- 縮小中は `⠿` 列を出さない（5.4「詳細を開いているときの一覧」）
+                       ——幅が無く、詳細を見ている間の操作でもない -->
+                  <th
+                    v-if="!shrunk"
+                    scope="col"
+                    class="grip-col"
+                    :aria-sort="ariaSort('sort_key')"
+                  >
                     <!-- `⠿` 列のヘッダが `sort_key` へ戻すボタンを兼ねる（5.4） -->
                     <button
                       type="button"
@@ -1361,7 +1506,14 @@ watch(projectKey, (key) => {
                       ⠿
                     </button>
                   </th>
-                  <th scope="col" class="id-col" :aria-sort="ariaSort('seq')">
+                  <!-- **`table-layout: fixed` は先頭行のセルで列幅が決まる。**
+                       縮小中の追加幅は `<td>` ではなくここへ書かないと効かない -->
+                  <th
+                    scope="col"
+                    class="id-col"
+                    :class="{ 'with-gutter': shrunk }"
+                    :aria-sort="ariaSort('seq')"
+                  >
                     <button type="button" class="sort" @click="sortBy('seq')">
                       ID
                       <span class="caret" aria-hidden="true">{{
@@ -1385,7 +1537,15 @@ watch(projectKey, (key) => {
                       }}</span>
                     </button>
                   </th>
-                  <th scope="col" class="priority-col" :aria-sort="ariaSort('priority')">
+                  <!-- 優先・担当・期限は縮小中に落とす（5.4）。**いずれも詳細側に
+                       出ているもの**で、残すのは「次にどれを開くか」を決めるのに
+                       要るものだけでよい -->
+                  <th
+                    v-if="!shrunk"
+                    scope="col"
+                    class="priority-col"
+                    :aria-sort="ariaSort('priority')"
+                  >
                     <button type="button" class="sort" @click="sortBy('priority')">
                       優先
                       <span class="caret" aria-hidden="true">{{
@@ -1394,8 +1554,8 @@ watch(projectKey, (key) => {
                     </button>
                   </th>
                   <!-- 担当だけソートできない（`ApiDesign.md` 9.2.1 の sort に無い） -->
-                  <th scope="col" class="assignee-col">担当</th>
-                  <th scope="col" class="due-col" :aria-sort="ariaSort('due_date')">
+                  <th v-if="!shrunk" scope="col" class="assignee-col">担当</th>
+                  <th v-if="!shrunk" scope="col" class="due-col" :aria-sort="ariaSort('due_date')">
                     <button type="button" class="sort" @click="sortBy('due_date')">
                       期限
                       <span class="caret" aria-hidden="true">{{
@@ -1414,12 +1574,14 @@ watch(projectKey, (key) => {
                     dragging: draggingSeq === row.ticket.seq,
                     'drop-before': hintsRow(row, section, 'before'),
                     'drop-after': hintsRow(row, section, 'after'),
+                    selected: detailSeq === row.ticket.seq,
                   }"
+                  :aria-selected="detailSeq === row.ticket.seq"
                   @click="openRow(row.ticket, $event)"
                   @dragover="onDragOverRow($event, row, section)"
                   @drop.prevent="dropOnRow($event, row, section)"
                 >
-                  <td class="grip-col">
+                  <td v-if="!shrunk" class="grip-col">
                     <span class="grip-line">
                       <span
                         v-if="canReorder"
@@ -1451,27 +1613,64 @@ watch(projectKey, (key) => {
                     </span>
                   </td>
 
-                  <!-- **完全形で出す**（5.4「ID列」）。`-31` は負の数に見える -->
-                  <td class="id-col">
+                  <!-- **完全形で出す**（5.4「ID列」）。`-31` は負の数に見える。
+                       **縮小中は折りたたみと種別アイコンをこのセルへ寄せる**
+                       ——落ちるのは `⠿`（並べ替え）の列であって、ツリーの開閉と
+                       種別の区別まで失うと 5.4 の「階層表示」が効かなくなる -->
+                  <td class="id-col" :class="{ 'with-gutter': shrunk }">
+                    <span v-if="shrunk" class="grip-line">
+                      <button
+                        v-if="row.hasChildren"
+                        type="button"
+                        class="tree-toggle"
+                        :aria-expanded="!treeCollapsed.has(row.ticket.seq)"
+                        :aria-label="`${row.ticket.title} の配下を開閉する`"
+                        @click.stop="toggleTree(row.ticket.seq)"
+                      >
+                        {{ treeCollapsed.has(row.ticket.seq) ? '▸' : '▾' }}
+                      </button>
+                      <span v-else class="tree-spacer" aria-hidden="true"></span>
+                      <span class="type-icon" :title="ticketTypeLabels[row.ticket.type]">
+                        {{ ticketTypeIcons[row.ticket.type] }}
+                      </span>
+                    </span>
                     <code class="seq">{{ fullId(row.ticket) }}</code>
                   </td>
 
                   <td class="title-col">
                     <span class="title-line" :style="{ paddingLeft: `${row.depth * 20}px` }">
                       <span v-if="row.depth > 0" class="branch" aria-hidden="true">└</span>
+                      <!-- **クエリを持ち回る**（3.2）。ここだけ落とすと、
+                           タイトルを押したときにフィルタが消えて、行の
+                           どこを押したかで結果が変わる -->
                       <RouterLink
                         v-slot="{ href, navigate }"
-                        :to="`/p/${projectKey}/tickets/${row.ticket.seq}`"
+                        :to="withQuery(`/p/${projectKey}/tickets/${row.ticket.seq}`)"
                         custom
                       >
                         <a ref="rowLink" class="title" :href="href" @click.stop="navigate">
                           {{ row.ticket.title }}
                         </a>
                       </RouterLink>
-                      <!-- タグは枠線＋文字（8.6）。色は使わない -->
-                      <span v-for="tag in row.ticket.tags" :key="tag.id" class="tag">{{
-                        tag.name
-                      }}</span>
+                      <!-- **縮小中の期限超過は `⚠` だけをタイトルの後ろに出す**
+                           （5.4「詳細を開いているときの一覧」）。日付は詳細側に出ている -->
+                      <span
+                        v-if="shrunk && isOverdue(row.ticket)"
+                        class="overdue"
+                        :title="`期限超過（${row.ticket.due_date}）`"
+                        >⚠</span
+                      >
+                      <!-- タグは枠線＋文字（8.6）。色は使わない。
+                           **縮小中は出さない**（5.4「詳細を開いているときの一覧」）
+                           ——450px ではタイトルが省略記号で切れたうえにタグが
+                           枠の途中で切れ、**読めないのに在る**状態になる（2.2.1 が
+                           「重ねる」案を却下したのと同じ理由）。タグは詳細側に出ている -->
+                      <span
+                        v-for="tag in shrunk ? [] : row.ticket.tags"
+                        :key="tag.id"
+                        class="tag"
+                        >{{ tag.name }}</span
+                      >
                     </span>
                   </td>
 
@@ -1485,7 +1684,7 @@ watch(projectKey, (key) => {
                   </td>
 
                   <!-- 優先度は色を使わず記号のみ。中は無表示（8.7） -->
-                  <td class="priority-col">
+                  <td v-if="!shrunk" class="priority-col">
                     <span
                       v-if="row.ticket.priority"
                       class="priority"
@@ -1494,7 +1693,7 @@ watch(projectKey, (key) => {
                     >
                   </td>
 
-                  <td class="assignee-col">
+                  <td v-if="!shrunk" class="assignee-col">
                     <template v-if="row.ticket.assignee">
                       <span class="actor-mark" aria-hidden="true">{{
                         assigneeMark(row.ticket)
@@ -1504,7 +1703,7 @@ watch(projectKey, (key) => {
                     <span v-else class="muted">—</span>
                   </td>
 
-                  <td class="due-col">
+                  <td v-if="!shrunk" class="due-col">
                     <span v-if="row.ticket.due_date" :class="{ overdue: isOverdue(row.ticket) }">
                       <span v-if="isOverdue(row.ticket)" aria-hidden="true">⚠ </span>
                       {{ formatPlainDate(row.ticket.due_date) }}
@@ -1548,33 +1747,88 @@ watch(projectKey, (key) => {
       </template>
     </div>
 
-    <NewTicketModal
-      v-if="showNewModal"
-      :project-key="projectKey"
-      :members="members"
-      :tags="tags"
-      :sprints="sprints"
-      :candidates="parentCandidates"
-      :defaults="newDefaults"
-      :busy="busy"
-      :field-errors="newFieldErrors"
-      @close="showNewModal = false"
-      @save="createTicket"
-    />
-  </div>
+      <NewTicketModal
+        v-if="showNewModal"
+        :project-key="projectKey"
+        :members="members"
+        :tags="tags"
+        :sprints="sprints"
+        :candidates="parentCandidates"
+        :defaults="newDefaults"
+        :busy="busy"
+        :field-errors="newFieldErrors"
+        @close="showNewModal = false"
+        @save="createTicket"
+      />
+    </template>
+
+    <!-- チケット詳細（5.5）。**`seq` が変わっても再マウントしない**——
+         同じペインが差し替わるだけで、一覧はそのまま残る（2.2.1） -->
+    <template #secondary>
+      <TicketDetailPane
+        v-if="detailSeq !== null"
+        :project-key="projectKey"
+        :seq="detailSeq"
+        :members="members"
+        :tags="tags"
+        :sprints="sprints"
+        :candidates="tickets"
+        @close="closeDetail"
+        @updated="onDetailUpdated"
+        @deleted="onDetailDeleted"
+      />
+    </template>
+  </SplitPane>
 </template>
 
 <style scoped>
 .page {
-  display: flex;
-  flex-direction: column;
   height: 100%;
 }
 
 .page-body {
   flex: 1;
+  min-width: 0;
   overflow: auto;
   padding: var(--pb-space-6);
+}
+
+/* ── 縮小中（詳細ペインを開いているとき。5.4）───────────── */
+
+/* 畳んだフィルタ行（`[絞り込み ▾]` の1行）。**新しい帯は足していない**
+   ——フィルタ行そのものを1行に置き換えている */
+.filters-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pb-space-1);
+  height: 28px;
+  padding: 0 var(--pb-space-2);
+  margin-bottom: var(--pb-space-3);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-bg);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.filters-toggle:hover {
+  background: var(--pb-hover);
+}
+
+/* 畳んでいても「絞り込みが効いている」ことは読めるようにする。
+   **色ではなく点の有無で示す**（8.6） */
+.filters-dot {
+  color: var(--pb-text-muted);
+  font-size: 10px;
+}
+
+/* 縮小中は左右の余白を詰める。450px のうち 48px を余白に使うと、
+   タイトル列の取り分がそのぶん減る（3列の合計は変わらないので、
+   削れるのはタイトルだけである） */
+.page-body.shrunk {
+  padding: var(--pb-space-4) var(--pb-space-3);
 }
 
 /* ── フィルタ行 ─────────────────────────────────────────── */
@@ -1742,6 +1996,14 @@ watch(projectKey, (key) => {
   opacity: 0.5;
 }
 
+/* **開いている行は選択状態として背景を変える**（5.4「行クリック」）。
+   色ではなく面の輝度で示す（8.2 / 8.6）。hover より一段強くして、
+   マウスが別の行に載っていても「いま開いているのはこれ」が読めるようにする */
+.row.selected,
+.row.selected:hover {
+  background: var(--pb-active);
+}
+
 /* ── ドロップ先の挿入線（5.4「ドロップ先の見せ方」）───────
    **罫線ではなく `box-shadow` の内側で描く。** `border` を足すと行の高さが
    2px 変わり、掴んで動かすたびに表全体が上下にずれる。
@@ -1774,6 +2036,13 @@ watch(projectKey, (key) => {
   background: var(--pb-hover);
 }
 
+/* 縮小中の `[+ 新規チケット]` はアイコンのみにする（5.4「一覧へ戻る導線」）。
+   ラベルが入らない幅なので、`aria-label` を付けて形だけ残す（9.2） */
+.primary.icon-only {
+  width: 28px;
+  padding: 0;
+}
+
 /* ── 列幅 ─────────────────────────────────────────────── */
 
 /* `⠿` ＋ 折りたたみ ＋ 種別アイコンの3つが入る */
@@ -1784,6 +2053,21 @@ watch(projectKey, (key) => {
 /* **完全形の ID を出す**（5.4）。`my-app-31` が入る幅にする */
 .id-col {
   width: 116px;
+}
+
+/* 縮小中はここへ折りたたみと種別アイコンが入る（`⠿` 列を落とすため）。
+   `▾` 16px ＋ 種別 16px ＋ すきま 4px を足した幅にする */
+.id-col.with-gutter {
+  width: 152px;
+}
+
+.id-col.with-gutter .grip-line {
+  margin-right: var(--pb-space-1);
+}
+
+/* 縮小中の期限超過は `⚠` だけを出す（5.4）。日付は詳細側にある */
+.title-line .overdue {
+  flex: none;
 }
 
 .status-col {

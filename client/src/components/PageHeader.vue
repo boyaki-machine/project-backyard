@@ -13,8 +13,30 @@
  * 「戻る・名前・メール」を出すためで、**2.5 が定める 48px 1行を崩さない**
  * ようにタイトルの左右へ寄せる（利用者の判断、2026-08-21。5.6.2 の
  * ワイヤーは2行だが、機能の議論が固まる前に描いたものである）。
+ *
+ * `titleActionLabel` は手順17b で足した。バックログが詳細ペインを開いて
+ * 縮んでいるとき、**このヘッダの左側全体が「全幅へ戻す」の当たり所になる**
+ * （5.4「一覧へ戻る導線」）。**新しい帯を差し込まず、既にある 48px を使う**
+ * ——足すと行の縦位置がずれる。
+ *
+ * **変更は追加のみにしてある。** 本部品は8画面が使う共有部品で、
+ * `titleActionLabel` を渡さない限り既定の挙動は変わらない。
  */
-defineProps<{ title: string }>()
+defineProps<{
+  title: string
+  /**
+   * 渡すとタイトル領域がボタンになる。値はそのまま `aria-label` になるので、
+   * **押すと何が起きるかを書く**（「バックログを全幅に戻す」）。
+   *
+   * **押しても何も起きないときは渡さない**（5.4）。押せないものをボタンに
+   * 見せない。
+   */
+  titleActionLabel?: string
+  /** ボタンにしたときタイトルの前へ置く記号（5.4 のワイヤーの `[⤢]`） */
+  titleActionIcon?: string
+}>()
+
+const emit = defineEmits<{ 'title-click': [] }>()
 </script>
 
 <template>
@@ -22,7 +44,22 @@ defineProps<{ title: string }>()
     <!-- タイトルの左（戻る導線など）。無ければ何も出ない -->
     <div v-if="$slots.lead" class="lead"><slot name="lead" /></div>
 
-    <h1 class="page-title">{{ title }}</h1>
+    <!-- **当たり所はアイコンと文字の全体**（5.4）。`actions` の `[+]` とは
+         別のボタンにして、当たり判定を食い合わせない -->
+    <button
+      v-if="titleActionLabel"
+      type="button"
+      class="title-button"
+      :aria-label="titleActionLabel"
+      :title="titleActionLabel"
+      @click="emit('title-click')"
+    >
+      <span v-if="titleActionIcon" class="title-icon" aria-hidden="true">{{
+        titleActionIcon
+      }}</span>
+      <h1 class="page-title">{{ title }}</h1>
+    </button>
+    <h1 v-else class="page-title">{{ title }}</h1>
 
     <!-- タイトルに従属する情報（メールなど）。見出しの一部にはしない（9.2） -->
     <div v-if="$slots.subtitle" class="subtitle"><slot name="subtitle" /></div>
@@ -69,6 +106,41 @@ defineProps<{ title: string }>()
    タイトルは内容の幅に収まり、狭ければ縮む（どちらも省略記号で切れる） */
 .with-subtitle .page-title {
   flex: 0 1 auto;
+}
+
+/* ボタンにしたとき。**外側が余りを受け取り、中の `<h1>` は伸びない**
+   ——`<h1>` に `flex: 1` が残っていると、当たり判定がヘッダの右端まで
+   伸びて `actions` と食い合う */
+.title-button {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--pb-space-2);
+  min-width: 0;
+  height: 32px;
+  padding: 0 var(--pb-space-2);
+  margin-left: calc(var(--pb-space-2) * -1);
+  border: none;
+  border-radius: var(--pb-radius);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.title-button:hover {
+  background: var(--pb-hover);
+}
+
+.title-button .page-title {
+  flex: 0 1 auto;
+  font-size: 16px;
+}
+
+.title-icon {
+  flex: none;
+  color: var(--pb-text-muted);
 }
 
 .subtitle {
