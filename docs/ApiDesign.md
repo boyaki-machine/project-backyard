@@ -2064,7 +2064,17 @@ PATCH|DELETE /api/v1/projects/:key/sprints/:id
 
 **`status_category` で集計する**（`status` ではない）。ワークフローがプロジェクトごとに違っても4つのカードの意味が変わらないようにするためである（9.2.1）。
 
+**`by_category` は常に4つのキーを持つ。** そのカテゴリのステータスがワークフローに1つも無くても `0` を返す。`simple` テンプレート（`DbDesign.md` 7.4）は `review` を持たないが、**キーが消えると画面のカードが3枚になり、「4つのカードの意味が変わらない」という上の目的が崩れる。**
+
 `overdue` は `due_date < 今日` かつ `closed_at IS NULL`。`stale` は `updated_at` が `threshold_days` 日より前で `closed_at IS NULL`。**閾値はサーバが持ち、応答に含めて返す**（画面に「14日以上」と出すため。文言をフロントで組み立てない）。
+
+**`threshold_days` は 14 で固定する**（Phase 1）。5.3 のワイヤーフレームの文言と一致させたもので、プロジェクトごとの設定にはしない——**放置の基準を変えたくなるのは運用に載せてからであり、いま設定項目を作ると使われないまま形が固まる。**
+
+**`unassigned` にも `closed_at IS NULL` が掛かる。** `assignee_id IS NULL` かつ未完了の件数である。完了したチケットに担当者が無いのは要対応ではなく、`overdue` / `stale` と条件が揃う。
+
+**「今日」は DB の `CURRENT_DATE` で決める**（9.2.1 の `due_within` と同じ）。`app_user.timezone` は混ぜない——混ぜると同じプロジェクトの集計が読み手ごとに変わり、「要対応が3件」という会話が成り立たなくなる。
+
+**`ETag`（2.7）は返さない。** 2.7 が対象とするのは一覧系 GET であり、本エンドポイントはページャを持たない。加えて **ETag の材料（件数と `MAX(updated_at)`）を採る走査が本体の集計とほぼ同じ**なので、付けても DB の仕事は減らない。
 
 ### 9.13.2 `GET /api/v1/projects/:key/activity`
 
@@ -2075,8 +2085,14 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 | パラメータ | 説明 |
 |---|---|
 | `entity` | `ticket:31` の形。省略時はプロジェクト全体（ダッシュボードの「最近の動き」） |
-| `action` | `create` / `update` / `delete` / `transition` |
+| `action` | `create` / `update` / `delete` / `transition`。**単一値のみ** |
 | `page` / `per_page` | 2.6。既定 `per_page=20` |
+
+**`action` はカンマ区切りの OR を受け付けない。** 9.2.1 のフィルタ群と違う扱いだが、**本エンドポイントの消費者は2つとも「全件を時系列で読む」**（`GuiDesign.md` 5.3 の最近の動きと 5.5 の履歴）であり、複数選択を要する画面が無い。要るようになった時点で 9.2.1 と同じ形へ広げる。
+
+**`entity` の書式違反は 422**（`error.code` は `validation_failed`、`details[].code` は `invalid`）。`ticket:abc` のように `seq` が整数でないもの、`foo:1` のように Phase 1 に存在しない `entity_type`、区切りを欠くものが該当する。
+
+**存在しない `seq` を指した場合は、空の一覧を `200` で返す**（`404` にしない）。`entity` は**資源の指定ではなくフィルタ**であり、9.2.1 の `assignee` や `tag` に存在しない ULID を渡したときと同じ挙動になる。**同じ理由で、削除されたチケットの履歴には `entity` で到達できない**——`seq` からチケットの ULID を引く経路が消えるためで、その行はプロジェクト全体の一覧（`entity` 省略）にだけ現れる。
 
 ```json
 {
@@ -2097,6 +2113,28 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 **削除されたチケットの行は `entity_seq` / `entity_title` が `null` になる**（9.5.3 が物理削除であるため）。画面は「削除されたチケット」と表示する。
 
 **`old_value` / `new_value` は `text` のまま返す**（`DbDesign.md` 6.8 の列がそうであるため）。ステータスの表示名への変換は画面が行う。ワークフローの定義は既に `GET /projects/:key`（5.4）で手元にある。
+
+**`actor` は `null` になりうる**（`activity.actor_id` は `ON DELETE SET NULL`。`DbDesign.md` 6.8）。9.2.2 の `assignee` / `reporter` と同じ扱いで、画面が「削除されたユーザー」と表示する。
+
+**並び順は `occurred_at DESC, id DESC` で固定する。** クエリパラメータでは変えられない。`occurred_at` だけでは足りないのは、**1回の `PATCH` が変更した項目ごとに複数行を書く**ためである（9.5.2）——タイトルと期限を同時に変えると2行が同じ時刻になり、tie-break が無いと履歴の並びが実行ごとに変わる。`id` は ULID で単調増加なので、`id DESC` は「最後に書いた項目が上」になる。
+
+**`ETag`（2.7）を返す。** ページャを持つ一覧であり、9.8 のコメント一覧と同じ扱いである。材料は**件数と結果の `MAX(occurred_at)`**、および 9.2.5 と同じくフィルタ条件（`entity` / `action`）を正規化した文字列である。
+
+```
+ETag: W/"act-a3f19c2b-142-1723372992000000000"
+```
+
+**`field` の値域は実装が定める。** Phase 1 では次の18種類が入る（`create` / `delete` は `field` が `null`）。
+
+| 由来 | `field` |
+|---|---|
+| 遷移（9.6） | `status_key` |
+| 本体の更新（9.5.2） | `type` / `title` / `body_md` / `priority` / `assignee_id` / `parent_id` / `sprint_id` / `estimate_point` / `estimate_hours` / `actual_hours` / `start_date` / `due_date` |
+| 子資源の更新（9.8 / 9.9 / 9.10） | `comment` / `dod` / `link` / `reference.code` / `reference.doc` |
+
+**`assignee_id` と `sprint_id` の値は ULID がそのまま入る。** 上の「表示名への変換は画面が行う」は `status_key` については成り立つ（ワークフローが 5.4 で手元にある）が、**この2つは解決先を持たない画面がありうる**——ダッシュボード（`GuiDesign.md` 5.3）はメンバー表もスプリント表も読まない。**画面がこの2つの値をどう出すかは `GuiDesign.md` 5.3 / 5.5 の側で決める。**
+
+**`body_md` の行は値を載せない**（9.5.2）。`old_value` / `new_value` はどちらも `null` で、「説明が変わった」ことだけが残る。
 
 ## 9.14 チケット固有のエラーコード
 
@@ -2132,7 +2170,8 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 | **17c** | **9.10.2**（＋ 9.5.1 の `references`） | チケットにリポジトリ・コミット・仕様書へのリンクが並び、子チケットを詳細から作れる |
 | **18a** | 9.8 / 9.9 / **9.10.1** | （API のみ。画面は 18b） |
 | **18b** | — | コメントを投稿し、完了条件と関連チケットを管理できる |
-| **19** | 9.13 | プロジェクトの現況が見える |
+| **19a** | 9.13 | （API のみ。画面は 19b） |
+| **19b** | — | プロジェクトの現況が見え、チケットの履歴を辿れる |
 
 9.1 / 9.14 は全手順に共通する規約であり、手順16 で確立する。
 
@@ -2145,6 +2184,11 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 **新しいエンドポイントを足さない。**
 **17c の「子チケットを詳細から作る」は新しい API を足さない**——9.3 の `POST /tickets` に
 `parent_seq` を添えるだけで、画面側の導線（`GuiDesign.md` 5.5）だけが増える。
+
+**手順19 も 19a（API）/ 19b（画面）に分かれている**（`Design.md` 11章）。19b が作る画面は
+**2か所である**——プロジェクトダッシュボード（`GuiDesign.md` 5.3）と、**チケット詳細の
+「履歴」セクション**（同 5.5 の表で手順19 と指定されている、Phase 1 に残る最後の未実装セクション）。
+どちらも 19a の `GET /activity` を読み、後者は `?entity=ticket:<seq>` を付けるだけである。
 
 ---
 

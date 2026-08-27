@@ -3,6 +3,7 @@ package v1
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -568,4 +569,85 @@ func detailRouteReq(q *fakeQuerier, method, path, body string) *http.Request {
 		req.Header.Set("If-Match", `"3"`)
 	}
 	return req
+}
+
+// ── ダッシュボード（ApiDesign.md 9.13。手順19a）─────────────────
+
+// dashRouteFake はダッシュボードの2本を叩ける状態のフェイクを返す。
+//
+// **project.view と ticket.view を別のロールに分けてある。** 9.13 は2本とも
+// project.view を要求しており、ticket.view しか持たないロールでは通らないことを
+// ここで測る。
+func dashRouteFake(t *testing.T, projectRole string) *fakeQuerier {
+	t.Helper()
+	q := newFake(t)
+	// システムロール側から project.view を外す。残したままだと、プロジェクト
+	// ロールを持たない利用者にも権限が渡り、「メンバーかどうか」ではなく
+	// 「システムロール」を測ることになる（tagRouteFake と同じ理由）。
+	q.permissions[auth.SystemRoleOperator] = []string{}
+	q.permissions["project_viewer"] = []string{"ticket.view"}
+	q.permissions["project_member"] = []string{"ticket.view", "project.view"}
+	q.projectIDByKey = map[string]string{"demo": testProjectID}
+	q.ticket.activityAll = nil
+	q.withProjectMember("demo", projectRole)
+	return q
+}
+
+// **2本とも project.view である**（9.13）。ticket.view では通らない。
+func TestDashboardRoutesRequireProjectView(t *testing.T) {
+	paths := []string{
+		"/api/v1/projects/demo/stats",
+		"/api/v1/projects/demo/activity",
+	}
+	for _, path := range paths {
+		t.Run(path+"/member", func(t *testing.T) {
+			rec := callAsMember(dashRouteFake(t, "project_member"), http.MethodGet, path, "")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+			}
+		})
+		t.Run(path+"/viewer", func(t *testing.T) {
+			// ticket.view はあるが project.view が無い。**403 であって 404 ではない**
+			// ——到達はできる（メンバーである）が権限が足りない。
+			rec := callAsMember(dashRouteFake(t, "project_viewer"), http.MethodGet, path, "")
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// **非メンバーには 404**（Design.md 6.4.5「存在を隠す」）。
+func TestDashboardRoutesHideProjectFromNonMember(t *testing.T) {
+	for _, path := range []string{
+		"/api/v1/projects/demo/stats",
+		"/api/v1/projects/demo/activity",
+	} {
+		rec := callAsMember(dashRouteFake(t, ""), http.MethodGet, path, "")
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404 (%s)", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// **stats / activity は静的なセグメントで、{seq} 配下と衝突しない。**
+// chi は静的なセグメントをパラメータより先に照合する。
+func TestDashboardRoutesDoNotCollideWithTicketRoutes(t *testing.T) {
+	q := dashRouteFake(t, "project_member")
+	rec := callAsMember(q, http.MethodGet, "/api/v1/projects/demo/stats", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stats: status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if !slices.Contains(q.opLog, "GetProjectTicketStats") {
+		t.Errorf("stats のハンドラに届いていない: %v", q.opLog)
+	}
+
+	q2 := dashRouteFake(t, "project_member")
+	rec2 := callAsMember(q2, http.MethodGet, "/api/v1/projects/demo/activity", "")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("activity: status = %d, want 200 (%s)", rec2.Code, rec2.Body.String())
+	}
+	if !slices.Contains(q2.opLog, "ListActivity") && !slices.Contains(q2.opLog, "SummarizeActivity") {
+		t.Errorf("activity のハンドラに届いていない: %v", q2.opLog)
+	}
 }

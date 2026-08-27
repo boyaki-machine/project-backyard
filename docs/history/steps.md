@@ -2404,3 +2404,77 @@ Markdown 描画・見出しの3段下げ／投稿欄が閉じた1行であるこ
    症状は「追加されない」で、**実装は正しいのに FAIL になる**（スモークで捕まえた）
 2. **`Input.insertText` はカーソル位置へ入る。** CodeMirror を開いた直後のカーソルは**先頭**なので、
    追記したつもりの文字が本文の**前**に付く。置き換えたいときは `commands: ["selectAll"]` を先に送る
+
+## 手順19a — stats / activity API（2026-08-28、`feature/step-19a-stats-activity-api`）
+
+**手順19 を 19a（API）/ 19b（画面）に分けた**（`Design.md` 11.2.1 に従って着手時に見積もった。
+利用者の承認、2026-08-28）。API は2本しかなく 17a（5本）・18a（11本）より小さいが、
+**19b が作る画面は2か所ある**——ダッシュボード（`GuiDesign.md` 5.3）と、
+**チケット詳細の「履歴」セクション**（同 5.5。Phase 1 に残る最後の未実装セクション）。
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/store/queries/stats.sql` | **新規。** `GetProjectTicketStats`（9件の `FILTER` を1文にまとめた集計） |
+| `server/internal/store/queries/activity.sql` | `ListActivity` / `SummarizeActivity` を追記（読み出しは 19a で初めて足した） |
+| `server/internal/httpapi/v1/stats.go` | **新規。** `getProjectStats`、`staleThresholdDays = 14` |
+| `server/internal/httpapi/v1/activity.go` | **新規。** `listProjectActivity`、`entity` の解析、`activityETag` |
+| `server/internal/httpapi/v1/routes.go` | 2ルート（どちらも `RequireProjectPermission("project.view")`） |
+| `server/internal/httpapi/v1/stats_test.go` | **新規。** 6件 |
+| `server/internal/httpapi/v1/activity_test.go` | **新規。** 17件（サブテスト込み） |
+| `server/internal/httpapi/v1/dashboard_integration_test.go` | **新規。** `TestDashboardIntegration` |
+| `server/internal/httpapi/v1/routes_test.go` | ルート宣言の検証3件を追記 |
+| `server/internal/httpapi/v1/fake_test.go` | フェイク3メソッド＋フィールド。**17c から崩れていた整列を `gofmt` で直した** |
+| `docs/openapi.yaml` | 2パス＋`ProjectStats` / `Activity` / `ActivityList` |
+| `docs/ApiDesign.md` | 9.13.1 / 9.13.2 の追記、9.15 の 19a / 19b 分割 |
+| `docs/Design.md` | 11章に 19a / 19b の分割表 |
+
+### 検証結果
+
+| 層 | 件数 | 内容 |
+|---|---|---|
+| 単体 | 23件（実行26件） | 並び順の tie-break・ページャ・`entity` / `action` の絞り込みと 422・null になる3項目・ETag の一意性・閾値がクエリまで届くこと |
+| ルート宣言 | 3件 | 2本とも `project.view`（`ticket.view` だけでは 403）・非メンバーは 404・`{seq}` 配下と衝突しない |
+| 実DB結合 | `make test-db` 全157件 PASS（19a で1件増） | `FILTER` の数え分け・**未解決の `status_key`**・`overdue` / `stale` の境界（13日前と20日前）・SQL 側の tie-break・`project_id` の絞り込み |
+| 実サーバ | 62件 | demo の実データを DB の実測と突き合わせ。4アカウントの認可・422 を9通り・ETag の一意性 |
+
+**マイグレーションは不要**（`activity` は 0008 で適用済み。読み出しを足しただけ）。
+
+#### 実DB結合でしか測れなかったもの
+
+- `status_key = 'zzz_unknown'` のチケットが**どのカテゴリにも入らないまま `total` には入る**
+  （`by_category` の合計 5 ≠ `total` 6）。`LEFT JOIN workflow_status` の帰結で、**合わせに行かない**
+- `stale` の境界。**13日前は放置でなく、20日前は放置である**（閾値14）。
+  **完了済み（`closed_at` あり）は 20日前でも数えない**
+- `ORDER BY occurred_at DESC, id DESC` の tie-break が SQL 側で効くこと。
+  フェイクではなく DB が並べた結果を見ている
+- **`project_id` の絞り込み。** 別プロジェクトに1行置き、`total` が 5 のままであることを確かめた
+
+#### 実サーバで分かった demo の実測値
+
+```
+by_category: todo 6 / in_progress 5 / review 0 / done 4    total 15  open 11
+overdue 3   stale 0   unassigned 6   threshold_days 14
+activity 21件（create 2 / delete 2 / update 17：comment 6・dod 9・link 2）
+```
+
+- **`review` が 0 でもキーが残る**ことを実データで確認した（demo は `simple` ワークフロー）
+- **`stale` は 0 である。** seed の `updated_at` が投入時刻なので、`make dev-reset` の直後は
+  必ずそうなる（境界は結合テスト側で測った。**利用者のデモデータは触っていない**）
+- `delete` の2行はどちらも `entity_seq` / `entity_title` が `null` で、`entity_id` は残っていた
+- **`transition` と `reference.code` / `reference.doc` の行は demo に無い**（18b の検証で作った分は
+  片付けられている）。19b が要約文を作るときは、画面を操作して積む必要がある
+
+### 検証で作った資源の片づけ
+
+- 結合テストが作る2プロジェクトは `t.Cleanup` で `DELETE FROM project`（`activity` も `ticket` も CASCADE）
+- **利用者の demo データは読むだけで、1行も変えていない。** `stale` を実データで発火させるには
+  `updated_at` を古くする必要があるが、**結合テスト側で境界を測れるので触らないことにした**
+- `make stop-server` を実行し、`lsof -sTCP:LISTEN` で 8080 が空くことを確認
+- スクラッチパッドの検証スクリプト・ログ・一時 worktree を削除
+
+### 気づいたこと
+
+**`make test` の `TestExpiresAtFormat` は 19a と無関係に落ちる。** `git worktree add <tmp> develop`
+で `develop` でも落ちることを確かめてから進めた（手順外の作業に起票ずみ）。

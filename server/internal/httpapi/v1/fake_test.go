@@ -1144,12 +1144,12 @@ type ticketFakeState struct {
 	// **create / update / delete はスライスへ実際に適用する。** POST と PATCH は
 	// 「書いてから読み直す」形（9.10.2）なので、書き込みが GetTicketReference に
 	// 反映されないと、応答が更新前の値でも気づけない。
-	references    []gen.ListTicketReferencesRow
-	referenceErr  error
-	refNextSort   int32
-	refCreated    []gen.CreateTicketReferenceParams
-	refUpdated    []gen.UpdateTicketReferenceParams
-	refDeleted    []gen.DeleteTicketReferenceParams
+	references   []gen.ListTicketReferencesRow
+	referenceErr error
+	refNextSort  int32
+	refCreated   []gen.CreateTicketReferenceParams
+	refUpdated   []gen.UpdateTicketReferenceParams
+	refDeleted   []gen.DeleteTicketReferenceParams
 
 	// ── 手順18a（9.8 のコメント / 9.9 の DoD / 9.10.1 のリンク）──────
 	//
@@ -1178,6 +1178,18 @@ type ticketFakeState struct {
 	linkExists  bool
 	linkCreated []gen.CreateTicketLinkParams
 	linkDeleted []gen.DeleteTicketLinkParams
+
+	// ── 手順19a（9.13 の stats / activity）─────────────────────
+	//
+	// **activityRows は「プロジェクト全体の履歴」を1つのスライスで持つ。**
+	// ListActivity のフェイクが entity_id / action の絞り込みと並べ替えと
+	// ページングを実際に適用するので、**ハンドラが渡した引数がそのまま測れる**
+	// （フェイクが常に全件を返すと、entity で絞れていなくても通ってしまう）。
+	activityAll  []gen.ListActivityRow
+	activityErr  error
+	statsRow     gen.GetProjectTicketStatsRow
+	statsErr     error
+	statsStaleIn int32
 }
 
 // findComment は id で1件引く。見つからなければ -1。
@@ -2005,4 +2017,94 @@ func (q *fakeQuerier) SetTicketStatus(_ context.Context, arg gen.SetTicketStatus
 	row.Version++
 	q.ticket.bySeq[arg.Seq] = row
 	return row.Version, nil
+}
+
+// ── 手順19a（ApiDesign.md 9.13）────────────────────────────────
+
+// GetProjectTicketStats は用意した1行をそのまま返す。
+//
+// **stale_days を控える**のは、ハンドラが 9.13.1 の 14 を渡していることを
+// 測るためである。応答の threshold_days だけを見ても、SQL へ何日が渡ったかは
+// 分からない（どちらも定数から書けてしまう）。
+func (q *fakeQuerier) GetProjectTicketStats(
+	_ context.Context, arg gen.GetProjectTicketStatsParams,
+) (gen.GetProjectTicketStatsRow, error) {
+	q.opLog = append(q.opLog, "GetProjectTicketStats")
+	q.ticket.statsStaleIn = arg.StaleDays
+	if q.ticket.statsErr != nil {
+		return gen.GetProjectTicketStatsRow{}, q.ticket.statsErr
+	}
+	return q.ticket.statsRow, nil
+}
+
+// ListActivity は絞り込み・並べ替え・ページングを**実際に適用する**。
+//
+// **SQL の WHERE / ORDER BY / LIMIT / OFFSET を写している**のは、9.13.2 の
+// 既定（per_page=20、occurred_at DESC, id DESC）と entity / action の絞り込みが
+// ハンドラから渡っていることを測るためである。
+func (q *fakeQuerier) ListActivity(
+	_ context.Context, arg gen.ListActivityParams,
+) ([]gen.ListActivityRow, error) {
+	q.opLog = append(q.opLog, "ListActivity")
+	if q.ticket.activityErr != nil {
+		return nil, q.ticket.activityErr
+	}
+
+	matched := q.filterActivity(arg.EntityID, arg.ActionFilter)
+	slices.SortStableFunc(matched, func(a, b gen.ListActivityRow) int {
+		if c := b.OccurredAt.Time.Compare(a.OccurredAt.Time); c != 0 {
+			return c
+		}
+		return strings.Compare(b.ID, a.ID)
+	})
+
+	total := int64(len(matched))
+	var last pgtype.Timestamptz
+	for _, row := range matched {
+		if !last.Valid || row.OccurredAt.Time.After(last.Time) {
+			last = row.OccurredAt
+		}
+	}
+
+	lo := min(int(arg.PageOffset), len(matched))
+	hi := min(lo+int(arg.PageLimit), len(matched))
+
+	out := make([]gen.ListActivityRow, 0, hi-lo)
+	for _, row := range matched[lo:hi] {
+		row.Total, row.LastOccurredAt = total, last
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (q *fakeQuerier) SummarizeActivity(
+	_ context.Context, arg gen.SummarizeActivityParams,
+) (gen.SummarizeActivityRow, error) {
+	q.opLog = append(q.opLog, "SummarizeActivity")
+	if q.ticket.activityErr != nil {
+		return gen.SummarizeActivityRow{}, q.ticket.activityErr
+	}
+	matched := q.filterActivity(arg.EntityID, arg.ActionFilter)
+	var last pgtype.Timestamptz
+	for _, row := range matched {
+		if !last.Valid || row.OccurredAt.Time.After(last.Time) {
+			last = row.OccurredAt
+		}
+	}
+	return gen.SummarizeActivityRow{Total: int64(len(matched)), LastOccurredAt: last}, nil
+}
+
+// filterActivity は SQL の WHERE を写す。空文字は「絞らない」（activity.sql）。
+func (q *fakeQuerier) filterActivity(entityID, action string) []gen.ListActivityRow {
+	out := make([]gen.ListActivityRow, 0, len(q.ticket.activityAll))
+	for _, row := range q.ticket.activityAll {
+		if entityID != "" && row.EntityID != entityID {
+			continue
+		}
+		if action != "" && row.Action != action {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
 }
