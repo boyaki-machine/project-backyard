@@ -140,6 +140,26 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.archive")).
 			Post("/projects/{key}/unarchive", h.unarchiveProject)
 
+		// ── ダッシュボード（ApiDesign.md 9.13）── 手順19a ─────────
+		//
+		// **どちらも project.view である**（9.13）。チケットを数える／チケットの
+		// 変更履歴を返すのに ticket.view ではないのは、**9.13 がプロジェクト
+		// ダッシュボードのデータ源として定義している**ためで、読み手は
+		// 「そのプロジェクトを開ける人」である。Phase 1 では project.view を
+		// 持たずに ticket.view を持つロールは存在しない（migration 0010）。
+		//
+		// **子資源なので RequireProjectPermission を通す。** 非メンバーには
+		// 404 が返る（Design.md 6.4.5）。どちらのクエリも project_id で
+		// 閉じてあり（stats.sql / activity.sql）、他プロジェクトの行に
+		// 触れる経路は無い。
+		//
+		// **stats と activity は静的なセグメントなので、{key} 配下の他の
+		// ルートと衝突しない。**
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).
+			Get("/projects/{key}/stats", h.getProjectStats)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).
+			Get("/projects/{key}/activity", h.listProjectActivity)
+
 		// ── タグ・スプリント（ApiDesign.md 9.11 / 9.12）──────────
 		//
 		// **読みと書きで必要権限が違う。** 一覧は ticket.view（バックログと
