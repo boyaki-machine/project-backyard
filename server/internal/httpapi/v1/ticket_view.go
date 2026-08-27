@@ -114,9 +114,9 @@ type ticketChildBrief struct {
 // ticketDetailView は 9.5.1 の応答。手順16b では POST /tickets が返す
 // （9.3 が「応答は 9.5 の GET と同形式」と定めるため）。
 //
-// **dod / links は空で返す。** 中身を作るのは手順18（9.9 / 9.10.1）だが、
-// 作りたてのチケットではどちらも空が正しい値であり、手順18 で項目が生えたように
-// 見せないほうが消費者にとって安定する。
+// **dod / links は手順18a から実数である**（9.9 / 9.10.1）。それまでは空配列を
+// 返していた——作りたてのチケットではどちらも空が正しい値であり、実装が入った
+// ときに項目が生えたように見せないためである。
 //
 // **references は手順17c から実数である**（9.5.1 / 9.10.2）。別の GET に切らず
 // 詳細応答へ入れるのは dod / links と同じ理由で、画面を開いた時点で見えている
@@ -131,8 +131,8 @@ type ticketDetailView struct {
 	BodyMd       *string            `json:"body_md"`
 	Parent       *ticketBrief       `json:"parent"`
 	Children     []ticketChildBrief `json:"children"`
-	DoD          []any              `json:"dod"`
-	Links        []any              `json:"links"`
+	DoD          []dodView          `json:"dod"`
+	Links        []linkView         `json:"links"`
 	References   []referenceView    `json:"references"`
 	CommentCount int64              `json:"comment_count"`
 }
@@ -201,6 +201,20 @@ func buildTicketDetail(
 		return ticketDetailView{}, err
 	}
 
+	// 9.5.1 の dod / links（手順18a）。references と同じく一覧APIと同じ関数を
+	// 通す（dod.go / links.go）。**別の GET に切らないのは、画面を開いた時点で
+	// 見えているものだからである**（GuiDesign.md 5.5、ApiDesign.md 8章の
+	// 「起動時1〜2本」）。遷移先の一覧（9.7）のように開いたときだけ要るもの
+	// ではない。
+	dod, err := ticketDoDFor(ctx, q, row.ID)
+	if err != nil {
+		return ticketDetailView{}, err
+	}
+	links, err := ticketLinksFor(ctx, q, row.ID)
+	if err != nil {
+		return ticketDetailView{}, err
+	}
+
 	view := ticketDetailView{
 		ticketListItem: ticketListItem{
 			ID:            row.ID,
@@ -227,11 +241,10 @@ func buildTicketDetail(
 			CreatedAt:     Time(row.CreatedAt.Time),
 			UpdatedAt:     Time(row.UpdatedAt.Time),
 		},
-		BodyMd:   textPtr(row.BodyMd),
-		Children: []ticketChildBrief{},
-		// 手順18 で中身が入る（9.9 / 9.10.1）。作りたては空が正しい。
-		DoD:          []any{},
-		Links:        []any{},
+		BodyMd:       textPtr(row.BodyMd),
+		Children:     []ticketChildBrief{},
+		DoD:          dod,
+		Links:        links,
 		References:   references,
 		CommentCount: commentCount,
 	}

@@ -493,12 +493,55 @@ func TestTicketSeqAndSubroutesDoNotCollide(t *testing.T) {
 			`{"position":"last"}`, http.StatusOK},
 		{"transitions", http.MethodGet, "/api/v1/projects/demo/tickets/31/transitions",
 			"", http.StatusOK},
+		// 手順18a で足した3つの子資源（9.8 / 9.9 / 9.10.1）。
+		{"comments", http.MethodGet, "/api/v1/projects/demo/tickets/31/comments",
+			"", http.StatusOK},
+		{"dod", http.MethodGet, "/api/v1/projects/demo/tickets/31/dod",
+			"", http.StatusOK},
+		{"links", http.MethodGet, "/api/v1/projects/demo/tickets/31/links",
+			"", http.StatusOK},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			routerWithDeps(Deps{Queries: q, Tx: &fakeTxRunner{q: q}}).
 				ServeHTTP(rec, detailRouteReq(q, c.method, c.path, c.body))
+			if rec.Code != c.want {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+// **コメントの DELETE は OR の必要権限を持つ**（9.8）。手順18a。
+//
+// RequireAnyProjectPermission が「どちらか一方でも通す」ことを、ルータ越しに
+// 3通りで測る。**ハンドラ単体では測れない**——ミドルウェアの宣言そのものが
+// 対象だからである（comments_test.go は「自分のものか」の側を見ている）。
+func TestDeleteCommentAcceptsEitherPermission(t *testing.T) {
+	const path = "/api/v1/projects/demo/tickets/31/comments/" + testCommentID
+
+	cases := []struct {
+		name  string
+		perms []string
+		want  int
+	}{
+		// 自分のコメントなので edit_own だけで通る。
+		{"edit_own のみ", []string{"ticket.view", "comment.edit_own"}, http.StatusNoContent},
+		// delete_any だけでも通る（**カスタムロールでこの組み合わせが作れる**）。
+		{"delete_any のみ", []string{"ticket.view", "comment.delete_any"}, http.StatusNoContent},
+		// どちらも無ければミドルウェアで 403。
+		{"どちらも無い", []string{"ticket.view"}, http.StatusForbidden},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q := detailRouteFake(t, "project_member", c.perms...)
+			q.ticket.commentRows = []gen.GetTicketCommentRow{
+				sampleComment(testCommentID, "自分の本文", "discussion", testActorID, baseTime),
+			}
+			rec := httptest.NewRecorder()
+			routerWithDeps(Deps{Queries: q, Tx: &fakeTxRunner{q: q}}).
+				ServeHTTP(rec, detailRouteReq(q, http.MethodDelete, path, ""))
 			if rec.Code != c.want {
 				t.Fatalf("status = %d, want %d (%s)", rec.Code, c.want, rec.Body.String())
 			}

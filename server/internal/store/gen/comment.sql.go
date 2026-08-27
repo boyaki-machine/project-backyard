@@ -7,7 +7,34 @@ package gen
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const commentRepliableInTicket = `-- name: CommentRepliableInTicket :one
+SELECT EXISTS (
+  SELECT 1 FROM comment
+   WHERE comment.ticket_id = $1
+     AND comment.id = $2
+     AND comment.deleted_at IS NULL
+)::boolean
+`
+
+type CommentRepliableInTicketParams struct {
+	TicketID  string
+	ReplyToID string
+}
+
+// CommentRepliableInTicket は in_reply_to の相手が「同じチケットの、削除されて
+// いないコメント」であることを見る（9.8）。**存在しない ID と他チケットの ID と
+// 削除済みを1つの結果に畳む**——呼び出し元にとってはどれも「指せない」であり、
+// 区別して返すと他チケットのコメントの存在を探れる（Design.md 6.4.5）。
+func (q *Queries) CommentRepliableInTicket(ctx context.Context, arg CommentRepliableInTicketParams) (bool, error) {
+	row := q.db.QueryRow(ctx, commentRepliableInTicket, arg.TicketID, arg.ReplyToID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
 
 const countTicketComments = `-- name: CountTicketComments :one
 SELECT count(*)::bigint FROM comment
@@ -29,17 +56,18 @@ func (q *Queries) CountTicketComments(ctx context.Context, ticketID string) (int
 
 const createComment = `-- name: CreateComment :exec
 
-INSERT INTO comment (id, ticket_id, author_id, body_md, kind, origin)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO comment (id, ticket_id, author_id, body_md, kind, origin, in_reply_to)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type CreateCommentParams struct {
-	ID       string
-	TicketID string
-	AuthorID string
-	BodyMd   string
-	Kind     string
-	Origin   string
+	ID        string
+	TicketID  string
+	AuthorID  string
+	BodyMd    string
+	Kind      string
+	Origin    string
+	InReplyTo pgtype.Text
 }
 
 // コメントに関するクエリ（DbDesign.md 6.7、ApiDesign.md 9.8）。
@@ -58,6 +86,9 @@ type CreateCommentParams struct {
 //
 // **origin は呼び出し元の actor.kind から決める**（human / agent）。
 // Phase 1 にエージェントは実在しないので常に 'human' になる。
+// **in_reply_to は手順18a で足した**（9.8 の返信）。9.6 の遷移コメントは返信を
+// 持たないので、あちらは NULL を渡す——列を増やすより、呼び出し側が「返信では
+// ない」を明示するほうが、後から読んだときに意図が残る。
 func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) error {
 	_, err := q.db.Exec(ctx, createComment,
 		arg.ID,
@@ -66,6 +97,258 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) er
 		arg.BodyMd,
 		arg.Kind,
 		arg.Origin,
+		arg.InReplyTo,
 	)
 	return err
+}
+
+const getTicketComment = `-- name: GetTicketComment :one
+SELECT
+  c.id,
+  c.body_md,
+  c.kind,
+  c.in_reply_to,
+  c.origin,
+  c.created_at,
+  c.updated_at,
+  c.deleted_at,
+  c.author_id,
+  a.kind         AS author_kind,
+  a.display_name AS author_name
+FROM comment c
+JOIN actor a ON a.id = c.author_id
+WHERE c.ticket_id = $1 AND c.id = $2
+`
+
+type GetTicketCommentParams struct {
+	TicketID string
+	ID       string
+}
+
+type GetTicketCommentRow struct {
+	ID         string
+	BodyMd     string
+	Kind       string
+	InReplyTo  pgtype.Text
+	Origin     string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+	DeletedAt  pgtype.Timestamptz
+	AuthorID   string
+	AuthorKind string
+	AuthorName string
+}
+
+// GetTicketComment は1件。POST / PATCH の応答と、更新・削除の前の読み取りに使う。
+//
+// **削除済みでも返す。** 「もう無い」として 404 に倒すのはハンドラの仕事で、
+// クエリは行の姿をそのまま返す——deleted_at を見て判断するために読んでいる。
+func (q *Queries) GetTicketComment(ctx context.Context, arg GetTicketCommentParams) (GetTicketCommentRow, error) {
+	row := q.db.QueryRow(ctx, getTicketComment, arg.TicketID, arg.ID)
+	var i GetTicketCommentRow
+	err := row.Scan(
+		&i.ID,
+		&i.BodyMd,
+		&i.Kind,
+		&i.InReplyTo,
+		&i.Origin,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AuthorID,
+		&i.AuthorKind,
+		&i.AuthorName,
+	)
+	return i, err
+}
+
+const listTicketComments = `-- name: ListTicketComments :many
+
+SELECT
+  c.id,
+  c.body_md,
+  c.kind,
+  c.in_reply_to,
+  c.origin,
+  c.created_at,
+  c.updated_at,
+  c.deleted_at,
+  c.author_id,
+  a.kind         AS author_kind,
+  a.display_name AS author_name,
+  count(*) OVER ()                        AS total,
+  (max(c.updated_at) OVER ())::timestamptz AS last_updated_at
+FROM comment c
+JOIN actor a ON a.id = c.author_id
+WHERE c.ticket_id = $1
+ORDER BY
+  CASE WHEN $2::text = 'asc'  THEN c.created_at END ASC,
+  CASE WHEN $2::text = 'desc' THEN c.created_at END DESC,
+  CASE WHEN $2::text = 'desc' THEN c.id END DESC,
+  c.id ASC
+LIMIT $4 OFFSET $3
+`
+
+type ListTicketCommentsParams struct {
+	TicketID   string
+	SortOrder  string
+	PageOffset int32
+	PageLimit  int32
+}
+
+type ListTicketCommentsRow struct {
+	ID            string
+	BodyMd        string
+	Kind          string
+	InReplyTo     pgtype.Text
+	Origin        string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	DeletedAt     pgtype.Timestamptz
+	AuthorID      string
+	AuthorKind    string
+	AuthorName    string
+	Total         int64
+	LastUpdatedAt pgtype.Timestamptz
+}
+
+// ── 手順18a：コメントAPI（ApiDesign.md 9.8）─────────────────────────
+//
+// **すべてのクエリが ticket_id で閉じている。** コメントはチケットの子資源であり、
+// 他チケットの ID を渡されても行が返らないようにするためである（reference.sql と
+// 同じ形）。チケットがそのプロジェクトのものかは FindTicketIDBySeq が済ませており、
+// 到達可否（メンバーか）は RequireProjectPermission が済ませている。
+//
+// **author は JOIN で引く**（LEFT ではない）。comment.author_id は NOT NULL かつ
+// ON DELETE RESTRICT なので、投稿者不在のコメントは DB が許さない（DbDesign.md 6.7）。
+// reference.sql の created_by が LEFT JOIN なのは、あちらが ON DELETE SET NULL
+// だからである——**同じ「書き手」でも、消せるかどうかが違う。**
+// ListTicketComments は 9.8 の一覧。**削除済みの行も返す**（body_md を null にして
+// 画面が「削除されました」と出す）ので、deleted_at では絞らない。
+//
+// **total と last_updated をウィンドウ関数で同時に取る。** LIMIT より先に評価される
+// ので全件に対する値になり、ListTickets（9.2.5）と同じ形である。1回の問い合わせで
+// 済ませるのは、件数と ETag が同じスナップショットを指すようにするためでもある。
+//
+// 並びは created_at の昇順が既定（9.8）。**許可する sort は created_at だけ**なので
+// CASE 式は order の2通りだけで足りる（ListAdminUsers は5項目ぶん並ぶ）。
+// **同値の tie-break は id** ——ULID は時刻順なので created_at と向きが揃う。
+func (q *Queries) ListTicketComments(ctx context.Context, arg ListTicketCommentsParams) ([]ListTicketCommentsRow, error) {
+	rows, err := q.db.Query(ctx, listTicketComments,
+		arg.TicketID,
+		arg.SortOrder,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTicketCommentsRow{}
+	for rows.Next() {
+		var i ListTicketCommentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BodyMd,
+			&i.Kind,
+			&i.InReplyTo,
+			&i.Origin,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.AuthorID,
+			&i.AuthorKind,
+			&i.AuthorName,
+			&i.Total,
+			&i.LastUpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const softDeleteComment = `-- name: SoftDeleteComment :execrows
+UPDATE comment SET deleted_at = now()
+WHERE ticket_id = $1 AND id = $2 AND deleted_at IS NULL
+`
+
+type SoftDeleteCommentParams struct {
+	TicketID string
+	ID       string
+}
+
+// SoftDeleteComment は論理削除（DbDesign.md 4.6 / 6.7）。
+//
+// **body_md は消さない。** 列が NOT NULL であり、応答で null にするのは view の
+// 仕事である（9.8）。DB に本文を残すのは、誤削除からの復旧手段を Phase 1 で
+// 捨てないためでもある。
+//
+// **updated_at はトリガが動かす**（trg_comment_updated）ので、削除も ETag に効く。
+func (q *Queries) SoftDeleteComment(ctx context.Context, arg SoftDeleteCommentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, softDeleteComment, arg.TicketID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const summarizeTicketComments = `-- name: SummarizeTicketComments :one
+SELECT
+  count(*)                        AS total,
+  max(updated_at)::timestamptz    AS last_updated_at
+FROM comment
+WHERE ticket_id = $1
+`
+
+type SummarizeTicketCommentsRow struct {
+	Total         int64
+	LastUpdatedAt pgtype.Timestamptz
+}
+
+// SummarizeTicketComments は ListTicketComments が1件も返さないときの total と
+// last_updated_at。**ウィンドウ関数は行が無いと1行も返らない**ので、ETag と
+// ページャの total をここから採る（0件のページを開いたときも ETag が要る）。
+func (q *Queries) SummarizeTicketComments(ctx context.Context, ticketID string) (SummarizeTicketCommentsRow, error) {
+	row := q.db.QueryRow(ctx, summarizeTicketComments, ticketID)
+	var i SummarizeTicketCommentsRow
+	err := row.Scan(&i.Total, &i.LastUpdatedAt)
+	return i, err
+}
+
+const updateComment = `-- name: UpdateComment :execrows
+UPDATE comment SET
+  body_md = COALESCE($1, body_md),
+  kind    = COALESCE($2, kind)
+WHERE ticket_id = $3 AND id = $4 AND deleted_at IS NULL
+`
+
+type UpdateCommentParams struct {
+	BodyMd   pgtype.Text
+	Kind     pgtype.Text
+	TicketID string
+	ID       string
+}
+
+// UpdateComment は 9.8 の PATCH。**変えられるのは body_md と kind だけ**で、
+// in_reply_to は immutable_field として先に弾かれている。
+//
+// **deleted_at IS NULL を条件に入れる。** 削除済みへの PATCH は 404 だが、
+// ハンドラの読み取りと UPDATE の間に別のリクエストが消す余地がある——
+// 行数0 で返れば、ハンドラは同じ 404 の経路に合流できる。
+func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateComment,
+		arg.BodyMd,
+		arg.Kind,
+		arg.TicketID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

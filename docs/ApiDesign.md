@@ -1354,7 +1354,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 
 **コメント本体と変更履歴は含めない。** コメントはページングを持ち（9.8）、履歴は既定で畳まれている（`GuiDesign.md` 5.5）。画面は起動時に本エンドポイントと `GET .../comments` の**2本**を呼ぶ。履歴は開いたときに3本目を遅延で呼ぶ。8章の「起動時1〜2本」に収まる。
 
-**`dod` / `links` は手順18 まで空の配列である**（9.9 / 9.10.1 の実装がまだ無い）。**`references` は手順17c から実数を返す。****`comment_count` は手順17 から実数を返す**——9.6 の遷移が `kind='progress'` のコメントを作るため、0 を固定で返すと事実と食い違う。
+**`dod` / `links` は手順18a から実数を返す**（9.9 / 9.10.1）。**`references` は手順17c から実数を返す。****`comment_count` は手順17 から実数を返す**——9.6 の遷移が `kind='progress'` のコメントを作るため、0 を固定で返すと事実と食い違う。
 
 **`references` を別の `GET` に切らず詳細応答へ入れるのは、`dod` / `links` と同じ理由である**（8章の「起動時1〜2本」）。件数は1チケットあたり数件で、遷移先の一覧（9.7）のように**開いたときだけ要るもの**ではない——画面を開いた時点で見えている（`GuiDesign.md` 5.5）。
 
@@ -1513,6 +1513,12 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/comments/:id
 | `PATCH` | `comment.edit_own`（自分のもののみ） | 他人のものは `403` |
 | `DELETE` | `comment.delete_any`、または `comment.edit_own` かつ自分のもの | |
 
+**`DELETE` の必要権限は OR である。** ルート定義には両方を並べ、**どちらか一方でも
+持っていればミドルウェアを通す**（`Design.md` 6.4.4 の「`routes.go` を眺めるだけで
+必要権限が分かる」を保つため）。「自分のものか」は行を読まないと決まらないので、
+**その判定だけをハンドラで行う**——`comment.delete_any` を持たない呼び出し元が
+他人のコメントを消そうとした場合は `403 forbidden`。
+
 `POST` / `PATCH` の本体：
 
 | フィールド | 検証 |
@@ -1521,9 +1527,100 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/comments/:id
 | `kind` | `discussion`（既定） / `decision` / `artifact` / `caveat` / `reference` / `progress` |
 | `in_reply_to` | 任意。同じチケットのコメントの ULID |
 
+**`in_reply_to` の参照先は、同じチケットの、削除されていないコメントであること。**
+満たさない場合は `422 validation_failed`、`details[].code = "not_found"`（9.14）。
+
+**`PATCH` で変えられるのは `body_md` と `kind` だけである。** `in_reply_to` を送ると
+`422 validation_failed`、`details[].code = "immutable_field"`。返信先を後から
+付け替えるとスレッドの形が変わり、**既に読まれた並びが崩れる。**
+
 **削除は論理削除**（`DbDesign.md` 4.6 / 6.7 の `deleted_at`）。削除済みも `items` に残し、`body_md` を `null`、`deleted_at` を設定した形で返す。画面は「削除されました」と表示する。
 
+**削除済みのコメントへの `PATCH` / `DELETE` は `404`。** 論理削除でも「もう無い」として
+扱う。二重削除が `204` で通ると、`activity` に同じ削除が2行並んで履歴が読めなくなる。
+
 **`origin` は応答に含める**（`human` / `agent`）。`GuiDesign.md` 5.5 が、エージェントのコメントをアバターの形（角丸四角）で人間と区別すると定めている。**リクエストでは指定できない**（呼び出し元のアクター種別から決まる）。
+
+### コメントの応答
+
+```json
+{
+  "items": [
+    { "id": "01K2...", "body_md": "レビューをお願いします",
+      "kind": "progress", "in_reply_to": null, "origin": "human",
+      "author": { "id": "01K2...", "kind": "user", "display_name": "田中" },
+      "created_at": "2026-08-27T02:10:00Z",
+      "updated_at": "2026-08-27T02:10:00Z", "deleted_at": null },
+    { "id": "01K2...", "body_md": null,
+      "kind": "discussion", "in_reply_to": "01K2...", "origin": "human",
+      "author": { "id": "01K2...", "kind": "user", "display_name": "佐藤" },
+      "created_at": "2026-08-27T03:00:00Z",
+      "updated_at": "2026-08-27T04:00:00Z",
+      "deleted_at": "2026-08-27T04:00:00Z" }
+  ],
+  "page": 1, "per_page": 50, "total": 2, "total_pages": 1
+}
+```
+
+`POST` は `201 Created` ＋ `Location` ＋ 作った1件（`items[]` と同じ形）。
+`PATCH` は `200 OK` ＋ 更新後の1件。`DELETE` は `204 No Content`。
+
+**`author` は 9.5.1 の `assignee` / `reporter` と同じ形である**（`{id, kind, display_name}`）。
+`actor.kind` が `agent` のとき、画面はアバターを角丸四角にする（`GuiDesign.md` 5.5）。
+**`author` が `null` になることはない**——`comment.author_id` は `NOT NULL` かつ
+`ON DELETE RESTRICT` で、投稿者不在のコメントを DB が許さない（`DbDesign.md` 6.7）。
+
+**削除済みの行も `total` に数える。** `items` に残す以上、`total` から外すと
+ページの件数と合わなくなる。**9.5.1 の `comment_count` だけは `deleted_at IS NULL` で
+数える**——あちらは見出し「コメント (4)」を作るための数であり、「**読める**コメントが
+何件あるか」を答える（`GuiDesign.md` 5.5）。**同じ表を数えて違う答えを返すのは意図的である。**
+
+### コメントのページネーションと `ETag`
+
+**2.6 のページネーションを持つ**（既定 `per_page=50`、上限 200）。許可する `sort` は
+`created_at` のみ、`order` は `asc` / `desc`。**チケットの子資源で 2.6 を持つのは
+コメントだけである**——DoD（9.9）・リンク（9.10.1）・外部参照（9.10.2）はいずれも
+1チケットあたり数件に収まるが、**コメントは議論の量だけ増える。**
+
+**一覧は `ETag` を返す**（2.7）。値は `W/"cmt-<件数>-<MAX(updated_at) のナノ秒>"`。
+**論理削除も `updated_at` を動かす**ので（`DbDesign.md` 6.7 の `trg_comment_updated`）、
+削除が `304` に埋もれない。
+
+**`ETag` を持つ子資源はコメントだけである。** 2.7 が「Phase 1 ではポーリングを実装しないが
+応答ヘッダだけ先に用意する」と定めており、**Phase 2 のエージェントが「新しいコメントが
+付いたか」を安く見る口がここになる**（`Requirements.md` 1章）。DoD とリンクは画面を
+開いた時点で詳細応答（9.5.1）に入っており、単独で追う対象にならない。
+
+**`If-Match` は持たない**（2.8 の楽観ロックの対象は `project` と `app_user` に限られる）。
+**親チケットの `version` と `updated_at` も動かさない**——コメントの増減は `ticket` の
+列を変えないためで、外部参照（9.10.2）と同じ扱いである。
+
+### コメントの変更を `activity` に記録する
+
+投稿・編集・削除のいずれも **`activity` に1行書く**（9.1.1。利用者の判断、2026-08-27）。
+
+| 列 | 値 |
+|---|---|
+| `entity_type` / `entity_id` | `ticket` と**親チケットの id**（コメントの id ではない） |
+| `action` | **常に `update`** |
+| `field` | `comment` |
+| `old_value` | 投稿のときは `NULL`。編集・削除は**変更前の要約** |
+| `new_value` | 削除のときは `NULL`。投稿・編集は**変更後の要約** |
+
+**要約は `<kind の表示名>: <本文の先頭40字>`**（40字を超えたら末尾に `…`）。
+9.5.2 が `body_md` の `old_value` / `new_value` を `NULL` にするのは、**本文が長いまま
+20件ぶん載ると 8章の「応答を軽く保つ」に反する**ためであり、**その理由は要約すれば消える。**
+履歴に「何が書かれたか」が1行も残らないと、手順19 の「最近の動き」が
+「コメントが変わった」しか言えなくなる。
+
+**`action` に `create` / `delete` を使わない理由は 9.10.2 と同じである**——`ticket:31` の
+`action='delete'` は「そのチケットが消された」を意味しており（9.5.3）、
+コメント1件の削除に同じ値を当てると**チケットごと消えたように見える。**
+
+**9.6 の遷移に添えたコメントは、`activity` に別行を書かない。** 遷移そのものが
+`action='transition'` の1行として記録されており（9.6）、**同じ1回の操作に対して
+「状態を変更した」と「コメントが付いた」の2行が並ぶと、履歴が同じ出来事を二重に見せる。**
+本文は `GET .../comments` に `kind='progress'` として並ぶので、失われるものは無い。
 
 ## 9.9 完了条件（DoD）
 
@@ -1544,6 +1641,83 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/dod/:id
 `is_satisfied` を `true` にしたとき、サーバが `satisfied_at` と `satisfied_by`（呼び出し元）を設定する。`false` に戻すと両方 `NULL` へ戻す。
 
 `assertion`（コマンド実行）・`artifact`（成果物の存在確認）・`review`・`task_ref` は Phase 2（`Requirements.md` 10.5.2、`GuiDesign.md` 5.5）。**表とその列は Phase 1 から `DbDesign.md` 6.11 の形で作り、API が受け付ける `type` だけを絞る。** 後から列を足すより、使わない列を持つほうが安い。
+
+**`type` は `POST` で省略できる**（既定 `manual`）。**`PATCH` で送ると `422`、
+`details[].code = "immutable_field"`**——Phase 1 で取りうる値が1つしかない以上、
+変更を受け付けても何も起こせない。Phase 2 で他の型を開けるときに、
+**型ごとに `config` の形が違う**（`DbDesign.md` 6.11）ので、そこで改めて設計する。
+
+### 完了条件の応答
+
+```json
+{
+  "items": [
+    { "id": "01K2...", "type": "manual", "body": "ユニットテストが通ること",
+      "is_satisfied": true, "satisfied_at": "2026-08-27T05:00:00Z",
+      "satisfied_by": { "id": "01K2...", "kind": "user", "display_name": "田中" },
+      "sort_order": 10,
+      "created_at": "2026-08-27T02:10:00Z", "updated_at": "2026-08-27T05:00:00Z" },
+    { "id": "01K2...", "type": "manual", "body": "設計文書を更新すること",
+      "is_satisfied": false, "satisfied_at": null, "satisfied_by": null,
+      "sort_order": 20,
+      "created_at": "2026-08-27T02:11:00Z", "updated_at": "2026-08-27T02:11:00Z" }
+  ]
+}
+```
+
+**`items[]` は `sort_order` → `created_at` の昇順。** 第2キーを置くのは 9.10.2 と同じく
+**順序が実行ごとに揺れないようにする**ためである。
+
+`POST` は `201 Created` ＋ `Location` ＋ 作った1件。`PATCH` は `200 OK` ＋ 更新後の1件。
+`DELETE` は `204 No Content`。
+
+**`satisfied_by` は 9.5.1 の `assignee` と同じ形である**（`{id, kind, display_name}`）。
+`ON DELETE SET NULL` なので、チェックした人を消した後は `null` になる——
+**条件を満たした事実は消えず、誰が満たしたかだけが分からなくなる。**
+
+**`config` / `evidence` / `origin` は返さない**（`DbDesign.md` 6.11 の列としては残る）。
+いずれも Phase 2 の型と AI提案のためのもので、**Phase 1 の API が受け付けない値を
+応答に並べると「使える」ように見える。** Phase 2 で `type` を開けるときに、
+同じ改訂でこの3つも応答へ足す。
+
+**`sort_order` を省略したときは末尾（現在の最大値 + 10）。** 9.10.2 の外部参照と同じ
+採番で、**10 刻みにするのは間に挿し込む余地を残すため**である。
+
+**ページネーション・`ETag`・`If-Match` はいずれも持たない**（9.10.2 と同じ）。
+1チケットあたり数件に収まり、詳細応答（9.5.1）の `dod` に同じ一覧が入る。
+**親チケットの `version` と `updated_at` も動かさない。**
+
+**完了条件を満たしていなくても、`done` への遷移は止めない**（Phase 1）。9.6 の
+検証の順序（`DbDesign.md` 6.5）に DoD は含まれず、**チェックリストは人が読む道具**である。
+自動判定に基づいて遷移を止めるのは、`assertion` / `artifact` が入る Phase 2
+（`Requirements.md` 10.5.2「AIが完了と言ったから完了」の回避）——**判定できない型で
+遷移を止めると、人が自分のチェック漏れで進めなくなるだけになる。**
+
+### 完了条件の変更を `activity` に記録する
+
+追加・更新・削除のいずれも **`activity` に1行書く**（9.1.1。利用者の判断、2026-08-27）。
+列の使い方は 9.10.2 と同じで、**`field` は `dod`、`action` は常に `update`** である。
+
+| 変更 | `old_value` | `new_value` |
+|---|---|---|
+| 追加 | `NULL` | `body` |
+| 本文の変更 | 変更前の `body` | 変更後の `body` |
+| チェックを付ける | `未: <body>` | `済: <body>` |
+| チェックを外す | `済: <body>` | `未: <body>` |
+| 並び順だけの変更 | — | **記録しない** |
+| 削除 | `body` | `NULL` |
+
+**並び順だけの変更を記録しないのは、`move`（9.4）を記録しないのと同じ理由である**
+（利用者の判断、2026-08-23）——順序を1回入れ替えただけで変更履歴が埋まり、
+業務履歴として読む価値が薄い。
+
+**チェックの付け外しに接頭辞を付けるのは、`is_satisfied` が真偽値だからである。**
+`true` / `false` をそのまま載せると履歴が「`false` → `true`」としか言わず、
+**どの条件を満たしたのかが読めない。**
+
+**本文とチェックを1回の `PATCH` で同時に変えたときも1行に畳む**（`済: <新しい body>` へ
+変わったものとして記録する）。9.5.2 が「変更した項目ごとに1行」と定めるのはチケットの
+列の話で、**DoD の1件は画面でも1行として読まれる**（`GuiDesign.md` 5.5）。
 
 ## 9.10 関連リンクと外部参照
 
@@ -1573,9 +1747,19 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 
 | フィールド | 検証 |
 |---|---|
-| `target_seq` | 必須。**同一プロジェクト内**に存在すること。自分自身は `422` |
+| `target_seq` | 必須。**同一プロジェクト内**に存在すること（無ければ `422`、`details[].code = "not_found"`）。自分自身は `422`、`details[].code = "self_link"` |
 | `link_type` | `FS` / `SS` / `FF` / `SF`（ガント用の依存）、`relates` / `duplicates` / `blocks` |
 | `lag_days` | 整数。既定 `0`。`FS`〜`SF` のときのみ意味を持つ |
+
+**同じ `(source, target, link_type)` の組が既にあるときは `409 already_exists`。**
+`uq_ticket_link`（`DbDesign.md` 6.6）が一意なキーであり、2.5.1 の `already_exists` は
+まさにこれを表す（プロジェクトキーの重複と同じ扱い）。`message` は
+「同じ関連はすでに登録されています」。**`conflict` を使わない**——あちらは `If-Match`
+不一致のような**状態**の競合で、こちらは**値**が既存の行と衝突している。
+
+**逆向き（`target` → `source`）の同じ `link_type` は別の行として作れる。** 一意制約が
+向きを含むためである。`A blocks B` と `B blocks A` は業務上は矛盾するが、
+**それを禁じるのは DB でもこの API でもない**——依存の循環検出は Phase 2 のガントで扱う（10.2）。
 
 `GET` の応答は、**当該チケットが `source` である行と `target` である行の両方**を返し、`direction` を付けて区別する。
 
@@ -1583,20 +1767,67 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 {
   "items": [
     { "id": "01K2...", "direction": "outgoing", "link_type": "blocks",
-      "ticket": { "seq": 45, "title": "ticketテーブル定義", "status": {...} },
-      "lag_days": 0, "origin": "human" },
+      "ticket": { "seq": 45, "title": "ticketテーブル定義", "type": "task",
+                  "status": { "key": "todo", "name": "未着手", "category": "todo" } },
+      "lag_days": 0, "origin": "human",
+      "created_at": "2026-08-27T02:10:00Z" },
     { "id": "01K2...", "direction": "incoming", "link_type": "blocks",
-      "ticket": { "seq": 12, "title": "DB設計", "status": {...} },
-      "lag_days": 0, "origin": "human" }
+      "ticket": { "seq": 12, "title": "DB設計", "type": "story",
+                  "status": { "key": "done", "name": "完了", "category": "done" } },
+      "lag_days": 0, "origin": "human",
+      "created_at": "2026-08-27T02:11:00Z" }
   ]
 }
 ```
 
 **双方向を1本の `GET` で返す。** `GuiDesign.md` 5.5 の「関連チケット」は「ブロック元」と「ブロック先」を同じリストに並べる。2回問い合わせると N+1 になる（設計方針3）。
 
+**`ticket` は 9.5.1 の `parent` と同じ形である**（`{seq, title, type, status}`）。
+`type` を持つのは、**画面が行の先頭に種別アイコンを出す**ためである（`GuiDesign.md` 5.4 / 5.5）。
+**`direction` は「相手がどちら側か」を表す**——`outgoing` なら `ticket` が `target`、
+`incoming` なら `ticket` が `source` である。どちらの場合も `ticket` に入るのは**相手**であり、
+自分は入らない。
+
+**`items[]` は `direction`（`outgoing` → `incoming`）、同じ向きの中は
+`link_type` → `ticket.seq` の昇順。** 9.10.2 と同じく、順序が実行ごとに揺れないようにする。
+
+**`DELETE` は `direction` を問わない。** `incoming` の行——相手のチケットが `source` で
+ある行——も、このエンドポイントから消せる。`GuiDesign.md` 5.5 が両方を同じリストに
+並べる以上、**片方だけ消せないと画面に「消せない行」が混ざる。** `204 No Content`。
+
+**`PATCH` は持たない。** 一意制約が `(source, target, link_type)` である以上、
+`link_type` の変更は**別の行になるのと同じ**であり、消して作り直すのと変わらない。
+`lag_days` だけのために1本増やす利得も無い——**Phase 1 に `lag_days` を読む画面が無い**（下記）。
+
+**ページネーション・`ETag`・`If-Match` はいずれも持たない**（9.10.2 と同じ）。
+**親チケットの `version` と `updated_at` も動かさず、相手側のチケットも動かさない**
+——リンクの増減はどちらの `ticket` の列も変えないためである。
+
 **プロジェクトを跨ぐリンクは Phase 1 では作れない。** `DbDesign.md` 6.6 の `ticket_link` に制約は無いが、API が `target_seq` で受ける以上、同一プロジェクトに閉じる（9.1）。跨ぐ必要が出た時点で `target` の指定方法ごと設計する（10.2）。
 
 `origin` は `human` / `ai_suggested`。**Phase 1 は `human` のみ作られる**（AI提案の採用・却下は Phase 2。`GuiDesign.md` 5.5）。
+
+**Phase 1 の画面が出す `link_type` は `relates` / `duplicates` / `blocks` の3つだけである**
+（利用者の判断、2026-08-27。`GuiDesign.md` 5.5）。`FS` / `SS` / `FF` / `SF` と `lag_days` は
+**ガントの依存線**のためのもので、ガントは Phase 2（`GuiDesign.md` 3.2）。
+**読む画面が無い値を人に選ばせても、入れた本人が結果を確かめられない。**
+**API は7種すべて受け続ける**——MCP とエージェントがガント用の依存を先に積むことは
+妨げない（`Requirements.md` 10.5）。
+
+#### リンクの変更を `activity` に記録する
+
+追加・削除のいずれも **`activity` に1行書く**（9.1.1。利用者の判断、2026-08-27）。
+列の使い方は 9.10.2 と同じで、**`field` は `link`、`action` は常に `update`** である。
+
+| 変更 | `old_value` | `new_value` |
+|---|---|---|
+| 追加 | `NULL` | `blocks my-app-12` |
+| 削除 | `blocks my-app-12` | `NULL` |
+
+**要約は `<link_type> <相手の完全形ID>`**（9.1 の `<key>-<seq>`）。
+**操作したチケット側に1行だけ書き、相手のチケットの履歴には書かない**——1回の操作で
+2行増えると、手順19 の「最近の動き」で同じ出来事が二重に見える。
+`direction` を要約に含めないのも同じ理由で、**読み手はそのチケットの履歴を見ている。**
 
 ### 9.10.2 外部参照
 
@@ -1882,7 +2113,9 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 | `parent_cycle` | 自分自身または自分の子孫を親に指定した（9.5.2） |
 | `unknown_status` | 遷移先がプロジェクトのワークフローに存在しない（9.6） |
 | `not_a_member` | 担当者に指定したアクターがプロジェクトのメンバーでない（9.3） |
-| `not_found` | `parent_seq` / `tag_ids` / `sprint_id` の参照先がこのプロジェクトに無い（9.3） |
+| `not_found` | `parent_seq` / `tag_ids` / `sprint_id` の参照先がこのプロジェクトに無い（9.3）。`target_seq` の相手がこのプロジェクトに無い（9.10.1）。`in_reply_to` の相手がこのチケットに無い、または削除済み（9.8） |
+| `self_link` | 自分自身へのリンクを作ろうとした（9.10.1） |
+| `immutable_field` | サーバが決める項目、または作成後に変えられない項目を送った（9.5.2 / 9.8 / 9.9 / 9.10.2） |
 | `use_move_endpoint` | `sort_key` / `staged_at` を `PATCH` で変えようとした（9.5.2） |
 | `not_stageable` | 表示上のトップレベルでないチケットを `staged: true` で上げようとした（9.4.1）。**オンステージのチケットを、段に置けなくなる `type` / `parent_seq` へ変えようとした場合も同じ**（9.5.2） |
 | `use_transition_endpoint` | `status_key` / `closed_at` を `PATCH` で変えようとした（9.5.2） |
@@ -1897,13 +2130,19 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 | **16** | 9.2 / 9.3 / 9.4 / 9.11 / 9.12 | チケットを一覧・作成・並べ替え・グループ化できる |
 | **17** | 9.5 / 9.6 / 9.7 | チケットを編集し、ワークフローに沿って状態を進められる |
 | **17c** | **9.10.2**（＋ 9.5.1 の `references`） | チケットにリポジトリ・コミット・仕様書へのリンクが並び、子チケットを詳細から作れる |
-| **18** | 9.8 / 9.9 / **9.10.1** | コメントを投稿し、完了条件と関連チケットを管理できる |
+| **18a** | 9.8 / 9.9 / **9.10.1** | （API のみ。画面は 18b） |
+| **18b** | — | コメントを投稿し、完了条件と関連チケットを管理できる |
 | **19** | 9.13 | プロジェクトの現況が見える |
 
 9.1 / 9.14 は全手順に共通する規約であり、手順16 で確立する。
 
 **手順17 は 17a（API）/ 17b（画面）/ 17c（外部参照）に分かれている**（`Design.md` 11章）。
 本表の 9.5 / 9.6 / 9.7 は 17a で実装済みで、17b は画面だけを作るため本章に対応する節を持たない。
+
+**手順18 も 18a（API）/ 18b（画面）に分かれている**（`Design.md` 11章）。18a が
+9.8 / 9.9 / 9.10.1 の3資源をまとめて実装し、9.5.1 の `dod` / `links` を空配列から
+実体へ差し替える。18b は `GuiDesign.md` 5.5 の3セクションを作るだけで、
+**新しいエンドポイントを足さない。**
 **17c の「子チケットを詳細から作る」は新しい API を足さない**——9.3 の `POST /tickets` に
 `parent_seq` を添えるだけで、画面側の導線（`GuiDesign.md` 5.5）だけが増える。
 

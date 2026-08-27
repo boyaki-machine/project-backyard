@@ -30,6 +30,11 @@ type Querier interface {
 	// 意味も無い。ログインの失敗回数は ResetLoginFailure がログイン成功時に消す。
 	//
 	ChangeMyPassword(ctx context.Context, arg ChangeMyPasswordParams) error
+	// CommentRepliableInTicket は in_reply_to の相手が「同じチケットの、削除されて
+	// いないコメント」であることを見る（9.8）。**存在しない ID と他チケットの ID と
+	// 削除済みを1つの結果に畳む**——呼び出し元にとってはどれも「指せない」であり、
+	// 区別して返すと他チケットのコメントの存在を探れる（Design.md 6.4.5）。
+	CommentRepliableInTicket(ctx context.Context, arg CommentRepliableInTicketParams) (bool, error)
 	// CountActiveAdministrators は「最後のアドミニストレータ」の判定に使う
 	// （ApiDesign.md 6.4 / 6.5 の last_administrator）。
 	//
@@ -102,7 +107,11 @@ type Querier interface {
 	//
 	// **origin は呼び出し元の actor.kind から決める**（human / agent）。
 	// Phase 1 にエージェントは実在しないので常に 'human' になる。
+	// **in_reply_to は手順18a で足した**（9.8 の返信）。9.6 の遷移コメントは返信を
+	// 持たないので、あちらは NULL を渡す——列を増やすより、呼び出し側が「返信では
+	// ない」を明示するほうが、後から読んだときに意図が残る。
 	CreateComment(ctx context.Context, arg CreateCommentParams) error
+	CreateDoDItem(ctx context.Context, arg CreateDoDItemParams) error
 	// must_change を明示で受ける（DbDesign.md 6.2 の既定は false）。
 	// POST /admin/users（ApiDesign.md 6.2）が must_change_password: true を
 	// 既定とするため、列の既定値任せにできない。**呼び出し側は Go の
@@ -123,6 +132,7 @@ type Querier interface {
 	CreateSystemActor(ctx context.Context, arg CreateSystemActorParams) error
 	CreateTag(ctx context.Context, arg CreateTagParams) error
 	CreateTicket(ctx context.Context, arg CreateTicketParams) error
+	CreateTicketLink(ctx context.Context, arg CreateTicketLinkParams) error
 	CreateTicketReference(ctx context.Context, arg CreateTicketReferenceParams) error
 	CreateUserActor(ctx context.Context, arg CreateUserActorParams) error
 	CreateUserIdentity(ctx context.Context, arg CreateUserIdentityParams) error
@@ -141,6 +151,7 @@ type Querier interface {
 	// 万一システムアクターの ID を渡されても消さない。
 	//
 	DeleteActorByID(ctx context.Context, actorID string) (int64, error)
+	DeleteDoDItem(ctx context.Context, arg DeleteDoDItemParams) (int64, error)
 	// project_counter / project_member / workflow（と配下の status・transition）は
 	// ON DELETE CASCADE で追従する（DbDesign.md 6.4 / 6.5）。
 	DeleteProjectByKey(ctx context.Context, key string) (int64, error)
@@ -165,6 +176,7 @@ type Querier interface {
 	// **activity は残る**——entity_id は多相参照で FK を持てず、9.13.2 が
 	// 「削除されたチケットの行」を表示する前提で組まれている（9.5.3）。
 	DeleteTicket(ctx context.Context, arg DeleteTicketParams) (int64, error)
+	DeleteTicketLink(ctx context.Context, arg DeleteTicketLinkParams) (int64, error)
 	DeleteTicketReference(ctx context.Context, arg DeleteTicketReferenceParams) (int64, error)
 	// DetachTicketTags は 9.5.2 の tag_ids の置き換えに使う（丸ごと消してから付け直す）。
 	//
@@ -346,6 +358,22 @@ type Querier interface {
 	// GetTicketBySeq は 9.5 形式の本体を1件引く。列は ListTickets とそろえてある
 	// （9.5.1 が「9.2 の items[] に body_md 等を加えたもの」と定めているため）。
 	GetTicketBySeq(ctx context.Context, arg GetTicketBySeqParams) (GetTicketBySeqRow, error)
+	// GetTicketComment は1件。POST / PATCH の応答と、更新・削除の前の読み取りに使う。
+	//
+	// **削除済みでも返す。** 「もう無い」として 404 に倒すのはハンドラの仕事で、
+	// クエリは行の姿をそのまま返す——deleted_at を見て判断するために読んでいる。
+	GetTicketComment(ctx context.Context, arg GetTicketCommentParams) (GetTicketCommentRow, error)
+	// 1件だけ返す形。POST / PATCH の応答（9.9）と、更新前の読み取りに使う。
+	GetTicketDoDItem(ctx context.Context, arg GetTicketDoDItemParams) (GetTicketDoDItemRow, error)
+	// GetTicketLink は1件を、**このチケットに紐づいているかを含めて**引く。
+	//
+	// **source と target のどちらでもよい。** DELETE は direction を問わないため
+	// （9.10.1。画面が両方を同じリストに並べる以上、片方だけ消せないと
+	// 「消せない行」が混ざる）。
+	//
+	// 相手の seq と link_type を返すのは、削除を activity へ記録するとき
+	// 「blocks my-app-12」の要約を組み立てるためである（9.10.1）。
+	GetTicketLink(ctx context.Context, arg GetTicketLinkParams) (GetTicketLinkRow, error)
 	// 1件だけ返す形。POST / PATCH の応答（ApiDesign.md 9.10.2）で使う。
 	GetTicketReference(ctx context.Context, arg GetTicketReferenceParams) (GetTicketReferenceRow, error)
 	// ── 並べ替え（ApiDesign.md 9.4）─────────────────────────────
@@ -610,9 +638,76 @@ type Querier interface {
 	ListTagsForTickets(ctx context.Context, ticketIds []string) ([]ListTagsForTicketsRow, error)
 	// ListTicketChildrenBrief は 9.5.1 の children（直下の子だけ。孫は含めない）。
 	ListTicketChildrenBrief(ctx context.Context, parentID pgtype.Text) ([]ListTicketChildrenBriefRow, error)
+	// ── 手順18a：コメントAPI（ApiDesign.md 9.8）─────────────────────────
+	//
+	// **すべてのクエリが ticket_id で閉じている。** コメントはチケットの子資源であり、
+	// 他チケットの ID を渡されても行が返らないようにするためである（reference.sql と
+	// 同じ形）。チケットがそのプロジェクトのものかは FindTicketIDBySeq が済ませており、
+	// 到達可否（メンバーか）は RequireProjectPermission が済ませている。
+	//
+	// **author は JOIN で引く**（LEFT ではない）。comment.author_id は NOT NULL かつ
+	// ON DELETE RESTRICT なので、投稿者不在のコメントは DB が許さない（DbDesign.md 6.7）。
+	// reference.sql の created_by が LEFT JOIN なのは、あちらが ON DELETE SET NULL
+	// だからである——**同じ「書き手」でも、消せるかどうかが違う。**
+	// ListTicketComments は 9.8 の一覧。**削除済みの行も返す**（body_md を null にして
+	// 画面が「削除されました」と出す）ので、deleted_at では絞らない。
+	//
+	// **total と last_updated をウィンドウ関数で同時に取る。** LIMIT より先に評価される
+	// ので全件に対する値になり、ListTickets（9.2.5）と同じ形である。1回の問い合わせで
+	// 済ませるのは、件数と ETag が同じスナップショットを指すようにするためでもある。
+	//
+	// 並びは created_at の昇順が既定（9.8）。**許可する sort は created_at だけ**なので
+	// CASE 式は order の2通りだけで足りる（ListAdminUsers は5項目ぶん並ぶ）。
+	// **同値の tie-break は id** ——ULID は時刻順なので created_at と向きが揃う。
+	ListTicketComments(ctx context.Context, arg ListTicketCommentsParams) ([]ListTicketCommentsRow, error)
+	// チケットの完了条件（DoD）（DbDesign.md 6.11、ApiDesign.md 9.9）。
+	//
+	// 手順18a で追加。チケット詳細（GuiDesign.md 5.5）の「完了条件 (DoD)」が消費者で、
+	// 詳細応答（9.5.1）の dod も同じ一覧を読む。
+	//
+	// **すべてのクエリが ticket_id で閉じている**（reference.sql と同じ）。DoD はチケットの
+	// 子資源であり、他チケットの ID を渡されても行が返らないようにするためである。
+	//
+	// **Phase 1 が受け付ける type は manual だけである**（9.9）。表と CHECK は Phase 2 の
+	// 形のまま作ってあり（DbDesign.md 6.11）、絞るのは API の仕事なので SQL には現れない。
+	//
+	// **config / evidence / origin は SELECT しない。** Phase 1 の応答に載せないため
+	// （9.9）。列は残っており、Phase 2 で type を開けるときに同じ改訂で足す。
+	//
+	// **satisfied_by は LEFT JOIN で引く。** actor は ON DELETE SET NULL なので、
+	// チェックした人を消した後も行は残る——条件を満たした事実は消えない。
+	// items[] は sort_order → created_at の昇順（9.9）。第2キーを置くのは、
+	// 9.10.2 と同じく順序が実行ごとに揺れないようにするためである。
+	ListTicketDoD(ctx context.Context, ticketID string) ([]ListTicketDoDRow, error)
 	// ListTicketIDsInSortOrder は振り直し（9.4 の rebalanced）の対象を現在の並びで返す。
 	// sort_key が NULL の行も含める——振り直しはそれを埋める機会でもある。
 	ListTicketIDsInSortOrder(ctx context.Context, projectID string) ([]string, error)
+	// チケット間リンク（DbDesign.md 6.6 の ticket_link、ApiDesign.md 9.10.1）。
+	//
+	// 手順18a で追加。チケット詳細（GuiDesign.md 5.5）の「関連チケット」が消費者で、
+	// 詳細応答（9.5.1）の links も同じ一覧を読む。
+	//
+	// **外部参照（reference.sql）と役割が違う。** あちらは PB の外を指し、こちらは
+	// 同じプロジェクトの別のチケットを指す。target_ticket_id に FK があるぶん、
+	// 整合性は DB が保証する（9.10）。
+	//
+	// **一覧だけが ticket_id で閉じていない。** 当該チケットが source である行と
+	// target である行の両方を返すためで、WHERE は2本に分かれる（下記）。更新系は
+	// 「このチケットに紐づく行か」を id と合わせて確かめる。
+	// ListTicketLinks は双方向を1本で返す（9.10.1）。2回問い合わせると N+1 になる。
+	//
+	// **ticket に入るのは常に「相手」である。** outgoing なら target、incoming なら
+	// source で、自分は入らない。画面は「ブロック元」と「ブロック先」を同じリストに
+	// 並べるため（GuiDesign.md 5.5）、行の形が揃っている必要がある。
+	//
+	// **direction_rank は並び順のためだけの列である。** UNION の ORDER BY は出力列
+	// しか参照できず、'outgoing' < 'incoming' は文字列としては逆順になる。
+	// 見た目の値（direction）と並びの値を分けておくと、後で順序を変えるときに
+	// 文字列の綴りに引きずられない。
+	//
+	// **status は LEFT JOIN。** ticket.status_key は物理FKではなく（DbDesign.md 6.6）、
+	// ワークフローを差し替えた後に定義の無いキーが残りうる。
+	ListTicketLinks(ctx context.Context, ticketID string) ([]ListTicketLinksRow, error)
 	// チケットの外部参照（DbDesign.md 6.12、ApiDesign.md 9.10.2）。
 	//
 	// 手順17c で追加。チケット詳細（GuiDesign.md 5.5）の「コード」「参考リンク」の
@@ -731,6 +826,10 @@ type Querier interface {
 	// change_stage が false のとき staged_at は現在値のままで、並べ替えだけを行う
 	// （リクエストで staged を省略した場合）。
 	MoveTicket(ctx context.Context, arg MoveTicketParams) (MoveTicketRow, error)
+	// sort_order 省略時の既定（現在の最大値 + 10）。行が無ければ 10 から始める。
+	// **10 刻みにするのは間に挿し込む余地を残すため**で、NextTicketReferenceSortOrder
+	// と同じ採番である。
+	NextDoDSortOrder(ctx context.Context, ticketID string) (int32, error)
 	// sort_order 省略時の既定（現在の最大値 + 10）。行が無ければ 10 から始める。
 	// 10刻みにするのは、並べ替え（9.11.1）が同じ間隔で振り直すためである。
 	NextTagSortOrder(ctx context.Context, projectID string) (int32, error)
@@ -894,6 +993,14 @@ type Querier interface {
 	// ——2人が同時に同じ遷移を実行すると、後発は「同じ状態から同じ状態へ」を
 	// 要求することになり、workflow_transition に定義が無いため 409 になる。
 	SetTicketStatus(ctx context.Context, arg SetTicketStatusParams) (int32, error)
+	// SoftDeleteComment は論理削除（DbDesign.md 4.6 / 6.7）。
+	//
+	// **body_md は消さない。** 列が NOT NULL であり、応答で null にするのは view の
+	// 仕事である（9.8）。DB に本文を残すのは、誤削除からの復旧手段を Phase 1 で
+	// 捨てないためでもある。
+	//
+	// **updated_at はトリガが動かす**（trg_comment_updated）ので、削除も ETag に効く。
+	SoftDeleteComment(ctx context.Context, arg SoftDeleteCommentParams) (int64, error)
 	SprintExistsInProject(ctx context.Context, arg SprintExistsInProjectParams) (bool, error)
 	// SummarizeAdminUsers は ListAdminUsers と同じ絞り込みに対する総件数と
 	// 最終更新日時を返す。total は 2.6、last_updated_at は 2.7 の ETag の材料。
@@ -914,6 +1021,17 @@ type Querier interface {
 	// 2回書かないよう1文にまとめてある。** 0件のとき last_updated_at は NULL。
 	//
 	SummarizeProjects(ctx context.Context, arg SummarizeProjectsParams) (SummarizeProjectsRow, error)
+	// SummarizeTicketComments は ListTicketComments が1件も返さないときの total と
+	// last_updated_at。**ウィンドウ関数は行が無いと1行も返らない**ので、ETag と
+	// ページャの total をここから採る（0件のページを開いたときも ETag が要る）。
+	SummarizeTicketComments(ctx context.Context, ticketID string) (SummarizeTicketCommentsRow, error)
+	// TicketLinkExists は uq_ticket_link（source, target, link_type）の重複を、
+	// INSERT の前に見る（9.10.1 の 409 already_exists）。
+	//
+	// **一意制約違反を捕まえて 409 に訳す方式は採らない。** pgx のエラーコードから
+	// 制約名を読む処理が1か所増えるうえ、**同じトランザクションが中断される**ため、
+	// activity の記録と同じ RunInTx の中で扱いにくい。先に見るほうが素直である。
+	TicketLinkExists(ctx context.Context, arg TicketLinkExistsParams) (bool, error)
 	// TicketSortKeyAfter / TicketSortKeyBefore は**段を問わない**（9.4.1）。
 	// sort_key はプロジェクト内で1本であり、どの行の隣を指定しても位置は一意に定まる。
 	TicketSortKeyAfter(ctx context.Context, arg TicketSortKeyAfterParams) (string, error)
@@ -956,6 +1074,23 @@ type Querier interface {
 	// 409（conflict）と 404（not_found）を分ける。
 	//
 	UpdateAdminUserProfile(ctx context.Context, arg UpdateAdminUserProfileParams) (int64, error)
+	// UpdateComment は 9.8 の PATCH。**変えられるのは body_md と kind だけ**で、
+	// in_reply_to は immutable_field として先に弾かれている。
+	//
+	// **deleted_at IS NULL を条件に入れる。** 削除済みへの PATCH は 404 だが、
+	// ハンドラの読み取りと UPDATE の間に別のリクエストが消す余地がある——
+	// 行数0 で返れば、ハンドラは同じ 404 の経路に合流できる。
+	UpdateComment(ctx context.Context, arg UpdateCommentParams) (int64, error)
+	// 部分更新（9.9 の PATCH）。
+	//
+	// **is_satisfied と satisfied_at / satisfied_by は同時に動く。** 9.9 が
+	// 「true にしたときサーバが satisfied_at と satisfied_by を設定し、false に
+	// 戻すと両方 NULL へ戻す」と定めるため、3つを別々の引数にせず
+	// satisfied_set の1つで束ねる——**バラバラに送れる形にすると、
+	// 「満たしたのに満たした人がいない」行を作れてしまう。**
+	//
+	// type は含めない。作成後は変えられない（9.9 が immutable_field と定める）。
+	UpdateDoDItem(ctx context.Context, arg UpdateDoDItemParams) (int64, error)
 	// UpdateLocalIdentitySubject はメール変更に user_identity.subject を追随させる。
 	//
 	// **設計文書に無い操作だが、無いと当人がログインできなくなる**（手順13a の判断。
