@@ -12,6 +12,11 @@
  *
  * **選択肢は開いたときに取る**（9.7）。詳細応答には入っていない。
  *
+ * **選んでも即座には遷移しない**（手順18b）。呼び出し側が確認モーダルを開き、
+ * そこで任意のコメントを添えてから `POST .../transition` を投げる
+ * （`GuiDesign.md` 5.5「遷移にコメントを添える」）。ここは**どれが選ばれたかを
+ * 伝えるところまで**を持つ。
+ *
  * **「全項目が不可」は例外ではなく通常の状態である**（5.5）。`simple` ワークフロー
  * （`DbDesign.md` 7.4）は `done` から出る遷移を持たないため、**完了したチケットは
  * 必ずこの状態になる。**
@@ -33,7 +38,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** 開いた。呼び出し側が `GET .../transitions` を投げる */
   open: []
-  select: [key: string]
+  /**
+   * 遷移できる項目が選ばれた。**キーではなく項目そのものを渡す**（手順18b）
+   * ——呼び出し側が確認モーダルに「`<現在の名前>` から `<遷移先の名前>` へ」を
+   * 出すため、`name` が要る（`GuiDesign.md` 5.5「遷移にコメントを添える」）。
+   */
+  select: [item: TicketTransitionOption]
 }>()
 
 const open = ref(false)
@@ -109,7 +119,7 @@ function setError(message: string): void {
 function choose(item: TicketTransitionOption): void {
   if (!item.allowed) return
   close()
-  emit('select', item.key)
+  emit('select', item)
 }
 
 onBeforeUnmount(detach)
