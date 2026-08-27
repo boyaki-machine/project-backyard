@@ -2043,3 +2043,74 @@ NOT NULL の列は `COALESCE(sqlc.narg(…), 現在値)`、NULL にできる列�
 （`dbdesign_612.md` / `gui_55.md` = 挿入する節の原稿）。スクラッチパッドは
 セッションをまたいで残らないため、明示的な削除は行っていない。
 **サーバもDBもコンテナも起動していない。**
+
+## 手順17b（チケット詳細画面。バックログの右に開くペイン）— 2026-08-27
+
+`GuiDesign.md` 5.5 の実画面と、2.2.1 のマスター・ディテール。**`server/` は1行も触っていない**
+（API は 17a で全部揃っている）。`docs/openapi.yaml` も不変。
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/src/components/SplitPane.vue` | 一覧と詳細の境界（6.1 / 2.2.1）。ポインタ操作で幅を変え `pb.detail_pane_w` に保存。**並ぶかどうかは受け取った幅で決める**（2.4。窓幅ではない） |
+| `client/src/components/TicketDetailPane.vue` | 詳細ペイン本体（5.5）。1カラム・2列のメタ情報グリッド・インライン編集・削除 |
+| `client/src/components/MarkdownEditor.vue` | CodeMirror 6（`minimalSetup`）＋ 縦に積んだライブプレビュー（5.5「説明欄」） |
+| `client/src/components/StatusDropdown.vue` | 状態のドロップダウン（5.5）。`<Teleport>` ＋ `fixed`。`allowed:false` を理由付きで出す |
+| `client/src/lib/markdown.ts` | `markdown-it` → `dompurify`。**見出しを3段下げる**規則を持つ |
+
+### 直したファイル
+
+| ファイル | 変更 |
+|---|---|
+| `client/src/api/tickets.ts` | `getTicket` / `updateTicket`（`If-Match`）/ `deleteTicket` / `transitionTicket` / `listTransitions` を追加 |
+| `client/src/pages/BacklogPage.vue` | `SplitPane` の組み込み、縮小時の3列、フィルタ行の折り畳み、戻る導線、選択行、`watch` の対象をクエリへ変更 |
+| `client/src/components/PageHeader.vue` | **追加のみ**。`titleActionLabel` / `titleActionIcon` を渡したときだけタイトル領域がボタンになる |
+| `client/src/components/EpicFilter.vue` | `↗` がクエリを持ち回るようにした（開いてもエピックの絞り込みが外れない） |
+| `client/src/styles/base.css` | `.markdown-body`（描画した Markdown の体裁）を追加 |
+| `client/src/router/routes.ts` | `/p/:key/tickets/:seq` を `BacklogPage` へ差し替え（プレースホルダを撤去） |
+| `client/package.json` / `package-lock.json` | 依存4つ ＋ `@types/markdown-it` |
+| `deploy/dev/seed/dev-data.yaml` | `body_md` を2件（demo-9 / demo-12）。**開いた瞬間に Markdown が描画される状態を seed に作った** |
+| `docs/GuiDesign.md` | 5.5（見積3つ・`updated_at` 非表示・親を選択式・「説明欄」の新設）、5.4（縮小時はタグを出さない） |
+| `docs/Development.md` | 10.4（実行時依存 3つ → 7つ）、8.2（`Page.bringToFront`） |
+
+### 実装中に見つけた欠陥（いずれも自分で踏んで直した）
+
+| 症状 | 原因 | 直し方 |
+|---|---|---|
+| **詳細が真っ白**（ヘッダだけ出る） | `immediate: true` の `watch` をスクリプト上部に置き、`cancelEdit()` が**まだ宣言前の `const`** を触って TDZ の `ReferenceError`。Vue は console.error に流すだけで画面は出る | `watch` をスクリプト末尾へ移した。**関数宣言は巻き上がるが、参照する `const` は巻き上がらない** |
+| **一覧ペイン全体が `--pb-accent` で塗り潰される** | `SplitPane` のスロット用 div に `class="primary"` / `"secondary"` を使い、**`base.css` のボタンの正本と衝突**した | `.split-primary` / `.split-secondary` へ改名（`LEARNINGS.md` #46 と同じ根） |
+| **数値欄がまったく保存されない**（編集モードのまま無反応） | **`v-model` は `type="number"` の値を自動で数値へ変換する**（Vue 3 `vModelText`）。`Ref<string>` の型は嘘になり、`draft.value.trim()` が実行時 `TypeError`。`commitEdit` の中で投げるので画面は何も言わない | `draftText()` で必ず `String()` を通す |
+| **境界を一度も掴めない** | `.divider` を `margin-right: -9px` で重ねたため、DOM 順で後ろの `.split-secondary` が上に載っていた | `.divider` に `position: relative; z-index: 1` |
+| **メタ情報が3列になり、見積・実績と開始・期限の組が行をまたいで割れた** | `grid-template-columns: repeat(auto-fit, minmax(210px, 1fr))` が 750px で3列を作った | 5.5 のとおり `repeat(2, minmax(0, 1fr))` で固定 |
+| **親の `↗` が次の行へ落ちた** | `select` に `max-width: 100%` だけを与え、選択肢の文字数ぶんの幅を主張していた | `flex: 1 1 0` ＋ `min-width: 0` |
+| **本文の `#` が `<h1>` を作り、9.2「`<h1>` は唯一のページ見出し」を破った** | `markdown-it` の既定 | `pb_demote_headings` で3段下げ（`#` → `<h4>`）。`base.css` の見た目もその階層で作り直した |
+| **縮小した一覧でタグが枠の途中で切れる** | 5.4 に縮小時のタグの扱いが無く、全幅と同じに出していた | **縮小中はタグを出さない**（5.4 に1行足した）。「読めないのに在る」は 2.2.1 が「重ねる」案を却下した理由と同じ |
+| **CodeMirror が1行ぶんの高さしか出ない** | 中身で伸びる作りで `min-height` を置いていなかった | `min-height: 180px`。**PB で最も打鍵回数の多い入力欄**（`Design.md` 3.1）に1行の窓を出すのは素の `textarea` より狭い |
+
+### 検証結果
+
+**ブラウザ 129件 PASS**（読み取り72 ＋ 状態変更57）。1440px / 1100px / 900px の3幅、
+メインメニューの展開・折りたたみの両方で実測し、**スクリーンショット10枚を目で見た。**
+
+| 区分 | 主な内容 |
+|---|---|
+| 読み取り（72件） | 全幅7列 → 開くと3列／`⠿`・優先・担当・期限・タグが落ちる／フィルタ行が `[絞り込み ▾]` へ／一覧450px・詳細750px／行の高さ 40px が動かない／ID 完全形・`✕`・`[⋯]`／メタ12項目（見積3つ）／`updated_at` を出さない／Markdown（見出し3・表・コード・リンクの `target`＋`rel`）／`<h1>` はページに1つ／出さないセクション5つ／子チケット2件と行クリックでの差し替え／ヘッダ左と `✕` の両方で戻る／フィルタの持ち回りと素のURL／縮小時の `⚠` のみ／状態ドロップダウン（完了チケットで全項目不可＋理由）／**2.4 が窓幅ではなくコンテンツペインの幅で決まること**（同じ 1100px でメニュー折りたたみ＝並ぶ、展開＝並ばない） |
+| 状態変更（57件） | タイトルの保存・`version` +1・無変更なら送らない・`Esc` で戻す・一覧の行も差し替わる／見積・実績・期限（`date` が前日へずれない）／空にして `null` へ戻す／優先度・担当・スプリントの即時 `PATCH`／担当を外す／タグの付け外し／CodeMirror の実キー入力とプレビュー追随／保存と取消／遷移（**まず「進める」ことを確かめてから**）／`422 not_stageable`・`422 parent_cycle`・`409` を**欄の直下に理由付きで、入力値を捨てずに**／削除の確認ダイアログに子2件／作って消す一巡／`SplitPane` の実マウスドラッグ・保存・読み直し・両側の下限 |
+
+**Go は1行も変えていない。** `make test` は既知の時限式 `TestExpiresAtFormat` だけが落ち、
+**`git worktree` で `develop` を切り出して同じ失敗を確認**した（手順外の作業に起票済み）。
+`deploy/dev/seed/dev-data.yaml` を変えたので `go test ./cmd/pb -count=1` を再実行して PASS。
+**`make test-db` は走らせていない**——`server/` に変更が無く、結合テストが測る対象が増えていない。
+
+### 検証で作った資源とその後始末
+
+| 作ったもの | 後始末 |
+|---|---|
+| チケット16件の全列・タグの控え（JSON） | `before.json` → 復元 → 再取得して `diff` で**差分ゼロ**を確認 |
+| 検証が作った `activity` 66行 | 削除（検証前の1行だけが残っていることを確認）。**日付リテラルで切らない**——DBのセッションTZは UTC で、JST の「今日」とずれる |
+| 検証のログインが作った `audit_log` 24行 | 削除（`login.success` / `login.failure` / `permission.denied`） |
+| ログイン失敗のロック | `failed_attempts = 0` / `locked_until = NULL` へ戻した |
+| 検証用に作って消したチケット2件 | 削除まで検証の一部。控えに無い `seq` を落とす復元スクリプトでも二重に担保 |
+| ヘッドレス Chrome のプロファイル・検証スクリプト・スクリーンショット | スクラッチパッド。セッション終了で消える |
+| `make build` の埋め込み成果物 | `make clean-webui` |

@@ -15,8 +15,9 @@
  * body へ出し、ボタンの実測位置に `fixed` で置く——フィルタ行の祖先が
  * `overflow: auto` を持つため、その中に描くと切り取られる。
  *
- * **エピック自身もチケットである**ので、各行に詳細への導線を置く（5.4「編集」。
- * 遷移先は手順17 まではプレースホルダ）。
+ * **エピック自身もチケットである**ので、各行に詳細への導線を置く（5.4「編集」）。
+ * **手順17b で実画面になった**——`↗` は右の詳細ペインを開く（2.2.1）。
+ * **クエリを持ち回る**（3.2）ので、開いてもエピックの絞り込みは外れない。
  */
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from 'vue'
 
@@ -169,7 +170,7 @@ const panelStyle = computed(() => ({
         <!-- エピック自身もチケットである（5.4「編集」）。詳細へ抜ける導線を置く -->
         <RouterLink
           class="epic-open"
-          :to="`/p/${projectKey}/tickets/${e.seq}`"
+          :to="{ path: `/p/${projectKey}/tickets/${e.seq}`, query: $route.query }"
           :aria-label="`${projectKey}-${e.seq} ${e.title} の詳細を開く`"
           :title="`${projectKey}-${e.seq} の詳細を開く`"
         >

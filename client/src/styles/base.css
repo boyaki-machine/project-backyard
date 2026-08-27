@@ -162,3 +162,152 @@ pre {
   cursor: default;
   opacity: 0.6;
 }
+
+/*
+ * 描画した Markdown（GuiDesign.md 5.5「説明欄」）
+ *
+ * 上のリセットが h1〜h6 / p / ul / ol の margin と padding を 0 にしているため、
+ * **本文として読める形はここで作り直す**。チケット詳細の表示とプレビューの
+ * 両方が使うので、scoped ではなくここに置く（.primary 等と同じ理由。手順13b）。
+ *
+ * **色は使わない**（8.6）。見出しの階層は太さと大きさ、コードと引用は
+ * 面の輝度で表す（8.2）。
+ */
+.markdown-body {
+  overflow-wrap: anywhere;
+}
+
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin: var(--pb-space-4) 0 var(--pb-space-2);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* **本文の見出しは3段下げて出る**（lib/markdown.ts の pb_demote_headings）。
+   9.2 の「ページヘッダの h1 が唯一のページ見出し」を守るためで、
+   `#` は h4、`##` は h5、`###` 以下は h6 になる。**見た目の大小はここで作る**
+   ので、段を下げても「概要」が小さくなるわけではない */
+/* **チケットのタイトル（18px）より小さくする。** 本文の最上位見出しが
+   タイトルと同じ大きさに見えると、どちらがそのチケットの名前か読めなくなる */
+.markdown-body h4 {
+  font-size: 16px;
+}
+
+.markdown-body h5 {
+  font-size: 15px;
+}
+
+.markdown-body h6 {
+  font-size: 14px;
+}
+
+/* 見出しの範囲が読めるように、上位2段だけ下線を引く（8.2）。
+   **`###` 以下は h6 に畳まれるので下線が付かない**——1カラム 750px の
+   ペインで4段の見出しを描き分ける必要は無いと判断した */
+.markdown-body h4,
+.markdown-body h5 {
+  padding-bottom: var(--pb-space-1);
+  border-bottom: 1px solid var(--pb-line);
+}
+
+.markdown-body p,
+.markdown-body blockquote,
+.markdown-body pre,
+.markdown-body table {
+  margin: 0 0 var(--pb-space-3);
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0 0 var(--pb-space-3);
+  padding-left: 1.6em;
+}
+
+.markdown-body li > ul,
+.markdown-body li > ol {
+  margin-bottom: 0;
+}
+
+/* チェックボックス付きの項目（Requirements.md 7章の対応構文）。
+   markdown-it は `<input disabled>` を出すので、マーカーだけ消す */
+.markdown-body li:has(> input[type='checkbox']) {
+  list-style: none;
+  margin-left: -1.3em;
+}
+
+.markdown-body input[type='checkbox'] {
+  margin-right: var(--pb-space-1);
+}
+
+.markdown-body a {
+  color: var(--pb-accent);
+  text-decoration: underline;
+}
+
+.markdown-body code {
+  padding: 1px 4px;
+  border-radius: var(--pb-radius);
+  background: var(--pb-elevated);
+  font-size: 13px;
+}
+
+/* **コードブロックだけは横スクロールさせる**（折り返すと、コードの意味が
+   変わって見える行が出る）。囲みの中で完結させ、ペインは横に流さない */
+.markdown-body pre {
+  overflow-x: auto;
+  padding: var(--pb-space-3);
+  border-radius: var(--pb-radius);
+  background: var(--pb-elevated);
+}
+
+.markdown-body pre code {
+  padding: 0;
+  background: none;
+}
+
+.markdown-body blockquote {
+  padding-left: var(--pb-space-3);
+  border-left: 3px solid var(--pb-border);
+  color: var(--pb-text-muted);
+}
+
+.markdown-body table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.markdown-body th,
+.markdown-body td {
+  padding: var(--pb-space-1) var(--pb-space-2);
+  border: 1px solid var(--pb-line);
+  text-align: left;
+}
+
+.markdown-body th {
+  background: var(--pb-elevated);
+  font-weight: 600;
+}
+
+.markdown-body hr {
+  margin: var(--pb-space-4) 0;
+  border: none;
+  border-top: 1px solid var(--pb-line);
+}
+
+.markdown-body img {
+  max-width: 100%;
+}

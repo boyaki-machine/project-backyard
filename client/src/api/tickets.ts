@@ -1,11 +1,15 @@
 /**
- * チケットのエンドポイント（`ApiDesign.md` 9.2 / 9.3 / 9.4）。
+ * チケットのエンドポイント（`ApiDesign.md` 9.2 〜 9.7）。
  *
  * 型は `docs/openapi.yaml` の生成物をそのまま使う（`tags.ts` と同じ方針）。
  *
- * **Phase 1 の消費者はバックログ画面ひとつ**（`GuiDesign.md` 5.4）。カンバン・
- * ガント（Phase 2）も 9.2 の同じエンドポイントから描くので、フィルタの組み立てを
- * 画面に書かず、ここに集める。
+ * **Phase 1 の消費者はバックログ画面と、その右に開く詳細ペインの2つ**
+ * （`GuiDesign.md` 5.4 / 5.5）。カンバン・ガント（Phase 2）も 9.2 の同じ
+ * エンドポイントから描くので、フィルタの組み立てを画面に書かず、ここに集める。
+ *
+ * **記号と表示名（`ticketTypeIcons` / `priorityMarks` / `statusMarks` /
+ * `*Labels`）もここが正本である。** 画面ごとに書き写さない——一覧と詳細で
+ * 同じチケットに違う記号が出ると、同じものだと読めなくなる。
  */
 import { api } from './client'
 import type { components } from './schema'
@@ -197,5 +201,101 @@ export function moveTicket(
   return api.post<MoveTicketResult>(
     `/projects/${encodeURIComponent(key)}/tickets/${seq}/move`,
     body,
+  )
+}
+
+// ── チケット1件（`ApiDesign.md` 9.5 / 9.6 / 9.7。手順17b で追加）─────
+
+export type TicketBrief = components['schemas']['TicketBrief']
+export type TicketChild = components['schemas']['TicketChild']
+export type UpdateTicketRequest = components['schemas']['UpdateTicketRequest']
+export type TransitionTicketRequest = components['schemas']['TransitionTicketRequest']
+export type TicketTransitionList = components['schemas']['TicketTransitionList']
+export type TicketTransitionOption = components['schemas']['TicketTransitionOption']
+
+/**
+ * チケット1件を取る（9.5.1）。必要権限は `ticket.view`。
+ *
+ * **9.2 の `items[]` に6項目を加えたもの**（`body_md` / `parent` / `children` /
+ * `dod` / `links` / `comment_count`）。**遷移先の一覧は含まれない**——
+ * ドロップダウンを開いたときに `listTransitions` を別に呼ぶ（9.7）。
+ */
+export function getTicket(key: string, seq: number): Promise<TicketDetail> {
+  return api.get<TicketDetail>(`/projects/${encodeURIComponent(key)}/tickets/${seq}`)
+}
+
+/**
+ * 部分更新（9.5.2）。必要権限は `ticket.edit`（`assignee_id` を変えるなら `ticket.assign` も）。
+ *
+ * **`If-Match` は必須である。** 省略すると 422 で、食い違えば 409。成功すると
+ * `version` が +1 されるので、**応答の `version` を次の更新に使い回す**
+ * （`GuiDesign.md` 5.5「編集の単位」。項目ごとに個別に送るため）。
+ *
+ * **`null` は「その項目を空にする」**であり、キーごと送らないのとは区別される。
+ * 担当を外す・親を外す・期限を消すはこの形でしか表せない。
+ *
+ * **送れないものが3系統ある**（`details[].code`）——`immutable_field`
+ * （サーバが決めるもの）、`use_move_endpoint`（`sort_key` / `staged_at` → 9.4）、
+ * `use_transition_endpoint`（`status_key` / `closed_at` → 9.6）。
+ */
+export function updateTicket(
+  key: string,
+  seq: number,
+  version: number,
+  body: UpdateTicketRequest,
+): Promise<TicketDetail> {
+  return api.patch<TicketDetail>(`/projects/${encodeURIComponent(key)}/tickets/${seq}`, body, {
+    headers: { 'If-Match': `"${version}"` },
+  })
+}
+
+/**
+ * 削除（9.5.3）。必要権限は `ticket.delete`。`204 No Content`。
+ *
+ * **子チケットは消えない。** `ticket.parent_id` は `ON DELETE SET NULL` なので、
+ * 子は親を失ってトップレベルへ上がる。**この挙動を確認ダイアログに件数付きで
+ * 明示する**（`GuiDesign.md` 6.3）。
+ */
+export function deleteTicket(key: string, seq: number): Promise<void> {
+  return api.del<void>(`/projects/${encodeURIComponent(key)}/tickets/${seq}`)
+}
+
+/**
+ * ステータスを遷移させる（9.6）。必要権限は `ticket.transition`
+ * （加えて `workflow_transition.required_permission` があればそれも）。
+ *
+ * **`If-Match` は要求しない**（9.6）。遷移そのものが競合を検出するためで、
+ * 2人が同時に同じ遷移を実行すると後発は「レビュー → レビュー」を要求することに
+ * なり、定義が無いので 409 `invalid_transition` になる。
+ *
+ * **`comment` は手順17b では送らない**（`GuiDesign.md` 5.5）。投稿したコメントを
+ * 表示する場所が手順18 まで無く、**送ったのに見えない**状態になる。
+ *
+ * 応答は 9.5.1 と同形式で、`version` は +1 される。
+ */
+export function transitionTicket(
+  key: string,
+  seq: number,
+  body: TransitionTicketRequest,
+): Promise<TicketDetail> {
+  return api.post<TicketDetail>(
+    `/projects/${encodeURIComponent(key)}/tickets/${seq}/transition`,
+    body,
+  )
+}
+
+/**
+ * 遷移先の候補（9.7）。必要権限は `ticket.view`。
+ *
+ * **`items[]` はワークフローの全ステータス（現在のものを除く）である。**
+ * 遷移できない先も `allowed: false` と `reason` を付けて返る——ステータスを
+ * 存在ごと隠すと「なぜ完了にできないのか」が分からなくなるため。
+ * `reason` は**そのまま画面に出せる日本語**（2.5）。
+ *
+ * **ドロップダウンを開いたときに呼ぶ**（9.7。詳細応答には入っていない）。
+ */
+export function listTransitions(key: string, seq: number): Promise<TicketTransitionList> {
+  return api.get<TicketTransitionList>(
+    `/projects/${encodeURIComponent(key)}/tickets/${seq}/transitions`,
   )
 }

@@ -471,6 +471,12 @@ window.set = window.set || function (el, v) {
   `socket.bind(('127.0.0.1', 0))` で取る
 - **`Runtime.evaluate` から返すのは値だけにする**（真偽・数・文字列）。DOM 要素は `{}` に
   直列化され、Python 側では偽になる
+- **フォーカスの出入りで保存する画面は `Page.bringToFront` を先に呼ぶ。**
+  ヘッドレスの窓は既定でフォーカスを持たず（`document.hasFocus()` が `false`）、
+  その状態では `el.blur()` が **blur イベントを発火しない**。
+  `GuiDesign.md` 5.5 のインライン編集（「別の領域をクリックしてフォーカスを外す」＝保存）は
+  これに当たり、呼ばないと**実装は正しいのに「保存されない」という FAIL**になる
+  （手順17b で実際に踏んだ）。`activeElement` は正しく入るので、そちらだけ見ても気づけない
 - **`Page.captureScreenshot` の `captureBeyondViewport: true` では `position: fixed` の要素が写らない。**
   文書全体を1枚に収めるモードなので、画面に固定した要素（`<Teleport>` で body へ出した
   ドロップダウンやメニュー）が抜ける。**開いたパネルを撮るときは `false` にする**
@@ -589,9 +595,16 @@ go ディレクティブも 1.25 へ上がる）。
 `alexedwards/argon2id` / `golang.org/x/term` / `go-chi/chi/v5` の5つ。
 トークンのハッシュと乱数は標準ライブラリ（`crypto/sha256` / `crypto/rand`）で足りる。
 
-**client（`client/package.json`）**：`vue` / `vue-router` / `pinia` の3つ。
-dev に `vite` / `@vitejs/plugin-vue` / `typescript` / `vue-tsc` / `openapi-typescript`。
-**`openapi-typescript` は型生成のみで実行時には入らない。**
+**client（`client/package.json`）**：`vue` / `vue-router` / `pinia` に、
+**手順17b で足した4つ**——`codemirror` / `@codemirror/lang-markdown` / `markdown-it` /
+`dompurify` を加えた**7つ**。後半4つは**チケット詳細の説明欄だけが使う**
+（`GuiDesign.md` 5.5「説明欄」。Markdownソース＋ライブプレビュー）。
+`dompurify` は `markdown-it` の出力を描画の直前に通すためのもので、
+**本文の書き手がエージェントでもありうる**ことによる（`Design.md` 3.1）。
+
+dev に `vite` / `@vitejs/plugin-vue` / `typescript` / `vue-tsc` / `openapi-typescript`、
+および `markdown-it` の型（`@types/markdown-it`）。
+**`openapi-typescript` と `@types/*` は型のためだけで実行時には入らない。**
 `npm run build` は型検査（`vue-tsc --noEmit`）を通してから `vite build` する
 （型エラーはビルドを止める）。`make build-client` は `npm ci` を使うため
 `client/package-lock.json` をコミットしている。

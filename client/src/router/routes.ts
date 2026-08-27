@@ -93,6 +93,9 @@ export const routes: RouteRecordRaw[] = [
   //
   // **チケットを見る「視点」はパスで分ける**（3.2）。`?view=` にしないのは、
   // 視点ごとにメニュー項目・権限・件数バッジを持てるようにするためである。
+  //
+  // **下の `/p/:key/tickets/:seq` と同じコンポーネントである**（手順17b）。
+  // 詳細は一覧を消さず、その右にペインとして開く（2.2.1）。
   {
     path: '/p/:key/backlog',
     component: BacklogPage,
@@ -110,25 +113,22 @@ export const routes: RouteRecordRaw[] = [
     redirect: (to) => ({ path: `/p/${String(to.params.key)}/backlog`, query: to.query }),
   },
 
+  // 実画面（GuiDesign.md 5.5）。手順17b でプレースホルダから差し替えた。
+  //
+  // **component が BacklogPage なのは誤りではない。** チケット詳細は画面を
+  // 置き換えず、**一覧の右に3枚目のペインとして開く**（2.2.1）。同じ
+  // コンポーネントを指すことで、行をクリックしても再マウントされず、
+  // **一覧の取得結果・折りたたみ・スクロール位置がそのまま残る**
+  // （5.4「戻したときに保つもの」）。
+  //
+  // **URL は `/p/:key/tickets/:seq` のまま変えない**（3.2）——チケット単体の
+  // 共有URLとして既に確定している。**バックログのフィルタはクエリで持ち回る**
+  // ので、クエリを解釈できない相手（共有された素のURL）でも壊れない
+  // （一覧がフィルタ無しで並ぶだけである）。
   {
     path: '/p/:key/tickets/:seq',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'ticket.view',
-      placeholder: {
-        title: 'チケット詳細',
-        docRef: 'GuiDesign.md 5.5',
-        status: 'Phase 1・未着手（docs/PROGRESS.md 手順17）',
-        planned: [
-          '説明（Markdownソース＋ライブプレビュー）',
-          '完了条件（DoD、Phase 1 は manual 型のみ）',
-          '関連チケット（手動リンクのみ）',
-          'コメント（kind を投稿時に選択）',
-          '右サイドバーのメタ情報（状態・担当・優先度・種別・親・見積・期限・スプリント）',
-          '履歴（activity の時系列表示、既定は畳む）',
-        ],
-      },
-    },
+    component: BacklogPage,
+    meta: { permission: 'ticket.view' },
   },
 
   // 実画面（GuiDesign.md 5.9）。手順11b でプレースホルダから差し替えた
