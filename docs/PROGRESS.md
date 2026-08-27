@@ -93,8 +93,8 @@ rev.8 で旧手順16（チケット）を 16〜19 に展開した**
 
 | | 値 |
 |---|---|
-| 現在 | **v1.34.47**（`feature/step-18b-ticket-detail-sections` のマージ前に `make bump-minor` 済み。マージ後に `make version-check` すること） |
-| 内訳 | メジャー1 / マイナー34 / ビルド47 |
+| 現在 | **v1.34.48**（`docs/promote-learnings-18b` のマージ前に `make bump-build` 済み。マージ後に `make version-check` すること）。**18b のマージは v1.34.47 で `version-check` 通過ずみ** |
+| 内訳 | メジャー1 / マイナー34 / ビルド48 |
 
 **ビルド番号は `make version` が正本**（`git rev-list --count --first-parent --merges develop` の実測）。
 **手で写した一覧は持たない**——二重管理して実際に記入漏れが起きたため。過去の経緯は
