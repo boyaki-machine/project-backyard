@@ -28,9 +28,9 @@ clone 直後には存在しないので、各自が作り直す。
 | 文書 | 内容 | 状態 |
 |---|---|---|
 | [Requirements.md](Requirements.md) | 要件・構想。1〜9章がチケット管理ツールとしての仕様、**10章がAI駆動開発への拡張** | 記述済 |
-| [Design.md](Design.md) | 全体設計。**6章（認証・認可）が本書の正本**。他領域は各設計書へ委譲 | 策定中 |
+| [Design.md](Design.md) | 全体設計。**6章（認証・認可）が本書の正本**。他領域は各設計書へ委譲 | Phase 1 確定（8章 MCP のみ未着手） |
 | [DbDesign.md](DbDesign.md) | Phase 1 の完全なDDL・マイグレーション・初期データ・docker compose 構成 | Phase 1 確定 |
-| [ApiDesign.md](ApiDesign.md) | 認証・プロジェクト・ユーザー管理API、および**チケットAPI（9章）を確定**。9章は未実装（手順16〜19） | Phase 1 確定 |
+| [ApiDesign.md](ApiDesign.md) | 認証・プロジェクト・ユーザー管理API、および**チケットAPI（9章）を確定** | Phase 1 確定 |
 | [GuiDesign.md](GuiDesign.md) | 画面遷移・ワイヤーフレーム・モノクロマティック配色体系 | Phase 1 確定 |
 | [Development.md](Development.md) | **開発環境の立ち上げ・デバッグ手順。** 設計ではなく、実装済みの範囲を動かす手順 | 実装に追従 |
 | [PROGRESS.md](PROGRESS.md) | 実装進捗・次の手順への引き継ぎ・環境メモ。**現況のみを持つ** | 実装に追従 |
@@ -88,4 +88,5 @@ clone 直後には存在しないので、各自が作り直す。
 
 ## 現在の着手ポイント
 
-`Design.md` 11章 Phase 1 の手順1〜3（compose構成 → マイグレーション 0001〜0010 → 初期管理者作成）が起点。DDLとシードは `DbDesign.md` 6〜7章にそのまま適用可能な形で記載済み。
+**[PROGRESS.md](PROGRESS.md) の Phase 1 の表が正本である。** 本書には写さない——
+実装が進むたびに2か所を直すことになり、片方が必ず古くなるため。
