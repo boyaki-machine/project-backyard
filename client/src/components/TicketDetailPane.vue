@@ -16,19 +16,30 @@
  * **画面全体を編集モードにしない**（5.5「編集の単位」）。選べるものは選んだ時点で
  * `PATCH`、文字・数値・日付はその領域をクリックして編集モードに入る。
  *
- * **手順17b で出さないセクションは見出しごと出さない**（5.5）——コード・参考リンク
- * （17c）、DoD・関連チケット・コメント（18）、履歴（19）。空の枠を置くと
- * 「実装済みで中身が無い」に見え、`comment_count` が実数を返すぶん誤解が強くなる。
+ * **まだ出さないセクションは見出しごと出さない**（5.5）——DoD・関連チケット・
+ * コメント（18）、履歴（19）。空の枠を置くと「実装済みで中身が無い」に見え、
+ * `comment_count` が実数を返すぶん誤解が強くなる。
+ *
+ * **コードと参考リンクは手順17c で足した**（5.5、`ApiDesign.md` 9.10.2）。
+ * 0件のときの扱いは2つで違う——**コードは見出しごと出さず**（画面から追加できず、
+ * 空の枠は何もできない箱になる）、**参考リンクは常に出す**（`[+ 追加]` が
+ * このセクションへの唯一の入口で、隠すと機能へ到達できない）。
  */
 import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
 
 import ConfirmDialog from './ConfirmDialog.vue'
 import EmptyState from './EmptyState.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
+import NewTicketModal from './NewTicketModal.vue'
+import ReferenceModal from './ReferenceModal.vue'
 import StatusDropdown from './StatusDropdown.vue'
 import UserActionsMenu from './UserActionsMenu.vue'
 import type { ActionItem } from './UserActionsMenu.vue'
 import { ApiError } from '../api/client'
+import type { ProjectMember } from '../api/projects'
+import * as referencesApi from '../api/references'
+import { codeSummary, docSummary } from '../api/references'
+import type { TicketReference } from '../api/references'
 import type { Sprint } from '../api/sprints'
 import type { Tag } from '../api/tags'
 import * as ticketsApi from '../api/tickets'
@@ -39,6 +50,7 @@ import {
   ticketTypeLabels,
 } from '../api/tickets'
 import type {
+  CreateTicketRequest,
   Ticket,
   TicketDetail,
   TicketPriority,
@@ -47,19 +59,21 @@ import type {
 } from '../api/tickets'
 import { formatPlainDate } from '../lib/datetime'
 import { renderMarkdown } from '../lib/markdown'
+import { isWebUrl } from '../lib/url'
 import { useAuthStore } from '../stores/auth'
-
-interface ProjectMemberRef {
-  actor_id: string
-  kind: string
-  display_name: string
-}
 
 const props = defineProps<{
   projectKey: string
   seq: number
-  /** 担当の選択肢（5.4.3 と同じく `GET /projects/:key` の `members[]`） */
-  members: ProjectMemberRef[]
+  /**
+   * 担当の選択肢（5.4.3 と同じく `GET /projects/:key` の `members[]`）。
+   *
+   * **`ProjectMember` をそのまま受ける**（手順17c で narrow な自前の型から
+   * 広げた）。子チケットの追加が `NewTicketModal` を開き、あちらは
+   * `ProjectMember` を要求する——同じ配列をそのまま渡すので、写しの型を
+   * 挟むと通らない。
+   */
+  members: ProjectMember[]
   tags: Tag[]
   sprints: Sprint[]
   /**
@@ -82,6 +96,8 @@ const canEdit = computed(() => auth.canInProject(props.projectKey, 'ticket.edit'
 const canAssign = computed(() => auth.canInProject(props.projectKey, 'ticket.assign'))
 const canTransition = computed(() => auth.canInProject(props.projectKey, 'ticket.transition'))
 const canDelete = computed(() => auth.canInProject(props.projectKey, 'ticket.delete'))
+/** 子チケットの追加（5.5）。作成そのものは 9.3 なので `ticket.create` を見る */
+const canCreate = computed(() => auth.canInProject(props.projectKey, 'ticket.create'))
 
 // ── 取得 ─────────────────────────────────────────────────────
 
@@ -308,8 +324,27 @@ async function transition(to: string): Promise<void> {
 
 const confirmDelete = ref(false)
 
-/** **`[⋯]` は削除のみ**（5.5 の表に他の項目が無い） */
+/**
+ * `[⋯]` の項目（5.5「`[⋯]` メニューの項目」）。
+ *
+ * **追加の2つは、セクションの見出し右と二重に置く**（利用者の判断、2026-08-27）。
+ * 見出し右はそのセクションを読んでいる最中の導線、`[⋯]` は**セクションが画面に
+ * 出ていなくても届く**導線で、役割が違う。**子チケットは0件だとセクションごと
+ * 消える**ので、`[⋯]` が無いと最初の1件を作れない。
+ */
 const actionItems = computed<ActionItem[]>(() => [
+  {
+    key: 'add-child',
+    label: '子チケットを追加',
+    disabled: !canCreate.value,
+    reason: canCreate.value ? undefined : 'チケットを作成する権限がありません',
+  },
+  {
+    key: 'add-reference',
+    label: '参考リンクを追加',
+    disabled: !canEdit.value,
+    reason: canEdit.value ? undefined : 'チケットを編集する権限がありません',
+  },
   {
     key: 'delete',
     label: 'このチケットを削除',
@@ -341,6 +376,212 @@ async function runDelete(): Promise<void> {
     fieldError.value = { field: 'delete', message: toApiError(e).message }
   } finally {
     busy.value = false
+  }
+}
+
+// ── コードと参考リンク（5.5、`ApiDesign.md` 9.10.2）。手順17c ─────
+
+/**
+ * セクションは `kind` で分ける。**一覧は1本で返る**ので、ここで振り分ける。
+ *
+ * サーバが `kind` 昇順・同じ `kind` の中は `sort_order` → `created_at` の
+ * 昇順で返す（9.10.2）ので、**画面で並べ替え直さない**。
+ */
+const codeRefs = computed(() =>
+  (ticket.value?.references ?? []).filter((r) => r.kind === 'code'),
+)
+const docRefs = computed(() => (ticket.value?.references ?? []).filter((r) => r.kind === 'doc'))
+
+/** 追加・編集のモーダル。`null` を渡すと新規、参照を渡すと編集（5.5） */
+const refModal = ref<{ target: TicketReference | null } | null>(null)
+const refErrors = ref<Record<string, string>>({})
+/** 削除の確認（6.3）。**どちらの `kind` も人が入れ直せるとは限らない** */
+const refToDelete = ref<TicketReference | null>(null)
+
+function openNewReference(): void {
+  refErrors.value = {}
+  refModal.value = { target: null }
+}
+
+function openEditReference(ref: TicketReference): void {
+  refErrors.value = {}
+  refModal.value = { target: ref }
+}
+
+/**
+ * 追加・更新を確定する。
+ *
+ * **詳細を取り直さない**（6.4「サーバ応答後に反映する」）。応答の1件を手元の
+ * 配列へ入れるだけで足りる——**参照の増減は親チケットの `version` も
+ * `updated_at` も動かさない**ので（9.10.2）、持ち回っている `version` に
+ * 影響しない。
+ */
+async function saveReference(
+  body: { url: string; label: string | null; note: string | null },
+): Promise<void> {
+  const t = ticket.value
+  const modal = refModal.value
+  if (t === null || modal === null) return
+
+  busy.value = true
+  refErrors.value = {}
+  try {
+    if (modal.target === null) {
+      const created = await referencesApi.createReference(props.projectKey, t.seq, {
+        kind: 'doc',
+        url: body.url,
+        label: body.label,
+        note: body.note,
+      })
+      applyReference(created)
+    } else {
+      const updated = await referencesApi.updateReference(
+        props.projectKey,
+        t.seq,
+        modal.target.id,
+        { url: body.url, label: body.label, note: body.note },
+      )
+      applyReference(updated)
+    }
+    refModal.value = null
+  } catch (e) {
+    const err = toApiError(e)
+    if (err.details.length > 0) {
+      // 欄に紐づく誤りはモーダルの中へ返す（6.4）
+      refErrors.value = Object.fromEntries(err.details.map((d) => [d.field, d.message]))
+    } else {
+      refModal.value = null
+      fieldError.value = { field: 'references', message: err.message }
+    }
+  } finally {
+    busy.value = false
+  }
+}
+
+async function runDeleteReference(): Promise<void> {
+  const t = ticket.value
+  const target = refToDelete.value
+  if (t === null || target === null) return
+
+  busy.value = true
+  try {
+    await referencesApi.deleteReference(props.projectKey, t.seq, target.id)
+    t.references = t.references.filter((r) => r.id !== target.id)
+    emit('updated', t)
+  } catch (e) {
+    fieldError.value = { field: 'references', message: toApiError(e).message }
+  } finally {
+    refToDelete.value = null
+    busy.value = false
+  }
+}
+
+/**
+ * 応答の1件を手元へ反映する。**並び順の規則はサーバのもの**（9.10.2）なので、
+ * 追加のときは同じ規則でその場に差し込む。
+ */
+function applyReference(ref: TicketReference): void {
+  const t = ticket.value
+  if (t === null) return
+  const i = t.references.findIndex((r) => r.id === ref.id)
+  if (i >= 0) {
+    t.references[i] = ref
+  } else {
+    t.references = [...t.references, ref].sort(compareReferences)
+  }
+  emit('updated', t)
+}
+
+/** `kind` 昇順 → `sort_order` → `created_at`（9.10.2 と同じ順序）。 */
+function compareReferences(a: TicketReference, b: TicketReference): number {
+  if (a.kind !== b.kind) return a.kind < b.kind ? -1 : 1
+  if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
+  return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0
+}
+
+/** 削除の確認文（6.3）。**誰も締め出さないので1行でよい** */
+const deleteReferenceMessage = computed(() => {
+  const r = refToDelete.value
+  if (r === null) return ''
+  const what = r.kind === 'code' ? 'コード' : '参考リンク'
+  const summary = r.kind === 'code' ? codeSummary(r) : docSummary(r)
+  const head = `${what}「${summary}」を削除します。元に戻せません。`
+  // **code は画面から入れ直せない**（追加の導線を持たない。5.5）
+  return r.kind === 'code'
+    ? `${head}\nコードは画面から追加できないため、消すと入れ直せません。`
+    : head
+})
+
+// ── 子チケットの追加（5.5「子チケット」）。手順17c ────────────
+
+/**
+ * 5.4.3 と同じモーダルを、**親をこのチケットに固定して**開く。
+ *
+ * **新しい API は要らない**——`POST /tickets`（9.3）に `parent_seq` を添える
+ * だけである。選択肢（メンバー・タグ・スプリント・親の候補）は詳細ペインが
+ * 既に props で受け取っているので、開くたびに往復が増えない。
+ */
+const showNewChild = ref(false)
+const newChildErrors = ref<Record<string, string>>({})
+
+function openNewChild(): void {
+  newChildErrors.value = {}
+  showNewChild.value = true
+}
+
+/** 親の候補。**このチケット自身に固定する**ので1件だけ渡す */
+const childParentCandidates = computed<Ticket[]>(() => {
+  const t = ticket.value
+  if (t === null) return []
+  const self = props.candidates.find((c) => c.seq === t.seq)
+  return self ? [self] : []
+})
+
+const newChildDefaults = computed(() => ({ parent_seq: ticket.value?.seq }))
+
+/**
+ * 子チケットを作る。
+ *
+ * **作ったあとは詳細を取り直す**——`children` はサーバが組み立てるもので
+ * （9.5.1）、応答は作った子チケットのほうだからである。参照の追加（手元へ
+ * 差し込む）とはここが違う。
+ */
+async function createChild(body: CreateTicketRequest): Promise<void> {
+  const t = ticket.value
+  if (t === null) return
+
+  busy.value = true
+  newChildErrors.value = {}
+  try {
+    await ticketsApi.createTicket(props.projectKey, { ...body, parent_seq: t.seq })
+    showNewChild.value = false
+    await load()
+    if (ticket.value !== null) emit('updated', ticket.value)
+  } catch (e) {
+    const err = toApiError(e)
+    if (err.details.length > 0) {
+      newChildErrors.value = Object.fromEntries(err.details.map((d) => [d.field, d.message]))
+    } else {
+      showNewChild.value = false
+      fieldError.value = { field: 'children', message: err.message }
+    }
+  } finally {
+    busy.value = false
+  }
+}
+
+/** `[⋯]` の項目を振り分ける（5.5）。 */
+function onAction(key: string): void {
+  switch (key) {
+    case 'add-child':
+      openNewChild()
+      break
+    case 'add-reference':
+      openNewReference()
+      break
+    case 'delete':
+      confirmDelete.value = true
+      break
   }
 }
 
@@ -433,7 +674,7 @@ function errorFor(field: string): string {
           :items="actionItems"
           :label="`${fullId} の操作メニュー`"
           compact
-          @select="confirmDelete = true"
+          @select="onAction"
         />
         <button type="button" class="icon-button" aria-label="詳細を閉じる" @click="emit('close')">
           ✕
@@ -912,7 +1153,19 @@ function errorFor(field: string): string {
         <!-- 子チケット（5.5「子チケット」）。**直下の子だけで、孫は含めない。**
              **子が無いときはセクションごと出さない**（空の見出しを置かない） -->
         <section v-if="ticket.children.length > 0" class="block">
-          <h3 class="block-title">子チケット ({{ ticket.children.length }})</h3>
+          <div class="block-head">
+            <h3 class="block-title">子チケット ({{ ticket.children.length }})</h3>
+            <!-- **見出し右の追加**（5.5）。0件だとこのセクションごと消えるので、
+                 最初の1件は `[⋯]` から作る -->
+            <button
+              v-if="canCreate"
+              type="button"
+              class="block-add"
+              @click="openNewChild"
+            >
+              + 追加
+            </button>
+          </div>
           <ul class="children">
             <li v-for="c in ticket.children" :key="c.seq">
               <!-- **行クリックでその子の詳細を開く**（同じペインが差し替わる） -->
@@ -935,9 +1188,129 @@ function errorFor(field: string): string {
           </ul>
         </section>
 
+        <!-- コード（5.5「コードと参考リンク」）。**画面に追加を置かない**——
+             この欄はエージェントの作業記録で、人が手で書くものではない。
+             **0件なら見出しごと出さない**（何もできない空の箱になるため） -->
+        <section v-if="codeRefs.length > 0" class="block">
+          <h3 class="block-title">コード</h3>
+          <ul class="refs">
+            <li v-for="r in codeRefs" :key="r.id" class="ref-row">
+              <!-- `url` があればリンク。**ブラウザで開けるものだけ**（5.5） -->
+              <a
+                v-if="isWebUrl(r.url)"
+                class="ref-main ref-link"
+                :href="r.url ?? undefined"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <code class="ref-code">{{ codeSummary(r) }}</code>
+                <span class="ref-external" aria-hidden="true">↗</span>
+              </a>
+              <span v-else class="ref-main">
+                <code class="ref-code">{{ codeSummary(r) }}</code>
+              </span>
+              <span v-if="r.label" class="ref-label">{{ r.label }}</span>
+              <button
+                v-if="canEdit"
+                type="button"
+                class="ref-action ref-danger"
+                @click="refToDelete = r"
+              >
+                削除
+              </button>
+            </li>
+          </ul>
+        </section>
+
+        <!-- 参考リンク（5.5）。**0件でも常に出す**——`[+ 追加]` がこのセクションへの
+             唯一の入口であり、隠すと機能へ到達できない -->
+        <section class="block">
+          <div class="block-head">
+            <h3 class="block-title">参考リンク</h3>
+            <button
+              v-if="canEdit"
+              type="button"
+              class="block-add"
+              @click="openNewReference"
+            >
+              + 追加
+            </button>
+          </div>
+          <ul v-if="docRefs.length > 0" class="refs">
+            <li v-for="r in docRefs" :key="r.id" class="ref-row">
+              <a
+                v-if="isWebUrl(r.url)"
+                class="ref-main ref-link"
+                :href="r.url ?? undefined"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span class="ref-text">{{ docSummary(r) }}</span>
+                <span class="ref-external" aria-hidden="true">↗</span>
+              </a>
+              <!-- SSH 形式などブラウザから開けないものは**文字列として出す**
+                   （コピーできる状態にとどめる。5.5 / 5.9.1） -->
+              <span v-else class="ref-main">
+                <span class="ref-text">{{ docSummary(r) }}</span>
+              </span>
+              <span v-if="r.note" class="ref-label">{{ r.note }}</span>
+              <template v-if="canEdit">
+                <button type="button" class="ref-action" @click="openEditReference(r)">
+                  編集
+                </button>
+                <button type="button" class="ref-action ref-danger" @click="refToDelete = r">
+                  削除
+                </button>
+              </template>
+            </li>
+          </ul>
+          <p v-else class="ref-empty">参考リンクはまだありません</p>
+          <p v-if="errorFor('references')" class="field-error" role="alert">
+            {{ errorFor('references') }}
+          </p>
+        </section>
+
+        <p v-if="errorFor('children')" class="field-error" role="alert">
+          {{ errorFor('children') }}
+        </p>
         <p v-if="errorFor('delete')" class="field-error" role="alert">{{ errorFor('delete') }}</p>
       </template>
     </div>
+
+    <ReferenceModal
+      v-if="refModal"
+      :reference="refModal.target"
+      :busy="busy"
+      :field-errors="refErrors"
+      @close="refModal = null"
+      @save="saveReference"
+    />
+
+    <ConfirmDialog
+      v-if="refToDelete"
+      :title="refToDelete.kind === 'code' ? 'コードを削除しますか？' : '参考リンクを削除しますか？'"
+      :message="deleteReferenceMessage"
+      confirm-label="削除する"
+      danger
+      :busy="busy"
+      @cancel="refToDelete = null"
+      @confirm="runDeleteReference"
+    />
+
+    <NewTicketModal
+      v-if="showNewChild && ticket"
+      :project-key="projectKey"
+      :members="members"
+      :tags="tags"
+      :sprints="sprints"
+      :candidates="childParentCandidates"
+      :defaults="newChildDefaults"
+      lock-parent
+      :busy="busy"
+      :field-errors="newChildErrors"
+      @close="showNewChild = false"
+      @save="createChild"
+    />
 
     <ConfirmDialog
       v-if="confirmDelete"
@@ -1317,6 +1690,142 @@ function errorFor(field: string): string {
   color: var(--pb-text-muted);
   font-size: 12px;
   white-space: nowrap;
+}
+
+/* ── コードと参考リンク（5.5）。手順17c ─────────────────────── */
+
+/* 見出しの右に操作を置くブロック（子チケット・参考リンク）。
+   **下線は `.block-title` ではなくこちらに引く**——`h3` に引くと線が
+   見出しの幅で切れ、右の `[+ 追加]` がブロックの外に見える */
+.block-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pb-space-2);
+  padding-bottom: var(--pb-space-1);
+  margin-bottom: var(--pb-space-2);
+  border-bottom: 1px solid var(--pb-line);
+}
+
+.block-head .block-title {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.block-add {
+  flex: none;
+  padding: 0 var(--pb-space-2);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+  color: var(--pb-text-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 22px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.block-add:hover {
+  background: var(--pb-hover);
+  color: inherit;
+}
+
+.refs {
+  list-style: none;
+}
+
+.ref-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+  min-width: 0;
+  padding: var(--pb-space-1) var(--pb-space-2);
+  border-radius: var(--pb-radius);
+}
+
+.ref-row:hover {
+  background: var(--pb-hover);
+}
+
+/* **主役には `flex: 1 1 auto` と `min-width` を必ず添える**（`GuiDesign.md` 6.7）。
+   書かないと `0 1 auto` になり、`flex: none` の操作を残したまま本体が潰れる */
+.ref-main {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--pb-space-1);
+  min-width: 8em;
+  overflow: hidden;
+}
+
+.ref-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.ref-link:hover {
+  text-decoration: underline;
+}
+
+.ref-code {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ref-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ref-external {
+  flex: none;
+  color: var(--pb-text-muted);
+  font-size: 11px;
+}
+
+/* ラベル・メモは補助。**本体より先に縮む**ように `0 1 auto` にしてある */
+.ref-label {
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--pb-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* **行の操作は `[編集]` / `[削除]` の文字列**（5.5、利用者の判断 2026-08-27）。
+   行そのものがリンクなので、行クリックに編集の意味を持たせられない */
+.ref-action {
+  flex: none;
+  padding: 0 var(--pb-space-1);
+  border: none;
+  background: none;
+  color: var(--pb-text-muted);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ref-action:hover {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.ref-danger:hover {
+  color: var(--pb-danger-text);
+}
+
+.ref-empty {
+  padding: var(--pb-space-1) var(--pb-space-2);
+  color: var(--pb-text-muted);
+  font-size: 13px;
 }
 
 /* ── 共通 ─────────────────────────────────────────────────── */

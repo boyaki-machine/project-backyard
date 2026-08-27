@@ -147,7 +147,35 @@ type devTicket struct {
 	// **表示上のトップレベルにしか置けない**——親を持たないもの、または
 	// 親がエピックのもの（ApiDesign.md 9.4.1）。検証は validateSeedData で行う。
 	Staged bool `yaml:"staged"`
+
+	// References は外部参照（DbDesign.md 6.12、手順17c）。
+	//
+	// **1件も無いと画面に何も出ない。** kind='code' は画面から追加できず
+	// （GuiDesign.md 5.5）、seed が唯一の供給源である。
+	References []devReference `yaml:"references"`
 }
+
+// devReference はチケットの外部参照（DbDesign.md 6.12、手順17c）。
+//
+// **kind ごとに必須が違う**——code は repository、doc は url。検証は
+// validateSeedData で行い、DB の CHECK に落とす前に定義ファイルの誤りとして返す。
+//
+// **created_by は書かない。** 定義ファイルに ULID を書かせない方針（タグ・
+// スプリントと同じ）で、投入時はチケットの reporter を据える。Phase 1 の
+// 書き手は人の API トークンを持つクライアントなので（ApiDesign.md 9.10.2）、
+// 人のアクターが入るのが実態に合う。
+type devReference struct {
+	Kind       string `yaml:"kind"`
+	Label      string `yaml:"label"`
+	URL        string `yaml:"url"`
+	Repository string `yaml:"repository"`
+	Branch     string `yaml:"branch"`
+	CommitSha  string `yaml:"commit_sha"`
+	Note       string `yaml:"note"`
+}
+
+// devReferenceKinds は ticket_reference.kind の CHECK（DbDesign.md 6.12）。
+var devReferenceKinds = map[string]bool{"code": true, "doc": true}
 
 // devTicketTypes / devTicketPriorities は ticket の CHECK 制約（DbDesign.md 6.6）。
 var (
@@ -444,6 +472,21 @@ func (d *devData) validate() error {
 			}
 			if start.Valid && due.Valid && start.Time.After(due.Time) {
 				return fmt.Errorf("%s: due_date は start_date 以降にしてください（ck_ticket_dates）", at)
+			}
+
+			// 外部参照（手順17c）。**kind ごとに必須が違う**（DbDesign.md 6.12）。
+			// DB の CHECK でも弾けるが、そちらのエラーは何行目が悪いか分からない。
+			for k, ref := range tk.References {
+				refAt := fmt.Sprintf("%s.references[%d]", at, k)
+				if !devReferenceKinds[ref.Kind] {
+					return fmt.Errorf("%s: kind は code / doc です（%q）", refAt, ref.Kind)
+				}
+				if ref.Kind == "code" && ref.Repository == "" {
+					return fmt.Errorf("%s: kind=code には repository が要ります（ck_ticket_reference_code）", refAt)
+				}
+				if ref.Kind == "doc" && ref.URL == "" {
+					return fmt.Errorf("%s: kind=doc には url が要ります（ck_ticket_reference_doc）", refAt)
+				}
 			}
 		}
 	}
@@ -956,8 +999,43 @@ func seedTickets(
 			}
 		}
 
+		if err := seedTicketReferences(ctx, q, ticketID, tk, reporterID); err != nil {
+			return err
+		}
+
 		idByTitle[tk.Title] = ticketID
 		result.ticketsCreated++
+	}
+	return nil
+}
+
+// seedTicketReferences はチケットの外部参照を投入する（DbDesign.md 6.12、手順17c）。
+//
+// **チケットを作った直後にだけ呼ぶ。** 冪等の単位はチケットであり（既にある
+// タイトルはスキップされる）、参照だけを後から突き合わせる手段は持たない
+// ——ticket_reference に自然キーが無いためである。
+//
+// sort_order は定義ファイルの並び順で 10 刻み。API が省略時に使う既定
+// （現在の最大値 + 10。ApiDesign.md 9.10.2）と同じ間隔に揃えてある。
+func seedTicketReferences(
+	ctx context.Context, q gen.Querier, ticketID string, tk devTicket, reporterID string,
+) error {
+	for i, ref := range tk.References {
+		if err := q.CreateTicketReference(ctx, gen.CreateTicketReferenceParams{
+			ID:         ulidgen.New(),
+			TicketID:   ticketID,
+			Kind:       ref.Kind,
+			Label:      nullText(ref.Label),
+			Url:        nullText(ref.URL),
+			Repository: nullText(ref.Repository),
+			Branch:     nullText(ref.Branch),
+			CommitSha:  nullText(ref.CommitSha),
+			Note:       nullText(ref.Note),
+			CreatedBy:  nullText(reporterID),
+			SortOrder:  int32((i + 1) * 10),
+		}); err != nil {
+			return fmt.Errorf("チケット %q に外部参照を足せない: %w", tk.Title, err)
+		}
 	}
 	return nil
 }

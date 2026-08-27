@@ -461,7 +461,7 @@ server/migrations/                      ← Design.md 4.1。sqlc がスキーマ
 └── 0016_ticket_reference.sql           ticket_reference（6.12）          ← 手順17c
 ```
 
-**0014 と 0016 は未適用である。** 0014 は `ApiDesign.md` 9章の確定にともなって設計だけを先に決めたもので手順18 の成果物、0016 は手順17c の成果物である。
+**0014 は当たっているが、まだ使われない。** `ApiDesign.md` 9章の確定にともなって設計だけを先に決めたもので、`dod_item` を読み書きするのは手順18 である。**「未適用」ではない**——`server/migrations/` に置いた時点で goose が当てるため、表は既に存在する。ファイルを先に置くのは、`make sqlc` が `migrations/` をスキーマ源に読むためで、手順18 の直前に `make migrate` を打ち直す必要をなくしている。
 
 `project.workflow_id` と `ticket.sprint_id` は後続テーブルを参照するため、**FK制約のみ後から `ALTER TABLE ... ADD CONSTRAINT` で付与する**（0005 / 0009 の末尾）。PostgreSQL は前方参照を許さないためである。
 
@@ -1133,7 +1133,9 @@ PB の外にあるものを指す。`ticket_link` は `target_ticket_id` に FK 
 **必須項目は `CHECK` で DB に守らせる**（アプリ側の検証と二重にする）。
 
 **`origin` 列は持たない。** 書き手は `created_by` から `actor.kind`（`user` / `agent` /
-`system`。6.1）で分かる。`ticket_link` と `dod_item` は `origin` を持つが、あちらが表すのは
+`system`。6.1）で分かる。**ただし Phase 1 の画面はこれを表示しない**——`GuiDesign.md` 5.5
+が書き手のアイコンを出さないと決めたため（利用者の判断、2026-08-27）。**列とAPIの応答は
+残す**（将来区別したくなったときに遡れるようにする）。`ticket_link` と `dod_item` は `origin` を持つが、あちらが表すのは
 **「AI の提案か、確定した事実か」**という別の軸である（`ai_suggested` は承認待ちを意味する）。
 ここに同じ列を置くと、**「誰が書いたか」を2か所に持つことになり、必ずずれる。**
 

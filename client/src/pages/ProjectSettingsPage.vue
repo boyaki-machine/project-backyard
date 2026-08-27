@@ -30,6 +30,7 @@ import * as sprintsApi from '../api/sprints'
 import { sprintStatusLabels } from '../api/sprints'
 import type { CreateSprintRequest, Sprint } from '../api/sprints'
 import { formatDate, formatPlainDate } from '../lib/datetime'
+import { isWebUrl } from '../lib/url'
 import { useRolesStore } from '../stores/roles'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
@@ -562,16 +563,6 @@ function applyRepository(next: ProjectRepository): void {
 
 function removeRepository(index: number): void {
   repositories.value.splice(index, 1)
-}
-
-/**
- * ブラウザで開けるURLか。
- *
- * `git@host:org/repo.git` はクリックしても何も起きないので**リンクにしない**
- * （5.9.1）。文字列として見せ、コピーできる状態にとどめる。
- */
-function isWebUrl(url: string): boolean {
-  return /^https?:\/\//i.test(url.trim())
 }
 
 // ── アーカイブ（5.6 / 6.3）───────────────────────────────────

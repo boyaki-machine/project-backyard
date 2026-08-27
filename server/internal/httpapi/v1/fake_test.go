@@ -1127,6 +1127,32 @@ type ticketFakeState struct {
 	comments   []gen.CreateCommentParams
 	commentNum int64
 	updateErr  error
+
+	// ── 手順17c（9.10.2 の外部参照）──────────────────────────
+	//
+	// **1チケットぶんの行を1つのスライスで持つ。** ハンドラは
+	// FindTicketIDBySeq で id を解いてから ticket_id で絞るので、フェイクが
+	// ticket_id ごとに分ける利得が無い。
+	//
+	// **create / update / delete はスライスへ実際に適用する。** POST と PATCH は
+	// 「書いてから読み直す」形（9.10.2）なので、書き込みが GetTicketReference に
+	// 反映されないと、応答が更新前の値でも気づけない。
+	references    []gen.ListTicketReferencesRow
+	referenceErr  error
+	refNextSort   int32
+	refCreated    []gen.CreateTicketReferenceParams
+	refUpdated    []gen.UpdateTicketReferenceParams
+	refDeleted    []gen.DeleteTicketReferenceParams
+}
+
+// findReference は id で1件引く。見つからなければ -1。
+func (t *ticketFakeState) findReference(id string) int {
+	for i, row := range t.references {
+		if row.ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 func (q *fakeQuerier) ListTickets(_ context.Context, arg gen.ListTicketsParams) ([]gen.ListTicketsRow, error) {
@@ -1393,6 +1419,107 @@ func (q *fakeQuerier) InsertActivity(_ context.Context, arg gen.InsertActivityPa
 // **書いてから読み直す形をここでも保つ。** PATCH と遷移の応答は 9.5.1 形式で
 // あり、ハンドラは更新後に GetTicketBySeq で読み直す。書き込みが bySeq に
 // 反映されないと、応答が「更新前の値」になっていても気づけない。
+
+// ── 外部参照（手順17c。ApiDesign.md 9.10.2）───────────────────
+
+func (q *fakeQuerier) ListTicketReferences(
+	_ context.Context, _ string,
+) ([]gen.ListTicketReferencesRow, error) {
+	q.opLog = append(q.opLog, "ListTicketReferences")
+	if q.ticket.referenceErr != nil {
+		return nil, q.ticket.referenceErr
+	}
+	return q.ticket.references, nil
+}
+
+func (q *fakeQuerier) GetTicketReference(
+	_ context.Context, arg gen.GetTicketReferenceParams,
+) (gen.GetTicketReferenceRow, error) {
+	q.opLog = append(q.opLog, "GetTicketReference")
+	i := q.ticket.findReference(arg.ID)
+	if i < 0 {
+		return gen.GetTicketReferenceRow{}, pgx.ErrNoRows
+	}
+	return gen.GetTicketReferenceRow(q.ticket.references[i]), nil
+}
+
+func (q *fakeQuerier) NextTicketReferenceSortOrder(_ context.Context, _ string) (int32, error) {
+	q.opLog = append(q.opLog, "NextTicketReferenceSortOrder")
+	if q.ticket.refNextSort == 0 {
+		return 10, nil
+	}
+	return q.ticket.refNextSort, nil
+}
+
+func (q *fakeQuerier) CreateTicketReference(
+	_ context.Context, arg gen.CreateTicketReferenceParams,
+) error {
+	q.opLog = append(q.opLog, "CreateTicketReference")
+	q.ticket.refCreated = append(q.ticket.refCreated, arg)
+	q.ticket.references = append(q.ticket.references, gen.ListTicketReferencesRow{
+		ID:         arg.ID,
+		Kind:       arg.Kind,
+		Label:      arg.Label,
+		Url:        arg.Url,
+		Repository: arg.Repository,
+		Branch:     arg.Branch,
+		CommitSha:  arg.CommitSha,
+		Note:       arg.Note,
+		SortOrder:  arg.SortOrder,
+		CreatedBy:  arg.CreatedBy,
+	})
+	return nil
+}
+
+// UpdateTicketReference は <列>_set の意味どおりに適用する。
+//
+// **COALESCE ではなく CASE WHEN の形を写している**（reference.sql）。Set が
+// false なら触らず、Set かつ値が無効なら NULL を書く——「null を送って空にする」
+// が実装と同じように効くことを、フェイクの上でも確かめられるようにするため。
+func (q *fakeQuerier) UpdateTicketReference(
+	_ context.Context, arg gen.UpdateTicketReferenceParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateTicketReference")
+	q.ticket.refUpdated = append(q.ticket.refUpdated, arg)
+	i := q.ticket.findReference(arg.ID)
+	if i < 0 {
+		return 0, nil
+	}
+	row := &q.ticket.references[i]
+	for _, f := range []struct {
+		set bool
+		src pgtype.Text
+		dst *pgtype.Text
+	}{
+		{arg.LabelSet, arg.Label, &row.Label},
+		{arg.UrlSet, arg.Url, &row.Url},
+		{arg.RepositorySet, arg.Repository, &row.Repository},
+		{arg.BranchSet, arg.Branch, &row.Branch},
+		{arg.CommitShaSet, arg.CommitSha, &row.CommitSha},
+		{arg.NoteSet, arg.Note, &row.Note},
+	} {
+		if f.set {
+			*f.dst = f.src
+		}
+	}
+	if arg.SortOrder.Valid {
+		row.SortOrder = arg.SortOrder.Int32
+	}
+	return 1, nil
+}
+
+func (q *fakeQuerier) DeleteTicketReference(
+	_ context.Context, arg gen.DeleteTicketReferenceParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "DeleteTicketReference")
+	q.ticket.refDeleted = append(q.ticket.refDeleted, arg)
+	i := q.ticket.findReference(arg.ID)
+	if i < 0 {
+		return 0, nil
+	}
+	q.ticket.references = append(q.ticket.references[:i], q.ticket.references[i+1:]...)
+	return 1, nil
+}
 
 func (q *fakeQuerier) CountTicketComments(_ context.Context, _ string) (int64, error) {
 	q.opLog = append(q.opLog, "CountTicketComments")

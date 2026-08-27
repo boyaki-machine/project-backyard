@@ -123,6 +123,7 @@ type Querier interface {
 	CreateSystemActor(ctx context.Context, arg CreateSystemActorParams) error
 	CreateTag(ctx context.Context, arg CreateTagParams) error
 	CreateTicket(ctx context.Context, arg CreateTicketParams) error
+	CreateTicketReference(ctx context.Context, arg CreateTicketReferenceParams) error
 	CreateUserActor(ctx context.Context, arg CreateUserActorParams) error
 	CreateUserIdentity(ctx context.Context, arg CreateUserIdentityParams) error
 	CreateWorkflowStatus(ctx context.Context, arg CreateWorkflowStatusParams) error
@@ -164,6 +165,7 @@ type Querier interface {
 	// **activity は残る**——entity_id は多相参照で FK を持てず、9.13.2 が
 	// 「削除されたチケットの行」を表示する前提で組まれている（9.5.3）。
 	DeleteTicket(ctx context.Context, arg DeleteTicketParams) (int64, error)
+	DeleteTicketReference(ctx context.Context, arg DeleteTicketReferenceParams) (int64, error)
 	// DetachTicketTags は 9.5.2 の tag_ids の置き換えに使う（丸ごと消してから付け直す）。
 	//
 	// **差分を計算しない。** 9.5.2 は「tag_ids は丸ごと置き換える」と定めており、
@@ -344,6 +346,8 @@ type Querier interface {
 	// GetTicketBySeq は 9.5 形式の本体を1件引く。列は ListTickets とそろえてある
 	// （9.5.1 が「9.2 の items[] に body_md 等を加えたもの」と定めているため）。
 	GetTicketBySeq(ctx context.Context, arg GetTicketBySeqParams) (GetTicketBySeqRow, error)
+	// 1件だけ返す形。POST / PATCH の応答（ApiDesign.md 9.10.2）で使う。
+	GetTicketReference(ctx context.Context, arg GetTicketReferenceParams) (GetTicketReferenceRow, error)
 	// ── 並べ替え（ApiDesign.md 9.4）─────────────────────────────
 	// GetTicketSortRow は move の対象を引く。
 	//
@@ -609,6 +613,24 @@ type Querier interface {
 	// ListTicketIDsInSortOrder は振り直し（9.4 の rebalanced）の対象を現在の並びで返す。
 	// sort_key が NULL の行も含める——振り直しはそれを埋める機会でもある。
 	ListTicketIDsInSortOrder(ctx context.Context, projectID string) ([]string, error)
+	// チケットの外部参照（DbDesign.md 6.12、ApiDesign.md 9.10.2）。
+	//
+	// 手順17c で追加。チケット詳細（GuiDesign.md 5.5）の「コード」「参考リンク」の
+	// 2セクションが消費者で、詳細応答（9.5.1）の references も同じ一覧を読む。
+	//
+	// **すべてのクエリが ticket_id で閉じている。** 外部参照はチケットの子資源であり、
+	// 他チケットの ID を渡されても行が返らないようにするためである。チケットが
+	// そのプロジェクトのものかは FindTicketIDBySeq が済ませており、到達可否
+	// （メンバーか）は RequireProjectPermission が済ませている（Design.md 6.4.5）。
+	//
+	// **created_by は LEFT JOIN で引く。** actor は ON DELETE SET NULL なので、
+	// 書き手を消した後も参照の行は残る（作業が起きた事実は消えない）。
+	// items[] は kind 昇順（code → doc）、同じ kind の中は sort_order → created_at の
+	// 昇順（ApiDesign.md 9.10.2）。第2・第3キーを置くのは、9.11 と同じく順序が
+	// 実行ごとに揺れないようにするためである。
+	//
+	// kind は 'code' / 'doc' の2値しか取らないので、照合順によらず code が先に来る。
+	ListTicketReferences(ctx context.Context, ticketID string) ([]ListTicketReferencesRow, error)
 	// ── 開発用デモデータ（pb dev seed。DbDesign.md 7.6.4）──────────
 	// ListTicketTitlesByProject は投入の冪等判定と親の解決に使う。
 	//
@@ -712,6 +734,12 @@ type Querier interface {
 	// sort_order 省略時の既定（現在の最大値 + 10）。行が無ければ 10 から始める。
 	// 10刻みにするのは、並べ替え（9.11.1）が同じ間隔で振り直すためである。
 	NextTagSortOrder(ctx context.Context, projectID string) (int32, error)
+	// sort_order 省略時の既定（現在の最大値 + 10）。行が無ければ 10 から始める。
+	//
+	// **kind をまたいで1本の連番にする。** 並びの第1キーは kind であり（9.10.2）、
+	// sort_order は同じ kind の中でしか比較されないためである。kind ごとに
+	// 数え直す利得は無く、クエリが1本増えるだけになる。
+	NextTicketReferenceSortOrder(ctx context.Context, ticketID string) (int32, error)
 	// ── 作成（ApiDesign.md 9.3）─────────────────────────────────
 	// NextTicketSeq は DbDesign.md 6.4.1 の1文。行ロックと採番が同時に完了する。
 	//
@@ -1018,6 +1046,15 @@ type Querier interface {
 	// タグだけを付け外しした場合もこの文を通るので、9.2.5 の ETag が必ず変わる。
 	//
 	UpdateTicket(ctx context.Context, arg UpdateTicketParams) (int64, error)
+	// 部分更新（ApiDesign.md 9.10.2 の PATCH）。
+	//
+	// **NULL 可の項目は `<列>_set` で「送られたか」を分ける。** COALESCE だけでは
+	// 「null を送って空にする」と「キーごと送らない」が区別できない。UpdateTicket
+	// （9.5.2）と同じ形である。
+	//
+	// **kind は含めない。** 作成後は変えられない（9.10.2 が immutable_field と定める）。
+	// sort_order は NOT NULL なので COALESCE で足りる。
+	UpdateTicketReference(ctx context.Context, arg UpdateTicketReferenceParams) (int64, error)
 	// ── プロジェクトメンバーシップ（ApiDesign.md 6.8）───────────────
 	// UpsertProjectMember は PUT /admin/users/:id/memberships/:project_key。
 	//

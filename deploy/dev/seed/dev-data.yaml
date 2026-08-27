@@ -205,6 +205,33 @@ projects:
           ```
 
           詳しくは <https://example.com/pb/api-design> を見ること。
+        # **外部参照**（GuiDesign.md 5.5、手順17c）。**code は画面から追加できない**
+        # ので、seed が唯一の供給源である。1件も無いとセクションごと出ない。
+        #
+        # **積み上がることを見せる**（DbDesign.md 6.12）——エージェントが作業の
+        # 経過として「このブランチで始めた」「このコミットを積んだ」を残していく形。
+        references:
+          - kind: code
+            repository: project-backyard
+            branch: feature/step-16b-ticket-api
+            commit_sha: 9f3c1a7
+            url: https://example.com/project-backyard/commit/9f3c1a7
+            label: 一覧のクエリと窓関数
+          - kind: code
+            repository: project-backyard
+            branch: feature/step-16b-ticket-api
+            commit_sha: 2e8b40d
+            url: https://example.com/project-backyard/commit/2e8b40d
+            label: フィルタ13種の検証
+          # **URL を持たない code。** リンクにならず文字列だけが並ぶ形を
+          # 画面で確かめられるようにする（5.5「url があればリンク」）。
+          - kind: code
+            repository: project-backyard
+            branch: feature/step-16b-ticket-api
+            note: ローカルで動かした分。まだ push していない
+          - kind: doc
+            url: https://example.com/pb/api-design
+            label: API設計メモ（9.2 のフィルタ一覧）
       # **オンステージ、かつ未着手。** 進捗とオンステージが独立した軸である
       # ことを画面で確かめられるようにする（DbDesign.md 6.6）。
       - title: バックログ画面
@@ -217,6 +244,20 @@ projects:
         due_date: '2026-08-28'
         estimate_point: 8
         staged: true
+        # **コードを持たず参考リンクだけを持つチケット。** 「コードは0件なら
+        # 見出しごと出さない／参考リンクは常に出す」の出し分けを画面で確かめる
+        # （GuiDesign.md 5.5）。
+        #
+        # **2件目はブラウザから開けない形**（SSH）。リンクにせず文字列として
+        # 出し、コピーできる状態にとどめる規則を確かめる。
+        references:
+          - kind: doc
+            url: https://example.com/pb/gui-design
+            label: 画面設計メモ（5.4 バックログ）
+          - kind: doc
+            url: git@example.com:org/project-backyard.git
+            label: リポジトリ（SSH）
+            note: ブラウザからは開けないのでリンクにしない
       # タグの無いチケット（「未分類」セクションの確認）。
       - title: 並べ替えの操作感を見る
         type: task
