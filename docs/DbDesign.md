@@ -1865,4 +1865,6 @@ docker compose exec -T db pg_dump -U pb_owner -Fc pb > backup/pb_$(date +%Y%m%d)
 - ワークフローの `definition`（jsonb 原本）と正規化テーブルの同期方法。どちらを正とするか
 - 日本語検索を `pg_trgm` から `pg_bigm` へ移行する判断基準（データ量・検索頻度・精度の不満）
 - Phase 2 でエージェントが並行書き込みする際のトランザクション分離レベル（既定の Read Committed で足りるか、`task_lease` 取得時に `SELECT FOR UPDATE` が必要か）
+- **リポジトリを `project.settings`（jsonb）に置いた**（6.4）。リポジトリ単位のトークン発行や横断検索（`Requirements.md` 10.9）が要件になったら `project_repository` テーブルへ移す
+- **`kind='system'` の actor に一意なキー列が無い**（6.2）。ユーザー削除時のコメント付け替え先「削除されたユーザー」を `display_name` で引いている。**システムアクターが2種類目になった時点で壊れる。** `agent` テーブル（8.1）を設計するときに、システムアクターの識別子も決める
 - マルチテナント（スキーマ分離）を導入する場合の移行手順。Phase 1〜2 は単一テナント前提のためテナントID列を持たない
