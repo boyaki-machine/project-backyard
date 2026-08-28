@@ -21,17 +21,16 @@ PROGRESS.md        実装進捗（現況のみ）
 ```
 
 **リポジトリ直下の `LEARNINGS.md` は設計文書ではない。** セッションから得た**進め方**の教訓を
-ためる場所で、`CLAUDE.md` と同じくセッションの開始時に読む（`Design.md` 11.0）。
-**個人のセッション履歴から抽出した内容を含むため `.gitignore` の対象**で、リポジトリには入らない。
-clone 直後には存在しないので、各自が作り直す。
+ためる場所で、`CLAUDE.md` と同じくセッションの開始時に読む。**`.gitignore` の対象**なので
+clone 直後には存在しない（規約は `Design.md` 11.0）。
 
 | 文書 | 内容 | 状態 |
 |---|---|---|
 | [Requirements.md](Requirements.md) | 要件・構想。1〜9章がチケット管理ツールとしての仕様、**10章がAI駆動開発への拡張** | 記述済 |
-| [Design.md](Design.md) | 全体設計。**6章（認証・認可）が本書の正本**。他領域は各設計書へ委譲 | Phase 1 確定（8章 MCP のみ未着手） |
-| [DbDesign.md](DbDesign.md) | Phase 1 の完全なDDL・マイグレーション・初期データ・docker compose 構成 | Phase 1 確定 |
-| [ApiDesign.md](ApiDesign.md) | 認証・プロジェクト・ユーザー管理API、および**チケットAPI（9章）を確定** | Phase 1 確定 |
-| [GuiDesign.md](GuiDesign.md) | 画面遷移・ワイヤーフレーム・モノクロマティック配色体系 | Phase 1 確定 |
+| [Design.md](Design.md) | 全体設計。**6章（認証・認可）が本書の正本**。他領域は各設計書へ委譲 | Phase 1 実装完了（8章 MCP のみ未着手） |
+| [DbDesign.md](DbDesign.md) | Phase 1 の完全なDDL・マイグレーション・初期データ・docker compose 構成 | Phase 1 実装完了（0001〜0016 適用済み） |
+| [ApiDesign.md](ApiDesign.md) | 認証・プロジェクト・ユーザー管理API、および**チケットAPI（9章）** | Phase 1 実装完了 |
+| [GuiDesign.md](GuiDesign.md) | 画面遷移・ワイヤーフレーム・モノクロマティック配色体系 | Phase 1 実装完了（監査ログのみプレースホルダ） |
 | [Development.md](Development.md) | **開発環境の立ち上げ・デバッグ手順。** 設計ではなく、実装済みの範囲を動かす手順 | 実装に追従 |
 | [PROGRESS.md](PROGRESS.md) | 実装進捗・次の手順への引き継ぎ・環境メモ。**現況のみを持つ** | 実装に追従 |
 | [history/decisions.md](history/decisions.md) [history/steps.md](history/steps.md) | 完了した手順の記録（判断の経緯／作ったファイルと検証結果）。**参照専用** | 追記のみ |
@@ -80,13 +79,13 @@ clone 直後には存在しないので、各自が作り直す。
 
 ## 開発フェーズ
 
-| Phase | 内容 | 詳細 |
-|---|---|---|
-| **1** | 認証・認可、プロジェクト、チケットの基礎。ローカルでの動作確認まで | `Design.md` 11章 |
-| 2 | MCPサーバ、コンテキストパック、承認キュー（エージェント連携） | 同上 |
-| 3 | AI機能（Readiness判定・要約・ベクトル検索）、OIDC/SAML連携 | 同上 |
+| Phase | 内容 | 状態 | 詳細 |
+|---|---|---|---|
+| **1** | 認証・認可、プロジェクト、チケットの基礎。ローカルでの動作確認まで | **完了**（2026-08-28） | `Design.md` 11章 |
+| 2 | MCPサーバ、コンテキストパック、承認キュー（エージェント連携） | 未着手 | 同上 |
+| 3 | AI機能（Readiness判定・要約・ベクトル検索）、OIDC/SAML連携 | 未着手 | 同上 |
 
 ## 現在の着手ポイント
 
-**[PROGRESS.md](PROGRESS.md) の Phase 1 の表が正本である。** 本書には写さない——
+**[PROGRESS.md](PROGRESS.md) が正本である。** 本書には写さない——
 実装が進むたびに2か所を直すことになり、片方が必ず古くなるため。

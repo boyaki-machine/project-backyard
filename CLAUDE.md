@@ -103,8 +103,12 @@ make dev-info    # 開発用：URL とデモアカウント一覧を表示
 
 ## 進捗と作業の進め方
 
-現在 **Phase 1**（`docs/Design.md` 11章）。どこまで完了したかは `docs/PROGRESS.md` を見ること。
-**着手前に同文書の「次の手順への引き継ぎ」に該当する行が無いか必ず確認する。**
+**Phase 1（手順1〜19）は 2026-08-28 に完了した。次は Phase 2（手順20〜26）である。**
+現況は `docs/PROGRESS.md` を見ること。**着手前に同文書の「次の手順への引き継ぎ」に
+該当する行が無いか必ず確認する。**
+
+**Phase 2 は手順一覧の再構成から始める。** `Design.md` 11章の Phase 2 は見出しだけの一覧で
+完了条件を持たない。**その作業を終えるまで `/pb-step 20` は走らせない**（`docs/PROGRESS.md`）。
 
 **完了した手順の詳しい記録は `docs/history/` にある**（`decisions.md` = 判断の経緯、
 `steps.md` = 作ったファイルと検証結果）。**毎セッションで読む文書ではない。**
@@ -124,38 +128,31 @@ make dev-info    # 開発用：URL とデモアカウント一覧を表示
 （設計や進捗ではない）。短い文書なので毎回読む。**個人のセッション履歴から抽出した内容を含むため
 `.gitignore` の対象**で、リポジトリには入らない。無ければ見出しと空の表だけ作って始める。
 
-**マージを提案する前に、必ず2種類の振り返りを行う。** どちらも `/pb-step` を使わない作業で同じ。
-
-| 振り返り | 対象 | 反映先 | 項目 |
-|---|---|---|---|
-| 成果物 | 引き継ぎ・判断・検証の記録、検証で作った資源の後始末 | `docs/PROGRESS.md` と `docs/history/` | `pb-step.md` 手順7 |
-| 進め方 | 手戻り・往復の多かった論点・誤解・空振り | `LEARNINGS.md` | `pb-step.md` 手順8 |
+**マージを提案する前に、必ず2種類の振り返りを行う**——成果物（`pb-step.md` 手順7）と
+進め方（同 手順8）。**`/pb-step` を使わない作業でも同じ。** 項目はあちらの表が正本である。
 
 **同じことが2回起きてから規約にする**（`LEARNINGS.md` の2回ルール）。一度きりの事象で
 `CLAUDE.md` を増やさない。規約が細かくなるほど守られなくなるため。
 
 ## ブランチ運用
 
+**正本は `docs/Design.md` 11.0〜11.1。** ここには毎回効く分だけを置く。
+
 ```
 main ← develop ← feature/*
 ```
 
-- **`develop` に直接コミットしない。** 実装は必ず `develop` から feature ブランチを切って行う
-- 分岐前に `git switch develop && git pull` で最新化する
-- 命名規約
+| 種別 | 形式 | 例 | マージ前に打つ |
+|---|---|---|---|
+| 手順の実装 | `feature/step-<2桁>-<英小文字スラッグ>` | `feature/step-02-migrations` | `make bump-minor` |
+| 手順外の機能実装 | `feature/<英小文字スラッグ>` | `feature/excel-export` | `make bump-minor` |
+| 機能を変えない修正 | `fix/<英小文字スラッグ>` | `fix/token-expiry` | `make bump-build` |
+| 設計文書のみの修正 | `docs/<英小文字スラッグ>` | `docs/ticket-api` | `make bump-build` |
 
-  | 種別 | 形式 | 例 | マージ時 |
-  |---|---|---|---|
-  | 手順の実装 | `feature/step-<2桁>-<英小文字スラッグ>` | `feature/step-02-migrations` | `make bump-minor` |
-  | 手順外の機能実装 | `feature/<英小文字スラッグ>` | `feature/excel-export` | `make bump-minor` |
-  | 機能を変えない修正 | `fix/<英小文字スラッグ>` | `fix/token-expiry` | `make bump-build` |
-  | 設計文書のみの修正 | `docs/<英小文字スラッグ>` | `docs/ticket-api` | `make bump-build` |
-
-  **不具合修正は `feature/` ではなく `fix/` を使う。** この接頭辞でマイナーバージョンを上げるかどうかが決まる（`docs/Design.md` 11.1）
-
+- **`develop` に直接コミットしない。** 分岐前に `git switch develop && git pull` で最新化する
+- **不具合修正は `feature/` ではなく `fix/` を使う。** この接頭辞でマイナーを上げるかが決まる
+- **`VERSION` の更新（`make bump-*`）と `docs/PROGRESS.md` の更新は、実装と同じブランチに含める。** マージ後に `make version-check` が通ること
 - コミットメッセージの先頭に手順番号を入れる（例：`step 2: マイグレーション 0001〜0010 を追加`）
-- ステップ完了時は、`docs/PROGRESS.md` の更新も**同じブランチに含めてから**コミットする
-- **マージ前に feature ブランチ上で `make bump-minor` / `make bump-build` を実行し、`VERSION` の更新を同じブランチに含める。** マージ後に `make version-check` が通ること（`docs/Design.md` 11.1）
 - **マージ・push・ブランチ削除はエージェントが勝手に行わない。** 完了時に以下を提案するに留め、実行はユーザーの承認後とする
 
   ```
