@@ -1253,7 +1253,7 @@ danger / warning / ai の**意味色**であり、`--pb-accent` は進行中バ�
 
 **コードの追加を画面に置かないのは、この欄がエージェントの作業記録だからである**（利用者の判断、2026-08-27）。人が手で書くものではない。**削除だけは置く**——誤って積まれた行を人が始末できないと詰む。
 
-**Phase 1 ではエージェント用のアクターも MCP も無い**（`Design.md` 11章 手順21・22）。それまでの書き手は**人の API トークンを持つクライアント**であり、PB 自身の開発では Claude Code がこれにあたる。
+**Phase 1 ではエージェント用のアクターも MCP も無い**（`Design.md` 11章 手順24・25）。それまでの書き手は**人の API トークンを持つクライアント**であり、PB 自身の開発では Claude Code がこれにあたる。
 
 **0件のときの扱いは2つで違う。** コードは**見出しごと出さない**（子チケットと同じ。画面から追加できないので、空の枠は何もできない箱になる）。**参考リンクは常に出す**——`[+ 追加]` がこのセクションへの唯一の入口であり、隠すと機能へ到達できない。0件のときは「参考リンクはまだありません」の1行を置く。
 
@@ -1654,7 +1654,7 @@ danger / warning / ai の**意味色**であり、`--pb-accent` は進行中バ�
 
 **`scope` でグループ見出しを1段置く**（「システム」「プロジェクト」）。`role.scope` は権限の効く範囲そのものであり（`Design.md` 6.4.1 の三層構造）、これが読めないと「プロジェクト管理者は `user.manage` を持たない」がインスタンス全体の話に見える。
 
-**行は `permission.category` ごとに小見出しで区切る**（project / ticket / comment / knowledge / proposal / agent / admin / export の8つ）。権限は28件あり、`ticket.*` だけで7件連続する。`ApiDesign.md` 7.2 が `category` を返すのはこのためである。
+**行は `permission.category` ごとに小見出しで区切る**（project / ticket / comment / doc / knowledge / proposal / agent / admin / export の8つ）。権限は28件あり、`ticket.*` だけで7件連続する。`ApiDesign.md` 7.2 が `category` を返すのはこのためである。
 
 **権限はキーを主、説明を副として同じ列に2行で出す。** キーだけでは `comment.edit_own` と `comment.delete_any` の違いが読み取りにくく、説明だけでは設計文書・API・監査ログと突き合わせられない。説明は `permission.description`（`DbDesign.md` 7.2 のシード）である。
 

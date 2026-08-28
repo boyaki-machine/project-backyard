@@ -1758,7 +1758,7 @@ paths:
         外部参照を1件足す（ApiDesign.md 9.10.2）。**必要権限は `ticket.edit`**。
 
         **`kind='code'` の主な書き手はエージェントである。** Phase 1 ではエージェント用の
-        アクターも MCP も無い（Design.md 11章 手順21・22）ため、書き手は `/me/tokens` で
+        アクターも MCP も無い（Design.md 11章 手順24・25）ため、書き手は `/me/tokens` で
         発行した API トークンを持つクライアントになる。**画面は `code` の追加を持たず、
         表示と削除だけを行う**（GuiDesign.md 5.5）。`doc` は Phase 1 から人が画面で
         追加・編集できる。
