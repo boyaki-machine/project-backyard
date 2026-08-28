@@ -311,7 +311,7 @@ PgBouncer は Phase 1 では不要。単一プロセス・少人数利用のた�
 | メール | `citext` | 大文字小文字を区別しない一意制約 |
 | 構造化データ | `jsonb` | 既定値を `'{}'::jsonb` / `'[]'::jsonb` とし `NULL` を避ける |
 | 数値 | `integer` / `double precision` | 金額を扱わないため `numeric` は不要 |
-| ベクトル | `vector(n)` | Phase 3。専用テーブルに隔離（8.3） |
+| ベクトル | `vector(n)` | Phase 3。専用テーブルに隔離（8.4） |
 
 **`varchar(n)` を使わない理由**：PostgreSQL では `text` と `varchar` に性能差がなく、長さ変更が `ALTER TABLE` を要する。長さ制限は `CHECK (length(title) <= 200)` として表現し、変更時はCHECK制約の張り替えで済ませる。
 
@@ -1088,7 +1088,7 @@ CREATE TRIGGER trg_dod_updated BEFORE UPDATE ON dod_item
 
 `config` の例：`task_ref` は `{"ticket_id":"01K2..."}`、`assertion` は `{"command":"pytest tests/auth/","expect":"pass"}`。
 
-**この表は本改訂で 8.1.3（Phase 2）から移した。** `GuiDesign.md` 5.5 は「完了条件は Phase 1 で `manual` 型のみ実装」と定めているのに、その置き場所が Phase 2 にあり、文書どうしが食い違っていた。手動のチェックリストは AI 抜きでも人間だけで価値があり、`Requirements.md` 10.1.1「チケットは依頼メモから実行契約へ」の土台にもなるため、**Phase 1 側に合わせた**。
+**この表は本改訂で 8.2.3（Phase 2）から移した。** `GuiDesign.md` 5.5 は「完了条件は Phase 1 で `manual` 型のみ実装」と定めているのに、その置き場所が Phase 2 にあり、文書どうしが食い違っていた。手動のチェックリストは AI 抜きでも人間だけで価値があり、`Requirements.md` 10.1.1「チケットは依頼メモから実行契約へ」の土台にもなるため、**Phase 1 側に合わせた**。
 
 **列と `CHECK` は Phase 2 の形のまま作り、API が受け付ける `type` だけを `manual` に絞る**（`ApiDesign.md` 9.9）。後から列を足すより、使わない列を持つほうが安い。`assertion`（コマンド実行）・`artifact`（成果物の存在確認）・`review`・`task_ref` は Phase 2 で開ける（`Requirements.md` 10.5.2）。
 
@@ -1205,6 +1205,14 @@ ON CONFLICT (key) DO UPDATE
 ```
 
 **`ON CONFLICT DO UPDATE` にしている**のは、説明文の修正を後続のマイグレーションで反映できるようにするため。権限キーそのものは削除しない（削除は `role_permission` の CASCADE を伴うため、専用のマイグレーションで慎重に扱う）。
+
+**後続のマイグレーションで足す権限は、本節に追記せず、その機能の節に置く。** 0010 のブロックを増やすと、**どのマイグレーションが何を入れたかが読めなくなる**ためである。現時点の追加は以下の1件。
+
+| 追加 | 権限 | 置き場 |
+|---|---|---|
+| 0017（Phase 2） | `doc.view` / `doc.edit` | 8.1.4 |
+
+**`Design.md` 付録A の「`permission` カタログの粒度は28件で確定」は、0010 時点の件数である。** 0017 適用後は30件になる。
 
 ## 7.3 ロールと権限の割り当て
 
@@ -1516,22 +1524,156 @@ make dev-info    # URL とデモアカウント一覧を表示
 Phase 1 のテーブルは変更せず、**テーブル追加のみ**で拡張する。本章のDDLは構成案であり、各Phase着手時に確定させる。
 
 ```
-0017_agent.sql            agent, task_lease
-0018_agent_run.sql        agent_run, agent_report, context_pack_log
-0019_knowledge.sql        knowledge, knowledge_revision, proposal
-0020_comment_signal.sql   comment_signal
-0021_embedding.sql        vector 拡張 + embedding
-0022_project_event.sql    project_event
-0023_analytics.sql        estimate_record, contribution
+Phase 2
+  0017_document.sql       document, document_revision, doc 権限, 文書テンプレート
+  0018_agent.sql          agent, task_lease
+Phase 3
+  0019_agent_run.sql      agent_run, agent_report, context_pack_log
+  0020_knowledge.sql      knowledge, knowledge_revision, proposal
+  0021_comment_signal.sql comment_signal
+  0022_embedding.sql      vector 拡張 + embedding
+  0023_project_event.sql  project_event
+  0024_analytics.sql      estimate_record, contribution
 ```
 
 採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 
-## 8.1 エージェント連携（Phase 2）
+## 8.1 プロジェクト文書（Phase 2）
 
-### 8.1.1 `agent` — エージェントの登録
+`Requirements.md` 10.6.2 のプロジェクト文書（憲章）を保持する。**規約・価値観・判断の基準を1か所に置き、全参加者のエージェントが同じものを読む**ための器である。
+
+**PB は文書管理の機構だけを持ち、型はテンプレートで配る。** `kind` に「価値観」「規約」といった語彙を**持たせない**。プロジェクト作成時にテンプレートから初期の文書を複製し、以後どう使うかはプロジェクトに委ねる。
+
+### 8.1.1 `document` — 文書の木
+
+```sql
+CREATE TABLE document (
+  id           char(26) COLLATE "C" PRIMARY KEY,
+  project_id   char(26) COLLATE "C" REFERENCES project(id)  ON DELETE CASCADE,
+  parent_id    char(26) COLLATE "C" REFERENCES document(id) ON DELETE CASCADE,
+  slug         text        NOT NULL CHECK (slug ~ '^[a-z0-9][a-z0-9-]{0,63}$'),
+  title        text        NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
+  body_md      text        NOT NULL DEFAULT '',
+  sort_order   integer     NOT NULL DEFAULT 0,
+  is_template  boolean     NOT NULL DEFAULT false,
+  template_key text,
+  created_by   char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  updated_by   char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  version      integer     NOT NULL DEFAULT 1,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT ck_document_template CHECK (
+    (is_template AND project_id IS NULL AND template_key IS NOT NULL)
+    OR (NOT is_template AND project_id IS NOT NULL AND template_key IS NULL)
+  )
+);
+CREATE UNIQUE INDEX uq_document_slug ON document (project_id, parent_id, slug)
+  NULLS NOT DISTINCT WHERE NOT is_template;
+CREATE UNIQUE INDEX uq_document_template_slug ON document (template_key, parent_id, slug)
+  NULLS NOT DISTINCT WHERE is_template;
+CREATE INDEX idx_document_tree ON document (project_id, parent_id, sort_order, slug);
+CREATE INDEX idx_document_body_trgm ON document USING gin (body_md gin_trgm_ops);
+CREATE TRIGGER trg_document_updated BEFORE UPDATE ON document
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE document_revision (
+  id            char(26) COLLATE "C" PRIMARY KEY,
+  document_id   char(26) COLLATE "C" NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+  revision_no   integer NOT NULL,
+  title         text    NOT NULL,
+  body_md       text    NOT NULL,
+  changed_by    char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  change_reason text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT uq_document_revision UNIQUE (document_id, revision_no)
+);
+CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revision_no DESC);
+```
+
+**テンプレートを別テーブルにしない。** `is_template` / `template_key` / `project_id IS NULL` で同居させるのは、**6.5 の `workflow` が既にこの形を採っている**ためである（7.4 の3種のテンプレートは `workflow` の行として入り、プロジェクト作成時に複製される）。同じ「テンプレートから複製する」機構を2つの形で持つと、片方に入れた直しがもう片方に入らない。
+
+**一意制約を2本に分けている。** 実文書はプロジェクト内で、テンプレートは `template_key` の中で、それぞれ「同じ親の下に同じ slug は1つ」を保証する。**`NULLS NOT DISTINCT` が要るのは `parent_id IS NULL`（トップレベル）のため**である。既定の `UNIQUE` は NULL どうしを別物として扱うので、これが無いとトップレベルで slug が重複できてしまう。**PostgreSQL 15 以降の機能**で、本プロジェクトは 17（3.1）。
+
+**`version` は楽観ロック用**で、`project`（6.4）と同じ使い方をする。**人とエージェントが同じ文書を触る**ため、Phase 1 のプロジェクト設定より競合が起きやすい。競合時の扱いは `ApiDesign.md` に置く。
+
+**削除は物理削除**（4.6 の既定）。本文の履歴は `document_revision` に残るため、`deleted_at` を持たせても復元の役には立たない。`parent_id` の `CASCADE` により、親を消すと部分木ごと消える。
+
+**`body_md` に GIN トライグラムインデックスを張る**のは、`knowledge`（8.3.1）と同じ理由による。日本語の部分一致検索を `pg_trgm` で賄う（4.5）。
+
+### 8.1.2 文書テンプレート（0017 の初期データ）
+
+`template_key = 'default'` の4件を置く。`Requirements.md` 10.6.2 の表に対応する。
+
+| `slug` | `title` | 役割 |
+|---|---|---|
+| `values` | 価値観・判断の基準 | **書かれていない事態を裁く**。迷ったとき何を優先するか |
+| `conventions` | 規約 | 既知の事態を裁く。命名・進め方・守るべきルール |
+| `decisions` | 判断の記録 | なぜそう決めたか。追記のみで使う |
+| `caveats` | 共有すべき知見 | 注意点、試して駄目だったこと |
+
+**本文を空にしない。** 各文書に「ここに何を書くか」の短い案内を初期本文として入れる。空の文書が4つ並ぶと、何を書く場所か分からないまま放置される。
+
+**複製はプロジェクト作成時に行う**（7.4 のワークフローテンプレートと同じ手順の中で）。複製後はそのプロジェクトのものになり、テンプレート側を直しても既存プロジェクトには波及しない。
+
+**後から足す文書は自由でよい。** 階層も slug も利用者が決める。テンプレートは出発点であって制約ではない。
+
+### 8.1.3 章を永続化しない
+
+`pb_get_doc(path, section)` の `section` は**見出しテキストから作るスラッグ**とし、**どこにも保存しない**。
+
+| 参照の寿命 | 使うもの | 見出しを改名したら |
+|---|---|---|
+| セッション内（`pb_list_docs` で目次 → `pb_get_doc` で章） | 見出しのスラッグ | **壊れない。** 目次は常に現在の見出しから作る |
+| 保存される参照 | **`document.id` のみ。章は保存しない** | **壊れない。** 指す先が見出しに依存しない |
+
+**章を列に持たせないことで、`Requirements.md` 10.13 が挙げていた「見出しが変わると既存の参照が壊れる」問題が消える。** 著者に `{#anchor}` のような記法を書かせる必要も無い。存在しない章を指されたときは、エラーではなく**目次を返す**（`ApiDesign.md`）。
+
+### 8.1.4 権限（0017）
+
+```sql
+INSERT INTO permission (key, category, description, sort_order) VALUES
+  ('doc.view', 'doc', 'プロジェクト文書の閲覧', 35),
+  ('doc.edit', 'doc', 'プロジェクト文書の編集', 36)
+ON CONFLICT (key) DO UPDATE
+  SET category = EXCLUDED.category,
+      description = EXCLUDED.description,
+      sort_order = EXCLUDED.sort_order;
+
+-- administrator は 7.3 の「全権限」SELECT で自動的に付く（再実行する）
+INSERT INTO role_permission (role_key, permission_key)
+SELECT 'administrator', key FROM permission
+ON CONFLICT DO NOTHING;
+
+INSERT INTO role_permission (role_key, permission_key)
+SELECT 'project_admin', key FROM permission WHERE key IN ('doc.view','doc.edit')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO role_permission (role_key, permission_key)
+SELECT r, 'doc.view' FROM unnest(ARRAY['operator','project_member','project_viewer']) AS r
+ON CONFLICT DO NOTHING;
+```
+
+| ロール | `doc.view` | `doc.edit` |
+|---|---|---|
+| `administrator` | ✓ | ✓ |
+| `project_admin` | ✓ | ✓ |
+| `operator` | ✓ | **—** |
+| `project_member` | ✓ | **—** |
+| `project_viewer` | ✓ | — |
+
+**`doc.edit` を `operator` と `project_member` に与えない。** 理由は2つある。
+
+ひとつは `Requirements.md` 10.6.2 との整合である。**憲章は全参加者を縛る**ので、更新できる人を絞る。編集そのものは「PM が自分のエージェントに指示して行う」形を想定している（同 10.7.5）。
+
+もうひとつは検証上の理由である。`Design.md` 付録A が「**Phase 1 に『チケットを作れない人』が実在しない**」（`operator` が `ticket.*` を持つため）と記し、その帰結として「**画面の権限による出し分けの負の側を検証できない**」を積み残していた。**`doc.edit` は、`operator` が持たない最初の権限になる**——「読めるが編集できない人」が実在するので、出し分けの負の側をここで初めて確かめられる。
+
+**これは権限モデル全体の再整理ではない。** 付録A の論点①（`GET /roles?scope=project` を権限不要としたのが暫定であること）は未決のまま残る。
+
+## 8.2 エージェント連携（Phase 2）
+
+### 8.2.1 `agent` — エージェントの登録
 
 ```sql
 CREATE TABLE agent (
@@ -1553,7 +1695,7 @@ CREATE TRIGGER trg_agent_updated BEFORE UPDATE ON agent
 
 `trust_level` は`Requirements.md` 10.10.3 の段階的権限昇格に対応する。
 
-### 8.1.2 `task_lease` — リース管理
+### 8.2.2 `task_lease` — リース管理
 
 ```sql
 CREATE TABLE task_lease (
@@ -1573,11 +1715,11 @@ CREATE INDEX idx_task_lease_expiry ON task_lease (expires_at) WHERE released_at 
 
 **部分一意インデックスで「1チケットに有効なリースは1つ」をDBレベルで保証する。** アプリ側の排他制御に依存しないため、エージェントが並行して claim しても破綻しない。
 
-### 8.1.3 `dod_item` — 6.11 へ移動
+### 8.2.3 `dod_item` — 6.11 へ移動
 
 **Phase 1 へ前倒しした。** `GuiDesign.md` 5.5 が完了条件を Phase 1 の実装対象としており、置き場所だけが Phase 2 に残っていた。DDL と判断根拠は 6.11 にある。Phase 2 で開けるのは `manual` 以外の `type`（`assertion` / `artifact` / `review` / `task_ref`）であり、**テーブルの追加は要らない**。
 
-### 8.1.4 `agent_run` / `agent_report`
+### 8.2.4 `agent_run` / `agent_report`
 
 ```sql
 CREATE TABLE agent_run (
@@ -1620,7 +1762,7 @@ ALTER TABLE comment
 
 `workflow_version` は`Requirements.md` 10.9.3 の陳腐化検出、`retry_count` は 10.10.5 のサーキットブレーカー判定に用いる。
 
-### 8.1.5 `context_pack_log`
+### 8.2.5 `context_pack_log`
 
 ```sql
 CREATE TABLE context_pack_log (
@@ -1638,9 +1780,13 @@ CREATE INDEX idx_context_pack_run ON context_pack_log (agent_run_id);
 
 **1テーブルで2つの要件を満たす。** `Requirements.md` 10.10.7（監査：エージェントが何を見たか）と 10.4.4（効果計測：どの情報を含めたときに成功率が上がったか）は、記録すべき内容が同一である。`agent_report.status` と突き合わせることで有用性スコアを算出する。
 
-## 8.2 知識還流（Phase 2）
+## 8.3 知識還流（Phase 3）
 
-### 8.2.1 `knowledge` — プロジェクトメモリ
+**本節は Phase 2 から Phase 3 へ送った**（利用者の判断、2026-08-29）。知識はまず **8.1 の文書として運用し、押し付けたい粒度が実測で見えてから**エンティティに切り出す（`Requirements.md` 10.6.2 の末尾）。先に器を作ると、要らなかったときに戻せない。
+
+**承認キュー（`proposal`）も同時に送っている。** 承認の対象だった `knowledge` と文書差分の両方が Phase 2 から外れると、**Phase 2 に残る承認対象がサブタスク提案だけになり、画面を作る理由が薄い**（`Requirements.md` 10.12）。Phase 2 では文書の編集を権限（`doc.edit`）で直接行う。
+
+### 8.3.1 `knowledge` — プロジェクトメモリ
 
 ```sql
 CREATE TABLE knowledge (
@@ -1686,7 +1832,7 @@ CREATE TABLE knowledge_revision (
 
 `knowledge_revision` により全変更が保持され、`proposal_id` を辿ればどのエージェントのどの提案に由来する変更かを特定できる。ロールバックは特定リビジョンの `body_md` を新リビジョンとして書き戻すことで行う（履歴を消さない）。
 
-### 8.2.2 `proposal` — AIの提案を集約する
+### 8.3.2 `proposal` — AIの提案を集約する
 
 ```sql
 CREATE TABLE proposal (
@@ -1721,9 +1867,9 @@ ALTER TABLE knowledge_revision
 
 `auto_applied` は、`Requirements.md` 10.6.3 の承認ポリシー（**影響範囲を軸に、自動採用と承認必須を分ける**）で自動反映されたものを表す。**自動反映であっても proposal 行は必ず残す**ことで、後から遡って取り消せる。
 
-## 8.3 AI機能・分析（Phase 3）
+## 8.4 AI機能・分析（Phase 3）
 
-### 8.3.1 `comment_signal` — コメント重要度
+### 8.4.1 `comment_signal` — コメント重要度
 
 ```sql
 CREATE TABLE comment_signal (
@@ -1742,7 +1888,7 @@ CREATE INDEX idx_comment_signal_importance ON comment_signal (importance DESC);
 
 `comment` 本体から分離するのは、①スコアが頻繁に更新されて本体の `updated_at` が汚れる（「編集された」との区別がつかなくなる）ことを避けるため、②スコアリングモデルを入れ替えた際にこのテーブルのみ再構築すればよいため。`Requirements.md` 6.6 に対応する。
 
-### 8.3.2 `embedding` — ベクトルインデックス
+### 8.4.2 `embedding` — ベクトルインデックス
 
 pgvector を最初から使える環境になったが、**専用テーブルへの隔離は維持する**。理由は、①埋め込みモデル変更時にこのテーブルのみ再構築すればよい、②本体テーブルの行サイズを膨らませない（1536次元で約6KB）、③ベクトル検索を使わない構成でもスキーマが成立する、の3点。
 
@@ -1761,7 +1907,7 @@ CREATE TABLE embedding (
 CREATE INDEX idx_embedding_hnsw ON embedding USING hnsw (vec vector_cosine_ops);
 ```
 
-### 8.3.3 `project_event` — プロジェクトヒストリー
+### 8.4.3 `project_event` — プロジェクトヒストリー
 
 ```sql
 CREATE TABLE project_event (
@@ -1789,7 +1935,7 @@ CREATE TRIGGER trg_project_event_updated BEFORE UPDATE ON project_event
 
 `Requirements.md` 6.7 のセミオート方式（AIが候補提示、PMが取捨選択）を `origin` と `status` で表現する。`proposal(kind='event')` が承認されるとこのテーブルへ昇格する。
 
-### 8.3.4 分析用テーブル
+### 8.4.4 分析用テーブル
 
 ```sql
 CREATE TABLE estimate_record (
@@ -1868,5 +2014,5 @@ docker compose exec -T db pg_dump -U pb_owner -Fc pb > backup/pb_$(date +%Y%m%d)
 - 日本語検索を `pg_trgm` から `pg_bigm` へ移行する判断基準（データ量・検索頻度・精度の不満）
 - Phase 2 でエージェントが並行書き込みする際のトランザクション分離レベル（既定の Read Committed で足りるか、`task_lease` 取得時に `SELECT FOR UPDATE` が必要か）
 - **リポジトリを `project.settings`（jsonb）に置いた**（6.4）。リポジトリ単位のトークン発行や横断検索（`Requirements.md` 10.9）が要件になったら `project_repository` テーブルへ移す
-- **`kind='system'` の actor に一意なキー列が無い**（6.2）。ユーザー削除時のコメント付け替え先「削除されたユーザー」を `display_name` で引いている。**システムアクターが2種類目になった時点で壊れる。** `agent` テーブル（8.1）を設計するときに、システムアクターの識別子も決める
+- **`kind='system'` の actor に一意なキー列が無い**（6.2）。ユーザー削除時のコメント付け替え先「削除されたユーザー」を `display_name` で引いている。**システムアクターが2種類目になった時点で壊れる。** `agent` テーブル（8.2）を設計するときに、システムアクターの識別子も決める
 - マルチテナント（スキーマ分離）を導入する場合の移行手順。Phase 1〜2 は単一テナント前提のためテナントID列を持たない

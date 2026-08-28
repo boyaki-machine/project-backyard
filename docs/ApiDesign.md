@@ -23,7 +23,8 @@
 | **7** | **ロール・権限API** | **確定** |
 | 8 | 画面とAPIの対応 | 確定 |
 | **9** | **チケットAPI** | **確定** |
-| 10 | 未解決の検討事項 | 確定 |
+| **10** | **プロジェクト文書API** | **確定**（Phase 2） |
+| 11 | 未解決の検討事項 | 確定 |
 
 ---
 
@@ -31,7 +32,7 @@
 
 ## 1.1 本書が定義する範囲
 
-Phase 1 の全APIを定義する。**すべて実装済みである。**
+Phase 1 の全APIを定義する。**9章までは実装済みである。10章（プロジェクト文書）は Phase 2 で実装する。**
 
 | 章 | 範囲 | 主な消費者（`GuiDesign.md`） |
 |---|---|---|
@@ -40,6 +41,7 @@ Phase 1 の全APIを定義する。**すべて実装済みである。**
 | 5 | プロジェクト | プロジェクト一覧・作成（5.2）、プロジェクト設定（5.9） |
 | 6・7 | ユーザー管理・ロール・権限 | アカウント / 権限管理（5.6） |
 | 9 | チケット（一覧・詳細・コメント・DoD・リンク・タグ・スプリント・集計） | バックログ（5.4）、チケット詳細（5.5）、ダッシュボード（5.3） |
+| 10 | **プロジェクト文書（憲章）**。Phase 2 | Docs（5.10）。**MCP の `pb_list_docs` / `pb_get_doc` / `pb_put_doc` もここを通る** |
 
 MCPサーバ向けのツール定義は本書の範囲外である（`Design.md` 8章、Phase 2）。
 
@@ -809,7 +811,7 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 
 **`sort=is_active` の昇順は無効が先**（`false < true`）。状態で並べ替える動機は「無効な利用者を探す」ことが多いため、そのままにしている。
 
-**`agent` は Phase 1 では常に `null` である。** 中身（`client_kind` / `model_name` / `project_key` / `trust_level`）は `DbDesign.md` 8.1 の `agent` テーブルの列で、そのテーブルは Phase 2 のマイグレーションで作られる。Phase 1 のスキーマから埋められる値が1つも無いため、**キーだけを返して中身は推測しない**。上の例はエージェントを作れるようになった後の姿である。
+**`agent` は Phase 1 では常に `null` である。** 中身（`client_kind` / `model_name` / `project_key` / `trust_level`）は `DbDesign.md` 8.2 の `agent` テーブルの列で、そのテーブルは Phase 2 のマイグレーションで作られる。Phase 1 のスキーマから埋められる値が1つも無いため、**キーだけを返して中身は推測しない**。上の例はエージェントを作れるようになった後の姿である。
 
 **`project_count` は `project_member` の行数**で、アーカイブ済みプロジェクトも数える。除くと 6.3 の `memberships` に並ぶ件数と食い違うため。
 
@@ -1069,6 +1071,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | アクセストークン | `GET|POST /me/tokens`<br>`DELETE /me/tokens/:id` |
 | プロジェクト設定（タグタブ） | `GET|POST /projects/:key/tags`<br>`PATCH|DELETE /projects/:key/tags/:id` |
 | プロジェクト設定（スプリントタブ） | `GET|POST /projects/:key/sprints`<br>`PATCH|DELETE /projects/:key/sprints/:id` |
+| **Docs（Phase 2）** | `GET /projects/:key/docs`（目次）<br>`GET /projects/:key/docs/*path`（本文）<br>`PATCH|DELETE /projects/:key/docs/*path`・`POST /projects/:key/docs`<br>`GET /projects/:key/docs/*path/_revisions`（履歴） |
 
 **各画面が起動時に呼ぶAPIは1〜2本に収まっている。** 設計方針3が満たされていることの確認になる。
 
@@ -1117,7 +1120,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 **タグとスプリントの定義変更（9.11 / 9.12）は、どちらにも記録しない。** `audit_log` の対象ではなく（上記のカタログに入らない）、`activity` の読み手はチケットの変更履歴であって、9.13.2 の `entity` も `ticket:31` の形しか受け付けない。**記録しても Phase 1 に読む画面が無い。**
 
-ただし**タグの削除は、`ticket_tag` を `CASCADE` で消して全チケットからそのタグを外す**（`DbDesign.md` 6.10）。「使用中だったタグを誰が消したか」を後から追えない状態であり、運用に載せてから困ることがありうる。**その時点で `activity` に `entity_type='tag'` / `'sprint'` を足す**（10.2）。先に入れないのは、読む画面の無い記録が形だけ固まるのを避けるためである。
+ただし**タグの削除は、`ticket_tag` を `CASCADE` で消して全チケットからそのタグを外す**（`DbDesign.md` 6.10）。「使用中だったタグを誰が消したか」を後から追えない状態であり、運用に載せてから困ることがありうる。**その時点で `activity` に `entity_type='tag'` / `'sprint'` を足す**（11.2）。先に入れないのは、読む画面の無い記録が形だけ固まるのを避けるためである。
 
 ## 9.2 `GET /api/v1/projects/:key/tickets`
 
@@ -1332,7 +1335,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 
 **`rebalanced`** は、隣接する2つのキーの間に新しいキーを作れず、プロジェクト全体の `sort_key` を振り直したことを示す。`true` のとき、**クライアントは一覧を取り直す**（手元の `sort_key` がすべて古くなっているため）。
 
-**`If-Match` は要求しない。** 2.8 の archive / unarchive と同じく、競合しても失われる編集内容が無い（`sort_key` はフォームで編集する項目ではない）。ただし**`version` は他の更新と同じく +1 する**。並べ替えの直後に詳細画面が `409` を返す可能性があるが、規約を1本に保つことを優先する。実運用で不都合が出たら 2.8 ごと見直す（10.2）。
+**`If-Match` は要求しない。** 2.8 の archive / unarchive と同じく、競合しても失われる編集内容が無い（`sort_key` はフォームで編集する項目ではない）。ただし**`version` は他の更新と同じく +1 する**。並べ替えの直後に詳細画面が `409` を返す可能性があるが、規約を1本に保つことを優先する。実運用で不都合が出たら 2.8 ごと見直す（11.2）。
 
 **並び順はプロジェクト内で1本である。** グループ化（親・タグ・スプリント）は表示上の区切りにすぎず、グループを切り替えても `sort_key` は変わらない。グループごとに別の順序を持たせると、軸を変えるたびに順序が失われる。
 
@@ -1401,7 +1404,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 
 `field` / `old_value` / `new_value` を埋めた行を、**変更が実際に生じた項目の数だけ**書く（`DbDesign.md` 6.8）。9.13.2 の応答がこの3列を持つのは、`GuiDesign.md` 5.5 の変更履歴が「いつ担当が誰から誰へ変わったか」を出すためである。更新1回につき1行にすると「更新した」しか残らない。
 
-**`body_md` だけは `old_value` / `new_value` を `NULL` にする**（`field` は記録する）。本文は長く、9.13.2 は `per_page=20` の一覧APIなので、20件ぶんの Markdown を載せると 8章の「応答を軽く保つ」方針に反する。**「前の本文に戻す」は履歴一覧の仕事ではない**——本文の版管理が要件になったら別の仕組みとして設計する（10.2 に起票）。
+**`body_md` だけは `old_value` / `new_value` を `NULL` にする**（`field` は記録する）。本文は長く、9.13.2 は `per_page=20` の一覧APIなので、20件ぶんの Markdown を載せると 8章の「応答を軽く保つ」方針に反する。**「前の本文に戻す」は履歴一覧の仕事ではない**——本文の版管理が要件になったら別の仕組みとして設計する（11.2 に起票）。
 
 値の送信はあったが内容が現在値と同じだった項目は、**変更が生じていないので記録しない。** `version` は 2.8 の規約どおり +1 する。
 
@@ -2172,13 +2175,244 @@ ETag: W/"act-a3f19c2b-142-1723372992000000000"
 
 ---
 
-# 10. 未解決の検討事項
+# 10. プロジェクト文書API
 
-## 10.1 実装順序 → `Design.md` 11章
+`DbDesign.md` 8.1 の `document` / `document_revision` を扱う。`Requirements.md` 10.6.2 の
+プロジェクト文書（憲章）——**規約・価値観・判断の基準を1か所に置き、全参加者のエージェントが
+同じものを読む**——の供給経路である。
+
+```
+GET|POST      /api/v1/projects/:key/docs
+GET|PATCH|DELETE /api/v1/projects/:key/docs/*path
+GET           /api/v1/projects/:key/docs/*path/_revisions
+GET           /api/v1/projects/:key/docs/*path/_revisions/:no
+```
+
+| メソッド | 必要権限 |
+|---|---|
+| `GET` | `doc.view` |
+| `POST` / `PATCH` / `DELETE` | **`doc.edit`** |
+
+**`doc.edit` は `operator` と `project_member` が持たない**（`DbDesign.md` 8.1.4）。憲章は
+全参加者を縛るため、更新できる人を絞る。**Phase 1 に「その操作ができない人」が実在しない
+という問題（`Design.md` 付録A）に対する、最初の実例でもある。**
+
+## 10.1 パスによる指定
+
+**文書はパスで指す。** `slug` を根から連ねたもので、`values`、`conventions/naming` のようになる。
+
+**ULID も返すが、指定には使わない。** 9.1 のチケットが `seq` を使うのと同じ理由——共有できる
+URL になり、画面の URL（`/p/:key/docs/conventions/naming`）とそのまま一致する。
+
+**`_revisions` はサブ資源の予約語である。** `slug` の検証は `^[a-z0-9][a-z0-9-]{0,63}$`
+（`DbDesign.md` 8.1.1）で **`_` を含められない**ため、`.../docs/a/b/_revisions` が
+「`a/b` のリビジョン一覧」なのか「`a/b/_revisions` という文書」なのかで迷うことがない。
+**ワイルドカードの末尾セグメントを見て分岐する**実装になる。
+
+## 10.2 `GET /api/v1/projects/:key/docs` — 目次
+
+```json
+{
+  "items": [
+    { "id": "01K2...", "path": "values", "slug": "values",
+      "title": "価値観・判断の基準", "sort_order": 10,
+      "updated_at": "2026-08-29T04:12:00Z", "children": [] },
+    { "id": "01K2...", "path": "conventions", "slug": "conventions",
+      "title": "規約", "sort_order": 20,
+      "updated_at": "2026-08-29T05:00:00Z",
+      "children": [
+        { "id": "01K2...", "path": "conventions/naming", "slug": "naming",
+          "title": "命名", "sort_order": 10,
+          "updated_at": "2026-08-29T05:00:00Z", "children": [] }
+      ] }
+  ]
+}
+```
+
+**`body_md` を含めない。** 目次は「どこに何があるか」を答えるものであり、本文は 10.3 が返す。
+**全文を一度に返す設計にすると、リポジトリの md ファイルより劣る**（ファイルなら部分読みができる）。
+
+`items[]` は各階層で **`sort_order` 昇順、同値は `slug` 昇順**。第2キーを置く理由は 9.11 と同じ。
+
+**ページネーションを持たない**（`items` のみ）。9.11 のタグと同じく、**全件が同時に要る**
+——目次は木であり、途中で切ると子が親から外れる。
+
+### `?outline=1`
+
+各文書の見出し一覧を足す。**エージェントが「どの章を読むか」を決めるために使う**。
+
+```json
+{ "id": "01K2...", "path": "conventions", "title": "規約", "sort_order": 20,
+  "updated_at": "2026-08-29T05:00:00Z",
+  "outline": [
+    { "section": "命名", "level": 2 },
+    { "section": "ブランチ", "level": 2 },
+    { "section": "接頭辞", "level": 3 }
+  ],
+  "children": [] }
+```
+
+**`section` は見出しテキストそのものである。** スラッグ化も番号付けもしない
+（`DbDesign.md` 8.1.3）。**この値はどこにも保存されず、常に現在の本文から作られる**ため、
+見出しを改名しても壊れる参照が生まれない。
+
+**同じ文書に同名の見出しが2つあるときは、2つ目以降に `#2` を付ける**（`命名`、`命名#2`）。
+`level` は Markdown の見出しレベル（`##` が 2）。
+
+## 10.3 `GET /api/v1/projects/:key/docs/*path` — 本文
+
+```json
+{
+  "id": "01K2...",
+  "path": "conventions",
+  "slug": "conventions",
+  "parent_path": null,
+  "title": "規約",
+  "body_md": "本書はこのプロジェクトの規約である。\n\n## 命名\n…",
+  "outline": [ { "section": "命名", "level": 2 } ],
+  "sort_order": 20,
+  "version": 3,
+  "created_by": { "id": "01K2...", "kind": "user", "display_name": "田中" },
+  "updated_by": { "id": "01K2...", "kind": "agent", "display_name": "claude-code" },
+  "created_at": "2026-08-29T04:00:00Z",
+  "updated_at": "2026-08-29T05:00:00Z"
+}
+```
+
+**`created_by` / `updated_by` は `null` になりうる**（`ON DELETE SET NULL`。`DbDesign.md` 8.1.1）。
+9.8 の `author` が `null` にならないのと異なる——コメントは書き手が消えたら意味を失うが、
+**文書は書いた人が退職しても内容が生き続ける**。
+
+`kind` が `agent` のとき、画面はアバターを角丸四角にする（`GuiDesign.md` 8.4.2）。
+**憲章に「エージェントが最後に更新した」と出ることは正常である**——`pb_put_doc` は
+権限を持つ人の指示で呼ばれる（`Requirements.md` 10.7.5）。
+
+### `?section=<見出し>`
+
+その章だけを返す。**`body_md` は見出し行から、同じか上のレベルの次の見出しの直前までを含む。**
+
+```
+GET /api/v1/projects/my-app/docs/conventions?section=命名
+```
+
+```json
+{ "id": "01K2...", "path": "conventions", "title": "規約",
+  "section": "命名", "body_md": "## 命名\n\n- テーブルは単数形…",
+  "version": 3, "updated_at": "2026-08-29T05:00:00Z" }
+```
+
+**見つからないときは `404 not_found` を返し、本体に `available_sections` を添える。**
+
+```json
+{ "error": {
+    "code": "not_found",
+    "message": "指定された章が見つかりません",
+    "available_sections": ["命名", "ブランチ", "接頭辞"],
+    "request_id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S" } }
+```
+
+**`details` ではなく本体の任意フィールドに置く。** `details` は `{field, code, message}` の
+配列で、入力欄に紐づかない配列を載せる場所がない——2.5 が `retry_after_sec` について
+述べているのと同じ理由である。**呼び出し側（多くはエージェント）が、もう一度目次を
+取りに行かずに次の一手を選べる。**
+
+## 10.4 `POST` / `PATCH` / `DELETE`
+
+`POST` の本体：
+
+| フィールド | 検証 |
+|---|---|
+| `slug` | 必須。`^[a-z0-9][a-z0-9-]{0,63}$`。**同じ親の下で一意**（重複は `409 already_exists`） |
+| `title` | 必須。1〜200文字。前後の空白を取り除いてから検証する |
+| `parent_path` | 任意。省略・`null` でトップレベル。存在しないパスは `422`、`details[].code = "not_found"` |
+| `body_md` | 任意。既定は空文字 |
+| `sort_order` | 任意。省略時は同じ親の中の末尾（現在の最大値 + 10） |
+
+`PATCH` は `title` / `body_md` / `slug` / `parent_path` / `sort_order` を任意の組み合わせで受け、
+**加えて `change_reason`（任意、200文字以内）を受ける**。
+
+**`If-Match` を要求する**（2.8）。`document` は `version` 列を持つ。**人とエージェントが
+同じ文書を触るため、Phase 1 のプロジェクト設定より競合が起きやすい。** 不一致は `409 conflict`。
+
+### リビジョンを作る条件
+
+**`title` か `body_md` が実際に変わったときだけ `document_revision` に1行足す。**
+`sort_order` の変更や、同じ本文の送り直しでは作らない。並べ替えのたびに履歴が伸びると、
+「いつ内容が変わったか」が読めなくなる。**`version` はどの更新でも +1 する**（2.8 の規約を
+1本に保つため。9.4 の `move` と同じ扱い）。
+
+`change_reason` は `document_revision.change_reason` に入る。**リビジョンを作らない更新で
+`change_reason` を送っても捨てる**（`422` にはしない）。
+
+### 移動と改名
+
+`parent_path` と `slug` の変更が移動・改名である。**部分木ごと移動する**（`path` は
+子孫の分も付け替わる）。**自分自身または自分の子孫を `parent_path` に指定すると
+`422 validation_failed`、`details[].code = "cycle"`。**
+
+**`path` が変わると、既に共有された URL は切れる。** チケットの `seq` を不変にした
+（5.2.1 / 9.1）のと違い、**文書のパスは変えられる**——文書は整理し直されるものであり、
+名前を固定すると構造を直せなくなる。**壊れて困る参照を作らないために、保存する参照には
+`id` を使う**（`DbDesign.md` 8.1.3）。
+
+### 削除
+
+`DELETE` は **`204 No Content`**。**物理削除で、部分木ごと消える**（`parent_id` の
+`CASCADE`。`DbDesign.md` 4.6 / 8.1.1）。`document_revision` も一緒に消える。
+
+**子を持つ文書の削除は、画面が件数を示して確認する**（`GuiDesign.md` 6.3）。API は止めない
+——使用中のタグを消せるようにしたのと同じ判断で（9.11）、消せないと構造を直せなくなる。
+
+## 10.5 `GET .../docs/*path/_revisions` — 履歴
+
+```json
+{
+  "items": [
+    { "revision_no": 3, "title": "規約",
+      "changed_by": { "id": "01K2...", "kind": "agent", "display_name": "claude-code" },
+      "change_reason": "ブランチ命名にチケット番号を入れる",
+      "created_at": "2026-08-29T05:00:00Z" },
+    { "revision_no": 2, "title": "規約",
+      "changed_by": { "id": "01K2...", "kind": "user", "display_name": "田中" },
+      "change_reason": null,
+      "created_at": "2026-08-29T04:30:00Z" }
+  ],
+  "page": 1, "per_page": 20, "total": 3, "total_pages": 1
+}
+```
+
+**一覧に `body_md` を含めない。** 9.13.2 の履歴が本文を `null` にしているのと同じ理由で、
+20件ぶんの Markdown を載せると応答が重くなる。本文が要るときは
+`GET .../\_revisions/:no` を呼ぶ（1件ぶんの `body_md` を返す）。
+
+**2.6 のページネーションを持つ**（既定 `per_page=20`、上限 100）。`revision_no` の降順に固定。
+
+**「前の版に戻す」は、取得した `body_md` を `PATCH` で書き戻して行う。** 専用の
+エンドポイントを置かない。**履歴は消さない**——書き戻しも新しいリビジョンとして積む
+（`DbDesign.md` 8.3.1 の `knowledge_revision` と同じ扱い）。
+
+**11.2 の「チケット本文（`body_md`）の版管理」とは別件である。** あちらは `ticket.body_md` の
+話で、`activity` が「いつ誰が変えたか」までしか持たないという積み残し（9.5.2）。**今回
+版管理を入れたのは `document` だけで、チケット本文には依然として無い。** ただし
+`document_revision` は「本文の版を別テーブルで持ち、一覧は本文を返さない」という形を先に
+作ることになるので、**チケット側を作るときの下敷きになる。**
+
+## 10.6 文書固有のエラーコード
+
+| Status | code | 意味 |
+|---|---|---|
+| 404 | `not_found` | 文書が無い、`?section=` の章が無い（`available_sections` を伴う）、閲覧権限が無い |
+| 409 | `already_exists` | 同じ親の下に同じ `slug` がある |
+| 409 | `conflict` | `If-Match` 不一致 |
+| 422 | `validation_failed` | `details[].code` に `not_found`（`parent_path`）、`cycle`（自分の子孫へ移動） |
+
+# 11. 未解決の検討事項
+
+## 11.1 実装順序 → `Design.md` 11章
 
 **実装順序は本書に持たない。** `Design.md` 11章の手順一覧が正本である。同じ順序を2か所に持つと片方だけ古くなるため、本節にあった独自の実装順序（2026-08-23 に削除）と、9章と手順16〜19 の対応表（9.15。2026-08-28、Phase 1 の完了にともない削除）はいずれも撤去した。**どの手順で何を実装したかは `docs/history/steps.md`** にある。
 
-## 10.2 未解決の検討事項
+## 11.2 未解決の検討事項
 
 - **`GET /me` のキャッシュ戦略**。ロール変更が他セッションへ反映されるまでの許容遅延をどう決めるか（毎リクエスト検証はコスト、長期キャッシュは権限剥奪が効かない）
 - 一覧APIの `total` を返し続けるコストが問題になる規模の見極め（Phase 2 のチケット一覧で再検討）
@@ -2193,7 +2427,7 @@ ETag: W/"act-a3f19c2b-142-1723372992000000000"
 - エージェント用トークンの発行API（Phase 2）を `/me/tokens` と統合するか、プロジェクト配下（`/projects/:key/agents`）に置くか
 - **`project.settings`（jsonb）の中身をサーバは検証しない**（5.5。JSONオブジェクトであることのみ）。`repositories` の必須・上限（10件／URL 1000文字／説明 200文字）は画面だけが持つ。**設定項目が増えるなら、サーバ側の検証をどこに置くかを決める必要がある**
 - **`access_token.client_info` は `api` トークンでは空である**（4.4）。セッション（User-Agent）用の列で、CLI トークンには相当するものが無く、本人が付ける `name` が識別子になる。エージェント用トークンを作るときに、クライアント種別をここに入れるかを決める
-- **`agent` は Phase 1 の応答で常に `null` である**（6.1）。サーバ側は型だけ置いてあり、`agent` テーブル（`DbDesign.md` 8.1）を作ったら中身を埋めて 6.1 の但し書きを外す
+- **`agent` は Phase 1 の応答で常に `null` である**（6.1）。サーバ側は型だけ置いてあり、`agent` テーブル（`DbDesign.md` 8.2）を作ったら中身を埋めて 6.1 の但し書きを外す
 - **`GET /admin/users/:id` は `kind='user'` しか返さない**（6.3。エージェント・システムアクターは 404）。一覧が `kind=user` しか出さないので Phase 1 では届くが、**エージェントタブに実データが入ったら、詳細への導線を種別で分ける**必要がある
 - **一覧の検索（`q`）はロールの表示名に当たるが、「エージェント」には当たらない**（6.1）。この文字列は `system_role` が `null` のときに画面が作っている代替表示でDBに無い。**エージェントタブを作るときに、種別で探せる形を決める**
 - **`project_memberships[]` にプロジェクトの `status` を入れていない**（6.3）。アーカイブ済みのプロジェクトも含まれるが、画面がそれを区別できない。必要になったら 6.3 の改訂を先に出す
