@@ -379,6 +379,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * プロジェクトの集計
+         * @description プロジェクトダッシュボードの4枚のカードと「要対応」ブロックのデータ源
+         *     （ApiDesign.md 9.13.1、GuiDesign.md 5.3）。**必要権限は `project.view`**
+         *     （メンバーでない場合はプロジェクトごと 404）。
+         *
+         *     **`status` ではなく `status_category` で集計する。** ワークフローが
+         *     プロジェクトごとに違っても、4つのカードの意味が変わらないようにするため
+         *     である。**`by_category` は常に4つのキーを持つ**——そのカテゴリのステータスが
+         *     ワークフローに1つも無くても `0` を返す（`simple` テンプレートは `review` を
+         *     持たない。DbDesign.md 7.4）。
+         *
+         *     **`by_category` の合計は `total` と一致しないことがある。** `status_key` が
+         *     ワークフローに解決できないチケットはどのカテゴリにも数えられない。合わせに
+         *     行かないのは、「分類できないチケットがある」ことを 0 で塗り潰さないためである。
+         *
+         *     `overdue` / `stale` / `unassigned` はいずれも `closed_at IS NULL` が掛かる。
+         *     **「今日」は DB の `CURRENT_DATE`** で決める（9.2.1 の `due_within` と同じ）。
+         *     `app_user.timezone` は混ぜない——混ぜると同じプロジェクトの集計が読み手ごとに
+         *     変わる。
+         *
+         *     **`ETag`（2.7）は返さない。** 一覧ではなくページャも持たず、ETag の材料を
+         *     採る走査が本体の集計とほぼ同じなので、付けても DB の仕事は減らない。
+         */
+        get: operations["getProjectStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 業務履歴の一覧
+         * @description チケットの変更履歴（ApiDesign.md 9.13.2）。**必要権限は `project.view`**。
+         *     消費者は2つとも「全件を時系列で読む」——ダッシュボードの「最近の動き」
+         *     （GuiDesign.md 5.3）と、チケット詳細の「履歴」セクション（同 5.5）である。
+         *
+         *     **`audit_log`（2.10）とは読み手が違う**（9.1.1）。あちらはインスタンス
+         *     管理者が認証・権限・トークンを追うためのもので、ここはプロジェクトの
+         *     メンバーがチケットの変更を読むためのものである。
+         *
+         *     **並び順は `occurred_at DESC, id DESC` で固定**で、`sort` / `order` は
+         *     指定できない（どちらも 422）。`occurred_at` だけでは足りないのは、
+         *     **1回の `PATCH` が変更した項目ごとに複数行を書く**ためである（9.5.2）
+         *     ——タイトルと期限を同時に変えると2行が同じ時刻になる。
+         *
+         *     **`entity` は資源の指定ではなくフィルタである。** 書式違反は 422 だが、
+         *     形が正しくてチケットが無いときは**空の一覧を 200 で返す**（404 にしない）。
+         *     **同じ理由で、削除されたチケットの履歴には `entity` で到達できない**
+         *     ——`seq` から ULID を引く経路が消えるためで、その行はプロジェクト全体の
+         *     一覧にだけ現れる。
+         *
+         *     Phase 1 は `If-None-Match` を解釈せず、ヘッダだけ出す（9.2.5 と同じ）。
+         */
+        get: operations["listProjectActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{key}/tags": {
         parameters: {
             query?: never;
@@ -2914,6 +3005,135 @@ export interface components {
             deleted_at: string | null;
         };
         /**
+         * @description プロジェクトの集計（ApiDesign.md 9.13.1）。ダッシュボード（GuiDesign.md 5.3）の
+         *     4枚のカードと「要対応」ブロックが読む。
+         *
+         *     **エピック（`type='epic'`）はどの項目にも数えない**（手順19b で変更）。
+         *     エピックはグルーピング専用であり（DbDesign.md 6.10）、バックログも行として
+         *     出さない。**4枚のカードは押すとバックログをそのカテゴリで絞って開く**ので、
+         *     除かないとカードの数と押した先の件数が一致しない。
+         */
+        ProjectStats: {
+            /**
+             * @description `status_category` ごとの件数。**常に4つのキーを持つ**——そのカテゴリの
+             *     ステータスがワークフローに無くても `0` を返す。
+             */
+            by_category: {
+                /** @example 18 */
+                todo: number;
+                /** @example 8 */
+                in_progress: number;
+                /** @example 4 */
+                review: number;
+                /** @example 36 */
+                done: number;
+            };
+            /**
+             * @description 全件。**`by_category` の合計と一致しないことがある**（`status_key` が
+             *     ワークフローに解決できないチケットはどのカテゴリにも入らない）。
+             * @example 66
+             */
+            total: number;
+            /**
+             * @description `closed_at IS NULL` の件数。
+             * @example 30
+             */
+            open: number;
+            /**
+             * @description `due_date < CURRENT_DATE` かつ `closed_at IS NULL`。
+             * @example 2
+             */
+            overdue: number;
+            /**
+             * @description 放置されているチケット。**閾値はサーバが持ち、応答に含めて返す**
+             *     ——画面に「14日以上」と出すためで、文言をフロントで組み立てない。
+             */
+            stale: {
+                /** @example 3 */
+                count: number;
+                /**
+                 * @description **Phase 1 では 14 で固定**（プロジェクトごとの設定にしない）。
+                 * @example 14
+                 */
+                threshold_days: number;
+            };
+            /**
+             * @description `assignee_id IS NULL` かつ `closed_at IS NULL` の件数。
+             * @example 5
+             */
+            unassigned: number;
+        };
+        /** @description 業務履歴の1件（ApiDesign.md 9.13.2、DbDesign.md 6.8 の `activity`）。 */
+        Activity: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /**
+             * @description **Phase 1 は `ticket` だけ**（9.1.1）。
+             * @enum {string}
+             */
+            entity_type: "ticket";
+            /**
+             * @description チケットの ULID。**削除されても行に残る**ので、`entity_seq` /
+             *     `entity_title` が `null` でもここは値を持つ。
+             * @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+             */
+            entity_id: string;
+            /**
+             * @description **非正規化して返す**（9.13.2）。画面は「`my-app-31` を『進行中』に変更」と
+             *     表示するため、行ごとにチケットを引くと N+1 になる。**削除されたチケットを
+             *     指す行では `null`**（9.5.3 が物理削除であるため）。
+             * @example 31
+             */
+            entity_seq: number | null;
+            /**
+             * @description 同上。削除されたチケットを指す行では `null`。
+             * @example 認証APIの実装
+             */
+            entity_title: string | null;
+            /**
+             * @description **`null` になりうる**——`activity.actor_id` は `ON DELETE SET NULL` で
+             *     あり（DbDesign.md 6.8）、ユーザーを消した後も履歴の行は残る。
+             */
+            actor: components["schemas"]["ActorRef"] | null;
+            /** @enum {string} */
+            action: "create" | "update" | "delete" | "transition";
+            /**
+             * @description 変更した項目。**`create` / `delete` では `null`。** Phase 1 の値域は
+             *     `status_key`（遷移）／`type` `title` `body_md` `priority` `assignee_id`
+             *     `parent_id` `sprint_id` `estimate_point` `estimate_hours` `actual_hours`
+             *     `start_date` `due_date`（本体の更新）／`comment` `dod` `link`
+             *     `reference.code` `reference.doc`（子資源の更新）の18種類である。
+             * @example status_key
+             */
+            field: string | null;
+            /**
+             * @description **`text` のまま返す**（9.13.2）。ステータスの表示名への変換は画面が行う
+             *     ——ワークフローの定義は `GET /projects/:key`（5.4）で手元にある。
+             *     **`assignee_id` / `sprint_id` の値は ULID がそのまま入る。**
+             *     **`body_md` の行は値を載せない**（両方 `null`）。
+             * @example todo
+             */
+            old_value: string | null;
+            /** @example in_progress */
+            new_value: string | null;
+            /**
+             * Format: date-time
+             * @example 2026-08-11T00:12:44Z
+             */
+            occurred_at: string;
+        };
+        /**
+         * @description 業務履歴の一覧（ApiDesign.md 9.13.2）。並びは `occurred_at DESC, id DESC` で
+         *     固定される。
+         */
+        ActivityList: {
+            items: components["schemas"]["Activity"][];
+            page: number;
+            per_page: number;
+            total: number;
+            total_pages: number;
+        };
+        /**
          * @description コメントの一覧（ApiDesign.md 9.8）。**チケットの子資源で唯一 2.6 の
          *     ページネーションを持つ**——コメントは議論の量だけ増えるためである。
          */
@@ -4301,6 +4521,90 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getProjectStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description プロジェクトの集計。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectStats"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listProjectActivity: {
+        parameters: {
+            query?: {
+                /**
+                 * @description `ticket:31` の形。省略時はプロジェクト全体。**Phase 1 に受け付ける
+                 *     `entity_type` はチケットだけである**（9.1.1）。
+                 * @example ticket:31
+                 */
+                entity?: string;
+                /**
+                 * @description **単一値のみ。** カンマ区切りの OR を受け付けない——9.2.1 のフィルタ群と
+                 *     違う扱いだが、複数選択を要する画面が Phase 1 に無い。
+                 */
+                action?: "create" | "update" | "delete" | "transition";
+                page?: number;
+                /** @description 既定 20、上限 200（ApiDesign.md 9.13.2 / 2.6）。 */
+                per_page?: number;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 業務履歴の一覧。 */
+            200: {
+                headers: {
+                    /**
+                     * @description `W/"act-<フィルタ条件のハッシュ>-<件数>-<MAX(occurred_at) のナノ秒>"`。
+                     *     **`page` / `per_page` もハッシュに含める**——ETag は応答本文を指す
+                     *     検証子であり、2ページ目と1ページ目が同じ値になってはならない。
+                     */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listTags: {
         parameters: {
             query?: never;
@@ -4631,6 +4935,25 @@ export interface operations {
                  * @example 7d
                  */
                 due_within?: string;
+                /**
+                 * @description `true` で**期限を過ぎた未完了のもの**（`due_date < 今日` かつ
+                 *     `closed_at IS NULL`）。9.13.1 の `overdue` と同じ条件で数える。
+                 *
+                 *     **`due_within=0d` で代用しない**——あちらは「今日以前」で
+                 *     **今日が期限のもの**を含み、1日ぶんずれる。
+                 */
+                overdue?: "true";
+                /**
+                 * @description `14d` 形式。**その日数より前から更新されていない未完了のもの**
+                 *     （`updated_at < now() - N日` かつ `closed_at IS NULL`）。
+                 *     9.13.1 の `stale` と同じ条件で数える。上限は `3650d`。
+                 *
+                 *     **日数を取るのは、閾値の正本がサーバにあるからである**
+                 *     （9.13.1 の `threshold_days`）。ダッシュボードは `stats` の応答に
+                 *     載る値をそのままリンクへ載せ、画面側に 14 を書かない。
+                 * @example 14d
+                 */
+                stale?: string;
                 /**
                  * @description `seq` を指定すると、そのチケットとその全子孫（部分木）に限る。
                  *     **カンマ区切りで複数指定は OR**（いずれかの部分木に含まれるもの）。

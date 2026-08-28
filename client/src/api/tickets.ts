@@ -127,6 +127,28 @@ export const statusMarks: Record<StatusCategory, string> = {
 }
 
 /**
+ * ステータス区分の表示名（`ApiDesign.md` 9.2.1 の `status_category`）。
+ *
+ * **ワークフローのステータス名とは別物である。** こちらは4値の固定で、
+ * プロジェクトのワークフローが何であっても意味が変わらない（9.2.1）。
+ * ダッシュボードの集計カード（`GuiDesign.md` 5.3）とバックログの状態フィルタ
+ * の「区分」群（同 5.4）が使う。
+ *
+ * `simple` / `with_review` テンプレートでは**ステータス名と同じ語になる**が、
+ * `with_approval` は `review` 区分に「レビュー中」と「承認待ち」の2つを持つ
+ * （`DbDesign.md` 7.4）。同じ語だからといって同じものではない。
+ */
+export const statusCategoryLabels: Record<StatusCategory, string> = {
+  todo: '未着手',
+  in_progress: '進行中',
+  review: 'レビュー中',
+  done: '完了',
+}
+
+/** 集計カードとフィルタで使う区分の並び（9.13.1 の `by_category` と同じ順） */
+export const statusCategoryOrder: StatusCategory[] = ['todo', 'in_progress', 'review', 'done']
+
+/**
  * 一覧のクエリ（9.2.1）。
  *
  * **複数指定はカンマ区切りで OR、異なる種類どうしは AND**。値の組み立ては
@@ -142,6 +164,10 @@ export interface ListTicketsQuery {
   sprint?: string
   open?: 'true' | 'false'
   due_within?: string
+  /** `true` で**期限を過ぎた未完了のもの**（9.2.1。手順19b）。`false` は受け付けない */
+  overdue?: 'true'
+  /** `14d` 形式。**その日数より前から更新されていない未完了のもの**（9.2.1。手順19b） */
+  stale?: string
   /**
    * 部分木で絞る（9.2.1）。**カンマ区切りで複数指定は OR** なので数値ではなく
    * 文字列である。バックログのエピックフィルタがこれを使う（`GuiDesign.md` 5.4）。

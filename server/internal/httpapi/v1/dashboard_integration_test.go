@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -89,20 +90,27 @@ func TestDashboardIntegration(t *testing.T) {
 	//   4  done          now     today-10     admin     -20d        done。**完了なので overdue/stale に入らない**
 	//   5  zzz_unknown   -       -            -         now         **どのカテゴリにも入らない**が total に入る
 	//   6  todo          -       -            admin     -13d        todo/open。**閾値の内側なので stale でない**
+	//   7  todo(epic)    -       today-5      -         -20d        **どの項目にも入らない**（9.13.1。手順19b）
+	//
+	// **seq=7 は「除外されなければ4項目が同時に動く」ように作ってある**
+	// ——todo・total・open・overdue・stale・unassigned のすべてに当たる値である。
+	// 1項目だけ当たる行だと、条件の書き漏らしを取りこぼす。
 	tickets := []struct {
 		seq        int32
+		ticketType string
 		statusKey  string
 		closed     bool
 		dueInDays  *int32 // CURRENT_DATE からの日数。nil なら due_date は NULL
 		assignee   bool
 		updatedAgo int32 // 何日前に更新されたことにするか
 	}{
-		{1, "todo", false, nil, false, 0},
-		{2, "in_progress", false, days(-3), true, 0},
-		{3, "review", false, days(30), false, 20},
-		{4, "done", true, days(-10), true, 20},
-		{5, "zzz_unknown", false, nil, false, 0},
-		{6, "todo", false, nil, true, 13},
+		{1, "task", "todo", false, nil, false, 0},
+		{2, "task", "in_progress", false, days(-3), true, 0},
+		{3, "task", "review", false, days(30), false, 20},
+		{4, "task", "done", true, days(-10), true, 20},
+		{5, "task", "zzz_unknown", false, nil, false, 0},
+		{6, "task", "todo", false, nil, true, 13},
+		{7, "epic", "todo", false, days(-5), false, 20},
 	}
 	ticketIDs := map[int32]string{}
 	for _, c := range tickets {
@@ -118,12 +126,12 @@ func TestDashboardIntegration(t *testing.T) {
 			INSERT INTO ticket
 			  (id, project_id, seq, type, title, status_key,
 			   due_date, closed_at, assignee_id, created_at, updated_at)
-			VALUES ($1, $2, $3, 'task', 'ダッシュボード結合テスト', $4,
-			   CASE WHEN $5::int IS NULL THEN NULL ELSE CURRENT_DATE + $5::int END,
-			   CASE WHEN $6::boolean THEN now() ELSE NULL END,
-			   $7,
-			   now(), now() - make_interval(days => $8::int))`,
-			id, projectID, c.seq, c.statusKey,
+			VALUES ($1, $2, $3, $4, 'ダッシュボード結合テスト', $5,
+			   CASE WHEN $6::int IS NULL THEN NULL ELSE CURRENT_DATE + $6::int END,
+			   CASE WHEN $7::boolean THEN now() ELSE NULL END,
+			   $8,
+			   now(), now() - make_interval(days => $9::int))`,
+			id, projectID, c.seq, c.ticketType, c.statusKey,
 			c.dueInDays, c.closed, assignee, c.updatedAgo); err != nil {
 			t.Fatalf("チケット seq=%d を作れない: %v", c.seq, err)
 		}
@@ -142,6 +150,9 @@ func TestDashboardIntegration(t *testing.T) {
 	if stats != want {
 		t.Errorf("stats = %+v,\n  want %+v", stats, want)
 	}
+
+	// **エピック（seq=7）はどの項目にも入っていない**（9.13.1。手順19b）。
+	// 上の want がエピックを足す前と同じ値であることがその証拠である。
 
 	// **by_category の合計（5）は total（6）と一致しない。** status_key が
 	// ワークフローに無い seq=5 がどのカテゴリにも入らないためで、これは仕様である。
@@ -162,6 +173,60 @@ func TestDashboardIntegration(t *testing.T) {
 	if rec := getWithCookie(r, "/api/v1/projects/"+otherKey+"/stats", session); !strings.Contains(
 		rec.Body.String(), `"review":0`) {
 		t.Errorf(`simple のプロジェクトに "review":0 が無い: %s`, rec.Body.String())
+	}
+
+	// ── ②' 要対応の導線が同じ件数を返すか（GuiDesign.md 5.3）────
+	//
+	// **ダッシュボードが出した件数と、押した先の一覧の件数が一致すること**が
+	// 9.2.1 の overdue / stale を足した理由そのものである。**両者は別の SQL
+	// なので、条件をどちらか片方だけ直すとここが落ちる。**
+	//
+	// 一覧は type の既定が「すべて」なのでエピックも返る。**stats がエピックを
+	// 数えない以上、比較する側も除く**（バックログは行として出さない。5.4）。
+	countTickets := func(query string) int64 {
+		t.Helper()
+		rec := getWithCookie(r, base+"/tickets?type=story,task&"+query, session)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /tickets?%s = %d (%s)", query, rec.Code, rec.Body.String())
+		}
+		var got struct {
+			Total int64 `json:"total"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("一覧を読めない: %v", err)
+		}
+		return got.Total
+	}
+
+	if n := countTickets("overdue=true"); n != stats.Overdue {
+		t.Errorf("?overdue=true の total = %d, stats.overdue = %d（一致しない）", n, stats.Overdue)
+	}
+	if n := countTickets("stale=14d"); n != stats.Stale.Count {
+		t.Errorf("?stale=14d の total = %d, stats.stale.count = %d（一致しない）", n, stats.Stale.Count)
+	}
+	if n := countTickets("assignee=none&open=true"); n != stats.Unassigned {
+		t.Errorf("?assignee=none&open=true の total = %d, stats.unassigned = %d（一致しない）",
+			n, stats.Unassigned)
+	}
+	// 集計カード4枚の導線（?status_category=...）も同じ数になること。
+	for _, c := range []struct {
+		category string
+		want     int64
+	}{
+		{"todo", stats.ByCategory.Todo},
+		{"in_progress", stats.ByCategory.InProgress},
+		{"review", stats.ByCategory.Review},
+		{"done", stats.ByCategory.Done},
+	} {
+		if n := countTickets("status_category=" + c.category); n != c.want {
+			t.Errorf("?status_category=%s の total = %d, カードの数 = %d（一致しない）",
+				c.category, n, c.want)
+		}
+	}
+	// **overdue は due_within=0d と1日ぶんずれる**（9.2.1）。seq=4 は完了かつ
+	// 期限切れなので due_within には入り、overdue には入らない。
+	if a, b := countTickets("overdue=true"), countTickets("due_within=0d"); a == b {
+		t.Errorf("overdue と due_within=0d が同じ件数（%d）——別条件であることが測れていない", a)
 	}
 
 	// ── ③ 履歴の材料を作る（9.13.2）──────────────────────────

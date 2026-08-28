@@ -1,6 +1,7 @@
 import type { RouteRecordRaw } from 'vue-router'
 
 import BacklogPage from '../pages/BacklogPage.vue'
+import DashboardPage from '../pages/DashboardPage.vue'
 import ForbiddenPage from '../pages/ForbiddenPage.vue'
 import LoginPage from '../pages/LoginPage.vue'
 import NotFoundPage from '../pages/NotFoundPage.vue'
@@ -24,8 +25,10 @@ export interface PlaceholderMeta {
   /**
    * ページヘッダを「<プロジェクト名> <この文字列>」にする（`GuiDesign.md` 5.3）。
    *
-   * ダッシュボードだけが持つ。他のプロジェクト配下の画面は画面名のみを出す。
-   * 実画面へ差し替えるときは、同じ見出しをその画面が組み立てる。
+   * **手順19b の時点でどのルートも持たない。** 唯一の持ち主だった
+   * ダッシュボードが実画面になり、同じ見出しを `DashboardPage.vue` が
+   * 自分で組み立てている。プロジェクト配下にプレースホルダを足すときに
+   * 再び要る（他の画面は画面名のみを出す）ので、仕組みは残してある。
    */
   projectHeading?: string
   /** 対応する設計文書の章番号。未定義なら「設計未確定」と明記する */
@@ -68,25 +71,20 @@ export const routes: RouteRecordRaw[] = [
     meta: { permission: 'project.view' },
   },
 
+  // 実画面（GuiDesign.md 5.3）。手順19b でプレースホルダから差し替えた。
+  //
+  // **必要権限は project.view**（3.2）。チケットの2ブロック（自分の担当・
+  // 期限が近い）と集計カードの導線だけが ticket.view を要し、**画面側で
+  // 出し分ける**（7.3）——集計そのものは project.view で読める（9.13）。
+  //
+  // **`projectKey` を props で渡す。** ルートの `:key` を画面が自分で
+  // `route.params` から読むと、プロジェクトを切り替えたときに watch を
+  // 書く場所が増える。ここで1回変換する。
   {
     path: '/p/:key',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'project.view',
-      placeholder: {
-        title: 'プロジェクトダッシュボード',
-        projectHeading: 'ダッシュボード',
-        docRef: 'GuiDesign.md 5.3',
-        status: 'Phase 1・未着手（docs/PROGRESS.md 手順19）',
-        planned: [
-          'ステータス別チケット件数',
-          '自分の担当（未完了 上位5件）',
-          '期限が近いチケット',
-          '最近の動き',
-          '要対応（放置検出・期限超過）',
-        ],
-      },
-    },
+    component: DashboardPage,
+    props: (to) => ({ projectKey: String(to.params.key) }),
+    meta: { permission: 'project.view' },
   },
 
   // 実画面（GuiDesign.md 5.4）。手順16c で新設した。

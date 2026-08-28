@@ -39,6 +39,7 @@ import MarkdownEditor from './MarkdownEditor.vue'
 import NewTicketModal from './NewTicketModal.vue'
 import ReferenceModal from './ReferenceModal.vue'
 import StatusDropdown from './StatusDropdown.vue'
+import TicketActivity from './TicketActivity.vue'
 import TicketComments from './TicketComments.vue'
 import TicketLinkModal from './TicketLinkModal.vue'
 import TransitionModal from './TransitionModal.vue'
@@ -50,7 +51,7 @@ import type { TicketDoDItem } from '../api/dod'
 import * as linksApi from '../api/links'
 import { linkLabel, linkLabelTitle } from '../api/links'
 import type { LinkChoice, TicketLink } from '../api/links'
-import type { ProjectMember } from '../api/projects'
+import type { ProjectMember, Workflow } from '../api/projects'
 import * as referencesApi from '../api/references'
 import { codeSummary, docSummary } from '../api/references'
 import type { TicketReference } from '../api/references'
@@ -91,6 +92,14 @@ const props = defineProps<{
   members: ProjectMember[]
   tags: Tag[]
   sprints: Sprint[]
+  /**
+   * プロジェクトのワークフロー（`GET /projects/:key` の `workflow`）。
+   *
+   * **履歴（5.5）が `status_key` を表示名に直すのに使う。** `activity` は
+   * キーしか返さない（`ApiDesign.md` 9.13.2）。状態のドロップダウンは
+   * `GET .../transitions` を開いたときに引くので、こちらは使わない。
+   */
+  workflow?: Workflow | null
   /**
    * 親の選択肢（5.5「編集の単位」）。**いま一覧に出ているチケット**から選ぶ。
    * バックログは最大200件を既に手元に持っており、追加の往復を要しない。
@@ -1692,6 +1701,20 @@ function errorFor(field: string): string {
           />
         </section>
 
+        <!-- 履歴（5.5「履歴」）。**件数を見出しに出さない**——開くまで
+             読み込まないので、畳んだ状態では数を知らない。数を出すために
+             起動時に1本足すのは、このセクションを遅延にした判断と矛盾する -->
+        <section class="block">
+          <TicketActivity
+            :project-key="projectKey"
+            :seq="ticket.seq"
+            :workflow="workflow"
+            :members="members"
+          >
+            <template #title><h3 class="block-title bare">履歴</h3></template>
+          </TicketActivity>
+        </section>
+
         <p v-if="errorFor('children')" class="field-error" role="alert">
           {{ errorFor('children') }}
         </p>
@@ -2083,6 +2106,16 @@ function errorFor(field: string): string {
   color: var(--pb-text-muted);
   font-size: 13px;
   font-weight: 600;
+}
+
+/* 下線を子側（`TicketActivity` の `.ta-head`）が引くとき用。
+   **`.block-head .block-title` と同じ効果を、親を選べない場所で得る**
+   ——スロットの中身は親のスコープでコンパイルされるので、子の
+   `scoped` セレクタからは `:slotted` 無しに届かない */
+.block-title.bare {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: none;
 }
 
 .block-actions {
