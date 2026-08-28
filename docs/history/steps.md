@@ -2696,3 +2696,50 @@ activity 21件（create 2 / delete 2 / update 17：comment 6・dod 9・link 2）
 | 18b | チケット詳細の3セクション（`GuiDesign.md` 5.5 の完了条件・関連チケット・コメント）と遷移コメント欄 | 完了 | 2026-08-27 | ブラウザ97件（読み取り48＋変更49）。1440/1100/900px の3幅で実測し、**スクリーンショット8枚を目で確認**。`server/` は変更なし（`openapi.yaml` 不変）。**権限の負の側を16c 以来はじめて実測した**（`comment.delete_any` を持たない member@ に他人のコメントの削除が出ない）。検証は DB を JSON で控えて差分ゼロまで戻した |
 | 19a | `GET /projects/:key/stats`・`GET /projects/:key/activity`（`ApiDesign.md` 9.13）。**API のみ** | 完了 | 2026-08-28 | 単体23件（実行26件）＋ルート宣言3件＋実DB結合（`make test-db` 全157件 PASS）＋実サーバ62件（demo の実データを DB の実測と突き合わせ・4アカウントの認可・422 を9通り・ETag の一意性）。**マイグレーションは不要**（`activity` は 0008 で適用済み）。**利用者の demo データは読むだけで1行も変えていない** |
 | 19b | プロジェクトダッシュボード（`GuiDesign.md` 5.3）＋**チケット詳細の「履歴」セクション**（同 5.5）＋`app_user.timezone` の反映 | 完了 | 2026-08-28 | 単体（`make test` 全パッケージ）＋実DB結合（`make test-db` 全157件 PASS）＋ブラウザ100件（ダッシュボード44・導線26・履歴22・タイムゾーン8）。1440/1100/900px の3幅で実測し、**スクリーンショット9枚を目で確認**。**19a の API を2点変えた**（`stats` からエピックを除く／`GET /tickets` に `overdue` / `stale`）。**検証が実装の欠陥を2件拾った**（ダッシュボードの2ブロックがエピックを数えて導線と食い違う／`Avatar` の `.sr-only` が文書を縦に伸ばす）。demo の DB は JSON で控えて差分ゼロまで戻した |
+
+### Phase 2 の再構成（2026-08-29、`docs/phase2-premise` / `docs/phase2-docs-design` / `docs/phase2-steps`）
+
+**`docs/PROGRESS.md` の引き継ぎ「Phase 2 の着手前：手順一覧を進め方と目標を含めて再構成する」を消化した。**
+コードは書いていない（文書のみ。ただし手順番号の振り直しに伴い `routes.go` のコメント1行と
+`openapi.yaml`・`schema.d.ts` の記述1件を追随させた）。
+
+| 段 | ブランチ | 変更した文書 |
+|---|---|---|
+| 1 | `docs/phase2-premise` | `Requirements.md` 10章（10.0 新設ほか13節）、`Design.md` 1.1（原則8） |
+| 2 | `docs/phase2-docs-design` | `DbDesign.md` 8章、`ApiDesign.md` 10章（新設）、`GuiDesign.md` 5.10（新設）、`Design.md` 8章、`README.md` |
+| 3 | `docs/phase2-steps` | `Design.md` 11章・付録A、`CLAUDE.md`、`PROGRESS.md`、`README.md` |
+
+**判断の経緯は `history/decisions.md`** の「Phase 2 の前提反転」と「Phase 2 段2」にある。
+
+### 検証
+
+文書作業のため、**相互参照の機械的な点検**を検証とした。
+
+```
+`<文書>.md <番号>` の形の参照を全文から抜き、
+各文書の見出しに同じ番号が存在するかを突き合わせる
+```
+
+| 段 | 検査した参照 | 未解決 |
+|---|---|---|
+| 1 | 217件 | 0 |
+| 3（最終） | **1360件** | **0**（`history/` の14件を除く） |
+
+**`history/` の14件は当時削除した章を指しており、これは想定どおり**である（あの2文書は
+過去の状態の記録であり、参照専用・追記のみ）。
+
+**検証スクリプト自体の点検を1度落とした。** 段2 で zsh の展開により実在する見出し15件を
+`MISSING` と出し、危うく「文書が壊れている」と報告するところだった。**わざと壊れた入力を
+1件通して検知できることを確かめる**手順を足して偽陽性と判明した（`LEARNINGS.md` #14）。
+
+### 手順番号の振り直しで追随させたもの
+
+**Phase 3 が 27〜33 から 29〜38 へずれた。** Phase 2 が7手順から9手順へ増え、
+`knowledge`・承認キュー・DoD machine 型の3項目が Phase 2 から移ったためである。
+
+| 追随先 | 内容 |
+|---|---|
+| `ApiDesign.md` 9.10.2 / `DbDesign.md` 6.12 / `GuiDesign.md` 5.5 | 「手順21・22」→「手順24・25」（エージェントアクターと MCP） |
+| `docs/openapi.yaml` / `client/src/api/schema.d.ts` | 同上。`make gen-api` で再生成し、手で直した内容と一致することを確認した |
+| `server/internal/httpapi/v1/routes.go` | 同上（コメント1行）。`make test` が通ることを確認 |
+| `Design.md` 5.4 / 6.4.2 / 付録A、`ApiDesign.md` 4.4.2 / 9.11 | 権限カタログ「28件で確定」→ 0017 で30件になる旨 |
