@@ -103,12 +103,13 @@ make dev-info    # 開発用：URL とデモアカウント一覧を表示
 
 ## 進捗と作業の進め方
 
-**Phase 1（手順1〜19）は 2026-08-28 に完了した。次は Phase 2（手順20〜26）である。**
+**Phase 1（手順1〜19）は 2026-08-28 に完了した。次は Phase 2（手順20〜28）である。**
 現況は `docs/PROGRESS.md` を見ること。**着手前に同文書の「次の手順への引き継ぎ」に
 該当する行が無いか必ず確認する。**
 
-**Phase 2 は手順一覧の再構成から始める。** `Design.md` 11章の Phase 2 は見出しだけの一覧で
-完了条件を持たない。**その作業を終えるまで `/pb-step 20` は走らせない**（`docs/PROGRESS.md`）。
+**Phase 2 の手順一覧は 2026-08-29 に再構成した**（`Design.md` 11章。手順20〜28、完了条件つき）。
+**目的は「複数人とエージェントが同じプロジェクトを進められるようにする」ことで、MCP はその手段である。**
+Phase 2 では手順の尺度が1つ増える——**1ステップ = ドッグフーディングの経路が1本増える単位**（同 11.2）。
 
 **完了した手順の詳しい記録は `docs/history/` にある**（`decisions.md` = 判断の経緯、
 `steps.md` = 作ったファイルと検証結果）。**毎セッションで読む文書ではない。**
@@ -144,10 +145,12 @@ main ← develop ← feature/*
 
 | 種別 | 形式 | 例 | マージ前に打つ |
 |---|---|---|---|
-| 手順の実装 | `feature/step-<2桁>-<英小文字スラッグ>` | `feature/step-02-migrations` | `make bump-minor` |
-| 手順外の機能実装 | `feature/<英小文字スラッグ>` | `feature/excel-export` | `make bump-minor` |
-| 機能を変えない修正 | `fix/<英小文字スラッグ>` | `fix/token-expiry` | `make bump-build` |
-| 設計文書のみの修正 | `docs/<英小文字スラッグ>` | `docs/ticket-api` | `make bump-build` |
+| 手順の実装 | `feature/step-<2桁>-<英小文字スラッグ>` | `feature/step-20-stg-instance` | `make bump-minor` |
+| 手順外の機能実装 | `feature/pb-<番号>-<英小文字スラッグ>` | `feature/pb-73-excel-export` | `make bump-minor` |
+| 機能を変えない修正 | `fix/pb-<番号>-<英小文字スラッグ>` | `fix/pb-57-token-expiry` | `make bump-build` |
+| 設計文書のみの修正 | `docs/pb-<番号>-<英小文字スラッグ>` | `docs/pb-81-ticket-api` | `make bump-build` |
+
+- **`<番号>` は PB のチケット番号。** チケットに紐づかない作業では省いてよい。**接頭辞は必ず残す**——`make bump-minor` と `bump-build` のどちらを打つかが接頭辞で決まる（`Design.md` 11.0〜11.1）
 
 - **`develop` に直接コミットしない。** 分岐前に `git switch develop && git pull` で最新化する
 - **不具合修正は `feature/` ではなく `fix/` を使う。** この接頭辞でマイナーを上げるかが決まる
