@@ -1291,6 +1291,51 @@ API は 13a で実装済みで、13b は**画面と API ラッパだけ**であ�
 
 ## 手順外の作業（完了分）
 
+### `TestExpiresAtFormat` の時限式を解消（2026-08-28、`fix/expires-at-test`）
+
+**`make test` が 2026-08-26 以降どのセッションでも赤だった問題を解消した。** 実装は正しく、
+テストの書き方だけの問題である。
+
+**原因**——`me_test.go` が `q.tokenRow.ExpiresAt` に `2026-08-25 09:03:12.123456 JST` を
+直書きしていた。測りたかったのは `expires_at` の**書式**（`ApiDesign.md` 2.2。非UTCの時刻帯と
+端数を持つ値が UTC・秒精度で出ること）だが、**その値は同時に `access_token.expires_at`
+そのもの**であり、その日を過ぎると `middleware/auth.go` が 401 を返す。`viewOf` は
+ステータスを見ないので、401 の本文を読んで `expires_at = <nil>` に見えていた。
+
+**直し方（利用者の承認、2026-08-28。案A＋案B）**
+
+| | 内容 |
+|---|---|
+| A | `me_test.go` の期限を**未来から組み立てる**（`time.Now().Add(SessionMaxAge).Truncate(time.Second)` ＋既知の端数 123456µs）。`rec.Code != 200` を先に `Fatalf` して、**401 を書式の誤りに見せない**。正規表現で形も見る |
+| B | **`apitime_test.go` を新設**（3件）。`Time.MarshalJSON` を固定の日時で直接測る。ここは認証を経由しないので `2026-08-25T00:03:12Z` を書いてよい |
+
+**案C（認証ミドルウェアに時計を注入する）は採らなかった**——テストの都合で本番コードの形を
+変えることになり、A で消える問題に対して割に合わない。
+
+**A の期待値は実装（`apitime.go`）と同じ組み立て**（`.UTC().Format(RFC3339)`）なので、
+**両方同時に誤ると気づけない。** 形だけは実装と独立に正規表現で見る
+（`iso8601UTCSeconds`。`apitime_test.go` に置いて2ファイルで共有）。
+
+**変えたファイル**
+
+| ファイル | 変更 |
+|---|---|
+| `server/internal/httpapi/v1/me_test.go` | `TestExpiresAtFormat` を書き直し（固定日 → 未来から組み立て、200 の確認、形の検査）。**なぜ固定日を書いてはいけないか**をコメントに残した |
+| `server/internal/httpapi/v1/apitime_test.go` | **新規。** `TestTimeMarshalJSON`（JST の端数つき → `2026-08-25T00:03:12Z`）／`TestTimeMarshalJSONTruncates`（0.9秒を切り上げない）／`TestTimeMarshalJSONZoneIndependent`（UTC / JST / EST で同じ文字列） |
+
+**`apitime.go` にはこれまでテストが1件も無かった**（全エンドポイントの日時がこの型を通る）。
+
+**検証**
+
+| 見たもの | 結果 |
+|---|---|
+| `make test` | **全パッケージ PASS**（`internal/httpapi/v1` 11.1s） |
+| **変異検査**（この検証は実装を壊せば落ちるか） | ①`.UTC()` を外す → 4件中3件が FAIL ②秒精度を外して `.000` を出す → 4件すべて FAIL。**どちらも検出できた**。`apitime.go` は復元し、`git diff` が空であることを確認 |
+| 端末の時刻帯への依存 | `TZ=America/New_York` / `TZ=UTC` / `TZ=Pacific/Kiritimati`（UTC+14）でそれぞれ `-count=1` で実行し、いずれも PASS |
+| 同種の時限式が他に無いか | 全 `_test.go` の `time.Date(20...)` を洗った。**`users_detail_test.go:123` の `ExpiresAt: 2026-08-25` はセッション一覧の表示データで認証に使われず**、期待値にも現れないので落ちない |
+
+**片付けた資源**：`apitime.go` の退避（スクラッチパッド）以外に作った資源は無い。DB・サーバ・コンテナは使っていない。
+
 ### Phase 1 完了にともなう文書整理（2026-08-28、`docs/phase1-consolidation`）
 
 **Phase 1 の完了を受けて、毎セッション読む4文書と設計文書を整理した**（利用者の指示）。

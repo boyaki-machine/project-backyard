@@ -196,14 +196,34 @@ func TestMeNullFieldsForNonUserActor(t *testing.T) {
 	}
 }
 
-// 日時は ISO8601 UTC・秒精度で出る（ApiDesign.md 2.2）。
+// GET /me の expires_at が Time 型（apitime.go）を通っていることを確かめる。
+// 書式そのものの検証は apitime_test.go にある。
+//
+// 期限は「未来」から組み立てる。expires_at は表示値であると同時に
+// access_token.expires_at そのものなので、固定日を書くとその日を過ぎた時点で
+// 認証が失効し（middleware/auth.go）、401 の本文を読んで expires_at が
+// null に見える。実際に 2026-08-25 を書いていて時限式に落ちた。
 func TestExpiresAtFormat(t *testing.T) {
 	q := newFake(t)
 	token := validToken(q, `[]`)
-	q.tokenRow.ExpiresAt = ts(time.Date(2026, 8, 25, 9, 3, 12, 123456000, time.FixedZone("JST", 9*3600)))
 
-	view := viewOf(t, authed(q, http.MethodGet, "/api/v1/me", token))
-	if got := view["expires_at"]; got != "2026-08-25T00:03:12Z" {
-		t.Errorf("expires_at = %v, want 2026-08-25T00:03:12Z", got)
+	// 秒未満を落としてから既知の端数を足す。端数の有無を毎回同じ条件で測るため。
+	jst := time.FixedZone("JST", 9*3600)
+	exp := time.Now().In(jst).Add(SessionMaxAge).Truncate(time.Second).Add(123456 * time.Microsecond)
+	q.tokenRow.ExpiresAt = ts(exp)
+
+	rec := authed(q, http.MethodGet, "/api/v1/me", token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+	}
+
+	got, _ := viewOf(t, rec)["expires_at"].(string)
+	if want := exp.UTC().Format(time.RFC3339); got != want {
+		t.Errorf("expires_at = %v, want %v", got, want)
+	}
+	// want は実装（apitime.go）と同じ組み立てなので、両方同時に誤ると気づけない。
+	// 形だけは実装と独立に見る（ApiDesign.md 2.2）。
+	if !iso8601UTCSeconds.MatchString(got) {
+		t.Errorf("expires_at = %q は 2.2 の形（UTC・秒精度）でない", got)
 	}
 }
