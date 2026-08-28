@@ -95,12 +95,12 @@ Makefile が `app_db_password` から `127.0.0.1:5432` 向けの接続文字列�
 ## 2.2 DBを起動してスキーマを作る
 
 ```
-make up        # docker compose up -d db（現状は db のみ。app は手順12b以降）
+make up        # docker compose up -d db（現状は db のみ。app は Dockerfile 待ち）
 make migrate   # goose で 0001〜 を適用する。前進のみ（DbDesign.md 5.3）
 ```
 
 `make up` が起動するのは **db だけ**である。`deploy/Dockerfile` が未作成のため、
-app サービスは compose に定義してあっても起動対象から外してある（手順12b以降で戻す）。
+app サービスは compose に定義してあっても起動対象から外してある（`docs/PROGRESS.md`「次の手順への引き継ぎ」に起票済み）。
 
 **`make migrate` は `pb_owner` で接続する**（`db_password` から組み立てる）。実行時ロールの
 `pb_app` は DDL を実行できず、それがロール分離の目的である（`DbDesign.md` 3.4）。
@@ -670,7 +670,7 @@ go ディレクティブも 1.25 へ上がる）。
 トークンのハッシュと乱数は標準ライブラリ（`crypto/sha256` / `crypto/rand`）で足りる。
 
 **client（`client/package.json`）**：`vue` / `vue-router` / `pinia` に、
-**手順17b で足した4つ**——`codemirror` / `@codemirror/lang-markdown` / `markdown-it` /
+**後から足した4つ**——`codemirror` / `@codemirror/lang-markdown` / `markdown-it` /
 `dompurify` を加えた**7つ**。後半4つは**チケット詳細の説明欄だけが使う**
 （`GuiDesign.md` 5.5「説明欄」。Markdownソース＋ライブプレビュー）。
 `dompurify` は `markdown-it` の出力を描画の直前に通すためのもので、
