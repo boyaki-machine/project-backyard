@@ -27,9 +27,9 @@ clone 直後には存在しない（規約は `Design.md` 11.0）。
 | 文書 | 内容 | 状態 |
 |---|---|---|
 | [Requirements.md](Requirements.md) | 要件・構想。1〜9章がチケット管理ツールとしての仕様、**10章がAI駆動開発への拡張** | 記述済 |
-| [Design.md](Design.md) | 全体設計。**6章（認証・認可）が本書の正本**。他領域は各設計書へ委譲 | Phase 1 実装完了（8章 MCP のみ未着手） |
+| [Design.md](Design.md) | 全体設計。**6章（認証・認可）が本書の正本**。他領域は各設計書へ委譲 | Phase 1 実装完了。8章（MCP）は Phase 2 の設計を記述済 |
 | [DbDesign.md](DbDesign.md) | Phase 1 の完全なDDL・マイグレーション・初期データ・docker compose 構成 | Phase 1 実装完了（0001〜0016 適用済み） |
-| [ApiDesign.md](ApiDesign.md) | 認証・プロジェクト・ユーザー管理API、および**チケットAPI（9章）** | Phase 1 実装完了 |
+| [ApiDesign.md](ApiDesign.md) | 認証・プロジェクト・ユーザー管理API、**チケットAPI（9章）**、**プロジェクト文書API（10章）** | Phase 1 実装完了。10章は Phase 2 |
 | [GuiDesign.md](GuiDesign.md) | 画面遷移・ワイヤーフレーム・モノクロマティック配色体系 | Phase 1 実装完了（監査ログのみプレースホルダ） |
 | [Development.md](Development.md) | **開発環境の立ち上げ・デバッグ手順。** 設計ではなく、実装済みの範囲を動かす手順 | 実装に追従 |
 | [PROGRESS.md](PROGRESS.md) | 実装進捗・次の手順への引き継ぎ・環境メモ。**現況のみを持つ** | 実装に追従 |
@@ -50,7 +50,8 @@ clone 直後には存在しない（規約は `Design.md` 11.0）。
 | データベース（スキーマ・DDL・実行環境） | `DbDesign.md` |
 | 認証・認可 | `Design.md` 6章 |
 | REST API | `ApiDesign.md` |
-| MCPサーバ | `Design.md` 8章（未着手） |
+| MCPサーバ | `Design.md` 8章 |
+| プロジェクト文書（Docs） | `DbDesign.md` 8.1、`ApiDesign.md` 10章、`GuiDesign.md` 5.10 |
 | 画面・UI・配色 | `GuiDesign.md` |
 | 開発フェーズ・実装順序 | `Design.md` 11章 |
 | ブランチ運用・バージョン番号 | `Design.md` 11.0〜11.1 |
@@ -67,7 +68,7 @@ clone 直後には存在しない（規約は `Design.md` 11.0）。
 | `actor` を人間とエージェントの共通基底にする | `Design.md` 5.3、`DbDesign.md` 6.2 |
 | `app_user` と `user_identity` を分離しOIDC/SAMLに備える | `Design.md` 6.2.3 |
 | 権限をコードではなくデータ（permissionカタログ）で定義する | `Design.md` 6.4、`DbDesign.md` 7.2 |
-| AIの提案はすべて `proposal` テーブルを経由させる | `DbDesign.md` 8.2.2 |
+| AIの提案はすべて `proposal` テーブルを経由させる | `DbDesign.md` 8.3.2 |
 | **チケットのグルーピングは2軸**——分解は親子階層、分類はタグ。1軸に混ぜない | `DbDesign.md` 6.10 |
 | **チケットは「視点」（バックログ／カンバン／ガント）で見る。** 同一データを別の描き方で出し、グループ化軸を共有する | `GuiDesign.md` 4.1.1 |
 | **バックログはページングしない。** グループ化・階層・並べ替えがページ境界をまたげないため | `ApiDesign.md` 9.2.3 |
@@ -76,14 +77,17 @@ clone 直後には存在しない（規約は `Design.md` 11.0）。
 | モノクロマティック配色。有彩色は危険・警告・AIの3つのみ | `GuiDesign.md` 8章 |
 | 紫は「AI由来」ではなく「未確認のAI出力」を意味する | `GuiDesign.md` 8.4.2 |
 | ビルド番号は `develop` へのマージ回数。ブランチ接頭辞でマイナーを上げるか決まる | `Design.md` 11.1 |
+| **単独開発で足りることを PB に作らない。** PB が要るのは参加者が複数になってから | `Design.md` 1.1 原則8、`Requirements.md` 10.0 |
+| **文書の型はテンプレートで配り、データモデルに語彙を持たせない**（ワークフローテンプレートと同じ機構） | `DbDesign.md` 8.1 |
+| **文書の章は永続化しない。** 保存する参照は `document.id` のみ | `DbDesign.md` 8.1.3 |
 
 ## 開発フェーズ
 
 | Phase | 内容 | 状態 | 詳細 |
 |---|---|---|---|
 | **1** | 認証・認可、プロジェクト、チケットの基礎。ローカルでの動作確認まで | **完了**（2026-08-28） | `Design.md` 11章 |
-| 2 | MCPサーバ、コンテキストパック、承認キュー（エージェント連携） | 未着手 | 同上 |
-| 3 | AI機能（Readiness判定・要約・ベクトル検索）、OIDC/SAML連携 | 未着手 | 同上 |
+| 2 | **プロジェクト文書（Docs）**、MCPサーバ、コンテキストパック（エージェント連携） | 未着手 | 同上 |
+| 3 | AI機能（Readiness判定・要約・ベクトル検索）、**承認キュー・プロジェクトメモリ**、OIDC/SAML連携 | 未着手 | 同上 |
 
 ## 現在の着手ポイント
 

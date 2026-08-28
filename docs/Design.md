@@ -332,7 +332,21 @@ docker compose -f deploy/base/compose.yaml -f deploy/dev/compose.yaml up -d
 
 ## 4.4 stg の扱い
 
-Phase 1〜2 は開発端末での動作が中心であり、**`stg/` は当面 `.gitkeep` のみで構わない**。ステージングが実際に必要になる（他者に触ってもらう、外部公開する）段階で、`dev` と `prod` の差分を見てから内容を決める方が無駄がない。
+**Phase 2 で `stg/` を使い始める。** PB 自身の開発を PB で行うため（ドッグフーディング）、**開発中に壊れる `dev` とは別に、壊れないインスタンス**が要る。
+
+| | `dev` | `stg` |
+|---|---|---|
+| 用途 | 開発中のコードを動かす | **PB 自身のプロジェクト管理**（チケット・憲章） |
+| PB 本体 | `make run`（`go run`） | **`make build` のネイティブバイナリ** |
+| 待受 | `127.0.0.1:8080` | `127.0.0.1:8081` |
+| DB | compose プロジェクト `pb`（`:5432`） | **compose プロジェクト `pb-stg`（`:5433`）** |
+| 作り直し | `make dev-reset` | **しない**（データが本番相当） |
+
+**分離は compose プロジェクトの単位で行う。** `deploy/dev/reset.sh` は `docker compose down -v` を実行して pgdata ボリュームごと破棄するため、**同じコンテナ内で DB 名を分けても `make dev-reset` 1回で消える**。compose プロジェクト名を分けると、コンテナ・ネットワーク・ボリュームが名前空間ごと分かれる。
+
+**PB 本体をコンテナにしない。** client を embed した単一バイナリを作れる構成（3.4）であり、`stg` に必要なのは「壊れず動き続けること」だけで、コンテナの利点（再現性・隔離）は開発端末上では効きが薄い。`deploy/Dockerfile` の作成は Phase 2 の前提から外れた。
+
+**`deploy/stg/` に置くもの**：`compose.yaml`（db のみ）、バイナリと設定を生成するスクリプト、`secrets/`（`.gitignore` 対象）。
 
 ## 4.5 ビルドとクロスコンパイル
 
@@ -406,9 +420,14 @@ project ──┬── ticket ──┬── comment
 | **1** | アジャイル | `sprint` | 6.9 |
 | **1** | タグ | `tag` `ticket_tag` | 6.10 |
 | **1** | 完了条件 | `dod_item` | 6.11 |
-| **2** | エージェント連携 | `agent` `task_lease` `agent_run` `agent_report` `context_pack_log` | 8.1 |
-| **2** | 知識還流 | `knowledge` `knowledge_revision` `proposal` | 8.2 |
-| **3** | AI・分析 | `comment_signal` `embedding` `project_event` `estimate_record` `contribution` | 8.3 |
+| **2** | **プロジェクト文書** | `document` `document_revision` | 8.1 |
+| **2** | エージェント連携 | `agent` `task_lease` | 8.2 |
+| **3** | エージェントの実行記録 | `agent_run` `agent_report` `context_pack_log` | 8.2 |
+| **3** | 知識還流 | `knowledge` `knowledge_revision` `proposal` | 8.3 |
+| **3** | AI・分析 | `comment_signal` `embedding` `project_event` `estimate_record` `contribution` | 8.4 |
+
+**`document` は Phase 1 のテーブルを1つも変更しない**（原則1）。`ticket_reference`（6.12）から
+PB 内の文書を指せるようにするかは、必要性が運用で確認できてから決める（`ApiDesign.md` 10章）。
 
 ## 5.3 設計上の要点（3点のみ）
 
@@ -667,14 +686,55 @@ GET /api/v1/me
 
 # 8. MCPサーバ設計
 
-未着手。`Requirements.md` 10.3（ツール一覧）・10.4（コンテキストパック）が入力となる。
+**エージェントから見える面は MCP のみとする**（原則7）。REST API を直接叩かせる設計は採らない。理由は `Requirements.md` 10.10.1——`curl -H "Authorization: Bearer ..."` を組み立てさせた時点で、資格情報がモデルのコンテキストを通過する。
 
-- ツールの入出力スキーマ定義
-- ツール description の文面設計（`Requirements.md` 10.13 の検討事項）
-- コンテキストパックの生成アルゴリズムとトークン予算配分
-- REST 層との責務分担
+## 8.1 REST 層との責務分担
 
-**エージェントから見える面は MCP のみとする**（原則7）。REST API を直接叩かせる設計は採らない。
+**MCP は REST API の薄いラッパである**（`Requirements.md` 10.3.1）。ビジネスルール・権限判定・検証は REST 層（`internal/httpapi`）に置き、**MCP 層は入出力の形を変えるだけ**にする。
+
+| 層 | 持つもの | 持たないもの |
+|---|---|---|
+| REST | 権限判定、検証、状態遷移、トランザクション | エージェント向けの言い換え |
+| MCP | ツール定義、description、応答の整形、トークン予算 | 独自のビジネスルール |
+
+**同じ規則を2か所に書かない。** エージェントだけに許す・禁じることは、**権限（`doc.edit` 等）とワークフロー（`is_agent_reachable` / `allowed_actor_kinds`）で表す**——MCP 層の `if` で表さない。前者は DB に残り監査できるが、後者は経路を1つ増やすたびに漏れる。
+
+## 8.2 ツールと必要権限
+
+**正本は `Requirements.md` 10.3.2**（Phase 列つきの一覧）。ここでは REST 側の対応と必要権限だけを示す。
+
+| ツール | REST | 必要権限 |
+|---|---|---|
+| `pb_get_project` | `GET /projects/:key` | `project.view` |
+| `pb_list_docs` | `GET /projects/:key/docs?outline=1` | `doc.view` |
+| `pb_get_doc` | `GET /projects/:key/docs/*path?section=` | `doc.view` |
+| `pb_get_task` / `pb_list_tasks` | `GET /projects/:key/tickets(/:seq)` | `ticket.view` |
+| `pb_get_context` | 専用（8.3） | `ticket.view` `doc.view` |
+| `pb_create_ticket` | `POST /projects/:key/tickets` | `ticket.create` |
+| `pb_put_doc` | `PATCH /projects/:key/docs/*path` | **`doc.edit`** |
+| `pb_post_note` | `POST /projects/:key/tickets/:seq/comments` | `comment.create` |
+| `pb_claim_task` / `pb_release_task` / `pb_submit_result` | 9章の遷移API＋リース | `ticket.transition` |
+
+**`pb_put_doc` は `doc.edit` を要求する。** エージェントのトークンにこの権限を載せるかは、**そのエージェントが誰に付いているか**で決まる（`Requirements.md` 10.10.3）。PM のエージェントは持ち、実装だけを行うエージェントは持たない。
+
+**トークンや接続情報を返すツールを一切持たない**（`Requirements.md` 10.3.1）。
+
+## 8.3 エンドポイントとスコープ
+
+```
+/mcp/<project_key>
+```
+
+**URL パスにプロジェクトキーを含める**（`Requirements.md` 10.8.8）。これにより手順ファイルがプロジェクト非依存になり、すべてのリポジトリで同じ雛形を使い回せる。
+
+**トークンのプロジェクトスコープと URL の整合はサーバが検証する。** 食い違えば `404`——6.4.5 が定める「トークンが特定のプロジェクトに紐づく場合、他プロジェクトは 404」の実施点がここである。
+
+## 8.4 まだ決めていないこと
+
+- **ツール description の文面設計**（`Requirements.md` 10.13）。**実質的にこれがエージェントの行動を規定する**ため、プロンプトエンジニアリングの対象になる
+- **コンテキストパックの生成アルゴリズムとトークン予算配分**（同 10.4.3）。Phase 2 の初期は「憲章の該当章＋スコープ境界＋依存タスク」の単純な選定でよい
+- **`pb_get_context` の応答形式**（構造化JSON か Markdown か。同 10.13）
+- **どの章を「該当章」と判定するか。** 憲章の章とチケットを結ぶ手がかりが、Phase 2 の時点ではタイトルの一致しかない
 
 ---
 
@@ -690,6 +750,7 @@ GET /api/v1/me
 | バックログ | `/p/:key/backlog` | `ticket.view` |
 | チケット詳細 | `/p/:key/tickets/:seq` | `ticket.view` |
 | プロジェクト設定（一般／メンバー／タグ／スプリント） | `/p/:key/settings` | `project.edit` |
+| **プロジェクト文書（Docs、Phase 2）** | `/p/:key/docs` | **`doc.view`**（編集は `doc.edit`） |
 | アカウント / 権限管理 | `/admin/users` | `user.manage` |
 | 監査ログ | `/admin/audit` | `auditlog.view` |
 | 自分の設定・トークン | `/me` `/me/tokens` | 本人 |
@@ -994,7 +1055,7 @@ Phase 1 の一覧の手順7〜9 に残る `[TS]` `[Go]` の印は、**この規�
 
 ## 付録A. 本書に関する未解決の検討事項
 
-各領域固有の検討事項は、それぞれの設計書の末尾に記載している（`DbDesign.md` 10章、`ApiDesign.md` 10.2、`GuiDesign.md` 11章）。本書に残るのは以下。
+各領域固有の検討事項は、それぞれの設計書の末尾に記載している（`DbDesign.md` 10章、`ApiDesign.md` 11.2、`GuiDesign.md` 11章）。本書に残るのは以下。
 
 - MCPサーバとREST APIの責務分担（8章の着手時に確定）
 - `Requirements.md` 8章の「KEDAでスケール0」を PostgreSQL 常駐構成でどう扱うか
