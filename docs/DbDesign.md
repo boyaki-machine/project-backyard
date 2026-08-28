@@ -1301,7 +1301,7 @@ INSERT INTO workflow_transition
 ON CONFLICT DO NOTHING;
 ```
 
-**`done` は `is_agent_reachable = false`、遷移の `allowed_actor_kinds` も `["user"]`。** エージェントは自分でチケットをクローズできない（`Requirements.md` 10.8.5 の禁止事項をDBレベルで担保する）。
+**`done` は `is_agent_reachable = false`、遷移の `allowed_actor_kinds` も `["user"]`。** エージェントは自分でチケットをクローズできない（`Requirements.md` 10.8.6 の禁止事項をDBレベルで担保する）。
 
 ```sql
 -- with_review：未着手 / 進行中 / レビュー中 / 完了
@@ -1719,7 +1719,7 @@ ALTER TABLE knowledge_revision
 
 **すべての「AIの提案」がこの1テーブルを通る。** 承認キュー画面（`GuiDesign.md` 10章）が単一の問い合わせで成立し、承認・却下の監査も一元化できる。
 
-`auto_applied` は、`Requirements.md` 10.6.3 の「`kind` ごとに自動採用／承認必須を設定する」ポリシーで自動反映されたものを表す。**自動反映であっても proposal 行は必ず残す**ことで、後から遡って取り消せる。
+`auto_applied` は、`Requirements.md` 10.6.3 の承認ポリシー（**影響範囲を軸に、自動採用と承認必須を分ける**）で自動反映されたものを表す。**自動反映であっても proposal 行は必ず残す**ことで、後から遡って取り消せる。
 
 ## 8.3 AI機能・分析（Phase 3）
 
