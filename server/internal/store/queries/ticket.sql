@@ -125,6 +125,19 @@ filtered AS (
     AND (@due_within_days::int < 0
          OR (t.due_date IS NOT NULL
              AND t.due_date <= CURRENT_DATE + @due_within_days::int))
+    -- overdue（9.2.1。手順19b）。**stats.sql の overdue と同じ条件**にしてある
+    -- ——ダッシュボードが出した件数と、押した先の一覧の件数が一致する必要がある
+    -- （GuiDesign.md 5.3）。due_within=0d は「今日以前」で今日締切を含むため、
+    -- 代用すると1日ぶんずれる。
+    AND (NOT @overdue_only::boolean
+         OR (t.closed_at IS NULL
+             AND t.due_date IS NOT NULL
+             AND t.due_date < CURRENT_DATE))
+    -- stale（9.2.1。手順19b）。**stats.sql の stale と同じ条件**。
+    -- 日数を引数に取るのは、閾値の正本がサーバ側の定数だからである（9.13.1）。
+    AND (@stale_days::int < 0
+         OR (t.closed_at IS NULL
+             AND t.updated_at < now() - make_interval(days => @stale_days::int)))
     AND (cardinality(@parent_seqs::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
 )
 SELECT

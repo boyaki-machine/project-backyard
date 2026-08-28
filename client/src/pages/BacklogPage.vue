@@ -20,6 +20,8 @@ import {
   priorityLabels,
   priorityMarks,
   priorityOrder,
+  statusCategoryLabels,
+  statusCategoryOrder,
   statusMarks,
   ticketTypeIcons,
   ticketTypeLabels,
@@ -184,6 +186,25 @@ const SORTS: TicketSort[] = [
 const FILTER_KEYS = ['status', 'type', 'assignee', 'priority', 'tag', 'sprint'] as const
 type FilterKey = (typeof FILTER_KEYS)[number]
 
+/**
+ * 「状態」の箱が持つ3系列のクエリ名（5.4「状態と期限のフィルタ」。手順19b）。
+ *
+ * **1つの箱で3つのクエリを出し入れする。** どれも「進み具合で絞る」という
+ * 同じ軸の値であり、同時に2つを選ぶ意味がない。**選ぶたびに他の2つを消す**
+ * ——消さないと `?open=true&status_category=done` のような、画面のどこにも
+ * 表れない組み合わせが URL に残る。
+ */
+const STATE_KEYS = ['status', 'status_category', 'open', 'stale'] as const
+
+/**
+ * 「期限」の箱が持つクエリ名（同上）。
+ *
+ * `overdue` と `due_within` は**別の条件**である（`ApiDesign.md` 9.2.1）——
+ * `due_within=0d` は「今日以前」で今日締切を含み、`overdue`（`due_date < 今日`）
+ * と1日ぶんずれる。
+ */
+const DUE_KEYS = ['overdue', 'due_within'] as const
+
 function queryValue(name: string): string {
   const v = route.query[name]
   return typeof v === 'string' ? v : ''
@@ -230,10 +251,66 @@ const group = computed<GroupAxis>(() => {
   return GROUP_AXES.includes(v) ? v : ''
 })
 
+/**
+ * 「状態」の箱の現在値。**選択肢の `value` は `<クエリ名>:<値>`** で、
+ * 空文字が「すべて」である。URL から復元するので、共有されたリンクを開いても
+ * 箱に選択が出る（5.4「フィルタとグループ化の保持」）。
+ */
+const stateValue = computed<string>(() => {
+  for (const k of STATE_KEYS) {
+    const v = queryValue(k)
+    if (v !== '') return `${k}:${v}`
+  }
+  return ''
+})
+
+/** 「期限」の箱の現在値。同じ形式 */
+const dueValue = computed<string>(() => {
+  for (const k of DUE_KEYS) {
+    const v = queryValue(k)
+    if (v !== '') return `${k}:${v}`
+  }
+  return ''
+})
+
+/**
+ * 排他の箱を1つ選ぶ。**同じ群の他のキーを空にしてから**新しい値を入れる。
+ *
+ * `setQuery` は空文字のキーを落とすので、これで URL には常に1つだけ残る。
+ */
+function setExclusive(keys: readonly string[], selected: string): void {
+  const patch: Record<string, string> = {}
+  for (const k of keys) patch[k] = ''
+  if (selected !== '') {
+    const at = selected.indexOf(':')
+    patch[selected.slice(0, at)] = selected.slice(at + 1)
+  }
+  setQuery(patch)
+}
+
+/**
+ * 「放置」の選択肢が使う日数（5.4）。**閾値の正本ではない**——正本は
+ * サーバ（`ApiDesign.md` 9.13.1 の `threshold_days`）で、ダッシュボードは
+ * 応答の値をそのままリンクへ載せる。ここは「素の状態から選ぶときの既定」
+ * であり、5.3 のワイヤーの文言に合わせてある。
+ */
+const STALE_DEFAULT_DAYS = 14
+
+/**
+ * いま選ばれている `stale` の日数。**URL の値から読む**ので、ダッシュボード
+ * から `?stale=30d` で来ればラベルも「30日以上更新なし」になる。
+ */
+const staleDays = computed(() => {
+  const m = /^(\d+)d$/.exec(queryValue('stale'))
+  return m === null ? STALE_DEFAULT_DAYS : Number(m[1])
+})
+
 /** 素の状態か。`[解除]` を出すかどうかの判定に使う */
 const isPristine = computed(
   () =>
     FILTER_KEYS.every((k) => filters.value[k] === '') &&
+    stateValue.value === '' &&
+    dueValue.value === '' &&
     epicSeqs.value.length === 0 &&
     group.value === '' &&
     sort.value === 'sort_key' &&
@@ -329,6 +406,15 @@ async function loadTickets(): Promise<void> {
       // **種別が「すべて」のときは `story,task` を送る**（5.4）。エピックを
       // 画面側で捨てると、下部に出す総件数（サーバの `total`）と食い違う。
       type: filters.value.type === '' ? backlogTicketTypes.join(',') : filters.value.type,
+      // 「状態」の箱が出す3系列（5.4。手順19b）。**排他なので同時に入らない** ——
+      // `setExclusive` が他を消すが、共有された URL に複数書かれていても
+      // サーバは AND で解釈するだけで壊れない。
+      status_category: queryValue('status_category'),
+      open: queryValue('open') === 'true' ? 'true' : queryValue('open') === 'false' ? 'false' : undefined,
+      stale: queryValue('stale'),
+      // 「期限」の箱が出す2系列（同上）
+      overdue: queryValue('overdue') === 'true' ? 'true' : undefined,
+      due_within: queryValue('due_within'),
       // エピックフィルタの実体（9.2.1）。空なら `listTickets` がキーごと落とす
       parent: epicSeqs.value.join(','),
       sort: sort.value,
@@ -1292,14 +1378,37 @@ watch(projectKey, (key) => {
 
       <!-- フィルタ行（5.4）。条件は URL のクエリに載る -->
       <div v-if="!shrunk || filtersOpen" class="filters">
+        <!-- 状態（5.4「状態と期限のフィルタ」。手順19b）。
+             **1つの箱で3系列を出し入れする**——進み具合（`open` / `stale`）・
+             区分（`status_category`）・ステータス（`status`）。同じ軸の値なので
+             箱を分けず、`optgroup` の見出しで区別する。**見出しが無いと、
+             `simple` / `with_review` で区分とステータスが同じ語になって読めない** -->
         <label class="filter">
           <span class="filter-label">状態</span>
           <select
-            :value="filters.status"
-            @change="setQuery({ status: ($event.target as HTMLSelectElement).value })"
+            :value="stateValue"
+            @change="setExclusive(STATE_KEYS, ($event.target as HTMLSelectElement).value)"
           >
             <option value="">すべて</option>
-            <option v-for="s in statuses" :key="s.key" :value="s.key">{{ s.name }}</option>
+            <optgroup label="進み具合">
+              <option value="open:true">未完了</option>
+              <option value="open:false">完了</option>
+              <option :value="`stale:${staleDays}d`">{{ staleDays }}日以上更新なし</option>
+            </optgroup>
+            <optgroup label="区分">
+              <option
+                v-for="c in statusCategoryOrder"
+                :key="c"
+                :value="`status_category:${c}`"
+              >
+                {{ statusCategoryLabels[c] }}
+              </option>
+            </optgroup>
+            <optgroup label="ステータス">
+              <option v-for="s in statuses" :key="s.key" :value="`status:${s.key}`">
+                {{ s.name }}
+              </option>
+            </optgroup>
           </select>
         </label>
 
@@ -1365,6 +1474,23 @@ watch(projectKey, (key) => {
             <option value="">すべて</option>
             <option value="none">スプリント未設定</option>
             <option v-for="s in sprints" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
+        </label>
+
+        <!-- 期限（5.4「状態と期限のフィルタ」。手順19b）。
+             **「期限超過」は `due_within=0d` ではない**——あちらは「今日以前」で
+             今日が期限のものを含み、`stats.overdue` と1日ぶんずれる（9.2.1） -->
+        <label class="filter">
+          <span class="filter-label">期限</span>
+          <select
+            :value="dueValue"
+            @change="setExclusive(DUE_KEYS, ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">すべて</option>
+            <option value="overdue:true">期限超過</option>
+            <option value="due_within:0d">今日まで</option>
+            <option value="due_within:7d">7日以内</option>
+            <option value="due_within:30d">30日以内</option>
           </select>
         </label>
 
@@ -1772,6 +1898,7 @@ watch(projectKey, (key) => {
         :members="members"
         :tags="tags"
         :sprints="sprints"
+        :workflow="projectStore.current?.workflow ?? null"
         :candidates="tickets"
         @close="closeDetail"
         @updated="onDetailUpdated"

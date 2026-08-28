@@ -1288,6 +1288,31 @@ paths:
             type: string
             pattern: '^[0-9]+d$'
           example: 7d
+        - name: overdue
+          in: query
+          description: |
+            `true` で**期限を過ぎた未完了のもの**（`due_date < 今日` かつ
+            `closed_at IS NULL`）。9.13.1 の `overdue` と同じ条件で数える。
+
+            **`due_within=0d` で代用しない**——あちらは「今日以前」で
+            **今日が期限のもの**を含み、1日ぶんずれる。
+          schema:
+            type: string
+            enum: ['true']
+        - name: stale
+          in: query
+          description: |
+            `14d` 形式。**その日数より前から更新されていない未完了のもの**
+            （`updated_at < now() - N日` かつ `closed_at IS NULL`）。
+            9.13.1 の `stale` と同じ条件で数える。上限は `3650d`。
+
+            **日数を取るのは、閾値の正本がサーバにあるからである**
+            （9.13.1 の `threshold_days`）。ダッシュボードは `stats` の応答に
+            載る値をそのままリンクへ載せ、画面側に 14 を書かない。
+          schema:
+            type: string
+            pattern: '^[0-9]+d$'
+          example: 14d
         - name: parent
           in: query
           description: |
@@ -4972,6 +4997,11 @@ components:
       description: |
         プロジェクトの集計（ApiDesign.md 9.13.1）。ダッシュボード（GuiDesign.md 5.3）の
         4枚のカードと「要対応」ブロックが読む。
+
+        **エピック（`type='epic'`）はどの項目にも数えない**（手順19b で変更）。
+        エピックはグルーピング専用であり（DbDesign.md 6.10）、バックログも行として
+        出さない。**4枚のカードは押すとバックログをそのカテゴリで絞って開く**ので、
+        除かないとカードの数と押した先の件数が一致しない。
       type: object
       required: [by_category, total, open, overdue, stale, unassigned]
       properties:

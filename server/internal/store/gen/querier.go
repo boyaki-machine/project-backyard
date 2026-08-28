@@ -370,6 +370,12 @@ type Querier interface {
 	// **overdue / stale / unassigned はいずれも closed_at IS NULL が掛かる**
 	// （9.13.1）。完了したチケットは要対応ではない。
 	//
+	// **エピックはどの項目にも数えない**（9.13.1。手順19b で足した条件）。エピックは
+	// グルーピング専用で（DbDesign.md 6.10）、GuiDesign.md 5.4 はバックログの行としても
+	// 出さない。**4枚のカードは押すとバックログをそのカテゴリで絞って開く**ため、
+	// 除かないとカードの数と押した先の件数が一致しない。unassigned にエピックが混ざる
+	// のも実害がある——エピックに担当者を置く運用が無いので、常に「要対応」に見える。
+	//
 	GetProjectTicketStats(ctx context.Context, arg GetProjectTicketStatsParams) (GetProjectTicketStatsRow, error)
 	// 1件だけ返す形。POST / PATCH の応答（B-2）で使う。
 	GetSprintByID(ctx context.Context, arg GetSprintByIDParams) (GetSprintByIDRow, error)

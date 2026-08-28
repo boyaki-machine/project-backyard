@@ -103,6 +103,8 @@ type ticketFilters struct {
 	sprintNone       bool
 	openFilter       string
 	dueWithinDays    int32
+	overdueOnly      bool
+	staleDays        int32
 	parentSeqs       []int32
 
 	// normalized は ETag の材料（9.2.5）。解析後の値から作るので、
@@ -140,6 +142,8 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		SprintNone:       filters.sprintNone,
 		OpenFilter:       filters.openFilter,
 		DueWithinDays:    filters.dueWithinDays,
+		OverdueOnly:      filters.overdueOnly,
+		StaleDays:        filters.staleDays,
 		ParentSeqs:       filters.parentSeqs,
 		Sort:             page.Sort,
 		SortOrder:        page.Order,
@@ -203,6 +207,9 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 		parentSeqs:    []int32{},
 		openFilter:    filterAll,
 		dueWithinDays: -1,
+		// staleDays も「指定なし」を負で表す（dueWithinDays と同じ）。
+		// 0 は「0日以上更新なし」＝全件になってしまうため使えない。
+		staleDays: -1,
 	}
 	var parts []string
 	add := func(name string, values []string) {
@@ -300,6 +307,43 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 			} else {
 				f.dueWithinDays = int32(days)
 				parts = append(parts, "due_within="+strconv.Itoa(days))
+			}
+		}
+	}
+
+	// overdue（9.2.1。手順19b）。**true 以外は受け付けない**——false は
+	// 「期限を過ぎていないもの」ではなく「絞らない」であり、それはキーを
+	// 送らないことで表せる。値を2つ持つと同じ意味の書き方が2通りになる。
+	switch v := q.Get("overdue"); v {
+	case "":
+	case "true":
+		f.overdueOnly = true
+		parts = append(parts, "overdue=true")
+	default:
+		details = append(details, apierr.Detail{
+			Field: "overdue", Code: "invalid",
+			Message: "overdue は true で指定してください",
+		})
+	}
+
+	// stale（9.2.1。手順19b）。書式は due_within と同じ <N>d で、上限も同じ。
+	if v := q.Get("stale"); v != "" {
+		m := dueWithinPattern.FindStringSubmatch(v)
+		if m == nil {
+			details = append(details, apierr.Detail{
+				Field: "stale", Code: "invalid",
+				Message: "stale は 14d のように日数で指定してください",
+			})
+		} else {
+			days, err := strconv.Atoi(m[1])
+			if err != nil || days > 3650 {
+				details = append(details, apierr.Detail{
+					Field: "stale", Code: "out_of_range",
+					Message: "stale は 3650d 以下で指定してください",
+				})
+			} else {
+				f.staleDays = int32(days)
+				parts = append(parts, "stale="+strconv.Itoa(days))
 			}
 		}
 	}

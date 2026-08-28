@@ -72,6 +72,14 @@ const title = computed(
   font-weight: 600;
   line-height: 1;
   user-select: none;
+  /* **`.sr-only` の位置の基準になる**（手順19b）。付けないと読み上げ用の
+     `position: absolute` が初期包含ブロックを基準に置かれ、**スクロール領域の
+     外へはみ出して文書そのものを縦に伸ばす**。症状は「アプリ全体が上へ
+     スクロールして下に余白が出る」で、`AppShell` の `.content` が
+     `overflow: hidden` でも防げない（絶対配置は祖先の overflow を無視する）。
+     ダッシュボードの「最近の動き」と履歴でアバターが縦に並んで表面化した
+     ——1440px で文書が 46〜69px 伸びるのを実測。 */
+  position: relative;
 }
 
 /* **エージェントは角丸四角。** 色は変えない */

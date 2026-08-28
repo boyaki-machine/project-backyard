@@ -21,6 +21,12 @@
 -- **overdue / stale / unassigned はいずれも closed_at IS NULL が掛かる**
 -- （9.13.1）。完了したチケットは要対応ではない。
 --
+-- **エピックはどの項目にも数えない**（9.13.1。手順19b で足した条件）。エピックは
+-- グルーピング専用で（DbDesign.md 6.10）、GuiDesign.md 5.4 はバックログの行としても
+-- 出さない。**4枚のカードは押すとバックログをそのカテゴリで絞って開く**ため、
+-- 除かないとカードの数と押した先の件数が一致しない。unassigned にエピックが混ざる
+-- のも実害がある——エピックに担当者を置く運用が無いので、常に「要対応」に見える。
+--
 -- name: GetProjectTicketStats :one
 SELECT
   count(*) FILTER (WHERE ws.category = 'todo')::bigint        AS todo,
@@ -41,4 +47,5 @@ FROM ticket t
 JOIN project p ON p.id = t.project_id
 LEFT JOIN workflow_status ws
        ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
-WHERE t.project_id = @project_id::text;
+WHERE t.project_id = @project_id::text
+  AND t.type <> 'epic';

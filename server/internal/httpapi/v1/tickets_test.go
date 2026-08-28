@@ -223,6 +223,11 @@ func TestListTicketsDefaults(t *testing.T) {
 	if p.OpenFilter != "all" || p.DueWithinDays != -1 || len(p.ParentSeqs) != 0 {
 		t.Errorf("未指定のフィルタが効いている: %+v", p)
 	}
+	// overdue / stale の「指定なし」（9.2.1。手順19b）。**stale は 0 ではなく負**
+	// ——0 は「0日以上更新なし」＝全件になってしまい、指定なしと区別できない。
+	if p.OverdueOnly || p.StaleDays != -1 {
+		t.Errorf("overdue/stale の既定が効いている: overdue=%v stale=%d", p.OverdueOnly, p.StaleDays)
+	}
 	// **nil を送らない**（tickets.go の parseTicketFilters）。pgx は nil スライスを
 	// SQL の NULL にするため cardinality(NULL) = NULL となり、「指定なし」の
 	// 判定が偽になって1件も返らなくなる。
@@ -276,6 +281,9 @@ func TestListTicketsRejectsInvalidFilters(t *testing.T) {
 		{"分類", "status_category=blocked", "status_category"},
 		{"open", "open=yes", "open"},
 		{"期限", "due_within=7days", "due_within"},
+		{"期限超過", "overdue=false", "overdue"},
+		{"放置の書式", "stale=14days", "stale"},
+		{"放置の上限", "stale=3651d", "stale"},
 		{"親", "parent=0", "parent"},
 		{"ソート", "sort=body_md", "sort"},
 		{"件数", "per_page=201", "per_page"},
@@ -354,6 +362,38 @@ func TestTicketsETagVariesByFilterAndPage(t *testing.T) {
 	// 同じ意味の違う書き方は同じ ETag（正規化して混ぜているため）
 	if a, b := etag("type=story,task"), etag("type=task,story"); a != b {
 		t.Errorf("順序違いの同じ条件で ETag が変わった: %q vs %q", a, b)
+	}
+	// overdue / stale も ETag の材料に入る（9.2.5。手順19b）。**入っていないと、
+	// ダッシュボードの「確認する →」から来た一覧が、素の一覧のキャッシュに
+	// 当たって 304 で返りうる。**
+	if other := etag("overdue=true"); other == etag("") {
+		t.Errorf("overdue の有無で ETag が変わらない: %q", other)
+	}
+	if a, b := etag("stale=14d"), etag("stale=30d"); a == b {
+		t.Errorf("stale の日数が違うのに ETag が同じ: %q", a)
+	}
+}
+
+// overdue / stale はクエリの値どおりに解釈される（9.2.1。手順19b）。
+//
+// **どちらも stats（9.13.1）と同じ条件を意図しており、SQL 側の条件は
+// stats.sql の写しである。** ここではハンドラが値を落とさず渡すことだけを見る。
+func TestListTicketsOverdueAndStale(t *testing.T) {
+	q := ticketFake()
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.listTickets(rec, ticketReq(http.MethodGet,
+		"/projects/demo/tickets?overdue=true&stale=14d", "", ""))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	p := q.ticket.listParams[0]
+	if !p.OverdueOnly {
+		t.Error("overdue=true が渡っていない")
+	}
+	if p.StaleDays != 14 {
+		t.Errorf("stale=14d の解釈が違う: %d", p.StaleDays)
 	}
 }
 

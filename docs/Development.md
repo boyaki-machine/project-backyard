@@ -560,6 +560,39 @@ DBを丸ごと作り直してよい場面では、**個別に戻すより `make 
 | **「戻る」「消える」「ゼロになる」を測るなら、先に始点を作る** | 終わりの値だけを書くと、**実装が何もしなくても通る。** 手順13a で `failed_attempts` のリセットを測ったとき、**リセット前が0でないことを一度も確かめていなかった**（そのうえ測る位置も、故意に失敗させたログインの後だった）——「0になった」は最初から0でも成り立つ。**始点が意味のある値であることを1件測ってから、終点を測る** |
 | **一覧の並びは「APIの応答と同じ順か」で見る** | 並び順の正本はサーバで、`display_name` は `COLLATE "ja-JP-x-icu"`（`DbDesign.md` 4.4）で比較される。**検証側で並べ直して突き合わせると、日本語の読み順と食い違って誤検知する** |
 
+## 8.6 seed に無い状態を作る（放置チケット・古い更新日時）
+
+**`updated_at` は通常の `UPDATE` では過去へ置けない。** `0006` の
+`trg_ticket_updated`（BEFORE UPDATE）が `now()` を書くためである。
+`ApiDesign.md` 9.13.1 の `stale`（14日以上更新のないチケット）や、
+`GuiDesign.md` 5.3 の「要対応」の放置の行は、**seed のデータでは
+一度も画面に出ない**（`pb dev seed` の投入時刻がそのまま入る）。
+
+**トリガを一時停止して振る。**
+
+```
+make psql <<'SQL'
+ALTER TABLE ticket DISABLE TRIGGER trg_ticket_updated;
+UPDATE ticket SET updated_at = now() - interval '20 days'
+ WHERE seq = <検証用の seq> AND project_id = (SELECT id FROM project WHERE key='demo');
+ALTER TABLE ticket ENABLE TRIGGER trg_ticket_updated;
+SQL
+```
+
+**チケット自体は API で作る**（`POST /projects/demo/tickets`）。`seq` の採番を
+サーバに任せるためで、直接 INSERT すると次の作成と番号がぶつかりうる。
+
+**振った後にそのチケットを触ると元へ戻る。** `PATCH` も `transition` も
+トリガを起こして `updated_at` が `now()` になるので、**他の検証を全部
+終えてから最後に振る**（手順19b で、振った直後に `PATCH` して
+「放置0件」に戻り、4件の FAIL を出した）。
+
+後始末は 8.4 に従い、チケットを消し、**積まれた `activity` も消す**——
+ULID は単調増加なので、検証前に `SELECT max(id) FROM activity` を控えておけば
+`DELETE FROM activity WHERE id > '<控えたID>'` で落とせる。
+
+---
+
 ---
 
 # 9. つまずいたとき

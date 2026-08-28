@@ -13,6 +13,7 @@ import { computed, ref } from 'vue'
 import * as authApi from '../api/auth'
 import type { Session, SessionProject } from '../api/auth'
 import { ApiError } from '../api/client'
+import { setTimezone } from '../lib/datetime'
 import { useUiStore } from './ui'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -88,17 +89,26 @@ export const useAuthStore = defineStore('auth', () => {
    * セッションが入ってくる口はログイン・復元・再取得・`PATCH /me` の4つ
    * あり、そのすべてでサーバ側の値を正としたい。呼び出し側に任せると、
    * どれか1つで書き忘れて「別の端末で変えたテーマが効かない」が起きる。
+   *
+   * **タイムゾーンも同じ口で流す**（`GuiDesign.md` 7.5。手順19b）。
+   * `datetime.ts` はモジュールの変数に持つので、ここを通れば全画面の
+   * `timestamptz` の表示が一度に切り替わる。テーマと同じ理由で、
+   * 呼び出し側に任せない。
    */
   function setSession(next: Session): void {
     session.value = next
     loaded.value = true
     useUiStore().syncFromServer(next.actor.theme, next.actor.hue)
+    setTimezone(next.actor.timezone)
   }
 
   /** ストアを未認証の状態へ戻す。画面遷移はしない（呼び出し側の責務） */
   function clear(): void {
     session.value = null
     loaded.value = true
+    // **前の利用者のタイムゾーンを残さない。** 同じ端末で別の人がログインする
+    // までの間、ログイン画面に前の設定が効いたままになるのを避ける。
+    setTimezone(null)
   }
 
   /**

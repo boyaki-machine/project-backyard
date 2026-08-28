@@ -671,6 +671,19 @@ filtered AS (
     AND ($18::int < 0
          OR (t.due_date IS NOT NULL
              AND t.due_date <= CURRENT_DATE + $18::int))
+    -- overdue（9.2.1。手順19b）。**stats.sql の overdue と同じ条件**にしてある
+    -- ——ダッシュボードが出した件数と、押した先の一覧の件数が一致する必要がある
+    -- （GuiDesign.md 5.3）。due_within=0d は「今日以前」で今日締切を含むため、
+    -- 代用すると1日ぶんずれる。
+    AND (NOT $19::boolean
+         OR (t.closed_at IS NULL
+             AND t.due_date IS NOT NULL
+             AND t.due_date < CURRENT_DATE))
+    -- stale（9.2.1。手順19b）。**stats.sql の stale と同じ条件**。
+    -- 日数を引数に取るのは、閾値の正本がサーバ側の定数だからである（9.13.1）。
+    AND ($20::int < 0
+         OR (t.closed_at IS NULL
+             AND t.updated_at < now() - make_interval(days => $20::int)))
     AND (cardinality($6::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
 )
 SELECT
@@ -731,6 +744,8 @@ type ListTicketsParams struct {
 	SprintNone       bool
 	OpenFilter       string
 	DueWithinDays    int32
+	OverdueOnly      bool
+	StaleDays        int32
 }
 
 type ListTicketsRow struct {
@@ -823,6 +838,8 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 		arg.SprintNone,
 		arg.OpenFilter,
 		arg.DueWithinDays,
+		arg.OverdueOnly,
+		arg.StaleDays,
 	)
 	if err != nil {
 		return nil, err

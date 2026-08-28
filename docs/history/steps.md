@@ -2478,3 +2478,77 @@ activity 21件（create 2 / delete 2 / update 17：comment 6・dod 9・link 2）
 
 **`make test` の `TestExpiresAtFormat` は 19a と無関係に落ちる。** `git worktree add <tmp> develop`
 で `develop` でも落ちることを確かめてから進めた（手順外の作業に起票ずみ）。
+
+---
+
+## 手順19b：プロジェクトダッシュボード・チケット詳細の履歴・タイムゾーン（2026-08-28）
+
+`GuiDesign.md` 5.3 の新規ページ1枚と、詳細ペインへ足す**Phase 1 最後のセクション**（同 5.5）、
+および `app_user.timezone` の反映（同 7.5）。**19a の API を2点変えている**（下記）。
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/src/pages/DashboardPage.vue` | ダッシュボード本体（5.3）。5本のAPIを `Promise.allSettled` で並列に投げ、**ブロック単位で4状態を持つ** |
+| `client/src/components/StatCard.vue` | 集計カード（6.1 の `StatCard` を実体化）。`to` を渡すとリンクになる |
+| `client/src/components/TicketActivity.vue` | 履歴セクション（5.5）。開閉と追記読み込みを持つ自己完結の単位。見出しは `#title` スロットで受ける |
+| `client/src/api/dashboard.ts` | `getProjectStats` / `listActivity` / `ticketEntity`（9.13） |
+| `client/src/lib/activity.ts` | **要約文18種類の正本**（9.13.2 の `field`）。2画面が同じ関数を通る |
+
+### 変えたファイル
+
+| ファイル | 変更 |
+|---|---|
+| `server/internal/store/queries/stats.sql` | `AND t.type <> 'epic'`（9.13.1） |
+| `server/internal/store/queries/ticket.sql` | `overdue` / `stale` の条件（**`stats.sql` の写し**） |
+| `server/internal/httpapi/v1/tickets.go` | `overdue` / `stale` の解析・検証・ETag の正規化 |
+| `server/internal/httpapi/v1/tickets_test.go` | 既定値・422・ETag・解釈の4か所を拡張 |
+| `server/internal/httpapi/v1/dashboard_integration_test.go` | **エピック（seq=7）を fixture に足し**、6項目すべてに当たる値にした。**`stats` と `GET /tickets` の件数一致**を9通り測る |
+| `client/src/router/routes.ts` | `/p/:key` を実画面へ。`projectKey` を props で渡す |
+| `client/src/pages/BacklogPage.vue` | 状態の箱に3系列（`optgroup`）＋期限の箱。`setExclusive` で排他 |
+| `client/src/components/TicketDetailPane.vue` | 履歴セクション、`workflow` prop、`.block-title.bare` |
+| `client/src/components/Avatar.vue` | `position: relative`（**欠陥修正**） |
+| `client/src/lib/datetime.ts` | `setTimezone` / `currentTimezone`。`Intl.DateTimeFormat` の `formatToParts` |
+| `client/src/stores/auth.ts` | `setSession` / `clear` でタイムゾーンを流す |
+| `client/src/api/tickets.ts` | `statusCategoryLabels` / `statusCategoryOrder` / `overdue` / `stale` |
+| `docs/ApiDesign.md` | 9.2.1（`overdue` / `stale`）・9.13.1（エピック除外） |
+| `docs/GuiDesign.md` | 3.2・5.3（全面）・5.4（状態と期限のフィルタ）・5.5（履歴）・6.1・6.5・6.7・7.5 |
+| `docs/openapi.yaml` | 2パラメータと `ProjectStats` の説明 |
+| `docs/Development.md` | 8.6「seed に無い状態を作る（放置チケット・古い更新日時）」を新設 |
+
+**マイグレーションは不要**（`activity` は 0008、`ticket` は 0006 で適用済み）。
+
+### 検証結果
+
+| 層 | 件数 | 内容 |
+|---|---|---|
+| 単体 | 全パッケージ ok | `TestExpiresAtFormat` のみ FAIL。**`git worktree add <tmp> develop` で `develop` でも落ちることを確認**（起票済みの時限式） |
+| 実DB結合 | **157件 PASS / 0 FAIL** | `stats` のエピック除外、`stats` と `GET /tickets` の**件数一致9通り**（区分4・overdue・stale・unassigned・`due_within=0d` との差） |
+| ブラウザ | **100件 PASS / 0 FAIL** | ダッシュボード44・導線26・履歴22・タイムゾーン8 |
+| スクリーンショット | 9枚 | 1440/1100/900px × （ダッシュボード上部・要対応・履歴）。**すべて目で確認した** |
+
+**ブラウザ検証の内訳**
+
+- **ダッシュボード44件**：見出し（プロジェクト名＋画面名）／カード4枚の見出し・数・リンク先・同じ段に並ぶこと／4ブロックの存在／自分の担当と期限が近いの行・リンク先・**期限の昇順**・`YYYY-MM-DD` の形／最近の動きの10件・アバター・**絶対表記**・相対表記が出ていないこと・「以前の動きを読む」／要対応3行の文と件数と**チケット名を名指ししないこと**とリンク先／コンソールにエラーが無いこと／横スクロールしないこと
+- **導線26件**：6通りのクエリで**バックログの総件数が `stats` と一致**すること、**フィルタの箱に選択が復元される**こと、`[解除]` が出ること、「すべて見る →」2本、状態の箱が3系列の `optgroup` に分かれること、**区分を選ぶと `open` が URL から消える**こと（排他）
+- **履歴22件**：既定は畳んである／**開くまで `/activity` を呼ばない**（`fetch` を数えて確認）／開くと呼ぶ／ボタンが「開く」↔「閉じる」／絶対表記／ステータスが表示名で出る／担当が表示名で出る／**ULID が生で出ていない**／値が「」で囲まれる／子資源の要約が別行に出る／閉じて開き直しても読み直さない／**履歴が無くても見出しは出る**
+- **タイムゾーン8件**：`Asia/Tokyo` 13:47 → `UTC` 04:47（−9h）→ `America/New_York` 00:47（−4h、夏時間）。**`date` 列（期限）は3つとも変わらない**（7.5 の表のとおり）
+
+### 検証で作った資源と後始末
+
+| 作ったもの | 後始末 |
+|---|---|
+| 検証用チケット `demo-18`（API で作成 → `updated_at` を20日前へ） | 削除。参考参照2件とコメント1件は FK の CASCADE で落ちた |
+| `activity` 9行（作成・タイトル・優先度・担当・見積・期限・遷移・コード・参考リンク） | **控えた `max(id)` より後**を削除（ULID は単調増加） |
+| `pm@example.com` のタイムゾーン | 検証の最後に `Asia/Tokyo` へ戻した（4アカウントとも `Asia/Tokyo`） |
+| サーバ・Chrome・スクラッチパッド | 停止・削除。`make clean-webui` 実行済み |
+
+**DB は JSON で控えて `diff` した——チケット15件、差分ゼロ。** `activity` は21行に戻った。
+**利用者の demo データは1行も変えていない。**
+
+### 気づいたこと
+
+**seed が `activity` を書かないため、要約文18種類のうち5種類しか実データに無かった**
+（dod・comment・delete・create・link）。画面を操作して13種類まで増やしてから確かめた。
+`make dev-reset` の直後は「最近の動き」も「履歴」も空になる（起票済み）。
