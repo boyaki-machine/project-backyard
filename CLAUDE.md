@@ -96,7 +96,17 @@ make psql        # DBコンソール
 make dev-reset   # 開発用：DBを作り直してデモデータを投入（手順7.5以降）
 make dev-seed    # 開発用：デモデータのみ投入（冪等）
 make dev-info    # 開発用：URL とデモアカウント一覧を表示
+
+make stg-init    # stg（ドッグフーディング用）：初回セットアップ
+make stg-build   # stg：動作に必要な一式を deploy/stg/out/ へ出力
+make stg-run     # stg：起動（http://localhost:8081）
+make stg-migrate # stg：マイグレーション適用（migrate と同時に打つ）
 ```
+
+**stg は PB 自身のプロジェクト管理に使う、壊れないインスタンスである**（`Design.md` 4.4、
+手順は `docs/Development.md` 11章）。`dev` とは compose プロジェクトごと分かれており、
+**`make dev-reset` の影響を受けない**。**画面は `http://localhost:8081` で開く**——
+`127.0.0.1:8081` で開くと dev とログインセッションが上書きし合う。
 
 **セットアップ・検証・つまずいたときの対処は `docs/Development.md`。** 秘密ファイルの配置、
 結合テストの走らせ方、ヘッドレス Chrome での画面確認、`make build` 後の `make clean-webui` など。

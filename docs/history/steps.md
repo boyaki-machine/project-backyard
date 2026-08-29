@@ -2743,3 +2743,95 @@ activity 21件（create 2 / delete 2 / update 17：comment 6・dod 9・link 2）
 | `docs/openapi.yaml` / `client/src/api/schema.d.ts` | 同上。`make gen-api` で再生成し、手で直した内容と一致することを確認した |
 | `server/internal/httpapi/v1/routes.go` | 同上（コメント1行）。`make test` が通ることを確認 |
 | `Design.md` 5.4 / 6.4.2 / 付録A、`ApiDesign.md` 4.4.2 / 9.11 | 権限カタログ「28件で確定」→ 0017 で30件になる旨 |
+
+## 手順20 — ドッグフーディング用インスタンス（2026-08-29、`feature/step-20-stg-instance`）
+
+**完了条件**：`make dev-reset` を実行しても stg のデータが残る → **満たした**（下記の実測）。
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `deploy/stg/compose.yaml` | base への上書き。`name: pb-stg` / `restart: always` / `ports: !override` で `127.0.0.1:5433:5432` / secrets を `../stg/secrets/` へ |
+| `deploy/stg/init.sh` | 初回セットアップ。秘密を `openssl rand -hex 16` で生成 → `pb.env` を作る → DB を `--wait` で起動 → `make stg-migrate`。**冪等**（既にあるものは作り直さない） |
+| `deploy/stg/build.sh` | 動作に必要な一式を出力する。`make sync-webui` → `go build` → `pb.env` / `secrets/app_database_url` を同梱 → `run.sh` と `README.txt` を生成。`OUT` で出力先を変えられる |
+| `deploy/stg/pb.env.example` | 出力に同梱する設定のテンプレート。`PB_BIND=127.0.0.1:8081` / `PB_DATABASE_URL_FILE=./secrets/app_database_url` / `PB_HEALTH_SHOW_VERSION=true` / `PB_COOKIE_SECURE=false` |
+
+### 変更したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `Makefile` | `STG_COMPOSE` / `STG_*_FILE` / `STG_GOOSE_DBSTRING_OWNER` と、`stg-init` / `stg-up` / `stg-down` / `stg-psql` / `stg-migrate` / `stg-build` / `stg-run` / `stg-stop` / `stg-admin-create` の9ターゲット |
+| `.gitignore` | `deploy/stg/out/` と `deploy/stg/pb.env`（secrets は既存の `deploy/*/secrets/*` が覆う） |
+| `docs/Design.md` | 4.1 のツリー、4.4 の全面補強（データの置き場・`restart: always`・常駐を保証しない・`localhost` で開く理由・出力一式の中身） |
+| `docs/Development.md` | **11章を新設**（付録A の前。既存の章番号を動かさないため末尾に置いた）。3.3 と 3.4 に stg への導線を1行ずつ |
+| `CLAUDE.md` | 開発コマンドに `stg-init` / `stg-build` / `stg-run` / `stg-migrate` を追記 |
+| `deploy/stg/.gitkeep` | 削除（実ファイルが入ったため） |
+
+### 検証（全 PASS）
+
+**ブラウザ検証（7件、Chrome ヘッドレス 1440×900）**
+
+```
+PASS  stg にログインできる                          http://localhost:8081/projects
+PASS  stg の /me が作成した管理者を返す              {"email":"<stg の管理者>","role":"administrator","name":"<表示名>"}
+PASS  stg にプロジェクト pb を作れる                 status=201
+PASS  stg の一覧の行に pb がある                     keys=[pb] names=[Project Backyard]
+PASS  dev（127.0.0.1:8080）にログインできる
+PASS  dev の /me は dev のアカウント                 admin@example.com
+PASS  dev にログインしても stg のセッションが残る    <stg の管理者>（dev は admin@example.com のまま）
+```
+
+**最後の1件が `localhost` / `127.0.0.1` の使い分けの実証である。** 同じブラウザプロファイルで
+dev にログインした後も、stg のセッションが生きている。
+
+**完了条件（`make dev-reset` をまたぐ）**
+
+| | before | after | 判定 |
+|---|---|---|---|
+| stg の `actor` / `app_user` / `project` / `ticket` / goose | 1 / 1 / 1 / 0 / 16 | 1 / 1 / 1 / 0 / 16 | **差分ゼロ** |
+| stg の `project` 行 | `pb\|Project Backyard\|2026-08-28 17:02:52.96454+00` | 同左 | **差分ゼロ** |
+| stg のサーバ | 動作中 | **動作中**（`{"status":"OK","version":"1.36.55"}`） | 落ちていない |
+| stg のブラウザ操作 | — | ログイン・一覧表示ともに可 | PASS |
+| dev | `ticket` 16 | `ticket` 15（＝seed の投入数） | **作り直された**（想定どおり） |
+
+**データの実体が別の場所であることの実測**
+
+```
+pb-stg_pgdata            /var/lib/docker/volumes/pb-stg_pgdata/_data
+project-backyard_pgdata  /var/lib/docker/volumes/project-backyard_pgdata/_data
+```
+
+**「出力を丸ごと別のパスへ置いて動く」ことの実測**
+
+`deploy/stg/out` をスクラッチパッドへ `cp -R` し、そこで `nohup ./run.sh &` を実行して
+`/healthcheck` が `{"status":"OK","version":"1.36.55"}` を返すことを確認した。**リポジトリの外で動く。**
+
+**`make` ターゲットの通し確認**
+
+`stg-init`（2回：`!override` 修正の前後）/ `stg-admin-create`（非対話で stdin から）/
+`stg-build` / `stg-run` / `stg-stop` / `stg-up` / `stg-migrate`（冪等：`no migrations to run`）/
+`stg-psql` を実際に実行した。**`stg-down` だけは実行していない**——コンテナごと消えて
+`restart: always` の自動起動も止まるため（`--dry-run` で形だけ確認）。
+
+`make test` は14パッケージすべて ok。
+
+### 検証で踏んだ誤り（検証側の不備）
+
+| 症状 | 原因 |
+|---|---|
+| `/me` が `{}` を返す（2件 FAIL） | 応答は `{actor:{email,…},permissions,projects}` で、`j.email` は存在しない（`ApiDesign.md` 3.1）。**`j.actor.email` が正しい** |
+| プロジェクト作成が 403（1件 FAIL） | CSRF ヘッダ名を `X-CSRF-Token` と決めつけていた。**正しくは `X-PB-CSRF`**（`client/src/api/client.ts:18`、`ApiDesign.md` 2.4） |
+| 「一覧に Project Backyard が出る」が実装前から PASS しうる（偽陽性） | `body.innerText` で見ており、**アプリ名そのもの**に当たっていた。`tr.row .key` を数える形に直した |
+
+### 後片付け
+
+- `make stg-stop` / `make stop-server` で検証用サーバを停止
+- スクラッチパッドへ置いた出力一式の写しを削除
+- `make clean-webui` を実行し、`git status` に汚れが無いことを確認
+- **stg は残した**（本手順の成果物そのもの）。DB コンテナ `pb-stg-db-1`（`restart: always`）と、
+  `deploy/stg/out/run.sh` を `nohup` で起動したサーバ（:8081）が動いている
+- **個人情報の排除を同ブランチで行った**（経緯は `decisions.md`「個人情報の排除」）。
+  `steps.md` の2行をプレースホルダ化して `--amend`、`PROGRESS.md` のローカルパスを一般化、
+  過去102コミットを `git filter-repo` で書き換え、stg の管理者アドレスを変更、
+  stg の `audit_log` 8行を削除した
