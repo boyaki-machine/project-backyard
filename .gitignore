@@ -30,6 +30,9 @@ server/internal/webui/dist/*
 # pb.env は端末ごとの設定で、テンプレートの pb.env.example のみコミットする。
 deploy/stg/out/
 deploy/stg/pb.env
+# 端末ごとの運用手順。**配置先の絶対パスなど個人の環境を書くため共有しない**
+# （Development.md 11章が共有される正本で、こちらはその端末向けの具体）
+deploy/stg/MANUAL.md
 
 # ─────────────────────────────────────────────
 # Go
