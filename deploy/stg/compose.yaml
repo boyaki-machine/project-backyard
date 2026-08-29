@@ -1,0 +1,38 @@
+# deploy/stg/compose.yaml
+#
+# 正本: Design.md 4.3（base への重ね合わせ）/ 4.4（stg の扱い）
+# ドッグフーディング用インスタンスの DB。base/compose.yaml に重ねて使う。
+#
+#   docker compose -f deploy/base/compose.yaml -f deploy/stg/compose.yaml up -d db
+#
+# **相対パスは1枚目（deploy/base/）からの相対で解決される。** 重ねたファイル自身の
+# 位置ではない（docker compose v5 で実測）。そのため secrets の file は
+# ../stg/secrets/... と書く。base が dev を ../dev/secrets/... と書いているのと同じ形。
+#
+# **app サービスは base から引き継ぐが、起動しない。** stg の PB 本体はコンテナに
+# しない（Design.md 4.4）。Makefile の stg-* は常に db を名指しする。
+
+# compose プロジェクト名。dev（project-backyard）と分けることで、コンテナ・
+# ネットワーク・ボリュームが名前空間ごと分かれる。**dev の docker compose down -v が
+# stg に届かないのはこれによる**（Design.md 4.4）。
+name: pb-stg
+
+services:
+  db:
+    # base の unless-stopped を上書きする。unless-stopped は手で止めた後は
+    # コンテナランタイムを起動し直しても戻らない。stg に求めるのは
+    # 「端末を再起動した後も、意識せずに上がっていること」（Design.md 4.4）。
+    restart: always
+    # **`!override` が要る。** compose の重ね合わせは、ports のようなリストを
+    # 「置き換え」ではなく「追記」で合成する。付けないと base の 5432 が残り、
+    # dev の DB と衝突して port is already allocated で起動できない（実測）。
+    ports: !override
+      - "127.0.0.1:5433:5432"        # dev の 5432 と分ける
+
+secrets:
+  db_password:
+    file: ../stg/secrets/db_password
+  app_db_password:
+    file: ../stg/secrets/app_db_password
+  app_database_url:
+    file: ../stg/secrets/app_database_url

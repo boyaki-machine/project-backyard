@@ -5,6 +5,12 @@
 
 COMPOSE := docker compose -f deploy/base/compose.yaml
 
+# ドッグフーディング用インスタンス（Design.md 4.4）。base に stg を重ねる。
+# **compose プロジェクト名が pb-stg に変わる**ので、コンテナ・ネットワーク・
+# ボリュームが dev（project-backyard）と名前空間ごと分かれる。
+# dev の make dev-reset（down -v）が stg に届かないのはこれによる。
+STG_COMPOSE := docker compose -f $(CURDIR)/deploy/base/compose.yaml -f $(CURDIR)/deploy/stg/compose.yaml
+
 # ── バージョン（Design.md 11.1）────────────────────────────────
 # VERSION ファイルが正。ビルド番号は develop へのマージ回数と一致し、
 # make version-check で git 側の実測と突き合わせる。
@@ -34,8 +40,17 @@ GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(DB_PASSWORD_FILE))@127.0.0.1
 APP_DB_PASSWORD_FILE := $(CURDIR)/deploy/dev/secrets/app_db_password
 PB_DATABASE_URL_APP = postgres://pb_app:$$(cat $(APP_DB_PASSWORD_FILE))@127.0.0.1:5432/pb?sslmode=disable&application_name=pb
 
+# stg の DB（:5433）。**接続文字列は deploy/stg/secrets/app_database_url に
+# 実体があり、そのまま渡せる**（dev と違い stg の PB はコンテナではなく
+# ネイティブに動くため、ファイルの中身がホストから見た 127.0.0.1:5433 を指す）。
+# goose は *_FILE を解さないので、migrate だけは owner の文字列を組み立てる。
+STG_DB_PASSWORD_FILE := $(CURDIR)/deploy/stg/secrets/db_password
+STG_APP_DATABASE_URL_FILE := $(CURDIR)/deploy/stg/secrets/app_database_url
+STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@127.0.0.1:5433/pb?sslmode=disable
+
 .PHONY: up down stop-server restart psql migrate sqlc run admin-create test test-db \
 	dev-reset dev-seed dev-info \
+	stg-init stg-up stg-down stg-psql stg-migrate stg-build stg-run stg-stop stg-admin-create \
 	dev-client gen-api build-client sync-webui build clean-webui \
 	version version-check bump-build bump-minor bump-major release-tag
 
@@ -144,6 +159,72 @@ dev-seed:
 # DBには接続しない。パスワードや URL を探す時間をなくすためのもの（DbDesign.md 7.6.6）。
 dev-info:
 	@cd server && go run ./cmd/pb dev info --file "$(DEV_SEED_FILE)"
+
+# ── ドッグフーディング用インスタンス（Design.md 4.4）──────────
+# PB 自身のプロジェクト管理に使う、壊れないインスタンス。
+# **dev（:8080 / :5432 / project-backyard）とは compose プロジェクトごと分かれる**
+# ので、make dev-reset の down -v は stg の pb-stg_pgdata に届かない。
+#
+# 画面は **http://localhost:8081** で開く。Cookie はポートを区別しないため、
+# 127.0.0.1 で開くと dev のログインセッションと上書きし合う（Design.md 4.4）。
+
+## stg：初回セットアップ（秘密の生成 → 設定 → DB起動 → migrate）
+# 生成・待ち合わせ・条件分岐を含む手続きなので deploy/stg/init.sh に置いている。
+# 何度実行しても壊れない（既にあるものは作り直さない）。
+stg-init:
+	@COMPOSE="$(STG_COMPOSE)" bash $(CURDIR)/deploy/stg/init.sh
+
+## stg：DBを起動する
+stg-up:
+	$(STG_COMPOSE) up -d db
+
+## stg：DBのコンテナを破棄する（pb-stg_pgdata ボリュームは残る）
+# **通常は実行しない。** restart: always による自動起動も、コンテナごと消えるため
+# 戻らなくなる（make stg-up で作り直す）。容量を空けたいときだけ使う。
+stg-down:
+	$(STG_COMPOSE) down
+
+## stg：DBコンソールを開く
+stg-psql:
+	$(STG_COMPOSE) exec db psql -U pb_owner -d pb
+
+## stg：マイグレーションを適用する
+# DDL を実行するため pb_owner で接続する（DbDesign.md 3.4）。
+# @ を付けて実行するのは、パスワードを含むコマンドをエコーさせないため。
+stg-migrate:
+	@cd $(CURDIR)/server/tools && GOOSE_DRIVER=postgres GOOSE_DBSTRING="$(STG_GOOSE_DBSTRING_OWNER)" \
+		go tool goose -dir ../migrations up
+
+## stg：動作に必要な一式を deploy/stg/out/ へ出力する
+# 出力は丸ごと別のパスへ置いても動く（Design.md 4.4）。
+# 別の場所へ出したいときは make stg-build OUT=/path/to/dir
+OUT ?= $(CURDIR)/deploy/stg/out
+stg-build:
+	bash $(CURDIR)/deploy/stg/build.sh "$(OUT)"
+
+## stg：出力した一式を前景で起動する（http://localhost:8081）
+# **背景で動かすなら出力先で直接叩く**（Ctrl+C で止める前提の入口はこちら）:
+#   nohup deploy/stg/out/run.sh > deploy/stg/out/pb.log 2>&1 &
+stg-run:
+	$(OUT)/run.sh
+
+## stg：:8081 を掴んでいるサーバを止める
+# stop-server（:8080）と同型。-sTCP:LISTEN を必ず付ける。付けないと
+# ESTABLISHED も拾い、8081 へ接続中のブラウザや curl の PID まで kill してしまう。
+stg-stop:
+	@pids=$$(lsof -ti tcp:8081 -sTCP:LISTEN 2>/dev/null); \
+	if [ -n "$$pids" ]; then \
+		echo "stg のサーバを停止する（PID: $${pids}）"; kill $$pids; sleep 1; \
+	else \
+		echo ":8081 を掴んでいるプロセスは無い"; \
+	fi
+
+## stg：初期管理者を対話的に作成する（DbDesign.md 7.5）
+# **デモデータ（make dev-seed）は入れない。** stg のデータは本番相当である
+# （Design.md 4.4）。接続文字列は *_FILE で渡し、argv にも環境変数の値にも残さない。
+stg-admin-create:
+	@cd $(CURDIR)/server && PB_DATABASE_URL_FILE="$(STG_APP_DATABASE_URL_FILE)" \
+		go run ./cmd/pb admin create
 
 # ── client とビルド（Design.md 3.4 / 4.2）──────────────────────
 

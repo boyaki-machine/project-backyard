@@ -25,6 +25,12 @@ client/dist/
 server/internal/webui/dist/*
 !server/internal/webui/dist/placeholder.html
 
+# ドッグフーディング用インスタンス（Design.md 4.4）
+# out/ は deploy/stg/build.sh の出力（バイナリ・設定・秘密の写しを含む）。
+# pb.env は端末ごとの設定で、テンプレートの pb.env.example のみコミットする。
+deploy/stg/out/
+deploy/stg/pb.env
+
 # ─────────────────────────────────────────────
 # Go
 # ─────────────────────────────────────────────

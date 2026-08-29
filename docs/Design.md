@@ -278,7 +278,13 @@ ProjectBackyard/
     │   ├── reset.sh               ← DBを作り直してデモを投入（DbDesign 7.6.6）
     │   ├── seed/dev-data.yaml     ← デモデータの定義（DbDesign 7.6.4。コミットする）
     │   └── secrets/               ← .gitignore（.example のみコミット）
-    ├── stg/                       ← ステージング（当面は空でよい。4.4）
+    ├── stg/                       ← ドッグフーディング用インスタンス（4.4）
+    │   ├── compose.yaml           ← base への上書き（db のみ。pb-stg / :5433）
+    │   ├── init.sh                ← 初回：秘密を乱数で生成し、DBを起動して migrate
+    │   ├── build.sh               ← 動作に必要な一式を out/ へ出力する
+    │   ├── pb.env.example         ← 出力に同梱する設定のテンプレート
+    │   ├── out/                   ← .gitignore（build.sh の出力）
+    │   └── secrets/               ← .gitignore（init.sh が生成。コミットしない）
     └── prod/                      ← 配布用
         ├── compose.yaml
         └── build-release.sh       ← クロスコンパイル／マルチアーキイメージ
@@ -337,16 +343,51 @@ docker compose -f deploy/base/compose.yaml -f deploy/dev/compose.yaml up -d
 | | `dev` | `stg` |
 |---|---|---|
 | 用途 | 開発中のコードを動かす | **PB 自身のプロジェクト管理**（チケット・憲章） |
-| PB 本体 | `make run`（`go run`） | **`make build` のネイティブバイナリ** |
+| PB 本体 | `make run`（`go run`） | **`deploy/stg/build.sh` が出力したネイティブバイナリ一式** |
 | 待受 | `127.0.0.1:8080` | `127.0.0.1:8081` |
-| DB | compose プロジェクト `pb`（`:5432`） | **compose プロジェクト `pb-stg`（`:5433`）** |
+| DB | compose プロジェクト `project-backyard`（`:5432`） | **compose プロジェクト `pb-stg`（`:5433`）** |
 | 作り直し | `make dev-reset` | **しない**（データが本番相当） |
 
 **分離は compose プロジェクトの単位で行う。** `deploy/dev/reset.sh` は `docker compose down -v` を実行して pgdata ボリュームごと破棄するため、**同じコンテナ内で DB 名を分けても `make dev-reset` 1回で消える**。compose プロジェクト名を分けると、コンテナ・ネットワーク・ボリュームが名前空間ごと分かれる。
 
 **PB 本体をコンテナにしない。** client を embed した単一バイナリを作れる構成（3.4）であり、`stg` に必要なのは「壊れず動き続けること」だけで、コンテナの利点（再現性・隔離）は開発端末上では効きが薄い。`deploy/Dockerfile` の作成は Phase 2 の前提から外れた。
 
-**`deploy/stg/` に置くもの**：`compose.yaml`（db のみ）、バイナリと設定を生成するスクリプト、`secrets/`（`.gitignore` 対象）。
+**データの置き場も分ける。** compose プロジェクトを分けた帰結として、pgdata は `dev` の `project-backyard_pgdata` とは**別の名前付きボリューム `pb-stg_pgdata`** になる。同じボリュームを共有しない以上、`dev` 側の `down -v` は `stg` に届かない。
+
+**stg の DB は `restart: always` にする。** base の既定は `unless-stopped` だが、それは**手で止めた後はコンテナランタイムを起動し直しても戻らない**。`stg` に求めるのは「端末を再起動した後も、意識せずに上がっていること」なので `always` を上書きする。**`docker compose down` はコンテナ自体を消すため、この設定でも戻らない**——`stg` を畳むのは容量を空けるときだけにする。
+
+**アプリは常駐を保証しない。** データが `pb-stg_pgdata` に残っている限り、PB のプロセスは落として上げ直せば同じ状態に戻る。したがって停止・再起動は利用者の手（ターミナルから起動し、必要なら `nohup`）に任せ、監視や自動再起動の仕組みを持たない。**「壊れないインスタンス」の保証は DB 側にある。**
+
+**ブラウザでは `http://localhost:8081` を開く。** Cookie はポートを区別しない（RFC 6265 8.5）。PB のセッション Cookie は `Domain` 属性を持たないホスト限定 Cookie なので、`dev`（`127.0.0.1:8080`）と同じホスト名で `stg` を開くと**双方のログインセッションが上書きし合う**。`localhost` と `127.0.0.1` は Cookie 上は別ホストであり、待受を `127.0.0.1:8081` に固定したままでも `localhost` から到達できる。
+
+**`deploy/stg/` に置くもの**
+
+| 置くもの | 内容 |
+|---|---|
+| `compose.yaml` | base への上書き。`name` / ポート / `restart` / secrets の置き場だけを差し替える |
+| `init.sh` | 初回だけ実行する。**秘密を乱数で生成し**、DB を起動して migrate まで進める |
+| `build.sh` | **動作に必要な一式を1つの出力ディレクトリへ吐く。** 出力を丸ごと任意のパスへ置けば、そこで動く |
+| `pb.env.example` | 出力に同梱する設定のテンプレート。実体の `pb.env` は `.gitignore` |
+| `secrets/` | `.gitignore`。**`.example` を置かず、`init.sh` が乱数で作る**——`dev` は `CHANGE_ME` の写しを手で書き換える形だが、`stg` は作り直さない器なので、初回に一度だけ強い値を機械に決めさせるほうがよい |
+| `out/` | `build.sh` の出力。`.gitignore` |
+
+**`build.sh` の出力は「配置すれば動く一式」にする。**
+
+```
+out/
+├── pb                      client を embed した単一バイナリ
+├── pb.env                  動作を規定する設定（pb.env.example の写し）
+├── run.sh                  pb.env を読んで pb serve を起動する。自身の位置へ cd してから動く
+├── secrets/
+│   └── app_database_url    pb_app での接続文字列（0600）
+└── README.txt              起動・停止・URL・ログの見方
+```
+
+**設定ファイル内のパスは出力ディレクトリからの相対で書く。** `pb.env` は接続文字列そのものではなく `PB_DATABASE_URL_FILE=./secrets/app_database_url` を持ち、**パスワードは設定ファイルにも環境変数の値にも現れない**。相対パスが解けるよう、`run.sh` は自身のあるディレクトリへ移ってから `pb` を起動する。
+
+**起動するのは `run.sh` であって `pb` ではない。** PB のバイナリは環境変数からしか設定を読まないため（3.1）、`pb` を直に叩いても `pb.env` は効かない。**バイナリ自身に設定ファイルを読ませるのは設定機構そのものの変更**であり、必要になった時点で別途扱う。
+
+**マイグレーションはリポジトリ側から適用する。** goose は `server/tools/` のツールモジュールにあり、出力一式には含まれない（`DbDesign.md` 5.1）。スキーマを進めるのは開発端末での作業であって、配置した一式の仕事ではない。
 
 ## 4.5 ビルドとクロスコンパイル
 
@@ -933,7 +974,7 @@ make version-check       # VERSION と git 実測が一致することを確認�
 | Phase | メジャー | 到達点 |
 |---|---|---|
 | 1 | **1** | **`v1.36.55`**——認証・認可、プロジェクト、チケットの基礎と、Phase 2 の設計 |
-| 2 | **2** | 未定 |
+| 2 | **2** | 未定（**`v2.1.56` から始まった**。手順20、2026-08-29） |
 
 **Phase 2 の最初のマージは `2.1.56` になる。** メジャーを上げるとマイナーは 0 に戻るが、
 **その作業自体が `feature/*` のマージなのでマイナーが 1 に上がる**——規約どおりの結果である。
@@ -947,6 +988,15 @@ make bump-minor          # 2.0.56  → 2.1.56
 
 **`bump-*` はどちらもビルド番号に `NEXT_BUILD`（現在のマージ回数 + 1）を書く**ため、
 続けて実行してもビルド番号は二重に進まない。`make version-check` はマージ後に通る。
+
+**ただし `make bump-major bump-minor` と1回の呼び出しにまとめてはならない。** `VERSION` は
+`VERSION := $(shell cat …)` で**パース時に一度だけ展開される**ので、まとめると `bump-minor` が
+`bump-major` の書いた値ではなく元の値を読み、`1.37.56` になる。**`make` を2回に分けて叩く**
+（手順20 で実測。`1.36.55` → `2.0.56` → `2.1.56`）。
+
+| Phase 1 の到達点 | Phase 2 の最初 |
+|---|---|
+| `v1.36.55`（`main` にタグ済み） | **`v2.1.56`**（手順20、2026-08-29。約束どおりに着地した） |
 
 **`fix/*` や `docs/*` で Phase 2 を始める場合は `make bump-major` と `make bump-build`** に
 なり、`2.0.56` から始まる。**マイナーは「そのメジャー内での機能実装数」であり**（上の表）、

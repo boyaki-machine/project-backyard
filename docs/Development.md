@@ -25,6 +25,7 @@
 8. 画面の動作確認
 9. つまずいたとき            ← 症状から引く
 10. 依存とツールのバージョン  ← 固定しているものと、その理由
+11. ドッグフーディング用インスタンス（stg）  ← PB 自身を PB で管理する器
 付録A. 環境の構築            ← 端末に一度だけ入れるもの
 ```
 
@@ -226,6 +227,7 @@ make dev-client   # :5173。ブラウザで開くのはこちら
 | **`make restart`** | **停止 → ビルド → DB起動 → サーバ起動をまとめて行う**（3.1）。画面を直したあとはこれ1つでよい |
 | `make stop-server` | :8080 を掴んでいるサーバを PID で止める（3.1「止め方」） |
 | `make down` | コンテナを停止する。**`pgdata` ボリュームは残る**ので、次の `make up` でデータは戻る（3.4） |
+| `make stg-*` | ドッグフーディング用インスタンス（11章）。`dev` とは別の器で、`make dev-reset` の影響を受けない |
 
 ## 3.4 作業を終える／再開する（端末のリソースを解放する）
 
@@ -254,6 +256,10 @@ make up       # 同じデータで戻る。migrate も dev-seed も要らない
 
 **データごと捨てたいときだけ `make dev-reset`** を使う（`down -v` を含む。4章）。
 `make down` と `make dev-reset` の違いはここだけである。
+
+**stg を立てているなら、そちらは止めない**（11章）。stg の DB は別の compose プロジェクト
+（`pb-stg`）で `restart: always` なので、`make down` でも `make dev-reset` でも落ちない。
+容量を空けるために畳むときだけ `make stg-down` を使う。
 
 ### どこまで解放されるか
 
@@ -684,6 +690,112 @@ dev に `vite` / `@vitejs/plugin-vue` / `typescript` / `vue-tsc` / `openapi-type
 `client/package-lock.json` をコミットしている。
 
 **依存を足す・置き換えるのはユーザーの承認が要る**（`CLAUDE.md` 絶対規則2）。
+
+---
+
+# 11. ドッグフーディング用インスタンス（stg）
+
+**設計は `Design.md` 4.4。** ここには手順だけを置く。
+
+**PB 自身のプロジェクト管理に使う、壊れないインスタンス**である。開発中に壊れる `dev` とは
+**compose プロジェクトごと分かれている**ので、`make dev-reset` を実行しても stg のデータは消えない。
+
+| | `dev` | `stg` |
+|---|---|---|
+| 画面 | `http://127.0.0.1:8080` | **`http://localhost:8081`** |
+| DB | `127.0.0.1:5432`（`project-backyard`） | `127.0.0.1:5433`（`pb-stg`） |
+| データの実体 | ボリューム `project-backyard_pgdata` | ボリューム `pb-stg_pgdata` |
+| PB 本体 | `make run`（`go run`） | `deploy/stg/build.sh` が出力した一式 |
+| 作り直し | `make dev-reset` | **しない** |
+
+**`http://localhost:8081` で開くこと。`127.0.0.1:8081` で開いてはならない。**
+Cookie はポートを区別しないため、`dev` と同じホスト名で開くと**双方のログインセッションが
+上書きし合う**（`Design.md` 4.4）。`localhost` と `127.0.0.1` は Cookie 上は別ホストである。
+
+## 11.1 初回セットアップ
+
+```
+make stg-init            # 秘密を乱数で生成 → 設定 → DB起動 → migrate
+make stg-admin-create    # 初期管理者を対話的に作る（DbDesign.md 7.5）
+make stg-build           # 動作に必要な一式を deploy/stg/out/ へ出力する
+make stg-run             # 前景で起動する
+```
+
+**`make stg-init` は何度実行しても壊れない。** 既にある秘密と `pb.env` は作り直さない
+（秘密を作り直すと DB のロールと食い違って接続できなくなるため）。
+
+**`dev` と違い、秘密を手で書き換える必要はない。** `init.sh` が `openssl rand` で生成する。
+`stg` は作り直さない器なので、初回に一度だけ強い値を機械に決めさせる。
+
+**デモデータは入れない**（`make dev-seed` に相当するものを用意していない）。stg のデータは
+本番相当である。**`pb dev seed` のガード（`DbDesign.md` 7.6.3）は接続先ホストしか見ないので
+stg を止めない**——`make` に入口を作らないことで防いでいる。
+
+## 11.2 日々の使い方
+
+```
+make stg-build           # コードを進めたら作り直す
+make stg-stop            # :8081 を掴んでいるサーバを止める
+make stg-run             # 起動し直す
+```
+
+**背景で動かすなら出力先で直接叩く。**
+
+```
+nohup deploy/stg/out/run.sh > deploy/stg/out/pb.log 2>&1 &
+```
+
+**アプリの常駐は保証していない。** データが `pb-stg_pgdata` に残っている限り、
+落として上げ直せば同じ状態に戻る（`Design.md` 4.4）。**「壊れない」の保証は DB 側にある。**
+
+**DB コンテナは `restart: always`** なので、コンテナランタイムを起動し直すと自動で上がる。
+**ただし `make stg-down` はコンテナ自体を消す**ので、その後は `make stg-up` が要る。
+通常は止めない。
+
+動いているかを見る:
+
+```
+curl -s http://localhost:8081/healthcheck        # バージョンが出る
+docker compose ls | grep pb-stg                  # DB が動いているか
+lsof -nP -iTCP:8081 -sTCP:LISTEN                 # サーバが動いているか
+```
+
+## 11.3 マイグレーションを足したとき
+
+**`stg` にも適用する。** これは手順20 以降ずっと続く運用である（`Design.md` 11章）。
+
+```
+make migrate       # dev
+make stg-migrate   # stg
+make stg-build     # バイナリを作り直す
+```
+
+**goose は出力一式に含まれない**（`server/tools/` のツールモジュールにある。`DbDesign.md` 5.1）。
+スキーマを進めるのはリポジトリ側の作業である。
+
+## 11.4 出力一式を別のパスへ置く
+
+`deploy/stg/build.sh` の出力は**丸ごとコピーすれば、そこで動く**。
+
+```
+make stg-build OUT=/path/to/dir
+```
+
+設定ファイル内のパスはすべて出力ディレクトリからの相対で書かれており、`run.sh` は
+自身のあるディレクトリへ移ってから `pb` を起動する。使い方は出力に同梱の `README.txt` にある。
+
+**起動するのは `run.sh` であって `pb` ではない。** PB は環境変数からしか設定を読まないため、
+`pb` を直に叩いても `pb.env` は効かない（`Design.md` 4.4）。
+
+## 11.5 つまずいたとき
+
+| 症状 | 原因と対処 |
+|---|---|
+| `make stg-build` が「先に make stg-init を実行すること」と言う | `pb.env` か `secrets/app_database_url` が無い。`make stg-init` を実行する |
+| stg にログインすると dev からログアウトされる | `127.0.0.1:8081` で開いている。**`localhost:8081`** で開き直す |
+| `bind: address already in use` | 前のサーバが残っている。`make stg-stop` |
+| 起動して即座に落ちる | `deploy/stg/secrets/app_database_url` のパスワードが DB のロールと食い違っている。**秘密を作り直したなら DB も作り直す**（initdb はボリュームが空のときしか走らない） |
+| `docker compose ls` に `pb-stg` が出ない | `make stg-up` |
 
 ---
 
