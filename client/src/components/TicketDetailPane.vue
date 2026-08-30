@@ -31,11 +31,15 @@
  * 空の枠は何もできない箱になる）、**参考リンクは常に出す**（`[+ 追加]` が
  * このセクションへの唯一の入口で、隠すと機能へ到達できない）。
  */
-import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, useTemplateRef, watch } from 'vue'
 
 import ConfirmDialog from './ConfirmDialog.vue'
 import EmptyState from './EmptyState.vue'
-import MarkdownEditor from './MarkdownEditor.vue'
+/**
+ * **型だけを取り込む。** `import type` は実行時の import を生まないので、
+ * 下の `defineAsyncComponent` によるチャンク分割を打ち消さない。
+ */
+import type MarkdownEditorComponent from './MarkdownEditor.vue'
 import NewTicketModal from './NewTicketModal.vue'
 import ReferenceModal from './ReferenceModal.vue'
 import StatusDropdown from './StatusDropdown.vue'
@@ -77,6 +81,16 @@ import { formatPlainDate } from '../lib/datetime'
 import { renderMarkdown } from '../lib/markdown'
 import { isWebUrl } from '../lib/url'
 import { useAuthStore } from '../stores/auth'
+
+/**
+ * **編集器は使うときに読み込む**（`GuiDesign.md` 5.10、`fix/split-markdown-chunk`）。
+ *
+ * CodeMirror が client の初回チャンクを 980KB にしている原因で、**説明欄は
+ * 詳細ペインを開いて編集を始めたときにしか要らない。** Docs（5.10）も同じ形で
+ * 読み込む——**片方が同期で取り込んでいる限りチャンクは分かれない**ので、
+ * 2つある利用者の両方をここで揃える。
+ */
+const MarkdownEditor = defineAsyncComponent(() => import('./MarkdownEditor.vue'))
 
 const props = defineProps<{
   projectKey: string
@@ -180,7 +194,7 @@ const draft = ref('')
 /** 失敗した欄と、その直下に出すサーバの `message`（5.5 / 6.4） */
 const fieldError = ref<{ field: string; message: string } | null>(null)
 
-const editorRef = useTemplateRef<InstanceType<typeof MarkdownEditor>>('editorRef')
+const editorRef = useTemplateRef<InstanceType<typeof MarkdownEditorComponent>>('editorRef')
 const inputRef = useTemplateRef<HTMLInputElement>('inputRef')
 
 /** いまの値を編集用の文字列にする。**数値の `null` は空文字**（未設定と 0 を分ける） */

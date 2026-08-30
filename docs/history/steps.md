@@ -3022,3 +3022,80 @@ project-backyard_pgdata  /var/lib/docker/volumes/project-backyard_pgdata/_data
 - 比較用の `git worktree` を削除（`git worktree list` はリポジトリ本体のみ）
 - `make build` は行っていないので `make clean-webui` は不要
 - **マイグレーションを足していないので `make stg-migrate` / `make stg-build` は不要**（`PROGRESS.md` の運用はマイグレーションに紐づく）。stg へ文書機能が載るのは 22b
+
+## 手順22b — Docs 画面の読み書き（2026-08-30、`feature/step-22-docs`）
+
+**完了条件**（`Design.md` 11章）：ブラウザで文書を作り、階層に置き、編集して履歴が残る。
+**22b が満たすのは「作り、階層に置き、編集して」まで。** 履歴を画面から読む経路は 22c。
+`Design.md` 11.2.1 に従い、22b の時点で検証・記録・コミットまで行って止まる。**ブランチは1本、マージは 22c の後に1回。**
+
+**分割の判断**：5.10 が求めるものを数えると木・本文・作成・編集・削除・移動改名・履歴・競合・
+D&D・空状態・権限出し分け・遅延読み込みの**12件**あり、利用者の承認を得て 22b / 22c に分けた。
+17b / 17c / 18b がチケット詳細を3回に分けた前例に合わせている。
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/src/api/docs.ts`（新規） | 目次・本文・作成・更新・削除の5本。`If-Match` は `updateDoc` が組み立てる。パスは**セグメントごとに符号化**する（全体を通すと `/` が `%2F` になり、サーバのワイルドカードが1階層としてしか読めない） |
+| `client/src/components/DocTree.vue`（新規） | 木の描画・折りたたみ・節点の `[⋯]`。**自分自身を再帰的に描く**（階層の深さに上限が無い）。**レイアウトも幅も `localStorage` も持たない**——メインメニューへ移す可能性に備えた |
+| `client/src/components/DocFormModal.vue`（新規） | 新規作成。`slug` が URL になることを入力中に見せる。`409 already_exists` を `slug` 欄の誤りとして出す。**`[ 別名で保存 ]` の受け皿でもある** |
+| `client/src/pages/DocsPage.vue`（新規） | 3ペインの組み立て、目次と本文の取得、編集と保存（`change_reason` / `If-Match` / 409 の3択）、削除、空状態、目次の概要、配下の文書 |
+
+### 直したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/src/components/SplitPane.vue` | `side` / `collapseTo` / `defaultSecondary` の3プロパティ（**すべて既定は従来の挙動**）。`side="start"` は DOM の順序ごと入れ替える。ポインタとキーの向きも `side` に追随させた |
+| `client/src/components/MarkdownEditor.vue` | `preview` プロパティ（既定 `true`）。`false` のとき描画そのものを行わない |
+| `client/src/components/TicketDetailPane.vue` | `MarkdownEditor` を `defineAsyncComponent` へ。型だけ `import type` で取り込む |
+| `client/src/components/TicketComments.vue` | 同上。**3つ目の利用者で、ビルドの `INEFFECTIVE_DYNAMIC_IMPORT` が教えてくれた** |
+| `client/src/router/routes.ts` | `/p/:key/docs` と `/p/:key/docs/:path(.*)` の2本（同じコンポーネント） |
+| `client/src/components/SideMenu.vue` | Docs（`doc.view`）。プロジェクト設定の上 |
+| `docs/GuiDesign.md` | 3.1 の遷移図・3.2 の2行・4.1 の図から Phase 表記を外す。5.10 を3ペインへ改訂（ワイヤー2枚、幅が足りないとき、配下の文書、木の操作の3分割、`[ 別名で保存 ]`、文書ツリーの置き場）。6.1 に部品3件、6.3 に文書削除、7.1 に `localStorage` 3行、7.4 に多ルート部品の class |
+| `docs/Development.md` | 7.1 に「遅延読み込みが効いているかはビルド出力で見る」 |
+
+**`openapi.yaml` と server は1行も変えていない**（API を足していない）。
+
+### 検証
+
+| # | 見たこと | 結果 |
+|---|---|---|
+| 1 | 単体（`make test`） | 949件 PASS（Go に変更が無いため全キャッシュ） |
+| 2 | 結合（`make test-db`） | **158件 PASS**（22a と同数。回帰なし） |
+| 3 | 型（`npm --prefix client run typecheck`） | PASS |
+| 4 | **初回チャンク**（`make build`） | **999.74KB → 491.56KB**（gzip 347.71 → 168.96）。`MarkdownEditor-*.js` 507.70KB が別チャンクへ出た。**`fix/split-markdown-chunk` を消化** |
+| 5〜36 | ブラウザ（1440px / 900px、`admin@` と `member@`） | **36件すべて PASS**（下表） |
+
+**ブラウザ検証の内訳**（`demo` に文書0件の状態から始め、終了時に0件へ戻した）
+
+| 群 | 見たこと |
+|---|---|
+| 1 空状態 | 一言が出る／`[+ 文書を追加]` が出る／メニューに Docs が出る |
+| 2〜4 作る・階層に置く | 作成後はその文書の URL へ移る（`/p/demo/docs/vision`）／親を選ぶと配下に入る（`/p/demo/docs/rules/naming`）／**木の行数が目次 API の件数と一致**（3対3）／トップレベル2件・`rules` の子1件 |
+| 5 配下の文書 | `rules` にリンクが出て `naming` へ辿れる／子が無い `vision` には出さない |
+| 6 編集・保存 | **1440px で3ペインが並ぶ**（木239 / 編集479 / 可視化480）／可視化ペインが並ぶ間は内蔵プレビューを出さない／保存の結果を操作した場所に出す／本文が描かれる／**履歴が2件**（作成時＋編集）／`change_reason` がリビジョンに入る／`version` が +1 |
+| 7 競合 | 外部から先に `PATCH`（200）→ 画面の保存が **409**／**編集内容が入力欄に残る**／`[最新を読み込む]` と `[別名で保存]` が出る |
+| 8 別名で保存 | 作成モーダルが**`slug` と `title` 空**で開く |
+| 9・13 削除 | 確認に**「配下の 1 件」**が出る／実行すると**部分木ごと消える**（`rules` と `naming`）／消えた文書を開いたままにしない（一覧へ戻る）／木の `[⋯]` からも消せる |
+| 10 幅 | 900px で**可視化ペインを畳み内蔵プレビューへ落ちる**（木239 / 編集604 / 可視化0 / 内蔵1）／どちらの幅でも横スクロールしない |
+| 11 コンソール | `console.error` 0件（両アカウント） |
+| 12 **権限の負の側** | `member@` は本文を読める／**`[編集]` 0件・`[+ 文書を追加]` 0件・`[⋯]` 0件**／メニューの Docs は出る（`doc.view` はある） |
+
+**スクリーンショットを5枚撮って自分で見た**（1440 閲覧・1440 編集・1440 目次の概要・1440 `member@`・900 編集・1440 空状態）。
+**実測32件が全 PASS のまま、目で見て2件の崩れが出た**（下記「拾った欠陥」）。
+
+### 拾った欠陥
+
+| 層 | 内容 |
+|---|---|
+| 実装（スクリーンショットで発覚。実測は全 PASS） | ①**`[⋯]` が木の全行に出たまま**だった。`UserActionsMenu` は `<button>` と `<Teleport>` の**多ルート**なので Vue が `class` を渡さず、`visibility: hidden` が当たっていなかった。**Vue の警告は `console.warn` なので `console.error` の監視では拾えない**。`<span>` で包んで解決（`GuiDesign.md` 7.4 へ昇格）②**編集ペインの下に広大な余白**。`MarkdownEditor` の `max-height: 420px` がペイン専用の置き場に合っていなかった。`:deep()` で外した |
+| 実装（ビルドが教えてくれた） | **`MarkdownEditor` の利用者を2つと数えて実際は3つだった**（`TicketComments.vue` を漏らした）。1つでも同期取り込みが残るとチャンクは分かれない。`INEFFECTIVE_DYNAMIC_IMPORT` が利用者を名指しする（`Development.md` 7.1 へ） |
+| 検証側（2件） | ①`nav[aria-label=メインメニュー]` と**引用符なしで非 ASCII の属性値**を書き、常に0件になっていた ②`a.textContent.trim() === 'Docs'` で数えたが、**アイコンの `▣` が混ざる**ので常に偽だった。**どちらも「メニューに Docs が無い」という偽の FAIL を出した**——実装は最初から正しかった |
+
+### あとしまつ
+
+- **`demo` の文書を0件へ戻した**（検証で作った `vision` / `rules` / `rules/naming` を画面の削除から消し、API で0件を確認）。**削除の通し確認をそのまま片付けに使った**
+- `make clean-webui` を実行し、`git status` に生成物が無いことを確認
+- サーバを停止（`make stop-server`）、Cookie jar とヘッドレス Chrome のプロファイルを削除
+- **マイグレーションを足していないので `make stg-migrate` は不要。`make stg-build` は 22c の完了後にまとめて行う**（画面が入るのは 22c のマージ時点）

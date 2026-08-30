@@ -418,6 +418,20 @@ make clean-webui  # ← コミット前に必ず実行する
 **client を未ビルドのまま `make run` すると、画面は `503` でプレースホルダを返す**
 （「画面がまだビルドされていません」）。`/healthcheck` と `/api` は影響を受けない。
 
+### 遅延読み込みが効いているかはビルド出力で見る
+
+**`defineAsyncComponent` は、その部品を*すべての*利用者が動的に取り込んで初めて効く。**
+1つでも `import X from './X.vue'` が残っていると、チャンクは分かれない。
+
+```
+[INEFFECTIVE_DYNAMIC_IMPORT] src/components/MarkdownEditor.vue is dynamically imported by
+… but also statically imported by src/components/TicketComments.vue…
+```
+
+**この警告が利用者を名指しする**ので、`grep` で数えるより速い。手順22b では
+`MarkdownEditor` の利用者を2つと数えて実際は3つあり、**警告で3つ目に気づいた**。
+効いていれば出力にチャンクが増える（`dist/assets/MarkdownEditor-*.js`）。
+
 ## 7.2 バージョン
 
 正本は `VERSION`。ビルド番号は **`develop` へのマージ回数**と一致する（`Design.md` 11.1）。

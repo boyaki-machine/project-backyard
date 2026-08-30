@@ -2,6 +2,7 @@ import type { RouteRecordRaw } from 'vue-router'
 
 import BacklogPage from '../pages/BacklogPage.vue'
 import DashboardPage from '../pages/DashboardPage.vue'
+import DocsPage from '../pages/DocsPage.vue'
 import ForbiddenPage from '../pages/ForbiddenPage.vue'
 import LoginPage from '../pages/LoginPage.vue'
 import NotFoundPage from '../pages/NotFoundPage.vue'
@@ -127,6 +128,30 @@ export const routes: RouteRecordRaw[] = [
     path: '/p/:key/tickets/:seq',
     component: BacklogPage,
     meta: { permission: 'ticket.view' },
+  },
+
+  // 実画面（GuiDesign.md 5.10）。手順22b で新設した。
+  //
+  // **2本のルートが同じコンポーネントを指す。** 文書を選んでいない状態
+  // （`/p/:key/docs`）と本文（`/p/:key/docs/rules/naming`）は同じ画面で、
+  // **URL は本文側が持つ**（5.10）——共有された URL を開くと、その文書が
+  // 開いた状態で木も展開される。同じコンポーネントなので、文書を切り替えても
+  // 再マウントされず、**木の取得結果と折りたたみがそのまま残る。**
+  //
+  // **`:path(.*)` にしてある。** 3.2 の表記は `:path*` だが、あれは「パス」の
+  // 説明であって vue-router の文法ではない。`:path*` は repeatable でパラメータが
+  // 配列になり、`rules/naming` を毎回つなぎ直すことになる。
+  {
+    path: '/p/:key/docs',
+    component: DocsPage,
+    props: (to) => ({ projectKey: String(to.params.key) }),
+    meta: { permission: 'doc.view' },
+  },
+  {
+    path: '/p/:key/docs/:path(.*)',
+    component: DocsPage,
+    props: (to) => ({ projectKey: String(to.params.key) }),
+    meta: { permission: 'doc.view' },
   },
 
   // 実画面（GuiDesign.md 5.9）。手順11b でプレースホルダから差し替えた

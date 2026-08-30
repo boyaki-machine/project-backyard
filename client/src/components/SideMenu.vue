@@ -18,8 +18,13 @@ import { useUiStore } from '../stores/ui'
  * 表示しない**（押せないメニューによる混乱を避ける）。
  *
  * 「P2」「P3」の項目（カンバン・ガント・チケット検索・進捗分析・承認キュー・
- * システム設定）は Phase 1 では表示しない（4.1）。**チケットを見る視点は
- * 5つあるが（4.1.1）、Phase 1 で実装するのはバックログだけ**である。
+ * システム設定）はまだ表示しない（4.1）。**チケットを見る視点は5つあるが
+ * （4.1.1）、実装済みなのはバックログだけ**である。
+ *
+ * **Docs は手順22b で出した**（4.3 の表。必要権限は `doc.view`）。**`doc.view` は
+ * `project_viewer` まで全ロールが持つ**ので、プロジェクトに到達できる人には
+ * 常に見える——出し分けが効くのは項目ではなく画面の中のボタンである
+ * （`DbDesign.md` 8.1.4、`GuiDesign.md` 5.10）。
  *
  * チケットの未完了件数バッジ（4.1 の `[12]`）は出していない。供給は
  * `GET /tickets?assignee=me&open=true&per_page=1` で可能だが、メニューは
@@ -76,6 +81,17 @@ const showAdmin = computed(() => auth.can('user.manage') || auth.can('auditlog.v
         >
           <span class="icon" aria-hidden="true">≡</span>
           <span v-if="!ui.menuCollapsed" class="label">バックログ</span>
+        </RouterLink>
+        <!-- Docs（4.3 の表。手順22b）。**プロジェクト設定より上に置く**——
+             4.1 の並びが「視点 → Docs → 設定」で、設定は最後に来る -->
+        <RouterLink
+          v-if="auth.canInProject(projectKey, 'doc.view')"
+          class="item"
+          :to="`/p/${projectKey}/docs`"
+          title="Docs"
+        >
+          <span class="icon" aria-hidden="true">▣</span>
+          <span v-if="!ui.menuCollapsed" class="label">Docs</span>
         </RouterLink>
         <RouterLink
           v-if="auth.canInProject(projectKey, 'project.edit')"

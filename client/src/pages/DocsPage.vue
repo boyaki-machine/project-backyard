@@ -1,0 +1,891 @@
+<script setup lang="ts">
+/**
+ * Docs（`GuiDesign.md` 5.10）。必要権限は `doc.view`、編集は `doc.edit`。手順22b。
+ *
+ * プロジェクト文書（憲章）を読み書きする。**規約・価値観・判断の基準を1か所に置き、
+ * 全参加者のエージェントが同じものを読む**ための画面である（`Requirements.md` 10.6.2）。
+ *
+ * **3ペインである**（利用者の判断、2026-08-30）——文書ツリー／編集ペイン／可視化ペイン。
+ * **編集ペインは編集モードのときだけ現れ**、書きながら横で描画を確かめられる。
+ * 並ばない幅では可視化ペインを畳み、`MarkdownEditor` の既定（ソースの下にプレビュー）
+ * へ落とす（5.10「幅が足りないとき」）。
+ *
+ * **`SplitPane` を2枚入れ子にして作る。** 外側は木を固定して本文が余りを取り、
+ * 内側は編集器を固定して可視化が余りを取る。**新しい3分割部品を作らない**——
+ * 同型の部品が並ぶと片方に入れた直しがもう片方に入らない。
+ *
+ * **`MarkdownEditor` は遅延読み込みにする**（5.10）。client の初回チャンクが
+ * 980KB になっている原因が CodeMirror であり、**閲覧だけの利用者に編集器を配らない。**
+ *
+ * **`doc.edit` を持たない人には `[ 編集 ]` `[ + 文書を追加 ]` `[⋯]` を出さない**
+ * （設計原則4）。`operator` と `project_member` がこれに当たり（`DbDesign.md` 8.1.4）、
+ * **Phase 1 で検証できなかった「権限による出し分けの負の側」をこの画面で初めて
+ * 実地に確かめられる**（`Design.md` 付録A）。
+ *
+ * **22b の範囲外**：木のドラッグ&ドロップ、`[⋯]` の「移動・改名」「履歴」は手順22c。
+ */
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+
+import Avatar from '../components/Avatar.vue'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
+import DocFormModal from '../components/DocFormModal.vue'
+import DocTree from '../components/DocTree.vue'
+import EmptyState from '../components/EmptyState.vue'
+import PageHeader from '../components/PageHeader.vue'
+import SplitPane from '../components/SplitPane.vue'
+import UserActionsMenu, { type ActionItem } from '../components/UserActionsMenu.vue'
+import { ApiError } from '../api/client'
+import * as docsApi from '../api/docs'
+import type { Doc, DocTreeItem } from '../api/docs'
+import { formatDateTime } from '../lib/datetime'
+import { renderMarkdown } from '../lib/markdown'
+import { useAuthStore } from '../stores/auth'
+
+/**
+ * **編集器は使うときに読み込む**（5.10）。`import()` にすると Vite が
+ * CodeMirror を別チャンクへ切り出すので、閲覧だけの利用者は取得しない。
+ */
+const MarkdownEditor = defineAsyncComponent(() => import('../components/MarkdownEditor.vue'))
+
+const props = defineProps<{ projectKey: string }>()
+
+const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
+
+/** 木の開閉を覚える置き場（7.1）。**畳んだものだけを持つので既定は全展開** */
+const COLLAPSED_KEY = 'pb.docs_tree_collapsed'
+
+const canEdit = computed(() => auth.canInProject(props.projectKey, 'doc.edit'))
+
+// ── 目次（10.2）────────────────────────────────────────────
+
+const tree = ref<DocTreeItem[]>([])
+const treeLoading = ref(true)
+const treeError = ref<string | null>(null)
+
+async function loadTree(): Promise<void> {
+  treeLoading.value = true
+  treeError.value = null
+  try {
+    // **`?outline=1` を付けない**（10.2）。見出し一覧はエージェントが「どの章を
+    // 読むか」を決めるための情報で、この画面は使わない
+    tree.value = (await docsApi.listDocs(props.projectKey)).items
+  } catch (e) {
+    treeError.value = e instanceof ApiError ? e.message : '文書の一覧を取得できませんでした'
+  } finally {
+    treeLoading.value = false
+  }
+}
+
+/** 木を平らにして `path` で引けるようにする。祖先の展開と子の数え上げに要る */
+interface FlatDoc {
+  item: DocTreeItem
+  depth: number
+}
+
+const flatDocs = computed<FlatDoc[]>(() => {
+  const out: FlatDoc[] = []
+  const walk = (items: DocTreeItem[], depth: number): void => {
+    for (const item of items) {
+      out.push({ item, depth })
+      walk(item.children, depth + 1)
+    }
+  }
+  walk(tree.value, 0)
+  return out
+})
+
+const byPath = computed(() => new Map(flatDocs.value.map((f) => [f.item.path, f.item])))
+
+/** その文書と子孫の合計件数 - 1（＝子孫の数）。削除の確認に出す（6.3） */
+function descendantCount(item: DocTreeItem): number {
+  let n = 0
+  const walk = (items: DocTreeItem[]): void => {
+    for (const child of items) {
+      n += 1
+      walk(child.children)
+    }
+  }
+  walk(item.children)
+  return n
+}
+
+// ── 木の開閉（7.1）──────────────────────────────────────────
+
+const collapsed = ref<Set<string>>(new Set())
+
+function readCollapsed(): void {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY)
+    const all = raw === null ? {} : (JSON.parse(raw) as Record<string, string[]>)
+    collapsed.value = new Set(all[props.projectKey] ?? [])
+  } catch {
+    // 読めなくても全展開で開ける。開閉は失われてよい情報である
+    collapsed.value = new Set()
+  }
+}
+
+function writeCollapsed(): void {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY)
+    const all = raw === null ? {} : (JSON.parse(raw) as Record<string, string[]>)
+    all[props.projectKey] = [...collapsed.value]
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(all))
+  } catch {
+    // プライベートモード等。保存できなくても、この場の開閉は効いている
+  }
+}
+
+function toggleCollapsed(path: string): void {
+  if (collapsed.value.has(path)) collapsed.value.delete(path)
+  else collapsed.value.add(path)
+  // Set の中身を変えても参照は同じなので、明示的に作り直して追随させる
+  collapsed.value = new Set(collapsed.value)
+  writeCollapsed()
+}
+
+/**
+ * 開いた文書の祖先を必ず展開する（5.10）。
+ *
+ * **共有された URL を開くと木も展開される**——畳んだままだと、選択中の行が
+ * 木に見えない状態になる。
+ */
+function expandAncestors(path: string): void {
+  const parts = path.split('/')
+  let changed = false
+  for (let i = 1; i < parts.length; i += 1) {
+    const ancestor = parts.slice(0, i).join('/')
+    if (collapsed.value.delete(ancestor)) changed = true
+  }
+  if (!changed) return
+  collapsed.value = new Set(collapsed.value)
+  writeCollapsed()
+}
+
+// ── 本文（10.3）────────────────────────────────────────────
+
+/** URL が持つ現在のパス（5.10「URL は本文側が持つ」）。`null` は未選択 */
+const currentPath = computed(() => {
+  const p = route.params.path
+  const value = Array.isArray(p) ? p.join('/') : p
+  return typeof value === 'string' && value !== '' ? value : null
+})
+
+const doc = ref<Doc | null>(null)
+const docLoading = ref(false)
+const docError = ref<string | null>(null)
+
+async function loadDoc(path: string | null): Promise<void> {
+  cancelEdit()
+  if (path === null) {
+    doc.value = null
+    docError.value = null
+    return
+  }
+  docLoading.value = true
+  docError.value = null
+  try {
+    doc.value = await docsApi.getDoc(props.projectKey, path)
+    expandAncestors(path)
+  } catch (e) {
+    doc.value = null
+    docError.value = e instanceof ApiError ? e.message : '文書を取得できませんでした'
+  } finally {
+    docLoading.value = false
+  }
+}
+
+const bodyHtml = computed(() => (doc.value === null ? '' : renderMarkdown(doc.value.body_md)))
+
+/** いま開いている文書の子。可視化ペインの末尾に「配下の文書」として出す（5.10） */
+const children = computed<DocTreeItem[]>(() => {
+  if (doc.value === null) return []
+  return byPath.value.get(doc.value.path)?.children ?? []
+})
+
+// ── 編集（10.4）────────────────────────────────────────────
+
+const editing = ref(false)
+const draft = ref('')
+const changeReason = ref('')
+const saving = ref(false)
+const saveError = ref<ApiError | null>(null)
+
+/**
+ * 保存した版。**結果表示を入力の監視で消さない**ため、
+ * 「サーバの値と一致している間だけ出す」と宣言的に書く（6.4）。
+ */
+const savedVersion = ref<number | null>(null)
+
+const conflict = computed(() => saveError.value?.status === 409)
+
+function startEdit(): void {
+  if (doc.value === null || !canEdit.value) return
+  draft.value = doc.value.body_md
+  changeReason.value = ''
+  saveError.value = null
+  savedVersion.value = null
+  editing.value = true
+}
+
+function cancelEdit(): void {
+  editing.value = false
+  draft.value = ''
+  changeReason.value = ''
+  saveError.value = null
+}
+
+async function save(): Promise<void> {
+  if (doc.value === null || saving.value) return
+  saving.value = true
+  saveError.value = null
+  try {
+    // **`If-Match` には直前の応答が返した `version` を使う**（2.8 / 10.4）。
+    // **`change_reason` は空なら送らない**——10.4 は「リビジョンを作らない更新で
+    // 送っても捨てる」と定めるが、空文字を送る意味は無い
+    const reason = changeReason.value.trim()
+    const next = await docsApi.updateDoc(props.projectKey, doc.value.path, doc.value.version, {
+      body_md: draft.value,
+      ...(reason === '' ? {} : { change_reason: reason }),
+    })
+    doc.value = next
+    savedVersion.value = next.version
+    editing.value = false
+    changeReason.value = ''
+    // 目次の `updated_at` と `version` も動いている（10.2）ので取り直す
+    await loadTree()
+  } catch (e) {
+    // **編集内容を捨てない**（5.10）。409 / 422 のいずれでも `draft` はそのまま
+    saveError.value =
+      e instanceof ApiError
+        ? e
+        : new ApiError({ status: 0, code: 'internal_error', message: '保存できませんでした' })
+  } finally {
+    saving.value = false
+  }
+}
+
+/** 409 のあと、サーバの最新を取り込む。**自分の編集は破棄される**（5.10） */
+async function reloadLatest(): Promise<void> {
+  if (doc.value === null) return
+  const path = doc.value.path
+  docLoading.value = true
+  try {
+    doc.value = await docsApi.getDoc(props.projectKey, path)
+    draft.value = doc.value.body_md
+    saveError.value = null
+  } catch (e) {
+    docError.value = e instanceof ApiError ? e.message : '文書を取得できませんでした'
+  } finally {
+    docLoading.value = false
+  }
+}
+
+// ── 追加・削除（10.4）──────────────────────────────────────
+
+const showCreate = ref(false)
+/** 作成モーダルの初期値。`[ 別名で保存 ]` は編集中の本文をここへ載せる（5.10） */
+const createParent = ref<string | null>(null)
+const createBody = ref('')
+
+function openCreate(parentPath: string | null = null, body = ''): void {
+  createParent.value = parentPath
+  createBody.value = body
+  showCreate.value = true
+}
+
+/** `[ 別名で保存 ]`（5.10）。**`slug` と `title` は空で開く**——名前は人が決める */
+function saveAsCopy(): void {
+  if (doc.value === null) return
+  openCreate(doc.value.parent_path, draft.value)
+}
+
+async function onCreated(created: Doc): Promise<void> {
+  showCreate.value = false
+  cancelEdit()
+  await loadTree()
+  await router.push(`/p/${props.projectKey}/docs/${created.path}`)
+}
+
+const deleteTarget = ref<DocTreeItem | null>(null)
+const deleting = ref(false)
+
+const deleteMessage = computed(() => {
+  const target = deleteTarget.value
+  if (target === null) return ''
+  const n = descendantCount(target)
+  const head = `「${target.title}」を削除します。`
+  const scope =
+    n === 0
+      ? 'この文書と、その変更履歴が消えます。'
+      : `この文書と配下の ${n} 件、およびそれぞれの変更履歴が消えます。`
+  return `${head}\n${scope}\n取り消せません。`
+})
+
+async function confirmDelete(): Promise<void> {
+  const target = deleteTarget.value
+  if (target === null || deleting.value) return
+  deleting.value = true
+  try {
+    await docsApi.deleteDoc(props.projectKey, target.path)
+    const removedCurrent =
+      currentPath.value !== null &&
+      (currentPath.value === target.path || currentPath.value.startsWith(`${target.path}/`))
+    deleteTarget.value = null
+    await loadTree()
+    // **消えた文書を開いたままにしない。** 部分木ごと消えるので、配下を開いて
+    // いた場合も一覧へ戻す（10.4）
+    if (removedCurrent) await router.push(`/p/${props.projectKey}/docs`)
+  } catch (e) {
+    docError.value = e instanceof ApiError ? e.message : '文書を削除できませんでした'
+    deleteTarget.value = null
+  } finally {
+    deleting.value = false
+  }
+}
+
+// ── `[⋯]` の項目 ───────────────────────────────────────────
+//
+// **「移動・改名」と「履歴」は手順22c で足す。** 22b では押せない項目を出さない
+// ——`UserActionsMenu` は `disabled` と理由を出せるが、まだ設計上の存在でしか
+// ないものを画面に見せても、次の一手が読めない。
+
+const docActions: ActionItem[] = [{ key: 'delete', label: '削除', danger: true }]
+
+function onTreeAction(payload: { key: string; item: DocTreeItem }): void {
+  if (payload.key === 'delete') deleteTarget.value = payload.item
+}
+
+function onHeaderAction(key: string): void {
+  if (doc.value === null) return
+  const item = byPath.value.get(doc.value.path)
+  if (key === 'delete' && item !== undefined) deleteTarget.value = item
+}
+
+// ── 3ペインの幅（5.10「幅が足りないとき」）──────────────────
+
+const bodyPane = ref<InstanceType<typeof SplitPane> | null>(null)
+
+/**
+ * 可視化ペインが独立して並んでいるか。
+ *
+ * **並んでいないときは `MarkdownEditor` の内蔵プレビューへ戻す**——あちらが
+ * 唯一の描画になるため。`SplitPane` が `sideBySide` を公開している（2.4 の
+ * 「並ぶかどうかはコンテンツペインの幅で決める」を持っているのはあの部品である）。
+ * **マウント前は `true` として扱う**——初回描画で内蔵プレビューを出してから
+ * 消すより、出さないでおいて必要なら出すほうがちらつかない。
+ */
+const previewPaneShown = computed(() => bodyPane.value?.sideBySide ?? true)
+
+// ── 読み込み ───────────────────────────────────────────────
+
+watch(
+  () => props.projectKey,
+  () => {
+    readCollapsed()
+    void loadTree()
+  },
+  { immediate: true },
+)
+
+watch(currentPath, (path) => void loadDoc(path), { immediate: true })
+</script>
+
+<template>
+  <!-- 外側：文書ツリー（固定・左）と本文（余りを取る）。**残すのは本文のほうである**
+       ——並ばない幅で木だけが残ると、文書を1件も読めなくなる（5.10） -->
+  <SplitPane
+    class="page"
+    :open="true"
+    side="start"
+    collapse-to="primary"
+    storage-key="pb.docs_tree_w"
+    :min-primary="360"
+    :min-secondary="200"
+    :default-secondary="240"
+  >
+    <template #secondary>
+      <nav class="docs-tree-pane" aria-label="文書ツリー">
+        <div class="docs-tree-scroll">
+          <p v-if="treeLoading" class="docs-tree-note">読み込み中…</p>
+          <p v-else-if="treeError" class="docs-tree-note docs-tree-error">✕ {{ treeError }}</p>
+          <DocTree
+            v-else-if="tree.length > 0"
+            :items="tree"
+            :selected-path="currentPath"
+            :collapsed="collapsed"
+            :project-key="projectKey"
+            :can-edit="canEdit"
+            :actions="docActions"
+            @toggle="toggleCollapsed"
+            @action="onTreeAction"
+          />
+        </div>
+
+        <!-- `doc.edit` を持たない人には出さない（設計原則4）。ワイヤーどおり木の下 -->
+        <div v-if="canEdit" class="docs-tree-foot">
+          <button type="button" class="secondary docs-add" @click="openCreate(null)">
+            + 文書を追加
+          </button>
+        </div>
+      </nav>
+    </template>
+
+    <template #primary>
+      <!-- **タイトル行は編集ペインと可視化ペインにまたがる**（5.10）。
+           2つの最上部に別々に出すと同じ文字が2回並ぶ -->
+      <PageHeader :title="doc?.title ?? 'Docs'">
+        <template #actions>
+          <template v-if="doc !== null && canEdit">
+            <template v-if="editing">
+              <button type="button" class="secondary" :disabled="saving" @click="cancelEdit">
+                取消
+              </button>
+              <button type="button" class="primary" :disabled="saving" @click="save">
+                {{ saving ? '保存中…' : '保存' }}
+              </button>
+            </template>
+            <template v-else>
+              <button type="button" class="secondary" @click="startEdit">編集</button>
+              <UserActionsMenu
+                :items="docActions"
+                :label="`${doc.title} の操作メニュー`"
+                @select="onHeaderAction"
+              />
+            </template>
+          </template>
+        </template>
+      </PageHeader>
+
+      <!-- 内側：編集ペイン（固定・左）と可視化ペイン（余りを取る）。
+           **編集していないときは可視化だけになる**（`open` が false） -->
+      <SplitPane
+        ref="bodyPane"
+        class="docs-body"
+        :open="editing"
+        side="start"
+        storage-key="pb.docs_editor_w"
+        :min-primary="360"
+        :min-secondary="360"
+        :default-secondary="480"
+      >
+        <template #secondary>
+          <section class="docs-editor" aria-label="編集">
+            <div class="docs-editor-scroll">
+              <!-- 競合（5.10）。**入力欄の内容は保持したまま**その場に出す（6.4） -->
+              <div v-if="conflict" class="docs-conflict">
+                <p class="docs-conflict-message">⚠ {{ saveError?.message }}</p>
+                <div class="docs-conflict-actions">
+                  <button type="button" class="secondary" @click="reloadLatest">
+                    最新を読み込む
+                  </button>
+                  <button type="button" class="secondary" @click="saveAsCopy">
+                    別名で保存
+                  </button>
+                </div>
+              </div>
+              <p v-else-if="saveError" class="docs-save-error">✕ {{ saveError.message }}</p>
+
+              <!-- **可視化ペインが並んでいるときは内蔵プレビューを出さない**（5.10） -->
+              <MarkdownEditor
+                v-model="draft"
+                :preview="!previewPaneShown"
+                @cancel="cancelEdit"
+              />
+            </div>
+
+            <!-- 更新理由は編集ペインの最下部（5.10）。本文とは線で分ける -->
+            <label class="docs-reason">
+              <span class="docs-reason-label">更新理由（任意）</span>
+              <input
+                v-model="changeReason"
+                type="text"
+                maxlength="200"
+                placeholder="ブランチ命名にチケット番号を入れる"
+              />
+            </label>
+          </section>
+        </template>
+
+        <template #primary>
+          <section class="docs-preview" aria-label="本文">
+            <p v-if="docLoading" class="docs-note">読み込み中…</p>
+            <p v-else-if="docError" class="docs-note docs-tree-error">✕ {{ docError }}</p>
+
+            <!-- 文書が1件も無いとき（5.10「空状態」）。**`doc.edit` を持たない人には
+                 一言だけを出し、ボタンを置かない**（設計原則4） -->
+            <EmptyState
+              v-else-if="tree.length === 0 && !treeLoading"
+              title="文書がありません"
+              :description="
+                canEdit
+                  ? '最初の文書を作成して、このプロジェクトの規約や判断の基準を書き始めましょう'
+                  : 'このプロジェクトにはまだ文書がありません。編集できる人が作成するのを待ってください'
+              "
+            >
+              <template v-if="canEdit" #action>
+                <button type="button" class="primary" @click="openCreate(null)">
+                  + 文書を追加
+                </button>
+              </template>
+            </EmptyState>
+
+            <!-- どの文書も選んでいない（5.10）。木全体を目次として出す -->
+            <div v-else-if="doc === null" class="docs-outline">
+              <p class="docs-outline-lead">
+                左の文書ツリーから選ぶか、下の一覧から開いてください。
+              </p>
+              <ul class="docs-outline-list">
+                <li v-for="f in flatDocs" :key="f.item.id" class="docs-outline-item">
+                  <RouterLink
+                    class="docs-outline-link"
+                    :to="`/p/${projectKey}/docs/${f.item.path}`"
+                    :style="{ paddingLeft: `${f.depth * 16}px` }"
+                  >
+                    <span class="docs-outline-title">{{ f.item.title }}</span>
+                    <span class="docs-outline-path">{{ f.item.path }}</span>
+                  </RouterLink>
+                  <span class="docs-outline-date">{{ formatDateTime(f.item.updated_at) }}</span>
+                </li>
+              </ul>
+            </div>
+
+            <article v-else class="docs-article">
+              <p class="docs-meta">
+                <span class="docs-meta-label">更新</span>
+                <span>{{ formatDateTime(doc.updated_at) }}</span>
+                <!-- **`updated_by` は `null` になりうる**（10.3。`ON DELETE SET NULL`）
+                     ——文書は書いた人が消えても内容が生き続ける -->
+                <template v-if="doc.updated_by">
+                  <Avatar
+                    :name="doc.updated_by.display_name"
+                    :kind="doc.updated_by.kind"
+                    :size="20"
+                  />
+                  <span>{{ doc.updated_by.display_name }}</span>
+                </template>
+                <span v-else class="docs-meta-none">—</span>
+              </p>
+
+              <!-- 保存の結果は操作した場所に出す（6.4）。**サーバの値と一致して
+                   いる間だけ出す**ので、次の編集を始めた時点で自然に消える -->
+              <p v-if="savedVersion === doc.version" class="docs-saved">✓ 保存しました</p>
+
+              <!-- eslint-disable-next-line vue/no-v-html -- lib/markdown.ts の dompurify を通っている -->
+              <div v-if="bodyHtml" class="markdown-body" v-html="bodyHtml"></div>
+              <p v-else class="docs-note">まだ何も書かれていません</p>
+
+              <!-- 配下の文書（5.10）。**画面が目次から生成する。本文に書かせない**
+                   ——手で書いたリンクは移動・改名の直後に必ず古くなる -->
+              <section v-if="children.length > 0" class="docs-children">
+                <h2 class="docs-children-title">配下の文書</h2>
+                <ul class="docs-children-list">
+                  <li v-for="child in children" :key="child.id">
+                    <RouterLink :to="`/p/${projectKey}/docs/${child.path}`">
+                      → {{ child.title }}
+                    </RouterLink>
+                  </li>
+                </ul>
+              </section>
+            </article>
+          </section>
+        </template>
+      </SplitPane>
+    </template>
+  </SplitPane>
+
+  <DocFormModal
+    v-if="showCreate"
+    :project-key="projectKey"
+    :tree="tree"
+    :initial-parent-path="createParent"
+    :initial-body="createBody"
+    @close="showCreate = false"
+    @created="onCreated"
+  />
+
+  <ConfirmDialog
+    v-if="deleteTarget"
+    title="文書を削除"
+    :message="deleteMessage"
+    confirm-label="削除"
+    danger
+    :busy="deleting"
+    @cancel="deleteTarget = null"
+    @confirm="confirmDelete"
+  />
+</template>
+
+<style scoped>
+.page {
+  height: 100%;
+}
+
+/* ── 文書ツリー ─────────────────────────────────────────── */
+
+.docs-tree-pane {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--pb-surface);
+}
+
+.docs-tree-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: var(--pb-space-2) 0;
+}
+
+.docs-tree-note {
+  margin: 0;
+  padding: var(--pb-space-3);
+  color: var(--pb-text-muted);
+  font-size: 13px;
+}
+
+.docs-tree-error {
+  color: var(--pb-danger-text);
+}
+
+.docs-tree-foot {
+  flex: none;
+  padding: var(--pb-space-2);
+  border-top: 1px solid var(--pb-line);
+}
+
+.docs-add {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ── 本文まわり ─────────────────────────────────────────── */
+
+/* **主役には `flex: 1 1 auto` と `min-height` を添える**（6.7 の縦版）。
+   ページヘッダ（48px）の下で残りを埋める */
+.docs-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.docs-editor,
+.docs-preview {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* **編集器はペインの高さいっぱいに伸ばす。** `MarkdownEditor` の既定は
+   `min-height: 180px` / `max-height: 420px`（チケットの説明欄はページの流れの
+   中にあり、青天井にすると本文が押し出されるため）。**Docs はペインが編集器
+   専用なので、420px で止めると下に広大な余白が残る**（実機のスクリーンショットで
+   発覚。座標の実測は「入るか」しか答えない）。
+   `:deep()` で子部品の内側へ届かせる——`.cm-editor` の規則は `MarkdownEditor` の
+   非 scoped ブロックにあり、こちらの詳細度が1つ上回る */
+.docs-editor-scroll {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--pb-space-4);
+}
+
+.docs-editor-scroll :deep(.md-editor) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.docs-editor-scroll :deep(.source) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.docs-editor-scroll :deep(.cm-editor) {
+  height: 100%;
+  max-height: none;
+}
+
+/* 内蔵プレビュー（並ばない幅のときだけ出る）は自然な高さで下に置く */
+.docs-editor-scroll :deep(.preview),
+.docs-editor-scroll :deep(.preview-label) {
+  flex: none;
+}
+
+.docs-preview {
+  overflow-y: auto;
+  padding: var(--pb-space-4) var(--pb-space-6);
+}
+
+.docs-article {
+  min-width: 0;
+}
+
+.docs-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+  margin: 0 0 var(--pb-space-3);
+  padding-bottom: var(--pb-space-3);
+  border-bottom: 1px solid var(--pb-line);
+  color: var(--pb-text-muted);
+  font-size: 13px;
+}
+
+.docs-meta-label {
+  color: var(--pb-text-muted);
+}
+
+.docs-meta-none {
+  color: var(--pb-text-muted);
+}
+
+.docs-saved {
+  margin: 0 0 var(--pb-space-3);
+  color: var(--pb-text-muted);
+  font-size: 13px;
+}
+
+.docs-note {
+  margin: 0;
+  color: var(--pb-text-muted);
+  font-size: 13px;
+}
+
+/* ── 更新理由 ───────────────────────────────────────────── */
+
+.docs-reason {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pb-space-2);
+  padding: var(--pb-space-3) var(--pb-space-4);
+  border-top: 1px solid var(--pb-line);
+}
+
+.docs-reason-label {
+  flex: none;
+  color: var(--pb-text-muted);
+  font-size: 13px;
+}
+
+.docs-reason input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 var(--pb-space-3);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-bg);
+  color: inherit;
+  font: inherit;
+}
+
+/* ── 競合（5.10）─────────────────────────────────────────── */
+
+/* **warning は面で表す**（8.4.1）。文字色だけにすると、編集中の画面で埋もれる */
+.docs-conflict {
+  flex: none;
+  margin-bottom: var(--pb-space-3);
+  padding: var(--pb-space-3);
+  border: 1px solid var(--pb-warning-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-warning-bg);
+}
+
+.docs-conflict-message {
+  margin: 0 0 var(--pb-space-3);
+  color: var(--pb-warning-text);
+}
+
+.docs-conflict-actions {
+  display: flex;
+  gap: var(--pb-space-2);
+}
+
+.docs-save-error {
+  margin: 0 0 var(--pb-space-3);
+  color: var(--pb-danger-text);
+  font-size: 13px;
+}
+
+/* ── 目次の概要（未選択時）───────────────────────────────── */
+
+.docs-outline-lead {
+  margin: 0 0 var(--pb-space-4);
+  color: var(--pb-text-muted);
+}
+
+.docs-outline-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.docs-outline-item {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-3);
+  height: var(--pb-row-h);
+  border-bottom: 1px solid var(--pb-line);
+}
+
+.docs-outline-link {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: var(--pb-space-2);
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pb-text);
+  white-space: nowrap;
+}
+
+.docs-outline-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.docs-outline-path {
+  flex: none;
+  color: var(--pb-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.docs-outline-date {
+  flex: none;
+  color: var(--pb-text-muted);
+  font-size: 12px;
+}
+
+/* ── 配下の文書（5.10）──────────────────────────────────── */
+
+.docs-children {
+  margin-top: var(--pb-space-6);
+  padding-top: var(--pb-space-4);
+  border-top: 1px solid var(--pb-line);
+}
+
+.docs-children-title {
+  margin: 0 0 var(--pb-space-2);
+  color: var(--pb-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.docs-children-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pb-space-2) var(--pb-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+</style>

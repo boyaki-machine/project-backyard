@@ -26,8 +26,16 @@ const props = withDefaults(
     modelValue: string
     /** 開いた直後にカーソルを置く。インライン編集の入口はクリックなので既定 true */
     autofocus?: boolean
+    /**
+     * ソースの下にプレビューを積むか。
+     *
+     * **Docs（`GuiDesign.md` 5.10）は可視化ペインを独立して持つので `false` にする**
+     * ——編集器の中にプレビューを二重に持たない。ただし**3ペインが並ばない幅では
+     * `true` に戻す**（あちらの可視化ペインが畳まれるため、ここが唯一の描画になる）。
+     */
+    preview?: boolean
   }>(),
-  { autofocus: true },
+  { autofocus: true, preview: true },
 )
 
 const emit = defineEmits<{
@@ -39,7 +47,8 @@ const emit = defineEmits<{
 const host = useTemplateRef<HTMLDivElement>('host')
 let view: EditorView | null = null
 
-const preview = computed(() => renderMarkdown(props.modelValue))
+/** 描画済みの HTML。**`preview` が false のときは作らない**（無駄な描画を毎打鍵で走らせない） */
+const previewHtml = computed(() => (props.preview ? renderMarkdown(props.modelValue) : ''))
 
 onMounted(() => {
   if (host.value === null) return
@@ -92,11 +101,14 @@ defineExpose({
   <div class="md-editor" @keydown.escape.stop="emit('cancel')">
     <div ref="host" class="source"></div>
 
-    <!-- プレビュー。**打つたびに追随する**（5.5「説明欄」のライブプレビュー） -->
-    <div class="preview-label">プレビュー</div>
-    <!-- eslint-disable-next-line vue/no-v-html -- lib/markdown.ts の dompurify を通っている -->
-    <div v-if="preview" class="markdown-body preview" v-html="preview"></div>
-    <p v-else class="preview empty">まだ何も書かれていません</p>
+    <!-- プレビュー。**打つたびに追随する**（5.5「説明欄」のライブプレビュー）。
+         Docs（5.10）は可視化ペインを別に持つので、ここは出さない -->
+    <template v-if="preview">
+      <div class="preview-label">プレビュー</div>
+      <!-- eslint-disable-next-line vue/no-v-html -- lib/markdown.ts の dompurify を通っている -->
+      <div v-if="previewHtml" class="markdown-body preview" v-html="previewHtml"></div>
+      <p v-else class="preview empty">まだ何も書かれていません</p>
+    </template>
   </div>
 </template>
 
