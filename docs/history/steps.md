@@ -2835,3 +2835,90 @@ project-backyard_pgdata  /var/lib/docker/volumes/project-backyard_pgdata/_data
   `steps.md` の2行をプレースホルダ化して `--amend`、`PROGRESS.md` のローカルパスを一般化、
   過去102コミットを `git filter-repo` で書き換え、stg の管理者アドレスを変更、
   stg の `audit_log` 8行を削除した
+
+## 手順21 — マイグレーション 0017（2026-08-30、`feature/step-21-document-migration`）
+
+**完了条件**（`Design.md` 11章）：`make migrate` と `make test-db` が通る。**両方 PASS。**
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/migrations/0017_document.sql`（新規） | `document` / `document_revision`（8.1.1）、`doc.view` / `doc.edit` と5ロールへの割り当て（8.1.4）、文書テンプレート4件（8.1.2） |
+| `server/internal/store/gen/models.go` | `make sqlc` の生成物。`Document`（14列）と `DocumentRevision`（8列）が増えた。**クエリは書いていない**（文書API は手順22） |
+
+### 直したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `docs/DbDesign.md` | 8.1.2 を全面改訂（slug / title / `sort_order` 列の追加、`knowledge` を避けた理由、見出しを置かない理由）、冒頭の状態行、5.2 のファイル一覧、「裁く」2か所 |
+| `docs/Requirements.md` | 10.6.2 のテンプレート表と本文、3章の表。「裁く」4か所を「答えを与える／拠りどころになる」へ。**「うまくいったことも同じ場所に置く」を追記** |
+| `docs/ApiDesign.md` | 10章の例 11か所（`conventions`→`rules` 9、`values`→`vision` 2）、10.2 の応答例のタイトル |
+| `docs/GuiDesign.md` | 5.10 のワイヤーフレーム（タイトル4件＋枠線の整列）、URL 例、5.6.3 の「28件→30件 / 8つ→9つ」 |
+| `docs/openapi.yaml` | 権限カタログの件数3か所 |
+| `server/internal/httpapi/v1/roles_integration_test.go` | 28→30（2か所）、`project_viewer` の期待値に `doc.view` |
+| `server/internal/httpapi/v1/auth_integration_test.go` | 28→30（2か所） |
+| `server/internal/store/queries/authz.sql` | `ListPermissions` のコメント（正本が2か所になった） |
+| `client/src/components/RolePermissionMatrix.vue` | コメント1行（権限は28件→30件） |
+
+### 検証結果
+
+**1. スキーマ（`DbDesign.md` 8.1.1 と突き合わせ）**
+
+| 見たもの | 結果 |
+|---|---|
+| テーブル | `document` / `document_revision` の2つ |
+| 索引 | 8本。`uq_document_slug` と `uq_document_template_slug` の**2本だけが `NULLS NOT DISTINCT`**（`pg_indexes.indexdef` で実測） |
+| トリガ | `trg_document_updated` |
+
+**2. 制約を実際に破った（7件。すべて1つのトランザクションで行い `ROLLBACK`、後に残存0件を確認）**
+
+| # | 破ったもの | 結果 |
+|---|---|---|
+| 5-1 | テンプレートの同じ親の下に同じ `slug` | `unique_violation` |
+| 5-2 | 実文書の**トップレベル**（`parent_id IS NULL`）で同じ `slug` | `unique_violation`。**`NULLS NOT DISTINCT` が効いていることの実測** |
+| 5-3 | `is_template = true` なのに `project_id` あり | `check_violation`（`ck_document_template`） |
+| 5-4 | 実文書なのに `template_key` あり | `check_violation` |
+| 5-5 | `slug` に `_`（`_revisions`） | `check_violation`。**`ApiDesign.md` 10.1 が「`_revisions` を予約語にできる」根拠にしている前提** |
+| 5-6 | `document_revision` の `(document_id, revision_no)` 重複 | `unique_violation` |
+| 5-7 | 親を削除 | 子と `document_revision` が CASCADE で消えた |
+
+**3. `updated_at` トリガ — 最初の測り方が間違っていた**
+
+`BEGIN` → `INSERT` → `pg_sleep(1.1)` → `UPDATE` で `updated_at > created_at` を見たが `false`。
+**トランザクション内では `now()` が固定される**ため、`created_at` と `updated_at` が同値になる（`pg_sleep`
+では動かない）。**実装ではなく検証側の欠陥。** `updated_at` を1日前に置いてから `UPDATE` する形に
+変え、**先に `ticket`（トリガが在ると分かっている表）で同じ方法を通してコントロールを取った**うえで
+`document` を測り、PASS。
+
+**4. シードと冪等性**
+
+| 見たもの | 結果 |
+|---|---|
+| `permission` の総数 | **30件**（0010 の28 + `doc.view` / `doc.edit`） |
+| `doc.view` / `doc.edit` | `category='doc'`、`sort_order` 35 / 36 |
+| ロール割り当て | `doc.view` は5ロール全部、**`doc.edit` は `administrator` と `project_admin` の2つだけ**（8.1.4 の表と一致） |
+| テンプレート4件 | `vision`(10) / `rules`(20) / `decisions`(30) / `learnings`(40)。`is_template=true`、`project_id IS NULL`、`template_key='default'`、`created_by IS NULL`、`version=1`、本文に `##` 見出しなし |
+| 冪等性 | 0017 のシード部分をもう一度流しても `permission` 30 / テンプレート4 のまま。**`body_md` は上書きされない**（`ON CONFLICT DO NOTHING`） |
+
+**5. テスト**
+
+| コマンド | 結果 |
+|---|---|
+| `make test` | 全パッケージ ok |
+| `make test-db` | **155件 PASS、FAIL 0、exit 0** |
+
+**6. stg**
+
+| コマンド | 結果 |
+|---|---|
+| `make stg-migrate` | `0017_document.sql` 適用、version 17 |
+| 実測 | dev / stg ともに `permission` 30件。stg のテンプレート4件も同じ並び |
+| `make stg-build` | `v2.2.58` のバイナリ一式を `deploy/stg/out/` へ出力（`make bump-minor` の**後**に実行し直した） |
+
+### あとしまつ
+
+- 検証で作った行は**すべて `ROLLBACK`**。終了後に `document` の検証用 ID が0件であることを確認
+- スクラッチパッド（`verify_0017.sql` / `testdb.log` / 8.1.2 の下書き）を削除
+- `make build` は行っていないので `make clean-webui` は不要
+- **stg のマイグレーションと `deploy/stg/out/` は意図して残した**（`Development.md` 11.3 の運用そのもの。`out/` は `.gitignore` 対象）

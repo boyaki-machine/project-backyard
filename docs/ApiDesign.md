@@ -2199,10 +2199,10 @@ GET           /api/v1/projects/:key/docs/*path/_revisions/:no
 
 ## 10.1 パスによる指定
 
-**文書はパスで指す。** `slug` を根から連ねたもので、`values`、`conventions/naming` のようになる。
+**文書はパスで指す。** `slug` を根から連ねたもので、`vision`、`rules/naming` のようになる。
 
 **ULID も返すが、指定には使わない。** 9.1 のチケットが `seq` を使うのと同じ理由——共有できる
-URL になり、画面の URL（`/p/:key/docs/conventions/naming`）とそのまま一致する。
+URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一致する。
 
 **`_revisions` はサブ資源の予約語である。** `slug` の検証は `^[a-z0-9][a-z0-9-]{0,63}$`
 （`DbDesign.md` 8.1.1）で **`_` を含められない**ため、`.../docs/a/b/_revisions` が
@@ -2214,14 +2214,14 @@ URL になり、画面の URL（`/p/:key/docs/conventions/naming`）とそのま
 ```json
 {
   "items": [
-    { "id": "01K2...", "path": "values", "slug": "values",
-      "title": "価値観・判断の基準", "sort_order": 10,
+    { "id": "01K2...", "path": "vision", "slug": "vision",
+      "title": "価値観・世界観", "sort_order": 10,
       "updated_at": "2026-08-29T04:12:00Z", "children": [] },
-    { "id": "01K2...", "path": "conventions", "slug": "conventions",
+    { "id": "01K2...", "path": "rules", "slug": "rules",
       "title": "規約", "sort_order": 20,
       "updated_at": "2026-08-29T05:00:00Z",
       "children": [
-        { "id": "01K2...", "path": "conventions/naming", "slug": "naming",
+        { "id": "01K2...", "path": "rules/naming", "slug": "naming",
           "title": "命名", "sort_order": 10,
           "updated_at": "2026-08-29T05:00:00Z", "children": [] }
       ] }
@@ -2242,7 +2242,7 @@ URL になり、画面の URL（`/p/:key/docs/conventions/naming`）とそのま
 各文書の見出し一覧を足す。**エージェントが「どの章を読むか」を決めるために使う**。
 
 ```json
-{ "id": "01K2...", "path": "conventions", "title": "規約", "sort_order": 20,
+{ "id": "01K2...", "path": "rules", "title": "規約", "sort_order": 20,
   "updated_at": "2026-08-29T05:00:00Z",
   "outline": [
     { "section": "命名", "level": 2 },
@@ -2264,8 +2264,8 @@ URL になり、画面の URL（`/p/:key/docs/conventions/naming`）とそのま
 ```json
 {
   "id": "01K2...",
-  "path": "conventions",
-  "slug": "conventions",
+  "path": "rules",
+  "slug": "rules",
   "parent_path": null,
   "title": "規約",
   "body_md": "本書はこのプロジェクトの規約である。\n\n## 命名\n…",
@@ -2292,11 +2292,11 @@ URL になり、画面の URL（`/p/:key/docs/conventions/naming`）とそのま
 その章だけを返す。**`body_md` は見出し行から、同じか上のレベルの次の見出しの直前までを含む。**
 
 ```
-GET /api/v1/projects/my-app/docs/conventions?section=命名
+GET /api/v1/projects/my-app/docs/rules?section=命名
 ```
 
 ```json
-{ "id": "01K2...", "path": "conventions", "title": "規約",
+{ "id": "01K2...", "path": "rules", "title": "規約",
   "section": "命名", "body_md": "## 命名\n\n- テーブルは単数形…",
   "version": 3, "updated_at": "2026-08-29T05:00:00Z" }
 ```

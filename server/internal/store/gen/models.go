@@ -129,6 +129,34 @@ type Comment struct {
 	DeletedAt  pgtype.Timestamptz
 }
 
+type Document struct {
+	ID          string
+	ProjectID   pgtype.Text
+	ParentID    pgtype.Text
+	Slug        string
+	Title       string
+	BodyMd      string
+	SortOrder   int32
+	IsTemplate  bool
+	TemplateKey pgtype.Text
+	CreatedBy   pgtype.Text
+	UpdatedBy   pgtype.Text
+	Version     int32
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type DocumentRevision struct {
+	ID           string
+	DocumentID   string
+	RevisionNo   int32
+	Title        string
+	BodyMd       string
+	ChangedBy    pgtype.Text
+	ChangeReason pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+}
+
 type DodItem struct {
 	ID          string
 	TicketID    string

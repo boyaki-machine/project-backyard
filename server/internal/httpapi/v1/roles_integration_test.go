@@ -95,7 +95,7 @@ func TestRolesCatalogIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("権限カタログは28件で category と description を持つ", func(t *testing.T) {
+	t.Run("権限カタログは30件で category と description を持つ", func(t *testing.T) {
 		rec := getWithCookie(r, "/api/v1/permissions", adminSession)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d（body=%s）", rec.Code, rec.Body.String())
@@ -106,9 +106,11 @@ func TestRolesCatalogIntegration(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 			t.Fatalf("応答が JSON でない: %v", err)
 		}
-		// Design.md 6.4.2 が「カタログは28件」と明記している。
-		if len(body.Items) != 28 {
-			t.Fatalf("権限 = %d件, want 28件", len(body.Items))
+		// カタログの正本は2か所にある——DbDesign.md 7.2 のシード（0010、28件）と
+		// 同 8.1.4（0017、doc.view / doc.edit の2件）。権限を足すときは
+		// Design.md 6.4.2 とあわせて3か所を動かす。
+		if len(body.Items) != 30 {
+			t.Fatalf("権限 = %d件, want 30件", len(body.Items))
 		}
 		if body.Items[0].Key != "project.view" {
 			t.Errorf("先頭 = %q, want project.view（sort_order 10）", body.Items[0].Key)
@@ -157,11 +159,13 @@ func TestRolesCatalogIntegration(t *testing.T) {
 		for _, role := range roles(t, adminSession, "") {
 			byKey[role.Key] = role
 		}
-		if got := len(byKey["administrator"].Permissions); got != 28 {
-			t.Errorf("administrator の権限 = %d件, want 28件（DbDesign.md 7.3 は全権限）", got)
+		if got := len(byKey["administrator"].Permissions); got != 30 {
+			t.Errorf("administrator の権限 = %d件, want 30件（DbDesign.md 7.3 は全権限）", got)
 		}
-		// 閲覧者は project.view / ticket.view / knowledge.view の3件（同シード）。
-		want := []string{"project.view", "ticket.view", "knowledge.view"}
+		// 閲覧者は project.view / ticket.view / doc.view / knowledge.view の4件
+		// （DbDesign.md 7.3 の3件に、8.1.4 が doc.view を足した）。並びは
+		// permission.sort_order で 10 / 20 / 35 / 40。
+		want := []string{"project.view", "ticket.view", "doc.view", "knowledge.view"}
 		got := byKey["project_viewer"].Permissions
 		if len(got) != len(want) {
 			t.Fatalf("project_viewer の権限 = %v, want %v", got, want)
