@@ -73,7 +73,7 @@ const scopeGroups = computed(() => {
 /**
  * 行。`permission.category` ごとに区切る（5.6.3）。
  *
- * 権限は28件あり `ticket.*` だけで7件連続する。`sort_order` は category ごとに
+ * 権限は30件あり `ticket.*` だけで7件連続する。`sort_order` は category ごとに
  * 連続する番号帯で採番されているため、順に見て変わり目で切ればよい。
  */
 const categories = computed(() => {

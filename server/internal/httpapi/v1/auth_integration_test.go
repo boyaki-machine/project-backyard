@@ -73,9 +73,10 @@ func TestLoginIntegration(t *testing.T) {
 	if got := loginView["actor"].(map[string]any)["email"]; got != email {
 		t.Errorf("actor.email = %v, want %q（保存された表記）", got, email)
 	}
-	// administrator は全権限（DbDesign.md 7.3）。28件の権限カタログが引けている。
-	if perms := loginView["permissions"].([]any); len(perms) != 28 {
-		t.Errorf("permissions = %d件, want 28（role_permission を引けていない）", len(perms))
+	// administrator は全権限（DbDesign.md 7.3）。30件の権限カタログが引けている
+	// （7.2 の28件 + 8.1.4 の doc.view / doc.edit）。
+	if perms := loginView["permissions"].([]any); len(perms) != 30 {
+		t.Errorf("permissions = %d件, want 30（role_permission を引けていない）", len(perms))
 	}
 
 	// ② DB には平文が載らない。
@@ -115,7 +116,7 @@ func TestLoginIntegration(t *testing.T) {
 	if meActor["id"] != actorID || meActor["locale"] != "ja" || meActor["timezone"] != "Asia/Tokyo" {
 		t.Errorf("GET /me の actor = %v", meActor)
 	}
-	if len(meView["permissions"].([]any)) != 28 {
+	if len(meView["permissions"].([]any)) != 30 {
 		t.Errorf("GET /me の permissions = %v", meView["permissions"])
 	}
 

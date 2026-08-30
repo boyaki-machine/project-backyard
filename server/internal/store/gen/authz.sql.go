@@ -122,7 +122,8 @@ ORDER BY sort_order, key
 
 // ListPermissions は権限カタログを返す（ApiDesign.md 7.2）。
 //
-// 正本は DbDesign.md 7.2 のシード（28件）。並びは permission.sort_order で、
+// 正本は DbDesign.md 7.2 のシード（0010、28件）と 8.1.4（0017、doc の2件）で
+// 計30件。並びは permission.sort_order で、
 // category ごとに連続するよう採番されている（project 10番台 / ticket 20番台
 // / …）。GuiDesign.md 5.6.3 がカテゴリで行を区切れるのはこのためである。
 func (q *Queries) ListPermissions(ctx context.Context) ([]Permission, error) {

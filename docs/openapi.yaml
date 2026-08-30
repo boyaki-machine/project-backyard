@@ -322,7 +322,7 @@ paths:
         **`token`（平文）はこの応答でのみ返る。** DB には SHA-256 のハッシュしか
         残らず、再表示する API は無い（DbDesign.md 6.2）。
 
-        **`scopes` の語彙は権限カタログのキー**（`ticket.view` 等28件。Design.md
+        **`scopes` の語彙は権限カタログのキー**（`ticket.view` 等30件。Design.md
         6.4.2）。カタログに無い値は 422。空配列は「絞り込みなし」＝本人の実効権限
         そのままで、Phase 1 の画面は常にこれで発行する。
 
@@ -3072,7 +3072,8 @@ paths:
       summary: 権限カタログ
       operationId: listPermissions
       description: |
-        権限カタログの28件（ApiDesign.md 7.2、正本は DbDesign.md 7.2 のシード）。
+        権限カタログの30件（ApiDesign.md 7.2、正本は DbDesign.md 7.2 のシード28件と
+        8.1.4 の doc 権限2件）。
         **必要権限は `user.manage`。**
 
         7.1 と違い開放しないのは、消費者が GuiDesign.md 5.6.3 の権限マトリクスだけで、
@@ -3664,7 +3665,7 @@ components:
           examples: [90]
         scopes:
           description: |
-            権限カタログのキー（Design.md 6.4.2 の28件）。カタログに無い値は 422。
+            権限カタログのキー（Design.md 6.4.2 の30件）。カタログに無い値は 422。
             省略時と空配列は「絞り込みなし」。**Phase 1 の画面は常に空で送る。**
           type: array
           items:
