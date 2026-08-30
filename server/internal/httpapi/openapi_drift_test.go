@@ -39,8 +39,50 @@ var httpMethods = []string{
 	"trace",
 }
 
+// wildcardExpansions は chi のワイルドカード1本が openapi.yaml の複数パスに
+// 対応する箇所を並べる（手順22a）。
+//
+// **文書API は /docs/* の1ルートで受ける**（ApiDesign.md 10.1）。階層の深さに
+// 上限が無いためワイルドカードでしか書けないが、openapi.yaml は「実装済みAPIの
+// 現状」を名乗る文書なので（同 1.3）、**履歴のサブ資源まで書かれていないと
+// 名乗りが嘘になる。**
+//
+// **素通しにしない。** 「/docs/ で始まるパスは何でも良い」とすると、_revisions の
+// 記述が丸ごと落ちても検知できなくなる。**どのパスへ展開されるかをここに
+// 書き下すことで、両方向の欠落・余剰が引き続き捕まる。**
+var wildcardExpansions = map[string][]string{
+	"/api/v1/projects/{key}/docs/*": {
+		"/api/v1/projects/{key}/docs/{path}",
+		"/api/v1/projects/{key}/docs/{path}/_revisions",
+		"/api/v1/projects/{key}/docs/{path}/_revisions/{revision_no}",
+	},
+}
+
+// expandWildcards はワイルドカードのルートを、対応する openapi のパスへ展開する。
+//
+// **GET だけがサブ資源を持つ**（10.1。_revisions は読み取り専用で、GET 以外は
+// 405）。PATCH / DELETE は文書そのものにしか対応しないので、展開表の1件目だけを使う。
+func expandWildcards(ops map[operation]bool) map[operation]bool {
+	out := make(map[operation]bool, len(ops))
+	for op := range ops {
+		method, route, found := strings.Cut(string(op), " ")
+		paths, ok := wildcardExpansions[route]
+		if !found || !ok {
+			out[op] = true
+			continue
+		}
+		if method != http.MethodGet {
+			paths = paths[:1]
+		}
+		for _, p := range paths {
+			out[operation(method+" "+p)] = true
+		}
+	}
+	return out
+}
+
 func TestOpenAPIMatchesRoutes(t *testing.T) {
-	implemented := walkRoutes(t)
+	implemented := expandWildcards(walkRoutes(t))
 	documented := readOpenAPIOperations(t)
 
 	for _, op := range diff(implemented, documented) {

@@ -37,6 +37,8 @@ tags:
     description: ユーザー管理（ApiDesign.md 6章）。すべてアドミニストレータ専用
   - name: tickets
     description: チケットとその周辺（ApiDesign.md 9章）
+  - name: docs
+    description: プロジェクト文書（憲章。ApiDesign.md 10章）
   - name: ops
     description: 監視（ApiDesign.md 2.11）
 
@@ -2481,6 +2483,331 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/docs:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    get:
+      tags: [docs]
+      summary: 文書の目次
+      operationId: listDocs
+      description: |
+        プロジェクト文書（憲章）の目次を返す（ApiDesign.md 10.2）。**必要権限は `doc.view`**
+        （メンバーでない場合はプロジェクトごと 404）。
+
+        **`body_md` を含めない。** 目次は「どこに何があるか」を答えるものであり、本文は
+        `GET .../docs/{path}` が返す。全文を一度に返す設計にすると、リポジトリの md ファイルより
+        劣る（ファイルなら部分読みができる）。
+
+        `items[]` は各階層で `sort_order` 昇順、同値は `slug` 昇順。**ページネーションを
+        持たない**——目次は木であり、途中で切ると子が親から外れる。
+
+        **`version` を含める。** 木のドラッグ&ドロップ（GuiDesign.md 5.10）は目次だけを持って
+        複数行を `PATCH` するため、`If-Match` の材料がここに要る。
+      responses:
+        '200':
+          description: 文書の木。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocTreeList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [docs]
+      summary: 文書の作成
+      operationId: createDoc
+      description: |
+        文書を1件作る（ApiDesign.md 10.4）。**必要権限は `doc.edit`**——**`operator` と
+        `project_member` はこれを持たない**（DbDesign.md 8.1.4）。憲章は全参加者を縛るため、
+        更新できる人を絞る。
+
+        `slug` は同じ親の下で一意で、重複は 409 `already_exists`。`parent_path` を省略・`null`
+        にするとトップレベル。存在しないパスは 422（`details[].code = "not_found"`）。
+
+        `sort_order` を省略すると同じ親の中の末尾（現在の最大値 + 10）に置く。
+
+        **`revision_no = 1` を同時に作る。** リビジョンは「その変更のあとの本文」を持つので、
+        作成時の1件が無いと最初の編集で「作ったときの本文」がどの版にも残らない。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDocRequest'
+      responses:
+        '201':
+          description: 作成された文書。`Location` に作成先のURLを返す。
+          headers:
+            Location:
+              schema:
+                type: string
+              example: /api/v1/projects/my-app/docs/rules/naming
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Doc'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '409':
+          $ref: '#/components/responses/DocAlreadyExists'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/docs/{path}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/DocPath'
+    get:
+      tags: [docs]
+      summary: 文書の本文
+      operationId: getDoc
+      description: |
+        文書1件を返す（ApiDesign.md 10.3）。必要権限は `doc.view`。
+
+        `created_by` / `updated_by` は `null` になりうる（`ON DELETE SET NULL`。
+        DbDesign.md 8.1.1）。コメントの `author` が `null` にならないのと異なり、
+        **文書は書いた人が退職しても内容が生き続ける。**
+
+        **`?section=` を付けるとその章だけを返す**（応答は `DocSection`）。`body_md` は
+        見出し行から、同じか上のレベルの次の見出しの直前までを含む。見つからないときは
+        404 で、本体に `available_sections` が付く——呼び出し側（多くはエージェント）が、
+        もう一度目次を取りに行かずに次の一手を選べるようにするため。
+      parameters:
+        - name: section
+          in: query
+          required: false
+          description: |
+            返す章の見出しテキスト。**スラッグ化も番号付けもしない**（10.2）。同じ文書に
+            同名の見出しが2つあるときだけ、2つ目以降に `#2` が付く（URL では `%23`）。
+          schema:
+            type: string
+          examples:
+            heading:
+              value: 命名
+      responses:
+        '200':
+          description: |
+            文書の本文。`?section=` を付けた場合は `DocSection`（章だけ）になる。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/Doc'
+                  - $ref: '#/components/schemas/DocSection'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/DocNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [docs]
+      summary: 文書の更新（移動・改名を含む）
+      operationId: patchDoc
+      description: |
+        文書を部分更新する（ApiDesign.md 10.4）。必要権限は `doc.edit`。
+
+        **`If-Match` は必須**（2.8）。省略すると 422（`details[].field` が `If-Match`）、
+        現在の `version` と食い違えば 409 `conflict`。**人とエージェントが同じ文書を触るため、
+        Phase 1 のプロジェクト設定より競合が起きやすい。**
+
+        **`parent_path` と `slug` の変更が移動・改名である。** 部分木ごと移動する（`path` は
+        子孫の分も付け替わる）。自分自身または自分の子孫を `parent_path` に指定すると 422
+        （`details[].code = "cycle"`）。移動先に同じ `slug` があれば 409 `already_exists`。
+
+        **リビジョンは `title` か `body_md` が実際に変わったときだけ積む。** `sort_order` の
+        変更や同じ本文の送り直しでは作らない——並べ替えのたびに履歴が伸びると「いつ内容が
+        変わったか」が読めなくなる。**`version` はどの更新でも +1 する。**
+
+        `change_reason` はリビジョンを作らない更新では捨てる（422 にはしない）。
+
+        **末尾が `_revisions` のパスへ送ると 405。** 履歴は読み取り専用である（10.1）。
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          description: 取得時の `version`。`"3"` のように引用符で囲む（RFC 9110 8.8.3）。
+          schema:
+            type: string
+          examples:
+            current:
+              value: '"3"'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchDocRequest'
+      responses:
+        '200':
+          description: 更新後の文書。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Doc'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/DocNotFound'
+        '405':
+          $ref: '#/components/responses/DocMethodNotAllowed'
+        '409':
+          description: |
+            `If-Match` が現在の `version` と一致しない（`conflict`）、または移動先の階層に
+            同じ `slug` の文書がある（`already_exists`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [docs]
+      summary: 文書の削除
+      operationId: deleteDoc
+      description: |
+        文書を消す（ApiDesign.md 10.4）。必要権限は `doc.edit`。
+
+        **物理削除で、部分木ごと消える**（`parent_id` の `CASCADE`。DbDesign.md 8.1.1）。
+        `document_revision` も一緒に消える。
+
+        **子を持っていても API は止めない。** 件数を示して確認するのは画面の仕事である
+        （GuiDesign.md 6.3）——使用中のタグを消せるようにしたのと同じ判断で、消せないと
+        構造を直せなくなる。
+
+        **末尾が `_revisions` のパスへ送ると 405。**
+      responses:
+        '204':
+          description: 削除された（本文なし）。
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/DocNotFound'
+        '405':
+          $ref: '#/components/responses/DocMethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/docs/{path}/_revisions:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/DocPath'
+    get:
+      tags: [docs]
+      summary: 文書の履歴
+      operationId: listDocRevisions
+      description: |
+        文書のリビジョン一覧を返す（ApiDesign.md 10.5）。必要権限は `doc.view`。
+
+        **`_revisions` はサブ資源の予約語である。** `slug` の検証が `_` を含められないため
+        （DbDesign.md 8.1.1）、`.../docs/a/b/_revisions` が「`a/b` のリビジョン一覧」なのか
+        「`a/b/_revisions` という文書」なのかで迷うことがない（10.1）。
+
+        **一覧に `body_md` を含めない。** 20件ぶんの Markdown を載せると応答が重くなる。
+        本文が要るときは `.../_revisions/{revision_no}` を呼ぶ。
+
+        **`revision_no` の降順に固定**（`sort` を受け付けない）。`per_page` の既定は 20、
+        上限は 100。
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: per_page
+          in: query
+          description: 既定 20、上限 100（ApiDesign.md 10.5 / 2.6）。
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: リビジョンの一覧。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocRevisionList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/DocNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/docs/{path}/_revisions/{revision_no}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/DocPath'
+      - $ref: '#/components/parameters/DocRevisionNo'
+    get:
+      tags: [docs]
+      summary: 文書の履歴1件（本文つき）
+      operationId: getDocRevision
+      description: |
+        リビジョン1件を本文つきで返す（ApiDesign.md 10.5）。必要権限は `doc.view`。
+
+        **一覧の1件に `body_md` を足した形である。** `version` も `outline` も持たない——
+        `version` は現在の文書の楽観ロック値であって過去の版に属さず、`outline` は現在の
+        本文から作るものである。
+
+        **「前の版に戻す」は、取得した `body_md` を `PATCH` で書き戻して行う。** 専用の
+        エンドポイントを置かない。**履歴は消さない**——書き戻しも新しいリビジョンとして積む。
+      responses:
+        '200':
+          description: リビジョン1件。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocRevision'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/DocNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/admin/users:
     get:
       tags: [admin]
@@ -3240,6 +3567,36 @@ components:
       examples:
         demo:
           value: my-app
+    DocPath:
+      name: path
+      in: path
+      required: true
+      description: |
+        文書のパス（ApiDesign.md 10.1）。`slug` を根から連ねたもので、`vision`、
+        `rules/naming` のようになる。**スラッシュを含む**——実装は chi の
+        ワイルドカード（`/docs/*`）1本で受け、末尾のセグメントで `_revisions` を
+        切り分ける。
+
+        **ULID も返すが、指定には使わない。** チケットが `seq` を使うのと同じ理由で、
+        共有できる URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一致する。
+      schema:
+        type: string
+      examples:
+        top:
+          value: vision
+        nested:
+          value: rules/naming
+    DocRevisionNo:
+      name: revision_no
+      in: path
+      required: true
+      description: リビジョン番号（1始まり。ApiDesign.md 10.5）。
+      schema:
+        type: integer
+        minimum: 1
+      examples:
+        second:
+          value: 2
     csrfToken:
       type: apiKey
       in: header
@@ -3383,6 +3740,36 @@ components:
         チケットが存在しない（`not_found`）。**他プロジェクトの番号も同じ 404 に寄せる**
         ——クエリの `WHERE` が `project_id` を含むため区別が付かず、区別する必要もない
         （Design.md 6.4.5）。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    DocNotFound:
+      description: |
+        文書が存在しない、`?section=` の章が無い、`_revisions/{revision_no}` の版が無い、
+        または閲覧権限が無い（`not_found`。ApiDesign.md 10.6）。**閲覧権限が無い場合も
+        同じ応答になる**——到達できないものの存在を漏らさないため（Design.md 6.4.5）。
+
+        **章が見つからなかった場合だけ、本体に `available_sections` が付く**（10.3）。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    DocAlreadyExists:
+      description: |
+        同じ親の下に同じ `slug` の文書がある（`already_exists`。ApiDesign.md 10.6）。
+        **`conflict` ではない**——`conflict` は `If-Match` 不一致のような状態の競合を指し、
+        こちらは一意なキーの重複である（2.5.1）。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    DocMethodNotAllowed:
+      description: |
+        `.../_revisions` を `GET` 以外で叩いた（`method_not_allowed`。ApiDesign.md 10.1）。
+        `slug` の検証が `_` を弾く以上「`_revisions` という名の文書」は存在しえないので、
+        **実在するサブ資源に対する未定義のメソッド**として扱う。「文書が無い」（404）に
+        寄せると、書き込み先を間違えた呼び出し側が原因に辿り着けない。
       content:
         application/json:
           schema:
@@ -4443,6 +4830,17 @@ components:
                 再試行までの秒数。`account_locked` と `rate_limited` で返す。
                 同じ値が `Retry-After` ヘッダにも入る。
               type: integer
+            available_sections:
+              description: |
+                `GET .../docs/{path}?section=` が命中しなかったときの見出し一覧
+                （ApiDesign.md 10.3）。`retry_after_sec` と同じ理由で `details` では
+                なく本体に置く——`details` は `{field, code, message}` の配列であり、
+                入力欄に紐づかない配列を載せる場所が無い。**呼び出し側（多くは
+                エージェント）が、もう一度目次を取りに行かずに次の一手を選べる。**
+              type: array
+              items:
+                type: string
+              examples: [['命名', 'ブランチ', '接頭辞']]
             request_id:
               description: |
                 `audit_log.request_id`（DbDesign.md 6.8）および構造化ログ
@@ -5846,6 +6244,293 @@ components:
             （手元の `sort_key` がすべて古くなっている）。
             **振り直しは他のチケットの `version` を上げない**——全行に触るので、
             上げると開いている詳細画面がすべて 409 になる。
+
+    DocTreeList:
+      description: |
+        文書の目次（ApiDesign.md 10.2）。**ページャを持たない**——目次は木であり、
+        途中で切ると子が親から外れる。
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocTreeItem'
+
+    DocTreeItem:
+      description: |
+        目次の1件（ApiDesign.md 10.2）。**`body_md` を持たない。**
+        `children` は各階層で `sort_order` 昇順、同値は `slug` 昇順。
+      type: object
+      required: [id, path, slug, title, sort_order, version, updated_at, children]
+      properties:
+        id:
+          type: string
+          example: 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+        path:
+          description: '`slug` を根から連ねたもの（10.1）。'
+          type: string
+          example: rules/naming
+        slug:
+          type: string
+          example: naming
+        title:
+          type: string
+          example: 命名
+        sort_order:
+          type: integer
+          example: 10
+        version:
+          description: |
+            楽観ロックの現在値（2.8）。**木のドラッグ&ドロップが `If-Match` に使う**
+            （GuiDesign.md 5.10）。
+          type: integer
+          example: 3
+        updated_at:
+          type: string
+          format: date-time
+        outline:
+          description: '`?outline=1` を付けたときだけ現れる（10.2）。見出しが無くても `[]` を返す。'
+          type: array
+          items:
+            $ref: '#/components/schemas/DocOutlineItem'
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocTreeItem'
+
+    DocOutlineItem:
+      description: |
+        見出し1件（ApiDesign.md 10.2）。**エージェントが「どの章を読むか」を決めるために使う。**
+
+        `section` は見出しテキストそのもので、スラッグ化も番号付けもしない。同じ文書に
+        同名の見出しが2つあるときだけ、2つ目以降に `#2` が付く。**この値はどこにも
+        保存されず、常に現在の本文から作られる**ため、見出しを改名しても壊れる参照が
+        生まれない（DbDesign.md 8.1.3）。
+      type: object
+      required: [section, level]
+      properties:
+        section:
+          type: string
+          example: 命名
+        level:
+          description: Markdown の見出しレベル（`##` が 2）。
+          type: integer
+          minimum: 1
+          maximum: 6
+          example: 2
+
+    Doc:
+      description: |
+        文書の本文（ApiDesign.md 10.3）。
+
+        **`created_by` / `updated_by` は `null` になりうる**（`ON DELETE SET NULL`。
+        DbDesign.md 8.1.1）。コメントの `author` が `null` にならないのと異なり、
+        **文書は書いた人が退職しても内容が生き続ける。**
+
+        `kind` が `agent` のとき、画面はアバターを角丸四角にする（GuiDesign.md 8.4.2）。
+        **憲章に「エージェントが最後に更新した」と出ることは正常である。**
+      type: object
+      required:
+        [id, path, slug, parent_path, title, body_md, outline, sort_order, version,
+         created_by, updated_by, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          example: 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+        path:
+          type: string
+          example: rules
+        slug:
+          type: string
+          example: rules
+        parent_path:
+          description: 親のパス。トップレベルなら `null`。
+          type: string
+          nullable: true
+          example: null
+        title:
+          type: string
+          example: 規約
+        body_md:
+          type: string
+        outline:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocOutlineItem'
+        sort_order:
+          type: integer
+          example: 20
+        version:
+          type: integer
+          example: 3
+        created_by:
+          allOf: [$ref: '#/components/schemas/ActorRef']
+          nullable: true
+        updated_by:
+          allOf: [$ref: '#/components/schemas/ActorRef']
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DocSection:
+      description: |
+        `?section=` を付けたときの応答（ApiDesign.md 10.3）。**章1つを読みに来た相手に
+        文書全体の情報は要らない**ので、`outline` も `created_by` も含まない。
+
+        `body_md` は見出し行から、同じか上のレベルの次の見出しの直前までを含む。
+      type: object
+      required: [id, path, title, section, body_md, version, updated_at]
+      properties:
+        id:
+          type: string
+        path:
+          type: string
+          example: rules
+        title:
+          type: string
+          example: 規約
+        section:
+          type: string
+          example: 命名
+        body_md:
+          type: string
+          example: "## 命名\n\n- テーブルは単数形…"
+        version:
+          type: integer
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateDocRequest:
+      description: 文書の作成（ApiDesign.md 10.4）。
+      type: object
+      required: [slug, title]
+      properties:
+        slug:
+          description: |
+            `^[a-z0-9][a-z0-9-]{0,63}$`（DbDesign.md 8.1.1 の CHECK と同じ式）。
+            **`_` を含められない**ことが、`_revisions` を予約語にできる根拠である（10.1）。
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,63}$'
+          example: naming
+        title:
+          description: 1〜200文字。前後の空白を取り除いてから検証する。
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: 命名
+        parent_path:
+          description: 省略・`null` でトップレベル。存在しないパスは 422（`details[].code = "not_found"`）。
+          type: string
+          nullable: true
+          example: rules
+        body_md:
+          description: 既定は空文字。
+          type: string
+        sort_order:
+          description: 省略時は同じ親の中の末尾（現在の最大値 + 10）。
+          type: integer
+
+    PatchDocRequest:
+      description: |
+        文書の部分更新（ApiDesign.md 10.4）。**送られた項目だけを更新する。**
+
+        **`parent_path` に `null` を送るとトップレベルへ移す。** 送らなければ親は変わらない
+        ——「送られていない」と「`null` が送られた」を区別する。
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        body_md:
+          type: string
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,63}$'
+        parent_path:
+          type: string
+          nullable: true
+        sort_order:
+          type: integer
+        change_reason:
+          description: |
+            200文字以内。`document_revision.change_reason` に入る。**リビジョンを作らない
+            更新で送っても捨てる**（422 にはしない）。
+          type: string
+          maxLength: 200
+          example: ブランチ命名にチケット番号を入れる
+
+    DocRevisionList:
+      description: |
+        リビジョンの一覧（ApiDesign.md 10.5）。2.6 のページネーションを持ち、
+        **`revision_no` の降順に固定**。
+      type: object
+      required: [items, page, per_page, total, total_pages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocRevisionItem'
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+
+    DocRevisionItem:
+      description: '履歴の1件（ApiDesign.md 10.5）。**`body_md` を含めない。**'
+      type: object
+      required: [revision_no, title, changed_by, change_reason, created_at]
+      properties:
+        revision_no:
+          type: integer
+          example: 3
+        title:
+          type: string
+          example: 規約
+        changed_by:
+          allOf: [$ref: '#/components/schemas/ActorRef']
+          nullable: true
+        change_reason:
+          type: string
+          nullable: true
+          example: ブランチ命名にチケット番号を入れる
+        created_at:
+          type: string
+          format: date-time
+
+    DocRevision:
+      description: |
+        履歴の1件（本文つき。ApiDesign.md 10.5）。**`version` も `outline` も持たない**
+        ——`version` は現在の文書の楽観ロック値であって過去の版に属さず、`outline` は
+        現在の本文から作るものである。
+      type: object
+      required: [revision_no, title, body_md, changed_by, change_reason, created_at]
+      properties:
+        revision_no:
+          type: integer
+        title:
+          type: string
+        body_md:
+          type: string
+        changed_by:
+          allOf: [$ref: '#/components/schemas/ActorRef']
+          nullable: true
+        change_reason:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
 
     ErrorCode:
       description: ApiDesign.md 2.5.1 の15コード。

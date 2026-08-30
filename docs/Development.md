@@ -418,6 +418,20 @@ make clean-webui  # ← コミット前に必ず実行する
 **client を未ビルドのまま `make run` すると、画面は `503` でプレースホルダを返す**
 （「画面がまだビルドされていません」）。`/healthcheck` と `/api` は影響を受けない。
 
+### 遅延読み込みが効いているかはビルド出力で見る
+
+**`defineAsyncComponent` は、その部品を*すべての*利用者が動的に取り込んで初めて効く。**
+1つでも `import X from './X.vue'` が残っていると、チャンクは分かれない。
+
+```
+[INEFFECTIVE_DYNAMIC_IMPORT] src/components/MarkdownEditor.vue is dynamically imported by
+… but also statically imported by src/components/TicketComments.vue…
+```
+
+**この警告が利用者を名指しする**ので、`grep` で数えるより速い。手順22b では
+`MarkdownEditor` の利用者を2つと数えて実際は3つあり、**警告で3つ目に気づいた**。
+効いていれば出力にチャンクが増える（`dist/assets/MarkdownEditor-*.js`）。
+
 ## 7.2 バージョン
 
 正本は `VERSION`。ビルド番号は **`develop` へのマージ回数**と一致する（`Design.md` 11.1）。
@@ -523,6 +537,28 @@ window.set = window.set || function (el, v) {
   Input.dispatchDragEvent {type: 'dragEnter' / 'dragOver' / 'drop', data: <intercepted の data>}
   ```
 
+- **`dragOver` は同じ落とし先の中で位置を変えるとき、1回では届かないことがある。**
+  **x を 1px ずらして2回送る**のを既定にする。手順22c で、行を3つに割る落とし先
+  （上1/4・下1/4・中央1/2）のうち**中央だけがアプリに届かず、直前のゾーンの目印が
+  残ったまま**になった。**実装は3ゾーンとも正しかった。**
+  切り分けは `document` に素の listener を張って `clientY` を数えるだけで済む
+  ——**送った3件のうち2件しか届いていない**ことが1回で分かる。
+
+  ```js
+  window.__log = []
+  document.addEventListener('dragover', (e) => window.__log.push(e.clientY), true)
+  ```
+
+- **`Input.dispatchDragEvent` の `data` は `dragIntercepted` が返したものをそのまま渡す。**
+  `dragOperationsMask` が必須で、`{items: []}` のような手書きの値は
+  `Invalid parameters` になる（`dragCancel` でも同じ）。
+- **CDP のコマンド応答を待つあいだに来たイベントを読み捨てない。** 1本の
+  WebSocket に応答とイベントが混ざって流れるので、`id` が一致する行だけを拾って
+  残りを捨てる作りにすると、**`Input.dragIntercepted` のような1回きりのイベントが消える**。
+  待つ側で溜めておき、あとから取り出す。
+- **検証端末に `websocket-client` は入っていない。** CDP を叩くには
+  **WebSocket を標準ライブラリで書く**（RFC 6455。ハンドシェイク、テキストフレーム、
+  **クライアント側のマスクは必須**、継続フレームの連結で足りる）。
 - **`dragstart` を機に落とし場所を描き足すと、Chrome がドラッグを取り消す。**
   掴んだ行の位置が直後にずれるためで、症状は「`dragstart` の 1〜2ms 後に `dragend` が来て、
   `dragover` が一度も起きない」。**落とし場所は掴む前から画面にあるものに限る**

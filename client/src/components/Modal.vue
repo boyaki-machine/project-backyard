@@ -14,7 +14,21 @@
  */
 import { nextTick, onBeforeUnmount, onMounted, useTemplateRef } from 'vue'
 
-defineProps<{ title: string }>()
+withDefaults(
+  defineProps<{
+    title: string
+    /**
+     * 幅の変種（6.1）。**変わるのは幅だけ**で、フォーカストラップ・`Esc`・
+     * 戻り先はどちらも同じである。
+     *
+     * `wide` を使うのは**中で左右に並べるものがあるとき**に限る——いまは
+     * Docs の履歴（5.10）だけで、あちらは左に一覧・右に本文を置く。
+     * **入力欄を並べるモーダルは既定のままにする**（1行が長いフォームは読みにくい）。
+     */
+    size?: 'default' | 'wide'
+  }>(),
+  { size: 'default' },
+)
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -86,6 +100,7 @@ onBeforeUnmount(() => {
     <div
       ref="panel"
       class="panel"
+      :class="{ wide: size === 'wide' }"
       role="dialog"
       aria-modal="true"
       :aria-label="title"
@@ -129,6 +144,13 @@ onBeforeUnmount(() => {
   border-radius: var(--pb-radius);
   background: var(--pb-surface);
   box-shadow: var(--pb-shadow-2);
+}
+
+/* **`max-width` だけを上書きする。** `width: 100%` はそのままなので、
+   窓が 880px に足りなければ `.overlay` の余白ぶんを引いた幅まで自然に縮む
+   ——狭い窓で横スクロールを作らない（6.7） */
+.panel.wide {
+  max-width: 880px;
 }
 
 .head {

@@ -320,6 +320,41 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
 			Delete("/projects/{key}/tickets/{seq}/links/{id}", h.deleteTicketLink)
 
+		// ── プロジェクト文書（ApiDesign.md 10章）── 手順22a ───────
+		//
+		// **読みは doc.view、更新系は doc.edit**（10章の表）。**doc.edit は
+		// operator と project_member が持たない**（DbDesign.md 8.1.4）——
+		// 憲章は全参加者を縛るため、更新できる人を絞る。
+		//
+		// **Phase 1 に「その操作ができない人」が実在しないという問題
+		// （Design.md 付録A）に対する、最初の実例である。** これまでの宣言は
+		// すべて operator がシステムロール側から通ってしまい、負の側を
+		// 検証できなかった。ここで初めて 403 を実際に出せる。
+		//
+		// **ワイルドカードで受ける。** 文書はパスで指し（10.1）、階層の深さに
+		// 上限が無いためである。**{key}/docs 配下は他に静的なセグメントを
+		// 持たない**ので、/docs と /docs/* の2本で衝突しない。
+		//
+		// **_revisions のルートを別に置いていない。** chi のワイルドカードが
+		// すべてを飲むため、履歴かどうかは末尾のセグメントで分岐する
+		// （10.1、doc_scope.go の parseDocPath）。slug の CHECK が _ を弾くので
+		// （DbDesign.md 8.1.1）、「_revisions という名の文書」と取り違えない。
+		// **GET 以外で _revisions を叩くと 405**（10.1）。
+		//
+		// **子資源なので RequireProjectPermission を通す。** 非メンバーには
+		// 404 が返る（Design.md 6.4.5）。木を読むクエリは project_id で
+		// 閉じており（document.sql）、文書の内部 ID はその木からしか出てこない。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "doc.view")).
+			Get("/projects/{key}/docs", h.listDocs)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "doc.edit")).
+			Post("/projects/{key}/docs", h.createDoc)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "doc.view")).
+			Get("/projects/{key}/docs/*", h.getDoc)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "doc.edit")).
+			Patch("/projects/{key}/docs/*", h.patchDoc)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "doc.edit")).
+			Delete("/projects/{key}/docs/*", h.deleteDoc)
+
 		// ── ロール・権限カタログ（ApiDesign.md 7章）──────────────
 		//
 		// **GET /roles だけ必要権限が scope で変わる**（7.1）。?scope=project は

@@ -19,11 +19,12 @@
  * **見出しの件数は親が持つ `comment_count` である**（`deleted_at IS NULL`）。
  * ここが持つ `total` は**削除済みも数える**ので答えが違う（9.8。意図的）。
  */
-import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, useTemplateRef, watch } from 'vue'
 
 import Avatar from './Avatar.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
-import MarkdownEditor from './MarkdownEditor.vue'
+/** 型だけを取り込む（実行時の import を生まないので、下の分割を打ち消さない） */
+import type MarkdownEditorComponent from './MarkdownEditor.vue'
 import { ApiError } from '../api/client'
 import * as commentsApi from '../api/comments'
 import {
@@ -35,6 +36,16 @@ import type { CommentKind, TicketComment } from '../api/comments'
 import { formatDateTime } from '../lib/datetime'
 import { renderMarkdown } from '../lib/markdown'
 import { useAuthStore } from '../stores/auth'
+
+/**
+ * **編集器は使うときに読み込む**（`GuiDesign.md` 5.10、`fix/split-markdown-chunk`）。
+ *
+ * **`MarkdownEditor` の利用者は3つある**——チケットの説明欄（`TicketDetailPane`）、
+ * ここ（コメントの投稿と編集）、Docs（5.10）。**1つでも同期で取り込んでいると
+ * CodeMirror は初回チャンクに残る**ので、3つとも動的にする（ビルドが
+ * `INEFFECTIVE_DYNAMIC_IMPORT` で教えてくれる）。
+ */
+const MarkdownEditor = defineAsyncComponent(() => import('./MarkdownEditor.vue'))
 
 const props = defineProps<{
   projectKey: string
@@ -191,7 +202,7 @@ const draftKind = ref<CommentKind>(defaultCommentKind)
 const replyTo = ref<TicketComment | null>(null)
 const postError = ref('')
 
-const composerRef = useTemplateRef<InstanceType<typeof MarkdownEditor>>('composerRef')
+const composerRef = useTemplateRef<InstanceType<typeof MarkdownEditorComponent>>('composerRef')
 
 const canPost = computed(() => draft.value.trim() !== '' && !busy.value)
 
