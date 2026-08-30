@@ -22,6 +22,9 @@ export type Doc = components['schemas']['Doc']
 export type DocSection = components['schemas']['DocSection']
 export type CreateDocRequest = components['schemas']['CreateDocRequest']
 export type PatchDocRequest = components['schemas']['PatchDocRequest']
+export type DocRevisionList = components['schemas']['DocRevisionList']
+export type DocRevisionItem = components['schemas']['DocRevisionItem']
+export type DocRevision = components['schemas']['DocRevision']
 
 /**
  * パスを URL へ埋める。
@@ -104,4 +107,101 @@ export function updateDoc(
  */
 export function deleteDoc(key: string, path: string): Promise<void> {
   return api.del<void>(docPath(key, path))
+}
+
+/**
+ * 履歴の一覧（10.5）。**`body_md` を含まない**——20件ぶんの Markdown を載せると
+ * 応答が重くなる。本文が要るときは `getDocRevision` を呼ぶ。
+ *
+ * **`revision_no` の降順に固定**で、並べ替える口が無い（`?sort=` は 422）。
+ * 2.6 のページネーションを持ち、既定は `per_page=20`。
+ *
+ * **`_revisions` はサブ資源の予約語である**（10.1）。`slug` の CHECK が `_` を
+ * 弾くので（`DbDesign.md` 8.1.1）、「`_revisions` という名の文書」と取り違えない。
+ * **`docPath` を通してから継ぎ足す**——`_revisions` 自体は符号化しない固定の語である。
+ */
+export function listDocRevisions(
+  key: string,
+  path: string,
+  query: { page?: number; per_page?: number } = {},
+): Promise<DocRevisionList> {
+  const params = new URLSearchParams()
+  for (const [k, v] of Object.entries(query)) {
+    if (v !== undefined) params.set(k, String(v))
+  }
+  const qs = params.toString()
+  return api.get<DocRevisionList>(
+    `${docPath(key, path)}/_revisions${qs === '' ? '' : `?${qs}`}`,
+  )
+}
+
+/**
+ * 履歴の1件（本文つき。10.5）。**`version` も `outline` も持たない**——`version` は
+ * 現在の文書の楽観ロック値であって過去の版に属さず、`outline` は現在の本文から
+ * 作るものである。無い `revision_no` を指すと 404。
+ *
+ * **戻すときはこの応答の `title` と `body_md` を `updateDoc` へ渡す**（10.5）。
+ * 専用のエンドポイントは無く、書き戻しも新しいリビジョンとして積まれる。
+ */
+export function getDocRevision(
+  key: string,
+  path: string,
+  revisionNo: number,
+): Promise<DocRevision> {
+  return api.get<DocRevision>(`${docPath(key, path)}/_revisions/${revisionNo}`)
+}
+
+/**
+ * 木のドラッグ&ドロップ1回ぶんの `PATCH`（`GuiDesign.md` 5.10「木の操作」）。
+ *
+ * **並べ替えの割り当ては 9.11.1 のタグと同じ**——移動先の兄弟の新しい並びへ
+ * `10, 20, 30, …` を振り直し、**値が変わった行だけ送る**。`If-Match` には目次が
+ * 返す `version` を使う（10.2）ので、木を1回取れば動いた行をそのまま送れる。
+ *
+ * **移動元の兄弟は触らない。** 1行が抜けても残りの `sort_order` は昇順のままで、
+ * 見た目の順序が変わらない。送る本数を増やさないほうが、途中で失敗したときに
+ * 半端に残る量が小さくなる。
+ *
+ * **移動する文書を最初に送る。** `slug` が移動先で重複すると `409 already_exists`
+ * になるが（10.6）、**先に他の兄弟を振り直してから失敗すると、順序だけが動いて
+ * 移動しなかった状態が残る**。最初に送れば、失敗しても何も動いていない。
+ *
+ * **この操作は原子的ではない**（`ApiDesign.md` 11.2 のタグと同じ未解決事項）。
+ * 呼び出し側は失敗したら目次を取り直し、いまの姿を見せること。
+ *
+ * @returns 実際に送った本数
+ */
+export async function moveDoc(
+  key: string,
+  plan: {
+    /** 移動する文書（`siblings` にも含まれている） */
+    moved: DocTreeItem
+    /** 移動前の親のパス。`null` はトップレベル */
+    fromParentPath: string | null
+    /** 移動先の親のパス。`null` はトップレベル */
+    toParentPath: string | null
+    /** 移動先の親が持つことになる兄弟の並び（`moved` を挿入ずみ） */
+    siblings: DocTreeItem[]
+  },
+): Promise<number> {
+  const parentChanged = plan.fromParentPath !== plan.toParentPath
+
+  const changed = plan.siblings
+    .map((item, index) => ({ item, sortOrder: (index + 1) * 10 }))
+    .map(({ item, sortOrder }) => {
+      const isMoved = item.id === plan.moved.id
+      const body: PatchDocRequest = {}
+      if (isMoved && parentChanged) body.parent_path = plan.toParentPath
+      if (item.sort_order !== sortOrder) body.sort_order = sortOrder
+      return { item, body, isMoved }
+    })
+    .filter(({ body }) => Object.keys(body).length > 0)
+    // 移動する行を先頭へ。**並べ替えは安定でなければならない**ので、
+    // 残りは元の並び（＝新しい `sort_order` の昇順）のままにする
+    .sort((a, b) => Number(b.isMoved) - Number(a.isMoved))
+
+  for (const { item, body } of changed) {
+    await updateDoc(key, item.path, item.version, body)
+  }
+  return changed.length
 }

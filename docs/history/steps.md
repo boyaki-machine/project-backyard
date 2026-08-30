@@ -3099,3 +3099,87 @@ D&D・空状態・権限出し分け・遅延読み込みの**12件**あり、�
 - `make clean-webui` を実行し、`git status` に生成物が無いことを確認
 - サーバを停止（`make stop-server`）、Cookie jar とヘッドレス Chrome のプロファイルを削除
 - **マイグレーションを足していないので `make stg-migrate` は不要。`make stg-build` は 22c の完了後にまとめて行う**（画面が入るのは 22c のマージ時点）
+
+## 手順22c — 木の D&D・移動改名・履歴（2026-08-30、`feature/step-22-docs`）
+
+`GuiDesign.md` 5.10「木の操作」「表示と編集」と `ApiDesign.md` 10.4 / 10.5 を画面に載せた。
+**サーバは 22a のまま1行も触っていない**——5ルートはすべて 22a で実装・`openapi.yaml` 記載ずみで、
+`DocRevisionList` / `DocRevisionItem` / `DocRevision` も `schema.d.ts` に入っていた。
+**22c は client だけの手順**であり、`make gen-api` も不要だった。
+
+### 先に当てた設計文書（コードより前）
+
+| 文書 | 変更 |
+|---|---|
+| `ApiDesign.md` 10.5 | 「前の版に戻す」を **`title` と `body_md` の2つ**に改めた（＋`slug` / `parent_path` を戻さない理由） |
+| `GuiDesign.md` 5.10「表示と編集」 | 履歴モーダルを**2ペイン＋幅の変種**と定め、「最新の版には `[ この版に戻す ]` を出さず『現在の版』と印を付ける」「戻す範囲は2つ」を書き足した |
+| `GuiDesign.md` 5.10「木の操作」 | **掴むのは行全体で `⠿` を置かない**（根拠の実測値つき）、**リンクに `draggable="false"`** を書き足した |
+| `GuiDesign.md` 6.1 | `DocTree` に D&D、`DocFormModal` に移動・改名、`DocRevisionsModal` を追記。**`Modal` の幅の変種**の規約を書いた |
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/src/components/DocRevisionsModal.vue` | **新規**。履歴の一覧（ページャ20件）＋本文の2ペイン、`[ この版に戻す ]`。**一覧は `body_md` を持たない**ので選んだ時点で `_revisions/:no` を叩く |
+
+### 変えたファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/src/api/docs.ts` | `listDocRevisions` / `getDocRevision` / **`moveDoc`**（D&D 1回ぶんの `PATCH` 群。`10, 20, 30, …` の振り直しと「値が変わった行だけ送る」を持つ） |
+| `client/src/components/DocTree.vue` | 行の `draggable`、`dragover` / `drop`、3分割の目印（線／面）、部分木を「落とせない」として見せる。**型 `DocDropZone` / `DocDropHint` を `<script lang="ts">` で export** |
+| `client/src/components/DocFormModal.vue` | 「移動・改名」モードを追加（`PATCH` ＋ `If-Match`、409 の `already_exists` / `conflict` 出し分け、親候補から自分と子孫を刈る、変わった欄だけ送る） |
+| `client/src/components/Modal.vue` | `size?: 'default' \| 'wide'`（880px）。**幅だけを変える** |
+| `client/src/pages/DocsPage.vue` | ドラッグ状態、ドロップの反映、移動後の URL 追随（`router.replace`）、`docActions` に2項目、2つのモーダルの開閉 |
+
+**ドラッグの状態は `DocsPage` が持つ。** `DocTree` は**自分自身を再帰的に描く**ので、
+部品側に持たせると段をまたいで共有されない。
+
+### 検証（ブラウザ102件・単体949件・結合158件がすべて PASS）
+
+**本物のドラッグで回した**（`Input.setInterceptDrags`。`Development.md` 8.2）。
+
+| 群 | 件数 | 見たもの |
+|---|---|---|
+| D&D | 30 | 掴める（`Input.dragIntercepted` が来る）／3分割の目印／自分と子孫へ落とせない／`before` の並べ替えと `sort_order` の振り直し／`inside` の親替え／**部分木ごと動く**と URL の追随／`member@` は掴めない |
+| 移動・改名 | 22 | `[⋯]` の3項目／欄の初期値／**親候補から自分と子孫が消える**／`409 already_exists` が `slug` 欄の下／title だけの変更で版が1件積まれる／slug 変更で子孫の URL が追随／変更が無ければ `version` を動かさない |
+| 履歴 | 31 | 幅 880px の2ペイン（実測 260 + 618）／件数と降順が API と一致／「現在の版」の印／`[ この版に戻す ]` の出し分け／**`title` と `body_md` の両方が戻る**／版が1つ増える／`change_reason` が残る／**22件で 1/2 のページャ** |
+| 22b の回帰 | 14 | ヘッダの `[⋯]`／編集して保存（3ペイン・内蔵プレビュー無し）／文書を追加／削除の確認に配下の件数／空状態 |
+| 競合 | 5 | **裏で `version` を進めてから D&D** → 木のそばに「他の変更と競合しました」が出て**木は消えない**／取り直したあと同じ操作が通る／誤りの表示が消える |
+
+**`Input.dragIntercepted` が来ることを単独で先に測ってから**3つの落とし先を見ている
+——16d-b の「32件 PASS のまま行が一度も掴めない」の再発防止である。
+**`member@` では同じ操作で来ない**ことも測った（検知が効いている証拠であり、
+`Design.md` 付録A 論点③の負の側でもある）。
+
+**期待値は決め打たず、操作の前に目次（10.2）を実測して 5.10 の規則から組み立てた。**
+`inside` で親を変えたとき「兄弟は `sort_order` が変わらないので1本も送らない」を
+**version の増分で測っている**。
+
+**スクリーンショットを 1440 / 1100 / 900 / 700px で撮って目で見た**（11枚）。
+面（`inside`）と線（`before` / `after`）が一目で別物と読めること、落とせない部分木が
+薄くなること、履歴モーダルが 720px 以下で縦に積まれること、移動・改名モーダルに
+URL のプレビューと「配下の文書も一緒に移動します」が出ることを確認した。
+
+### 検証で見つけて直したもの（2件）
+
+| 見つけ方 | 中身 |
+|---|---|
+| ブラウザ検証 | **履歴モーダルの見出しが `[ この版に戻す ]` の後も古いタイトルのまま**だった。`historyTarget` が目次の行の**写し**を持っていたため。**`id` を持って木から引き直す computed に変えた**——履歴は「開いたまま対象が変わる」唯一のモーダルである |
+| 実測 | `DocTree.vue` の `[⋯]` のコメントが「場所は常に取らない」と書いていたが、`visibility: hidden` は **28px を確保する**（実測）。**コメントだけを直した**（挙動は正しい） |
+
+### 検証側の誤りだったもの（4件。実装は正しかった）
+
+| 症状 | 実際 |
+|---|---|
+| `inside` の目印だけ出ない | **`Input.dispatchDragEvent` の `dragOver` が1回では届かない**。x を 1px ずらして2回送ると3件とも届いた。`document` に素の listener を張って `clientY` を数えたら「送った3件のうち2件しか届いていない」と1回で出た（→ `Development.md` 8.2） |
+| `.markdown-body h1` が無い | **`lib/markdown.ts` は見出しを3段下げる**（`#` → `<h4>`）。9.2 の「ページヘッダの `<h1>` が唯一のページ見出し」を守るためで、そう書いてある |
+| 「根の末尾に入る」が外れた | **`PATCH` は `sort_order` を据え置く**。10.4 の「末尾」は `POST` の既定である。期待値を 10.2 の並び規則から組み立て直した |
+| probe が `rules` を引けない | **前の実行が `learnings/rules` へ移していた**。`fixture.reset()` を作って**毎回そこから始められる形**にした |
+
+### あとしまつ
+
+- **検証で作った文書5件を消して 0 件へ戻した**（`GET /projects/demo/docs` の `items` が `[]`）
+- サーバを停止（`make stop-server`）、ヘッドレス Chrome のプロファイル（`/tmp/pb-cdp-*`）を削除
+- `make clean-webui` を実行し、`git status` に生成物が無いことを確認
+- **マイグレーションを足していないので `make stg-migrate` は不要。`make stg-build` はマージ後に行う**

@@ -22,7 +22,9 @@
  * **Phase 1 で検証できなかった「権限による出し分けの負の側」をこの画面で初めて
  * 実地に確かめられる**（`Design.md` 付録A）。
  *
- * **22b の範囲外**：木のドラッグ&ドロップ、`[⋯]` の「移動・改名」「履歴」は手順22c。
+ * **手順22c で足したもの**：木のドラッグ&ドロップ、`[⋯]` の「移動・改名」「履歴」。
+ * **ドラッグの状態はここが持つ**——`DocTree` は自分自身を再帰的に描くので、
+ * 部品側に持たせると段をまたいで共有されない。
  */
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -30,7 +32,8 @@ import { useRoute, useRouter } from 'vue-router'
 import Avatar from '../components/Avatar.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import DocFormModal from '../components/DocFormModal.vue'
-import DocTree from '../components/DocTree.vue'
+import DocRevisionsModal from '../components/DocRevisionsModal.vue'
+import DocTree, { type DocDropHint, type DocDropZone } from '../components/DocTree.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
 import SplitPane from '../components/SplitPane.vue'
@@ -98,6 +101,27 @@ const flatDocs = computed<FlatDoc[]>(() => {
 })
 
 const byPath = computed(() => new Map(flatDocs.value.map((f) => [f.item.path, f.item])))
+
+/**
+ * 親のパス。**`path` から末尾の `slug` を落として作る**——目次（10.2）は
+ * `parent_path` を返さないが、`path` は `slug` を根から連ねたものなので（10.1）、
+ * 最後の区切りで切れば親が出る。`null` はトップレベル。
+ */
+function parentPathOf(path: string): string | null {
+  const cut = path.lastIndexOf('/')
+  return cut < 0 ? null : path.slice(0, cut)
+}
+
+/** その親が持つ子の並び。`null` はトップレベル（＝木の根） */
+function childrenOf(parentPath: string | null): DocTreeItem[] {
+  if (parentPath === null) return tree.value
+  return byPath.value.get(parentPath)?.children ?? []
+}
+
+/** `id` で木を引く。**移動のあと `path` が変わった行を追う**のに要る */
+function findById(id: string): DocTreeItem | null {
+  return flatDocs.value.find((f) => f.item.id === id)?.item ?? null
+}
 
 /** その文書と子孫の合計件数 - 1（＝子孫の数）。削除の確認に出す（6.3） */
 function descendantCount(item: DocTreeItem): number {
@@ -346,22 +370,177 @@ async function confirmDelete(): Promise<void> {
   }
 }
 
-// ── `[⋯]` の項目 ───────────────────────────────────────────
-//
-// **「移動・改名」と「履歴」は手順22c で足す。** 22b では押せない項目を出さない
-// ——`UserActionsMenu` は `disabled` と理由を出せるが、まだ設計上の存在でしか
-// ないものを画面に見せても、次の一手が読めない。
+// ── 移動したあと URL を追う（10.4）────────────────────────
 
-const docActions: ActionItem[] = [{ key: 'delete', label: '削除', danger: true }]
+/**
+ * 移動・改名で `path` が変わったら、開いている文書の URL を追随させる。
+ *
+ * **部分木ごと動く**（10.4）ので、**開いているのが動いた文書の子孫でも**
+ * URL は変わる。追わないと、次に読み込んだときに 404 になる。
+ *
+ * **`replace` を使う。** 移動は履歴に積む「遷移」ではなく、いま見ているものの
+ * 住所が変わっただけである——`push` にすると戻るボタンで古い URL（もう無い）へ戻る。
+ *
+ * @returns 実際に遷移したか。**呼び出し側が本文の取り直しを重ねないため**に返す
+ *   （遷移すれば `currentPath` の watch が `loadDoc` を呼ぶ）
+ */
+async function followMoved(id: string, oldPath: string): Promise<boolean> {
+  const cur = currentPath.value
+  if (cur === null) return false
+  if (cur !== oldPath && !cur.startsWith(`${oldPath}/`)) return false
+
+  const moved = findById(id)
+  if (moved === null) {
+    await router.replace(`/p/${props.projectKey}/docs`)
+    return true
+  }
+  const next = `${moved.path}${cur.slice(oldPath.length)}`
+  if (next === cur) return false
+  await router.replace(`/p/${props.projectKey}/docs/${next}`)
+  return true
+}
+
+// ── 木のドラッグ&ドロップ（5.10「木の操作」）──────────────
+
+/**
+ * 掴んでいる行と、目印の置き場。**この2つをページが1つずつ持つ**——
+ * `DocTree` は再帰で自分自身を描くので、部品側の状態は段をまたいで共有されない。
+ */
+const draggingItem = ref<DocTreeItem | null>(null)
+const dropHint = ref<DocDropHint | null>(null)
+
+/** 並べ替えの誤り。**木のそばに出す**（操作した場所に結果を出す。6.4） */
+const moveError = ref<string | null>(null)
+const moving = ref(false)
+
+function onDragging(item: DocTreeItem | null): void {
+  draggingItem.value = item
+  if (item === null) dropHint.value = null
+}
+
+/**
+ * 落とした（5.10 の表）。
+ *
+ * | ゾーン | 行き先 |
+ * |---|---|
+ * | `before` / `after` | 相手と**同じ親**の中で、相手の前／後ろ |
+ * | `inside` | **相手の子**の末尾 |
+ *
+ * **移動先の兄弟の並びを組み立てて `moveDoc` へ渡す。** `10, 20, 30, …` の
+ * 振り直しと「変わった行だけ送る」はあちらが持つ（`api/docs.ts`）。
+ *
+ * **楽観更新はしない**（利用者と合意、2026-08-30）。親子が変わると部分木の
+ * `path` が丸ごと付け替わるので（10.4）、手元で正しい姿を作るとサーバの規則を
+ * 二重に持つことになる。`PATCH` を送ってから目次を取り直す。
+ */
+async function onDrop(payload: { item: DocTreeItem; zone: DocDropZone }): Promise<void> {
+  // **掴んでいた行を先に控える。** `onDragging(null)` を通すと消えてしまう
+  const moved = draggingItem.value
+  const target = payload.item
+  onDragging(null)
+  if (moved === null || moving.value) return
+
+  const toParentPath = payload.zone === 'inside' ? target.path : parentPathOf(target.path)
+  const fromParentPath = parentPathOf(moved.path)
+
+  // 移動する行を除いた移動先の並び。**別の親から来たときは元から入っていない**
+  const base = childrenOf(toParentPath).filter((c) => c.id !== moved.id)
+  let siblings: DocTreeItem[]
+  if (payload.zone === 'inside') {
+    siblings = [...base, moved]
+  } else {
+    const at = base.findIndex((c) => c.id === target.id)
+    if (at < 0) return
+    const insertAt = payload.zone === 'before' ? at : at + 1
+    siblings = [...base.slice(0, insertAt), moved, ...base.slice(insertAt)]
+  }
+
+  const oldPath = moved.path
+  moving.value = true
+  moveError.value = null
+  try {
+    const sent = await docsApi.moveDoc(props.projectKey, {
+      moved,
+      fromParentPath,
+      toParentPath,
+      siblings,
+    })
+    if (sent === 0) return
+    // **子にしたなら、その親を必ず開く。** 畳んだ節点へ落とすと、
+    // 動いた行がどこへ行ったのか画面から見えなくなる
+    if (payload.zone === 'inside' && collapsed.value.delete(target.path)) {
+      collapsed.value = new Set(collapsed.value)
+      writeCollapsed()
+    }
+    await loadTree()
+    await followMoved(moved.id, oldPath)
+  } catch (e) {
+    // **原子的ではない**（`ApiDesign.md` 11.2 のタグと同じ）。途中まで反映された
+    // 状態が実際に起こりうるので、取り直していまの姿を見せる
+    moveError.value = e instanceof ApiError ? e.message : '文書を移動できませんでした'
+    await loadTree()
+  } finally {
+    moving.value = false
+  }
+}
+
+// ── `[⋯]` の項目 ───────────────────────────────────────────
+
+const docActions: ActionItem[] = [
+  { key: 'move', label: '移動・改名' },
+  { key: 'history', label: '履歴' },
+  { key: 'delete', label: '削除', danger: true },
+]
+
+/** 「移動・改名」の対象。**目次の行を渡す**——`version` を持つので `If-Match` に足りる */
+const moveTarget = ref<DocTreeItem | null>(null)
+
+/**
+ * 「履歴」の対象。**行そのものではなく `id` を持ち、木から引き直す。**
+ *
+ * 履歴モーダルは**開いたまま文書を変える**（`[ この版に戻す ]`）唯一の場所で、
+ * 戻すと `title` が変わりうる（10.5 は `title` も書き戻す）。行の写しを持つと
+ * **モーダルの見出しが戻す前のタイトルのまま残る**（実測で発覚）。
+ * 移動・改名のほうは保存と同時に閉じるので、この作りは要らない。
+ */
+const historyTargetId = ref<string | null>(null)
+const historyTarget = computed<DocTreeItem | null>(() =>
+  historyTargetId.value === null ? null : findById(historyTargetId.value),
+)
+
+function runAction(key: string, item: DocTreeItem): void {
+  if (key === 'move') moveTarget.value = item
+  else if (key === 'history') historyTargetId.value = item.id
+  else if (key === 'delete') deleteTarget.value = item
+}
 
 function onTreeAction(payload: { key: string; item: DocTreeItem }): void {
-  if (payload.key === 'delete') deleteTarget.value = payload.item
+  runAction(payload.key, payload.item)
 }
 
 function onHeaderAction(key: string): void {
   if (doc.value === null) return
   const item = byPath.value.get(doc.value.path)
-  if (key === 'delete' && item !== undefined) deleteTarget.value = item
+  if (item !== undefined) runAction(key, item)
+}
+
+/** 移動・改名が通った（10.4）。**`path` が変わっていれば URL を追う** */
+async function onDocSaved(saved: Doc): Promise<void> {
+  const target = moveTarget.value
+  moveTarget.value = null
+  if (target === null) return
+  const oldPath = target.path
+  await loadTree()
+  const navigated = await followMoved(saved.id, oldPath)
+  // 遷移したなら watch が本文を取り直す。していないなら、開いているのが
+  // 当人のときだけ手元で差し替える（タイトルだけ変えた場合がこれにあたる）
+  if (!navigated && currentPath.value === saved.path) doc.value = saved
+}
+
+/** `[ この版に戻す ]` が通った（10.5）。**新しい版として積まれている** */
+async function onReverted(next: Doc): Promise<void> {
+  await loadTree()
+  if (currentPath.value === next.path) doc.value = next
 }
 
 // ── 3ペインの幅（5.10「幅が足りないとき」）──────────────────
@@ -419,13 +598,21 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
             :project-key="projectKey"
             :can-edit="canEdit"
             :actions="docActions"
+            :dragging-path="draggingItem?.path ?? null"
+            :drop-hint="dropHint"
             @toggle="toggleCollapsed"
             @action="onTreeAction"
+            @dragging="onDragging"
+            @hint="dropHint = $event"
+            @drop="onDrop"
           />
         </div>
 
         <!-- `doc.edit` を持たない人には出さない（設計原則4）。ワイヤーどおり木の下 -->
         <div v-if="canEdit" class="docs-tree-foot">
+          <!-- 並べ替えの誤りは木のそばに出す（6.4）。**目次は取り直してあるので、
+               画面に出ているのは失敗した後のいまの姿である** -->
+          <p v-if="moveError" class="docs-tree-note docs-tree-error">✕ {{ moveError }}</p>
           <button type="button" class="secondary docs-add" @click="openCreate(null)">
             + 文書を追加
           </button>
@@ -606,6 +793,27 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
     @created="onCreated"
   />
 
+  <!-- 「移動・改名」（5.10）。**同じ部品の別モード**——扱う欄が
+       `title` / `slug` / `parent_path` の3つで完全に同じである（6.1） -->
+  <DocFormModal
+    v-if="moveTarget"
+    :project-key="projectKey"
+    :tree="tree"
+    :doc="moveTarget"
+    @close="moveTarget = null"
+    @saved="onDocSaved"
+  />
+
+  <!-- 「履歴」（5.10 / `ApiDesign.md` 10.5）。閉じれば現在の版に戻る -->
+  <DocRevisionsModal
+    v-if="historyTarget"
+    :project-key="projectKey"
+    :doc="historyTarget"
+    :can-edit="canEdit"
+    @close="historyTargetId = null"
+    @reverted="onReverted"
+  />
+
   <ConfirmDialog
     v-if="deleteTarget"
     title="文書を削除"
@@ -656,6 +864,12 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
   flex: none;
   padding: var(--pb-space-2);
   border-top: 1px solid var(--pb-line);
+}
+
+/* 誤りの行はボタンの真上に置く。**`.docs-tree-note` の余白は木の中で
+   使うためのもの**なので、フッタでは詰める */
+.docs-tree-foot .docs-tree-note {
+  padding: 0 var(--pb-space-1) var(--pb-space-2);
 }
 
 .docs-add {
