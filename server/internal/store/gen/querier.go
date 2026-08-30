@@ -112,6 +112,12 @@ type Querier interface {
 	// ない」を明示するほうが、後から読んだときに意図が残る。
 	CreateComment(ctx context.Context, arg CreateCommentParams) error
 	CreateDoDItem(ctx context.Context, arg CreateDoDItemParams) error
+	CreateDocument(ctx context.Context, arg CreateDocumentParams) error
+	// CreateDocumentRevision は 10.4 の「リビジョンを作る条件」に当たったときだけ呼ぶ。
+	//
+	// **POST は revision_no = 1 を作る**（10.4）。リビジョンは「その変更のあとの本文」を
+	// 持つので、作成時の1件が無いと最初の編集で「作ったときの本文」が残らない。
+	CreateDocumentRevision(ctx context.Context, arg CreateDocumentRevisionParams) error
 	// must_change を明示で受ける（DbDesign.md 6.2 の既定は false）。
 	// POST /admin/users（ApiDesign.md 6.2）が must_change_password: true を
 	// 既定とするため、列の既定値任せにできない。**呼び出し側は Go の
@@ -152,6 +158,9 @@ type Querier interface {
 	//
 	DeleteActorByID(ctx context.Context, actorID string) (int64, error)
 	DeleteDoDItem(ctx context.Context, arg DeleteDoDItemParams) (int64, error)
+	// DELETE は物理削除で、部分木ごと消える（parent_id の CASCADE。10.4 / 8.1.1）。
+	// document_revision も CASCADE で一緒に消える。
+	DeleteDocument(ctx context.Context, id string) (int64, error)
 	// project_counter / project_member / workflow（と配下の status・transition）は
 	// ON DELETE CASCADE で追従する（DbDesign.md 6.4 / 6.5）。
 	DeleteProjectByKey(ctx context.Context, key string) (int64, error)
@@ -331,6 +340,13 @@ type Querier interface {
 	// **行が返らない＝404** となる（ApiDesign.md 1.2-5）。
 	//
 	GetAdminUser(ctx context.Context, actorID string) (GetAdminUserRow, error)
+	// GetDocument は本文1件（10.3）。created_by / updated_by は LEFT JOIN である。
+	//
+	// **どちらも null になりうる**（ON DELETE SET NULL。8.1.1）。9.8 の author が
+	// null にならないのと異なり、**文書は書いた人が退職しても内容が生き続ける**（10.3）。
+	GetDocument(ctx context.Context, id string) (GetDocumentRow, error)
+	// GetDocumentRevision は1件ぶんの本文（10.5）。
+	GetDocumentRevision(ctx context.Context, arg GetDocumentRevisionParams) (GetDocumentRevisionRow, error)
 	// ── 詳細（ApiDesign.md 5.4。POST /projects の応答も同じ形）───────
 	// GetProjectByKey は1プロジェクトの本体とワークフローの見出しを返す。
 	//
@@ -454,6 +470,12 @@ type Querier interface {
 	// 利用者が TTL の間だけ旧権限で動く。
 	//
 	InvalidateActorPermissionCache(ctx context.Context, actorID string) error
+	// IsDocumentDescendant は 10.4 の cycle 検出。
+	//
+	// **自分自身を含む。** 起点を UNION の第1項に置いてあるので、「自分自身または
+	// 自分の子孫を parent_path に指定した」（10.4）を1文で判定できる。
+	// ticket.sql の IsTicketDescendant と同じ形である。
+	IsDocumentDescendant(ctx context.Context, arg IsDocumentDescendantParams) (bool, error)
 	// IsProjectMember は assignee_id の検証に使う（9.3 の not_a_member）。
 	IsProjectMember(ctx context.Context, arg IsProjectMemberParams) (bool, error)
 	// ロールの妥当性はDBに問い合わせる。Go 側に 'project_admin' などを
@@ -529,6 +551,49 @@ type Querier interface {
 	// 目的なので、画面に出ないキー（administrator）は対象にしない。
 	//
 	ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) ([]ListAdminUsersRow, error)
+	// ListDocumentBodies は ?outline=1（10.2）のためだけに本文を読む。
+	//
+	// **応答には本文を載せない。** 見出し一覧は本文から作るので読む必要があるが、
+	// 10.2 の「body_md を含めない」は応答の話である。**?outline=1 が付いたときだけ
+	// 呼ぶ**ので、既定の目次は本文をまったく運ばない。
+	ListDocumentBodies(ctx context.Context, projectID pgtype.Text) ([]ListDocumentBodiesRow, error)
+	// ListDocumentRevisions は履歴の一覧（10.5）。
+	//
+	// **body_md を含めない。** 20件ぶんの Markdown を載せると応答が重くなる（10.5）。
+	// 本文が要るときは GetDocumentRevision を呼ぶ。
+	//
+	// **revision_no の降順に固定**（10.5）。sort / order を受け付けない。
+	// total は window 関数で同じ1回の走査から取る（comment.sql と同じ形）。
+	ListDocumentRevisions(ctx context.Context, arg ListDocumentRevisionsParams) ([]ListDocumentRevisionsRow, error)
+	// プロジェクト文書に関するクエリ（DbDesign.md 8.1、ApiDesign.md 10章）。
+	//
+	// 手順22a で追加。消費者は Docs 画面（GuiDesign.md 5.10）と、Phase 2 後半の
+	// MCP（pb_list_docs / pb_get_doc / pb_put_doc。Design.md 8章）である。
+	//
+	// **path は列ではない。** 文書の位置は parent_id の連なりで表し、ApiDesign.md 10.1 の
+	// パス（vision、rules/naming）は slug を根から連ねて組み立てる。列に持たせると、
+	// 部分木を移動するたびに子孫の行をすべて書き換えることになる（10.4 の「path は
+	// 子孫の分も付け替わる」は見え方の話であって、行の更新ではない）。
+	//
+	// **テンプレート行を返さない。** is_template = true の4件（8.1.2）は project_id が
+	// NULL なので、project_id で閉じたクエリには最初から現れない。プロジェクト作成時の
+	// 複製は手順23 が扱う。
+	//
+	// **すべてのクエリが project_id か document_id で閉じている。** 到達可否（メンバーか）
+	// の判定は RequireProjectPermission が済ませている（Design.md 6.4.5）。
+	// ListDocumentTree はプロジェクトの全文書を1回で返す。目次（10.2）の源であり、
+	// **パスの解決・循環の検出・削除時の子孫の数え上げも、この1本から作る。**
+	//
+	// **body_md を含めない。** 目次は「どこに何があるか」を答えるもので、本文は 10.3 が
+	// 返す（10.2）。本文が要る経路は GetDocument が document_id で1件だけ読む。
+	//
+	// **version を含める。** 木のドラッグ&ドロップ（GuiDesign.md 5.10）は目次だけを持って
+	// 複数行を PATCH し、10.4 が If-Match を必須とするため（10.2）。
+	//
+	// **並びは親ごとに sort_order 昇順、同値は slug 昇順**（10.2）。parent_id を第1キーに
+	// 置いて同じ親の行を隣り合わせているので、呼び出し側は届いた順に子を積むだけで
+	// 各階層の順序が揃う。NULLS FIRST でトップレベルが先に来る。
+	ListDocumentTree(ctx context.Context, projectID pgtype.Text) ([]ListDocumentTreeRow, error)
 	// ── アクセストークン（ApiDesign.md 4.4）──────────────────────────────
 	//
 	// **いずれも token_type = 'api' に限る。** ブラウザのセッション
@@ -882,6 +947,18 @@ type Querier interface {
 	// **10 刻みにするのは間に挿し込む余地を残すため**で、NextTicketReferenceSortOrder
 	// と同じ採番である。
 	NextDoDSortOrder(ctx context.Context, ticketID string) (int32, error)
+	// ── リビジョン（ApiDesign.md 10.5）──────────────────────────
+	// NextDocumentRevisionNo は次の版番号。uq_document_revision (document_id,
+	// revision_no) があるので、競合しても2件目が一意制約で落ちる。
+	NextDocumentRevisionNo(ctx context.Context, documentID string) (int32, error)
+	// NextDocumentSortOrder は sort_order 省略時の既定（同じ親の中の最大値 + 10。10.4）。
+	//
+	// **IS NOT DISTINCT FROM でトップレベルを扱う。** parent_id は NULL を取りうるので、
+	// = では uq_document_slug の NULLS NOT DISTINCT と食い違う（8.1.1）。
+	//
+	// 10刻みにするのは 8.1.2 と同じ理由で、並べ替え（9.11.1 と同じ形）が同じ間隔で
+	// 振り直すためである。
+	NextDocumentSortOrder(ctx context.Context, arg NextDocumentSortOrderParams) (int32, error)
 	// sort_order 省略時の既定（現在の最大値 + 10）。行が無ければ 10 から始める。
 	// 10刻みにするのは、並べ替え（9.11.1）が同じ間隔で振り直すためである。
 	NextTagSortOrder(ctx context.Context, projectID string) (int32, error)
@@ -1149,6 +1226,25 @@ type Querier interface {
 	//
 	// type は含めない。作成後は変えられない（9.9 が immutable_field と定める）。
 	UpdateDoDItem(ctx context.Context, arg UpdateDoDItemParams) (int64, error)
+	// UpdateDocument は 10.4 の部分更新。**送られたフィールドだけを更新する。**
+	//
+	// **2つの書き方を使い分けている**（ticket.sql の UpdateTicket と同じ形）。
+	//
+	//   NOT NULL の列（slug / title / body_md / sort_order）  COALESCE(sqlc.narg(…), 現在値)
+	//   NULL にできる列（parent_id）                         CASE WHEN @…_set THEN … END
+	//
+	// COALESCE では「null を送ってトップレベルへ移す」を表せない。10.4 が
+	// parent_path の null をトップレベルと定めているので、_set のフラグで
+	// 「送られていない」と「null が送られた」を区別する。
+	//
+	// **version は必ず +1 する**（10.4）。sort_order だけの変更でも動かすのは、
+	// 2.8 の規約を1本に保つためである（9.4 の move と同じ扱い）。
+	//
+	// **WHERE に version を置くのが If-Match そのものである。** 0行なら 409 conflict
+	// か 404 のどちらかで、呼び出し側が行の存在を別に確かめて切り分ける。
+	//
+	// **updated_at はトリガが動かす**（trg_document_updated。8.1.1）。
+	UpdateDocument(ctx context.Context, arg UpdateDocumentParams) (int64, error)
 	// UpdateLocalIdentitySubject はメール変更に user_identity.subject を追随させる。
 	//
 	// **設計文書に無い操作だが、無いと当人がログインできなくなる**（手順13a の判断。

@@ -112,8 +112,18 @@ type Error struct {
 	// {field, code, message} の配列であり（2.5）、数値を載せる場所が
 	// 無いためである。フロントが「あと N 分」を組み立てられるよう、
 	// 文言ではなく数値のまま返す。
-	RetryAfterSec int    `json:"retry_after_sec,omitempty"`
-	RequestID     string `json:"request_id,omitempty"`
+	RetryAfterSec int `json:"retry_after_sec,omitempty"`
+
+	// AvailableSections は ?section= が命中しなかったときの見出し一覧
+	// （ApiDesign.md 10.3）。空なら出さない。
+	//
+	// retry_after_sec と同じ理由で details ではなく本体に置く——details は
+	// {field, code, message} の配列であり（2.5）、入力欄に紐づかない配列を
+	// 載せる場所が無い。**呼び出し側（多くはエージェント）が、もう一度目次を
+	// 取りに行かずに次の一手を選べる**ようにするためである。
+	AvailableSections []string `json:"available_sections,omitempty"`
+
+	RequestID string `json:"request_id,omitempty"`
 
 	// cause は応答には出さず、サーバログにのみ残す内部原因。
 	cause error
@@ -151,6 +161,15 @@ func (e *Error) WithDetails(details ...Detail) *Error {
 func (e *Error) WithRetryAfter(sec int) *Error {
 	if sec > 0 {
 		e.RetryAfterSec = sec
+	}
+	return e
+}
+
+// WithAvailableSections は ?section= が命中しなかったときの見出し一覧を添える
+// （ApiDesign.md 10.3）。空スライスなら何もしない。
+func (e *Error) WithAvailableSections(sections []string) *Error {
+	if len(sections) > 0 {
+		e.AvailableSections = sections
 	}
 	return e
 }

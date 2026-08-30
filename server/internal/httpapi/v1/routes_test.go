@@ -651,3 +651,123 @@ func TestDashboardRoutesDoNotCollideWithTicketRoutes(t *testing.T) {
 		t.Errorf("activity のハンドラに届いていない: %v", q2.opLog)
 	}
 }
+
+// ── プロジェクト文書のルート（手順22a。ApiDesign.md 10章）────────────
+//
+// **doc.edit は operator と project_member が持たない**（DbDesign.md 8.1.4）。
+// **Phase 1 では作れなかった「その操作ができない人」が、ここで初めて実在する**
+// ——これまでの宣言は operator がシステムロール側から通ってしまい、403 を
+// 一度も出せなかった（Design.md 付録A の論点③）。
+
+// docRouteFake は「プロジェクト demo のメンバーだが doc.edit を持たない」状態を
+// 作る。0017 の割り当て（8.1.4）をそのまま写してある。
+func docRouteFake(t *testing.T, projectRole string) *fakeQuerier {
+	t.Helper()
+	q := newFake(t)
+	// システムロール側の operator は doc.view を持ち doc.edit を持たない（8.1.4）。
+	q.permissions[auth.SystemRoleOperator] = []string{"project.view", "doc.view"}
+	q.permissions["project_member"] = []string{"doc.view"}
+	q.permissions["project_viewer"] = []string{"doc.view"}
+	q.permissions["project_admin"] = []string{"doc.view", "doc.edit"}
+	q.projectIDByKey = map[string]string{"demo": testProjectID}
+	q.docs = docFakeState{
+		tree: []gen.ListDocumentTreeRow{
+			{ID: testDocRulesID, Slug: "rules", Title: "規約", SortOrder: 20, Version: 3},
+		},
+		byID: map[string]gen.GetDocumentRow{
+			testDocRulesID: {ID: testDocRulesID, Slug: "rules", Title: "規約", Version: 3},
+		},
+		bodies:         map[string]string{testDocRulesID: "本文\n"},
+		nextSortOrder:  30,
+		nextRevisionNo: 4,
+		updateRows:     1,
+		deleteRows:     1,
+		revisionByNo:   map[int32]gen.GetDocumentRevisionRow{},
+	}
+	q.withProjectMember("demo", projectRole)
+	return q
+}
+
+// doc.view しか持たないメンバーは、読めるが書けない。
+func TestDocRoutesSplitReadAndWritePermissions(t *testing.T) {
+	const base = "/api/v1/projects/demo/docs"
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		want   int
+	}{
+		{"目次は読める", http.MethodGet, base, "", http.StatusOK},
+		{"本文は読める", http.MethodGet, base + "/rules", "", http.StatusOK},
+		{"履歴は読める", http.MethodGet, base + "/rules/_revisions", "", http.StatusOK},
+		{"作れない", http.MethodPost, base, `{"slug":"x","title":"題"}`, http.StatusForbidden},
+		{"編集できない", http.MethodPatch, base + "/rules", `{"title":"新"}`, http.StatusForbidden},
+		{"削除できない", http.MethodDelete, base + "/rules", "", http.StatusForbidden},
+	}
+	for _, role := range []string{"project_member", "project_viewer"} {
+		for _, c := range cases {
+			t.Run(role+"/"+c.name, func(t *testing.T) {
+				q := docRouteFake(t, role)
+				rec := callAsMember(q, c.method, c.path, c.body)
+				if rec.Code != c.want {
+					t.Fatalf("status = %d, want %d (%s)", rec.Code, c.want, rec.Body.String())
+				}
+			})
+		}
+	}
+}
+
+// doc.edit を持つプロジェクト管理者は書ける。
+func TestDocRoutesAllowProjectAdmin(t *testing.T) {
+	q := docRouteFake(t, "project_admin")
+	rec := callAsMember(q, http.MethodPost, "/api/v1/projects/demo/docs",
+		`{"slug":"decisions","title":"判断の記録"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// **非メンバーには 404**（Design.md 6.4.5「存在を隠す」）。403 ではない。
+func TestDocRoutesHideProjectFromNonMember(t *testing.T) {
+	q := docRouteFake(t, "")
+	for _, path := range []string{
+		"/api/v1/projects/demo/docs",
+		"/api/v1/projects/demo/docs/rules",
+	} {
+		rec := callAsMember(q, http.MethodGet, path, "")
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404 (%s)", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// /docs と /docs/* は衝突しない（chi は静的なセグメントを先に照合する）。
+func TestDocRoutesWildcardDoesNotSwallowIndex(t *testing.T) {
+	q := docRouteFake(t, "project_admin")
+	rec := callAsMember(q, http.MethodGet, "/api/v1/projects/demo/docs", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("目次: status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"items"`) {
+		t.Errorf("目次の応答になっていない: %s", rec.Body.String())
+	}
+}
+
+// 状態変更系は CSRF を要求する（2.4）。
+func TestDocWriteRequiresCSRF(t *testing.T) {
+	q := docRouteFake(t, "project_admin")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/demo/docs",
+		strings.NewReader(`{"slug":"x","title":"題"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: tokenAs(q, auth.SystemRoleOperator)})
+	rec := httptest.NewRecorder()
+	routerWithDeps(Deps{Queries: q, Tx: &fakeTxRunner{q: q}}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorOf(t, rec).Code; got != "csrf_failed" {
+		t.Errorf("error.code = %q, want csrf_failed", got)
+	}
+}

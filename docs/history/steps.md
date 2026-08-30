@@ -2922,3 +2922,103 @@ project-backyard_pgdata  /var/lib/docker/volumes/project-backyard_pgdata/_data
 - スクラッチパッド（`verify_0017.sql` / `testdb.log` / 8.1.2 の下書き）を削除
 - `make build` は行っていないので `make clean-webui` は不要
 - **stg のマイグレーションと `deploy/stg/out/` は意図して残した**（`Development.md` 11.3 の運用そのもの。`out/` は `.gitignore` 対象）
+
+## 手順22a — 文書API（2026-08-30、`feature/step-22-docs`）
+
+**完了条件**（`Design.md` 11章）：ブラウザで文書を作り、階層に置き、編集して履歴が残る。
+**22a では満たさない**——`Design.md` 11.2.1 に従い、a はサーバ側で止めて検証・記録・コミットまで行う。
+**完了条件は 22b（Docs 画面）で満たす。**
+
+**分割の判断**：着手時の見積もりで、サーバだけで新規5ルート（うち `*path` 配下が3系統）＋
+見出し解析＋楽観ロック＋部分木の移動と循環検知、画面側は木の D&D・編集・履歴・移動改名・
+競合の5系統だったため、利用者の承認を得て 22a / 22b に分けた。**ブランチは1本、マージは1回。**
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/store/queries/document.sql`（新規） | 11本。木の取得（`ListDocumentTree`）、`?outline=1` 用の本文（`ListDocumentBodies`）、本文1件、`sort_order` の既定、CRUD、循環検知（再帰CTE）、リビジョン4本 |
+| `server/internal/httpapi/v1/doc_scope.go`（新規） | ワイルドカードのパス解決、木の組み立てと `path` の生成、`_revisions` の切り分け（10.1）、404 / 405 の文言 |
+| `server/internal/httpapi/v1/doc_outline.go`（新規） | 見出しの抽出（CommonMark の ATX）と `?section=` の切り出し |
+| `server/internal/httpapi/v1/docs.go`（新規） | `GET` 目次（`?outline=1`）と本文（`?section=`） |
+| `server/internal/httpapi/v1/docs_write.go`（新規） | `POST` / `PATCH` / `DELETE`、入力の検証、`If-Match`、リビジョンを作る条件 |
+| `server/internal/httpapi/v1/docs_revisions.go`（新規） | `_revisions` の一覧と1件 |
+| `server/internal/httpapi/v1/doc_outline_test.go`（新規） | 見出し抽出と章の切り出しの単体（12件） |
+| `server/internal/httpapi/v1/docs_fake_test.go`（新規） | 文書クエリのフェイク。`uq_document_slug` と ORDER BY を真似る |
+| `server/internal/httpapi/v1/docs_test.go`（新規） | ハンドラの単体（29件） |
+| `server/internal/httpapi/v1/docs_integration_test.go`（新規） | 実DBに対する結合（`TestDocsIntegration`） |
+
+### 直したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `docs/ApiDesign.md` | 10.2 に `version` と理由、`?outline=1` の例、10.4 に「`POST` は revision 1 を作る」、10.1 に「`_revisions` への `GET` 以外は 405」、10.5 に `_revisions/:no` の応答例、10.6 のエラー表3行 |
+| `docs/DbDesign.md` | 8.1.3 の3か所（`section` はスラッグではなく見出しテキスト、表の語、存在しない章は 404 + `available_sections`） |
+| `docs/GuiDesign.md` | 3.2 の壊れた表の行、5.10 に「空状態」節、木の D&D が `If-Match` に目次の `version` を使うこと |
+| `docs/openapi.yaml` | `docs` タグ、4パス、パラメータ2件、応答3件、スキーマ10件、`Error.available_sections` |
+| `client/src/api/schema.d.ts` | `make gen-api` の生成物 |
+| `server/internal/httpapi/apierr/apierr.go` | `AvailableSections` と `WithAvailableSections`（10.3） |
+| `server/internal/httpapi/v1/routes.go` | 5ルートの宣言（`doc.view` / `doc.edit`） |
+| `server/internal/httpapi/v1/routes_test.go` | 文書ルートの権限テスト5件 |
+| `server/internal/httpapi/v1/fake_test.go` | `docs docFakeState` の1行 |
+| `server/internal/httpapi/openapi_drift_test.go` | ワイルドカードルートの展開表（`wildcardExpansions`） |
+
+### 検証結果
+
+**1. `make test`（単体・全 PASS）** — 949件。うち今回の新規は 46件。
+
+**2. `make test` のドリフト検出** — `openapi.yaml` と実装のルートが一致。
+**わざと壊して検知できることを確かめた**——`_revisions/{revision_no}` のパスキーを
+`_history/{revision_no}` に変えたところ、**両方向**（実装にあって yaml に無い／yaml にあって
+実装に無い）で落ちた。**`-count=1` を付けないとキャッシュで素通りする**（1回踏んだ）。
+
+**3. `make test-db`（結合・全 PASS）** — 158件。**`TestDocsIntegration` を外すと 157件**
+なので、今回の増分は1件。**手順21 の記録にある「155件」は 157件の誤り**（本ブランチの
+変更前を実測した値が 157 だった。差の2件は今回の変更と無関係）。
+
+**4. 実サーバ検証（`make run` + curl、73件 PASS / 0 FAIL）**
+
+| 見たもの | 結果 |
+|---|---|
+| 作成 | `sort_order` の既定が 10 / 20、子は親ごとに数え直して 10。`path` と `parent_path` が `slug` の連なりになる |
+| 目次 | `sort_order` 昇順、子が親の下に付く、`version` を返す |
+| `?outline=1` | `rules` の見出し2件（`命名` / `ブランチ`、`level=2`）。**見出しの無い文書も `[]`** |
+| `?section=` | 命中は `## 命名\n\n- 単数形`。不命中は 404 + `available_sections: ['命名','ブランチ']` |
+| 一意制約 | 同じ階層の重複 slug は 409 `already_exists`（`conflict` ではない）。`_revisions` は 422 |
+| 楽観ロック | `If-Match` 無しは 422（`details[].field = If-Match`）、古い値は 409 `conflict`、成功で `version` +1 |
+| リビジョン | 作成直後に1件。本文を変える `PATCH` で2件目。**並べ替え（`sort_order`）では増えない**。`revision_no` の降順。リビジョン1に作成時の本文が残る |
+| `_revisions` | `GET` 以外は 405 `method_not_allowed` |
+| 移動 | 自分の子孫へは 422 `cycle`。`vision` の下へ移すと `path` が `vision/rules`、**子の `parent_path` も付け替わる** |
+| 削除 | 204。部分木ごと消え、子孫は 404。目次が空に戻る |
+
+**5. `doc.edit` の負の側（`Design.md` 付録A 論点③の初回検証）**
+
+**`member@` と `viewer@` で、読めるが書けないことを実測した。** 実効権限はシステムロール
+（`operator`）∪ プロジェクトロール（`project_member` / `project_viewer`）で、いずれにも
+`doc.edit` が入らない（`DbDesign.md` 8.1.4）。
+
+| 操作 | `pm@`（`project_admin`） | `member@` / `viewer@` |
+|---|---|---|
+| `GET` 目次・本文・履歴 | 200 | **200** |
+| `POST` / `PATCH` / `DELETE` | 201 / 200 / 204 | **403 `forbidden`** |
+
+**Phase 1 では一度も出せなかった 403 が、ここで初めて実際に出た。** 単体側も
+`TestDocRoutesSplitReadAndWritePermissions`（`project_member` / `project_viewer` × 6操作）で
+同じことをルータ越しに見ている。
+
+### 検証で踏んだ誤り
+
+| 誤り | 中身 |
+|---|---|
+| 検証側（3件、いずれも期待値の決め打ち） | ①②`created_by` / `updated_by` の表示名を「田中PM」と書いた（実際は `開発PM`）③トップレベルの件数を数える python 式が壊れていて常に 0 を返していた。**①②は `GET /me` から読む形に、③は `json.load` で数える形に直した** |
+| 実装側（1件） | `docTreeItem.Outline` を `[]docOutlineItem` + `omitempty` にしており、**`?outline=1` を付けたのに見出しが0件の文書ではキーごと消えていた**。「要求していない」と「見出しが無い」が区別できない。`*[]docOutlineItem` に直した。**単体テストが捕まえた** |
+| 道具（1件） | `go test` のキャッシュでドリフト検出が素通りした。`-count=1` が要る |
+
+### あとしまつ
+
+- **DB は検証前後で差分ゼロ**（`document`：テンプレート4件・実文書0件、`document_revision`：0件）
+- **`audit_log` の残りを削除**——実サーバ検証が残した19行（`login.success` 7 / `permission.denied` 12）と、`make test-db` が残した匿名10行（`login.failure` 5 / 消えたアクターの `login.success` 5）。検証の窓に残り0件を確認
+- Cookie jar（セッショントークンの平文）を削除。`make stop-server` でサーバを停止し、`:8080` が空いていることを確認
+- 比較用の `git worktree` を削除（`git worktree list` はリポジトリ本体のみ）
+- `make build` は行っていないので `make clean-webui` は不要
+- **マイグレーションを足していないので `make stg-migrate` / `make stg-build` は不要**（`PROGRESS.md` の運用はマイグレーションに紐づく）。stg へ文書機能が載るのは 22b

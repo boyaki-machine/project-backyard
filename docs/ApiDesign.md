@@ -2209,20 +2209,25 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
 「`a/b` のリビジョン一覧」なのか「`a/b/_revisions` という文書」なのかで迷うことがない。
 **ワイルドカードの末尾セグメントを見て分岐する**実装になる。
 
+**`_revisions` に対する `GET` 以外のメソッドは `405 method_not_allowed`。** `slug` の
+検証が `_` を弾く以上「`_revisions` という名の文書」は存在しえないので、**実在する
+サブ資源に対する未定義のメソッド**として扱うのが正しい。「文書が無い」（404）に
+寄せると、書き込み先を間違えた呼び出し側が原因に辿り着けない。
+
 ## 10.2 `GET /api/v1/projects/:key/docs` — 目次
 
 ```json
 {
   "items": [
     { "id": "01K2...", "path": "vision", "slug": "vision",
-      "title": "価値観・世界観", "sort_order": 10,
+      "title": "価値観・世界観", "sort_order": 10, "version": 1,
       "updated_at": "2026-08-29T04:12:00Z", "children": [] },
     { "id": "01K2...", "path": "rules", "slug": "rules",
-      "title": "規約", "sort_order": 20,
+      "title": "規約", "sort_order": 20, "version": 3,
       "updated_at": "2026-08-29T05:00:00Z",
       "children": [
         { "id": "01K2...", "path": "rules/naming", "slug": "naming",
-          "title": "命名", "sort_order": 10,
+          "title": "命名", "sort_order": 10, "version": 1,
           "updated_at": "2026-08-29T05:00:00Z", "children": [] }
       ] }
   ]
@@ -2234,6 +2239,16 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
 
 `items[]` は各階層で **`sort_order` 昇順、同値は `slug` 昇順**。第2キーを置く理由は 9.11 と同じ。
 
+**`version` を含める。** 本文（10.3）にもあるが、目次にも要る——**`GuiDesign.md` 5.10 の木の
+ドラッグ&ドロップは、目次だけを持って複数行を `PATCH` する**（9.11.1 のタグと同じく、新しい
+並びへ `10, 20, 30, …` を割り当てて値が変わった行だけ送る）。10.4 が `PATCH` に `If-Match` を
+必須とする以上、**目次が `version` を返さないと、動かした行の数だけ `GET` が増える**。
+目次は木の唯一の供給源であり、`updated_at` という鮮度の値を既に運んでいる器でもある。
+
+**`sort_order` だけの更新を `If-Match` の対象外にする案は採らない。** 2.8 の「更新には
+`If-Match`」という規約を資源ごとに割ると、どの `PATCH` にヘッダが要るかを呼び出し側が
+覚えることになる。
+
 **ページネーションを持たない**（`items` のみ）。9.11 のタグと同じく、**全件が同時に要る**
 ——目次は木であり、途中で切ると子が親から外れる。
 
@@ -2242,7 +2257,7 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
 各文書の見出し一覧を足す。**エージェントが「どの章を読むか」を決めるために使う**。
 
 ```json
-{ "id": "01K2...", "path": "rules", "title": "規約", "sort_order": 20,
+{ "id": "01K2...", "path": "rules", "title": "規約", "sort_order": 20, "version": 3,
   "updated_at": "2026-08-29T05:00:00Z",
   "outline": [
     { "section": "命名", "level": 2 },
@@ -2336,7 +2351,12 @@ GET /api/v1/projects/my-app/docs/rules?section=命名
 
 ### リビジョンを作る条件
 
-**`title` か `body_md` が実際に変わったときだけ `document_revision` に1行足す。**
+**`POST` は `revision_no = 1` を作る。** 作成時の `title` / `body_md` をそのまま置き、
+`change_reason` は `null`。**リビジョンは「その変更のあとの本文」を持つ**ので（10.5 の
+`change_reason` が、その版の中身を説明していることに対応する）、作成時の1件が無いと
+**最初の編集で「作ったときの本文」がどの版にも残らず、戻せなくなる。**
+
+`PATCH` は **`title` か `body_md` が実際に変わったときだけ `document_revision` に1行足す。**
 `sort_order` の変更や、同じ本文の送り直しでは作らない。並べ替えのたびに履歴が伸びると、
 「いつ内容が変わったか」が読めなくなる。**`version` はどの更新でも +1 する**（2.8 の規約を
 1本に保つため。9.4 の `move` と同じ扱い）。
@@ -2383,7 +2403,27 @@ GET /api/v1/projects/my-app/docs/rules?section=命名
 
 **一覧に `body_md` を含めない。** 9.13.2 の履歴が本文を `null` にしているのと同じ理由で、
 20件ぶんの Markdown を載せると応答が重くなる。本文が要るときは
-`GET .../\_revisions/:no` を呼ぶ（1件ぶんの `body_md` を返す）。
+`GET .../\_revisions/:no` を呼ぶ。
+
+```
+GET /api/v1/projects/my-app/docs/rules/_revisions/2
+```
+
+```json
+{
+  "revision_no": 2,
+  "title": "規約",
+  "body_md": "本書はこのプロジェクトの規約である。\n\n## 命名\n…",
+  "changed_by": { "id": "01K2...", "kind": "user", "display_name": "田中" },
+  "change_reason": null,
+  "created_at": "2026-08-29T04:30:00Z"
+}
+```
+
+**一覧の1件に `body_md` を足した形である。** `document_revision`（`DbDesign.md` 8.1.1）の
+列とそのまま対応する。**`version` も `outline` も持たない**——`version` は現在の文書の
+楽観ロック値であって過去の版に属さず、`outline` は現在の本文から作るものである（10.2）。
+無い `revision_no` を指すと `404 not_found`。
 
 **2.6 のページネーションを持つ**（既定 `per_page=20`、上限 100）。`revision_no` の降順に固定。
 
@@ -2401,8 +2441,9 @@ GET /api/v1/projects/my-app/docs/rules?section=命名
 
 | Status | code | 意味 |
 |---|---|---|
-| 404 | `not_found` | 文書が無い、`?section=` の章が無い（`available_sections` を伴う）、閲覧権限が無い |
-| 409 | `already_exists` | 同じ親の下に同じ `slug` がある |
+| 404 | `not_found` | 文書が無い、`?section=` の章が無い（`available_sections` を伴う）、`_revisions/:no` の版が無い、閲覧権限が無い |
+| 405 | `method_not_allowed` | `.../_revisions` を `GET` 以外で叩いた（10.1） |
+| 409 | `already_exists` | 同じ親の下に同じ `slug` がある（作成・改名・移動のいずれでも） |
 | 409 | `conflict` | `If-Match` 不一致 |
 | 422 | `validation_failed` | `details[].code` に `not_found`（`parent_path`）、`cycle`（自分の子孫へ移動） |
 

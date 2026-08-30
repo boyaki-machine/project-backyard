@@ -61,6 +61,9 @@ type fakeQuerier struct {
 	// チケット（手順16b）
 	ticket ticketFakeState
 
+	// プロジェクト文書（手順22a。ApiDesign.md 10章）
+	docs docFakeState
+
 	// タグ・スプリント（手順16a）
 	tagRows              []gen.ListTagsByProjectRow
 	tagByID              map[string]gen.GetTagByIDRow

@@ -156,7 +156,7 @@ export interface paths {
          *     **`token`（平文）はこの応答でのみ返る。** DB には SHA-256 のハッシュしか
          *     残らず、再表示する API は無い（DbDesign.md 6.2）。
          *
-         *     **`scopes` の語彙は権限カタログのキー**（`ticket.view` 等28件。Design.md
+         *     **`scopes` の語彙は権限カタログのキー**（`ticket.view` 等30件。Design.md
          *     6.4.2）。カタログに無い値は 422。空配列は「絞り込みなし」＝本人の実効権限
          *     そのままで、Phase 1 の画面は常にこれで発行する。
          *
@@ -1534,6 +1534,226 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/docs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 文書の目次
+         * @description プロジェクト文書（憲章）の目次を返す（ApiDesign.md 10.2）。**必要権限は `doc.view`**
+         *     （メンバーでない場合はプロジェクトごと 404）。
+         *
+         *     **`body_md` を含めない。** 目次は「どこに何があるか」を答えるものであり、本文は
+         *     `GET .../docs/{path}` が返す。全文を一度に返す設計にすると、リポジトリの md ファイルより
+         *     劣る（ファイルなら部分読みができる）。
+         *
+         *     `items[]` は各階層で `sort_order` 昇順、同値は `slug` 昇順。**ページネーションを
+         *     持たない**——目次は木であり、途中で切ると子が親から外れる。
+         *
+         *     **`version` を含める。** 木のドラッグ&ドロップ（GuiDesign.md 5.10）は目次だけを持って
+         *     複数行を `PATCH` するため、`If-Match` の材料がここに要る。
+         */
+        get: operations["listDocs"];
+        put?: never;
+        /**
+         * 文書の作成
+         * @description 文書を1件作る（ApiDesign.md 10.4）。**必要権限は `doc.edit`**——**`operator` と
+         *     `project_member` はこれを持たない**（DbDesign.md 8.1.4）。憲章は全参加者を縛るため、
+         *     更新できる人を絞る。
+         *
+         *     `slug` は同じ親の下で一意で、重複は 409 `already_exists`。`parent_path` を省略・`null`
+         *     にするとトップレベル。存在しないパスは 422（`details[].code = "not_found"`）。
+         *
+         *     `sort_order` を省略すると同じ親の中の末尾（現在の最大値 + 10）に置く。
+         *
+         *     **`revision_no = 1` を同時に作る。** リビジョンは「その変更のあとの本文」を持つので、
+         *     作成時の1件が無いと最初の編集で「作ったときの本文」がどの版にも残らない。
+         */
+        post: operations["createDoc"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/docs/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description 文書のパス（ApiDesign.md 10.1）。`slug` を根から連ねたもので、`vision`、
+                 *     `rules/naming` のようになる。**スラッシュを含む**——実装は chi の
+                 *     ワイルドカード（`/docs/*`）1本で受け、末尾のセグメントで `_revisions` を
+                 *     切り分ける。
+                 *
+                 *     **ULID も返すが、指定には使わない。** チケットが `seq` を使うのと同じ理由で、
+                 *     共有できる URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一致する。
+                 */
+                path: components["parameters"]["DocPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 文書の本文
+         * @description 文書1件を返す（ApiDesign.md 10.3）。必要権限は `doc.view`。
+         *
+         *     `created_by` / `updated_by` は `null` になりうる（`ON DELETE SET NULL`。
+         *     DbDesign.md 8.1.1）。コメントの `author` が `null` にならないのと異なり、
+         *     **文書は書いた人が退職しても内容が生き続ける。**
+         *
+         *     **`?section=` を付けるとその章だけを返す**（応答は `DocSection`）。`body_md` は
+         *     見出し行から、同じか上のレベルの次の見出しの直前までを含む。見つからないときは
+         *     404 で、本体に `available_sections` が付く——呼び出し側（多くはエージェント）が、
+         *     もう一度目次を取りに行かずに次の一手を選べるようにするため。
+         */
+        get: operations["getDoc"];
+        put?: never;
+        post?: never;
+        /**
+         * 文書の削除
+         * @description 文書を消す（ApiDesign.md 10.4）。必要権限は `doc.edit`。
+         *
+         *     **物理削除で、部分木ごと消える**（`parent_id` の `CASCADE`。DbDesign.md 8.1.1）。
+         *     `document_revision` も一緒に消える。
+         *
+         *     **子を持っていても API は止めない。** 件数を示して確認するのは画面の仕事である
+         *     （GuiDesign.md 6.3）——使用中のタグを消せるようにしたのと同じ判断で、消せないと
+         *     構造を直せなくなる。
+         *
+         *     **末尾が `_revisions` のパスへ送ると 405。**
+         */
+        delete: operations["deleteDoc"];
+        options?: never;
+        head?: never;
+        /**
+         * 文書の更新（移動・改名を含む）
+         * @description 文書を部分更新する（ApiDesign.md 10.4）。必要権限は `doc.edit`。
+         *
+         *     **`If-Match` は必須**（2.8）。省略すると 422（`details[].field` が `If-Match`）、
+         *     現在の `version` と食い違えば 409 `conflict`。**人とエージェントが同じ文書を触るため、
+         *     Phase 1 のプロジェクト設定より競合が起きやすい。**
+         *
+         *     **`parent_path` と `slug` の変更が移動・改名である。** 部分木ごと移動する（`path` は
+         *     子孫の分も付け替わる）。自分自身または自分の子孫を `parent_path` に指定すると 422
+         *     （`details[].code = "cycle"`）。移動先に同じ `slug` があれば 409 `already_exists`。
+         *
+         *     **リビジョンは `title` か `body_md` が実際に変わったときだけ積む。** `sort_order` の
+         *     変更や同じ本文の送り直しでは作らない——並べ替えのたびに履歴が伸びると「いつ内容が
+         *     変わったか」が読めなくなる。**`version` はどの更新でも +1 する。**
+         *
+         *     `change_reason` はリビジョンを作らない更新では捨てる（422 にはしない）。
+         *
+         *     **末尾が `_revisions` のパスへ送ると 405。** 履歴は読み取り専用である（10.1）。
+         */
+        patch: operations["patchDoc"];
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/docs/{path}/_revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description 文書のパス（ApiDesign.md 10.1）。`slug` を根から連ねたもので、`vision`、
+                 *     `rules/naming` のようになる。**スラッシュを含む**——実装は chi の
+                 *     ワイルドカード（`/docs/*`）1本で受け、末尾のセグメントで `_revisions` を
+                 *     切り分ける。
+                 *
+                 *     **ULID も返すが、指定には使わない。** チケットが `seq` を使うのと同じ理由で、
+                 *     共有できる URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一致する。
+                 */
+                path: components["parameters"]["DocPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 文書の履歴
+         * @description 文書のリビジョン一覧を返す（ApiDesign.md 10.5）。必要権限は `doc.view`。
+         *
+         *     **`_revisions` はサブ資源の予約語である。** `slug` の検証が `_` を含められないため
+         *     （DbDesign.md 8.1.1）、`.../docs/a/b/_revisions` が「`a/b` のリビジョン一覧」なのか
+         *     「`a/b/_revisions` という文書」なのかで迷うことがない（10.1）。
+         *
+         *     **一覧に `body_md` を含めない。** 20件ぶんの Markdown を載せると応答が重くなる。
+         *     本文が要るときは `.../_revisions/{revision_no}` を呼ぶ。
+         *
+         *     **`revision_no` の降順に固定**（`sort` を受け付けない）。`per_page` の既定は 20、
+         *     上限は 100。
+         */
+        get: operations["listDocRevisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/docs/{path}/_revisions/{revision_no}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description 文書のパス（ApiDesign.md 10.1）。`slug` を根から連ねたもので、`vision`、
+                 *     `rules/naming` のようになる。**スラッシュを含む**——実装は chi の
+                 *     ワイルドカード（`/docs/*`）1本で受け、末尾のセグメントで `_revisions` を
+                 *     切り分ける。
+                 *
+                 *     **ULID も返すが、指定には使わない。** チケットが `seq` を使うのと同じ理由で、
+                 *     共有できる URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一致する。
+                 */
+                path: components["parameters"]["DocPath"];
+                /** @description リビジョン番号（1始まり。ApiDesign.md 10.5）。 */
+                revision_no: components["parameters"]["DocRevisionNo"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 文書の履歴1件（本文つき）
+         * @description リビジョン1件を本文つきで返す（ApiDesign.md 10.5）。必要権限は `doc.view`。
+         *
+         *     **一覧の1件に `body_md` を足した形である。** `version` も `outline` も持たない——
+         *     `version` は現在の文書の楽観ロック値であって過去の版に属さず、`outline` は現在の
+         *     本文から作るものである。
+         *
+         *     **「前の版に戻す」は、取得した `body_md` を `PATCH` で書き戻して行う。** 専用の
+         *     エンドポイントを置かない。**履歴は消さない**——書き戻しも新しいリビジョンとして積む。
+         */
+        get: operations["getDocRevision"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users": {
         parameters: {
             query?: never;
@@ -1831,7 +2051,8 @@ export interface paths {
         };
         /**
          * 権限カタログ
-         * @description 権限カタログの28件（ApiDesign.md 7.2、正本は DbDesign.md 7.2 のシード）。
+         * @description 権限カタログの30件（ApiDesign.md 7.2、正本は DbDesign.md 7.2 のシード28件と
+         *     8.1.4 の doc 権限2件）。
          *     **必要権限は `user.manage`。**
          *
          *     7.1 と違い開放しないのは、消費者が GuiDesign.md 5.6.3 の権限マトリクスだけで、
@@ -2066,7 +2287,7 @@ export interface components {
              */
             expires_in_days: number;
             /**
-             * @description 権限カタログのキー（Design.md 6.4.2 の28件）。カタログに無い値は 422。
+             * @description 権限カタログのキー（Design.md 6.4.2 の30件）。カタログに無い値は 422。
              *     省略時と空配列は「絞り込みなし」。**Phase 1 の画面は常に空で送る。**
              * @example []
              */
@@ -2618,6 +2839,19 @@ export interface components {
                  *     同じ値が `Retry-After` ヘッダにも入る。
                  */
                 retry_after_sec?: number;
+                /**
+                 * @description `GET .../docs/{path}?section=` が命中しなかったときの見出し一覧
+                 *     （ApiDesign.md 10.3）。`retry_after_sec` と同じ理由で `details` では
+                 *     なく本体に置く——`details` は `{field, code, message}` の配列であり、
+                 *     入力欄に紐づかない配列を載せる場所が無い。**呼び出し側（多くは
+                 *     エージェント）が、もう一度目次を取りに行かずに次の一手を選べる。**
+                 * @example [
+                 *       "命名",
+                 *       "ブランチ",
+                 *       "接頭辞"
+                 *     ]
+                 */
+                available_sections?: string[];
                 /**
                  * @description `audit_log.request_id`（DbDesign.md 6.8）および構造化ログ
                  *     （Design.md 10.1）と突き合わせられる。
@@ -3637,6 +3871,200 @@ export interface components {
             rebalanced: boolean;
         };
         /**
+         * @description 文書の目次（ApiDesign.md 10.2）。**ページャを持たない**——目次は木であり、
+         *     途中で切ると子が親から外れる。
+         */
+        DocTreeList: {
+            items: components["schemas"]["DocTreeItem"][];
+        };
+        /**
+         * @description 目次の1件（ApiDesign.md 10.2）。**`body_md` を持たない。**
+         *     `children` は各階層で `sort_order` 昇順、同値は `slug` 昇順。
+         */
+        DocTreeItem: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /**
+             * @description `slug` を根から連ねたもの（10.1）。
+             * @example rules/naming
+             */
+            path: string;
+            /** @example naming */
+            slug: string;
+            /** @example 命名 */
+            title: string;
+            /** @example 10 */
+            sort_order: number;
+            /**
+             * @description 楽観ロックの現在値（2.8）。**木のドラッグ&ドロップが `If-Match` に使う**
+             *     （GuiDesign.md 5.10）。
+             * @example 3
+             */
+            version: number;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description `?outline=1` を付けたときだけ現れる（10.2）。見出しが無くても `[]` を返す。 */
+            outline?: components["schemas"]["DocOutlineItem"][];
+            children: components["schemas"]["DocTreeItem"][];
+        };
+        /**
+         * @description 見出し1件（ApiDesign.md 10.2）。**エージェントが「どの章を読むか」を決めるために使う。**
+         *
+         *     `section` は見出しテキストそのもので、スラッグ化も番号付けもしない。同じ文書に
+         *     同名の見出しが2つあるときだけ、2つ目以降に `#2` が付く。**この値はどこにも
+         *     保存されず、常に現在の本文から作られる**ため、見出しを改名しても壊れる参照が
+         *     生まれない（DbDesign.md 8.1.3）。
+         */
+        DocOutlineItem: {
+            /** @example 命名 */
+            section: string;
+            /**
+             * @description Markdown の見出しレベル（`##` が 2）。
+             * @example 2
+             */
+            level: number;
+        };
+        /**
+         * @description 文書の本文（ApiDesign.md 10.3）。
+         *
+         *     **`created_by` / `updated_by` は `null` になりうる**（`ON DELETE SET NULL`。
+         *     DbDesign.md 8.1.1）。コメントの `author` が `null` にならないのと異なり、
+         *     **文書は書いた人が退職しても内容が生き続ける。**
+         *
+         *     `kind` が `agent` のとき、画面はアバターを角丸四角にする（GuiDesign.md 8.4.2）。
+         *     **憲章に「エージェントが最後に更新した」と出ることは正常である。**
+         */
+        Doc: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /** @example rules */
+            path: string;
+            /** @example rules */
+            slug: string;
+            /**
+             * @description 親のパス。トップレベルなら `null`。
+             * @example null
+             */
+            parent_path: string | null;
+            /** @example 規約 */
+            title: string;
+            body_md: string;
+            outline: components["schemas"]["DocOutlineItem"][];
+            /** @example 20 */
+            sort_order: number;
+            /** @example 3 */
+            version: number;
+            created_by: components["schemas"]["ActorRef"] | null;
+            updated_by: components["schemas"]["ActorRef"] | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /**
+         * @description `?section=` を付けたときの応答（ApiDesign.md 10.3）。**章1つを読みに来た相手に
+         *     文書全体の情報は要らない**ので、`outline` も `created_by` も含まない。
+         *
+         *     `body_md` は見出し行から、同じか上のレベルの次の見出しの直前までを含む。
+         */
+        DocSection: {
+            id: string;
+            /** @example rules */
+            path: string;
+            /** @example 規約 */
+            title: string;
+            /** @example 命名 */
+            section: string;
+            /**
+             * @example ## 命名
+             *
+             *     - テーブルは単数形…
+             */
+            body_md: string;
+            version: number;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description 文書の作成（ApiDesign.md 10.4）。 */
+        CreateDocRequest: {
+            /**
+             * @description `^[a-z0-9][a-z0-9-]{0,63}$`（DbDesign.md 8.1.1 の CHECK と同じ式）。
+             *     **`_` を含められない**ことが、`_revisions` を予約語にできる根拠である（10.1）。
+             * @example naming
+             */
+            slug: string;
+            /**
+             * @description 1〜200文字。前後の空白を取り除いてから検証する。
+             * @example 命名
+             */
+            title: string;
+            /**
+             * @description 省略・`null` でトップレベル。存在しないパスは 422（`details[].code = "not_found"`）。
+             * @example rules
+             */
+            parent_path?: string | null;
+            /** @description 既定は空文字。 */
+            body_md?: string;
+            /** @description 省略時は同じ親の中の末尾（現在の最大値 + 10）。 */
+            sort_order?: number;
+        };
+        /**
+         * @description 文書の部分更新（ApiDesign.md 10.4）。**送られた項目だけを更新する。**
+         *
+         *     **`parent_path` に `null` を送るとトップレベルへ移す。** 送らなければ親は変わらない
+         *     ——「送られていない」と「`null` が送られた」を区別する。
+         */
+        PatchDocRequest: {
+            title?: string;
+            body_md?: string;
+            slug?: string;
+            parent_path?: string | null;
+            sort_order?: number;
+            /**
+             * @description 200文字以内。`document_revision.change_reason` に入る。**リビジョンを作らない
+             *     更新で送っても捨てる**（422 にはしない）。
+             * @example ブランチ命名にチケット番号を入れる
+             */
+            change_reason?: string;
+        };
+        /**
+         * @description リビジョンの一覧（ApiDesign.md 10.5）。2.6 のページネーションを持ち、
+         *     **`revision_no` の降順に固定**。
+         */
+        DocRevisionList: {
+            items: components["schemas"]["DocRevisionItem"][];
+            page: number;
+            per_page: number;
+            total: number;
+            total_pages: number;
+        };
+        /** @description 履歴の1件（ApiDesign.md 10.5）。**`body_md` を含めない。** */
+        DocRevisionItem: {
+            /** @example 3 */
+            revision_no: number;
+            /** @example 規約 */
+            title: string;
+            changed_by: components["schemas"]["ActorRef"] | null;
+            /** @example ブランチ命名にチケット番号を入れる */
+            change_reason: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /**
+         * @description 履歴の1件（本文つき。ApiDesign.md 10.5）。**`version` も `outline` も持たない**
+         *     ——`version` は現在の文書の楽観ロック値であって過去の版に属さず、`outline` は
+         *     現在の本文から作るものである。
+         */
+        DocRevision: {
+            revision_no: number;
+            title: string;
+            body_md: string;
+            changed_by: components["schemas"]["ActorRef"] | null;
+            change_reason: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /**
          * @description ApiDesign.md 2.5.1 の15コード。
          * @enum {string}
          */
@@ -3818,6 +4246,48 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /**
+         * @description 文書が存在しない、`?section=` の章が無い、`_revisions/{revision_no}` の版が無い、
+         *     または閲覧権限が無い（`not_found`。ApiDesign.md 10.6）。**閲覧権限が無い場合も
+         *     同じ応答になる**——到達できないものの存在を漏らさないため（Design.md 6.4.5）。
+         *
+         *     **章が見つからなかった場合だけ、本体に `available_sections` が付く**（10.3）。
+         */
+        DocNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
+         * @description 同じ親の下に同じ `slug` の文書がある（`already_exists`。ApiDesign.md 10.6）。
+         *     **`conflict` ではない**——`conflict` は `If-Match` 不一致のような状態の競合を指し、
+         *     こちらは一意なキーの重複である（2.5.1）。
+         */
+        DocAlreadyExists: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
+         * @description `.../_revisions` を `GET` 以外で叩いた（`method_not_allowed`。ApiDesign.md 10.1）。
+         *     `slug` の検証が `_` を弾く以上「`_revisions` という名の文書」は存在しえないので、
+         *     **実在するサブ資源に対する未定義のメソッド**として扱う。「文書が無い」（404）に
+         *     寄せると、書き込み先を間違えた呼び出し側が原因に辿り着けない。
+         */
+        DocMethodNotAllowed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description レート制限（`rate_limited`。ApiDesign.md 2.9）。 */
         RateLimited: {
             headers: {
@@ -3885,6 +4355,18 @@ export interface components {
          *     一致させ、開発時のデバッグを容易にするため。
          */
         ProjectKey: string;
+        /**
+         * @description 文書のパス（ApiDesign.md 10.1）。`slug` を根から連ねたもので、`vision`、
+         *     `rules/naming` のようになる。**スラッシュを含む**——実装は chi の
+         *     ワイルドカード（`/docs/*`）1本で受け、末尾のセグメントで `_revisions` を
+         *     切り分ける。
+         *
+         *     **ULID も返すが、指定には使わない。** チケットが `seq` を使うのと同じ理由で、
+         *     共有できる URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一致する。
+         */
+        DocPath: string;
+        /** @description リビジョン番号（1始まり。ApiDesign.md 10.5）。 */
+        DocRevisionNo: number;
         /**
          * @description `pb_csrf` Cookie と同じ値を送る（double submit。ApiDesign.md 2.4）。
          *     Cookie 認証の状態変更系でのみ要求する。Bearer 認証では不要。
@@ -5986,6 +6468,317 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["TicketNotFound"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDocs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文書の木。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocTreeList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createDoc: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateDocRequest"];
+            };
+        };
+        responses: {
+            /** @description 作成された文書。`Location` に作成先のURLを返す。 */
+            201: {
+                headers: {
+                    /** @example /api/v1/projects/my-app/docs/rules/naming */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Doc"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            409: components["responses"]["DocAlreadyExists"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDoc: {
+        parameters: {
+            query?: {
+                /**
+                 * @description 返す章の見出しテキスト。**スラッグ化も番号付けもしない**（10.2）。同じ文書に
+                 *     同名の見出しが2つあるときだけ、2つ目以降に `#2` が付く（URL では `%23`）。
+                 */
+                section?: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description 文書のパス（ApiDesign.md 10.1）。`slug` を根から連ねたもので、`vision`、
+                 *     `rules/naming` のようになる。**スラッシュを含む**——実装は chi の
+                 *     ワイルドカード（`/docs/*`）1本で受け、末尾のセグメントで `_revisions` を
+                 *     切り分ける。
+                 *
+                 *     **ULID も返すが、指定には使わない。** チケットが `seq` を使うのと同じ理由で、
+                 *     共有できる URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一致する。
+                 */
+                path: components["parameters"]["DocPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文書の本文。`?section=` を付けた場合は `DocSection`（章だけ）になる。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Doc"] | components["schemas"]["DocSection"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["DocNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteDoc: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description 文書のパス（ApiDesign.md 10.1）。`slug` を根から連ねたもので、`vision`、
+                 *     `rules/naming` のようになる。**スラッシュを含む**——実装は chi の
+                 *     ワイルドカード（`/docs/*`）1本で受け、末尾のセグメントで `_revisions` を
+                 *     切り分ける。
+                 *
+                 *     **ULID も返すが、指定には使わない。** チケットが `seq` を使うのと同じ理由で、
+                 *     共有できる URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一致する。
+                 */
+                path: components["parameters"]["DocPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除された（本文なし）。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["DocNotFound"];
+            405: components["responses"]["DocMethodNotAllowed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    patchDoc: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 取得時の `version`。`"3"` のように引用符で囲む（RFC 9110 8.8.3）。 */
+                "If-Match": string;
+            };
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description 文書のパス（ApiDesign.md 10.1）。`slug` を根から連ねたもので、`vision`、
+                 *     `rules/naming` のようになる。**スラッシュを含む**——実装は chi の
+                 *     ワイルドカード（`/docs/*`）1本で受け、末尾のセグメントで `_revisions` を
+                 *     切り分ける。
+                 *
+                 *     **ULID も返すが、指定には使わない。** チケットが `seq` を使うのと同じ理由で、
+                 *     共有できる URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一致する。
+                 */
+                path: components["parameters"]["DocPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchDocRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後の文書。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Doc"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["DocNotFound"];
+            405: components["responses"]["DocMethodNotAllowed"];
+            /**
+             * @description `If-Match` が現在の `version` と一致しない（`conflict`）、または移動先の階層に
+             *     同じ `slug` の文書がある（`already_exists`）。
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDocRevisions: {
+        parameters: {
+            query?: {
+                page?: number;
+                /** @description 既定 20、上限 100（ApiDesign.md 10.5 / 2.6）。 */
+                per_page?: number;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description 文書のパス（ApiDesign.md 10.1）。`slug` を根から連ねたもので、`vision`、
+                 *     `rules/naming` のようになる。**スラッシュを含む**——実装は chi の
+                 *     ワイルドカード（`/docs/*`）1本で受け、末尾のセグメントで `_revisions` を
+                 *     切り分ける。
+                 *
+                 *     **ULID も返すが、指定には使わない。** チケットが `seq` を使うのと同じ理由で、
+                 *     共有できる URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一致する。
+                 */
+                path: components["parameters"]["DocPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description リビジョンの一覧。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocRevisionList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["DocNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDocRevision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description 文書のパス（ApiDesign.md 10.1）。`slug` を根から連ねたもので、`vision`、
+                 *     `rules/naming` のようになる。**スラッシュを含む**——実装は chi の
+                 *     ワイルドカード（`/docs/*`）1本で受け、末尾のセグメントで `_revisions` を
+                 *     切り分ける。
+                 *
+                 *     **ULID も返すが、指定には使わない。** チケットが `seq` を使うのと同じ理由で、
+                 *     共有できる URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一致する。
+                 */
+                path: components["parameters"]["DocPath"];
+                /** @description リビジョン番号（1始まり。ApiDesign.md 10.5）。 */
+                revision_no: components["parameters"]["DocRevisionNo"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description リビジョン1件。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocRevision"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["DocNotFound"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };
