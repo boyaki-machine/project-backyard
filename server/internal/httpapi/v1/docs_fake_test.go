@@ -41,6 +41,13 @@ type docFakeState struct {
 	revisionRows    []gen.ListDocumentRevisionsRow
 	revisionByNo    map[int32]gen.GetDocumentRevisionRow
 	revisionListErr error
+
+	// templates は ListDocumentTemplates が返す行（手順23）。
+	// **空のままなら複製は1件も起きない**ので、文書に関心の無いテストは
+	// 何も設定しなくてよい。
+	templates         []gen.ListDocumentTemplatesRow
+	templatesErr      error
+	templateKeysAsked []string
 }
 
 func (q *fakeQuerier) ListDocumentTree(
@@ -95,6 +102,21 @@ func (q *fakeQuerier) NextDocumentSortOrder(
 	return q.docs.nextSortOrder, nil
 }
 
+// ListDocumentTemplates はプロジェクト作成時の複製元（DbDesign.md 8.1.2、手順23）。
+//
+// **template_key を記録する。** 複製が 'default' 以外を引いていないことを
+// 呼び出し側のテストが確かめられるようにしてある。
+func (q *fakeQuerier) ListDocumentTemplates(
+	_ context.Context, key pgtype.Text,
+) ([]gen.ListDocumentTemplatesRow, error) {
+	q.opLog = append(q.opLog, "ListDocumentTemplates")
+	q.docs.templateKeysAsked = append(q.docs.templateKeysAsked, key.String)
+	if q.docs.templatesErr != nil {
+		return nil, q.docs.templatesErr
+	}
+	return q.docs.templates, nil
+}
+
 func (q *fakeQuerier) CreateDocument(_ context.Context, arg gen.CreateDocumentParams) error {
 	q.opLog = append(q.opLog, "CreateDocument")
 	if q.docs.createErr != nil {
@@ -112,6 +134,12 @@ func (q *fakeQuerier) CreateDocument(_ context.Context, arg gen.CreateDocumentPa
 		ID: arg.ID, ParentID: arg.ParentID, Slug: arg.Slug, Title: arg.Title,
 		SortOrder: arg.SortOrder, Version: 1,
 	})
+	// **byID を遅延で作る。** 手順23 でプロジェクト作成の経路からも
+	// CreateDocument が呼ばれるようになり、そちらは文書のテストではないので
+	// docFakeState を組み立てていない。
+	if q.docs.byID == nil {
+		q.docs.byID = map[string]gen.GetDocumentRow{}
+	}
 	q.docs.byID[arg.ID] = gen.GetDocumentRow{
 		ID: arg.ID, ParentID: arg.ParentID, Slug: arg.Slug, Title: arg.Title,
 		BodyMd: arg.BodyMd, SortOrder: arg.SortOrder, Version: 1,

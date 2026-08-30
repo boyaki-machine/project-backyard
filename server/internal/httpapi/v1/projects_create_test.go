@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
+	"github.com/boyaki-machine/project-backyard/server/internal/project"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
@@ -40,10 +41,23 @@ func createFake(t *testing.T) (*fakeQuerier, *fakeTxRunner) {
 		WorkflowID:   txt("01K2F8QW3H7YRJ4M5N6P7Q8WFL"),
 		WorkflowName: txt("シンプル"),
 	}
+	// **文書テンプレートを親子で持たせる**（手順23）。DbDesign.md 8.1.2 の実物は
+	// 4件ともトップレベルだが、uq_document_template_slug が parent_id を含むので
+	// テンプレートは子を持てる。**木として複製されることを単体で測るために、
+	// フェイクには子を1件入れてある**——平坦な4件では、親子の張り替えが
+	// 落ちていても気づけない。
+	q.docs.templates = []gen.ListDocumentTemplatesRow{
+		{ID: "01TPLD1", Slug: "vision", Title: "価値観・世界観", BodyMd: "価値観の案内", SortOrder: 10},
+		{ID: "01TPLD2", Slug: "rules", Title: "規約", BodyMd: "規約の案内", SortOrder: 20},
+		{
+			ID: "01TPLD3", ParentID: txt("01TPLD2"), Slug: "naming", Title: "命名",
+			BodyMd: "命名の案内", SortOrder: 10,
+		},
+	}
 	q.memberRows = []gen.ListProjectMembersRow{
 		{
 			ActorID: testActorID, Kind: auth.ActorKindUser, DisplayName: "田中",
-			RoleKey: creatorRoleKey, JoinedAt: ts(time.Date(2026, 8, 15, 3, 4, 5, 0, time.UTC)),
+			RoleKey: project.CreatorRoleKey, JoinedAt: ts(time.Date(2026, 8, 15, 3, 4, 5, 0, time.UTC)),
 		},
 	}
 	return q, &fakeTxRunner{q: q}
@@ -81,12 +95,19 @@ func TestCreateProjectRunsFullSequenceInOneTransaction(t *testing.T) {
 	}
 
 	// 手順の順序。ワークフローの複製は project より後で、紐づけはその後。
+	// **文書の複製はワークフローの後、メンバー登録の前**（ApiDesign.md 5.3）。
+	// 文書1件につき CreateDocument と CreateDocumentRevision が対で出る（10.4）。
 	want := []string{
 		"CreateProject", "CreateProjectCounter",
 		"FindWorkflowTemplate", "CreateProjectWorkflow",
 		"ListWorkflowStatuses", "CreateWorkflowStatus", "CreateWorkflowStatus", "CreateWorkflowStatus",
 		"ListWorkflowTransitions", "CreateWorkflowTransition", "CreateWorkflowTransition",
-		"SetProjectWorkflow", "AddProjectMember", "InsertAuditLog",
+		"SetProjectWorkflow",
+		"ListDocumentTemplates",
+		"CreateDocument", "CreateDocumentRevision",
+		"CreateDocument", "CreateDocumentRevision",
+		"CreateDocument", "CreateDocumentRevision",
+		"AddProjectMember", "InsertAuditLog",
 	}
 	if len(q.opLog) < len(want) {
 		t.Fatalf("呼び出し順 = %v, want 先頭が %v", q.opLog, want)
@@ -131,8 +152,8 @@ func TestCreateProjectRunsFullSequenceInOneTransaction(t *testing.T) {
 	if len(q.addedMembers) != 1 {
 		t.Fatalf("登録されたメンバー = %d件, want 1", len(q.addedMembers))
 	}
-	if m := q.addedMembers[0]; m.ActorID != testActorID || m.RoleKey != creatorRoleKey {
-		t.Errorf("メンバー = %+v, want actor=%s role=%s", m, testActorID, creatorRoleKey)
+	if m := q.addedMembers[0]; m.ActorID != testActorID || m.RoleKey != project.CreatorRoleKey {
+		t.Errorf("メンバー = %+v, want actor=%s role=%s", m, testActorID, project.CreatorRoleKey)
 	}
 
 	// 監査（ApiDesign.md 2.10）。
@@ -142,6 +163,119 @@ func TestCreateProjectRunsFullSequenceInOneTransaction(t *testing.T) {
 }
 
 // 応答は 5.4 と同形式（5.3）。
+// TestCreateProjectCopiesDocumentTemplates は文書テンプレートの複製（手順23）。
+//
+// **測るのは4つ**——①複製元が template_key='default' であること ②木として写り、
+// 子の parent_id が複製後の親を指すこと ③sort_order がテンプレートの値のまま
+// であること ④1件ごとに revision_no=1 が付き、created_by が作成者であること
+// （DbDesign.md 8.1.2、ApiDesign.md 5.3）。
+func TestCreateProjectCopiesDocumentTemplates(t *testing.T) {
+	q, tx := createFake(t)
+	token := tokenAs(q, auth.SystemRoleAdministrator)
+
+	rec := postProject(q, tx, token, validCreateBody)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201（body=%s）", rec.Code, rec.Body.String())
+	}
+
+	// ① 引いたテンプレートの束。
+	if got := q.docs.templateKeysAsked; len(got) != 1 || got[0] != project.DefaultDocTemplateKey {
+		t.Errorf("引いた template_key = %v, want [%s]", got, project.DefaultDocTemplateKey)
+	}
+
+	// ② 件数と並び。ListDocumentTemplates が返した順にそのまま作る。
+	docs := q.docs.created
+	if len(docs) != len(q.docs.templates) {
+		t.Fatalf("複製された文書 = %d件, want %d件", len(docs), len(q.docs.templates))
+	}
+	projectID := q.createdProjects[0].ID
+	bySlug := map[string]gen.CreateDocumentParams{}
+	for _, d := range docs {
+		if d.ProjectID.String != projectID {
+			t.Errorf("文書 %s の project_id = %q, want %q", d.Slug, d.ProjectID.String, projectID)
+		}
+		if d.CreatedBy.String != testActorID {
+			t.Errorf("文書 %s の created_by = %q, want %q", d.Slug, d.CreatedBy.String, testActorID)
+		}
+		bySlug[d.Slug] = d
+	}
+
+	// ③ 木として写る。naming の親はテンプレートの ID ではなく、
+	// **複製された rules の ID** を指していなければならない。
+	rules, ok := bySlug["rules"]
+	if !ok {
+		t.Fatalf("rules が複製されていない（%v）", bySlug)
+	}
+	naming, ok := bySlug["naming"]
+	if !ok {
+		t.Fatalf("naming が複製されていない（%v）", bySlug)
+	}
+	if naming.ParentID.String != rules.ID {
+		t.Errorf("naming.parent_id = %q, want 複製後の rules の ID %q", naming.ParentID.String, rules.ID)
+	}
+	if bySlug["vision"].ParentID.Valid {
+		t.Errorf("vision はトップレベルのはず: parent_id = %+v", bySlug["vision"].ParentID)
+	}
+
+	// ④ sort_order はテンプレートの値のまま（8.1.2）。
+	for _, tpl := range q.docs.templates {
+		if got := bySlug[tpl.Slug].SortOrder; got != tpl.SortOrder {
+			t.Errorf("%s の sort_order = %d, want %d（テンプレートの値のまま）", tpl.Slug, got, tpl.SortOrder)
+		}
+		if got := bySlug[tpl.Slug].BodyMd; got != tpl.BodyMd {
+			t.Errorf("%s の body_md = %q, want %q", tpl.Slug, got, tpl.BodyMd)
+		}
+	}
+
+	// ⑤ 1件につき初版が1つ。**本文と表題は複製したものと同じ**（10.4）。
+	revs := q.docs.revisionsMade
+	if len(revs) != len(docs) {
+		t.Fatalf("作られたリビジョン = %d件, want %d件", len(revs), len(docs))
+	}
+	revByDoc := map[string]gen.CreateDocumentRevisionParams{}
+	for _, r := range revs {
+		if r.RevisionNo != 1 {
+			t.Errorf("revision_no = %d, want 1", r.RevisionNo)
+		}
+		if r.ChangedBy.String != testActorID {
+			t.Errorf("changed_by = %q, want %q", r.ChangedBy.String, testActorID)
+		}
+		revByDoc[r.DocumentID] = r
+	}
+	for _, d := range docs {
+		r, ok := revByDoc[d.ID]
+		if !ok {
+			t.Fatalf("文書 %s の初版が無い", d.Slug)
+		}
+		if r.Title != d.Title || r.BodyMd != d.BodyMd {
+			t.Errorf("%s の初版が本文と食い違う: %+v", d.Slug, r)
+		}
+	}
+}
+
+// TestCreateProjectWithoutDocumentTemplates は 0017 のシードが無いDBでも
+// プロジェクトを作れることを測る（internal/project の copyDocumentTemplates）。
+//
+// **文書はプロジェクトの成立条件ではない。** 後から画面で作れるので
+// （GuiDesign.md 5.10「空状態」）、0件でも 201 になる。ワークフローが
+// 500 に倒れるのと扱いが違う。
+func TestCreateProjectWithoutDocumentTemplates(t *testing.T) {
+	q, tx := createFake(t)
+	q.docs.templates = nil
+	token := tokenAs(q, auth.SystemRoleAdministrator)
+
+	rec := postProject(q, tx, token, validCreateBody)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201（body=%s）", rec.Code, rec.Body.String())
+	}
+	if len(q.docs.created) != 0 {
+		t.Errorf("複製された文書 = %d件, want 0件", len(q.docs.created))
+	}
+	if !tx.committed {
+		t.Error("トランザクションがコミットされていない")
+	}
+}
+
 func TestCreateProjectReturnsDetailView(t *testing.T) {
 	q, tx := createFake(t)
 	token := tokenAs(q, auth.SystemRoleAdministrator)
@@ -184,11 +318,11 @@ func TestCreateProjectReturnsDetailView(t *testing.T) {
 	if len(members) != 1 {
 		t.Fatalf("members = %v, want 1件", view["members"])
 	}
-	if m, _ := members[0].(map[string]any); m["role"] != creatorRoleKey {
-		t.Errorf("members[0].role = %v, want %s", m["role"], creatorRoleKey)
+	if m, _ := members[0].(map[string]any); m["role"] != project.CreatorRoleKey {
+		t.Errorf("members[0].role = %v, want %s", m["role"], project.CreatorRoleKey)
 	}
-	if view["my_role"] != creatorRoleKey {
-		t.Errorf("my_role = %v, want %s", view["my_role"], creatorRoleKey)
+	if view["my_role"] != project.CreatorRoleKey {
+		t.Errorf("my_role = %v, want %s", view["my_role"], project.CreatorRoleKey)
 	}
 
 	// my_permissions = システムロール ∪ プロジェクトロール（Design.md 6.4.1）。

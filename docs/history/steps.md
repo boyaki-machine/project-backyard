@@ -1289,7 +1289,62 @@ API は 13a で実装済みで、13b は**画面と API ラッパだけ**であ�
 
 ---
 
+## 手順23 — 文書テンプレートの複製（2026-08-30、`feature/step-23-doc-templates`）
+
+**完了条件**（`Design.md` 11章）：新規プロジェクトに型の4文書が並ぶ。stg に PB 自身の憲章を書く。
+
+### 作ったもの・変えたもの
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/project/create.go`（新規 285行） | プロジェクト作成の手順を1本に。`Create` / `copyWorkflowTemplate` / `copyDocumentTemplates` |
+| `server/migrations/0018_document_template_text.sql`（新規） | 0017 の初期本文を差し替える。**DDLを持たない** |
+| `server/internal/store/queries/document.sql` | `ListDocumentTemplates` を追加（＋ 冒頭コメントの更新） |
+| `server/internal/store/gen/{document.sql.go,querier.go}` | `make sqlc` の生成物 |
+| `server/internal/httpapi/v1/projects_create.go` | `project.Create` を呼ぶだけにした（−72行） |
+| `server/cmd/pb/dev_seed.go` | 同上（−110行）。局所変数 `project` → `pj`（パッケージ名を覆うため） |
+| `server/internal/httpapi/v1/projects_create_test.go` | 呼び出し順の期待値＋複製の単体2件 |
+| `server/internal/httpapi/v1/docs_fake_test.go` | `ListDocumentTemplates` のフェイク。`byID` を遅延初期化 |
+| `server/internal/httpapi/v1/projects_integration_test.go` | `assertDocTemplatesCopied`（実DBで木・初版・作成者を測る） |
+| `server/internal/httpapi/v1/docs_integration_test.go` | 「作りたては空」の前提が崩れるので、冒頭で複製を消してから始める |
+| `docs/ApiDesign.md` 5.3 / `docs/openapi.yaml` | サーバ側の処理に文書複製を追記 |
+| `docs/DbDesign.md` 8.1.2 / 5.2 / 8章 | 複製の規則、0018、採番のずれ、CommonMark と約物の表 |
+| `docs/Design.md` 11章 | 手順23 の注記、`agent` を 0019、Phase 3 を 0020〜0025 へ |
+| `docs/Development.md` 8.2 | CDP の落とし穴3件（RFC 6455 の GUID、async の包み、ページ内 fetch） |
+
+### 検証結果
+
+| 層 | 結果 |
+|---|---|
+| 単体（`make test`） | 全 PASS。うち新規2件——`TestCreateProjectCopiesDocumentTemplates`（テンプレートキー・木の張り替え・`sort_order`・初版・`created_by`）、`TestCreateProjectWithoutDocumentTemplates`（0件でも 201） |
+| 結合（`make test-db`） | **158件 PASS**（件数は手順22 と同じ。新しい検査は既存のサブテストの中に足したため） |
+| **わざと壊して落ちるか** | 3通り確かめた——①親の張り替えを壊す → `naming.parent_id` で FAIL ②初版の作成を消す → 呼び出し順と件数の2件が FAIL ③`template_key` を `nope` に → 結合が「複製された文書 = 0件, want 4件」で FAIL |
+| CLI 経路（`make dev-reset`） | demo に4文書。`sort_order` 10/20/30/40、`version` 1、`created_by` = 開発PM、各1リビジョン。**再実行しても増えない**（冪等） |
+| ブラウザ（1440px / 900px） | 7件 PASS。新規プロジェクト作成 → Docs に4文書が並び、**空状態が出ない**。並びと表題はテンプレートから読んで突き合わせ（決め打ちしない） |
+| 描画（0018 の効果） | 12件 PASS。4文書とも**全角文字の間の半角空白が0件**、`**` が生で残らず、`<strong>` が出る |
+| 章立て（手順25 への入力） | 11件 PASS。憲章の本文を `PATCH` で入れ、`?outline=1` が `vision` 5章 / `rules` 6章 / `decisions` 4章 / `learnings` 4章を返すことを実測 |
+| stg | 0018 を適用、`make stg-build` で入れ替え、憲章4件を投入。`GET /api/v1/projects/pb/docs` が 401（ルートは生きている）。**画面での目視は未実施**（管理者パスワードが記録されていない） |
+
+### 片付け
+
+検証で作った使い捨てプロジェクト3件（`s23-*` / `s23o-*`）を削除。dev に残るのは `demo` のみ、
+stg に残るのは `pb` のみ。ヘッドレス Chrome は終了。`make clean-webui` 実行済み。
+
 ## 手順外の作業（完了分）
+
+### プロジェクト作成手順の二重化を解消（2026-08-30、`feature/step-23-doc-templates`）
+
+**`PROGRESS.md`「手順外の作業」に 2026-08-21 から在った行を、手順23 の中で片付けた**
+（`Design.md` 11章が「手順21〜23 の前に片付けることが望ましい」としていたもの）。
+
+`server/cmd/pb/dev_seed.go` と `server/internal/httpapi/v1/projects_create.go` が
+「project 作成 → counter 初期化 → ワークフロー複製 → 監査」を**それぞれ別に持っていた**。
+`server/internal/project/create.go` に `Create` を1本置き、両方から呼ぶ形にした。
+**削れたのは `dev_seed.go` の 110 行**（`createProject` ＋ `copyWorkflowTemplate`）と
+`projects_create.go` の 72 行（`copyWorkflowTemplate`）。
+
+**手順23 の文書テンプレート複製は、この1本に足しただけで両方の入口に効いた**——
+これが二重化を先に畳んだ理由そのものである。
 
 ### `TestExpiresAtFormat` の時限式を解消（2026-08-28、`fix/expires-at-test`）
 

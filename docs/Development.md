@@ -559,6 +559,18 @@ window.set = window.set || function (el, v) {
 - **検証端末に `websocket-client` は入っていない。** CDP を叩くには
   **WebSocket を標準ライブラリで書く**（RFC 6455。ハンドシェイク、テキストフレーム、
   **クライアント側のマスクは必須**、継続フレームの連結で足りる）。
+  **`Sec-WebSocket-Accept` の magic GUID は `258EAFA5-E914-47DA-95CA-C5AB0DC85B11`**
+  （36文字。手順23 で末尾の区切りを取り違えて書き、**ハンドシェイクは 101 で成功するのに
+  検算だけが合わない**という形で 15 分溶かした）。**書いたら RFC 6455 の例で1回検算する**
+  ——`dGhlIHNhbXBsZSBub25jZQ==` → `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`。
+- **`Runtime.evaluate` の包みを2種類持つ。** `(function(){…})()` の中では `await` が
+  使えない（`SyntaxError: await is only valid in async functions`）。**ページ内 `fetch` で
+  APIを叩く検証**は必ず `await` を要るので、`(async function(){…})()` で包む版を別に用意する。
+- **ページ内 `fetch` で書き込み系APIを叩くと、Cookie も CSRF もそのまま乗る。**
+  トークンは `document.cookie` の `pb_csrf` から取り、ヘッダ名は **`X-PB-CSRF`**
+  （`client/src/api/client.ts`）。**画面を操作するより速く、権限や応答の形をそのまま測れる**
+  ——手順23 では憲章の本文を4件 `PATCH` して `?outline=1` の章立てまでを1本で確かめた。
+  `If-Match` は `"<version>"`（引用符ごと）。
 - **`dragstart` を機に落とし場所を描き足すと、Chrome がドラッグを取り消す。**
   掴んだ行の位置が直後にずれるためで、症状は「`dragstart` の 1〜2ms 後に `dragend` が来て、
   `dragover` が一度も起きない」。**落とし場所は掴む前から画面にあるものに限る**

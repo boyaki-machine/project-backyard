@@ -685,7 +685,13 @@ GET /api/v1/projects/check-key?key=my-app
 
 `201 Created`（`Location: /api/v1/projects/my-app`）。応答は 5.4 と同形式。
 
-**サーバ側の処理**：`project` 作成、`project_counter` 初期化、テンプレートから `workflow` / `workflow_status` / `workflow_transition` を複製、作成者を `project_member`（`project_admin`）として登録。**これらは単一トランザクションで行う。**
+**サーバ側の処理**：`project` 作成、`project_counter` 初期化、テンプレートから `workflow` / `workflow_status` / `workflow_transition` を複製、**テンプレートから `document` を複製**（`DbDesign.md` 8.1.2）、作成者を `project_member`（`project_admin`）として登録。**これらは単一トランザクションで行う。**
+
+**文書テンプレートは `template_key = 'default'` 固定である。** `workflow_template` に対応する入力フィールドを持たない——テンプレートが1種類しかないうちは、選ばせる意味がないため。2種類目を持つときに 5.3 の本体へ足すかを判断する。
+
+**複製した文書には `revision_no = 1` を作る**（10.4 の `POST` と同じ）。テンプレートの初期本文は「ここに何を書くか」の案内であり、**消して書き直したあとに「何が書いてあったか」を見たくなる**。作成時の1件が無いと、その本文はどの版にも残らない。
+
+**`created_by` / `updated_by` はプロジェクトの作成者**。テンプレート行の `created_by` は NULL だが（マイグレーションの時点でアクターがいない。`DbDesign.md` 8.1.2）、複製を起こしたのは作成者である。
 
 キー重複は `409 conflict`（`code: "already_exists"`）。競合検出はDBの `UNIQUE` 制約に委ね、`check-key` の結果を信頼しない（TOCTOU 対策）。
 

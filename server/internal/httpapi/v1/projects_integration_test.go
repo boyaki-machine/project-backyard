@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
+	"github.com/boyaki-machine/project-backyard/server/internal/project"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
@@ -83,8 +84,8 @@ func TestProjectsIntegration(t *testing.T) {
 	if len(projectID) != 26 {
 		t.Fatalf("id = %v, want ULID", created["id"])
 	}
-	if created["my_role"] != creatorRoleKey {
-		t.Errorf("my_role = %v, want %s", created["my_role"], creatorRoleKey)
+	if created["my_role"] != project.CreatorRoleKey {
+		t.Errorf("my_role = %v, want %s", created["my_role"], project.CreatorRoleKey)
 	}
 	wf, ok := created["workflow"].(map[string]any)
 	if !ok {
@@ -113,14 +114,21 @@ func TestProjectsIntegration(t *testing.T) {
 	if got := scalarInt(t, pool, `
 		SELECT count(*) FROM project_member
 		 WHERE project_id = $1 AND actor_id = $2 AND role_key = $3`,
-		projectID, adminID, creatorRoleKey); got != 1 {
-		t.Errorf("作成者が %s として登録されていない", creatorRoleKey)
+		projectID, adminID, project.CreatorRoleKey); got != 1 {
+		t.Errorf("作成者が %s として登録されていない", project.CreatorRoleKey)
 	}
 	if got := scalarInt(t, pool, `
 		SELECT count(*) FROM audit_log
 		 WHERE action = 'project.create' AND target_id = $1`, projectID); got != 1 {
 		t.Error("audit_log に project.create が無い")
 	}
+
+	// ②' 文書テンプレートの複製（手順23。DbDesign.md 8.1.2、ApiDesign.md 5.3）。
+	//
+	// **期待値を決め打ちしない。** 何件がどの slug でどの sort_order かは
+	// document_template の行（0017）が決めるので、テンプレート側を読んで
+	// 突き合わせる——テンプレートを1件足したときに、この検査も一緒に動く。
+	assertDocTemplatesCopied(t, pool, projectID, adminID)
 
 	// ③ キー重複は 409 already_exists。**DBの UNIQUE 制約で捕まること。**
 	dup := postWithCookie(r, "/api/v1/projects", adminSession,
@@ -146,8 +154,8 @@ func TestProjectsIntegration(t *testing.T) {
 	if got, _ := item["progress"].(float64); got != 0.75 {
 		t.Errorf("progress = %v, want 0.75", item["progress"])
 	}
-	if item["my_role"] != creatorRoleKey {
-		t.Errorf("my_role = %v, want %s", item["my_role"], creatorRoleKey)
+	if item["my_role"] != project.CreatorRoleKey {
+		t.Errorf("my_role = %v, want %s", item["my_role"], project.CreatorRoleKey)
 	}
 
 	// ⑤ 並び替えは5項目 × 2方向すべてが実際に実行できること
@@ -361,4 +369,124 @@ func scalarInt(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) int {
 		t.Fatalf("クエリに失敗した（%s）: %v", sql, err)
 	}
 	return n
+}
+
+// assertDocTemplatesCopied は文書テンプレートが木のまま複製されたことを実DBで測る
+// （手順23。DbDesign.md 8.1.2）。
+//
+// **テンプレート側を読んでから比べる。** 4件・10/20/30/40 と書き下すと、
+// 0017 のシードを直したときに検査が嘘になる。
+func assertDocTemplatesCopied(t *testing.T, pool *pgxpool.Pool, projectID, creatorID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	type tplRow struct {
+		slug      string
+		title     string
+		bodyMd    string
+		sortOrder int32
+		parent    *string
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT slug, title, body_md, sort_order, parent_id
+		  FROM document
+		 WHERE is_template AND template_key = 'default'
+		 ORDER BY parent_id NULLS FIRST, sort_order, slug`)
+	if err != nil {
+		t.Fatalf("文書テンプレートを読めない: %v", err)
+	}
+	var templates []tplRow
+	for rows.Next() {
+		var x tplRow
+		if err := rows.Scan(&x.slug, &x.title, &x.bodyMd, &x.sortOrder, &x.parent); err != nil {
+			t.Fatalf("文書テンプレートの読み取り: %v", err)
+		}
+		templates = append(templates, x)
+	}
+	rows.Close()
+	if len(templates) == 0 {
+		t.Fatal("文書テンプレートが1件も無い（0017 のシードが未適用）")
+	}
+
+	copied, err := pool.Query(ctx, `
+		SELECT d.slug, d.title, d.body_md, d.sort_order, p.slug, d.created_by, d.updated_by, d.version
+		  FROM document d
+		  LEFT JOIN document p ON p.id = d.parent_id
+		 WHERE d.project_id = $1
+		 ORDER BY d.parent_id NULLS FIRST, d.sort_order, d.slug`, projectID)
+	if err != nil {
+		t.Fatalf("複製された文書を読めない: %v", err)
+	}
+	type gotRow struct {
+		slug       string
+		title      string
+		bodyMd     string
+		sortOrder  int32
+		parentSlug *string
+		createdBy  *string
+		updatedBy  *string
+		version    int32
+	}
+	var got []gotRow
+	for copied.Next() {
+		var x gotRow
+		if err := copied.Scan(&x.slug, &x.title, &x.bodyMd, &x.sortOrder,
+			&x.parentSlug, &x.createdBy, &x.updatedBy, &x.version); err != nil {
+			t.Fatalf("複製された文書の読み取り: %v", err)
+		}
+		got = append(got, x)
+	}
+	copied.Close()
+
+	if len(got) != len(templates) {
+		t.Fatalf("複製された文書 = %d件, want %d件（テンプレートと同数）", len(got), len(templates))
+	}
+	for i, want := range templates {
+		g := got[i]
+		if g.slug != want.slug || g.title != want.title || g.bodyMd != want.bodyMd {
+			t.Errorf("[%d] 複製 = %s/%q, want %s/%q（本文一致=%v）",
+				i, g.slug, g.title, want.slug, want.title, g.bodyMd == want.bodyMd)
+		}
+		if g.sortOrder != want.sortOrder {
+			t.Errorf("%s の sort_order = %d, want %d（テンプレートの値のまま）", g.slug, g.sortOrder, want.sortOrder)
+		}
+		// 親はテンプレートと同じ slug を指す（木として写る）。
+		switch {
+		case want.parent == nil && g.parentSlug != nil:
+			t.Errorf("%s はトップレベルのはずが親 %q を持つ", g.slug, *g.parentSlug)
+		case want.parent != nil && g.parentSlug == nil:
+			t.Errorf("%s に親が無い（テンプレートでは子）", g.slug)
+		}
+		if g.createdBy == nil || *g.createdBy != creatorID {
+			t.Errorf("%s の created_by = %v, want %s（作成者）", g.slug, g.createdBy, creatorID)
+		}
+		if g.updatedBy == nil || *g.updatedBy != creatorID {
+			t.Errorf("%s の updated_by = %v, want %s", g.slug, g.updatedBy, creatorID)
+		}
+		if g.version != 1 {
+			t.Errorf("%s の version = %d, want 1", g.slug, g.version)
+		}
+	}
+
+	// **1件につき初版が1つ**（ApiDesign.md 5.3 / 10.4）。本文まで一致すること。
+	if n := scalarInt(t, pool, `
+		SELECT count(*) FROM document_revision r
+		  JOIN document d ON d.id = r.document_id
+		 WHERE d.project_id = $1 AND r.revision_no = 1
+		   AND r.title = d.title AND r.body_md = d.body_md
+		   AND r.change_reason IS NULL`, projectID); n != len(templates) {
+		t.Errorf("初版 = %d件, want %d件（本文が文書と一致すること）", n, len(templates))
+	}
+	if n := scalarInt(t, pool, `
+		SELECT count(*) FROM document_revision r
+		  JOIN document d ON d.id = r.document_id
+		 WHERE d.project_id = $1 AND r.revision_no <> 1`, projectID); n != 0 {
+		t.Errorf("初版以外のリビジョン = %d件, want 0件", n)
+	}
+
+	// **テンプレート行そのものはプロジェクトに紐づかない**（ck_document_template）。
+	if n := scalarInt(t, pool, `
+		SELECT count(*) FROM document WHERE project_id = $1 AND is_template`, projectID); n != 0 {
+		t.Errorf("プロジェクトに is_template の行が %d件ある, want 0件", n)
+	}
 }

@@ -32,6 +32,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/lexorank"
+	"github.com/boyaki-machine/project-backyard/server/internal/project"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
@@ -1266,14 +1267,16 @@ type devStatus struct {
 func projectStatuses(
 	ctx context.Context, q gen.Querier, key string,
 ) (map[string]devStatus, error) {
-	project, err := q.GetProjectByKey(ctx, key)
+	// **変数名を pj にしてある。** internal/project を import したので、
+	// project という局所変数はパッケージ名を関数の中で覆い隠す。
+	pj, err := q.GetProjectByKey(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("プロジェクト %s を読めない: %w", key, err)
 	}
-	if !project.WorkflowID.Valid {
+	if !pj.WorkflowID.Valid {
 		return nil, fmt.Errorf("プロジェクト %s にワークフローがありません", key)
 	}
-	rows, err := q.ListWorkflowStatuses(ctx, project.WorkflowID.String)
+	rows, err := q.ListWorkflowStatuses(ctx, pj.WorkflowID.String)
 	if err != nil {
 		return nil, fmt.Errorf("プロジェクト %s のワークフローを読めない: %w", key, err)
 	}
@@ -1344,114 +1347,29 @@ func devDate(s string) (pgtype.Date, error) {
 	return pgtype.Date{Time: t, Valid: true}, nil
 }
 
-// createProject は project / project_counter とワークフローを作り、project.id を返す。
+// createProject は project / project_counter とワークフローと文書を作り、project.id を返す。
 //
-// 手順は POST /projects（ApiDesign.md 5.2）と同じ。「project 作成、project_counter
-// 初期化、テンプレートから workflow / workflow_status / workflow_transition を複製」。
-// 作成者を project_admin として登録する部分だけは、CLI に実行者がいないため
-// 定義ファイルの project_admin をもって created_by とする。
+// **手順の実体は internal/project にある**（ApiDesign.md 5.3）。POST /projects と
+// 同じ1本を通るので、片方だけ直って差が開くことがない。
+//
+// **作成者のメンバー登録だけは行わない。** 定義ファイルの members を seedProject が
+// そのまま登録するため、ここで先に入れると役割の出所が2つになる。created_by には
+// 定義ファイルで project_admin を与えられたメンバーを据える。
 func createProject(ctx context.Context, q gen.Querier, rec *audit.Recorder, p devProject, actorIDs map[string]string) (string, error) {
 	projectID := ulidgen.New()
-
-	if err := q.CreateProject(ctx, gen.CreateProjectParams{
-		ID:          projectID,
-		Key:         p.Key,
-		Name:        p.Name,
-		Description: nullText(p.Description),
-		CreatedBy:   nullText(projectCreator(p, actorIDs)),
-	}); err != nil {
-		return "", fmt.Errorf("プロジェクト %s を作成できない: %w", p.Key, err)
-	}
-	if err := q.CreateProjectCounter(ctx, projectID); err != nil {
-		return "", fmt.Errorf("プロジェクト %s のカウンタを作成できない: %w", p.Key, err)
-	}
-	if err := copyWorkflowTemplate(ctx, q, projectID, p); err != nil {
-		return "", err
-	}
-
-	if err := rec.Record(ctx, q, audit.Entry{
-		Action:     audit.ProjectCreate,
-		Result:     audit.Success,
-		TargetType: "project",
-		TargetID:   projectID,
-		Detail: map[string]any{
-			"key":               p.Key,
-			"workflow_template": p.WorkflowTemplate,
-			"via":               "pb dev seed",
-		},
-	}); err != nil {
+	err := project.Create(ctx, q, rec, project.CreateParams{
+		ID:               projectID,
+		Key:              p.Key,
+		Name:             p.Name,
+		Description:      nullText(p.Description),
+		WorkflowTemplate: p.WorkflowTemplate,
+		CreatedBy:        nullText(projectCreator(p, actorIDs)),
+		AuditVia:         "pb dev seed",
+	})
+	if err != nil {
 		return "", err
 	}
 	return projectID, nil
-}
-
-// copyWorkflowTemplate はテンプレートをプロジェクト固有のワークフローへ複製する。
-//
-// workflow は project より後に作る。非テンプレートの workflow は project_id が
-// 必須で（ck_workflow_template、DbDesign.md 6.5）、プロジェクトより先に作れない。
-// そのため project.workflow_id は複製後に埋める。
-func copyWorkflowTemplate(ctx context.Context, q gen.Querier, projectID string, p devProject) error {
-	tpl, err := q.FindWorkflowTemplate(ctx, nullText(p.WorkflowTemplate))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("ワークフローテンプレート %q が見つかりません（DbDesign.md 7.4 のシードが未適用の可能性があります）", p.WorkflowTemplate)
-	}
-	if err != nil {
-		return fmt.Errorf("ワークフローテンプレート %s を取得できない: %w", p.WorkflowTemplate, err)
-	}
-
-	workflowID := ulidgen.New()
-	if err := q.CreateProjectWorkflow(ctx, gen.CreateProjectWorkflowParams{
-		ID:         workflowID,
-		ProjectID:  nullText(projectID),
-		Name:       tpl.Name,
-		Definition: tpl.Definition,
-	}); err != nil {
-		return fmt.Errorf("プロジェクト %s のワークフローを作成できない: %w", p.Key, err)
-	}
-
-	statuses, err := q.ListWorkflowStatuses(ctx, tpl.ID)
-	if err != nil {
-		return fmt.Errorf("テンプレート %s のステータスを取得できない: %w", p.WorkflowTemplate, err)
-	}
-	for _, s := range statuses {
-		if err := q.CreateWorkflowStatus(ctx, gen.CreateWorkflowStatusParams{
-			ID:                    ulidgen.New(),
-			WorkflowID:            workflowID,
-			Key:                   s.Key,
-			Name:                  s.Name,
-			Category:              s.Category,
-			SortOrder:             s.SortOrder,
-			RequiresHumanApproval: s.RequiresHumanApproval,
-			IsAgentReachable:      s.IsAgentReachable,
-		}); err != nil {
-			return fmt.Errorf("ステータス %s を複製できない: %w", s.Key, err)
-		}
-	}
-
-	transitions, err := q.ListWorkflowTransitions(ctx, tpl.ID)
-	if err != nil {
-		return fmt.Errorf("テンプレート %s の遷移を取得できない: %w", p.WorkflowTemplate, err)
-	}
-	for _, t := range transitions {
-		if err := q.CreateWorkflowTransition(ctx, gen.CreateWorkflowTransitionParams{
-			ID:                 ulidgen.New(),
-			WorkflowID:         workflowID,
-			FromStatusKey:      t.FromStatusKey,
-			ToStatusKey:        t.ToStatusKey,
-			RequiredPermission: t.RequiredPermission,
-			AllowedActorKinds:  t.AllowedActorKinds,
-		}); err != nil {
-			return fmt.Errorf("遷移 %s→%s を複製できない: %w", t.FromStatusKey, t.ToStatusKey, err)
-		}
-	}
-
-	if err := q.SetProjectWorkflow(ctx, gen.SetProjectWorkflowParams{
-		ID:         projectID,
-		WorkflowID: nullText(workflowID),
-	}); err != nil {
-		return fmt.Errorf("プロジェクト %s にワークフローを紐づけられない: %w", p.Key, err)
-	}
-	return nil
 }
 
 // projectCreator は project.created_by に入れる actor.id を返す。
