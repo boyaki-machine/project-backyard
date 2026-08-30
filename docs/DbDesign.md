@@ -7,7 +7,7 @@
 > - 対象読者：サーバ実装者（人間およびAIエージェント）
 > - **方針変更**：SQLite先行をやめ、**初期から PostgreSQL を前提とする**（2章）
 > - 関連：`Design.md`（全体設計・認証設計）、`ApiDesign.md`、`GuiDesign.md`、`Requirements.md`
-> - 状態：Phase 1 のDDL・シードは確定・適用済み（0001〜0016）。**Phase 2 は 0017（8.1）まで適用済み**。以降の Phase 2/3 はテーブル構成案
+> - 状態：Phase 1 のDDL・シードは確定・適用済み（0001〜0016）。**Phase 2 は 0018 まで適用済み**（0017 = 8.1 の器、0018 = 8.1.2 の初期本文の直し）。以降の Phase 2/3 はテーブル構成案
 
 **`Design.md` 旧第5章「データベース設計」は本書に統合された。** 以降、DBに関する記述は本書を正とする。
 
@@ -459,11 +459,12 @@ server/migrations/                      ← Design.md 4.1。sqlc がスキーマ
 ├── 0015_ticket_type_and_stage.sql      ticket.type を3値へ縮小、
 │                                       ticket.staged_at を追加（6.6）
 ├── 0016_ticket_reference.sql           ticket_reference（6.12）
-└── 0017_document.sql                   document, document_revision,
-                                        doc 権限, 文書テンプレート（8.1。Phase 2）
+├── 0017_document.sql                   document, document_revision,
+│                                       doc 権限, 文書テンプレート（8.1。Phase 2）
+└── 0018_document_template_text.sql     文書テンプレートの初期本文を直す（8.1.2。Phase 2）
 ```
 
-**0011〜0016 は Phase 1 の途中で足したものである**（`ApiDesign.md` 9章の確定にともなって、使う前にファイルだけ先に置いたものを含む）。**0017 が Phase 2 の最初の1本**である（8章）。前進のみの規則（5.3）に従い、既存のファイルは編集していない。**ファイルを先に置くのは、`make sqlc` が `migrations/` をスキーマ源に読むため**である。
+**0011〜0016 は Phase 1 の途中で足したものである**（`ApiDesign.md` 9章の確定にともなって、使う前にファイルだけ先に置いたものを含む）。**0017 が Phase 2 の最初の1本**である（8章）。**0018 はDDLを持たず、0017 で入れた初期本文の誤りだけを直す**（8.1.2）。前進のみの規則（5.3）に従い、既存のファイルは編集していない。**ファイルを先に置くのは、`make sqlc` が `migrations/` をスキーマ源に読むため**である。
 
 `project.workflow_id` と `ticket.sprint_id` は後続テーブルを参照するため、**FK制約のみ後から `ALTER TABLE ... ADD CONSTRAINT` で付与する**（0005 / 0009 の末尾）。PostgreSQL は前方参照を許さないためである。
 
@@ -1527,18 +1528,20 @@ Phase 1 のテーブルは変更せず、**テーブル追加のみ**で拡張�
 
 ```
 Phase 2
-  0017_document.sql       document, document_revision, doc 権限, 文書テンプレート
-  0018_agent.sql          agent, task_lease
+  0017_document.sql       document, document_revision, doc 権限, 文書テンプレート  ← 適用済み
+  0018_document_template_text.sql
+                          文書テンプレートの初期本文を直す（DDLなし）            ← 適用済み
+  0019_agent.sql          agent, task_lease
 Phase 3
-  0019_agent_run.sql      agent_run, agent_report, context_pack_log
-  0020_knowledge.sql      knowledge, knowledge_revision, proposal
-  0021_comment_signal.sql comment_signal
-  0022_embedding.sql      vector 拡張 + embedding
-  0023_project_event.sql  project_event
-  0024_analytics.sql      estimate_record, contribution
+  0020_agent_run.sql      agent_run, agent_report, context_pack_log
+  0021_knowledge.sql      knowledge, knowledge_revision, proposal
+  0022_comment_signal.sql comment_signal
+  0023_embedding.sql      vector 拡張 + embedding
+  0024_project_event.sql  project_event
+  0025_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——手順23 で 0018（初期本文の直し）を挟んだため、`agent` は 0018 から 0019 へ、Phase 3 は 0019〜0024 から 0020〜0025 へ1つずつ後ろへずれた。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 
@@ -1604,7 +1607,7 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 
 **`body_md` に GIN トライグラムインデックスを張る**のは、`knowledge`（8.3.1）と同じ理由による。日本語の部分一致検索を `pg_trgm` で賄う（4.5）。
 
-### 8.1.2 文書テンプレート（0017 の初期データ）
+### 8.1.2 文書テンプレート（0017 の初期データ、本文は 0018）
 
 `template_key = 'default'` の4件を置く。`Requirements.md` 10.6.2 の表に対応する。
 
@@ -1621,9 +1624,35 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 
 **本文を空にしない。** 各文書に「ここに何を書くか」の短い案内を初期本文として入れる。空の文書が4つ並ぶと、何を書く場所か分からないまま放置される。
 
+**初期本文の正本は 0018 である。** 0017 が入れた本文は段落の途中で改行しており、
+**画面で読むと全角文字の間に半角空白が出た**（6か所。手順23 で初めて画面に並べたときに判明）。
+`GuiDesign.md` 6.6 の「画面に出す日本語は1行に収める」は、**設計文書ではなくアプリが表示する
+文字列すべてに効く**。0017 は適用済みなので編集せず（5.3）、0018 で本文だけを差し替えた。
+
+**CommonMark の強調は、日本語の約物と相性が悪い。** `**` が開くか閉じるかは前後の文字種で
+決まる（flanking の規則）ため、**約物に接する `**` は黙って働かなくなる**。手順23 で両方向とも
+実測した（markdown-it）。
+
+| 書き方 | 何が起きるか | 直し方 |
+|---|---|---|
+| `**…だけを書く。**個人の…` | **閉じない**（`**` が地の文に残る）。閉じる `**` が約物 `。` に続き、直後が全角文字だと右フランキングにならない | 半角空白を入れるか（ただし画面にその空白が見える）、**段落を分ける** |
+| `これが**「読める人」が…**` | **開かない**（同じく `**` が残る）。開く `**` の直前が全角文字で直後が約物 `「` だと左フランキングにならない | **約物を強調の外へ出す**（`これが「読める人」が…**最初の権限**`） |
+
+**強調するのは文ではなく句にする。** 文全体を `**…。**` で囲むとどちらの罠にも当たりやすい。
+句を囲めば前後が文字になり、空白も段落分けも要らない。**書いたら必ず一度描画して確かめる**
+——`**` が生のまま残っても画面は出るので、読むまで気づかない。
+
 **初期本文に見出し（`##`）を置かない。** `ApiDesign.md` 10.2 の `?outline=1` は**エージェントが「どの章を読むか」を決めるため**に使う。中身の無い見出しを並べると、目次だけを見た相手に「読むべき章がある」と読まれる。
 
-**複製はプロジェクト作成時に行う**（7.4 のワークフローテンプレートと同じ手順の中で）。複製後はそのプロジェクトのものになり、テンプレート側を直しても既存プロジェクトには波及しない。
+**複製はプロジェクト作成時に行う**（7.4 のワークフローテンプレートと同じ手順の中で）。複製後はそのプロジェクトのものになり、テンプレート側を直しても既存プロジェクトには波及しない。**プロジェクト作成の経路は `POST /projects` と `pb dev seed` の2つがあり、どちらも同じ手順を通る**（実体は `server/internal/project`）。
+
+**複製は木として行う。** いまテンプレートは4件ともトップレベルだが、`uq_document_template_slug` が `parent_id` を含んでおり、**テンプレート側は子を持てる**。親から順に複製して旧 `id` → 新 `id` の対応で `parent_id` を張り替える。トップレベルだけを写す実装は、テンプレートに子が1件足された日に**無言で落とす**。
+
+**`sort_order` はテンプレートの値をそのまま使う**（10 / 20 / 30 / 40）。振り直さないのは、並べ替え（`ApiDesign.md` 10.4）が同じ 10 刻みで書き戻す作りだからで、初期値が揃っていれば最初の並べ替えで余計な更新が出ない。
+
+**複製した文書には `revision_no = 1` を作り、`created_by` / `updated_by` にはプロジェクトの作成者を入れる**（`ApiDesign.md` 5.3）。
+
+**既存プロジェクトには波及しない。** 複製が走るのはプロジェクト作成時だけなので、**それ以前に作られたプロジェクトの文書は0件のまま**である（`GuiDesign.md` 5.10「空状態」）。テンプレートを後から適用する口は持たない。
 
 **後から足す文書は自由でよい。** 階層も slug も利用者が決める。テンプレートは出発点であって制約ではない。
 

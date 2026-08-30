@@ -479,8 +479,12 @@ paths:
         （Phase 1 = アドミニストレータのみ）。
 
         サーバ側は `project` 作成・`project_counter` 初期化・テンプレートからの
-        ワークフロー複製・作成者の `project_admin` 登録・`audit_log` への記録を
-        **単一トランザクション**で行う。
+        ワークフロー複製・**テンプレートからの文書複製**・作成者の `project_admin` 登録・
+        `audit_log` への記録を**単一トランザクション**で行う。
+
+        文書テンプレートは `template_key = 'default'` 固定で、入力フィールドを持たない
+        （`DbDesign.md` 8.1.2）。複製された文書はそれぞれ `revision_no = 1` を持ち、
+        `created_by` は作成者になる。
 
         キー重複の検出はDBの `UNIQUE` 制約に委ねる（`check-key` の結果は信頼しない）。
       requestBody:

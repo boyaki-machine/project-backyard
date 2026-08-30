@@ -9,11 +9,13 @@
 -- 子孫の分も付け替わる」は見え方の話であって、行の更新ではない）。
 --
 -- **テンプレート行を返さない。** is_template = true の4件（8.1.2）は project_id が
--- NULL なので、project_id で閉じたクエリには最初から現れない。プロジェクト作成時の
--- 複製は手順23 が扱う。
+-- NULL なので、project_id で閉じたクエリには最初から現れない。**唯一の例外が
+-- ListDocumentTemplates**（末尾）で、こちらはテンプレートだけを返す。
 --
 -- **すべてのクエリが project_id か document_id で閉じている。** 到達可否（メンバーか）
 -- の判定は RequireProjectPermission が済ませている（Design.md 6.4.5）。
+-- ListDocumentTemplates だけはプロジェクトに属さない行を読むが、呼ぶのは
+-- プロジェクト作成の手順（internal/project）だけで、HTTP の入力を受けない。
 
 -- ListDocumentTree はプロジェクトの全文書を1回で返す。目次（10.2）の源であり、
 -- **パスの解決・循環の検出・削除時の子孫の数え上げも、この1本から作る。**
@@ -205,3 +207,25 @@ SELECT
 FROM document_revision r
 LEFT JOIN actor a ON a.id = r.changed_by
 WHERE r.document_id = @document_id AND r.revision_no = @revision_no;
+
+-- ListDocumentTemplates はプロジェクト作成時に複製する文書テンプレートを返す
+-- （DbDesign.md 8.1.2、ApiDesign.md 5.3）。呼ぶのは internal/project だけである。
+--
+-- **並びが複製の順序をそのまま決める。** parent_id NULLS FIRST で親が必ず子より先に
+-- 来るので、呼び出し側は届いた順に1件ずつ作りながら旧 id → 新 id の対応を貯めるだけで
+-- parent_id を張り替えられる（8.1.2「複製は木として行う」）。同じ親の中の並びは
+-- ListDocumentTree と揃えて sort_order, slug の昇順。
+--
+-- **いまテンプレートは4件ともトップレベルだが、それに依存しない。**
+-- uq_document_template_slug が parent_id を含んでおり、テンプレート側は子を持てる。
+-- name: ListDocumentTemplates :many
+SELECT
+  d.id,
+  d.parent_id,
+  d.slug,
+  d.title,
+  d.body_md,
+  d.sort_order
+FROM document d
+WHERE d.is_template AND d.template_key = @template_key
+ORDER BY d.parent_id NULLS FIRST, d.sort_order, d.slug;

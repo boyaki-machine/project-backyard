@@ -69,11 +69,24 @@ func TestDocsIntegration(t *testing.T) {
 
 	base := "/api/v1/projects/" + key + "/docs"
 
+	// ── ⓪ テンプレートの複製を取り除く ─────────────────
+	//
+	// **手順23 から、作りたてのプロジェクトには型の4文書が並ぶ**
+	// （DbDesign.md 8.1.2）。本テストが測るのは 10章のAPIの意味論であって
+	// 複製ではない——複製そのものは projects_integration_test.go の
+	// assertDocTemplatesCopied が測る。**以降の検証は「空から作る」前提で
+	// 書かれている**ので、ここで0件へ戻してから始める。
+	//
+	// APIの DELETE ではなく直接 SQL で消すのは、まだ測っていない
+	// エンドポイントに前提を預けないためである。
+	if _, err := pool.Exec(ctx, `DELETE FROM document WHERE project_id = (
+		SELECT id FROM project WHERE key = $1)`, key); err != nil {
+		t.Fatalf("複製された文書を取り除けない: %v", err)
+	}
+
 	// ── ① 文書が1件も無い状態 ───────────────────────────
 	//
-	// **テンプレートの複製は手順23 なので、作りたてのプロジェクトは空である**
-	// （DbDesign.md 8.1.2）。is_template = true の4件が漏れて出ないことも、
-	// ここで初めて実データに対して確かめられる。
+	// is_template = true の4件が漏れて出ないことを、実データに対して確かめる。
 	empty := getWithCookie(r, base, session)
 	if empty.Code != http.StatusOK {
 		t.Fatalf("空の目次の status = %d（body=%s）", empty.Code, empty.Body.String())
