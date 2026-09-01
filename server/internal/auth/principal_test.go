@@ -230,3 +230,76 @@ func TestFreshPermissionsNilPrincipal(t *testing.T) {
 		t.Error("nil のプリンシパルがキャッシュを持っていることになっている")
 	}
 }
+
+// ── 委譲（Design.md 6.5、0019）──────────────────────────────
+
+// TestAuthzActorIDDelegatesToOwner は「誰のロールを読むか」を測る。
+//
+// **ActorID と AuthzActorID を取り違えると、監査がエージェントではなく
+// 所有者の名前で残る**（あるいはその逆で、権限が0件になる）。両方を見る。
+func TestAuthzActorIDDelegatesToOwner(t *testing.T) {
+	agent := &Principal{
+		ActorID:      "01AGENT0000000000000000000",
+		ActorKind:    ActorKindAgent,
+		OwnerActorID: "01OWNER0000000000000000000",
+	}
+	if got := agent.AuthzActorID(); got != "01OWNER0000000000000000000" {
+		t.Errorf("AuthzActorID = %q, want 所有者", got)
+	}
+	// **監査と書き手はエージェント自身のまま。**
+	if agent.ActorID != "01AGENT0000000000000000000" {
+		t.Errorf("ActorID = %q, want エージェント自身", agent.ActorID)
+	}
+	if !agent.IsAgent() {
+		t.Error("IsAgent = false")
+	}
+
+	human := &Principal{ActorID: "01USER00000000000000000000", ActorKind: ActorKindUser}
+	if got := human.AuthzActorID(); got != "01USER00000000000000000000" {
+		t.Errorf("人間の AuthzActorID = %q, want ActorID と同じ", got)
+	}
+	if human.IsAgent() {
+		t.Error("人間で IsAgent = true")
+	}
+
+	// nil でも落ちない（呼び出し側が種別で分岐しなくて済む前提）。
+	var nilP *Principal
+	if got := nilP.AuthzActorID(); got != "" {
+		t.Errorf("nil の AuthzActorID = %q, want 空", got)
+	}
+}
+
+// TestAgentEffectivePermissionsAreOwnersNarrowedByScopes は 6.5 の式を測る。
+//
+//	実効権限 = ( 所有者のシステムロール ∪ 所有者のプロジェクトロール ) ∩ スコープ
+func TestAgentEffectivePermissionsAreOwnersNarrowedByScopes(t *testing.T) {
+	// 所有者は operator（project.view / ticket.view）＋ project_member
+	// （ticket.create / comment.create）を持つとする。
+	ownerSystem := []string{"project.view", "ticket.view"}
+	ownerProject := []string{"ticket.create", "comment.create"}
+	// エージェントの既定スコープには doc.view が入るが、所有者が持たない。
+	scopes := []string{"project.view", "ticket.view", "ticket.create", "doc.view"}
+
+	got := EffectivePermissions(ownerSystem, ownerProject, scopes)
+	want := []string{"project.view", "ticket.create", "ticket.view"}
+	if len(got) != len(want) {
+		t.Fatalf("実効権限 = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("実効権限 = %v, want %v", got, want)
+		}
+	}
+	// **所有者が持たない権限はスコープに書いても付かない**（縮小のみ）。
+	for _, p := range got {
+		if p == "doc.view" {
+			t.Error("所有者が持たない doc.view が付いている")
+		}
+	}
+	// **comment.create はスコープに無いので落ちる。**
+	for _, p := range got {
+		if p == "comment.create" {
+			t.Error("スコープに無い comment.create が残っている")
+		}
+	}
+}

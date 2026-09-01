@@ -25,6 +25,23 @@ projects:
       - { email: member@example.com, role: project_member }
       - { email: viewer@example.com, role: project_viewer }
 
+    # エージェント（DbDesign.md 8.2.1、手順24a）。
+    #
+    # **owner は必ずこのプロジェクトのメンバーであること。** 権限は所有者から
+    # 導かれるので（Design.md 6.5 の委譲）、メンバーでない人に付けると権限0件になる。
+    #
+    # **1件だけ置く。** 入れないと `/admin/users` のエージェント行も Avatar の
+    # 角丸四角（GuiDesign.md 8.4.2）も画面で一度も描かれない。
+    #
+    # **トークンは seed に入れない。** 平文は発行応答にしか存在せず（4.5.3）、
+    # 定義ファイルに書くと「秘密をリポジトリに置かない」に反する。
+    # 使えるトークンが要るときは画面か API から発行する。
+    agents:
+      - display_name: 開発PMのClaude Code
+        owner: pm@example.com
+        client_kind: claude_code
+        model_name: claude-opus-5
+
     # タグ（DbDesign.md 6.10、手順16a）。バックログのグループ化の軸になる。
     # 色は持たない（GuiDesign.md 8.6）。sort_order がセクションの並び順。
     tags:

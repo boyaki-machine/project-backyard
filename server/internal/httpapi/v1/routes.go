@@ -102,6 +102,21 @@ func Mount(r chi.Router, deps Deps) {
 		r.Get("/me/tokens", h.listMyTokens)
 		r.Post("/me/tokens", h.createMyToken)
 		r.Delete("/me/tokens/{id}", h.deleteMyToken)
+		// 自分のエージェント（4.5、Phase 2）。**RequirePermission を付けない。**
+		//
+		// agent.register / agent.token.issue は project_admin と administrator が
+		// 持つ権限だが（DbDesign.md 7.3）、**それは「他人のエージェントを管理する」
+		// 側の権限**である。登録と発行は本人の操作で、Requirements.md 10.9.1 の
+		// 系統B が「参加する本人」と定めている。/me/tokens と同じ扱いにする。
+		//
+		// 他人のエージェントを「見つからない」に寄せるのはクエリ側（agent.sql が
+		// すべて owner_actor_id を条件に含める）であり、ミドルウェアでは
+		// 表現できない。
+		r.Get("/me/agents", h.listMyAgents)
+		r.Post("/me/agents", h.createMyAgent)
+		r.Patch("/me/agents/{id}", h.updateMyAgent)
+		r.Post("/me/agents/{id}/tokens", h.createMyAgentToken)
+		r.Delete("/me/agents/{id}/tokens/{token_id}", h.deleteMyAgentToken)
 
 		// ── プロジェクト（ApiDesign.md 5章）──────────────────
 		//

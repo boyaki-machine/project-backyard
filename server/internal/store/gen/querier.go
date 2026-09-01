@@ -12,6 +12,17 @@ import (
 
 type Querier interface {
 	AddProjectMember(ctx context.Context, arg AddProjectMemberParams) error
+	// AgentExistsWithName は 409 already_exists の判定（ApiDesign.md 4.5.2）。
+	//
+	// **同じ所有者の中で（プロジェクト・クライアント種別・表示名）の組を見る。**
+	// 3つ組が 8.2.1 の言う同一性であり、表示名まで含めるのは、同じ端末から同じ
+	// プロジェクトへ2本目をつなぐ場面（別のモデルを試す等）を塞がないためである。
+	//
+	// **DBの一意制約にしていない。** actor.display_name は agent 表に無く、
+	// 制約を張るには表をまたぐ必要がある。ここは画面の使い勝手のための検査であり、
+	// 破れても壊れるものが無い（重複した行が1つ増えるだけ）。
+	//
+	AgentExistsWithName(ctx context.Context, arg AgentExistsWithNameParams) (bool, error)
 	// AppUserExists は UpdateAdminUserProfile が 0 行だった理由を切り分ける。
 	//
 	// 行が在れば version 不一致（409 conflict）、無ければ削除済み（404）。
@@ -89,6 +100,13 @@ type Querier interface {
 	//
 	CreateAccessToken(ctx context.Context, arg CreateAccessTokenParams) error
 	CreateAdministrator(ctx context.Context, arg CreateAdministratorParams) error
+	CreateAgent(ctx context.Context, arg CreateAgentParams) error
+	// CreateAgentActor は actor(kind='agent') を1行作る。
+	//
+	// **user.sql の CreateUserActor と分けている。** あちらは kind='user' を
+	// 固定で書いており、種別を引数にすると呼び出し側の誤りが型で止まらなくなる。
+	//
+	CreateAgentActor(ctx context.Context, arg CreateAgentActorParams) error
 	// system_role を引数に取る点だけが CreateAdministrator と違う。
 	CreateAppUser(ctx context.Context, arg CreateAppUserParams) error
 	// コメントに関するクエリ（DbDesign.md 6.7、ApiDesign.md 9.8）。
@@ -201,8 +219,17 @@ type Querier interface {
 	// 理由を残せなくなるため。応答はいずれも 401 で統一する（存在を漏らさない）が、
 	// 運用者が原因を追えるようにする。判定は呼び出し側で行う。
 	//
-	// app_user を LEFT JOIN にしているのは、エージェント（Phase 2）とシステムの
-	// アクターが app_user の行を持たないため。
+	// app_user を LEFT JOIN にしているのは、システムのアクターが app_user の行を
+	// 持たないため。
+	//
+	// **エージェントは所有者の app_user を引く**（Design.md 6.5 の委譲、0019）。
+	// agent を LEFT JOIN し、app_user の結合先を COALESCE(ag.owner_actor_id, a.id)
+	// にしてある。これで「所有者のシステムロール」が**クエリを1本も増やさずに**
+	// 載る——認証は全リクエストが通る経路であり、ここで引く行に相乗りするのが
+	// 本設計の要点だからである（cached_permissions と同じ考え方）。
+	//
+	// 人間のアクターでは ag.owner_actor_id が NULL なので COALESCE は a.id に
+	// 落ち、従来と同じ結合になる。
 	//
 	FindAccessTokenByHash(ctx context.Context, tokenHash string) (FindAccessTokenByHashRow, error)
 	FindActorIDByEmail(ctx context.Context, email string) (string, error)
@@ -249,6 +276,12 @@ type Querier interface {
 	// （冪等に 204 を返すが、監査ログは二重に書かない）。
 	//
 	FindMyAPIToken(ctx context.Context, arg FindMyAPITokenParams) (FindMyAPITokenRow, error)
+	// FindMyAgent は1件を引く（PATCH と トークン発行の対象）。
+	//
+	// **actor.is_active も返す。** 4.5.3 が無効化されたエージェントへの発行を
+	// 409 で拒むため、呼び出し側が状態を知る必要がある。
+	//
+	FindMyAgent(ctx context.Context, arg FindMyAgentParams) (FindMyAgentRow, error)
 	// FindMyLocalCredential は POST /me/password が現在のパスワードを検証するために
 	// 資格情報を引く。
 	//
@@ -260,6 +293,16 @@ type Querier interface {
 	// 「パスワードは変えられるのにログインできない」という食い違いが起きる。
 	//
 	FindMyLocalCredential(ctx context.Context, actorID string) (FindMyLocalCredentialRow, error)
+	// ListMyProjectKeysForAgent は project_key の検証に使う（ApiDesign.md 4.5.2）。
+	//
+	// **自分がメンバーであるプロジェクトに限る。** エージェントの権限は所有者から
+	// 導かれる（Design.md 6.5 の委譲）ので、自分が入っていないプロジェクトの
+	// エージェントを作っても権限0件になる。**作れてしまうほうが分かりにくい。**
+	//
+	// アーカイブ済みも返す。アーカイブは status で表す状態であって不可視に
+	// するものではない（ApiDesign.md 5.6）。
+	//
+	FindMyProjectByKey(ctx context.Context, arg FindMyProjectByKeyParams) (FindMyProjectByKeyRow, error)
 	// FindProjectAuthzByKey は、プロジェクトキー1つに対する認可の材料を返す。
 	// RequireProjectPermission（Design.md 6.4.4）が使う。
 	//
@@ -490,6 +533,10 @@ type Querier interface {
 	// UNION ALL ではなく UNION を使うのは ListTickets の subtree と同じ理由で、
 	// 重複を運ぶ意味がないためである。
 	IsTicketDescendant(ctx context.Context, arg IsTicketDescendantParams) (bool, error)
+	// ── エージェント用トークン（ApiDesign.md 4.5.3 / 4.5.5） ──────────────
+	// FindActiveAgentToken は再発行のときに失効させる相手を引く。
+	//
+	ListActiveAgentTokens(ctx context.Context, arg ListActiveAgentTokensParams) ([]ListActiveAgentTokensRow, error)
 	// ── 読み出し（ApiDesign.md 9.13.2。手順19a）────────────────────
 	// ListActivity はプロジェクトの業務履歴を新しい順に返す。
 	//
@@ -628,6 +675,20 @@ type Querier interface {
 	// 認証側と揃えて期限切れを落とすが、こちらは本人が管理するための一覧である。
 	//
 	ListMyAPITokens(ctx context.Context, actorID string) ([]ListMyAPITokensRow, error)
+	// 自分のエージェントに関するクエリ（ApiDesign.md 4.5、DbDesign.md 8.2.1）。
+	//
+	// **すべて owner_actor_id を条件に含める。** 他人のエージェントを 403 ではなく
+	// 404 に倒すため（Design.md 6.4.5「存在を隠す」）、「見つからない」1つの結果に
+	// 寄せる。me.sql の FindMyAPIToken が actor_id を条件に含めるのと同じ形である。
+	// ListMyAgents は GET /me/agents（ApiDesign.md 4.5.1）。
+	//
+	// **有効なトークンを LATERAL で1本だけ引く。** 4.5.3 が「1件につき有効な
+	// トークンは1本」と定めるので通常は1行だが、LIMIT 1 を置いて形を保証する。
+	// 失効済み（revoked_at IS NOT NULL）は返さない——4.4.1 と同じ扱いで、
+	// 失効は本人が消したものである。**期限切れは返す**（更新が要ることに
+	// 気づく必要がある）。
+	//
+	ListMyAgents(ctx context.Context, ownerActorID string) ([]ListMyAgentsRow, error)
 	// ListPermissions は権限カタログを返す（ApiDesign.md 7.2）。
 	//
 	// 正本は DbDesign.md 7.2 のシード（0010、28件）と 8.1.4（0017、doc の2件）で
@@ -1042,6 +1103,22 @@ type Querier interface {
 	// 返す行数が「何本切ったか」で、監査ログの detail に入れる。
 	//
 	RevokeActorSessions(ctx context.Context, actorID string) (int64, error)
+	// RevokeAgentToken は失効させる（4.5.5）。
+	//
+	// **行は消さない**（4.4.3 と同じ）。既に失効済みなら WHERE が外れ、
+	// revoked_at を上書きしない（冪等）。
+	//
+	// **owner_actor_id を条件に含める。** 他人のエージェントのトークンを
+	// 404 に倒すため。
+	//
+	RevokeAgentToken(ctx context.Context, arg RevokeAgentTokenParams) (int64, error)
+	// RevokeAllAgentTokens は無効化のときに全部切る（4.5.4）。
+	//
+	// **無効化したのに動き続けるのは利用者の期待に反する。** actor.is_active を
+	// false にするだけでは認証が止まる（middleware の invalidReason）が、
+	// 行としては有効なトークンが残り、4.5.1 の一覧に「有効」と出てしまう。
+	//
+	RevokeAllAgentTokens(ctx context.Context, actorID string) (int64, error)
 	// RevokeMyAPIToken は失効させる（ApiDesign.md 4.4.3）。
 	//
 	// **行は消さない。** audit_log.token_id から辿れる先を残すためである。
@@ -1222,6 +1299,13 @@ type Querier interface {
 	// 409（conflict）と 404（not_found）を分ける。
 	//
 	UpdateAdminUserProfile(ctx context.Context, arg UpdateAdminUserProfileParams) (int64, error)
+	// UpdateAgentActor は表示名と有効・無効を更新する（ApiDesign.md 4.5.4）。
+	//
+	// **owner_actor_id を条件に含めるため agent と結合する。** actor だけを
+	// 更新すると他人のエージェントを触れてしまう。
+	//
+	UpdateAgentActor(ctx context.Context, arg UpdateAgentActorParams) (int64, error)
+	UpdateAgentModel(ctx context.Context, arg UpdateAgentModelParams) (int64, error)
 	// UpdateComment は 9.8 の PATCH。**変えられるのは body_md と kind だけ**で、
 	// in_reply_to は immutable_field として先に弾かれている。
 	//

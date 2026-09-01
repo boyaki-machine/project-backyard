@@ -217,6 +217,25 @@ type fakeQuerier struct {
 	myTokenRevokes     []gen.RevokeMyAPITokenParams
 	myTokenRevokedRows int64
 
+	// 自分のエージェント（ApiDesign.md 4.5、手順24a）。
+	agentRows            []gen.ListMyAgentsRow
+	agentListErr         error
+	agentRow             gen.FindMyAgentRow
+	agentFindErr         error
+	agentExists          bool
+	agentExistsErr       error
+	agentProject         gen.FindMyProjectByKeyRow
+	agentProjectErr      error
+	createdAgentActors   []gen.CreateAgentActorParams
+	createdAgents        []gen.CreateAgentParams
+	createAgentErr       error
+	updatedAgentActors   []gen.UpdateAgentActorParams
+	updatedAgentModels   []gen.UpdateAgentModelParams
+	activeAgentTokens    []gen.ListActiveAgentTokensRow
+	agentTokenRevokes    []gen.RevokeAgentTokenParams
+	agentTokenRevokedRow int64
+	agentAllTokenRevokes []string
+
 	// 認可ミドルウェア（RequireProjectPermission）が引く行。
 	// key ごとに「プロジェクトの存在・自分のロール・その権限」を持つ。
 	projectAuthzRows map[string][]gen.FindProjectAuthzByKeyRow
@@ -278,6 +297,7 @@ func (q *fakeQuerier) ListProjectMembershipsByActor(context.Context, string) ([]
 }
 
 func (q *fakeQuerier) CreateAccessToken(_ context.Context, arg gen.CreateAccessTokenParams) error {
+	q.opLog = append(q.opLog, "CreateAccessToken")
 	if q.createErr != nil {
 		return q.createErr
 	}
@@ -2110,4 +2130,77 @@ func (q *fakeQuerier) filterActivity(entityID, action string) []gen.ListActivity
 		out = append(out, row)
 	}
 	return out
+}
+
+// ── 自分のエージェント（ApiDesign.md 4.5、手順24a）─────────────
+
+func (q *fakeQuerier) ListMyAgents(_ context.Context, _ string) ([]gen.ListMyAgentsRow, error) {
+	if q.agentListErr != nil {
+		return nil, q.agentListErr
+	}
+	return q.agentRows, nil
+}
+
+func (q *fakeQuerier) FindMyAgent(_ context.Context, _ gen.FindMyAgentParams) (gen.FindMyAgentRow, error) {
+	if q.agentFindErr != nil {
+		return gen.FindMyAgentRow{}, q.agentFindErr
+	}
+	return q.agentRow, nil
+}
+
+func (q *fakeQuerier) FindMyProjectByKey(_ context.Context, _ gen.FindMyProjectByKeyParams) (gen.FindMyProjectByKeyRow, error) {
+	if q.agentProjectErr != nil {
+		return gen.FindMyProjectByKeyRow{}, q.agentProjectErr
+	}
+	return q.agentProject, nil
+}
+
+func (q *fakeQuerier) AgentExistsWithName(_ context.Context, _ gen.AgentExistsWithNameParams) (bool, error) {
+	if q.agentExistsErr != nil {
+		return false, q.agentExistsErr
+	}
+	return q.agentExists, nil
+}
+
+func (q *fakeQuerier) CreateAgentActor(_ context.Context, arg gen.CreateAgentActorParams) error {
+	q.opLog = append(q.opLog, "CreateAgentActor")
+	q.createdAgentActors = append(q.createdAgentActors, arg)
+	return nil
+}
+
+func (q *fakeQuerier) CreateAgent(_ context.Context, arg gen.CreateAgentParams) error {
+	q.opLog = append(q.opLog, "CreateAgent")
+	if q.createAgentErr != nil {
+		return q.createAgentErr
+	}
+	q.createdAgents = append(q.createdAgents, arg)
+	return nil
+}
+
+func (q *fakeQuerier) UpdateAgentActor(_ context.Context, arg gen.UpdateAgentActorParams) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateAgentActor")
+	q.updatedAgentActors = append(q.updatedAgentActors, arg)
+	return 1, nil
+}
+
+func (q *fakeQuerier) UpdateAgentModel(_ context.Context, arg gen.UpdateAgentModelParams) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateAgentModel")
+	q.updatedAgentModels = append(q.updatedAgentModels, arg)
+	return 1, nil
+}
+
+func (q *fakeQuerier) ListActiveAgentTokens(_ context.Context, _ gen.ListActiveAgentTokensParams) ([]gen.ListActiveAgentTokensRow, error) {
+	return q.activeAgentTokens, nil
+}
+
+func (q *fakeQuerier) RevokeAgentToken(_ context.Context, arg gen.RevokeAgentTokenParams) (int64, error) {
+	q.opLog = append(q.opLog, "RevokeAgentToken")
+	q.agentTokenRevokes = append(q.agentTokenRevokes, arg)
+	return q.agentTokenRevokedRow, nil
+}
+
+func (q *fakeQuerier) RevokeAllAgentTokens(_ context.Context, actorID string) (int64, error) {
+	q.opLog = append(q.opLog, "RevokeAllAgentTokens")
+	q.agentAllTokenRevokes = append(q.agentAllTokenRevokes, actorID)
+	return 1, nil
 }

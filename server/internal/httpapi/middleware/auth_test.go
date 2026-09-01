@@ -327,3 +327,103 @@ func TestAuthenticateIgnoresEmptyCookie(t *testing.T) {
 		t.Errorf("Source = %q, want bearer", p.Source)
 	}
 }
+
+// ── エージェントの委譲（Design.md 6.5、0019）────────────────
+
+// agentRow は有効なエージェントトークン1件。
+//
+// **SystemRole には所有者のロールが入る。** FindAccessTokenByHash が
+// app_user を COALESCE(agent.owner_actor_id, actor.id) で結合するためで、
+// エージェント自身は app_user の行を持たない（DbDesign.md 8.2.1）。
+func agentRow() gen.FindAccessTokenByHashRow {
+	row := validRow()
+	row.TokenID = "01AGENTTOKEN00000000000000"
+	row.TokenType = auth.TokenTypeAgent
+	row.ActorID = "01AGENT0000000000000000000"
+	row.ActorKind = auth.ActorKindAgent
+	row.DisplayName = "私の Claude Code"
+	row.OwnerActorID = txt("01OWNER0000000000000000000")
+	row.OwnerIsActive = pgtype.Bool{Bool: true, Valid: true}
+	row.SystemRole = txt(auth.SystemRoleOperator) // 所有者のロール
+	row.Email = txt("owner@example.com")          // 所有者のメール
+	return row
+}
+
+func serveAgent(row gen.FindAccessTokenByHashRow) (*httptest.ResponseRecorder, *auth.Principal) {
+	const plaintext = "pb_agt_valid"
+	q := &tokenQuerier{rows: map[string]gen.FindAccessTokenByHashRow{
+		auth.HashToken(plaintext): row,
+	}}
+	r := httptest.NewRequest("GET", "/api/v1/me", nil)
+	r.Header.Set("Authorization", "Bearer "+plaintext)
+	return serve(q, r)
+}
+
+// TestAuthenticateAgentCarriesOwner は所有者がプリンシパルへ載ることを見る。
+func TestAuthenticateAgentCarriesOwner(t *testing.T) {
+	w, p := serveAgent(agentRow())
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204（body=%s）", w.Code, w.Body.String())
+	}
+	if p.ActorID != "01AGENT0000000000000000000" {
+		t.Errorf("ActorID = %q, want エージェント自身（監査の主体）", p.ActorID)
+	}
+	if p.OwnerActorID != "01OWNER0000000000000000000" {
+		t.Errorf("OwnerActorID = %q", p.OwnerActorID)
+	}
+	// **認可はここを見る**（Design.md 6.5 の委譲）。
+	if p.AuthzActorID() != "01OWNER0000000000000000000" {
+		t.Errorf("AuthzActorID = %q, want 所有者", p.AuthzActorID())
+	}
+	// **所有者のシステムロールが載る。** 載らないと第1層が空になり、
+	// スコープに何を書いても権限0件で全部 403 になる。
+	if p.SystemRole != auth.SystemRoleOperator {
+		t.Errorf("SystemRole = %q, want 所有者の operator", p.SystemRole)
+	}
+}
+
+// TestAuthenticateRejectsAgentOfInactiveOwner は「所有者を無効化したら
+// そのエージェントも止まる」を見る（Design.md 6.5）。
+//
+// **401 に倒す**（403 ではない）。ApiDesign.md 3.1 がアカウント無効を
+// 認証失敗と区別しないと定めているため。
+func TestAuthenticateRejectsAgentOfInactiveOwner(t *testing.T) {
+	row := agentRow()
+	row.OwnerIsActive = pgtype.Bool{Bool: false, Valid: true}
+
+	w, p := serveAgent(row)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401（所有者が無効なら通さない）", w.Code)
+	}
+	if p != nil {
+		t.Error("認証を通してしまっている")
+	}
+}
+
+// TestAuthenticateHumanUnaffectedByOwnerColumn は人間の経路が変わっていないこと。
+//
+// **OwnerIsActive は人間では NULL（Valid=false）である。** ここを
+// 「false なら弾く」と書くと、全ユーザーがログインできなくなる。
+func TestAuthenticateHumanUnaffectedByOwnerColumn(t *testing.T) {
+	row := validRow() // OwnerActorID も OwnerIsActive も未設定＝NULL
+	if row.OwnerIsActive.Valid {
+		t.Fatal("前提が違う: 人間の行に owner_is_active が入っている")
+	}
+	const plaintext = "pb_sess_valid"
+	q := &tokenQuerier{rows: map[string]gen.FindAccessTokenByHashRow{
+		auth.HashToken(plaintext): row,
+	}}
+	r := httptest.NewRequest("GET", "/api/v1/me", nil)
+	r.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: plaintext})
+
+	w, p := serve(q, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204（人間の経路を壊していないこと）", w.Code)
+	}
+	if p.OwnerActorID != "" {
+		t.Errorf("OwnerActorID = %q, want 空", p.OwnerActorID)
+	}
+	if p.AuthzActorID() != p.ActorID {
+		t.Errorf("AuthzActorID = %q, want ActorID と同じ", p.AuthzActorID())
+	}
+}

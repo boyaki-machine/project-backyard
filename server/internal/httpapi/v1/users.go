@@ -72,16 +72,33 @@ type userListItem struct {
 
 // agentView は 6.1 の agent オブジェクト。
 //
-// **Phase 1 では常に null になる。** 中身（client_kind / model_name /
-// project_key / trust_level）は DbDesign.md 8.1 の agent テーブルの列で、
-// そのテーブルは Phase 2 のマイグレーション 0013 以降で作られる。Phase 1 の
-// スキーマから埋められる値が1つも無いため、型だけ先に置いて null を返す。
-// **中身を推測して埋めない**（手順12a の判断。6.1 へ但し書きの追加を提案済み）。
+// **kind='agent' の行にだけ入る**（人間の行では null）。中身は
+// DbDesign.md 8.2.1 の agent テーブルの列である。0019 まで常に null だった
+// ——テーブルが無く、埋められる値が1つも無かったためである。
+//
+// **owner は「このエージェントが誰に付いているか」**（agent.owner_actor_id）。
+// エージェントの実効権限はこの人から導かれる（Design.md 6.5 の委譲）ため、
+// 管理者が一覧で最初に見るべき値である。**登録した人ではなく、権限の根拠。**
+//
+// **me_agents.go の myAgentView とは別物である。** あちらは本人の一覧で、
+// エージェント1件を単独で表す（名前・状態・トークンを持つ）。こちらは
+// userListItem の一部として、人間の行と同じ表に並ぶ前提の形である。
 type agentView struct {
-	ClientKind string `json:"client_kind"`
-	ModelName  string `json:"model_name"`
-	ProjectKey string `json:"project_key"`
-	TrustLevel int32  `json:"trust_level"`
+	ClientKind string    `json:"client_kind"`
+	ModelName  string    `json:"model_name"`
+	ProjectKey string    `json:"project_key"`
+	TrustLevel int32     `json:"trust_level"`
+	Owner      *ownerRef `json:"owner"`
+}
+
+// ownerRef はエージェントの所有者（6.1 の agent.owner）。
+//
+// **ticket_view.go の actorRef を使わない。** あちらは kind を持つが、
+// 所有者は agent.owner_actor_id が app_user を参照する以上**必ず人間**であり、
+// kind は常に "user" になって何も伝えない（DbDesign.md 8.2.1）。
+type ownerRef struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
 }
 
 // listUsers は GET /api/v1/admin/users を処理する（ApiDesign.md 6.1）。
@@ -132,7 +149,7 @@ func (h *handler) listUsers(w http.ResponseWriter, r *http.Request) {
 			DisplayName:  row.DisplayName,
 			Email:        textPtr(row.Email),
 			SystemRole:   textPtr(row.SystemRole),
-			Agent:        nil, // Phase 1 では常に null（agentView のコメント）
+			Agent:        adminAgentView(row),
 			IsActive:     row.IsActive,
 			LastLoginAt:  apiTimestamptz(row.LastLoginAt),
 			ProjectCount: row.ProjectCount,
@@ -218,4 +235,30 @@ func usersETag(total int64, lastUpdated pgtype.Timestamptz) string {
 		stamp = lastUpdated.Time.UTC().UnixNano()
 	}
 	return fmt.Sprintf(`W/"user-%d-%d"`, total, stamp)
+}
+
+// adminAgentView は一覧の1行から 6.1 の agent オブジェクトを組み立てる。
+//
+// **client_kind の有無で判定する。** agent 表は kind='agent' の actor にしか
+// 行を持たないので、この列が NULL なら人間である。kind の文字列で分岐せず
+// 結合の結果で見るのは、**両者が食い違ったときに黙って壊れないため**——
+// agent 表に行があるのに kind が user なら、それはデータの誤りであって
+// 「エージェントとして描かない」で隠してよいものではない。
+func adminAgentView(row gen.ListAdminUsersRow) *agentView {
+	if !row.ClientKind.Valid {
+		return nil
+	}
+	v := &agentView{
+		ClientKind: row.ClientKind.String,
+		ModelName:  row.AgentModelName.String,
+		ProjectKey: row.AgentProjectKey.String,
+		TrustLevel: row.AgentTrustLevel.Int32,
+	}
+	if row.OwnerActorID.Valid {
+		v.Owner = &ownerRef{
+			ID:          row.OwnerActorID.String,
+			DisplayName: row.OwnerDisplayName.String,
+		}
+	}
+	return v
 }

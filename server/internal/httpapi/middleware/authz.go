@@ -227,8 +227,11 @@ func requireProjectPermissions(q gen.Querier, name string, permissions ...string
 // projectAuthz は key が指すプロジェクトの認可結果を組み立てる。
 // プロジェクトが存在しなければ nil を返す（エラーではない）。
 func projectAuthz(ctx context.Context, q gen.Querier, p *auth.Principal, key string) (*auth.ProjectAuthz, context.Context, error) {
+	// **AuthzActorID を渡す。** エージェントは project_member の行を持たず、
+	// 所有者のプロジェクトロールを用いる（Design.md 6.5 の委譲、0019）。
+	// 人間では ActorID と同じ値になる。
 	rows, err := q.FindProjectAuthzByKey(ctx, gen.FindProjectAuthzByKeyParams{
-		ActorID:    p.ActorID,
+		ActorID:    p.AuthzActorID(),
 		ProjectKey: key,
 	})
 	if err != nil {

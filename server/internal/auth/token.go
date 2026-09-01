@@ -26,6 +26,13 @@ const (
 	SessionTokenPrefix = "pb_sess_"
 	// APITokenPrefix は CLI・スクリプト用の Bearer トークン（ApiDesign.md 4.4）。
 	APITokenPrefix = "pb_api_"
+	// AgentTokenPrefix はエージェント用の Bearer トークン（ApiDesign.md 4.5.3、
+	// Design.md 6.5）。
+	//
+	// 既存の2つと同じく7文字にしてある。TokenPrefixLen が8なので、
+	// token_prefix には接頭辞＋乱数1文字が入り、一覧で種別と個体の
+	// 両方が読める形が揃う。
+	AgentTokenPrefix = "pb_agt_"
 )
 
 // tokenRandomBytes は乱数部のバイト数。Design.md 6.2.1 が定める32バイト。

@@ -424,10 +424,22 @@ WITH filtered AS (
     u.system_role,
     u.last_login_at,
     r.sort_order AS role_sort_order,
-    (SELECT count(*) FROM project_member pm WHERE pm.actor_id = a.id) AS project_count
+    (SELECT count(*) FROM project_member pm WHERE pm.actor_id = a.id) AS project_count,
+    -- エージェントの属性（ApiDesign.md 6.1 の agent オブジェクト、0019）。
+    -- **kind='user' の行では全部 NULL になる**ので、応答側は client_kind の
+    -- 有無で「エージェントか」を判定できる。
+    ag.client_kind,
+    ag.model_name    AS agent_model_name,
+    ag.trust_level   AS agent_trust_level,
+    agp.key          AS agent_project_key,
+    ag.owner_actor_id,
+    owner.display_name AS owner_display_name
   FROM actor a
   LEFT JOIN app_user u ON u.actor_id = a.id
   LEFT JOIN role r ON r.key = u.system_role AND r.scope = 'system'
+  LEFT JOIN agent ag ON ag.actor_id = a.id
+  LEFT JOIN project agp ON agp.id = ag.project_id
+  LEFT JOIN actor owner ON owner.id = ag.owner_actor_id
   WHERE a.kind <> 'system'
     AND ($5::text = 'all' OR a.kind = $5::text)
     AND ($6::text = 'all' OR a.is_active = ($6::text = 'true'))
@@ -440,7 +452,9 @@ WITH filtered AS (
 )
 SELECT
   f.id, f.kind, f.display_name, f.email, f.system_role,
-  f.is_active, f.last_login_at, f.project_count, f.created_at
+  f.is_active, f.last_login_at, f.project_count, f.created_at,
+  f.client_kind, f.agent_model_name, f.agent_trust_level,
+  f.agent_project_key, f.owner_actor_id, f.owner_display_name
 FROM filtered f
 ORDER BY
   CASE WHEN $1::text = 'display_name'  AND $2::text = 'asc'  THEN f.display_name COLLATE "ja-JP-x-icu" END ASC,
@@ -470,15 +484,21 @@ type ListAdminUsersParams struct {
 }
 
 type ListAdminUsersRow struct {
-	ID           string
-	Kind         string
-	DisplayName  string
-	Email        pgtype.Text
-	SystemRole   pgtype.Text
-	IsActive     bool
-	LastLoginAt  pgtype.Timestamptz
-	ProjectCount int64
-	CreatedAt    pgtype.Timestamptz
+	ID               string
+	Kind             string
+	DisplayName      string
+	Email            pgtype.Text
+	SystemRole       pgtype.Text
+	IsActive         bool
+	LastLoginAt      pgtype.Timestamptz
+	ProjectCount     int64
+	CreatedAt        pgtype.Timestamptz
+	ClientKind       pgtype.Text
+	AgentModelName   pgtype.Text
+	AgentTrustLevel  pgtype.Int4
+	AgentProjectKey  pgtype.Text
+	OwnerActorID     pgtype.Text
+	OwnerDisplayName pgtype.Text
 }
 
 // ── ユーザー管理（ApiDesign.md 6章、手順12a）─────────────────────
@@ -545,6 +565,12 @@ func (q *Queries) ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) 
 			&i.LastLoginAt,
 			&i.ProjectCount,
 			&i.CreatedAt,
+			&i.ClientKind,
+			&i.AgentModelName,
+			&i.AgentTrustLevel,
+			&i.AgentProjectKey,
+			&i.OwnerActorID,
+			&i.OwnerDisplayName,
 		); err != nil {
 			return nil, err
 		}

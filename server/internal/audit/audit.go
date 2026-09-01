@@ -45,15 +45,20 @@ const (
 	ProjectCreate    Action = "project.create"
 	ProjectArchive   Action = "project.archive"
 	PermissionDenied Action = "permission.denied"
+	// 以下は 0019（Phase 2）で加わった（ApiDesign.md 4.5.6）。
+	// エージェントの登録と更新はアカウントの作成・変更と同じ重みを持つ。
+	AgentRegister Action = "agent.register"
+	AgentUpdate   Action = "agent.update"
 )
 
-// actions は ApiDesign.md 2.10 が列挙する15件。
+// actions は ApiDesign.md 2.10 が列挙する17件。
 var actions = map[Action]bool{
 	LoginSuccess: true, LoginFailure: true, Logout: true,
 	PasswordChange: true, PasswordReset: true,
 	TokenIssue: true, TokenRevoke: true, SessionRevoke: true,
 	UserCreate: true, UserUpdate: true, UserDelete: true, RoleChange: true,
 	ProjectCreate: true, ProjectArchive: true, PermissionDenied: true,
+	AgentRegister: true, AgentUpdate: true,
 }
 
 // Result は audit_log.result（DbDesign.md 6.8 の CHECK 制約）。
