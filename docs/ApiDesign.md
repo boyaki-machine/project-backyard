@@ -17,7 +17,7 @@
 | 1 | 本書の範囲と方針 | 確定 |
 | 2 | 共通仕様 | 確定 |
 | **3** | **認証・セッションAPI** | **確定** |
-| **4** | **自分自身に関するAPI（/me）** | **確定** |
+| **4** | **自分自身に関するAPI（/me・トークン・エージェント）** | **確定**（4.5 は Phase 2） |
 | **5** | **プロジェクトAPI** | **確定** |
 | **6** | **ユーザー管理API** | **確定** |
 | **7** | **ロール・権限API** | **確定** |
@@ -32,12 +32,12 @@
 
 ## 1.1 本書が定義する範囲
 
-Phase 1 の全APIを定義する。**9章までは実装済みである。10章（プロジェクト文書）は Phase 2 で実装する。**
+Phase 1 の全APIを定義する。**9章までは実装済みである**（**4.5 を除く。同節は Phase 2**）。**10章（プロジェクト文書）は Phase 2 で実装する。**
 
 | 章 | 範囲 | 主な消費者（`GuiDesign.md`） |
 |---|---|---|
 | 3 | 認証・セッション | ログイン（5.1） |
-| 4 | 自分自身（`/me`・トークン） | 自分の設定（5.8）。`GET /me` は全画面が起動時に依存する |
+| 4 | 自分自身（`/me`・トークン・**エージェント**） | 自分の設定（5.8）。`GET /me` は全画面が起動時に依存する。**4.5（エージェント）は Phase 2** |
 | 5 | プロジェクト | プロジェクト一覧・作成（5.2）、プロジェクト設定（5.9） |
 | 6・7 | ユーザー管理・ロール・権限 | アカウント / 権限管理（5.6） |
 | 9 | チケット（一覧・詳細・コメント・DoD・リンク・タグ・スプリント・集計） | バックログ（5.4）、チケット詳細（5.5）、ダッシュボード（5.3） |
@@ -274,7 +274,12 @@ If-Match: "3"
 
 `login.success` / `login.failure` / `logout` / `password.change` / `password.reset` /
 `token.issue` / `token.revoke` / `session.revoke` / `user.create` / `user.update` /
-`user.delete` / `role.change` / `project.create` / `project.archive` / `permission.denied`
+`user.delete` / `role.change` / `project.create` / `project.archive` / `permission.denied` /
+`agent.register` / `agent.update`
+
+**末尾の2件は 0019（Phase 2）で加わった**（4.5.6）。エージェントの登録と更新は
+アカウントの作成・変更と同じ重みを持つ操作であり、`user.create` / `user.update` と
+並べてある。
 
 ## 2.11 ヘルスチェック
 
@@ -467,7 +472,8 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 （`token_type='session'`）はこの3本のどれにも現れない。本人が自分のセッションを
 見る・切る画面を持たないと決めており（`GuiDesign.md` 5.8）、混ぜると
 「一覧に出ているのに失効させられない行」が生まれる。エージェント用
-（`token_type='agent'`）はプロジェクト設定側から発行する（`Design.md` 6.5、Phase 2）。
+（`token_type='agent'`）も**この3本には現れない**——本人の操作である点は同じだが、
+**エージェント1件にぶら下がる資格情報**なので 4.5 が別に扱う（`Design.md` 6.5）。
 
 ### 4.4.1 `GET /api/v1/me/tokens`
 
@@ -541,9 +547,10 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 であり、**この積は権限キーどうしの完全一致で取る**。別の語彙を混ぜると、絞ったつもりの
 トークンが権限0件になるか、解釈できない語彙を通して逆に広がるかのどちらかになる。
 
-`Design.md` 6.5 がエージェントの既定スコープとして挙げる `ticket:read` / `ticket:claim` /
-`result:submit` / `context:read` は、**権限カタログに対応するキーを持たない**。
-エージェントの操作そのものが Phase 2 で設計されるため、対応表を先取りしない。
+**`Design.md` 6.5 のエージェントの既定スコープも、同じ語彙で書かれている**（2026-08-30、手順24a）。
+改訂前の 6.5 は `ticket:read` / `ticket:claim` / `result:submit` / `context:read` という別語彙を
+挙げていたが、**その語彙で発行すると実効権限が0件になる**ため、権限キーへ置き換えた。
+**エージェント用トークンは 4.5.3 が発行し、スコープは選ばせない**（6.5 の既定を常に入れる）。
 
 **Phase 1 の画面はスコープを選ばせない**（`GuiDesign.md` 5.8）。常に `[]` で発行するため、
 発行されたトークンは本人の権限をそのまま持つ。どの権限をまとめて選ばせるかは、
@@ -598,6 +605,211 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 いずれも `target_type='access_token'`、`target_id` はトークンの ID。
 `audit_log.token_id` は**操作に使ったトークン**（通常はブラウザのセッション）であり、
 発行・失効の対象とは別である。
+
+## 4.5 `/api/v1/me/agents` — 自分のエージェント（Phase 2）
+
+**必要権限**：本人
+
+```
+GET|POST      /api/v1/me/agents
+PATCH         /api/v1/me/agents/:id
+POST          /api/v1/me/agents/:id/tokens
+DELETE        /api/v1/me/agents/:id/tokens/:token_id
+```
+
+自分の端末で動くクライアント（Claude Code / VS Code+Copilot）を PB に登録し、
+その資格情報を発行する（`DbDesign.md` 8.2.1、`Design.md` 6.5）。
+
+**登録するのは本人である。** `Requirements.md` 10.9.1 の系統B（メンバーの参画）が
+「誰が」の欄に**「参加する本人」**を挙げており、トークンは 10.10.3 のとおり参加者ごとに
+発行する。**4.4 と同じく権限キーを要求しない**——`agent.register` / `agent.token.issue` は
+**他人のエージェントを管理する**側の権限であり、自分のものには要らない。
+
+**1件が表すのは「ある参加者の手元で動くクライアント1つ」である。** 人ではない。
+同じ人が Claude Code と VS Code を使えば2件になり、2つのプロジェクトにつなぐなら
+さらに分かれる（`DbDesign.md` 8.2.1）。
+
+**権限は所有者から導く。** エージェントの実効権限は
+`( 自分のシステムロール ∪ 自分のプロジェクトロール ) ∩ トークンのスコープ` であり、
+**自分の権限を超えるエージェントは作れない**（`Design.md` 6.4.1 / 6.5）。
+
+### 4.5.1 `GET /api/v1/me/agents`
+
+```json
+{
+  "items": [
+    { "id": "01K2...", "display_name": "私の Claude Code",
+      "client_kind": "claude_code", "model_name": "claude-opus-5", "model_version": null,
+      "project": { "key": "pb", "name": "Project Backyard" },
+      "trust_level": 1, "is_active": true,
+      "created_at": "2026-08-30T09:03:12Z",
+      "token": { "id": "01K3...", "token_prefix": "pb_agt_7",
+                 "issued_at": "2026-08-30T09:03:12Z",
+                 "last_used_at": "2026-08-30T10:41:00Z",
+                 "expires_at": "2026-11-28T09:03:12Z", "status": "active" } }
+  ]
+}
+```
+
+`items[]` は `created_at` の降順。
+
+| 項目 | 内容 |
+|---|---|
+| `id` | エージェントの `actor.id`。**`agent.actor_id` と同じ値**である（`DbDesign.md` 8.2.1 は `actor_id` を主キーにしている） |
+| `display_name` | 本人が付けた名前。**どの端末のどのクライアントかを本人が思い出すための手がかり**であり、一意ではない |
+| `project` | 参加プロジェクト。`null` にならない（登録時に必須） |
+| `token` | **有効なトークンが無ければ `null`。** 1件につき有効なトークンは1本（4.5.3） |
+| `is_active` | `false` は無効化されたエージェント。行は残る |
+
+**`token.token`（平文）は返さない。** 返すのは `token_prefix`（先頭8文字。`pb_agt_` + 1文字）だけで、
+4.4.1 と同じ扱いである。`status` は `active` / `expired`。
+
+**ページネーションも `ETag` も持たない**（4.4.1 と同じ）。1人が持つ件数は端末とプロジェクトの
+積であり、絞り込みも差分取得も意味を持たない。
+
+### 4.5.2 `POST /api/v1/me/agents`
+
+```json
+// Request
+{ "display_name": "私の Claude Code", "project_key": "pb",
+  "client_kind": "claude_code", "model_name": "claude-opus-5" }
+```
+
+```json
+// 201 Created
+{ "id": "01K2...", "display_name": "私の Claude Code",
+  "client_kind": "claude_code", "model_name": "claude-opus-5", "model_version": null,
+  "project": { "key": "pb", "name": "Project Backyard" },
+  "trust_level": 1, "is_active": true,
+  "created_at": "2026-08-30T09:03:12Z", "token": null }
+```
+
+**トークンは同時に発行しない。** 登録と発行を分けるのは、**再発行が必要になったときに同じ
+経路を通す**ためである（4.5.3）。登録直後の `token` は `null` で、画面は続けて発行を呼ぶ。
+
+| 項目 | 規則 |
+|---|---|
+| `display_name` | **必須**。1〜60文字（`actor.display_name` の CHECK に合わせる。`DbDesign.md` 6.2） |
+| `project_key` | **必須**。**自分がメンバーであるプロジェクトに限る。** それ以外は `422`（`details[].code` は `not_found`） |
+| `client_kind` | **必須**。`claude_code` / `copilot` / `other`（`DbDesign.md` 8.2.1 の CHECK） |
+| `model_name` | 省略可。1〜100文字 |
+| `model_version` | 省略可。1〜100文字 |
+
+**`trust_level` は受け取らない。** 段階的な権限昇格の材料（`agent_run` の実績）が Phase 3 の
+ため、既定値の 1 で作る（`Design.md` 6.5）。
+
+**`capabilities` も受け取らない。** 何を能力として並べるかが決まっていない。
+
+**自分がメンバーでないプロジェクトを 404 ではなく 422 に倒す。** `project_key` は本体の
+フィールドであり、`Design.md` 6.4.5 の「存在を隠す」は**パスで指した資源**についての規約である
+（他人のエージェントを指した 4.5.4 の `404` はそちら）。本体の値の誤りは 2.5 の検証エラーで返す。
+
+| 状況 | 応答 |
+|---|---|
+| 成功 | `201`。上の本体 |
+| 形式誤り／非メンバーのプロジェクト | `422 validation_failed` |
+| 同じ（プロジェクト・クライアント種別・表示名）の組が既にある | `409 already_exists` |
+
+### 4.5.3 `POST /api/v1/me/agents/:id/tokens`
+
+```json
+// Request
+{ "expires_in_days": 90 }
+```
+
+```json
+// 201 Created — token は「この応答でのみ」返る
+{ "id": "01K3...", "token": "pb_agt_7f3c...", "token_prefix": "pb_agt_7",
+  "scopes": ["agent.run","comment.create","doc.view","project.view",
+             "ticket.assign","ticket.create","ticket.transition","ticket.view"],
+  "issued_at": "2026-08-30T09:03:12Z",
+  "expires_at": "2026-11-28T09:03:12Z", "status": "active" }
+```
+
+**`token` を返すのはこの応答だけである**（4.4.2 と同じ。DBには SHA-256 のハッシュしか残らない）。
+
+| 項目 | 規則 |
+|---|---|
+| `expires_in_days` | **必須**。1〜365 の整数。無期限は許さない（`Design.md` 6.5「有効期限必須」） |
+| `scopes` | **受け取らない。** `Design.md` 6.5 の既定を常に入れる |
+
+**スコープを選ばせない。** 6.5 が既定を定めており、**そこから外れる組み合わせを作る動機が
+Phase 2 に無い**。`ticket.close` と `doc.edit` を既定から外してあるのが要点で、選ばせると
+その禁止が画面の作りに依存してしまう。**トークンは所有者の権限との積になる**ため、既定を
+そのまま載せても所有者が持たない権限は付かない。
+
+**発行するトークンは `project_id` を持つ**（`access_token.project_id` にエージェントの
+プロジェクトを入れる）。他プロジェクトへのアクセスは `404` になる（`Design.md` 6.4.5）。
+
+**`client_info` にクライアント種別を入れる**（`claude_code` 等）。`api` トークンでは空だった
+列で、エージェントには入れる値がある。
+
+#### 有効なトークンは1件につき1本
+
+**再発行すると、それまでの有効なトークンを失効させる。** 応答は `201` で、失効は暗黙に行う。
+
+`/me/tokens` の「1人5本まで」と形を変えているのは、**同じ principal に複数のトークンを
+持たせる理由が無い**ためである。10.10.3 が「トークンは参加者ごとに発行する。1リポジトリに
+1本ではない」と言うのは **principal を分ける**話であり、1つの principal が複数の資格情報を
+持つことを求めてはいない。1本に保てば、「どれが生きているか」を画面で数えなくてよい。
+
+| 状況 | 応答 |
+|---|---|
+| 成功 | `201`。上の本体（**既存の有効なトークンがあれば失効させたうえで発行する**） |
+| `expires_in_days` の形式誤り | `422 validation_failed` |
+| 他人のエージェント・存在しない `id` | `404 not_found` |
+| 無効化されたエージェント（`is_active=false`） | `409 conflict` |
+
+### 4.5.4 `PATCH /api/v1/me/agents/:id`
+
+```json
+{ "display_name": "私の Claude Code (mini)", "model_name": "claude-opus-5",
+  "model_version": "20260501", "is_active": false }
+```
+
+いずれも省略可（送られた項目だけを更新する）。応答は 4.5.2 と同じ本体。
+
+**`project_key` と `client_kind` は変えられない。** 変えたければ別のエージェントとして
+登録する——**その2つが「どのクライアントがどのプロジェクトにつないでいるか」という
+1件の同一性そのもの**だからである。付け替えると、そのエージェントが過去に行った操作の
+文脈が後から変わる。
+
+**`is_active: false` が無効化である。** 行は消さない（`comment.author_id` などが参照する）。
+**無効化すると、そのエージェントのトークンも失効する**——無効化したのに動き続けるのは
+利用者の期待に反する。
+
+**エージェントを消す API は持たない。** 4.4.3 がトークンを消さずに失効させるのと同じ理由で、
+監査から辿れる先を残す。
+
+| 状況 | 応答 |
+|---|---|
+| 成功 | `200` |
+| 形式誤り | `422 validation_failed` |
+| 他人のエージェント・存在しない `id` | `404 not_found` |
+
+### 4.5.5 `DELETE /api/v1/me/agents/:id/tokens/:token_id`
+
+トークンを失効させる（`access_token.revoked_at` を立てる）。4.4.3 と同じ作法で、行は消さない。
+
+| 状況 | 応答 |
+|---|---|
+| 成功 | `204` |
+| 既に失効済み | `204`（**冪等**） |
+| 他人のエージェント・存在しない `id` / `token_id`・`token_type` が `agent` でない | `404 not_found` |
+
+### 4.5.6 監査（2.10）
+
+| 操作 | `action` | `detail` |
+|---|---|---|
+| 登録 | `agent.register` | `display_name` / `client_kind` / `project_key` |
+| 更新・無効化 | `agent.update` | 変更した項目。無効化は `is_active: false` |
+| 発行 | `token.issue` | `client_kind` / `project_key` / `scopes` / `expires_at`。**平文は入れない** |
+| 失効 | `token.revoke` | `token_prefix`。再発行に伴う暗黙の失効もここに残す |
+
+登録と更新は `target_type='agent'`、`target_id` はエージェントの `actor.id`。
+トークンの2つは 4.4.4 と同じく `target_type='access_token'`。
+
+**`audit_log.actor_id` は操作した本人**（エージェントではない）。登録も発行も人の操作である。
 ---
 
 # 5. プロジェクトAPI
@@ -803,7 +1015,8 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
     { "id": "01K2...", "kind": "agent", "display_name": "claude-code (my-app)",
       "email": null, "system_role": null,
       "agent": { "client_kind": "claude_code", "model_name": "claude-opus-5",
-                 "project_key": "my-app", "trust_level": 1 },
+                 "project_key": "my-app", "trust_level": 1,
+                 "owner": { "id": "01K2...", "display_name": "田中" } },
       "is_active": true, "last_login_at": "2026-08-11T08:41:00Z",
       "project_count": 1, "created_at": "2026-08-01T00:00:00Z" }
   ],
@@ -817,9 +1030,11 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 
 **`sort=is_active` の昇順は無効が先**（`false < true`）。状態で並べ替える動機は「無効な利用者を探す」ことが多いため、そのままにしている。
 
-**`agent` は Phase 1 では常に `null` である。** 中身（`client_kind` / `model_name` / `project_key` / `trust_level`）は `DbDesign.md` 8.2 の `agent` テーブルの列で、そのテーブルは Phase 2 のマイグレーションで作られる。Phase 1 のスキーマから埋められる値が1つも無いため、**キーだけを返して中身は推測しない**。上の例はエージェントを作れるようになった後の姿である。
+**`agent` は `kind='agent'` の行にだけ入る**（人間の行では `null`）。中身は `DbDesign.md` 8.2.1 の `agent` テーブルの列である。**0019 まで常に `null` だった**——テーブルが無く、埋められる値が1つも無かったためである。
 
-**`project_count` は `project_member` の行数**で、アーカイブ済みプロジェクトも数える。除くと 6.3 の `memberships` に並ぶ件数と食い違うため。
+**`owner` は「このエージェントが誰に付いているか」を表す**（`agent.owner_actor_id`）。**エージェントの実効権限はこの人から導かれる**ため（`Design.md` 6.5 の委譲）、管理者が一覧で最初に見るべき列である。**登録した人ではなく、権限の根拠である。**
+
+**`project_count` は `project_member` の行数**で、アーカイブ済みプロジェクトも数える。除くと 6.3 の `memberships` に並ぶ件数と食い違うため。**エージェントは `project_member` の行を持たない**（権限を所有者から導くため）ので、常に `0` になる。**参加プロジェクトは `agent.project_key` のほうで読む。**
 
 一覧は `ETag` を返す（2.7）。`W/"user-<件数>-<MAX(updated_at) のナノ秒>"` で、**`updated_at` は `actor` と `app_user` の新しいほうを採る**。システムロールの変更は `app_user` の行だけを更新するため、`actor` だけを見るとロールを変えても値が変わらない。
 
@@ -922,6 +1137,8 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 物理削除（`DbDesign.md` 4.6）。`actor` の削除により `app_user` `user_identity` `local_credential` `access_token` `project_member` が CASCADE で消える。
 
 `ticket.assignee_id` は `ON DELETE SET NULL` のため**チケットは残る**。`comment.author_id` は `NOT NULL` かつ `ON DELETE RESTRICT` のため、**削除前にシステムアクター（`kind='system'` の「削除されたユーザー」）へ付け替える**必要がある（`DbDesign.md` 6.7）。
+
+**0019 以降、その人が所有するエージェントも一緒に消える**（`agent.owner_actor_id` の `ON DELETE CASCADE`。`DbDesign.md` 8.2.1）。**エージェントが書き手になる手順で、上の付け替えの対象をエージェントにも広げること**——本節の記述は人についてしか書かれておらず、エージェントがコメントを持つようになると所有者の削除が `RESTRICT` に当たる。0019 の時点ではエージェントはコメントを書けないため、まだ起きない。
 
 | ガード | 応答 |
 |---|---|
@@ -1075,6 +1292,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | アカウント / 権限（ロールタブ） | `GET /roles` + `GET /permissions` |
 | 自分の設定 | `PATCH /me`<br>`POST /me/password` |
 | アクセストークン | `GET|POST /me/tokens`<br>`DELETE /me/tokens/:id` |
+| **エージェント（Phase 2）** | `GET|POST /me/agents`<br>`PATCH /me/agents/:id`<br>`POST /me/agents/:id/tokens`<br>`DELETE /me/agents/:id/tokens/:token_id` |
 | プロジェクト設定（タグタブ） | `GET|POST /projects/:key/tags`<br>`PATCH|DELETE /projects/:key/tags/:id` |
 | プロジェクト設定（スプリントタブ） | `GET|POST /projects/:key/sprints`<br>`PATCH|DELETE /projects/:key/sprints/:id` |
 | **Docs（Phase 2）** | `GET /projects/:key/docs`（目次）<br>`GET /projects/:key/docs/*path`（本文）<br>`PATCH|DELETE /projects/:key/docs/*path`・`POST /projects/:key/docs`<br>`GET /projects/:key/docs/*path/_revisions`（履歴） |
@@ -2478,12 +2696,9 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 - **タグの並べ替えに原子性が要るか**（9.11.1）。いまは `PATCH /tags/:id` を複数回送る形で、途中で失敗すると順序が中途半端に残る。必要になったら ID の配列を受ける一括更新を足す
 - **タグ・スプリントの定義変更を `activity` に残すか**（9.1.1）。読む画面が無いため Phase 1 では記録しない。タグ削除の追跡が運用上必要になった時点で `entity_type` を足す
 - エラーメッセージの多言語化。Phase 1 は日本語固定とするが、`code` を機械可読にしてあるためフロント側での差し替えは可能
-- エージェント用トークンの発行API（Phase 2）を `/me/tokens` と統合するか、プロジェクト配下（`/projects/:key/agents`）に置くか
 - **`project.settings`（jsonb）の中身をサーバは検証しない**（5.5。JSONオブジェクトであることのみ）。`repositories` の必須・上限（10件／URL 1000文字／説明 200文字）は画面だけが持つ。**設定項目が増えるなら、サーバ側の検証をどこに置くかを決める必要がある**
-- **`access_token.client_info` は `api` トークンでは空である**（4.4）。セッション（User-Agent）用の列で、CLI トークンには相当するものが無く、本人が付ける `name` が識別子になる。エージェント用トークンを作るときに、クライアント種別をここに入れるかを決める
-- **`agent` は Phase 1 の応答で常に `null` である**（6.1）。サーバ側は型だけ置いてあり、`agent` テーブル（`DbDesign.md` 8.2）を作ったら中身を埋めて 6.1 の但し書きを外す
-- **`GET /admin/users/:id` は `kind='user'` しか返さない**（6.3。エージェント・システムアクターは 404）。一覧が `kind=user` しか出さないので Phase 1 では届くが、**エージェントタブに実データが入ったら、詳細への導線を種別で分ける**必要がある
-- **一覧の検索（`q`）はロールの表示名に当たるが、「エージェント」には当たらない**（6.1）。この文字列は `system_role` が `null` のときに画面が作っている代替表示でDBに無い。**エージェントタブを作るときに、種別で探せる形を決める**
+- **`GET /admin/users/:id` は `kind='user'` しか返さない**（6.3。エージェント・システムアクターは 404）。**0019 で実データが入ったので、この行の条件は満たされた**——一覧（6.1）はエージェントを返すのに、行から詳細へ飛べない。**詳細への導線を種別で分けるか、エージェントを 6.3 が返せるようにするかを決める**（`GuiDesign.md` 5.6 のエージェントタブを作る手順で）
+- **一覧の検索（`q`）はロールの表示名に当たるが、「エージェント」には当たらない**（6.1）。この文字列は `system_role` が `null` のときに画面が作っている代替表示でDBに無い。**0019 以降は `agent.client_kind` / `model_name` / 所有者の表示名が実在する**ので、種別で探せる形をそれらから選ぶ
 - **`project_memberships[]` にプロジェクトの `status` を入れていない**（6.3）。アーカイブ済みのプロジェクトも含まれるが、画面がそれを区別できない。必要になったら 6.3 の改訂を先に出す
 - **2.5.1 の11コードの既定文言が実装側（`apierr.messages`）にしかない。** 文書に持たせるなら 2.5.1 に message 列を足す
 - 削除操作の監査における個人情報の保持期間（`audit_log.detail` と `actor_label` に残した表示名・メールをいつ消すか）

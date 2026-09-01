@@ -87,6 +87,7 @@ func Authenticate(q gen.Querier) func(http.Handler) http.Handler {
 				DisplayName:         row.DisplayName,
 				Email:               row.Email.String,
 				SystemRole:          row.SystemRole.String,
+				OwnerActorID:        row.OwnerActorID.String,
 				TokenID:             row.TokenID,
 				TokenType:           row.TokenType,
 				Scopes:              scopes,
@@ -133,6 +134,17 @@ func invalidReason(row gen.FindAccessTokenByHashRow) string {
 		// ApiDesign.md 3.1 が「アカウント無効も認証失敗と区別しない」と
 		// 定めているため、ここも 401 に倒す（403 にしない）。
 		return "アクターが無効化されている（actor.is_active=false）"
+	}
+	// **所有者が無効ならエージェントも通さない**（Design.md 6.5、0019）。
+	// エージェントの権限は所有者から導かれるので、所有者が無効化された時点で
+	// 実効権限は空になるべきである。ここで止めないと、権限0件のまま認証だけ
+	// 通り、すべてのエンドポイントが 403 を返す状態になる——**利用者から見た
+	// 症状が「無効化したのに動いている」に見える。**
+	//
+	// OwnerIsActive は人間のアクターでは NULL（Valid=false）なので、
+	// この判定はエージェントにだけ効く。
+	if row.OwnerIsActive.Valid && !row.OwnerIsActive.Bool {
+		return "エージェントの所有者が無効化されている（agent.owner_actor_id）"
 	}
 	return ""
 }

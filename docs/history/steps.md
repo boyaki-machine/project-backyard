@@ -3238,3 +3238,99 @@ URL のプレビューと「配下の文書も一緒に移動します」が出�
 - サーバを停止（`make stop-server`）、ヘッドレス Chrome のプロファイル（`/tmp/pb-cdp-*`）を削除
 - `make clean-webui` を実行し、`git status` に生成物が無いことを確認
 - **マイグレーションを足していないので `make stg-migrate` は不要。`make stg-build` はマージ後に行う**
+
+## 手順24a — マイグレーション 0019 とエージェント登録・トークン発行API（2026-09-02）
+
+ブランチ `feature/step-24a-agent-api`。**手順24 を a / b に分けた**（`Design.md` 11.2.1）——
+`ApiDesign.md` と `GuiDesign.md` の両方に節を書き起こす必要があり、手順22 と同等の分量だった。
+**24a は API まで。画面（`/me/agents`）は 24b で、完了条件はそちらで満たす。**
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/migrations/0019_agent.sql` | `agent`（＋`owner_actor_id`）、`task_lease`、`agent.run` の再配布 |
+| `server/internal/store/queries/agent.sql` | 11本（一覧・1件・作成・重複判定・更新2種・プロジェクト検証・トークン3種） |
+| `server/internal/httpapi/v1/me_agents.go` | 5本のハンドラ（4.5.1〜4.5.5）。`me_tokens.go` の `tokenStatus` / 値域定数を再利用 |
+| `server/internal/httpapi/v1/me_agents_test.go` | 単体18件 |
+| `server/internal/httpapi/v1/me_agents_integration_test.go` | 結合6件（副検査を含む） |
+
+### 変えたファイル（主なもの）
+
+| ファイル | 変更 |
+|---|---|
+| `docs/DbDesign.md` | 8.2.1 に `owner_actor_id` と委譲・所有者削除の節、8.2.6（権限）を新設、7.2 と8章の採番表 |
+| `docs/ApiDesign.md` | **4.5 を新設**（4.5.1〜4.5.6）、1.1・2.10・6.1・6.5・8章の対応表、11.2 から3項目を削除 |
+| `docs/Design.md` | 6.5 を全面改訂（所有者・委譲・スコープ対応表）、6.4.1、付録A（解消済みへ3件移動）、11章の完了条件 |
+| `docs/Requirements.md` | 10.9.1 の系統B を `/me/agents` へ、10.8.10 の接頭辞を `pb_agt_` へ |
+| `docs/GuiDesign.md` | 3.2 の註（系統A のみ・手順28）、5.6 に「属する人」の列 |
+| `docs/openapi.yaml` | 4ルート＋パラメータ2＋スキーマ7。`make gen-api` で `schema.d.ts` を再生成 |
+| `auth/principal.go` | `OwnerActorID` と `AuthzActorID()` / `IsAgent()` |
+| `auth/token.go` | `AgentTokenPrefix = "pb_agt_"` |
+| `store/queries/auth.sql` | `FindAccessTokenByHash` に `agent` を LEFT JOIN、`app_user` を `COALESCE(ag.owner_actor_id, a.id)` で結合。**認可のためのクエリを1本も増やしていない** |
+| `middleware/auth.go` | `OwnerActorID` を載せる。`invalidReason` に所有者の無効を足す |
+| `middleware/authz.go` | `FindProjectAuthzByKey` を `p.AuthzActorID()` で引く |
+| `middleware/permissions.go` | **エージェントには権限キャッシュを書かない**（無効化がアクター単位なので届かない） |
+| `httpapi/v1/me.go` | `profile.AuthzActorID` を足し、所属を所有者で引く |
+| `httpapi/v1/users.go` | `agentView` に `owner`、`adminAgentView` を新設 |
+| `store/queries/user.sql` | `ListAdminUsers` に `agent` / `project` / 所有者を LEFT JOIN |
+| `audit/audit.go` | `agent.register` / `agent.update`（17件に） |
+| `cmd/pb/dev_seed.go` | `devAgent` と `seedAgents`（冪等） |
+| `deploy/dev/seed/dev-data.yaml` | `demo` にエージェント1件（所有者 `pm@example.com`） |
+
+### 検証結果
+
+**① DDL を破って確かめた**（`ROLLBACK` 前提。9件）
+
+`owner_actor_id` の NOT NULL ／ 存在しない所有者の FK ／ **所有者にエージェントを指す**（`app_user`
+を参照するので弾かれる）／ `client_kind` の CHECK ／ `trust_level` の範囲 ／ `actor_id` の FK ／
+`uq_task_lease_active` ／ **解放済みなら2本目を張れる**（部分索引の条件）／ `release_reason` の CHECK。
+**ロールバック後の残存0件**を確認した。
+
+**1回目は2件が意図と違うものを見ていた**——`agent_actor_id_fkey` が先に発火し、**所有者側の FK に
+届いていなかった**（`actor` 行を作らずに INSERT していた）。actor を先に作って撮り直したところ、
+どちらも `agent_owner_actor_id_fkey` で落ちた。**コントロール（正しい行は入る）を先に置いたので
+切り分けが1回で済んだ。**
+
+**② `agent.run` を持つロール** — 2件（`administrator` / `project_admin`）→ **5件**（＋`operator` /
+`project_member` / `project_viewer`）。`make psql` で実測。
+
+**③ 単体 989件 PASS**（既存949 → 989。＋40）。**④ 結合 163件 PASS**（既存158 → 163。＋5）。
+
+**⑤ 実サーバ 35件 PASS**（27 + 撮り直し8）。dev の実プロセス・実HTTP・実 seed データに対して——
+seed のエージェントが一覧に出る／実HTTPで発行した平文が `pb_agt_` で始まる／既定スコープ8件で
+`ticket.close` と `doc.edit` を含まない／**Bearer で `GET /me` が所有者のプロジェクトを返す**（委譲）／
+`actor.kind` が `agent` で `system_role` が `null`（借用していない）／`doc.view` は実効権限にあり
+`doc.edit` は無い／`GET /projects/demo/docs` が 200 で `POST` が 403（かつ `code` が `forbidden` で
+CSRF ではない）／他プロジェクトが 404 ／`/admin/users?kind=agent` に所有者「開発PM」が出る／
+**所有者を無効化すると 401、戻すと 200 に復帰**／失効後は 401。
+
+**1回目に落ちた2件はどちらも検証側の誤りだった**——①応答を読む前に `out.json` を次の呼び出しで
+上書きしていた ②`If-Match` を送っていなかった（2.8）。**実装は最初から正しかった。**
+
+**⑥ わざと壊して検知できることを確かめた**（`-count=1`）
+
+| 壊したもの | 落ちた検査 |
+|---|---|
+| `agentDefaultScopes` を旧語彙へ戻す | `TestAgentDefaultScopesSurviveIntersection` |
+| `AuthzActorID` から委譲を外す | 結合の「所有者のプロジェクトが実効権限になる」（`projects = 0件`） |
+| 権限キャッシュのエージェント除外を外す | `TestSystemPermissionsSkipsCacheForAgent` |
+
+**委譲を外したときの症状が、設計が予測したとおり**（所属0件→権限0件→全部 403）だった。
+
+**⑦ 既存テストの期待値を2件直した**（どちらも私の変更を正しく検知していた）
+
+- `roles_integration_test.go` — `project_viewer` の権限が4件→**5件**（`agent.run`）
+- `users_integration_test.go` — `kind=agent` が「0件」の決め打ちだった。**件数を決め打ちせず、
+  返った行がすべて `agent` であること・`kind=user` と重ならないこと**を測る形に直した
+  （seed も他のテストもエージェントを作りうるため）
+
+### 片付け
+
+- 検証で発行したエージェント用トークンを失効（有効なエージェントトークン **0本**を実測）
+- 検証で作りかけた文書 `agent-%` が **0件**、結合テストの `agt-%` プロジェクト・利用者が **0件**
+- 所有者（`pm@example.com`）が `is_active = true` に戻っていることを実測
+- **seed のエージェント1件は意図して残した**（`/admin/users` と 24b の画面で描かれる必要がある）
+- サーバを停止（`make stop-server`）。スクラッチパッドの検証スクリプトは日付をまたぐと消える
+- `make migrate` / `make stg-migrate` / `make stg-build` を実行済み。**`make build` はしていないので
+  `make clean-webui` は不要**

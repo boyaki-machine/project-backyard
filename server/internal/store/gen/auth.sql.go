@@ -73,11 +73,17 @@ SELECT
   a.kind         AS actor_kind,
   a.display_name,
   a.is_active,
+  ag.owner_actor_id,
+  -- 所有者が無効なら、そのエージェントも通さない（Design.md 6.5）。
+  -- 人間のアクターでは NULL になり、判定は a.is_active だけで行う。
+  owner.is_active AS owner_is_active,
   u.system_role,
   u.email
 FROM access_token t
 JOIN actor a ON a.id = t.actor_id
-LEFT JOIN app_user u ON u.actor_id = a.id
+LEFT JOIN agent ag ON ag.actor_id = a.id
+LEFT JOIN actor owner ON owner.id = ag.owner_actor_id
+LEFT JOIN app_user u ON u.actor_id = COALESCE(ag.owner_actor_id, a.id)
 WHERE t.token_hash = $1
 `
 
@@ -95,6 +101,8 @@ type FindAccessTokenByHashRow struct {
 	ActorKind           string
 	DisplayName         string
 	IsActive            bool
+	OwnerActorID        pgtype.Text
+	OwnerIsActive       pgtype.Bool
 	SystemRole          pgtype.Text
 	Email               pgtype.Text
 }
@@ -107,8 +115,17 @@ type FindAccessTokenByHashRow struct {
 // 理由を残せなくなるため。応答はいずれも 401 で統一する（存在を漏らさない）が、
 // 運用者が原因を追えるようにする。判定は呼び出し側で行う。
 //
-// app_user を LEFT JOIN にしているのは、エージェント（Phase 2）とシステムの
-// アクターが app_user の行を持たないため。
+// app_user を LEFT JOIN にしているのは、システムのアクターが app_user の行を
+// 持たないため。
+//
+// **エージェントは所有者の app_user を引く**（Design.md 6.5 の委譲、0019）。
+// agent を LEFT JOIN し、app_user の結合先を COALESCE(ag.owner_actor_id, a.id)
+// にしてある。これで「所有者のシステムロール」が**クエリを1本も増やさずに**
+// 載る——認証は全リクエストが通る経路であり、ここで引く行に相乗りするのが
+// 本設計の要点だからである（cached_permissions と同じ考え方）。
+//
+// 人間のアクターでは ag.owner_actor_id が NULL なので COALESCE は a.id に
+// 落ち、従来と同じ結合になる。
 func (q *Queries) FindAccessTokenByHash(ctx context.Context, tokenHash string) (FindAccessTokenByHashRow, error) {
 	row := q.db.QueryRow(ctx, findAccessTokenByHash, tokenHash)
 	var i FindAccessTokenByHashRow
@@ -126,6 +143,8 @@ func (q *Queries) FindAccessTokenByHash(ctx context.Context, tokenHash string) (
 		&i.ActorKind,
 		&i.DisplayName,
 		&i.IsActive,
+		&i.OwnerActorID,
+		&i.OwnerIsActive,
 		&i.SystemRole,
 		&i.Email,
 	)

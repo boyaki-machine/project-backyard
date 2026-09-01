@@ -1209,11 +1209,12 @@ ON CONFLICT (key) DO UPDATE
 
 **`ON CONFLICT DO UPDATE` にしている**のは、説明文の修正を後続のマイグレーションで反映できるようにするため。権限キーそのものは削除しない（削除は `role_permission` の CASCADE を伴うため、専用のマイグレーションで慎重に扱う）。
 
-**後続のマイグレーションで足す権限は、本節に追記せず、その機能の節に置く。** 0010 のブロックを増やすと、**どのマイグレーションが何を入れたかが読めなくなる**ためである。現時点の追加は以下の1件。
+**後続のマイグレーションで足す権限は、本節に追記せず、その機能の節に置く。** 0010 のブロックを増やすと、**どのマイグレーションが何を入れたかが読めなくなる**ためである。現時点の追加は以下のとおり。
 
 | 追加 | 権限 | 置き場 |
 |---|---|---|
-| 0017（Phase 2） | `doc.view` / `doc.edit` | 8.1.4 |
+| 0017（Phase 2） | `doc.view` / `doc.edit` を新設 | 8.1.4 |
+| 0019（Phase 2） | **キーは足さず、`agent.run` の割り当てを広げる** | 8.2.6 |
 
 **`Design.md` 付録A の「`permission` カタログの粒度は28件で確定」は、0010 時点の件数である。** 0017 適用後は30件になる。
 
@@ -1531,7 +1532,7 @@ Phase 2
   0017_document.sql       document, document_revision, doc 権限, 文書テンプレート  ← 適用済み
   0018_document_template_text.sql
                           文書テンプレートの初期本文を直す（DDLなし）            ← 適用済み
-  0019_agent.sql          agent, task_lease
+  0019_agent.sql          agent, task_lease, agent.run の再配布            ← 適用済み
 Phase 3
   0020_agent_run.sql      agent_run, agent_report, context_pack_log
   0021_knowledge.sql      knowledge, knowledge_revision, proposal
@@ -1717,23 +1718,56 @@ ON CONFLICT DO NOTHING;
 
 ```sql
 CREATE TABLE agent (
-  actor_id      char(26) COLLATE "C" PRIMARY KEY REFERENCES actor(id) ON DELETE CASCADE,
-  project_id    char(26) COLLATE "C" REFERENCES project(id) ON DELETE CASCADE,
-  client_kind   text    NOT NULL CHECK (client_kind IN ('claude_code','copilot','other')),
-  model_name    text,
-  model_version text,
-  capabilities  jsonb   NOT NULL DEFAULT '[]'::jsonb,
-  trust_level   integer NOT NULL DEFAULT 1 CHECK (trust_level BETWEEN 0 AND 3),
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  updated_at    timestamptz NOT NULL DEFAULT now()
+  actor_id       char(26) COLLATE "C" PRIMARY KEY REFERENCES actor(id) ON DELETE CASCADE,
+  owner_actor_id char(26) COLLATE "C" NOT NULL
+                 REFERENCES app_user(actor_id) ON DELETE CASCADE,
+  project_id     char(26) COLLATE "C" REFERENCES project(id) ON DELETE CASCADE,
+  client_kind    text    NOT NULL CHECK (client_kind IN ('claude_code','copilot','other')),
+  model_name     text,
+  model_version  text,
+  capabilities   jsonb   NOT NULL DEFAULT '[]'::jsonb,
+  trust_level    integer NOT NULL DEFAULT 1 CHECK (trust_level BETWEEN 0 AND 3),
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX idx_agent_owner ON agent (owner_actor_id);
 CREATE TRIGGER trg_agent_updated BEFORE UPDATE ON agent
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ```
 
+**1行が表すのは「ある参加者の手元で動くクライアント1つ」である。** 人ではない。同じ人が Claude Code と VS Code を使えば2行になり（`Requirements.md` 10.10.3「クライアントごとに分ける」）、2つのプロジェクトにつなぐならさらに分かれる。**キーは（所有者・クライアント種別・プロジェクト）の3つ組**であり、`ApiDesign.md` 6.1 のエージェント行の例（`claude-code (my-app)`）がこの形を前提にしている。
+
 `model_name` / `model_version` を保持するのは、`Requirements.md` 10.10.3 の「モデル更新後に品質が変化した際の切り分け」のため。`agent_run` にも実行時点の値をコピーする（後からモデルを変えても過去の実行記録が壊れないよう非正規化する）。
 
-`trust_level` は`Requirements.md` 10.10.3 の段階的権限昇格に対応する。
+`trust_level` は`Requirements.md` 10.10.3 の段階的権限昇格に対応する。**0019 の時点では既定値のまま置き、APIも画面も受け取らない**——昇格の材料になる実績（`agent_run`、Phase 3）がまだ無く、使うものが無いうちに入口を作ると意味が固まるためである。
+
+#### `owner_actor_id` — エージェントは人に紐づく（0019 で追加）
+
+**利用者の判断（2026-08-30）。** 現状のAIエージェントは人の支援を行う形態なので、**エージェントはプロジェクトメンバの誰かに紐づけて登録する。** その人の持つ権限がベースになり、そこにエージェント独自の権限を整理して割り当てる。
+
+参照先を `actor` ではなく **`app_user`** にしているのは、所有者が人間に限られるためである。エージェントがエージェントを所有することはない。
+
+**この列が無いと「その人の権限がベース」を構造で守れない。** 改訂前の本節にはこの列が無く、`Requirements.md` 10.10.3 が属性に挙げる「**どの参加者に付いているか**」が DDL のどこにも無かった。
+
+#### 権限は所有者から導く（委譲）
+
+エージェントは `app_user` の行を持たないため、`Design.md` 6.4.1 の式のうち**システムロールの層が必ず空になる**。そこで**所有者の層をそのまま使う**。
+
+```
+実効権限 = ( 所有者のシステムロール ∪ 所有者のプロジェクトロール ) ∩ トークンのスコープ
+```
+
+**エージェントに `project_member` の行を作らない。** 作ると所有者のロールと二重に持つことになり、所有者のロールを変えたときに片方だけ古くなる。委譲なら常に一致する。
+
+`Design.md` 6.5 の「**人間アカウントの借用をしない**」はこれで破れていない——principal（`actor`）もトークンも監査の `actor_id` も別のままで、**借りるのは資格情報ではなく権限の根拠**である。副次的に、**所有者を無効化するとその人のエージェントも同時に効かなくなる**（安全側）。
+
+**自立したエージェントが要るようになったら、`NOT NULL` を外して `NULL = 所有者を持たない自立エージェント`と定義する。** そのときは `project_member` に自前の行を持ち、メンバの一員として並ぶ（利用者の言う「PJ予算でエージェントに働いてもらう」形態）。**いま `NOT NULL` から始めるのは順序の問題である**——制約を外すのは前進のみのマイグレーションで1行だが、後から付けるには全行の埋め戻しが要る。
+
+#### 所有者を物理削除したとき
+
+`owner_actor_id` の `ON DELETE CASCADE` により、**利用者を削除するとその人のエージェントの行も消える**（`actor` の CASCADE を通じてトークンとメンバーシップも消える）。所有者を失ったエージェントを残さないためである。
+
+**エージェントが書き手になる手順（`pb_post_note`）で、この経路を見直すこと。** `comment.author_id` は `NOT NULL` かつ `ON DELETE RESTRICT` で、`ApiDesign.md` 6.5 は削除前にシステムアクターへ付け替えると定めている。**その規定は人についてしか書かれていない**ため、エージェントがコメントを持つようになると、所有者の削除が RESTRICT に当たる。0019 の時点ではエージェントはコメントを書けないので問題は起きない。
 
 ### 8.2.2 `task_lease` — リース管理
 
@@ -1819,6 +1853,28 @@ CREATE INDEX idx_context_pack_run ON context_pack_log (agent_run_id);
 ```
 
 **1テーブルで2つの要件を満たす。** `Requirements.md` 10.10.7（監査：エージェントが何を見たか）と 10.4.4（効果計測：どの情報を含めたときに成功率が上がったか）は、記録すべき内容が同一である。`agent_report.status` と突き合わせることで有用性スコアを算出する。
+
+### 8.2.6 権限（0019）
+
+**新しい権限キーは足さない。** `agent.register` / `agent.token.issue` / `agent.run` は 0010 の 28件に既にある（7.2）。0019 が変えるのは**割り当てのほう**である。
+
+```sql
+-- agent.run を「自分に紐づくエージェントを MCP から走らせてよい」と定め、
+-- プロジェクトに参加する側のロールへ配り直す（Design.md 6.5）。
+INSERT INTO role_permission (role_key, permission_key)
+SELECT r.key, 'agent.run'
+  FROM role r
+ WHERE r.key IN ('operator','project_member','project_viewer')
+ON CONFLICT DO NOTHING;
+```
+
+**理由。** 8.2.1 の委譲により、エージェントの権限は**所有者から導かれる**。`agent.run` を持つのが `project_admin` と `administrator` だけのままだと、**プロジェクト管理者のエージェントしか MCP を使えない**。人の支援を行う形態（8.2.1）ではメンバも閲覧者もエージェントを伴うため、参加する側のロールが持つべき権限である。
+
+**`project_viewer` にも与える。** `Requirements.md` 10.9.1 の系統B が発行の用途に「実装用＝write可／**閲覧用＝read only**」を挙げており、読むだけのエージェントも走る必要がある。何を読み書きできるかは `agent.run` ではなく、トークンのスコープと個々のツールの必要権限（`Design.md` 8.2）が決める。
+
+**当面このキーは誰も拒まない。** `app_user.system_role` は `operator` か `administrator` のいずれかであり（6.2 の CHECK）、`operator` に与えた時点で全利用者が持つ。**実際に効き始めるのは `Design.md` 付録A 論点②（operator の持ち物を減らす）を片付けてから**であり、それまでは「所有者が持つべき権限」を表明しているだけである。**割り当てをカタログ側に正しく書いておくことに意味がある**——後で operator を絞ったときに、プロジェクトロール側が受け皿として既に用意されている。
+
+`agent.register` / `agent.token.issue` の割り当ては**変えない**。登録とトークン発行は本人の操作（`ApiDesign.md` 4.5）であり、`/me/tokens` と同じく権限キーを要求しないためである。この2つは**他人のエージェントを管理する側**の権限として `project_admin` に残る。
 
 ## 8.3 知識還流（Phase 3）
 

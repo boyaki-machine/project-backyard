@@ -162,10 +162,14 @@ func TestRolesCatalogIntegration(t *testing.T) {
 		if got := len(byKey["administrator"].Permissions); got != 30 {
 			t.Errorf("administrator の権限 = %d件, want 30件（DbDesign.md 7.3 は全権限）", got)
 		}
-		// 閲覧者は project.view / ticket.view / doc.view / knowledge.view の4件
-		// （DbDesign.md 7.3 の3件に、8.1.4 が doc.view を足した）。並びは
-		// permission.sort_order で 10 / 20 / 35 / 40。
-		want := []string{"project.view", "ticket.view", "doc.view", "knowledge.view"}
+		// 閲覧者は5件——DbDesign.md 7.3 の3件に、8.1.4 が doc.view、
+		// 8.2.6（0019）が agent.run を足した。並びは permission.sort_order で
+		// 10 / 20 / 35 / 40 / 62。
+		//
+		// **agent.run が閲覧者にも要る。** エージェントの権限は所有者から導かれる
+		// （Design.md 6.5 の委譲）ので、閲覧者が所有するエージェントも MCP を
+		// 走らせられなければならない（読むだけのエージェント。Requirements.md 10.9.1）。
+		want := []string{"project.view", "ticket.view", "doc.view", "knowledge.view", "agent.run"}
 		got := byKey["project_viewer"].Permissions
 		if len(got) != len(want) {
 			t.Fatalf("project_viewer の権限 = %v, want %v", got, want)

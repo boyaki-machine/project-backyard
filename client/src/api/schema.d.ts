@@ -205,6 +205,163 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 自分のエージェント一覧
+         * @description 自分の端末で動くクライアントを一覧する（ApiDesign.md 4.5.1）。
+         *     必要権限は「本人」。
+         *
+         *     **1件が表すのは「ある参加者の手元で動くクライアント1つ」である。** 人ではない。
+         *     キーは（所有者・クライアント種別・プロジェクト）の3つ組で、同じ人が
+         *     Claude Code と VS Code を使えば2件になる（Requirements.md 10.10.3）。
+         *
+         *     **`token` は有効な1本だけを載せる。** 失効済みは返さず、期限切れは返す
+         *     （`status` が `expired`）。有効なトークンが無ければ `null`。
+         *
+         *     ページネーションも ETag も持たない（4.4.1 と同じ）。
+         */
+        get: operations["listMyAgents"];
+        put?: never;
+        /**
+         * エージェントを登録
+         * @description 自分のエージェントを登録する（ApiDesign.md 4.5.2）。必要権限は「本人」。
+         *
+         *     **トークンは同時に発行しない**（応答の `token` は常に `null`）。登録と発行を
+         *     分けるのは、再発行のときに同じ経路（`POST /me/agents/{id}/tokens`）を通す
+         *     ためである。
+         *
+         *     **`project_key` は自分がメンバーであるプロジェクトに限る。** それ以外は 422
+         *     （`details[].code` は `not_found`）。エージェントの権限は所有者から導かれる
+         *     ので、自分が入っていないプロジェクトのエージェントを作っても権限0件になる。
+         *
+         *     **`trust_level` と `capabilities` は受け取らない**（Design.md 6.5）。
+         *     昇格の材料が Phase 3 のため、既定値で作る。
+         */
+        post: operations["createMyAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/agents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["AgentID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * エージェントを更新・無効化
+         * @description 自分のエージェントを更新する（ApiDesign.md 4.5.4）。必要権限は「本人」。
+         *     送られた項目だけを更新する。
+         *
+         *     **`project_key` と `client_kind` は変えられない**（本要求に含まれない）。
+         *     その2つが「どのクライアントがどのプロジェクトにつないでいるか」という
+         *     1件の同一性そのものであり、付け替えると過去の操作の文脈が後から変わる。
+         *
+         *     **`is_active: false` が無効化である。** 行は消さない（`comment.author_id`
+         *     などが参照するため）。**無効化すると、そのエージェントのトークンも失効する。**
+         *
+         *     **他人のエージェント・存在しない `id` は 404**（403 にしない。Design.md 6.4.5）。
+         */
+        patch: operations["updateMyAgent"];
+        trace?: never;
+    };
+    "/api/v1/me/agents/{id}/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["AgentID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * エージェント用トークンを発行
+         * @description エージェント用の Bearer トークンを発行する（ApiDesign.md 4.5.3）。
+         *     必要権限は「本人」。
+         *
+         *     **`token`（平文）はこの応答でのみ返る。** DB には SHA-256 のハッシュしか
+         *     残らず、再表示する API は無い（DbDesign.md 6.2）。
+         *
+         *     **有効なトークンは1件につき1本。** 再発行すると、それまでの有効なトークンを
+         *     失効させたうえで発行する（応答は 201。失効は暗黙に行い、監査には残る）。
+         *
+         *     **`scopes` は選ばせない。** Design.md 6.5 の既定を常に入れる——
+         *     `ticket.close` と `doc.edit` を既定から外してあるのが要点で、選ばせると
+         *     その禁止が画面の作りに依存してしまう。**トークンは所有者の権限との積に
+         *     なる**ため、既定をそのまま載せても所有者が持たない権限は付かない。
+         *
+         *     発行するトークンは `project_id` を持ち、他プロジェクトへのアクセスは 404 になる
+         *     （Design.md 6.4.5）。
+         */
+        post: operations["createMyAgentToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/agents/{id}/tokens/{token_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["AgentID"];
+                /** @description エージェント用トークンの ULID（`access_token.id`。ApiDesign.md 4.5.5）。 */
+                token_id: components["parameters"]["AgentTokenID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * エージェント用トークンを失効
+         * @description エージェント用トークンを失効させる（ApiDesign.md 4.5.5）。必要権限は「本人」。
+         *
+         *     **行は消さず `revoked_at` を立てる**（4.4.3 と同じ）。
+         *
+         *     **冪等。** 既に失効済みでも 204 を返し、`revoked_at` を上書きしない。
+         *
+         *     **他人のエージェント・存在しない `id` / `token_id`・`token_type` が `agent`
+         *     でないものは 404**（Design.md 6.4.5）。
+         */
+        delete: operations["deleteMyAgentToken"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -230,8 +387,12 @@ export interface paths {
          *     （Phase 1 = アドミニストレータのみ）。
          *
          *     サーバ側は `project` 作成・`project_counter` 初期化・テンプレートからの
-         *     ワークフロー複製・作成者の `project_admin` 登録・`audit_log` への記録を
-         *     **単一トランザクション**で行う。
+         *     ワークフロー複製・**テンプレートからの文書複製**・作成者の `project_admin` 登録・
+         *     `audit_log` への記録を**単一トランザクション**で行う。
+         *
+         *     文書テンプレートは `template_key = 'default'` 固定で、入力フィールドを持たない
+         *     （`DbDesign.md` 8.1.2）。複製された文書はそれぞれ `revision_no = 1` を持ち、
+         *     `created_by` は作成者になる。
          *
          *     キー重複の検出はDBの `UNIQUE` 制約に委ねる（`check-key` の結果は信頼しない）。
          */
@@ -2197,6 +2358,121 @@ export interface components {
              * @enum {string}
              */
             system_role?: "administrator" | "operator";
+        };
+        /**
+         * @description ApiDesign.md 4.5.1。ページネーションも ETag も持たない（4.4.1 と同じく、
+         *     件数が少なく絞り込みも差分取得も意味を持たないため）。
+         */
+        MyAgentList: {
+            items: components["schemas"]["MyAgent"][];
+        };
+        /**
+         * @description ApiDesign.md 4.5.1 / 4.5.2 / 4.5.4。自分のエージェント1件。
+         *
+         *     **`/admin/users` の `agent` オブジェクト（6.1）とは別物である。** あちらは
+         *     管理者の一覧が返す形で、所有者を持つ代わりに名前と状態を親が持つ。
+         */
+        MyAgent: {
+            /** @description エージェントの ULID（`agent.actor_id`）。 */
+            id: string;
+            /**
+             * @description 本人が付けた名前。**どの端末のどのクライアントかを思い出すための
+             *     手がかり**であり、一意ではない。
+             */
+            display_name: string;
+            /** @enum {string} */
+            client_kind: "claude_code" | "copilot" | "other";
+            model_name: string | null;
+            model_version: string | null;
+            /** @description 参加プロジェクト。登録時に必須なので `null` にならない。 */
+            project: components["schemas"]["ProjectRef"];
+            /**
+             * @description 0〜3（既定 1）。**Phase 2 では使わない**——段階的な権限昇格の材料
+             *     （`agent_run` の実績）が Phase 3 のため、既定値のまま置く。
+             */
+            trust_level: number;
+            /** @description `false` は無効化されたエージェント。行は残る。 */
+            is_active: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** @description 有効なトークン1本。無ければ `null`。 */
+            token: components["schemas"]["AgentToken"] | null;
+        };
+        /** @description プロジェクトの最小の参照（ApiDesign.md 4.5.1）。 */
+        ProjectRef: {
+            key: string;
+            name: string;
+        };
+        /** @description ApiDesign.md 4.5.1 の `token`。**平文を持たない。** */
+        AgentToken: {
+            id: string;
+            /** @description 先頭8文字（`pb_agt_` + 1文字）。検索キーではない。 */
+            token_prefix: string;
+            /** Format: date-time */
+            issued_at: string;
+            /**
+             * Format: date-time
+             * @description 一度も使われていなければ `null`。更新は1分粒度。
+             */
+            last_used_at: string | null;
+            /** Format: date-time */
+            expires_at: string | null;
+            /** @enum {string} */
+            status: "active" | "expired";
+        };
+        /**
+         * @description ApiDesign.md 4.5.3。**`token`（平文）を持つ唯一の形**である。
+         *     DB には SHA-256 のハッシュしか残らず、再表示する経路は存在しない。
+         */
+        IssuedAgentToken: {
+            id: string;
+            /** @description **この応答でのみ返る平文。** 接頭辞は `pb_agt_`。 */
+            token: string;
+            token_prefix: string;
+            /**
+             * @description Design.md 6.5 の既定スコープ（権限キー8件）。**要求では選べない。**
+             *     `ticket.close` と `doc.edit` は含まれない。
+             */
+            scopes: string[];
+            /** Format: date-time */
+            issued_at: string;
+            /** Format: date-time */
+            expires_at: string | null;
+            /** @enum {string} */
+            status: "active" | "expired";
+        };
+        /** @description ApiDesign.md 4.5.2。 */
+        CreateAgentRequest: {
+            /** @description `actor.display_name` の CHECK（1〜60）に揃える。 */
+            display_name: string;
+            /**
+             * @description **自分がメンバーであるプロジェクトに限る。** それ以外は 422
+             *     （`details[].code` は `not_found`）。
+             */
+            project_key: string;
+            /** @enum {string} */
+            client_kind: "claude_code" | "copilot" | "other";
+            model_name?: string;
+            model_version?: string;
+        };
+        /**
+         * @description ApiDesign.md 4.5.4。**送られた項目だけを更新する。**
+         *     `project_key` と `client_kind` は変えられない。
+         */
+        UpdateAgentRequest: {
+            display_name?: string;
+            model_name?: string;
+            model_version?: string;
+            /** @description `false` で無効化する。**そのエージェントのトークンも失効する。** */
+            is_active?: boolean;
+        };
+        /** @description ApiDesign.md 4.5.3。 */
+        CreateAgentTokenRequest: {
+            /**
+             * @description **必須。無期限は許さない**（Design.md 6.5「有効期限必須」）。
+             *     値域は `/me/tokens`（4.4.2）と同じ。
+             */
+            expires_in_days: number;
         };
         /**
          * @description ApiDesign.md 4.4.1。ページネーションも ETag も持たない（1人5本が上限で、
@@ -4318,6 +4594,13 @@ export interface components {
          */
         UserID: string;
         /**
+         * @description エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+         *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+         */
+        AgentID: string;
+        /** @description エージェント用トークンの ULID（`access_token.id`。ApiDesign.md 4.5.5）。 */
+        AgentTokenID: string;
+        /**
          * @description アクセストークンの ULID（`access_token.id`。ApiDesign.md 4.4.3）。
          *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
          */
@@ -4693,6 +4976,209 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["CSRFFailed"];
             /** @description 自分の `api` トークンとして見つからない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listMyAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 自分のエージェント。`created_at` の降順。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyAgentList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createMyAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAgentRequest"];
+            };
+        };
+        responses: {
+            /** @description 登録したエージェント。`token` は `null`。 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyAgent"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["CSRFFailed"];
+            /**
+             * @description 同じ（プロジェクト・クライアント種別・表示名）の組が既にある
+             *     （`already_exists`）。
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateMyAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["AgentID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAgentRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後のエージェント。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyAgent"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["CSRFFailed"];
+            /** @description 自分のエージェントとして見つからない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createMyAgentToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["AgentID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAgentTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description 発行したトークン。**`token` を返す唯一の応答**。 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedAgentToken"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["CSRFFailed"];
+            /** @description 自分のエージェントとして見つからない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 無効化されたエージェントには発行できない（`conflict`）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteMyAgentToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["AgentID"];
+                /** @description エージェント用トークンの ULID（`access_token.id`。ApiDesign.md 4.5.5）。 */
+                token_id: components["parameters"]["AgentTokenID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 失効させた（既に失効済みでも同じ）。本文を持たない。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["CSRFFailed"];
+            /** @description 自分のエージェントのトークンとして見つからない（`not_found`）。 */
             404: {
                 headers: {
                     [name: string]: unknown;

@@ -63,10 +63,26 @@ type Principal struct {
 	// DisplayName は actor.display_name。
 	DisplayName string
 	// Email は app_user.email。user 以外では空。
+	//
+	// **エージェントでは所有者のメールが入る。** SystemRole と同じく
+	// COALESCE(agent.owner_actor_id, actor.id) で引いた app_user の行から
+	// 来るためである。GET /me の応答には出さない（me.go は actor の
+	// プロフィールを別に引く）。
 	Email string
 	// SystemRole は app_user.system_role（operator / administrator）。
-	// user 以外では空になる。認可の第1層（Design.md 6.4.1）。
+	// 認可の第1層（Design.md 6.4.1）。
+	//
+	// **エージェントでは所有者のロールが入る**（Design.md 6.5 の委譲、0019）。
+	// エージェント自身は app_user の行を持たないため、これが無いと
+	// 第1層が必ず空になり、権限0件で全部 403 になる。
+	// system アクターでは空のままである。
 	SystemRole string
+	// OwnerActorID は agent.owner_actor_id。エージェント以外では空。
+	//
+	// **認可でどのアクターのロールを読むかを決める**（AuthzActorID）。
+	// ActorID とは別に持つ——監査と書き手はエージェント自身であり、
+	// 借りるのは権限の根拠だけだからである（Design.md 6.5）。
+	OwnerActorID string
 
 	// TokenID は access_token.id。監査ログの token_id になる。
 	TokenID string
@@ -118,6 +134,32 @@ func (p *Principal) FreshPermissions(now time.Time) ([]string, bool) {
 
 // IsUser は人間ユーザーかどうかを返す。
 func (p *Principal) IsUser() bool { return p != nil && p.ActorKind == ActorKindUser }
+
+// IsAgent はエージェントかどうかを返す。
+func (p *Principal) IsAgent() bool { return p != nil && p.ActorKind == ActorKindAgent }
+
+// AuthzActorID は「誰のロールを読むか」を返す（Design.md 6.5 の委譲、0019）。
+//
+// エージェントは app_user の行も project_member の行も持たないため、
+// 6.4.1 の式の左辺2層をそのままでは埋められない。所有者のロールを用いる。
+//
+//	実効権限 = ( 所有者のシステムロール ∪ 所有者のプロジェクトロール ) ∩ スコープ
+//
+// **ActorID とは使い分ける。** 監査ログ・コメントの書き手・activity は
+// ActorID（エージェント自身）であり、借りるのは権限の根拠だけである。
+// これを取り違えると、エージェントの操作が所有者の名前で記録される。
+//
+// 人間・システムのアクターでは ActorID をそのまま返すので、呼び出し側は
+// 種別で分岐しなくてよい。
+func (p *Principal) AuthzActorID() string {
+	if p == nil {
+		return ""
+	}
+	if p.OwnerActorID != "" {
+		return p.OwnerActorID
+	}
+	return p.ActorID
+}
 
 // IsAdministrator はシステムロールがアドミニストレータかどうかを返す。
 func (p *Principal) IsAdministrator() bool {

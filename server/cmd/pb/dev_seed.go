@@ -91,7 +91,22 @@ type devProject struct {
 	Members          []devMember `yaml:"members"`
 	Tags             []devTag    `yaml:"tags"`
 	Sprints          []devSprint `yaml:"sprints"`
+	Agents           []devAgent  `yaml:"agents"`
 	Tickets          []devTicket `yaml:"tickets"`
+}
+
+// devAgent はエージェントの定義（DbDesign.md 8.2.1、手順24a）。
+//
+// **owner は必須。** エージェントの権限は所有者から導かれる（Design.md 6.5）ので、
+// 誰にも紐づかないエージェントは作れない（DDL の owner_actor_id も NOT NULL）。
+//
+// **トークンは持たない。** 平文は発行応答にしか存在せず（ApiDesign.md 4.5.3）、
+// 定義ファイルに書けば秘密をリポジトリへ置くことになる。
+type devAgent struct {
+	DisplayName string `yaml:"display_name"`
+	Owner       string `yaml:"owner"`
+	ClientKind  string `yaml:"client_kind"`
+	ModelName   string `yaml:"model_name"`
 }
 
 type devMember struct {
@@ -653,6 +668,8 @@ type seedResult struct {
 	sprintsSkipped  int
 	ticketsCreated  int
 	ticketsSkipped  int
+	agentsCreated   int
+	agentsSkipped   int
 }
 
 func (r seedResult) print(w io.Writer) {
@@ -665,6 +682,9 @@ func (r seedResult) print(w io.Writer) {
 	if r.tagsCreated+r.tagsSkipped+r.sprintsCreated+r.sprintsSkipped > 0 {
 		fmt.Fprintf(w, "タグ       : 作成 %d / スキップ %d\n", r.tagsCreated, r.tagsSkipped)
 		fmt.Fprintf(w, "スプリント : 作成 %d / スキップ %d\n", r.sprintsCreated, r.sprintsSkipped)
+	}
+	if r.agentsCreated+r.agentsSkipped > 0 {
+		fmt.Fprintf(w, "エージェント: 作成 %d / スキップ %d\n", r.agentsCreated, r.agentsSkipped)
 	}
 	if r.ticketsCreated+r.ticketsSkipped > 0 {
 		fmt.Fprintf(w, "チケット   : 作成 %d / スキップ %d\n", r.ticketsCreated, r.ticketsSkipped)
@@ -867,7 +887,65 @@ func seedProject(ctx context.Context, q gen.Querier, rec *audit.Recorder, p devP
 	if err := seedSprints(ctx, q, projectID, p, result); err != nil {
 		return err
 	}
+	if err := seedAgents(ctx, q, projectID, p, actorIDs, result); err != nil {
+		return err
+	}
 	return seedTickets(ctx, q, projectID, p, actorIDs, result)
+}
+
+// seedAgents はプロジェクトのエージェントを投入する（DbDesign.md 8.2.1、手順24a）。
+//
+// **冪等**（7.6.2）。同じ（所有者・クライアント種別・表示名）の組が既にあれば作らない
+// ——ApiDesign.md 4.5.2 の 409 と同じ判定にそろえてある。
+//
+// **トークンは発行しない。** 平文は発行応答にしか存在しない（4.5.3）。ここで作るのは
+// 「画面にエージェントが1件並ぶ」状態までで、実際に MCP でつなぐときは画面か API から
+// 発行する。**入れておかないと、/admin/users のエージェント行も Avatar の角丸四角も
+// 一度も描かれない。**
+func seedAgents(
+	ctx context.Context, q gen.Querier, projectID string, p devProject,
+	actorIDs map[string]string, result *seedResult,
+) error {
+	for _, a := range p.Agents {
+		ownerID := actorIDs[strings.ToLower(a.Owner)]
+		if ownerID == "" {
+			return fmt.Errorf("プロジェクト %s のエージェント %s: 所有者 %s が users に居ません",
+				p.Key, a.DisplayName, a.Owner)
+		}
+
+		exists, err := q.AgentExistsWithName(ctx, gen.AgentExistsWithNameParams{
+			OwnerActorID: ownerID,
+			ProjectID:    nullText(projectID),
+			ClientKind:   a.ClientKind,
+			DisplayName:  a.DisplayName,
+		})
+		if err != nil {
+			return fmt.Errorf("エージェント %s を確認できない: %w", a.DisplayName, err)
+		}
+		if exists {
+			result.agentsSkipped++
+			continue
+		}
+
+		agentID := ulidgen.New()
+		if err := q.CreateAgentActor(ctx, gen.CreateAgentActorParams{
+			ID:          agentID,
+			DisplayName: a.DisplayName,
+		}); err != nil {
+			return fmt.Errorf("エージェント %s のアクターを作れない: %w", a.DisplayName, err)
+		}
+		if err := q.CreateAgent(ctx, gen.CreateAgentParams{
+			ActorID:      agentID,
+			OwnerActorID: ownerID,
+			ProjectID:    nullText(projectID),
+			ClientKind:   a.ClientKind,
+			ModelName:    nullText(a.ModelName),
+		}); err != nil {
+			return fmt.Errorf("エージェント %s を登録できない: %w", a.DisplayName, err)
+		}
+		result.agentsCreated++
+	}
+	return nil
 }
 
 // seedTags はプロジェクトのタグを投入する（DbDesign.md 6.10 / 7.6.4）。

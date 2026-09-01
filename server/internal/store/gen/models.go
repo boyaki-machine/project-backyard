@@ -52,6 +52,19 @@ type Actor struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type Agent struct {
+	ActorID      string
+	OwnerActorID string
+	ProjectID    pgtype.Text
+	ClientKind   string
+	ModelName    pgtype.Text
+	ModelVersion pgtype.Text
+	Capabilities []byte
+	TrustLevel   int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type AppUser struct {
 	ActorID         string
 	Email           string
@@ -251,6 +264,18 @@ type Tag struct {
 	SortOrder int32
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type TaskLease struct {
+	ID            string
+	TicketID      string
+	ActorID       string
+	LeaseToken    string
+	AcquiredAt    pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+	HeartbeatAt   pgtype.Timestamptz
+	ReleasedAt    pgtype.Timestamptz
+	ReleaseReason pgtype.Text
 }
 
 type Ticket struct {

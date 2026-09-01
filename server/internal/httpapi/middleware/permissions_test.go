@@ -320,3 +320,57 @@ func TestProjectAuthzIsNotCachedAcrossRequests(t *testing.T) {
 		t.Errorf("ListRolePermissions の呼び出し = %d回, want 0（システムロール層はキャッシュが効くはず）", q.roleCalls)
 	}
 }
+
+// ── エージェントにはキャッシュを書かない（0019）──────────────
+
+// agentPrincipal は所有者のロールを載せたエージェント。
+func agentPrincipal(ownerRole string, scopes ...string) *auth.Principal {
+	p := principal(ownerRole, scopes...)
+	p.ActorID = "01AGENT0000000000000000000"
+	p.ActorKind = auth.ActorKindAgent
+	p.OwnerActorID = "01OWNER0000000000000000000"
+	p.TokenType = auth.TokenTypeAgent
+	p.Source = auth.SourceBearer
+	return p
+}
+
+// TestSystemPermissionsSkipsCacheForAgent は、エージェントのトークンに
+// 実効権限のキャッシュを書かないことを見る（Design.md 6.4.5、0019）。
+//
+// **理由は無効化が届かないことである。** 6.4.5 の無効化はアクター単位
+// （当人の全トークン）で行われるため、所有者のロールを変えても、別アクターで
+// あるエージェントのトークンに載ったキャッシュは残る。書かなければ毎回
+// 計算し直すので、常に正本と一致する。
+func TestSystemPermissionsSkipsCacheForAgent(t *testing.T) {
+	q := seededQuerier()
+	p := agentPrincipal(auth.SystemRoleOperator)
+
+	w, reached := serveAuthz(p, "/x", "/x", RequirePermission(q, "ticket.view"))
+	if w.Code != http.StatusNoContent || !reached {
+		t.Fatalf("code = %d, reached = %v。所有者の権限で通っていない", w.Code, reached)
+	}
+	// **所有者のロールから計算している。**
+	if q.roleCalls != 1 {
+		t.Errorf("ListRolePermissions = %d回, want 1（毎回計算し直す）", q.roleCalls)
+	}
+	// **書き戻していない。**
+	if len(q.cacheSaves) != 0 {
+		t.Errorf("エージェントのトークンにキャッシュを %d 回書いた, want 0", len(q.cacheSaves))
+	}
+}
+
+// TestSystemPermissionsCachesForHuman は対（人間には従来どおり書く）。
+//
+// **この2本を並べて初めて「エージェントだけ除いた」と言える。**
+// 片方だけだと、全員に書かなくなったのか判別できない。
+func TestSystemPermissionsCachesForHuman(t *testing.T) {
+	q := seededQuerier()
+	p := principal(auth.SystemRoleOperator)
+
+	if _, reached := serveAuthz(p, "/x", "/x", RequirePermission(q, "ticket.view")); !reached {
+		t.Fatal("人間が通らなかった")
+	}
+	if len(q.cacheSaves) != 1 {
+		t.Errorf("人間のキャッシュ書き戻し = %d回, want 1", len(q.cacheSaves))
+	}
+}

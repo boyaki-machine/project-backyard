@@ -400,6 +400,240 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/me/agents:
+    get:
+      tags: [me]
+      summary: 自分のエージェント一覧
+      operationId: listMyAgents
+      description: |
+        自分の端末で動くクライアントを一覧する（ApiDesign.md 4.5.1）。
+        必要権限は「本人」。
+
+        **1件が表すのは「ある参加者の手元で動くクライアント1つ」である。** 人ではない。
+        キーは（所有者・クライアント種別・プロジェクト）の3つ組で、同じ人が
+        Claude Code と VS Code を使えば2件になる（Requirements.md 10.10.3）。
+
+        **`token` は有効な1本だけを載せる。** 失効済みは返さず、期限切れは返す
+        （`status` が `expired`）。有効なトークンが無ければ `null`。
+
+        ページネーションも ETag も持たない（4.4.1 と同じ）。
+      responses:
+        '200':
+          description: 自分のエージェント。`created_at` の降順。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyAgentList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags: [me]
+      summary: エージェントを登録
+      operationId: createMyAgent
+      description: |
+        自分のエージェントを登録する（ApiDesign.md 4.5.2）。必要権限は「本人」。
+
+        **トークンは同時に発行しない**（応答の `token` は常に `null`）。登録と発行を
+        分けるのは、再発行のときに同じ経路（`POST /me/agents/{id}/tokens`）を通す
+        ためである。
+
+        **`project_key` は自分がメンバーであるプロジェクトに限る。** それ以外は 422
+        （`details[].code` は `not_found`）。エージェントの権限は所有者から導かれる
+        ので、自分が入っていないプロジェクトのエージェントを作っても権限0件になる。
+
+        **`trust_level` と `capabilities` は受け取らない**（Design.md 6.5）。
+        昇格の材料が Phase 3 のため、既定値で作る。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentRequest'
+      responses:
+        '201':
+          description: 登録したエージェント。`token` は `null`。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyAgent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CSRFFailed'
+        '409':
+          description: |
+            同じ（プロジェクト・クライアント種別・表示名）の組が既にある
+            （`already_exists`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/me/agents/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AgentID'
+    patch:
+      tags: [me]
+      summary: エージェントを更新・無効化
+      operationId: updateMyAgent
+      description: |
+        自分のエージェントを更新する（ApiDesign.md 4.5.4）。必要権限は「本人」。
+        送られた項目だけを更新する。
+
+        **`project_key` と `client_kind` は変えられない**（本要求に含まれない）。
+        その2つが「どのクライアントがどのプロジェクトにつないでいるか」という
+        1件の同一性そのものであり、付け替えると過去の操作の文脈が後から変わる。
+
+        **`is_active: false` が無効化である。** 行は消さない（`comment.author_id`
+        などが参照するため）。**無効化すると、そのエージェントのトークンも失効する。**
+
+        **他人のエージェント・存在しない `id` は 404**（403 にしない。Design.md 6.4.5）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAgentRequest'
+      responses:
+        '200':
+          description: 更新後のエージェント。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyAgent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CSRFFailed'
+        '404':
+          description: |
+            自分のエージェントとして見つからない（`not_found`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/me/agents/{id}/tokens:
+    parameters:
+      - $ref: '#/components/parameters/AgentID'
+    post:
+      tags: [me]
+      summary: エージェント用トークンを発行
+      operationId: createMyAgentToken
+      description: |
+        エージェント用の Bearer トークンを発行する（ApiDesign.md 4.5.3）。
+        必要権限は「本人」。
+
+        **`token`（平文）はこの応答でのみ返る。** DB には SHA-256 のハッシュしか
+        残らず、再表示する API は無い（DbDesign.md 6.2）。
+
+        **有効なトークンは1件につき1本。** 再発行すると、それまでの有効なトークンを
+        失効させたうえで発行する（応答は 201。失効は暗黙に行い、監査には残る）。
+
+        **`scopes` は選ばせない。** Design.md 6.5 の既定を常に入れる——
+        `ticket.close` と `doc.edit` を既定から外してあるのが要点で、選ばせると
+        その禁止が画面の作りに依存してしまう。**トークンは所有者の権限との積に
+        なる**ため、既定をそのまま載せても所有者が持たない権限は付かない。
+
+        発行するトークンは `project_id` を持ち、他プロジェクトへのアクセスは 404 になる
+        （Design.md 6.4.5）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentTokenRequest'
+      responses:
+        '201':
+          description: 発行したトークン。**`token` を返す唯一の応答**。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuedAgentToken'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CSRFFailed'
+        '404':
+          description: |
+            自分のエージェントとして見つからない（`not_found`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: |
+            無効化されたエージェントには発行できない（`conflict`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/me/agents/{id}/tokens/{token_id}:
+    parameters:
+      - $ref: '#/components/parameters/AgentID'
+      - $ref: '#/components/parameters/AgentTokenID'
+    delete:
+      tags: [me]
+      summary: エージェント用トークンを失効
+      operationId: deleteMyAgentToken
+      description: |
+        エージェント用トークンを失効させる（ApiDesign.md 4.5.5）。必要権限は「本人」。
+
+        **行は消さず `revoked_at` を立てる**（4.4.3 と同じ）。
+
+        **冪等。** 既に失効済みでも 204 を返し、`revoked_at` を上書きしない。
+
+        **他人のエージェント・存在しない `id` / `token_id`・`token_type` が `agent`
+        でないものは 404**（Design.md 6.4.5）。
+      responses:
+        '204':
+          description: 失効させた（既に失効済みでも同じ）。本文を持たない。
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CSRFFailed'
+        '404':
+          description: |
+            自分のエージェントのトークンとして見つからない（`not_found`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects:
     get:
       tags: [projects]
@@ -3473,6 +3707,25 @@ components:
       examples:
         demo:
           value: 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+    AgentID:
+      name: id
+      in: path
+      required: true
+      description: |
+        エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+        **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+      schema:
+        type: string
+
+    AgentTokenID:
+      name: token_id
+      in: path
+      required: true
+      description: |
+        エージェント用トークンの ULID（`access_token.id`。ApiDesign.md 4.5.5）。
+      schema:
+        type: string
+
     TokenID:
       name: id
       in: path
@@ -3935,6 +4188,195 @@ components:
             **変更できない。** 送られると 422（`details[].code` が `not_allowed`）。
           type: string
           enum: [administrator, operator]
+
+    MyAgentList:
+      description: |
+        ApiDesign.md 4.5.1。ページネーションも ETag も持たない（4.4.1 と同じく、
+        件数が少なく絞り込みも差分取得も意味を持たないため）。
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MyAgent'
+
+    MyAgent:
+      description: |
+        ApiDesign.md 4.5.1 / 4.5.2 / 4.5.4。自分のエージェント1件。
+
+        **`/admin/users` の `agent` オブジェクト（6.1）とは別物である。** あちらは
+        管理者の一覧が返す形で、所有者を持つ代わりに名前と状態を親が持つ。
+      type: object
+      required:
+        [id, display_name, client_kind, model_name, model_version,
+         project, trust_level, is_active, created_at, token]
+      properties:
+        id:
+          type: string
+          description: エージェントの ULID（`agent.actor_id`）。
+        display_name:
+          type: string
+          description: |
+            本人が付けた名前。**どの端末のどのクライアントかを思い出すための
+            手がかり**であり、一意ではない。
+        client_kind:
+          type: string
+          enum: [claude_code, copilot, other]
+        model_name:
+          type: string
+          nullable: true
+        model_version:
+          type: string
+          nullable: true
+        project:
+          allOf:
+            - $ref: '#/components/schemas/ProjectRef'
+          description: 参加プロジェクト。登録時に必須なので `null` にならない。
+        trust_level:
+          type: integer
+          description: |
+            0〜3（既定 1）。**Phase 2 では使わない**——段階的な権限昇格の材料
+            （`agent_run` の実績）が Phase 3 のため、既定値のまま置く。
+        is_active:
+          type: boolean
+          description: '`false` は無効化されたエージェント。行は残る。'
+        created_at:
+          type: string
+          format: date-time
+        token:
+          allOf:
+            - $ref: '#/components/schemas/AgentToken'
+          nullable: true
+          description: 有効なトークン1本。無ければ `null`。
+
+    ProjectRef:
+      description: プロジェクトの最小の参照（ApiDesign.md 4.5.1）。
+      type: object
+      required: [key, name]
+      properties:
+        key:
+          type: string
+        name:
+          type: string
+
+    AgentToken:
+      description: |
+        ApiDesign.md 4.5.1 の `token`。**平文を持たない。**
+      type: object
+      required: [id, token_prefix, issued_at, last_used_at, expires_at, status]
+      properties:
+        id:
+          type: string
+        token_prefix:
+          type: string
+          description: 先頭8文字（`pb_agt_` + 1文字）。検索キーではない。
+        issued_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 一度も使われていなければ `null`。更新は1分粒度。
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [active, expired]
+
+    IssuedAgentToken:
+      description: |
+        ApiDesign.md 4.5.3。**`token`（平文）を持つ唯一の形**である。
+        DB には SHA-256 のハッシュしか残らず、再表示する経路は存在しない。
+      type: object
+      required: [id, token, token_prefix, scopes, issued_at, expires_at, status]
+      properties:
+        id:
+          type: string
+        token:
+          type: string
+          description: '**この応答でのみ返る平文。** 接頭辞は `pb_agt_`。'
+        token_prefix:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+          description: |
+            Design.md 6.5 の既定スコープ（権限キー8件）。**要求では選べない。**
+            `ticket.close` と `doc.edit` は含まれない。
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [active, expired]
+
+    CreateAgentRequest:
+      description: ApiDesign.md 4.5.2。
+      type: object
+      required: [display_name, project_key, client_kind]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 60
+          description: '`actor.display_name` の CHECK（1〜60）に揃える。'
+        project_key:
+          type: string
+          description: |
+            **自分がメンバーであるプロジェクトに限る。** それ以外は 422
+            （`details[].code` は `not_found`）。
+        client_kind:
+          type: string
+          enum: [claude_code, copilot, other]
+        model_name:
+          type: string
+          maxLength: 100
+        model_version:
+          type: string
+          maxLength: 100
+
+    UpdateAgentRequest:
+      description: |
+        ApiDesign.md 4.5.4。**送られた項目だけを更新する。**
+        `project_key` と `client_kind` は変えられない。
+      type: object
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 60
+        model_name:
+          type: string
+          maxLength: 100
+        model_version:
+          type: string
+          maxLength: 100
+        is_active:
+          type: boolean
+          description: |
+            `false` で無効化する。**そのエージェントのトークンも失効する。**
+
+    CreateAgentTokenRequest:
+      description: ApiDesign.md 4.5.3。
+      type: object
+      required: [expires_in_days]
+      properties:
+        expires_in_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: |
+            **必須。無期限は許さない**（Design.md 6.5「有効期限必須」）。
+            値域は `/me/tokens`（4.4.2）と同じ。
 
     AccessTokenList:
       description: |

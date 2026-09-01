@@ -225,9 +225,32 @@ func TestAdminUsersIntegration(t *testing.T) {
 			t.Errorf("`_` がワイルドカードとして働いている: %d 件当たった", len(got))
 		}
 
-		// kind=agent は Phase 1 では0件（エージェントを作る経路が無い）。
-		if got := listUsersAs(t, r, adminSession, "?kind=agent"); len(got) != 0 {
-			t.Errorf("kind=agent の件数 = %d, want 0", len(got))
+		// kind=agent の絞り込みが効くこと（0019 でエージェントが実在する）。
+		//
+		// **件数を決め打ちしない。** dev seed も他のテストもエージェントを作りうる
+		// ので、「0件」や「N件」と書くと他人のデータで落ちる。ここで測るのは
+		// **絞り込みが種別で効いているか**——返った行がすべて agent であること、
+		// および kind=user の結果と重ならないことを見る。
+		agents := listUsersAs(t, r, adminSession, "?kind=agent&per_page=200")
+		inAgents := map[string]bool{}
+		for _, raw := range agents {
+			a, _ := raw.(map[string]any)
+			if a["kind"] != "agent" {
+				t.Errorf("kind=agent に %v の行が混ざっている", a["kind"])
+			}
+			// **エージェントには email も system_role も無い**（6.1）。
+			if a["email"] != nil || a["system_role"] != nil {
+				t.Errorf("エージェントに email/system_role が入っている: %v", a)
+			}
+			id, _ := a["id"].(string)
+			inAgents[id] = true
+		}
+		for _, raw := range listUsersAs(t, r, adminSession, "?kind=user&per_page=200") {
+			h, _ := raw.(map[string]any)
+			id, _ := h["id"].(string)
+			if inAgents[id] {
+				t.Errorf("同じ行が kind=user と kind=agent の両方に出ている: %s", id)
+			}
 		}
 
 		// 並び替えの両方向が効くこと（CASE 式の確認）。

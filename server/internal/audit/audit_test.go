@@ -184,13 +184,15 @@ func TestRecordRejectsBadResult(t *testing.T) {
 }
 
 func TestAllDocumentedActionsAreAccepted(t *testing.T) {
-	// ApiDesign.md 2.10 が列挙する15件。定数の取りこぼしを検出する。
+	// ApiDesign.md 2.10 が列挙する17件。定数の取りこぼしを検出する。
+	// 末尾2件は 0019（Phase 2）で加わった（ApiDesign.md 4.5.6）。
 	documented := []Action{
 		"login.success", "login.failure", "logout",
 		"password.change", "password.reset",
 		"token.issue", "token.revoke", "session.revoke",
 		"user.create", "user.update", "user.delete", "role.change",
 		"project.create", "project.archive", "permission.denied",
+		"agent.register", "agent.update",
 	}
 	if len(actions) != len(documented) {
 		t.Errorf("アクション数 = %d, want %d（ApiDesign.md 2.10）", len(actions), len(documented))

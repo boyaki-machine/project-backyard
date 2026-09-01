@@ -68,7 +68,16 @@ type sessionView struct {
 // ログインは FindLocalLoginByEmail の結果から、GET /me は GetActorProfile の
 // 結果から、それぞれこの形に詰め替える。
 type profile struct {
-	ActorID            string
+	ActorID string
+	// AuthzActorID は「誰のプロジェクトロールを読むか」（Design.md 6.5 の委譲）。
+	//
+	// **エージェントでは所有者の actor.id が入る。** エージェントは
+	// project_member の行を持たないため、ActorID で引くと所属プロジェクトが
+	// 常に空になり、MCP がどのプロジェクトにも到達できない。
+	//
+	// **空なら ActorID を使う。** ログイン（login.go）と PATCH /me
+	// （me_update.go）は人間しか通らない経路なので、そちらは詰めていない。
+	AuthzActorID       string
 	Kind               string
 	DisplayName        string
 	Email              string
@@ -101,15 +110,17 @@ func (h *handler) me(w http.ResponseWriter, r *http.Request) {
 
 	// 行が取れないのは actor が消えた直後などの競合。認証済みの素材で埋める。
 	prof := profile{
-		ActorID:     p.ActorID,
-		Kind:        p.ActorKind,
-		DisplayName: p.DisplayName,
-		Email:       p.Email,
-		SystemRole:  p.SystemRole,
+		ActorID:      p.ActorID,
+		AuthzActorID: p.AuthzActorID(),
+		Kind:         p.ActorKind,
+		DisplayName:  p.DisplayName,
+		Email:        p.Email,
+		SystemRole:   p.SystemRole,
 	}
 	if err == nil {
 		prof = profile{
 			ActorID:            row.ActorID,
+			AuthzActorID:       p.AuthzActorID(),
 			Kind:               row.Kind,
 			DisplayName:        row.DisplayName,
 			Email:              row.Email.String,
@@ -165,7 +176,13 @@ func (h *handler) buildSessionView(
 		systemPerms = []string{}
 	}
 
-	rows, err := q.ListProjectMembershipsByActor(ctx, prof.ActorID)
+	// **所属は AuthzActorID で引く**（Design.md 6.5 の委譲）。エージェントは
+	// 自前の project_member を持たず、所有者の所属をそのまま使う。
+	authzActorID := prof.AuthzActorID
+	if authzActorID == "" {
+		authzActorID = prof.ActorID
+	}
+	rows, err := q.ListProjectMembershipsByActor(ctx, authzActorID)
 	if err != nil {
 		return sessionView{}, fmt.Errorf("所属プロジェクトを読めない: %w", err)
 	}
