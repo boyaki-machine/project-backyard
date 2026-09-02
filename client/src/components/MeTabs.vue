@@ -2,8 +2,12 @@
 /**
  * 「自分の設定」のタブ（`GuiDesign.md` 5.8）。
  *
- * **タブの切替が URL の遷移になる**（`/me` と `/me/tokens`。3.2）。
+ * **タブの切替が URL の遷移になる**（`/me` と `/me/tokens` と `/me/agents`。3.2）。
  * プロジェクト設定（5.9）の一般／メンバーとは違う点である。
+ *
+ * **3つ目のエージェントタブは手順24b で足した**（5.8.2）。**ユーザーメニュー
+ * （4.2）には足していない**——登録は参画のときに1回起きる作業であり、常時出る
+ * メニューを1行増やす価値が薄い（利用者の判断、2026-09-02）。
  *
  * **部品に切り出したのは、2つの画面で完全に同じでなければならないため。**
  * 写しを2つ持つと、片方だけ直したときに「同じタブなのに見た目が違う」という
@@ -12,7 +16,7 @@
  */
 defineProps<{
   /** いま開いているタブ */
-  current: 'general' | 'tokens'
+  current: 'general' | 'tokens' | 'agents'
 }>()
 </script>
 
@@ -33,6 +37,14 @@ defineProps<{
       :aria-current="current === 'tokens' ? 'page' : undefined"
     >
       アクセストークン
+    </RouterLink>
+    <RouterLink
+      to="/me/agents"
+      class="tab"
+      :class="{ selected: current === 'agents' }"
+      :aria-current="current === 'agents' ? 'page' : undefined"
+    >
+      エージェント
     </RouterLink>
   </nav>
 </template>

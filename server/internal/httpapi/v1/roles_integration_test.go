@@ -223,11 +223,51 @@ func TestRolesCatalogIntegration(t *testing.T) {
 			"/api/v1/roles",
 			"/api/v1/roles?scope=system",
 			"/api/v1/roles?scope=all",
-			"/api/v1/permissions",
 		} {
 			rec := getWithCookie(r, path, operatorSession)
 			if rec.Code != http.StatusForbidden {
 				t.Errorf("オペレータの %s = %d, want 403（body=%s）", path, rec.Code, rec.Body.String())
+			}
+		}
+	})
+
+	// **権限カタログは user.manage を要さない**（ApiDesign.md 7.2、2026-09-02 に変更）。
+	//
+	// 消費者が2つになったための開放である——GuiDesign.md 5.6.3 の権限マトリクスと、
+	// 5.8.2 のエージェント用トークンの発行結果。**後者の必要権限は「本人」**で、
+	// user.manage を持たない利用者がスコープの description を引く。
+	//
+	// **description まで見る。** 200 が返るだけでは足りず、5.8.2 が必要とするのは
+	// 「権限キーを日本語にする」ことなので、そこが空でないことまで測る。
+	t.Run("権限カタログはオペレータでも読める", func(t *testing.T) {
+		rec := getWithCookie(r, "/api/v1/permissions", operatorSession)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("オペレータの /permissions = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+		}
+
+		var got struct {
+			Items []struct {
+				Key         string `json:"key"`
+				Description string `json:"description"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("応答を読めない: %v", err)
+		}
+		if len(got.Items) == 0 {
+			t.Fatal("権限カタログが空である")
+		}
+
+		// エージェント用トークンの既定スコープ（Design.md 6.5）がすべて
+		// カタログに在り、description を持つことを見る。**ここが欠けると
+		// 5.8.2 の発行結果が権限キーのまま出る。**
+		desc := map[string]string{}
+		for _, it := range got.Items {
+			desc[it.Key] = it.Description
+		}
+		for _, key := range agentDefaultScopes {
+			if desc[key] == "" {
+				t.Errorf("既定スコープ %q の description が空（カタログ %d件）", key, len(got.Items))
 			}
 		}
 	})

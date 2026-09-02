@@ -3639,10 +3639,13 @@ paths:
       description: |
         権限カタログの30件（ApiDesign.md 7.2、正本は DbDesign.md 7.2 のシード28件と
         8.1.4 の doc 権限2件）。
-        **必要権限は `user.manage`。**
+        **必要権限は不要**（認証済みであればよい。2026-09-02 に `user.manage` から変更）。
 
-        7.1 と違い開放しないのは、消費者が GuiDesign.md 5.6.3 の権限マトリクスだけで、
-        そのタブが `user.manage` を要する画面（`/admin/users`）の中にあるためである。
+        消費者が2つになったため開放した——GuiDesign.md 5.6.3 の権限マトリクス
+        （`/admin/users` の中）と、5.8.2 のエージェント用トークンの発行結果
+        （`/me/agents`。必要権限は「本人」）である。カタログ自体は Design.md 6.4.2 に
+        全文があり、本人の実効権限は `GET /me` が既に返しているので、開放しても
+        渡る情報は増えない。
 
         `items[]` は `permission.sort_order` 昇順。`category` は同じ番号帯で連続しており、
         画面はこれで行を区切る。**ページネーションも ETag も持たない。**
@@ -3655,8 +3658,6 @@ paths:
                 $ref: '#/components/schemas/PermissionList'
         '401':
           $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/RateLimited'
         '500':

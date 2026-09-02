@@ -8,6 +8,7 @@ import LoginPage from '../pages/LoginPage.vue'
 import NotFoundPage from '../pages/NotFoundPage.vue'
 import PlaceholderPage from '../pages/PlaceholderPage.vue'
 import MySettingsPage from '../pages/MySettingsPage.vue'
+import MyAgentsPage from '../pages/MyAgentsPage.vue'
 import MyTokensPage from '../pages/MyTokensPage.vue'
 import ProjectSettingsPage from '../pages/ProjectSettingsPage.vue'
 import ProjectsPage from '../pages/ProjectsPage.vue'
@@ -213,6 +214,17 @@ export const routes: RouteRecordRaw[] = [
   {
     path: '/me/tokens',
     component: MyTokensPage,
+  },
+
+  // 実画面（GuiDesign.md 5.8.2）。手順24b で足した。**プレースホルダを
+  // 経由していない**——このルートは 24b で初めて存在する（3.2 の行も同時に足した）。
+  //
+  // **`/me` と同じく meta.permission を持たない。** 必要権限は「本人」であり、
+  // 権限キーで判定するものではない（3.2）。サーバ側も ApiDesign.md 4.5 に
+  // 認可ミドルウェアを付けていない（routes.go）。
+  {
+    path: '/me/agents',
+    component: MyAgentsPage,
   },
 
   // ── Phase 2（GuiDesign.md 10章）─────────────────────────────

@@ -81,3 +81,87 @@ export function createToken(body: CreateTokenRequest): Promise<IssuedAccessToken
 export function revokeToken(id: string): Promise<void> {
   return api.del<void>(`/me/tokens/${encodeURIComponent(id)}`)
 }
+
+// ── エージェント（`ApiDesign.md` 4.5）──────────────────────────
+//
+// **`/me` 配下なので本ファイルに置く。** `api/agents.ts` を別に作らないのは、
+// これらが「自分のエージェント」の操作であり、他人のエージェントを扱う経路
+// （`/admin/users` のエージェントタブ。`ApiDesign.md` 6.1）とは別物だからである。
+
+/** `GET /me/agents` が返す1件（`ApiDesign.md` 4.5.1）。**平文のトークンを含まない** */
+export type MyAgent = components['schemas']['MyAgent']
+
+/** 1件につき1本の有効なトークン（4.5.1）。無ければ `null` */
+export type AgentToken = components['schemas']['AgentToken']
+
+/** `POST /me/agents/:id/tokens` の 201（4.5.3）。**`token` を持つ唯一の形** */
+export type IssuedAgentToken = components['schemas']['IssuedAgentToken']
+
+export type CreateAgentRequest = components['schemas']['CreateAgentRequest']
+export type UpdateAgentRequest = components['schemas']['UpdateAgentRequest']
+export type CreateAgentTokenRequest = components['schemas']['CreateAgentTokenRequest']
+
+/**
+ * 自分のエージェントを一覧する（`ApiDesign.md` 4.5.1）。
+ *
+ * **他人のものは返らない。** `created_at` の降順で、ページネーションも `ETag` も
+ * 持たないので、返った配列がそのまま全件である。
+ *
+ * **無効化されたエージェントも返る**（`is_active: false`）。行は消えないため、
+ * 畳むかどうかは画面が決める（`GuiDesign.md` 5.8.2）。
+ */
+export function listAgents(): Promise<{ items: MyAgent[] }> {
+  return api.get<{ items: MyAgent[] }>('/me/agents')
+}
+
+/**
+ * エージェントを登録する（`ApiDesign.md` 4.5.2）。
+ *
+ * **トークンは同時に発行されない。** 応答の `token` は必ず `null` で、画面は
+ * 続けて `issueAgentToken` を呼ぶ（4.5.2 が定める）。
+ *
+ * `project_key` は**自分がメンバーであるプロジェクト**に限る。それ以外は 422
+ * （`details[].field` が `project_key`、`code` が `not_found`）。
+ */
+export function createAgent(body: CreateAgentRequest): Promise<MyAgent> {
+  return api.post<MyAgent>('/me/agents', body)
+}
+
+/**
+ * エージェントを更新する（`ApiDesign.md` 4.5.4）。**送った項目だけが変わる。**
+ *
+ * `project_key` と `client_kind` は変えられない（1件の同一性そのものであるため）。
+ * **`is_active: false` にすると、そのエージェントのトークンも失効する。**
+ */
+export function updateAgent(id: string, body: UpdateAgentRequest): Promise<MyAgent> {
+  return api.patch<MyAgent>(`/me/agents/${encodeURIComponent(id)}`, body)
+}
+
+/**
+ * エージェント用トークンを発行する（`ApiDesign.md` 4.5.3）。
+ *
+ * **`token`（平文）はこの応答でしか得られない。** 呼び出し側は1回だけ画面に出し、
+ * 再取得できないことを明記すること（`GuiDesign.md` 5.8.2）。
+ *
+ * **有効なトークンは1件につき1本。** 既に在れば暗黙に失効させたうえで発行する
+ * ——画面は押す前にその旨を出す。無効化されたエージェントには 409。
+ *
+ * **スコープは送らない**（4.5.3）。`Design.md` 6.5 の既定が常に入る。
+ */
+export function issueAgentToken(
+  id: string,
+  body: CreateAgentTokenRequest,
+): Promise<IssuedAgentToken> {
+  return api.post<IssuedAgentToken>(`/me/agents/${encodeURIComponent(id)}/tokens`, body)
+}
+
+/**
+ * エージェント用トークンを失効させる（`ApiDesign.md` 4.5.5）。
+ *
+ * **冪等。** 既に失効済みでも 204 が返る。自分のものでなければ 404。
+ */
+export function revokeAgentToken(id: string, tokenID: string): Promise<void> {
+  return api.del<void>(
+    `/me/agents/${encodeURIComponent(id)}/tokens/${encodeURIComponent(tokenID)}`,
+  )
+}

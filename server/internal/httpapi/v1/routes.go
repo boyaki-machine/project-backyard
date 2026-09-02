@@ -382,11 +382,15 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequirePermissionUnlessQuery(
 			deps.Queries, "user.manage", "scope", roleScopeProject)).
 			Get("/roles", h.listRoles)
-		// 権限カタログは 7.1 と違い user.manage のまま。消費者が
-		// GuiDesign.md 5.6.3 の権限マトリクスだけで、そのタブは user.manage を
-		// 要する画面（/admin/users）の中にある。
-		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
-			Get("/permissions", h.listPermissions)
+		// 権限カタログは**認証済みなら誰でも読める**（ApiDesign.md 7.2、
+		// 2026-09-02 に user.manage から変更）。消費者が2つになったためである
+		// ——GuiDesign.md 5.6.3 の権限マトリクス（/admin/users の中）と、
+		// 5.8.2 のエージェント用トークンの発行結果（/me/agents。必要権限は「本人」）。
+		// **後者は user.manage を持たない。**
+		//
+		// 開放しても渡る情報は増えない。カタログは Design.md 6.4.2 に全文があり、
+		// 本人の実効権限は GET /me が既に返している。
+		r.Get("/permissions", h.listPermissions)
 
 		// ── ユーザー管理（ApiDesign.md 6章）────────────────────
 		//
