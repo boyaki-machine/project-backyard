@@ -1228,7 +1228,7 @@ Phase 2 の成果物には**ブラウザに出ないものがある**——MCP �
 ## Phase 3 — AI機能・分析と、知識の還流
 
 ```
-29. マイグレーション 0020〜0025                        ← DbDesign 8.2, 8.3, 8.4
+29. マイグレーション 0021〜0026                        ← DbDesign 8.2, 8.3, 8.4
 30. agent_run / agent_report と DoD の machine 型      ← DbDesign 8.2.4
 31. proposal と承認キューUI                            ← Requirements 10.6.3
 32. プロジェクトメモリ（knowledge）とコンテキストパックへの供給 ← DbDesign 8.3

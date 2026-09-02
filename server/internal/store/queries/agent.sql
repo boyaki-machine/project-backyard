@@ -118,6 +118,41 @@ SELECT EXISTS (
     AND a.display_name    = @display_name
 );
 
+-- AgentExistsWithNameExcept は更新時の重複検査に使う（ApiDesign.md 4.5.4）。
+--
+-- **client_kind と display_name はどちらも変えられる**ので、更新でも4つ組が
+-- ぶつかりうる。**自分自身を除く**のが AgentExistsWithName との違いである。
+--
+-- name: AgentExistsWithNameExcept :one
+SELECT EXISTS (
+  SELECT 1
+  FROM agent ag
+  JOIN actor a ON a.id = ag.actor_id
+  WHERE ag.owner_actor_id = @owner_actor_id
+    AND ag.project_id     = @project_id
+    AND ag.client_kind    = @client_kind
+    AND a.display_name    = @display_name
+    AND ag.actor_id      <> @exclude_actor_id
+);
+
+-- ListAgentClientKinds はクライアント種別のカタログを返す（ApiDesign.md 4.5.7）。
+--
+-- **画面はこれを引いて表示名を出す。** 対応表を画面へ焼き込まない——値域は
+-- 今後も増える（DbDesign.md 8.2.1.1）ので、写しを置くと必ず腐る。
+--
+-- name: ListAgentClientKinds :many
+SELECT key, display_name
+FROM agent_client_kind
+ORDER BY sort_order, key;
+
+-- AgentClientKindExists は入力の検証に使う（ApiDesign.md 4.5.2 / 4.5.4）。
+--
+-- **値域を Go の定数で持たない。** 正本は agent_client_kind の行であり、
+-- 二重に持つと「検証を通った値が INSERT で落ちて 500」になる。
+--
+-- name: AgentClientKindExists :one
+SELECT EXISTS (SELECT 1 FROM agent_client_kind WHERE key = @key);
+
 -- UpdateAgentActor は表示名と有効・無効を更新する（ApiDesign.md 4.5.4）。
 --
 -- **owner_actor_id を条件に含めるため agent と結合する。** actor だけを
@@ -132,10 +167,17 @@ WHERE ag.actor_id = a.id
   AND a.id = @actor_id
   AND ag.owner_actor_id = @owner_actor_id;
 
+-- UpdateAgentModel はモデルとクライアント種別を更新する（ApiDesign.md 4.5.4）。
+--
+-- **client_kind は 0020 から変更できる。** 値域が今後も増えるため、`other` で
+-- 登録した人が、PB がその種別に対応した日に移れる必要がある。**project_id は
+-- 変えられない**——そのエージェントが行った仕事はプロジェクトに属する。
+--
 -- name: UpdateAgentModel :execrows
 UPDATE agent
 SET model_name    = COALESCE(sqlc.narg('model_name'),    model_name),
-    model_version = COALESCE(sqlc.narg('model_version'), model_version)
+    model_version = COALESCE(sqlc.narg('model_version'), model_version),
+    client_kind   = COALESCE(sqlc.narg('client_kind'),   client_kind)
 WHERE actor_id = @actor_id
   AND owner_actor_id = @owner_actor_id;
 

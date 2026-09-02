@@ -3334,3 +3334,152 @@ CSRF ではない）／他プロジェクトが 404 ／`/admin/users?kind=agent`
 - サーバを停止（`make stop-server`）。スクラッチパッドの検証スクリプトは日付をまたぐと消える
 - `make migrate` / `make stg-migrate` / `make stg-build` を実行済み。**`make build` はしていないので
   `make clean-webui` は不要**
+
+---
+
+## 手順24b — エージェントタブ `/me/agents`（2026-09-02 完了）
+
+**ブランチ** `feature/step-24b-agent-ui`。**手順24 の完了条件をここで満たした**——
+自分の設定でエージェントを登録し、参加プロジェクトを選び、トークンを1回だけ全文表示できる。
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/src/pages/MyAgentsPage.vue`（新） | エージェントタブ本体。カードの一覧、登録・編集・発行・失効・無効化・有効化、無効なものを畳む |
+| `client/src/components/AgentFormModal.vue`（新） | 登録と編集の2モード（`DocFormModal` と同じ形）。編集ではプロジェクトとクライアント種別を読み取り専用にする |
+| `client/src/components/IssuedAgentTokenDialog.vue`（新） | 発行結果の1回表示。`IssuedTokenDialog`（5.8.1）とは別部品——対象プロジェクトの限定と「できること」を持つ |
+| `client/src/lib/agents.ts`（新） | `client_kind` の表示名（正本は `GuiDesign.md` 5.8.2 の表）。API に供給源が無いため画面が持つ |
+
+### 変えたファイル
+
+| ファイル | 内容 |
+|---|---|
+| `docs/GuiDesign.md` | **5.8.2 を新設**。5.8 の見出しとタブのワイヤー2か所、5.8.1 の古い1文（「プロジェクト設定側に追加される」）、3.2 のルーティング表に `/me/agents`、5.6 の相互参照、6.1 の部品 |
+| `docs/ApiDesign.md` | **7.2 の必要権限を `user.manage` から「不要」へ**。理由と、却下した2案を節に書いた |
+| `docs/openapi.yaml` | `/api/v1/permissions` の説明と、権限判定が無くなったので `403` を落とした |
+| `server/internal/httpapi/v1/routes.go` | `/permissions` から `RequirePermission` を外した |
+| `server/internal/httpapi/v1/roles.go` | `listPermissions` のコメントを実態に合わせた |
+| `server/internal/httpapi/v1/roles_integration_test.go` | 「オペレータは403」の一覧から `/permissions` を外し、**「オペレータでも読めて、既定スコープ8件の `description` が空でない」**を測る節を足した |
+| `client/src/api/me.ts` | エージェント5関数と型（`/me` 配下なので `api/agents.ts` を作らない） |
+| `client/src/components/MeTabs.vue` | 3つ目のタブ。`current` に `'agents'` |
+| `client/src/router/routes.ts` | `/me/agents`（`meta.permission` は持たない。必要権限は「本人」） |
+
+**サーバのエージェントAPI（`ApiDesign.md` 4.5）は1行も触っていない**——24a で全部入っている。
+**マイグレーションも無い。**
+
+### 検証
+
+**単体 989件**（`go test -count=1 ./...`。増減なし——単体テストは足していない）
+**結合 166件**（`--- PASS` 行の総数）。**増分は `t.Run` の総数 125 → 126 で実測**し、
+私が足した1件と一致した（件数の数え方が 24a の記録「163件」と違う可能性があるため、
+比較できるのは `t.Run` のほうである）。
+
+**足した結合テストが本当に落ちうるかを確かめた**——`/permissions` をわざと
+`user.manage` へ戻すと `--- FAIL`、戻すと `--- PASS`。
+
+**ブラウザ検証 65件**（`localhost:5173` の Vite ＋ `127.0.0.1:8080` の実サーバ。CDP は
+標準ライブラリで書き直した。RFC 6455 の例で検算してから使った）。
+
+| 本 | 件数 | 見たもの |
+|---|---|---|
+| A | 25 | タブ3つと選択状態／seed の1件が未発行で出る／**`Avatar` の角丸四角（`border-radius: 6px`、24px 四方）を実測**／登録モーダルの選択肢と種別3つ／**登録の直後に発行モーダルが自動で開く**（4.5.2）／平文が1回出る／**できること8件がカタログの `description` と一致**／「積」を出していない |
+| B | 27 | **再発行で `token.id` が入れ替わり、有効なトークンは1本のまま**（DBで実測）／失効した行は残る／**暗黙の失効が監査に残る**（`reason=reissue`）／失効で `token` が `null` に戻る／**無効化でトークンも失効**／畳みと件数／`[⋯]` が「有効化」に入れ替わる／有効化してもトークンは戻らない |
+| C | 13 | `member@` の一覧が空で、pm@ のエージェント名が1文字も出ない／**アドミニストレータの負の側**——非メンバーのプロジェクトが選択肢から落ち、押せない理由が出る。**API では 422 `project_key` / `not_found`** |
+
+**C は seed のままでは測れなかった**——`admin@example.com` は `demo` の `project_admin` である
+（`Development.md` 4.1 の表は `—` と書いており実態と違う。起票した）。
+**`project_member` を1行外して測り、控えから戻した**。削除→復元を先に1回通し、
+`diff` で差分ゼロを確かめてから本番に使っている。
+
+**スクリーンショットを 1440px と 900px で撮って自分で見た**（一覧・登録モーダル・発行結果）。
+**自動検証が全 PASS のまま欠陥が1件あった**——`GuiDesign.md` 6.6 の
+「画面に出す日本語は1行に収める」を**自分で破っていた**（テンプレートで途中改行し、
+HTML が半角空白にして「発行します。 エージェントは」と空きが出た）。
+補間のまわりの空白も1件（「対象は デモプロジェクト だけです」）。**どちらも直して撮り直した。**
+横スクロールは 1440px / 900px とも `scrollWidth == clientWidth` で起きていない。
+
+`make build` → `make clean-webui` を実行済み。`git status` は綺麗。
+
+### 検証で作った資源（片付け済み）
+
+- 検証で作ったエージェントを削除し、**seed の1件だけを残した**。
+  **`make dev-seed` が「作成 0 / スキップ 1」を返すことで裏を取った**（冪等なので、
+  これが「seed の状態に戻っている」ことの実測になる）
+- **seed のエージェントに発行してしまったトークン2本を削除した**（24a は「トークンは入れない」と
+  決めている。平文は発行応答にしか存在しないため）。`access_token` の `token_type='agent'` は 0件
+- `admin@example.com` の `project_member` を控えから復元（`diff` で差分ゼロ）
+- サーバと Vite を停止（`stop-server` と `pkill`。:8080 と :5173 とも 0プロセス）
+- ヘッドレス Chrome のプロファイル `/tmp/pbchrome-*` を削除（**セッショントークンの平文が残るため**）
+- `local_credential` のロックは 0件
+
+**`audit_log` は消していない。** 結合テストが同じ dev DB へ毎回積むもの（`login.failure` 等）と
+区別がつかず、**選択的に消すほうが履歴として不正確になる**ためである（環境メモに書いた）。
+
+### 手順24b の追補 — クライアント種別を参照テーブルにする（0020、2026-09-02）
+
+**同じブランチ（`feature/step-24b-agent-ui`）に積んだ。** マージは1回、`VERSION` は 2.6.62 のまま。
+
+**きっかけは利用者の問い**——「クライアント種別の選択肢は、実際の MCP 利用に何か影響があるのか」。
+**調べた答えは「影響しない」**（MCP の口は `/mcp/<project_key>`、認可はトークンの
+`project_id` と `scopes` だけ）。**効くのは手順28 の配置ファイル生成だけ**である。
+そこから「**選択肢が、接続手順・サンプルファイルを提供する判断になる**」という利用者の読みで、
+値域を広げる方針が決まった。
+
+#### 作った・変えたもの
+
+| ファイル | 内容 |
+|---|---|
+| `server/migrations/0020_agent_client_kind.sql`（新） | `agent_client_kind` と5行のシード、`agent.client_kind` の CHECK → FK |
+| `docs/DbDesign.md` | 8.2.1.1 を新設。8章の採番表（**Phase 3 を 0021〜0026 へ**） |
+| `docs/ApiDesign.md` | 4.5.2（値域）／4.5.4（`client_kind` を変更可能に、409 の追加）／**4.5.7 を新設** |
+| `docs/GuiDesign.md` | 5.8.2（`<select>` 化、対応表の廃止、VS Code の当て方、編集で種別を変えられる） |
+| `docs/Design.md` / `docs/PROGRESS.md` | 採番の写し |
+| `server/internal/store/queries/agent.sql` | `ListAgentClientKinds` / `AgentClientKindExists` / `AgentExistsWithNameExcept`、`UpdateAgentModel` に `client_kind` |
+| `server/internal/httpapi/v1/me_agents.go` | **Go の値域定数を削除**（正本は DB）。`checkClientKind`、`listAgentClientKinds`、更新時の重複検査 |
+| `server/internal/httpapi/v1/routes.go` | `GET /agent-client-kinds`（必要権限なし） |
+| `docs/openapi.yaml` | `client_kind` の `enum` を2か所で削除、`UpdateAgentRequest` に追加、パスとスキーマを新設 |
+| `client/src/lib/agents.ts` | **対応表を廃止**し、カタログから引く形へ |
+| `client/src/api/me.ts` / `AgentFormModal.vue` / `MyAgentsPage.vue` | カタログの取得、`<select>`、編集で種別を変える |
+
+#### 値（`DbDesign.md` 8.2.1.1）
+
+`claude_code`（Claude Code）／`codex`（OpenAI Codex）／`copilot`（GitHub Copilot）／
+`gemini`（Gemini（CLI / Code Assist））／`other`（その他・OSS 等）。
+
+**`key` は事業者名ではなく製品名**——1事業者が複数のクライアントを出しうるためで、
+値が表すのは事業者ではなく**設定ファイルの置き場**である。
+
+#### 検証
+
+**単体 994件**（+5。カタログ・種別の変更・値域外・重複・重複検査の省略）。
+**結合 168件**（+2。カタログの並びと `display_name`、種別の変更／値域外／重複）。
+**ブラウザ検証 26件**（種別まわり18・回帰8）。
+
+**DDL は「破れるか」で測った**——値域外 `cursor` を INSERT して
+`violates foreign key constraint "agent_client_kind_fkey"` を確認し、
+`gemini` が通ることをコントロールとして同じ方法で1回見た。`ROLLBACK` 後の残存0件。
+
+**足したテストが落ちうることを実測した**——更新時の重複検査を `if false` で潰すと
+`TestUpdateMyAgentRejectsDuplicateAfterChange` が FAIL、戻すと PASS。
+
+**フェイクを真偽値で作りかけて、値域の検証を無意味にしかけた**——
+`AgentClientKindExists` が常に `true` を返す作りにしたため「種別が値域外」の既存テストが
+落ちた。**カタログを引く形に直した**（DBの FK と同じ判定）。
+
+**スクリーンショットを 1440px と 900px で見た**（登録モーダル）。横スクロールは
+どちらも `scrollWidth == clientWidth` で起きていない。
+
+**dev と stg の両方に適用済み**（`make stg-migrate` / `make stg-build`）。
+
+#### 片付け
+
+検証で作ったエージェントを削除し、`client_kind` を `claude_code` へ戻し、
+エージェント用トークンを全削除、**無効化した行を有効へ戻した**。
+**`make dev-seed` が「作成 0 / スキップ 1」を返すことで seed の状態に戻ったことを裏づけた。**
+
+**戻し方が一度不完全だった**——`reset.sh` に「有効化」が無く、ブラウザ検証で無効化した
+seed のエージェントが残って **`TestAdminUsersIntegration/一覧の絞り込みと並び替え` が
+落ちた**（`is_active=false の件数 = 1, want 0`）。**症状はコードの回帰に見えたが、
+原因は自分の検証残骸である。** 片付けの関数に足して、結合168件が戻ることを確かめた。 サーバと Vite を停止、`/tmp/pbchrome-*` を削除、
+`make clean-webui`（`stg-build` が `dist/` を埋めるため）。

@@ -125,8 +125,13 @@ func (h *handler) listRoles(w http.ResponseWriter, r *http.Request) {
 
 // listPermissions は GET /api/v1/permissions を処理する（ApiDesign.md 7.2）。
 //
-// **7.1 と違い user.manage のまま**である。消費者が GuiDesign.md 5.6.3 の
-// 権限マトリクスだけで、そのタブは user.manage を要する画面の中にある。
+// **必要権限は無い**（認証済みであればよい。2026-09-02 に user.manage から変更）。
+// 消費者が2つある——GuiDesign.md 5.6.3 の権限マトリクスと、5.8.2 の
+// エージェント用トークンの発行結果である。**後者の必要権限は「本人」**なので、
+// user.manage を要求したままだと description を引けない。
+//
+// **description を画面へ焼き込む案は退けた。** 手順24a が「旧語彙で発行すると
+// 実効権限が0件になる」という形で、写しが腐る失敗を踏んだばかりである。
 func (h *handler) listPermissions(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.q.ListPermissions(r.Context())
 	if err != nil {

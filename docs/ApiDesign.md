@@ -615,6 +615,7 @@ GET|POST      /api/v1/me/agents
 PATCH         /api/v1/me/agents/:id
 POST          /api/v1/me/agents/:id/tokens
 DELETE        /api/v1/me/agents/:id/tokens/:token_id
+GET           /api/v1/agent-client-kinds        （カタログ。必要権限は「認証済み」。4.5.7）
 ```
 
 自分の端末で動くクライアント（Claude Code / VS Code+Copilot）を PB に登録し、
@@ -691,7 +692,7 @@ DELETE        /api/v1/me/agents/:id/tokens/:token_id
 |---|---|
 | `display_name` | **必須**。1〜60文字（`actor.display_name` の CHECK に合わせる。`DbDesign.md` 6.2） |
 | `project_key` | **必須**。**自分がメンバーであるプロジェクトに限る。** それ以外は `422`（`details[].code` は `not_found`） |
-| `client_kind` | **必須**。`claude_code` / `copilot` / `other`（`DbDesign.md` 8.2.1 の CHECK） |
+| `client_kind` | **必須**。`agent_client_kind` の `key`（`DbDesign.md` 8.2.1.1）。値域は固定せず、**4.5.7 のカタログが正本**である |
 | `model_name` | 省略可。1〜100文字 |
 | `model_version` | 省略可。1〜100文字 |
 
@@ -763,16 +764,27 @@ Phase 2 に無い**。`ticket.close` と `doc.edit` を既定から外してあ�
 ### 4.5.4 `PATCH /api/v1/me/agents/:id`
 
 ```json
-{ "display_name": "私の Claude Code (mini)", "model_name": "claude-opus-5",
-  "model_version": "20260501", "is_active": false }
+{ "display_name": "私の Claude Code (mini)", "client_kind": "codex",
+  "model_name": "claude-opus-5", "model_version": "20260501", "is_active": false }
 ```
 
 いずれも省略可（送られた項目だけを更新する）。応答は 4.5.2 と同じ本体。
 
-**`project_key` と `client_kind` は変えられない。** 変えたければ別のエージェントとして
-登録する——**その2つが「どのクライアントがどのプロジェクトにつないでいるか」という
-1件の同一性そのもの**だからである。付け替えると、そのエージェントが過去に行った操作の
+**`project_key` は変えられない。** 変えたければ別のエージェントとして登録する
+——**そのエージェントが行った仕事はプロジェクトに属する**ので、付け替えると過去の操作の
 文脈が後から変わる。
+
+**`client_kind` は変えられる**（2026-09-02 に変更。手順24b）。**改訂前は `project_key` と
+同じ規則で変更不可にしていたが、根拠を2つ別々に点検したところ、`client_kind` には
+当てはまらなかった**——同じ端末で Claude Code から別のクライアントへ乗り換えても、
+「私の端末の、このプロジェクト用のエージェント」という同一性は変わらない。
+**変更可能にする実利のほうが大きい**——`agent_client_kind` は**今後も増える**ので
+（`DbDesign.md` 8.2.1.1）、`other` で登録した人が、PB がその種別に対応した日に移れる必要がある。
+できないと登録し直し＋トークン再発行になる。
+
+**`client_kind` を変えると一意性の判定に効く。** キーは（所有者・プロジェクト・
+クライアント種別・表示名）の4つ組なので、**更新でも重複を検査して `409 already_exists` を返す**
+（検査を省くとアプリを抜けてDBの一意制約に当たる）。
 
 **`is_active: false` が無効化である。** 行は消さない（`comment.author_id` などが参照する）。
 **無効化すると、そのエージェントのトークンも失効する**——無効化したのに動き続けるのは
@@ -784,8 +796,13 @@ Phase 2 に無い**。`ticket.close` と `doc.edit` を既定から外してあ�
 | 状況 | 応答 |
 |---|---|
 | 成功 | `200` |
-| 形式誤り | `422 validation_failed` |
+| 形式誤り・値域にない `client_kind` | `422 validation_failed` |
+| 変更後の4つ組が既にある | `409 already_exists` |
 | 他人のエージェント・存在しない `id` | `404 not_found` |
+
+**`client_kind` を変えても、発行済みトークンの `client_info` は書き換えない**
+（4.5.3 が発行時の値を入れる列であり、**そのトークンがいつ何として発行されたか**を残す）。
+次に発行し直したときに新しい値が入る。
 
 ### 4.5.5 `DELETE /api/v1/me/agents/:id/tokens/:token_id`
 
@@ -810,6 +827,36 @@ Phase 2 に無い**。`ticket.close` と `doc.edit` を既定から外してあ�
 トークンの2つは 4.4.4 と同じく `target_type='access_token'`。
 
 **`audit_log.actor_id` は操作した本人**（エージェントではない）。登録も発行も人の操作である。
+
+### 4.5.7 `GET /api/v1/agent-client-kinds` — クライアント種別のカタログ
+
+**必要権限**：**不要**（認証済みであればよい）
+
+```json
+{
+  "items": [
+    { "key": "claude_code", "display_name": "Claude Code" },
+    { "key": "codex",       "display_name": "OpenAI Codex" },
+    { "key": "copilot",     "display_name": "GitHub Copilot" },
+    { "key": "gemini",      "display_name": "Gemini（CLI / Code Assist）" },
+    { "key": "other",       "display_name": "その他・OSS 等" }
+  ]
+}
+```
+
+`items[]` は `sort_order` の昇順。**ページネーションも `ETag` も持たない**（7.1 / 7.2 と同じ扱い）。
+
+**`/me/agents` の配下ではなく最上位に置く。** 本人のデータではなく**カタログ**であり、
+`GET /permissions`（7.2）や `GET /roles`（7.1）と同じ性格のものだからである。**本節に置いたのは、
+唯一の消費者が 4.5 の画面（`GuiDesign.md` 5.8.2）だからである**——読む人が対応を追いやすい。
+
+**画面に対応表を持たせない。** `GET /roles` が `display_name` を返すようになった時点で
+`lib/roles.ts` を廃止したのと同じ形である（`GuiDesign.md` 5.6）。**値域は今後も増える**ので
+（`DbDesign.md` 8.2.1.1）、写しを置くと必ず腐る。
+
+**「PB が接続手順を提供できるか」は返さない。** 配置ファイルの生成は手順28 であり、
+**使うものが無いうちに項目を作ると意味が固まる**（`trust_level` を 4.5.2 で受け取らないのと同じ判断）。
+28 でテンプレートを書くときに足す。
 ---
 
 # 5. プロジェクトAPI
@@ -1250,7 +1297,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 ## 7.2 `GET /api/v1/permissions`
 
-**必要権限**：`user.manage`
+**必要権限**：**不要**（認証済みであればよい）
 
 ```json
 {
@@ -1264,7 +1311,15 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 `items[]` は `permission.sort_order` の昇順。7.1 と同じくページネーションも `ETag` も持たない。
 
-**7.1 と違い `user.manage` のままとする。** 消費者が `GuiDesign.md` 5.6.3 の権限マトリクスだけで、そのタブは `user.manage` を必要とする画面（`/admin/users`。3.2 のルーティング表）の中にあるためである。7.1 を開放したのは、権限を持たない画面がロールの**表示名**を必要とするからであって、権限カタログそのものを必要としているわけではない。
+### 認証済みなら誰でも読める理由（2026-09-02 に `user.manage` から変更）
+
+**改訂前は `user.manage` を要求していた。** 理由は「消費者が `GuiDesign.md` 5.6.3 の権限マトリクスだけで、そのタブは `user.manage` を必要とする画面の中にある」だった。**手順24b で2つ目の消費者が現れたため、その前提が崩れた**——`GuiDesign.md` 5.8.2 のエージェント用トークンの発行結果が、`scopes[]` の権限キーを**本人に読める言葉で**出す必要がある。あの画面の必要権限は「本人」であり、`user.manage` を持たない。
+
+**開放しても渡る情報は増えない。** 権限カタログは `Design.md` 6.4.2 に全文があり、**本人の実効権限は `GET /me` が既に返している**（4.1）。新たに渡るのは「PB にどういう権限キーが定義されているか」だけで、これは秘密ではない。**むしろ隠すと、本人が自分のエージェントに何ができるのかを読めなくなる。**
+
+**代替案2つを退けた。** ①画面に日本語の対応表を焼き込む——**必ず腐る**。手順24a が踏んだ「旧語彙で発行すると実効権限が0件になる」がまさにこの腐り方である ②権限キーをそのまま並べる——腐らないが**本人が読めない**。`description` はこの用途のために既にカタログが持っている列である。
+
+**7.1 の `scope` 別の必要権限は変えない。** あちらはロールの表示名を渡すためのもので、開放の理由も範囲も違う。
 
 `GuiDesign.md` 5.6.3 の権限マトリクス表は、7.1 と 7.2 の2レスポンスから組み立てる。**マトリクス専用のエンドポイントは作らない**（データが重複し、片方だけ更新される事故を招くため）。
 
@@ -1292,7 +1347,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | アカウント / 権限（ロールタブ） | `GET /roles` + `GET /permissions` |
 | 自分の設定 | `PATCH /me`<br>`POST /me/password` |
 | アクセストークン | `GET|POST /me/tokens`<br>`DELETE /me/tokens/:id` |
-| **エージェント（Phase 2）** | `GET|POST /me/agents`<br>`PATCH /me/agents/:id`<br>`POST /me/agents/:id/tokens`<br>`DELETE /me/agents/:id/tokens/:token_id` |
+| **エージェント（Phase 2）** | `GET|POST /me/agents`<br>`PATCH /me/agents/:id`<br>`POST /me/agents/:id/tokens`<br>`DELETE /me/agents/:id/tokens/:token_id`<br>`GET /agent-client-kinds` |
 | プロジェクト設定（タグタブ） | `GET|POST /projects/:key/tags`<br>`PATCH|DELETE /projects/:key/tags/:id` |
 | プロジェクト設定（スプリントタブ） | `GET|POST /projects/:key/sprints`<br>`PATCH|DELETE /projects/:key/sprints/:id` |
 | **Docs（Phase 2）** | `GET /projects/:key/docs`（目次）<br>`GET /projects/:key/docs/*path`（本文）<br>`PATCH|DELETE /projects/:key/docs/*path`・`POST /projects/:key/docs`<br>`GET /projects/:key/docs/*path/_revisions`（履歴） |

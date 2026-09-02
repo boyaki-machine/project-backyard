@@ -205,6 +205,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agent-client-kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * クライアント種別のカタログ
+         * @description エージェントのクライアント種別（ApiDesign.md 4.5.7、正本は
+         *     DbDesign.md 8.2.1.1 の `agent_client_kind`）。
+         *
+         *     **必要権限は不要**（認証済みであればよい）。消費者は GuiDesign.md 5.8.2 の
+         *     画面で、そこの必要権限は「本人」である。カタログ自体は秘密ではない。
+         *
+         *     **画面に対応表を持たせないために在る**——`GET /roles` が display_name を
+         *     返すようになった時点で `lib/roles.ts` を廃止したのと同じ形。値域は今後も
+         *     増えるので、写しを置くと必ず腐る。
+         *
+         *     `items[]` は `sort_order` の昇順。**ページネーションも ETag も持たない。**
+         */
+        get: operations["listAgentClientKinds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/agents": {
         parameters: {
             query?: never;
@@ -2214,10 +2244,13 @@ export interface paths {
          * 権限カタログ
          * @description 権限カタログの30件（ApiDesign.md 7.2、正本は DbDesign.md 7.2 のシード28件と
          *     8.1.4 の doc 権限2件）。
-         *     **必要権限は `user.manage`。**
+         *     **必要権限は不要**（認証済みであればよい。2026-09-02 に `user.manage` から変更）。
          *
-         *     7.1 と違い開放しないのは、消費者が GuiDesign.md 5.6.3 の権限マトリクスだけで、
-         *     そのタブが `user.manage` を要する画面（`/admin/users`）の中にあるためである。
+         *     消費者が2つになったため開放した——GuiDesign.md 5.6.3 の権限マトリクス
+         *     （`/admin/users` の中）と、5.8.2 のエージェント用トークンの発行結果
+         *     （`/me/agents`。必要権限は「本人」）である。カタログ自体は Design.md 6.4.2 に
+         *     全文があり、本人の実効権限は `GET /me` が既に返しているので、開放しても
+         *     渡る情報は増えない。
          *
          *     `items[]` は `permission.sort_order` 昇順。`category` は同じ番号帯で連続しており、
          *     画面はこれで行を区切る。**ページネーションも ETag も持たない。**
@@ -2359,6 +2392,21 @@ export interface components {
              */
             system_role?: "administrator" | "operator";
         };
+        /** @description ApiDesign.md 4.5.7。ページネーションも ETag も持たない。 */
+        AgentClientKindList: {
+            items: components["schemas"]["AgentClientKind"][];
+        };
+        /**
+         * @description エージェントのクライアント種別1件（DbDesign.md 8.2.1.1）。
+         *     **値が決めるのは設定ファイルの置き場であって、エディタではない**
+         *     ——同じ VS Code でも Claude 拡張と GitHub Copilot で分かれる。
+         */
+        AgentClientKind: {
+            /** @example claude_code */
+            key: string;
+            /** @example Claude Code */
+            display_name: string;
+        };
         /**
          * @description ApiDesign.md 4.5.1。ページネーションも ETag も持たない（4.4.1 と同じく、
          *     件数が少なく絞り込みも差分取得も意味を持たないため）。
@@ -2380,8 +2428,12 @@ export interface components {
              *     手がかり**であり、一意ではない。
              */
             display_name: string;
-            /** @enum {string} */
-            client_kind: "claude_code" | "copilot" | "other";
+            /**
+             * @description `agent_client_kind` の `key`（DbDesign.md 8.2.1.1）。
+             *     **値域を固定しない**——正本は `GET /api/v1/agent-client-kinds`（4.5.7）で、
+             *     今後も増える。0019 までは CHECK の3値だった。
+             */
+            client_kind: string;
             model_name: string | null;
             model_version: string | null;
             /** @description 参加プロジェクト。登録時に必須なので `null` にならない。 */
@@ -2450,17 +2502,30 @@ export interface components {
              *     （`details[].code` は `not_found`）。
              */
             project_key: string;
-            /** @enum {string} */
-            client_kind: "claude_code" | "copilot" | "other";
+            /**
+             * @description `agent_client_kind` の `key`（DbDesign.md 8.2.1.1）。
+             *     **値域を固定しない**——正本は `GET /api/v1/agent-client-kinds`（4.5.7）で、
+             *     今後も増える。0019 までは CHECK の3値だった。
+             */
+            client_kind: string;
             model_name?: string;
             model_version?: string;
         };
         /**
          * @description ApiDesign.md 4.5.4。**送られた項目だけを更新する。**
-         *     `project_key` と `client_kind` は変えられない。
+         *     `project_key` は変えられない（そのエージェントが行った仕事は
+         *     プロジェクトに属するため）。**`client_kind` は 0020 から変えられる**
+         *     ——値域が今後も増えるので、`other` で登録した人が、PB がその種別に
+         *     対応した日に移れる必要がある。
          */
         UpdateAgentRequest: {
             display_name?: string;
+            /**
+             * @description `agent_client_kind` の `key`（4.5.7 が正本）。変更すると
+             *     （所有者・プロジェクト・クライアント種別・表示名）の4つ組が
+             *     ぶつかりうるので、**重複すれば 409 `already_exists`** になる。
+             */
+            client_kind?: string;
             model_name?: string;
             model_version?: string;
             /** @description `false` で無効化する。**そのエージェントのトークンも失効する。** */
@@ -4986,6 +5051,27 @@ export interface operations {
             };
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    listAgentClientKinds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description クライアント種別のカタログ。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentClientKindList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
         };
     };
     listMyAgents: {
@@ -7821,7 +7907,6 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

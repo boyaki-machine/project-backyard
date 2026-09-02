@@ -11,6 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const agentClientKindExists = `-- name: AgentClientKindExists :one
+SELECT EXISTS (SELECT 1 FROM agent_client_kind WHERE key = $1)
+`
+
+// AgentClientKindExists は入力の検証に使う（ApiDesign.md 4.5.2 / 4.5.4）。
+//
+// **値域を Go の定数で持たない。** 正本は agent_client_kind の行であり、
+// 二重に持つと「検証を通った値が INSERT で落ちて 500」になる。
+func (q *Queries) AgentClientKindExists(ctx context.Context, key string) (bool, error) {
+	row := q.db.QueryRow(ctx, agentClientKindExists, key)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const agentExistsWithName = `-- name: AgentExistsWithName :one
 SELECT EXISTS (
   SELECT 1
@@ -45,6 +60,44 @@ func (q *Queries) AgentExistsWithName(ctx context.Context, arg AgentExistsWithNa
 		arg.ProjectID,
 		arg.ClientKind,
 		arg.DisplayName,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const agentExistsWithNameExcept = `-- name: AgentExistsWithNameExcept :one
+SELECT EXISTS (
+  SELECT 1
+  FROM agent ag
+  JOIN actor a ON a.id = ag.actor_id
+  WHERE ag.owner_actor_id = $1
+    AND ag.project_id     = $2
+    AND ag.client_kind    = $3
+    AND a.display_name    = $4
+    AND ag.actor_id      <> $5
+)
+`
+
+type AgentExistsWithNameExceptParams struct {
+	OwnerActorID   string
+	ProjectID      pgtype.Text
+	ClientKind     string
+	DisplayName    string
+	ExcludeActorID string
+}
+
+// AgentExistsWithNameExcept は更新時の重複検査に使う（ApiDesign.md 4.5.4）。
+//
+// **client_kind と display_name はどちらも変えられる**ので、更新でも4つ組が
+// ぶつかりうる。**自分自身を除く**のが AgentExistsWithName との違いである。
+func (q *Queries) AgentExistsWithNameExcept(ctx context.Context, arg AgentExistsWithNameExceptParams) (bool, error) {
+	row := q.db.QueryRow(ctx, agentExistsWithNameExcept,
+		arg.OwnerActorID,
+		arg.ProjectID,
+		arg.ClientKind,
+		arg.DisplayName,
+		arg.ExcludeActorID,
 	)
 	var exists bool
 	err := row.Scan(&exists)
@@ -227,6 +280,41 @@ func (q *Queries) ListActiveAgentTokens(ctx context.Context, arg ListActiveAgent
 	for rows.Next() {
 		var i ListActiveAgentTokensRow
 		if err := rows.Scan(&i.ID, &i.TokenPrefix); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgentClientKinds = `-- name: ListAgentClientKinds :many
+SELECT key, display_name
+FROM agent_client_kind
+ORDER BY sort_order, key
+`
+
+type ListAgentClientKindsRow struct {
+	Key         string
+	DisplayName string
+}
+
+// ListAgentClientKinds はクライアント種別のカタログを返す（ApiDesign.md 4.5.7）。
+//
+// **画面はこれを引いて表示名を出す。** 対応表を画面へ焼き込まない——値域は
+// 今後も増える（DbDesign.md 8.2.1.1）ので、写しを置くと必ず腐る。
+func (q *Queries) ListAgentClientKinds(ctx context.Context) ([]ListAgentClientKindsRow, error) {
+	rows, err := q.db.Query(ctx, listAgentClientKinds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentClientKindsRow{}
+	for rows.Next() {
+		var i ListAgentClientKindsRow
+		if err := rows.Scan(&i.Key, &i.DisplayName); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -441,22 +529,30 @@ func (q *Queries) UpdateAgentActor(ctx context.Context, arg UpdateAgentActorPara
 const updateAgentModel = `-- name: UpdateAgentModel :execrows
 UPDATE agent
 SET model_name    = COALESCE($1,    model_name),
-    model_version = COALESCE($2, model_version)
-WHERE actor_id = $3
-  AND owner_actor_id = $4
+    model_version = COALESCE($2, model_version),
+    client_kind   = COALESCE($3,   client_kind)
+WHERE actor_id = $4
+  AND owner_actor_id = $5
 `
 
 type UpdateAgentModelParams struct {
 	ModelName    pgtype.Text
 	ModelVersion pgtype.Text
+	ClientKind   pgtype.Text
 	ActorID      string
 	OwnerActorID string
 }
 
+// UpdateAgentModel はモデルとクライアント種別を更新する（ApiDesign.md 4.5.4）。
+//
+// **client_kind は 0020 から変更できる。** 値域が今後も増えるため、`other` で
+// 登録した人が、PB がその種別に対応した日に移れる必要がある。**project_id は
+// 変えられない**——そのエージェントが行った仕事はプロジェクトに属する。
 func (q *Queries) UpdateAgentModel(ctx context.Context, arg UpdateAgentModelParams) (int64, error) {
 	result, err := q.db.Exec(ctx, updateAgentModel,
 		arg.ModelName,
 		arg.ModelVersion,
+		arg.ClientKind,
 		arg.ActorID,
 		arg.OwnerActorID,
 	)

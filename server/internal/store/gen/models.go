@@ -65,6 +65,12 @@ type Agent struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type AgentClientKind struct {
+	Key         string
+	DisplayName string
+	SortOrder   int32
+}
+
 type AppUser struct {
 	ActorID         string
 	Email           string
