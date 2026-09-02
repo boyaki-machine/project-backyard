@@ -224,6 +224,12 @@ type fakeQuerier struct {
 	agentFindErr         error
 	agentExists          bool
 	agentExistsErr       error
+	// 0020（agent_client_kind）。**値域は agentClientKinds が持つ**
+	// ——真偽値で持つと「どんな値でも通る」フェイクになり、値域の検証が
+	// 意味を失う（実際に1回そうしてテストを落とした）。
+	agentClientKindErr error
+	agentClientKinds   []gen.ListAgentClientKindsRow
+	agentExistsExcept  bool
 	agentProject         gen.FindMyProjectByKeyRow
 	agentProjectErr      error
 	createdAgentActors   []gen.CreateAgentActorParams
@@ -2160,6 +2166,38 @@ func (q *fakeQuerier) AgentExistsWithName(_ context.Context, _ gen.AgentExistsWi
 		return false, q.agentExistsErr
 	}
 	return q.agentExists, nil
+}
+
+// 0020（DbDesign.md 8.2.1.1）。**client_kind の値域は DB が正本**なので、
+// ハンドラが問い合わせる。フェイクの既定は「値域に在る」。
+func (q *fakeQuerier) AgentClientKindExists(_ context.Context, key string) (bool, error) {
+	if q.agentClientKindErr != nil {
+		return false, q.agentClientKindErr
+	}
+	// **カタログを引く**（DBの FK と同じ判定）。真偽値を返す作りにすると
+	// どんな値でも通ってしまい、4.5.2 の値域の検証を測れない。
+	for _, k := range q.agentClientKinds {
+		if k.Key == key {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// AgentExistsWithNameExcept は更新時の重複検査（ApiDesign.md 4.5.4）。
+func (q *fakeQuerier) AgentExistsWithNameExcept(_ context.Context, _ gen.AgentExistsWithNameExceptParams) (bool, error) {
+	if q.agentExistsErr != nil {
+		return false, q.agentExistsErr
+	}
+	return q.agentExistsExcept, nil
+}
+
+// ListAgentClientKinds はカタログ（ApiDesign.md 4.5.7）。
+func (q *fakeQuerier) ListAgentClientKinds(_ context.Context) ([]gen.ListAgentClientKindsRow, error) {
+	if q.agentClientKindErr != nil {
+		return nil, q.agentClientKindErr
+	}
+	return q.agentClientKinds, nil
 }
 
 func (q *fakeQuerier) CreateAgentActor(_ context.Context, arg gen.CreateAgentActorParams) error {

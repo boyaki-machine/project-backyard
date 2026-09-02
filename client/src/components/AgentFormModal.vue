@@ -3,9 +3,14 @@
  * エージェントの登録・編集モーダル（`GuiDesign.md` 5.8.2）。
  *
  * **1つの部品が2つのモードを持つ**（5.10 の `DocFormModal` と同じ形）。同じ欄を
- * 使い、編集では**プロジェクトとクライアント種別を読み取り専用にする**
- * ——`ApiDesign.md` 4.5.4 が変更不可と定めており、**その2つが「どのクライアントが
- * どのプロジェクトにつないでいるか」という1件の同一性そのもの**だからである。
+ * 使い、編集では**プロジェクトだけを読み取り専用にする**——`ApiDesign.md` 4.5.4 が
+ * 変更不可と定めており、**そのエージェントが行った仕事はプロジェクトに属する**からである。
+ * **クライアント種別は編集できる**（0020 で変更可能にした）——値域が今後も増えるので、
+ * `その他・OSS 等` で登録した人が、PB がその種別に対応した日に移れる必要がある。
+ *
+ * **クライアント種別は `<select>` で出す**（ラジオではない）。値域が5つを超えて
+ * 増えていくため（`DbDesign.md` 8.2.1.1）、ラジオを1行に並べる形では早晩あふれる。
+ * **選択肢と表示名は `GET /agent-client-kinds` から取る**——画面は対応表を持たない。
  *
  * **プロジェクトの選択肢は「自分がメンバーであるもの」に限る。** `GET /projects` は
  * アドミニストレータには非メンバーのプロジェクトも返す（`my_role` が `null`。
@@ -15,9 +20,9 @@
 import { computed, onMounted, ref } from 'vue'
 
 import { ApiError } from '../api/client'
-import type { MyAgent } from '../api/me'
+import * as meApi from '../api/me'
+import type { AgentClientKind, MyAgent } from '../api/me'
 import * as projectsApi from '../api/projects'
-import { CLIENT_KINDS, type ClientKind } from '../lib/agents'
 import Modal from './Modal.vue'
 
 const props = defineProps<{
@@ -30,7 +35,15 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  submit: [payload: { display_name: string; project_key: string; client_kind: ClientKind; model_name: string; model_version: string }]
+  submit: [
+    payload: {
+      display_name: string
+      project_key: string
+      client_kind: string
+      model_name: string
+      model_version: string
+    },
+  ]
   close: []
 }>()
 
@@ -43,9 +56,27 @@ const isEdit = computed(() => props.agent !== null)
 
 const displayName = ref(props.agent?.display_name ?? '')
 const projectKey = ref(props.agent?.project.key ?? '')
-const clientKind = ref<ClientKind>(props.agent?.client_kind ?? 'claude_code')
+const clientKind = ref<string>(props.agent?.client_kind ?? '')
 const modelName = ref(props.agent?.model_name ?? '')
 const modelVersion = ref(props.agent?.model_version ?? '')
+
+// ── クライアント種別のカタログ（`ApiDesign.md` 4.5.7）──────
+
+const clientKinds = ref<AgentClientKind[]>([])
+const kindsError = ref<ApiError | null>(null)
+
+async function loadClientKinds() {
+  try {
+    clientKinds.value = (await meApi.listAgentClientKinds()).items
+    // **既定は一覧の先頭**（`sort_order` の昇順で返る）。画面は並べ替えない。
+    if (clientKind.value === '' && clientKinds.value.length > 0) {
+      clientKind.value = clientKinds.value[0].key
+    }
+  } catch (e: unknown) {
+    kindsError.value = e instanceof ApiError ? e : null
+  }
+}
+onMounted(loadClientKinds)
 
 // ── プロジェクトの選択肢 ────────────────────────────────────
 
@@ -91,6 +122,7 @@ function detail(field: string) {
 const canSubmit = computed(
   () =>
     displayName.value.trim() !== '' &&
+    clientKind.value !== '' &&
     (isEdit.value || projectKey.value !== '') &&
     !props.busy,
 )
@@ -146,28 +178,25 @@ function submit() {
         </template>
       </div>
 
-      <div class="field">
-        <span class="label">クライアント <span v-if="!isEdit" class="required">*</span></span>
-        <p v-if="isEdit" class="fixed">
-          {{ CLIENT_KINDS.find((k) => k.value === agent?.client_kind)?.label }}
-        </p>
-        <template v-else>
-          <div class="choices-row">
-            <label v-for="k in CLIENT_KINDS" :key="k.value">
-              <input
-                type="radio"
-                name="client_kind"
-                :value="k.value"
-                :checked="clientKind === k.value"
-                :disabled="busy"
-                @change="clientKind = k.value"
-              />
-              <span>{{ k.label }}</span>
-            </label>
-          </div>
-          <span class="hint">あとで変更できません。別のクライアントは別に登録します。</span>
-        </template>
-      </div>
+      <!-- **`<select>` で出す**（5.8.2）。値域は今後も増えるのでラジオでは早晩あふれる。
+           **選択肢は `GET /agent-client-kinds` から取る**——画面は対応表を持たない -->
+      <label class="field">
+        <span class="label">クライアント <span class="required">*</span></span>
+        <select
+          v-model="clientKind"
+          name="client_kind"
+          :disabled="busy || clientKinds.length === 0"
+          :aria-invalid="detail('client_kind') !== undefined"
+        >
+          <option v-for="k in clientKinds" :key="k.key" :value="k.key">{{ k.display_name }}</option>
+        </select>
+        <span v-if="detail('client_kind')" class="detail">{{ detail('client_kind')?.message }}</span>
+        <!-- **「VS Code」という語が選択肢に無い**ので、自分の使い方をどれに当てるか迷う。
+             5.8.2 の対応表を1行に畳んでその場に出す -->
+        <span v-else class="hint">
+          VS Code をお使いの場合は、その中で動いているものを選びます（Claude 拡張なら Claude Code、GitHub Copilot なら GitHub Copilot）。
+        </span>
+      </label>
 
       <label class="field">
         <span class="label">モデル名</span>
@@ -194,9 +223,10 @@ function submit() {
         <span v-if="detail('model_version')" class="detail">{{ detail('model_version')?.message }}</span>
       </label>
 
+      <p v-if="kindsError" class="alert" role="alert">{{ kindsError.message }}</p>
       <p v-if="projectsError" class="alert" role="alert">{{ projectsError.message }}</p>
       <p
-        v-if="error && !detail('display_name') && !detail('project_key') && !detail('model_name') && !detail('model_version')"
+        v-if="error && !detail('display_name') && !detail('project_key') && !detail('client_kind') && !detail('model_name') && !detail('model_version')"
         class="alert"
         role="alert"
       >
@@ -254,29 +284,6 @@ function submit() {
 .fixed {
   margin: 0;
   padding: var(--pb-space-1) 0;
-}
-
-/* ラジオを横1行に並べる（5.8.1 の発行モーダルと同じ形）。
-   `.field` の `flex-direction: column` をそのまま受けると縦積みになる */
-.choices-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--pb-space-1) var(--pb-space-4);
-  align-items: center;
-}
-
-.choices-row label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--pb-space-1);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.choices-row input[type='radio'] {
-  width: auto;
-  height: auto;
-  margin: 0;
 }
 
 .detail {

@@ -31,10 +31,20 @@ import PageHeader from '../components/PageHeader.vue'
 import UserActionsMenu from '../components/UserActionsMenu.vue'
 import type { ActionItem } from '../components/UserActionsMenu.vue'
 import { clientKindLabel } from '../lib/agents'
+import type { AgentClientKind } from '../api/me'
 import { formatDate, formatDateTime } from '../lib/datetime'
 
 /** 有効期限の選択肢（`GuiDesign.md` 5.8.1 と同じ3つ。値域は 1〜365） */
 const EXPIRY_CHOICES = [30, 90, 365] as const
+
+/**
+ * クライアント種別のカタログ（`ApiDesign.md` 4.5.7）。
+ *
+ * **表示名を画面が持たない**ため、一覧を描くのにこれが要る（`GuiDesign.md` 5.8.2）。
+ * **引けなくても一覧は出す**——`clientKindLabel` がキーをそのまま返すので、
+ * 種別の欄が空になるより読める。
+ */
+const clientKinds = ref<AgentClientKind[]>([])
 
 const items = ref<MyAgent[]>([])
 const loading = ref(false)
@@ -63,7 +73,14 @@ async function load() {
   loading.value = true
   loadError.value = null
   try {
-    items.value = (await meApi.listAgents()).items
+    // **カタログの失敗で一覧を落とさない。** 表示名が引けないだけで、
+    // エージェントそのものは出せる。
+    const [agents, kinds] = await Promise.all([
+      meApi.listAgents(),
+      meApi.listAgentClientKinds().catch(() => ({ items: [] as AgentClientKind[] })),
+    ])
+    items.value = agents.items
+    clientKinds.value = kinds.items
   } catch (e: unknown) {
     loadError.value = asApiError(e)
   } finally {
@@ -95,7 +112,7 @@ function openEdit(agent: MyAgent) {
 async function submitForm(payload: {
   display_name: string
   project_key: string
-  client_kind: MyAgent['client_kind']
+  client_kind: string
   model_name: string
   model_version: string
 }) {
@@ -105,8 +122,11 @@ async function submitForm(payload: {
     if (formTarget.value) {
       // **送るのは変えられる3項目だけ**（4.5.4）。project_key と client_kind は
       // 変更不可なので、モーダルも読み取り専用にしてある。
+      // **client_kind も送る**（`ApiDesign.md` 4.5.4、0020 から変更可能）。
+      // project_key だけが変えられない。
       const updated = await meApi.updateAgent(formTarget.value.id, {
         display_name: payload.display_name,
+        client_kind: payload.client_kind,
         model_name: payload.model_name,
         model_version: payload.model_version,
       })
@@ -309,7 +329,7 @@ function asApiError(e: unknown): ApiError {
  * 名前が無いこと自体は異常ではない。
  */
 function subtitle(agent: MyAgent): string {
-  const parts = [clientKindLabel(agent.client_kind), agent.project.name]
+  const parts = [clientKindLabel(clientKinds.value, agent.client_kind), agent.project.name]
   if (agent.model_name) parts.push(agent.model_name)
   if (agent.model_version) parts.push(agent.model_version)
   return parts.join(' ・ ')

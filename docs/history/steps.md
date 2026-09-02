@@ -3415,3 +3415,71 @@ HTML が半角空白にして「発行します。 エージェントは」と�
 
 **`audit_log` は消していない。** 結合テストが同じ dev DB へ毎回積むもの（`login.failure` 等）と
 区別がつかず、**選択的に消すほうが履歴として不正確になる**ためである（環境メモに書いた）。
+
+### 手順24b の追補 — クライアント種別を参照テーブルにする（0020、2026-09-02）
+
+**同じブランチ（`feature/step-24b-agent-ui`）に積んだ。** マージは1回、`VERSION` は 2.6.62 のまま。
+
+**きっかけは利用者の問い**——「クライアント種別の選択肢は、実際の MCP 利用に何か影響があるのか」。
+**調べた答えは「影響しない」**（MCP の口は `/mcp/<project_key>`、認可はトークンの
+`project_id` と `scopes` だけ）。**効くのは手順28 の配置ファイル生成だけ**である。
+そこから「**選択肢が、接続手順・サンプルファイルを提供する判断になる**」という利用者の読みで、
+値域を広げる方針が決まった。
+
+#### 作った・変えたもの
+
+| ファイル | 内容 |
+|---|---|
+| `server/migrations/0020_agent_client_kind.sql`（新） | `agent_client_kind` と5行のシード、`agent.client_kind` の CHECK → FK |
+| `docs/DbDesign.md` | 8.2.1.1 を新設。8章の採番表（**Phase 3 を 0021〜0026 へ**） |
+| `docs/ApiDesign.md` | 4.5.2（値域）／4.5.4（`client_kind` を変更可能に、409 の追加）／**4.5.7 を新設** |
+| `docs/GuiDesign.md` | 5.8.2（`<select>` 化、対応表の廃止、VS Code の当て方、編集で種別を変えられる） |
+| `docs/Design.md` / `docs/PROGRESS.md` | 採番の写し |
+| `server/internal/store/queries/agent.sql` | `ListAgentClientKinds` / `AgentClientKindExists` / `AgentExistsWithNameExcept`、`UpdateAgentModel` に `client_kind` |
+| `server/internal/httpapi/v1/me_agents.go` | **Go の値域定数を削除**（正本は DB）。`checkClientKind`、`listAgentClientKinds`、更新時の重複検査 |
+| `server/internal/httpapi/v1/routes.go` | `GET /agent-client-kinds`（必要権限なし） |
+| `docs/openapi.yaml` | `client_kind` の `enum` を2か所で削除、`UpdateAgentRequest` に追加、パスとスキーマを新設 |
+| `client/src/lib/agents.ts` | **対応表を廃止**し、カタログから引く形へ |
+| `client/src/api/me.ts` / `AgentFormModal.vue` / `MyAgentsPage.vue` | カタログの取得、`<select>`、編集で種別を変える |
+
+#### 値（`DbDesign.md` 8.2.1.1）
+
+`claude_code`（Claude Code）／`codex`（OpenAI Codex）／`copilot`（GitHub Copilot）／
+`gemini`（Gemini（CLI / Code Assist））／`other`（その他・OSS 等）。
+
+**`key` は事業者名ではなく製品名**——1事業者が複数のクライアントを出しうるためで、
+値が表すのは事業者ではなく**設定ファイルの置き場**である。
+
+#### 検証
+
+**単体 994件**（+5。カタログ・種別の変更・値域外・重複・重複検査の省略）。
+**結合 168件**（+2。カタログの並びと `display_name`、種別の変更／値域外／重複）。
+**ブラウザ検証 26件**（種別まわり18・回帰8）。
+
+**DDL は「破れるか」で測った**——値域外 `cursor` を INSERT して
+`violates foreign key constraint "agent_client_kind_fkey"` を確認し、
+`gemini` が通ることをコントロールとして同じ方法で1回見た。`ROLLBACK` 後の残存0件。
+
+**足したテストが落ちうることを実測した**——更新時の重複検査を `if false` で潰すと
+`TestUpdateMyAgentRejectsDuplicateAfterChange` が FAIL、戻すと PASS。
+
+**フェイクを真偽値で作りかけて、値域の検証を無意味にしかけた**——
+`AgentClientKindExists` が常に `true` を返す作りにしたため「種別が値域外」の既存テストが
+落ちた。**カタログを引く形に直した**（DBの FK と同じ判定）。
+
+**スクリーンショットを 1440px と 900px で見た**（登録モーダル）。横スクロールは
+どちらも `scrollWidth == clientWidth` で起きていない。
+
+**dev と stg の両方に適用済み**（`make stg-migrate` / `make stg-build`）。
+
+#### 片付け
+
+検証で作ったエージェントを削除し、`client_kind` を `claude_code` へ戻し、
+エージェント用トークンを全削除、**無効化した行を有効へ戻した**。
+**`make dev-seed` が「作成 0 / スキップ 1」を返すことで seed の状態に戻ったことを裏づけた。**
+
+**戻し方が一度不完全だった**——`reset.sh` に「有効化」が無く、ブラウザ検証で無効化した
+seed のエージェントが残って **`TestAdminUsersIntegration/一覧の絞り込みと並び替え` が
+落ちた**（`is_active=false の件数 = 1, want 0`）。**症状はコードの回帰に見えたが、
+原因は自分の検証残骸である。** 片付けの関数に足して、結合168件が戻ることを確かめた。 サーバと Vite を停止、`/tmp/pbchrome-*` を削除、
+`make clean-webui`（`stg-build` が `dist/` を埋めるため）。

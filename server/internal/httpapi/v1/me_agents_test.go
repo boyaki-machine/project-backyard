@@ -90,6 +90,15 @@ func agentFake(t *testing.T) *fakeQuerier {
 		ProjectName: pgtype.Text{String: "デモプロジェクト", Valid: true},
 	}
 	q.agentTokenRevokedRow = 1
+	// 0020：client_kind の値域は DB が正本（DbDesign.md 8.2.1.1）。
+	// **フェイクもカタログで判定する**ので、ここに無い値は 422 になる。
+	q.agentClientKinds = []gen.ListAgentClientKindsRow{
+		{Key: "claude_code", DisplayName: "Claude Code"},
+		{Key: "codex", DisplayName: "OpenAI Codex"},
+		{Key: "copilot", DisplayName: "GitHub Copilot"},
+		{Key: "gemini", DisplayName: "Gemini（CLI / Code Assist）"},
+		{Key: "other", DisplayName: "その他・OSS 等"},
+	}
 	return q
 }
 
@@ -736,5 +745,116 @@ func TestAgentDefaultScopesExcludeBanned(t *testing.T) {
 				t.Errorf("既定スコープに %q が入っている（Design.md 6.5 の禁止）", banned)
 			}
 		}
+	}
+}
+
+// ── 0020：クライアント種別のカタログ（ApiDesign.md 4.5.7）──────
+
+// TestListAgentClientKinds はカタログが sort_order の順で返ることを見る。
+//
+// **画面はこれで表示名を出す**（GuiDesign.md 5.8.2）。対応表を画面へ持たせない
+// ための API なので、display_name が空でないことまで測る。
+func TestListAgentClientKinds(t *testing.T) {
+	q := agentFake(t)
+	rec := httptest.NewRecorder()
+	agentHandler(q).listAgentClientKinds(rec,
+		httptest.NewRequest(http.MethodGet, "/agent-client-kinds", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Items []struct {
+			Key         string `json:"key"`
+			DisplayName string `json:"display_name"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("応答を読めない: %v", err)
+	}
+	if len(got.Items) != len(q.agentClientKinds) {
+		t.Fatalf("件数 = %d, want %d", len(got.Items), len(q.agentClientKinds))
+	}
+	// **並びはカタログの順そのもの**（sort_order 昇順。画面は並べ替えない）
+	for i, want := range q.agentClientKinds {
+		if got.Items[i].Key != want.Key {
+			t.Errorf("items[%d].key = %q, want %q", i, got.Items[i].Key, want.Key)
+		}
+		if got.Items[i].DisplayName == "" {
+			t.Errorf("items[%d](%s) の display_name が空", i, want.Key)
+		}
+	}
+}
+
+// TestUpdateMyAgentChangesClientKind は client_kind を変えられることを見る
+// （ApiDesign.md 4.5.4。0020 で変更可能にした）。
+//
+// **0019 までは変更不可だった。** 値域が今後も増えるので、other で登録した人が
+// PB がその種別に対応した日に移れる必要がある。
+func TestUpdateMyAgentChangesClientKind(t *testing.T) {
+	q := agentFake(t)
+	rec := httptest.NewRecorder()
+	agentHandler(q).updateMyAgent(rec, agentReq(http.MethodPatch, "/me/agents/x",
+		`{"client_kind":"codex"}`, "01AGENT0000000000000000000", "", selfPrincipal()))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateMyAgentRejectsUnknownClientKind は値域外を 422 にする。
+//
+// **値域の正本は agent_client_kind の行である**（DbDesign.md 8.2.1.1）。
+// Go 側に一覧を持たないので、ハンドラが DB へ問い合わせて確かめる。
+func TestUpdateMyAgentRejectsUnknownClientKind(t *testing.T) {
+	q := agentFake(t)
+	rec := httptest.NewRecorder()
+	agentHandler(q).updateMyAgent(rec, agentReq(http.MethodPatch, "/me/agents/x",
+		`{"client_kind":"cursor"}`, "01AGENT0000000000000000000", "", selfPrincipal()))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422（body=%s）", rec.Code, rec.Body.String())
+	}
+	if !hasDetailField(errorOf(t, rec), "client_kind") {
+		t.Errorf("details に client_kind が無い: %+v", errorOf(t, rec).Details)
+	}
+}
+
+// TestUpdateMyAgentRejectsDuplicateAfterChange は、更新で4つ組がぶつかると
+// 409 になることを見る（ApiDesign.md 4.5.4）。
+//
+// **キーは（所有者・プロジェクト・クライアント種別・表示名）**で、
+// display_name と client_kind はどちらも変えられる。**検査を省くとアプリを
+// 抜けてDBに当たる。**
+func TestUpdateMyAgentRejectsDuplicateAfterChange(t *testing.T) {
+	q := agentFake(t)
+	q.agentExistsExcept = true // 変更後の4つ組が既にある
+
+	rec := httptest.NewRecorder()
+	agentHandler(q).updateMyAgent(rec, agentReq(http.MethodPatch, "/me/agents/x",
+		`{"client_kind":"codex"}`, "01AGENT0000000000000000000", "", selfPrincipal()))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409（body=%s）", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateMyAgentSkipsDuplicateCheckWhenKeyUnchanged は、キーに関わらない
+// 項目だけを更新するときに重複検査を走らせないことを見る。
+//
+// **走らせると自分自身に当たって永久に 409 になる**わけではない（Except で
+// 自分を除く）が、**無用な問い合わせを1回増やす**。measurable にするため、
+// 「重複あり」を仕込んでも 200 が返ることで確かめる。
+func TestUpdateMyAgentSkipsDuplicateCheckWhenKeyUnchanged(t *testing.T) {
+	q := agentFake(t)
+	q.agentExistsExcept = true // 検査が走れば 409 になる
+
+	rec := httptest.NewRecorder()
+	agentHandler(q).updateMyAgent(rec, agentReq(http.MethodPatch, "/me/agents/x",
+		`{"model_name":"claude-opus-5"}`, "01AGENT0000000000000000000", "", selfPrincipal()))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200（モデル名だけの更新で重複検査は走らない。body=%s）",
+			rec.Code, rec.Body.String())
 	}
 }

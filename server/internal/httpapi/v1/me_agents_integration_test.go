@@ -343,6 +343,70 @@ func TestMeAgentsIntegration(t *testing.T) {
 		}
 	})
 
+	// ── 0020：クライアント種別のカタログと変更（4.5.7 / 4.5.4）──
+
+	t.Run("クライアント種別のカタログが sort_order の順で返る", func(t *testing.T) {
+		rec := getWithCookie(r, "/api/v1/agent-client-kinds", ownerSession)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+		}
+		view := viewOf(t, rec)
+		items, _ := view["items"].([]any)
+		if len(items) == 0 {
+			t.Fatal("カタログが空である")
+		}
+
+		// **期待値を決め打ちしない。** DB の行が正本なので、
+		// 「claude_code が先頭」「other が末尾」「display_name が空でない」だけを見る。
+		// 値を足したときにテストが落ちない形にする。
+		first, _ := items[0].(map[string]any)
+		if first["key"] != "claude_code" {
+			t.Errorf("先頭 = %v, want claude_code（sort_order 10）", first["key"])
+		}
+		last, _ := items[len(items)-1].(map[string]any)
+		if last["key"] != "other" {
+			t.Errorf("末尾 = %v, want other（sort_order 90）", last["key"])
+		}
+		for i, raw := range items {
+			it, _ := raw.(map[string]any)
+			if s, _ := it["display_name"].(string); s == "" {
+				t.Errorf("items[%d](%v) の display_name が空", i, it["key"])
+			}
+		}
+	})
+
+	t.Run("client_kind を変えられ、値域外は422になる", func(t *testing.T) {
+		ag := register(t, ownerSession, "種別を変える", projectKey, "claude_code")
+		path := "/api/v1/me/agents/" + ag.ID
+
+		rec := bodyWithCookie(r, http.MethodPatch, path, ownerSession,
+			`{"client_kind":"codex"}`, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+		}
+		if got := viewOf(t, rec)["client_kind"]; got != "codex" {
+			t.Errorf("client_kind = %v, want codex", got)
+		}
+
+		// **値域外は 422。** 正本は agent_client_kind の行で、Go 側に一覧を持たない。
+		rec = bodyWithCookie(r, http.MethodPatch, path, ownerSession,
+			`{"client_kind":"cursor"}`, "")
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("値域外の status = %d, want 422（body=%s）", rec.Code, rec.Body.String())
+		}
+		if !hasDetailField(errorOf(t, rec), "client_kind") {
+			t.Errorf("details に client_kind が無い: %s", rec.Body.String())
+		}
+
+		// **変更で4つ組がぶつかると 409**（4.5.4）。同じ名前・同じ種別を先に作る。
+		register(t, ownerSession, "衝突する名前", projectKey, "copilot")
+		rec = bodyWithCookie(r, http.MethodPatch, path, ownerSession,
+			`{"display_name":"衝突する名前","client_kind":"copilot"}`, "")
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("重複の status = %d, want 409（body=%s）", rec.Code, rec.Body.String())
+		}
+	})
+
 	// ── ⑧/admin/users にエージェントが所有者つきで出る（6.1）───
 
 	t.Run("管理者の一覧にエージェントが所有者つきで出る", func(t *testing.T) {

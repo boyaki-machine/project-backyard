@@ -101,6 +101,22 @@ export type CreateAgentRequest = components['schemas']['CreateAgentRequest']
 export type UpdateAgentRequest = components['schemas']['UpdateAgentRequest']
 export type CreateAgentTokenRequest = components['schemas']['CreateAgentTokenRequest']
 
+/** `GET /agent-client-kinds` が返す1件（`ApiDesign.md` 4.5.7） */
+export type AgentClientKind = components['schemas']['AgentClientKind']
+
+/**
+ * クライアント種別のカタログ（`ApiDesign.md` 4.5.7）。
+ *
+ * **必要権限は無い**（認証済みであればよい）。`sort_order` の昇順で返るので、
+ * **画面は並べ替えない。**
+ *
+ * **画面に対応表を持たせないために在る**——値域は今後も増える
+ * （`DbDesign.md` 8.2.1.1）ので、写しを置くと必ず腐る。
+ */
+export function listAgentClientKinds(): Promise<{ items: AgentClientKind[] }> {
+  return api.get<{ items: AgentClientKind[] }>('/agent-client-kinds')
+}
+
 /**
  * 自分のエージェントを一覧する（`ApiDesign.md` 4.5.1）。
  *
@@ -130,7 +146,13 @@ export function createAgent(body: CreateAgentRequest): Promise<MyAgent> {
 /**
  * エージェントを更新する（`ApiDesign.md` 4.5.4）。**送った項目だけが変わる。**
  *
- * `project_key` と `client_kind` は変えられない（1件の同一性そのものであるため）。
+ * `project_key` は変えられない（そのエージェントが行った仕事はプロジェクトに
+ * 属するため）。**`client_kind` は変えられる**——値域が今後も増えるので、
+ * `other` で登録した人が、PB がその種別に対応した日に移れる必要がある。
+ *
+ * **`client_kind` か `display_name` を変えると重複しうる**（キーは所有者・
+ * プロジェクト・クライアント種別・表示名の4つ組）。重複は 409 `already_exists`。
+ *
  * **`is_active: false` にすると、そのエージェントのトークンも失効する。**
  */
 export function updateAgent(id: string, body: UpdateAgentRequest): Promise<MyAgent> {

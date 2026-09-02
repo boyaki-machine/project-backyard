@@ -1533,16 +1533,18 @@ Phase 2
   0018_document_template_text.sql
                           文書テンプレートの初期本文を直す（DDLなし）            ← 適用済み
   0019_agent.sql          agent, task_lease, agent.run の再配布            ← 適用済み
+  0020_agent_client_kind.sql
+                          agent_client_kind（クライアント種別のカタログ）と FK 化 ← 適用済み
 Phase 3
-  0020_agent_run.sql      agent_run, agent_report, context_pack_log
-  0021_knowledge.sql      knowledge, knowledge_revision, proposal
-  0022_comment_signal.sql comment_signal
-  0023_embedding.sql      vector 拡張 + embedding
-  0024_project_event.sql  project_event
-  0025_analytics.sql      estimate_record, contribution
+  0021_agent_run.sql      agent_run, agent_report, context_pack_log
+  0022_knowledge.sql      knowledge, knowledge_revision, proposal
+  0023_comment_signal.sql comment_signal
+  0024_embedding.sql      vector 拡張 + embedding
+  0025_project_event.sql  project_event
+  0026_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——手順23 で 0018（初期本文の直し）を挟んだため、`agent` は 0018 から 0019 へ、Phase 3 は 0019〜0024 から 0020〜0025 へ1つずつ後ろへずれた。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で2回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 がさらに1つ後ろへ動いた。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026** である。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 
@@ -1722,7 +1724,7 @@ CREATE TABLE agent (
   owner_actor_id char(26) COLLATE "C" NOT NULL
                  REFERENCES app_user(actor_id) ON DELETE CASCADE,
   project_id     char(26) COLLATE "C" REFERENCES project(id) ON DELETE CASCADE,
-  client_kind    text    NOT NULL CHECK (client_kind IN ('claude_code','copilot','other')),
+  client_kind    text    NOT NULL REFERENCES agent_client_kind(key),
   model_name     text,
   model_version  text,
   capabilities   jsonb   NOT NULL DEFAULT '[]'::jsonb,
@@ -1735,11 +1737,63 @@ CREATE TRIGGER trg_agent_updated BEFORE UPDATE ON agent
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ```
 
+**`client_kind` は 0020 で参照テーブルに変えた**（8.2.1.1）。0019 では
+`CHECK (client_kind IN ('claude_code','copilot','other'))` だった。
+
 **1行が表すのは「ある参加者の手元で動くクライアント1つ」である。** 人ではない。同じ人が Claude Code と VS Code を使えば2行になり（`Requirements.md` 10.10.3「クライアントごとに分ける」）、2つのプロジェクトにつなぐならさらに分かれる。**キーは（所有者・クライアント種別・プロジェクト）の3つ組**であり、`ApiDesign.md` 6.1 のエージェント行の例（`claude-code (my-app)`）がこの形を前提にしている。
 
 `model_name` / `model_version` を保持するのは、`Requirements.md` 10.10.3 の「モデル更新後に品質が変化した際の切り分け」のため。`agent_run` にも実行時点の値をコピーする（後からモデルを変えても過去の実行記録が壊れないよう非正規化する）。
 
 `trust_level` は`Requirements.md` 10.10.3 の段階的権限昇格に対応する。**0019 の時点では既定値のまま置き、APIも画面も受け取らない**——昇格の材料になる実績（`agent_run`、Phase 3）がまだ無く、使うものが無いうちに入口を作ると意味が固まるためである。
+
+#### 8.2.1.1 `agent_client_kind` — クライアント種別のカタログ（0020 で追加）
+
+```sql
+CREATE TABLE agent_client_kind (
+  key          text PRIMARY KEY,
+  display_name text    NOT NULL,
+  sort_order   integer NOT NULL
+);
+```
+
+| `key` | `display_name` | `sort_order` | 事業者 |
+|---|---|---|---|
+| `claude_code` | Claude Code | 10 | Anthropic |
+| `codex` | OpenAI Codex | 20 | OpenAI |
+| `copilot` | GitHub Copilot | 30 | Microsoft |
+| `gemini` | Gemini（CLI / Code Assist） | 40 | Google |
+| `other` | その他・OSS 等 | 90 | — |
+
+**値が決めるのは「設定ファイルの置き場」である。** エディタではない——同じ VS Code でも
+Claude 拡張なら `.mcp.json` + `.claude/commands/`、GitHub Copilot なら
+`.vscode/mcp.json` + `.github/prompts/` になる（`Requirements.md` 10.8）。
+**両方を使う人は2行になる。**
+
+**2026年に「エージェント」と「エディタ」が1対1でなくなった**（ACP により Claude Code /
+Codex / Gemini CLI が Zed・JetBrains・Neovim の中で動く）。**軸をエディタに取ると値域が
+定まらない**ので、**MCP クライアントとして振る舞うもの**を1軸に採る。
+
+**`key` は事業者名ではなく製品名にする。** 1つの事業者が複数のクライアントを出しうるためで、
+値が表すのは事業者ではなく置き場である。**`claude_code` と `copilot` は 0019 からの綴りを
+変えない**（既存の行がある）。
+
+**CHECK ではなく参照テーブルにした理由**（利用者の判断、2026-09-02——「業界は流動的で
+今後増える可能性も存分にある」）。
+
+| | 得るもの |
+|---|---|
+| 増やすのが行の追加になる | CHECK だと値を増やすたびに DDL のマイグレーションが要る |
+| **表示名がDBに来る** | **画面が対応表を持たなくてよくなる**（`GET /roles` が `lib/roles.ts` を廃止させたのと同じ形。`GuiDesign.md` 5.6） |
+| 値域はDBが守る | FK なので、アプリの検証を抜けた値は INSERT で落ちる |
+
+**「PB が接続手順を提供できるか」の列は持たない。** 配置ファイルの生成は手順28
+（`Requirements.md` 10.9.1 系統A）であり、**使うものが無いうちに入口を作ると意味が固まる**
+——`trust_level` を 0019 で受け取らなかったのと同じ判断である。**28 でテンプレートを
+書くときに列を足す。**
+
+**`other` を残す。** OSS のエージェント（Cline / Goose / OpenCode / OpenHands / Aider /
+Continue など）や、事業者系でも PB がまだ手順を持たないものがここへ入る。
+**手順28 で個別のテンプレートを書いたものから、行として独立させていく。**
 
 #### `owner_actor_id` — エージェントは人に紐づく（0019 で追加）
 

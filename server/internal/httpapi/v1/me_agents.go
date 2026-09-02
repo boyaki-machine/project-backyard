@@ -17,10 +17,10 @@
 package v1
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -46,11 +46,12 @@ const (
 	agentModelMaxLen = 100
 )
 
-// agentClientKinds は client_kind の値域（DbDesign.md 8.2.1 の CHECK）。
+// client_kind の値域は Go の定数で持たない（0020）。
 //
-// **DBの CHECK と同じ順・同じ綴りで持つ。** ここが食い違うと、検証を通った値が
-// INSERT で落ちて 500 になる。
-var agentClientKinds = []string{"claude_code", "copilot", "other"}
+// **正本は agent_client_kind の行である**（DbDesign.md 8.2.1.1）。0019 までは
+// DBの CHECK と同じ綴りを Go 側にも並べていたが、**値域が「世の中のエージェント一覧」に
+// なった以上、二重に持つと必ず食い違う**——食い違えば検証を通った値が INSERT で
+// 落ちて 500 になる。検証は AgentClientKindExists で行い、最後の砦は FK である。
 
 // agentDefaultScopes はエージェント用トークンの既定スコープ（Design.md 6.5）。
 //
@@ -179,6 +180,38 @@ func (h *handler) listMyAgents(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, myAgentListView{Items: items})
 }
 
+// ── GET /api/v1/agent-client-kinds（4.5.7）──────────────────
+
+// agentClientKindView はカタログの1件（ApiDesign.md 4.5.7）。
+type agentClientKindView struct {
+	Key         string `json:"key"`
+	DisplayName string `json:"display_name"`
+}
+
+// listAgentClientKinds はクライアント種別のカタログを返す（ApiDesign.md 4.5.7）。
+//
+// **必要権限は無い**（認証済みであればよい）。消費者は 5.8.2 の画面で、
+// そこの必要権限は「本人」である。カタログ自体は秘密ではない。
+//
+// **画面に対応表を持たせないために在る。** GET /roles が display_name を
+// 返すようになった時点で lib/roles.ts を廃止したのと同じ形（GuiDesign.md 5.6）
+// ——値域は今後も増えるので、写しを置くと必ず腐る。
+//
+// **ページネーションも ETag も持たない**（7.1 / 7.2 と同じ扱い）。
+func (h *handler) listAgentClientKinds(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.q.ListAgentClientKinds(r.Context())
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("クライアント種別の一覧を取得できない: %w", err)))
+		return
+	}
+	items := make([]agentClientKindView, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, agentClientKindView{Key: row.Key, DisplayName: row.DisplayName})
+	}
+	WriteJSON(w, http.StatusOK, catalog[agentClientKindView]{Items: items})
+}
+
 // ── POST /api/v1/me/agents（4.5.2）──────────────────────────
 
 type createAgentRequest struct {
@@ -217,6 +250,11 @@ func (h *handler) createMyAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	if e := h.checkClientKind(ctx, f.clientKind); e != nil {
+		apierr.Write(w, r, e)
+		return
+	}
 
 	// **自分がメンバーであるプロジェクトに限る**（4.5.2）。エージェントの権限は
 	// 所有者から導かれるので、自分が入っていないプロジェクトのエージェントを
@@ -312,6 +350,28 @@ func (h *handler) createMyAgent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// checkClientKind は client_kind が値域にあるかを DB で確かめる（ApiDesign.md 4.5.2）。
+//
+// **値域の正本は agent_client_kind の行である**（DbDesign.md 8.2.1.1）。Go 側に
+// 一覧を持たないのは、**値が今後も増える**ためで、二重に持つと必ず食い違う。
+//
+// 値域外は 422（`details[].field` は client_kind）。**FK が最後の砦として残る**ので、
+// ここを通り抜けても DB で落ちる——ただしその場合は 500 になるため、ここで先に見る。
+func (h *handler) checkClientKind(ctx context.Context, kind string) *apierr.Error {
+	ok, err := h.q.AgentClientKindExists(ctx, kind)
+	if err != nil {
+		return apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("クライアント種別を確かめられない: %w", err))
+	}
+	if !ok {
+		return apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+			Field: "client_kind", Code: "invalid",
+			Message: "クライアントの種別を一覧から選んでください",
+		})
+	}
+	return nil
+}
+
 // validateCreateAgent は 4.5.2 の入力を検証する。
 //
 // **すべての項目を見てから返す**（2.5 の details は項目ごとに紐づける）。
@@ -341,18 +401,13 @@ func validateCreateAgent(req createAgentRequest) (createAgentFields, *apierr.Err
 		})
 	}
 
+	// **値域はここで判定しない**（0020）。正本は agent_client_kind の行なので、
+	// ハンドラが DB へ問い合わせて確かめる（checkClientKind）。
 	f.clientKind = strings.TrimSpace(req.ClientKind)
-	switch {
-	case f.clientKind == "":
+	if f.clientKind == "" {
 		details = append(details, apierr.Detail{
 			Field: "client_kind", Code: "required",
 			Message: "クライアントの種別を選んでください",
-		})
-	case !slices.Contains(agentClientKinds, f.clientKind):
-		details = append(details, apierr.Detail{
-			Field: "client_kind", Code: "invalid",
-			Message: fmt.Sprintf("クライアントの種別は %s のいずれかで指定してください",
-				strings.Join(agentClientKinds, " / ")),
 		})
 	}
 
@@ -382,7 +437,11 @@ func validateCreateAgent(req createAgentRequest) (createAgentFields, *apierr.Err
 // updateAgentRequest はポインタで受ける。**送られた項目だけを更新する**ため、
 // 「空文字を送った」と「送らなかった」を区別する必要がある。
 type updateAgentRequest struct {
-	DisplayName  *string `json:"display_name"`
+	DisplayName *string `json:"display_name"`
+	// ClientKind は 0020 から変更できる（ApiDesign.md 4.5.4）。**値域が今後も
+	// 増える**ので、other で登録した人が、PB がその種別に対応した日に移れる
+	// 必要がある。**project_key は変えられないまま**——仕事はプロジェクトに属する。
+	ClientKind   *string `json:"client_kind"`
 	ModelName    *string `json:"model_name"`
 	ModelVersion *string `json:"model_version"`
 	IsActive     *bool   `json:"is_active"`
@@ -440,25 +499,71 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		*c.value = v
 	}
+	if req.ClientKind != nil {
+		kind := strings.TrimSpace(*req.ClientKind)
+		if kind == "" {
+			details = append(details, apierr.Detail{
+				Field: "client_kind", Code: "required",
+				Message: "クライアントの種別を選んでください",
+			})
+		}
+		req.ClientKind = &kind
+	}
 	if len(details) > 0 {
 		apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(details...))
 		return
 	}
 
 	ctx := r.Context()
+	if req.ClientKind != nil {
+		if e := h.checkClientKind(ctx, *req.ClientKind); e != nil {
+			apierr.Write(w, r, e)
+			return
+		}
+	}
 	rec := audit.FromRequest(r)
 	var updated gen.FindMyAgentRow
 
 	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
 		// **先に存在と持ち主を確かめる。** UPDATE の影響行数だけで判断すると、
 		// 「他人のもの」と「値が同じで更新不要」を区別できない。
-		if _, err := q.FindMyAgent(ctx, gen.FindMyAgentParams{
+		cur, err := q.FindMyAgent(ctx, gen.FindMyAgentParams{
 			ActorID: agentID, OwnerActorID: p.ActorID,
-		}); err != nil {
+		})
+		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return apierr.New(apierr.NotFound)
 			}
 			return fmt.Errorf("エージェントを読めない: %w", err)
+		}
+
+		// **更新でも重複しうる**（ApiDesign.md 4.5.4）。キーは（所有者・
+		// プロジェクト・クライアント種別・表示名）の4つ組で、**display_name と
+		// client_kind はどちらも変えられる**ためである。**変わる項目があるときだけ
+		// 数える**——値を送っていない項目は現在値のまま比較する。
+		if req.DisplayName != nil || req.ClientKind != nil {
+			name := cur.DisplayName
+			if req.DisplayName != nil {
+				name = *req.DisplayName
+			}
+			kind := cur.ClientKind
+			if req.ClientKind != nil {
+				kind = *req.ClientKind
+			}
+			dup, err := q.AgentExistsWithNameExcept(ctx, gen.AgentExistsWithNameExceptParams{
+				OwnerActorID:   p.ActorID,
+				ProjectID:      cur.ProjectID,
+				ClientKind:     kind,
+				DisplayName:    name,
+				ExcludeActorID: agentID,
+			})
+			if err != nil {
+				return fmt.Errorf("エージェントの重複を確かめられない: %w", err)
+			}
+			if dup {
+				return apierr.New(apierr.AlreadyExists).
+					WithMessage("同じ名前のエージェントが、このプロジェクトに既に登録されています")
+			}
 		}
 
 		if req.DisplayName != nil || req.IsActive != nil {
@@ -471,12 +576,13 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 				return fmt.Errorf("エージェントを更新できない: %w", err)
 			}
 		}
-		if req.ModelName != nil || req.ModelVersion != nil {
+		if req.ModelName != nil || req.ModelVersion != nil || req.ClientKind != nil {
 			if _, err := q.UpdateAgentModel(ctx, gen.UpdateAgentModelParams{
 				ActorID:      agentID,
 				OwnerActorID: p.ActorID,
 				ModelName:    nargText(req.ModelName),
 				ModelVersion: nargText(req.ModelVersion),
+				ClientKind:   nargText(req.ClientKind),
 			}); err != nil {
 				return fmt.Errorf("エージェントのモデルを更新できない: %w", err)
 			}
@@ -493,6 +599,9 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 		detail := map[string]any{}
 		if req.DisplayName != nil {
 			detail["display_name"] = *req.DisplayName
+		}
+		if req.ClientKind != nil {
+			detail["client_kind"] = *req.ClientKind
 		}
 		if req.ModelName != nil {
 			detail["model_name"] = *req.ModelName
@@ -515,11 +624,11 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 
 		// **応答は同じトランザクションの中で読む。** プールの側を使うと、
 		// まだコミットしていない更新が応答に載らない（me.go と同じ議論）。
-		row, err := q.FindMyAgent(ctx, gen.FindMyAgentParams{
+		row, err2 := q.FindMyAgent(ctx, gen.FindMyAgentParams{
 			ActorID: agentID, OwnerActorID: p.ActorID,
 		})
-		if err != nil {
-			return fmt.Errorf("更新後のエージェントを読めない: %w", err)
+		if err2 != nil {
+			return fmt.Errorf("更新後のエージェントを読めない: %w", err2)
 		}
 		updated = row
 		return nil

@@ -12,6 +12,12 @@ import (
 
 type Querier interface {
 	AddProjectMember(ctx context.Context, arg AddProjectMemberParams) error
+	// AgentClientKindExists は入力の検証に使う（ApiDesign.md 4.5.2 / 4.5.4）。
+	//
+	// **値域を Go の定数で持たない。** 正本は agent_client_kind の行であり、
+	// 二重に持つと「検証を通った値が INSERT で落ちて 500」になる。
+	//
+	AgentClientKindExists(ctx context.Context, key string) (bool, error)
 	// AgentExistsWithName は 409 already_exists の判定（ApiDesign.md 4.5.2）。
 	//
 	// **同じ所有者の中で（プロジェクト・クライアント種別・表示名）の組を見る。**
@@ -23,6 +29,12 @@ type Querier interface {
 	// 破れても壊れるものが無い（重複した行が1つ増えるだけ）。
 	//
 	AgentExistsWithName(ctx context.Context, arg AgentExistsWithNameParams) (bool, error)
+	// AgentExistsWithNameExcept は更新時の重複検査に使う（ApiDesign.md 4.5.4）。
+	//
+	// **client_kind と display_name はどちらも変えられる**ので、更新でも4つ組が
+	// ぶつかりうる。**自分自身を除く**のが AgentExistsWithName との違いである。
+	//
+	AgentExistsWithNameExcept(ctx context.Context, arg AgentExistsWithNameExceptParams) (bool, error)
 	// AppUserExists は UpdateAdminUserProfile が 0 行だった理由を切り分ける。
 	//
 	// 行が在れば version 不一致（409 conflict）、無ければ削除済み（404）。
@@ -598,6 +610,12 @@ type Querier interface {
 	// 目的なので、画面に出ないキー（administrator）は対象にしない。
 	//
 	ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) ([]ListAdminUsersRow, error)
+	// ListAgentClientKinds はクライアント種別のカタログを返す（ApiDesign.md 4.5.7）。
+	//
+	// **画面はこれを引いて表示名を出す。** 対応表を画面へ焼き込まない——値域は
+	// 今後も増える（DbDesign.md 8.2.1.1）ので、写しを置くと必ず腐る。
+	//
+	ListAgentClientKinds(ctx context.Context) ([]ListAgentClientKindsRow, error)
 	// ListDocumentBodies は ?outline=1（10.2）のためだけに本文を読む。
 	//
 	// **応答には本文を載せない。** 見出し一覧は本文から作るので読む必要があるが、
@@ -1305,6 +1323,12 @@ type Querier interface {
 	// 更新すると他人のエージェントを触れてしまう。
 	//
 	UpdateAgentActor(ctx context.Context, arg UpdateAgentActorParams) (int64, error)
+	// UpdateAgentModel はモデルとクライアント種別を更新する（ApiDesign.md 4.5.4）。
+	//
+	// **client_kind は 0020 から変更できる。** 値域が今後も増えるため、`other` で
+	// 登録した人が、PB がその種別に対応した日に移れる必要がある。**project_id は
+	// 変えられない**——そのエージェントが行った仕事はプロジェクトに属する。
+	//
 	UpdateAgentModel(ctx context.Context, arg UpdateAgentModelParams) (int64, error)
 	// UpdateComment は 9.8 の PATCH。**変えられるのは body_md と kind だけ**で、
 	// in_reply_to は immutable_field として先に弾かれている。

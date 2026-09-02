@@ -400,6 +400,33 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/agent-client-kinds:
+    get:
+      tags: [agents]
+      summary: クライアント種別のカタログ
+      operationId: listAgentClientKinds
+      description: |
+        エージェントのクライアント種別（ApiDesign.md 4.5.7、正本は
+        DbDesign.md 8.2.1.1 の `agent_client_kind`）。
+
+        **必要権限は不要**（認証済みであればよい）。消費者は GuiDesign.md 5.8.2 の
+        画面で、そこの必要権限は「本人」である。カタログ自体は秘密ではない。
+
+        **画面に対応表を持たせないために在る**——`GET /roles` が display_name を
+        返すようになった時点で `lib/roles.ts` を廃止したのと同じ形。値域は今後も
+        増えるので、写しを置くと必ず腐る。
+
+        `items[]` は `sort_order` の昇順。**ページネーションも ETag も持たない。**
+      responses:
+        '200':
+          description: クライアント種別のカタログ。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentClientKindList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+
   /api/v1/me/agents:
     get:
       tags: [me]
@@ -4190,6 +4217,31 @@ components:
           type: string
           enum: [administrator, operator]
 
+    AgentClientKindList:
+      description: ApiDesign.md 4.5.7。ページネーションも ETag も持たない。
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentClientKind'
+
+    AgentClientKind:
+      description: |
+        エージェントのクライアント種別1件（DbDesign.md 8.2.1.1）。
+        **値が決めるのは設定ファイルの置き場であって、エディタではない**
+        ——同じ VS Code でも Claude 拡張と GitHub Copilot で分かれる。
+      type: object
+      required: [key, display_name]
+      properties:
+        key:
+          type: string
+          example: claude_code
+        display_name:
+          type: string
+          example: Claude Code
+
     MyAgentList:
       description: |
         ApiDesign.md 4.5.1。ページネーションも ETag も持たない（4.4.1 と同じく、
@@ -4223,7 +4275,10 @@ components:
             手がかり**であり、一意ではない。
         client_kind:
           type: string
-          enum: [claude_code, copilot, other]
+          description: |
+            `agent_client_kind` の `key`（DbDesign.md 8.2.1.1）。
+            **値域を固定しない**——正本は `GET /api/v1/agent-client-kinds`（4.5.7）で、
+            今後も増える。0019 までは CHECK の3値だった。
         model_name:
           type: string
           nullable: true
@@ -4337,7 +4392,10 @@ components:
             （`details[].code` は `not_found`）。
         client_kind:
           type: string
-          enum: [claude_code, copilot, other]
+          description: |
+            `agent_client_kind` の `key`（DbDesign.md 8.2.1.1）。
+            **値域を固定しない**——正本は `GET /api/v1/agent-client-kinds`（4.5.7）で、
+            今後も増える。0019 までは CHECK の3値だった。
         model_name:
           type: string
           maxLength: 100
@@ -4348,13 +4406,22 @@ components:
     UpdateAgentRequest:
       description: |
         ApiDesign.md 4.5.4。**送られた項目だけを更新する。**
-        `project_key` と `client_kind` は変えられない。
+        `project_key` は変えられない（そのエージェントが行った仕事は
+        プロジェクトに属するため）。**`client_kind` は 0020 から変えられる**
+        ——値域が今後も増えるので、`other` で登録した人が、PB がその種別に
+        対応した日に移れる必要がある。
       type: object
       properties:
         display_name:
           type: string
           minLength: 1
           maxLength: 60
+        client_kind:
+          type: string
+          description: |
+            `agent_client_kind` の `key`（4.5.7 が正本）。変更すると
+            （所有者・プロジェクト・クライアント種別・表示名）の4つ組が
+            ぶつかりうるので、**重複すれば 409 `already_exists`** になる。
         model_name:
           type: string
           maxLength: 100

@@ -118,6 +118,13 @@ func Mount(r chi.Router, deps Deps) {
 		r.Post("/me/agents/{id}/tokens", h.createMyAgentToken)
 		r.Delete("/me/agents/{id}/tokens/{token_id}", h.deleteMyAgentToken)
 
+		// クライアント種別のカタログ（ApiDesign.md 4.5.7）。**必要権限は無い**
+		// （認証済みであればよい）——消費者は GuiDesign.md 5.8.2 の画面で、
+		// そこの必要権限は「本人」である。/permissions と同じ扱い。
+		//
+		// **/me の配下に置かない。** 本人のデータではなくカタログである。
+		r.Get("/agent-client-kinds", h.listAgentClientKinds)
+
 		// ── プロジェクト（ApiDesign.md 5章）──────────────────
 		//
 		// 一覧が要求するのは project.view であり、**どのプロジェクトが見えるかは
