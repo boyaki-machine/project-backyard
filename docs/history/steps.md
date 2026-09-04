@@ -3549,10 +3549,31 @@ chi RouteContext を引き継ぎ、内側のルータが消費済みのパスで
 `develop` に6か所あることが分かったので起票した（`docs/unclosed-bold`）。
 **検査そのものが効くことを、わざと壊した入力1件で確かめている。**
 
+### 実クライアントでの通し（2026-09-05、完了条件）
+
+**利用者が stg を再起動し、`/me/agents` でトークンを発行して `/pb-onboard` を実行した。**
+Claude Code の MCP クライアントが `.mcp.json`（`http://localhost:8081/mcp/pb`）へ接続し、
+ツール5件が `mcp__pb__*` として現れ、**手順どおり4ツールが順に走った。**
+
+| 見たこと | 結果 |
+|---|---|
+| 接続 | `initialize` から `tools/list` まで通る。**プロトコルの実装差は1件も出ていない**（`Accept` ヘッダ・ストリーム開設・`MCP-Protocol-Version` のいずれでも落ちなかった） |
+| `pb_get_project` | `key=pb`、**`my_role=project_admin`（委譲が実データで効いている）**、`my_permissions` 8件。**`doc.edit` は入らない**（既定スコープから外してある） |
+| `pb_list_docs` | 憲章4件と、それぞれの見出し（`vision` 6章・`rules` 6章・`decisions` 4章・`learnings` 4章） |
+| `pb_get_doc` | `vision` / `rules` / `decisions` を全文、`learnings` は目次だけ（コマンドの指示どおりに読み分けられた） |
+| `pb_list_tasks` | `assignee=me` は **0件**。板全体では未完了20件で、**20件すべてが未割当**だった |
+
+**エージェントが憲章に対して4件の指摘を出した**（`/pb-onboard` 手順4 の「意味が取れなかった箇所」）。
+**これが 10.8.5 が「実質的な価値」と呼んでいるものである**——内容は `PROGRESS.md` の
+引き継ぎ「stg の憲章を読むとき」に写した。**反映するかは利用者の判断待ち。**
+
+**`settings.repositories` が空**であることが、この経路で初めて表に出た。**手順28 の系統B は
+clone コマンドをここから組み立てる**ので、28 の前に埋まっている必要がある。
+
 ### 片付け
 
 検証で作ったもの（エージェント1件・その actor と監査2行、個人トークン2本、見出しつき文書1件）を
 すべて削除し、**`make dev-seed` が「作成 0 / スキップ 1」を返すことで seed の状態に戻ったことを
 裏づけた**。`actor.is_active` が false の行は0件、`mcp-` で始まるプロジェクトも0件。
-dev サーバを停止（`make stop-server`）。**`make stg-build` は実行済みで、stg の再起動は
-利用者の操作を待つ。**
+dev サーバを停止（`make stop-server`）。**stg は `make stg-build` の後、利用者が再起動して
+そのまま動いている**（MCP を持つ版）。
