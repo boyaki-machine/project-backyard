@@ -440,8 +440,8 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 | `pb_get_project` | read | 2 | — | プロジェクト名・キー・説明・**リポジトリ一覧**・自分の役割 | **参画時に最初に呼ぶ。** リポジトリは `project.settings.repositories`（`DbDesign.md` 6.4） |
 | `pb_list_docs` | read | 2 | — | プロジェクト文書の目次（階層・見出し） | **憲章の目次。** 全文を返さない |
 | `pb_get_doc` | read | 2 | `path`, `section?` | 文書本文（Markdown） | **`section` で章を指定できる。** 全文しか返せない設計にしない（10.6.2） |
-| `pb_get_task` | read | 2 | `id` | チケット本文、種別、DoD、スコープ境界、実行主体属性、readinessスコア | チケットの契約内容を取得 |
-| `pb_list_tasks` | read | 2 | `filter`, `status`, `assignee?` | チケット一覧（軽量） | ボードの状況把握。**`assignee=me` で自分のチケット** |
+| `pb_get_task` | read | 2 | **`seq`** | チケット本文、種別、DoD、スコープ境界、実行主体属性、readinessスコア | チケットの契約内容を取得。**引数は `seq`**（画面と URL に出るチケット番号。`Design.md` 8.5） |
+| `pb_list_tasks` | read | 2 | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `per_page?` | チケット一覧（軽量） | ボードの状況把握。**`assignee=me` で自分のチケット**——エージェントのトークンでは**所有者**を指す（`Design.md` 8.5） |
 | `pb_get_context` | read | 2 | `task_id`, `budget?` | コンテキストパック（10.4） | 実装に必要な前提情報一式 |
 | `pb_create_ticket` | write | 2 | `type`, `title`, `body`, `parent?`, `assignee?` | チケットID・`seq` | **議論の結果をその場で起票する。** 10.0.2 の 1・3 への手当 |
 | `pb_claim_task` | write | 2 | `id`, `agent_id` | `lease_id`, `expires_at` | 着手宣言。ステータスを「実装中」へ |

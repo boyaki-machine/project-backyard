@@ -3483,3 +3483,97 @@ seed のエージェントが残って **`TestAdminUsersIntegration/一覧の絞
 落ちた**（`is_active=false の件数 = 1, want 0`）。**症状はコードの回帰に見えたが、
 原因は自分の検証残骸である。** 片付けの関数に足して、結合168件が戻ることを確かめた。 サーバと Vite を停止、`/tmp/pbchrome-*` を削除、
 `make clean-webui`（`stg-build` が `dist/` を埋めるため）。
+
+## 手順25 — MCP サーバと read 系ツール（2026-09-05、`feature/step-25-mcp-read`）
+
+`Design.md` 11章 手順25。**完了条件は「Claude Code から `/pb-onboard` が通しで走る」。**
+プロトコル層とツール5件をこのセッションで実装し、**実クライアントでの通しは利用者に残した**
+（エージェントは stg にログインできず、トークンを発行できないため）。
+
+### 作ったファイル
+
+| ファイル | 中身 |
+|---|---|
+| `server/internal/mcp/jsonrpc.go` | JSON-RPC 2.0 の型・エラーコード・応答の組み立て（約90行） |
+| `server/internal/mcp/server.go` | Streamable HTTP の POST 経路、`initialize` / 通知 / `tools/list` / `tools/call` / `ping` の振り分け（約220行） |
+| `server/internal/mcp/tools.go` | ツール5件の定義・description・入力スキーマ・本体（約400行） |
+| `server/internal/mcp/rest.go` | 内部 HTTP 呼び出しと `http.ResponseWriter` の受け皿（約120行） |
+| `server/internal/mcp/server_test.go` / `tools_test.go` | 単体30件 |
+| `server/internal/httpapi/mcp_integration_test.go` | 結合17件（実DB） |
+| `.mcp.json` / `.claude/commands/pb-onboard.md` | 配置ファイル（**手順28 まで手書き**。`Requirements.md` 10.8.3 / 10.8.5 の写し） |
+
+### 変更したファイル
+
+| ファイル | 変更 |
+|---|---|
+| `docs/Design.md` | **8.4（プロトコル）と 8.5（ツールの引数と応答）を新設**、旧 8.4 を 8.6 へ繰り下げ、8.3 に必要権限と Cookie の扱いを追記、目次の8章を「記述済」へ。**8.6 に公式 SDK へ乗り換える条件を書いた** |
+| `docs/Requirements.md` | 10.3.2 の `pb_get_task` / `pb_list_tasks` の引数列 |
+| `docs/ApiDesign.md` / `docs/openapi.yaml` | 5.4 の `my_role` / `my_permissions`（エージェントでは所有者のもの） |
+| `docs/Development.md` | **12章（エージェントを MCP でつなぐ）を新設。** 目次も更新 |
+| `server/internal/httpapi/router.go` | `/mcp/{key}` のマウント、内部呼び出し用ルータ、`MCPPath` とレート制限の定数 |
+| `server/internal/httpapi/v1/project_view.go` | `my_role` の照合を `p.AuthzActorID()` へ（委譲） |
+| `server/internal/httpapi/openapi_drift_test.go` | `/mcp/{key}` をドリフト検出から1本だけ除外 |
+| `server/internal/httpapi/router_test.go` | 未知の API パスの一覧から `/mcp/nope` を外し、**MCP の認証を見る検査を新設** |
+
+### 検証
+
+**単体 1026件 PASS**（`--- PASS` の総数。手順24b は 994。増分は mcp パッケージ30件ほか）。
+**結合 186件 PASS**（同 168。増分18件は `TestMCPIntegration` の1＋17）。
+
+**わざと壊して、検査が落ちることを先に確かめた**——①`resolveAssignee` を素通しにする
+②`lighten` を素通しにする。**4件が落ちた**（`me` の写しが3件、項目数が1件）。戻して再度 PASS。
+
+**結合テストで6件が落ち、1件が panic した。原因は1つ**——内部呼び出しが外側の
+chi RouteContext を引き継ぎ、内側のルータが消費済みのパスで照合していた。**単体は
+フェイクの REST を相手にしているのでこの経路を通らない。** `chi.RouteCtxKey` に nil を
+入れて外し、`Body == nil` の防御を足した。
+
+**実サーバ検証 42件 PASS**（dev :8080。標準ライブラリだけで書いた MCP クライアント）。
+
+| 見たこと | 結果 |
+|---|---|
+| 認証の負の側 | トークン無し・知らないトークンは 401、存在しないプロジェクトは 404、`GET` は 405 |
+| `initialize` | `2025-06-18` をそのまま返す。`2024-11-05` も返す。知らない版には最新を返す。`capabilities` は `tools` だけ |
+| 通知 | `notifications/initialized` は **202 で本文なし** |
+| `tools/list` | read 系5件が `/pb-onboard` の順。description あり、`inputSchema` は object、`pb_get_doc` は `path` 必須 |
+| `pb_get_project` | `key=demo`、**`my_role=project_admin`（委譲）**、`my_permissions` 8件に `ticket.create` を含む |
+| `pb_list_docs` | テンプレート4件が並び、`body_md` は含まれず、`outline` の欄が付く |
+| `pb_get_doc` | 本文が Markdown 生で返る。`section` を指定すると短くなる |
+| `pb_list_tasks` | 未完了11件。**1件が10項目**で、`id` / `sort_key` / `tags` / `version` は無い |
+| `pb_get_task` | `seq` で1件（**30項目**）。`"4"` と文字列で渡しても通る |
+| 権限の負の側 | **`doc.view` を外したトークンで `pb_get_doc` が 403**、同じトークンで `pb_get_project` は 200 |
+| 呼び出し側の誤り | 知らないメソッド `-32601`、知らないツール `-32602`、必須引数なし `-32602`、壊れた本文 `-32700` |
+| ツールの失敗 | 見つからない章は `isError` ＋ **`available_sections` つき**、見つからないチケットも `isError` |
+
+**日本語の描画を測った**（`markdown-it`）。**閉じていない `**` は、私が足した箇所には無い**。
+`develop` に6か所あることが分かったので起票した（`docs/unclosed-bold`）。
+**検査そのものが効くことを、わざと壊した入力1件で確かめている。**
+
+### 実クライアントでの通し（2026-09-05、完了条件）
+
+**利用者が stg を再起動し、`/me/agents` でトークンを発行して `/pb-onboard` を実行した。**
+Claude Code の MCP クライアントが `.mcp.json`（`http://localhost:8081/mcp/pb`）へ接続し、
+ツール5件が `mcp__pb__*` として現れ、**手順どおり4ツールが順に走った。**
+
+| 見たこと | 結果 |
+|---|---|
+| 接続 | `initialize` から `tools/list` まで通る。**プロトコルの実装差は1件も出ていない**（`Accept` ヘッダ・ストリーム開設・`MCP-Protocol-Version` のいずれでも落ちなかった） |
+| `pb_get_project` | `key=pb`、**`my_role=project_admin`（委譲が実データで効いている）**、`my_permissions` 8件。**`doc.edit` は入らない**（既定スコープから外してある） |
+| `pb_list_docs` | 憲章4件と、それぞれの見出し（`vision` 6章・`rules` 6章・`decisions` 4章・`learnings` 4章） |
+| `pb_get_doc` | `vision` / `rules` / `decisions` を全文、`learnings` は目次だけ（コマンドの指示どおりに読み分けられた） |
+| `pb_list_tasks` | `assignee=me` は **0件**。板全体では未完了20件で、**20件すべてが未割当**だった |
+
+**エージェントが憲章に対して4件の指摘を出した**（`/pb-onboard` 手順4 の「意味が取れなかった箇所」）。
+**これが 10.8.5 が「実質的な価値」と呼んでいるものである**——内容は `PROGRESS.md` の
+引き継ぎ「stg の憲章を読むとき」に写した。**反映するかは利用者の判断待ち。**
+
+**`settings.repositories` が空**であることが、この経路で初めて表に出た。**手順28 の系統B は
+clone コマンドをここから組み立てる**ので、28 の前に埋まっている必要がある。
+
+### 片付け
+
+検証で作ったもの（エージェント1件・その actor と監査2行、個人トークン2本、見出しつき文書1件）を
+すべて削除し、**`make dev-seed` が「作成 0 / スキップ 1」を返すことで seed の状態に戻ったことを
+裏づけた**。`actor.is_active` が false の行は0件、`mcp-` で始まるプロジェクトも0件。
+dev サーバを停止（`make stop-server`）。**stg は `make stg-build` の後、利用者が再起動して
+そのまま動いている**（MCP を持つ版）。

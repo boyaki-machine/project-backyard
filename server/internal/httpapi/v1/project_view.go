@@ -140,7 +140,17 @@ func buildProjectDetail(
 			Role:        m.RoleKey,
 			JoinedAt:    Time(m.JoinedAt.Time),
 		})
-		if m.ActorID == p.ActorID {
+		// **委譲：エージェントでは所有者のメンバーシップを見る**
+		// （Design.md 6.5、ApiDesign.md 5.4）。エージェントは project_member の
+		// 行を持たないので、ActorID で照合すると my_role が常に null になり、
+		// **下の my_permissions からプロジェクトロール層が丸ごと落ちる**——
+		// 認可は AuthzActorID で通す（middleware/authz.go）ので、
+		// 「できるのに、できないと応答している」状態になる。
+		//
+		// GET /me（4.1）は 24a でこの形になっている。手順25 で MCP の
+		// pb_get_project が 5.4 を初めてエージェントのトークンで叩き、
+		// 割れていることが分かった。
+		if m.ActorID == p.AuthzActorID() {
 			myRole = m.RoleKey
 		}
 	}
