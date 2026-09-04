@@ -5207,12 +5207,15 @@ components:
           items:
             $ref: '#/components/schemas/ProjectMember'
         my_role:
-          description: メンバーでないアドミニストレータでは null。
+          description: |
+            メンバーでないアドミニストレータでは null。
+            **エージェントのトークンでは所有者のロールが出る**（委譲。Design.md 6.5）。
           type: [string, 'null']
         my_permissions:
           description: |
             当該プロジェクトでの実効権限
             （システムロール ∪ プロジェクトロール ∩ スコープ。Design.md 6.4.1）。
+            **エージェントのトークンでは所有者のロールから導く**（同 6.5）。
           type: array
           items:
             type: string

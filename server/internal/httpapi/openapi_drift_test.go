@@ -15,6 +15,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"gopkg.in/yaml.v3"
+
+	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 )
 
 // openAPIPath は本テストから見た openapi.yaml の位置。
@@ -112,6 +114,17 @@ func walkRoutes(t *testing.T) map[operation]bool {
 		// chi は末尾に / を付けた形も歩く（/api/v1/me/ など）。同じ経路なので畳む。
 		route = strings.TrimSuffix(route, "/")
 		if route == "" {
+			return nil
+		}
+		// **MCP は openapi.yaml の対象外である**（手順25）。/mcp/{key} は
+		// JSON-RPC 2.0 の1エンドポイントで、メソッドもパスも増えず、
+		// 「何ができるか」は tools/list が返す（Design.md 8.4）。OAS に書けるのは
+		// 「POST に任意の JSON を送ると任意の JSON が返る」だけで、契約を1文字も
+		// 表せない。**正本は Design.md 8.4〜8.5 である。**
+		//
+		// **前方一致で素通しにしない。** ここに1本だけ書き下すことで、REST の
+		// エンドポイントを誤って /mcp の下へ生やせば、そちらは検知に掛かる。
+		if route == MCPPath+"/{"+middleware.ProjectKeyURLParam+"}" {
 			return nil
 		}
 		ops[operation(method+" "+route)] = true

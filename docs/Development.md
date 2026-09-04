@@ -26,6 +26,7 @@
 9. つまずいたとき            ← 症状から引く
 10. 依存とツールのバージョン  ← 固定しているものと、その理由
 11. ドッグフーディング用インスタンス（stg）  ← PB 自身を PB で管理する器
+12. エージェントを MCP でつなぐ  ← /pb-onboard を通すまでと、手で叩く手順
 付録A. 環境の構築            ← 端末に一度だけ入れるもの
 ```
 
@@ -844,6 +845,76 @@ make stg-build OUT=/path/to/dir
 | `bind: address already in use` | 前のサーバが残っている。`make stg-stop` |
 | 起動して即座に落ちる | `deploy/stg/secrets/app_database_url` のパスワードが DB のロールと食い違っている。**秘密を作り直したなら DB も作り直す**（initdb はボリュームが空のときしか走らない） |
 | `docker compose ls` に `pb-stg` が出ない | `make stg-up` |
+
+---
+
+# 12. エージェントを MCP でつなぐ
+
+**設計は `Design.md` 8章。** ここは手順だけを書く。
+
+## 12.1 このリポジトリの `.mcp.json`
+
+リポジトリ直下の `.mcp.json` は **stg（`http://localhost:8081/mcp/pb`）を指している**。
+PB 自身の管理に PB を使うためで（`Design.md` 4.4）、**dev（`:8080`）ではない**——
+`make dev-reset` で消えるインスタンスを憲章の置き場にはできない。
+
+**手順ファイルは `.claude/commands/pb-onboard.md`。** どちらも手順28 で PB が生成する
+ようになるが、それまでは手で置いてある（`Requirements.md` 10.8.3 / 10.8.5 の写し）。
+
+## 12.2 つなぐ（初回）
+
+```
+make stg-build                 # MCP を持つバイナリを作る
+make stg-stop && make stg-run  # 起動し直す（前景。背景は 11.2）
+```
+
+1. `http://localhost:8081` を開いてログインする（**`127.0.0.1:8081` で開かない**。11.5）
+2. `/me/agents` でエージェントを登録する（プロジェクトは `pb`、クライアント種別は使う道具）
+3. トークンを発行し、**一度だけ表示される全文**を控える
+4. 端末の環境変数に置く。**リポジトリには書かない**（`Requirements.md` 10.8.1）
+
+```
+export PB_TOKEN=pb_agt_...     # ~/.zshrc か direnv
+```
+
+5. Claude Code を開き直し、`/pb-onboard` を実行する
+
+**うまくいけば、憲章の要約と自分の担当チケットが返る。** 読み取りしかしないコマンドなので、
+ツール許可を read 系だけ自動承認にしておくと一息に走る。
+
+## 12.3 手で叩く（サーバだけを確かめたい）
+
+**MCP クライアントを立てずに、`curl` で JSON-RPC を1往復できる。**
+実装を直したときの当たりを取るのはこちらが速い。
+
+```
+TOKEN=pb_agt_...   # 履歴に残したくないなら read -s TOKEN
+
+# ツールの一覧
+curl -s http://127.0.0.1:8080/mcp/demo \
+  -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | python3 -m json.tool
+
+# ツールを1つ呼ぶ
+curl -s http://127.0.0.1:8080/mcp/demo \
+  -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call",
+       "params":{"name":"pb_get_doc","arguments":{"path":"rules"}}}' | python3 -m json.tool
+```
+
+**dev のトークンは画面から作れる**（`http://127.0.0.1:8080` → `/me/agents`）。
+デモアカウントは 4.1。
+
+## 12.4 つまずいたとき
+
+| 症状 | 原因と対処 |
+|---|---|
+| クライアントが「接続できない」と言う | サーバが起きていない。`curl -s http://localhost:8081/healthcheck` で確かめる |
+| `401 unauthenticated` | `PB_TOKEN` が空か、失効しているか、**所有者が無効化されている**（`Design.md` 6.5）。`/me/agents` で発行し直す |
+| `404 not_found` | URL のプロジェクトキーが、トークンのプロジェクトと違う（同 8.3）。`.mcp.json` の URL を見る |
+| `403 forbidden` がツールの結果に出る | トークンのスコープか所有者の権限が足りない（同 6.4.1）。`/me/agents` で発行時のスコープを見る |
+| `405 method_not_allowed` | `GET` で叩いている。**PB は `POST` だけを受ける**（SSE ストリームを持たない。同 8.4） |
+| ツールが1つも見えない | クライアントは接続時に一覧をキャッシュする。**クライアントを開き直す** |
 
 ---
 

@@ -48,7 +48,12 @@ func do(t *testing.T, method, path string) (*httptest.ResponseRecorder, errBody)
 // SPA のフォールバック（Design.md 3.4）が効くのは /api /mcp の外だけであり、
 // 綴りを誤った API 呼び出しに index.html を返してはならない。
 func TestUnknownAPIPathReturnsApiErrorShape(t *testing.T) {
-	for _, path := range []string{"/api/v1/nope", "/api", "/api/", "/mcp/nope"} {
+	// **/mcp/nope はもう「未知のパス」ではない**（手順25）。/mcp/{key} が
+	// 実装され、認証を通っていない要求は 401 になる（下の
+	// TestMCPRequiresAuthentication）。ここに残すのは /mcp そのものと、
+	// {key} より深いパス——どちらもルートに当たらないので 404 である。
+	// **この2件が 401 になったら、認証を /mcp の木ごと掛けてしまっている。**
+	for _, path := range []string{"/api/v1/nope", "/api", "/api/", "/mcp", "/mcp/demo/extra"} {
 		rec, body := do(t, http.MethodGet, path)
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s: status = %d, want 404", path, rec.Code)
@@ -59,6 +64,26 @@ func TestUnknownAPIPathReturnsApiErrorShape(t *testing.T) {
 		if body.Error.Message == "" {
 			t.Errorf("%s: message が空", path)
 		}
+	}
+}
+
+// MCP の口は認証を要する（Design.md 8.3）。
+//
+// **SPA のフォールバックに落ちないことと、認証が掛かっていることは別の検査で
+// ある。** 手順25 より前は /mcp/<何か> が 404 になることで前者だけを見ていたが、
+// ルートが実装された今は 401 が返る——**404 のままだと、認証を外しても
+// 気づけない。**
+func TestMCPRequiresAuthentication(t *testing.T) {
+	rec, body := do(t, http.MethodPost, MCPPath+"/demo")
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+	if body.Error.Code != "unauthenticated" {
+		t.Errorf("code = %q, want unauthenticated", body.Error.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); strings.HasPrefix(ct, "text/html") {
+		t.Errorf("SPA のフォールバックに落ちている: Content-Type = %q", ct)
 	}
 }
 

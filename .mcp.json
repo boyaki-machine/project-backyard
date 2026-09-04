@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "pb": {
+      "type": "http",
+      "url": "http://localhost:8081/mcp/pb",
+      "headers": {
+        "Authorization": "Bearer ${PB_TOKEN}"
+      }
+    }
+  }
+}
