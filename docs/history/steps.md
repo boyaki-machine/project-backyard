@@ -4134,3 +4134,63 @@ MCP 層が `GET` で読んで載せる。**`409 conflict` は `isError` のツ�
 
 スクラッチパッドの作業ファイル（`learn-rows.txt` / `keep.txt` / `mv-*.md`）のみ。
 サーバ・DB・コンテナは触っていない。作業ツリーは `git status` で空。
+
+## 手順26b の現況記録（2026-09-05）
+
+**完了。** MCP に状態遷移を開け、`ticket.working_agent_id`（実行者の自己申告）を足した。
+**リースは Phase 3 へ送った**（判断の経緯は `decisions.md`「手順26b」）。
+
+### 作ったもの・変えたもの
+
+```
+マイグレーション
+  server/migrations/0021_ticket_working_agent.sql   新規（1列。索引は張らない）
+
+サーバ
+  server/internal/store/queries/ticket.sql          SELECT に working_agent、
+                                                    UpdateTicket に列、
+                                                    SetTicketWorkingAgent / GetAgentOwner を新設
+  server/internal/httpapi/v1/ticket_view.go         応答に working_agent
+  server/internal/httpapi/v1/ticket_workflow.go     検証6（agentMayWorkOn / denyTransition）
+  server/internal/httpapi/v1/tickets_transition.go  検証6 の材料と working_agent の副作用
+  server/internal/httpapi/v1/tickets_transitions.go 9.7 でも同じ判定を通す
+  server/internal/httpapi/v1/tickets_update.go      PATCH の working_agent_id
+  server/internal/httpapi/v1/tickets_create.go      validateTicketWorkingAgent
+  server/internal/httpapi/apierr/apierr.go          DefaultMessage を公開
+  server/internal/mcp/tools.go                      transitionTools()、lightItem を11項目へ
+  server/internal/mcp/server.go                     遷移系を登録
+  server/internal/mcp/rest.go                       tokenScopeHint を既定文言のときだけに絞る
+
+クライアント
+  client/src/pages/BacklogPage.vue                  担当セルに 🤖（flex 化）
+  client/src/components/TicketDetailPane.vue        実行者の行と [解除]
+  client/src/api/schema.d.ts                        make gen-api で生成
+
+設計文書
+  Requirements.md 10.3.2 / 10.3.3 / 10.7.1 / 10.8.6
+  Design.md 6.4.4 / 6.4.5 / 8.2 / 8.5 / 8.5.3（新設）/ 8.6 / 11章
+  ApiDesign.md 4.5.4 / 6.5 / 9.2.2 / 9.5.2 / 9.6 / 9.7
+  DbDesign.md 冒頭 / 6.6（+ working_agent_id の節）/ 8.2.2 / 採番表
+  GuiDesign.md 5.4 / 5.5
+  Testing.md 6（overflow の落とし穴）
+  openapi.yaml
+```
+
+### 検証の結果
+
+| 層 | 結果 |
+|---|---|
+| 単体（`make test`） | 全 PASS。`tools/list` が10件になり、`pb_list_tasks` が11項目になることを更新 |
+| 結合（`make test-db`） | 全 PASS。新規9件——遷移先の一覧／担当が所有者なら進める／`working_agent` が立つ／遷移コメントが `progress`・`agent`／**再送が 409 に倒れる**／検証6 で拒む（状態も実行者も動かない）／拒まれるチケットは全行 `allowed:false`／`pb_list_tasks` が `working_agent` を運ぶ／**スコープの助言が付かない**（逆側で付くことも同時に測る）。人の側は `tickets_detail_integration_test.go` に「人の遷移では `working_agent` が立たない」「検証6 は人に掛からない」を追加 |
+| MCP（実サーバ） | `tools/list` = 10件。`pb_list_transitions` が `done` を `allowed:false` ＋「この状態へはエージェントから変更できません」で返す。`pb_transition_task` が seq 9 を進め、`working_agent` が立つ。seq 10（未割当）は 403 で拒まれ、**助言は付かない** |
+| 画面（ヘッドレス Chrome、1440 / 1024） | 12件 PASS。**ただし1回目は自動検査が全 PASS のまま 🤖 がセルから消えていた**（`Testing.md` 6 に追記）。CSS を直し、検査を「親の矩形に収まっているか」へ変えて再確認 |
+| DDL | `make migrate` / `make stg-migrate` ともに 0021 適用済み。`make stg-build` 実行済み |
+
+**`Design.md` 11章の手順26 の完了条件**「議論の結果をチケットとして起票でき、指示で文書を更新でき、
+**エージェントが自分の担当ぶんの状態を進められる**」——最後の1つが 26b で満たされた。
+
+### 片付け
+
+`26b_setup.sh clean` で実測——`agent行=0 token行=0 actor行=0 working_agent付き=0 seq9status=in_progress`。
+`make dev-seed` は冪等に通り、`make clean-webui` と `git status` も綺麗。
+検証の道具（`cdp.py` / `check26b.py` / `26b_setup.sh`）はスクラッチパッドに置いたので残らない。

@@ -1819,14 +1819,28 @@ watch(projectKey, (key) => {
                     >
                   </td>
 
+                  <!-- 担当と実行者を1つのセルに入れる（5.4「実行者を担当と同じ
+                       セルに置く」。手順26b）。**中を flex にする**——担当の名前を
+                       縮ませ、実行者の 🤖 は縮ませないためで、素の text node の
+                       ままだと 🤖 がセルの外へ押し出されて消える（実機で判明） -->
                   <td v-if="!shrunk" class="assignee-col">
-                    <template v-if="row.ticket.assignee">
-                      <span class="actor-mark" aria-hidden="true">{{
-                        assigneeMark(row.ticket)
-                      }}</span
-                      >{{ row.ticket.assignee.display_name }}
-                    </template>
-                    <span v-else class="muted">—</span>
+                    <span class="assignee-cell">
+                      <span v-if="row.ticket.assignee" class="assignee-name">
+                        <span class="actor-mark" aria-hidden="true">{{
+                          assigneeMark(row.ticket)
+                        }}</span
+                        >{{ row.ticket.assignee.display_name }}
+                      </span>
+                      <span v-else class="muted">—</span>
+                      <!-- **一覧では 🤖 だけを出す**（名前は詳細ペインが出す）。
+                           130px の列に名前2つは入らない -->
+                      <span
+                        v-if="row.ticket.working_agent"
+                        class="working-agent"
+                        :title="`${row.ticket.working_agent.display_name} が処理しています`"
+                        >🤖</span
+                      >
+                    </span>
                   </td>
 
                   <td v-if="!shrunk" class="due-col">
@@ -2207,9 +2221,38 @@ watch(projectKey, (key) => {
 
 /* `👤 開発メンバー` が 1440px で切れない幅。**狭い窓ではタイトルを優先する**が、
    それは `.title` の下限（`min-width`）が担うので、ここは固定値のままにする
-   ——メディアクエリを1つ足すより、下限を1か所に置くほうが読める */
+   ——メディアクエリを1つ足すより、下限を1か所に置くほうが読める。
+
+   **実行者（🤖）も同じセルに入る**（5.4。手順26b）。列を足さないのは、8列が既に
+   横幅の上限であることと、実行者を読みたい場面が「担当は誰か」を読む場面と
+   同じだからである */
 .assignee-col {
   width: 130px;
+}
+
+/* 担当と実行者を1行に収める。**縮むのは担当の名前だけで、🤖 は縮まない**
+   （`flex: none`）——「誰か」より先に「エージェントが入っている」が読めればよく、
+   名前の全文は詳細ペイン（5.5）が出す。
+
+   **素の text node のままでは 🤖 がセルの外へ押し出されて消えた**（実機で判明）。
+   セルに overflow があるため、はみ出した要素は幅を持ったまま見えなくなる
+   ——`getBoundingClientRect()` が 0 にならないので、実測では気づけない */
+.assignee-cell {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.assignee-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.working-agent {
+  flex: none;
+  color: var(--pb-text-muted);
 }
 
 /* `⚠ 2026-08-14` が入る幅。**年を省かない**（5.4）ので、`⚠` の分まで数える */

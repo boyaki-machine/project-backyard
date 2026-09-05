@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
+	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 )
 
 // apiBasePath は REST のベースパス（ApiDesign.md 2.1）。
@@ -105,8 +106,21 @@ func (h *Handler) getREST(r *http.Request, path string, query url.Values) (restR
 // なのかは、モデルにも利用者にも区別が付かない。**どちらを見ればよいかだけを
 // 伝える**（権限キーの一覧そのものは返さない——8.2 が「トークンや接続情報を
 // 返すツールを持たない」と定めており、実効権限は PB の画面が持つ情報である）。
-func tokenScopeHint(p *auth.Principal) string {
+//
+// **REST が具体的な理由を返したときは添えない**（手順26b）。ApiDesign.md 9.6 の
+// 検証3・4・6 は「エージェントからは行えません」「担当が所有者ではありません」の
+// ように、**スコープとは無関係な 403** を返す。そこへスコープを見よと足すと、
+// モデルを誤った方向へ送る——実際、検証6 を入れた直後の実サーバ検証で、
+// 担当が付いていないことが原因の 403 に「スコープを確認せよ」が付いた。
+//
+// 判定は**既定文言かどうか**で行う（apierr.DefaultMessage）。ミドルウェアが
+// 素の 403 を返したときだけ message が既定のままで、ハンドラが理由を作った
+// ときは WithMessage で上書きされている。
+func tokenScopeHint(p *auth.Principal, message string) string {
 	if p == nil || !p.IsAgent() {
+		return ""
+	}
+	if message != "" && message != apierr.DefaultMessage(apierr.Forbidden) {
 		return ""
 	}
 	return "（エージェントの権限は所有者のロールとトークンのスコープの積である。" +

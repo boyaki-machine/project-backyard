@@ -51,7 +51,12 @@ type Handler struct {
 func New(rest http.Handler, version string) *Handler {
 	// **並び順がそのまま tools/list の順になる。** read を先に置くのは、
 	// /pb-onboard が最初に呼ぶものが read だからである（Requirements.md 10.8.5）。
-	return &Handler{rest: rest, version: version, tools: append(readTools(), writeTools()...)}
+	// **遷移系は write の後に置く**——/pb-implement の流れが「読む → 起票・記録 →
+	// 状態を進める」だからである（Requirements.md 10.8.6。手順26b）。
+	tools := readTools()
+	tools = append(tools, writeTools()...)
+	tools = append(tools, transitionTools()...)
+	return &Handler{rest: rest, version: version, tools: tools}
 }
 
 // ServeHTTP は Streamable HTTP の POST 経路だけを実装する（Design.md 8.4）。

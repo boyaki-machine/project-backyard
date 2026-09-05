@@ -70,7 +70,12 @@ func (h *handler) listTicketTransitions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	actor := transitionActor{kind: p.ActorKind}
+	actor := transitionActor{
+		kind: p.ActorKind,
+		// 検証6（9.6。手順26b）。**9.6 と同じ関数を通す**ので、画面が出した
+		// 選択肢が押した瞬間に断られることがない。
+		assigneeIsOwner: agentMayWorkOn(p, row.AssigneeID),
+	}
 	if a := auth.ProjectAuthzFromContext(ctx, key); a != nil {
 		actor.permissions = a.Permissions
 	}

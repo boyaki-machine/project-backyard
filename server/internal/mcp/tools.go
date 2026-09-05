@@ -345,22 +345,29 @@ func resolveAssignee(value string, p *auth.Principal) string {
 	return strings.Join(parts, ",")
 }
 
-// lightItem は pb_list_tasks が残す10項目（Design.md 8.5）。
+// lightItem は pb_list_tasks が残す11項目（Design.md 8.5）。
 //
 // **すべて json.RawMessage で持つ。** 値の型を写すと、null を取りうる欄
 // （priority / assignee / due_date …）ごとにポインタの判断が要り、REST 側が
 // 欄を増やしたときに型の食い違いで落ちる。ここが行うのは選別だけである。
 type lightItem struct {
-	Seq       json.RawMessage `json:"seq"`
-	Type      json.RawMessage `json:"type"`
-	Title     json.RawMessage `json:"title"`
-	Status    json.RawMessage `json:"status"`
-	Priority  json.RawMessage `json:"priority"`
-	Assignee  json.RawMessage `json:"assignee"`
-	ParentSeq json.RawMessage `json:"parent_seq"`
-	StagedAt  json.RawMessage `json:"staged_at"`
-	DueDate   json.RawMessage `json:"due_date"`
-	UpdatedAt json.RawMessage `json:"updated_at"`
+	Seq      json.RawMessage `json:"seq"`
+	Type     json.RawMessage `json:"type"`
+	Title    json.RawMessage `json:"title"`
+	Status   json.RawMessage `json:"status"`
+	Priority json.RawMessage `json:"priority"`
+	Assignee json.RawMessage `json:"assignee"`
+	// WorkingAgent は「誰が実際に処理しているか」（手順26b で11項目目にした）。
+	//
+	// **一覧に残すのは、排他が無いためである。** 同じ所有者の別のエージェントが
+	// 既に触ったチケットを、それと知らずにもう一度進めることが起こりうる
+	// （ApiDesign.md 9.6 は上書きを許す）。/pb-onboard の
+	// pb_list_tasks(assignee=me) でこれが見えていれば、モデルが気づける。
+	WorkingAgent json.RawMessage `json:"working_agent"`
+	ParentSeq    json.RawMessage `json:"parent_seq"`
+	StagedAt     json.RawMessage `json:"staged_at"`
+	DueDate      json.RawMessage `json:"due_date"`
+	UpdatedAt    json.RawMessage `json:"updated_at"`
 }
 
 // lightList は軽量化した一覧。ページングの4項目は 2.6 のまま残す。
@@ -372,7 +379,7 @@ type lightList struct {
 	TotalPages json.RawMessage `json:"total_pages,omitempty"`
 }
 
-// lighten は 9.2.2 の応答から10項目だけを抜き出す（Design.md 8.5）。
+// lighten は 9.2.2 の応答から11項目だけを抜き出す（Design.md 8.5）。
 //
 // **落とした項目が要るときは pb_get_task が全部を返す。** ボードの状況把握に
 // 要らない項目を、件数ぶん掛け算しないための選別である。
@@ -431,7 +438,7 @@ func failed(r *http.Request, res restResult) toolResult {
 			res.status, body.Error.Code, body.Error.Message)
 	}
 	if res.status == http.StatusForbidden {
-		head += tokenScopeHint(auth.PrincipalFromContext(r.Context()))
+		head += tokenScopeHint(auth.PrincipalFromContext(r.Context()), body.Error.Message)
 	}
 	return errorResult(head + "\n" + string(res.body))
 }
@@ -777,4 +784,118 @@ func callPutDoc(h *Handler, r *http.Request, key string, args json.RawMessage) (
 		return failed(r, res), nil
 	}
 	return textResult(string(res.body)), nil
+}
+
+// ── 遷移系（手順26b。Design.md 8.5.3）──────────────────────
+
+// transitionTools は手順26b で実装する2件を返す。
+//
+// **叩く REST（9.6 / 9.7）は Phase 1 から在る。** 設計原則7 が「エージェントから
+// 見える面は MCP のみ」と定めているのに、状態遷移だけが REST に在って MCP に
+// 無かった——Requirements.md 10.3.2 が pb_claim_task の説明に「着手宣言。
+// ステータスを『実装中』へ」と書いていたため、**状態を動かす機能がリースの中に
+// 埋まって見えなくなっていた**（Design.md 8.2）。
+//
+// **リース（pb_claim_task / pb_release_task）は Phase 3 へ送った**
+// （Requirements.md 10.3.3）。排他が実際に要るのは自律取得（pb_next_task）からで、
+// Phase 2 は人がチケット番号を指定して走らせる。
+//
+// **並び順は「見てから動かす」。** 先に pb_list_transitions を置くのは、進める先と
+// 進めない理由を1往復で知ってから pb_transition_task を呼ぶ流れにするためである。
+func transitionTools() []tool {
+	return []tool{
+		{
+			Name: "pb_list_transitions",
+			Description: "このチケットがいまどの状態へ進めるかを、進めない先の理由つきで返す。" +
+				"状態を変える前にこれを呼ぶこと。" +
+				"進めない理由には「担当が自分の所有者でない」「人しか通せない順路である」などがあり、" +
+				"そのまま利用者に伝えれば次に何をすればよいかが分かる。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq": {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
+				},
+				Required: []string{"seq"},
+			},
+			call: callListTransitions,
+		},
+		{
+			Name: "pb_transition_task",
+			Description: "チケットの状態を1つ進める。着手するときは、まずこれで進行中にすること" +
+				"（同時に「自分が処理している」という記録がチケットに残る）。" +
+				"**進められるのは、自分の所有者が担当になっているチケットだけである。**" +
+				"担当が付いていなければ、進めずに利用者へ伝えること。" +
+				"**チケットを完了にすることはできない**——完了は人が確認して行う。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq": {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
+					"to": {Type: "string", Description: "遷移先のステータスキー（例: in_progress、review）。" +
+						"表示名（「進行中」）ではない。pb_list_transitions が返す key をそのまま渡す"},
+					"comment": {Type: "string", Description: "この遷移に添えるコメント（Markdown）。" +
+						"なぜこの状態にしたかを1〜2行で書くと、次に見た人が経緯を辿れる。" +
+						"チケットのコメント欄に残る"},
+				},
+				Required: []string{"seq", "to"},
+			},
+			call: callTransitionTask,
+		},
+	}
+}
+
+// transitionArgs は pb_transition_task の引数（Design.md 8.5.3）。
+type transitionArgs struct {
+	Seq     flexInt `json:"seq"`
+	To      string  `json:"to"`
+	Comment string  `json:"comment"`
+}
+
+func callListTransitions(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in taskArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if !in.Seq.set || in.Seq.value < 1 {
+		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	}
+	res, err := h.getREST(r,
+		"/projects/"+url.PathEscape(key)+"/tickets/"+
+			strconv.FormatInt(in.Seq.value, 10)+"/transitions", nil)
+	return passThrough(r, res, err)
+}
+
+// callTransitionTask は状態を1つ進める。
+//
+// **comment を開けているのは、9.6 が同じトランザクションでコメントを作るためである**
+// （Design.md 8.5.3）。pb_post_note を別に呼ばせると2往復になり、途中で落ちると
+// 遷移だけが残って経緯が残らない。
+//
+// **working_agent_id は MCP 層では触らない。** REST 側の副作用であり
+// （ApiDesign.md 9.6）、人が画面から遷移したときと同じ経路を通る。ここで書くと
+// 同じ規則が2か所に生まれる（8.1）。
+func callTransitionTask(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in transitionArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if !in.Seq.set || in.Seq.value < 1 {
+		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	}
+	if strings.TrimSpace(in.To) == "" {
+		return toolResult{}, newError(codeInvalidParams,
+			"to は必須である（ステータスキー。pb_list_transitions が返す key を渡すこと）")
+	}
+
+	body := map[string]any{"to": strings.TrimSpace(in.To)}
+	if in.Comment != "" {
+		body["comment"] = in.Comment
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost,
+		"/projects/"+url.PathEscape(key)+"/tickets/"+
+			strconv.FormatInt(in.Seq.value, 10)+"/transition", nil, raw, nil)
+	return passThrough(r, res, err)
 }

@@ -646,6 +646,15 @@ r.With(RequirePermission("ticket.close")).
 
 **権限は chi のミドルウェアとしてルート定義に宣言する。** ハンドラ本体に権限チェックを書くと、新しいエンドポイントで書き忘れても気づけない。ルート定義に並べれば、`routes.go` を眺めるだけで全エンドポイントの必要権限を確認でき、テストで網羅も検証できる。
 
+**「行を読まないと決まらない判定」だけはハンドラに置く。** ミドルウェアはプロジェクトまでしか知らず、どの行を触るかを見ないためである。**現在2例ある。**
+
+| 例 | 判定 | 出典 |
+|---|---|---|
+| コメントの編集・削除 | 自分が書いたものか（`comment.edit_own`） | `ApiDesign.md` 9.8 |
+| チケットの状態遷移 | 呼び出し元がエージェントのとき、担当が自分の所有者か | `ApiDesign.md` 9.6 の検証6（手順26b） |
+
+**3例目が現れたら、付録A 論点①（権限の全体像の再整理）をそこで行う。** 2例までは「宣言でほぼ足りる」と言えるが、3例あるものは規則である。
+
 **1本のルートでクエリの値により必要権限が変わる場合は `RequirePermissionUnlessQuery`（`middleware/authz.go`）を使う。** 宣言をルート定義に残すためのもので、**読み取り専用で、素通しする部分集合を意図して公開しているものにだけ使う。** 認可が値の検証より先に走るため、権限の無い呼び出し元には `422` ではなく `403` が返る。
 
 **フロント側（表示制御）**：ログイン時に実効権限の一覧を返し、ストアに保持する（`ApiDesign.md` 4.1）。
@@ -669,7 +678,8 @@ GET /api/v1/me
 - 権限不足は `403` を返し、`audit_log('permission.denied')` に記録する。**存在を隠したい資源（他プロジェクト）は `404` を返す**
   - **トークンが特定のプロジェクトに紐づく場合（`access_token.project_id`）、他プロジェクトは `404`。** 当人がそのプロジェクトのメンバーであっても、アドミニストレータであっても通さない。6.5 がエージェントトークンに禁じる「他プロジェクトへのアクセス」の実施点はここである。ロール・権限とは独立した軸で、トークンスコープが「何をしてよいか」を絞るのに対し、こちらは「どのプロジェクトに対してか」を絞る
 - **不変条件をAPI側で守る**：自分自身のロール変更・無効化・削除の禁止、最後の**有効な**アドミニストレータの降格禁止（`ApiDesign.md` 6.4 / 6.5）。UIだけで防ぐと、直接APIを叩いた際に誰もログインできないインスタンスが生まれうる
-- エージェントからの操作は、権限に加えて①ワークフローの `is_agent_reachable`、②サーキットブレーカーの状態、③リースの保有、を追加で検証する
+- エージェントからの操作は、権限に加えて①ワークフローの `is_agent_reachable`、②サーキットブレーカーの状態、③**担当が自分の所有者であること**（状態遷移のみ。`ApiDesign.md` 9.6 の検証6。手順26b）、を追加で検証する
+  - **③は当初「リースの保有」だった。** リースを Phase 3 へ送ったため置き換えた（8.2）。判定の材料が `task_lease` の行から `ticket.assignee_id` に変わっただけで、**「人が引き受けていないものをエージェントが動かさない」という意図は同じ**である
 
 ## 6.5 エージェントの認証（Phase 2）
 
@@ -784,17 +794,40 @@ GET /api/v1/me
 | `pb_create_ticket` | `POST /projects/:key/tickets` | `ticket.create` |
 | `pb_put_doc` | `PATCH /projects/:key/docs/*path` | **`doc.edit`** |
 | `pb_post_note` | `POST /projects/:key/tickets/:seq/comments` | `comment.create` |
-| `pb_claim_task` / `pb_release_task` / `pb_submit_result` | 9章の遷移API＋リース | `ticket.transition` |
+| `pb_transition_task` | `POST /projects/:key/tickets/:seq/transition` | `ticket.transition` |
+| `pb_list_transitions` | `GET /projects/:key/tickets/:seq/transitions` | `ticket.view` |
+| `pb_submit_result` | 9章の遷移API | `ticket.transition` |
+| `pb_claim_task` / `pb_release_task`（**Phase 3**） | リース（`DbDesign.md` 8.2.2） | `ticket.transition` |
 
 **手順26 は3つに分かれる**（利用者の判断、2026-09-05）。
 
 | | ツール | 状態 |
 |---|---|---|
 | **26a** | `pb_create_ticket` / `pb_put_doc` / `pb_post_note` | **叩く REST が実装済み**なので、MCP 層だけで足りる |
-| **26b** | `pb_claim_task` / `pb_release_task` | **REST が無い。** `ApiDesign.md` にリースの節を新設し、`GuiDesign.md` に「作業中」の表示を足す |
+| **26b** | `pb_transition_task` / `pb_list_transitions` | **叩く REST（9.6 / 9.7）は Phase 1 から在る。** 足すのは MCP の口と、`ticket.working_agent_id`（`DbDesign.md` 6.6）と、9.6 の検証6 |
 | **26c** | `pb_submit_result` | **格納先の `agent_run` / `agent_report` が Phase 3**（11章）。マイグレーションの追加を伴う |
 
 **分けたのは、26b と 26c が新しい設計を約20件要求するためである**（リースのステータス遷移先・TTL の延長点・`stale` の判定・完了レポートの検証範囲・`proposed_subtasks` の格納先など）。11.2.1 のとおり、**26a の時点で検証・記録・コミットまで終える。**
+
+### 26b はリースをやめ、状態遷移を開けた（2026-09-05）
+
+**当初の 26b は `pb_claim_task` / `pb_release_task` だった。** 実装前の一括確認で、利用者から**「汎用的なプロジェクト管理から見ると claim / リースに違和感がある」**という指摘があり、設計を組み直した。
+
+**きっかけは、リースが何を排他するのかを数えたことである。** `task_lease` に言及する設計文書の全16か所を調べたところ、**「リースを保持している間、他者の◯◯を拒む」と書かれた箇所が1つも無かった。** `Requirements.md` 10.3.3 自身が「**第一の目的は、いま誰が触っているかを他の参加者に見せること**」「少人数運用では**緩やかな整合**で実害はない」と書いている。**設計上のリースは掲示であって錠ではなく、`lease_token`（能力トークン）という名前だけが錠の語彙を持ち込んでいた。**
+
+そのうえでリースが解こうとしていた3つを分解した（詳細は `DbDesign.md` 6.6）。
+
+| 解こうとしていたもの | Phase 2 での判定 |
+|---|---|
+| 可視性 | **`assignee_id` ＋ `working_agent_id` ＋ `status_key` で足りる。** TTL 30分はエージェントのセッションの時間尺度で、PB が目指す分野横断のプロジェクト管理には合わない |
+| 排他 | **Phase 2 では発生しない。** `/pb-implement <seq>` は人が番号を指定して走らせる。エージェントが自律的に拾うのは `pb_next_task`（Phase 3） |
+| 詰まり防止 | 占有しないので詰まらない |
+
+**代わりに見えたのが、本当の穴だった**——**設計原則7 が「エージェントから見える面は MCP のみ」と定めているのに、状態遷移（9.6 / 9.7）は Phase 1 から REST に在って MCP に無かった。** `Requirements.md` 10.3.2 が `pb_claim_task` の説明に「着手宣言。**ステータスを「実装中」へ**」と書いていたため、**「状態を動かす機能」がリースの中に埋まって見えなくなっていた。** 26b はそれを取り出す手順になった。
+
+**副次的に、担当欄をめぐる食い違いが1つ解消した**（`DbDesign.md` 6.6）。
+
+**`pb_claim_task` / `pb_release_task` は Phase 3 へ送った**（`Requirements.md` 10.3.2）。**再検討の条件は自律取得（`pb_next_task`）の実装である**——そのときは `working_agent_id` を「宣言」から「条件」へ格上げすれば足り、テーブルを足さずに済む。TTL による失効（`stale` の検知）が要ると分かった時点で `task_lease` の器を起こす。
 
 **`pb_put_doc` は `doc.edit` を要求する。** エージェントのトークンにこの権限を載せるかは、**そのエージェントが誰に付いているか**で決まる（`Requirements.md` 10.10.3）。PM のエージェントは持ち、実装だけを行うエージェントは持たない。**発行時に許可リストから選ぶ**（`ApiDesign.md` 4.5.3。手順26a で 6.5 とあわせて改訂した）。
 
@@ -845,7 +878,7 @@ GET /api/v1/me
 
 **MCP 層は REST を内部の HTTP 呼び出しで叩く**（同一プロセス内で同じ chi ルータへ渡す。`Authorization` ヘッダを引き継ぐ）。8.1 が定める「ビジネスルール・権限判定・検証は REST 層に置く」を、**経路として強制するため**である。ハンドラを直接呼ぶ形にすると `RequireProjectPermission` を通らない経路が生まれ、権限判定が2か所になる。
 
-## 8.5 ツールの引数と応答（手順25・26a）
+## 8.5 ツールの引数と応答（手順25・26a・26b）
 
 ### 8.5.1 write 系（手順26a）
 
@@ -871,6 +904,25 @@ GET /api/v1/me
 
 **冪等キー（`idempotency_key`）は受けない**（`Requirements.md` 10.3.4 の改訂。再検討の条件は 8.6）。
 
+### 8.5.3 遷移系（手順26b）
+
+| ツール | 引数 | 叩く REST | 応答 |
+|---|---|---|---|
+| `pb_list_transitions` | `seq` | `GET /projects/:key/tickets/:seq/transitions` | 9.7 の応答をそのまま |
+| `pb_transition_task` | `seq`, `to`, `comment?` | `POST /projects/:key/tickets/:seq/transition` | 9.5.1 の応答をそのまま |
+
+**`pb_list_transitions` を別のツールとして出す。** 9.7 は**遷移できない先も `allowed: false` と日本語の理由を付けて返す**ので、エージェントが盲目的に `pb_transition_task` を試して失敗を繰り返すのを防げる。9.6 の検証6（担当が所有者でない）もここに現れるため、**「なぜ進められないか」を1往復で知れる。**
+
+**`pb_get_task` の応答に畳まない。** 9.7 がエンドポイントを分けている理由がそのまま効く——遷移先は `PATCH` のたびに再計算が要り、詳細を読むだけの呼び出しにその計算を載せない。
+
+**`to` はステータスキーである**（`in_progress` などの英字キー。表示名の「進行中」ではない）。`pb_get_project` の `workflow.statuses[]` と `pb_list_transitions` の `items[].key` がその語彙を返す。
+
+**`comment` を開けている。** 9.6 が「同じトランザクションで `kind='progress'` のコメントを作る」と定めており、**遷移だけ通って経緯が残らない状態を作らない**ためである。`pb_post_note` を別に呼ばせると2往復になり、途中で落ちると遷移だけが残る。
+
+**`done` への遷移は開けなくてよい。** 3つのワークフローテンプレートすべてで `done` は `is_agent_reachable = false` かつ遷移の `allowed_actor_kinds` が `["user"]` であり（`DbDesign.md` 7.4）、**DB とワークフローが拒む**（`Requirements.md` 10.8.6 の禁止事項）。MCP 層に `if` を置かない（8.1）。
+
+**遷移に成功すると `ticket.working_agent_id` が呼び出し元のエージェントになる**（`ApiDesign.md` 9.6）。**MCP 層は何もしない**——REST 側の副作用であり、人が画面から遷移したときと同じ経路を通る。
+
 ### 8.5.2 read 系（手順25）
 
 **応答は REST の JSON をそのまま `content[0].text` に載せる**（`pb_get_doc` の本文だけは Markdown 生）。整形の規則を MCP 層に置くと、同じ規則が REST と2か所に生まれる（8.1）。フィールド名が `ApiDesign.md` と一致していれば、エージェントは迷ったときに設計文書を引ける。
@@ -885,11 +937,14 @@ GET /api/v1/me
 
 **`pb_get_task` の引数は `seq` である**（`Requirements.md` 10.3.2 は `id` と書いていた）。9.1 が「URL とチケット番号を一致させる」と定めており、人が画面で見る番号も `/pb-implement <id>` に渡す値も `seq` である。`id`（ULID）を名乗ると、ULID を渡す呼び出しが必ず出る。
 
-**`pb_list_tasks` は軽量にする**（`Requirements.md` 10.3.2 の「チケット一覧（軽量）」）。9.2.2 の応答から次の10項目だけを残す。
+**`pb_list_tasks` は軽量にする**（`Requirements.md` 10.3.2 の「チケット一覧（軽量）」）。9.2.2 の応答から次の11項目だけを残す。
 
 ```
-seq / type / title / status / priority / assignee / parent_seq / staged_at / due_date / updated_at
+seq / type / title / status / priority / assignee / working_agent
+  / parent_seq / staged_at / due_date / updated_at
 ```
+
+**`working_agent` は手順26b で11項目目にした。** 排他が無いため（`ApiDesign.md` 9.6 は上書きを許す）、**同じ所有者の別のエージェントが既に触ったチケットを、それと知らずにもう一度進めることが起こりうる。** `/pb-onboard` の `pb_list_tasks(assignee=me)` で見えていれば、モデルが気づける。
 
 落とすのは `id`（`seq` で足りる）、`sort_key`（画面の並べ替え用）、`tags` `sprint` `has_children` `reporter`、見積3種、`start_date` `closed_at` `version` `created_at` である。**ボードの状況把握に要らない項目を、一覧の件数ぶん掛け算しない。** 1件の詳細が要るときは `pb_get_task` が全項目を返す。
 
@@ -903,7 +958,7 @@ seq / type / title / status / priority / assignee / parent_seq / staged_at / due
   - **SDK が v1 に達し、破壊的変更が収まったとき。** v0.x のあいだ依存に入れると、追随の手間が手順26〜28 に乗る
   - **判断の材料は `server/internal/mcp` の行数である。** 4メソッドで数百行なら自前が安い。**仕様への追随のために膨らみ始めたら、それは SDK が引き受けている仕事を書き写している**という合図であり、そこが乗り換え時である
 - **write 系の冪等キー（`idempotency_key`）を受けるか。** `Requirements.md` 10.3.4 は「write 系ツールは `idempotency_key` を受け付ける」と定めていたが、**手順26a では受けない**ことにし、あちらを改訂した。**本当の冪等性には「キー → 結果」を持つ器が要り**、8.1 が「MCP に独自のビジネスルールを置かない」と定める以上、置き場は REST 層＝全クライアントに効く変更になる。26a の3ツールは**再送が安全側に倒れる**——`pb_put_doc` は `If-Match` があるので古い版での再送が `409`、`pb_create_ticket` と `pb_post_note` の重複は画面で見えて人が消せる。**次のいずれかが起きたら再検討する**
-  - **リースが入ったとき（手順26b）。** `pb_claim_task` の再送は状態を進めるので、上の「安全側に倒れる」が成り立たない
+  - ~~**リースが入ったとき（手順26b）。**~~ **消化した**（2026-09-05）。26b はリースを採らず状態遷移を開けたので、条件そのものが立たなくなった。**`pb_transition_task` の再送は安全側に倒れる**——2度目は「進行中 → 進行中」を要求することになり、`ck_workflow_transition_diff` により定義が存在しないため `409 invalid_transition` で弾かれる（`ApiDesign.md` 9.6 の検証2）。**リースを Phase 3 で起こすときに、この条件も一緒に戻す**
   - **無人実行に踏み込んだとき**（`Requirements.md` 10.11 の将来対応）。人が同席していれば重複は目で拾えるが、同席しないなら拾えない
   - **判断の材料は「再送で何が二重になるか」を1つ言えるかである。** 言えないうちは器を作らない
 
@@ -1289,9 +1344,11 @@ Phase 2 の成果物には**ブラウザに出ないものがある**——MCP �
 25. MCP サーバと read 系ツール                          ← Design 8
       ← Claude Code から /pb-onboard が通しで走る
 26. MCP の write 系ツール                               ← Design 8.2
-      ← 議論の結果をチケットとして起票でき、指示で文書を更新できる
+      ← 議論の結果をチケットとして起票でき、指示で文書を更新でき、
+        エージェントが自分の担当ぶんの状態を進められる
       （26a=起票・文書更新・ノート＋エージェントの削除、
-        26b=リース、26c=完了レポート。8.2 の表が内訳）
+        26b=状態遷移＋ticket.working_agent_id、26c=完了レポート。
+        8.2 の表が内訳。26b は当初リースだったが 2026-09-05 に組み直した）
 27. コンテキストパック（pb_get_context）                 ← Requirements 10.4
       ← チケットを指定すると憲章の該当章とスコープ境界が返る
 28. セットアップ画面と設定ファイル生成                    ← Requirements 10.9

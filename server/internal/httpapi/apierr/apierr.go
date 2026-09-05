@@ -142,6 +142,16 @@ func New(code Code) *Error {
 	return &Error{Code: code, Message: messages[code]}
 }
 
+// DefaultMessage は code の既定文言を返す（2.5.1）。
+//
+// **写しを作らせないために公開している。** 呼び出し元が「既定のままか、
+// 上書きされたか」を判定したいことがある——MCP 層が 403 に添える助言が、
+// REST が具体的な理由を返したときには邪魔になる（mcp/rest.go）。
+// 文言を向こうに書き写すと、ここを直したときに片方だけ古くなる。
+func DefaultMessage(code Code) string {
+	return messages[code]
+}
+
 // WithMessage は画面に出す文言を差し替える。
 func (e *Error) WithMessage(msg string) *Error {
 	e.Message = msg

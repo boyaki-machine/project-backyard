@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -433,6 +434,9 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
+	// **逆側も同じ道具で1回測る**（Testing.md 6）——助言が付くべき 403 で
+	// 付いていることを確かめないと、上の「付かない」は検知が効いている証拠に
+	// ならない（付け忘れでも通ってしまう）。
 	t.Run("スコープから doc.view を外すと文書を読めない", func(t *testing.T) {
 		// **所有者は doc.view を持つ**（0017 が operator と project_member へ
 		// 与えている）。それでも読めないのは、トークンのスコープとの積で
@@ -443,6 +447,11 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		if !strings.Contains(text, "403") || !strings.Contains(text, "forbidden") {
 			t.Errorf("403 forbidden が伝わっていない: %s", text)
+		}
+		// **こちらには助言が付く**（原因がスコープだから）。検証6 の側で
+		// 「付かない」を測っているので、両側を同じ道具で見ている。
+		if !strings.Contains(text, "発行時のスコープ") {
+			t.Errorf("スコープの助言が付いていない: %s", text)
 		}
 		// 同じトークンでも、スコープに含めたものは読める（絞り込みが
 		// 効いていることと、トークンごと死んでいないことの両方を見る）。
@@ -466,8 +475,9 @@ func TestMCPIntegration(t *testing.T) {
 		if got.Total != 1 || len(got.Items) != 1 {
 			t.Fatalf("件数 = %d（items %d）, want 1", got.Total, len(got.Items))
 		}
-		if len(got.Items[0]) != 10 {
-			t.Errorf("項目数 = %d, want 10（Design.md 8.5）", len(got.Items[0]))
+		if len(got.Items[0]) != 11 {
+			t.Errorf("項目数 = %d, want 11（Design.md 8.5。手順26b で working_agent を足した）",
+				len(got.Items[0]))
 		}
 		if string(got.Items[0]["seq"]) != "1" {
 			t.Errorf("seq = %s, want 1", got.Items[0]["seq"])
@@ -734,6 +744,301 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		if reason != "MCP から更新した" {
 			t.Errorf("change_reason = %q", reason)
+		}
+	})
+
+	// ── 遷移系（手順26b。Design.md 8.5.3、ApiDesign.md 9.6 の検証6）──────
+
+	// 担当が「所有者ではない」チケットを1件用意する。**検証6 の負の側**であり、
+	// これが無いと「エージェントは所有者の担当だけを進められる」を測れない。
+	//
+	// **未割当（assignee_id が NULL）にする。** 別の人を作って割り当てるより
+	// 材料が少なく、9.6 が「担当が未割当のものも進められない」と定めている
+	// ぶん、規則そのものを直接測れる。
+	foreignTicketID := ulidgen.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO ticket (id, project_id, seq, type, title, status_key)
+		VALUES ($1, $2, 90, 'task', '担当が付いていないチケット', 'todo')`,
+		foreignTicketID, projectID); err != nil {
+		t.Fatalf("担当なしのチケットを作れない: %v", err)
+	}
+
+	t.Run("pb_list_transitions が進める先と理由を返す", func(t *testing.T) {
+		text, isErr := tool(t, fullToken, "pb_list_transitions", `{"seq":1}`)
+		if isErr {
+			t.Fatalf("失敗した: %s", text)
+		}
+		var got struct {
+			Current struct {
+				Key string `json:"key"`
+			} `json:"current"`
+			Items []struct {
+				Key     string  `json:"key"`
+				Allowed bool    `json:"allowed"`
+				Reason  *string `json:"reason"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		if got.Current.Key != "todo" {
+			t.Errorf("current = %q, want todo", got.Current.Key)
+		}
+		// simple テンプレート（DbDesign.md 7.4）：todo からは in_progress のみ。
+		// **done は allowed:false で残る**——9.7 が「遷移できない先も理由付きで
+		// 返す」と定めており、隠すと「なぜ完了にできないか」が読めなくなる。
+		seen := map[string]bool{}
+		for _, it := range got.Items {
+			seen[it.Key] = it.Allowed
+			if !it.Allowed && (it.Reason == nil || *it.Reason == "") {
+				t.Errorf("%s が allowed:false なのに reason が無い", it.Key)
+			}
+		}
+		if !seen["in_progress"] {
+			t.Errorf("in_progress へ進めない（items=%s）", text)
+		}
+		if seen["done"] {
+			t.Error("done へ進めることになっている（エージェントはクローズできない）")
+		}
+	})
+
+	t.Run("担当が所有者ならエージェントが状態を進められる", func(t *testing.T) {
+		text, isErr := tool(t, fullToken, "pb_transition_task",
+			`{"seq":1,"to":"in_progress","comment":"着手します"}`)
+		if isErr {
+			t.Fatalf("失敗した: %s", text)
+		}
+		var got struct {
+			Status struct {
+				Key string `json:"key"`
+			} `json:"status"`
+			WorkingAgent *struct {
+				ID   string `json:"id"`
+				Kind string `json:"kind"`
+			} `json:"working_agent"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		if got.Status.Key != "in_progress" {
+			t.Errorf("status = %q, want in_progress", got.Status.Key)
+		}
+		// **遷移の副作用で実行者が立つ**（ApiDesign.md 9.6）。
+		if got.WorkingAgent == nil {
+			t.Fatalf("working_agent が立っていない（%s）", text)
+		}
+		if got.WorkingAgent.ID != agentID {
+			t.Errorf("working_agent.id = %q, want %q", got.WorkingAgent.ID, agentID)
+		}
+		if got.WorkingAgent.Kind != "agent" {
+			t.Errorf("working_agent.kind = %q, want agent", got.WorkingAgent.Kind)
+		}
+
+		// **遷移コメントが同じトランザクションで入る**（9.6）。
+		var kind, origin string
+		if err := pool.QueryRow(ctx, `
+			SELECT kind, origin FROM comment
+			WHERE ticket_id = $1 ORDER BY created_at DESC LIMIT 1`,
+			ticketID).Scan(&kind, &origin); err != nil {
+			t.Fatalf("遷移コメントを引けない: %v", err)
+		}
+		if kind != "progress" || origin != "agent" {
+			t.Errorf("遷移コメント = (%s, %s), want (progress, agent)", kind, origin)
+		}
+	})
+
+	t.Run("再送は 409 に倒れる（冪等キーが要らない根拠）", func(t *testing.T) {
+		// Design.md 8.6：「再送で何が二重になるか」を1つも言えないことの実測。
+		// 2度目は「進行中 → 進行中」を要求することになり、
+		// ck_workflow_transition_diff により定義が無いため検証2 で落ちる。
+		text, isErr := tool(t, fullToken, "pb_transition_task",
+			`{"seq":1,"to":"in_progress"}`)
+		if !isErr {
+			t.Fatalf("再送が通ってしまった: %s", text)
+		}
+		if !strings.Contains(text, "invalid_transition") {
+			t.Errorf("invalid_transition が返っていない: %s", text)
+		}
+	})
+
+	t.Run("担当が所有者でないチケットは検証6 で拒まれる", func(t *testing.T) {
+		text, isErr := tool(t, fullToken, "pb_transition_task",
+			`{"seq":90,"to":"in_progress"}`)
+		if !isErr {
+			t.Fatalf("拒まれなかった: %s", text)
+		}
+		if !strings.Contains(text, "403") {
+			t.Errorf("403 が返っていない: %s", text)
+		}
+		if !strings.Contains(text, "所有者") {
+			t.Errorf("検証6 の理由が返っていない: %s", text)
+		}
+		// **スコープの助言を添えない**（手順26b。mcp/rest.go の tokenScopeHint）。
+		// 検証6 の 403 はスコープと無関係で、添えるとモデルを誤った方向へ送る。
+		// **実サーバの検証で実際に付いていたので、ここで押さえる。**
+		if strings.Contains(text, "発行時のスコープ") {
+			t.Errorf("スコープの助言が付いている（原因はスコープではない）: %s", text)
+		}
+
+		// **状態も実行者も動いていないこと。** 拒否が「返り値だけ」で、
+		// 副作用が残っていないかを実物で見る。
+		var status string
+		var workingAgent *string
+		if err := pool.QueryRow(ctx,
+			`SELECT status_key, working_agent_id FROM ticket WHERE id = $1`,
+			foreignTicketID).Scan(&status, &workingAgent); err != nil {
+			t.Fatalf("チケットを引けない: %v", err)
+		}
+		if status != "todo" || workingAgent != nil {
+			t.Errorf("拒んだのに動いている: status=%s working_agent=%v", status, workingAgent)
+		}
+	})
+
+	t.Run("拒まれるチケットでは全ての遷移先が allowed:false になる", func(t *testing.T) {
+		// 検証6 はチケット単位の条件なので、9.7 の items[] が全行同時に落ちる。
+		text, isErr := tool(t, fullToken, "pb_list_transitions", `{"seq":90}`)
+		if isErr {
+			t.Fatalf("失敗した: %s", text)
+		}
+		var got struct {
+			Items []struct {
+				Key     string  `json:"key"`
+				Allowed bool    `json:"allowed"`
+				Reason  *string `json:"reason"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		if len(got.Items) == 0 {
+			t.Fatal("items が空である")
+		}
+		for _, it := range got.Items {
+			if it.Allowed {
+				t.Errorf("%s が allowed:true になっている", it.Key)
+			}
+		}
+	})
+
+	t.Run("pb_list_tasks が working_agent を運ぶ", func(t *testing.T) {
+		text, isErr := tool(t, fullToken, "pb_list_tasks", `{"assignee":"me"}`)
+		if isErr {
+			t.Fatalf("失敗した: %s", text)
+		}
+		var got struct {
+			Items []map[string]json.RawMessage `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("一覧を読めない: %v（%s）", err, text)
+		}
+		// **items[0] を見ない。** この時点で所有者の担当は複数あり（先の
+		// pb_create_ticket が1件足している）、並びは sort_key 順である。
+		// 遷移したのは seq 1 なので、そこを名指しで探す。
+		var target map[string]json.RawMessage
+		for _, it := range got.Items {
+			if string(it["seq"]) == "1" {
+				target = it
+				break
+			}
+		}
+		if target == nil {
+			t.Fatalf("seq 1 が一覧に無い（%s）", text)
+		}
+		raw, ok := target["working_agent"]
+		if !ok {
+			t.Fatalf("working_agent が落ちている（%s）", text)
+		}
+		if !strings.Contains(string(raw), agentID) {
+			t.Errorf("working_agent = %s, want %s を含む", raw, agentID)
+		}
+	})
+
+	// restJSON は /api/v1 を Bearer トークンで1回叩く（PATCH の検証用）。
+	//
+	// **MCP の口を通さない。** working_agent_id を人が消す経路は REST の
+	// PATCH（ApiDesign.md 9.5.2）であり、MCP には出していない——実行者を
+	// 立てるのはエージェント自身で、消すのは人だからである。
+	restJSON := func(method, path, token, body, ifMatch string) *httptest.ResponseRecorder {
+		var rd *strings.Reader
+		if body == "" {
+			rd = strings.NewReader("")
+		} else {
+			rd = strings.NewReader(body)
+		}
+		req := httptest.NewRequest(method, "/api/v1"+path, rd)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		if ifMatch != "" {
+			req.Header.Set("If-Match", ifMatch)
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("人は PATCH で実行者を消せる", func(t *testing.T) {
+		// 直前の遷移で seq 1 に実行者が立っている。**版を実物から取る**
+		// ——手で書いた期待値は、先行する検証が1つ増えるたびに腐る。
+		get := restJSON(http.MethodGet, "/projects/"+projectKey+"/tickets/1", fullToken, "", "")
+		if get.Code != http.StatusOK {
+			t.Fatalf("チケットを読めない: %d（%s）", get.Code, get.Body.String())
+		}
+		var cur struct {
+			Version      int  `json:"version"`
+			WorkingAgent *any `json:"working_agent"`
+		}
+		if err := json.Unmarshal(get.Body.Bytes(), &cur); err != nil {
+			t.Fatalf("応答を読めない: %v", err)
+		}
+		if cur.WorkingAgent == nil {
+			t.Fatal("前提が崩れている：実行者が立っていない")
+		}
+
+		w := restJSON(http.MethodPatch, "/projects/"+projectKey+"/tickets/1", fullToken,
+			`{"working_agent_id":null}`, `"`+strconv.Itoa(cur.Version)+`"`)
+		if w.Code != http.StatusOK {
+			t.Fatalf("PATCH の status = %d, want 200（%s）", w.Code, w.Body.String())
+		}
+		var after struct {
+			WorkingAgent *any `json:"working_agent"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &after); err != nil {
+			t.Fatalf("応答を読めない: %v", err)
+		}
+		if after.WorkingAgent != nil {
+			t.Errorf("working_agent = %v, want null", *after.WorkingAgent)
+		}
+
+		// **activity に1行残る**（9.5.2）。人が変えたときは記録する
+		// ——記録しないのは遷移の副作用のほうだけである。
+		var n int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM activity
+			WHERE entity_id = $1 AND field = 'working_agent_id'`, ticketID).Scan(&n); err != nil {
+			t.Fatalf("activity を数えられない: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("working_agent_id の activity = %d行, want 1", n)
+		}
+	})
+
+	t.Run("実行者に人を指定すると 422", func(t *testing.T) {
+		get := restJSON(http.MethodGet, "/projects/"+projectKey+"/tickets/1", fullToken, "", "")
+		var cur struct {
+			Version int `json:"version"`
+		}
+		if err := json.Unmarshal(get.Body.Bytes(), &cur); err != nil {
+			t.Fatalf("応答を読めない: %v", err)
+		}
+		// **所有者（人）の ULID を渡す。** 実行者の欄に人が入る経路を作らない
+		// ——担当と実行者を分けた意味が消える（DbDesign.md 6.6）。
+		w := restJSON(http.MethodPatch, "/projects/"+projectKey+"/tickets/1", fullToken,
+			`{"working_agent_id":"`+ownerID+`"}`, `"`+strconv.Itoa(cur.Version)+`"`)
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422（%s）", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "not_found") {
+			t.Errorf("not_found が返っていない: %s", w.Body.String())
 		}
 	})
 

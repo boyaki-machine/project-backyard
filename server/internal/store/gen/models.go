@@ -315,6 +315,8 @@ type Ticket struct {
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
 	StagedAt        pgtype.Timestamptz
+	// 実行者（誰が実際に処理しているか）。エージェントが遷移時に自己申告する。DbDesign.md 6.6
+	WorkingAgentID pgtype.Text
 }
 
 type TicketLink struct {

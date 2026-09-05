@@ -186,6 +186,7 @@ const listBody = `{"items":[{"id":"01TICKET00000000000000000","seq":31,"type":"t
 	`"title":"認証APIの実装","status":{"key":"in_progress","name":"進行中","category":"in_progress"},` +
 	`"priority":"high","assignee":{"id":"01USER0000000000000000000","kind":"user","display_name":"田中"},` +
 	`"reporter":{"id":"01USER0000000000000000000","kind":"user","display_name":"田中"},` +
+	`"working_agent":{"id":"01AGENT000000000000000000","kind":"agent","display_name":"claude-code"},` +
 	`"parent_seq":null,"has_children":true,"sort_key":"0|hzzzzz:","staged_at":null,` +
 	`"tags":[{"id":"01TAG00000000000000000000","name":"設計"}],"sprint":null,` +
 	`"estimate_point":5,"estimate_hours":null,"actual_hours":3.5,"start_date":"2026-08-09",` +
@@ -193,7 +194,7 @@ const listBody = `{"items":[{"id":"01TICKET00000000000000000","seq":31,"type":"t
 	`"created_at":"2026-08-09T01:00:00Z","updated_at":"2026-08-11T00:12:44Z"}],` +
 	`"page":1,"per_page":200,"total":48,"total_pages":1}`
 
-func TestListTasksKeepsExactlyTenFields(t *testing.T) {
+func TestListTasksKeepsExactlyElevenFields(t *testing.T) {
 	// Design.md 8.5：ボードの状況把握に要らない項目を件数ぶん掛け算しない。
 	rest := &fakeREST{body: listBody}
 	h := New(rest, "v0")
@@ -215,7 +216,7 @@ func TestListTasksKeepsExactlyTenFields(t *testing.T) {
 	}
 
 	want := []string{"seq", "type", "title", "status", "priority", "assignee",
-		"parent_seq", "staged_at", "due_date", "updated_at"}
+		"working_agent", "parent_seq", "staged_at", "due_date", "updated_at"}
 	for _, k := range want {
 		if _, ok := got.Items[0][k]; !ok {
 			t.Errorf("%s が落ちている", k)
