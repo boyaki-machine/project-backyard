@@ -63,12 +63,16 @@ type Agent struct {
 	TrustLevel   int32
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	// トークンを載せる環境変数の接尾。PB_TOKEN_ を付けた名前を接続設定が読む。DbDesign.md 8.2.1
+	TokenEnvSuffix pgtype.Text
 }
 
 type AgentClientKind struct {
 	Key         string
 	DisplayName string
 	SortOrder   int32
+	// PB がこの種別の配置ファイルを出せるか。DbDesign.md 8.2.1.1
+	HasSetupTemplate bool
 }
 
 // エージェントの完了レポート。report に Requirements.md 10.6.1 の全体が入る。DbDesign.md 8.2.4

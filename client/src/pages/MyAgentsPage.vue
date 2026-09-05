@@ -118,6 +118,7 @@ async function submitForm(payload: {
   client_kind: string
   model_name: string
   model_version: string
+  token_env_suffix: string
 }) {
   formBusy.value = true
   formError.value = null
@@ -132,6 +133,12 @@ async function submitForm(payload: {
         client_kind: payload.client_kind,
         model_name: payload.model_name,
         model_version: payload.model_version,
+        // **空文字は送らない。** サーバの COALESCE は空文字を「値の指定」として
+        // 扱うため、未設定へ戻す意味にはならない（4.5.4）。**空にする経路は
+        // Phase 2 では作らない。**
+        ...(payload.token_env_suffix === ''
+          ? {}
+          : { token_env_suffix: payload.token_env_suffix }),
       })
       showForm.value = false
       notice.value = `✓ エージェント「${updated.display_name}」を更新しました`
@@ -144,6 +151,10 @@ async function submitForm(payload: {
         client_kind: payload.client_kind,
         ...(payload.model_name === '' ? {} : { model_name: payload.model_name }),
         ...(payload.model_version === '' ? {} : { model_version: payload.model_version }),
+        // **空なら送らない**（未設定として作られ、token_env_name が id へ倒れる）。
+        ...(payload.token_env_suffix === ''
+          ? {}
+          : { token_env_suffix: payload.token_env_suffix }),
       })
       showForm.value = false
       notice.value = `✓ エージェント「${created.display_name}」を登録しました`
@@ -464,6 +475,12 @@ function subtitle(agent: MyAgent): string {
 
               <p class="agent-meta">{{ subtitle(a) }}</p>
               <p class="agent-meta">登録 {{ formatDateTime(a.created_at) }}</p>
+              <!-- **環境変数名を出す**（手順28a）。ここに出さないと、登録のときに
+                   決めた名前を後から確かめる場所が無い。**`export` 行そのものと
+                   接続設定は手順28b** -->
+              <p class="agent-meta">
+                環境変数 <code class="env-name">{{ a.token_env_name }}</code>
+              </p>
 
               <div class="token-box">
                 <template v-if="a.token">
@@ -716,6 +733,13 @@ function subtitle(agent: MyAgent): string {
   color: var(--pb-text-muted);
   font-size: 13px;
   word-break: break-word;
+}
+
+/* 接続設定が読む環境変数の名前（4.5.1 の token_env_name）。
+   **未設定なら id へ倒れた形が出る**ので、長くなっても折り返させる */
+.env-name {
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 /* ── トークンの箱 ─────────────────────────────────────────── */

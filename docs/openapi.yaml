@@ -1059,6 +1059,144 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/agent-setup:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    get:
+      tags: [projects]
+      summary: エージェント連携セットアップ（配置ファイルの生成）
+      operationId: getAgentSetup
+      description: |
+        リポジトリにコミットする配置ファイルを組み立てて返す
+        （ApiDesign.md 5.7.1、Requirements.md 10.9.1 の系統A）。
+        **必要権限は `agent.register`**（`project.edit` ではない。GuiDesign.md 3.2）。
+
+        **接続設定（`.mcp.json` / `.vscode/mcp.json` / `.codex/config.toml`）は
+        含まない。** 10.8.1 が履歴管理の対象外と定めたので、リポジトリに置くものを
+        作るこの口には置き場がない——各人が `/me/agents` から受け取る（手順28b）。
+
+        **`base_url` はリクエストの `Host` から組み立てる**（暫定）。PB は自分の
+        公開 URL を知らず、設定にあるのは `PB_BIND`（`0.0.0.0:8080`）だけで URL に
+        使えない。スキームは `PB_COOKIE_SECURE` を見る——リバースプロキシで TLS を
+        終端する構成では `r.TLS` が nil になるためで、同じ問題を同じ設定で解いている。
+
+        **`ETag` もページネーションも持たない。** 件数は選んだ種別で決まる。
+      parameters:
+        - name: client
+          in: query
+          required: true
+          description: |
+            `agent_client_kind` の `key` のうち、**`has_setup_template` が真のもの**
+            （4.5.7）。**繰り返し指定する**（`?client=claude_code&client=codex`）。
+            偽の値・未知の値は 422。**重複は畳み、並びはカタログの順に揃える。**
+          schema:
+            type: array
+            minItems: 1
+            items:
+              type: string
+          style: form
+          explode: true
+          example: [claude_code, codex]
+      responses:
+        '200':
+          description: 配置ファイル一式。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSetup'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: 権限不足（`forbidden`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: プロジェクトが存在しない、または到達できない（`not_found`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: |
+            `client` が無い、配置ファイルを持たない種別、未知の種別
+            （`validation_failed`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/agent-setup.zip:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    get:
+      tags: [projects]
+      summary: エージェント連携セットアップ（zip ダウンロード）
+      operationId: getAgentSetupZip
+      description: |
+        `/agent-setup` と同じ内容を zip で返す（ApiDesign.md 5.7.2）。
+
+        - **リポジトリ直下からの相対パスでフォルダを掘る**
+        - **`mode` が `create` でないものは別名で入れる**
+          （`CLAUDE.md` → `CLAUDE.pb-block.md`）。展開した瞬間に既存のファイルを
+          消す zip を配らないため
+        - **別パスにしてあるのは、ブラウザの `<a download href>` で素直に落とすため**
+          である（`Accept` ヘッダでの切り替えにしない）
+      parameters:
+        - name: client
+          in: query
+          required: true
+          description: '`/agent-setup` と同じ。'
+          schema:
+            type: array
+            minItems: 1
+            items:
+              type: string
+          style: form
+          explode: true
+      responses:
+        '200':
+          description: zip アーカイブ。
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              example: attachment; filename="pb-setup-pb.zip"
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: 権限不足（`forbidden`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: プロジェクトが存在しない、または到達できない（`not_found`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: '`client` の指定が不正（`validation_failed`）。'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/stats:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -4359,13 +4497,84 @@ components:
           items:
             $ref: '#/components/schemas/AgentClientKind'
 
+    AgentSetup:
+      description: |
+        ApiDesign.md 5.7.1。リポジトリにコミットする配置ファイル一式。
+      type: object
+      required: [project, base_url, workflow_version, clients, files]
+      properties:
+        project:
+          $ref: '#/components/schemas/ProjectRef'
+        base_url:
+          type: string
+          description: |
+            PB の公開 URL。**リクエストの `Host` から組み立てた暫定値**である。
+            画面が「エージェントはこの URL へ接続します」と出すために返す。
+          example: http://localhost:8081
+        workflow_version:
+          type: integer
+          description: |
+            生成した手順ファイルに埋まる版番号（Requirements.md 10.9.3）。
+            **Phase 2 では常に 1。** 「PB 側が古いと判断して警告を返す」経路は
+            まだ無く、埋めるところまでが手順28a の範囲である。
+          example: 1
+        clients:
+          type: array
+          description: 実際に組み立てた種別（重複を畳み、カタログの順に並べたもの）。
+          items:
+            type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentSetupFile'
+
+    AgentSetupFile:
+      description: |
+        ApiDesign.md 5.7.1 の `files[]`。**`mode` が要点である**——これが無いと、
+        画面が「上書きしてよいファイル」と「壊してはいけないファイル」を同じ見た目で
+        並べる。
+      type: object
+      required: [path, client_kind, mode, language, content]
+      properties:
+        path:
+          type: string
+          description: リポジトリ直下からの相対パス。
+          example: .claude/commands/pb-onboard.md
+        client_kind:
+          type: string
+          description: |
+            どのクライアント向けか。**共通のもの（`.gitignore`）は空文字**。
+        mode:
+          type: string
+          enum: [create, append, merge]
+          description: |
+            - `create`：そのまま置く
+            - `append`：既存の末尾へ追記する（マーカーの内側だけが PB の管理範囲）
+            - `merge`：既存の構造へ該当キーだけを足す。**JSON は追記できないので
+              `append` と分けている**（`.claude/settings.json` を丸ごと置き換えると
+              既存の許可設定が消える）
+        language:
+          type: string
+          description: 画面がハイライトに使う（`markdown` / `json` / `text`）。
+        marker_begin:
+          type: string
+          description: '`append` のときだけ入る（Requirements.md 10.8.8）。'
+          example: '<!-- PB:BEGIN v1'
+        marker_end:
+          type: string
+          description: '`append` のときだけ入る。'
+          example: '<!-- PB:END -->'
+        content:
+          type: string
+          description: ファイルの中身。
+
     AgentClientKind:
       description: |
         エージェントのクライアント種別1件（DbDesign.md 8.2.1.1）。
         **値が決めるのは設定ファイルの置き場であって、エディタではない**
         ——同じ VS Code でも Claude 拡張と GitHub Copilot で分かれる。
       type: object
-      required: [key, display_name]
+      required: [key, display_name, has_setup_template]
       properties:
         key:
           type: string
@@ -4373,6 +4582,13 @@ components:
         display_name:
           type: string
           example: Claude Code
+        has_setup_template:
+          type: boolean
+          description: |
+            PB がこの種別の配置ファイルを出せるか（0023。手順28a）。
+            **絞り込みは画面が行う**——`/me/agents` の登録モーダルは全種別を出し
+            （テンプレートが無くてもエージェントは登録できる）、
+            `/p/:key/settings/agents` は真のものだけを出す。
 
     MyAgentList:
       description: |
@@ -4395,7 +4611,8 @@ components:
       type: object
       required:
         [id, display_name, client_kind, model_name, model_version,
-         project, trust_level, is_active, created_at, token]
+         project, token_env_suffix, token_env_name,
+         trust_level, is_active, created_at, token]
       properties:
         id:
           type: string
@@ -4421,6 +4638,20 @@ components:
           allOf:
             - $ref: '#/components/schemas/ProjectRef'
           description: 参加プロジェクト。登録時に必須なので `null` にならない。
+        token_env_suffix:
+          type: string
+          nullable: true
+          description: |
+            接続設定ファイルが読む環境変数の**接尾**（`DbDesign.md` 8.2.1）。本人が決める。
+            **未設定なら `null`**（0023 より前に登録された行）。
+        token_env_name:
+          type: string
+          description: |
+            接頭 `PB_TOKEN_` を付けた**実際の変数名**。
+            **`token_env_suffix` が `null` のときは `PB_TOKEN_<エージェントの id>`。**
+            **組み立てはサーバの1か所に閉じてある**——画面と生成器が各々
+            フォールバックを計算すると、設定ファイルの名前と `export` 行がずれる。
+          example: PB_TOKEN_MY_LAPTOP
         trust_level:
           type: integer
           description: |
@@ -4534,6 +4765,13 @@ components:
         model_version:
           type: string
           maxLength: 100
+        token_env_suffix:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]{0,40}$'
+          description: |
+            トークンを載せる環境変数の接尾（手順28a）。省略・空は「未設定」で、
+            `token_env_name` が id へ倒れる。**同じ所有者の中で一意**
+            （重複は 409 `already_exists`）。
 
     UpdateAgentRequest:
       description: |
@@ -4560,6 +4798,13 @@ components:
         model_version:
           type: string
           maxLength: 100
+        token_env_suffix:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]{0,40}$'
+          description: |
+            **変えられる**（手順28a）。端末を替えたときに直せる必要があるのは
+            `display_name` と同じ理由である。**変えたら接続設定を取り直す**
+            ——設定ファイルに古い変数名が残っていると繋がらない。
         is_active:
           type: boolean
           description: |

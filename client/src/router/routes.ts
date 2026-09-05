@@ -1,5 +1,6 @@
 import type { RouteRecordRaw } from 'vue-router'
 
+import AgentSetupPage from '../pages/AgentSetupPage.vue'
 import BacklogPage from '../pages/BacklogPage.vue'
 import DashboardPage from '../pages/DashboardPage.vue'
 import DocsPage from '../pages/DocsPage.vue'
@@ -339,22 +340,17 @@ export const routes: RouteRecordRaw[] = [
   },
 
   {
+    // 実画面（GuiDesign.md 5.11）。手順28a でプレースホルダから差し替えた。
+    //
+    // **プロジェクト設定のタブではなく独立したルートである**（5.9）。
+    // 必要権限も違う——`project.edit` ではなく **`agent.register`** で、
+    // 持つのは project_admin だけである（0010）。
+    //
+    // **系統A（リポジトリの初回接続）だけを担う**（Requirements.md 10.9.1）。
+    // トークンの発行・接続確認・各人の接続設定は `/me/agents` 側（系統B、手順28b）。
     path: '/p/:key/settings/agents',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'agent.register',
-      placeholder: {
-        title: 'エージェント連携セットアップ',
-        docRef: 'GuiDesign.md 10章',
-        status: 'Phase 2',
-        planned: [
-          'クライアントの選択',
-          'トークンの発行',
-          '設定ファイルのコピー／ダウンロード',
-          '接続確認',
-        ],
-      },
-    },
+    component: AgentSetupPage,
+    meta: { permission: 'agent.register' },
   },
 
   // ── Phase 3（GuiDesign.md 10章）─────────────────────────────

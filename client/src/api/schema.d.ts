@@ -593,6 +593,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/agent-setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * エージェント連携セットアップ（配置ファイルの生成）
+         * @description リポジトリにコミットする配置ファイルを組み立てて返す
+         *     （ApiDesign.md 5.7.1、Requirements.md 10.9.1 の系統A）。
+         *     **必要権限は `agent.register`**（`project.edit` ではない。GuiDesign.md 3.2）。
+         *
+         *     **接続設定（`.mcp.json` / `.vscode/mcp.json` / `.codex/config.toml`）は
+         *     含まない。** 10.8.1 が履歴管理の対象外と定めたので、リポジトリに置くものを
+         *     作るこの口には置き場がない——各人が `/me/agents` から受け取る（手順28b）。
+         *
+         *     **`base_url` はリクエストの `Host` から組み立てる**（暫定）。PB は自分の
+         *     公開 URL を知らず、設定にあるのは `PB_BIND`（`0.0.0.0:8080`）だけで URL に
+         *     使えない。スキームは `PB_COOKIE_SECURE` を見る——リバースプロキシで TLS を
+         *     終端する構成では `r.TLS` が nil になるためで、同じ問題を同じ設定で解いている。
+         *
+         *     **`ETag` もページネーションも持たない。** 件数は選んだ種別で決まる。
+         */
+        get: operations["getAgentSetup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/agent-setup.zip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * エージェント連携セットアップ（zip ダウンロード）
+         * @description `/agent-setup` と同じ内容を zip で返す（ApiDesign.md 5.7.2）。
+         *
+         *     - **リポジトリ直下からの相対パスでフォルダを掘る**
+         *     - **`mode` が `create` でないものは別名で入れる**
+         *       （`CLAUDE.md` → `CLAUDE.pb-block.md`）。展開した瞬間に既存のファイルを
+         *       消す zip を配らないため
+         *     - **別パスにしてあるのは、ブラウザの `<a download href>` で素直に落とすため**
+         *       である（`Accept` ヘッダでの切り替えにしない）
+         */
+        get: operations["getAgentSetupZip"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{key}/stats": {
         parameters: {
             query?: never;
@@ -2500,6 +2572,63 @@ export interface components {
         AgentClientKindList: {
             items: components["schemas"]["AgentClientKind"][];
         };
+        /** @description ApiDesign.md 5.7.1。リポジトリにコミットする配置ファイル一式。 */
+        AgentSetup: {
+            project: components["schemas"]["ProjectRef"];
+            /**
+             * @description PB の公開 URL。**リクエストの `Host` から組み立てた暫定値**である。
+             *     画面が「エージェントはこの URL へ接続します」と出すために返す。
+             * @example http://localhost:8081
+             */
+            base_url: string;
+            /**
+             * @description 生成した手順ファイルに埋まる版番号（Requirements.md 10.9.3）。
+             *     **Phase 2 では常に 1。** 「PB 側が古いと判断して警告を返す」経路は
+             *     まだ無く、埋めるところまでが手順28a の範囲である。
+             * @example 1
+             */
+            workflow_version: number;
+            /** @description 実際に組み立てた種別（重複を畳み、カタログの順に並べたもの）。 */
+            clients: string[];
+            files: components["schemas"]["AgentSetupFile"][];
+        };
+        /**
+         * @description ApiDesign.md 5.7.1 の `files[]`。**`mode` が要点である**——これが無いと、
+         *     画面が「上書きしてよいファイル」と「壊してはいけないファイル」を同じ見た目で
+         *     並べる。
+         */
+        AgentSetupFile: {
+            /**
+             * @description リポジトリ直下からの相対パス。
+             * @example .claude/commands/pb-onboard.md
+             */
+            path: string;
+            /** @description どのクライアント向けか。**共通のもの（`.gitignore`）は空文字**。 */
+            client_kind: string;
+            /**
+             * @description - `create`：そのまま置く
+             *     - `append`：既存の末尾へ追記する（マーカーの内側だけが PB の管理範囲）
+             *     - `merge`：既存の構造へ該当キーだけを足す。**JSON は追記できないので
+             *       `append` と分けている**（`.claude/settings.json` を丸ごと置き換えると
+             *       既存の許可設定が消える）
+             * @enum {string}
+             */
+            mode: "create" | "append" | "merge";
+            /** @description 画面がハイライトに使う（`markdown` / `json` / `text`）。 */
+            language: string;
+            /**
+             * @description `append` のときだけ入る（Requirements.md 10.8.8）。
+             * @example <!-- PB:BEGIN v1
+             */
+            marker_begin?: string;
+            /**
+             * @description `append` のときだけ入る。
+             * @example <!-- PB:END -->
+             */
+            marker_end?: string;
+            /** @description ファイルの中身。 */
+            content: string;
+        };
         /**
          * @description エージェントのクライアント種別1件（DbDesign.md 8.2.1.1）。
          *     **値が決めるのは設定ファイルの置き場であって、エディタではない**
@@ -2510,6 +2639,13 @@ export interface components {
             key: string;
             /** @example Claude Code */
             display_name: string;
+            /**
+             * @description PB がこの種別の配置ファイルを出せるか（0023。手順28a）。
+             *     **絞り込みは画面が行う**——`/me/agents` の登録モーダルは全種別を出し
+             *     （テンプレートが無くてもエージェントは登録できる）、
+             *     `/p/:key/settings/agents` は真のものだけを出す。
+             */
+            has_setup_template: boolean;
         };
         /**
          * @description ApiDesign.md 4.5.1。ページネーションも ETag も持たない（4.4.1 と同じく、
@@ -2542,6 +2678,19 @@ export interface components {
             model_version: string | null;
             /** @description 参加プロジェクト。登録時に必須なので `null` にならない。 */
             project: components["schemas"]["ProjectRef"];
+            /**
+             * @description 接続設定ファイルが読む環境変数の**接尾**（`DbDesign.md` 8.2.1）。本人が決める。
+             *     **未設定なら `null`**（0023 より前に登録された行）。
+             */
+            token_env_suffix: string | null;
+            /**
+             * @description 接頭 `PB_TOKEN_` を付けた**実際の変数名**。
+             *     **`token_env_suffix` が `null` のときは `PB_TOKEN_<エージェントの id>`。**
+             *     **組み立てはサーバの1か所に閉じてある**——画面と生成器が各々
+             *     フォールバックを計算すると、設定ファイルの名前と `export` 行がずれる。
+             * @example PB_TOKEN_MY_LAPTOP
+             */
+            token_env_name: string;
             /**
              * @description 0〜3（既定 1）。**Phase 2 では使わない**——段階的な権限昇格の材料
              *     （`agent_run` の実績）が Phase 3 のため、既定値のまま置く。
@@ -2614,6 +2763,12 @@ export interface components {
             client_kind: string;
             model_name?: string;
             model_version?: string;
+            /**
+             * @description トークンを載せる環境変数の接尾（手順28a）。省略・空は「未設定」で、
+             *     `token_env_name` が id へ倒れる。**同じ所有者の中で一意**
+             *     （重複は 409 `already_exists`）。
+             */
+            token_env_suffix?: string;
         };
         /**
          * @description ApiDesign.md 4.5.4。**送られた項目だけを更新する。**
@@ -2632,6 +2787,12 @@ export interface components {
             client_kind?: string;
             model_name?: string;
             model_version?: string;
+            /**
+             * @description **変えられる**（手順28a）。端末を替えたときに直せる必要があるのは
+             *     `display_name` と同じ理由である。**変えたら接続設定を取り直す**
+             *     ——設定ファイルに古い変数名が残っていると繋がらない。
+             */
+            token_env_suffix?: string;
             /** @description `false` で無効化する。**そのエージェントのトークンも失効する。** */
             is_active?: boolean;
         };
@@ -5912,6 +6073,137 @@ export interface operations {
             };
             /** @description プロジェクトが存在しない、または到達できない（`not_found`）。 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAgentSetup: {
+        parameters: {
+            query: {
+                /**
+                 * @description `agent_client_kind` の `key` のうち、**`has_setup_template` が真のもの**
+                 *     （4.5.7）。**繰り返し指定する**（`?client=claude_code&client=codex`）。
+                 *     偽の値・未知の値は 422。**重複は畳み、並びはカタログの順に揃える。**
+                 * @example [
+                 *       "claude_code",
+                 *       "codex"
+                 *     ]
+                 */
+                client: string[];
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 配置ファイル一式。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSetup"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description プロジェクトが存在しない、または到達できない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description `client` が無い、配置ファイルを持たない種別、未知の種別
+             *     （`validation_failed`）。
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAgentSetupZip: {
+        parameters: {
+            query: {
+                /** @description `/agent-setup` と同じ。 */
+                client: string[];
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description zip アーカイブ。 */
+            200: {
+                headers: {
+                    /** @example attachment; filename="pb-setup-pb.zip" */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description プロジェクトが存在しない、または到達できない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `client` の指定が不正（`validation_failed`）。 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -10,8 +10,14 @@
  */
 import type { components } from './schema'
 
-/** API のベースパス（`ApiDesign.md` 2.1） */
-const BASE_PATH = '/api/v1'
+/**
+ * API のベースパス（`ApiDesign.md` 2.1）。
+ *
+ * **`export` してあるのは、JSON を返さない口が1つあるため**（手順28a）。
+ * `agent-setup.zip` は `<a download href>` に URL を渡して落とすので `api` を
+ * 通れない。**写しを置かず、ここを引かせる。**
+ */
+export const BASE_PATH = '/api/v1'
 
 /** CSRF の Cookie とヘッダ（`ApiDesign.md` 2.4） */
 const CSRF_COOKIE = 'pb_csrf'

@@ -644,6 +644,7 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
     { "id": "01K2...", "display_name": "私の Claude Code",
       "client_kind": "claude_code", "model_name": "claude-opus-5", "model_version": null,
       "project": { "key": "pb", "name": "Project Backyard" },
+      "token_env_suffix": "MY_LAPTOP", "token_env_name": "PB_TOKEN_MY_LAPTOP",
       "trust_level": 1, "is_active": true,
       "created_at": "2026-08-30T09:03:12Z",
       "token": { "id": "01K3...", "token_prefix": "pb_agt_7",
@@ -663,6 +664,13 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 | `project` | 参加プロジェクト。`null` にならない（登録時に必須） |
 | `token` | **有効なトークンが無ければ `null`。** 1件につき有効なトークンは1本（4.5.3） |
 | `is_active` | `false` は無効化されたエージェント。行は残る |
+| `token_env_suffix` | **接続設定ファイルが読む環境変数の接尾**（`DbDesign.md` 8.2.1）。本人が決める。**未設定なら `null`** |
+| `token_env_name` | 上に `PB_TOKEN_` を付けた**実際の変数名**。**`token_env_suffix` が `null` のときは `PB_TOKEN_<エージェントの id>`** |
+
+**`token_env_name` を返すのは、フォールバックの規則をサーバに1つだけ置くためである**（手順28a）。
+接尾が未設定のとき何になるかを画面と生成器が各々計算すると、**`.mcp.json` に書いた名前と
+画面が出す `export` 行がずれる**——ずれても誰も気づかず、症状は「エージェントが繋がらない」に
+なる。**組み立てはサーバの1か所で行い、消費側は受け取った文字列をそのまま使う。**
 
 **`token.token`（平文）は返さない。** 返すのは `token_prefix`（先頭8文字。`pb_agt_` + 1文字）だけで、
 4.4.1 と同じ扱いである。`status` は `active` / `expired`。
@@ -675,7 +683,8 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 ```json
 // Request
 { "display_name": "私の Claude Code", "project_key": "pb",
-  "client_kind": "claude_code", "model_name": "claude-opus-5" }
+  "client_kind": "claude_code", "model_name": "claude-opus-5",
+  "token_env_suffix": "MY_LAPTOP" }
 ```
 
 ```json
@@ -683,6 +692,7 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 { "id": "01K2...", "display_name": "私の Claude Code",
   "client_kind": "claude_code", "model_name": "claude-opus-5", "model_version": null,
   "project": { "key": "pb", "name": "Project Backyard" },
+  "token_env_suffix": "MY_LAPTOP", "token_env_name": "PB_TOKEN_MY_LAPTOP",
   "trust_level": 1, "is_active": true,
   "created_at": "2026-08-30T09:03:12Z", "token": null }
 ```
@@ -697,6 +707,7 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 | `client_kind` | **必須**。`agent_client_kind` の `key`（`DbDesign.md` 8.2.1.1）。値域は固定せず、**4.5.7 のカタログが正本**である |
 | `model_name` | 省略可。1〜100文字 |
 | `model_version` | 省略可。1〜100文字 |
+| `token_env_suffix` | 省略可。**`^[A-Z][A-Z0-9_]{0,40}$`**。同じ所有者の中で一意（重複は `409 already_exists`）。省略・`null` は「未設定」で、`token_env_name` が id へフォールバックする |
 
 **`trust_level` は受け取らない。** 段階的な権限昇格の材料（`agent_run` の実績）が Phase 3 の
 ため、既定値の 1 で作る（`Design.md` 6.5）。
@@ -789,7 +800,8 @@ DB レベルでも担保される。`DbDesign.md` 7.4）。
 
 ```json
 { "display_name": "私の Claude Code (mini)", "client_kind": "codex",
-  "model_name": "claude-opus-5", "model_version": "20260501", "is_active": false }
+  "model_name": "claude-opus-5", "model_version": "20260501",
+  "token_env_suffix": "MY_LAPTOP", "is_active": false }
 ```
 
 いずれも省略可（送られた項目だけを更新する）。応答は 4.5.2 と同じ本体。
@@ -814,11 +826,16 @@ DB レベルでも担保される。`DbDesign.md` 7.4）。
 **無効化すると、そのエージェントのトークンも失効する**——無効化したのに動き続けるのは
 利用者の期待に反する。
 
+**`token_env_suffix` も変えられる**（手順28a）。**端末を替えたときに直せる必要がある**のは
+`display_name` と同じ理由である（4.5.1）。**変えたら接続設定を取り直す**——`.mcp.json` に
+古い変数名が残っていると、`~/.zshrc` を直しても繋がらない。**画面はその旨を出す**
+（`GuiDesign.md` 5.8.2）。
+
 | 状況 | 応答 |
 |---|---|
 | 成功 | `200` |
-| 形式誤り・値域にない `client_kind` | `422 validation_failed` |
-| 変更後の4つ組が既にある | `409 already_exists` |
+| 形式誤り・値域にない `client_kind`・`token_env_suffix` の形式違反 | `422 validation_failed` |
+| 変更後の4つ組が既にある／`token_env_suffix` が同じ所有者の中で重複 | `409 already_exists` |
 | 他人のエージェント・存在しない `id` | `404 not_found` |
 
 **`client_kind` を変えても、発行済みトークンの `client_info` は書き換えない**
@@ -907,11 +924,11 @@ DB レベルでも担保される。`DbDesign.md` 7.4）。
 ```json
 {
   "items": [
-    { "key": "claude_code", "display_name": "Claude Code" },
-    { "key": "codex",       "display_name": "OpenAI Codex" },
-    { "key": "copilot",     "display_name": "GitHub Copilot" },
-    { "key": "gemini",      "display_name": "Gemini（CLI / Code Assist）" },
-    { "key": "other",       "display_name": "その他・OSS 等" }
+    { "key": "claude_code", "display_name": "Claude Code",  "has_setup_template": true },
+    { "key": "codex",       "display_name": "OpenAI Codex", "has_setup_template": true },
+    { "key": "copilot",     "display_name": "GitHub Copilot", "has_setup_template": true },
+    { "key": "gemini",      "display_name": "Gemini（CLI / Code Assist）", "has_setup_template": false },
+    { "key": "other",       "display_name": "その他・OSS 等", "has_setup_template": false }
   ]
 }
 ```
@@ -926,9 +943,13 @@ DB レベルでも担保される。`DbDesign.md` 7.4）。
 `lib/roles.ts` を廃止したのと同じ形である（`GuiDesign.md` 5.6）。**値域は今後も増える**ので
 （`DbDesign.md` 8.2.1.1）、写しを置くと必ず腐る。
 
-**「PB が接続手順を提供できるか」は返さない。** 配置ファイルの生成は手順28 であり、
-**使うものが無いうちに項目を作ると意味が固まる**（`trust_level` を 4.5.2 で受け取らないのと同じ判断）。
-28 でテンプレートを書くときに足す。
+**`has_setup_template` は「PB が配置ファイルを出せるか」である**（手順28a で足した。
+`DbDesign.md` 8.2.1.1）。**改訂前は「返さない」と書いていた**——「使うものが無いうちに項目を
+作ると意味が固まる」ためで、**予告どおり 28a でテンプレートを書いたので足した。**
+
+**消費者が2つになった。** `GuiDesign.md` 5.8.2 の登録モーダル（**全種別を出す**。テンプレートが
+無くてもエージェントは登録できる）と、5.11 のセットアップ画面（**`true` の種別だけを出す**。
+選んだ先に何も出ないのを防ぐ）。**画面ごとに絞り方が違うので、フィルタはサーバでなく画面が行う。**
 ---
 
 # 5. プロジェクトAPI
@@ -1105,6 +1126,109 @@ GET /api/v1/projects/check-key?key=my-app
 
 `If-Match` は要求しない（2.8）。**監査ログは archive / unarchive のどちらも `project.archive`
 として記録し**（2.10 のカタログにこの1つしかない）、`detail` に遷移後の `status` を入れて区別する。
+
+---
+
+## 5.7 エージェント連携セットアップ（手順28a）
+
+```
+GET /api/v1/projects/:key/agent-setup?client=claude_code&client=codex
+GET /api/v1/projects/:key/agent-setup.zip?client=claude_code&client=codex
+```
+
+**必要権限**：`agent.register`（`project_admin` のみ。`GuiDesign.md` 3.2）
+
+**リポジトリにコミットする配置ファイルを組み立てて返す**（`Requirements.md` 10.9.1 の系統A）。
+**接続設定は含まない**——10.8.1 が履歴管理の対象外と定めたので、リポジトリに置くものを作る
+この口では出せない。接続設定は**系統B**（`/me/agents` のエージェントごと。手順28b）で本人へ渡す。
+
+### 5.7.1 `GET /api/v1/projects/:key/agent-setup`
+
+```json
+{
+  "project": { "key": "pb", "name": "Project Backyard" },
+  "base_url": "http://localhost:8081",
+  "workflow_version": 1,
+  "clients": ["claude_code", "codex"],
+  "files": [
+    { "path": ".claude/commands/pb-onboard.md",
+      "client_kind": "claude_code",
+      "mode": "create", "language": "markdown",
+      "content": "---\ndescription: PBのプロジェクトに参画する…" },
+    { "path": "CLAUDE.md",
+      "client_kind": "claude_code",
+      "mode": "append", "language": "markdown",
+      "marker_begin": "<!-- PB:BEGIN v1",
+      "marker_end": "<!-- PB:END -->",
+      "content": "<!-- PB:BEGIN v1 (Project Backyard が生成・管理します。…" },
+    { "path": ".gitignore",
+      "client_kind": null,
+      "mode": "append", "language": "text",
+      "content": "# Project Backyard — 各自の環境。共有しない\n.mcp.json\n…" }
+  ]
+}
+```
+
+| 項目 | 内容 |
+|---|---|
+| `client` | **繰り返し指定**。`agent_client_kind` の `key` のうち **`has_setup_template` が真のもの**（4.5.7）。1件以上必須 |
+| `base_url` | **リクエストの `Host` から組み立てた PB の公開 URL**（下記） |
+| `workflow_version` | 生成した手順ファイルに埋まる版番号（`Requirements.md` 10.9.3）。**Phase 2 では常に `1`** |
+| `files[].mode` | `create`（そのまま置く）／`append`（既存の末尾へ追記する）／**`merge`**（既存の構造へ該当キーだけを足す） |
+| `files[].client_kind` | どのクライアント向けか。**共通のもの（`.gitignore`）は `null`** |
+| `files[].marker_begin` / `marker_end` | `append` のときだけ入る。**マーカーの内側だけが PB の管理範囲**（`Requirements.md` 10.8.8） |
+
+**`mode` を持たせるのが本節の要点である。** これが無いと、**画面が「上書きしてよいファイル」と
+「壊してはいけないファイル」を同じ見た目で並べる**。10.8.8 がマーカーを要求しているのと同じ理由で、
+**追記であることは受け渡しの形に現れていなければならない。**
+
+**`merge` を `append` と分けたのは、JSON を追記できないためである**（実装中に判明。手順28a）。
+`.claude/settings.json` は既に130行あることがあり——**PB 自身のリポジトリがそうだった**
+——丸ごと置き換えると Bash の許可設定が全部消える。`merge` が渡すのは**足す断片**で、
+画面は「既にあるなら `permissions.allow` にこの中身を足してください」と案内する。
+
+| 状況 | 応答 |
+|---|---|
+| 成功 | `200` |
+| `client` が無い／`has_setup_template` が偽の値／未知の値 | `422 validation_failed` |
+| 非メンバー・存在しないプロジェクト | `404 not_found`（6.4.5） |
+| `agent.register` を持たない | `403 forbidden` |
+
+**`ETag` もページネーションも持たない**（4.5.1 と同じ）。件数は選んだ種別で決まり、
+差分取得の意味がない。
+
+#### `base_url` はリクエストの `Host` から組み立てる（暫定）
+
+**PB は自分の公開 URL を知らない。** 設定にあるのは `PB_BIND`（`0.0.0.0:8080`）だけで、
+これは URL に使えない。**外から見えるアドレスを伝えるのはリクエストの `Host` ヘッダだけ**である。
+
+**利用者がいま画面を開いている URL がそのまま入る**ので、dev（`:8080`）と stg（`:8081`）は
+自動で正しく分かれる。**リバースプロキシ配下では外れうる**が、生成物は画面に全文が出る
+テキストなので、置く前に手で直せる。
+
+**スキームは `PB_COOKIE_SECURE` を見る**（実装で決めた。手順28a）。`Design.md` 3.1 が
+この設定に「リバースプロキシで TLS を終端する構成ではアプリに平文で届くため、自動判定は
+『HTTPS で公開しているのに Secure が付かない』を招く」と注記しており、**スキームの判定は
+まったく同じ問題である**。`r.TLS` だけを見ると、プロキシの背後で必ず `http://` になる。
+**新しい設定項目を増やさずに済む。**
+
+**新しい設定項目（`PB_PUBLIC_URL` 等）は足さない**（利用者の判断、2026-09-06）。
+**着地はアプリケーション設定画面**（アドミニストレータが公開エンドポイント・アクセス元・TLS を
+見る。`Design.md` 10.3）であり、**env を今足すと、DB へ移す日に「env と DB のどちらが正本か」を
+解く仕事が増える**。加えて `deploy/stg/pb.env` は端末ごとで共有されないため、**参加者間で
+黙って食い違う。**
+
+### 5.7.2 `GET /api/v1/projects/:key/agent-setup.zip`
+
+**5.7.1 と同じ内容を zip で返す。** `Content-Type: application/zip`、
+`Content-Disposition: attachment; filename="pb-setup-<key>.zip"`。
+
+- **リポジトリ直下からの相対パスでフォルダを掘る**（`.claude/commands/pb-onboard.md` のまま）
+- **`mode` が `create` でないものは別名で入れる**（`CLAUDE.md` → `CLAUDE.pb-block.md`）。
+  **展開した瞬間に既存の `CLAUDE.md` を消す zip を配らない。** 拡張子の前に入れるので、
+  ドットで始まる名前は末尾に付く（`.gitignore` → `.gitignore.pb-block`）
+- **別パスにするのは、ブラウザの `<a download href>` で素直に落とすためである**
+  （`Accept` ヘッダでの切り替えにしない）。認証は Cookie が載る
 
 ---
 
@@ -1441,6 +1565,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | **エージェント（Phase 2）** | `GET|POST /me/agents`<br>`PATCH /me/agents/:id`<br>`POST /me/agents/:id/tokens`<br>`DELETE /me/agents/:id/tokens/:token_id`<br>`GET /agent-client-kinds` |
 | プロジェクト設定（タグタブ） | `GET|POST /projects/:key/tags`<br>`PATCH|DELETE /projects/:key/tags/:id` |
 | プロジェクト設定（スプリントタブ） | `GET|POST /projects/:key/sprints`<br>`PATCH|DELETE /projects/:key/sprints/:id` |
+| **エージェント連携セットアップ（Phase 2）** | `GET /agent-client-kinds`<br>`GET /projects/:key/agent-setup`<br>`GET /projects/:key/agent-setup.zip`（ダウンロード） |
 | **Docs（Phase 2）** | `GET /projects/:key/docs`（目次）<br>`GET /projects/:key/docs/*path`（本文）<br>`PATCH|DELETE /projects/:key/docs/*path`・`POST /projects/:key/docs`<br>`GET /projects/:key/docs/*path/_revisions`（履歴） |
 
 **各画面が起動時に呼ぶAPIは1〜2本に収まっている。** 設計方針3が満たされていることの確認になる。

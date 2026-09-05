@@ -2234,6 +2234,28 @@ func (q *fakeQuerier) ListAgentClientKinds(_ context.Context) ([]gen.ListAgentCl
 	return q.agentClientKinds, nil
 }
 
+// AgentClientKindsWithTemplate は配置ファイルを出せる種別（ApiDesign.md 5.7.1）。
+//
+// **agentClientKinds を has_setup_template で絞って返す。** 別のフィールドを
+// 用意すると、カタログと絞り込みが食い違った状態をテストで作れてしまう
+// ——実物は同じ表の同じ行を見ている。
+func (q *fakeQuerier) AgentClientKindsWithTemplate(
+	_ context.Context,
+) ([]gen.AgentClientKindsWithTemplateRow, error) {
+	if q.agentClientKindErr != nil {
+		return nil, q.agentClientKindErr
+	}
+	out := make([]gen.AgentClientKindsWithTemplateRow, 0, len(q.agentClientKinds))
+	for _, k := range q.agentClientKinds {
+		if k.HasSetupTemplate {
+			out = append(out, gen.AgentClientKindsWithTemplateRow{
+				Key: k.Key, DisplayName: k.DisplayName,
+			})
+		}
+	}
+	return out, nil
+}
+
 func (q *fakeQuerier) CreateAgentActor(_ context.Context, arg gen.CreateAgentActorParams) error {
 	q.opLog = append(q.opLog, "CreateAgentActor")
 	q.createdAgentActors = append(q.createdAgentActors, arg)

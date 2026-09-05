@@ -21,6 +21,7 @@ SELECT
   ag.model_name,
   ag.model_version,
   ag.trust_level,
+  ag.token_env_suffix,
   ag.created_at,
   p.key  AS project_key,
   p.name AS project_name,
@@ -71,6 +72,7 @@ SELECT
   ag.model_name,
   ag.model_version,
   ag.trust_level,
+  ag.token_env_suffix,
   ag.created_at,
   ag.project_id,
   p.key  AS project_key,
@@ -92,9 +94,11 @@ VALUES (@id, 'agent', @display_name);
 
 -- name: CreateAgent :exec
 INSERT INTO agent (
-  actor_id, owner_actor_id, project_id, client_kind, model_name, model_version
+  actor_id, owner_actor_id, project_id, client_kind, model_name, model_version,
+  token_env_suffix
 ) VALUES (
-  @actor_id, @owner_actor_id, @project_id, @client_kind, @model_name, @model_version
+  @actor_id, @owner_actor_id, @project_id, @client_kind, @model_name, @model_version,
+  @token_env_suffix
 );
 
 -- AgentExistsWithName は 409 already_exists の判定（ApiDesign.md 4.5.2）。
@@ -141,7 +145,7 @@ SELECT EXISTS (
 -- 今後も増える（DbDesign.md 8.2.1.1）ので、写しを置くと必ず腐る。
 --
 -- name: ListAgentClientKinds :many
-SELECT key, display_name
+SELECT key, display_name, has_setup_template
 FROM agent_client_kind
 ORDER BY sort_order, key;
 
@@ -152,6 +156,21 @@ ORDER BY sort_order, key;
 --
 -- name: AgentClientKindExists :one
 SELECT EXISTS (SELECT 1 FROM agent_client_kind WHERE key = @key);
+
+-- AgentClientKindsWithTemplate は配置ファイルを出せる種別を返す（ApiDesign.md 5.7.1）。
+--
+-- **セットアップ画面の検証に使う。** has_setup_template が偽の種別を指定されたら
+-- 422 にする——選んだ先に何も出ないためである（DbDesign.md 8.2.1.1）。
+--
+-- **ListAgentClientKinds で代用しない。** あちらはカタログ全件を返す口で、
+-- 5.8.2 の登録モーダル（全種別を出す）が使う。**絞る条件をSQLに書いておくほうが、
+-- 呼び出し側で bool を見落とす経路より安全である。**
+--
+-- name: AgentClientKindsWithTemplate :many
+SELECT key, display_name
+FROM agent_client_kind
+WHERE has_setup_template
+ORDER BY sort_order, key;
 
 -- UpdateAgentActor は表示名と有効・無効を更新する（ApiDesign.md 4.5.4）。
 --
@@ -173,13 +192,39 @@ WHERE ag.actor_id = a.id
 -- 登録した人が、PB がその種別に対応した日に移れる必要がある。**project_id は
 -- 変えられない**——そのエージェントが行った仕事はプロジェクトに属する。
 --
+-- **token_env_suffix も変えられる**（手順28a）。端末を替えたときに直せる必要があるのは
+-- display_name と同じ理由である。**変えたら接続設定を取り直す**——.mcp.json に古い変数名が
+-- 残っていると ~/.zshrc を直しても繋がらない。
+--
 -- name: UpdateAgentModel :execrows
 UPDATE agent
-SET model_name    = COALESCE(sqlc.narg('model_name'),    model_name),
-    model_version = COALESCE(sqlc.narg('model_version'), model_version),
-    client_kind   = COALESCE(sqlc.narg('client_kind'),   client_kind)
+SET model_name       = COALESCE(sqlc.narg('model_name'),       model_name),
+    model_version    = COALESCE(sqlc.narg('model_version'),    model_version),
+    client_kind      = COALESCE(sqlc.narg('client_kind'),      client_kind),
+    token_env_suffix = COALESCE(sqlc.narg('token_env_suffix'), token_env_suffix)
 WHERE actor_id = @actor_id
   AND owner_actor_id = @owner_actor_id;
+
+-- AgentEnvSuffixExists は 409 already_exists の判定（ApiDesign.md 4.5.2 / 4.5.4）。
+--
+-- **一意は（所有者・接尾）である**（DbDesign.md 8.2.1）。環境変数は端末ごとの名前空間
+-- なので他人と重なってよいが、**同じ人の中で重なると ~/.zshrc の1行が2つのエージェントに
+-- 解釈される。**
+--
+-- **DBに部分一意インデックスがある**ので、この検査が破れても壊れない。画面に
+-- 読める message を返すために先に見ている（AgentExistsWithName と同じ考え方）。
+--
+-- **@exclude_actor_id には、新規作成のとき空文字を渡す**（ULID は空文字になりえない）。
+-- 更新のときだけ自分自身が除かれる。
+--
+-- name: AgentEnvSuffixExists :one
+SELECT EXISTS (
+  SELECT 1
+  FROM agent
+  WHERE owner_actor_id   = @owner_actor_id
+    AND token_env_suffix = @token_env_suffix
+    AND actor_id        <> @exclude_actor_id
+);
 
 -- ListMyProjectKeysForAgent は project_key の検証に使う（ApiDesign.md 4.5.2）。
 --

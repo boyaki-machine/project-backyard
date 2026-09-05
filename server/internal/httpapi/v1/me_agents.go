@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -45,7 +46,56 @@ const (
 	// agentModelMaxLen は model_name / model_version の上限。
 	// agent 表の列に CHECK は無く（DbDesign.md 8.2.1）、アプリ側が持つ。
 	agentModelMaxLen = 100
+
+	// agentTokenEnvPrefix はトークンを載せる環境変数の接頭（ApiDesign.md 4.5.1）。
+	//
+	// **接尾だけを本人に決めさせ、接頭は PB が付ける**（DbDesign.md 8.2.1）。
+	// 接頭ごと入力させると PATH や HOME を作れてしまう。
+	agentTokenEnvPrefix = "PB_TOKEN_"
 )
+
+// agentEnvSuffixPattern は token_env_suffix の形式（DbDesign.md 8.2.1 の CHECK と同じ）。
+//
+// **DBの CHECK と同じ正規表現を2か所に持っている。** ここで弾けば 422 として
+// details 付きで返せるが、通り抜けても CHECK が最後の砦になる——ただしその場合は
+// 500 になるため、先に見る（checkClientKind と同じ構図）。
+var agentEnvSuffixPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,40}$`)
+
+// agentTokenEnvName は接続設定が読む環境変数の実際の名前を組み立てる（ApiDesign.md 4.5.1）。
+//
+// **接尾が未設定なら id へフォールバックする。** 0023 より前に登録された行は
+// token_env_suffix が NULL で、埋め戻しに使える決定的な規則が無い（日本語の表示名から
+// 環境変数名を作れない。DbDesign.md 8.2.1）。**ULID は Crockford Base32 の大文字26文字
+// なので、そのまま環境変数名に使える。**
+//
+// **組み立てをここ1か所に閉じるのが要点である。** 画面と配置ファイルの生成器が
+// 各々フォールバックを計算すると、**.mcp.json に書いた名前と画面が出す export 行が
+// ずれる**——ずれても誰も気づかず、症状は「エージェントが繋がらない」になる。
+func agentTokenEnvName(suffix pgtype.Text, agentID string) string {
+	if suffix.Valid && suffix.String != "" {
+		return agentTokenEnvPrefix + suffix.String
+	}
+	return agentTokenEnvPrefix + agentID
+}
+
+// validateAgentEnvSuffix は token_env_suffix を検証する（ApiDesign.md 4.5.2 / 4.5.4）。
+//
+// **空文字は「未設定」として通す。** 画面の入力欄を空のまま登録できる必要があり
+// （日本語だけの表示名では候補を作れない。GuiDesign.md 5.8.2）、そのときは
+// agentTokenEnvName が id へ倒す。
+func validateAgentEnvSuffix(v string) (string, *apierr.Detail) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", nil
+	}
+	if !agentEnvSuffixPattern.MatchString(v) {
+		return "", &apierr.Detail{
+			Field: "token_env_suffix", Code: "invalid_format",
+			Message: "環境変数名は英大文字で始め、英大文字・数字・_ を41文字以内で入力してください",
+		}
+	}
+	return v, nil
+}
 
 // client_kind の値域は Go の定数で持たない（0020）。
 //
@@ -169,12 +219,17 @@ type agentTokenView struct {
 // 返す形で、所有者と client_kind を持つが名前や状態は親（userListItem）側に
 // ある。こちらは本人の一覧で、エージェント1件を単独で表す。
 type myAgentView struct {
-	ID           string          `json:"id"`
-	DisplayName  string          `json:"display_name"`
-	ClientKind   string          `json:"client_kind"`
-	ModelName    *string         `json:"model_name"`
-	ModelVersion *string         `json:"model_version"`
-	Project      *projectRef     `json:"project"`
+	ID           string      `json:"id"`
+	DisplayName  string      `json:"display_name"`
+	ClientKind   string      `json:"client_kind"`
+	ModelName    *string     `json:"model_name"`
+	ModelVersion *string     `json:"model_version"`
+	Project      *projectRef `json:"project"`
+	// TokenEnvSuffix は本人が決めた環境変数の接尾。未設定なら null（4.5.1）。
+	TokenEnvSuffix *string `json:"token_env_suffix"`
+	// TokenEnvName は接頭を付けた実際の変数名。**未設定のときは id へ倒す**ので
+	// 常に空でない（4.5.1）。画面と生成器はこちらをそのまま使う。
+	TokenEnvName string          `json:"token_env_name"`
 	TrustLevel   int32           `json:"trust_level"`
 	IsActive     bool            `json:"is_active"`
 	CreatedAt    Time            `json:"created_at"`
@@ -226,9 +281,13 @@ func (h *handler) listMyAgents(w http.ResponseWriter, r *http.Request) {
 			ClientKind:   row.ClientKind,
 			ModelName:    textPtr(row.ModelName),
 			ModelVersion: textPtr(row.ModelVersion),
-			TrustLevel:   row.TrustLevel,
-			IsActive:     row.IsActive,
-			CreatedAt:    Time(row.CreatedAt.Time),
+
+			TokenEnvSuffix: textPtr(row.TokenEnvSuffix),
+			TokenEnvName:   agentTokenEnvName(row.TokenEnvSuffix, row.ActorID),
+
+			TrustLevel: row.TrustLevel,
+			IsActive:   row.IsActive,
+			CreatedAt:  Time(row.CreatedAt.Time),
 		}
 		if row.ProjectKey.Valid {
 			v.Project = &projectRef{Key: row.ProjectKey.String, Name: row.ProjectName.String}
@@ -256,6 +315,12 @@ func (h *handler) listMyAgents(w http.ResponseWriter, r *http.Request) {
 type agentClientKindView struct {
 	Key         string `json:"key"`
 	DisplayName string `json:"display_name"`
+	// HasSetupTemplate は PB が配置ファイルを出せるか（0023。DbDesign.md 8.2.1.1）。
+	//
+	// **絞り込みは画面が行う。** 5.8.2 の登録モーダルは全種別を出し（テンプレートが
+	// 無くてもエージェントは登録できる）、5.11 のセットアップ画面は真のものだけを出す
+	// ——画面ごとに絞り方が違うので、サーバは値を返すだけにする。
+	HasSetupTemplate bool `json:"has_setup_template"`
 }
 
 // listAgentClientKinds はクライアント種別のカタログを返す（ApiDesign.md 4.5.7）。
@@ -277,7 +342,11 @@ func (h *handler) listAgentClientKinds(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]agentClientKindView, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, agentClientKindView{Key: row.Key, DisplayName: row.DisplayName})
+		items = append(items, agentClientKindView{
+			Key:              row.Key,
+			DisplayName:      row.DisplayName,
+			HasSetupTemplate: row.HasSetupTemplate,
+		})
 	}
 	WriteJSON(w, http.StatusOK, catalog[agentClientKindView]{Items: items})
 }
@@ -290,14 +359,19 @@ type createAgentRequest struct {
 	ClientKind   string `json:"client_kind"`
 	ModelName    string `json:"model_name"`
 	ModelVersion string `json:"model_version"`
+	// TokenEnvSuffix は省略可（4.5.2）。空なら「未設定」で、token_env_name が
+	// id へ倒れる。**固定名（PB_TOKEN）にしないのは、同じ端末で2つ以上の
+	// エージェントを使うと衝突するためである**（DbDesign.md 8.2.1）。
+	TokenEnvSuffix string `json:"token_env_suffix"`
 }
 
 type createAgentFields struct {
-	displayName  string
-	projectKey   string
-	clientKind   string
-	modelName    string
-	modelVersion string
+	displayName    string
+	projectKey     string
+	clientKind     string
+	modelName      string
+	modelVersion   string
+	tokenEnvSuffix string
 }
 
 func (h *handler) createMyAgent(w http.ResponseWriter, r *http.Request) {
@@ -369,6 +443,26 @@ func (h *handler) createMyAgent(w http.ResponseWriter, r *http.Request) {
 				WithMessage("同じ名前のエージェントが、このプロジェクトに既に登録されています")
 		}
 
+		// **環境変数名は所有者の中で一意である**（DbDesign.md 8.2.1）。
+		// 重なると ~/.zshrc の1行が2つのエージェントに解釈される。
+		// **未設定（空）は重複を見ない**——NULL は何行あってもよい（部分一意索引）。
+		if f.tokenEnvSuffix != "" {
+			dup, err := q.AgentEnvSuffixExists(ctx, gen.AgentEnvSuffixExistsParams{
+				OwnerActorID:   p.ActorID,
+				TokenEnvSuffix: text(f.tokenEnvSuffix),
+				// **新規なので除外する相手が無い。** ULID は空文字になりえないため、
+				// 空文字を渡せば «自分自身» に当たる行が存在しない。
+				ExcludeActorID: "",
+			})
+			if err != nil {
+				return fmt.Errorf("環境変数名の重複を確かめられない: %w", err)
+			}
+			if dup {
+				return apierr.New(apierr.AlreadyExists).
+					WithMessage("その環境変数名は、あなたの別のエージェントが既に使っています")
+			}
+		}
+
 		if err := q.CreateAgentActor(ctx, gen.CreateAgentActorParams{
 			ID:          agentID,
 			DisplayName: f.displayName,
@@ -382,6 +476,8 @@ func (h *handler) createMyAgent(w http.ResponseWriter, r *http.Request) {
 			ClientKind:   f.clientKind,
 			ModelName:    text(f.modelName),
 			ModelVersion: text(f.modelVersion),
+			// **空文字は NULL として入れる**（未設定）。text("") は Valid=false になる。
+			TokenEnvSuffix: text(f.tokenEnvSuffix),
 			// trust_level と capabilities は受け取らない（4.5.2）。既定値で作る。
 		}); err != nil {
 			return fmt.Errorf("エージェントを登録できない: %w", err)
@@ -411,9 +507,13 @@ func (h *handler) createMyAgent(w http.ResponseWriter, r *http.Request) {
 		ModelName:    nullable(f.modelName),
 		ModelVersion: nullable(f.modelVersion),
 		Project:      &projectRef{Key: proj.Key, Name: proj.Name},
-		TrustLevel:   1,
-		IsActive:     true,
-		CreatedAt:    Time(createdAt),
+
+		TokenEnvSuffix: nullable(f.tokenEnvSuffix),
+		TokenEnvName:   agentTokenEnvName(text(f.tokenEnvSuffix), agentID),
+
+		TrustLevel: 1,
+		IsActive:   true,
+		CreatedAt:  Time(createdAt),
 		// **登録と発行を分ける**（4.5.2）。再発行が必要になったときに
 		// 同じ経路（4.5.3）を通すため、ここでは token を作らない。
 		Token: nil,
@@ -496,6 +596,12 @@ func validateCreateAgent(req createAgentRequest) (createAgentFields, *apierr.Err
 		})
 	}
 
+	suffix, d := validateAgentEnvSuffix(req.TokenEnvSuffix)
+	if d != nil {
+		details = append(details, *d)
+	}
+	f.tokenEnvSuffix = suffix
+
 	if len(details) > 0 {
 		return createAgentFields{}, apierr.New(apierr.ValidationFailed).WithDetails(details...)
 	}
@@ -514,7 +620,11 @@ type updateAgentRequest struct {
 	ClientKind   *string `json:"client_kind"`
 	ModelName    *string `json:"model_name"`
 	ModelVersion *string `json:"model_version"`
-	IsActive     *bool   `json:"is_active"`
+	// TokenEnvSuffix も変えられる（4.5.4）。端末を替えたときに直せる必要がある
+	// のは display_name と同じ理由である。**変えたら接続設定を取り直す**
+	// ——.mcp.json に古い変数名が残っていると ~/.zshrc を直しても繋がらない。
+	TokenEnvSuffix *string `json:"token_env_suffix"`
+	IsActive       *bool   `json:"is_active"`
 }
 
 func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
@@ -579,6 +689,13 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		req.ClientKind = &kind
 	}
+	if req.TokenEnvSuffix != nil {
+		suffix, d := validateAgentEnvSuffix(*req.TokenEnvSuffix)
+		if d != nil {
+			details = append(details, *d)
+		}
+		req.TokenEnvSuffix = &suffix
+	}
 	if len(details) > 0 {
 		apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(details...))
 		return
@@ -636,6 +753,23 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// **環境変数名も所有者の中で一意である**（DbDesign.md 8.2.1）。
+		// **空にする（未設定へ戻す）ときは数えない**——NULL は何行あってもよい。
+		if req.TokenEnvSuffix != nil && *req.TokenEnvSuffix != "" {
+			dup, err := q.AgentEnvSuffixExists(ctx, gen.AgentEnvSuffixExistsParams{
+				OwnerActorID:   p.ActorID,
+				TokenEnvSuffix: text(*req.TokenEnvSuffix),
+				ExcludeActorID: agentID,
+			})
+			if err != nil {
+				return fmt.Errorf("環境変数名の重複を確かめられない: %w", err)
+			}
+			if dup {
+				return apierr.New(apierr.AlreadyExists).
+					WithMessage("その環境変数名は、あなたの別のエージェントが既に使っています")
+			}
+		}
+
 		if req.DisplayName != nil || req.IsActive != nil {
 			if _, err := q.UpdateAgentActor(ctx, gen.UpdateAgentActorParams{
 				ActorID:      agentID,
@@ -646,13 +780,18 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 				return fmt.Errorf("エージェントを更新できない: %w", err)
 			}
 		}
-		if req.ModelName != nil || req.ModelVersion != nil || req.ClientKind != nil {
+		if req.ModelName != nil || req.ModelVersion != nil || req.ClientKind != nil ||
+			req.TokenEnvSuffix != nil {
 			if _, err := q.UpdateAgentModel(ctx, gen.UpdateAgentModelParams{
 				ActorID:      agentID,
 				OwnerActorID: p.ActorID,
 				ModelName:    nargText(req.ModelName),
 				ModelVersion: nargText(req.ModelVersion),
 				ClientKind:   nargText(req.ClientKind),
+				// **空文字を送ると「未設定へ戻す」にはならない**——COALESCE が
+				// 現在値を残す。空にする経路は Phase 2 では作らない（画面が
+				// 空欄を送らない。GuiDesign.md 5.8.2）。
+				TokenEnvSuffix: nargText(req.TokenEnvSuffix),
 			}); err != nil {
 				return fmt.Errorf("エージェントのモデルを更新できない: %w", err)
 			}
@@ -678,6 +817,9 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.ModelVersion != nil {
 			detail["model_version"] = *req.ModelVersion
+		}
+		if req.TokenEnvSuffix != nil {
+			detail["token_env_suffix"] = *req.TokenEnvSuffix
 		}
 		if req.IsActive != nil {
 			detail["is_active"] = *req.IsActive
@@ -714,9 +856,13 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 		ClientKind:   updated.ClientKind,
 		ModelName:    textPtr(updated.ModelName),
 		ModelVersion: textPtr(updated.ModelVersion),
-		TrustLevel:   updated.TrustLevel,
-		IsActive:     updated.IsActive,
-		CreatedAt:    Time(updated.CreatedAt.Time),
+
+		TokenEnvSuffix: textPtr(updated.TokenEnvSuffix),
+		TokenEnvName:   agentTokenEnvName(updated.TokenEnvSuffix, updated.ActorID),
+
+		TrustLevel: updated.TrustLevel,
+		IsActive:   updated.IsActive,
+		CreatedAt:  Time(updated.CreatedAt.Time),
 	}
 	if updated.ProjectKey.Valid {
 		v.Project = &projectRef{Key: updated.ProjectKey.String, Name: updated.ProjectName.String}

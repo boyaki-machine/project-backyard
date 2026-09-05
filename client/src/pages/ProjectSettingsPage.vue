@@ -577,6 +577,21 @@ const isArchived = computed(() => current.value?.status === 'archived')
 const canArchive = computed(() => current.value?.my_permissions.includes('project.archive') ?? false)
 
 /**
+ * `agent.register` を持つか（手順28a）。
+ *
+ * **エージェント連携セットアップ（5.11）への導線を出し分ける。** この画面の
+ * 必要権限は `project.edit` で、セットアップ側は `agent.register` である
+ * ——**0010 ではどちらも `project_admin` だけが持つが、同じとは限らない**ので
+ * 導線の側でも見る（`GuiDesign.md` 7.3）。
+ */
+const canSetupAgents = computed(
+  () => current.value?.my_permissions.includes('agent.register') ?? false,
+)
+
+/** セットアップ画面（`GuiDesign.md` 5.11）。**タブではなく独立したルートである** */
+const agentSetupPath = computed(() => `/p/${projectKey.value}/settings/agents`)
+
+/**
  * アーカイブは確認を挟む（6.3）。**解除は挟まない。**
  * 6.3 が確認を求めているのはアーカイブであり、解除は失うものが無い。
  */
@@ -634,7 +649,15 @@ function kindIcon(kind: string): string {
 
 <template>
   <div class="page">
-    <PageHeader title="プロジェクト設定" />
+    <PageHeader title="プロジェクト設定">
+      <template #actions>
+        <!-- **タブにしない**（5.9）。独立したルートで必要権限も違うため、
+             タブ列に混ぜると「同じ画面の続き」に見える -->
+        <RouterLink v-if="canSetupAgents" class="secondary setup-link" :to="agentSetupPath">
+          エージェント連携セットアップ →
+        </RouterLink>
+      </template>
+    </PageHeader>
 
     <div class="page-body">
       <!-- エラー（6.2）。原因はサーバが返した message をそのまま出す -->
@@ -1187,6 +1210,18 @@ function kindIcon(kind: string): string {
 </template>
 
 <style scoped>
+/* ボタンと同じ高さに揃える（`base.css` の .secondary は button 前提の指定） */
+.setup-link {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 var(--pb-space-3);
+  border-radius: var(--pb-radius);
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
 .page {
   display: flex;
   flex-direction: column;

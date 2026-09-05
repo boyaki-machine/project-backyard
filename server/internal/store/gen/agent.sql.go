@@ -26,6 +26,80 @@ func (q *Queries) AgentClientKindExists(ctx context.Context, key string) (bool, 
 	return exists, err
 }
 
+const agentClientKindsWithTemplate = `-- name: AgentClientKindsWithTemplate :many
+SELECT key, display_name
+FROM agent_client_kind
+WHERE has_setup_template
+ORDER BY sort_order, key
+`
+
+type AgentClientKindsWithTemplateRow struct {
+	Key         string
+	DisplayName string
+}
+
+// AgentClientKindsWithTemplate は配置ファイルを出せる種別を返す（ApiDesign.md 5.7.1）。
+//
+// **セットアップ画面の検証に使う。** has_setup_template が偽の種別を指定されたら
+// 422 にする——選んだ先に何も出ないためである（DbDesign.md 8.2.1.1）。
+//
+// **ListAgentClientKinds で代用しない。** あちらはカタログ全件を返す口で、
+// 5.8.2 の登録モーダル（全種別を出す）が使う。**絞る条件をSQLに書いておくほうが、
+// 呼び出し側で bool を見落とす経路より安全である。**
+func (q *Queries) AgentClientKindsWithTemplate(ctx context.Context) ([]AgentClientKindsWithTemplateRow, error) {
+	rows, err := q.db.Query(ctx, agentClientKindsWithTemplate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentClientKindsWithTemplateRow{}
+	for rows.Next() {
+		var i AgentClientKindsWithTemplateRow
+		if err := rows.Scan(&i.Key, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const agentEnvSuffixExists = `-- name: AgentEnvSuffixExists :one
+SELECT EXISTS (
+  SELECT 1
+  FROM agent
+  WHERE owner_actor_id   = $1
+    AND token_env_suffix = $2
+    AND actor_id        <> $3
+)
+`
+
+type AgentEnvSuffixExistsParams struct {
+	OwnerActorID   string
+	TokenEnvSuffix pgtype.Text
+	ExcludeActorID string
+}
+
+// AgentEnvSuffixExists は 409 already_exists の判定（ApiDesign.md 4.5.2 / 4.5.4）。
+//
+// **一意は（所有者・接尾）である**（DbDesign.md 8.2.1）。環境変数は端末ごとの名前空間
+// なので他人と重なってよいが、**同じ人の中で重なると ~/.zshrc の1行が2つのエージェントに
+// 解釈される。**
+//
+// **DBに部分一意インデックスがある**ので、この検査が破れても壊れない。画面に
+// 読める message を返すために先に見ている（AgentExistsWithName と同じ考え方）。
+//
+// **@exclude_actor_id には、新規作成のとき空文字を渡す**（ULID は空文字になりえない）。
+// 更新のときだけ自分自身が除かれる。
+func (q *Queries) AgentEnvSuffixExists(ctx context.Context, arg AgentEnvSuffixExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, agentEnvSuffixExists, arg.OwnerActorID, arg.TokenEnvSuffix, arg.ExcludeActorID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const agentExistsWithName = `-- name: AgentExistsWithName :one
 SELECT EXISTS (
   SELECT 1
@@ -120,19 +194,22 @@ func (q *Queries) CountAgentComments(ctx context.Context, authorID string) (int6
 
 const createAgent = `-- name: CreateAgent :exec
 INSERT INTO agent (
-  actor_id, owner_actor_id, project_id, client_kind, model_name, model_version
+  actor_id, owner_actor_id, project_id, client_kind, model_name, model_version,
+  token_env_suffix
 ) VALUES (
-  $1, $2, $3, $4, $5, $6
+  $1, $2, $3, $4, $5, $6,
+  $7
 )
 `
 
 type CreateAgentParams struct {
-	ActorID      string
-	OwnerActorID string
-	ProjectID    pgtype.Text
-	ClientKind   string
-	ModelName    pgtype.Text
-	ModelVersion pgtype.Text
+	ActorID        string
+	OwnerActorID   string
+	ProjectID      pgtype.Text
+	ClientKind     string
+	ModelName      pgtype.Text
+	ModelVersion   pgtype.Text
+	TokenEnvSuffix pgtype.Text
 }
 
 func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) error {
@@ -143,6 +220,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) error 
 		arg.ClientKind,
 		arg.ModelName,
 		arg.ModelVersion,
+		arg.TokenEnvSuffix,
 	)
 	return err
 }
@@ -256,6 +334,7 @@ SELECT
   ag.model_name,
   ag.model_version,
   ag.trust_level,
+  ag.token_env_suffix,
   ag.created_at,
   ag.project_id,
   p.key  AS project_key,
@@ -273,17 +352,18 @@ type FindMyAgentParams struct {
 }
 
 type FindMyAgentRow struct {
-	ActorID      string
-	DisplayName  string
-	IsActive     bool
-	ClientKind   string
-	ModelName    pgtype.Text
-	ModelVersion pgtype.Text
-	TrustLevel   int32
-	CreatedAt    pgtype.Timestamptz
-	ProjectID    pgtype.Text
-	ProjectKey   pgtype.Text
-	ProjectName  pgtype.Text
+	ActorID        string
+	DisplayName    string
+	IsActive       bool
+	ClientKind     string
+	ModelName      pgtype.Text
+	ModelVersion   pgtype.Text
+	TrustLevel     int32
+	TokenEnvSuffix pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+	ProjectID      pgtype.Text
+	ProjectKey     pgtype.Text
+	ProjectName    pgtype.Text
 }
 
 // FindMyAgent は1件を引く（PATCH と トークン発行の対象）。
@@ -301,6 +381,7 @@ func (q *Queries) FindMyAgent(ctx context.Context, arg FindMyAgentParams) (FindM
 		&i.ModelName,
 		&i.ModelVersion,
 		&i.TrustLevel,
+		&i.TokenEnvSuffix,
 		&i.CreatedAt,
 		&i.ProjectID,
 		&i.ProjectKey,
@@ -386,14 +467,15 @@ func (q *Queries) ListActiveAgentTokens(ctx context.Context, arg ListActiveAgent
 }
 
 const listAgentClientKinds = `-- name: ListAgentClientKinds :many
-SELECT key, display_name
+SELECT key, display_name, has_setup_template
 FROM agent_client_kind
 ORDER BY sort_order, key
 `
 
 type ListAgentClientKindsRow struct {
-	Key         string
-	DisplayName string
+	Key              string
+	DisplayName      string
+	HasSetupTemplate bool
 }
 
 // ListAgentClientKinds はクライアント種別のカタログを返す（ApiDesign.md 4.5.7）。
@@ -409,7 +491,7 @@ func (q *Queries) ListAgentClientKinds(ctx context.Context) ([]ListAgentClientKi
 	items := []ListAgentClientKindsRow{}
 	for rows.Next() {
 		var i ListAgentClientKindsRow
-		if err := rows.Scan(&i.Key, &i.DisplayName); err != nil {
+		if err := rows.Scan(&i.Key, &i.DisplayName, &i.HasSetupTemplate); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -430,6 +512,7 @@ SELECT
   ag.model_name,
   ag.model_version,
   ag.trust_level,
+  ag.token_env_suffix,
   ag.created_at,
   p.key  AS project_key,
   p.name AS project_name,
@@ -475,6 +558,7 @@ type ListMyAgentsRow struct {
 	ModelName       pgtype.Text
 	ModelVersion    pgtype.Text
 	TrustLevel      int32
+	TokenEnvSuffix  pgtype.Text
 	CreatedAt       pgtype.Timestamptz
 	ProjectKey      pgtype.Text
 	ProjectName     pgtype.Text
@@ -514,6 +598,7 @@ func (q *Queries) ListMyAgents(ctx context.Context, ownerActorID string) ([]List
 			&i.ModelName,
 			&i.ModelVersion,
 			&i.TrustLevel,
+			&i.TokenEnvSuffix,
 			&i.CreatedAt,
 			&i.ProjectKey,
 			&i.ProjectName,
@@ -654,19 +739,21 @@ func (q *Queries) UpdateAgentActor(ctx context.Context, arg UpdateAgentActorPara
 
 const updateAgentModel = `-- name: UpdateAgentModel :execrows
 UPDATE agent
-SET model_name    = COALESCE($1,    model_name),
-    model_version = COALESCE($2, model_version),
-    client_kind   = COALESCE($3,   client_kind)
-WHERE actor_id = $4
-  AND owner_actor_id = $5
+SET model_name       = COALESCE($1,       model_name),
+    model_version    = COALESCE($2,    model_version),
+    client_kind      = COALESCE($3,      client_kind),
+    token_env_suffix = COALESCE($4, token_env_suffix)
+WHERE actor_id = $5
+  AND owner_actor_id = $6
 `
 
 type UpdateAgentModelParams struct {
-	ModelName    pgtype.Text
-	ModelVersion pgtype.Text
-	ClientKind   pgtype.Text
-	ActorID      string
-	OwnerActorID string
+	ModelName      pgtype.Text
+	ModelVersion   pgtype.Text
+	ClientKind     pgtype.Text
+	TokenEnvSuffix pgtype.Text
+	ActorID        string
+	OwnerActorID   string
 }
 
 // UpdateAgentModel はモデルとクライアント種別を更新する（ApiDesign.md 4.5.4）。
@@ -674,11 +761,16 @@ type UpdateAgentModelParams struct {
 // **client_kind は 0020 から変更できる。** 値域が今後も増えるため、`other` で
 // 登録した人が、PB がその種別に対応した日に移れる必要がある。**project_id は
 // 変えられない**——そのエージェントが行った仕事はプロジェクトに属する。
+//
+// **token_env_suffix も変えられる**（手順28a）。端末を替えたときに直せる必要があるのは
+// display_name と同じ理由である。**変えたら接続設定を取り直す**——.mcp.json に古い変数名が
+// 残っていると ~/.zshrc を直しても繋がらない。
 func (q *Queries) UpdateAgentModel(ctx context.Context, arg UpdateAgentModelParams) (int64, error) {
 	result, err := q.db.Exec(ctx, updateAgentModel,
 		arg.ModelName,
 		arg.ModelVersion,
 		arg.ClientKind,
+		arg.TokenEnvSuffix,
 		arg.ActorID,
 		arg.OwnerActorID,
 	)
