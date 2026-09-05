@@ -314,7 +314,7 @@ func initializeOf(t *testing.T, res rpcResponse) initializeResult {
 }
 
 func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
-	// Design.md 8.2 の read 行から pb_get_context（手順27）を除いた5件。
+	// Design.md 8.2 の read 行の6件（手順27 で pb_get_context が揃った）。
 	h := New(&fakeREST{}, "v0")
 	res := decodeRPC(t, callMCP(t, h, agentPrincipal(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 	if res.Error != nil {
@@ -351,15 +351,17 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 		}
 	}
 
-	// read 5件（/pb-onboard が呼ぶ順）＋ write 3件（10.7.1 の開発フローの順）
-	// ＋ 遷移2件（見てから動かす順。手順26b）＋ 完了レポート1件（手順26c。
-	// /pb-implement の流れの終端）。
+	// read 5件（/pb-onboard が呼ぶ順）＋ コンテキストパック1件（手順27。
+	// /pb-implement が「契約を読む → 前提を読む」の順で呼ぶので pb_get_task の
+	// 直後）＋ write 3件（10.7.1 の開発フローの順）＋ 遷移2件（見てから動かす順。
+	// 手順26b）＋ 完了レポート1件（手順26c。/pb-implement の流れの終端）。
 	//
 	// **pb_claim_task / pb_release_task は Phase 3 へ送った**
 	// （Requirements.md 10.3.3——排他が実際に要るのは自律取得 pb_next_task から
-	// である）。**pb_get_context は手順27。**
+	// である）。
 	want := []string{
 		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tasks", "pb_get_task",
+		"pb_get_context",
 		"pb_create_ticket", "pb_post_note", "pb_put_doc",
 		"pb_list_transitions", "pb_transition_task",
 		"pb_submit_result",

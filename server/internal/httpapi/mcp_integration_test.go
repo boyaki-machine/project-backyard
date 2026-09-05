@@ -1050,6 +1050,84 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
+	// ── コンテキストパック（手順27。Design.md 8.5.5）───────────
+	//
+	// **ここに置くのは restJSON が要るためである**（スコープ境界を書く経路が
+	// PATCH しかない）。/pb-implement の流れでは pb_get_task の直後に来る。
+	//
+	// **単体はフェイクの REST を相手にしている**ので、ここで初めて
+	// 「3種類の応答が実データで合成されるか」「doc.view を外したときに憲章だけが
+	// 落ちるか」が測れる。
+
+	t.Run("pb_get_context が境界・憲章・依存を1枚にまとめる", func(t *testing.T) {
+		// **版を実物から取る**（先行する検証が1つ増えるたびに腐るため）。
+		get := restJSON(http.MethodGet, "/projects/"+projectKey+"/tickets/1", fullToken, "", "")
+		if get.Code != http.StatusOK {
+			t.Fatalf("チケットを読めない: %d（%s）", get.Code, get.Body.String())
+		}
+		var cur struct {
+			Version int `json:"version"`
+		}
+		if err := json.Unmarshal(get.Body.Bytes(), &cur); err != nil {
+			t.Fatalf("応答を読めない: %v", err)
+		}
+
+		// **境界を書く経路は PATCH だけである**（9.5.2。手順27 で開けた）。
+		w := restJSON(http.MethodPatch, "/projects/"+projectKey+"/tickets/1", fullToken,
+			`{"scope":{"allow":["src/auth/**"],"deny":["migrations/**"]},`+
+				`"execution_mode":"agent_draft","readiness":"yellow",`+
+				`"readiness_note":"認証方式が未決",`+
+				// **本文を入れるのは、下の「重ねて運ばない」を空振りさせないためである。**
+				// 固定データの本文は NULL なので、書かずに測ると必ず通ってしまう。
+				`"body_md":"この本文はパックに載らない"}`,
+			`"`+strconv.Itoa(cur.Version)+`"`)
+		if w.Code != http.StatusOK {
+			t.Fatalf("PATCH の status = %d, want 200（%s）", w.Code, w.Body.String())
+		}
+
+		text, isErr := tool(t, fullToken, "pb_get_context", `{"seq":1}`)
+		if isErr {
+			t.Fatalf("pb_get_context が失敗した: %s", text)
+		}
+		// 5節すべてと、3種類の応答それぞれから来た値が1枚に入っていること。
+		for _, want := range []string{
+			"## 1. スコープ境界と制約",
+			"## 2. 実行の前提",
+			"## 3. 憲章",
+			"## 4. 依存・関連するチケット",
+			"## 5. 足りないときの調べ方",
+			"`src/auth/**`",   // チケット（9.5.1 の scope）
+			"認証方式が未決",         // 同上（readiness_note）
+			"価値観・世界観",         // 憲章の目次（10.2）
+			"### 規約（`rules`）", // 憲章の本文（10.3）
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("パックに %q が無い:\n%s", want, text)
+			}
+		}
+		// **本文と完了条件は重ねて運ばない**（8.5.5）。
+		if strings.Contains(text, "この本文はパックに載らない") {
+			t.Errorf("チケット本文が入っている:\n%s", text)
+		}
+	})
+
+	t.Run("doc.view が無いと憲章だけが落ちる", func(t *testing.T) {
+		// Design.md 8.5.5：**403 で全体を落とすと、読めるはずのものまで届かない。**
+		text, isErr := tool(t, narrowToken, "pb_get_context", `{"seq":1}`)
+		if isErr {
+			t.Fatalf("憲章の欠落は切り詰めであって失敗ではない: %s", text)
+		}
+		if !strings.Contains(text, "doc.view") {
+			t.Errorf("省いた理由を書いていない:\n%s", text)
+		}
+		if !strings.Contains(text, "`src/auth/**`") {
+			t.Errorf("読めるはずのスコープ境界まで落ちている:\n%s", text)
+		}
+		if strings.Contains(text, "### 規約（`rules`）") {
+			t.Errorf("憲章が載っている（doc.view を外したのに）:\n%s", text)
+		}
+	})
+
 	// ── 完了レポート（手順26c。ApiDesign.md 9.15）─────────────
 
 	// **完了条件を2件足す。** unsatisfied_dod が「自己申告との突き合わせ」で

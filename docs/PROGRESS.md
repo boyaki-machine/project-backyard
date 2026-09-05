@@ -8,7 +8,7 @@
 | Phase | 内容 | 状態 |
 |---|---|---|
 | **1** | 認証・認可、プロジェクト、チケットの基礎（手順1〜19） | **完了**（2026-08-28、v1.36.55） |
-| 2 | **複数人とエージェントが同じプロジェクトを進められるようにする**（手順20〜28） | **進行中**（**手順26 は完了**。次は **27**＝コンテキストパック） |
+| 2 | **複数人とエージェントが同じプロジェクトを進められるようにする**（手順20〜28） | **進行中**（**手順27 は完了**。次は **28**＝セットアップ画面と設定ファイル生成） |
 | 3 | AI機能・分析、承認キュー、プロジェクトメモリ、OIDC/SAML（手順29〜38） | 未着手 |
 
 手順の一覧と完了条件は `Design.md` 11章。**Phase 2 の受け入れは通しで測る**——新しく clone した
@@ -32,6 +32,7 @@
 | 26b | 09-05 | **リースを採らず、状態遷移を開けた**（利用者の判断）。`pb_transition_task` / `pb_list_transitions` と 0021 の `ticket.working_agent_id`（実行者の自己申告）。**エージェントは「担当が自分の所有者」のチケットしか進められない**（`ApiDesign.md` 9.6 の検証6）。**`pb_claim_task` / `pb_release_task` は Phase 3 へ**（再検討の条件は `pb_next_task`） |
 | 26a | 09-05 | write 系3件（`pb_create_ticket` / `pb_post_note` / `pb_put_doc`）と `DELETE /me/agents/:id`。**`ApiDesign.md` 4.5.3 に許可リスト（既定8件 ∪ `doc.edit`）**。`pb_put_doc` は内部で2往復（`If-Match` のため）。**冪等キーは受けない** |
 | 26c | 09-05 | `pb_submit_result` と `POST .../tickets/:seq/reports`（`ApiDesign.md` 9.15）。0022 で `agent_run` / `agent_report` / `context_pack_log`。**1提出＝1 run で、Phase 2 の `status` は `completed` だけ。** **盤面を動かさない**——`dod_item.is_satisfied` も状態も触らず、`unsatisfied_dod` は自己申告との突き合わせ。**人が読む面は `kind='progress'` のコメント**（画面の実装は不要）。必要権限は `ticket.transition`、9.6 の検証6 は掛けない |
+| 27 | 09-05 | `pb_get_context`（**Markdown 1枚**。5節＝境界／実行の前提／憲章／依存・関連／調べ方）。**合成は MCP 層で、REST に専用の口を作らない**（`Design.md` 8.5.5）。**憲章は4文書とも全文**（実測3,601文字。`budget` は受けず `context_pack_log` にも書かない）。**9.5.1 / 9.5.2 に `execution_mode` / `readiness` / `readiness_note` / `scope` を足した**——これで `pb_get_task` が `Requirements.md` 10.3.2 の約束を果たす |
 
 **マイグレーションの採番**：0017〜0022 まで使用済み。**Phase 3 は 0023〜0027**（手順23 の 0018、
 24b の 0020、26b の 0021、26c の 0022 で4回動いた。**26c は「ずれ」ではなく先頭1本が Phase 2 へ
@@ -70,6 +71,7 @@
 | 33 | medium | `router/routes.ts` のプレースホルダが Phase 2 と表示する（正しくは Phase 3） |
 | 34 | medium | Docs の編集中、可視化ペインが下書きを映さない |
 | 39 | medium | 設計文書に閉じていない強調記号（`**`）が6か所ある |
+| 44 | low | `Requirements.md` 10.13 に決着済みの「憲章の章をどう指し示すか」が残っている |
 | 26 | low | `ticketScope` と `referenceScope` が同型で並んでいる |
 | 27 | low | 8ファイルに残るボタンスタイルの写し |
 | 28 | low | タグの並べ替えにドロップ先の挿入線を入れるか |
@@ -103,7 +105,9 @@
 
 | タグ | 約束 |
 |---|---|
-| `[27]` | **`context_pack_log`（0022）は器だけ在り、書き手が居ない**（`DbDesign.md` 8.2.5）。**27 で `pb_get_context` を作るとき、そこへ書くかを決める**——`Requirements.md` 10.4.4 の効果計測は運用の実績が要るので Phase 3 のままにしてある。**`agent_run` が Phase 2 に来たので、FK の相手は既に在る** |
+| `[28]` | **既存のチケットは全件 `execution_mode='human_only'`**（DDL の既定。stg の `pb` で40件すべて）。**パックはこれを読んで「実装せず利用者へ報告して終了せよ」と書く**（`Requirements.md` 10.8.6）ので、**エージェントに任せる前に誰かが `PATCH` で実行モードを立てる必要がある**。Phase 2 の受け入れ（`/pb-implement` の通し）を測る前に、対象チケットに `agent_only` か `agent_draft` を入れること |
+| `[画面に実行モード／Readiness／スコープ境界を作る手順]` | **API は手順27 で開いたが、人は画面から書けない**（`GuiDesign.md` 5.5 の表）。いま書けるのは API を直に叩く経路だけである。**3項目の入力欄を1回で設計する**——スコープ境界は配列2本＋リポジトリで、単純な文字列欄にならない |
+| `[文書を PB へ移譲する手順]` | **`docs/PROGRESS.md` と `docs/history/` を PB の文書へ移す**（利用者の構想、2026-09-05）。**プロジェクトに紐づく内容は PB、環境と利用者との関係は `CLAUDE.md` / `LEARNINGS.md` に残す**（`Requirements.md` 10.8.1 の三層分離をリポジトリ側から詰める）。**移すと2つが同時に動く**——①憲章が1桁大きくなり、パックの全文送出が成り立たなくなる（`Design.md` 8.6 の再検討条件）②**毎セッション4文書 80KB の予算の測り方が変わる**（`make docs-size` の対象から `PROGRESS.md` が抜ける）。**どちらも移譲と同じ手順で決める** |
 | `[画面に完了レポートのセクションを作る手順]` | **`GET .../reports` を置いていない**（`ApiDesign.md` 9.15）。Phase 2 で人が読むのはコメントで、`agent_report` の行を読む面が無いため。**作る条件は、レポートが時系列に埋もれたとき、または `agent_report` を集計に使い始めたとき。** そのとき `GuiDesign.md` 5.5 のセクションと API を1回で設計する |
 | `[エージェントの削除に関わる表を足す手順]` | **`actor` を `ON DELETE RESTRICT` で参照する表を足したら、`me_agents.go` の `reassignAgentRecords` に付け替えを足す**（`ApiDesign.md` 4.5.4）。いまは `comment.author_id` と `agent_run.actor_id` の2つ。**足し忘れると `DELETE /me/agents/:id` が本番で初めて失敗する**（フェイクにも同じメソッドが要る） |
 | `[Phase 3 の入口]` | **26c で材料が揃ったもの3つ。**①`agent_run.status` の `failed` / `abandoned` を誰が立てるか（開始を告げる口が要る）②`retry_count` を使うサーキットブレーカー（`Requirements.md` 10.10.5）③**`trust_level` / `capabilities` の受け取り**（`[trust_level を使い始める手順]` の前提だった `agent_run` が Phase 2 に来た） |
@@ -148,6 +152,7 @@
 | **`go test` の結果はキャッシュされる** | `openapi.yaml` だけを書き換えてもドリフト検出は再実行されない（`make test` は `-count=1`） |
 | **このリポジトリに git のリモートが無い** | `git pull` は「no tracking information」で失敗する。ブランチは `git switch develop && git switch -c …` |
 | **`make` はリポジトリ直下から実行する**（親を探しに行かない） | 他所から実行すると無音で失敗する |
+| **MCP クライアントのツール一覧はセッション開始時に固定される** | ツールを足した手順では、そのセッションから新しいツールを呼べない。実サーバ検証は `curl` で `POST /mcp/<key>`（`$PB_TOKEN` を使う）|
 | **検証の道具（`cdp.py` 等）はセッションをまたいで残らない** | スクラッチパッドは日付をまたぐと消える。毎回書き直す前提で組む |
 | **追跡ファイルに実在のメールアドレス・氏名・ローカルパスを書かない** | ダミーは `@example.com`（既存54件、実在0件） |
 | **`Runtime.evaluate` の式が `await` を含むなら、包む即時関数を `async` にする** | CDP で画面を測るとき |

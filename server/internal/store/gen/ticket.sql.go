@@ -241,7 +241,13 @@ SELECT
   t.closed_at,
   t.version,
   t.created_at,
-  t.updated_at
+  t.updated_at,
+  -- 9.5.1 の4項目（手順27）。**一覧（ListTickets）には足さない**——読む相手
+  -- （pb_get_task と pb_get_context）はどちらもチケット1件を指して呼ぶ。
+  t.execution_mode,
+  t.readiness,
+  t.readiness_note,
+  t.scope
 FROM ticket t
 JOIN project p ON p.id = t.project_id
 LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
@@ -292,6 +298,10 @@ type GetTicketBySeqRow struct {
 	Version          int32
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	ExecutionMode    string
+	Readiness        pgtype.Text
+	ReadinessNote    pgtype.Text
+	Scope            []byte
 }
 
 // ── 詳細（ApiDesign.md 9.5.1。手順16b では POST の応答にだけ使う）────
@@ -334,6 +344,10 @@ func (q *Queries) GetTicketBySeq(ctx context.Context, arg GetTicketBySeqParams) 
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExecutionMode,
+		&i.Readiness,
+		&i.ReadinessNote,
+		&i.Scope,
 	)
 	return i, err
 }
@@ -1276,8 +1290,15 @@ UPDATE ticket SET
   actual_hours   = CASE WHEN $19::boolean   THEN $20   ELSE actual_hours END,
   start_date     = CASE WHEN $21::boolean     THEN $22     ELSE start_date END,
   due_date       = CASE WHEN $23::boolean       THEN $24       ELSE due_date END,
+  -- 9.5.2 で開けた4項目（手順27）。**execution_mode と scope は NOT NULL** なので
+  -- COALESCE で足りる（null を送れば 422 で先に落ちる）。readiness と
+  -- readiness_note は null が「未判定へ戻す」を表すので _set の形が要る。
+  execution_mode = COALESCE($25, execution_mode),
+  readiness      = CASE WHEN $26::boolean      THEN $27      ELSE readiness END,
+  readiness_note = CASE WHEN $28::boolean THEN $29 ELSE readiness_note END,
+  scope          = COALESCE($30, scope),
   version        = version + 1
-WHERE project_id = $25 AND seq = $26 AND version = $27
+WHERE project_id = $31 AND seq = $32 AND version = $33
 `
 
 type UpdateTicketParams struct {
@@ -1305,6 +1326,12 @@ type UpdateTicketParams struct {
 	StartDate         pgtype.Date
 	DueDateSet        bool
 	DueDate           pgtype.Date
+	ExecutionMode     pgtype.Text
+	ReadinessSet      bool
+	Readiness         pgtype.Text
+	ReadinessNoteSet  bool
+	ReadinessNote     pgtype.Text
+	Scope             []byte
 	ProjectID         string
 	Seq               int32
 	Version           int32
@@ -1358,6 +1385,12 @@ func (q *Queries) UpdateTicket(ctx context.Context, arg UpdateTicketParams) (int
 		arg.StartDate,
 		arg.DueDateSet,
 		arg.DueDate,
+		arg.ExecutionMode,
+		arg.ReadinessSet,
+		arg.Readiness,
+		arg.ReadinessNoteSet,
+		arg.ReadinessNote,
+		arg.Scope,
 		arg.ProjectID,
 		arg.Seq,
 		arg.Version,

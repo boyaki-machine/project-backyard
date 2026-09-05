@@ -10,6 +10,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -130,6 +131,16 @@ type ticketChildBrief struct {
 // **comment_count は手順17a から実数である。** 9.6 の遷移が kind='progress' の
 // コメントを作る（DbDesign.md 6.7）ので、0 を固定で返すと事実と食い違う。
 // コメントAPI（9.8）そのものは手順18 だが、件数の供給元は先に要る。
+//
+// **execution_mode / readiness / readiness_note / scope は手順27 で足した**（9.5.1）。
+// 9.2.2 が「Phase 2 で有効化する際に足す」と書いていたもので、**一覧には足していない**
+// ——読む相手（pb_get_task と pb_get_context）はどちらもチケット1件を指して呼ぶ。
+//
+// **足した理由は、pb_get_task が果たせていない約束があったためである**（9.5.1）。
+// Requirements.md 10.8.6 の /pb-implement は手順1 で「実行主体属性が human-only なら
+// 実装せず報告して終了」「readiness が赤なら確認する」と定めているが、Design.md 8.5.2 の
+// とおり pb_get_task は本応答をそのまま返すので、**ここが返さない限りどちらの分岐も
+// 起こりえなかった。**
 type ticketDetailView struct {
 	ticketListItem
 	BodyMd       *string            `json:"body_md"`
@@ -139,6 +150,28 @@ type ticketDetailView struct {
 	Links        []linkView         `json:"links"`
 	References   []referenceView    `json:"references"`
 	CommentCount int64              `json:"comment_count"`
+
+	ExecutionMode string  `json:"execution_mode"`
+	Readiness     *string `json:"readiness"`
+	ReadinessNote *string `json:"readiness_note"`
+	// Scope はスコープ境界（Requirements.md 10.5.3）。**未設定でも null にせず
+	// {} を返す**——「境界が無い」と「項目が無い」は違うもので、パック
+	// （Design.md 8.5.5）が前者に文を当てる。
+	Scope json.RawMessage `json:"scope"`
+}
+
+// emptyScope は scope 列が空だったときに返す値（9.5.1）。
+//
+// **DB は NOT NULL DEFAULT '{}' だが、それを当てにしない。** ここが null を返すと
+// 生成した型が object と null の両方を持つことになり、読む側が分岐を持つ。
+var emptyScope = json.RawMessage(`{}`)
+
+// scopeOrEmpty は jsonb の生バイトを応答へ載せる形にする。
+func scopeOrEmpty(raw []byte) json.RawMessage {
+	if len(raw) == 0 {
+		return emptyScope
+	}
+	return json.RawMessage(raw)
 }
 
 // buildTicketListItem は一覧の1行を組み立てる。tags は別クエリで引いたもの。
@@ -253,6 +286,11 @@ func buildTicketDetail(
 		Links:        links,
 		References:   references,
 		CommentCount: commentCount,
+
+		ExecutionMode: row.ExecutionMode,
+		Readiness:     textPtr(row.Readiness),
+		ReadinessNote: textPtr(row.ReadinessNote),
+		Scope:         scopeOrEmpty(row.Scope),
 	}
 
 	if row.ParentSeq.Valid {

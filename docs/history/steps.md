@@ -61,6 +61,11 @@
 - 手順22c・24b の経緯（2026-09-05 に `PROGRESS.md` から移した）
 - 手順26a — MCP の write 系3件とエージェントの削除（2026-09-05、`feature/step-26a-mcp-write`）
 - 手順24a〜26a の現況記録（2026-09-05 に `PROGRESS.md` から移した）
+- 手順外の作業（stg の PB へ起票済み、2026-09-05）
+- 手順外の作業：毎セッション読む文書の再構成（2026-09-05、`docs/doc-restructure`）
+- 手順26b の現況記録（2026-09-05）
+- 手順26c — 完了レポート（2026-09-05、`feature/step-26c-agent-report`、v2.10.67）
+- 手順27 — コンテキストパック（2026-09-05、`feature/step-27-context-pack`、v2.11.69）
 - 手順外の作業（stg の PB へ起票済み、2026-09-05。チケット番号への対応表）
 
 ---
@@ -4238,3 +4243,68 @@ Cookie jar・トークン・Chrome プロファイル（`/tmp/pb-cdp-*`）を削
 `gofmt -l server/` の残りは既知の3件（`docs.go` / `docs_test.go` / `fake_test.go`）のみで、
 **`fake_test.go` は私の追加が整列を切っていたので、既存ブロックを壊さない位置へ移した**
 （`gofmt -w` を当てると既知の未整形まで直って無関係な差分が出るため）。
+
+---
+
+## 手順27 — コンテキストパック（2026-09-05、`feature/step-27-context-pack`、v2.11.69）
+
+`Design.md` 11章の手順27。完了条件は「**チケットを指定すると憲章の該当章とスコープ境界が返る**」。
+判断の経緯は `history/decisions.md`「手順27 — コンテキストパック」にある。
+
+### 作ったファイル
+
+| ファイル | 中身 |
+|---|---|
+| `server/internal/mcp/context_pack.go` | `pb_get_context` のツール定義・3種類の REST の合成・Markdown の描画（5節）。**見出しを2段下げて埋め込む** |
+| `server/internal/mcp/context_pack_test.go` | 13件。5節の構成／境界の描画（未知のキーを含む）／未設定の文／`human_only` と赤で止める／`doc.view` が無いときの切り詰め／本文と DoD を重ねない／見出しの段下げ |
+
+### 変えたファイル
+
+| ファイル | 変更 |
+|---|---|
+| `docs/Design.md` | 8.2 の表（REST 列を「合成」へ）／**8.5.5 を新設**／8.6 の3項目を決着させ、再検討の条件を書いた |
+| `docs/ApiDesign.md` | 9.2.2（詳細にだけ足したことを追記）／9.5.1 に4項目／9.5.2 に4項目と検証・`activity`・`POST` に足さない理由 |
+| `docs/Requirements.md` | 10.3.2 の `pb_get_context` 行（`seq`、`budget` を落とす）／10.4.3（Phase 2 では実装しない）／10.5.3（書く経路は `PATCH`）／10.13 の2項目を決着 |
+| `docs/DbDesign.md` | 8.2.5（手順27 でも書かない理由と再検討の条件） |
+| `docs/GuiDesign.md` | 5.5 の表の「実行モード／Readiness」行（API は開いた／画面は別手順） |
+| `docs/openapi.yaml` | `TicketDetail` に4項目（required にも）／`UpdateTicketRequest` に4項目 |
+| `docs/Testing.md` | 6章に「文章を組み立てて返す成果物は、見出しの木を出力して確かめる」 |
+| `server/internal/store/queries/ticket.sql` | `GetTicketBySeq` に4列／`UpdateTicket` に4項目（`execution_mode` と `scope` は COALESCE、他は `_set`） |
+| `server/internal/httpapi/v1/ticket_view.go` | `ticketDetailView` に4項目。**`scope` は未設定でも `{}`** |
+| `server/internal/httpapi/v1/tickets.go` | 値域3つ（`ticketExecutionModes` / `ticketReadinessSet` / `ticketScopeArrayKeys`） |
+| `server/internal/httpapi/v1/tickets_update.go` | `ticketPatch` に4項目・検証・`activity`・`validateTicketScope` / `canonicalJSON` |
+| `server/internal/mcp/server.go` / `tools.go` | `contextTools()` を read 系の直後に登録 |
+| `client/src/api/schema.d.ts` | `make gen-api`（+58行） |
+| 試験 | `tickets_detail_test.go`（+8件）／`fake_test.go`（DDL の既定を置く）／`server_test.go`（12件へ）／`mcp_integration_test.go`（+2件） |
+
+### 検証結果
+
+| 層 | 結果 |
+|---|---|
+| 単体（`make test`） | **全パッケージ PASS**。`openapi_drift_test.go` を含む |
+| 結合（`make test-db`） | **全 PASS**。新規2件——`pb_get_context が境界・憲章・依存を1枚にまとめる`（`PATCH` で境界を書いてから合成を確認）／`doc.view が無いと憲章だけが落ちる` |
+| 実サーバ（stg `:8081`） | `make stg-build` → 再起動 → **`curl` で `POST /mcp/pb`**（MCP クライアントのツール一覧はセッション開始時に固定されるため、この会話の MCP からは呼べない）。`tools/list` が**12件**、`pb_get_context(21)` が **4,622文字**、`pb_get_context(38)` が 4,476文字 |
+
+**完了条件の照合**
+
+| 完了条件 | 満たした証拠 |
+|---|---|
+| 憲章の該当章が返る | 実サーバのパックに4文書すべての本文（`vision` / `rules` / `decisions` / `learnings`）と22見出しが `####` で入った |
+| スコープ境界が返る | stg の pb-21 に境界を入れて呼び、`触ってよい範囲` 3件・`触ってはいけない範囲` 2件・`リポジトリ` 1件が出た。境界の無い pb-38 では「設定されていない」の文が出た |
+
+**描画して初めて分かった問題を1件直した。** 憲章の本文が `##` で始まるため、パック自身の
+`## 3. 憲章` と同じ高さに並び、**後続の `## 4.` が憲章の中か外か読めない**状態だった。
+文字列の一致だけを測る13件は全 PASS のままだった。**見出しの木を字下げして出力**して見つけ、
+埋め込み時に2段下げる実装を足した（`Testing.md` 6章へ書き足した）。
+
+### あとしまつ
+
+| 作った資源 | 片付け |
+|---|---|
+| stg の pb-21 に入れた `scope` / `execution_mode` / `readiness` / `readiness_note` | **既定へ戻した。** `SELECT count(*) … WHERE scope<>'{}' OR execution_mode<>'human_only' OR readiness IS NOT NULL` = **0** |
+| `make stg-build` の出力と webui の埋め込み | `make clean-webui`。`git status` は意図した20件のみ |
+| スクラッチパッドの `pack.json` / `pack2.md` | セッション終了で消える（`PROGRESS.md` の環境メモ） |
+
+**戻しきれなかったもの1件**：pb-21 の `updated_at` が SQL の更新2回ぶん動いた
+（`trg_ticket_updated`。`activity` は書いていないので履歴には出ない）。**stg は
+ドッグフーディングの実データなので、消さずに残す。**

@@ -3741,6 +3741,10 @@ export interface components {
          *     空配列を返していた——作りたてのチケットではどちらも空が正しい値であり、
          *     実装が入ったときに項目が生えたように見せないためである。
          *     **`references` は手順17c から、`comment_count` は手順17a から実数である。**
+         *
+         *     **`execution_mode` / `readiness` / `readiness_note` / `scope` は手順27 で足した。**
+         *     9.2.2 が「Phase 2 で有効化する際に足す」と書いていたもので、**一覧には含めない**
+         *     （`pb_get_task` と `pb_get_context` はどちらもチケット1件を指して呼ぶ）。
          */
         TicketDetail: components["schemas"]["Ticket"] & {
             /** @description 本文（Markdown ソース）。 */
@@ -3771,6 +3775,29 @@ export interface components {
              * @description コメント件数（本文は含めない。ApiDesign.md 9.8）。
              */
             comment_count: number;
+            /**
+             * @description 実行主体属性（Requirements.md 10.5.4、DbDesign.md 6.6）。**手順27 で追加。**
+             *     `/pb-implement` は `human_only` のとき実装せず利用者へ返す
+             *     （Requirements.md 10.8.6）。
+             * @enum {string}
+             */
+            execution_mode: "human_only" | "agent_only" | "agent_draft";
+            /**
+             * @description 実行可能性の信号（Requirements.md 10.5.1）。未判定は null。**手順27 で追加。**
+             * @enum {string|null}
+             */
+            readiness: "red" | "yellow" | "green" | null;
+            /** @description Readiness の理由。未設定は null。**手順27 で追加。** */
+            readiness_note: string | null;
+            /**
+             * @description スコープ境界（Requirements.md 10.5.3）。**手順27 で追加。** 未設定は `{}`。
+             *     既知の4キー（allow / deny / repositories / external_apis）は文字列の配列で、
+             *     **未知のキーはそのまま保存する**（ApiDesign.md 9.5.2）。
+             *     コンテキストパックの最優先項目として渡る（Design.md 8.5.5）。
+             */
+            scope: {
+                [key: string]: unknown;
+            };
         };
         /**
          * @description チケットのコメント（ApiDesign.md 9.8、DbDesign.md 6.7）。**人とエージェントが
@@ -4316,6 +4343,37 @@ export interface components {
              * @description `YYYY-MM-DD`。開始日より前だと 422。
              */
             due_date?: string | null;
+            /**
+             * @description 実行主体属性（Requirements.md 10.5.4）。**手順27 で開いた。**
+             *     **`null` は受け付けない**（列が NOT NULL。422 の `invalid`）。
+             *     **`ticket.assign` は要らない**——追加の権限が要るのは「誰がやるか」を
+             *     決める操作だけで、これは「何をしてよいか」である（9.5.2）。
+             * @enum {string}
+             */
+            execution_mode?: "human_only" | "agent_only" | "agent_draft";
+            /**
+             * @description 実行可能性の信号（Requirements.md 10.5.1）。**手順27 で開いた。**
+             *     `null` で未判定へ戻す。
+             * @enum {string|null}
+             */
+            readiness?: "red" | "yellow" | "green" | null;
+            /**
+             * @description Readiness の理由。**手順27 で開いた。** `null` で消す。
+             *     **長さの上限を置かない**（`body_md` と同じ扱い）。
+             */
+            readiness_note?: string | null;
+            /**
+             * @description スコープ境界（Requirements.md 10.5.3）。**手順27 で開いた。**
+             *     **`null` は受け付けない**（列が NOT NULL DEFAULT `'{}'`）。`{}` で空に戻す。
+             *
+             *     既知の4キー（`allow` / `deny` / `repositories` / `external_apis`）は
+             *     **文字列の配列**であること。それ以外の型は 422（`invalid`）。
+             *     **未知のキーは拒まずそのまま保存する**——境界の表し方はプロジェクトごとに
+             *     育つため、形だけを見る（9.15 の完了レポートと同じ判断）。
+             */
+            scope?: {
+                [key: string]: unknown;
+            };
         };
         /** @description ステータスの遷移（ApiDesign.md 9.6）。 */
         TransitionTicketRequest: {

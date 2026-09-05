@@ -1577,7 +1577,9 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 **`body_md` は含めない。** 一覧は本文を表示せず（`GuiDesign.md` 5.4）、200件分の Markdown は応答を数十倍にする。本文が要るのは詳細（9.5）だけである。
 
-**`execution_mode` / `readiness` / `readiness_note` / `scope` / `custom_fields` も含めない。** 列は `DbDesign.md` 6.6 に先行定義されているが、`GuiDesign.md` 5.5 が「Phase 1 では非表示」と決めている。**画面が使わない項目を応答に載せない**（載せると、使われないまま形が固まる）。Phase 2 で有効化する際に足す。
+**`execution_mode` / `readiness` / `readiness_note` / `scope` / `custom_fields` も含めない。** 列は `DbDesign.md` 6.6 に先行定義されているが、`GuiDesign.md` 5.5 が「Phase 1 では非表示」と決めている。**画面が使わない項目を応答に載せない**（載せると、使われないまま形が固まる）。
+
+**このうち前の4つは、手順27 で詳細（9.5.1）にだけ足した。** 一覧には**引き続き含めない**——読む相手（コンテキストパックと `/pb-implement` の分岐）はどちらも**チケット1件を指して呼ぶ**ものであり、200件ぶんの `scope` を運ぶ理由が無い。`custom_fields` は詳細にも足していない（9.5.1）。
 
 `assignee` / `reporter` は担当者不在のとき `null`。`kind` は `user` / `agent` / `system` で、**画面はこれを見てエージェントに 🤖 バッジを付ける**（`GuiDesign.md` 5.4、設計原則5）。
 
@@ -1735,6 +1737,27 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 | `links` | 関連リンクの配列（9.10.1） |
 | `references` | 外部参照の配列（9.10.2）。`kind` の昇順、同じ `kind` の中は `sort_order` → `created_at` の昇順 |
 | `comment_count` | コメント件数（本文は含めない）。`deleted_at IS NULL` のものを数える |
+| `execution_mode` | `human_only` / `agent_only` / `agent_draft`（手順27 で追加） |
+| `readiness` | `red` / `yellow` / `green`。未判定は `null`（同上） |
+| `readiness_note` | Readiness の理由。未設定は `null`（同上） |
+| `scope` | スコープ境界のオブジェクト。未設定は `{}`（同上） |
+
+**下の4項目は手順27 で足した**（`execution_mode` / `readiness` / `readiness_note` / `scope`）。
+9.2.2 が「Phase 2 で有効化する際に足す」と書いていたものである。**足したのは詳細だけで、
+一覧（9.2.2）には引き続き含めない**——本文と同じく、**一覧は使わない項目を件数ぶん
+掛け算する場所ではない**。
+
+**足した理由は、`pb_get_task` が果たせていない約束があったためである。**
+`Requirements.md` 10.3.2 は `pb_get_task` の戻り値に「スコープ境界、実行主体属性、
+readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` は手順1 で
+**「実行主体属性が `human-only` の場合、実装せずユーザーに報告して終了する」**
+「readiness が赤の場合、不足点を提示し、実装に進んでよいかユーザーに確認する」と
+定めている。`Design.md` 8.5.2 のとおり `pb_get_task` は本節の応答をそのまま返すので、
+**本節が返さない限り、この2つの分岐はどちらも起こりえなかった。**
+
+**`custom_fields` は足さない。** 9.2.2 が挙げた5項目のうち、これだけは読む相手が
+まだ居ない——画面も MCP のツールも使わない（`GuiDesign.md` 5.5）。**在ることは、
+要ることの根拠にならない。**
 
 **コメント本体と変更履歴は含めない。** コメントはページングを持ち（9.8）、履歴は既定で畳まれている（`GuiDesign.md` 5.5）。画面は起動時に本エンドポイントと `GET .../comments` の**2本**を呼ぶ。履歴は開いたときに3本目を遅延で呼ぶ。8章の「起動時1〜2本」に収まる。
 
@@ -1748,7 +1771,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 
 `If-Match: "3"` による楽観ロック（2.8）。**省略時は `422`**。成功すると `version` が +1 される。送られたフィールドだけを更新する。
 
-変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `sprint_id` `estimate_point` `estimate_hours` `actual_hours` `start_date` `due_date`
+変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `sprint_id` `estimate_point` `estimate_hours` `actual_hours` `start_date` `due_date` `execution_mode` `readiness` `readiness_note` `scope`
 
 **含められないフィールド**
 
@@ -1772,6 +1795,45 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 **メンバーであることを所有者で見るのは、`Design.md` 6.5 の委譲に従うためである。** エージェントは `project_member` の行を持たない（持たせると所有者のロールと二重になる）ので、`assignee_id` と同じ検証をエージェント自身に対して行うと必ず落ちる。
 
 **`ticket.assign` を要求するのは、これが「誰がやるか」を決める操作だからである。** `assignee_id` と同じ扱いにする。
+
+**`execution_mode` / `readiness` / `readiness_note` / `scope` を書けるようにした**（手順27）
+
+**エージェントの逸脱防止を構造データで行う**（`Requirements.md` 10.5.3）以上、**その構造データを
+書く経路が要る。** 列は 0006 から在ったが（`DbDesign.md` 6.6）、**本節の変更可能リストにも
+9.3 の `POST` にも無く、どの経路からも書けなかった**——手順26c の時点で、stg の40件すべてが
+既定値のままだった（実測）。
+
+| フィールド | 検証 | 失敗時の `details[].code` |
+|---|---|---|
+| `execution_mode` | `human_only` / `agent_only` / `agent_draft` のいずれか。**`null` は不可**（列が NOT NULL） | `invalid` |
+| `readiness` | `red` / `yellow` / `green`、または **`null`（未判定へ戻す）** | `invalid` |
+| `readiness_note` | 文字列、または `null`。**長さの上限を置かない**（`body_md` と同じ扱い） | `invalid` |
+| `scope` | **オブジェクト。** 既知の4キー（`allow` / `deny` / `repositories` / `external_apis`）は**文字列の配列**であること。`{}` で空に戻す。**`null` は不可**（列が NOT NULL DEFAULT `'{}'`） | `invalid` |
+
+**`scope` の未知のキーは拒まず、そのまま保存する。** 9.15 の完了レポートと同じ判断である
+——`Requirements.md` 10.5.3 の例は `allow` / `deny` / `repositories` / `external_apis` の4つを
+挙げるが、**境界の表し方はプロジェクトごとに育つ**（触ってよい API、触ってよい環境、承認が要る
+操作）。**知らないキーを1つ付けただけで更新が丸ごと落ちると、往復が増えるだけで誰も得をしない。**
+**形（配列かオブジェクトか）だけを見る**のも 9.15 と同じである。
+
+**`ticket.assign` は要求しない。** 追加の権限が要るのは `assignee_id` / `working_agent_id` ——
+すなわち**「誰がやるか」を決める操作**だけである（本節冒頭）。**スコープ境界と実行モードは
+「何をしてよいか」であり、担当の割り当てではない。** `ticket.edit` を持つ人が本文や完了条件を
+書けることと同じ重さに置く。
+
+**新しい `details[].code` を発明しない。** 4項目とも既存の `invalid` で表せる（9.14 の表に
+加わるものは無い）。
+
+**`activity` には4項目とも `old_value` / `new_value` を記録する**（`body_md` のように
+`NULL` にしない）。**`scope` の変更は「誰が縛りを緩めたか」であり、履歴として読む価値が
+本文より高い。** 実際の値は数行に収まり、9.13.2 の `per_page=20` を圧迫しない。
+
+**`POST /tickets`（9.3）には足さない**（手順27）。**スコープ境界は縛る側が書くものである**
+——起票時に受けると、`pb_create_ticket`（`Design.md` 8.5.1）を通じて**実装するエージェントが
+自分の境界を書ける経路**になる。PM のエージェントに書かせる形は、`Design.md` 8.2 が
+「エージェントが自分の所有者へ担当を割り当ててから遷移できる」問題を扱うときに、**同じ
+論点として1回で決める**（`docs/PROGRESS.md` の引き継ぎ）。人は画面から書けないままなので、
+**`GuiDesign.md` 5.5 の「実行モード／Readiness」を有効化する手順で、入力欄とあわせて開ける。**
 
 **`parent_seq` に `null` を送ると親を外す。** 自分自身または自分の子孫を親に指定した場合は `422 validation_failed`、`details[].code = "parent_cycle"`。**循環検出はアプリ層で行う**（DBの `ck_ticket_not_self_parent` は自己参照しか防げない。`DbDesign.md` 6.6）。
 

@@ -82,6 +82,17 @@ type ticketPatch struct {
 
 	StartDate optional[pgtype.Date]
 	DueDate   optional[pgtype.Date]
+
+	// 手順27 で開けた4つ（9.5.2）。**エージェントの逸脱防止を構造データで行う**
+	// （Requirements.md 10.5.3）以上、その構造データを書く経路が要る。列は 0006 から
+	// 在ったが、本文のリストにも 9.3 の POST にも無く、どの経路からも書けなかった。
+	//
+	// **ExecutionMode と Scope は null を受けない**（列が NOT NULL）。
+	// Readiness と ReadinessNote は null が「未判定へ戻す」を表す。
+	ExecutionMode optional[string]
+	Readiness     optional[string]
+	ReadinessNote optional[string]
+	Scope         optional[json.RawMessage]
 }
 
 // optional は「送られたか」と「null か」を持つ値。
@@ -241,6 +252,18 @@ func (h *handler) resolveTicketPatch(
 	params.ActualHoursSet, params.ActualHours = floatParam(patch.ActualHours)
 	params.StartDateSet, params.StartDate = dateParam(patch.StartDate)
 	params.DueDateSet, params.DueDate = dateParam(patch.DueDate)
+
+	// 手順27 の4つ（9.5.2）。**execution_mode と scope は COALESCE で足りる**
+	// ——null は parseTicketPatch が先に 422 で落としているので、ここへ来る値は
+	// 「送られなかった」か「実体のある値」のどちらかしかない。
+	if patch.ExecutionMode.Set {
+		params.ExecutionMode = pgtype.Text{String: patch.ExecutionMode.Value, Valid: true}
+	}
+	params.ReadinessSet, params.Readiness = textParam(patch.Readiness)
+	params.ReadinessNoteSet, params.ReadinessNote = textParam(patch.ReadinessNote)
+	if patch.Scope.Set {
+		params.Scope = []byte(patch.Scope.Value)
+	}
 
 	// ── 開始日と期限の前後関係（DbDesign.md 6.6 の ck_ticket_dates）─────
 	//
@@ -463,6 +486,22 @@ func recordTicketFieldChanges(
 		add("due_date", dateStrPtr(before.DueDate), optionalDateStrPtr(patch.DueDate))
 	}
 
+	// 手順27 の4つ。**scope も old/new を残す**（body_md のように落とさない）
+	// ——「誰が縛りを緩めたか」は履歴として読む価値が本文より高く、値は数行に
+	// 収まるので 9.13.2 の per_page=20 を圧迫しない（9.5.2）。
+	if patch.ExecutionMode.Set {
+		add("execution_mode", strPtr(before.ExecutionMode), strPtr(patch.ExecutionMode.Value))
+	}
+	if patch.Readiness.Set {
+		add("readiness", textPtr(before.Readiness), optionalStrPtr(patch.Readiness))
+	}
+	if patch.ReadinessNote.Set {
+		add("readiness_note", textPtr(before.ReadinessNote), optionalStrPtr(patch.ReadinessNote))
+	}
+	if patch.Scope.Set {
+		add("scope", strPtr(canonicalJSON(before.Scope)), strPtr(canonicalJSON(patch.Scope.Value)))
+	}
+
 	for _, c := range changes {
 		field := c.field
 		if err := rec.Record(ctx, q, activity.Entry{
@@ -571,6 +610,42 @@ func parseTicketPatch(raw updateTicketRequest) (ticketPatch, *apierr.Error) {
 	patch.StartDate, details = optionalDateField(raw, "start_date", details)
 	patch.DueDate, details = optionalDateField(raw, "due_date", details)
 
+	// ── 手順27 で開けた4つ（9.5.2）─────────────────────────────
+	//
+	// **新しい details[].code を発明しない。** 4項目とも既存の invalid で表せる
+	// （9.14 の表に加わるものは無い）。
+	if v, ok := raw["execution_mode"]; ok {
+		s, isNull, err := decodeOptionalString(v)
+		switch {
+		case err != nil || isNull || !slices.Contains(ticketExecutionModes, s):
+			details = append(details, apierr.Detail{
+				Field: "execution_mode", Code: "invalid",
+				Message: "実行モードは " + strings.Join(ticketExecutionModes, " / ") + " のいずれかです",
+			})
+		default:
+			patch.ExecutionMode = optional[string]{Set: true, Value: s}
+		}
+	}
+	patch.Readiness, details = optionalStringField(raw, "readiness", details,
+		func(s string) *apierr.Detail {
+			if slices.Contains(ticketReadinessSet, s) {
+				return nil
+			}
+			return &apierr.Detail{
+				Field: "readiness", Code: "invalid",
+				Message: "Readiness は " + strings.Join(ticketReadinessSet, " / ") + " のいずれかです",
+			}
+		})
+	patch.ReadinessNote, details = optionalStringField(raw, "readiness_note", details, nil)
+
+	if v, ok := raw["scope"]; ok {
+		if d := validateTicketScope(v); d != nil {
+			details = append(details, *d)
+		} else {
+			patch.Scope = optional[json.RawMessage]{Set: true, Value: v}
+		}
+	}
+
 	if v, ok := raw["parent_seq"]; ok {
 		if isJSONNull(v) {
 			patch.ParentSeq = optional[int32]{Set: true, Null: true}
@@ -607,6 +682,62 @@ func parseTicketPatch(raw updateTicketRequest) (ticketPatch, *apierr.Error) {
 		return ticketPatch{}, apierr.New(apierr.ValidationFailed).WithDetails(details...)
 	}
 	return patch, nil
+}
+
+// validateTicketScope は scope の形を見る（9.5.2。手順27）。
+//
+// **形（配列かオブジェクトか）だけを見て、そのまま保存する。** 9.15 の完了レポートと
+// 同じ判断で、**未知のキーは拒まない**——境界の表し方はプロジェクトごとに育つ
+// （触ってよい API、触ってよい環境、承認が要る操作）。知らないキーを1つ付けた
+// だけで更新が丸ごと落ちると、往復が増えるだけで誰も得をしない。
+//
+// **null は受けない。** 列が NOT NULL DEFAULT '{}' であり、空にするのは {} である。
+func validateTicketScope(v json.RawMessage) *apierr.Detail {
+	invalid := func(msg string) *apierr.Detail {
+		return &apierr.Detail{Field: "scope", Code: "invalid", Message: msg}
+	}
+	if isJSONNull(v) {
+		return invalid("スコープ境界は空にするとき {} を指定してください")
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(v, &obj); err != nil {
+		return invalid("スコープ境界はオブジェクトで指定してください")
+	}
+	for _, key := range ticketScopeArrayKeys {
+		raw, ok := obj[key]
+		if !ok {
+			continue
+		}
+		var items []string
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return invalid(key + " は文字列の配列で指定してください")
+		}
+	}
+	return nil
+}
+
+// canonicalJSON は jsonb を比較・記録できる1つの表記に均す（9.5.2 の activity）。
+//
+// **これが無いと「同じ内容の送り直し」が変更として記録される。** DB から返る
+// jsonb は Postgres が正規化した並び（キーの長さ順）で、送られてくる JSON の
+// 並びとは一致しない。encoding/json は map のキーを名前順に並べるので、
+// **両側を通せば同じ内容が同じ文字列になる。**
+//
+// 解けないものはそのまま返す（検証を通った値しか来ないが、記録のために
+// エラーを持ち上げる価値が無い）。
+func canonicalJSON(raw []byte) string {
+	if len(raw) == 0 {
+		return "{}"
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return string(raw)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return string(raw)
+	}
+	return string(b)
 }
 
 // ── 本文を解くための小物 ──────────────────────────────────────

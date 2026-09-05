@@ -57,6 +57,18 @@ var (
 	ticketTypes        = []string{"epic", "story", "task"}
 	ticketPriorities   = []string{"lowest", "low", "medium", "high", "highest"}
 	ticketStatusCatego = []string{"todo", "in_progress", "review", "done"}
+
+	// 手順27 で PATCH に開けた3つ（ApiDesign.md 9.5.2、DbDesign.md 6.6 の CHECK）。
+	ticketExecutionModes = []string{"human_only", "agent_only", "agent_draft"}
+	ticketReadinessSet   = []string{"red", "yellow", "green"}
+
+	// ticketScopeArrayKeys は scope の既知のキー（Requirements.md 10.5.3）。
+	//
+	// **形だけを見る。** ここに挙がったキーは「文字列の配列であること」だけを
+	// 検証し、**未知のキーは拒まずそのまま保存する**（9.5.2）——境界の表し方は
+	// プロジェクトごとに育つので、知らないキーを1つ付けただけで更新が丸ごと
+	// 落ちると往復が増えるだけになる（9.15 の完了レポートと同じ判断）。
+	ticketScopeArrayKeys = []string{"allow", "deny", "repositories", "external_apis"}
 )
 
 // ticketSortSpec は 9.2.1 の sort / order / per_page の既定と許可リスト。
