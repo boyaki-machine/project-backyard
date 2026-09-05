@@ -275,11 +275,12 @@ If-Match: "3"
 `login.success` / `login.failure` / `logout` / `password.change` / `password.reset` /
 `token.issue` / `token.revoke` / `session.revoke` / `user.create` / `user.update` /
 `user.delete` / `role.change` / `project.create` / `project.archive` / `permission.denied` /
-`agent.register` / `agent.update`
+`agent.register` / `agent.update` / `agent.delete`
 
-**末尾の2件は 0019（Phase 2）で加わった**（4.5.6）。エージェントの登録と更新は
-アカウントの作成・変更と同じ重みを持つ操作であり、`user.create` / `user.update` と
-並べてある。
+**末尾の3件は Phase 2 で加わった**（4.5.6）。**`agent.register` / `agent.update` は 0019**、
+**`agent.delete` は手順26a**（2026-09-05）である。エージェントの登録・変更・削除は
+アカウントの作成・変更・削除と同じ重みを持つ操作であり、`user.create` / `user.update` /
+`user.delete` と並べてある。
 
 ## 2.11 ヘルスチェック
 
@@ -550,7 +551,8 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 **`Design.md` 6.5 のエージェントの既定スコープも、同じ語彙で書かれている**（2026-08-30、手順24a）。
 改訂前の 6.5 は `ticket:read` / `ticket:claim` / `result:submit` / `context:read` という別語彙を
 挙げていたが、**その語彙で発行すると実効権限が0件になる**ため、権限キーへ置き換えた。
-**エージェント用トークンは 4.5.3 が発行し、スコープは選ばせない**（6.5 の既定を常に入れる）。
+**エージェント用トークンは 4.5.3 が発行する。** スコープは**許可リストの中から選べる**
+（省略時は 6.5 の既定8件。2026-09-05 に「選ばせない」から改めた。手順26a）。
 
 **Phase 1 の画面はスコープを選ばせない**（`GuiDesign.md` 5.8）。常に `[]` で発行するため、
 発行されたトークンは本人の権限をそのまま持つ。どの権限をまとめて選ばせるかは、
@@ -732,12 +734,34 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 | 項目 | 規則 |
 |---|---|
 | `expires_in_days` | **必須**。1〜365 の整数。無期限は許さない（`Design.md` 6.5「有効期限必須」） |
-| `scopes` | **受け取らない。** `Design.md` 6.5 の既定を常に入れる |
+| `scopes` | 省略可。**省略すると `Design.md` 6.5 の既定8件**。渡すときは**許可リストの中だけ**（下記）。カタログに無い値・許可リスト外の値は `422` |
 
-**スコープを選ばせない。** 6.5 が既定を定めており、**そこから外れる組み合わせを作る動機が
-Phase 2 に無い**。`ticket.close` と `doc.edit` を既定から外してあるのが要点で、選ばせると
-その禁止が画面の作りに依存してしまう。**トークンは所有者の権限との積になる**ため、既定を
-そのまま載せても所有者が持たない権限は付かない。
+**許可リストは「6.5 の既定8件 ∪ `doc.edit`」の9件である**（2026-09-05 に改訂。手順26a）。
+
+```
+agent.run  comment.create  doc.view  project.view
+ticket.assign  ticket.create  ticket.transition  ticket.view   ← 既定の8件
+doc.edit                                                        ← 発行時に足せる
+```
+
+**改訂前は「受け取らない」だった**（2026-09-02、手順24a）。その根拠は**「既定から外れる
+組み合わせを作る動機が Phase 2 に無い」**だったが、**手順26 の `pb_put_doc` がその動機である**
+——`Design.md` 8.2 が「`pb_put_doc` は `doc.edit` を要求する」、6.5 が「載せるかは**その
+エージェントが誰に付いているか**で決まる。PM のエージェントは持ち、実装だけを行う
+エージェントは持たない」と定めているのに、**発行の口が固定では 6.5 を実行できない**。
+
+**`ticket.close` は許可リストにも入れない。** 6.5 の禁止のうち、`doc.edit` だけが
+「誰に付いているかで決まる」と書かれており、クローズは**エージェントに開けない**と
+定められている（ワークフローの `is_agent_reachable = false` と `allowed_actor_kinds` で
+DB レベルでも担保される。`DbDesign.md` 7.4）。
+
+**許可リストを持つのは、画面の作りに禁止を依存させないためである**（改訂前の記述の要点は
+ここにあり、それは保たれている）。**`scopes` に任意の権限キーを通すと、`/me/agents` を
+叩ける本人が `user.manage` を載せたトークンを自分のエージェントへ渡せる**——所有者との積で
+消えるとはいえ、アドミニストレータが所有者のときは消えない。
+
+**トークンは所有者の権限との積になる**ため、許可リストの中でも所有者が持たない権限は付かない
+——`doc.edit` を持つのは `project_admin` だけである（0017。`DbDesign.md` 8.1.4）。
 
 **発行するトークンは `project_id` を持つ**（`access_token.project_id` にエージェントの
 プロジェクトを入れる）。他プロジェクトへのアクセスは `404` になる（`Design.md` 6.4.5）。
@@ -761,7 +785,7 @@ Phase 2 に無い**。`ticket.close` と `doc.edit` を既定から外してあ�
 | 他人のエージェント・存在しない `id` | `404 not_found` |
 | 無効化されたエージェント（`is_active=false`） | `409 conflict` |
 
-### 4.5.4 `PATCH /api/v1/me/agents/:id`
+### 4.5.4 `PATCH` / `DELETE` `/api/v1/me/agents/:id`
 
 ```json
 { "display_name": "私の Claude Code (mini)", "client_kind": "codex",
@@ -790,9 +814,6 @@ Phase 2 に無い**。`ticket.close` と `doc.edit` を既定から外してあ�
 **無効化すると、そのエージェントのトークンも失効する**——無効化したのに動き続けるのは
 利用者の期待に反する。
 
-**エージェントを消す API は持たない。** 4.4.3 がトークンを消さずに失効させるのと同じ理由で、
-監査から辿れる先を残す。
-
 | 状況 | 応答 |
 |---|---|
 | 成功 | `200` |
@@ -803,6 +824,49 @@ Phase 2 に無い**。`ticket.close` と `doc.edit` を既定から外してあ�
 **`client_kind` を変えても、発行済みトークンの `client_info` は書き換えない**
 （4.5.3 が発行時の値を入れる列であり、**そのトークンがいつ何として発行されたか**を残す）。
 次に発行し直したときに新しい値が入る。
+
+#### `DELETE /api/v1/me/agents/:id` — エージェントを消す
+
+**`204 No Content`。** エージェントの `actor` 行を物理削除する（`DbDesign.md` 4.6）。
+`agent` `access_token` は `ON DELETE CASCADE` で追従するので、**そのエージェントの
+資格情報は1本残らず消える**。
+
+**改訂前は「消す API を持たない」と定めていた**（2026-09-02、手順24b）。**根拠は
+「監査から辿れる先を残す」だったが、これは 4.4.3 がトークンについて述べたものの
+写しで、エージェントには当てはまらなかった**——`audit_log.actor_id` は
+`ON DELETE SET NULL` で、`actor_kind` / `actor_label` を非正規化して持つ（0008）ため、
+**アクターを消しても監査は読める**。人の削除（6.5）を成立させているのがこの仕組みである。
+**手順26 でエージェントが書き手になり、`ticket.create` / `comment.create` / `doc.edit` を
+持つ資格情報を配るようになった以上、それを完全に取り消す手段が要る**（利用者の判断、
+2026-09-05——「write 権限を与えるので、同時にエージェントの管理も強化したい」）。
+
+**削除前に、そのエージェントが書いたコメントを付け替える。** `comment.author_id` は
+`NOT NULL` かつ `ON DELETE RESTRICT` であり（`DbDesign.md` 6.7）、付け替えないと
+削除そのものが失敗する。6.5 が人について定めているのと同じ手順である。
+
+**付け替え先は `kind='agent'` の「削除されたエージェント」である**（利用者の判断、
+2026-09-05）。**人の付け替え先（`kind='system'` の「削除されたユーザー」）と分ける**——
+`GuiDesign.md` 8.4.2 はアバターの**形**で人（円）とエージェント（角丸四角）を区別しており、
+`system` へ寄せると**過去のコメントが全部円になり、人が書いたように見える**。
+形は恒常的に表示される属性であり、消したあとに変わると出所が読めなくなる。
+
+**この付け替え先は `agent` 行を持たない `actor` である。** トークンを1本も持たないため
+認証の経路（`Design.md` 6.4.5）には現れず、`/me/agents` にも `GET /admin/users?kind=agent` にも
+出ない。**最初に必要になった削除で作る**（`CreateSystemActor` と同じ作法。手順13a の判断）。
+
+| 状況 | 応答 |
+|---|---|
+| 成功 | `204` |
+| 他人のエージェント・存在しない `id` | `404 not_found` |
+| 有効な `task_lease` を保持中（**手順26b 以降**） | `409 conflict` |
+
+**リースのガードは 26b で足す。** `task_lease` に行を書く経路（`pb_claim_task`）が
+26b で入るまで、この状況は起こらない。**6.5 が人について同じガードを定めている**ので、
+形は揃っている。
+
+**監査は `agent.delete`**（4.5.6）。**`is_active: false` による無効化は残す**——
+「いま止めたいが記録は残したい」と「消したい」は別の要求である（`GuiDesign.md` 5.6 が
+人について「無効化を既定の導線にし、削除は `⋯` の下段に置く」と定めているのと同じ）。
 
 ### 4.5.5 `DELETE /api/v1/me/agents/:id/tokens/:token_id`
 
@@ -820,10 +884,11 @@ Phase 2 に無い**。`ticket.close` と `doc.edit` を既定から外してあ�
 |---|---|---|
 | 登録 | `agent.register` | `display_name` / `client_kind` / `project_key` |
 | 更新・無効化 | `agent.update` | 変更した項目。無効化は `is_active: false` |
+| 削除 | `agent.delete` | 削除時点の `display_name` / `client_kind` / `project_key`、**付け替えたコメントの件数**（`reassigned_comments`） |
 | 発行 | `token.issue` | `client_kind` / `project_key` / `scopes` / `expires_at`。**平文は入れない** |
 | 失効 | `token.revoke` | `token_prefix`。再発行に伴う暗黙の失効もここに残す |
 
-登録と更新は `target_type='agent'`、`target_id` はエージェントの `actor.id`。
+登録・更新・削除は `target_type='agent'`、`target_id` はエージェントの `actor.id`。
 トークンの2つは 4.4.4 と同じく `target_type='access_token'`。
 
 **`audit_log.actor_id` は操作した本人**（エージェントではない）。登録も発行も人の操作である。
@@ -1187,7 +1252,24 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 
 `ticket.assignee_id` は `ON DELETE SET NULL` のため**チケットは残る**。`comment.author_id` は `NOT NULL` かつ `ON DELETE RESTRICT` のため、**削除前にシステムアクター（`kind='system'` の「削除されたユーザー」）へ付け替える**必要がある（`DbDesign.md` 6.7）。
 
-**0019 以降、その人が所有するエージェントも一緒に消える**（`agent.owner_actor_id` の `ON DELETE CASCADE`。`DbDesign.md` 8.2.1）。**エージェントが書き手になる手順で、上の付け替えの対象をエージェントにも広げること**——本節の記述は人についてしか書かれておらず、エージェントがコメントを持つようになると所有者の削除が `RESTRICT` に当たる。0019 の時点ではエージェントはコメントを書けないため、まだ起きない。
+**その人が所有するエージェントは、削除の前にこちらで始末する**（2026-09-05 に改訂。手順26a）。
+
+**`agent.owner_actor_id` の `ON DELETE CASCADE` が消すのは `agent` の行だけである。**
+FK の向きは `agent.actor_id → actor(id)` なので、**エージェントの `actor` 行・その
+`access_token`・そのコメントは残る**。改訂前の本節は「エージェントも一緒に消えるので
+`comment.author_id` の `RESTRICT` に当たる」と書いていたが、**実際に起きるのは
+`RESTRICT` ではなく孤児のアクターである**——`agent` 行を失った `actor` は
+`FindAccessTokenByHash` の `LEFT JOIN agent` から外れ、**認証は通るが実効権限が0件の
+トークンが残る**（`Design.md` 6.4.1 の両層が空になるため）。
+
+したがって `DELETE /admin/users/:id` は、本人を消す前に**所有するエージェントを
+4.5.4 の `DELETE /me/agents/:id` と同じ手順で1件ずつ消す**——コメントを
+`kind='agent'` の「削除されたエージェント」へ付け替え、エージェントの `actor` を削除する
+（`agent` と `access_token` は CASCADE で追従する）。**同一トランザクションで行う。**
+
+**監査は本人の `user.delete` 1行に集約する**（`detail` に `deleted_agents` の件数を入れる）。
+消したエージェントごとに `agent.delete` を並べない——**利用者から見た操作は1回**であり、
+1人の削除で監査が数行に散ると「誰を消したか」が読みにくくなる。
 
 | ガード | 応答 |
 |---|---|

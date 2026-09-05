@@ -533,3 +533,248 @@ func (f *flexString) UnmarshalJSON(b []byte) error {
 	f.value = strings.TrimSpace(s)
 	return nil
 }
+
+// ── write 系（手順26a。Design.md 8.5.1）─────────────────────
+
+// writeTools は手順26a で実装する write 系3件を返す。
+//
+// **並び順は 10.7.1 の開発フローに合わせてある**——議論の結果を起票し
+// （pb_create_ticket）、実装中に分かったことを書き（pb_post_note）、指示が
+// あれば憲章へ反映する（pb_put_doc）。tools/list はこの順で出る。
+//
+// **pb_claim_task / pb_release_task は 26b、pb_submit_result は 26c**
+// （Design.md 8.2）。
+func writeTools() []tool {
+	return []tool{
+		{
+			Name: "pb_create_ticket",
+			Description: "チケットを1件起票する。議論の結果として「これは別の作業だ」と決まったものを、" +
+				"その場で PB に残すために使う。作ったチケットは必ずバックログに入り、" +
+				"担当も状態も後から人が決められる。**勝手に着手しないこと。**",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"type":    {Type: "string", Description: "チケットの種別", Enum: []string{"epic", "story", "task"}},
+					"title":   {Type: "string", Description: "1〜200文字。何をするかが1行で分かる文にする"},
+					"body_md": {Type: "string", Description: "本文（Markdown）。背景・やること・完了の見分け方を書く"},
+					"priority": {Type: "string", Description: "優先度。省略すると未設定",
+						Enum: []string{"lowest", "low", "medium", "high", "highest"}},
+					"parent_seq": {Type: "integer", Description: "親チケットの番号（seq）。省略するとトップレベル", Minimum: intPtr(1)},
+					"assignee_id": {Type: "string", Description: "担当者。me で自分（エージェントのトークンでは所有者）、" +
+						"アクターの ULID も渡せる。省略すると未割当。**当該プロジェクトのメンバーであること**"},
+				},
+				Required: []string{"type", "title"},
+			},
+			call: callCreateTicket,
+		},
+		{
+			Name: "pb_post_note",
+			Description: "チケットにコメントを1件書く。途中経過・判明した事実・試して駄目だったことを、" +
+				"次に同じ場所を触る人が読める形で残すために使う。" +
+				"kind で種類を選ぶと、あとから決定や注意点だけを拾える。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq":     {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
+					"body_md": {Type: "string", Description: "本文（Markdown）。1文字以上"},
+					"kind": {Type: "string", Description: "種類。既定は discussion。" +
+						"decision=決めたこと、caveat=次の人が踏む落とし穴、artifact=成果物の所在、" +
+						"reference=参照先、progress=途中経過",
+						Enum: []string{"discussion", "decision", "artifact", "caveat", "reference", "progress"}},
+				},
+				Required: []string{"seq", "body_md"},
+			},
+			call: callPostNote,
+		},
+		{
+			Name: "pb_put_doc",
+			Description: "プロジェクト文書（憲章）の本文を書き換える。**全置換である**——" +
+				"pb_get_doc で全文を読み、直した全文を渡すこと。章だけを差し替える口は無い。" +
+				"**憲章は全参加者を縛るので、権限を持つ人が明示的に指示したときにだけ呼ぶこと。**" +
+				"自分の判断で書き換えてはならない。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"path":    {Type: "string", Description: "文書のパス。pb_list_docs が返す path をそのまま渡す（例: rules、rules/naming）"},
+					"body_md": {Type: "string", Description: "**文書全体**の Markdown。渡した内容で本文がまるごと置き換わる"},
+					"change_reason": {Type: "string", Description: "何をなぜ変えたかを200文字以内で。履歴に残り、" +
+						"あとから版を選ぶときの手がかりになる"},
+				},
+				Required: []string{"path", "body_md"},
+			},
+			call: callPutDoc,
+		},
+	}
+}
+
+// createTicketArgs は pb_create_ticket の引数（Design.md 8.5.1）。
+//
+// **9.3 のフィールド名に揃えてある。** Requirements.md 10.3.2 は body / parent /
+// assignee と書いていたが、名前が ApiDesign.md と一致していれば、エージェントは
+// 迷ったときに設計文書を引ける（8.5）。
+//
+// **tag_ids / sprint_id / 見積 / 日付は開けていない**——いずれも ULID か画面の
+// 文脈が要り、エージェントが持たない。増やすときは 8.5.1 の表を先に直すこと。
+type createTicketArgs struct {
+	Type       string  `json:"type"`
+	Title      string  `json:"title"`
+	BodyMD     string  `json:"body_md"`
+	Priority   string  `json:"priority"`
+	ParentSeq  flexInt `json:"parent_seq"`
+	AssigneeID string  `json:"assignee_id"`
+}
+
+func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in createTicketArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if strings.TrimSpace(in.Type) == "" {
+		return toolResult{}, newError(codeInvalidParams, "type は必須である（epic / story / task）")
+	}
+	if strings.TrimSpace(in.Title) == "" {
+		return toolResult{}, newError(codeInvalidParams, "title は必須である")
+	}
+
+	// **本文は「送られた項目だけ」を組み立てる。** 空文字を載せると、9.3 が
+	// 任意と定める欄に空を明示したことになり、既定の解釈が変わりうる。
+	body := map[string]any{"type": in.Type, "title": in.Title}
+	if in.BodyMD != "" {
+		body["body_md"] = in.BodyMD
+	}
+	if in.Priority != "" {
+		body["priority"] = in.Priority
+	}
+	if in.ParentSeq.set {
+		body["parent_seq"] = in.ParentSeq.value
+	}
+	// **me は所有者を指す**（8.5 の assignee と同じ写し方）。エージェントは
+	// アクターの ULID を知らないため、me が無いと担当を付ける経路が実質無い。
+	if a := resolveAssignee(in.AssigneeID, auth.PrincipalFromContext(r.Context())); a != "" {
+		body["assignee_id"] = a
+	}
+
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost,
+		"/projects/"+url.PathEscape(key)+"/tickets", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// postNoteArgs は pb_post_note の引数（Design.md 8.5.1）。
+//
+// **in_reply_to は開けていない。** 同じチケットのコメントの ULID を指す欄だが
+// （9.8）、エージェントがその ULID を得る経路が無い。
+type postNoteArgs struct {
+	Seq    flexInt `json:"seq"`
+	BodyMD string  `json:"body_md"`
+	Kind   string  `json:"kind"`
+}
+
+func callPostNote(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in postNoteArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if !in.Seq.set || in.Seq.value < 1 {
+		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	}
+	if strings.TrimSpace(in.BodyMD) == "" {
+		return toolResult{}, newError(codeInvalidParams, "body_md は必須である")
+	}
+
+	body := map[string]any{"body_md": in.BodyMD}
+	if in.Kind != "" {
+		body["kind"] = in.Kind
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost,
+		"/projects/"+url.PathEscape(key)+"/tickets/"+strconv.FormatInt(in.Seq.value, 10)+"/comments",
+		nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// putDocArgs は pb_put_doc の引数（Design.md 8.5.1）。
+type putDocArgs struct {
+	Path         string `json:"path"`
+	BodyMD       string `json:"body_md"`
+	ChangeReason string `json:"change_reason"`
+}
+
+// callPutDoc は文書の本文を全置換する。
+//
+// **内部で2往復する。** 10.4 が PATCH に If-Match を必須とする一方、pb_get_doc は
+// 本文の Markdown しか返さないので（8.5）**エージェントは version を持てない**。
+// GET で読んで If-Match に載せる。**これは MCP が独自のルールを持つことにはならない**
+// ——楽観ロックの判定は REST 側のままで、ここがしているのは「エージェントが
+// 渡せない値を、同じ REST から取ってくる」ことだけである（8.1 / 8.5.1）。
+func callPutDoc(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in putDocArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	path := strings.Trim(in.Path, "/")
+	if path == "" {
+		return toolResult{}, newError(codeInvalidParams, "path は必須である")
+	}
+	// **空文字は弾く。** 10.4 の PATCH は body_md を任意とするので、空のまま
+	// 送ると「本文を空にする更新」として通ってしまう。全置換のツールで
+	// 引数を省いた呼び出しが憲章を消すのは、事故として重い。
+	if in.BodyMD == "" {
+		return toolResult{}, newError(codeInvalidParams,
+			"body_md は必須である（本文を全置換するツールなので、空では呼べない）")
+	}
+
+	docPath := "/projects/" + url.PathEscape(key) + "/docs/" + escapePath(path)
+
+	// ① いまの version を読む。**403 / 404 はここで出る**ので、書く前に返せる。
+	cur, err := h.getREST(r, docPath, nil)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, err.Error())
+	}
+	if !cur.ok() {
+		return failed(r, cur), nil
+	}
+	var doc struct {
+		Version int64 `json:"version"`
+	}
+	if err := json.Unmarshal(cur.body, &doc); err != nil {
+		return toolResult{}, newError(codeInternalError, "文書の応答を解釈できない: "+err.Error())
+	}
+	if doc.Version < 1 {
+		return toolResult{}, newError(codeInternalError, "文書の応答に version が無い")
+	}
+
+	// ② 書き戻す。
+	body := map[string]any{"body_md": in.BodyMD}
+	if in.ChangeReason != "" {
+		body["change_reason"] = in.ChangeReason
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	// 引用符付きの entity-tag で送る（2.8 / 5.5 の例と同じ形）。
+	header := http.Header{"If-Match": []string{`"` + strconv.FormatInt(doc.Version, 10) + `"`}}
+
+	res, err := h.callREST(r, http.MethodPatch, docPath, nil, raw, header)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, err.Error())
+	}
+	if res.status == http.StatusConflict {
+		// **409 は isError のツール結果**（8.4）。読み直してやり直すのは
+		// モデルが判断できることで、プロトコルの誤りではない。
+		return errorResult("この文書は、読んでから書くまでのあいだに他の人が更新した。" +
+			"pb_get_doc で読み直し、その内容に自分の変更を重ねてから、もう一度 pb_put_doc を呼ぶこと。\n" +
+			string(res.body)), nil
+	}
+	if !res.ok() {
+		return failed(r, res), nil
+	}
+	return textResult(string(res.body)), nil
+}

@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -408,6 +409,229 @@ func TestMeAgentsIntegration(t *testing.T) {
 	})
 
 	// ── ⑧/admin/users にエージェントが所有者つきで出る（6.1）───
+
+	// ── ⑨発行時のスコープ（ApiDesign.md 4.5.3。手順26a）─────────
+
+	t.Run("scopes を省略すると既定8件、doc.edit を足すと9件になる", func(t *testing.T) {
+		ag := register(t, ownerSession, "スコープ検証", projectKey, "claude_code")
+
+		// 省略＝既定。
+		rec := issueToken(t, ownerSession, ag.ID, `{"expires_in_days":30}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("既定の発行 status = %d, want 201（body=%s）", rec.Code, rec.Body.String())
+		}
+		var def issuedAgentTokenJSON
+		decodeJSONBody(t, rec, &def)
+		if len(def.Scopes) != len(agentDefaultScopes) {
+			t.Errorf("既定の scopes = %v, want %d件", def.Scopes, len(agentDefaultScopes))
+		}
+
+		// doc.edit を足す。**所有者は project_admin なので積で消えない。**
+		with := append(append([]string{}, agentDefaultScopes...), "doc.edit")
+		raw, err := json.Marshal(with)
+		if err != nil {
+			t.Fatalf("scopes を組み立てられない: %v", err)
+		}
+		rec = issueToken(t, ownerSession, ag.ID,
+			`{"expires_in_days":30,"scopes":`+string(raw)+`}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("doc.edit つきの発行 status = %d, want 201（body=%s）", rec.Code, rec.Body.String())
+		}
+		var got issuedAgentTokenJSON
+		decodeJSONBody(t, rec, &got)
+
+		// **実効権限に doc.edit が入ること**を GET /me で実測する
+		// （応答の scopes は「要求どおり」でしかない。積の結果はこちら）。
+		me := bearerGet(r, "/api/v1/me", got.Token)
+		if me.Code != http.StatusOK {
+			t.Fatalf("/me の status = %d（body=%s）", me.Code, me.Body.String())
+		}
+		if !strings.Contains(me.Body.String(), `"doc.edit"`) {
+			t.Errorf("実効権限に doc.edit が無い: %s", me.Body.String())
+		}
+	})
+
+	t.Run("許可リスト外のスコープは422で、トークンを作らない", func(t *testing.T) {
+		ag := register(t, ownerSession, "許可リスト検証", projectKey, "claude_code")
+
+		before := scalarText(t, pool,
+			`SELECT count(*)::text FROM access_token WHERE actor_id = $1`, ag.ID)
+
+		for _, sc := range []string{"user.manage", "ticket.close", "doc.delete"} {
+			rec := issueToken(t, ownerSession, ag.ID,
+				`{"expires_in_days":30,"scopes":["project.view","`+sc+`"]}`)
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Errorf("scope=%q の status = %d, want 422（body=%s）", sc, rec.Code, rec.Body.String())
+			}
+		}
+
+		after := scalarText(t, pool,
+			`SELECT count(*)::text FROM access_token WHERE actor_id = $1`, ag.ID)
+		if before != after {
+			t.Errorf("トークンが増えている（%s → %s）", before, after)
+		}
+	})
+
+	// ── ⑩削除（ApiDesign.md 4.5.4。手順26a）───────────────────
+
+	t.Run("削除するとエージェントとトークンが消える", func(t *testing.T) {
+		ag := register(t, ownerSession, "削除されるエージェント", projectKey, "claude_code")
+		rec := issueToken(t, ownerSession, ag.ID, `{"expires_in_days":30}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("発行の status = %d, want 201", rec.Code)
+		}
+		var tok issuedAgentTokenJSON
+		decodeJSONBody(t, rec, &tok)
+
+		// 消す前は通ること（**「効いていた資格情報が効かなくなる」を測るため**）。
+		if me := bearerGet(r, "/api/v1/me", tok.Token); me.Code != http.StatusOK {
+			t.Fatalf("削除前の /me = %d, want 200", me.Code)
+		}
+
+		del := deleteWithCookie(r, "/api/v1/me/agents/"+ag.ID, ownerSession)
+		if del.Code != http.StatusNoContent {
+			t.Fatalf("削除の status = %d, want 204（body=%s）", del.Code, del.Body.String())
+		}
+
+		// actor / agent / access_token がすべて消えていること。
+		for _, c := range []struct {
+			name string
+			sql  string
+		}{
+			{"actor", `SELECT count(*)::text FROM actor WHERE id = $1`},
+			{"agent", `SELECT count(*)::text FROM agent WHERE actor_id = $1`},
+			{"access_token", `SELECT count(*)::text FROM access_token WHERE actor_id = $1`},
+		} {
+			if got := scalarText(t, pool, c.sql, ag.ID); got != "0" {
+				t.Errorf("%s が %s 件残っている", c.name, got)
+			}
+		}
+		// **平文のトークンが効かなくなること**（4.5.4 の目的そのもの）。
+		if me := bearerGet(r, "/api/v1/me", tok.Token); me.Code != http.StatusUnauthorized {
+			t.Errorf("削除後の /me = %d, want 401", me.Code)
+		}
+		// 監査は残る（audit_log.actor_id は ON DELETE SET NULL）。
+		if got := scalarText(t, pool,
+			`SELECT count(*)::text FROM audit_log WHERE action = 'agent.delete' AND target_id = $1`,
+			ag.ID); got != "1" {
+			t.Errorf("agent.delete の監査 = %s件, want 1", got)
+		}
+	})
+
+	t.Run("他人のエージェントは削除できない", func(t *testing.T) {
+		ag := register(t, ownerSession, "他人のもの", projectKey, "claude_code")
+		otherSession := loginAs(t, r, otherEmail)
+
+		del := deleteWithCookie(r, "/api/v1/me/agents/"+ag.ID, otherSession)
+		// **403 ではなく 404**（Design.md 6.4.5）。
+		if del.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404（body=%s）", del.Code, del.Body.String())
+		}
+		if got := scalarText(t, pool,
+			`SELECT count(*)::text FROM agent WHERE actor_id = $1`, ag.ID); got != "1" {
+			t.Error("他人のエージェントが消えている")
+		}
+	})
+
+	t.Run("利用者を削除すると所有するエージェントも残らない", func(t *testing.T) {
+		// **ApiDesign.md 6.5（手順26a で改訂）。** agent.owner_actor_id の
+		// ON DELETE CASCADE が消すのは agent の行だけで、**エージェントの
+		// actor / access_token / コメントは残る**（FK の向きは
+		// agent.actor_id → actor）。放置すると、agent 行を失った actor が
+		// FindAccessTokenByHash の LEFT JOIN agent から外れ、
+		// **認証は通るが実効権限が0件のトークン**が残る。
+
+		victimID := ulidgen.New()
+		victimEmail := "agt-victim-" + strings.ToLower(victimID) + "@example.com"
+		seedUserWithRole(t, ctx, pool, q, victimID, victimEmail, auth.SystemRoleOperator)
+		if err := q.AddProjectMember(ctx, gen.AddProjectMemberParams{
+			ProjectID: projectID, ActorID: victimID, RoleKey: "project_member",
+		}); err != nil {
+			t.Fatalf("メンバーを追加できない: %v", err)
+		}
+
+		victimSession := loginAs(t, r, victimEmail)
+		ag := register(t, victimSession, "所有者ごと消えるエージェント", projectKey, "claude_code")
+		rec := issueToken(t, victimSession, ag.ID, `{"expires_in_days":30}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("発行の status = %d, want 201（body=%s）", rec.Code, rec.Body.String())
+		}
+		var tok issuedAgentTokenJSON
+		decodeJSONBody(t, rec, &tok)
+
+		// **そのエージェントにコメントを書かせる**（RESTRICT の経路を作る）。
+		// API ではなく直接 INSERT でよい——ここで見るのは削除の後始末であって、
+		// コメントの作成規則ではない。
+		ticketID := ulidgen.New()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO ticket (id, project_id, seq, type, title, status_key)
+			VALUES ($1, $2, 9001, 'task', 'エージェントが書き込むチケット', 'todo')`,
+			ticketID, projectID); err != nil {
+			t.Fatalf("チケットを作れない: %v", err)
+		}
+		commentID := ulidgen.New()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO comment (id, ticket_id, author_id, body_md, kind)
+			VALUES ($1, $2, $3, 'エージェントの記録', 'caveat')`,
+			commentID, ticketID, ag.ID); err != nil {
+			t.Fatalf("コメントを作れない: %v", err)
+		}
+
+		// ── 削除する ────────────────────────────────────
+		del := callWithCookie(r, http.MethodDelete, "/api/v1/admin/users/"+victimID,
+			loginAs(t, r, adminEmail))
+		if del.Code != http.StatusNoContent {
+			t.Fatalf("利用者の削除 status = %d, want 204（body=%s）", del.Code, del.Body.String())
+		}
+
+		// **エージェントの actor / agent / access_token が残っていないこと。**
+		for _, c := range []struct{ name, sql string }{
+			{"actor", `SELECT count(*)::text FROM actor WHERE id = $1`},
+			{"agent", `SELECT count(*)::text FROM agent WHERE actor_id = $1`},
+			{"access_token", `SELECT count(*)::text FROM access_token WHERE actor_id = $1`},
+		} {
+			if got := scalarText(t, pool, c.sql, ag.ID); got != "0" {
+				t.Errorf("%s が %s 件残っている（孤児のアクター）", c.name, got)
+			}
+		}
+		// **平文のトークンが効かないこと**（残っていれば 200 が返ってしまう）。
+		if me := bearerGet(r, "/api/v1/me", tok.Token); me.Code != http.StatusUnauthorized {
+			t.Errorf("削除後の /me = %d, want 401", me.Code)
+		}
+
+		// **コメントは残り、書き手が「削除されたエージェント」になること。**
+		// kind='agent' なので、画面のアバターは角丸四角のままである
+		// （GuiDesign.md 8.4.2）。
+		author := scalarText(t, pool, `
+			SELECT a.kind || '/' || a.display_name
+			FROM comment c JOIN actor a ON a.id = c.author_id WHERE c.id = $1`, commentID)
+		if author != "agent/"+deletedAgentDisplayName {
+			t.Errorf("コメントの書き手 = %q, want %q", author, "agent/"+deletedAgentDisplayName)
+		}
+
+		// **監査は user.delete 1行に集約する**（6.5）。エージェントごとに
+		// agent.delete を並べない。
+		if got := scalarText(t, pool,
+			`SELECT count(*)::text FROM audit_log WHERE action = 'agent.delete' AND target_id = $1`,
+			ag.ID); got != "0" {
+			t.Errorf("agent.delete が %s件ある（user.delete に集約するはず）", got)
+		}
+		detail := scalarText(t, pool, `
+			SELECT coalesce(detail->>'deleted_agents', '') FROM audit_log
+			WHERE action = 'user.delete' AND target_id = $1`, victimID)
+		if detail != "1" {
+			t.Errorf("user.delete の deleted_agents = %q, want 1", detail)
+		}
+
+		// 後始末（チケットを消せばコメントも落ちる。付け替え先の actor は残す
+		// ——他の削除でも共用される1件であり、消すと次回また作られるだけである）。
+		t.Cleanup(func() {
+			bg := context.Background()
+			if _, err := pool.Exec(bg, `DELETE FROM ticket WHERE id = $1`, ticketID); err != nil {
+				t.Errorf("チケットの後始末に失敗した: %v", err)
+			}
+		})
+	})
 
 	t.Run("管理者の一覧にエージェントが所有者つきで出る", func(t *testing.T) {
 		ag := register(t, ownerSession, "一覧に出ること", projectKey, "claude_code")

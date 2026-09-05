@@ -104,6 +104,20 @@ func (q *Queries) AgentExistsWithNameExcept(ctx context.Context, arg AgentExists
 	return exists, err
 }
 
+const countAgentComments = `-- name: CountAgentComments :one
+SELECT count(*) FROM comment WHERE author_id = $1
+`
+
+// CountAgentComments はそのエージェントが書いたコメント数を数える。
+//
+// **0 件なら付け替え先を作らない**（reassignCommentsToSystemActor と同じ）。
+func (q *Queries) CountAgentComments(ctx context.Context, authorID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countAgentComments, authorID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAgent = `-- name: CreateAgent :exec
 INSERT INTO agent (
   actor_id, owner_actor_id, project_id, client_kind, model_name, model_version
@@ -150,6 +164,87 @@ type CreateAgentActorParams struct {
 func (q *Queries) CreateAgentActor(ctx context.Context, arg CreateAgentActorParams) error {
 	_, err := q.db.Exec(ctx, createAgentActor, arg.ID, arg.DisplayName)
 	return err
+}
+
+const createDeletedAgentActor = `-- name: CreateDeletedAgentActor :exec
+INSERT INTO actor (id, kind, display_name) VALUES ($1, 'agent', $2)
+`
+
+type CreateDeletedAgentActorParams struct {
+	ID          string
+	DisplayName string
+}
+
+// CreateDeletedAgentActor は付け替え先を1件作る。
+//
+// **シードで先に置かず、最初に必要になった削除で作る**（CreateSystemActor と
+// 同じ作法。手順13a の判断）。置いても、削除が起きるまで一度も参照されない。
+func (q *Queries) CreateDeletedAgentActor(ctx context.Context, arg CreateDeletedAgentActorParams) error {
+	_, err := q.db.Exec(ctx, createDeletedAgentActor, arg.ID, arg.DisplayName)
+	return err
+}
+
+const deleteMyAgentActor = `-- name: DeleteMyAgentActor :execrows
+DELETE FROM actor a
+WHERE a.id = $1
+  AND a.kind = 'agent'
+  AND EXISTS (
+    SELECT 1 FROM agent ag
+    WHERE ag.actor_id = a.id AND ag.owner_actor_id = $2
+  )
+`
+
+type DeleteMyAgentActorParams struct {
+	ActorID      string
+	OwnerActorID string
+}
+
+// DeleteMyAgentActor はエージェントの actor 行を物理削除する。
+//
+// agent / access_token は ON DELETE CASCADE で追従するので、**そのエージェントの
+// 資格情報は1本残らず消える**（ApiDesign.md 4.5.4）。
+//
+// **owner_actor_id を条件に含める。** 他人のエージェントを 403 ではなく 404 に
+// 倒すためで、本ファイルの他のクエリと同じ方針である（Design.md 6.4.5）。
+//
+// **kind='agent' に限る。** 万一人のアクター ID を渡されても消さない
+// （DeleteActorByID が kind='user' に限っているのと対である）。
+func (q *Queries) DeleteMyAgentActor(ctx context.Context, arg DeleteMyAgentActorParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteMyAgentActor, arg.ActorID, arg.OwnerActorID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const findDeletedAgentActor = `-- name: FindDeletedAgentActor :one
+
+SELECT id FROM actor
+WHERE kind = 'agent' AND display_name = $1
+  AND NOT EXISTS (SELECT 1 FROM agent ag WHERE ag.actor_id = actor.id)
+ORDER BY created_at, id
+LIMIT 1
+`
+
+// ── エージェントの削除（ApiDesign.md 4.5.4。手順26a）─────────────
+// FindDeletedAgentActor は「削除されたエージェント」の付け替え先を引く。
+//
+// **kind='agent' である。** 人の付け替え先（kind='system' の
+// 「削除されたユーザー」）と分けているのは、GuiDesign.md 8.4.2 が
+// アバターの**形**で人（円）とエージェント（角丸四角）を区別しているためで、
+// system へ寄せると**過去のコメントが全部円になり、人が書いたように見える**。
+//
+// **agent の行を持たない actor である。** トークンを1本も持たないので
+// 認証の経路（Design.md 6.4.5）には現れず、/me/agents にも
+// GET /admin/users?kind=agent にも出ない（どちらも agent と内部結合する）。
+//
+// display_name で引くのは FindDeletedUserActor と同じ事情である
+// （actor に key に相当する列が無い。DbDesign.md 6.2）。
+func (q *Queries) FindDeletedAgentActor(ctx context.Context, displayName string) (string, error) {
+	row := q.db.QueryRow(ctx, findDeletedAgentActor, displayName)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const findMyAgent = `-- name: FindMyAgent :one
@@ -431,6 +526,37 @@ func (q *Queries) ListMyAgents(ctx context.Context, ownerActorID string) ([]List
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOwnedAgentActorIDs = `-- name: ListOwnedAgentActorIDs :many
+SELECT actor_id FROM agent WHERE owner_actor_id = $1 ORDER BY actor_id
+`
+
+// ListOwnedAgentActorIDs は、その人が所有するエージェントを列挙する。
+//
+// **人の削除（ApiDesign.md 6.5）で使う。** agent.owner_actor_id の
+// ON DELETE CASCADE が消すのは agent の行だけで、**エージェントの actor 行・
+// その access_token・そのコメントは残る**（FK の向きは agent.actor_id → actor）。
+// 放置すると、agent 行を失った actor が FindAccessTokenByHash の
+// LEFT JOIN agent から外れ、**認証は通るが実効権限が0件のトークンが残る。**
+func (q *Queries) ListOwnedAgentActorIDs(ctx context.Context, ownerActorID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listOwnedAgentActorIDs, ownerActorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var actor_id string
+		if err := rows.Scan(&actor_id); err != nil {
+			return nil, err
+		}
+		items = append(items, actor_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

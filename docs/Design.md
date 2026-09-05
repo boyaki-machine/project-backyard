@@ -682,7 +682,7 @@ GET /api/v1/me
 | **権限** | **所有者から導く（委譲）。** 下の式を参照 |
 | トークン | `access_token(token_type='agent')`。プロジェクトスコープ必須、有効期限必須。接頭辞は `pb_agt_` |
 | 発行 | **本人が自分の設定から**（`/me/agents`。`ApiDesign.md` 4.5、`Requirements.md` 10.9.1 系統B）。**発行時に一度だけ全文表示** |
-| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run`。**語彙は権限カタログのキーそのものである**（6.4.1） |
+| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit` だけを足せる**（`ApiDesign.md` 4.5.3 の許可リスト。手順26a） |
 | 禁止 | `ticket.close`、`doc.edit`、`knowledge` の直接更新、他プロジェクトへのアクセス |
 | 信頼度 | `agent.trust_level` に応じて既定スコープを段階的に拡大（`Requirements.md` 10.10.3）。**実績の供給源が Phase 3 のため、Phase 2 では既定値のまま使わない** |
 | 失効 | 本人と管理画面から即時失効。サーキットブレーカー作動時は自動失効も選択可 |
@@ -707,7 +707,9 @@ GET /api/v1/me
 | `result:submit` | `ticket.transition` |
 | `proposal:create` | `ticket.create`（`proposal` は `DbDesign.md` 8.3 で Phase 3 へ送った） |
 
-**`doc.edit` は既定に入れない。** `pb_put_doc` にこの権限が要る（8.2）が、載せるかは**そのエージェントが誰に付いているか**で決まる——PM のエージェントは持ち、実装だけを行うエージェントは持たない。**そもそも所有者が `doc.edit` を持たなければ、スコープに書いても積で消える。**
+**`doc.edit` は既定に入れないが、発行時に足せる。** `pb_put_doc` にこの権限が要る（8.2）が、載せるかは**そのエージェントが誰に付いているか**で決まる——PM のエージェントは持ち、実装だけを行うエージェントは持たない。**そもそも所有者が `doc.edit` を持たなければ、スコープに書いても積で消える**（持つのは `project_admin` だけである。`DbDesign.md` 8.1.4）。
+
+**手順26a まで、これは実行できなかった。** `ApiDesign.md` 4.5.3 が `scopes` を受け取らず既定を固定していたため、**`pb_put_doc` は誰が呼んでも必ず 403 になる**状態だった。26a で 4.5.3 に許可リスト（既定8件 ∪ `doc.edit`）を入れ、本節の「誰に付いているかで決まる」を発行の口で表せるようにした。**`ticket.close` は許可リストにも入れない**——本節の禁止のうち、`doc.edit` だけが「決まる」と書かれている。
 
 **`agent.run` を既定に含める。** `DbDesign.md` 8.2.6 で `operator` / `project_member` / `project_viewer` へ配り直しており、所有者が持つ権限になった。
 
@@ -784,7 +786,17 @@ GET /api/v1/me
 | `pb_post_note` | `POST /projects/:key/tickets/:seq/comments` | `comment.create` |
 | `pb_claim_task` / `pb_release_task` / `pb_submit_result` | 9章の遷移API＋リース | `ticket.transition` |
 
-**`pb_put_doc` は `doc.edit` を要求する。** エージェントのトークンにこの権限を載せるかは、**そのエージェントが誰に付いているか**で決まる（`Requirements.md` 10.10.3）。PM のエージェントは持ち、実装だけを行うエージェントは持たない。
+**手順26 は3つに分かれる**（利用者の判断、2026-09-05）。
+
+| | ツール | 状態 |
+|---|---|---|
+| **26a** | `pb_create_ticket` / `pb_put_doc` / `pb_post_note` | **叩く REST が実装済み**なので、MCP 層だけで足りる |
+| **26b** | `pb_claim_task` / `pb_release_task` | **REST が無い。** `ApiDesign.md` にリースの節を新設し、`GuiDesign.md` に「作業中」の表示を足す |
+| **26c** | `pb_submit_result` | **格納先の `agent_run` / `agent_report` が Phase 3**（11章）。マイグレーションの追加を伴う |
+
+**分けたのは、26b と 26c が新しい設計を約20件要求するためである**（リースのステータス遷移先・TTL の延長点・`stale` の判定・完了レポートの検証範囲・`proposed_subtasks` の格納先など）。11.2.1 のとおり、**26a の時点で検証・記録・コミットまで終える。**
+
+**`pb_put_doc` は `doc.edit` を要求する。** エージェントのトークンにこの権限を載せるかは、**そのエージェントが誰に付いているか**で決まる（`Requirements.md` 10.10.3）。PM のエージェントは持ち、実装だけを行うエージェントは持たない。**発行時に許可リストから選ぶ**（`ApiDesign.md` 4.5.3。手順26a で 6.5 とあわせて改訂した）。
 
 **トークンや接続情報を返すツールを一切持たない**（`Requirements.md` 10.3.1）。
 
@@ -833,7 +845,33 @@ GET /api/v1/me
 
 **MCP 層は REST を内部の HTTP 呼び出しで叩く**（同一プロセス内で同じ chi ルータへ渡す。`Authorization` ヘッダを引き継ぐ）。8.1 が定める「ビジネスルール・権限判定・検証は REST 層に置く」を、**経路として強制するため**である。ハンドラを直接呼ぶ形にすると `RequireProjectPermission` を通らない経路が生まれ、権限判定が2か所になる。
 
-## 8.5 ツールの引数と応答（手順25）
+## 8.5 ツールの引数と応答（手順25・26a）
+
+### 8.5.1 write 系（手順26a）
+
+| ツール | 引数 | 叩く REST | 応答 |
+|---|---|---|---|
+| `pb_create_ticket` | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?` | `POST /projects/:key/tickets` | 9.5.1 の応答をそのまま |
+| `pb_put_doc` | `path`, `body_md`, `change_reason?` | `GET` してから `PATCH /projects/:key/docs/*path` | 10.3 の応答をそのまま |
+| `pb_post_note` | `seq`, `body_md`, `kind?` | `POST /projects/:key/tickets/:seq/comments` | 9.8 の1件をそのまま |
+
+**引数の名前は `ApiDesign.md` の本体フィールドに揃える**（`body` ではなく `body_md`、`parent` ではなく `parent_seq`）。8.5 の冒頭が述べるとおり、名前が一致していればエージェントは迷ったときに設計文書を引ける。`Requirements.md` 10.3.2 は `body` / `parent` / `task_id` と書いていたが、**あちらを実装に合わせて改訂した**。
+
+**`assignee_id` は `me` を受ける。** read 系の `assignee` と同じ写し方をする（下記）——**エージェントはアクターの ULID を知らない**ため、`me` を通さないと担当を付ける経路が実質無い。ULID をそのまま渡すこともできる。
+
+**開けない引数がある。** `pb_create_ticket` は 9.3 が受ける `tag_ids` / `sprint_id` / 見積2種 / `start_date` / `due_date` を渡せない——**いずれも ULID か画面の文脈が要り、エージェントが持たない**。`pb_post_note` は `in_reply_to` を渡せない（同じ理由。コメントの ULID を得る経路が無い）。**増やすときは本表を先に直す。**
+
+**`pb_put_doc` は内部で2往復する。** 10.4 が `PATCH` に `If-Match` を必須とする一方、`pb_get_doc` は本文の Markdown しか返さないので（8.5 の表）**エージェントは `version` を持てない**。MCP 層が `GET` で読んで `If-Match` に載せる。**`409 conflict` は `isError` のツール結果**として返す——「他の人が更新したので読み直してやり直す」はモデルが判断できることであり、8.4 が定める「ツール呼び出しの結果」に当たる。
+
+**これは MCP 層が独自のルールを持つことにはならない**（8.1）。楽観ロックの判定は REST 側のままで、MCP がしているのは**エージェントが渡せない値を、同じ REST から取ってくる**ことだけである。
+
+**`pb_put_doc` は本文を全置換する。** 10.4 の `PATCH` がそうであり、章だけを差し替える口は無い。`?section=` は読む側（10.3）にしかない。**エージェントは `pb_get_doc` で全文を読み、直した全文を渡す。**
+
+**write 系も応答は REST の JSON をそのままである。** `Requirements.md` 10.3.2 は戻り値を「チケットID・`seq`」「リビジョン番号」と書いていたが、**絞ると 8.1 の「整形の規則を MCP 層に置かない」に反する**うえ、`PATCH .../docs` の応答は `revision_no` を持たない（10.3 の形）。**あちらを改訂した。**
+
+**冪等キー（`idempotency_key`）は受けない**（`Requirements.md` 10.3.4 の改訂。再検討の条件は 8.6）。
+
+### 8.5.2 read 系（手順25）
 
 **応答は REST の JSON をそのまま `content[0].text` に載せる**（`pb_get_doc` の本文だけは Markdown 生）。整形の規則を MCP 層に置くと、同じ規則が REST と2か所に生まれる（8.1）。フィールド名が `ApiDesign.md` と一致していれば、エージェントは迷ったときに設計文書を引ける。
 
@@ -864,6 +902,11 @@ seq / type / title / status / priority / assignee / parent_seq / staged_at / due
   - **認可が MCP の Authorization 仕様（OAuth 2.1）へ寄ったとき。** いまは静的な Bearer トークン1本（6.5）だが、メタデータの配布・動的クライアント登録・トークン検証まで自前で持つのは割に合わない
   - **SDK が v1 に達し、破壊的変更が収まったとき。** v0.x のあいだ依存に入れると、追随の手間が手順26〜28 に乗る
   - **判断の材料は `server/internal/mcp` の行数である。** 4メソッドで数百行なら自前が安い。**仕様への追随のために膨らみ始めたら、それは SDK が引き受けている仕事を書き写している**という合図であり、そこが乗り換え時である
+- **write 系の冪等キー（`idempotency_key`）を受けるか。** `Requirements.md` 10.3.4 は「write 系ツールは `idempotency_key` を受け付ける」と定めていたが、**手順26a では受けない**ことにし、あちらを改訂した。**本当の冪等性には「キー → 結果」を持つ器が要り**、8.1 が「MCP に独自のビジネスルールを置かない」と定める以上、置き場は REST 層＝全クライアントに効く変更になる。26a の3ツールは**再送が安全側に倒れる**——`pb_put_doc` は `If-Match` があるので古い版での再送が `409`、`pb_create_ticket` と `pb_post_note` の重複は画面で見えて人が消せる。**次のいずれかが起きたら再検討する**
+  - **リースが入ったとき（手順26b）。** `pb_claim_task` の再送は状態を進めるので、上の「安全側に倒れる」が成り立たない
+  - **無人実行に踏み込んだとき**（`Requirements.md` 10.11 の将来対応）。人が同席していれば重複は目で拾えるが、同席しないなら拾えない
+  - **判断の材料は「再送で何が二重になるか」を1つ言えるかである。** 言えないうちは器を作らない
+
 - **ツール description の文面設計**（`Requirements.md` 10.13）。**実質的にこれがエージェントの行動を規定する**ため、プロンプトエンジニアリングの対象になる。**手順25 では日本語で書いた**——憲章・チケット・文書がすべて日本語であり、description が指示する語彙と、エージェントが読む対象の語彙を揃えるためである（英語より毎セッション数百トークン多く消費する）
 - **コンテキストパックの生成アルゴリズムとトークン予算配分**（同 10.4.3）。Phase 2 の初期は「憲章の該当章＋スコープ境界＋依存タスク」の単純な選定でよい
 - **`pb_get_context` の応答形式**（構造化JSON か Markdown か。同 10.13）
@@ -1247,6 +1290,8 @@ Phase 2 の成果物には**ブラウザに出ないものがある**——MCP �
       ← Claude Code から /pb-onboard が通しで走る
 26. MCP の write 系ツール                               ← Design 8.2
       ← 議論の結果をチケットとして起票でき、指示で文書を更新できる
+      （26a=起票・文書更新・ノート＋エージェントの削除、
+        26b=リース、26c=完了レポート。8.2 の表が内訳）
 27. コンテキストパック（pb_get_context）                 ← Requirements 10.4
       ← チケットを指定すると憲章の該当章とスコープ境界が返る
 28. セットアップ画面と設定ファイル生成                    ← Requirements 10.9
@@ -1285,7 +1330,7 @@ Phase 2 の成果物には**ブラウザに出ないものがある**——MCP �
 |---|---|
 | `knowledge`（プロジェクトメモリ） | まず 8.1 の文書として運用し、押し付けたい粒度が実測で見えてから切り出す（`DbDesign.md` 8.3） |
 | **`proposal` と承認キューUI** | 承認対象だった `knowledge` と文書差分の両方が Phase 3 へ移ると、**Phase 2 に残る対象がサブタスク提案だけになり、画面を作る理由が薄い** |
-| DoD の machine 型、`agent_run` / `agent_report` / `context_pack_log` | 人が同席する前提では、`pb_post_note` を既存の `comment.kind` に載せれば足りる（`Requirements.md` 10.3.2） |
+| DoD の machine 型、`agent_run` / `agent_report` / `context_pack_log` | 人が同席する前提では、`pb_post_note` を既存の `comment.kind` に載せれば足りる（`Requirements.md` 10.3.2）。**うち `agent_run` / `agent_report` は手順26c で Phase 2 へ戻す**（利用者の判断、2026-09-05——`pb_submit_result` を Phase 2 で実装する。マイグレーションの追加を伴い、Phase 3 の採番がまた1つずれる） |
 
 **旧手順21 は「`dod_item` と `agent_report`」だった。** `dod_item` は Phase 1（手順18）へ前倒し済みで、`agent_report` は上記により Phase 3 へ送った（`DbDesign.md` 6.11 / 8.2.4）。
 
@@ -1293,7 +1338,8 @@ Phase 2 の成果物には**ブラウザに出ないものがある**——MCP �
 
 ```
 29. マイグレーション 0021〜0026                        ← DbDesign 8.2, 8.3, 8.4
-30. agent_run / agent_report と DoD の machine 型      ← DbDesign 8.2.4
+30. DoD の machine 型                                  ← DbDesign 6.11
+      （agent_run / agent_report は手順26c へ前倒し。2026-09-05）
 31. proposal と承認キューUI                            ← Requirements 10.6.3
 32. プロジェクトメモリ（knowledge）とコンテキストパックへの供給 ← DbDesign 8.3
 33. Readiness 判定、DoD ドラフト生成                    ← Requirements 10.5.1

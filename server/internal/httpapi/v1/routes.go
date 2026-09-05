@@ -115,6 +115,7 @@ func Mount(r chi.Router, deps Deps) {
 		r.Get("/me/agents", h.listMyAgents)
 		r.Post("/me/agents", h.createMyAgent)
 		r.Patch("/me/agents/{id}", h.updateMyAgent)
+		r.Delete("/me/agents/{id}", h.deleteMyAgent)
 		r.Post("/me/agents/{id}/tokens", h.createMyAgentToken)
 		r.Delete("/me/agents/{id}/tokens/{token_id}", h.deleteMyAgentToken)
 

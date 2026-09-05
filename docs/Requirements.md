@@ -443,12 +443,12 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 | `pb_get_task` | read | 2 | **`seq`** | チケット本文、種別、DoD、スコープ境界、実行主体属性、readinessスコア | チケットの契約内容を取得。**引数は `seq`**（画面と URL に出るチケット番号。`Design.md` 8.5） |
 | `pb_list_tasks` | read | 2 | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `per_page?` | チケット一覧（軽量） | ボードの状況把握。**`assignee=me` で自分のチケット**——エージェントのトークンでは**所有者**を指す（`Design.md` 8.5） |
 | `pb_get_context` | read | 2 | `task_id`, `budget?` | コンテキストパック（10.4） | 実装に必要な前提情報一式 |
-| `pb_create_ticket` | write | 2 | `type`, `title`, `body`, `parent?`, `assignee?` | チケットID・`seq` | **議論の結果をその場で起票する。** 10.0.2 の 1・3 への手当 |
-| `pb_claim_task` | write | 2 | `id`, `agent_id` | `lease_id`, `expires_at` | 着手宣言。ステータスを「実装中」へ |
-| `pb_post_note` | write | 2 | `task_id`, `kind`, `body`, `refs?` | note_id | 途中経過・判明した事実の記録 |
-| `pb_put_doc` | write | 2 | `path`, `body`, `change_reason` | リビジョン番号 | **文書の更新。** 権限を持つ人の指示で呼ぶ（10.6.2） |
-| `pb_submit_result` | write | 2 | `task_id`, `report`（10.6.1） | 受理結果、未充足DoD項目 | 完了レポートの返却 |
-| `pb_release_task` | write | 2 | `id`, `reason` | — | 中断時のリース解放 |
+| `pb_create_ticket` | write | 2 | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?` | 9.5.1 の応答をそのまま | **議論の結果をその場で起票する。** 10.0.2 の 1・3 への手当。**引数名は REST の本体フィールドに揃える**（`Design.md` 8.5.1） |
+| `pb_claim_task` | write | 2 | `id`, `agent_id` | `lease_id`, `expires_at` | 着手宣言。ステータスを「実装中」へ。**手順26b**（REST を新設する） |
+| `pb_post_note` | write | 2 | **`seq`**, `body_md`, `kind?` | 9.8 の1件をそのまま | 途中経過・判明した事実の記録。**`refs` は落とした**——`ApiDesign.md` 9.8 に対応するフィールドが無い（`Design.md` 8.5.1） |
+| `pb_put_doc` | write | 2 | `path`, `body_md`, `change_reason?` | 10.3 の応答をそのまま | **文書の更新。** 権限を持つ人の指示で呼ぶ（10.6.2）。**本文の全置換**で、`If-Match` は MCP 層が付ける（`Design.md` 8.5.1） |
+| `pb_submit_result` | write | 2 | `task_id`, `report`（10.6.1） | 受理結果、未充足DoD項目 | 完了レポートの返却。**手順26c**（`agent_run` / `agent_report` を Phase 3 から戻す。利用者の判断、2026-09-05） |
+| `pb_release_task` | write | 2 | `id`, `reason` | — | 中断時のリース解放。**手順26b** |
 | `pb_search` | read | 3 | `query`, `scope?`, `top_k?` | 該当コメント/決定/文書 | 履歴横断のRAG検索 |
 | `pb_next_task` | read | 3 | `capabilities?`, `agent_id?` | 実行可能なチケット | 依存解決済み・readiness良好なものをPB側が選定 |
 | `pb_propose_subtasks` | write | 3 | `task_id`, `subtasks[]`, `rationale` | 提案ID | 分割提案（承認待ちキューへ） |
@@ -476,7 +476,7 @@ Runner による外形監視がないため厳密なハートビートは取れ�
 
 ### 10.3.4 その他のプロトコル要件
 
-- **冪等性**：write 系ツールは `idempotency_key` を受け付ける。エージェントは同一操作を再送しがちである
+- **冪等性**：**手順26a では受け付けない**（2026-09-05 に改訂）。エージェントは同一操作を再送しがちだが、26a の3ツールは再送が安全側に倒れる——`pb_put_doc` は `If-Match` があるので古い版での再送が `409`、`pb_create_ticket` と `pb_post_note` の重複は画面で見えて人が消せる。**本当の冪等性には「キー → 結果」を持つ器が要り**、`Design.md` 8.1 が「MCP に独自のビジネスルールを置かない」と定める以上、置き場は REST 層＝全クライアントに効く変更になる。**再検討の条件は `Design.md` 8.6** にある（リースが入ったとき／無人実行に踏み込んだとき）
 - **エージェント識別**：`agent_id` は PB に登録された principal（10.10.3）。モデル名・バージョンを併せて記録し、モデル更新前後での品質変化を切り分け可能にする
 - **同時実行制御**：プロジェクト単位で同時 claim 数の上限を設定できる
 - **ワークフローバージョン**：`pb_get_task` の引数にクライアント側のワークフロー定義バージョンを含め、PB側が古いと判断した場合はレスポンスに再取得を促す警告を混ぜる（10.9.3）

@@ -168,7 +168,12 @@ export function updateAgent(id: string, body: UpdateAgentRequest): Promise<MyAge
  * **有効なトークンは1件につき1本。** 既に在れば暗黙に失効させたうえで発行する
  * ——画面は押す前にその旨を出す。無効化されたエージェントには 409。
  *
- * **スコープは送らない**（4.5.3）。`Design.md` 6.5 の既定が常に入る。
+ * **`scopes` は省略できる**（4.5.3。手順26a で「受け取らない」から改めた）。
+ * 省略すると `Design.md` 6.5 の既定8件。渡すときは**許可リストの中だけ**で、
+ * 既定に足せるのは `doc.edit`（`pb_put_doc` が要求する権限）の1件である。
+ *
+ * **所有者の権限との積になる**ので、`doc.edit` を選んでも所有者が
+ * `project_admin` でなければ実効権限には入らない。
  */
 export function issueAgentToken(
   id: string,
@@ -186,4 +191,21 @@ export function revokeAgentToken(id: string, tokenID: string): Promise<void> {
   return api.del<void>(
     `/me/agents/${encodeURIComponent(id)}/tokens/${encodeURIComponent(tokenID)}`,
   )
+}
+
+/**
+ * エージェントを削除する（`ApiDesign.md` 4.5.4）。
+ *
+ * **物理削除である。** `agent` と発行済みトークンが CASCADE で消え、
+ * **そのエージェントの資格情報は1本残らず消える。**
+ *
+ * **そのエージェントが書いたコメントは残る**——書き手が
+ * 「削除されたエージェント」へ付け替わり、アバターは角丸四角のままである
+ * （`GuiDesign.md` 8.4.2）。監査ログも残る。
+ *
+ * **無効化（`updateAgent({is_active:false})`）とは別の操作である。**
+ * 「いま止めたいが記録は残したい」が無効化、「配った資格情報ごと消したい」が削除。
+ */
+export function deleteAgent(id: string): Promise<void> {
+  return api.del<void>(`/me/agents/${encodeURIComponent(id)}`)
 }

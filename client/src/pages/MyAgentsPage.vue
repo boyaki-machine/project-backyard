@@ -30,7 +30,7 @@ import Modal from '../components/Modal.vue'
 import PageHeader from '../components/PageHeader.vue'
 import UserActionsMenu from '../components/UserActionsMenu.vue'
 import type { ActionItem } from '../components/UserActionsMenu.vue'
-import { clientKindLabel } from '../lib/agents'
+import { AGENT_DEFAULT_SCOPES, clientKindLabel } from '../lib/agents'
 import type { AgentClientKind } from '../api/me'
 import { formatDate, formatDateTime } from '../lib/datetime'
 
@@ -57,9 +57,12 @@ const actionError = ref<ApiError | null>(null)
 /**
  * 無効なエージェントを出すか（5.8.2）。
  *
- * **行は消えない**（`ApiDesign.md` 4.5.4 に削除の API が無い）ので、使わなく
- * なったものが視界に溜まり続ける。**既定で畳み、件数を添えて開けるようにする**
- * （利用者の指摘、2026-09-02）。
+ * **無効化しても行は消えない**ので、使わなくなったものが視界に溜まり続ける。
+ * **既定で畳み、件数を添えて開けるようにする**（利用者の指摘、2026-09-02）。
+ *
+ * **手順26a で削除（`ApiDesign.md` 4.5.4）が入ったが、畳むのはやめない**——
+ * 「いま止めたいが記録は残したい」と「消したい」は別の要求であり、
+ * 無効化のまま置く選択が残る（`GuiDesign.md` 5.8.2）。
  */
 const showInactive = ref(false)
 
@@ -164,6 +167,13 @@ const issueTarget = ref<MyAgent | null>(null)
 const issuing = ref(false)
 const issueError = ref<ApiError | null>(null)
 const newExpiresInDays = ref<number>(90)
+/**
+ * 憲章の編集（`doc.edit`）を許すか（`ApiDesign.md` 4.5.3。手順26a）。
+ *
+ * **既定は外す。** `Design.md` 6.5 が「載せるかはそのエージェントが誰に
+ * 付いているかで決まる」と定めており、押さなければ従来どおりの8件になる。
+ */
+const allowDocEdit = ref(false)
 
 /** 1回だけ出す発行結果。閉じると二度と出せない（4.5.3） */
 const issued = ref<IssuedAgentToken | null>(null)
@@ -185,6 +195,9 @@ const newExpiryDate = computed(() => {
 function openIssue(agent: MyAgent) {
   issueTarget.value = agent
   newExpiresInDays.value = 90
+  // **毎回外す。** 前に発行したときの選択を引き継ぐと、憲章を編集できる
+  // トークンが気づかないうちに配られる。
+  allowDocEdit.value = false
   issueError.value = null
 }
 
@@ -194,9 +207,12 @@ async function issueToken() {
   issuing.value = true
   issueError.value = null
   try {
-    // **スコープは送らない**（4.5.3）。`Design.md` 6.5 の既定が常に入る。
+    // **`scopes` は押されたときだけ送る**（4.5.3）。省略すると
+    // `Design.md` 6.5 の既定8件が入るので、既定の写しを画面に持たない
+    // ——持つと 6.5 が変わったときに片方だけ古くなる。
     const token = await meApi.issueAgentToken(target.id, {
       expires_in_days: newExpiresInDays.value,
+      ...(allowDocEdit.value ? { scopes: [...AGENT_DEFAULT_SCOPES, 'doc.edit'] } : {}),
     })
     issueTarget.value = null
     // **先に平文を出す。** 一覧の読み直しが失敗しても、二度と出せない値を
@@ -283,6 +299,47 @@ async function setActive(agent: MyAgent, active: boolean) {
   }
 }
 
+// ── 削除（`ApiDesign.md` 4.5.4。手順26a）─────────────────────
+
+const deleteTarget = ref<MyAgent | null>(null)
+const deleting = ref(false)
+
+/**
+ * 確認の本文（`GuiDesign.md` 5.8.2）。
+ *
+ * **消えるものと残るものを両方書く**（6.3 の破壊的操作の作法）。片方だけ書くと、
+ * 利用者は書かれていないほうを自分の期待で埋める——「コメントも消える」と読んで
+ * ためらうか、「トークンは残る」と読んで止め損ねるかのどちらかになる。
+ */
+const deleteMessage = computed(() => {
+  const a = deleteTarget.value
+  if (!a) return ''
+  return (
+    `「${a.display_name}」を削除します。この操作は取り消せません。\n` +
+    '消えるもの：登録と、発行済みのトークン。\n' +
+    '残るもの：このエージェントが書いたコメント（書き手は「削除されたエージェント」になります）と、監査ログ。'
+  )
+})
+
+async function deleteAgent() {
+  const target = deleteTarget.value
+  if (!target || deleting.value) return
+  deleting.value = true
+  actionError.value = null
+  try {
+    await meApi.deleteAgent(target.id)
+    deleteTarget.value = null
+    notice.value = `✓ 「${target.display_name}」を削除しました`
+    await load()
+  } catch (e: unknown) {
+    actionError.value = asApiError(e)
+    notice.value = ''
+    deleteTarget.value = null
+  } finally {
+    deleting.value = false
+  }
+}
+
 // ── `[⋯]` の項目（5.8.2）─────────────────────────────────────
 
 function menuItems(agent: MyAgent): ActionItem[] {
@@ -304,6 +361,9 @@ function menuItems(agent: MyAgent): ActionItem[] {
     agent.is_active
       ? { key: 'deactivate', label: '無効化', danger: true }
       : { key: 'activate', label: '有効化' },
+    // **削除は下段に置く**（5.8.2）。5.6 が人について「無効化を既定の導線にし、
+    // 削除は `⋯` の下段」と定めているのと同じ形である。
+    { key: 'delete', label: '削除', danger: true, separated: true },
   ]
 }
 
@@ -313,6 +373,7 @@ function onMenuSelect(agent: MyAgent, key: string) {
   else if (key === 'edit') openEdit(agent)
   else if (key === 'deactivate') deactivateTarget.value = agent
   else if (key === 'activate') void setActive(agent, true)
+  else if (key === 'delete') deleteTarget.value = agent
 }
 
 // ── 小さな助け ──────────────────────────────────────────────
@@ -488,6 +549,19 @@ function subtitle(agent: MyAgent): string {
           <span v-else class="hint">{{ newExpiryDate }} まで有効です。</span>
         </fieldset>
 
+        <!-- **追加の権限は `doc.edit` の1件だけ**（4.5.3 の許可リスト。手順26a）。
+             既定は外す——`Design.md` 6.5 が「載せるかはそのエージェントが誰に
+             付いているかで決まる」と定めており、押さなければ従来どおりの8件になる。
+             **権限キーを画面に出さない**（24b で決めた形。発行結果も日本語で出す） -->
+        <fieldset class="field">
+          <legend class="label">追加の権限</legend>
+          <label class="check">
+            <input v-model="allowDocEdit" type="checkbox" :disabled="issuing" />
+            <span>プロジェクト文書の編集を許す</span>
+          </label>
+          <span class="hint">憲章を書き換えられるようになります。</span>
+        </fieldset>
+
         <!-- **再発行が既存を暗黙に失効させることを、押す前に出す**（4.5.3）。
              利用者は「再発行した」としか認識しないため、書かないと動いていた
              端末が黙って 401 になる -->
@@ -509,6 +583,18 @@ function subtitle(agent: MyAgent): string {
         </button>
       </template>
     </Modal>
+
+    <!-- ── 削除の確認（4.5.4。手順26a）───────────────────── -->
+    <ConfirmDialog
+      v-if="deleteTarget"
+      title="エージェントを削除"
+      :message="deleteMessage"
+      confirm-label="削除する"
+      danger
+      :busy="deleting"
+      @confirm="deleteAgent"
+      @cancel="deleteTarget = null"
+    />
 
     <!-- ── 1回だけの表示（4.5.3）──────────────────────────── -->
     <IssuedAgentTokenDialog
@@ -728,16 +814,21 @@ function subtitle(agent: MyAgent): string {
   min-width: 0;
 }
 
+/* **`fieldset` の既定の枠と余白は消す。** 消さないと、この欄だけが枠線の箱に
+   なり、隣の「有効期限」と別の種類の入力に見える（手順26a でスクリーンショットを
+   見て気づいた。自動検証17件は全 PASS だった） */
+fieldset.field {
+  padding: 0;
+  border: 0;
+  margin: 0;
+}
+
 .label {
   color: var(--pb-text-muted);
   font-size: 13px;
 }
 
-/* ラジオを横1行に並べる（5.8.1 と同じ）。`fieldset` の既定の枠と余白は消す */
-.choices {
-  padding: 0;
-  border: 0;
-}
+/* ラジオを横1行に並べる（5.8.1 と同じ）。枠と余白の打ち消しは `fieldset.field` */
 
 .choices-row {
   display: flex;
@@ -755,6 +846,21 @@ function subtitle(agent: MyAgent): string {
 }
 
 .choices input[type='radio'] {
+  width: auto;
+  height: auto;
+  margin: 0;
+}
+
+/* 追加の権限のチェックボックス（5.8.2。手順26a）。**ラジオと同じ組み方**にする
+   ——`gap` を置かないと記号と文字がくっつき、押せる範囲も読み取りにくくなる */
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pb-space-1);
+  cursor: pointer;
+}
+
+.check input[type='checkbox'] {
   width: auto;
   height: auto;
   margin: 0;

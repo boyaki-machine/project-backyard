@@ -75,6 +75,11 @@ type Querier interface {
 	//
 	// 手順3で pb admin create が直接書いていたSQLを sqlc へ移したもの。
 	CountAdministrators(ctx context.Context) (int64, error)
+	// CountAgentComments はそのエージェントが書いたコメント数を数える。
+	//
+	// **0 件なら付け替え先を作らない**（reassignCommentsToSystemActor と同じ）。
+	//
+	CountAgentComments(ctx context.Context, authorID string) (int64, error)
 	// 以下は pb dev seed（DbDesign.md 7.6）が使う。
 	CountAppUsers(ctx context.Context) (int64, error)
 	// ── 削除（ApiDesign.md 6.5）─────────────────────────────────
@@ -141,6 +146,12 @@ type Querier interface {
 	// 持たないので、あちらは NULL を渡す——列を増やすより、呼び出し側が「返信では
 	// ない」を明示するほうが、後から読んだときに意図が残る。
 	CreateComment(ctx context.Context, arg CreateCommentParams) error
+	// CreateDeletedAgentActor は付け替え先を1件作る。
+	//
+	// **シードで先に置かず、最初に必要になった削除で作る**（CreateSystemActor と
+	// 同じ作法。手順13a の判断）。置いても、削除が起きるまで一度も参照されない。
+	//
+	CreateDeletedAgentActor(ctx context.Context, arg CreateDeletedAgentActorParams) error
 	CreateDoDItem(ctx context.Context, arg CreateDoDItemParams) error
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) error
 	// CreateDocumentRevision は 10.4 の「リビジョンを作る条件」に当たったときだけ呼ぶ。
@@ -191,6 +202,18 @@ type Querier interface {
 	// DELETE は物理削除で、部分木ごと消える（parent_id の CASCADE。10.4 / 8.1.1）。
 	// document_revision も CASCADE で一緒に消える。
 	DeleteDocument(ctx context.Context, id string) (int64, error)
+	// DeleteMyAgentActor はエージェントの actor 行を物理削除する。
+	//
+	// agent / access_token は ON DELETE CASCADE で追従するので、**そのエージェントの
+	// 資格情報は1本残らず消える**（ApiDesign.md 4.5.4）。
+	//
+	// **owner_actor_id を条件に含める。** 他人のエージェントを 403 ではなく 404 に
+	// 倒すためで、本ファイルの他のクエリと同じ方針である（Design.md 6.4.5）。
+	//
+	// **kind='agent' に限る。** 万一人のアクター ID を渡されても消さない
+	// （DeleteActorByID が kind='user' に限っているのと対である）。
+	//
+	DeleteMyAgentActor(ctx context.Context, arg DeleteMyAgentActorParams) (int64, error)
 	// project_counter / project_member / workflow（と配下の status・transition）は
 	// ON DELETE CASCADE で追従する（DbDesign.md 6.4 / 6.5）。
 	DeleteProjectByKey(ctx context.Context, key string) (int64, error)
@@ -245,6 +268,22 @@ type Querier interface {
 	//
 	FindAccessTokenByHash(ctx context.Context, tokenHash string) (FindAccessTokenByHashRow, error)
 	FindActorIDByEmail(ctx context.Context, email string) (string, error)
+	// ── エージェントの削除（ApiDesign.md 4.5.4。手順26a）─────────────
+	// FindDeletedAgentActor は「削除されたエージェント」の付け替え先を引く。
+	//
+	// **kind='agent' である。** 人の付け替え先（kind='system' の
+	// 「削除されたユーザー」）と分けているのは、GuiDesign.md 8.4.2 が
+	// アバターの**形**で人（円）とエージェント（角丸四角）を区別しているためで、
+	// system へ寄せると**過去のコメントが全部円になり、人が書いたように見える**。
+	//
+	// **agent の行を持たない actor である。** トークンを1本も持たないので
+	// 認証の経路（Design.md 6.4.5）には現れず、/me/agents にも
+	// GET /admin/users?kind=agent にも出ない（どちらも agent と内部結合する）。
+	//
+	// display_name で引くのは FindDeletedUserActor と同じ事情である
+	// （actor に key に相当する列が無い。DbDesign.md 6.2）。
+	//
+	FindDeletedAgentActor(ctx context.Context, displayName string) (string, error)
 	// FindDeletedUserActor は「削除されたユーザー」のシステムアクターを引く。
 	//
 	// **display_name で引いている。** kind='system' のアクターに一意なキー列が
@@ -707,6 +746,15 @@ type Querier interface {
 	// 気づく必要がある）。
 	//
 	ListMyAgents(ctx context.Context, ownerActorID string) ([]ListMyAgentsRow, error)
+	// ListOwnedAgentActorIDs は、その人が所有するエージェントを列挙する。
+	//
+	// **人の削除（ApiDesign.md 6.5）で使う。** agent.owner_actor_id の
+	// ON DELETE CASCADE が消すのは agent の行だけで、**エージェントの actor 行・
+	// その access_token・そのコメントは残る**（FK の向きは agent.actor_id → actor）。
+	// 放置すると、agent 行を失った actor が FindAccessTokenByHash の
+	// LEFT JOIN agent から外れ、**認証は通るが実効権限が0件のトークンが残る。**
+	//
+	ListOwnedAgentActorIDs(ctx context.Context, ownerActorID string) ([]string, error)
 	// ListPermissions は権限カタログを返す（ApiDesign.md 7.2）。
 	//
 	// 正本は DbDesign.md 7.2 のシード（0010、28件）と 8.1.4（0017、doc の2件）で

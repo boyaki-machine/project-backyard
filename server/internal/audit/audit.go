@@ -49,16 +49,19 @@ const (
 	// エージェントの登録と更新はアカウントの作成・変更と同じ重みを持つ。
 	AgentRegister Action = "agent.register"
 	AgentUpdate   Action = "agent.update"
+	// agent.delete は手順26a で加わった（ApiDesign.md 4.5.6）。
+	// write 系ツールが入り、資格情報を「完全に取り消す」操作が要るようになった。
+	AgentDelete Action = "agent.delete"
 )
 
-// actions は ApiDesign.md 2.10 が列挙する17件。
+// actions は ApiDesign.md 2.10 が列挙する18件。
 var actions = map[Action]bool{
 	LoginSuccess: true, LoginFailure: true, Logout: true,
 	PasswordChange: true, PasswordReset: true,
 	TokenIssue: true, TokenRevoke: true, SessionRevoke: true,
 	UserCreate: true, UserUpdate: true, UserDelete: true, RoleChange: true,
 	ProjectCreate: true, ProjectArchive: true, PermissionDenied: true,
-	AgentRegister: true, AgentUpdate: true,
+	AgentRegister: true, AgentUpdate: true, AgentDelete: true,
 }
 
 // Result は audit_log.result（DbDesign.md 6.8 の CHECK 制約）。

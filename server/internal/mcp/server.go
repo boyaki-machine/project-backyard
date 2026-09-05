@@ -49,7 +49,9 @@ type Handler struct {
 // rest には /api/v1 配下を解決できるハンドラを渡す（Design.md 8.4 の
 // 「MCP 層は REST を内部の HTTP 呼び出しで叩く」）。
 func New(rest http.Handler, version string) *Handler {
-	return &Handler{rest: rest, version: version, tools: readTools()}
+	// **並び順がそのまま tools/list の順になる。** read を先に置くのは、
+	// /pb-onboard が最初に呼ぶものが read だからである（Requirements.md 10.8.5）。
+	return &Handler{rest: rest, version: version, tools: append(readTools(), writeTools()...)}
 }
 
 // ServeHTTP は Streamable HTTP の POST 経路だけを実装する（Design.md 8.4）。

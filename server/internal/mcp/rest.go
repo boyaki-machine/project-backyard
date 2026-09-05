@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 
@@ -28,7 +29,7 @@ type restResult struct {
 // ok は 2xx かどうかを返す。
 func (r restResult) ok() bool { return r.status >= 200 && r.status < 300 }
 
-// getREST は REST の GET を内部で1回叩く（Design.md 8.4）。
+// callREST は REST を内部で1回叩く（Design.md 8.4）。
 //
 // **同一プロセス内で同じルータへ渡す。** ネットワークへは出ない。
 // こうするのは、8.1 が定める「権限判定・検証は REST 層に置く」を**経路として
@@ -37,7 +38,12 @@ func (r restResult) ok() bool { return r.status >= 200 && r.status < 300 }
 //
 // **Authorization ヘッダを引き継ぐ**ので、内部呼び出しも同じ認証・認可を通る。
 // トークンの照会が1回増えるが、権限の判定が1か所に留まる対価として払う。
-func (h *Handler) getREST(r *http.Request, path string, query url.Values) (restResult, error) {
+//
+// body が nil でなければ Content-Type: application/json を付ける。
+// header には If-Match のような追加のヘッダを渡す（手順26a の pb_put_doc）。
+func (h *Handler) callREST(r *http.Request, method, path string, query url.Values,
+	body []byte, header http.Header) (restResult, error) {
+
 	u := url.URL{Path: apiBasePath + path}
 	if len(query) > 0 {
 		u.RawQuery = query.Encode()
@@ -54,14 +60,30 @@ func (h *Handler) getREST(r *http.Request, path string, query url.Values) (restR
 	// ログと監査は外側のリクエストと同じ id で並ぶ。
 	ctx := context.WithValue(r.Context(), chi.RouteCtxKey, nil)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), reader)
 	if err != nil {
-		return restResult{}, fmt.Errorf("内部呼び出しの組み立てに失敗した（%s）: %w", u.String(), err)
+		return restResult{}, fmt.Errorf("内部呼び出しの組み立てに失敗した（%s %s）: %w", method, u.String(), err)
 	}
 	// **資格情報はヘッダごと持ち回る。** Principal をコンテキストで渡す形に
 	// すると Authenticate を素通りでき、失効したトークンでも通ってしまう。
 	req.Header.Set("Authorization", r.Header.Get("Authorization"))
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, vs := range header {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
+	}
+	// **CSRF ヘッダは付けない。** MCP は Bearer だけを受けるので（Design.md 8.3）、
+	// 内側の CSRF ミドルウェアは Cookie 認証でないリクエストを素通しする。
+	// ここで付けると「Cookie でも通る」ように読める経路が1本増える。
+
 	// 監査とレート制限が送信元を見るため、外側のリクエストのものを写す。
 	req.RemoteAddr = r.RemoteAddr
 
@@ -69,6 +91,11 @@ func (h *Handler) getREST(r *http.Request, path string, query url.Values) (restR
 	h.rest.ServeHTTP(rec, req)
 
 	return restResult{status: rec.statusCode(), body: rec.body.Bytes()}, nil
+}
+
+// getREST は REST の GET を内部で1回叩く。callREST の薄いラッパである。
+func (h *Handler) getREST(r *http.Request, path string, query url.Values) (restResult, error) {
+	return h.callREST(r, http.MethodGet, path, query, nil, nil)
 }
 
 // tokenScopeHint は、権限不足の説明に添える1行を返す。

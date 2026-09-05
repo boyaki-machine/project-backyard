@@ -9,6 +9,14 @@ export interface ActionItem {
   disabled?: boolean
   /** 押せない理由。`disabled` のときだけ出す */
   reason?: string
+  /**
+   * この項目の上に区切り線を引く（手順26a）。
+   *
+   * **取り消せない操作を、日常の操作から離すために使う**（`GuiDesign.md`
+   * 5.6 / 5.8.2 が「削除は `⋯` の下段」と定める）。`danger` は文字色を
+   * 変えるだけで、押し間違いの距離までは作らない。
+   */
+  separated?: boolean
 }
 </script>
 
@@ -60,7 +68,8 @@ function place(): void {
   const el = trigger.value
   if (!el) return
   const r = el.getBoundingClientRect()
-  const estimated = props.items.length * 34 + 8
+  const estimated =
+    props.items.length * 34 + props.items.filter((i) => i.separated).length * 9 + 8
   const below = window.innerHeight - r.bottom
   pos.value = {
     // 下に入らなければボタンの上へ出す（一覧の最終行で画面外に出さない）
@@ -162,6 +171,7 @@ const panelStyle = computed(() => ({
       @click.stop
     >
       <template v-for="item in items" :key="item.key">
+        <hr v-if="item.separated" class="sep" />
         <button
           type="button"
           role="menuitem"
@@ -218,6 +228,13 @@ const panelStyle = computed(() => ({
   border-radius: var(--pb-radius);
   background: var(--pb-elevated);
   box-shadow: var(--pb-shadow-2);
+}
+
+/* 取り消せない操作を日常の操作から離す区切り（5.6 / 5.8.2） */
+.sep {
+  border: 0;
+  border-top: 1px solid var(--pb-border);
+  margin: 4px 0;
 }
 
 .item {
