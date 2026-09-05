@@ -61,8 +61,7 @@
 - 手順22c・24b の経緯（2026-09-05 に `PROGRESS.md` から移した）
 - 手順26a — MCP の write 系3件とエージェントの削除（2026-09-05、`feature/step-26a-mcp-write`）
 - 手順24a〜26a の現況記録（2026-09-05 に `PROGRESS.md` から移した）
-- 手順外の作業（未着手の全文、2026-09-05 に `PROGRESS.md` から移した）
-- 手順外の作業
+- 手順外の作業（stg の PB へ起票済み、2026-09-05。チケット番号への対応表）
 
 ---
 
@@ -4061,39 +4060,20 @@ MCP 層が `GET` で読んで載せる。**`409 conflict` は `isError` のツ�
 チェックボックスと文字の間に余白が無かったこと。`fieldset.field` に打ち消しを置いて直した。
 
 
-## 手順外の作業（未着手の全文、2026-09-05 に `PROGRESS.md` から移した）
+## 手順外の作業（stg の PB へ起票済み、2026-09-05）
 
-**第2弾（`docs/backlog-to-stg`）で stg の PB へ起票する材料である。**
-起票が済んだら、この節はチケット番号への対応表に置き換える。
+未着手21行を stg の PB（プロジェクト `pb`）へ **20件として起票した**（`docs/backlog-to-stg`、#21〜#40）。
+**以降はチケットが正本である。本書にも `PROGRESS.md` にも全文を戻さない。**
 
-## 手順外の作業
+- **`gofmt` の2行は1件に寄せた**（#21）——`fix/gofmt-v1`（3ファイル）が
+  `fix/gofmt-docs`（2ファイル）を含み、後者が前者の部分集合だったため
+- **`PROGRESS.md` が「22件」と数えていたのは、seed の放置チケットを別立てにしていたため。**
+  表では `activity` の行に畳まれており、#23 の「やること」に残してある
+- **番号と1行要約は `PROGRESS.md`「手順外の作業」**（`Development.md` 12.5 の定め）
+- 背景・やること・完了の見分け方は各チケットの本文にある
 
-`Design.md` 11章の手順に属さない作業はここに記録する。
-**完了した分は `history/steps.md`「手順外の作業（完了分）」へ移す**（`pb-step.md` 手順7 の掃除）。
-
-| 内容 | 状態 | ブランチ | 直し方と確かめ方 |
-|---|---|---|---|
-| **`gofmt` が3ファイルを未整形と報告する**（`server/internal/httpapi/v1/docs.go` / `docs_test.go` / `fake_test.go`）。**`develop` にも同じ3件がある**（手順26a に worktree で確認済み）ので回帰ではない。**`make test` は `gofmt` を見ないので落ちない**——気づけるのは手で叩いたときだけである | 未着手 | `fix/gofmt-v1` | `gofmt -w` を当てる。**ただし当てると周囲の構造体フィールドまで再整形され、無関係な差分が20行ほど出る**（手順26a で1度踏んで戻した）ので、**それだけを1本のブランチにする**。あわせて `make test` か CI で `gofmt -l` が空であることを見るかを判断する |
-| **完了したチケットを差し戻せない**（`DbDesign.md` 7.4 のワークフローテンプレート3種）。**`simple` / `with_review` / `with_approval` のいずれも `done` から出る遷移を持たない**。`ApiDesign.md` 9.6 の「`done` 以外へ遷移すると `closed_at` は `NULL` へ戻る」は API から到達できない（結合テストは `closed_at` を直接立てて測っている）。完了チケットの `GET .../transitions` は全項目が `allowed:false` になる | 未着手 |  | テンプレートに `done → todo`（または `done → in_progress`）を足すかを判断する。**マイグレーションの追加になる**ので `DbDesign.md` 7.4 の改訂提案から始める |
-| **seed が `activity` を1行も書かない**（`server/cmd/pb/dev_seed.go`。理由付きのコメントがある——「デモデータの投入は業務上の出来事ではない」）。帰結として、**`make dev-reset` の直後はダッシュボードの「最近の動き」もチケット詳細の「履歴」も空**になり、**`stats.stale` も必ず 0**（seed の `updated_at` が投入時刻のため）。次に画面を触る人が**実装済みの表示を目で確かめられない** | 未着手 | `fix/seed-activity` | `devTicket` に「作成・遷移・コメント」ぶんの `activity` を数行仕込むか、`updated_at` を過去に振った放置チケットを1件置く。**全件ではなく数件に絞る**（seed のコメントが述べる「履歴が投入ログで埋まる」懸念と両立させる）。`make dev-reset` の直後に demo のダッシュボードで「最近の動き」と「要対応」が出ることを見る。放置チケットの作り方は `Development.md` 8.6 |
-| **seed に「返信」と「削除済みコメント」が無い**（`deploy/dev/seed/dev-data.yaml`）。`in_reply_to` の両向きリンク（`↩ 返信先:` と `返信 N件:`）と削除済みの「削除されました」は実装済みだが、**seed だけではどちらも画面に出ない**。上の行と同じ形の問題 | 未着手 | `fix/seed-comment-variants` | `devComment` に `reply_to` と `deleted` を足し、`make dev-reset` の直後に demo-9 で両方が見えることを確認する。**`comment.in_reply_to` は同じチケットの未削除コメントを指す必要がある**（`ApiDesign.md` 9.8） |
-| **seed のチケットに reporter が入らない**（`server/cmd/pb/dev_seed.go`）。`projectCreator` は**既にアクターIDを返す**のに、呼び出し側が `actorIDs[strings.ToLower(projectCreator(...))]` とメール引きで再度探しており、**必ず空になる**。seed の15件すべてが `reporter_id IS NULL`。外部参照の `created_by` も同じ値を使うため NULL になる（**画面は書き手を出さないので見た目の影響は無い**） | 未着手 | `fix/seed-reporter` | `reporterID := projectCreator(p, actorIDs)` に直し、`make dev-reset` の後に `SELECT count(*) FILTER (WHERE reporter_id IS NULL) FROM ticket` が 0 になることを見る |
-| **`ticketScope` と `referenceScope` が同型で並んでいる**（`server/internal/httpapi/v1/ticket_scope.go` と `references.go`）。どちらも「`{key}` と `{seq}` を解いてチケットの内部 ID を得る」35行で、**返す構造体の名前だけが違う**。**片方に直しが入るともう片方が置き去りになる** | 未着手 | `fix/ticket-scope-dedupe` | `references.go` の `referenceScope` / `referenceScopeInfo` を消して `ticketScope` へ寄せ、`make test` と `make test-db` の外部参照まわりが通ることを見る |
-| **ボタンの写しを撤去する**（`.primary` / `.secondary` / `.danger`）。正本は `client/src/styles/base.css` にあるが、**既存8ファイルの scoped な写しはそのまま**である（scoped のほうが詳細度が高いので見た目は変わらない）。写しごとに `:hover` と `:hover:not(:disabled)` の微差があるため**撤去は見た目の変更を含む** | 未着手 | `fix/button-styles` | 8ファイルの `.primary` / `.secondary` / `.danger` を消し、1440px と 900px でスクリーンショットを撮って差が無いことを見る |
-| **タグの並べ替え（`GuiDesign.md` 5.9.4）にもドロップ先の挿入線を入れるか**（利用者の判断で見送り、2026-08-24）。バックログには 5.4「ドロップ先の見せ方」として入れた。あちらは5件程度の短い一覧なので困りごとが出にくい | 未着手 | `fix/tag-drop-indicator` | 入れるなら `BacklogPage.vue` から `dropHint` / `sideOf()` / `.drop-before` / `.drop-after` を部品として切り出す。`ProjectSettingsPage.vue` の `dropTag` は `@dragover.prevent` を無条件に付けており（落とせない相手の概念が無い）**そのままでは移せない**。5.9.4 に規約を書き足し、1440px と 900px で見る |
-| **`pb serve` が bind に失敗しても「サーバを起動した」を先にログへ出す**（`server/cmd/pb/serve.go` が `ListenAndServe()` の**前**に `slog.Info` を書いている）。**`address already in use` で起動できていないのに、ログの1行目は成功に見える**。2026-08-30 に実際に読み違えの原因になった | 未着手 | `fix/serve-log-order` | `ListenAndServe()` を goroutine に出すか、`net.Listen` を先に行って成功してからログを書く。**`bind` に失敗したときにログが1行も出ないこと**を確認する。既存の graceful shutdown（`Development.md` 3.1「止め方」の2行）を壊さないこと |
-| **履歴書き換えのバックアップが残っている**——`/Users/<ユーザ>/git/ProjectBackyard-pre-pii-rewrite-20260829.bundle`（約2.1MB、リポジトリの外）。2026-08-29 の `git filter-repo` の前に取ったもので、**旧履歴（＝排除した個人情報）を含む**。書き換え後の履歴で問題が無いことを確認したら**削除する** | 未着手 |  | `git clone <bundle> <一時ディレクトリ>` で中身を確認できる。不要と判断したら `rm` するだけ。**残したままだと個人情報の排除が完了しない** |
-| **`Makefile` と `deploy/base/compose.yaml` のコメントが「手順13以降で `deploy/Dockerfile` を作成する」と書いている**（`Makefile:43` と `compose.yaml:48` の2か所）。**番号が古いうえ、前提も変わった**——`Design.md` 4.4 が 2026-08-29 に「`deploy/Dockerfile` の作成は Phase 2 の前提から外れた」と定めたので、**手順13 でも Phase 2 でも作らない**。次に読む人が「もうすぐ作るのだな」と信じて待つ。**手順20 で直すことを提案したが、利用者の判断で見送った**（2026-08-29） | 未着手 | `docs/stale-dockerfile-comments` | 2か所を「`deploy/Dockerfile` は未作成。`Design.md` 4.4 により Phase 2 では作らない」の趣旨へ直す。**`docs/Development.md` 2.2 の「app は Dockerfile 待ち」も同じ前提**なので一緒に見る。`grep -rn '手順13以降'` で写しを数えてから直す |
-| **`projects_integration_test.go` のコメントが古い**（3か所。「チケットAPIは手順18のため、行は直接 INSERT して用意する」）。**チケットAPIは既に入っている**ので、**次に読む人が「まだ無い」と信じて回り道する** | 未着手 | `docs/stale-test-comments` | 「このテストは一覧の集計だけを見るので直接 INSERT で足りる」の趣旨へ直す。**同種が他にないかを `grep '手順18'` で数えてから直す** |
-| **`router/routes.ts` のプレースホルダの Phase 表記が古い**（2か所）。`/p/:key/approvals` と `/p/:key/knowledge` が `status: 'Phase 2'` だが、**`Design.md` 11章と `GuiDesign.md` 3.2 はどちらも Phase 3** としている（`proposal` と承認キューUI・プロジェクトメモリは 2026-08-29 に Phase 3 へ送られた）。**画面に「Phase 2」と表示されるので、次に読む人が「もうすぐ来る」と信じて待つ** | 未着手 | `docs/stale-placeholder-phase` | 2か所を `'Phase 3'` へ直す。**`grep -n "Phase 2" client/src/router/routes.ts` で写しを数えてから直す**。プレースホルダ画面を開いて表示を確認する |
-| **Docs の編集中、可視化ペインが下書きを映さない**（`client/src/pages/DocsPage.vue` の `bodyHtml` が `draft` ではなく保存済みの `doc.body_md` を見ている）。**`GuiDesign.md` 5.10 は編集ペインを3ペインにした理由を「書きながら横で描画を確かめられる」と書いており、実装がその意図を満たしていない**。stg のドッグフーディングで利用者が本文に書き残していた（2026-08-30） | 未着手 | `fix/docs-live-preview` | `bodyHtml` を「編集モードなら `draft`、閲覧モードなら `doc.body_md`」に切り替える。**5.10 の記述と実装のどちらを直すかを先に決める**（生プレビューが重い文書で困らないかも見る）。1440px と、編集ペインが畳まれる幅の両方で確認する |
-| **Docs の画面への問い4件**（stg のドッグフーディングで利用者が本文に書き残したもの。2026-08-30）。①可視化ペインのトップの更新日時・更新者は必要か ②更新理由の欄は必要か ③保存ボタンを押さないと保存されない形は妥当か（利用者自身が「妥当な気がする」と自答済み）④Markdown の書式ヘルプをポップアップで出せると良い（書式をそのままコピーできる形） | 未着手 |  | ①②は `GuiDesign.md` 5.10 の「表示と編集」の表を、④は 6.1 の `MarkdownEditor` を触る。**まとめて1回で判断する**（個別に直すと 5.10 を4回書き換えることになる） |
-| **`markdown-it` が段落内の改行を半角空白にする**（`client/src/lib/markdown.ts` の `breaks: false`。CommonMark どおり）。**日本語では、書き手が折り返した位置に空白が見える**。手順23 でテンプレートの初期本文を 0018 で直したが、**利用者が Docs・説明欄・コメントに日本語を書いて改行すれば同じことが起きる** | 未着手 | `fix/cjk-soft-break` | `breaks: true`（改行を `<br>` に）か、CJK どうしの改行だけを詰める規則を足すかの判断。**Phase 1 から在る既存の説明欄・コメントすべての描画が変わる**ので、影響範囲を数えてから決める。「PB は CJK のために CommonMark から外れるか」という判断そのものが論点 |
-| **`docs.go` と `docs_test.go` が `gofmt` の整形と食い違っている**（構造体タグの桁揃え。手順22a から在り、`develop` でも同じ）。`make test` は `gofmt` を見ないので落ちない | 未着手 | `fix/gofmt-docs` | `gofmt -w` を当てるだけ。**手順23 のスコープ外なので触らなかった**（変更したファイルにも含まれない） |
-| **`docs/Development.md` 4.1 のデモアカウント表が実態と違う**。`admin@example.com` の「`demo` での役割」を **`—`（メンバーでない）**と書いているが、**DBでは `project_admin` である**——`dev-data.yaml` の `members:` に admin は無いものの、**プロジェクトの作成者として membership が入る**ためである（手順23 で作成手順を `internal/project` に1本化した帰結）。`make dev-info` も YAML を読むので同じ表示になる。**手順24b の検証で、この表を信じて「管理者だが非メンバー」の前提を組み、4件が偽の FAIL になった** | 未着手 | `docs/dev-account-table` | 4.1 の表の admin の行を `project_admin`（プロジェクト作成者）へ直す。**`dev-info` の出力も DB ではなく YAML 由来であることを添える**。`grep -rn 'admin@example.com' docs/` で写しを数えてから直す。**「管理者だが非メンバー」を作りたい検証は、`project_member` を1行外して控えから戻す**（手順24b でそうした。差分ゼロを確認済み） |
-| **`GET /projects`（一覧）が委譲を通っていない**（`server/internal/httpapi/v1/projects.go:120`）。`SummarizeProjects` / `ListProjects` に `p.ActorID` を渡しており、**エージェントのトークンでは所属プロジェクトが0件になる**（`project_member` の行を持たないため）。5.4 は手順25 で `AuthzActorID()` へ直したが、**5.1 は1行では済まない**——所有者のロールで引くと、**トークンの `project_id` で絞っていない一覧が、スコープ外のプロジェクト名まで返す**（`Design.md` 6.5 が禁じる「他プロジェクトへのアクセス」）。手順25 の read 系ツールは 5.1 を使わないため実害はまだ無い | 未着手 | `fix/projects-list-delegation` | `AuthzActorID()` への差し替えと**同時に**、`access_token.project_id` が入っているときは一覧をそのプロジェクトへ絞る。**先に `ApiDesign.md` 5.1 の改訂案を出す**（「エージェントのトークンでは自分のプロジェクト1件だけが返る」を書く）。結合テストは `mcp_integration_test.go` と同じ作り（所有者＋エージェント＋2プロジェクト）で書ける |
-| **設計文書に閉じていない `**` が6か所ある**（`Design.md` 2件・`ApiDesign.md` 3件・`Requirements.md` 1件。`develop` でも同じ）。`**「参加する本人」**` のように**日本語の約物と隣り合うと開かない／閉じない**（`DbDesign.md` 8.1.2 の表、`PROGRESS`「日本語の本文を書く手順」）。**画面ではなく文書側の問題**で、GitHub でも編集画面でも `**` が生で出る | 未着手 | `docs/unclosed-bold` | `markdown-it` に通して描画結果に `**` が残る行を数える（手順25 の検証で使った 8行のスクリプト）。**文ではなく句を強調する**形に書き換える。**修正のたびに再測する**——直した行の隣で同じことが起きる |
-| **初期パスワードの生成強度を上げる**（`auth.GeneratePassword`）。現在は `<形容詞>-<名詞>-<4桁数字>`・語彙各16語で**約21ビット**。手動の動作確認をしやすくするための暫定で、利用者の方針（2026-08-18）により**セキュリティ監査の時点で見直す**。`must_change` が既定 true、アカウントロック（5回/15分）が効くため当面の実害は無い | 未着手 |  | 語彙数を増やすか要素を足し、`genpassword_test` の強度の期待値を上げる。**あわせて `ApiDesign.md` 6.2 の記述も直す。** 監査の指摘とひも付ける |
+**完了した分は「手順外の作業（完了分）」へ移す**（`pb-step.md` 手順7 の掃除）。
+本書には**どの手順の中で片付けたか**だけを残す。
 
 
 ## 手順外の作業：毎セッション読む文書の再構成（2026-09-05、`docs/doc-restructure`）
