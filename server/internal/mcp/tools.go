@@ -98,8 +98,9 @@ func errorResult(text string) toolResult {
 // perPageMax は 9.2.1 と 2.6 が定める一覧の上限。
 const perPageMax = 200
 
-// readTools は手順25 で実装する read 系5件を返す（Design.md 8.2 の read 行から
-// pb_get_context を除いたもの。あれは手順27）。
+// readTools は手順25 で実装した read 系5件を返す（Design.md 8.2 の read 行から
+// pb_get_context を除いたもの。あれは手順27 の contextTools で、context_pack.go
+// にある——REST を1本叩くだけの5件と違い、3種類の応答を合成するため）。
 //
 // **並び順がそのまま tools/list の順になる。** /pb-onboard が呼ぶ順
 // （Requirements.md 10.8.5）に並べてある。

@@ -54,6 +54,10 @@ func New(rest http.Handler, version string) *Handler {
 	// **遷移系は write の後に置く**——/pb-implement の流れが「読む → 起票・記録 →
 	// 状態を進める」だからである（Requirements.md 10.8.6。手順26b）。
 	tools := readTools()
+	// **コンテキストパックは read 系の最後**——/pb-implement が「契約を読む
+	// （pb_get_task）→ 前提を読む（pb_get_context）」の順で呼ぶためである
+	// （Requirements.md 10.8.6 の手順1・2。手順27）。
+	tools = append(tools, contextTools()...)
 	tools = append(tools, writeTools()...)
 	tools = append(tools, transitionTools()...)
 	// **完了レポートは最後である**——/pb-implement の流れの終端だからである

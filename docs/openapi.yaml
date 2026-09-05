@@ -6104,10 +6104,15 @@ components:
         空配列を返していた——作りたてのチケットではどちらも空が正しい値であり、
         実装が入ったときに項目が生えたように見せないためである。
         **`references` は手順17c から、`comment_count` は手順17a から実数である。**
+
+        **`execution_mode` / `readiness` / `readiness_note` / `scope` は手順27 で足した。**
+        9.2.2 が「Phase 2 で有効化する際に足す」と書いていたもので、**一覧には含めない**
+        （`pb_get_task` と `pb_get_context` はどちらもチケット1件を指して呼ぶ）。
       allOf:
         - $ref: '#/components/schemas/Ticket'
         - type: object
-          required: [body_md, parent, children, dod, links, references, comment_count]
+          required: [body_md, parent, children, dod, links, references, comment_count,
+                     execution_mode, readiness, readiness_note, scope]
           properties:
             body_md:
               type: string
@@ -6149,6 +6154,31 @@ components:
               type: integer
               format: int64
               description: コメント件数（本文は含めない。ApiDesign.md 9.8）。
+            execution_mode:
+              type: string
+              enum: [human_only, agent_only, agent_draft]
+              description: |
+                実行主体属性（Requirements.md 10.5.4、DbDesign.md 6.6）。**手順27 で追加。**
+                `/pb-implement` は `human_only` のとき実装せず利用者へ返す
+                （Requirements.md 10.8.6）。
+            readiness:
+              type: string
+              enum: [red, yellow, green]
+              nullable: true
+              description: |
+                実行可能性の信号（Requirements.md 10.5.1）。未判定は null。**手順27 で追加。**
+            readiness_note:
+              type: string
+              nullable: true
+              description: Readiness の理由。未設定は null。**手順27 で追加。**
+            scope:
+              type: object
+              additionalProperties: true
+              description: |
+                スコープ境界（Requirements.md 10.5.3）。**手順27 で追加。** 未設定は `{}`。
+                既知の4キー（allow / deny / repositories / external_apis）は文字列の配列で、
+                **未知のキーはそのまま保存する**（ApiDesign.md 9.5.2）。
+                コンテキストパックの最優先項目として渡る（Design.md 8.5.5）。
 
     TicketComment:
       description: |
@@ -6875,6 +6905,38 @@ components:
           format: date
           nullable: true
           description: '`YYYY-MM-DD`。開始日より前だと 422。'
+        execution_mode:
+          type: string
+          enum: [human_only, agent_only, agent_draft]
+          description: |
+            実行主体属性（Requirements.md 10.5.4）。**手順27 で開いた。**
+            **`null` は受け付けない**（列が NOT NULL。422 の `invalid`）。
+            **`ticket.assign` は要らない**——追加の権限が要るのは「誰がやるか」を
+            決める操作だけで、これは「何をしてよいか」である（9.5.2）。
+        readiness:
+          type: string
+          enum: [red, yellow, green]
+          nullable: true
+          description: |
+            実行可能性の信号（Requirements.md 10.5.1）。**手順27 で開いた。**
+            `null` で未判定へ戻す。
+        readiness_note:
+          type: string
+          nullable: true
+          description: |
+            Readiness の理由。**手順27 で開いた。** `null` で消す。
+            **長さの上限を置かない**（`body_md` と同じ扱い）。
+        scope:
+          type: object
+          additionalProperties: true
+          description: |
+            スコープ境界（Requirements.md 10.5.3）。**手順27 で開いた。**
+            **`null` は受け付けない**（列が NOT NULL DEFAULT `'{}'`）。`{}` で空に戻す。
+
+            既知の4キー（`allow` / `deny` / `repositories` / `external_apis`）は
+            **文字列の配列**であること。それ以外の型は 422（`invalid`）。
+            **未知のキーは拒まずそのまま保存する**——境界の表し方はプロジェクトごとに
+            育つため、形だけを見る（9.15 の完了レポートと同じ判断）。
       example:
         title: 認証APIの実装（改）
         priority: high

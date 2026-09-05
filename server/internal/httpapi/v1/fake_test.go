@@ -1376,6 +1376,9 @@ func (q *fakeQuerier) CreateTicket(_ context.Context, arg gen.CreateTicketParams
 		EstimatePoint: arg.EstimatePoint, EstimateHours: arg.EstimateHours,
 		StartDate: arg.StartDate, DueDate: arg.DueDate,
 		SprintID: arg.SprintID, SortKey: arg.SortKey,
+		// DDL の既定（DbDesign.md 6.6）。9.3 は3つとも受けないので、
+		// 作りたてのチケットは必ずこの値になる（手順27）。
+		ExecutionMode: "human_only", Scope: []byte(`{}`),
 		Version: 1, CreatedAt: ts(time.Now()), UpdatedAt: ts(time.Now()),
 	}
 	return nil

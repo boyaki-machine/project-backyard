@@ -232,7 +232,13 @@ SELECT
   t.closed_at,
   t.version,
   t.created_at,
-  t.updated_at
+  t.updated_at,
+  -- 9.5.1 の4項目（手順27）。**一覧（ListTickets）には足さない**——読む相手
+  -- （pb_get_task と pb_get_context）はどちらもチケット1件を指して呼ぶ。
+  t.execution_mode,
+  t.readiness,
+  t.readiness_note,
+  t.scope
 FROM ticket t
 JOIN project p ON p.id = t.project_id
 LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
@@ -476,6 +482,13 @@ UPDATE ticket SET
   actual_hours   = CASE WHEN @actual_hours_set::boolean   THEN sqlc.narg('actual_hours')   ELSE actual_hours END,
   start_date     = CASE WHEN @start_date_set::boolean     THEN sqlc.narg('start_date')     ELSE start_date END,
   due_date       = CASE WHEN @due_date_set::boolean       THEN sqlc.narg('due_date')       ELSE due_date END,
+  -- 9.5.2 で開けた4項目（手順27）。**execution_mode と scope は NOT NULL** なので
+  -- COALESCE で足りる（null を送れば 422 で先に落ちる）。readiness と
+  -- readiness_note は null が「未判定へ戻す」を表すので _set の形が要る。
+  execution_mode = COALESCE(sqlc.narg('execution_mode'), execution_mode),
+  readiness      = CASE WHEN @readiness_set::boolean      THEN sqlc.narg('readiness')      ELSE readiness END,
+  readiness_note = CASE WHEN @readiness_note_set::boolean THEN sqlc.narg('readiness_note') ELSE readiness_note END,
+  scope          = COALESCE(sqlc.narg('scope'), scope),
   version        = version + 1
 WHERE project_id = @project_id AND seq = @seq AND version = @version;
 

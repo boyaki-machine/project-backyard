@@ -56,9 +56,15 @@ func ticketDetailRow() gen.GetTicketBySeqRow {
 		ReporterKind:   txt("user"),
 		ReporterName:   txt("田中"),
 		SortKey:        txt("0|n:"),
-		Version:        3,
-		CreatedAt:      ts(now),
-		UpdatedAt:      ts(now),
+		// **DDL の既定と同じ値を置く**（DbDesign.md 6.6）。実物では
+		// execution_mode が NOT NULL DEFAULT 'human_only'、scope が
+		// NOT NULL DEFAULT '{}' であり、零値のフェイクだと 9.5.1 の
+		// 応答が実サーバと違う形になる（手順27）。
+		ExecutionMode: "human_only",
+		Scope:         []byte(`{}`),
+		Version:       3,
+		CreatedAt:     ts(now),
+		UpdatedAt:     ts(now),
 	}
 }
 
@@ -600,6 +606,164 @@ func TestPatchTicketRejectsNonMemberAssignee(t *testing.T) {
 	}
 	if !hasDetail(errorOf(t, rec), "assignee_id", "not_a_member") {
 		t.Errorf("details = %v, want assignee_id/not_a_member", errorOf(t, rec).Details)
+	}
+}
+
+// ── 9.5.1 / 9.5.2：エージェントの契約4項目（手順27）──────────────
+//
+// **期待値は ApiDesign.md 9.5.1 / 9.5.2 から取る。** 4項目を足した理由は
+// pb_get_task が Requirements.md 10.3.2 の約束（スコープ境界・実行主体属性・
+// readiness を返す）を果たせていなかったことで、pb_get_task は 9.5.1 を
+// そのまま返す（Design.md 8.5.2）ため、ここが返さない限り届かない。
+
+func TestGetTicketReturnsAgentContractFields(t *testing.T) {
+	q := ticketDetailFake()
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.getTicket(rec, detailReq(http.MethodGet, "/api/v1/projects/demo/tickets/31", "", "31"))
+
+	view := viewOf(t, rec)
+	for _, key := range []string{"execution_mode", "readiness", "readiness_note", "scope"} {
+		if _, ok := view[key]; !ok {
+			t.Errorf("詳細に %q が無い（9.5.1。手順27 で追加）", key)
+		}
+	}
+	if got := view["execution_mode"]; got != "human_only" {
+		t.Errorf("execution_mode = %v, want human_only（DDL の既定）", got)
+	}
+	// **未設定でも null にせず {} を返す**（9.5.1）。「境界が無い」と
+	// 「項目が無い」は違うもので、パックが前者に文を当てる。
+	scope, ok := view["scope"].(map[string]any)
+	if !ok || len(scope) != 0 {
+		t.Errorf("scope = %v, want {}", view["scope"])
+	}
+	// custom_fields は足していない（9.5.1。読む相手がまだ居ない）。
+	if _, ok := view["custom_fields"]; ok {
+		t.Errorf("custom_fields が載っている（9.5.1 は足さないと決めている）")
+	}
+}
+
+func TestPatchTicketWritesScopeAndExecutionMode(t *testing.T) {
+	q := ticketDetailFake()
+	body := `{"execution_mode":"agent_draft","readiness":"yellow",` +
+		`"readiness_note":"認証方式が未決","scope":{"allow":["src/auth/**"],"deny":["migrations/**"]}}`
+	rec := callPatch(q, body, `"3"`, "ticket.edit")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	arg := q.ticket.updated[0]
+	if arg.ExecutionMode.String != "agent_draft" {
+		t.Errorf("execution_mode = %q, want agent_draft", arg.ExecutionMode.String)
+	}
+	if !arg.ReadinessSet || arg.Readiness.String != "yellow" {
+		t.Errorf("readiness = %+v, want yellow", arg.Readiness)
+	}
+	if !arg.ReadinessNoteSet || arg.ReadinessNote.String != "認証方式が未決" {
+		t.Errorf("readiness_note = %+v", arg.ReadinessNote)
+	}
+	if !strings.Contains(string(arg.Scope), "src/auth/**") {
+		t.Errorf("scope = %s", arg.Scope)
+	}
+}
+
+// **未知のキーは拒まずそのまま保存する**（9.5.2。9.15 と同じ判断）。
+func TestPatchTicketKeepsUnknownScopeKeys(t *testing.T) {
+	q := ticketDetailFake()
+	rec := callPatch(q, `{"scope":{"approval":["本番デプロイ"]}}`, `"3"`, "ticket.edit")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(string(q.ticket.updated[0].Scope), "approval") {
+		t.Errorf("未知のキーが落ちている: %s", q.ticket.updated[0].Scope)
+	}
+}
+
+func TestPatchTicketRejectsInvalidAgentContractFields(t *testing.T) {
+	cases := []struct {
+		name  string
+		body  string
+		field string
+	}{
+		{"実行モードが不正", `{"execution_mode":"robot"}`, "execution_mode"},
+		{"実行モードが null", `{"execution_mode":null}`, "execution_mode"},
+		{"Readiness が不正", `{"readiness":"orange"}`, "readiness"},
+		{"scope が null", `{"scope":null}`, "scope"},
+		{"scope が配列", `{"scope":["src/**"]}`, "scope"},
+		{"allow が配列でない", `{"scope":{"allow":"src/**"}}`, "scope"},
+		{"allow の要素が文字列でない", `{"scope":{"allow":[1,2]}}`, "scope"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q := ticketDetailFake()
+			rec := callPatch(q, c.body, `"3"`, "ticket.edit")
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want 422 (%s)", rec.Code, rec.Body.String())
+			}
+			// **新しい details[].code を発明しない**（9.5.2）。既存の invalid で表す。
+			if !hasDetail(errorOf(t, rec), c.field, "invalid") {
+				t.Errorf("details = %v, want %s/invalid", errorOf(t, rec).Details, c.field)
+			}
+		})
+	}
+}
+
+// null は「未判定へ戻す」（9.5.2）。execution_mode / scope と扱いが違う。
+func TestPatchTicketClearsReadinessWithNull(t *testing.T) {
+	q := ticketDetailFake()
+	rec := callPatch(q, `{"readiness":null,"readiness_note":null}`, `"3"`, "ticket.edit")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	arg := q.ticket.updated[0]
+	if !arg.ReadinessSet || arg.Readiness.Valid {
+		t.Errorf("readiness = %+v, want NULL を書く", arg.Readiness)
+	}
+}
+
+// **ticket.assign は要らない**（9.5.2）。追加の権限が要るのは「誰がやるか」を
+// 決める操作だけで、境界と実行モードは「何をしてよいか」である。
+func TestPatchTicketScopeDoesNotNeedAssignPermission(t *testing.T) {
+	q := ticketDetailFake()
+	rec := callPatch(q, `{"scope":{"allow":["src/**"]},"execution_mode":"agent_only"}`,
+		`"3"`, "ticket.edit")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// **scope は old/new を残す**（9.5.2。body_md のように落とさない）。
+func TestPatchTicketRecordsScopeChange(t *testing.T) {
+	q := ticketDetailFake()
+	rec := callPatch(q, `{"scope":{"allow":["src/**"]}}`, `"3"`, "ticket.edit")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.activities) != 1 {
+		t.Fatalf("activity = %d件, want 1", len(q.ticket.activities))
+	}
+	a := q.ticket.activities[0]
+	if a.Field.String != "scope" {
+		t.Fatalf("field = %q, want scope", a.Field.String)
+	}
+	if a.OldValue.String != "{}" || !strings.Contains(a.NewValue.String, "src/**") {
+		t.Errorf("old/new = %q/%q（境界の変更は履歴に残す）", a.OldValue.String, a.NewValue.String)
+	}
+}
+
+// **同じ内容の送り直しは記録しない**（9.5.2）。DB の jsonb と送られた JSON は
+// 並びが違うので、均さないと「変わっていない」を判定できない。
+func TestPatchTicketDoesNotRecordUnchangedScope(t *testing.T) {
+	q := ticketDetailFake()
+	row := q.ticket.bySeq[31]
+	row.Scope = []byte(`{"deny": ["migrations/**"], "allow": ["src/**"]}`)
+	q.ticket.bySeq[31] = row
+
+	rec := callPatch(q, `{"scope":{"allow":["src/**"],"deny":["migrations/**"]}}`, `"3"`, "ticket.edit")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.activities) != 0 {
+		t.Errorf("activity = %v, want 0件（内容が同じ）", q.ticket.activities)
 	}
 }
 
