@@ -796,7 +796,7 @@ GET /api/v1/me
 | `pb_post_note` | `POST /projects/:key/tickets/:seq/comments` | `comment.create` |
 | `pb_transition_task` | `POST /projects/:key/tickets/:seq/transition` | `ticket.transition` |
 | `pb_list_transitions` | `GET /projects/:key/tickets/:seq/transitions` | `ticket.view` |
-| `pb_submit_result` | 9章の遷移API | `ticket.transition` |
+| `pb_submit_result` | `POST /projects/:key/tickets/:seq/reports`（`ApiDesign.md` 9.15） | `ticket.transition` |
 | `pb_claim_task` / `pb_release_task`（**Phase 3**） | リース（`DbDesign.md` 8.2.2） | `ticket.transition` |
 
 **手順26 は3つに分かれる**（利用者の判断、2026-09-05）。
@@ -805,7 +805,7 @@ GET /api/v1/me
 |---|---|---|
 | **26a** | `pb_create_ticket` / `pb_put_doc` / `pb_post_note` | **叩く REST が実装済み**なので、MCP 層だけで足りる |
 | **26b** | `pb_transition_task` / `pb_list_transitions` | **叩く REST（9.6 / 9.7）は Phase 1 から在る。** 足すのは MCP の口と、`ticket.working_agent_id`（`DbDesign.md` 6.6）と、9.6 の検証6 |
-| **26c** | `pb_submit_result` | **格納先の `agent_run` / `agent_report` が Phase 3**（11章）。マイグレーションの追加を伴う |
+| **26c** | `pb_submit_result` | **格納先の `agent_run` / `agent_report` を Phase 3 から戻した**（11章）。0022 を足し、**REST 側も新設した**（`ApiDesign.md` 9.15。遷移API を叩く形にはならなかった） |
 
 **分けたのは、26b と 26c が新しい設計を約20件要求するためである**（リースのステータス遷移先・TTL の延長点・`stale` の判定・完了レポートの検証範囲・`proposed_subtasks` の格納先など）。11.2.1 のとおり、**26a の時点で検証・記録・コミットまで終える。**
 
@@ -922,6 +922,42 @@ GET /api/v1/me
 **`done` への遷移は開けなくてよい。** 3つのワークフローテンプレートすべてで `done` は `is_agent_reachable = false` かつ遷移の `allowed_actor_kinds` が `["user"]` であり（`DbDesign.md` 7.4）、**DB とワークフローが拒む**（`Requirements.md` 10.8.6 の禁止事項）。MCP 層に `if` を置かない（8.1）。
 
 **遷移に成功すると `ticket.working_agent_id` が呼び出し元のエージェントになる**（`ApiDesign.md` 9.6）。**MCP 層は何もしない**——REST 側の副作用であり、人が画面から遷移したときと同じ経路を通る。
+
+### 8.5.4 完了レポート系（手順26c）
+
+| ツール | 引数 | 叩く REST | 応答 |
+|---|---|---|---|
+| `pb_submit_result` | `seq`, `status`, `artifacts?`, `dod_results?`, `findings?`, `failures?`, `proposed_subtasks?`, `knowledge_impact?`, `cost?` | `POST /projects/:key/tickets/:seq/reports` | 9.15 の応答をそのまま |
+
+**引数を平らにする。** `Requirements.md` 10.3.2 は `task_id` と `report`（10.6.1 のオブジェクト）
+と書いていたが、**あちらを実装に合わせて改訂した**。理由は 8.5.1 と同じ——引数の名前が REST の
+本体フィールドに一致していれば、エージェントは迷ったときに設計文書を引ける。`task_id` を
+`seq` にするのも `pb_get_task` と同じ理由である（8.5.2）。
+
+**`pb_submit_result` は状態を進めない**（利用者の判断、2026-09-05）。26b で遷移が
+`pb_transition_task` として独立したので、**完了レポートの提出と状態遷移を1つのツールに
+混ぜない**。**チケットもクローズしない**——`done` は `is_agent_reachable = false` かつ
+`allowed_actor_kinds = ["user"]` で、DB とワークフローが拒む（`DbDesign.md` 7.4）。
+`Requirements.md` 10.8.6 の禁止事項が、MCP 層の `if` ではなくワークフローで守られている
+（8.1）。
+
+**応答の `unsatisfied_dod` が、エージェントの次の一手を決める。** サーバはチケットの完了条件を
+数え上げ、**レポートの `dod_results` に `passed: true` として現れなかった項目**を返す
+（9.15）。`/pb-implement` の手順7 が「未充足の完了条件が返されたら修正して再提出する」と
+定めており（`Requirements.md` 10.8.6）、その判断材料がこれである。
+
+**完了条件のチェック（`dod_item.is_satisfied`）は動かない。** いま API が開けている DoD の型は
+`manual` だけで、その定義は「人間がチェックを入れる」である（`Requirements.md` 10.5.2）。
+**エージェントが立てると型の定義に反する**ので、盤面は人が動かす（9.15）。
+
+**提出は完了レポートのコメントを1件作る**（`kind='progress'`）。**人がレポートを読む面が
+コメント欄である**——チケット詳細のコメント欄は遷移・作業中のノート・人の議論が時系列に
+並ぶ場所で、**完了の報告もそこに並ぶのが読む順序として自然である**（利用者の判断、
+2026-09-05）。**整形は REST 層が行う**（8.1。MCP 層に置くと同じ規則が2か所に生まれる）。
+
+**`proposed_subtasks` はレポートに残るだけで、チケットにならない。** 承認キュー（`proposal`）は
+Phase 3 であり、人が読んで要ると判断すれば `pb_create_ticket`（26a）を呼ばせれば済む。
+**承認なしに盤面が増える経路を作らない。**
 
 ### 8.5.2 read 系（手順25）
 
@@ -1347,7 +1383,8 @@ Phase 2 の成果物には**ブラウザに出ないものがある**——MCP �
       ← 議論の結果をチケットとして起票でき、指示で文書を更新でき、
         エージェントが自分の担当ぶんの状態を進められる
       （26a=起票・文書更新・ノート＋エージェントの削除、
-        26b=状態遷移＋ticket.working_agent_id、26c=完了レポート。
+        26b=状態遷移＋ticket.working_agent_id、
+        26c=完了レポート＋マイグレーション 0022（agent_run / agent_report）。
         8.2 の表が内訳。26b は当初リースだったが 2026-09-05 に組み直した）
 27. コンテキストパック（pb_get_context）                 ← Requirements 10.4
       ← チケットを指定すると憲章の該当章とスコープ境界が返る
@@ -1387,16 +1424,17 @@ Phase 2 の成果物には**ブラウザに出ないものがある**——MCP �
 |---|---|
 | `knowledge`（プロジェクトメモリ） | まず 8.1 の文書として運用し、押し付けたい粒度が実測で見えてから切り出す（`DbDesign.md` 8.3） |
 | **`proposal` と承認キューUI** | 承認対象だった `knowledge` と文書差分の両方が Phase 3 へ移ると、**Phase 2 に残る対象がサブタスク提案だけになり、画面を作る理由が薄い** |
-| DoD の machine 型、`agent_run` / `agent_report` / `context_pack_log` | 人が同席する前提では、`pb_post_note` を既存の `comment.kind` に載せれば足りる（`Requirements.md` 10.3.2）。**うち `agent_run` / `agent_report` は手順26c で Phase 2 へ戻す**（利用者の判断、2026-09-05——`pb_submit_result` を Phase 2 で実装する。マイグレーションの追加を伴い、Phase 3 の採番がまた1つずれる） |
+| DoD の machine 型、`agent_run` / `agent_report` / `context_pack_log` | 人が同席する前提では、`pb_post_note` を既存の `comment.kind` に載せれば足りる（`Requirements.md` 10.3.2）。**うち `agent_run` / `agent_report` は手順26c で Phase 2 へ戻した**（利用者の判断、2026-09-05。0022 で適用済みで、Phase 3 の採番は 0023〜0027 へずれた）。**`context_pack_log` は 0022 に器だけ作り、書き手は Phase 3 のまま**（`DbDesign.md` 8.2.5） |
 
 **旧手順21 は「`dod_item` と `agent_report`」だった。** `dod_item` は Phase 1（手順18）へ前倒し済みで、`agent_report` は上記により Phase 3 へ送った（`DbDesign.md` 6.11 / 8.2.4）。
 
 ## Phase 3 — AI機能・分析と、知識の還流
 
 ```
-29. マイグレーション 0021〜0026                        ← DbDesign 8.2, 8.3, 8.4
+29. マイグレーション 0023〜0027                        ← DbDesign 8.3, 8.4
 30. DoD の machine 型                                  ← DbDesign 6.11
-      （agent_run / agent_report は手順26c へ前倒し。2026-09-05）
+      （agent_run / agent_report は手順26c で実装済み。0022。
+        context_pack_log は 0022 に器だけ在り、書き手は本 Phase）
 31. proposal と承認キューUI                            ← Requirements 10.6.3
 32. プロジェクトメモリ（knowledge）とコンテキストパックへの供給 ← DbDesign 8.3
 33. Readiness 判定、DoD ドラフト生成                    ← Requirements 10.5.1

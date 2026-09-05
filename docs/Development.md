@@ -475,6 +475,11 @@ Playwright / Puppeteer は入れていない（`Design.md` 3.1 の採用技術�
 
 - **ウィンドウ幅を必ず指定する**（`--window-size=1440,900`）。既定のままでは 768px 未満と判定され、
   メニューがオーバーレイになる（`GuiDesign.md` 2.4）。「メニューが出ない」と誤読しやすい
+- **セレクタは DOM を1回出してから書く**（手順26c で2回外した）。ログイン画面の入力欄は
+  `id` を持たず `name` だけを持ち、`form button` は**パスワードの表示切替（`👁`）を先に拾う**
+  ——`document.querySelectorAll('input')` と `button[type=submit]` が確実である。
+  **外したときの症状は「ログインできない」ではなく「ログイン画面のまま先へ進む」**で、
+  後続の検証が全部 FAIL になるため、原因が遠くに見える
 - `v-model` の入力欄に値を入れるときは、`el.value = v` ではなく**ネイティブの value セッターを
   呼んでから `input` イベントを発火**する。前者では Vue が変更に気づかない
 
@@ -656,7 +661,8 @@ ULID は単調増加なので、検証前に `SELECT max(id) FROM activity` を�
 |---|---|
 | `make: *** No rule to make target 'migrate'` / `no makefile found` | **リポジトリ直下以外で実行している。** `make` は親ディレクトリを探しに行かない。`pwd` を確認して直下へ戻るか、`make -C <リポジトリのパス> migrate` と書く |
 | `make up` が `failed to connect to the docker API` | コンテナランタイムが停止している。Rancher Desktop を起動し、`docker info` が通るまで待つ（約30秒） |
-| `make run` が `bind: address already in use` | 前のセッションの `pb` が :8080 を掴んでいる。`lsof -nP -iTCP:8080 -sTCP:LISTEN` で確認する。他人のプロセスを落とさずに済ませるなら `PB_BIND=127.0.0.1:8099` のように待受を変えて起動する |
+| `make run` が `bind: address already in use` | 前のセッションの `pb` が :8080 を掴んでいる。`lsof -nP -iTCP:8080 -sTCP:LISTEN` で確認する。`make stop-server` で落とすか、他人のプロセスを残すなら `PB_BIND=127.0.0.1:8099` のように待受を変えて起動する |
+| **バックグラウンドで起動したら、`/healthcheck` の `version` を `make version` と突き合わせる** | `make run &` は失敗しても画面に出ない。**古いプロセスが :8080 を掴んでいると、healthcheck は 200 を返し続ける**ので「起動した」と誤読する（手順26c で実際に踏み、足したばかりの MCP ツールが `tools/list` に出ないことで初めて気づいた）。**版が一致しなければ、動いているのは自分のビルドではない** |
 | `make migrate` が認証に失敗する | `deploy/dev/secrets/db_password` と DB の実際のパスワードがずれている。initdb は**初回起動時にしか走らない**ため、後から `.example` を書き換えても反映されない。`make dev-reset` で作り直す |
 | アプリだけDBに繋がらない | `app_db_password` と `app_database_url` のパスワードが不一致（2.1） |
 | `npm run build` が `ERR_PACKAGE_PATH_NOT_EXPORTED` | `typescript` が 7.x になっている。**`^5` に固定すること**（vue-tsc 3.3.9 が `typescript/lib/tsc` を require できない） |

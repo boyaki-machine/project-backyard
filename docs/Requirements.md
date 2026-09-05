@@ -448,7 +448,7 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 | `pb_list_transitions` | read | 2 | **`seq`** | 9.7 の応答をそのまま | **いまどの状態へ進めるか**と、進めない先の理由。手順26b |
 | `pb_post_note` | write | 2 | **`seq`**, `body_md`, `kind?` | 9.8 の1件をそのまま | 途中経過・判明した事実の記録。**`refs` は落とした**——`ApiDesign.md` 9.8 に対応するフィールドが無い（`Design.md` 8.5.1） |
 | `pb_put_doc` | write | 2 | `path`, `body_md`, `change_reason?` | 10.3 の応答をそのまま | **文書の更新。** 権限を持つ人の指示で呼ぶ（10.6.2）。**本文の全置換**で、`If-Match` は MCP 層が付ける（`Design.md` 8.5.1） |
-| `pb_submit_result` | write | 2 | `task_id`, `report`（10.6.1） | 受理結果、未充足DoD項目 | 完了レポートの返却。**手順26c**（`agent_run` / `agent_report` を Phase 3 から戻す。利用者の判断、2026-09-05） |
+| `pb_submit_result` | write | 2 | **`seq`**, `status`, `artifacts?`, `dod_results?`, `findings?`, `failures?`, `proposed_subtasks?`, `knowledge_impact?`, `cost?` | 9.15 の応答をそのまま（`unsatisfied_dod` を含む） | 完了レポートの返却。**手順26c**（`agent_run` / `agent_report` を Phase 3 から戻した）。**引数は 10.6.1 のレポートを平らにしたもの**で、名前は REST の本体フィールドに揃う（`Design.md` 8.5.4）。**状態は進めずクローズもしない** |
 | `pb_claim_task` | write | **3** | `seq` | `lease_id`, `expires_at` | 着手時のリース取得。**Phase 3 へ送った**（2026-09-05。10.3.3） |
 | `pb_release_task` | write | **3** | `seq`, `reason` | — | 中断時のリース解放。**Phase 3 へ送った**（同上） |
 | `pb_search` | read | 3 | `query`, `scope?`, `top_k?` | 該当コメント/決定/文書 | 履歴横断のRAG検索 |
@@ -579,6 +579,11 @@ Runner による外形監視がないため厳密なハートビートは取れ�
 
 `pb_submit_result` は未充足のDoD項目を応答として返し、エージェントに修正を促す。
 
+**Phase 2 の実装では、これは「レポートの `dod_results` に `passed: true` として現れなかった
+項目」である**（`ApiDesign.md` 9.15）。**`dod_item.is_satisfied` は書き換えない**——上表の
+とおり `manual` の検証者は人間であり、いま API が開けている型は `manual` だけだからである。
+**客観判定（`assertion` / `artifact`）が入るまで、盤面のチェックは人が付ける。**
+
 ### 10.5.3 スコープ境界フィールド
 
 エージェントの逸脱防止は、プロンプトの注意書きではなく**構造データ**で行う。
@@ -625,6 +630,10 @@ scope:
 ### 10.6.1 構造化完了レポート
 
 `pb_submit_result` に渡すレポートのスキーマ。
+
+**実装では `task_id` を持たない**（手順26c）。チケットは URL が指し（`ApiDesign.md` 9.1）、
+MCP の引数では `seq` を受ける。残りのキーはそのまま最上位の引数になる（`Design.md` 8.5.4）。
+**`dod_results[].id` は完了条件の ULID である**（`pb_get_task` の応答が返す値）。
 
 ```yaml
 task_id: 123

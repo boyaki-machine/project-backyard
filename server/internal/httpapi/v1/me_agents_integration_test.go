@@ -488,9 +488,36 @@ func TestMeAgentsIntegration(t *testing.T) {
 			t.Fatalf("削除前の /me = %d, want 200", me.Code)
 		}
 
+		// **実行記録を1件書かせてから消す**（手順26c）。agent_run.actor_id は
+		// ON DELETE RESTRICT なので、**付け替えが漏れるとここで 500 になる。**
+		runTicketID, runID := ulidgen.New(), ulidgen.New()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO ticket (id, project_id, seq, type, title, status_key)
+			VALUES ($1, $2, 9002, 'task', 'レポートを出したチケット', 'todo')`,
+			runTicketID, projectID); err != nil {
+			t.Fatalf("チケットを作れない: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO agent_run (id, ticket_id, actor_id, status, ended_at)
+			VALUES ($1, $2, $3, 'completed', now())`,
+			runID, runTicketID, ag.ID); err != nil {
+			t.Fatalf("実行記録を作れない: %v", err)
+		}
+		t.Cleanup(func() {
+			if _, err := pool.Exec(context.Background(),
+				`DELETE FROM ticket WHERE id = $1`, runTicketID); err != nil {
+				t.Errorf("チケットの後始末に失敗した: %v", err)
+			}
+		})
+
 		del := deleteWithCookie(r, "/api/v1/me/agents/"+ag.ID, ownerSession)
 		if del.Code != http.StatusNoContent {
 			t.Fatalf("削除の status = %d, want 204（body=%s）", del.Code, del.Body.String())
+		}
+		// **実行記録は残り、アクターだけが付け替わる。**
+		if got := scalarText(t, pool,
+			`SELECT count(*)::text FROM agent_run WHERE id = $1`, runID); got != "1" {
+			t.Errorf("実行記録が消えている（%s 件）", got)
 		}
 
 		// actor / agent / access_token がすべて消えていること。
@@ -576,6 +603,16 @@ func TestMeAgentsIntegration(t *testing.T) {
 			commentID, ticketID, ag.ID); err != nil {
 			t.Fatalf("コメントを作れない: %v", err)
 		}
+		// **実行記録も書かせる**（手順26c）。agent_run.actor_id も
+		// NOT NULL かつ ON DELETE RESTRICT なので、**同じ付け替えが要る**
+		// （DbDesign.md 8.2.4、ApiDesign.md 4.5.4）。
+		runID := ulidgen.New()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO agent_run (id, ticket_id, actor_id, status, ended_at)
+			VALUES ($1, $2, $3, 'completed', now())`,
+			runID, ticketID, ag.ID); err != nil {
+			t.Fatalf("実行記録を作れない: %v", err)
+		}
 
 		// ── 削除する ────────────────────────────────────
 		del := callWithCookie(r, http.MethodDelete, "/api/v1/admin/users/"+victimID,
@@ -607,6 +644,16 @@ func TestMeAgentsIntegration(t *testing.T) {
 			FROM comment c JOIN actor a ON a.id = c.author_id WHERE c.id = $1`, commentID)
 		if author != "agent/"+deletedAgentDisplayName {
 			t.Errorf("コメントの書き手 = %q, want %q", author, "agent/"+deletedAgentDisplayName)
+		}
+
+		// **実行記録も残り、アクターが「削除されたエージェント」になること**
+		// （手順26c）。付け替えが漏れると、そもそも削除が RESTRICT で
+		// 止まって上の 204 に届かない。
+		runActor := scalarText(t, pool, `
+			SELECT a.kind || '/' || a.display_name
+			FROM agent_run ar JOIN actor a ON a.id = ar.actor_id WHERE ar.id = $1`, runID)
+		if runActor != "agent/"+deletedAgentDisplayName {
+			t.Errorf("実行記録のアクター = %q, want %q", runActor, "agent/"+deletedAgentDisplayName)
 		}
 
 		// **監査は user.delete 1行に集約する**（6.5）。エージェントごとに

@@ -80,6 +80,17 @@ type Querier interface {
 	// **0 件なら付け替え先を作らない**（reassignCommentsToSystemActor と同じ）。
 	//
 	CountAgentComments(ctx context.Context, authorID string) (int64, error)
+	// CountAgentRuns はそのアクターの実行記録の数を数える（ApiDesign.md 4.5.4）。
+	//
+	// **0 件なら付け替え先を作らない**（CountAgentComments と同じ）。
+	//
+	CountAgentRuns(ctx context.Context, actorID string) (int64, error)
+	// CountAgentRunsForTicket は同じ（チケット × アクター）の既存の run 数を数える。
+	//
+	// **agent_run.retry_count に入れる値である**（DbDesign.md 8.2.4）。初回は 0。
+	// 再提出が別の run になるので、これが「何回目のやり直しか」と一致する。
+	//
+	CountAgentRunsForTicket(ctx context.Context, arg CountAgentRunsForTicketParams) (int64, error)
 	// 以下は pb dev seed（DbDesign.md 7.6）が使う。
 	CountAppUsers(ctx context.Context) (int64, error)
 	// ── 削除（ApiDesign.md 6.5）─────────────────────────────────
@@ -124,6 +135,34 @@ type Querier interface {
 	// 固定で書いており、種別を引数にすると呼び出し側の誤りが型で止まらなくなる。
 	//
 	CreateAgentActor(ctx context.Context, arg CreateAgentActorParams) error
+	// CreateAgentReport は提出されたレポートを1件保存する。
+	//
+	// **report に Requirements.md 10.6.1 の全体が入る。** 集計対象になる status と
+	// knowledge_impact だけを列へ展開する（DbDesign.md 8.2.4）。
+	//
+	CreateAgentReport(ctx context.Context, arg CreateAgentReportParams) error
+	// エージェントの完了レポート（DbDesign.md 8.2.4、ApiDesign.md 9.15）。手順26c。
+	//
+	// **Phase 2 での書き手は pb_submit_result ひとつである**（DbDesign.md 8.2.4）。
+	// 1回の提出が agent_run 1行・agent_report 1行・完了レポートのコメント1件を
+	// 同じトランザクションで作る。
+	//
+	// **読み取りのクエリを置かない。** Phase 2 で人が読むのは完了レポートのコメント
+	// であり（GuiDesign.md 5.5）、agent_report の行そのものを読む面が無い（9.15 が
+	// GET .../reports を置かないと決めた）。**要るようになってから足す。**
+	// CreateAgentRun は1回の実行記録を作る。
+	//
+	// **Phase 2 で status に入るのは completed だけである**（DbDesign.md 8.2.4）。
+	// 開始を告げる口が無いので running は作られず、failed / abandoned は「レポートを
+	// 出さずに終わった run」で観測する口が無い。
+	//
+	// **workflow_version は渡さない**（NULL のまま）。workflow に版の列が無く
+	// （DbDesign.md 6.5）、陳腐化検出は Phase 3 である。
+	//
+	// **started_at はレポートの cost.wall_clock_min から逆算した値が入る。**
+	// 無ければ呼び出し側が ended_at と同じ値を渡す（DbDesign.md 8.2.4）。
+	//
+	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) error
 	// system_role を引数に取る点だけが CreateAdministrator と違う。
 	CreateAppUser(ctx context.Context, arg CreateAppUserParams) error
 	// コメントに関するクエリ（DbDesign.md 6.7、ApiDesign.md 9.8）。
@@ -145,6 +184,9 @@ type Querier interface {
 	// **in_reply_to は手順18a で足した**（9.8 の返信）。9.6 の遷移コメントは返信を
 	// 持たないので、あちらは NULL を渡す——列を増やすより、呼び出し側が「返信では
 	// ない」を明示するほうが、後から読んだときに意図が残る。
+	// **agent_run_id は手順26c で足した**（0022 で FK が付いた。DbDesign.md 6.7 / 8.2.4）。
+	// **埋まるのは pb_submit_result が作る完了レポートのコメントだけ**——遷移コメントも
+	// pb_post_note も、その時点で run が存在しないので NULL を渡す。
 	CreateComment(ctx context.Context, arg CreateCommentParams) error
 	// CreateDeletedAgentActor は付け替え先を1件作る。
 	//
@@ -439,6 +481,16 @@ type Querier interface {
 	// **agent テーブルを引く。** actor.kind='agent' であることと所有者が誰かを一度に
 	// 取るためで、行が無ければ「エージェントではない」である。
 	GetAgentOwner(ctx context.Context, actorID string) (string, error)
+	// GetAgentRuntimeInfo は実行時点のクライアント種別とモデルを引く。
+	//
+	// **agent_run へ非正規化して写す**（DbDesign.md 8.2.4）。Requirements.md 10.10.3 の
+	// 「モデル更新後に品質が変化した際の切り分け」のためで、後から agent.model_name を
+	// 書き換えても過去の実行記録が動かないことがこの列の値である。
+	//
+	// **人のトークンで叩かれたときは行が無い**（agent の行を持たないため）。
+	// 呼び出し側は pgx.ErrNoRows を「エージェントではない」として扱う。
+	//
+	GetAgentRuntimeInfo(ctx context.Context, actorID string) (GetAgentRuntimeInfoRow, error)
 	// GetDocument は本文1件（10.3）。created_by / updated_by は LEFT JOIN である。
 	//
 	// **どちらも null になりうる**（ON DELETE SET NULL。8.1.1）。9.8 の author が
@@ -1127,6 +1179,13 @@ type Querier interface {
 	// 委ね、check-key の結果を信頼しない」と定めている（TOCTOU 対策）。
 	//
 	ProjectKeyExists(ctx context.Context, key string) (bool, error)
+	// ReassignAgentRuns は実行記録のアクターを付け替える（ApiDesign.md 4.5.4）。
+	//
+	// **agent_run.actor_id は NOT NULL かつ ON DELETE RESTRICT である**
+	// （DbDesign.md 8.2.4）。DBが「付け替えてからでないと消せない」という順序を
+	// 強制するので、comment.author_id と同じ手順が要る。
+	//
+	ReassignAgentRuns(ctx context.Context, arg ReassignAgentRunsParams) (int64, error)
 	// ReassignComments は投稿者を付け替える（DbDesign.md 6.7、ApiDesign.md 6.5）。
 	//
 	ReassignComments(ctx context.Context, arg ReassignCommentsParams) (int64, error)

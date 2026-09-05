@@ -56,18 +56,20 @@ func (q *Queries) CountTicketComments(ctx context.Context, ticketID string) (int
 
 const createComment = `-- name: CreateComment :exec
 
-INSERT INTO comment (id, ticket_id, author_id, body_md, kind, origin, in_reply_to)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO comment (id, ticket_id, author_id, body_md, kind, origin, in_reply_to, agent_run_id)
+VALUES ($1, $2, $3, $4, $5, $6,
+        $7, $8)
 `
 
 type CreateCommentParams struct {
-	ID        string
-	TicketID  string
-	AuthorID  string
-	BodyMd    string
-	Kind      string
-	Origin    string
-	InReplyTo pgtype.Text
+	ID         string
+	TicketID   string
+	AuthorID   string
+	BodyMd     string
+	Kind       string
+	Origin     string
+	InReplyTo  pgtype.Text
+	AgentRunID pgtype.Text
 }
 
 // コメントに関するクエリ（DbDesign.md 6.7、ApiDesign.md 9.8）。
@@ -89,6 +91,9 @@ type CreateCommentParams struct {
 // **in_reply_to は手順18a で足した**（9.8 の返信）。9.6 の遷移コメントは返信を
 // 持たないので、あちらは NULL を渡す——列を増やすより、呼び出し側が「返信では
 // ない」を明示するほうが、後から読んだときに意図が残る。
+// **agent_run_id は手順26c で足した**（0022 で FK が付いた。DbDesign.md 6.7 / 8.2.4）。
+// **埋まるのは pb_submit_result が作る完了レポートのコメントだけ**——遷移コメントも
+// pb_post_note も、その時点で run が存在しないので NULL を渡す。
 func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) error {
 	_, err := q.db.Exec(ctx, createComment,
 		arg.ID,
@@ -98,6 +103,7 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) er
 		arg.Kind,
 		arg.Origin,
 		arg.InReplyTo,
+		arg.AgentRunID,
 	)
 	return err
 }

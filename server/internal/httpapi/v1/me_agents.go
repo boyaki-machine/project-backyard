@@ -1009,7 +1009,7 @@ func (h *handler) deleteMyAgent(w http.ResponseWriter, r *http.Request) {
 		// **有効な task_lease を保持中なら 409**（4.5.4）は手順26b で足す。
 		// task_lease に行を書く経路（pb_claim_task）が 26b で入るまで起きない。
 
-		moved, err := reassignAgentComments(ctx, q, agentID)
+		moved, movedRuns, err := reassignAgentRecords(ctx, q, agentID)
 		if err != nil {
 			return err
 		}
@@ -1026,6 +1026,7 @@ func (h *handler) deleteMyAgent(w http.ResponseWriter, r *http.Request) {
 				"client_kind":         ag.ClientKind,
 				"project_key":         ag.ProjectKey.String,
 				"reassigned_comments": moved,
+				"reassigned_runs":     movedRuns,
 			},
 		}); err != nil {
 			return err
@@ -1051,21 +1052,32 @@ func (h *handler) deleteMyAgent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// reassignAgentComments はエージェントのコメントを「削除されたエージェント」へ
-// 付け替え、動かした件数を返す（ApiDesign.md 4.5.4）。
+// reassignAgentRecords はエージェントのコメントと実行記録を「削除された
+// エージェント」へ付け替え、動かした件数を返す（ApiDesign.md 4.5.4）。
 //
-// comment.author_id は NOT NULL かつ ON DELETE RESTRICT であり、**DBが
-// 「付け替えてからでないと消せない」という順序を強制する**（DbDesign.md 6.7）。
+// comment.author_id と agent_run.actor_id は NOT NULL かつ ON DELETE RESTRICT で
+// あり、**DBが「付け替えてからでないと消せない」という順序を強制する**
+// （DbDesign.md 6.7 / 8.2.4）。
 //
-// **コメントが1件も無ければ付け替え先も作らない**（reassignCommentsToSystemActor
-// と同じ）。手順26a より前に作られたエージェントは1件も書いていない。
-func reassignAgentComments(ctx context.Context, q gen.Querier, agentActorID string) (int64, error) {
-	n, err := q.CountAgentComments(ctx, agentActorID)
+// **同じ制約を持つ表が増えるたびにここへ足す**（agent_run は手順26c で加わった）。
+// 付け替えを1か所にまとめてあるのは、足し忘れると DELETE /me/agents/:id が
+// **本番で初めて失敗する**ためである。
+//
+// **どちらも0件なら付け替え先も作らない**（reassignCommentsToSystemActor と
+// 同じ）。手順26a より前に作られたエージェントは1件も書いていない。
+func reassignAgentRecords(
+	ctx context.Context, q gen.Querier, agentActorID string,
+) (comments, runs int64, err error) {
+	nComments, err := q.CountAgentComments(ctx, agentActorID)
 	if err != nil {
-		return 0, fmt.Errorf("コメント数を数えられない: %w", err)
+		return 0, 0, fmt.Errorf("コメント数を数えられない: %w", err)
 	}
-	if n == 0 {
-		return 0, nil
+	nRuns, err := q.CountAgentRuns(ctx, agentActorID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("実行記録の数を数えられない: %w", err)
+	}
+	if nComments == 0 && nRuns == 0 {
+		return 0, 0, nil
 	}
 
 	destID, err := q.FindDeletedAgentActor(ctx, deletedAgentDisplayName)
@@ -1075,22 +1087,33 @@ func reassignAgentComments(ctx context.Context, q gen.Querier, agentActorID stri
 			ID:          destID,
 			DisplayName: deletedAgentDisplayName,
 		}); err != nil {
-			return 0, fmt.Errorf("付け替え先のアクターを作成できない: %w", err)
+			return 0, 0, fmt.Errorf("付け替え先のアクターを作成できない: %w", err)
 		}
 	} else if err != nil {
-		return 0, fmt.Errorf("付け替え先のアクターを引けない: %w", err)
+		return 0, 0, fmt.Errorf("付け替え先のアクターを引けない: %w", err)
 	}
 
-	// ReassignComments（user.sql）を共用する。付け替えは「投稿者を差し替える」
-	// 操作であって、人かエージェントかで手順が変わらない。
-	moved, err := q.ReassignComments(ctx, gen.ReassignCommentsParams{
-		NewAuthorID: destID,
-		OldAuthorID: agentActorID,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("コメントの投稿者を付け替えられない: %w", err)
+	if nComments > 0 {
+		// ReassignComments（user.sql）を共用する。付け替えは「投稿者を差し替える」
+		// 操作であって、人かエージェントかで手順が変わらない。
+		comments, err = q.ReassignComments(ctx, gen.ReassignCommentsParams{
+			NewAuthorID: destID,
+			OldAuthorID: agentActorID,
+		})
+		if err != nil {
+			return 0, 0, fmt.Errorf("コメントの投稿者を付け替えられない: %w", err)
+		}
 	}
-	return moved, nil
+	if nRuns > 0 {
+		runs, err = q.ReassignAgentRuns(ctx, gen.ReassignAgentRunsParams{
+			NewActorID: destID,
+			OldActorID: agentActorID,
+		})
+		if err != nil {
+			return 0, 0, fmt.Errorf("実行記録のアクターを付け替えられない: %w", err)
+		}
+	}
+	return comments, runs, nil
 }
 
 // purgeOwnedAgents は、その人が所有するエージェントをすべて消す
@@ -1110,7 +1133,7 @@ func purgeOwnedAgents(ctx context.Context, q gen.Querier, ownerActorID string) (
 		return 0, fmt.Errorf("所有するエージェントを読めない: %w", err)
 	}
 	for _, id := range ids {
-		if _, err := reassignAgentComments(ctx, q, id); err != nil {
+		if _, _, err := reassignAgentRecords(ctx, q, id); err != nil {
 			return 0, err
 		}
 		if _, err := q.DeleteMyAgentActor(ctx, gen.DeleteMyAgentActorParams{

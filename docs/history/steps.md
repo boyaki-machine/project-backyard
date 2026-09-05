@@ -4194,3 +4194,67 @@ MCP 層が `GET` で読んで載せる。**`409 conflict` は `isError` のツ�
 `26b_setup.sh clean` で実測——`agent行=0 token行=0 actor行=0 working_agent付き=0 seq9status=in_progress`。
 `make dev-seed` は冪等に通り、`make clean-webui` と `git status` も綺麗。
 検証の道具（`cdp.py` / `check26b.py` / `26b_setup.sh`）はスクラッチパッドに置いたので残らない。
+
+## 手順26c — 完了レポート（2026-09-05、`feature/step-26c-agent-report`、v2.10.67）
+
+**`pb_submit_result` と、その格納先である `agent_run` / `agent_report` を Phase 3 から Phase 2 へ戻した。**
+`Design.md` 11章の手順26（MCP の write 系ツール）は 26a / 26b / 26c の3分割で、これが最後である。
+
+### 作ったファイル
+
+| 種別 | ファイル |
+|---|---|
+| 新規（実装） | `server/migrations/0022_agent_run.sql`、`server/internal/store/queries/agent_report.sql`、`server/internal/httpapi/v1/reports.go`、`server/internal/httpapi/v1/report_render.go` |
+| 新規（試験） | `server/internal/httpapi/v1/reports_test.go`、`server/internal/httpapi/v1/report_render_test.go` |
+| 変更（実装） | `server/internal/httpapi/v1/routes.go`（1ルート）、`server/internal/httpapi/v1/me_agents.go`（`reassignAgentRecords`）、`server/internal/httpapi/v1/comments.go` / `tickets_transition.go`（`AgentRunID` を明示）、`server/internal/store/queries/comment.sql`（`CreateComment` に `agent_run_id`）、`server/internal/mcp/tools.go`（`property` に `Items` / `Properties` / `Required`、`reportTools`、`callSubmitResult`）、`server/internal/mcp/server.go` |
+| 変更（試験） | `mcp_integration_test.go`（5 subtest）、`me_agents_integration_test.go`（2 subtest に `agent_run` を絡めた）、`me_agents_test.go`、`fake_test.go`、`routes_test.go`、`server_test.go`、`tools_test.go` |
+| 変更（文書） | `ApiDesign.md`（**9.15 を新設**、9.6 / 9.9 / 4.5.4 に相互参照）、`DbDesign.md`（8章の採番、**8.2.4 を Phase 2 の節へ**、8.2.5、6.7）、`Design.md`（8.2 の表と分割表、**8.5.4 を新設**、11章）、`Requirements.md`（10.3.2 / 10.5.2 / 10.6.1）、`GuiDesign.md`（5.5）、`openapi.yaml`、`Testing.md` 8、`Development.md` 8.2 / 9章 |
+| 生成 | `server/internal/store/gen/`（sqlc）、`client/src/api/schema.d.ts`（`make gen-api`） |
+
+**クライアント（`client/`）の実装は無い**——完了レポートは `kind='progress'` のコメントとして
+既存のコメント欄に出るため（利用者の判断）。変わったのは生成物の型定義だけである。
+
+### DDL の転記を機械で照合した
+
+`DbDesign.md` 8.2.4 + 8.2.5 の SQL ブロックとマイグレーションを、コメントと空白を落として
+差分を取った（`Testing.md` 8 に書き足した型）。**結果は「原文と一致（`COMMENT ON` 3件のみ追加）」。**
+
+### 検証結果
+
+| 層 | 結果 |
+|---|---|
+| `make migrate` | `OK 0022_agent_run.sql (16.4ms)` → version 22 |
+| `make stg-migrate` / `make stg-build` | 通った（21.45ms。`deploy/stg/out/` を更新） |
+| `make test`（単体） | 全パッケージ ok。ドリフト検出（`openapi.yaml`）を含む |
+| `make test-db`（結合） | 全パッケージ ok。`TestMCPIntegration` の subtest 5件と `TestMeAgentsIntegration` の 2件が新規 |
+| 実サーバ（dev） | 下記 |
+
+**`tools/list` は 11件**（read5 → write3 → 遷移2 → **報告1**）。
+
+**通し**：`member@example.com` の所有でエージェントを登録 → トークン発行（既定8スコープ）→
+`pb_get_task(seq=9)` で完了条件4件の ULID を取得 → `pb_submit_result` を提出。
+
+| 測ったもの | 実測 |
+|---|---|
+| 応答 | `isError:false`、`unsatisfied_dod` が2件（`passed:false` の1件＋触れなかった1件） |
+| `agent_run` | `status=completed` / `client_kind=claude_code` / `model_name=claude-opus-5` / `tokens_used=184320` / `turns=41` / `retry_count=0` / `ended_at - started_at = 63.0分`（`cost.wall_clock_min` からの逆算） |
+| `agent_report` | `status=partial` / `knowledge_impact=minor` / `report` に未知キー（`weather`）も保存 |
+| `comment` | `kind=progress` / `origin=agent` / `agent_run_id` が run を指す |
+| 盤面 | `dod_item.is_satisfied` は `済,済,未,未` のまま（レポートは動かさない）、`status_key=in_progress` のまま |
+| 画面 | チケット詳細のコメント欄に**人の議論コメントの次に並んだ**。成果物・完了条件の表・判明したこと・試して駄目だったこと・分割の提案・コストがすべて描画され、**生の Markdown は漏れていない**。`kind` のラベルは「経過」、アバターはエージェント（角丸四角） |
+| 再提出 | 別の run になり `retry_count=1`。全条件を `passed:true` で申告すると `unsatisfied_dod` が空になる |
+| 負の側 | `ticket.transition` を持たないトークンで 403、知らない `dod_results[].id` で 422 `not_found` |
+
+**実機で1つ直した。** 完了条件の表を3列（判定／完了条件／証跡）で出したところ、
+**判定列が最小幅まで縮んで見出しが縦に折り返された。** 判定を条件のセルへ前置して2列にし、
+`ApiDesign.md` 9.15 の本文の形も直した。
+
+### 片付け
+
+`PB_YES=1 make dev-reset` で DB を戻し、実測した——
+`agent_run=0 agent_report=0 検証エージェント=0 レポートのコメント=0`。
+Cookie jar・トークン・Chrome プロファイル（`/tmp/pb-cdp-*`）を削除し、`make run` を停止した
+（`:8080` が空いていることを `lsof` で確認）。**`make build` はしていないので `clean-webui` は不要。**
+`gofmt -l server/` の残りは既知の3件（`docs.go` / `docs_test.go` / `fake_test.go`）のみで、
+**`fake_test.go` は私の追加が整列を切っていたので、既存ブロックを壊さない位置へ移した**
+（`gofmt -w` を当てると既知の未整形まで直って無関係な差分が出るため）。

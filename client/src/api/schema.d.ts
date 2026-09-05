@@ -1640,6 +1640,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/tickets/{seq}/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 完了レポートの提出
+         * @description エージェントが1回の作業の結果を構造化して提出する（ApiDesign.md 9.15、
+         *     Requirements.md 10.6.1）。**必要権限は `ticket.transition`**。
+         *
+         *     `agent_run` と `agent_report` に1行ずつ書き、**同じトランザクションで
+         *     完了レポートのコメントを1件作る**（`kind='progress'`）。**そのコメントが、
+         *     人がレポートを読む面である**（GuiDesign.md 5.5）。
+         *
+         *     **状態を進めない。** 26b で遷移が 9.6 として独立したので、完了レポートの
+         *     提出と状態遷移を1つの操作に混ぜない。**チケットもクローズしない**——
+         *     `done` への遷移は `is_agent_reachable=false` かつ
+         *     `allowed_actor_kinds=["user"]` で、DB とワークフローが拒む。
+         *
+         *     **完了条件（`dod_item.is_satisfied`）を書き換えない。** いま API が開けて
+         *     いる DoD の型は `manual` だけで、その定義は「人間がチェックを入れる」で
+         *     ある（Requirements.md 10.5.2）。**エージェントが立てると型の定義に反する。**
+         *
+         *     **`unsatisfied_dod` は「レポートの `dod_results` に `passed: true` として
+         *     現れなかった完了条件」である。** `is_satisfied = false` のものではない
+         *     ——この API は `is_satisfied` を動かさないので、それを返すと作業直後は
+         *     必ず全件になり、`/pb-implement` の手順7 が終わらなくなる。
+         *
+         *     **検証は「列に出す値」だけ厳しい。** `status` と `knowledge_impact`、
+         *     `cost.tokens` / `cost.turns` は列へ展開されるので値域を見る。
+         *     **それ以外の知らないキーは拒まず、`report` jsonb にそのまま保存する。**
+         *
+         *     **9.6 の検証6（エージェントは所有者の担当だけ）は適用しない**——あの規則は
+         *     ボードの状態を動かすことへの制約であり、レポートは状態を動かさない。
+         *
+         *     **`GET` を置かない。** Phase 2 で人が読むのは完了レポートのコメントで
+         *     あり、`agent_report` の行そのものを読む面が無い。
+         */
+        post: operations["submitTicketReport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{key}/tickets/{seq}/transitions": {
         parameters: {
             query?: never;
@@ -3393,6 +3455,107 @@ export interface components {
             /** Format: date */
             end_date?: string | null;
             status?: components["schemas"]["SprintStatus"];
+        };
+        /**
+         * @description 完了レポートの本文（ApiDesign.md 9.15、Requirements.md 10.6.1）。
+         *     **`task_id` を持たない**——チケットは URL が指す（9.1）。
+         *
+         *     **ここに書かれていないキーも受け付け、`report` jsonb にそのまま保存する。**
+         *     検証するのは列へ展開される値だけである。
+         */
+        SubmitTicketReportRequest: {
+            /**
+             * @description 作業の結果。
+             * @enum {string}
+             */
+            status: "completed" | "blocked" | "partial";
+            /**
+             * @description 得た知見がプロジェクトの規約や設計にどれだけ効くか。
+             * @enum {string|null}
+             */
+            knowledge_impact?: "none" | "minor" | "major" | null;
+            /** @description この作業に掛かったもの。`tokens` と `turns` は `agent_run` の列へ展開される。 */
+            cost?: {
+                /** Format: int64 */
+                tokens?: number;
+                turns?: number;
+                /** @description 掛かった時間（分）。**`agent_run.started_at` はこれから逆算する。** */
+                wall_clock_min?: number;
+            };
+            /** @description 完了条件ごとの自己検証の結果。**`id` はこのチケットの完了条件のものに限る**（他は 422 `not_found`）。 */
+            dod_results?: {
+                /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+                id: string;
+                passed?: boolean;
+                evidence?: string;
+                note?: string;
+            }[];
+            /** @description 作った成果物。 */
+            artifacts?: {
+                /** @example pull_request */
+                type?: string;
+                url?: string;
+                path?: string;
+            }[];
+            /** @description 判明したこと。`kind` は Requirements.md 6.5 の情報類型。 */
+            findings?: {
+                /** @enum {string} */
+                kind?: "decision" | "discussion" | "artifact" | "caveat" | "reference";
+                body?: string;
+            }[];
+            /**
+             * @description **試して駄目だったこと。** 10.6.2 が「失敗の記録を第一級の資産とする」と
+             *     定めている——エージェントは同じ失敗を平然と繰り返すため効果が大きい。
+             */
+            failures?: {
+                approach?: string;
+                reason?: string;
+            }[];
+            /**
+             * @description 分割の提案。**チケットにはならない**——承認キュー（`proposal`）は Phase 3 で
+             *     あり、人が読んで要ると判断すれば `pb_create_ticket` を呼ばせれば済む。
+             */
+            proposed_subtasks?: {
+                title?: string;
+                rationale?: string;
+            }[];
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description 受理した完了レポート（ApiDesign.md 9.15）。 */
+        TicketReport: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /**
+             * @description この提出で作られた実行記録（`agent_run`）の id。
+             * @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+             */
+            agent_run_id: string;
+            /** @description チケット番号。 */
+            seq: number;
+            /** @enum {string} */
+            status: "completed" | "blocked" | "partial";
+            /** @enum {string|null} */
+            knowledge_impact?: "none" | "minor" | "major" | null;
+            /** Format: date-time */
+            submitted_at: string;
+            submitted_by: components["schemas"]["ActorRef"];
+            /**
+             * @description 同じトランザクションで作った完了レポートのコメントの id。
+             * @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+             */
+            comment_id: string;
+            /**
+             * @description **レポートの `dod_results` に `passed: true` として現れなかった完了条件。**
+             *     `is_satisfied = false` のものではない——この API は `is_satisfied` を
+             *     動かさないので、それを返すと作業直後は必ず全件になる。
+             */
+            unsatisfied_dod: {
+                id: string;
+                /** @example manual */
+                type: string;
+                body: string;
+            }[];
         };
         /**
          * @description アクターの参照（担当者・報告者。ApiDesign.md 9.2.2）。**`kind` を必ず返す**
@@ -7083,6 +7246,51 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["TicketLinkNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    submitTicketReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitTicketReportRequest"];
+            };
+        };
+        responses: {
+            /** @description 受理した完了レポート。 */
+            201: {
+                headers: {
+                    /** @description 受理した完了レポートの URL（`GET` は実装していない）。 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketReport"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

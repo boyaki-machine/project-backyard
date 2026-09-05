@@ -263,6 +263,9 @@ func (h *handler) createTicketComment(w http.ResponseWriter, r *http.Request) {
 			Kind:      kind,
 			Origin:    scope.origin(),
 			InReplyTo: replyTo,
+			// **pb_post_note の時点で agent_run は存在しない**（手順26c）。
+			// run を作るのは pb_submit_result だけである（DbDesign.md 8.2.4）。
+			AgentRunID: pgtype.Text{},
 		}); err != nil {
 			return fmt.Errorf("コメントを作成できない: %w", err)
 		}

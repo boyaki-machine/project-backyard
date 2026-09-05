@@ -182,6 +182,9 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 				Origin:   origin,
 				// **遷移コメントは返信ではない**（手順18a で in_reply_to を足した）。
 				InReplyTo: pgtype.Text{},
+				// **遷移の時点で agent_run は存在しない**（手順26c）。run を作るのは
+				// pb_submit_result だけである（DbDesign.md 8.2.4）。
+				AgentRunID: pgtype.Text{},
 			}); err != nil {
 				return fmt.Errorf("遷移コメントを作成できない: %w", err)
 			}

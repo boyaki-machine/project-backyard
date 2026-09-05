@@ -18,9 +18,13 @@
 -- **in_reply_to は手順18a で足した**（9.8 の返信）。9.6 の遷移コメントは返信を
 -- 持たないので、あちらは NULL を渡す——列を増やすより、呼び出し側が「返信では
 -- ない」を明示するほうが、後から読んだときに意図が残る。
+-- **agent_run_id は手順26c で足した**（0022 で FK が付いた。DbDesign.md 6.7 / 8.2.4）。
+-- **埋まるのは pb_submit_result が作る完了レポートのコメントだけ**——遷移コメントも
+-- pb_post_note も、その時点で run が存在しないので NULL を渡す。
 -- name: CreateComment :exec
-INSERT INTO comment (id, ticket_id, author_id, body_md, kind, origin, in_reply_to)
-VALUES (@id, @ticket_id, @author_id, @body_md, @kind, @origin, sqlc.narg('in_reply_to'));
+INSERT INTO comment (id, ticket_id, author_id, body_md, kind, origin, in_reply_to, agent_run_id)
+VALUES (@id, @ticket_id, @author_id, @body_md, @kind, @origin,
+        sqlc.narg('in_reply_to'), sqlc.narg('agent_run_id'));
 
 -- CountTicketComments は 9.5.1 の comment_count。
 --

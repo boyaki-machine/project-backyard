@@ -352,18 +352,20 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 	}
 
 	// read 5件（/pb-onboard が呼ぶ順）＋ write 3件（10.7.1 の開発フローの順）
-	// ＋ 遷移2件（見てから動かす順。手順26b）。
+	// ＋ 遷移2件（見てから動かす順。手順26b）＋ 完了レポート1件（手順26c。
+	// /pb-implement の流れの終端）。
 	//
-	// **pb_submit_result は 26c**（Design.md 8.2）。**pb_claim_task /
-	// pb_release_task は Phase 3 へ送った**（Requirements.md 10.3.3——排他が
-	// 実際に要るのは自律取得 pb_next_task からである）。
+	// **pb_claim_task / pb_release_task は Phase 3 へ送った**
+	// （Requirements.md 10.3.3——排他が実際に要るのは自律取得 pb_next_task から
+	// である）。**pb_get_context は手順27。**
 	want := []string{
 		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tasks", "pb_get_task",
 		"pb_create_ticket", "pb_post_note", "pb_put_doc",
 		"pb_list_transitions", "pb_transition_task",
+		"pb_submit_result",
 	}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
-		t.Errorf("ツール = %v, want %v（read → write → 遷移 の順）", names, want)
+		t.Errorf("ツール = %v, want %v（read → write → 遷移 → 報告 の順）", names, want)
 	}
 
 	// 必須の引数が宣言されていること。
@@ -377,6 +379,11 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 			if strings.Join(tl.InputSchema.Required, ",") != "seq" {
 				t.Errorf("pb_get_task の required = %v, want [seq]", tl.InputSchema.Required)
 			}
+		case "pb_submit_result":
+			if strings.Join(tl.InputSchema.Required, ",") != "seq,status" {
+				t.Errorf("pb_submit_result の required = %v, want [seq status]",
+					tl.InputSchema.Required)
+			}
 		}
 	}
 }
@@ -388,4 +395,57 @@ func TestToolsListDoesNotLeakCallField(t *testing.T) {
 	if strings.Contains(w.Body.String(), `"call"`) {
 		t.Errorf("tools/list に call が出ている: %s", w.Body.String())
 	}
+}
+
+// TestToolsListDeclaresNestedSchema は、入れ子のスキーマが tools/list に出ることを見る。
+//
+// **手順26c で property に items / properties を足した。** pb_submit_result の
+// 引数（Requirements.md 10.6.1）が配列とオブジェクトの入れ子を持つためで、
+// **ここが表せないとモデルは中身の形を知らないまま埋める。**
+func TestToolsListDeclaresNestedSchema(t *testing.T) {
+	h := New(&fakeREST{}, "v0")
+	res := decodeRPC(t, callMCP(t, h, agentPrincipal(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+
+	b, _ := json.Marshal(res.Result)
+	var out struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]struct {
+					Type  string `json:"type"`
+					Items *struct {
+						Type       string                     `json:"type"`
+						Properties map[string]json.RawMessage `json:"properties"`
+						Required   []string                   `json:"required"`
+					} `json:"items"`
+					Properties map[string]json.RawMessage `json:"properties"`
+				} `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("tools/list の応答を読めない: %v", err)
+	}
+
+	for _, tl := range out.Tools {
+		if tl.Name != "pb_submit_result" {
+			continue
+		}
+		dod, ok := tl.InputSchema.Properties["dod_results"]
+		if !ok || dod.Items == nil {
+			t.Fatalf("dod_results に items が無い: %+v", tl.InputSchema.Properties)
+		}
+		if strings.Join(dod.Items.Required, ",") != "id,passed" {
+			t.Errorf("dod_results.items.required = %v, want [id passed]", dod.Items.Required)
+		}
+		if _, ok := dod.Items.Properties["evidence"]; !ok {
+			t.Errorf("dod_results.items に evidence が無い: %+v", dod.Items.Properties)
+		}
+		cost := tl.InputSchema.Properties["cost"]
+		if cost.Type != "object" || len(cost.Properties) != 3 {
+			t.Errorf("cost = %+v, want object（tokens / turns / wall_clock_min）", cost)
+		}
+		return
+	}
+	t.Fatal("pb_submit_result が tools/list に無い")
 }
