@@ -60,6 +60,7 @@
 | 30 | high | 履歴書き換え前のバックアップ bundle が残っている（旧履歴の個人情報を含む） |
 | 37 | high | `Development.md` 4.1 のデモアカウント表が実態と違う（admin は `demo` の `project_admin`） |
 | 38 | high | `GET /projects` が委譲を通らず、エージェントのトークンで0件になる |
+| 45 | high | チケット詳細に実行モード・Readiness・スコープ境界の欄が無く、人が判断・変更できない |
 | 21 | medium | `gofmt` が3ファイルを未整形と報告する（`docs.go` / `docs_test.go` / `fake_test.go`） |
 | 22 | medium | 完了したチケットを差し戻す遷移をテンプレートに足すか（`DbDesign.md` 7.4 の改訂から） |
 | 23 | medium | seed が `activity` を1行も書かず、履歴と「最近の動き」が空になる |
@@ -105,8 +106,7 @@
 
 | タグ | 約束 |
 |---|---|
-| `[28]` | **既存のチケットは全件 `execution_mode='human_only'`**（DDL の既定。stg の `pb` で40件すべて）。**パックはこれを読んで「実装せず利用者へ報告して終了せよ」と書く**（`Requirements.md` 10.8.6）ので、**エージェントに任せる前に誰かが `PATCH` で実行モードを立てる必要がある**。Phase 2 の受け入れ（`/pb-implement` の通し）を測る前に、対象チケットに `agent_only` か `agent_draft` を入れること |
-| `[画面に実行モード／Readiness／スコープ境界を作る手順]` | **API は手順27 で開いたが、人は画面から書けない**（`GuiDesign.md` 5.5 の表）。いま書けるのは API を直に叩く経路だけである。**3項目の入力欄を1回で設計する**——スコープ境界は配列2本＋リポジトリで、単純な文字列欄にならない |
+| `[28]` | **既存のチケットは全件 `execution_mode='human_only'`**（DDL の既定。stg の `pb` で40件すべて）。**パックはこれを読んで「実装せず利用者へ報告して終了せよ」と書く**（`Requirements.md` 10.8.6）ので、**エージェントに任せる前に誰かが `PATCH` で実行モードを立てる必要がある**。Phase 2 の受け入れ（`/pb-implement` の通し）を測る前に、対象チケットに `agent_only` か `agent_draft` を入れること。**恒久の手当ては PB #45**（画面に欄を作る） |
 | `[文書を PB へ移譲する手順]` | **`docs/PROGRESS.md` と `docs/history/` を PB の文書へ移す**（利用者の構想、2026-09-05）。**プロジェクトに紐づく内容は PB、環境と利用者との関係は `CLAUDE.md` / `LEARNINGS.md` に残す**（`Requirements.md` 10.8.1 の三層分離をリポジトリ側から詰める）。**移すと2つが同時に動く**——①憲章が1桁大きくなり、パックの全文送出が成り立たなくなる（`Design.md` 8.6 の再検討条件）②**毎セッション4文書 80KB の予算の測り方が変わる**（`make docs-size` の対象から `PROGRESS.md` が抜ける）。**どちらも移譲と同じ手順で決める** |
 | `[画面に完了レポートのセクションを作る手順]` | **`GET .../reports` を置いていない**（`ApiDesign.md` 9.15）。Phase 2 で人が読むのはコメントで、`agent_report` の行を読む面が無いため。**作る条件は、レポートが時系列に埋もれたとき、または `agent_report` を集計に使い始めたとき。** そのとき `GuiDesign.md` 5.5 のセクションと API を1回で設計する |
 | `[エージェントの削除に関わる表を足す手順]` | **`actor` を `ON DELETE RESTRICT` で参照する表を足したら、`me_agents.go` の `reassignAgentRecords` に付け替えを足す**（`ApiDesign.md` 4.5.4）。いまは `comment.author_id` と `agent_run.actor_id` の2つ。**足し忘れると `DELETE /me/agents/:id` が本番で初めて失敗する**（フェイクにも同じメソッドが要る） |
