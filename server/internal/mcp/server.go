@@ -56,6 +56,9 @@ func New(rest http.Handler, version string) *Handler {
 	tools := readTools()
 	tools = append(tools, writeTools()...)
 	tools = append(tools, transitionTools()...)
+	// **完了レポートは最後である**——/pb-implement の流れの終端だからである
+	// （Requirements.md 10.8.6 の手順7。手順26c）。
+	tools = append(tools, reportTools()...)
 	return &Handler{rest: rest, version: version, tools: tools}
 }
 

@@ -568,3 +568,106 @@ func TestPutDocRejectsEmptyBody(t *testing.T) {
 		t.Errorf("REST を叩いている: %d回", rest.calls)
 	}
 }
+
+// ── 完了レポート系（手順26c。Design.md 8.5.4）───────────────
+
+// TestSubmitResultPostsReport は seq を URL へ、残りを本文へ写すことを見る。
+func TestSubmitResultPostsReport(t *testing.T) {
+	rest := &fakeREST{status: http.StatusCreated, body: `{"id":"01K5","unsatisfied_dod":[]}`}
+	h := New(rest, "v0")
+
+	out := callTool1(t, h, toolCallBody("pb_submit_result", `{
+		"seq":31,"status":"completed",
+		"artifacts":[{"type":"pull_request","url":"https://example.com/pr/45"}],
+		"dod_results":[{"id":"01K2DOD","passed":true,"evidence":"go test → ok"}],
+		"failures":[{"approach":"ライブラリZ","reason":"版が競合"}],
+		"cost":{"tokens":128000,"turns":34}}`))
+
+	if rest.gotMethod != http.MethodPost {
+		t.Errorf("メソッド = %q, want POST", rest.gotMethod)
+	}
+	if rest.gotPath != "/api/v1/projects/demo/tickets/31/reports" {
+		t.Errorf("叩いた REST = %q", rest.gotPath)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(rest.gotBody), &sent); err != nil {
+		t.Fatalf("送った本文が JSON でない: %v（%s）", err, rest.gotBody)
+	}
+	// **seq は URL へ移したので本文に残らない**（Design.md 8.5.4）。
+	if _, ok := sent["seq"]; ok {
+		t.Errorf("本文に seq が残っている: %s", rest.gotBody)
+	}
+	for _, k := range []string{"status", "artifacts", "dod_results", "failures", "cost"} {
+		if _, ok := sent[k]; !ok {
+			t.Errorf("本文に %s が無い: %s", k, rest.gotBody)
+		}
+	}
+	if out.IsError {
+		t.Errorf("成功のはずが isError: %s", out.Content[0].Text)
+	}
+	if out.Content[0].Text != rest.body {
+		t.Errorf("応答をそのまま返していない（8.5）: %s", out.Content[0].Text)
+	}
+}
+
+// **知らないキーも REST へ渡す**（ApiDesign.md 9.15）。
+//
+// MCP 層で構造体に受け直すと、9.15 が「拒まず保存する」と定めているのに
+// **ここで落ちる**ことになり、同じ規則が2か所で食い違う（Design.md 8.1）。
+func TestSubmitResultPassesUnknownKeys(t *testing.T) {
+	rest := &fakeREST{status: http.StatusCreated, body: `{}`}
+	h := New(rest, "v0")
+
+	callTool1(t, h, toolCallBody("pb_submit_result",
+		`{"seq":31,"status":"completed","weather":"晴れ"}`))
+
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(rest.gotBody), &sent); err != nil {
+		t.Fatalf("送った本文が JSON でない: %v", err)
+	}
+	if _, ok := sent["weather"]; !ok {
+		t.Errorf("知らないキーが落ちている: %s", rest.gotBody)
+	}
+}
+
+// seq が無い・0 以下なら -32602（呼び出し側の不具合。Design.md 8.4）。
+func TestSubmitResultRequiresSeq(t *testing.T) {
+	for _, args := range []string{`{"status":"completed"}`, `{"seq":0,"status":"completed"}`} {
+		h := New(&fakeREST{status: http.StatusCreated, body: `{}`}, "v0")
+		res := decodeRPC(t, callMCP(t, h, agentPrincipal(),
+			toolCallBody("pb_submit_result", args)))
+		if res.Error == nil || res.Error.Code != codeInvalidParams {
+			t.Errorf("args=%s のエラー = %+v, want %d", args, res.Error, codeInvalidParams)
+		}
+	}
+}
+
+// **seq を文字列で書いてきても受ける**（flexInt。Design.md 8.4）。
+func TestSubmitResultAcceptsSeqAsString(t *testing.T) {
+	rest := &fakeREST{status: http.StatusCreated, body: `{}`}
+	h := New(rest, "v0")
+
+	callTool1(t, h, toolCallBody("pb_submit_result", `{"seq":"31","status":"blocked"}`))
+
+	if rest.gotPath != "/api/v1/projects/demo/tickets/31/reports" {
+		t.Errorf("叩いた REST = %q", rest.gotPath)
+	}
+}
+
+// **status の値域は REST 層が判定する**（8.1）。MCP は素通しする。
+func TestSubmitResultLeavesStatusValidationToREST(t *testing.T) {
+	rest := &fakeREST{
+		status: http.StatusUnprocessableEntity,
+		body:   `{"error":{"code":"validation_failed","details":[{"field":"status","code":"invalid"}]}}`,
+	}
+	h := New(rest, "v0")
+
+	out := callTool1(t, h, toolCallBody("pb_submit_result", `{"seq":31,"status":"finished"}`))
+
+	if !out.IsError {
+		t.Errorf("422 は isError のツール結果のはず: %+v", out)
+	}
+	if !strings.Contains(out.Content[0].Text, "validation_failed") {
+		t.Errorf("本文をそのまま添えていない: %s", out.Content[0].Text)
+	}
+}

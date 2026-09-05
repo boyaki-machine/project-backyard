@@ -270,6 +270,13 @@ type fakeQuerier struct {
 	createdAgentActorName string
 	deleteAgentRows       int64
 
+	// 手順26c：実行記録の付け替え（ApiDesign.md 4.5.4）。**agent_run.actor_id も
+	// NOT NULL かつ ON DELETE RESTRICT なので、コメントと同じ付け替えが要る**
+	// （DbDesign.md 8.2.4）。
+	agentRunCount     int64
+	reassignedRunRows int64
+	reassignedRunTo   string
+
 	// 手順26a：コメントの付け替え（ApiDesign.md 4.5.4 / 6.5）。
 	reassignedTo           string
 	reassignedFrom         string
@@ -1208,6 +1215,16 @@ type ticketFakeState struct {
 	commentUpdate []gen.UpdateCommentParams
 	commentDelete []gen.SoftDeleteCommentParams
 	repliable     map[string]bool
+
+	// ── 手順26c（9.15 の完了レポート）─────────────────────────
+	//
+	// **書き込みをスライスに貯めるだけ**（読み直す形ではない）。9.15 の応答は
+	// 要求とチケットの完了条件から組み立てられ、書いた行を読み返さない。
+	agentRuns      []gen.CreateAgentRunParams
+	agentReports   []gen.CreateAgentReportParams
+	priorRunCount  int64
+	agentInfo      *gen.GetAgentRuntimeInfoRow
+	agentReportErr error
 
 	dodRows    []gen.GetTicketDoDItemRow
 	dodErr     error
@@ -2268,6 +2285,23 @@ func (q *fakeQuerier) CountAgentComments(context.Context, string) (int64, error)
 	return q.agentCommentCount, nil
 }
 
+// CountAgentRuns / ReassignAgentRuns は手順26c で足した（ApiDesign.md 4.5.4）。
+//
+// **同じ制約を持つ表が増えるたびにフェイクにも足す。** 足し忘れると、
+// エージェントの削除が nil の gen.Querier を呼んで panic する——26a で
+// ReassignComments が同じ形で漏れていた。
+func (q *fakeQuerier) CountAgentRuns(context.Context, string) (int64, error) {
+	return q.agentRunCount, nil
+}
+
+func (q *fakeQuerier) ReassignAgentRuns(
+	_ context.Context, arg gen.ReassignAgentRunsParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "ReassignAgentRuns")
+	q.reassignedRunTo = arg.NewActorID
+	return q.reassignedRunRows, nil
+}
+
 func (q *fakeQuerier) FindDeletedAgentActor(context.Context, string) (string, error) {
 	if q.deletedAgentActorID == "" {
 		return "", pgx.ErrNoRows
@@ -2313,4 +2347,41 @@ func (q *fakeQuerier) CreateSystemActor(_ context.Context, arg gen.CreateSystemA
 	q.deletedUserActorID = arg.ID
 	q.createdSystemActorName = arg.DisplayName
 	return nil
+}
+
+
+// ── 完了レポート（手順26c。ApiDesign.md 9.15、DbDesign.md 8.2.4）───
+
+func (q *fakeQuerier) CreateAgentRun(_ context.Context, arg gen.CreateAgentRunParams) error {
+	q.opLog = append(q.opLog, "CreateAgentRun")
+	if q.ticket.agentReportErr != nil {
+		return q.ticket.agentReportErr
+	}
+	q.ticket.agentRuns = append(q.ticket.agentRuns, arg)
+	return nil
+}
+
+func (q *fakeQuerier) CreateAgentReport(_ context.Context, arg gen.CreateAgentReportParams) error {
+	q.opLog = append(q.opLog, "CreateAgentReport")
+	q.ticket.agentReports = append(q.ticket.agentReports, arg)
+	return nil
+}
+
+func (q *fakeQuerier) CountAgentRunsForTicket(
+	_ context.Context, _ gen.CountAgentRunsForTicketParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "CountAgentRunsForTicket")
+	return q.ticket.priorRunCount, nil
+}
+
+// GetAgentRuntimeInfo は、**人のトークンでは行が無い**（agent の行を持たない）。
+// agentInfo が nil のときに pgx.ErrNoRows を返すのはそのためである。
+func (q *fakeQuerier) GetAgentRuntimeInfo(
+	_ context.Context, _ string,
+) (gen.GetAgentRuntimeInfoRow, error) {
+	q.opLog = append(q.opLog, "GetAgentRuntimeInfo")
+	if q.ticket.agentInfo == nil {
+		return gen.GetAgentRuntimeInfoRow{}, pgx.ErrNoRows
+	}
+	return *q.ticket.agentInfo, nil
 }

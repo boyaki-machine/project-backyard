@@ -2682,6 +2682,75 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/projects/{key}/tickets/{seq}/reports:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+    post:
+      tags: [tickets]
+      summary: 完了レポートの提出
+      operationId: submitTicketReport
+      description: |
+        エージェントが1回の作業の結果を構造化して提出する（ApiDesign.md 9.15、
+        Requirements.md 10.6.1）。**必要権限は `ticket.transition`**。
+
+        `agent_run` と `agent_report` に1行ずつ書き、**同じトランザクションで
+        完了レポートのコメントを1件作る**（`kind='progress'`）。**そのコメントが、
+        人がレポートを読む面である**（GuiDesign.md 5.5）。
+
+        **状態を進めない。** 26b で遷移が 9.6 として独立したので、完了レポートの
+        提出と状態遷移を1つの操作に混ぜない。**チケットもクローズしない**——
+        `done` への遷移は `is_agent_reachable=false` かつ
+        `allowed_actor_kinds=["user"]` で、DB とワークフローが拒む。
+
+        **完了条件（`dod_item.is_satisfied`）を書き換えない。** いま API が開けて
+        いる DoD の型は `manual` だけで、その定義は「人間がチェックを入れる」で
+        ある（Requirements.md 10.5.2）。**エージェントが立てると型の定義に反する。**
+
+        **`unsatisfied_dod` は「レポートの `dod_results` に `passed: true` として
+        現れなかった完了条件」である。** `is_satisfied = false` のものではない
+        ——この API は `is_satisfied` を動かさないので、それを返すと作業直後は
+        必ず全件になり、`/pb-implement` の手順7 が終わらなくなる。
+
+        **検証は「列に出す値」だけ厳しい。** `status` と `knowledge_impact`、
+        `cost.tokens` / `cost.turns` は列へ展開されるので値域を見る。
+        **それ以外の知らないキーは拒まず、`report` jsonb にそのまま保存する。**
+
+        **9.6 の検証6（エージェントは所有者の担当だけ）は適用しない**——あの規則は
+        ボードの状態を動かすことへの制約であり、レポートは状態を動かさない。
+
+        **`GET` を置かない。** Phase 2 で人が読むのは完了レポートのコメントで
+        あり、`agent_report` の行そのものを読む面が無い。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitTicketReportRequest'
+      responses:
+        '201':
+          description: 受理した完了レポート。
+          headers:
+            Location:
+              description: 受理した完了レポートの URL（`GET` は実装していない）。
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketReport'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/tickets/{seq}/transitions:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -5640,6 +5709,133 @@ components:
           nullable: true
         status:
           $ref: '#/components/schemas/SprintStatus'
+
+    SubmitTicketReportRequest:
+      description: |
+        完了レポートの本文（ApiDesign.md 9.15、Requirements.md 10.6.1）。
+        **`task_id` を持たない**——チケットは URL が指す（9.1）。
+
+        **ここに書かれていないキーも受け付け、`report` jsonb にそのまま保存する。**
+        検証するのは列へ展開される値だけである。
+      type: object
+      required: [status]
+      additionalProperties: true
+      properties:
+        status:
+          type: string
+          enum: [completed, blocked, partial]
+          description: 作業の結果。
+        knowledge_impact:
+          type: string
+          enum: [none, minor, major]
+          nullable: true
+          description: 得た知見がプロジェクトの規約や設計にどれだけ効くか。
+        cost:
+          type: object
+          description: この作業に掛かったもの。`tokens` と `turns` は `agent_run` の列へ展開される。
+          properties:
+            tokens: { type: integer, format: int64, minimum: 0 }
+            turns: { type: integer, minimum: 0 }
+            wall_clock_min:
+              type: integer
+              minimum: 0
+              description: 掛かった時間（分）。**`agent_run.started_at` はこれから逆算する。**
+        dod_results:
+          type: array
+          description: 完了条件ごとの自己検証の結果。**`id` はこのチケットの完了条件のものに限る**（他は 422 `not_found`）。
+          items:
+            type: object
+            required: [id]
+            properties:
+              id: { type: string, example: 01K2F8QW3H7YRJ4M5N6P7Q8R9S }
+              passed: { type: boolean }
+              evidence: { type: string }
+              note: { type: string }
+        artifacts:
+          type: array
+          description: 作った成果物。
+          items:
+            type: object
+            properties:
+              type: { type: string, example: pull_request }
+              url: { type: string }
+              path: { type: string }
+        findings:
+          type: array
+          description: 判明したこと。`kind` は Requirements.md 6.5 の情報類型。
+          items:
+            type: object
+            properties:
+              kind:
+                type: string
+                enum: [decision, discussion, artifact, caveat, reference]
+              body: { type: string }
+        failures:
+          type: array
+          description: |
+            **試して駄目だったこと。** 10.6.2 が「失敗の記録を第一級の資産とする」と
+            定めている——エージェントは同じ失敗を平然と繰り返すため効果が大きい。
+          items:
+            type: object
+            properties:
+              approach: { type: string }
+              reason: { type: string }
+        proposed_subtasks:
+          type: array
+          description: |
+            分割の提案。**チケットにはならない**——承認キュー（`proposal`）は Phase 3 で
+            あり、人が読んで要ると判断すれば `pb_create_ticket` を呼ばせれば済む。
+          items:
+            type: object
+            properties:
+              title: { type: string }
+              rationale: { type: string }
+
+    TicketReport:
+      description: |
+        受理した完了レポート（ApiDesign.md 9.15）。
+      type: object
+      required: [id, agent_run_id, seq, status, submitted_at, submitted_by, comment_id, unsatisfied_dod]
+      properties:
+        id:
+          type: string
+          example: 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+        agent_run_id:
+          type: string
+          description: この提出で作られた実行記録（`agent_run`）の id。
+          example: 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+        seq:
+          type: integer
+          description: チケット番号。
+        status:
+          type: string
+          enum: [completed, blocked, partial]
+        knowledge_impact:
+          type: string
+          enum: [none, minor, major]
+          nullable: true
+        submitted_at:
+          type: string
+          format: date-time
+        submitted_by:
+          $ref: '#/components/schemas/ActorRef'
+        comment_id:
+          type: string
+          description: 同じトランザクションで作った完了レポートのコメントの id。
+          example: 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+        unsatisfied_dod:
+          type: array
+          description: |
+            **レポートの `dod_results` に `passed: true` として現れなかった完了条件。**
+            `is_satisfied = false` のものではない——この API は `is_satisfied` を
+            動かさないので、それを返すと作業直後は必ず全件になる。
+          items:
+            type: object
+            required: [id, type, body]
+            properties:
+              id: { type: string }
+              type: { type: string, example: manual }
+              body: { type: string }
 
     ActorRef:
       description: |

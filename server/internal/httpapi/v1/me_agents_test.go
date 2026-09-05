@@ -1060,6 +1060,51 @@ func TestDeleteMyAgentSkipsReassignWhenNoComments(t *testing.T) {
 	}
 }
 
+// TestDeleteMyAgentReassignsRuns は実行記録も付け替えることを見る（手順26c）。
+//
+// **agent_run.actor_id も NOT NULL かつ ON DELETE RESTRICT である**
+// （DbDesign.md 8.2.4）。**コメントが1件も無くても、実行記録が在れば
+// 付け替えが要る**——ここを分けて測るのは、26a の実装が「コメントの件数だけ」で
+// 早期に返っていたためで、そのままだと**レポートだけを出したエージェントが
+// 削除できない。**
+func TestDeleteMyAgentReassignsRuns(t *testing.T) {
+	q := agentFake(t)
+	q.deleteAgentRows = 1
+	q.agentCommentCount = 0
+	q.agentRunCount = 2
+
+	if rec := deleteAgentReq(t, q); rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204（本文: %s）", rec.Code, rec.Body.String())
+	}
+
+	var createdAt, reassignAt, deleteAt = -1, -1, -1
+	for i, op := range q.opLog {
+		switch op {
+		case "CreateDeletedAgentActor":
+			createdAt = i
+		case "ReassignAgentRuns":
+			reassignAt = i
+		case "DeleteMyAgentActor":
+			deleteAt = i
+		}
+	}
+	if createdAt < 0 || reassignAt < 0 || deleteAt < 0 {
+		t.Fatalf("実行記録の付け替えが抜けている: %v", q.opLog)
+	}
+	if !(createdAt < reassignAt && reassignAt < deleteAt) {
+		t.Errorf("順序が違う（作る→付け替える→消す）: %v", q.opLog)
+	}
+	// **コメントが0件なら、コメント側は呼ばない。**
+	for _, op := range q.opLog {
+		if op == "ReassignComments" {
+			t.Errorf("コメントが無いのに ReassignComments を呼んでいる: %v", q.opLog)
+		}
+	}
+	if q.reassignedRunTo != q.deletedAgentActorID {
+		t.Errorf("付け替え先が違う: %q vs %q", q.reassignedRunTo, q.deletedAgentActorID)
+	}
+}
+
 func TestDeleteMyAgentNotFoundForForeignAgent(t *testing.T) {
 	q := agentFake(t)
 	q.agentFindErr = pgx.ErrNoRows

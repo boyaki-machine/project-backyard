@@ -65,6 +65,14 @@ func TestMCPIntegration(t *testing.T) {
 			[]string{projectID, otherProjectID}); err != nil {
 			t.Errorf("project の後始末に失敗した: %v", err)
 		}
+		// **agent_run は actor を ON DELETE RESTRICT で参照する**（手順26c。
+		// DbDesign.md 8.2.4）。project を消せば ticket 経由の CASCADE で
+		// agent_run も落ちるが、**順序が入れ替わると actor の削除が止まる**ので
+		// 明示で消す。agent_report は agent_run の CASCADE で落ちる。
+		if _, err := pool.Exec(bg, `DELETE FROM agent_run WHERE actor_id = ANY($1)`,
+			[]string{ownerID, agentID}); err != nil {
+			t.Errorf("agent_run の後始末に失敗した: %v", err)
+		}
 		// actor を消せば access_token と agent も CASCADE で落ちる。
 		// **エージェントを先に消す**——owner_actor_id が app_user を参照している。
 		if _, err := pool.Exec(bg, `DELETE FROM actor WHERE id = $1`, agentID); err != nil {
@@ -1039,6 +1047,197 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		if !strings.Contains(w.Body.String(), "not_found") {
 			t.Errorf("not_found が返っていない: %s", w.Body.String())
+		}
+	})
+
+	// ── 完了レポート（手順26c。ApiDesign.md 9.15）─────────────
+
+	// **完了条件を2件足す。** unsatisfied_dod が「自己申告との突き合わせ」で
+	// あることを実データで確かめるための材料である。
+	dodA, dodB := ulidgen.New(), ulidgen.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO dod_item (id, ticket_id, sort_order, type, body) VALUES
+		  ($1, $3, 10, 'manual', 'ユニットテストが通ること'),
+		  ($2, $3, 20, 'manual', '設計文書を更新すること')`,
+		dodA, dodB, ticketID); err != nil {
+		t.Fatalf("完了条件を作れない: %v", err)
+	}
+
+	t.Run("pb_submit_result が実行記録・レポート・コメントを作る", func(t *testing.T) {
+		text, isErr := tool(t, fullToken, "pb_submit_result", `{
+			"seq":1,"status":"partial",
+			"artifacts":[{"type":"pull_request","url":"https://example.com/pr/1"}],
+			"dod_results":[{"id":`+quote(dodA)+`,"passed":true,"evidence":"go test → ok"}],
+			"failures":[{"approach":"ライブラリZ","reason":"版が競合"}],
+			"cost":{"tokens":128000,"turns":34,"wall_clock_min":42},
+			"knowledge_impact":"minor","weather":"晴れ"}`)
+		if isErr {
+			t.Fatalf("失敗した: %s", text)
+		}
+		var got struct {
+			ID             string `json:"id"`
+			AgentRunID     string `json:"agent_run_id"`
+			Status         string `json:"status"`
+			CommentID      string `json:"comment_id"`
+			UnsatisfiedDoD []struct {
+				ID   string `json:"id"`
+				Body string `json:"body"`
+			} `json:"unsatisfied_dod"`
+			SubmittedBy struct {
+				Kind string `json:"kind"`
+			} `json:"submitted_by"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+
+		// **unsatisfied_dod は passed: true として現れなかったもの**（9.15）。
+		// dodA は is_satisfied=false のままだが、申告したので返らない。
+		if len(got.UnsatisfiedDoD) != 1 || got.UnsatisfiedDoD[0].ID != dodB {
+			t.Errorf("unsatisfied_dod = %+v, want [%s] のみ", got.UnsatisfiedDoD, dodB)
+		}
+		if got.SubmittedBy.Kind != "agent" {
+			t.Errorf("submitted_by.kind = %q, want agent", got.SubmittedBy.Kind)
+		}
+
+		// **agent_run は実行時点の値を写す**（DbDesign.md 8.2.4）。
+		var runStatus, clientKind string
+		var tokens int64
+		var turns, retry int32
+		var gapMin float64
+		if err := pool.QueryRow(ctx, `
+			SELECT status, client_kind, tokens_used, turns, retry_count,
+			       EXTRACT(EPOCH FROM (ended_at - started_at)) / 60
+			  FROM agent_run WHERE id = $1`, got.AgentRunID).
+			Scan(&runStatus, &clientKind, &tokens, &turns, &retry, &gapMin); err != nil {
+			t.Fatalf("agent_run を引けない: %v", err)
+		}
+		if runStatus != "completed" {
+			t.Errorf("agent_run.status = %q, want completed（Phase 2 はこれだけ）", runStatus)
+		}
+		if clientKind != "claude_code" {
+			t.Errorf("client_kind = %q, want claude_code", clientKind)
+		}
+		if tokens != 128000 || turns != 34 || retry != 0 {
+			t.Errorf("コスト/retry = (%d, %d, %d), want (128000, 34, 0)", tokens, turns, retry)
+		}
+		// **started_at は wall_clock_min から逆算する**（8.2.4）。
+		if gapMin < 41.9 || gapMin > 42.1 {
+			t.Errorf("ended_at - started_at = %.2f分, want 42", gapMin)
+		}
+
+		// **report jsonb は本文をそのまま持つ**（知らないキーも落ちない。9.15）。
+		var impact string
+		var report []byte
+		if err := pool.QueryRow(ctx, `
+			SELECT knowledge_impact, report FROM agent_report WHERE id = $1`, got.ID).
+			Scan(&impact, &report); err != nil {
+			t.Fatalf("agent_report を引けない: %v", err)
+		}
+		if impact != "minor" {
+			t.Errorf("knowledge_impact = %q, want minor", impact)
+		}
+		if !strings.Contains(string(report), "晴れ") {
+			t.Errorf("知らないキーが保存されていない: %s", report)
+		}
+
+		// **完了レポートのコメントが agent_run を指す**（0007 が空けていた列。6.7）。
+		var kind, origin, body string
+		var runRef *string
+		if err := pool.QueryRow(ctx, `
+			SELECT kind, origin, body_md, agent_run_id FROM comment WHERE id = $1`,
+			got.CommentID).Scan(&kind, &origin, &body, &runRef); err != nil {
+			t.Fatalf("完了レポートのコメントを引けない: %v", err)
+		}
+		if kind != "progress" || origin != "agent" {
+			t.Errorf("コメント = (%s, %s), want (progress, agent)", kind, origin)
+		}
+		if runRef == nil || *runRef != got.AgentRunID {
+			t.Errorf("comment.agent_run_id = %v, want %q", runRef, got.AgentRunID)
+		}
+		// 人が読む面としての中身（9.15 の本文の形）。
+		for _, want := range []string{
+			"## 完了レポート（一部完了）",
+			"| ✅ ユニットテストが通ること | go test → ok |",
+			"| — 設計文書を更新すること | 報告なし |",
+			"- ライブラリZ — 版が競合",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("コメント本文に %q が無い:\n%s", want, body)
+			}
+		}
+	})
+
+	t.Run("提出は盤面を動かさない", func(t *testing.T) {
+		// **dod_item.is_satisfied も status_key も動かない**（9.15）。
+		var satisfied bool
+		if err := pool.QueryRow(ctx,
+			`SELECT is_satisfied FROM dod_item WHERE id = $1`, dodA).Scan(&satisfied); err != nil {
+			t.Fatalf("完了条件を引けない: %v", err)
+		}
+		if satisfied {
+			t.Error("エージェントの申告で完了条件のチェックが立っている（manual の検証者は人間）")
+		}
+		var status string
+		if err := pool.QueryRow(ctx,
+			`SELECT status_key FROM ticket WHERE id = $1`, ticketID).Scan(&status); err != nil {
+			t.Fatalf("チケットを引けない: %v", err)
+		}
+		if status != "in_progress" {
+			t.Errorf("status_key = %q, want in_progress（レポートは状態を進めない）", status)
+		}
+	})
+
+	t.Run("再提出は別の run になり retry_count が増える", func(t *testing.T) {
+		text, isErr := tool(t, fullToken, "pb_submit_result", `{
+			"seq":1,"status":"completed",
+			"dod_results":[{"id":`+quote(dodA)+`,"passed":true},
+			               {"id":`+quote(dodB)+`,"passed":true}]}`)
+		if isErr {
+			t.Fatalf("失敗した: %s", text)
+		}
+		var got struct {
+			AgentRunID     string `json:"agent_run_id"`
+			UnsatisfiedDoD []any  `json:"unsatisfied_dod"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		// 全部申告したので未充足が無くなる（/pb-implement 手順7 が終わる条件）。
+		if len(got.UnsatisfiedDoD) != 0 {
+			t.Errorf("unsatisfied_dod = %+v, want 空", got.UnsatisfiedDoD)
+		}
+		var retry int32
+		if err := pool.QueryRow(ctx,
+			`SELECT retry_count FROM agent_run WHERE id = $1`, got.AgentRunID).
+			Scan(&retry); err != nil {
+			t.Fatalf("agent_run を引けない: %v", err)
+		}
+		if retry != 1 {
+			t.Errorf("retry_count = %d, want 1（2回目の提出）", retry)
+		}
+	})
+
+	t.Run("知らない完了条件は 422 に倒れる", func(t *testing.T) {
+		text, isErr := tool(t, fullToken, "pb_submit_result",
+			`{"seq":1,"status":"completed","dod_results":[{"id":"01K2NOPE0000000000000000X","passed":true}]}`)
+		if !isErr {
+			t.Fatalf("拒まれなかった: %s", text)
+		}
+		if !strings.Contains(text, "not_found") {
+			t.Errorf("not_found が返っていない: %s", text)
+		}
+	})
+
+	t.Run("ticket.transition を持たないトークンでは提出できない", func(t *testing.T) {
+		// narrow は agent.run / project.view / ticket.view しか持たない。
+		text, isErr := tool(t, narrowToken, "pb_submit_result",
+			`{"seq":1,"status":"completed"}`)
+		if !isErr {
+			t.Fatalf("提出が通ってしまった: %s", text)
+		}
+		if !strings.Contains(text, "403") {
+			t.Errorf("403 が返っていない: %s", text)
 		}
 	})
 

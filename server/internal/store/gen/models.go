@@ -71,6 +71,35 @@ type AgentClientKind struct {
 	SortOrder   int32
 }
 
+// エージェントの完了レポート。report に Requirements.md 10.6.1 の全体が入る。DbDesign.md 8.2.4
+type AgentReport struct {
+	ID              string
+	AgentRunID      string
+	TicketID        string
+	Status          string
+	Report          []byte
+	KnowledgeImpact pgtype.Text
+	SubmittedAt     pgtype.Timestamptz
+}
+
+// エージェントの実行記録。Phase 2 では pb_submit_result が1提出につき1行作る。DbDesign.md 8.2.4
+type AgentRun struct {
+	ID              string
+	TicketID        string
+	ActorID         string
+	TokenID         pgtype.Text
+	ClientKind      pgtype.Text
+	ModelName       pgtype.Text
+	ModelVersion    pgtype.Text
+	WorkflowVersion pgtype.Int4
+	StartedAt       pgtype.Timestamptz
+	EndedAt         pgtype.Timestamptz
+	Status          string
+	TokensUsed      pgtype.Int8
+	Turns           pgtype.Int4
+	RetryCount      int32
+}
+
 type AppUser struct {
 	ActorID         string
 	Email           string
@@ -146,6 +175,18 @@ type Comment struct {
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
 	DeletedAt  pgtype.Timestamptz
+}
+
+// コンテキストパックの生成記録。Phase 2 では書き手を持たない（器のみ）。DbDesign.md 8.2.5
+type ContextPackLog struct {
+	ID           string
+	TicketID     string
+	AgentRunID   pgtype.Text
+	BudgetTokens pgtype.Int4
+	ActualTokens pgtype.Int4
+	Included     []byte
+	Truncated    []byte
+	GeneratedAt  pgtype.Timestamptz
 }
 
 type Document struct {

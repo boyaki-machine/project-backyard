@@ -332,6 +332,18 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
 			Delete("/projects/{key}/tickets/{seq}/dod/{id}", h.deleteDoDItem)
 
+		// ── 完了レポート（ApiDesign.md 9.15）── 手順26c ───────────
+		//
+		// **必要権限は ticket.transition**（9.15）。レポートは「作業の完了を
+		// 申告する」操作で、盤面を動かす権限と同じ重さにある。専用の権限キーを
+		// 足さない——DbDesign.md 7.2 は権限キーを削除しないと定めており、
+		// **使い分ける必要が現れる前にカタログを増やさない。**
+		//
+		// **GET を置かない**（9.15）。Phase 2 で人が読むのは完了レポートの
+		// コメントであり、agent_report の行そのものを読む面が無い。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).
+			Post("/projects/{key}/tickets/{seq}/reports", h.submitTicketReport)
+
 		// ── チケット間リンク（ApiDesign.md 9.10.1）── 手順18a ─────
 		//
 		// **PATCH を持たない**（9.10.1）。一意制約が (source, target, link_type)

@@ -501,6 +501,10 @@ func TestTicketSeqAndSubroutesDoNotCollide(t *testing.T) {
 			"", http.StatusOK},
 		{"links", http.MethodGet, "/api/v1/projects/demo/tickets/31/links",
 			"", http.StatusOK},
+		// 手順26c で足した完了レポート（9.15）。**/tickets/{seq} と衝突しない
+		// ことに加え、必要権限が ticket.transition であることも通っている。**
+		{"reports", http.MethodPost, "/api/v1/projects/demo/tickets/31/reports",
+			`{"status":"completed"}`, http.StatusCreated},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

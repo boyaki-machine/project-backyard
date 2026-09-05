@@ -35,12 +35,34 @@ type schema struct {
 	Required   []string            `json:"required,omitempty"`
 }
 
+// property は1つの引数のスキーマ。
+//
+// **Items / Properties は手順26c で足した。** pb_submit_result の引数
+// （Requirements.md 10.6.1 のレポート）が配列とオブジェクトの入れ子を持つため
+// である。**ここが表せないと、モデルは中身の形を知らないまま埋めることになる**
+// ——description で言葉にするより、スキーマで宣言したほうが取り違えが減る。
 type property struct {
-	Type        string   `json:"type"`
-	Description string   `json:"description"`
-	Enum        []string `json:"enum,omitempty"`
-	Minimum     *int     `json:"minimum,omitempty"`
-	Maximum     *int     `json:"maximum,omitempty"`
+	Type        string              `json:"type"`
+	Description string              `json:"description"`
+	Enum        []string            `json:"enum,omitempty"`
+	Minimum     *int                `json:"minimum,omitempty"`
+	Maximum     *int                `json:"maximum,omitempty"`
+	Items       *property           `json:"items,omitempty"`
+	Properties  map[string]property `json:"properties,omitempty"`
+	Required    []string            `json:"required,omitempty"`
+}
+
+// objectItems は「オブジェクトの配列」を1行で書くための小道具。
+func objectItems(desc string, props map[string]property, required ...string) property {
+	return property{
+		Type:        "array",
+		Description: desc,
+		Items: &property{
+			Type:       "object",
+			Properties: props,
+			Required:   required,
+		},
+	}
 }
 
 // callParams は tools/call の params。
@@ -897,5 +919,115 @@ func callTransitionTask(h *Handler, r *http.Request, key string, args json.RawMe
 	res, err := h.callREST(r, http.MethodPost,
 		"/projects/"+url.PathEscape(key)+"/tickets/"+
 			strconv.FormatInt(in.Seq.value, 10)+"/transition", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// ── 完了レポート系（手順26c。Design.md 8.5.4）───────────────
+
+// reportTools は手順26c で実装する1件を返す。
+//
+// **並び順は最後である。** /pb-implement の流れが「読む → 起票・記録 → 状態を
+// 進める → 報告する」だからで（Requirements.md 10.8.6）、tools/list はこの順で出る。
+func reportTools() []tool {
+	return []tool{
+		{
+			Name: "pb_submit_result",
+			Description: "作業の結果を構造化した完了レポートとして提出する。" +
+				"成果物・完了条件ごとの判定と証跡・判明したこと・**試して駄目だったこと**・" +
+				"分割の提案・コストを渡すと、チケットのコメントとして人が読める形で残る。" +
+				"**状態は進まず、チケットも完了にならない**——完了は人が確認して行うので、" +
+				"状態を進めたいときは pb_transition_task を別に呼ぶこと。" +
+				"応答の unsatisfied_dod に項目が残っていたら、直して出し直すこと。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq": {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
+					"status": {Type: "string", Enum: []string{"completed", "blocked", "partial"},
+						Description: "作業の結果。completed=やり切った / blocked=進められない / partial=一部だけ終わった"},
+					"artifacts": objectItems(
+						"作った成果物。プルリクエスト・変更したファイルなど",
+						map[string]property{
+							"type": {Type: "string", Description: "種別（例: pull_request、file）"},
+							"url":  {Type: "string", Description: "URL（プルリクエスト等）"},
+							"path": {Type: "string", Description: "リポジトリ内のパス（ファイル）"},
+						}, "type"),
+					"dod_results": objectItems(
+						"完了条件ごとの自己検証の結果。**pb_get_task が返した完了条件の id をそのまま使うこと。**"+
+							"ここで passed: true にしなかった条件は、応答の unsatisfied_dod に残る",
+						map[string]property{
+							"id":       {Type: "string", Description: "完了条件の id（pb_get_task の dod[].id）"},
+							"passed":   {Type: "boolean", Description: "満たしたかどうか"},
+							"evidence": {Type: "string", Description: "証跡。実行したコマンドと結果など"},
+							"note":     {Type: "string", Description: "満たせなかった理由や補足"},
+						}, "id", "passed"),
+					"findings": objectItems(
+						"判明したこと。次に同じ領域を触る人が知っておくべきこと",
+						map[string]property{
+							"kind": {Type: "string",
+								Enum:        []string{"decision", "discussion", "artifact", "caveat", "reference"},
+								Description: "情報の種類。decision=決めたこと / caveat=注意すべきこと"},
+							"body": {Type: "string", Description: "本文"},
+						}, "kind", "body"),
+					"failures": objectItems(
+						"**試して駄目だったこと。** 同じ失敗を繰り返さないために必ず書くこと",
+						map[string]property{
+							"approach": {Type: "string", Description: "試したやり方"},
+							"reason":   {Type: "string", Description: "うまくいかなかった理由"},
+						}, "approach"),
+					"proposed_subtasks": objectItems(
+						"分割の提案。**チケットにはならない**——人が読んで判断する",
+						map[string]property{
+							"title":     {Type: "string", Description: "提案するチケットの表題"},
+							"rationale": {Type: "string", Description: "なぜ要ると考えたか"},
+						}, "title"),
+					"knowledge_impact": {Type: "string", Enum: []string{"none", "minor", "major"},
+						Description: "この作業で得た知見が、プロジェクトの規約や設計にどれだけ効くか。" +
+							"major なら憲章への反映を利用者に提案すること"},
+					"cost": {Type: "object", Description: "この作業に掛かったもの",
+						Properties: map[string]property{
+							"tokens":         {Type: "integer", Description: "使ったトークン数", Minimum: intPtr(0)},
+							"turns":          {Type: "integer", Description: "やり取りの回数", Minimum: intPtr(0)},
+							"wall_clock_min": {Type: "integer", Description: "掛かった時間（分）", Minimum: intPtr(0)},
+						}},
+				},
+				Required: []string{"seq", "status"},
+			},
+			call: callSubmitResult,
+		},
+	}
+}
+
+// callSubmitResult は完了レポートを提出する。
+//
+// **seq を URL へ写し、残りの引数をそのまま本体にする。** レポートの中身を
+// 構造体で受け直すと、9.15 が「知らないキーも拒まず保存する」と定めているのに
+// **MCP 層で落ちる**ことになり、同じ規則が2か所で食い違う（Design.md 8.1）。
+// 検証は REST 層の仕事である。
+//
+// **状態は進めない**（Design.md 8.5.4）。26b で遷移が pb_transition_task として
+// 独立したので、完了レポートの提出と状態遷移を1つのツールに混ぜない。
+func callSubmitResult(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	fields := map[string]json.RawMessage{}
+	if rpcErr := decodeArgs(args, &fields); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+
+	rawSeq, ok := fields["seq"]
+	if !ok {
+		return toolResult{}, newError(codeInvalidParams, "seq は必須である")
+	}
+	var seq flexInt
+	if err := seq.UnmarshalJSON(rawSeq); err != nil || !seq.set || seq.value < 1 {
+		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	}
+	delete(fields, "seq")
+
+	body, err := json.Marshal(fields)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost,
+		"/projects/"+url.PathEscape(key)+"/tickets/"+
+			strconv.FormatInt(seq.value, 10)+"/reports", nil, body, nil)
 	return passThrough(r, res, err)
 }

@@ -969,6 +969,10 @@ CREATE TABLE attachment (
 CREATE INDEX idx_attachment_ticket ON attachment (ticket_id);
 ```
 
+**`agent_run_id` の FK は 0022 で付いた**（8.2.4）。**埋まるのは `pb_submit_result` が作る
+完了レポートのコメントだけである**（`ApiDesign.md` 9.15）——作業中の `pb_post_note` は
+run を持たない。
+
 **`comment.author_id` を `NOT NULL` かつ `ON DELETE RESTRICT` としている。** コメントは必ず投稿者を持つべきだが、`SET NULL` は `NOT NULL` と衝突して削除時に不可解なエラーになる。`RESTRICT` にすることで、**アプリ側がシステムアクター（`kind='system'` の「削除されたユーザー」）へ付け替えてからでないとユーザーを削除できない**、という順序をDBが強制する。この付け替え処理は `ApiDesign.md` 6.5 の削除処理に含める。
 
 `ticket.assignee_id` / `reporter_id` は NULL 許容のため `SET NULL` でよい。担当者不在のチケットは意味を持つが、投稿者不在のコメントは意味を持たない、という違いによる。
@@ -1568,8 +1572,9 @@ Phase 2
                           agent_client_kind（クライアント種別のカタログ）と FK 化 ← 適用済み
   0021_ticket_working_agent.sql
                           ticket.working_agent_id（実行者の自己申告。6.6）  ← 適用済み
+  0022_agent_run.sql      agent_run, agent_report, context_pack_log,
+                          comment.agent_run_id の FK 付与（8.2.4）        ← 適用済み
 Phase 3
-  0022_agent_run.sql      agent_run, agent_report, context_pack_log
   0023_knowledge.sql      knowledge, knowledge_revision, proposal
   0024_comment_signal.sql comment_signal
   0025_embedding.sql      vector 拡張 + embedding
@@ -1577,7 +1582,7 @@ Phase 3
   0027_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で3回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かした。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027** である（手順26b の 0021 で3回目）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で4回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027** である（手順26c の 0022 で4回目。**このときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 
@@ -1886,7 +1891,11 @@ CREATE INDEX idx_task_lease_expiry ON task_lease (expires_at) WHERE released_at 
 
 **Phase 1 へ前倒しした。** `GuiDesign.md` 5.5 が完了条件を Phase 1 の実装対象としており、置き場所だけが Phase 2 に残っていた。DDL と判断根拠は 6.11 にある。Phase 2 で開けるのは `manual` 以外の `type`（`assertion` / `artifact` / `review` / `task_ref`）であり、**テーブルの追加は要らない**。
 
-### 8.2.4 `agent_run` / `agent_report`
+### 8.2.4 `agent_run` / `agent_report`（0022。手順26c で Phase 2 へ戻した）
+
+**本節は Phase 3 に置いていた**（`Design.md` 11章「Phase 3 へ送ったもの」）。**手順26c で
+Phase 2 へ戻した**（利用者の判断、2026-09-05）——`pb_submit_result` を Phase 2 で実装すると
+決めたためで、格納先がこの2表である。**DDL は送ったときの形のまま転記する。**
 
 ```sql
 CREATE TABLE agent_run (
@@ -1929,6 +1938,47 @@ ALTER TABLE comment
 
 `workflow_version` は`Requirements.md` 10.9.3 の陳腐化検出、`retry_count` は 10.10.5 のサーキットブレーカー判定に用いる。
 
+#### Phase 2 での書き手は `pb_submit_result` ひとつである
+
+**1回の提出が `agent_run` 1行と `agent_report` 1行を同時に作る**（利用者の判断、2026-09-05。
+`ApiDesign.md` 9.15）。**開始を告げる口を Phase 2 は持たない**——`pb_claim_task` は Phase 3 へ
+送られ（8.2.2）、`pb_transition_task` の副作用は `ticket.working_agent_id` だけと決めた（6.6）。
+
+**「走っている run」を読む者が Phase 2 に居ないので、開始の口を作らない。** 「いま誰が
+処理しているか」は `ticket.working_agent_id` が既に担っており（6.6）、`status='running'` の行を
+足すと**同じ事実が2か所になる**。**再提出は別の run になる**——`/pb-implement` の手順7
+（`Requirements.md` 10.8.6）は「未充足の完了条件が返ったら修正して再提出する」と定めており、
+その修正はエージェントが実際に作業をやり直したことを意味する。
+
+この帰結を4つ書き下す。**列の意味が Phase 2 と Phase 3 で変わらないよう、埋めない列は
+埋めないままにする。**
+
+| 列 | Phase 2 での扱い |
+|---|---|
+| `status` | **`completed` しか立たない。** `failed` / `abandoned` は「レポートを出さずに終わった run」で、それを観測する口が無い。`running` は上記のとおり作らない |
+| `started_at` | `report.cost.wall_clock_min` があればそこから逆算し、無ければ `now()`。**エージェントの自己申告である** |
+| `ended_at` | 提出時刻。`agent_report.submitted_at` と同じ値になる |
+| `workflow_version` | **NULL のまま。** `workflow` に版の列が無く（6.5）、`Requirements.md` 10.9.3 の陳腐化検出は Phase 3 である |
+| `retry_count` | **同じ（チケット × アクター）の既存の run 数**を入れる。初回は 0 |
+
+`token_id` / `client_kind` / `model_name` / `model_version` は**提出時点の値を写す**
+（`access_token` と `agent` の行から）。非正規化するのは `Requirements.md` 10.10.3 の
+「モデル更新後に品質が変化した際の切り分け」のためで、**後から `agent.model_name` を
+書き換えても過去の実行記録が動かない**ことがこの列の値である。
+
+#### `comment.agent_run_id` の FK は本節で使い手を得る
+
+0007 が「Phase 2 で FK を付与」と書いて空けていた列である（6.7）。**0022 が FK を付け、
+`pb_submit_result` が作る完了レポートのコメントがこの列を埋める**（`ApiDesign.md` 9.15）。
+**Phase 2 でこの列を埋めるのはそのコメント1種類だけである**——`pb_post_note` が作る
+コメントは run を持たない（作業中に run が存在しないため）。
+
+#### `actor_id` は `ON DELETE RESTRICT` である
+
+**エージェントを削除する前に、その run を「削除されたエージェント」へ付け替える**
+（`ApiDesign.md` 4.5.4）。`comment.author_id` が同じ制約を持ち、26a が同じ付け替えを
+実装している（6.7）。**付け替えないと `DELETE /me/agents/:id` そのものが失敗する。**
+
 ### 8.2.5 `context_pack_log`
 
 ```sql
@@ -1946,6 +1996,12 @@ CREATE INDEX idx_context_pack_run ON context_pack_log (agent_run_id);
 ```
 
 **1テーブルで2つの要件を満たす。** `Requirements.md` 10.10.7（監査：エージェントが何を見たか）と 10.4.4（効果計測：どの情報を含めたときに成功率が上がったか）は、記録すべき内容が同一である。`agent_report.status` と突き合わせることで有用性スコアを算出する。
+
+**0022 で器だけ作り、Phase 2 では書かない。** `agent_run` への FK を持つので同じファイルに
+入れる必要があり、8章の採番表も 0022 の中身としてこの表を挙げている。**書き手（`pb_get_context`
+の記録）が現れるのは Phase 3 である**——手順27 が `pb_get_context` を実装するが、`Requirements.md`
+10.4.4 の効果計測は運用の実績が要る。**0019 が `task_lease` を同じ理由で寝かせたのと同じ扱いで**
+（8.2.2）、前進のみのマイグレーション（5.3）では使わない表を落とすより寝かせるほうが安い。
 
 ### 8.2.6 権限（0019）
 
