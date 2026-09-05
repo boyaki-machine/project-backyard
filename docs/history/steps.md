@@ -3577,3 +3577,195 @@ clone コマンドをここから組み立てる**ので、28 の前に埋まっ
 裏づけた**。`actor.is_active` が false の行は0件、`mcp-` で始まるプロジェクトも0件。
 dev サーバを停止（`make stop-server`）。**stg は `make stg-build` の後、利用者が再起動して
 そのまま動いている**（MCP を持つ版）。
+
+
+## 手順20〜23 の現況記録（2026-09-05 に `PROGRESS.md` から移した）
+
+**手順26a で `PROGRESS.md` が 80KB を超えたため、完了して今後の手順に不要な分をここへ移した**
+（`pb-step.md` 手順7 の掃除の①）。**日付と結果が確定していて、もう変わらないもの**が対象である。
+各手順の作ったファイルと検証結果の全文は、本書のそれぞれの節にある。
+
+**手順20（ドッグフーディング用インスタンス）は 2026-08-29 に完了した。** `deploy/stg/` に
+compose プロジェクト `pb-stg`（`:5433`）と、動作に必要な一式を出力する `build.sh` を置いた。
+**`make dev-reset` をまたいで stg のデータが残ることを実測済み**（件数・プロジェクト行ともに差分ゼロ）。
+手順は `Development.md` 11章。
+
+**手順21（マイグレーション 0017）は 2026-08-30 に完了した。** `document` / `document_revision` と
+`doc.view` / `doc.edit`、文書テンプレート4件（`vision` / `rules` / `decisions` / `learnings`）を置いた。
+**`doc.edit` は `operator` と `project_member` が持たない最初の権限**で、これで「読めるが編集できない人」が
+初めて実在する（`DbDesign.md` 8.1.4）。制約7件を実際に破って DB 側が守ることを実測済み。
+`make test-db` 158件 PASS（**手順21 の記録にある「155件」は 157件の誤り**。今回の増分は1件）。
+**dev と stg の両方に適用済み**（どちらも `permission` 30件）。
+
+**手順22a（文書API）は 2026-08-30 に完了した。** `ApiDesign.md` 10章の5ルート
+（目次 `?outline=1` ／本文 `?section=` ／`POST` `PATCH` `DELETE` ／`_revisions` 一覧と1件）を
+`doc.view` / `doc.edit` の宣言つきで実装し、`openapi.yaml` を同じブランチで更新した。
+**`Design.md` 付録A 論点③（画面の権限による出し分けの負の側）を、API の層で初めて実測した**
+——`member@` / `viewer@` は読めて 200、書くと 403 になる。単体949件・結合158件・
+実サーバ73件がすべて PASS。
+
+**手順22b（Docs 画面の読み書き）は 2026-08-30 に完了した。** `GuiDesign.md` 5.10 の画面を
+**3ペイン**（文書ツリー／編集ペイン／可視化ペイン）で実装した。**5.10 のワイヤーフレームは
+2ペインだったが、利用者の判断で「書きながら横で描画を確かめられる」形に改めた**——編集ペインは
+編集モードのときだけ現れ、幅が足りなければ可視化ペインを畳んで `MarkdownEditor` の内蔵
+プレビューへ落ちる。**`Design.md` 付録A 論点③（画面の権限による出し分けの負の側）を、
+初めて画面の層で実測した**——`member@` は本文を読めるが `[ 編集 ]` `[ + 文書を追加 ]` `[⋯]` が
+DOM に1つも無い。**`fix/split-markdown-chunk` をここで消化した**（初回チャンク
+999.74KB → 491.56KB、gzip 347.71 → 168.96）。ブラウザ検証36件・単体949件・結合158件が PASS。
+
+**手順22c（木の D&D・移動改名・履歴）は 2026-08-30 に完了した。** 木の行を掴んで
+落とし先を3つに割り（上1/4＝前の兄弟／下1/4＝後ろの兄弟／中央1/2＝その行の子）、
+`[⋯]` に「移動・改名」と「履歴」を足した。**`[ この版に戻す ]` は `title` と `body_md` の
+両方を書き戻す**（利用者の判断。`ApiDesign.md` 10.5 を同じブランチで改訂した）。
+**サーバは 22a のまま1行も触っていない**——22c は client だけの手順である。
+`Modal` に幅の変種（`size="wide"`、880px）を1つ足し、履歴の2ペインに使った。
+**ブラウザ検証102件**（D&D 30・移動改名 22・履歴 31・22b の回帰 14・競合 5）、
+単体949件・結合158件が PASS。
+
+**これで手順22 の完了条件（ブラウザで文書を作り、階層に置き、編集して履歴が残る）を満たした。**
+22a / 22b / 22c は同じブランチ `feature/step-22-docs` に積んであり、**マージは1回**。
+
+**手順23（文書テンプレートの複製）は 2026-08-30 に完了した。** プロジェクト作成の手順を
+`server/internal/project` に1本化し（`POST /projects` と `pb dev seed` の二重化を解消）、
+そこに文書テンプレートの複製を足した。**新規プロジェクトには型の4文書が並ぶ**——
+`sort_order` はテンプレートの値のまま（10/20/30/40）、1件ごとに `revision_no = 1`、
+`created_by` は作成者。**複製は木として行う**ので、テンプレートに子が足された日にも落ちない。
+**stg の `pb` に PB 自身の憲章を置いた**（`vision` / `rules` / `decisions` / `learnings`。
+見出しつきで、`?outline=1` が4〜6章を返すことを実測）。単体・結合158件・ブラウザ検証が PASS。
+
+
+## 手順22c・24b の経緯（2026-09-05 に `PROGRESS.md` から移した）
+
+**0018 の初期本文の直し・本物のドラッグでの検証・0020（クライアント種別の参照テーブル化）**。
+いずれも完了しており、手順26b / 26c には効かない。
+
+**0017 の初期本文が、画面で読むと全角文字の間に半角空白を出していた**（6か所）。
+段落の途中で改行していたためで、`GuiDesign.md` 6.6 の「画面に出す日本語は1行に収める」に
+反していた。**手順23 で初めて画面に並べたときに、スクリーンショットを見て気づいた**
+（自動検証7件は件数と表題しか見ておらず、全 PASS のままだった）。0017 は適用済みなので
+編集せず、0018 で本文だけを差し替えた。**dev と stg の両方に適用済み。**
+
+**本物のドラッグで検証した**（`Input.setInterceptDrags`）。**`Input.dragIntercepted` が
+来ることを単独で先に測ってから**3つの落とし先を見ている——16d-b の「32件 PASS のまま
+行が一度も掴めない」の再発防止である。`member@` では**同じ操作で
+`dragIntercepted` が来ない**ことも測った（検知が効いている証拠であり、
+`Design.md` 付録A 論点③の負の側でもある）。
+
+**手順24b で、クライアント種別を参照テーブルにした**（マイグレーション 0020、2026-09-02）。
+**利用者の判断**——「業界は流動的で今後増える可能性も存分にある」。0019 は
+`CHECK (client_kind IN ('claude_code','copilot','other'))` だった。
+
+**値は主要な商用AI提供事業者系に絞り、それ以外は `other` にまとめた**（同）——
+`claude_code` / `codex` / `copilot` / `gemini` / `other` の5件。**値が決めるのは
+「設定ファイルの置き場」であって、エディタではない**——同じ VS Code でも Claude 拡張なら
+`.mcp.json` + `.claude/commands/`、GitHub Copilot なら `.vscode/mcp.json` + `.github/prompts/` に
+なる。**2026年に ACP で「エージェント」と「エディタ」が1対1でなくなった**ので、
+軸をエディタに取ると値域が定まらない。
+
+**参照テーブルにしたことで画面の対応表が消えた**——`GET /agent-client-kinds`（`ApiDesign.md` 4.5.7）が
+`display_name` を返す。**`GET /roles` が `lib/roles.ts` を廃止させたのと同じ形**である。
+**登録モーダルはラジオから `<select>` へ変えた**（値域が増えるため）。
+
+**`client_kind` を変更可能にした**（`ApiDesign.md` 4.5.4）。**値域が今後も増えるので、
+`other` で登録した人が、PB がその種別に対応した日に移れる必要がある**。`project_key` は
+変更不可のまま——そのエージェントが行った仕事はプロジェクトに属する。**4.5.4 が2つを
+同じ規則で束ねていたのは、根拠を別々に点検していなかったため**である。
+
+**エージェントの MCP 利用には `client_kind` は一切効かない**（調べて確かめた）。
+MCP の口は `/mcp/<project_key>` で、認可はトークンの `project_id` と `scopes` だけである
+（`Design.md` 8.3 / 6.4.5）。**効くのは手順28（配置ファイルの生成）だけ**で、
+**「PB が接続手順を提供できるか」の列は 28 で足す**（使うものが無いうちに入口を作らない）。
+
+## 手順26a — MCP の write 系3件とエージェントの削除（2026-09-05、`feature/step-26a-mcp-write`）
+
+`Design.md` 11章 手順26 の1つ目。**完了条件は「議論の結果をチケットとして起票でき、
+指示で文書を更新できる」**——26a で満たした。**26b＝リース、26c＝完了レポート。**
+
+### 作ったファイル
+
+| ファイル | 中身 |
+|---|---|
+| （新規なし） | **サーバもクライアントも既存のファイルへ足した。** 新しい層を作る手順ではない |
+
+### 変更したファイル
+
+| ファイル | 変更 |
+|---|---|
+| `docs/Design.md` | 8.2 に**手順26 の内訳（26a/26b/26c）の表**、8.5 を「手順25・26a」へ改め **8.5.1 write 系 / 8.5.2 read 系**に分けた、8.6 に**冪等キーの再検討条件**、6.5 のスコープ既定と `doc.edit` の段落、11章の手順26 と「Phase 3 へ送ったもの」「手順30」の注記 |
+| `docs/ApiDesign.md` | **4.5.3 の `scopes`（許可リスト＝既定8件 ∪ `doc.edit`）**、4.4.2 の写し1行、**4.5.4 に `DELETE /api/v1/me/agents/:id` を `####` として追加**（節番号を動かさないため）、4.5.6 に `agent.delete`、2.10 のアクション一覧、**6.5 のエージェント後始末（実測に合わせて全面改訂）** |
+| `docs/Requirements.md` | 10.3.2 の write 3行（引数・戻り値）と `pb_claim_task` / `pb_release_task` / `pb_submit_result` の手順注記、10.3.4 の冪等性 |
+| `docs/GuiDesign.md` | 5.8.2 の**発行モーダルに「追加の権限」**、`[⋯]` に**削除（下段・区切り線）**と**削除の確認モーダル** |
+| `docs/openapi.yaml` | `DELETE /api/v1/me/agents/{id}`、`CreateAgentTokenRequest.scopes` |
+| `server/internal/mcp/rest.go` | `getREST` → **`callREST`（メソッド・本文・追加ヘッダ）**。`getREST` はその薄いラッパ |
+| `server/internal/mcp/tools.go` | **`writeTools()` 3件**（定義・description・スキーマ・本体）と `callCreateTicket` / `callPostNote` / `callPutDoc` |
+| `server/internal/mcp/server.go` | `New` が read＋write を連結 |
+| `server/internal/httpapi/v1/me_agents.go` | `agentGrantableScopes` / `agentAllowedScopes` / `resolveAgentScopes`、**`deleteMyAgent`**、`reassignAgentComments`、`purgeOwnedAgents` |
+| `server/internal/httpapi/v1/routes.go` | `DELETE /me/agents/{id}` |
+| `server/internal/httpapi/v1/users_update.go` | **利用者の削除が所有エージェントを先に始末する** |
+| `server/internal/store/queries/agent.sql` | `FindDeletedAgentActor` / `CreateDeletedAgentActor` / `CountAgentComments` / `DeleteMyAgentActor` / `ListOwnedAgentActorIDs` |
+| `server/internal/audit/audit.go` | `AgentDelete` |
+| `client/src/api/me.ts` | `deleteAgent`、`issueAgentToken` の説明 |
+| `client/src/lib/agents.ts` | **`AGENT_DEFAULT_SCOPES`**（写しである旨と、ずれたときの出方を書いた） |
+| `client/src/pages/MyAgentsPage.vue` | `allowDocEdit`、削除の状態と確認、`[⋯]` の項目、`fieldset.field` と `.check` のスタイル |
+| `client/src/components/UserActionsMenu.vue` | `ActionItem.separated`（区切り線）とパネル高さの推定 |
+
+### 検証
+
+**単体 1046件 PASS**（`--- PASS` の総数。手順25 は 1026。増分20件）。
+**結合 196件 PASS**（同 186。増分10件）。**実サーバ MCP 32件・ブラウザ 17件が PASS。**
+
+**わざと壊して、検査が落ちることを先に確かめた**（`-count=1` でキャッシュを切る）。
+
+| 壊したところ | 落ちた検査 |
+|---|---|
+| `If-Match` を送らない | `TestPutDocReadsVersionThenPatches` |
+| `resolveAssignee` を素通し | `TestCreateTicketResolvesAssigneeMe` |
+| 空の `body_md` を許す | `TestPutDocRejectsEmptyBody` |
+| 許可リストの検査を外す | `TestCreateMyAgentTokenRejectsScopesOutsideAllowlist` |
+| コメントを付け替えずに消す | `TestDeleteMyAgentReassignsComments` |
+| `purgeOwnedAgents` を呼ばない | **結合「利用者を削除すると所有するエージェントも残らない」**（`actor` と `access_token` が1件ずつ残り、**削除済み利用者のトークンで `/me` が 200 を返した**） |
+| `delete:` を `x-delete:` にする | `TestOpenAPIMatchesRoutes`（ドリフト検出。**`operationId` を変えただけでは落ちない**ことも確かめた） |
+
+**結合で初めて測れたもの**——①`pb_create_ticket` が実際に行を増やし、`reporter_id` が
+**エージェント自身**になること（権限の根拠は所有者だが、操作したのはエージェント）
+②`pb_post_note` が `activity` に1行書くこと ③**所有者が `project_member` のあいだは
+`pb_put_doc` が 403 で、`project_admin` へ上げると通ること**（委譲そのもの。トークンは
+再発行していない）④リビジョンが1件増え、`change_reason` が入ること。
+
+**実サーバ検証 32件**（dev :8080、標準ライブラリだけで書いた MCP クライアント）。
+
+| 見たこと | 結果 |
+|---|---|
+| 発行のスコープ | `doc.edit` つきで 9件、省略で既定8件 |
+| `tools/list` | **8件**（read 5 → write 3 の順） |
+| `pb_create_ticket` | `seq` が採番され、`assignee=me` が**人**を指し、`staged_at` は `null`、`reporter` は**エージェント** |
+| 型の取り違え | `parent_seq` を `"16"` と文字列で渡しても通る（`flexInt`） |
+| `pb_post_note` | `origin=agent`、`author.kind=agent`、`kind` を省くと `discussion`（既定は REST 側） |
+| `pb_put_doc` | `updated_by` が**エージェント**、`version` が 1→2、目次に見出しが出る、履歴に `change_reason` |
+| 元へ戻す | 書き戻して**本文が元と完全一致**することまで確認 |
+| 権限の負の側 | **`doc.edit` の無いトークンで `pb_put_doc` が 403**、同じトークンで `pb_get_doc` は成功（読めるが書けない） |
+| 呼び出し側の誤り | `body_md` 無し・`type` 無しは `-32602`、無いチケットへの投稿は `isError` |
+| 認証 | トークン無しは 401 |
+
+**ブラウザ検証 17件**（`/me/agents`）。発行モーダルの「追加の権限」が出て**既定で外れている**こと、
+文言が日本語で**権限キーを出さない**こと、900px でも収まること、`[⋯]` の**最下段に区切り線つきで
+「削除」**が出ること、確認が**「消えるもの」「残るもの」「取り消せません」**を書くこと、
+削除すると**一覧のカードから消える**こと。
+
+**スクリーンショットで2件の崩れを拾った**（自動検証17件は全 PASS だった）——
+①**「追加の権限」だけ `fieldset` の枠線が出て**、隣の「有効期限」と別の種類の入力に見えていた
+（`.choices` に打ち消しがあり `.field` には無かった）②**チェックボックスと文字の間に余白が無かった**。
+`fieldset.field` に打ち消しを置き、`.check` を `.choices label` と同じ組み方にした。
+
+**発行結果の「このトークンでできること」に「プロジェクト文書の編集」が9件目として出る**ことを、
+スクリーンショットで確認している（権限キーではなく `description` の日本語。24b の形）。
+
+### 片付け
+
+検証で作ったもの（エージェント4件・チケット2件・コメント2件・トークン4本）をすべて削除した。
+**`vision` の本文は書き戻したが、版が 1→3 に増えていた**ので、**触っていない3文書を対照に取り**
+（`version=1` / `revs=1` / `updated_by = created_by` / `updated_at = created_at`）、
+`document` のトリガを一時的に外して**同じ形へ厳密に戻した**。
+**結合テストが dev の DB に作った「削除されたエージェント」のアクターも消した**
+（参照が1件も無いことを確かめてから）。**`make dev-seed` が全項目「作成 0」を返すことで裏づけた。**
+dev サーバを停止し、`make clean-webui` を実行している。

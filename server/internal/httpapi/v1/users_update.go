@@ -191,18 +191,32 @@ func (h *handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 
+		// **所有するエージェントを先に始末する**（6.5。手順26a で足した）。
+		// agent.owner_actor_id の ON DELETE CASCADE が消すのは agent の行だけで、
+		// **エージェントの actor 行・その access_token・そのコメントは残る**
+		// ——FK の向きは agent.actor_id → actor だからである。放置すると、
+		// **認証は通るが実効権限が0件のトークン**が残り続ける。
+		deletedAgents, err := purgeOwnedAgents(ctx, q, id)
+		if err != nil {
+			return err
+		}
+
 		// **監査は削除の前に書く**（6.5）。detail に削除時点の表示名とメールを
 		// 残さないと、後から「誰を消したか」を追えなくなる。同じトランザクション
 		// なので、削除が失敗すれば記録も残らない。
+		//
+		// **エージェントごとに agent.delete を並べない**（6.5）。利用者から見た
+		// 操作は1回であり、件数だけを detail に載せる。
 		if err := rec.Record(ctx, q, audit.Entry{
 			Action:     audit.UserDelete,
 			Result:     audit.Success,
 			TargetType: "app_user",
 			TargetID:   id,
 			Detail: map[string]any{
-				"display_name": cur.DisplayName,
-				"email":        cur.Email,
-				"system_role":  cur.SystemRole,
+				"display_name":   cur.DisplayName,
+				"email":          cur.Email,
+				"system_role":    cur.SystemRole,
+				"deleted_agents": deletedAgents,
 			},
 		}); err != nil {
 			return err

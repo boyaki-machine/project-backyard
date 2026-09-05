@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -393,7 +394,7 @@ func TestCreateMyAgentTokenReturnsPlaintextOnce(t *testing.T) {
 		t.Errorf("token_prefix = %q, token の先頭8文字と一致しない", got.TokenPrefix)
 	}
 
-	// **既定スコープをそのまま載せる**（4.5.3。要求では選べない）。
+	// **scopes を省略すると既定8件**（4.5.3。手順26a で「受け取らない」から改めた）。
 	if len(got.Scopes) != len(agentDefaultScopes) {
 		t.Fatalf("scopes = %d件, want %d件", len(got.Scopes), len(agentDefaultScopes))
 	}
@@ -856,5 +857,230 @@ func TestUpdateMyAgentSkipsDuplicateCheckWhenKeyUnchanged(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200（モデル名だけの更新で重複検査は走らない。body=%s）",
 			rec.Code, rec.Body.String())
+	}
+}
+
+// ── 発行時のスコープ（ApiDesign.md 4.5.3。手順26a）───────────────
+
+// issueWithScopes は scopes つきで発行し、応答を返す。
+func issueWithScopes(t *testing.T, body string) (*httptest.ResponseRecorder, *fakeQuerier) {
+	t.Helper()
+	q := agentFake(t)
+	rec := httptest.NewRecorder()
+	agentHandler(q).createMyAgentToken(rec, agentReq(http.MethodPost,
+		"/api/v1/me/agents/01AGENT0000000000000000000/tokens", body,
+		"01AGENT0000000000000000000", "", selfPrincipal()))
+	return rec, q
+}
+
+// TestCreateMyAgentTokenAcceptsDocEdit は許可リストの1件を足せることを見る。
+//
+// **これが無いと pb_put_doc は誰が呼んでも 403 になる**（Design.md 6.5 / 8.2）。
+func TestCreateMyAgentTokenAcceptsDocEdit(t *testing.T) {
+	rec, _ := issueWithScopes(t, `{"expires_in_days":90,
+		"scopes":["agent.run","comment.create","doc.edit","doc.view","project.view",
+		          "ticket.assign","ticket.create","ticket.transition","ticket.view"]}`)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201（本文: %s）", rec.Code, rec.Body.String())
+	}
+	var got issuedAgentTokenJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("応答を解釈できない: %v", err)
+	}
+	if len(got.Scopes) != len(agentDefaultScopes)+1 {
+		t.Fatalf("scopes = %d件, want %d件", len(got.Scopes), len(agentDefaultScopes)+1)
+	}
+	var hasDocEdit bool
+	for _, s := range got.Scopes {
+		if s == "doc.edit" {
+			hasDocEdit = true
+		}
+	}
+	if !hasDocEdit {
+		t.Errorf("scopes に doc.edit が無い: %v", got.Scopes)
+	}
+	// **昇順で返す**（auth.EffectivePermissions と並びを揃える）。
+	if !sort.StringsAreSorted(got.Scopes) {
+		t.Errorf("scopes が昇順でない: %v", got.Scopes)
+	}
+}
+
+// TestCreateMyAgentTokenNarrowsScopes は既定より狭くも発行できることを見る。
+//
+// 10.9.1 系統B の「閲覧用＝read only」がこれで作れる。
+func TestCreateMyAgentTokenNarrowsScopes(t *testing.T) {
+	rec, _ := issueWithScopes(t,
+		`{"expires_in_days":90,"scopes":["agent.run","project.view","ticket.view"]}`)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201（本文: %s）", rec.Code, rec.Body.String())
+	}
+	var got issuedAgentTokenJSON
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if len(got.Scopes) != 3 {
+		t.Errorf("scopes = %v, want 3件", got.Scopes)
+	}
+}
+
+// TestCreateMyAgentTokenRejectsScopesOutsideAllowlist は許可リスト外を弾くことを見る。
+//
+// **素通しにすると、本人が user.manage を載せたトークンを自分のエージェントへ
+// 渡せる**——所有者との積で消えるとはいえ、アドミニストレータが所有者のときは
+// 消えない（ApiDesign.md 4.5.3）。
+func TestCreateMyAgentTokenRejectsScopesOutsideAllowlist(t *testing.T) {
+	for _, sc := range []string{"user.manage", "ticket.close", "auditlog.view", "存在しない権限"} {
+		rec, q := issueWithScopes(t,
+			`{"expires_in_days":90,"scopes":["project.view","`+sc+`"]}`)
+
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("scope=%q の status = %d, want 422（本文: %s）", sc, rec.Code, rec.Body.String())
+			continue
+		}
+		// **応答は {"error":{…}} で包まれている**ので errorOf で外す
+		// （本文へ直接 Unmarshal すると details が空になり、正しい実装を
+		// FAIL と言う。LEARNINGS #14 の形）。
+		if !hasDetailField(errorOf(t, rec), "scopes") {
+			t.Errorf("scope=%q の details に scopes が無い: %s", sc, rec.Body.String())
+		}
+		if len(q.created) != 0 {
+			t.Errorf("scope=%q でトークンを作っている", sc)
+		}
+	}
+}
+
+// TestCreateMyAgentTokenRejectsEmptyScopes は空配列を弾くことを見る。
+//
+// **4.4.2 の個人トークンは [] を「絞り込みなし」と定める**（本人の全権が乗る）。
+// エージェントで同じ意味に取ると、既定より広いトークンが黙って出る。
+func TestCreateMyAgentTokenRejectsEmptyScopes(t *testing.T) {
+	rec, q := issueWithScopes(t, `{"expires_in_days":90,"scopes":[]}`)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422（本文: %s）", rec.Code, rec.Body.String())
+	}
+	if len(q.created) != 0 {
+		t.Error("トークンを作っている")
+	}
+}
+
+// ── DELETE /me/agents/:id（ApiDesign.md 4.5.4。手順26a）──────────
+
+// deleteAgentReq は削除を1回呼ぶ。
+func deleteAgentReq(t *testing.T, q *fakeQuerier) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	agentHandler(q).deleteMyAgent(rec, agentReq(http.MethodDelete,
+		"/api/v1/me/agents/01AGENT0000000000000000000", "",
+		"01AGENT0000000000000000000", "", selfPrincipal()))
+	return rec
+}
+
+func TestDeleteMyAgentRemovesActor(t *testing.T) {
+	q := agentFake(t)
+	q.deleteAgentRows = 1
+
+	rec := deleteAgentReq(t, q)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204（本文: %s）", rec.Code, rec.Body.String())
+	}
+	if len(q.deletedActors) != 1 || q.deletedActors[0] != "01AGENT0000000000000000000" {
+		t.Errorf("消したアクター = %v, want エージェントの ID", q.deletedActors)
+	}
+	// **監査は削除の前に書く**（6.5 と同じ順序）。
+	var auditAt, deleteAt = -1, -1
+	for i, op := range q.opLog {
+		if op == "InsertAuditLog" && auditAt < 0 {
+			auditAt = i
+		}
+		if op == "DeleteMyAgentActor" {
+			deleteAt = i
+		}
+	}
+	if auditAt < 0 || deleteAt < 0 || auditAt > deleteAt {
+		t.Errorf("監査が削除より後にある: %v", q.opLog)
+	}
+	if len(q.audits) == 0 || q.audits[len(q.audits)-1].Action != "agent.delete" {
+		t.Errorf("監査の action が agent.delete でない: %+v", q.audits)
+	}
+}
+
+// TestDeleteMyAgentReassignsComments は付け替えてから消すことを見る。
+//
+// **comment.author_id は NOT NULL かつ ON DELETE RESTRICT** なので、
+// 付け替えないと削除そのものが失敗する（DbDesign.md 6.7）。
+func TestDeleteMyAgentReassignsComments(t *testing.T) {
+	q := agentFake(t)
+	q.deleteAgentRows = 1
+	q.agentCommentCount = 3
+
+	if rec := deleteAgentReq(t, q); rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204（本文: %s）", rec.Code, rec.Body.String())
+	}
+
+	// **付け替え先は kind='agent' の「削除されたエージェント」である**
+	// （GuiDesign.md 8.4.2：形で人とエージェントを区別している）。
+	if q.createdAgentActorName != deletedAgentDisplayName {
+		t.Errorf("付け替え先の表示名 = %q, want %q", q.createdAgentActorName, deletedAgentDisplayName)
+	}
+	var createdAt, reassignAt, deleteAt = -1, -1, -1
+	for i, op := range q.opLog {
+		switch op {
+		case "CreateDeletedAgentActor":
+			createdAt = i
+		case "ReassignComments":
+			reassignAt = i
+		case "DeleteMyAgentActor":
+			deleteAt = i
+		}
+	}
+	if createdAt < 0 || reassignAt < 0 || deleteAt < 0 {
+		t.Fatalf("付け替えの手順が抜けている: %v", q.opLog)
+	}
+	if !(createdAt < reassignAt && reassignAt < deleteAt) {
+		t.Errorf("順序が違う（作る→付け替える→消す）: %v", q.opLog)
+	}
+}
+
+// TestDeleteMyAgentSkipsReassignWhenNoComments は、コメントが無ければ
+// 付け替え先も作らないことを見る（reassignCommentsToSystemActor と同じ）。
+func TestDeleteMyAgentSkipsReassignWhenNoComments(t *testing.T) {
+	q := agentFake(t)
+	q.deleteAgentRows = 1
+	q.agentCommentCount = 0
+
+	if rec := deleteAgentReq(t, q); rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+	for _, op := range q.opLog {
+		if op == "CreateDeletedAgentActor" || op == "ReassignComments" {
+			t.Errorf("コメントが無いのに %s を呼んでいる: %v", op, q.opLog)
+		}
+	}
+}
+
+func TestDeleteMyAgentNotFoundForForeignAgent(t *testing.T) {
+	q := agentFake(t)
+	q.agentFindErr = pgx.ErrNoRows
+
+	rec := deleteAgentReq(t, q)
+
+	// **403 ではなく 404**（Design.md 6.4.5）。存在することを漏らさない。
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404（本文: %s）", rec.Code, rec.Body.String())
+	}
+	if len(q.deletedActors) != 0 {
+		t.Errorf("他人のエージェントを消している: %v", q.deletedActors)
+	}
+}
+
+// TestDeleteMyAgentNotFoundWhenRaced は、直後に消えた場合を 404 に倒すことを見る。
+func TestDeleteMyAgentNotFoundWhenRaced(t *testing.T) {
+	q := agentFake(t)
+	q.deleteAgentRows = 0
+
+	if rec := deleteAgentReq(t, q); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }

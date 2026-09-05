@@ -240,3 +240,72 @@ SET revoked_at = now()
 WHERE actor_id = @actor_id
   AND token_type = 'agent'
   AND revoked_at IS NULL;
+
+-- ── エージェントの削除（ApiDesign.md 4.5.4。手順26a）─────────────
+
+-- FindDeletedAgentActor は「削除されたエージェント」の付け替え先を引く。
+--
+-- **kind='agent' である。** 人の付け替え先（kind='system' の
+-- 「削除されたユーザー」）と分けているのは、GuiDesign.md 8.4.2 が
+-- アバターの**形**で人（円）とエージェント（角丸四角）を区別しているためで、
+-- system へ寄せると**過去のコメントが全部円になり、人が書いたように見える**。
+--
+-- **agent の行を持たない actor である。** トークンを1本も持たないので
+-- 認証の経路（Design.md 6.4.5）には現れず、/me/agents にも
+-- GET /admin/users?kind=agent にも出ない（どちらも agent と内部結合する）。
+--
+-- display_name で引くのは FindDeletedUserActor と同じ事情である
+-- （actor に key に相当する列が無い。DbDesign.md 6.2）。
+--
+-- name: FindDeletedAgentActor :one
+SELECT id FROM actor
+WHERE kind = 'agent' AND display_name = @display_name
+  AND NOT EXISTS (SELECT 1 FROM agent ag WHERE ag.actor_id = actor.id)
+ORDER BY created_at, id
+LIMIT 1;
+
+-- CreateDeletedAgentActor は付け替え先を1件作る。
+--
+-- **シードで先に置かず、最初に必要になった削除で作る**（CreateSystemActor と
+-- 同じ作法。手順13a の判断）。置いても、削除が起きるまで一度も参照されない。
+--
+-- name: CreateDeletedAgentActor :exec
+INSERT INTO actor (id, kind, display_name) VALUES (@id, 'agent', @display_name);
+
+-- CountAgentComments はそのエージェントが書いたコメント数を数える。
+--
+-- **0 件なら付け替え先を作らない**（reassignCommentsToSystemActor と同じ）。
+--
+-- name: CountAgentComments :one
+SELECT count(*) FROM comment WHERE author_id = @author_id;
+
+-- DeleteMyAgentActor はエージェントの actor 行を物理削除する。
+--
+-- agent / access_token は ON DELETE CASCADE で追従するので、**そのエージェントの
+-- 資格情報は1本残らず消える**（ApiDesign.md 4.5.4）。
+--
+-- **owner_actor_id を条件に含める。** 他人のエージェントを 403 ではなく 404 に
+-- 倒すためで、本ファイルの他のクエリと同じ方針である（Design.md 6.4.5）。
+--
+-- **kind='agent' に限る。** 万一人のアクター ID を渡されても消さない
+-- （DeleteActorByID が kind='user' に限っているのと対である）。
+--
+-- name: DeleteMyAgentActor :execrows
+DELETE FROM actor a
+WHERE a.id = @actor_id
+  AND a.kind = 'agent'
+  AND EXISTS (
+    SELECT 1 FROM agent ag
+    WHERE ag.actor_id = a.id AND ag.owner_actor_id = @owner_actor_id
+  );
+
+-- ListOwnedAgentActorIDs は、その人が所有するエージェントを列挙する。
+--
+-- **人の削除（ApiDesign.md 6.5）で使う。** agent.owner_actor_id の
+-- ON DELETE CASCADE が消すのは agent の行だけで、**エージェントの actor 行・
+-- その access_token・そのコメントは残る**（FK の向きは agent.actor_id → actor）。
+-- 放置すると、agent 行を失った actor が FindAccessTokenByHash の
+-- LEFT JOIN agent から外れ、**認証は通るが実効権限が0件のトークンが残る。**
+--
+-- name: ListOwnedAgentActorIDs :many
+SELECT actor_id FROM agent WHERE owner_actor_id = @owner_actor_id ORDER BY actor_id;

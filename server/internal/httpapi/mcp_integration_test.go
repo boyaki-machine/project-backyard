@@ -519,6 +519,224 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
+	// ── write 系（手順26a。Design.md 8.5.1）─────────────────────
+	//
+	// **単体はフェイクの REST を相手にしている**ので、ここで初めて
+	// 「実際に行が増えたか」「所有者のロールで弾かれるか」が測れる。
+
+	t.Run("pb_create_ticket がチケットを作る", func(t *testing.T) {
+		// **project_counter を実データに合わせる。** 上の準備が ticket を
+		// 直接 INSERT していて採番器を進めていないため、そのままだと
+		// 9.3 の `UPDATE ... RETURNING` が seq=1 を返して一意制約に当たる。
+		if _, err := pool.Exec(ctx, `
+			UPDATE project_counter SET last_ticket_seq =
+				(SELECT coalesce(max(seq), 0) FROM ticket WHERE project_id = $1)
+			WHERE project_id = $1`, projectID); err != nil {
+			t.Fatalf("採番器を合わせられない: %v", err)
+		}
+
+		text, isErr := tool(t, fullToken, "pb_create_ticket",
+			`{"type":"task","title":"MCP から起票したチケット","body_md":"本文","priority":"high","assignee_id":"me"}`)
+		if isErr {
+			t.Fatalf("起票できない: %s", text)
+		}
+
+		var got struct {
+			Seq      int    `json:"seq"`
+			Title    string `json:"title"`
+			Assignee *struct {
+				ID   string `json:"id"`
+				Kind string `json:"kind"`
+			} `json:"assignee"`
+			StagedAt *string `json:"staged_at"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		if got.Seq < 2 {
+			t.Errorf("seq = %d, want 2 以上（既存の1件の次）", got.Seq)
+		}
+		// **assignee_id=me は所有者を指す**（Design.md 8.5）。担当を持つのは人である。
+		if got.Assignee == nil || got.Assignee.ID != ownerID {
+			t.Errorf("assignee = %+v, want 所有者（%s）", got.Assignee, ownerID)
+		}
+		// **作ったチケットは必ずバックログに入る**（9.3）。
+		if got.StagedAt != nil {
+			t.Errorf("staged_at = %v, want null（作成時はバックログ）", *got.StagedAt)
+		}
+
+		// 実際に行が増えていること。**reporter はエージェント自身である**
+		// （権限の根拠は所有者だが、操作したのはエージェント。Design.md 6.5）。
+		var reporter string
+		if err := pool.QueryRow(ctx,
+			`SELECT coalesce(reporter_id, '') FROM ticket WHERE project_id = $1 AND seq = $2`,
+			projectID, got.Seq).Scan(&reporter); err != nil {
+			t.Fatalf("作ったチケットを引けない: %v", err)
+		}
+		if reporter != agentID {
+			t.Errorf("reporter_id = %q, want エージェント（%s）", reporter, agentID)
+		}
+	})
+
+	t.Run("ticket.create を持たないトークンでは起票できない", func(t *testing.T) {
+		// narrowToken は agent.run / project.view / ticket.view だけ。
+		// **所有者は ticket.create を持つ**（project_member）ので、
+		// ここで効いているのはトークンのスコープである（6.4.1 の積）。
+		text, isErr := tool(t, narrowToken, "pb_create_ticket",
+			`{"type":"task","title":"通らないはず"}`)
+		if !isErr {
+			t.Fatalf("403 になるはずが成功した: %s", text)
+		}
+		if !strings.Contains(text, "403") {
+			t.Errorf("403 と読めない: %s", text)
+		}
+	})
+
+	t.Run("pb_post_note がコメントを書き、origin が agent になる", func(t *testing.T) {
+		text, isErr := tool(t, fullToken, "pb_post_note",
+			`{"seq":1,"body_md":"並列実行すると落ちる","kind":"caveat"}`)
+		if isErr {
+			t.Fatalf("コメントを書けない: %s", text)
+		}
+
+		var got struct {
+			ID     string `json:"id"`
+			Kind   string `json:"kind"`
+			Origin string `json:"origin"`
+			Author struct {
+				ID   string `json:"id"`
+				Kind string `json:"kind"`
+			} `json:"author"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		if got.Kind != "caveat" {
+			t.Errorf("kind = %q, want caveat", got.Kind)
+		}
+		// **origin はリクエストで指定できない**（9.8）。呼び出し元の種別から決まる。
+		if got.Origin != "agent" {
+			t.Errorf("origin = %q, want agent", got.Origin)
+		}
+		// **画面はこの kind でアバターを角丸四角にする**（GuiDesign.md 8.4.2）。
+		if got.Author.Kind != "agent" || got.Author.ID != agentID {
+			t.Errorf("author = %+v, want エージェント（%s）", got.Author, agentID)
+		}
+
+		// activity に1行入る（9.8「コメントの変更を activity に記録する」）。
+		var n int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM activity
+			WHERE entity_type = 'ticket' AND entity_id = $1 AND field = 'comment'`,
+			ticketID).Scan(&n); err != nil {
+			t.Fatalf("activity を数えられない: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("activity = %d行, want 1", n)
+		}
+	})
+
+	t.Run("doc.edit を持たない所有者では pb_put_doc が 403", func(t *testing.T) {
+		// **所有者は project_member であり、doc.edit は project_admin だけが持つ**
+		// （0017。DbDesign.md 8.1.4）。fullToken はスコープを絞っていないので、
+		// **ここで効いているのは所有者のロールのほう**である（6.4.1 の積の左辺）。
+		text, isErr := tool(t, fullToken, "pb_put_doc",
+			`{"path":"handbook","body_md":"# 書き換え\n\n通らないはず"}`)
+		if !isErr {
+			t.Fatalf("403 になるはずが成功した: %s", text)
+		}
+
+		// **本文が変わっていないこと。** 読めるが書けない、が正しい形である。
+		var body string
+		if err := pool.QueryRow(ctx, `SELECT body_md FROM document WHERE id = $1`,
+			docID).Scan(&body); err != nil {
+			t.Fatalf("文書を引けない: %v", err)
+		}
+		if strings.Contains(body, "通らないはず") {
+			t.Error("403 のはずが本文が書き換わっている")
+		}
+	})
+
+	t.Run("所有者が doc.edit を持てば pb_put_doc が通る", func(t *testing.T) {
+		// **委譲を実データで測る**（Design.md 6.5）。所有者のロールを上げると、
+		// トークンを再発行しなくてもエージェントの実効権限が変わる。
+		if _, err := pool.Exec(ctx,
+			`UPDATE project_member SET role_key = 'project_admin'
+			 WHERE project_id = $1 AND actor_id = $2`, projectID, ownerID); err != nil {
+			t.Fatalf("所有者のロールを上げられない: %v", err)
+		}
+		t.Cleanup(func() {
+			if _, err := pool.Exec(context.Background(),
+				`UPDATE project_member SET role_key = 'project_member'
+				 WHERE project_id = $1 AND actor_id = $2`, projectID, ownerID); err != nil {
+				t.Errorf("所有者のロールを戻せなかった: %v", err)
+			}
+		})
+		// **実効権限のキャッシュを落とす**（Design.md 6.4.5）。ロールを直接
+		// 書き換えたので、トークンに焼かれた cached_permissions が古い。
+		if _, err := pool.Exec(ctx,
+			`UPDATE access_token SET cached_permissions = NULL, permissions_cached_at = NULL
+			 WHERE actor_id = $1`, agentID); err != nil {
+			t.Fatalf("権限キャッシュを落とせない: %v", err)
+		}
+
+		var before int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM document_revision WHERE document_id = $1`,
+			docID).Scan(&before); err != nil {
+			t.Fatalf("リビジョンを数えられない: %v", err)
+		}
+
+		text, isErr := tool(t, fullToken, "pb_put_doc",
+			`{"path":"handbook","body_md":"# 手引き\n\n## 命名\n\nエージェントが書き換えた。\n",`+
+				`"change_reason":"MCP から更新した"}`)
+		if isErr {
+			t.Fatalf("書き換えられない: %s", text)
+		}
+
+		var got struct {
+			Version   int `json:"version"`
+			UpdatedBy *struct {
+				ID   string `json:"id"`
+				Kind string `json:"kind"`
+			} `json:"updated_by"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		// **If-Match が効いている証拠。** GET で読んだ version の次になる。
+		if got.Version < 2 {
+			t.Errorf("version = %d, want 2 以上", got.Version)
+		}
+		// **憲章に「エージェントが最後に更新した」と出るのは正常である**
+		// （ApiDesign.md 10.3）。
+		if got.UpdatedBy == nil || got.UpdatedBy.Kind != "agent" || got.UpdatedBy.ID != agentID {
+			t.Errorf("updated_by = %+v, want エージェント（%s）", got.UpdatedBy, agentID)
+		}
+
+		// **リビジョンが1件増える**（10.4「title か body_md が変わったときだけ」）。
+		var after int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM document_revision WHERE document_id = $1`,
+			docID).Scan(&after); err != nil {
+			t.Fatalf("リビジョンを数えられない: %v", err)
+		}
+		if after != before+1 {
+			t.Errorf("リビジョン = %d件, want %d件", after, before+1)
+		}
+		// change_reason が入っていること（10.5 が履歴に出す）。
+		var reason string
+		if err := pool.QueryRow(ctx, `
+			SELECT coalesce(change_reason, '') FROM document_revision
+			WHERE document_id = $1 ORDER BY revision_no DESC LIMIT 1`,
+			docID).Scan(&reason); err != nil {
+			t.Fatalf("change_reason を引けない: %v", err)
+		}
+		if reason != "MCP から更新した" {
+			t.Errorf("change_reason = %q", reason)
+		}
+	})
+
 	t.Run("所有者を無効化するとエージェントも通らない", func(t *testing.T) {
 		// Design.md 6.5 の委譲。**最後に置く**——この後の検証は通らなくなる。
 		if _, err := pool.Exec(ctx, `UPDATE actor SET is_active = false WHERE id = $1`,

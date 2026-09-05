@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -23,25 +24,59 @@ type fakeREST struct {
 	status int
 	body   string
 
+	// steps は呼び出しごとに違う応答を返すための台本（手順26a）。
+	// **pb_put_doc は GET してから PATCH する**ので、1回ぶんの status/body では
+	// 足りない。空なら status/body を毎回返す。
+	steps []fakeStep
+
 	gotPath  string
 	gotQuery url.Values
 	gotAuth  string
 	calls    int
+
+	// 手順26a：write 系が何をどう送ったかを見る。**最後の1回ぶん**を持つ。
+	gotMethod      string
+	gotBody        string
+	gotIfMatch     string
+	gotContentType string
+	// gotPaths / gotMethods は複数回の呼び出しを順に見るため。
+	gotPaths   []string
+	gotMethods []string
+}
+
+// fakeStep は台本の1手。
+type fakeStep struct {
+	status int
+	body   string
 }
 
 func (f *fakeREST) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	f.calls++
 	f.gotPath = r.URL.Path
 	f.gotQuery = r.URL.Query()
 	f.gotAuth = r.Header.Get("Authorization")
+	f.gotMethod = r.Method
+	f.gotIfMatch = r.Header.Get("If-Match")
+	f.gotContentType = r.Header.Get("Content-Type")
+	f.gotPaths = append(f.gotPaths, r.URL.Path)
+	f.gotMethods = append(f.gotMethods, r.Method)
+	f.gotBody = ""
+	if r.Body != nil {
+		b, _ := io.ReadAll(r.Body)
+		f.gotBody = string(b)
+	}
 
-	status := f.status
+	status, body := f.status, f.body
+	if len(f.steps) > 0 {
+		st := f.steps[min(f.calls, len(f.steps)-1)]
+		status, body = st.status, st.body
+	}
+	f.calls++
 	if status == 0 {
 		status = http.StatusOK
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_, _ = w.Write([]byte(f.body))
+	_, _ = w.Write([]byte(body))
 }
 
 // agentPrincipal は所有者つきのエージェント（Design.md 6.5 の委譲）。
@@ -278,7 +313,7 @@ func initializeOf(t *testing.T, res rpcResponse) initializeResult {
 	return out
 }
 
-func TestToolsListReturnsFiveReadTools(t *testing.T) {
+func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 	// Design.md 8.2 の read 行から pb_get_context（手順27）を除いた5件。
 	h := New(&fakeREST{}, "v0")
 	res := decodeRPC(t, callMCP(t, h, agentPrincipal(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
@@ -316,9 +351,15 @@ func TestToolsListReturnsFiveReadTools(t *testing.T) {
 		}
 	}
 
-	want := []string{"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tasks", "pb_get_task"}
+	// read 5件（/pb-onboard が呼ぶ順）＋ write 3件（10.7.1 の開発フローの順）。
+	// **write は手順26a の3件だけである**——pb_claim_task / pb_release_task は 26b、
+	// pb_submit_result は 26c（Design.md 8.2）。
+	want := []string{
+		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tasks", "pb_get_task",
+		"pb_create_ticket", "pb_post_note", "pb_put_doc",
+	}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
-		t.Errorf("ツール = %v, want %v（/pb-onboard が呼ぶ順）", names, want)
+		t.Errorf("ツール = %v, want %v（read → write の順）", names, want)
 	}
 
 	// 必須の引数が宣言されていること。

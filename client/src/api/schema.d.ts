@@ -296,7 +296,30 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * エージェントを削除
+         * @description 自分のエージェントを削除する（ApiDesign.md 4.5.4）。必要権限は「本人」。
+         *
+         *     **物理削除である。** エージェントの `actor` 行を消すと、`agent` と
+         *     `access_token` が `ON DELETE CASCADE` で追従し、**そのエージェントの
+         *     資格情報は1本残らず消える。**
+         *
+         *     **削除前に、そのエージェントが書いたコメントを付け替える**——
+         *     付け替え先は `kind='agent'` の「削除されたエージェント」で、
+         *     **アバターは角丸四角のまま残る**（GuiDesign.md 8.4.2）。
+         *     `comment.author_id` は `NOT NULL` かつ `ON DELETE RESTRICT` なので、
+         *     付け替えないと削除そのものが失敗する。
+         *
+         *     **無効化（`is_active: false`）とは別の操作である。**
+         *     「いま止めたいが記録は残したい」が無効化、「配った資格情報ごと
+         *     消したい」が削除である。
+         *
+         *     **他人のエージェント・存在しない `id` は 404**（403 にしない。Design.md 6.4.5）。
+         *
+         *     **監査は `agent.delete`**（4.5.6）。`detail` に削除時点の表示名・
+         *     クライアント種別・プロジェクトキーと、付け替えたコメントの件数が入る。
+         */
+        delete: operations["deleteMyAgent"];
         options?: never;
         head?: never;
         /**
@@ -2538,6 +2561,28 @@ export interface components {
              *     値域は `/me/tokens`（4.4.2）と同じ。
              */
             expires_in_days: number;
+            /**
+             * @description 省略可（手順26a で足した）。**省略すると Design.md 6.5 の既定8件**
+             *     （`agent.run` `comment.create` `doc.view` `project.view`
+             *     `ticket.assign` `ticket.create` `ticket.transition` `ticket.view`）。
+             *
+             *     渡すときは**許可リストの中だけ**——既定8件に `doc.edit` を加えた
+             *     9件である。それ以外のキーは 422。`ticket.close` は許可リストにも
+             *     入れない（Design.md 6.5 の禁止。ワークフローの
+             *     `is_agent_reachable=false` でも担保される）。
+             *
+             *     **`doc.edit` を足せるのは `pb_put_doc` のためである**（Design.md 8.2）。
+             *     載せるかは「そのエージェントが誰に付いているか」で決まる——
+             *     PM のエージェントは持ち、実装だけを行うエージェントは持たない。
+             *
+             *     **空配列 `[]` は 422 である。** `/me/tokens`（4.4.2）は `[]` を
+             *     「絞り込みなし」と定めており、同じ意味に取ると**既定より広い
+             *     トークンが黙って出る**。語彙が同じで意味が逆になる欄は作らない。
+             *
+             *     **所有者の権限との積になる**ので、許可リストの中でも所有者が
+             *     持たない権限は付かない（`doc.edit` を持つのは `project_admin` だけ）。
+             */
+            scopes?: string[];
         };
         /**
          * @description ApiDesign.md 4.4.1。ページネーションも ETag も持たない（1人5本が上限で、
@@ -3090,11 +3135,15 @@ export interface components {
             /** @description `project.workflow_id` が NULL のときは null。 */
             workflow: components["schemas"]["Workflow"] | null;
             members: components["schemas"]["ProjectMember"][];
-            /** @description メンバーでないアドミニストレータでは null。 */
+            /**
+             * @description メンバーでないアドミニストレータでは null。
+             *     **エージェントのトークンでは所有者のロールが出る**（委譲。Design.md 6.5）。
+             */
             my_role: string | null;
             /**
              * @description 当該プロジェクトでの実効権限
              *     （システムロール ∪ プロジェクトロール ∩ スコープ。Design.md 6.4.1）。
+             *     **エージェントのトークンでは所有者のロールから導く**（同 6.5）。
              */
             my_permissions: string[];
             /**
@@ -5135,6 +5184,43 @@ export interface operations {
                 };
             };
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteMyAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["AgentID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除した。本文なし。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["CSRFFailed"];
+            /** @description 自分のエージェントとして見つからない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

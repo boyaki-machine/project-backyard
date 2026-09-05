@@ -263,6 +263,20 @@ type fakeQuerier struct {
 	revokeErr error
 	// cacheSaveErr は実効権限のキャッシュ書き戻しを失敗させる（手順6b）。
 	cacheSaveErr error
+	// 手順26a：エージェントの削除（ApiDesign.md 4.5.4 / 6.5）。
+	ownedAgentIDs         []string
+	agentCommentCount     int64
+	deletedAgentActorID   string
+	createdAgentActorName string
+	deleteAgentRows       int64
+
+	// 手順26a：コメントの付け替え（ApiDesign.md 4.5.4 / 6.5）。
+	reassignedTo           string
+	reassignedFrom         string
+	reassignedRows         int64
+	deletedUserActorID     string
+	createdSystemActorName string
+
 }
 
 func (q *fakeQuerier) FindLocalLoginByEmail(_ context.Context, email string) (gen.FindLocalLoginByEmailRow, error) {
@@ -2241,4 +2255,62 @@ func (q *fakeQuerier) RevokeAllAgentTokens(_ context.Context, actorID string) (i
 	q.opLog = append(q.opLog, "RevokeAllAgentTokens")
 	q.agentAllTokenRevokes = append(q.agentAllTokenRevokes, actorID)
 	return 1, nil
+}
+
+// ── エージェントの削除（ApiDesign.md 4.5.4 / 6.5。手順26a）─────────
+
+func (q *fakeQuerier) ListOwnedAgentActorIDs(_ context.Context, ownerActorID string) ([]string, error) {
+	q.opLog = append(q.opLog, "ListOwnedAgentActorIDs")
+	return q.ownedAgentIDs, nil
+}
+
+func (q *fakeQuerier) CountAgentComments(context.Context, string) (int64, error) {
+	return q.agentCommentCount, nil
+}
+
+func (q *fakeQuerier) FindDeletedAgentActor(context.Context, string) (string, error) {
+	if q.deletedAgentActorID == "" {
+		return "", pgx.ErrNoRows
+	}
+	return q.deletedAgentActorID, nil
+}
+
+func (q *fakeQuerier) CreateDeletedAgentActor(_ context.Context, arg gen.CreateDeletedAgentActorParams) error {
+	q.opLog = append(q.opLog, "CreateDeletedAgentActor")
+	q.deletedAgentActorID = arg.ID
+	q.createdAgentActorName = arg.DisplayName
+	return nil
+}
+
+func (q *fakeQuerier) DeleteMyAgentActor(_ context.Context, arg gen.DeleteMyAgentActorParams) (int64, error) {
+	q.opLog = append(q.opLog, "DeleteMyAgentActor")
+	q.deletedActors = append(q.deletedActors, arg.ActorID)
+	return q.deleteAgentRows, nil
+}
+
+// ReassignComments / FindDeletedUserActor / CreateSystemActor は、人の削除
+// （ApiDesign.md 6.5）とエージェントの削除（4.5.4）が共用する。
+//
+// **手順26a まで、フェイクに実装が無かった**——人の削除のテストは
+// commentCount を 0 のままにしており、付け替えの経路を一度も通っていなかった
+// （埋め込んだ nil の gen.Querier を呼んで panic する）。
+func (q *fakeQuerier) ReassignComments(_ context.Context, arg gen.ReassignCommentsParams) (int64, error) {
+	q.opLog = append(q.opLog, "ReassignComments")
+	q.reassignedTo = arg.NewAuthorID
+	q.reassignedFrom = arg.OldAuthorID
+	return q.reassignedRows, nil
+}
+
+func (q *fakeQuerier) FindDeletedUserActor(context.Context, string) (string, error) {
+	if q.deletedUserActorID == "" {
+		return "", pgx.ErrNoRows
+	}
+	return q.deletedUserActorID, nil
+}
+
+func (q *fakeQuerier) CreateSystemActor(_ context.Context, arg gen.CreateSystemActorParams) error {
+	q.opLog = append(q.opLog, "CreateSystemActor")
+	q.deletedUserActorID = arg.ID
+	q.createdSystemActorName = arg.DisplayName
+	return nil
 }

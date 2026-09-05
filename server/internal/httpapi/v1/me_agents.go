@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -75,6 +76,75 @@ var agentDefaultScopes = []string{
 	"ticket.create",
 	"ticket.transition",
 	"ticket.view",
+}
+
+// agentGrantableScopes は既定に足せる権限（ApiDesign.md 4.5.3。手順26a）。
+//
+// **`doc.edit` の1件だけである。** Design.md 6.5 の禁止のうち、これだけが
+// 「載せるかは**そのエージェントが誰に付いているか**で決まる」と書かれている
+// ——PM のエージェントは持ち、実装だけを行うエージェントは持たない。
+// **pb_put_doc がこの権限を要求する**（8.2）ので、発行の口が固定のままでは
+// 6.5 を実行できなかった（手順26a まで、pb_put_doc は必ず 403 になっていた）。
+//
+// **ticket.close は入れない。** 6.5 はこちらを「エージェントに開けない」と
+// 定めており、ワークフローの is_agent_reachable=false と allowed_actor_kinds で
+// DB レベルでも担保されている（DbDesign.md 7.4）。
+//
+// **任意の権限キーを通さないための許可リストである。** 素通しにすると、
+// /me/agents を叩ける本人が user.manage を載せたトークンを自分のエージェントへ
+// 渡せる——所有者との積で消えるとはいえ、アドミニストレータが所有者のときは
+// 消えない。
+var agentGrantableScopes = []string{"doc.edit"}
+
+// agentAllowedScopes は発行時に受け付ける権限の全体（既定 ∪ 足せるもの）。
+func agentAllowedScopes() map[string]bool {
+	m := make(map[string]bool, len(agentDefaultScopes)+len(agentGrantableScopes))
+	for _, k := range agentDefaultScopes {
+		m[k] = true
+	}
+	for _, k := range agentGrantableScopes {
+		m[k] = true
+	}
+	return m
+}
+
+// resolveAgentScopes は 4.5.3 の scopes を検証して並べ替える。
+//
+// **省略（nil）は既定8件。** 空配列 [] は「絞り込みなし」ではなく**空のスコープ**
+// として扱い、422 で弾く——4.4.2 の個人トークンは [] を「絞り込みなし」と
+// 定めており（本人の全権が乗る）、エージェントで同じ意味に取ると
+// **既定より広いトークンが黙って出る**。語彙が同じで意味が逆になる欄は作らない。
+//
+// **昇順で返す。** auth.EffectivePermissions が昇順で返すので、応答の並びと
+// 突き合わせるときに並べ替えが要らない（agentDefaultScopes と同じ理由）。
+func resolveAgentScopes(in []string) ([]string, *apierr.Error) {
+	if in == nil {
+		return agentDefaultScopes, nil
+	}
+	if len(in) == 0 {
+		return nil, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+			Field: "scopes", Code: "invalid",
+			Message: "スコープを空にはできません。省略すると既定の権限で発行します",
+		})
+	}
+	allowed := agentAllowedScopes()
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, k := range in {
+		if !allowed[k] {
+			return nil, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+				Field: "scopes", Code: "invalid",
+				Message: "エージェント用トークンに指定できない権限です: " + k,
+			})
+		}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // projectRef は応答の project 部分（ApiDesign.md 4.5.1）。
@@ -658,6 +728,8 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 
 type createAgentTokenRequest struct {
 	ExpiresInDays *int `json:"expires_in_days"`
+	// Scopes は省略可（ApiDesign.md 4.5.3。手順26a）。省略すると既定8件。
+	Scopes []string `json:"scopes"`
 }
 
 func (h *handler) createMyAgentToken(w http.ResponseWriter, r *http.Request) {
@@ -694,12 +766,18 @@ func (h *handler) createMyAgentToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	scopes, scopeErr := resolveAgentScopes(req.Scopes)
+	if scopeErr != nil {
+		apierr.Write(w, r, scopeErr)
+		return
+	}
+
 	plaintext, err := auth.NewToken(auth.AgentTokenPrefix)
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return
 	}
-	encodedScopes, err := auth.EncodeScopes(agentDefaultScopes)
+	encodedScopes, err := auth.EncodeScopes(scopes)
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return
@@ -789,7 +867,7 @@ func (h *handler) createMyAgentToken(w http.ResponseWriter, r *http.Request) {
 			Detail: map[string]any{
 				"client_kind": ag.ClientKind,
 				"project_key": ag.ProjectKey.String,
-				"scopes":      agentDefaultScopes,
+				"scopes":      scopes,
 				"expires_at":  expiresAt.UTC().Format(time.RFC3339),
 			},
 		})
@@ -804,7 +882,7 @@ func (h *handler) createMyAgentToken(w http.ResponseWriter, r *http.Request) {
 		ID:          tokenID,
 		Token:       plaintext,
 		TokenPrefix: auth.TokenPrefix(plaintext),
-		Scopes:      agentDefaultScopes,
+		Scopes:      scopes,
 		IssuedAt:    Time(issuedAt),
 		ExpiresAt:   apiTime(&expiresAt),
 		Status:      tokenStatusActive,
@@ -875,4 +953,171 @@ func writeAgentError(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+}
+
+// ── DELETE /api/v1/me/agents/:id（ApiDesign.md 4.5.4。手順26a）─────
+
+// deletedAgentDisplayName は「削除されたエージェント」の付け替え先の表示名。
+//
+// **kind='agent' である**（deletedUserDisplayName の kind='system' と分ける）。
+// GuiDesign.md 8.4.2 はアバターの**形**で人とエージェントを区別しており、
+// system へ寄せると過去のコメントが全部円になって人が書いたように見える。
+const deletedAgentDisplayName = "削除されたエージェント"
+
+// deleteMyAgent は DELETE /me/agents/:id を処理する（ApiDesign.md 4.5.4）。
+//
+// **物理削除である。** エージェントの actor 行を消すと、agent と access_token が
+// ON DELETE CASCADE で追従し、**そのエージェントの資格情報は1本残らず消える。**
+//
+// **手順26a で足した。** 24b では「消す API を持たない」としていたが、その根拠
+// （監査から辿れる先を残す）は 4.4.3 がトークンについて述べたものの写しで、
+// エージェントには当てはまらなかった——audit_log.actor_id は ON DELETE SET NULL で
+// actor_kind / actor_label を非正規化して持つ（0008）ため、**アクターを消しても
+// 監査は読める**。26a で write 系ツールが入り、ticket.create / comment.create /
+// doc.edit を持つ資格情報を配るようになった以上、**それを完全に取り消す手段が要る。**
+//
+// **無効化（is_active: false）は残す。** 「いま止めたいが記録は残したい」と
+// 「消したい」は別の要求である（GuiDesign.md 5.8.2）。
+//
+// **If-Match は要求しない**（2.8）。deleteUser と同じく、削除に「失われる編集
+// 内容」が無く、競合しても結果は同じ「消えている」に収束する。
+func (h *handler) deleteMyAgent(w http.ResponseWriter, r *http.Request) {
+	p := auth.PrincipalFromContext(r.Context())
+	if p == nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("DELETE /me/agents/:id が認証ミドルウェアを通っていない")))
+		return
+	}
+	agentID := chi.URLParam(r, "id")
+
+	ctx := r.Context()
+	rec := audit.FromRequest(r)
+
+	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		ag, err := q.FindMyAgent(ctx, gen.FindMyAgentParams{
+			ActorID: agentID, OwnerActorID: p.ActorID,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				// **他人のエージェントも 404 である**（Design.md 6.4.5）。
+				// 403 にすると「存在すること」が漏れる。
+				return apierr.New(apierr.NotFound)
+			}
+			return fmt.Errorf("エージェントを読めない: %w", err)
+		}
+
+		// **有効な task_lease を保持中なら 409**（4.5.4）は手順26b で足す。
+		// task_lease に行を書く経路（pb_claim_task）が 26b で入るまで起きない。
+
+		moved, err := reassignAgentComments(ctx, q, agentID)
+		if err != nil {
+			return err
+		}
+
+		// **監査は削除の前に書く**（6.5 と同じ理由）。同じトランザクションなので、
+		// 削除が失敗すれば記録も残らない。
+		if err := rec.Record(ctx, q, audit.Entry{
+			Action:     audit.AgentDelete,
+			Result:     audit.Success,
+			TargetType: "agent",
+			TargetID:   agentID,
+			Detail: map[string]any{
+				"display_name":        ag.DisplayName,
+				"client_kind":         ag.ClientKind,
+				"project_key":         ag.ProjectKey.String,
+				"reassigned_comments": moved,
+			},
+		}); err != nil {
+			return err
+		}
+
+		rows, err := q.DeleteMyAgentActor(ctx, gen.DeleteMyAgentActorParams{
+			ActorID: agentID, OwnerActorID: p.ActorID,
+		})
+		if err != nil {
+			return fmt.Errorf("エージェント %q を削除できない: %w", agentID, err)
+		}
+		if rows == 0 {
+			// FindMyAgent を通った直後に消えた場合。204 ではなく 404 に倒す。
+			return apierr.New(apierr.NotFound)
+		}
+		return nil
+	})
+	if err != nil {
+		writeAgentError(w, r, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// reassignAgentComments はエージェントのコメントを「削除されたエージェント」へ
+// 付け替え、動かした件数を返す（ApiDesign.md 4.5.4）。
+//
+// comment.author_id は NOT NULL かつ ON DELETE RESTRICT であり、**DBが
+// 「付け替えてからでないと消せない」という順序を強制する**（DbDesign.md 6.7）。
+//
+// **コメントが1件も無ければ付け替え先も作らない**（reassignCommentsToSystemActor
+// と同じ）。手順26a より前に作られたエージェントは1件も書いていない。
+func reassignAgentComments(ctx context.Context, q gen.Querier, agentActorID string) (int64, error) {
+	n, err := q.CountAgentComments(ctx, agentActorID)
+	if err != nil {
+		return 0, fmt.Errorf("コメント数を数えられない: %w", err)
+	}
+	if n == 0 {
+		return 0, nil
+	}
+
+	destID, err := q.FindDeletedAgentActor(ctx, deletedAgentDisplayName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		destID = ulidgen.New()
+		if err := q.CreateDeletedAgentActor(ctx, gen.CreateDeletedAgentActorParams{
+			ID:          destID,
+			DisplayName: deletedAgentDisplayName,
+		}); err != nil {
+			return 0, fmt.Errorf("付け替え先のアクターを作成できない: %w", err)
+		}
+	} else if err != nil {
+		return 0, fmt.Errorf("付け替え先のアクターを引けない: %w", err)
+	}
+
+	// ReassignComments（user.sql）を共用する。付け替えは「投稿者を差し替える」
+	// 操作であって、人かエージェントかで手順が変わらない。
+	moved, err := q.ReassignComments(ctx, gen.ReassignCommentsParams{
+		NewAuthorID: destID,
+		OldAuthorID: agentActorID,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("コメントの投稿者を付け替えられない: %w", err)
+	}
+	return moved, nil
+}
+
+// purgeOwnedAgents は、その人が所有するエージェントをすべて消す
+// （ApiDesign.md 6.5。人の削除から呼ぶ）。消した件数を返す。
+//
+// **agent.owner_actor_id の ON DELETE CASCADE では足りない。** あれが消すのは
+// agent の行だけで、FK の向きは agent.actor_id → actor なので、**エージェントの
+// actor 行・その access_token・そのコメントは残る。** 放置すると、agent 行を
+// 失った actor が FindAccessTokenByHash の LEFT JOIN agent から外れ、
+// **認証は通るが実効権限が0件のトークンが残る。**
+//
+// **監査は人の user.delete 1行に集約する**（6.5）。利用者から見た操作は1回で
+// あり、1人の削除で agent.delete が数行並ぶと「誰を消したか」が読みにくくなる。
+func purgeOwnedAgents(ctx context.Context, q gen.Querier, ownerActorID string) (int, error) {
+	ids, err := q.ListOwnedAgentActorIDs(ctx, ownerActorID)
+	if err != nil {
+		return 0, fmt.Errorf("所有するエージェントを読めない: %w", err)
+	}
+	for _, id := range ids {
+		if _, err := reassignAgentComments(ctx, q, id); err != nil {
+			return 0, err
+		}
+		if _, err := q.DeleteMyAgentActor(ctx, gen.DeleteMyAgentActorParams{
+			ActorID: id, OwnerActorID: ownerActorID,
+		}); err != nil {
+			return 0, fmt.Errorf("エージェント %q を削除できない: %w", id, err)
+		}
+	}
+	return len(ids), nil
 }
