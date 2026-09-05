@@ -52,7 +52,8 @@ STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@1
 	dev-reset dev-seed dev-info \
 	stg-init stg-up stg-down stg-psql stg-migrate stg-build stg-run stg-stop stg-admin-create \
 	dev-client gen-api build-client sync-webui build clean-webui \
-	version version-check bump-build bump-minor bump-major release-tag
+	version version-check bump-build bump-minor bump-major release-tag \
+	docs-size
 
 ## DB を起動する
 # TODO(手順13以降): deploy/Dockerfile 作成後、`up -d` に戻して app も起動対象にする
@@ -298,3 +299,31 @@ bump-major:
 release-tag: version-check
 	@git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
 	@echo "タグ v$(VERSION) を作成した。push は git push origin v$(VERSION) で手動で行う"
+
+# ── 文書の分量（CLAUDE.md「文書の分量」）────────────────────────
+
+# 毎セッション必ず読む文書。合計にだけ予算を置く（個別の閾値は持たない）。
+SESSION_DOCS := CLAUDE.md LEARNINGS.md docs/PROGRESS.md .claude/commands/pb-step.md
+DOCS_BUDGET  := 81920
+
+## 毎セッション読む文書の合計サイズを測る（予算 80KB。超過で非ゼロ終了）
+docs-size:
+	@total=0; \
+	for f in $(SESSION_DOCS); do \
+		if [ -f "$(CURDIR)/$$f" ]; then \
+			n=$$(wc -c < "$(CURDIR)/$$f" | tr -d ' '); \
+		else n=0; fi; \
+		total=$$(( total + n )); \
+		printf '%8d  %s\n' "$$n" "$$f"; \
+	done; \
+	printf '%8d  合計（予算 %d = %dKB）\n' "$$total" "$(DOCS_BUDGET)" "$$(( $(DOCS_BUDGET) / 1024 ))"; \
+	echo "-- 最長行 Top5 --"; \
+	for f in $(SESSION_DOCS); do \
+		[ -f "$(CURDIR)/$$f" ] && LC_ALL=C awk -v n="$$f" '{ if (length($$0) > m) m = length($$0) } END { printf "%8d  %s\n", m, n }' "$(CURDIR)/$$f"; \
+	done | sort -rn | head -5; \
+	if [ "$$total" -gt "$(DOCS_BUDGET)" ]; then \
+		echo "NG: 予算を $$(( total - $(DOCS_BUDGET) )) バイト超過している"; \
+		echo "    掃除する（pb-step.md 手順7）。閾値の引き上げは利用者だけが判断する"; \
+		exit 1; \
+	fi; \
+	echo "OK: 予算内（残り $$(( $(DOCS_BUDGET) - total )) バイト）"
