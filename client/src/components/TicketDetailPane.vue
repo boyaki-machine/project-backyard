@@ -1094,6 +1094,35 @@ function errorFor(field: string): string {
             </dd>
           </div>
 
+          <!-- 実行者（5.5「実行者の行」。手順26b）。**居るときだけ1行出す**
+               ——大半のチケットで空になる欄に、最上部の1行を常時使わない。
+               **出せるのは「消す」だけ**で、立てるのはエージェント自身である
+               （9.6 の遷移の副作用）。ピッカーを置くと、人が指名した実行者と
+               実際に動いたエージェントが食い違う状態を作れてしまう。 -->
+          <div v-if="ticket.working_agent" class="meta-item wide">
+            <dt>実行者</dt>
+            <dd>
+              <span>
+                <span aria-hidden="true">{{ actorMark(ticket.working_agent.kind) }}</span>
+                {{ ticket.working_agent.display_name }}
+              </span>
+              <!-- **確認モーダルを出さない**（6.3）。失われるのは自己申告の1欄で、
+                   次の遷移で立ち直る -->
+              <button
+                v-if="canEdit && canAssign"
+                type="button"
+                class="ref-action"
+                :disabled="busy"
+                @click="selectField({ working_agent_id: null }, 'working_agent_id')"
+              >
+                解除
+              </button>
+              <p v-if="errorFor('working_agent_id')" class="field-error" role="alert">
+                {{ errorFor('working_agent_id') }}
+              </p>
+            </dd>
+          </div>
+
           <div class="meta-item">
             <dt>優先度</dt>
             <dd>

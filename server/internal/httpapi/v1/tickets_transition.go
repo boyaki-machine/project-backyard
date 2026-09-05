@@ -8,6 +8,14 @@
 // （9.5.2）、9.2.1 の ?open=true（closed_at IS NULL）が「完了していないもの」と
 // 一致することが保証される。
 //
+// **エージェントが遷移すると working_agent_id が自分になる**（9.6。手順26b）。
+// 実行者の自己申告であり、担当（assignee_id）とは別の欄である（DbDesign.md 6.6）。
+// **activity には記録しない**——遷移の行が「誰が進めたか」を actor_id で既に
+// 持っており、同じ事実が2行になる。
+//
+// **エージェントは、担当が自分の所有者であるチケットしか進められない**（検証6）。
+// 判定は ticket_workflow.go の agentMayWorkOn にあり、9.7 と共有する。
+//
 // **If-Match を要求しない**（9.6）。遷移そのものが競合を検出する——2人が同時に
 // 「進行中 → レビュー」を実行すると、後発は「レビュー → レビュー」を要求する
 // ことになり、workflow_transition に定義が無いため検証2 で 409 になる。
@@ -76,11 +84,6 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actor := transitionActor{kind: p.ActorKind}
-	if a := auth.ProjectAuthzFromContext(r.Context(), key); a != nil {
-		actor.permissions = a.Permissions
-	}
-
 	ctx := r.Context()
 	rec := activity.FromRequest(r)
 	var (
@@ -105,6 +108,16 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
+		// **検証3〜6 の材料は、チケットを読んだ後でないと揃わない**（手順26b）。
+		// assigneeIsOwner が行に依存するためで、9.7 が同じ関数を通す。
+		actor := transitionActor{
+			kind:            p.ActorKind,
+			assigneeIsOwner: agentMayWorkOn(p, before.AssigneeID),
+		}
+		if a := auth.ProjectAuthzFromContext(ctx, key); a != nil {
+			actor.permissions = a.Permissions
+		}
+
 		// 検証1：遷移先がワークフローに存在するか（422 unknown_status）。
 		target := wf.findStatus(req.To)
 		if target == nil {
@@ -118,7 +131,7 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 		// **同じステータスへの遷移は定義されえない**（ck_workflow_transition_diff）。
 		// 検証2 が 409 に倒すので、ここで特別扱いはしない。
 
-		// 検証2：定義が無ければ 409、検証3〜5 は 403。
+		// 検証2：定義が無ければ 409、検証3〜6 は 403。
 		if reason := wf.denyTransition(before.StatusKey, *target, actor); reason != "" {
 			writeErr = transitionDenied(wf, before.StatusKey, req.To, reason)
 			return errTicketReference
@@ -135,6 +148,23 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("チケット %d のステータスを変えられない: %w", seq, err)
 		}
 		_ = newVersion
+
+		// **エージェントは、遷移に成功した時点で自分を実行者として立てる**（9.6）。
+		// 「着手した」と「宣言した」が別々に起こる状態を作らないための副作用で、
+		// 専用の操作を持たない（DbDesign.md 6.6）。**別のエージェントが入って
+		// いれば上書きする**——途中で替えるのが通常の運用であり、排他ではない。
+		//
+		// **version を動かさない。** 直前の SetTicketStatus が既に +1 しており、
+		// ここでもう一度上げると1回の遷移で2つ進む（2.8）。
+		if p.ActorKind == actorKindAgent {
+			if err := q.SetTicketWorkingAgent(ctx, gen.SetTicketWorkingAgentParams{
+				WorkingAgentID: pgtype.Text{String: p.ActorID, Valid: true},
+				ProjectID:      projectID,
+				Seq:            seq,
+			}); err != nil {
+				return fmt.Errorf("実行者を記録できない: %w", err)
+			}
+		}
 
 		// **コメントは同じトランザクションで作る**（9.6）。遷移だけ通って
 		// 経緯が残らない状態を作らない。

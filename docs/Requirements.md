@@ -444,11 +444,13 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 | `pb_list_tasks` | read | 2 | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `per_page?` | チケット一覧（軽量） | ボードの状況把握。**`assignee=me` で自分のチケット**——エージェントのトークンでは**所有者**を指す（`Design.md` 8.5） |
 | `pb_get_context` | read | 2 | `task_id`, `budget?` | コンテキストパック（10.4） | 実装に必要な前提情報一式 |
 | `pb_create_ticket` | write | 2 | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?` | 9.5.1 の応答をそのまま | **議論の結果をその場で起票する。** 10.0.2 の 1・3 への手当。**引数名は REST の本体フィールドに揃える**（`Design.md` 8.5.1） |
-| `pb_claim_task` | write | 2 | `id`, `agent_id` | `lease_id`, `expires_at` | 着手宣言。ステータスを「実装中」へ。**手順26b**（REST を新設する） |
+| `pb_transition_task` | write | 2 | **`seq`**, `to`, `comment?` | 9.5.1 の応答をそのまま | **状態を進める。** `to` はワークフローのステータスキー。**着手の宣言もこれで行う**（`working_agent_id` が自動で立つ）。手順26b |
+| `pb_list_transitions` | read | 2 | **`seq`** | 9.7 の応答をそのまま | **いまどの状態へ進めるか**と、進めない先の理由。手順26b |
 | `pb_post_note` | write | 2 | **`seq`**, `body_md`, `kind?` | 9.8 の1件をそのまま | 途中経過・判明した事実の記録。**`refs` は落とした**——`ApiDesign.md` 9.8 に対応するフィールドが無い（`Design.md` 8.5.1） |
 | `pb_put_doc` | write | 2 | `path`, `body_md`, `change_reason?` | 10.3 の応答をそのまま | **文書の更新。** 権限を持つ人の指示で呼ぶ（10.6.2）。**本文の全置換**で、`If-Match` は MCP 層が付ける（`Design.md` 8.5.1） |
 | `pb_submit_result` | write | 2 | `task_id`, `report`（10.6.1） | 受理結果、未充足DoD項目 | 完了レポートの返却。**手順26c**（`agent_run` / `agent_report` を Phase 3 から戻す。利用者の判断、2026-09-05） |
-| `pb_release_task` | write | 2 | `id`, `reason` | — | 中断時のリース解放。**手順26b** |
+| `pb_claim_task` | write | **3** | `seq` | `lease_id`, `expires_at` | 着手時のリース取得。**Phase 3 へ送った**（2026-09-05。10.3.3） |
+| `pb_release_task` | write | **3** | `seq`, `reason` | — | 中断時のリース解放。**Phase 3 へ送った**（同上） |
 | `pb_search` | read | 3 | `query`, `scope?`, `top_k?` | 該当コメント/決定/文書 | 履歴横断のRAG検索 |
 | `pb_next_task` | read | 3 | `capabilities?`, `agent_id?` | 実行可能なチケット | 依存解決済み・readiness良好なものをPB側が選定 |
 | `pb_propose_subtasks` | write | 3 | `task_id`, `subtasks[]`, `rationale` | 提案ID | 分割提案（承認待ちキューへ） |
@@ -460,7 +462,23 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 
 `kind` の値は第6.5節で定義した情報類型（`decision` / `discussion` / `artifact` / `caveat` / `reference`）をそのまま用いる。**`comment.kind` が既にこの5値を持つ**（`DbDesign.md` 6.7）ため、`pb_post_note` は新しいテーブルを必要としない。エージェントは構造化して報告できるため、人間のコメントより分類の精度が高く、6.5で想定していたLLMによる事後分類のコストを削減できる。
 
-### 10.3.3 リース（lease）モデル
+### 10.3.3 リース（lease）モデル — **Phase 3 へ送った**
+
+**Phase 2 では実装しない**（利用者の判断、2026-09-05。手順26b）。**代わりに置いたのは `ticket.working_agent_id`（実行者の自己申告）と、`ApiDesign.md` 9.6 の検証6（エージェントは所有者の担当だけを進められる）である。**
+
+**送った理由は、リースが解こうとしていた3つのうち、Phase 2 で成立するものが無かったことである。**
+
+| 解こうとしていたもの | Phase 2 での判定 |
+|---|---|
+| **可視性**（いま誰が触っているか。10.0.2 の 4） | **状態・担当・実行者の3欄で足りる。** 下記の TTL 30分は**エージェントのセッションの時間尺度**であり、**PB は分野を問わないプロジェクト管理を目指す**（10.0）。建築・法務・企画の「進行中」に30分の失効は合わない |
+| **排他**（同じチケットを2つのエージェントが同時に処理しない） | **Phase 2 では発生しない。** 10.8.6 の `/pb-implement <seq>` は**人がチケット番号を指定し、方針の承認を経てから**走る。エージェントが自律的に拾うのは `pb_next_task`（Phase 3） |
+| **詰まり防止**（放置された占有を解く） | 占有しないので詰まらない |
+
+**もう1つの理由は、本節が定めるリースが実際には何も排他しないことである。** 本節自身が「**第一の目的は、いま誰がどのチケットを触っているかを他の参加者に見せること**」「少人数運用では**緩やかな整合**で実害はない」と書いており、**設計文書のどこにも「リース保持中は他者の◯◯を拒む」という規定が無い**（`Design.md` 8.2）。**`lease_token` という名前だけが錠前の語彙を持ち込んでいた。**
+
+**再検討の条件は、自律取得（`pb_next_task`）を実装するときである。** そのときは `working_agent_id` を「宣言」から「条件」へ格上げすれば足り、テーブルを足さずに済む（`DbDesign.md` 6.6）。**TTL による失効（`stale` の検知）が要ると分かった時点で**、`DbDesign.md` 8.2.2 の器を起こす。器は 0019 で既に在る。
+
+以下は Phase 3 で起こすときの設計である。
 
 タスクの take は排他ロックではなく **リース** とする。
 
@@ -746,7 +764,7 @@ PM が「文書へ反映せよ」と指示したときに `pb_put_doc` が呼ば
   /pb-implement 123
   → エージェントが pb_get_task / pb_get_context で契約と前提を取得
   → 不明点を人間に確認（対話）
-  → 実装方針を提示・承認 → pb_claim_task
+  → 実装方針を提示・承認 → pb_transition_task（進行中へ）
   → 実装（重要判断は都度 pb_post_note）
   → DoD自己検証 → pb_submit_result
 
@@ -992,7 +1010,10 @@ allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 - 実装方針（変更するファイル、アプローチ、想定される影響）を提示し、承認を得る
 
 ## 4. 着手
-- 承認後、`pb_claim_task` で着手を記録する（**他の参加者から作業中と見える**）
+- 承認後、`pb_transition_task` で状態を進行中へ進める（**他の参加者からボードで見える**。
+  同時に `ticket.working_agent_id` が自分になる。`ApiDesign.md` 9.6）
+- **進められるのは、自分の所有者が担当になっているチケットだけである。** 担当が付いて
+  いなければ、実装せず利用者に伝える（`ApiDesign.md` 9.6 の検証6）
 - 作業用の worktree とブランチを作成する
   `git worktree add ../<repo>-pb-$1 -b <接頭辞>/pb-$1-<スラッグ>`
   接頭辞は作業の種別で決める（`feature` / `fix` / `docs`。10.7.3）

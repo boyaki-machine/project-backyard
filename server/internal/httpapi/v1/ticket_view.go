@@ -63,17 +63,21 @@ type sprintRef struct {
 // 持たない**——列は DbDesign.md 6.6 に先行定義されているが、GuiDesign.md 5.5 が
 // 「Phase 1 では非表示」と決めている。画面が使わない項目を応答に載せない。
 type ticketListItem struct {
-	ID          string           `json:"id"`
-	Seq         int32            `json:"seq"`
-	Type        string           `json:"type"`
-	Title       string           `json:"title"`
-	Status      ticketStatusView `json:"status"`
-	Priority    *string          `json:"priority"`
-	Assignee    *actorRef        `json:"assignee"`
-	Reporter    *actorRef        `json:"reporter"`
-	ParentSeq   *int32           `json:"parent_seq"`
-	HasChildren bool             `json:"has_children"`
-	SortKey     *string          `json:"sort_key"`
+	ID       string           `json:"id"`
+	Seq      int32            `json:"seq"`
+	Type     string           `json:"type"`
+	Title    string           `json:"title"`
+	Status   ticketStatusView `json:"status"`
+	Priority *string          `json:"priority"`
+	Assignee *actorRef        `json:"assignee"`
+	Reporter *actorRef        `json:"reporter"`
+	// WorkingAgent は「誰が実際に処理しているか」（9.2.2、DbDesign.md 6.6。手順26b）。
+	// **Assignee が「誰の仕事か」を表すのに対し、こちらは実行者である。**
+	// エージェントが遷移したときに自分で立て（9.6）、消化しても消えない。
+	WorkingAgent *actorRef `json:"working_agent"`
+	ParentSeq    *int32    `json:"parent_seq"`
+	HasChildren  bool      `json:"has_children"`
+	SortKey      *string   `json:"sort_key"`
 	// StagedAt は「オンステージ」（9.2.2、DbDesign.md 6.6）。null がバックログ、
 	// 値が入っているものがオンステージで、値は「いつ上げたか」である。
 	// **進捗（status）とは独立した軸**で、「未着手だがオンステージ」を表せる。
@@ -151,6 +155,7 @@ func buildTicketListItem(row gen.ListTicketsRow, tags []ticketTagRef) ticketList
 		Priority:      textPtr(row.Priority),
 		Assignee:      actorRefOf(row.AssigneeID, row.AssigneeKind, row.AssigneeName),
 		Reporter:      actorRefOf(row.ReporterID, row.ReporterKind, row.ReporterName),
+		WorkingAgent:  actorRefOf(row.WorkingAgentID, row.WorkingAgentKind, row.WorkingAgentName),
 		ParentSeq:     int4Ptr(row.ParentSeq),
 		HasChildren:   row.HasChildren,
 		SortKey:       textPtr(row.SortKey),
@@ -225,6 +230,7 @@ func buildTicketDetail(
 			Priority:      textPtr(row.Priority),
 			Assignee:      actorRefOf(row.AssigneeID, row.AssigneeKind, row.AssigneeName),
 			Reporter:      actorRefOf(row.ReporterID, row.ReporterKind, row.ReporterName),
+			WorkingAgent:  actorRefOf(row.WorkingAgentID, row.WorkingAgentKind, row.WorkingAgentName),
 			ParentSeq:     int4Ptr(row.ParentSeq),
 			HasChildren:   row.HasChildren,
 			SortKey:       textPtr(row.SortKey),

@@ -7,7 +7,7 @@
 > - 対象読者：サーバ実装者（人間およびAIエージェント）
 > - **方針変更**：SQLite先行をやめ、**初期から PostgreSQL を前提とする**（2章）
 > - 関連：`Design.md`（全体設計・認証設計）、`ApiDesign.md`、`GuiDesign.md`、`Requirements.md`
-> - 状態：Phase 1 のDDL・シードは確定・適用済み（0001〜0016）。**Phase 2 は 0018 まで適用済み**（0017 = 8.1 の器、0018 = 8.1.2 の初期本文の直し）。以降の Phase 2/3 はテーブル構成案
+> - 状態：Phase 1 のDDL・シードは確定・適用済み（0001〜0016）。**Phase 2 は 0021 まで適用済み**（0017 = 8.1 の器、0018 = 8.1.2 の初期本文の直し、0019 = 8.2 の器、0020 = クライアント種別、0021 = 6.6 の `working_agent_id`）。以降の Phase 2/3 はテーブル構成案
 
 **`Design.md` 旧第5章「データベース設計」は本書に統合された。** 以降、DBに関する記述は本書を正とする。
 
@@ -803,6 +803,8 @@ CREATE TABLE ticket (
   priority       text    CHECK (priority IN ('lowest','low','medium','high','highest')),
   assignee_id    char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
   reporter_id    char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  working_agent_id char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+                                            -- 0021 で追加。実行者の自己申告
 
   estimate_point double precision,
   estimate_hours double precision,
@@ -895,6 +897,35 @@ CREATE INDEX idx_ticket_link_target ON ticket_link (target_ticket_id);
 **`parent_id` の循環禁止はアプリ層で検証する。** `ck_ticket_not_self_parent` が防げるのは自己参照（A→A）だけで、A→B→A のような循環は `CHECK` では表現できない。`ApiDesign.md` 9.5.2 が `parent_cycle` として `422` を返す。**階層の深さに上限は設けない**（表示側が5段でインデントを打ち切る。`GuiDesign.md` 5.4）。
 
 **`closed_at` はステータス遷移の副作用としてのみ動く。** 遷移先の `workflow_status.category` が `done` なら設定し、`done` 以外へ戻したら `NULL` へ戻す（`ApiDesign.md` 9.6）。直接更新させないことで、一覧の「未完了」フィルタ（`closed_at IS NULL`）と集計が食い違わないようにする。
+
+### `working_agent_id` — 誰が実際に処理しているか（0021 で追加）
+
+**担当（`assignee_id`）と実行者を別の列にする**（利用者の判断、2026-09-05）。
+
+| 列 | 表すもの | 誰が書くか | いつ消えるか |
+|---|---|---|---|
+| `assignee_id` | **誰の仕事か**（責任者） | 人が割り当てる | 担当を外したとき |
+| `working_agent_id` | **誰が実際に処理しているか**（実行者） | **エージェントが自分で宣言する** | **消えない。人が消す** |
+
+**1列では両方を表せなかった。** `assignee_id` は `actor` を参照するのでエージェントを入れられ、`GuiDesign.md` 5.4 は「担当がエージェント」を想定した表示を定めている。ところが `Design.md` 8.5（手順25）は「**担当は人が持つ**」と決め、MCP の `assignee=me` を所有者へ写した。**「田中の担当だが claude が処理している」を表す欄が無かった**のが食い違いの正体で、列を分けると両方が正しくなる。
+
+**この列は権限判定に使わない。** エージェントが状態を変えてよいかは `assignee_id` が所有者かどうかで決まる（`ApiDesign.md` 9.6 の検証6）。**人がいつでも消せる列を判定に使うと、消しただけで作業が止まる。**
+
+**エージェントの宣言は遷移のときに自動で立つ**（`ApiDesign.md` 9.6）。専用の操作を持たないのは、「着手した」と「宣言した」が別々に起こる状態を作らないためである。**チケットを消化しても消さない**——「このチケットは誰が処理したか」は完了後にこそ読みたい情報である（`activity` を辿らずに1列で分かる）。担当を付け替えるように、人が `PATCH` で消すか差し替える（`ApiDesign.md` 9.5.2）。
+
+**`ON DELETE SET NULL` は `assignee_id` と同じ。** エージェントを削除しても、そのエージェントが処理したチケットは残る。
+
+#### `task_lease` を採らなかった
+
+**8.2.2 の `task_lease` は Phase 2 では使わない**（利用者の判断、2026-09-05）。`Requirements.md` 10.3.3 のリースが解こうとしていた3つを分解した結果である。
+
+| 解こうとしていたもの | Phase 2 での扱い |
+|---|---|
+| **可視性**（いま誰が触っているか） | `assignee_id` ＋ `working_agent_id` ＋ `status_key` で足りる。リースの TTL（30分）は**エージェントのセッションの時間尺度**であり、PB が目指す分野横断のプロジェクト管理には合わない |
+| **排他**（同じチケットを2つのエージェントが同時に処理しない） | **Phase 2 では発生しない。** `/pb-implement <seq>` は人がチケット番号を指定し、方針の承認を経てから走る。エージェントが自律的に拾うのは `pb_next_task`（Phase 3） |
+| **詰まり防止**（放置された占有を解く） | 占有しないので詰まらない |
+
+**再検討の条件は「自律取得（`pb_next_task`）を実装するとき」である。** そのときは `working_agent_id` を「宣言」から「条件」へ格上げすればよく（自分でなければ拒む）、**テーブルを足さずに済む。** TTL による失効（`stale` の検知）が要ると分かった時点で、8.2.2 の器を起こす。
 
 ## 6.7 コメントと添付（0007）
 
@@ -1535,16 +1566,18 @@ Phase 2
   0019_agent.sql          agent, task_lease, agent.run の再配布            ← 適用済み
   0020_agent_client_kind.sql
                           agent_client_kind（クライアント種別のカタログ）と FK 化 ← 適用済み
+  0021_ticket_working_agent.sql
+                          ticket.working_agent_id（実行者の自己申告。6.6）  ← 適用済み
 Phase 3
-  0021_agent_run.sql      agent_run, agent_report, context_pack_log
-  0022_knowledge.sql      knowledge, knowledge_revision, proposal
-  0023_comment_signal.sql comment_signal
-  0024_embedding.sql      vector 拡張 + embedding
-  0025_project_event.sql  project_event
-  0026_analytics.sql      estimate_record, contribution
+  0022_agent_run.sql      agent_run, agent_report, context_pack_log
+  0023_knowledge.sql      knowledge, knowledge_revision, proposal
+  0024_comment_signal.sql comment_signal
+  0025_embedding.sql      vector 拡張 + embedding
+  0026_project_event.sql  project_event
+  0027_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で2回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 がさらに1つ後ろへ動いた。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026** である。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で3回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かした。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027** である（手順26b の 0021 で3回目）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 
@@ -1842,6 +1875,12 @@ CREATE INDEX idx_task_lease_expiry ON task_lease (expires_at) WHERE released_at 
 ```
 
 **部分一意インデックスで「1チケットに有効なリースは1つ」をDBレベルで保証する。** アプリ側の排他制御に依存しないため、エージェントが並行して claim しても破綻しない。
+
+**この器は Phase 2 では使わない**（利用者の判断、2026-09-05。手順26b）。**行を1行も書かない。** 判断の理由と再検討の条件は 6.6「`task_lease` を採らなかった」にある。要点だけ再掲すると——**排他が実際に要るのは自律取得（`pb_next_task`、Phase 3）からで、Phase 2 は人がチケット番号を指定して走らせる**ため、同じチケットを2つのエージェントが取り合う状況が起きない。
+
+**`lease_token` の用途を本節は定義していなかった。** 分散リースの定型でいう**能力トークン**——リースを取った側に秘密値を渡し、以降の操作でその提示を求めることで、呼び出し元の身元とは独立に所持を証明させるもの——を意図した列である。**PB では要らない**：MCP の口は Bearer 必須で呼び出し元のアクターが常に判明しており（`Design.md` 8.3）、`uq_task_lease_active` が「1チケットに有効なリースは1つ」を保証するので、`actor_id` の一致だけで所持証明が済む。**要るようになるのは、同じエージェント登録で複数のセッションを同時に走らせたとき**（同一トークンを2つの端末で `export` した場合）である。`Requirements.md` 10.10.3 が「Claude Code と VS Code を使えば2行になる」と定めるので、クライアントが違うだけなら `actor_id` で区別できる。
+
+**器を消さずに残す。** 前進のみのマイグレーション（5.3）では、使わない表を落とすより寝かせるほうが安い。
 
 ### 8.2.3 `dod_item` — 6.11 へ移動
 

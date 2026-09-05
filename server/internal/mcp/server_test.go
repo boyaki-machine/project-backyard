@@ -351,15 +351,19 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 		}
 	}
 
-	// read 5件（/pb-onboard が呼ぶ順）＋ write 3件（10.7.1 の開発フローの順）。
-	// **write は手順26a の3件だけである**——pb_claim_task / pb_release_task は 26b、
-	// pb_submit_result は 26c（Design.md 8.2）。
+	// read 5件（/pb-onboard が呼ぶ順）＋ write 3件（10.7.1 の開発フローの順）
+	// ＋ 遷移2件（見てから動かす順。手順26b）。
+	//
+	// **pb_submit_result は 26c**（Design.md 8.2）。**pb_claim_task /
+	// pb_release_task は Phase 3 へ送った**（Requirements.md 10.3.3——排他が
+	// 実際に要るのは自律取得 pb_next_task からである）。
 	want := []string{
 		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tasks", "pb_get_task",
 		"pb_create_ticket", "pb_post_note", "pb_put_doc",
+		"pb_list_transitions", "pb_transition_task",
 	}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
-		t.Errorf("ツール = %v, want %v（read → write の順）", names, want)
+		t.Errorf("ツール = %v, want %v（read → write → 遷移 の順）", names, want)
 	}
 
 	// 必須の引数が宣言されていること。

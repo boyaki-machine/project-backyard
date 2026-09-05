@@ -1035,8 +1035,9 @@ export interface paths {
         /**
          * チケットの更新
          * @description 部分更新（ApiDesign.md 9.5.2）。**必要権限は `ticket.edit`。ただし
-         *     `assignee_id` を変える場合は `ticket.assign` も必要**——この追加分だけは
-         *     リクエスト本文の内容で決まるため、ルート定義の宣言ではなくハンドラ内で見ている。
+         *     `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要**
+         *     ——この追加分だけはリクエスト本文の内容で決まるため、ルート定義の宣言ではなく
+         *     ハンドラ内で見ている。
          *
          *     **送られたフィールドだけを更新する。** `null` を送るとその項目を空にする
          *     （担当を外す・親を外す・期限を消す）。キーごと送らなければ据え置く。
@@ -1119,9 +1120,22 @@ export interface paths {
          *     | 3 | 呼び出し元の `actor.kind` が `allowed_actor_kinds` に含まれるか | 403 |
          *     | 4 | 遷移先の `is_agent_reachable` が `false` で、呼び出し元がエージェントか | 403 |
          *     | 5 | `required_permission` を呼び出し元が持つか | 403 |
+         *     | 6 | 呼び出し元がエージェントのとき、`assignee_id` が自分の所有者か | 403 |
          *
-         *     **3〜5 が Requirements.md 10.10.4「承認ゲートをAPIレベルで強制する」の実体である。**
+         *     **3〜6 が Requirements.md 10.10.4「承認ゲートをAPIレベルで強制する」の実体である。**
          *     画面側の制御に依存しない。
+         *
+         *     **検証6 は手順26b で足した。** エージェントが状態を変えてよいのは、担当が自分の
+         *     所有者であるチケットに限る（担当が未割当のものも進められない）。**呼び出し元が
+         *     人のときは適用しない**——全員に掛けると `ticket.transition` を持つ人が他人の担当を
+         *     進められなくなる。`Design.md` 6.5 の委譲（権限の根拠は所有者）に、作業の根拠も
+         *     所有者だという規則が加わったものである。
+         *
+         *     **遷移に成功すると、エージェントは自分を `working_agent_id` に立てる**（9.6）。
+         *     「着手した」と「宣言した」が別々に起こる状態を作らないための副作用で、専用の
+         *     操作を持たない。**別のエージェントが入っていれば上書きする**（排他ではない）。
+         *     `version` は動かさず、`activity` にも記録しない——遷移の行が「誰が進めたか」を
+         *     `actor_id` で既に持っている。
          *
          *     **`closed_at` はこの経路だけが動かす。** 遷移先の `category` が `done` なら `now()`、
          *     それ以外なら `NULL` へ戻す。`PATCH` で直接書けないようにしてあるので（9.5.2）、
@@ -1661,7 +1675,7 @@ export interface paths {
          *     `in_progress → done` の定義が無く、隠すとレビューを通す必要があること自体が
          *     画面から読めない。
          *
-         *     `reason` は 9.6 の検証2〜5 に対応する（検証1 は `items[]` をワークフローから
+         *     `reason` は 9.6 の検証2〜6 に対応する（検証1 は `items[]` をワークフローから
          *     組み立てるため起こらない）。**複数に当たる場合は先の検証の理由を返す**——
          *     利用者が最初に取り除くべき障害がそれだからである。
          *
@@ -1671,6 +1685,11 @@ export interface paths {
          *     | 3（`allowed_actor_kinds`） | `この状態への変更は<種別>からは行えません` |
          *     | 4（`is_agent_reachable`） | `この状態へはエージェントから変更できません` |
          *     | 5（`required_permission`） | `<権限キー> 権限が必要です` |
+         *     | 6（担当が所有者でない） | `このチケットの担当者があなたの所有者ではないため、エージェントからは変更できません` |
+         *
+         *     **検証6 はチケット単位の条件なので、当たると `items[]` の全行が同時に
+         *     `allowed: false` になる**（手順26b）。遷移先ごとに違う理由が並ぶ他の検証とは
+         *     性質が異なるが、行ごとに理由を付ける形は変えない。
          *
          *     **このエンドポイントを 9.5.1 の詳細応答に埋めないのは、`PATCH` のたびに再計算が
          *     要るためである。** ドロップダウンを開いたときにだけ呼べばよい。
@@ -3449,6 +3468,16 @@ export interface components {
             assignee: components["schemas"]["ActorRef"] | null;
             reporter: components["schemas"]["ActorRef"] | null;
             /**
+             * @description **誰が実際に処理しているか**（実行者。9.2.2、`DbDesign.md` 6.6。手順26b）。
+             *     `assignee` が「誰の仕事か」を表すのに対し、こちらは実行者を表す。
+             *
+             *     **エージェントが遷移したときに自分で立てる**（9.6）ので、人が手で埋める
+             *     必要はない。**チケットを消化しても消えない**——「誰が処理したか」は完了後に
+             *     こそ読みたい情報である。人が `PATCH`（9.5.2）で消すか差し替える。
+             *     `kind` は常に `agent`。
+             */
+            working_agent: components["schemas"]["ActorRef"] | null;
+            /**
              * Format: int32
              * @description 親チケットの `seq`。**フィルタで親が結果から落ちても保たれる**（9.2.4）。
              *     画面は「親が結果に含まれていない子」をトップレベルに並べる。
@@ -4086,6 +4115,18 @@ export interface components {
              *     プロジェクトのメンバーでなければ 422（`not_a_member`）。`null` で担当を外す。
              */
             assignee_id?: string | null;
+            /**
+             * @description 実行者（エージェント）の `actor.id`。**変更には `ticket.assign` 権限も要る**
+             *     （9.5.2。手順26b）。`null` で外す。
+             *
+             *     **この経路は人が使う**——エージェント自身の宣言は 9.6 の遷移が副作用として
+             *     立てる。**画面が出すのは「消す」だけである**（`GuiDesign.md` 5.5）。
+             *
+             *     エージェントでなければ 422（`not_found`）。そのエージェントの**所有者**が
+             *     プロジェクトのメンバーでなければ 422（`not_a_member`）——エージェントは
+             *     `project_member` の行を持たないため、所有者で見る（`Design.md` 6.5）。
+             */
+            working_agent_id?: string | null;
             /**
              * Format: int32
              * @description 親チケットの `seq`（同一プロジェクト内）。`null` で親を外す。
@@ -6309,7 +6350,8 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             /**
              * @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。
-             *     **`assignee_id` を送ったが `ticket.assign` を持たない場合もここへ来る。**
+             *     **`assignee_id` / `working_agent_id` を送ったが `ticket.assign` を
+             *     持たない場合もここへ来る。**
              */
             403: {
                 headers: {

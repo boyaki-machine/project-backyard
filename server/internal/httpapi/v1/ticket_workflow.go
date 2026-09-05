@@ -11,8 +11,9 @@
 //	3  actor.kind が allowed_actor_kinds にあるか   403 forbidden
 //	4  遷移先が is_agent_reachable=false でエージェント 403 forbidden
 //	5  required_permission を持つか                 403 forbidden
+//	6  エージェントなら、担当が自分の所有者か         403 forbidden
 //
-// **3〜5 が Requirements.md 10.10.4「承認ゲートをAPIレベルで強制する」の実体**
+// **3〜6 が Requirements.md 10.10.4「承認ゲートをAPIレベルで強制する」の実体**
 // であり、画面側の制御に依存しない。
 package v1
 
@@ -22,6 +23,9 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
@@ -95,13 +99,40 @@ func (wf ticketWorkflow) findTransition(from, to string) *gen.ListWorkflowTransi
 	return nil
 }
 
-// transitionActor は遷移を試みる側。検証3〜5 の材料になる。
+// transitionActor は遷移を試みる側。検証3〜6 の材料になる。
 type transitionActor struct {
 	kind        string
 	permissions []string
+	// assigneeIsOwner は検証6 の材料（9.6。手順26b）。呼び出し元がエージェントの
+	// とき、そのチケットの assignee_id が自分の所有者かどうか。
+	//
+	// **チケット単位の値なので、ここに持たせる。** 検証2〜5 が遷移ごとに変わるのに
+	// 対し、これは1チケットに対して1つしかない。呼び出し側が
+	// agentMayWorkOn で作る。
+	assigneeIsOwner bool
 }
 
-// denyTransition は検証2〜5 を順に見て、通らない理由を日本語で返す。
+// agentMayWorkOn は検証6 の判定を1か所に閉じる（9.6。手順26b）。
+//
+// **人（actor.kind='user'）には常に true を返す。** 全員に掛けると
+// ticket.transition を持つ人が他人の担当を進められなくなり、GuiDesign.md 5.5 の
+// 状態ドロップダウンが自分の担当でしか使えなくなる。**種別で分けることで、
+// 検証3・4 と同じ土俵に乗る**（ApiDesign.md 9.6）。
+//
+// **担当が未割当（NULL）のチケットは、エージェントから進められない。**
+// 「人が引き受けていないものをエージェントが動かさない」が規則であり、
+// 誰の担当でもないものはその条件を満たさない。
+//
+// **working_agent_id は見ない。** あれは実行者の自己申告で、人がいつでも消せる
+// （DbDesign.md 6.6）。消しただけで作業が止まる列を認可に使わない。
+func agentMayWorkOn(p *auth.Principal, assigneeID pgtype.Text) bool {
+	if p == nil || p.ActorKind != actorKindAgent {
+		return true
+	}
+	return assigneeID.Valid && p.OwnerActorID != "" && assigneeID.String == p.OwnerActorID
+}
+
+// denyTransition は検証2〜6 を順に見て、通らない理由を日本語で返す。
 // 通るなら空文字。
 //
 // **検証1（to の存在）は呼び出し側で見る。** 9.6 は 422 unknown_status という
@@ -110,6 +141,10 @@ type transitionActor struct {
 //
 // **複数に当たる場合は先の検証の理由を返す**（9.7）。利用者が最初に取り除くべき
 // 障害がそれだからである——権限を得ても遷移が定義されていなければ進めない。
+//
+// **検証6 はチケット単位の条件なので、9.7 では全行が同時に allowed:false になる。**
+// 遷移先ごとに違う理由が並ぶ他の検証とは性質が異なるが、行ごとに理由を付ける形は
+// 変えない（9.7）——エージェントは「この1件はどうか」を見て次の一手を決める。
 func (wf ticketWorkflow) denyTransition(
 	from string, to gen.ListWorkflowStatusesRow, actor transitionActor,
 ) string {
@@ -143,6 +178,15 @@ func (wf ticketWorkflow) denyTransition(
 	if tr.RequiredPermission.Valid &&
 		!slices.Contains(actor.permissions, tr.RequiredPermission.String) {
 		return fmt.Sprintf("%s 権限が必要です", tr.RequiredPermission.String)
+	}
+
+	// 検証6：エージェントは所有者の担当だけを進められる（手順26b）。
+	//
+	// **最後に置くのは、これが行に依存する唯一の検証だからである**（9.6）。
+	// 行を読まずに決まる障害（順路が無い・種別が違う・権限が無い）を先に
+	// 返したほうが、利用者が取り除く順序と一致する。
+	if actor.kind == actorKindAgent && !actor.assigneeIsOwner {
+		return "このチケットの担当者があなたの所有者ではないため、エージェントからは変更できません"
 	}
 
 	return ""

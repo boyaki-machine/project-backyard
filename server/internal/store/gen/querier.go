@@ -434,6 +434,11 @@ type Querier interface {
 	// **行が返らない＝404** となる（ApiDesign.md 1.2-5）。
 	//
 	GetAdminUser(ctx context.Context, actorID string) (GetAdminUserRow, error)
+	// GetAgentOwner は working_agent_id の検証（9.5.2）と、9.6 の検証6 に使う。
+	//
+	// **agent テーブルを引く。** actor.kind='agent' であることと所有者が誰かを一度に
+	// 取るためで、行が無ければ「エージェントではない」である。
+	GetAgentOwner(ctx context.Context, actorID string) (string, error)
 	// GetDocument は本文1件（10.3）。created_by / updated_by は LEFT JOIN である。
 	//
 	// **どちらも null になりうる**（ON DELETE SET NULL。8.1.1）。9.8 の author が
@@ -1278,6 +1283,18 @@ type Querier interface {
 	// ——2人が同時に同じ遷移を実行すると、後発は「同じ状態から同じ状態へ」を
 	// 要求することになり、workflow_transition に定義が無いため 409 になる。
 	SetTicketStatus(ctx context.Context, arg SetTicketStatusParams) (int32, error)
+	// ── 実行者（ApiDesign.md 9.6 / 9.5.2。手順26b）───────────────
+	// SetTicketWorkingAgent は、遷移に成功したエージェントを実行者として立てる
+	// （ApiDesign.md 9.6「遷移に成功したとき、エージェントは自分を working_agent_id に
+	// 立てる」）。既に自分なら何も書かない。別のエージェントが入っていれば上書きする。
+	//
+	// **version を動かさない。** 同じトランザクションで SetTicketStatus が既に +1 して
+	// おり、ここでもう一度上げると1回の遷移で version が2つ進む。2.8 の楽観ロックは
+	// 「利用者の1操作で1つ」を前提にしている。
+	//
+	// **WHERE に現在値との比較を置いて、変わらないときは行を触らない。** trg_ticket_updated
+	// が updated_at を動かすため、無変更の UPDATE でも 9.2.5 の ETag が変わってしまう。
+	SetTicketWorkingAgent(ctx context.Context, arg SetTicketWorkingAgentParams) error
 	// SoftDeleteComment は論理削除（DbDesign.md 4.6 / 6.7）。
 	//
 	// **body_md は消さない。** 列が NOT NULL であり、応答で null にするのは view の
@@ -1499,6 +1516,11 @@ type Querier interface {
 	//
 	// **status_key / closed_at / sort_key / staged_at は含めない**（9.5.2）。
 	// 前2つは 9.6 の遷移、後2つは 9.4 の move が書く。
+	//
+	// **working_agent_id はここにも 9.6 にも書き込み口がある**（手順26b）。この文が
+	// 受けるのは人の操作（消す・差し替える。ApiDesign.md 9.5.2）で、エージェント自身の
+	// 宣言は SetTicketWorkingAgent が別に行う——あちらは遷移の副作用なので version を
+	// 動かさず、If-Match の照合も持たない。
 	//
 	// **updated_at はトリガが動かす**（trg_ticket_updated。DbDesign.md 6.6）。
 	// タグだけを付け外しした場合もこの文を通るので、9.2.5 の ETag が必ず変わる。

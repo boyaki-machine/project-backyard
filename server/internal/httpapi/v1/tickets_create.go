@@ -20,12 +20,14 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/activity"
@@ -321,6 +323,48 @@ func validateTicketAssignee(
 		return apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
 			Field: "assignee_id", Code: "not_a_member",
 			Message: "担当者はこのプロジェクトのメンバーから選んでください",
+		})
+	}
+	return nil
+}
+
+// validateTicketWorkingAgent は working_agent_id を検証する（9.5.2。手順26b）。
+//
+// **メンバーであることを所有者で見る**（Design.md 6.5 の委譲）。エージェントは
+// project_member の行を持たない——持たせると所有者のロールと二重になり、
+// 所有者のロールを変えたときに片方だけ古くなる。したがって
+// validateTicketAssignee と同じ検証をエージェント自身に対して行うと必ず落ちる。
+//
+// **エージェントでなければ not_found に倒す。** 実行者の欄に人を入れる経路を
+// 作らない（DbDesign.md 6.6 が担当と実行者を分けた意味が消える）。
+func validateTicketWorkingAgent(
+	ctx context.Context, q gen.Querier, projectID, agentActorID string,
+) *apierr.Error {
+	if agentActorID == "" {
+		return nil
+	}
+	owner, err := q.GetAgentOwner(ctx, agentActorID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+				Field: "working_agent_id", Code: "not_found",
+				Message: "指定されたエージェントが見つかりません",
+			})
+		}
+		return apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("エージェントの所有者を確認できない: %w", err))
+	}
+	member, err := q.IsProjectMember(ctx, gen.IsProjectMemberParams{
+		ProjectID: projectID, ActorID: owner,
+	})
+	if err != nil {
+		return apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("エージェントの所有者の所属を確認できない: %w", err))
+	}
+	if !member {
+		return apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+			Field: "working_agent_id", Code: "not_a_member",
+			Message: "実行者は、このプロジェクトのメンバーが所有するエージェントから選んでください",
 		})
 	}
 	return nil

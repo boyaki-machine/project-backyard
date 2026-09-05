@@ -69,9 +69,12 @@ type ticketPatch struct {
 	BodyMd     optional[string]
 	Priority   optional[string]
 	AssigneeID optional[string]
-	ParentSeq  optional[int32]
-	SprintID   optional[string]
-	TagIDs     optional[[]string]
+	// WorkingAgentID は実行者（9.5.2。手順26b）。**この経路は人が使う**——
+	// エージェント自身の宣言は 9.6 の遷移が副作用として立てる。
+	WorkingAgentID optional[string]
+	ParentSeq      optional[int32]
+	SprintID       optional[string]
+	TagIDs         optional[[]string]
 
 	EstimatePoint optional[float64]
 	EstimateHours optional[float64]
@@ -131,6 +134,17 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 		if a == nil || !auth.HasPermission(a.Permissions, permTicketAssign) {
 			apierr.Write(w, r, apierr.New(apierr.Forbidden).
 				WithMessage("担当者を変更する権限がありません"))
+			return
+		}
+	}
+
+	// **実行者も「誰がやるか」を決める操作なので ticket.assign を要る**（9.5.2）。
+	// 担当と同じ扱いにする。
+	if patch.WorkingAgentID.Set {
+		a := auth.ProjectAuthzFromContext(r.Context(), key)
+		if a == nil || !auth.HasPermission(a.Permissions, permTicketAssign) {
+			apierr.Write(w, r, apierr.New(apierr.Forbidden).
+				WithMessage("実行者を変更する権限がありません"))
 			return
 		}
 	}
@@ -254,6 +268,13 @@ func (h *handler) resolveTicketPatch(
 		}
 	}
 	params.AssigneeIDSet, params.AssigneeID = textParam(patch.AssigneeID)
+
+	if patch.WorkingAgentID.Set && !patch.WorkingAgentID.Null {
+		if e := validateTicketWorkingAgent(ctx, q, projectID, patch.WorkingAgentID.Value); e != nil {
+			return params, e
+		}
+	}
+	params.WorkingAgentIDSet, params.WorkingAgentID = textParam(patch.WorkingAgentID)
 
 	if patch.SprintID.Set && !patch.SprintID.Null {
 		if e := validateTicketSprint(ctx, q, projectID, patch.SprintID.Value); e != nil {
@@ -414,6 +435,9 @@ func recordTicketFieldChanges(
 	if patch.Priority.Set {
 		add("priority", textPtr(before.Priority), optionalStrPtr(patch.Priority))
 	}
+	if patch.WorkingAgentID.Set {
+		add("working_agent_id", textPtr(before.WorkingAgentID), optionalStrPtr(patch.WorkingAgentID))
+	}
 	if patch.AssigneeID.Set {
 		add("assignee_id", textPtr(before.AssigneeID), optionalStrPtr(patch.AssigneeID))
 	}
@@ -537,6 +561,7 @@ func parseTicketPatch(raw updateTicketRequest) (ticketPatch, *apierr.Error) {
 			}
 		})
 	patch.AssigneeID, details = optionalStringField(raw, "assignee_id", details, nil)
+	patch.WorkingAgentID, details = optionalStringField(raw, "working_agent_id", details, nil)
 	patch.SprintID, details = optionalStringField(raw, "sprint_id", details, nil)
 
 	patch.EstimatePoint, details = optionalFloatField(raw, "estimate_point", details)

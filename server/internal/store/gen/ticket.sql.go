@@ -155,6 +155,24 @@ func (q *Queries) FindTicketIDBySeq(ctx context.Context, arg FindTicketIDBySeqPa
 	return id, err
 }
 
+const getAgentOwner = `-- name: GetAgentOwner :one
+SELECT ag.owner_actor_id
+  FROM agent ag
+  JOIN actor a ON a.id = ag.actor_id
+ WHERE ag.actor_id = $1 AND a.kind = 'agent'
+`
+
+// GetAgentOwner は working_agent_id の検証（9.5.2）と、9.6 の検証6 に使う。
+//
+// **agent テーブルを引く。** actor.kind='agent' であることと所有者が誰かを一度に
+// 取るためで、行が無ければ「エージェントではない」である。
+func (q *Queries) GetAgentOwner(ctx context.Context, actorID string) (string, error) {
+	row := q.db.QueryRow(ctx, getAgentOwner, actorID)
+	var owner_actor_id string
+	err := row.Scan(&owner_actor_id)
+	return owner_actor_id, err
+}
+
 const getTicketBrief = `-- name: GetTicketBrief :one
 SELECT t.seq, t.title, t.type, t.status_key,
        ws.name AS status_name, ws.category AS status_category
@@ -206,6 +224,9 @@ SELECT
   t.reporter_id,
   ra.kind         AS reporter_kind,
   ra.display_name AS reporter_name,
+  t.working_agent_id,
+  wa.kind         AS working_agent_kind,
+  wa.display_name AS working_agent_name,
   pt.seq AS parent_seq,
   EXISTS (SELECT 1 FROM ticket ch WHERE ch.parent_id = t.id) AS has_children,
   t.staged_at,
@@ -226,6 +247,7 @@ JOIN project p ON p.id = t.project_id
 LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
 LEFT JOIN actor  aa ON aa.id = t.assignee_id
 LEFT JOIN actor  ra ON ra.id = t.reporter_id
+LEFT JOIN actor  wa ON wa.id = t.working_agent_id
 LEFT JOIN ticket pt ON pt.id = t.parent_id
 LEFT JOIN sprint sp ON sp.id = t.sprint_id
 WHERE t.project_id = $1 AND t.seq = $2
@@ -237,36 +259,39 @@ type GetTicketBySeqParams struct {
 }
 
 type GetTicketBySeqRow struct {
-	ID             string
-	Seq            int32
-	Type           string
-	Title          string
-	BodyMd         pgtype.Text
-	StatusKey      string
-	StatusName     pgtype.Text
-	StatusCategory pgtype.Text
-	Priority       pgtype.Text
-	AssigneeID     pgtype.Text
-	AssigneeKind   pgtype.Text
-	AssigneeName   pgtype.Text
-	ReporterID     pgtype.Text
-	ReporterKind   pgtype.Text
-	ReporterName   pgtype.Text
-	ParentSeq      pgtype.Int4
-	HasChildren    bool
-	StagedAt       pgtype.Timestamptz
-	SortKey        pgtype.Text
-	SprintID       pgtype.Text
-	SprintName     pgtype.Text
-	EstimatePoint  pgtype.Float8
-	EstimateHours  pgtype.Float8
-	ActualHours    pgtype.Float8
-	StartDate      pgtype.Date
-	DueDate        pgtype.Date
-	ClosedAt       pgtype.Timestamptz
-	Version        int32
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID               string
+	Seq              int32
+	Type             string
+	Title            string
+	BodyMd           pgtype.Text
+	StatusKey        string
+	StatusName       pgtype.Text
+	StatusCategory   pgtype.Text
+	Priority         pgtype.Text
+	AssigneeID       pgtype.Text
+	AssigneeKind     pgtype.Text
+	AssigneeName     pgtype.Text
+	ReporterID       pgtype.Text
+	ReporterKind     pgtype.Text
+	ReporterName     pgtype.Text
+	WorkingAgentID   pgtype.Text
+	WorkingAgentKind pgtype.Text
+	WorkingAgentName pgtype.Text
+	ParentSeq        pgtype.Int4
+	HasChildren      bool
+	StagedAt         pgtype.Timestamptz
+	SortKey          pgtype.Text
+	SprintID         pgtype.Text
+	SprintName       pgtype.Text
+	EstimatePoint    pgtype.Float8
+	EstimateHours    pgtype.Float8
+	ActualHours      pgtype.Float8
+	StartDate        pgtype.Date
+	DueDate          pgtype.Date
+	ClosedAt         pgtype.Timestamptz
+	Version          int32
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 // ── 詳細（ApiDesign.md 9.5.1。手順16b では POST の応答にだけ使う）────
@@ -291,6 +316,9 @@ func (q *Queries) GetTicketBySeq(ctx context.Context, arg GetTicketBySeqParams) 
 		&i.ReporterID,
 		&i.ReporterKind,
 		&i.ReporterName,
+		&i.WorkingAgentID,
+		&i.WorkingAgentKind,
+		&i.WorkingAgentName,
 		&i.ParentSeq,
 		&i.HasChildren,
 		&i.StagedAt,
@@ -614,6 +642,9 @@ filtered AS (
     t.reporter_id,
     ra.kind         AS reporter_kind,
     ra.display_name AS reporter_name,
+    t.working_agent_id,
+    wa.kind         AS working_agent_kind,
+    wa.display_name AS working_agent_name,
     pt.seq AS parent_seq,
     EXISTS (SELECT 1 FROM ticket ch WHERE ch.parent_id = t.id) AS has_children,
     t.sort_key,
@@ -634,6 +665,7 @@ filtered AS (
   LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
   LEFT JOIN actor  aa ON aa.id = t.assignee_id
   LEFT JOIN actor  ra ON ra.id = t.reporter_id
+  LEFT JOIN actor  wa ON wa.id = t.working_agent_id
   LEFT JOIN ticket pt ON pt.id = t.parent_id
   LEFT JOIN sprint sp ON sp.id = t.sprint_id
   WHERE t.project_id = $5::text
@@ -687,7 +719,7 @@ filtered AS (
     AND (cardinality($6::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
 )
 SELECT
-  f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at,
+  f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at,
   count(*) OVER ()                        AS total,
   (max(f.updated_at) OVER ())::timestamptz AS last_updated_at
 FROM filtered f
@@ -749,38 +781,41 @@ type ListTicketsParams struct {
 }
 
 type ListTicketsRow struct {
-	ID              string
-	Seq             int32
-	Type            string
-	Title           string
-	StatusKey       string
-	StatusName      pgtype.Text
-	StatusCategory  pgtype.Text
-	StatusSortOrder pgtype.Int4
-	Priority        pgtype.Text
-	AssigneeID      pgtype.Text
-	AssigneeKind    pgtype.Text
-	AssigneeName    pgtype.Text
-	ReporterID      pgtype.Text
-	ReporterKind    pgtype.Text
-	ReporterName    pgtype.Text
-	ParentSeq       pgtype.Int4
-	HasChildren     bool
-	SortKey         pgtype.Text
-	StagedAt        pgtype.Timestamptz
-	SprintID        pgtype.Text
-	SprintName      pgtype.Text
-	EstimatePoint   pgtype.Float8
-	EstimateHours   pgtype.Float8
-	ActualHours     pgtype.Float8
-	StartDate       pgtype.Date
-	DueDate         pgtype.Date
-	ClosedAt        pgtype.Timestamptz
-	Version         int32
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-	Total           int64
-	LastUpdatedAt   pgtype.Timestamptz
+	ID               string
+	Seq              int32
+	Type             string
+	Title            string
+	StatusKey        string
+	StatusName       pgtype.Text
+	StatusCategory   pgtype.Text
+	StatusSortOrder  pgtype.Int4
+	Priority         pgtype.Text
+	AssigneeID       pgtype.Text
+	AssigneeKind     pgtype.Text
+	AssigneeName     pgtype.Text
+	ReporterID       pgtype.Text
+	ReporterKind     pgtype.Text
+	ReporterName     pgtype.Text
+	WorkingAgentID   pgtype.Text
+	WorkingAgentKind pgtype.Text
+	WorkingAgentName pgtype.Text
+	ParentSeq        pgtype.Int4
+	HasChildren      bool
+	SortKey          pgtype.Text
+	StagedAt         pgtype.Timestamptz
+	SprintID         pgtype.Text
+	SprintName       pgtype.Text
+	EstimatePoint    pgtype.Float8
+	EstimateHours    pgtype.Float8
+	ActualHours      pgtype.Float8
+	StartDate        pgtype.Date
+	DueDate          pgtype.Date
+	ClosedAt         pgtype.Timestamptz
+	Version          int32
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	Total            int64
+	LastUpdatedAt    pgtype.Timestamptz
 }
 
 // チケットに関するクエリ（DbDesign.md 6.6、ApiDesign.md 9.2 / 9.3 / 9.4）。
@@ -864,6 +899,9 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 			&i.ReporterID,
 			&i.ReporterKind,
 			&i.ReporterName,
+			&i.WorkingAgentID,
+			&i.WorkingAgentKind,
+			&i.WorkingAgentName,
 			&i.ParentSeq,
 			&i.HasChildren,
 			&i.SortKey,
@@ -1139,6 +1177,35 @@ func (q *Queries) SetTicketStatus(ctx context.Context, arg SetTicketStatusParams
 	return version, err
 }
 
+const setTicketWorkingAgent = `-- name: SetTicketWorkingAgent :exec
+
+UPDATE ticket SET working_agent_id = $1
+WHERE project_id = $2 AND seq = $3
+  AND working_agent_id IS DISTINCT FROM $1
+`
+
+type SetTicketWorkingAgentParams struct {
+	WorkingAgentID pgtype.Text
+	ProjectID      string
+	Seq            int32
+}
+
+// ── 実行者（ApiDesign.md 9.6 / 9.5.2。手順26b）───────────────
+// SetTicketWorkingAgent は、遷移に成功したエージェントを実行者として立てる
+// （ApiDesign.md 9.6「遷移に成功したとき、エージェントは自分を working_agent_id に
+// 立てる」）。既に自分なら何も書かない。別のエージェントが入っていれば上書きする。
+//
+// **version を動かさない。** 同じトランザクションで SetTicketStatus が既に +1 して
+// おり、ここでもう一度上げると1回の遷移で version が2つ進む。2.8 の楽観ロックは
+// 「利用者の1操作で1つ」を前提にしている。
+//
+// **WHERE に現在値との比較を置いて、変わらないときは行を触らない。** trg_ticket_updated
+// が updated_at を動かすため、無変更の UPDATE でも 9.2.5 の ETag が変わってしまう。
+func (q *Queries) SetTicketWorkingAgent(ctx context.Context, arg SetTicketWorkingAgentParams) error {
+	_, err := q.db.Exec(ctx, setTicketWorkingAgent, arg.WorkingAgentID, arg.ProjectID, arg.Seq)
+	return err
+}
+
 const sprintExistsInProject = `-- name: SprintExistsInProject :one
 SELECT EXISTS (
   SELECT 1 FROM sprint WHERE project_id = $1 AND id = $2
@@ -1201,43 +1268,46 @@ UPDATE ticket SET
   body_md        = CASE WHEN $3::boolean        THEN $4        ELSE body_md END,
   priority       = CASE WHEN $5::boolean       THEN $6       ELSE priority END,
   assignee_id    = CASE WHEN $7::boolean    THEN $8    ELSE assignee_id END,
-  parent_id      = CASE WHEN $9::boolean      THEN $10      ELSE parent_id END,
-  sprint_id      = CASE WHEN $11::boolean      THEN $12      ELSE sprint_id END,
-  estimate_point = CASE WHEN $13::boolean THEN $14 ELSE estimate_point END,
-  estimate_hours = CASE WHEN $15::boolean THEN $16 ELSE estimate_hours END,
-  actual_hours   = CASE WHEN $17::boolean   THEN $18   ELSE actual_hours END,
-  start_date     = CASE WHEN $19::boolean     THEN $20     ELSE start_date END,
-  due_date       = CASE WHEN $21::boolean       THEN $22       ELSE due_date END,
+  working_agent_id = CASE WHEN $9::boolean THEN $10 ELSE working_agent_id END,
+  parent_id      = CASE WHEN $11::boolean      THEN $12      ELSE parent_id END,
+  sprint_id      = CASE WHEN $13::boolean      THEN $14      ELSE sprint_id END,
+  estimate_point = CASE WHEN $15::boolean THEN $16 ELSE estimate_point END,
+  estimate_hours = CASE WHEN $17::boolean THEN $18 ELSE estimate_hours END,
+  actual_hours   = CASE WHEN $19::boolean   THEN $20   ELSE actual_hours END,
+  start_date     = CASE WHEN $21::boolean     THEN $22     ELSE start_date END,
+  due_date       = CASE WHEN $23::boolean       THEN $24       ELSE due_date END,
   version        = version + 1
-WHERE project_id = $23 AND seq = $24 AND version = $25
+WHERE project_id = $25 AND seq = $26 AND version = $27
 `
 
 type UpdateTicketParams struct {
-	Type             pgtype.Text
-	Title            pgtype.Text
-	BodyMdSet        bool
-	BodyMd           pgtype.Text
-	PrioritySet      bool
-	Priority         pgtype.Text
-	AssigneeIDSet    bool
-	AssigneeID       pgtype.Text
-	ParentIDSet      bool
-	ParentID         pgtype.Text
-	SprintIDSet      bool
-	SprintID         pgtype.Text
-	EstimatePointSet bool
-	EstimatePoint    pgtype.Float8
-	EstimateHoursSet bool
-	EstimateHours    pgtype.Float8
-	ActualHoursSet   bool
-	ActualHours      pgtype.Float8
-	StartDateSet     bool
-	StartDate        pgtype.Date
-	DueDateSet       bool
-	DueDate          pgtype.Date
-	ProjectID        string
-	Seq              int32
-	Version          int32
+	Type              pgtype.Text
+	Title             pgtype.Text
+	BodyMdSet         bool
+	BodyMd            pgtype.Text
+	PrioritySet       bool
+	Priority          pgtype.Text
+	AssigneeIDSet     bool
+	AssigneeID        pgtype.Text
+	WorkingAgentIDSet bool
+	WorkingAgentID    pgtype.Text
+	ParentIDSet       bool
+	ParentID          pgtype.Text
+	SprintIDSet       bool
+	SprintID          pgtype.Text
+	EstimatePointSet  bool
+	EstimatePoint     pgtype.Float8
+	EstimateHoursSet  bool
+	EstimateHours     pgtype.Float8
+	ActualHoursSet    bool
+	ActualHours       pgtype.Float8
+	StartDateSet      bool
+	StartDate         pgtype.Date
+	DueDateSet        bool
+	DueDate           pgtype.Date
+	ProjectID         string
+	Seq               int32
+	Version           int32
 }
 
 // ── 更新・削除・遷移（ApiDesign.md 9.5.2 / 9.5.3 / 9.6。手順17a）──────
@@ -1255,6 +1325,11 @@ type UpdateTicketParams struct {
 // **status_key / closed_at / sort_key / staged_at は含めない**（9.5.2）。
 // 前2つは 9.6 の遷移、後2つは 9.4 の move が書く。
 //
+// **working_agent_id はここにも 9.6 にも書き込み口がある**（手順26b）。この文が
+// 受けるのは人の操作（消す・差し替える。ApiDesign.md 9.5.2）で、エージェント自身の
+// 宣言は SetTicketWorkingAgent が別に行う——あちらは遷移の副作用なので version を
+// 動かさず、If-Match の照合も持たない。
+//
 // **updated_at はトリガが動かす**（trg_ticket_updated。DbDesign.md 6.6）。
 // タグだけを付け外しした場合もこの文を通るので、9.2.5 の ETag が必ず変わる。
 func (q *Queries) UpdateTicket(ctx context.Context, arg UpdateTicketParams) (int64, error) {
@@ -1267,6 +1342,8 @@ func (q *Queries) UpdateTicket(ctx context.Context, arg UpdateTicketParams) (int
 		arg.Priority,
 		arg.AssigneeIDSet,
 		arg.AssigneeID,
+		arg.WorkingAgentIDSet,
+		arg.WorkingAgentID,
 		arg.ParentIDSet,
 		arg.ParentID,
 		arg.SprintIDSet,

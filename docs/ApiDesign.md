@@ -858,11 +858,15 @@ DB レベルでも担保される。`DbDesign.md` 7.4）。
 |---|---|
 | 成功 | `204` |
 | 他人のエージェント・存在しない `id` | `404 not_found` |
-| 有効な `task_lease` を保持中（**手順26b 以降**） | `409 conflict` |
+| 有効な `task_lease` を保持中（**Phase 3 以降**） | `409 conflict` |
 
-**リースのガードは 26b で足す。** `task_lease` に行を書く経路（`pb_claim_task`）が
-26b で入るまで、この状況は起こらない。**6.5 が人について同じガードを定めている**ので、
-形は揃っている。
+**リースのガードは Phase 3 で足す。** `task_lease` に行を書く経路（`pb_claim_task`）が
+**Phase 3 へ移った**ため（`Requirements.md` 10.3.3。手順26b でリースを採らないと決めた）、
+それまでこの状況は起こらない。**6.5 が人について同じガードを定めている**ので、形は揃っている。
+
+**`ticket.working_agent_id` は削除を妨げない。** 列は `ON DELETE SET NULL` で、
+消したエージェントが処理していたチケットは残り、欄だけが空になる（`DbDesign.md` 6.6）。
+**リースと違って「いま走っている」ことを表さない**ので、削除を止める根拠にならない。
 
 **監査は `agent.delete`**（4.5.6）。**`is_active: false` による無効化は残す**——
 「いま止めたいが記録は残したい」と「消したい」は別の要求である（`GuiDesign.md` 5.6 が
@@ -1275,7 +1279,7 @@ FK の向きは `agent.actor_id → actor(id)` なので、**エージェント�
 |---|---|
 | 自分自身 | `409 self_modification_forbidden` |
 | 最後の有効なアドミニストレータ | `409 last_administrator` |
-| 有効な `task_lease` を保持中（Phase 2） | `409 conflict` |
+| 有効な `task_lease` を保持中（**Phase 3**） | `409 conflict` |
 
 **「最後の有効なアドミニストレータ」は 6.4 と同じ数え方をする**——`system_role='administrator'` かつ `actor.is_active` の人数で判定する。無効なアドミニストレータは認証を通れないため、管理者として「残っている」ことにならない。
 
@@ -1542,6 +1546,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
       "priority": "high",
       "assignee": { "id": "01K2...", "kind": "user", "display_name": "田中" },
       "reporter": { "id": "01K2...", "kind": "user", "display_name": "田中" },
+      "working_agent": { "id": "01K2...", "kind": "agent", "display_name": "claude-code" },
       "parent_seq": null,
       "has_children": true,
       "sort_key": "0|hzzzzz:",
@@ -1572,6 +1577,12 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 **`execution_mode` / `readiness` / `readiness_note` / `scope` / `custom_fields` も含めない。** 列は `DbDesign.md` 6.6 に先行定義されているが、`GuiDesign.md` 5.5 が「Phase 1 では非表示」と決めている。**画面が使わない項目を応答に載せない**（載せると、使われないまま形が固まる）。Phase 2 で有効化する際に足す。
 
 `assignee` / `reporter` は担当者不在のとき `null`。`kind` は `user` / `agent` / `system` で、**画面はこれを見てエージェントに 🤖 バッジを付ける**（`GuiDesign.md` 5.4、設計原則5）。
+
+**`working_agent` は「誰が実際に処理しているか」である**（`DbDesign.md` 6.6 の `working_agent_id`。手順26b で追加）。`assignee` が**誰の仕事か**を表すのに対し、こちらは**実行者**を表す。**エージェントが遷移したときに自分で立てる**（9.6）ので、人が手で埋める必要はない。未設定なら `null`。
+
+**担当と実行者を別の欄にするのは、1欄では「田中の担当だが claude が処理している」を表せないためである。** `assignee` にエージェントを入れる形は採らない——`Design.md` 8.5 が「担当は人が持つ」と定め、MCP の `assignee=me` を所有者へ写している。**両者の食い違いは欄が1本しかなかったことに由来していた**（`DbDesign.md` 6.6）。
+
+**`working_agent` はチケットを消化しても消えない。** 「このチケットは誰が処理したか」は完了後にこそ読みたい情報である。人が `PATCH`（9.5.2）で消すか差し替える。
 
 ### 9.2.3 ページャを画面に出さない
 
@@ -1730,11 +1741,11 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 
 ### 9.5.2 `PATCH`
 
-**必要権限**：`ticket.edit`。ただし `assignee_id` を変える場合は `ticket.assign` も必要
+**必要権限**：`ticket.edit`。ただし `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要
 
 `If-Match: "3"` による楽観ロック（2.8）。**省略時は `422`**。成功すると `version` が +1 される。送られたフィールドだけを更新する。
 
-変更可能：`type` `title` `body_md` `priority` `assignee_id` `parent_seq` `tag_ids` `sprint_id` `estimate_point` `estimate_hours` `actual_hours` `start_date` `due_date`
+変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `sprint_id` `estimate_point` `estimate_hours` `actual_hours` `start_date` `due_date`
 
 **含められないフィールド**
 
@@ -1747,6 +1758,17 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 `immutable_field` / `use_move_endpoint` / `use_transition_endpoint` はいずれも **`details[].code` の値**であって 2.5.1 の `error.code` ではない（`error.code` は `validation_failed`）。5.5 と同じ規約である。
 
 **`tag_ids` は丸ごと置き換える**（部分更新ではない）。`settings` と同じ方針（5.5）。空配列でタグを全て外す。
+
+**`working_agent_id` を書けるのは、実行者を消すか差し替えるためである**（手順26b）。**エージェント自身は 9.6 の遷移で自動的に立てる**ので、この経路は人が使う。`null` を送ると外れる。
+
+| 検証 | 失敗時 |
+|---|---|
+| 参照先が存在し、`actor.kind` が `agent` であること | `422 validation_failed`、`details[].code = "not_found"` |
+| そのエージェントの所有者が、このプロジェクトのメンバーであること | `422 validation_failed`、`details[].code = "not_a_member"` |
+
+**メンバーであることを所有者で見るのは、`Design.md` 6.5 の委譲に従うためである。** エージェントは `project_member` の行を持たない（持たせると所有者のロールと二重になる）ので、`assignee_id` と同じ検証をエージェント自身に対して行うと必ず落ちる。
+
+**`ticket.assign` を要求するのは、これが「誰がやるか」を決める操作だからである。** `assignee_id` と同じ扱いにする。
 
 **`parent_seq` に `null` を送ると親を外す。** 自分自身または自分の子孫を親に指定した場合は `422 validation_failed`、`details[].code = "parent_cycle"`。**循環検出はアプリ層で行う**（DBの `ck_ticket_not_self_parent` は自己参照しか防げない。`DbDesign.md` 6.6）。
 
@@ -1806,8 +1828,31 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 | 3 | 呼び出し元の `actor.kind` が `allowed_actor_kinds` に含まれるか | `403 forbidden` |
 | 4 | 遷移先の `is_agent_reachable` が `false` で、呼び出し元がエージェントか | `403 forbidden` |
 | 5 | `required_permission` を呼び出し元が持つか | `403 forbidden` |
+| 6 | **呼び出し元がエージェントのとき、`assignee_id` が自分の所有者か** | `403 forbidden` |
 
-3〜5 が `Requirements.md` 10.10.4「承認ゲートをAPIレベルで強制する」の実体である。**画面側の制御に依存しない。**
+3〜6 が `Requirements.md` 10.10.4「承認ゲートをAPIレベルで強制する」の実体である。**画面側の制御に依存しない。**
+
+#### 検証6 — エージェントは所有者の担当だけを進められる（手順26b）
+
+**エージェントが状態を変えてよいのは、`assignee_id` が自分の所有者であるチケットに限る**（利用者の判断、2026-09-05）。担当が付いていないチケット（`assignee_id IS NULL`）も進められない。
+
+**「所有者が引き受けている」ことが、そのエージェントが動かしてよい根拠になる。** `Design.md` 6.5 は「権限の根拠は所有者」と定めた（委譲）。**そこに「作業の根拠も所有者」が加わる**——人がチケットを引き受けていないのに、その人のエージェントがボードの状態を動かすことはない。**人がループに残る。**
+
+**呼び出し元が人（`actor.kind='user'`）のときは適用しない。** 全員に掛けると画面が壊れる——`ticket.transition` を持つ人が他人の担当を進められなくなり、`GuiDesign.md` 5.5 の状態ドロップダウンが自分の担当でしか使えなくなる。**MCP 経由の人にだけ掛ける形も採らない**——同じ操作の可否が経路で変わり、`Design.md` 8.1 の「同じ規則を2か所に書かない」に反する。**種別で分けることで、検証3・4 と同じ土俵に乗る。**
+
+**この判定は `Design.md` 6.4.4 の宣言では表せない。** ミドルウェアはプロジェクトまでしか知らず、「どのチケットか」を見ないためである。**行を読んでから決まる判定をハンドラに置くのは、9.8 のコメント（`comment.edit_own`）に続いて2例目である。** 3例目が現れたら、`Design.md` 付録A 論点①（権限の全体像の再整理）をそこで行う。
+
+**検証6 を最後に置くのは、これが行に依存する唯一の検証だからである。** 行を読まずに決まる障害（順路が無い・種別が違う・権限が無い）を先に返したほうが、利用者が取り除く順序と一致する。
+
+**`working_agent_id` は判定に使わない。** あれは実行者の自己申告で、人がいつでも消せる（`DbDesign.md` 6.6）。**消しただけで作業が止まる列を認可に使わない。**
+
+#### 遷移に成功したとき、エージェントは自分を `working_agent_id` に立てる
+
+**呼び出し元がエージェントなら、同じトランザクションで `working_agent_id` を自分にする**（既に自分なら何もしない。別のエージェントが入っていれば上書きする）。「着手した」と「宣言した」が別々に起こる状態を作らないためで、**専用の操作を持たない。**
+
+**上書きを許すのは、途中でエージェントを替えるのが通常の運用だからである**（`DbDesign.md` 6.6）。**排他ではない**——同じ所有者の2つのエージェントが同じチケットを進めた場合、後から進めたほうが立つ。PB の並行制御は一貫して「検出」であって「排他」ではなく、この欄も例外ではない。
+
+**`activity` には `working_agent_id` の変更を記録しない。** 遷移の行（`action='transition'`）が「誰が進めたか」を `actor_id` で既に持っており、同じ事実が2行になる。人が `PATCH`（9.5.2）で変えたときは通常どおり1行記録する。
 
 **`closed_at` の規則**
 
@@ -1862,6 +1907,9 @@ GET /api/v1/projects/my-app/tickets/31/transitions
 | 3 | 呼び出し元の `actor.kind` が `allowed_actor_kinds` に無い | `この状態への変更は<種別>からは行えません` |
 | 4 | 遷移先の `is_agent_reachable` が `false` で、呼び出し元がエージェント | `この状態へはエージェントから変更できません` |
 | 5 | `required_permission` を持たない | `<権限キー> 権限が必要です` |
+| 6 | 呼び出し元がエージェントで、`assignee_id` が所有者でない | `このチケットの担当者があなたの所有者ではないため、エージェントからは変更できません` |
+
+**検証6 はチケット単位の条件なので、`items[]` の全行が同時に `allowed: false` になる。** 遷移先ごとに違う理由が並ぶ他の検証とは性質が異なるが、**行ごとに理由を付ける形は変えない**——エージェントは「この1件はどうか」を見て次の一手を決めるので、表の形が揃っているほうが読み違えない。
 
 **判定の順序は 9.6 と同じにする。** 複数に当たる場合は先の検証の `reason` を返す——利用者が最初に取り除くべき障害がそれだからである（権限を得ても遷移が定義されていなければ進めない）。
 

@@ -422,6 +422,18 @@ func TestTicketDetailIntegration(t *testing.T) {
 			t.Errorf("details = %v, want to/unknown_status", errorOf(t, unknown).Details)
 		}
 
+		// **人が遷移しても working_agent は立たない**（9.6。手順26b）。
+		// あれは実行者の自己申告で、立てるのはエージェントだけである。
+		if wa := got["working_agent"]; wa != nil {
+			t.Errorf("人の遷移で working_agent = %v, want null", wa)
+		}
+
+		// **検証6 は人には掛からない**（9.6）。このチケットは担当が未割当だが、
+		// ticket.transition を持つ人は進められている（直前の 200 がその実測）。
+		if created["assignee"] != nil {
+			t.Fatalf("前提が崩れている：assignee = %v, want null", created["assignee"])
+		}
+
 		// in_progress → review（コメント付き）。
 		out = postWithCookie(r, path, session, `{"to":"review","comment":"確認をお願いします"}`)
 		if out.Code != http.StatusOK {
