@@ -471,6 +471,10 @@ Playwright / Puppeteer は入れていない（`Design.md` 3.1 の採用技術�
 （手順8では Python の標準ライブラリだけで書いた。`Runtime.evaluate` / `Page.navigate` /
 `Page.captureScreenshot` / `Emulation.setDeviceMetricsOverride`）。
 
+**`websocket-client` はこの端末に入っていない**（2026-09-06 に実測）。**WebSocket は
+標準ライブラリだけで書く**——CDP のフレームはテキスト1種類しか来ないので、
+**クライアント側のマスク（必須）・断片化・ping/pong の読み飛ばし**の3つを扱えば足りる。
+
 **注意点が2つある。**
 
 - **ウィンドウ幅を必ず指定する**（`--window-size=1440,900`）。既定のままでは 768px 未満と判定され、

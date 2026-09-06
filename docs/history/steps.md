@@ -68,6 +68,7 @@
 - 手順27 — コンテキストパック（2026-09-05、`feature/step-27-context-pack`、v2.11.69）
 - 手順28a — 配置ファイルの生成とセットアップ画面（2026-09-06、`feature/step-28a-agent-setup-files`）
 - 手順28b — 系統B：自分の接続設定（2026-09-06、`feature/step-28b-agent-connect-panel`）
+- 手順28c — エージェントの参画情報（2026-09-06、`feature/step-28c-agent-onboarding-doc`）
 - 手順外の作業（stg の PB へ起票済み、2026-09-05。チケット番号への対応表）
 
 ---
@@ -4479,3 +4480,76 @@ Cookie jar・トークン・Chrome プロファイル（`/tmp/pb-cdp-*`）を削
 
 **dev の `demo` に残る `開発PMのClaude Code` は `dev-seed` が作る行**であり、検証の残りではない
 （`deploy/dev/seed/dev-data.yaml` で確認）。
+
+---
+
+## 手順28c — エージェントの参画情報（2026-09-06、`feature/step-28c-agent-onboarding-doc`）
+
+**作業材料の取り方を PB の文書で指定できるようにした。** 文書テンプレートの5件目
+`agent-onboarding`「エージェントの参画情報」を足し、接続パネルからそこへ深リンクし、
+コンテキストパックの憲章からはその1件だけを外した。**手順28 の完了はここで満たす**
+（`Design.md` 11章）。
+
+### 作ったファイル・変えたファイル
+
+| ファイル | 何をしたか |
+|---|---|
+| `server/migrations/0024_document_template_agent_onboarding.sql` | **新規。** テンプレートの5件目（ULID `…D5`、`sort_order` 50）。冪等 |
+| `server/internal/mcp/context_pack.go` | `charter` 型を足し、`fetchCharter` が `dropOnboardingDoc` で目次から1件を外す（**本文を引く前に落とす**）。`writeCharterSection` が落としたことを1行出す |
+| `server/internal/mcp/context_pack_test.go` | 単体3件（除外／移されたら戻る／参画情報しか無いとき） |
+| `server/internal/agentsetup/templates/body/pb-onboard.md` | 「2. 憲章を読む」に参画情報の行、「4. 報告と確認」に取り方の提示。「このリポジトリ」→「この作業場所」 |
+| `client/src/components/AgentConnectPanel.vue` | step 1 のリンクを `/p/<key>/docs/agent-onboarding` へ |
+| `docs/DbDesign.md` 8.1.2 | テンプレートを5件に。`slug` に `agents` を使わない理由、`sort_order` 50 の理由、パックから外すこと、**テンプレートに件数を足しても既存プロジェクトへ波及しないこと** |
+| `docs/Requirements.md` 10.6.2 / 10.8.5 / 10.9.1 / 10.9.4 | 型の表に1行／手順ファイルの写しを同期／文書の設計を確定＋「MCP 型では系統A に置き場が無い」節／B の 3 に文書名 |
+| `docs/Design.md` 8.5.5 / 11.x | 憲章から1件を外すことと、その1行を出すこと／「4文書とも全文」の記述を改めた |
+| `docs/GuiDesign.md` 5.8.2 / 5.11 | ワイヤーと「出さないもの」／**「1 は文書へ深リンクする」節を追加** |
+
+**API は増えていない**ので `docs/openapi.yaml` は変更なし。
+
+### 検証結果
+
+| # | 何を | 結果 |
+|---|---|---|
+| 1 | `make test` / `make migrate` / `make test-db` | すべて PASS。0024 適用（6.12ms） |
+| 2 | 複製が5件になる | `make dev-reset` 後、`demo` に `vision`/`rules`/`decisions`/`learnings`/`agent-onboarding`（10/20/30/40/50） |
+| 3 | 既存に波及しない | `make stg-migrate` 後も stg の `pb` は**4件のまま** |
+| 4 | パックから外れる | 実サーバ（dev `:8080`）で `pb_get_context(seq=1)`。憲章に参画情報の本文が0回、除外の1行が1回 |
+| 5 | 立ち上げ相の実演（stg） | **できなかった。** stg のエージェントトークンは `doc.edit` を持たない（`ApiDesign.md` 4.5.3）。**下書きを残した**（次節） |
+| 6 | 画面の導線 | ヘッドレス Chrome（CDP、標準ライブラリだけの WebSocket 実装）で4件 PASS——ログイン／リンク先が `/p/demo/docs/agent-onboarding`／押すと本文が出て `**` が残らない／**無い文書でも木は残る**（`見つかりません` ＋ 木の節点 11） |
+| 7 | 機械の側 | `pb_get_doc(path="agent-onboarding")` で本文が届く |
+| 8 | 手順28 の完了条件「2系統が出る」 | 系統A（`/p/demo/settings/agents`）と系統B（`/me/agents` の step 1〜4）を1回ずつ開いて確認 |
+
+**強調の描画を markdown-it 14.3.0 で実測した**（`DbDesign.md` 8.1.2 の「書いたら一度描画して
+確かめる」）。テンプレート本文の4段落・5か所とも閉じ、既知の失敗形2件は落ちる（判定が両側で効く）。
+**この実測で、パックの断り書きに同じ罠を踏んでいたことが分かった**（次節）。
+
+### 踏んだ罠
+
+**`**…。**全角文字` は閉じない。** 手順28c で書いた除外の断り書きがこの形で、**実サーバの応答を
+読むまで気づかなかった**。句を囲む形（`は**含めていない**。`）へ直した。**同じ形が手順27 の
+403 の断り書きにもある**が、ついでの修正を避けて **PB #50** として起票した。
+
+### stg へ書く本文の下書き（PM の作業）
+
+**stg の `pb` にはこの文書が無い**（テンプレートの追加は既存プロジェクトへ波及しない）。
+PM が `/p/pb/docs` の `[+ 文書を追加]` で `slug=agent-onboarding` / 表題「エージェントの参画情報」
+として作る。本文の下書き（描画は実測済み）：
+
+```
+このプロジェクトの作業材料はローカルの git リポジトリである。**いまリモートを持っていない**ので、clone 元も配布物も無い。
+
+材料の取り方は次のとおり。**既に作業ディレクトリを持っている端末で作業する**か、その端末からリポジトリごと複製する。**リモートを用意したら、この段落を clone コマンドに書き直すこと。**
+
+参画の合図は参画コマンドである。Claude Code と Copilot は `/pb-onboard`、Codex は「PB に参画して」と伝える。**手順ファイルはリポジトリの中にある**ので、材料を用意してからでないと使えない。
+
+資格情報は PB のトークンだけである。**`/me/agents` で自分のエージェントを登録し、トークンを発行して、表示された `export` 行をシェルの設定へ書く。** 秘密そのものはこの文書には書かない。
+```
+
+### あとしまつ
+
+| 作ったもの | 片付け | 測った結果 |
+|---|---|---|
+| dev のエージェントトークン1本 | `DELETE /me/agents/:id/tokens/:tid`（204） | `access_token` の未失効でエージェントのものは **0件** |
+| Cookie jar とトークンの平文 | 削除 | スクラッチパッドから消えている |
+| ヘッドレス Chrome のプロファイル | スクリプトが `finally` で削除 | 呼び出しごとに別ディレクトリ |
+| `make build` の埋め込み | `make clean-webui` | `git status` に差分なし |

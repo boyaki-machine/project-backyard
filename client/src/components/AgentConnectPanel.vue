@@ -9,7 +9,7 @@
  *
  * **出すのは「MCP が使える状態になるまで」だけである。** 作業の材料をどこから
  * どう用意するかは PB が知らない（リポジトリ型・配布型・MCP 型がある）ので、
- * **プロジェクトの文書への導線だけ**を置く（手順28c で中身が入る）。
+ * **プロジェクトの文書「エージェントの参画情報」への深リンクだけ**を置く（手順28c）。
  *
  * **接続確認はここに出さない。** `token.last_used_at` はカード側（トークンの箱）が
  * 持っており、**畳んでいるときも見えている必要がある**——「繋がったか確かめに戻る」
@@ -44,6 +44,21 @@ const copied = ref<Record<string, CopyState>>({})
 const file = computed(() => setup.value?.files?.[0] ?? null)
 
 const zipHref = computed(() => setupApi.agentConnectZipURL(props.agentId))
+
+/**
+ * 作業材料の取り方を書く文書の `slug`（`DbDesign.md` 8.1.2、`GuiDesign.md` 5.8.2）。
+ *
+ * **文書ツリーの根へ落とさない。** そうすると憲章5件の中からどれを読むのかを
+ * 参加者に当てさせることになる。**接続の手順の1行目でそれをやらせるのは、
+ * この画面が「MCP が使える状態になるまで」を完成品にした意図と合わない。**
+ *
+ * **有無を判定しない。** 複製はプロジェクト作成時にしか走らないので、それ以前の
+ * プロジェクトには無い。**押しても Docs 画面の左の木は残る**ので行き止まりに
+ * ならず、**判定を足すと同じ事実を API と画面の2か所から出すことになる。**
+ */
+const ONBOARDING_DOC_SLUG = 'agent-onboarding'
+
+const onboardingDocHref = computed(() => `/p/${props.projectKey}/docs/${ONBOARDING_DOC_SLUG}`)
 
 async function load() {
   loading.value = true
@@ -91,11 +106,11 @@ function preview(content: string): string {
       <!-- 1. 作業フォルダ ────────────────────────────────────
            **PB は材料の取り方を知らない**（`Requirements.md` 10.9.1）。
            リポジトリ型・配布型・MCP 型があり、指定するのはプロジェクト管理者で、
-           置き場は PB の文書である。ここは導線だけを出す（手順28c） -->
+           置き場は PB の文書である。ここは深リンクだけを出す（手順28c） -->
       <h4 class="step">1. 作業フォルダを用意する</h4>
       <p class="hint">
         材料の取り方（リポジトリの clone、配布物の展開など）はプロジェクトの文書にあります。
-        <RouterLink :to="`/p/${projectKey}/docs`">プロジェクトの文書を開く</RouterLink>
+        <RouterLink :to="onboardingDocHref">エージェントの参画情報を開く</RouterLink>
       </p>
 
       <!-- 2. 接続設定 ─────────────────────────────────────── -->

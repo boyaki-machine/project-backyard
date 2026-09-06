@@ -310,3 +310,92 @@ func TestGetContextSaysWhenCharterIsEmpty(t *testing.T) {
 		t.Errorf("憲章が空であることを述べていない:\n%s", text)
 	}
 }
+
+// ── 「エージェントの参画情報」を憲章から外す（手順28c）──────────
+//
+// 期待値は Design.md 8.5.5「ただし『エージェントの参画情報』だけを除く」と
+// DbDesign.md 8.1.2 から取る。**参画時に一度読む手順であって、判断の
+// 拠りどころではない**ためである。
+
+func TestGetContextExcludesOnboardingDoc(t *testing.T) {
+	// **節点ごと落ちる**ので、その下にぶら下げた文書も憲章に来ない。
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"items":[
+			{"path":"vision","title":"価値観・世界観","children":[]},
+			{"path":"agent-onboarding","title":"エージェントの参画情報","children":[
+				{"path":"agent-onboarding/creds","title":"資格情報","children":[]}]}]}`},
+		{status: http.StatusOK, body: `{"body_md":"人とエージェントの器である。"}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+
+	// **本文を引く前に落とす**——捨てる文書のために 10.3 を叩かない。
+	want := []string{
+		"/api/v1/projects/demo/tickets/31",
+		"/api/v1/projects/demo/docs",
+		"/api/v1/projects/demo/docs/vision",
+	}
+	if strings.Join(rest.gotPaths, ",") != strings.Join(want, ",") {
+		t.Errorf("叩いた REST = %v, want %v", rest.gotPaths, want)
+	}
+	if strings.Contains(text, "### エージェントの参画情報") {
+		t.Errorf("参画情報が憲章に載っている:\n%s", text)
+	}
+	// **落としたことを1行書く**（Requirements.md 10.4.3 の 4）。
+	for _, s := range []string{
+		"「エージェントの参画情報」（`agent-onboarding`）は**含めていない**",
+		`pb_get_doc(path="agent-onboarding")`,
+		"### 価値観・世界観（`vision`）",
+	} {
+		if !strings.Contains(text, s) {
+			t.Errorf("パックに %q が無い:\n%s", s, text)
+		}
+	}
+}
+
+func TestGetContextKeepsOnboardingDocWhenMoved(t *testing.T) {
+	// **除外は path の完全一致で見る**（Design.md 8.5.5）。木のどこでも効く
+	// 規則にすると、同じ slug を付けた別の文書まで黙って落ちる。
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"items":[
+			{"path":"rules","title":"規約","children":[
+				{"path":"rules/agent-onboarding","title":"参画","children":[]}]}]}`},
+		{status: http.StatusOK, body: `{"body_md":"推測で実装しない。"}`},
+		{status: http.StatusOK, body: `{"body_md":"clone してから始める。"}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+
+	if !strings.Contains(text, "### 参画（`rules/agent-onboarding`）") {
+		t.Errorf("移された文書は憲章に載るはず:\n%s", text)
+	}
+	if strings.Contains(text, "は含めていない") {
+		t.Errorf("落としていないのに除外の断りが出ている:\n%s", text)
+	}
+}
+
+func TestGetContextSaysCharterIsEmptyWhenOnlyOnboardingExists(t *testing.T) {
+	// **件数を数え上げない。** 参画情報を落とした後で「1件も無い」と言い切ると
+	// 嘘になるので、「判断の拠りどころになる文書が」と限定して述べる。
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"items":[
+			{"path":"agent-onboarding","title":"エージェントの参画情報","children":[]}]}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+
+	for _, s := range []string{
+		"判断の拠りどころになる文書が1件も無い",
+		"「エージェントの参画情報」（`agent-onboarding`）は**含めていない**",
+	} {
+		if !strings.Contains(text, s) {
+			t.Errorf("パックに %q が無い:\n%s", s, text)
+		}
+	}
+}

@@ -149,12 +149,34 @@ func callGetContext(h *Handler, r *http.Request, key string, args json.RawMessag
 	}
 
 	// ── 憲章（10.2 の目次 → 10.3 の本文）──────────────────────
-	docs, note, rpcErr := h.fetchCharter(r, base)
+	ch, rpcErr := h.fetchCharter(r, base)
 	if rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
 
-	return textResult(renderContextPack(key, ticket, docs, note)), nil
+	return textResult(renderContextPack(key, ticket, ch)), nil
+}
+
+// onboardingDocPath は憲章から外す1件のパス（Design.md 8.5.5、DbDesign.md 8.1.2）。
+//
+// **「エージェントの参画情報」は参画のときに一度読む手順であって、判断の
+// 拠りどころではない**（Requirements.md 10.6.2）。**チケットごとのパックに毎回
+// 運ぶと、押し付けたいもの（スコープ境界・規約）が薄まる**——本文と完了条件を
+// 入れない理由と同じである。
+//
+// **完全一致で見る。** 木のどこにあっても効く規則にすると、**たまたま同じ slug を
+// 付けた別の文書まで黙って落ちる。** 他の文書の下へ移されると憲章に戻るが、
+// **落としたことは応答に1行出る**ので、移した人が気づける。
+const onboardingDocPath = "agent-onboarding"
+
+// charter は憲章の取り込み結果（Design.md 8.5.5）。
+type charter struct {
+	// docs は目次の順に本文を積んだ文書。
+	docs []packDoc
+	// note は憲章を丸ごと省いたときの理由（省いていなければ空）。
+	note string
+	// excludedOnboarding は onboardingDocPath を落としたかどうか。
+	excludedOnboarding bool
 }
 
 // fetchCharter は憲章を全文で集める（Design.md 8.5.5）。
@@ -166,20 +188,20 @@ func callGetContext(h *Handler, r *http.Request, key string, args json.RawMessag
 // パックは役に立つ。
 //
 // 返す note は、憲章を省いたときにその理由を書いた1行である（省いていなければ空）。
-func (h *Handler) fetchCharter(r *http.Request, base string) ([]packDoc, string, *rpcError) {
+func (h *Handler) fetchCharter(r *http.Request, base string) (charter, *rpcError) {
 	q := url.Values{}
 	q.Set("outline", "1")
 	res, err := h.getREST(r, base+"/docs", q)
 	if err != nil {
-		return nil, "", newError(codeInternalError, err.Error())
+		return charter{}, newError(codeInternalError, err.Error())
 	}
 	if res.status == http.StatusForbidden {
-		return nil, "**このトークンは憲章を読む権限（doc.view）を持たないため、憲章を省いた。**" +
+		return charter{note: "**このトークンは憲章を読む権限（doc.view）を持たないため、憲章を省いた。**" +
 			"プロジェクトの規約・価値観・判断の記録を参照せずに進めることになるので、" +
-			"判断に迷ったら実装せず利用者に相談すること。", nil
+			"判断に迷ったら実装せず利用者に相談すること。"}, nil
 	}
 	if !res.ok() {
-		return nil, "", newError(codeInternalError,
+		return charter{}, newError(codeInternalError,
 			fmt.Sprintf("憲章の目次を読めない（HTTP %d）: %s", res.status, string(res.body)))
 	}
 
@@ -187,18 +209,40 @@ func (h *Handler) fetchCharter(r *http.Request, base string) ([]packDoc, string,
 		Items []packDocNode `json:"items"`
 	}
 	if err := json.Unmarshal(res.body, &outline); err != nil {
-		return nil, "", newError(codeInternalError, "憲章の目次を解釈できない: "+err.Error())
+		return charter{}, newError(codeInternalError, "憲章の目次を解釈できない: "+err.Error())
 	}
 
-	var docs []packDoc
-	for _, node := range flattenDocTree(outline.Items) {
+	// **本文を引く前に落とす。** 目次の段階で外しておかないと、捨てる文書のために
+	// 10.3 を1往復ぶん余計に叩くことになる。
+	items, excluded := dropOnboardingDoc(outline.Items)
+
+	ch := charter{excludedOnboarding: excluded}
+	for _, node := range flattenDocTree(items) {
 		body, rpcErr := h.fetchDocBody(r, base, node.Path)
 		if rpcErr != nil {
-			return nil, "", rpcErr
+			return charter{}, rpcErr
 		}
-		docs = append(docs, packDoc{Path: node.Path, Title: node.Title, BodyMD: body})
+		ch.docs = append(ch.docs, packDoc{Path: node.Path, Title: node.Title, BodyMD: body})
 	}
-	return docs, "", nil
+	return ch, nil
+}
+
+// dropOnboardingDoc は onboardingDocPath の節点を目次から外す。
+//
+// **トップレベルだけを見る**（テンプレートが置く位置。上の const を参照）。
+// 節点ごと外すので、**その下に置かれた文書も一緒に落ちる**——参画の細目を
+// ぶら下げた人の意図に沿う。
+func dropOnboardingDoc(nodes []packDocNode) ([]packDocNode, bool) {
+	for i, n := range nodes {
+		if n.Path != onboardingDocPath {
+			continue
+		}
+		out := make([]packDocNode, 0, len(nodes)-1)
+		out = append(out, nodes[:i]...)
+		out = append(out, nodes[i+1:]...)
+		return out, true
+	}
+	return nodes, false
 }
 
 // fetchDocBody は文書1件の本文を引く（10.3）。
@@ -262,7 +306,7 @@ var scopeKeyLabels = []struct{ key, label string }{
 }
 
 // renderContextPack は 8.5.5 の5節を組み立てる。
-func renderContextPack(projectKey string, t packTicket, docs []packDoc, charterNote string) string {
+func renderContextPack(projectKey string, t packTicket, ch charter) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "# コンテキストパック — %s-%d「%s」\n\n", projectKey, t.Seq, t.Title)
@@ -272,7 +316,7 @@ func renderContextPack(projectKey string, t packTicket, docs []packDoc, charterN
 
 	writeScopeSection(&b, t.Scope)
 	writeExecutionSection(&b, t)
-	writeCharterSection(&b, docs, charterNote)
+	writeCharterSection(&b, ch)
 	writeRelatedSection(&b, projectKey, t)
 	writeNextStepsSection(&b, t.Seq)
 
@@ -399,21 +443,31 @@ func writeExecutionSection(b *strings.Builder, t packTicket) {
 
 // writeCharterSection は 10.4.2 の優先度2。**Phase 2 は文書がメモリの代わりである**
 // （DbDesign.md 8.3 が knowledge を Phase 3 へ送っているため）。
-func writeCharterSection(b *strings.Builder, docs []packDoc, note string) {
+func writeCharterSection(b *strings.Builder, ch charter) {
 	b.WriteString("## 3. 憲章\n\n")
-	if note != "" {
-		b.WriteString(note + "\n\n")
+	if ch.note != "" {
+		b.WriteString(ch.note + "\n\n")
 		return
 	}
-	if len(docs) == 0 {
-		b.WriteString("**このプロジェクトにはまだ文書が1件も無い。**\n" +
+	if len(ch.docs) == 0 {
+		// **件数を数え上げない。** 参画情報を落とした後で「1件も無い」と
+		// 言い切ると、実際には1件ある場合に嘘になる。
+		b.WriteString("**このプロジェクトには、判断の拠りどころになる文書が1件も無い。**\n" +
 			"規約・価値観・判断の記録が書かれていないということなので、" +
 			"**判断が要る場面では推測せず利用者に確認すること。**\n\n")
-		return
+	} else {
+		b.WriteString("**プロジェクトの規約・価値観・判断の記録である。全参加者を縛る。**\n" +
+			"以下は全文であり、切り詰めていない。\n\n")
 	}
-	b.WriteString("**プロジェクトの規約・価値観・判断の記録である。全参加者を縛る。**\n" +
-		"以下は全文であり、切り詰めていない。\n\n")
-	for _, d := range docs {
+	// **落としたことを1行書く**（10.4.3 の 4）。実際に落ちたときだけ出す。
+	if ch.excludedOnboarding {
+		// **強調は文ではなく句を囲む**（DbDesign.md 8.1.2）。閉じる ** が句点に続き
+		// 直後が全角文字だと、CommonMark の right-flanking にならず ** が地の文に残る。
+		b.WriteString("ただし「エージェントの参画情報」（`" + onboardingDocPath + "`）は**含めていない**。" +
+			"参画のときに一度読む手順であって、判断の拠りどころではないためである。" +
+			"作業材料の取り方や参画の合図が要るなら `pb_get_doc(path=\"" + onboardingDocPath + "\")` で読む。\n\n")
+	}
+	for _, d := range ch.docs {
 		fmt.Fprintf(b, "### %s（`%s`）\n\n", d.Title, d.Path)
 		body := strings.TrimSpace(d.BodyMD)
 		if body == "" {
