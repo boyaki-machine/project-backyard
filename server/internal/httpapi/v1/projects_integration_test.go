@@ -26,7 +26,7 @@ import (
 //
 //   - ListProjects の CASE 式による ORDER BY と ICU collation が実際に動くこと
 //   - LATERAL の集約が ticket_count / closed_count / progress を正しく出すこと
-//     （チケットAPIは手順18のため、行は直接 INSERT して用意する）
+//     （このテストは一覧の集計だけを見るので、行は直接 INSERT で足りる）
 //   - キー重複が本当にDBの UNIQUE 制約で捕まり、409 に写ること
 //     （pgconn.PgError の TableName / ConstraintName が期待どおりに入るか）
 //   - 途中で失敗したときにトランザクションが巻き戻ること
@@ -281,8 +281,9 @@ func seedUserWithRole(
 
 // seedTickets は project に total 件のチケットを入れ、うち closed 件を完了にする。
 //
-// **チケットAPIは手順18のため、行を直接入れる。** 一覧の ticket_count /
-// closed_count / progress は、チケットが1件も無いと 0 のままで検証できない。
+// **一覧の集計だけを見るので、行は直接入れる**（チケットAPIを経由する必要が無い）。
+// ticket_count / closed_count / progress は、チケットが1件も無いと 0 のままで
+// 検証できない。
 func seedTickets(t *testing.T, ctx context.Context, pool *pgxpool.Pool, projectID string, total, closed int) {
 	t.Helper()
 	for i := 1; i <= total; i++ {

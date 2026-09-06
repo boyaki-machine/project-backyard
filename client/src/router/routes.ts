@@ -307,37 +307,7 @@ export const routes: RouteRecordRaw[] = [
     },
   },
 
-  {
-    path: '/p/:key/approvals',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'proposal.review',
-      placeholder: {
-        title: '承認キュー',
-        docRef: 'GuiDesign.md 10章',
-        status: 'Phase 2',
-        planned: [
-          'AIの提案（知識更新・サブタスク・ドキュメント差分）を差分ビューで一括レビュー',
-          'proposal テーブル1つを源とする単一画面',
-          'メインメニューへの未処理件数バッジ',
-        ],
-      },
-    },
-  },
 
-  {
-    path: '/p/:key/knowledge',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'knowledge.view',
-      placeholder: {
-        title: 'プロジェクトメモリ',
-        docRef: 'GuiDesign.md 10章',
-        status: 'Phase 2',
-        planned: ['知識の一覧・編集・履歴', 'kind（規約／決定／注意／失敗）によるフィルタ'],
-      },
-    },
-  },
 
   {
     // 実画面（GuiDesign.md 5.11）。手順28a でプレースホルダから差し替えた。
@@ -355,8 +325,41 @@ export const routes: RouteRecordRaw[] = [
 
   // ── Phase 3（GuiDesign.md 10章）─────────────────────────────
   //
-  // **必要権限は project.view**（3.2）。チケット個々を見ずに集計だけを読む
-  // 画面のため、ticket.view ではない（4.3）。
+  // **必要権限は画面ごとに違う**（3.2 が正本）。承認キューは `proposal.review`、
+  // プロジェクトメモリは `knowledge.view`、進捗分析とヒストリーは `project.view`
+  // ——後者はチケット個々を見ずに集計だけを読む画面のため、ticket.view ではない（4.3）。
+  {
+    path: '/p/:key/approvals',
+    component: PlaceholderPage,
+    meta: {
+      permission: 'proposal.review',
+      placeholder: {
+        title: '承認キュー',
+        docRef: 'GuiDesign.md 10章',
+        status: 'Phase 3',
+        planned: [
+          'AIの提案（知識更新・サブタスク・ドキュメント差分）を差分ビューで一括レビュー',
+          'proposal テーブル1つを源とする単一画面',
+          'メインメニューへの未処理件数バッジ',
+        ],
+      },
+    },
+  },
+
+  {
+    path: '/p/:key/knowledge',
+    component: PlaceholderPage,
+    meta: {
+      permission: 'knowledge.view',
+      placeholder: {
+        title: 'プロジェクトメモリ',
+        docRef: 'GuiDesign.md 10章',
+        status: 'Phase 3',
+        planned: ['知識の一覧・編集・履歴', 'kind（規約／決定／注意／失敗）によるフィルタ'],
+      },
+    },
+  },
+
   {
     path: '/p/:key/insights',
     component: PlaceholderPage,
