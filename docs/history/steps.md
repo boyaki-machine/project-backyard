@@ -66,6 +66,7 @@
 - 手順26b の現況記録（2026-09-05）
 - 手順26c — 完了レポート（2026-09-05、`feature/step-26c-agent-report`、v2.10.67）
 - 手順27 — コンテキストパック（2026-09-05、`feature/step-27-context-pack`、v2.11.69）
+- 手順28a — 配置ファイルの生成とセットアップ画面（2026-09-06、`feature/step-28a-agent-setup-files`）
 - 手順外の作業（stg の PB へ起票済み、2026-09-05。チケット番号への対応表）
 
 ---
@@ -4308,3 +4309,73 @@ Cookie jar・トークン・Chrome プロファイル（`/tmp/pb-cdp-*`）を削
 **戻しきれなかったもの1件**：pb-21 の `updated_at` が SQL の更新2回ぶん動いた
 （`trg_ticket_updated`。`activity` は書いていないので履歴には出ない）。**stg は
 ドッグフーディングの実データなので、消さずに残す。**
+
+---
+
+## 手順28a — 配置ファイルの生成とセットアップ画面（2026-09-06、`feature/step-28a-agent-setup-files`）
+
+**手順28 を2つに分けた**（`Design.md` 11.2.1）。28a が系統A（リポジトリの初回接続）、
+**28b が系統B（`/me/agents` のエージェントごと）で、手順の完了条件は 28b で満たす。**
+
+### 作ったファイル
+
+| ファイル | 役割 |
+|---|---|
+| `server/migrations/0023_agent_setup.sql` | `agent.token_env_suffix`（部分一意索引つき）と `agent_client_kind.has_setup_template` |
+| `server/internal/agentsetup/agentsetup.go` | 配置ファイルの組み立てと zip 化。テンプレートを `embed` する |
+| `server/internal/agentsetup/templates/body/*.md` | 手順3枚（`pb-onboard` / `pb-implement` / `pb-refine`）と常時コンテキストのブロック。**本文は1枚ずつしか持たない** |
+| `server/internal/agentsetup/agentsetup_test.go` | 7件。**0023 の `UPDATE … WHERE key IN (…)` を正規表現で読んで Go の `specs` と突き合わせる** |
+| `server/internal/httpapi/v1/agent_setup.go` | `GET /projects/{key}/agent-setup` と `.zip` |
+| `server/internal/httpapi/v1/agent_setup_test.go` | 5件（応答の形・`base_url`・`?client=` の検証・zip・404） |
+| `server/internal/httpapi/v1/agent_setup_integration_test.go` | 7件（**403 / 404 の出し分けと 0023 の実適用**） |
+| `client/src/api/agentSetup.ts` | 2本の口。zip は `<a download href>` に渡す URL を返す |
+| `client/src/pages/AgentSetupPage.vue` | セットアップ画面（`GuiDesign.md` 5.11） |
+
+### 変えたファイル
+
+`me_agents.go`（`token_env_suffix` / `token_env_name` / `has_setup_template`）、
+`store/queries/agent.sql`（6か所＋新規2本）、`routes.go`、`client.ts`（`BASE_PATH` を `export`）、
+`AgentFormModal.vue`（環境変数名の欄と候補生成）、`MyAgentsPage.vue`（カードに変数名）、
+`ProjectSettingsPage.vue`（導線）、`routes.ts`（プレースホルダを差し替え）、
+`docs/openapi.yaml`（2パス＋2スキーマ＋既存3スキーマ）。
+
+**設計文書**：`Requirements.md` 10.8.1〜10.8.10 / 10.9.1 / 10.9.2 / 10.9.4、
+`ApiDesign.md` 4.5.1 / 4.5.2 / 4.5.4 / 4.5.7 / 新節5.7 / 8章、
+`GuiDesign.md` 3.2 / 5.8.2 / 5.9 / 新節5.11 / 10章、`DbDesign.md` 8章の採番 / 8.2.1 / 8.2.1.1、
+`Design.md` 10.3 / 11章、`Development.md` 12.1、`Testing.md` 3章 / 新節7.5。
+
+### このリポジトリへ適用したもの
+
+| 対象 | 結果 |
+|---|---|
+| `.claude/commands/pb-onboard.md` | 生成物へ置換。**手書きとの差はフロントマターだけで、本文は完全に一致していた**（引き継ぎ `[28]`「手書きのほうが古くなっていないか」の答え） |
+| `.claude/commands/pb-implement.md` / `pb-refine.md` | **新規**（これまで存在しなかった） |
+| `.claude/settings.json` | `permissions.allow` へ read 系7件を**追記**（既存130行は保った） |
+| `.gitignore` | `.mcp.json` と `.envrc` を除外する追記 |
+| `.mcp.json` | **`git rm --cached`**（利用者の承認）。ファイルは残るので接続は切れない |
+| `CLAUDE.md` のブロック | **見送り**（利用者の判断。引き継ぎ `[stg の憲章を読むとき]` 指摘②と一緒に決める） |
+
+### 検証結果
+
+| 層 | 結果 |
+|---|---|
+| 単体（`make test`） | 全パッケージ PASS。`agentsetup` 7件、`agent_setup` 5件 |
+| ドリフト検出 | 追加直後に**2件 FAIL**（`openapi.yaml` に無い）→ 追記して PASS |
+| マイグレーション | `make migrate` / `make stg-migrate` ともに 0023 適用 |
+| 結合（`make test-db`） | `TestAgentSetupIntegration` 7件 PASS。**`project_member` は 403、非メンバーは 404、`gemini` は 422** |
+| 画面（ヘッドレス Chrome、1440x900） | **15件 PASS**（導線・3種別の選択肢・6枚の生成・接続設定が入らない・新規/追記/統合の出し分け・注意書き・接続先・zip の href・環境変数名の候補・`member@` の 403 ×2） |
+| 落ちる側 | `0023` の `IN (…)` から `codex` を抜いて `TestSupportedClientsMatchesMigration` が FAIL することを確認して戻した |
+
+**描画して初めて分かった問題を1件直した。** `.gitignore` はマーカーを持たないのに
+「`<マーカー>` 〜 `<マーカー>` の間だけが PB の管理範囲です」と空欄で出ていた。
+**単体は通ったままだった**（文字列が返ることは測れても、読める文かは描かないと分からない）。
+マーカーを持つ行にだけ注意書きと説明を出す形へ直し、`Testing.md` 7.5 へ書いた。
+
+### あとしまつ
+
+| 作った資源 | 片付け |
+|---|---|
+| dev の `demo` から取った `setup.json`（生成物の取得） | スクラッチパッド。セッション終了で消える |
+| ヘッドレス Chrome のプロファイル2つ | `tempfile.TemporaryDirectory` で自動削除。プロセスは `close()` で終了 |
+| dev / stg の DB | **書き込みを伴う検証をしていない**（生成は GET だけ）。結合テストが作った行は `t.Cleanup` で削除 |
+| `make build` の埋め込み | `make clean-webui` |

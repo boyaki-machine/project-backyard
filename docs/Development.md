@@ -866,14 +866,38 @@ make stg-build OUT=/path/to/dir
 
 **設計は `Design.md` 8章。** ここは手順だけを書く。
 
-## 12.1 このリポジトリの `.mcp.json`
+## 12.1 このリポジトリの配置ファイル
 
-リポジトリ直下の `.mcp.json` は **stg（`http://localhost:8081/mcp/pb`）を指している**。
-PB 自身の管理に PB を使うためで（`Design.md` 4.4）、**dev（`:8080`）ではない**——
-`make dev-reset` で消えるインスタンスを憲章の置き場にはできない。
+**手順28a から、手順ファイルは PB が生成したものである**（`/p/<key>/settings/agents`。
+`GuiDesign.md` 5.11）。`.claude/commands/pb-onboard.md` / `pb-implement.md` /
+`pb-refine.md` と `.claude/settings.json` の許可がそれで、**直したいときは
+テンプレート（`server/internal/agentsetup/templates/body/`）を直して取り直す。**
+手で直すと、次に取り直したときに消える。
 
-**手順ファイルは `.claude/commands/pb-onboard.md`。** どちらも手順28 で PB が生成する
-ようになるが、それまでは手で置いてある（`Requirements.md` 10.8.3 / 10.8.5 の写し）。
+**`.mcp.json` は履歴管理の対象外である**（`Requirements.md` 10.8.1。2026-09-06 に
+`.gitignore` へ移した）。各人のネットワーク事情で書き換えるファイルなので、コミットすると
+**個人環境が履歴に残り、参加者どうしで上書き合戦になる**。**clone した人は自分で用意する**
+——手順28b で `/me/agents` から落とせるようになるまでは、下の形を手で置く。
+
+```json
+{
+  "mcpServers": {
+    "pb": {
+      "type": "http",
+      "url": "http://localhost:8081/mcp/pb",
+      "headers": { "Authorization": "Bearer ${PB_TOKEN}" }
+    }
+  }
+}
+```
+
+**stg（`:8081`）を指す。** PB 自身の管理に PB を使うためで（`Design.md` 4.4）、
+**dev（`:8080`）ではない**——`make dev-reset` で消えるインスタンスを憲章の置き場にはできない。
+
+**環境変数名は手順28a から本人が決められる**（`ApiDesign.md` 4.5.2 の `token_env_suffix`）。
+**このリポジトリの `.mcp.json` は `${PB_TOKEN}` のまま置いてある**——0023 より前に登録した
+エージェントは接尾が未設定で、変えると動いている接続が切れるためである。**28b で
+`/me/agents` から取り直すときに、決めた名前へ揃える。**
 
 ## 12.2 つなぐ（初回）
 

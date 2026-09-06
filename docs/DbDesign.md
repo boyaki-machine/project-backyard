@@ -1574,15 +1574,17 @@ Phase 2
                           ticket.working_agent_id（実行者の自己申告。6.6）  ← 適用済み
   0022_agent_run.sql      agent_run, agent_report, context_pack_log,
                           comment.agent_run_id の FK 付与（8.2.4）        ← 適用済み
+  0023_agent_setup.sql    agent.token_env_suffix（8.2.1）,
+                          agent_client_kind.has_setup_template（8.2.1.1） ← 適用済み
 Phase 3
-  0023_knowledge.sql      knowledge, knowledge_revision, proposal
-  0024_comment_signal.sql comment_signal
-  0025_embedding.sql      vector 拡張 + embedding
-  0026_project_event.sql  project_event
-  0027_analytics.sql      estimate_record, contribution
+  0024_knowledge.sql      knowledge, knowledge_revision, proposal
+  0025_comment_signal.sql comment_signal
+  0026_embedding.sql      vector 拡張 + embedding
+  0027_project_event.sql  project_event
+  0028_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で4回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027** である（手順26c の 0022 で4回目。**このときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028** である（手順26c の 0022 で4回目、**手順28a の 0023 で5回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 
@@ -1773,12 +1775,54 @@ CREATE TABLE agent (
 CREATE INDEX idx_agent_owner ON agent (owner_actor_id);
 CREATE TRIGGER trg_agent_updated BEFORE UPDATE ON agent
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- 0023（手順28a）
+ALTER TABLE agent ADD COLUMN token_env_suffix text
+  CHECK (token_env_suffix IS NULL
+      OR token_env_suffix ~ '^[A-Z][A-Z0-9_]{0,40}$');
+CREATE UNIQUE INDEX uq_agent_env_suffix
+  ON agent (owner_actor_id, token_env_suffix)
+  WHERE token_env_suffix IS NOT NULL;
 ```
 
 **`client_kind` は 0020 で参照テーブルに変えた**（8.2.1.1）。0019 では
 `CHECK (client_kind IN ('claude_code','copilot','other'))` だった。
 
-**1行が表すのは「ある参加者の手元で動くクライアント1つ」である。** 人ではない。同じ人が Claude Code と VS Code を使えば2行になり（`Requirements.md` 10.10.3「クライアントごとに分ける」）、2つのプロジェクトにつなぐならさらに分かれる。**キーは（所有者・クライアント種別・プロジェクト）の3つ組**であり、`ApiDesign.md` 6.1 のエージェント行の例（`claude-code (my-app)`）がこの形を前提にしている。
+#### `token_env_suffix` — トークンを載せる環境変数の名前（0023 で追加）
+
+**接続設定ファイルが読む環境変数の名前を、本人が決める**（`Requirements.md` 10.8.3、
+利用者の判断 2026-09-06）。**格納するのは接尾だけ**で、`PB_TOKEN_` の接頭はアプリが付ける。
+
+```
+token_env_suffix = 'MY_LAPTOP'   →   PB_TOKEN_MY_LAPTOP
+```
+
+**接頭を持たせないのは、`PATH` や `HOME` を作れないようにするため**である。CHECK が
+`^[A-Z][A-Z0-9_]{0,40}$` に限るので、環境変数名として妥当な文字だけが入る。
+
+**一意は（所有者・接尾）である。** 環境変数は端末ごとの名前空間なので、他人と重なって構わない。
+**同じ人の中で重なると、`~/.zshrc` の1行が2つのエージェントに解釈されて事故になる。**
+
+**固定名（`PB_TOKEN`）では足りない。** 同じ端末で2つ以上のエージェントを使うと衝突し、
+症状は `404 not_found`（トークンのプロジェクトと URL のプロジェクトの食い違い。`Design.md` 8.3）
+になる——**利用者からは原因が見分けられない。**
+
+**導出にしない理由**（3案とも検討して落とした）。
+
+| 導出元 | 落ちる理由 |
+|---|---|
+| プロジェクトキー | エージェントが増える主な軸は**端末**である。「ノートPC」と「デスクトップ」は同じプロジェクト・同じ種別になり、区別できない |
+| 表示名 | 一意でない（キーは4つ組。`ApiDesign.md` 4.5.4）。**日本語が通る**ので環境変数名を作れないことがある。しかも**改名できる**ので、`~/.zshrc` の行が黙って効かなくなる |
+| ULID | 一意で不変だが読めない。`~/.zshrc` を開いた本人が何の変数か分からない（利用者の指摘） |
+
+**「どの端末か」は PB が知らない情報である。** `ApiDesign.md` 4.5.1 が `display_name` を
+「**本人が**思い出すための手がかり」と定めているのと同じ理由で、本人に書いてもらう。
+
+**NULL を許すのは、0023 の時点で既に登録済みの行があるため**である。埋め戻しに使える
+決定的な規則が上のとおり存在しない（日本語の表示名から作れない）。**NULL の行は
+`PB_TOKEN_<エージェントの ULID>` にフォールバックし、画面が設定を促す**（`ApiDesign.md` 4.5.1）。
+
+**1行が表すのは「ある参加者の手元で動くクライアント1つ」である。** 人ではない。同じ人が Claude Code と VS Code を使えば2行になり（`Requirements.md` 10.10.3「クライアントごとに分ける」）、2つのプロジェクトにつなぐならさらに分かれる。**キーは（所有者・クライアント種別・プロジェクト・表示名）の4つ組**であり（`ApiDesign.md` 4.5.4）、`ApiDesign.md` 6.1 のエージェント行の例（`claude-code (my-app)`）がこの形を前提にしている。**表示名まで含むので、同じ端末種別で「ノートPC」と「デスクトップ」を分けられる。**
 
 `model_name` / `model_version` を保持するのは、`Requirements.md` 10.10.3 の「モデル更新後に品質が変化した際の切り分け」のため。`agent_run` にも実行時点の値をコピーする（後からモデルを変えても過去の実行記録が壊れないよう非正規化する）。
 
@@ -1792,15 +1836,21 @@ CREATE TABLE agent_client_kind (
   display_name text    NOT NULL,
   sort_order   integer NOT NULL
 );
+
+-- 0023（手順28a）
+ALTER TABLE agent_client_kind
+  ADD COLUMN has_setup_template boolean NOT NULL DEFAULT false;
+UPDATE agent_client_kind SET has_setup_template = true
+ WHERE key IN ('claude_code', 'copilot', 'codex');
 ```
 
-| `key` | `display_name` | `sort_order` | 事業者 |
-|---|---|---|---|
-| `claude_code` | Claude Code | 10 | Anthropic |
-| `codex` | OpenAI Codex | 20 | OpenAI |
-| `copilot` | GitHub Copilot | 30 | Microsoft |
-| `gemini` | Gemini（CLI / Code Assist） | 40 | Google |
-| `other` | その他・OSS 等 | 90 | — |
+| `key` | `display_name` | `sort_order` | `has_setup_template` | 事業者 |
+|---|---|---|---|---|
+| `claude_code` | Claude Code | 10 | **true** | Anthropic |
+| `codex` | OpenAI Codex | 20 | **true** | OpenAI |
+| `copilot` | GitHub Copilot | 30 | **true** | Microsoft |
+| `gemini` | Gemini（CLI / Code Assist） | 40 | false | Google |
+| `other` | その他・OSS 等 | 90 | false | — |
 
 **値が決めるのは「設定ファイルの置き場」である。** エディタではない——同じ VS Code でも
 Claude 拡張なら `.mcp.json` + `.claude/commands/`、GitHub Copilot なら
@@ -1824,14 +1874,32 @@ Codex / Gemini CLI が Zed・JetBrains・Neovim の中で動く）。**軸をエ
 | **表示名がDBに来る** | **画面が対応表を持たなくてよくなる**（`GET /roles` が `lib/roles.ts` を廃止させたのと同じ形。`GuiDesign.md` 5.6） |
 | 値域はDBが守る | FK なので、アプリの検証を抜けた値は INSERT で落ちる |
 
-**「PB が接続手順を提供できるか」の列は持たない。** 配置ファイルの生成は手順28
-（`Requirements.md` 10.9.1 系統A）であり、**使うものが無いうちに入口を作ると意味が固まる**
-——`trust_level` を 0019 で受け取らなかったのと同じ判断である。**28 でテンプレートを
-書くときに列を足す。**
+#### `has_setup_template` — PB が配置ファイルを出せるか（0023 で追加）
+
+**PB がそのクライアント向けのテンプレートを持っているかを表す。** 持たない種別を
+セットアップ画面の選択肢に出すと、**選んだ先に何も出ない。**
+
+**true にしたのは3種別だけである**（`Requirements.md` 10.8.2 が本文を定義しているものに限る）。
+**書いていないテンプレートを「持っている」と名乗らない。**
+
+| 種別 | 接続設定 | 手順 | 常時コンテキスト |
+|---|---|---|---|
+| `claude_code` | `.mcp.json` | `.claude/commands/*.md` | `CLAUDE.md` |
+| `copilot` | `.vscode/mcp.json` | `.github/prompts/*.prompt.md` | `.github/copilot-instructions.md` |
+| `codex` | `.codex/config.toml` | `.agents/skills/*/SKILL.md` | `AGENTS.md` |
+
+**3種別とも置き場が違う。** これが「値が決めるのは設定ファイルの置き場である」の実物であり、
+**同じ人が複数のクライアントを使うなら、エージェントごとに違うものを渡す必要がある**
+（`Requirements.md` 10.9.1 の系統B）。
+
+**改訂前は「列は持たない」だった**（0020 の時点。「使うものが無いうちに入口を作ると意味が固まる」
+——`trust_level` を 0019 で受け取らなかったのと同じ判断）。**手順28a でテンプレートを書いたので、
+予告どおり列を足した。**
 
 **`other` を残す。** OSS のエージェント（Cline / Goose / OpenCode / OpenHands / Aider /
 Continue など）や、事業者系でも PB がまだ手順を持たないものがここへ入る。
-**手順28 で個別のテンプレートを書いたものから、行として独立させていく。**
+**個別のテンプレートを書いたものから、行として独立させ `has_setup_template` を立てる。**
+`gemini` は行として在るがテンプレートが無いので false である。
 
 #### `owner_actor_id` — エージェントは人に紐づく（0019 で追加）
 

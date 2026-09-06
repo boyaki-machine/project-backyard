@@ -178,6 +178,19 @@ func Mount(r chi.Router, deps Deps) {
 		//
 		// **stats と activity は静的なセグメントなので、{key} 配下の他の
 		// ルートと衝突しない。**
+		// ── エージェント連携セットアップ（ApiDesign.md 5.7）── 手順28a ──
+		//
+		// **必要権限は agent.register**（GuiDesign.md 3.2）。project.edit では
+		// ない——持つのは project_admin だけで、0010 の割り当てをそのまま使う。
+		//
+		// **agent-setup と agent-setup.zip は静的なセグメントなので、{key} 配下の
+		// 他のルートと衝突しない**（stats / activity と同じ）。**zip を別パスに
+		// してあるのは、ブラウザの <a download href> で落とすためである。**
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.register")).
+			Get("/projects/{key}/agent-setup", h.getAgentSetup)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.register")).
+			Get("/projects/{key}/agent-setup.zip", h.getAgentSetupZip)
+
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).
 			Get("/projects/{key}/stats", h.getProjectStats)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).

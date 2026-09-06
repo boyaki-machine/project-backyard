@@ -18,6 +18,29 @@ type Querier interface {
 	// 二重に持つと「検証を通った値が INSERT で落ちて 500」になる。
 	//
 	AgentClientKindExists(ctx context.Context, key string) (bool, error)
+	// AgentClientKindsWithTemplate は配置ファイルを出せる種別を返す（ApiDesign.md 5.7.1）。
+	//
+	// **セットアップ画面の検証に使う。** has_setup_template が偽の種別を指定されたら
+	// 422 にする——選んだ先に何も出ないためである（DbDesign.md 8.2.1.1）。
+	//
+	// **ListAgentClientKinds で代用しない。** あちらはカタログ全件を返す口で、
+	// 5.8.2 の登録モーダル（全種別を出す）が使う。**絞る条件をSQLに書いておくほうが、
+	// 呼び出し側で bool を見落とす経路より安全である。**
+	//
+	AgentClientKindsWithTemplate(ctx context.Context) ([]AgentClientKindsWithTemplateRow, error)
+	// AgentEnvSuffixExists は 409 already_exists の判定（ApiDesign.md 4.5.2 / 4.5.4）。
+	//
+	// **一意は（所有者・接尾）である**（DbDesign.md 8.2.1）。環境変数は端末ごとの名前空間
+	// なので他人と重なってよいが、**同じ人の中で重なると ~/.zshrc の1行が2つのエージェントに
+	// 解釈される。**
+	//
+	// **DBに部分一意インデックスがある**ので、この検査が破れても壊れない。画面に
+	// 読める message を返すために先に見ている（AgentExistsWithName と同じ考え方）。
+	//
+	// **@exclude_actor_id には、新規作成のとき空文字を渡す**（ULID は空文字になりえない）。
+	// 更新のときだけ自分自身が除かれる。
+	//
+	AgentEnvSuffixExists(ctx context.Context, arg AgentEnvSuffixExistsParams) (bool, error)
 	// AgentExistsWithName は 409 already_exists の判定（ApiDesign.md 4.5.2）。
 	//
 	// **同じ所有者の中で（プロジェクト・クライアント種別・表示名）の組を見る。**
@@ -1452,6 +1475,10 @@ type Querier interface {
 	// **client_kind は 0020 から変更できる。** 値域が今後も増えるため、`other` で
 	// 登録した人が、PB がその種別に対応した日に移れる必要がある。**project_id は
 	// 変えられない**——そのエージェントが行った仕事はプロジェクトに属する。
+	//
+	// **token_env_suffix も変えられる**（手順28a）。端末を替えたときに直せる必要があるのは
+	// display_name と同じ理由である。**変えたら接続設定を取り直す**——.mcp.json に古い変数名が
+	// 残っていると ~/.zshrc を直しても繋がらない。
 	//
 	UpdateAgentModel(ctx context.Context, arg UpdateAgentModelParams) (int64, error)
 	// UpdateComment は 9.8 の PATCH。**変えられるのは body_md と kind だけ**で、

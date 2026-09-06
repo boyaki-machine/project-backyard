@@ -1,10 +1,3 @@
----
-description: PB のプロジェクトに参画する（規約と担当を読む）。参画した直後、および間が空いたときに使う
-allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs, mcp__pb__pb_get_doc, mcp__pb__pb_list_tasks
----
-
-<!-- pb-workflow-version: 1 -->
-
 このプロジェクトの前提を PB から読み込む。以下の手順を順守すること。
 
 ## 1. プロジェクトを知る
@@ -24,7 +17,7 @@ allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs, mcp__pb__pb_get_d
 - 読み取った規約・価値観のうち、**このリポジトリでの作業に効くものを要約して提示する**
 - 担当チケットを一覧で提示する
 - **憲章の記述で意味が取れなかった箇所、矛盾していると思った箇所を挙げる**
-- 以降、チケットに着手するときは `/pb-implement <id>` を使うことを案内する
+- 以降、チケットに着手するときは {{.ImplementRef}} を使うことを案内する
 
 ## 禁止事項
 - **PB を更新してはならない。** 本コマンドは読み取りのみである

@@ -42,6 +42,7 @@ const emit = defineEmits<{
       client_kind: string
       model_name: string
       model_version: string
+      token_env_suffix: string
     },
   ]
   close: []
@@ -52,6 +53,15 @@ const MAX_NAME = 60
 /** 同 4.5.2。`agent` 表に CHECK は無く、アプリ側が持つ */
 const MAX_MODEL = 100
 
+/**
+ * 環境変数名の接尾（`ApiDesign.md` 4.5.2 の `token_env_suffix`）。
+ *
+ * **接頭の `PB_TOKEN_` は PB が付ける。** 接頭ごと入力させると `PATH` や `HOME` を
+ * 作れてしまう（`DbDesign.md` 8.2.1）。CHECK は `^[A-Z][A-Z0-9_]{0,40}$`。
+ */
+const ENV_SUFFIX_PREFIX = 'PB_TOKEN_'
+const MAX_ENV_SUFFIX = 41
+
 const isEdit = computed(() => props.agent !== null)
 
 const displayName = ref(props.agent?.display_name ?? '')
@@ -59,6 +69,40 @@ const projectKey = ref(props.agent?.project.key ?? '')
 const clientKind = ref<string>(props.agent?.client_kind ?? '')
 const modelName = ref(props.agent?.model_name ?? '')
 const modelVersion = ref(props.agent?.model_version ?? '')
+const tokenEnvSuffix = ref(props.agent?.token_env_suffix ?? '')
+
+/**
+ * 表示名から環境変数名の候補を作る。
+ *
+ * **英数字を大文字化し、それ以外を `_` に畳む。** `私の Claude Code` なら
+ * `CLAUDE_CODE`、`ノートPC` なら **空**——**日本語だけの名前では候補が作れない**ので、
+ * そのときは入力を促す（`GuiDesign.md` 5.8.2）。
+ *
+ * **候補はあくまで初期値である。** 「どの端末か」は PB が知らない情報なので、
+ * 利用者が打ち直せる（`ApiDesign.md` 4.5.1 が `display_name` を「本人が思い出す
+ * ための手がかり」と定めているのと同じ理由）。
+ */
+function suggestEnvSuffix(name: string): string {
+  const s = name
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  // 先頭は英字でなければならない（CHECK が `^[A-Z]`）。数字始まりは候補にしない。
+  if (!/^[A-Z]/.test(s)) return ''
+  return s.slice(0, MAX_ENV_SUFFIX)
+}
+
+/**
+ * 名前を打ち終えたら候補を入れる。
+ *
+ * **既に何か入っていれば触らない。** 利用者が打った値を上書きしない。
+ * **編集では候補を入れない**——既存の変数名を勝手に変えると、`~/.zshrc` を
+ * 直すまで繋がらなくなる。
+ */
+function fillEnvSuffixSuggestion() {
+  if (isEdit.value || tokenEnvSuffix.value !== '') return
+  tokenEnvSuffix.value = suggestEnvSuffix(displayName.value)
+}
 
 // ── クライアント種別のカタログ（`ApiDesign.md` 4.5.7）──────
 
@@ -135,6 +179,7 @@ function submit() {
     client_kind: clientKind.value,
     model_name: modelName.value.trim(),
     model_version: modelVersion.value.trim(),
+    token_env_suffix: tokenEnvSuffix.value.trim().toUpperCase(),
   })
 }
 </script>
@@ -152,6 +197,7 @@ function submit() {
           placeholder="私の Claude Code"
           :aria-invalid="detail('display_name') !== undefined"
           :disabled="busy"
+          @blur="fillEnvSuffixSuggestion"
         />
         <span v-if="detail('display_name')" class="detail">{{ detail('display_name')?.message }}</span>
         <span v-else class="hint">どの端末のどのクライアントかが分かる名前を付けてください。</span>
@@ -223,10 +269,37 @@ function submit() {
         <span v-if="detail('model_version')" class="detail">{{ detail('model_version')?.message }}</span>
       </label>
 
+      <!-- **接尾だけを入力させる**（5.8.2）。接頭は固定文字として左に出し、
+           編集させない——`PATH` や `HOME` を作れないようにするためである -->
+      <label class="field">
+        <span class="label">環境変数名</span>
+        <div class="env-row">
+          <span class="env-prefix">{{ ENV_SUFFIX_PREFIX }}</span>
+          <input
+            v-model="tokenEnvSuffix"
+            type="text"
+            name="token_env_suffix"
+            :maxlength="MAX_ENV_SUFFIX"
+            placeholder="MY_LAPTOP"
+            :aria-invalid="detail('token_env_suffix') !== undefined"
+            :disabled="busy"
+          />
+        </div>
+        <span v-if="detail('token_env_suffix')" class="detail">
+          {{ detail('token_env_suffix')?.message }}
+        </span>
+        <span v-else-if="isEdit" class="hint">
+          変えたら接続設定を取り直してください。設定ファイルに古い変数名が残っていると繋がりません。
+        </span>
+        <span v-else class="hint">
+          トークンを入れる環境変数です。端末が分かる名前にしてください（同じ端末で複数のエージェントを使うときに区別できます）。
+        </span>
+      </label>
+
       <p v-if="kindsError" class="alert" role="alert">{{ kindsError.message }}</p>
       <p v-if="projectsError" class="alert" role="alert">{{ projectsError.message }}</p>
       <p
-        v-if="error && !detail('display_name') && !detail('project_key') && !detail('client_kind') && !detail('model_name') && !detail('model_version')"
+        v-if="error && !detail('display_name') && !detail('project_key') && !detail('client_kind') && !detail('model_name') && !detail('model_version') && !detail('token_env_suffix')"
         class="alert"
         role="alert"
       >
@@ -278,6 +351,21 @@ function submit() {
   background: var(--pb-bg);
   color: inherit;
   font: inherit;
+}
+
+/* 接頭は固定文字。**入力欄の一部に見せて、編集できないことを形で示す** */
+.env-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+  min-width: 0;
+}
+
+.env-prefix {
+  flex: none;
+  color: var(--pb-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
 }
 
 /* 編集で変えられない項目（4.5.4）。入力欄に見せない */
