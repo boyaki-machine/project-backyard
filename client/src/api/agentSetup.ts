@@ -43,3 +43,33 @@ export function getAgentSetup(key: string, clients: readonly string[]): Promise<
 export function agentSetupZipURL(key: string, clients: readonly string[]): string {
   return `${BASE_PATH}/projects/${encodeURIComponent(key)}/agent-setup.zip?${clientQuery(clients)}`
 }
+
+// ── 系統B：自分の接続設定（`ApiDesign.md` 4.5.8、手順28b）────────
+
+export type AgentConnect = components['schemas']['AgentConnect']
+
+/**
+ * そのエージェント1件のための接続設定（4.5.8.1）。
+ *
+ * **系統A と対になる。** あちらはリポジトリにコミットするファイル（管理者が1回）、
+ * こちらは**各人の手元にしか残らないもの**（本人が何度でも）。
+ *
+ * **`files` は空になりうる**（`has_setup_template` が偽の種別。4.5.8.3）。
+ * **エラーではない**ので、画面はカードを消さず「自分で設定するための値」を出す。
+ *
+ * **接続できたかどうかはここに無い**——`GET /me/agents` の `token.last_used_at` が
+ * それを表す（同じ事実を2か所から出さない）。
+ */
+export function getAgentConnect(agentID: string): Promise<AgentConnect> {
+  return api.get<AgentConnect>(`/me/agents/${encodeURIComponent(agentID)}/setup`)
+}
+
+/**
+ * zip のダウンロード URL（4.5.8.5）。
+ *
+ * **`fetch` ではなく `<a download href>` に渡す**（系統A と同じ。認証は Cookie）。
+ * zip には手引き（`PB-README.md`）と、**改名した**接続設定が入る。
+ */
+export function agentConnectZipURL(agentID: string): string {
+  return `${BASE_PATH}/me/agents/${encodeURIComponent(agentID)}/setup.zip`
+}

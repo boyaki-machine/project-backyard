@@ -117,6 +117,11 @@ func Mount(r chi.Router, deps Deps) {
 		r.Patch("/me/agents/{id}", h.updateMyAgent)
 		r.Delete("/me/agents/{id}", h.deleteMyAgent)
 		r.Post("/me/agents/{id}/tokens", h.createMyAgentToken)
+		// **系統B——各人が自分の端末へ置く接続設定**（ApiDesign.md 4.5.8、手順28b）。
+		// **必要権限は「本人」**（4.5 と同じ）。系統A（agent-setup）は
+		// agent.register を要るが、こちらは自分のエージェントの話である。
+		r.Get("/me/agents/{id}/setup", h.getMyAgentSetup)
+		r.Get("/me/agents/{id}/setup.zip", h.getMyAgentSetupZip)
 		r.Delete("/me/agents/{id}/tokens/{token_id}", h.deleteMyAgentToken)
 
 		// クライアント種別のカタログ（ApiDesign.md 4.5.7）。**必要権限は無い**
