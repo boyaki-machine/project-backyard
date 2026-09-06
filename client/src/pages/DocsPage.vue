@@ -221,8 +221,6 @@ async function loadDoc(path: string | null): Promise<void> {
   }
 }
 
-const bodyHtml = computed(() => (doc.value === null ? '' : renderMarkdown(doc.value.body_md)))
-
 /** いま開いている文書の子。可視化ペインの末尾に「配下の文書」として出す（5.10） */
 const children = computed<DocTreeItem[]>(() => {
   if (doc.value === null) return []
@@ -244,6 +242,21 @@ const saveError = ref<ApiError | null>(null)
 const savedVersion = ref<number | null>(null)
 
 const conflict = computed(() => saveError.value?.status === 409)
+
+/**
+ * 可視化ペインに出す HTML。**編集中は保存済みの本文ではなく `draft` を描く**
+ * ——5.10 が編集ペインを独立させた理由が「**書きながら横で描画を確かめられる**」
+ * だからである。保存するまで描画が変わらないなら、3枚目は要らない。
+ *
+ * **デバウンスを挟まない。** `MarkdownEditor` は `preview` が真のとき既に毎打鍵で
+ * 描画しており（可視化ペインが畳まれる幅では今日それが動いている）、こちらだけ
+ * 遅らせると**同じ画面に2つの流儀が並ぶ**。描画の実測は 10KB の本文で約 1ms、
+ * `GuiDesign.md` 相当の 160K字でも約 7ms である（`markdown-it`、2026-09-06）。
+ */
+const bodyHtml = computed(() => {
+  if (editing.value) return renderMarkdown(draft.value)
+  return doc.value === null ? '' : renderMarkdown(doc.value.body_md)
+})
 
 function startEdit(): void {
   if (doc.value === null || !canEdit.value) return
