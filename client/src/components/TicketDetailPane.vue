@@ -229,6 +229,28 @@ async function startEdit(field: EditField): Promise<void> {
   else inputRef.value?.focus()
 }
 
+/**
+ * `Enter` で確定する（5.5「編集の単位」）。**IME の変換確定を確定と読み違えない。**
+ *
+ * 日本語入力では、変換候補を確定する `Enter` も `keydown` として飛んでくる。
+ * その keydown は `isComposing: true`（`keyCode` は 229）で来るが、**Vue の
+ * `.enter` 修飾子はこれを区別しない**。素直に書くと、**変換を確定したつもりの
+ * `Enter` が欄の確定として処理され、変換前の文字列のまま編集モードを抜ける**
+ * （pb-42。利用者の報告、2026-09-05）。
+ *
+ * **`.prevent` を修飾子で付けてはいけない。** あちらはハンドラより先に
+ * `preventDefault()` を呼ぶので、**変換確定そのものを止めてしまう**。
+ * 変換中でないと分かってから止める。
+ *
+ * `keyCode === 229` も見るのは、`isComposing` を立てない実装が残っているため
+ * （古い WebKit）。**どちらか一方でも真なら変換中として扱う。**
+ */
+function onEnterCommit(e: KeyboardEvent, commit: () => void): void {
+  if (e.isComposing || e.keyCode === 229) return
+  e.preventDefault()
+  commit()
+}
+
 /** `Esc`：編集前の値へ戻す（5.5）。**別の領域のクリックは保存であって取消ではない** */
 function cancelEdit(): void {
   editing.value = null
@@ -298,6 +320,16 @@ async function commitEdit(): Promise<void> {
  * 失敗したら値を戻す必要はない——応答が来るまで画面の値は変えていない。
  */
 async function selectField(patch: UpdateTicketRequest, field: string): Promise<void> {
+  // **編集中の欄があれば先に保存する**（5.5「別の領域をクリックしてフォーカスを
+  // 外す」＝保存。pb-43）。`startEdit` が既に持っている作法を、選ぶ側にも広げる
+  // ——広げないと、**タグを1つ足しただけで説明の下書きが消える**。
+  //
+  // **先の保存が失敗したらそこで止める。** 失敗を踏み越えて別の変更を通すと、
+  // 利用者は何が保存されたのか読めなくなる。
+  if (editing.value !== null && editing.value !== field) {
+    await commitEdit()
+    if (editing.value !== null) return
+  }
   await save(patch, field)
 }
 
@@ -319,7 +351,10 @@ async function save(patch: UpdateTicketRequest, field: string): Promise<void> {
   try {
     const next = await ticketsApi.updateTicket(props.projectKey, current.seq, current.version, patch)
     ticket.value = next
-    cancelEdit()
+    // **閉じるのは、いま編集している欄を保存したときだけ**（pb-43）。
+    // 以前は成功のたびに閉じていたので、**関係のない欄の `PATCH` が成功しただけで
+    // 編集中の下書きが（保存もされずに）消えていた**。
+    if (editing.value === field) cancelEdit()
     emit('updated', next)
   } catch (e) {
     const err = toApiError(e)
@@ -1037,7 +1072,7 @@ function errorFor(field: string): string {
               maxlength="200"
               aria-label="タイトル"
               @keydown.escape="cancelEdit"
-              @keydown.enter.prevent="commitEdit"
+              @keydown.enter="onEnterCommit($event, commitEdit)"
               @blur="commitEdit"
             />
           </template>
@@ -1361,7 +1396,7 @@ function errorFor(field: string): string {
                 step="0.5"
                 aria-label="見積（ポイント）"
                 @keydown.escape="cancelEdit"
-                @keydown.enter.prevent="commitEdit"
+                @keydown.enter="onEnterCommit($event, commitEdit)"
                 @blur="commitEdit"
               />
               <button
@@ -1391,7 +1426,7 @@ function errorFor(field: string): string {
                 step="0.5"
                 aria-label="見積（時間）"
                 @keydown.escape="cancelEdit"
-                @keydown.enter.prevent="commitEdit"
+                @keydown.enter="onEnterCommit($event, commitEdit)"
                 @blur="commitEdit"
               />
               <button
@@ -1421,7 +1456,7 @@ function errorFor(field: string): string {
                 step="0.5"
                 aria-label="実績（時間）"
                 @keydown.escape="cancelEdit"
-                @keydown.enter.prevent="commitEdit"
+                @keydown.enter="onEnterCommit($event, commitEdit)"
                 @blur="commitEdit"
               />
               <button
@@ -1454,7 +1489,7 @@ function errorFor(field: string): string {
                 type="date"
                 aria-label="開始日"
                 @keydown.escape="cancelEdit"
-                @keydown.enter.prevent="commitEdit"
+                @keydown.enter="onEnterCommit($event, commitEdit)"
                 @blur="commitEdit"
               />
               <button
@@ -1482,7 +1517,7 @@ function errorFor(field: string): string {
                 type="date"
                 aria-label="期限"
                 @keydown.escape="cancelEdit"
-                @keydown.enter.prevent="commitEdit"
+                @keydown.enter="onEnterCommit($event, commitEdit)"
                 @blur="commitEdit"
               />
               <button
@@ -1680,7 +1715,7 @@ function errorFor(field: string): string {
                   class="dod-input"
                   aria-label="完了条件の本文"
                   :disabled="busy"
-                  @keydown.enter.prevent="commitDoDEdit"
+                  @keydown.enter="onEnterCommit($event, commitDoDEdit)"
                   @keydown.escape="cancelDoDEdit"
                   @blur="commitDoDEdit"
                 />
