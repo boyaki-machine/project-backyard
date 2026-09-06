@@ -315,6 +315,8 @@ lsof -nP -iTCP:8080 -sTCP:LISTEN                 # サーバが残っていな�
 | `member@example.com` | operator | project_member | プロジェクト設定が触れない |
 | `viewer@example.com` | operator | project_viewer | 閲覧のみ |
 
+**`admin@example.com` は `demo` のメンバーではない。** `pb dev seed` は**プロジェクトの作成者をメンバーとして登録しない**（`server/cmd/pb/dev_seed.go`）。登録するのは `POST /projects`（画面から作ったとき）だけで、そちらは作成者が `project_admin` になる（`ApiDesign.md` 5.2）。**この非対称を忘れると「管理者だが非メンバー」の前提を取り違える**——手順24b の検証で実際に4件が偽の FAIL になった。**`make dev-info` は定義ファイルを読むので、DB を引いた結果とは別物である。**
+
 ## 4.2 本番DBへ流れない仕組み
 
 二重のガードがある（`DbDesign.md` 7.6.3）。いずれかに掛かったら何もせず終了する。
