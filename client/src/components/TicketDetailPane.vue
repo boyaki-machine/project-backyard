@@ -46,7 +46,6 @@ import StatusDropdown from './StatusDropdown.vue'
 import TicketActivity from './TicketActivity.vue'
 import TicketComments from './TicketComments.vue'
 import TicketLinkModal from './TicketLinkModal.vue'
-import TransitionModal from './TransitionModal.vue'
 import UserActionsMenu from './UserActionsMenu.vue'
 import type { ActionItem } from './UserActionsMenu.vue'
 import { ApiError } from '../api/client'
@@ -383,37 +382,30 @@ async function loadTransitions(): Promise<void> {
 }
 
 /**
- * 選ばれた遷移先。**入っている間だけ確認モーダルが出る**（5.5「遷移にコメントを
- * 添える」。手順18b で足した——それまでは選んだ時点で即座に遷移していた）。
- */
-const pendingTransition = ref<TicketTransitionOption | null>(null)
-
-/**
- * 遷移させる（9.6）。**`comment` を送れるようになった**（手順18b）——
- * 投稿したコメントを表示する場所（コメントセクション）がこの手順で出たため。
+ * 遷移させる（9.6）。**選んだ時点で送る**（5.5「状態のドロップダウン」。pb-55）。
  *
- * サーバは**同じトランザクションで `kind='progress'` のコメントを作る**ので、
- * **成功したらコメント一覧を取り直す**——応答（9.5.1 と同形式）は
- * `comment_count` を持つが**本文は持たない**（9.8 の別エンドポイント）。
+ * **確認モーダルは廃止した。** 手順18b で「なぜ動かしたかを残せる場所を同じ操作の
+ * 中に置く価値が、クリック1つより大きい」として足したものだが、**実運用では逆
+ * だった**——状態変更は頻度が高く、毎回ダイアログを挟むのは現実的でない
+ * （利用者の判断、2026-09-06）。「選べるものは選んだ時点で `PATCH`」という
+ * 5.5 の原則へ戻した。
+ *
+ * **履歴は `activity` が持つ**（9.8）。誰がどの状態からどの状態へ変えたかは
+ * 残るので、ダイアログを外しても記録は失われない。
+ *
+ * **API の `comment` は任意のまま残っている**（9.6）。MCP の `pb_transition_task`
+ * は今までどおりコメントを添えられる——**画面が使わなくなっただけである。**
  */
-async function transition(comment: string | null): Promise<void> {
+async function transition(to: TicketTransitionOption): Promise<void> {
   const t = ticket.value
-  const to = pendingTransition.value
-  if (t === null || to === null) return
+  if (t === null) return
   busy.value = true
   fieldError.value = null
   try {
-    const next = await ticketsApi.transitionTicket(props.projectKey, t.seq, {
-      to: to.key,
-      // **空なら送らない**（空文字だと本文の無いコメントが1件生まれる）
-      ...(comment === null ? {} : { comment }),
-    })
+    const next = await ticketsApi.transitionTicket(props.projectKey, t.seq, { to: to.key })
     ticket.value = next
-    pendingTransition.value = null
     emit('updated', next)
-    if (comment !== null) await commentsRef.value?.reload()
   } catch (e) {
-    pendingTransition.value = null
     fieldError.value = { field: 'status', message: toApiError(e).message }
   } finally {
     busy.value = false
@@ -854,8 +846,6 @@ const deleteLinkMessage = computed(() => {
 
 // ── コメント（5.5、`ApiDesign.md` 9.8）。手順18b ──────────────
 
-const commentsRef = useTemplateRef<InstanceType<typeof TicketComments>>('commentsRef')
-
 /**
  * 見出しの `(4)` に使う数を足し引きする。
  *
@@ -932,6 +922,37 @@ async function createChild(body: CreateTicketRequest): Promise<void> {
   }
 }
 
+/**
+ * 子チケットの担当を、一覧の行から変える（5.5「子チケット」。pb-60）。
+ *
+ * **`children` は `version` を持たない**（`ApiDesign.md` 9.5.1 の `TicketChild` は
+ * `seq` / `title` / `type` / `status` / `assignee` だけ）。`PATCH` は `If-Match` が
+ * 必須なので（2.8）、**子の詳細を1回引いて `version` を得てから送る。**
+ * `TicketChild` に `version` を足す案は採らなかった——**画面の都合でスキーマを
+ * 広げるより、往復を1回増やすほうが安い。**
+ *
+ * **終わったら親の詳細を取り直す。** `children` はサーバが組み立てるものなので、
+ * 応答（子のほう）を手元へ差し込んでも親の一覧は古いままである。
+ */
+async function setChildAssignee(childSeq: number, assigneeId: string | null): Promise<void> {
+  if (!canEdit.value || busy.value) return
+  busy.value = true
+  fieldError.value = null
+  try {
+    const cur = await ticketsApi.getTicket(props.projectKey, childSeq)
+    await ticketsApi.updateTicket(props.projectKey, childSeq, cur.version, {
+      assignee_id: assigneeId,
+    })
+    await load()
+    if (ticket.value !== null) emit('updated', ticket.value)
+  } catch (e) {
+    const err = toApiError(e)
+    fieldError.value = { field: 'children', message: err.details[0]?.message ?? err.message }
+  } finally {
+    busy.value = false
+  }
+}
+
 /** `[⋯]` の項目を振り分ける（5.5）。 */
 function onAction(key: string): void {
   switch (key) {
@@ -960,6 +981,57 @@ const body = computed(() => renderMarkdown(ticket.value?.body_md ?? ''))
 const parentOptions = computed(() =>
   props.candidates.filter((c) => c.seq !== props.seq),
 )
+
+/**
+ * 親の選択（5.5「親は選択式である」。pb-48）。
+ *
+ * **`<select>` をやめて、絞り込みのできる一覧にした。** チケットが増えると
+ * `<option>` を目で探すのが現実的でなくなる（利用者の報告、2026-09-06）。
+ * **候補の出どころは変えていない**——いま一覧に出ているチケット（最大200件）で、
+ * 追加の往復を要しない。
+ */
+const parentPickerOpen = ref(false)
+const parentQuery = ref('')
+
+/**
+ * いま候補に出ていない現在の親も一覧へ入れる。**落とすと、開いた瞬間に
+ * 現在値が消えて見える**（オンステージの配下などは候補に来ない）。
+ */
+const parentChoices = computed(() => {
+  const list = [...parentOptions.value]
+  const cur = ticket.value?.parent
+  if (cur && !list.some((c) => c.seq === cur.seq)) {
+    list.unshift({ seq: cur.seq, title: cur.title } as (typeof list)[number])
+  }
+  return list
+})
+
+/**
+ * 絞り込み。**番号でもタイトルでも当たる**——`my-app-31` の完全形と、
+ * `31` のような数字だけの入力の両方を拾う。大文字小文字は区別しない。
+ */
+const parentMatches = computed(() => {
+  const q = parentQuery.value.trim().toLowerCase()
+  if (q === '') return parentChoices.value
+  return parentChoices.value.filter((c) =>
+    `${props.projectKey}-${c.seq} ${c.title}`.toLowerCase().includes(q),
+  )
+})
+
+function openParentPicker(): void {
+  if (!canEdit.value || busy.value) return
+  parentQuery.value = ''
+  parentPickerOpen.value = true
+  void nextTick(() => parentSearchRef.value?.focus())
+}
+
+async function pickParent(seq: number | null): Promise<void> {
+  parentPickerOpen.value = false
+  if ((ticket.value?.parent?.seq ?? null) === seq) return // 変わらないなら送らない（5.5）
+  await selectField({ parent_seq: seq }, 'parent_seq')
+}
+
+const parentSearchRef = useTemplateRef<HTMLInputElement>('parentSearchRef')
 
 /** タグの付け外し（9.5.2 の `tag_ids` は**丸ごと置き換える**） */
 const tagIds = computed(() => new Set((ticket.value?.tags ?? []).map((t) => t.id)))
@@ -1026,7 +1098,34 @@ function errorFor(field: string): string {
         <span class="type-icon" :title="ticketTypeLabels[ticket.type]" aria-hidden="true">
           {{ ticketTypeIcons[ticket.type] }}
         </span>
+        <!-- **ID の右にタイトルを並べる**（5.5。pb-10）。1段目は領域が余っており、
+             2段目を畳めば1行ぶんの縦が本文へ回る。**ID は残す**——5.4「ID列」が
+             完全形を出すと定めており、詳細から消えると照合できなくなる -->
         <h2 class="detail-id">{{ fullId }}</h2>
+        <template v-if="editing === 'title'">
+          <input
+            ref="inputRef"
+            v-model="draft"
+            class="title-input"
+            type="text"
+            maxlength="200"
+            aria-label="タイトル"
+            @keydown.escape="cancelEdit"
+            @keydown.enter="onEnterCommit($event, commitEdit)"
+            @blur="commitEdit"
+          />
+        </template>
+        <button
+          v-else
+          type="button"
+          class="title-view"
+          :class="{ readonly: !canEdit }"
+          :disabled="!canEdit"
+          :title="canEdit ? `クリックしてタイトルを編集：${ticket.title}` : ticket.title"
+          @click="startEdit('title')"
+        >
+          {{ ticket.title }}
+        </button>
       </template>
       <h2 v-else class="detail-id">チケット</h2>
 
@@ -1061,34 +1160,9 @@ function errorFor(field: string): string {
       </div>
 
       <template v-else-if="ticket">
-        <!-- タイトル。**クリックで編集**（5.5。`[編集]` ボタンは置かない） -->
-        <div class="title-block">
-          <template v-if="editing === 'title'">
-            <input
-              ref="inputRef"
-              v-model="draft"
-              class="title-input"
-              type="text"
-              maxlength="200"
-              aria-label="タイトル"
-              @keydown.escape="cancelEdit"
-              @keydown.enter="onEnterCommit($event, commitEdit)"
-              @blur="commitEdit"
-            />
-          </template>
-          <button
-            v-else
-            type="button"
-            class="title-view"
-            :class="{ readonly: !canEdit }"
-            :disabled="!canEdit"
-            :title="canEdit ? 'クリックしてタイトルを編集' : ''"
-            @click="startEdit('title')"
-          >
-            {{ ticket.title }}
-          </button>
-          <p v-if="errorFor('title')" class="field-error" role="alert">{{ errorFor('title') }}</p>
-        </div>
+        <!-- タイトルはヘッダ段へ移した（5.5。pb-10）。**失敗の文言だけは本文側に
+             残す**——48px のヘッダに複数行を入れると段の高さが動く（6.4） -->
+        <p v-if="errorFor('title')" class="field-error" role="alert">{{ errorFor('title') }}</p>
 
         <!-- メタ情報（5.5）。**2列のラベル＋値のグリッド** -->
         <dl class="meta">
@@ -1101,7 +1175,7 @@ function errorFor(field: string): string {
                 :can-transition="canTransition"
                 :busy="busy"
                 @open="loadTransitions"
-                @select="pendingTransition = $event"
+                @select="transition"
               />
               <p v-if="errorFor('status')" class="field-error" role="alert">
                 {{ errorFor('status') }}
@@ -1227,36 +1301,71 @@ function errorFor(field: string): string {
             <dt>親</dt>
             <dd class="parent-cell">
               <!-- **選択式である**（5.5）。親の実体は `parent_seq` の数値で、
-                   番号を手で打たせる形はどの画面にも無い -->
-              <select
-                v-if="canEdit"
-                :value="ticket.parent?.seq ?? ''"
-                :disabled="busy"
-                aria-label="親チケット"
-                @change="
-                  selectField(
-                    {
-                      parent_seq: ($event.target as HTMLSelectElement).value
-                        ? Number(($event.target as HTMLSelectElement).value)
-                        : null,
-                    },
-                    'parent_seq',
-                  )
-                "
-              >
-                <option value="">親なし</option>
-                <!-- いま一覧に出ていない親（オンステージの配下など）も選択肢に
-                     残す。落とすと、開いた瞬間に現在値が消えて見える -->
-                <option
-                  v-if="ticket.parent && !parentOptions.some((c) => c.seq === ticket!.parent!.seq)"
-                  :value="ticket.parent.seq"
+                   番号を手で打たせる形はどの画面にも無い。**絞り込みができる
+                   一覧にした**（pb-48）——`<option>` を目で探せる件数を超えた -->
+              <template v-if="canEdit">
+                <button
+                  type="button"
+                  class="parent-trigger"
+                  :disabled="busy"
+                  aria-haspopup="listbox"
+                  :aria-expanded="parentPickerOpen"
+                  aria-label="親チケット"
+                  @click="parentPickerOpen ? (parentPickerOpen = false) : openParentPicker()"
                 >
-                  {{ projectKey }}-{{ ticket.parent.seq }} {{ ticket.parent.title }}
-                </option>
-                <option v-for="c in parentOptions" :key="c.seq" :value="c.seq">
-                  {{ projectKey }}-{{ c.seq }} {{ c.title }}
-                </option>
-              </select>
+                  <span class="parent-current">{{
+                    ticket.parent
+                      ? `${projectKey}-${ticket.parent.seq} ${ticket.parent.title}`
+                      : '親なし'
+                  }}</span>
+                  <span class="caret" aria-hidden="true">▾</span>
+                </button>
+
+                <div v-if="parentPickerOpen" class="parent-panel">
+                  <!-- **入力欄を先頭に置き、開いた直後にフォーカスを当てる。**
+                       開いてから探す場所を探させない -->
+                  <input
+                    ref="parentSearchRef"
+                    v-model="parentQuery"
+                    type="text"
+                    class="parent-search"
+                    placeholder="番号かタイトルで絞り込む"
+                    aria-label="親チケットを絞り込む"
+                    @keydown.escape="parentPickerOpen = false"
+                  />
+                  <ul class="parent-list" role="listbox">
+                    <li>
+                      <button
+                        type="button"
+                        class="parent-option"
+                        :class="{ current: !ticket.parent }"
+                        role="option"
+                        :aria-selected="!ticket.parent"
+                        @click="pickParent(null)"
+                      >
+                        親なし
+                      </button>
+                    </li>
+                    <li v-for="c in parentMatches" :key="c.seq">
+                      <button
+                        type="button"
+                        class="parent-option"
+                        :class="{ current: ticket.parent?.seq === c.seq }"
+                        role="option"
+                        :aria-selected="ticket.parent?.seq === c.seq"
+                        @click="pickParent(c.seq)"
+                      >
+                        <code class="parent-seq">{{ projectKey }}-{{ c.seq }}</code>
+                        {{ c.title }}
+                      </button>
+                    </li>
+                    <!-- **0件でも黙って空にしない**（6.2） -->
+                    <li v-if="parentMatches.length === 0" class="parent-empty">
+                      一致するチケットがありません
+                    </li>
+                  </ul>
+                </div>
+              </template>
               <span v-else-if="ticket.parent">
                 {{ projectKey }}-{{ ticket.parent.seq }} {{ ticket.parent.title }}
               </span>
@@ -1587,8 +1696,10 @@ function errorFor(field: string): string {
             </button>
           </div>
           <ul class="children">
-            <li v-for="c in ticket.children" :key="c.seq">
-              <!-- **行クリックでその子の詳細を開く**（同じペインが差し替わる） -->
+            <li v-for="c in ticket.children" :key="c.seq" class="child-row">
+              <!-- **行クリックでその子の詳細を開く**（同じペインが差し替わる）。
+                   **担当のセルはリンクの外に出す**（pb-60）——`<select>` をリンクの
+                   中に置くと、開こうとしただけで子の詳細へ飛ぶ -->
               <RouterLink class="child" :to="`/p/${projectKey}/tickets/${c.seq}`">
                 <span class="type-icon" :title="ticketTypeLabels[c.type]" aria-hidden="true">
                   {{ ticketTypeIcons[c.type] }}
@@ -1596,14 +1707,33 @@ function errorFor(field: string): string {
                 <code class="child-id">{{ projectKey }}-{{ c.seq }}</code>
                 <span class="child-title">{{ c.title }}</span>
                 <span class="child-status">{{ c.status.name }}</span>
-                <span class="child-assignee">
-                  <template v-if="c.assignee">
-                    <span aria-hidden="true">{{ actorMark(c.assignee.kind) }}</span>
-                    {{ c.assignee.display_name }}
-                  </template>
-                  <span v-else class="muted">—</span>
-                </span>
               </RouterLink>
+              <span class="child-assignee">
+                <!-- 選択肢は親自身の担当欄と同じ語彙（プロジェクトのメンバー＋未割当） -->
+                <select
+                  v-if="canEdit"
+                  :value="c.assignee?.id ?? ''"
+                  :disabled="busy"
+                  :aria-label="`${projectKey}-${c.seq} の担当`"
+                  @change="
+                    setChildAssignee(
+                      c.seq,
+                      ($event.target as HTMLSelectElement).value || null,
+                    )
+                  "
+                >
+                  <option value="">未割当</option>
+                  <!-- **メンバーの識別子は `actor_id`**（`id` ではない） -->
+                  <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
+                    {{ actorMark(m.kind) }} {{ m.display_name }}
+                  </option>
+                </select>
+                <template v-else-if="c.assignee">
+                  <span aria-hidden="true">{{ actorMark(c.assignee.kind) }}</span>
+                  {{ c.assignee.display_name }}
+                </template>
+                <span v-else class="muted">—</span>
+              </span>
             </li>
           </ul>
         </section>
@@ -1813,7 +1943,6 @@ function errorFor(field: string): string {
         <section class="block">
           <h3 class="block-title">コメント ({{ ticket.comment_count }})</h3>
           <TicketComments
-            ref="commentsRef"
             :project-key="projectKey"
             :seq="ticket.seq"
             @count-delta="onCommentCountDelta"
@@ -1887,16 +2016,6 @@ function errorFor(field: string): string {
       @confirm="runDelete"
     />
 
-    <!-- 状態の変更（5.5「遷移にコメントを添える」）。手順18b -->
-    <TransitionModal
-      v-if="pendingTransition && ticket"
-      :from-name="ticket.status.name"
-      :to-name="pendingTransition.name"
-      :busy="busy"
-      @close="pendingTransition = null"
-      @confirm="transition"
-    />
-
     <TicketLinkModal
       v-if="showLinkModal"
       :project-key="projectKey"
@@ -1953,13 +2072,12 @@ function errorFor(field: string): string {
 }
 
 .detail-id {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
+  /* **ID は縮まない**（5.4「ID列」は完全形を出すと定めている）。
+     余りを取って省略記号で切れるのはタイトルのほうである（pb-10） */
+  flex: none;
   font-size: 15px;
   font-weight: 600;
   white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 .header-actions {
@@ -1993,26 +2111,26 @@ function errorFor(field: string): string {
   padding: var(--pb-space-4);
 }
 
-/* ── タイトル ─────────────────────────────────────────────── */
+/* ── タイトル（ヘッダ段。5.5。pb-10）─────────────────────── */
 
-.title-block {
-  margin-bottom: var(--pb-space-4);
-}
-
-/* 押せる領域だが、読むときはただの見出しに見せる（クリックで編集に入る） */
+/* 押せる領域だが、読むときはただの見出しに見せる（クリックで編集に入る）。
+   **余りを取り、長いタイトルは省略記号で切る**——48px の段に収めるので
+   折り返さない。全文は `title` 属性と、編集に入ったときの入力欄が出す */
 .title-view {
-  display: block;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: var(--pb-space-1) var(--pb-space-2);
-  margin-left: calc(var(--pb-space-2) * -1);
   border: 1px solid transparent;
   border-radius: var(--pb-radius);
   background: none;
   color: inherit;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1.5;
   text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: text;
 }
 
@@ -2025,12 +2143,13 @@ function errorFor(field: string): string {
 }
 
 .title-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: var(--pb-space-1) var(--pb-space-2);
   border: 1px solid var(--pb-focus);
   border-radius: var(--pb-radius);
   background: var(--pb-bg);
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 600;
 }
 
@@ -2116,6 +2235,107 @@ function errorFor(field: string): string {
 
 .value-view:disabled {
   cursor: default;
+}
+
+/* ── 親の選択（5.5。pb-48）─────────────────────────────────
+   **絞り込みの一覧は、そのセルの中に絶対配置で開く。** `<Teleport>` を使わない
+   ——このペインは自分でスクロールするので、body へ出すと**スクロールに追随せず
+   置き去りになる**（StatusDropdown は fixed で追随を自前で持っている） */
+.parent-cell {
+  position: relative;
+}
+
+.parent-trigger {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--pb-space-1);
+  padding: var(--pb-space-1) var(--pb-space-2);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-bg);
+  color: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.parent-trigger:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* **1行に収める**（5.5 と同じ規則）。長いタイトルは省略記号で切る */
+.parent-current {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.parent-panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 2px);
+  left: 0;
+  width: 100%;
+  min-width: 260px;
+  padding: var(--pb-space-2);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-bg);
+  box-shadow: var(--pb-shadow-2);
+}
+
+.parent-search {
+  width: 100%;
+  padding: var(--pb-space-1) var(--pb-space-2);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  font-size: 13px;
+}
+
+/* **一覧側だけスクロールさせる。** 入力欄は常に見えている */
+.parent-list {
+  max-height: 240px;
+  margin-top: var(--pb-space-2);
+  overflow-y: auto;
+  list-style: none;
+}
+
+.parent-option {
+  display: block;
+  width: 100%;
+  padding: var(--pb-space-1) var(--pb-space-2);
+  border: none;
+  border-radius: var(--pb-radius);
+  background: none;
+  color: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.parent-option:hover {
+  background: var(--pb-hover);
+}
+
+/* いま選ばれているものは面の輝度で示す（色を使わない。8.2 / 8.6） */
+.parent-option.current {
+  background: var(--pb-active);
+}
+
+.parent-seq {
+  margin-right: var(--pb-space-1);
+  color: var(--pb-text-muted);
+}
+
+.parent-empty {
+  padding: var(--pb-space-2);
+  color: var(--pb-text-muted);
+  font-size: 13px;
 }
 
 .parent-cell .jump {
@@ -2272,8 +2492,18 @@ function errorFor(field: string): string {
   list-style: none;
 }
 
+/* **行は「リンク部分」と「担当のセル」の2つに割れている**（pb-60）。
+   担当を変える操作がリンクの遷移と食い合わないようにするため */
+.child-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+  min-width: 0;
+}
+
 .child {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: var(--pb-space-2);
   min-width: 0;
