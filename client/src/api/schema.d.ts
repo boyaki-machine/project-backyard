@@ -415,6 +415,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/agents/{id}/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["AgentID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 自分の接続設定（系統B）
+         * @description そのエージェントが PB に繋がるために、本人が自分の端末へ置くものを返す
+         *     （ApiDesign.md 4.5.8、Requirements.md 10.9.1 の系統B）。必要権限は「本人」。
+         *
+         *     **`/projects/{key}/agent-setup`（系統A）と対になる。** あちらはリポジトリに
+         *     コミットするファイル（1リポジトリに1回、管理者が）、こちらは**各人の手元にしか
+         *     残らないもの**（人ごとに、何度でも）。
+         *
+         *     **答えるのは「MCP が使える状態になるまで」だけである。** 作業の材料をどこから
+         *     どう用意するかは PB が知らないので返さない——プロジェクトの文書に書かれ、
+         *     人もエージェントもそこから読む（手順28c）。
+         *
+         *     **平文のトークンは返さない。** `export_line` は変数名までで、値はプレースホルダ。
+         *     **接続できたかどうかも返さない**——`GET /me/agents` の `token.last_used_at` が
+         *     既にそれを表しており、同じ事実を2か所から出すと必ず食い違う。
+         *
+         *     **`ETag` もページネーションも持たない。**
+         */
+        get: operations["getMyAgentSetup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/agents/{id}/setup.zip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["AgentID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 自分の接続設定（zip ダウンロード）
+         * @description `/setup` と同じ接続設定を zip で返す（ApiDesign.md 4.5.8.5）。
+         *
+         *     - **`mode` は常に `merge`** なので、**zip には別名で入る**
+         *       （`.mcp.json` → `.mcp.pb-block.json`）。**展開した瞬間に既存の接続設定を
+         *       消す zip を配らない**——`.mcp.json` は履歴管理の対象外で、消すと git から戻せない
+         *     - **`PB-README.md` が1枚入る。** 中身は**種別ごとに違う**（置き場も、改名の要否も、
+         *       `.gitignore` の扱いも種別で変わる）。**JSON の `files[]` には含まれない**
+         *       ——画面が同じ内容を節として描いており、`files[]` に入れると
+         *       「これも置くファイルだ」と読まれる
+         *     - **`README.md` という名前にしない。** プロジェクト直下で展開されたときに
+         *       本物の `README.md` を消す
+         *     - **ファイル名に種別を入れる**（`pb-connect-<key>-<client_kind>.zip`）。1人が同じ
+         *       プロジェクトに2件持つことがあり、同じ名前の zip が並ぶと見分けられない
+         *     - **別パスにしてあるのは、ブラウザの `<a download href>` で素直に落とすため**
+         */
+        get: operations["getMyAgentSetupZip"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -2590,6 +2670,56 @@ export interface components {
             workflow_version: number;
             /** @description 実際に組み立てた種別（重複を畳み、カタログの順に並べたもの）。 */
             clients: string[];
+            files: components["schemas"]["AgentSetupFile"][];
+        };
+        /**
+         * @description ApiDesign.md 4.5.8。**そのエージェント1件のための接続設定一式**（系統B）。
+         *     **`AgentSetup`（系統A）とは別物である**——あちらはリポジトリにコミットする
+         *     ファイル、こちらは各人の手元にしか残らないもの。
+         */
+        AgentConnect: {
+            agent: {
+                id: string;
+                display_name: string;
+                client_kind: string;
+                /**
+                 * @description カタログの表示名（4.5.7）。**画面が対応表を持たないために返す**
+                 *     ——値域は今後も増えるので、写しを置くと必ず腐る。
+                 *     **カタログに無い種別ではキーをそのまま返す。**
+                 */
+                client_display_name: string;
+                /**
+                 * @description 接頭 `PB_TOKEN_` を付けた実際の変数名。**組み立てはサーバの1か所**
+                 *     （4.5.1）。**`export_line` が null の種別でも値は返す。**
+                 */
+                token_env_name: string;
+            };
+            project: components["schemas"]["ProjectRef"];
+            /**
+             * @description PB の公開 URL。**リクエストの `Host` から組み立てた暫定値**
+             *     （5.7.1 と同じ規則。スキームは `PB_COOKIE_SECURE`）。
+             * @example http://localhost:8081
+             */
+            base_url: string;
+            /**
+             * @description `base_url` ＋ `/mcp/<project_key>`（Design.md 8.3）。
+             *     **`files[]` の中に埋まっているものと同じ文字列である。**
+             * @example http://localhost:8081/mcp/pb
+             */
+            mcp_url: string;
+            /**
+             * @description トークンを環境変数へ置く行。**`null` になる種別がある**（4.5.8.2）
+             *     ——Copilot は `${input:pb-token}` を使い、環境変数を読まない。
+             *     **画面は `null` のとき節ごと出さない。**
+             * @example export PB_TOKEN_MY_LAPTOP='ここに発行したトークンを貼る'
+             */
+            export_line: string | null;
+            /**
+             * @description 接続設定。**1枚だけか、空である**——`has_setup_template` が偽の種別
+             *     （`gemini` / `other`）では空配列を返し、**エラーにしない**（4.5.8.3）。
+             *     **`mode` は常に `merge`**（4.5.8.4）。
+             *     **zip に入る `PB-README.md` はここに含まれない**（4.5.8.5）。
+             */
             files: components["schemas"]["AgentSetupFile"][];
         };
         /**
@@ -5774,6 +5904,87 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["CSRFFailed"];
             /** @description 自分のエージェントのトークンとして見つからない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getMyAgentSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["AgentID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description 接続設定一式。**`files` は空配列になりうる**
+             *     （`has_setup_template` が偽の種別。4.5.8.3）。
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConnect"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description 自分のエージェントとして見つからない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getMyAgentSetupZip: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description エージェントの ULID（`agent.actor_id`。ApiDesign.md 4.5）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["AgentID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description zip アーカイブ。 */
+            200: {
+                headers: {
+                    /** @example attachment; filename="pb-connect-pb-claude_code.zip" */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description 自分のエージェントとして見つからない（`not_found`）。 */
             404: {
                 headers: {
                     [name: string]: unknown;

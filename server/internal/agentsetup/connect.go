@@ -1,0 +1,333 @@
+// 系統B——各人が自分の端末へ置く接続設定（Requirements.md 10.9.1、
+// ApiDesign.md 4.5.8、手順28b）。
+//
+// **同じパッケージに置くのは、系統A と同じ clientSpec の知識を使うためである**
+// ——どのクライアントが何と呼ばれ、参画をどう起動するか（onboardRef）は両方で要る。
+// **ただし specs には足さない。** あちらは「リポジトリにコミットするもの」の仕様で、
+// こちらは「手元にしか残らないもの」の仕様である。**混ぜると、Git に入る／入らないの
+// 境目が構造から消える**——それは 10.8.1 が三層に分けた理由そのものだった。
+//
+// **2つのマップの鍵がずれないことはテストが確かめる**（TestConnectSpecsCoverClients）。
+package agentsetup
+
+import (
+	"bytes"
+	"embed"
+	"encoding/json"
+	"fmt"
+	"path"
+	"strings"
+	"text/template"
+)
+
+//go:embed templates/connect/*.md
+var connectFS embed.FS
+
+// autoApprovedTools は確認なしで走らせる読み取りツール（Requirements.md 10.8.2）。
+//
+// **/pb-onboard は読み取りしかしないので、これを入れておくと一息に走る**（10.8.5）。
+// **write 系は入れない**——起票・遷移・文書更新は、利用者が1回ずつ見て通す。
+//
+// **系統A の .claude/settings.json と、系統B の .codex/config.toml の両方がこれを読む。**
+// **Claude Code は許可を別のファイル（コミットする）に書き、Codex は接続設定と同じ
+// ファイル（コミットしない）に書く**——同じ意図を2つの書式で表すことになるので、
+// **元の一覧は1つにしておく**（Requirements.md 10.8.4.1 の非対称）。
+var autoApprovedTools = []string{
+	"pb_get_project",
+	"pb_list_docs",
+	"pb_get_doc",
+	"pb_list_tasks",
+	"pb_get_task",
+	"pb_get_context",
+	"pb_list_transitions",
+}
+
+// mcpServerName は接続設定に書くサーバ名。
+//
+// **手順ファイルが mcp__pb__* で権限を書くので、ここを変えると許可が効かなくなる。**
+const mcpServerName = "pb"
+
+// ConnectParams は接続設定へ差し込む値（ApiDesign.md 4.5.8.1）。
+type ConnectParams struct {
+	ProjectKey  string
+	ProjectName string
+	// MCPURL は接続先（Design.md 8.3）。**画面が出す文字列と同じもの**を使う
+	// ——別々に組み立てると、画面の表示と生成物が黙ってずれる。
+	MCPURL string
+	// TokenEnvName は接頭付きの実際の変数名（ApiDesign.md 4.5.1）。
+	// **フォールバックの計算はサーバの1か所**で済ませてあり、ここは受け取るだけ。
+	TokenEnvName string
+	// DisplayName は本人が付けたエージェントの名前（手引きの宛名に使う）。
+	DisplayName string
+	// ClientDisplayName はカタログの表示名（ApiDesign.md 4.5.7）。
+	// **配置ファイルを持たない種別でも手引きは出す**ので、常に要る。
+	ClientDisplayName string
+}
+
+// Connect は系統B の成果物一式（ApiDesign.md 4.5.8）。
+type Connect struct {
+	// Files は接続設定。**0枚か1枚**である——has_setup_template が偽の種別では空。
+	Files []File
+	// Readme は zip にだけ入れる手引き（4.5.8.5）。
+	//
+	// **Files に入れない。** 画面が同じ内容を節として描いており、files[] に入れると
+	// 「これも置くファイルだ」と読まれる。
+	Readme string
+	// UsesTokenEnvVar は export 行を出すか（4.5.8.2）。
+	//
+	// **Copilot だけ偽である**——${input:pb-token} を使い、環境変数を読まない。
+	UsesTokenEnvVar bool
+}
+
+// ReadmeName は zip に入れる手引きのファイル名（ApiDesign.md 4.5.8.5）。
+//
+// **README.md にしない。** プロジェクト直下で展開されたときに本物を消す
+// ——それは接続設定を merge にした理由そのものである。
+const ReadmeName = "PB-README.md"
+
+// connectSpec はクライアント種別ごとの接続設定の仕様。
+type connectSpec struct {
+	// configPath は置き場（DbDesign.md 8.2.1.1 が言う「client_kind が決めるもの」）。
+	configPath string
+	// usesTokenEnvVar は環境変数を読むか。**Copilot だけ偽**（10.8.4）。
+	usesTokenEnvVar bool
+	// render は設定ファイルの中身を組み立てる。
+	render func(p ConnectParams) (string, error)
+	// language は画面がハイライトに使う。
+	language string
+	// readme は手引きのテンプレート名（templates/connect/ の中）。
+	readme string
+}
+
+var connectSpecs = map[string]connectSpec{
+	"claude_code": {
+		configPath:      ".mcp.json",
+		usesTokenEnvVar: true,
+		render:          renderClaudeMCP,
+		language:        "json",
+		readme:          "claude_code.md",
+	},
+	"copilot": {
+		configPath: ".vscode/mcp.json",
+		// **VS Code が初回に入力を求め、以降は安全に保存する**（10.8.4）。
+		// ワークスペースごとに別のトークンを持てるので、同じ端末で複数の
+		// プロジェクトを開いても衝突しない。
+		usesTokenEnvVar: false,
+		render:          renderCopilotMCP,
+		language:        "json",
+		readme:          "copilot.md",
+	},
+	"codex": {
+		configPath:      ".codex/config.toml",
+		usesTokenEnvVar: true,
+		render:          renderCodexConfig,
+		language:        "toml",
+		readme:          "codex.md",
+	},
+}
+
+// ExportLine は環境変数へトークンを置く行を組み立てる（ApiDesign.md 4.5.8.2）。
+//
+// **値はプレースホルダである。** 平文は発行の応答にしか存在せず、
+// 何度でも開ける画面に置くのは Requirements.md 10.10.1 に反する。
+//
+// **単引用符で囲む。** トークンは pb_agt_ + Base62 なのでシェルの特殊文字を含まないが、
+// **利用者が貼り替える先**であり、囲っておかないと貼った値に記号が混じったときだけ
+// 静かに壊れる。
+func ExportLine(tokenEnvName string) string {
+	return fmt.Sprintf("export %s='ここに発行したトークンを貼る'", tokenEnvName)
+}
+
+// RenderConnect は1件のエージェントぶんの接続設定を組み立てる（ApiDesign.md 4.5.8）。
+//
+// **配置ファイルを持たない種別でも error にしない**（4.5.8.3）。Files を空にして、
+// 手引きに「この値で自分で設定してください」と書く——**エージェントは既に登録されており、
+// URL も変数名も正しく決まっている。** 5.7.1 が未対応の種別を 422 で拒むのは
+// **これから選ぶ**ものだからで、こちらは**既に選ばれた結果**である。
+func RenderConnect(kind string, p ConnectParams) (Connect, error) {
+	spec, ok := connectSpecs[kind]
+	if !ok {
+		readme, err := renderReadme("none.md", kind, connectSpec{}, p)
+		if err != nil {
+			return Connect{}, err
+		}
+		// **環境変数は勧める側で出す。** 自分で書く人にとって、変数名は
+		// PB が決めた事実であって選択肢ではない。
+		return Connect{Files: nil, Readme: readme, UsesTokenEnvVar: true}, nil
+	}
+
+	content, err := spec.render(p)
+	if err != nil {
+		return Connect{}, err
+	}
+	readme, err := renderReadme(spec.readme, kind, spec, p)
+	if err != nil {
+		return Connect{}, err
+	}
+
+	return Connect{
+		Files: []File{{
+			Path:       spec.configPath,
+			ClientKind: kind,
+			// **常に merge である**（ApiDesign.md 4.5.8.4）。既存の構造へ
+			// 該当キーだけを足すものであり、**zip では別名になる**。
+			Mode:     ModeMerge,
+			Language: spec.language,
+			Content:  content,
+		}},
+		Readme:          readme,
+		UsesTokenEnvVar: spec.usesTokenEnvVar,
+	}, nil
+}
+
+// readmeParams は手引きへ差し込む値。
+type readmeParams struct {
+	ConnectParams
+	// ConfigPath は置き場。**空になりうる**（配置ファイルを持たない種別）。
+	ConfigPath string
+	// ZipEntryName は zip の中での名前。**改名を促すために出す。**
+	ZipEntryName string
+	ExportLine   string
+	// OnboardRef は参画をどう起動するか。**系統A の specs から借りる**
+	// ——同じ文言を2か所に置くと必ずずれる（Codex はスラッシュコマンドを持たない）。
+	OnboardRef string
+}
+
+// renderReadme は templates/connect/<name> を差し込む。
+func renderReadme(name, kind string, spec connectSpec, p ConnectParams) (string, error) {
+	rp := readmeParams{
+		ConnectParams: p,
+		ConfigPath:    spec.configPath,
+		ExportLine:    ExportLine(p.TokenEnvName),
+		OnboardRef:    "参画の手順",
+	}
+	if spec.configPath != "" {
+		rp.ZipEntryName = blockName(spec.configPath)
+	}
+	// **系統A が持つ「起動の言い方」をそのまま使う**（Codex は誘発、他はコマンド）。
+	// **無い種別（gemini / other）では既定の日本語のまま**にする。
+	//
+	// **動詞を足さない。** onboardRef は種別ごとに品詞が違う（Claude Code は
+	// 「`/pb-onboard`」だが Codex は「…と伝える（…）」で動詞を含む）ので、
+	// **文として整えるのはテンプレート側の仕事である**——ここで
+	// 「を実行します」を継ぎ足したら Claude Code だけ二重になった（実出力で発見）。
+	if a, ok := specs[kind]; ok {
+		rp.OnboardRef = a.onboardRef
+	}
+
+	raw, err := connectFS.ReadFile(path.Join("templates/connect", name))
+	if err != nil {
+		return "", fmt.Errorf("手引き %s を読めない: %w", name, err)
+	}
+	tmpl, err := template.New(name).Parse(string(raw))
+	if err != nil {
+		return "", fmt.Errorf("手引き %s を解釈できない: %w", name, err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, rp); err != nil {
+		return "", fmt.Errorf("手引き %s を組み立てられない: %w", name, err)
+	}
+	return buf.String(), nil
+}
+
+// ── 種別ごとの設定ファイル ──────────────────────────────────
+
+// mcpServerEntry は .mcp.json / .vscode/mcp.json のサーバ1件。
+type mcpServerEntry struct {
+	Type    string            `json:"type"`
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// renderClaudeMCP は .mcp.json を組み立てる（Requirements.md 10.8.3）。
+//
+// **encoding/json で組み立てる。** 文字列を継ぎ足すと、**壊れた JSON を配っても
+// 誰も気づかない**——症状はクライアント側の「繋がらない」であって、PB には出ない。
+//
+// **${…} はクライアントが起動時に展開する。** ファイルに実体は残らない。
+func renderClaudeMCP(p ConnectParams) (string, error) {
+	doc := struct {
+		MCPServers map[string]mcpServerEntry `json:"mcpServers"`
+	}{
+		MCPServers: map[string]mcpServerEntry{
+			mcpServerName: {
+				Type: "http",
+				URL:  p.MCPURL,
+				Headers: map[string]string{
+					"Authorization": fmt.Sprintf("Bearer ${%s}", p.TokenEnvName),
+				},
+			},
+		},
+	}
+	return marshalConfig(doc)
+}
+
+// renderCopilotMCP は .vscode/mcp.json を組み立てる（Requirements.md 10.8.4）。
+//
+// **トップレベルは servers であって mcpServers ではない**（VS Code の書式）。
+// **inputs で初回に入力を求め、以降は VS Code が安全に保存する**ので、
+// **この形式だけ環境変数を使わない。**
+func renderCopilotMCP(p ConnectParams) (string, error) {
+	type input struct {
+		ID          string `json:"id"`
+		Type        string `json:"type"`
+		Description string `json:"description"`
+		Password    bool   `json:"password"`
+	}
+	doc := struct {
+		Inputs  []input                   `json:"inputs"`
+		Servers map[string]mcpServerEntry `json:"servers"`
+	}{
+		Inputs: []input{{
+			ID:          "pb-token",
+			Type:        "promptString",
+			Description: fmt.Sprintf("Project Backyard（%s）のアクセストークン", p.ProjectName),
+			Password:    true,
+		}},
+		Servers: map[string]mcpServerEntry{
+			mcpServerName: {
+				Type: "http",
+				URL:  p.MCPURL,
+				Headers: map[string]string{
+					"Authorization": "Bearer ${input:pb-token}",
+				},
+			},
+		},
+	}
+	return marshalConfig(doc)
+}
+
+// renderCodexConfig は .codex/config.toml を組み立てる（Requirements.md 10.8.4.1）。
+//
+// **TOML を標準ライブラリで書けないので文字列で組む。** 差し込む値は URL・変数名・
+// ツール名（すべて PB が決めた値）で、利用者の自由入力は入らない。
+//
+// **ツールの許可も同居する。** Claude Code が .claude/settings.json（コミットする）に
+// 書くものを、Codex はこのファイル（コミットしない）に書く——**だから系統B が配る**。
+// **enabled_tools は使わない**——あれは一覧から消す絞り込みで、**write 系のツールを
+// 消してしまう**。欲しいのは「読み取り7件を確認なしに、残りは毎回聞く」なので、
+// default_tools_approval_mode = "prompt" ＋ 個別の auto にする。
+func renderCodexConfig(p ConnectParams) (string, error) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[mcp_servers.%s]\n", mcpServerName)
+	fmt.Fprintf(&b, "url = %q\n", p.MCPURL)
+	fmt.Fprintf(&b, "bearer_token_env_var = %q\n", p.TokenEnvName)
+	b.WriteString("default_tools_approval_mode = \"prompt\"\n")
+	for _, tool := range autoApprovedTools {
+		fmt.Fprintf(&b, "\n[mcp_servers.%s.tools.%s]\n", mcpServerName, tool)
+		b.WriteString("approval_mode = \"auto\"\n")
+	}
+	return b.String(), nil
+}
+
+// marshalConfig は設定ファイルを2スペース字下げの JSON にする。
+//
+// **末尾に改行を付ける。** 利用者が手で継ぎ足す先であり、改行の無いファイルは
+// エディタによって扱いが揺れる。
+func marshalConfig(v any) (string, error) {
+	raw, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("接続設定を組み立てられない: %w", err)
+	}
+	return string(raw) + "\n", nil
+}

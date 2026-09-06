@@ -201,25 +201,26 @@ var specs = map[string]clientSpec{
 	},
 }
 
-// claudeSettings は .claude/settings.json へ足す許可（10.8.2）。
+// renderClaudeSettings は .claude/settings.json へ足す許可を組み立てる（10.8.2）。
 //
 // **read 系だけを自動承認にする。** /pb-onboard は読み取りしかしないので、
 // これを入れておくと確認を挟まず一息に走る（10.8.5）。**write 系は入れない**
 // ——起票・遷移・文書更新は、利用者が1回ずつ見て通す。
-const claudeSettings = `{
-  "permissions": {
-    "allow": [
-      "mcp__pb__pb_get_project",
-      "mcp__pb__pb_list_docs",
-      "mcp__pb__pb_get_doc",
-      "mcp__pb__pb_list_tasks",
-      "mcp__pb__pb_get_task",
-      "mcp__pb__pb_get_context",
-      "mcp__pb__pb_list_transitions"
-    ]
-  }
+//
+// **一覧は autoApprovedTools が正本である**（手順28b）。**同じ意図を Codex は
+// .codex/config.toml に別の書式で書く**ので（Requirements.md 10.8.4.1）、
+// **元を1つにしておかないと、片方だけ足して気づかない。**
+//
+// **mcp__<サーバ名>__<ツール名> の形は Claude Code の書式である**（実機で確認済み）。
+func renderClaudeSettings() string {
+	allow := make([]string, 0, len(autoApprovedTools))
+	for _, tool := range autoApprovedTools {
+		allow = append(allow, fmt.Sprintf("      %q", "mcp__"+mcpServerName+"__"+tool))
+	}
+	return "{\n  \"permissions\": {\n    \"allow\": [\n" +
+		strings.Join(allow, ",\n") +
+		"\n    ]\n  }\n}\n"
 }
-`
 
 // SupportedClients は配置ファイルを出せる種別を返す（昇順）。
 //
@@ -303,7 +304,7 @@ func Render(clients []string, p Params) ([]File, error) {
 				ClientKind: kind,
 				Mode:       ModeMerge,
 				Language:   "json",
-				Content:    claudeSettings,
+				Content:    renderClaudeSettings(),
 			})
 		}
 
@@ -410,4 +411,24 @@ func blockName(p string) string {
 		return dir + base[:i] + ".pb-block" + base[i:]
 	}
 	return p + ".pb-block"
+}
+
+// ConnectZip は系統B の成果物を zip にまとめる（ApiDesign.md 4.5.8.5）。
+//
+// **手引き（PB-README.md）を ModeCreate で入れる。** Zip の規則により
+// create だけが実名のまま入るので、**手引きは改名せず、接続設定は改名される**
+// ——**読むものはすぐ読め、置くものは一手間かかる**、が狙いどおりの形である。
+//
+// **接続設定が無い種別でも手引きだけの zip を返す。** エラーにしない
+// （4.5.8.3 と同じ判断）——URL と変数名を持ち歩ける形で渡す値打ちがある。
+func ConnectZip(c Connect) ([]byte, error) {
+	files := make([]File, 0, len(c.Files)+1)
+	files = append(files, File{
+		Path:     ReadmeName,
+		Mode:     ModeCreate,
+		Language: "markdown",
+		Content:  c.Readme,
+	})
+	files = append(files, c.Files...)
+	return Zip(files)
 }

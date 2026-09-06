@@ -20,6 +20,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ApiError } from '../api/client'
 import * as meApi from '../api/me'
 import type { IssuedAgentToken, MyAgent } from '../api/me'
+import AgentConnectPanel from '../components/AgentConnectPanel.vue'
 import AgentFormModal from '../components/AgentFormModal.vue'
 import Avatar from '../components/Avatar.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
@@ -394,6 +395,34 @@ function asApiError(e: unknown): ApiError {
   return new ApiError({ status: 0, code: 'network_error', message: '通信に失敗しました' })
 }
 
+// ── 接続パネル（`GuiDesign.md` 5.8.2、手順28b）──────────────
+
+/**
+ * 接続パネルを開いているエージェント（`null` なら全部畳んでいる）。
+ *
+ * **1件ずつしか開かない。** 中身が長いので、2件開くと下のカードが画面外へ出る。
+ * **カードの中に畳んで置く**のは、接続確認（下）が畳んだままでも見えている
+ * 必要があるためである——「繋がったか確かめに戻る」場面では開く動機がない。
+ */
+const openPanel = ref<string | null>(null)
+
+function togglePanel(agent: MyAgent) {
+  openPanel.value = openPanel.value === agent.id ? null : agent.id
+}
+
+/**
+ * 接続できたか（`GuiDesign.md` 5.8.2「接続確認はトークンの箱に出す」）。
+ *
+ * **`token.last_used_at` がそのまま答えである**（`ApiDesign.md` 4.5.1）。
+ * **新しい口を作らない**——同じ事実を2か所から出すと必ず食い違う。
+ *
+ * **「初回接続」ではなく「最終利用」を出す。** 初回だけを覚える列が無く、
+ * 足すと「いつ繋がったか」と「いま生きているか」を別々に持つことになる。
+ */
+function connectedAt(agent: MyAgent): string | null {
+  return agent.token?.last_used_at ?? null
+}
+
 /**
  * 副題の `クライアント ・ プロジェクト ・ モデル名`。
  *
@@ -488,10 +517,16 @@ function subtitle(agent: MyAgent): string {
                     <code class="prefix">{{ a.token.token_prefix }}</code>
                     <span v-if="a.token.status === 'active'">● 有効</span>
                     <span v-else class="expired">期限切れ</span>
+                    <!-- **接続確認は `token.last_used_at` で測る**（5.8.2、手順28b）。
+                         新しい口を作らない。**畳んでいるときも見えている必要がある**ので
+                         パネルではなくここに出す。状態を色だけで示さない（9.2） -->
+                    <span v-if="connectedAt(a)" class="connected">
+                      ✓ 接続済み（最終利用 {{ formatDateTime(connectedAt(a)!) }}）
+                    </span>
+                    <span v-else class="not-connected">未接続</span>
                   </div>
                   <p class="token-meta">
-                    発行 {{ formatDateTime(a.token.issued_at) }} ・ 最終利用
-                    {{ a.token.last_used_at ? formatDateTime(a.token.last_used_at) : '—' }}
+                    発行 {{ formatDateTime(a.token.issued_at) }}
                   </p>
                   <p class="token-meta">
                     有効期限 {{ a.token.expires_at ? formatDate(a.token.expires_at) : '無期限' }}
@@ -512,6 +547,21 @@ function subtitle(agent: MyAgent): string {
                   </button>
                 </div>
               </div>
+
+              <!-- ── 接続パネル（5.8.2、手順28b）────────────────
+                   **既定は畳む。** 開くのは 1〜4 の作業だけで、接続の結果は
+                   上のトークンの箱に出る -->
+              <div class="panel-row">
+                <button type="button" class="secondary panel-toggle" @click="togglePanel(a)">
+                  {{ openPanel === a.id ? '接続の手順を畳む ▴' : '接続の手順を開く ▾' }}
+                </button>
+              </div>
+              <AgentConnectPanel
+                v-if="openPanel === a.id"
+                :agent-id="a.id"
+                :has-token="Boolean(a.token)"
+                :project-key="a.project.key"
+              />
             </article>
           </div>
 
@@ -681,6 +731,30 @@ function subtitle(agent: MyAgent): string {
 .block-title {
   font-size: 14px;
   font-weight: 600;
+}
+
+/* 接続確認（手順28b）。状態を色だけで示さないので記号と文言を添える */
+/* **成功色のトークンをこの画面のために作らない。** `.ok`（結果の欄）と同じく
+   `--pb-text-muted` にする——記号「✓」と文言が状態を担う（9.2） */
+.connected {
+  color: var(--pb-text-muted);
+  font-size: 12px;
+}
+
+.not-connected {
+  color: var(--pb-text-muted);
+  font-size: 12px;
+}
+
+.panel-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.panel-toggle {
+  height: 26px;
+  font-size: 12px;
+  font-weight: 400;
 }
 
 /* ── カード（5.8.2）───────────────────────────────────────── */

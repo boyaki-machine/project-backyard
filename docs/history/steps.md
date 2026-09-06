@@ -67,6 +67,7 @@
 - 手順26c — 完了レポート（2026-09-05、`feature/step-26c-agent-report`、v2.10.67）
 - 手順27 — コンテキストパック（2026-09-05、`feature/step-27-context-pack`、v2.11.69）
 - 手順28a — 配置ファイルの生成とセットアップ画面（2026-09-06、`feature/step-28a-agent-setup-files`）
+- 手順28b — 系統B：自分の接続設定（2026-09-06、`feature/step-28b-agent-connect-panel`）
 - 手順外の作業（stg の PB へ起票済み、2026-09-05。チケット番号への対応表）
 
 ---
@@ -4379,3 +4380,102 @@ Cookie jar・トークン・Chrome プロファイル（`/tmp/pb-cdp-*`）を削
 | ヘッドレス Chrome のプロファイル2つ | `tempfile.TemporaryDirectory` で自動削除。プロセスは `close()` で終了 |
 | dev / stg の DB | **書き込みを伴う検証をしていない**（生成は GET だけ）。結合テストが作った行は `t.Cleanup` で削除 |
 | `make build` の埋め込み | `make clean-webui` |
+
+## 手順28b — 系統B：自分の接続設定（2026-09-06、`feature/step-28b-agent-connect-panel`）
+
+**`Requirements.md` 10.9.1 の系統B**（メンバーの参画）を作った。**28a（系統A＝リポジトリに
+コミットするファイル）と対になる半分**で、**各人の手元にしか残らないもの**を本人が
+何度でも取り直せるようにする。
+
+### 計画のときに前提が2つ外れた（利用者の指摘、2026-09-06）
+
+| 外していたこと | 実際 |
+|---|---|
+| **順序**：clone → 接続設定 → export → 起動 と書いた | **逆である。** トークンを環境へ置き、接続設定を置いて**MCP が使える状態を先に作る**。MCP 型では材料の取得そのものが MCP 経由なので、先にできない |
+| **材料の取り方**：`project.settings.repositories` があるから clone、と決め打ちした | **PB は汎用のプロジェクト管理ツール**であり、リポジトリを持たないプロジェクトが成り立つ。**`repositories` が在ることは、それが取り方であることの根拠にならない** |
+
+**この指摘で 28b の範囲が変わった**——**28b は「MCP が使える状態になるまで」だけ**を扱い、
+**材料の取り方は 28c**（PB の文書で指定する）へ送った。**分けられたのは、28b の中身が
+3つの型のどれでも同じだから**である（トークン・接続設定・環境変数はプロジェクトの性質に依らない）。
+
+### 一次情報で確かめたこと（LEARNINGS 140 の適用）
+
+**「`/pb-onboard` や `/pb-charter` は Claude 固有の仕組みではないか」という問い**に答えるため、
+3クライアントの公式文書を引いた（2026-09-06）。
+
+| | Claude Code | GitHub Copilot | OpenAI Codex |
+|---|---|---|---|
+| 接続設定 | `.mcp.json`（`mcpServers`） | `.vscode/mcp.json`（**`servers`**） | `.codex/config.toml`（`[mcp_servers.*]`） |
+| 認証 | `headers` に `${ENV}` | `inputs` の `${input:…}` | `bearer_token_env_var` |
+| **ツール許可** | **`.claude/settings.json`**（別ファイル・**コミットする**） | **コミットできる仕組みが無い** | **`.codex/config.toml`（接続設定と同じファイル・除外）** |
+
+- **`settings.json` は Claude Code 固有である。** 業界標準になったのは **`AGENTS.md`（指示・文脈だけ）**で、
+  Linux Foundation の Agentic AI Foundation が管理し、**MCP 接続もツール権限も標準化していない**
+- **ツールの一覧はファイルで渡さない。** クライアントは接続後に `tools/list` を送り、
+  **PB が名前・説明・引数スキーマを返す**（`Design.md` 8.4。手順25 で実装済み）。
+  **新しいツールを足しても配置ファイルの配り直しは要らない**
+- **Codex のツール許可が接続設定と同居する**ので、**それを配れるのは系統B だけ**である
+  ——`Requirements.md` 10.8.4.1 に非対称の表として書いた
+- **`.mcp.json` を Claude Code の公式文書は「コミットする前提」と位置づけている**（`${VAR:-既定値}` の
+  展開もある）。**PB は 10.8.1 で逆を選んでいる**が、根拠のうち「上書き合戦」は技術的には解ける
+  ——**いま覆さない**（もう一方の「個人のホスト名が履歴に残る」は消えていない）
+
+### 作ったファイル
+
+| ファイル | 内容 |
+|---|---|
+| `server/internal/agentsetup/connect.go` | `RenderConnect` / `ConnectParams` / `Connect` / `ExportLine`。**`specs`（系統A）とは別のマップ**（`connectSpecs`）にした——Git に入る／入らないの境目を構造から消さないため。鍵の一致はテストが見る |
+| `server/internal/agentsetup/templates/connect/{claude_code,copilot,codex,none}.md` | zip に入れる `PB-README.md` の種別ごとの本文 |
+| `server/internal/agentsetup/connect_test.go` | 10件 |
+| `server/internal/httpapi/v1/me_agent_setup.go` | `GET /me/agents/{id}/setup` と `.zip` |
+| `server/internal/httpapi/v1/me_agent_setup_test.go` | 6件（フェイク） |
+| `server/internal/httpapi/v1/me_agent_setup_integration_test.go` | 5件（実DB・ルータ経由） |
+| `client/src/components/AgentConnectPanel.vue` | 接続パネル（4節） |
+
+**変えたファイル**：`agentsetup.go`（`claudeSettings` の定数を `renderClaudeSettings()` にし、
+**`autoApprovedTools` から Claude と Codex の両方を組み立てる**）、`routes.go`、
+`client/src/api/agentSetup.ts`、`client/src/pages/MyAgentsPage.vue`、`schema.d.ts`（再生成）。
+
+**文書**：`ApiDesign.md` 4.5.8 を新設、`GuiDesign.md` 5.8.2 に「接続パネル」、
+`Requirements.md` 10.8.4.1 / 10.9.1 / 10.9.4、`openapi.yaml`、`Development.md` 12.1〜12.2、
+`Testing.md` 3章・7.5。**マイグレーションは足していない。**
+
+### 検証結果
+
+| 層 | 件数 | 結果 |
+|---|---|---|
+| 単体（`internal/agentsetup`） | 10 | PASS。3種別の中身、`export_line` の出し分け、`.claude/settings.json` と `.codex/config.toml` が同じ一覧から出ること、zip の名前 |
+| 単体（ハンドラ・フェイク） | 6 | PASS。応答の形、`token_env_suffix` 未設定のフォールバック、404、zip のヘッダ |
+| 結合（実DB・ルータ経由） | 5 | PASS。他人のエージェントは 404、Copilot の `export_line` が `null`、Codex のツール許可、zip の中身 |
+| ドリフト | — | PASS（`openapi.yaml` と実装） |
+| 画面（ヘッドレス Chrome） | 20 | **20/20 PASS**。カード3件、接続確認の3状態、パネルの開閉（1件だけ開く）、4節、種別ごとの出し分け、平文が出ないこと、`[全文を見る]` で 3→12 行 |
+| 実サーバ（end-to-end） | — | **生成した `.mcp.json` の `url` と `Authorization` をそのまま使って `tools/list` が12件返った**（値を手で打ち直さずに、生成物から読み出して使った） |
+
+### 実出力を読んで見つけた不具合（1件）
+
+**`PB-README.md` に「`/pb-onboard` を実行します を実行します」と二重に出ていた。**
+「起動の言い方」を系統A の `onboardRef` から借りたが、**値の側に動詞が入っている種別があり**
+（Codex は「…と伝える（…）」）、Go 側で「を実行します」を継ぎ足したため Claude Code だけ壊れた。
+**`Contains` の検査は3種別とも通っていた**——実サーバから落として読むまで見えなかった。
+**二重になった文そのものを検査に足し、壊した状態で FAIL することを確かめてから直した。**
+`Testing.md` 7.5 に書いた。
+
+### 画面の検証で1件 FAIL（期待値の誤り）
+
+「未接続」の始点に**トークン未発行のエージェント**を使って落ちた。**トークンが無い行は
+接続確認そのものを出さない**ので、測っていたのは別の状態だった。**発行しただけで
+一度も使っていないトークン**を作り直して 20/20 になった。`Testing.md` 3章に書いた。
+
+### あとしまつ
+
+| 作った資源 | 片付け | 測った結果 |
+|---|---|---|
+| dev の検証用エージェント3件とトークン | `DELETE /me/agents/:id` ×3 | **`actor` 0件・`access_token` 0件**（`display_name LIKE '接続検証%'`） |
+| Cookie jar（セッションの平文） | `rm` | 0件 |
+| ダウンロードした zip 2件 | `rm` | 0件 |
+| ヘッドレス Chrome のプロファイル | `shutil.rmtree` | 0件 |
+| `make restart` が起動したサーバ | `kill` | **`:8080` の LISTEN 0件** |
+| `make build` の埋め込み | `make clean-webui` | `git status` に差分なし |
+
+**dev の `demo` に残る `開発PMのClaude Code` は `dev-seed` が作る行**であり、検証の残りではない
+（`deploy/dev/seed/dev-data.yaml` で確認）。
