@@ -144,6 +144,25 @@ function onDetailUpdated(next: TicketDetail): void {
   tickets.value = tickets.value.map((t) => (t.seq === next.seq ? { ...t, ...next } : t))
 }
 
+/**
+ * 詳細ペインで**行が増えた**（子チケットの作成。5.5「子チケット」）。
+ *
+ * **取り直す。** `onDetailUpdated` の「差し替えるだけで取り直さない」を
+ * ここへ写せない——**新しい行は結果集合に一度も入っていない**ので、
+ * いまのフィルタに合致するか、`sort_key` の並びのどこへ入るかを手元で
+ * 決められない。手元へ足すと、**絞り込みに合わない行が出たうえで
+ * 下部の総件数と食い違う**（9.2.2 / 5.4）。
+ *
+ * **`onDetailDeleted` が既に同じ判断をしている。** 行が増減したときは取り直す、
+ * 行の中身が変わっただけのときは差し替える、という切り分けである（pb-15）。
+ *
+ * **結果の一言は出さない。** 操作したのは詳細ペインであり、作られた子は
+ * あちらの「子チケット」の節に現れる（6.4「操作結果は操作した場所に出す」）。
+ */
+function onDetailCreated(): void {
+  void loadTickets()
+}
+
 /** 削除された（9.5.3）。**画面が消える操作なので、結果は着地する一覧へ渡す**（6.4） */
 function onDetailDeleted(seq: number, title: string): void {
   tickets.value = tickets.value.filter((t) => t.seq !== seq)
@@ -1916,6 +1935,7 @@ watch(projectKey, (key) => {
         :candidates="tickets"
         @close="closeDetail"
         @updated="onDetailUpdated"
+        @created="onDetailCreated"
         @deleted="onDetailDeleted"
       />
     </template>

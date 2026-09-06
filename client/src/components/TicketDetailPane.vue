@@ -125,6 +125,13 @@ const emit = defineEmits<{
   close: []
   /** 変更が確定した。一覧側が該当行だけ差し替える（取り直さない） */
   updated: [ticket: TicketDetail]
+  /**
+   * **行が増えた。** `updated` と分けているのは、受け側の扱いが違うからである
+   * ——`updated` は既にある行の差し替えで済むが、**新しい行は一覧の結果集合に
+   * 一度も入っていない**ので、フィルタに合うか・`sort_key` のどこに入るかを
+   * 一覧側では決められない。`deleted` が取り直しているのと同じ理由（pb-15）。
+   */
+  created: [ticket: TicketDetail]
   deleted: [seq: number, title: string]
 }>()
 
@@ -868,10 +875,13 @@ async function createChild(body: CreateTicketRequest): Promise<void> {
   busy.value = true
   newChildErrors.value = {}
   try {
-    await ticketsApi.createTicket(props.projectKey, { ...body, parent_seq: t.seq })
+    const child = await ticketsApi.createTicket(props.projectKey, { ...body, parent_seq: t.seq })
     showNewChild.value = false
     await load()
-    if (ticket.value !== null) emit('updated', ticket.value)
+    // **`updated` ではなく `created` を流す**（pb-15）。親の行を差し替えるだけでは
+    // **作った子が一覧に一度も現れない**——バックログは詳細を開いたまま子を
+    // 増やせるので、リロードするまで見えない状態が残っていた。
+    emit('created', child)
   } catch (e) {
     const err = toApiError(e)
     if (err.details.length > 0) {
