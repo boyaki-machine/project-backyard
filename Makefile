@@ -56,7 +56,8 @@ STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@1
 	docs-size
 
 ## DB を起動する
-# TODO(手順13以降): deploy/Dockerfile 作成後、`up -d` に戻して app も起動対象にする
+# app を起動対象にしていないのは deploy/Dockerfile が未作成のためである。
+# Design.md 4.4 により Phase 2 では作らない（PB 本体は単一バイナリで動かす）。
 up:
 	$(COMPOSE) up -d db
 
