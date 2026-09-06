@@ -895,15 +895,28 @@ function openRow(t: Ticket, e: MouseEvent): void {
   void router.replace(to)
 }
 
-// ── 並べ替えと段の行き来（`⠿` のドラッグ。`ApiDesign.md` 9.4）─
+// ── 並べ替えと段の行き来（ドラッグ。`ApiDesign.md` 9.4）───────
 
 /**
  * 掴めるのは**ソートが `sort_key` の昇順のとき**だけである（5.4）。
  * 他の並びでは、画面上の位置と `after_seq` の意味が一致しない。
+ *
+ * **縮小中も掴める**（5.4「縮小中の掴みしろ」。pb-7）。以前は `!shrunk` を
+ * 条件に持っていたが、**詳細を開いたまま消化順を組み替える**のは実際に起きる
+ * 作業で、そのたびに全幅へ戻すことになっていた。
  */
 const canReorder = computed(
-  () => canEdit.value && !shrunk.value && sort.value === 'sort_key' && order.value === 'asc',
+  () => canEdit.value && sort.value === 'sort_key' && order.value === 'asc',
 )
+
+/**
+ * 掴みしろを行そのものに置くか（5.4「縮小中の掴みしろ」）。
+ *
+ * **縮小中は `⠿` の列を持てない。** 450px の内訳は ID・タイトル・状態の3列で、
+ * `⠿` に約28px を割くとタイトルの実効幅がさらに縮む。**5.10 の文書ツリーが
+ * 同じ理由で同じ判断をしている。**
+ */
+const grabWholeRow = computed(() => canReorder.value && shrunk.value)
 
 /**
  * 掴んでいる行。
@@ -1715,7 +1728,11 @@ watch(projectKey, (key) => {
                   v-for="row in section.rows"
                   :key="`${section.key}:${row.ticket.seq}`"
                   class="row"
+                  :draggable="grabWholeRow"
+                  @dragstart="grabWholeRow && (draggingSeq = row.ticket.seq)"
+                  @dragend="endDrag()"
                   :class="{
+                    grabbable: grabWholeRow,
                     dragging: draggingSeq === row.ticket.seq,
                     'drop-before': hintsRow(row, section, 'before'),
                     'drop-after': hintsRow(row, section, 'after'),
@@ -1793,7 +1810,16 @@ watch(projectKey, (key) => {
                         :to="withQuery(`/p/${projectKey}/tickets/${row.ticket.seq}`)"
                         custom
                       >
-                        <a ref="rowLink" class="title" :href="href" @click.stop="navigate">
+                        <!-- **`<a>` は既定でドラッグ可能**なので落とす（5.4 / 5.10）。
+                             放置すると掴んだ瞬間に URL のドラッグが始まり、
+                             行のドラッグが一度も起きない -->
+                        <a
+                          ref="rowLink"
+                          class="title"
+                          :href="href"
+                          draggable="false"
+                          @click.stop="navigate"
+                        >
                           {{ row.ticket.title }}
                         </a>
                       </RouterLink>
@@ -2155,6 +2181,18 @@ watch(projectKey, (key) => {
 
 .row.dragging {
   opacity: 0.5;
+}
+
+/* **縮小中は行そのものが掴みしろになる**（5.4「縮小中の掴みしろ」。pb-7）。
+   `⠿` の列を持てない幅なので、掴めることはカーソルだけが伝える。
+   **行クリックで詳細が開く**ことは変わらないので `pointer` を上書きしない
+   ——`grab` は「掴める」を足すのであって、「押せない」を意味しない */
+.row.grabbable {
+  cursor: grab;
+}
+
+.row.grabbable:active {
+  cursor: grabbing;
 }
 
 /* **開いている行は選択状態として背景を変える**（5.4「行クリック」）。
