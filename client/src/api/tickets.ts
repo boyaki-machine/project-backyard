@@ -26,6 +26,8 @@ export type MoveTicketResult = components['schemas']['MoveTicketResult']
 
 export type TicketType = Ticket['type']
 export type TicketPriority = NonNullable<Ticket['priority']>
+/** 実行モード（`DbDesign.md` 6.6 の `CHECK` が持つ3値）。**`null` を取らない** */
+export type TicketExecutionMode = TicketDetail['execution_mode']
 export type StatusCategory = TicketStatus['category']
 
 /**
@@ -101,6 +103,29 @@ export const priorityMarks: Record<TicketPriority, string> = {
   low: '▽',
   lowest: '▽▽',
 }
+
+/**
+ * 実行モードの表示名（`GuiDesign.md` 5.5「実行モード」）。
+ *
+ * **サーバと同じ語を使う**——`server/internal/mcp/context_pack.go` の
+ * `executionModeLabels` が同じ3語をコンテキストパックに出している。
+ * **語が違うと、人が「エージェントに見えているもの」を確かめられない。**
+ */
+export const executionModeLabels: Record<TicketExecutionMode, string> = {
+  human_only: '人が行う',
+  agent_draft: 'エージェントが下書きし、人が仕上げる',
+  agent_only: 'エージェントに任せてよい',
+}
+
+/**
+ * 選択肢の並び。**弱いほうから強いほうへ**（人だけ → 下書き → 任せる）並べる。
+ * `DbDesign.md` 6.6 の `CHECK` が持つ3値がすべてである。
+ */
+export const executionModeOptions: TicketExecutionMode[] = [
+  'human_only',
+  'agent_draft',
+  'agent_only',
+]
 
 export const priorityLabels: Record<TicketPriority, string> = {
   highest: '最高',
