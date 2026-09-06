@@ -758,7 +758,7 @@ dev に `vite` / `@vitejs/plugin-vue` / `typescript` / `vue-tsc` / `openapi-type
 （型エラーはビルドを止める）。`make build-client` は `npm ci` を使うため
 `client/package-lock.json` をコミットしている。
 
-**依存を足す・置き換えるのはユーザーの承認が要る**（`CLAUDE.md` 絶対規則2）。
+**依存を足す・置き換えるのはユーザーの承認が要る**（PB の規約「実装の前に」）。
 
 ---
 

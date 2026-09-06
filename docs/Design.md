@@ -1287,7 +1287,7 @@ git switch develop && git merge --no-ff feature/step-02-migrations
 
 **`LEARNINGS.md` は `.gitignore` の対象**であり、リポジトリには入らない。**個人のセッション履歴（`~/.claude/projects/`）から抽出した内容を含む**ためで、規約へ昇格した分だけが `CLAUDE.md` と `pb-step.md` に残る。文書が存在しない環境では、見出しと空の表だけ作って始める。
 
-**マージ・push・ブランチ削除はエージェントに独断で行わせない**（`CLAUDE.md` のブランチ運用、`.claude/commands/pb-step.md` の手順10）。
+**マージ・push・ブランチ削除はエージェントに独断で行わせない**（PB の規約「人の承認が要ること」、`.claude/commands/pb-step.md` の手順10）。
 
 ## 11.1 バージョン番号とリリースタグ
 
