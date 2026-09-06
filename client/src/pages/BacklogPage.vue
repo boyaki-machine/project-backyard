@@ -545,10 +545,14 @@ const treeMode = computed(
 /**
  * 段ごとに振り分ける（5.4「二段」）。
  *
- * **上げた行の配下は、どちらの段にも行として出さない**（5.4「配下の行き先」。
- * 利用者の判断、2026-08-23）。親と一緒に運ばれた以上、片方の段にだけ子が
- * 残ると上下を見比べる作業がここで復活する。**グループ化に切り替えると
- * 段の軸が消えるので、伏せた行もふたたび出る。**
+ * **上げた行の配下は、オンステージ段に親の下として出す**（5.4「配下の行き先」。
+ * 利用者の判断、2026-09-06。pb-46）。**バックログ段には出さない**——「行は
+ * 片方の段にしか出ない」という大原則を保つためで、両方に出すと上下を
+ * 見比べる作業が復活する。
+ *
+ * **段を決めるのは親であり、子は親と一緒に運ばれる**（9.4.1）。配下の行は
+ * `staged_at` が `NULL` のままオンステージ段に現れるので、**`staged_at` だけで
+ * 振り分けてはいけない**。
  */
 function splitByStage(items: Ticket[]): { staged: Ticket[]; backlog: Ticket[] } {
   const childrenOf = new Map<number, Ticket[]>()
@@ -572,8 +576,9 @@ function splitByStage(items: Ticket[]): { staged: Ticket[]; backlog: Ticket[] } 
   const staged: Ticket[] = []
   const backlog: Ticket[] = []
   for (const t of items) {
-    if (carried.has(t.seq)) continue
-    if (t.staged_at !== null) staged.push(t)
+    // **`carried` は「オンステージの行の部分木」である。** `staged_at` は
+    // `NULL` のままなので、この判定を先に置かないとバックログ段へ落ちる
+    if (carried.has(t.seq) || t.staged_at !== null) staged.push(t)
     else backlog.push(t)
   }
   return { staged, backlog }
@@ -581,12 +586,16 @@ function splitByStage(items: Ticket[]): { staged: Ticket[]; backlog: Ticket[] } 
 
 const staged = computed(() => splitByStage(tickets.value))
 
-/** 出していない配下の件数。総件数との差を画面で説明するために数える */
-const carriedCount = computed(() =>
-  twoTier.value
-    ? tickets.value.length - staged.value.staged.length - staged.value.backlog.length
-    : 0,
-)
+/**
+ * **その行がいまどちらの段に出ているか。** `staged_at` で判定してはいけない
+ * （pb-46）——オンステージへ上げた行の配下は `staged_at` が `NULL` のまま
+ * オンステージ段に現れるためで、**段を決めるのは親である**（9.4.1）。
+ */
+const stagedSeqs = computed(() => new Set(staged.value.staged.map((t) => t.seq)))
+
+function shownInStage(t: Ticket): boolean {
+  return stagedSeqs.value.has(t.seq)
+}
 
 /**
  * `parent_seq` からツリーを組む。
@@ -726,11 +735,17 @@ function sectionOrder(): string[] {
 }
 
 const sections = computed<Section[]>(() => {
-  // 二段（5.4）。**オンステージはフラットな消化順リスト**で、ツリーを組まない
-  // ——段に置けるのは表示上のトップレベルだけなので、子の行がそもそも来ない。
+  // 二段（5.4）。**両方の段が親子のインデントと折りたたみを持つ**（pb-46）。
+  // オンステージ段には親と一緒に運ばれた配下が来るので、バックログ段と
+  // 同じ条件でツリーに組み直す（グループ化が「なし」かつ `sort_key` の昇順）。
   if (twoTier.value) {
     return [
-      { key: 'staged', label: 'オンステージ', rows: flatRows(staged.value.staged), stage: true },
+      {
+        key: 'staged',
+        label: 'オンステージ',
+        rows: treeMode.value ? buildTree(staged.value.staged) : flatRows(staged.value.staged),
+        stage: true,
+      },
       {
         key: 'backlog',
         label: 'バックログ',
@@ -978,7 +993,9 @@ function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolea
   const source = sourceRow.ticket
 
   if (section.stage !== undefined) {
-    if ((source.staged_at !== null) === section.stage) {
+    // **同じ段の中なら、表示上の親が同じ行どうし**（オンステージ段にも
+    // インデントされた行が出るようになったので、根だけとは限らない。pb-46）
+    if (shownInStage(source) === section.stage) {
       return sourceRow.parentKey === row.parentKey
     }
     return isStageable(source) && row.parentKey === null
@@ -1000,7 +1017,7 @@ function canDropOnSection(sourceSeq: number | null, section: Section): boolean {
   if (sourceSeq === null || section.stage === undefined) return false
   const sourceRow = rowIndex.value.get(sourceSeq)
   if (sourceRow === undefined || sourceRow.parentKey !== null) return false
-  if ((sourceRow.ticket.staged_at !== null) === section.stage) return true
+  if (shownInStage(sourceRow.ticket) === section.stage) return true
   return isStageable(sourceRow.ticket)
 }
 
@@ -1103,10 +1120,17 @@ async function runMove(
   }
 }
 
-/** 段が変わるか。変わらないときは `undefined`（`move` に `staged` を送らない） */
+/**
+ * 段が変わるか。変わらないときは `undefined`（`move` に `staged` を送らない）。
+ *
+ * **`staged_at` ではなく「いま出ている段」で比べる**（pb-46）。配下の行は
+ * `staged_at` が `NULL` のままオンステージ段に居るので、`staged_at` で比べると
+ * **同じ段の中で動かしただけなのに `staged: true` を送り**、親を持つ行なので
+ * 422 `not_stageable` になる（9.4.1）。
+ */
 function stageChangeOf(source: Ticket, section: Section): boolean | undefined {
   if (section.stage === undefined) return undefined
-  return (source.staged_at !== null) === section.stage ? undefined : section.stage
+  return shownInStage(source) === section.stage ? undefined : section.stage
 }
 
 /** 段の見た目を先に変えるための行。正しい値はサーバ応答で上書きする */
@@ -1918,16 +1942,13 @@ watch(projectKey, (key) => {
         </div>
 
         <!-- 総件数は**チケットの実数**で、タグの重複を含まない（5.4.1）。
-             **出していない配下を含む**ので、上下の件数の合計とは一致しない
-             ことがある（5.4「配下の行き先」） -->
+             **上下の件数の合計と一致する**——伏せる行が無くなったため
+             （5.4「配下の行き先」。pb-46） -->
         <p class="total">
           <template v-if="truncated">
             {{ withComma(total) }}件中 {{ withComma(perPage) }}件を表示しています。フィルタで絞り込んでください
           </template>
           <template v-else>{{ withComma(total) }}件</template>
-          <span v-if="carriedCount > 0" class="carried">
-            （うち{{ withComma(carriedCount) }}件はオンステージの配下として出していません）
-          </span>
         </p>
       </template>
     </div>
@@ -2464,9 +2485,5 @@ watch(projectKey, (key) => {
 .total {
   margin-top: var(--pb-space-4);
   color: var(--pb-text-muted);
-}
-
-.carried {
-  font-size: 13px;
 }
 </style>
