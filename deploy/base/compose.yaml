@@ -45,7 +45,7 @@ services:
     image: project-backyard:dev
     build:
       context: ../..                 # リポジトリルート（client/ と server/ を含む）
-      dockerfile: deploy/Dockerfile  # Design.md 4.1。手順13以降で作成する
+      dockerfile: deploy/Dockerfile  # Design.md 4.1。未作成——4.4 により Phase 2 では作らない
     restart: unless-stopped
     depends_on:
       db:
