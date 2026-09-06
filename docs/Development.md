@@ -315,6 +315,8 @@ lsof -nP -iTCP:8080 -sTCP:LISTEN                 # サーバが残っていな�
 | `member@example.com` | operator | project_member | プロジェクト設定が触れない |
 | `viewer@example.com` | operator | project_viewer | 閲覧のみ |
 
+**`admin@example.com` は `demo` のメンバーではない。** `pb dev seed` は**プロジェクトの作成者をメンバーとして登録しない**（`server/cmd/pb/dev_seed.go`）。登録するのは `POST /projects`（画面から作ったとき）だけで、そちらは作成者が `project_admin` になる（`ApiDesign.md` 5.2）。**この非対称を忘れると「管理者だが非メンバー」の前提を取り違える**——手順24b の検証で実際に4件が偽の FAIL になった。**`make dev-info` は定義ファイルを読むので、DB を引いた結果とは別物である。**
+
 ## 4.2 本番DBへ流れない仕組み
 
 二重のガードがある（`DbDesign.md` 7.6.3）。いずれかに掛かったら何もせず終了する。
@@ -484,7 +486,7 @@ Playwright / Puppeteer は入れていない（`Design.md` 3.1 の採用技術�
 - **セレクタは DOM を1回出してから書く**（手順26c で2回外した）。ログイン画面の入力欄は
   `id` を持たず `name` だけを持ち、`form button` は**パスワードの表示切替（`👁`）を先に拾う**
   ——`document.querySelectorAll('input')` と `button[type=submit]` が確実である。
-  **外したときの症状は「ログインできない」ではなく「ログイン画面のまま先へ進む」**で、
+  **外したときの症状は「ログインできない」ではなく「ログイン画面のまま先へ進む」ことである**。
   後続の検証が全部 FAIL になるため、原因が遠くに見える
 - `v-model` の入力欄に値を入れるときは、`el.value = v` ではなく**ネイティブの value セッターを
   呼んでから `input` イベントを発火**する。前者では Vue が変更に気づかない

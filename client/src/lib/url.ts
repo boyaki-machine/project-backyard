@@ -17,7 +17,7 @@
  *
  * **`http://` も真とする。** この規則が線を引いている理由は「開けるかどうか」で
  * あってスキームの安全性ではなく、社内 wiki や開発中のサーバは `http://` で
- * 出てくる（`GuiDesign.md` 5.9.1）。Slack・Teams・SharePoint のような
+ * 出てくる（`GuiDesign.md` 5.9.1）。チャットや文書共有のサービスのような
  * ファイルサービスへのリンクもここを通る。
  */
 export function isWebUrl(url: string | null | undefined): boolean {
