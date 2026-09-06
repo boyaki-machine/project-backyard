@@ -70,7 +70,6 @@
 | 24 | medium | seed に返信と削除済みコメントが無い |
 | 25 | medium | seed のチケットに reporter が入らない（メール引きで必ず空） |
 | 29 | medium | `pb serve` が bind に失敗しても起動成功を先にログへ出す |
-| 31 | medium | `Makefile` と `compose.yaml` の「手順13以降で Dockerfile」が古い |
 | 32 | medium | `projects_integration_test.go` の「チケットAPIは手順18」が古い |
 | 33 | medium | `router/routes.ts` のプレースホルダが Phase 2 と表示する（正しくは Phase 3） |
 | 34 | medium | Docs の編集中、可視化ペインが下書きを映さない |
