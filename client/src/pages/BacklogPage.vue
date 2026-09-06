@@ -545,10 +545,14 @@ const treeMode = computed(
 /**
  * 段ごとに振り分ける（5.4「二段」）。
  *
- * **上げた行の配下は、どちらの段にも行として出さない**（5.4「配下の行き先」。
- * 利用者の判断、2026-08-23）。親と一緒に運ばれた以上、片方の段にだけ子が
- * 残ると上下を見比べる作業がここで復活する。**グループ化に切り替えると
- * 段の軸が消えるので、伏せた行もふたたび出る。**
+ * **上げた行の配下は、オンステージ段に親の下として出す**（5.4「配下の行き先」。
+ * 利用者の判断、2026-09-06。pb-46）。**バックログ段には出さない**——「行は
+ * 片方の段にしか出ない」という大原則を保つためで、両方に出すと上下を
+ * 見比べる作業が復活する。
+ *
+ * **段を決めるのは親であり、子は親と一緒に運ばれる**（9.4.1）。配下の行は
+ * `staged_at` が `NULL` のままオンステージ段に現れるので、**`staged_at` だけで
+ * 振り分けてはいけない**。
  */
 function splitByStage(items: Ticket[]): { staged: Ticket[]; backlog: Ticket[] } {
   const childrenOf = new Map<number, Ticket[]>()
@@ -572,8 +576,9 @@ function splitByStage(items: Ticket[]): { staged: Ticket[]; backlog: Ticket[] } 
   const staged: Ticket[] = []
   const backlog: Ticket[] = []
   for (const t of items) {
-    if (carried.has(t.seq)) continue
-    if (t.staged_at !== null) staged.push(t)
+    // **`carried` は「オンステージの行の部分木」である。** `staged_at` は
+    // `NULL` のままなので、この判定を先に置かないとバックログ段へ落ちる
+    if (carried.has(t.seq) || t.staged_at !== null) staged.push(t)
     else backlog.push(t)
   }
   return { staged, backlog }
@@ -581,12 +586,16 @@ function splitByStage(items: Ticket[]): { staged: Ticket[]; backlog: Ticket[] } 
 
 const staged = computed(() => splitByStage(tickets.value))
 
-/** 出していない配下の件数。総件数との差を画面で説明するために数える */
-const carriedCount = computed(() =>
-  twoTier.value
-    ? tickets.value.length - staged.value.staged.length - staged.value.backlog.length
-    : 0,
-)
+/**
+ * **その行がいまどちらの段に出ているか。** `staged_at` で判定してはいけない
+ * （pb-46）——オンステージへ上げた行の配下は `staged_at` が `NULL` のまま
+ * オンステージ段に現れるためで、**段を決めるのは親である**（9.4.1）。
+ */
+const stagedSeqs = computed(() => new Set(staged.value.staged.map((t) => t.seq)))
+
+function shownInStage(t: Ticket): boolean {
+  return stagedSeqs.value.has(t.seq)
+}
 
 /**
  * `parent_seq` からツリーを組む。
@@ -726,11 +735,17 @@ function sectionOrder(): string[] {
 }
 
 const sections = computed<Section[]>(() => {
-  // 二段（5.4）。**オンステージはフラットな消化順リスト**で、ツリーを組まない
-  // ——段に置けるのは表示上のトップレベルだけなので、子の行がそもそも来ない。
+  // 二段（5.4）。**両方の段が親子のインデントと折りたたみを持つ**（pb-46）。
+  // オンステージ段には親と一緒に運ばれた配下が来るので、バックログ段と
+  // 同じ条件でツリーに組み直す（グループ化が「なし」かつ `sort_key` の昇順）。
   if (twoTier.value) {
     return [
-      { key: 'staged', label: 'オンステージ', rows: flatRows(staged.value.staged), stage: true },
+      {
+        key: 'staged',
+        label: 'オンステージ',
+        rows: treeMode.value ? buildTree(staged.value.staged) : flatRows(staged.value.staged),
+        stage: true,
+      },
       {
         key: 'backlog',
         label: 'バックログ',
@@ -895,15 +910,28 @@ function openRow(t: Ticket, e: MouseEvent): void {
   void router.replace(to)
 }
 
-// ── 並べ替えと段の行き来（`⠿` のドラッグ。`ApiDesign.md` 9.4）─
+// ── 並べ替えと段の行き来（ドラッグ。`ApiDesign.md` 9.4）───────
 
 /**
  * 掴めるのは**ソートが `sort_key` の昇順のとき**だけである（5.4）。
  * 他の並びでは、画面上の位置と `after_seq` の意味が一致しない。
+ *
+ * **縮小中も掴める**（5.4「縮小中の掴みしろ」。pb-7）。以前は `!shrunk` を
+ * 条件に持っていたが、**詳細を開いたまま消化順を組み替える**のは実際に起きる
+ * 作業で、そのたびに全幅へ戻すことになっていた。
  */
 const canReorder = computed(
-  () => canEdit.value && !shrunk.value && sort.value === 'sort_key' && order.value === 'asc',
+  () => canEdit.value && sort.value === 'sort_key' && order.value === 'asc',
 )
+
+/**
+ * 掴みしろを行そのものに置くか（5.4「縮小中の掴みしろ」）。
+ *
+ * **縮小中は `⠿` の列を持てない。** 450px の内訳は ID・タイトル・状態の3列で、
+ * `⠿` に約28px を割くとタイトルの実効幅がさらに縮む。**5.10 の文書ツリーが
+ * 同じ理由で同じ判断をしている。**
+ */
+const grabWholeRow = computed(() => canReorder.value && shrunk.value)
 
 /**
  * 掴んでいる行。
@@ -924,7 +952,7 @@ const draggingSeq = ref<number | null>(null)
  * **掴んでいる間だけ値を持ち、落とせない相手の上では `null` に戻す**——
  * 線が残っていると、落ちない場所に落ちるように見える。
  */
-type DropSide = 'before' | 'after' | 'first' | 'last'
+type DropSide = 'before' | 'after' | 'inside' | 'first' | 'last'
 
 const dropHint = ref<{ key: string; seq: number | null; side: DropSide } | null>(null)
 
@@ -965,7 +993,9 @@ function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolea
   const source = sourceRow.ticket
 
   if (section.stage !== undefined) {
-    if ((source.staged_at !== null) === section.stage) {
+    // **同じ段の中なら、表示上の親が同じ行どうし**（オンステージ段にも
+    // インデントされた行が出るようになったので、根だけとは限らない。pb-46）
+    if (shownInStage(source) === section.stage) {
       return sourceRow.parentKey === row.parentKey
     }
     return isStageable(source) && row.parentKey === null
@@ -987,21 +1017,73 @@ function canDropOnSection(sourceSeq: number | null, section: Section): boolean {
   if (sourceSeq === null || section.stage === undefined) return false
   const sourceRow = rowIndex.value.get(sourceSeq)
   if (sourceRow === undefined || sourceRow.parentKey !== null) return false
-  if ((sourceRow.ticket.staged_at !== null) === section.stage) return true
+  if (shownInStage(sourceRow.ticket) === section.stage) return true
   return isStageable(sourceRow.ticket)
 }
 
 /**
- * ポインタが行のどちら半分を指しているか（5.4「ドロップ先の見せ方」）。
+ * ポインタが行のどこを指しているか（5.4「ドロップ先の見せ方」）。
+ *
+ * **上 1/4・下 1/4・中央 1/2。** 上下は兄弟（`sort_key`）、中央は子
+ * （`parent_seq`）で、**1回のドロップで2軸のどちらを動かすかを決める**（pb-16）。
+ * 半分で割る形では兄弟しか表せない。**5.10 の文書ツリーが先に採った形**で、
+ * `DocTree.vue` の `zoneOf` と同じ割り方である。
  *
  * **掴んだ行がどこから来たかに依らない。** 「越えた向き」で決める方式は、
- * 行の下半分を指しても上に入ることがあり、線を出した意味がなくなる。
+ * 行の下 1/4 を指しても上に入ることがあり、線を出した意味がなくなる。
  */
-function sideOf(e: DragEvent): 'before' | 'after' {
+function sideOf(e: DragEvent): 'before' | 'after' | 'inside' {
   const el = e.currentTarget as HTMLElement | null
   if (el === null) return 'after'
   const r = el.getBoundingClientRect()
-  return e.clientY < r.top + r.height / 2 ? 'before' : 'after'
+  const y = e.clientY - r.top
+  if (y < r.height / 4) return 'before'
+  if (y > (r.height * 3) / 4) return 'after'
+  return 'inside'
+}
+
+/**
+ * その行の**子にして**よいか（5.4「ドロップ先の見せ方」。pb-16）。
+ *
+ * **サーバが弾く条件を、そのまま画面の規則にする**——落とせない相手の上では
+ * 面を出さず、カーソルを禁止の形にする。
+ *
+ * | 落とせない相手 | 根拠 |
+ * |---|---|
+ * | 自分自身と自分の子孫 | `parent_cycle`（`ApiDesign.md` 9.5.2） |
+ * | オンステージの行を、エピック以外の子にする | `not_stageable`（9.5.2 / 9.4.1） |
+ * | いま親である行 | 送っても何も変わらない |
+ *
+ * **段をまたいでもよい。** バックログの行をオンステージの行の子にすると、
+ * その行は親と一緒に運ばれてオンステージ段に出る（5.4「配下の行き先」）。
+ */
+function canDropInto(sourceSeq: number | null, row: Row): boolean {
+  if (sourceSeq === null || sourceSeq === row.ticket.seq) return false
+  const sourceRow = rowIndex.value.get(sourceSeq)
+  if (sourceRow === undefined) return false
+  const source = sourceRow.ticket
+  if (source.parent_seq === row.ticket.seq) return false
+  // **オンステージの行は、エピック以外の子になれない。** 配下は親と一緒に
+  // 運ばれるので、子を個別に段へ置く操作は意味を持たない（9.4.1）
+  if (source.staged_at !== null && row.ticket.type !== 'epic') return false
+  return !isDescendant(row.ticket.seq, sourceSeq)
+}
+
+/**
+ * `seq` が `ancestorSeq` の子孫か。**自分の子孫を親にすると輪になる**
+ * （`parent_cycle`。9.5.2）。サーバもアプリ層で検出するが、ここで見るのは
+ * ドラッグ中にその部分木をドロップ不可として見せるためである。
+ */
+function isDescendant(seq: number, ancestorSeq: number): boolean {
+  const bySeq = new Map(tickets.value.map((t) => [t.seq, t]))
+  let cur = bySeq.get(seq)
+  const seen = new Set<number>()
+  while (cur?.parent_seq != null && !seen.has(cur.seq)) {
+    if (cur.parent_seq === ancestorSeq) return true
+    seen.add(cur.seq)
+    cur = bySeq.get(cur.parent_seq)
+  }
+  return false
 }
 
 /**
@@ -1012,12 +1094,17 @@ function sideOf(e: DragEvent): 'before' | 'after' {
  * から弾くと、落とせるように見えて何も起きない。
  */
 function onDragOverRow(e: DragEvent, row: Row, section: Section): void {
-  if (!canDropOn(draggingSeq.value, row, section)) {
+  const side = sideOf(e)
+  const ok =
+    side === 'inside'
+      ? canDropInto(draggingSeq.value, row)
+      : canDropOn(draggingSeq.value, row, section)
+  if (!ok) {
     dropHint.value = null
     return
   }
   e.preventDefault()
-  dropHint.value = { key: section.key, seq: row.ticket.seq, side: sideOf(e) }
+  dropHint.value = { key: section.key, seq: row.ticket.seq, side }
 }
 
 function onDragOverSection(e: DragEvent, section: Section, side: 'first' | 'last'): void {
@@ -1030,7 +1117,7 @@ function onDragOverSection(e: DragEvent, section: Section, side: 'first' | 'last
 }
 
 /** 目印を出すか。`dropHint` は1つしか持たないので、線も同時に1本しか出ない */
-function hintsRow(row: Row, section: Section, side: 'before' | 'after'): boolean {
+function hintsRow(row: Row, section: Section, side: 'before' | 'after' | 'inside'): boolean {
   const h = dropHint.value
   return h !== null && h.key === section.key && h.seq === row.ticket.seq && h.side === side
 }
@@ -1090,10 +1177,17 @@ async function runMove(
   }
 }
 
-/** 段が変わるか。変わらないときは `undefined`（`move` に `staged` を送らない） */
+/**
+ * 段が変わるか。変わらないときは `undefined`（`move` に `staged` を送らない）。
+ *
+ * **`staged_at` ではなく「いま出ている段」で比べる**（pb-46）。配下の行は
+ * `staged_at` が `NULL` のままオンステージ段に居るので、`staged_at` で比べると
+ * **同じ段の中で動かしただけなのに `staged: true` を送り**、親を持つ行なので
+ * 422 `not_stageable` になる（9.4.1）。
+ */
 function stageChangeOf(source: Ticket, section: Section): boolean | undefined {
   if (section.stage === undefined) return undefined
-  return (source.staged_at !== null) === section.stage ? undefined : section.stage
+  return shownInStage(source) === section.stage ? undefined : section.stage
 }
 
 /** 段の見た目を先に変えるための行。正しい値はサーバ応答で上書きする */
@@ -1103,9 +1197,37 @@ function optimisticRow(source: Ticket, stagedChange: boolean | undefined): Ticke
 }
 
 /**
- * 行の上へ落とす。**ポインタが指した半分がそのまま前後になる**
- * （5.4「ドロップ先の見せ方」）——出した挿入線と着地を一致させるためで、
- * 掴んだ行がどこから来たかには依らない。
+ * その行の子にする（5.4「ドロップ先の見せ方」の中央 1/2。pb-16）。
+ *
+ * **送るのは `PATCH` の `parent_seq` だけで、`move` は呼ばない。**
+ * 新しい親の下での位置は、続けて並べ替えれば決められる。2本続けて送ると
+ * **片方だけ成功した状態**が残りうる。
+ *
+ * **取り直す。** 親子が変わると木の組み方が変わり、`has_children` も動く。
+ * 手元で組み替えるより、サーバの答えを1回もらうほうが確かである。
+ */
+async function dropInto(source: Ticket, parent: Ticket): Promise<void> {
+  busy.value = true
+  result.value = ''
+  error.value = null
+  try {
+    await ticketsApi.updateTicket(projectKey.value, source.seq, source.version, {
+      parent_seq: parent.seq,
+    })
+    await loadTickets()
+    result.value = `✓ ${fullId(source)}「${source.title}」を ${fullId(parent)}「${parent.title}」の子にしました`
+  } catch (err) {
+    error.value = toApiError(err)
+    await loadTickets()
+  } finally {
+    busy.value = false
+  }
+}
+
+/**
+ * 行の上へ落とす。**ポインタが指した位置がそのまま行き先になる**
+ * （5.4「ドロップ先の見せ方」）——上 1/4 と下 1/4 が兄弟、**中央 1/2 が子**。
+ * 出した目印と着地を一致させるためで、掴んだ行がどこから来たかには依らない。
  *
  * 段をまたぐときも同じ規則で決める。`sort_key` は二段で1本なので（9.4）、
  * どちらの段の行を基準にしても位置は一意に定まる。
@@ -1116,6 +1238,15 @@ async function dropOnRow(e: DragEvent, row: Row, section: Section): Promise<void
   const seq = draggingSeq.value
   const side = sideOf(e)
   endDrag()
+
+  if (side === 'inside') {
+    if (!canDropInto(seq, row)) return
+    const source = tickets.value.find((t) => t.seq === seq)
+    if (source === undefined) return
+    await dropInto(source, row.ticket)
+    return
+  }
+
   if (!canDropOn(seq, row, section)) return
 
   const from = tickets.value.findIndex((t) => t.seq === seq)
@@ -1715,10 +1846,15 @@ watch(projectKey, (key) => {
                   v-for="row in section.rows"
                   :key="`${section.key}:${row.ticket.seq}`"
                   class="row"
+                  :draggable="grabWholeRow"
+                  @dragstart="grabWholeRow && (draggingSeq = row.ticket.seq)"
+                  @dragend="endDrag()"
                   :class="{
+                    grabbable: grabWholeRow,
                     dragging: draggingSeq === row.ticket.seq,
                     'drop-before': hintsRow(row, section, 'before'),
                     'drop-after': hintsRow(row, section, 'after'),
+                    'drop-inside': hintsRow(row, section, 'inside'),
                     selected: detailSeq === row.ticket.seq,
                   }"
                   :aria-selected="detailSeq === row.ticket.seq"
@@ -1793,7 +1929,16 @@ watch(projectKey, (key) => {
                         :to="withQuery(`/p/${projectKey}/tickets/${row.ticket.seq}`)"
                         custom
                       >
-                        <a ref="rowLink" class="title" :href="href" @click.stop="navigate">
+                        <!-- **`<a>` は既定でドラッグ可能**なので落とす（5.4 / 5.10）。
+                             放置すると掴んだ瞬間に URL のドラッグが始まり、
+                             行のドラッグが一度も起きない -->
+                        <a
+                          ref="rowLink"
+                          class="title"
+                          :href="href"
+                          draggable="false"
+                          @click.stop="navigate"
+                        >
                           {{ row.ticket.title }}
                         </a>
                       </RouterLink>
@@ -1892,16 +2037,13 @@ watch(projectKey, (key) => {
         </div>
 
         <!-- 総件数は**チケットの実数**で、タグの重複を含まない（5.4.1）。
-             **出していない配下を含む**ので、上下の件数の合計とは一致しない
-             ことがある（5.4「配下の行き先」） -->
+             **上下の件数の合計と一致する**——伏せる行が無くなったため
+             （5.4「配下の行き先」。pb-46） -->
         <p class="total">
           <template v-if="truncated">
             {{ withComma(total) }}件中 {{ withComma(perPage) }}件を表示しています。フィルタで絞り込んでください
           </template>
           <template v-else>{{ withComma(total) }}件</template>
-          <span v-if="carriedCount > 0" class="carried">
-            （うち{{ withComma(carriedCount) }}件はオンステージの配下として出していません）
-          </span>
         </p>
       </template>
     </div>
@@ -2157,6 +2299,18 @@ watch(projectKey, (key) => {
   opacity: 0.5;
 }
 
+/* **縮小中は行そのものが掴みしろになる**（5.4「縮小中の掴みしろ」。pb-7）。
+   `⠿` の列を持てない幅なので、掴めることはカーソルだけが伝える。
+   **行クリックで詳細が開く**ことは変わらないので `pointer` を上書きしない
+   ——`grab` は「掴める」を足すのであって、「押せない」を意味しない */
+.row.grabbable {
+  cursor: grab;
+}
+
+.row.grabbable:active {
+  cursor: grabbing;
+}
+
 /* **開いている行は選択状態として背景を変える**（5.4「行クリック」）。
    色ではなく面の輝度で示す（8.2 / 8.6）。hover より一段強くして、
    マウスが別の行に載っていても「いま開いているのはこれ」が読めるようにする */
@@ -2178,6 +2332,32 @@ watch(projectKey, (key) => {
 
 .row.drop-after td {
   box-shadow: inset 0 -2px 0 0 var(--pb-accent);
+}
+
+/* **中央 1/2 は面で塗る**（5.4「ドロップ先の見せ方」。pb-16）。
+   線が「行と行の**間**」、面が「行**そのもの**」を指す。
+   **線と並べたときに一目で別物と読める強さ**にする——2px の線と淡い背景色
+   では、どちらに入るのかが手元で判別できない（5.10 と同じ判断） */
+.row.drop-inside td {
+  background: var(--pb-accent);
+  color: var(--pb-on-accent);
+}
+
+.row.drop-inside td :is(a, code, .seq, .title, .muted, .branch, .type-icon, .overdue) {
+  color: var(--pb-on-accent);
+}
+
+/* **面の上ではバッジの地を抜く。** 状態・優先・タグは自前の背景と枠を持って
+   いるので、面を敷いただけでは**白地のバッジが面に溶けて読めなくなる**
+   （スクリーンショットで判明）。枠と文字だけを残して面に載せる */
+.row.drop-inside td :is(.status, .tag, .priority) {
+  background: transparent;
+  border-color: var(--pb-on-accent);
+  color: var(--pb-on-accent);
+}
+
+.row.drop-inside td .status-mark {
+  color: var(--pb-on-accent);
 }
 
 /* 見出しは「その段の先頭へ」なので、線は見出しの下端に引く */
@@ -2426,9 +2606,5 @@ watch(projectKey, (key) => {
 .total {
   margin-top: var(--pb-space-4);
   color: var(--pb-text-muted);
-}
-
-.carried {
-  font-size: 13px;
 }
 </style>
