@@ -447,6 +447,13 @@ func TestTicketsIntegration(t *testing.T) {
 		t.Errorf("次の seq = %v, want 6（422 で終わった要求は採番を消費しない）", got)
 	}
 
+	// **作成時の execution_mode は DDL の既定で決まる**（ApiDesign.md 9.3。pb-65）。
+	// `INSERT` は値を送っておらず、0025 が `agent_draft` を既定にした。
+	// **フェイクでは測れない**——あちらは列の既定を持たず、書いた値がそのまま返る。
+	if got := next["execution_mode"]; got != "agent_draft" {
+		t.Errorf("作成直後の execution_mode = %v, want agent_draft（0025 の既定）", got)
+	}
+
 	// ── ⑩ 他プロジェクトのチケットは見えない ────────────────
 	if got := ticketSeqs(t, r, session, "/api/v1/projects/"+otherKey, ""); len(got) != 0 {
 		t.Errorf("よそのプロジェクトに %v が見えている（project_id で閉じていない）", got)

@@ -57,10 +57,10 @@ func ticketDetailRow() gen.GetTicketBySeqRow {
 		ReporterName:   txt("田中"),
 		SortKey:        txt("0|n:"),
 		// **DDL の既定と同じ値を置く**（DbDesign.md 6.6）。実物では
-		// execution_mode が NOT NULL DEFAULT 'human_only'、scope が
-		// NOT NULL DEFAULT '{}' であり、零値のフェイクだと 9.5.1 の
-		// 応答が実サーバと違う形になる（手順27）。
-		ExecutionMode: "human_only",
+		// execution_mode が NOT NULL DEFAULT 'agent_draft'（0025 で
+		// 'human_only' から変えた。pb-65）、scope が NOT NULL DEFAULT '{}'
+		// であり、零値のフェイクだと 9.5.1 の応答が実サーバと違う形になる（手順27）。
+		ExecutionMode: "agent_draft",
 		Scope:         []byte(`{}`),
 		Version:       3,
 		CreatedAt:     ts(now),
@@ -628,8 +628,8 @@ func TestGetTicketReturnsAgentContractFields(t *testing.T) {
 			t.Errorf("詳細に %q が無い（9.5.1。手順27 で追加）", key)
 		}
 	}
-	if got := view["execution_mode"]; got != "human_only" {
-		t.Errorf("execution_mode = %v, want human_only（DDL の既定）", got)
+	if got := view["execution_mode"]; got != "agent_draft" {
+		t.Errorf("execution_mode = %v, want agent_draft（DDL の既定。0025）", got)
 	}
 	// **未設定でも null にせず {} を返す**（9.5.1）。「境界が無い」と
 	// 「項目が無い」は違うもので、パックが前者に文を当てる。

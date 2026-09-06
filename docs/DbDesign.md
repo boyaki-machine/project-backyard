@@ -817,7 +817,8 @@ CREATE TABLE ticket (
   staged_at      timestamptz,               -- 0015 で追加。NULL＝バックログ
 
   -- エージェント連携（Phase 1 で列のみ先行定義）
-  execution_mode text    NOT NULL DEFAULT 'human_only'
+  -- 既定は 0025 で 'human_only' から 'agent_draft' へ変えた（pb-65）
+  execution_mode text    NOT NULL DEFAULT 'agent_draft'
                  CHECK (execution_mode IN ('human_only','agent_only','agent_draft')),
   readiness      text    CHECK (readiness IN ('red','yellow','green')),
   readiness_note text,
@@ -1576,15 +1577,19 @@ Phase 2
                           comment.agent_run_id の FK 付与（8.2.4）        ← 適用済み
   0023_agent_setup.sql    agent.token_env_suffix（8.2.1）,
                           agent_client_kind.has_setup_template（8.2.1.1） ← 適用済み
+  0024_document_template_agent_onboarding.sql
+                          文書テンプレートに agent-onboarding を足す（8.1.2）← 適用済み
+  0025_ticket_execution_mode_default.sql
+                          ticket.execution_mode の既定を agent_draft へ（6.6）← 適用済み
 Phase 3
-  0024_knowledge.sql      knowledge, knowledge_revision, proposal
-  0025_comment_signal.sql comment_signal
-  0026_embedding.sql      vector 拡張 + embedding
-  0027_project_event.sql  project_event
-  0028_analytics.sql      estimate_record, contribution
+  0026_knowledge.sql      knowledge, knowledge_revision, proposal
+  0027_comment_signal.sql comment_signal
+  0028_embedding.sql      vector 拡張 + embedding
+  0029_project_event.sql  project_event
+  0030_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028** である（手順26c の 0022 で4回目、**手順28a の 0023 で5回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 

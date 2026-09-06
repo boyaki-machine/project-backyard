@@ -63,6 +63,8 @@ import type { Sprint } from '../api/sprints'
 import type { Tag } from '../api/tags'
 import * as ticketsApi from '../api/tickets'
 import {
+  executionModeLabels,
+  executionModeOptions,
   priorityLabels,
   priorityOrder,
   ticketTypeIcons,
@@ -1262,6 +1264,35 @@ function errorFor(field: string): string {
               <span v-else>{{ ticket.sprint?.name ?? '—' }}</span>
               <p v-if="errorFor('sprint_id')" class="field-error" role="alert">
                 {{ errorFor('sprint_id') }}
+              </p>
+            </dd>
+          </div>
+
+          <!-- 実行モード（5.5「実行モード」。pb-65）。**このチケットにエージェントが
+               手を出してよいか**を決める欄で、エージェントは着手前にこれを読む。
+               **「未設定」を持たない**——列が `NOT NULL` で、`null` を送ると 422（9.5.2） -->
+          <div class="meta-item wide">
+            <dt>実行モード</dt>
+            <dd>
+              <select
+                v-if="canEdit"
+                :value="ticket.execution_mode"
+                :disabled="busy"
+                aria-label="実行モード"
+                @change="
+                  selectField(
+                    { execution_mode: ($event.target as HTMLSelectElement).value as never },
+                    'execution_mode',
+                  )
+                "
+              >
+                <option v-for="m in executionModeOptions" :key="m" :value="m">
+                  {{ executionModeLabels[m] }}
+                </option>
+              </select>
+              <span v-else>{{ executionModeLabels[ticket.execution_mode] }}</span>
+              <p v-if="errorFor('execution_mode')" class="field-error" role="alert">
+                {{ errorFor('execution_mode') }}
               </p>
             </dd>
           </div>
