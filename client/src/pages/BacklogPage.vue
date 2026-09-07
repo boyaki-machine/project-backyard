@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import AssigneePicker from '../components/AssigneePicker.vue'
 import EmptyState from '../components/EmptyState.vue'
 import EpicFilter from '../components/EpicFilter.vue'
 import NewTicketModal from '../components/NewTicketModal.vue'
 import type { NewTicketDefaults } from '../components/NewTicketModal.vue'
 import PageHeader from '../components/PageHeader.vue'
 import SplitPane from '../components/SplitPane.vue'
+import StatusDropdown from '../components/StatusDropdown.vue'
 import TicketDetailPane from '../components/TicketDetailPane.vue'
 import { ApiError } from '../api/client'
 import * as sprintsApi from '../api/sprints'
@@ -22,7 +25,6 @@ import {
   priorityOrder,
   statusCategoryLabels,
   statusCategoryOrder,
-  statusMarks,
   ticketTypeIcons,
   ticketTypeLabels,
 } from '../api/tickets'
@@ -33,6 +35,7 @@ import type {
   TicketDetail,
   TicketPriority,
   TicketSort,
+  TicketTransitionOption,
   SortOrder,
 } from '../api/tickets'
 import { formatPlainDate, todayPlainDate } from '../lib/datetime'
@@ -79,6 +82,12 @@ const projectKey = computed(() => {
 
 const canCreate = computed(() => auth.canInProject(projectKey.value, 'ticket.create'))
 const canEdit = computed(() => auth.canInProject(projectKey.value, 'ticket.edit'))
+/** 一覧から状態を変えるのに要る（`ApiDesign.md` 9.6。pb-63） */
+const canTransition = computed(() => auth.canInProject(projectKey.value, 'ticket.transition'))
+/** 一覧から担当を変えるのに要る（9.5.2 は `ticket.edit` に加えてこれを要求する。pb-64） */
+const canAssign = computed(
+  () => canEdit.value && auth.canInProject(projectKey.value, 'ticket.assign'),
+)
 
 // ── 詳細ペイン（2.2.1 / 5.5）─────────────────────────────────
 
@@ -865,11 +874,6 @@ function isOverdue(t: Ticket): boolean {
   return t.due_date !== null && t.closed_at === null && t.due_date < today
 }
 
-function assigneeMark(t: Ticket): string {
-  if (t.assignee === null) return ''
-  return t.assignee.kind === 'agent' ? '🤖' : '👤'
-}
-
 /** 件数は端末の設定に依らない形で区切る（`ja-JP` を明示する） */
 function withComma(n: number): string {
   return n.toLocaleString('ja-JP')
@@ -916,7 +920,7 @@ function openRow(t: Ticket, e: MouseEvent): void {
  * 掴めるのは**ソートが `sort_key` の昇順のとき**だけである（5.4）。
  * 他の並びでは、画面上の位置と `after_seq` の意味が一致しない。
  *
- * **縮小中も掴める**（5.4「縮小中の掴みしろ」。pb-7）。以前は `!shrunk` を
+ * **縮小中も掴める**（5.4「掴みしろ」。pb-7）。以前は `!shrunk` を
  * 条件に持っていたが、**詳細を開いたまま消化順を組み替える**のは実際に起きる
  * 作業で、そのたびに全幅へ戻すことになっていた。
  */
@@ -925,13 +929,36 @@ const canReorder = computed(
 )
 
 /**
- * 掴みしろを行そのものに置くか（5.4「縮小中の掴みしろ」）。
+ * 掴みしろを行そのものに置くか（5.4「掴みしろ」）。
  *
- * **縮小中は `⠿` の列を持てない。** 450px の内訳は ID・タイトル・状態の3列で、
- * `⠿` に約28px を割くとタイトルの実効幅がさらに縮む。**5.10 の文書ツリーが
- * 同じ理由で同じ判断をしている。**
+ * **全幅でも縮小中でも行全体を掴む**（利用者の要望、2026-09-07。pb-71）。
+ * かつては縮小中だけがこの形だった——450px では `⠿` の列を持てないためで、
+ * **全幅では `⠿` の28px だけが掴みしろ**だった。実運用では**幅の広いほうが
+ * 狙いにくい**と分かった。行が長いほど `⠿` は遠く、並べ替えのたびに左端まで
+ * ポインタを運ぶことになる。
+ *
+ * **`⠿` の列は残す**（全幅のとき）。ヘッダが「`sort_key` へ戻す」ボタンを
+ * 兼ねており（5.4）、列ごと落とすとその導線が失われる。**掴める範囲が
+ * 広がるだけである。**
  */
-const grabWholeRow = computed(() => canReorder.value && shrunk.value)
+const grabWholeRow = canReorder
+
+/**
+ * ポインタが**操作を持つセル**（状態・担当）の上にあるか（5.4「掴みしろ」。pb-71）。
+ *
+ * **`draggable="false"` を子孫に置いても親のドラッグは止まらない**（実測、
+ * 2026-09-07）。`dragstart` はドラッグ元——つまり `draggable` な `<tr>`——で
+ * 発火するので、`<td>` に `@dragstart.stop.prevent` を書いても**イベントの経路に
+ * 入らず一度も呼ばれない**。属性 `draggable="false"` も、Chrome は上位の
+ * `draggable="true"` まで遡るため効かない。
+ *
+ * **そこで、ポインタがそのセルに入っている間だけ行を掴めなくする。** 掴めるのは
+ * ポインタが載っている場所だけなので、値は1つで足りる。
+ *
+ * **要素を差し込むわけではない**ので、`dragstart` の直後に位置がずれて Chrome が
+ * ドラッグを取り消す問題（5.4「掴んだ瞬間に要素を差し込まない」）には当たらない。
+ */
+const overActionCell = ref(false)
 
 /**
  * 掴んでいる行。
@@ -1004,21 +1031,45 @@ function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolea
 }
 
 /**
- * 段そのもの（見出し＝先頭、末尾の帯＝末尾）へ落としてよいか。
+ * 段そのもの（見出し＝先頭、空の枠＝末尾）へ落としてよいか。
  *
  * 空の段には基準にできる行が無いので、この落とし場所が無いと最初の1件を
  * 上げられない（`ApiDesign.md` 9.4.1 が `position` を段の中で解釈する理由）。
  *
- * **掴んでいるのが表示上の根のときだけ受け取る。** インデントされた行は段の中の
- * 位置を持たない——`position: "last"` を送っても、その行は親の下で兄弟の末尾へ
- * 動くだけで、「バックログの末尾へ」という表示と食い違う。
+ * **表示上の根と、インデントされた行とで意味が違う**（5.4「ドロップ先の見せ方」）。
+ *
+ * | 掴んでいる行 | 落としたときに起きること |
+ * |---|---|
+ * | 表示上の根 | その段の先頭／末尾へ動く（`move`）。段をまたいでもよい |
+ * | インデントされた行 | **ルートになる**（`PATCH parent_seq: null`。pb-70）。**バックログ段だけ** |
+ *
+ * **インデントされた行に `position` を送らない。** その行は親の下で兄弟の端へ
+ * 動くだけで、「その段の先頭／末尾へ」という表示と食い違う。**ルート化は
+ * 位置を約束しない別の操作**なので、目印も線ではなく枠で出す。
  */
 function canDropOnSection(sourceSeq: number | null, section: Section): boolean {
   if (sourceSeq === null || section.stage === undefined) return false
   const sourceRow = rowIndex.value.get(sourceSeq)
-  if (sourceRow === undefined || sourceRow.parentKey !== null) return false
+  if (sourceRow === undefined) return false
+  if (sourceRow.parentKey !== null) return canUnparentInto(section)
   if (shownInStage(sourceRow.ticket) === section.stage) return true
   return isStageable(sourceRow.ticket)
+}
+
+/**
+ * インデントされた行をこの段へ落として**ルートにできる**か（5.4。pb-70）。
+ *
+ * **バックログ段だけである。** ルートになった行は `staged_at` が `NULL` のまま
+ * なので（親と一緒に運ばれていただけ。5.4「配下の行き先」）、**必ずバックログへ
+ * 出る**。オンステージ段の見出しへ落とせるようにすると、ルート化と段上げで
+ * `PATCH` と `move` の2本を送ることになり、**片方だけ成功した状態**が残りうる
+ * ——5.4 が「1回のドロップで送るのは1本だけにする」と定めている。
+ *
+ * **段へ上げたいときは、先にルートにしてから上げる。** 「オンステージの行を
+ * エピック以外の子にできない（先に段から降ろしてから親を変える）」の裏返しである。
+ */
+function canUnparentInto(section: Section): boolean {
+  return section.stage === false
 }
 
 /**
@@ -1127,6 +1178,19 @@ function hintsSection(section: Section, side: 'first' | 'last'): boolean {
   return h !== null && h.key === section.key && h.seq === null && h.side === side
 }
 
+/**
+ * その段が「ルートにする」の落とし先として光っているか（5.4。pb-70）。
+ *
+ * **線ではなく面で出す。** 5.4 の比喩をそのまま使う——**線は行と行の「間」
+ * （位置）を、面は属する先を指す。** ルート化は `parent_seq` を変える操作で
+ * あって位置を約束しないので、**「先頭へ」の線を出すと着地と食い違う。**
+ */
+function hintsUnparent(section: Section): boolean {
+  const h = dropHint.value
+  if (h === null || h.key !== section.key || h.seq !== null) return false
+  return draggingSeq.value !== null && rowIndex.value.get(draggingSeq.value)?.parentKey !== null
+}
+
 function moveMessage(t: Ticket, stagedChange: boolean | undefined): string {
   const id = `${fullId(t)}「${t.title}」`
   if (stagedChange === true) return `✓ ${id}をオンステージへ上げました`
@@ -1225,6 +1289,37 @@ async function dropInto(source: Ticket, parent: Ticket): Promise<void> {
 }
 
 /**
+ * ルートにする（5.4「ドロップ先の見せ方」。pb-70）。
+ *
+ * **送るのは `PATCH` の `parent_seq: null` だけで、`move` は呼ばない**——
+ * `dropInto`（子にする）と同じ規則である。**位置は動かさない**ので、`sort_key`
+ * の並びのどこに居たかがそのまま残る。並べ直したければ続けて掴めばよい。
+ *
+ * **ルートになった行はバックログへ出る。** `staged_at` は `NULL` のままで
+ * （親と一緒に運ばれていただけ）、親を失った時点でその段から降りる。
+ * **落とせるのがバックログ段だけなのは、これと着地を一致させるためである。**
+ *
+ * **取り直す。** 親子が変わると木の組み方が変わり、`has_children` も動く。
+ */
+async function unparent(source: Ticket): Promise<void> {
+  busy.value = true
+  result.value = ''
+  error.value = null
+  try {
+    await ticketsApi.updateTicket(projectKey.value, source.seq, source.version, {
+      parent_seq: null,
+    })
+    await loadTickets()
+    result.value = `✓ ${fullId(source)}「${source.title}」をルートにしました`
+  } catch (err) {
+    error.value = toApiError(err)
+    await loadTickets()
+  } finally {
+    busy.value = false
+  }
+}
+
+/**
  * 行の上へ落とす。**ポインタが指した位置がそのまま行き先になる**
  * （5.4「ドロップ先の見せ方」）——上 1/4 と下 1/4 が兄弟、**中央 1/2 が子**。
  * 出した目印と着地を一致させるためで、掴んだ行がどこから来たかには依らない。
@@ -1282,11 +1377,19 @@ async function dropOnRow(e: DragEvent, row: Row, section: Section): Promise<void
  */
 async function dropOnSection(section: Section, position: 'first' | 'last'): Promise<void> {
   const seq = draggingSeq.value
+  const sourceIsChild = seq !== null && rowIndex.value.get(seq)?.parentKey !== null
   endDrag()
   if (!canDropOnSection(seq, section)) return
 
   const source = rowIndex.value.get(seq!)?.ticket
   if (source === undefined || section.stage === undefined) return
+
+  // **インデントされた行はルートにする**（5.4。pb-70）。`position` は送らない
+  // ——ルート化は位置を約束しない操作である。
+  if (sourceIsChild) {
+    await unparent(source)
+    return
+  }
 
   const stagedChange = stageChangeOf(source, section)
   const body: MoveTicketRequest = { position }
@@ -1295,6 +1398,100 @@ async function dropOnSection(section: Section, position: 'first' | 'last'): Prom
   // 段の中の先頭・末尾は手元で正しい位置を作れない——`position` は段の中で
   // 解釈される（9.4.1）のに `sort_key` は二段で1本だからで、取り直して合わせる。
   await runMove(source, body, null, stagedChange)
+}
+
+// ── 一覧から状態を変える（5.4「一覧で状態を変える」。pb-63）──────
+
+/**
+ * 行ごとの `StatusDropdown`（5.5 の部品をそのまま使う）。
+ *
+ * **開いているのは常に1つだけ**（`StatusDropdown` は外側を押すと閉じる）だが、
+ * **どの行が開いたかは押されるまで分からない**ので、行ごとに参照を持つ。
+ * `v-for` の中では関数 ref を使う——`useTemplateRef` は配列で返り、`seq` から
+ * 引けない。
+ *
+ * **`onUnmounted` で消さなくてよい。** Vue は要素が外れるとき `null` を渡して
+ * 呼び直すので、下の `setStatusRef` が自分で消す。
+ */
+const statusRefs = new Map<number, InstanceType<typeof StatusDropdown>>()
+
+function setStatusRef(seq: number, el: Element | ComponentPublicInstance | null): void {
+  if (el === null) statusRefs.delete(seq)
+  else statusRefs.set(seq, el as InstanceType<typeof StatusDropdown>)
+}
+
+/**
+ * **開いたときに引く**（`ApiDesign.md` 9.7）。一覧の応答には入っていない。
+ *
+ * **行ごとに引く。** 遷移できる先はチケットの現在地と担当で変わるので
+ * （9.6 の検証6）、一覧を取ったときにまとめて引いても使い回せない。
+ */
+async function loadRowTransitions(seq: number): Promise<void> {
+  const dropdown = statusRefs.get(seq)
+  dropdown?.setLoading()
+  try {
+    const res = await ticketsApi.listTransitions(projectKey.value, seq)
+    dropdown?.setItems(res.items)
+  } catch (e) {
+    dropdown?.setError(toApiError(e).message)
+  }
+}
+
+/**
+ * 遷移させる（9.6）。**選んだ時点で送る**——確認は挟まない。
+ *
+ * 5.5 が pb-55 で確認モーダルを廃止しており（「状態変更は頻度が高く、毎回
+ * ダイアログを挟むのは現実的でない」）、**一覧はさらに頻度が高い。**
+ *
+ * **応答をそのまま行へ差し替える。** `onDetailUpdated` と同じ判断で、
+ * 行の中身が変わっただけなら取り直さない（pb-15）。**フィルタから外れる行が
+ * 残ることはある**——`status=todo` で絞っている最中に進行中へ変えた場合で、
+ * これは詳細ペインから変えたときと同じ振る舞いである。
+ *
+ * **結果の一言は出さない。** 変えた行の表示がその場で変わるので、
+ * 操作したことは見えている（6.4「操作結果は操作した場所に出す」）。
+ */
+async function transitionRow(ticket: Ticket, to: TicketTransitionOption): Promise<void> {
+  busy.value = true
+  error.value = null
+  try {
+    const next = await ticketsApi.transitionTicket(projectKey.value, ticket.seq, { to: to.key })
+    onDetailUpdated(next)
+  } catch (e) {
+    error.value = toApiError(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+// ── 一覧から担当を変える（5.4「一覧で担当を選ぶ」。pb-64）────────
+
+/**
+ * 担当を差し替える（`ApiDesign.md` 9.5.2）。**選んだ時点で送る**——状態と同じで、
+ * 確認は挟まない。
+ *
+ * **`If-Match` は行が持つ `version` を使う**（2.8）。一覧の行は `PATCH` の応答と
+ * `move` の応答で更新されており、他人が同時に変えていれば 409 が返る——**黙って
+ * 上書きしない。**
+ *
+ * **応答をその行へ差し替える**（`onDetailUpdated` と同じ判断。pb-15）。行の増減が
+ * 起きないので取り直さない。**担当で絞り込み中に外れる行が残ることはある**が、
+ * これは状態を変えたときと同じ振る舞いである。
+ */
+async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> {
+  if ((ticket.assignee?.id ?? null) === actorId) return
+  busy.value = true
+  error.value = null
+  try {
+    const next = await ticketsApi.updateTicket(projectKey.value, ticket.seq, ticket.version, {
+      assignee_id: actorId,
+    })
+    onDetailUpdated(next)
+  } catch (e) {
+    error.value = toApiError(e)
+  } finally {
+    busy.value = false
+  }
 }
 
 // ── 新規チケット（5.4.3）───────────────────────────────────
@@ -1729,7 +1926,10 @@ watch(projectKey, (key) => {
                **段そのものが末尾への落とし場所を兼ねる**（9.4.1 の position） -->
           <div
             class="section-head"
-            :class="{ 'drop-first': hintsSection(section, 'first') }"
+            :class="{
+              'drop-first': hintsSection(section, 'first') && !hintsUnparent(section),
+              'drop-unparent': hintsUnparent(section),
+            }"
             @dragover="onDragOverSection($event, section, 'first')"
             @drop.prevent="dropOnSection(section, 'first')"
           >
@@ -1846,8 +2046,8 @@ watch(projectKey, (key) => {
                   v-for="row in section.rows"
                   :key="`${section.key}:${row.ticket.seq}`"
                   class="row"
-                  :draggable="grabWholeRow"
-                  @dragstart="grabWholeRow && (draggingSeq = row.ticket.seq)"
+                  :draggable="grabWholeRow && !overActionCell"
+                  @dragstart="grabWholeRow && !overActionCell && (draggingSeq = row.ticket.seq)"
                   @dragend="endDrag()"
                   :class="{
                     grabbable: grabWholeRow,
@@ -1964,13 +2164,30 @@ watch(projectKey, (key) => {
                     </span>
                   </td>
 
-                  <td class="status-col">
-                    <span class="status" :class="row.ticket.status.category">
-                      <span class="status-mark" aria-hidden="true">{{
-                        statusMarks[row.ticket.status.category]
-                      }}</span>
-                      {{ row.ticket.status.name }}
-                    </span>
+                  <!-- **一覧から状態を変えられる**（5.4「一覧で状態を変える」。pb-63）。
+                       5.5 と同じ `StatusDropdown` を `dense` で置く——遷移できない先も
+                       理由つきで出る規則（9.7）ごと共有される。**`ticket.transition` を
+                       持たないときは部品側が押せないボタンにする**ので、出し分けを
+                       ここに書かない -->
+                  <!-- **`@click.stop` が要る。** `<tr>` の `openRow` が同時に走ると
+                       詳細ペインが開き、**一覧が 450px へ縮んでパネルだけ元の位置に
+                       取り残される**（実機で判明）。状態セルは状態の操作に使う場所
+                       であって、詳細を開く場所ではない -->
+                  <td
+                    class="status-col"
+                    @click.stop
+                    @mouseenter="overActionCell = true"
+                    @mouseleave="overActionCell = false"
+                  >
+                    <StatusDropdown
+                      :ref="(el) => setStatusRef(row.ticket.seq, el)"
+                      dense
+                      :current="row.ticket.status"
+                      :can-transition="canTransition"
+                      :busy="busy"
+                      @open="loadRowTransitions(row.ticket.seq)"
+                      @select="transitionRow(row.ticket, $event)"
+                    />
                   </td>
 
                   <!-- 優先度は色を使わず記号のみ。中は無表示（8.7） -->
@@ -1987,15 +2204,24 @@ watch(projectKey, (key) => {
                        セルに置く」。手順26b）。**中を flex にする**——担当の名前を
                        縮ませ、実行者の 🤖 は縮ませないためで、素の text node の
                        ままだと 🤖 がセルの外へ押し出されて消える（実機で判明） -->
-                  <td v-if="!shrunk" class="assignee-col">
+                  <td
+                    v-if="!shrunk"
+                    class="assignee-col"
+                    @click.stop
+                    @mouseenter="overActionCell = true"
+                    @mouseleave="overActionCell = false"
+                  >
                     <span class="assignee-cell">
-                      <span v-if="row.ticket.assignee" class="assignee-name">
-                        <span class="actor-mark" aria-hidden="true">{{
-                          assigneeMark(row.ticket)
-                        }}</span
-                        >{{ row.ticket.assignee.display_name }}
-                      </span>
-                      <span v-else class="muted">—</span>
+                      <!-- **一覧から担当を選べる**（5.4「一覧で担当を選ぶ」。pb-64）。
+                           `ticket.assign` を持たないときは押せない表示になるので、
+                           出し分けをここに書かない -->
+                      <AssigneePicker
+                        :current="row.ticket.assignee"
+                        :members="members"
+                        :can-assign="canAssign"
+                        :busy="busy"
+                        @select="assignRow(row.ticket, $event)"
+                      />
                       <!-- **一覧では 🤖 だけを出す**（名前は詳細ペインが出す）。
                            130px の列に名前2つは入らない -->
                       <span
@@ -2023,7 +2249,10 @@ watch(projectKey, (key) => {
             <p
               v-if="section.rows.length === 0"
               class="stage-empty"
-              :class="{ 'drop-last': hintsSection(section, 'last') }"
+              :class="{
+                'drop-last': hintsSection(section, 'last') && !hintsUnparent(section),
+                'drop-unparent': hintsUnparent(section),
+              }"
               @dragover="onDragOverSection($event, section, 'last')"
               @drop.prevent="dropOnSection(section, 'last')"
             >
@@ -2299,8 +2528,7 @@ watch(projectKey, (key) => {
   opacity: 0.5;
 }
 
-/* **縮小中は行そのものが掴みしろになる**（5.4「縮小中の掴みしろ」。pb-7）。
-   `⠿` の列を持てない幅なので、掴めることはカーソルだけが伝える。
+/* **行そのものが掴みしろである**（5.4「掴みしろ」。pb-7 → pb-71 で全幅にも広げた）。
    **行クリックで詳細が開く**ことは変わらないので `pointer` を上書きしない
    ——`grab` は「掴める」を足すのであって、「押せない」を意味しない */
 .row.grabbable {
@@ -2365,6 +2593,20 @@ watch(projectKey, (key) => {
   box-shadow: inset 0 -2px 0 0 var(--pb-accent);
 }
 
+/* **ルートにする落とし先は面で塗る**（5.4「ドロップ先の見せ方」。pb-70）。
+   線は行と行の「間」（位置）を、面は属する先を指す——ルート化は位置を
+   約束しないので、「先頭へ」の線を出すと着地と食い違う */
+.section-head.drop-unparent,
+.stage-empty.drop-unparent {
+  border-color: var(--pb-accent);
+  background: var(--pb-accent);
+  color: var(--pb-on-accent);
+}
+
+.section-head.drop-unparent :is(.section-toggle, .section-count) {
+  color: var(--pb-on-accent);
+}
+
 .skeleton-row td {
   height: var(--pb-row-h);
 }
@@ -2426,8 +2668,12 @@ watch(projectKey, (key) => {
    **実行者（🤖）も同じセルに入る**（5.4。手順26b）。列を足さないのは、8列が既に
    横幅の上限であることと、実行者を読みたい場面が「担当は誰か」を読む場面と
    同じだからである */
+/* **`▾` のぶん 16px 広げた**（5.4「一覧で担当を選ぶ」。pb-64）。130px は
+   `👤開発メンバー` でほぼ埋まる幅で、キャレットを足すと名前が省略記号で切れる
+   ——**押せることを示す記号のために、読みたい情報を削らない。**
+   広げたぶんはタイトル列（可変）から取る */
 .assignee-col {
-  width: 130px;
+  width: 146px;
 }
 
 /* 担当と実行者を1行に収める。**縮むのは担当の名前だけで、🤖 は縮まない**
@@ -2442,12 +2688,6 @@ watch(projectKey, (key) => {
   align-items: baseline;
   gap: 4px;
   min-width: 0;
-}
-
-.assignee-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .working-agent {
@@ -2551,47 +2791,14 @@ watch(projectKey, (key) => {
   line-height: 18px;
 }
 
-/* ステータスは輝度差＋記号で表す（8.7）。進行中ほど濃く、終わったものほど淡い */
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 var(--pb-space-2);
-  border-radius: var(--pb-radius);
-  font-size: 13px;
-  line-height: 22px;
-}
+/* ステータスのバッジは `StatusDropdown` が持つ（5.4「一覧で状態を変える」。pb-63）。
+   **輝度差＋記号で表す規則（8.7）ごとあちらへ移した**——同じ見た目を2か所に
+   置くと、片方だけ直る。ここに残っていた `.status` 系は使い手を失ったので消した */
 
-.status.todo {
-  border: 1px solid var(--pb-border);
+/* 担当の名前と種別の記号は `AssigneePicker` が持つ（5.4「一覧で担当を選ぶ」。
+   pb-64）。ここに残っていた `.assignee-name` / `.actor-mark` は使い手を失った */
+.priority {
   color: var(--pb-text-muted);
-}
-
-.status.in_progress {
-  background: var(--pb-elevated);
-  color: var(--pb-text);
-}
-
-.status.in_progress .status-mark {
-  color: var(--pb-accent);
-}
-
-.status.review {
-  background: var(--pb-hover);
-  color: var(--pb-text);
-}
-
-.status.done {
-  color: var(--pb-text-muted);
-}
-
-.priority,
-.actor-mark {
-  color: var(--pb-text-muted);
-}
-
-.actor-mark {
-  margin-right: 4px;
 }
 
 .muted {
