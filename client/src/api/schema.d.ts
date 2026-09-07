@@ -4765,6 +4765,7 @@ export interface components {
          *     | `{"position": "last"}` | 段の末尾へ |
          *     | `{"staged": true, "position": "first"}` | **オンステージ**へ上げ、その先頭に置く |
          *     | `{"staged": false, "after_seq": 44}` | **バックログ**へ戻し、44 の直後に置く |
+         *     | `{"parent_seq": null, "after_seq": 44}` | **ルートにして**、44 の直後に置く（9.4.2） |
          *
          *     `position` と `after_seq` / `before_seq` の同時指定は 422。いずれも無い場合も 422。
          *     **動かすチケット自身を基準にはできない**（422）。
@@ -4785,9 +4786,22 @@ export interface components {
              *     **省略すると段は変わらない**（並べ替えだけを行う）。
              *     **段に置けるのは表示上のトップレベルだけ**——親を持たないもの、または
              *     親がエピックのもの。それ以外に `true` を送ると 422
-             *     （`details[].code = "not_stageable"`）。
+             *     （`details[].code = "not_stageable"`）。**判定は `parent_seq` を
+             *     適用した後の状態で行う**（9.4.2）。
              */
             staged?: boolean;
+            /**
+             * Format: int32
+             * @description **ルートにする**（9.4.2）。**`null` だけを受け取る。** 省略すると親は
+             *     変わらない。数値を送ると 422（`details[].code = "unsupported"`）
+             *     ——「別の親の下の、この位置へ」を表すドロップが `GuiDesign.md` 5.4 に
+             *     無いためで、その操作を作った日にここへ足す。
+             *
+             *     **`move` が受け取るのは「位置と同時に決まるもの」だけである。**
+             *     位置を伴わない親の変更（行の中央へ落として子にする）は `PATCH`
+             *     （9.5.2）のままである。
+             */
+            parent_seq?: number | null;
         };
         /** @description 並べ替えの結果（ApiDesign.md 9.4）。 */
         MoveTicketResult: {

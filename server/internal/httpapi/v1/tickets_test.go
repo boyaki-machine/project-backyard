@@ -788,6 +788,9 @@ func TestMoveTicketValidation(t *testing.T) {
 		{"position が値域外", `{"position":"middle"}`, "position"},
 		{"自分自身が基準", `{"after_seq":31}`, "after_seq"},
 		{"基準が無い", `{"after_seq":999}`, "after_seq"},
+		// **parent_seq は null しか受け取らない**（9.4.2）。数値を黙って捨てると、
+		// 送った側は「親を変えたつもり」のまま位置だけ動いた結果を受け取る
+		{"parent_seq に数値", `{"parent_seq":44,"after_seq":44}`, "parent_seq"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -807,6 +810,102 @@ func TestMoveTicketValidation(t *testing.T) {
 				t.Error("検証に失敗したのにコミットしている")
 			}
 		})
+	}
+}
+
+// parent_seq: null は「ルートにする」を同じ文で送る（9.4.2）。
+//
+// **位置と一緒に決まるものを1本で送る**——2本に分けると「ルートにはなったが
+// 位置は元のまま」が残りうる（9.4.1 の staged と同じ理由）。
+func TestMoveTicketUnparent(t *testing.T) {
+	q := moveFake()
+	h, tx := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.moveTicket(rec, ticketReq(http.MethodPost,
+		"/projects/demo/tickets/31/move", `{"parent_seq":null,"after_seq":44}`, "31"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d（200 のはず）body = %s", rec.Code, rec.Body.String())
+	}
+	if !tx.committed {
+		t.Fatal("コミットしていない")
+	}
+	if len(q.ticket.moved) != 1 {
+		t.Fatalf("MoveTicket = %d回, want 1", len(q.ticket.moved))
+	}
+	if !q.ticket.moved[0].Unparent {
+		t.Error("Unparent が false（親を外す指定が SQL へ渡っていない）")
+	}
+	// **位置も同じ文で決まる。** sort_key が動いていることまで見る
+	if q.ticket.moved[0].SortKey.String == "" {
+		t.Error("sort_key が空（位置が決まっていない）")
+	}
+}
+
+// parent_seq を省いたときは親を触らない（9.4.2）。
+//
+// **省略と null の区別が効いていることの実測である。** 区別を落とすと、
+// ただの並べ替えが親まで外してしまう。
+func TestMoveTicketWithoutParentSeqKeepsParent(t *testing.T) {
+	q := moveFake()
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.moveTicket(rec, ticketReq(http.MethodPost,
+		"/projects/demo/tickets/31/move", `{"after_seq":44}`, "31"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d（200 のはず）body = %s", rec.Code, rec.Body.String())
+	}
+	if q.ticket.moved[0].Unparent {
+		t.Error("parent_seq を送っていないのに Unparent が true")
+	}
+}
+
+// **段に置けるかは、親を外した後の状態で判定する**（9.4.2）。
+//
+// 親を持つ行は本来オンステージへ上げられない（not_stageable）が、**同じ
+// リクエストで親を外すなら上げてよい**——同じトランザクションで両方が確定する
+// ので、途中の状態は存在しない。**外す前の親を見て弾いてはならない。**
+func TestMoveTicketUnparentAllowsStaging(t *testing.T) {
+	q := moveFake()
+	// 31 は「タスクで、親がストーリー」＝そのままでは段に置けない行にする
+	row := q.ticket.sortRowBySeq[31]
+	row.Type = "task"
+	row.ParentType = txt("story")
+	q.ticket.sortRowBySeq[31] = row
+
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.moveTicket(rec, ticketReq(http.MethodPost,
+		"/projects/demo/tickets/31/move",
+		`{"parent_seq":null,"staged":true,"position":"first"}`, "31"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d（200 のはず）body = %s", rec.Code, rec.Body.String())
+	}
+	if !q.ticket.moved[0].Unparent {
+		t.Error("Unparent が false")
+	}
+}
+
+// 親を外さずに段へ上げようとすると、従来どおり not_stageable（9.4.1）。
+func TestMoveTicketStagingChildStillRejected(t *testing.T) {
+	q := moveFake()
+	row := q.ticket.sortRowBySeq[31]
+	row.Type = "task"
+	row.ParentType = txt("story")
+	q.ticket.sortRowBySeq[31] = row
+
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.moveTicket(rec, ticketReq(http.MethodPost,
+		"/projects/demo/tickets/31/move", `{"staged":true,"position":"first"}`, "31"))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d（422 のはず）body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not_stageable") {
+		t.Errorf("not_stageable が返っていない: %s", rec.Body.String())
 	}
 }
 

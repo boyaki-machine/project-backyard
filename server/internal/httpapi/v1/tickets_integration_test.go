@@ -331,6 +331,38 @@ func TestTicketsIntegration(t *testing.T) {
 		t.Errorf("details に not_stageable が無い: %s", body)
 	}
 
+	// ── 9.4.2 parent_seq: null（ルートにする）─────────────────
+	//
+	// **親と位置が同じ文で決まることを、実DBで測る。** 3 はタスク配下（上の
+	// not_stageable で使った行）なので、親を外せば表示上のトップレベルになる。
+	rec = postWithCookie(r, base+"/tickets/3/move", session, `{"parent_seq":null,"after_seq":5}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ルート化の status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+	}
+	if got := getTicketIT(t, r, session, base, 3)["parent"]; got != nil {
+		t.Errorf("parent = %v, want null（ルートになっていない）", got)
+	}
+
+	// **親を外した後の状態で not_stageable を判定する**（9.4.2）。
+	// さっきまで 422 だった 3 が、いまはトップレベルなので上げられる。
+	rec = postWithCookie(r, base+"/tickets/3/move", session, `{"staged":true,"position":"last"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ルート化した行の段上げ status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+	}
+	rec = postWithCookie(r, base+"/tickets/3/move", session, `{"staged":false,"position":"last"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("バックログへ戻す status = %d（body=%s）", rec.Code, rec.Body.String())
+	}
+
+	// **parent_seq に数値は受け取らない**（9.4.2）
+	rec = postWithCookie(r, base+"/tickets/3/move", session, `{"parent_seq":1,"after_seq":5}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("数値の parent_seq の status = %d, want 422（body=%s）", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "unsupported") {
+		t.Errorf("details に unsupported が無い: %s", body)
+	}
+
 	// **エピック自身も上げられない**（親を持たないが行として出ないため）
 	rec = postWithCookie(r, base+"/tickets/1/move", session, `{"staged":true,"position":"last"}`)
 	if rec.Code != http.StatusUnprocessableEntity {
