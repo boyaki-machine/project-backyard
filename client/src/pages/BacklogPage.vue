@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vu
 import type { ComponentPublicInstance } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import AssigneePicker from '../components/AssigneePicker.vue'
 import EmptyState from '../components/EmptyState.vue'
 import EpicFilter from '../components/EpicFilter.vue'
 import NewTicketModal from '../components/NewTicketModal.vue'
@@ -83,6 +84,10 @@ const canCreate = computed(() => auth.canInProject(projectKey.value, 'ticket.cre
 const canEdit = computed(() => auth.canInProject(projectKey.value, 'ticket.edit'))
 /** 一覧から状態を変えるのに要る（`ApiDesign.md` 9.6。pb-63） */
 const canTransition = computed(() => auth.canInProject(projectKey.value, 'ticket.transition'))
+/** 一覧から担当を変えるのに要る（9.5.2 は `ticket.edit` に加えてこれを要求する。pb-64） */
+const canAssign = computed(
+  () => canEdit.value && auth.canInProject(projectKey.value, 'ticket.assign'),
+)
 
 // ── 詳細ペイン（2.2.1 / 5.5）─────────────────────────────────
 
@@ -869,11 +874,6 @@ function isOverdue(t: Ticket): boolean {
   return t.due_date !== null && t.closed_at === null && t.due_date < today
 }
 
-function assigneeMark(t: Ticket): string {
-  if (t.assignee === null) return ''
-  return t.assignee.kind === 'agent' ? '🤖' : '👤'
-}
-
 /** 件数は端末の設定に依らない形で区切る（`ja-JP` を明示する） */
 function withComma(n: number): string {
   return n.toLocaleString('ja-JP')
@@ -1357,6 +1357,36 @@ async function transitionRow(ticket: Ticket, to: TicketTransitionOption): Promis
   error.value = null
   try {
     const next = await ticketsApi.transitionTicket(projectKey.value, ticket.seq, { to: to.key })
+    onDetailUpdated(next)
+  } catch (e) {
+    error.value = toApiError(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+// ── 一覧から担当を変える（5.4「一覧で担当を選ぶ」。pb-64）────────
+
+/**
+ * 担当を差し替える（`ApiDesign.md` 9.5.2）。**選んだ時点で送る**——状態と同じで、
+ * 確認は挟まない。
+ *
+ * **`If-Match` は行が持つ `version` を使う**（2.8）。一覧の行は `PATCH` の応答と
+ * `move` の応答で更新されており、他人が同時に変えていれば 409 が返る——**黙って
+ * 上書きしない。**
+ *
+ * **応答をその行へ差し替える**（`onDetailUpdated` と同じ判断。pb-15）。行の増減が
+ * 起きないので取り直さない。**担当で絞り込み中に外れる行が残ることはある**が、
+ * これは状態を変えたときと同じ振る舞いである。
+ */
+async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> {
+  if ((ticket.assignee?.id ?? null) === actorId) return
+  busy.value = true
+  error.value = null
+  try {
+    const next = await ticketsApi.updateTicket(projectKey.value, ticket.seq, ticket.version, {
+      assignee_id: actorId,
+    })
     onDetailUpdated(next)
   } catch (e) {
     error.value = toApiError(e)
@@ -2067,15 +2097,18 @@ watch(projectKey, (key) => {
                        セルに置く」。手順26b）。**中を flex にする**——担当の名前を
                        縮ませ、実行者の 🤖 は縮ませないためで、素の text node の
                        ままだと 🤖 がセルの外へ押し出されて消える（実機で判明） -->
-                  <td v-if="!shrunk" class="assignee-col">
+                  <td v-if="!shrunk" class="assignee-col" @click.stop>
                     <span class="assignee-cell">
-                      <span v-if="row.ticket.assignee" class="assignee-name">
-                        <span class="actor-mark" aria-hidden="true">{{
-                          assigneeMark(row.ticket)
-                        }}</span
-                        >{{ row.ticket.assignee.display_name }}
-                      </span>
-                      <span v-else class="muted">—</span>
+                      <!-- **一覧から担当を選べる**（5.4「一覧で担当を選ぶ」。pb-64）。
+                           `ticket.assign` を持たないときは押せない表示になるので、
+                           出し分けをここに書かない -->
+                      <AssigneePicker
+                        :current="row.ticket.assignee"
+                        :members="members"
+                        :can-assign="canAssign"
+                        :busy="busy"
+                        @select="assignRow(row.ticket, $event)"
+                      />
                       <!-- **一覧では 🤖 だけを出す**（名前は詳細ペインが出す）。
                            130px の列に名前2つは入らない -->
                       <span
@@ -2506,8 +2539,12 @@ watch(projectKey, (key) => {
    **実行者（🤖）も同じセルに入る**（5.4。手順26b）。列を足さないのは、8列が既に
    横幅の上限であることと、実行者を読みたい場面が「担当は誰か」を読む場面と
    同じだからである */
+/* **`▾` のぶん 16px 広げた**（5.4「一覧で担当を選ぶ」。pb-64）。130px は
+   `👤開発メンバー` でほぼ埋まる幅で、キャレットを足すと名前が省略記号で切れる
+   ——**押せることを示す記号のために、読みたい情報を削らない。**
+   広げたぶんはタイトル列（可変）から取る */
 .assignee-col {
-  width: 130px;
+  width: 146px;
 }
 
 /* 担当と実行者を1行に収める。**縮むのは担当の名前だけで、🤖 は縮まない**
@@ -2522,12 +2559,6 @@ watch(projectKey, (key) => {
   align-items: baseline;
   gap: 4px;
   min-width: 0;
-}
-
-.assignee-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .working-agent {
@@ -2635,13 +2666,10 @@ watch(projectKey, (key) => {
    **輝度差＋記号で表す規則（8.7）ごとあちらへ移した**——同じ見た目を2か所に
    置くと、片方だけ直る。ここに残っていた `.status` 系は使い手を失ったので消した */
 
-.priority,
-.actor-mark {
+/* 担当の名前と種別の記号は `AssigneePicker` が持つ（5.4「一覧で担当を選ぶ」。
+   pb-64）。ここに残っていた `.assignee-name` / `.actor-mark` は使い手を失った */
+.priority {
   color: var(--pb-text-muted);
-}
-
-.actor-mark {
-  margin-right: 4px;
 }
 
 .muted {
