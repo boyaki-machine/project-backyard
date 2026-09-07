@@ -585,6 +585,12 @@ window.set = window.set || function (el, v) {
   （`client/src/api/client.ts`）。**画面を操作するより速く、権限や応答の形をそのまま測れる**
   ——手順23 では憲章の本文を4件 `PATCH` して `?outline=1` の章立てまでを1本で確かめた。
   `If-Match` は `"<version>"`（引用符ごと）。
+- **画面を測る前に `make build` を通す。** dev のサーバは **client を embed している**ので
+  （`Design.md` 3.4）、`make run` で起動し直すだけでは**古い画面が出続ける**。症状は
+  「押しても何も起きない」で、**実装のバグに見える**——pb-69 では、`pb-55` で廃止したはずの
+  確認モーダルが開いていて、選択肢を押しても `POST` が飛ばなかった。**測っていたのは
+  数世代前の画面である。** 1コマンドで済ませるなら `make restart`（停止→ビルド→DB起動→起動）。
+  疑ったときは `/healthcheck` の `version` を見る（`PB_HEALTH_SHOW_VERSION=true` のとき出る）。
 - **`dragstart` を機に落とし場所を描き足すと、Chrome がドラッグを取り消す。**
   掴んだ行の位置が直後にずれるためで、症状は「`dragstart` の 1〜2ms 後に `dragend` が来て、
   `dragover` が一度も起きない」。**落とし場所は掴む前から画面にあるものに限る**
