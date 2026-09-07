@@ -1020,6 +1020,14 @@ function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolea
   const source = sourceRow.ticket
 
   if (section.stage !== undefined) {
+    // **インデントされた行を根の並びへ落とすとルートになる**（5.4。pb-70）。
+    // 親を外すことと位置決めが `move` 1本で決まるので、線を出してよい。
+    // **兄弟の中での並べ替えは従来どおり**——同じ親を持つ行の上下へは、
+    // 親を触らずに落とせる。
+    if (sourceRow.parentKey !== null) {
+      if (row.parentKey === null) return canUnparentInto(section)
+      return sourceRow.parentKey === row.parentKey && shownInStage(source) === section.stage
+    }
     // **同じ段の中なら、表示上の親が同じ行どうし**（オンステージ段にも
     // インデントされた行が出るようになったので、根だけとは限らない。pb-46）
     if (shownInStage(source) === section.stage) {
@@ -1059,14 +1067,12 @@ function canDropOnSection(sourceSeq: number | null, section: Section): boolean {
 /**
  * インデントされた行をこの段へ落として**ルートにできる**か（5.4。pb-70）。
  *
- * **バックログ段だけである。** ルートになった行は `staged_at` が `NULL` のまま
- * なので（親と一緒に運ばれていただけ。5.4「配下の行き先」）、**必ずバックログへ
- * 出る**。オンステージ段の見出しへ落とせるようにすると、ルート化と段上げで
- * `PATCH` と `move` の2本を送ることになり、**片方だけ成功した状態**が残りうる
- * ——5.4 が「1回のドロップで送るのは1本だけにする」と定めている。
- *
- * **段へ上げたいときは、先にルートにしてから上げる。** 「オンステージの行を
- * エピック以外の子にできない（先に段から降ろしてから親を変える）」の裏返しである。
+ * **バックログ段だけである。** サーバは `parent_seq: null` と `staged` を同時に
+ * 受け取れるが（`ApiDesign.md` 9.4.2）、**画面の落とし先は絞る**——ルートにする
+ * のと段へ上げるのは別の判断であり、1回のドラッグに2つ込めると誤操作が戻し
+ * にくい。**ルートになった行は `staged_at` が `NULL` のままなので、必ずバック
+ * ログへ出る**（配下は親と一緒に運ばれていただけ。5.4「配下の行き先」）
+ * ——落とし先と着地が一致する。
  */
 function canUnparentInto(section: Section): boolean {
   return section.stage === false
@@ -1178,21 +1184,12 @@ function hintsSection(section: Section, side: 'first' | 'last'): boolean {
   return h !== null && h.key === section.key && h.seq === null && h.side === side
 }
 
-/**
- * その段が「ルートにする」の落とし先として光っているか（5.4。pb-70）。
- *
- * **線ではなく面で出す。** 5.4 の比喩をそのまま使う——**線は行と行の「間」
- * （位置）を、面は属する先を指す。** ルート化は `parent_seq` を変える操作で
- * あって位置を約束しないので、**「先頭へ」の線を出すと着地と食い違う。**
- */
-function hintsUnparent(section: Section): boolean {
-  const h = dropHint.value
-  if (h === null || h.key !== section.key || h.seq !== null) return false
-  return draggingSeq.value !== null && rowIndex.value.get(draggingSeq.value)?.parentKey !== null
-}
 
-function moveMessage(t: Ticket, stagedChange: boolean | undefined): string {
+function moveMessage(t: Ticket, stagedChange: boolean | undefined, unparented: boolean): string {
   const id = `${fullId(t)}「${t.title}」`
+  // **ルート化を先に言う。** 同じ操作で段も動きうるが、利用者が意図したのは
+  // 親を外すことである（5.4。pb-70）
+  if (unparented) return `✓ ${id}をルートにしました`
   if (stagedChange === true) return `✓ ${id}をオンステージへ上げました`
   if (stagedChange === false) return `✓ ${id}をバックログへ戻しました`
   return `✓ ${id}の並び順を変更しました`
@@ -1214,6 +1211,7 @@ async function runMove(
   body: MoveTicketRequest,
   optimistic: Ticket[] | null,
   stagedChange: boolean | undefined,
+  unparented = false,
 ): Promise<void> {
   const before = tickets.value
   if (optimistic !== null) tickets.value = optimistic
@@ -1231,7 +1229,7 @@ async function runMove(
           : t,
       )
     }
-    result.value = moveMessage(source, stagedChange)
+    result.value = moveMessage(source, stagedChange, unparented)
   } catch (e) {
     tickets.value = before
     error.value = toApiError(e)
@@ -1289,37 +1287,6 @@ async function dropInto(source: Ticket, parent: Ticket): Promise<void> {
 }
 
 /**
- * ルートにする（5.4「ドロップ先の見せ方」。pb-70）。
- *
- * **送るのは `PATCH` の `parent_seq: null` だけで、`move` は呼ばない**——
- * `dropInto`（子にする）と同じ規則である。**位置は動かさない**ので、`sort_key`
- * の並びのどこに居たかがそのまま残る。並べ直したければ続けて掴めばよい。
- *
- * **ルートになった行はバックログへ出る。** `staged_at` は `NULL` のままで
- * （親と一緒に運ばれていただけ）、親を失った時点でその段から降りる。
- * **落とせるのがバックログ段だけなのは、これと着地を一致させるためである。**
- *
- * **取り直す。** 親子が変わると木の組み方が変わり、`has_children` も動く。
- */
-async function unparent(source: Ticket): Promise<void> {
-  busy.value = true
-  result.value = ''
-  error.value = null
-  try {
-    await ticketsApi.updateTicket(projectKey.value, source.seq, source.version, {
-      parent_seq: null,
-    })
-    await loadTickets()
-    result.value = `✓ ${fullId(source)}「${source.title}」をルートにしました`
-  } catch (err) {
-    error.value = toApiError(err)
-    await loadTickets()
-  } finally {
-    busy.value = false
-  }
-}
-
-/**
  * 行の上へ落とす。**ポインタが指した位置がそのまま行き先になる**
  * （5.4「ドロップ先の見せ方」）——上 1/4 と下 1/4 が兄弟、**中央 1/2 が子**。
  * 出した目印と着地を一致させるためで、掴んだ行がどこから来たかには依らない。
@@ -1349,9 +1316,15 @@ async function dropOnRow(e: DragEvent, row: Row, section: Section): Promise<void
   const source = tickets.value[from]!
   const stagedChange = stageChangeOf(source, section)
 
+  // **インデントされた行を根の並びへ落としたらルートにする**（5.4。pb-70）。
+  // **親と位置を `move` 1本で送る**（`ApiDesign.md` 9.4.2）——2本に分けると
+  // 「ルートにはなったが位置は元のまま」が残りうる。
+  const unparenting = rowIndex.value.get(seq!)?.parentKey != null && row.parentKey === null
+
   const body: MoveTicketRequest =
     side === 'before' ? { before_seq: row.ticket.seq } : { after_seq: row.ticket.seq }
   if (stagedChange !== undefined) body.staged = stagedChange
+  if (unparenting) body.parent_seq = null
 
   // **掴んだ行を抜いてから相手の位置を数え直す。** 抜く前の添字で挿入すると、
   // 下へ動かしたときだけ1つ手前に入る。
@@ -1361,9 +1334,17 @@ async function dropOnRow(e: DragEvent, row: Row, section: Section): Promise<void
   if (to < 0) return
   const insertAt = side === 'before' ? to : to + 1
 
-  // 位置も段も変わらないなら送らない。**`version` を無駄に上げない**
+  // 位置も段も親も変わらないなら送らない。**`version` を無駄に上げない**
   // （`If-Match` を使う画面が 409 になる。9.4）
-  if (insertAt === from && stagedChange === undefined) return
+  if (insertAt === from && stagedChange === undefined && !unparenting) return
+
+  // **ルート化するときは手元で並べ替えない。** 親子が変わると木の組み方と
+  // インデントが動き、`has_children` も動く。**手元で組み替えるより、
+  // サーバの答えを1回もらうほうが確かである**（`dropInto` と同じ判断）。
+  if (unparenting) {
+    await runMove(source, body, null, stagedChange, true)
+    return
+  }
 
   next.splice(insertAt, 0, optimisticRow(source, stagedChange))
   await runMove(source, body, next, stagedChange)
@@ -1384,20 +1365,16 @@ async function dropOnSection(section: Section, position: 'first' | 'last'): Prom
   const source = rowIndex.value.get(seq!)?.ticket
   if (source === undefined || section.stage === undefined) return
 
-  // **インデントされた行はルートにする**（5.4。pb-70）。`position` は送らない
-  // ——ルート化は位置を約束しない操作である。
-  if (sourceIsChild) {
-    await unparent(source)
-    return
-  }
-
   const stagedChange = stageChangeOf(source, section)
   const body: MoveTicketRequest = { position }
   if (stagedChange !== undefined) body.staged = stagedChange
+  // **インデントされた行はルートにして、その段の先頭／末尾へ置く**（5.4。pb-70）。
+  // 親と位置が `move` 1本で決まるので、見出しの線と着地が一致する。
+  if (sourceIsChild) body.parent_seq = null
 
   // 段の中の先頭・末尾は手元で正しい位置を作れない——`position` は段の中で
   // 解釈される（9.4.1）のに `sort_key` は二段で1本だからで、取り直して合わせる。
-  await runMove(source, body, null, stagedChange)
+  await runMove(source, body, null, stagedChange, sourceIsChild)
 }
 
 // ── 一覧から状態を変える（5.4「一覧で状態を変える」。pb-63）──────
@@ -1926,10 +1903,7 @@ watch(projectKey, (key) => {
                **段そのものが末尾への落とし場所を兼ねる**（9.4.1 の position） -->
           <div
             class="section-head"
-            :class="{
-              'drop-first': hintsSection(section, 'first') && !hintsUnparent(section),
-              'drop-unparent': hintsUnparent(section),
-            }"
+            :class="{ 'drop-first': hintsSection(section, 'first') }"
             @dragover="onDragOverSection($event, section, 'first')"
             @drop.prevent="dropOnSection(section, 'first')"
           >
@@ -2249,10 +2223,7 @@ watch(projectKey, (key) => {
             <p
               v-if="section.rows.length === 0"
               class="stage-empty"
-              :class="{
-                'drop-last': hintsSection(section, 'last') && !hintsUnparent(section),
-                'drop-unparent': hintsUnparent(section),
-              }"
+              :class="{ 'drop-last': hintsSection(section, 'last') }"
               @dragover="onDragOverSection($event, section, 'last')"
               @drop.prevent="dropOnSection(section, 'last')"
             >
@@ -2593,19 +2564,6 @@ watch(projectKey, (key) => {
   box-shadow: inset 0 -2px 0 0 var(--pb-accent);
 }
 
-/* **ルートにする落とし先は面で塗る**（5.4「ドロップ先の見せ方」。pb-70）。
-   線は行と行の「間」（位置）を、面は属する先を指す——ルート化は位置を
-   約束しないので、「先頭へ」の線を出すと着地と食い違う */
-.section-head.drop-unparent,
-.stage-empty.drop-unparent {
-  border-color: var(--pb-accent);
-  background: var(--pb-accent);
-  color: var(--pb-on-accent);
-}
-
-.section-head.drop-unparent :is(.section-toggle, .section-count) {
-  color: var(--pb-on-accent);
-}
 
 .skeleton-row td {
   height: var(--pb-row-h);

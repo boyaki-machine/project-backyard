@@ -14,6 +14,11 @@
 // **並び順はプロジェクト内で1本である**（9.4）。グループ化（親・タグ・スプリント）は
 // 表示上の区切りにすぎず、グループを切り替えても sort_key は変わらない。
 //
+// **staged と parent_seq を受け取るのは、位置と同時に決まるものだからである**
+// （9.4.1 / 9.4.2）。ドラッグの1操作で段や親と位置が一緒に決まるので、2本の
+// エンドポイントに分けると中途半端な状態が残る。**位置を伴わない親の変更
+// （行の中央へ落として子にする）は PATCH のままである**（9.5.2）。
+//
 // **activity に記録しない**（利用者の判断、2026-08-23）。sort_key だけの更新で
 // あり、記録するとバックログを一度並べ替えただけでチケット詳細の変更履歴
 // （GuiDesign.md 5.5）が埋まる。読み手はプロジェクトのメンバーであって、
@@ -22,6 +27,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -52,6 +58,22 @@ type moveTicketRequest struct {
 	BeforeSeq *int32 `json:"before_seq"`
 	Position  string `json:"position"`
 	Staged    *bool  `json:"staged"`
+
+	// ParentSeq は「ルートにする」（9.4.2）。**null だけを受け取る。**
+	//
+	// **省略と null を区別する必要がある**ので、生の JSON で受けてから読む
+	// （9.5.2 の PATCH が optional[T] でやっているのと同じ区別である）。
+	// 数値は 422 に倒す——「別の親の下の、この位置へ」を表すドロップが
+	// GuiDesign.md 5.4 に無く、受け取っても使い手がいない。
+	ParentSeq json.RawMessage `json:"parent_seq"`
+}
+
+// unparent は「ルートにする」が指定されたか（9.4.2）。
+//
+// **省略（nil）と JSON の null を区別する。** encoding/json は前者で
+// RawMessage を nil のまま残し、後者では []byte("null") を入れる。
+func (r moveTicketRequest) unparent() bool {
+	return len(r.ParentSeq) > 0 && string(r.ParentSeq) == "null"
 }
 
 // moveTicketResponse は 9.4 の応答。
@@ -120,7 +142,15 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 		// ——親を持たないもの、または親がエピックのもの。配下は親と一緒に運ばれる
 		// ので、子を個別に上げる操作は意味を持たない。**バックログへ戻すのは
 		// 常に許す**（段から降ろすだけなので、置ける条件を問う理由がない）。
-		if targetStaged && !row.StagedAt.Valid && !stageable(row.Type, row.ParentType) {
+		//
+		// **判定は parent_seq を適用した後の状態で行う**（9.4.2）。親を外せば
+		// トップレベルになるので、**外す前の親を見て弾いてはならない**——
+		// 同じトランザクションで両方が確定する以上、途中の状態は存在しない。
+		parentType := row.ParentType
+		if req.unparent() {
+			parentType = pgtype.Text{}
+		}
+		if targetStaged && !row.StagedAt.Valid && !stageable(row.Type, parentType) {
 			message := "配下のチケットはオンステージへ上げられません。親のチケットを上げてください"
 			if row.Type == ticketTypeEpic {
 				message = "エピックはオンステージへ上げられません。配下のチケットを上げてください"
@@ -183,6 +213,9 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 			SortKey:     text(key),
 			ChangeStage: changeStage,
 			StagedAt:    stagedAt,
+			// **同じ文で親を外す**（9.4.2）。位置と一緒に決まるものなので、
+			// 別の文へ分けると片方だけ成功した状態が残りうる。
+			Unparent: req.unparent(),
 		})
 		if err != nil {
 			return fmt.Errorf("チケット %d の並び順を更新できない: %w", seq, err)
@@ -251,6 +284,13 @@ func validateMoveTarget(req moveTicketRequest) *apierr.Error {
 		return apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
 			Field: "position", Code: "invalid",
 			Message: "position は first または last で指定してください",
+		})
+	// **parent_seq は null しか受け取らない**（9.4.2）。数値を黙って捨てると、
+	// 送った側は「親を変えたつもり」のまま位置だけ動いた結果を受け取る。
+	case len(req.ParentSeq) > 0 && !req.unparent():
+		return apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+			Field: "parent_seq", Code: "unsupported",
+			Message: "parent_seq は null（ルートにする）だけ指定できます。親を変えるにはチケットの更新を使ってください",
 		})
 	}
 	return nil

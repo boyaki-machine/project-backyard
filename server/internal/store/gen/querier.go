@@ -1154,14 +1154,20 @@ type Querier interface {
 	// 「プロジェクト全体の先頭」ではない。**空の段へ最初の1件を落とすとき、
 	// 基準にできる行が無い**ため、この2本が要る。
 	MinTicketSortKeyInStage(ctx context.Context, arg MinTicketSortKeyInStageParams) (string, error)
-	// MoveTicket は動かした1件の sort_key と段を書き、version を +1 する（9.4）。
+	// MoveTicket は動かした1件の sort_key・段・親を書き、version を +1 する（9.4）。
 	//
-	// **段と位置を1文で書く**（9.4.1）。ドラッグ&ドロップの1操作で両方が同時に
-	// 決まるため、2文に分けると途中で失敗したときに「段は移ったが位置は末尾」と
-	// いう中途半端な状態が残る。
+	// **段（staged_at）と親（parent_id）を位置と同じ文で書く**（9.4.1 / 9.4.2）。
+	// どちらもドラッグ&ドロップの1操作で位置と同時に決まるため、文を分けると
+	// 途中で失敗したときに「段は移ったが位置は末尾」「ルートにはなったが位置は
+	// 元のまま」という中途半端な状態が残る。
 	//
 	// change_stage が false のとき staged_at は現在値のままで、並べ替えだけを行う
-	// （リクエストで staged を省略した場合）。
+	// （リクエストで staged を省略した場合）。unparent も同じで、false なら
+	// parent_id を触らない。
+	//
+	// **@unparent は「ルートにする」だけを表す。** move が受け取る parent_seq は
+	// null に限られる（9.4.2）ので、親を付け替える経路はここに無い——それは
+	// PATCH（9.5.2）の仕事である。
 	MoveTicket(ctx context.Context, arg MoveTicketParams) (MoveTicketRow, error)
 	// sort_order 省略時の既定（現在の最大値 + 10）。行が無ければ 10 から始める。
 	// **10 刻みにするのは間に挿し込む余地を残すため**で、NextTicketReferenceSortOrder

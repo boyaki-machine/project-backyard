@@ -330,24 +330,25 @@ type TaskLease struct {
 }
 
 type Ticket struct {
-	ID              string
-	ProjectID       string
-	Seq             int32
-	ParentID        pgtype.Text
-	Type            string
-	Title           string
-	BodyMd          pgtype.Text
-	StatusKey       string
-	Priority        pgtype.Text
-	AssigneeID      pgtype.Text
-	ReporterID      pgtype.Text
-	EstimatePoint   pgtype.Float8
-	EstimateHours   pgtype.Float8
-	ActualHours     pgtype.Float8
-	StartDate       pgtype.Date
-	DueDate         pgtype.Date
-	SprintID        pgtype.Text
-	SortKey         pgtype.Text
+	ID            string
+	ProjectID     string
+	Seq           int32
+	ParentID      pgtype.Text
+	Type          string
+	Title         string
+	BodyMd        pgtype.Text
+	StatusKey     string
+	Priority      pgtype.Text
+	AssigneeID    pgtype.Text
+	ReporterID    pgtype.Text
+	EstimatePoint pgtype.Float8
+	EstimateHours pgtype.Float8
+	ActualHours   pgtype.Float8
+	StartDate     pgtype.Date
+	DueDate       pgtype.Date
+	SprintID      pgtype.Text
+	SortKey       pgtype.Text
+	// 実行モード。エージェントが着手してよいかを決める。既定は agent_draft（0025）。DbDesign.md 6.6
 	ExecutionMode   string
 	Readiness       pgtype.Text
 	ReadinessNote   pgtype.Text

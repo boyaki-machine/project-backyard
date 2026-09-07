@@ -400,18 +400,25 @@ SELECT id FROM ticket
 -- name: SetTicketSortKey :exec
 UPDATE ticket SET sort_key = @sort_key WHERE id = @id;
 
--- MoveTicket は動かした1件の sort_key と段を書き、version を +1 する（9.4）。
+-- MoveTicket は動かした1件の sort_key・段・親を書き、version を +1 する（9.4）。
 --
--- **段と位置を1文で書く**（9.4.1）。ドラッグ&ドロップの1操作で両方が同時に
--- 決まるため、2文に分けると途中で失敗したときに「段は移ったが位置は末尾」と
--- いう中途半端な状態が残る。
+-- **段（staged_at）と親（parent_id）を位置と同じ文で書く**（9.4.1 / 9.4.2）。
+-- どちらもドラッグ&ドロップの1操作で位置と同時に決まるため、文を分けると
+-- 途中で失敗したときに「段は移ったが位置は末尾」「ルートにはなったが位置は
+-- 元のまま」という中途半端な状態が残る。
 --
 -- change_stage が false のとき staged_at は現在値のままで、並べ替えだけを行う
--- （リクエストで staged を省略した場合）。
+-- （リクエストで staged を省略した場合）。unparent も同じで、false なら
+-- parent_id を触らない。
+--
+-- **@unparent は「ルートにする」だけを表す。** move が受け取る parent_seq は
+-- null に限られる（9.4.2）ので、親を付け替える経路はここに無い——それは
+-- PATCH（9.5.2）の仕事である。
 -- name: MoveTicket :one
 UPDATE ticket SET
    sort_key  = @sort_key,
    staged_at = CASE WHEN @change_stage::boolean THEN @staged_at ELSE staged_at END,
+   parent_id = CASE WHEN @unparent::boolean THEN NULL ELSE parent_id END,
    version   = version + 1
  WHERE project_id = @project_id AND id = @id
 RETURNING seq, sort_key, staged_at, version;
