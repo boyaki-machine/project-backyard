@@ -1031,21 +1031,45 @@ function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolea
 }
 
 /**
- * 段そのもの（見出し＝先頭、末尾の帯＝末尾）へ落としてよいか。
+ * 段そのもの（見出し＝先頭、空の枠＝末尾）へ落としてよいか。
  *
  * 空の段には基準にできる行が無いので、この落とし場所が無いと最初の1件を
  * 上げられない（`ApiDesign.md` 9.4.1 が `position` を段の中で解釈する理由）。
  *
- * **掴んでいるのが表示上の根のときだけ受け取る。** インデントされた行は段の中の
- * 位置を持たない——`position: "last"` を送っても、その行は親の下で兄弟の末尾へ
- * 動くだけで、「バックログの末尾へ」という表示と食い違う。
+ * **表示上の根と、インデントされた行とで意味が違う**（5.4「ドロップ先の見せ方」）。
+ *
+ * | 掴んでいる行 | 落としたときに起きること |
+ * |---|---|
+ * | 表示上の根 | その段の先頭／末尾へ動く（`move`）。段をまたいでもよい |
+ * | インデントされた行 | **ルートになる**（`PATCH parent_seq: null`。pb-70）。**バックログ段だけ** |
+ *
+ * **インデントされた行に `position` を送らない。** その行は親の下で兄弟の端へ
+ * 動くだけで、「その段の先頭／末尾へ」という表示と食い違う。**ルート化は
+ * 位置を約束しない別の操作**なので、目印も線ではなく枠で出す。
  */
 function canDropOnSection(sourceSeq: number | null, section: Section): boolean {
   if (sourceSeq === null || section.stage === undefined) return false
   const sourceRow = rowIndex.value.get(sourceSeq)
-  if (sourceRow === undefined || sourceRow.parentKey !== null) return false
+  if (sourceRow === undefined) return false
+  if (sourceRow.parentKey !== null) return canUnparentInto(section)
   if (shownInStage(sourceRow.ticket) === section.stage) return true
   return isStageable(sourceRow.ticket)
+}
+
+/**
+ * インデントされた行をこの段へ落として**ルートにできる**か（5.4。pb-70）。
+ *
+ * **バックログ段だけである。** ルートになった行は `staged_at` が `NULL` のまま
+ * なので（親と一緒に運ばれていただけ。5.4「配下の行き先」）、**必ずバックログへ
+ * 出る**。オンステージ段の見出しへ落とせるようにすると、ルート化と段上げで
+ * `PATCH` と `move` の2本を送ることになり、**片方だけ成功した状態**が残りうる
+ * ——5.4 が「1回のドロップで送るのは1本だけにする」と定めている。
+ *
+ * **段へ上げたいときは、先にルートにしてから上げる。** 「オンステージの行を
+ * エピック以外の子にできない（先に段から降ろしてから親を変える）」の裏返しである。
+ */
+function canUnparentInto(section: Section): boolean {
+  return section.stage === false
 }
 
 /**
@@ -1154,6 +1178,19 @@ function hintsSection(section: Section, side: 'first' | 'last'): boolean {
   return h !== null && h.key === section.key && h.seq === null && h.side === side
 }
 
+/**
+ * その段が「ルートにする」の落とし先として光っているか（5.4。pb-70）。
+ *
+ * **線ではなく面で出す。** 5.4 の比喩をそのまま使う——**線は行と行の「間」
+ * （位置）を、面は属する先を指す。** ルート化は `parent_seq` を変える操作で
+ * あって位置を約束しないので、**「先頭へ」の線を出すと着地と食い違う。**
+ */
+function hintsUnparent(section: Section): boolean {
+  const h = dropHint.value
+  if (h === null || h.key !== section.key || h.seq !== null) return false
+  return draggingSeq.value !== null && rowIndex.value.get(draggingSeq.value)?.parentKey !== null
+}
+
 function moveMessage(t: Ticket, stagedChange: boolean | undefined): string {
   const id = `${fullId(t)}「${t.title}」`
   if (stagedChange === true) return `✓ ${id}をオンステージへ上げました`
@@ -1252,6 +1289,37 @@ async function dropInto(source: Ticket, parent: Ticket): Promise<void> {
 }
 
 /**
+ * ルートにする（5.4「ドロップ先の見せ方」。pb-70）。
+ *
+ * **送るのは `PATCH` の `parent_seq: null` だけで、`move` は呼ばない**——
+ * `dropInto`（子にする）と同じ規則である。**位置は動かさない**ので、`sort_key`
+ * の並びのどこに居たかがそのまま残る。並べ直したければ続けて掴めばよい。
+ *
+ * **ルートになった行はバックログへ出る。** `staged_at` は `NULL` のままで
+ * （親と一緒に運ばれていただけ）、親を失った時点でその段から降りる。
+ * **落とせるのがバックログ段だけなのは、これと着地を一致させるためである。**
+ *
+ * **取り直す。** 親子が変わると木の組み方が変わり、`has_children` も動く。
+ */
+async function unparent(source: Ticket): Promise<void> {
+  busy.value = true
+  result.value = ''
+  error.value = null
+  try {
+    await ticketsApi.updateTicket(projectKey.value, source.seq, source.version, {
+      parent_seq: null,
+    })
+    await loadTickets()
+    result.value = `✓ ${fullId(source)}「${source.title}」をルートにしました`
+  } catch (err) {
+    error.value = toApiError(err)
+    await loadTickets()
+  } finally {
+    busy.value = false
+  }
+}
+
+/**
  * 行の上へ落とす。**ポインタが指した位置がそのまま行き先になる**
  * （5.4「ドロップ先の見せ方」）——上 1/4 と下 1/4 が兄弟、**中央 1/2 が子**。
  * 出した目印と着地を一致させるためで、掴んだ行がどこから来たかには依らない。
@@ -1309,11 +1377,19 @@ async function dropOnRow(e: DragEvent, row: Row, section: Section): Promise<void
  */
 async function dropOnSection(section: Section, position: 'first' | 'last'): Promise<void> {
   const seq = draggingSeq.value
+  const sourceIsChild = seq !== null && rowIndex.value.get(seq)?.parentKey !== null
   endDrag()
   if (!canDropOnSection(seq, section)) return
 
   const source = rowIndex.value.get(seq!)?.ticket
   if (source === undefined || section.stage === undefined) return
+
+  // **インデントされた行はルートにする**（5.4。pb-70）。`position` は送らない
+  // ——ルート化は位置を約束しない操作である。
+  if (sourceIsChild) {
+    await unparent(source)
+    return
+  }
 
   const stagedChange = stageChangeOf(source, section)
   const body: MoveTicketRequest = { position }
@@ -1850,7 +1926,10 @@ watch(projectKey, (key) => {
                **段そのものが末尾への落とし場所を兼ねる**（9.4.1 の position） -->
           <div
             class="section-head"
-            :class="{ 'drop-first': hintsSection(section, 'first') }"
+            :class="{
+              'drop-first': hintsSection(section, 'first') && !hintsUnparent(section),
+              'drop-unparent': hintsUnparent(section),
+            }"
             @dragover="onDragOverSection($event, section, 'first')"
             @drop.prevent="dropOnSection(section, 'first')"
           >
@@ -2170,7 +2249,10 @@ watch(projectKey, (key) => {
             <p
               v-if="section.rows.length === 0"
               class="stage-empty"
-              :class="{ 'drop-last': hintsSection(section, 'last') }"
+              :class="{
+                'drop-last': hintsSection(section, 'last') && !hintsUnparent(section),
+                'drop-unparent': hintsUnparent(section),
+              }"
               @dragover="onDragOverSection($event, section, 'last')"
               @drop.prevent="dropOnSection(section, 'last')"
             >
@@ -2509,6 +2591,20 @@ watch(projectKey, (key) => {
 /* 見出しは「その段の先頭へ」なので、線は見出しの下端に引く */
 .section-head.drop-first {
   box-shadow: inset 0 -2px 0 0 var(--pb-accent);
+}
+
+/* **ルートにする落とし先は面で塗る**（5.4「ドロップ先の見せ方」。pb-70）。
+   線は行と行の「間」（位置）を、面は属する先を指す——ルート化は位置を
+   約束しないので、「先頭へ」の線を出すと着地と食い違う */
+.section-head.drop-unparent,
+.stage-empty.drop-unparent {
+  border-color: var(--pb-accent);
+  background: var(--pb-accent);
+  color: var(--pb-on-accent);
+}
+
+.section-head.drop-unparent :is(.section-toggle, .section-count) {
+  color: var(--pb-on-accent);
 }
 
 .skeleton-row td {
