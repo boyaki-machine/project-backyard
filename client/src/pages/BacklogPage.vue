@@ -920,7 +920,7 @@ function openRow(t: Ticket, e: MouseEvent): void {
  * 掴めるのは**ソートが `sort_key` の昇順のとき**だけである（5.4）。
  * 他の並びでは、画面上の位置と `after_seq` の意味が一致しない。
  *
- * **縮小中も掴める**（5.4「縮小中の掴みしろ」。pb-7）。以前は `!shrunk` を
+ * **縮小中も掴める**（5.4「掴みしろ」。pb-7）。以前は `!shrunk` を
  * 条件に持っていたが、**詳細を開いたまま消化順を組み替える**のは実際に起きる
  * 作業で、そのたびに全幅へ戻すことになっていた。
  */
@@ -929,13 +929,36 @@ const canReorder = computed(
 )
 
 /**
- * 掴みしろを行そのものに置くか（5.4「縮小中の掴みしろ」）。
+ * 掴みしろを行そのものに置くか（5.4「掴みしろ」）。
  *
- * **縮小中は `⠿` の列を持てない。** 450px の内訳は ID・タイトル・状態の3列で、
- * `⠿` に約28px を割くとタイトルの実効幅がさらに縮む。**5.10 の文書ツリーが
- * 同じ理由で同じ判断をしている。**
+ * **全幅でも縮小中でも行全体を掴む**（利用者の要望、2026-09-07。pb-71）。
+ * かつては縮小中だけがこの形だった——450px では `⠿` の列を持てないためで、
+ * **全幅では `⠿` の28px だけが掴みしろ**だった。実運用では**幅の広いほうが
+ * 狙いにくい**と分かった。行が長いほど `⠿` は遠く、並べ替えのたびに左端まで
+ * ポインタを運ぶことになる。
+ *
+ * **`⠿` の列は残す**（全幅のとき）。ヘッダが「`sort_key` へ戻す」ボタンを
+ * 兼ねており（5.4）、列ごと落とすとその導線が失われる。**掴める範囲が
+ * 広がるだけである。**
  */
-const grabWholeRow = computed(() => canReorder.value && shrunk.value)
+const grabWholeRow = canReorder
+
+/**
+ * ポインタが**操作を持つセル**（状態・担当）の上にあるか（5.4「掴みしろ」。pb-71）。
+ *
+ * **`draggable="false"` を子孫に置いても親のドラッグは止まらない**（実測、
+ * 2026-09-07）。`dragstart` はドラッグ元——つまり `draggable` な `<tr>`——で
+ * 発火するので、`<td>` に `@dragstart.stop.prevent` を書いても**イベントの経路に
+ * 入らず一度も呼ばれない**。属性 `draggable="false"` も、Chrome は上位の
+ * `draggable="true"` まで遡るため効かない。
+ *
+ * **そこで、ポインタがそのセルに入っている間だけ行を掴めなくする。** 掴めるのは
+ * ポインタが載っている場所だけなので、値は1つで足りる。
+ *
+ * **要素を差し込むわけではない**ので、`dragstart` の直後に位置がずれて Chrome が
+ * ドラッグを取り消す問題（5.4「掴んだ瞬間に要素を差し込まない」）には当たらない。
+ */
+const overActionCell = ref(false)
 
 /**
  * 掴んでいる行。
@@ -1944,8 +1967,8 @@ watch(projectKey, (key) => {
                   v-for="row in section.rows"
                   :key="`${section.key}:${row.ticket.seq}`"
                   class="row"
-                  :draggable="grabWholeRow"
-                  @dragstart="grabWholeRow && (draggingSeq = row.ticket.seq)"
+                  :draggable="grabWholeRow && !overActionCell"
+                  @dragstart="grabWholeRow && !overActionCell && (draggingSeq = row.ticket.seq)"
                   @dragend="endDrag()"
                   :class="{
                     grabbable: grabWholeRow,
@@ -2071,7 +2094,12 @@ watch(projectKey, (key) => {
                        詳細ペインが開き、**一覧が 450px へ縮んでパネルだけ元の位置に
                        取り残される**（実機で判明）。状態セルは状態の操作に使う場所
                        であって、詳細を開く場所ではない -->
-                  <td class="status-col" @click.stop>
+                  <td
+                    class="status-col"
+                    @click.stop
+                    @mouseenter="overActionCell = true"
+                    @mouseleave="overActionCell = false"
+                  >
                     <StatusDropdown
                       :ref="(el) => setStatusRef(row.ticket.seq, el)"
                       dense
@@ -2097,7 +2125,13 @@ watch(projectKey, (key) => {
                        セルに置く」。手順26b）。**中を flex にする**——担当の名前を
                        縮ませ、実行者の 🤖 は縮ませないためで、素の text node の
                        ままだと 🤖 がセルの外へ押し出されて消える（実機で判明） -->
-                  <td v-if="!shrunk" class="assignee-col" @click.stop>
+                  <td
+                    v-if="!shrunk"
+                    class="assignee-col"
+                    @click.stop
+                    @mouseenter="overActionCell = true"
+                    @mouseleave="overActionCell = false"
+                  >
                     <span class="assignee-cell">
                       <!-- **一覧から担当を選べる**（5.4「一覧で担当を選ぶ」。pb-64）。
                            `ticket.assign` を持たないときは押せない表示になるので、
@@ -2412,8 +2446,7 @@ watch(projectKey, (key) => {
   opacity: 0.5;
 }
 
-/* **縮小中は行そのものが掴みしろになる**（5.4「縮小中の掴みしろ」。pb-7）。
-   `⠿` の列を持てない幅なので、掴めることはカーソルだけが伝える。
+/* **行そのものが掴みしろである**（5.4「掴みしろ」。pb-7 → pb-71 で全幅にも広げた）。
    **行クリックで詳細が開く**ことは変わらないので `pointer` を上書きしない
    ——`grab` は「掴める」を足すのであって、「押せない」を意味しない */
 .row.grabbable {
