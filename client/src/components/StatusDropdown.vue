@@ -17,6 +17,11 @@
  * 添えない」。pb-55）——手順18b では確認モーダルを挟んでいたが、状態変更の頻度に
  * 対してダイアログが重く、廃止した。**この部品の役割は変わっていない。**
  *
+ * **5.4 のバックログ一覧でも使う**（pb-63）。**2つ目を作らない**——一覧に要るものは
+ * 5.5 とまったく同じ（開いたときに `GET .../transitions` を引き、`allowed` と `reason` を
+ * 出す）で、別に書くと**同じ判定が2か所に散る**。違うのは行の高さだけなので `dense` を
+ * 足した。
+ *
  * **「全項目が不可」の扱いは残す**（5.5）。0026 で再オープン（`done → in_progress`）を
  * 足すまでは、`simple` ワークフロー（`DbDesign.md` 7.4）で完了したチケットが必ず
  * この状態になっていた。**いまは既定の3テンプレートでは起きない**が、**遷移は
@@ -34,6 +39,14 @@ const props = defineProps<{
   canTransition: boolean
   /** 送信中。二重に送らせない */
   busy: boolean
+  /**
+   * 一覧の行に置くときの密度（5.4。pb-63）。
+   *
+   * **バックログの表は行が詰まっている。** 5.5 のメタ欄と同じ 28px にすると
+   * **全行が 6px 高くなり**、一画面に入る件数が減る。`dense` では 5.4 の
+   * ステータスバッジと同じ `line-height: 22px` に揃える（8.7）。
+   */
+  dense?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -134,7 +147,7 @@ defineExpose({ setItems, setLoading, setError, close })
     ref="trigger"
     type="button"
     class="status-trigger"
-    :class="[current.category, { plain: !canTransition }]"
+    :class="[current.category, { plain: !canTransition, dense }]"
     :disabled="!canTransition || busy"
     :aria-expanded="open"
     aria-haspopup="listbox"
@@ -215,6 +228,13 @@ defineExpose({ setItems, setLoading, setError, close })
 
 .status-trigger.plain {
   cursor: default;
+}
+
+/* 一覧の行に置くとき（5.4。pb-63）。**5.4 のステータスバッジと同じ高さにする**
+   ——表の行がこれ1つで 6px 高くなるのを避ける */
+.status-trigger.dense {
+  height: 22px;
+  padding: 0 var(--pb-space-1);
 }
 
 .status-trigger.todo {

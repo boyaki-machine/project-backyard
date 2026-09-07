@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import EmptyState from '../components/EmptyState.vue'
@@ -8,6 +9,7 @@ import NewTicketModal from '../components/NewTicketModal.vue'
 import type { NewTicketDefaults } from '../components/NewTicketModal.vue'
 import PageHeader from '../components/PageHeader.vue'
 import SplitPane from '../components/SplitPane.vue'
+import StatusDropdown from '../components/StatusDropdown.vue'
 import TicketDetailPane from '../components/TicketDetailPane.vue'
 import { ApiError } from '../api/client'
 import * as sprintsApi from '../api/sprints'
@@ -22,7 +24,6 @@ import {
   priorityOrder,
   statusCategoryLabels,
   statusCategoryOrder,
-  statusMarks,
   ticketTypeIcons,
   ticketTypeLabels,
 } from '../api/tickets'
@@ -33,6 +34,7 @@ import type {
   TicketDetail,
   TicketPriority,
   TicketSort,
+  TicketTransitionOption,
   SortOrder,
 } from '../api/tickets'
 import { formatPlainDate, todayPlainDate } from '../lib/datetime'
@@ -79,6 +81,8 @@ const projectKey = computed(() => {
 
 const canCreate = computed(() => auth.canInProject(projectKey.value, 'ticket.create'))
 const canEdit = computed(() => auth.canInProject(projectKey.value, 'ticket.edit'))
+/** 一覧から状態を変えるのに要る（`ApiDesign.md` 9.6。pb-63） */
+const canTransition = computed(() => auth.canInProject(projectKey.value, 'ticket.transition'))
 
 // ── 詳細ペイン（2.2.1 / 5.5）─────────────────────────────────
 
@@ -1297,6 +1301,70 @@ async function dropOnSection(section: Section, position: 'first' | 'last'): Prom
   await runMove(source, body, null, stagedChange)
 }
 
+// ── 一覧から状態を変える（5.4「一覧で状態を変える」。pb-63）──────
+
+/**
+ * 行ごとの `StatusDropdown`（5.5 の部品をそのまま使う）。
+ *
+ * **開いているのは常に1つだけ**（`StatusDropdown` は外側を押すと閉じる）だが、
+ * **どの行が開いたかは押されるまで分からない**ので、行ごとに参照を持つ。
+ * `v-for` の中では関数 ref を使う——`useTemplateRef` は配列で返り、`seq` から
+ * 引けない。
+ *
+ * **`onUnmounted` で消さなくてよい。** Vue は要素が外れるとき `null` を渡して
+ * 呼び直すので、下の `setStatusRef` が自分で消す。
+ */
+const statusRefs = new Map<number, InstanceType<typeof StatusDropdown>>()
+
+function setStatusRef(seq: number, el: Element | ComponentPublicInstance | null): void {
+  if (el === null) statusRefs.delete(seq)
+  else statusRefs.set(seq, el as InstanceType<typeof StatusDropdown>)
+}
+
+/**
+ * **開いたときに引く**（`ApiDesign.md` 9.7）。一覧の応答には入っていない。
+ *
+ * **行ごとに引く。** 遷移できる先はチケットの現在地と担当で変わるので
+ * （9.6 の検証6）、一覧を取ったときにまとめて引いても使い回せない。
+ */
+async function loadRowTransitions(seq: number): Promise<void> {
+  const dropdown = statusRefs.get(seq)
+  dropdown?.setLoading()
+  try {
+    const res = await ticketsApi.listTransitions(projectKey.value, seq)
+    dropdown?.setItems(res.items)
+  } catch (e) {
+    dropdown?.setError(toApiError(e).message)
+  }
+}
+
+/**
+ * 遷移させる（9.6）。**選んだ時点で送る**——確認は挟まない。
+ *
+ * 5.5 が pb-55 で確認モーダルを廃止しており（「状態変更は頻度が高く、毎回
+ * ダイアログを挟むのは現実的でない」）、**一覧はさらに頻度が高い。**
+ *
+ * **応答をそのまま行へ差し替える。** `onDetailUpdated` と同じ判断で、
+ * 行の中身が変わっただけなら取り直さない（pb-15）。**フィルタから外れる行が
+ * 残ることはある**——`status=todo` で絞っている最中に進行中へ変えた場合で、
+ * これは詳細ペインから変えたときと同じ振る舞いである。
+ *
+ * **結果の一言は出さない。** 変えた行の表示がその場で変わるので、
+ * 操作したことは見えている（6.4「操作結果は操作した場所に出す」）。
+ */
+async function transitionRow(ticket: Ticket, to: TicketTransitionOption): Promise<void> {
+  busy.value = true
+  error.value = null
+  try {
+    const next = await ticketsApi.transitionTicket(projectKey.value, ticket.seq, { to: to.key })
+    onDetailUpdated(next)
+  } catch (e) {
+    error.value = toApiError(e)
+  } finally {
+    busy.value = false
+  }
+}
+
 // ── 新規チケット（5.4.3）───────────────────────────────────
 
 const showNewModal = ref(false)
@@ -1964,13 +2032,25 @@ watch(projectKey, (key) => {
                     </span>
                   </td>
 
-                  <td class="status-col">
-                    <span class="status" :class="row.ticket.status.category">
-                      <span class="status-mark" aria-hidden="true">{{
-                        statusMarks[row.ticket.status.category]
-                      }}</span>
-                      {{ row.ticket.status.name }}
-                    </span>
+                  <!-- **一覧から状態を変えられる**（5.4「一覧で状態を変える」。pb-63）。
+                       5.5 と同じ `StatusDropdown` を `dense` で置く——遷移できない先も
+                       理由つきで出る規則（9.7）ごと共有される。**`ticket.transition` を
+                       持たないときは部品側が押せないボタンにする**ので、出し分けを
+                       ここに書かない -->
+                  <!-- **`@click.stop` が要る。** `<tr>` の `openRow` が同時に走ると
+                       詳細ペインが開き、**一覧が 450px へ縮んでパネルだけ元の位置に
+                       取り残される**（実機で判明）。状態セルは状態の操作に使う場所
+                       であって、詳細を開く場所ではない -->
+                  <td class="status-col" @click.stop>
+                    <StatusDropdown
+                      :ref="(el) => setStatusRef(row.ticket.seq, el)"
+                      dense
+                      :current="row.ticket.status"
+                      :can-transition="canTransition"
+                      :busy="busy"
+                      @open="loadRowTransitions(row.ticket.seq)"
+                      @select="transitionRow(row.ticket, $event)"
+                    />
                   </td>
 
                   <!-- 優先度は色を使わず記号のみ。中は無表示（8.7） -->
@@ -2551,39 +2631,9 @@ watch(projectKey, (key) => {
   line-height: 18px;
 }
 
-/* ステータスは輝度差＋記号で表す（8.7）。進行中ほど濃く、終わったものほど淡い */
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 var(--pb-space-2);
-  border-radius: var(--pb-radius);
-  font-size: 13px;
-  line-height: 22px;
-}
-
-.status.todo {
-  border: 1px solid var(--pb-border);
-  color: var(--pb-text-muted);
-}
-
-.status.in_progress {
-  background: var(--pb-elevated);
-  color: var(--pb-text);
-}
-
-.status.in_progress .status-mark {
-  color: var(--pb-accent);
-}
-
-.status.review {
-  background: var(--pb-hover);
-  color: var(--pb-text);
-}
-
-.status.done {
-  color: var(--pb-text-muted);
-}
+/* ステータスのバッジは `StatusDropdown` が持つ（5.4「一覧で状態を変える」。pb-63）。
+   **輝度差＋記号で表す規則（8.7）ごとあちらへ移した**——同じ見た目を2か所に
+   置くと、片方だけ直る。ここに残っていた `.status` 系は使い手を失ったので消した */
 
 .priority,
 .actor-mark {
