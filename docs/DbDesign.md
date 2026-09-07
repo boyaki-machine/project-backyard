@@ -1345,7 +1345,9 @@ INSERT INTO workflow_transition
   ('01JZZZZZZZZZZZZZZZZZZZZZT2','01JZZZZZZZZZZZZZZZZZZZZZW1',
    'in_progress','done','ticket.close','["user"]'::jsonb),
   ('01JZZZZZZZZZZZZZZZZZZZZZT3','01JZZZZZZZZZZZZZZZZZZZZZW1',
-   'in_progress','todo','ticket.transition','["user","agent"]'::jsonb)
+   'in_progress','todo','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTG','01JZZZZZZZZZZZZZZZZZZZZZW1',
+   'done','in_progress','ticket.close','["user"]'::jsonb)
 ON CONFLICT DO NOTHING;
 ```
 
@@ -1382,7 +1384,9 @@ INSERT INTO workflow_transition
   ('01JZZZZZZZZZZZZZZZZZZZZZT7','01JZZZZZZZZZZZZZZZZZZZZZW2',
    'review','done','ticket.close','["user"]'::jsonb),
   ('01JZZZZZZZZZZZZZZZZZZZZZT8','01JZZZZZZZZZZZZZZZZZZZZZW2',
-   'in_progress','todo','ticket.transition','["user","agent"]'::jsonb)
+   'in_progress','todo','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTH','01JZZZZZZZZZZZZZZZZZZZZZW2',
+   'done','in_progress','ticket.close','["user"]'::jsonb)
 ON CONFLICT DO NOTHING;
 
 -- with_approval：未着手 / 進行中 / レビュー中 / 承認待ち / 完了
@@ -1421,7 +1425,9 @@ INSERT INTO workflow_transition
   ('01JZZZZZZZZZZZZZZZZZZZZZTE','01JZZZZZZZZZZZZZZZZZZZZZW3',
    'approval','done','ticket.close','["user"]'::jsonb),
   ('01JZZZZZZZZZZZZZZZZZZZZZTF','01JZZZZZZZZZZZZZZZZZZZZZW3',
-   'in_progress','todo','ticket.transition','["user","agent"]'::jsonb)
+   'in_progress','todo','ticket.transition','["user","agent"]'::jsonb),
+  ('01JZZZZZZZZZZZZZZZZZZZZZTJ','01JZZZZZZZZZZZZZZZZZZZZZW3',
+   'done','in_progress','ticket.close','["user"]'::jsonb)
 ON CONFLICT DO NOTHING;
 ```
 
@@ -1430,15 +1436,25 @@ ON CONFLICT DO NOTHING;
 | | simple | with_review | with_approval |
 |---|---|---|---|
 | ステータス数 | 3 | 4 | 5 |
-| 遷移数 | 3 | 5 | 7 |
+| 遷移数 | 4 | 6 | 8 |
 | エージェントが到達できる最終地点 | `in_progress` | **`review`** | **`review`** |
-| 人間限定の遷移 | `→done` | `→done` | `→approval`、`→done`、`approval→in_progress` |
+| 人間限定の遷移 | `→done`、`done→in_progress` | `→done`、`done→in_progress` | `→approval`、`→done`、`approval→in_progress`、`done→in_progress` |
 
 **`approval`（承認待ち）の `category` は `review` とする。** `workflow_status.category` の `CHECK` は `todo / in_progress / review / done` の4値であり（6.5）、承認待ちは「完了していないが作業も止まっている」状態なので `review` に含める。**カテゴリはボードの列やバーンダウンの集計単位であり、承認待ちをレビュー中と同じ列に置くのが実態に合う。**
 
 **`with_review` は `in_progress → review` をエージェントに許す。** これがテンプレートを分ける最大の意味で、**エージェントが作業を終えて人間のレビューに載せるところまでを自律的に行える**。一方 `with_approval` では `review → approval` を人間限定にしており、承認ゲートの手前へエージェントが自分で進むことを禁じている（`Requirements.md` 10.10.4）。
 
 **差し戻し遷移（`review → in_progress`、`approval → in_progress`）を必ず持たせる。** これが無いと、レビューで問題が見つかったチケットを前進させるしか手がなくなり、承認ゲートが実質的に骨抜きになる。
+
+**再オープン（`done → in_progress`）も3つとも持たせる**（0026 で追加。pb-69）。0010 では `done` から出る遷移を1つも置いていなかった——完了は終端であり、そこから戻る用途を想定していなかったためである。**運用で逆だと分かった。** 完了と判定したチケットを確認したら直っていなかった、誤操作で完了にした、という場面が実際に起きる（利用者の報告、2026-09-07）。行が無ければ `ApiDesign.md` 9.6 は検証2 で 409 に倒れるので、**戻す手段が画面にもAPIにも無い**状態だった。
+
+**再オープンだけ `required_permission` が `ticket.close` である。** 差し戻し遷移が `ticket.transition` なのは、あれが完了していないものを前段へ戻す操作で、**完了判定そのものは動いていない**からである。再オープンは完了判定の取り消しなので、**閉じられる人だけが開け直せる**（`ticket.close` は 7.3 で project_admin にだけ与えてある）。`allowed_actor_kinds` も `["user"]` にしてエージェントには通させない——「エージェントは自分でチケットをクローズできない」の裏返しである。**`closed_at` は遷移の副作用として NULL へ戻る**（`ApiDesign.md` 9.6 の表）ので、API 側に足すものは無い。
+
+**ただし、いまの構成では `ticket.close` で誰も締め出されない**——`Design.md` 付録A の論点②に既に挙がっている事実である。実効権限はシステムロールとプロジェクトロールの**和**で（`Design.md` 6.4.1）、`operator` も `administrator` も 7.3 で `ticket.close` を持つ。差が出るのは scope を絞ったトークンだけである（`ApiDesign.md` 4.4.2）。**これは再オープンに限らずクローズ（`in_progress → done`）にも等しく当てはまる既存の論点なので、ここでは動かさない。** 再オープンをクローズと同じ権限に揃えたこと自体は、`operator` の持ち物を減らした日に自動的に効く。
+
+**`done → todo` は置かない。** 完了から未着手まで一息に戻す場面が挙がっていない。必要になってから足す。
+
+**0026 は既存プロジェクトのワークフローにも同じ行を入れる。** プロジェクトのワークフローはテンプレートの複製であり（6.5）、複製が走るのは作成時だけなので、テンプレートを直しても既存には波及しない。**0024（文書テンプレートの5件目）は「波及しない」と決めたが、ここでは同じ判断をしない**——あちらは足りない1枚をプロジェクト管理者が画面から書けるのに対し、**ワークフローの遷移を画面から足す経路が無い。** 入れなければ既存プロジェクトは永久に完了から戻せない。複製ぶんの ID は、ワークフローの ULID の先頭24文字に `R1` を継いで作る（利用者の判断、2026-09-07）。「ID はアプリ側で生成する」（4.2）からの局所的な逸脱であり、**決定的なので再実行しても冪等**で、ULID の時刻部分が残るので `C` ロケールの並びも崩れない。**次に同じ形で足すときは `R2` を使う。**
 
 テンプレートIDは固定ULIDとし、マイグレーションの再実行で重複しないようにする。採番は `…W<n>`（workflow）、`…S<n>`（status）、`…T<n>`（transition）の連番で、`n` は Crockford Base32（`0-9A-Z` から `I L O U` を除く）1文字。**テンプレートを追加する場合も既存のIDを再利用しない。**
 

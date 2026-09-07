@@ -457,8 +457,8 @@ func TestTicketDetailIntegration(t *testing.T) {
 			t.Errorf("closed_at = null, want 値あり（category=done）")
 		}
 
-		// **done から戻すと NULL へ帰る**（9.6 の表）。done → in_progress の
-		// 定義は with_review に無いので、いったん確かめるのは「立った」ことまで。
+		// **ここで確かめるのは「立った」ことまで。** 戻して NULL へ帰るところは、
+		// 次の副試験が done → in_progress（0026 で足した再オープン）で測る。
 		closedAt := scalarString(t, pool,
 			`SELECT coalesce(closed_at::text, '') FROM ticket WHERE id = $1`, ticketID)
 		if closedAt == "" {
@@ -477,40 +477,141 @@ func TestTicketDetailIntegration(t *testing.T) {
 		}
 	})
 
-	// **closed_at が NULL へ帰ることを測る**（9.6 の表の下半分）。
+	// **0026 が3テンプレートすべてに再オープンを入れたこと**を、複製元の行で測る
+	// （DbDesign.md 7.4。pb-69）。**プロジェクトのワークフローはテンプレートの複製**
+	// なので、ここが欠けると新しく作るプロジェクトすべてで完了から戻せなくなる。
+	t.Run("再オープンはテンプレート3件すべてに入っている", func(t *testing.T) {
+		got := scalarInt(t, pool, `
+			SELECT count(*) FROM workflow_transition t
+			  JOIN workflow w ON w.id = t.workflow_id
+			 WHERE w.is_template
+			   AND t.from_status_key = 'done' AND t.to_status_key = 'in_progress'
+			   AND t.required_permission = 'ticket.close'
+			   AND t.allowed_actor_kinds = '["user"]'::jsonb`)
+		if got != 3 {
+			t.Errorf("テンプレートの再オープン = %d件, want 3（simple / with_review / with_approval）", got)
+		}
+	})
+
+	// **完了から進行中へ戻せる**（DbDesign.md 7.4「再オープン」。0026。pb-69）。
 	//
-	// **Phase 1 のワークフローテンプレートは done から出る遷移を持たない**
-	// （DbDesign.md 7.4。simple / with_review / with_approval のいずれも）。
-	// そのため「完了 → 進行中」を API から作れない。**スキップせず、1段下げて
-	// 測る**（LEARNINGS #37）——closed_at が入った状態を直接作り、そこから
-	// done 以外へ遷移させれば、規則そのものは確かめられる。
-	t.Run("done以外への遷移でclosed_atがNULLへ帰る", func(t *testing.T) {
-		created := createTicketIT(t, r, session, base, `{"type":"task","title":"closed_atの解除"}`)
+	// **9.6 の表の下半分——closed_at が NULL へ帰る——を、API から実際に作った完了
+	// 状態に対して測る。** 0026 の前はテンプレートが done から出る遷移を1つも持たず、
+	// closed_at を UPDATE で直接立ててから todo → in_progress を撃つ「1段下げた」
+	// 測り方しかできなかった（LEARNINGS #37）。**いまは本物の経路がある。**
+	t.Run("完了から進行中へ戻すとclosed_atがNULLへ帰る", func(t *testing.T) {
+		created := createTicketIT(t, r, session, base, `{"type":"task","title":"再オープン"}`)
 		seq := int(created["seq"].(float64))
 		ticketID := created["id"].(string)
+		path := fmt.Sprintf("%s/tickets/%d/transition", base, seq)
 
-		// 完了済みの状態を作る（dev seed が SetTicketClosedAt でやっているのと同じ）。
-		if _, err := pool.Exec(ctx,
-			`UPDATE ticket SET closed_at = now() WHERE id = $1`, ticketID); err != nil {
-			t.Fatalf("closed_at を立てられない: %v", err)
+		// with_review の順路で完了まで進める。
+		for _, to := range []string{"in_progress", "review", "done"} {
+			out := postWithCookie(r, path, session, fmt.Sprintf(`{"to":%q}`, to))
+			if out.Code != http.StatusOK {
+				t.Fatalf("%s への遷移の status = %d（body=%s）", to, out.Code, out.Body.String())
+			}
 		}
 		if scalarString(t, pool,
 			`SELECT coalesce(closed_at::text,'') FROM ticket WHERE id = $1`, ticketID) == "" {
 			t.Fatalf("前提が作れていない（closed_at が NULL のまま）")
 		}
 
-		// todo → in_progress（category は in_progress なので NULL へ戻る）。
-		out := postWithCookie(r, fmt.Sprintf("%s/tickets/%d/transition", base, seq),
-			session, `{"to":"in_progress"}`)
+		// **done → in_progress。** 0026 が入れた行が無ければ検証2 で 409 になる。
+		out := postWithCookie(r, path, session, `{"to":"in_progress"}`)
 		if out.Code != http.StatusOK {
-			t.Fatalf("遷移の status = %d（body=%s）", out.Code, out.Body.String())
+			t.Fatalf("再オープンの status = %d, want 200（body=%s）", out.Code, out.Body.String())
 		}
-		if got := viewOf(t, out)["closed_at"]; got != nil {
-			t.Errorf("応答の closed_at = %v, want null", got)
+		got := viewOf(t, out)
+		if got["status"].(map[string]any)["key"] != "in_progress" {
+			t.Errorf("status = %v, want in_progress", got["status"])
+		}
+		if got["closed_at"] != nil {
+			t.Errorf("応答の closed_at = %v, want null", got["closed_at"])
 		}
 		if left := scalarString(t, pool,
 			`SELECT coalesce(closed_at::text,'') FROM ticket WHERE id = $1`, ticketID); left != "" {
 			t.Errorf("DB の closed_at = %q, want NULL", left)
+		}
+	})
+
+	// **再オープンに要るのは ticket.transition ではなく ticket.close である**
+	// （DbDesign.md 7.4。pb-69）。
+	//
+	// **プロジェクトロールでは測れない。** 実効権限はシステムロールとプロジェクト
+	// ロールの和であり（auth.EffectivePermissions）、システムロールは operator と
+	// administrator の2つしかなく、**どちらも 7.3 で ticket.close を持つ**。つまり
+	// いまの PB に「ticket.close を持たない人」は存在しない（Design.md 付録A の論点②）。
+	//
+	// **scope を絞ったトークンが唯一の観測点である**（ApiDesign.md 4.4.2。scope は
+	// 実効権限を絞り込む）。ticket.transition だけを載せたトークンは
+	// **todo → in_progress は通るのに、完了 → 進行中では 403 になる**——これが
+	// 「閉じられる人だけが開け直せる」の実測であり、差し戻し遷移と扱いを分けた
+	// ことの証跡でもある。
+	t.Run("ticket.closeを持たないトークンは再オープンできない", func(t *testing.T) {
+		rec := bodyWithCookie(r, http.MethodPost, "/api/v1/me/tokens", session,
+			`{"name":"pb-69 再オープンの実測","expires_in_days":30,`+
+				`"scopes":["project.view","ticket.view","ticket.transition"]}`, "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("トークン発行の status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		var issued tokenJSON
+		decodeJSONBody(t, rec, &issued)
+		t.Cleanup(func() {
+			del := bodyWithCookie(r, http.MethodDelete,
+				"/api/v1/me/tokens/"+issued.ID, session, "", "")
+			if del.Code != http.StatusNoContent {
+				t.Errorf("トークンの後始末に失敗した: status = %d", del.Code)
+			}
+		})
+
+		created := createTicketIT(t, r, session, base, `{"type":"task","title":"再オープンの権限"}`)
+		seq := int(created["seq"].(float64))
+		path := fmt.Sprintf("%s/tickets/%d/transition", base, seq)
+
+		// **同じトークンで todo → in_progress は通る。** 落ちているのが
+		// ticket.close であって、トークンそのものではないことの対照である。
+		if out := bearerPost(r, path, issued.Token, `{"to":"in_progress"}`); out.Code != http.StatusOK {
+			t.Fatalf("todo → in_progress の status = %d, want 200（body=%s）",
+				out.Code, out.Body.String())
+		}
+
+		// 完了まではセッション（ticket.close を持つ）で進める。
+		for _, to := range []string{"review", "done"} {
+			if out := postWithCookie(r, path, session, fmt.Sprintf(`{"to":%q}`, to)); out.Code != http.StatusOK {
+				t.Fatalf("%s への遷移の status = %d（body=%s）", to, out.Code, out.Body.String())
+			}
+		}
+
+		// **403 であって 409 ではない。** 順路はあるが、このトークンでは通れない（9.6）。
+		out := bearerPost(r, path, issued.Token, `{"to":"in_progress"}`)
+		if out.Code != http.StatusForbidden {
+			t.Fatalf("再オープンの status = %d, want 403（body=%s）", out.Code, out.Body.String())
+		}
+
+		// **9.7 は同じ判定を通す**ので、選択肢では allowed=false と理由が並ぶ。
+		// 画面が出した選択肢が押した瞬間に断られることがない、という保証である。
+		list := bearerGet(r, fmt.Sprintf("%s/tickets/%d/transitions", base, seq), issued.Token)
+		if list.Code != http.StatusOK {
+			t.Fatalf("選択肢の status = %d（body=%s）", list.Code, list.Body.String())
+		}
+		items, _ := viewOf(t, list)["items"].([]any)
+		found := false
+		for _, it := range items {
+			m, _ := it.(map[string]any)
+			if m["key"] != "in_progress" {
+				continue
+			}
+			found = true
+			if m["allowed"] != false {
+				t.Errorf("in_progress = %v, want allowed=false", m)
+			}
+			if reason, _ := m["reason"].(string); !strings.Contains(reason, "ticket.close") {
+				t.Errorf("reason = %q, want ticket.close を含む", reason)
+			}
+		}
+		if !found {
+			t.Errorf("選択肢に in_progress が無い: %v", items)
 		}
 	})
 
