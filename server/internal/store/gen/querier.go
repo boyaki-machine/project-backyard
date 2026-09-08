@@ -553,6 +553,20 @@ type Querier interface {
 	// 呼び出し側は pgx.ErrNoRows を「エージェントではない」として扱う。
 	//
 	GetAgentRuntimeInfo(ctx context.Context, actorID string) (GetAgentRuntimeInfoRow, error)
+	// 表示上のトップレベルの祖先（自分を含む）を返す（ApiDesign.md 9.6
+	// 「着手したら、オンステージへ上げる」。pb-5）。
+	//
+	// **段に置けるのは表示上のトップレベルだけである**（9.4.1）——親を持たないか、
+	// 親がエピックのもの。着手したのが子タスクでも、動かすべきなのは**その子を
+	// 含む部分木の根**であり、配下は親と一緒に運ばれる。
+	//
+	// 上へたどって「親が無いか、親がエピック」を最初に満たした行が答えになる。
+	// **その上にあるのはエピックか、何も無いかのどちらか**で、どちらも段には
+	// 出ないためである。
+	//
+	// **深さに上限を置く。** parent_id の循環は 9.5.2 の parent_cycle が書き込み時に
+	// 防いでいるが、万一の循環で要求が返らなくなるのを避ける（cascade と同じ 32）。
+	GetDisplayRootForStaging(ctx context.Context, ticketID string) (GetDisplayRootForStagingRow, error)
 	// GetDocument は本文1件（10.3）。created_by / updated_by は LEFT JOIN である。
 	//
 	// **どちらも null になりうる**（ON DELETE SET NULL。8.1.1）。9.8 の author が

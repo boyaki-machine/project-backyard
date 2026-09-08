@@ -1175,6 +1175,12 @@ type ticketFakeState struct {
 	projectTagCount int64
 	isMember        bool
 
+	// 9.6 の「着手したらオンステージへ上げる」（pb-5）。
+	// 表示上のトップレベルの祖先を id から引く。
+	displayRoot map[string]gen.GetDisplayRootForStagingRow
+	// SetTicketStagedAt に渡ったもの（誰を段へ上げたか）
+	stagedSet []gen.SetTicketStagedAtParams
+
 	// 並び順は sortRowBySeq から計算する（固定値を持たない）。
 	sortRowBySeq map[int32]gen.GetTicketSortRowRow
 	idsInOrder   []string
@@ -1388,6 +1394,26 @@ func (q *fakeQuerier) GetParentForCascade(
 	row, ok := q.ticket.parentForCascade[childID]
 	if !ok {
 		return gen.GetParentForCascadeRow{}, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+func (q *fakeQuerier) SetTicketStagedAt(_ context.Context, arg gen.SetTicketStagedAtParams) error {
+	q.opLog = append(q.opLog, "SetTicketStagedAt")
+	q.ticket.stagedSet = append(q.ticket.stagedSet, arg)
+	return nil
+}
+
+// GetDisplayRootForStaging は 9.6 の「着手したらオンステージへ上げる」が使う
+// （pb-5）。**未設定なら pgx.ErrNoRows を返す**——祖先が見つからない場合と
+// 同じ扱いで、連動は静かに何もしない。
+func (q *fakeQuerier) GetDisplayRootForStaging(
+	_ context.Context, ticketID string,
+) (gen.GetDisplayRootForStagingRow, error) {
+	q.opLog = append(q.opLog, "GetDisplayRootForStaging")
+	row, ok := q.ticket.displayRoot[ticketID]
+	if !ok {
+		return gen.GetDisplayRootForStagingRow{}, pgx.ErrNoRows
 	}
 	return row, nil
 }

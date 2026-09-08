@@ -77,9 +77,40 @@ func TestSprintLifecycleIntegration(t *testing.T) {
 		fmt.Sprintf(`{"type":"task","title":"孫の仕事","parent_seq":%d}`, seqOf(child)))
 	backlogOnly := createTicketIT(t, r, session, base, `{"type":"story","title":"まだやらない"}`)
 
-	// **エピックは段に置けない**（9.4.1）ので、上げるのは親だけである。
-	// 配下（子・孫）は親と一緒に運ばれる。
-	stageTicket(t, r, session, base, seqOf(parent))
+	// ── ⓪ 着手すると、表示上のトップレベルの祖先が段へ上がる（9.6。pb-5）──
+	//
+	// **孫に着手する。** 上がるのは孫でも子でもなく、**部分木の根である親**
+	// ——段に置けるのは表示上のトップレベルだけで、配下は親と一緒に運ばれる。
+	if got := stagedAtOf(t, r, session, base, seqOf(parent)); got != nil {
+		t.Fatalf("着手する前から親がオンステージに居る: %v（始点が意味を持たない）", got)
+	}
+	rec = postWithCookie(r, fmt.Sprintf("%s/tickets/%d/transition", base, seqOf(grandchild)),
+		session, `{"to":"in_progress"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("孫の着手の status = %d（body=%s）", rec.Code, rec.Body.String())
+	}
+	if stagedAtOf(t, r, session, base, seqOf(parent)) == nil {
+		t.Error("孫に着手したのに、部分木の根（親）がオンステージへ上がっていない")
+	}
+	// **上がるのは根だけである。** 孫と子は staged_at が NULL のまま、
+	// 親と一緒にオンステージ段へ出る（GuiDesign.md 5.4）。
+	for _, tk := range []map[string]any{child, grandchild} {
+		if got := stagedAtOf(t, r, session, base, seqOf(tk)); got != nil {
+			t.Errorf("seq=%d の staged_at = %v, want null（子は親と一緒に運ばれる）",
+				seqOf(tk), got)
+		}
+	}
+
+	// **未着手へ戻しても降りない**（9.6）。「未着手だがオンステージ」は
+	// 段が表せなければならない状態である（DbDesign.md 6.6）。
+	rec = postWithCookie(r, fmt.Sprintf("%s/tickets/%d/transition", base, seqOf(grandchild)),
+		session, `{"to":"todo"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("孫を未着手へ戻す status = %d（body=%s）", rec.Code, rec.Body.String())
+	}
+	if stagedAtOf(t, r, session, base, seqOf(parent)) == nil {
+		t.Error("未着手へ戻したらオンステージから降りた（降ろすのは手か、スプリントの終了だけ）")
+	}
 
 	// ── ① 開始：オンステージの部分木が対象になる ──────────────
 	rec = postWithCookie(r, base+"/sprints/start", session,
@@ -190,17 +221,6 @@ func TestSprintLifecycleIntegration(t *testing.T) {
 
 func seqOf(ticket map[string]any) int {
 	return int(ticket["seq"].(float64))
-}
-
-// stageTicket は 9.4.1 の staged で行をオンステージへ上げる。
-func stageTicket(t *testing.T, r http.Handler, session, base string, seq int) {
-	t.Helper()
-	rec := postWithCookie(r, fmt.Sprintf("%s/tickets/%d/move", base, seq), session,
-		`{"staged":true,"position":"first"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("seq=%d をオンステージへ上げられない: status = %d（body=%s）",
-			seq, rec.Code, rec.Body.String())
-	}
 }
 
 // closeTicket は 9.6 の遷移で完了にする。**closed_at は遷移の副作用でしか動かない**

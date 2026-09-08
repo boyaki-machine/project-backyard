@@ -1513,3 +1513,94 @@ func TestListTransitionsNotFound(t *testing.T) {
 		t.Fatalf("status = %d, want 404 (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// ── 着手したらオンステージへ上げる（9.6。pb-5）────────────────
+
+// stagingFake は seq=31 が未着手で、表示上のトップレベルの祖先を持つ状態を作る。
+//
+// **祖先は自分ではない。** 段に置けるのは表示上のトップレベルだけで（9.4.1）、
+// 配下は親と一緒に運ばれる——子タスクに着手したとき動くのは部分木の根である。
+func stagingFake(t *testing.T, root gen.GetDisplayRootForStagingRow) *fakeQuerier {
+	t.Helper()
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	row := q.ticket.bySeq[31]
+	row.StatusKey = "todo"
+	q.ticket.bySeq[31] = row
+	q.ticket.displayRoot = map[string]gen.GetDisplayRootForStagingRow{testTicketID: root}
+	return q
+}
+
+// 未着手を出たら、表示上のトップレベルの祖先が段へ上がる。
+func TestTransitionFromTodoStagesDisplayRoot(t *testing.T) {
+	q := stagingFake(t, gen.GetDisplayRootForStagingRow{
+		ID: testTicketID2, Type: "story", Staged: false,
+	})
+
+	rec := callTransition(q, `{"to":"in_progress"}`, "ticket.transition")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.stagedSet) != 1 {
+		t.Fatalf("SetTicketStagedAt = %d回, want 1: %+v", len(q.ticket.stagedSet), q.ticket.stagedSet)
+	}
+	// **上げるのは自分ではなく祖先である。**
+	if got := q.ticket.stagedSet[0].ID; got != testTicketID2 {
+		t.Errorf("段へ上げた相手 = %q, want %q（表示上のトップレベルの祖先）", got, testTicketID2)
+	}
+	if !q.ticket.stagedSet[0].StagedAt.Valid {
+		t.Error("staged_at に値が入っていない（NULL のままではバックログ段に残る）")
+	}
+	// **sort_key を動かさない**（9.4。二段は順序キーを1本共有する）。
+	if len(q.ticket.setSortKey) != 0 {
+		t.Errorf("sort_key を動かしている: %+v（着手のたびに消化順が壊れる）", q.ticket.setSortKey)
+	}
+}
+
+// 既にオンステージなら何もしない（二重に上げない）。
+func TestTransitionDoesNotRestageWhenAlreadyStaged(t *testing.T) {
+	q := stagingFake(t, gen.GetDisplayRootForStagingRow{
+		ID: testTicketID2, Type: "story", Staged: true,
+	})
+
+	if rec := callTransition(q, `{"to":"in_progress"}`, "ticket.transition"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.stagedSet) != 0 {
+		t.Errorf("既にオンステージなのに上げ直している: %+v", q.ticket.stagedSet)
+	}
+}
+
+// **エピックは段に置けない**（9.4.1）。親を持たないエピックを着手させても上げない。
+func TestTransitionDoesNotStageEpic(t *testing.T) {
+	q := stagingFake(t, gen.GetDisplayRootForStagingRow{
+		ID: testTicketID2, Type: "epic", Staged: false,
+	})
+
+	if rec := callTransition(q, `{"to":"in_progress"}`, "ticket.transition"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.stagedSet) != 0 {
+		t.Errorf("エピックを段へ上げている: %+v（どちらの段にも行として出ない）", q.ticket.stagedSet)
+	}
+}
+
+// **未着手カテゴリの中の遷移では上げない。** 「未着手だがオンステージ」を
+// 手で作れることは変わらず、着手していないものを勝手に仕掛りへ混ぜない。
+func TestTransitionWithinTodoDoesNotStage(t *testing.T) {
+	q := stagingFake(t, gen.GetDisplayRootForStagingRow{
+		ID: testTicketID2, Type: "story", Staged: false,
+	})
+	// todo → todo は順路が無いので、逆に「進行中から未着手へ戻す」を測る。
+	row := q.ticket.bySeq[31]
+	row.StatusKey = "in_progress"
+	q.ticket.bySeq[31] = row
+
+	if rec := callTransition(q, `{"to":"todo"}`, "ticket.transition"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	// **逆向きの連動は持たない**——降ろしもしないし、上げもしない。
+	if len(q.ticket.stagedSet) != 0 {
+		t.Errorf("未着手へ戻したのに段を触っている: %+v", q.ticket.stagedSet)
+	}
+}

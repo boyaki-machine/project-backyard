@@ -673,3 +673,33 @@ SELECT ag.owner_actor_id
   FROM agent ag
   JOIN actor a ON a.id = ag.actor_id
  WHERE ag.actor_id = @actor_id AND a.kind = 'agent';
+
+-- 表示上のトップレベルの祖先（自分を含む）を返す（ApiDesign.md 9.6
+-- 「着手したら、オンステージへ上げる」。pb-5）。
+--
+-- **段に置けるのは表示上のトップレベルだけである**（9.4.1）——親を持たないか、
+-- 親がエピックのもの。着手したのが子タスクでも、動かすべきなのは**その子を
+-- 含む部分木の根**であり、配下は親と一緒に運ばれる。
+--
+-- 上へたどって「親が無いか、親がエピック」を最初に満たした行が答えになる。
+-- **その上にあるのはエピックか、何も無いかのどちらか**で、どちらも段には
+-- 出ないためである。
+--
+-- **深さに上限を置く。** parent_id の循環は 9.5.2 の parent_cycle が書き込み時に
+-- 防いでいるが、万一の循環で要求が返らなくなるのを避ける（cascade と同じ 32）。
+-- name: GetDisplayRootForStaging :one
+WITH RECURSIVE up AS (
+  SELECT t.id, t.parent_id, t.type, t.staged_at, 0 AS depth
+    FROM ticket t
+   WHERE t.id = @ticket_id
+  UNION ALL
+  SELECT p.id, p.parent_id, p.type, p.staged_at, up.depth + 1
+    FROM ticket p JOIN up ON p.id = up.parent_id
+   WHERE up.depth < 32
+)
+SELECT u.id, u.type, (u.staged_at IS NOT NULL)::boolean AS staged
+  FROM up u
+  LEFT JOIN ticket pt ON pt.id = u.parent_id
+ WHERE u.parent_id IS NULL OR pt.type = 'epic'
+ ORDER BY u.depth
+ LIMIT 1;
