@@ -1193,6 +1193,48 @@ Phase 2（`Design.md` 11章 手順24・25）であり、Phase 1 の書き手は
 **`/me/tokens` で発行した API トークンを持つクライアント**である（`ApiDesign.md` 4.4）。
 画面が持つのは**表示と削除**だけで、誤って積まれた行を人が始末できるようにする
 （`GuiDesign.md` 5.5）。`doc` は Phase 1 から人が画面で追加・編集できる。
+
+### 6.12.1 権限（0027。pb-68）
+
+```sql
+INSERT INTO permission (key, category, description, sort_order) VALUES
+  ('ticket.reference.edit', 'ticket', 'チケットの外部参照の編集', 27)
+ON CONFLICT (key) DO UPDATE
+  SET category = EXCLUDED.category,
+      description = EXCLUDED.description,
+      sort_order = EXCLUDED.sort_order;
+
+-- administrator は 7.3 の「全権限」SELECT で自動的に付く（再実行する）
+INSERT INTO role_permission (role_key, permission_key)
+SELECT 'administrator', key FROM permission
+ON CONFLICT DO NOTHING;
+
+-- ticket.edit を持つロールへそのまま配る（退行を出さないため。下記）
+INSERT INTO role_permission (role_key, permission_key)
+SELECT role_key, 'ticket.reference.edit' FROM role_permission
+ WHERE permission_key = 'ticket.edit'
+ON CONFLICT DO NOTHING;
+```
+
+**外部参照の更新系（`POST` / `PATCH` / `DELETE`）を `ticket.edit` から切り出す**（`ApiDesign.md` 9.10.2。利用者の判断、2026-09-08）。読みは `ticket.view` のままである。
+
+| ロール | `ticket.edit` | `ticket.reference.edit` |
+|---|---|---|
+| `administrator` | ✓ | ✓ |
+| `project_admin` | ✓ | ✓ |
+| `operator` | ✓ | ✓ |
+| `project_member` | ✓ | ✓ |
+| `project_viewer` | — | — |
+
+**分けた理由は、エージェントに開けたい範囲がここで初めて `ticket.edit` より狭くなったからである。** 6.12 は「`kind='code'` の書き手は**エージェント**」「作業の経過として追記されて積み上がる」と定めているのに、**エージェントのトークンに載せられる権限の許可リスト**（`ApiDesign.md` 4.5.3）は `ticket.edit` を含まない。**設計文書が「エージェントが書く」と定めた行を、エージェントが書けない**状態だった。
+
+**許可リストへ `ticket.edit` を足す案は棄却した。** `ticket.edit` は外部参照だけでなく `PATCH /tickets/:seq`（本文・担当・期日の書き換え）・`move`（並べ替え）・DoD（9.9）・チケット間リンク（9.10.1）も開ける。**「作業の跡を積む」ために「チケットの中身を書き換える」威力まで渡すことになる。** しかも一度許可リストに入れた権限は、**発行済みのトークンがある分だけ後から狭めにくい**——`access_token.scopes` は発行時に固定される jsonb 列である（6.2）。
+
+**`ticket.edit` を持つロールへ機械的に配るのは、退行を出さないためである。** いま画面から `doc` 参照を編集できている人（`GuiDesign.md` 5.5）が編集できなくなってはならない。**`SELECT ... FROM role_permission WHERE permission_key = 'ticket.edit'` と書くことで、0010 以降にロールが増えていても取りこぼさない**——キーを並べて書くと、増えたロールを書き漏らしたときに黙って権限が落ちる。
+
+**この権限は、エージェント用トークンの既定スコープに入る**（`Design.md` 6.5。利用者の判断、2026-09-08）。`doc.edit` のように発行時に選ぶ形は採らない——**作業の跡を残すのは実装エージェントの通常の仕事**であり、既定から外すと「コミットを記録できないエージェント」が既定になる。
+
+**既に発行されているトークンには入らない。** `access_token.scopes` は発行時に固定されるので、この権限を使うには**トークンを発行し直す**必要がある（`ApiDesign.md` 4.5.3）。
 ---
 
 # 7. 初期データ（0010）
@@ -1251,8 +1293,9 @@ ON CONFLICT (key) DO UPDATE
 |---|---|---|
 | 0017（Phase 2） | `doc.view` / `doc.edit` を新設 | 8.1.4 |
 | 0019（Phase 2） | **キーは足さず、`agent.run` の割り当てを広げる** | 8.2.6 |
+| 0027（pb-68） | `ticket.reference.edit` を新設 | **6.12.1** |
 
-**`Design.md` 付録A の「`permission` カタログの粒度は28件で確定」は、0010 時点の件数である。** 0017 適用後は30件になる。
+**`Design.md` 付録A の「`permission` カタログの粒度は28件で確定」は、0010 時点の件数である。** 0017 適用後は30件、0027 適用後は31件になる。
 
 ## 7.3 ロールと権限の割り当て
 

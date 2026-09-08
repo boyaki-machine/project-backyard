@@ -745,15 +745,20 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 | 項目 | 規則 |
 |---|---|
 | `expires_in_days` | **必須**。1〜365 の整数。無期限は許さない（`Design.md` 6.5「有効期限必須」） |
-| `scopes` | 省略可。**省略すると `Design.md` 6.5 の既定8件**。渡すときは**許可リストの中だけ**（下記）。カタログに無い値・許可リスト外の値は `422` |
+| `scopes` | 省略可。**省略すると `Design.md` 6.5 の既定9件**。渡すときは**許可リストの中だけ**（下記）。カタログに無い値・許可リスト外の値は `422` |
 
-**許可リストは「6.5 の既定8件 ∪ `doc.edit`」の9件である**（2026-09-05 に改訂。手順26a）。
+**許可リストは「6.5 の既定9件 ∪ `doc.edit`」の10件である**（2026-09-05 に改訂＝手順26a、2026-09-08 に `ticket.reference.edit` を既定へ足した＝pb-68）。
 
 ```
 agent.run  comment.create  doc.view  project.view
-ticket.assign  ticket.create  ticket.transition  ticket.view   ← 既定の8件
+ticket.assign  ticket.create  ticket.transition  ticket.view
+ticket.reference.edit                                           ← 既定の9件
 doc.edit                                                        ← 発行時に足せる
 ```
+
+**`ticket.reference.edit` は「足せるもの」ではなく既定に入れた**（利用者の判断、2026-09-08）。`doc.edit` が発行時の選択になっているのは 6.5 が「載せるかは**そのエージェントが誰に付いているか**で決まる」と定めるためだが、**作業の跡（`kind='code'` の外部参照）を積むのは実装エージェントの通常の仕事**であり、付く相手で変わらない。既定から外すと「コミットを記録できないエージェント」が既定になる。
+
+**既に発行済みのトークンには入らない。** `scopes` は `access_token` の jsonb 列として**発行時に固定される**ため、既定を増やしても遡って効かない。**この権限を使うにはトークンを発行し直す**（本節「有効なトークンは1件につき1本」により、再発行すると古いものは失効する）。
 
 **改訂前は「受け取らない」だった**（2026-09-02、手順24a）。その根拠は「**既定から外れる
 組み合わせを作る動機が Phase 2 に無い**」だったが、**手順26 の `pb_put_doc` がその動機である**
@@ -2594,7 +2599,9 @@ GET|POST     /api/v1/projects/:key/tickets/:seq/references
 PATCH|DELETE /api/v1/projects/:key/tickets/:seq/references/:id
 ```
 
-**必要権限**：`GET` は `ticket.view`、更新系は `ticket.edit`
+**必要権限**：`GET` は `ticket.view`、更新系は **`ticket.reference.edit`**（0027。pb-68）
+
+**更新系を `ticket.edit` から切り出した**（利用者の判断、2026-09-08）。`DbDesign.md` 6.12 が「`kind='code'` の書き手は**エージェント**」と定める一方、エージェントのトークンに載せられる権限の許可リスト（4.5.3）は `ticket.edit` を含まず、**設計文書が定めた書き手が書けなかった**。許可リストへ `ticket.edit` を足すと `PATCH /tickets/:seq`・`move`・DoD（9.9）・チケット間リンク（9.10.1）まで同時に開く（棄却の理由は `DbDesign.md` 6.12.1）。**`ticket.edit` を持つロールにはすべて配るので、人から見た可否は変わらない。**
 
 表は `ticket_reference`（`DbDesign.md` 6.12）。`kind` は `code` と `doc` の2つで、**必須の項目が違う。**
 

@@ -115,6 +115,18 @@ func validateAgentEnvSuffix(v string) (string, *apierr.Detail) {
 // pb_put_doc に要る権限だが、載せるかは「そのエージェントが誰に付いているか」で
 // 決まる（Design.md 8.2）。そもそも所有者が持たなければ積で消える。
 //
+// **ticket.reference.edit は入れる**（0027／pb-68。利用者の判断、2026-09-08）。
+// pb_add_reference が要求する権限で、**作業の跡（ブランチ・コミット）を残すのは
+// 実装エージェントの通常の仕事**だから既定に置く——doc.edit のように「誰に付いて
+// いるか」で変わらない。既定から外すと「コミットを記録できないエージェント」が
+// 既定になる。**ticket.edit は既定にも許可リストにも入れない**：外部参照だけでなく
+// 本文・担当・期日の書き換えや並べ替えまで開くためで、そこを切り出すために 0027 で
+// 権限を新設した（DbDesign.md 6.12.1）。
+//
+// **既に発行済みのトークンには入らない。** scopes は access_token の jsonb 列として
+// 発行時に固定されるので（0002）、既定を増やしても遡って効かない。使うには
+// トークンを発行し直す（4.5.3 の「有効なトークンは1件につき1本」）。
+//
 // **昇順で持つ。** auth.EffectivePermissions が昇順で返すので、応答の並びと
 // 突き合わせるときに並べ替えが要らない。
 var agentDefaultScopes = []string{
@@ -124,6 +136,7 @@ var agentDefaultScopes = []string{
 	"project.view",
 	"ticket.assign",
 	"ticket.create",
+	"ticket.reference.edit",
 	"ticket.transition",
 	"ticket.view",
 }

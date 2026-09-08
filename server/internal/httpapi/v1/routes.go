@@ -292,7 +292,14 @@ func Mount(r chi.Router, deps Deps) {
 
 		// ── チケットの外部参照（ApiDesign.md 9.10.2。手順17c）───────
 		//
-		// **読みは ticket.view、更新系は ticket.edit**（9.10.2）。参照を足す
+		// **読みは ticket.view、更新系は ticket.reference.edit**（9.10.2。
+		// 0027／pb-68 で ticket.edit から切り出した）。**切り出したのは、
+		// エージェントに開けたい範囲がここで初めて ticket.edit より狭く
+		// なったからである**——6.12 が「kind='code' の書き手はエージェント」
+		// と定めるのに、4.5.3 の許可リストは ticket.edit を含まなかった。
+		// ticket.edit を許可リストへ足すと、本文・担当・期日の書き換えや
+		// 並べ替えまで同時に開く（DbDesign.md 6.12.1）。**ticket.edit を持つ
+		// ロールにはすべて配るので、人から見た可否は変わらない。** 参照を足す
 		// ことはチケットを編集することであり、新しい権限は増やしていない
 		// （DbDesign.md 7.2 の28件は Design.md 付録Aで確定済み）。
 		//
@@ -307,11 +314,11 @@ func Mount(r chi.Router, deps Deps) {
 		// パラメータより先に照合する）。
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}/references", h.listTicketReferences)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.reference.edit")).
 			Post("/projects/{key}/tickets/{seq}/references", h.createTicketReference)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.reference.edit")).
 			Patch("/projects/{key}/tickets/{seq}/references/{id}", h.patchTicketReference)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.reference.edit")).
 			Delete("/projects/{key}/tickets/{seq}/references/{id}", h.deleteTicketReference)
 
 		// ── コメント（ApiDesign.md 9.8）── 手順18a ────────────────

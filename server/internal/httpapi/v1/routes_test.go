@@ -518,6 +518,55 @@ func TestTicketSeqAndSubroutesDoNotCollide(t *testing.T) {
 	}
 }
 
+// **外部参照の更新系は ticket.edit ではなく ticket.reference.edit を要る**
+// （9.10.2。0027／pb-68）。
+//
+// **ticket.edit を持っていても通らないことを測る。** 切り出しの目的は
+// 「エージェントに開ける範囲を ticket.edit より狭くする」ことなので、
+// **ticket.edit で素通りしたら切り出しは効いていない。**
+//
+// **ハンドラ単体では測れない**——ミドルウェアの宣言そのものが対象である
+// （references_test.go はハンドラを直接呼ぶので権限を通らない）。
+func TestReferenceWritesNeedTheirOwnPermission(t *testing.T) {
+	const path = "/api/v1/projects/demo/tickets/31/references"
+	const body = `{"kind":"code","repository":"my-app","branch":"feature/pb-68"}`
+
+	// **まず「持っていれば通る」ことを確かめる。** これを測らないと、
+	// 下の 403 は「何をやっても 403」の実装でも緑になる。
+	t.Run("ticket.reference.edit があれば作れる", func(t *testing.T) {
+		q := detailRouteFake(t, "project_member",
+			"ticket.view", "ticket.edit", "ticket.reference.edit")
+		rec := httptest.NewRecorder()
+		routerWithDeps(Deps{Queries: q, Tx: &fakeTxRunner{q: q}}).
+			ServeHTTP(rec, detailRouteReq(q, http.MethodPost, path, body))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("ticket.edit だけでは作れない", func(t *testing.T) {
+		q := detailRouteFake(t, "project_member", "ticket.view", "ticket.edit")
+		rec := httptest.NewRecorder()
+		routerWithDeps(Deps{Queries: q, Tx: &fakeTxRunner{q: q}}).
+			ServeHTTP(rec, detailRouteReq(q, http.MethodPost, path, body))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
+		}
+	})
+
+	// **読みは ticket.view のままである**（9.10.2）。切り出しで読めなくなって
+	// いないことを並べて見る。
+	t.Run("読みは ticket.view のまま", func(t *testing.T) {
+		q := detailRouteFake(t, "project_viewer", "ticket.view")
+		rec := httptest.NewRecorder()
+		routerWithDeps(Deps{Queries: q, Tx: &fakeTxRunner{q: q}}).
+			ServeHTTP(rec, detailRouteReq(q, http.MethodGet, path, ""))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+		}
+	})
+}
+
 // **コメントの DELETE は OR の必要権限を持つ**（9.8）。手順18a。
 //
 // RequireAnyProjectPermission が「どちらか一方でも通す」ことを、ルータ越しに

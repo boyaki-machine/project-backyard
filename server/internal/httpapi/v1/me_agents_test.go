@@ -877,9 +877,13 @@ func issueWithScopes(t *testing.T, body string) (*httptest.ResponseRecorder, *fa
 //
 // **これが無いと pb_put_doc は誰が呼んでも 403 になる**（Design.md 6.5 / 8.2）。
 func TestCreateMyAgentTokenAcceptsDocEdit(t *testing.T) {
-	rec, _ := issueWithScopes(t, `{"expires_in_days":90,
-		"scopes":["agent.run","comment.create","doc.edit","doc.view","project.view",
-		          "ticket.assign","ticket.create","ticket.transition","ticket.view"]}`)
+	// **要求するスコープを正本から組み立てる**（既定 ∪ doc.edit）。書き下すと、
+	// 既定を足した日に「10件のうち9件しか要求していない」テストになる。
+	scopes, err := json.Marshal(append(append([]string{}, agentDefaultScopes...), "doc.edit"))
+	if err != nil {
+		t.Fatalf("スコープを組み立てられない: %v", err)
+	}
+	rec, _ := issueWithScopes(t, `{"expires_in_days":90,"scopes":`+string(scopes)+`}`)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201（本文: %s）", rec.Code, rec.Body.String())

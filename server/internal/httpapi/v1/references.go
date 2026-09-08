@@ -1,9 +1,14 @@
 // チケットの外部参照（ApiDesign.md 9.10.2）。手順17c。
 //
 //	GET    /api/v1/projects/{key}/tickets/{seq}/references        ticket.view
-//	POST   /api/v1/projects/{key}/tickets/{seq}/references        ticket.edit
-//	PATCH  /api/v1/projects/{key}/tickets/{seq}/references/{id}    ticket.edit
-//	DELETE /api/v1/projects/{key}/tickets/{seq}/references/{id}    ticket.edit
+//	POST   /api/v1/projects/{key}/tickets/{seq}/references        ticket.reference.edit
+//	PATCH  /api/v1/projects/{key}/tickets/{seq}/references/{id}    ticket.reference.edit
+//	DELETE /api/v1/projects/{key}/tickets/{seq}/references/{id}    ticket.reference.edit
+//
+// **更新系は 0027（pb-68）で ticket.edit から切り出した**（DbDesign.md 6.12.1）。
+// エージェントが MCP から commit / ブランチを積めるようにするためで、ticket.edit を
+// そのまま許可リストへ入れると本文・担当・期日の書き換えまで開いてしまう。
+// **ticket.edit を持つロールには機械的に配ってあるので、人から見た可否は変わらない。**
 //
 // **チケットから「外」を指す参照である。** ticket_link（9.10.1）が同じ
 // プロジェクトの別のチケットを指すのに対し、こちらはリポジトリ・コミット・
