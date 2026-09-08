@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1117,6 +1118,258 @@ func decodeTransitions(t *testing.T, rec *httptest.ResponseRecorder) transitions
 }
 
 // **items[] はワークフローの全ステータス（現在を除く）**（A-5／D-1）。
+// ── 検証7：未完了の子が残っている親は完了にできない（9.6。pb-72）──────
+
+// **まず通る側を測る。** これが無いと、下の 409 は「完了へは常に 409」の実装でも
+// 緑になる（LEARNINGS #139）。
+func TestTransitionTicketAllowsDoneWhenNoOpenChildren(t *testing.T) {
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	row := q.ticket.bySeq[31]
+	row.StatusKey = "review"
+	q.ticket.bySeq[31] = row
+	q.ticket.openChildren = 0
+
+	rec := callTransition(q, `{"to":"done"}`, "ticket.transition", "ticket.close")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTransitionTicketRejectsDoneWithOpenChildren(t *testing.T) {
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	row := q.ticket.bySeq[31]
+	row.StatusKey = "review"
+	q.ticket.bySeq[31] = row
+	q.ticket.openChildren = 1
+
+	rec := callTransition(q, `{"to":"done"}`, "ticket.transition", "ticket.close")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+	e := errorOf(t, rec)
+	// **403 ではなく 409。** 権限の問題ではない——同じ人が、子を完了させたあとなら通る。
+	if e.Code != "children_not_closed" {
+		t.Errorf("code = %q, want children_not_closed", e.Code)
+	}
+	if e.Message != "未完了の子チケットが残っているため完了にできません" {
+		t.Errorf("message = %q（9.7 の reason と同じ文字列であること）", e.Message)
+	}
+	if len(q.ticket.statusSet) != 0 {
+		t.Errorf("拒んだのにステータスを書いている: %v", q.ticket.statusSet)
+	}
+}
+
+// **完了へ進むときだけ数える**（9.6）。他の遷移で結果に効かないクエリを毎回
+// 増やさない。
+func TestTransitionTicketCountsChildrenOnlyForDone(t *testing.T) {
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	q.ticket.openChildren = 3 // 効かないはず
+
+	rec := callTransition(q, `{"to":"review"}`, "ticket.transition")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if slices.Contains(q.opLog, "CountOpenChildren") {
+		t.Errorf("完了以外の遷移で子を数えている: %v", q.opLog)
+	}
+}
+
+// 9.7 も同じ関数を通る——**画面が「押せる完了」を出したあとで 409 にならない。**
+func TestListTransitionsMarksOpenChildren(t *testing.T) {
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	row := q.ticket.bySeq[31]
+	row.StatusKey = "review"
+	q.ticket.bySeq[31] = row
+	q.ticket.openChildren = 2
+
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.listTicketTransitions(rec, detailReq(http.MethodGet,
+		"/api/v1/projects/demo/tickets/31/transitions", "", "31",
+		"ticket.transition", "ticket.close"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+
+	var got transitionsView
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("応答を読めない: %v", err)
+	}
+	var done *transitionOptionView
+	for i := range got.Items {
+		if got.Items[i].Key == "done" {
+			done = &got.Items[i]
+		}
+	}
+	if done == nil {
+		t.Fatalf("items に done が無い: %+v", got.Items)
+	}
+	if done.Allowed {
+		t.Errorf("done が allowed:true（未完了の子が2件ある）")
+	}
+	if done.Reason == nil ||
+		*done.Reason != "未完了の子チケットが残っているため完了にできません" {
+		t.Errorf("reason = %v（9.6 の message と同じ文字列であること）", done.Reason)
+	}
+}
+
+// ── 子が動いたら親を進行中にする（9.6。pb-72）──────────────────
+
+// cascadeFake は seq=31 が未着手で、親（seq=44）を持つ状態を作る。
+func cascadeFake(t *testing.T) *fakeQuerier {
+	t.Helper()
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	row := q.ticket.bySeq[31]
+	row.StatusKey = "todo"
+	q.ticket.bySeq[31] = row
+	q.ticket.parentForCascade = map[string]gen.GetParentForCascadeRow{
+		testTicketID: {ID: testTicketID2, Seq: 44, StatusKey: "todo",
+			StatusCategory: txt("todo")},
+	}
+	// **祖先の行も bySeq に要る。** SetTicketStatus は seq で引いて書き戻すので、
+	// 行が無いと ErrNoRows になる（実物では、親は GetParentForCascade が
+	// 返した時点で必ず在る）。
+	for _, seq := range []int32{44, 55} {
+		row := ticketDetailRow()
+		row.Seq = seq
+		row.StatusKey = "todo"
+		q.ticket.bySeq[seq] = row
+	}
+	return q
+}
+
+func TestTransitionFromTodoAdvancesParent(t *testing.T) {
+	q := cascadeFake(t)
+
+	rec := callTransition(q, `{"to":"in_progress"}`, "ticket.transition")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.statusSet) != 2 {
+		t.Fatalf("SetTicketStatus = %d回, want 2（子と親）: %+v", len(q.ticket.statusSet), q.ticket.statusSet)
+	}
+	parent := q.ticket.statusSet[1]
+	if parent.Seq != 44 || parent.StatusKey != "in_progress" {
+		t.Errorf("親の更新 = %+v, want seq=44 / in_progress", parent)
+	}
+	// **closed_at は動かない**（in_progress は done ではない）。
+	if parent.Closing {
+		t.Errorf("親で closing = true, want false")
+	}
+	// **activity は子と親で1行ずつ。** コメントは作らない（本文が無い）。
+	if len(q.ticket.activities) != 2 {
+		t.Fatalf("activity = %d件, want 2: %+v", len(q.ticket.activities), q.ticket.activities)
+	}
+	a := q.ticket.activities[1]
+	if a.Action != "transition" || a.OldValue.String != "todo" || a.NewValue.String != "in_progress" {
+		t.Errorf("親の activity = %+v, want transition todo→in_progress", a)
+	}
+	// **親に working_agent_id は立てない**（人が呼んだので子にも立たない）。
+	if slices.Contains(q.opLog, "SetTicketWorkingAgent") {
+		t.Errorf("working_agent_id を立てている: %v", q.opLog)
+	}
+}
+
+// 祖先まで連鎖する。
+func TestTransitionCascadesThroughAncestors(t *testing.T) {
+	q := cascadeFake(t)
+	q.ticket.parentForCascade[testTicketID2] = gen.GetParentForCascadeRow{
+		ID: "01TICKET0000000000000GRAND", Seq: 55, StatusKey: "todo",
+		StatusCategory: txt("todo"),
+	}
+
+	if rec := callTransition(q, `{"to":"in_progress"}`, "ticket.transition"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.statusSet) != 3 {
+		t.Fatalf("SetTicketStatus = %d回, want 3（子・親・祖父）: %+v",
+			len(q.ticket.statusSet), q.ticket.statusSet)
+	}
+	if q.ticket.statusSet[2].Seq != 55 {
+		t.Errorf("3件目 = seq %d, want 55", q.ticket.statusSet[2].Seq)
+	}
+}
+
+// **親が既に動いていれば打ち切る。** その上の祖先も見ない——この規則自体が
+// 親を進めるとき同じ経路を通るので、todo でない親の上に todo の祖先は残らない。
+func TestTransitionStopsAtStartedAncestor(t *testing.T) {
+	q := cascadeFake(t)
+	q.ticket.parentForCascade[testTicketID] = gen.GetParentForCascadeRow{
+		ID: testTicketID2, Seq: 44, StatusKey: "in_progress",
+		StatusCategory: txt("in_progress"),
+	}
+	q.ticket.parentForCascade[testTicketID2] = gen.GetParentForCascadeRow{
+		ID: "01TICKET0000000000000GRAND", Seq: 55, StatusKey: "todo",
+		StatusCategory: txt("todo"),
+	}
+
+	if rec := callTransition(q, `{"to":"in_progress"}`, "ticket.transition"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.statusSet) != 1 {
+		t.Errorf("SetTicketStatus = %d回, want 1（子だけ）: %+v",
+			len(q.ticket.statusSet), q.ticket.statusSet)
+	}
+}
+
+// 未着手を出ていない遷移では連動しない（in_progress → review）。
+func TestTransitionDoesNotCascadeWhenAlreadyStarted(t *testing.T) {
+	q := cascadeFake(t)
+	row := q.ticket.bySeq[31]
+	row.StatusKey = "in_progress"
+	q.ticket.bySeq[31] = row
+
+	if rec := callTransition(q, `{"to":"review"}`, "ticket.transition"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.statusSet) != 1 {
+		t.Errorf("SetTicketStatus = %d回, want 1（子だけ）: %+v",
+			len(q.ticket.statusSet), q.ticket.statusSet)
+	}
+	if slices.Contains(q.opLog, "GetParentForCascade") {
+		t.Errorf("未着手を出ていないのに親をたどっている: %v", q.opLog)
+	}
+}
+
+// 親を持たなければ何も起きない（GetParentForCascade が 0件）。
+func TestTransitionWithoutParentDoesNothing(t *testing.T) {
+	q := cascadeFake(t)
+	q.ticket.parentForCascade = map[string]gen.GetParentForCascadeRow{}
+
+	if rec := callTransition(q, `{"to":"in_progress"}`, "ticket.transition"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.statusSet) != 1 {
+		t.Errorf("SetTicketStatus = %d回, want 1: %+v", len(q.ticket.statusSet), q.ticket.statusSet)
+	}
+}
+
+// **順路が定義されていなければ黙って飛ばす。** 親のワークフローの都合で子の遷移を
+// 失敗させると、関係のないチケットが着手できなくなる（9.6）。
+func TestCascadeSkipsWhenRouteUndefined(t *testing.T) {
+	q := cascadeFake(t)
+	// todo → in_progress の定義を落とす（子の遷移も同じ順路を使うので、
+	// 子は review へ動かして測る）。
+	q.ticket.workflowTransitions = []gen.ListWorkflowTransitionsRow{
+		{FromStatusKey: "todo", ToStatusKey: "review",
+			RequiredPermission: txt("ticket.transition"), AllowedActorKinds: []byte(`["user"]`)},
+	}
+
+	rec := callTransition(q, `{"to":"review"}`, "ticket.transition")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200（連動の失敗で子を落とさない） (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.statusSet) != 1 {
+		t.Errorf("SetTicketStatus = %d回, want 1（子だけ）: %+v",
+			len(q.ticket.statusSet), q.ticket.statusSet)
+	}
+}
+
 func TestListTransitionsIncludesUndefinedTargets(t *testing.T) {
 	q := ticketDetailFake()
 	withReviewWorkflow(q)

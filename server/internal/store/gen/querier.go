@@ -135,6 +135,18 @@ type Querier interface {
 	// 実行すると、同時に2本 POST されたときに上限を超える。
 	//
 	CountMyAPITokens(ctx context.Context, actorID string) (int64, error)
+	// ── 親子の連動（ApiDesign.md 9.6 の検証7 と「子が動いたら親を進行中に」。pb-72）──
+	// CountOpenChildren は検証7 の材料（9.6）。**直下の子だけを数える。**
+	//
+	// 孫まで数えないのは、同じ規則が子にも掛かるためである——孫が未完了なら子も
+	// 完了にできず、子が完了していなければ親はここで止まる。規則が段ごとに効くので
+	// 再帰は要らない。
+	//
+	// **closed_at IS NULL で数える。** 9.6 の「closed_at は遷移の副作用としてのみ動く」
+	// により、これが「完了していない」と一致することが保証されている（9.2 の
+	// ?open=true と同じ判定）。ステータスのカテゴリで数え直すと、同じ事実を2通りに
+	// 数えることになり、片方だけ直した日にずれる。
+	CountOpenChildren(ctx context.Context, parentID pgtype.Text) (int64, error)
 	// CountProjectTagsByIDs は tag_ids がすべて当該プロジェクトのものかを数える（9.3）。
 	// 渡した件数と一致しなければ、他プロジェクトのタグか存在しない ID が混ざっている。
 	CountProjectTagsByIDs(ctx context.Context, arg CountProjectTagsByIDsParams) (int64, error)
@@ -521,6 +533,15 @@ type Querier interface {
 	GetDocument(ctx context.Context, id string) (GetDocumentRow, error)
 	// GetDocumentRevision は1件ぶんの本文（10.5）。
 	GetDocumentRevision(ctx context.Context, arg GetDocumentRevisionParams) (GetDocumentRevisionRow, error)
+	// GetParentForCascade は「子が動いたら親を進行中にする」で祖先をたどる1段ぶん
+	// （9.6）。子の id を渡すと、その親の seq とステータスのカテゴリが返る。
+	//
+	// **親を持たなければ行が返らない**（parent_id が NULL のとき、内側の SELECT が
+	// NULL を返して外側が0件になる）。呼び出し側はそこでたどるのをやめる。
+	//
+	// **seq を返すのは、SetTicketStatus が project_id と seq で更新するためである。**
+	// id で更新する口を別に作ると、同じ更新が2通りになる。
+	GetParentForCascade(ctx context.Context, childID string) (GetParentForCascadeRow, error)
 	// ── 詳細（ApiDesign.md 5.4。POST /projects の応答も同じ形）───────
 	// GetProjectByKey は1プロジェクトの本体とワークフローの見出しを返す。
 	//

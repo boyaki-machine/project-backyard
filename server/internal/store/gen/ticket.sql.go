@@ -26,6 +26,30 @@ func (q *Queries) AttachTicketTag(ctx context.Context, arg AttachTicketTagParams
 	return err
 }
 
+const countOpenChildren = `-- name: CountOpenChildren :one
+
+SELECT count(*) FROM ticket
+ WHERE parent_id = $1 AND closed_at IS NULL
+`
+
+// ── 親子の連動（ApiDesign.md 9.6 の検証7 と「子が動いたら親を進行中に」。pb-72）──
+// CountOpenChildren は検証7 の材料（9.6）。**直下の子だけを数える。**
+//
+// 孫まで数えないのは、同じ規則が子にも掛かるためである——孫が未完了なら子も
+// 完了にできず、子が完了していなければ親はここで止まる。規則が段ごとに効くので
+// 再帰は要らない。
+//
+// **closed_at IS NULL で数える。** 9.6 の「closed_at は遷移の副作用としてのみ動く」
+// により、これが「完了していない」と一致することが保証されている（9.2 の
+// ?open=true と同じ判定）。ステータスのカテゴリで数え直すと、同じ事実を2通りに
+// 数えることになり、片方だけ直した日にずれる。
+func (q *Queries) CountOpenChildren(ctx context.Context, parentID pgtype.Text) (int64, error) {
+	row := q.db.QueryRow(ctx, countOpenChildren, parentID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countProjectTagsByIDs = `-- name: CountProjectTagsByIDs :one
 SELECT count(*)::bigint FROM tag
  WHERE project_id = $1 AND id = ANY($2::text[])
@@ -171,6 +195,41 @@ func (q *Queries) GetAgentOwner(ctx context.Context, actorID string) (string, er
 	var owner_actor_id string
 	err := row.Scan(&owner_actor_id)
 	return owner_actor_id, err
+}
+
+const getParentForCascade = `-- name: GetParentForCascade :one
+SELECT t.id, t.seq, t.status_key, ws.category AS status_category
+  FROM ticket t
+  JOIN project p ON p.id = t.project_id
+  LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
+ WHERE t.id = (SELECT c.parent_id FROM ticket c WHERE c.id = $1)
+`
+
+type GetParentForCascadeRow struct {
+	ID             string
+	Seq            int32
+	StatusKey      string
+	StatusCategory pgtype.Text
+}
+
+// GetParentForCascade は「子が動いたら親を進行中にする」で祖先をたどる1段ぶん
+// （9.6）。子の id を渡すと、その親の seq とステータスのカテゴリが返る。
+//
+// **親を持たなければ行が返らない**（parent_id が NULL のとき、内側の SELECT が
+// NULL を返して外側が0件になる）。呼び出し側はそこでたどるのをやめる。
+//
+// **seq を返すのは、SetTicketStatus が project_id と seq で更新するためである。**
+// id で更新する口を別に作ると、同じ更新が2通りになる。
+func (q *Queries) GetParentForCascade(ctx context.Context, childID string) (GetParentForCascadeRow, error) {
+	row := q.db.QueryRow(ctx, getParentForCascade, childID)
+	var i GetParentForCascadeRow
+	err := row.Scan(
+		&i.ID,
+		&i.Seq,
+		&i.StatusKey,
+		&i.StatusCategory,
+	)
+	return i, err
 }
 
 const getTicketBrief = `-- name: GetTicketBrief :one

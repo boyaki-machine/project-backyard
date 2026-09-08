@@ -12,9 +12,13 @@
 //	4  遷移先が is_agent_reachable=false でエージェント 403 forbidden
 //	5  required_permission を持つか                 403 forbidden
 //	6  エージェントなら、担当が自分の所有者か         403 forbidden
+//	7  完了へ進むとき、未完了の子が残っていないか     409 children_not_closed
 //
 // **3〜6 が Requirements.md 10.10.4「承認ゲートをAPIレベルで強制する」の実体**
 // であり、画面側の制御に依存しない。
+//
+// **検証7 は権限ではなく盤面の整合である**（pb-72）。人にもエージェントにも等しく
+// 掛かる——「未完了の子を抱えた親が完了している」状態は、誰が作っても壊れている。
 package v1
 
 import (
@@ -89,6 +93,24 @@ func (wf ticketWorkflow) findStatus(key string) *gen.ListWorkflowStatusesRow {
 	return nil
 }
 
+// firstStatusInCategory はカテゴリに属するステータスのうち、sort_order が最小の
+// ものを返す。無ければ nil（親子の連動で使う。ApiDesign.md 9.6。pb-72）。
+//
+// **statuses は sort_order 昇順で読んである**（ListWorkflowStatuses の ORDER BY）
+// ので、最初に見つかったものがそれである。
+//
+// **カテゴリで引くのは、ステータスのキーがワークフローごとに違いうるためである。**
+// 'in_progress' というキーを決め打ちすると、テンプレートを写して名前を変えた
+// プロジェクトで連動が黙って効かなくなる（DbDesign.md 6.5）。
+func (wf ticketWorkflow) firstStatusInCategory(category string) *gen.ListWorkflowStatusesRow {
+	for i := range wf.statuses {
+		if wf.statuses[i].Category == category {
+			return &wf.statuses[i]
+		}
+	}
+	return nil
+}
+
 // findTransition は from → to の定義を返す。無ければ nil（検証2 で使う）。
 func (wf ticketWorkflow) findTransition(from, to string) *gen.ListWorkflowTransitionsRow {
 	for i := range wf.transitions {
@@ -132,7 +154,7 @@ func agentMayWorkOn(p *auth.Principal, assigneeID pgtype.Text) bool {
 	return assigneeID.Valid && p.OwnerActorID != "" && assigneeID.String == p.OwnerActorID
 }
 
-// denyTransition は検証2〜6 を順に見て、通らない理由を日本語で返す。
+// denyTransition は検証2〜7 を順に見て、通らない理由を日本語で返す。
 // 通るなら空文字。
 //
 // **検証1（to の存在）は呼び出し側で見る。** 9.6 は 422 unknown_status という
@@ -145,8 +167,12 @@ func agentMayWorkOn(p *auth.Principal, assigneeID pgtype.Text) bool {
 // **検証6 はチケット単位の条件なので、9.7 では全行が同時に allowed:false になる。**
 // 遷移先ごとに違う理由が並ぶ他の検証とは性質が異なるが、行ごとに理由を付ける形は
 // 変えない（9.7）——エージェントは「この1件はどうか」を見て次の一手を決める。
+// **hasOpenChildren を actor に持たせない。** transitionActor は「遷移を試みる側」
+// であり、子が残っているかはチケットの側の事実である（検証6 の assigneeIsOwner が
+// あそこに居るのは、あれが「その人にとってのチケット」を表すためである）。
 func (wf ticketWorkflow) denyTransition(
 	from string, to gen.ListWorkflowStatusesRow, actor transitionActor,
+	hasOpenChildren bool,
 ) string {
 	tr := wf.findTransition(from, to.Key)
 
@@ -189,8 +215,28 @@ func (wf ticketWorkflow) denyTransition(
 		return "このチケットの担当者があなたの所有者ではないため、エージェントからは変更できません"
 	}
 
+	// 検証7：未完了の子が残っている親は完了にできない（pb-72）。
+	//
+	// **人にもエージェントにも等しく掛ける。** 検証6 と違って種別で分けないのは、
+	// これが**盤面の整合**についての規則だからである——「未完了の子を抱えた親が
+	// 完了している」状態は、誰が作っても同じように壊れている。
+	//
+	// **検証6 の後に置く。** どちらも行を読むが、6 は「あなたが動かしてよいか」、
+	// 7 は「いま動かしてよいか」であり、前者を先に返すほうが利用者が取り除く
+	// 順序と一致する（9.6）。
+	if to.Category == statusCategoryDone && hasOpenChildren {
+		return childrenNotClosedReason
+	}
+
 	return ""
 }
+
+// childrenNotClosedReason は検証7 の文言（ApiDesign.md 9.6 / 9.7）。
+//
+// **9.7 の reason と 9.6 の message を同じ文字列にする。** 画面は reason を
+// そのまま出し（GuiDesign.md 5.5）、押したときは 9.6 の message が出る——
+// 別々の文言を持つと、同じ理由が2通りの日本語で見える。
+const childrenNotClosedReason = "未完了の子チケットが残っているため完了にできません"
 
 // decodeActorKinds は allowed_actor_kinds（jsonb の配列）を解く。
 //

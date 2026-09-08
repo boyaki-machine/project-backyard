@@ -44,6 +44,15 @@ const (
 	// （9.6 の検証2）。**Conflict と分けてあるのは、利用者が取る行動が違うため**
 	// ——競合は読み直せば済むが、こちらは順路そのものが存在しない。
 	InvalidTransition Code = "invalid_transition"
+
+	// ChildrenNotClosed は遷移先が完了カテゴリなのに、未完了の子チケットが
+	// 残っている（ApiDesign.md 9.6 の検証7、9.14。pb-72）。
+	//
+	// **403 ではなく 409 なのは、権限の問題ではないためである**——同じ人が、
+	// 子を完了させたあとなら通る。InvalidTransition と同じ 409 に置くのは、
+	// どちらも「盤面がその遷移を許さない」であり、利用者が次に取る行動が
+	// 「別の何かを先に済ませる」で共通するためである。
+	ChildrenNotClosed Code = "children_not_closed"
 )
 
 // statuses は ApiDesign.md 2.5.1 の Status 列。
@@ -64,6 +73,7 @@ var statuses = map[Code]int{
 	RateLimited:               http.StatusTooManyRequests,
 	InternalError:             http.StatusInternalServerError,
 	InvalidTransition:         http.StatusConflict,
+	ChildrenNotClosed:         http.StatusConflict,
 }
 
 // messages は各コードの既定文言。
@@ -90,6 +100,9 @@ var messages = map[Code]string{
 	// 遷移の既定文言は使われないことが多い。9.6 の検証2 は「進行中から完了へは
 	// 直接進められません」のように、ワークフローの名前を入れた文言で上書きする。
 	InvalidTransition: "現在の状態からこの状態へは進められません",
+	// 検証7 も denyTransition が同じ文言を作って上書きする（9.7 の reason と
+	// 揃えるため）。ここは呼び出し漏れの保険である。
+	ChildrenNotClosed: "未完了の子チケットが残っているため完了にできません",
 }
 
 // Detail はフィールド単位のエラー。フォームの各入力欄に紐づける（ApiDesign.md 2.5）。

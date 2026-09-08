@@ -43,7 +43,7 @@ var table = []struct {
 
 // 領域ごとの追加コード。**2.5.1 の表に「加わるもの」**として、章ごとに定義される。
 //
-// いまは 9.14（チケット）の1件だけである。ここへ足すときは、必ず設計文書側の
+// いまは 9.14（チケット）の2件である。ここへ足すときは、必ず設計文書側の
 // 表にも同じ行があること——**実装だけに在るコードは、消費者が知りようがない。**
 var domainTable = []struct {
 	code   Code
@@ -51,6 +51,7 @@ var domainTable = []struct {
 	docRef string
 }{
 	{InvalidTransition, 409, "ApiDesign.md 9.14"},
+	{ChildrenNotClosed, 409, "ApiDesign.md 9.14"},
 }
 
 func TestStatusMatchesApiDesign(t *testing.T) {

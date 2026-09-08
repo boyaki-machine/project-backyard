@@ -23,6 +23,7 @@
 package v1
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -131,8 +132,19 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 		// **同じステータスへの遷移は定義されえない**（ck_workflow_transition_diff）。
 		// 検証2 が 409 に倒すので、ここで特別扱いはしない。
 
-		// 検証2：定義が無ければ 409、検証3〜6 は 403。
-		if reason := wf.denyTransition(before.StatusKey, *target, actor); reason != "" {
+		// 検証7 の材料（9.6。pb-72）。**完了へ進むときだけ数える**——
+		// それ以外の遷移では結果に効かないので、毎回1本増やす理由が無い。
+		var hasOpenChildren bool
+		if target.Category == statusCategoryDone {
+			n, err := q.CountOpenChildren(ctx, pgtype.Text{String: before.ID, Valid: true})
+			if err != nil {
+				return fmt.Errorf("チケット %d の子を数えられない: %w", seq, err)
+			}
+			hasOpenChildren = n > 0
+		}
+
+		// 検証2：定義が無ければ 409、検証3〜6 は 403、検証7 は 409。
+		if reason := wf.denyTransition(before.StatusKey, *target, actor, hasOpenChildren); reason != "" {
 			writeErr = transitionDenied(wf, before.StatusKey, req.To, reason)
 			return errTicketReference
 		}
@@ -207,6 +219,14 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
+		// **子が未着手を出たら、祖先を進行中にする**（9.6。pb-72）。
+		//
+		// **同じトランザクションで行う。** 連動が落ちて子だけ進むと、盤面が
+		// 「子は動いているのに親は未着手」のまま残る——それを直す操作が画面に無い。
+		if err := cascadeParentsToInProgress(ctx, q, rec, wf, projectID, before, *target); err != nil {
+			return err
+		}
+
 		v, err := buildTicketDetail(ctx, q, projectID, seq)
 		if err != nil {
 			return fmt.Errorf("遷移したチケットを読めない: %w", err)
@@ -227,12 +247,120 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, view)
 }
 
+// statusCategoryTodo / statusCategoryInProgress は親子の連動が見るカテゴリ
+// （9.6「子が動いたら、親を進行中にする」。pb-72）。
+const (
+	statusCategoryTodo       = "todo"
+	statusCategoryInProgress = "in_progress"
+)
+
+// cascadeParentsToInProgress は、子が未着手カテゴリを出たときに祖先を進行中へ動かす
+// （ApiDesign.md 9.6「子が動いたら、親を進行中にする」。pb-72）。
+//
+// **掛ける検証は2（順路の定義）だけである。** 検証3〜7 は掛けない——連動は
+// **すでに認可された操作の帰結**であって、新しい操作ではない。ここで検証5（権限）や
+// 検証6（担当が所有者か）を掛けると、**親の担当が別人であるという理由で子の着手が
+// 失敗する**ことになる。
+//
+// **順路が定義されていなければ黙って飛ばす。** 親のワークフローに todo → in_progress
+// が無いことを理由に子の遷移を 409 にすると、関係のないチケットが着手できなくなる。
+// 連動は付随的な整合であって、子の遷移の成否を左右しない。
+//
+// **親に working_agent_id は立てない**（DbDesign.md 6.6）。あれは「自分がこの
+// チケットを処理している」という自己申告で、エージェントは親を処理していない。
+//
+// **コメントは作らない**——添える本文が無い。activity には子を進めた本人の
+// actor_id で1行残す（連動を起こした責任はそこにある）。
+func cascadeParentsToInProgress(
+	ctx context.Context, q gen.Querier, rec *activity.Recorder, wf ticketWorkflow,
+	projectID string, before gen.GetTicketBySeqRow, target gen.ListWorkflowStatusesRow,
+) error {
+	// 未着手カテゴリを出たときだけ動く。**遷移前が todo でなければ、親は既に
+	// 動いている**（この規則自身がそうしている）。
+	fromStatus := wf.findStatus(before.StatusKey)
+	if fromStatus == nil || fromStatus.Category != statusCategoryTodo ||
+		target.Category == statusCategoryTodo {
+		return nil
+	}
+
+	to := wf.firstStatusInCategory(statusCategoryInProgress)
+	if to == nil {
+		return nil
+	}
+
+	// **祖先をたどる。** 親が todo でなければそこで打ち切る——この規則自体が
+	// 親を進めるとき同じ経路を通るので、todo でない親の上に todo の祖先は残らない。
+	//
+	// **深さに上限を置く。** parent_id の循環は 9.5.2 の parent_cycle が書き込み時に
+	// 防いでいるが、認可を通らない経路で無限に回ると要求が返らなくなる。
+	// 木の深さは epic → story → task の3段が想定で（DbDesign.md 6.6）、
+	// 32 は実際の運用の遥か上にある。
+	childID := before.ID
+	for depth := 0; depth < 32; depth++ {
+		parent, err := q.GetParentForCascade(ctx, childID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // 親を持たない（根に着いた）
+		}
+		if err != nil {
+			return fmt.Errorf("親チケットを読めない: %w", err)
+		}
+		if !parent.StatusCategory.Valid ||
+			parent.StatusCategory.String != statusCategoryTodo {
+			return nil
+		}
+
+		// 検証2 だけを掛ける。順路が無ければ、そこで静かにやめる。
+		if wf.findTransition(parent.StatusKey, to.Key) == nil {
+			return nil
+		}
+
+		if _, err := q.SetTicketStatus(ctx, gen.SetTicketStatusParams{
+			StatusKey: to.Key,
+			// **in_progress は done ではないので closed_at は立たない**（9.6 の表）。
+			Closing:   false,
+			ProjectID: projectID,
+			Seq:       parent.Seq,
+		}); err != nil {
+			return fmt.Errorf("親チケット %d を進行中にできない: %w", parent.Seq, err)
+		}
+
+		field := "status_key"
+		oldValue := parent.StatusKey
+		newValue := to.Key
+		if err := rec.Record(ctx, q, activity.Entry{
+			ProjectID:  projectID,
+			EntityType: activity.EntityTicket,
+			EntityID:   parent.ID,
+			Action:     activity.Transition,
+			Field:      &field,
+			OldValue:   &oldValue,
+			NewValue:   &newValue,
+		}); err != nil {
+			return err
+		}
+
+		childID = parent.ID
+	}
+	return nil
+}
+
 // transitionDenied は denyTransition の理由を 9.6 の応答へ翻訳する。
 //
-// **定義が無い（検証2）だけが 409 invalid_transition で、残りは 403**（9.6 の表）。
-// 前者は「このワークフローではその順路が存在しない」、後者は「順路はあるが
-// あなたには通れない」であり、利用者が次に取る行動が違う。
+// **定義が無い（検証2）だけが 409 invalid_transition で、検証3〜6 は 403**
+// （9.6 の表）。前者は「このワークフローではその順路が存在しない」、後者は
+// 「順路はあるがあなたには通れない」であり、利用者が次に取る行動が違う。
+//
+// **検証7 は 409 children_not_closed**（pb-72）。403 に混ぜないのは、これが
+// 権限の問題ではないためである——**同じ人が、子を完了させたあとなら通る。**
+//
+// **理由の文字列で見分ける。** denyTransition が返すのは日本語1本なので、
+// どの検証で落ちたかは呼び出し側からは文字列でしか分からない。検証7 の文言だけ
+// 定数（childrenNotClosedReason）にしてあるのはこのためで、**9.7 の reason と
+// 同じ文字列を使う必要もここで満たされる。**
 func transitionDenied(wf ticketWorkflow, from, to, reason string) *apierr.Error {
+	if reason == childrenNotClosedReason {
+		return apierr.New(apierr.ChildrenNotClosed).WithMessage(reason)
+	}
 	if wf.findTransition(from, to) == nil {
 		return apierr.New(apierr.InvalidTransition).WithMessage(reason)
 	}

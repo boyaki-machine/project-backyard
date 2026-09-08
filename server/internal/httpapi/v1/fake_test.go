@@ -1185,6 +1185,18 @@ type ticketFakeState struct {
 	commentNum int64
 	updateErr  error
 
+	// ── pb-72（9.6 の検証7 と、子が動いたら親を進行中にする）──────
+	//
+	// **openChildren は「未完了の子の件数」をそのまま返す。** 実物は
+	// closed_at IS NULL を数えるが、フェイクで木を組み立てても検証の対象は
+	// 「数が 0 より大きいときに拒む」ことだけである。
+	//
+	// **parentForCascade は子の id から親を引く。** 無ければ pgx.ErrNoRows を
+	// 返して「親を持たない」を表す（実物の SELECT が0件になるのと同じ）。
+	// **祖先をたどる形を測るため、複数段を入れられるようにしてある。**
+	openChildren     int64
+	parentForCascade map[string]gen.GetParentForCascadeRow
+
 	// ── 手順17c（9.10.2 の外部参照）──────────────────────────
 	//
 	// **1チケットぶんの行を1つのスライスで持つ。** ハンドラは
@@ -1339,6 +1351,24 @@ func (q *fakeQuerier) GetTicketBrief(_ context.Context, id string) (gen.GetTicke
 func (q *fakeQuerier) ListTicketChildrenBrief(context.Context, pgtype.Text) ([]gen.ListTicketChildrenBriefRow, error) {
 	q.opLog = append(q.opLog, "ListTicketChildrenBrief")
 	return q.ticket.children, nil
+}
+
+// ── pb-72（ApiDesign.md 9.6）─────────────────────────────────
+
+func (q *fakeQuerier) CountOpenChildren(context.Context, pgtype.Text) (int64, error) {
+	q.opLog = append(q.opLog, "CountOpenChildren")
+	return q.ticket.openChildren, nil
+}
+
+func (q *fakeQuerier) GetParentForCascade(
+	_ context.Context, childID string,
+) (gen.GetParentForCascadeRow, error) {
+	q.opLog = append(q.opLog, "GetParentForCascade")
+	row, ok := q.ticket.parentForCascade[childID]
+	if !ok {
+		return gen.GetParentForCascadeRow{}, pgx.ErrNoRows
+	}
+	return row, nil
 }
 
 func (q *fakeQuerier) FindTicketIDBySeq(_ context.Context, arg gen.FindTicketIDBySeqParams) (string, error) {

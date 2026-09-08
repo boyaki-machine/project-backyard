@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -76,6 +78,16 @@ func (h *handler) listTicketTransitions(w http.ResponseWriter, r *http.Request) 
 		// 選択肢が押した瞬間に断られることがない。
 		assigneeIsOwner: agentMayWorkOn(p, row.AssigneeID),
 	}
+	// 検証7 の材料（9.6。pb-72）。**9.6 と同じ関数を通すので、ここで数えないと
+	// 「押せる完了」を出したあとで 409 になる。**
+	openChildren, err := h.q.CountOpenChildren(ctx,
+		pgtype.Text{String: row.ID, Valid: true})
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("チケット %d の子を数えられない: %w", seq, err)))
+		return
+	}
+
 	if a := auth.ProjectAuthzFromContext(ctx, key); a != nil {
 		actor.permissions = a.Permissions
 	}
@@ -98,7 +110,7 @@ func (h *handler) listTicketTransitions(w http.ResponseWriter, r *http.Request) 
 		option := transitionOptionView{
 			Key: s.Key, Name: s.Name, Category: s.Category, Allowed: true,
 		}
-		if reason := wf.denyTransition(row.StatusKey, s, actor); reason != "" {
+		if reason := wf.denyTransition(row.StatusKey, s, actor, openChildren > 0); reason != "" {
 			option.Allowed = false
 			option.Reason = &reason
 		}
