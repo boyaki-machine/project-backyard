@@ -1153,7 +1153,6 @@ func seedTickets(
 			EstimatePoint: estimate,
 			StartDate:     start,
 			DueDate:       due,
-			SprintID:      nullText(sprintIDs[tk.Sprint]),
 			SortKey:       pgtype.Text{String: sortKey, Valid: true},
 		}); err != nil {
 			return fmt.Errorf("プロジェクト %s にチケット %q を作れない: %w", p.Key, tk.Title, err)
@@ -1174,6 +1173,28 @@ func seedTickets(
 				ID: ticketID, ClosedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			}); err != nil {
 				return fmt.Errorf("チケット %q を完了にできない: %w", tk.Title, err)
+			}
+		}
+
+		// スプリントの所属（DbDesign.md 6.9.1。pb-6）。
+		//
+		// **CreateTicket では入れられなくなった**（ApiDesign.md 9.3）。
+		// スプリントは開始のときに決まるものになったので、seed も
+		// 「作ってから所属させる」順序に揃える。**関連表と ticket.sprint_id の
+		// 両方を書く**——片方だけだと 9.12 の集計と 9.2.1 の判定が食い違う。
+		if sid := sprintIDs[tk.Sprint]; tk.Sprint != "" && sid != "" {
+			if err := q.AddTicketsToSprint(ctx, gen.AddTicketsToSprintParams{
+				TicketIds: []string{ticketID}, SprintID: sid,
+			}); err != nil {
+				return fmt.Errorf("チケット %q をスプリント %q に入れられない: %w",
+					tk.Title, tk.Sprint, err)
+			}
+			if err := q.SetTicketsSprintID(ctx, gen.SetTicketsSprintIDParams{
+				SprintID:  nullText(sid),
+				ProjectID: projectID,
+				TicketIds: []string{ticketID},
+			}); err != nil {
+				return fmt.Errorf("チケット %q のスプリントを設定できない: %w", tk.Title, err)
 			}
 		}
 

@@ -58,7 +58,6 @@ import type { ProjectMember, Workflow } from '../api/projects'
 import * as referencesApi from '../api/references'
 import { codeSummary, docSummary } from '../api/references'
 import type { TicketReference } from '../api/references'
-import type { Sprint } from '../api/sprints'
 import type { Tag } from '../api/tags'
 import * as ticketsApi from '../api/tickets'
 import {
@@ -106,7 +105,6 @@ const props = defineProps<{
    */
   members: ProjectMember[]
   tags: Tag[]
-  sprints: Sprint[]
   /**
    * プロジェクトのワークフロー（`GET /projects/:key` の `workflow`）。
    *
@@ -1388,27 +1386,12 @@ function errorFor(field: string): string {
           <div class="meta-item">
             <dt>スプリント</dt>
             <dd>
-              <!-- **選択肢はプロジェクトのスプリント。ここから新規作成はできない**
-                   （定義は 5.9.5） -->
-              <select
-                v-if="canEdit"
-                :value="ticket.sprint?.id ?? ''"
-                :disabled="busy"
-                aria-label="スプリント"
-                @change="
-                  selectField(
-                    { sprint_id: ($event.target as HTMLSelectElement).value || null },
-                    'sprint_id',
-                  )
-                "
-              >
-                <option value="">スプリント未設定</option>
-                <option v-for="s in sprints" :key="s.id" :value="s.id">{{ s.name }}</option>
-              </select>
-              <span v-else>{{ ticket.sprint?.name ?? '—' }}</span>
-              <p v-if="errorFor('sprint_id')" class="field-error" role="alert">
-                {{ errorFor('sprint_id') }}
-              </p>
+              <!-- **読み取り専用である**（5.5「スプリントは選べない」。pb-6）。
+                   スプリントは「チケットにあらかじめ付ける属性」ではなく
+                   「いまどの期間で消化しようとしているか」であり、決まるのは
+                   オンステージ段でスプリントを開始した瞬間である（5.4）。
+                   `PATCH` もこの欄を受け付けない（ApiDesign.md 9.5.2）。 -->
+              <span>{{ ticket.sprint?.name ?? '—' }}</span>
             </dd>
           </div>
 
@@ -1995,7 +1978,6 @@ function errorFor(field: string): string {
       :project-key="projectKey"
       :members="members"
       :tags="tags"
-      :sprints="sprints"
       :candidates="childParentCandidates"
       :defaults="newChildDefaults"
       lock-parent

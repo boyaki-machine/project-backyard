@@ -1659,6 +1659,118 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/sprints/start:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    post:
+      tags: [tickets]
+      summary: スプリントの開始
+      operationId: startSprint
+      description: |
+        スプリントを新しく作り、`active` にし、**オンステージに載っているものを対象に
+        入れる**（ApiDesign.md 9.12.1。pb-6）。必要権限は `project.edit`。
+        3つを1つのトランザクションで行う。
+
+        対象は **`staged_at IS NOT NULL` の行とその子孫**である。`staged_at` だけで
+        決めてはならない——段を決めるのは親であり、子は `staged_at` が `null` のまま
+        親と一緒にオンステージ段へ出る（GuiDesign.md 5.4）。**エピックは除く。**
+
+        **進行中のスプリントが既にあれば 409。** `active` は同時に1本だけである
+        ——オンステージは1つしかなく、「いまどの期間で消化しようとしているか」の
+        答えが2つあると、開始のたびにどちらへ入れるかを選ぶことになる。
+
+        **オンステージが空でも通す。** 期間を先に切ってから積む進め方があるため、
+        開始できない理由にしない。
+
+        **既にある `planned` のスプリントは開始の対象にならない**（常に新規作成）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartSprintRequest'
+      responses:
+        '201':
+          description: 開始したスプリント。
+          headers:
+            Location:
+              schema:
+                type: string
+              example: /api/v1/projects/my-app/sprints/01K2F8QW3H7YRJ4M5N6P7Q8R9S
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sprint'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '409':
+          description: 進行中のスプリントが既にある（`active_sprint_exists`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/sprints/{id}/finish:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/SprintID'
+    post:
+      tags: [tickets]
+      summary: スプリントの終了
+      operationId: finishSprint
+      description: |
+        スプリントを終える（ApiDesign.md 9.12.2。pb-6）。必要権限は `project.edit`。
+        **本文を取らない。**
+
+        `status` を `completed` にし、`end_date` が空なら今日を入れる。所属
+        （`ticket_sprint`）すべてに `removed_at` を立て、**完了しているオンステージの
+        根を段から降ろす**（`staged_at` を `null` に戻す）。**未完了のものは触らず、
+        オンステージに残って次の開始でそちらへ入る。**
+
+        **`ticket.sprint_id` は消さない。** 終わったあとも「最後に属したスプリント」を
+        指し続ける——9.2.1 の「棚に戻ったか」の判定がこれを読む。
+
+        降ろした行は 9.2.1 の3条件を満たすため、既定の一覧から外れて画面から消える。
+        辿るには `?retired=true` を送る。
+
+        **`status` が `active` でなければ 409**（`sprint_not_active`）。権限でも
+        不在でもなく、盤面がその操作を許さないためである。
+      responses:
+        '200':
+          description: 終了したスプリント。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sprint'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SprintNotFound'
+        '409':
+          description: 進行中のスプリントではない（`sprint_not_active`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/sprints/{id}:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -1821,6 +1933,27 @@ paths:
           schema:
             type: string
             enum: ['true', 'false']
+        - name: retired
+          in: query
+          description: |
+            **棚に戻ったものを返すかどうか**（ApiDesign.md 9.2.1。pb-5 / pb-6）。
+            既定は `false`。
+
+            次の3つをすべて満たす行が「棚に戻った」ものであり、既定で一覧から外れる。
+
+            1. `closed_at IS NOT NULL`
+            2. いま属しているスプリントが `completed`
+            3. 未完了の祖先を持たない（根までたどる。直下の親だけでは歯抜けが起きる）
+
+            **スプリントを終えた時点で、消化し終えたものがバックログから消える**
+            ——これが「バックログ＝行うべき仕事すべての保管庫」を保つ手当てである。
+
+            バックログの状態フィルタで完了を明示的に選んだときに画面が `true` を送る
+            （GuiDesign.md 5.4）。**検索画面ができるまでの唯一の逃げ道である。**
+          schema:
+            type: string
+            enum: ['true', 'false']
+            default: 'false'
         - name: due_within
           in: query
           description: |
@@ -1949,7 +2082,8 @@ paths:
         | `code` | 意味 |
         |---|---|
         | `not_a_member` | `assignee_id` に指定したアクターがプロジェクトのメンバーでない（9.14） |
-        | `not_found` | `parent_seq` / `tag_ids` / `sprint_id` の参照先がこのプロジェクトに無い |
+        | `not_found` | `parent_seq` / `tag_ids` の参照先がこのプロジェクトに無い |
+        | `use_sprint_endpoint` | `sprint_id` を送った（スプリントの開始・終了が動かす。pb-6） |
         | `required` / `invalid` / `too_long` / `out_of_range` | 2.5 の一般の検証エラー |
       requestBody:
         required: true
@@ -2065,7 +2199,8 @@ paths:
         | `parent_cycle` | 自分自身または自分の子孫を親に指定した |
         | `not_stageable` | **オンステージのチケットを、段に置けなくなる `type` / `parent_seq` へ変えようとした** |
         | `not_a_member` | 担当者に指定したアクターがプロジェクトのメンバーでない |
-        | `not_found` | `parent_seq` / `tag_ids` / `sprint_id` の参照先がこのプロジェクトに無い |
+        | `not_found` | `parent_seq` / `tag_ids` の参照先がこのプロジェクトに無い |
+        | `use_sprint_endpoint` | `sprint_id` を送った（スプリントの開始・終了が動かす。pb-6） |
 
         **`not_stageable` は 9.4.1 が `move` で弾いている条件と同じものである。**
         `staged_at` が入っている行を `epic` にする、またはエピック以外の子にすると、
@@ -6087,6 +6222,32 @@ components:
         status:
           $ref: '#/components/schemas/SprintStatus'
 
+    StartSprintRequest:
+      description: |
+        スプリントを始めるときに決めるもの（ApiDesign.md 9.12.1。pb-6）。
+
+        **`status` を受け取らない。** 開始は必ず `active` であり、選ばせる意味がない。
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: 前後の空白は取り除かれる。**一意制約は無い**（同名を作れる）。
+        goal:
+          type: string
+          nullable: true
+        start_date:
+          type: string
+          format: date
+          nullable: true
+        end_date:
+          type: string
+          format: date
+          nullable: true
+          description: '`start_date` があるとき `start_date <= end_date`。'
+
     PatchSprintRequest:
       description: |
         送られた項目だけを変える。**`goal` / `start_date` / `end_date` は `null` を
@@ -6742,9 +6903,11 @@ components:
           description: |
             変更した項目。**`create` / `delete` では `null`。** Phase 1 の値域は
             `status_key`（遷移）／`type` `title` `body_md` `priority` `assignee_id`
-            `parent_id` `sprint_id` `estimate_point` `estimate_hours` `actual_hours`
+            `parent_id` `estimate_point` `estimate_hours` `actual_hours`
             `start_date` `due_date`（本体の更新）／`comment` `dod` `link`
-            `reference.code` `reference.doc`（子資源の更新）の18種類である。
+            `reference.code` `reference.doc`（子資源の更新）の17種類である。
+            **`sprint_id` は pb-6 で外れた**——9.5.2 で書けなくなり、動くのは
+            スプリントの開始・終了のときだけになった（あの2つは記録しない）。
           example: status_key
         old_value:
           type: string
@@ -6752,7 +6915,7 @@ components:
           description: |
             **`text` のまま返す**（9.13.2）。ステータスの表示名への変換は画面が行う
             ——ワークフローの定義は `GET /projects/:key`（5.4）で手元にある。
-            **`assignee_id` / `sprint_id` の値は ULID がそのまま入る。**
+            **`assignee_id` の値は ULID がそのまま入る。**
             **`body_md` の行は値を載せない**（両方 `null`）。
           example: todo
         new_value:
@@ -7277,9 +7440,6 @@ components:
             type: string
           description: |
             **丸ごと置き換える**（部分更新ではない）。空配列または `null` で全て外す。
-        sprint_id:
-          type: string
-          nullable: true
         estimate_point:
           type: number
           format: double
@@ -7441,9 +7601,6 @@ components:
           items:
             type: string
           description: すべて当該プロジェクトのタグであること。重複は畳まれる。
-        sprint_id:
-          type: string
-          description: 当該プロジェクトのスプリントであること。
         estimate_point:
           type: number
           format: double

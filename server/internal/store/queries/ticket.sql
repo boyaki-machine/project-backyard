@@ -51,6 +51,39 @@ WITH RECURSIVE subtree AS (
   UNION
   SELECT c.id FROM ticket c JOIN subtree s ON c.parent_id = s.id
 ),
+-- **未完了の行と、その全子孫**（9.2.1 の retired の条件3。pb-5）。
+--
+-- ここに入る行は棚に戻さない。「自分が未完了」か「**未完了の祖先を持つ**」の
+-- どちらかだからである。
+--
+-- **直下の親だけを見る形では足りない**（実データで判明、2026-09-08）。
+-- 親→子→孫で子と孫だけを完了させると、孫の直下の親（子）は完了しているので
+-- 孫が消える。**だが子は、その親が未完了なので残る**——結果として
+-- 「子は見えるのに孫だけ消えた」歯抜けが起きる。**条件3 が防ごうとしていた
+-- ものそのものである。**
+--
+-- 9.6 の検証7（未完了の子を抱えた親は完了にできない）があるので、通常の
+-- 流れでは「根が完了した＝部分木が全部完了した」になる。**それでも祖先を
+-- たどるのは、0026 の再オープン（done → in_progress）が、完了した親の下に
+-- 未完了の子が居る状態を作れるためである。**
+--
+-- **エピックは祖先に数えない**（実データで判明、2026-09-09）。エピックは
+-- グルーピング専用で**行として出ない**ので（GuiDesign.md 5.4）、完了しない
+-- まま残っていても歯抜けを作らない。数えてしまうと、**エピック配下の
+-- チケットが永久に棚へ戻らなくなる**——実運用のバックログはたいてい
+-- エピックで束ねられているので、機能そのものが効かなくなる。
+--
+-- 起点を「未完了かつエピックでない行」に絞ることで、**表示上のトップレベル
+-- （親が無いか、親がエピック。ApiDesign.md 9.4.1）から下だけを見る**形になる。
+open_desc AS (
+  SELECT id FROM ticket
+   WHERE project_id = @project_id::text
+     AND closed_at IS NULL
+     AND type <> 'epic'
+  UNION
+  SELECT c.id FROM ticket c JOIN open_desc o ON c.parent_id = o.id
+   WHERE c.type <> 'epic'
+),
 filtered AS (
   SELECT
     t.id,
@@ -142,6 +175,31 @@ filtered AS (
     AND (@stale_days::int < 0
          OR (t.closed_at IS NULL
              AND t.updated_at < now() - make_interval(days => @stale_days::int)))
+    -- retired（9.2.1。pb-5 / pb-6）。**スプリントを終えて棚に戻ったものを
+    -- 既定で外す。** 3つすべてを満たす行が対象である。
+    --
+    --   1. 完了している
+    --   2. いま属しているスプリントが completed
+    --   3. 親が無いか、親も完了している
+    --
+    -- **条件2 が「完了」だけで外さない理由。** 完了した直後に消えると、
+    -- スプリント中に何が終わったかを振り返る面が無くなる。オンステージは
+    -- 期間の作業台であり、期間が閉じるまでは終わったものも載っている。
+    --
+    -- **条件3 が要るのは、子が親より先に完了するからである。** 子だけ消えると
+    -- 親を開いたときに配下が歯抜けになる。**祖先を根までたどる**——直下の親
+    -- だけでは足りないことが実データで判明した（open_desc の説明を見ること）。
+    --
+    -- **t.sprint_id を読む**（ticket_sprint を並べ直さない）。sprint_id は
+    -- 「いま属しているスプリント」を指す非正規化された写しであり
+    -- （DbDesign.md 6.9.1）、最後の1件を引く結合と同じ答えになる。
+    AND (@include_retired::boolean
+         OR NOT (
+           t.closed_at IS NOT NULL
+           AND EXISTS (SELECT 1 FROM sprint rs
+                        WHERE rs.id = t.sprint_id AND rs.status = 'completed')
+           AND NOT EXISTS (SELECT 1 FROM open_desc od WHERE od.id = t.id)
+         ))
     AND (cardinality(@parent_seqs::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
 )
 SELECT
@@ -297,15 +355,17 @@ SELECT ws.key
  ORDER BY (ws.category = 'todo') DESC, ws.sort_order
  LIMIT 1;
 
+-- **sprint_id を受け取らない**（ApiDesign.md 9.3。pb-6）。作られたチケットは
+-- 必ずスプリント未所属で始まり、次にスプリントを開始したときに入る。
 -- name: CreateTicket :exec
 INSERT INTO ticket (
   id, project_id, seq, parent_id, type, title, body_md, status_key, priority,
   assignee_id, reporter_id, estimate_point, estimate_hours,
-  start_date, due_date, sprint_id, sort_key
+  start_date, due_date, sort_key
 ) VALUES (
   @id, @project_id, @seq, @parent_id, @type, @title, @body_md, @status_key, @priority,
   @assignee_id, @reporter_id, @estimate_point, @estimate_hours,
-  @start_date, @due_date, @sprint_id, @sort_key
+  @start_date, @due_date, @sort_key
 );
 
 -- name: AttachTicketTag :exec
@@ -323,10 +383,6 @@ SELECT id FROM ticket WHERE project_id = @project_id AND seq = @seq;
 SELECT count(*)::bigint FROM tag
  WHERE project_id = @project_id AND id = ANY(@ids::text[]);
 
--- name: SprintExistsInProject :one
-SELECT EXISTS (
-  SELECT 1 FROM sprint WHERE project_id = @project_id AND id = @id
-);
 
 -- IsProjectMember は assignee_id の検証に使う（9.3 の not_a_member）。
 -- name: IsProjectMember :one
@@ -483,7 +539,8 @@ UPDATE ticket SET
   assignee_id    = CASE WHEN @assignee_id_set::boolean    THEN sqlc.narg('assignee_id')    ELSE assignee_id END,
   working_agent_id = CASE WHEN @working_agent_id_set::boolean THEN sqlc.narg('working_agent_id') ELSE working_agent_id END,
   parent_id      = CASE WHEN @parent_id_set::boolean      THEN sqlc.narg('parent_id')      ELSE parent_id END,
-  sprint_id      = CASE WHEN @sprint_id_set::boolean      THEN sqlc.narg('sprint_id')      ELSE sprint_id END,
+  -- sprint_id は 9.5.2 から外した（pb-6）。スプリントの開始・終了だけが動かす
+  -- （sprint.sql の SetTicketsSprintID）。DbDesign.md 6.9.1。
   estimate_point = CASE WHEN @estimate_point_set::boolean THEN sqlc.narg('estimate_point') ELSE estimate_point END,
   estimate_hours = CASE WHEN @estimate_hours_set::boolean THEN sqlc.narg('estimate_hours') ELSE estimate_hours END,
   actual_hours   = CASE WHEN @actual_hours_set::boolean   THEN sqlc.narg('actual_hours')   ELSE actual_hours END,
@@ -616,3 +673,33 @@ SELECT ag.owner_actor_id
   FROM agent ag
   JOIN actor a ON a.id = ag.actor_id
  WHERE ag.actor_id = @actor_id AND a.kind = 'agent';
+
+-- 表示上のトップレベルの祖先（自分を含む）を返す（ApiDesign.md 9.6
+-- 「着手したら、オンステージへ上げる」。pb-5）。
+--
+-- **段に置けるのは表示上のトップレベルだけである**（9.4.1）——親を持たないか、
+-- 親がエピックのもの。着手したのが子タスクでも、動かすべきなのは**その子を
+-- 含む部分木の根**であり、配下は親と一緒に運ばれる。
+--
+-- 上へたどって「親が無いか、親がエピック」を最初に満たした行が答えになる。
+-- **その上にあるのはエピックか、何も無いかのどちらか**で、どちらも段には
+-- 出ないためである。
+--
+-- **深さに上限を置く。** parent_id の循環は 9.5.2 の parent_cycle が書き込み時に
+-- 防いでいるが、万一の循環で要求が返らなくなるのを避ける（cascade と同じ 32）。
+-- name: GetDisplayRootForStaging :one
+WITH RECURSIVE up AS (
+  SELECT t.id, t.parent_id, t.type, t.staged_at, 0 AS depth
+    FROM ticket t
+   WHERE t.id = @ticket_id
+  UNION ALL
+  SELECT p.id, p.parent_id, p.type, p.staged_at, up.depth + 1
+    FROM ticket p JOIN up ON p.id = up.parent_id
+   WHERE up.depth < 32
+)
+SELECT u.id, u.type, (u.staged_at IS NOT NULL)::boolean AS staged
+  FROM up u
+  LEFT JOIN ticket pt ON pt.id = u.parent_id
+ WHERE u.parent_id IS NULL OR pt.type = 'epic'
+ ORDER BY u.depth
+ LIMIT 1;

@@ -596,12 +596,6 @@ func TestCreateTicketRejectsForeignReferences(t *testing.T) {
 			setup: func(q *fakeQuerier) { q.ticket.projectTagCount = 0 },
 			field: "tag_ids",
 		},
-		{
-			name:  "スプリントが他プロジェクト",
-			body:  `{"type":"task","title":"x","sprint_id":"01K2SPR00000000000000009"}`,
-			setup: func(q *fakeQuerier) { q.ticket.sprintExists = false },
-			field: "sprint_id",
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -621,6 +615,28 @@ func TestCreateTicketRejectsForeignReferences(t *testing.T) {
 				t.Error("参照先が不正なのにコミットしている")
 			}
 		})
+	}
+}
+
+// sprint_id は 9.3 が受け付けない（pb-6）。**黙って捨てず 422 に倒す**
+// ——decodeJSON は未知のキーを無視するので、struct から落とすだけだと
+// 送った側は設定できたつもりでスプリント無しのチケットが出来る。
+func TestCreateTicketRejectsSprintID(t *testing.T) {
+	q := ticketFake()
+	h, tx := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.createTicket(rec, ticketReq(http.MethodPost, "/projects/demo/tickets",
+		`{"type":"task","title":"x","sprint_id":"01K2SPR00000000000000009"}`, ""))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "use_sprint_endpoint") {
+		t.Errorf("details[].code が use_sprint_endpoint でない: %s", rec.Body.String())
+	}
+	if tx.committed {
+		t.Error("受け付けない項目が来たのにコミットしている")
 	}
 }
 

@@ -10,6 +10,7 @@
 //
 //	immutable_field         id / seq / version / created_at / updated_at / reporter_id
 //	use_move_endpoint       sort_key / staged_at      → 9.4 の move
+//	use_sprint_endpoint     sprint_id                 → 9.12 の start / finish
 //	use_transition_endpoint status_key / closed_at    → 9.6 の transition
 //
 // **assignee_id を変えるときだけ ticket.assign も要る**（9.5.2）。ルート定義の
@@ -47,6 +48,10 @@ var (
 	}
 	ticketMoveOnlyFields       = []string{"sort_key", "staged_at"}
 	ticketTransitionOnlyFields = []string{"status_key", "closed_at"}
+	// **sprint_id は 0028 で書けなくなった**（9.5.2。pb-6）。スプリントは
+	// 「チケットにあらかじめ付ける属性」ではなく「いまどの期間で消化しようと
+	// しているか」であり、付け替えはオンステージ全体に対して1回起きる。
+	ticketSprintOnlyFields = []string{"sprint_id"}
 )
 
 // updateTicketRequest は 9.5.2 のリクエスト。
@@ -73,7 +78,6 @@ type ticketPatch struct {
 	// エージェント自身の宣言は 9.6 の遷移が副作用として立てる。
 	WorkingAgentID optional[string]
 	ParentSeq      optional[int32]
-	SprintID       optional[string]
 	TagIDs         optional[[]string]
 
 	EstimatePoint optional[float64]
@@ -246,7 +250,6 @@ func (h *handler) resolveTicketPatch(
 	}
 	params.BodyMdSet, params.BodyMd = textParam(patch.BodyMd)
 	params.PrioritySet, params.Priority = textParam(patch.Priority)
-	params.SprintIDSet, params.SprintID = textParam(patch.SprintID)
 	params.EstimatePointSet, params.EstimatePoint = floatParam(patch.EstimatePoint)
 	params.EstimateHoursSet, params.EstimateHours = floatParam(patch.EstimateHours)
 	params.ActualHoursSet, params.ActualHours = floatParam(patch.ActualHours)
@@ -299,11 +302,6 @@ func (h *handler) resolveTicketPatch(
 	}
 	params.WorkingAgentIDSet, params.WorkingAgentID = textParam(patch.WorkingAgentID)
 
-	if patch.SprintID.Set && !patch.SprintID.Null {
-		if e := validateTicketSprint(ctx, q, projectID, patch.SprintID.Value); e != nil {
-			return params, e
-		}
-	}
 	if patch.TagIDs.Set && !patch.TagIDs.Null {
 		if e := validateTicketTags(ctx, q, projectID, patch.TagIDs.Value); e != nil {
 			return params, e
@@ -467,9 +465,6 @@ func recordTicketFieldChanges(
 	if patch.ParentSeq.Set {
 		add("parent_id", int4StrPtr(before.ParentSeq), optionalInt32StrPtr(patch.ParentSeq))
 	}
-	if patch.SprintID.Set {
-		add("sprint_id", textPtr(before.SprintID), optionalStrPtr(patch.SprintID))
-	}
 	if patch.EstimatePoint.Set {
 		add("estimate_point", float8StrPtr(before.EstimatePoint), optionalFloatStrPtr(patch.EstimatePoint))
 	}
@@ -552,6 +547,14 @@ func parseTicketPatch(raw updateTicketRequest) (ticketPatch, *apierr.Error) {
 			})
 		}
 	}
+	for _, field := range ticketSprintOnlyFields {
+		if _, ok := raw[field]; ok {
+			details = append(details, apierr.Detail{
+				Field: field, Code: "use_sprint_endpoint",
+				Message: "スプリントの変更はスプリントの開始・終了で行ってください",
+			})
+		}
+	}
 
 	// type / title は NOT NULL。null を送るのは「空にする」ではなく誤りである。
 	if v, ok := raw["type"]; ok {
@@ -601,7 +604,6 @@ func parseTicketPatch(raw updateTicketRequest) (ticketPatch, *apierr.Error) {
 		})
 	patch.AssigneeID, details = optionalStringField(raw, "assignee_id", details, nil)
 	patch.WorkingAgentID, details = optionalStringField(raw, "working_agent_id", details, nil)
-	patch.SprintID, details = optionalStringField(raw, "sprint_id", details, nil)
 
 	patch.EstimatePoint, details = optionalFloatField(raw, "estimate_point", details)
 	patch.EstimateHours, details = optionalFloatField(raw, "estimate_hours", details)

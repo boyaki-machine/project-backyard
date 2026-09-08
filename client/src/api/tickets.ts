@@ -198,6 +198,14 @@ export interface ListTicketsQuery {
    * 文字列である。バックログのエピックフィルタがこれを使う（`GuiDesign.md` 5.4）。
    */
   parent?: string
+  /**
+   * 棚に戻ったものも返すか（9.2.1。pb-5 / pb-6）。既定は返さない。
+   *
+   * **スプリントを終えて消化し終えたものは、既定で一覧から外れる。**
+   * バックログの状態フィルタで完了を明示的に選んだときだけ `'true'` を送る
+   * （`GuiDesign.md` 5.4）——**検索画面ができるまでの唯一の逃げ道である。**
+   */
+  retired?: 'true'
   sort?: TicketSort
   order?: SortOrder
   page?: number

@@ -86,8 +86,8 @@ func TestTicketsIntegration(t *testing.T) {
 	//
 	// **欠番を出さないこと**（DbDesign.md 6.4.1）。作った順に 1,2,3… になる。
 	epic := createTicketIT(t, r, session, base,
-		fmt.Sprintf(`{"type":"epic","title":"親の仕事","priority":"highest","tag_ids":[%q],"sprint_id":%q,"due_date":"2026-08-14","start_date":"2026-08-09"}`,
-			tagID, sprintID))
+		fmt.Sprintf(`{"type":"epic","title":"親の仕事","priority":"highest","tag_ids":[%q],"due_date":"2026-08-14","start_date":"2026-08-09"}`,
+			tagID))
 	if epic["seq"].(float64) != 1 {
 		t.Errorf("最初の seq = %v, want 1", epic["seq"])
 	}
@@ -201,8 +201,11 @@ func TestTicketsIntegration(t *testing.T) {
 		{"担当（未割当）", "?assignee=none", []int{1, 3, 4, 5}},
 		{"タグ", "?tag=" + tagID, []int{1}},
 		{"タグ（未分類）", "?tag=none", []int{2, 3, 4, 5}},
-		{"スプリント", "?sprint=" + sprintID, []int{1}},
-		{"スプリント（未割当）", "?sprint=none", []int{2, 3, 4, 5}},
+		// **作成ではスプリントに入らない**（9.3 は sprint_id を受けない。pb-6）。
+		// 所属が付く経路は 9.12.1 の start だけで、それは
+		// TestSprintLifecycleIntegration が実データで通す。
+		{"スプリント", "?sprint=" + sprintID, nil},
+		{"スプリント（未割当）", "?sprint=none", []int{1, 2, 3, 4, 5}},
 		{"未完了のみ", "?open=true", []int{1, 2, 3, 4, 5}},
 		{"完了のみ", "?open=false", nil},
 		{"分類", "?status_category=todo", []int{1, 2, 3, 4, 5}},

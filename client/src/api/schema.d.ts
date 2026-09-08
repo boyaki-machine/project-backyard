@@ -983,6 +983,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/sprints/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * スプリントの開始
+         * @description スプリントを新しく作り、`active` にし、**オンステージに載っているものを対象に
+         *     入れる**（ApiDesign.md 9.12.1。pb-6）。必要権限は `project.edit`。
+         *     3つを1つのトランザクションで行う。
+         *
+         *     対象は **`staged_at IS NOT NULL` の行とその子孫**である。`staged_at` だけで
+         *     決めてはならない——段を決めるのは親であり、子は `staged_at` が `null` のまま
+         *     親と一緒にオンステージ段へ出る（GuiDesign.md 5.4）。**エピックは除く。**
+         *
+         *     **進行中のスプリントが既にあれば 409。** `active` は同時に1本だけである
+         *     ——オンステージは1つしかなく、「いまどの期間で消化しようとしているか」の
+         *     答えが2つあると、開始のたびにどちらへ入れるかを選ぶことになる。
+         *
+         *     **オンステージが空でも通す。** 期間を先に切ってから積む進め方があるため、
+         *     開始できない理由にしない。
+         *
+         *     **既にある `planned` のスプリントは開始の対象にならない**（常に新規作成）。
+         */
+        post: operations["startSprint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/sprints/{id}/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /** @description スプリントの ULID（ApiDesign.md 9.1）。 */
+                id: components["parameters"]["SprintID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * スプリントの終了
+         * @description スプリントを終える（ApiDesign.md 9.12.2。pb-6）。必要権限は `project.edit`。
+         *     **本文を取らない。**
+         *
+         *     `status` を `completed` にし、`end_date` が空なら今日を入れる。所属
+         *     （`ticket_sprint`）すべてに `removed_at` を立て、**完了しているオンステージの
+         *     根を段から降ろす**（`staged_at` を `null` に戻す）。**未完了のものは触らず、
+         *     オンステージに残って次の開始でそちらへ入る。**
+         *
+         *     **`ticket.sprint_id` は消さない。** 終わったあとも「最後に属したスプリント」を
+         *     指し続ける——9.2.1 の「棚に戻ったか」の判定がこれを読む。
+         *
+         *     降ろした行は 9.2.1 の3条件を満たすため、既定の一覧から外れて画面から消える。
+         *     辿るには `?retired=true` を送る。
+         *
+         *     **`status` が `active` でなければ 409**（`sprint_not_active`）。権限でも
+         *     不在でもなく、盤面がその操作を許さないためである。
+         */
+        post: operations["finishSprint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{key}/sprints/{id}": {
         parameters: {
             query?: never;
@@ -1105,7 +1189,8 @@ export interface paths {
          *     | `code` | 意味 |
          *     |---|---|
          *     | `not_a_member` | `assignee_id` に指定したアクターがプロジェクトのメンバーでない（9.14） |
-         *     | `not_found` | `parent_seq` / `tag_ids` / `sprint_id` の参照先がこのプロジェクトに無い |
+         *     | `not_found` | `parent_seq` / `tag_ids` の参照先がこのプロジェクトに無い |
+         *     | `use_sprint_endpoint` | `sprint_id` を送った（スプリントの開始・終了が動かす。pb-6） |
          *     | `required` / `invalid` / `too_long` / `out_of_range` | 2.5 の一般の検証エラー |
          */
         post: operations["createTicket"];
@@ -1219,7 +1304,8 @@ export interface paths {
          *     | `parent_cycle` | 自分自身または自分の子孫を親に指定した |
          *     | `not_stageable` | **オンステージのチケットを、段に置けなくなる `type` / `parent_seq` へ変えようとした** |
          *     | `not_a_member` | 担当者に指定したアクターがプロジェクトのメンバーでない |
-         *     | `not_found` | `parent_seq` / `tag_ids` / `sprint_id` の参照先がこのプロジェクトに無い |
+         *     | `not_found` | `parent_seq` / `tag_ids` の参照先がこのプロジェクトに無い |
+         *     | `use_sprint_endpoint` | `sprint_id` を送った（スプリントの開始・終了が動かす。pb-6） |
          *
          *     **`not_stageable` は 9.4.1 が `move` で弾いている条件と同じものである。**
          *     `staged_at` が入っている行を `epic` にする、またはエピック以外の子にすると、
@@ -3736,6 +3822,23 @@ export interface components {
             status?: components["schemas"]["SprintStatus"];
         };
         /**
+         * @description スプリントを始めるときに決めるもの（ApiDesign.md 9.12.1。pb-6）。
+         *
+         *     **`status` を受け取らない。** 開始は必ず `active` であり、選ばせる意味がない。
+         */
+        StartSprintRequest: {
+            /** @description 前後の空白は取り除かれる。**一意制約は無い**（同名を作れる）。 */
+            name: string;
+            goal?: string | null;
+            /** Format: date */
+            start_date?: string | null;
+            /**
+             * Format: date
+             * @description `start_date` があるとき `start_date <= end_date`。
+             */
+            end_date?: string | null;
+        };
+        /**
          * @description 送られた項目だけを変える。**`goal` / `start_date` / `end_date` は `null` を
          *     送ると値を消す**（キーが無い場合の「据え置き」と区別する）。
          */
@@ -4235,16 +4338,18 @@ export interface components {
             /**
              * @description 変更した項目。**`create` / `delete` では `null`。** Phase 1 の値域は
              *     `status_key`（遷移）／`type` `title` `body_md` `priority` `assignee_id`
-             *     `parent_id` `sprint_id` `estimate_point` `estimate_hours` `actual_hours`
+             *     `parent_id` `estimate_point` `estimate_hours` `actual_hours`
              *     `start_date` `due_date`（本体の更新）／`comment` `dod` `link`
-             *     `reference.code` `reference.doc`（子資源の更新）の18種類である。
+             *     `reference.code` `reference.doc`（子資源の更新）の17種類である。
+             *     **`sprint_id` は pb-6 で外れた**——9.5.2 で書けなくなり、動くのは
+             *     スプリントの開始・終了のときだけになった（あの2つは記録しない）。
              * @example status_key
              */
             field: string | null;
             /**
              * @description **`text` のまま返す**（9.13.2）。ステータスの表示名への変換は画面が行う
              *     ——ワークフローの定義は `GET /projects/:key`（5.4）で手元にある。
-             *     **`assignee_id` / `sprint_id` の値は ULID がそのまま入る。**
+             *     **`assignee_id` の値は ULID がそのまま入る。**
              *     **`body_md` の行は値を載せない**（両方 `null`）。
              * @example todo
              */
@@ -4618,7 +4723,6 @@ export interface components {
             parent_seq?: number | null;
             /** @description **丸ごと置き換える**（部分更新ではない）。空配列または `null` で全て外す。 */
             tag_ids?: string[] | null;
-            sprint_id?: string | null;
             /** Format: double */
             estimate_point?: number | null;
             /** Format: double */
@@ -4735,8 +4839,6 @@ export interface components {
             parent_seq?: number;
             /** @description すべて当該プロジェクトのタグであること。重複は畳まれる。 */
             tag_ids?: string[];
-            /** @description 当該プロジェクトのスプリントであること。 */
-            sprint_id?: string;
             /** Format: double */
             estimate_point?: number;
             /** Format: double */
@@ -6743,6 +6845,96 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    startSprint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartSprintRequest"];
+            };
+        };
+        responses: {
+            /** @description 開始したスプリント。 */
+            201: {
+                headers: {
+                    /** @example /api/v1/projects/my-app/sprints/01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Sprint"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            /** @description 進行中のスプリントが既にある（`active_sprint_exists`）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    finishSprint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /** @description スプリントの ULID（ApiDesign.md 9.1）。 */
+                id: components["parameters"]["SprintID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 終了したスプリント。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Sprint"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SprintNotFound"];
+            /** @description 進行中のスプリントではない（`sprint_not_active`）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     deleteSprint: {
         parameters: {
             query?: never;
@@ -6849,6 +7041,23 @@ export interface operations {
                 sprint?: string;
                 /** @description `true` で `closed_at IS NULL` のもののみ。`false` で完了のみ。 */
                 open?: "true" | "false";
+                /**
+                 * @description **棚に戻ったものを返すかどうか**（ApiDesign.md 9.2.1。pb-5 / pb-6）。
+                 *     既定は `false`。
+                 *
+                 *     次の3つをすべて満たす行が「棚に戻った」ものであり、既定で一覧から外れる。
+                 *
+                 *     1. `closed_at IS NOT NULL`
+                 *     2. いま属しているスプリントが `completed`
+                 *     3. 未完了の祖先を持たない（根までたどる。直下の親だけでは歯抜けが起きる）
+                 *
+                 *     **スプリントを終えた時点で、消化し終えたものがバックログから消える**
+                 *     ——これが「バックログ＝行うべき仕事すべての保管庫」を保つ手当てである。
+                 *
+                 *     バックログの状態フィルタで完了を明示的に選んだときに画面が `true` を送る
+                 *     （GuiDesign.md 5.4）。**検索画面ができるまでの唯一の逃げ道である。**
+                 */
+                retired?: "true" | "false";
                 /**
                  * @description `7d` 形式。**今日から N 日以内に期限があるもの（期限超過を含む）**。
                  *     `due_date IS NULL` は除外する。上限は `3650d`。

@@ -13,6 +13,7 @@ export type SprintList = components['schemas']['SprintList']
 export type SprintStatus = components['schemas']['SprintStatus']
 export type CreateSprintRequest = components['schemas']['CreateSprintRequest']
 export type PatchSprintRequest = components['schemas']['PatchSprintRequest']
+export type StartSprintRequest = components['schemas']['StartSprintRequest']
 
 /**
  * スプリントの状態の表示名（`GuiDesign.md` 5.9.5）。
@@ -65,5 +66,36 @@ export function updateSprint(
 export function deleteSprint(key: string, id: string): Promise<void> {
   return api.del<void>(
     `/projects/${encodeURIComponent(key)}/sprints/${encodeURIComponent(id)}`,
+  )
+}
+
+/**
+ * スプリントを始める（9.12.1。pb-6）。
+ *
+ * **新しく作り、`active` にし、オンステージに載っているものを対象に入れる**
+ * ——3つがサーバ側の1トランザクションで起きる。**対象を画面から渡さない**のは、
+ * 「オンステージ段に出ている行」の判定が `staged_at` だけでは決まらない
+ * （子は親と一緒に運ばれる）ためで、サーバが部分木ごと取る。
+ *
+ * **進行中のスプリントが既にあると 409**（`active_sprint_exists`）。画面は
+ * ボタンを出さないことで先に防ぐが、他の人が同時に始めた場合はここへ来る。
+ */
+export function startSprint(key: string, body: StartSprintRequest): Promise<Sprint> {
+  return api.post<Sprint>(`/projects/${encodeURIComponent(key)}/sprints/start`, body)
+}
+
+/**
+ * スプリントを終える（9.12.2。pb-6）。**本文を取らない。**
+ *
+ * 完了しているオンステージの根が段から降り、**9.2.1 の3条件を満たすので
+ * 一覧から消える**。未完了のものはオンステージに残る。
+ *
+ * **呼んだあとは一覧を引き直すこと。** 外れる行と残る行が同時に決まるので、
+ * 手元で差分を当てずにサーバの答えを採る。
+ */
+export function finishSprint(key: string, id: string): Promise<Sprint> {
+  return api.post<Sprint>(
+    `/projects/${encodeURIComponent(key)}/sprints/${encodeURIComponent(id)}/finish`,
+    {},
   )
 }

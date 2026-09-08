@@ -8,7 +8,6 @@
 export interface NewTicketDefaults {
   parent_seq?: number
   tag_ids?: string[]
-  sprint_id?: string
   assignee_id?: string
 }
 </script>
@@ -31,7 +30,6 @@ export interface NewTicketDefaults {
 import { computed, ref } from 'vue'
 
 import Modal from './Modal.vue'
-import type { Sprint } from '../api/sprints'
 import type { Tag } from '../api/tags'
 import {
   backlogTicketTypes,
@@ -49,7 +47,6 @@ const props = defineProps<{
   projectKey: string
   members: ProjectMember[]
   tags: Tag[]
-  sprints: Sprint[]
   /** 親の選択肢。バックログがいま表示しているチケット（5.4.3） */
   candidates: Ticket[]
   defaults?: NewTicketDefaults
@@ -90,7 +87,6 @@ const priority = ref<TicketPriority | ''>('')
 const assigneeId = ref(props.defaults?.assignee_id ?? '')
 const parentSeq = ref(props.defaults?.parent_seq !== undefined ? String(props.defaults.parent_seq) : '')
 const tagIds = ref<string[]>([...(props.defaults?.tag_ids ?? [])])
-const sprintId = ref(props.defaults?.sprint_id ?? '')
 const estimatePoint = ref('')
 const startDate = ref('')
 const dueDate = ref('')
@@ -163,7 +159,6 @@ function submit(): void {
   if (assigneeId.value !== '') body.assignee_id = assigneeId.value
   if (parentSeq.value !== '') body.parent_seq = Number(parentSeq.value)
   if (tagIds.value.length > 0) body.tag_ids = [...tagIds.value]
-  if (sprintId.value !== '') body.sprint_id = sprintId.value
   if (estimatePoint.value !== '') body.estimate_point = Number(estimatePoint.value)
   if (startDate.value !== '') body.start_date = startDate.value
   if (dueDate.value !== '') body.due_date = dueDate.value
@@ -242,13 +237,6 @@ function submit(): void {
           <span v-if="fieldErrors?.parent_seq" class="detail">✕ {{ fieldErrors.parent_seq }}</span>
         </label>
 
-        <label class="field grow">
-          <span class="label">スプリント</span>
-          <select v-model="sprintId">
-            <option value="">スプリント未設定</option>
-            <option v-for="s in sprints" :key="s.id" :value="s.id">{{ s.name }}</option>
-          </select>
-        </label>
       </div>
 
       <!-- タグは複数付く（`ticket_tag` は多対多）。ここから新規作成はできない

@@ -6,15 +6,17 @@ import { useRoute, useRouter } from 'vue-router'
 import AssigneePicker from '../components/AssigneePicker.vue'
 import EmptyState from '../components/EmptyState.vue'
 import EpicFilter from '../components/EpicFilter.vue'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
 import NewTicketModal from '../components/NewTicketModal.vue'
 import type { NewTicketDefaults } from '../components/NewTicketModal.vue'
 import PageHeader from '../components/PageHeader.vue'
 import SplitPane from '../components/SplitPane.vue'
 import StatusDropdown from '../components/StatusDropdown.vue'
+import SprintStartModal from '../components/SprintStartModal.vue'
 import TicketDetailPane from '../components/TicketDetailPane.vue'
 import { ApiError } from '../api/client'
 import * as sprintsApi from '../api/sprints'
-import type { Sprint } from '../api/sprints'
+import type { Sprint, StartSprintRequest } from '../api/sprints'
 import * as tagsApi from '../api/tags'
 import type { Tag } from '../api/tags'
 import * as ticketsApi from '../api/tickets'
@@ -81,6 +83,12 @@ const projectKey = computed(() => {
 })
 
 const canCreate = computed(() => auth.canInProject(projectKey.value, 'ticket.create'))
+/**
+ * スプリントの開始・終了は `project.edit`（`ApiDesign.md` 9.12.1 / 9.12.2）。
+ *
+ * **持っていない人にはボタンを出さない**（`GuiDesign.md` 2.4 の権限による出し分け）。
+ */
+const canRunSprint = computed(() => auth.canInProject(projectKey.value, 'project.edit'))
 const canEdit = computed(() => auth.canInProject(projectKey.value, 'ticket.edit'))
 /** 一覧から状態を変えるのに要る（`ApiDesign.md` 9.6。pb-63） */
 const canTransition = computed(() => auth.canInProject(projectKey.value, 'ticket.transition'))
@@ -232,6 +240,38 @@ const STATE_KEYS = ['status', 'status_category', 'open', 'stale'] as const
  * と1日ぶんずれる。
  */
 const DUE_KEYS = ['overdue', 'due_within'] as const
+
+/**
+ * 状態フィルタが「完了」を指しているか（5.4「状態と期限のフィルタ」。pb-5 / pb-6）。
+ *
+ * **これが `retired=true` を送る唯一の条件である。** スプリントを終えて棚に
+ * 戻ったチケットは既定で一覧から外れるので（`ApiDesign.md` 9.2.1）、
+ * **完了を明示的に選んだときだけ戻す**——検索画面（`/p/:key/search`、3.2 の
+ * プレースホルダ）ができるまでの逃げ道である。
+ *
+ * **「すべて」では送らない。** 素の状態のバックログは「これからやるべき仕事」を
+ * 並べる面であり、終わった仕事が混ざると走査の妨げになる。
+ *
+ * 3系列のどれで完了を選んでも効かせる（`open=false` / `status_category=done` /
+ * **完了カテゴリのステータスキー**）。**キーからカテゴリを引くのに
+ * ワークフローを読む**——`done` という名前のキーを決め打ちにすると、
+ * ワークフローを差し替えたプロジェクトで効かなくなる。
+ */
+const wantsRetired = computed(() => {
+  if (queryValue('open') === 'false') return true
+  if (splitQuery('status_category').includes('done')) return true
+  const keys = splitQuery('status')
+  if (keys.length === 0) return false
+  const statuses = projectStore.current?.workflow?.statuses ?? []
+  return keys.some((k) => statuses.find((st) => st.key === k)?.category === 'done')
+})
+
+/** カンマ区切りのクエリを配列にする（空は落とす） */
+function splitQuery(name: string): string[] {
+  return queryValue(name)
+    .split(',')
+    .filter((v) => v !== '')
+}
 
 function queryValue(name: string): string {
   const v = route.query[name]
@@ -404,6 +444,67 @@ const sprints = ref<Sprint[]>([])
 /** エピックの選択肢（5.4「フィルタ」）。タグ・スプリントと同じ「語彙の取得」である */
 const epics = ref<Ticket[]>([])
 
+/** スプリントの開始ダイアログ（5.4「開始のダイアログ」。pb-6） */
+const showSprintStart = ref(false)
+/** スプリントの終了確認（5.4「終了の確認」） */
+const confirmSprintFinish = ref(false)
+/** 開始ダイアログへ返す検証エラー（`details[].field` → メッセージ） */
+const sprintStartErrors = ref<Record<string, string>>({})
+
+/**
+ * いま進行中のスプリント（`ApiDesign.md` 9.12.1 は同時に1本だけを許す）。
+ *
+ * **一覧から拾う。** 語彙として既に `GET /sprints` を引いているので、
+ * 進行中を知るために往復を増やさない。
+ */
+const activeSprint = computed(() => sprints.value.find((s) => s.status === 'active') ?? null)
+
+/**
+ * 進行中のスプリントの期間表示（`8/05 — 8/21`）。
+ *
+ * **年を出さない。** ここは「いま回っている期間」であり、5.4 の期限列とは
+ * 事情が違う（あちらは来年の期限が今年に見えると判断を誤るので年を出す）。
+ * 見出しの1行に収める必要があり、両端が揃っていれば月日で足りる。
+ */
+const activeSprintPeriod = computed(() => {
+  const sp = activeSprint.value
+  if (!sp) return ''
+  const md = (d: string | null | undefined) => (d ? d.slice(5).replace('-', '/') : '')
+  const from = md(sp.start_date)
+  const to = md(sp.end_date)
+  if (from === '' && to === '') return ''
+  return `${from} — ${to}`
+})
+
+/**
+ * オンステージ段に出ている行数（開始ダイアログに出す参考値）。
+ *
+ * **サーバの判定とは別物である。** あちらは `staged_at` を持つ行の部分木を
+ * DB で取る（9.12.1）。ここはフィルタが掛かった手元の表示から数えるので、
+ * **絞り込み中は実際の対象より少なく出る。**
+ */
+const onstageCount = computed(() => staged.value.staged.length)
+
+/**
+ * 終了したときの内訳（5.4「終了の確認」）。**押す前に数で出す。**
+ *
+ * **数えるのはスプリントの対象であって、オンステージ段の行ではない**
+ * （実機で判明、2026-09-09）。手元の行から数えていたときは、
+ *
+ * - **オンステージから降りた対象が漏れる**（対象に入ったあとバックログ段へ
+ *   戻した行）。実際に「完了した 0 件」と出しながら1件が消えた
+ * - フィルタで絞っている間は、絞られた行が数から落ちる
+ *
+ * サーバが `ticket_count` / `closed_count` を返しているので（`ApiDesign.md`
+ * 9.12）、**そちらを正本にする。**
+ */
+const finishPreview = computed(() => {
+  const sp = activeSprint.value
+  const total = sp?.ticket_count ?? 0
+  const closed = sp?.closed_count ?? 0
+  return { total, closed, remaining: total - closed }
+})
+
 /** 操作の結果は操作した場所に出す（6.4）。作成と並べ替えで1つの欄を使い回す */
 const result = ref('')
 const busy = ref(false)
@@ -440,6 +541,8 @@ async function loadTickets(): Promise<void> {
       status_category: queryValue('status_category'),
       open: queryValue('open') === 'true' ? 'true' : queryValue('open') === 'false' ? 'false' : undefined,
       stale: queryValue('stale'),
+      // **完了を明示的に選んだときだけ棚に戻ったものを出す**（5.4。pb-5 / pb-6）
+      retired: wantsRetired.value ? 'true' : undefined,
       // 「期限」の箱が出す2系列（同上）
       overdue: queryValue('overdue') === 'true' ? 'true' : undefined,
       due_within: queryValue('due_within'),
@@ -1510,7 +1613,9 @@ function openNewModal(sectionKey?: string): void {
   ) {
     if (group.value === 'parent') defaults.parent_seq = Number(sectionKey)
     if (group.value === 'tag') defaults.tag_ids = [sectionKey]
-    if (group.value === 'sprint') defaults.sprint_id = sectionKey
+    // **スプリントの軸だけ初期値を持たない**（pb-6）。9.3 が `sprint_id` を
+    // 受け付けなくなったためで、所属はスプリントを開始したときに決まる。
+    // 状態の軸が初期値を持たないのと同じ形である。
     if (group.value === 'assignee') defaults.assignee_id = sectionKey
   }
   if (defaults.parent_seq === undefined && epicSeqs.value.length === 1) {
@@ -1548,6 +1653,68 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
       showNewModal.value = false
       error.value = err
     }
+  } finally {
+    busy.value = false
+  }
+}
+
+// ── スプリントの運用（5.4「スプリントを開始・終了する」。pb-6）──────
+
+/**
+ * スプリントを始める（`ApiDesign.md` 9.12.1）。
+ *
+ * **対象を送らない。** 「オンステージ段に出ている行」の判定は `staged_at` だけ
+ * では決まらない（子は親と一緒に運ばれる）ので、サーバが部分木ごと取る。
+ *
+ * **成功したら語彙と一覧の両方を取り直す。** 語彙は見出しに出す進行中の
+ * スプリントのため、一覧はチケットの `sprint` 欄が変わったためである。
+ */
+async function runStartSprint(body: StartSprintRequest): Promise<void> {
+  busy.value = true
+  sprintStartErrors.value = {}
+  try {
+    const sprint = await sprintsApi.startSprint(projectKey.value, body)
+    showSprintStart.value = false
+    await Promise.all([loadVocabulary(), loadTickets()])
+    result.value = `✓ スプリント「${sprint.name}」を開始しました（対象 ${sprint.ticket_count} 件）`
+  } catch (e) {
+    const err = toApiError(e)
+    if (err.status === 422) {
+      const fields: Record<string, string> = {}
+      for (const d of err.details) fields[d.field] = d.message
+      sprintStartErrors.value = fields
+    } else {
+      // 409（進行中が既にある）と 403 はモーダルを閉じて画面上部へ出す。
+      // **409 は他の人が同時に始めたときに来る**——画面はボタンを出さない
+      // ことで先に防いでいるが、手元の語彙が古ければすり抜ける。
+      showSprintStart.value = false
+      error.value = err
+      if (err.status === 409) await loadVocabulary()
+    }
+  } finally {
+    busy.value = false
+  }
+}
+
+/**
+ * スプリントを終える（`ApiDesign.md` 9.12.2）。
+ *
+ * **終わったら一覧を引き直す。** 外れる行と残る行が同時に決まるので、
+ * 手元で差分を当てずにサーバの答えを採る（5.4「終了の確認」）。
+ */
+async function runFinishSprint(): Promise<void> {
+  const sprint = activeSprint.value
+  if (!sprint) return
+  busy.value = true
+  try {
+    const done = await sprintsApi.finishSprint(projectKey.value, sprint.id)
+    confirmSprintFinish.value = false
+    await Promise.all([loadVocabulary(), loadTickets()])
+    result.value = `✓ スプリント「${done.name}」を終了しました（完了 ${done.closed_count} / ${done.ticket_count} 件）`
+  } catch (e) {
+    confirmSprintFinish.value = false
+    error.value = toApiError(e)
+    await loadVocabulary()
   } finally {
     busy.value = false
   }
@@ -1931,6 +2098,42 @@ watch(projectKey, (key) => {
             >
               +
             </button>
+
+            <!-- スプリントの運用（5.4「スプリントを開始・終了する」。pb-6）。
+                 **オンステージ段の見出しにだけ出す**——対象がオンステージに
+                 載っているもの全部だからで、別の画面で選び直させると同じ
+                 集合を2回作ることになる。
+                 **進行中があるときは開始のボタンを出さない**（押せない
+                 ボタンを出すより、状態が1つに見えるほうがよい）。
+                 **縮小中は畳む**——450px では段の名前が「オンステ…」と切れる
+                 （実機で判明）。フィルタ行を畳み、列を3つに落とすのと同じ
+                 方針で、一覧に残すのは「次にどれを開くか」に要るものだけ -->
+            <template v-if="canRunSprint && section.stage === true && !shrunk">
+              <span v-if="activeSprint" class="sprint-active">
+                <span class="sprint-name">{{ activeSprint.name }}</span>
+                <span v-if="activeSprintPeriod" class="sprint-period">
+                  {{ activeSprintPeriod }}
+                </span>
+              </span>
+              <button
+                v-if="activeSprint"
+                type="button"
+                class="secondary small"
+                :disabled="busy"
+                @click="confirmSprintFinish = true"
+              >
+                スプリントを終了
+              </button>
+              <button
+                v-else
+                type="button"
+                class="secondary small"
+                :disabled="busy"
+                @click="showSprintStart = true"
+              >
+                スプリントを開始
+              </button>
+            </template>
           </div>
 
           <template v-if="!collapsed.has(section.key)">
@@ -2253,13 +2456,36 @@ watch(projectKey, (key) => {
         :project-key="projectKey"
         :members="members"
         :tags="tags"
-        :sprints="sprints"
         :candidates="parentCandidates"
         :defaults="newDefaults"
         :busy="busy"
         :field-errors="newFieldErrors"
         @close="showNewModal = false"
         @save="createTicket"
+      />
+
+      <!-- スプリントの開始（5.4「開始のダイアログ」。pb-6） -->
+      <SprintStartModal
+        v-if="showSprintStart"
+        :onstage-count="onstageCount"
+        :busy="busy"
+        :field-errors="sprintStartErrors"
+        @close="showSprintStart = false"
+        @start="runStartSprint"
+      />
+
+      <!-- スプリントの終了（5.4「終了の確認」）。**「外れます」と書き、
+           「削除されます」と書かない**——チケットは消えず、状態フィルタで
+           完了を選べば戻ってくる。取り返しがつかないと読める言葉を、
+           取り返しのつく操作に使わない（6.3）。だから `danger` も付けない -->
+      <ConfirmDialog
+        v-if="confirmSprintFinish && activeSprint"
+        title="スプリントを終了しますか？"
+        :message="`${activeSprint.name} を終了します。対象の ${finishPreview.total} 件のうち、完了しているのは ${finishPreview.closed} 件です。完了したものは一覧から外れ、未完了の ${finishPreview.remaining} 件はオンステージに残ります。`"
+        confirm-label="終了する"
+        :busy="busy"
+        @cancel="confirmSprintFinish = false"
+        @confirm="runFinishSprint"
       />
     </template>
 
@@ -2272,7 +2498,6 @@ watch(projectKey, (key) => {
         :seq="detailSeq"
         :members="members"
         :tags="tags"
-        :sprints="sprints"
         :workflow="projectStore.current?.workflow ?? null"
         :candidates="tickets"
         @close="closeDetail"
@@ -2562,6 +2787,30 @@ watch(projectKey, (key) => {
 /* 見出しは「その段の先頭へ」なので、線は見出しの下端に引く */
 .section-head.drop-first {
   box-shadow: inset 0 -2px 0 0 var(--pb-accent);
+}
+
+/* 進行中のスプリント（5.4「スプリントを開始・終了する」。pb-6）。
+   **見出しの1行に収める**——名前が長いときは名前のほうを省略し、
+   期間は縮ませない（日付が切れると読めない）。 */
+.sprint-active {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pb-space-2);
+  min-width: 0;
+  color: var(--pb-text-muted);
+  font-size: 13px;
+}
+
+.sprint-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pb-text);
+}
+
+.sprint-period {
+  flex: none;
+  font-variant-numeric: tabular-nums;
 }
 
 

@@ -227,6 +227,15 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
+		// **着手したら、オンステージへ上げる**（9.6。pb-5）。
+		//
+		// 「オンステージだけを見れば仕掛りが全部わかる」という段の約束を、
+		// 手の操作に頼らずに保つ（GuiDesign.md 5.4）——上げ忘れた仕掛りが
+		// バックログ段に埋もれると、上の段は仕掛りの一覧でなくなる。
+		if err := stageDisplayRootOnStart(ctx, q, wf, before, *target); err != nil {
+			return err
+		}
+
 		v, err := buildTicketDetail(ctx, q, projectID, seq)
 		if err != nil {
 			return fmt.Errorf("遷移したチケットを読めない: %w", err)
@@ -340,6 +349,63 @@ func cascadeParentsToInProgress(
 		}
 
 		childID = parent.ID
+	}
+	return nil
+}
+
+// stageDisplayRootOnStart は、未着手カテゴリを出たチケットの「表示上の
+// トップレベルの祖先」をオンステージへ上げる（ApiDesign.md 9.6
+// 「着手したら、オンステージへ上げる」。pb-5。利用者の判断、2026-09-08）。
+//
+// **上げるのは自分ではなく祖先である。** 段に置けるのは表示上のトップレベル
+// だけで（9.4.1 の not_stageable）、配下は親と一緒に運ばれる。子タスクに
+// 着手したとき、動かすべきなのは**その子を含む部分木の根**である。
+//
+// **sort_key を動かさない。** 二段は同じ順序キーを1本共有しており（9.4）、
+// 段が変わっても位置は保たれる。**着手のたびに末尾へ飛ぶと、人が手で組んだ
+// 消化順が壊れる。**
+//
+// **version を動かさない。** staged_at は 9.5.2 で PATCH できない欄なので、
+// 開いている詳細ペインの If-Match が古くなっても失われる編集が無い。
+// 逆に上げると、着手のたびに祖先を開いている画面が 409 になる。
+//
+// **activity には書かない**（9.6）。遷移の行が「誰が進めたか」を既に持って
+// おり、手で動かす経路（9.4）と混ざることもない。
+//
+// **逆向きの連動は持たない**——未着手へ戻してもオンステージから降ろさない。
+// 「未着手だがオンステージ」は段が表せなければならない状態であり
+// （DbDesign.md 6.6）、やり直しのために状態を戻した行が仕掛りから消えるのは
+// 誤りである。降ろすのは手で戻すか、スプリントを終えるかの2つだけである。
+func stageDisplayRootOnStart(
+	ctx context.Context, q gen.Querier, wf ticketWorkflow,
+	before gen.GetTicketBySeqRow, target gen.ListWorkflowStatusesRow,
+) error {
+	// 未着手カテゴリを出たときだけ動く。遷移前が todo でなければ、
+	// 既に一度は着手されている（この規則自身がそのとき上げている）。
+	fromStatus := wf.findStatus(before.StatusKey)
+	if fromStatus == nil || fromStatus.Category != statusCategoryTodo ||
+		target.Category == statusCategoryTodo {
+		return nil
+	}
+
+	root, err := q.GetDisplayRootForStaging(ctx, before.ID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("段に置く祖先を読めない: %w", err)
+	}
+	// **エピックは段に置けない**（9.4.1）。親を持たないエピックを着手させると
+	// ここへ来るので、黙って何もしない。
+	if root.Staged || root.Type == ticketTypeEpic {
+		return nil
+	}
+
+	if err := q.SetTicketStagedAt(ctx, gen.SetTicketStagedAtParams{
+		ID:       root.ID,
+		StagedAt: nowTimestamptz(),
+	}); err != nil {
+		return fmt.Errorf("チケットをオンステージへ上げられない: %w", err)
 	}
 	return nil
 }
