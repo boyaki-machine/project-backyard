@@ -353,7 +353,8 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 
 	// read 5件（/pb-onboard が呼ぶ順）＋ コンテキストパック1件（手順27。
 	// /pb-implement が「契約を読む → 前提を読む」の順で呼ぶので pb_get_task の
-	// 直後）＋ write 3件（10.7.1 の開発フローの順）＋ 遷移2件（見てから動かす順。
+	// 直後）＋ write 4件（10.7.1 の開発フローの順。pb_add_reference は「実装中に
+	// 分かったことを書く」の隣＝作業の跡を積む位置。pb-68）＋ 遷移2件（見てから動かす順。
 	// 手順26b）＋ 完了レポート1件（手順26c。/pb-implement の流れの終端）。
 	//
 	// **pb_claim_task / pb_release_task は Phase 3 へ送った**
@@ -362,7 +363,7 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 	want := []string{
 		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tasks", "pb_get_task",
 		"pb_get_context",
-		"pb_create_ticket", "pb_post_note", "pb_put_doc",
+		"pb_create_ticket", "pb_post_note", "pb_add_reference", "pb_put_doc",
 		"pb_list_transitions", "pb_transition_task",
 		"pb_submit_result",
 	}

@@ -559,6 +559,37 @@ UPDATE ticket SET
 WHERE project_id = @project_id AND seq = @seq
 RETURNING version;
 
+-- ── 親子の連動（ApiDesign.md 9.6 の検証7 と「子が動いたら親を進行中に」。pb-72）──
+
+-- CountOpenChildren は検証7 の材料（9.6）。**直下の子だけを数える。**
+--
+-- 孫まで数えないのは、同じ規則が子にも掛かるためである——孫が未完了なら子も
+-- 完了にできず、子が完了していなければ親はここで止まる。規則が段ごとに効くので
+-- 再帰は要らない。
+--
+-- **closed_at IS NULL で数える。** 9.6 の「closed_at は遷移の副作用としてのみ動く」
+-- により、これが「完了していない」と一致することが保証されている（9.2 の
+-- ?open=true と同じ判定）。ステータスのカテゴリで数え直すと、同じ事実を2通りに
+-- 数えることになり、片方だけ直した日にずれる。
+-- name: CountOpenChildren :one
+SELECT count(*) FROM ticket
+ WHERE parent_id = @parent_id AND closed_at IS NULL;
+
+-- GetParentForCascade は「子が動いたら親を進行中にする」で祖先をたどる1段ぶん
+-- （9.6）。子の id を渡すと、その親の seq とステータスのカテゴリが返る。
+--
+-- **親を持たなければ行が返らない**（parent_id が NULL のとき、内側の SELECT が
+-- NULL を返して外側が0件になる）。呼び出し側はそこでたどるのをやめる。
+--
+-- **seq を返すのは、SetTicketStatus が project_id と seq で更新するためである。**
+-- id で更新する口を別に作ると、同じ更新が2通りになる。
+-- name: GetParentForCascade :one
+SELECT t.id, t.seq, t.status_key, ws.category AS status_category
+  FROM ticket t
+  JOIN project p ON p.id = t.project_id
+  LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
+ WHERE t.id = (SELECT c.parent_id FROM ticket c WHERE c.id = @child_id);
+
 -- ── 実行者（ApiDesign.md 9.6 / 9.5.2。手順26b）───────────────
 
 -- SetTicketWorkingAgent は、遷移に成功したエージェントを実行者として立てる

@@ -566,11 +566,12 @@ func (f *flexString) UnmarshalJSON(b []byte) error {
 
 // ── write 系（手順26a。Design.md 8.5.1）─────────────────────
 
-// writeTools は手順26a で実装する write 系3件を返す。
+// writeTools は write 系を返す（手順26a の3件と、pb-68 の pb_add_reference）。
 //
 // **並び順は 10.7.1 の開発フローに合わせてある**——議論の結果を起票し
-// （pb_create_ticket）、実装中に分かったことを書き（pb_post_note）、指示が
-// あれば憲章へ反映する（pb_put_doc）。tools/list はこの順で出る。
+// （pb_create_ticket）、実装中に分かったことを書き（pb_post_note）、作業の跡を
+// 積み（pb_add_reference）、指示があれば憲章へ反映する（pb_put_doc）。
+// tools/list はこの順で出る。
 //
 // **pb_claim_task / pb_release_task は 26b、pb_submit_result は 26c**
 // （Design.md 8.2）。
@@ -615,6 +616,32 @@ func writeTools() []tool {
 				Required: []string{"seq", "body_md"},
 			},
 			call: callPostNote,
+		},
+		{
+			Name: "pb_add_reference",
+			Description: "チケットに、作業の跡（リポジトリ・ブランチ・コミット）を1件積む。" +
+				"「このブランチで始めた」「このコミットを積んだ」を、次に同じ場所を触る人が" +
+				"辿れる形で残すために使う。**追記専用である**——積んだ行を直す・消す口は無く、" +
+				"誤って積んだものは人が画面から始末する。仕様書などの URL を指すときは kind に doc を渡す。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq": {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
+					"repository": {Type: "string", Description: "リポジトリを識別する文字列。" +
+						"**kind=code のとき必須。** プロジェクト設定に登録が無い名前でも受け付ける"},
+					"branch":     {Type: "string", Description: "ブランチ名。255文字まで"},
+					"commit_sha": {Type: "string", Description: "コミットID。64文字まで。git rev-parse --short の短縮形でよい"},
+					"url": {Type: "string", Description: "URL。コミットへのリンクなど。**kind=doc のとき必須。** " +
+						"1000文字まで"},
+					"label": {Type: "string", Description: "この参照が何かを1行で。200文字まで"},
+					"note":  {Type: "string", Description: "補足。500文字まで"},
+					"kind": {Type: "string", Description: "種類。既定は code。" +
+						"code=リポジトリ・ブランチ・コミット、doc=仕様書などのURL",
+						Enum: []string{"code", "doc"}},
+				},
+				Required: []string{"seq"},
+			},
+			call: callAddReference,
 		},
 		{
 			Name: "pb_put_doc",
@@ -725,6 +752,72 @@ func callPostNote(h *Handler, r *http.Request, key string, args json.RawMessage)
 	}
 	res, err := h.callREST(r, http.MethodPost,
 		"/projects/"+url.PathEscape(key)+"/tickets/"+strconv.FormatInt(in.Seq.value, 10)+"/comments",
+		nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// addReferenceArgs は pb_add_reference の引数（Design.md 8.5.1）。
+//
+// **sort_order は開けていない。** 9.10.2 が省略時に末尾（現在の最大値 + 10）へ
+// 置き、DbDesign.md 6.12 が「並びは sort_order ではなく created_at が実質の軸」と
+// 述べている。**積む順がそのまま並びになるので、エージェントが決める値が無い。**
+type addReferenceArgs struct {
+	Seq        flexInt `json:"seq"`
+	Repository string  `json:"repository"`
+	Branch     string  `json:"branch"`
+	CommitSHA  string  `json:"commit_sha"`
+	URL        string  `json:"url"`
+	Label      string  `json:"label"`
+	Note       string  `json:"note"`
+	Kind       string  `json:"kind"`
+}
+
+// callAddReference は ticket_reference を1行足す（ApiDesign.md 9.10.2）。
+//
+// **必要権限は ticket.reference.edit**（0027／pb-68）。エージェントの既定スコープに
+// 入っているが、**既に発行済みのトークンには入っていない**——scopes は発行時に固定
+// されるので、古いトークンでは 403 になる（ApiDesign.md 4.5.3）。
+//
+// **kind の既定は code である。** 呼ぶ動機がほぼ code だからで、doc も渡せる
+// ——塞ぐと 8.1 の「MCP 層に独自の規則を置かない」に反する。**既定を置くことは
+// Design.md 8.5.1 に書いてある限り隠れた規則にならない。**
+//
+// **条件付き必須（code なら repository、doc なら url）をスキーマで組まない。**
+// 判定が REST と MCP の2か所に分かれるためで、9.10.2 の検証をそのまま返す。
+func callAddReference(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in addReferenceArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if !in.Seq.set || in.Seq.value < 1 {
+		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	}
+
+	// **本文は「送られた項目だけ」を組み立てる**（callCreateTicket と同じ）。
+	// 空文字を載せると、9.10.2 が任意と定める欄に空を明示したことになる。
+	kind := strings.TrimSpace(in.Kind)
+	if kind == "" {
+		kind = "code"
+	}
+	body := map[string]any{"kind": kind}
+	for k, v := range map[string]string{
+		"repository": in.Repository,
+		"branch":     in.Branch,
+		"commit_sha": in.CommitSHA,
+		"url":        in.URL,
+		"label":      in.Label,
+		"note":       in.Note,
+	} {
+		if v != "" {
+			body[k] = v
+		}
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost,
+		"/projects/"+url.PathEscape(key)+"/tickets/"+strconv.FormatInt(in.Seq.value, 10)+"/references",
 		nil, raw, nil)
 	return passThrough(r, res, err)
 }

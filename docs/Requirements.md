@@ -448,6 +448,7 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 | `pb_list_transitions` | read | 2 | **`seq`** | 9.7 の応答をそのまま | **いまどの状態へ進めるか**と、進めない先の理由。手順26b |
 | `pb_post_note` | write | 2 | **`seq`**, `body_md`, `kind?` | 9.8 の1件をそのまま | 途中経過・判明した事実の記録。**`refs` は落とした**——`ApiDesign.md` 9.8 に対応するフィールドが無い（`Design.md` 8.5.1） |
 | `pb_put_doc` | write | 2 | `path`, `body_md`, `change_reason?` | 10.3 の応答をそのまま | **文書の更新。** 権限を持つ人の指示で呼ぶ（10.6.2）。**本文の全置換**で、`If-Match` は MCP 層が付ける（`Design.md` 8.5.1） |
+| `pb_add_reference` | write | 2 | **`seq`**, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | 9.10.2 の1件をそのまま | **作業の跡（ブランチ・コミット）をチケットに積む。** `ticket_reference` の `kind='code'`（`DbDesign.md` 6.12）。**追記専用**で、直す・消すは人が画面から行う。**必要権限は `ticket.reference.edit`**（0027）。pb-68 |
 | `pb_submit_result` | write | 2 | **`seq`**, `status`, `artifacts?`, `dod_results?`, `findings?`, `failures?`, `proposed_subtasks?`, `knowledge_impact?`, `cost?` | 9.15 の応答をそのまま（`unsatisfied_dod` を含む） | 完了レポートの返却。**手順26c**（`agent_run` / `agent_report` を Phase 3 から戻した）。**引数は 10.6.1 のレポートを平らにしたもの**で、名前は REST の本体フィールドに揃う（`Design.md` 8.5.4）。**状態は進めずクローズもしない** |
 | `pb_claim_task` | write | **3** | `seq` | `lease_id`, `expires_at` | 着手時のリース取得。**Phase 3 へ送った**（2026-09-05。10.3.3） |
 | `pb_release_task` | write | **3** | `seq`, `reason` | — | 中断時のリース解放。**Phase 3 へ送った**（同上） |

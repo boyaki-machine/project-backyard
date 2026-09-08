@@ -692,7 +692,7 @@ GET /api/v1/me
 | **権限** | **所有者から導く（委譲）。** 下の式を参照 |
 | トークン | `access_token(token_type='agent')`。プロジェクトスコープ必須、有効期限必須。接頭辞は `pb_agt_` |
 | 発行 | **本人が自分の設定から**（`/me/agents`。`ApiDesign.md` 4.5、`Requirements.md` 10.9.1 系統B）。**発行時に一度だけ全文表示** |
-| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit` だけを足せる**（`ApiDesign.md` 4.5.3 の許可リスト。手順26a） |
+| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run` `ticket.reference.edit`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit` だけを足せる**（`ApiDesign.md` 4.5.3 の許可リスト。手順26a） |
 | 禁止 | `ticket.close`、`doc.edit`、`knowledge` の直接更新、他プロジェクトへのアクセス |
 | 信頼度 | `agent.trust_level` に応じて既定スコープを段階的に拡大（`Requirements.md` 10.10.3）。**実績の供給源が Phase 3 のため、Phase 2 では既定値のまま使わない** |
 | 失効 | 本人と管理画面から即時失効。サーキットブレーカー作動時は自動失効も選択可 |
@@ -722,6 +722,8 @@ GET /api/v1/me
 **手順26a まで、これは実行できなかった。** `ApiDesign.md` 4.5.3 が `scopes` を受け取らず既定を固定していたため、**`pb_put_doc` は誰が呼んでも必ず 403 になる**状態だった。26a で 4.5.3 に許可リスト（既定8件 ∪ `doc.edit`）を入れ、本節の「誰に付いているかで決まる」を発行の口で表せるようにした。**`ticket.close` は許可リストにも入れない**——本節の禁止のうち、`doc.edit` だけが「決まる」と書かれている。
 
 **`agent.run` を既定に含める。** `DbDesign.md` 8.2.6 で `operator` / `project_member` / `project_viewer` へ配り直しており、所有者が持つ権限になった。
+
+**`ticket.reference.edit` を既定に含める**（pb-68。利用者の判断、2026-09-08）。`pb_add_reference` が要求する権限で（8.2）、**作業の跡を残すのは実装エージェントの通常の仕事**だから既定に置く——`doc.edit` のように「誰に付いているか」で変わらない。**`ticket.edit` を既定にも許可リストにも入れない**：外部参照だけでなく本文・担当・期日の書き換えや並べ替えまで開いてしまうためで、そこを切り出すために 0027 で権限を新設した（`DbDesign.md` 6.12.1）。
 
 **エージェントによるクローズ禁止はDBレベルでも担保する。** ワークフローの `done` ステータスは `is_agent_reachable = false`、遷移の `allowed_actor_kinds` は `["user"]`（`DbDesign.md` 7.4）。
 
@@ -794,6 +796,7 @@ GET /api/v1/me
 | `pb_create_ticket` | `POST /projects/:key/tickets` | `ticket.create` |
 | `pb_put_doc` | `PATCH /projects/:key/docs/*path` | **`doc.edit`** |
 | `pb_post_note` | `POST /projects/:key/tickets/:seq/comments` | `comment.create` |
+| `pb_add_reference` | `POST /projects/:key/tickets/:seq/references` | **`ticket.reference.edit`** |
 | `pb_transition_task` | `POST /projects/:key/tickets/:seq/transition` | `ticket.transition` |
 | `pb_list_transitions` | `GET /projects/:key/tickets/:seq/transitions` | `ticket.view` |
 | `pb_submit_result` | `POST /projects/:key/tickets/:seq/reports`（`ApiDesign.md` 9.15） | `ticket.transition` |
@@ -887,6 +890,7 @@ GET /api/v1/me
 | `pb_create_ticket` | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?` | `POST /projects/:key/tickets` | 9.5.1 の応答をそのまま |
 | `pb_put_doc` | `path`, `body_md`, `change_reason?` | `GET` してから `PATCH /projects/:key/docs/*path` | 10.3 の応答をそのまま |
 | `pb_post_note` | `seq`, `body_md`, `kind?` | `POST /projects/:key/tickets/:seq/comments` | 9.8 の1件をそのまま |
+| `pb_add_reference` | `seq`, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | `POST /projects/:key/tickets/:seq/references` | 9.10.2 の1件をそのまま |
 
 **引数の名前は `ApiDesign.md` の本体フィールドに揃える**（`body` ではなく `body_md`、`parent` ではなく `parent_seq`）。8.5 の冒頭が述べるとおり、名前が一致していればエージェントは迷ったときに設計文書を引ける。`Requirements.md` 10.3.2 は `body` / `parent` / `task_id` と書いていたが、**あちらを実装に合わせて改訂した**。
 
@@ -903,6 +907,20 @@ GET /api/v1/me
 **write 系も応答は REST の JSON をそのままである。** `Requirements.md` 10.3.2 は戻り値を「チケットID・`seq`」「リビジョン番号」と書いていたが、**絞ると 8.1 の「整形の規則を MCP 層に置かない」に反する**うえ、`PATCH .../docs` の応答は `revision_no` を持たない（10.3 の形）。**あちらを改訂した。**
 
 **冪等キー（`idempotency_key`）は受けない**（`Requirements.md` 10.3.4 の改訂。再検討の条件は 8.6）。
+
+#### `pb_add_reference` — 作業の跡を積む（pb-68）
+
+**表を新設していない。** `ticket_reference`（`DbDesign.md` 6.12）が 0016 から `repository` / `branch` / `commit_sha` を持ち、**6.12 自身が「`kind='code'` の書き手はエージェント」「作業の経過として追記されて積み上がる」と定めていた**。REST も 9.10.2 として実装済みで、**欠けていたのは MCP の口と権限だけだった。**
+
+**`kind` の既定は `code` である。** 省略できるのは、このツールを呼ぶ動機がほぼ `code` だからで、**`doc` も渡せる**——塞ぐと 8.1 の「MCP 層に独自の規則を置かない」に反する。**既定を MCP 層に置くことは、本節に書いてある限り隠れた規則にならない。**
+
+**必須は `seq` だけにしてある。** `repository`（`code` のとき）と `url`（`doc` のとき）の出し分けは 9.10.2 の検証がそのまま返す。**スキーマ側で条件付き必須を組むと、判定が REST と MCP の2か所に分かれる。**
+
+**`sort_order` は開けない。** 9.10.2 が省略時に末尾（現在の最大値 + 10）へ置き、6.12 が「並びは `sort_order` ではなく `created_at` が実質の軸」と述べている。**積む順がそのまま並びになるので、エージェントが決める値が無い。**
+
+**更新と削除の口は作らない。** 6.12 が「画面が持つのは**表示と削除**だけで、誤って積まれた行を人が始末できるようにする」と定めており、**エージェント側は追記専用**にする。積み間違いを人が消せる形を保つほうが、エージェントが自分の跡を消せることより価値がある。
+
+**読む口も作らない。** `pb_get_task` の応答（9.5.1）が `references` を実数で含むため、**既に読めている**。
 
 ### 8.5.3 遷移系（手順26b）
 

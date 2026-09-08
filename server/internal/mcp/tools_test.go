@@ -471,6 +471,110 @@ func TestPostNoteRequiresSeqAndBody(t *testing.T) {
 	}
 }
 
+// ── pb_add_reference（pb-68。Design.md 8.5.1）────────────────
+
+// TestAddReferencePostsReference は 9.10.2 を叩くことを見る。
+//
+// **表は新設していない**——ticket_reference は 0016 から repository / branch /
+// commit_sha を持ち、欠けていたのは MCP の口と権限だけだった（DbDesign.md 6.12）。
+func TestAddReferencePostsReference(t *testing.T) {
+	rest := &fakeREST{status: http.StatusCreated, body: `{"id":"01R1","kind":"code"}`}
+	h := New(rest, "v0")
+
+	out := callTool1(t, h, toolCallBody("pb_add_reference",
+		`{"seq":31,"repository":"project-backyard","branch":"feature/pb-68",
+		  "commit_sha":"a1b2c3d","label":"MCP の口を足した"}`))
+
+	if rest.gotMethod != http.MethodPost {
+		t.Errorf("メソッド = %q, want POST", rest.gotMethod)
+	}
+	if rest.gotPath != "/api/v1/projects/demo/tickets/31/references" {
+		t.Errorf("叩いた REST = %q", rest.gotPath)
+	}
+	var sent map[string]any
+	_ = json.Unmarshal([]byte(rest.gotBody), &sent)
+	for k, want := range map[string]string{
+		"kind": "code", "repository": "project-backyard",
+		"branch": "feature/pb-68", "commit_sha": "a1b2c3d", "label": "MCP の口を足した",
+	} {
+		if sent[k] != want {
+			t.Errorf("%s = %v, want %q（本文: %s）", k, sent[k], want, rest.gotBody)
+		}
+	}
+	// **送っていない欄は載せない**（callCreateTicket と同じ）。空文字を載せると、
+	// 9.10.2 が任意と定める欄に空を明示したことになる。
+	for _, k := range []string{"url", "note"} {
+		if _, ok := sent[k]; ok {
+			t.Errorf("%s を送っている（渡していない）: %s", k, rest.gotBody)
+		}
+	}
+	if out.IsError {
+		t.Errorf("成功のはずが isError: %s", out.Content[0].Text)
+	}
+}
+
+// TestAddReferenceDefaultsKindToCode は kind の既定が code であることを見る。
+//
+// **ここだけは MCP 層が既定を置く**（Design.md 8.5.1）。9.10.2 は kind を必須と
+// するので、pb_post_note のように「送らない」形にすると必ず 422 になる。
+// **既定を置くことが隠れた規則にならないよう、8.5.1 に書いてある。**
+func TestAddReferenceDefaultsKindToCode(t *testing.T) {
+	rest := &fakeREST{status: http.StatusCreated, body: `{"id":"01R1"}`}
+	h := New(rest, "v0")
+
+	callTool1(t, h, toolCallBody("pb_add_reference", `{"seq":31,"repository":"my-app"}`))
+
+	var sent map[string]any
+	_ = json.Unmarshal([]byte(rest.gotBody), &sent)
+	if sent["kind"] != "code" {
+		t.Errorf("kind = %v, want code（本文: %s）", sent["kind"], rest.gotBody)
+	}
+}
+
+// TestAddReferencePassesDocKindThrough は doc を塞いでいないことを見る。
+//
+// **塞ぐと 8.1 の「MCP 層に独自の規則を置かない」に反する。** 既定が code なのは
+// 呼ぶ動機がほぼ code だからであって、doc を禁じたからではない。
+func TestAddReferencePassesDocKindThrough(t *testing.T) {
+	rest := &fakeREST{status: http.StatusCreated, body: `{"id":"01R2"}`}
+	h := New(rest, "v0")
+
+	callTool1(t, h, toolCallBody("pb_add_reference",
+		`{"seq":31,"kind":"doc","url":"https://example.com/design.md"}`))
+
+	var sent map[string]any
+	_ = json.Unmarshal([]byte(rest.gotBody), &sent)
+	if sent["kind"] != "doc" || sent["url"] != "https://example.com/design.md" {
+		t.Errorf("doc の参照が素通りしていない: %s", rest.gotBody)
+	}
+}
+
+// TestAddReferenceRequiresSeq は seq だけを必須にしていることを見る。
+//
+// **条件付き必須（code なら repository、doc なら url）はスキーマで組まない**
+// ——判定が REST と MCP の2か所に分かれる。9.10.2 の検証がそのまま返る。
+func TestAddReferenceRequiresSeq(t *testing.T) {
+	h := New(&fakeREST{}, "v0")
+
+	for _, args := range []string{`{"repository":"my-app"}`, `{"seq":0,"repository":"my-app"}`} {
+		res := decodeRPC(t, callMCP(t, h, agentPrincipal(), toolCallBody("pb_add_reference", args)))
+		if res.Error == nil || res.Error.Code != codeInvalidParams {
+			t.Errorf("args=%s のエラー = %+v, want %d", args, res.Error, codeInvalidParams)
+		}
+	}
+
+	// **repository が無いことは MCP では弾かない**（REST が返す 422 を通す）。
+	rest := &fakeREST{status: http.StatusUnprocessableEntity,
+		body: `{"error":{"code":"validation_failed"}}`}
+	out := callTool1(t, New(rest, "v0"), toolCallBody("pb_add_reference", `{"seq":31}`))
+	if !out.IsError {
+		t.Errorf("REST の 422 が isError で返っていない: %+v", out)
+	}
+	if rest.calls != 1 {
+		t.Errorf("REST の呼び出し = %d回, want 1（MCP で先に弾いていない）", rest.calls)
+	}
+}
+
 // TestPutDocReadsVersionThenPatches は 2往復して If-Match を付けることを見る
 // （Design.md 8.5.1）。
 //
