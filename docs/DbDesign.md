@@ -899,6 +899,10 @@ CREATE INDEX idx_ticket_link_target ON ticket_link (target_ticket_id);
 
 **`closed_at` はステータス遷移の副作用としてのみ動く。** 遷移先の `workflow_status.category` が `done` なら設定し、`done` 以外へ戻したら `NULL` へ戻す（`ApiDesign.md` 9.6）。直接更新させないことで、一覧の「未完了」フィルタ（`closed_at IS NULL`）と集計が食い違わないようにする。
 
+**`sprint_id` も同じく、直接更新させない**（0028 で足した 6.9.1）。スプリントの開始・終了の副作用としてのみ動き、`PATCH` は `422` を返す（`ApiDesign.md` 9.5.2）。**スプリントは「チケットにあらかじめ付ける属性」ではなく「いまどの期間で消化しようとしているか」である**（利用者の判断、2026-09-08。pb-6）——付け替えはチケット1件ずつではなく、**オンステージ全体に対して1回起きる**。
+
+**`staged_at` は、状態が未着手カテゴリを出たときにも立つ**（`ApiDesign.md` 9.6。pb-5）。着手したものがバックログ段に残っていると、「オンステージだけを見れば仕掛りが全部わかる」という段の約束（`GuiDesign.md` 5.4）が崩れるためである。**手で上げる操作（9.4.1 の `staged`）は残る**——「未着手だがオンステージ」を表す軸としての役割は変わらない。
+
 ### `working_agent_id` — 誰が実際に処理しているか（0021 で追加）
 
 **担当（`assignee_id`）と実行者を別の列にする**（利用者の判断、2026-09-05）。
@@ -1059,6 +1063,41 @@ ALTER TABLE ticket
 ```
 
 **スプリントの CRUD は Phase 1 で開ける**（`ApiDesign.md` 9.12）。表だけあって作る手段が無いと、チケット詳細のスプリント欄が常に空のドロップダウンになるためである。バーンダウン・ベロシティを含むスプリント管理画面は Phase 2（`GuiDesign.md` 10章）で、Phase 1 は**定義のみ**をプロジェクト設定のスプリントタブで行う。
+
+**Phase 2 で、スプリントを動かす主体をチケットからオンステージへ移した**（利用者の判断、2026-09-08。pb-6）。**定義**（名前・期間を作る）はプロジェクト設定のスプリントタブに残り、**運用**（開始・終了）はバックログのオンステージ段が持つ。チケット詳細のスプリント欄は**読み取り専用**になる（`GuiDesign.md` 5.5）。
+
+### 6.9.1 チケットとスプリントの所属（0028）
+
+```sql
+CREATE TABLE ticket_sprint (
+  ticket_id  char(26) COLLATE "C" NOT NULL REFERENCES ticket(id) ON DELETE CASCADE,
+  sprint_id  char(26) COLLATE "C" NOT NULL REFERENCES sprint(id) ON DELETE CASCADE,
+  added_at   timestamptz NOT NULL DEFAULT now(),
+  removed_at timestamptz,
+  PRIMARY KEY (ticket_id, sprint_id)
+);
+CREATE INDEX idx_ticket_sprint_sprint ON ticket_sprint (sprint_id);
+
+-- 既存の ticket.sprint_id を所属の履歴へ写す
+INSERT INTO ticket_sprint (ticket_id, sprint_id)
+SELECT id, sprint_id FROM ticket WHERE sprint_id IS NOT NULL
+ON CONFLICT DO NOTHING;
+```
+
+**1つのチケットは複数のスプリントに属しうる**（利用者の判断、2026-09-08。pb-6）。スプリントは「消化するための一定期間」であり、**期間内に終わらなかったチケットは次のスプリントへ持ち越される**。持ち越しは、あるスプリントで何件が企画され何件が消化されたかを数える材料なので、**上書きせず履歴として残す**。
+
+**`ticket.sprint_id` は捨てず、「いま属しているスプリント」を指す。** 所属の履歴は本表が持ち、`sprint_id` はそのうち最新の1件を指す**非正規化された写し**である。捨てなかったのは、`ApiDesign.md` 9.12 の `ticket_count` / `closed_count`、9.2.1 の `sprint` フィルタ、`GuiDesign.md` 5.4 のグループ化が、いずれも「**いま**属しているのはどれか」しか要らないためである。**結合で書き直しても答えは変わらず、読む側だけが複雑になる。**
+
+**`sprint_id` は `PATCH` では動かない**（`ApiDesign.md` 9.5.2）。スプリントの開始・終了の副作用としてのみ動く。**`closed_at` と同じ扱いである**（6.6）——直接更新させないことで、本表と `sprint_id` が食い違わないようにする。
+
+| 列 | 意味 |
+|---|---|
+| `added_at` | そのスプリントの対象になった時刻。**スプリント開始時**に入る |
+| `removed_at` | そのスプリントを離れた時刻。**スプリント終了時に、完了・未完了を問わず入る** |
+
+**`removed_at` を「未完了のときだけ立てない」という区別はしない。** 本表が答えるのは「**そのスプリントの対象だった期間**」であって「消化できたか」ではない。消化できたかは `ticket.closed_at` と `sprint.end_date` の突き合わせで後から言える。**1つの列に2つの問いを答えさせない。**
+
+**行は消さない。** スプリントを削除したときだけ `ON DELETE CASCADE` で落ちる（`sprint` 自体が消えるので、属していた期間も意味を失う）。9.12 の `DELETE` が `ticket.sprint_id` を `SET NULL` にするのと揃う——**どちらもチケットは消えない。**
 
 ## 6.10 タグ（0013）
 
@@ -1640,15 +1679,20 @@ Phase 2
                           文書テンプレートに agent-onboarding を足す（8.1.2）← 適用済み
   0025_ticket_execution_mode_default.sql
                           ticket.execution_mode の既定を agent_draft へ（6.6）← 適用済み
+  0026_workflow_reopen.sql
+                          done → in_progress の再オープン（7.4。pb-69）     ← 適用済み
+  0027_ticket_reference_permission.sql
+                          ticket.reference.edit（6.12。pb-68）             ← 適用済み
+  0028_ticket_sprint.sql  ticket_sprint（チケットとスプリントの所属。6.9.1。pb-6）
 Phase 3
-  0026_knowledge.sql      knowledge, knowledge_revision, proposal
-  0027_comment_signal.sql comment_signal
-  0028_embedding.sql      vector 拡張 + embedding
-  0029_project_event.sql  project_event
-  0030_analytics.sql      estimate_record, contribution
+  0029_knowledge.sql      knowledge, knowledge_revision, proposal
+  0030_comment_signal.sql comment_signal
+  0031_embedding.sql      vector 拡張 + embedding
+  0032_project_event.sql  project_event
+  0033_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 
