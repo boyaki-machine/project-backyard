@@ -119,6 +119,10 @@ type ticketFilters struct {
 	staleDays        int32
 	parentSeqs       []int32
 
+	// includeRetired は retired（9.2.1。pb-5 / pb-6）。**既定は false** で、
+	// スプリントを終えて棚に戻ったものを一覧から外す。
+	includeRetired bool
+
 	// normalized は ETag の材料（9.2.5）。解析後の値から作るので、
 	// 同じ意味の違う書き方（?type=bug,task と ?type=task,bug）が同じ値になる。
 	normalized string
@@ -157,6 +161,7 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		OverdueOnly:      filters.overdueOnly,
 		StaleDays:        filters.staleDays,
 		ParentSeqs:       filters.parentSeqs,
+		IncludeRetired:   filters.includeRetired,
 		Sort:             page.Sort,
 		SortOrder:        page.Order,
 		PageLimit:        int32(page.Limit()),
@@ -285,6 +290,21 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 	add("sprint", f.sprintIDs)
 	if f.sprintNone {
 		parts = append(parts, "sprint_none=1")
+	}
+
+	// retired（9.2.1。pb-5 / pb-6）。**棚に戻ったものを出すかどうか**で、
+	// 既定は出さない。バックログの状態フィルタで完了を明示的に選んだときに
+	// 画面が送る（GuiDesign.md 5.4「状態と期限のフィルタ」）。
+	switch v := q.Get("retired"); v {
+	case "", "false":
+	case "true":
+		f.includeRetired = true
+		parts = append(parts, "retired=true")
+	default:
+		details = append(details, apierr.Detail{
+			Field: "retired", Code: "invalid",
+			Message: "retired は true または false で指定してください",
+		})
 	}
 
 	switch v := q.Get("open"); v {

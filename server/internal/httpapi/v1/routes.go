@@ -231,6 +231,19 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
 			Delete("/projects/{key}/sprints/{id}", h.deleteSprint)
 
+		// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2。pb-6）。
+		//
+		// **start は {id} を取らない。** 開始は常に新規作成であり、既にある
+		// planned のスプリントを開始する形にはしていない（9.12.1）。
+		//
+		// **{id}/finish より先に /start を宣言する。** chi は静的な区間を
+		// パラメータより優先して照合するので順序に依存しないが、**読む人が
+		// 「start という id があるのか」と迷わない**ように並べておく。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Post("/projects/{key}/sprints/start", h.startSprint)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Post("/projects/{key}/sprints/{id}/finish", h.finishSprint)
+
 		// ── チケット（ApiDesign.md 9.2 / 9.3 / 9.4）──────────────
 		//
 		// **3本とも必要権限が違う。** 読みは ticket.view、作成は ticket.create、

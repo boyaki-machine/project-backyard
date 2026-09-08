@@ -73,11 +73,11 @@ const createTicket = `-- name: CreateTicket :exec
 INSERT INTO ticket (
   id, project_id, seq, parent_id, type, title, body_md, status_key, priority,
   assignee_id, reporter_id, estimate_point, estimate_hours,
-  start_date, due_date, sprint_id, sort_key
+  start_date, due_date, sort_key
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7, $8, $9,
   $10, $11, $12, $13,
-  $14, $15, $16, $17
+  $14, $15, $16
 )
 `
 
@@ -97,10 +97,11 @@ type CreateTicketParams struct {
 	EstimateHours pgtype.Float8
 	StartDate     pgtype.Date
 	DueDate       pgtype.Date
-	SprintID      pgtype.Text
 	SortKey       pgtype.Text
 }
 
+// **sprint_id を受け取らない**（ApiDesign.md 9.3。pb-6）。作られたチケットは
+// 必ずスプリント未所属で始まり、次にスプリントを開始したときに入る。
 func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) error {
 	_, err := q.db.Exec(ctx, createTicket,
 		arg.ID,
@@ -118,7 +119,6 @@ func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) erro
 		arg.EstimateHours,
 		arg.StartDate,
 		arg.DueDate,
-		arg.SprintID,
 		arg.SortKey,
 	)
 	return err
@@ -698,6 +698,15 @@ WITH RECURSIVE subtree AS (
   UNION
   SELECT c.id FROM ticket c JOIN subtree s ON c.parent_id = s.id
 ),
+open_desc AS (
+  SELECT id FROM ticket
+   WHERE project_id = $5::text
+     AND closed_at IS NULL
+     AND type <> 'epic'
+  UNION
+  SELECT c.id FROM ticket c JOIN open_desc o ON c.parent_id = o.id
+   WHERE c.type <> 'epic'
+),
 filtered AS (
   SELECT
     t.id,
@@ -789,6 +798,31 @@ filtered AS (
     AND ($20::int < 0
          OR (t.closed_at IS NULL
              AND t.updated_at < now() - make_interval(days => $20::int)))
+    -- retired（9.2.1。pb-5 / pb-6）。**スプリントを終えて棚に戻ったものを
+    -- 既定で外す。** 3つすべてを満たす行が対象である。
+    --
+    --   1. 完了している
+    --   2. いま属しているスプリントが completed
+    --   3. 親が無いか、親も完了している
+    --
+    -- **条件2 が「完了」だけで外さない理由。** 完了した直後に消えると、
+    -- スプリント中に何が終わったかを振り返る面が無くなる。オンステージは
+    -- 期間の作業台であり、期間が閉じるまでは終わったものも載っている。
+    --
+    -- **条件3 が要るのは、子が親より先に完了するからである。** 子だけ消えると
+    -- 親を開いたときに配下が歯抜けになる。**祖先を根までたどる**——直下の親
+    -- だけでは足りないことが実データで判明した（open_desc の説明を見ること）。
+    --
+    -- **t.sprint_id を読む**（ticket_sprint を並べ直さない）。sprint_id は
+    -- 「いま属しているスプリント」を指す非正規化された写しであり
+    -- （DbDesign.md 6.9.1）、最後の1件を引く結合と同じ答えになる。
+    AND ($21::boolean
+         OR NOT (
+           t.closed_at IS NOT NULL
+           AND EXISTS (SELECT 1 FROM sprint rs
+                        WHERE rs.id = t.sprint_id AND rs.status = 'completed')
+           AND NOT EXISTS (SELECT 1 FROM open_desc od WHERE od.id = t.id)
+         ))
     AND (cardinality($6::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
 )
 SELECT
@@ -851,6 +885,7 @@ type ListTicketsParams struct {
 	DueWithinDays    int32
 	OverdueOnly      bool
 	StaleDays        int32
+	IncludeRetired   bool
 }
 
 type ListTicketsRow struct {
@@ -926,6 +961,31 @@ type ListTicketsRow struct {
 // has_children は「プロジェクト内に子がいるか」であって「結果の中に子がいるか」
 // ではない（利用者の判断、2026-08-23）。結果の中で数えると、親が絞り込みで
 // 落ちた瞬間に子の有無まで消える。
+//
+// **未完了の行と、その全子孫**（9.2.1 の retired の条件3。pb-5）。
+//
+// ここに入る行は棚に戻さない。「自分が未完了」か「**未完了の祖先を持つ**」の
+// どちらかだからである。
+//
+// **直下の親だけを見る形では足りない**（実データで判明、2026-09-08）。
+// 親→子→孫で子と孫だけを完了させると、孫の直下の親（子）は完了しているので
+// 孫が消える。**だが子は、その親が未完了なので残る**——結果として
+// 「子は見えるのに孫だけ消えた」歯抜けが起きる。**条件3 が防ごうとしていた
+// ものそのものである。**
+//
+// 9.6 の検証7（未完了の子を抱えた親は完了にできない）があるので、通常の
+// 流れでは「根が完了した＝部分木が全部完了した」になる。**それでも祖先を
+// たどるのは、0026 の再オープン（done → in_progress）が、完了した親の下に
+// 未完了の子が居る状態を作れるためである。**
+//
+// **エピックは祖先に数えない**（実データで判明、2026-09-09）。エピックは
+// グルーピング専用で**行として出ない**ので（GuiDesign.md 5.4）、完了しない
+// まま残っていても歯抜けを作らない。数えてしまうと、**エピック配下の
+// チケットが永久に棚へ戻らなくなる**——実運用のバックログはたいてい
+// エピックで束ねられているので、機能そのものが効かなくなる。
+//
+// 起点を「未完了かつエピックでない行」に絞ることで、**表示上のトップレベル
+// （親が無いか、親がエピック。ApiDesign.md 9.4.1）から下だけを見る**形になる。
 func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error) {
 	rows, err := q.db.Query(ctx, listTickets,
 		arg.Sort,
@@ -948,6 +1008,7 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 		arg.DueWithinDays,
 		arg.OverdueOnly,
 		arg.StaleDays,
+		arg.IncludeRetired,
 	)
 	if err != nil {
 		return nil, err
@@ -1288,24 +1349,6 @@ func (q *Queries) SetTicketWorkingAgent(ctx context.Context, arg SetTicketWorkin
 	return err
 }
 
-const sprintExistsInProject = `-- name: SprintExistsInProject :one
-SELECT EXISTS (
-  SELECT 1 FROM sprint WHERE project_id = $1 AND id = $2
-)
-`
-
-type SprintExistsInProjectParams struct {
-	ProjectID string
-	ID        string
-}
-
-func (q *Queries) SprintExistsInProject(ctx context.Context, arg SprintExistsInProjectParams) (bool, error) {
-	row := q.db.QueryRow(ctx, sprintExistsInProject, arg.ProjectID, arg.ID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
 const ticketSortKeyAfter = `-- name: TicketSortKeyAfter :one
 SELECT COALESCE(min(sort_key COLLATE "C"), '')::text FROM ticket
  WHERE project_id = $1 AND sort_key COLLATE "C" > $2::text
@@ -1352,21 +1395,22 @@ UPDATE ticket SET
   assignee_id    = CASE WHEN $7::boolean    THEN $8    ELSE assignee_id END,
   working_agent_id = CASE WHEN $9::boolean THEN $10 ELSE working_agent_id END,
   parent_id      = CASE WHEN $11::boolean      THEN $12      ELSE parent_id END,
-  sprint_id      = CASE WHEN $13::boolean      THEN $14      ELSE sprint_id END,
-  estimate_point = CASE WHEN $15::boolean THEN $16 ELSE estimate_point END,
-  estimate_hours = CASE WHEN $17::boolean THEN $18 ELSE estimate_hours END,
-  actual_hours   = CASE WHEN $19::boolean   THEN $20   ELSE actual_hours END,
-  start_date     = CASE WHEN $21::boolean     THEN $22     ELSE start_date END,
-  due_date       = CASE WHEN $23::boolean       THEN $24       ELSE due_date END,
+  -- sprint_id は 9.5.2 から外した（pb-6）。スプリントの開始・終了だけが動かす
+  -- （sprint.sql の SetTicketsSprintID）。DbDesign.md 6.9.1。
+  estimate_point = CASE WHEN $13::boolean THEN $14 ELSE estimate_point END,
+  estimate_hours = CASE WHEN $15::boolean THEN $16 ELSE estimate_hours END,
+  actual_hours   = CASE WHEN $17::boolean   THEN $18   ELSE actual_hours END,
+  start_date     = CASE WHEN $19::boolean     THEN $20     ELSE start_date END,
+  due_date       = CASE WHEN $21::boolean       THEN $22       ELSE due_date END,
   -- 9.5.2 で開けた4項目（手順27）。**execution_mode と scope は NOT NULL** なので
   -- COALESCE で足りる（null を送れば 422 で先に落ちる）。readiness と
   -- readiness_note は null が「未判定へ戻す」を表すので _set の形が要る。
-  execution_mode = COALESCE($25, execution_mode),
-  readiness      = CASE WHEN $26::boolean      THEN $27      ELSE readiness END,
-  readiness_note = CASE WHEN $28::boolean THEN $29 ELSE readiness_note END,
-  scope          = COALESCE($30, scope),
+  execution_mode = COALESCE($23, execution_mode),
+  readiness      = CASE WHEN $24::boolean      THEN $25      ELSE readiness END,
+  readiness_note = CASE WHEN $26::boolean THEN $27 ELSE readiness_note END,
+  scope          = COALESCE($28, scope),
   version        = version + 1
-WHERE project_id = $31 AND seq = $32 AND version = $33
+WHERE project_id = $29 AND seq = $30 AND version = $31
 `
 
 type UpdateTicketParams struct {
@@ -1382,8 +1426,6 @@ type UpdateTicketParams struct {
 	WorkingAgentID    pgtype.Text
 	ParentIDSet       bool
 	ParentID          pgtype.Text
-	SprintIDSet       bool
-	SprintID          pgtype.Text
 	EstimatePointSet  bool
 	EstimatePoint     pgtype.Float8
 	EstimateHoursSet  bool
@@ -1441,8 +1483,6 @@ func (q *Queries) UpdateTicket(ctx context.Context, arg UpdateTicketParams) (int
 		arg.WorkingAgentID,
 		arg.ParentIDSet,
 		arg.ParentID,
-		arg.SprintIDSet,
-		arg.SprintID,
 		arg.EstimatePointSet,
 		arg.EstimatePoint,
 		arg.EstimateHoursSet,

@@ -36,7 +36,7 @@ func ticketDetailFake() *fakeQuerier {
 	q.ticket.updateRows = 1
 	q.ticket.deleteRows = 1
 	q.ticket.projectTagCount = 2
-	q.ticket.sprintExists = true
+	// sprint_id は 9.3 / 9.5.2 から外れた（pb-6）ので、参照先の検証は無くなった。
 	q.ticket.isMember = true
 	return q
 }

@@ -303,7 +303,18 @@ func (h *handler) deleteSprint(w http.ResponseWriter, r *http.Request) {
 
 // sprintByID は応答用に1件を読み直す（ticket_count / closed_count のため）。
 func (h *handler) sprintByID(ctx context.Context, projectID, id string) (sprintView, error) {
-	row, err := h.q.GetSprintByID(ctx, gen.GetSprintByIDParams{ProjectID: projectID, ID: id})
+	return sprintByIDWith(ctx, h.q, projectID, id)
+}
+
+// sprintByIDWith は sprintByID の Querier を差し替えられる形（pb-6）。
+//
+// **トランザクションの中から呼ぶために分けた。** 9.12.1 / 9.12.2 は書き込みと
+// 同じトランザクションで応答用の行を読む必要があり、h.q（プール）で読むと
+// **まだコミットされていない自分の書き込みが見えない。**
+func sprintByIDWith(
+	ctx context.Context, q gen.Querier, projectID, id string,
+) (sprintView, error) {
+	row, err := q.GetSprintByID(ctx, gen.GetSprintByIDParams{ProjectID: projectID, ID: id})
 	if err != nil {
 		return sprintView{}, err
 	}

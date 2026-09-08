@@ -12,6 +12,12 @@ import (
 
 type Querier interface {
 	AddProjectMember(ctx context.Context, arg AddProjectMemberParams) error
+	// 所属を1回で書く（DbDesign.md 6.9.1）。
+	//
+	// **行ごとに INSERT しない。** オンステージは200件になりうる（9.2.1 の per_page）。
+	// ON CONFLICT DO NOTHING は、同じスプリントを二重に開始できない以上ほぼ起きないが、
+	// 同じチケットが部分木の重なりで2度現れた場合の保険である。
+	AddTicketsToSprint(ctx context.Context, arg AddTicketsToSprintParams) error
 	// AgentClientKindExists は入力の検証に使う（ApiDesign.md 4.5.2 / 4.5.4）。
 	//
 	// **値域を Go の定数で持たない。** 正本は agent_client_kind の行であり、
@@ -255,6 +261,8 @@ type Querier interface {
 	//
 	CreateSystemActor(ctx context.Context, arg CreateSystemActorParams) error
 	CreateTag(ctx context.Context, arg CreateTagParams) error
+	// **sprint_id を受け取らない**（ApiDesign.md 9.3。pb-6）。作られたチケットは
+	// 必ずスプリント未所属で始まり、次にスプリントを開始したときに入る。
 	CreateTicket(ctx context.Context, arg CreateTicketParams) error
 	CreateTicketLink(ctx context.Context, arg CreateTicketLinkParams) error
 	CreateTicketReference(ctx context.Context, arg CreateTicketReferenceParams) error
@@ -482,6 +490,25 @@ type Querier interface {
 	FindTicketIDBySeq(ctx context.Context, arg FindTicketIDBySeqParams) (string, error)
 	// ── テンプレートの複製（ApiDesign.md 5.3）─────────────────────
 	FindWorkflowTemplate(ctx context.Context, templateKey pgtype.Text) (FindWorkflowTemplateRow, error)
+	// スプリントを終える（ApiDesign.md 9.12.2）。
+	//
+	// **end_date が空なら今日を入れる。** 期間を切らずに始めたスプリントでも、
+	// 終わった日付は残る——9.2.1 の「棚に戻ったか」の判定は status を見るので
+	// ここに依存しないが、あとから振り返る材料になる。
+	FinishSprint(ctx context.Context, arg FinishSprintParams) (int64, error)
+	// ─────────────────────────────────────────────────────────────
+	// スプリントの運用（開始・終了）。ApiDesign.md 9.12.1 / 9.12.2。pb-6。
+	//
+	// **定義（上の CRUD）と運用を分ける。** 上はプロジェクト設定のスプリントタブ
+	// （GuiDesign.md 5.9.5）が使い、ここはバックログのオンステージ段（同 5.4）が使う。
+	// ─────────────────────────────────────────────────────────────
+	// 進行中のスプリントは同時に1本だけである（ApiDesign.md 9.12.1。利用者の判断、
+	// 2026-09-08）。開始の前にこれを引き、在れば 409 active_sprint_exists にする。
+	//
+	// **LIMIT 1 を置くのは保険である。** 0028 より前に作られたデータや、9.12 の
+	// PATCH で status を直接 active にした行が複数あると2件返りうる。:one は
+	// 2行返ると失敗するので、いちばん新しい1件に倒す。
+	GetActiveSprint(ctx context.Context, projectID string) (GetActiveSprintRow, error)
 	// GetActorProfile は GET /me（ApiDesign.md 4.1）が返す actor 部分を引く。
 	//
 	// 認証ミドルウェアが載せる Principal（Design.md 6.2.2）には locale / timezone /
@@ -847,6 +874,22 @@ type Querier interface {
 	// 気づく必要がある）。
 	//
 	ListMyAgents(ctx context.Context, ownerActorID string) ([]ListMyAgentsRow, error)
+	// オンステージ段に出ているチケットの id をすべて返す（ApiDesign.md 9.12.1）。
+	//
+	// **staged_at だけで決めてはならない**（GuiDesign.md 5.4、ApiDesign.md 9.4.1）。
+	// 段を決めるのは親であり、**子は staged_at が NULL のまま親と一緒にオンステージ
+	// 段へ出る**。ここが取り違えると、スプリントの対象から配下が丸ごと落ちる。
+	//
+	// **エピックは除く。** どちらの段にも行として出ないので（GuiDesign.md 5.4）、
+	// スプリントの対象にしても数に混ざるだけである。
+	//
+	// **棚に戻ったものを明示的に外す。** 9.12.2 は終了の時点で完了していた根だけを
+	// 降ろすので、**終了したあとに完了した根はオンステージに残ったままになる**
+	// （実データで判明、2026-09-08）。そのまま次を始めると、画面から消えている
+	// はずの行が次のスプリントの対象に入り、ticket_count が実態と合わなくなる。
+	// 判定は 9.2.1 の条件1・2 と同じで、根は表示上のトップレベルなので条件3 は
+	// 自動的に満たされる。
+	ListOnstageTicketIDs(ctx context.Context, projectID string) ([]string, error)
 	// ListOwnedAgentActorIDs は、その人が所有するエージェントを列挙する。
 	//
 	// **人の削除（ApiDesign.md 6.5）で使う。** agent.owner_actor_id の
@@ -1126,6 +1169,30 @@ type Querier interface {
 	// ではない（利用者の判断、2026-08-23）。結果の中で数えると、親が絞り込みで
 	// 落ちた瞬間に子の有無まで消える。
 	//
+	// **未完了の行と、その全子孫**（9.2.1 の retired の条件3。pb-5）。
+	//
+	// ここに入る行は棚に戻さない。「自分が未完了」か「**未完了の祖先を持つ**」の
+	// どちらかだからである。
+	//
+	// **直下の親だけを見る形では足りない**（実データで判明、2026-09-08）。
+	// 親→子→孫で子と孫だけを完了させると、孫の直下の親（子）は完了しているので
+	// 孫が消える。**だが子は、その親が未完了なので残る**——結果として
+	// 「子は見えるのに孫だけ消えた」歯抜けが起きる。**条件3 が防ごうとしていた
+	// ものそのものである。**
+	//
+	// 9.6 の検証7（未完了の子を抱えた親は完了にできない）があるので、通常の
+	// 流れでは「根が完了した＝部分木が全部完了した」になる。**それでも祖先を
+	// たどるのは、0026 の再オープン（done → in_progress）が、完了した親の下に
+	// 未完了の子が居る状態を作れるためである。**
+	//
+	// **エピックは祖先に数えない**（実データで判明、2026-09-09）。エピックは
+	// グルーピング専用で**行として出ない**ので（GuiDesign.md 5.4）、完了しない
+	// まま残っていても歯抜けを作らない。数えてしまうと、**エピック配下の
+	// チケットが永久に棚へ戻らなくなる**——実運用のバックログはたいてい
+	// エピックで束ねられているので、機能そのものが効かなくなる。
+	//
+	// 起点を「未完了かつエピックでない行」に絞ることで、**表示上のトップレベル
+	// （親が無いか、親がエピック。ApiDesign.md 9.4.1）から下だけを見る**形になる。
 	ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error)
 	// ListUserIdentities は 6.3 の identities[] を引く。
 	//
@@ -1163,6 +1230,11 @@ type Querier interface {
 	ListUserSessions(ctx context.Context, actorID string) ([]ListUserSessionsRow, error)
 	ListWorkflowStatuses(ctx context.Context, workflowID string) ([]ListWorkflowStatusesRow, error)
 	ListWorkflowTransitions(ctx context.Context, workflowID string) ([]ListWorkflowTransitionsRow, error)
+	// そのスプリントの所属を閉じる（DbDesign.md 6.9.1）。
+	//
+	// **完了・未完了を問わず立てる。** この列が答えるのは「そのスプリントの対象
+	// だった期間」であって「消化できたか」ではない。
+	MarkSprintMembershipRemoved(ctx context.Context, sprintID string) error
 	// MaxTicketSortKey はプロジェクト全体の末尾。**作成時の採番だけが使う**
 	// （9.3。新規チケットは必ずバックログへ入るので、段で絞る意味がない）。
 	MaxTicketSortKey(ctx context.Context, projectID string) (string, error)
@@ -1404,6 +1476,14 @@ type Querier interface {
 	// **WHERE に現在値との比較を置いて、変わらないときは行を触らない。** trg_ticket_updated
 	// が updated_at を動かすため、無変更の UPDATE でも 9.2.5 の ETag が変わってしまう。
 	SetTicketWorkingAgent(ctx context.Context, arg SetTicketWorkingAgentParams) error
+	// ticket.sprint_id を「いま属しているスプリント」へ揃える（DbDesign.md 6.9.1）。
+	//
+	// **version を上げない**（利用者の判断の範囲外だが、9.5.2 が sprint_id を
+	// 編集不可にしたことの帰結である）。sprint_id は PATCH で書けない欄なので、
+	// 開いている詳細ペインの If-Match が古くなっても**失われる編集が無い**。
+	// 逆に上げると、スプリントを開始するたびに開いている全ペインが 409 になる。
+	// updated_at は trg_ticket_updated が動かすので、一覧の再取得は効く。
+	SetTicketsSprintID(ctx context.Context, arg SetTicketsSprintIDParams) error
 	// SoftDeleteComment は論理削除（DbDesign.md 4.6 / 6.7）。
 	//
 	// **body_md は消さない。** 列が NOT NULL であり、応答で null にするのは view の
@@ -1412,7 +1492,6 @@ type Querier interface {
 	//
 	// **updated_at はトリガが動かす**（trg_comment_updated）ので、削除も ETag に効く。
 	SoftDeleteComment(ctx context.Context, arg SoftDeleteCommentParams) (int64, error)
-	SprintExistsInProject(ctx context.Context, arg SprintExistsInProjectParams) (bool, error)
 	// SummarizeActivity は ListActivity が1件も返さないときの total と
 	// last_occurred_at。**ウィンドウ関数は行が無いと1行も返らない**ので、ETag と
 	// ページャの total をここから採る（0件のプロジェクト、および範囲外のページ）。
@@ -1467,6 +1546,14 @@ type Querier interface {
 	// ログイン時に書かなければ永久に NULL のままになる。
 	//
 	TouchLastLoginAt(ctx context.Context, actorID string) error
+	// 完了しているオンステージの根を、段から降ろす（ApiDesign.md 9.12.2）。
+	//
+	// **子は staged_at を持たないので触るものが無く、親と一緒に降りる。**
+	// 根が未完了なら、完了した子も一緒にオンステージへ残る（部分木は丸ごと動く）。
+	//
+	// **sprint_id は消さない。** 終わったあとも「最後に属したスプリント」を指し
+	// 続ける——9.2.1 の判定がこれを読むので、ここで NULL にすると材料が消える。
+	UnstageClosedTicketsInSprint(ctx context.Context, arg UnstageClosedTicketsInSprintParams) (int64, error)
 	// UpdateAdminUserActor は PATCH /admin/users/:id の actor 側を更新する。
 	//
 	// display_name と is_active は actor の列である（DbDesign.md 6.2）。

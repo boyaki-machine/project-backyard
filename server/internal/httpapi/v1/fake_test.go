@@ -46,6 +46,25 @@ func txt(s string) pgtype.Text { return pgtype.Text{String: s, Valid: true} }
 //
 // 埋め込んだ gen.Querier は nil のままなので、実装し忘れたメソッドを
 // 呼べば panic して気づける。
+// sprintRunFakeState は 9.12.1 / 9.12.2 が触るものを持つ（pb-6）。
+//
+// **書き込みを配列で溜める。** 何を渡したかを検査したいためで、
+// 「オンステージの部分木が対象に入ったか」「完了した根だけを降ろしたか」は
+// 引数を見ないと確かめられない。
+type sprintRunFakeState struct {
+	active     gen.GetActiveSprintRow // ID が空なら「進行中は無い」
+	onstageIDs []string
+
+	added            []gen.AddTicketsToSprintParams
+	assigned         []gen.SetTicketsSprintIDParams
+	finished         []gen.FinishSprintParams
+	membershipClosed []string
+	unstaged         []gen.UnstageClosedTicketsInSprintParams
+
+	finishRows   int64
+	unstagedRows int64
+}
+
 type fakeQuerier struct {
 	gen.Querier
 
@@ -84,6 +103,9 @@ type fakeQuerier struct {
 	updatedSprints       []gen.UpdateSprintParams
 	updateSprintErr      error
 	deletedSprints       []gen.DeleteSprintParams
+
+	// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2。pb-6）
+	sprint sprintRunFakeState
 
 	// プロフィールと権限
 	profileRow  gen.GetActorProfileRow
@@ -1151,7 +1173,6 @@ type ticketFakeState struct {
 	attached         []gen.AttachTicketTagParams
 
 	projectTagCount int64
-	sprintExists    bool
 	isMember        bool
 
 	// 並び順は sortRowBySeq から計算する（固定値を持たない）。
@@ -1405,7 +1426,9 @@ func (q *fakeQuerier) CreateTicket(_ context.Context, arg gen.CreateTicketParams
 		AssigneeID: arg.AssigneeID, ReporterID: arg.ReporterID,
 		EstimatePoint: arg.EstimatePoint, EstimateHours: arg.EstimateHours,
 		StartDate: arg.StartDate, DueDate: arg.DueDate,
-		SprintID: arg.SprintID, SortKey: arg.SortKey,
+		// **sprint_id は 9.3 が受けなくなった**（pb-6）。作りたての
+		// チケットは必ずスプリント未所属で始まる。
+		SortKey: arg.SortKey,
 		// DDL の既定（DbDesign.md 6.6）。9.3 は3つとも受けないので、
 		// 作りたてのチケットは必ずこの値になる（手順27）。
 		ExecutionMode: "human_only", Scope: []byte(`{}`),
@@ -1425,9 +1448,54 @@ func (q *fakeQuerier) CountProjectTagsByIDs(_ context.Context, _ gen.CountProjec
 	return q.ticket.projectTagCount, nil
 }
 
-func (q *fakeQuerier) SprintExistsInProject(context.Context, gen.SprintExistsInProjectParams) (bool, error) {
-	q.opLog = append(q.opLog, "SprintExistsInProject")
-	return q.ticket.sprintExists, nil
+// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2。pb-6）。
+//
+// **SprintExistsInProject は消えた**——9.3 / 9.5.2 が sprint_id を受け付け
+// なくなり、参照先を確かめる場面が無くなったためである。
+
+func (q *fakeQuerier) GetActiveSprint(context.Context, string) (gen.GetActiveSprintRow, error) {
+	q.opLog = append(q.opLog, "GetActiveSprint")
+	if q.sprint.active.ID == "" {
+		return gen.GetActiveSprintRow{}, pgx.ErrNoRows
+	}
+	return q.sprint.active, nil
+}
+
+func (q *fakeQuerier) ListOnstageTicketIDs(context.Context, string) ([]string, error) {
+	q.opLog = append(q.opLog, "ListOnstageTicketIDs")
+	return q.sprint.onstageIDs, nil
+}
+
+func (q *fakeQuerier) AddTicketsToSprint(_ context.Context, arg gen.AddTicketsToSprintParams) error {
+	q.opLog = append(q.opLog, "AddTicketsToSprint")
+	q.sprint.added = append(q.sprint.added, arg)
+	return nil
+}
+
+func (q *fakeQuerier) SetTicketsSprintID(_ context.Context, arg gen.SetTicketsSprintIDParams) error {
+	q.opLog = append(q.opLog, "SetTicketsSprintID")
+	q.sprint.assigned = append(q.sprint.assigned, arg)
+	return nil
+}
+
+func (q *fakeQuerier) FinishSprint(_ context.Context, arg gen.FinishSprintParams) (int64, error) {
+	q.opLog = append(q.opLog, "FinishSprint")
+	q.sprint.finished = append(q.sprint.finished, arg)
+	return q.sprint.finishRows, nil
+}
+
+func (q *fakeQuerier) MarkSprintMembershipRemoved(_ context.Context, id string) error {
+	q.opLog = append(q.opLog, "MarkSprintMembershipRemoved")
+	q.sprint.membershipClosed = append(q.sprint.membershipClosed, id)
+	return nil
+}
+
+func (q *fakeQuerier) UnstageClosedTicketsInSprint(
+	_ context.Context, arg gen.UnstageClosedTicketsInSprintParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "UnstageClosedTicketsInSprint")
+	q.sprint.unstaged = append(q.sprint.unstaged, arg)
+	return q.sprint.unstagedRows, nil
 }
 
 func (q *fakeQuerier) IsProjectMember(context.Context, gen.IsProjectMemberParams) (bool, error) {
@@ -2063,9 +2131,6 @@ func (q *fakeQuerier) UpdateTicket(_ context.Context, arg gen.UpdateTicketParams
 	}
 	if arg.AssigneeIDSet {
 		row.AssigneeID = arg.AssigneeID
-	}
-	if arg.SprintIDSet {
-		row.SprintID = arg.SprintID
 	}
 	if arg.EstimatePointSet {
 		row.EstimatePoint = arg.EstimatePoint

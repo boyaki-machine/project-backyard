@@ -393,6 +393,13 @@ type TicketReference struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type TicketSprint struct {
+	TicketID  string
+	SprintID  string
+	AddedAt   pgtype.Timestamptz
+	RemovedAt pgtype.Timestamptz
+}
+
 type TicketTag struct {
 	TicketID string
 	TagID    string

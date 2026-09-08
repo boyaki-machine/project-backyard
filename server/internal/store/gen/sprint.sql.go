@@ -11,6 +11,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addTicketsToSprint = `-- name: AddTicketsToSprint :exec
+INSERT INTO ticket_sprint (ticket_id, sprint_id)
+SELECT unnest($1::text[]), $2
+ON CONFLICT (ticket_id, sprint_id) DO NOTHING
+`
+
+type AddTicketsToSprintParams struct {
+	TicketIds []string
+	SprintID  string
+}
+
+// 所属を1回で書く（DbDesign.md 6.9.1）。
+//
+// **行ごとに INSERT しない。** オンステージは200件になりうる（9.2.1 の per_page）。
+// ON CONFLICT DO NOTHING は、同じスプリントを二重に開始できない以上ほぼ起きないが、
+// 同じチケットが部分木の重なりで2度現れた場合の保険である。
+func (q *Queries) AddTicketsToSprint(ctx context.Context, arg AddTicketsToSprintParams) error {
+	_, err := q.db.Exec(ctx, addTicketsToSprint, arg.TicketIds, arg.SprintID)
+	return err
+}
+
 const createSprint = `-- name: CreateSprint :exec
 INSERT INTO sprint (id, project_id, name, goal, start_date, end_date, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -56,6 +77,63 @@ func (q *Queries) DeleteSprint(ctx context.Context, arg DeleteSprintParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const finishSprint = `-- name: FinishSprint :execrows
+UPDATE sprint
+   SET status = 'completed',
+       end_date = COALESCE(end_date, CURRENT_DATE)
+ WHERE project_id = $1 AND id = $2 AND status = 'active'
+`
+
+type FinishSprintParams struct {
+	ProjectID string
+	ID        string
+}
+
+// スプリントを終える（ApiDesign.md 9.12.2）。
+//
+// **end_date が空なら今日を入れる。** 期間を切らずに始めたスプリントでも、
+// 終わった日付は残る——9.2.1 の「棚に戻ったか」の判定は status を見るので
+// ここに依存しないが、あとから振り返る材料になる。
+func (q *Queries) FinishSprint(ctx context.Context, arg FinishSprintParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finishSprint, arg.ProjectID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getActiveSprint = `-- name: GetActiveSprint :one
+
+SELECT id, name FROM sprint
+ WHERE project_id = $1 AND status = 'active'
+ ORDER BY created_at DESC
+ LIMIT 1
+`
+
+type GetActiveSprintRow struct {
+	ID   string
+	Name string
+}
+
+// ─────────────────────────────────────────────────────────────
+// スプリントの運用（開始・終了）。ApiDesign.md 9.12.1 / 9.12.2。pb-6。
+//
+// **定義（上の CRUD）と運用を分ける。** 上はプロジェクト設定のスプリントタブ
+// （GuiDesign.md 5.9.5）が使い、ここはバックログのオンステージ段（同 5.4）が使う。
+// ─────────────────────────────────────────────────────────────
+// 進行中のスプリントは同時に1本だけである（ApiDesign.md 9.12.1。利用者の判断、
+// 2026-09-08）。開始の前にこれを引き、在れば 409 active_sprint_exists にする。
+//
+// **LIMIT 1 を置くのは保険である。** 0028 より前に作られたデータや、9.12 の
+// PATCH で status を直接 active にした行が複数あると2件返りうる。:one は
+// 2行返ると失敗するので、いちばん新しい1件に倒す。
+func (q *Queries) GetActiveSprint(ctx context.Context, projectID string) (GetActiveSprintRow, error) {
+	row := q.db.QueryRow(ctx, getActiveSprint, projectID)
+	var i GetActiveSprintRow
+	err := row.Scan(&i.ID, &i.Name)
+	return i, err
 }
 
 const getSprintByID = `-- name: GetSprintByID :one
@@ -105,6 +183,62 @@ func (q *Queries) GetSprintByID(ctx context.Context, arg GetSprintByIDParams) (G
 		&i.ClosedCount,
 	)
 	return i, err
+}
+
+const listOnstageTicketIDs = `-- name: ListOnstageTicketIDs :many
+WITH RECURSIVE roots AS (
+  SELECT id FROM ticket
+   WHERE project_id = $1::text
+     AND staged_at IS NOT NULL
+     AND type <> 'epic'
+     AND NOT (
+       closed_at IS NOT NULL
+       AND EXISTS (SELECT 1 FROM sprint os
+                    WHERE os.id = ticket.sprint_id AND os.status = 'completed')
+     )
+),
+subtree AS (
+  SELECT id FROM roots
+  UNION
+  SELECT c.id FROM ticket c JOIN subtree s ON c.parent_id = s.id
+   WHERE c.type <> 'epic'
+)
+SELECT id FROM subtree
+`
+
+// オンステージ段に出ているチケットの id をすべて返す（ApiDesign.md 9.12.1）。
+//
+// **staged_at だけで決めてはならない**（GuiDesign.md 5.4、ApiDesign.md 9.4.1）。
+// 段を決めるのは親であり、**子は staged_at が NULL のまま親と一緒にオンステージ
+// 段へ出る**。ここが取り違えると、スプリントの対象から配下が丸ごと落ちる。
+//
+// **エピックは除く。** どちらの段にも行として出ないので（GuiDesign.md 5.4）、
+// スプリントの対象にしても数に混ざるだけである。
+//
+// **棚に戻ったものを明示的に外す。** 9.12.2 は終了の時点で完了していた根だけを
+// 降ろすので、**終了したあとに完了した根はオンステージに残ったままになる**
+// （実データで判明、2026-09-08）。そのまま次を始めると、画面から消えている
+// はずの行が次のスプリントの対象に入り、ticket_count が実態と合わなくなる。
+// 判定は 9.2.1 の条件1・2 と同じで、根は表示上のトップレベルなので条件3 は
+// 自動的に満たされる。
+func (q *Queries) ListOnstageTicketIDs(ctx context.Context, projectID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listOnstageTicketIDs, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listSprintsByProject = `-- name: ListSprintsByProject :many
@@ -177,6 +311,71 @@ func (q *Queries) ListSprintsByProject(ctx context.Context, projectID string) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const markSprintMembershipRemoved = `-- name: MarkSprintMembershipRemoved :exec
+UPDATE ticket_sprint SET removed_at = now()
+ WHERE sprint_id = $1 AND removed_at IS NULL
+`
+
+// そのスプリントの所属を閉じる（DbDesign.md 6.9.1）。
+//
+// **完了・未完了を問わず立てる。** この列が答えるのは「そのスプリントの対象
+// だった期間」であって「消化できたか」ではない。
+func (q *Queries) MarkSprintMembershipRemoved(ctx context.Context, sprintID string) error {
+	_, err := q.db.Exec(ctx, markSprintMembershipRemoved, sprintID)
+	return err
+}
+
+const setTicketsSprintID = `-- name: SetTicketsSprintID :exec
+UPDATE ticket SET sprint_id = $1
+ WHERE project_id = $2::text AND id = ANY($3::text[])
+`
+
+type SetTicketsSprintIDParams struct {
+	SprintID  pgtype.Text
+	ProjectID string
+	TicketIds []string
+}
+
+// ticket.sprint_id を「いま属しているスプリント」へ揃える（DbDesign.md 6.9.1）。
+//
+// **version を上げない**（利用者の判断の範囲外だが、9.5.2 が sprint_id を
+// 編集不可にしたことの帰結である）。sprint_id は PATCH で書けない欄なので、
+// 開いている詳細ペインの If-Match が古くなっても**失われる編集が無い**。
+// 逆に上げると、スプリントを開始するたびに開いている全ペインが 409 になる。
+// updated_at は trg_ticket_updated が動かすので、一覧の再取得は効く。
+func (q *Queries) SetTicketsSprintID(ctx context.Context, arg SetTicketsSprintIDParams) error {
+	_, err := q.db.Exec(ctx, setTicketsSprintID, arg.SprintID, arg.ProjectID, arg.TicketIds)
+	return err
+}
+
+const unstageClosedTicketsInSprint = `-- name: UnstageClosedTicketsInSprint :execrows
+UPDATE ticket SET staged_at = NULL
+ WHERE project_id = $1::text
+   AND sprint_id = $2
+   AND staged_at IS NOT NULL
+   AND closed_at IS NOT NULL
+`
+
+type UnstageClosedTicketsInSprintParams struct {
+	ProjectID string
+	SprintID  pgtype.Text
+}
+
+// 完了しているオンステージの根を、段から降ろす（ApiDesign.md 9.12.2）。
+//
+// **子は staged_at を持たないので触るものが無く、親と一緒に降りる。**
+// 根が未完了なら、完了した子も一緒にオンステージへ残る（部分木は丸ごと動く）。
+//
+// **sprint_id は消さない。** 終わったあとも「最後に属したスプリント」を指し
+// 続ける——9.2.1 の判定がこれを読むので、ここで NULL にすると材料が消える。
+func (q *Queries) UnstageClosedTicketsInSprint(ctx context.Context, arg UnstageClosedTicketsInSprintParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unstageClosedTicketsInSprint, arg.ProjectID, arg.SprintID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateSprint = `-- name: UpdateSprint :execrows

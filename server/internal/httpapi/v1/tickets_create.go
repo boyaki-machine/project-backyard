@@ -45,14 +45,17 @@ const ticketTitleMaxLen = 200
 // **ポインタなのは「送られていない」を区別する必要がある項目だけ**である。
 // type / title は必須なので値型でよい。
 type createTicketRequest struct {
-	Type          string   `json:"type"`
-	Title         string   `json:"title"`
-	BodyMd        string   `json:"body_md"`
-	Priority      string   `json:"priority"`
-	AssigneeID    string   `json:"assignee_id"`
-	ParentSeq     *int32   `json:"parent_seq"`
-	TagIDs        []string `json:"tag_ids"`
-	SprintID      string   `json:"sprint_id"`
+	Type       string   `json:"type"`
+	Title      string   `json:"title"`
+	BodyMd     string   `json:"body_md"`
+	Priority   string   `json:"priority"`
+	AssigneeID string   `json:"assignee_id"`
+	ParentSeq  *int32   `json:"parent_seq"`
+	TagIDs     []string `json:"tag_ids"`
+	// **sprint_id は 0028 で受け付けなくなった**（9.3。pb-6）。struct から
+	// 落とさず受けてから 422 に倒すのは、**黙って捨てると送った側が設定できた
+	// つもりになる**ためである（decodeJSON は未知のキーを無視する）。
+	SprintID      *string  `json:"sprint_id"`
 	EstimatePoint *float64 `json:"estimate_point"`
 	EstimateHours *float64 `json:"estimate_hours"`
 	StartDate     string   `json:"start_date"`
@@ -106,10 +109,6 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 			refErr = e
 			return errTicketReference
 		}
-		if e := validateTicketSprint(ctx, q, projectID, req.SprintID); e != nil {
-			refErr = e
-			return errTicketReference
-		}
 
 		n, err := q.NextTicketSeq(ctx, projectID)
 		if err != nil {
@@ -143,7 +142,6 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 			EstimateHours: float8Of(req.EstimateHours),
 			StartDate:     startDate,
 			DueDate:       dueDate,
-			SprintID:      optionalText(req.SprintID),
 			SortKey:       pgtype.Text{String: sortKey, Valid: true},
 		}); err != nil {
 			return fmt.Errorf("チケットを作成できない: %w", err)
@@ -206,6 +204,16 @@ var errTicketReference = fmt.Errorf("チケットの参照先が不正")
 // validateCreateTicket は形だけで判定できる検証（9.3 の表）。
 func validateCreateTicket(req *createTicketRequest) (pgtype.Date, pgtype.Date, *apierr.Error) {
 	var details []apierr.Detail
+
+	// **sprint_id は受け付けない**（9.3。pb-6）。9.5.2 の PATCH と同じ
+	// use_sprint_endpoint に倒す——作成時にだけ設定できて後から変えられないのは、
+	// どちらの規則としても読めない中途半端な状態になる。
+	if req.SprintID != nil {
+		details = append(details, apierr.Detail{
+			Field: "sprint_id", Code: "use_sprint_endpoint",
+			Message: "スプリントの変更はスプリントの開始・終了で行ってください",
+		})
+	}
 
 	if req.Type == "" {
 		details = append(details, apierr.Detail{
@@ -389,29 +397,6 @@ func validateTicketTags(
 		return apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
 			Field: "tag_ids", Code: "not_found",
 			Message: "このプロジェクトに無いタグが含まれています",
-		})
-	}
-	return nil
-}
-
-// validateTicketSprint は sprint_id が当該プロジェクトのものかを見る（9.3）。
-func validateTicketSprint(
-	ctx context.Context, q gen.Querier, projectID, sprintID string,
-) *apierr.Error {
-	if sprintID == "" {
-		return nil
-	}
-	exists, err := q.SprintExistsInProject(ctx, gen.SprintExistsInProjectParams{
-		ProjectID: projectID, ID: sprintID,
-	})
-	if err != nil {
-		return apierr.New(apierr.InternalError).
-			WithCause(fmt.Errorf("スプリントの所属を確認できない: %w", err))
-	}
-	if !exists {
-		return apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
-			Field: "sprint_id", Code: "not_found",
-			Message: "このプロジェクトに無いスプリントです",
 		})
 	}
 	return nil
