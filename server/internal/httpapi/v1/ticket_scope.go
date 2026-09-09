@@ -57,7 +57,15 @@ const (
 
 // ticketScope は {key} と {seq} を解いて、チケットの内部 ID までたどり着く。
 //
+// **projects_get.go の3つを通す**（プリンシパル → {key} → project_id）。
+// そのうえで {seq} をチケットの id まで解き、**他プロジェクトの番号を指しても
+// 404 に寄せる**（Design.md 6.4.5）。
+//
 // route は 403 / 404 の監査に載せる識別子で、projectScopeContext がそのまま使う。
+//
+// **外部参照の4本もこれを通す**（pb-26）。references.go に同型の referenceScope が
+// 並んでいたが、**返す構造体の名前だけが違う35行の写し**だった。片方に直しが入ると
+// もう片方が置き去りになるので、上位集合であるこちらへ寄せた。
 func (h *handler) ticketScope(
 	w http.ResponseWriter, r *http.Request, route string,
 ) (context.Context, ticketScopeInfo, string, bool) {

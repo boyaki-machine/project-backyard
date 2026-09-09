@@ -126,7 +126,7 @@ type referencePatch struct {
 
 // listTicketReferences はチケットの外部参照を返す（9.10.2）。
 func (h *handler) listTicketReferences(w http.ResponseWriter, r *http.Request) {
-	ctx, _, ticketID, ok := h.referenceScope(w, r,
+	ctx, _, ticketID, ok := h.ticketScope(w, r,
 		"GET /projects/{key}/tickets/{seq}/references")
 	if !ok {
 		return
@@ -148,7 +148,7 @@ func (h *handler) listTicketReferences(w http.ResponseWriter, r *http.Request) {
 // あるためで、記録の無い参照が生まれると手順19 の変更履歴に穴があく
 // （tickets_create.go と同じ理由）。
 func (h *handler) createTicketReference(w http.ResponseWriter, r *http.Request) {
-	ctx, scope, ticketID, ok := h.referenceScope(w, r,
+	ctx, scope, ticketID, ok := h.ticketScope(w, r,
 		"POST /projects/{key}/tickets/{seq}/references")
 	if !ok {
 		return
@@ -227,7 +227,7 @@ func (h *handler) createTicketReference(w http.ResponseWriter, r *http.Request) 
 // の url を null にする、kind='code' の repository を空にするといった要求は
 // 422 で弾く。DB の CHECK に任せると 2.5 の形式ではなく 500 になる。
 func (h *handler) patchTicketReference(w http.ResponseWriter, r *http.Request) {
-	ctx, scope, ticketID, ok := h.referenceScope(w, r,
+	ctx, scope, ticketID, ok := h.ticketScope(w, r,
 		"PATCH /projects/{key}/tickets/{seq}/references/{id}")
 	if !ok {
 		return
@@ -317,7 +317,7 @@ func (h *handler) patchTicketReference(w http.ResponseWriter, r *http.Request) {
 // **画面は code にも削除を置く**（GuiDesign.md 5.5）。追加の導線が無いぶん、
 // 誤って積まれた行を人が始末できないと詰むためである。
 func (h *handler) deleteTicketReference(w http.ResponseWriter, r *http.Request) {
-	ctx, scope, ticketID, ok := h.referenceScope(w, r,
+	ctx, scope, ticketID, ok := h.ticketScope(w, r,
 		"DELETE /projects/{key}/tickets/{seq}/references/{id}")
 	if !ok {
 		return
@@ -373,52 +373,6 @@ func (h *handler) deleteTicketReference(w http.ResponseWriter, r *http.Request) 
 // tickets_create.go の errTicketReference と同じ型の仕掛けで、
 // RunInTx の外へ 500 として漏らさないために呼び出し側で握りつぶす。
 var errReferenceHandled = errors.New("外部参照の処理をハンドラ内で決めた")
-
-// referenceScope は4本のハンドラが共通で通す解決。
-//
-// **projects_get.go の3つを通す**（プリンシパル → {key} → project_id）。
-// そのうえで {seq} をチケットの id まで解き、他プロジェクトの番号を指しても
-// 404 に寄せる（Design.md 6.4.5）。
-type referenceScopeInfo struct {
-	key       string
-	projectID string
-	actorID   string
-	seq       int32
-}
-
-func (h *handler) referenceScope(
-	w http.ResponseWriter, r *http.Request, route string,
-) (context.Context, referenceScopeInfo, string, bool) {
-	p, key, projectID, ok := projectScopeContext(w, r, h.q, route)
-	if !ok {
-		return nil, referenceScopeInfo{}, "", false
-	}
-	seq, apiErr := ticketSeqParam(r)
-	if apiErr != nil {
-		apierr.Write(w, r, apiErr)
-		return nil, referenceScopeInfo{}, "", false
-	}
-
-	ctx := r.Context()
-	ticketID, err := h.q.FindTicketIDBySeq(ctx, gen.FindTicketIDBySeqParams{
-		ProjectID: projectID, Seq: seq,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			apierr.Write(w, r, ticketNotFound(seq))
-		} else {
-			apierr.Write(w, r, apierr.New(apierr.InternalError).
-				WithCause(fmt.Errorf("チケット %d を読めない: %w", seq, err)))
-		}
-		return nil, referenceScopeInfo{}, "", false
-	}
-
-	info := referenceScopeInfo{key: key, projectID: projectID, seq: seq}
-	if p != nil {
-		info.actorID = p.ActorID
-	}
-	return ctx, info, ticketID, true
-}
 
 // referenceRow は List と Get の行を1つの形に揃える。
 //
