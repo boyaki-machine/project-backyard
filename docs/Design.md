@@ -692,7 +692,7 @@ GET /api/v1/me
 | **権限** | **所有者から導く（委譲）。** 下の式を参照 |
 | トークン | `access_token(token_type='agent')`。プロジェクトスコープ必須、有効期限必須。接頭辞は `pb_agt_` |
 | 発行 | **本人が自分の設定から**（`/me/agents`。`ApiDesign.md` 4.5、`Requirements.md` 10.9.1 系統B）。**発行時に一度だけ全文表示** |
-| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run` `ticket.reference.edit`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit` だけを足せる**（`ApiDesign.md` 4.5.3 の許可リスト。手順26a） |
+| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run` `ticket.reference.edit` `ticket.self_edit`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit` だけを足せる**（`ApiDesign.md` 4.5.3 の許可リスト。手順26a） |
 | 禁止 | `ticket.close`、`doc.edit`、`knowledge` の直接更新、他プロジェクトへのアクセス |
 | 信頼度 | `agent.trust_level` に応じて既定スコープを段階的に拡大（`Requirements.md` 10.10.3）。**実績の供給源が Phase 3 のため、Phase 2 では既定値のまま使わない** |
 | 失効 | 本人と管理画面から即時失効。サーキットブレーカー作動時は自動失効も選択可 |
@@ -716,6 +716,8 @@ GET /api/v1/me
 | `note:write` | `comment.create` |
 | `result:submit` | `ticket.transition` |
 | `proposal:create` | `ticket.create`（`proposal` は `DbDesign.md` 8.3 で Phase 3 へ送った） |
+
+**`ticket.self_edit` は既定に入れた**（利用者の判断、2026-09-09。pb-75）。`ticket.reference.edit` と同じ理由で、**起票したチケットを直すのは実装エージェントの通常の仕事**である。**`ticket.edit` は許可リストにも入れない**——9.5.2 の全項目を開けるので、**エージェントが `execution_mode` や `scope` を自分で緩められる**（`DbDesign.md` 6.13）。
 
 **`doc.edit` は既定に入れないが、発行時に足せる。** `pb_put_doc` にこの権限が要る（8.2）が、載せるかは**そのエージェントが誰に付いているか**で決まる——PM のエージェントは持ち、実装だけを行うエージェントは持たない。**そもそも所有者が `doc.edit` を持たなければ、スコープに書いても積で消える**（持つのは `project_admin` だけである。`DbDesign.md` 8.1.4）。
 
@@ -794,6 +796,9 @@ GET /api/v1/me
 | `pb_get_task` / `pb_list_tasks` | `GET /projects/:key/tickets(/:seq)` | `ticket.view` |
 | `pb_get_context` | **合成**（`GET /tickets/:seq` ＋ `GET /docs` ＋ `GET /docs/*path`。8.5.5） | `ticket.view` `doc.view` |
 | `pb_create_ticket` | `POST /projects/:key/tickets` | `ticket.create` |
+| `pb_update_ticket` | `PATCH /projects/:key/tickets/:seq` | **`ticket.self_edit`**（pb-75） |
+| `pb_put_dod` | `GET|POST|PATCH|DELETE /projects/:key/tickets/:seq/dod` | **`ticket.self_edit`**（pb-75） |
+| `pb_list_tags` | `GET /projects/:key/tags` | `ticket.view`（pb-76） |
 | `pb_put_doc` | `PATCH /projects/:key/docs/*path` | **`doc.edit`** |
 | `pb_post_note` | `POST /projects/:key/tickets/:seq/comments` | `comment.create` |
 | `pb_add_reference` | `POST /projects/:key/tickets/:seq/references` | **`ticket.reference.edit`** |
@@ -887,7 +892,10 @@ GET /api/v1/me
 
 | ツール | 引数 | 叩く REST | 応答 |
 |---|---|---|---|
-| `pb_create_ticket` | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?` | `POST /projects/:key/tickets` | 9.5.1 の応答をそのまま |
+| `pb_create_ticket` | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?`, `tag_ids?`, `estimate_point?`, `estimate_hours?`, `start_date?`, `due_date?` | `POST /projects/:key/tickets` | 9.5.1 の応答をそのまま |
+| `pb_update_ticket` | `seq`, ＋ 上の任意引数から **`type` を除いたもの**（**送ったものだけ更新**） | `PATCH /projects/:key/tickets/:seq` | 9.5.1 の応答をそのまま |
+| `pb_put_dod` | `seq`, `add?[]`, `update?[]`, `delete?[]` | 9.9 の `POST` / `PATCH` / `DELETE` | 9.9 の一覧をそのまま |
+| `pb_list_tags` | （なし） | `GET /projects/:key/tags` | 9.11 の一覧をそのまま |
 | `pb_put_doc` | `path`, `body_md`, `change_reason?` | `GET` してから `PATCH /projects/:key/docs/*path` | 10.3 の応答をそのまま |
 | `pb_post_note` | `seq`, `body_md`, `kind?` | `POST /projects/:key/tickets/:seq/comments` | 9.8 の1件をそのまま |
 | `pb_add_reference` | `seq`, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | `POST /projects/:key/tickets/:seq/references` | 9.10.2 の1件をそのまま |
@@ -896,7 +904,41 @@ GET /api/v1/me
 
 **`assignee_id` は `me` を受ける。** read 系の `assignee` と同じ写し方をする（下記）——**エージェントはアクターの ULID を知らない**ため、`me` を通さないと担当を付ける経路が実質無い。ULID をそのまま渡すこともできる。
 
-**開けない引数がある。** `pb_create_ticket` は 9.3 が受ける `tag_ids` / `sprint_id` / 見積2種 / `start_date` / `due_date` を渡せない——**いずれも ULID か画面の文脈が要り、エージェントが持たない**。`pb_post_note` は `in_reply_to` を渡せない（同じ理由。コメントの ULID を得る経路が無い）。**増やすときは本表を先に直す。**
+**開けない引数がある。** `pb_post_note` は `in_reply_to` を渡せない——**コメントの ULID を得る経路が無い**ためである。**増やすときは本表を先に直す。**
+
+**改訂前は、見積2種・日付2種・`tag_ids` / `sprint_id` も閉じていた**（理由は「いずれも ULID か画面の文脈が要り、エージェントが持たない」）。**pb-76 で3つに分けて見直した**（利用者の判断、2026-09-09）。
+
+| | 判定 |
+|---|---|
+| 見積2種・日付2種 | **開けた。** 数値と日付であって ULID ではない。**この理由は最初から当てはまっていなかった**——編集の口を作る前提が無かった時期に、まとめて閉じたものと見られる |
+| `tag_ids` | **開けた。** `pb_list_tags` を足したので**列挙できる**。ULID が要るという理由はここで解消した |
+| `sprint_id` | **開けない。** 理由が変わった——**0028 以降どの経路からも書けない**（`ApiDesign.md` 9.5.2 の `use_sprint_endpoint`）。所属を動かすのはスプリントの開始・終了だけである（9.12.1 / 9.12.2） |
+
+**`actual_hours` も開けない。** `pb_submit_result` の `cost.wall_clock_min` と二重になり、**どちらが正本か決まらない**（pb-76 の判断②）。
+
+**`pb_list_sprints` は足さない。** 設定できない以上、列挙する用途が無い——**読むだけなら `pb_get_task` の応答が `sprint: {id, name}` を返している**（9.5.1）。
+
+#### `pb_update_ticket` — 起票したあと直す（pb-75）
+
+**「作れるものは直せる。ただし `type` を除く」を線にした。** `pb_create_ticket` が受ける集合と揃えてあり、**起票時に選べる項目を直せないのは筋が通らない**——が、**種別の切り替えは人が行う**（利用者の判断、2026-09-09）。タスクをエピックへ変えると、その行はバックログから消えてフィルタの選択肢になる（`GuiDesign.md` 5.4）ので、**記述を整えるつもりで盤面の見え方を変えてしまう。**
+
+**塞いでいるのは REST 側である**（9.5.2 の `ticket.self_edit` が `type` を受け付けない）。**MCP 層で引数を落としているのではない**——8.1 の「MCP に独自の規則を置かない」を保つ。
+
+**部分更新である**（送った項目だけ）。`PATCH`（9.5.2）と同じ形にした。**`pb_put_doc` が全置換なのは `If-Match` の都合**であり、本文も同じにする理由は無い。
+
+**`If-Match` は MCP 層が内部で取る。** 9.5.2 は `If-Match` を必須とするが、`pb_get_task` は `version` を返すので**エージェントが渡すこともできる**——それでも内部で取るのは、`pb_put_doc` と同じ形に揃えるためと、**読んでから書くまでの間に人が直したときに競合を検出できる**ようにするためである。**競合（`409`）は `isError` のツール結果**として返し、モデルが読み直してやり直せるようにする。
+
+**`execution_mode` / `readiness` / `readiness_note` / `scope` は引数に無い。** REST 側も `ticket.self_edit` では受け付けない（9.5.2）ので、**MCP 層で塞いでいるのではない**——8.1 の「MCP に独自の規則を置かない」を保つ。
+
+#### `pb_put_dod` — 完了条件を整える（pb-75）
+
+**いまある DoD に対する追加・編集・削除を、まとめて1回で受ける。** 9.9 は3本のエンドポイントに分かれているが、**DoD は「一覧をあるべき形にする」操作**であり、1件ずつ往復させると n 回の呼び出しになる。
+
+**一覧の全置換にはしない。** 全置換だと送る側が全項目の ULID を持つ必要があり、**読んでから書くまでの間に他の人が足した項目を黙って消す。** 差分で受ければ、触っていない項目は残る。
+
+**`is_satisfied` は引数に無い。** REST 側も `ticket.self_edit` では受け付けない（9.9）。**`pb_submit_result` が「盤面を動かさない」と決めた判断と正面からぶつかる**ためで、**完了の判定は人が行う。**
+
+**応答は 9.9 の一覧をそのまま返す。** 何件足して何件消したかを MCP 層で組み立てない（8.1）。
 
 **`pb_put_doc` は内部で2往復する。** 10.4 が `PATCH` に `If-Match` を必須とする一方、`pb_get_doc` は本文の Markdown しか返さないので（8.5 の表）**エージェントは `version` を持てない**。MCP 層が `GET` で読んで `If-Match` に載せる。**`409 conflict` は `isError` のツール結果**として返す——「他の人が更新したので読み直してやり直す」はモデルが判断できることであり、8.4 が定める「ツール呼び出しの結果」に当たる。
 

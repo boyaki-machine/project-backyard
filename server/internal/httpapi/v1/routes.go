@@ -294,7 +294,12 @@ func Mount(r chi.Router, deps Deps) {
 		// 変わる値なので、宣言ではなくDBから読む（ticket_workflow.go）。
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}", h.getTicket)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		// **ticket.edit と ticket.self_edit の OR である**（9.5.2。0029。pb-75）。
+		// 狭いほうしか持たない呼び出し元には、**送れる項目をハンドラが絞る**
+		// ——どの項目を送ったかで可否が決まるので、6.4.4 の宣言では表せない
+		// （9.8 のコメント削除に続く2例目の OR）。
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries,
+			"ticket.edit", "ticket.self_edit")).
 			Patch("/projects/{key}/tickets/{seq}", h.updateTicket)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.delete")).
 			Delete("/projects/{key}/tickets/{seq}", h.deleteTicket)
@@ -363,11 +368,16 @@ func Mount(r chi.Router, deps Deps) {
 		// 概念を持たない——誰が足した条件でも、担当が変われば直す。
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}/dod", h.listTicketDoD)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		// **ticket.self_edit でも通る。ただし is_satisfied は書けない**
+		// （9.9。0029。pb-75）——完了の判定は人が行う。
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries,
+			"ticket.edit", "ticket.self_edit")).
 			Post("/projects/{key}/tickets/{seq}/dod", h.createDoDItem)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries,
+			"ticket.edit", "ticket.self_edit")).
 			Patch("/projects/{key}/tickets/{seq}/dod/{id}", h.patchDoDItem)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries,
+			"ticket.edit", "ticket.self_edit")).
 			Delete("/projects/{key}/tickets/{seq}/dod/{id}", h.deleteDoDItem)
 
 		// ── 完了レポート（ApiDesign.md 9.15）── 手順26c ───────────

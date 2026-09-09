@@ -185,6 +185,19 @@ func TestMCPIntegration(t *testing.T) {
 
 	// doc.view を含めないトークン。**これが権限による出し分けの負の側になる**
 	// （Design.md 付録A 論点③）——所有者は doc.view を持つが、積で消える。
+	// **実際のエージェントが持つ既定スコープのトークン**（Design.md 6.5。pb-75）。
+	//
+	// **fullToken では ticket.self_edit の絞り込みを測れない。** あちらは
+	// スコープが空＝絞り込みなしなので所有者の ticket.edit まで通り、
+	// **狭いほうの経路に一度も入らない。** 既定スコープは ticket.self_edit を
+	// 持ち ticket.edit を持たないので、ここが 9.5.2 の負の側になる。
+	agentToken := auth.AgentTokenPrefix + "agent-" + suffix
+	issue("agent", agentToken, projectID, []string{
+		"agent.run", "comment.create", "doc.view", "project.view",
+		"ticket.assign", "ticket.create", "ticket.reference.edit",
+		"ticket.self_edit", "ticket.transition", "ticket.view",
+	})
+
 	narrowToken := auth.AgentTokenPrefix + "narrow-" + suffix
 	issue("narrow", narrowToken, projectID, []string{"agent.run", "project.view", "ticket.view"})
 
@@ -1337,6 +1350,327 @@ func TestMCPIntegration(t *testing.T) {
 			t.Fatalf("status = %d, want 401（body=%s）", w.Code, w.Body.String())
 		}
 	})
+
+	// ── pb-75 / pb-76：起票したあと直す ────────────────────────
+	//
+	// **フェイクでは権限の積を測れない**（Design.md 6.4.1 の
+	// 「所有者のロール ∩ トークンのスコープ」）。ここが唯一の場所である。
+
+	t.Run("pb_list_tags がプロジェクトのタグを返す", func(t *testing.T) {
+		// **始点を作る。** 0件のまま「表の件数と一致する」を測ると、
+		// **実装が空配列を返すだけでも通る**（憲章「ゼロを測るなら先に始点を作る」）。
+		for _, name := range []string{"設計", "MCP連携"} {
+			if _, err := pool.Exec(ctx,
+				`INSERT INTO tag (id, project_id, name, sort_order) VALUES ($1, $2, $3, $4)
+				 ON CONFLICT (project_id, name) DO NOTHING`,
+				ulidgen.New(), projectID, name, 10); err != nil {
+				t.Fatalf("タグを作れない: %v", err)
+			}
+		}
+
+		text, isErr := tool(t, agentToken, "pb_list_tags", `{}`)
+		if isErr {
+			t.Fatalf("タグを引けない: %s", text)
+		}
+		var got struct {
+			Items []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		// **件数を書き下さない**（憲章「期待値は決め打ちせず、正本から読む」）。
+		// 表に何件あるかを引いて突き合わせる。
+		var want int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM tag WHERE project_id = $1`, projectID).Scan(&want); err != nil {
+			t.Fatalf("タグの件数を読めない: %v", err)
+		}
+		if want == 0 {
+			t.Fatal("tag 表が空である（始点が意味を持たない）")
+		}
+		if len(got.Items) != want {
+			t.Errorf("タグ = %d件, want %d件（tag 表の全行）", len(got.Items), want)
+		}
+	})
+
+	t.Run("pb_update_ticket が記述を直す", func(t *testing.T) {
+		text, isErr := tool(t, agentToken, "pb_update_ticket",
+			`{"seq":1,"title":"エージェントが直したタイトル","body_md":"直した本文"}`)
+		if isErr {
+			t.Fatalf("直せない: %s", text)
+		}
+		var got struct {
+			Title  string `json:"title"`
+			BodyMD string `json:"body_md"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		if got.Title != "エージェントが直したタイトル" {
+			t.Errorf("title = %q", got.Title)
+		}
+		// 実際に行が変わっていること。
+		var stored string
+		if err := pool.QueryRow(ctx,
+			`SELECT title FROM ticket WHERE project_id = $1 AND seq = 1`,
+			projectID).Scan(&stored); err != nil {
+			t.Fatalf("チケットを引けない: %v", err)
+		}
+		if stored != "エージェントが直したタイトル" {
+			t.Errorf("DB の title = %q", stored)
+		}
+	})
+
+	// **縛る側の項目は断られる**（9.5.2。0029）。ここが pb-75 の制約条件
+	// 「エージェントが自分の縛りを緩められる状態を作らない」の実測である。
+	//
+	// **REST を直接叩く。** pb_update_ticket はこれらの引数を宣言していないので、
+	// MCP 経由では「引数が落ちて空の更新になる」だけで**守りを測れない**
+	// ——測りたいのは**権限のほうが最後の砦であること**である。
+	patchAsAgent := func(t *testing.T, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		var cur struct {
+			Version int64 `json:"version"`
+		}
+		get := httptest.NewRequest(http.MethodGet,
+			"/api/v1/projects/"+projectKey+"/tickets/1", nil)
+		get.Header.Set("Authorization", "Bearer "+agentToken)
+		gw := httptest.NewRecorder()
+		r.ServeHTTP(gw, get)
+		if err := json.Unmarshal(gw.Body.Bytes(), &cur); err != nil {
+			t.Fatalf("version を読めない: %v（%s）", err, gw.Body.String())
+		}
+
+		req := httptest.NewRequest(http.MethodPatch,
+			"/api/v1/projects/"+projectKey+"/tickets/1", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+agentToken)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("If-Match", `"`+strconv.FormatInt(cur.Version, 10)+`"`)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("エージェントのスコープでは実行モードを変えられない", func(t *testing.T) {
+		res := patchAsAgent(t, `{"execution_mode":"agent_only"}`)
+		if res.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403（body=%s）", res.Code, res.Body.String())
+		}
+		if !strings.Contains(res.Body.String(), "execution_mode") {
+			t.Errorf("断った項目名が本文に無い: %s", res.Body.String())
+		}
+		// **盤面が動いていないこと。**
+		var mode string
+		if err := pool.QueryRow(ctx,
+			`SELECT execution_mode FROM ticket WHERE project_id = $1 AND seq = 1`,
+			projectID).Scan(&mode); err != nil {
+			t.Fatalf("チケットを引けない: %v", err)
+		}
+		if mode == "agent_only" {
+			t.Error("403 なのに execution_mode が変わっている")
+		}
+	})
+
+	t.Run("エージェントのスコープでは種別を変えられない", func(t *testing.T) {
+		res := patchAsAgent(t, `{"type":"epic"}`)
+		if res.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403（body=%s）", res.Code, res.Body.String())
+		}
+	})
+
+	// **MCP のツールはそもそもこれらの引数を宣言していない**（Design.md 8.5.1）。
+	// 送っても落ちるだけで、**空の更新として JSON-RPC の invalid params になる**
+	// ——ツールの失敗（isError）ではないので、生の応答で見る。
+	t.Run("pb_update_ticket は縛る側の引数を受け取らない", func(t *testing.T) {
+		w := call(agentToken, projectKey,
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"pb_update_ticket",`+
+				`"arguments":{"seq":1,"execution_mode":"agent_only"}}}`)
+		var res struct {
+			Error *struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, w.Body.String())
+		}
+		if res.Error == nil {
+			t.Fatalf("引数が落ちて空の更新になるはずが、成功した: %s", w.Body.String())
+		}
+		if !strings.Contains(res.Error.Message, "直す項目") {
+			t.Errorf("空の更新として断られていない: %+v", res.Error)
+		}
+	})
+
+	// **人（ticket.edit）は従来どおり変えられる。** self_edit は部分集合で
+	// あって、画面の振る舞いを変えるものではない。
+	t.Run("スコープを絞らないトークンでは実行モードも変えられる", func(t *testing.T) {
+		var cur struct {
+			Version int64 `json:"version"`
+		}
+		get := httptest.NewRequest(http.MethodGet,
+			"/api/v1/projects/"+projectKey+"/tickets/1", nil)
+		get.Header.Set("Authorization", "Bearer "+fullToken)
+		gw := httptest.NewRecorder()
+		r.ServeHTTP(gw, get)
+		if err := json.Unmarshal(gw.Body.Bytes(), &cur); err != nil {
+			t.Fatalf("version を読めない: %v（%s）", err, gw.Body.String())
+		}
+
+		req := httptest.NewRequest(http.MethodPatch,
+			"/api/v1/projects/"+projectKey+"/tickets/1",
+			strings.NewReader(`{"execution_mode":"agent_draft"}`))
+		req.Header.Set("Authorization", "Bearer "+fullToken)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("If-Match", `"`+strconv.FormatInt(cur.Version, 10)+`"`)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200（body=%s）", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("pb_put_dod が完了条件を足して直して消す", func(t *testing.T) {
+		// **始点は0件ではない**（この準備が seq=1 に DoD を2件入れている）。
+		// **全置換ではなく差分なので、既存の条件はそのまま残る**——それを
+		// 確かめるために、足す前の件数を採る。
+		var before int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM dod_item d JOIN ticket t ON t.id = d.ticket_id
+			  WHERE t.project_id = $1 AND t.seq = 1`, projectID).Scan(&before); err != nil {
+			t.Fatalf("完了条件の件数を読めない: %v", err)
+		}
+
+		// ① 足す
+		text, isErr := tool(t, agentToken, "pb_put_dod",
+			`{"seq":1,"add":[{"body":"試験が通ること"},{"body":"消される条件"}]}`)
+		if isErr {
+			t.Fatalf("足せない: %s", text)
+		}
+		var list struct {
+			Items []struct {
+				ID          string `json:"id"`
+				Body        string `json:"body"`
+				IsSatisfied bool   `json:"is_satisfied"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(text), &list); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		if len(list.Items) != before+2 {
+			t.Fatalf("完了条件 = %d件, want %d件（既存 + 2）: %s",
+				len(list.Items), before+2, text)
+		}
+
+		// ② 直して消す（**同じ呼び出しでまとめて送れる**）。
+		// **id は body で引く**——並び順に依存すると、既存の条件が混ざったときに
+		// 別のものを掴む。
+		byBody := map[string]string{}
+		for _, it := range list.Items {
+			byBody[it.Body] = it.ID
+		}
+		keep, drop := byBody["試験が通ること"], byBody["消される条件"]
+		if keep == "" || drop == "" {
+			t.Fatalf("足したはずの条件が見つからない: %s", text)
+		}
+		text, isErr = tool(t, agentToken, "pb_put_dod",
+			`{"seq":1,"update":[{"id":`+quote(keep)+`,"body":"試験と画面の確認が通ること"}],`+
+				`"delete":[`+quote(drop)+`]}`)
+		if isErr {
+			t.Fatalf("直せない: %s", text)
+		}
+		if err := json.Unmarshal([]byte(text), &list); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		if len(list.Items) != before+1 {
+			t.Fatalf("完了条件 = %d件, want %d件（1件消したので）: %s",
+				len(list.Items), before+1, text)
+		}
+		// **触っていない既存の条件は残っている**（差分であって全置換ではない）。
+		bodies := map[string]bool{}
+		for _, it := range list.Items {
+			bodies[it.Body] = true
+		}
+		if !bodies["試験と画面の確認が通ること"] {
+			t.Errorf("直した条件が無い: %s", text)
+		}
+		if bodies["消される条件"] {
+			t.Errorf("消したはずの条件が残っている: %s", text)
+		}
+		if before > 0 && !bodies["ユニットテストが通ること"] {
+			t.Errorf("触っていない既存の条件が消えている（全置換になっている）: %s", text)
+		}
+	})
+
+	// **チェックは付けられない**（9.9。0029）。完了の判定は人が行う。
+	t.Run("pb_put_dod ではチェックを付けられない", func(t *testing.T) {
+		// **ツールの引数に is_satisfied が無い**ので、そもそも渡せない。
+		// ここで測るのは REST 側の守り——MCP の引数定義が変わっても、
+		// 権限のほうが最後の砦であることを見る。
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/projects/"+projectKey+"/tickets/1/dod",
+			strings.NewReader(`{"body":"満たしたことにする","is_satisfied":true}`))
+		req.Header.Set("Authorization", "Bearer "+agentToken)
+		req.Header.Set("Content-Type", "application/json")
+		res := httptest.NewRecorder()
+		r.ServeHTTP(res, req)
+
+		if res.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403（body=%s）", res.Code, res.Body.String())
+		}
+	})
+
+	t.Run("pb_create_ticket が見積もりと日付とタグを受ける", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `
+			UPDATE project_counter SET last_ticket_seq =
+				(SELECT coalesce(max(seq), 0) FROM ticket WHERE project_id = $1)
+			WHERE project_id = $1`, projectID); err != nil {
+			t.Fatalf("採番器を合わせられない: %v", err)
+		}
+		var tagID string
+		if err := pool.QueryRow(ctx,
+			`SELECT id FROM tag WHERE project_id = $1 ORDER BY sort_order LIMIT 1`,
+			projectID).Scan(&tagID); err != nil {
+			t.Fatalf("タグを引けない: %v", err)
+		}
+
+		text, isErr := tool(t, agentToken, "pb_create_ticket",
+			`{"type":"task","title":"見積もりつきで起票","estimate_point":5,`+
+				`"start_date":"2026-09-09","due_date":"2026-09-21","tag_ids":[`+quote(tagID)+`]}`)
+		if isErr {
+			t.Fatalf("起票できない: %s", text)
+		}
+		var got struct {
+			Seq           int      `json:"seq"`
+			EstimatePoint *float64 `json:"estimate_point"`
+			StartDate     *string  `json:"start_date"`
+			DueDate       *string  `json:"due_date"`
+			Tags          []struct {
+				ID string `json:"id"`
+			} `json:"tags"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		if got.EstimatePoint == nil || *got.EstimatePoint != 5 {
+			t.Errorf("estimate_point = %v, want 5", got.EstimatePoint)
+		}
+		// **date 列は時刻を持たない**（前日へずれる経路を作らない）。
+		if got.StartDate == nil || *got.StartDate != "2026-09-09" {
+			t.Errorf("start_date = %v", got.StartDate)
+		}
+		if got.DueDate == nil || *got.DueDate != "2026-09-21" {
+			t.Errorf("due_date = %v", got.DueDate)
+		}
+		if len(got.Tags) != 1 || got.Tags[0].ID != tagID {
+			t.Errorf("tags = %+v, want [%s]", got.Tags, tagID)
+		}
+	})
+
 }
 
 // contains は文字列の並びに v があるかを返す。

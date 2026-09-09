@@ -1604,3 +1604,74 @@ func TestTransitionWithinTodoDoesNotStage(t *testing.T) {
 		t.Errorf("未着手へ戻したのに段を触っている: %+v", q.ticket.stagedSet)
 	}
 }
+
+// ── ticket.self_edit の絞り込み（9.5.2。0029。pb-75）────────────
+//
+// **まず通る側を確かめてから、断られる側を測る**（憲章）。狭い権限でも
+// 記述の修正は通ること、縛りの側の項目だけが 403 になることの両方を見る。
+
+// selfEditPerms は ticket.self_edit だけを持つ呼び出し元（エージェント）。
+//
+// **ticket.assign は既定スコープに入っている**ので一緒に持たせる
+// （Design.md 6.5）。これが無いと assignee_id の検証で落ち、
+// **何を測っているのか分からなくなる。**
+var selfEditPerms = []string{permTicketSelfEdit, permTicketAssign}
+
+func TestPatchAllowsDescriptionForSelfEdit(t *testing.T) {
+	q := ticketDetailFake()
+
+	rec := callPatch(q, `{"title":"直したタイトル","body_md":"直した本文"}`, `"3"`,
+		selfEditPerms...)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// **縛る側の項目は断る。** エージェントが自分の実行モードやスコープ境界を
+// 緩められては、pb-75 の制約条件が成り立たない。
+func TestPatchRejectsGuardFieldsForSelfEdit(t *testing.T) {
+	cases := []struct {
+		name  string
+		body  string
+		field string
+	}{
+		{"実行モード", `{"execution_mode":"agent_only"}`, "execution_mode"},
+		{"readiness", `{"readiness":"green"}`, "readiness"},
+		{"readiness_note", `{"readiness_note":"よい"}`, "readiness_note"},
+		{"スコープ境界", `{"scope":{"allow":["**"]}}`, "scope"},
+		{"種別", `{"type":"epic"}`, "type"},
+		{"実行者", `{"working_agent_id":null}`, "working_agent_id"},
+		{"実績時間", `{"actual_hours":3}`, "actual_hours"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q := ticketDetailFake()
+			rec := callPatch(q, c.body, `"3"`, selfEditPerms...)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
+			}
+			// **どの項目で断ったかを本文に出す**——「権限がありません」だけでは、
+			// どれを外せば通るのかが分からない。
+			if !strings.Contains(rec.Body.String(), c.field) {
+				t.Errorf("断った項目名が本文に無い: %s", rec.Body.String())
+			}
+			if len(q.ticket.updated) != 0 {
+				t.Error("403 なのに更新している")
+			}
+		})
+	}
+}
+
+// **ticket.edit を持つ人は従来どおり全部変えられる。** self_edit は部分集合で
+// あって、画面の振る舞いを変えるものではない。
+func TestPatchAllowsGuardFieldsForTicketEdit(t *testing.T) {
+	q := ticketDetailFake()
+
+	rec := callPatch(q, `{"execution_mode":"agent_only","type":"story"}`, `"3"`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+}

@@ -137,6 +137,14 @@ func readTools() []tool {
 			call: callGetDoc,
 		},
 		{
+			Name: "pb_list_tags",
+			Description: "プロジェクトのタグを列挙する。**チケットにタグを付けるには ULID が要る**ので、" +
+				"pb_create_ticket / pb_update_ticket の tag_ids を渡す前に引く。" +
+				"タグの新規作成はできない——**語彙を決めるのは人である**（プロジェクト設定で追加する）。",
+			InputSchema: schema{Type: "object", Properties: map[string]property{}},
+			call:        callListTags,
+		},
+		{
 			Name: "pb_list_tasks",
 			Description: "チケットの一覧を軽量な形で返す。ボードの状況把握と、自分の担当を知るために使う。" +
 				"1件の詳細（本文・完了条件・関連リンク）が要るときは pb_get_task を呼ぶこと。",
@@ -593,10 +601,71 @@ func writeTools() []tool {
 					"parent_seq": {Type: "integer", Description: "親チケットの番号（seq）。省略するとトップレベル", Minimum: intPtr(1)},
 					"assignee_id": {Type: "string", Description: "担当者。me で自分（エージェントのトークンでは所有者）、" +
 						"アクターの ULID も渡せる。省略すると未割当。**当該プロジェクトのメンバーであること**"},
+					"tag_ids": {Type: "array", Description: "タグの ULID の配列。**pb_list_tags で列挙できる。** " +
+						"すべて当該プロジェクトのタグであること",
+						Items: &property{Type: "string"}},
+					"estimate_point": {Type: "number", Description: "見積もり（ポイント）。0以上"},
+					"estimate_hours": {Type: "number", Description: "見積もり（時間）。0以上"},
+					"start_date":     {Type: "string", Description: "開始日。YYYY-MM-DD"},
+					"due_date":       {Type: "string", Description: "期限。YYYY-MM-DD。start_date があるとき start_date 以降"},
 				},
 				Required: []string{"type", "title"},
 			},
 			call: callCreateTicket,
+		},
+		{
+			Name: "pb_update_ticket",
+			Description: "チケットの記述を直す。**送った項目だけを更新する。** " +
+				"仕様の矛盾や書き漏れに気づいたとき、その場で直すために使う——" +
+				"直せないまま人に渡すと、誤った記述がチケットに残り続ける。" +
+				"**開けていない項目がある**——種別（type）の切り替え、実行モード・readiness・" +
+				"スコープ境界・実行者・実績時間・スプリントは、いずれも人が決めるものである。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq":     {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
+					"title":   {Type: "string", Description: "1〜200文字"},
+					"body_md": {Type: "string", Description: "本文（Markdown）。**全置換である**"},
+					"priority": {Type: "string", Description: "優先度",
+						Enum: []string{"lowest", "low", "medium", "high", "highest"}},
+					"parent_seq":  {Type: "integer", Description: "親チケットの番号（seq）", Minimum: intPtr(1)},
+					"assignee_id": {Type: "string", Description: "担当者。me で自分（所有者）、アクターの ULID も渡せる"},
+					"tag_ids": {Type: "array", Description: "タグの ULID の配列。**丸ごと置き換える**（空配列で全部外す）。" +
+						"pb_list_tags で列挙できる",
+						Items: &property{Type: "string"}},
+					"estimate_point": {Type: "number", Description: "見積もり（ポイント）。0以上"},
+					"estimate_hours": {Type: "number", Description: "見積もり（時間）。0以上"},
+					"start_date":     {Type: "string", Description: "開始日。YYYY-MM-DD"},
+					"due_date":       {Type: "string", Description: "期限。YYYY-MM-DD"},
+				},
+				Required: []string{"seq"},
+			},
+			call: callUpdateTicket,
+		},
+		{
+			Name: "pb_put_dod",
+			Description: "チケットの完了条件（DoD）を整える。**いまある一覧に対する追加・編集・削除を、" +
+				"まとめて1回で送る**（全置換ではないので、触っていない条件はそのまま残る）。" +
+				"**チェック（is_satisfied）は付け外しできない**——完了の判定は人が行う。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq": {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
+					"add": objectItems("足す完了条件", map[string]property{
+						"body":       {Type: "string", Description: "完了条件の文。1文字以上"},
+						"sort_order": {Type: "integer", Description: "並び順。省略すると末尾"},
+					}, "body"),
+					"update": objectItems("直す完了条件。**pb_get_task の dod[].id を渡す**", map[string]property{
+						"id":         {Type: "string", Description: "完了条件の id（ULID）"},
+						"body":       {Type: "string", Description: "直した文"},
+						"sort_order": {Type: "integer", Description: "並び順"},
+					}, "id"),
+					"delete": {Type: "array", Description: "消す完了条件の id の配列",
+						Items: &property{Type: "string"}},
+				},
+				Required: []string{"seq"},
+			},
+			call: callPutDoD,
 		},
 		{
 			Name: "pb_post_note",
@@ -670,15 +739,25 @@ func writeTools() []tool {
 // assignee と書いていたが、名前が ApiDesign.md と一致していれば、エージェントは
 // 迷ったときに設計文書を引ける（8.5）。
 //
-// **tag_ids / sprint_id / 見積 / 日付は開けていない**——いずれも ULID か画面の
-// 文脈が要り、エージェントが持たない。増やすときは 8.5.1 の表を先に直すこと。
+// **tag_ids / 見積 / 日付は pb-76 で開けた。** 見積と日付は数値と日付であって
+// ULID ではなく、**閉じていた理由が最初から当てはまっていなかった**。タグは
+// pb_list_tags で列挙できるようになったので ULID を渡せる。
+//
+// **sprint_id と actual_hours は開けない。** 前者は 0028 以降どの経路からも
+// 書けず（9.5.2 の use_sprint_endpoint）、後者は pb_submit_result の
+// cost.wall_clock_min と二重になる。増やすときは 8.5.1 の表を先に直すこと。
 type createTicketArgs struct {
-	Type       string  `json:"type"`
-	Title      string  `json:"title"`
-	BodyMD     string  `json:"body_md"`
-	Priority   string  `json:"priority"`
-	ParentSeq  flexInt `json:"parent_seq"`
-	AssigneeID string  `json:"assignee_id"`
+	Type          string   `json:"type"`
+	Title         string   `json:"title"`
+	BodyMD        string   `json:"body_md"`
+	Priority      string   `json:"priority"`
+	ParentSeq     flexInt  `json:"parent_seq"`
+	AssigneeID    string   `json:"assignee_id"`
+	TagIDs        []string `json:"tag_ids"`
+	EstimatePoint *float64 `json:"estimate_point"`
+	EstimateHours *float64 `json:"estimate_hours"`
+	StartDate     string   `json:"start_date"`
+	DueDate       string   `json:"due_date"`
 }
 
 func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
@@ -710,6 +789,23 @@ func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	if a := resolveAssignee(in.AssigneeID, auth.PrincipalFromContext(r.Context())); a != "" {
 		body["assignee_id"] = a
 	}
+	// pb-76 で開けた5つ。**空は載せない**（上と同じ理由——9.3 が任意と定める
+	// 欄に空を明示すると、既定の解釈が変わりうる）。
+	if len(in.TagIDs) > 0 {
+		body["tag_ids"] = in.TagIDs
+	}
+	if in.EstimatePoint != nil {
+		body["estimate_point"] = *in.EstimatePoint
+	}
+	if in.EstimateHours != nil {
+		body["estimate_hours"] = *in.EstimateHours
+	}
+	if in.StartDate != "" {
+		body["start_date"] = in.StartDate
+	}
+	if in.DueDate != "" {
+		body["due_date"] = in.DueDate
+	}
 
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -717,6 +813,243 @@ func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	}
 	res, err := h.callREST(r, http.MethodPost,
 		"/projects/"+url.PathEscape(key)+"/tickets", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// ── pb_update_ticket（Design.md 8.5.1。pb-75 / pb-76）─────────
+
+// updateTicketArgs は pb_update_ticket の引数。
+//
+// **すべてポインタ／optional である。** 9.5.2 は「送られた項目だけを更新する」
+// ので、**送っていないことと空を送ったことを区別できなければならない**。
+// 素の string だと、省略が空文字として届いて欄を消してしまう。
+//
+// **type は開けていない**（利用者の判断、2026-09-09）。種別の切り替えは
+// 盤面の見え方を変える——タスクをエピックへ変えると、その行はバックログから
+// 消えてフィルタの選択肢になる（GuiDesign.md 5.4）。**塞いでいるのは REST 側
+// である**（ticket.self_edit が type を受けない）ので、ここで落としているのは
+// 引数の定義だけで、8.1 の「MCP に独自の規則を置かない」は保たれている。
+type updateTicketArgs struct {
+	Seq           flexInt   `json:"seq"`
+	Title         *string   `json:"title"`
+	BodyMD        *string   `json:"body_md"`
+	Priority      *string   `json:"priority"`
+	ParentSeq     flexInt   `json:"parent_seq"`
+	AssigneeID    *string   `json:"assignee_id"`
+	TagIDs        *[]string `json:"tag_ids"`
+	EstimatePoint *float64  `json:"estimate_point"`
+	EstimateHours *float64  `json:"estimate_hours"`
+	StartDate     *string   `json:"start_date"`
+	DueDate       *string   `json:"due_date"`
+}
+
+// callUpdateTicket は 9.5.2 の PATCH を叩く。
+//
+// **If-Match は MCP 層が内部で取る**（pb_put_doc と同じ形。8.5.1）。
+// pb_get_task は version を返すのでエージェントに渡させることもできるが、
+// **読んでから書くまでの間に人が直したときに競合を検出できる**ようにしたい。
+func callUpdateTicket(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in updateTicketArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if !in.Seq.set || in.Seq.value < 1 {
+		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	}
+
+	body := map[string]any{}
+	if in.Title != nil {
+		body["title"] = *in.Title
+	}
+	if in.BodyMD != nil {
+		body["body_md"] = *in.BodyMD
+	}
+	if in.Priority != nil {
+		body["priority"] = *in.Priority
+	}
+	if in.ParentSeq.set {
+		body["parent_seq"] = in.ParentSeq.value
+	}
+	// **me は所有者を指す**（pb_create_ticket と同じ写し方）。
+	if in.AssigneeID != nil {
+		body["assignee_id"] = resolveAssignee(*in.AssigneeID, auth.PrincipalFromContext(r.Context()))
+	}
+	if in.TagIDs != nil {
+		body["tag_ids"] = *in.TagIDs
+	}
+	if in.EstimatePoint != nil {
+		body["estimate_point"] = *in.EstimatePoint
+	}
+	if in.EstimateHours != nil {
+		body["estimate_hours"] = *in.EstimateHours
+	}
+	if in.StartDate != nil {
+		body["start_date"] = *in.StartDate
+	}
+	if in.DueDate != nil {
+		body["due_date"] = *in.DueDate
+	}
+	// **空の更新は断る。** 9.5.2 は受けても何もしないが、version だけが +1 する
+	// ので、呼んだ側は「直した」と誤解する。
+	if len(body) == 0 {
+		return toolResult{}, newError(codeInvalidParams,
+			"直す項目を1つ以上渡すこと（seq だけでは何も変わらない）")
+	}
+
+	seqPath := "/projects/" + url.PathEscape(key) + "/tickets/" + strconv.FormatInt(in.Seq.value, 10)
+
+	// ① いまの version を読む。**403 / 404 はここで出る**ので、書く前に返せる。
+	cur, err := h.getREST(r, seqPath, nil)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, err.Error())
+	}
+	if !cur.ok() {
+		return failed(r, cur), nil
+	}
+	var ticket struct {
+		Version int64 `json:"version"`
+	}
+	if err := json.Unmarshal(cur.body, &ticket); err != nil {
+		return toolResult{}, newError(codeInternalError, "チケットの応答を解釈できない: "+err.Error())
+	}
+	if ticket.Version < 1 {
+		return toolResult{}, newError(codeInternalError, "チケットの応答に version が無い")
+	}
+
+	// ② 書き戻す。
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	header := http.Header{"If-Match": []string{`"` + strconv.FormatInt(ticket.Version, 10) + `"`}}
+
+	res, err := h.callREST(r, http.MethodPatch, seqPath, nil, raw, header)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, err.Error())
+	}
+	if res.status == http.StatusConflict {
+		// **409 は isError のツール結果**（8.4。pb_put_doc と同じ扱い）。
+		return errorResult("このチケットは、読んでから書くまでのあいだに他の人が更新した。" +
+			"pb_get_task で読み直してから、もう一度直すこと。"), nil
+	}
+	return passThrough(r, res, nil)
+}
+
+// ── pb_put_dod（Design.md 8.5.1。pb-75）───────────────────────
+
+// putDoDArgs は pb_put_dod の引数。
+//
+// **いまある一覧に対する差分である**（全置換ではない）。全置換だと送る側が
+// 全項目の ULID を持つ必要があり、**読んでから書くまでの間に他の人が足した
+// 項目を黙って消す。**
+//
+// **is_satisfied は無い。** REST 側も ticket.self_edit では受け付けない
+// （9.9）——pb_submit_result が「盤面を動かさない」と決めた判断と正面から
+// ぶつかるためで、完了の判定は人が行う。
+type putDoDArgs struct {
+	Seq flexInt `json:"seq"`
+	Add []struct {
+		Body      string   `json:"body"`
+		SortOrder *float64 `json:"sort_order"`
+	} `json:"add"`
+	Update []struct {
+		ID        string   `json:"id"`
+		Body      *string  `json:"body"`
+		SortOrder *float64 `json:"sort_order"`
+	} `json:"update"`
+	Delete []string `json:"delete"`
+}
+
+// callPutDoD は 9.9 の POST / PATCH / DELETE を順に叩く。
+//
+// **順序は「消す → 直す → 足す」である。** 消してから足すことで、
+// 入れ替えを1回で表せる。逆順だと、足したものを消してしまう指定を書けてしまう。
+//
+// **途中で失敗したら、そこで止めて失敗を返す。** REST は1件ずつの
+// エンドポイントなので、**まとめてのロールバックはできない**——できない以上、
+// 「どこまで進んだか」を呼んだ側が読めるようにするほうが正直である。
+// 最後に一覧を読み直して返すので、**実際にどうなったかは応答で分かる。**
+func callPutDoD(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in putDoDArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if !in.Seq.set || in.Seq.value < 1 {
+		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	}
+	if len(in.Add) == 0 && len(in.Update) == 0 && len(in.Delete) == 0 {
+		return toolResult{}, newError(codeInvalidParams,
+			"add / update / delete のいずれかを渡すこと（seq だけでは何も変わらない）")
+	}
+
+	base := "/projects/" + url.PathEscape(key) + "/tickets/" +
+		strconv.FormatInt(in.Seq.value, 10) + "/dod"
+
+	// ① 消す
+	for _, id := range in.Delete {
+		res, err := h.callREST(r, http.MethodDelete, base+"/"+url.PathEscape(id), nil, nil, nil)
+		if err != nil {
+			return toolResult{}, newError(codeInternalError, err.Error())
+		}
+		if !res.ok() {
+			return failed(r, res), nil
+		}
+	}
+
+	// ② 直す
+	for _, item := range in.Update {
+		if strings.TrimSpace(item.ID) == "" {
+			return toolResult{}, newError(codeInvalidParams, "update[].id は必須である")
+		}
+		body := map[string]any{}
+		if item.Body != nil {
+			body["body"] = *item.Body
+		}
+		if item.SortOrder != nil {
+			body["sort_order"] = *item.SortOrder
+		}
+		if len(body) == 0 {
+			return toolResult{}, newError(codeInvalidParams,
+				"update[] には body か sort_order のどちらかが要る（id だけでは何も変わらない）")
+		}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+		}
+		res, err := h.callREST(r, http.MethodPatch, base+"/"+url.PathEscape(item.ID), nil, raw, nil)
+		if err != nil {
+			return toolResult{}, newError(codeInternalError, err.Error())
+		}
+		if !res.ok() {
+			return failed(r, res), nil
+		}
+	}
+
+	// ③ 足す
+	for _, item := range in.Add {
+		if strings.TrimSpace(item.Body) == "" {
+			return toolResult{}, newError(codeInvalidParams, "add[].body は必須である")
+		}
+		body := map[string]any{"body": item.Body}
+		if item.SortOrder != nil {
+			body["sort_order"] = *item.SortOrder
+		}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+		}
+		res, err := h.callREST(r, http.MethodPost, base, nil, raw, nil)
+		if err != nil {
+			return toolResult{}, newError(codeInternalError, err.Error())
+		}
+		if !res.ok() {
+			return failed(r, res), nil
+		}
+	}
+
+	// ④ **結果の一覧を読み直して返す。** 何件足して何件消したかを MCP 層で
+	// 組み立てない（8.1）——9.9 の一覧がそのまま答えである。
+	res, err := h.getREST(r, base, nil)
 	return passThrough(r, res, err)
 }
 
@@ -1123,5 +1456,20 @@ func callSubmitResult(h *Handler, r *http.Request, key string, args json.RawMess
 	res, err := h.callREST(r, http.MethodPost,
 		"/projects/"+url.PathEscape(key)+"/tickets/"+
 			strconv.FormatInt(seq.value, 10)+"/reports", nil, body, nil)
+	return passThrough(r, res, err)
+}
+
+// ── pb_list_tags（Design.md 8.5.1。pb-76）─────────────────────
+
+// callListTags は 9.11 の一覧をそのまま返す。
+//
+// **引数を取らない。** 9.11 はページャも絞り込みも持たず、プロジェクトの
+// タグを全件返す。
+//
+// **pb_list_sprints は作っていない。** スプリントは 0028 以降どの経路からも
+// 設定できないので（9.5.2 の use_sprint_endpoint）、**列挙する用途が無い**
+// ——読むだけなら pb_get_task の応答が sprint: {id, name} を返している。
+func callListTags(h *Handler, r *http.Request, key string, _ json.RawMessage) (toolResult, *rpcError) {
+	res, err := h.getREST(r, "/projects/"+url.PathEscape(key)+"/tags", nil)
 	return passThrough(r, res, err)
 }

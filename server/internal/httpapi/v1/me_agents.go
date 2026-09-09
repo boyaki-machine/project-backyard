@@ -123,6 +123,13 @@ func validateAgentEnvSuffix(v string) (string, *apierr.Detail) {
 // 本文・担当・期日の書き換えや並べ替えまで開くためで、そこを切り出すために 0027 で
 // 権限を新設した（DbDesign.md 6.12.1）。
 //
+// **ticket.self_edit も入れる**（0029／pb-75。利用者の判断、2026-09-09）。
+// pb_update_ticket と pb_put_dod が要求する権限で、**起票したチケットを直すのは
+// 実装エージェントの通常の仕事**である。ticket.reference.edit と同じ判断で、
+// **ticket.edit を渡す案は同じ理由で棄却した**——あちらは execution_mode /
+// readiness / scope まで開けるので、**エージェントが自分の縛りを緩められる**
+// （DbDesign.md 6.13）。
+//
 // **既に発行済みのトークンには入らない。** scopes は access_token の jsonb 列として
 // 発行時に固定されるので（0002）、既定を増やしても遡って効かない。使うには
 // トークンを発行し直す（4.5.3 の「有効なトークンは1件につき1本」）。
@@ -137,6 +144,7 @@ var agentDefaultScopes = []string{
 	"ticket.assign",
 	"ticket.create",
 	"ticket.reference.edit",
+	"ticket.self_edit",
 	"ticket.transition",
 	"ticket.view",
 }

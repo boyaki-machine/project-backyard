@@ -1274,6 +1274,54 @@ ON CONFLICT DO NOTHING;
 **この権限は、エージェント用トークンの既定スコープに入る**（`Design.md` 6.5。利用者の判断、2026-09-08）。`doc.edit` のように発行時に選ぶ形は採らない——**作業の跡を残すのは実装エージェントの通常の仕事**であり、既定から外すと「コミットを記録できないエージェント」が既定になる。
 
 **既に発行されているトークンには入らない。** `access_token.scopes` は発行時に固定されるので、この権限を使うには**トークンを発行し直す**必要がある（`ApiDesign.md` 4.5.3）。
+
+## 6.13 チケットの自己編集の権限（0029。pb-75 / pb-76）
+
+```sql
+INSERT INTO permission (key, category, description, sort_order) VALUES
+  ('ticket.self_edit', 'ticket', 'チケットの記述の編集（エージェントに開ける範囲）', 28)
+ON CONFLICT (key) DO UPDATE
+  SET category = EXCLUDED.category,
+      description = EXCLUDED.description,
+      sort_order = EXCLUDED.sort_order;
+
+-- administrator は 7.3 の「全権限」SELECT で自動的に付く（再実行する）
+INSERT INTO role_permission (role_key, permission_key)
+SELECT 'administrator', key FROM permission
+ON CONFLICT DO NOTHING;
+
+-- ticket.edit を持つロールへそのまま配る（退行を出さないため）
+INSERT INTO role_permission (role_key, permission_key)
+SELECT role_key, 'ticket.self_edit' FROM role_permission
+ WHERE permission_key = 'ticket.edit'
+ON CONFLICT DO NOTHING;
+```
+
+**`PATCH /tickets/:seq` と DoD の更新系を、エージェントに開ける範囲だけ `ticket.edit` から切り出す**（`ApiDesign.md` 9.5.2 / 9.9。利用者の判断、2026-09-09）。**0027 の `ticket.reference.edit` と同じ形である。**
+
+**きっかけは 6.12.1 と同じ構図だった。** エージェントは起票できるのに、**起票したあと何も直せない**。pb-72 の実装中にチケットの記述そのものの矛盾を踏んだとき、エージェントには直す手段が無く、修正案をコメントに置いて人に貼り替えてもらう形になった。**仕様の矛盾を最初に踏むのは実装する側である。**
+
+**許可リストへ `ticket.edit` を足す案は、0027 のときと同じ理由で棄却した。** `ticket.edit` は 9.5.2 の全項目を開ける——そこには `execution_mode` / `readiness` / `readiness_note` / `scope` が含まれる。**これらはエージェントを縛る側が書くものであり**（9.5.2「スコープ境界は縛る側が書くものである」）、**自分で緩められては意味がない。**
+
+**この権限が開けるのは、9.5.2 のうち次の集合だけである**（正本は `ApiDesign.md` 9.5.2）。
+
+| 開ける | 開けない |
+|---|---|
+| `title` `body_md` `priority` `parent_seq` `assignee_id` | `type` `execution_mode` `readiness` `readiness_note` `scope` |
+| `tag_ids` `estimate_point` `estimate_hours` `start_date` `due_date` | `working_agent_id` `actual_hours` `sprint_id` |
+
+**線は「作れるものは直せる。ただし `type` を除く」である。** 起票（9.3）で選べる項目を直せないのは筋が通らないが、**種別の切り替えは人が行う**（利用者の判断、2026-09-09）。`tag_ids` と見積・日付が加わるのは pb-76 の判断による。
+
+**`type` を外したのは、切り替えの影響が記述の修正に収まらないからである。** エピックはバックログに行として出ず、複数選択できるフィルタになる（6.6、`GuiDesign.md` 5.4）。**タスクをエピックへ変えると、その行は一覧から消えてフィルタの選択肢になる**——エージェントが記述を整えるつもりで盤面の見え方を変えてしまう。**起票のときに選ぶのは、まだ盤面に無いものについての選択なので事情が違う。**
+
+**`working_agent_id` を開けないのは、あれが自己申告の欄だからである**（6.6）。遷移の副作用として自動で立つので（`ApiDesign.md` 9.6）、書く経路をもう1つ作る理由が無い。**`actual_hours` は `pb_submit_result` の `cost` と二重になる**ため開けない。**`sprint_id` は 0028 以降どの経路からも書けない**（9.5.2 の `use_sprint_endpoint`）。
+
+**DoD は `body` の追加・編集・削除までで、`is_satisfied` は開けない**（`ApiDesign.md` 9.9）。**`pb_submit_result` が「盤面を動かさない」と決めた判断と正面からぶつかる**ためで、完了の判定は人が行う。
+
+**`ticket.self_edit` は `ticket.edit` の部分集合であって、上位ではない。** `ticket.edit` を持つ人は本表の「開ける」側も当然に編集でき、**画面の振る舞いは何も変わらない。**
+
+**この権限は、エージェント用トークンの既定スコープに入る**（`Design.md` 6.5）。`ticket.reference.edit` と同じ判断で、**起票したチケットを直すのは実装エージェントの通常の仕事**である。**既に発行されているトークンには入らない。**
+
 ---
 
 # 7. 初期データ（0010）
@@ -1684,15 +1732,17 @@ Phase 2
   0027_ticket_reference_permission.sql
                           ticket.reference.edit（6.12。pb-68）             ← 適用済み
   0028_ticket_sprint.sql  ticket_sprint（チケットとスプリントの所属。6.9.1。pb-6）
+  0029_ticket_self_edit.sql
+                          ticket.self_edit（6.13。pb-75 / pb-76）
 Phase 3
-  0029_knowledge.sql      knowledge, knowledge_revision, proposal
-  0030_comment_signal.sql comment_signal
-  0031_embedding.sql      vector 拡張 + embedding
-  0032_project_event.sql  project_event
-  0033_analytics.sql      estimate_record, contribution
+  0030_knowledge.sql      knowledge, knowledge_revision, proposal
+  0031_comment_signal.sql comment_signal
+  0032_embedding.sql      vector 拡張 + embedding
+  0033_project_event.sql  project_event
+  0034_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033 → 0030〜0034** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**、**pb-75 の 0029（`ticket.self_edit`。6.13）で11回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 

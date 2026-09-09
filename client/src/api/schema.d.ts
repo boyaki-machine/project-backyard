@@ -1272,10 +1272,23 @@ export interface paths {
         head?: never;
         /**
          * チケットの更新
-         * @description 部分更新（ApiDesign.md 9.5.2）。**必要権限は `ticket.edit`。ただし
-         *     `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要**
-         *     ——この追加分だけはリクエスト本文の内容で決まるため、ルート定義の宣言ではなく
-         *     ハンドラ内で見ている。
+         * @description 部分更新（ApiDesign.md 9.5.2）。**必要権限は `ticket.edit` または
+         *     `ticket.self_edit`。ただし `assignee_id` / `working_agent_id` を変える場合は
+         *     `ticket.assign` も必要**——この追加分だけはリクエスト本文の内容で決まるため、
+         *     ルート定義の宣言ではなくハンドラ内で見ている。
+         *
+         *     **`ticket.self_edit` では開ける項目が絞られる**（0029。pb-75）。
+         *     エージェントに渡す権限であり、**自分の縛りを緩められては意味がない**
+         *     （DbDesign.md 6.13）。次を送ると `403` になる。
+         *
+         *     | `ticket.self_edit` で変えられる | 変えられない |
+         *     |---|---|
+         *     | `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_date` `due_date` | `type` `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
+         *
+         *     **`type` を外したのは、切り替えが盤面の見え方を変えるからである**
+         *     ——タスクをエピックへ変えると、その行はバックログから消えてフィルタの
+         *     選択肢になる（GuiDesign.md 5.4）。**`sprint_id` は 0028 以降どちらの権限でも
+         *     書けない**（下記 `use_sprint_endpoint`）。
          *
          *     **送られたフィールドだけを更新する。** `null` を送るとその項目を空にする
          *     （担当を外す・親を外す・期限を消す）。キーごと送らなければ据え置く。
@@ -1437,7 +1450,8 @@ export interface paths {
         put?: never;
         /**
          * 外部参照の追加
-         * @description 外部参照を1件足す（ApiDesign.md 9.10.2）。**必要権限は `ticket.edit`**。
+         * @description 外部参照を1件足す（ApiDesign.md 9.10.2）。**必要権限は `ticket.reference.edit`**
+         *     （0027 で `ticket.edit` から切り出した。読みは `ticket.view` のまま）。
          *
          *     **`kind='code'` の主な書き手はエージェントである。** Phase 1 ではエージェント用の
          *     アクターも MCP も無い（Design.md 11章 手順24・25）ため、書き手は `/me/tokens` で
@@ -1492,7 +1506,8 @@ export interface paths {
         post?: never;
         /**
          * 外部参照の削除
-         * @description 外部参照を1件消す（ApiDesign.md 9.10.2）。**必要権限は `ticket.edit`**。
+         * @description 外部参照を1件消す（ApiDesign.md 9.10.2）。**必要権限は `ticket.reference.edit`**
+         *     （0027）。
          *
          *     **`code` にも削除を置く**（GuiDesign.md 5.5）。画面に追加の導線が無いぶん、
          *     誤って積まれた行を人が始末できないと詰むためである。
@@ -1504,7 +1519,8 @@ export interface paths {
         head?: never;
         /**
          * 外部参照の更新
-         * @description 外部参照を部分更新する（ApiDesign.md 9.10.2）。**必要権限は `ticket.edit`**。
+         * @description 外部参照を部分更新する（ApiDesign.md 9.10.2）。**必要権限は `ticket.reference.edit`**
+         *     （0027）。
          *
          *     **`kind` は作成後に変えられない。** 送ると 422 `validation_failed` で、
          *     `details[].code` は `immutable_field` である。
@@ -1689,7 +1705,10 @@ export interface paths {
         put?: never;
         /**
          * 完了条件の追加
-         * @description 完了条件を1件足す（ApiDesign.md 9.9）。**必要権限は `ticket.edit`**。
+         * @description 完了条件を1件足す（ApiDesign.md 9.9）。**必要権限は `ticket.edit` または
+         *     `ticket.self_edit`。ただし `ticket.self_edit` では `is_satisfied` を送れない**
+         *     （0029。pb-75）——送ると `403`。`pb_submit_result` が「盤面を動かさない」と
+         *     決めた判断と正面からぶつかるためで、**完了の判定は人が行う**。
          *
          *     **Phase 1 が受け付ける `type` は `manual` だけである**（省略時も `manual`）。
          *     `task_ref` / `assertion` / `artifact` / `review` は 422 `validation_failed`、
@@ -1735,7 +1754,8 @@ export interface paths {
         post?: never;
         /**
          * 完了条件の削除
-         * @description 完了条件を1件消す（ApiDesign.md 9.9）。**必要権限は `ticket.edit`**。
+         * @description 完了条件を1件消す（ApiDesign.md 9.9）。**必要権限は `ticket.edit` または
+         *     `ticket.self_edit`**（0029。pb-75）。
          *
          *     削除も `activity` に記録する（`old_value` に要約、`new_value` は `null`）。
          */
@@ -1744,7 +1764,10 @@ export interface paths {
         head?: never;
         /**
          * 完了条件の更新
-         * @description 完了条件を部分更新する（ApiDesign.md 9.9）。**必要権限は `ticket.edit`**。
+         * @description 完了条件を部分更新する（ApiDesign.md 9.9）。**必要権限は `ticket.edit` または
+         *     `ticket.self_edit`。ただし `ticket.self_edit` では `is_satisfied` を送れない**
+         *     （0029。pb-75）——送ると `403`。**`sort_order` は開ける**（並べ替えは記述の
+         *     整理であって、盤面の判定ではない）。
          *
          *     **`is_satisfied` を `true` にすると、サーバが `satisfied_at` と
          *     `satisfied_by`（呼び出し元）を設定する。`false` に戻すと両方 `null` へ戻る。**

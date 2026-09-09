@@ -50,7 +50,40 @@ const (
 	// **遷移（9.6）の required_permission はここに置かない。** あちらは
 	// workflow_transition の列から読む値であり、プロジェクトごとに変わる。
 	permTicketAssign = "ticket.assign"
+
+	// permTicketEdit / permTicketSelfEdit は 9.5.2 と 9.9 の「どの項目を送ったか
+	// で可否が決まる」判定に使う（0029。pb-75）。
+	//
+	// **ルート定義は RequireAnyProjectPermission で両方を並べる**ので、
+	// どちらか一方を持っていれば通る。**狭いほうしか持たない呼び出し元に
+	// 対して、送れる項目を絞るのがハンドラの仕事である。**
+	//
+	// **これが「行を読んでから決まる判定」の3例目である**（9.6 の検証6、
+	// 9.8 の comment.edit_own に続く）。Design.md 付録A 論点①（権限の
+	// 全体像の再整理）は、ApiDesign.md 9.5.2 の改訂でここに置いた。
+	permTicketEdit     = "ticket.edit"
+	permTicketSelfEdit = "ticket.self_edit"
 )
+
+// selfEditDeniedFields は ticket.self_edit だけを持つ呼び出し元が送れない項目
+// （ApiDesign.md 9.5.2、DbDesign.md 6.13）。
+//
+// **エージェントを縛る側が書くものを、エージェント自身に書かせない**——
+// execution_mode / readiness / readiness_note / scope がそれである
+// （9.5.2「スコープ境界は縛る側が書くものである」）。
+//
+// **type も入る**（利用者の判断、2026-09-09）。種別の切り替えは盤面の見え方を
+// 変える——タスクをエピックへ変えると、その行はバックログから消えてフィルタの
+// 選択肢になる（GuiDesign.md 5.4）。
+//
+// **working_agent_id は自己申告の欄**（DbDesign.md 6.6）で、遷移の副作用として
+// 自動で立つ。**actual_hours は pb_submit_result の cost と二重になる。**
+// **sprint_id は 0028 以降どの経路からも書けない**（use_sprint_endpoint）。
+var selfEditDeniedFields = []string{
+	"type",
+	"execution_mode", "readiness", "readiness_note", "scope",
+	"working_agent_id", "actual_hours",
+}
 
 // チケットの値域（ApiDesign.md 9.2.1 / 9.3、DbDesign.md 6.6 の CHECK と同じ）。
 var (

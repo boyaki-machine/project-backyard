@@ -360,10 +360,15 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 	// **pb_claim_task / pb_release_task は Phase 3 へ送った**
 	// （Requirements.md 10.3.3——排他が実際に要るのは自律取得 pb_next_task から
 	// である）。
+	//
+	// **pb-75 / pb-76 で3件増えた**——pb_list_tags（タグの語彙。read 系の
+	// pb_get_doc の隣）、pb_update_ticket と pb_put_dod（起票したあと直す。
+	// pb_create_ticket の隣）。
 	want := []string{
-		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tasks", "pb_get_task",
-		"pb_get_context",
-		"pb_create_ticket", "pb_post_note", "pb_add_reference", "pb_put_doc",
+		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tags",
+		"pb_list_tasks", "pb_get_task", "pb_get_context",
+		"pb_create_ticket", "pb_update_ticket", "pb_put_dod",
+		"pb_post_note", "pb_add_reference", "pb_put_doc",
 		"pb_list_transitions", "pb_transition_task",
 		"pb_submit_result",
 	}
