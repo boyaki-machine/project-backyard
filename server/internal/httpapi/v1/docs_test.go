@@ -95,7 +95,6 @@ func docFake() *fakeQuerier {
 	return q
 }
 
-
 // ── 応答を読むための写し ─────────────────────────────────────
 //
 // **Time は MarshalJSON だけを持つ**（apitime.go）ので、応答の型そのままでは
@@ -760,4 +759,3 @@ func TestDocRevisionsMethodNotAllowed(t *testing.T) {
 		}
 	})
 }
-

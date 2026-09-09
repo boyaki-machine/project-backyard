@@ -240,18 +240,18 @@ type fakeQuerier struct {
 	myTokenRevokedRows int64
 
 	// 自分のエージェント（ApiDesign.md 4.5、手順24a）。
-	agentRows            []gen.ListMyAgentsRow
-	agentListErr         error
-	agentRow             gen.FindMyAgentRow
-	agentFindErr         error
-	agentExists          bool
-	agentExistsErr       error
+	agentRows      []gen.ListMyAgentsRow
+	agentListErr   error
+	agentRow       gen.FindMyAgentRow
+	agentFindErr   error
+	agentExists    bool
+	agentExistsErr error
 	// 0020（agent_client_kind）。**値域は agentClientKinds が持つ**
 	// ——真偽値で持つと「どんな値でも通る」フェイクになり、値域の検証が
 	// 意味を失う（実際に1回そうしてテストを落とした）。
-	agentClientKindErr error
-	agentClientKinds   []gen.ListAgentClientKindsRow
-	agentExistsExcept  bool
+	agentClientKindErr   error
+	agentClientKinds     []gen.ListAgentClientKindsRow
+	agentExistsExcept    bool
 	agentProject         gen.FindMyProjectByKeyRow
 	agentProjectErr      error
 	createdAgentActors   []gen.CreateAgentActorParams
@@ -305,7 +305,6 @@ type fakeQuerier struct {
 	reassignedRows         int64
 	deletedUserActorID     string
 	createdSystemActorName string
-
 }
 
 func (q *fakeQuerier) FindLocalLoginByEmail(_ context.Context, email string) (gen.FindLocalLoginByEmailRow, error) {
@@ -2494,7 +2493,6 @@ func (q *fakeQuerier) CreateSystemActor(_ context.Context, arg gen.CreateSystemA
 	q.createdSystemActorName = arg.DisplayName
 	return nil
 }
-
 
 // ── 完了レポート（手順26c。ApiDesign.md 9.15、DbDesign.md 8.2.4）───
 

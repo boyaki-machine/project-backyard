@@ -73,10 +73,13 @@ func TestLoginIntegration(t *testing.T) {
 	if got := loginView["actor"].(map[string]any)["email"]; got != email {
 		t.Errorf("actor.email = %v, want %q（保存された表記）", got, email)
 	}
-	// administrator は全権限（DbDesign.md 7.3）。30件の権限カタログが引けている
-	// （7.2 の28件 + 8.1.4 の doc.view / doc.edit）。
-	if perms := loginView["permissions"].([]any); len(perms) != 30 {
-		t.Errorf("permissions = %d件, want 30（role_permission を引けていない）", len(perms))
+	// administrator は全権限（DbDesign.md 7.3）。**件数は permission 表から読む**
+	// ——書き下すと、権限を足した日に嘘になる（pb-85。0027 で実際に落ちた）。
+	// ここで測っているのは「role_permission を引けているか」である。
+	wantPerms := permissionCatalogSize(t, ctx, pool)
+	if perms := loginView["permissions"].([]any); len(perms) != wantPerms {
+		t.Errorf("permissions = %d件, want %d（role_permission を引けていない）",
+			len(perms), wantPerms)
 	}
 
 	// ② DB には平文が載らない。
@@ -116,8 +119,10 @@ func TestLoginIntegration(t *testing.T) {
 	if meActor["id"] != actorID || meActor["locale"] != "ja" || meActor["timezone"] != "Asia/Tokyo" {
 		t.Errorf("GET /me の actor = %v", meActor)
 	}
-	if len(meView["permissions"].([]any)) != 30 {
-		t.Errorf("GET /me の permissions = %v", meView["permissions"])
+	// ログイン応答と同じ数になる（どちらも実効権限を返す）。**ここも書き下さない。**
+	if got := len(meView["permissions"].([]any)); got != wantPerms {
+		t.Errorf("GET /me の permissions = %d件, want %d件: %v",
+			got, wantPerms, meView["permissions"])
 	}
 
 	// ⑤ ログアウトで失効し、同じ Cookie は 401 になる。

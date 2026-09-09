@@ -25,13 +25,13 @@ import (
 // **version を持つ。** 木のドラッグ&ドロップ（GuiDesign.md 5.10）が If-Match に
 // 使う（10.2 / 10.4）。
 type docTreeItem struct {
-	ID        string           `json:"id"`
-	Path      string           `json:"path"`
-	Slug      string           `json:"slug"`
-	Title     string           `json:"title"`
-	SortOrder int32            `json:"sort_order"`
-	Version   int32            `json:"version"`
-	UpdatedAt Time `json:"updated_at"`
+	ID        string `json:"id"`
+	Path      string `json:"path"`
+	Slug      string `json:"slug"`
+	Title     string `json:"title"`
+	SortOrder int32  `json:"sort_order"`
+	Version   int32  `json:"version"`
+	UpdatedAt Time   `json:"updated_at"`
 	// Outline は ?outline=1 のときだけ現れる（10.2）。
 	//
 	// **ポインタなのは、「要求していない」と「見出しが1つも無い」を分けるため**
