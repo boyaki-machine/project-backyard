@@ -53,7 +53,7 @@ STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@1
 	stg-init stg-up stg-down stg-psql stg-migrate stg-build stg-run stg-stop stg-admin-create \
 	dev-client gen-api build-client sync-webui build clean-webui \
 	version version-check bump-build bump-minor bump-major release-tag \
-	docs-size
+	docs-size fmt-check
 
 ## DB を起動する
 # app を起動対象にしていないのは deploy/Dockerfile が未作成のためである。
@@ -122,8 +122,25 @@ admin-create:
 	@cd server && PB_DATABASE_URL="$(PB_DATABASE_URL_APP)" go run ./cmd/pb admin create
 
 ## テストを実行する
-test:
+# **整形の検査を先に通す**（pb-21）。gofmt は go test が見ないので、
+# 打つ人がいなければ発火しない。起票から4日間、誰も気づかないまま
+# 別のチケットが偶然直した、という経緯が根拠である。
+test: fmt-check
 	@cd server && go test ./...
+
+## 整形されていない Go のファイルが無いことを見る（pb-21）
+# **パイプ越しに判定しない。** `gofmt -l . | ...` の $? は常にパイプの
+# 最後のコマンドのものになり、判定が常に成功する（pb-31 で踏んだ）。
+# 出力を変数に取ってから中身の有無で見る。
+fmt-check:
+	@out=$$(cd server && gofmt -l ./cmd ./internal ./tools); \
+	if [ -n "$$out" ]; then \
+		echo "NG: gofmt が未整形と報告した"; \
+		echo "$$out" | sed 's|^|    server/|'; \
+		echo "    直す: cd server && gofmt -w <ファイル>"; \
+		exit 1; \
+	fi; \
+	echo "OK: gofmt は未整形を報告しない"
 
 ## 実DBを使う結合テストを実行する（Development.md 6.1）
 # PB_TEST_DATABASE_URL が無いとテスト側が SKIP するため、通常の make test では
