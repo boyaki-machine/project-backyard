@@ -196,9 +196,9 @@ func (h *Handler) fetchCharter(r *http.Request, base string) (charter, *rpcError
 		return charter{}, newError(codeInternalError, err.Error())
 	}
 	if res.status == http.StatusForbidden {
-		return charter{note: "**このトークンは憲章を読む権限（doc.view）を持たないため、憲章を省いた。**" +
+		return charter{note: "このトークンは憲章を読む権限（doc.view）を**持たない**ため、**憲章を省いた**。" +
 			"プロジェクトの規約・価値観・判断の記録を参照せずに進めることになるので、" +
-			"判断に迷ったら実装せず利用者に相談すること。"}, nil
+			"**判断に迷ったら実装せず利用者に相談すること**。"}, nil
 	}
 	if !res.ok() {
 		return charter{}, newError(codeInternalError,
