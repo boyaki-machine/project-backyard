@@ -1450,7 +1450,8 @@ export interface paths {
         put?: never;
         /**
          * 外部参照の追加
-         * @description 外部参照を1件足す（ApiDesign.md 9.10.2）。**必要権限は `ticket.edit`**。
+         * @description 外部参照を1件足す（ApiDesign.md 9.10.2）。**必要権限は `ticket.reference.edit`**
+         *     （0027 で `ticket.edit` から切り出した。読みは `ticket.view` のまま）。
          *
          *     **`kind='code'` の主な書き手はエージェントである。** Phase 1 ではエージェント用の
          *     アクターも MCP も無い（Design.md 11章 手順24・25）ため、書き手は `/me/tokens` で
@@ -1505,7 +1506,8 @@ export interface paths {
         post?: never;
         /**
          * 外部参照の削除
-         * @description 外部参照を1件消す（ApiDesign.md 9.10.2）。**必要権限は `ticket.edit`**。
+         * @description 外部参照を1件消す（ApiDesign.md 9.10.2）。**必要権限は `ticket.reference.edit`**
+         *     （0027）。
          *
          *     **`code` にも削除を置く**（GuiDesign.md 5.5）。画面に追加の導線が無いぶん、
          *     誤って積まれた行を人が始末できないと詰むためである。
@@ -1517,7 +1519,8 @@ export interface paths {
         head?: never;
         /**
          * 外部参照の更新
-         * @description 外部参照を部分更新する（ApiDesign.md 9.10.2）。**必要権限は `ticket.edit`**。
+         * @description 外部参照を部分更新する（ApiDesign.md 9.10.2）。**必要権限は `ticket.reference.edit`**
+         *     （0027）。
          *
          *     **`kind` は作成後に変えられない。** 送ると 422 `validation_failed` で、
          *     `details[].code` は `immutable_field` である。
