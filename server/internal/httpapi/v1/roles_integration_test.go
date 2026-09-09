@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -18,7 +20,8 @@ import (
 //
 // フェイクでは確かめられないものがここにある。
 //
-//   - シード（DbDesign.md 7.2 / 7.3）が本当に5ロール・28権限であること
+//   - シード（DbDesign.md 7.2 / 7.3）が本当に5ロールで、**権限カタログが
+//     permission 表の全行を返す**こと
 //   - scope の絞り込みが role.scope に効き、**2本のクエリが同じ絞り込みを使う**こと
 //     （片方だけ絞ると、返らないロールの権限が応答に混ざる）
 //   - permissions[] の並びが permission.sort_order であること
@@ -27,6 +30,29 @@ import (
 // PB_TEST_DATABASE_URL が無ければスキップする。
 //
 //	PB_TEST_DATABASE_URL='postgres://pb_app:...@127.0.0.1:5432/pb' go test ./internal/httpapi/v1/ -run Integration -v
+//
+// permissionCatalogSize は permission 表の行数を返す（pb-85）。
+//
+// **期待値を決め打ちしない**（憲章「期待値の作り方」）。権限カタログの正本は
+// マイグレーションが入れるこの表であり（DbDesign.md 7.2 / 8.1.4 ほか）、
+// 件数を書き下すと**正本を直した日に検査が嘘になる**。0027 を足したときに
+// 実際そうなった。
+//
+// **0件なら落とす。** これが無いと、マイグレーションが当たっていない環境で
+// `0 == 0` が成立して**素通りする**——「ゼロになる」を測るなら始点が意味を
+// 持つことを先に確かめる、という同じ話である。
+func permissionCatalogSize(t *testing.T, ctx context.Context, pool *pgxpool.Pool) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM permission`).Scan(&n); err != nil {
+		t.Fatalf("権限カタログの件数を読めない: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("permission 表が空である（マイグレーションが当たっていない）")
+	}
+	return n
+}
+
 func TestRolesCatalogIntegration(t *testing.T) {
 	dsn := os.Getenv("PB_TEST_DATABASE_URL")
 	if dsn == "" {
@@ -95,7 +121,7 @@ func TestRolesCatalogIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("権限カタログは30件で category と description を持つ", func(t *testing.T) {
+	t.Run("権限カタログは permission 表の全行で category と description を持つ", func(t *testing.T) {
 		rec := getWithCookie(r, "/api/v1/permissions", adminSession)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d（body=%s）", rec.Code, rec.Body.String())
@@ -106,11 +132,17 @@ func TestRolesCatalogIntegration(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 			t.Fatalf("応答が JSON でない: %v", err)
 		}
-		// カタログの正本は2か所にある——DbDesign.md 7.2 のシード（0010、28件）と
-		// 同 8.1.4（0017、doc.view / doc.edit の2件）。権限を足すときは
-		// Design.md 6.4.2 とあわせて3か所を動かす。
-		if len(body.Items) != 30 {
-			t.Fatalf("権限 = %d件, want 30件", len(body.Items))
+		// **件数を書き下さない**（憲章「期待値の作り方」。pb-85）。カタログの
+		// 正本はマイグレーションが入れる permission 表であり、0010 以降も
+		// 0017（doc.view / doc.edit）・0019（agent 系）・0027
+		// （ticket.reference.edit）と増え続ける。**数を書くと、正本を直した日に
+		// 嘘になる**——実際 0027 を足したとき、この検査は直されずに落ちていた。
+		//
+		// **表と突き合わせるのは、APIとは別の経路だからである。** これで
+		// 「30と書いてある」ではなく「**全行を返しているか**」を測れる。
+		want := permissionCatalogSize(t, ctx, pool)
+		if len(body.Items) != want {
+			t.Fatalf("権限 = %d件, want %d件（permission 表の全行）", len(body.Items), want)
 		}
 		if body.Items[0].Key != "project.view" {
 			t.Errorf("先頭 = %q, want project.view（sort_order 10）", body.Items[0].Key)
@@ -159,8 +191,12 @@ func TestRolesCatalogIntegration(t *testing.T) {
 		for _, role := range roles(t, adminSession, "") {
 			byKey[role.Key] = role
 		}
-		if got := len(byKey["administrator"].Permissions); got != 30 {
-			t.Errorf("administrator の権限 = %d件, want 30件（DbDesign.md 7.3 は全権限）", got)
+		// 同じ副検査の後半で project_viewer の期待値に `want` を使うので、
+		// こちらは別の名前にする。
+		wantAll := permissionCatalogSize(t, ctx, pool)
+		if got := len(byKey["administrator"].Permissions); got != wantAll {
+			t.Errorf("administrator の権限 = %d件, want %d件（DbDesign.md 7.3 は全権限）",
+				got, wantAll)
 		}
 		// 閲覧者は5件——DbDesign.md 7.3 の3件に、8.1.4 が doc.view、
 		// 8.2.6（0019）が agent.run を足した。並びは permission.sort_order で
