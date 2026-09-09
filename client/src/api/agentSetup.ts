@@ -54,7 +54,8 @@ export type AgentConnect = components['schemas']['AgentConnect']
  * **系統A と対になる。** あちらはリポジトリにコミットするファイル（管理者が1回）、
  * こちらは**各人の手元にしか残らないもの**（本人が何度でも）。
  *
- * **`files` は空になりうる**（`has_setup_template` が偽の種別。4.5.8.3）。
+ * **`files` は空になりうる**（PB が接続設定の書式を持たない種別。4.5.8.3）。
+ * **`has_setup_template` では決まらない**——`claude_desktop` は偽のまま設定を持つ。
  * **エラーではない**ので、画面はカードを消さず「自分で設定するための値」を出す。
  *
  * **接続できたかどうかはここに無い**——`GET /me/agents` の `token.last_used_at` が

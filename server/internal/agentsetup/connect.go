@@ -7,7 +7,10 @@
 // こちらは「手元にしか残らないもの」の仕様である。**混ぜると、Git に入る／入らないの
 // 境目が構造から消える**——それは 10.8.1 が三層に分けた理由そのものだった。
 //
-// **2つのマップの鍵がずれないことはテストが確かめる**（TestConnectSpecsCoverClients）。
+// **鍵のずれはテストが確かめる。** 系統A を持つ種別は必ず系統B も持ち
+// （TestConnectSpecsCoverClients）、系統B の鍵はカタログに在る
+// （TestConnectSpecsAreInCatalog）。**逆は成り立たない**——claude_desktop は
+// 接続設定だけを持つ（pb-58。作業フォルダが無いのでコミットする先が無い）。
 package agentsetup
 
 import (
@@ -66,7 +69,9 @@ type ConnectParams struct {
 
 // Connect は系統B の成果物一式（ApiDesign.md 4.5.8）。
 type Connect struct {
-	// Files は接続設定。**0枚か1枚**である——has_setup_template が偽の種別では空。
+	// Files は接続設定。**0枚か1枚**である——PB が書式を持たない種別（gemini /
+	// other）では空。**has_setup_template では決まらない**（ApiDesign.md 4.5.8.3）
+	// ——あれは系統A の有無で、claude_desktop は偽のまま接続設定を持つ。
 	Files []File
 	// Readme は zip にだけ入れる手引き（4.5.8.5）。
 	//
@@ -75,7 +80,9 @@ type Connect struct {
 	Readme string
 	// UsesTokenEnvVar は export 行を出すか（4.5.8.2）。
 	//
-	// **Copilot だけ偽である**——${input:pb-token} を使い、環境変数を読まない。
+	// **偽になる種別が2つあり、理由が違う**（ApiDesign.md 4.5.8.2）。Copilot は
+	// ${input:pb-token} を使って環境変数を読まず、Claude Desktop は**GUI アプリ
+	// なのでシェルの環境が届かない**（トークンは設定ファイルの env に書く）。
 	UsesTokenEnvVar bool
 }
 
@@ -89,7 +96,8 @@ const ReadmeName = "PB-README.md"
 type connectSpec struct {
 	// configPath は置き場（DbDesign.md 8.2.1.1 が言う「client_kind が決めるもの」）。
 	configPath string
-	// usesTokenEnvVar は環境変数を読むか。**Copilot だけ偽**（10.8.4）。
+	// usesTokenEnvVar は環境変数を読むか。**Copilot と Claude Desktop が偽**
+	// （10.8.4、10.8.4.2）。**同じ偽でも渡し方が違う**ので、画面は書き分ける。
 	usesTokenEnvVar bool
 	// render は設定ファイルの中身を組み立てる。
 	render func(p ConnectParams) (string, error)
