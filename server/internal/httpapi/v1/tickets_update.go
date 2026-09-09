@@ -137,8 +137,20 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// **ticket.self_edit だけの呼び出し元は、送れる項目が絞られる**（9.5.2、
+	// DbDesign.md 6.13。0029。pb-75）。ルートは ticket.edit と
+	// ticket.self_edit を OR で宣言しているので、狭いほうしか持たない
+	// 相手をここで見る。
+	//
+	// **raw（生のキー集合）で見る。** patch へ写した後だと、そもそも
+	// parseTicketPatch が読まない項目（type 以外の拒否対象）を検出できない。
+	if e := denySelfEditFields(r, key, raw); e != nil {
+		apierr.Write(w, r, e)
+		return
+	}
+
 	// **担当者を変えるなら ticket.assign が要る**（9.5.2）。ルートの宣言
-	// （ticket.edit）に足りない分をここで見る。
+	// （ticket.edit / ticket.self_edit）に足りない分をここで見る。
 	//
 	// **判定は RequireProjectPermission が計算済みのものを使う。** 同じ
 	// リクエストの中で実効権限を2回計算しないため、また「ミドルウェアと
@@ -947,4 +959,42 @@ func equalStringPtr(a, b *string) bool {
 	default:
 		return *a == *b
 	}
+}
+
+// denySelfEditFields は ticket.self_edit だけを持つ呼び出し元が、開けていない
+// 項目を送っていないかを見る（ApiDesign.md 9.5.2、DbDesign.md 6.13。pb-75）。
+//
+// **ticket.edit を持っていれば何もしない。** 人が画面から編集する経路は
+// 従来どおりで、**ticket.self_edit は ticket.edit の部分集合**である。
+//
+// **403 を返す**（422 ではない）。項目の値が誤っているのではなく、
+// **その項目を書く権限が無い**からである——利用者が次に取る行動は
+// 「値を直す」ではなく「権限を持つ人に頼む」になる。
+func denySelfEditFields(r *http.Request, key string, raw updateTicketRequest) *apierr.Error {
+	a := auth.ProjectAuthzFromContext(r.Context(), key)
+	if a == nil {
+		// ミドルウェアを通っていれば必ず入る。念のため、狭いほうとして扱う。
+		return apierr.New(apierr.Forbidden).
+			WithMessage("この項目を変更する権限がありません").
+			WithCause(errors.New("権限の計算結果が文脈に無い"))
+	}
+	if auth.HasPermission(a.Permissions, permTicketEdit) {
+		return nil
+	}
+
+	var denied []string
+	for _, field := range selfEditDeniedFields {
+		if _, ok := raw[field]; ok {
+			denied = append(denied, field)
+		}
+	}
+	if len(denied) == 0 {
+		return nil
+	}
+	// **どの項目で断ったかを本文に出す。** 「権限がありません」だけでは、
+	// 18項目のうちどれを外せば通るのかが分からない。
+	return apierr.New(apierr.Forbidden).
+		WithMessage(fmt.Sprintf("次の項目を変更する権限がありません: %s",
+			strings.Join(denied, " / "))).
+		WithCause(fmt.Errorf("ticket.self_edit では書けない項目が来た: %v", denied))
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/activity"
+	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
@@ -131,6 +132,13 @@ func (h *handler) createDoDItem(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, e)
 		return
 	}
+	// **ticket.self_edit では is_satisfied を送れない**（9.9。0029。pb-75）。
+	if req.IsSatisfied != nil {
+		if e := denyDoDSatisfied(r, scope.key); e != nil {
+			apierr.Write(w, r, e)
+			return
+		}
+	}
 	body, satisfied, e := validateNewDoD(req)
 	if e != nil {
 		apierr.Write(w, r, e)
@@ -219,6 +227,12 @@ func (h *handler) patchDoDItem(w http.ResponseWriter, r *http.Request) {
 	if e := decodeJSON(r, &raw); e != nil {
 		apierr.Write(w, r, e)
 		return
+	}
+	if _, ok := raw["is_satisfied"]; ok {
+		if e := denyDoDSatisfied(r, scope.key); e != nil {
+			apierr.Write(w, r, e)
+			return
+		}
 	}
 	patch, e := parseDoDPatch(raw)
 	if e != nil {
@@ -546,4 +560,28 @@ func dodSummaryOf(v dodView) string {
 		prefix = "済: "
 	}
 	return prefix + v.Body
+}
+
+// denyDoDSatisfied は ticket.self_edit だけを持つ呼び出し元が is_satisfied を
+// 書こうとしていないかを見る（ApiDesign.md 9.9。0029。pb-75）。
+//
+// **pb_submit_result が「盤面を動かさない」と決めた判断と正面からぶつかる**
+// （9.15、手順26c）。完了の判定は人が行うので、エージェントに開けるのは
+// body の追加・編集・削除までである。
+//
+// **ticket.edit を持っていれば何もしない**——画面からチェックを付け外しする
+// 経路は従来どおりである。
+func denyDoDSatisfied(r *http.Request, key string) *apierr.Error {
+	a := auth.ProjectAuthzFromContext(r.Context(), key)
+	if a == nil {
+		return apierr.New(apierr.Forbidden).
+			WithMessage("完了条件のチェックを変更する権限がありません").
+			WithCause(errors.New("権限の計算結果が文脈に無い"))
+	}
+	if auth.HasPermission(a.Permissions, permTicketEdit) {
+		return nil
+	}
+	return apierr.New(apierr.Forbidden).
+		WithMessage("完了条件のチェック（is_satisfied）を変更する権限がありません").
+		WithCause(errors.New("ticket.self_edit では is_satisfied を書けない"))
 }

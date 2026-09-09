@@ -204,14 +204,29 @@ func TestCreateDoDRejectsEmptyBody(t *testing.T) {
 	}
 }
 
+// withTicketEdit は ticket.edit を持つ認可結果を文脈に載せる（pb-75）。
+//
+// **本番ではミドルウェアが必ず載せる**（RequireAnyProjectPermission）。
+// 0029 で is_satisfied の可否がハンドラの判定になったので、単体テストでも
+// 同じ入れ物へ入れる——載せなければ「ticket.self_edit しか持たない」に倒れ、
+// チェックの付け外しが 403 になる。
+func withTicketEdit(req *http.Request) *http.Request {
+	return withDeleteAny(req, permTicketEdit)
+}
+
+// withSelfEditOnly は ticket.self_edit だけを持つ認可結果を載せる（pb-75）。
+func withSelfEditOnly(req *http.Request) *http.Request {
+	return withDeleteAny(req, permTicketSelfEdit)
+}
+
 // **作成時に is_satisfied=true なら満たした人も入る。**
 func TestCreateDoDSatisfiedRecordsActor(t *testing.T) {
 	q := dodFake()
 	h, _ := ticketHandler(q)
 
 	rec := httptest.NewRecorder()
-	h.createDoDItem(rec, cmtReq(http.MethodPost, "/dod",
-		`{"body":"すでに満たしている","is_satisfied":true}`, "31", ""))
+	h.createDoDItem(rec, withTicketEdit(cmtReq(http.MethodPost, "/dod",
+		`{"body":"すでに満たしている","is_satisfied":true}`, "31", "")))
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
@@ -261,8 +276,8 @@ func TestPatchDoDCheckSetsSatisfiedBy(t *testing.T) {
 	h, _ := ticketHandler(q)
 
 	rec := httptest.NewRecorder()
-	h.patchDoDItem(rec, cmtReq(http.MethodPatch, "/dod/"+testDoDID,
-		`{"is_satisfied":true}`, "31", testDoDID))
+	h.patchDoDItem(rec, withTicketEdit(cmtReq(http.MethodPatch, "/dod/"+testDoDID,
+		`{"is_satisfied":true}`, "31", testDoDID)))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
@@ -290,8 +305,8 @@ func TestPatchDoDUncheckClearsSatisfied(t *testing.T) {
 	h, _ := ticketHandler(q)
 
 	rec := httptest.NewRecorder()
-	h.patchDoDItem(rec, cmtReq(http.MethodPatch, "/dod/"+testDoDID,
-		`{"is_satisfied":false}`, "31", testDoDID))
+	h.patchDoDItem(rec, withTicketEdit(cmtReq(http.MethodPatch, "/dod/"+testDoDID,
+		`{"is_satisfied":false}`, "31", testDoDID)))
 
 	got := decodeDoD(t, rec)
 	if got.IsSatisfied || got.SatisfiedAt != nil || got.SatisfiedBy != nil {
@@ -354,8 +369,8 @@ func TestPatchDoDBodyAndCheckIsOneActivity(t *testing.T) {
 	h, _ := ticketHandler(q)
 
 	rec := httptest.NewRecorder()
-	h.patchDoDItem(rec, cmtReq(http.MethodPatch, "/dod/"+testDoDID,
-		`{"body":"直した条件","is_satisfied":true}`, "31", testDoDID))
+	h.patchDoDItem(rec, withTicketEdit(cmtReq(http.MethodPatch, "/dod/"+testDoDID,
+		`{"body":"直した条件","is_satisfied":true}`, "31", testDoDID)))
 
 	if len(q.ticket.activities) != 1 {
 		t.Fatalf("activity = %d行, want 1", len(q.ticket.activities))
@@ -468,5 +483,56 @@ func TestTicketDetailIncludesDoDAndLinks(t *testing.T) {
 	ticket, _ := link["ticket"].(map[string]any)
 	if ticket["seq"] != float64(12) || ticket["type"] != "story" {
 		t.Errorf("links[0].ticket = %+v", ticket)
+	}
+}
+
+// ── ticket.self_edit では is_satisfied を書けない（9.9。0029。pb-75）──
+//
+// **まず通る側を確かめてから、断られる側を測る**（憲章「動いたことを先に
+// 確かめてから、動かないことを確かめる」）。上の4件が通る側である。
+
+func TestCreateDoDRejectsSatisfiedForSelfEdit(t *testing.T) {
+	q := dodFake()
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.createDoDItem(rec, withSelfEditOnly(cmtReq(http.MethodPost, "/dod",
+		`{"body":"満たしたことにする","is_satisfied":true}`, "31", "")))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "is_satisfied") {
+		t.Errorf("どの項目で断ったかが本文に無い: %s", rec.Body.String())
+	}
+}
+
+func TestPatchDoDRejectsSatisfiedForSelfEdit(t *testing.T) {
+	q := dodFake()
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.patchDoDItem(rec, withSelfEditOnly(cmtReq(http.MethodPatch, "/dod",
+		`{"is_satisfied":true}`, "31", testDoDID)))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// **body だけなら ticket.self_edit で通る。** 開けているのはここまでである。
+func TestPatchDoDAllowsBodyForSelfEdit(t *testing.T) {
+	q := dodFake()
+	q.ticket.dodRows = []gen.GetTicketDoDItemRow{
+		sampleDoD(testDoDID, "テストが通ること", false, 10),
+	}
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.patchDoDItem(rec, withSelfEditOnly(cmtReq(http.MethodPatch, "/dod/"+testDoDID,
+		`{"body":"記述を整えた"}`, "31", testDoDID)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
 }
