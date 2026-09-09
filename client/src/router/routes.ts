@@ -228,7 +228,15 @@ export const routes: RouteRecordRaw[] = [
     component: MyAgentsPage,
   },
 
-  // ── Phase 2（GuiDesign.md 10章）─────────────────────────────
+  // ── チケットで駆動する視点（GuiDesign.md 3.2 / 10章）──────────
+  //
+  // **Phase 番号を割り当てない**（利用者の判断、2026-09-09。pb-62）。
+  // 駆動を手順番号からチケットへ移したため（Design.md 11章、2026-09-06）、
+  // **表示は Phase ではなく PB のチケット番号**にする。
+  //
+  // **WBS とスプリント管理の2ルートは消した**（同）。WBS が指していたのは
+  // チケットの親子階層で、**バックログが既にその面である**。バーンダウン・
+  // ベロシティは進捗分析（/p/:key/insights）へ寄せた。
   {
     path: '/p/:key/board',
     component: PlaceholderPage,
@@ -237,7 +245,7 @@ export const routes: RouteRecordRaw[] = [
       placeholder: {
         title: 'カンバンボード',
         docRef: 'GuiDesign.md 10章',
-        status: 'Phase 2',
+        status: 'PB のチケット pb-87',
         planned: [
           '列＝ワークフローのステータス',
           'ドラッグ&ドロップによる遷移',
@@ -255,22 +263,8 @@ export const routes: RouteRecordRaw[] = [
       placeholder: {
         title: 'ガントチャート',
         docRef: 'GuiDesign.md 10章',
-        status: 'Phase 2',
+        status: 'PB のチケット pb-88',
         planned: ['集中モード（2.3.2）の主な用途', '仮想スクロールによる大量行への対応'],
-      },
-    },
-  },
-
-  {
-    path: '/p/:key/wbs',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'ticket.view',
-      placeholder: {
-        title: 'WBS',
-        docRef: 'GuiDesign.md 10章',
-        status: 'Phase 2',
-        planned: ['ツリー＋インライン編集', 'ガントと同一データの別ビュー'],
       },
     },
   },
@@ -283,26 +277,12 @@ export const routes: RouteRecordRaw[] = [
       placeholder: {
         title: 'チケット検索',
         docRef: 'GuiDesign.md 10章',
-        status: 'Phase 2',
+        status: 'PB のチケット pb-66',
         planned: [
           '全文検索（DbDesign.md 4.5 の trigram インデックス）',
           'バックログのフィルタでは辿り着けない「1件を探す」用途に限る',
           'ApiDesign.md 9.2 に q を足して開ける',
         ],
-      },
-    },
-  },
-
-  {
-    path: '/p/:key/sprints',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'ticket.view',
-      placeholder: {
-        title: 'スプリント管理',
-        docRef: '設計未確定（GuiDesign.md 3.2 にルートのみ）',
-        status: 'Phase 2',
-        planned: [],
       },
     },
   },
