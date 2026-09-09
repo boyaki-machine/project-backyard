@@ -932,6 +932,7 @@ DB レベルでも担保される。`DbDesign.md` 7.4）。
 {
   "items": [
     { "key": "claude_code", "display_name": "Claude Code",  "has_setup_template": true },
+    { "key": "claude_desktop", "display_name": "Claude Desktop", "has_setup_template": false },
     { "key": "codex",       "display_name": "OpenAI Codex", "has_setup_template": true },
     { "key": "copilot",     "display_name": "GitHub Copilot", "has_setup_template": true },
     { "key": "gemini",      "display_name": "Gemini（CLI / Code Assist）", "has_setup_template": false },
@@ -1029,7 +1030,7 @@ GET /api/v1/me/agents/:id/setup.zip
 
 #### 4.5.8.3 配置ファイルを持たない種別では `files` が空になる
 
-`agent_client_kind.has_setup_template` が偽の種別（`gemini` / `other`）では、
+`agent_client_kind.has_setup_template` が偽の種別（`claude_desktop` / `gemini` / `other`）では、
 **`files` を空配列で返し、`200` を返す。** エラーにしない——**エージェントは既に登録されており、
 `mcp_url` と `token_env_name` は正しく決まっている**ので、それを使って自分で書ける。
 
