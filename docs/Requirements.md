@@ -914,7 +914,7 @@ Copilot 側に同等のフック機構がないため、**Claude Code では全�
 
 | 層 | ファイル | 中身 | Git | モデルのコンテキストに載るか |
 |---|---|---|---|---|
-| 接続設定 | `.mcp.json`（Claude Code）<br>`.vscode/mcp.json`（Copilot）<br>`.codex/config.toml`（Codex） | サーバURL、トランスポート、認証ヘッダの**参照** | **コミットしない**（下記） | **載らない**（MCPクライアントが処理） |
+| 接続設定 | `.mcp.json`（Claude Code）<br>`.vscode/mcp.json`（Copilot）<br>`.codex/config.toml`（Codex）<br>`claude_desktop_config.json`（Claude Desktop。**リポジトリの外**。10.8.4.2） | サーバURL、トランスポート、認証ヘッダの**参照**（Desktop だけトークンの実体） | **コミットしない**（下記） | **載らない**（MCPクライアントが処理） |
 | 資格情報 | 環境変数 / OSキーチェーン | トークンの実体 | **コミットしない** | **載らない** |
 | 手順 | `.claude/commands/*.md`<br>`.github/prompts/*.prompt.md`<br>`.agents/skills/*/SKILL.md`（Codex） | ツール名と呼び出し順序のみ | コミットする | 載る |
 | 常時コンテキスト | `CLAUDE.md`<br>`.github/copilot-instructions.md`<br>`AGENTS.md`（Codex） | プロジェクトの前提とPBへのポインタ | コミットする | 載る（毎セッション） |
@@ -953,7 +953,10 @@ Copilot 側に同等のフック機構がないため、**Claude Code では全�
 ### 10.8.2 配置ファイル一覧
 
 **PB が手順のテンプレートを持つのは3種別である**（`DbDesign.md` 8.2.1.1 の
-`has_setup_template`）。`gemini` と `other` は種別として選べるが、配置ファイルを出さない。
+`has_setup_template`）。`claude_desktop` / `gemini` / `other` は種別として選べるが、
+配置ファイルを出さない。**`claude_desktop` だけは理由が違い、テンプレートを書けば
+出せるようになる種別ではない**——作業フォルダを持たないので、コミットする先が無い
+（10.9.1「MCP 型では系統A に置き場が無い」）。
 
 | パス | 対象 | 役割 | Git |
 |---|---|---|---|
@@ -983,6 +986,10 @@ Copilot 側に同等のフック機構がないため、**Claude Code では全�
 
 **クライアントが混在するリポジトリでは、3種別ぶんの手順ファイルが同居する。** 各クライアントは
 自分のものしか読まないので衝突しない。**接続設定は誰の手元にも1枚ずつある**が、履歴には入らない。
+
+**`claude_desktop` はこの表に行を持たない**（pb-58）。**リポジトリに置くものが1枚も無い**ためで、
+`.gitignore` にも載らない——設定はリポジトリの外にある（10.8.4.2）。**接続設定だけが在り、
+それは系統B が配る**（`ApiDesign.md` 4.5.8）。
 
 #### Codex だけ入口の形が違う
 
@@ -1105,6 +1112,61 @@ approval_mode = "auto"
 
 **Copilot には出せない。** 種別によって「できること」が違うのは PB の都合ではなく
 クライアントの仕様なので、**無いものを補う工夫はしない**（利用者が VS Code の UI で承認する）。
+
+### 10.8.4.2 `claude_desktop_config.json`（Claude Desktop）
+
+**pb-58 で足した。** 他の3種別と違い、**この設定はリポジトリの中に置かない**——Claude Desktop に
+作業フォルダが無いためである（10.9.1「MCP 型では系統A に置き場が無い」）。**開くのはアプリの
+メニュー**（`Settings > Developer > Edit Config`）で、`.gitignore` にも載らない。
+
+```json
+{
+  "mcpServers": {
+    "pb": {
+      "command": "<npx の絶対パス>",
+      "args": ["-y", "mcp-remote", "http://localhost:8081/mcp/pb",
+               "--header", "Authorization:Bearer ${PB_TOKEN_DESKTOP}"],
+      "env": {
+        "PATH": "<node のあるディレクトリ>:/usr/bin:/bin",
+        "PB_TOKEN_DESKTOP": "<発行したトークン>"
+      }
+    }
+  }
+}
+```
+
+**カスタムコネクタ（リモート MCP）は使えない**（2026-09-09 に利用者が実機で確認、
+`Requirements.md` 10.9.1 の系統B）。**あの経路の接続は利用者の端末からではなく Anthropic の
+クラウドから届く**ので、手元で動く PB には到達せず、**https も要求される**。**残る経路が
+このファイルだけである。**
+
+**橋が要る。** このファイルに書けるのは **stdio のサーバだけ**で、PB は Streamable HTTP である。
+npm の `mcp-remote` が両者を繋ぐ。**PB との往復は実測した**（0.8.5。`initialize` と `tools/list` が
+通る）。**Claude Desktop 自身がこの設定を読んで起動するところは未確認である。**
+
+**PB が値を埋められない欄が2つある。** どちらも「**GUI アプリはシェルの `PATH` を継承しない**」に
+帰着し、**両方とも実測で踏んだ**。
+
+| 書き方 | 起きること |
+|---|---|
+| `"command": "npx"` | 起動しない（`No such file or directory: npx`） |
+| npx を絶対パスにする | `env: node: No such file or directory` で落ちる。**npx 自身が `node` を `PATH` から探す** |
+| 絶対パス ＋ `env` の `PATH` に node のディレクトリ | 通る |
+
+**したがって `command` と `env.PATH` は placeholder で渡す**（`ApiDesign.md` 4.5.8.6）。
+PB は相手の端末に node がどこにあるかを知らない。**`export` 行と同じ作法である**——
+PB が決められる値は入れ、決められない値は「ここに貼る」と書いて渡す。
+
+**トークンは `env` に置き、ヘッダから `${…}` で参照する**（`mcp-remote` が展開する）。
+**平文が設定ファイルに残ることは避けられない**——**シェルの環境変数は GUI アプリに届かない**ので、
+10.8.10 の `export` 行がこの種別にだけ効かない。**「モデルが読むファイルには秘密を書かない」
+（10.8.1）には反しない**——これは MCP クライアントが読む接続設定であって、手順ファイルではない。
+
+**コロンの後に空白を入れない**（`Authorization:Bearer ${…}`）。`mcp-remote` が引数の空白で
+割れる形を避けるための書き方である。
+
+**症状が読めないことを、手引きに書いておく必要がある。** 401 を受けると `mcp-remote` は
+OAuth を試みて例外で終了し、**Claude Desktop には「サーバが起動しない」としか出ない。**
 
 ### 10.8.5 `.claude/commands/pb-onboard.md`
 
@@ -1452,6 +1514,8 @@ export PB_TOKEN_MY_LAPTOP="pb_agt_xxxxxxxxxxxxxxxx"
 #### MCP 型では系統A に置き場が無い
 
 **系統A が作るのは「リポジトリにコミットする配置ファイル」**（手順・常時コンテキスト・`.gitignore`）だが、**MCP 型にはコミットする先が無い。** 手順ファイル（`.claude/commands/pb-onboard.md`）はリポジトリの中にある前提で書かれている。
+
+**クライアントの側にも同じことが起きる。** `claude_desktop`（0030／pb-58）は作業フォルダを持たないので、**プロジェクトが MCP 型でなくても系統A の置き場が無い。** 種別としては選べるが `has_setup_template` は偽で、渡せるのは系統B の値だけである（`ApiDesign.md` 4.5.8.3）。
 
 **手当ては、参画情報の文書に「参画の合図」を書くことである**（利用者の判断、2026-09-06）。**手順ファイルが置かれていないなら、エージェントには「PB に参画して」と一文で伝えれば足りる**——これは Codex に対して既に採っている形であり（10.8.2。Codex はスラッシュコマンドを持たない）、**①立ち上げ相で専用コマンドを作らないと決めたのと同じ判断である。**
 

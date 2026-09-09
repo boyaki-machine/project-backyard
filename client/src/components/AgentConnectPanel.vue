@@ -43,6 +43,22 @@ const copied = ref<Record<string, CopyState>>({})
 /** 接続設定は1枚か0枚（4.5.8.3） */
 const file = computed(() => setup.value?.files?.[0] ?? null)
 
+/**
+ * Claude Desktop だけ、置き場も渡し方も他と違う（pb-58）。
+ *
+ * **画面に種別の対応表は持たない**という 5.8.2 の作法は表示名の話であり、
+ * ここで見ているのは**手順そのものが違う**という事実である。他の種別は
+ * 「作業フォルダの直下へ置き、履歴管理から外す」だが、**Desktop の設定は
+ * 作業フォルダの外にあり、トークンもその中に書く。** 同じ文言を出すと嘘になる。
+ *
+ * **3つ目が現れたら、この事実はサーバが持つべきである**（`ApiDesign.md` 4.5.8.1 に
+ * 項目を足す）。2つのうち1つに留まるうちは、画面の分岐で足りる。
+ */
+const CLIENT_KIND_CLAUDE_DESKTOP = 'claude_desktop'
+const isDesktop = computed(
+  () => setup.value?.agent.client_kind === CLIENT_KIND_CLAUDE_DESKTOP,
+)
+
 const zipHref = computed(() => setupApi.agentConnectZipURL(props.agentId))
 
 /**
@@ -128,17 +144,41 @@ function preview(content: string): string {
           <a class="secondary download" :href="zipHref" download>⬇ zip</a>
         </div>
 
-        <p class="hint">
-          1 のフォルダの直下に <code>{{ file.path }}</code> として置きます。
-        </p>
-        <!-- **既存を壊しうることを、押す前に出す。** zip では別名で入るが、
-             コピーして貼る人には別名という手当てが効かない -->
-        <p class="warn-note">
-          ⓘ これは各自の環境です。履歴管理には入れません（<code>.gitignore</code> に入っています）<br />
-          ⚠ 既に <code>{{ file.path }}</code> がある場合は、丸ごと置き換えないでください。
-          中の該当キーに <code>pb</code> の項だけを足します<br />
-          ⚠ zip の中は <code>{{ file.path }}</code> ではなく別名です。展開してから元の名前へ戻します
-        </p>
+        <!-- **Desktop は作業フォルダを持たない**（pb-58）。設定はアプリのメニューから
+             開き、履歴管理とは関係しない。同じ文言を出すと嘘になる -->
+        <template v-if="isDesktop">
+          <p class="hint">
+            {{ setup.agent.client_display_name }} の
+            <strong>Settings &gt; Developer &gt; Edit Config</strong> から
+            <code>{{ file.path }}</code> を開いて、中の <code>mcpServers</code> に
+            <code>pb</code> の項を足します。
+          </p>
+          <p class="warn-note">
+            ⚠ 設定 &gt; コネクタ（カスタムコネクタ）からは繋がりません。あちらの接続は
+            あなたの端末ではなく <strong>Anthropic のクラウドから</strong>届くため、
+            手元の PB には到達せず https も必要になります<br />
+            ⚠ <code>"command": "npx"</code> のままでは起動しません。GUI アプリはシェルの
+            <code>PATH</code> を継承しないので、<strong>貼り替える欄が2つ</strong>あります
+            （<code>which npx</code> と <code>dirname $(which node)</code>）<br />
+            ⚠ 既に他の MCP サーバを登録している場合は、丸ごと置き換えないでください<br />
+            ⓘ 橋（<code>mcp-remote</code>）が PB と往復することは実測しました。
+            {{ setup.agent.client_display_name }} 自身がこの設定を読んで起動するところは
+            <strong>まだ確かめられていません</strong>
+          </p>
+        </template>
+        <template v-else>
+          <p class="hint">
+            1 のフォルダの直下に <code>{{ file.path }}</code> として置きます。
+          </p>
+          <!-- **既存を壊しうることを、押す前に出す。** zip では別名で入るが、
+               コピーして貼る人には別名という手当てが効かない -->
+          <p class="warn-note">
+            ⓘ これは各自の環境です。履歴管理には入れません（<code>.gitignore</code> に入っています）<br />
+            ⚠ 既に <code>{{ file.path }}</code> がある場合は、丸ごと置き換えないでください。
+            中の該当キーに <code>pb</code> の項だけを足します<br />
+            ⚠ zip の中は <code>{{ file.path }}</code> ではなく別名です。展開してから元の名前へ戻します
+          </p>
+        </template>
 
         <p v-if="copied.file === 'ok'" class="ok" role="status">✓ コピーしました</p>
         <p v-else-if="copied.file === 'manual'" class="hint" role="status">
@@ -205,8 +245,17 @@ function preview(content: string): string {
       </template>
       <template v-else>
         <h4 class="step">3. トークンを渡す</h4>
-        <p class="hint">
+        <!-- **同じ null でも渡し方が違う**（4.5.8.2）。Copilot はクライアントが
+             入力を求め、Desktop は設定ファイルの env に平文で書く -->
+        <p v-if="isDesktop" class="hint">
+          {{ setup.agent.client_display_name }} は環境変数を使いません（GUI アプリにシェルの環境は届きません）。
+          上の設定の <code>env</code> の <code>{{ setup.agent.token_env_name }}</code> に、発行時に一度だけ表示された値を貼ります。
+        </p>
+        <p v-else class="hint">
           {{ setup.agent.client_display_name }} は環境変数を使いません。初回の接続時に入力を求められるので、発行時に一度だけ表示された値を貼ります。
+        </p>
+        <p v-if="isDesktop" class="warn-note">
+          ⚠ トークンの平文が設定ファイルに残ります。このファイルは共有しないでください
         </p>
         <p v-if="!hasToken" class="warn-note">
           ⚠ このエージェントはトークンが未発行です。先に [ トークンを発行 ] を押してください。
@@ -215,8 +264,16 @@ function preview(content: string): string {
 
       <!-- 4. 起動 ────────────────────────────────────────── -->
       <h4 class="step">4. エージェントを起動して参画の手順を実行する</h4>
+      <p v-if="isDesktop" class="hint">
+        <strong>窓を閉じるだけでは足りません。</strong>
+        {{ setup.agent.client_display_name }} を完全に終了してから起動し直し、「PB に参画して」と伝えます。
+      </p>
       <p class="hint">
         繋がると、上のトークンの欄に「接続済み」のチェックが付きます。
+      </p>
+      <p v-if="isDesktop" class="hint">
+        ⓘ 起動しないときは、原因が {{ setup.agent.client_display_name }} 側に出ません。
+        同梱の手引き（zip）に切り分けの表があります。
       </p>
     </template>
   </section>

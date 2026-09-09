@@ -1734,15 +1734,17 @@ Phase 2
   0028_ticket_sprint.sql  ticket_sprint（チケットとスプリントの所属。6.9.1。pb-6）
   0029_ticket_self_edit.sql
                           ticket.self_edit（6.13。pb-75 / pb-76）
+  0030_agent_client_kind_claude_desktop.sql
+                          agent_client_kind に claude_desktop（8.2.1.1。pb-58）
 Phase 3
-  0030_knowledge.sql      knowledge, knowledge_revision, proposal
-  0031_comment_signal.sql comment_signal
-  0032_embedding.sql      vector 拡張 + embedding
-  0033_project_event.sql  project_event
-  0034_analytics.sql      estimate_record, contribution
+  0031_knowledge.sql      knowledge, knowledge_revision, proposal
+  0032_comment_signal.sql comment_signal
+  0033_embedding.sql      vector 拡張 + embedding
+  0034_project_event.sql  project_event
+  0035_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033 → 0030〜0034** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**、**pb-75 の 0029（`ticket.self_edit`。6.13）で11回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033 → 0030〜0034 → 0031〜0035** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**、**pb-75 の 0029（`ticket.self_edit`。6.13）で11回目**、**pb-58 の 0030（`claude_desktop` をカタログへ追加。8.2.1.1）で12回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 
@@ -2011,11 +2013,16 @@ ALTER TABLE agent_client_kind
   ADD COLUMN has_setup_template boolean NOT NULL DEFAULT false;
 UPDATE agent_client_kind SET has_setup_template = true
  WHERE key IN ('claude_code', 'copilot', 'codex');
+
+-- 0030（pb-58）。**行の追加だけで済む**——0020 が参照テーブルにした狙いの実物である。
+INSERT INTO agent_client_kind (key, display_name, sort_order, has_setup_template) VALUES
+  ('claude_desktop', 'Claude Desktop', 15, false);
 ```
 
 | `key` | `display_name` | `sort_order` | `has_setup_template` | 事業者 |
 |---|---|---|---|---|
 | `claude_code` | Claude Code | 10 | **true** | Anthropic |
+| `claude_desktop` | Claude Desktop | 15 | false | Anthropic |
 | `codex` | OpenAI Codex | 20 | **true** | OpenAI |
 | `copilot` | GitHub Copilot | 30 | **true** | Microsoft |
 | `gemini` | Gemini（CLI / Code Assist） | 40 | false | Google |
@@ -2069,6 +2076,19 @@ Codex / Gemini CLI が Zed・JetBrains・Neovim の中で動く）。**軸をエ
 Continue など）や、事業者系でも PB がまだ手順を持たないものがここへ入る。
 **個別のテンプレートを書いたものから、行として独立させ `has_setup_template` を立てる。**
 `gemini` は行として在るがテンプレートが無いので false である。
+
+**`claude_desktop` が false なのは理由が違う**（0030／pb-58）。書いていないからではなく、
+**置き場が存在しないからである**——系統A が作るのは作業フォルダへ置くファイルだが、
+**Claude Desktop に作業フォルダは無い**（`Requirements.md` 10.9.1「MCP 型では系統A に
+置き場が無い」）。**したがって、テンプレートを書けば true になる種別ではない。**
+手順ファイルを配れないことは欠落ではなく、参画は「PB に参画して」の一文で足りる
+——それは Codex に対して既に採っている形である（10.8.2）。
+
+**この列で系統B の有無を判定しない。** `claude_desktop` は false のまま**接続設定を持つ**
+（`claude_desktop_config.json`。`Requirements.md` 10.8.4.2）。**2つは元から別の問いで、
+この種別が現れるまで答えが一致していただけである**（`ApiDesign.md` 4.5.8.3）。
+**系統B の正本は `internal/agentsetup` の `connectSpecs`** で、鍵がカタログにあることは
+テストが本表と突き合わせて確かめる。
 
 #### `owner_actor_id` — エージェントは人に紐づく（0019 で追加）
 

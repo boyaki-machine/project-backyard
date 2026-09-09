@@ -4,6 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"os"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -23,21 +26,136 @@ func testConnectParams() ConnectParams {
 	}
 }
 
-// TestConnectSpecsCoverClients は2つのマップの鍵が一致することを確かめる。
+// TestConnectSpecsCoverClients は系統A を持つ種別が系統B も持つことを確かめる。
 //
-// **系統A（specs）と系統B（connectSpecs）は別の関心だが、種別の集合は同じである。**
-// 片方だけに種別が足されると、**画面は種別を出すのに接続設定が空になる**——
+// **片方だけに種別が足されると、画面は種別を出すのに接続設定が空になる**——
 // 症状は「落とせない」で、サーバ側には何も出ない。
+//
+// **逆は成り立たない**（pb-58 で改訂）。改訂前は「種別の集合は同じ」を両向きに
+// 見ていたが、**claude_desktop は接続設定を持ち、配置ファイルを持たない**——
+// 作業フォルダが無いのでコミットする先が無い（Requirements.md 10.9.1）。
+// **逆向きの歯止めは TestConnectSpecsAreInCatalog へ移した。**
 func TestConnectSpecsCoverClients(t *testing.T) {
 	for _, kind := range SupportedClients() {
 		if _, ok := connectSpecs[kind]; !ok {
 			t.Errorf("%q は配置ファイルを出せる種別なのに、接続設定の仕様が無い", kind)
 		}
 	}
-	for kind := range connectSpecs {
-		if _, ok := specs[kind]; !ok {
-			t.Errorf("%q に接続設定の仕様があるのに、配置ファイルの仕様が無い", kind)
+}
+
+// TestConnectSpecsAreInCatalog は connectSpecs の鍵がカタログにあることを確かめる。
+//
+// **綴りを間違えた仕様は、黙って使われない。** RenderConnect はカタログの値で引くので、
+// 鍵がずれていると**エラーにならず、汎用の手引き（none.md）へ落ちる**——
+// 「種別を足したのに前と同じものが出る」という、原因の見えない症状になる。
+//
+// **カタログの正本はマイグレーションである**（DbDesign.md 8.2.1.1）。
+// specs との突き合わせでは claude_desktop を捕まえられないので、こちらで見る。
+func TestConnectSpecsAreInCatalog(t *testing.T) {
+	catalog := map[string]bool{}
+	for _, name := range []string{
+		"../../migrations/0020_agent_client_kind.sql",
+		"../../migrations/0030_agent_client_kind_claude_desktop.sql",
+	} {
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("マイグレーションを読めない: %v", err)
 		}
+		// INSERT の値並びから key だけを拾う（('claude_code', 'Claude Code', 10, …)）。
+		re := regexp.MustCompile(`\('([a-z_]+)',`)
+		for _, m := range re.FindAllSubmatch(raw, -1) {
+			catalog[string(m[1])] = true
+		}
+	}
+	if len(catalog) == 0 {
+		t.Fatal("マイグレーションからカタログの key を1件も拾えなかった")
+	}
+	for kind := range connectSpecs {
+		if !catalog[kind] {
+			t.Errorf("%q に接続設定の仕様があるが、カタログに同じ key が無い", kind)
+		}
+	}
+}
+
+// TestRenderConnectClaudeDesktop は claude_desktop_config.json を確かめる
+// （Requirements.md 10.8.4.2、pb-58）。
+//
+// **実測で踏んだ罠を、そのまま検査にしている**——貼り替える欄が消えると
+// 「起動しない」で終わり、原因が Desktop 側に出ない。
+func TestRenderConnectClaudeDesktop(t *testing.T) {
+	p := testConnectParams()
+	p.ClientDisplayName = "Claude Desktop"
+	c, err := RenderConnect("claude_desktop", p)
+	if err != nil {
+		t.Fatalf("RenderConnect が失敗した: %v", err)
+	}
+
+	if len(c.Files) != 1 {
+		t.Fatalf("接続設定は1枚のはず: got %d 枚 %v", len(c.Files), pathsOf(c.Files))
+	}
+	f := c.Files[0]
+	if f.Path != "claude_desktop_config.json" {
+		t.Errorf("置き場: got %q", f.Path)
+	}
+	if f.Mode != ModeMerge {
+		t.Errorf("mode: got %q, want %q（既存の mcpServers を丸ごと置き換えない）", f.Mode, ModeMerge)
+	}
+	// **export 行を出さない。** GUI アプリにシェルの環境変数は届かない（4.5.8.2）。
+	if c.UsesTokenEnvVar {
+		t.Error("Claude Desktop は環境変数を読まない（export 行を出さない）")
+	}
+
+	var doc struct {
+		MCPServers map[string]struct {
+			Command string            `json:"command"`
+			Args    []string          `json:"args"`
+			Env     map[string]string `json:"env"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(f.Content), &doc); err != nil {
+		t.Fatalf("生成した JSON が壊れている: %v\n%s", err, f.Content)
+	}
+	srv, ok := doc.MCPServers["pb"]
+	if !ok {
+		t.Fatalf("mcpServers に pb が無い: %s", f.Content)
+	}
+
+	// **橋と接続先が args に入っていること。**
+	joined := strings.Join(srv.Args, " ")
+	if !strings.Contains(joined, "mcp-remote") {
+		t.Errorf("args に橋が無い: %v", srv.Args)
+	}
+	if !strings.Contains(joined, p.MCPURL) {
+		t.Errorf("args に接続先が無い: %v", srv.Args)
+	}
+	// **コロンの後に空白を入れない**（mcp-remote が引数の空白で割れる形を避ける）。
+	wantHeader := "Authorization:Bearer ${" + p.TokenEnvName + "}"
+	if !slices.Contains(srv.Args, wantHeader) {
+		t.Errorf("ヘッダの書き方: got %v, want %q を含む", srv.Args, wantHeader)
+	}
+
+	// **貼り替える欄が2つあること**（PB は相手の端末の node の場所を知らない）。
+	if !strings.Contains(srv.Command, "貼る") {
+		t.Errorf("command は貼り替える欄のはず: got %q", srv.Command)
+	}
+	if !strings.Contains(srv.Env["PATH"], "貼る") {
+		t.Errorf("env の PATH は貼り替える欄のはず: got %q", srv.Env["PATH"])
+	}
+	// **トークンは env に置く。** 設定ファイルに平文が残ることは避けられない。
+	if _, ok := srv.Env[p.TokenEnvName]; !ok {
+		t.Errorf("env に %q が無い: %v", p.TokenEnvName, srv.Env)
+	}
+	// **平文そのものは入れない**（4.5.8 の「返さない」と同じ）。
+	if !strings.Contains(srv.Env[p.TokenEnvName], "貼る") {
+		t.Errorf("env のトークンは placeholder のはず: got %q", srv.Env[p.TokenEnvName])
+	}
+
+	// **手引きは Desktop 専用のものが出ること**（none.md へ落ちていない）。
+	if !strings.Contains(c.Readme, "Settings > Developer > Edit Config") {
+		t.Error("手引きが claude_desktop.md ではない（設定ファイルの開き方が無い）")
+	}
+	if !strings.Contains(c.Readme, "コネクタ") {
+		t.Error("手引きにカスタムコネクタで繋がらない断りが無い")
 	}
 }
 
