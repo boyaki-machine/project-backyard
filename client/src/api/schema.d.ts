@@ -2819,15 +2819,19 @@ export interface components {
              */
             mcp_url: string;
             /**
-             * @description トークンを環境変数へ置く行。**`null` になる種別がある**（4.5.8.2）
-             *     ——Copilot は `${input:pb-token}` を使い、環境変数を読まない。
-             *     **画面は `null` のとき節ごと出さない。**
+             * @description トークンを環境変数へ置く行。**`null` になる種別が2つある**（4.5.8.2）
+             *     ——Copilot は `${input:pb-token}` を使って環境変数を読まず、
+             *     Claude Desktop は **GUI アプリなのでシェルの環境が届かない**
+             *     （トークンは設定ファイルの `env` に書く）。
+             *     **画面は `null` のとき節ごと出さないが、続く指示は種別で違う。**
              * @example export PB_TOKEN_MY_LAPTOP='ここに発行したトークンを貼る'
              */
             export_line: string | null;
             /**
-             * @description 接続設定。**1枚だけか、空である**——`has_setup_template` が偽の種別
+             * @description 接続設定。**1枚だけか、空である**——PB が書式を持たない種別
              *     （`gemini` / `other`）では空配列を返し、**エラーにしない**（4.5.8.3）。
+             *     **`has_setup_template` では判定しない**——あれは系統A の有無であり、
+             *     `claude_desktop` は偽のまま接続設定を持つ。
              *     **`mode` は常に `merge`**（4.5.8.4）。
              *     **zip に入る `PB-README.md` はここに含まれない**（4.5.8.5）。
              */
@@ -6088,7 +6092,7 @@ export interface operations {
         responses: {
             /**
              * @description 接続設定一式。**`files` は空配列になりうる**
-             *     （`has_setup_template` が偽の種別。4.5.8.3）。
+             *     （PB が接続設定の書式を持たない種別。4.5.8.3）。
              */
             200: {
                 headers: {

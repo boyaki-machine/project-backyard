@@ -124,6 +124,20 @@ var connectSpecs = map[string]connectSpec{
 		language:        "toml",
 		readme:          "codex.md",
 	},
+	// **系統A（specs）に対応する行が無い唯一の種別である**（pb-58）。
+	// Claude Desktop は作業フォルダを持たないので、リポジトリにコミットする
+	// 配置ファイルの置き場が無い（Requirements.md 10.9.1）。**接続設定だけが在る。**
+	"claude_desktop": {
+		configPath: "claude_desktop_config.json",
+		// **環境変数を読まない。** GUI アプリはシェルから起動しないので、
+		// ~/.zshrc に書いた export は届かない（Copilot と同じく export_line は null）。
+		// **ただし理由が違う**——あちらはクライアントが入力を求めるのに対し、
+		// こちらは**設定ファイルの env にトークンそのものを書く。**
+		usesTokenEnvVar: false,
+		render:          renderClaudeDesktopConfig,
+		language:        "json",
+		readme:          "claude_desktop.md",
+	},
 }
 
 // ExportLine は環境変数へトークンを置く行を組み立てる（ApiDesign.md 4.5.8.2）。
@@ -290,6 +304,67 @@ func renderCopilotMCP(p ConnectParams) (string, error) {
 				URL:  p.MCPURL,
 				Headers: map[string]string{
 					"Authorization": "Bearer ${input:pb-token}",
+				},
+			},
+		},
+	}
+	return marshalConfig(doc)
+}
+
+// desktopCommandPlaceholder / desktopPathPlaceholder は利用者が貼り替える欄
+// （ApiDesign.md 4.5.8.6）。**PB は相手の端末に node がどこにあるかを知らない。**
+//
+// **export 行と同じ作法である**——PB が決められる値は入れ、決められない値は
+// 「ここに貼る」と書いて渡す。
+const (
+	desktopCommandPlaceholder = "ここに npx の絶対パスを貼る（which npx で分かる）"
+	desktopPathPlaceholder    = "ここに node のあるディレクトリを貼る（dirname $(which node)）:/usr/bin:/bin"
+	desktopTokenPlaceholder   = "ここに発行したトークンを貼る"
+)
+
+// mcpRemotePackage は stdio と Streamable HTTP を繋ぐ橋（Requirements.md 10.8.4.2）。
+//
+// **Claude Desktop の設定ファイルは stdio のサーバしか書けない**ので、
+// HTTP の PB へ繋ぐには橋が要る。**0.8.5 で実測した**（pb-58）。
+const mcpRemotePackage = "mcp-remote"
+
+// renderClaudeDesktopConfig は claude_desktop_config.json を組み立てる
+// （Requirements.md 10.8.4.2、手順は pb-58 で実測）。
+//
+// **カスタムコネクタでは繋がらない。** あちらの接続は利用者の端末からではなく
+// Anthropic のクラウドから届くので、手元の PB には到達しない（https も要る）。
+// **残る経路がこのファイルだけである。**
+//
+// **command と PATH は placeholder にする。** 実測で分かった罠が2つあり、どちらも
+// 「GUI アプリはシェルの PATH を継承しない」に帰着する。`"npx"` とだけ書くと
+// **起動できず**（No such file or directory）、絶対パスにしても **npx 自身が node を
+// PATH から探して落ちる**（env: node: No such file or directory）。
+// **env の PATH に node のディレクトリを足して初めて通る。**
+//
+// **トークンは env に置き、ヘッダから ${…} で参照する**（mcp-remote が展開する）。
+// **平文がファイルに残ることは避けられない**——シェルの環境変数は GUI アプリに届かない。
+//
+// **コロンの後に空白を入れない**（`Authorization:Bearer ${…}`）。mcp-remote が
+// 引数の空白で割れる形を避けるための書き方である。
+func renderClaudeDesktopConfig(p ConnectParams) (string, error) {
+	type desktopServer struct {
+		Command string            `json:"command"`
+		Args    []string          `json:"args"`
+		Env     map[string]string `json:"env"`
+	}
+	doc := struct {
+		MCPServers map[string]desktopServer `json:"mcpServers"`
+	}{
+		MCPServers: map[string]desktopServer{
+			mcpServerName: {
+				Command: desktopCommandPlaceholder,
+				Args: []string{
+					"-y", mcpRemotePackage, p.MCPURL,
+					"--header", fmt.Sprintf("Authorization:Bearer ${%s}", p.TokenEnvName),
+				},
+				Env: map[string]string{
+					"PATH":         desktopPathPlaceholder,
+					p.TokenEnvName: desktopTokenPlaceholder,
 				},
 			},
 		},
