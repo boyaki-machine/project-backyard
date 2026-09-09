@@ -510,7 +510,7 @@ Playwright / Puppeteer は入れていない。スクリプトはリポジトリ
 
 | ファイル | 内容 |
 |---|---|
-| `server/internal/httpapi/v1/projects_get.go` | `GET /projects/{key}`（5.4）。組み立ては既存の `buildProjectDetail` を呼ぶだけ。`projectRequestContext`（プリンシパルと `{key}` の取り出し）と `writeProjectDetailError`（`pgx.ErrNoRows` → 404）は**`/projects/{key}` 配下で共有する** |
+| `server/internal/httpapi/v1/projects_get.go` | `GET /projects/{key}`（5.4）。組み立ては既存の `buildProjectDetail` を呼ぶだけ。`projectRequestContext`（プリンシパルと `{key}` の取り出し）と `writeProjectDetailError`（`pgx.ErrNoRows` → 404）は`/projects/{key}` **配下で共有する** |
 | `server/internal/httpapi/v1/projects_update.go` | `PATCH`（5.5）と `archive`/`unarchive`（5.6）。`parseIfMatch`・`buildUpdateProjectParams`・`parseDescriptionField`・`classifyUpdateMiss`・`writeProjectUpdateError`。archive と unarchive は `setProjectStatus` 1つに集約し、渡す `status` だけが違う |
 | `server/internal/httpapi/v1/projects_update_test.go` | 単体16件。5.4 の形・非メンバーの 404・部分更新・`null` の区別・`If-Match` の必須と 409・`immutable_field`・冪等な archive・403・`check-key` の予約 |
 | `server/internal/httpapi/v1/projects_update_integration_test.go` | **実DBに対する結合テスト。** `COALESCE`/`sqlc.narg` の据え置き、`version` の照合と +1、`archived_at` の CASE、`status <> @status` の冪等、`trg_project_updated` による `updated_at` の前進 |
@@ -676,7 +676,7 @@ CDP を話す最小クライアント（`cdp.py`）と検証本体（`verify.py`
 
 ## 環境メモから移した記録（2026-08-18、その2・`feature/step-11-project-detail-api`）
 
-`PROGRESS.md` が 30KB を超えたため、環境メモを**「いま効いていて、かつ手順書に落とせない
+`PROGRESS.md` が 30KB を超えたため、環境メモを「**いま効いていて、かつ手順書に落とせない
 制約」だけ**に絞った（2026-08-18、11a）。再現手順は `docs/Development.md` へ写し
 （テストの落とし穴＝6.2、依存とツールの固定版＝10章、initdb の実行ビット＝2.2）、
 **役目を終えた回避策だけをここへ移した。**
@@ -1232,7 +1232,7 @@ API は 13a で実装済みで、13b は**画面と API ラッパだけ**であ�
 |---|---|
 | `ApiDesign.md` 7.1 | `scope` クエリ（値域 `system` / `project`、それ以外は 422）と **scope 別の必要権限**。開放の理由・暫定である旨・値域を閉じる理由を追記 |
 | `ApiDesign.md` 7.2 | `user.manage` のまま据え置く理由、並びとエンベロープ |
-| `GuiDesign.md` 5.6.3 | ワイヤーを**5列**へ。グループ見出し・カテゴリ区切り・キー＋説明・**表の規則（権限列の固定）**を追記 |
+| `GuiDesign.md` 5.6.3 | ワイヤーを**5列**へ。グループ見出し・カテゴリ区切り・キー＋説明・**表の規則**（権限列の固定）を追記 |
 | `GuiDesign.md` 5.6 / 5.9.2 | 「画面が対応表を持つ」記述を撤去 |
 | `Design.md` 6.4.3 | 「Phase 1 ではシステムロール2種のみをUIで扱う」を撤去（**13b の時点で実装と食い違っていた**） |
 
@@ -1515,7 +1515,7 @@ stg に残るのは `pb` のみ。ヘッドレス Chrome は終了。`make clean
 
 **原因は「行き先の無い知識」だった。** `PROGRESS.md` の「次の手順への引き継ぎ」75行 36.9KB のうち、
 **手順番号にひもづく約束は16行だけ**で、残りは「画面を作る手順では…」のように
-**作業の種類にひもづく実装規約30行（16.0KB）**と、**Phase 2 以降・時期未定26行（9.7KB）**だった。
+**作業の種類にひもづく実装規約30行**（16.0KB）と、**Phase 2 以降・時期未定26行**（9.7KB）だった。
 前者は消化の概念が無いので永久に残り、後者は Phase 1 の間ずっと効かないのに毎回読まれる。
 設計文書は「何を作るか」、`LEARNINGS.md` は「進め方」なので、どちらにも属さない知識が
 毎回読む文書に沈殿していた。
@@ -2138,7 +2138,7 @@ NOT NULL と推論し、NULL を読めなかった。**単体テストはフェ�
 
 | ファイル | 内容 |
 |---|---|
-| `docs/GuiDesign.md` | 5.4「二段」に**「配下の行き先」を新設**（どちらの段にも出さない／到達手段は手順17／ツリーの折りたたみが有効ならオンステージへ展開／総件数は出していない配下を含む）。表の「段に置けるもの」にも1行 |
+| `docs/GuiDesign.md` | 5.4「二段」に「**配下の行き先」を新設**（どちらの段にも出さない／到達手段は手順17／ツリーの折りたたみが有効ならオンステージへ展開／総件数は出していない配下を含む）。表の「段に置けるもの」にも1行 |
 | `deploy/dev/seed/dev-data.yaml` | `MCP サーバの足場を作る` の配下に2件（**story/task どうしの親子**。エピック配下だけではツリーが画面に出ない）。冒頭の組み合わせ表の「階層2段」の説明も直した |
 | `client/src/api/tickets.ts` | `ListTicketsQuery.parent` を `number` → `string`（**カンマ区切りの OR。openapi と食い違っていた**）、`newTicketBodyTemplate` を新設 |
 | `client/src/components/NewTicketModal.vue` | 種別の選択肢を `backlogTicketTypes`（2つ）へ、説明欄の初期値をテンプレートに、`projectKey` を受け取り**親の候補を完全形 `demo-8 …` で出す**、`rows` を 7 へ |
@@ -2536,7 +2536,7 @@ NOT NULL の列は `COALESCE(sqlc.narg(…), 現在値)`、NULL にできる列�
 |---|---|
 | `GuiDesign.md` 5.5 | **「完了条件（DoD）」「関連チケット」「コメント」の3小節を新設**。それまでワイヤーフレームの1行と対応表の1行しか無かった。`link_type` の日本語ラベル表（関連／重複／自先行／自後行）、`kind` の表示名表、返信の両向きリンク、0件のときの扱いを書いた |
 | `GuiDesign.md` 5.5 | 「状態のドロップダウン」の末尾にあった「遷移にコメントを添える欄は手順17b では置かない」を、**「遷移にコメントを添える」小節**へ書き換えた |
-| `GuiDesign.md` 5.5 | ワイヤーフレームの `← 手順18` マーカーを3つ外し、対応表の手順欄を `18` → `18b` に。「まだ実装していないセクションは見出しごと出さない」を**「実装済みは0件でも見出しを出す。ただしコードと子チケットだけは0件で消す」**の基準とともに書き直した |
+| `GuiDesign.md` 5.5 | ワイヤーフレームの `← 手順18` マーカーを3つ外し、対応表の手順欄を `18` → `18b` に。「まだ実装していないセクションは見出しごと出さない」を「**実装済みは0件でも見出しを出す。ただしコードと子チケットだけは0件で消す**」の基準とともに書き直した |
 | `GuiDesign.md` 6.3 | 破壊的操作の表に**3行**追加（コメント／完了条件／関連チケットの削除） |
 | `GuiDesign.md` 6.1 | `Avatar` を実体化した旨と、**`TicketComments.vue` を切り出した基準**（自己完結の単位か、親が配列を所有しているか）を追記 |
 | `Development.md` 8.2 | 検証の道具の落とし穴を**2件**追記（下記「新しく分かった環境の制約」） |
@@ -3194,8 +3194,8 @@ D&D・空状態・権限出し分け・遅延読み込みの**12件**あり、�
 | 5 配下の文書 | `rules` にリンクが出て `naming` へ辿れる／子が無い `vision` には出さない |
 | 6 編集・保存 | **1440px で3ペインが並ぶ**（木239 / 編集479 / 可視化480）／可視化ペインが並ぶ間は内蔵プレビューを出さない／保存の結果を操作した場所に出す／本文が描かれる／**履歴が2件**（作成時＋編集）／`change_reason` がリビジョンに入る／`version` が +1 |
 | 7 競合 | 外部から先に `PATCH`（200）→ 画面の保存が **409**／**編集内容が入力欄に残る**／`[最新を読み込む]` と `[別名で保存]` が出る |
-| 8 別名で保存 | 作成モーダルが**`slug` と `title` 空**で開く |
-| 9・13 削除 | 確認に**「配下の 1 件」**が出る／実行すると**部分木ごと消える**（`rules` と `naming`）／消えた文書を開いたままにしない（一覧へ戻る）／木の `[⋯]` からも消せる |
+| 8 別名で保存 | 作成モーダルが`slug` **と `title` 空**で開く |
+| 9・13 削除 | 確認に「**配下の 1 件**」が出る／実行すると**部分木ごと消える**（`rules` と `naming`）／消えた文書を開いたままにしない（一覧へ戻る）／木の `[⋯]` からも消せる |
 | 10 幅 | 900px で**可視化ペインを畳み内蔵プレビューへ落ちる**（木239 / 編集604 / 可視化0 / 内蔵1）／どちらの幅でも横スクロールしない |
 | 11 コンソール | `console.error` 0件（両アカウント） |
 | 12 **権限の負の側** | `member@` は本文を読める／**`[編集]` 0件・`[+ 文書を追加]` 0件・`[⋯]` 0件**／メニューの Docs は出る（`doc.view` はある） |
@@ -3207,7 +3207,7 @@ D&D・空状態・権限出し分け・遅延読み込みの**12件**あり、�
 
 | 層 | 内容 |
 |---|---|
-| 実装（スクリーンショットで発覚。実測は全 PASS） | ①**`[⋯]` が木の全行に出たまま**だった。`UserActionsMenu` は `<button>` と `<Teleport>` の**多ルート**なので Vue が `class` を渡さず、`visibility: hidden` が当たっていなかった。**Vue の警告は `console.warn` なので `console.error` の監視では拾えない**。`<span>` で包んで解決（`GuiDesign.md` 7.4 へ昇格）②**編集ペインの下に広大な余白**。`MarkdownEditor` の `max-height: 420px` がペイン専用の置き場に合っていなかった。`:deep()` で外した |
+| 実装（スクリーンショットで発覚。実測は全 PASS） | ①`[⋯]` **が木の全行に出たまま**だった。`UserActionsMenu` は `<button>` と `<Teleport>` の**多ルート**なので Vue が `class` を渡さず、`visibility: hidden` が当たっていなかった。**Vue の警告は `console.warn` なので `console.error` の監視では拾えない**。`<span>` で包んで解決（`GuiDesign.md` 7.4 へ昇格）②**編集ペインの下に広大な余白**。`MarkdownEditor` の `max-height: 420px` がペイン専用の置き場に合っていなかった。`:deep()` で外した |
 | 実装（ビルドが教えてくれた） | **`MarkdownEditor` の利用者を2つと数えて実際は3つだった**（`TicketComments.vue` を漏らした）。1つでも同期取り込みが残るとチャンクは分かれない。`INEFFECTIVE_DYNAMIC_IMPORT` が利用者を名指しする（`Development.md` 7.1 へ） |
 | 検証側（2件） | ①`nav[aria-label=メインメニュー]` と**引用符なしで非 ASCII の属性値**を書き、常に0件になっていた ②`a.textContent.trim() === 'Docs'` で数えたが、**アイコンの `▣` が混ざる**ので常に偽だった。**どちらも「メニューに Docs が無い」という偽の FAIL を出した**——実装は最初から正しかった |
 
@@ -3423,7 +3423,7 @@ CSRF ではない）／他プロジェクトが 404 ／`/admin/users?kind=agent`
 | `docs/openapi.yaml` | `/api/v1/permissions` の説明と、権限判定が無くなったので `403` を落とした |
 | `server/internal/httpapi/v1/routes.go` | `/permissions` から `RequirePermission` を外した |
 | `server/internal/httpapi/v1/roles.go` | `listPermissions` のコメントを実態に合わせた |
-| `server/internal/httpapi/v1/roles_integration_test.go` | 「オペレータは403」の一覧から `/permissions` を外し、**「オペレータでも読めて、既定スコープ8件の `description` が空でない」**を測る節を足した |
+| `server/internal/httpapi/v1/roles_integration_test.go` | 「オペレータは403」の一覧から `/permissions` を外し、「**オペレータでも読めて、既定スコープ8件の `description` が空でない**」を測る節を足した |
 | `client/src/api/me.ts` | エージェント5関数と型（`/me` 配下なので `api/agents.ts` を作らない） |
 | `client/src/components/MeTabs.vue` | 3つ目のタブ。`current` に `'agents'` |
 | `client/src/router/routes.ts` | `/me/agents`（`meta.permission` は持たない。必要権限は「本人」） |
@@ -3815,7 +3815,7 @@ MCP の口は `/mcp/<project_key>` で、認可はトークンの `project_id` �
 「削除」**が出ること、確認が**「消えるもの」「残るもの」「取り消せません」**を書くこと、
 削除すると**一覧のカードから消える**こと。
 
-**スクリーンショットで2件の崩れを拾った**（自動検証17件は全 PASS だった）——
+**スクリーンショットで2件の崩れを拾った（**自動検証17件は全 PASS だった）——
 ①**「追加の権限」だけ `fieldset` の枠線が出て**、隣の「有効期限」と別の種類の入力に見えていた
 （`.choices` に打ち消しがあり `.field` には無かった）②**チェックボックスと文字の間に余白が無かった**。
 `fieldset.field` に打ち消しを置き、`.check` を `.choices label` と同じ組み方にした。
@@ -3918,7 +3918,7 @@ dev サーバを停止し、`make clean-webui` を実行している。
 `POST /me/agents` はメンバーでないと 422 になる。**選べるのに必ず失敗する項目を出さない。**
 
 **単体994件・結合168件（`--- PASS` 行の総数）・ブラウザ検証91件が PASS。**
-結合の増分は**`t.Run` の総数 125 → 126** で、私が足した1件と一致する（件数の数え方が
+結合の増分は`t.Run` **の総数 125 → 126** で、私が足した1件と一致する（件数の数え方が
 24a の「163件」と違う可能性があるため、比較できるのはこちらである）。
 **足した結合テストは「わざと `user.manage` へ戻すと落ちる」ことを実測して確かめた。**
 
@@ -3977,7 +3977,7 @@ SSE ストリームもセッションも持たない（`Design.md` 8.4）。**�
 **`GET /projects/:key` の `my_role` / `my_permissions` を委譲に合わせて直した**（利用者の判断、
 2026-09-04）。`project_view.go` がメンバー行を `p.ActorID` で照合しており、**エージェントでは
 `my_role` が常に `null`、`my_permissions` からプロジェクトロール層が丸ごと落ちていた**——
-認可は `AuthzActorID()`（所有者）で通るので、**「できるのに、できないと応答している」**状態
+認可は `AuthzActorID()`（所有者）で通るので、「**できるのに、できないと応答している**」状態
 だった。`GET /me` は 24a で直っていたが、5.4 は Phase 1 の章で読み直されていなかった。
 `ApiDesign.md` 5.4 と `openapi.yaml` を同じブランチで改訂している。
 
@@ -4019,7 +4019,7 @@ Phase 2 へ戻す（マイグレーションの追加を伴い、Phase 3 の採�
 どちらかを直さないと 26a の完了条件を満たせなかった。**
 
 **4.5.3 に許可リスト（既定8件 ∪ `doc.edit`）を入れた**（利用者の判断）。改訂前の根拠は
-**「既定から外れる組み合わせを作る動機が Phase 2 に無い」**だったが、**その動機が
+「**既定から外れる組み合わせを作る動機が Phase 2 に無い**」だったが、**その動機が
 `pb_put_doc` そのものである**。`ticket.close` は許可リストにも入れない（6.5 は
 こちらを「エージェントに開けない」と定め、ワークフローの `is_agent_reachable=false` でも
 担保されている）。**空配列 `[]` は 422** ——4.4.2 の個人トークンは `[]` を
@@ -4410,7 +4410,7 @@ Cookie jar・トークン・Chrome プロファイル（`/tmp/pb-cdp-*`）を削
 | 認証 | `headers` に `${ENV}` | `inputs` の `${input:…}` | `bearer_token_env_var` |
 | **ツール許可** | **`.claude/settings.json`**（別ファイル・**コミットする**） | **コミットできる仕組みが無い** | **`.codex/config.toml`（接続設定と同じファイル・除外）** |
 
-- **`settings.json` は Claude Code 固有である。** 業界標準になったのは **`AGENTS.md`（指示・文脈だけ）**で、
+- **`settings.json` は Claude Code 固有である。** 業界標準になったのは **`AGENTS.md`**（指示・文脈だけ）で、
   Linux Foundation の Agentic AI Foundation が管理し、**MCP 接続もツール権限も標準化していない**
 - **ツールの一覧はファイルで渡さない。** クライアントは接続後に `tools/list` を送り、
   **PB が名前・説明・引数スキーマを返す**（`Design.md` 8.4。手順25 で実装済み）。

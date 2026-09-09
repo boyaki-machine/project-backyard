@@ -1114,7 +1114,7 @@ function kindIcon(kind: string): string {
                   </td>
                   <td class="period">{{ sprintPeriod(s) }}</td>
                   <td class="status-col">{{ sprintStatusLabels[s.status] }}</td>
-                  <!-- グラフは出さない（バーンダウンは Phase 2 の /p/:key/sprints） -->
+                  <!-- グラフは出さない（バーンダウンは進捗分析、/p/:key/insights。GuiDesign.md 5.9.5） -->
                   <td class="count-col">{{ s.closed_count }}/{{ s.ticket_count }}</td>
                   <td class="actions-col">
                     <div class="row-actions">

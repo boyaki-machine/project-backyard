@@ -1175,6 +1175,7 @@ export interface paths {
          *     | `status_key` | ワークフローのうち `category='todo'` かつ `sort_order` 最小。該当が無ければ `sort_order` 最小 |
          *     | `sort_key` | 現在の末尾の次（9.4 の LexoRank） |
          *     | `reporter_id` | 呼び出し元のアクター |
+         *     | `staged_at` | **常に `NULL`**（バックログへ入る）。オンステージへ上げるのは 9.4 の `move` である |
          *     | `execution_mode` | **常に `agent_draft`**（DbDesign.md 6.6 の列の既定。`INSERT` は値を送らない）。変えるのは 9.5.2 の `PATCH` |
          *     | `version` | `1` |
          *
