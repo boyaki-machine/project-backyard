@@ -1356,6 +1356,46 @@ func TestMCPIntegration(t *testing.T) {
 	// **フェイクでは権限の積を測れない**（Design.md 6.4.1 の
 	// 「所有者のロール ∩ トークンのスコープ」）。ここが唯一の場所である。
 
+	t.Run("pb_list_tags がプロジェクトのタグを返す", func(t *testing.T) {
+		// **始点を作る。** 0件のまま「表の件数と一致する」を測ると、
+		// **実装が空配列を返すだけでも通る**（憲章「ゼロを測るなら先に始点を作る」）。
+		for _, name := range []string{"設計", "MCP連携"} {
+			if _, err := pool.Exec(ctx,
+				`INSERT INTO tag (id, project_id, name, sort_order) VALUES ($1, $2, $3, $4)
+				 ON CONFLICT (project_id, name) DO NOTHING`,
+				ulidgen.New(), projectID, name, 10); err != nil {
+				t.Fatalf("タグを作れない: %v", err)
+			}
+		}
+
+		text, isErr := tool(t, agentToken, "pb_list_tags", `{}`)
+		if isErr {
+			t.Fatalf("タグを引けない: %s", text)
+		}
+		var got struct {
+			Items []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		// **件数を書き下さない**（憲章「期待値は決め打ちせず、正本から読む」）。
+		// 表に何件あるかを引いて突き合わせる。
+		var want int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM tag WHERE project_id = $1`, projectID).Scan(&want); err != nil {
+			t.Fatalf("タグの件数を読めない: %v", err)
+		}
+		if want == 0 {
+			t.Fatal("tag 表が空である（始点が意味を持たない）")
+		}
+		if len(got.Items) != want {
+			t.Errorf("タグ = %d件, want %d件（tag 表の全行）", len(got.Items), want)
+		}
+	})
+
 	t.Run("pb_update_ticket が記述を直す", func(t *testing.T) {
 		text, isErr := tool(t, agentToken, "pb_update_ticket",
 			`{"seq":1,"title":"エージェントが直したタイトル","body_md":"直した本文"}`)
@@ -1581,6 +1621,53 @@ func TestMCPIntegration(t *testing.T) {
 
 		if res.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403（body=%s）", res.Code, res.Body.String())
+		}
+	})
+
+	t.Run("pb_create_ticket が見積もりと日付とタグを受ける", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `
+			UPDATE project_counter SET last_ticket_seq =
+				(SELECT coalesce(max(seq), 0) FROM ticket WHERE project_id = $1)
+			WHERE project_id = $1`, projectID); err != nil {
+			t.Fatalf("採番器を合わせられない: %v", err)
+		}
+		var tagID string
+		if err := pool.QueryRow(ctx,
+			`SELECT id FROM tag WHERE project_id = $1 ORDER BY sort_order LIMIT 1`,
+			projectID).Scan(&tagID); err != nil {
+			t.Fatalf("タグを引けない: %v", err)
+		}
+
+		text, isErr := tool(t, agentToken, "pb_create_ticket",
+			`{"type":"task","title":"見積もりつきで起票","estimate_point":5,`+
+				`"start_date":"2026-09-09","due_date":"2026-09-21","tag_ids":[`+quote(tagID)+`]}`)
+		if isErr {
+			t.Fatalf("起票できない: %s", text)
+		}
+		var got struct {
+			Seq           int      `json:"seq"`
+			EstimatePoint *float64 `json:"estimate_point"`
+			StartDate     *string  `json:"start_date"`
+			DueDate       *string  `json:"due_date"`
+			Tags          []struct {
+				ID string `json:"id"`
+			} `json:"tags"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		if got.EstimatePoint == nil || *got.EstimatePoint != 5 {
+			t.Errorf("estimate_point = %v, want 5", got.EstimatePoint)
+		}
+		// **date 列は時刻を持たない**（前日へずれる経路を作らない）。
+		if got.StartDate == nil || *got.StartDate != "2026-09-09" {
+			t.Errorf("start_date = %v", got.StartDate)
+		}
+		if got.DueDate == nil || *got.DueDate != "2026-09-21" {
+			t.Errorf("due_date = %v", got.DueDate)
+		}
+		if len(got.Tags) != 1 || got.Tags[0].ID != tagID {
+			t.Errorf("tags = %+v, want [%s]", got.Tags, tagID)
 		}
 	})
 

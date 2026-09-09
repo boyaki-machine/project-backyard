@@ -137,6 +137,14 @@ func readTools() []tool {
 			call: callGetDoc,
 		},
 		{
+			Name: "pb_list_tags",
+			Description: "プロジェクトのタグを列挙する。**チケットにタグを付けるには ULID が要る**ので、" +
+				"pb_create_ticket / pb_update_ticket の tag_ids を渡す前に引く。" +
+				"タグの新規作成はできない——**語彙を決めるのは人である**（プロジェクト設定で追加する）。",
+			InputSchema: schema{Type: "object", Properties: map[string]property{}},
+			call:        callListTags,
+		},
+		{
 			Name: "pb_list_tasks",
 			Description: "チケットの一覧を軽量な形で返す。ボードの状況把握と、自分の担当を知るために使う。" +
 				"1件の詳細（本文・完了条件・関連リンク）が要るときは pb_get_task を呼ぶこと。",
@@ -593,6 +601,13 @@ func writeTools() []tool {
 					"parent_seq": {Type: "integer", Description: "親チケットの番号（seq）。省略するとトップレベル", Minimum: intPtr(1)},
 					"assignee_id": {Type: "string", Description: "担当者。me で自分（エージェントのトークンでは所有者）、" +
 						"アクターの ULID も渡せる。省略すると未割当。**当該プロジェクトのメンバーであること**"},
+					"tag_ids": {Type: "array", Description: "タグの ULID の配列。**pb_list_tags で列挙できる。** " +
+						"すべて当該プロジェクトのタグであること",
+						Items: &property{Type: "string"}},
+					"estimate_point": {Type: "number", Description: "見積もり（ポイント）。0以上"},
+					"estimate_hours": {Type: "number", Description: "見積もり（時間）。0以上"},
+					"start_date":     {Type: "string", Description: "開始日。YYYY-MM-DD"},
+					"due_date":       {Type: "string", Description: "期限。YYYY-MM-DD。start_date があるとき start_date 以降"},
 				},
 				Required: []string{"type", "title"},
 			},
@@ -615,6 +630,13 @@ func writeTools() []tool {
 						Enum: []string{"lowest", "low", "medium", "high", "highest"}},
 					"parent_seq":  {Type: "integer", Description: "親チケットの番号（seq）", Minimum: intPtr(1)},
 					"assignee_id": {Type: "string", Description: "担当者。me で自分（所有者）、アクターの ULID も渡せる"},
+					"tag_ids": {Type: "array", Description: "タグの ULID の配列。**丸ごと置き換える**（空配列で全部外す）。" +
+						"pb_list_tags で列挙できる",
+						Items: &property{Type: "string"}},
+					"estimate_point": {Type: "number", Description: "見積もり（ポイント）。0以上"},
+					"estimate_hours": {Type: "number", Description: "見積もり（時間）。0以上"},
+					"start_date":     {Type: "string", Description: "開始日。YYYY-MM-DD"},
+					"due_date":       {Type: "string", Description: "期限。YYYY-MM-DD"},
 				},
 				Required: []string{"seq"},
 			},
@@ -717,15 +739,25 @@ func writeTools() []tool {
 // assignee と書いていたが、名前が ApiDesign.md と一致していれば、エージェントは
 // 迷ったときに設計文書を引ける（8.5）。
 //
-// **tag_ids / sprint_id / 見積 / 日付は開けていない**——いずれも ULID か画面の
-// 文脈が要り、エージェントが持たない。増やすときは 8.5.1 の表を先に直すこと。
+// **tag_ids / 見積 / 日付は pb-76 で開けた。** 見積と日付は数値と日付であって
+// ULID ではなく、**閉じていた理由が最初から当てはまっていなかった**。タグは
+// pb_list_tags で列挙できるようになったので ULID を渡せる。
+//
+// **sprint_id と actual_hours は開けない。** 前者は 0028 以降どの経路からも
+// 書けず（9.5.2 の use_sprint_endpoint）、後者は pb_submit_result の
+// cost.wall_clock_min と二重になる。増やすときは 8.5.1 の表を先に直すこと。
 type createTicketArgs struct {
-	Type       string  `json:"type"`
-	Title      string  `json:"title"`
-	BodyMD     string  `json:"body_md"`
-	Priority   string  `json:"priority"`
-	ParentSeq  flexInt `json:"parent_seq"`
-	AssigneeID string  `json:"assignee_id"`
+	Type          string   `json:"type"`
+	Title         string   `json:"title"`
+	BodyMD        string   `json:"body_md"`
+	Priority      string   `json:"priority"`
+	ParentSeq     flexInt  `json:"parent_seq"`
+	AssigneeID    string   `json:"assignee_id"`
+	TagIDs        []string `json:"tag_ids"`
+	EstimatePoint *float64 `json:"estimate_point"`
+	EstimateHours *float64 `json:"estimate_hours"`
+	StartDate     string   `json:"start_date"`
+	DueDate       string   `json:"due_date"`
 }
 
 func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
@@ -757,6 +789,23 @@ func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	if a := resolveAssignee(in.AssigneeID, auth.PrincipalFromContext(r.Context())); a != "" {
 		body["assignee_id"] = a
 	}
+	// pb-76 で開けた5つ。**空は載せない**（上と同じ理由——9.3 が任意と定める
+	// 欄に空を明示すると、既定の解釈が変わりうる）。
+	if len(in.TagIDs) > 0 {
+		body["tag_ids"] = in.TagIDs
+	}
+	if in.EstimatePoint != nil {
+		body["estimate_point"] = *in.EstimatePoint
+	}
+	if in.EstimateHours != nil {
+		body["estimate_hours"] = *in.EstimateHours
+	}
+	if in.StartDate != "" {
+		body["start_date"] = in.StartDate
+	}
+	if in.DueDate != "" {
+		body["due_date"] = in.DueDate
+	}
 
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -781,12 +830,17 @@ func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 // である**（ticket.self_edit が type を受けない）ので、ここで落としているのは
 // 引数の定義だけで、8.1 の「MCP に独自の規則を置かない」は保たれている。
 type updateTicketArgs struct {
-	Seq        flexInt `json:"seq"`
-	Title      *string `json:"title"`
-	BodyMD     *string `json:"body_md"`
-	Priority   *string `json:"priority"`
-	ParentSeq  flexInt `json:"parent_seq"`
-	AssigneeID *string `json:"assignee_id"`
+	Seq           flexInt   `json:"seq"`
+	Title         *string   `json:"title"`
+	BodyMD        *string   `json:"body_md"`
+	Priority      *string   `json:"priority"`
+	ParentSeq     flexInt   `json:"parent_seq"`
+	AssigneeID    *string   `json:"assignee_id"`
+	TagIDs        *[]string `json:"tag_ids"`
+	EstimatePoint *float64  `json:"estimate_point"`
+	EstimateHours *float64  `json:"estimate_hours"`
+	StartDate     *string   `json:"start_date"`
+	DueDate       *string   `json:"due_date"`
 }
 
 // callUpdateTicket は 9.5.2 の PATCH を叩く。
@@ -819,6 +873,21 @@ func callUpdateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	// **me は所有者を指す**（pb_create_ticket と同じ写し方）。
 	if in.AssigneeID != nil {
 		body["assignee_id"] = resolveAssignee(*in.AssigneeID, auth.PrincipalFromContext(r.Context()))
+	}
+	if in.TagIDs != nil {
+		body["tag_ids"] = *in.TagIDs
+	}
+	if in.EstimatePoint != nil {
+		body["estimate_point"] = *in.EstimatePoint
+	}
+	if in.EstimateHours != nil {
+		body["estimate_hours"] = *in.EstimateHours
+	}
+	if in.StartDate != nil {
+		body["start_date"] = *in.StartDate
+	}
+	if in.DueDate != nil {
+		body["due_date"] = *in.DueDate
 	}
 	// **空の更新は断る。** 9.5.2 は受けても何もしないが、version だけが +1 する
 	// ので、呼んだ側は「直した」と誤解する。
@@ -1387,5 +1456,20 @@ func callSubmitResult(h *Handler, r *http.Request, key string, args json.RawMess
 	res, err := h.callREST(r, http.MethodPost,
 		"/projects/"+url.PathEscape(key)+"/tickets/"+
 			strconv.FormatInt(seq.value, 10)+"/reports", nil, body, nil)
+	return passThrough(r, res, err)
+}
+
+// ── pb_list_tags（Design.md 8.5.1。pb-76）─────────────────────
+
+// callListTags は 9.11 の一覧をそのまま返す。
+//
+// **引数を取らない。** 9.11 はページャも絞り込みも持たず、プロジェクトの
+// タグを全件返す。
+//
+// **pb_list_sprints は作っていない。** スプリントは 0028 以降どの経路からも
+// 設定できないので（9.5.2 の use_sprint_endpoint）、**列挙する用途が無い**
+// ——読むだけなら pb_get_task の応答が sprint: {id, name} を返している。
+func callListTags(h *Handler, r *http.Request, key string, _ json.RawMessage) (toolResult, *rpcError) {
+	res, err := h.getREST(r, "/projects/"+url.PathEscape(key)+"/tags", nil)
 	return passThrough(r, res, err)
 }
