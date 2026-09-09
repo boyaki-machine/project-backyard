@@ -745,16 +745,18 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 | 項目 | 規則 |
 |---|---|
 | `expires_in_days` | **必須**。1〜365 の整数。無期限は許さない（`Design.md` 6.5「有効期限必須」） |
-| `scopes` | 省略可。**省略すると `Design.md` 6.5 の既定9件**。渡すときは**許可リストの中だけ**（下記）。カタログに無い値・許可リスト外の値は `422` |
+| `scopes` | 省略可。**省略すると `Design.md` 6.5 の既定10件**。渡すときは**許可リストの中だけ**（下記）。カタログに無い値・許可リスト外の値は `422` |
 
-**許可リストは「6.5 の既定9件 ∪ `doc.edit`」の10件である**（2026-09-05 に改訂＝手順26a、2026-09-08 に `ticket.reference.edit` を既定へ足した＝pb-68）。
+**許可リストは「6.5 の既定10件 ∪ `doc.edit`」の11件である**（2026-09-05 に改訂＝手順26a、2026-09-08 に `ticket.reference.edit`、2026-09-09 に `ticket.self_edit` を既定へ足した＝pb-68 / pb-75）。
 
 ```
 agent.run  comment.create  doc.view  project.view
 ticket.assign  ticket.create  ticket.transition  ticket.view
-ticket.reference.edit                                           ← 既定の9件
+ticket.reference.edit  ticket.self_edit                         ← 既定の10件
 doc.edit                                                        ← 発行時に足せる
 ```
+
+**`ticket.self_edit` も既定に入れた**（利用者の判断、2026-09-09）。`ticket.reference.edit` と同じ理由である——**起票したチケットを直すのは実装エージェントの通常の仕事**であり、付く相手で変わらない。**`ticket.edit` は許可リストに入れない**。あれは 9.5.2 の全項目を開けるので、**エージェントが `execution_mode` や `scope` を自分で緩められる**（`DbDesign.md` 6.13）。
 
 **`ticket.reference.edit` は「足せるもの」ではなく既定に入れた**（利用者の判断、2026-09-08）。`doc.edit` が発行時の選択になっているのは 6.5 が「載せるかは**そのエージェントが誰に付いているか**で決まる」と定めるためだが、**作業の跡（`kind='code'` の外部参照）を積むのは実装エージェントの通常の仕事**であり、付く相手で変わらない。既定から外すと「コミットを記録できないエージェント」が既定になる。
 
@@ -2068,6 +2070,18 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 **必要権限**：`ticket.edit`。ただし `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要
 
+**`ticket.self_edit` でも通る**（0029。pb-75）。ただし**開けるのは下の絞り込んだ集合だけ**で、それ以外の項目を送ると `403` になる。**エージェントに渡す権限であり、自分の縛りを緩められては意味がない**（`DbDesign.md` 6.13）。
+
+| `ticket.self_edit` で変えられる | 変えられない |
+|---|---|
+| `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_date` `due_date` | **`type`** `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
+
+**`type` は `ticket.edit` を持つ人だけが変えられる**（利用者の判断、2026-09-09）。**種別の切り替えは盤面の見え方を変える**——タスクをエピックへ変えると、その行はバックログから消えてフィルタの選択肢になる（`GuiDesign.md` 5.4）。
+
+**判定はハンドラで行う。** `Design.md` 6.4.4 の宣言では表せない——**どの項目を送ったか**で可否が決まるためである。**9.6 の検証6・9.8 の `comment.edit_own` に続いて3例目**であり、`Design.md` 付録A 論点①（権限の全体像の再整理）をここで行う。
+
+**`assignee_id` を変えるときに `ticket.assign` も要るのは `ticket.edit` のときと同じ**である（エージェントの既定スコープは両方を持つ）。
+
 `If-Match: "3"` による楽観ロック（2.8）。**省略時は `422`**。成功すると `version` が +1 される。送られたフィールドだけを更新する。
 
 変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `estimate_point` `estimate_hours` `actual_hours` `start_date` `due_date` `execution_mode` `readiness` `readiness_note` `scope`
@@ -2484,6 +2498,10 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/dod/:id
 ```
 
 **必要権限**：`GET` は `ticket.view`、更新系は `ticket.edit`
+
+**`ticket.self_edit` でも通る。ただし `is_satisfied` は送れない**（0029。pb-75）。送ると `403` になる。**`pb_submit_result` が「盤面を動かさない」と決めた判断と正面からぶつかる**ためで（9.15、手順26c）、**完了の判定は人が行う。** エージェントに開けるのは `body` の追加・編集・削除までである。
+
+**`sort_order` は開ける。** 並べ替えは記述の整理の一部であって、盤面の判定ではない。
 
 | フィールド | 検証 |
 |---|---|
