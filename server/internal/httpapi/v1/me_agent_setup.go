@@ -166,9 +166,9 @@ func (h *handler) buildAgentConnect(
 		MCPURL:  mcpURL,
 		Files:   files,
 	}
-	// **Copilot だけ null になる**（4.5.8.2）。${input:pb-token} を使い、
-	// 環境変数を読まない——**意味のない行を出すと、利用者は書かれていない前提を
-	// 自分の期待で埋める。**
+	// **2種別で null になる**（4.5.8.2）。Copilot は ${input:pb-token} を使って
+	// 環境変数を読まず、Claude Desktop は GUI アプリなのでシェルの環境が届かない。
+	// **意味のない行を出すと、利用者は書かれていない前提を自分の期待で埋める。**
 	if connect.UsesTokenEnvVar {
 		line := agentsetup.ExportLine(params.TokenEnvName)
 		view.ExportLine = &line
