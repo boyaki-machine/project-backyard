@@ -69,38 +69,6 @@ const emit = defineEmits<{ confirm: []; cancel: [] }>()
   cursor: pointer;
 }
 
-.secondary {
-  border: 1px solid var(--pb-border);
-  background: var(--pb-surface);
-  color: inherit;
-}
-
-.secondary:hover:not(:disabled) {
-  background: var(--pb-hover);
-}
-
-.primary {
-  border: 1px solid var(--pb-accent);
-  background: var(--pb-accent);
-  color: var(--pb-on-accent);
-}
-
-.primary:hover:not(:disabled) {
-  border-color: var(--pb-accent-hover);
-  background: var(--pb-accent-hover);
-}
-
-/* 取り消せない操作だけ danger を面で使う（8.4.3 / 8.6） */
-.danger {
-  border: 1px solid var(--pb-danger-border);
-  background: var(--pb-danger-bg);
-  color: var(--pb-danger-text);
-}
-
-.danger:hover:not(:disabled) {
-  border-color: var(--pb-danger);
-}
-
 button:disabled {
   cursor: default;
   opacity: 0.6;
