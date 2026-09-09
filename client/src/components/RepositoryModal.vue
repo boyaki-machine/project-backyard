@@ -157,23 +157,6 @@ input[aria-invalid='true'] {
   cursor: pointer;
 }
 
-.primary {
-  border: 1px solid var(--pb-accent);
-  background: var(--pb-accent);
-  color: var(--pb-on-accent);
-}
-
-.primary:hover:not(:disabled) {
-  border-color: var(--pb-accent-hover);
-  background: var(--pb-accent-hover);
-}
-
-.secondary {
-  border: 1px solid var(--pb-border);
-  background: var(--pb-surface);
-  color: inherit;
-}
-
 .secondary:hover {
   background: var(--pb-hover);
 }
