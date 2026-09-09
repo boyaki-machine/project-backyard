@@ -2976,8 +2976,16 @@ export interface components {
             token: string;
             token_prefix: string;
             /**
-             * @description Design.md 6.5 の既定スコープ（権限キー8件）。**要求では選べない。**
-             *     `ticket.close` と `doc.edit` は含まれない。
+             * @description **このトークンが持つ権限キーの全部。** 要求で `scopes` を省けば
+             *     Design.md 6.5 の既定10件、送ればその並びがそのまま入る
+             *     （手順26a で選べるようにした）。`ticket.close` は許可リストの外なので
+             *     決して含まれない。
+             *
+             *     **発行時のスコープを読めるのはこの応答だけである。** `AgentToken`
+             *     （`GET /me/agents` が返す形）は `scopes` を持たない。後から
+             *     確かめたいときは、そのトークンで `GET /me` を叩いて `permissions`
+             *     を見る——ただしあれは**所有者のロールとの積**であって、
+             *     発行時のスコープそのものではない。
              */
             scopes: string[];
             /** Format: date-time */
@@ -3045,14 +3053,20 @@ export interface components {
              */
             expires_in_days: number;
             /**
-             * @description 省略可（手順26a で足した）。**省略すると Design.md 6.5 の既定8件**
+             * @description 省略可（手順26a で足した）。**省略すると Design.md 6.5 の既定10件**
              *     （`agent.run` `comment.create` `doc.view` `project.view`
-             *     `ticket.assign` `ticket.create` `ticket.transition` `ticket.view`）。
+             *     `ticket.assign` `ticket.create` `ticket.reference.edit`
+             *     `ticket.self_edit` `ticket.transition` `ticket.view`）。
              *
-             *     渡すときは**許可リストの中だけ**——既定8件に `doc.edit` を加えた
-             *     9件である。それ以外のキーは 422。`ticket.close` は許可リストにも
+             *     渡すときは**許可リストの中だけ**——既定10件に `doc.edit` を加えた
+             *     11件である。それ以外のキーは 422。`ticket.close` は許可リストにも
              *     入れない（Design.md 6.5 の禁止。ワークフローの
              *     `is_agent_reachable=false` でも担保される）。
+             *
+             *     **`scopes` は絶対指定であって、足すものの並びではない。** 送ると
+             *     そのトークンが持つ権限の全部になるので、**既定に1件足したいときも
+             *     既定の全件を並べて送る**。既定より短い並びを送ると、**その差は
+             *     黙って落ちる**（pb-90 で実際に2件落ちた）。
              *
              *     **`doc.edit` を足せるのは `pb_put_doc` のためである**（Design.md 8.2）。
              *     載せるかは「そのエージェントが誰に付いているか」で決まる——
