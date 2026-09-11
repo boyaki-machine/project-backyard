@@ -1322,6 +1322,44 @@ ON CONFLICT DO NOTHING;
 
 **この権限は、エージェント用トークンの既定スコープに入る**（`Design.md` 6.5）。`ticket.reference.edit` と同じ判断で、**起票したチケットを直すのは実装エージェントの通常の仕事**である。**既に発行されているトークンには入らない。**
 
+## 6.14 アプリケーション設定（0031。pb-2）
+
+```sql
+CREATE TABLE app_setting (
+  key         text PRIMARY KEY,
+  value       text NOT NULL,
+  updated_by  char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT app_setting_key_format CHECK (key ~ '^[a-z][a-z0-9_]{0,62}$')
+);
+
+CREATE TRIGGER app_setting_touch BEFORE UPDATE ON app_setting
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+**`Design.md` 10.3 の第2層の置き場である。** 第1層（接続文字列・待受）はここに置けない——**接続文字列は DB の中にあり得ない**ためで、第1層は環境変数に残る。第3層（TLS の秘密鍵。pb-3）は**本表ではなく専用の表**に置く（値が長く、暗号化した列と有効期限を持つため）。
+
+**行が無いことが既定値である。** 起動時に行を投入しない。既定値の正本は Go 側の設定レジストリであり、**DB とコードの2か所に既定値を持たない。**
+
+### `value` を `text` の1列にし、型の列を置かない
+
+**型・既定値・検証規則は Go 側の設定レジストリだけが持つ。** 型を列に持つと、`integer` と書かれた行に `true` が入ったときにどちらが正しいかを決める根拠が無くなる。**書き込みの経路は `PUT /api/v1/admin/settings`（`ApiDesign.md` 11.2）の1本だけ**であり、そこがレジストリを引いて検証する。
+
+### キーの許可リストを CHECK に書かない
+
+**CHECK は書式だけを見る。** 許可リストを DDL に書くと、**設定を1件足すたびにマイグレーションが要る**ことになり、本表を選んだ理由の3つめ（「設定を1件足すのがスキーマ変更でなくなる」。`Design.md` 10.3）が消える。
+
+**レジストリに無いキーの行は、読む側が警告を1行出して無視する。** これは**古いバイナリへ戻したときに落ちない**ためである——新しい版が書いた行が、知らないキーとして残る。
+
+### `updated_by` を置く理由
+
+**`audit_log` と二重に見えるが、読む権限が違う。** 変更の記録は `audit_log` に残る（6.8）が、それを読むには `auditlog.view` が要る。**設定画面を開ける人（`system.settings`）が、いま出ている値を誰がいつ変えたかを見られるようにする**ため、行にも持つ。**値の履歴は持たない**——履歴が要るなら `audit_log` を見る。
+
+### 秘密を本表に置かない
+
+**`value` は平文である。** 秘密（パスワード・トークン・接続文字列・秘密鍵）を本表に入れない。**`pg_dump` がそのまま運ぶ**ためで、これは規約「秘密をコードや文書に書かない」と同じ理由による。第3層は暗号化した専用の表を使う（pb-3）。
+
 ---
 
 # 7. 初期データ（0010）
@@ -1736,15 +1774,16 @@ Phase 2
                           ticket.self_edit（6.13。pb-75 / pb-76）
   0030_agent_client_kind_claude_desktop.sql
                           agent_client_kind に claude_desktop（8.2.1.1。pb-58）
+  0031_app_setting.sql    app_setting（6.14。pb-2）
 Phase 3
-  0031_knowledge.sql      knowledge, knowledge_revision, proposal
-  0032_comment_signal.sql comment_signal
-  0033_embedding.sql      vector 拡張 + embedding
-  0034_project_event.sql  project_event
-  0035_analytics.sql      estimate_record, contribution
+  0032_knowledge.sql      knowledge, knowledge_revision, proposal
+  0033_comment_signal.sql comment_signal
+  0034_embedding.sql      vector 拡張 + embedding
+  0035_project_event.sql  project_event
+  0036_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033 → 0030〜0034 → 0031〜0035** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**、**pb-75 の 0029（`ticket.self_edit`。6.13）で11回目**、**pb-58 の 0030（`claude_desktop` をカタログへ追加。8.2.1.1）で12回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033 → 0030〜0034 → 0031〜0035 → 0032〜0036** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**、**pb-75 の 0029（`ticket.self_edit`。6.13）で11回目**、**pb-58 の 0030（`claude_desktop` をカタログへ追加。8.2.1.1）で12回目**、**pb-2 の 0031（`app_setting`。6.14）で13回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 

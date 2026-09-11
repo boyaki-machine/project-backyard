@@ -2631,6 +2631,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * アプリケーション設定の一覧
+         * @description サーバ全体の設定と、**各設定の実効値がどこから来たか**を返す
+         *     （ApiDesign.md 11.1）。**必要権限は `system.settings`。**
+         *
+         *     設定は3層に分かれる（Design.md 10.3）。優先順は
+         *     `<KEY>_FILE` ＞ `PB_CONFIG_FILE` の YAML ＞ 環境変数 ＞ `app_setting` の行 ＞ 既定値で、
+         *     `source` がどの層から来たかを示す。**`editable` が真になるのは第2層で、
+         *     かつファイルも環境変数も与えていないときだけである。**
+         *
+         *     `items[]` は設定レジストリの並び順（層の昇順、層の中は定義順）。
+         *     **ページネーションも ETag も持たない**——件数はレジストリで固定されている。
+         */
+        get: operations["listSettings"];
+        /**
+         * アプリケーション設定の保存
+         * @description 変更のある設定をまとめて書く（ApiDesign.md 11.2）。**必要権限は `system.settings`。**
+         *
+         *     **配列で受けるのは、設定画面の保存ボタンが1回だからである。** 1件ずつにすると
+         *     3件変えたときに3回の往復と3行の監査ログが出て、途中で失敗したときに画面と DB が
+         *     ずれる。**1トランザクションで書き、監査ログも1行**（`setting.update`）にする。
+         *
+         *     **`value` を `null` にすると行を消し、既定値へ戻す。** 「既定に戻す」ための別の
+         *     エンドポイントを作らない——設定を消すことと既定へ戻すことは同じ状態である。
+         *
+         *     **`PUT` は追加と変更を兼ねる（冪等）。** 本文に現れないキーは触らない。
+         */
+        put: operations["updateSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthcheck": {
         parameters: {
             query?: never;
@@ -3992,6 +4034,88 @@ export interface components {
                 /** @example manual */
                 type: string;
                 body: string;
+            }[];
+        };
+        /**
+         * @description ApiDesign.md 11.1。**PermissionList と同じくページネーション項目を持たない。**
+         *     `config_file_path` は効いている設定ファイルの位置で、使っていなければ `null`。
+         */
+        SettingList: {
+            items: components["schemas"]["Setting"][];
+            /**
+             * @description PB_CONFIG_FILE が指すファイルの位置。
+             * @example /etc/pb/pb.yaml
+             */
+            config_file_path: string | null;
+        };
+        /**
+         * @description 設定1件（ApiDesign.md 11.1）。**`value` は型によらず常に文字列**で、
+         *     `value_type` と対で読む——真偽値を JSON の `true` にすると `value` の型が
+         *     設定ごとに変わり、生成した型が共用体になる。
+         */
+        Setting: {
+            /**
+             * @description **`PB_` の無い平らな名前。** `app_setting.key` と `pb.yaml` のキー。
+             * @example log_level
+             */
+            key: string;
+            /** @example ログレベル */
+            display_name: string;
+            /** @description そのまま画面に出せる日本語。 */
+            description: string;
+            /**
+             * @description 1=起動前（ファイルと環境変数にしか置けない）／2=実行時の共有設定（DB）／
+             *     3=共有される秘密（未実装。pb-3）。Design.md 10.3。
+             * @enum {integer}
+             */
+            layer: 1 | 2 | 3;
+            /** @description **`secret` が真のものは常に `null`。** */
+            value: string | null;
+            /** @enum {string} */
+            value_type: "string" | "bool" | "enum";
+            /** @description `value_type` が `enum` のときの値域。それ以外は `null`。**キーは常に返す。** */
+            allowed: string[] | null;
+            /** @description レジストリが持つ既定値。**必須の設定は `null`。** */
+            default_value: string | null;
+            /**
+             * @description 実効値がどこから来たか。**並びは優先順と同じ**（Design.md 10.3）。
+             * @enum {string}
+             */
+            source: "secret_file" | "config_file" | "env" | "database" | "default";
+            /**
+             * @description **`layer` が 2 で、かつ `source` が `database` か `default` のときだけ真。**
+             *     ファイルや環境変数で与えられている項目は、書いても効かないので編集させない。
+             */
+            editable: boolean;
+            restart_required: boolean;
+            secret: boolean;
+            /**
+             * @description 環境変数の名前。**`source` が何であっても必ず返す**——いま与えられていない
+             *     設定にも、上書きする道を画面が示せるようにする。K8s では ConfigMap /
+             *     Secret に書くキーである。
+             * @example PB_LOG_LEVEL
+             */
+            env_key: string;
+            /** @description `pb.yaml` に書くときのキー。`key` と同じ値。 */
+            config_file_key: string;
+            /**
+             * Format: date-time
+             * @description **`source` が `database` のときだけ埋まる。**
+             */
+            updated_at: string | null;
+            /** @description **`source` が `database` のときだけ埋まる。** 値の履歴は持たない（audit_log を見る）。 */
+            updated_by: components["schemas"]["ActorRef"] | null;
+        };
+        /**
+         * @description ApiDesign.md 11.2。**空配列は 422。** 本文に現れないキーは触らない
+         *     ——全件を送らせると、画面が古い値を握ったまま保存したときに他人の変更を巻き戻す。
+         */
+        SettingUpdateRequest: {
+            items: {
+                /** @example log_level */
+                key: string;
+                /** @description **`null` は行を消して既定値へ戻す。** */
+                value: string | null;
             }[];
         };
         /**
@@ -9070,6 +9194,72 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthenticated"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 設定の一覧。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description 保存後の設定の一覧（11.1 と同じ形）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /**
+             * @description その設定はファイルか環境変数で固定されている、または第1層のため
+             *     画面から変更できない（`conflict`）。`message` に環境変数名または
+             *     設定ファイルのキーを含める。
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

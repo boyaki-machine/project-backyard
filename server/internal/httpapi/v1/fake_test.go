@@ -65,8 +65,24 @@ type sprintRunFakeState struct {
 	unstagedRows int64
 }
 
+// appSettingFakeState は app_setting が触るものを持つ（pb-2。ApiDesign.md 11章）。
+//
+// **書き込みを配列で溜める。** 何を渡したかを検査したいためで、
+// 「既定へ戻すときに DELETE が走ったか」「変わらないキーを書いていないか」は
+// 引数を見ないと確かめられない。
+type appSettingFakeState struct {
+	rows []gen.ListAppSettingsRow
+	err  error
+
+	upserted []gen.UpsertAppSettingParams
+	deleted  []string
+}
+
 type fakeQuerier struct {
 	gen.Querier
+
+	// アプリケーション設定（pb-2。ApiDesign.md 11章）
+	settings appSettingFakeState
 
 	// login 経路
 	loginRow  gen.FindLocalLoginByEmailRow
@@ -2528,4 +2544,43 @@ func (q *fakeQuerier) GetAgentRuntimeInfo(
 		return gen.GetAgentRuntimeInfoRow{}, pgx.ErrNoRows
 	}
 	return *q.ticket.agentInfo, nil
+}
+
+// ── アプリケーション設定（pb-2。ApiDesign.md 11章）──────────────
+
+func (q *fakeQuerier) ListAppSettings(ctx context.Context) ([]gen.ListAppSettingsRow, error) {
+	if q.settings.err != nil {
+		return nil, q.settings.err
+	}
+	return q.settings.rows, nil
+}
+
+// **書いた結果を rows に映す。** 映さないと、保存後の引き直しが常に同じ行を
+// 返すことになり、**「既定に戻す」が効いていないことを検査できない**——
+// 実際にその形で実サーバ検証まで漏れた（pb-2、2026-09-11）。
+func (q *fakeQuerier) UpsertAppSetting(ctx context.Context, arg gen.UpsertAppSettingParams) error {
+	q.settings.upserted = append(q.settings.upserted, arg)
+	for i := range q.settings.rows {
+		if q.settings.rows[i].Key == arg.Key {
+			q.settings.rows[i].Value = arg.Value
+			q.settings.rows[i].UpdatedBy = arg.UpdatedBy
+			return nil
+		}
+	}
+	q.settings.rows = append(q.settings.rows, gen.ListAppSettingsRow{
+		Key: arg.Key, Value: arg.Value, UpdatedBy: arg.UpdatedBy,
+	})
+	return nil
+}
+
+func (q *fakeQuerier) DeleteAppSetting(ctx context.Context, key string) error {
+	q.settings.deleted = append(q.settings.deleted, key)
+	kept := q.settings.rows[:0]
+	for _, row := range q.settings.rows {
+		if row.Key != key {
+			kept = append(kept, row)
+		}
+	}
+	q.settings.rows = kept
+	return nil
 }

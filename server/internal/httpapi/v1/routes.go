@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
@@ -40,9 +41,12 @@ type Deps struct {
 	// 複数の書き込みが不可分である操作が使う。
 	Tx TxRunner
 
-	// CookieSecure は pb_session / pb_csrf に Secure 属性を付けるか
-	// （PB_COOKIE_SECURE、Design.md 6.2.1 手順7）。
-	CookieSecure bool
+	// Settings は実行中の設定（Design.md 10.3）。**nil なら既定値だけの
+	// Live を組む**——設定を渡さないテストが、レジストリの既定で動くように。
+	Settings *config.Live
+
+	// OnSettingsChanged は設定が変わったときに呼ばれる（任意）。
+	OnSettingsChanged func(*config.Set)
 }
 
 // Mount は /api/v1 のルートを r に並べる。
@@ -59,7 +63,11 @@ type Deps struct {
 // 付いていないのは、いずれも「必要権限：不要」または「認証済み・本人」で
 // あり、権限キーを要求しないためである。
 func Mount(r chi.Router, deps Deps) {
-	h := &handler{q: deps.Queries, tx: deps.Tx, cookieSecure: deps.CookieSecure}
+	settings := deps.Settings
+	if settings == nil {
+		settings = config.LiveDefaults()
+	}
+	h := &handler{q: deps.Queries, tx: deps.Tx, settings: settings, onSettingsChanged: deps.OnSettingsChanged}
 
 	// ── 認証不要 ────────────────────────────────
 	// ログインは認証を通れない状態で叩くもののため、認証必須グループの外に置く。
@@ -496,12 +504,30 @@ func Mount(r chi.Router, deps Deps) {
 			Put("/admin/users/{id}/memberships/{key}", h.putUserMembership)
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
 			Delete("/admin/users/{id}/memberships/{key}", h.deleteUserMembership)
+
+		// ── アプリケーション設定（ApiDesign.md 11章）──────────────
+		//
+		// **system.settings は 0010 から存在していたが、ここが最初の利用者
+		// である**（pb-2）。user.manage とは別の権限なので、ユーザー管理を
+		// 持たない役割に設定だけを配ることができる。
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Get("/admin/settings", h.listSettings)
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Put("/admin/settings", h.updateSettings)
 	})
 }
 
 // handler は /api/v1 のハンドラが共有する依存。
 type handler struct {
-	q            gen.Querier
-	tx           TxRunner
-	cookieSecure bool
+	q  gen.Querier
+	tx TxRunner
+
+	// settings は実行中の設定（Design.md 10.3 の第2層）。**cookieSecure を
+	// bool で持っていたのを置き換えた**（pb-2）——画面から変えられるように
+	// なったので、組み立て時の値を握り続けると変更が効かない。
+	settings *config.Live
+
+	// onSettingsChanged は設定が変わったときに呼ぶ。ロガーの入れ替え
+	// （log_format / log_level）を serve.go 側で行うための口である。
+	onSettingsChanged func(*config.Set)
 }

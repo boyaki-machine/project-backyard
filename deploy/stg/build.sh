@@ -66,8 +66,12 @@ cat >"${out_dir}/run.sh" <<'RUNSH'
 #   ./run.sh                             前景で起動する
 #   nohup ./run.sh > pb.log 2>&1 &       背景で起動し、ログをファイルへ
 #
-# **pb を直に叩いても動かない。** PB は環境変数からしか設定を読まないため
-# （Design.md 3.1）、pb.env を読み込むこのスクリプトが起動の入口である。
+# **pb を直に叩いても動かない。** pb.env は**シェルが読んで環境変数へ export する
+# ファイル**であり、バイナリは開かない（Design.md 4.4）。pb.env を読み込む
+# このスクリプトが起動の入口である。
+#
+# **設定ファイル（PB_CONFIG_FILE の YAML）はバイナリが直接読む**が、stg では
+# 使っていない——第2層は画面から変える（Design.md 10.3）。
 set -euo pipefail
 
 # **自身のあるディレクトリへ移る。** pb.env の PB_DATABASE_URL_FILE は

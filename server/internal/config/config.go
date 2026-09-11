@@ -1,139 +1,114 @@
-// Package config は実行時設定を環境変数から読む。
+// Package config は実行時設定を5段の優先順で解決する（Design.md 10.3）。
+//
+//	<KEY>_FILE ＞ PB_CONFIG_FILE の YAML ＞ 環境変数 <KEY> ＞ app_setting の行 ＞ 既定値
+//
+// **キー・型・既定値・検証規則の正本は registry.go である。** 設定を1件足すときに
+// 触るのはあのファイルだけで、マイグレーションは要らない。
 //
 // 秘密（接続文字列・パスワード）は環境変数に直接置かず、`<KEY>_FILE` が指す
-// ファイル経由で渡す。docker inspect や ps で見えないようにするため
-// （DbDesign.md 3.2、Design.md 3.1「環境変数＋*_FILE 展開」）。
-// 設定項目は deploy/base/env.example に列挙したものと一対一に対応する。
+// ファイル経由で渡す。docker inspect や ps で見えないようにするためで
+// （DbDesign.md 3.2）、compose の `secrets:` と K8s の Secret ボリュームが
+// この形でファイルを配る。
+//
+// **pb.env はこのパッケージが読むファイルではない。** あれはシェルが読んで
+// 環境変数へ export するもので（`run.sh` の `set -a`）、バイナリは開かない
+// （Design.md 4.4）。バイナリが直接読む設定ファイルは PB_CONFIG_FILE の YAML だけである。
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 )
 
-// Config は PB の実行時設定。
+// Config は起動時に要る設定の写しである。
+//
+// **第2層（ログ・ヘルスチェック・Cookie）の値も持つが、これは起動時点の
+// スナップショットにすぎない。** 実行中に画面から変えられるので、
+// リクエストを捌く側は Live を見ること（Set を経由する）。
 type Config struct {
-	Bind        string // PB_BIND        待受アドレス
-	DatabaseURL string // PB_DATABASE_URL 接続文字列（pb_app）
-	LogFormat   string // PB_LOG_FORMAT  log/slog の出力形式
-	LogLevel    string // PB_LOG_LEVEL   log/slog の最低レベル
+	Bind        string // bind        待受アドレス
+	DatabaseURL string // database_url 接続文字列（pb_app）
+	LogFormat   string // log_format  log/slog の出力形式
+	LogLevel    string // log_level   log/slog の最低レベル
 
-	// HealthShowVersion は PB_HEALTH_SHOW_VERSION。
-	// GET /healthcheck にバージョンを含めるか（ApiDesign.md 2.11）。
-	// 既定を false にするのは、未認証の呼び出し元への情報開示になるため。
+	// HealthShowVersion は GET /healthcheck にバージョンを含めるか
+	// （ApiDesign.md 2.11）。既定を false にするのは、未認証の呼び出し元への
+	// 情報開示になるため。
 	HealthShowVersion bool
 
-	// CookieSecure は PB_COOKIE_SECURE。
-	// pb_session / pb_csrf に Secure 属性を付けるか（Design.md 6.2.1 手順7
-	// 「Secure(本番)」、6.6）。
+	// CookieSecure は pb_session / pb_csrf に Secure 属性を付けるか
+	// （Design.md 6.2.1 手順7「Secure(本番)」、6.6）。
 	//
 	// リクエストの TLS 有無から自動判定しない。リバースプロキシで TLS を
 	// 終端する構成ではアプリに平文で届くため、自動判定は「HTTPS で公開して
 	// いるのに Secure が付かない」を招く。既定は false（開発端末の http）。
 	CookieSecure bool
+
+	// Set は全設定の実効値と出どころ。**設定APIと設定画面の材料**であり、
+	// Live の初期値になる。
+	Set *Set
 }
 
+// 設定キー。**コード中からはこの定数で引く**——文字列を散らすと、
+// レジストリのキーを変えたときに追えなくなる。
 const (
-	defaultBind      = "0.0.0.0:8080"
-	defaultLogFormat = "json"
-	defaultLogLevel  = "info"
+	KeyDatabaseURL       = "database_url"
+	KeyBind              = "bind"
+	KeyLogFormat         = "log_format"
+	KeyLogLevel          = "log_level"
+	KeyHealthShowVersion = "health_show_version"
+	KeyCookieSecure      = "cookie_secure"
 )
 
-// logLevels は PB_LOG_LEVEL に指定できる値（Design.md 10.1）。
-var logLevels = map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
-
-// Load は環境変数を読んで Config を組み立てる。
-// DatabaseURL は必須で、未設定ならエラーを返す。
+// Load は設定を解決して Config を組み立てる。
 func Load() (Config, error) {
-	dbURL, err := lookup("PB_DATABASE_URL")
+	set, err := Resolve()
 	if err != nil {
 		return Config{}, err
 	}
-	if dbURL == "" {
-		return Config{}, errors.New("PB_DATABASE_URL または PB_DATABASE_URL_FILE を設定してください")
-	}
+	return FromSet(set), nil
+}
 
-	bind, err := lookup("PB_BIND")
-	if err != nil {
-		return Config{}, err
-	}
-	if bind == "" {
-		bind = defaultBind
-	}
-
-	logFormat, err := lookup("PB_LOG_FORMAT")
-	if err != nil {
-		return Config{}, err
-	}
-	if logFormat == "" {
-		logFormat = defaultLogFormat
-	}
-
-	logLevel, err := lookup("PB_LOG_LEVEL")
-	if err != nil {
-		return Config{}, err
-	}
-	if logLevel == "" {
-		logLevel = defaultLogLevel
-	}
-	logLevel = strings.ToLower(logLevel)
-	if !logLevels[logLevel] {
-		return Config{}, fmt.Errorf("PB_LOG_LEVEL は debug / info / warn / error のいずれかを指定してください（%q）", logLevel)
-	}
-
-	showVersion, err := lookupBool("PB_HEALTH_SHOW_VERSION")
-	if err != nil {
-		return Config{}, err
-	}
-
-	cookieSecure, err := lookupBool("PB_COOKIE_SECURE")
-	if err != nil {
-		return Config{}, err
-	}
-
+// FromSet は Set から Config を写す。**Live が入れ替わったあとの値で
+// 組み直すためにも使う。**
+func FromSet(set *Set) Config {
 	return Config{
-		Bind:              bind,
-		DatabaseURL:       dbURL,
-		LogFormat:         logFormat,
-		LogLevel:          logLevel,
-		HealthShowVersion: showVersion,
-		CookieSecure:      cookieSecure,
-	}, nil
+		Bind:              set.String(KeyBind),
+		DatabaseURL:       set.String(KeyDatabaseURL),
+		LogFormat:         set.String(KeyLogFormat),
+		LogLevel:          set.String(KeyLogLevel),
+		HealthShowVersion: set.Bool(KeyHealthShowVersion),
+		CookieSecure:      set.Bool(KeyCookieSecure),
+		Set:               set,
+	}
 }
 
-// lookupBool は真偽値の設定を読む。未設定なら false。
-// 解釈できない値は既定へ倒さずエラーにする（設定の書き誤りを黙って無視しないため）。
-func lookupBool(key string) (bool, error) {
-	v, err := lookup(key)
-	if err != nil {
-		return false, err
-	}
-	if v == "" {
-		return false, nil
-	}
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		return false, fmt.Errorf("%s は true / false で指定してください（%q）", key, v)
-	}
-	return b, nil
-}
-
-// lookup は <key>_FILE が指すファイルの内容を優先して返し、
-// 無ければ環境変数 <key> の値を返す。どちらも無ければ空文字を返す。
+// lookupSecretFile は <KEY>_FILE が指すファイルの内容を返す。
 //
-// ファイル経由を優先するのは、compose が両方を渡した場合に、より秘密を
-// 漏らしにくい経路を採るため。読み取った値は末尾の改行のみを取り除く
-// （Makefile の $(cat ...) と挙動を揃える）。
-func lookup(key string) (string, error) {
-	if path := os.Getenv(key + "_FILE"); path != "" {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("%s_FILE の読み込みに失敗した: %w", key, err)
-		}
-		return strings.TrimRight(string(b), "\r\n"), nil
+// 読み取った値は末尾の改行のみを取り除く（Makefile の $(cat ...) と挙動を揃える）。
+// **ファイルが指定されているのに読めなければ誤りにする**——既定へ倒すと、
+// 秘密が渡っていないまま起動してしまう。
+func lookupSecretFile(envKey string) (string, bool, error) {
+	path := os.Getenv(envKey + "_FILE")
+	if path == "" {
+		return "", false, nil
 	}
-	return os.Getenv(key), nil
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", false, fmt.Errorf("%s_FILE の読み込みに失敗した: %w", envKey, err)
+	}
+	return strings.TrimRight(string(b), "\r\n"), true, nil
+}
+
+// lookupEnv は環境変数を読む。
+//
+// **空文字は「未設定」として扱う。** compose や shell で `PB_LOG_LEVEL=` と
+// 書いたときに、空文字で検証を落とすより下の層へ落としたほうが素直である。
+func lookupEnv(envKey string) (string, bool) {
+	v := os.Getenv(envKey)
+	if v == "" {
+		return "", false
+	}
+	return v, true
 }

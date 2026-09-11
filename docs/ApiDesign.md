@@ -32,7 +32,7 @@
 
 ## 1.1 本書が定義する範囲
 
-Phase 1 の全APIを定義する。**9章までは実装済みである**（**4.5 を除く。同節は Phase 2**）。**10章（プロジェクト文書）は Phase 2 で実装する。**
+Phase 1 の全APIを定義する。**9章までは実装済みである**（**4.5 を除く。同節は Phase 2**）。**10章（プロジェクト文書）と11章（アプリケーション設定）は Phase 2 で実装する。**
 
 | 章 | 範囲 | 主な消費者（`GuiDesign.md`） |
 |---|---|---|
@@ -42,6 +42,7 @@ Phase 1 の全APIを定義する。**9章までは実装済みである**（**4.
 | 6・7 | ユーザー管理・ロール・権限 | アカウント / 権限管理（5.6） |
 | 9 | チケット（一覧・詳細・コメント・DoD・リンク・タグ・スプリント・集計） | バックログ（5.4）、チケット詳細（5.5）、ダッシュボード（5.3） |
 | 10 | **プロジェクト文書（憲章）**。Phase 2 | Docs（5.10）。**MCP の `pb_list_docs` / `pb_get_doc` / `pb_put_doc` もここを通る** |
+| 11 | **アプリケーション設定**。Phase 2（pb-2） | アプリケーション設定（5.12）。**設定の3層は `Design.md` 10.3 が正本** |
 
 MCPサーバ向けのツール定義は本書の範囲外である（`Design.md` 8章、Phase 2）。
 
@@ -275,12 +276,16 @@ If-Match: "3"
 `login.success` / `login.failure` / `logout` / `password.change` / `password.reset` /
 `token.issue` / `token.revoke` / `session.revoke` / `user.create` / `user.update` /
 `user.delete` / `role.change` / `project.create` / `project.archive` / `permission.denied` /
-`agent.register` / `agent.update` / `agent.delete`
+`agent.register` / `agent.update` / `agent.delete` / `setting.update`
 
-**末尾の3件は Phase 2 で加わった**（4.5.6）。**`agent.register` / `agent.update` は 0019**、
+**`agent.` の3件は Phase 2 で加わった**（4.5.6）。**`agent.register` / `agent.update` は 0019**、
 **`agent.delete` は手順26a**（2026-09-05）である。エージェントの登録・変更・削除は
 アカウントの作成・変更・削除と同じ重みを持つ操作であり、`user.create` / `user.update` /
 `user.delete` と並べてある。
+
+**`setting.update` は pb-2 で加わった**（11.2）。**1回の保存が1行**で、`detail.changes[]` に変更した
+キーと新旧の実効値を並べる。**サーバ全体の設定を変える操作**であり、影響範囲が1プロジェクトに
+収まらないため記録する。
 
 ## 2.11 ヘルスチェック
 
@@ -1728,6 +1733,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | プロジェクト設定（タグタブ） | `GET|POST /projects/:key/tags`<br>`PATCH|DELETE /projects/:key/tags/:id` |
 | プロジェクト設定（スプリントタブ） | `GET|POST /projects/:key/sprints`<br>`PATCH|DELETE /projects/:key/sprints/:id` |
 | **エージェント連携セットアップ（Phase 2）** | `GET /agent-client-kinds`<br>`GET /projects/:key/agent-setup`<br>`GET /projects/:key/agent-setup.zip`（ダウンロード） |
+| **アプリケーション設定（Phase 2）** | `GET /admin/settings`<br>`PUT /admin/settings`（保存） |
 | **Docs（Phase 2）** | `GET /projects/:key/docs`（目次）<br>`GET /projects/:key/docs/*path`（本文）<br>`PATCH|DELETE /projects/:key/docs/*path`・`POST /projects/:key/docs`<br>`GET /projects/:key/docs/*path/_revisions`（履歴） |
 
 **各画面が起動時に呼ぶAPIは1〜2本に収まっている。** 設計方針3が満たされていることの確認になる。
@@ -3623,13 +3629,141 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 | 409 | `conflict` | `If-Match` 不一致 |
 | 422 | `validation_failed` | `details[].code` に `not_found`（`parent_path`）、`cycle`（自分の子孫へ移動） |
 
-# 11. 未解決の検討事項
+# 11. アプリケーション設定API
 
-## 11.1 実装順序 → `Design.md` 11章
+**サーバ全体の設定を、アドミニストレータが確認・変更する**（`GuiDesign.md` 5.12、`Design.md` 10.3）。設定は3層に分かれており、**本章が扱うのは「何が実効値で、それがどこから来たか」である。**
+
+**必要権限はどちらも `system.settings`。** この権限は Phase 1 のシード（`DbDesign.md` 7.2）から存在していたが、**本章が最初の利用者である。**
+
+## 11.1 `GET /api/v1/admin/settings`
+
+**必要権限**：`system.settings`
+
+```json
+{
+  "items": [
+    { "key": "log_level", "display_name": "ログレベル",
+      "description": "構造化ログの最低レベル。debug では /healthcheck のアクセスログも出る",
+      "layer": 2, "value": "info", "value_type": "enum",
+      "allowed": ["debug", "info", "warn", "error"], "default_value": "info",
+      "source": "default", "editable": true, "restart_required": false,
+      "secret": false, "env_key": "PB_LOG_LEVEL",
+      "updated_at": null, "updated_by": null },
+
+    { "key": "cookie_secure", "display_name": "Cookie に Secure を付ける",
+      "description": "HTTPS で公開する環境では有効にする。http で有効にするとログインできなくなる",
+      "layer": 2, "value": "false", "value_type": "bool",
+      "allowed": null, "default_value": "false",
+      "source": "database", "editable": true, "restart_required": false,
+      "secret": false, "env_key": "PB_COOKIE_SECURE",
+      "updated_at": "2026-09-11T04:10:00Z",
+      "updated_by": { "id": "01K2...", "display_name": "田中" } },
+
+    { "key": "database_url", "display_name": "DB接続文字列",
+      "description": "起動時に接続プールを張る。変更には再起動が要る",
+      "layer": 1, "value": null, "value_type": "string",
+      "allowed": null, "default_value": null,
+      "source": "secret_file", "editable": false, "restart_required": true,
+      "secret": true, "env_key": "PB_DATABASE_URL",
+      "updated_at": null, "updated_by": null }
+  ]
+}
+```
+
+`items[]` は設定レジストリの並び順（層の昇順、層の中は定義順）。**ページネーションも `ETag` も持たない。** 件数は設定レジストリで固定されており、絞り込みも差分取得も意味を持たない（7.1 と同じ理由）。
+
+| 項目 | 内容 |
+|---|---|
+| `key` | 設定キー。`app_setting.key` と同じ（`DbDesign.md` 6.14）。**`PB_` 接頭辞の無い小文字**である |
+| `layer` | `1`（起動前）／ `2`（実行時の共有設定）／ `3`（共有される秘密）。`Design.md` 10.3 の層 |
+| `value` | **実効値を文字列で返す。** `bool` も `"true"` / `"false"` の文字列である（下記）。**`secret` が `true` のものは常に `null`** |
+| `value_type` | `string` / `bool` / `enum` |
+| `allowed` | `value_type` が `enum` のときの値域。それ以外は `null`。**キーは常に返す**（省略しない） |
+| `default_value` | 設定レジストリが持つ既定値。**必須の設定は `null`** |
+| `source` | `secret_file` / `config_file` / `env` / `database` / `default`。**実効値がどこから来たか**（`Design.md` 10.3 の優先順と同じ並び） |
+| `editable` | 画面から変更できるか。**`layer` が 2 で、かつ `source` が `database` か `default` のときだけ `true`** |
+| `config_file_key` | `pb.yaml` に書くときのキー。`key` と同じ値を返す（画面が説明文を組み立てるために持つ） |
+| `restart_required` | 変更が効くまでに再起動が要るか |
+| `secret` | `true` なら `value` を返さない |
+| `env_key` | この設定を環境変数で与えるときの名前（`PB_` 付き）。**`key` は `PB_` の無い平らな名前**で、`pb.yaml` と `app_setting` はそちらを使う |
+| `updated_at` `updated_by` | `app_setting` の行があるときだけ埋まる。`source` が `database` 以外なら両方 `null` |
+
+### `value` を型付きの JSON にせず、常に文字列で返す
+
+**`value_type` と対で読む前提にする。** 真偽値を JSON の `true` にすると、`value` の型が設定ごとに変わり、**生成した型が共用体になる**（3種類の `value` を持つ配列要素になる）。画面は `value_type` を見て解釈すればよく、**入力欄も文字列で扱える。**
+
+**`env_key` を返すのは、第1層を画面から変更できないからである。** 変更できない値について「ではどこで変えるのか」を画面が答えられないと、`editable: false` は行き止まりになる。**`source` が何であっても常に返す**——いま環境変数で与えられていない設定についても、環境変数で上書きする道を画面が示せるようにする。
+
+### `editable` を `layer` と `source` から導く理由
+
+**「編集できない」には2つの理由があり、利用者への説明が違う。**
+
+| 状況 | `layer` | `source` | 画面に出す説明 |
+|---|---|---|---|
+| 構造的に画面で扱えない | `1` | 何でも | 「起動前に要る設定です。`pb.yaml` か `env_key` で与えてください」 |
+| 設定ファイルで固定されている | `2` | `config_file` | 「`pb.yaml` の `log_format` で固定されています」 |
+| 環境変数で固定されている | `2` | `env` | 「`PB_LOG_FORMAT` で固定されています」 |
+| 秘密のファイルで与えられている | `2` | `secret_file` | 「`PB_LOG_FORMAT_FILE` が指すファイルで固定されています」 |
+| 変更できる | `2` | `database` / `default` | （編集欄を出す） |
+
+**`editable` だけを返すと、この2つが同じ見た目になる。** 後者は環境変数を外せば編集できるようになるが、前者はならない。
+
+## 11.2 `PUT /api/v1/admin/settings`
+
+**必要権限**：`system.settings`
+
+```json
+{ "items": [ { "key": "log_level", "value": "debug" },
+             { "key": "health_show_version", "value": null } ] }
+```
+
+- 成功 → `200`。**本文は 11.1 と同じ形**を返す（変更後の実効値と `source` を画面が描き直せるようにする）
+- 設定レジストリに無い `key` → `422 validation_failed`
+- `value_type` / `allowed` に合わない `value` → `422 validation_failed`
+- `editable` が `false` の `key` → `409 conflict`
+- `items` が空 → `422 validation_failed`
+
+**`value` を `null` にすると行を消し、既定値へ戻す。** 「既定に戻す」ための別のエンドポイントを作らない——**設定を消すことと既定へ戻すことは同じ状態**であり（`DbDesign.md` 6.14「行が無いことが既定値である」）、経路を2本持つと片方だけが監査に残る事故を生む。
+
+**`PUT` は追加と変更を兼ねる（冪等）。** 6.9 の権限の `PUT` と同じ扱いである。**同じ本文を2回送っても結果は変わらない。**
+
+**送られた `items` だけを変更する。** 本文に現れないキーは触らない——全件を送らせると、画面が古い値を握ったまま保存したときに**他人の変更を巻き戻す。**
+
+### 1件ずつではなく配列で受ける
+
+**設定画面の保存ボタンは1回である。** 1件ずつの `PUT` にすると、3件変えたときに3回の往復と3行の監査ログが出て、**途中で失敗したときに画面と DB がずれる。** 配列で受けて**1トランザクションで書き、監査ログも1行**にする（`detail` に変更したキーと新旧の値を入れる）。
+
+**`detail` に秘密を入れない。** 第1層と第3層は `editable: false` なので本エンドポイントを通らず、**通るのは第2層だけ**である。第2層に秘密は無い（`DbDesign.md` 6.14）。
+
+### 監査ログの action は `setting.update`
+
+2.10 の列挙に加わる。**1回の保存＝1行**で、`detail` は次の形にする。
+
+```json
+{ "changes": [ { "key": "log_level", "from": "info", "to": "debug" },
+               { "key": "health_show_version", "from": "true", "to": null } ] }
+```
+
+`from` は変更前の**実効値**、`to` は書いた値（`null` は既定へ戻したこと）。**変更が無かったキーは `changes` に入れない。**
+
+## 11.3 反映の範囲
+
+| 層 | 反映 | 画面の表示 |
+|---|---|---|
+| 第2層 | **即時。** 次のリクエストから効く | `restart_required: false` |
+| 第1層 | **再起動が要る** | `restart_required: true` |
+
+**第2層は、リクエストごとに DB を引かない。** 設定はプロセス内に持ち、`PUT` が成功した時点で入れ替える。**複数のレプリカでは、他のレプリカが次に読み直すまで古い値が残る**——読み直しの間隔は実装側の既定とし、`Design.md` 10.3 に従って**設定項目にはしない**（設定の反映を設定で決めると、その設定自身の反映が説明できなくなる）。
+
+---
+
+# 12. 未解決の検討事項
+
+## 12.1 実装順序 → `Design.md` 11章
 
 **実装順序は本書に持たない。** `Design.md` 11章の手順一覧が正本である。同じ順序を2か所に持つと片方だけ古くなるため、本節にあった独自の実装順序（2026-08-23 に削除）と、9章と手順16〜19 の対応表（9.15。2026-08-28、Phase 1 の完了にともない削除）はいずれも撤去した。**どの手順で何を実装したかは `docs/history/steps.md`** にある。
 
-## 11.2 未解決の検討事項
+## 12.2 未解決の検討事項
 
 - **`GET /me` のキャッシュ戦略**。ロール変更が他セッションへ反映されるまでの許容遅延をどう決めるか（毎リクエスト検証はコスト、長期キャッシュは権限剥奪が効かない）
 - 一覧APIの `total` を返し続けるコストが問題になる規模の見極め（Phase 2 のチケット一覧で再検討）

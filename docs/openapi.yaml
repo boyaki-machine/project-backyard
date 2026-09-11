@@ -39,6 +39,8 @@ tags:
     description: チケットとその周辺（ApiDesign.md 9章）
   - name: docs
     description: プロジェクト文書（憲章。ApiDesign.md 10章）
+  - name: settings
+    description: アプリケーション設定（ApiDesign.md 11章）。必要権限は system.settings
   - name: ops
     description: 監視（ApiDesign.md 2.11）
 
@@ -4214,6 +4216,85 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/admin/settings:
+    get:
+      tags: [settings]
+      summary: アプリケーション設定の一覧
+      operationId: listSettings
+      description: |
+        サーバ全体の設定と、**各設定の実効値がどこから来たか**を返す
+        （ApiDesign.md 11.1）。**必要権限は `system.settings`。**
+
+        設定は3層に分かれる（Design.md 10.3）。優先順は
+        `<KEY>_FILE` ＞ `PB_CONFIG_FILE` の YAML ＞ 環境変数 ＞ `app_setting` の行 ＞ 既定値で、
+        `source` がどの層から来たかを示す。**`editable` が真になるのは第2層で、
+        かつファイルも環境変数も与えていないときだけである。**
+
+        `items[]` は設定レジストリの並び順（層の昇順、層の中は定義順）。
+        **ページネーションも ETag も持たない**——件数はレジストリで固定されている。
+      responses:
+        '200':
+          description: 設定の一覧。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [settings]
+      summary: アプリケーション設定の保存
+      operationId: updateSettings
+      description: |
+        変更のある設定をまとめて書く（ApiDesign.md 11.2）。**必要権限は `system.settings`。**
+
+        **配列で受けるのは、設定画面の保存ボタンが1回だからである。** 1件ずつにすると
+        3件変えたときに3回の往復と3行の監査ログが出て、途中で失敗したときに画面と DB が
+        ずれる。**1トランザクションで書き、監査ログも1行**（`setting.update`）にする。
+
+        **`value` を `null` にすると行を消し、既定値へ戻す。** 「既定に戻す」ための別の
+        エンドポイントを作らない——設定を消すことと既定へ戻すことは同じ状態である。
+
+        **`PUT` は追加と変更を兼ねる（冪等）。** 本文に現れないキーは触らない。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingUpdateRequest'
+      responses:
+        '200':
+          description: 保存後の設定の一覧（11.1 と同じ形）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: |
+            その設定はファイルか環境変数で固定されている、または第1層のため
+            画面から変更できない（`conflict`）。`message` に環境変数名または
+            設定ファイルのキーを含める。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /healthcheck:
     get:
       tags: [ops]
@@ -6440,6 +6521,118 @@ components:
               id: { type: string }
               type: { type: string, example: manual }
               body: { type: string }
+
+    SettingList:
+      type: object
+      required: [items, config_file_path]
+      description: |
+        ApiDesign.md 11.1。**PermissionList と同じくページネーション項目を持たない。**
+        `config_file_path` は効いている設定ファイルの位置で、使っていなければ `null`。
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Setting'
+        config_file_path:
+          type: [string, 'null']
+          description: PB_CONFIG_FILE が指すファイルの位置。
+          example: /etc/pb/pb.yaml
+
+    Setting:
+      type: object
+      required:
+        [key, display_name, description, layer, value, value_type, allowed,
+         default_value, source, editable, restart_required, secret, env_key,
+         config_file_key, updated_at, updated_by]
+      description: |
+        設定1件（ApiDesign.md 11.1）。**`value` は型によらず常に文字列**で、
+        `value_type` と対で読む——真偽値を JSON の `true` にすると `value` の型が
+        設定ごとに変わり、生成した型が共用体になる。
+      properties:
+        key:
+          type: string
+          description: '**`PB_` の無い平らな名前。** `app_setting.key` と `pb.yaml` のキー。'
+          example: log_level
+        display_name:
+          type: string
+          example: ログレベル
+        description:
+          type: string
+          description: そのまま画面に出せる日本語。
+        layer:
+          type: integer
+          enum: [1, 2, 3]
+          description: |
+            1=起動前（ファイルと環境変数にしか置けない）／2=実行時の共有設定（DB）／
+            3=共有される秘密（未実装。pb-3）。Design.md 10.3。
+        value:
+          type: [string, 'null']
+          description: '**`secret` が真のものは常に `null`。**'
+        value_type:
+          type: string
+          enum: [string, bool, enum]
+        allowed:
+          type: [array, 'null']
+          items:
+            type: string
+          description: '`value_type` が `enum` のときの値域。それ以外は `null`。**キーは常に返す。**'
+        default_value:
+          type: [string, 'null']
+          description: レジストリが持つ既定値。**必須の設定は `null`。**
+        source:
+          type: string
+          enum: [secret_file, config_file, env, database, default]
+          description: |
+            実効値がどこから来たか。**並びは優先順と同じ**（Design.md 10.3）。
+        editable:
+          type: boolean
+          description: |
+            **`layer` が 2 で、かつ `source` が `database` か `default` のときだけ真。**
+            ファイルや環境変数で与えられている項目は、書いても効かないので編集させない。
+        restart_required:
+          type: boolean
+        secret:
+          type: boolean
+        env_key:
+          type: string
+          description: |
+            環境変数の名前。**`source` が何であっても必ず返す**——いま与えられていない
+            設定にも、上書きする道を画面が示せるようにする。K8s では ConfigMap /
+            Secret に書くキーである。
+          example: PB_LOG_LEVEL
+        config_file_key:
+          type: string
+          description: '`pb.yaml` に書くときのキー。`key` と同じ値。'
+        updated_at:
+          type: [string, 'null']
+          format: date-time
+          description: '**`source` が `database` のときだけ埋まる。**'
+        updated_by:
+          oneOf:
+            - $ref: '#/components/schemas/ActorRef'
+            - type: 'null'
+          description: '**`source` が `database` のときだけ埋まる。** 値の履歴は持たない（audit_log を見る）。'
+
+    SettingUpdateRequest:
+      type: object
+      required: [items]
+      description: |
+        ApiDesign.md 11.2。**空配列は 422。** 本文に現れないキーは触らない
+        ——全件を送らせると、画面が古い値を握ったまま保存したときに他人の変更を巻き戻す。
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [key, value]
+            properties:
+              key:
+                type: string
+                example: log_level
+              value:
+                type: [string, 'null']
+                description: '**`null` は行を消して既定値へ戻す。**'
 
     ActorRef:
       description: |

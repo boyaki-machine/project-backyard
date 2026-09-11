@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	v1 "github.com/boyaki-machine/project-backyard/server/internal/httpapi/v1"
@@ -31,12 +32,17 @@ type Deps struct {
 
 	// Version は GET /healthcheck が返すバージョン（ApiDesign.md 2.11）。
 	Version string
-	// HealthShowVersion が false なら version を返さない。既定は false。
-	HealthShowVersion bool
 
-	// CookieSecure は pb_session / pb_csrf に Secure を付けるか
-	// （PB_COOKIE_SECURE、Design.md 6.2.1 手順7）。
-	CookieSecure bool
+	// Settings は実行中の設定（Design.md 10.3 の第2層）。
+	//
+	// **HealthShowVersion と CookieSecure を bool で持っていたのを置き換えた**
+	// （pb-2）。どちらも画面から変えられるようになったので、組み立て時の値を
+	// 畳み込むと変更が効かない。**nil なら既定値だけの Live を組む。**
+	Settings *config.Live
+
+	// OnSettingsChanged は設定が変わったときに呼ばれる（任意）。
+	// ロガーの入れ替えを cmd 側で行うための口である。
+	OnSettingsChanged func(*config.Set)
 }
 
 // BasePath は API のベースパス（ApiDesign.md 2.1）。
@@ -102,12 +108,17 @@ func NewRouter(deps Deps) http.Handler {
 	})
 
 	// 認証不要・副作用なし。認証／CSRF／レート制限の対象外に置く（ApiDesign.md 2.11）。
-	r.Get(HealthPath, health(deps.Version, deps.HealthShowVersion))
+	settings := deps.Settings
+	if settings == nil {
+		settings = config.LiveDefaults()
+	}
+	r.Get(HealthPath, health(deps.Version, settings.HealthShowVersion))
 
 	v1Deps := v1.Deps{
-		Queries:      q,
-		Tx:           tx,
-		CookieSecure: deps.CookieSecure,
+		Queries:           q,
+		Tx:                tx,
+		Settings:          settings,
+		OnSettingsChanged: deps.OnSettingsChanged,
 	}
 
 	r.Route(BasePath, func(r chi.Router) {

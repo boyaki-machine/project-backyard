@@ -18,7 +18,8 @@ import { useUiStore } from '../stores/ui'
  * 表示しない**（押せないメニューによる混乱を避ける）。
  *
  * 「P2」「P3」の項目（カンバン・ガント・チケット検索・進捗分析・承認キュー・
- * システム設定）はまだ表示しない（4.1）。**チケットを見る視点は5つあるが
+ * 認証プロバイダ）はまだ表示しない（4.1）。**アプリケーション設定は pb-2 で
+ * 実装したので出す。** **チケットを見る視点は5つあるが
  * （4.1.1）、実装済みなのはバックログだけ**である。
  *
  * **Docs は手順22b で出した**（4.3 の表。必要権限は `doc.view`）。**`doc.view` は
@@ -47,7 +48,9 @@ const showProject = computed(
 )
 
 /** 管理セクション：user.manage / auditlog.view のいずれかを持つ場合に見出しごと（4.3） */
-const showAdmin = computed(() => auth.can('user.manage') || auth.can('auditlog.view'))
+const showAdmin = computed(
+  () => auth.can('user.manage') || auth.can('auditlog.view') || auth.can('system.settings'),
+)
 </script>
 
 <template>
@@ -125,6 +128,15 @@ const showAdmin = computed(() => auth.can('user.manage') || auth.can('auditlog.v
         >
           <span class="icon" aria-hidden="true">⛨</span>
           <span v-if="!ui.menuCollapsed" class="label">監査ログ</span>
+        </RouterLink>
+        <RouterLink
+          v-if="auth.can('system.settings')"
+          class="item"
+          to="/admin/settings"
+          title="アプリケーション設定"
+        >
+          <span class="icon" aria-hidden="true">⚙</span>
+          <span v-if="!ui.menuCollapsed" class="label">アプリケーション設定</span>
         </RouterLink>
       </template>
     </div>

@@ -488,7 +488,7 @@ async function onDrop(payload: { item: DocTreeItem; zone: DocDropZone }): Promis
     await loadTree()
     await followMoved(moved.id, oldPath)
   } catch (e) {
-    // **原子的ではない**（`ApiDesign.md` 11.2 のタグと同じ）。途中まで反映された
+    // **原子的ではない**（`ApiDesign.md` 12.2 のタグと同じ）。途中まで反映された
     // 状態が実際に起こりうるので、取り直していまの姿を見せる
     moveError.value = e instanceof ApiError ? e.message : '文書を移動できませんでした'
     await loadTree()

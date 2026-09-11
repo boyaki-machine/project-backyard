@@ -17,6 +17,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
+	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
 // HTTP サーバのタイムアウト。設計文書に規定が無いため実装側の既定として置く。
@@ -44,13 +45,41 @@ func serve(ctx context.Context) error {
 	}
 	defer pool.Close()
 
+	// **DB の行を重ねてから待ち受ける。** 第2層（ログ・ヘルスチェック・Cookie）は
+	// app_setting の行が正本であり（Design.md 10.3）、ファイルや環境変数で
+	// 固定されていないキーだけが置き換わる。
+	//
+	// **行が引けなくても起動を止めない。** 設定は既定値で動けるものだけが
+	// 第2層に入っており、ここで止めると「設定表が読めないので起動しない」
+	// という復旧しにくい状態を作る。
+	live := config.NewLive(cfg.Set)
+	set := cfg.Set
+	if rows, err := gen.New(pool).ListAppSettings(ctx); err != nil {
+		slog.Warn("設定の行を読めなかったため、ファイルと環境変数と既定値で起動する",
+			slog.String("error", err.Error()))
+	} else {
+		overlay := make([]config.Row, 0, len(rows))
+		for _, row := range rows {
+			overlay = append(overlay, config.Row{Key: row.Key, Value: row.Value})
+		}
+		set = live.ApplyRows(overlay)
+	}
+
+	// 重ねた結果でログを組み直す。**DB で debug にしてあれば、ここから効く。**
+	logs := &logState{format: cfg.LogFormat}
+	if set.String(config.KeyLogFormat) != cfg.LogFormat || set.String(config.KeyLogLevel) != cfg.LogLevel {
+		applyLogSettings(logs, set)
+	}
+
 	srv := &http.Server{
-		Addr: cfg.Bind,
+		Addr: set.String(config.KeyBind),
 		Handler: httpapi.NewRouter(httpapi.Deps{
-			Pool:              pool,
-			Version:           version,
-			HealthShowVersion: cfg.HealthShowVersion,
-			CookieSecure:      cfg.CookieSecure,
+			Pool:     pool,
+			Version:  version,
+			Settings: live,
+			OnSettingsChanged: func(s *config.Set) {
+				applyLogSettings(logs, s)
+			},
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
@@ -88,14 +117,22 @@ func serve(ctx context.Context) error {
 	return nil
 }
 
+// logLevelVar は実行中にログレベルを差し替えるための入れ物。
+//
+// **slog.LevelVar を使うのは、ハンドラを作り直さずにレベルを変えられるからである。**
+// レベルだけなら差し替えが要らず、形式（json / text）が変わったときだけ
+// ハンドラを組み直す（pb-2、Design.md 10.3 の第2層）。
+var logLevelVar = new(slog.LevelVar)
+
 // initLogger は log/slog の既定ロガーを差し替える（Design.md 10.1）。
 //
 // 出力先は標準出力に一本化する。stderr は「異常」の含意を持ち、正常な
 // アクセスログを流すと収集基盤で誤って error 扱いされやすいため。
 // また2ストリームに分けると行の到着順が保証されない。
-// PB_LOG_FORMAT が json 以外なら人間が読みやすいテキスト形式にする。
+// log_format が json 以外なら人間が読みやすいテキスト形式にする。
 func initLogger(format, level string) {
-	opts := &slog.HandlerOptions{Level: parseLevel(level)}
+	logLevelVar.Set(parseLevel(level))
+	opts := &slog.HandlerOptions{Level: logLevelVar}
 
 	var h slog.Handler
 	if format == "json" {
@@ -105,6 +142,26 @@ func initLogger(format, level string) {
 	}
 	slog.SetDefault(slog.New(h))
 }
+
+// applyLogSettings はログの設定が変わったときに反映する。
+//
+// **形式が変わったときだけハンドラを組み直す。** レベルは LevelVar を
+// 動かすだけで済み、組み直すと出力先のバッファを掴み直すことになる。
+func applyLogSettings(cur *logState, set *config.Set) {
+	format := set.String(config.KeyLogFormat)
+	level := set.String(config.KeyLogLevel)
+
+	logLevelVar.Set(parseLevel(level))
+	if format != cur.format {
+		initLogger(format, level)
+		cur.format = format
+	}
+	slog.Info("設定を反映した",
+		slog.String("log_format", format), slog.String("log_level", level))
+}
+
+// logState はいま効いているログ形式を覚えておく入れ物。
+type logState struct{ format string }
 
 // parseLevel は PB_LOG_LEVEL を slog.Level に写す。
 // 値の検証は config.Load が済ませているため、ここでは既定へ倒すだけでよい。
