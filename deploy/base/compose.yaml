@@ -50,13 +50,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # **第2層（ログ形式・ログレベル・ヘルスチェックのバージョン表示・Cookie の
+    # Secure）をここに書かない**（Design.md 10.3）。優先順が
+    # 環境変数 ＞ app_setting なので、**書くと画面から変更できなくなる。**
+    # 既定値の正本は server/internal/config/registry.go である。
     environment:
       PB_BIND: "0.0.0.0:8080"
       PB_DATABASE_URL_FILE: /run/secrets/app_database_url
-      PB_LOG_FORMAT: json             # 標準出力へ構造化JSON（Design.md 10.1）
-      PB_LOG_LEVEL: info
-      PB_HEALTH_SHOW_VERSION: "false" # ApiDesign.md 2.11
-      PB_COOKIE_SECURE: "false"       # HTTPS で公開する環境では true（Design.md 6.2.1）
       TZ: UTC
     secrets:
       - app_database_url

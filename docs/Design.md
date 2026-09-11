@@ -330,7 +330,8 @@ docker compose -f deploy/base/compose.yaml -f deploy/dev/compose.yaml up -d
 |---|---|
 | `base/compose.yaml` | `db` と `app` のサービス定義、ボリューム、ヘルスチェック、依存関係 |
 | `base/initdb/` | DBロール作成（`DbDesign.md` 3.4）。環境によらず同一 |
-| `base/env.example` | 必要な環境変数の一覧と説明 |
+| `base/env.example` | 必要な環境変数の一覧と説明。**第1層と第2層に分けてある**（10.3） |
+| `base/pb.yaml.example` | **設定ファイル（YAML）の雛形。** `PB_CONFIG_FILE` で位置を渡す（10.3）。任意——置かなくても環境変数と既定値で動く |
 | `dev/compose.yaml` | ポートを `127.0.0.1` に公開、ログ詳細化、ソースのバインドマウント、開発用シード |
 | `prod/compose.yaml` | イメージタグ固定、バインドマウントなし、`restart: always`、リソース制限 |
 
