@@ -22,12 +22,39 @@ type Row struct {
 // **読みが圧倒的に多いので RWMutex で足りる。** 書きは設定画面からの保存だけで、
 // 1インスタンスにつき1日に数回を超えない。
 type Live struct {
-	mu  sync.RWMutex
+	mu sync.RWMutex
+
+	// base はファイル・環境変数・既定値だけからなる Set。**DB を含まない。**
+	//
+	// **これを分けて持つのが要点である。** DB の行を重ねるときは必ず base から
+	// やり直す——前回の重ね結果を土台にすると、**行を消しても実効値が
+	// DB 由来のまま残る**（OverlayDatabase は足すだけで、消す術を持たない）。
+	// 実サーバ検証で「既定に戻す」が応答に反映されない形で出た（2026-09-11）。
+	base *Set
+
+	// set は base に DB の行を重ねたもの。リクエストが読むのはこちら。
 	set *Set
 }
 
-// NewLive は Set を包む。
-func NewLive(set *Set) *Live { return &Live{set: set} }
+// NewLive は base を包む。**渡すのは DB を重ねる前の Set である。**
+func NewLive(base *Set) *Live { return &Live{base: base, set: base} }
+
+// Base は DB を重ねる前の Set を返す。**行を重ね直す土台はいつもこれである。**
+func (l *Live) Base() *Set {
+	if l == nil {
+		return Defaults()
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.base
+}
+
+// ApplyRows は base に行を重ね直して保持し、その Set を返す。
+func (l *Live) ApplyRows(rows []Row) *Set {
+	set := OverlayDatabase(l.Base(), rows)
+	l.Replace(set)
+	return set
+}
 
 // Snapshot はいまの Set を返す。**設定APIの一覧の材料である。**
 //
@@ -44,7 +71,10 @@ func (l *Live) Snapshot() *Set {
 	return l.set
 }
 
-// Replace は Set を入れ替える。**nil レシーバでは何もしない。**
+// Replace は set を入れ替える。**base は動かさない**——次に行を重ねるときの
+// 土台が汚れると、行を消しても実効値が戻らなくなる。
+//
+// **nil レシーバでは何もしない。**
 func (l *Live) Replace(set *Set) {
 	if l == nil {
 		return

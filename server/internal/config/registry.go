@@ -188,7 +188,9 @@ var definitions = []Definition{
 		Layer: LayerRuntime, Type: TypeBool,
 		Default:     "false",
 		DisplayName: "Cookie に Secure を付ける",
-		Description: "HTTPS で公開する環境では有効にします。http で提供しているまま有効にすると、ログインできなくなります",
+		// **結果（ログインできなくなる）は書かない。** 画面が ⚠ の1行で出すので
+		// （GuiDesign.md 5.12）、ここに書くと同じことを2度言うことになる。
+		Description: "HTTPS で公開する環境では有効にします",
 	},
 }
 

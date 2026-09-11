@@ -296,6 +296,64 @@ func TestUpdateSettingsAppliesImmediately(t *testing.T) {
 	}
 }
 
+// 既定に戻すと、応答の実効値も既定へ戻る。
+//
+// **実サーバ検証で見つけた退行の回帰試験である**（pb-2、2026-09-11）。行は
+// 消えていたのに、応答は source=database のままだった——**重ねる土台に前回の
+// 重ね結果を使っていた**ためで、OverlayDatabase は足すだけなので消えた行の
+// 影響が残った。土台は必ず Live.Base（DB を含まない Set）から取る。
+func TestUpdateSettingsResetReflectsInResponse(t *testing.T) {
+	live := config.LiveDefaults()
+	r, q, token := settingsRouter(t, live)
+
+	// まず DB 由来にする。
+	if rec := putWithCookie(r, "/api/v1/admin/settings", token,
+		`{"items":[{"key":"log_level","value":"debug"}]}`); rec.Code != http.StatusOK {
+		t.Fatalf("1回目の PUT = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	items, _ := getSettings(t, r, token)
+	if items[config.KeyLogLevel]["source"] != "database" {
+		t.Fatalf("前提：DB 由来になっていない（%v）", items[config.KeyLogLevel]["source"])
+	}
+
+	// 既定へ戻す。
+	rec := putWithCookie(r, "/api/v1/admin/settings", token,
+		`{"items":[{"key":"log_level","value":null}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("2回目の PUT = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if len(q.settings.deleted) != 1 {
+		t.Fatalf("delete = %v", q.settings.deleted)
+	}
+
+	var body struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("応答を読めない: %v", err)
+	}
+	for _, item := range body.Items {
+		if item["key"] != config.KeyLogLevel {
+			continue
+		}
+		def, _ := config.Lookup(config.KeyLogLevel)
+		if item["source"] != "default" {
+			t.Errorf("source = %v, want default", item["source"])
+		}
+		if item["value"] != def.Default {
+			t.Errorf("value = %v, want %q", item["value"], def.Default)
+		}
+		if item["updated_by"] != nil {
+			t.Errorf("既定に戻したのに updated_by が残っている: %v", item["updated_by"])
+		}
+	}
+
+	// **Live も戻っていること。** 次のリクエストが古い値で動かないように。
+	if live.LogLevel() != "info" {
+		t.Errorf("Live の log_level = %q, want info", live.LogLevel())
+	}
+}
+
 // system.settings を持たない人は触れない（Design.md 6.4.4）。
 func TestSettingsRequiresPermission(t *testing.T) {
 	q := newFake(t)

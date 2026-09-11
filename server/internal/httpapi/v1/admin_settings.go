@@ -197,10 +197,9 @@ func (h *handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 // settingsSnapshot は「ファイル・環境変数・既定値」の層に DB の行を重ねた
 // 実効値と、重ねた元の行を返す。
 func (h *handler) settingsSnapshot(r *http.Request) (*config.Set, []gen.ListAppSettingsRow, *apierr.Error) {
-	base := config.Defaults()
-	if h.settings != nil {
-		base = h.settings.Snapshot()
-	}
+	// **重ねる土台は必ず Base（DB を含まない Set）である。** Snapshot を土台に
+	// すると、前回重ねた DB 由来の値が残り、**行を消しても実効値が戻らない。**
+	base := h.settings.Base()
 
 	rows, err := h.q.ListAppSettings(r.Context())
 	if err != nil {
@@ -281,7 +280,7 @@ func validateSettingsUpdate(req settingsUpdateRequest, set *config.Set) ([]setti
 			details = append(details, apierr.Detail{
 				Field:   fmt.Sprintf("items[%d].value", i),
 				Code:    "invalid",
-				Message: fmt.Sprintf("%s は%s", cur.Def.DisplayName, err.Error()),
+				Message: fmt.Sprintf("%sは %s", cur.Def.DisplayName, err.Error()),
 			})
 			continue
 		}

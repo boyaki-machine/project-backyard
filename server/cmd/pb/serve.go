@@ -52,6 +52,7 @@ func serve(ctx context.Context) error {
 	// **行が引けなくても起動を止めない。** 設定は既定値で動けるものだけが
 	// 第2層に入っており、ここで止めると「設定表が読めないので起動しない」
 	// という復旧しにくい状態を作る。
+	live := config.NewLive(cfg.Set)
 	set := cfg.Set
 	if rows, err := gen.New(pool).ListAppSettings(ctx); err != nil {
 		slog.Warn("設定の行を読めなかったため、ファイルと環境変数と既定値で起動する",
@@ -61,7 +62,7 @@ func serve(ctx context.Context) error {
 		for _, row := range rows {
 			overlay = append(overlay, config.Row{Key: row.Key, Value: row.Value})
 		}
-		set = config.OverlayDatabase(set, overlay)
+		set = live.ApplyRows(overlay)
 	}
 
 	// 重ねた結果でログを組み直す。**DB で debug にしてあれば、ここから効く。**
@@ -69,8 +70,6 @@ func serve(ctx context.Context) error {
 	if set.String(config.KeyLogFormat) != cfg.LogFormat || set.String(config.KeyLogLevel) != cfg.LogLevel {
 		applyLogSettings(logs, set)
 	}
-
-	live := config.NewLive(set)
 
 	srv := &http.Server{
 		Addr: set.String(config.KeyBind),

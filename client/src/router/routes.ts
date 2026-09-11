@@ -1,6 +1,7 @@
 import type { RouteRecordRaw } from 'vue-router'
 
 import AgentSetupPage from '../pages/AgentSetupPage.vue'
+import AppSettingsPage from '../pages/AppSettingsPage.vue'
 import BacklogPage from '../pages/BacklogPage.vue'
 import DashboardPage from '../pages/DashboardPage.vue'
 import DocsPage from '../pages/DocsPage.vue'
@@ -177,6 +178,17 @@ export const routes: RouteRecordRaw[] = [
     path: '/admin/users/:id',
     component: UserDetailPage,
     meta: { permission: 'user.manage' },
+  },
+
+  // 実画面（GuiDesign.md 5.12）。pb-2 で足した。
+  //
+  // **/admin/system（認証プロバイダ、Phase 3）とは別画面である。** 必要権限が
+  // system.settings と authprovider.manage で分かれており、ユーザー管理を
+  // 持たない役割に設定だけを配ることができる。
+  {
+    path: '/admin/settings',
+    component: AppSettingsPage,
+    meta: { permission: 'system.settings' },
   },
 
   {
@@ -382,7 +394,7 @@ export const routes: RouteRecordRaw[] = [
     meta: {
       permission: 'authprovider.manage',
       placeholder: {
-        title: 'システム設定・認証プロバイダ',
+        title: '認証プロバイダ（OIDC/SAML）',
         docRef: 'GuiDesign.md 10章',
         status: 'Phase 3',
         planned: ['OIDC/SAML の設定', 'auth_provider テーブルの編集UI'],
