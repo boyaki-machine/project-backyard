@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -39,7 +40,8 @@ func TestHealthDefault(t *testing.T) {
 }
 
 func TestHealthWithVersion(t *testing.T) {
-	_, body := getHealth(t, Deps{Version: "1.4.4", HealthShowVersion: true})
+	_, body := getHealth(t, Deps{Version: "1.4.4",
+		Settings: config.LiveWith(config.Row{Key: config.KeyHealthShowVersion, Value: "true"})})
 
 	if body["status"] != "OK" {
 		t.Errorf("status = %v, want OK", body["status"])

@@ -218,7 +218,7 @@ func (h *handler) parseSetupClients(r *http.Request) ([]string, *apierr.Error) {
 // アプリケーション設定画面（Design.md 10.3）である。
 func (h *handler) publicBaseURL(r *http.Request) string {
 	scheme := "http"
-	if h.cookieSecure || r.TLS != nil {
+	if h.settings.CookieSecure() || r.TLS != nil {
 		scheme = "https"
 	}
 	return scheme + "://" + r.Host

@@ -52,6 +52,11 @@ const (
 	// agent.delete は手順26a で加わった（ApiDesign.md 4.5.6）。
 	// write 系ツールが入り、資格情報を「完全に取り消す」操作が要るようになった。
 	AgentDelete Action = "agent.delete"
+
+	// SettingUpdate は pb-2 で加わった（ApiDesign.md 11.2）。**1回の保存が1行**で、
+	// detail.changes[] に変更したキーと新旧の実効値を並べる。サーバ全体の設定を
+	// 変える操作であり、影響範囲が1プロジェクトに収まらないため記録する。
+	SettingUpdate Action = "setting.update"
 )
 
 // actions は ApiDesign.md 2.10 が列挙する18件。
@@ -62,6 +67,7 @@ var actions = map[Action]bool{
 	UserCreate: true, UserUpdate: true, UserDelete: true, RoleChange: true,
 	ProjectCreate: true, ProjectArchive: true, PermissionDenied: true,
 	AgentRegister: true, AgentUpdate: true, AgentDelete: true,
+	SettingUpdate: true,
 }
 
 // Result は audit_log.result（DbDesign.md 6.8 の CHECK 制約）。

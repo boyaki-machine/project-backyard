@@ -2,6 +2,7 @@ package v1
 
 import (
 	"errors"
+	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"net/http"
 	"strconv"
 	"strings"
@@ -138,7 +139,8 @@ func TestLoginCookieAttributes(t *testing.T) {
 // PB_COOKIE_SECURE=true で Secure が付く（Design.md 6.2.1 手順7）。
 func TestLoginCookieSecure(t *testing.T) {
 	q := newFake(t)
-	r := routerWithDeps(Deps{Queries: q, CookieSecure: true})
+	r := routerWithDeps(Deps{Queries: q,
+		Settings: config.LiveWith(config.Row{Key: config.KeyCookieSecure, Value: "true"})})
 	rec := call(r, http.MethodPost, "/api/v1/auth/login",
 		`{"email":"tanaka@example.com","password":"`+testPassword+`"}`)
 

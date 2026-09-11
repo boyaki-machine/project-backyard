@@ -96,7 +96,7 @@ func (h *handler) setSessionCookies(w http.ResponseWriter, s issuedSession) {
 		Path:     sessionCookiePath,
 		MaxAge:   maxAge,
 		HttpOnly: true,
-		Secure:   h.cookieSecure,
+		Secure:   h.settings.CookieSecure(),
 		SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(w, &http.Cookie{
@@ -105,7 +105,7 @@ func (h *handler) setSessionCookies(w http.ResponseWriter, s issuedSession) {
 		Path:     sessionCookiePath,
 		MaxAge:   maxAge,
 		HttpOnly: false,
-		Secure:   h.cookieSecure,
+		Secure:   h.settings.CookieSecure(),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -122,7 +122,7 @@ func (h *handler) clearSessionCookies(w http.ResponseWriter) {
 			Path:     sessionCookiePath,
 			MaxAge:   -1, // 即時削除
 			HttpOnly: name == auth.SessionCookieName,
-			Secure:   h.cookieSecure,
+			Secure:   h.settings.CookieSecure(),
 			SameSite: http.SameSiteLaxMode,
 		})
 	}

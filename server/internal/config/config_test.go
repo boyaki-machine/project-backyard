@@ -14,14 +14,23 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got.Bind != defaultBind {
-		t.Errorf("Bind = %q, want %q", got.Bind, defaultBind)
-	}
-	if got.LogFormat != defaultLogFormat {
-		t.Errorf("LogFormat = %q, want %q", got.LogFormat, defaultLogFormat)
-	}
-	if got.LogLevel != defaultLogLevel {
-		t.Errorf("LogLevel = %q, want %q", got.LogLevel, defaultLogLevel)
+	// **既定値はレジストリから読んで突き合わせる。** 書き下すと、
+	// registry.go を直した日にこの検査が嘘になる。
+	for _, tc := range []struct {
+		key string
+		got string
+	}{
+		{KeyBind, got.Bind},
+		{KeyLogFormat, got.LogFormat},
+		{KeyLogLevel, got.LogLevel},
+	} {
+		def, ok := Lookup(tc.key)
+		if !ok {
+			t.Fatalf("レジストリに %s が無い", tc.key)
+		}
+		if tc.got != def.Default {
+			t.Errorf("%s = %q, want %q", tc.key, tc.got, def.Default)
+		}
 	}
 	// 未認証の呼び出し元への情報開示になるため、既定は false（ApiDesign.md 2.11）。
 	if got.HealthShowVersion {

@@ -104,6 +104,15 @@ type AgentRun struct {
 	RetryCount      int32
 }
 
+// アプリケーション設定の第2層（Design.md 10.3）。平文なので秘密を入れない。既定値は行の不在で表す
+type AppSetting struct {
+	Key       string
+	Value     string
+	UpdatedBy pgtype.Text
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type AppUser struct {
 	ActorID         string
 	Email           string

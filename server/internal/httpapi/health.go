@@ -24,12 +24,14 @@ type healthResponse struct {
 //
 // DBの疎通を見ないのは、DB断がプロセスの再起動では復旧しないためである。
 // liveness に含めると不要な再起動ループを招く（Design.md 10.2）。
-func health(version string, showVersion bool) http.HandlerFunc {
-	body := healthResponse{Status: "OK"}
-	if showVersion {
-		body.Version = version
-	}
+// **showVersion は関数で受ける。** pb-2 でこの設定が画面から変えられるように
+// なったため、組み立て時に bool を畳み込むと変更が効かない（Design.md 10.3 の第2層）。
+func health(version string, showVersion func() bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		body := healthResponse{Status: "OK"}
+		if showVersion() {
+			body.Version = version
+		}
 		// v1.WriteJSON を使わないのは、/healthcheck が「唯一 /api/v1 の外に置く
 		// エンドポイント」（ApiDesign.md 2.11）であり、ルータを持つ本パッケージが
 		// v1 を import する向きを保つため（逆向きにすると循環する）。

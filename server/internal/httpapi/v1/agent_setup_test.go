@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -132,7 +134,8 @@ func TestGetAgentSetupBaseURL(t *testing.T) {
 		{"TLS 終端の背後", "pb.example.com", true, "https://pb.example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := &handler{q: setupFake(), cookieSecure: tc.cookieSecure}
+			h := &handler{q: setupFake(),
+				settings: config.LiveWith(config.Row{Key: config.KeyCookieSecure, Value: strconv.FormatBool(tc.cookieSecure)})}
 			req := setupReq("/api/v1/projects/demo/agent-setup?client=claude_code")
 			req.Host = tc.host
 			rec := httptest.NewRecorder()
