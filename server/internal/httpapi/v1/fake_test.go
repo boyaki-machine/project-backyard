@@ -65,8 +65,24 @@ type sprintRunFakeState struct {
 	unstagedRows int64
 }
 
+// appSettingFakeState は app_setting が触るものを持つ（pb-2。ApiDesign.md 11章）。
+//
+// **書き込みを配列で溜める。** 何を渡したかを検査したいためで、
+// 「既定へ戻すときに DELETE が走ったか」「変わらないキーを書いていないか」は
+// 引数を見ないと確かめられない。
+type appSettingFakeState struct {
+	rows []gen.ListAppSettingsRow
+	err  error
+
+	upserted []gen.UpsertAppSettingParams
+	deleted  []string
+}
+
 type fakeQuerier struct {
 	gen.Querier
+
+	// アプリケーション設定（pb-2。ApiDesign.md 11章）
+	settings appSettingFakeState
 
 	// login 経路
 	loginRow  gen.FindLocalLoginByEmailRow
@@ -2528,4 +2544,23 @@ func (q *fakeQuerier) GetAgentRuntimeInfo(
 		return gen.GetAgentRuntimeInfoRow{}, pgx.ErrNoRows
 	}
 	return *q.ticket.agentInfo, nil
+}
+
+// ── アプリケーション設定（pb-2。ApiDesign.md 11章）──────────────
+
+func (q *fakeQuerier) ListAppSettings(ctx context.Context) ([]gen.ListAppSettingsRow, error) {
+	if q.settings.err != nil {
+		return nil, q.settings.err
+	}
+	return q.settings.rows, nil
+}
+
+func (q *fakeQuerier) UpsertAppSetting(ctx context.Context, arg gen.UpsertAppSettingParams) error {
+	q.settings.upserted = append(q.settings.upserted, arg)
+	return nil
+}
+
+func (q *fakeQuerier) DeleteAppSetting(ctx context.Context, key string) error {
+	q.settings.deleted = append(q.settings.deleted, key)
+	return nil
 }
