@@ -3663,7 +3663,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
       "description": "起動時に接続プールを張る。変更には再起動が要る",
       "layer": 1, "value": null, "value_type": "string",
       "allowed": null, "default_value": null,
-      "source": "file", "editable": false, "restart_required": true,
+      "source": "secret_file", "editable": false, "restart_required": true,
       "secret": true, "env_key": "PB_DATABASE_URL",
       "updated_at": null, "updated_by": null }
   ]
@@ -3680,18 +3680,19 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 | `value_type` | `string` / `bool` / `enum` |
 | `allowed` | `value_type` が `enum` のときの値域。それ以外は `null`。**キーは常に返す**（省略しない） |
 | `default_value` | 設定レジストリが持つ既定値。**必須の設定は `null`** |
-| `source` | `env` / `file` / `database` / `default`。**実効値がどこから来たか** |
+| `source` | `secret_file` / `config_file` / `env` / `database` / `default`。**実効値がどこから来たか**（`Design.md` 10.3 の優先順と同じ並び） |
 | `editable` | 画面から変更できるか。**`layer` が 2 で、かつ `source` が `database` か `default` のときだけ `true`** |
+| `config_file_key` | `pb.yaml` に書くときのキー。`key` と同じ値を返す（画面が説明文を組み立てるために持つ） |
 | `restart_required` | 変更が効くまでに再起動が要るか |
 | `secret` | `true` なら `value` を返さない |
-| `env_key` | この設定を環境変数で与えるときの名前。**K8s では ConfigMap / Secret に置く名前である** |
+| `env_key` | この設定を環境変数で与えるときの名前（`PB_` 付き）。**`key` は `PB_` の無い平らな名前**で、`pb.yaml` と `app_setting` はそちらを使う |
 | `updated_at` `updated_by` | `app_setting` の行があるときだけ埋まる。`source` が `database` 以外なら両方 `null` |
 
 ### `value` を型付きの JSON にせず、常に文字列で返す
 
 **`value_type` と対で読む前提にする。** 真偽値を JSON の `true` にすると、`value` の型が設定ごとに変わり、**生成した型が共用体になる**（3種類の `value` を持つ配列要素になる）。画面は `value_type` を見て解釈すればよく、**入力欄も文字列で扱える。**
 
-**`env_key` を返すのは、第1層を画面から変更できないからである。** 変更できない値について「ではどこで変えるのか」を画面が答えられないと、`editable: false` は行き止まりになる。
+**`env_key` を返すのは、第1層を画面から変更できないからである。** 変更できない値について「ではどこで変えるのか」を画面が答えられないと、`editable: false` は行き止まりになる。**`source` が何であっても常に返す**——いま環境変数で与えられていない設定についても、環境変数で上書きする道を画面が示せるようにする。
 
 ### `editable` を `layer` と `source` から導く理由
 
@@ -3699,8 +3700,10 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 
 | 状況 | `layer` | `source` | 画面に出す説明 |
 |---|---|---|---|
-| 構造的に画面で扱えない | `1` | 何でも | 「起動前に要る設定です。`env_key` で与えてください」 |
-| 環境変数で固定されている | `2` | `env` / `file` | 「環境変数で固定されています」 |
+| 構造的に画面で扱えない | `1` | 何でも | 「起動前に要る設定です。`pb.yaml` か `env_key` で与えてください」 |
+| 設定ファイルで固定されている | `2` | `config_file` | 「`pb.yaml` の `log_format` で固定されています」 |
+| 環境変数で固定されている | `2` | `env` | 「`PB_LOG_FORMAT` で固定されています」 |
+| 秘密のファイルで与えられている | `2` | `secret_file` | 「`PB_LOG_FORMAT_FILE` が指すファイルで固定されています」 |
 | 変更できる | `2` | `database` / `default` | （編集欄を出す） |
 
 **`editable` だけを返すと、この2つが同じ見た目になる。** 後者は環境変数を外せば編集できるようになるが、前者はならない。
