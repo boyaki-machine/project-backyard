@@ -1360,6 +1360,85 @@ CREATE TRIGGER app_setting_touch BEFORE UPDATE ON app_setting
 
 **`value` は平文である。** 秘密（パスワード・トークン・接続文字列・秘密鍵）を本表に入れない。**`pg_dump` がそのまま運ぶ**ためで、これは規約「秘密をコードや文書に書かない」と同じ理由による。第3層は暗号化した専用の表を使う（pb-3）。
 
+## 6.15 TLS 証明書（0032。pb-3）
+
+```sql
+CREATE TABLE tls_certificate (
+  id             char(26) COLLATE "C" PRIMARY KEY,
+  common_name    text NOT NULL,
+  dns_names      text[] NOT NULL DEFAULT '{}',
+  not_before     timestamptz NOT NULL,
+  not_after      timestamptz NOT NULL,
+  serial_number  text NOT NULL,
+  fingerprint    text NOT NULL,
+  is_self_signed boolean NOT NULL,
+
+  -- 証明書の連鎖は平文で持つ。公開されるものであり、隠す意味が無い。
+  cert_pem       text NOT NULL,
+
+  -- 秘密鍵は secret_key で暗号化して持つ（Design.md 6.6.1）。
+  key_ciphertext bytea NOT NULL,
+  key_nonce      bytea NOT NULL,
+  key_id         text NOT NULL,
+
+  uploaded_by    char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz NOT NULL DEFAULT now(),
+
+  CONSTRAINT tls_certificate_period CHECK (not_before < not_after),
+  CONSTRAINT tls_certificate_fingerprint_unique UNIQUE (fingerprint)
+);
+
+-- 出す証明書の選定（6.6.1）は now が期間に入る行から notBefore が最大のものを採る。
+CREATE INDEX tls_certificate_period_idx ON tls_certificate (not_before DESC, not_after);
+
+CREATE TRIGGER tls_certificate_touch BEFORE UPDATE ON tls_certificate
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+**`Design.md` 10.3 の第3層で、`app_setting`（第2層）とは別の表である。** 分けたのは
+①値が長い（PEM は数KB）②**暗号化した列と復号のための付帯情報を持つ** ③有効期間で
+選ぶという固有の問い合わせがある、の3点による。**キーと値の表に混ぜると、`app_setting`
+の「平文である」という前提が崩れる。**
+
+### 証明書は平文、秘密鍵だけ暗号化する
+
+**`cert_pem` を隠さない。** 証明書は TLS ハンドシェイクで相手に渡すもので、**隠す意味が無い。**
+平文で持つことで、画面が発行者・期間・SAN を出すのに復号が要らなくなる。
+
+**`key_ciphertext` は AES-256-GCM である。** 鍵は `secret_key`（第1層）。`key_nonce` は
+行ごとに新しく生成し、`key_id` は**どの鍵で暗号化したかを識別する**（鍵を交換する日に、
+どの行がまだ古い鍵かを引けるようにする）。**GCM は認証付きなので、改竄された行は
+復号で失敗する。**
+
+### 解析した値を列に持つ
+
+`common_name` / `dns_names` / `not_before` / `not_after` / `serial_number` / `fingerprint` は
+**登録時に `cert_pem` を解析して埋める。** PEM から毎回引き直さないのは、①選定の問い合わせ
+（`not_before` / `not_after`）を SQL で書けるようにする ②画面の一覧が復号も解析もせずに
+描ける、の2点による。
+
+**`cert_pem` が正本で、これらは派生である。** 食い違ったら `cert_pem` が正しい——
+**登録は1経路しかなく**（`ApiDesign.md` 11.4）、そこが両方を同時に書く。
+
+### `fingerprint` に一意制約を置く
+
+**同じ証明書を2回登録できないようにする。** SHA-256 の指紋で、**同じものを2枚持つと
+「どちらを出したか」が `notBefore` では決まらなくなる**（同一なので同じ値になる）。
+更新のつもりで同じ PEM を貼った利用者に、その場で気づかせる。
+
+### `is_self_signed` は表示のためだけに持つ
+
+**PB は検証の連鎖を辿らない**（`Design.md` 6.6.1）。この列は**画面に「自己署名」と
+出すためだけ**で、振る舞いを変えない——フォーマル証明書と自己署名証明書の扱いは同じである。
+判定は「発行者と主体が一致するか」の1点で行う。
+
+### 行の削除はできるが、更新はできない
+
+**登録と削除だけを開ける**（`ApiDesign.md` 11.4 / 11.6）。`PATCH` を作らないのは、
+**証明書の中身を部分的に差し替えられるものが無い**ためである——変えたいなら新しいものを
+登録する。`updated_at` とトリガを置いてあるのは、4.3 の規約に合わせた形式上のものである。
+
 ---
 
 # 7. 初期データ（0010）
@@ -1775,15 +1854,16 @@ Phase 2
   0030_agent_client_kind_claude_desktop.sql
                           agent_client_kind に claude_desktop（8.2.1.1。pb-58）
   0031_app_setting.sql    app_setting（6.14。pb-2）
+  0032_tls_certificate.sql tls_certificate（6.15。pb-3）
 Phase 3
-  0032_knowledge.sql      knowledge, knowledge_revision, proposal
-  0033_comment_signal.sql comment_signal
-  0034_embedding.sql      vector 拡張 + embedding
-  0035_project_event.sql  project_event
-  0036_analytics.sql      estimate_record, contribution
+  0033_knowledge.sql      knowledge, knowledge_revision, proposal
+  0034_comment_signal.sql comment_signal
+  0035_embedding.sql      vector 拡張 + embedding
+  0036_project_event.sql  project_event
+  0037_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033 → 0030〜0034 → 0031〜0035 → 0032〜0036** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**、**pb-75 の 0029（`ticket.self_edit`。6.13）で11回目**、**pb-58 の 0030（`claude_desktop` をカタログへ追加。8.2.1.1）で12回目**、**pb-2 の 0031（`app_setting`。6.14）で13回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033 → 0030〜0034 → 0031〜0035 → 0032〜0036 → 0033〜0037** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**、**pb-75 の 0029（`ticket.self_edit`。6.13）で11回目**、**pb-58 の 0030（`claude_desktop` をカタログへ追加。8.2.1.1）で12回目**、**pb-2 の 0031（`app_setting`。6.14）で13回目**、**pb-3 の 0032（`tls_certificate`。6.15）で14回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 

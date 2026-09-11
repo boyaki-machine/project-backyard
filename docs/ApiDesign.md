@@ -42,7 +42,7 @@ Phase 1 の全APIを定義する。**9章までは実装済みである**（**4.
 | 6・7 | ユーザー管理・ロール・権限 | アカウント / 権限管理（5.6） |
 | 9 | チケット（一覧・詳細・コメント・DoD・リンク・タグ・スプリント・集計） | バックログ（5.4）、チケット詳細（5.5）、ダッシュボード（5.3） |
 | 10 | **プロジェクト文書（憲章）**。Phase 2 | Docs（5.10）。**MCP の `pb_list_docs` / `pb_get_doc` / `pb_put_doc` もここを通る** |
-| 11 | **アプリケーション設定**。Phase 2（pb-2） | アプリケーション設定（5.12）。**設定の3層は `Design.md` 10.3 が正本** |
+| 11 | **アプリケーション設定と TLS 証明書**。Phase 2（pb-2 / pb-3） | アプリケーション設定（5.12）。**設定の3層は `Design.md` 10.3、TLS は 6.6.1 が正本** |
 
 MCPサーバ向けのツール定義は本書の範囲外である（`Design.md` 8章、Phase 2）。
 
@@ -276,7 +276,8 @@ If-Match: "3"
 `login.success` / `login.failure` / `logout` / `password.change` / `password.reset` /
 `token.issue` / `token.revoke` / `session.revoke` / `user.create` / `user.update` /
 `user.delete` / `role.change` / `project.create` / `project.archive` / `permission.denied` /
-`agent.register` / `agent.update` / `agent.delete` / `setting.update`
+`agent.register` / `agent.update` / `agent.delete` / `setting.update` /
+`tls.certificate.upload` / `tls.certificate.delete`
 
 **`agent.` の3件は Phase 2 で加わった**（4.5.6）。**`agent.register` / `agent.update` は 0019**、
 **`agent.delete` は手順26a**（2026-09-05）である。エージェントの登録・変更・削除は
@@ -286,6 +287,9 @@ If-Match: "3"
 **`setting.update` は pb-2 で加わった**（11.2）。**1回の保存が1行**で、`detail.changes[]` に変更した
 キーと新旧の実効値を並べる。**サーバ全体の設定を変える操作**であり、影響範囲が1プロジェクトに
 収まらないため記録する。
+
+**`tls.certificate.*` は pb-3 で加わった**（11.5 / 11.6）。**`detail` には指紋・`common_name`・
+有効期間を入れ、PEM と秘密鍵は入れない**——`audit_log` は長期保存される記録である。
 
 ## 2.11 ヘルスチェック
 
@@ -1734,6 +1738,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | プロジェクト設定（スプリントタブ） | `GET|POST /projects/:key/sprints`<br>`PATCH|DELETE /projects/:key/sprints/:id` |
 | **エージェント連携セットアップ（Phase 2）** | `GET /agent-client-kinds`<br>`GET /projects/:key/agent-setup`<br>`GET /projects/:key/agent-setup.zip`（ダウンロード） |
 | **アプリケーション設定（Phase 2）** | `GET /admin/settings`<br>`PUT /admin/settings`（保存） |
+| **TLS証明書（Phase 2）** | `GET /admin/tls/certificates`<br>`POST /admin/tls/certificates`（登録）<br>`DELETE /admin/tls/certificates/:id` |
 | **Docs（Phase 2）** | `GET /projects/:key/docs`（目次）<br>`GET /projects/:key/docs/*path`（本文）<br>`PATCH|DELETE /projects/:key/docs/*path`・`POST /projects/:key/docs`<br>`GET /projects/:key/docs/*path/_revisions`（履歴） |
 
 **各画面が起動時に呼ぶAPIは1〜2本に収まっている。** 設計方針3が満たされていることの確認になる。
@@ -3633,6 +3638,8 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 
 **サーバ全体の設定を、アドミニストレータが確認・変更する**（`GuiDesign.md` 5.12、`Design.md` 10.3）。設定は3層に分かれており、**本章が扱うのは「何が実効値で、それがどこから来たか」である。**
 
+**11.4 以降は TLS 証明書を扱う**（pb-3）。あれは第3層（`Design.md` 6.6.1）で、**値が秘密である点と有効期間で選ばれる点**が第2層と違うため、`app_setting` とは別の表・別のエンドポイントになっている。
+
 **必要権限はどちらも `system.settings`。** この権限は Phase 1 のシード（`DbDesign.md` 7.2）から存在していたが、**本章が最初の利用者である。**
 
 ## 11.1 `GET /api/v1/admin/settings`
@@ -3754,6 +3761,102 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 | 第1層 | **再起動が要る** | `restart_required: true` |
 
 **第2層は、リクエストごとに DB を引かない。** 設定はプロセス内に持ち、`PUT` が成功した時点で入れ替える。**複数のレプリカでは、他のレプリカが次に読み直すまで古い値が残る**——読み直しの間隔は実装側の既定とし、`Design.md` 10.3 に従って**設定項目にはしない**（設定の反映を設定で決めると、その設定自身の反映が説明できなくなる）。
+
+## 11.4 `GET /api/v1/admin/tls/certificates`
+
+**必要権限**：`system.settings`
+
+登録済みの TLS 証明書を返す（`Design.md` 6.6.1、`DbDesign.md` 6.15）。
+
+```json
+{
+  "items": [
+    { "id": "01K2...", "common_name": "pb.example.com",
+      "dns_names": ["pb.example.com", "www.pb.example.com"],
+      "not_before": "2026-09-01T00:00:00Z", "not_after": "2026-12-01T00:00:00Z",
+      "serial_number": "0a1b2c3d", "fingerprint": "ab:cd:…",
+      "is_self_signed": false, "status": "active",
+      "uploaded_at": "2026-09-11T04:10:00Z",
+      "uploaded_by": { "id": "01K2...", "kind": "user", "display_name": "田中" } }
+  ],
+  "tls_enabled": true,
+  "secret_key_present": true
+}
+```
+
+**`private_key` は返さない。** 暗号化して保持しており（`DbDesign.md` 6.15）、**この応答にも
+他のどの応答にも現れない。** 2.5 の設計方針6「秘密は一度しか返さない」より強く、**一度も返さない。**
+
+| 項目 | 内容 |
+|---|---|
+| `status` | `active`（**いま出している1枚**）／ `pending`（`not_before` が未来）／ `expired`（`not_after` を過ぎた）／ `superseded`（有効だが、より新しい有効なものがある） |
+| `tls_enabled` | いま TLS で待ち受けているか。**設定 `tls_enabled` の実効値ではなく、実際の待受の状態である** |
+| `secret_key_present` | `secret_key` が与えられているか。**値は返さない。** 偽なら証明書を登録できない |
+
+`items[]` は `not_before` の降順。**ページネーションも `ETag` も持たない**——証明書は数枚である。
+
+### `status` をサーバが決める理由
+
+**選定の規則は `Design.md` 6.6.1 の1か所にある。** 画面が `not_before` と `not_after` と
+現在時刻から組み立てると、**「いまどれが出ているか」の判定がサーバと画面の2か所に分かれる。**
+`active` が必ず1枚以下であることも、サーバが決めるから保証できる。
+
+**`superseded` を `active` と分けるのは、消してよいものが分かるようにするため**である。
+期限が切れていなくても、より新しいものが出ているなら消して差し支えない。
+
+## 11.5 `POST /api/v1/admin/tls/certificates`
+
+**必要権限**：`system.settings`
+
+```json
+{ "cert_pem": "-----BEGIN CERTIFICATE-----\n…", "key_pem": "-----BEGIN PRIVATE KEY-----\n…" }
+```
+
+- 成功 → `201`。本文は 11.4 の `items[]` の要素1件
+- PEM として読めない／証明書と鍵が対応しない → `422 validation_failed`
+- 同じ指紋の証明書が既にある → `409 conflict`
+- `secret_key` が与えられていない → `409 conflict`
+- 期限が切れている証明書 → `422 validation_failed`
+
+**証明書と鍵が対応することを登録時に確かめる**（`tls.X509KeyPair` と同じ検証）。
+**ここで弾かないと、ハンドシェイクの時刻まで誤りが見つからない**——そのときにはもう
+画面も API も TLS の向こう側にあり、直す手段が無い。
+
+**期限切れを受けない。** 受けても `active` になれず、**利用者は「登録したのに効かない」
+としか読めない。** 一方で `not_before` が未来のものは受ける——**新旧2枚を並べる**という
+本チケットの目的そのものである。
+
+**鍵の形式は PKCS#8 / PKCS#1 / SEC1 を受ける。** どれも `-----BEGIN … PRIVATE KEY-----`
+で始まる PEM であり、**利用者が発行元から受け取った形をそのまま貼れるようにする。**
+
+**暗号化されたままの秘密鍵（パスフレーズ付き）は受けない**（`422`）。パスフレーズを
+どこに置くかという問いが増え、**第1層の鍵が2つになる。** 復号してから貼ってもらう。
+
+### `multipart/form-data` ではなく JSON で受ける
+
+PEM は**テキスト**であり、画面は貼り付け欄で受ける（`GuiDesign.md` 5.12.1）。
+ファイル選択にすると、**鍵をファイルとして持っていない利用者**（発行元の画面から
+コピーしただけ）が詰まる。2.2 の JSON 一本化からも外れない。
+
+## 11.6 `DELETE /api/v1/admin/tls/certificates/:id`
+
+**必要権限**：`system.settings`
+
+- 成功 → `204`
+- 存在しない → `404`
+- **消すと有効な証明書が1枚も残らない、かつ TLS で待ち受けている** → `409 conflict`
+
+**最後の有効な証明書を消させない。** 消せてしまうと、その瞬間から TLS ハンドシェイクが
+失敗し（`Design.md` 6.6.1）、**画面から復旧できなくなる。** 平文へ戻したいなら、
+先に `tls_enabled` を `false` にする。
+
+**`expired` と `superseded` はいつでも消せる。** どちらも出していないので、消しても
+振る舞いが変わらない。
+
+### 監査ログ
+
+`tls.certificate.upload` と `tls.certificate.delete` を 2.10 の列挙に加える。
+**`detail` には指紋・`common_name`・有効期間を入れ、PEM と鍵は入れない。**
 
 ---
 
