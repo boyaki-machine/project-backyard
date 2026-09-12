@@ -124,14 +124,17 @@ func serve(ctx context.Context) error {
 		swapMu.Lock()
 		defer swapMu.Unlock()
 
-		want := s.Bool(config.KeyTLSEnabled)
-		if want == server.TLSOn() {
+		// **待受のアドレスも画面から変わる**（pb-99）。tls_enabled と同じ
+		// 張り替えに載るので、2つを1回の判定でまとめて見る。
+		wantAddr := s.String(config.KeyBind)
+		wantTLS := s.Bool(config.KeyTLSEnabled)
+		if wantAddr == server.Addr() && wantTLS == server.TLSOn() {
 			return
 		}
 
-		if !want {
+		if !wantTLS {
 			certs = nil
-			if err := server.Swap(nil); err != nil {
+			if err := server.Swap(wantAddr, nil); err != nil {
 				slog.Error("平文へ切り替えられない", slog.String("error", err.Error()))
 				return
 			}
@@ -149,7 +152,7 @@ func serve(ctx context.Context) error {
 			return
 		}
 		certs = holder
-		if err := server.Swap(tc); err != nil {
+		if err := server.Swap(wantAddr, tc); err != nil {
 			slog.Error("TLS へ切り替えられない", slog.String("error", err.Error()))
 			return
 		}
@@ -158,9 +161,9 @@ func serve(ctx context.Context) error {
 
 	// **TLS の有無で Handler ごと作り直す。** 応答に出る tls_enabled と
 	// listen_url は実際の待受であり（11.4）、設定の実効値ではない。
-	build := func(tc *tls.Config) *http.Server {
+	build := func(addr string, tc *tls.Config) *http.Server {
 		return &http.Server{
-			Addr:      bind,
+			Addr:      addr,
 			TLSConfig: tc,
 			Handler: httpapi.NewRouter(httpapi.Deps{
 				Pool:              pool,
@@ -169,7 +172,8 @@ func serve(ctx context.Context) error {
 				OnSettingsChanged: onChanged,
 				Certs:             certs,
 				TLSListening:      tc != nil,
-				ListenURL:         listenURL(bind, tc != nil),
+				// **アドレスも張り替わる**（pb-99）ので、いま張ったものを使う。
+				ListenURL: listenURL(addr, tc != nil),
 			}),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
@@ -177,11 +181,11 @@ func serve(ctx context.Context) error {
 			IdleTimeout:       idleTimeout,
 		}
 	}
-	server = newSwappableServer(bind, build)
+	server = newSwappableServer(build)
 
 	// **待受を先に張り、成立してからログを書く**（pb-29）。bind に失敗したのに
 	// 「サーバを起動した」が先に出ると、2026-08-30 のような読み違えを生む。
-	if err := server.Start(tlsConfig); err != nil {
+	if err := server.Start(bind, tlsConfig); err != nil {
 		return fmt.Errorf("サーバを起動できない: %w", err)
 	}
 

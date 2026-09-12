@@ -120,8 +120,14 @@ func TestListSettings(t *testing.T) {
 		if items[config.KeyLogLevel]["restart_required"] != false {
 			t.Error("log_level に再起動が要るとある")
 		}
-		if items[config.KeyBind]["restart_required"] != true {
-			t.Error("bind に再起動が要らないとある")
+		// **bind も第2層である**（pb-99）。pb-106 で待受を張り替えられるように
+		// したので、再起動は要らない。
+		if items[config.KeyBind]["restart_required"] != false {
+			t.Error("bind に再起動が要るとある")
+		}
+		// **第1層は再起動が要る。** DB に到るために要るものだけが残っている。
+		if items[config.KeyDatabaseURL]["restart_required"] != true {
+			t.Error("database_url に再起動が要らないとある")
 		}
 	})
 }
@@ -232,7 +238,8 @@ func TestUpdateSettingsRejects(t *testing.T) {
 		{"真偽値でない値は 422", `{"items":[{"key":"cookie_secure","value":"maybe"}]}`, http.StatusUnprocessableEntity},
 		{"同じキーを2回は 422", `{"items":[{"key":"log_level","value":"warn"},{"key":"log_level","value":"debug"}]}`, http.StatusUnprocessableEntity},
 		// **第1層は 409。** 値の誤りではなく、画面から変えられないという状態の衝突である。
-		{"第1層は 409", `{"items":[{"key":"bind","value":"0.0.0.0:9999"}]}`, http.StatusConflict},
+		// **bind はここから外れた**（pb-99 で第2層へ移した）。
+		{"第1層は 409", `{"items":[{"key":"secret_key","value":"x"}]}`, http.StatusConflict},
 		{"秘密も 409", `{"items":[{"key":"database_url","value":"postgres://y"}]}`, http.StatusConflict},
 	}
 	for _, tc := range cases {

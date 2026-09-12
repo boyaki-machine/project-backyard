@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -183,10 +184,25 @@ func (h *handler) confirmSettings(w http.ResponseWriter, r *http.Request) {
 //     cookie_secure が有効なのに Cookie が届いているなら、ブラウザは HTTPS で
 //     繋いでいる。**前段にプロキシを置く構成でも成立する**（PB には平文で届く）
 func (h *handler) checkConfirmReached(r *http.Request, prev map[string]*string) *apierr.Error {
+	set := h.settings.Snapshot()
+
+	// **bind：実際の待受が設定値と一致していること**（pb-99）。
+	//
+	// **待受が1つなので、届いた時点で新しい待受である**——ただし**張り替えに
+	// 失敗して古いままのことがある**（新しいポートが使用中だったなど）。
+	// そこへ届いた確認を受け取ると、**繋がらない設定を確定してしまう。**
+	if _, ok := prev[config.KeyBind]; ok {
+		want := set.String(config.KeyBind)
+		if got := listenHostPort(h.listenURL); got != want {
+			return apierr.New(apierr.Conflict).WithMessage(
+				"待受がまだ " + got + " のままです（設定は " + want + "）。" +
+					"張り替えに失敗している可能性があります。ログを確かめてください")
+		}
+	}
+
 	if _, ok := prev[config.KeyTLSEnabled]; !ok {
 		return nil
 	}
-	set := h.settings.Snapshot()
 	want := set.Bool(config.KeyTLSEnabled)
 	if got := r.TLS != nil; want != got {
 		if want {
@@ -197,6 +213,19 @@ func (h *handler) checkConfirmReached(r *http.Request, prev map[string]*string) 
 			WithMessage("この確認は HTTPS で届いています。http で開き直してから押してください")
 	}
 	return nil
+}
+
+// listenHostPort は listen_url からスキームを落として host:port を返す。
+//
+// **設定値（bind）と比べるために要る。** listen_url は `http://0.0.0.0:8080`
+// の形で、設定値は `0.0.0.0:8080` である（ApiDesign.md 11.4）。
+func listenHostPort(listenURL string) string {
+	for _, prefix := range []string{"https://", "http://"} {
+		if strings.HasPrefix(listenURL, prefix) {
+			return strings.TrimPrefix(listenURL, prefix)
+		}
+	}
+	return listenURL
 }
 
 func pendingKeys(prev map[string]*string) []string {
