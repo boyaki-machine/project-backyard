@@ -23,16 +23,17 @@ import (
 // 単純だが、**HTTP/2 が使えなくなる**——`http.Server` が HTTP/2 を有効にするのは
 // `ServeTLS` を通ったときだけで、自分で包むと平文の `Serve` 扱いになる。
 type swappableServer struct {
-	addr string
 
 	// build は待受ごとに Server を作る。
 	//
-	// **TLS の有無で Handler も変わる。** 応答に出る `tls_enabled` と
+	// **アドレスと TLS の有無で Handler も変わる。** 応答に出る `tls_enabled` と
 	// `listen_url` は**実際の待受**であり（ApiDesign.md 11.4）、設定の実効値
 	// ではない。作り直さないと、切り替えたあとも古い値を返し続ける。
-	build func(tlsConfig *tls.Config) *http.Server
+	build func(addr string, tlsConfig *tls.Config) *http.Server
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// addr はいま張っている待受のアドレス。**画面から変えられる**（pb-99）。
+	addr    string
 	srv     *http.Server
 	ln      net.Listener
 	tlsConf *tls.Config
@@ -43,18 +44,18 @@ type swappableServer struct {
 	serveErr chan error
 }
 
-func newSwappableServer(addr string, build func(*tls.Config) *http.Server) *swappableServer {
-	return &swappableServer{addr: addr, build: build, serveErr: make(chan error, 1)}
+func newSwappableServer(build func(string, *tls.Config) *http.Server) *swappableServer {
+	return &swappableServer{build: build, serveErr: make(chan error, 1)}
 }
 
 // Start は待受を張る。**成立してから返る**ので、呼び出し側はここでログを書ける（pb-29）。
-func (s *swappableServer) Start(tlsConfig *tls.Config) error {
+func (s *swappableServer) Start(addr string, tlsConfig *tls.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.listen(tlsConfig); err != nil {
+	if err := s.listen(addr, tlsConfig); err != nil {
 		return err
 	}
-	s.tlsConf = tlsConfig
+	s.addr, s.tlsConf = addr, tlsConfig
 	return nil
 }
 
@@ -63,14 +64,14 @@ func (s *swappableServer) Start(tlsConfig *tls.Config) error {
 // **同じアドレスなので、旧を閉じてからでないと新しく開けない。** 開けなかったら
 // 元の設定で開き直す——**そこも失敗すると待受が無くなる**ので、そのときだけ
 // 呼び出し側へ致命的な誤りとして返す。
-func (s *swappableServer) Swap(tlsConfig *tls.Config) error {
+func (s *swappableServer) Swap(addr string, tlsConfig *tls.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopped {
 		return errors.New("停止済みのサーバは張り替えられない")
 	}
 
-	old, prev := s.srv, s.tlsConf
+	old, prevAddr, prevTLS := s.srv, s.addr, s.tlsConf
 	if err := s.ln.Close(); err != nil {
 		return fmt.Errorf("いまの待受を閉じられない: %w", err)
 	}
@@ -86,13 +87,15 @@ func (s *swappableServer) Swap(tlsConfig *tls.Config) error {
 		}
 	}()
 
-	if err := s.listen(tlsConfig); err != nil {
-		if back := s.listen(prev); back != nil {
+	if err := s.listen(addr, tlsConfig); err != nil {
+		// **アドレスごと元へ戻す**（pb-99）。**ポートを誤ると新しい待受は
+		// 開けない**ので、ここが実際に通る経路になる。
+		if back := s.listen(prevAddr, prevTLS); back != nil {
 			return fmt.Errorf("待受を張り替えられず、元にも戻せない（%v）: %w", err, back)
 		}
 		return fmt.Errorf("待受を張り替えられないため元に戻した: %w", err)
 	}
-	s.tlsConf = tlsConfig
+	s.addr, s.tlsConf = addr, tlsConfig
 	return nil
 }
 
@@ -123,12 +126,12 @@ func (s *swappableServer) Addr() string {
 }
 
 // listen は新しい待受を張り、Serve を回す。**s.mu を持った状態で呼ぶこと。**
-func (s *swappableServer) listen(tlsConfig *tls.Config) error {
-	ln, err := net.Listen("tcp", s.addr)
+func (s *swappableServer) listen(addr string, tlsConfig *tls.Config) error {
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
-	srv := s.build(tlsConfig)
+	srv := s.build(addr, tlsConfig)
 	s.srv, s.ln = srv, ln
 
 	go func() {

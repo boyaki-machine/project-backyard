@@ -162,10 +162,16 @@ var definitions = []Definition{
 	},
 	{
 		Key: "bind", EnvKey: "PB_BIND",
-		Layer: LayerBoot, Type: TypeString,
-		Default: "0.0.0.0:8080", RestartRequired: true,
+		// **第2層へ移した**（pb-99）。**待受は「起動の順序をそう決めている」だけ**
+		// であり、接続文字列のように原理的に DB へ置けないものではない——
+		// サーバは DB へ繋いだあとに待受を張っている。
+		//
+		// **再起動は要らない**（pb-106 で張り替えられるようにした）。
+		// **確認しないと元へ戻す**（pb-97）——ポートを誤ると画面へ到達できない。
+		Layer: LayerRuntime, Type: TypeString,
+		Default: "0.0.0.0:8080", NeedsConfirm: true,
 		DisplayName: "待受アドレス",
-		Description: "HTTP を待ち受けるアドレスとポート。公開範囲は compose の ports で制御します",
+		Description: "HTTP を待ち受けるアドレスとポート。切り替えは即時で、期限内に確認しないと元へ戻ります。コンテナで動かしている場合は、公開側の設定（compose の ports や Service の targetPort）も合わせて変えてください",
 	},
 	{
 		Key: "secret_key", EnvKey: "PB_SECRET_KEY",

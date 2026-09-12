@@ -149,6 +149,55 @@ func TestConfirmSettings(t *testing.T) {
 		}
 	})
 
+	t.Run("bind は実際の待受と一致しないと 409", func(t *testing.T) {
+		// **張り替えに失敗して古い待受のままのことがある**（新しいポートが
+		// 使用中だったなど）。**そこへ届いた確認を受け取ると、繋がらない
+		// 設定を確定してしまう**（pb-99）。
+		live := config.LiveDefaults()
+		live.Replace(config.OverlayDatabase(live.Base(),
+			[]config.Row{{Key: config.KeyBind, Value: "0.0.0.0:9999"}}))
+
+		q := newFake(t)
+		grantSystemSettings(q)
+		token := validToken(q, "[]")
+		// **待受は 8080 のまま**（設定は 9999）。
+		r := routerWithDeps(Deps{
+			Queries: q, Tx: &fakeTxRunner{q: q}, Settings: live,
+			ListenURL: "http://0.0.0.0:8080",
+		})
+		row := pendingRow(t, map[string]*string{config.KeyBind: nil}, ConfirmWindow)
+		q.settings.pending = &row
+
+		rec := postWithCookie(r, "/api/v1/admin/settings/confirm", token, "")
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("POST = %d, want 409（body=%s）", rec.Code, rec.Body.String())
+		}
+		if len(q.settings.pendingDeleted) != 0 {
+			t.Error("待受が張り替わっていないのに確定してしまっている")
+		}
+	})
+
+	t.Run("bind が実際の待受と一致すれば確定できる", func(t *testing.T) {
+		live := config.LiveDefaults()
+		live.Replace(config.OverlayDatabase(live.Base(),
+			[]config.Row{{Key: config.KeyBind, Value: "0.0.0.0:9999"}}))
+
+		q := newFake(t)
+		grantSystemSettings(q)
+		token := validToken(q, "[]")
+		r := routerWithDeps(Deps{
+			Queries: q, Tx: &fakeTxRunner{q: q}, Settings: live,
+			ListenURL: "http://0.0.0.0:9999",
+		})
+		row := pendingRow(t, map[string]*string{config.KeyBind: nil}, ConfirmWindow)
+		q.settings.pending = &row
+
+		rec := postWithCookie(r, "/api/v1/admin/settings/confirm", token, "")
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("POST = %d, want 204（body=%s）", rec.Code, rec.Body.String())
+		}
+	})
+
 	t.Run("tls_enabled が無効なら平文で確定できる", func(t *testing.T) {
 		r, q, token := settingsRouter(t, config.LiveDefaults())
 		row := pendingRow(t, map[string]*string{config.KeyTLSEnabled: nil}, ConfirmWindow)

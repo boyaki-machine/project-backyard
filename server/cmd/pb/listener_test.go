@@ -60,8 +60,9 @@ func testTLSConfig(t *testing.T) *tls.Config {
 }
 
 // echoScheme は届いた接続が TLS かどうかを本文で返す。
-func echoScheme(tc *tls.Config) *http.Server {
+func echoScheme(addr string, tc *tls.Config) *http.Server {
 	return &http.Server{
+		Addr:      addr,
 		TLSConfig: tc,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.TLS != nil {
@@ -99,9 +100,9 @@ func fetch(t *testing.T, url string) (string, error) {
 // **起動ログではなく実際の接続で確かめる**（チケットの完了の見分け方）。
 func TestSwappableServerSwitchesTLS(t *testing.T) {
 	addr := freeAddr(t)
-	s := newSwappableServer(addr, echoScheme)
+	s := newSwappableServer(echoScheme)
 
-	if err := s.Start(nil); err != nil {
+	if err := s.Start(addr, nil); err != nil {
 		t.Fatalf("起動できない: %v", err)
 	}
 	t.Cleanup(func() {
@@ -115,7 +116,7 @@ func TestSwappableServerSwitchesTLS(t *testing.T) {
 	}
 
 	// ── TLS へ張り替える ──────────────────────────────
-	if err := s.Swap(testTLSConfig(t)); err != nil {
+	if err := s.Swap(addr, testTLSConfig(t)); err != nil {
 		t.Fatalf("TLS へ張り替えられない: %v", err)
 	}
 	if !s.TLSOn() {
@@ -134,7 +135,7 @@ func TestSwappableServerSwitchesTLS(t *testing.T) {
 	}
 
 	// ── 平文へ戻す ──────────────────────────────────
-	if err := s.Swap(nil); err != nil {
+	if err := s.Swap(addr, nil); err != nil {
 		t.Fatalf("平文へ戻せない: %v", err)
 	}
 	if got, err := fetch(t, "http://"+addr); err != nil || got != "http" {
@@ -153,13 +154,14 @@ func TestSwapFromInsideHandlerReturnsResponse(t *testing.T) {
 	tc := testTLSConfig(t)
 
 	var s *swappableServer
-	build := func(cur *tls.Config) *http.Server {
+	build := func(bindAddr string, cur *tls.Config) *http.Server {
 		return &http.Server{
+			Addr:      bindAddr,
 			TLSConfig: cur,
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/switch" {
 					// **ハンドラの中から張り替える。** 画面からの設定変更と同じ経路。
-					if err := s.Swap(tc); err != nil {
+					if err := s.Swap(addr, tc); err != nil {
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 						return
 					}
@@ -169,8 +171,8 @@ func TestSwapFromInsideHandlerReturnsResponse(t *testing.T) {
 			ReadHeaderTimeout: 2 * time.Second,
 		}
 	}
-	s = newSwappableServer(addr, build)
-	if err := s.Start(nil); err != nil {
+	s = newSwappableServer(build)
+	if err := s.Start(addr, nil); err != nil {
 		t.Fatalf("起動できない: %v", err)
 	}
 	t.Cleanup(func() {
@@ -200,5 +202,60 @@ func TestSwapFromInsideHandlerReturnsResponse(t *testing.T) {
 	// 張り替わっていること。
 	if got, err := fetch(t, "https://"+addr); err != nil || got != "ok" {
 		t.Fatalf("TLS へ張り替わっていない: %q, %v", got, err)
+	}
+}
+
+// TestSwapChangesAddress は**待受のアドレスを張り替えられる**ことを見る（pb-99）。
+//
+// **画面から待受を変える**のがこの機能である。開けなかったときに**アドレスごと
+// 元へ戻る**ことも見る——ポートを誤ると新しい待受は開けないので、実際に通る経路である。
+func TestSwapChangesAddress(t *testing.T) {
+	first := freeAddr(t)
+	second := freeAddr(t)
+	s := newSwappableServer(echoScheme)
+
+	if err := s.Start(first, nil); err != nil {
+		t.Fatalf("起動できない: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = s.Shutdown(ctx)
+	})
+
+	if got, err := fetch(t, "http://"+first); err != nil || got != "http" {
+		t.Fatalf("最初のアドレスで待ち受けていない: %q, %v", got, err)
+	}
+
+	// ── 別のアドレスへ張り替える ──────────────────────
+	if err := s.Swap(second, nil); err != nil {
+		t.Fatalf("アドレスを張り替えられない: %v", err)
+	}
+	if s.Addr() != second {
+		t.Errorf("Addr() = %q, want %q", s.Addr(), second)
+	}
+	if got, err := fetch(t, "http://"+second); err != nil || got != "http" {
+		t.Fatalf("新しいアドレスで待ち受けていない: %q, %v", got, err)
+	}
+	if _, err := fetch(t, "http://"+first); err == nil {
+		t.Error("古いアドレスがまだ生きている")
+	}
+
+	// ── 開けないアドレスへ張り替えると、元へ戻る ──────────
+	blocker, err := net.Listen("tcp", first)
+	if err != nil {
+		t.Fatalf("塞げない: %v", err)
+	}
+	defer func() { _ = blocker.Close() }()
+
+	if err := s.Swap(first, nil); err == nil {
+		t.Error("塞がれているアドレスへ張り替えられてしまった")
+	}
+	// **アドレスごと元へ戻っていること。**
+	if s.Addr() != second {
+		t.Errorf("戻ったあとの Addr() = %q, want %q", s.Addr(), second)
+	}
+	if got, err := fetch(t, "http://"+second); err != nil || got != "http" {
+		t.Fatalf("元のアドレスへ戻っていない: %q, %v", got, err)
 	}
 }
