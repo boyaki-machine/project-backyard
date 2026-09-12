@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -102,23 +103,37 @@ func serve(ctx context.Context) error {
 		IdleTimeout:       idleTimeout,
 	}
 
+	// **待受を先に張り、成立してからログを書く**（pb-29）。ListenAndServe は
+	// bind とその後の待受を1つにまとめてしまうので、**その前にログを書くと
+	// address already in use でも「サーバを起動した」が先に出る。**
+	// 2026-08-30 に読み違えの原因になり、2026-09-08 には実サーバ検証が
+	// 古いバイナリに当たったまま進んだ（pb-72）。
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		return fmt.Errorf("サーバを起動できない: %w", err)
+	}
+
+	scheme := "http"
+	if tlsConfig != nil {
+		scheme = "https"
+	}
+	// **ln.Addr() を出す。** 実際に掴んだアドレスなので、ポートに 0 を
+	// 指定したときも嘘にならない（srv.Addr は指定した文字列のままである）。
+	slog.Info("サーバを起動した",
+		slog.String("bind", ln.Addr().String()), slog.String("scheme", scheme),
+		slog.String("version", version))
+
 	errCh := make(chan error, 1)
 	go func() {
-		scheme := "http"
-		if tlsConfig != nil {
-			scheme = "https"
-		}
-		slog.Info("サーバを起動した",
-			slog.String("bind", srv.Addr), slog.String("scheme", scheme),
-			slog.String("version", version))
-
 		// **証明書と鍵のパスを渡さない。** TLSConfig.GetCertificate が
 		// 毎ハンドシェイクで選ぶので（Design.md 6.6.1）、起動時に固定しない。
+		//
+		// **Shutdown はここで渡したリスナも閉じる**ので、停止処理は変わらない。
 		var err error
 		if tlsConfig != nil {
-			err = srv.ListenAndServeTLS("", "")
+			err = srv.ServeTLS(ln, "", "")
 		} else {
-			err = srv.ListenAndServe()
+			err = srv.Serve(ln)
 		}
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
