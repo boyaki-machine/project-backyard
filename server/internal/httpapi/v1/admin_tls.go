@@ -14,6 +14,7 @@
 package v1
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -62,8 +63,12 @@ type certificateListResponse struct {
 	// 画面の先頭にそのまま出す。**設定値から画面が組み立てない**——
 	// 待受の変更には再起動が要るので、両者は再起動をまたぐとずれる。
 	ListenURL string `json:"listen_url"`
-	// SecretKeyPresent は secret_key が与えられているか。**値は返さない。**
+	// SecretKeyPresent は鍵が使える状態か。**PB が作るので通常は真である。**
 	SecretKeyPresent bool `json:"secret_key_present"`
+	// SecretKeyOrigin は鍵の出どころ（env / generated）。
+	// **画面に代償を出すために要る**——生成した鍵は DB にあるので、
+	// pg_dump に鍵と暗号文の両方が入る（Design.md 6.6.1）。
+	SecretKeyOrigin string `json:"secret_key_origin"`
 }
 
 // certificateUploadRequest は 11.5 のリクエスト本体。
@@ -83,7 +88,14 @@ func (h *handler) listTLSCertificates(w http.ResponseWriter, r *http.Request) {
 			WithCause(fmt.Errorf("証明書を引けない: %w", err)))
 		return
 	}
-	WriteJSON(w, http.StatusOK, h.buildCertificateList(rows))
+	// **鍵の出どころを画面へ返す。** 生成した鍵は DB にあるので、
+	// pg_dump に鍵と暗号文の両方が入ることを画面が伝える（6.6.1）。
+	_, origin, e := h.secretKey(r.Context())
+	if e != nil {
+		apierr.Write(w, r, e)
+		return
+	}
+	WriteJSON(w, http.StatusOK, h.buildCertificateList(rows, origin))
 }
 
 // uploadTLSCertificate は POST /api/v1/admin/tls/certificates を処理する（11.5）。
@@ -101,9 +113,8 @@ func (h *handler) uploadTLSCertificate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// **鍵が無ければ登録させない**（11.5 が 409）。暗号化して保存できないので、
-	// 受け取っても置き場が無い。
-	key, e := h.secretKey()
+	// **鍵は PB が用意する。** 無ければ作って DB へ保存する（6.6.1）。
+	key, _, e := h.secretKey(r.Context())
 	if e != nil {
 		apierr.Write(w, r, e)
 		return
@@ -187,7 +198,8 @@ func (h *handler) uploadTLSCertificate(w http.ResponseWriter, r *http.Request) {
 	// 出す証明書を選び直す。**登録した瞬間から次の接続で効く**（6.6.1）。
 	rows := h.reloadCertificates(r)
 
-	for _, v := range h.buildCertificateList(rows).Items {
+	_, origin, _ := h.secretKey(r.Context())
+	for _, v := range h.buildCertificateList(rows, origin).Items {
 		if v.ID == id {
 			WriteJSON(w, http.StatusCreated, v)
 			return
@@ -275,16 +287,22 @@ func (h *handler) deleteTLSCertificate(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// secretKey は secret_key を鍵として読む。無ければ 409 を返す。
-func (h *handler) secretKey() ([]byte, *apierr.Error) {
+// secretKey は使う暗号鍵とその出どころを返す（Design.md 6.6.1）。
+//
+//	PB_SECRET_KEY があればそれ ＞ DB の行 ＞ 生成して DB へ保存
+//
+// **利用者の操作を要らなくするため、無ければ PB が作る。** 改訂前は環境変数を
+// 必須にして 409 を返していたが、**証明書を1枚登録するために環境変数の設定と
+// 再起動を要求する形は「設定は WebGUI を第一の口とする」方針と矛盾していた**
+// （stg での利用者の指摘、2026-09-12）。
+func (h *handler) secretKey(ctx context.Context) ([]byte, tlscert.KeyOrigin, *apierr.Error) {
 	encoded := h.settings.Snapshot().String(config.KeySecretKey)
-	key, err := tlscert.DecodeKey(encoded)
+	key, origin, err := tlscert.ResolveKey(ctx, SecretStore{Q: h.q}, encoded)
 	if err != nil {
-		return nil, apierr.New(apierr.Conflict).
-			WithMessage("証明書を登録するには PB_SECRET_KEY の設定が要ります（32バイトを base64 で与えてください）").
-			WithCause(err)
+		return nil, "", apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("暗号鍵を用意できない: %w", err))
 	}
-	return key, nil
+	return key, origin, nil
 }
 
 // tlsActive は実際に TLS で待ち受けているかを返す。
@@ -302,7 +320,7 @@ func (h *handler) reloadCertificates(r *http.Request) []gen.ListTLSCertificatesR
 	if h.certs == nil {
 		return rows
 	}
-	key, e := h.secretKey()
+	key, _, e := h.secretKey(r.Context())
 	if e != nil {
 		return rows
 	}
@@ -311,7 +329,7 @@ func (h *handler) reloadCertificates(r *http.Request) []gen.ListTLSCertificatesR
 }
 
 // buildCertificateList は 11.4 の応答を組み立てる。
-func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow) certificateListResponse {
+func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow, origin tlscert.KeyOrigin) certificateListResponse {
 	entries := make([]tlscert.Entry, 0, len(rows))
 	for _, row := range rows {
 		entries = append(entries, tlscert.Entry{
@@ -347,12 +365,12 @@ func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow) certif
 		items = append(items, v)
 	}
 
-	_, err := tlscert.DecodeKey(h.settings.Snapshot().String(config.KeySecretKey))
 	return certificateListResponse{
 		Items:            items,
 		TLSEnabled:       h.tlsActive(),
 		ListenURL:        h.listenURL,
-		SecretKeyPresent: err == nil,
+		SecretKeyPresent: origin != "",
+		SecretKeyOrigin:  string(origin),
 	}
 }
 

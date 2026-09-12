@@ -204,6 +204,10 @@ type Querier interface {
 	// 無ければ呼び出し側が ended_at と同じ値を渡す（DbDesign.md 8.2.4）。
 	//
 	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) error
+	// 鍵を作る。**既にあれば何もしない**——複数のレプリカが同時に起動したとき、
+	// 先に入れたほうを両方が使うようにするためである。
+	// **書いた／既にあったに関わらず、呼び出し側は改めて GetAppSecret で読む。**
+	CreateAppSecretIfAbsent(ctx context.Context, arg CreateAppSecretIfAbsentParams) error
 	// system_role を引数に取る点だけが CreateAdministrator と違う。
 	CreateAppUser(ctx context.Context, arg CreateAppUserParams) error
 	// コメントに関するクエリ（DbDesign.md 6.7、ApiDesign.md 9.8）。
@@ -563,6 +567,12 @@ type Querier interface {
 	// 呼び出し側は pgx.ErrNoRows を「エージェントではない」として扱う。
 	//
 	GetAgentRuntimeInfo(ctx context.Context, actorID string) (GetAgentRuntimeInfoRow, error)
+	// 秘密の暗号鍵のクエリ（DbDesign.md 6.16、Design.md 6.6.1）。pb-3。
+	//
+	// **PB が初回に生成した鍵を読む／書く。** PB_SECRET_KEY を与えたときは
+	// この表を読まない（環境変数が勝つ）。
+	// 鍵を引く。無ければ行が返らない（初回）。
+	GetAppSecret(ctx context.Context, keyID string) (GetAppSecretRow, error)
 	// 表示上のトップレベルの祖先（自分を含む）を返す（ApiDesign.md 9.6
 	// 「着手したら、オンステージへ上げる」。pb-5）。
 	//

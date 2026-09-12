@@ -4366,7 +4366,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           description: |
-            同じ指紋の証明書が既にある、または `secret_key` が与えられていない（`conflict`）。
+            同じ指紋の証明書が既にある（`conflict`）。
           content:
             application/json:
               schema:
@@ -6765,7 +6765,7 @@ components:
 
     TLSCertificateList:
       type: object
-      required: [items, tls_enabled, listen_url, secret_key_present]
+      required: [items, tls_enabled, listen_url, secret_key_present, secret_key_origin]
       description: |
         ApiDesign.md 11.4。**ページネーションも ETag も持たない**——証明書は数枚である。
       properties:
@@ -6787,7 +6787,15 @@ components:
           example: https://0.0.0.0:8443
         secret_key_present:
           type: boolean
-          description: '`secret_key` が与えられているか。**値は返さない。** 偽なら証明書を登録できない。'
+          description: |
+            鍵が使える状態か。**PB が無ければ作るので通常は真である**（Design.md 6.6.1）。
+        secret_key_origin:
+          type: string
+          enum: [env, generated]
+          description: |
+            `env`（PB_SECRET_KEY で与えられた）／ `generated`（PB が作って DB に保存した）。
+            **鍵そのものは返さない。** 画面が代償を出すために要る——**生成した鍵は DB に
+            あるので、`pg_dump` に鍵と暗号文の両方が入る。**
 
     TLSCertificate:
       type: object

@@ -34,7 +34,9 @@ const listenUrl = ref('')
  */
 const tlsSetting = ref<Setting | null>(null)
 const togglingTls = ref(false)
-const secretKeyPresent = ref(false)
+const secretKeyPresent = ref(true)
+/** 鍵の出どころ（`env` / `generated`）。**生成なら代償を画面に出す** */
+const secretKeyOrigin = ref('')
 const loading = ref(false)
 const loadError = ref<ApiError | null>(null)
 
@@ -93,6 +95,7 @@ async function load() {
     tlsEnabled.value = res.tls_enabled
     listenUrl.value = res.listen_url
     secretKeyPresent.value = res.secret_key_present
+    secretKeyOrigin.value = res.secret_key_origin
     // 0枚なら作り方を開いて出す（初回は必ず要る）。
     if (res.items.length === 0) {
       showSelfSigned.value = true
@@ -106,9 +109,7 @@ async function load() {
 }
 onMounted(load)
 
-const canSubmit = computed(
-  () => secretKeyPresent.value && certPem.value.trim() !== '' && keyPem.value.trim() !== '',
-)
+const canSubmit = computed(() => certPem.value.trim() !== '' && keyPem.value.trim() !== '')
 
 /** 残り日数。**期限切れは画面が見えなくなる事故に直結する**ので気づく面を持たせる */
 function daysLeft(c: TLSCertificate): number {
@@ -146,6 +147,37 @@ async function submit() {
     submitting.value = false
   }
 }
+
+/** 有効化後の待受（`https://…`）。**押す前に何になるかを示す**（利用者の指摘、2026-09-12） */
+const listenUrlIfEnabled = computed(() => listenUrl.value.replace(/^https?:/, 'https:'))
+
+/** `listen_url` のホスト部（ポートを除く）。証明書の名前と突き合わせる */
+const listenHost = computed(() => {
+  const m = /^https?:\/\/([^:/]+)/.exec(listenUrl.value)
+  return m ? m[1] : ''
+})
+
+/**
+ * いま出す証明書が、アクセスに使うホスト名を覆っているか。
+ *
+ * **覆っていないとブラウザが警告を出す。** 押す前に気づける面が要る
+ * （利用者の指摘、2026-09-12）。`*.example.com` の形も見る。
+ *
+ * `null` は「判定できない」（証明書が無い、ホスト名が取れない）。
+ */
+const certCoversHost = computed<boolean | null>(() => {
+  const active = items.value.find((c) => c.status === 'active')
+  if (!active || !listenHost.value) return null
+  const names = active.dns_names.length ? active.dns_names : [active.common_name]
+  return names.some((n) => {
+    if (n === listenHost.value) return true
+    if (n.startsWith('*.')) {
+      const suffix = n.slice(1) // ".example.com"
+      return listenHost.value.endsWith(suffix) && !listenHost.value.slice(0, -suffix.length).includes('.')
+    }
+    return false
+  })
+})
 
 /**
  * `tls_enabled` を切り替える。
@@ -240,6 +272,27 @@ function asApiError(e: unknown): ApiError {
           }}で固定されています（いまの値: {{ tlsSetting.value }}）
         </p>
         <template v-else>
+          <!--
+            **押す前に「何になるか」を示す**（利用者の指摘、2026-09-12）。
+            「エンドポイントがどのアドレス・ドメインなのか、ポート番号は何番なのか
+            わからないので、有効ボタンを押す前に確認がしたい」。
+          -->
+          <dl v-if="tlsSetting.value !== 'true'" class="preview">
+            <dt>有効にすると</dt>
+            <dd><code>{{ listenUrlIfEnabled }}</code> で待ち受けます</dd>
+          </dl>
+
+          <!-- 証明書の名前とアクセス先が合っているか。**合わないとブラウザが警告を出す** -->
+          <p v-if="certCoversHost === false" class="warn">
+            ⚠ いま使う証明書は <code>{{ listenHost }}</code> を覆っていません（証明書の名前:
+            {{ (items.find((c) => c.status === 'active')?.dns_names ?? []).join(', ') || '—' }}）。
+            <strong>このままではブラウザが警告を出します。</strong>
+            アクセスに使うホスト名を SAN に含む証明書を登録してください。
+          </p>
+          <p v-else-if="certCoversHost === true" class="ok">
+            ✓ いま使う証明書は <code>{{ listenHost }}</code> を覆っています
+          </p>
+
           <div class="actions-left">
             <button
               type="button"
@@ -275,9 +328,22 @@ function asApiError(e: unknown): ApiError {
           ——5.8.2 の「選んだ先に何も出ない選択肢を置かない」を、欄そのものへ
           当てたのが誤りだった。**押せないボタンは出さないが、貼る場所は見せる。**
         -->
+        <!--
+          **鍵は PB が用意するので、登録の前に利用者が何かする必要はない**
+          （利用者の決定、2026-09-12）。ただし**既定では代償があるので隠さない。**
+        -->
+        <p v-if="secretKeyOrigin === 'generated'" class="muted note">
+          秘密鍵は PB が生成した鍵で暗号化されます。その鍵は DB にあるため、<strong
+            >データベースのバックアップを持ち出せる人は秘密鍵も取り出せます</strong
+          >。それを防ぐには <code>PB_SECRET_KEY</code> を与えてください（<code
+            >openssl rand -base64 32</code
+          >）。
+        </p>
+        <p v-else-if="secretKeyOrigin === 'env'" class="muted note">
+          秘密鍵は <code>PB_SECRET_KEY</code> で与えられた鍵で暗号化されます。
+        </p>
         <p v-if="!secretKeyPresent" class="error">
-          いまは登録できません。<code>PB_SECRET_KEY</code> を設定して再起動してください。32バイトを
-          base64 で与えます（<code>openssl rand -base64 32</code>）。
+          いまは登録できません。暗号鍵を用意できていません。
         </p>
 
         <label class="field">
@@ -286,7 +352,6 @@ function asApiError(e: unknown): ApiError {
             v-model="certPem"
             rows="6"
             spellcheck="false"
-            :disabled="!secretKeyPresent"
             placeholder="-----BEGIN CERTIFICATE-----"
           ></textarea>
         </label>
@@ -296,7 +361,6 @@ function asApiError(e: unknown): ApiError {
             v-model="keyPem"
             rows="6"
             spellcheck="false"
-            :disabled="!secretKeyPresent"
             placeholder="-----BEGIN PRIVATE KEY-----"
           ></textarea>
         </label>
@@ -467,6 +531,33 @@ function asApiError(e: unknown): ApiError {
   display: flex;
   align-items: center;
   gap: var(--pb-space-3);
+}
+.preview {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pb-space-2);
+  margin: 0 0 var(--pb-space-2);
+  flex-wrap: wrap;
+}
+.preview dt {
+  font-weight: 600;
+  flex: none;
+}
+.preview dd {
+  margin: 0;
+}
+.preview code {
+  font-family: var(--pb-font-mono);
+  word-break: break-all;
+}
+.ok {
+  color: var(--pb-success-fg);
+  font-size: var(--pb-fs-sm);
+  margin: var(--pb-space-1) 0;
+}
+.note {
+  font-size: var(--pb-fs-sm);
+  margin: 0 0 var(--pb-space-2);
 }
 .upload {
   order: 4;

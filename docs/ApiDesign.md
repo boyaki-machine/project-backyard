@@ -3781,7 +3781,8 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
   ],
   "tls_enabled": true,
   "listen_url": "https://0.0.0.0:8443",
-  "secret_key_present": true
+  "secret_key_present": true,
+  "secret_key_origin": "generated"
 }
 ```
 
@@ -3793,7 +3794,8 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 | `status` | `active`（**いま出している1枚**）／ `pending`（`not_before` が未来）／ `expired`（`not_after` を過ぎた）／ `superseded`（有効だが、より新しい有効なものがある） |
 | `tls_enabled` | いま TLS で待ち受けているか。**設定 `tls_enabled` の実効値ではなく、実際の待受の状態である** |
 | `listen_url` | **いま待ち受けているスキームとアドレス**（`https://0.0.0.0:8443`）。画面の先頭にそのまま出す（`GuiDesign.md` 5.12.1） |
-| `secret_key_present` | `secret_key` が与えられているか。**値は返さない。** 偽なら証明書を登録できない |
+| `secret_key_present` | 鍵が使える状態か。**PB が無ければ作るので通常は真である**（`Design.md` 6.6.1） |
+| `secret_key_origin` | `env`（`PB_SECRET_KEY` で与えられた）／ `generated`（PB が作って DB に保存した）。**鍵そのものは返さない。** 画面が代償を出すために要る——**生成した鍵は DB にあるので、`pg_dump` に鍵と暗号文の両方が入る** |
 
 `items[]` は `not_before` の降順。**ページネーションも `ETag` も持たない**——証明書は数枚である。
 
@@ -3827,8 +3829,12 @@ TLS で待ち受けているかを見る。
 - 成功 → `201`。本文は 11.4 の `items[]` の要素1件
 - PEM として読めない／証明書と鍵が対応しない → `422 validation_failed`
 - 同じ指紋の証明書が既にある → `409 conflict`
-- `secret_key` が与えられていない → `409 conflict`
 - 期限が切れている証明書 → `422 validation_failed`
+
+**鍵が無いことを理由に断らない**（改訂、2026-09-12）。**改訂前は `secret_key` が
+無ければ `409` を返していた**が、**証明書を1枚登録するために環境変数の設定と再起動を
+要求する形は「設定は WebGUI を第一の口とする」方針と矛盾していた**（stg での利用者の
+指摘）。**いまは無ければ PB が作る**（`Design.md` 6.6.1）。
 
 **証明書と鍵が対応することを登録時に確かめる**（`tls.X509KeyPair` と同じ検証）。
 **ここで弾かないと、ハンドシェイクの時刻まで誤りが見つからない**——そのときにはもう
