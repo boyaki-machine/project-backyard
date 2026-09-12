@@ -616,8 +616,11 @@ type Querier interface {
 	// **seq を返すのは、SetTicketStatus が project_id と seq で更新するためである。**
 	// id で更新する口を別に作ると、同じ更新が2通りになる。
 	GetParentForCascade(ctx context.Context, childID string) (GetParentForCascadeRow, error)
-	// 未確認を引く。**画面が残り時間を出すために使う。**
-	GetPendingSettingChange(ctx context.Context) (PendingSettingChange, error)
+	// 未確認を引く。**画面が残り時間と「誰が変えたか」を出すために使う。**
+	//
+	// **変えた人の表示名も返す**（pb-107）。画面は「あなたが変えました」と
+	// 「〇〇 が変えました」で文言を分ける——押す前に確かめることが違う。
+	GetPendingSettingChange(ctx context.Context) (GetPendingSettingChangeRow, error)
 	// ── 詳細（ApiDesign.md 5.4。POST /projects の応答も同じ形）───────
 	// GetProjectByKey は1プロジェクトの本体とワークフローの見出しを返す。
 	//

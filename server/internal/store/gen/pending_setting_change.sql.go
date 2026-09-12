@@ -83,22 +83,45 @@ func (q *Queries) DeletePendingSettingChange(ctx context.Context, id string) (in
 }
 
 const getPendingSettingChange = `-- name: GetPendingSettingChange :one
-SELECT id, previous, expires_at, created_at, created_by
-FROM pending_setting_change
-ORDER BY created_at DESC
+SELECT
+  p.id,
+  p.previous,
+  p.expires_at,
+  p.created_at,
+  p.created_by,
+  a.kind AS created_by_kind,
+  a.display_name AS created_by_display_name
+FROM pending_setting_change p
+LEFT JOIN actor a ON a.id = p.created_by
+ORDER BY p.created_at DESC
 LIMIT 1
 `
 
-// 未確認を引く。**画面が残り時間を出すために使う。**
-func (q *Queries) GetPendingSettingChange(ctx context.Context) (PendingSettingChange, error) {
+type GetPendingSettingChangeRow struct {
+	ID                   string
+	Previous             []byte
+	ExpiresAt            pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	CreatedBy            pgtype.Text
+	CreatedByKind        pgtype.Text
+	CreatedByDisplayName pgtype.Text
+}
+
+// 未確認を引く。**画面が残り時間と「誰が変えたか」を出すために使う。**
+//
+// **変えた人の表示名も返す**（pb-107）。画面は「あなたが変えました」と
+// 「〇〇 が変えました」で文言を分ける——押す前に確かめることが違う。
+func (q *Queries) GetPendingSettingChange(ctx context.Context) (GetPendingSettingChangeRow, error) {
 	row := q.db.QueryRow(ctx, getPendingSettingChange)
-	var i PendingSettingChange
+	var i GetPendingSettingChangeRow
 	err := row.Scan(
 		&i.ID,
 		&i.Previous,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.CreatedBy,
+		&i.CreatedByKind,
+		&i.CreatedByDisplayName,
 	)
 	return i, err
 }

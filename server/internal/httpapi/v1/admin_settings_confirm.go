@@ -35,12 +35,17 @@ import (
 // 誤ったときに戻せない**——10.3 の「反映の間隔を設定にしない」と同じ形である。
 const ConfirmWindow = 300 * time.Second
 
-// pendingView は 11.1 / 11.2 の pending_confirmation。
+// pendingView は 11.1 / 11.2 / 11.9 の pending_confirmation。
 type pendingView struct {
 	// Keys は確認を待っているキー。**1回の保存を1件として扱う**（11.2）。
 	Keys []string `json:"keys"`
 	// ExpiresAt を過ぎると元へ戻る。画面は残り時間をここから出す。
 	ExpiresAt time.Time `json:"expires_at"`
+	// ChangedBy は変えた人（分からなければ null）。pb-107。
+	//
+	// **画面が文言を分けるために要る**——「あなたが変えました」と
+	// 「別の人が変えました」では、押す前に確かめることが違う。
+	ChangedBy *actorRef `json:"changed_by"`
 }
 
 // confirmKeys は「確認が要る」設定のキー集合。
@@ -64,7 +69,7 @@ func decodePrevious(blob []byte) (map[string]*string, error) {
 }
 
 // pendingFromRow は行を画面向けの形にする。
-func pendingFromRow(row gen.PendingSettingChange) (*pendingView, error) {
+func pendingFromRow(row gen.GetPendingSettingChangeRow) (*pendingView, error) {
 	prev, err := decodePrevious(row.Previous)
 	if err != nil {
 		return nil, err
@@ -75,7 +80,16 @@ func pendingFromRow(row gen.PendingSettingChange) (*pendingView, error) {
 	}
 	// **並びを固定する。** 応答が呼ぶたびに変わると、画面の差分が無駄に動く。
 	sortStrings(keys)
-	return &pendingView{Keys: keys, ExpiresAt: row.ExpiresAt.Time.UTC()}, nil
+
+	view := &pendingView{Keys: keys, ExpiresAt: row.ExpiresAt.Time.UTC()}
+	if row.CreatedBy.Valid {
+		view.ChangedBy = &actorRef{
+			ID:          row.CreatedBy.String,
+			Kind:        row.CreatedByKind.String,
+			DisplayName: row.CreatedByDisplayName.String,
+		}
+	}
+	return view, nil
 }
 
 func sortStrings(s []string) {
@@ -403,4 +417,35 @@ func (h *handler) withPending(r *http.Request, res settingsResponse) settingsRes
 	}
 	res.PendingConfirmation = view
 	return res
+}
+
+// pendingResponse は 11.9 の応答。
+type pendingResponse struct {
+	// PendingConfirmation は確認を待っている変更（無ければ null）。
+	PendingConfirmation *pendingView `json:"pending_confirmation"`
+}
+
+// getPendingSettings は GET /api/v1/admin/settings/pending を処理する（11.9。pb-107）。
+//
+// **設定一覧と分けて軽い口にする。** 画面はこれを定期的に引いて、**どの画面に
+// いても未確認を出す**（GuiDesign.md 2.6）。全設定の一覧をポーリングで運ぶのは無駄である。
+//
+// **権限は設定一覧と同じ `system.settings`。** 一般利用者に「いま管理者が設定を
+// 変えている」を見せる必要はなく、**確認を押す権限も無い。**
+func (h *handler) getPendingSettings(w http.ResponseWriter, r *http.Request) {
+	row, err := h.q.GetPendingSettingChange(r.Context())
+	if errors.Is(err, pgx.ErrNoRows) {
+		WriteJSON(w, http.StatusOK, pendingResponse{})
+		return
+	} else if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("未確認の変更を引けない: %w", err)))
+		return
+	}
+	view, err := pendingFromRow(row)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+		return
+	}
+	WriteJSON(w, http.StatusOK, pendingResponse{PendingConfirmation: view})
 }

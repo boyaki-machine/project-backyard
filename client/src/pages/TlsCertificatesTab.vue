@@ -228,10 +228,16 @@ async function toggleTls(next: boolean) {
     await settingsApi.putSettings([{ key: 'tls_enabled', value: next ? 'true' : 'false' }])
     // **切り替えは即時に効く**（pb-106）。**この画面はもう届かない**——
     // ブラウザは同じスキームで叩き続けるので、読み直さずに新しい URL を案内する。
+    // **確認と期限を必ず書く**（pb-107。利用者の指摘、2026-09-12）。
+    // 改訂前は「開き直してください」だけで、**押さないと300秒で戻ることが
+    // どこにも書かれていなかった。**
+    const confirmNote =
+      '開き直したら画面下の「アクセスできました」を押してください。' +
+      '押さないまま300秒が過ぎると、元の設定へ戻ります。'
     notice.value = next
-      ? `TLS で待ち受けるようにしました。${listenUrlIfEnabled.value} で開き直してください。` +
+      ? `TLS で待ち受けるようにしました。${listenUrlIfEnabled.value} で開き直してください。${confirmNote}` +
         '（切り替わらなかったときは証明書を確かめてください）'
-      : `平文で待ち受けるようにしました。${listenUrl.value.replace(/^https:/, 'http:')} で開き直してください。`
+      : `平文で待ち受けるようにしました。${listenUrl.value.replace(/^https:/, 'http:')} で開き直してください。${confirmNote}`
   } catch (e: unknown) {
     actionError.value = asApiError(e)
   } finally {

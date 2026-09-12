@@ -4216,6 +4216,39 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/admin/settings/pending:
+    get:
+      tags: [settings]
+      summary: 確認を待っている設定変更
+      operationId: getPendingSettings
+      description: |
+        確認を待っている変更だけを返す（ApiDesign.md 11.9）。pb-107。
+        **必要権限は `system.settings`。**
+
+        **設定一覧と分けた軽い口である。** 画面はこれを定期的に引いて、
+        **どの画面にいても未確認を出す**（GuiDesign.md 2.6）。全設定の一覧を
+        ポーリングで運ぶのは無駄である。
+
+        **一般利用者には見せない。** 「いま管理者が設定を変えている」を見せる
+        必要はなく、確認を押す権限も無い。
+      responses:
+        '200':
+          description: 未確認の変更（無ければ `pending_confirmation` は `null`）。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pending_confirmation]
+                properties:
+                  pending_confirmation:
+                    oneOf:
+                      - $ref: '#/components/schemas/PendingConfirmation'
+                      - type: 'null'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /api/v1/admin/settings/confirm:
     post:
       tags: [settings]
@@ -6756,7 +6789,7 @@ components:
 
     PendingConfirmation:
       type: object
-      required: [keys, expires_at]
+      required: [keys, expires_at, changed_by]
       description: |
         締め出されうる設定の未確認の変更（ApiDesign.md 11.8、DbDesign.md 6.17）。
 
@@ -6772,6 +6805,15 @@ components:
           type: string
           format: date-time
           description: これを過ぎると元の値へ戻る。
+        changed_by:
+          oneOf:
+            - $ref: '#/components/schemas/ActorRef'
+            - type: 'null'
+          description: |
+            変えた人（分からなければ `null`）。pb-107。
+
+            **画面が文言を分けるために要る**——「あなたが変えました」と
+            「田中 が変えました」では、押す前に確かめることが違う。
 
     Setting:
       type: object

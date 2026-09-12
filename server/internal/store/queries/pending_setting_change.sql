@@ -11,11 +11,22 @@ INSERT INTO pending_setting_change (id, previous, expires_at, created_by)
 VALUES (@id, @previous, @expires_at, @created_by)
 RETURNING id, previous, expires_at, created_at;
 
--- 未確認を引く。**画面が残り時間を出すために使う。**
+-- 未確認を引く。**画面が残り時間と「誰が変えたか」を出すために使う。**
+--
+-- **変えた人の表示名も返す**（pb-107）。画面は「あなたが変えました」と
+-- 「〇〇 が変えました」で文言を分ける——押す前に確かめることが違う。
 -- name: GetPendingSettingChange :one
-SELECT id, previous, expires_at, created_at, created_by
-FROM pending_setting_change
-ORDER BY created_at DESC
+SELECT
+  p.id,
+  p.previous,
+  p.expires_at,
+  p.created_at,
+  p.created_by,
+  a.kind AS created_by_kind,
+  a.display_name AS created_by_display_name
+FROM pending_setting_change p
+LEFT JOIN actor a ON a.id = p.created_by
+ORDER BY p.created_at DESC
 LIMIT 1;
 
 -- 期限が来たものを全部引く。**起動時の点検と、プロセス内のタイマが使う。**

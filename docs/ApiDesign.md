@@ -3779,12 +3779,15 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
   "config_file_path": null,
   "pending_confirmation": {
     "keys": ["tls_enabled"],
-    "expires_at": "2026-09-12T12:05:00Z"
+    "expires_at": "2026-09-12T12:05:00Z",
+    "changed_by": { "id": "01K2...", "kind": "user", "display_name": "田中" }
   }
 }
 ```
 
 **画面は残り時間をここから出す**（`GuiDesign.md` 5.12）。`expires_at` を過ぎると元の値へ戻る。
+
+**`changed_by` は文言を分けるために要る**（pb-107）。「あなたが変えました」と「田中 が変えました」では、**押す前に確かめることが違う。** 分からなければ `null`。
 
 **引けなくても応答を落とさない。** 未確認の有無は設定一覧の付随情報であり、ここで `500` にすると**締め出しの手当てが設定画面自体を壊す**ことになる。
 
@@ -4051,6 +4054,26 @@ Content-Disposition: attachment; filename="pb.example.com.crt"
 ### 期限は 300 秒で、設定にしない
 
 **設定にすると、その設定自身を誤ったときに戻せない**（`Design.md` 10.3 の「反映の間隔を設定にしない」と同じ形）。
+
+## 11.9 `GET /api/v1/admin/settings/pending`
+
+**必要権限**：`system.settings`
+
+**確認を待っている変更だけを返す**（pb-107）。無ければ `pending_confirmation` は `null`。
+
+```json
+{ "pending_confirmation": { "keys": ["tls_enabled"], "expires_at": "…", "changed_by": { … } } }
+```
+
+### 設定一覧と分けて軽い口にする
+
+**画面はこれを定期的に引く。** どの画面にいても未確認を出すためで（`GuiDesign.md` 2.6）、**全設定の一覧をポーリングで運ぶのは無駄である。**
+
+**間隔は30秒**（利用者の判断、2026-09-12）。300秒の窓に対して十分で、他の管理者の変更に最悪30秒遅れて気づく。**設定にしない**（`Design.md` 10.3）。
+
+### 一般利用者には見せない
+
+**権限は設定一覧と同じ `system.settings`。** 一般利用者に「いま管理者が設定を変えている」を見せる必要はなく、**確認を押す権限も無い**（11.8）。画面は権限を持つ人だけがこの口を引く。
 
 ---
 

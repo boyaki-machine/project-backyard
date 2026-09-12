@@ -14,13 +14,13 @@ import (
 )
 
 // pendingRow は未確認の記録を1件作る。
-func pendingRow(t *testing.T, previous map[string]*string, expiresIn time.Duration) gen.PendingSettingChange {
+func pendingRow(t *testing.T, previous map[string]*string, expiresIn time.Duration) gen.GetPendingSettingChangeRow {
 	t.Helper()
 	blob, err := json.Marshal(previous)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return gen.PendingSettingChange{
+	return gen.GetPendingSettingChangeRow{
 		ID:        "01K2F8QW3H7YRJ4M5N6P7Q8PND",
 		Previous:  blob,
 		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(expiresIn), Valid: true},
