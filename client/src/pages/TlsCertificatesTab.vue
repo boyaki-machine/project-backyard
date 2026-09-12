@@ -20,6 +20,7 @@ import { formatDateTime } from '../lib/datetime'
 
 const items = ref<TLSCertificate[]>([])
 const tlsEnabled = ref(false)
+const listenUrl = ref('')
 const secretKeyPresent = ref(false)
 const loading = ref(false)
 const loadError = ref<ApiError | null>(null)
@@ -37,6 +38,16 @@ const deleting = ref<TLSCertificate | null>(null)
 /** 作り方の折りたたみ。**0枚のときは開いて出す**（5.12.1） */
 const showSelfSigned = ref(false)
 const showFormal = ref(false)
+
+/**
+ * **0枚のときだけ貼り付け欄を一覧より先に出す**（利用者の決定、2026-09-12）。
+ *
+ * 初回は貼る場所がすぐ見つかり、運用中は期限と使用中が先頭に来る。
+ * 順が状態で変わるのは代償だが、**どちらの場面でも「いま見たいもの」が上に来る**
+ * ほうを採った。**位置は CSS の order で変える**——v-if で2か所に書くと、
+ * 同じ markup が2つになり片方だけ直す事故を生む。
+ */
+const uploadFirst = computed(() => items.value.length === 0)
 
 /** 状態の札（5.12.1） */
 const STATUS_LABEL: Record<CertificateStatus, string> = {
@@ -63,6 +74,7 @@ async function load() {
     const res = await settingsApi.getCertificates()
     items.value = res.items
     tlsEnabled.value = res.tls_enabled
+    listenUrl.value = res.listen_url
     secretKeyPresent.value = res.secret_key_present
     // 0枚なら作り方を開いて出す（初回は必ず要る）。
     if (res.items.length === 0) {
@@ -158,67 +170,35 @@ function asApiError(e: unknown): ApiError {
     <p v-else-if="loadError" class="error" role="alert">{{ loadError.message }}</p>
 
     <template v-else>
-      <p class="state">
-        <template v-if="tlsEnabled">いま HTTPS で待ち受けています</template>
-        <template v-else
-          >いま HTTP で待ち受けています。証明書を登録したあと、「一般」タブの<strong
-            >TLS で待ち受ける</strong
-          >を有効にして再起動してください</template
-        >
-      </p>
+      <!--
+        ① 動作状況。**説明文ではなく値を出す**（利用者の指示、2026-09-12）。
+        待受のスキームとホストとポートがそのまま読めるようにする。
+      -->
+      <dl class="status">
+        <dt>動作状況</dt>
+        <dd>
+          <code :class="{ secure: tlsEnabled }">{{ listenUrl }}</code>
+          <span class="muted note">
+            <template v-if="tlsEnabled">TLS で終端しています</template>
+            <template v-else>TLS は無効です</template>
+          </span>
+        </dd>
+      </dl>
 
       <p v-if="notice" class="notice" role="status">{{ notice }}</p>
       <p v-if="actionError" class="error" role="alert">{{ actionError.message }}</p>
 
-      <p v-if="items.length === 0" class="muted">まだ証明書が登録されていません。</p>
-
-      <div v-for="c in items" :key="c.id" class="cert" :class="`st-${c.status}`">
-        <div class="head">
-          <span class="cn">{{ c.common_name }}</span>
-          <span class="badge" :class="`st-${c.status}`">{{ STATUS_LABEL[c.status] }}</span>
-          <span class="muted kind">{{ c.is_self_signed ? '自己署名' : '認証局発行' }}</span>
-        </div>
-
-        <p class="period">
-          {{ new Date(c.not_before).toLocaleDateString('ja-JP') }} 〜
-          {{ new Date(c.not_after).toLocaleDateString('ja-JP') }}
-          <span v-if="c.status === 'active'" :class="{ warn: daysLeft(c) < 30 }">
-            （あと {{ daysLeft(c) }} 日）
-          </span>
-        </p>
-
-        <!-- 「いつから使われるか」は、自動で切り替わることを確かめられる唯一の場所 -->
-        <p v-if="c.status === 'pending'" class="from">
-          <strong>{{ formatDateTime(c.not_before) }} から自動で使われます</strong>
-        </p>
-
-        <p v-if="c.dns_names.length" class="muted san">SAN: {{ c.dns_names.join(', ') }}</p>
-        <p class="muted fp">指紋: {{ c.fingerprint }}</p>
-        <p class="muted by">
-          {{ formatDateTime(c.uploaded_at) }}
-          <template v-if="c.uploaded_by">{{ c.uploaded_by.display_name }} が登録</template>
-        </p>
-
-        <div class="foot">
-          <button v-if="canDelete(c)" type="button" class="link danger" @click="deleting = c">
-            削除
-          </button>
-          <span v-else class="muted"
-            >これを消すと HTTPS で待ち受けられなくなります。平文へ戻すには「一般」タブの<strong
-              >TLS で待ち受ける</strong
-            >を無効にしてください</span
-          >
-        </div>
-      </div>
-
-      <!-- ── 登録 ─────────────────────────────────────── -->
-      <section class="upload">
+      <!--
+        ② 貼り付け。**DOM は1つだけ置き、位置は CSS の order で変える。**
+        0枚のときだけ一覧より先に来る。
+      -->
+      <section class="block upload" :class="{ 'upload-first': uploadFirst }">
         <h3>証明書を登録する</h3>
 
         <!-- 選んだ先に何も出ない選択肢を置かない（5.8.2 の規則） -->
         <p v-if="!secretKeyPresent" class="error">
-          証明書を登録するには <code>PB_SECRET_KEY</code> の設定が要ります。32バイトを
-          base64 で与えてください（<code>openssl rand -base64 32</code>）。
+          証明書を登録するには <code>PB_SECRET_KEY</code> の設定が要ります。32バイトを base64
+          で与えてください（<code>openssl rand -base64 32</code>）。
         </p>
 
         <template v-else>
@@ -245,20 +225,72 @@ function asApiError(e: unknown): ApiError {
             >。手元の鍵を残しておいてください。
           </p>
           <div class="actions">
-            <button type="button" class="primary" :disabled="!canSubmit || submitting" @click="submit">
+            <button
+              type="button"
+              class="primary"
+              :disabled="!canSubmit || submitting"
+              @click="submit"
+            >
               {{ submitting ? '登録中…' : '登録' }}
             </button>
           </div>
         </template>
       </section>
 
-      <!-- ── 作り方（利用者の指示、2026-09-11）───────────── -->
-      <section class="howto">
+      <!-- ③ 登録済みの証明書 -->
+      <section class="block list">
+        <h3>登録済みの証明書</h3>
+        <p v-if="items.length === 0" class="muted">まだ証明書が登録されていません。</p>
+
+        <div v-for="c in items" :key="c.id" class="cert" :class="`st-${c.status}`">
+          <div class="head">
+            <span class="cn">{{ c.common_name }}</span>
+            <span class="badge" :class="`st-${c.status}`">{{ STATUS_LABEL[c.status] }}</span>
+            <span class="muted kind">{{ c.is_self_signed ? '自己署名' : '認証局発行' }}</span>
+          </div>
+
+          <p class="period">
+            {{ new Date(c.not_before).toLocaleDateString('ja-JP') }} 〜
+            {{ new Date(c.not_after).toLocaleDateString('ja-JP') }}
+            <span v-if="c.status === 'active'" :class="{ warn: daysLeft(c) < 30 }"
+              >（あと {{ daysLeft(c) }} 日）</span
+            >
+          </p>
+
+          <!-- 「いつから使われるか」は、自動で切り替わることを確かめられる唯一の場所 -->
+          <p v-if="c.status === 'pending'" class="from">
+            <strong>{{ formatDateTime(c.not_before) }} から自動で使われます</strong>
+          </p>
+
+          <p v-if="c.dns_names.length" class="muted san">SAN: {{ c.dns_names.join(', ') }}</p>
+          <p class="muted fp">指紋: {{ c.fingerprint }}</p>
+          <p class="muted by">
+            {{ formatDateTime(c.uploaded_at) }}
+            <template v-if="c.uploaded_by">{{ c.uploaded_by.display_name }} が登録</template>
+          </p>
+
+          <div class="foot">
+            <button v-if="canDelete(c)" type="button" class="link danger" @click="deleting = c">
+              削除
+            </button>
+            <span v-else class="muted"
+              >これを消すと HTTPS で待ち受けられなくなります。平文へ戻すには「一般」タブの<strong
+                >TLS で待ち受ける</strong
+              >を無効にしてください</span
+            >
+          </div>
+        </div>
+      </section>
+
+      <!-- ④ 作り方。**セクションを分け、必要なところだけ開く**（利用者の指示） -->
+      <section class="block howto">
+        <h3>証明書の作り方</h3>
+
         <details :open="showSelfSigned">
-          <summary>自己署名証明書の作り方（openssl）</summary>
+          <summary>自己署名証明書を作る（openssl）</summary>
           <p class="muted">
-            開発端末や LAN の中で試すときに使います。ブラウザは警告を出しますが、PB の
-            動作は認証局発行の証明書と変わりません。
+            開発端末や LAN の中で試すときに使います。ブラウザは警告を出しますが、PB の動作は
+            認証局発行の証明書と変わりません。
           </p>
           <pre>{{ SELF_SIGNED_CMD }}</pre>
           <button type="button" class="link" @click="copy(SELF_SIGNED_CMD)">コピー</button>
@@ -280,26 +312,30 @@ function asApiError(e: unknown): ApiError {
         <details :open="showFormal">
           <summary>認証局が発行した証明書を登録する</summary>
           <p class="muted">
-            サイバートラスト・DigiCert・GlobalSign・Let's Encrypt など、発行元によらず
-            手順は同じです。
+            サイバートラスト・DigiCert・GlobalSign・Let's Encrypt など、発行元によらず手順は
+            同じです。
           </p>
           <p class="muted"><strong>① 秘密鍵と CSR を作る</strong></p>
           <pre>{{ CSR_CMD }}</pre>
           <button type="button" class="link" @click="copy(CSR_CMD)">コピー</button>
           <p class="muted">
-            <code>pb.key</code> は手元に残し、<strong>発行元には渡しません</strong>。
-            <code>pb.csr</code> を発行元の申込画面へ提出します。
+            <code>pb.key</code> は手元に残し、<strong>発行元には渡しません</strong>。<code
+              >pb.csr</code
+            >
+            を発行元の申込画面へ提出します。
           </p>
           <p class="muted"><strong>② 受け取ったものを1つにまとめる</strong></p>
           <p class="muted">
-            発行元からはサーバ証明書と中間証明書が別々に届くことが多いです。証明書の欄には
-            <strong>サーバ証明書 → 中間証明書の順</strong>で続けて貼ってください。逆にすると
-            「証明書が信頼できない」と出ます。<strong>ルート証明書は貼らなくてよい</strong>です。
+            発行元からはサーバ証明書と中間証明書が別々に届くことが多いです。証明書の欄には<strong
+              >サーバ証明書 → 中間証明書の順</strong
+            >で続けて貼ってください。逆にすると「証明書が信頼できない」と出ます。<strong
+              >ルート証明書は貼らなくてよい</strong
+            >です。
           </p>
           <p class="muted"><strong>③ 更新するとき</strong></p>
           <p class="muted">
-            <strong>古いものを消さずに、新しいものを登録します。</strong> 新しい証明書が
-            有効になった時点で自動的に切り替わり、再起動は要りません。
+            <strong>古いものを消さずに、新しいものを登録します。</strong>
+            新しい証明書が有効になった時点で自動的に切り替わり、再起動は要りません。
           </p>
         </details>
 
@@ -327,7 +363,77 @@ function asApiError(e: unknown): ApiError {
 
 <style scoped>
 .tab {
+  /* スクロールは親（AppSettingsPage の .page-body）が持つ */
   padding-block: var(--pb-space-3);
+
+  /*
+   * **並びは order で決める**（利用者の指示、2026-09-12）。
+   * ①動作状況 → ②貼り付け → ③一覧 → ④作り方。
+   * **証明書が1枚以上あるときだけ、貼り付けを一覧の後ろへ送る。**
+   */
+  display: flex;
+  flex-direction: column;
+}
+.status {
+  order: 1;
+}
+.notice,
+.error {
+  order: 2;
+}
+.upload {
+  order: 4;
+}
+.upload.upload-first {
+  order: 3;
+}
+.list {
+  order: 3;
+}
+.howto {
+  order: 5;
+}
+
+/* ① 動作状況。**説明文ではなく値を出す** */
+.status {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pb-space-3);
+  margin: 0 0 var(--pb-space-4);
+  flex-wrap: wrap;
+}
+.status dt {
+  font-weight: 600;
+  flex: none;
+}
+.status dd {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--pb-space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.status code {
+  font-family: var(--pb-font-mono);
+  font-size: var(--pb-fs-md);
+  word-break: break-all;
+}
+.status code.secure {
+  color: var(--pb-success-fg);
+}
+.status .note {
+  font-size: var(--pb-fs-sm);
+}
+
+.block {
+  margin-bottom: var(--pb-space-5);
+}
+.block h3 {
+  font-size: var(--pb-fs-md);
+  margin: 0 0 var(--pb-space-2);
+  border-bottom: 1px solid var(--pb-border);
+  padding-bottom: var(--pb-space-1);
 }
 .muted {
   color: var(--pb-fg-muted);
@@ -340,9 +446,6 @@ function asApiError(e: unknown): ApiError {
 }
 .warn {
   color: var(--pb-warning-fg);
-}
-.state {
-  margin: 0 0 var(--pb-space-3);
 }
 .cert {
   border: 1px solid var(--pb-border);
@@ -395,16 +498,6 @@ function asApiError(e: unknown): ApiError {
 .foot {
   margin-top: var(--pb-space-2);
   font-size: var(--pb-fs-sm);
-}
-.upload,
-.howto {
-  margin-top: var(--pb-space-5);
-  border-top: 1px solid var(--pb-border);
-  padding-top: var(--pb-space-3);
-}
-.upload h3 {
-  font-size: var(--pb-fs-md);
-  margin: 0 0 var(--pb-space-2);
 }
 .field {
   display: block;

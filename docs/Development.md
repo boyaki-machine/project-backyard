@@ -535,6 +535,22 @@ window.set = window.set || function (el, v) {
   つもりの文字列が前に付き、印による後片付けが空振りした）。**置き換えたいときは
   全選択してから入れる**——`Input.dispatchKeyEvent` に `commands: ["selectAll"]` を添える。
 
+- **`captureBeyondViewport: true` は「画面の下が切れている」を隠す。** 文書全体を1枚に
+  収めるモードなので、**ビューポートに収まらない部分も描画される**——スクロールできない
+  作りでも、スクリーンショットには全部写る。**スクロールは座標ではなく実測で確かめる。**
+
+  ```js
+  const el = document.querySelector('.page-body')
+  JSON.stringify({ scrollH: el.scrollHeight, clientH: el.clientHeight,
+                   canScroll: el.scrollHeight > el.clientHeight,
+                   overflow: getComputedStyle(el).overflowY })
+  ```
+
+  **`AppShell` の `.content` は `overflow: hidden` で、各ページが自前のスクロール枠を
+  持つ約束である**（`UsersPage` の `.page-body`）。置き忘れると下が切れて操作できない。
+  **pb-3 の設定画面でこれを踏み、自動検証は全 PASS のまま stg で利用者が見つけた**
+  （2026-09-12）。**下までスクロールして最下部の要素が見えることまで測る。**
+
 - **`Page.captureScreenshot` の `captureBeyondViewport: true` では `position: fixed` の要素が写らない。**
   文書全体を1枚に収めるモードなので、画面に固定した要素（`<Teleport>` で body へ出した
   ドロップダウンやメニュー）が抜ける。**開いたパネルを撮るときは `false` にする**

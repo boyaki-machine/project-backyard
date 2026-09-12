@@ -51,6 +51,8 @@ type Deps struct {
 	// TLSListening は実際に TLS で待ち受けているか。**設定の実効値ではない**
 	// ——設定を変えても再起動までは待受が変わらないためである。
 	TLSListening bool
+	// ListenURL は実際に待ち受けているスキームとアドレス（ApiDesign.md 11.4）。
+	ListenURL string
 }
 
 // BasePath は API のベースパス（ApiDesign.md 2.1）。
@@ -129,6 +131,7 @@ func NewRouter(deps Deps) http.Handler {
 		OnSettingsChanged: deps.OnSettingsChanged,
 		Certs:             deps.Certs,
 		TLSListening:      deps.TLSListening,
+		ListenURL:         deps.ListenURL,
 	}
 
 	r.Route(BasePath, func(r chi.Router) {

@@ -3780,6 +3780,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
       "uploaded_by": { "id": "01K2...", "kind": "user", "display_name": "田中" } }
   ],
   "tls_enabled": true,
+  "listen_url": "https://0.0.0.0:8443",
   "secret_key_present": true
 }
 ```
@@ -3791,9 +3792,20 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 |---|---|
 | `status` | `active`（**いま出している1枚**）／ `pending`（`not_before` が未来）／ `expired`（`not_after` を過ぎた）／ `superseded`（有効だが、より新しい有効なものがある） |
 | `tls_enabled` | いま TLS で待ち受けているか。**設定 `tls_enabled` の実効値ではなく、実際の待受の状態である** |
+| `listen_url` | **いま待ち受けているスキームとアドレス**（`https://0.0.0.0:8443`）。画面の先頭にそのまま出す（`GuiDesign.md` 5.12.1） |
 | `secret_key_present` | `secret_key` が与えられているか。**値は返さない。** 偽なら証明書を登録できない |
 
 `items[]` は `not_before` の降順。**ページネーションも `ETag` も持たない**——証明書は数枚である。
+
+### `listen_url` をサーバが組み立てる理由
+
+**画面が `bind` の設定値から組み立てない。** 待受の変更には再起動が要るので（`Design.md` 10.3）、
+**設定の値と実際の待受は再起動をまたぐとずれる。** 画面が設定値から組み立てると、
+ずれている間ずっと嘘を表示することになる。**サーバは自分が何で待ち受けているかを
+知っている唯一の者である。**
+
+**スキームも同じ理由でサーバが決める。** `tls_enabled` の実効値ではなく、実際に
+TLS で待ち受けているかを見る。
 
 ### `status` をサーバが決める理由
 

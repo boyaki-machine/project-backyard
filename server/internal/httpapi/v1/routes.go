@@ -53,6 +53,8 @@ type Deps struct {
 	Certs *tlscert.Holder
 	// TLSListening は実際に TLS で待ち受けているか。
 	TLSListening bool
+	// ListenURL は実際に待ち受けているスキームとアドレス（ApiDesign.md 11.4）。
+	ListenURL string
 }
 
 // Mount は /api/v1 のルートを r に並べる。
@@ -78,6 +80,7 @@ func Mount(r chi.Router, deps Deps) {
 		onSettingsChanged: deps.OnSettingsChanged,
 		certs:             deps.Certs,
 		tlsListening:      deps.TLSListening,
+		listenURL:         deps.ListenURL,
 	}
 
 	// ── 認証不要 ────────────────────────────────
@@ -559,4 +562,8 @@ type handler struct {
 	// tlsListening は実際に TLS で待ち受けているか。**設定の実効値ではない**
 	// ——設定を変えても再起動までは待受が変わらないためである。
 	tlsListening bool
+
+	// listenURL は実際に待ち受けているスキームとアドレス（ApiDesign.md 11.4）。
+	// **設定の bind から画面が組み立てない**ので、ここで組み立てて渡す。
+	listenURL string
 }

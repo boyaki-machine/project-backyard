@@ -93,6 +93,7 @@ func serve(ctx context.Context) error {
 			},
 			Certs:        certs,
 			TLSListening: tlsConfig != nil,
+			ListenURL:    listenURL(set.String(config.KeyBind), tlsConfig != nil),
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
@@ -151,6 +152,18 @@ func serve(ctx context.Context) error {
 // レベルだけなら差し替えが要らず、形式（json / text）が変わったときだけ
 // ハンドラを組み直す（pb-2、Design.md 10.3 の第2層）。
 var logLevelVar = new(slog.LevelVar)
+
+// listenURL は待受のスキームとアドレスを組み立てる（ApiDesign.md 11.4）。
+//
+// **画面が bind の設定値から組み立てない**ので、実際に待ち受ける側で作る。
+// 待受の変更には再起動が要るため、設定の値と実際の待受は再起動をまたぐとずれる。
+func listenURL(bind string, tls bool) string {
+	scheme := "http"
+	if tls {
+		scheme = "https"
+	}
+	return scheme + "://" + bind
+}
 
 // setupTLS は TLS の待受を準備する（Design.md 6.6.1）。
 //

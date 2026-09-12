@@ -58,6 +58,10 @@ type certificateListResponse struct {
 	Items []certificateView `json:"items"`
 	// TLSEnabled は**実際の待受の状態**である（設定の実効値ではない）。
 	TLSEnabled bool `json:"tls_enabled"`
+	// ListenURL は**いま待ち受けているスキームとアドレス**（11.4）。
+	// 画面の先頭にそのまま出す。**設定値から画面が組み立てない**——
+	// 待受の変更には再起動が要るので、両者は再起動をまたぐとずれる。
+	ListenURL string `json:"listen_url"`
 	// SecretKeyPresent は secret_key が与えられているか。**値は返さない。**
 	SecretKeyPresent bool `json:"secret_key_present"`
 }
@@ -347,6 +351,7 @@ func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow) certif
 	return certificateListResponse{
 		Items:            items,
 		TLSEnabled:       h.tlsActive(),
+		ListenURL:        h.listenURL,
 		SecretKeyPresent: err == nil,
 	}
 }
