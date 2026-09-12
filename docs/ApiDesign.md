@@ -1765,11 +1765,16 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
   "sessions": [
     { "id": "01K2...", "client_info": "Chrome / macOS",
       "issued_at": "...", "last_used_at": "...", "expires_at": "..." }
-  ]
+  ],
+  "mfa_credential_count": 1
 }
 ```
 
 **`identities` 配列が Phase 3 の IdP 連携をそのまま受け入れる。** OIDC を追加しても要素が1つ増えるだけで、レスポンス構造もUIも変わらない（`DbDesign.md` 6.2）。
+
+**`mfa_credential_count` は確定済みの認証器の件数である**（pb-103。`DbDesign.md` 6.18）。
+**配列ではなく件数だけを返す。** 画面（`GuiDesign.md` 5.6.2）が出すのも件数で、
+**他人の端末の名前は管理に要らない。** 0 なら `[解除]`（6.9）を `disabled` にする根拠になる。
 
 ## 6.4 `PATCH /api/v1/admin/users/:id`
 

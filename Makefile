@@ -48,7 +48,7 @@ STG_DB_PASSWORD_FILE := $(CURDIR)/deploy/stg/secrets/db_password
 STG_APP_DATABASE_URL_FILE := $(CURDIR)/deploy/stg/secrets/app_database_url
 STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@127.0.0.1:5433/pb?sslmode=disable
 
-.PHONY: up down stop-server restart psql migrate sqlc run admin-create test test-db \
+.PHONY: up down stop-server restart psql migrate sqlc run admin-create admin-mfa-reset test test-db \
 	dev-reset dev-seed dev-info \
 	stg-init stg-up stg-down stg-psql stg-migrate stg-build stg-run stg-stop stg-admin-create \
 	dev-client gen-api build-client sync-webui build clean-webui \
@@ -120,6 +120,15 @@ run:
 # @ を付けて実行するのは、パスワードを含むコマンドをエコーさせないため。
 admin-create:
 	@cd server && PB_DATABASE_URL="$(PB_DATABASE_URL_APP)" go run ./cmd/pb admin create
+
+## 第2要素（TOTP・リカバリコード）を解除する（Design.md 6.7.5。pb-103）
+# **画面から解除できなくなった人のための口である。** 管理者が1人だけの構成で、
+# その人が認証アプリとリカバリコードの両方を失うと、画面側の口（ApiDesign.md 6.9）は
+# 誰も呼べない。使い方: make admin-mfa-reset EMAIL=tanaka@example.com
+admin-mfa-reset:
+	@test -n "$(EMAIL)" || (echo "EMAIL を指定してください（例: make admin-mfa-reset EMAIL=a@example.com）" && exit 1)
+	@cd server && PB_DATABASE_URL="$(PB_DATABASE_URL_APP)" \
+		go run ./cmd/pb admin mfa-reset --email "$(EMAIL)"
 
 ## テストを実行する
 # **整形の検査を先に通す**（pb-21）。gofmt は go test が見ないので、

@@ -11,8 +11,9 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import * as authApi from '../api/auth'
-import type { Session, SessionProject } from '../api/auth'
+import type { MfaChallenge, Session, SessionProject } from '../api/auth'
 import { ApiError } from '../api/client'
+import * as mfaApi from '../api/mfa'
 import { setTimezone } from '../lib/datetime'
 import { useUiStore } from './ui'
 
@@ -151,9 +152,39 @@ export const useAuthStore = defineStore('auth', () => {
     setSession(await authApi.me())
   }
 
-  /** ログイン。応答は `GET /me` と同じ内容なので、そのままストアになる */
-  async function login(email: string, password: string): Promise<void> {
-    setSession(await authApi.login(email, password))
+  /**
+   * ログイン。
+   *
+   * **戻り値が挑戦なら、まだログインしていない**（`ApiDesign.md` 3.1）。
+   * 第2要素が登録されている利用者では Cookie が発行されず、`actor` も返らない。
+   * 呼び出し側は返った挑戦を持ってコード入力へ進み、`completeMfa` を呼ぶ。
+   *
+   * **セッションになったときだけストアを更新する。** 挑戦の段階でストアを
+   * 触ると、ルーターガードが認証済みと判断して画面へ通してしまう。
+   */
+  async function login(email: string, password: string): Promise<MfaChallenge | null> {
+    const result = await authApi.login(email, password)
+    if (authApi.isMfaChallenge(result)) return result
+    setSession(result)
+    return null
+  }
+
+  /**
+   * 第2要素を確認してログインを終える（`ApiDesign.md` 3.4）。
+   *
+   * `code`（認証アプリの6桁）と `recoveryCode` は**どちらか一方だけ**を渡す。
+   */
+  async function completeMfa(
+    mfaToken: string,
+    factor: { code?: string; recoveryCode?: string },
+  ): Promise<void> {
+    setSession(
+      await mfaApi.loginMfa({
+        mfa_token: mfaToken,
+        code: factor.code,
+        recovery_code: factor.recoveryCode,
+      }),
+    )
   }
 
   /**
@@ -186,6 +217,7 @@ export const useAuthStore = defineStore('auth', () => {
     restore,
     refresh,
     login,
+    completeMfa,
     logout,
     setSession,
     clear,

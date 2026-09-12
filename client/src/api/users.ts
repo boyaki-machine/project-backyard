@@ -168,6 +168,19 @@ export function revokeUserSessions(id: string): Promise<void> {
 }
 
 /**
+ * 第2要素の解除（`ApiDesign.md` 6.9。pb-103）。`204`。
+ *
+ * **本人がリカバリコードまで失ったときの口である。** 対象は次のログインから
+ * パスワードだけで入れるようになる。**パスワードには触らず、セッションも切らない**
+ * ——締め出しの原因が「パスワードを忘れた」（6.6）とは別物だからである。
+ *
+ * **冪等**で、1件も登録が無くても `204` を返す。
+ */
+export function resetUserMfa(id: string): Promise<void> {
+  return api.post<void>(`/admin/users/${encodeURIComponent(id)}/mfa/reset`)
+}
+
+/**
  * プロジェクトメンバーシップの付与・変更（`ApiDesign.md` 6.8）。
  *
  * **追加と変更を兼ねる（冪等）。** 既にメンバーならロールを上書きし、

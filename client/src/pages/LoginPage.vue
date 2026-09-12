@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, useTemplateRef } from 'vue'
+import { computed, nextTick, onMounted, ref, useTemplateRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import type { MfaChallenge } from '../api/auth'
 import { ApiError } from '../api/client'
 import { REDIRECT_QUERY, safeRedirect } from '../router/guards'
 import { useAuthStore } from '../stores/auth'
@@ -30,8 +31,81 @@ const submitting = ref(false)
 const error = ref<ApiError | null>(null)
 
 const emailInput = useTemplateRef<HTMLInputElement>('emailInput')
+const codeInput = useTemplateRef<HTMLInputElement>('codeInput')
 
 onMounted(() => emailInput.value?.focus())
+
+/**
+ * 第2要素の挑戦（5.1.1）。
+ *
+ * **同じカードを差し替える。** `/login/mfa` のようなルートを作らないのは、
+ * 挑戦トークンがメモリにあるだけで**再読み込みで失われる**ためである——
+ * URL を持たせると、開き直せるように見えて実際には最初からやり直しになる。
+ *
+ * **保存もしない**（`localStorage` に置かない）。パスワードを通した直後の
+ * 状態であり、次のタブや次回の起動へ持ち越す意味が無い。
+ */
+const challenge = ref<MfaChallenge | null>(null)
+const code = ref('')
+/** リカバリコードで入るモードか（挑戦が `recovery_code` を許すときだけ出す） */
+const useRecovery = ref(false)
+
+const canUseRecovery = computed(
+  () => challenge.value?.methods.includes('recovery_code') === true,
+)
+
+const codeDetail = computed(() => error.value?.detailFor('code'))
+
+/** 第2要素を確認する（`ApiDesign.md` 3.4） */
+async function submitCode() {
+  const c = challenge.value
+  if (!c || submitting.value || code.value.trim() === '') return
+  submitting.value = true
+  error.value = null
+  try {
+    const value = code.value.trim()
+    await auth.completeMfa(
+      c.mfa_token,
+      useRecovery.value ? { recoveryCode: value } : { code: value },
+    )
+    await goAfterLogin()
+  } catch (e: unknown) {
+    error.value = asApiError(e)
+    code.value = ''
+  } finally {
+    submitting.value = false
+  }
+}
+
+/**
+ * メールアドレスの入力へ戻る。
+ *
+ * **必ず置く。** 認証アプリを開いたら消えていた、という場面で
+ * **行き止まりにしないため**である（5.1.1）。挑戦は捨てる。
+ */
+function backToPassword() {
+  challenge.value = null
+  code.value = ''
+  useRecovery.value = false
+  error.value = null
+  password.value = ''
+  void nextTick(() => emailInput.value?.focus())
+}
+
+async function goAfterLogin() {
+  // 未認証で保護ページへ来ていた場合はそこへ戻る（5.1 のリダイレクト復帰）。
+  const back = safeRedirect(route.query[REDIRECT_QUERY])
+  await router.replace(back ?? '/projects')
+}
+
+function asApiError(e: unknown): ApiError {
+  if (e instanceof ApiError) return e
+  return new ApiError({
+    status: 0,
+    code: 'internal_error',
+    message: '予期しないエラーが発生しました',
+  })
+}
 
 /** 入力欄に紐づくエラー（2.5 の details） */
 const emailDetail = computed(() => error.value?.detailFor('email'))
@@ -52,15 +126,18 @@ async function submit() {
   submitting.value = true
   error.value = null
   try {
-    await auth.login(email.value, password.value)
-    // 未認証で保護ページへ来ていた場合はそこへ戻る（5.1 のリダイレクト復帰）。
-    const back = safeRedirect(route.query[REDIRECT_QUERY])
-    await router.replace(back ?? '/projects')
+    const next = await auth.login(email.value, password.value)
+    if (next) {
+      // **第2要素が要る**（`ApiDesign.md` 3.1）。まだログインしていないので
+      // 遷移せず、同じカードをコード入力へ差し替える。
+      challenge.value = next
+      await nextTick()
+      codeInput.value?.focus()
+      return
+    }
+    await goAfterLogin()
   } catch (e: unknown) {
-    error.value =
-      e instanceof ApiError
-        ? e
-        : new ApiError({ status: 0, code: 'internal_error', message: '予期しないエラーが発生しました' })
+    error.value = asApiError(e)
   } finally {
     submitting.value = false
   }
@@ -69,7 +146,57 @@ async function submit() {
 
 <template>
   <div class="login">
-    <form class="card" @submit.prevent="submit">
+    <!-- ── 第2要素の入力（5.1.1）──────────────────────────
+         **同じカードを差し替える。** ルートを増やさない -->
+    <form v-if="challenge" class="card" @submit.prevent="submitCode">
+      <h1 class="brand">Project Backyard</h1>
+
+      <p v-if="generalError" class="alert" role="alert">{{ generalError }}</p>
+
+      <label class="field">
+        <span class="label">{{ useRecovery ? 'リカバリコード' : '確認コード' }}</span>
+        <input
+          ref="codeInput"
+          v-model="code"
+          type="text"
+          name="code"
+          :inputmode="useRecovery ? 'text' : 'numeric'"
+          :autocomplete="useRecovery ? 'off' : 'one-time-code'"
+          :maxlength="useRecovery ? 16 : 8"
+          :aria-invalid="codeDetail !== undefined"
+          :disabled="submitting"
+        />
+        <span v-if="codeDetail" class="detail">{{ codeDetail.message }}</span>
+        <span v-else class="hint">
+          {{
+            useRecovery
+              ? '保存しておいたリカバリコードを1本入力します。'
+              : 'ⓘ 認証アプリに表示されている6桁を入力します。'
+          }}
+        </span>
+      </label>
+
+      <button type="submit" class="submit" :disabled="submitting || code.trim() === ''">
+        {{ submitting ? '確認中…' : '確認' }}
+      </button>
+
+      <!-- **出せない選択肢を出さない**（`methods` に無ければ導線も出さない） -->
+      <button
+        v-if="canUseRecovery"
+        type="button"
+        class="link"
+        @click="useRecovery = !useRecovery"
+      >
+        {{ useRecovery ? '認証アプリのコードを使う' : 'リカバリコードを使う' }}
+      </button>
+
+      <!-- **行き止まりにしない**（5.1.1） -->
+      <button type="button" class="link" @click="backToPassword">
+        ← メールアドレスから入力
+      </button>
+    </form>
+
+    <form v-else class="card" @submit.prevent="submit">
       <h1 class="brand">Project Backyard</h1>
 
       <p v-if="generalError" class="alert" role="alert">{{ generalError }}</p>
@@ -130,6 +257,27 @@ async function submit() {
   gap: var(--pb-space-6);
   height: 100%;
   padding: var(--pb-space-6);
+}
+
+/* カード内の補助文言と、段を戻る導線（5.1.1） */
+.hint {
+  color: var(--pb-text-muted);
+  font-size: 12px;
+}
+
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--pb-text-muted);
+  font-size: 13px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.link:hover {
+  color: var(--pb-text);
+  text-decoration: underline;
 }
 
 .card {
