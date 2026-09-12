@@ -9,6 +9,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
+	"github.com/boyaki-machine/project-backyard/server/internal/tlscert"
 )
 
 // レート制限の上限と窓（ApiDesign.md 2.9）。
@@ -47,6 +48,11 @@ type Deps struct {
 
 	// OnSettingsChanged は設定が変わったときに呼ばれる（任意）。
 	OnSettingsChanged func(*config.Set)
+
+	// Certs は出す TLS 証明書の入れ物（Design.md 6.6.1）。
+	Certs *tlscert.Holder
+	// TLSListening は実際に TLS で待ち受けているか。
+	TLSListening bool
 }
 
 // Mount は /api/v1 のルートを r に並べる。
@@ -67,7 +73,12 @@ func Mount(r chi.Router, deps Deps) {
 	if settings == nil {
 		settings = config.LiveDefaults()
 	}
-	h := &handler{q: deps.Queries, tx: deps.Tx, settings: settings, onSettingsChanged: deps.OnSettingsChanged}
+	h := &handler{
+		q: deps.Queries, tx: deps.Tx, settings: settings,
+		onSettingsChanged: deps.OnSettingsChanged,
+		certs:             deps.Certs,
+		tlsListening:      deps.TLSListening,
+	}
 
 	// ── 認証不要 ────────────────────────────────
 	// ログインは認証を通れない状態で叩くもののため、認証必須グループの外に置く。
@@ -514,6 +525,17 @@ func Mount(r chi.Router, deps Deps) {
 			Get("/admin/settings", h.listSettings)
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Put("/admin/settings", h.updateSettings)
+
+		// ── TLS 証明書（ApiDesign.md 11.4〜11.6。pb-3）──────────────
+		//
+		// **設定と同じ system.settings である。** 第3層（Design.md 6.6.1）で、
+		// app_setting とは別の表・別のエンドポイントだが、触れる人は同じである。
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Get("/admin/tls/certificates", h.listTLSCertificates)
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Post("/admin/tls/certificates", h.uploadTLSCertificate)
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Delete("/admin/tls/certificates/{id}", h.deleteTLSCertificate)
 	})
 }
 
@@ -530,4 +552,11 @@ type handler struct {
 	// onSettingsChanged は設定が変わったときに呼ぶ。ロガーの入れ替え
 	// （log_format / log_level）を serve.go 側で行うための口である。
 	onSettingsChanged func(*config.Set)
+
+	// certs は出す TLS 証明書の入れ物（Design.md 6.6.1）。**nil なら
+	// TLS で待ち受けていない**（証明書の登録はできる）。
+	certs *tlscert.Holder
+	// tlsListening は実際に TLS で待ち受けているか。**設定の実効値ではない**
+	// ——設定を変えても再起動までは待受が変わらないためである。
+	tlsListening bool
 }

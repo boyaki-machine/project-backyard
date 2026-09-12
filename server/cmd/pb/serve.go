@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,10 +15,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
+	"github.com/boyaki-machine/project-backyard/server/internal/tlscert"
 )
 
 // HTTP サーバのタイムアウト。設計文書に規定が無いため実装側の既定として置く。
@@ -71,8 +75,15 @@ func serve(ctx context.Context) error {
 		applyLogSettings(logs, set)
 	}
 
+	// TLS の準備（Design.md 6.6.1）。**証明書を読めなければ起動を失敗させる。**
+	certs, tlsConfig, err := setupTLS(ctx, pool, set)
+	if err != nil {
+		return err
+	}
+
 	srv := &http.Server{
-		Addr: set.String(config.KeyBind),
+		Addr:      set.String(config.KeyBind),
+		TLSConfig: tlsConfig,
 		Handler: httpapi.NewRouter(httpapi.Deps{
 			Pool:     pool,
 			Version:  version,
@@ -80,6 +91,8 @@ func serve(ctx context.Context) error {
 			OnSettingsChanged: func(s *config.Set) {
 				applyLogSettings(logs, s)
 			},
+			Certs:        certs,
+			TLSListening: tlsConfig != nil,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
@@ -89,8 +102,23 @@ func serve(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("サーバを起動した", slog.String("bind", cfg.Bind), slog.String("version", version))
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		scheme := "http"
+		if tlsConfig != nil {
+			scheme = "https"
+		}
+		slog.Info("サーバを起動した",
+			slog.String("bind", srv.Addr), slog.String("scheme", scheme),
+			slog.String("version", version))
+
+		// **証明書と鍵のパスを渡さない。** TLSConfig.GetCertificate が
+		// 毎ハンドシェイクで選ぶので（Design.md 6.6.1）、起動時に固定しない。
+		var err error
+		if tlsConfig != nil {
+			err = srv.ListenAndServeTLS("", "")
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
 		}
@@ -123,6 +151,94 @@ func serve(ctx context.Context) error {
 // レベルだけなら差し替えが要らず、形式（json / text）が変わったときだけ
 // ハンドラを組み直す（pb-2、Design.md 10.3 の第2層）。
 var logLevelVar = new(slog.LevelVar)
+
+// setupTLS は TLS の待受を準備する（Design.md 6.6.1）。
+//
+// **tls_enabled が偽なら何もしない**（平文で待ち受ける）。真なら証明書を
+// 読んで入れ物に載せ、tls.Config を返す。
+//
+// **証明書があるのに secret_key が無ければ起動を失敗させる。** 復号できない
+// 証明書を抱えて平文で上がると、**HTTPS で公開しているつもりの利用者が
+// 平文で公開する**——これが最悪の結果である。
+//
+// **有効な証明書が1枚も無い状態でも起動する。** ハンドシェイクは失敗するが、
+// 起動自体を止めると PB_TLS_ENABLED=false で戻す以外の手が無くなり、
+// 「なぜ上がらないのか」をログでしか伝えられない。
+func setupTLS(ctx context.Context, pool *pgxpool.Pool, set *config.Set) (*tlscert.Holder, *tls.Config, error) {
+	if !set.Bool(config.KeyTLSEnabled) {
+		return nil, nil, nil
+	}
+
+	rows, err := gen.New(pool).ListTLSCertificates(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("TLS 証明書を引けない: %w", err)
+	}
+
+	key, err := tlscert.DecodeKey(set.String(config.KeySecretKey))
+	if err != nil {
+		if len(rows) == 0 {
+			// 証明書が無いなら鍵も要らない。**ただし TLS では上がれない。**
+			return nil, nil, fmt.Errorf(
+				"TLS で待ち受ける設定だが、証明書が1枚も登録されていない。" +
+					"PB_TLS_ENABLED=false で平文に戻すか、証明書を登録すること")
+		}
+		return nil, nil, fmt.Errorf("TLS 証明書があるが秘密の暗号鍵を読めない（PB_SECRET_KEY）: %w", err)
+	}
+
+	holder := tlscert.NewHolder()
+	entries := make([]tlscert.Entry, 0, len(rows))
+	for _, row := range rows {
+		pair, err := loadCertPair(row, key)
+		if err != nil {
+			continue // loadCertPair が警告を出している
+		}
+		entries = append(entries, tlscert.Entry{
+			ID: row.ID, NotBefore: row.NotBefore.Time, NotAfter: row.NotAfter.Time, Pair: pair,
+		})
+	}
+
+	// **1枚も読めなかったら起動を失敗させる。** 行があるのに全部読めないのは
+	// 鍵の取り違えか行の破損であり、**時間が経っても直らない設定の誤りである。**
+	// 起動してしまうと、利用者には「繋がらない」としか見えない
+	// （実サーバ検証で、別の鍵を渡すと scheme=https で上がってしまった。2026-09-12）。
+	//
+	// **日付のせいで有効なものが無い場合とは区別する。** あちらは時刻で変わるので、
+	// 警告を出して起動する（Holder.Replace が出す）。
+	if len(entries) == 0 {
+		return nil, nil, fmt.Errorf(
+			"TLS 証明書が %d 件あるが、1枚も読めなかった（秘密鍵を復号できない）。"+
+				"PB_SECRET_KEY が登録時と同じか確かめること。"+
+				"平文へ戻すなら PB_TLS_ENABLED=false を与えて起動し直す", len(rows))
+	}
+
+	holder.Replace(entries)
+
+	return holder, &tls.Config{
+		MinVersion:     tls.VersionTLS12,
+		GetCertificate: holder.GetCertificate,
+	}, nil
+}
+
+// loadCertPair は行の秘密鍵を復号して tls.Certificate を作る。
+//
+// **1行の失敗で全部を止めない。** 鍵を交換したあとに古い行が残っている場合などで、
+// 使える証明書があるなら上がるべきである。
+func loadCertPair(row gen.ListTLSCertificatesRow, key []byte) (*tls.Certificate, error) {
+	keyPEM, err := tlscert.Open(key, row.KeyCiphertext, row.KeyNonce)
+	if err != nil {
+		slog.Warn("証明書の秘密鍵を復号できないため、この行を使わない",
+			slog.String("certificate_id", row.ID), slog.String("key_id", row.KeyID),
+			slog.String("error", err.Error()))
+		return nil, err
+	}
+	pair, err := tls.X509KeyPair([]byte(row.CertPem), []byte(keyPEM))
+	if err != nil {
+		slog.Warn("証明書と秘密鍵が対応しないため、この行を使わない",
+			slog.String("certificate_id", row.ID), slog.String("error", err.Error()))
+		return nil, err
+	}
+	return &pair, nil
+}
 
 // initLogger は log/slog の既定ロガーを差し替える（Design.md 10.1）。
 //

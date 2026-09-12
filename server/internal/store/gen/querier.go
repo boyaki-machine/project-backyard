@@ -260,6 +260,9 @@ type Querier interface {
 	// Phase 1 に comment を作る経路が無く、置いても一度も参照されないため。
 	//
 	CreateSystemActor(ctx context.Context, arg CreateSystemActorParams) error
+	// 1件を作る。**指紋の一意制約に当たると誤りが返る**ので、
+	// 呼び出し側が 409 へ写す（ApiDesign.md 11.5）。
+	CreateTLSCertificate(ctx context.Context, arg CreateTLSCertificateParams) (CreateTLSCertificateRow, error)
 	CreateTag(ctx context.Context, arg CreateTagParams) error
 	// **sprint_id を受け取らない**（ApiDesign.md 9.3。pb-6）。作られたチケットは
 	// 必ずスプリント未所属で始まり、次にスプリントを開始したときに入る。
@@ -317,6 +320,8 @@ type Querier interface {
 	// ticket.sprint_id は fk_ticket_sprint の ON DELETE SET NULL で外れる
 	// （DbDesign.md 6.9）。チケットは消えず、スプリント未設定に戻る。
 	DeleteSprint(ctx context.Context, arg DeleteSprintParams) (int64, error)
+	// 1件を消す。**消した件数を返す**ので、0 なら 404 にできる。
+	DeleteTLSCertificate(ctx context.Context, id string) (int64, error)
 	// ticket_tag は ON DELETE CASCADE で追従する（DbDesign.md 6.10）。
 	// 使用中でも削除できる。禁止すると、要らなくなった分類を消すために
 	// 全チケットから手で外すことになる（ApiDesign.md 9.11）。
@@ -636,6 +641,9 @@ type Querier interface {
 	GetProjectTicketStats(ctx context.Context, arg GetProjectTicketStatsParams) (GetProjectTicketStatsRow, error)
 	// 1件だけ返す形。POST / PATCH の応答（B-2）で使う。
 	GetSprintByID(ctx context.Context, arg GetSprintByIDParams) (GetSprintByIDRow, error)
+	// 1件を引く。削除の前に「存在するか」と「消したら有効なものが残るか」を
+	// 判定するために使う（ApiDesign.md 11.6）。
+	GetTLSCertificate(ctx context.Context, id string) (GetTLSCertificateRow, error)
 	// 1件だけ返す形。POST / PATCH の応答（ApiDesign.md 9.11、B-2）で使う。
 	GetTagByID(ctx context.Context, arg GetTagByIDParams) (GetTagByIDRow, error)
 	// GetTicketBrief は 9.5.1 の parent（親の要約）を引く。
@@ -1048,6 +1056,19 @@ type Querier interface {
 	// closed_at は遷移の副作用としてのみ動く（DbDesign.md 6.6）ため、
 	// ワークフローの定義が違うプロジェクトでも意味が変わらない。
 	ListSprintsByProject(ctx context.Context, projectID string) ([]ListSprintsByProjectRow, error)
+	// TLS 証明書のクエリ（DbDesign.md 6.15、ApiDesign.md 11.4〜11.6）。pb-3。
+	//
+	// **Design.md 10.3 の第3層である。** 秘密鍵は secret_key で暗号化されて入っており、
+	// **復号はアプリ側（internal/tlscert）で行う。** DB は暗号文を運ぶだけである。
+	//
+	// **プロジェクトで閉じていない。** 証明書はサーバ全体のもので、必要権限は
+	// system.settings（アドミニストレータ）。
+	// 一覧。**秘密鍵の暗号文も返す**——起動時と登録・削除のあとに、出す証明書を
+	// 選び直して復号するために要る（Design.md 6.6.1）。
+	// 画面向けの応答では鍵を落とす（ApiDesign.md 11.4 は private_key を返さない）。
+	//
+	// not_before の降順にするのは、画面が新しいものから並べるためである。
+	ListTLSCertificates(ctx context.Context) ([]ListTLSCertificatesRow, error)
 	// タグに関するクエリ（DbDesign.md 6.10、ApiDesign.md 9.11）。
 	//
 	// 手順16a で追加。プロジェクト設定のタグタブ（GuiDesign.md 5.9.4）が消費者で、

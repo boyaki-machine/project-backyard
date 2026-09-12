@@ -39,3 +39,40 @@ export function putSettings(
 ): Promise<SettingList> {
   return api.put<SettingList>('/admin/settings', { items })
 }
+
+export type TLSCertificateList = components['schemas']['TLSCertificateList']
+export type TLSCertificate = components['schemas']['TLSCertificate']
+
+/** 証明書の状態（11.4 の `status`）。**サーバが決める**——画面が日付から組み立てない。 */
+export type CertificateStatus = TLSCertificate['status']
+
+/**
+ * 登録済みの TLS 証明書（`ApiDesign.md` 11.4）。
+ *
+ * **`private_key` は含まれない。** 暗号化して保持しており、この応答にも
+ * 他のどの応答にも現れない。
+ */
+export function getCertificates(): Promise<TLSCertificateList> {
+  return api.get<TLSCertificateList>('/admin/tls/certificates')
+}
+
+/**
+ * 証明書を登録する（`ApiDesign.md` 11.5）。
+ *
+ * **貼った秘密鍵は二度と表示されない。** 呼び出し側はその旨を画面に出すこと。
+ */
+export function uploadCertificate(certPem: string, keyPem: string): Promise<TLSCertificate> {
+  return api.post<TLSCertificate>('/admin/tls/certificates', {
+    cert_pem: certPem,
+    key_pem: keyPem,
+  })
+}
+
+/**
+ * 証明書を消す（`ApiDesign.md` 11.6）。
+ *
+ * **最後の有効な証明書は 409 になる。** 消せると画面から復旧できなくなるため。
+ */
+export function deleteCertificate(id: string): Promise<void> {
+  return api.del<void>(`/admin/tls/certificates/${encodeURIComponent(id)}`)
+}

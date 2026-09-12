@@ -4295,6 +4295,135 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/admin/tls/certificates:
+    get:
+      tags: [settings]
+      summary: TLS証明書の一覧
+      operationId: listTLSCertificates
+      description: |
+        登録済みの TLS 証明書を返す（ApiDesign.md 11.4、Design.md 6.6.1）。
+        **必要権限は `system.settings`。**
+
+        **`private_key` は返さない。** 暗号化して保持しており、この応答にも他のどの応答にも
+        現れない。設計方針6「秘密は一度しか返さない」より強く、**一度も返さない。**
+
+        **`status` はサーバが決める。** 選定の規則（有効なもののうち `not_before` が
+        最も新しいもの）は Design.md 6.6.1 の1か所に置き、画面が日付から組み立てない。
+        `active` は必ず1枚以下である。
+
+        `items[]` は `not_before` の降順。**ページネーションも ETag も持たない。**
+      responses:
+        '200':
+          description: 証明書の一覧。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TLSCertificateList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [settings]
+      summary: TLS証明書の登録
+      operationId: uploadTLSCertificate
+      description: |
+        証明書と秘密鍵を PEM で登録する（ApiDesign.md 11.5）。**必要権限は `system.settings`。**
+
+        **証明書と鍵が対応することを登録時に確かめる。** ここで弾かないとハンドシェイクの
+        時刻まで誤りが見つからず、そのときにはもう画面も API も TLS の向こう側にあり、
+        直す手段が無い。
+
+        **期限切れの証明書は受けない**（422）。受けても `active` になれず、利用者は
+        「登録したのに効かない」としか読めない。一方で `not_before` が未来のものは受ける
+        ——**新旧2枚を並べる**という目的そのものである。
+
+        **パスフレーズ付きの秘密鍵は受けない**（422）。パスフレーズの置き場という問いが増え、
+        第1層の鍵が2つになる。復号してから貼る。
+
+        **`multipart/form-data` ではなく JSON で受ける。** PEM はテキストであり、鍵を
+        ファイルとして持っていない利用者（発行元の画面からコピーしただけ）が詰まる。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TLSCertificateUploadRequest'
+      responses:
+        '201':
+          description: 登録した証明書1件。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TLSCertificate'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: |
+            同じ指紋の証明書が既にある、または `secret_key` が与えられていない（`conflict`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/admin/tls/certificates/{id}:
+    delete:
+      tags: [settings]
+      summary: TLS証明書の削除
+      operationId: deleteTLSCertificate
+      description: |
+        証明書1件を消す（ApiDesign.md 11.6）。**必要権限は `system.settings`。**
+
+        **最後の有効な証明書は消せない**（409）。消せてしまうとその瞬間から TLS
+        ハンドシェイクが失敗し、**画面から復旧できなくなる。** 平文へ戻したいなら、
+        先に `tls_enabled` を無効にする。
+
+        **`expired` と `superseded` はいつでも消せる。** どちらも出していないので、
+        消しても振る舞いが変わらない。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 証明書の ID（ULID）。
+      responses:
+        '204':
+          description: 消した。
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: その ID の証明書が無い（`not_found`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: |
+            これを消すと有効な証明書が無くなり、HTTPS で待ち受けられなくなる（`conflict`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /healthcheck:
     get:
       tags: [ops]
@@ -6633,6 +6762,92 @@ components:
               value:
                 type: [string, 'null']
                 description: '**`null` は行を消して既定値へ戻す。**'
+
+    TLSCertificateList:
+      type: object
+      required: [items, tls_enabled, secret_key_present]
+      description: |
+        ApiDesign.md 11.4。**ページネーションも ETag も持たない**——証明書は数枚である。
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TLSCertificate'
+        tls_enabled:
+          type: boolean
+          description: |
+            いま TLS で待ち受けているか。**設定 `tls_enabled` の実効値ではなく、
+            実際の待受の状態である**——設定を変えても再起動までは待受が変わらない。
+        secret_key_present:
+          type: boolean
+          description: '`secret_key` が与えられているか。**値は返さない。** 偽なら証明書を登録できない。'
+
+    TLSCertificate:
+      type: object
+      required:
+        [id, common_name, dns_names, not_before, not_after, serial_number,
+         fingerprint, is_self_signed, status, uploaded_at, uploaded_by]
+      description: |
+        証明書1件（ApiDesign.md 11.4）。**`private_key` は含まれない。**
+      properties:
+        id:
+          type: string
+          example: 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+        common_name:
+          type: string
+          example: pb.example.com
+        dns_names:
+          type: array
+          items:
+            type: string
+          description: SAN の DNS 名。**キーは常に返す**（無ければ空配列）。
+        not_before:
+          type: string
+          format: date-time
+        not_after:
+          type: string
+          format: date-time
+        serial_number:
+          type: string
+          description: 16進。
+        fingerprint:
+          type: string
+          description: SHA-256 を `ab:cd:…` の形で。openssl の出力に揃えてある。
+        is_self_signed:
+          type: boolean
+          description: |
+            **表示のためだけに持つ。** PB は検証の連鎖を辿らないので、
+            フォーマル証明書と自己署名証明書の扱いは同じである。
+        status:
+          type: string
+          enum: [active, pending, expired, superseded]
+          description: |
+            `active`（**いま出している1枚。必ず1枚以下**）／ `pending`（`not_before` が未来）／
+            `expired`（`not_after` を過ぎた）／ `superseded`（有効だが、より新しい有効なものがある）。
+        uploaded_at:
+          type: string
+          format: date-time
+        uploaded_by:
+          oneOf:
+            - $ref: '#/components/schemas/ActorRef'
+            - type: 'null'
+
+    TLSCertificateUploadRequest:
+      type: object
+      required: [cert_pem, key_pem]
+      description: |
+        ApiDesign.md 11.5。**秘密鍵は暗号化して保存され、以後どの応答にも現れない。**
+      properties:
+        cert_pem:
+          type: string
+          description: 証明書の PEM。中間証明書を続けて貼ってもよい。
+          example: "-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----\n"
+        key_pem:
+          type: string
+          description: |
+            秘密鍵の PEM。PKCS#8 / PKCS#1 / SEC1 を受ける。
+            **パスフレーズ付きは受けない**（422）。
+          example: "-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----\n"
 
     ActorRef:
       description: |

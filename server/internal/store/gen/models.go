@@ -414,6 +414,26 @@ type TicketTag struct {
 	TagID    string
 }
 
+// TLS 証明書（Design.md 10.3 の第3層）。秘密鍵は secret_key で暗号化して持つ
+type TlsCertificate struct {
+	ID           string
+	CommonName   string
+	DnsNames     []string
+	NotBefore    pgtype.Timestamptz
+	NotAfter     pgtype.Timestamptz
+	SerialNumber string
+	Fingerprint  string
+	IsSelfSigned bool
+	// 平文。証明書はハンドシェイクで相手に渡すものなので隠さない
+	CertPem       string
+	KeyCiphertext []byte
+	KeyNonce      []byte
+	KeyID         string
+	UploadedBy    pgtype.Text
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type UserIdentity struct {
 	ID          string
 	UserID      string

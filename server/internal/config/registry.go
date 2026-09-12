@@ -163,6 +163,20 @@ var definitions = []Definition{
 		Description: "HTTP を待ち受けるアドレスとポート。公開範囲は compose の ports で制御します",
 	},
 	{
+		Key: "secret_key", EnvKey: "PB_SECRET_KEY",
+		Layer: LayerBoot, Type: TypeString,
+		Secret: true, RestartRequired: true,
+		DisplayName: "秘密の暗号鍵",
+		Description: "TLS の秘密鍵を暗号化するための鍵。32バイトを base64 で与えます。証明書を登録しないなら不要です",
+	},
+	{
+		Key: "tls_enabled", EnvKey: "PB_TLS_ENABLED",
+		Layer: LayerRuntime, Type: TypeBool,
+		Default: "false", RestartRequired: true,
+		DisplayName: "TLS で待ち受ける",
+		Description: "有効にすると HTTPS で待ち受けます。証明書の登録が別途必要で、変更には再起動が要ります",
+	},
+	{
 		Key: "log_format", EnvKey: "PB_LOG_FORMAT",
 		Layer: LayerRuntime, Type: TypeEnum, Allowed: []string{"json", "text"},
 		Default:     "json",

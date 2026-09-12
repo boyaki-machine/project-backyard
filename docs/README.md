@@ -54,6 +54,8 @@ clone 直後には存在しない（規約は `Design.md` 11.0）。
 | REST API | `ApiDesign.md` |
 | MCPサーバ | `Design.md` 8章 |
 | プロジェクト文書（Docs） | `DbDesign.md` 8.1、`ApiDesign.md` 10章、`GuiDesign.md` 5.10 |
+| **アプリケーション設定（設定の3層）** | **`Design.md` 10.3**、`DbDesign.md` 6.14、`ApiDesign.md` 11.1〜11.3、`GuiDesign.md` 5.12 |
+| **TLS 終端と証明書** | **`Design.md` 6.6.1**、`DbDesign.md` 6.15、`ApiDesign.md` 11.4〜11.6、`GuiDesign.md` 5.12.1 |
 | 画面・UI・配色 | `GuiDesign.md` |
 | 開発フェーズ・実装順序 | `Design.md` 11章 |
 | ブランチ運用・バージョン番号 | `Design.md` 11.0〜11.1 |
@@ -73,6 +75,9 @@ clone 直後には存在しない（規約は `Design.md` 11.0）。
 | 権限をコードではなくデータ（permissionカタログ）で定義する | `Design.md` 6.4、`DbDesign.md` 7.2 |
 | AIの提案はすべて `proposal` テーブルを経由させる | `DbDesign.md` 8.3.2 |
 | **チケットのグルーピングは2軸**——分解は親子階層、分類はタグ。1軸に混ぜない | `DbDesign.md` 6.10 |
+| **設定を3層に分ける**（起動前＝環境変数と設定ファイル／実行時＝DB／共有される秘密＝DB で暗号化） | `Design.md` 10.3 |
+| **サーバが自分の設定ファイルを書き換える案を採らない**（スケールアウトでレプリカごとに分岐する） | `Design.md` 10.3 |
+| **TLS の証明書は DB に置く。** 出すのは「有効なもののうち `notBefore` が最も新しいもの」 | `Design.md` 6.6.1 |
 | **チケットは「視点」（バックログ／カンバン／ガント）で見る。** 同一データを別の描き方で出し、グループ化軸を共有する | `GuiDesign.md` 4.1.1 |
 | **バックログはページングしない。** グループ化・階層・並べ替えがページ境界をまたげないため | `ApiDesign.md` 9.2.3 |
 | チケットは API でも `seq`（プロジェクト内連番）で指す。ULID は返すが指定には使わない | `ApiDesign.md` 9.1 |

@@ -15,6 +15,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/mcp"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
+	"github.com/boyaki-machine/project-backyard/server/internal/tlscert"
 	"github.com/boyaki-machine/project-backyard/server/internal/webui"
 )
 
@@ -43,6 +44,13 @@ type Deps struct {
 	// OnSettingsChanged は設定が変わったときに呼ばれる（任意）。
 	// ロガーの入れ替えを cmd 側で行うための口である。
 	OnSettingsChanged func(*config.Set)
+
+	// Certs は出す TLS 証明書の入れ物（Design.md 6.6.1）。**nil なら
+	// TLS で待ち受けていない**（証明書の登録はできる）。
+	Certs *tlscert.Holder
+	// TLSListening は実際に TLS で待ち受けているか。**設定の実効値ではない**
+	// ——設定を変えても再起動までは待受が変わらないためである。
+	TLSListening bool
 }
 
 // BasePath は API のベースパス（ApiDesign.md 2.1）。
@@ -119,6 +127,8 @@ func NewRouter(deps Deps) http.Handler {
 		Tx:                tx,
 		Settings:          settings,
 		OnSettingsChanged: deps.OnSettingsChanged,
+		Certs:             deps.Certs,
+		TLSListening:      deps.TLSListening,
 	}
 
 	r.Route(BasePath, func(r chi.Router) {
