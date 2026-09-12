@@ -347,7 +347,7 @@ function asApiError(e: unknown): ApiError {
         </p>
 
         <label class="field">
-          <span>証明書（PEM）</span>
+          <span>証明書（.crt / PEM 形式）</span>
           <textarea
             v-model="certPem"
             rows="6"
@@ -356,7 +356,7 @@ function asApiError(e: unknown): ApiError {
           ></textarea>
         </label>
         <label class="field">
-          <span>秘密鍵（PEM）</span>
+          <span>秘密鍵（.key / PEM 形式）</span>
           <textarea
             v-model="keyPem"
             rows="6"
