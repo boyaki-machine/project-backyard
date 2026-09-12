@@ -949,6 +949,11 @@ function onMenuSelect(key: string): void {
       v-if="generated && user"
       title="パスワードをリセットしました"
       lead-suffix="のパスワードを再発行しました。"
+      :footer-note="
+        isSelf
+          ? 'このパスワードで入り直し、次回ログイン後に新しいものへ変更してください。'
+          : undefined
+      "
       :display-name="user.display_name"
       :email="user.email"
       :password="generated"

@@ -31,8 +31,19 @@ withDefaults(
     title?: string
     /** 導入の1文。`<strong>` で囲む表示名の後ろに続く文言 */
     leadSuffix?: string
+    /**
+     * 末尾の1文。
+     *
+     * **自分自身へのリセットでは既定が合わない**（pb-82）。あれは他人へ渡す人に
+     * 向けた文言で、**自分で押した人に「本人に伝えてください」と出るのは筋が通らない。**
+     */
+    footerNote?: string
   }>(),
-  { title: '初期パスワード', leadSuffix: 'を追加しました。' },
+  {
+    title: '初期パスワード',
+    leadSuffix: 'を追加しました。',
+    footerNote: '本人には、このパスワードと次回ログイン後に変更する必要があることを伝えてください。',
+  },
 )
 
 const emit = defineEmits<{ close: [] }>()
@@ -78,9 +89,7 @@ async function copy(password: string) {
         </dd>
       </dl>
 
-      <p class="hint">
-        本人には、このパスワードと次回ログイン後に変更する必要があることを伝えてください。
-      </p>
+      <p class="hint">{{ footerNote }}</p>
     </div>
 
     <template #footer>
