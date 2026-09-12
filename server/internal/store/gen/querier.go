@@ -87,6 +87,20 @@ type Querier interface {
 	// 削除済みを1つの結果に畳む**——呼び出し元にとってはどれも「指せない」であり、
 	// 区別して返すと他チケットのコメントの存在を探れる（Design.md 6.4.5）。
 	CommentRepliableInTicket(ctx context.Context, arg CommentRepliableInTicketParams) (bool, error)
+	// ConfirmMfaCredential は照合が通った行を確定させる。
+	//
+	// **confirmed_at IS NULL を条件に残す。** 二重に送られたときに2回目が0行になり、
+	// 呼び出し側が 404 に落とせる。
+	ConfirmMfaCredential(ctx context.Context, arg ConfirmMfaCredentialParams) (ConfirmMfaCredentialRow, error)
+	// ConsumeMfaLoginChallenge は挑戦を使い切った印を付ける。
+	//
+	// **consumed_at IS NULL を条件に残す。** 同じ挑戦で2本のセッションを出さない。
+	ConsumeMfaLoginChallenge(ctx context.Context, id string) (int64, error)
+	// ConsumeRecoveryCode は未使用の1本を消費する。
+	//
+	// **used_at IS NULL を条件に含めるのが要点である。** 同じコードを2回使えない。
+	// 0行なら「無い」か「既に使った」で、どちらも応答は同じ 401 である。
+	ConsumeRecoveryCode(ctx context.Context, arg ConsumeRecoveryCodeParams) (int64, error)
 	// CountActiveAdministrators は「最後のアドミニストレータ」の判定に使う
 	// （ApiDesign.md 6.4 / 6.5 の last_administrator）。
 	//
@@ -131,6 +145,11 @@ type Querier interface {
 	// 実装は先に通しておく。
 	//
 	CountCommentsByAuthor(ctx context.Context, authorID string) (int64, error)
+	// CountConfirmedMfaCredentials は上限（5件）とログイン時の分岐に使う。
+	//
+	// **ログインのたびに通る。** 行そのものは要らず、1件でもあるかを見る
+	// （Design.md 6.7.4 の手順2）。
+	CountConfirmedMfaCredentials(ctx context.Context, userID string) (int64, error)
 	// CountMyAPITokens は発行本数の上限（1人5本。ApiDesign.md 4.4.2）を判定する。
 	//
 	// **数え方は ListMyAPITokens と同一にする**（失効していないもの。期限切れを含む）。
@@ -165,6 +184,9 @@ type Querier interface {
 	// 「コメント本体は含めない」と定めており、件数だけで 5.5 の見出し
 	// 「コメント (4)」が作れる。
 	CountTicketComments(ctx context.Context, ticketID string) (int64, error)
+	// ── リカバリコード ──────────────────────────────────────
+	// CountUnusedRecoveryCodes は残数（ApiDesign.md 4.6.1）。
+	CountUnusedRecoveryCodes(ctx context.Context, userID string) (int64, error)
 	// CreateAccessToken はセッション・APIトークン・エージェントトークンを発行する
 	// （DbDesign.md 6.2）。**平文は渡さない。** token_hash は SHA-256、
 	// token_prefix は一覧表示用の先頭8文字である。
@@ -254,6 +276,11 @@ type Querier interface {
 	// ゼロ値に頼らず明示的に書く**こと。どの経路が初回変更を要求するのかを
 	// 呼び出し箇所だけで読めるようにするためである。
 	CreateLocalCredential(ctx context.Context, arg CreateLocalCredentialParams) error
+	// CreateMfaCredential は登録の途中の行を作る（confirmed_at は NULL のまま）。
+	CreateMfaCredential(ctx context.Context, arg CreateMfaCredentialParams) error
+	// ── ログインの挑戦 ──────────────────────────────────────
+	// CreateMfaLoginChallenge は中途状態を1件作る（Design.md 6.7.4 の手順3）。
+	CreateMfaLoginChallenge(ctx context.Context, arg CreateMfaLoginChallengeParams) error
 	// 未確認の設定変更のクエリ（DbDesign.md 6.17、Design.md 10.3）。pb-97。
 	//
 	// **行は0か1つである。** 未確認が残っている間は次の危険な変更を受け付けない
@@ -267,6 +294,8 @@ type Querier interface {
 	CreateProject(ctx context.Context, arg CreateProjectParams) error
 	CreateProjectCounter(ctx context.Context, projectID string) error
 	CreateProjectWorkflow(ctx context.Context, arg CreateProjectWorkflowParams) error
+	// CreateRecoveryCode は1本を保存する（平文は保存しない）。
+	CreateRecoveryCode(ctx context.Context, arg CreateRecoveryCodeParams) error
 	CreateSprint(ctx context.Context, arg CreateSprintParams) error
 	// CreateSystemActor はシステムアクターを1件作る。
 	//
@@ -300,6 +329,8 @@ type Querier interface {
 	// 万一システムアクターの ID を渡されても消さない。
 	//
 	DeleteActorByID(ctx context.Context, actorID string) (int64, error)
+	// DeleteAllMfaCredentials は管理者の解除と CLI が使う（ApiDesign.md 6.9）。
+	DeleteAllMfaCredentials(ctx context.Context, userID string) (int64, error)
 	// 1件を消す。**「既定に戻す」がこれである**（ApiDesign.md 11.2 の value: null）。
 	// 設定を消すことと既定へ戻すことは同じ状態なので、別の口を作らない。
 	//
@@ -309,6 +340,16 @@ type Querier interface {
 	// DELETE は物理削除で、部分木ごと消える（parent_id の CASCADE。10.4 / 8.1.1）。
 	// document_revision も CASCADE で一緒に消える。
 	DeleteDocument(ctx context.Context, id string) (int64, error)
+	// DeleteMfaCredential は本人の認証器を消す（ApiDesign.md 4.6.4）。
+	//
+	// **行を消す。** access_token のように revoked_at を立てる形にしないのは、
+	// 残した行が「登録されているのに効かない認証器」として一覧の判定を複雑にするため。
+	DeleteMfaCredential(ctx context.Context, arg DeleteMfaCredentialParams) (int64, error)
+	// DeleteMfaLoginChallengesForUser は古い挑戦を片付ける。
+	//
+	// **新しい挑戦を作る前に呼ぶ。** 期限切れの行が積むのを防ぐ掃除を、
+	// 専用のバッチではなく**次のログインに相乗りさせる**（1人あたり数行で済む）。
+	DeleteMfaLoginChallengesForUser(ctx context.Context, userID string) error
 	// DeleteMyAgentActor はエージェントの actor 行を物理削除する。
 	//
 	// agent / access_token は ON DELETE CASCADE で追従するので、**そのエージェントの
@@ -321,6 +362,10 @@ type Querier interface {
 	// （DeleteActorByID が kind='user' に限っているのと対である）。
 	//
 	DeleteMyAgentActor(ctx context.Context, arg DeleteMyAgentActorParams) (int64, error)
+	// DeletePendingMfaCredentials は登録を始め直したときに古い途中の行を捨てる。
+	//
+	// **途中の行は1人1件まで**という規則をここで守る（DbDesign.md 6.18。DB では縛らない）。
+	DeletePendingMfaCredentials(ctx context.Context, userID string) error
 	// 1件消す。**確認できたとき（確定）と、戻し終えたとき**に呼ぶ。
 	// **消した件数を返す**ので、競合して既に消えていたかが分かる。
 	DeletePendingSettingChange(ctx context.Context, id string) (int64, error)
@@ -334,6 +379,8 @@ type Querier interface {
 	// 返す（何度呼んでも「居ない」状態に収束する）。
 	//
 	DeleteProjectMember(ctx context.Context, arg DeleteProjectMemberParams) (int64, error)
+	// DeleteRecoveryCodes は全部消す（作り直し・最後の認証器の削除・管理者の解除）。
+	DeleteRecoveryCodes(ctx context.Context, userID string) (int64, error)
 	// ticket.sprint_id は fk_ticket_sprint の ON DELETE SET NULL で外れる
 	// （DbDesign.md 6.9）。チケットは消えず、スプリント未設定に戻る。
 	DeleteSprint(ctx context.Context, arg DeleteSprintParams) (int64, error)
@@ -429,6 +476,14 @@ type Querier interface {
 	// 判定は呼び出し側で行う。
 	//
 	FindLocalLoginByEmail(ctx context.Context, email string) (FindLocalLoginByEmailRow, error)
+	// FindMfaCredentialByName は同じ名前の確定済みがあるかを見る（409 の判定）。
+	FindMfaCredentialByName(ctx context.Context, arg FindMfaCredentialByNameParams) (string, error)
+	// FindMfaLoginChallenge は受け取った平文の SHA-256 で挑戦を引く。
+	//
+	// **有効性を WHERE で絞らない。** access_token と同じ考え方で（6.2 の
+	// FindAccessTokenByHash）、「無い」と「期限切れ」を区別してサーバログに残す。
+	// 応答はどちらも 401 で統一する。
+	FindMfaLoginChallenge(ctx context.Context, tokenHash string) (FindMfaLoginChallengeRow, error)
 	// FindMyAPIToken は DELETE /me/tokens/:id の対象を引く（ApiDesign.md 4.4.3）。
 	//
 	// **actor_id と token_type を条件に含めるのが要点である。** 他人のトークンや
@@ -466,6 +521,11 @@ type Querier interface {
 	// するものではない（ApiDesign.md 5.6）。
 	//
 	FindMyProjectByKey(ctx context.Context, arg FindMyProjectByKeyParams) (FindMyProjectByKeyRow, error)
+	// FindPendingMfaCredential は登録の途中の行を引く（ApiDesign.md 4.6.3）。
+	//
+	// **user_id を条件に含めるのが要点である。** 他人の id を渡されても行が返らない
+	// ので、404 に落ちる（存在を漏らさない。Design.md 6.4.5）。
+	FindPendingMfaCredential(ctx context.Context, arg FindPendingMfaCredentialParams) (FindPendingMfaCredentialRow, error)
 	// FindProjectAuthzByKey は、プロジェクトキー1つに対する認可の材料を返す。
 	// RequireProjectPermission（Design.md 6.4.4）が使う。
 	//
@@ -667,6 +727,13 @@ type Querier interface {
 	// のも実害がある——エピックに担当者を置く運用が無いので、常に「要対応」に見える。
 	//
 	GetProjectTicketStats(ctx context.Context, arg GetProjectTicketStatsParams) (GetProjectTicketStatsRow, error)
+	// GetRecoveryCodeStatus は残数と発行時刻をまとめて返す。
+	//
+	// **1本も持たないときは行が返らない**ので、呼び出し側は null を返せる
+	// （「作って全部使った」と「まだ無い」を区別する。ApiDesign.md 4.6.1）。
+	// **min() に型を明示する。** 付けないと sqlc が interface{} で生成し、
+	// 呼び出し側が時刻として扱えない。
+	GetRecoveryCodeStatus(ctx context.Context, userID string) (GetRecoveryCodeStatusRow, error)
 	// 1件だけ返す形。POST / PATCH の応答（B-2）で使う。
 	GetSprintByID(ctx context.Context, arg GetSprintByIDParams) (GetSprintByIDRow, error)
 	// 1件を引く。削除の前に「存在するか」と「消したら有効なものが残るか」を
@@ -855,6 +922,20 @@ type Querier interface {
 	// 知らないキーを読み飛ばすため（config.OverlayDatabase）。
 	// 起動時に1回、設定の保存ごとに1回しか呼ばれない。
 	ListAppSettings(ctx context.Context) ([]ListAppSettingsRow, error)
+	// 多要素認証のクエリ（DbDesign.md 6.18、Design.md 6.7）。pb-103。
+	//
+	// **未確定の行（confirmed_at IS NULL）を、確定済みを引くクエリに混ぜない。**
+	// 認証の要素として数えないためであり、条件はクエリ側に閉じ込めてある——
+	// ハンドラが毎回書くと、書き忘れた1本が「照合していない認証器で関門が立つ」を招く。
+	// ── 認証器 ──────────────────────────────────────────────
+	// ListConfirmedMfaCredentials は本人の確定済みの認証器を返す（ApiDesign.md 4.6.1）。
+	ListConfirmedMfaCredentials(ctx context.Context, userID string) ([]ListConfirmedMfaCredentialsRow, error)
+	// ListConfirmedMfaSecrets は照合のために共有秘密ごと引く。
+	//
+	// **封じられたまま返す。** 復号はハンドラが app_secret の鍵で行う
+	// （Design.md 6.7.3）。**どの認証器で通るかは分からない**ので、
+	// 確定済みを全部返して順に試す（1人5件までなので許容できる）。
+	ListConfirmedMfaSecrets(ctx context.Context, userID string) ([]ListConfirmedMfaSecretsRow, error)
 	// ListDocumentBodies は ?outline=1（10.2）のためだけに本文を読む。
 	//
 	// **応答には本文を載せない。** 見出し一覧は本文から作るので読む必要があるが、
@@ -1409,6 +1490,10 @@ type Querier interface {
 	// 閾値の判定はアプリ側で行い、その結果をそのまま反映する。
 	//
 	RecordLoginFailure(ctx context.Context, arg RecordLoginFailureParams) error
+	// RecordMfaChallengeFailure は試行回数を加算し、加算後の値を返す。
+	RecordMfaChallengeFailure(ctx context.Context, id string) (int32, error)
+	// RecordMfaCredentialFailure は登録時の照合失敗を数える（5回で捨てる）。
+	RecordMfaCredentialFailure(ctx context.Context, arg RecordMfaCredentialFailureParams) (int32, error)
 	// RehashPassword はハッシュパラメータが旧世代のときに再ハッシュ結果を書く
 	// （Design.md 6.2.1 手順5）。
 	//
@@ -1640,6 +1725,10 @@ type Querier interface {
 	// ログイン時に書かなければ永久に NULL のままになる。
 	//
 	TouchLastLoginAt(ctx context.Context, actorID string) error
+	// TouchMfaCredentialUsed は照合が通った刻みを保存する。
+	//
+	// **同じ刻みのコードを2回受け付けない**という規則の保存側である（Design.md 6.7.2）。
+	TouchMfaCredentialUsed(ctx context.Context, arg TouchMfaCredentialUsedParams) error
 	// 完了しているオンステージの根を、段から降ろす（ApiDesign.md 9.12.2）。
 	//
 	// **子は staged_at を持たないので触るものが無く、親と一緒に降りる。**
