@@ -4201,6 +4201,13 @@ export interface components {
              *     実際の待受の状態である**——設定を変えても再起動までは待受が変わらない。
              */
             tls_enabled: boolean;
+            /**
+             * @description **いま待ち受けているスキームとアドレス。** 画面の先頭にそのまま出す。
+             *     **画面が `bind` の設定値から組み立てない**——待受の変更には再起動が要るので、
+             *     設定の値と実際の待受は再起動をまたぐとずれる。
+             * @example https://0.0.0.0:8443
+             */
+            listen_url: string;
             /** @description `secret_key` が与えられているか。**値は返さない。** 偽なら証明書を登録できない。 */
             secret_key_present: boolean;
         };

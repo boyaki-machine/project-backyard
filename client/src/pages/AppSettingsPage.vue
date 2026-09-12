@@ -215,6 +215,7 @@ function asApiError(e: unknown): ApiError {
       </button>
     </div>
 
+    <div class="page-body">
     <TlsCertificatesTab v-if="tab === 'tls'" />
 
     <template v-else>
@@ -314,6 +315,7 @@ function asApiError(e: unknown): ApiError {
       </div>
     </template>
     </template>
+    </div>
 
     <Teleport to="body">
       <ConfirmDialog
@@ -331,15 +333,30 @@ function asApiError(e: unknown): ApiError {
 </template>
 
 <style scoped>
+/**
+ * **AppShell の .content は overflow:hidden なので、各ページが自前のスクロール枠を
+ * 持つ約束である**（UsersPage と同じ形）。置き忘れると画面の下が切れて
+ * スクロールもできない——stg で利用者が踏んだ（2026-09-12）。
+ */
 .page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.page-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
   padding: var(--pb-space-4);
   max-width: 44rem;
 }
 .tabs {
   display: flex;
+  flex: none;
   gap: var(--pb-space-1);
   border-bottom: 1px solid var(--pb-border);
-  margin-bottom: var(--pb-space-2);
+  padding-inline: var(--pb-space-4);
 }
 .tabs button {
   background: none;
