@@ -57,6 +57,11 @@ const (
 	// detail.changes[] に変更したキーと新旧の実効値を並べる。サーバ全体の設定を
 	// 変える操作であり、影響範囲が1プロジェクトに収まらないため記録する。
 	SettingUpdate Action = "setting.update"
+
+	// TLSCertificateUpload / TLSCertificateDelete は pb-3（ApiDesign.md 11.5 / 11.6）。
+	// **detail には指紋・common_name・有効期間を入れ、PEM と秘密鍵は入れない。**
+	TLSCertificateUpload Action = "tls.certificate.upload"
+	TLSCertificateDelete Action = "tls.certificate.delete"
 )
 
 // actions は ApiDesign.md 2.10 が列挙する18件。
@@ -67,7 +72,8 @@ var actions = map[Action]bool{
 	UserCreate: true, UserUpdate: true, UserDelete: true, RoleChange: true,
 	ProjectCreate: true, ProjectArchive: true, PermissionDenied: true,
 	AgentRegister: true, AgentUpdate: true, AgentDelete: true,
-	SettingUpdate: true,
+	SettingUpdate:        true,
+	TLSCertificateUpload: true, TLSCertificateDelete: true,
 }
 
 // Result は audit_log.result（DbDesign.md 6.8 の CHECK 制約）。
