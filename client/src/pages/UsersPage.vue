@@ -940,6 +940,11 @@ async function retry(): Promise<void> {
       v-if="resetResult"
       title="パスワードをリセットしました"
       lead-suffix="のパスワードを再発行しました。"
+      :footer-note="
+        auth.actor?.id === resetResult.user.id
+          ? 'このパスワードで入り直し、次回ログイン後に新しいものへ変更してください。'
+          : undefined
+      "
       :display-name="resetResult.user.display_name"
       :email="resetResult.user.email ?? ''"
       :password="resetResult.password"

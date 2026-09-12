@@ -53,7 +53,7 @@ type passwordResetResponse struct {
 //
 // **local_credential を持たないユーザー（IdP のみ、Phase 3）は 409 conflict**。
 func (h *handler) resetUserPassword(w http.ResponseWriter, r *http.Request) {
-	_, id, ok := h.adminUserContext(w, r, "POST /admin/users/{id}/password-reset")
+	p, id, ok := h.adminUserContext(w, r, "POST /admin/users/{id}/password-reset")
 	if !ok {
 		return
 	}
@@ -117,7 +117,23 @@ func (h *handler) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		// **全セッションを失効する**（6.6）。パスワードを変えても、既に
 		// 入っている端末が残っていては「乗っ取られた疑いがあるので直す」
 		// という用途を果たさない。
-		revoked, err := q.RevokeActorSessions(ctx, id)
+		//
+		// **ただし自分自身へのリセットでは、いま操作しているセッションを残す**
+		// （6.6 の改訂。pb-82）。切ってしまうと、**画面は generated_password を
+		// 表示する前に 401 を受けてログイン画面へ飛ぶ**。あの値はこの応答でしか
+		// 手に入らないので、**押した本人が自分を締め出す**（実測、2026-09-12）。
+		//
+		// **用途は壊れない。** 自分で押したなら、いま操作している端末は本人の
+		// ものである。他の端末はすべて切れる（4.3 と同じ扱い）。
+		var revoked int64
+		if id == p.ActorID {
+			revoked, err = q.RevokeMyOtherSessions(ctx, gen.RevokeMyOtherSessionsParams{
+				ActorID:        id,
+				CurrentTokenID: p.TokenID,
+			})
+		} else {
+			revoked, err = q.RevokeActorSessions(ctx, id)
+		}
 		if err != nil {
 			return fmt.Errorf("セッションを失効できない: %w", err)
 		}

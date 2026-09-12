@@ -633,6 +633,59 @@ func callPasswordReset(q *fakeQuerier, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
+// TestResetPasswordOnSelfKeepsCurrentSession は 6.6 の改訂を見る（pb-82）。
+//
+// **自分自身へのリセットで全セッションを切ると、押した本人が自分を締め出す。**
+// 画面は generated_password を表示する前に 401 を受けてログイン画面へ飛び、
+// **その値はこの応答でしか手に入らないので永久に失われる**（実測、2026-09-12）。
+func TestResetPasswordOnSelfKeepsCurrentSession(t *testing.T) {
+	q := userFake(t)
+	q.revokedSessions = 2
+	// **対象を自分自身にする。** 行の ID も principal に合わせる。
+	q.detailUser.ID = testActorID
+
+	p := adminPrincipal()
+	h, _ := newUserHandler(q)
+	rec := httptest.NewRecorder()
+	h.resetUserPassword(rec, adminUserReq(http.MethodPost,
+		"/api/v1/admin/users/"+testActorID+"/password-reset", "", p, "id", testActorID))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+	}
+	if pw, _ := viewOf(t, rec)["generated_password"].(string); pw == "" {
+		t.Fatalf("generated_password が空: %s", rec.Body.String())
+	}
+
+	// **いま操作しているセッションを外して切る**（4.3 と同じ扱い）。
+	if len(q.myRevokeParams) != 1 {
+		t.Fatalf("RevokeMyOtherSessions の呼び出し = %d回, want 1", len(q.myRevokeParams))
+	}
+	if got := q.myRevokeParams[0].CurrentTokenID; got != p.TokenID {
+		t.Errorf("残すトークン = %q, want %q", got, p.TokenID)
+	}
+	// **全失効のほうを呼んでいないこと。** 呼ぶと自分のセッションまで切れる。
+	if slices.Contains(q.revokedActors, testActorID) {
+		t.Errorf("自分自身に全セッション失効を掛けている: %v", q.revokedActors)
+	}
+}
+
+// TestResetPasswordOnOtherRevokesAllSessions は他人へのリセットが従来どおりで
+// あることを見る。**自分自身の例外が他人へ漏れていないこと。**
+func TestResetPasswordOnOtherRevokesAllSessions(t *testing.T) {
+	q := userFake(t)
+	q.revokedSessions = 3
+	if rec := callPasswordReset(q, ""); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+	}
+	if !slices.Contains(q.revokedActors, targetID) {
+		t.Errorf("他人には全セッション失効を掛けること: %v", q.revokedActors)
+	}
+	if len(q.myRevokeParams) != 0 {
+		t.Errorf("他人に RevokeMyOtherSessions を使っている: %+v", q.myRevokeParams)
+	}
+}
+
 func TestResetPasswordReturnsGeneratedPasswordAndRevokesSessions(t *testing.T) {
 	q := userFake(t)
 	q.revokedSessions = 3
