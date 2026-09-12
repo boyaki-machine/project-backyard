@@ -2721,6 +2721,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/tls/certificates/{id}/pem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * TLS証明書の取り出し
+         * @description 証明書を PEM のまま返す（ApiDesign.md 11.7）。**必要権限は `system.settings`。**
+         *
+         *     **秘密鍵は返さない。** 返すのは証明書だけで、**鍵はどの応答にも現れない。**
+         *
+         *     **この口は循環を断つためにある**——自己署名証明書では、その証明書を持って
+         *     いないクライアントが PB へ繋げない。**証明書は PB の DB にあるので、
+         *     繋げない相手から取ってこなければならない**（pb-100。stg で実際に起きた）。
+         *     **HTTPS にする前に取っておける。**
+         */
+        get: operations["downloadTLSCertificate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/tls/certificates/{id}": {
         parameters: {
             query?: never;
@@ -4208,6 +4235,23 @@ export interface components {
              * @example https://0.0.0.0:8443
              */
             listen_url: string;
+            /**
+             * @description **接続に使うホスト名**（`listen_url` のホスト部）。**`0.0.0.0` と `::` では
+             *     `null` である**——あれらは待受の表記であって接続先のホスト名ではなく、
+             *     **`0.0.0.0` を SAN に入れた証明書はどのクライアントからも一致しない**（pb-100）。
+             * @example 127.0.0.1
+             */
+            listen_host: string | null;
+            /**
+             * @description いま出す証明書が `listen_host` を覆っているか（ApiDesign.md 11.4）。
+             *     **判定はサーバが行う**——画面が `dns_names` と照合していたときは
+             *     **IP の SAN が抜け落ちていた**（pb-100 で実測）。
+             *
+             *     `unspecific` は `listen_host` が `null` のとき、`no_certificate` は
+             *     いま出す1枚が無いときである。
+             * @enum {string}
+             */
+            listen_host_match: "covered" | "uncovered" | "unspecific" | "no_certificate";
             /** @description 鍵が使える状態か。**PB が無ければ作るので通常は真である**（Design.md 6.6.1）。 */
             secret_key_present: boolean;
             /**
@@ -4226,6 +4270,17 @@ export interface components {
             common_name: string;
             /** @description SAN の DNS 名。**キーは常に返す**（無ければ空配列）。 */
             dns_names: string[];
+            /**
+             * @description SAN の IP アドレス。**キーは常に返す**（無ければ空配列）。
+             *
+             *     **列には無く、`cert_pem` を解析して返す**（pb-100）。`dns_names` は
+             *     `DNS:` の SAN しか持たないので、**画面がこちらを並べて出さないと
+             *     「SAN: localhost」と「127.0.0.1 を覆っています」が並んで見える。**
+             * @example [
+             *       "127.0.0.1"
+             *     ]
+             */
+            ip_addresses: string[];
             /** Format: date-time */
             not_before: string;
             /** Format: date-time */
@@ -9473,6 +9528,40 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    downloadTLSCertificate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 証明書の ID（ULID）。 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 証明書の PEM。`Content-Disposition` でファイル名が付く。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-pem-file": string;
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description その ID の証明書が無い（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     deleteTLSCertificate: {

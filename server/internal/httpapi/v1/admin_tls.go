@@ -43,6 +43,10 @@ type certificateView struct {
 	ID           string    `json:"id"`
 	CommonName   string    `json:"common_name"`
 	DNSNames     []string  `json:"dns_names"`
+	// IPAddresses は IP の SAN（11.4）。**列には無く、cert_pem から採る**——
+	// dns_names は DNS: の SAN しか持たないので、**これを出さないと画面の
+	// 「SAN」欄と突き合わせの結果が食い違って見える**（pb-100 の実画面で踏んだ）。
+	IPAddresses []string `json:"ip_addresses"`
 	NotBefore    time.Time `json:"not_before"`
 	NotAfter     time.Time `json:"not_after"`
 	SerialNumber string    `json:"serial_number"`
@@ -63,6 +67,14 @@ type certificateListResponse struct {
 	// 画面の先頭にそのまま出す。**設定値から画面が組み立てない**——
 	// 待受の変更には再起動が要るので、両者は再起動をまたぐとずれる。
 	ListenURL string `json:"listen_url"`
+	// ListenHost は接続に使うホスト名。**0.0.0.0 と :: では null である**（11.4）。
+	// **あれらは待受の表記であって接続先のホスト名ではない**（pb-100 で実測）。
+	ListenHost *string `json:"listen_host"`
+	// ListenHostMatch はいま出す証明書が ListenHost を覆っているか（11.4）。
+	//
+	// **判定はサーバが行い、画面は結果を出すだけである。** 画面が dns_names と
+	// 照合していたときは IP の SAN が抜け落ちていた（pb-100）。
+	ListenHostMatch tlscert.ListenHostMatch `json:"listen_host_match"`
 	// SecretKeyPresent は鍵が使える状態か。**PB が作るので通常は真である。**
 	SecretKeyPresent bool `json:"secret_key_present"`
 	// SecretKeyOrigin は鍵の出どころ（env / generated）。
@@ -336,7 +348,7 @@ func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow, origin
 			ID: row.ID, NotBefore: row.NotBefore.Time, NotAfter: row.NotAfter.Time,
 		})
 	}
-	status, _ := tlscert.Select(entries, time.Now())
+	status, activeID := tlscert.Select(entries, time.Now())
 
 	items := make([]certificateView, 0, len(rows))
 	for _, row := range rows {
@@ -344,6 +356,7 @@ func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow, origin
 			ID:           row.ID,
 			CommonName:   row.CommonName,
 			DNSNames:     row.DnsNames,
+			IPAddresses:  tlscert.IPAddresses(row.CertPem),
 			NotBefore:    row.NotBefore.Time.UTC(),
 			NotAfter:     row.NotAfter.Time.UTC(),
 			SerialNumber: row.SerialNumber,
@@ -355,6 +368,9 @@ func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow, origin
 		if v.DNSNames == nil {
 			v.DNSNames = []string{}
 		}
+		if v.IPAddresses == nil {
+			v.IPAddresses = []string{}
+		}
 		if row.UploadedBy.Valid {
 			v.UploadedBy = &actorRef{
 				ID:          row.UploadedBy.String,
@@ -365,13 +381,69 @@ func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow, origin
 		items = append(items, v)
 	}
 
-	return certificateListResponse{
+	host := tlscert.ListenHost(h.listenURL)
+	resp := certificateListResponse{
 		Items:            items,
 		TLSEnabled:       h.tlsActive(),
 		ListenURL:        h.listenURL,
+		ListenHostMatch:  tlscert.MatchNoCertificate,
 		SecretKeyPresent: origin != "",
 		SecretKeyOrigin:  string(origin),
 	}
+	if host != "" {
+		resp.ListenHost = &host
+	}
+
+	// **突き合わせるのは、いま出している1枚だけである。** 待機中のものは
+	// まだ誰にも提示されていないので、いま繋がるかどうかを左右しない。
+	if activeID != "" {
+		switch {
+		case host == "":
+			resp.ListenHostMatch = tlscert.MatchUnspecific
+		case tlscert.CoversHost(activePEM(rows, activeID), host):
+			resp.ListenHostMatch = tlscert.MatchCovered
+		default:
+			resp.ListenHostMatch = tlscert.MatchUncovered
+		}
+	}
+	return resp
+}
+
+// activePEM はいま出している1枚の PEM を取り出す。
+func activePEM(rows []gen.ListTLSCertificatesRow, activeID string) string {
+	for _, row := range rows {
+		if row.ID == activeID {
+			return row.CertPem
+		}
+	}
+	return ""
+}
+
+// downloadTLSCertificate は GET /api/v1/admin/tls/certificates/:id/pem を処理する（11.7）。
+//
+// **証明書だけを返す。** 秘密鍵はこの口にも現れない（11.4）。
+//
+// **監査ログを残さない。** 証明書は接続してきた誰にでも提示されるもので、
+// 取り出せること自体は秘密の漏洩にあたらない（11.7）。
+func (h *handler) downloadTLSCertificate(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	row, err := h.q.GetTLSCertificatePEM(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		apierr.WriteCode(w, r, apierr.NotFound)
+		return
+	} else if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("証明書を引けない: %w", err)))
+		return
+	}
+
+	// **ブラウザの保存にそのまま乗せる**（11.7）。画面が Blob を組み立てなくて済む。
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Content-Disposition",
+		`attachment; filename="`+tlscert.FileName(row.CommonName)+`"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(row.CertPem))
 }
 
 // loadPair は行から tls.Certificate を作る。**秘密鍵をここで復号する。**

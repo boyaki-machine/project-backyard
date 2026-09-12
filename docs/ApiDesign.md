@@ -3773,6 +3773,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
   "items": [
     { "id": "01K2...", "common_name": "pb.example.com",
       "dns_names": ["pb.example.com", "www.pb.example.com"],
+      "ip_addresses": ["127.0.0.1"],
       "not_before": "2026-09-01T00:00:00Z", "not_after": "2026-12-01T00:00:00Z",
       "serial_number": "0a1b2c3d", "fingerprint": "ab:cd:…",
       "is_self_signed": false, "status": "active",
@@ -3781,6 +3782,8 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
   ],
   "tls_enabled": true,
   "listen_url": "https://0.0.0.0:8443",
+  "listen_host": null,
+  "listen_host_match": "unspecific",
   "secret_key_present": true,
   "secret_key_origin": "generated"
 }
@@ -3794,6 +3797,9 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 | `status` | `active`（**いま出している1枚**）／ `pending`（`not_before` が未来）／ `expired`（`not_after` を過ぎた）／ `superseded`（有効だが、より新しい有効なものがある） |
 | `tls_enabled` | いま TLS で待ち受けているか。**設定 `tls_enabled` の実効値ではなく、実際の待受の状態である** |
 | `listen_url` | **いま待ち受けているスキームとアドレス**（`https://0.0.0.0:8443`）。画面の先頭にそのまま出す（`GuiDesign.md` 5.12.1） |
+| `ip_addresses` | **IP の SAN**（pb-100）。**列には無く、`cert_pem` から採る**（下記）。画面は `dns_names` と並べて出す |
+| `listen_host` | **接続に使うホスト名。** `listen_url` のホスト部だが、**`0.0.0.0` と `::` のときは `null`** である（下記） |
+| `listen_host_match` | いま出す証明書が `listen_host` を覆っているか。`covered` ／ `uncovered` ／ `unspecific`（`listen_host` が `null`）／ `no_certificate`（いま出す1枚が無い） |
 | `secret_key_present` | 鍵が使える状態か。**PB が無ければ作るので通常は真である**（`Design.md` 6.6.1） |
 | `secret_key_origin` | `env`（`PB_SECRET_KEY` で与えられた）／ `generated`（PB が作って DB に保存した）。**鍵そのものは返さない。** 画面が代償を出すために要る——**生成した鍵は DB にあるので、`pg_dump` に鍵と暗号文の両方が入る** |
 
@@ -3808,6 +3814,44 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 
 **スキームも同じ理由でサーバが決める。** `tls_enabled` の実効値ではなく、実際に
 TLS で待ち受けているかを見る。
+
+### `ip_addresses` を列に持たない
+
+**`dns_names` は `DNS:` の SAN だけを持つ**（`DbDesign.md` 6.15）。IP の SAN は
+**`cert_pem` を解析して返す**（pb-100）。
+
+**列を足さないのは、登録済みの行にもそのまま効かせるためである。** 列にすると
+**既に入っている証明書は登録し直すまで IP を持たない。**
+
+**これは表示のためだけの値ではない。** 判定（`listen_host_match`）と**同じ出どころから
+採る**ので、**画面に出る根拠と判定が食い違わない。** `SAN: localhost` と出しながら
+`127.0.0.1 を覆っています` と言う状態を作らない（pb-100 の実画面で踏んだ）。
+
+### 証明書の名前との突き合わせもサーバが行う
+
+**判定の結果だけを返し、画面が証明書の名前を照合しない**（改訂、pb-100）。**改訂前は
+画面が `dns_names` と `listen_url` を突き合わせていた**が、そこには IP アドレスが入らない。
+**`dns_names` は `DNS:` の SAN だけであり、`IP:` の SAN は別の欄にある**（`DbDesign.md` 6.15
+は前者しか列に持たない）。**`https://127.0.0.1:8443` で繋ぐ構成が「覆っていない」と判定
+できず、黙って通っていた**（pb-100 で実測）。
+
+**サーバは `cert_pem` を持っているので、標準ライブラリの `VerifyHostname` に照合させられる。**
+自分で書いた照合は、ワイルドカードと IP の規則を2度実装することになる。**列を足さずに
+済み、登録済みの行もそのまま新しい判定に乗る。**
+
+**`CN` へのフォールバックはしない。** `VerifyHostname` は SAN だけを見る（Go 1.15 以降）。
+**現代のブラウザも同じである**ので、SAN の無い証明書は `uncovered` になる。これは
+`Development.md` 14.2 の「`CN` だけでは最近のブラウザが受けない」と同じ判定である。
+
+### `listen_host` が `null` になるとき
+
+**`0.0.0.0` と `::` は待受の表記であって、接続先のホスト名ではない**（pb-100 で実測）。
+**すべてのアドレスで待ち受ける、という意味しか持たない**ので、**何と突き合わせるべきかを
+サーバは知らない。** ここで `0.0.0.0` を突き合わせると、**利用者は `0.0.0.0` を SAN に
+入れた証明書を作ってしまう**——その証明書はどのクライアントからも一致しない。
+
+**`null` を返し、画面は「アクセスに使うホスト名を自分で確かめてください」と出す**
+（`GuiDesign.md` 5.12.1）。
 
 ### `status` をサーバが決める理由
 
@@ -3875,6 +3919,51 @@ PEM は**テキスト**であり、画面は貼り付け欄で受ける（`GuiDe
 
 `tls.certificate.upload` と `tls.certificate.delete` を 2.10 の列挙に加える。
 **`detail` には指紋・`common_name`・有効期間を入れ、PEM と鍵は入れない。**
+
+## 11.7 `GET /api/v1/admin/tls/certificates/:id/pem`
+
+**必要権限**：`system.settings`
+
+登録済みの証明書を PEM のまま返す（pb-100）。
+
+- 成功 → `200`、`Content-Type: application/x-pem-file`
+- 存在しない → `404`
+
+```
+Content-Disposition: attachment; filename="pb.example.com.crt"
+```
+
+**秘密鍵は返さない。** 返すのは `cert_pem` だけで、11.4 と同じく**鍵はどの応答にも現れない。**
+
+### なぜ取り出す口が要るか
+
+**自己署名証明書では、その証明書を持っていないクライアントが PB へ繋げない**
+（`Development.md` 14.5）。証明書は PB の DB にあって画面から登録するが、**それを
+クライアントへ渡すまでエージェントは PB へ繋げない**ので、**繋げない相手から取って
+こなければならない**という循環になる（pb-100。stg で実際に起きた）。
+
+**この口は循環を断つためにある。** HTTPS にする前に取っておける。
+
+### なぜ一覧に含めず、別の口にしたか
+
+**11.4 は画面を開くたびに引かれる。** `cert_pem` を含めると、**使いもしない PEM を
+毎回全枚数ぶん運ぶ。** 取り出しは稀にしか起きない。
+
+**`Content-Disposition` を付けられるのも理由である。** ブラウザの保存にそのまま乗り、
+画面が Blob を組み立てなくて済む。
+
+### ファイル名
+
+`<common_name>.crt`。**`common_name` は任意の文字列なので、英数字・ハイフン・ドット・
+アンダースコア以外は `_` に置き換える**——パスの区切りが入ると保存先がずれる。
+**先頭と末尾の `_` と `.` は落とす**——先頭が `.` だと隠しファイルになる。
+**置き換えた結果が空になったら `certificate.crt` にする。**
+
+### 監査ログを残さない
+
+**証明書は接続してきた誰にでも提示されるもの**であり、**取り出せること自体は秘密の
+漏洩にあたらない。** `system.settings` を要求するのは**口を無用に広げないため**であって、
+秘匿のためではない。11.4 の一覧も同じ理由で残していない。
 
 ---
 

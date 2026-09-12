@@ -107,6 +107,25 @@ func (q *Queries) GetTLSCertificate(ctx context.Context, id string) (GetTLSCerti
 	return i, err
 }
 
+const getTLSCertificatePEM = `-- name: GetTLSCertificatePEM :one
+SELECT common_name, cert_pem
+FROM tls_certificate WHERE id = $1
+`
+
+type GetTLSCertificatePEMRow struct {
+	CommonName string
+	CertPem    string
+}
+
+// 1件を PEM のまま引く。**画面から保存するために使う**（ApiDesign.md 11.7）。
+// **秘密鍵は引かない**——この口が返すのは証明書だけである。
+func (q *Queries) GetTLSCertificatePEM(ctx context.Context, id string) (GetTLSCertificatePEMRow, error) {
+	row := q.db.QueryRow(ctx, getTLSCertificatePEM, id)
+	var i GetTLSCertificatePEMRow
+	err := row.Scan(&i.CommonName, &i.CertPem)
+	return i, err
+}
+
 const listTLSCertificates = `-- name: ListTLSCertificates :many
 
 SELECT

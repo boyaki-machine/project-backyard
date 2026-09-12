@@ -14,7 +14,12 @@ import { computed, onMounted, ref } from 'vue'
 
 import { ApiError } from '../api/client'
 import * as settingsApi from '../api/settings'
-import type { CertificateStatus, Setting, TLSCertificate } from '../api/settings'
+import type {
+  CertificateStatus,
+  Setting,
+  TLSCertificate,
+  TLSCertificateList,
+} from '../api/settings'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { formatDateTime } from '../lib/datetime'
 
@@ -22,6 +27,19 @@ const items = ref<TLSCertificate[]>([])
 /** **実際に TLS で待ち受けているか。** 設定の実効値ではない（`ApiDesign.md` 11.4） */
 const tlsEnabled = ref(false)
 const listenUrl = ref('')
+
+/**
+ * 接続に使うホスト名と、いま出す証明書との突き合わせ（`ApiDesign.md` 11.4）。
+ *
+ * **判定は画面で行わない**（改訂、pb-100）。**改訂前は `dns_names` と照合していた**が、
+ * そこには IP アドレスが入らない——**`https://127.0.0.1:8443` で繋ぐ構成が
+ * 「覆っていない」と判定できず、黙って通っていた。**
+ *
+ * `listenHost` は `0.0.0.0` と `::` では `null` である。**あれらは待受の表記で
+ * あって接続先のホスト名ではない。**
+ */
+const listenHost = ref<string | null>(null)
+const listenHostMatch = ref<TLSCertificateList['listen_host_match']>('no_certificate')
 
 /**
  * 設定 `tls_enabled`（`GuiDesign.md` 5.12.1）。
@@ -94,6 +112,8 @@ async function load() {
     items.value = res.items
     tlsEnabled.value = res.tls_enabled
     listenUrl.value = res.listen_url
+    listenHost.value = res.listen_host
+    listenHostMatch.value = res.listen_host_match
     secretKeyPresent.value = res.secret_key_present
     secretKeyOrigin.value = res.secret_key_origin
     // 0枚なら作り方を開いて出す（初回は必ず要る）。
@@ -151,33 +171,34 @@ async function submit() {
 /** 有効化後の待受（`https://…`）。**押す前に何になるかを示す**（利用者の指摘、2026-09-12） */
 const listenUrlIfEnabled = computed(() => listenUrl.value.replace(/^https?:/, 'https:'))
 
-/** `listen_url` のホスト部（ポートを除く）。証明書の名前と突き合わせる */
-const listenHost = computed(() => {
-  const m = /^https?:\/\/([^:/]+)/.exec(listenUrl.value)
-  return m ? m[1] : ''
-})
+/** いま出している1枚（`status === 'active'`）。**必ず1枚以下である**（11.4） */
+const activeCert = computed(() => items.value.find((c) => c.status === 'active') ?? null)
 
 /**
- * いま出す証明書が、アクセスに使うホスト名を覆っているか。
+ * いま出す証明書が自己署名か。
  *
- * **覆っていないとブラウザが警告を出す。** 押す前に気づける面が要る
- * （利用者の指摘、2026-09-12）。`*.example.com` の形も見る。
- *
- * `null` は「判定できない」（証明書が無い、ホスト名が取れない）。
+ * **自己署名だと、その証明書を持っていないクライアントは繋げない**（pb-100。
+ * 2026-09-12 に stg で実際に起きた）。**ブラウザは警告を出して続行できるが、
+ * エージェントは黙って失敗する**ので、画面を見ている人には分からない。
  */
-const certCoversHost = computed<boolean | null>(() => {
-  const active = items.value.find((c) => c.status === 'active')
-  if (!active || !listenHost.value) return null
-  const names = active.dns_names.length ? active.dns_names : [active.common_name]
-  return names.some((n) => {
-    if (n === listenHost.value) return true
-    if (n.startsWith('*.')) {
-      const suffix = n.slice(1) // ".example.com"
-      return listenHost.value.endsWith(suffix) && !listenHost.value.slice(0, -suffix.length).includes('.')
-    }
-    return false
-  })
-})
+const activeIsSelfSigned = computed(() => activeCert.value?.is_self_signed === true)
+
+/**
+ * 一覧と警告に出す SAN。
+ *
+ * **`dns_names` だけでは足りない**（pb-100）。あれは `DNS:` の SAN しか持たないので、
+ * **IP で繋ぐ構成では「SAN: localhost」と出しながら「127.0.0.1 を覆っています」と
+ * 言う**ことになり、利用者が画面だけで検算できない。
+ */
+function sanText(c: TLSCertificate): string {
+  return [...c.dns_names, ...c.ip_addresses].join(', ')
+}
+
+/** 証明書を取り出す URL（11.7）。**HTTPS にする前に取っておける**のが要点である */
+const pemUrl = settingsApi.certificatePemUrl
+
+/** クライアントに信頼させる環境変数。**Node.js のクライアントで実証済み**（pb-100） */
+const TRUST_ENV = 'export NODE_EXTRA_CA_CERTS=/absolute/path/to/pb.crt'
 
 /**
  * `tls_enabled` を切り替える。
@@ -282,16 +303,66 @@ function asApiError(e: unknown): ApiError {
             <dd><code>{{ listenUrlIfEnabled }}</code> で待ち受けます</dd>
           </dl>
 
-          <!-- 証明書の名前とアクセス先が合っているか。**合わないとブラウザが警告を出す** -->
-          <p v-if="certCoversHost === false" class="warn">
+          <!--
+            証明書の名前とアクセス先が合っているか。**判定はサーバが返す**
+            （`ApiDesign.md` 11.4）。画面は結果を出すだけである。
+          -->
+          <p v-if="listenHostMatch === 'uncovered'" class="warn">
             ⚠ いま使う証明書は <code>{{ listenHost }}</code> を覆っていません（証明書の名前:
-            {{ (items.find((c) => c.status === 'active')?.dns_names ?? []).join(', ') || '—' }}）。
+            {{ (activeCert && sanText(activeCert)) || '—' }}）。
             <strong>このままではブラウザが警告を出します。</strong>
             アクセスに使うホスト名を SAN に含む証明書を登録してください。
           </p>
-          <p v-else-if="certCoversHost === true" class="ok">
+          <p v-else-if="listenHostMatch === 'covered'" class="ok">
             ✓ いま使う証明書は <code>{{ listenHost }}</code> を覆っています
           </p>
+          <!--
+            **`0.0.0.0` は待受の表記であって接続先のホスト名ではない**（pb-100）。
+            「判定できません」とだけ書くと、利用者は `0.0.0.0` を証明書に入れて
+            解決しようとする——**入れても一致しない**ことまで書く。
+          -->
+          <p v-else-if="listenHostMatch === 'unspecific'" class="warn">
+            すべてのアドレスで待ち受けています（<code>{{ listenUrl }}</code>）。
+            <strong>アクセスに使うホスト名が証明書に入っているか確かめてください。</strong>
+            <code>0.0.0.0</code> を証明書に入れても一致しません。
+          </p>
+
+          <!--
+            **自己署名だとエージェントが黙って繋がらなくなる**（pb-100。stg で実際に
+            起きた）。**有効化は止めない**——前段にプロキシを置く構成やブラウザだけの
+            用途では困らない。
+          -->
+          <template v-if="activeIsSelfSigned">
+            <p class="warn">
+              ⚠ この証明書は自己署名です。ブラウザは警告を出し、<strong
+                >エージェントの MCP 接続は失敗します。</strong
+              >
+              繋がるようにするには、証明書をクライアントへ渡す設定が要ります。
+            </p>
+            <details class="trust">
+              <summary>クライアントに信頼させる</summary>
+              <ol class="muted">
+                <li>
+                  <strong>証明書を保存します。</strong>下の一覧の「保存」から取れます。
+                  <strong>HTTPS にする前に取っておいてください</strong
+                  >——HTTPS にしたあとは、繋げないクライアントからは取れません
+                </li>
+                <li>
+                  <strong>クライアントに渡します。</strong>Node.js で動くクライアント
+                  （Claude Code など）は次の環境変数を読みます
+                  <pre>{{ TRUST_ENV }}</pre>
+                  <button type="button" class="link" @click="copy(TRUST_ENV)">コピー</button>
+                </li>
+                <li>
+                  <strong>クライアントを再起動します。</strong>環境変数は起動時にしか
+                  読まれません
+                </li>
+              </ol>
+              <p class="muted">
+                切り分けの手順は <code>docs/Development.md</code> 14.5 にあります。
+              </p>
+            </details>
+          </template>
 
           <div class="actions-left">
             <button
@@ -405,7 +476,7 @@ function asApiError(e: unknown): ApiError {
             <strong>{{ formatDateTime(c.not_before) }} から自動で使われます</strong>
           </p>
 
-          <p v-if="c.dns_names.length" class="muted san">SAN: {{ c.dns_names.join(', ') }}</p>
+          <p v-if="sanText(c)" class="muted san">SAN: {{ sanText(c) }}</p>
           <p class="muted fp">指紋: {{ c.fingerprint }}</p>
           <p class="muted by">
             {{ formatDateTime(c.uploaded_at) }}
@@ -413,6 +484,12 @@ function asApiError(e: unknown): ApiError {
           </p>
 
           <div class="foot">
+            <!--
+              **取り出せることが循環を断つ**（pb-100）——証明書をクライアントへ渡す
+              まで、エージェントは PB へ繋げない。`Content-Disposition` はサーバが
+              付けるので、画面は Blob を組み立てない。
+            -->
+            <a class="save" :href="pemUrl(c.id)" download>保存</a>
             <button v-if="canDelete(c)" type="button" class="link danger" @click="deleting = c">
               削除
             </button>
@@ -676,6 +753,35 @@ function asApiError(e: unknown): ApiError {
 .foot {
   margin-top: var(--pb-space-2);
   font-size: var(--pb-fs-sm);
+  display: flex;
+  gap: var(--pb-space-3);
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.save {
+  color: var(--pb-accent);
+}
+/* **自己署名の手順は畳んで出す。** 毎回読むものではない（5.12.1） */
+.trust {
+  margin: var(--pb-space-2) 0;
+}
+.trust summary {
+  cursor: pointer;
+}
+.trust ol {
+  padding-left: var(--pb-space-4);
+}
+.trust li {
+  margin-bottom: var(--pb-space-2);
+}
+.trust pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--pb-elevated);
+  padding: var(--pb-space-2);
+  border-radius: var(--pb-radius);
+  margin: var(--pb-space-1) 0;
 }
 .field {
   display: block;
