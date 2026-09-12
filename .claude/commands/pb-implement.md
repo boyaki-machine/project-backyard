@@ -29,6 +29,8 @@ allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 - 作業用の worktree とブランチを作成する
   `git worktree add ../<repo>-pb-<番号> -b <接頭辞>/pb-<番号>-<スラッグ>`
   接頭辞は作業の種別で決める（`feature` / `fix` / `docs`）
+- **作った worktree は畳むまでが1組である。** マージし終えた時点、または feature
+  ブランチを削除した時点で `git worktree remove` する（**規約「worktree は作ったら畳む」**）
 
 ## 5. 実装
 - スコープ境界（`scope.allow` / `scope.deny`）の外にあるファイルは変更しない
