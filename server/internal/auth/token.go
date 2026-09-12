@@ -33,6 +33,12 @@ const (
 	// token_prefix には接頭辞＋乱数1文字が入り、一覧で種別と個体の
 	// 両方が読める形が揃う。
 	AgentTokenPrefix = "pb_agt_"
+	// MFAChallengePrefix はログインの第2要素の挑戦（Design.md 6.7.4）。
+	//
+	// **これはセッションではない。** 置き場も access_token ではなく
+	// mfa_login_challenge であり（DbDesign.md 6.18）、接頭辞を分けてあるのは
+	// **漏れた文字列を見たときに何のトークンか判別できるようにするため**である。
+	MFAChallengePrefix = "pb_mfa_"
 )
 
 // tokenRandomBytes は乱数部のバイト数。Design.md 6.2.1 が定める32バイト。

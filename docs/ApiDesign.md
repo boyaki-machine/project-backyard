@@ -277,7 +277,8 @@ If-Match: "3"
 `token.issue` / `token.revoke` / `session.revoke` / `user.create` / `user.update` /
 `user.delete` / `role.change` / `project.create` / `project.archive` / `permission.denied` /
 `agent.register` / `agent.update` / `agent.delete` / `setting.update` /
-`tls.certificate.upload` / `tls.certificate.delete`
+`tls.certificate.upload` / `tls.certificate.delete` / `mfa.register` / `mfa.unregister` /
+`mfa.recovery_codes.regenerate` / `mfa.reset` / `login.mfa_failure`
 
 **`agent.` の3件は Phase 2 で加わった**（4.5.6）。**`agent.register` / `agent.update` は 0019**、
 **`agent.delete` は手順26a**（2026-09-05）である。エージェントの登録・変更・削除は
@@ -290,6 +291,11 @@ If-Match: "3"
 
 **`tls.certificate.*` は pb-3 で加わった**（11.5 / 11.6）。**`detail` には指紋・`common_name`・
 有効期間を入れ、PEM と秘密鍵は入れない**——`audit_log` は長期保存される記録である。
+
+**`mfa.*` の4件と `login.mfa_failure` は pb-103 で加わった**（4.6.6）。**共有秘密・
+`otpauth_uri`・リカバリコードを `detail` に入れない**——同じ理由である。
+**`login.mfa_failure` を `login.failure` と分けてある**のは、前者ではパスワードが
+既に通っており、**総当たりの調査で見る対象が違う**ためである。
 
 ## 2.11 ヘルスチェック
 

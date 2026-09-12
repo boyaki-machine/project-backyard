@@ -242,3 +242,69 @@ func validatePasswordReset(req passwordResetRequest) *apierr.Error {
 		Message: "mode は generate で指定してください",
 	})
 }
+
+// resetUserMfa は POST /api/v1/admin/users/:id/mfa/reset を処理する
+// （ApiDesign.md 6.9。pb-103）。
+//
+// **本人がリカバリコードまで失ったときの口である**（Design.md 6.7.5）。
+// 対象の認証器・リカバリコード・未消費の挑戦をすべて消し、次のログインから
+// パスワードだけで入れる状態に戻す。
+//
+// **パスワードには触らず、セッションも切らない。** 締め出しの原因は
+// 「パスワードを忘れた」（6.6）と「認証アプリを失った」で別物であり、
+// まとめて直すと必要のない資格情報まで作り替える。
+//
+// **冪等である。** 1件も登録が無くても 204 を返す。
+//
+// **自分自身に対しても許す。** 自分の認証器は /me から外せる（4.6.4）ので、
+// この口を自分へ向ける理由は壊れた状態の復旧だけであり、塞ぐ意味が無い。
+func (h *handler) resetUserMfa(w http.ResponseWriter, r *http.Request) {
+	_, id, ok := h.adminUserContext(w, r, "POST /admin/users/{id}/mfa/reset")
+	if !ok {
+		return
+	}
+
+	ctx := r.Context()
+	rec := audit.FromRequest(r)
+
+	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		cur, err := q.GetAdminUser(ctx, id)
+		if err != nil {
+			return err
+		}
+
+		credentials, err := q.DeleteAllMfaCredentials(ctx, id)
+		if err != nil {
+			return fmt.Errorf("認証器を消せない: %w", err)
+		}
+		codes, err := q.DeleteRecoveryCodes(ctx, id)
+		if err != nil {
+			return fmt.Errorf("リカバリコードを消せない: %w", err)
+		}
+		// **未消費の挑戦も捨てる。** 残すと、解除の直後に古い挑戦で
+		// 第2要素を要求される（対象はもう答えられない）。
+		if err := q.DeleteMfaLoginChallengesForUser(ctx, id); err != nil {
+			return fmt.Errorf("挑戦を消せない: %w", err)
+		}
+
+		// 0件でも記録する。**「解除しようとした」こと自体が監査の対象**である
+		// （6.7 の失効と同じ判断）。
+		return rec.Record(ctx, q, audit.Entry{
+			Action:     audit.MFAReset,
+			Result:     audit.Success,
+			TargetType: "app_user",
+			TargetID:   id,
+			Detail: map[string]any{
+				"email":                  cur.Email,
+				"removed_credentials":    credentials,
+				"removed_recovery_codes": codes,
+			},
+		})
+	})
+	if err != nil {
+		writeUserUpdateError(w, r, id, nil, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -62,6 +62,8 @@ func usage() {
 使い方:
   pb serve          APIサーバを起動する
   pb admin create   初期管理者（アドミニストレータ）を対話的に作成する
+  pb admin mfa-reset --email <アドレス>
+                    第2要素（TOTP・リカバリコード）を解除する（Design.md 6.7.5）
   pb dev seed       開発用デモデータを投入する（DbDesign.md 7.6）
   pb dev info       URL とデモアカウント一覧を表示する
   pb version        バージョンを表示する
@@ -80,11 +82,15 @@ func usage() {
 
 func runAdmin(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("admin のサブコマンドを指定してください（create）")
+		return errors.New("admin のサブコマンドを指定してください（create / mfa-reset）")
 	}
 	switch args[0] {
 	case "create":
 		return adminCreate(ctx)
+	// **画面から第2要素を外せなくなった人のための口である**（Design.md 6.7.5）。
+	// 管理者が1人だけの構成では、画面側の 6.9 が成立しない。
+	case "mfa-reset":
+		return adminMFAReset(ctx, args[1:])
 	default:
 		return fmt.Errorf("未知のサブコマンド: admin %s", args[0])
 	}

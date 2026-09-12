@@ -86,8 +86,51 @@ type appSettingFakeState struct {
 	expiredPending []gen.ListExpiredPendingSettingChangesRow
 }
 
+// mfaFakeState は第2要素が触るものを持つ（pb-103。ApiDesign.md 4.6 / 3.4）。
+//
+// **書き込みを配列で溜める。** 何を渡したかを検査したいためで、
+// 「未確定の行を先に捨てたか」「リカバリコードを10本入れたか」
+// 「最後の1件を消したときコードも消したか」は引数を見ないと確かめられない。
+type mfaFakeState struct {
+	// confirmed は ListConfirmedMfaCredentials / CountConfirmedMfaCredentials が返す。
+	// **既定は空**なので、既存のログイン経路は第2要素なしのまま通る。
+	confirmed []gen.ListConfirmedMfaCredentialsRow
+	// secrets は照合のために引く行（封じられた共有秘密ごと）。
+	secrets []gen.ListConfirmedMfaSecretsRow
+	// pending は FindPendingMfaCredential が返す行。nil なら pgx.ErrNoRows。
+	pending    *gen.FindPendingMfaCredentialRow
+	nameTaken  bool
+	recovery   *gen.GetRecoveryCodeStatusRow
+	unusedCode int64
+	// challenge は FindMfaLoginChallenge が返す行。nil なら pgx.ErrNoRows。
+	challenge *gen.FindMfaLoginChallengeRow
+
+	created           []gen.CreateMfaCredentialParams
+	pendingDeleted    []string
+	confirmCalls      []gen.ConfirmMfaCredentialParams
+	confirmErr        error
+	failureCount      int32
+	deleted           []gen.DeleteMfaCredentialParams
+	deletedRows       int64
+	allDeletedFor     []string
+	createdCodes      []gen.CreateRecoveryCodeParams
+	codesDeletedFor   []string
+	codesDeletedRows  int64
+	consumedCodes     []gen.ConsumeRecoveryCodeParams
+	consumeCodeRows   int64
+	challengesCreated []gen.CreateMfaLoginChallengeParams
+	challengesDeleted []string
+	challengeAttempts int32
+	consumedChallenge []string
+	consumeChalRows   int64
+	touchedUsed       []gen.TouchMfaCredentialUsedParams
+}
+
 type fakeQuerier struct {
 	gen.Querier
+
+	// 第2要素（pb-103。ApiDesign.md 4.6 / 3.4）
+	mfa mfaFakeState
 
 	// アプリケーション設定（pb-2。ApiDesign.md 11章）
 	settings appSettingFakeState
@@ -396,6 +439,152 @@ func (q *fakeQuerier) RecordLoginFailure(_ context.Context, arg gen.RecordLoginF
 		return q.failErr
 	}
 	q.failures = append(q.failures, arg)
+	return nil
+}
+
+// ── 秘密の暗号鍵（pb-3 の app_secret。pb-103 が単体テストで使い始めた）──
+//
+// **鍵は固定の32バイトを返す。** tlscert.ResolveKey は「無ければ作って保存し、
+// 必ず読み直す」ので、行がある状態にしておけば生成の経路を通らない。
+
+// testSecretKey は AES-256-GCM の鍵（32バイト）。値そのものに意味は無い。
+var testSecretKey = []byte("0123456789abcdef0123456789abcdef")
+
+func (q *fakeQuerier) GetAppSecret(_ context.Context, keyID string) (gen.GetAppSecretRow, error) {
+	return gen.GetAppSecretRow{KeyID: keyID, Secret: testSecretKey}, nil
+}
+
+func (q *fakeQuerier) CreateAppSecretIfAbsent(_ context.Context, _ gen.CreateAppSecretIfAbsentParams) error {
+	return nil
+}
+
+// ── 第2要素（pb-103）──────────────────────────────────────
+//
+// **既定は「1件も登録されていない」である。** そうしないと、第2要素と関係の
+// ない既存のログインのテストが全部 MFA の分岐へ落ちる。
+
+func (q *fakeQuerier) ListConfirmedMfaCredentials(_ context.Context, _ string) ([]gen.ListConfirmedMfaCredentialsRow, error) {
+	return q.mfa.confirmed, nil
+}
+
+func (q *fakeQuerier) CountConfirmedMfaCredentials(_ context.Context, _ string) (int64, error) {
+	return int64(len(q.mfa.confirmed)), nil
+}
+
+func (q *fakeQuerier) ListConfirmedMfaSecrets(_ context.Context, _ string) ([]gen.ListConfirmedMfaSecretsRow, error) {
+	return q.mfa.secrets, nil
+}
+
+func (q *fakeQuerier) FindPendingMfaCredential(_ context.Context, _ gen.FindPendingMfaCredentialParams) (gen.FindPendingMfaCredentialRow, error) {
+	if q.mfa.pending == nil {
+		return gen.FindPendingMfaCredentialRow{}, pgx.ErrNoRows
+	}
+	return *q.mfa.pending, nil
+}
+
+func (q *fakeQuerier) FindMfaCredentialByName(_ context.Context, _ gen.FindMfaCredentialByNameParams) (string, error) {
+	if q.mfa.nameTaken {
+		return "01K2F8QW3H7YRJ4M5N6P7Q8TAK", nil
+	}
+	return "", pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) DeletePendingMfaCredentials(_ context.Context, userID string) error {
+	q.mfa.pendingDeleted = append(q.mfa.pendingDeleted, userID)
+	return nil
+}
+
+func (q *fakeQuerier) CreateMfaCredential(_ context.Context, arg gen.CreateMfaCredentialParams) error {
+	q.mfa.created = append(q.mfa.created, arg)
+	return nil
+}
+
+func (q *fakeQuerier) ConfirmMfaCredential(_ context.Context, arg gen.ConfirmMfaCredentialParams) (gen.ConfirmMfaCredentialRow, error) {
+	q.mfa.confirmCalls = append(q.mfa.confirmCalls, arg)
+	if q.mfa.confirmErr != nil {
+		return gen.ConfirmMfaCredentialRow{}, q.mfa.confirmErr
+	}
+	// **name はパラメータに無い**（UPDATE は id と user_id で引く）ので、
+	// 登録時に受け取った値を使う。無ければテスト用の既定を置く。
+	name := "iPhone"
+	if len(q.mfa.created) > 0 {
+		name = q.mfa.created[len(q.mfa.created)-1].Name
+	}
+	return gen.ConfirmMfaCredentialRow{
+		ID: arg.ID, Name: name, Kind: "totp", CreatedAt: ts(time.Now()),
+	}, nil
+}
+
+func (q *fakeQuerier) RecordMfaCredentialFailure(_ context.Context, _ gen.RecordMfaCredentialFailureParams) (int32, error) {
+	q.mfa.failureCount++
+	return q.mfa.failureCount, nil
+}
+
+func (q *fakeQuerier) TouchMfaCredentialUsed(_ context.Context, arg gen.TouchMfaCredentialUsedParams) error {
+	q.mfa.touchedUsed = append(q.mfa.touchedUsed, arg)
+	return nil
+}
+
+func (q *fakeQuerier) DeleteMfaCredential(_ context.Context, arg gen.DeleteMfaCredentialParams) (int64, error) {
+	q.mfa.deleted = append(q.mfa.deleted, arg)
+	return q.mfa.deletedRows, nil
+}
+
+func (q *fakeQuerier) DeleteAllMfaCredentials(_ context.Context, userID string) (int64, error) {
+	q.mfa.allDeletedFor = append(q.mfa.allDeletedFor, userID)
+	return int64(len(q.mfa.confirmed)), nil
+}
+
+func (q *fakeQuerier) CountUnusedRecoveryCodes(_ context.Context, _ string) (int64, error) {
+	return q.mfa.unusedCode, nil
+}
+
+func (q *fakeQuerier) GetRecoveryCodeStatus(_ context.Context, _ string) (gen.GetRecoveryCodeStatusRow, error) {
+	if q.mfa.recovery == nil {
+		return gen.GetRecoveryCodeStatusRow{}, pgx.ErrNoRows
+	}
+	return *q.mfa.recovery, nil
+}
+
+func (q *fakeQuerier) CreateRecoveryCode(_ context.Context, arg gen.CreateRecoveryCodeParams) error {
+	q.mfa.createdCodes = append(q.mfa.createdCodes, arg)
+	return nil
+}
+
+func (q *fakeQuerier) ConsumeRecoveryCode(_ context.Context, arg gen.ConsumeRecoveryCodeParams) (int64, error) {
+	q.mfa.consumedCodes = append(q.mfa.consumedCodes, arg)
+	return q.mfa.consumeCodeRows, nil
+}
+
+func (q *fakeQuerier) DeleteRecoveryCodes(_ context.Context, userID string) (int64, error) {
+	q.mfa.codesDeletedFor = append(q.mfa.codesDeletedFor, userID)
+	return q.mfa.codesDeletedRows, nil
+}
+
+func (q *fakeQuerier) CreateMfaLoginChallenge(_ context.Context, arg gen.CreateMfaLoginChallengeParams) error {
+	q.mfa.challengesCreated = append(q.mfa.challengesCreated, arg)
+	return nil
+}
+
+func (q *fakeQuerier) FindMfaLoginChallenge(_ context.Context, _ string) (gen.FindMfaLoginChallengeRow, error) {
+	if q.mfa.challenge == nil {
+		return gen.FindMfaLoginChallengeRow{}, pgx.ErrNoRows
+	}
+	return *q.mfa.challenge, nil
+}
+
+func (q *fakeQuerier) RecordMfaChallengeFailure(_ context.Context, _ string) (int32, error) {
+	q.mfa.challengeAttempts++
+	return q.mfa.challengeAttempts, nil
+}
+
+func (q *fakeQuerier) ConsumeMfaLoginChallenge(_ context.Context, id string) (int64, error) {
+	q.mfa.consumedChallenge = append(q.mfa.consumedChallenge, id)
+	return q.mfa.consumeChalRows, nil
+}
+
+func (q *fakeQuerier) DeleteMfaLoginChallengesForUser(_ context.Context, userID string) error {
+	q.mfa.challengesDeleted = append(q.mfa.challengesDeleted, userID)
 	return nil
 }
 
