@@ -104,6 +104,13 @@ type AgentRun struct {
 	RetryCount      int32
 }
 
+// PB が生成した暗号鍵（Design.md 6.6.1）。PB_SECRET_KEY を与えたときは読まない
+type AppSecret struct {
+	KeyID     string
+	Secret    []byte
+	CreatedAt pgtype.Timestamptz
+}
+
 // アプリケーション設定の第2層（Design.md 10.3）。平文なので秘密を入れない。既定値は行の不在で表す
 type AppSetting struct {
 	Key       string

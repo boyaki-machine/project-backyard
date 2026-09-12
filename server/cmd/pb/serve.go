@@ -19,6 +19,7 @@ import (
 
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi"
+	v1 "github.com/boyaki-machine/project-backyard/server/internal/httpapi/v1"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/tlscert"
@@ -187,15 +188,23 @@ func setupTLS(ctx context.Context, pool *pgxpool.Pool, set *config.Set) (*tlscer
 		return nil, nil, fmt.Errorf("TLS 証明書を引けない: %w", err)
 	}
 
-	key, err := tlscert.DecodeKey(set.String(config.KeySecretKey))
+	if len(rows) == 0 {
+		// 証明書が無いなら鍵も要らない。**ただし TLS では上がれない。**
+		return nil, nil, fmt.Errorf(
+			"TLS で待ち受ける設定だが、証明書が1枚も登録されていない。" +
+				"PB_TLS_ENABLED=false で平文に戻すか、証明書を登録すること")
+	}
+
+	// **鍵は PB が用意する**（Design.md 6.6.1）。PB_SECRET_KEY があればそれ、
+	// 無ければ DB の行、それも無ければ生成して保存する。
+	key, origin, err := tlscert.ResolveKey(ctx, v1.SecretStore{Q: gen.New(pool)},
+		set.String(config.KeySecretKey))
 	if err != nil {
-		if len(rows) == 0 {
-			// 証明書が無いなら鍵も要らない。**ただし TLS では上がれない。**
-			return nil, nil, fmt.Errorf(
-				"TLS で待ち受ける設定だが、証明書が1枚も登録されていない。" +
-					"PB_TLS_ENABLED=false で平文に戻すか、証明書を登録すること")
-		}
-		return nil, nil, fmt.Errorf("TLS 証明書があるが秘密の暗号鍵を読めない（PB_SECRET_KEY）: %w", err)
+		return nil, nil, fmt.Errorf("秘密の暗号鍵を用意できない: %w", err)
+	}
+	if origin == tlscert.OriginGenerated {
+		slog.Warn("PB が生成した暗号鍵を使っている",
+			slog.String("hint", "バックアップの持ち出しから秘密鍵を守るには PB_SECRET_KEY を与えること"))
 	}
 
 	holder := tlscert.NewHolder()

@@ -4208,8 +4208,15 @@ export interface components {
              * @example https://0.0.0.0:8443
              */
             listen_url: string;
-            /** @description `secret_key` が与えられているか。**値は返さない。** 偽なら証明書を登録できない。 */
+            /** @description 鍵が使える状態か。**PB が無ければ作るので通常は真である**（Design.md 6.6.1）。 */
             secret_key_present: boolean;
+            /**
+             * @description `env`（PB_SECRET_KEY で与えられた）／ `generated`（PB が作って DB に保存した）。
+             *     **鍵そのものは返さない。** 画面が代償を出すために要る——**生成した鍵は DB に
+             *     あるので、`pg_dump` に鍵と暗号文の両方が入る。**
+             * @enum {string}
+             */
+            secret_key_origin: "env" | "generated";
         };
         /** @description 証明書1件（ApiDesign.md 11.4）。**`private_key` は含まれない。** */
         TLSCertificate: {
@@ -9454,7 +9461,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
-            /** @description 同じ指紋の証明書が既にある、または `secret_key` が与えられていない（`conflict`）。 */
+            /** @description 同じ指紋の証明書が既にある（`conflict`）。 */
             409: {
                 headers: {
                     [name: string]: unknown;
