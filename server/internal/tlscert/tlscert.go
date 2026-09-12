@@ -17,6 +17,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -191,4 +192,115 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 		return nil, fmt.Errorf("暗号を初期化できない: %w", err)
 	}
 	return cipher.NewGCM(block)
+}
+
+// ListenHostMatch は待受のホスト名と、いま出す証明書の突き合わせの結果
+// （ApiDesign.md 11.4）。**判定はサーバの1か所に置く**——画面が dns_names と
+// 照合していたときは IP の SAN が抜け落ちていた（pb-100 で実測）。
+type ListenHostMatch string
+
+const (
+	// MatchCovered は証明書が待受のホスト名を覆っている。
+	MatchCovered ListenHostMatch = "covered"
+	// MatchUncovered は覆っていない。**ブラウザが警告を出す状態である。**
+	MatchUncovered ListenHostMatch = "uncovered"
+	// MatchUnspecific は待受が全アドレスで、突き合わせる相手が決まらない。
+	MatchUnspecific ListenHostMatch = "unspecific"
+	// MatchNoCertificate はいま出す証明書が無い。
+	MatchNoCertificate ListenHostMatch = "no_certificate"
+)
+
+// ListenHost は待受の URL から、証明書と突き合わせるホスト名を取り出す。
+//
+// **0.0.0.0 と :: では空を返す。** あれらは待受の表記であって接続先のホスト名では
+// なく、**すべてのアドレスで待ち受けるという意味しか持たない**（ApiDesign.md 11.4）。
+// ここで 0.0.0.0 を返すと、利用者は 0.0.0.0 を SAN に入れた証明書を作ってしまう——
+// **その証明書はどのクライアントからも一致しない**（pb-100 で実測）。
+func ListenHost(listenURL string) string {
+	u, err := url.Parse(listenURL)
+	if err != nil {
+		return ""
+	}
+	switch h := u.Hostname(); h {
+	case "", "0.0.0.0", "::":
+		return ""
+	default:
+		return h
+	}
+}
+
+// CoversHost は証明書が host を覆っているかを返す。
+//
+// **照合は crypto/x509 の VerifyHostname に任せる。** ワイルドカードと IP の規則を
+// 自分で書くと、標準ライブラリと同じものを2度実装することになる。**IP アドレスは
+// IPAddresses の SAN と照合される**ので、DNS:127.0.0.1 では一致しない（pb-100）。
+//
+// **CN へのフォールバックはしない**（Go 1.15 以降の VerifyHostname がそうである）。
+// **現代のブラウザも CN を見ない**ので、SAN の無い証明書は覆っていないと判定する
+// （Development.md 14.2）。
+func CoversHost(certPEM, host string) bool {
+	if host == "" {
+		return false
+	}
+	leaf := parseLeaf(certPEM)
+	if leaf == nil {
+		return false
+	}
+	return leaf.VerifyHostname(host) == nil
+}
+
+// IPAddresses は証明書の IP の SAN を返す（ApiDesign.md 11.4）。
+//
+// **DB の列には無い。** `dns_names` は `DNS:` の SAN だけを持つ（DbDesign.md 6.15）。
+// **列を足さずに cert_pem から採る**ので、登録済みの行にもそのまま効く。
+//
+// **CoversHost と出どころが同じである。** 画面に出る根拠と判定が食い違わない
+// ——`SAN: localhost` と出しながら `127.0.0.1 を覆っています` と言う状態を作らない。
+func IPAddresses(certPEM string) []string {
+	leaf := parseLeaf(certPEM)
+	if leaf == nil {
+		return nil
+	}
+	out := make([]string, 0, len(leaf.IPAddresses))
+	for _, ip := range leaf.IPAddresses {
+		out = append(out, ip.String())
+	}
+	return out
+}
+
+// parseLeaf は PEM の先頭のブロックを証明書として読む。
+//
+// **先頭がリーフである**（Parse が encodeChain でその順に書いている）。
+func parseLeaf(certPEM string) *x509.Certificate {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return nil
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil
+	}
+	return leaf
+}
+
+// FileName は証明書を保存するときのファイル名を作る（ApiDesign.md 11.7）。
+//
+// **common_name は任意の文字列である。** パスの区切りが入ると保存先がずれるので、
+// 英数字・ハイフン・ドット・アンダースコア以外は _ に置き換える。
+func FileName(commonName string) string {
+	var b strings.Builder
+	for _, r := range commonName {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '.', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	name := strings.Trim(b.String(), "_.")
+	if name == "" {
+		return "certificate.crt"
+	}
+	return name + ".crt"
 }

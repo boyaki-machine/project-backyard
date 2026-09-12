@@ -54,3 +54,9 @@ DELETE FROM tls_certificate WHERE id = @id;
 -- name: GetTLSCertificate :one
 SELECT id, common_name, not_before, not_after, fingerprint
 FROM tls_certificate WHERE id = @id;
+
+-- 1件を PEM のまま引く。**画面から保存するために使う**（ApiDesign.md 11.7）。
+-- **秘密鍵は引かない**——この口が返すのは証明書だけである。
+-- name: GetTLSCertificatePEM :one
+SELECT common_name, cert_pem
+FROM tls_certificate WHERE id = @id;

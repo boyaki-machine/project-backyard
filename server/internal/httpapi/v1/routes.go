@@ -539,6 +539,11 @@ func Mount(r chi.Router, deps Deps) {
 			Post("/admin/tls/certificates", h.uploadTLSCertificate)
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Delete("/admin/tls/certificates/{id}", h.deleteTLSCertificate)
+		// **取り出す口（11.7。pb-100）。** 証明書をクライアントへ渡すまで
+		// エージェントは PB へ繋げないので、**繋げない相手から取ってこなければ
+		// ならない**という循環がある。この口がそれを断つ。
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Get("/admin/tls/certificates/{id}/pem", h.downloadTLSCertificate)
 	})
 }
 

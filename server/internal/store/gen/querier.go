@@ -654,6 +654,9 @@ type Querier interface {
 	// 1件を引く。削除の前に「存在するか」と「消したら有効なものが残るか」を
 	// 判定するために使う（ApiDesign.md 11.6）。
 	GetTLSCertificate(ctx context.Context, id string) (GetTLSCertificateRow, error)
+	// 1件を PEM のまま引く。**画面から保存するために使う**（ApiDesign.md 11.7）。
+	// **秘密鍵は引かない**——この口が返すのは証明書だけである。
+	GetTLSCertificatePEM(ctx context.Context, id string) (GetTLSCertificatePEMRow, error)
 	// 1件だけ返す形。POST / PATCH の応答（ApiDesign.md 9.11、B-2）で使う。
 	GetTagByID(ctx context.Context, arg GetTagByIDParams) (GetTagByIDRow, error)
 	// GetTicketBrief は 9.5.1 の parent（親の要約）を引く。

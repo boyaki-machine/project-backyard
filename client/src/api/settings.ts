@@ -4,7 +4,7 @@
  * 型は `docs/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない
  * （`roles.ts` と同じ方針）。
  */
-import { api } from './client'
+import { api, BASE_PATH } from './client'
 import type { components } from './schema'
 
 export type SettingList = components['schemas']['SettingList']
@@ -75,4 +75,18 @@ export function uploadCertificate(certPem: string, keyPem: string): Promise<TLSC
  */
 export function deleteCertificate(id: string): Promise<void> {
   return api.del<void>(`/admin/tls/certificates/${encodeURIComponent(id)}`)
+}
+
+/**
+ * 証明書を取り出す URL（`ApiDesign.md` 11.7）。
+ *
+ * **`<a href>` で開く。** Cookie 認証なので追加のヘッダが要らず、サーバが付ける
+ * `Content-Disposition` がそのままブラウザの保存に乗る。**画面が Blob を
+ * 組み立てない。**
+ *
+ * **この口は循環を断つためにある**——自己署名証明書では、その証明書を持って
+ * いないクライアントが PB へ繋げない（pb-100）。
+ */
+export function certificatePemUrl(id: string): string {
+  return `${BASE_PATH}/admin/tls/certificates/${encodeURIComponent(id)}/pem`
 }
