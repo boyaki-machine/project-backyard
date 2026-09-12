@@ -18,25 +18,43 @@ import (
 //   - 意味が中立な語に限る。人名・地名・否定的な語を入れない
 var (
 	genAdjectives = []string{
-		"brave", "calm", "clear", "early", "fresh", "gentle", "happy", "keen",
-		"kind", "light", "lucky", "quiet", "rapid", "smart", "solid", "warm",
+		"able", "active", "agile", "alert", "ample", "bold", "brave", "bright",
+		"broad", "busy", "calm", "civic", "clear", "clever", "cool", "crisp",
+		"deep", "eager", "early", "easy", "epic", "even", "fair", "fine",
+		"firm", "free", "fresh", "gentle", "glad", "good", "grand", "great",
+		"green", "happy", "humble", "ideal", "jolly", "keen", "kind", "light",
+		"lively", "lucky", "merry", "mild", "neat", "noble", "open", "plain",
+		"polite", "proud", "pure", "quiet", "rapid", "ready", "rich", "ripe",
+		"royal", "smart", "smooth", "solid", "steady", "sunny", "swift", "warm",
 	}
 	genNouns = []string{
-		"anchor", "bridge", "canyon", "forest", "garden", "harbor", "island", "lake",
-		"maple", "meadow", "mint", "orchard", "prairie", "river", "summit", "valley",
+		"acorn", "anchor", "basin", "beach", "birch", "bloom", "breeze", "bridge",
+		"brook", "cabin", "canopy", "canyon", "cedar", "cliff", "cloud", "coast",
+		"coral", "creek", "dawn", "delta", "dune", "ember", "fern", "field",
+		"fjord", "forest", "garden", "glade", "grove", "harbor", "haven", "heath",
+		"hill", "island", "knoll", "lagoon", "lake", "ledge", "maple", "marsh",
+		"meadow", "mesa", "mint", "moss", "oasis", "orchard", "peak", "pine",
+		"pond", "prairie", "reef", "river", "shore", "spring", "spruce", "stone",
+		"stream", "summit", "thicket", "tide", "trail", "tundra", "valley", "willow",
 	}
 )
 
 // GeneratePassword は初期パスワードを1つ作る（ApiDesign.md 6.2）。
 //
-// 形式は <形容詞>-<名詞>-<4桁数字>（例：quiet-harbor-4172）。
-// 語彙は各16語なので 16 × 16 × 10^4 ≈ 2^21.3 の強度になる。
+// 形式は <形容詞>-<名詞>-<4桁数字>-<名詞>（例：quiet-harbor-4172-mint）。
+// 語彙は各64語なので 64 × 64 × 10^4 × 64 ≈ 2^31.3 の強度になる。
 //
-// **この強度は暫定である。** Phase 1 の開発中は生成された値を手で打ち込んで
-// 動作確認するため、長さと打ちやすさを優先している。単発の初期パスワードで
-// あり、must_change_password が既定で true、かつアカウントロック（5回/15分、
-// Design.md 6.3）が効くので、オンラインでの推測は現実的でない。
-// **セキュリティ監査の際に強度を上げる**（docs/PROGRESS.md「手順外の作業」に起票済み）。
+// **2026-09-12 に 2^21.3 から引き上げた**（pb-40）。改訂前は語彙が各16語で
+// 要素も3つだった。あれは Phase 1 の開発中に手で打ち込んで動作確認するための
+// 暫定で、**セキュリティ監査の時点で見直すと決まっていた**（利用者の方針、
+// 2026-08-18）。
+//
+// **語を増やす形を採り、ランダム英数字にはしない。** 読み上げ・転記のしやすさは
+// 6.2 が挙げる採用理由そのものであり、強度のために捨てない。**名詞を2回引く**
+// ので同じ語が並ぶことはあるが、一様独立に引く限り強度は変わらない。
+//
+// **単発の初期パスワードである。** must_change_password が既定で true、かつ
+// アカウントロック（5回/15分、Design.md 6.3）が効く。
 //
 // 乱数は crypto/rand を使う。math/rand は種が推測できると全ユーザーの
 // 初期パスワードが再現できてしまう。
@@ -49,13 +67,17 @@ func GeneratePassword() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	tail, err := pickWord(genNouns)
+	if err != nil {
+		return "", err
+	}
 	// 1000〜9999 ではなく 0000〜9999 とし、4桁に零詰めする。
 	// 先頭を1以上に絞ると候補が1割減るうえ、見た目の桁数も変わらない。
 	n, err := rand.Int(rand.Reader, big.NewInt(10000))
 	if err != nil {
 		return "", fmt.Errorf("初期パスワードの数字を生成できない: %w", err)
 	}
-	return fmt.Sprintf("%s-%s-%04d", adj, noun, n.Int64()), nil
+	return fmt.Sprintf("%s-%s-%04d-%s", adj, noun, n.Int64(), tail), nil
 }
 
 // pickWord は words から一様に1語選ぶ。

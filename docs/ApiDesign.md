@@ -1481,7 +1481,7 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 {
   "id": "01K2...", "kind": "user", "display_name": "山田 太郎",
   "email": "yamada@example.com", "system_role": "operator", "is_active": true,
-  "generated_password": "quiet-harbor-4172"
+  "generated_password": "quiet-harbor-4172-mint"
 }
 ```
 
@@ -1495,9 +1495,15 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 
 **読み上げ・転記しやすい語句連結方式**とする。ランダム英数字は電話やチャットでの伝達時に誤りが生じやすいため。
 
-形式は **`<形容詞>-<名詞>-<4桁数字>`**（例 `quiet-harbor-4172`）。語彙は形容詞16語・名詞16語で、いずれも英小文字のみ・4文字以上とし、連結が常に最小長（12文字、`Design.md` 6.3）を超えるようにする。乱数は暗号論的擬似乱数から採る。
+形式は **`<形容詞>-<名詞>-<4桁数字>-<名詞>`**（例 `quiet-harbor-4172-mint`）。語彙は形容詞64語・名詞64語で、いずれも英小文字のみ・4文字以上とし、連結が常に最小長（12文字、`Design.md` 6.3）を超えるようにする。乱数は暗号論的擬似乱数から採る。
 
-**この強度（約21ビット）は暫定である。** Phase 1 の開発中は生成された値を手で打ち込んで動作確認するため、**長さと打ちやすさを優先**している。単発の初期パスワードであり、`must_change_password` が既定で `true`、かつアカウントロック（5回/15分、`Design.md` 6.3）が効くため、オンラインでの推測は現実的でない。**セキュリティ監査の時点で語彙数または要素数を増やす**（`docs/PROGRESS.md`「手順外の作業」に起票済み）。
+**強度は 64 × 64 × 10⁴ × 64 ≈ 2³¹·³ である**（改訂、2026-09-12。pb-40）。**改訂前は語彙が各16語・要素が3つで約2²¹·³だった**——あれは Phase 1 の開発中に手で打ち込んで動作確認するための暫定で、**セキュリティ監査の時点で見直すと決めていた**（利用者の方針、2026-08-18）。
+
+**語を増やす形を採り、ランダム英数字にはしない。** 読み上げ・転記のしやすさは本節が語句連結を採る理由そのものであり、強度のために捨てない。**名詞を2回引く**ので同じ語が並ぶことはあるが、一様独立に引く限り強度は変わらない。
+
+**単発の初期パスワードである。** `must_change_password` が既定で `true`、かつアカウントロック（5回/15分、`Design.md` 6.3）が効くため、オンラインでの推測は現実的でない。
+
+**語彙の選定基準は試験が守る**（`genpassword_test.go`）。英小文字のみ・4文字以上・重複なしに加えて、**1文字しか違わない組を禁じる**——口頭で伝えたときに取り違えるためで、実際に `loyal` と `royal`、`bridge` と `ridge` を試験が拾った。
 
 ## 6.3 `GET /api/v1/admin/users/:id`
 
@@ -1594,7 +1600,7 @@ FK の向きは `agent.actor_id → actor(id)` なので、**エージェント�
 
 ```json
 // 200 OK
-{ "generated_password": "quiet-harbor-4172" }
+{ "generated_password": "quiet-harbor-4172-mint" }
 ```
 
 | フィールド | 既定 | 説明 |

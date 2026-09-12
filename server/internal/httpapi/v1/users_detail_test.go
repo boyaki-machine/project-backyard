@@ -645,10 +645,10 @@ func TestResetPasswordReturnsGeneratedPasswordAndRevokesSessions(t *testing.T) {
 	if pw == "" {
 		t.Fatalf("generated_password が空: %s", rec.Body.String())
 	}
-	// 6.2.1 の形式（<形容詞>-<名詞>-<4桁数字>）。**6.6 の応答例は4要素だが、
-	// 生成器は 6.2.1 に従う**（6.6 の例を直す提案を出す）。
-	if strings.Count(pw, "-") != 2 {
-		t.Errorf("generated_password = %q, want <形容詞>-<名詞>-<4桁数字>", pw)
+	// 6.2.1 の形式（<形容詞>-<名詞>-<4桁数字>-<名詞>）。**6.6 の応答例とも揃った**
+	// （pb-40 で強度を 2^21.3 から 2^31.3 へ上げたときに、例のほうも直した）。
+	if strings.Count(pw, "-") != 3 {
+		t.Errorf("generated_password = %q, want <形容詞>-<名詞>-<4桁数字>-<名詞>", pw)
 	}
 
 	if len(q.credentialResets) != 1 {

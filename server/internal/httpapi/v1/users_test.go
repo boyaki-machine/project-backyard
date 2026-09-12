@@ -305,9 +305,9 @@ func TestCreateUserGeneratesPassword(t *testing.T) {
 	if !ok || pw == "" {
 		t.Fatalf("generated_password = %v, want 生成された平文", body["generated_password"])
 	}
-	// 形式は <形容詞>-<名詞>-<4桁>（6.2、手順12a で強度を確定）。
-	if parts := strings.Split(pw, "-"); len(parts) != 3 || len(parts[2]) != 4 {
-		t.Errorf("generated_password = %q, want <形容詞>-<名詞>-<4桁数字>", pw)
+	// 形式は <形容詞>-<名詞>-<4桁>-<名詞>（6.2.1。pb-40 で語を1つ足した）。
+	if parts := strings.Split(pw, "-"); len(parts) != 4 || len(parts[2]) != 4 {
+		t.Errorf("generated_password = %q, want <形容詞>-<名詞>-<4桁数字>-<名詞>", pw)
 	}
 	if err := auth.ValidatePassword(pw); err != nil {
 		t.Errorf("生成した平文が最小長を満たさない: %v", err)
@@ -491,8 +491,8 @@ func TestGeneratePasswordShape(t *testing.T) {
 			t.Fatalf("生成した %q が最小長を満たさない: %v", pw, err)
 		}
 		parts := strings.Split(pw, "-")
-		if len(parts) != 3 {
-			t.Fatalf("%q は <形容詞>-<名詞>-<4桁数字> でない", pw)
+		if len(parts) != 4 {
+			t.Fatalf("%q は <形容詞>-<名詞>-<4桁数字>-<名詞> でない", pw)
 		}
 		if len(parts[2]) != 4 {
 			t.Fatalf("%q の数字が4桁でない", pw)

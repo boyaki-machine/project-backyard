@@ -5825,7 +5825,7 @@ components:
         generated_password:
           description: |
             **この応答でのみ返る。** 再表示できず、監査ログにも残さない。
-            形式は `<形容詞>-<名詞>-<4桁数字>`（例 `quiet-harbor-4172`）で、
+            形式は `<形容詞>-<名詞>-<4桁数字>-<名詞>`（例 `quiet-harbor-4172-mint`）で、
             読み上げ・転記しやすい語句連結方式（ApiDesign.md 6.2）。
             `password_mode=manual` のときは `null`（呼び出し側が既に平文を持っているため）。
           type: string
@@ -6034,7 +6034,7 @@ components:
         generated_password:
           description: |
             **この応答でのみ返る。** 再表示できず、監査ログにも残さない。
-            形式は `<形容詞>-<名詞>-<4桁数字>`（例 `quiet-harbor-4172`。
+            形式は `<形容詞>-<名詞>-<4桁数字>-<名詞>`（例 `quiet-harbor-4172-mint`。
             ApiDesign.md 6.2.1）。
           type: string
 
