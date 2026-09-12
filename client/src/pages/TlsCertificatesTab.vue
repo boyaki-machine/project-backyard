@@ -14,13 +14,26 @@ import { computed, onMounted, ref } from 'vue'
 
 import { ApiError } from '../api/client'
 import * as settingsApi from '../api/settings'
-import type { CertificateStatus, TLSCertificate } from '../api/settings'
+import type { CertificateStatus, Setting, TLSCertificate } from '../api/settings'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { formatDateTime } from '../lib/datetime'
 
 const items = ref<TLSCertificate[]>([])
+/** **実際に TLS で待ち受けているか。** 設定の実効値ではない（`ApiDesign.md` 11.4） */
 const tlsEnabled = ref(false)
 const listenUrl = ref('')
+
+/**
+ * 設定 `tls_enabled`（`GuiDesign.md` 5.12.1）。
+ *
+ * **TLS タブで切り替える**（利用者の指摘、2026-09-12）。改訂前は一般タブの
+ * 設定一覧にあったが、**関係するものが2つのタブに分かれているのは筋が悪い。**
+ *
+ * **`tlsEnabled`（実際の待受）とは別物である。** 変更には再起動が要るので、
+ * 設定を変えた直後は両者がずれる。
+ */
+const tlsSetting = ref<Setting | null>(null)
+const togglingTls = ref(false)
 const secretKeyPresent = ref(false)
 const loading = ref(false)
 const loadError = ref<ApiError | null>(null)
@@ -71,7 +84,11 @@ async function load() {
   loading.value = true
   loadError.value = null
   try {
-    const res = await settingsApi.getCertificates()
+    const [res, settings] = await Promise.all([
+      settingsApi.getCertificates(),
+      settingsApi.getSettings(),
+    ])
+    tlsSetting.value = settings.items.find((s) => s.key === 'tls_enabled') ?? null
     items.value = res.items
     tlsEnabled.value = res.tls_enabled
     listenUrl.value = res.listen_url
@@ -127,6 +144,29 @@ async function submit() {
     actionError.value = asApiError(e)
   } finally {
     submitting.value = false
+  }
+}
+
+/**
+ * `tls_enabled` を切り替える。
+ *
+ * **有効にするときだけ確認を挟む。** 誤ると画面へ到達できなくなるためで、
+ * 無効化は平文へ戻る操作なので締め出されない（`GuiDesign.md` 5.12.1）。
+ */
+async function toggleTls(next: boolean) {
+  togglingTls.value = true
+  notice.value = ''
+  actionError.value = null
+  try {
+    await settingsApi.putSettings([{ key: 'tls_enabled', value: next ? 'true' : 'false' }])
+    notice.value = next
+      ? 'TLS で待ち受ける設定にしました。反映するには再起動してください。'
+      : '平文で待ち受ける設定にしました。反映するには再起動してください。'
+    await load()
+  } catch (e: unknown) {
+    actionError.value = asApiError(e)
+  } finally {
+    togglingTls.value = false
   }
 }
 
@@ -189,52 +229,91 @@ function asApiError(e: unknown): ApiError {
       <p v-if="actionError" class="error" role="alert">{{ actionError.message }}</p>
 
       <!--
+        ①' TLS の切り替え。**TLS タブで扱う**（利用者の指摘、2026-09-12）。
+        設定の実効値と実際の待受はずれるので、**両方を出す。**
+      -->
+      <section v-if="tlsSetting" class="block toggle">
+        <h3>TLS で待ち受ける</h3>
+        <p v-if="!tlsSetting.editable" class="muted">
+          この設定は{{
+            tlsSetting.source === 'env' ? `環境変数 ${tlsSetting.env_key}` : '設定ファイル'
+          }}で固定されています（いまの値: {{ tlsSetting.value }}）
+        </p>
+        <template v-else>
+          <div class="actions-left">
+            <button
+              type="button"
+              :class="tlsSetting.value === 'true' ? 'secondary' : 'primary'"
+              :disabled="togglingTls"
+              @click="toggleTls(tlsSetting.value !== 'true')"
+            >
+              {{ tlsSetting.value === 'true' ? '無効にする' : '有効にする' }}
+            </button>
+            <span class="muted">設定値: {{ tlsSetting.value === 'true' ? '有効' : '無効' }}</span>
+          </div>
+          <p v-if="(tlsSetting.value === 'true') !== tlsEnabled" class="warn">
+            ⚠ 設定と実際の待受がずれています。<strong>再起動すると設定が反映されます。</strong>
+          </p>
+          <p v-if="tlsSetting.value === 'true' && items.length === 0" class="error">
+            証明書が1枚も登録されていません。この状態で再起動すると<strong
+              >起動に失敗します</strong
+            >。証明書を登録するか、TLS を無効に戻してください。
+          </p>
+        </template>
+      </section>
+
+      <!--
         ② 貼り付け。**DOM は1つだけ置き、位置は CSS の order で変える。**
         0枚のときだけ一覧より先に来る。
       -->
       <section class="block upload" :class="{ 'upload-first': uploadFirst }">
         <h3>証明書を登録する</h3>
 
-        <!-- 選んだ先に何も出ない選択肢を置かない（5.8.2 の規則） -->
+        <!--
+          **欄を隠さず、無効化して理由を添える**（利用者の指摘、2026-09-12）。
+          改訂前は欄ごと隠していたが、**「貼る場所がない」と読めてしまった**
+          ——5.8.2 の「選んだ先に何も出ない選択肢を置かない」を、欄そのものへ
+          当てたのが誤りだった。**押せないボタンは出さないが、貼る場所は見せる。**
+        -->
         <p v-if="!secretKeyPresent" class="error">
-          証明書を登録するには <code>PB_SECRET_KEY</code> の設定が要ります。32バイトを base64
-          で与えてください（<code>openssl rand -base64 32</code>）。
+          いまは登録できません。<code>PB_SECRET_KEY</code> を設定して再起動してください。32バイトを
+          base64 で与えます（<code>openssl rand -base64 32</code>）。
         </p>
 
-        <template v-else>
-          <label class="field">
-            <span>証明書（PEM）</span>
-            <textarea
-              v-model="certPem"
-              rows="6"
-              spellcheck="false"
-              placeholder="-----BEGIN CERTIFICATE-----"
-            ></textarea>
-          </label>
-          <label class="field">
-            <span>秘密鍵（PEM）</span>
-            <textarea
-              v-model="keyPem"
-              rows="6"
-              spellcheck="false"
-              placeholder="-----BEGIN PRIVATE KEY-----"
-            ></textarea>
-          </label>
-          <p class="muted hint">
-            秘密鍵は暗号化して保存され、<strong>二度と表示されません</strong
-            >。手元の鍵を残しておいてください。
-          </p>
-          <div class="actions">
-            <button
-              type="button"
-              class="primary"
-              :disabled="!canSubmit || submitting"
-              @click="submit"
-            >
-              {{ submitting ? '登録中…' : '登録' }}
-            </button>
-          </div>
-        </template>
+        <label class="field">
+          <span>証明書（PEM）</span>
+          <textarea
+            v-model="certPem"
+            rows="6"
+            spellcheck="false"
+            :disabled="!secretKeyPresent"
+            placeholder="-----BEGIN CERTIFICATE-----"
+          ></textarea>
+        </label>
+        <label class="field">
+          <span>秘密鍵（PEM）</span>
+          <textarea
+            v-model="keyPem"
+            rows="6"
+            spellcheck="false"
+            :disabled="!secretKeyPresent"
+            placeholder="-----BEGIN PRIVATE KEY-----"
+          ></textarea>
+        </label>
+        <p class="muted hint">
+          秘密鍵は暗号化して保存され、<strong>二度と表示されません</strong
+          >。手元の鍵を残しておいてください。
+        </p>
+        <div class="actions">
+          <button
+            type="button"
+            class="primary"
+            :disabled="!canSubmit || submitting"
+            @click="submit"
+          >
+            {{ submitting ? '登録中…' : '登録' }}
+          </button>
+        </div>
       </section>
 
       <!-- ③ 登録済みの証明書 -->
@@ -381,6 +460,14 @@ function asApiError(e: unknown): ApiError {
 .error {
   order: 2;
 }
+.toggle {
+  order: 2;
+}
+.actions-left {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-3);
+}
 .upload {
   order: 4;
 }
@@ -512,6 +599,11 @@ function asApiError(e: unknown): ApiError {
   width: 100%;
   font-family: var(--pb-font-mono);
   font-size: var(--pb-fs-sm);
+}
+.field textarea:disabled {
+  /* **欄は見せるが触れないことを見た目で示す**（利用者の指摘、2026-09-12） */
+  background: var(--pb-bg-subtle);
+  cursor: not-allowed;
 }
 .hint {
   font-size: var(--pb-fs-sm);

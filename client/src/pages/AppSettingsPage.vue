@@ -84,8 +84,20 @@ onMounted(load)
  * **`layer` の 1 / 2 / 3 という番号は画面に出さない。** あれは設計の語彙であって、
  * 設定を変える人が知る必要のある区別ではない（設計原則4）。
  */
-const runtimeItems = computed(() => items.value.filter((s) => !s.restart_required))
-const bootItems = computed(() => items.value.filter((s) => s.restart_required))
+const runtimeItems = computed(() =>
+  items.value.filter((s) => !s.restart_required && !TLS_TAB_KEYS.has(s.key)),
+)
+const bootItems = computed(() =>
+  items.value.filter((s) => s.restart_required && !TLS_TAB_KEYS.has(s.key)),
+)
+
+/**
+ * **TLS 証明書タブが扱う設定**（利用者の指摘、2026-09-12）。
+ *
+ * 一般タブには出さない——**関係するものが2つのタブに分かれているのは筋が悪い。**
+ * `secret_key` も TLS のためだけの設定なので、あちらで扱う。
+ */
+const TLS_TAB_KEYS = new Set(['tls_enabled', 'secret_key'])
 
 /** いまの入力値（未編集なら実効値） */
 function currentValue(s: Setting): string {
@@ -216,6 +228,7 @@ function asApiError(e: unknown): ApiError {
     </div>
 
     <div class="page-body">
+      <div class="page-inner">
     <TlsCertificatesTab v-if="tab === 'tls'" />
 
     <template v-else>
@@ -315,6 +328,7 @@ function asApiError(e: unknown): ApiError {
       </div>
     </template>
     </template>
+      </div>
     </div>
 
     <Teleport to="body">
@@ -344,10 +358,18 @@ function asApiError(e: unknown): ApiError {
   height: 100%;
   min-height: 0;
 }
+/**
+ * **スクロールする箱は全幅にする。** ここに max-width を付けると、
+ * スクロールバーがコンテンツペインの右端ではなく**内側の右端に出る**
+ * ——stg で利用者が「真ん中にスクロールバーが出る」として見つけた（2026-09-12）。
+ * 幅の制限は内側の .page-inner が持つ。
+ */
 .page-body {
   flex: 1;
   overflow: auto;
   min-height: 0;
+}
+.page-inner {
   padding: var(--pb-space-4);
   max-width: 44rem;
 }
