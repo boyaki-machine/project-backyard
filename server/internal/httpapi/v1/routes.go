@@ -528,6 +528,10 @@ func Mount(r chi.Router, deps Deps) {
 			Get("/admin/settings", h.listSettings)
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Put("/admin/settings", h.updateSettings)
+		// **締め出されうる設定の確認**（11.8。pb-97）。**新しい設定を通って
+		// 届いたか**を見るので、平文で来た確認は受け取らない。
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Post("/admin/settings/confirm", h.confirmSettings)
 
 		// ── TLS 証明書（ApiDesign.md 11.4〜11.6。pb-3）──────────────
 		//

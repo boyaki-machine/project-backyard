@@ -76,6 +76,14 @@ type appSettingFakeState struct {
 
 	upserted []gen.UpsertAppSettingParams
 	deleted  []string
+
+	// 未確認の設定変更（pb-97。ApiDesign.md 11.8）。
+	//
+	// **pending が nil なら「未確認は無い」**（pgx.ErrNoRows を返す）。
+	pending        *gen.PendingSettingChange
+	pendingCreated []gen.CreatePendingSettingChangeParams
+	pendingDeleted []string
+	expiredPending []gen.ListExpiredPendingSettingChangesRow
 }
 
 type fakeQuerier struct {
@@ -2583,4 +2591,57 @@ func (q *fakeQuerier) DeleteAppSetting(ctx context.Context, key string) error {
 	}
 	q.settings.rows = kept
 	return nil
+}
+
+// ── 未確認の設定変更（pb-97）──────────────────────────────
+
+func (q *fakeQuerier) GetPendingSettingChange(context.Context) (gen.PendingSettingChange, error) {
+	if q.settings.pending == nil {
+		return gen.PendingSettingChange{}, pgx.ErrNoRows
+	}
+	return *q.settings.pending, nil
+}
+
+func (q *fakeQuerier) CountPendingSettingChanges(context.Context) (int64, error) {
+	if q.settings.pending == nil {
+		return 0, nil
+	}
+	return 1, nil
+}
+
+func (q *fakeQuerier) CreatePendingSettingChange(
+	_ context.Context, arg gen.CreatePendingSettingChangeParams,
+) (gen.CreatePendingSettingChangeRow, error) {
+	q.opLog = append(q.opLog, "CreatePendingSettingChange")
+	q.settings.pendingCreated = append(q.settings.pendingCreated, arg)
+	return gen.CreatePendingSettingChangeRow{
+		ID: arg.ID, Previous: arg.Previous, ExpiresAt: arg.ExpiresAt,
+	}, nil
+}
+
+func (q *fakeQuerier) DeletePendingSettingChange(_ context.Context, id string) (int64, error) {
+	q.opLog = append(q.opLog, "DeletePendingSettingChange")
+	q.settings.pendingDeleted = append(q.settings.pendingDeleted, id)
+	if q.settings.pending == nil {
+		return 0, nil
+	}
+	return 1, nil
+}
+
+func (q *fakeQuerier) ListPendingSettingChanges(
+	context.Context,
+) ([]gen.ListPendingSettingChangesRow, error) {
+	out := make([]gen.ListPendingSettingChangesRow, 0, len(q.settings.expiredPending))
+	for _, r := range q.settings.expiredPending {
+		out = append(out, gen.ListPendingSettingChangesRow{
+			ID: r.ID, Previous: r.Previous, ExpiresAt: r.ExpiresAt,
+		})
+	}
+	return out, nil
+}
+
+func (q *fakeQuerier) ListExpiredPendingSettingChanges(
+	context.Context,
+) ([]gen.ListExpiredPendingSettingChangesRow, error) {
+	return q.settings.expiredPending, nil
 }

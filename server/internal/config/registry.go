@@ -85,6 +85,11 @@ type Definition struct {
 	Secret bool
 	// RestartRequired が真なら、変更が効くまでに再起動が要る。
 	RestartRequired bool
+	// NeedsConfirm が真なら、**変えたあと確認しないと元へ戻す**（pb-97、Design.md 10.3）。
+	//
+	// **判定の基準は「その変更で、その画面へ戻れなくなるか」だけである。**
+	// 重要かどうかで決めない——重要さは人によって違う。
+	NeedsConfirm bool
 
 	// DisplayName と Description は画面にそのまま出す日本語（GuiDesign.md 5.12）。
 	DisplayName string
@@ -172,9 +177,12 @@ var definitions = []Definition{
 	{
 		Key: "tls_enabled", EnvKey: "PB_TLS_ENABLED",
 		Layer: LayerRuntime, Type: TypeBool,
-		Default: "false", RestartRequired: true,
+		// **再起動は要らない**（pb-106 で待受を張り替えられるようにした）。
+		// **確認しないと元へ戻す**（pb-97）——http で入っていた人が https へ
+		// 移れないと締め出される。
+		Default: "false", NeedsConfirm: true,
 		DisplayName: "TLS で待ち受ける",
-		Description: "有効にすると HTTPS で待ち受けます。証明書の登録が別途必要で、変更には再起動が要ります",
+		Description: "有効にすると HTTPS で待ち受けます。証明書の登録が別途必要です。切り替えは即時で、期限内に確認しないと元へ戻ります",
 	},
 	{
 		Key: "log_format", EnvKey: "PB_LOG_FORMAT",
@@ -200,7 +208,9 @@ var definitions = []Definition{
 	{
 		Key: "cookie_secure", EnvKey: "PB_COOKIE_SECURE",
 		Layer: LayerRuntime, Type: TypeBool,
-		Default:     "false",
+		// **確認しないと元へ戻す**（pb-97）——http で有効にすると Cookie が
+		// 送られず、**ログインが黙って失敗する。**
+		Default: "false", NeedsConfirm: true,
 		DisplayName: "Cookie に Secure を付ける",
 		// **結果（ログインできなくなる）は書かない。** 画面が ⚠ の1行で出すので
 		// （GuiDesign.md 5.12）、ここに書くと同じことを2度言うことになる。
