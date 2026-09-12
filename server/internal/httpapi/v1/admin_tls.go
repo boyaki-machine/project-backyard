@@ -40,22 +40,30 @@ import (
 
 // certificateView は 11.4 の items[] の要素。
 type certificateView struct {
-	ID           string    `json:"id"`
-	CommonName   string    `json:"common_name"`
-	DNSNames     []string  `json:"dns_names"`
+	ID         string   `json:"id"`
+	CommonName string   `json:"common_name"`
+	DNSNames   []string `json:"dns_names"`
 	// IPAddresses は IP の SAN（11.4）。**列には無く、cert_pem から採る**——
 	// dns_names は DNS: の SAN しか持たないので、**これを出さないと画面の
 	// 「SAN」欄と突き合わせの結果が食い違って見える**（pb-100 の実画面で踏んだ）。
-	IPAddresses []string `json:"ip_addresses"`
+	IPAddresses  []string  `json:"ip_addresses"`
 	NotBefore    time.Time `json:"not_before"`
 	NotAfter     time.Time `json:"not_after"`
 	SerialNumber string    `json:"serial_number"`
 	Fingerprint  string    `json:"fingerprint"`
 	IsSelfSigned bool      `json:"is_self_signed"`
 	// Status はサーバが決める（11.4）。画面が日付から組み立てない。
-	Status     string    `json:"status"`
-	UploadedAt time.Time `json:"uploaded_at"`
-	UploadedBy *actorRef `json:"uploaded_by"`
+	Status string `json:"status"`
+	// Decryptable はいまの鍵で秘密鍵を復号できるか（11.4。pb-98）。
+	//
+	// **key_id の突き合わせでは検出できない**——行の key_id は常に v1 で、
+	// 鍵の出どころを記録していない。**行ごとに復号を試して決める。**
+	//
+	// **status とは別の軸である。** status は日付で決まり、こちらは鍵で決まる。
+	// **active なのに復号できない**という状態がありうる。
+	Decryptable bool      `json:"decryptable"`
+	UploadedAt  time.Time `json:"uploaded_at"`
+	UploadedBy  *actorRef `json:"uploaded_by"`
 }
 
 // certificateListResponse は 11.4 の応答。
@@ -102,12 +110,12 @@ func (h *handler) listTLSCertificates(w http.ResponseWriter, r *http.Request) {
 	}
 	// **鍵の出どころを画面へ返す。** 生成した鍵は DB にあるので、
 	// pg_dump に鍵と暗号文の両方が入ることを画面が伝える（6.6.1）。
-	_, origin, e := h.secretKey(r.Context())
+	key, origin, e := h.secretKey(r.Context())
 	if e != nil {
 		apierr.Write(w, r, e)
 		return
 	}
-	WriteJSON(w, http.StatusOK, h.buildCertificateList(rows, origin))
+	WriteJSON(w, http.StatusOK, h.buildCertificateList(rows, key, origin))
 }
 
 // uploadTLSCertificate は POST /api/v1/admin/tls/certificates を処理する（11.5）。
@@ -210,8 +218,8 @@ func (h *handler) uploadTLSCertificate(w http.ResponseWriter, r *http.Request) {
 	// 出す証明書を選び直す。**登録した瞬間から次の接続で効く**（6.6.1）。
 	rows := h.reloadCertificates(r)
 
-	_, origin, _ := h.secretKey(r.Context())
-	for _, v := range h.buildCertificateList(rows, origin).Items {
+	key, origin, _ := h.secretKey(r.Context())
+	for _, v := range h.buildCertificateList(rows, key, origin).Items {
 		if v.ID == id {
 			WriteJSON(w, http.StatusCreated, v)
 			return
@@ -341,7 +349,7 @@ func (h *handler) reloadCertificates(r *http.Request) []gen.ListTLSCertificatesR
 }
 
 // buildCertificateList は 11.4 の応答を組み立てる。
-func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow, origin tlscert.KeyOrigin) certificateListResponse {
+func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow, key []byte, origin tlscert.KeyOrigin) certificateListResponse {
 	entries := make([]tlscert.Entry, 0, len(rows))
 	for _, row := range rows {
 		entries = append(entries, tlscert.Entry{
@@ -363,6 +371,7 @@ func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow, origin
 			Fingerprint:  row.Fingerprint,
 			IsSelfSigned: row.IsSelfSigned,
 			Status:       string(status[row.ID]),
+			Decryptable:  decryptable(row, key),
 			UploadedAt:   row.CreatedAt.Time.UTC(),
 		}
 		if v.DNSNames == nil {
@@ -407,6 +416,18 @@ func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow, origin
 		}
 	}
 	return resp
+}
+
+// decryptable はいまの鍵でこの行の秘密鍵を復号できるかを返す（11.4。pb-98）。
+//
+// **X509KeyPair までは見ない。** 見たいのは**鍵の出どころが変わっていないか**で
+// あり、登録時に証明書と鍵の対応は検証済みである（11.5）。
+func decryptable(row gen.ListTLSCertificatesRow, key []byte) bool {
+	if len(key) == 0 {
+		return false
+	}
+	_, err := tlscert.Open(key, row.KeyCiphertext, row.KeyNonce)
+	return err == nil
 }
 
 // activePEM はいま出している1枚の PEM を取り出す。

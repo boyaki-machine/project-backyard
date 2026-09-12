@@ -4281,6 +4281,17 @@ export interface components {
              *     ]
              */
             ip_addresses: string[];
+            /**
+             * @description **いまの鍵で秘密鍵を復号できるか**（pb-98）。偽なら**その証明書は出せない**
+             *     ——暗号鍵の出どころが登録時から変わっている。
+             *
+             *     **`key_id` の突き合わせでは検出できない**（行の `key_id` は常に `v1` で、
+             *     鍵の出どころを記録していない）ので、**行ごとに復号を試して決める。**
+             *
+             *     **`status` とは別の軸である。** `status` は日付で決まり、こちらは鍵で決まる。
+             *     **`active` なのに復号できない**という状態がありうる。
+             */
+            decryptable: boolean;
             /** Format: date-time */
             not_before: string;
             /** Format: date-time */

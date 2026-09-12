@@ -3776,7 +3776,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
       "ip_addresses": ["127.0.0.1"],
       "not_before": "2026-09-01T00:00:00Z", "not_after": "2026-12-01T00:00:00Z",
       "serial_number": "0a1b2c3d", "fingerprint": "ab:cd:…",
-      "is_self_signed": false, "status": "active",
+      "is_self_signed": false, "status": "active", "decryptable": true,
       "uploaded_at": "2026-09-11T04:10:00Z",
       "uploaded_by": { "id": "01K2...", "kind": "user", "display_name": "田中" } }
   ],
@@ -3797,6 +3797,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 | `status` | `active`（**いま出している1枚**）／ `pending`（`not_before` が未来）／ `expired`（`not_after` を過ぎた）／ `superseded`（有効だが、より新しい有効なものがある） |
 | `tls_enabled` | いま TLS で待ち受けているか。**設定 `tls_enabled` の実効値ではなく、実際の待受の状態である** |
 | `listen_url` | **いま待ち受けているスキームとアドレス**（`https://0.0.0.0:8443`）。画面の先頭にそのまま出す（`GuiDesign.md` 5.12.1） |
+| `decryptable` | **いまの鍵で秘密鍵を復号できるか**（pb-98）。偽なら**その証明書は出せない**——鍵の出どころが変わっている |
 | `ip_addresses` | **IP の SAN**（pb-100）。**列には無く、`cert_pem` から採る**（下記）。画面は `dns_names` と並べて出す |
 | `listen_host` | **接続に使うホスト名。** `listen_url` のホスト部だが、**`0.0.0.0` と `::` のときは `null`** である（下記） |
 | `listen_host_match` | いま出す証明書が `listen_host` を覆っているか。`covered` ／ `uncovered` ／ `unspecific`（`listen_host` が `null`）／ `no_certificate`（いま出す1枚が無い） |
@@ -3814,6 +3815,21 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 
 **スキームも同じ理由でサーバが決める。** `tls_enabled` の実効値ではなく、実際に
 TLS で待ち受けているかを見る。
+
+### `decryptable` は復号を試して決める
+
+**`key_id` の突き合わせでは検出できない**（pb-98 で実測）。行の `key_id` は常に `v1` で、
+**鍵の出どころ（`env` / `generated`）を記録していない。** `PB_SECRET_KEY` を別の値へ
+差し替えても `key_id` は変わらないので、**「同じ識別子だが中身が違う」を判別できない。**
+
+**行ごとに復号を試す。** 「実際に使えるか」を直接見るので代理指標にならず、**列を足さずに
+済み、登録済みの行にもそのまま効く。**
+
+**`status` とは別の軸である。** `status` は日付で決まり（6.6.1 の選定）、**復号の可否は
+鍵で決まる。** 混ぜると、**`active` なのに出せない**という状態を表せない。
+
+**行ごとに返すのは、混在しうるためである。** 鍵を変えたあとに登録した証明書は読める。
+集計だけでは、**どれを消せばよいか**が分からない。
 
 ### `ip_addresses` を列に持たない
 

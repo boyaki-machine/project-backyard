@@ -178,8 +178,49 @@ func listenURL(bind string, tls bool) string {
 // **有効な証明書が1枚も無い状態でも起動する。** ハンドシェイクは失敗するが、
 // 起動自体を止めると PB_TLS_ENABLED=false で戻す以外の手が無くなり、
 // 「なぜ上がらないのか」をログでしか伝えられない。
+// warnIfKeyChanged は、登録済みの証明書をいまの鍵で復号できるかを起動時に1回見る（pb-98）。
+//
+// **止めない。** TLS で待ち受けないなら、読めない証明書があっても動作に影響しない。
+// **止めると平文へ戻す経路が細くなる**——鍵を取り違えた利用者が、画面を開いて直す
+// 手段まで失う。
+func warnIfKeyChanged(ctx context.Context, pool *pgxpool.Pool, set *config.Set) {
+	q := gen.New(pool)
+	rows, err := q.ListTLSCertificates(ctx)
+	if err != nil || len(rows) == 0 {
+		// **証明書が無いなら鍵も要らない。** ここで ResolveKey を呼ぶと、
+		// 使いもしない鍵を生成して DB へ書くことになる。
+		return
+	}
+
+	key, _, err := tlscert.ResolveKey(ctx, v1.SecretStore{Q: q}, set.String(config.KeySecretKey))
+	if err != nil {
+		slog.Warn("暗号鍵を用意できないため、登録済みの証明書を確かめられない",
+			slog.String("error", err.Error()))
+		return
+	}
+
+	bad := 0
+	for _, row := range rows {
+		if _, err := tlscert.Open(key, row.KeyCiphertext, row.KeyNonce); err != nil {
+			bad++
+		}
+	}
+	if bad == 0 {
+		return
+	}
+	slog.Warn("登録済みの TLS 証明書を復号できない（暗号鍵の出どころが登録時から変わっている）",
+		slog.Int("undecryptable", bad),
+		slog.Int("registered", len(rows)),
+		slog.String("hint", "元の PB_SECRET_KEY に戻すか、証明書を登録し直すこと。"+
+			"このまま TLS を有効にすると起動に失敗する"))
+}
+
 func setupTLS(ctx context.Context, pool *pgxpool.Pool, set *config.Set) (*tlscert.Holder, *tls.Config, error) {
 	if !set.Bool(config.KeyTLSEnabled) {
+		// **TLS で上がらないときも、鍵の食い違いは知らせる**（pb-98）。
+		// 気づくのが「次に TLS で起動したとき」では遅い——そのとき起動は失敗し、
+		// ローリングアップデートの途中なら**一部の Pod だけが落ちる**形で現れる。
+		warnIfKeyChanged(ctx, pool, set)
 		return nil, nil, nil
 	}
 

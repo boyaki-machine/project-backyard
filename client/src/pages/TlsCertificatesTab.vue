@@ -194,6 +194,19 @@ function sanText(c: TLSCertificate): string {
   return [...c.dns_names, ...c.ip_addresses].join(', ')
 }
 
+/**
+ * 復号できない証明書の件数（`ApiDesign.md` 11.4。pb-98）。
+ *
+ * **暗号鍵の出どころが変わると、登録済みの証明書を復号できなくなる。**
+ * 気づくのが「次に TLS で起動したとき」では遅い——**そのとき起動は失敗する。**
+ */
+const undecryptableCount = computed(() => items.value.filter((c) => !c.decryptable).length)
+
+/** 1枚も復号できないか。**このまま有効にすると起動に失敗する**（`Design.md` 6.6.1） */
+const noneDecryptable = computed(
+  () => items.value.length > 0 && undecryptableCount.value === items.value.length,
+)
+
 /** 証明書を取り出す URL（11.7）。**HTTPS にする前に取っておける**のが要点である */
 const pemUrl = settingsApi.certificatePemUrl
 
@@ -302,6 +315,20 @@ function asApiError(e: unknown): ApiError {
             <dt>有効にすると</dt>
             <dd><code>{{ listenUrlIfEnabled }}</code> で待ち受けます</dd>
           </dl>
+
+          <!--
+            **鍵の出どころが変わると、登録済みの証明書を復号できなくなる**（pb-98）。
+            **このまま有効にして再起動すると起動に失敗する**ので、押す前に出す。
+          -->
+          <p v-if="noneDecryptable" class="warn">
+            ⚠ 登録済みの証明書は<strong>別の鍵で暗号化されています。</strong>
+            このままでは TLS を有効にできません。元の鍵（<code>PB_SECRET_KEY</code>）に
+            戻すか、証明書を登録し直してください。
+          </p>
+          <p v-else-if="undecryptableCount > 0" class="warn">
+            ⚠ 一部の証明書を復号できません（{{ undecryptableCount }} 件）。
+            別の鍵で暗号化されています。
+          </p>
 
           <!--
             証明書の名前とアクセス先が合っているか。**判定はサーバが返す**
@@ -462,6 +489,15 @@ function asApiError(e: unknown): ApiError {
             <span class="badge" :class="`st-${c.status}`">{{ STATUS_LABEL[c.status] }}</span>
             <span class="muted kind">{{ c.is_self_signed ? '自己署名' : '認証局発行' }}</span>
           </div>
+
+          <!--
+            **状態の札は消さない。** `status` は日付で決まる値であり、復号の可否は
+            別の軸である（`ApiDesign.md` 11.4）。**選定はその行を選んでいて、
+            出せないのは鍵のせいである**、というのがここで伝えたいことである。
+          -->
+          <p v-if="!c.decryptable" class="warn">
+            ⚠ 別の鍵で暗号化されています。<strong>この証明書は出せません</strong>
+          </p>
 
           <p class="period">
             {{ new Date(c.not_before).toLocaleDateString('ja-JP') }} 〜

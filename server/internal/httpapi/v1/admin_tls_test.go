@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -101,7 +102,7 @@ func TestBuildCertificateListListenHostMatch(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			h := &handler{listenURL: c.listenURL}
-			got := h.buildCertificateList(c.rows, tlscert.KeyOrigin("generated"))
+			got := h.buildCertificateList(c.rows, nil, tlscert.KeyOrigin("generated"))
 
 			if got.ListenHostMatch != c.wantMatch {
 				t.Errorf("listen_host_match = %q, want %q", got.ListenHostMatch, c.wantMatch)
@@ -115,5 +116,48 @@ func TestBuildCertificateListListenHostMatch(t *testing.T) {
 				t.Errorf("listen_host = %q, want %q", *got.ListenHost, c.wantHost)
 			}
 		})
+	}
+}
+
+// TestBuildCertificateListDecryptable は 11.4 の decryptable を見る（pb-98）。
+//
+// **key_id の突き合わせでは検出できない**ので、行ごとに復号を試している。
+// **鍵を変えたあとに登録したものと混在しうる**ので、行ごとに出ることを確かめる。
+func TestBuildCertificateListDecryptable(t *testing.T) {
+	keyA := bytes.Repeat([]byte{0xA1}, tlscert.KeySize)
+	keyB := bytes.Repeat([]byte{0xB2}, tlscert.KeySize)
+
+	sealed := func(t *testing.T, id string, key []byte) gen.ListTLSCertificatesRow {
+		t.Helper()
+		ct, nonce, err := tlscert.Seal(key, "-----BEGIN PRIVATE KEY-----\n…")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := row(id, certPEM(t, "pb.example.com", []string{"pb.example.com"}, nil))
+		r.KeyCiphertext, r.KeyNonce = ct, nonce
+		return r
+	}
+
+	rows := []gen.ListTLSCertificatesRow{
+		sealed(t, "a", keyA), // いまの鍵で封をした
+		sealed(t, "b", keyB), // 別の鍵で封をした
+	}
+
+	h := &handler{listenURL: "https://pb.example.com:8443"}
+	got := h.buildCertificateList(rows, keyA, tlscert.KeyOrigin("generated"))
+
+	want := map[string]bool{"a": true, "b": false}
+	for _, v := range got.Items {
+		if v.Decryptable != want[v.ID] {
+			t.Errorf("%s の decryptable = %v, want %v", v.ID, v.Decryptable, want[v.ID])
+		}
+	}
+
+	// **鍵が無いときは復号できない。** 「確かめていない」を真で返さない。
+	none := h.buildCertificateList(rows, nil, tlscert.KeyOrigin(""))
+	for _, v := range none.Items {
+		if v.Decryptable {
+			t.Errorf("鍵が無いのに %s が decryptable になった", v.ID)
+		}
 	}
 }
