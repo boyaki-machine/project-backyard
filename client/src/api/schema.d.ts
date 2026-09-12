@@ -2631,6 +2631,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/settings/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 確認を待っている設定変更
+         * @description 確認を待っている変更だけを返す（ApiDesign.md 11.9）。pb-107。
+         *     **必要権限は `system.settings`。**
+         *
+         *     **設定一覧と分けた軽い口である。** 画面はこれを定期的に引いて、
+         *     **どの画面にいても未確認を出す**（GuiDesign.md 2.6）。全設定の一覧を
+         *     ポーリングで運ぶのは無駄である。
+         *
+         *     **一般利用者には見せない。** 「いま管理者が設定を変えている」を見せる
+         *     必要はなく、確認を押す権限も無い。
+         */
+        get: operations["getPendingSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/settings/confirm": {
         parameters: {
             query?: never;
@@ -4204,6 +4232,13 @@ export interface components {
              * @description これを過ぎると元の値へ戻る。
              */
             expires_at: string;
+            /**
+             * @description 変えた人（分からなければ `null`）。pb-107。
+             *
+             *     **画面が文言を分けるために要る**——「あなたが変えました」と
+             *     「田中 が変えました」では、押す前に確かめることが違う。
+             */
+            changed_by: components["schemas"]["ActorRef"] | null;
         };
         /**
          * @description 設定1件（ApiDesign.md 11.1）。**`value` は型によらず常に文字列**で、
@@ -9466,6 +9501,30 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    getPendingSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 未確認の変更（無ければ `pending_confirmation` は `null`）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        pending_confirmation: components["schemas"]["PendingConfirmation"] | null;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
         };
     };
     confirmSettings: {

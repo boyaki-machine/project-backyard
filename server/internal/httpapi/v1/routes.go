@@ -532,6 +532,10 @@ func Mount(r chi.Router, deps Deps) {
 		// 届いたか**を見るので、平文で来た確認は受け取らない。
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Post("/admin/settings/confirm", h.confirmSettings)
+		// **未確認だけを返す軽い口**（11.9。pb-107）。画面がこれを定期的に
+		// 引いて、**どの画面にいても確認ボタンを出す。**
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Get("/admin/settings/pending", h.getPendingSettings)
 
 		// ── TLS 証明書（ApiDesign.md 11.4〜11.6。pb-3）──────────────
 		//

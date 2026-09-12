@@ -81,6 +81,21 @@ export function deleteCertificate(id: string): Promise<void> {
 export type PendingConfirmation = components['schemas']['PendingConfirmation']
 
 /**
+ * 確認を待っている設定変更を引く（`ApiDesign.md` 11.9）。
+ *
+ * **設定一覧と分けた軽い口である。** どの画面にいても未確認を出すために
+ * 定期的に引くので、全設定の一覧を運ばない（pb-107）。
+ *
+ * **必要権限は `system.settings`。** 持たなければ 403 になるので、
+ * 呼び出し側が権限を見てから叩くこと。
+ */
+export function getPendingSettings(): Promise<{
+  pending_confirmation: PendingConfirmation | null
+}> {
+  return api.get('/admin/settings/pending')
+}
+
+/**
  * 締め出されうる設定変更を確定する（`ApiDesign.md` 11.8）。
  *
  * **確定すると以後は元へ戻らない。** 押されなければ期限で元の値へ戻る

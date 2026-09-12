@@ -80,7 +80,7 @@ type appSettingFakeState struct {
 	// 未確認の設定変更（pb-97。ApiDesign.md 11.8）。
 	//
 	// **pending が nil なら「未確認は無い」**（pgx.ErrNoRows を返す）。
-	pending        *gen.PendingSettingChange
+	pending        *gen.GetPendingSettingChangeRow
 	pendingCreated []gen.CreatePendingSettingChangeParams
 	pendingDeleted []string
 	expiredPending []gen.ListExpiredPendingSettingChangesRow
@@ -2595,9 +2595,11 @@ func (q *fakeQuerier) DeleteAppSetting(ctx context.Context, key string) error {
 
 // ── 未確認の設定変更（pb-97）──────────────────────────────
 
-func (q *fakeQuerier) GetPendingSettingChange(context.Context) (gen.PendingSettingChange, error) {
+func (q *fakeQuerier) GetPendingSettingChange(
+	context.Context,
+) (gen.GetPendingSettingChangeRow, error) {
 	if q.settings.pending == nil {
-		return gen.PendingSettingChange{}, pgx.ErrNoRows
+		return gen.GetPendingSettingChangeRow{}, pgx.ErrNoRows
 	}
 	return *q.settings.pending, nil
 }

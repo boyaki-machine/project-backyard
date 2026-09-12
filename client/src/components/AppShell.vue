@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 
+import PendingConfirmBar from './PendingConfirmBar.vue'
 import SideMenu from './SideMenu.vue'
 import SideMenuToggle from './SideMenuToggle.vue'
+import { usePendingStore } from '../stores/pending'
 import { useUiStore } from '../stores/ui'
 
 /**
@@ -15,6 +17,14 @@ import { useUiStore } from '../stores/ui'
  */
 const ui = useUiStore()
 
+/**
+ * 未確認の設定変更の監視（pb-107）。
+ *
+ * **アプリの枠で始める。** どの画面にいても帯が出る必要があり、**設定画面に
+ * 置くと、そこを離れた瞬間に見えなくなる**（stg での利用者の指摘、2026-09-12）。
+ */
+const pendingStore = usePendingStore()
+
 /** `[` でメニューを折りたたむ（GuiDesign.md 9.1） */
 function onKeydown(e: KeyboardEvent) {
   if (e.key !== '[' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
@@ -25,8 +35,14 @@ function onKeydown(e: KeyboardEvent) {
   ui.toggleMenu()
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  pendingStore.start()
+})
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
+  pendingStore.stop()
+})
 </script>
 
 <template>
@@ -40,9 +56,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     <SideMenu v-if="!ui.narrow || ui.overlayOpen" class="pane" />
     <div v-if="ui.narrow && ui.overlayOpen" class="scrim" @click="ui.closeOverlay()"></div>
 
-    <main class="content">
+    <main class="content" :class="{ 'with-bar': pendingStore.pending }">
       <RouterView />
     </main>
+
+    <!--
+      **未確認の設定変更は全画面に出す**（pb-107）。設定画面の中だけに置くと、
+      そこを離れた瞬間に確認ボタンが消える。
+    -->
+    <PendingConfirmBar />
   </div>
 </template>
 
@@ -61,6 +83,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   min-width: 0;
   height: 100%;
   overflow: hidden;
+}
+
+/*
+ * **帯のぶんだけ下を空ける**（pb-107）。空けないと、スクロール枠を持つ画面
+ * （文書のツリー、設定の貼り付け欄）で**最下部が帯の裏に隠れる。**
+ */
+.content.with-bar {
+  padding-bottom: 6rem;
 }
 
 /* 768px 未満：メニューはオーバーレイ。タイトル行との衝突は許容する（2.4） */
