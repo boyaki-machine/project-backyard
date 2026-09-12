@@ -35,6 +35,12 @@ const (
 
 	// 停止時に処理中のリクエストを待つ上限。
 	shutdownTimeout = 15 * time.Second
+
+	// settingsGuardInterval は未確認の設定変更の期限を点検する間隔（pb-97）。
+	//
+	// **設定にしない**（Design.md 10.3）。期限の既定は 300 秒なので、
+	// この粒度で「期限から最大10秒遅れて戻る」ことになる。
+	settingsGuardInterval = 10 * time.Second
 )
 
 func serve(ctx context.Context) error {
@@ -68,6 +74,22 @@ func serve(ctx context.Context) error {
 			overlay = append(overlay, config.Row{Key: row.Key, Value: row.Value})
 		}
 		set = live.ApplyRows(overlay)
+	}
+
+	// **期限の切れた未確認の変更を、待受を張る前に戻す**（pb-97、DbDesign.md 6.17）。
+	//
+	// **前のプロセスが落ちたあと、未確認のまま期限が切れている可能性がある。**
+	// ここで戻さないと、締め出す設定のまま待ち受けてしまう。
+	//
+	// **OnChanged は渡さない。** 待受はまだ張っていないので、戻した値は
+	// このあとの setupTLS が読む。
+	txRunner := store.NewTxRunner(pool)
+	bootGuard := v1.SettingsGuard{Tx: txRunner, Q: gen.New(pool), Settings: live}
+	if n, err := bootGuard.RevertExpired(ctx); err != nil {
+		slog.Error("期限切れの設定変更を戻せなかったため、いまの設定で起動する",
+			slog.String("error", err.Error()))
+	} else if n > 0 {
+		set = live.Snapshot()
 	}
 
 	// 重ねた結果でログを組み直す。**DB で debug にしてあれば、ここから効く。**
@@ -169,6 +191,31 @@ func serve(ctx context.Context) error {
 	slog.Info("サーバを起動した",
 		slog.String("bind", server.Addr()), slog.String("scheme", scheme),
 		slog.String("version", version))
+
+	// **期限を数える主体は2つある**（pb-97）。起動時の点検（上）と、この定期点検。
+	// **どちらも DB の expires_at を見る**ので、判定は1つである。
+	//
+	// **間隔は設定にしない**（Design.md 10.3。設定の反映を設定で決めると、
+	// その設定自身の反映が説明できなくなる）。
+	guard := v1.SettingsGuard{
+		Tx: txRunner, Q: gen.New(pool), Settings: live, OnChanged: onChanged,
+	}
+	go func() {
+		t := time.NewTicker(settingsGuardInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				// **停止信号で打ち切られた ctx を使わない。** 戻す途中で
+				// 打ち切ると、設定だけ戻って記録が残る。
+				if _, err := guard.RevertExpired(context.WithoutCancel(ctx)); err != nil {
+					slog.Error("期限切れの設定変更を戻せない", slog.String("error", err.Error()))
+				}
+			}
+		}
+	}()
 
 	select {
 	case err := <-server.Err():

@@ -69,6 +69,11 @@ type settingsResponse struct {
 	// ConfigFilePath は効いている設定ファイルの位置（使っていなければ null）。
 	// 「どこを直せばよいか」を画面が言うために返す。
 	ConfigFilePath *string `json:"config_file_path"`
+	// PendingConfirmation は確認を待っている変更（無ければ null）。pb-97。
+	//
+	// **画面はここから残り時間を出す。** 期限までに確認されないと元へ戻る
+	// （Design.md 10.3）。
+	PendingConfirmation *pendingView `json:"pending_confirmation"`
 }
 
 // settingsUpdateRequest は 11.2 のリクエスト本体。
@@ -97,7 +102,7 @@ func (h *handler) listSettings(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, e)
 		return
 	}
-	WriteJSON(w, http.StatusOK, buildSettingsResponse(set, rows))
+	WriteJSON(w, http.StatusOK, h.withPending(r, buildSettingsResponse(set, rows)))
 }
 
 // updateSettings は PUT /api/v1/admin/settings を処理する（ApiDesign.md 11.2）。
@@ -118,7 +123,7 @@ func (h *handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 	// **いまの実効値を先に取る。** 検証には「その設定が編集できるか」が要り、
 	// それは実効値の出どころで決まる（ファイルや環境変数で固定されていれば
 	// 編集できない）。監査ログの from もここから取る。
-	set, _, e := h.settingsSnapshot(r)
+	set, currentRows, e := h.settingsSnapshot(r)
 	if e != nil {
 		apierr.Write(w, r, e)
 		return
@@ -135,6 +140,17 @@ func (h *handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 
 	// **1トランザクションで書き、監査ログも1行にする**（11.2）。
 	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		// **締め出されうる設定を含むなら、未確認として記録する**（pb-97）。
+		// 設定を書くのと1つの単位にする——**片方だけ残ると、戻せない変更や
+		// 戻す先の無い記録ができる。**
+		//
+		// **書き換える前に記録する。** あとで行を読むと、**戻す値が新しい値に
+		// なってしまう**（フェイクで実際に踏んだ。実DBでは取得済みのスライスが
+		// 書き換わらないので気づけない）。
+		if _, err := recordPending(ctx, q, p.ActorID, changes, currentRows); err != nil {
+			return err
+		}
+
 		for _, c := range changes {
 			if c.To == nil {
 				if err := q.DeleteAppSetting(ctx, c.Key); err != nil {
@@ -191,7 +207,7 @@ func (h *handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 		h.onSettingsChanged(newSet)
 	}
 
-	WriteJSON(w, http.StatusOK, buildSettingsResponse(newSet, rows))
+	WriteJSON(w, http.StatusOK, h.withPending(r, buildSettingsResponse(newSet, rows)))
 }
 
 // settingsSnapshot は「ファイル・環境変数・既定値」の層に DB の行を重ねた

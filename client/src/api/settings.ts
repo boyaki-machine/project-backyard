@@ -77,6 +77,22 @@ export function deleteCertificate(id: string): Promise<void> {
   return api.del<void>(`/admin/tls/certificates/${encodeURIComponent(id)}`)
 }
 
+/** 確認を待っている設定変更（`ApiDesign.md` 11.8） */
+export type PendingConfirmation = components['schemas']['PendingConfirmation']
+
+/**
+ * 締め出されうる設定変更を確定する（`ApiDesign.md` 11.8）。
+ *
+ * **確定すると以後は元へ戻らない。** 押されなければ期限で元の値へ戻る
+ * （`Design.md` 10.3）。
+ *
+ * **新しい設定を通って届いていないと 409 になる。** `tls_enabled` を有効に
+ * したなら、**https で開き直してから押す**必要がある。
+ */
+export function confirmSettings(): Promise<void> {
+  return api.post<void>('/admin/settings/confirm')
+}
+
 /**
  * 証明書を取り出す URL（`ApiDesign.md` 11.7）。
  *

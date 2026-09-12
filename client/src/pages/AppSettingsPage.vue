@@ -14,7 +14,7 @@
  * 単一ノードでは `[DB]` と `[既定]` の項目を編集でき、K8s では ConfigMap /
  * Secret で固定された項目が読み取り専用で並ぶ。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import { ApiError } from '../api/client'
 import * as settingsApi from '../api/settings'
@@ -61,6 +61,56 @@ const SOURCE_LABEL: Record<SettingSource, string> = {
   default: '既定',
 }
 
+/**
+ * 確認を待っている設定変更（`ApiDesign.md` 11.8。pb-97）。
+ *
+ * **タブの外に出す。** 未確認はページ全体の状態であり、**どのタブにいても
+ * 見えていなければならない**——締め出されかけている人に、戻る道を隠さない。
+ */
+const pending = ref<settingsApi.PendingConfirmation | null>(null)
+const confirming = ref(false)
+/** いまの時刻。**残り時間を秒で出すために毎秒進める。** */
+const now = ref(Date.now())
+let tick: ReturnType<typeof setInterval> | undefined
+
+/** 期限までの残り秒。**0 になると元の設定へ戻る。** */
+const remainSeconds = computed(() => {
+  if (pending.value === null) return 0
+  const ms = new Date(pending.value.expires_at).getTime() - now.value
+  return Math.max(0, Math.floor(ms / 1000))
+})
+
+onMounted(() => {
+  tick = setInterval(() => {
+    now.value = Date.now()
+    // **期限を過ぎたら引き直す。** サーバ側が戻しているので、画面も追う。
+    if (pending.value !== null && remainSeconds.value === 0) void load()
+  }, 1000)
+})
+onUnmounted(() => {
+  if (tick !== undefined) clearInterval(tick)
+})
+
+/**
+ * 「アクセスできました」を押す（11.8）。
+ *
+ * **新しい設定を通って届いていないと 409 になる。** その文言はサーバが返す
+ * ものをそのまま出す（`tls_enabled` なら「https で開き直してください」）。
+ */
+async function confirm() {
+  confirming.value = true
+  actionError.value = null
+  try {
+    await settingsApi.confirmSettings()
+    notice.value = '設定を確定しました。以後は元に戻りません。'
+    await load()
+  } catch (e: unknown) {
+    actionError.value = asApiError(e)
+  } finally {
+    confirming.value = false
+  }
+}
+
 async function load() {
   loading.value = true
   loadError.value = null
@@ -68,6 +118,7 @@ async function load() {
     const res = await settingsApi.getSettings()
     items.value = res.items
     configFilePath.value = res.config_file_path
+    pending.value = res.pending_confirmation
     draft.value = {}
   } catch (e: unknown) {
     loadError.value = asApiError(e)
@@ -205,6 +256,26 @@ function asApiError(e: unknown): ApiError {
 <template>
   <div class="page">
     <PageHeader title="アプリケーション設定" />
+
+    <!--
+      **未確認の変更はタブの外に出す**（`GuiDesign.md` 5.12。pb-97）。
+      どのタブにいても見えていなければならない——**締め出されかけている人に、
+      戻る道を隠さない。**
+    -->
+    <section v-if="pending" class="pending" role="alert">
+      <p class="head">
+        <strong>変更を確認してください</strong>
+        <span class="remain">あと {{ remainSeconds }} 秒</span>
+      </p>
+      <p class="muted">
+        {{ pending.keys.join(', ') }} を変えました。
+        <strong>この設定で画面へ入れていることを確かめて、下のボタンを押してください。</strong>
+        押さないまま期限が過ぎると、<strong>元の設定へ戻ります</strong>。
+      </p>
+      <button type="button" class="primary" :disabled="confirming" @click="confirm">
+        {{ confirming ? '確認中…' : 'アクセスできました' }}
+      </button>
+    </section>
 
     <div class="tabs" role="tablist">
       <button
@@ -347,6 +418,32 @@ function asApiError(e: unknown): ApiError {
 </template>
 
 <style scoped>
+/*
+ * **未確認の変更は目立たせる**（pb-97）。押さないと元へ戻るので、
+ * 見落とすと「なぜ設定が戻ったのか」が分からなくなる。
+ */
+.pending {
+  margin: var(--pb-space-3) var(--pb-space-4);
+  padding: var(--pb-space-3);
+  border: 1px solid var(--pb-warning-border);
+  background: var(--pb-warning-bg);
+  border-radius: var(--pb-radius);
+}
+.pending .head {
+  margin: 0 0 var(--pb-space-2);
+  display: flex;
+  gap: var(--pb-space-3);
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.pending .remain {
+  font-variant-numeric: tabular-nums;
+  color: var(--pb-warning-text);
+}
+.pending p {
+  margin: 0 0 var(--pb-space-2);
+}
+
 /**
  * **AppShell の .content は overflow:hidden なので、各ページが自前のスクロール枠を
  * 持つ約束である**（UsersPage と同じ形）。置き忘れると画面の下が切れて

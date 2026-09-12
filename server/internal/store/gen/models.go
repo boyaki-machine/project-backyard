@@ -264,6 +264,15 @@ type LocalCredential struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+// 未確認の設定変更。期限内に確認されなければ previous へ戻す（pb-97）
+type PendingSettingChange struct {
+	ID        string
+	Previous  []byte
+	ExpiresAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+	CreatedBy pgtype.Text
+}
+
 type Permission struct {
 	Key         string
 	Category    string

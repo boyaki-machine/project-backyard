@@ -153,6 +153,8 @@ type Querier interface {
 	// ?open=true と同じ判定）。ステータスのカテゴリで数え直すと、同じ事実を2通りに
 	// 数えることになり、片方だけ直した日にずれる。
 	CountOpenChildren(ctx context.Context, parentID pgtype.Text) (int64, error)
+	// 未確認が何件あるか。**次の危険な変更を断るために使う。**
+	CountPendingSettingChanges(ctx context.Context) (int64, error)
 	// CountProjectTagsByIDs は tag_ids がすべて当該プロジェクトのものかを数える（9.3）。
 	// 渡した件数と一致しなければ、他プロジェクトのタグか存在しない ID が混ざっている。
 	CountProjectTagsByIDs(ctx context.Context, arg CountProjectTagsByIDsParams) (int64, error)
@@ -252,6 +254,14 @@ type Querier interface {
 	// ゼロ値に頼らず明示的に書く**こと。どの経路が初回変更を要求するのかを
 	// 呼び出し箇所だけで読めるようにするためである。
 	CreateLocalCredential(ctx context.Context, arg CreateLocalCredentialParams) error
+	// 未確認の設定変更のクエリ（DbDesign.md 6.17、Design.md 10.3）。pb-97。
+	//
+	// **行は0か1つである。** 未確認が残っている間は次の危険な変更を受け付けない
+	// （ApiDesign.md 11.2 が 409 を返す）ので、複数行を前提にした操作を持たない。
+	// ただし**点検は「期限が来たもの」を探す**形にしておく——起動時に古い行が
+	// 残っていても、ひとつ残らず戻せる。
+	// 1件作る。**previous は戻す値**（キー→値。null は行が無かったことを表す）。
+	CreatePendingSettingChange(ctx context.Context, arg CreatePendingSettingChangeParams) (CreatePendingSettingChangeRow, error)
 	// workflow_id は後から埋める。非テンプレートの workflow は project_id が
 	// NOT NULL 相当（ck_workflow_template）で、プロジェクトより先に作れないため。
 	CreateProject(ctx context.Context, arg CreateProjectParams) error
@@ -311,6 +321,9 @@ type Querier interface {
 	// （DeleteActorByID が kind='user' に限っているのと対である）。
 	//
 	DeleteMyAgentActor(ctx context.Context, arg DeleteMyAgentActorParams) (int64, error)
+	// 1件消す。**確認できたとき（確定）と、戻し終えたとき**に呼ぶ。
+	// **消した件数を返す**ので、競合して既に消えていたかが分かる。
+	DeletePendingSettingChange(ctx context.Context, id string) (int64, error)
 	// project_counter / project_member / workflow（と配下の status・transition）は
 	// ON DELETE CASCADE で追従する（DbDesign.md 6.4 / 6.5）。
 	DeleteProjectByKey(ctx context.Context, key string) (int64, error)
@@ -603,6 +616,8 @@ type Querier interface {
 	// **seq を返すのは、SetTicketStatus が project_id と seq で更新するためである。**
 	// id で更新する口を別に作ると、同じ更新が2通りになる。
 	GetParentForCascade(ctx context.Context, childID string) (GetParentForCascadeRow, error)
+	// 未確認を引く。**画面が残り時間を出すために使う。**
+	GetPendingSettingChange(ctx context.Context) (PendingSettingChange, error)
 	// ── 詳細（ApiDesign.md 5.4。POST /projects の応答も同じ形）───────
 	// GetProjectByKey は1プロジェクトの本体とワークフローの見出しを返す。
 	//
@@ -893,6 +908,8 @@ type Querier interface {
 	// 置いて同じ親の行を隣り合わせているので、呼び出し側は届いた順に子を積むだけで
 	// 各階層の順序が揃う。NULLS FIRST でトップレベルが先に来る。
 	ListDocumentTree(ctx context.Context, projectID pgtype.Text) ([]ListDocumentTreeRow, error)
+	// 期限が来たものを全部引く。**起動時の点検と、プロセス内のタイマが使う。**
+	ListExpiredPendingSettingChanges(ctx context.Context) ([]ListExpiredPendingSettingChangesRow, error)
 	// ── アクセストークン（ApiDesign.md 4.4）──────────────────────────────
 	//
 	// **いずれも token_type = 'api' に限る。** ブラウザのセッション

@@ -2631,6 +2631,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/settings/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 締め出されうる設定変更の確定
+         * @description 未確認の設定変更を確定する（ApiDesign.md 11.8、Design.md 10.3）。pb-97。
+         *     **必要権限は `system.settings`。**
+         *
+         *     **確定すると以後は元へ戻らない。** 押されなければ期限で元の値へ戻る。
+         *
+         *     **確認の条件はキーごとに違う。** `tls_enabled` は**接続が設定どおりで
+         *     あること**を見る（平文で届いた確認を受け取ると、切り替えが失敗していても
+         *     確定してしまう）。`cookie_secure` は**この口に届いたこと自体で足りる**
+         *     ——認証が要る口であり、有効なのに Cookie が届いているなら、ブラウザは
+         *     HTTPS で繋いでいる。**前段にプロキシを置く構成でも成立する。**
+         */
+        post: operations["confirmSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/settings": {
         parameters: {
             query?: never;
@@ -4149,6 +4178,32 @@ export interface components {
              * @example /etc/pb/pb.yaml
              */
             config_file_path: string | null;
+            /**
+             * @description 確認を待っている設定変更（無ければ `null`）。pb-97。
+             *
+             *     **期限までに確認されないと元の値へ戻る**（ApiDesign.md 11.8、
+             *     Design.md 10.3）。画面は残り時間をここから出す。
+             */
+            pending_confirmation: components["schemas"]["PendingConfirmation"] | null;
+        };
+        /**
+         * @description 締め出されうる設定の未確認の変更（ApiDesign.md 11.8、DbDesign.md 6.17）。
+         *
+         *     **1回の保存が1件である。** 確認すれば全部確定し、期限が切れれば全部戻る。
+         */
+        PendingConfirmation: {
+            /**
+             * @description 確認を待っているキー。
+             * @example [
+             *       "tls_enabled"
+             *     ]
+             */
+            keys: string[];
+            /**
+             * Format: date-time
+             * @description これを過ぎると元の値へ戻る。
+             */
+            expires_at: string;
         };
         /**
          * @description 設定1件（ApiDesign.md 11.1）。**`value` は型によらず常に文字列**で、
@@ -9411,6 +9466,47 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    confirmSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 確定した。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description 確認を待っている変更が無い（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description 新しい設定を通って届いていない、または期限と競合して既に戻っていた
+             *     （`conflict`）。
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listSettings: {

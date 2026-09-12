@@ -4216,6 +4216,44 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/admin/settings/confirm:
+    post:
+      tags: [settings]
+      summary: 締め出されうる設定変更の確定
+      operationId: confirmSettings
+      description: |
+        未確認の設定変更を確定する（ApiDesign.md 11.8、Design.md 10.3）。pb-97。
+        **必要権限は `system.settings`。**
+
+        **確定すると以後は元へ戻らない。** 押されなければ期限で元の値へ戻る。
+
+        **確認の条件はキーごとに違う。** `tls_enabled` は**接続が設定どおりで
+        あること**を見る（平文で届いた確認を受け取ると、切り替えが失敗していても
+        確定してしまう）。`cookie_secure` は**この口に届いたこと自体で足りる**
+        ——認証が要る口であり、有効なのに Cookie が届いているなら、ブラウザは
+        HTTPS で繋いでいる。**前段にプロキシを置く構成でも成立する。**
+      responses:
+        '204':
+          description: 確定した。
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 確認を待っている変更が無い（`not_found`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: |
+            新しい設定を通って届いていない、または期限と競合して既に戻っていた
+            （`conflict`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/v1/admin/settings:
     get:
       tags: [settings]
@@ -6693,7 +6731,7 @@ components:
 
     SettingList:
       type: object
-      required: [items, config_file_path]
+      required: [items, config_file_path, pending_confirmation]
       description: |
         ApiDesign.md 11.1。**PermissionList と同じくページネーション項目を持たない。**
         `config_file_path` は効いている設定ファイルの位置で、使っていなければ `null`。
@@ -6706,6 +6744,34 @@ components:
           type: [string, 'null']
           description: PB_CONFIG_FILE が指すファイルの位置。
           example: /etc/pb/pb.yaml
+        pending_confirmation:
+          oneOf:
+            - $ref: '#/components/schemas/PendingConfirmation'
+            - type: 'null'
+          description: |
+            確認を待っている設定変更（無ければ `null`）。pb-97。
+
+            **期限までに確認されないと元の値へ戻る**（ApiDesign.md 11.8、
+            Design.md 10.3）。画面は残り時間をここから出す。
+
+    PendingConfirmation:
+      type: object
+      required: [keys, expires_at]
+      description: |
+        締め出されうる設定の未確認の変更（ApiDesign.md 11.8、DbDesign.md 6.17）。
+
+        **1回の保存が1件である。** 確認すれば全部確定し、期限が切れれば全部戻る。
+      properties:
+        keys:
+          type: array
+          items:
+            type: string
+          description: 確認を待っているキー。
+          example: ['tls_enabled']
+        expires_at:
+          type: string
+          format: date-time
+          description: これを過ぎると元の値へ戻る。
 
     Setting:
       type: object
