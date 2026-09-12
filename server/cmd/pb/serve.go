@@ -196,6 +196,21 @@ func setupTLS(ctx context.Context, pool *pgxpool.Pool, set *config.Set) (*tlscer
 			ID: row.ID, NotBefore: row.NotBefore.Time, NotAfter: row.NotAfter.Time, Pair: pair,
 		})
 	}
+
+	// **1枚も読めなかったら起動を失敗させる。** 行があるのに全部読めないのは
+	// 鍵の取り違えか行の破損であり、**時間が経っても直らない設定の誤りである。**
+	// 起動してしまうと、利用者には「繋がらない」としか見えない
+	// （実サーバ検証で、別の鍵を渡すと scheme=https で上がってしまった。2026-09-12）。
+	//
+	// **日付のせいで有効なものが無い場合とは区別する。** あちらは時刻で変わるので、
+	// 警告を出して起動する（Holder.Replace が出す）。
+	if len(entries) == 0 {
+		return nil, nil, fmt.Errorf(
+			"TLS 証明書が %d 件あるが、1枚も読めなかった（秘密鍵を復号できない）。"+
+				"PB_SECRET_KEY が登録時と同じか確かめること。"+
+				"平文へ戻すなら PB_TLS_ENABLED=false を与えて起動し直す", len(rows))
+	}
+
 	holder.Replace(entries)
 
 	return holder, &tls.Config{
