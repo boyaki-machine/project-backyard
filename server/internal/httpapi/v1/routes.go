@@ -551,7 +551,7 @@ func Mount(r chi.Router, deps Deps) {
 		// エージェントは PB へ繋げないので、**繋げない相手から取ってこなければ
 		// ならない**という循環がある。この口がそれを断つ。
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
-			Get("/admin/tls/certificates/{id}/pem", h.downloadTLSCertificate)
+			Get("/admin/tls/certificates/{id}/certificate.zip", h.downloadTLSCertificate)
 	})
 }
 

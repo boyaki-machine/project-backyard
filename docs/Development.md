@@ -1376,6 +1376,13 @@ pb (DEPTH_ZERO_SELF_SIGNED_CERT): "self signed certificate"
 **`/admin/settings` の「TLS 証明書」タブで「保存」を押す**（`ApiDesign.md` 11.7）。
 **HTTPS にする前に取っておける**のがこの導線の要点である。
 
+**落ちてくるのは zip である。** 展開すると `<ホスト名>.crt` が1つ出てくるので、
+**そちらのパスを②で使う**（`.crt` をそのまま返すとブラウザが拒むため包んでいる。pb-108）。
+
+```
+unzip pb-cert-pb.example.com.zip
+```
+
 **既に HTTPS にしてしまい、画面も開けないときは接続先から直接取る。**
 
 ```
