@@ -3974,17 +3974,25 @@ PEM は**テキスト**であり、画面は貼り付け欄で受ける（`GuiDe
 `tls.certificate.upload` と `tls.certificate.delete` を 2.10 の列挙に加える。
 **`detail` には指紋・`common_name`・有効期間を入れ、PEM と鍵は入れない。**
 
-## 11.7 `GET /api/v1/admin/tls/certificates/:id/pem`
+## 11.7 `GET /api/v1/admin/tls/certificates/:id/certificate.zip`
 
 **必要権限**：`system.settings`
 
-登録済みの証明書を PEM のまま返す（pb-100）。
+登録済みの証明書を zip に包んで返す（pb-100、pb-108）。
 
-- 成功 → `200`、`Content-Type: application/x-pem-file`
+- 成功 → `200`、`Content-Type: application/zip`
 - 存在しない → `404`
 
 ```
-Content-Disposition: attachment; filename="pb.example.com.crt"
+Content-Disposition: attachment; filename="pb-cert-pb.example.com.zip"
+```
+
+**中身は証明書1枚だけである。** 手引きの類は入れない——**入れると、渡すべきものが
+どれかを受け取った側が選ぶことになる。**
+
+```
+pb-cert-pb.example.com.zip
+  └ pb.example.com.crt
 ```
 
 **秘密鍵は返さない。** 返すのは `cert_pem` だけで、11.4 と同じく**鍵はどの応答にも現れない。**
@@ -3998,6 +4006,23 @@ Content-Disposition: attachment; filename="pb.example.com.crt"
 
 **この口は循環を断つためにある。** HTTPS にする前に取っておける。
 
+### なぜ zip で包むか
+
+**`.crt` をそのまま返すと、ブラウザが保存させない**（pb-108。2026-09-12 に実機で
+起きた）。Chrome は危険な形式に準じるものとして扱い、**「不審なファイル」として拒む。**
+
+**PB 側は 200 を返しているので、画面にもログにも失敗が残らない。** 利用者から見えるのは
+「押しても何も起きない」だけで、**壊れていることが誰にも分からない**——pb-100 と同じ形の
+見えない失敗である。**循環を断つための口が、断てていなかった。**
+
+**zip はブラウザが素通しする。** エージェントの手引きを同じ理由で zip にしている（5.7.2）。
+
+### PEM のまま返す口は残さない
+
+**同じ中身を返す口を2つ持たない。** 画面の導線は zip 一本になり、**PEM を直に欲しい
+ときは接続先から取れる**（`Development.md` 14.5 の `openssl s_client`）。**残しても、
+ブラウザからは落とせないままである。**
+
 ### なぜ一覧に含めず、別の口にしたか
 
 **11.4 は画面を開くたびに引かれる。** `cert_pem` を含めると、**使いもしない PEM を
@@ -4008,10 +4033,11 @@ Content-Disposition: attachment; filename="pb.example.com.crt"
 
 ### ファイル名
 
-`<common_name>.crt`。**`common_name` は任意の文字列なので、英数字・ハイフン・ドット・
+**zip は `pb-cert-<common_name>.zip`、中の1件は `<common_name>.crt`。**
+**`common_name` は任意の文字列なので、英数字・ハイフン・ドット・
 アンダースコア以外は `_` に置き換える**——パスの区切りが入ると保存先がずれる。
 **先頭と末尾の `_` と `.` は落とす**——先頭が `.` だと隠しファイルになる。
-**置き換えた結果が空になったら `certificate.crt` にする。**
+**置き換えた結果が空になったら `certificate.crt` / `pb-cert-certificate.zip` にする。**
 
 ### 監査ログを残さない
 

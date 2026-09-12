@@ -117,7 +117,10 @@ export function confirmSettings(): Promise<void> {
  *
  * **この口は循環を断つためにある**——自己署名証明書では、その証明書を持って
  * いないクライアントが PB へ繋げない（pb-100）。
+ *
+ * **落ちてくるのは zip である**（pb-108）。**`.crt` をそのまま返すとブラウザが
+ * 「不審なファイル」として拒み、200 が返っているので失敗がどこにも残らない。**
  */
-export function certificatePemUrl(id: string): string {
-  return `${BASE_PATH}/admin/tls/certificates/${encodeURIComponent(id)}/pem`
+export function certificateZipUrl(id: string): string {
+  return `${BASE_PATH}/admin/tls/certificates/${encodeURIComponent(id)}/certificate.zip`
 }

@@ -209,7 +209,7 @@ const noneDecryptable = computed(
 )
 
 /** 証明書を取り出す URL（11.7）。**HTTPS にする前に取っておける**のが要点である */
-const pemUrl = settingsApi.certificatePemUrl
+const zipUrl = settingsApi.certificateZipUrl
 
 /** クライアントに信頼させる環境変数。**Node.js のクライアントで実証済み**（pb-100） */
 const TRUST_ENV = 'export NODE_EXTRA_CA_CERTS=/absolute/path/to/pb.crt'
@@ -379,7 +379,8 @@ function asApiError(e: unknown): ApiError {
               <summary>クライアントに信頼させる</summary>
               <ol class="muted">
                 <li>
-                  <strong>証明書を保存します。</strong>下の一覧の「保存」から取れます。
+                  <strong>証明書を保存します。</strong>下の一覧の「保存（zip）」から取れます。
+                  <strong>展開して出てくる <code>.crt</code> を渡します。</strong>
                   <strong>HTTPS にする前に取っておいてください</strong
                   >——HTTPS にしたあとは、繋げないクライアントからは取れません
                 </li>
@@ -539,7 +540,7 @@ function asApiError(e: unknown): ApiError {
               まで、エージェントは PB へ繋げない。`Content-Disposition` はサーバが
               付けるので、画面は Blob を組み立てない。
             -->
-            <a class="save" :href="pemUrl(c.id)" download>保存</a>
+            <a class="save" :href="zipUrl(c.id)" download>保存（zip）</a>
             <button v-if="canDelete(c)" type="button" class="link danger" @click="deleting = c">
               削除
             </button>

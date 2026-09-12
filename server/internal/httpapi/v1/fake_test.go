@@ -329,6 +329,20 @@ type fakeQuerier struct {
 	reassignedRows         int64
 	deletedUserActorID     string
 	createdSystemActorName string
+
+	// TLS 証明書の取り出し（ApiDesign.md 11.7。pb-108）
+	certPEMRow gen.GetTLSCertificatePEMRow
+	certPEMErr error
+}
+
+// GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
+func (q *fakeQuerier) GetTLSCertificatePEM(
+	_ context.Context, _ string,
+) (gen.GetTLSCertificatePEMRow, error) {
+	if q.certPEMErr != nil {
+		return gen.GetTLSCertificatePEMRow{}, q.certPEMErr
+	}
+	return q.certPEMRow, nil
 }
 
 func (q *fakeQuerier) FindLocalLoginByEmail(_ context.Context, email string) (gen.FindLocalLoginByEmailRow, error) {

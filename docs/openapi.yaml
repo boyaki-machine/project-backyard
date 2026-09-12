@@ -4449,13 +4449,14 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
-  /api/v1/admin/tls/certificates/{id}/pem:
+  /api/v1/admin/tls/certificates/{id}/certificate.zip:
     get:
       tags: [settings]
-      summary: TLS証明書の取り出し
+      summary: TLS証明書の取り出し（zip ダウンロード）
       operationId: downloadTLSCertificate
       description: |
-        証明書を PEM のまま返す（ApiDesign.md 11.7）。**必要権限は `system.settings`。**
+        証明書を zip に包んで返す（ApiDesign.md 11.7）。**必要権限は `system.settings`。**
+        **中身は `<common_name>.crt` 1枚だけ。**
 
         **秘密鍵は返さない。** 返すのは証明書だけで、**鍵はどの応答にも現れない。**
 
@@ -4463,6 +4464,9 @@ paths:
         いないクライアントが PB へ繋げない。**証明書は PB の DB にあるので、
         繋げない相手から取ってこなければならない**（pb-100。stg で実際に起きた）。
         **HTTPS にする前に取っておける。**
+
+        **zip で包むのは、`.crt` をそのまま返すとブラウザが拒むためである**
+        （pb-108）。**PB は 200 を返しているので、失敗が画面にもログにも残らない。**
       parameters:
         - name: id
           in: path
@@ -4473,11 +4477,17 @@ paths:
       responses:
         '200':
           description: |
-            証明書の PEM。`Content-Disposition` でファイル名が付く。
-          content:
-            application/x-pem-file:
+            証明書1枚を収めた zip。`Content-Disposition` でファイル名が付く。
+          headers:
+            Content-Disposition:
               schema:
                 type: string
+              example: attachment; filename="pb-cert-pb.example.com.zip"
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':

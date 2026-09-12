@@ -2778,7 +2778,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/admin/tls/certificates/{id}/pem": {
+    "/api/v1/admin/tls/certificates/{id}/certificate.zip": {
         parameters: {
             query?: never;
             header?: never;
@@ -2786,8 +2786,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * TLS証明書の取り出し
-         * @description 証明書を PEM のまま返す（ApiDesign.md 11.7）。**必要権限は `system.settings`。**
+         * TLS証明書の取り出し（zip ダウンロード）
+         * @description 証明書を zip に包んで返す（ApiDesign.md 11.7）。**必要権限は `system.settings`。**
+         *     **中身は `<common_name>.crt` 1枚だけ。**
          *
          *     **秘密鍵は返さない。** 返すのは証明書だけで、**鍵はどの応答にも現れない。**
          *
@@ -2795,6 +2796,9 @@ export interface paths {
          *     いないクライアントが PB へ繋げない。**証明書は PB の DB にあるので、
          *     繋げない相手から取ってこなければならない**（pb-100。stg で実際に起きた）。
          *     **HTTPS にする前に取っておける。**
+         *
+         *     **zip で包むのは、`.crt` をそのまま返すとブラウザが拒むためである**
+         *     （pb-108）。**PB は 200 を返しているので、失敗が画面にもログにも残らない。**
          */
         get: operations["downloadTLSCertificate"];
         put?: never;
@@ -9708,13 +9712,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 証明書の PEM。`Content-Disposition` でファイル名が付く。 */
+            /** @description 証明書1枚を収めた zip。`Content-Disposition` でファイル名が付く。 */
             200: {
                 headers: {
+                    /** @example attachment; filename="pb-cert-pb.example.com.zip" */
+                    "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/x-pem-file": string;
+                    "application/zip": string;
                 };
             };
             401: components["responses"]["Unauthenticated"];

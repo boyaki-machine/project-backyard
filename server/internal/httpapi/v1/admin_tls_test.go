@@ -1,18 +1,25 @@
 package v1
 
 import (
+	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -159,5 +166,76 @@ func TestBuildCertificateListDecryptable(t *testing.T) {
 		if v.Decryptable {
 			t.Errorf("鍵が無いのに %s が decryptable になった", v.ID)
 		}
+	}
+}
+
+// TestDownloadTLSCertificateZip は 11.7 の取り出し口が zip を返すことを見る（pb-108）。
+//
+// **`.crt` をそのまま返すとブラウザが拒む**ので包んでいる。**包んだ中身が元の PEM と
+// 一致することまで見る**——形式だけ変えて中身を落としたら、渡した先で使えない。
+func TestDownloadTLSCertificateZip(t *testing.T) {
+	pemText := certPEM(t, "pb.example.com", []string{"pb.example.com"}, nil)
+	h := &handler{q: &fakeQuerier{certPEMRow: gen.GetTLSCertificatePEMRow{
+		CommonName: "pb.example.com", CertPem: pemText,
+	}}}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/admin/tls/certificates/01K2F8QW3H7YRJ4M5N6P7Q8R9S/certificate.zip", nil)
+	rc := chi.NewRouteContext()
+	rc.URLParams.Add("id", "01K2F8QW3H7YRJ4M5N6P7Q8R9S")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
+	h.downloadTLSCertificate(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/zip" {
+		t.Errorf("Content-Type: got %q", got)
+	}
+	want := `attachment; filename="pb-cert-pb.example.com.zip"`
+	if got := rec.Header().Get("Content-Disposition"); got != want {
+		t.Errorf("Content-Disposition:\n got %q\nwant %q", got, want)
+	}
+
+	blob := rec.Body.Bytes()
+	zr, err := zip.NewReader(bytes.NewReader(blob), int64(len(blob)))
+	if err != nil {
+		t.Fatalf("zip を開けない: %v", err)
+	}
+	if len(zr.File) != 1 {
+		t.Fatalf("中身は1件だけのはず: %d 件", len(zr.File))
+	}
+	if zr.File[0].Name != "pb.example.com.crt" {
+		t.Errorf("中の名前: got %q", zr.File[0].Name)
+	}
+	f, err := zr.File[0].Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	got, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != pemText {
+		t.Errorf("中身が元の PEM と違う:\n got %q\nwant %q", string(got), pemText)
+	}
+}
+
+// TestDownloadTLSCertificateNotFound は無い ID が 404 になることを見る（11.7）。
+func TestDownloadTLSCertificateNotFound(t *testing.T) {
+	h := &handler{q: &fakeQuerier{certPEMErr: pgx.ErrNoRows}}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/admin/tls/certificates/nosuch/certificate.zip", nil)
+	rc := chi.NewRouteContext()
+	rc.URLParams.Add("id", "nosuch")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
+	h.downloadTLSCertificate(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404 (%s)", rec.Code, rec.Body.String())
 	}
 }

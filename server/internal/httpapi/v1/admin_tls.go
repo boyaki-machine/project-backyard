@@ -440,9 +440,13 @@ func activePEM(rows []gen.ListTLSCertificatesRow, activeID string) string {
 	return ""
 }
 
-// downloadTLSCertificate は GET /api/v1/admin/tls/certificates/:id/pem を処理する（11.7）。
+// downloadTLSCertificate は GET /api/v1/admin/tls/certificates/:id/certificate.zip
+// を処理する（11.7）。
 //
 // **証明書だけを返す。** 秘密鍵はこの口にも現れない（11.4）。
+//
+// **zip に包む**（pb-108）。`.crt` をそのまま返すとブラウザが拒み、**PB は 200 を
+// 返しているので失敗がどこにも残らない。**
 //
 // **監査ログを残さない。** 証明書は接続してきた誰にでも提示されるもので、
 // 取り出せること自体は秘密の漏洩にあたらない（11.7）。
@@ -459,12 +463,18 @@ func (h *handler) downloadTLSCertificate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	blob, err := tlscert.Zip(tlscert.FileName(row.CommonName), row.CertPem)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+		return
+	}
+
 	// **ブラウザの保存にそのまま乗せる**（11.7）。画面が Blob を組み立てなくて済む。
-	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition",
-		`attachment; filename="`+tlscert.FileName(row.CommonName)+`"`)
+		`attachment; filename="`+tlscert.ZipName(row.CommonName)+`"`)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(row.CertPem))
+	_, _ = w.Write(blob)
 }
 
 // loadPair は行から tls.Certificate を作る。**秘密鍵をここで復号する。**
