@@ -1525,6 +1525,96 @@ CREATE TABLE pending_setting_change (
 **ただし起動時は期限を見ない**（改訂、2026-09-12）。**未確認は全部戻す**——
 締め出された人が最初に試すのは再起動であり、**そこで戻さないと、その設定では
 起動に失敗する場合に永遠に戻らない**（`Design.md` 10.3 の ③''）。
+## 6.18 多要素認証（0035。pb-103）
+
+```sql
+-- 第2要素の認証器。Phase 2 は TOTP だけ（Design.md 6.7）
+CREATE TABLE user_mfa_credential (
+  id              char(26) COLLATE "C" PRIMARY KEY,
+  user_id         char(26) COLLATE "C" NOT NULL
+                  REFERENCES app_user(actor_id) ON DELETE CASCADE,
+  kind            text        NOT NULL CHECK (kind IN ('totp')),
+  name            text        NOT NULL CHECK (length(name) BETWEEN 1 AND 60),
+  secret          bytea       NOT NULL,   -- AES-256-GCM で封じた Base32 の共有秘密
+  secret_nonce    bytea       NOT NULL,
+  confirmed_at    timestamptz,            -- NULL = 登録の途中（要素として数えない）
+  last_used_step  bigint,                 -- 照合が通った刻みの番号。再利用を拒むため
+  last_used_at    timestamptz,
+  failed_attempts integer     NOT NULL DEFAULT 0,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_user_mfa_credential_user ON user_mfa_credential (user_id)
+  WHERE confirmed_at IS NOT NULL;
+CREATE UNIQUE INDEX uq_user_mfa_credential_name ON user_mfa_credential (user_id, name)
+  WHERE confirmed_at IS NOT NULL;
+CREATE TRIGGER trg_user_mfa_credential_updated BEFORE UPDATE ON user_mfa_credential
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ログインの中途状態。パスワードは通ったが、コードがまだ（Design.md 6.7.4）
+CREATE TABLE mfa_login_challenge (
+  id          char(26) COLLATE "C" PRIMARY KEY,
+  user_id     char(26) COLLATE "C" NOT NULL
+              REFERENCES app_user(actor_id) ON DELETE CASCADE,
+  token_hash  text        NOT NULL UNIQUE,   -- SHA-256。平文は応答にしか出さない
+  attempts    integer     NOT NULL DEFAULT 0,
+  expires_at  timestamptz NOT NULL,
+  consumed_at timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_mfa_login_challenge_user ON mfa_login_challenge (user_id);
+
+-- 締め出しの手当て（Design.md 6.7.5）
+CREATE TABLE mfa_recovery_code (
+  id         char(26) COLLATE "C" PRIMARY KEY,
+  user_id    char(26) COLLATE "C" NOT NULL
+             REFERENCES app_user(actor_id) ON DELETE CASCADE,
+  code_hash  text        NOT NULL UNIQUE,    -- SHA-256。平文は発行の1回だけ
+  used_at    timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_mfa_recovery_code_user ON mfa_recovery_code (user_id)
+  WHERE used_at IS NULL;
+```
+
+### 認証器は `app_user` に吊る。`user_identity` には吊らない
+
+**第2要素は「誰であるかを特定する手段」ではなく、特定できたあとに重ねる関門である**
+（`Design.md` 6.7.1）。`user_identity` に吊ると、Phase 3 で OIDC を足したときに
+**同じ人が手段ごとに別の認証器を登録することになる。**
+
+### `confirmed_at` が NULL の行を要素として数えない
+
+**QR を出しただけで登録が済んだことにしない。** コードの照合が通るまで `NULL` のままで、
+**索引に部分条件を付けて数と一意性の両方から外してある。**
+
+**照合しないまま確定させると、利用者が自分を締め出せる**——登録できたつもりの認証器で
+ログインの関門が立ち、そのコードは誰も出せない。
+
+**途中の行は1人1件までだが、DB では縛らない**（6.17 と同じ）。登録を始め直したときに
+古い行を消すのはアプリ側の仕事であり、**制約で縛ると「やり直し」が誤りとして跳ね返る。**
+
+### 名前の一意は確定済みの行だけに掛ける
+
+**部分 UNIQUE にしてあるのは、途中の行が名前を占有しないようにするためである。**
+「iPhone」で登録に失敗した人が、もう一度「iPhone」で始められる。
+
+### `last_used_step` は刻みの番号をそのまま持つ
+
+**時刻ではなく `floor(unixtime / 30)` を持つ。** 時刻で持つと、許容窓（前後1刻み）との
+比較のたびに刻みへ戻す計算が要る。**同じ刻みのコードを2回受け付けない**という規則は、
+**「保存された番号以下を拒む」という1回の比較で書ける。**
+
+### 挑戦を `access_token` に置かない
+
+**認証ミドルウェアが `token_type` で絞らないためである**（6.2 の `FindAccessTokenByHash`）。
+**`access_token` に中間状態を置いた瞬間、挑戦トークンが API 全体を通る資格情報になる。**
+詳細と棄却した代替案は `Design.md` 6.7.4 にある。
+
+### リカバリコードは行で持ち、本数を列で持たない
+
+**1本ずつ独立に消費される**ので、残数は `used_at IS NULL` の件数である。
+**「10本のうち何本使ったか」を列に持つと、行と列の2か所が同じ事実を持つ。**
 
 ---
 
@@ -1943,15 +2033,19 @@ Phase 2
   0031_app_setting.sql    app_setting（6.14。pb-2）
   0032_tls_certificate.sql tls_certificate（6.15。pb-3）
   0033_app_secret.sql     app_secret（6.16。pb-3）
+  0034_pending_setting_change.sql
+                          pending_setting_change（6.17。pb-97）
+  0035_mfa.sql            user_mfa_credential, mfa_login_challenge,
+                          mfa_recovery_code（6.18。pb-103）
 Phase 3
-  0034_knowledge.sql      knowledge, knowledge_revision, proposal
-  0035_comment_signal.sql comment_signal
-  0036_embedding.sql      vector 拡張 + embedding
-  0037_project_event.sql  project_event
-  0038_analytics.sql      estimate_record, contribution
+  0036_knowledge.sql      knowledge, knowledge_revision, proposal
+  0037_comment_signal.sql comment_signal
+  0038_embedding.sql      vector 拡張 + embedding
+  0039_project_event.sql  project_event
+  0040_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033 → 0030〜0034 → 0031〜0035 → 0032〜0036 → 0033〜0037 → 0034〜0038** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**、**pb-75 の 0029（`ticket.self_edit`。6.13）で11回目**、**pb-58 の 0030（`claude_desktop` をカタログへ追加。8.2.1.1）で12回目**、**pb-2 の 0031（`app_setting`。6.14）で13回目**、**pb-3 の 0032（`tls_certificate`。6.15）で14回目**、**pb-3 の 0033（`app_secret`。6.16）で15回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033 → 0030〜0034 → 0031〜0035 → 0032〜0036 → 0033〜0037 → 0034〜0038 → 0035〜0039 → 0036〜0040** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**、**pb-75 の 0029（`ticket.self_edit`。6.13）で11回目**、**pb-58 の 0030（`claude_desktop` をカタログへ追加。8.2.1.1）で12回目**、**pb-2 の 0031（`app_setting`。6.14）で13回目**、**pb-3 の 0032（`tls_certificate`。6.15）で14回目**、**pb-3 の 0033（`app_secret`。6.16）で15回目**、**pb-97 の 0034（`pending_setting_change`。6.17）で16回目**、**pb-103 の 0035（MFA の3表。6.18）で17回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**。**pb-97 の 0034 は、本段落と上の一覧の両方から落ちていた**——6.17 には節として書かれていたので、**節を足したことと採番を直すことが別の作業として扱われている**。pb-103 で気づいて補った）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 
