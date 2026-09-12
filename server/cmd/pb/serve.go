@@ -76,16 +76,18 @@ func serve(ctx context.Context) error {
 		set = live.ApplyRows(overlay)
 	}
 
-	// **期限の切れた未確認の変更を、待受を張る前に戻す**（pb-97、DbDesign.md 6.17）。
+	// **未確認の設定変更を、待受を張る前に全部戻す**（pb-97、DbDesign.md 6.17）。
 	//
-	// **前のプロセスが落ちたあと、未確認のまま期限が切れている可能性がある。**
-	// ここで戻さないと、締め出す設定のまま待ち受けてしまう。
+	// **起動時は期限を見ない**（改訂、2026-09-12）。**締め出された人が最初に
+	// 試すのは再起動**であり、そこで戻さないと**その設定では起動に失敗する
+	// 場合に永遠に戻らない**——プロセスが上がらないのでタイマも動かず、
+	// 何度再起動しても同じところで落ちる。
 	//
 	// **OnChanged は渡さない。** 待受はまだ張っていないので、戻した値は
 	// このあとの setupTLS が読む。
 	txRunner := store.NewTxRunner(pool)
 	bootGuard := v1.SettingsGuard{Tx: txRunner, Q: gen.New(pool), Settings: live}
-	if n, err := bootGuard.RevertExpired(ctx); err != nil {
+	if n, err := bootGuard.RevertAll(ctx); err != nil {
 		slog.Error("期限切れの設定変更を戻せなかったため、いまの設定で起動する",
 			slog.String("error", err.Error()))
 	} else if n > 0 {

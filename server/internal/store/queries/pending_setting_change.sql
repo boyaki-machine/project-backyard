@@ -33,3 +33,14 @@ DELETE FROM pending_setting_change WHERE id = @id;
 -- 未確認が何件あるか。**次の危険な変更を断るために使う。**
 -- name: CountPendingSettingChanges :one
 SELECT count(*) FROM pending_setting_change;
+
+-- 未確認を全部引く。**起動時に使う**（pb-97 の改訂、2026-09-12）。
+--
+-- **起動時は期限を見ない。** 締め出された人が最初に試すのは再起動であり、
+-- そこで戻さないと**その設定では起動に失敗する場合に永遠に戻らない**
+-- （プロセスが上がらないのでタイマも動かない）。ネットワーク機器の
+-- commit confirmed も、再起動すると未確定の設定を捨てる。
+-- name: ListPendingSettingChanges :many
+SELECT id, previous, expires_at
+FROM pending_setting_change
+ORDER BY created_at;

@@ -136,3 +136,41 @@ func (q *Queries) ListExpiredPendingSettingChanges(ctx context.Context) ([]ListE
 	}
 	return items, nil
 }
+
+const listPendingSettingChanges = `-- name: ListPendingSettingChanges :many
+SELECT id, previous, expires_at
+FROM pending_setting_change
+ORDER BY created_at
+`
+
+type ListPendingSettingChangesRow struct {
+	ID        string
+	Previous  []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
+// 未確認を全部引く。**起動時に使う**（pb-97 の改訂、2026-09-12）。
+//
+// **起動時は期限を見ない。** 締め出された人が最初に試すのは再起動であり、
+// そこで戻さないと**その設定では起動に失敗する場合に永遠に戻らない**
+// （プロセスが上がらないのでタイマも動かない）。ネットワーク機器の
+// commit confirmed も、再起動すると未確定の設定を捨てる。
+func (q *Queries) ListPendingSettingChanges(ctx context.Context) ([]ListPendingSettingChangesRow, error) {
+	rows, err := q.db.Query(ctx, listPendingSettingChanges)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPendingSettingChangesRow{}
+	for rows.Next() {
+		var i ListPendingSettingChangesRow
+		if err := rows.Scan(&i.ID, &i.Previous, &i.ExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

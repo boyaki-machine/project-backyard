@@ -218,7 +218,34 @@ func TestSettingsGuardRevertsExpired(t *testing.T) {
 		}
 	})
 
-	t.Run("期限が来ていなければ何もしない", func(t *testing.T) {
+	t.Run("起動時は期限に関わらず戻す", func(t *testing.T) {
+		// **締め出された人が最初に試すのは再起動である**（改訂、2026-09-12）。
+		// 期限内でも戻さないと、**その設定では起動に失敗する場合に永遠に
+		// 戻らない**——プロセスが上がらないのでタイマも動かない。
+		q := newFake(t)
+		blob, _ := json.Marshal(map[string]*string{config.KeyTLSEnabled: nil})
+		q.settings.expiredPending = []gen.ListExpiredPendingSettingChangesRow{{
+			ID: "01K2F8QW3H7YRJ4M5N6P7Q8PND", Previous: blob,
+			// **期限はまだ先である。**
+			ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(5 * time.Minute), Valid: true},
+		}}
+		row := pendingRow(t, map[string]*string{config.KeyTLSEnabled: nil}, 5*time.Minute)
+		q.settings.pending = &row
+
+		g := SettingsGuard{Tx: &fakeTxRunner{q: q}, Q: q, Settings: config.LiveDefaults()}
+		n, err := g.RevertAll(context.Background())
+		if err != nil {
+			t.Fatalf("戻せない: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("戻した件数 = %d, want 1（期限内でも戻す）", n)
+		}
+		if len(q.settings.deleted) != 1 {
+			t.Errorf("設定を戻していない: %v", q.settings.deleted)
+		}
+	})
+
+	t.Run("期限が来ていなければ、タイマの点検では何もしない", func(t *testing.T) {
 		q := newFake(t)
 		g := SettingsGuard{Tx: &fakeTxRunner{q: q}, Q: q, Settings: config.LiveDefaults()}
 		n, err := g.RevertExpired(context.Background())

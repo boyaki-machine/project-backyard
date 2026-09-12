@@ -2628,6 +2628,18 @@ func (q *fakeQuerier) DeletePendingSettingChange(_ context.Context, id string) (
 	return 1, nil
 }
 
+func (q *fakeQuerier) ListPendingSettingChanges(
+	context.Context,
+) ([]gen.ListPendingSettingChangesRow, error) {
+	out := make([]gen.ListPendingSettingChangesRow, 0, len(q.settings.expiredPending))
+	for _, r := range q.settings.expiredPending {
+		out = append(out, gen.ListPendingSettingChangesRow{
+			ID: r.ID, Previous: r.Previous, ExpiresAt: r.ExpiresAt,
+		})
+	}
+	return out, nil
+}
+
 func (q *fakeQuerier) ListExpiredPendingSettingChanges(
 	context.Context,
 ) ([]gen.ListExpiredPendingSettingChangesRow, error) {

@@ -970,6 +970,13 @@ type Querier interface {
 	// LEFT JOIN agent から外れ、**認証は通るが実効権限が0件のトークンが残る。**
 	//
 	ListOwnedAgentActorIDs(ctx context.Context, ownerActorID string) ([]string, error)
+	// 未確認を全部引く。**起動時に使う**（pb-97 の改訂、2026-09-12）。
+	//
+	// **起動時は期限を見ない。** 締め出された人が最初に試すのは再起動であり、
+	// そこで戻さないと**その設定では起動に失敗する場合に永遠に戻らない**
+	// （プロセスが上がらないのでタイマも動かない）。ネットワーク機器の
+	// commit confirmed も、再起動すると未確定の設定を捨てる。
+	ListPendingSettingChanges(ctx context.Context) ([]ListPendingSettingChangesRow, error)
 	// ListPermissions は権限カタログを返す（ApiDesign.md 7.2）。
 	//
 	// 正本は DbDesign.md 7.2 のシード（0010、28件）と 8.1.4（0017、doc の2件）で

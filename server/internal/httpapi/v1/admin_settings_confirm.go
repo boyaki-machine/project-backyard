@@ -206,12 +206,51 @@ type SettingsGuard struct {
 	OnChanged func(*config.Set)
 }
 
-// RevertExpired は期限が切れた分を戻す。**戻した件数を返す。**
+// pendingTarget は戻す対象。**2つのクエリの行を同じ形で扱う。**
+type pendingTarget struct {
+	ID       string
+	Previous []byte
+}
+
+// RevertExpired は期限が切れた分を戻す（プロセス内のタイマから呼ぶ）。
 func (g SettingsGuard) RevertExpired(ctx context.Context) (int, error) {
 	rows, err := g.Q.ListExpiredPendingSettingChanges(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("期限切れの未確認を引けない: %w", err)
 	}
+	targets := make([]pendingTarget, 0, len(rows))
+	for _, row := range rows {
+		targets = append(targets, pendingTarget{ID: row.ID, Previous: row.Previous})
+	}
+	return g.revert(ctx, targets, "期限内に確認されなかったため元へ戻した")
+}
+
+// RevertAll は未確認を全部戻す。**起動時に呼ぶ**（改訂、2026-09-12）。
+//
+// **起動時は期限を見ない。** 締め出された人が最初に試すのは再起動であり、
+// **そこで戻さないと、その設定では起動に失敗する場合に永遠に戻らない**
+// ——プロセスが上がらないのでタイマも動かず、何度再起動しても同じところで
+// 落ちる（実機で確かめた。TLS を有効にしたまま暗号鍵の出どころが変わった場合）。
+//
+// **ネットワーク機器の commit confirmed も同じである。** 再起動すると
+// 未確定の設定は失われ、保存済みの設定で上がる。
+//
+// **代償は、確認前に別の理由で再起動すると変更が失われることである。**
+// ただし**確認していないのだから戻って正しい**——やり直せばよい。
+func (g SettingsGuard) RevertAll(ctx context.Context) (int, error) {
+	rows, err := g.Q.ListPendingSettingChanges(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("未確認を引けない: %w", err)
+	}
+	targets := make([]pendingTarget, 0, len(rows))
+	for _, row := range rows {
+		targets = append(targets, pendingTarget{ID: row.ID, Previous: row.Previous})
+	}
+	return g.revert(ctx, targets, "確認されないまま再起動したため元へ戻した")
+}
+
+// revert は対象をまとめて戻す。**戻した件数を返す。**
+func (g SettingsGuard) revert(ctx context.Context, rows []pendingTarget, reason string) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
@@ -254,7 +293,7 @@ func (g SettingsGuard) RevertExpired(ctx context.Context) (int, error) {
 
 		// **利用者に分かる形でログへ残す**（チケットの制約条件）。黙って戻すと
 		// 「なぜ HTTP に戻ったのか」が追えない。
-		slog.Warn("設定変更が期限内に確認されなかったため元へ戻した",
+		slog.Warn("設定変更を元へ戻した: "+reason,
 			slog.Any("keys", pendingKeys(prev)),
 			slog.String("hint", "新しい設定で画面へ入り、「アクセスできました」を押すと確定する"))
 		reverted++
