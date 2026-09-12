@@ -22,6 +22,14 @@ import type { Setting, SettingSource } from '../api/settings'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import PageHeader from '../components/PageHeader.vue'
 import { formatDateTime } from '../lib/datetime'
+import TlsCertificatesTab from './TlsCertificatesTab.vue'
+
+/**
+ * タブ（`GuiDesign.md` 5.12）。**証明書が設定の一覧に収まらないので分けた**
+ * ——1件が複数行の情報を持ち、登録と削除という操作を伴う。
+ */
+type Tab = 'general' | 'tls'
+const tab = ref<Tab>('general')
 
 const items = ref<Setting[]>([])
 const configFilePath = ref<string | null>(null)
@@ -186,6 +194,30 @@ function asApiError(e: unknown): ApiError {
   <div class="page">
     <PageHeader title="アプリケーション設定" />
 
+    <div class="tabs" role="tablist">
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="tab === 'general'"
+        :class="{ on: tab === 'general' }"
+        @click="tab = 'general'"
+      >
+        一般
+      </button>
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="tab === 'tls'"
+        :class="{ on: tab === 'tls' }"
+        @click="tab = 'tls'"
+      >
+        TLS 証明書
+      </button>
+    </div>
+
+    <TlsCertificatesTab v-if="tab === 'tls'" />
+
+    <template v-else>
     <p v-if="loading" class="muted">読み込み中…</p>
     <p v-else-if="loadError" class="error" role="alert">{{ loadError.message }}</p>
 
@@ -281,6 +313,7 @@ function asApiError(e: unknown): ApiError {
         </button>
       </div>
     </template>
+    </template>
 
     <Teleport to="body">
       <ConfirmDialog
@@ -301,6 +334,25 @@ function asApiError(e: unknown): ApiError {
 .page {
   padding: var(--pb-space-4);
   max-width: 44rem;
+}
+.tabs {
+  display: flex;
+  gap: var(--pb-space-1);
+  border-bottom: 1px solid var(--pb-border);
+  margin-bottom: var(--pb-space-2);
+}
+.tabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: var(--pb-space-2) var(--pb-space-3);
+  cursor: pointer;
+  color: var(--pb-fg-muted);
+}
+.tabs button.on {
+  color: var(--pb-fg);
+  border-bottom-color: var(--pb-accent);
+  font-weight: 600;
 }
 .muted {
   color: var(--pb-fg-muted);

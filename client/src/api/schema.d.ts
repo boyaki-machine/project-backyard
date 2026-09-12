@@ -2673,6 +2673,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/tls/certificates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * TLS証明書の一覧
+         * @description 登録済みの TLS 証明書を返す（ApiDesign.md 11.4、Design.md 6.6.1）。
+         *     **必要権限は `system.settings`。**
+         *
+         *     **`private_key` は返さない。** 暗号化して保持しており、この応答にも他のどの応答にも
+         *     現れない。設計方針6「秘密は一度しか返さない」より強く、**一度も返さない。**
+         *
+         *     **`status` はサーバが決める。** 選定の規則（有効なもののうち `not_before` が
+         *     最も新しいもの）は Design.md 6.6.1 の1か所に置き、画面が日付から組み立てない。
+         *     `active` は必ず1枚以下である。
+         *
+         *     `items[]` は `not_before` の降順。**ページネーションも ETag も持たない。**
+         */
+        get: operations["listTLSCertificates"];
+        put?: never;
+        /**
+         * TLS証明書の登録
+         * @description 証明書と秘密鍵を PEM で登録する（ApiDesign.md 11.5）。**必要権限は `system.settings`。**
+         *
+         *     **証明書と鍵が対応することを登録時に確かめる。** ここで弾かないとハンドシェイクの
+         *     時刻まで誤りが見つからず、そのときにはもう画面も API も TLS の向こう側にあり、
+         *     直す手段が無い。
+         *
+         *     **期限切れの証明書は受けない**（422）。受けても `active` になれず、利用者は
+         *     「登録したのに効かない」としか読めない。一方で `not_before` が未来のものは受ける
+         *     ——**新旧2枚を並べる**という目的そのものである。
+         *
+         *     **パスフレーズ付きの秘密鍵は受けない**（422）。パスフレーズの置き場という問いが増え、
+         *     第1層の鍵が2つになる。復号してから貼る。
+         *
+         *     **`multipart/form-data` ではなく JSON で受ける。** PEM はテキストであり、鍵を
+         *     ファイルとして持っていない利用者（発行元の画面からコピーしただけ）が詰まる。
+         */
+        post: operations["uploadTLSCertificate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/tls/certificates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * TLS証明書の削除
+         * @description 証明書1件を消す（ApiDesign.md 11.6）。**必要権限は `system.settings`。**
+         *
+         *     **最後の有効な証明書は消せない**（409）。消せてしまうとその瞬間から TLS
+         *     ハンドシェイクが失敗し、**画面から復旧できなくなる。** 平文へ戻したいなら、
+         *     先に `tls_enabled` を無効にする。
+         *
+         *     **`expired` と `superseded` はいつでも消せる。** どちらも出していないので、
+         *     消しても振る舞いが変わらない。
+         */
+        delete: operations["deleteTLSCertificate"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthcheck": {
         parameters: {
             query?: never;
@@ -4117,6 +4192,66 @@ export interface components {
                 /** @description **`null` は行を消して既定値へ戻す。** */
                 value: string | null;
             }[];
+        };
+        /** @description ApiDesign.md 11.4。**ページネーションも ETag も持たない**——証明書は数枚である。 */
+        TLSCertificateList: {
+            items: components["schemas"]["TLSCertificate"][];
+            /**
+             * @description いま TLS で待ち受けているか。**設定 `tls_enabled` の実効値ではなく、
+             *     実際の待受の状態である**——設定を変えても再起動までは待受が変わらない。
+             */
+            tls_enabled: boolean;
+            /** @description `secret_key` が与えられているか。**値は返さない。** 偽なら証明書を登録できない。 */
+            secret_key_present: boolean;
+        };
+        /** @description 証明書1件（ApiDesign.md 11.4）。**`private_key` は含まれない。** */
+        TLSCertificate: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /** @example pb.example.com */
+            common_name: string;
+            /** @description SAN の DNS 名。**キーは常に返す**（無ければ空配列）。 */
+            dns_names: string[];
+            /** Format: date-time */
+            not_before: string;
+            /** Format: date-time */
+            not_after: string;
+            /** @description 16進。 */
+            serial_number: string;
+            /** @description SHA-256 を `ab:cd:…` の形で。openssl の出力に揃えてある。 */
+            fingerprint: string;
+            /**
+             * @description **表示のためだけに持つ。** PB は検証の連鎖を辿らないので、
+             *     フォーマル証明書と自己署名証明書の扱いは同じである。
+             */
+            is_self_signed: boolean;
+            /**
+             * @description `active`（**いま出している1枚。必ず1枚以下**）／ `pending`（`not_before` が未来）／
+             *     `expired`（`not_after` を過ぎた）／ `superseded`（有効だが、より新しい有効なものがある）。
+             * @enum {string}
+             */
+            status: "active" | "pending" | "expired" | "superseded";
+            /** Format: date-time */
+            uploaded_at: string;
+            uploaded_by: components["schemas"]["ActorRef"] | null;
+        };
+        /** @description ApiDesign.md 11.5。**秘密鍵は暗号化して保存され、以後どの応答にも現れない。** */
+        TLSCertificateUploadRequest: {
+            /**
+             * @description 証明書の PEM。中間証明書を続けて貼ってもよい。
+             * @example -----BEGIN CERTIFICATE-----
+             *     …
+             *     -----END CERTIFICATE-----
+             */
+            cert_pem: string;
+            /**
+             * @description 秘密鍵の PEM。PKCS#8 / PKCS#1 / SEC1 を受ける。
+             *     **パスフレーズ付きは受けない**（422）。
+             * @example -----BEGIN PRIVATE KEY-----
+             *     …
+             *     -----END PRIVATE KEY-----
+             */
+            key_pem: string;
         };
         /**
          * @description アクターの参照（担当者・報告者。ApiDesign.md 9.2.2）。**`kind` を必ず返す**
@@ -9260,6 +9395,111 @@ export interface operations {
                 };
             };
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listTLSCertificates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 証明書の一覧。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TLSCertificateList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    uploadTLSCertificate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TLSCertificateUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description 登録した証明書1件。 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TLSCertificate"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description 同じ指紋の証明書が既にある、または `secret_key` が与えられていない（`conflict`）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteTLSCertificate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 証明書の ID（ULID）。 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 消した。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description その ID の証明書が無い（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description これを消すと有効な証明書が無くなり、HTTPS で待ち受けられなくなる（`conflict`）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };
