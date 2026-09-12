@@ -8,12 +8,11 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -78,38 +77,87 @@ func serve(ctx context.Context) error {
 	}
 
 	// TLS の準備（Design.md 6.6.1）。**証明書を読めなければ起動を失敗させる。**
-	certs, tlsConfig, err := setupTLS(ctx, pool, set)
+	startCerts, tlsConfig, err := setupTLS(ctx, pool, set)
 	if err != nil {
 		return err
 	}
 
-	srv := &http.Server{
-		Addr:      set.String(config.KeyBind),
-		TLSConfig: tlsConfig,
-		Handler: httpapi.NewRouter(httpapi.Deps{
-			Pool:     pool,
-			Version:  version,
-			Settings: live,
-			OnSettingsChanged: func(s *config.Set) {
-				applyLogSettings(logs, s)
-			},
-			Certs:        certs,
-			TLSListening: tlsConfig != nil,
-			ListenURL:    listenURL(set.String(config.KeyBind), tlsConfig != nil),
-		}),
-		ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout:       readTimeout,
-		WriteTimeout:      writeTimeout,
-		IdleTimeout:       idleTimeout,
+	bind := set.String(config.KeyBind)
+
+	// **待受は張り替えられる**（pb-106、Design.md 10.3）。tls_enabled を画面から
+	// 変えた時点で切り替わり、再起動は要らない。
+	var server *swappableServer
+
+	// certs は**いま出している証明書の入れ物**。TLS へ切り替えるたびに作り直す。
+	certs := startCerts
+
+	// swapMu は張り替えを直列化する。**設定の保存は稀なので、素朴な排他で足りる。**
+	var swapMu sync.Mutex
+
+	onChanged := func(s *config.Set) {
+		applyLogSettings(logs, s)
+
+		swapMu.Lock()
+		defer swapMu.Unlock()
+
+		want := s.Bool(config.KeyTLSEnabled)
+		if want == server.TLSOn() {
+			return
+		}
+
+		if !want {
+			certs = nil
+			if err := server.Swap(nil); err != nil {
+				slog.Error("平文へ切り替えられない", slog.String("error", err.Error()))
+				return
+			}
+			slog.Info("平文で待ち受けるよう切り替えた", slog.String("bind", server.Addr()))
+			return
+		}
+
+		// **証明書を読み直してから切り替える。** 読めなければ切り替えない——
+		// 設定は有効になっているが待受は平文のままで、**画面はそのずれを
+		// 出せる**（ApiDesign.md 11.4 の tls_enabled は実際の待受である）。
+		holder, tc, err := setupTLS(ctx, pool, s)
+		if err != nil {
+			slog.Error("TLS へ切り替えられないため平文のままにする",
+				slog.String("error", err.Error()))
+			return
+		}
+		certs = holder
+		if err := server.Swap(tc); err != nil {
+			slog.Error("TLS へ切り替えられない", slog.String("error", err.Error()))
+			return
+		}
+		slog.Info("TLS で待ち受けるよう切り替えた", slog.String("bind", server.Addr()))
 	}
 
-	// **待受を先に張り、成立してからログを書く**（pb-29）。ListenAndServe は
-	// bind とその後の待受を1つにまとめてしまうので、**その前にログを書くと
-	// address already in use でも「サーバを起動した」が先に出る。**
-	// 2026-08-30 に読み違えの原因になり、2026-09-08 には実サーバ検証が
-	// 古いバイナリに当たったまま進んだ（pb-72）。
-	ln, err := net.Listen("tcp", srv.Addr)
-	if err != nil {
+	// **TLS の有無で Handler ごと作り直す。** 応答に出る tls_enabled と
+	// listen_url は実際の待受であり（11.4）、設定の実効値ではない。
+	build := func(tc *tls.Config) *http.Server {
+		return &http.Server{
+			Addr:      bind,
+			TLSConfig: tc,
+			Handler: httpapi.NewRouter(httpapi.Deps{
+				Pool:              pool,
+				Version:           version,
+				Settings:          live,
+				OnSettingsChanged: onChanged,
+				Certs:             certs,
+				TLSListening:      tc != nil,
+				ListenURL:         listenURL(bind, tc != nil),
+			}),
+			ReadHeaderTimeout: readHeaderTimeout,
+			ReadTimeout:       readTimeout,
+			WriteTimeout:      writeTimeout,
+			IdleTimeout:       idleTimeout,
+		}
+	}
+	server = newSwappableServer(bind, build)
+
+	// **待受を先に張り、成立してからログを書く**（pb-29）。bind に失敗したのに
+	// 「サーバを起動した」が先に出ると、2026-08-30 のような読み違えを生む。
+	if err := server.Start(tlsConfig); err != nil {
 		return fmt.Errorf("サーバを起動できない: %w", err)
 	}
 
@@ -117,33 +165,13 @@ func serve(ctx context.Context) error {
 	if tlsConfig != nil {
 		scheme = "https"
 	}
-	// **ln.Addr() を出す。** 実際に掴んだアドレスなので、ポートに 0 を
-	// 指定したときも嘘にならない（srv.Addr は指定した文字列のままである）。
+	// **実際に掴んだアドレスを出す。** ポートに 0 を指定したときも嘘にならない。
 	slog.Info("サーバを起動した",
-		slog.String("bind", ln.Addr().String()), slog.String("scheme", scheme),
+		slog.String("bind", server.Addr()), slog.String("scheme", scheme),
 		slog.String("version", version))
 
-	errCh := make(chan error, 1)
-	go func() {
-		// **証明書と鍵のパスを渡さない。** TLSConfig.GetCertificate が
-		// 毎ハンドシェイクで選ぶので（Design.md 6.6.1）、起動時に固定しない。
-		//
-		// **Shutdown はここで渡したリスナも閉じる**ので、停止処理は変わらない。
-		var err error
-		if tlsConfig != nil {
-			err = srv.ServeTLS(ln, "", "")
-		} else {
-			err = srv.Serve(ln)
-		}
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-			return
-		}
-		errCh <- nil
-	}()
-
 	select {
-	case err := <-errCh:
+	case err := <-server.Err():
 		if err != nil {
 			return fmt.Errorf("サーバを起動できない: %w", err)
 		}
@@ -155,7 +183,7 @@ func serve(ctx context.Context) error {
 	// ctx は既に打ち切られているため、猶予つきの別コンテキストで停止する。
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("サーバの停止に失敗した: %w", err)
 	}
 	slog.Info("サーバを停止した")

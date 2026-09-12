@@ -47,8 +47,9 @@ const listenHostMatch = ref<TLSCertificateList['listen_host_match']>('no_certifi
  * **TLS タブで切り替える**（利用者の指摘、2026-09-12）。改訂前は一般タブの
  * 設定一覧にあったが、**関係するものが2つのタブに分かれているのは筋が悪い。**
  *
- * **`tlsEnabled`（実際の待受）とは別物である。** 変更には再起動が要るので、
- * 設定を変えた直後は両者がずれる。
+ * **`tlsEnabled`（実際の待受）とは別物である。** **pb-106 で即時反映になった**
+ * ので通常は一致するが、**証明書を読めないと切り替えが起きず**、設定だけが
+ * 有効になる（`Design.md` 6.6.1）。
  */
 const tlsSetting = ref<Setting | null>(null)
 const togglingTls = ref(false)
@@ -225,10 +226,12 @@ async function toggleTls(next: boolean) {
   actionError.value = null
   try {
     await settingsApi.putSettings([{ key: 'tls_enabled', value: next ? 'true' : 'false' }])
+    // **切り替えは即時に効く**（pb-106）。**この画面はもう届かない**——
+    // ブラウザは同じスキームで叩き続けるので、読み直さずに新しい URL を案内する。
     notice.value = next
-      ? 'TLS で待ち受ける設定にしました。反映するには再起動してください。'
-      : '平文で待ち受ける設定にしました。反映するには再起動してください。'
-    await load()
+      ? `TLS で待ち受けるようにしました。${listenUrlIfEnabled.value} で開き直してください。` +
+        '（切り替わらなかったときは証明書を確かめてください）'
+      : `平文で待ち受けるようにしました。${listenUrl.value.replace(/^https:/, 'http:')} で開き直してください。`
   } catch (e: unknown) {
     actionError.value = asApiError(e)
   } finally {
@@ -402,12 +405,17 @@ function asApiError(e: unknown): ApiError {
             </button>
             <span class="muted">設定値: {{ tlsSetting.value === 'true' ? '有効' : '無効' }}</span>
           </div>
+          <!--
+            **切り替えは即時である**（pb-106）。それでもずれるのは、証明書を
+            読めずに切り替えが起きなかったときで、**再起動しても同じところで
+            失敗する**（`GuiDesign.md` 5.12.1）。
+          -->
           <p v-if="(tlsSetting.value === 'true') !== tlsEnabled" class="warn">
-            ⚠ 設定と実際の待受がずれています。<strong>再起動すると設定が反映されます。</strong>
+            ⚠ 設定と実際の待受がずれています。<strong>証明書を確かめてください。</strong>
+            再起動しても直りません。
           </p>
           <p v-if="tlsSetting.value === 'true' && items.length === 0" class="error">
-            証明書が1枚も登録されていません。この状態で再起動すると<strong
-              >起動に失敗します</strong
+            証明書が1枚も登録されていません。この状態では<strong>TLS に切り替わりません</strong
             >。証明書を登録するか、TLS を無効に戻してください。
           </p>
         </template>
