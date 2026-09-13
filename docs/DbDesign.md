@@ -430,7 +430,7 @@ sqlc:
 | 権限の伝播 | 3.4 の `ALTER DEFAULT PRIVILEGES FOR ROLE pb_owner` により、goose が作ったテーブルにも `pb_app` の DML 権限が自動で付く。マイグレーション後に `GRANT` を流す必要はない |
 | 生成物 | `server/internal/store/gen/` は**コミットする**（`Design.md` 4.6）。sqlc を導入していない環境でもビルドが通る状態を保つ |
 
-**`server/tools/go.mod` の `go` ディレクティブは 1.24 に保つ。** `go get -tool` は依存を最新へ引き上げる際にこの値も書き換えることがあり、そうなると Go 1.24 の環境で `make migrate` が動かなくなる。ツールを追加・更新したら `head -3 server/tools/go.mod` で確認する。
+**`server/tools/go.mod` の `go` ディレクティブは 1.24 のまま据え置く。** 本体（`server/go.mod`）は pb-104 で 1.26 へ上げたが（`Design.md` 3.1）、ツールまで上げる理由は無い。`go get -tool` は依存を最新へ引き上げる際にこの値も書き換えることがあるので、ツールを追加・更新したら `head -3 server/tools/go.mod` で確認する。
 
 **各ファイルの冒頭に `-- +goose Up` を置く。** `down` は書かない（5.3）。`set_updated_at()` のように本体に `;` を含む定義は、goose のパーサがステートメント境界を誤らないよう `-- +goose StatementBegin` / `-- +goose StatementEnd` で囲む。
 
@@ -1616,6 +1616,109 @@ CREATE INDEX idx_mfa_recovery_code_user ON mfa_recovery_code (user_id)
 **1本ずつ独立に消費される**ので、残数は `used_at IS NULL` の件数である。
 **「10本のうち何本使ったか」を列に持つと、行と列の2か所が同じ事実を持つ。**
 
+## 6.19 パスキー（0036。pb-104）
+
+```sql
+-- パスワードの代わりにログインする鍵（Design.md 6.8）
+CREATE TABLE user_passkey (
+  id                 char(26) COLLATE "C" PRIMARY KEY,
+  user_id            char(26) COLLATE "C" NOT NULL
+                     REFERENCES app_user(actor_id) ON DELETE CASCADE,
+  name               text        NOT NULL CHECK (length(name) BETWEEN 1 AND 60),
+  credential_id      bytea       NOT NULL UNIQUE,  -- 認証器が決める。ログインはこれで引く
+  public_key         bytea       NOT NULL,         -- COSE_Key のまま。公開鍵なので封じない
+  rp_id              text        NOT NULL,         -- 登録したときのホスト名（Design.md 6.8.3）
+  attestation_type   text        NOT NULL,         -- none を求めるので、ほぼ 'none'
+  attestation_format text        NOT NULL,
+  aaguid             bytea,                        -- 認証器の機種。示さなければ NULL
+  attachment         text,                         -- platform / cross-platform。示さなければ NULL
+  transports         jsonb       NOT NULL DEFAULT '[]'::jsonb,
+  sign_count         bigint      NOT NULL DEFAULT 0,
+  user_verified      boolean     NOT NULL,         -- UV を一度でも確かめたか（uvInitialized）
+  backup_eligible    boolean     NOT NULL,         -- 同期できる鍵か。変わってはならない
+  backup_state       boolean     NOT NULL,         -- いま同期されているか
+  last_used_at       timestamptz,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX uq_user_passkey_name ON user_passkey (user_id, name);
+CREATE TRIGGER trg_user_passkey_updated BEFORE UPDATE ON user_passkey
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- WebAuthn の挑戦。登録とログインの途中状態（Design.md 6.8.2）
+CREATE TABLE webauthn_challenge (
+  id          char(26) COLLATE "C" PRIMARY KEY,
+  purpose     text        NOT NULL CHECK (purpose IN ('register', 'login')),
+  user_id     char(26) COLLATE "C"
+              REFERENCES app_user(actor_id) ON DELETE CASCADE,
+  challenge   text        NOT NULL UNIQUE,   -- base64url。clientDataJSON の challenge で引く
+  session     jsonb       NOT NULL,          -- go-webauthn の SessionData
+  expires_at  timestamptz NOT NULL,
+  consumed_at timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT ck_webauthn_challenge_user CHECK ((purpose = 'register') = (user_id IS NOT NULL))
+);
+CREATE INDEX idx_webauthn_challenge_user ON webauthn_challenge (user_id)
+  WHERE user_id IS NOT NULL;
+CREATE INDEX idx_webauthn_challenge_expires ON webauthn_challenge (expires_at);
+```
+
+### パスキーは `app_user` に吊る。`user_identity` にも `user_mfa_credential` にも吊らない
+
+**判断と理由は `Design.md` 6.8.4 にある。** 要点は2つで、`user_identity` の列の多くは IdP のために
+あってパスキーでは使われないこと、`user_mfa_credential` に置くとログインの分岐（6.18）が
+パスキーを第2要素として数えてしまうことである。
+
+### 公開鍵は封じない
+
+**6.18 の共有秘密と違い、`public_key` は平文で持つ。** 公開鍵が読めても署名は作れず、
+**DB が漏れてもその人としてログインできない。** 封じると、鍵（`app_secret`。6.16）を失ったときに
+全員のパスキーが使えなくなるという代償だけが残る。
+
+### `credential_id` は表全体で一意にする
+
+**ログインのときは誰のパスキーかが分からない**（メールアドレスを入力させない。`Design.md` 6.8.1）。
+引く手がかりは `credential_id` だけなので、利用者をまたいで一意でなければならない。
+**同じ値がもう一度登録されようとしたら、同じ認証器の二重登録である**（`ApiDesign.md` 4.7.3 が `409`）。
+
+### 名前は1人の中で一意にし、部分条件を付けない
+
+**6.18 と違い、登録の途中の行が無い。** 登録は `webauthn_challenge` の挑戦を経て1回の要求で確定するので、
+`user_passkey` に入る行はすべて使えるパスキーである。**部分 UNIQUE で途中の行を外す必要が無い。**
+この索引は `user_id` の先頭一致で一覧と件数にも使う（別の索引を持たない）。
+
+### フラグと sign count を列で持つ
+
+**go-webauthn の `Credential` を JSON のまま1列に入れない。** 列にしておけば、ライブラリを替えても
+行はそのまま読める（公開鍵は COSE_Key の生バイトである）。**`backup_eligible` は変わってはならない**
+——ログインのたびに今回の値と比べ、違えば拒否する（ライブラリの検証）。`backup_state` と
+`sign_count` はログインのたびに書き戻す。**`user_verified` は一度真になったら戻らない**（WebAuthn の uvInitialized）。
+
+### 挑戦を `mfa_login_challenge` と分ける
+
+**6.18 の挑戦はパスワードが通った人のものであり、`user_id` が必ずある。** パスキーのログインの挑戦は、
+**まだ誰か分からない状態で作る**（`user_id` が NULL）。持つ中身も違い、こちらは go-webauthn の
+`SessionData` を持ち、あちらはトークンのハッシュを持つ。**`access_token` に置かない理由は 6.18 と同じである。**
+
+### `challenge` はハッシュにせず平文で持つ
+
+**挑戦は資格情報ではない。** ブラウザへ渡して認証器に署名させる値であり、
+**知っていても秘密鍵が無ければログインできない。** 6.18 の `token_hash` をハッシュにしたのは、
+あのトークンが「パスワードが通った」ことの証明そのものだからである。
+**引くときは clientDataJSON に入っている値をそのまま使う。**
+
+### `purpose` と `user_id` を CHECK で結ぶ
+
+**登録の挑戦には利用者が必ずあり、ログインの挑戦には必ず無い。** 前者は go-webauthn が、挑戦を作った
+利用者と確定させる利用者を比べるため、後者は discoverable なログインが `user_id` を持つ挑戦を拒むためである。
+**どちらかを取り違えた行は、検証の段で原因の分かりにくい失敗になる**ので、入口で弾く。
+
+### 期限切れの行は、次の挑戦を作るときに消す
+
+**ログインの挑戦は認証なしで作られる。** 専用のバッチを持たず、挑戦を1件作るたびに期限切れを全部消す
+（6.18 の挑戦を次のログインが片付けるのと同じ考え方）。**増える速さは IP 単位のレート制限（`ApiDesign.md` 2.9）が抑える。**
+登録の挑戦は、同じ利用者が始め直したら古いものを消す（`ApiDesign.md` 4.7.2）。
+
 ---
 
 # 7. 初期データ（0010）
@@ -2037,15 +2140,16 @@ Phase 2
                           pending_setting_change（6.17。pb-97）
   0035_mfa.sql            user_mfa_credential, mfa_login_challenge,
                           mfa_recovery_code（6.18。pb-103）
+  0036_passkey.sql        user_passkey, webauthn_challenge（6.19。pb-104）
 Phase 3
-  0036_knowledge.sql      knowledge, knowledge_revision, proposal
-  0037_comment_signal.sql comment_signal
-  0038_embedding.sql      vector 拡張 + embedding
-  0039_project_event.sql  project_event
-  0040_analytics.sql      estimate_record, contribution
+  0037_knowledge.sql      knowledge, knowledge_revision, proposal
+  0038_comment_signal.sql comment_signal
+  0039_embedding.sql      vector 拡張 + embedding
+  0040_project_event.sql  project_event
+  0041_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033 → 0030〜0034 → 0031〜0035 → 0032〜0036 → 0033〜0037 → 0034〜0038 → 0035〜0039 → 0036〜0040** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**、**pb-75 の 0029（`ticket.self_edit`。6.13）で11回目**、**pb-58 の 0030（`claude_desktop` をカタログへ追加。8.2.1.1）で12回目**、**pb-2 の 0031（`app_setting`。6.14）で13回目**、**pb-3 の 0032（`tls_certificate`。6.15）で14回目**、**pb-3 の 0033（`app_secret`。6.16）で15回目**、**pb-97 の 0034（`pending_setting_change`。6.17）で16回目**、**pb-103 の 0035（MFA の3表。6.18）で17回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**。**pb-97 の 0034 は、本段落と上の一覧の両方から落ちていた**——6.17 には節として書かれていたので、**節を足したことと採番を直すことが別の作業として扱われている**。pb-103 で気づいて補った）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033 → 0030〜0034 → 0031〜0035 → 0032〜0036 → 0033〜0037 → 0034〜0038 → 0035〜0039 → 0036〜0040 → 0037〜0041** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**、**pb-75 の 0029（`ticket.self_edit`。6.13）で11回目**、**pb-58 の 0030（`claude_desktop` をカタログへ追加。8.2.1.1）で12回目**、**pb-2 の 0031（`app_setting`。6.14）で13回目**、**pb-3 の 0032（`tls_certificate`。6.15）で14回目**、**pb-3 の 0033（`app_secret`。6.16）で15回目**、**pb-97 の 0034（`pending_setting_change`。6.17）で16回目**、**pb-103 の 0035（MFA の3表。6.18）で17回目**、**pb-104 の 0036（パスキーの2表。6.19）で18回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**。**pb-97 の 0034 は、本段落と上の一覧の両方から落ちていた**——6.17 には節として書かれていたので、**節を足したことと採番を直すことが別の作業として扱われている**。pb-103 で気づいて補った）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
 

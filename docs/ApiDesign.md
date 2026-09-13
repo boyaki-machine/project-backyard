@@ -17,7 +17,7 @@
 | 1 | 本書の範囲と方針 | 確定 |
 | 2 | 共通仕様 | 確定 |
 | **3** | **認証・セッションAPI** | **確定** |
-| **4** | **自分自身に関するAPI（/me・トークン・エージェント・第2要素）** | **確定**（4.5 / 4.6 は Phase 2） |
+| **4** | **自分自身に関するAPI（/me・トークン・エージェント・第2要素・パスキー）** | **確定**（4.5〜4.7 は Phase 2） |
 | **5** | **プロジェクトAPI** | **確定** |
 | **6** | **ユーザー管理API** | **確定** |
 | **7** | **ロール・権限API** | **確定** |
@@ -265,6 +265,7 @@ If-Match: "3"
 | 対象 | 制限 |
 |---|---|
 | `POST /auth/login` | IPあたり 10回/分、アカウントあたり 5回/15分（超過で `account_locked`） |
+| `POST /auth/passkey/options`・`POST /auth/login/passkey`（pb-104） | IPあたり 10回/分。**アカウント単位の制限もロックも持たない**（パスキーは総当たりできない。`Design.md` 6.8.2） |
 | その他の認証済みリクエスト | アクターあたり 600回/分 |
 
 応答ヘッダ：`X-RateLimit-Limit` / `X-RateLimit-Remaining` / `Retry-After`
@@ -278,7 +279,8 @@ If-Match: "3"
 `user.delete` / `role.change` / `project.create` / `project.archive` / `permission.denied` /
 `agent.register` / `agent.update` / `agent.delete` / `setting.update` /
 `tls.certificate.upload` / `tls.certificate.delete` / `mfa.register` / `mfa.unregister` /
-`mfa.recovery_codes.regenerate` / `mfa.reset` / `login.mfa_failure`
+`mfa.recovery_codes.regenerate` / `mfa.reset` / `login.mfa_failure` /
+`passkey.register` / `passkey.unregister` / `passkey.reset` / `login.passkey_failure`
 
 **`agent.` の3件は Phase 2 で加わった**（4.5.6）。**`agent.register` / `agent.update` は 0019**、
 **`agent.delete` は手順26a**（2026-09-05）である。エージェントの登録・変更・削除は
@@ -296,6 +298,12 @@ If-Match: "3"
 `otpauth_uri`・リカバリコードを `detail` に入れない**——同じ理由である。
 **`login.mfa_failure` を `login.failure` と分けてある**のは、前者ではパスワードが
 既に通っており、**総当たりの調査で見る対象が違う**ためである。
+
+**`passkey.*` の3件と `login.passkey_failure` は pb-104 で加わった**（4.7.5・6.10）。**公開鍵も
+`credential_id` も `detail` に入れない**——秘密ではないが、長期保存する記録に鍵の材料を残す理由が無い。
+**`login.passkey_failure` も `login.failure` と分けてある。** パスキーの失敗は、挑戦が誰にも結び付いて
+いないため**アカウントを特定できないことが多い**（`Design.md` 6.8.1）。メールアドレスごとに失敗を数える
+`login.failure` の読み方と混ぜない。
 
 ## 2.11 ヘルスチェック
 
@@ -487,6 +495,98 @@ Set-Cookie: pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
 **画面は `GET /me/mfa`（4.6.1）で残数を読む。** ログインの応答に混ぜると、
 3.1 と同一構造という約束（設計方針3）が崩れる。**残り1本になったことに気づかせるのは
 `/me` の画面の仕事**であり、ログイン直後の画面ではない。
+
+## 3.5 `POST /api/v1/auth/passkey/options`
+
+**必要権限**：不要
+
+パスキーでのログインを始める（`Design.md` 6.8.2 の手順1。pb-104）。**本文を受けない。**
+
+```json
+// 200 OK
+{
+  "options": {
+    "publicKey": {
+      "challenge": "Q2hhbGxlbmdlLTMyLWJ5dGVzLi4u",
+      "timeout": 300000,
+      "rpId": "localhost",
+      "userVerification": "required"
+    }
+  },
+  "expires_at": "2026-09-13T02:16:40Z"
+}
+```
+
+**`options` は WebAuthn の `CredentialRequestOptions` の JSON 表現である**（WebAuthn Level 3 の
+`PublicKeyCredentialRequestOptionsJSON`）。画面は `options.publicKey` を
+`PublicKeyCredential.parseRequestOptionsFromJSON()` に渡し、`navigator.credentials.get()` を呼ぶ。
+**PB の命名規約（snake_case。2.2）に合わせて変換しない**——ブラウザの API が受け取る形そのものであり、
+変換すると画面側で戻す手間だけが増える。
+
+**`allowCredentials` を持たない。** 誰がログインしようとしているかを知らないまま挑戦を作るので、
+**アカウントの有無が応答に現れない**（`Design.md` 6.8.1）。
+
+**`expires_at` は挑戦の期限**（5分）であり、`timeout` と同じ長さである。
+
+| 状況 | 応答 |
+|---|---|
+| IP アドレスで開いている（Host がドメインでない） | `409 conflict`「IP アドレスで開いた画面ではパスキーを使えません。ホスト名で開いてください」 |
+
+**挑戦を作るたびに、期限切れの挑戦を消す**（`DbDesign.md` 6.19）。
+
+## 3.6 `POST /api/v1/auth/login/passkey`
+
+**必要権限**：不要（パスキーの署名が本人であることの証明を兼ねる）
+
+```json
+// Request
+{
+  "credential": {
+    "id": "b3JpZ2luYWwtY3JlZGVudGlhbC1pZA",
+    "rawId": "b3JpZ2luYWwtY3JlZGVudGlhbC1pZA",
+    "type": "public-key",
+    "response": {
+      "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0Ii...",
+      "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAQ",
+      "signature": "MEUCIQ...",
+      "userHandle": "MDFLMkY4UVczSDdZUko0TTVONlA3UThSOVM"
+    },
+    "clientExtensionResults": {}
+  }
+}
+```
+
+```json
+// 200 OK — 本体は 3.1 の成功応答と同一構造
+{ "actor": { "..." }, "permissions": ["..."], "projects": ["..."],
+  "expires_at": "2026-09-27T09:03:12Z" }
+```
+
+```
+Set-Cookie: pb_session=pb_sess_...; HttpOnly; SameSite=Lax; Path=/; Max-Age=1209600
+Set-Cookie: pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
+```
+
+**`credential` は `PublicKeyCredential.toJSON()` の結果をそのまま入れる**（3.5 と同じ理由で変換しない）。
+
+| 状況 | 応答 |
+|---|---|
+| `credential` が無い・JSON として解釈できない | `422 validation_failed`（`details[].field = "credential"`） |
+| 挑戦が存在しない・期限切れ・消費済み | `401 invalid_credentials`「パスキーを確認できませんでした。もう一度お試しください」 |
+| 登録されていないパスキー・署名や origin の検証に失敗・UV が無い・sign count の逆行 | 同上 |
+| 利用者が無効化されている | 同上（**存在を漏らさないため区別しない**。3.1 と同じ） |
+
+**失敗の文言を分けない。** 3.4 は期限切れとコード違いで文言を分けたが、あちらはパスワードを通した
+本人にしか返らない。**こちらは誰でも叩ける**ので、「そのパスキーは登録されていない」と「署名が合わない」を
+区別して見せない。理由はサーバログと監査（`login.passkey_failure` の `detail.reason`。4.7.5）に残す。
+
+**ロックと第2要素を通らない**（`Design.md` 6.8.2）。`local_credential.failed_attempts` を増やさず、
+`locked_until` も見ず、確定済みの TOTP があっても 3.1 の挑戦（`mfa_required`）を返さない。
+
+**成功時は 3.1 の手順6〜8 をそのまま行う**（3.4 と同じ）。監査の `login.success` には
+`detail.method = "passkey"` と、通ったパスキーの `passkey_id` を残す。
+
+**3.4 と同じく、CSRF（2.4）の対象外である。** Cookie を使わない要求だからである。
 
 ---
 
@@ -1359,6 +1459,164 @@ clone 直後には存在せず、**主経路では上書きの相手がいない
 **`secret` も `otpauth_uri` もリカバリコードも `detail` に入れない**（憲章「秘密と個人情報」）。
 `audit_log` は管理者が読めるため（`DbDesign.md` 6.8）、**入れると他人の第2要素を作れる。**
 
+
+## 4.7 `/api/v1/me/passkeys` — 自分のパスキー（Phase 2。pb-104）
+
+**必要権限**：本人（4.6 と同じ。権限キーを要求しない）
+
+**設計は `Design.md` 6.8、表は `DbDesign.md` 6.19、画面は `GuiDesign.md` 5.8。**
+
+| メソッド | パス | 用途 |
+|---|---|---|
+| `GET` | `/me/passkeys` | 登録済みのパスキー |
+| `POST` | `/me/passkeys/options` | 登録を始める（ブラウザへ渡す options を受け取る） |
+| `POST` | `/me/passkeys` | 認証器の応答を検証して登録する |
+| `DELETE` | `/me/passkeys/:id` | 削除する |
+
+**4.6 と違い、登録の途中の行を作らない。** TOTP は QR を出してからコードを照合するまで行を持つが、
+パスキーは認証器が署名した応答1つで確定する。途中の状態は挑戦（`webauthn_challenge`）だけにある。
+
+### 4.7.1 `GET /api/v1/me/passkeys`
+
+```json
+{
+  "items": [
+    { "id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S", "name": "MacBook",
+      "rp_id": "localhost", "backed_up": true,
+      "created_at": "2026-09-13T02:11:40Z", "last_used_at": "2026-09-13T08:20:02Z" }
+  ]
+}
+```
+
+`items[]` は `created_at` の昇順（4.6.1 と同じ）。
+
+| 項目 | 内容 |
+|---|---|
+| `rp_id` | 登録したときのホスト名。**画面はいま開いているホスト名と比べ、違えば「このアドレスでは使えません」と出す**（`Design.md` 6.8.3） |
+| `backed_up` | 端末をまたいで同期されているか（`backup_state`）。**画面は「同期」として出す**——端末を失っても他の端末で使えるかの手がかりになる |
+| `last_used_at` | 一度も使われていなければ `null` |
+
+**公開鍵も `credential_id` も返さない。** 画面に要らず、返すと一覧が鍵の材料の置き場になる。
+
+**ページネーションも `ETag` も持たない。** 上限5件である（4.6.1 と同じ）。
+
+### 4.7.2 `POST /api/v1/me/passkeys/options`
+
+**本文を受けない。**
+
+```json
+// 200 OK
+{
+  "options": {
+    "publicKey": {
+      "rp": { "id": "localhost", "name": "Project Backyard" },
+      "user": { "id": "MDFLMkY4UVczSDdZUko0TTVONlA3UThSOVM",
+                "name": "tanaka@example.com", "displayName": "田中" },
+      "challenge": "Q2hhbGxlbmdlLTMyLWJ5dGVzLi4u",
+      "pubKeyCredParams": [ { "type": "public-key", "alg": -7 }, "..." ],
+      "timeout": 300000,
+      "excludeCredentials": [ { "type": "public-key", "id": "b3JpZ2luYWwt..." } ],
+      "authenticatorSelection": { "residentKey": "required", "requireResidentKey": true,
+                                  "userVerification": "required" },
+      "attestation": "none"
+    }
+  },
+  "expires_at": "2026-09-13T02:16:40Z"
+}
+```
+
+**3.5 と同じく、WebAuthn の JSON 表現をそのまま返す。** 画面は
+`PublicKeyCredential.parseCreationOptionsFromJSON()` に渡し、`navigator.credentials.create()` を呼ぶ。
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| `user.id` | `actor.id`（ULID）の base64url | `Design.md` 6.8.4 |
+| `residentKey` | `required` | メールアドレスを入力させずに引けるパスキーだけを受ける（`Design.md` 6.8.1） |
+| `userVerification` | `required` | `Design.md` 6.8.1 |
+| `attestation` | `none` | 機種を検証しない（`Design.md` 6.8.5） |
+| `excludeCredentials` | 同じホスト名で登録済みのパスキー | **同じ認証器を二重に登録させない**——ブラウザが登録の前に断る |
+
+| 状況 | 応答 |
+|---|---|
+| 既に5件登録している | `409 conflict`「登録できるのは5件までです。いずれかを削除してください」 |
+| IP アドレスで開いている | `409 conflict`（3.5 と同じ文言） |
+
+**登録の挑戦は1人1件までとし、始め直したら置き換える**（4.6.2 と同じ考え方）。**この応答を監査に残さない**
+——まだ何も登録されていない。
+
+### 4.7.3 `POST /api/v1/me/passkeys`
+
+```json
+// Request
+{
+  "name": "MacBook",
+  "credential": {
+    "id": "...", "rawId": "...", "type": "public-key",
+    "response": { "clientDataJSON": "...", "attestationObject": "...",
+                  "transports": ["internal", "hybrid"] },
+    "authenticatorAttachment": "platform",
+    "clientExtensionResults": {}
+  }
+}
+```
+
+```json
+// 201 Created
+{ "id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S", "name": "MacBook", "rp_id": "localhost",
+  "backed_up": true, "created_at": "2026-09-13T02:11:40Z", "last_used_at": null }
+```
+
+**名前は認証器の応答と一緒に送る。** 4.6.2 は名前を先に受けたが、こちらは登録の途中の行を持たないので、
+確定の要求で受ける。
+
+| 状況 | 応答 |
+|---|---|
+| `name` が空・61文字以上、`credential` が無い | `422 validation_failed` |
+| 同じ名前のパスキーがある | `409 already_exists` |
+| 既に5件登録している | `409 conflict`（4.7.2 と同じ文言） |
+| 挑戦が無い・期限切れ・消費済み・他人のもの | `422 validation_failed`（`details[].field = "credential"`）「登録の有効期限が切れました。もう一度やり直してください」 |
+| 検証に失敗（origin・署名・UV が無い など） | `422 validation_failed`（`details[].field = "credential"`）「パスキーを確認できませんでした」 |
+| 同じ認証器が登録済み（`credential_id` の重複） | `409 already_exists`「このパスキーは登録済みです」 |
+
+**名前の重複と件数は、挑戦を消費する前に確かめる。** 名前だけを直して同じ応答を送り直せるようにするためである
+（端末にはもうパスキーができている）。
+
+**ここは `401` ではなく `422` である**（4.6.3 と同じ理由）。既にセッションを持つ本人の操作であり、
+セッションを疑う場面ではない。
+
+**挑戦は検証より先に消費する**（`Design.md` 6.8.2 と同じ）。検証に失敗したら 4.7.2 からやり直す。
+
+**リカバリコードを出さない。** パスキーは第2要素ではなく、失ってもパスワードで入れる（`Design.md` 6.8.1）。
+
+監査は `passkey.register`（`target_type = "user_passkey"`、`detail` に `name` と `backed_up`）。
+
+### 4.7.4 `DELETE /api/v1/me/passkeys/:id`
+
+`204 No Content`。存在しない・他人のものは `404`。
+
+**現在のパスワードを求めない**（4.6.4 と同じ扱い。再検討の条件も同じ）。
+
+**最後の1件を消しても、他に何も消さない。** パスワードで入れる状態は変わらない
+（4.6.4 が最後の認証器でリカバリコードを消すのとは違う）。
+
+**端末の中のパスキーは消えない。** PB が消せるのは自分の側の記録だけであり、端末の一覧には残る。
+その端末で「パスキーでログイン」を選んでも、PB は 3.6 の `401` を返す。画面の確認ダイアログにそう書く
+（`GuiDesign.md` 5.8）。
+
+監査は `passkey.unregister`（`detail` に `name`）。
+
+### 4.7.5 監査（2.10）
+
+| action | 記録する操作 |
+|---|---|
+| `passkey.register` | 4.7.3 の登録 |
+| `passkey.unregister` | 4.7.4 の削除 |
+| `passkey.reset` | 6.10 の管理者による全削除 |
+| `login.passkey_failure` | 3.6 の失敗（`detail.reason` に `unknown_challenge` / `expired` / `consumed` / `unknown_credential` / `inactive` / `verification_failed` / `clone_warning`） |
+| `login.success` | 3.6 の成功（既存の action。`detail.method = "passkey"`） |
+
+**公開鍵・`credential_id`・`clientDataJSON` を `detail` に入れない**（2.10）。
+
 ---
 
 # 5. プロジェクトAPI
@@ -1766,7 +2024,8 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
     { "id": "01K2...", "client_info": "Chrome / macOS",
       "issued_at": "...", "last_used_at": "...", "expires_at": "..." }
   ],
-  "mfa_credential_count": 1
+  "mfa_credential_count": 1,
+  "passkey_count": 2
 }
 ```
 
@@ -1775,6 +2034,9 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 **`mfa_credential_count` は確定済みの認証器の件数である**（pb-103。`DbDesign.md` 6.18）。
 **配列ではなく件数だけを返す。** 画面（`GuiDesign.md` 5.6.2）が出すのも件数で、
 **他人の端末の名前は管理に要らない。** 0 なら `[解除]`（6.9）を `disabled` にする根拠になる。
+
+**`passkey_count` は登録済みのパスキーの件数である**（pb-104。`DbDesign.md` 6.19）。
+`mfa_credential_count` と同じ理由で件数だけを返し、0 なら `[全削除]`（6.10）を `disabled` にする根拠になる。
 
 ## 6.4 `PATCH /api/v1/admin/users/:id`
 
@@ -1917,6 +2179,27 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 その場合は `pb admin mfa-reset --email <アドレス>` を端末から実行する（`Development.md` 9章）。
 
 監査は `mfa.reset`（`target_type = "app_user"`、`detail` に外した認証器とコードの本数）。
+
+## 6.10 `POST /api/v1/admin/users/:id/passkeys/reset`
+
+**必要権限**：`user.manage`
+
+対象ユーザーの**パスキーをすべて消す**（未消費の登録の挑戦も）。`204`。
+**冪等**であり、1件も無くても `204` を返す（pb-104）。
+
+**乗っ取りの疑いがあるときの口である**（`Design.md` 6.8.6）。パスキーはパスワード無しで入れる鍵なので、
+乗っ取った人が登録した1本は、6.6 のリセットも 6.7 の失効も 6.9 の解除も消さない。
+**乗っ取りを直すなら、6.6（パスワード）・6.7（セッション）と組み合わせて使う。** 本口は3つをまとめない
+——締め出しの原因ごとに口を分けた 6.9 と同じ判断である。
+
+**セッションは切らない**（6.9 と同じ）。切るなら 6.7 を併せて使う。
+
+**自分自身に対しても許す**（6.9 と同じ理由）。
+
+**端末から叩く口は作らない。** パスキーを失ってもパスワードで入れるので、管理者が1人だけの構成でも
+締め出されない（`Design.md` 6.8.6）。
+
+監査は `passkey.reset`（`target_type = "app_user"`、`detail` に消した本数）。
 
 ---
 
