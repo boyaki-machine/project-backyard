@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -79,7 +80,7 @@ func TestRenderClaudeCode(t *testing.T) {
 		t.Error("pb-onboard に read 系の allowed-tools が入っていない（10.8.5）")
 	}
 	// **版番号は手順ファイルの先頭に埋まっていなければならない**（10.9.3）。
-	if !strings.Contains(onboard.Content, "<!-- pb-workflow-version: 1 -->") {
+	if !strings.Contains(onboard.Content, "<!-- pb-workflow-version: "+strconv.Itoa(WorkflowVersion)+" -->") {
 		t.Error("版番号が埋まっていない")
 	}
 

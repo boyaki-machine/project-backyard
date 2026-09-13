@@ -399,3 +399,108 @@ func TestGetContextSaysCharterIsEmptyWhenOnlyOnboardingExists(t *testing.T) {
 		}
 	}
 }
+
+// ── 「判断の記録」は目次だけを載せる（pb-119）──────────────────
+//
+// 期待値は Design.md 8.5.5「判断の記録は本文を載せず、目次と引き方だけを載せる」から取る。
+// **追記で一方的に増える文書**なので、全チケットに全文を運ばない。
+
+func TestGetContextListsDecisionsAsOutline(t *testing.T) {
+	// **本文を引かない**——目次は 10.2 の ?outline=1 がすでに返している。
+	// **節点ごと目次だけになる**ので、その下に置いた文書も本文を引かない。
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"items":[
+			{"path":"rules","title":"規約","outline":[{"section":"実装の前に","level":2}],"children":[]},
+			{"path":"decisions","title":"判断の記録","outline":[
+				{"section":"技術選定","level":2},
+				{"section":"2026-08 / サーバは Go とする","level":3}],"children":[
+				{"path":"decisions/archive","title":"古い判断","outline":[
+					{"section":"2026-07 / 最初の判断","level":3}],"children":[]}]},
+			{"path":"learnings","title":"学びと知見","outline":[],"children":[]}]}`},
+		{status: http.StatusOK, body: `{"body_md":"## 実装の前に\n\n推測で実装しない。"}`},
+		{status: http.StatusOK, body: `{"body_md":"失敗も成功も残す。"}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+
+	want := []string{
+		"/api/v1/projects/demo/tickets/31",
+		"/api/v1/projects/demo/docs",
+		"/api/v1/projects/demo/docs/rules",
+		"/api/v1/projects/demo/docs/learnings",
+	}
+	if strings.Join(rest.gotPaths, ",") != strings.Join(want, ",") {
+		t.Errorf("叩いた REST = %v, want %v", rest.gotPaths, want)
+	}
+	for _, s := range []string{
+		"判断の記録（`decisions`）は**目次だけ**を載せている",
+		"### 判断の記録（`decisions`）",
+		"- 技術選定\n  - 2026-08 / サーバは Go とする\n",
+		`pb_get_doc(path="decisions", section="<見出し>")`,
+		"### 古い判断（`decisions/archive`）",
+		"- 2026-07 / 最初の判断\n",
+		`pb_get_doc(path="decisions/archive", section="<見出し>")`,
+		// 目次だけの文書の前後で、他の文書は全文のまま載る。
+		"推測で実装しない。",
+		"失敗も成功も残す。",
+	} {
+		if !strings.Contains(text, s) {
+			t.Errorf("パックに %q が無い:\n%s", s, text)
+		}
+	}
+}
+
+func TestGetContextKeepsDecisionsDocWhenMoved(t *testing.T) {
+	// **見分けは path の完全一致**（Design.md 8.5.5）。他の文書の下へ移すと全文に戻り、
+	// 目次だけにした旨の1行も出ない。
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"items":[
+			{"path":"rules","title":"規約","outline":[],"children":[
+				{"path":"rules/decisions","title":"判断","outline":[
+					{"section":"2026-08 / ID は ULID","level":3}],"children":[]}]}]}`},
+		{status: http.StatusOK, body: `{"body_md":"推測で実装しない。"}`},
+		{status: http.StatusOK, body: `{"body_md":"### 2026-08 / ID は ULID\n\nアプリ側で生成する。"}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+
+	if !strings.Contains(text, "アプリ側で生成する。") {
+		t.Errorf("移された判断の記録は全文で載るはず:\n%s", text)
+	}
+	if strings.Contains(text, "目次だけ") {
+		t.Errorf("目次にしていないのに断りが出ている:\n%s", text)
+	}
+}
+
+func TestGetContextSaysDecisionsHasNoHeadings(t *testing.T) {
+	// **見出しが1つも無いときも本文を載せない**（Design.md 8.5.5。利用者の判断、2026-09-13）。
+	// 新規プロジェクトのテンプレート本文には見出しが無い（PB #121）。
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"items":[
+			{"path":"decisions","title":"判断の記録","outline":[],"children":[]}]}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+
+	if len(rest.gotPaths) != 2 {
+		t.Errorf("呼び出し = %v, want チケットと目次の2本（本文を引かない）", rest.gotPaths)
+	}
+	for _, s := range []string{
+		"見出しが1つも無い",
+		`pb_get_doc(path="decisions")`,
+	} {
+		if !strings.Contains(text, s) {
+			t.Errorf("パックに %q が無い:\n%s", s, text)
+		}
+	}
+	// **判断の記録は目次の形で載っている**ので、「1件も無い」とは言わない。
+	if strings.Contains(text, "1件も無い") {
+		t.Errorf("判断の記録があるのに「1件も無い」と言っている:\n%s", text)
+	}
+}

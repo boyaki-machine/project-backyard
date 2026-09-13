@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/agentsetup"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -81,8 +82,8 @@ func TestGetAgentSetupReturnsCommittedFiles(t *testing.T) {
 	if v.Project.Key != "demo" || v.Project.Name != "デモ" {
 		t.Errorf("project: got %+v", v.Project)
 	}
-	if v.WorkflowVersion != 1 {
-		t.Errorf("workflow_version: got %d, want 1", v.WorkflowVersion)
+	if v.WorkflowVersion != agentsetup.WorkflowVersion {
+		t.Errorf("workflow_version: got %d, want %d", v.WorkflowVersion, agentsetup.WorkflowVersion)
 	}
 	if len(v.Clients) != 1 || v.Clients[0] != "claude_code" {
 		t.Errorf("clients: got %v", v.Clients)
