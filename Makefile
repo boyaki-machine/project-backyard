@@ -26,7 +26,8 @@ MERGES_ON_DEVELOP = $(shell git rev-list --count --first-parent --merges develop
 # bump-* は feature ブランチ上で「これからマージする」前提で走らせるため +1 する。
 NEXT_BUILD = $$(( $(MERGES_ON_DEVELOP) + 1 ))
 
-# make build と、手順18以降の build-release.sh が使う（Design.md 4.5）。
+# make build が使う。deploy/stg/build.sh と deploy/prod/build-release.sh も同じ値を
+# 自前で組み立てている（Design.md 4.5）ので、変えるなら3か所を揃える。
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 # マイグレーションは DDL を実行するため pb_owner で接続する（DbDesign.md 3.4）。
@@ -51,7 +52,7 @@ STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@1
 .PHONY: up down stop-server restart psql migrate sqlc run admin-create admin-mfa-reset test test-db \
 	dev-reset dev-seed dev-info \
 	stg-init stg-up stg-down stg-psql stg-migrate stg-build stg-run stg-stop stg-admin-create \
-	dev-client gen-api build-client sync-webui build clean-webui \
+	dev-client gen-api build-client sync-webui build clean-webui release \
 	version version-check bump-build bump-minor bump-major release-tag \
 	docs-size fmt-check
 
@@ -290,6 +291,22 @@ build: sync-webui
 # git clean は追跡済みの placeholder.html を消さない。
 clean-webui:
 	git -C $(CURDIR) clean -fdxq server/internal/webui/dist
+
+# ── リリース用の一式（Design.md 4.5）──────────────────────────
+
+# cmdline は、変数がコマンドラインで渡されたときだけその値を返す。
+cmdline = $(if $(filter command line,$(origin $(1))),$($(1)))
+
+## リリース用の一式を出力する（使い方は deploy/prod/MANUAL.md の2章）
+#   make release TARGET=native OS=darwin ARCH=arm64 [OUT=/path/to/dir]
+# **コマンドラインで渡された値だけを使う。** OUT は stg-build と共有の変数で、既定値が
+# deploy/stg/out である——渡さずに叩いて stg の一式を上書きしないため。OS や ARCH は
+# 環境変数として定義されている端末があり、それを黙って拾わないため。
+# 値の検証と別名の読み替えは build-release.sh が行う。
+release:
+	@bash $(CURDIR)/deploy/prod/build-release.sh \
+		--target "$(call cmdline,TARGET)" --os "$(call cmdline,OS)" --arch "$(call cmdline,ARCH)" \
+		$(if $(call cmdline,OUT),--out "$(OUT)")
 
 # ── バージョン操作（Design.md 11.1）────────────────────────────
 

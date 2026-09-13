@@ -430,6 +430,8 @@ sqlc:
 | 権限の伝播 | 3.4 の `ALTER DEFAULT PRIVILEGES FOR ROLE pb_owner` により、goose が作ったテーブルにも `pb_app` の DML 権限が自動で付く。マイグレーション後に `GRANT` を流す必要はない |
 | 生成物 | `server/internal/store/gen/` は**コミットする**（`Design.md` 4.6）。sqlc を導入していない環境でもビルドが通る状態を保つ |
 
+**配布物には goose を別の実行ファイルとして同梱する**（pb-122。`Design.md` 4.5）。`make release` が `server/tools` からビルドするので、**版はここで固定したものと同じになる。** postgres 以外のドライバはビルドタグで外す（全ドライバ入りで約 38MB、外すと 11〜12MB。タグの一覧の正本は `deploy/prod/build-release.sh`）。**`pb` 本体には入れない**——上に書いた理由（ツールの依存をアプリの依存グラフに混ぜない）がそのまま効く。本体へ入れる案の材料と再検討の条件は pb-4 のコメントにある。
+
 **`server/tools/go.mod` の `go` ディレクティブは 1.24 のまま据え置く。** 本体（`server/go.mod`）は pb-104 で 1.26 へ上げたが（`Design.md` 3.1）、ツールまで上げる理由は無い。`go get -tool` は依存を最新へ引き上げる際にこの値も書き換えることがあるので、ツールを追加・更新したら `head -3 server/tools/go.mod` で確認する。
 
 **各ファイルの冒頭に `-- +goose Up` を置く。** `down` は書かない（5.3）。`set_updated_at()` のように本体に `;` を含む定義は、goose のパーサがステートメント境界を誤らないよう `-- +goose StatementBegin` / `-- +goose StatementEnd` で囲む。

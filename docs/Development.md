@@ -21,7 +21,7 @@
 4. 開発用デモデータ
 5. コード生成（sqlc / openapi-typescript）
 6. テスト
-7. ビルドとバージョン
+7. ビルドとバージョン          ← リリース用の一式を作る（7.3）
 8. 画面の動作確認
 9. つまずいたとき            ← 症状から引く
 10. 依存とツールのバージョン  ← 固定しているものと、その理由
@@ -453,6 +453,25 @@ make bump-build      # fix/* docs/* をマージする前に。ビルドのみ +
 
 **`bump-*` は feature ブランチ上で実行し、`VERSION` の更新を同じブランチに含める。**
 `develop` 上で直接コミットしないため（`Design.md` 11.0）。
+
+## 7.3 リリース用の一式を作る（`make release`）
+
+**設計は `Design.md` 4.5、配布物の使い方は `deploy/prod/MANUAL.md`**（一式に同梱される）。
+ここには作る側の手順だけを置く。
+
+```
+make release TARGET=native OS=darwin ARCH=arm64                    # dist/pb-v<版>-native-darwin-arm64/
+make release TARGET=native OS=windows ARCH=amd64 OUT=/path/to/dir  # 出力先を指定する
+```
+
+- **いま指定できる `TARGET` は `native` だけ**（docker / compose は pb-123、k8s は pb-124）
+- **client のビルド（`npm ci`）を毎回含む。** 組を変えて続けて作ると、そのたびに走る
+- **空でない出力先には書かない。** 作り直すなら、出力先を消してから叩く
+- **`OUT` を省くと `dist/` の下に出る。** `make stg-build` の既定の出力先（`deploy/stg/out`）は
+  使わない——`make release` はコマンドラインで渡された `OUT` だけを見る
+- **Windows 向けは、この端末では動かせない。** ビルドと中身の検査までで、`run.ps1`／`migrate.ps1` は
+  一度も実行していない（pb-122。この端末に Windows も pwsh も無い）
+- 作ったあとは `make clean-webui` で embed 対象を戻してよい（7.1）
 
 ---
 
@@ -933,8 +952,8 @@ make stg-migrate   # stg
 make stg-build     # バイナリを作り直す
 ```
 
-**goose は出力一式に含まれない**（`server/tools/` のツールモジュールにある。`DbDesign.md` 5.1）。
-スキーマを進めるのはリポジトリ側の作業である。
+**goose は stg の出力一式に含まれない**（`server/tools/` のツールモジュールにある。`DbDesign.md` 5.1）。
+stg のスキーマを進めるのはリポジトリ側の作業である。**配布用の一式（7.3）は goose を同梱する。**
 
 ## 11.4 出力一式を別のパスへ置く
 

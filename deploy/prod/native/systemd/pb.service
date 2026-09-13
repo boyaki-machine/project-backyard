@@ -1,0 +1,22 @@
+# PB を systemd で常駐させる雛形（MANUAL.md「3.8 常駐させる」）。
+#
+# __PB_HOME__ を一式を置いたディレクトリの絶対パスに、__PB_USER__ を PB を動かす
+# ユーザに置き換えてから、/etc/systemd/system/pb.service へ置く。
+# ログは journalctl -u pb で読む。
+
+[Unit]
+Description=Project Backyard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__PB_USER__
+WorkingDirectory=__PB_HOME__
+ExecStart=__PB_HOME__/run.sh
+Restart=on-failure
+# pb は SIGTERM を受けると待受を閉じて終わる。
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

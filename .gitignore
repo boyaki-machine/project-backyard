@@ -5,6 +5,9 @@
 deploy/*/secrets/*
 !deploy/*/secrets/*.example
 !deploy/*/secrets/.gitkeep
+# 配布物の雛形の中の secrets/（deploy/prod/native/secrets/）も同じ扱いにする
+deploy/*/*/secrets/*
+!deploy/*/*/secrets/*.example
 .env
 .env.*
 !.env.example
