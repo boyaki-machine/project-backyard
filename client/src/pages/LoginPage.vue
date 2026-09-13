@@ -4,6 +4,15 @@ import { useRoute, useRouter } from 'vue-router'
 
 import type { MfaChallenge } from '../api/auth'
 import { ApiError } from '../api/client'
+import * as passkeysApi from '../api/passkeys'
+import {
+  IP_ADDRESS_REASON,
+  getPasskey,
+  isPasskeyCancelled,
+  openedByIPAddress,
+  passkeySupported,
+} from '../lib/passkey'
+import type { PasskeyOptionsEnvelope } from '../lib/passkey'
 import { REDIRECT_QUERY, safeRedirect } from '../router/guards'
 import { useAuthStore } from '../stores/auth'
 import { APP_VERSION } from '../version'
@@ -19,6 +28,9 @@ import { APP_VERSION } from '../version'
  *
  * IdP ボタン（GET /auth/providers）は置いていない。Phase 1 の認証手段は
  * local のみで 5.1 も「非表示」としており、API も未実装のため。
+ *
+ * **パスキーのボタンはパスワードの欄の下に置く**（5.1.2。pb-104）。
+ * パスキーは第2要素ではないので、5.1.1 のコード入力には出さない。
  */
 const route = useRoute()
 const router = useRouter()
@@ -120,6 +132,46 @@ const generalError = computed(() => {
 })
 
 const version = APP_VERSION
+
+// ── パスキーでログイン（5.1.2。pb-104）──────────────────────
+
+/**
+ * パスキーのボタンを出すか。**WebAuthn の無いブラウザでは出さない**（5.1.2）。
+ * パスワードで入れるので行き止まりにはならない。
+ */
+const showPasskey = passkeySupported()
+
+/** IP アドレスで開いているか。**ボタンは押せなくし、理由を添える**（`Design.md` 6.8.3） */
+const passkeyBlocked = openedByIPAddress()
+
+/** パスキーの確認中か。ボタンの文言だけを切り替える（送信の抑止は `submitting`） */
+const passkeyBusy = ref(false)
+
+/**
+ * パスキーでログインする（`ApiDesign.md` 3.5 → `navigator.credentials.get()` → 3.6）。
+ *
+ * **メールアドレスの入力を見ない。** 端末がパスキーを選ばせる（`Design.md` 6.8.1）。
+ * 確認中は `submitting` を立て、**パスワード側の送信も押せなくする**——
+ * 2つのログインを並行させない。
+ */
+async function loginWithPasskey() {
+  if (submitting.value || passkeyBlocked) return
+  submitting.value = true
+  passkeyBusy.value = true
+  error.value = null
+  try {
+    const options = await passkeysApi.startPasskeyLogin()
+    const credential = await getPasskey(options.options as PasskeyOptionsEnvelope)
+    await auth.loginWithPasskey(credential)
+    await goAfterLogin()
+  } catch (e: unknown) {
+    // **端末のダイアログを閉じたときは何も出さない**（5.1.2）
+    if (!isPasskeyCancelled(e)) error.value = asApiError(e)
+  } finally {
+    submitting.value = false
+    passkeyBusy.value = false
+  }
+}
 
 async function submit() {
   if (submitting.value) return
@@ -240,8 +292,23 @@ async function submit() {
       </label>
 
       <button type="submit" class="submit" :disabled="submitting">
-        {{ submitting ? 'ログイン中…' : 'ログイン' }}
+        {{ submitting && !passkeyBusy ? 'ログイン中…' : 'ログイン' }}
       </button>
+
+      <!-- ── パスキー（5.1.2。pb-104）────────────────────────
+           **パスワードの欄より上に置かない。** WebAuthn の無いブラウザでは出さない -->
+      <template v-if="showPasskey">
+        <div class="or" aria-hidden="true">または</div>
+        <button
+          type="button"
+          class="passkey"
+          :disabled="submitting || passkeyBlocked"
+          @click="loginWithPasskey"
+        >
+          {{ passkeyBusy ? '確認中…' : '🔑 パスキーでログイン' }}
+        </button>
+        <span v-if="passkeyBlocked" class="hint">{{ IP_ADDRESS_REASON }}</span>
+      </template>
     </form>
 
     <p class="version">PB v{{ version }}</p>
@@ -375,6 +442,42 @@ input[aria-invalid='true'] {
 }
 
 .submit:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* 「または」の区切り（5.1 の図） */
+.or {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+  color: var(--pb-text-muted);
+  font-size: 12px;
+}
+
+.or::before,
+.or::after {
+  content: '';
+  flex: 1 1 auto;
+  border-top: 1px solid var(--pb-line);
+}
+
+/* パスワードの送信より一段控えめにする。大半の利用者はパスワードで入る（5.1.2） */
+.passkey {
+  height: 36px;
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+  color: var(--pb-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.passkey:hover:not(:disabled) {
+  background: var(--pb-bg);
+}
+
+.passkey:disabled {
   cursor: default;
   opacity: 0.7;
 }

@@ -14,6 +14,7 @@ import * as authApi from '../api/auth'
 import type { MfaChallenge, Session, SessionProject } from '../api/auth'
 import { ApiError } from '../api/client'
 import * as mfaApi from '../api/mfa'
+import * as passkeysApi from '../api/passkeys'
 import { setTimezone } from '../lib/datetime'
 import { useUiStore } from './ui'
 
@@ -188,6 +189,16 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
+   * パスキーの応答でログインする（`ApiDesign.md` 3.6。pb-104）。
+   *
+   * **第2要素の挑戦は返らない**（`Design.md` 6.8.2）。成功すればそのままセッションになる。
+   * 端末の手続き（`navigator.credentials.get()`）は呼び出し側が済ませてから渡す。
+   */
+  async function loginWithPasskey(credential: unknown): Promise<void> {
+    setSession(await passkeysApi.loginPasskey(credential))
+  }
+
+  /**
    * ログアウト。
    *
    * サーバ側が失敗しても画面側の状態は必ず捨てる。ログアウトしたつもりの
@@ -218,6 +229,7 @@ export const useAuthStore = defineStore('auth', () => {
     refresh,
     login,
     completeMfa,
+    loginWithPasskey,
     logout,
     setSession,
     clear,

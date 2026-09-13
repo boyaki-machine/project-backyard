@@ -460,6 +460,39 @@ async function runMfaReset(): Promise<void> {
   }
 }
 
+// ── パスキーの全削除（5.6.2 / `ApiDesign.md` 6.10。pb-104）──────
+//
+// **乗っ取りの疑いがあるときの口である**（`Design.md` 6.8.6）。パスキーは
+// パスワード無しで入れる鍵なので、6.6 のリセットも 6.9 の解除もそれを消さない。
+// **この1つで乗っ取りが直ったと読ませない**——確認の本文に、リセットと失効が
+// 別の操作であることを書く（5.6.2）。
+const passkeyResetting = ref(false)
+const passkeyConfirmOpen = ref(false)
+
+/** 登録済みのパスキーの件数（6.3 の `passkey_count`） */
+const passkeyCount = computed(() => user.value?.passkey_count ?? 0)
+
+async function runPasskeyReset(): Promise<void> {
+  const u = user.value
+  if (u === null || passkeyResetting.value) return
+
+  passkeyResetting.value = true
+  credentialError.value = null
+  credentialNotice.value = null
+  try {
+    await usersApi.resetUserPasskeys(u.id)
+    credentialNotice.value = 'パスキーをすべて削除しました。パスワードでは引き続きログインできます'
+    passkeyConfirmOpen.value = false
+    // `passkey_count` が変わる（6.3）
+    await reloadDetail()
+  } catch (e: unknown) {
+    credentialError.value = toApiError(e)
+    passkeyConfirmOpen.value = false
+  } finally {
+    passkeyResetting.value = false
+  }
+}
+
 // ── 有効なセッション（5.6.2 / `ApiDesign.md` 6.7）────────────────
 //
 // **一覧は参照のみ。** 行ごとの `[失効]` は出さない（13a の判断）。管理者が
@@ -572,6 +605,12 @@ const menuItems = computed<ActionItem[]>(() => [
     reason: '登録がないため解除できません',
   },
   {
+    key: 'reset-passkeys',
+    label: 'パスキーを全削除',
+    disabled: passkeyCount.value === 0,
+    reason: '登録がないため削除できません',
+  },
+  {
     key: 'toggle-active',
     label: isActive.value ? '無効化' : '有効化',
     disabled: isSelf.value && isActive.value,
@@ -590,6 +629,7 @@ function onMenuSelect(key: string): void {
   if (key === 'password-reset') resetConfirmOpen.value = true
   else if (key === 'revoke-sessions') revokeConfirmOpen.value = true
   else if (key === 'reset-mfa') mfaConfirmOpen.value = true
+  else if (key === 'reset-passkeys') passkeyConfirmOpen.value = true
   else if (key === 'toggle-active') {
     // 無効化だけ確認を挟む。有効化は失うものが無い（6.3 と同じ考え方）
     if (isActive.value) activeConfirmOpen.value = true
@@ -911,6 +951,26 @@ function onMenuSelect(key: string): void {
                   </button>
                 </td>
               </tr>
+
+              <!-- パスキー（pb-104。`DbDesign.md` 6.19）。第2要素と同じく
+                   **user_identity ではない**が、同じブロックに**件数だけ**を出す -->
+              <tr>
+                <td>パスキー</td>
+                <td class="muted">
+                  {{ passkeyCount === 0 ? '登録されていません' : `${passkeyCount}件 登録済み` }}
+                </td>
+                <td class="row-actions">
+                  <button
+                    type="button"
+                    class="secondary small"
+                    :disabled="passkeyCount === 0 || passkeyResetting"
+                    :title="passkeyCount === 0 ? '登録がないため削除できません' : undefined"
+                    @click="passkeyConfirmOpen = true"
+                  >
+                    全削除
+                  </button>
+                </td>
+              </tr>
             </tbody>
           </table>
 
@@ -979,6 +1039,17 @@ function onMenuSelect(key: string): void {
       :busy="mfaResetting"
       @confirm="runMfaReset"
       @cancel="mfaConfirmOpen = false"
+    />
+
+    <ConfirmDialog
+      v-if="passkeyConfirmOpen"
+      title="パスキーを全削除"
+      :message="`${user?.display_name ?? ''} の登録済みのパスキーをすべて削除します。対象はパスキーでログインできなくなりますが、パスワードでは入れます。\n乗っ取りを疑っているなら、パスワードのリセットとセッションの失効も別に行ってください。`"
+      confirm-label="全削除する"
+      danger
+      :busy="passkeyResetting"
+      @confirm="runPasskeyReset"
+      @cancel="passkeyConfirmOpen = false"
     />
 
     <ConfirmDialog
