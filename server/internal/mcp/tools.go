@@ -124,7 +124,7 @@ func readTools() []tool {
 			Name: "pb_get_doc",
 			Description: "プロジェクト文書の本文を Markdown で返す。" +
 				"section に見出しを渡すとその章だけを返す。" +
-				"価値観・規約・判断基準にあたる文書は全文を読み、それ以外は必要な章だけを読むこと。",
+				"価値観・規約・学びと知見にあたる文書は全文を読み、判断の記録とそれ以外の文書は目次から必要な章だけを読むこと。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{

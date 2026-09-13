@@ -531,7 +531,7 @@ Runner による外形監視がないため厳密なハートビートは取れ�
 ### 10.4.3 トークン予算制御
 
 **Phase 2 では実装しない**（利用者の判断、2026-09-05。手順27）。**`pb_get_context` は `budget` を
-受けず、憲章を全文で載せる。** 決め手は実測で、**stg の憲章は4文書で 3,601 文字**しか
+受けず、憲章を全文で載せる**（判断の記録だけは目次と引き方にした。pb-119、`Design.md` 8.5.5）。決め手は実測で、**stg の憲章は4文書で 3,601 文字**しか
 なく、切り詰めが起きる規模に届いていない。**予算制御の器を先に作ると、要らなかったときに
 戻せない**（`Design.md` 8.5.5）。**再検討の条件は `Design.md` 8.6** にある——`docs/PROGRESS.md` と
 `docs/history/` が PB の文書へ移ったとき、または Phase 3 の `knowledge` が入ったとき。
@@ -1181,7 +1181,7 @@ allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs,
                mcp__pb__pb_get_doc, mcp__pb__pb_list_tasks
 ---
 
-<!-- pb-workflow-version: 1 -->
+<!-- pb-workflow-version: 2 -->
 
 このプロジェクトの前提を PB から読み込む。以下の手順を順守すること。
 
@@ -1191,7 +1191,8 @@ allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs,
 
 ## 2. 憲章を読む
 - `pb_list_docs` で文書の目次を取得する
-- **価値観・規約・判断基準にあたる文書は全文を読む**（`pb_get_doc`）
+- **価値観・規約・学びと知見にあたる文書は全文を読む**（`pb_get_doc`）
+- **判断の記録にあたる文書は、目次から関わる判断だけを読む**（`pb_get_doc` の `section` に見出しを渡す）
 - **「エージェントの参画情報」（`agent-onboarding`）があれば必ず読む。** 作業材料の取り方と参画の合図が書かれている。**無ければ利用者に尋ねる**——PB は取り方を知らない
 - それ以外は目次の見出しだけを控え、必要になった時点で章を指定して読む
 - **文書を全文まとめて読み込まない。** 目次から必要な章を特定して、その章だけを読む
@@ -1237,7 +1238,7 @@ argument-hint: <ticket-id>
 allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 ---
 
-<!-- pb-workflow-version: 1 -->
+<!-- pb-workflow-version: 2 -->
 
 チケット #$1 の実装を行う。以下の手順を順守すること。
 
@@ -1311,7 +1312,7 @@ description: PBのチケット記述を改善する
 argument-hint: <ticket-id>
 ---
 
-<!-- pb-workflow-version: 1 -->
+<!-- pb-workflow-version: 2 -->
 
 チケット #$1 の記述を、AIエージェントが自律実行できる水準まで引き上げる。
 
@@ -1335,7 +1336,7 @@ argument-hint: <ticket-id>
 **憲章の本文をここに書き写してはならない。** PB のプロジェクト文書と二重管理になり、必ず乖離する。**ただし、絶対に読み飛ばされてはならない数行だけは例外とする。**
 
 ```markdown
-<!-- PB:BEGIN v1 (Project Backyard が生成・管理します。手動編集は上書きされます) -->
+<!-- PB:BEGIN v2 (Project Backyard が生成・管理します。手動編集は上書きされます) -->
 <!-- 貼る前に: git pull して、リポジトリに新しい版が入っていないか確かめる -->
 <!-- 貼った後に: git diff でこのブロックを見て、他の人の更新を潰していないか確かめる -->
 ## プロジェクト管理 — Project Backyard
@@ -1386,7 +1387,7 @@ MCPサーバ `pb` 経由でアクセスできる。
 
 **陳腐化の検出**は 10.9.3 の仕組みをそのまま使う。
 
-1. ブロックの先頭に `<!-- PB:BEGIN v1 -->` として版番号を埋める
+1. ブロックの先頭に `<!-- PB:BEGIN v2 -->` として版番号を埋める
 2. `pb_get_project` / `pb_get_task` の呼び出しにその版番号を渡す
 3. PB 側が古いと判断したら、応答に警告を混ぜて返す
 4. ブロックを最新版へ差し替える

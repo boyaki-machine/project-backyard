@@ -4,7 +4,7 @@ argument-hint: <ticket-id>
 allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 ---
 
-<!-- pb-workflow-version: 1 -->
+<!-- pb-workflow-version: 2 -->
 
 チケット #$1 の実装を行う。以下の手順を順守すること。
 

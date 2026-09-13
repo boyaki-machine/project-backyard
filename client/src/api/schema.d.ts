@@ -3397,9 +3397,9 @@ export interface components {
             base_url: string;
             /**
              * @description 生成した手順ファイルに埋まる版番号（Requirements.md 10.9.3）。
-             *     **Phase 2 では常に 1。** 「PB 側が古いと判断して警告を返す」経路は
-             *     まだ無く、埋めるところまでが手順28a の範囲である。
-             * @example 1
+             *     **手順ファイルの本文を変えたら上がる**（pb-119 で 2）。「PB 側が古いと
+             *     判断して警告を返す」経路はまだ無く、埋めるところまでが手順28a の範囲である。
+             * @example 2
              */
             workflow_version: number;
             /** @description 実際に組み立てた種別（重複を畳み、カタログの順に並べたもの）。 */
@@ -3486,7 +3486,7 @@ export interface components {
             language: string;
             /**
              * @description `append` のときだけ入る（Requirements.md 10.8.8）。
-             * @example <!-- PB:BEGIN v1
+             * @example <!-- PB:BEGIN v2
              */
             marker_begin?: string;
             /**

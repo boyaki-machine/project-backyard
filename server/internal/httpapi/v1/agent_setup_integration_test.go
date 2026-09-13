@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/agentsetup"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -114,8 +115,8 @@ func TestAgentSetupIntegration(t *testing.T) {
 		if got.Project.Key != projectKey {
 			t.Errorf("project.key = %q, want %q", got.Project.Key, projectKey)
 		}
-		if got.WorkflowVersion != 1 {
-			t.Errorf("workflow_version = %d, want 1", got.WorkflowVersion)
+		if got.WorkflowVersion != agentsetup.WorkflowVersion {
+			t.Errorf("workflow_version = %d, want %d", got.WorkflowVersion, agentsetup.WorkflowVersion)
 		}
 		if !strings.HasPrefix(got.BaseURL, "http://") {
 			t.Errorf("base_url = %q, want http:// で始まる", got.BaseURL)

@@ -3,7 +3,7 @@ description: PB のプロジェクトに参画する（規約と担当を読む�
 allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs, mcp__pb__pb_get_doc, mcp__pb__pb_list_tasks
 ---
 
-<!-- pb-workflow-version: 1 -->
+<!-- pb-workflow-version: 2 -->
 
 このプロジェクトの前提を PB から読み込む。以下の手順を順守すること。
 
@@ -13,7 +13,8 @@ allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs, mcp__pb__pb_get_d
 
 ## 2. 憲章を読む
 - `pb_list_docs` で文書の目次を取得する
-- **価値観・規約・判断基準にあたる文書は全文を読む**（`pb_get_doc`）
+- **価値観・規約・学びと知見にあたる文書は全文を読む**（`pb_get_doc`）
+- **判断の記録にあたる文書は、目次から関わる判断だけを読む**（`pb_get_doc` の `section` に見出しを渡す）
 - それ以外は目次の見出しだけを控え、必要になった時点で章を指定して読む
 - **文書を全文まとめて読み込まない。** 目次から必要な章を特定して、その章だけを読む
 
