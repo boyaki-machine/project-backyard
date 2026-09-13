@@ -90,6 +90,12 @@ func Mount(r chi.Router, deps Deps) {
 	r.With(middleware.RateLimit(loginRateLimit, loginRateWindow, middleware.ClientIPKey)).
 		Post("/auth/login", h.login)
 
+	// ログインの第2要素（ApiDesign.md 3.4。pb-103）。**認証不要のまま置く**
+	// ——挑戦トークンが本人であることの証明を兼ねるので、Cookie も Bearer も
+	// 持たない状態で叩かれる。CSRF（2.4）の対象にもならない。
+	r.With(middleware.RateLimit(loginRateLimit, loginRateWindow, middleware.ClientIPKey)).
+		Post("/auth/login/mfa", h.loginMFA)
+
 	// ── 認証必須 ────────────────────────────────
 	// Cookie か Bearer での認証を必須とする（Design.md 6.2.2）。
 	//
@@ -121,6 +127,15 @@ func Mount(r chi.Router, deps Deps) {
 		// アクセストークン（4.4）。**扱うのは token_type='api' だけ**であり、
 		// 対象の絞り込みはクエリ側（me.sql）にある。他人のトークンとセッションは
 		// 「見つからない」に寄せるため、認可ミドルウェアでは表現できない。
+		// 第2要素（ApiDesign.md 4.6。pb-103）。**必要権限は「本人」**であり、
+		// 4章の他の節と同じく権限キーを要求しない。触れる範囲はハンドラが
+		// p.ActorID で閉じている。
+		r.Get("/me/mfa", h.getMyMfa)
+		r.Post("/me/mfa/totp", h.startMyTotp)
+		r.Post("/me/mfa/totp/{id}/confirm", h.confirmMyTotp)
+		r.Delete("/me/mfa/totp/{id}", h.deleteMyTotp)
+		r.Post("/me/mfa/recovery-codes", h.regenerateMyRecoveryCodes)
+
 		r.Get("/me/tokens", h.listMyTokens)
 		r.Post("/me/tokens", h.createMyToken)
 		r.Delete("/me/tokens/{id}", h.deleteMyToken)
@@ -514,6 +529,10 @@ func Mount(r chi.Router, deps Deps) {
 			Post("/admin/users/{id}/password-reset", h.resetUserPassword)
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
 			Post("/admin/users/{id}/sessions/revoke", h.revokeUserSessions)
+		// 第2要素の解除（ApiDesign.md 6.9。pb-103）。**6.6 のリセットと同じ
+		// 権限だが別の操作である**——あちらはパスワード、こちらは認証器。
+		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
+			Post("/admin/users/{id}/mfa/reset", h.resetUserMfa)
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
 			Put("/admin/users/{id}/memberships/{key}", h.putUserMembership)
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).

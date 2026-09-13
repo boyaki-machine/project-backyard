@@ -12,6 +12,10 @@
 //  8. audit_log('login.success') を記録
 //
 // 手順2〜3は FindLocalLoginByEmail が1文で行う（queries/auth.sql）。
+//
+// **手順5と6のあいだに第2要素の分岐がある**（pb-103。Design.md 6.7.4）。
+// 確定済みの認証器があれば、セッションを出さずに挑戦を返し、手順6〜8 を
+// 次の要求（POST /auth/login/mfa。login_mfa.go）へ持ち越す。
 package v1
 
 import (
@@ -125,6 +129,26 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 	if !row.IsActive {
 		h.recordLoginFailure(r.Context(), rec, email, "inactive_actor")
 		apierr.WriteCode(w, r, apierr.InvalidCredentials)
+		return
+	}
+
+	// 手順5.5。**第2要素が登録されていれば、ここで止める**（Design.md 6.7.4）。
+	// セッションを出してから確認する形にすると、第2要素が飾りになる。
+	count, err := h.q.CountConfirmedMfaCredentials(r.Context(), row.ActorID)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("第2要素の件数を読めない: %w", err)))
+		return
+	}
+	if count > 0 {
+		// **失敗回数のリセットはここでも行う**（手順5「成功 → failed_attempts=0」）。
+		// パスワードは正しかったので、第2要素で止まってもロックの数は戻す。
+		if err := h.q.ResetLoginFailure(r.Context(), row.IdentityID); err != nil {
+			apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+			return
+		}
+		h.rehashIfStale(r.Context(), row, req.Password)
+		h.startMFAChallenge(w, r, rec, row.ActorID)
 		return
 	}
 

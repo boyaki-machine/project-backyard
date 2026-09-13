@@ -6,7 +6,7 @@
  *
  *   基本情報      ログインID・表示名・メールアドレス・言語・タイムゾーン
  *   デザイン      テーマ・色相（8.11）
- *   セキュリティ  パスワード（将来 MFA・パスキーもここへ）
+ *   セキュリティ  パスワード・多要素認証（TOTP。pb-103）・パスキー（未対応）
  *
  * **結果はセクションごとに出す**（6.4）。トーストは使わない。デザインだけは
  * 見た目が即座に変わることが結果の表示を兼ねるため、成功時の文言を出さない。
@@ -16,19 +16,36 @@
  * 追随する。2行に分けてあるのは、将来ログインのIDと連絡先を別々に登録できる
  * ようにするためであり、そのとき画面の形を変えずに済む（利用者の判断、2026-08-22）。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 
 import { ApiError } from '../api/client'
 import * as meApi from '../api/me'
 import type { UpdateMeRequest } from '../api/me'
+import * as mfaApi from '../api/mfa'
+import type { ConfirmedTotp, MfaOverview, TotpCredential } from '../api/mfa'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
 import MeTabs from '../components/MeTabs.vue'
 import PageHeader from '../components/PageHeader.vue'
+import RecoveryCodesDialog from '../components/RecoveryCodesDialog.vue'
+import { formatDateTime } from '../lib/datetime'
 import { useAuthStore } from '../stores/auth'
 import type { Hue, ThemePreference } from '../stores/ui'
 import { useUiStore } from '../stores/ui'
 
 const auth = useAuthStore()
 const ui = useUiStore()
+
+/**
+ * 登録ダイアログは遅延読み込みにする（`Development.md` 7.1）。
+ *
+ * **`qrcode` が初期バンドルを 38KB 増やしていた**（実測。575.50 → 613.65 kB）。
+ * QR を描くのは「認証アプリを追加」を押したときだけなので、その瞬間まで
+ * 取り込まない。**この画面が唯一の利用者**なので、静的な import を残さなければ
+ * チャンクは分かれる。
+ */
+const TotpRegisterModal = defineAsyncComponent(
+  () => import('../components/TotpRegisterModal.vue'),
+)
 
 /** 表示名の上限（`ApiDesign.md` 6.2 と同じ。DBの CHECK 制約に合わせる） */
 const MAX_DISPLAY_NAME = 60
@@ -193,6 +210,112 @@ async function changePassword() {
 const showPasswordChanged = computed(
   () => passwordChanged.value && currentPassword.value === '' && newPassword.value === '',
 )
+
+// ── 多要素認証（MFA。`ApiDesign.md` 4.6）─────────────────────
+
+/**
+ * 登録済みの第2要素。
+ *
+ * **押した操作ごとにその場で反映する**（`GuiDesign.md` 5.8「保存の単位」）。
+ * `[ 保存 ]` を通さないのは、登録がダイアログの中で完結し、削除は確認ダイアログが
+ * 承認を兼ねるためである。
+ */
+const mfa = ref<MfaOverview | null>(null)
+const mfaError = ref<ApiError | null>(null)
+const mfaNotice = ref('')
+
+/** 登録できる件数の上限（サーバ側 maxMFACredentialsPerUser と同じ値） */
+const MAX_TOTP = 5
+
+const registerOpen = ref(false)
+/** 1回だけ表示するリカバリコード。null なら出さない */
+const shownCodes = ref<string[] | null>(null)
+/** 削除の確認中の認証器 */
+const deleting = ref<TotpCredential | null>(null)
+const deleteBusy = ref(false)
+const regenerating = ref(false)
+
+async function loadMfa() {
+  mfaError.value = null
+  try {
+    mfa.value = await mfaApi.getMfa()
+  } catch (e: unknown) {
+    mfaError.value = asApiError(e)
+  }
+}
+onMounted(loadMfa)
+
+const totpItems = computed(() => mfa.value?.totp ?? [])
+const atTotpLimit = computed(() => totpItems.value.length >= MAX_TOTP)
+/** リカバリコードの行を出すか。**認証器が0件なら作れない**（4.6.5 が 409） */
+const showRecoveryRow = computed(() => totpItems.value.length > 0)
+
+/**
+ * 登録が確定した。
+ *
+ * **初回だけリカバリコードが返る**（`ApiDesign.md` 4.6.3）。返ったときは
+ * 1回表示のダイアログへ渡し、登録ダイアログは閉じる。
+ */
+async function onRegistered(result: ConfirmedTotp) {
+  registerOpen.value = false
+  mfaNotice.value = `✓ 「${result.credential.name}」を登録しました`
+  if (result.recovery_codes && result.recovery_codes.length > 0) {
+    shownCodes.value = result.recovery_codes
+  }
+  await loadMfa()
+}
+
+/**
+ * 削除の確認本文。**最後の1件かどうかで変える**（`GuiDesign.md` 5.8「削除」）。
+ *
+ * 「MFA が無効になります」だけでは、利用者にとって何が緩むのかが読めない。
+ */
+const deleteMessage = computed(() => {
+  if (!deleting.value) return ''
+  const name = deleting.value.name
+  if (totpItems.value.length > 1) {
+    return `「${name}」で作ったコードは使えなくなります。\n他の認証アプリはそのまま使えます。`
+  }
+  return (
+    `「${name}」を削除すると多要素認証が無効になり、` +
+    '次のログインからパスワードだけで入れるようになります。\n' +
+    'リカバリコードもあわせて削除されます。'
+  )
+})
+
+async function confirmDelete() {
+  const target = deleting.value
+  if (!target || deleteBusy.value) return
+  deleteBusy.value = true
+  mfaError.value = null
+  try {
+    await mfaApi.deleteTotp(target.id)
+    mfaNotice.value = `✓ 「${target.name}」を削除しました`
+    deleting.value = null
+    await loadMfa()
+  } catch (e: unknown) {
+    mfaError.value = asApiError(e)
+  } finally {
+    deleteBusy.value = false
+  }
+}
+
+/** リカバリコードを作り直す。**既存は未使用のものも含めて全部無効になる** */
+async function regenerateCodes() {
+  if (regenerating.value) return
+  regenerating.value = true
+  mfaError.value = null
+  mfaNotice.value = ''
+  try {
+    const { recovery_codes } = await mfaApi.regenerateRecoveryCodes()
+    shownCodes.value = recovery_codes
+    await loadMfa()
+  } catch (e: unknown) {
+    mfaError.value = asApiError(e)
+  } finally {
+    regenerating.value = false
+  }
+}
 
 // ── 小さな助け ──────────────────────────────────────────────
 
@@ -398,9 +521,124 @@ function asApiError(e: unknown): ApiError {
               {{ changingPassword ? '変更中…' : '変更' }}
             </button>
           </div>
+
+          <!-- ── 多要素認証（pb-103。`GuiDesign.md` 5.8）──────────
+               **パスワードと同じセクションに置く。** どれも「どうやって自分で
+               あることを示すか」であり、利用者がログインの固さを見るときに
+               1か所で足りるほうがよい -->
+          <hr class="divider" />
+
+          <div class="sub-block">
+            <div class="sub-head">
+              <h3 class="sub-title">多要素認証（MFA）</h3>
+              <button
+                type="button"
+                class="secondary"
+                :disabled="atTotpLimit"
+                @click="registerOpen = true"
+              >
+                + 認証アプリを追加
+              </button>
+            </div>
+
+            <p class="hint">
+              ⓘ ログインのときに、パスワードに加えて認証アプリの6桁のコードを求めます。
+            </p>
+            <!-- **在るはずの操作が黙って消えるより、押せない理由が読めるほうがよい**
+                 （5.8.1 と同じ作法） -->
+            <p v-if="atTotpLimit" class="hint">
+              登録できるのは{{ MAX_TOTP }}件までです。追加するには、いずれかを削除してください。
+            </p>
+
+            <table v-if="totpItems.length > 0" class="mfa-table">
+              <thead>
+                <tr>
+                  <th scope="col">名前</th>
+                  <th scope="col">登録</th>
+                  <th scope="col">最終利用</th>
+                  <th scope="col"><span class="sr-only">操作</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="c in totpItems" :key="c.id">
+                  <td>{{ c.name }}</td>
+                  <td>{{ formatDateTime(c.created_at) }}</td>
+                  <td>{{ c.last_used_at ? formatDateTime(c.last_used_at) : '—' }}</td>
+                  <td class="row-actions">
+                    <button type="button" class="secondary" @click="deleting = c">削除</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else class="empty">登録されていません。</p>
+
+            <!-- リカバリコード。**認証器が0件のときは行そのものを出さない**
+                 （作れないため。`ApiDesign.md` 4.6.5 が 409） -->
+            <div v-if="showRecoveryRow" class="recovery">
+              <div class="recovery-head">
+                <span class="label">リカバリコード</span>
+                <!-- **残り0本と「1本も作っていない」を区別して出す**（4.6.1） -->
+                <span v-if="mfa?.recovery_codes" class="recovery-count">
+                  残り {{ mfa.recovery_codes.remaining }} 本
+                </span>
+                <span v-else class="recovery-count warn-text">⚠ リカバリコードがありません</span>
+                <button
+                  type="button"
+                  class="secondary"
+                  :disabled="regenerating"
+                  @click="regenerateCodes"
+                >
+                  {{ mfa?.recovery_codes ? '作り直す' : '作成' }}
+                </button>
+              </div>
+              <p class="hint">
+                ⚠ 認証アプリを使えなくなったときは、このコードでログインします。
+                作り直すと、いまのコードはすべて使えなくなります。
+              </p>
+            </div>
+
+            <!-- 結果は MFA の表の直上ではなくこの領域に出す（6.4）。
+                 パスワードの結果欄と混ざらないようにする -->
+            <p v-if="mfaError" class="alert" role="alert">{{ mfaError.message }}</p>
+            <p v-else-if="mfaNotice" class="ok" role="status">{{ mfaNotice }}</p>
+          </div>
+
+          <!-- ── パスキー（未対応。`GuiDesign.md` 5.8）───────────
+               **項目そのものは出す**（利用者の判断、2026-09-13）。MFA と
+               パスキーは別のものであり、MFA を登録した利用者が「パスキーも
+               設定した」と誤解するのを防ぐのは、項目が並んでいることである -->
+          <hr class="divider" />
+
+          <div class="sub-block">
+            <h3 class="sub-title">パスキー</h3>
+            <p class="hint">ⓘ まだ対応していません。</p>
+          </div>
         </form>
       </div>
     </div>
+
+    <TotpRegisterModal
+      v-if="registerOpen"
+      @close="registerOpen = false"
+      @registered="onRegistered"
+    />
+
+    <RecoveryCodesDialog
+      v-if="shownCodes"
+      :codes="shownCodes"
+      @close="shownCodes = null"
+    />
+
+    <ConfirmDialog
+      v-if="deleting"
+      title="認証アプリを削除しますか？"
+      :message="deleteMessage"
+      confirm-label="削除"
+      danger
+      :busy="deleteBusy"
+      @confirm="confirmDelete"
+      @cancel="deleting = null"
+    />
   </div>
 </template>
 
@@ -576,5 +814,94 @@ select:disabled {
 
 .spacer {
   flex: 1;
+}
+
+/* ── 多要素認証（pb-103）────────────────────────────────────
+   **パスワードと同じセクションの中で、区切り線で分ける。** 別のブロックに
+   すると「ログインの固さ」が3か所に散る（`GuiDesign.md` 5.8） */
+.divider {
+  width: 100%;
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: var(--pb-line);
+}
+
+.sub-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-2);
+}
+
+.sub-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pb-space-3);
+}
+
+.mfa-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.mfa-table th {
+  padding: var(--pb-space-1) var(--pb-space-2);
+  border-bottom: 1px solid var(--pb-line);
+  color: var(--pb-text-muted);
+  font-weight: 500;
+  text-align: left;
+}
+
+.mfa-table td {
+  padding: var(--pb-space-2);
+  border-bottom: 1px solid var(--pb-line);
+}
+
+.row-actions {
+  text-align: right;
+}
+
+.empty {
+  margin: 0;
+  color: var(--pb-text-muted);
+  font-size: 13px;
+}
+
+.recovery {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-1);
+  padding: var(--pb-space-3);
+  border: 1px solid var(--pb-line);
+  border-radius: var(--pb-radius);
+}
+
+/* 残数とボタンを横に並べる。**狭いと縦へ落とす**（2.4） */
+.recovery-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-3);
+}
+
+.recovery-count {
+  flex: 1;
+  font-size: 13px;
+}
+
+/* **色だけで示さない**（9.2）ので、文言側に ⚠ を添えてある */
+.warn-text {
+  color: var(--pb-warning-text, var(--pb-text));
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 </style>

@@ -428,6 +428,38 @@ async function runPasswordReset(): Promise<void> {
   }
 }
 
+// ── 第2要素の解除（5.6.2 / `ApiDesign.md` 6.9。pb-103）──────────
+//
+// **6.6 のパスワードリセットと同じブロックに置くが、別の操作である。**
+// 締め出しの原因が2つある——パスワードを忘れた人と、認証アプリを失った人は
+// 別の人で、まとめて直すと必要のない資格情報まで作り替える。
+const mfaResetting = ref(false)
+const mfaConfirmOpen = ref(false)
+
+/** 確定済みの認証器の件数（6.3 の `mfa_credential_count`） */
+const mfaCount = computed(() => user.value?.mfa_credential_count ?? 0)
+
+async function runMfaReset(): Promise<void> {
+  const u = user.value
+  if (u === null || mfaResetting.value) return
+
+  mfaResetting.value = true
+  credentialError.value = null
+  credentialNotice.value = null
+  try {
+    await usersApi.resetUserMfa(u.id)
+    credentialNotice.value = '第2要素を解除しました。次のログインからパスワードだけで入れます'
+    mfaConfirmOpen.value = false
+    // `mfa_credential_count` が変わる（6.3）
+    await reloadDetail()
+  } catch (e: unknown) {
+    credentialError.value = toApiError(e)
+    mfaConfirmOpen.value = false
+  } finally {
+    mfaResetting.value = false
+  }
+}
+
 // ── 有効なセッション（5.6.2 / `ApiDesign.md` 6.7）────────────────
 //
 // **一覧は参照のみ。** 行ごとの `[失効]` は出さない（13a の判断）。管理者が
@@ -533,6 +565,13 @@ const menuItems = computed<ActionItem[]>(() => [
   { key: 'password-reset', label: 'パスワードをリセット' },
   { key: 'revoke-sessions', label: 'セッションを全失効' },
   {
+    key: 'reset-mfa',
+    label: '多要素認証を解除',
+    // **登録が0件なら押せない。** 黙って消さず、理由を添える（5.6.2 の作法）
+    disabled: mfaCount.value === 0,
+    reason: '登録がないため解除できません',
+  },
+  {
     key: 'toggle-active',
     label: isActive.value ? '無効化' : '有効化',
     disabled: isSelf.value && isActive.value,
@@ -550,6 +589,7 @@ const menuItems = computed<ActionItem[]>(() => [
 function onMenuSelect(key: string): void {
   if (key === 'password-reset') resetConfirmOpen.value = true
   else if (key === 'revoke-sessions') revokeConfirmOpen.value = true
+  else if (key === 'reset-mfa') mfaConfirmOpen.value = true
   else if (key === 'toggle-active') {
     // 無効化だけ確認を挟む。有効化は失うものが無い（6.3 と同じ考え方）
     if (isActive.value) activeConfirmOpen.value = true
@@ -819,9 +859,11 @@ function onMenuSelect(key: string): void {
         <section class="block">
           <h2 class="block-title">認証手段</h2>
 
-          <table v-if="localIdentity" class="table">
+          <!-- **1つの表にまとめる。** 別の table に分けると列幅が独立して決まり、
+               2行の「最終更新」と「登録済み」が縦に揃わない（実測、2026-09-13） -->
+          <table class="table">
             <tbody>
-              <tr>
+              <tr v-if="localIdentity">
                 <td>ローカルパスワード</td>
                 <td class="muted">
                   最終更新
@@ -842,9 +884,35 @@ function onMenuSelect(key: string): void {
                   </button>
                 </td>
               </tr>
+              <tr v-else>
+                <td>ローカルパスワード</td>
+                <td class="muted">設定されていません</td>
+                <td class="row-actions"></td>
+              </tr>
+
+              <!-- 第2要素（pb-103。`DbDesign.md` 6.18）。**user_identity ではない**が、
+                   管理者が「この人はどうやってログインするか」を1か所で読むために
+                   同じブロックへ置く。**出すのは件数だけ** -->
+              <tr>
+                <td>多要素認証（TOTP）</td>
+                <td class="muted">
+                  {{ mfaCount === 0 ? '登録されていません' : `${mfaCount}件 登録済み` }}
+                </td>
+                <td class="row-actions">
+                  <!-- **黙って消さず、押せない理由を添える**（5.6.2 の作法） -->
+                  <button
+                    type="button"
+                    class="secondary small"
+                    :disabled="mfaCount === 0 || mfaResetting"
+                    :title="mfaCount === 0 ? '登録がないため解除できません' : undefined"
+                    @click="mfaConfirmOpen = true"
+                  >
+                    解除
+                  </button>
+                </td>
+              </tr>
             </tbody>
           </table>
-          <p v-else class="hint">ローカルパスワードは設定されていません。</p>
 
           <p class="hint">（OIDC/SAML 連携は Phase 3）</p>
 
@@ -900,6 +968,17 @@ function onMenuSelect(key: string): void {
       :busy="resetting"
       @confirm="runPasswordReset"
       @cancel="resetConfirmOpen = false"
+    />
+
+    <ConfirmDialog
+      v-if="mfaConfirmOpen"
+      title="多要素認証を解除"
+      :message="`${user?.display_name ?? ''} の第2要素の保護が外れ、次のログインからパスワードだけで入れるようになります。\n登録済みの認証アプリとリカバリコードはすべて削除されます。\nパスワードとセッションには影響しません。`"
+      confirm-label="解除する"
+      danger
+      :busy="mfaResetting"
+      @confirm="runMfaReset"
+      @cancel="mfaConfirmOpen = false"
     />
 
     <ConfirmDialog

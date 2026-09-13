@@ -62,9 +62,21 @@ const (
 	// **detail には指紋・common_name・有効期間を入れ、PEM と秘密鍵は入れない。**
 	TLSCertificateUpload Action = "tls.certificate.upload"
 	TLSCertificateDelete Action = "tls.certificate.delete"
+
+	// 以下5件は pb-103（ApiDesign.md 4.6.6）。
+	//
+	// **detail に共有秘密・otpauth URI・リカバリコードを入れない。** audit_log は
+	// 管理者が読めるため（DbDesign.md 6.8）、入れると他人の第2要素を作れる。
+	MFARegister               Action = "mfa.register"
+	MFAUnregister             Action = "mfa.unregister"
+	MFARecoveryCodeRegenerate Action = "mfa.recovery_codes.regenerate"
+	MFAReset                  Action = "mfa.reset"
+	// LoginMFAFailure は第2要素の照合失敗。**login.failure と分けてある**
+	// ——パスワードは通っているので、総当たりの調査で見る対象が違う。
+	LoginMFAFailure Action = "login.mfa_failure"
 )
 
-// actions は ApiDesign.md 2.10 が列挙する18件。
+// actions は ApiDesign.md 2.10 が列挙する26件。
 var actions = map[Action]bool{
 	LoginSuccess: true, LoginFailure: true, Logout: true,
 	PasswordChange: true, PasswordReset: true,
@@ -74,6 +86,9 @@ var actions = map[Action]bool{
 	AgentRegister: true, AgentUpdate: true, AgentDelete: true,
 	SettingUpdate:        true,
 	TLSCertificateUpload: true, TLSCertificateDelete: true,
+	MFARegister: true, MFAUnregister: true,
+	MFARecoveryCodeRegenerate: true, MFAReset: true,
+	LoginMFAFailure: true,
 }
 
 // Result は audit_log.result（DbDesign.md 6.8 の CHECK 制約）。

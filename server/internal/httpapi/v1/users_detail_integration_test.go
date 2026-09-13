@@ -489,7 +489,7 @@ func TestAdminUserDetailIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("operatorは6.3〜6.8のすべてで403", func(t *testing.T) {
+	t.Run("operatorは6.3〜6.9のすべてで403", func(t *testing.T) {
 		id, _, _ := createTarget(t, "forbidden")
 		path := "/api/v1/admin/users/" + id
 
@@ -501,6 +501,7 @@ func TestAdminUserDetailIntegration(t *testing.T) {
 			{http.MethodDelete, path, ""},
 			{http.MethodPost, path + "/password-reset", `{}`},
 			{http.MethodPost, path + "/sessions/revoke", ""},
+			{http.MethodPost, path + "/mfa/reset", ""},
 			{http.MethodPut, path + "/memberships/whatever", `{"role":"project_member"}`},
 			{http.MethodDelete, path + "/memberships/whatever", ""},
 		}

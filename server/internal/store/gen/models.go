@@ -264,6 +264,26 @@ type LocalCredential struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+// パスワードは通ったが第2要素がまだ、という中途状態（Design.md 6.7.4）
+type MfaLoginChallenge struct {
+	ID         string
+	UserID     string
+	TokenHash  string
+	Attempts   int32
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
+// 認証器を失ったときのリカバリコード（Design.md 6.7.5）
+type MfaRecoveryCode struct {
+	ID        string
+	UserID    string
+	CodeHash  string
+	UsedAt    pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
 // 未確認の設定変更。期限内に確認されなければ previous へ戻す（pb-97）
 type PendingSettingChange struct {
 	ID        string
@@ -458,6 +478,22 @@ type UserIdentity struct {
 	Attributes  []byte
 	LinkedAt    pgtype.Timestamptz
 	LastUsedAt  pgtype.Timestamptz
+}
+
+// 第2要素の認証器（DbDesign.md 6.18）。Phase 2 は TOTP のみ
+type UserMfaCredential struct {
+	ID             string
+	UserID         string
+	Kind           string
+	Name           string
+	Secret         []byte
+	SecretNonce    []byte
+	ConfirmedAt    pgtype.Timestamptz
+	LastUsedStep   pgtype.Int8
+	LastUsedAt     pgtype.Timestamptz
+	FailedAttempts int32
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type Workflow struct {

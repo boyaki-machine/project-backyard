@@ -938,3 +938,70 @@ func TestDeleteMembershipIsIdempotentAndSkipsAudit(t *testing.T) {
 		t.Errorf("空振りでキャッシュを捨てている: %v", q.invalidatedCaches)
 	}
 }
+
+// ── POST /admin/users/:id/mfa/reset（ApiDesign.md 6.9。pb-103）──
+
+func callMfaReset(q *fakeQuerier) *httptest.ResponseRecorder {
+	h, _ := newUserHandler(q)
+	rec := httptest.NewRecorder()
+	h.resetUserMfa(rec, adminUserReq(http.MethodPost,
+		"/api/v1/admin/users/"+targetID+"/mfa/reset", "", adminPrincipal(), "id", targetID))
+	return rec
+}
+
+// TestResetUserMfaRemovesAllFactors は3つを全部消すことを確かめる。
+//
+// **未消費の挑戦も捨てる。** 残すと、解除の直後に古い挑戦で第2要素を
+// 要求される——対象はもう答えられない。
+func TestResetUserMfaRemovesAllFactors(t *testing.T) {
+	q := userFake(t)
+	q.mfa.confirmed = []gen.ListConfirmedMfaCredentialsRow{
+		{ID: "01K2MFA00000000000000001", Name: "iPhone", Kind: "totp", CreatedAt: ts(time.Now())},
+	}
+	q.mfa.codesDeletedRows = 7
+
+	rec := callMfaReset(q)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204（body=%s）", rec.Code, rec.Body.String())
+	}
+	if len(q.mfa.allDeletedFor) != 1 {
+		t.Errorf("認証器の削除が %d 回, want 1", len(q.mfa.allDeletedFor))
+	}
+	if len(q.mfa.codesDeletedFor) != 1 {
+		t.Errorf("リカバリコードの削除が %d 回, want 1", len(q.mfa.codesDeletedFor))
+	}
+	if len(q.mfa.challengesDeleted) != 1 {
+		t.Errorf("挑戦の削除が %d 回, want 1", len(q.mfa.challengesDeleted))
+	}
+
+	// **パスワードには触らない**（6.6 と分けてある理由そのものである）。
+	if len(q.credentialResets) != 0 {
+		t.Errorf("パスワードを %d 回書き換えた", len(q.credentialResets))
+	}
+	// **セッションも切らない**（対象が自力で直せる状態を壊さない）。
+	if len(q.revoked) != 0 {
+		t.Errorf("セッションを %d 回失効させた", len(q.revoked))
+	}
+}
+
+// TestResetUserMfaIsIdempotent は登録0件でも 204 を返すことを確かめる。
+func TestResetUserMfaIsIdempotent(t *testing.T) {
+	q := userFake(t) // mfa は空
+
+	rec := callMfaReset(q)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204（body=%s）", rec.Code, rec.Body.String())
+	}
+	// **0件でも監査に残す**（「解除しようとした」ことが対象である。6.7 と同じ）。
+	var found bool
+	for _, a := range q.audits {
+		if a.Action == "mfa.reset" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("mfa.reset が監査に無い")
+	}
+}

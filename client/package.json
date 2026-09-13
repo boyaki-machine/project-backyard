@@ -16,11 +16,13 @@
     "dompurify": "^3.4.14",
     "markdown-it": "^14.3.0",
     "pinia": "^4.0.3",
+    "qrcode": "^1.5.4",
     "vue": "^3.5.41",
     "vue-router": "^5.2.0"
   },
   "devDependencies": {
     "@types/markdown-it": "^14.2.0",
+    "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "^6.0.8",
     "openapi-typescript": "^7.13.0",
     "typescript": "^5.9.3",

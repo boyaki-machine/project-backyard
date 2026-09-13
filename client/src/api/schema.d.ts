@@ -205,6 +205,201 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/login/mfa": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * ログインの第2要素を確認
+         * @description `POST /auth/login` が `mfa_required` を返したときの2段目（ApiDesign.md 3.4）。
+         *
+         *     **`code`（TOTP の6桁）と `recovery_code` のどちらか一方**を、挑戦トークンと
+         *     一緒に送る。成功すると 3.1 と同じ応答とセッション Cookie を返す。
+         *
+         *     認証不要。**挑戦トークンが本人であることの証明を兼ねる**ので、Cookie にも
+         *     Authorization ヘッダにも依存しない。IPあたり 10回/分のレート制限
+         *     （ApiDesign.md 2.9）。
+         *
+         *     **失敗は理由を分けず `invalid_credentials` に文言を被せる。** 期限切れ・
+         *     コード違い・試行超過のいずれも、利用者が取る行動は「もう一度やる」で共通する。
+         *
+         *     **第2要素の失敗でアカウントをロックしない**（Design.md 6.7.4）。抑止は
+         *     挑戦ごとの5回とレート制限が担うため、`retry_after_sec` も返さない。
+         */
+        post: operations["loginMfa"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/mfa": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 自分の第2要素
+         * @description 登録済みの認証器とリカバリコードの残数（ApiDesign.md 4.6.1）。
+         *     必要権限は「本人」。
+         *
+         *     **確定していない登録は返さない。** `confirmed_at` が NULL の行は認証の要素
+         *     として数えないため（DbDesign.md 6.18）、一覧に出すと「登録できている」と読める。
+         *
+         *     **リカバリコードを1本も持たないときは `recovery_codes` が null。**
+         *     `remaining: 0` は「作って全部使った」であり、別の状態である。
+         *
+         *     ページネーションも ETag も持たない（上限5件）。
+         */
+        get: operations["getMyMfa"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/mfa/totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 認証アプリの登録を始める
+         * @description 共有秘密を作り、QR の材料を返す（ApiDesign.md 4.6.2）。必要権限は「本人」。
+         *
+         *     **この時点では登録されていない。** `confirmed_at` は NULL で、
+         *     `POST /me/mfa/totp/{id}/confirm` が通るまで認証には一切影響しない。
+         *
+         *     **`secret` と `otpauth_uri` は同じ値の2つの表現である。** QR を読めない環境で
+         *     手入力に落とせるようにするため両方返す。**QR 画像は返さない**——描くのは
+         *     クライアントである（GuiDesign.md 5.8）。
+         *
+         *     **途中の行は1人1件まで。** 2回続けて呼ぶと1回目の行は消える——利用者から
+         *     見て「いま出ている QR」は1つであり、捨てた QR で確定できる余地を残さない。
+         *
+         *     **確定済みが5件あると 409。** 同じ名前の確定済みがあると 409
+         *     （`already_exists`）。
+         */
+        post: operations["startMyTotp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/mfa/totp/{id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 認証器の ULID（`user_mfa_credential.id`。ApiDesign.md 4.6）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["MfaCredentialID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 認証アプリの登録を確定する
+         * @description いまアプリに出ている6桁を照合し、認証器を確定させる（ApiDesign.md 4.6.3）。
+         *     必要権限は「本人」。
+         *
+         *     **MFA を最初に有効にしたときだけ `recovery_codes` が入る。** 2件目以降の
+         *     認証器では返らない——既に持っているコードが無効になると読めてしまう。
+         *     **平文が出るのはこの応答と `POST /me/mfa/recovery-codes` だけである。**
+         *
+         *     **コード違いは 422**（401 ではない）。既にセッションを持つ本人が入力を
+         *     間違えただけであり、セッションを疑う場面ではない。
+         *
+         *     **同じ登録で5回失敗したら途中の行を捨てる。** やり直しは
+         *     `POST /me/mfa/totp` から。
+         */
+        post: operations["confirmMyTotp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/mfa/totp/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 認証器の ULID（`user_mfa_credential.id`。ApiDesign.md 4.6）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["MfaCredentialID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 認証アプリを削除
+         * @description 登録済みの認証器を削除する（ApiDesign.md 4.6.4）。必要権限は「本人」。
+         *
+         *     **現在のパスワードを求めない**（4.2 の扱いに揃える。利用者の判断、2026-09-13）。
+         *
+         *     **最後の認証器を削除したら、リカバリコードも消える**（Design.md 6.7.5）。
+         *     MFA が無効な状態でコードだけ残しても入口が無く、次に有効化したときに古い
+         *     コードが通るのは筋が悪い。
+         *
+         *     **行は消す**（アクセストークンのように `revoked_at` を立てる形にしない）。
+         *     監査から辿る先は `audit_log` の `detail` で足り、**残した行は「登録されて
+         *     いるのに効かない認証器」として一覧の判定を複雑にする。**
+         */
+        delete: operations["deleteMyTotp"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/mfa/recovery-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * リカバリコードを作り直す
+         * @description 10本を作り直す（ApiDesign.md 4.6.5）。必要権限は「本人」。
+         *
+         *     **既存のコードは未使用のものも含めて全部無効になる。**
+         *
+         *     **本文を受けない。** 本数も形式も選ばせない——選択肢を先に作ると、使われ方を
+         *     知る前に語彙が固まる（4.4.2 のスコープと同じ判断）。
+         *
+         *     **確定済みの認証器が1件も無いと 409**（先に認証アプリを登録する必要がある）。
+         */
+        post: operations["regenerateMyRecoveryCodes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent-client-kinds": {
         parameters: {
             query?: never;
@@ -2507,6 +2702,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users/{id}/mfa/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 第2要素の解除
+         * @description 対象ユーザーの認証器・リカバリコード・未消費の挑戦をすべて消す
+         *     （ApiDesign.md 6.9）。必要権限は `user.manage`。
+         *
+         *     **本人がリカバリコードまで失ったときの口である**（Design.md 6.7.5）。
+         *     対象は次のログインからパスワードだけで入れるようになる。
+         *
+         *     **パスワードには触らず、セッションも切らない。** 締め出しの原因は
+         *     「パスワードを忘れた」と「認証アプリを失った」の2つで別物であり、
+         *     まとめて直すと必要のない資格情報まで作り替える。
+         *
+         *     **冪等である。** 1件も登録が無くても 204 を返す。
+         *
+         *     **自分自身に対しても許す**（`self_modification_forbidden` の対象にしない）。
+         *     自分の認証器は `/me` から外せるので、この口を自分へ向ける理由は壊れた状態の
+         *     復旧だけであり、そこを塞ぐ意味が無い。
+         *
+         *     **管理者が1人しかいない構成ではこの口は成立しない**（締め出された本人が
+         *     呼べない）。その場合は `pb admin mfa-reset --email` を端末から実行する。
+         */
+        post: operations["resetUserMfa"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users/{id}/memberships/{key}": {
         parameters: {
             query?: never;
@@ -3291,6 +3530,170 @@ export interface components {
             scopes?: string[];
         };
         /**
+         * @description パスワードは通ったが、第2要素がまだという状態（ApiDesign.md 3.1）。
+         *     **`Session` とは `mfa_required` の有無で見分ける**——こちらに `actor` は無い。
+         *     **Cookie は発行されていない。**
+         */
+        MfaChallenge: {
+            /**
+             * @description 常に true。この鍵の存在そのものが分岐の目印である。
+             * @example true
+             */
+            mfa_required: boolean;
+            /**
+             * @description 挑戦の平文トークン。**DB には SHA-256 しか残らない**（DbDesign.md 6.18）。
+             *     画面はメモリに置くだけで、保存しない（GuiDesign.md 5.1.1）。
+             * @example pb_mfa_9f3c1d...
+             */
+            mfa_token: string;
+            /**
+             * @description この挑戦で使える手段。**挑戦ごとに組む**——未使用のリカバリコードが
+             *     1本も無ければ `recovery_code` は入らない。
+             * @example [
+             *       "totp",
+             *       "recovery_code"
+             *     ]
+             */
+            methods: ("totp" | "recovery_code")[];
+            /**
+             * Format: date-time
+             * @description 挑戦の期限（5分）。**セッションの期限ではない。**
+             */
+            expires_at: string;
+        };
+        /**
+         * @description ApiDesign.md 3.4。**`code` と `recovery_code` はどちらか一方だけを送る**
+         *     （両方・どちらも無しは 422）。
+         */
+        LoginMfaRequest: {
+            /** @example pb_mfa_9f3c1d... */
+            mfa_token: string;
+            /**
+             * @description 認証アプリに表示されている6桁。
+             * @example 123456
+             */
+            code?: string;
+            /**
+             * @description リカバリコード1本（Base32 の10文字）。**空白とハイフンは無視し、
+             *     小文字も受ける**——紙から写す値なので、見た目の差で落とさない。
+             * @example K7M2QX9B4T
+             */
+            recovery_code?: string;
+        };
+        /** @description ApiDesign.md 4.6.1。ページネーションも ETag も持たない（上限5件）。 */
+        MfaOverview: {
+            /** @description 確定済みの認証器。**未確定の行は含まない。** */
+            totp: components["schemas"]["TotpCredential"][];
+            /**
+             * @description **1本も持たないときは null。** `remaining: 0` は「作って全部使った」で
+             *     あり、別の状態である（画面は前者に「作成」、後者に「作り直す」を出す）。
+             */
+            recovery_codes?: components["schemas"]["RecoveryCodeStatus"] | null;
+        };
+        /** @description 確定済みの認証器1件（ApiDesign.md 4.6.1）。**共有秘密は含まない。** */
+        TotpCredential: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /**
+             * @description 登録時に本人が付けた名前。どの端末かを思い出すための手がかり。
+             * @example iPhone
+             */
+            name: string;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description 一度も使われていなければ null。
+             */
+            last_used_at?: string | null;
+        };
+        /** @description リカバリコードの残数（ApiDesign.md 4.6.1）。**平文は含まない。** */
+        RecoveryCodeStatus: {
+            /**
+             * @description 未使用の本数。**行を数えた値**で、列に持っていない。
+             * @example 8
+             */
+            remaining: number;
+            /**
+             * Format: date-time
+             * @description 10本を作った時刻。
+             */
+            generated_at: string;
+        };
+        /** @description ApiDesign.md 4.6.2。 */
+        StartTotpRequest: {
+            /**
+             * @description 1〜60文字（`user_mfa_credential.name` の CHECK と同じ）。
+             * @example iPhone
+             */
+            name: string;
+        };
+        /**
+         * @description 登録の途中の認証器（ApiDesign.md 4.6.2）。**`secret` と `otpauth_uri` が
+         *     出る唯一の応答**であり、どちらも同じ共有秘密の別の表現である。
+         */
+        StartedTotpRegistration: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /** @example iPhone */
+            name: string;
+            /**
+             * @description Base32（パディング無し）。**手入力用**で、QR を読めない環境のために返す。
+             * @example JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+             */
+            secret: string;
+            /**
+             * @description QR にする文字列（RFC 6238 の慣例。`otpauth://totp/...`）。
+             *     **画像はクライアントが描く**（GuiDesign.md 5.8）。
+             * @example otpauth://totp/Project%20Backyard:tanaka%40example.com?secret=JBSWY3DPEHPK3PXP&issuer=Project+Backyard&algorithm=SHA1&digits=6&period=30
+             */
+            otpauth_uri: string;
+            /**
+             * @description 6。**列に持たず定数である**（Design.md 6.7.2）。画面の案内文に使う。
+             * @example 6
+             */
+            digits: number;
+            /**
+             * @description 30。同じく定数。
+             * @example 30
+             */
+            period_sec: number;
+        };
+        /** @description ApiDesign.md 4.6.3。 */
+        ConfirmTotpRequest: {
+            /**
+             * @description いまアプリに出ている6桁。**前後1刻みまで許容する**（Design.md 6.7.2）。
+             * @example 123456
+             */
+            code: string;
+        };
+        /**
+         * @description 確定した認証器（ApiDesign.md 4.6.3）。**MFA を最初に有効にしたときだけ
+         *     `recovery_codes` が入る。**
+         */
+        ConfirmedTotp: {
+            credential: components["schemas"]["TotpCredential"];
+            /**
+             * @description 10本の平文。**2件目以降の認証器では返らない**——既に持っているコードが
+             *     無効になると読めてしまうため。
+             * @example [
+             *       "K7M2QX9B4T",
+             *       "9FRD3HJ5PW"
+             *     ]
+             */
+            recovery_codes?: string[];
+        };
+        /** @description 作り直した10本（ApiDesign.md 4.6.5）。**再表示はできない。** */
+        RecoveryCodeList: {
+            /**
+             * @example [
+             *       "K7M2QX9B4T",
+             *       "9FRD3HJ5PW"
+             *     ]
+             */
+            recovery_codes: string[];
+        };
+        /**
          * @description ApiDesign.md 4.4.1。ページネーションも ETag も持たない（1人5本が上限で、
          *     絞り込みも差分取得も意味を持たないため。7.1 / 7.2 と同じ扱い）。
          */
@@ -3627,6 +4030,13 @@ export interface components {
              *     失効しておらず期限内のもの）。
              */
             sessions: components["schemas"]["UserSession"][];
+            /**
+             * @description 確定済みの第2要素の件数（pb-103。DbDesign.md 6.18）。**配列ではなく
+             *     件数だけを返す**——画面（GuiDesign.md 5.6.2）が出すのも件数で、
+             *     他人の端末の名前は管理に要らない。**未確定の登録は数えない。**
+             *     0 なら第2要素の解除（6.9）を disabled にする根拠になる。
+             */
+            mfa_credential_count: number;
         };
         /** @description 認証手段1件（ApiDesign.md 6.3 の `identities[]`）。 */
         UserIdentity: {
@@ -5865,6 +6275,11 @@ export interface components {
          */
         TokenID: string;
         /**
+         * @description 認証器の ULID（`user_mfa_credential.id`。ApiDesign.md 4.6）。
+         *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+         */
+        MfaCredentialID: string;
+        /**
          * @description タグの ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。
          *     タグは `seq` に相当する連番を持たない。
          */
@@ -5960,7 +6375,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Session"];
+                    "application/json": components["schemas"]["Session"] | components["schemas"]["MfaChallenge"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -6236,6 +6651,239 @@ export interface operations {
             403: components["responses"]["CSRFFailed"];
             /** @description 自分の `api` トークンとして見つからない（`not_found`）。 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    loginMfa: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginMfaRequest"];
+            };
+        };
+        responses: {
+            /** @description 第2要素の確認に成功。`pb_session` と `pb_csrf` を発行する（3.1 と同じ）。 */
+            200: {
+                headers: {
+                    /**
+                     * @description ```
+                     *     pb_session=pb_sess_...; HttpOnly; SameSite=Lax; Path=/; Max-Age=1209600
+                     *     pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
+                     *     ```
+                     */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /**
+             * @description 挑戦が無い・期限切れ・消費済み・試行超過、またはコードが合わない
+             *     （いずれも `invalid_credentials`。`message` で区別する）。
+             */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getMyMfa: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 登録済みの第2要素。`created_at` の昇順。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MfaOverview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    startMyTotp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartTotpRequest"];
+            };
+        };
+        responses: {
+            /** @description 登録の途中の認証器。**`secret` と `otpauth_uri` を返す唯一の応答**。 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartedTotpRegistration"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["CSRFFailed"];
+            /**
+             * @description 確定済みが既に5件（`conflict`）、または同じ名前が使われている
+             *     （`already_exists`）。
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    confirmMyTotp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 認証器の ULID（`user_mfa_credential.id`。ApiDesign.md 4.6）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["MfaCredentialID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmTotpRequest"];
+            };
+        };
+        responses: {
+            /** @description 確定した認証器。初回は10本のリカバリコードを伴う。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfirmedTotp"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["CSRFFailed"];
+            /**
+             * @description 自分の未確定の認証器として見つからない（`not_found`）。
+             *     他人のもの・存在しない ID・既に確定済みを区別しない。
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteMyTotp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 認証器の ULID（`user_mfa_credential.id`。ApiDesign.md 4.6）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["MfaCredentialID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除した。本文を持たない。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["CSRFFailed"];
+            /** @description 自分の認証器として見つからない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    regenerateMyRecoveryCodes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description 作り直した10本。**平文が出る2つの応答のうちの1つ**（もう1つは
+             *     `POST /me/mfa/totp/{id}/confirm`）。
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodeList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["CSRFFailed"];
+            /** @description 確定済みの認証器が1件も無い（`conflict`）。 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9313,6 +9961,52 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description 失効した。本文は無い。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description ユーザーが存在しない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resetUserMfa: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 解除した（登録が0件でも同じ）。本文を持たない。 */
             204: {
                 headers: {
                     [name: string]: unknown;

@@ -84,6 +84,7 @@ make psql        # DBコンソール
 make dev-reset   # 開発用：DBを作り直してデモデータを投入
 make dev-seed    # 開発用：デモデータのみ投入（冪等）
 make dev-info    # 開発用：URL とデモアカウント一覧を表示
+make admin-mfa-reset EMAIL=…  # 第2要素を外す（認証アプリを失ったとき。Design.md 6.7.5）
 
 make stg-init    # stg（ドッグフーディング用）：初回セットアップ
 make stg-build   # stg：動作に必要な一式を deploy/stg/out/ へ出力
