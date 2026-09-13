@@ -132,6 +132,9 @@ type fakeQuerier struct {
 	// 第2要素（pb-103。ApiDesign.md 4.6 / 3.4）
 	mfa mfaFakeState
 
+	// パスキー（pb-104。ApiDesign.md 3.5 / 3.6 / 4.7 / 6.10）。型とメソッドは passkey_fake_test.go
+	passkey passkeyFakeState
+
 	// アプリケーション設定（pb-2。ApiDesign.md 11章）
 	settings appSettingFakeState
 

@@ -196,7 +196,9 @@ SELECT
   -- **件数だけを引く。** 画面が出すのも件数であり（GuiDesign.md 5.6.2）、
   -- 認証器の名前は他人の管理に要らない。**未確定の行は数えない。**
   (SELECT count(*) FROM user_mfa_credential mc
-    WHERE mc.user_id = a.id AND mc.confirmed_at IS NOT NULL) AS mfa_credential_count
+    WHERE mc.user_id = a.id AND mc.confirmed_at IS NOT NULL) AS mfa_credential_count,
+  -- 登録済みのパスキーの件数（ApiDesign.md 6.3。pb-104）。第2要素と同じく件数だけを引く。
+  (SELECT count(*) FROM user_passkey pk WHERE pk.user_id = a.id) AS passkey_count
 FROM actor a
 JOIN app_user u ON u.actor_id = a.id
 WHERE a.id = @actor_id AND a.kind = 'user';

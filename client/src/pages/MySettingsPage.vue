@@ -6,7 +6,7 @@
  *
  *   基本情報      ログインID・表示名・メールアドレス・言語・タイムゾーン
  *   デザイン      テーマ・色相（8.11）
- *   セキュリティ  パスワード・多要素認証（TOTP。pb-103）・パスキー（未対応）
+ *   セキュリティ  パスワード・多要素認証（TOTP。pb-103）・パスキー（pb-104）
  *
  * **結果はセクションごとに出す**（6.4）。トーストは使わない。デザインだけは
  * 見た目が即座に変わることが結果の表示を兼ねるため、成功時の文言を出さない。
@@ -23,11 +23,15 @@ import * as meApi from '../api/me'
 import type { UpdateMeRequest } from '../api/me'
 import * as mfaApi from '../api/mfa'
 import type { ConfirmedTotp, MfaOverview, TotpCredential } from '../api/mfa'
+import * as passkeysApi from '../api/passkeys'
+import type { Passkey } from '../api/passkeys'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import MeTabs from '../components/MeTabs.vue'
 import PageHeader from '../components/PageHeader.vue'
+import PasskeyRegisterModal from '../components/PasskeyRegisterModal.vue'
 import RecoveryCodesDialog from '../components/RecoveryCodesDialog.vue'
 import { formatDateTime } from '../lib/datetime'
+import { IP_ADDRESS_REASON, openedByIPAddress, passkeySupported } from '../lib/passkey'
 import { useAuthStore } from '../stores/auth'
 import type { Hue, ThemePreference } from '../stores/ui'
 import { useUiStore } from '../stores/ui'
@@ -317,6 +321,94 @@ async function regenerateCodes() {
   }
 }
 
+// ── パスキー（`ApiDesign.md` 4.7。pb-104）─────────────────────
+
+/**
+ * 登録済みのパスキー。
+ *
+ * **多要素認証の下に、別の項目として置く**（`GuiDesign.md` 5.8）。パスキーは
+ * 第2要素ではなく、パスワードの代わりである——MFA の表に混ぜると、登録した
+ * 利用者が「ログインのときにパスキーも求められる」と読む。
+ */
+const passkeys = ref<Passkey[]>([])
+const passkeyError = ref<ApiError | null>(null)
+const passkeyNotice = ref('')
+const passkeyRegisterOpen = ref(false)
+/** 削除の確認中のパスキー */
+const deletingPasskey = ref<Passkey | null>(null)
+const passkeyDeleteBusy = ref(false)
+
+/** 登録できる件数の上限（サーバ側 passkey.MaxPerUser と同じ値） */
+const MAX_PASSKEYS = 5
+
+/** WebAuthn の無いブラウザか。追加は押せないが、**一覧と削除は出す**（5.8） */
+const passkeyUnsupported = !passkeySupported()
+/** IP アドレスで開いているか（`Design.md` 6.8.3） */
+const passkeyOnIPAddress = openedByIPAddress()
+/** いま開いているホスト名。`rp_id` と比べて「このアドレスでは使えません」を出す */
+const currentHost = window.location.hostname
+
+/**
+ * 追加を押せない理由。押せるなら空文字。
+ *
+ * **在るはずの操作が黙って消えるより、押せない理由が読めるほうがよい**（5.8.1 の作法）。
+ */
+const passkeyAddBlockedReason = computed(() => {
+  if (passkeyUnsupported) return 'このブラウザはパスキーに対応していません'
+  if (passkeyOnIPAddress) return IP_ADDRESS_REASON
+  if (passkeys.value.length >= MAX_PASSKEYS) {
+    return `登録できるのは${MAX_PASSKEYS}件までです。追加するには、いずれかを削除してください。`
+  }
+  return ''
+})
+
+async function loadPasskeys() {
+  passkeyError.value = null
+  try {
+    passkeys.value = (await passkeysApi.listPasskeys()).items
+  } catch (e: unknown) {
+    passkeyError.value = asApiError(e)
+  }
+}
+onMounted(loadPasskeys)
+
+async function onPasskeyRegistered(created: Passkey) {
+  passkeyRegisterOpen.value = false
+  passkeyNotice.value = `✓ 「${created.name}」を登録しました`
+  await loadPasskeys()
+}
+
+/**
+ * 削除の確認本文（`GuiDesign.md` 5.8「パスキーの削除」）。
+ *
+ * **最後の1件かどうかで変えない。** 全部消してもパスワードで入れる。
+ * **端末の中のパスキーは消えない**ことを必ず書く（`ApiDesign.md` 4.7.4）。
+ */
+const passkeyDeleteMessage = computed(() => {
+  if (!deletingPasskey.value) return ''
+  return (
+    `「${deletingPasskey.value.name}」では PB にログインできなくなります。\n` +
+    '端末の中のパスキーは消えません。不要なら端末の設定から削除してください。'
+  )
+})
+
+async function confirmPasskeyDelete() {
+  const target = deletingPasskey.value
+  if (!target || passkeyDeleteBusy.value) return
+  passkeyDeleteBusy.value = true
+  passkeyError.value = null
+  try {
+    await passkeysApi.deletePasskey(target.id)
+    passkeyNotice.value = `✓ 「${target.name}」を削除しました`
+    deletingPasskey.value = null
+    await loadPasskeys()
+  } catch (e: unknown) {
+    passkeyError.value = asApiError(e)
+  } finally {
+    passkeyDeleteBusy.value = false
+  }
+}
+
 // ── 小さな助け ──────────────────────────────────────────────
 
 /**
@@ -603,15 +695,68 @@ function asApiError(e: unknown): ApiError {
             <p v-else-if="mfaNotice" class="ok" role="status">{{ mfaNotice }}</p>
           </div>
 
-          <!-- ── パスキー（未対応。`GuiDesign.md` 5.8）───────────
+          <!-- ── パスキー（pb-104。`GuiDesign.md` 5.8）───────────
                **項目そのものは出す**（利用者の判断、2026-09-13）。MFA と
                パスキーは別のものであり、MFA を登録した利用者が「パスキーも
                設定した」と誤解するのを防ぐのは、項目が並んでいることである -->
           <hr class="divider" />
 
           <div class="sub-block">
-            <h3 class="sub-title">パスキー</h3>
-            <p class="hint">ⓘ まだ対応していません。</p>
+            <div class="sub-head">
+              <h3 class="sub-title">パスキー</h3>
+              <button
+                type="button"
+                class="secondary"
+                :disabled="passkeyAddBlockedReason !== ''"
+                @click="passkeyRegisterOpen = true"
+              >
+                + パスキーを追加
+              </button>
+            </div>
+
+            <p class="hint">
+              ⓘ パスワードの代わりに、この端末の生体認証や PIN でログインできます。
+            </p>
+            <p v-if="passkeyAddBlockedReason" class="hint">{{ passkeyAddBlockedReason }}</p>
+
+            <table v-if="passkeys.length > 0" class="mfa-table">
+              <thead>
+                <tr>
+                  <th scope="col">名前</th>
+                  <th scope="col">登録</th>
+                  <th scope="col">最終利用</th>
+                  <th scope="col">同期</th>
+                  <th scope="col"><span class="sr-only">操作</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template v-for="pk in passkeys" :key="pk.id">
+                  <tr>
+                    <td>{{ pk.name }}</td>
+                    <td>{{ formatDateTime(pk.created_at) }}</td>
+                    <td>{{ pk.last_used_at ? formatDateTime(pk.last_used_at) : '—' }}</td>
+                    <!-- 状態を色だけで示さない（9.2） -->
+                    <td>{{ pk.backed_up ? '✓' : '—' }}</td>
+                    <td class="row-actions">
+                      <button type="button" class="secondary" @click="deletingPasskey = pk">
+                        削除
+                      </button>
+                    </td>
+                  </tr>
+                  <!-- **登録したホスト名と違えば使えない**（`Design.md` 6.8.3）。削除は押せる -->
+                  <tr v-if="pk.rp_id !== currentHost">
+                    <td colspan="5" class="warn-text">
+                      ⚠ このアドレスでは使えません（{{ pk.rp_id }} で登録）
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <p v-else class="empty">登録されていません。</p>
+
+            <!-- 結果はパスキーの項目の中に出す（6.4）。MFA の結果欄は使わない -->
+            <p v-if="passkeyError" class="alert" role="alert">{{ passkeyError.message }}</p>
+            <p v-else-if="passkeyNotice" class="ok" role="status">{{ passkeyNotice }}</p>
           </div>
         </form>
       </div>
@@ -621,6 +766,24 @@ function asApiError(e: unknown): ApiError {
       v-if="registerOpen"
       @close="registerOpen = false"
       @registered="onRegistered"
+    />
+
+    <PasskeyRegisterModal
+      v-if="passkeyRegisterOpen"
+      :existing-names="passkeys.map((pk) => pk.name)"
+      @close="passkeyRegisterOpen = false"
+      @registered="onPasskeyRegistered"
+    />
+
+    <ConfirmDialog
+      v-if="deletingPasskey"
+      title="パスキーを削除"
+      :message="passkeyDeleteMessage"
+      confirm-label="削除する"
+      danger
+      :busy="passkeyDeleteBusy"
+      @confirm="confirmPasskeyDelete"
+      @cancel="deletingPasskey = null"
     />
 
     <RecoveryCodesDialog
@@ -841,6 +1004,12 @@ select:disabled {
 }
 
 .mfa-table {
+  /* **見出しの `.sr-only` の位置の基準になる**（pb-104）。付けないと
+     `position: absolute` が初期包含ブロックを基準に置かれ、文書そのものを縦に
+     伸ばす——パスキーを1件登録すると、1440×900 で文書が 900 → 1300px に伸びた
+     （実測）。症状は「アプリ全体が上へずれて下に余白が出る」で、Avatar.vue の
+     手順19b と同じ形である。MFA の表も同じ見出しを持つので、ここで両方を止める。 */
+  position: relative;
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;

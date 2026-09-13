@@ -238,6 +238,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/passkey/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * パスキーでのログインを始める
+         * @description 挑戦を作り、`navigator.credentials.get()` に渡す options を返す（ApiDesign.md 3.5。
+         *     Design.md 6.8.2）。本文を受けない。
+         *
+         *     認証不要。IPあたり 10回/分のレート制限（ApiDesign.md 2.9）。
+         *
+         *     **`options` は WebAuthn の JSON 表現そのままで、snake_case に変換しない。**
+         *     **`allowCredentials` を持たない**——誰がログインしようとしているかを知らないまま
+         *     挑戦を作るので、アカウントの有無が応答に現れない。
+         */
+        post: operations["startPasskeyLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/login/passkey": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * パスキーでログインする
+         * @description `PublicKeyCredential.toJSON()` の結果を検証し、成功すれば 3.1 と同じ応答と
+         *     セッション Cookie を返す（ApiDesign.md 3.6。Design.md 6.8.2）。
+         *
+         *     認証不要。**パスキーの署名が本人であることの証明を兼ねる。** IPあたり 10回/分の
+         *     レート制限（ApiDesign.md 2.9）。
+         *
+         *     **失敗は理由を分けず、同じ `invalid_credentials` と同じ文言を返す**——誰でも叩ける
+         *     口なので、「登録されていない」と「署名が合わない」を区別して見せない。
+         *
+         *     **ロックと第2要素を通らない。** `failed_attempts` を増やさず、TOTP を登録していても
+         *     `mfa_required` を返さない。
+         */
+        post: operations["loginPasskey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/mfa": {
         parameters: {
             query?: never;
@@ -395,6 +452,92 @@ export interface paths {
          */
         post: operations["regenerateMyRecoveryCodes"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/passkeys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 自分のパスキー
+         * @description 登録済みのパスキー（ApiDesign.md 4.7.1）。必要権限は「本人」。`created_at` の昇順。
+         *
+         *     **公開鍵も credential_id も返さない。** ページネーションも ETag も持たない（上限5件）。
+         */
+        get: operations["listMyPasskeys"];
+        put?: never;
+        /**
+         * パスキーを登録する
+         * @description `POST /me/passkeys/options` で始めた登録を、認証器の応答で確定させる
+         *     （ApiDesign.md 4.7.3）。必要権限は「本人」。
+         *
+         *     **名前の重複と件数は、挑戦を消費する前に確かめる**——名前だけを直して同じ応答を
+         *     送り直せる。検証の失敗は `401` ではなく `422`（既にセッションを持つ本人の操作であるため）。
+         */
+        post: operations["registerMyPasskey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/passkeys/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * パスキーの登録を始める
+         * @description 挑戦を作り、`navigator.credentials.create()` に渡す options を返す
+         *     （ApiDesign.md 4.7.2）。必要権限は「本人」。本文を受けない。
+         *
+         *     **residentKey と userVerification は required、attestation は none。**
+         *     `excludeCredentials` に、同じホスト名で登録済みのパスキーを入れる。
+         *
+         *     登録の挑戦は1人1件までで、始め直したら置き換える。監査に残さない。
+         */
+        post: operations["startMyPasskeyRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/passkeys/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description パスキーの ULID（`user_passkey.id`。ApiDesign.md 4.7）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["PasskeyID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * パスキーを削除する
+         * @description パスキーを1件削除する（ApiDesign.md 4.7.4）。必要権限は「本人」。
+         *     現在のパスワードを求めない。
+         *
+         *     **最後の1件を消しても他に何も消さない**——パスワードで入れる状態は変わらない。
+         *     **端末の中のパスキーは消えない。**
+         */
+        delete: operations["deleteMyPasskey"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2746,6 +2889,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users/{id}/passkeys/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * パスキーの全削除
+         * @description 対象ユーザーのパスキーと未消費の登録の挑戦をすべて消す（ApiDesign.md 6.10）。
+         *     必要権限は `user.manage`。
+         *
+         *     **乗っ取りの疑いがあるときの口である**（Design.md 6.8.6）。パスキーはパスワード無しで
+         *     入れる鍵なので、乗っ取った人が登録した1本は、パスワードのリセットも第2要素の解除も消さない。
+         *
+         *     **パスワードには触らず、セッションも切らない。** 乗っ取りを直すなら、パスワードの
+         *     リセットとセッションの失効を組み合わせて使う。
+         *
+         *     **冪等である。** 1件も無くても 204 を返す。自分自身に対しても許す。
+         */
+        post: operations["resetUserPasskeys"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users/{id}/memberships/{key}": {
         parameters: {
             query?: never;
@@ -3694,6 +3873,84 @@ export interface components {
             recovery_codes: string[];
         };
         /**
+         * @description WebAuthn の options（ApiDesign.md 3.5・4.7.2）。**`options` は WebAuthn Level 3 の
+         *     JSON 表現そのままで、PB の命名規約（snake_case）に変換しない**——画面は
+         *     `options.publicKey` を `PublicKeyCredential.parseRequestOptionsFromJSON()`（ログイン）か
+         *     `parseCreationOptionsFromJSON()`（登録）に渡す。
+         */
+        PasskeyOptions: {
+            /**
+             * @description ログインでは `publicKey` に `PublicKeyCredentialRequestOptionsJSON`、
+             *     登録では `PublicKeyCredentialCreationOptionsJSON` が入る。
+             */
+            options: {
+                publicKey: {
+                    [key: string]: unknown;
+                };
+                mediation?: string;
+            };
+            /**
+             * Format: date-time
+             * @description 挑戦の期限（5分）。
+             */
+            expires_at: string;
+        };
+        /** @description ApiDesign.md 3.6。 */
+        LoginPasskeyRequest: {
+            /**
+             * @description `PublicKeyCredential.toJSON()` の結果をそのまま入れる（WebAuthn Level 3 の
+             *     `AuthenticationResponseJSON`）。
+             */
+            credential: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description ApiDesign.md 4.7.3。 */
+        RegisterPasskeyRequest: {
+            /**
+             * @description 1〜60文字（`user_passkey.name` の CHECK と同じ）。1人の中で一意。
+             * @example MacBook
+             */
+            name: string;
+            /**
+             * @description `PublicKeyCredential.toJSON()` の結果をそのまま入れる（WebAuthn Level 3 の
+             *     `RegistrationResponseJSON`）。
+             */
+            credential: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description ApiDesign.md 4.7.1。ページネーションも ETag も持たない（上限5件）。 */
+        PasskeyList: {
+            /** @description `created_at` の昇順。 */
+            items: components["schemas"]["Passkey"][];
+        };
+        /** @description 登録済みのパスキー1件（ApiDesign.md 4.7.1）。**公開鍵も credential_id も含まない。** */
+        Passkey: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /**
+             * @description 登録時に本人が付けた名前。
+             * @example MacBook
+             */
+            name: string;
+            /**
+             * @description 登録したときのホスト名（Design.md 6.8.3）。**いま開いているホスト名と違えば、
+             *     そのパスキーはこの画面では使えない。**
+             * @example localhost
+             */
+            rp_id: string;
+            /** @description 端末をまたいで同期されているか（`backup_state`）。 */
+            backed_up: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description 一度も使われていなければ null。
+             */
+            last_used_at: string | null;
+        };
+        /**
          * @description ApiDesign.md 4.4.1。ページネーションも ETag も持たない（1人5本が上限で、
          *     絞り込みも差分取得も意味を持たないため。7.1 / 7.2 と同じ扱い）。
          */
@@ -4037,6 +4294,11 @@ export interface components {
              *     0 なら第2要素の解除（6.9）を disabled にする根拠になる。
              */
             mfa_credential_count: number;
+            /**
+             * @description 登録済みのパスキーの件数（pb-104。DbDesign.md 6.19）。`mfa_credential_count` と
+             *     同じ理由で件数だけを返す。0 ならパスキーの全削除（6.10）を disabled にする根拠になる。
+             */
+            passkey_count: number;
         };
         /** @description 認証手段1件（ApiDesign.md 6.3 の `identities[]`）。 */
         UserIdentity: {
@@ -6280,6 +6542,11 @@ export interface components {
          */
         MfaCredentialID: string;
         /**
+         * @description パスキーの ULID（`user_passkey.id`。ApiDesign.md 4.7）。
+         *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+         */
+        PasskeyID: string;
+        /**
          * @description タグの ULID（ApiDesign.md 9.1「チケット以外の子資源は ULID で指す」）。
          *     タグは `seq` に相当する連番を持たない。
          */
@@ -6709,6 +6976,87 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    startPasskeyLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 挑戦を作った。`expires_at` は挑戦の期限（5分）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasskeyOptions"];
+                };
+            };
+            /**
+             * @description IP アドレスで開いている（`conflict`）。IP アドレスは RP ID になれない
+             *     （Design.md 6.8.3）。
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    loginPasskey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginPasskeyRequest"];
+            };
+        };
+        responses: {
+            /** @description パスキーの確認に成功。`pb_session` と `pb_csrf` を発行する（3.1 と同じ）。 */
+            200: {
+                headers: {
+                    /**
+                     * @description ```
+                     *     pb_session=pb_sess_...; HttpOnly; SameSite=Lax; Path=/; Max-Age=1209600
+                     *     pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
+                     *     ```
+                     */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /**
+             * @description 挑戦が無い・期限切れ・消費済み、登録されていないパスキー、検証の失敗、
+             *     無効化された利用者（いずれも `invalid_credentials`。区別しない）。
+             */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     getMyMfa: {
         parameters: {
             query?: never;
@@ -6884,6 +7232,162 @@ export interface operations {
             403: components["responses"]["CSRFFailed"];
             /** @description 確定済みの認証器が1件も無い（`conflict`）。 */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listMyPasskeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 登録済みのパスキー。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasskeyList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    registerMyPasskey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterPasskeyRequest"];
+            };
+        };
+        responses: {
+            /** @description 登録した。 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Passkey"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 同じ名前か同じ認証器が登録済み（`already_exists`）、または既に5件ある（`conflict`）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    startMyPasskeyRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 挑戦を作った。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasskeyOptions"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 既に5件ある、または IP アドレスで開いている（`conflict`）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteMyPasskey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description パスキーの ULID（`user_passkey.id`。ApiDesign.md 4.7）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["PasskeyID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除した。本文を持たない。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 存在しない、または他人のパスキー（`not_found`）。 */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10007,6 +10511,52 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description 解除した（登録が0件でも同じ）。本文を持たない。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description ユーザーが存在しない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resetUserPasskeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
+                 *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
+                 *     分けると、ID の総当たりに手がかりを与えるため（1.2-5）。
+                 */
+                id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 消した（登録が0件でも同じ）。本文を持たない。 */
             204: {
                 headers: {
                     [name: string]: unknown;

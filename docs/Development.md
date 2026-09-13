@@ -41,7 +41,7 @@
 | 必要なもの | 確認コマンド | 期待する結果 | 無いとき |
 |---|---|---|---|
 | コンテナランタイム | `docker info` | エラーにならない（起動している） | 付録 A.1 |
-| Go | `go version` | **`go1.24` 以上**（`Design.md` 3.1） | 付録 A.2 |
+| Go | `go version` | **`go1.26` 以上**（`Design.md` 3.1。pb-104 で 1.24 から上げた） | 付録 A.2 |
 | Node.js / npm | `node -v && npm -v` | 表示される（client のビルドに必要） | 付録 A.3 |
 | Google Chrome | `ls "/Applications/Google Chrome.app"` | 存在する（**画面の動作確認（8章）に使うだけ。任意**） | 付録 A.4 |
 
@@ -713,7 +713,36 @@ SQL
 ULID は単調増加なので、検証前に `SELECT max(id) FROM activity` を控えておけば
 `DELETE FROM activity WHERE id > '<控えたID>'` で落とせる。
 
----
+## 8.7 パスキーを確かめる（CDP の仮想認証器。pb-104）
+
+**実機の生体認証が無くても、CDP の `WebAuthn` ドメインで仮想の認証器を差し込めば、
+登録からログインまで画面で通せる。**
+
+```
+WebAuthn.enable {enableUI: false}
+WebAuthn.addVirtualAuthenticator {options: {protocol: "ctap2", transport: "internal",
+  hasResidentKey: true, hasUserVerification: true, isUserVerified: true,
+  automaticPresenceSimulation: true}}                          → authenticatorId
+WebAuthn.getCredentials {authenticatorId}                      ← discoverable な鍵ができたか
+WebAuthn.setResponseOverrideBits {authenticatorId, isBogusSignature: true}   ← サーバの負の側
+WebAuthn.clearCredentials {authenticatorId}                    ← やり直すとき
+```
+
+- **`http://localhost:8080` で開く。`127.0.0.1` ではパスキーを使えない**（IP アドレスは RP ID に
+  なれない。`Design.md` 6.8.3）。ヘッドレス Chrome はプロファイルを分けるので stg と Cookie は
+  混ざらないが、**手元のブラウザで試すなら stg（`localhost:8081`）と別のプロファイルにする**（11章）
+- **サーバの負の側は `isBogusSignature` で作る。** `isUserVerified: false` にすると、UV を求める
+  挑戦には**認証器の側が応答を返さず**（`NotAllowedError`）、画面は何も出さない。**サーバまで
+  届かないので、UV の検証を測ったことにならない。** UV の無い応答をサーバが拒むことは、単体テストの
+  ソフトウェア認証器（`passkey_authenticator_test.go`）で測る
+- **同じ認証器での二重登録は、ブラウザが送信の前に断る**（`InvalidStateError`）。サーバのログに
+  `POST /me/passkeys` が出ないのが正しい
+- **パスキーの項目はセキュリティセクションの最下部にあり、1440×900 でもビューポートの外である。**
+  撮る前に `scrollIntoView({block: 'center'})` し、`getBoundingClientRect()` で収まったことを
+  測る——pb-104 で、全項目 PASS のまま**パスキーの写っていない画像を4枚撮った**
+- **後始末**：`webauthn_challenge` の行は5分で失効し、次の挑戦を作るときに消える。登録した
+  パスキーは画面の削除か `ApiDesign.md` 6.10 の全削除で消す。監査の `passkey.*` と
+  `login.passkey_failure` も 8.4 に従って消す
 
 ---
 
@@ -734,18 +763,20 @@ ULID は単調増加なので、検証前に `SELECT max(id) FROM activity` を�
 | Vite が :5173 以外で起動しない | `strictPort` にしてある。**ポートが空いていなければ黙ってずらさずに失敗する**（Cookie の送り先が変わるのを防ぐため） |
 | `Ctrl + C` の後に `make: *** [run] Error 1` が出る | **異常ではない**（3.1 の「止め方」）。`go run` がシグナル終了を失敗として扱うため。`停止信号を受け取った` → `サーバを停止した` の2行が出ていれば正常 |
 | 画面を直したのに反映されない | :8080 は embed 済みの画面を返す。`make build` し直すか、:5173（`make dev-client`）で見る（3.1 / 3.2） |
-| `go version` が 1.24 未満 | 付録 A.2。goose / sqlc も Go 経由で動くため、ここが古いとマイグレーションから先に進めない |
+| `go version` が 1.26 未満 | 付録 A.2。goose / sqlc も Go 経由で動くため、ここが古いとマイグレーションから先に進めない |
 | `make down` したらデータも消えたのでは、と不安になる | 消えていない。`-v` を付けていないのでボリュームは残る（3.4）。`docker volume ls \| grep backyard` に `project-backyard_pgdata` があれば無事 |
 | 端末が重い。PB を止めたのにメモリが空かない | `make down` はコンテナだけ。**コンテナランタイムの VM は動いたまま**（3.4）。アプリごと終了する |
 | **認証アプリを失って画面に入れない**（pb-103） | `make admin-mfa-reset EMAIL=<アドレス>` で第2要素を外す（`Design.md` 6.7.5）。**管理者が他にいるなら画面から解除できる**（`GuiDesign.md` 5.6.2）ので、この口は管理者が1人だけのときのためにある。パスワードには触らない |
 | 第2要素の検証で、正しいはずのコードが 401 になる | **確定に使った刻みのコードを、そのままログインでも使っている。** 同じ刻みは再利用として拒まれる（`Design.md` 6.7.2）。検証では `mfa.Step(time.Now())+1`（許容窓の内側）で作り直す。**実装ではなく検証の誤りである** |
+| **パスキーのボタンが押せない**（「IP アドレスで開いた画面ではパスキーを使えません」。pb-104） | `http://127.0.0.1:8080` で開いている。**IP アドレスは RP ID になれない**（`Design.md` 6.8.3）。`http://localhost:8080` で開き直す。**stg（`localhost:8081`）と Cookie が上書きし合う**ので（11章）、両方を開くならブラウザのプロファイルを分ける |
+| パスキーの一覧に「このアドレスでは使えません」と出る | 登録したときのホスト名（`rp_id`）と、いま開いているホスト名が違う。**パスキーはホスト名に結び付く**（`localhost` と `pb.localhost` も別物）。登録した側のアドレスで開くか、このアドレスで登録し直す |
 
 ---
 
 # 10. 依存とツールのバージョン
 
 **ここに挙げたものは意図して固定してある。** 上げると `Design.md` 3.1 の
-「Go 1.24 以上」と衝突する、あるいはビルドが壊れる。**上げる場合は 3.1 の
+「Go 1.26 以上」と衝突する、あるいはビルドが壊れる。**上げる場合は 3.1 の
 最低バージョンとセットで見直すこと。**
 
 ## 10.1 固定しているもの
@@ -754,11 +785,14 @@ ULID は単調増加なので、検証前に `SELECT max(id) FROM activity` を�
 |---|---|---|
 | goose | **v3.26.0**（`server/tools/go.mod`） | v3.27.3 以降は `go 1.25.7` を要求する |
 | sqlc | **v1.30.0**（同上） | v1.31.1 は `go 1.26.0` を要求する（v1.30.0 自体は `go 1.23.0` 要求） |
-| `golang.org/x/term` / `x/sys` | `v0.33.0` 系 | 最新版は go 1.25 を要求し、`go get` が go ディレクティブを勝手に `1.25.0` へ引き上げる |
 | `typescript`（client） | **`^5`** | vue-tsc 3.3.9 が TS 7 の `typescript/lib/tsc` を require できない（症状は9章） |
 
+**`golang.org/x/term` / `x/sys` の固定は pb-104 で外した。** 「最新版が go 1.25 を要求し、go ディレクティブを
+勝手に引き上げる」が理由だったが、本体の go ディレクティブが 1.26 になって理由が消えた
+（go-webauthn が `x/sys` v0.48.0 を要求する）。
+
 **`go get` の後は `head -3 server/go.mod` と `head -3 server/tools/go.mod` を見て、
-go ディレクティブが `1.24` のままか確認する。**
+go ディレクティブが `1.26.0` と `1.24` のままか確認する。**
 
 ## 10.2 ツールは server/tools/go.mod に隔離してある
 
@@ -799,7 +833,9 @@ ELSE 無しの `CASE` → `NULLIF` と4手外したあと、`(COALESCE(t.id::tex
 ## 10.4 実行時の依存
 
 **Go（`server/go.mod` の直接依存）**：`jackc/pgx/v5` / `oklog/ulid/v2` /
-`alexedwards/argon2id` / `golang.org/x/term` / `go-chi/chi/v5` の5つ。
+`alexedwards/argon2id` / `golang.org/x/term` / `go-chi/chi/v5` / `gopkg.in/yaml.v3`（pb-2）/
+`go-webauthn/webauthn`（pb-104。`Design.md` 6.8.5）の7つ。**go-webauthn は推移依存を連れてくる**
+（CBOR・JWT・TPM など。多くは attestation と MDS 用で、PB は使わない）。
 トークンのハッシュと乱数は標準ライブラリ（`crypto/sha256` / `crypto/rand`）で足りる。
 
 **client（`client/package.json`）**：`vue` / `vue-router` / `pinia` に、
@@ -1458,18 +1494,19 @@ docker info      # エラーにならなければ導入・起動できている
 
 ## A.2 Go
 
-**1.24 以上**（`Design.md` 3.1）。サーバ本体に加えて、`goose`（マイグレーション）と
+**1.26 以上**（`Design.md` 3.1。**pb-104 で 1.24 から上げた**——パスキーの検証に使う go-webauthn が
+go 1.26.0 を要求するため）。サーバ本体に加えて、`goose`（マイグレーション）と
 `sqlc`（コード生成）も `go tool` 経由で動くため、これが無いと 2.2 から先へ進めない。
 
 ```
-go version       # go1.24 以上であること
+go version       # go1.26 以上であること
 ```
 
 macOS なら Homebrew（検証環境もこれ。`brew install go`）。公式配布の pkg でもよい。
 
 **上げるときは注意する。** ライブラリの都合で go ディレクティブが勝手に上がる問題を避けるため、
-`go.mod` は `1.24` に固定してある（10.1）。Go 本体を新しくするのは構わないが、
-`go get` の後は `head -3 server/go.mod` で `1.24` のままか確認すること。
+`server/go.mod` は `1.26.0`、`server/tools/go.mod` は `1.24` にしてある（10.1）。Go 本体を新しくするのは
+構わないが、`go get` の後は `head -3` で両方の値が変わっていないか確認すること。
 
 ## A.3 Node.js / npm
 

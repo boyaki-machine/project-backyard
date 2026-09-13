@@ -2,6 +2,8 @@
 //
 //	POST /api/v1/admin/users/:id/password-reset    6.6
 //	POST /api/v1/admin/users/:id/sessions/revoke   6.7
+//	POST /api/v1/admin/users/:id/mfa/reset         6.9（pb-103）
+//	POST /api/v1/admin/users/:id/passkeys/reset    6.10（pb-104）
 //
 // **どちらも当人を締め出す操作である。** 6.6 はパスワードを差し替えたうえで
 // 全セッションを失効し、6.7 は失効だけを行う。
@@ -15,6 +17,7 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/audit"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
@@ -298,6 +301,62 @@ func (h *handler) resetUserMfa(w http.ResponseWriter, r *http.Request) {
 				"email":                  cur.Email,
 				"removed_credentials":    credentials,
 				"removed_recovery_codes": codes,
+			},
+		})
+	})
+	if err != nil {
+		writeUserUpdateError(w, r, id, nil, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// resetUserPasskeys は POST /api/v1/admin/users/:id/passkeys/reset を処理する
+// （ApiDesign.md 6.10。pb-104）。
+//
+// **乗っ取りの疑いがあるときの口である**（Design.md 6.8.6）。パスキーはパスワード
+// 無しで入れる鍵なので、乗っ取った人が登録した1本は、6.6 のリセットも 6.7 の
+// 失効も 6.9 の解除も消さない。
+//
+// **パスワードには触らず、セッションも切らない**（6.9 と同じ判断）。乗っ取りを
+// 直すなら 6.6・6.7 と組み合わせて使う。締め出しの原因ごとに口を分けてある。
+//
+// **冪等である。** 1件も無くても 204 を返す。自分自身に対しても許す。
+func (h *handler) resetUserPasskeys(w http.ResponseWriter, r *http.Request) {
+	_, id, ok := h.adminUserContext(w, r, "POST /admin/users/{id}/passkeys/reset")
+	if !ok {
+		return
+	}
+
+	ctx := r.Context()
+	rec := audit.FromRequest(r)
+
+	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		cur, err := q.GetAdminUser(ctx, id)
+		if err != nil {
+			return err
+		}
+
+		removed, err := q.DeleteAllPasskeys(ctx, id)
+		if err != nil {
+			return fmt.Errorf("パスキーを消せない: %w", err)
+		}
+		// **未消費の登録の挑戦も捨てる。** 残すと、乗っ取った人が登録の途中に
+		// いた場合、全削除の直後にその挑戦で登録を確定できてしまう。
+		if _, err := q.DeleteWebauthnChallengesForUser(ctx, pgtype.Text{String: id, Valid: true}); err != nil {
+			return fmt.Errorf("登録の挑戦を消せない: %w", err)
+		}
+
+		// 0件でも記録する（6.9 と同じ判断）。
+		return rec.Record(ctx, q, audit.Entry{
+			Action:     audit.PasskeyReset,
+			Result:     audit.Success,
+			TargetType: "app_user",
+			TargetID:   id,
+			Detail: map[string]any{
+				"email":            cur.Email,
+				"removed_passkeys": removed,
 			},
 		})
 	})

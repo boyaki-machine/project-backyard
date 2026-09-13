@@ -181,6 +181,19 @@ export function resetUserMfa(id: string): Promise<void> {
 }
 
 /**
+ * パスキーの全削除（`ApiDesign.md` 6.10。pb-104）。`204`。
+ *
+ * **乗っ取りの疑いがあるときの口である。** パスキーはパスワード無しで入れる鍵なので、
+ * 乗っ取った人が登録した1本は、パスワードのリセットも第2要素の解除も消さない。
+ * **パスワードには触らず、セッションも切らない**——直すなら 6.6・6.7 と組み合わせる。
+ *
+ * **冪等**で、1件も登録が無くても `204` を返す。
+ */
+export function resetUserPasskeys(id: string): Promise<void> {
+  return api.post<void>(`/admin/users/${encodeURIComponent(id)}/passkeys/reset`)
+}
+
+/**
  * プロジェクトメンバーシップの付与・変更（`ApiDesign.md` 6.8）。
  *
  * **追加と変更を兼ねる（冪等）。** 既にメンバーならロールを上書きし、
