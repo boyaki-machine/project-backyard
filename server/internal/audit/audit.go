@@ -74,9 +74,20 @@ const (
 	// LoginMFAFailure は第2要素の照合失敗。**login.failure と分けてある**
 	// ——パスワードは通っているので、総当たりの調査で見る対象が違う。
 	LoginMFAFailure Action = "login.mfa_failure"
+
+	// 以下4件は pb-104（ApiDesign.md 4.7.5）。
+	//
+	// **detail に公開鍵・credential_id・clientDataJSON を入れない。** 秘密ではないが、
+	// 長期保存する記録に鍵の材料を残す理由が無い（ApiDesign.md 2.10）。
+	PasskeyRegister   Action = "passkey.register"
+	PasskeyUnregister Action = "passkey.unregister"
+	PasskeyReset      Action = "passkey.reset"
+	// LoginPasskeyFailure はパスキーでのログインの失敗。**login.failure と分けてある**
+	// ——挑戦が誰にも結び付いていないため、アカウントを特定できないことが多い。
+	LoginPasskeyFailure Action = "login.passkey_failure"
 )
 
-// actions は ApiDesign.md 2.10 が列挙する26件。
+// actions は ApiDesign.md 2.10 が列挙する30件。
 var actions = map[Action]bool{
 	LoginSuccess: true, LoginFailure: true, Logout: true,
 	PasswordChange: true, PasswordReset: true,
@@ -89,6 +100,8 @@ var actions = map[Action]bool{
 	MFARegister: true, MFAUnregister: true,
 	MFARecoveryCodeRegenerate: true, MFAReset: true,
 	LoginMFAFailure: true,
+	PasskeyRegister: true, PasskeyUnregister: true, PasskeyReset: true,
+	LoginPasskeyFailure: true,
 }
 
 // Result は audit_log.result（DbDesign.md 6.8 の CHECK 制約）。

@@ -96,6 +96,14 @@ func Mount(r chi.Router, deps Deps) {
 	r.With(middleware.RateLimit(loginRateLimit, loginRateWindow, middleware.ClientIPKey)).
 		Post("/auth/login/mfa", h.loginMFA)
 
+	// パスキーでのログイン（ApiDesign.md 3.5 / 3.6。pb-104）。**認証不要のまま置く**
+	// ——パスワードの代わりに本人を特定する手段であり、Cookie も Bearer も持たない
+	// 状態で叩かれる。**アカウント単位の制限もロックも持たない**（2.9）。
+	r.With(middleware.RateLimit(loginRateLimit, loginRateWindow, middleware.ClientIPKey)).
+		Post("/auth/passkey/options", h.startPasskeyLogin)
+	r.With(middleware.RateLimit(loginRateLimit, loginRateWindow, middleware.ClientIPKey)).
+		Post("/auth/login/passkey", h.loginPasskey)
+
 	// ── 認証必須 ────────────────────────────────
 	// Cookie か Bearer での認証を必須とする（Design.md 6.2.2）。
 	//
@@ -135,6 +143,13 @@ func Mount(r chi.Router, deps Deps) {
 		r.Post("/me/mfa/totp/{id}/confirm", h.confirmMyTotp)
 		r.Delete("/me/mfa/totp/{id}", h.deleteMyTotp)
 		r.Post("/me/mfa/recovery-codes", h.regenerateMyRecoveryCodes)
+		// パスキー（ApiDesign.md 4.7。pb-104）。4.6 と同じく「本人」であり、
+		// 触れる範囲はハンドラが p.ActorID で閉じている。**/options は /{id} より
+		// 先に一致する**（chi は静的なセグメントを優先する）が、メソッドも違う。
+		r.Get("/me/passkeys", h.listMyPasskeys)
+		r.Post("/me/passkeys/options", h.startMyPasskeyRegistration)
+		r.Post("/me/passkeys", h.registerMyPasskey)
+		r.Delete("/me/passkeys/{id}", h.deleteMyPasskey)
 
 		r.Get("/me/tokens", h.listMyTokens)
 		r.Post("/me/tokens", h.createMyToken)
@@ -533,6 +548,10 @@ func Mount(r chi.Router, deps Deps) {
 		// 権限だが別の操作である**——あちらはパスワード、こちらは認証器。
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
 			Post("/admin/users/{id}/mfa/reset", h.resetUserMfa)
+		// パスキーの全削除（ApiDesign.md 6.10。pb-104）。**6.9 と同じ権限だが別の操作
+		// である**——あちらは第2要素、こちらはパスワードの代わりになる鍵。
+		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
+			Post("/admin/users/{id}/passkeys/reset", h.resetUserPasskeys)
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
 			Put("/admin/users/{id}/memberships/{key}", h.putUserMembership)
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).

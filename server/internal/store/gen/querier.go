@@ -101,6 +101,11 @@ type Querier interface {
 	// **used_at IS NULL を条件に含めるのが要点である。** 同じコードを2回使えない。
 	// 0行なら「無い」か「既に使った」で、どちらも応答は同じ 401 である。
 	ConsumeRecoveryCode(ctx context.Context, arg ConsumeRecoveryCodeParams) (int64, error)
+	// ConsumeWebauthnChallenge は挑戦を使い切った印を付ける。
+	//
+	// **検証より先に呼ぶ。** consumed_at IS NULL を条件にしてあるので、
+	// 同じ応答を並行して2回送られても、通るのは1回だけになる。
+	ConsumeWebauthnChallenge(ctx context.Context, id string) (int64, error)
 	// CountActiveAdministrators は「最後のアドミニストレータ」の判定に使う
 	// （ApiDesign.md 6.4 / 6.5 の last_administrator）。
 	//
@@ -172,6 +177,8 @@ type Querier interface {
 	// ?open=true と同じ判定）。ステータスのカテゴリで数え直すと、同じ事実を2通りに
 	// 数えることになり、片方だけ直した日にずれる。
 	CountOpenChildren(ctx context.Context, parentID pgtype.Text) (int64, error)
+	// CountPasskeys は上限（5件）に使う。
+	CountPasskeys(ctx context.Context, userID string) (int64, error)
 	// 未確認が何件あるか。**次の危険な変更を断るために使う。**
 	CountPendingSettingChanges(ctx context.Context) (int64, error)
 	// CountProjectTagsByIDs は tag_ids がすべて当該プロジェクトのものかを数える（9.3）。
@@ -281,6 +288,10 @@ type Querier interface {
 	// ── ログインの挑戦 ──────────────────────────────────────
 	// CreateMfaLoginChallenge は中途状態を1件作る（Design.md 6.7.4 の手順3）。
 	CreateMfaLoginChallenge(ctx context.Context, arg CreateMfaLoginChallengeParams) error
+	// CreatePasskey は検証の済んだパスキーを1件保存する（ApiDesign.md 4.7.3）。
+	//
+	// created_at を返すのは、201 の応答に DB の値をそのまま載せるためである。
+	CreatePasskey(ctx context.Context, arg CreatePasskeyParams) (pgtype.Timestamptz, error)
 	// 未確認の設定変更のクエリ（DbDesign.md 6.17、Design.md 10.3）。pb-97。
 	//
 	// **行は0か1つである。** 未確認が残っている間は次の危険な変更を受け付けない
@@ -314,6 +325,12 @@ type Querier interface {
 	CreateTicketReference(ctx context.Context, arg CreateTicketReferenceParams) error
 	CreateUserActor(ctx context.Context, arg CreateUserActorParams) error
 	CreateUserIdentity(ctx context.Context, arg CreateUserIdentityParams) error
+	// ── WebAuthn の挑戦 ────────────────────────────────────────
+	// CreateWebauthnChallenge は挑戦を1件作る。
+	//
+	// **user_id はログインでは NULL、登録では本人である。** 取り違えは CHECK が弾く
+	// （DbDesign.md 6.19）。
+	CreateWebauthnChallenge(ctx context.Context, arg CreateWebauthnChallengeParams) error
 	CreateWorkflowStatus(ctx context.Context, arg CreateWorkflowStatusParams) error
 	CreateWorkflowTransition(ctx context.Context, arg CreateWorkflowTransitionParams) error
 	// actor を消せば app_user / user_identity / local_credential /
@@ -331,6 +348,8 @@ type Querier interface {
 	DeleteActorByID(ctx context.Context, actorID string) (int64, error)
 	// DeleteAllMfaCredentials は管理者の解除と CLI が使う（ApiDesign.md 6.9）。
 	DeleteAllMfaCredentials(ctx context.Context, userID string) (int64, error)
+	// DeleteAllPasskeys は管理者による全削除（ApiDesign.md 6.10）。
+	DeleteAllPasskeys(ctx context.Context, userID string) (int64, error)
 	// 1件を消す。**「既定に戻す」がこれである**（ApiDesign.md 11.2 の value: null）。
 	// 設定を消すことと既定へ戻すことは同じ状態なので、別の口を作らない。
 	//
@@ -340,6 +359,10 @@ type Querier interface {
 	// DELETE は物理削除で、部分木ごと消える（parent_id の CASCADE。10.4 / 8.1.1）。
 	// document_revision も CASCADE で一緒に消える。
 	DeleteDocument(ctx context.Context, id string) (int64, error)
+	// DeleteExpiredWebauthnChallenges は期限切れの挑戦を全部消す。
+	//
+	// **挑戦を作るたびに呼ぶ。** 専用のバッチを持たない（DbDesign.md 6.19）。
+	DeleteExpiredWebauthnChallenges(ctx context.Context) error
 	// DeleteMfaCredential は本人の認証器を消す（ApiDesign.md 4.6.4）。
 	//
 	// **行を消す。** access_token のように revoked_at を立てる形にしないのは、
@@ -362,6 +385,11 @@ type Querier interface {
 	// （DeleteActorByID が kind='user' に限っているのと対である）。
 	//
 	DeleteMyAgentActor(ctx context.Context, arg DeleteMyAgentActorParams) (int64, error)
+	// DeletePasskey は本人のパスキーを1件消す（ApiDesign.md 4.7.4）。
+	//
+	// **user_id を条件に含めるのが要点である。** 他人の id では行が返らず 404 になる。
+	// 名前を返すのは監査の detail に入れるためである。
+	DeletePasskey(ctx context.Context, arg DeletePasskeyParams) (string, error)
 	// DeletePendingMfaCredentials は登録を始め直したときに古い途中の行を捨てる。
 	//
 	// **途中の行は1人1件まで**という規則をここで守る（DbDesign.md 6.18。DB では縛らない）。
@@ -399,6 +427,10 @@ type Querier interface {
 	DeleteTicket(ctx context.Context, arg DeleteTicketParams) (int64, error)
 	DeleteTicketLink(ctx context.Context, arg DeleteTicketLinkParams) (int64, error)
 	DeleteTicketReference(ctx context.Context, arg DeleteTicketReferenceParams) (int64, error)
+	// DeleteWebauthnChallengesForUser は本人の挑戦（＝登録の挑戦）を消す。
+	//
+	// 登録を始め直したとき（ApiDesign.md 4.7.2）と、管理者の全削除（6.10）で使う。
+	DeleteWebauthnChallengesForUser(ctx context.Context, userID pgtype.Text) (int64, error)
 	// DetachTicketTags は 9.5.2 の tag_ids の置き換えに使う（丸ごと消してから付け直す）。
 	//
 	// **差分を計算しない。** 9.5.2 は「tag_ids は丸ごと置き換える」と定めており、
@@ -521,6 +553,17 @@ type Querier interface {
 	// するものではない（ApiDesign.md 5.6）。
 	//
 	FindMyProjectByKey(ctx context.Context, arg FindMyProjectByKeyParams) (FindMyProjectByKeyRow, error)
+	// FindPasskeyByName は同名の有無を確かめる。
+	//
+	// **一意索引と同じ条件を先に見る**ので、制約違反ではなく 409 already_exists として返せる。
+	FindPasskeyByName(ctx context.Context, arg FindPasskeyByNameParams) (string, error)
+	// FindPasskeyLogin はログインの照合のために、パスキーと利用者を1回で引く
+	// （Design.md 6.8.2）。
+	//
+	// **credential_id だけで引く。** ログインのときは誰のパスキーかが分からない。
+	// 応答（3.1 と同一構造）に要る利用者の属性も一緒に返し、往復を増やさない
+	// ——6.18 の FindMfaLoginChallenge と同じ形である。
+	FindPasskeyLogin(ctx context.Context, credentialID []byte) (FindPasskeyLoginRow, error)
 	// FindPendingMfaCredential は登録の途中の行を引く（ApiDesign.md 4.6.3）。
 	//
 	// **user_id を条件に含めるのが要点である。** 他人の id を渡されても行が返らない
@@ -575,6 +618,11 @@ type Querier interface {
 	// FindTicketIDBySeq は parent_seq（9.3）の解決に使う。**同一プロジェクトに
 	// 限る**——親もリンク先も同一プロジェクト内に限るのが Phase 1 の前提である（9.1）。
 	FindTicketIDBySeq(ctx context.Context, arg FindTicketIDBySeqParams) (string, error)
+	// FindWebauthnChallenge は clientDataJSON の challenge で挑戦を引く。
+	//
+	// **有効性を WHERE で絞らない。** 「無い」「期限切れ」「消費済み」を
+	// 監査の reason で区別するためである（FindMfaLoginChallenge と同じ考え方）。
+	FindWebauthnChallenge(ctx context.Context, arg FindWebauthnChallengeParams) (FindWebauthnChallengeRow, error)
 	// ── テンプレートの複製（ApiDesign.md 5.3）─────────────────────
 	FindWorkflowTemplate(ctx context.Context, templateKey pgtype.Text) (FindWorkflowTemplateRow, error)
 	// スプリントを終える（ApiDesign.md 9.12.2）。
@@ -1054,6 +1102,19 @@ type Querier interface {
 	// LEFT JOIN agent から外れ、**認証は通るが実効権限が0件のトークンが残る。**
 	//
 	ListOwnedAgentActorIDs(ctx context.Context, ownerActorID string) ([]string, error)
+	// ListPasskeyDescriptors は excludeCredentials の材料を返す（ApiDesign.md 4.7.2）。
+	//
+	// **同じホスト名で登録したものだけを返す。** RP ID が違うパスキーは、
+	// ブラウザがそもそも同じ認証器として扱わない（Design.md 6.8.3）。
+	ListPasskeyDescriptors(ctx context.Context, arg ListPasskeyDescriptorsParams) ([]ListPasskeyDescriptorsRow, error)
+	// パスキーのクエリ（DbDesign.md 6.19、Design.md 6.8）。pb-104。
+	//
+	// **公開鍵と credential_id は、一覧のクエリで返さない。** 画面に要らず
+	// （ApiDesign.md 4.7.1）、返す口を増やすほど鍵の材料が漏れる経路が増える。
+	// 照合と登録のクエリだけが扱う。
+	// ── パスキー ──────────────────────────────────────────────
+	// ListPasskeys は本人のパスキーを返す（ApiDesign.md 4.7.1）。
+	ListPasskeys(ctx context.Context, userID string) ([]ListPasskeysRow, error)
 	// 未確認を全部引く。**起動時に使う**（pb-97 の改訂、2026-09-12）。
 	//
 	// **起動時は期限を見ない。** 締め出された人が最初に試すのは再起動であり、
@@ -1729,6 +1790,11 @@ type Querier interface {
 	//
 	// **同じ刻みのコードを2回受け付けない**という規則の保存側である（Design.md 6.7.2）。
 	TouchMfaCredentialUsed(ctx context.Context, arg TouchMfaCredentialUsedParams) error
+	// TouchPasskeyUsed はログインが通ったあとに書き戻す（DbDesign.md 6.19）。
+	//
+	// **backup_eligible は書かない。** 変わってはならない値であり、変わっていたら
+	// ライブラリの検証が先に拒んでいる。
+	TouchPasskeyUsed(ctx context.Context, arg TouchPasskeyUsedParams) error
 	// 完了しているオンステージの根を、段から降ろす（ApiDesign.md 9.12.2）。
 	//
 	// **子は staged_at を持たないので触るものが無く、親と一緒に降りる。**

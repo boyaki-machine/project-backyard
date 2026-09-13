@@ -59,6 +59,10 @@ type userDetailView struct {
 	// **配列ではなく件数だけを返す。** 画面（GuiDesign.md 5.6.2）が出すのも
 	// 件数であり、他人の端末の名前は管理に要らない。
 	MFACredentialCount int64 `json:"mfa_credential_count"`
+
+	// PasskeyCount は登録済みのパスキーの件数（pb-104。ApiDesign.md 6.3）。
+	// MFACredentialCount と同じ理由で件数だけを返す。
+	PasskeyCount int64 `json:"passkey_count"`
 }
 
 // userIdentityView は 6.3 の identities[] 要素（DbDesign.md 6.2 の user_identity）。
@@ -166,6 +170,7 @@ func buildUserDetail(ctx context.Context, q gen.Querier, actorID string) (userDe
 		ProjectMemberships: make([]userMembershipView, 0, len(memberships)),
 		Sessions:           make([]userSessionView, 0, len(sessions)),
 		MFACredentialCount: u.MfaCredentialCount,
+		PasskeyCount:       u.PasskeyCount,
 	}
 
 	for _, row := range identities {

@@ -496,6 +496,40 @@ type UserMfaCredential struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+// パスワードの代わりにログインする鍵（DbDesign.md 6.19）
+type UserPasskey struct {
+	ID                string
+	UserID            string
+	Name              string
+	CredentialID      []byte
+	PublicKey         []byte
+	RpID              string
+	AttestationType   string
+	AttestationFormat string
+	Aaguid            []byte
+	Attachment        pgtype.Text
+	Transports        []byte
+	SignCount         int64
+	UserVerified      bool
+	BackupEligible    bool
+	BackupState       bool
+	LastUsedAt        pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
+// WebAuthn の登録とログインの途中状態（DbDesign.md 6.19）
+type WebauthnChallenge struct {
+	ID         string
+	Purpose    string
+	UserID     pgtype.Text
+	Challenge  string
+	Session    []byte
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
 type Workflow struct {
 	ID          string
 	ProjectID   pgtype.Text
