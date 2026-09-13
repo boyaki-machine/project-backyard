@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  PB を launchd で常駐させる雛形（MANUAL.md「3.8 常駐させる」）。
+
+  __PB_HOME__ を、一式を置いたディレクトリの絶対パスに置き換えてから
+  ~/Library/LaunchAgents/ へ置く。ログは一式の中の pb.log に書かれる。
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>local.projectbackyard.pb</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__PB_HOME__/run.sh</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>__PB_HOME__</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>__PB_HOME__/pb.log</string>
+	<key>StandardErrorPath</key>
+	<string>__PB_HOME__/pb.log</string>
+</dict>
+</plist>

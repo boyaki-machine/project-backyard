@@ -226,7 +226,6 @@ ProjectBackyard/
 │   ├── ApiDesign.md               ← REST API 設計
 │   ├── GuiDesign.md               ← GUI 設計
 │   ├── Development.md             ← 開発環境の立ち上げ・デバッグ手順
-│   ├── Deploy.md                  ← 環境別のデプロイ手順
 │   ├── PROGRESS.md                ← 実装進捗（現況のみ）
 │   ├── history/                   ← 完了した手順の記録（decisions.md / steps.md）
 │   ├── openapi.yaml               ← 実装済みAPIの現状（ApiDesign.md 1.3）
@@ -286,9 +285,11 @@ ProjectBackyard/
     │   ├── pb.env.example         ← 出力に同梱する設定のテンプレート
     │   ├── out/                   ← .gitignore（build.sh の出力）
     │   └── secrets/               ← .gitignore（init.sh が生成。コミットしない）
-    └── prod/                      ← 配布用
-        ├── compose.yaml
-        └── build-release.sh       ← クロスコンパイル／マルチアーキイメージ
+    └── prod/                      ← 配布用（4.5）
+        ├── build-release.sh       ← make release の本体。TARGET / OS / ARCH を受けて一式を出力する
+        ├── MANUAL.md              ← 配布物の使い方。**一式に同梱する**（旧 docs/Deploy.md の予定を置き換えた）
+        ├── native/                ← TARGET=native の雛形（起動・migrate・設定・ロール作成・常駐）
+        └── compose.yaml
 ```
 
 ## 4.2 client と server を分けたまま単一プロセスで動かす
@@ -391,25 +392,61 @@ out/
 
 **「バイナリ自身に設定ファイルを読ませるのは設定機構そのものの変更であり、必要になった時点で別途扱う」と先送りしていたが、pb-2 でその時点が来た**（利用者の希望、2026-09-11）。**いまは `PB_CONFIG_FILE` が指す YAML をバイナリが直接読む**（10.3）。**`pb.env` は残る**——環境変数の層に値を流し込む道具としてで、YAML とは別の段である。
 
-**マイグレーションはリポジトリ側から適用する。** goose は `server/tools/` のツールモジュールにあり、出力一式には含まれない（`DbDesign.md` 5.1）。スキーマを進めるのは開発端末での作業であって、配置した一式の仕事ではない。
+**stg のマイグレーションはリポジトリ側から適用する。** goose は `server/tools/` のツールモジュールにあり、**stg の出力一式には含まれない**（`DbDesign.md` 5.1）。stg のスキーマを進めるのは開発端末での作業であって、配置した一式の仕事ではない。**配布用の一式（4.5）は事情が違い、goose を同梱する**——受け取った人はリポジトリを持っていない。
 
 ## 4.5 ビルドとクロスコンパイル
 
 | 目的 | 方法 |
 |---|---|
 | 開発端末で動かす | `make run`（`go run`）または `make build` |
-| コンテナで動かす | `deploy/Dockerfile`（マルチステージ）。**ビルドもコンテナ内で行うため、ホストのアーキテクチャに依存しない** |
+| **配布用の一式を作る** | **`make release TARGET=… OS=… ARCH=… [OUT=…]`** → `deploy/prod/build-release.sh`。配布物の使い方は `deploy/prod/MANUAL.md`（一式に同梱する） |
+| コンテナで動かす | `deploy/Dockerfile`（マルチステージ）。**ビルドもコンテナ内で行うため、ホストのアーキテクチャに依存しない**（pb-123 で作る） |
 | 他アーキテクチャ向けイメージ | `docker buildx build --platform linux/amd64,linux/arm64` |
-| ネイティブバイナリ配布 | `deploy/prod/build-release.sh` で `GOOS`/`GOARCH` を回す |
 
-```bash
-# build-release.sh の骨子
-for target in darwin/arm64 linux/amd64 linux/arm64; do
-  GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 \
-    go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
-    -o "dist/pb_${GOOS}_${GOARCH}" ./cmd/pb
-done
+### `make release`（pb-122）
+
+**`TARGET` で形を、`OS` と `ARCH` で行き先を選ぶ。** いま実装しているのは `native`（実行ファイルと起動スクリプト）だけで、`docker` / `compose` は pb-123、`k8s` は pb-124 で足す。
+
+| 引数 | 受ける値 | 同じ意味に読む表記 |
+|---|---|---|
+| `TARGET` | `native` | — |
+| `OS` | `darwin` / `windows` / `linux` | `mac` → `darwin` |
+| `ARCH` | `amd64` / `arm64` | `x64`・`x86_64`・`x86` → `amd64`、`m1`・`arm`・`aarch64` → `arm64` |
+| `OUT` | 出力先 | 省略すると `dist/pb-v<版>-<TARGET>-<OS>-<ARCH>` |
+
+**CPU は 64bit の2種だけを受ける**（利用者の判断、2026-09-13。pb-4）。`386`・`armv7` など 32bit を名指しする値は、理由を出して止まる。DB の公開イメージ（`pgvector/pgvector:pg17`）も amd64 / arm64 しか無い。
+
+**受けない指定は終了コード 2 で止まる。** ビルドそのものの失敗（1）と区別するため。
+
+**空でない出力先には書かない。** stg の `build.sh` は上書きするが、配布物では許さない——利用者が書き換えた起動スクリプトや設定が黙って元に戻り、動いている一式のバイナリを同じパスへ書き直すと実行中のプロセスが落ちうる。
+
+**Makefile はコマンドラインで渡された値だけを使う**（`$(origin …)`）。`OUT` は `stg-build` と共有の変数で既定値が `deploy/stg/out` なので、渡さずに叩いて stg の一式を上書きしないため。`OS` や `ARCH` は環境変数として定義されている端末があり、それを黙って拾わないため。
+
+#### native の一式
+
 ```
+<OUT>/
+├── pb（pb.exe）              client を embed した単一バイナリ
+├── goose（goose.exe）        postgres のドライバだけに絞った goose（DbDesign.md 5.1）
+├── migrations/               server/migrations/ の写し
+├── run.sh（run.ps1）          起動の入口。設定ファイル・秘密の位置・待受を渡して pb を起動する
+├── migrate.sh（migrate.ps1）  goose で migrate する
+├── migrate.conf              goose の接続先（パスワードを含まない）
+├── pb.yaml                   設定ファイル（PB_CONFIG_FILE。何も書かなくても動く）
+├── create-roles.sql          既存の PostgreSQL に DB とロールを作る（psql で1回）
+├── secrets/                  app_database_url.example / pgpass.example
+├── launchd/（darwin）・systemd/（linux）   常駐の雛形
+└── MANUAL.md                 deploy/prod/MANUAL.md の写し
+```
+
+| 決めたこと | 理由 |
+|---|---|
+| **DB は用意済みの PostgreSQL が前提で、配布物に DB を含めない**（利用者の判断、2026-09-13） | native は「実行ファイルと起動スクリプト」であり、DB の立て方は利用者の環境が決める。**要るのは PostgreSQL 17・contrib・ICU で、pgvector はまだ要らない**（`DbDesign.md` 3.1 の `vector` は Phase 3） |
+| **goose は別の実行ファイルとして同梱し、`pb` 本体に入れない**（同） | `server/go.mod` にツールの依存を持ち込まない（`DbDesign.md` 5.1）。本体へ入れる案の材料と再検討の条件は pb-4 のコメント |
+| **`pb_owner` のパスワードは passfile（`secrets/pgpass`）で渡す**（同） | goose はパスワードに `_FILE` の口を持たない。**`PGPASSFILE` にはファイルの位置だけを渡し、中身は pgx が読む**ので、パスワードが環境変数の値にも引数にも出ない |
+| **ロール作成の SQL にパスワードを書かない** | psql の `\password` が入力を画面に出さず、ハッシュにしてから送る。中身の権限の分け方は `deploy/base/initdb/01_roles.sh` と同じ（`DbDesign.md` 3.4） |
+| **起動スクリプトで `PB_BIND=127.0.0.1:8080` に固定する**（同） | PB の既定値 `0.0.0.0:8080` のままだと、平文ですべてのアドレスに出る（`Requirements.md` 10.10.2 と食い違う。pb-125）。**代償として、画面の「待受アドレス」は環境変数で固定になる** |
+| **ps1 には出力するときに UTF-8 の BOM を付ける** | Windows PowerShell 5.1 は BOM の無い `.ps1` を ANSI として読み、日本語が化ける。リポジトリ側には BOM を持たせない（差分と grep を素直に保つ）。**Windows の実機では確かめていない**（この端末に Windows も pwsh も無い） |
 
 **`CGO_ENABLED=0` で静的バイナリになる。** pgx が pure Go 実装であるため C ライブラリに依存せず、`scratch` や distroless イメージで動作する。開発端末（arm64 macOS）から Linux/amd64 向けを出すのもフラグ指定のみで済む。
 
