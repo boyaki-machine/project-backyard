@@ -316,6 +316,32 @@ SELECT t.seq, t.title, t.type, t.status_key,
   LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
  WHERE t.id = @id;
 
+-- GetTicketEpicAncestor は 9.5.1 の epic（pb-14）を引く——祖先をたどって最初に
+-- 見つかるエピック。**自分自身は数えない**（エピックの詳細では、その上のエピック）。
+-- 無ければ 0行で、呼び出し側が null にする。
+--
+-- up の1行は「深さ depth の行の親」を持つ。**深さに上限を置く**のは
+-- GetDisplayRootForStaging と同じ理由（万一の循環で要求が返らなくなるのを避ける）。
+-- name: GetTicketEpicAncestor :one
+WITH RECURSIVE up AS (
+  SELECT t.parent_id, 0 AS depth
+    FROM ticket t
+   WHERE t.id = @ticket_id
+  UNION ALL
+  SELECT p.parent_id, up.depth + 1
+    FROM ticket p JOIN up ON p.id = up.parent_id
+   WHERE up.depth < 32
+)
+SELECT t.seq, t.title, t.type, t.status_key,
+       ws.name AS status_name, ws.category AS status_category
+  FROM up
+  JOIN ticket t ON t.id = up.parent_id
+  JOIN project p ON p.id = t.project_id
+  LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
+ WHERE t.type = 'epic'
+ ORDER BY up.depth
+ LIMIT 1;
+
 -- ListTicketChildrenBrief は 9.5.1 の children（直下の子だけ。孫は含めない）。
 -- name: ListTicketChildrenBrief :many
 SELECT c.seq, c.title, c.type, c.status_key,

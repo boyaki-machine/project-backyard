@@ -178,6 +178,90 @@ func TestGetTicketReturnsDetailShape(t *testing.T) {
 	if view["parent"] != nil {
 		t.Errorf("parent = %v, want null（親を持たない行）", view["parent"])
 	}
+	// epic（pb-14）は**キーごと在って null**。親が無ければ祖先もたどらない。
+	if v, ok := view["epic"]; !ok || v != nil {
+		t.Errorf("epic = %v（在る=%v）, want null（親を持たない行）", v, ok)
+	}
+	if slices.Contains(q.opLog, "GetTicketEpicAncestor") {
+		t.Error("親が無いのに祖先のエピックを引いた")
+	}
+}
+
+// ── 9.5.1 epic（pb-14）──────────────────────────────────────
+
+// detailWithParent は seq=31 の親を seq=12 にしたフェイクを返す。parentType が親の種別。
+func detailWithParent(parentType string) *fakeQuerier {
+	q := ticketDetailFake()
+	row := ticketDetailRow()
+	row.ParentSeq = pgtype.Int4{Int32: 12, Valid: true}
+	q.ticket.bySeq[31] = row
+	q.ticket.idBySeq[12] = testTicketID4
+	q.ticket.briefByID[testTicketID4] = gen.GetTicketBriefRow{
+		Seq: 12, Title: "認証", Type: parentType, StatusKey: "todo",
+		StatusName: txt("未着手"), StatusCategory: txt("todo"),
+	}
+	return q
+}
+
+func epicSeqOf(t *testing.T, view map[string]any) any {
+	t.Helper()
+	e, ok := view["epic"].(map[string]any)
+	if !ok {
+		return view["epic"]
+	}
+	return e["seq"]
+}
+
+// 親がエピックなら、それが答えである。**祖先をたどる往復を足さない。**
+func TestGetTicketEpicIsParentWhenParentIsEpic(t *testing.T) {
+	q := detailWithParent("epic")
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.getTicket(rec, detailReq(http.MethodGet, "/api/v1/projects/demo/tickets/31", "", "31"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if got := epicSeqOf(t, viewOf(t, rec)); got != float64(12) {
+		t.Errorf("epic.seq = %v, want 12（親そのもの）", got)
+	}
+	if slices.Contains(q.opLog, "GetTicketEpicAncestor") {
+		t.Error("親がエピックなのに祖先をたどった")
+	}
+}
+
+// 親がエピックでなければ、祖先をたどった結果が入る。
+func TestGetTicketEpicWalksAncestorsWhenParentIsNotEpic(t *testing.T) {
+	q := detailWithParent("story")
+	q.ticket.epicAncestorByID = map[string]gen.GetTicketEpicAncestorRow{
+		testTicketID: {Seq: 9, Title: "認証基盤", Type: "epic", StatusKey: "todo",
+			StatusName: txt("未着手"), StatusCategory: txt("todo")},
+	}
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.getTicket(rec, detailReq(http.MethodGet, "/api/v1/projects/demo/tickets/31", "", "31"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if got := epicSeqOf(t, viewOf(t, rec)); got != float64(9) {
+		t.Errorf("epic.seq = %v, want 9（祖先のエピック）", got)
+	}
+}
+
+// 祖先にエピックが無いのは誤りではない。**0行を 500 にしない。**
+func TestGetTicketEpicIsNullWhenNoAncestorEpic(t *testing.T) {
+	q := detailWithParent("story")
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.getTicket(rec, detailReq(http.MethodGet, "/api/v1/projects/demo/tickets/31", "", "31"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if got := epicSeqOf(t, viewOf(t, rec)); got != nil {
+		t.Errorf("epic = %v, want null", got)
+	}
+	if !slices.Contains(q.opLog, "GetTicketEpicAncestor") {
+		t.Error("祖先をたどっていない（null の理由が検証になっていない）")
+	}
 }
 
 // **comment_count は 0 固定ではない。** 遷移がコメントを作る以上、

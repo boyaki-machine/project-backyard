@@ -805,6 +805,13 @@ type Querier interface {
 	GetTicketComment(ctx context.Context, arg GetTicketCommentParams) (GetTicketCommentRow, error)
 	// 1件だけ返す形。POST / PATCH の応答（9.9）と、更新前の読み取りに使う。
 	GetTicketDoDItem(ctx context.Context, arg GetTicketDoDItemParams) (GetTicketDoDItemRow, error)
+	// GetTicketEpicAncestor は 9.5.1 の epic（pb-14）を引く——祖先をたどって最初に
+	// 見つかるエピック。**自分自身は数えない**（エピックの詳細では、その上のエピック）。
+	// 無ければ 0行で、呼び出し側が null にする。
+	//
+	// up の1行は「深さ depth の行の親」を持つ。**深さに上限を置く**のは
+	// GetDisplayRootForStaging と同じ理由（万一の循環で要求が返らなくなるのを避ける）。
+	GetTicketEpicAncestor(ctx context.Context, ticketID string) (GetTicketEpicAncestorRow, error)
 	// GetTicketLink は1件を、**このチケットに紐づいているかを含めて**引く。
 	//
 	// **source と target のどちらでもよい。** DELETE は direction を問わないため
