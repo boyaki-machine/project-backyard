@@ -1,0 +1,114 @@
+# compose.yaml — PB を docker compose で動かす一式（make release TARGET=compose が出力した）
+#
+# 使い方は MANUAL.md の4章。最初の1回は次の順に実行する。
+#
+#   docker load -i project-backyard-<版>-linux-<CPU>.tar   イメージを取り込む（PUSH で作った一式なら不要）
+#   ./init.sh                                            秘密を乱数で作る
+#   docker compose up -d                                 db → migrate → app の順に起動する
+#   docker compose run --rm app admin create             初期管理者を作る
+#
+# 画面は http://localhost:8080 。**DB のポートは外へ出さない。**
+# **app の healthcheck は持たない。** 健全かは curl -s http://localhost:8080/healthcheck で見る。
+#
+# 用意済みの PostgreSQL へ繋ぐときは、ファイル末尾の「外部の PostgreSQL へ繋ぐとき」を読む。
+
+# compose のプロジェクト名。コンテナ・ネットワーク・ボリュームの名前の頭に付く。
+# **開発用の compose（project-backyard）と分けてある**——同じ名前だと DB のボリュームを共有する。
+name: pb-prod
+
+services:
+  # ── DB（公開イメージ。PB の配布物には含まない）──────────────
+  # 外部の PostgreSQL へ繋ぐときは、このサービスを丸ごと消す。
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pb
+      POSTGRES_USER: pb_owner
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: UTC
+      PGTZ: UTC
+    secrets:
+      - db_password
+      - app_db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # pb_app のロールを作る。**pgdata が空の初回起動でしか走らない。**
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pb_owner -d pb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ── スキーマを進める ───────────────────────────────────
+  # 起動のたびに走り、適用済みなら何も変えずに終わる。app はこれの成功を待つ。
+  # **パスワードは passfile（secrets/pgpass）で渡す。** 接続先にパスワードを書かない。
+  migrate:
+    image: __PB_IMAGE__
+    entrypoint: ["/goose", "-dir", "/migrations", "postgres", "postgres://pb_owner@db:5432/pb?sslmode=disable", "up"]
+    # 外部の PostgreSQL へ繋ぐときは、上の entrypoint を消して次の3行を使う（ホストとポートを直す）:
+    # entrypoint: ["/goose", "-dir", "/migrations", "postgres", "postgres://pb_owner@host.docker.internal:5432/pb?sslmode=disable", "up"]
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    environment:
+      PGPASSFILE: /run/secrets/pgpass
+    secrets:
+      - pgpass
+    # 外部の PostgreSQL へ繋ぐときは、次の3行を消す。
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # ── PB 本体 ─────────────────────────────────────────────
+  app:
+    image: __PB_IMAGE__
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # 外部の PostgreSQL が同じ端末で動いているときは、次の2行のコメントを外す:
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    # **第2層（ログ・Cookie など）の設定をここに書かない。** 書くと画面から変えられなくなる。
+    # 待受（PB_BIND=0.0.0.0:8080）はイメージが決めている。外への公開範囲は ports で決める。
+    environment:
+      PB_DATABASE_URL_FILE: /run/secrets/app_database_url
+      TZ: UTC
+    secrets:
+      - app_database_url
+    ports:
+      # この端末からだけ届く。外へ出すなら、先に TLS を有効にする（MANUAL.md 3.10）。
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  pgdata:
+
+# 秘密は init.sh が作る。**secrets/ は 700、中のファイルは 644**（MANUAL.md 4.3）。
+# docker compose は secrets の uid・mode の指定を無視するので、コンテナの中の利用者
+# （pb は uid 65532、DB は postgres）が読めるようにファイルの権限で開けておく。
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  app_db_password:
+    file: ./secrets/app_db_password
+  app_database_url:
+    file: ./secrets/app_database_url
+  pgpass:
+    file: ./secrets/pgpass
+
+# ── 外部の PostgreSQL へ繋ぐとき ─────────────────────────────
+#
+# 1. **外部の PostgreSQL に create-roles.sql を1回だけ流す**（MANUAL.md 3.3）。
+#    initdb/01_roles.sh は上の db サービスの初回起動でしか走らないので、
+#    外部の PostgreSQL ではロールを自分で作る必要がある。
+# 2. db サービスを丸ごと消し、migrate の depends_on（3行）を消す。
+# 3. migrate の entrypoint を、コメントアウトしてある外部用の行に差し替える。
+#    ホストとポートは「コンテナの中から見た」ものにする（127.0.0.1 はコンテナ自身を指す）。
+#    同じ端末の PostgreSQL なら host.docker.internal を使い、migrate と app の extra_hosts を有効にする。
+# 4. ./init.sh は使わず、secrets/ を手で作る（MANUAL.md 4.5）。
+#    - secrets/pgpass            *:*:*:pb_owner:<create-roles.sql で入力した pb_owner のパスワード>
+#    - secrets/app_database_url  postgres://pb_app:<pb_app のパスワード>@<ホスト>:<ポート>/pb?sslmode=disable&application_name=pb
+#    - secrets/db_password と secrets/app_db_password は、中身が空のファイルでよい（使わないが、上の secrets の定義が参照する）

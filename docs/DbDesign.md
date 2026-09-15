@@ -136,18 +136,16 @@ services:
     image: project-backyard:dev
     build:
       context: ../..                 # リポジトリルート（client/ と server/ を含む）
-      dockerfile: deploy/Dockerfile  # `Design.md` 4.1
+      dockerfile: deploy/Dockerfile  # `Design.md` 4.5（pb-123）。dev の make up は db だけを起動する
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+    # 第2層（ログ形式・ログレベル・ヘルスチェックのバージョン表示・Cookie の Secure）を
+    # ここに書かない（`Design.md` 10.3）。書くと画面から変更できなくなる
     environment:
       PB_BIND: "0.0.0.0:8080"
       PB_DATABASE_URL_FILE: /run/secrets/app_database_url
-      PB_LOG_FORMAT: json            # 標準出力へ構造化JSON（`Design.md` 10.1）
-      PB_LOG_LEVEL: info
-      PB_HEALTH_SHOW_VERSION: "false" # `ApiDesign.md` 2.11
-      PB_COOKIE_SECURE: "false"       # HTTPS 提供時は true（`Design.md` 6.2.1）
       TZ: UTC
     secrets:
       - app_database_url
@@ -173,7 +171,8 @@ secrets:
 - パスワードは環境変数に直接書かず `*_FILE` で渡す。**`docker inspect` や `ps` で見えないようにするため**
 - `deploy/<env>/secrets/` は `.gitignore` に含める（`.example` のみコミット）
 - `healthcheck` + `depends_on: condition: service_healthy` により、DB起動前のマイグレーション失敗を防ぐ
-- **`build.context` はリポジトリルートを指す。** compose ファイルの位置（`deploy/base/`）ではない。`deploy/Dockerfile` は `client/` と `server/` の双方をマルチステージでビルドするため、両方を含むルートを渡す必要がある（`Design.md` 4.1、4.5）
+- **`build.context` はリポジトリルートを指す。** compose ファイルの位置（`deploy/base/`）ではない。`deploy/Dockerfile` は `client/` と `server/` の双方をマルチステージでビルドするため、両方を含むルートを渡す必要がある（`Design.md` 4.1、4.5）。**材料として送るのは `VERSION`・`client/`・`server/` だけ**で、ルートの `.dockerignore` が名指しで許している
+- **dev では app を起動しない。** `make up` は db だけで、PB 本体は `make run` でホストから動かす（`Development.md` 2.2）。**配布用の compose は `deploy/prod/compose/` にあり、base に重ねず単体で動く**（受け取った人は base を持たない。`Design.md` 4.5）
 
 `deploy/dev/secrets/` に置くファイル：
 

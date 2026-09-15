@@ -2433,3 +2433,14 @@ pb-50 が `context_pack.go`、pb-67 が `schema.d.ts`、pb-62 が `routes.ts` �
 差は、前置きに増えた「判断の記録は目次だけ」の1行（+77字）と、目次の1字である。**見積りは判断の記録の
 節の差だけを引いており、前置きの増分を数えていなかった。**
 
+## コンテナイメージと docker／compose の一式（2026-09-15、pb-123）
+
+**`deploy/Dockerfile` と `make release TARGET=docker|compose` を作った。** 判断の経緯と実測値は PB のチケット
+#123 のコメントにある。**ここにはリポジトリの約束に効くことだけを残す。**
+
+### 消化した引き継ぎ
+
+| 送られていたもの | どう決着したか |
+|---|---|
+| **`[Dockerfile を作る手順]`** `make up` の対象を全サービスへ戻す／`healthcheck` を足すか。`/healthcheck` は SPA フォールバックの例外 | **`deploy/Dockerfile` を作った**（配布用。`Design.md` 4.5）。**`make up` は db だけのまま**——dev は PB 本体を `make run` でホストから動かしており、app のコンテナまで上げると 8080 番でぶつかる。**コンテナの healthcheck は持たない**（利用者の判断、2026-09-15）——distroless に `/healthcheck` を叩くコマンドが無く、叩き役（`pb healthcheck`）も足さない。健全かは外から `/healthcheck` を見る。**2026-08-12 に残した「`pb healthcheck` サブコマンドを足す案」はこれで畳んだ。** 再検討の条件は、**compose に「app が健全になってから」を待つサービスを足すとき**。`/healthcheck` が SPA フォールバックの例外であることは実装済み（`ApiDesign.md` 2.11） |
+

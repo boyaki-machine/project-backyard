@@ -216,6 +216,7 @@ ProjectBackyard/
 ├── CLAUDE.md                      ← エージェント向け常時コンテキスト（ポインタのみ）
 ├── LEARNINGS.md                   ← 進め方の教訓（開始時に読む。**追跡対象外**。11.0）
 ├── Makefile                       ← 開発・ビルドの入口
+├── .dockerignore                  ← docker build に送る材料を VERSION・client/・server/ に絞る（4.5）
 ├── .claude/commands/              ← 実装ステップ用のスラッシュコマンド
 │
 ├── docs/                          ← 設計・運用に関する文書はすべてここ
@@ -268,7 +269,7 @@ ProjectBackyard/
 │   └── dist/                      ← .gitignore
 │
 └── deploy/                        ← 環境別の実行設定
-    ├── Dockerfile                 ← マルチステージ（client build → server build → 実行）
+    ├── Dockerfile                 ← 配布用イメージ。client → pb と goose → 実行（distroless nonroot）の3段（4.5。pb-123）
     ├── base/                      ← 全環境で共通のもの（4.3）
     │   ├── compose.yaml
     │   ├── initdb/01_roles.sql    ← DBロール分離（DbDesign 3.4）
@@ -289,7 +290,8 @@ ProjectBackyard/
         ├── build-release.sh       ← make release の本体。TARGET / OS / ARCH を受けて一式を出力する
         ├── MANUAL.md              ← 配布物の使い方。**一式に同梱する**（旧 docs/Deploy.md の予定を置き換えた）
         ├── native/                ← TARGET=native の雛形（起動・migrate・設定・ロール作成・常駐）
-        └── compose.yaml
+        ├── docker/                ← TARGET=docker の雛形（docker run で起動・migrate する例）
+        └── compose/               ← TARGET=compose の雛形（compose.yaml と、秘密を作る init.sh）
 ```
 
 ## 4.2 client と server を分けたまま単一プロセスで動かす
@@ -322,7 +324,7 @@ build: sync-webui                   # 単一バイナリ
 
 ## 4.3 deploy/base に置くもの
 
-「全環境で同じ」ものを `base/` に集約し、環境ごとの差分のみを `dev/` `stg/` `prod/` に置く。docker compose は複数ファイルの重ね合わせに対応している。
+「全環境で同じ」ものを `base/` に集約し、環境ごとの差分のみを `dev/` `stg/` に置く。docker compose は複数ファイルの重ね合わせに対応している。**配布用の `prod/compose/` は base に重ねず、単体で動く**——受け取った人は base を持たない（4.5）。
 
 ```
 docker compose -f deploy/base/compose.yaml -f deploy/dev/compose.yaml up -d
@@ -335,7 +337,7 @@ docker compose -f deploy/base/compose.yaml -f deploy/dev/compose.yaml up -d
 | `base/env.example` | 必要な環境変数の一覧と説明。**第1層と第2層に分けてある**（10.3） |
 | `base/pb.yaml.example` | **設定ファイル（YAML）の雛形。** `PB_CONFIG_FILE` で位置を渡す（10.3）。任意——置かなくても環境変数と既定値で動く |
 | `dev/compose.yaml` | ポートを `127.0.0.1` に公開、ログ詳細化、ソースのバインドマウント、開発用シード |
-| `prod/compose.yaml` | イメージタグ固定、バインドマウントなし、`restart: always`、リソース制限 |
+| `prod/compose/compose.yaml` | **配布用。base に重ねず単体で動く。** イメージの参照は `make release` が埋め、DB のポートは外へ出さない。秘密は同梱の `init.sh` が作る（4.5） |
 
 **`base/` の中身が育つまでは、`dev/compose.yaml` 単体で始めてよい。** 環境が1つしかない段階で共通化を先取りすると、共通部分の判断材料がないまま構造だけが増える。
 
@@ -353,7 +355,7 @@ docker compose -f deploy/base/compose.yaml -f deploy/dev/compose.yaml up -d
 
 **分離は compose プロジェクトの単位で行う。** `deploy/dev/reset.sh` は `docker compose down -v` を実行して pgdata ボリュームごと破棄するため、**同じコンテナ内で DB 名を分けても `make dev-reset` 1回で消える**。compose プロジェクト名を分けると、コンテナ・ネットワーク・ボリュームが名前空間ごと分かれる。
 
-**PB 本体をコンテナにしない。** client を embed した単一バイナリを作れる構成（3.4）であり、`stg` に必要なのは「壊れず動き続けること」だけで、コンテナの利点（再現性・隔離）は開発端末上では効きが薄い。`deploy/Dockerfile` の作成は Phase 2 の前提から外れた。
+**stg の PB 本体はコンテナにしない。** client を embed した単一バイナリを作れる構成（3.4）であり、`stg` に必要なのは「壊れず動き続けること」だけで、コンテナの利点（再現性・隔離）は開発端末上では効きが薄い。**配布用のコンテナイメージは pb-123 で `deploy/Dockerfile` として作った**（4.5）が、stg はネイティブの一式のまま動かす。
 
 **データの置き場も分ける。** compose プロジェクトを分けた帰結として、pgdata は `dev` の `project-backyard_pgdata` とは**別の名前付きボリューム `pb-stg_pgdata`** になる。同じボリュームを共有しない以上、`dev` 側の `down -v` は `stg` に届かない。
 
@@ -399,20 +401,21 @@ out/
 | 目的 | 方法 |
 |---|---|
 | 開発端末で動かす | `make run`（`go run`）または `make build` |
-| **配布用の一式を作る** | **`make release TARGET=… OS=… ARCH=… [OUT=…]`** → `deploy/prod/build-release.sh`。配布物の使い方は `deploy/prod/MANUAL.md`（一式に同梱する） |
-| コンテナで動かす | `deploy/Dockerfile`（マルチステージ）。**ビルドもコンテナ内で行うため、ホストのアーキテクチャに依存しない**（pb-123 で作る） |
-| 他アーキテクチャ向けイメージ | `docker buildx build --platform linux/amd64,linux/arm64` |
+| **配布用の一式を作る** | **`make release TARGET=… OS=… ARCH=… [OUT=…] [PUSH=…]`** → `deploy/prod/build-release.sh`。配布物の使い方は `deploy/prod/MANUAL.md`（一式に同梱する） |
+| コンテナで動かす | `deploy/Dockerfile`（3段）。**ビルドもコンテナの中で行うため、この端末の Go と Node を使わない。** `make release TARGET=docker\|compose` が呼ぶ（pb-123） |
+| 他アーキテクチャ向けイメージ | `make release … ARCH=amd64\|arm64`。**1回に1つの CPU。** ビルドの段を `$BUILDPLATFORM` で動かしてクロスコンパイルするので、エミュレーションは要らない |
 
-### `make release`（pb-122）
+### `make release`（pb-122・pb-123）
 
-**`TARGET` で形を、`OS` と `ARCH` で行き先を選ぶ。** いま実装しているのは `native`（実行ファイルと起動スクリプト）だけで、`docker` / `compose` は pb-123、`k8s` は pb-124 で足す。
+**`TARGET` で形を、`OS` と `ARCH` で行き先を選ぶ。** 実装しているのは `native`（実行ファイルと起動スクリプト。pb-122）と `docker` / `compose`（コンテナイメージと一式。pb-123）で、`k8s` は pb-124 で足す。
 
 | 引数 | 受ける値 | 同じ意味に読む表記 |
 |---|---|---|
-| `TARGET` | `native` | — |
-| `OS` | `darwin` / `windows` / `linux` | `mac` → `darwin` |
+| `TARGET` | `native` / `docker` / `compose` | — |
+| `OS` | `darwin` / `windows` / `linux`。**docker / compose は `linux` だけで、省いてよい** | `mac` → `darwin` |
 | `ARCH` | `amd64` / `arm64` | `x64`・`x86_64`・`x86` → `amd64`、`m1`・`arm`・`aarch64` → `arm64` |
 | `OUT` | 出力先 | 省略すると `dist/pb-v<版>-<TARGET>-<OS>-<ARCH>` |
+| `PUSH` | docker / compose だけ。イメージを tar に出す代わりに、このレジストリへ送る | — |
 
 **CPU は 64bit の2種だけを受ける**（利用者の判断、2026-09-13。pb-4）。`386`・`armv7` など 32bit を名指しする値は、理由を出して止まる。DB の公開イメージ（`pgvector/pgvector:pg17`）も amd64 / arm64 しか無い。
 
@@ -447,6 +450,29 @@ out/
 | **ロール作成の SQL にパスワードを書かない** | psql の `\password` が入力を画面に出さず、ハッシュにしてから送る。中身の権限の分け方は `deploy/base/initdb/01_roles.sh` と同じ（`DbDesign.md` 3.4） |
 | **起動スクリプトで `PB_BIND=127.0.0.1:8080` に固定する**（同） | PB の既定値 `0.0.0.0:8080` のままだと、平文ですべてのアドレスに出る（`Requirements.md` 10.10.2 と食い違う。pb-125）。**代償として、画面の「待受アドレス」は環境変数で固定になる** |
 | **ps1 には出力するときに UTF-8 の BOM を付ける** | Windows PowerShell 5.1 は BOM の無い `.ps1` を ANSI として読み、日本語が化ける。リポジトリ側には BOM を持たせない（差分と grep を素直に保つ）。**Windows の実機では確かめていない**（この端末に Windows も pwsh も無い） |
+
+#### docker / compose の一式（pb-123）
+
+**イメージ**は `deploy/Dockerfile` の3段（client → pb と goose → 実行）で作る。中身は `/pb`（入口。既定の引数は `serve`）・`/goose`（postgres のドライバだけ）・`/migrations`。実行の段は `gcr.io/distroless/static-debian12:nonroot` で、利用者は uid 65532。
+
+| | compose | docker |
+|---|---|---|
+| イメージ | `project-backyard-<版>-linux-<CPU>.tar`（`PUSH` のときは無し） | 同じ |
+| 起動 | `compose.yaml`（db＝公開イメージ `pgvector/pgvector:pg17`・migrate・app） | `run.sh`（`docker run` の例） |
+| スキーマ | compose の migrate サービス（同じイメージの `/goose`。起動のたびに走る） | `migrate.sh`（同じイメージの `/goose`） |
+| 秘密 | `init.sh` が乱数で作る | 見本を複製して手で書く |
+| DB | 同梱の DB サービス。**外部の PostgreSQL へ繋ぐ手順を `compose.yaml` にコメントで併記** | 用意済みの PostgreSQL（`create-roles.sql`） |
+
+| 決めたこと | 理由 |
+|---|---|
+| **nonroot（uid 65532）で動かし、秘密ファイルはディレクトリ 700・ファイル 644 で置く**（利用者の判断、2026-09-15） | コンテナの利用者に読ませるには、ファイルの権限で開けるしかない——**compose は secrets の `uid`・`mode` を無視する**（v5.3.1 で実測）。**700 のディレクトリごと渡すと 644 でも読めない**ので、ファイルを1つずつ渡す。Linux の権限は Rancher Desktop の VM の中で本物のイメージを使って実測した（mac の共有パスは所有者が書き換わり、違いが見えない） |
+| **コンテナの healthcheck を持たない**（同） | distroless に `/healthcheck` を叩くコマンドが無く、叩き役（`pb healthcheck`）も足さない。健全かは外から見る。再検討の条件は `history/decisions.md`「コンテナイメージと docker／compose の一式」 |
+| **tar は buildx の `type=docker`** | `docker load` のほか nerdctl や podman も読める。`type=oci` もこの端末では `docker load` で読めたが、取り込める相手の広さで選んだ |
+| **`pb_owner` のパスワードは passfile で渡す** | native と揃える。compose では秘密の1つとして渡し、`PGPASSFILE` にその位置を入れる |
+| **`.dockerignore` は送るものを名指しで許す**（`VERSION`・`client/`・`server/`） | 除く形だと、あとから増えた秘密（`deploy/*/secrets/` など）を送り漏らしうる |
+| **compose のプロジェクト名は `pb-prod` で、DB のポートは外へ出さない** | dev の compose（`project-backyard`）と同じ名前だと、同じ端末で DB のボリュームを共有する。DB へは compose の中からだけ繋ぐ |
+| **イメージに `ENV PB_BIND=0.0.0.0:8080` を持たせる** | PB の既定値が変わっても（pb-125）、コンテナの外から届かなくならない。公開範囲は `-p` と `ports` で決める。**画面の「待受アドレス」は環境変数で固定になる** |
+| **`make up` は db だけのまま** | dev は PB 本体を `make run` でホストから動かす。app のコンテナまで上げると 8080 番でぶつかる（`Development.md` 2.2） |
 
 **`CGO_ENABLED=0` で静的バイナリになる。** pgx が pure Go 実装であるため C ライブラリに依存せず、`scratch` や distroless イメージで動作する。開発端末（arm64 macOS）から Linux/amd64 向けを出すのもフラグ指定のみで済む。
 

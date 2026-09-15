@@ -13,6 +13,10 @@
    3.4 秘密を置く          3.9 設定を変える
    3.5 スキーマを作る      3.10 端末の外へ出す
 4. コンテナ（docker / compose）
+   4.1 イメージと一式の中身              4.5 compose で外部の PostgreSQL へ繋ぐ
+   4.2 イメージを取り込む・登録する      4.6 docker 単体で動かす
+   4.3 秘密ファイルの権限                4.7 新しい版へ入れ替える
+   4.4 compose で動かす                  4.8 つまずいたとき
 5. Kubernetes
 ```
 
@@ -23,29 +27,34 @@
 | TARGET | 出力されるもの | DB | この版 |
 |---|---|---|---|
 | `native` | 実行ファイルと起動スクリプト（mac / Windows / Linux） | **用意済みの PostgreSQL に繋ぐ** | 使える |
-| `docker` | コンテナイメージ | 用意済みの PostgreSQL に繋ぐ | まだ無い |
-| `compose` | コンテナイメージと compose 一式 | DB コンテナを立てるサンプル付き | まだ無い |
+| `docker` | コンテナイメージと、`docker run` で動かすスクリプト | **用意済みの PostgreSQL に繋ぐ** | 使える |
+| `compose` | コンテナイメージと compose 一式 | **DB のコンテナも一緒に立てる**（外部の PostgreSQL へ繋ぐこともできる） | 使える |
 | `k8s` | コンテナイメージとマニフェスト | DB を立てるサンプル付き | まだ無い |
 
-**どの形でも、PB の配布物に DB は入っていない。**
+**どの形でも、PB の配布物に DB は入っていない。** compose が立てる DB は、公開イメージ
+`pgvector/pgvector:pg17` を起動時に取りに行く。
 
 ---
 
 ## 2. 一式を作る（リポジトリで）
 
-リポジトリの直下で実行する。Go と Node.js が要る（リポジトリの `docs/Development.md` 1章）。
+リポジトリの直下で実行する。
 
 ```
 make release TARGET=native OS=<darwin|windows|linux> ARCH=<amd64|arm64> [OUT=<出力先>]
+make release TARGET=<docker|compose> ARCH=<amd64|arm64> [OUT=<出力先>] [PUSH=<レジストリ>/<名前>:<タグ>]
 ```
 
 | 引数 | 指定できる値 | 同じ意味に読む表記 |
 |---|---|---|
-| `TARGET` | `native` | — |
-| `OS` | `darwin` / `windows` / `linux` | `mac` → `darwin` |
+| `TARGET` | `native` / `docker` / `compose` | — |
+| `OS` | `darwin` / `windows` / `linux`。**docker / compose は `linux` だけで、省いてよい** | `mac` → `darwin` |
 | `ARCH` | `amd64` / `arm64` | `x64`・`x86_64`・`x86` → `amd64`、`m1`・`arm`・`aarch64` → `arm64` |
 | `OUT` | 出力先のディレクトリ | 省略すると `dist/pb-v<版>-<TARGET>-<OS>-<ARCH>` |
+| `PUSH` | docker / compose だけ。イメージを tar に出す代わりに、このレジストリへ送る（4.2） | — |
 
+- **要るもの**：native は Go と Node.js（リポジトリの `docs/Development.md` 1章）。
+  **docker / compose は Docker（buildx）だけ**——ビルドはイメージの中で行う
 - **CPU は 64bit の2種だけ。** `386` や `armv7` など 32bit を指定すると、理由を表示して止まる
 - **空でない出力先には書かない。** 作り直すときは、出力先を消してから実行する
 - 指定の誤りで止まったときの終了コードは 2、ビルドそのものが失敗したときは 1
@@ -289,7 +298,204 @@ mv <新しい一式> <今の一式>
 
 ## 4. コンテナ（docker / compose）
 
-**まだ用意していない。**
+**手順の流れ（compose）**：4.2 イメージを取り込む → 4.4 秘密を作って起動する。
+**手順の流れ（docker 単体）**：4.2 イメージを取り込む → 4.6 用意済みの PostgreSQL に繋いで起動する。
+**先に 4.3（秘密ファイルの権限）を読む。**
+
+### 4.1 イメージと一式の中身
+
+**イメージ `project-backyard:<版>`**
+
+| 中身 | 役目 |
+|---|---|
+| `/pb` | PB 本体（画面も入った単一の実行ファイル）。コンテナの入口で、既定の引数は `serve` |
+| `/goose` | スキーマを進める道具（postgres のドライバだけ） |
+| `/migrations/` | スキーマの定義 |
+
+- **利用者は uid 65532（root ではない）。** シェルも `curl` も入っていない
+- **コンテナの中の待受は `0.0.0.0:8080`** で、イメージが環境変数 `PB_BIND` で決めている（画面では
+  「環境変数で固定」と表示される）。**外への公開範囲は `-p` や compose の `ports` で決める**
+- **CPU ごとに別のイメージである。** amd64 の端末には amd64 の、arm64 の端末には arm64 の一式を使う
+- **コンテナの healthcheck は持たない。** 健全かは外から `curl -s http://localhost:8080/healthcheck` で見る
+  （`{"status":"OK"}` が返る）
+
+**compose の一式**
+
+```
+<一式>/
+├── project-backyard-<版>-linux-<CPU>.tar   イメージ（PUSH で作った一式には無い）
+├── compose.yaml         db・migrate・app の3サービス
+├── init.sh              秘密を乱数で作る（最初の1回だけ）
+├── initdb/01_roles.sh   DB の初回起動で pb_app のロールを作る
+├── create-roles.sql     外部の PostgreSQL へ繋ぐときに使う（4.5）
+└── MANUAL.md            この文書
+```
+
+**docker の一式**
+
+```
+<一式>/
+├── project-backyard-<版>-linux-<CPU>.tar   イメージ（PUSH で作った一式には無い）
+├── run.sh               docker run で PB を起動する
+├── migrate.sh           docker run で goose を流す
+├── migrate.conf         goose の接続先（パスワードは書かない）
+├── create-roles.sql     用意済みの PostgreSQL に DB とロールを作る（3.3）
+├── secrets/             app_database_url.example / pgpass.example
+└── MANUAL.md            この文書
+```
+
+### 4.2 イメージを取り込む・登録する
+
+**tar は `docker load` で取り込める形式である**（buildx の `type=docker` で書き出したもの）。
+
+```
+docker load -i project-backyard-<版>-linux-<CPU>.tar     # project-backyard:<版> として取り込まれる
+```
+
+**自分のレジストリへ登録する**には、取り込んだイメージに名前を付けて送る。
+
+```
+docker tag  project-backyard:<版>  registry.example.com/pb:<版>
+docker push registry.example.com/pb:<版>
+```
+
+**一式を作るときに、tar を出さずに直接送る**こともできる（`PUSH`）。
+
+```
+make release TARGET=compose ARCH=amd64 PUSH=registry.example.com/pb:<版>
+```
+
+- **送る先には、先に `docker login` しておく**
+- **`PUSH` で作った一式には tar が入らない。** `compose.yaml`（docker の一式なら `run.sh` と `migrate.sh`）が
+  そのレジストリのイメージを指す。起動するときにそこから取りに行く
+- **CPU ごとに1つずつ送る。** amd64 と arm64 を1つの名前にまとめるには、docker-container ドライバの
+  builder で `docker buildx build --platform linux/amd64,linux/arm64 --push` を実行する。**この手順は確かめていない**
+
+### 4.3 秘密ファイルの権限
+
+**`secrets/` ディレクトリは 700、中のファイルは 644 にする。** compose の `init.sh` はこの形で作る。
+
+| 権限 | 理由 |
+|---|---|
+| **ファイル 644** | コンテナの中の利用者（PB は uid 65532、DB は postgres）が読めるようにする。**docker compose は secrets の `uid`・`mode` の指定を無視する**ので、ファイルの権限で開けるしかない |
+| **ディレクトリ 700** | この端末の他のユーザを閉め出す。コンテナへはファイルを1つずつ渡すので、ディレクトリが 700 でもコンテナからは読める |
+
+- **ディレクトリを 700 より緩めない。** ファイルは 644 なので、ディレクトリが開くと他のユーザから秘密が読める
+- **`secrets/` をディレクトリごとコンテナへ渡さない。** 700 のディレクトリを、コンテナの中の利用者は開けない
+- **mac と Windows の Docker Desktop・Rancher Desktop では、権限が違っていても動いてしまう**
+  （共有したファイルの所有者が、コンテナの利用者に書き換わって見える）。**Linux のサーバへ移したときに
+  初めて `permission denied` になる**ので、最初からこの形で置く
+
+### 4.4 compose で動かす
+
+一式のディレクトリで、最初の1回は次の順に実行する。
+
+```
+docker load -i project-backyard-<版>-linux-<CPU>.tar   # 4.2（PUSH で作った一式なら不要）
+./init.sh                                            # 秘密を乱数で作る
+docker compose up -d                                 # db → migrate → app の順に起動する
+docker compose run --rm app admin create             # 初期管理者を作る
+```
+
+- **画面は `http://localhost:8080`**（`localhost` で開く。3.7）
+- **migrate は起動のたびに走り、適用済みなら何も変えずに終わる。** app は migrate の成功を待って起動する
+- **DB のポートは外へ出していない。** DB に入るなら `docker compose exec db psql -U pb_owner -d pb`
+- **compose のプロジェクト名は `pb-prod`** で、コンテナとデータのボリューム（`pb-prod_pgdata`）の名前の頭に付く
+
+| したいこと | コマンド |
+|---|---|
+| 状態を見る | `docker compose ps` |
+| ログを見る | `docker compose logs -f app`（migrate の結果は `docker compose logs migrate`） |
+| 止める（コンテナは残る） | `docker compose stop` |
+| コンテナを消す（**データは残る**） | `docker compose down` |
+| **データごと消す** | `docker compose down -v` |
+
+- **秘密を作り直すのは、データごと消すときだけ**：`docker compose down -v` → `rm -r secrets` → `./init.sh`。
+  DB のパスワードは、データのボリュームが空の初回起動でしか決まらない
+- **端末の外へ出すとき**は、3.10 の1・2・4を行い、3 の代わりに `compose.yaml` の `ports` の左側
+  （`127.0.0.1:8080`）を外から届くアドレスに直して `docker compose up -d` する。**平文のまま外へ出さない**
+
+### 4.5 compose で外部の PostgreSQL へ繋ぐ
+
+**`compose.yaml` の末尾にある「外部の PostgreSQL へ繋ぐとき」の4段に従う。** 要点は次のとおり。
+
+- **外部の PostgreSQL に `create-roles.sql` を1回流す**（3.3）。`initdb/01_roles.sh` は compose の db の
+  初回起動でしか走らないので、**外部の PostgreSQL ではロールを自分で作る必要がある**
+- db サービスを消し、migrate の接続先を外部用の行に差し替える
+- `init.sh` は使わず、`secrets/` を 700、中のファイルを 644 で手で作る（4.3）
+- **この組み合わせは確かめていない**
+
+### 4.6 docker 単体で動かす
+
+**用意済みの PostgreSQL に繋ぐ。** 一式のディレクトリで、最初の1回は次の順に実行する。
+
+```
+docker load -i project-backyard-<版>-linux-<CPU>.tar     # 4.2（PUSH で作った一式なら不要）
+psql -h <ホスト> -U postgres -d postgres -f create-roles.sql   # 3.3（1回だけ）
+
+cp secrets/app_database_url.example secrets/app_database_url
+cp secrets/pgpass.example secrets/pgpass
+chmod 700 secrets
+chmod 644 secrets/app_database_url secrets/pgpass
+#   secrets/app_database_url・secrets/pgpass・migrate.conf を書き換える（3.4 と同じ。ホストは下の表）
+
+./migrate.sh              # スキーマを作る
+./run.sh admin create     # 初期管理者を作る
+./run.sh                  # 背景で起動する（コンテナ名 pb）
+```
+
+**ホストは「コンテナの中から見た」名前で書く。** `127.0.0.1` はコンテナ自身を指す。
+
+| PostgreSQL の場所 | ホストに書くもの |
+|---|---|
+| 同じ端末 | `host.docker.internal`（`run.sh` と `migrate.sh` がこの名前を引けるようにしている）。**Linux では、PostgreSQL が docker のブリッジのアドレスでも待ち受け、そこからの接続を `pg_hba.conf` で許している必要がある。この場合は確かめていない** |
+| コンテナで動いている | そのコンテナ名。**`PB_DOCKER_NETWORK=<ネットワーク名>` を付けて**、`migrate.sh` と `run.sh` を同じネットワークに入れる |
+| 別のマシン | そのホスト名。`sslmode=disable` を `require` 以上にする |
+
+| したいこと | コマンド |
+|---|---|
+| ログを見る | `docker logs -f pb` |
+| 止める・消す | `docker stop pb` → `docker rm pb` |
+| コンテナ名を変える | `PB_CONTAINER_NAME=<名前> ./run.sh` |
+
+- **パスワードが渡る経路**：`run.sh` と `migrate.sh` は秘密ファイルを1つずつコンテナへ渡し、
+  **パスワードは環境変数の値にも docker の引数にも現れない**
+- **公開は `127.0.0.1:8080` だけ。** 外へ出すときは 3.10 に従い、`run.sh` の `-p 127.0.0.1:8080:8080` を直す
+
+### 4.7 新しい版へ入れ替える
+
+**compose**：新しい一式を別の場所に作り、秘密を引き継いで、そこで起動し直す。**プロジェクト名が同じ
+（`pb-prod`）なので、同じデータのボリュームを使う。** migrate は起動のときに走る。
+
+```
+docker load -i <新しい一式>/project-backyard-<新しい版>-linux-<CPU>.tar
+cp -Rp <今の一式>/secrets <新しい一式>/
+#    compose.yaml を書き換えていたなら（ports・外部の PostgreSQL など）、新しい compose.yaml にも同じ変更を入れる
+docker compose -f <今の一式>/compose.yaml exec db pg_dump -U pb_owner pb > pb-backup.sql   # バックアップ
+cd <新しい一式> && docker compose up -d
+```
+
+**docker 単体**：
+
+```
+docker load -i <新しい一式>/project-backyard-<新しい版>-linux-<CPU>.tar
+cp -Rp <今の一式>/secrets <今の一式>/migrate.conf <新しい一式>/
+<新しい一式>/migrate.sh
+docker stop pb && docker rm pb
+<新しい一式>/run.sh
+```
+
+### 4.8 つまずいたとき
+
+| 症状 | 原因と対処 |
+|---|---|
+| `docker compose up` が `bind source path does not exist: …/secrets/db_password` で止まる | `./init.sh` を実行していない（4.4） |
+| `pull access denied for project-backyard` など、イメージを取りに行って失敗する | イメージを取り込んでいない（4.2） |
+| app が起動せず、`docker compose ps` で migrate が失敗している | `docker compose logs migrate` を見る。`password authentication failed` なら、`secrets/` と DB のパスワードが食い違っている（DB のパスワードは初回起動でしか決まらない。4.4） |
+| ログに `permission denied`（`/run/secrets/…`） | 秘密ファイルの権限を 4.3 の形にする |
+| `port is already allocated`（8080） | 8080 番を別のプロセスが使っている。compose は `ports` の左側、docker は `run.sh` の `-p` を変える |
+| docker 単体で `connection refused` や名前が引けない | 接続先のホストの書き方を 4.6 の表で確かめる |
+| `exec format error` | CPU の違う一式を使っている（4.1） |
 
 ---
 

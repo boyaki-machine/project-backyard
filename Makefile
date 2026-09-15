@@ -57,8 +57,8 @@ STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@1
 	docs-size fmt-check
 
 ## DB を起動する
-# app を起動対象にしていないのは deploy/Dockerfile が未作成のためである。
-# Design.md 4.4 により Phase 2 では作らない（PB 本体は単一バイナリで動かす）。
+# **app は起動しない。** dev では PB 本体を make run でホストから動かしており、app の
+# コンテナまで上げると 8080 番でぶつかる。コンテナの一式は make release TARGET=compose（pb-123）。
 up:
 	$(COMPOSE) up -d db
 
@@ -299,6 +299,7 @@ cmdline = $(if $(filter command line,$(origin $(1))),$($(1)))
 
 ## リリース用の一式を出力する（使い方は deploy/prod/MANUAL.md の2章）
 #   make release TARGET=native OS=darwin ARCH=arm64 [OUT=/path/to/dir]
+#   make release TARGET=compose ARCH=amd64 [OUT=/path/to/dir] [PUSH=registry.example.com/pb:2.37.0]
 # **コマンドラインで渡された値だけを使う。** OUT は stg-build と共有の変数で、既定値が
 # deploy/stg/out である——渡さずに叩いて stg の一式を上書きしないため。OS や ARCH は
 # 環境変数として定義されている端末があり、それを黙って拾わないため。
@@ -306,7 +307,8 @@ cmdline = $(if $(filter command line,$(origin $(1))),$($(1)))
 release:
 	@bash $(CURDIR)/deploy/prod/build-release.sh \
 		--target "$(call cmdline,TARGET)" --os "$(call cmdline,OS)" --arch "$(call cmdline,ARCH)" \
-		$(if $(call cmdline,OUT),--out "$(OUT)")
+		$(if $(call cmdline,OUT),--out "$(OUT)") \
+		$(if $(call cmdline,PUSH),--push "$(PUSH)")
 
 # ── バージョン操作（Design.md 11.1）────────────────────────────
 
