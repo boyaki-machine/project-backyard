@@ -30,6 +30,7 @@ import * as sprintsApi from '../api/sprints'
 import { sprintStatusLabels } from '../api/sprints'
 import type { CreateSprintRequest, Sprint } from '../api/sprints'
 import { formatDate, formatPlainDate } from '../lib/datetime'
+import { zoneOf, type DropZone } from '../lib/dnd'
 import { isWebUrl } from '../lib/url'
 import { useRolesStore } from '../stores/roles'
 import { useAuthStore } from '../stores/auth'
@@ -171,6 +172,39 @@ const deletingTag = ref<Tag | null>(null)
 /** ドラッグ中のタグ ID（`⠿` の並べ替え） */
 const draggingTagId = ref<string | null>(null)
 
+/** いま目印を出す場所（5.9.4）。**一覧で1つしか持たない**ので、線も1本しか出ない */
+const dropHint = ref<{ id: string; zone: DropZone } | null>(null)
+
+/**
+ * **受け取れる相手の上でだけ `preventDefault()` する**（6.8）。
+ *
+ * HTML の D&D は「既定の動作を止めた要素」だけがドロップ先になる規約なので、
+ * これで**自分自身の上ではカーソルが禁止の形になる**。すべて受け取ってから
+ * 弾くと、落とせるように見えて何も起きない。
+ */
+function onDragOverTag(e: DragEvent, tag: Tag): void {
+  if (draggingTagId.value === null || draggingTagId.value === tag.id) {
+    dropHint.value = null
+    return
+  }
+  e.preventDefault()
+  // **タグは2分割**（`lib/dnd.ts`）——親子を持たないので、中央に割り当てる
+  // 行き先が無い（`ApiDesign.md` 9.11.1 が動かすのは `sort_order` だけである）
+  dropHint.value = { id: tag.id, zone: zoneOf(e) }
+}
+
+/** 目印を出すか。`dropHint` は1つしか持たないので、線も同時に1本しか出ない */
+function hintsTag(tag: Tag, zone: DropZone): boolean {
+  const h = dropHint.value
+  return h !== null && h.id === tag.id && h.zone === zone
+}
+
+/** 掴んでいる状態を捨てる。**目印も一緒に消す**（残すと線が出たままになる） */
+function endTagDrag(): void {
+  draggingTagId.value = null
+  dropHint.value = null
+}
+
 async function loadTags(): Promise<void> {
   tagsLoading.value = true
   tagsError.value = null
@@ -269,22 +303,36 @@ function compareTags(a: Tag, b: Tag): number {
 /**
  * `⠿` のドラッグで並べ替える（5.9.4、`ApiDesign.md` 9.11.1）。
  *
+ * **ポインタが指した位置がそのまま行き先になる**（`lib/dnd.ts`）——上半分なら
+ * 相手の前、下半分なら相手の後ろ。**出した線と着地を一致させるため**で、掴んだ
+ * 行がどこから来たかには依らない（5.4 と同じ規則）。
+ *
  * **画面を先に動かし、サーバへは変わった行だけ送る。** 失敗したら一覧を
  * 取り直して戻す——この操作は原子的ではなく、途中まで反映された状態が
  * 実際に起こりうるためである。
  */
-async function dropTag(targetId: string): Promise<void> {
+async function dropTag(e: DragEvent, target: Tag): Promise<void> {
+  // **掴んでいた ID と落とし先を先に控える。** `endTagDrag()` を通すと
+  // `draggingTagId` が消え、判定が必ず空振りする
   const sourceId = draggingTagId.value
-  draggingTagId.value = null
-  if (sourceId === null || sourceId === targetId) return
+  const zone = zoneOf(e)
+  endTagDrag()
+  if (sourceId === null || sourceId === target.id) return
 
   const from = tags.value.findIndex((t) => t.id === sourceId)
-  const to = tags.value.findIndex((t) => t.id === targetId)
-  if (from < 0 || to < 0) return
+  if (from < 0) return
 
-  const next = [...tags.value]
-  const [moved] = next.splice(from, 1)
-  next.splice(to, 0, moved)
+  // **掴んだ行を抜いてから相手の位置を数え直す。** 抜く前の添字で挿入すると、
+  // 下へ動かしたときだけ1つ手前に入る（5.4 の `dropOnRow` と同じ）
+  const next = tags.value.filter((t) => t.id !== sourceId)
+  const to = next.findIndex((t) => t.id === target.id)
+  if (to < 0) return
+  next.splice(zone === 'before' ? to : to + 1, 0, tags.value[from]!)
+
+  // **並びが変わらないなら何も送らない。** 送っても `sort_order` は同じ値に
+  // なるが、「✓ 並び順を変更しました」だけが出て操作が効いたように見える
+  if (next.every((t, i) => t.id === tags.value[i]?.id)) return
+
   const before = tags.value
   tags.value = next
 
@@ -961,12 +1009,18 @@ function kindIcon(kind: string): string {
                 </tr>
               </thead>
               <tbody>
+                <!-- **`dragover` に `.prevent` を付けない**（6.8）。受け取れる相手の
+                     上でだけ既定を止めるので、止めるかどうかはハンドラが決める -->
                 <tr
                   v-for="tag in tags"
                   :key="tag.id"
-                  :class="{ dragging: draggingTagId === tag.id }"
-                  @dragover.prevent
-                  @drop.prevent="dropTag(tag.id)"
+                  :class="{
+                    dragging: draggingTagId === tag.id,
+                    'drop-before': hintsTag(tag, 'before'),
+                    'drop-after': hintsTag(tag, 'after'),
+                  }"
+                  @dragover="onDragOverTag($event, tag)"
+                  @drop.prevent="dropTag($event, tag)"
                 >
                   <td class="grip-col">
                     <span
@@ -975,7 +1029,7 @@ function kindIcon(kind: string): string {
                       role="button"
                       :aria-label="`${tag.name} を並べ替える`"
                       @dragstart="draggingTagId = tag.id"
-                      @dragend="draggingTagId = null"
+                      @dragend="endTagDrag()"
                       >⠿</span
                     >
                   </td>
@@ -1593,6 +1647,19 @@ td {
 
 tr.dragging {
   opacity: 0.5;
+}
+
+/* ドロップ先の挿入線（5.9.4。判定は `lib/dnd.ts`）。
+   **罫線ではなく `box-shadow` の内側で描く**——`border` を足すと行の高さが
+   2px 変わり、掴んで動かすたびに表全体が上下にずれる（5.4 と同じ）。
+   **面は使わない。** タグは親子を持たないので「その行**に**入る」が無い。
+   色は `--pb-accent`（8.6 が禁じるのは danger / warning / ai の意味色である） */
+tr.drop-before td {
+  box-shadow: inset 0 2px 0 0 var(--pb-accent);
+}
+
+tr.drop-after td {
+  box-shadow: inset 0 -2px 0 0 var(--pb-accent);
 }
 
 .name-col {

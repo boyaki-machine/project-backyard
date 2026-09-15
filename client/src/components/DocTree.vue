@@ -1,17 +1,17 @@
 <script lang="ts">
+import type { DropZone } from '../lib/dnd'
+
 /**
- * ドロップ先（`GuiDesign.md` 5.10「木の操作」）。**行を3つに割る。**
- *
- * | ポインタの位置 | 値 | 結果 |
- * |---|---|---|
- * | 行の上 1/4 | `before` | その行の**前の兄弟**へ |
- * | 行の下 1/4 | `after` | その行の**後ろの兄弟**へ |
- * | 行の中央 1/2 | `inside` | **その行の子**へ（末尾） |
+ * ドロップ先（`GuiDesign.md` 5.10「木の操作」）。**行を3つに割る**——上 1/4 が
+ * `before`（前の兄弟へ）、下 1/4 が `after`（後ろの兄弟へ）、中央 1/2 が
+ * `inside`（その行の子へ、末尾）。**割り方の正本は `lib/dnd.ts` の `zoneOf`**
+ * で、3か所（5.4 / 5.10 / 5.9.4）が同じ判定を使う（pb-28）。
  *
  * **`<script setup>` は export を持てない**ので、型はここに置く
- * （`UserActionsMenu.vue` の `ActionItem` と同じ形）。
+ * （`UserActionsMenu.vue` の `ActionItem` と同じ形）。**別名を残すのは、木の
+ * 文脈で読ませるためである**（中身は `DropZone` と同じ）。
  */
-export type DocDropZone = 'before' | 'after' | 'inside'
+export type DocDropZone = DropZone
 
 /** いま目印を出している場所。木の中で同時に1つしか持たない */
 export interface DocDropHint {
@@ -41,6 +41,7 @@ export interface DocDropHint {
  * クラス名は分けないので、`.node` のような一般名は検証のセレクタが別画面に当たる。
  */
 import type { DocTreeItem } from '../api/docs'
+import { zoneOf } from '../lib/dnd'
 import UserActionsMenu, { type ActionItem } from './UserActionsMenu.vue'
 
 const props = withDefaults(
@@ -100,23 +101,6 @@ function undroppable(item: DocTreeItem): boolean {
 }
 
 /**
- * ポインタが行のどこを指しているか（5.10 の表）。
- *
- * **上 1/4・下 1/4・中央 1/2。** 5.4 の `sideOf`（半分で割る）をそのまま写せない
- * ——あちらは親子を変えないので行き先が2つしかないが、**木は「兄弟」と「子」の
- * 2軸を1回のドロップで決める**（5.10）ため、中央を子に割り当てる必要がある。
- */
-function zoneOf(e: DragEvent): DocDropZone {
-  const el = e.currentTarget as HTMLElement | null
-  if (el === null) return 'inside'
-  const r = el.getBoundingClientRect()
-  const y = e.clientY - r.top
-  if (y < r.height / 4) return 'before'
-  if (y > (r.height * 3) / 4) return 'after'
-  return 'inside'
-}
-
-/**
  * **受け取れる相手の上でだけ `preventDefault()` する**（6.8）。
  *
  * HTML の D&D は「既定の動作を止めた要素」だけがドロップ先になる規約なので、
@@ -129,12 +113,13 @@ function onDragOver(e: DragEvent, item: DocTreeItem): void {
     return
   }
   e.preventDefault()
-  emit('hint', { path: item.path, zone: zoneOf(e) })
+  // **木は3分割**（`lib/dnd.ts`）——中央 1/2 が「その行の子へ」である
+  emit('hint', { path: item.path, zone: zoneOf(e, { inside: true }) })
 }
 
 function onDrop(e: DragEvent, item: DocTreeItem): void {
   if (!droppable(item)) return
-  emit('drop', { item, zone: zoneOf(e) })
+  emit('drop', { item, zone: zoneOf(e, { inside: true }) })
 }
 
 /** 目印を出すか。`dropHint` は木全体で1つなので、線も面も同時に1つしか出ない */
