@@ -1,0 +1,191 @@
+# app.yaml — PB 本体（make release TARGET=k8s が出力した）
+#
+# 使い方は MANUAL.md の5章。中身は ConfigMap（pb.yaml）・Deployment・Service の3つ。
+# 最初の1回は次の順に実行する（<ns> は PB を入れる namespace）。
+#
+#   kubectl create namespace <ns>
+#   kubectl create -n <ns> -f secret.yaml      secret.example.yaml を複製して値を入れたもの。apply ではなく create（5.3）
+#   kubectl apply -n <ns> -f k8s/db.yaml       試すための DB（外部の PostgreSQL へ繋ぐなら使わない）
+#   kubectl apply -n <ns> -f k8s/app.yaml      これ。initContainer が migrate してから PB が起動する
+#
+# **namespace を書かない。** apply するときの -n で決める。
+# **秘密は Secret「pb」から環境変数で渡す**（DbDesign.md 3.3）。Pod の定義に出るのは参照だけである。
+# 画面は kubectl port-forward -n <ns> svc/pb 8080:8080 で、http://localhost:8080 を開く。
+#
+# 外部の PostgreSQL へ繋ぐときは、ファイル末尾の「外部の PostgreSQL へ繋ぐとき」を読む。
+
+# ── 設定ファイル（PB_CONFIG_FILE）──────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pb-config
+  labels:
+    app.kubernetes.io/name: project-backyard
+    app.kubernetes.io/component: app
+data:
+  pb.yaml: |
+    # pb.yaml — PB の設定ファイル（Deployment が PB_CONFIG_FILE で渡す）
+    #
+    # **何も書かなくても動く。** 設定の多くは、起動したあと画面の「管理 → 設定」から変える。
+    # **ここに書いたキーは画面から変えられなくなる**（「設定ファイルで固定されています」と出る）。
+    # 画面で変えた値は DB に残るので、Pod を作り直しても消えない。
+    #
+    # 書き方
+    #   - キーは平らに並べる（入れ子にすると起動が失敗する）
+    #   - ${環境変数名} と書くと、その環境変数の値を引く
+    #   - 知らないキーがあると起動が失敗する（綴り違いを黙って無視しないため）
+    #   - **秘密（パスワード・接続文字列）をここに書かない。** Secret「pb」に置く
+    #
+    # 優先順（上ほど強い）
+    #   <KEY>_FILE ＞ このファイル ＞ 環境変数 ＞ 画面で変えた値 ＞ 既定値
+    #
+    # **database_url と bind を書かない。** 接続文字列は Secret から環境変数で、待受は
+    # イメージの環境変数（0.0.0.0:8080）で決めている。ここに書くとそちらより強くなる。
+
+    # ── 固定したいときだけ、コメントを外す ────────────────────────
+    # log_format: json           # json / text
+    # log_level: info            # debug / info / warn / error
+    # health_show_version: false # /healthcheck にバージョンを含める
+    # cookie_secure: false       # HTTPS で公開するなら true
+---
+# ── PB 本体 ─────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pb
+  labels:
+    app.kubernetes.io/name: project-backyard
+    app.kubernetes.io/component: app
+spec:
+  # **レプリカは1のままにする。** migrate を initContainer で走らせており、goose の CLI には
+  # 同時実行を防ぐロックが無い（DbDesign.md 3.3）。
+  replicas: 1
+  # **古い Pod を止めてから新しい Pod を上げる。** 並べて入れ替えると、新しい Pod が
+  # スキーマを進めたあとも、古い版の Pod が新しいスキーマの上で動く。代わりに入れ替えの間は止まる。
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: project-backyard
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: project-backyard
+        app.kubernetes.io/component: app
+    spec:
+      # **Service の環境変数を注入させない。** 既定では Service「pb」の分として PB_PORT や
+      # PB_SERVICE_HOST が入る（headless の pb-db の分は入らない）。PB は PB_<キー> の環境変数を
+      # 設定として読むので、いまのキーとは重ならなくても、キーを足したときに黙って拾いうる。
+      enableServiceLinks: false
+      # PB は K8s の API を使わない。
+      automountServiceAccountToken: false
+      securityContext:
+        # イメージの利用者（nonroot）。数値で書かないと runAsNonRoot が確かめられない。
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # 非公開のレジストリから取るときは、docker-registry 型の Secret を作ってコメントを外す（MANUAL.md 5.2）:
+      # imagePullSecrets:
+      #   - name: pb-registry
+
+      # ── スキーマを進める ─────────────────────────────────
+      # Pod が起動するたびに走り、適用済みなら何も変えずに終わる。失敗すると PB 本体は起動しない。
+      # **接続先にパスワードを書かない。** pb_owner のパスワードは PGPASSWORD で渡す（goose が使う pgx が読む）。
+      initContainers:
+        - name: migrate
+          image: __PB_IMAGE__
+          imagePullPolicy: IfNotPresent
+          command: ["/goose", "-dir", "/migrations", "postgres", "postgres://pb_owner@pb-db:5432/pb?sslmode=disable", "up"]
+          # 外部の PostgreSQL へ繋ぐときは、上の command を消して次の行を使う（ホストとポートを直す）:
+          # command: ["/goose", "-dir", "/migrations", "postgres", "postgres://pb_owner@postgres.example.com:5432/pb?sslmode=require", "up"]
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pb
+                  key: owner_password
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+      containers:
+        - name: pb
+          image: __PB_IMAGE__
+          imagePullPolicy: IfNotPresent
+          args: ["serve"]
+          # **第2層（ログ・Cookie など）の設定をここに書かない。** 書くと画面から変えられなくなる（Design.md 10.3）。
+          env:
+            - name: PB_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pb
+                  key: database_url
+            - name: PB_CONFIG_FILE
+              value: /etc/pb/pb.yaml
+            - name: TZ
+              value: UTC
+          ports:
+            - name: http
+              containerPort: 8080
+          # **liveness だけを置く。** /healthcheck は DB を見ない固定の応答で、プロセスが応答するかだけを表す
+          # （Design.md 10.2）。DB が落ちても再起動では直らないので、liveness に DB を含めない。
+          # **画面で TLS を有効にしたら、下に scheme: HTTPS を足して apply し直す。** PB は平文と TLS を
+          # 同時に待ち受けないので、http のままだと probe が失敗し続けて再起動を繰り返す（MANUAL.md 5.8）。
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+              # scheme: HTTPS
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: config
+              mountPath: /etc/pb
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: pb-config
+---
+# ── PB 本体の Service ───────────────────────────────────────
+# クラスタの中からだけ届く。手元から開くときは kubectl port-forward を使う。
+# 外へ出すなら、先に TLS を有効にする（MANUAL.md 5.8）。
+apiVersion: v1
+kind: Service
+metadata:
+  name: pb
+  labels:
+    app.kubernetes.io/name: project-backyard
+    app.kubernetes.io/component: app
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: project-backyard
+    app.kubernetes.io/component: app
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+
+# ── 外部の PostgreSQL へ繋ぐとき ─────────────────────────────
+#
+# 1. **外部の PostgreSQL に create-roles.sql を1回だけ流す**（MANUAL.md 3.3）。
+#    k8s/db.yaml の DB は初回起動でロールを作るが、外部の PostgreSQL ではロールを自分で作る必要がある。
+# 2. k8s/db.yaml を apply しない（apply 済みなら kubectl delete -n <ns> -f k8s/db.yaml）。
+# 3. 上の migrate の command を、コメントアウトしてある外部用の行に差し替える。
+# 4. secret.yaml の database_url を、コメントアウトしてある外部用の行に差し替える。
+#    owner_password には create-roles.sql で入力した pb_owner のパスワードを、database_url の中には
+#    pb_app のパスワードを書く。
+# 5. kubectl create -n <ns> -f secret.yaml（入れ済みなら replace）と kubectl apply -n <ns> -f k8s/app.yaml を実行する。
+#    **この組み合わせは確かめていない。**

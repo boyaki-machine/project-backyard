@@ -3,13 +3,13 @@
 # リリース用の一式を出力する（Design.md 4.5）。使い方は deploy/prod/MANUAL.md の2章。
 #
 #   make release TARGET=native OS=<darwin|windows|linux> ARCH=<amd64|arm64> [OUT=<出力先>]
-#   make release TARGET=<docker|compose> ARCH=<amd64|arm64> [OUT=<出力先>] [PUSH=<レジストリ>/<名前>:<タグ>]
+#   make release TARGET=<docker|compose|k8s> ARCH=<amd64|arm64> [OUT=<出力先>] [PUSH=<レジストリ>/<名前>:<タグ>]
 #   deploy/prod/build-release.sh --target <…> [--os <…>] --arch <…> [--out <出力先>] [--push <…>]
 #
 # **出力は「配置すれば動く一式」である**（stg の build.sh と同じ考え方。Design.md 4.4）。
 # 同梱のスクリプトは自分の位置へ移ってから動くので、一式を丸ごと任意のパスへ置ける。
 #
-# TARGET は native（pb-122）と docker / compose（pb-123）。k8s は pb-124 で足す。
+# TARGET は native（pb-122）と docker / compose（pb-123）と k8s（pb-124）。
 # **CPU は 64bit の2種だけを受ける**（利用者の判断、2026-09-13。pb-4）。
 #
 # **macOS 標準の bash 3.2 でも動くように書く。** ${var,,} や連想配列を使わない。
@@ -20,6 +20,7 @@ prod_dir="${repo_root}/deploy/prod"
 native_dir="${prod_dir}/native"
 docker_dir="${prod_dir}/docker"
 compose_dir="${prod_dir}/compose"
+k8s_dir="${prod_dir}/k8s"
 
 # **goose には postgres のドライバだけを入れる。** 全ドライバ入りは約 38MB、絞ると
 # 11〜12MB になる（pb-4 で実測）。版は server/tools/go.mod が固定しているので
@@ -30,14 +31,14 @@ usage() {
 	cat <<'USAGE'
 使い方:
   make release TARGET=native OS=<darwin|windows|linux> ARCH=<amd64|arm64> [OUT=<出力先>]
-  make release TARGET=<docker|compose> ARCH=<amd64|arm64> [OUT=<出力先>] [PUSH=<レジストリ>/<名前>:<タグ>]
+  make release TARGET=<docker|compose|k8s> ARCH=<amd64|arm64> [OUT=<出力先>] [PUSH=<レジストリ>/<名前>:<タグ>]
 
   TARGET  native（実行ファイルと起動スクリプト）/ docker（イメージと docker run の例）/
-          compose（イメージと compose 一式）。k8s はまだ無い
-  OS      darwin（mac と書いてもよい）/ windows / linux。docker / compose は linux だけで、省いてよい
+          compose（イメージと compose 一式）/ k8s（イメージとマニフェスト一式）
+  OS      darwin（mac と書いてもよい）/ windows / linux。docker / compose / k8s は linux だけで、省いてよい
   ARCH    amd64（x64 / x86_64 / x86）/ arm64（m1 / arm / aarch64）。32bit 向けには出力しない
   OUT     出力先。省略すると dist/pb-v<版>-<TARGET>-<OS>-<ARCH>。空でないディレクトリには書かない
-  PUSH    docker / compose だけ。イメージを tar に出す代わりに、このレジストリへ送る
+  PUSH    docker / compose / k8s だけ。イメージを tar に出す代わりに、このレジストリへ送る
 USAGE
 }
 
@@ -76,15 +77,15 @@ case "$(lower "${target}")" in
 native) target=native ;;
 docker) target=docker ;;
 compose) target=compose ;;
-k8s) die "TARGET=${target} はまだ実装していない（いま指定できるのは native / docker / compose）" ;;
-"") die "TARGET を指定すること（native / docker / compose）" ;;
-*) die "知らない TARGET: ${target}（native / docker / compose を指定できる）" ;;
+k8s) target=k8s ;;
+"") die "TARGET を指定すること（native / docker / compose / k8s）" ;;
+*) die "知らない TARGET: ${target}（native / docker / compose / k8s を指定できる）" ;;
 esac
 
 container=false
-if [ "${target}" = docker ] || [ "${target}" = compose ]; then
-	container=true
-fi
+case "${target}" in
+docker | compose | k8s) container=true ;;
+esac
 
 case "$(lower "${os}")" in
 darwin | mac) os=darwin ;;
@@ -115,7 +116,7 @@ esac
 
 if [ -n "${push}" ]; then
 	if [ "${container}" != true ]; then
-		die "PUSH は TARGET=docker / compose でだけ使える"
+		die "PUSH は TARGET=docker / compose / k8s でだけ使える"
 	fi
 	case "${push}" in
 	*[[:space:]]*) die "PUSH に空白を含めない: ${push}" ;;
@@ -204,7 +205,7 @@ build_native() {
 	esac
 }
 
-# ── docker / compose（pb-123）───────────────────────────────
+# ── docker / compose（pb-123）・k8s（pb-124）─────────────────
 # build_image はイメージを作り、一式の雛形に埋める参照を image_ref に入れる。
 image_ref=""
 build_image() {
@@ -231,13 +232,29 @@ fill_image() {
 	sed "s|__PB_IMAGE__|${image_ref}|g" "$1" >"$2"
 }
 
+# fill_initdb は db.yaml の __INITDB_ROLES_SH__ の行を、ロール作成のスクリプトで置き換える。
+# **正本は deploy/base/initdb/01_roles.sh**（DbDesign.md 3.4）で、ConfigMap のブロックへ4桁下げて埋める。
+# 空行は字下げしない（YAML のブロックでは、空行の字下げは意味を持たない）。
+fill_initdb() {
+	awk -v script="${repo_root}/deploy/base/initdb/01_roles.sh" '
+		/^__INITDB_ROLES_SH__$/ {
+			while ((getline line < script) > 0) {
+				if (line == "") print ""; else print "    " line
+			}
+			close(script)
+			next
+		}
+		{ print }
+	' "$1" >"$2"
+}
+
 build_container() {
 	build_image
 
 	echo
 	echo "==> 雛形を置く（TARGET=${target}）"
 	cp "${prod_dir}/MANUAL.md" "${out}/MANUAL.md"
-	# 用意済みの PostgreSQL にロールを作る SQL。compose でも外部の PostgreSQL へ繋ぐときに使う。
+	# 用意済みの PostgreSQL にロールを作る SQL。compose と k8s でも、外部の PostgreSQL へ繋ぐときに使う。
 	cp "${native_dir}/create-roles.sql" "${out}/create-roles.sql"
 
 	case "${target}" in
@@ -260,6 +277,14 @@ build_container() {
 		chmod 700 "${out}/secrets"
 		cp "${docker_dir}"/secrets/*.example "${out}/secrets/"
 		;;
+	k8s)
+		# **k8s/ には apply してよいものだけを置く。** Secret の雛形は値が入っていないので、
+		# kubectl apply -f k8s/ で紛れ込まないよう一式の直下に置く。
+		mkdir -p "${out}/k8s"
+		fill_image "${k8s_dir}/app.yaml" "${out}/k8s/app.yaml"
+		fill_initdb "${k8s_dir}/db.yaml" "${out}/k8s/db.yaml"
+		cp "${k8s_dir}/secret.example.yaml" "${out}/secret.example.yaml"
+		;;
 	esac
 }
 
@@ -267,13 +292,20 @@ mkdir -p "${out}"
 # 相対で渡されても絶対パスに直す。以降のコマンドを cwd に依存させないため。
 out=$(cd "${out}" && pwd)
 
-if [ "${container}" = true ]; then
-	build_container
-	chapter="4章（コンテナ）"
-else
+case "${target}" in
+native)
 	build_native
 	chapter="3章（native）"
-fi
+	;;
+docker | compose)
+	build_container
+	chapter="4章（コンテナ）"
+	;;
+k8s)
+	build_container
+	chapter="5章（Kubernetes）"
+	;;
+esac
 
 echo
 echo "完了: ${out}"

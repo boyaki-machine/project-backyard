@@ -300,6 +300,7 @@ cmdline = $(if $(filter command line,$(origin $(1))),$($(1)))
 ## リリース用の一式を出力する（使い方は deploy/prod/MANUAL.md の2章）
 #   make release TARGET=native OS=darwin ARCH=arm64 [OUT=/path/to/dir]
 #   make release TARGET=compose ARCH=amd64 [OUT=/path/to/dir] [PUSH=registry.example.com/pb:2.37.0]
+#   make release TARGET=k8s ARCH=arm64 [OUT=/path/to/dir] [PUSH=registry.example.com/pb:2.38.0]
 # **コマンドラインで渡された値だけを使う。** OUT は stg-build と共有の変数で、既定値が
 # deploy/stg/out である——渡さずに叩いて stg の一式を上書きしないため。OS や ARCH は
 # 環境変数として定義されている端末があり、それを黙って拾わないため。

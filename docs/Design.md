@@ -291,7 +291,8 @@ ProjectBackyard/
         ├── MANUAL.md              ← 配布物の使い方。**一式に同梱する**（旧 docs/Deploy.md の予定を置き換えた）
         ├── native/                ← TARGET=native の雛形（起動・migrate・設定・ロール作成・常駐）
         ├── docker/                ← TARGET=docker の雛形（docker run で起動・migrate する例）
-        └── compose/               ← TARGET=compose の雛形（compose.yaml と、秘密を作る init.sh）
+        ├── compose/               ← TARGET=compose の雛形（compose.yaml と、秘密を作る init.sh）
+        └── k8s/                   ← TARGET=k8s の雛形（PB 本体の app.yaml・試すための db.yaml・Secret の雛形。pb-124）
 ```
 
 ## 4.2 client と server を分けたまま単一プロセスで動かす
@@ -402,20 +403,20 @@ out/
 |---|---|
 | 開発端末で動かす | `make run`（`go run`）または `make build` |
 | **配布用の一式を作る** | **`make release TARGET=… OS=… ARCH=… [OUT=…] [PUSH=…]`** → `deploy/prod/build-release.sh`。配布物の使い方は `deploy/prod/MANUAL.md`（一式に同梱する） |
-| コンテナで動かす | `deploy/Dockerfile`（3段）。**ビルドもコンテナの中で行うため、この端末の Go と Node を使わない。** `make release TARGET=docker\|compose` が呼ぶ（pb-123） |
+| コンテナで動かす | `deploy/Dockerfile`（3段）。**ビルドもコンテナの中で行うため、この端末の Go と Node を使わない。** `make release TARGET=docker\|compose\|k8s` が呼ぶ（pb-123・pb-124） |
 | 他アーキテクチャ向けイメージ | `make release … ARCH=amd64\|arm64`。**1回に1つの CPU。** ビルドの段を `$BUILDPLATFORM` で動かしてクロスコンパイルするので、エミュレーションは要らない |
 
-### `make release`（pb-122・pb-123）
+### `make release`（pb-122・pb-123・pb-124）
 
-**`TARGET` で形を、`OS` と `ARCH` で行き先を選ぶ。** 実装しているのは `native`（実行ファイルと起動スクリプト。pb-122）と `docker` / `compose`（コンテナイメージと一式。pb-123）で、`k8s` は pb-124 で足す。
+**`TARGET` で形を、`OS` と `ARCH` で行き先を選ぶ。** `native`（実行ファイルと起動スクリプト。pb-122）、`docker` / `compose`（コンテナイメージと一式。pb-123）、`k8s`（コンテナイメージとマニフェスト一式。pb-124）の4つ。
 
 | 引数 | 受ける値 | 同じ意味に読む表記 |
 |---|---|---|
-| `TARGET` | `native` / `docker` / `compose` | — |
-| `OS` | `darwin` / `windows` / `linux`。**docker / compose は `linux` だけで、省いてよい** | `mac` → `darwin` |
+| `TARGET` | `native` / `docker` / `compose` / `k8s` | — |
+| `OS` | `darwin` / `windows` / `linux`。**docker / compose / k8s は `linux` だけで、省いてよい** | `mac` → `darwin` |
 | `ARCH` | `amd64` / `arm64` | `x64`・`x86_64`・`x86` → `amd64`、`m1`・`arm`・`aarch64` → `arm64` |
 | `OUT` | 出力先 | 省略すると `dist/pb-v<版>-<TARGET>-<OS>-<ARCH>` |
-| `PUSH` | docker / compose だけ。イメージを tar に出す代わりに、このレジストリへ送る | — |
+| `PUSH` | docker / compose / k8s だけ。イメージを tar に出す代わりに、このレジストリへ送る | — |
 
 **CPU は 64bit の2種だけを受ける**（利用者の判断、2026-09-13。pb-4）。`386`・`armv7` など 32bit を名指しする値は、理由を出して止まる。DB の公開イメージ（`pgvector/pgvector:pg17`）も amd64 / arm64 しか無い。
 
@@ -473,6 +474,34 @@ out/
 | **compose のプロジェクト名は `pb-prod` で、DB のポートは外へ出さない** | dev の compose（`project-backyard`）と同じ名前だと、同じ端末で DB のボリュームを共有する。DB へは compose の中からだけ繋ぐ |
 | **イメージに `ENV PB_BIND=0.0.0.0:8080` を持たせる** | PB の既定値が変わっても（pb-125）、コンテナの外から届かなくならない。公開範囲は `-p` と `ports` で決める。**画面の「待受アドレス」は環境変数で固定になる** |
 | **`make up` は db だけのまま** | dev は PB 本体を `make run` でホストから動かす。app のコンテナまで上げると 8080 番でぶつかる（`Development.md` 2.2） |
+
+#### k8s の一式（pb-124）
+
+**イメージは docker / compose と同じもの**で、マニフェストと Secret の雛形を添える。**DB は試すためのサンプルで、運用では CloudNativePG か外部の PostgreSQL を使う**（`DbDesign.md` 3.3）。
+
+```
+<OUT>/
+├── project-backyard-<版>-linux-<CPU>.tar   イメージ（PUSH のときは無し）
+├── k8s/
+│   ├── app.yaml          ConfigMap（pb.yaml）・Deployment（initContainer で migrate）・Service
+│   └── db.yaml           試すための DB：ConfigMap（ロール作成）・headless Service・StatefulSet（PVC 付き）
+├── secret.example.yaml   Secret の雛形（値は CHANGE_ME）
+├── create-roles.sql      外部の PostgreSQL 用（native と同じもの）
+└── MANUAL.md
+```
+
+| 決めたこと | 理由 |
+|---|---|
+| **DB は素の StatefulSet のサンプルとし、外部の PostgreSQL へ繋ぐ設定をコメントアウトで併記する**（利用者の判断、2026-09-13） | 試すためのもの。CloudNativePG の `Cluster` はサンプルにしない |
+| **秘密は Secret から環境変数で渡す**（利用者の判断、2026-09-15。推奨はファイルでのマウントだった） | PB 本体は `PB_DATABASE_URL`、goose は `PGPASSWORD`（接続先にパスワードを書かない）。**Pod の定義に出るのは参照だけ**（pb-124 で値が0件と実測）。**DB のサンプルのロール作成だけはファイルで読む**——dev・stg・compose と共有する正本（`deploy/base/initdb/01_roles.sh`）を変えないため |
+| **Secret は `kubectl create` で入れ、`apply` しない** | `apply` は入れた内容を注釈 `last-applied-configuration` に平文で残す。`create` と `replace` は残さない（pb-124 で実測） |
+| **migrate は initContainer、Deployment はレプリカ1・`strategy: Recreate`** | goose の CLI に同時実行を防ぐロックが無い。並べて入れ替えると、古い版の Pod が新しいスキーマの上で動く。**代わりに入れ替えの間は止まる**（`DbDesign.md` 3.3） |
+| **livenessProbe だけを置き、`/healthcheck` を見る** | `/healthcheck` は DB を見ない固定の応答で、liveness だけを表す（10.2）。**画面で TLS を有効にしたら `scheme: HTTPS` へ直す**——PB は平文と TLS を同時に待ち受けない（6.6.1） |
+| **`enableServiceLinks: false`** | 既定では Service `pb` の分として `PB_PORT` や `PB_SERVICE_HOST` が注入される（pb-124 で実測。headless の `pb-db` の分は入らない）。PB は `PB_<キー>` を設定として読むので、キーを足したときに黙って拾いうる |
+| **nonroot（65532）・`readOnlyRootFilesystem`・capability をすべて外す** | PB と goose はファイルを書かない。読み取り専用のまま migrate・起動・ログインまで通した |
+| **Secret の雛形は `k8s/` の外に置く** | `kubectl apply -f k8s/` で、値の入っていない Secret まで入れないため |
+| **ロール作成のスクリプトは、ビルドのときに ConfigMap へ埋め込む** | 正本を `deploy/base/initdb/01_roles.sh` の1つに保ったまま、一式を `kubectl` だけで入れられる |
+| **マニフェストに namespace を書かない** | 入れる先は apply するときの `-n` で決める |
 
 **`CGO_ENABLED=0` で静的バイナリになる。** pgx が pure Go 実装であるため C ライブラリに依存せず、`scratch` や distroless イメージで動作する。開発端末（arm64 macOS）から Linux/amd64 向けを出すのもフラグ指定のみで済む。
 

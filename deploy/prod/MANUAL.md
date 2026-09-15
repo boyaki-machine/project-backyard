@@ -18,6 +18,11 @@
    4.3 秘密ファイルの権限                4.7 新しい版へ入れ替える
    4.4 compose で動かす                  4.8 つまずいたとき
 5. Kubernetes
+   5.1 一式の中身                      5.6 初期管理者を作る
+   5.2 イメージをクラスタへ届ける      5.7 外部の PostgreSQL へ繋ぐ
+   5.3 秘密を作る                      5.8 クラスタの外へ出す
+   5.4 apply する                      5.9 新しい版へ入れ替える・片付ける
+   5.5 画面を開く（port-forward）      5.10 つまずいたとき
 ```
 
 ---
@@ -29,9 +34,9 @@
 | `native` | 実行ファイルと起動スクリプト（mac / Windows / Linux） | **用意済みの PostgreSQL に繋ぐ** | 使える |
 | `docker` | コンテナイメージと、`docker run` で動かすスクリプト | **用意済みの PostgreSQL に繋ぐ** | 使える |
 | `compose` | コンテナイメージと compose 一式 | **DB のコンテナも一緒に立てる**（外部の PostgreSQL へ繋ぐこともできる） | 使える |
-| `k8s` | コンテナイメージとマニフェスト | DB を立てるサンプル付き | まだ無い |
+| `k8s` | コンテナイメージとマニフェスト一式 | **試すための DB のサンプル付き**（運用では CloudNativePG か外部の PostgreSQL） | 使える |
 
-**どの形でも、PB の配布物に DB は入っていない。** compose が立てる DB は、公開イメージ
+**どの形でも、PB の配布物に DB は入っていない。** compose と k8s のサンプルが立てる DB は、公開イメージ
 `pgvector/pgvector:pg17` を起動時に取りに行く。
 
 ---
@@ -42,19 +47,19 @@
 
 ```
 make release TARGET=native OS=<darwin|windows|linux> ARCH=<amd64|arm64> [OUT=<出力先>]
-make release TARGET=<docker|compose> ARCH=<amd64|arm64> [OUT=<出力先>] [PUSH=<レジストリ>/<名前>:<タグ>]
+make release TARGET=<docker|compose|k8s> ARCH=<amd64|arm64> [OUT=<出力先>] [PUSH=<レジストリ>/<名前>:<タグ>]
 ```
 
 | 引数 | 指定できる値 | 同じ意味に読む表記 |
 |---|---|---|
-| `TARGET` | `native` / `docker` / `compose` | — |
-| `OS` | `darwin` / `windows` / `linux`。**docker / compose は `linux` だけで、省いてよい** | `mac` → `darwin` |
+| `TARGET` | `native` / `docker` / `compose` / `k8s` | — |
+| `OS` | `darwin` / `windows` / `linux`。**docker / compose / k8s は `linux` だけで、省いてよい** | `mac` → `darwin` |
 | `ARCH` | `amd64` / `arm64` | `x64`・`x86_64`・`x86` → `amd64`、`m1`・`arm`・`aarch64` → `arm64` |
 | `OUT` | 出力先のディレクトリ | 省略すると `dist/pb-v<版>-<TARGET>-<OS>-<ARCH>` |
-| `PUSH` | docker / compose だけ。イメージを tar に出す代わりに、このレジストリへ送る（4.2） | — |
+| `PUSH` | docker / compose / k8s だけ。イメージを tar に出す代わりに、このレジストリへ送る（4.2） | — |
 
 - **要るもの**：native は Go と Node.js（リポジトリの `docs/Development.md` 1章）。
-  **docker / compose は Docker（buildx）だけ**——ビルドはイメージの中で行う
+  **docker / compose / k8s は Docker（buildx）だけ**——ビルドはイメージの中で行う
 - **CPU は 64bit の2種だけ。** `386` や `armv7` など 32bit を指定すると、理由を表示して止まる
 - **空でない出力先には書かない。** 作り直すときは、出力先を消してから実行する
 - 指定の誤りで止まったときの終了コードは 2、ビルドそのものが失敗したときは 1
@@ -501,4 +506,179 @@ docker stop pb && docker rm pb
 
 ## 5. Kubernetes
 
-**まだ用意していない。**
+**手順の流れ**：5.2 イメージを届ける → 5.3 秘密を作る → 5.4 apply する → 5.6 初期管理者を作る → 5.5 画面を開く。
+**5.3 と 5.6 は最初の1回だけ**である。
+
+**`k8s/db.yaml` の DB は、試すためのサンプルである。** バックアップもフェイルオーバも持たない。
+運用では CloudNativePG か外部の PostgreSQL を使う（5.7）。
+
+### 5.1 一式の中身
+
+```
+<一式>/
+├── project-backyard-<版>-linux-<CPU>.tar   イメージ（PUSH で作った一式には無い）
+├── k8s/
+│   ├── app.yaml         PB 本体：ConfigMap（pb.yaml）・Deployment・Service
+│   └── db.yaml          試すための DB：ConfigMap（ロール作成）・Service・StatefulSet（PVC 付き）
+├── secret.example.yaml  Secret の雛形（値は入っていない。5.3）
+├── create-roles.sql     外部の PostgreSQL へ繋ぐときに使う（5.7）
+└── MANUAL.md            この文書
+```
+
+| 名前 | 種類 | 役目 |
+|---|---|---|
+| `pb` | Deployment・Service | PB 本体。Service は 8080 番 |
+| `pb` | Secret | パスワードと接続文字列。**各コンテナへ環境変数で渡る** |
+| `pb-config` | ConfigMap | 設定ファイル `pb.yaml`（3.9 と同じ書き方） |
+| `pb-db` | StatefulSet・Service | 試すための DB。Service は 5432 番 |
+| `pb-db-initdb` | ConfigMap | DB の初回起動で `pb_app` のロールを作る |
+| `data-pb-db-0` | PVC | DB のデータ（StatefulSet が作る） |
+
+- **Pod が起動するたびに、initContainer の `migrate` がスキーマを進める。** 適用済みなら何も変えずに終わる。
+  失敗すると PB 本体は起動しない
+- **レプリカは1のままにする。** migrate の同時実行を防ぐロックが無い。版の入れ替えは「止めてから上げる」
+  （`strategy: Recreate`）ので、**入れ替えの間は PB が止まる**
+- **マニフェストに namespace は書いていない。** apply するときに `-n` で決める
+- 利用者は uid 65532（root ではない）で、ファイルシステムを読み取り専用にして動かす
+- **CPU ごとに別のイメージである**（4.1）。ノードの CPU に合わせた一式を使う
+
+### 5.2 イメージをクラスタへ届ける
+
+**ノードがイメージを引ける場所へ置く。** クラスタによって届け方が違う。
+
+| クラスタ | 届け方 |
+|---|---|
+| **レジストリから引く**（一般のクラスタ） | 4.2 のとおりレジストリへ送り、`k8s/app.yaml` の `image:`（2か所）をその名前に直す。**`PUSH` で作った一式なら、はじめからその名前が入っている** |
+| **Rancher Desktop（コンテナエンジンが dockerd）** | `docker load -i project-backyard-<版>-linux-<CPU>.tar`。**k3s が同じ docker を使うので、取り込んだイメージがそのまま見える** |
+| **Rancher Desktop（コンテナエンジンが containerd）** | `nerdctl -n k8s.io load -i project-backyard-<版>-linux-<CPU>.tar`。**この手順は確かめていない** |
+
+- **どのエンジンで動いているか**は `kubectl get nodes -o wide` の `CONTAINER-RUNTIME` 列で分かる（`docker://…` か `containerd://…`）
+- **`imagePullPolicy` は `IfNotPresent`**：ノードに同じ名前のイメージがあれば取りに行かない。**tar で届けたときは、名前（`project-backyard:<版>`）を変えない**
+- **非公開のレジストリ**から引くなら、docker-registry 型の Secret を作り、`k8s/app.yaml` の `imagePullSecrets` のコメントを外す。
+  作り方は Kubernetes の文書「Pull an Image from a Private Registry」にある。**この手順は確かめていない**
+
+### 5.3 秘密を作る
+
+**`secret.example.yaml` を複製して、`CHANGE_ME` を3か所書き換える。** 雛形そのものには値を書かない。
+
+```
+cp secret.example.yaml secret.yaml
+chmod 600 secret.yaml
+openssl rand -hex 16     # 1つ目の値
+openssl rand -hex 16     # 2つ目の値
+```
+
+| キー | 書くもの |
+|---|---|
+| `owner_password` | 1つ目の値（`pb_owner` のパスワード） |
+| `app_password` | 2つ目の値（`pb_app` のパスワード） |
+| `database_url` | `pb_app:CHANGE_ME@` の `CHANGE_ME` を、**2つ目と同じ値**にする |
+
+- **DB のパスワードは、PVC が空の初回起動でしか決まらない。** あとから Secret の値を変えても DB の側は変わらず、
+  認証エラーになる（5.10）
+- **パスワードは英数字だけにする。** 記号を含むと、`database_url` の書き方に気を遣う必要がある（`@` → `%40`、`:` → `%3A`）
+- **値は各コンテナへ環境変数で渡る。** Pod の定義（`kubectl get pod -o yaml`）に出るのは Secret の参照だけで、値は出ない。
+  **Secret を読める権限を持つ人は値を読める**ので、namespace の権限で絞る
+- **Secret は `kubectl apply` ではなく `kubectl create` で入れる。** `apply` は、入れた内容を Secret の注釈
+  （`kubectl.kubernetes.io/last-applied-configuration`）に**平文のまま**残し、`kubectl get secret pb -o yaml` で値がそのまま読める
+- **値を変えるときは `kubectl replace -n <ns> -f secret.yaml`**（これも注釈を残さない）。環境変数は Pod の起動時にしか
+  読まれないので、続けて `kubectl rollout restart -n <ns> deployment/pb` を実行する。**DB の側のパスワードは変わらない**（上の1つ目）
+- 入れたあと、`secret.yaml` は消してよい（値はクラスタの Secret に残る）
+
+### 5.4 apply する
+
+`<ns>` は PB を入れる namespace（例：`pb`）。一式のディレクトリで実行する。
+
+```
+kubectl create namespace <ns>
+kubectl create -n <ns> -f secret.yaml     # Secret だけは apply ではなく create（5.3）
+kubectl apply -n <ns> -f k8s/db.yaml
+kubectl rollout status -n <ns> statefulset/pb-db --timeout=180s     # DB が Ready になるまで待つ
+kubectl apply -n <ns> -f k8s/app.yaml
+kubectl rollout status -n <ns> deployment/pb --timeout=180s
+```
+
+- **DB を先に上げる。** `kubectl apply -n <ns> -f k8s/` でまとめて入れても最後には上がるが、DB が Ready になるまで
+  migrate が失敗と再試行を繰り返し、待ち時間が延びる
+- **入れる前に、通るかだけを見る**なら `kubectl apply -n <ns> -f k8s/ --dry-run=server`
+- migrate の結果は `kubectl logs -n <ns> deployment/pb -c migrate`、PB 本体のログは `kubectl logs -n <ns> deployment/pb -c pb -f`
+
+### 5.5 画面を開く（port-forward）
+
+```
+kubectl port-forward -n <ns> svc/pb 8080:8080
+```
+
+- **画面は `http://localhost:8080` で開く**（`localhost` と書く。3.7）。port-forward を止めると届かなくなる
+- **動いているかは `curl -s http://localhost:8080/healthcheck`** で分かる（`{"status":"OK"}` が返る）。
+  Deployment の livenessProbe も同じ `/healthcheck` を見ている
+
+### 5.6 初期管理者を作る
+
+```
+kubectl exec -it -n <ns> deployment/pb -c pb -- /pb admin create
+```
+
+表示名・メールアドレス・パスワード（2回）を尋ねられる。**最初の1回だけ**でよい。
+**PB 本体のコンテナの中で動くので、接続先を渡す必要は無い。** イメージにシェルは無いが、`/pb` は直に実行できる。
+
+### 5.7 外部の PostgreSQL へ繋ぐ
+
+**`k8s/app.yaml` の末尾にある「外部の PostgreSQL へ繋ぐとき」の5段に従う。** 要点は次のとおり。
+
+- **外部の PostgreSQL に `create-roles.sql` を1回流す**（3.2・3.3）。`k8s/db.yaml` の DB と違い、**ロールは自分で作る**
+- `k8s/db.yaml` を apply しない
+- `k8s/app.yaml` の migrate の接続先と、`secret.yaml` の `database_url` を、コメントアウトしてある外部用の行に差し替える
+- **クラスタの Pod から外部の PostgreSQL へ届く**必要がある（ファイアウォールと `pg_hba.conf`）。別のマシンなら `sslmode` を `require` 以上にする
+- **この組み合わせは確かめていない**
+
+### 5.8 クラスタの外へ出す
+
+**平文（http）のまま外へ出さない。** 次の順で進める。
+
+1. port-forward で開いた画面の「管理 → 設定」で証明書を登録し、TLS を有効にする（3.10 の1・2）。以後の画面は `https://localhost:8080`
+2. **`k8s/app.yaml` の livenessProbe に `scheme: HTTPS` を足して apply し直す**（コメントアウトしてある行）。
+   **PB は平文と TLS を同時に待ち受けない**ので、http のままだと probe が失敗し続けて Pod が再起動を繰り返す
+3. Ingress か `type: LoadBalancer` の Service で外へ出す
+4. 画面で「Cookie に Secure を付ける」を有効にする
+
+**この手順は確かめていない。**
+
+### 5.9 新しい版へ入れ替える・片付ける
+
+**入れ替える**
+
+```
+kubectl exec -n <ns> pb-db-0 -- pg_dump -U pb_owner -Fc pb > pb-backup.dump   # バックアップ（サンプルの DB のとき）
+#   新しい一式のイメージを届ける（5.2）
+kubectl apply -n <ns> -f <新しい一式>/k8s/app.yaml
+kubectl rollout status -n <ns> deployment/pb --timeout=180s
+```
+
+- `k8s/app.yaml` を書き換えていたなら（外部の PostgreSQL・`imagePullSecrets`・`scheme: HTTPS` など）、新しい `app.yaml` にも同じ変更を入れる
+- **古い Pod が止まってから、新しい Pod の migrate が走る**（`strategy: Recreate`）。migrate が失敗すると PB は止まったままになる——
+  ログを見て直すか、バックアップから戻す
+- Secret と `k8s/db.yaml` は作り直さない
+
+**片付ける**
+
+```
+kubectl delete namespace <ns>
+```
+
+- **namespace ごと消すと PVC も消える。** その先のデータまで消えるかは StorageClass の `reclaimPolicy` による
+  （`kubectl get storageclass` の `RECLAIMPOLICY` 列。`Delete` なら消える）
+- PB を消してデータを残すなら、`kubectl delete -n <ns> -f k8s/app.yaml -f k8s/db.yaml`（PVC `data-pb-db-0` は残る）
+
+### 5.10 つまずいたとき
+
+| 症状 | 原因と対処 |
+|---|---|
+| Pod が `ErrImagePull` ／ `ImagePullBackOff` | イメージがノードに無い（5.2）。`kubectl describe pod -n <ns> -l app.kubernetes.io/component=app` の Events に、取りに行った名前が出る |
+| Pod が `CreateContainerConfigError` | Secret `pb` が無いか、キーが足りない（5.3）。`kubectl describe pod` に足りないものが出る |
+| Pod が `Init:Error` ／ `Init:CrashLoopBackOff` | migrate が失敗している。`kubectl logs -n <ns> deployment/pb -c migrate` を見る。DB が Ready になる前なら、待てば上がる |
+| migrate が `password authentication failed for user "pb_owner"` | Secret の `owner_password` が、DB を初めて起動したときの値と違う（5.3）。サンプルの DB を作り直すなら `kubectl delete -n <ns> -f k8s/db.yaml` → `kubectl delete pvc -n <ns> data-pb-db-0` → 5.4（**データは消える**） |
+| PB が `password authentication failed for user "pb_app"` | `database_url` の中のパスワードが `app_password` と違う（5.3） |
+| Pod が再起動を繰り返し、Events に `Liveness probe failed` | 画面で TLS を有効にしたのに、probe が http のまま（5.8 の2） |
+| port-forward の画面でログインしても入れない（http で開いている） | 「Cookie に Secure を付ける」を http のまま有効にした。`kubectl set env -n <ns> deployment/pb PB_COOKIE_SECURE=false` で入り、画面で無効に戻してから `kubectl set env -n <ns> deployment/pb PB_COOKIE_SECURE-` で外す |
+| `exec format error` | ノードの CPU と違う一式を使っている（5.1） |

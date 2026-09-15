@@ -1,0 +1,146 @@
+# db.yaml — 試すための PostgreSQL（make release TARGET=k8s が出力した）
+#
+# **試すためのサンプルであり、運用には使わない。** バックアップ・フェイルオーバ・PITR を持たない。
+# 運用では CloudNativePG か外部の PostgreSQL を使う（DbDesign.md 3.3）。
+# 外部の PostgreSQL へ繋ぐときは、このファイルを apply しない（k8s/app.yaml の末尾）。
+#
+# 中身は ConfigMap（ロール作成）・Service・StatefulSet（PVC 付き）の3つ。イメージは公開の
+# pgvector/pgvector:pg17 で、**PB の配布物には含まない**（起動するときに取りに行く）。
+#
+# **データは PVC「data-pb-db-0」に残る。** StatefulSet を消しても PVC は残り、namespace ごと消すと
+# PVC も消える（その先のデータが消えるかは StorageClass の reclaimPolicy による）。
+
+# ── pb_app のロールを作る ────────────────────────────────────
+# **PVC が空の初回起動でしか走らない。** 正本は deploy/base/initdb/01_roles.sh（DbDesign.md 3.4）で、
+# make release が埋め込んだ。pb_app のパスワードはファイル（/run/secrets/app_db_password）から読む。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pb-db-initdb
+  labels:
+    app.kubernetes.io/name: project-backyard
+    app.kubernetes.io/component: db
+data:
+  01_roles.sh: |
+__INITDB_ROLES_SH__
+---
+# ── DB の Service ───────────────────────────────────────────
+# PB 本体と migrate は「pb-db」という名前で繋ぐ。StatefulSet が名前を持つための headless Service。
+apiVersion: v1
+kind: Service
+metadata:
+  name: pb-db
+  labels:
+    app.kubernetes.io/name: project-backyard
+    app.kubernetes.io/component: db
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: project-backyard
+    app.kubernetes.io/component: db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+# ── DB 本体 ─────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pb-db
+  labels:
+    app.kubernetes.io/name: project-backyard
+    app.kubernetes.io/component: db
+spec:
+  serviceName: pb-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: project-backyard
+      app.kubernetes.io/component: db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: project-backyard
+        app.kubernetes.io/component: db
+    spec:
+      # Service の環境変数（Service「pb」の PB_PORT など）は DB に要らないので、注入させない。
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg17
+          imagePullPolicy: IfNotPresent
+          # 値は deploy/base/compose.yaml と揃える（DbDesign.md 3.2・3.5）。
+          args:
+            - -c
+            - shared_buffers=256MB
+            - -c
+            - work_mem=16MB
+            - -c
+            - max_connections=50
+            - -c
+            - log_min_duration_statement=200ms
+          env:
+            - name: POSTGRES_DB
+              value: pb
+            - name: POSTGRES_USER
+              value: pb_owner
+            # **pb_owner のパスワードは、migrate と同じキーから読む**（同じ値を2か所に書かない）。
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pb
+                  key: owner_password
+            - name: POSTGRES_INITDB_ARGS
+              value: "--encoding=UTF8 --locale=C"
+            # **データは PVC の根ではなくサブディレクトリに置く。** 根に lost+found を作る
+            # StorageClass では、空でないディレクトリに initdb が失敗する。
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: TZ
+              value: UTC
+            - name: PGTZ
+              value: UTC
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "pb_owner", "-d", "pb"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+            # **ロール作成のスクリプトはパスワードをファイルで読む**ので、このキーだけファイルで渡す。
+            - name: app-db-password
+              mountPath: /run/secrets
+              readOnly: true
+      volumes:
+        - name: initdb
+          configMap:
+            name: pb-db-initdb
+            # 実行ビットが無いと、postgres の入口が source する形になる（DbDesign.md 3.4）。
+            defaultMode: 0755
+        - name: app-db-password
+          secret:
+            secretName: pb
+            items:
+              - key: app_password
+                path: app_db_password
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: project-backyard
+          app.kubernetes.io/component: db
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # storageClassName を省くと、クラスタの既定の StorageClass を使う。
+        resources:
+          requests:
+            storage: 1Gi
