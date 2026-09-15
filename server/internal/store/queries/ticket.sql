@@ -18,8 +18,8 @@
 -- ListTickets はバックログの唯一のデータ源（9.2）。
 --
 -- **総件数と最終更新を同じクエリの窓関数で返す。** 2.6 の total と 2.7 の ETag の
--- 材料であり、別クエリにすると WHERE を二重に持つことになる。フィルタが13種類
--- あるため、写しが片方だけ古くなる危険が現実的に高い（user.sql の
+-- 材料であり、別クエリにすると WHERE を二重に持つことになる。フィルタが20種類
+-- あるため（pb-66 で検索の条件を7つ足した）、写しが片方だけ古くなる危険が現実的に高い（user.sql の
 -- ListAdminUsers / SummarizeAdminUsers は「一字一句そろえる」と注記して2本に
 -- 分けているが、あちらは条件が3つである）。窓関数は WHERE の後・LIMIT の前に
 -- 評価されるので、ページを切っても総件数は絞り込み全体のものになる。
@@ -201,6 +201,46 @@ filtered AS (
            AND NOT EXISTS (SELECT 1 FROM open_desc od WHERE od.id = t.id)
          ))
     AND (cardinality(@parent_seqs::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
+    -- ── 検索の条件（ApiDesign.md 9.2.1「検索の条件」。pb-66）──────────
+    --
+    -- キーワードの一致は store/search（queries/search.sql）が済ませ、**一致した ID
+    -- だけを受け取る**（Design.md 4.6 の隔離）。keyword_set が偽なら絞らない——
+    -- 「語が無い」と「語はあったが0件に一致」を区別するためのフラグである。
+    AND (NOT @keyword_set::boolean OR t.id = ANY(@keyword_ids::text[]))
+    -- 番号の範囲は両端を含む。0 は指定なし（seq は1から始まる）。
+    AND (@seq_from::int <= 0 OR t.seq >= @seq_from::int)
+    AND (@seq_to::int <= 0 OR t.seq <= @seq_to::int)
+    -- 完了日時は since 以上・before 未満。**指定すると未完了は外れる**（NULL との比較は偽）。
+    AND (sqlc.narg('closed_since')::timestamptz IS NULL
+         OR t.closed_at >= sqlc.narg('closed_since')::timestamptz)
+    AND (sqlc.narg('closed_before')::timestamptz IS NULL
+         OR t.closed_at < sqlc.narg('closed_before')::timestamptz)
+    -- 着手日時（9.2.1「着手日時を導く」）。**状態が todo 区分から初めて出た遷移**の
+    -- occurred_at で、列を持たず activity から導く。完了を取り消して着手し直しても
+    -- min を採るので、最初の着手になる。区分はいまのワークフローで引くので、
+    -- いまのワークフローに無いキーの遷移は結合で落ちる。
+    AND ((sqlc.narg('started_since')::timestamptz IS NULL
+          AND sqlc.narg('started_before')::timestamptz IS NULL)
+         OR EXISTS (
+           SELECT 1
+             FROM (SELECT min(a.occurred_at) AS started_at
+                     FROM activity a
+                     JOIN workflow_status os
+                       ON os.workflow_id = p.workflow_id AND os.key = a.old_value
+                     JOIN workflow_status ns
+                       ON ns.workflow_id = p.workflow_id AND ns.key = a.new_value
+                    WHERE a.entity_type = 'ticket'
+                      AND a.entity_id = t.id
+                      AND a.action = 'transition'
+                      AND a.field = 'status_key'
+                      AND os.category = 'todo'
+                      AND ns.category <> 'todo') st
+            WHERE st.started_at IS NOT NULL
+              AND (sqlc.narg('started_since')::timestamptz IS NULL
+                   OR st.started_at >= sqlc.narg('started_since')::timestamptz)
+              AND (sqlc.narg('started_before')::timestamptz IS NULL
+                   OR st.started_at < sqlc.narg('started_before')::timestamptz)
+         ))
 )
 SELECT
   f.*,
@@ -236,6 +276,9 @@ ORDER BY
   CASE WHEN @sort::text = 'created_at' AND @sort_order::text = 'desc' THEN f.created_at END DESC,
   CASE WHEN @sort::text = 'updated_at' AND @sort_order::text = 'asc'  THEN f.updated_at END ASC,
   CASE WHEN @sort::text = 'updated_at' AND @sort_order::text = 'desc' THEN f.updated_at END DESC,
+  -- 完了日時（pb-66。チケット検索の「完了日」の列）。**未完了（NULL）は昇順・降順とも末尾**（9.2.1）。
+  CASE WHEN @sort::text = 'closed_at'  AND @sort_order::text = 'asc'  THEN f.closed_at END ASC  NULLS LAST,
+  CASE WHEN @sort::text = 'closed_at'  AND @sort_order::text = 'desc' THEN f.closed_at END DESC NULLS LAST,
   -- 同値の行の順序が実行ごとに揺れないようにする最終キー。
   f.seq ASC
 LIMIT @page_limit OFFSET @page_offset;

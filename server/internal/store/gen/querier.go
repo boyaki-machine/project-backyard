@@ -1394,8 +1394,8 @@ type Querier interface {
 	// ListTickets はバックログの唯一のデータ源（9.2）。
 	//
 	// **総件数と最終更新を同じクエリの窓関数で返す。** 2.6 の total と 2.7 の ETag の
-	// 材料であり、別クエリにすると WHERE を二重に持つことになる。フィルタが13種類
-	// あるため、写しが片方だけ古くなる危険が現実的に高い（user.sql の
+	// 材料であり、別クエリにすると WHERE を二重に持つことになる。フィルタが20種類
+	// あるため（pb-66 で検索の条件を7つ足した）、写しが片方だけ古くなる危険が現実的に高い（user.sql の
 	// ListAdminUsers / SummarizeAdminUsers は「一字一句そろえる」と注記して2本に
 	// 分けているが、あちらは条件が3つである）。窓関数は WHERE の後・LIMIT の前に
 	// 評価されるので、ページを切っても総件数は絞り込み全体のものになる。
@@ -1667,6 +1667,24 @@ type Querier interface {
 	// 呼び出し側がシステムロールを持たないアクターを除いているため、ここへは来ない。
 	//
 	SaveTokenPermissionCache(ctx context.Context, arg SaveTokenPermissionCacheParams) error
+	// キーワード検索（ApiDesign.md 9.2.1「検索の条件」。pb-66）。
+	//
+	// **全文検索の実装は、このファイルと store/search/ に閉じる**（Design.md 4.6、
+	// DbDesign.md 4.5）。日本語検索を pg_trgm から pg_bigm へ替えるとき、変わるのは
+	// インデックス定義とここだけにする。一覧（ticket.sql の ListTickets）は、ここが
+	// 返した ID を受け取るだけで、語もパターンも知らない。
+	// SearchTicketIDs は、すべてのパターンを含むチケットの ID を返す。
+	//
+	// **語ごとに、タイトル・本文・コメント（削除済みを除く）のどれかに当たればよい。**
+	// 「当たらない語が1つも無い」を NOT EXISTS で書く——語の数が可変なので、AND を
+	// 並べる形にできない。パターンのエスケープは store/search が済ませている。
+	//
+	// **本文は NULL を先に落とす。** body_md は NULL になりうる。NULL のまま ILIKE に
+	// 渡すと判定が NULL になり、NOT (… OR NULL …) も NULL になって「当たらない語」
+	// として数えられず、**語を含まないチケットが一致してしまう。**
+	//
+	// patterns が空なら全件が返る。呼び出し側は語が無いときに呼ばない。
+	SearchTicketIDs(ctx context.Context, arg SearchTicketIDsParams) ([]string, error)
 	// SetProjectStatus は archive / unarchive を1文で行う（5.6）。
 	//
 	// archived_at は archive で now()、unarchive で NULL（5.6 の表）。

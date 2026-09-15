@@ -376,7 +376,7 @@ SELECT * FROM app_user ORDER BY display_name COLLATE "ja-JP-x-icu";
 | `pg_bigm` | 日本語向けbigram索引。2文字クエリに強い。カスタムイメージのビルドが必要 |
 | PGroonga | 形態素解析・スコアリングまで対応。高機能だが導入と運用の重さが原則（軽快さ）と衝突する |
 
-Phase 1 は `pg_trgm` とし、実運用で不足が確認された時点で `pg_bigm` へ移行する。**移行時に影響するのはインデックス定義と検索クエリのみで、スキーマ本体は変わらない**よう、検索は `repo/search/` に隔離する（`Design.md` 4章）。
+Phase 1 は `pg_trgm` とし、実運用で不足が確認された時点で `pg_bigm` へ移行する。**移行時に影響するのはインデックス定義と検索クエリのみで、スキーマ本体は変わらない**よう、検索は `store/search/` に隔離する（`Design.md` 4.6。pb-66 で作った）。
 
 ## 4.6 削除方針
 

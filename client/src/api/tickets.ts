@@ -45,6 +45,8 @@ export type TicketSort =
   | 'due_date'
   | 'created_at'
   | 'updated_at'
+  /** 完了日時。チケット検索の「完了日」の列（pb-66）。未完了は昇順・降順とも末尾 */
+  | 'closed_at'
 
 export type SortOrder = 'asc' | 'desc'
 
@@ -202,10 +204,23 @@ export interface ListTicketsQuery {
    * 棚に戻ったものも返すか（9.2.1。pb-5 / pb-6）。既定は返さない。
    *
    * **スプリントを終えて消化し終えたものは、既定で一覧から外れる。**
-   * バックログの状態フィルタで完了を明示的に選んだときだけ `'true'` を送る
-   * （`GuiDesign.md` 5.4）——**検索画面ができるまでの唯一の逃げ道である。**
+   * バックログは状態フィルタで完了を明示的に選んだときだけ `'true'` を送り
+   * （`GuiDesign.md` 5.4）、**チケット検索は常に送る**（5.13。pb-66）。
    */
   retired?: 'true'
+  /** キーワード（9.2.1「検索の条件」。pb-66）。空白で区切った語をすべて含むもの */
+  q?: string
+  /** 番号の範囲（両端を含む）。**URL のクエリの値をそのまま渡す**ので文字列で持つ */
+  seq_from?: string
+  seq_to?: string
+  /**
+   * 着手した日時・完了した日時の範囲（ISO8601。`since` 以上・`before` 未満）。
+   * **日の境界は画面が利用者のタイムゾーンで作る**（`datetime.ts` の `startOfDayInstant`）
+   */
+  started_since?: string
+  started_before?: string
+  closed_since?: string
+  closed_before?: string
   sort?: TicketSort
   order?: SortOrder
   page?: number

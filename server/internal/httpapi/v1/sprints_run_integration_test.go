@@ -186,7 +186,7 @@ func TestSprintLifecycleIntegration(t *testing.T) {
 	if got := ticketSeqs(t, r, session, base, ""); !equalInts(got, wantVisible) {
 		t.Errorf("棚に戻ったあとの一覧 = %v, want %v", got, wantVisible)
 	}
-	// **retired=true が唯一の逃げ道である**（9.2.1。検索画面ができるまで）。
+	// **retired=true で棚に戻ったものも返る**（9.2.1）。チケット検索（pb-66）は常にこれを送る。
 	if got := ticketSeqs(t, r, session, base, "?retired=true"); !equalInts(got, all) {
 		t.Errorf("retired=true の一覧 = %v, want %v", got, all)
 	}

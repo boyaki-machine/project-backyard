@@ -1466,8 +1466,8 @@ export interface paths {
          * @description プロジェクトのチケットを返す（ApiDesign.md 9.2）。**必要権限は `ticket.view`**
          *     （メンバーでない場合はプロジェクトごと 404）。
          *
-         *     バックログ画面（GuiDesign.md 5.4）の唯一のデータ源であり、Phase 2 のカンバン・
-         *     ガントも同じエンドポイントから描く。
+         *     バックログ画面（GuiDesign.md 5.4）とチケット検索（GuiDesign.md 5.13）のデータ源であり、
+         *     Phase 2 のカンバン・ガントも同じエンドポイントから描く。
          *
          *     **既定が他の一覧と2か所ちがう**（9.2.1）。
          *
@@ -1491,8 +1491,9 @@ export interface paths {
          *     応答を数十倍にする。`execution_mode` / `readiness` / `scope` / `custom_fields` も
          *     同じ理由で含めない（GuiDesign.md 5.5 が「Phase 1 では非表示」と決めている）。
          *
-         *     **`q`（全文検索）は Phase 1 では受け付けない**（9.2.1）。専用画面
-         *     `/p/:key/search`（Phase 2）と同時に開ける。
+         *     **検索の条件**（9.2.1「検索の条件」。pb-66）：`q`・`seq_from` / `seq_to`・
+         *     `started_since` / `started_before`・`closed_since` / `closed_before`。
+         *     **範囲の前後が逆なら 422** を返す（黙って空の結果を返さない）。
          *
          *     `ETag` は「フィルタ条件を正規化した文字列のハッシュ・件数・`MAX(updated_at)`」から
          *     作る（9.2.5）。**`sort` / `order` / `page` / `per_page` も混ぜる**——ETag は応答本文を
@@ -8687,7 +8688,7 @@ export interface operations {
                  *     ——これが「バックログ＝行うべき仕事すべての保管庫」を保つ手当てである。
                  *
                  *     バックログの状態フィルタで完了を明示的に選んだときに画面が `true` を送る
-                 *     （GuiDesign.md 5.4）。**検索画面ができるまでの唯一の逃げ道である。**
+                 *     （GuiDesign.md 5.4）。**チケット検索（5.13）は常に `true` を送る。**
                  */
                 retired?: "true" | "false";
                 /**
@@ -8723,12 +8724,34 @@ export interface operations {
                  */
                 parent?: string;
                 /**
+                 * @description **キーワード**（ApiDesign.md 9.2.1「検索の条件」。pb-66）。空白で区切った語を
+                 *     **すべて含む**もの。各語はタイトル・本文・コメント（削除済みを除く）のいずれかに
+                 *     部分一致すればよい。大文字小文字を区別しない。`%` と `_` は文字として扱う。
+                 * @example 認証 API
+                 */
+                q?: string;
+                /** @description チケット番号の範囲の下限（**含む**）。`seq_to` と片方だけでもよい。 */
+                seq_from?: number;
+                /** @description チケット番号の範囲の上限（**含む**）。`seq_from` より小さいと 422。 */
+                seq_to?: number;
+                /**
+                 * @description **実際に着手した日時**がこの瞬間**以上**のもの（9.2.1「着手日時を導く」）。
+                 *     着手は、状態が `todo` 区分から初めて出た遷移の日時。着手していないものは外れる。
+                 */
+                started_since?: string;
+                /** @description 着手した日時がこの瞬間**未満**のもの。`started_since` 以下なら 422。 */
+                started_before?: string;
+                /** @description `closed_at` がこの瞬間**以上**のもの。未完了は外れる。 */
+                closed_since?: string;
+                /** @description `closed_at` がこの瞬間**未満**のもの。`closed_since` 以下なら 422。 */
+                closed_before?: string;
+                /**
                  * @description 既定は `sort_key`。**`priority` と `status` は意味の順で並ぶ**——
                  *     `priority` は `lowest`→`highest`、`status` はワークフローの `sort_order` で、
                  *     キーの辞書順ではない（`high` が `lowest` より前に来ると「優先度で並べた」と
-                 *     読めないため）。
+                 *     読めないため）。`closed_at` は未完了が末尾に来る（pb-66）。
                  */
-                sort?: "sort_key" | "seq" | "title" | "status" | "priority" | "due_date" | "created_at" | "updated_at";
+                sort?: "sort_key" | "seq" | "title" | "status" | "priority" | "due_date" | "created_at" | "updated_at" | "closed_at";
                 order?: "asc" | "desc";
                 page?: number;
                 per_page?: number;

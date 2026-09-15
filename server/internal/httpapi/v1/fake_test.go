@@ -1398,6 +1398,10 @@ type ticketFakeState struct {
 	// epicAncestorByID は 9.5.1 の epic（pb-14）。nil のままなら全件 0行
 	epicAncestorByID map[string]gen.GetTicketEpicAncestorRow
 
+	// searchIDs / searchParams は 9.2.1「検索の条件」（pb-66）。返す ID と、受けた引数
+	searchIDs    []string
+	searchParams []gen.SearchTicketIDsParams
+
 	nextSeq          int32
 	initialStatusKey string
 	created          []gen.CreateTicketParams
@@ -1581,6 +1585,13 @@ func (q *fakeQuerier) ListTickets(_ context.Context, arg gen.ListTicketsParams) 
 		return nil, q.ticket.listErr
 	}
 	return q.ticket.rows, nil
+}
+
+// SearchTicketIDs は 9.2.1「検索の条件」（pb-66）。受けたパターンを記録し、searchIDs を返す。
+func (q *fakeQuerier) SearchTicketIDs(_ context.Context, arg gen.SearchTicketIDsParams) ([]string, error) {
+	q.opLog = append(q.opLog, "SearchTicketIDs")
+	q.ticket.searchParams = append(q.ticket.searchParams, arg)
+	return q.ticket.searchIDs, nil
 }
 
 func (q *fakeQuerier) ListTagsForTickets(_ context.Context, ids []string) ([]gen.ListTagsForTicketsRow, error) {

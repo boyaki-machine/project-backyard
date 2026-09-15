@@ -24,12 +24,14 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
+	"github.com/boyaki-machine/project-backyard/server/internal/store/search"
 )
 
 // ticketTypeEpic は種別「エピック」（DbDesign.md 6.6）。
@@ -109,6 +111,8 @@ var ticketSortSpec = SortSpec{
 	Allowed: []string{
 		"sort_key", "seq", "title", "status", "priority",
 		"due_date", "created_at", "updated_at",
+		// closed_at はチケット検索の「完了日」の列（9.2.1。pb-66）
+		"closed_at",
 	},
 	DefaultSort:    "sort_key",
 	DefaultOrder:   OrderAsc,
@@ -152,6 +156,24 @@ type ticketFilters struct {
 	staleDays        int32
 	parentSeqs       []int32
 
+	// 検索の条件（9.2.1「検索の条件」。pb-66）。
+	//
+	// keywordPatterns は q を ILIKE のパターンにしたもの（store/search が作る）。
+	// **一致の判定は一覧のクエリに持ち込まず**、store/search で ID に変えてから渡す
+	// （Design.md 4.6 の隔離）。keywordSet は「q に語が1つ以上あった」。
+	keywordPatterns []string
+	keywordSet      bool
+
+	// seqFrom / seqTo は両端を含む。**0 は指定なし**（seq は1から始まる）。
+	seqFrom int32
+	seqTo   int32
+
+	// 日時の範囲は since 以上・before 未満。Valid が偽なら指定なし。
+	startedSince  pgtype.Timestamptz
+	startedBefore pgtype.Timestamptz
+	closedSince   pgtype.Timestamptz
+	closedBefore  pgtype.Timestamptz
+
 	// includeRetired は retired（9.2.1。pb-5 / pb-6）。**既定は false** で、
 	// スプリントを終えて棚に戻ったものを一覧から外す。
 	includeRetired bool
@@ -177,6 +199,22 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// キーワードは store/search で一致する ID に変えてから渡す（9.2.1「検索の条件」。
+	// Design.md 4.6 の隔離）。**一覧のクエリは語もパターンも知らない。**
+	keywordIDs := []string{}
+	if filters.keywordSet {
+		ids, err := search.TicketIDs(r.Context(), h.q, projectID, filters.keywordPatterns)
+		if err != nil {
+			apierr.Write(w, r, apierr.New(apierr.InternalError).
+				WithCause(fmt.Errorf("キーワード検索を行えない: %w", err)))
+			return
+		}
+		// **nil を渡さない**——pgx は nil を NULL として送る（parentSeqs と同じ扱い）
+		if ids != nil {
+			keywordIDs = ids
+		}
+	}
+
 	rows, err := h.q.ListTickets(r.Context(), gen.ListTicketsParams{
 		ProjectID:        projectID,
 		StatusKeys:       filters.statusKeys,
@@ -194,6 +232,14 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		OverdueOnly:      filters.overdueOnly,
 		StaleDays:        filters.staleDays,
 		ParentSeqs:       filters.parentSeqs,
+		KeywordSet:       filters.keywordSet,
+		KeywordIds:       keywordIDs,
+		SeqFrom:          filters.seqFrom,
+		SeqTo:            filters.seqTo,
+		StartedSince:     filters.startedSince,
+		StartedBefore:    filters.startedBefore,
+		ClosedSince:      filters.closedSince,
+		ClosedBefore:     filters.closedBefore,
 		IncludeRetired:   filters.includeRetired,
 		Sort:             page.Sort,
 		SortOrder:        page.Order,
@@ -445,6 +491,50 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 		}
 	}
 
+	// ── 検索の条件（9.2.1「検索の条件」。pb-66）────────────────────
+	//
+	// **語は並べ替えて正規化する**（9.2.5）。語どうしは AND なので、順番違いは
+	// 同じ意味である。空白だけの q は指定なしと同じ。
+	if raw := q.Get("q"); raw != "" {
+		if search.TooLong(raw) {
+			details = append(details, apierr.Detail{
+				Field: "q", Code: "out_of_range",
+				Message: fmt.Sprintf("q は%d文字以内で指定してください", search.MaxQueryRunes),
+			})
+		} else if terms := search.Terms(raw); len(terms) > 0 {
+			f.keywordSet = true
+			f.keywordPatterns = search.Patterns(terms)
+			sorted := slices.Clone(terms)
+			slices.Sort(sorted)
+			parts = append(parts, "q="+strings.Join(sorted, " "))
+		}
+	}
+
+	f.seqFrom, details = parseTicketSeqBound(q.Get("seq_from"), "seq_from", details)
+	f.seqTo, details = parseTicketSeqBound(q.Get("seq_to"), "seq_to", details)
+	if f.seqFrom > 0 && f.seqTo > 0 && f.seqFrom > f.seqTo {
+		details = append(details, apierr.Detail{
+			Field: "seq_to", Code: "invalid",
+			Message: "seq_to は seq_from 以上で指定してください",
+		})
+	}
+	if f.seqFrom > 0 {
+		parts = append(parts, "seq_from="+strconv.Itoa(int(f.seqFrom)))
+	}
+	if f.seqTo > 0 {
+		parts = append(parts, "seq_to="+strconv.Itoa(int(f.seqTo)))
+	}
+
+	f.startedSince, details = parseTicketInstant(q.Get("started_since"), "started_since", details)
+	f.startedBefore, details = parseTicketInstant(q.Get("started_before"), "started_before", details)
+	details, parts = appendTicketInstantRange(f.startedSince, f.startedBefore,
+		"started_since", "started_before", details, parts)
+
+	f.closedSince, details = parseTicketInstant(q.Get("closed_since"), "closed_since", details)
+	f.closedBefore, details = parseTicketInstant(q.Get("closed_before"), "closed_before", details)
+	details, parts = appendTicketInstantRange(f.closedSince, f.closedBefore,
+		"closed_since", "closed_before", details, parts)
+
 	if len(details) > 0 {
 		return ticketFilters{}, apierr.New(apierr.ValidationFailed).WithDetails(details...)
 	}
@@ -452,6 +542,64 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 	slices.Sort(parts)
 	f.normalized = strings.Join(parts, "&")
 	return f, nil
+}
+
+// parseTicketSeqBound は seq_from / seq_to を読む（9.2.1「検索の条件」）。
+// 未指定は 0。1以上の整数でなければ details に積む。
+func parseTicketSeqBound(raw, field string, details []apierr.Detail) (int32, []apierr.Detail) {
+	if raw == "" {
+		return 0, details
+	}
+	n, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || n < 1 {
+		return 0, append(details, apierr.Detail{
+			Field: field, Code: "invalid",
+			Message: field + " はチケット番号（1以上の整数）で指定してください",
+		})
+	}
+	return int32(n), details
+}
+
+// parseTicketInstant は started_* / closed_* を読む（9.2.1「検索の条件」）。
+//
+// **時差を含む ISO8601 の瞬間だけを受ける。** 日付だけの `2026-09-01` は受けない
+// ——どのタイムゾーンの0時かをサーバが決めることになり、画面が利用者のタイムゾーンで
+// 表示している日付とずれうる（日の境界は画面が作る）。
+func parseTicketInstant(raw, field string, details []apierr.Detail) (pgtype.Timestamptz, []apierr.Detail) {
+	if raw == "" {
+		return pgtype.Timestamptz{}, details
+	}
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return pgtype.Timestamptz{}, append(details, apierr.Detail{
+			Field: field, Code: "invalid",
+			Message: field + " は時差を含む ISO8601 の日時で指定してください（例：2026-09-01T00:00:00+09:00）",
+		})
+	}
+	return pgtype.Timestamptz{Time: t, Valid: true}, details
+}
+
+// appendTicketInstantRange は since < before を確かめ、正規化の材料を足す（9.2.1 / 9.2.5）。
+//
+// **前後が逆なら 422 にする。** 黙って空の結果を返すと、入力の誤りが「該当なし」に見える。
+// 正規化は UTC に揃える——同じ瞬間を違う時差で書いても同じ ETag になるようにする。
+func appendTicketInstantRange(
+	since, before pgtype.Timestamptz, sinceField, beforeField string,
+	details []apierr.Detail, parts []string,
+) ([]apierr.Detail, []string) {
+	if since.Valid && before.Valid && !since.Time.Before(before.Time) {
+		details = append(details, apierr.Detail{
+			Field: beforeField, Code: "invalid",
+			Message: beforeField + " は " + sinceField + " より後の日時で指定してください",
+		})
+	}
+	if since.Valid {
+		parts = append(parts, sinceField+"="+since.Time.UTC().Format(time.RFC3339Nano))
+	}
+	if before.Valid {
+		parts = append(parts, beforeField+"="+before.Time.UTC().Format(time.RFC3339Nano))
+	}
+	return details, parts
 }
 
 // splitFilter はカンマ区切りの複数指定を分解する（9.2.1）。

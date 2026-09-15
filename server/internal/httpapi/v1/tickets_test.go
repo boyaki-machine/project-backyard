@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -287,6 +289,15 @@ func TestListTicketsRejectsInvalidFilters(t *testing.T) {
 		{"親", "parent=0", "parent"},
 		{"ソート", "sort=body_md", "sort"},
 		{"件数", "per_page=201", "per_page"},
+		// 検索の条件（9.2.1「検索の条件」。pb-66）。**範囲が逆なら空の結果にせず 422**
+		{"キーワードの長さ", "q=" + url.QueryEscape(strings.Repeat("あ", 201)), "q"},
+		{"番号の下限", "seq_from=0", "seq_from"},
+		{"番号の書式", "seq_to=abc", "seq_to"},
+		{"番号の向き", "seq_from=20&seq_to=10", "seq_to"},
+		{"着手日時は日付だけでは受けない", "started_since=2026-09-01", "started_since"},
+		{"完了日時の向き", "closed_since=2026-09-16T00:00:00Z&closed_before=2026-09-01T00:00:00Z", "closed_before"},
+		// 時差が違っても同じ瞬間なら空の範囲である
+		{"同じ瞬間は空の範囲", "started_since=2026-09-01T00:00:00Z&started_before=2026-09-01T09:00:00%2B09:00", "started_before"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -371,6 +382,89 @@ func TestTicketsETagVariesByFilterAndPage(t *testing.T) {
 	}
 	if a, b := etag("stale=14d"), etag("stale=30d"); a == b {
 		t.Errorf("stale の日数が違うのに ETag が同じ: %q", a)
+	}
+	// 検索の条件も ETag に混ざる（9.2.5。pb-66）。**語の順番違いと、同じ瞬間の時差違いは
+	// 同じ意味**なので同じ値になる。
+	if a, b := etag("q="+url.QueryEscape("認証 API")), etag("q="+url.QueryEscape("API 認証")); a != b {
+		t.Errorf("語の順番違いで ETag が変わった: %q vs %q", a, b)
+	}
+	if a, b := etag("q="+url.QueryEscape("認証")), etag("q=API"); a == b {
+		t.Errorf("語が違うのに ETag が同じ: %q", a)
+	}
+	if a, b := etag("seq_from=10"), etag("seq_from=11"); a == b {
+		t.Errorf("番号の範囲が違うのに ETag が同じ: %q", a)
+	}
+	if a, b := etag("closed_since=2026-09-01T00:00:00Z"),
+		etag("closed_since="+url.QueryEscape("2026-09-01T09:00:00+09:00")); a != b {
+		t.Errorf("同じ瞬間の時差違いで ETag が変わった: %q vs %q", a, b)
+	}
+}
+
+// 検索の条件（9.2.1「検索の条件」。pb-66）がクエリの値どおりに渡る。
+//
+// **キーワードは store/search で ID に変えてから一覧へ渡す**（Design.md 4.6）。
+// 検索へ渡ったパターンと、一覧へ渡った ID の両方を見る。
+func TestListTicketsSearchConditions(t *testing.T) {
+	q := ticketFake()
+	q.ticket.searchIDs = []string{testTicketID}
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.listTickets(rec, ticketReq(http.MethodGet,
+		"/projects/demo/tickets?q="+url.QueryEscape("認証　100% 認証")+
+			"&seq_from=10&seq_to=20"+
+			"&started_since="+url.QueryEscape("2026-09-01T00:00:00+09:00")+
+			"&closed_before=2026-09-16T00:00:00Z&sort=closed_at&order=desc", "", ""))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	// 全角の空白で分け、重複を畳み、% を文字として扱う（store/search）
+	if len(q.ticket.searchParams) != 1 {
+		t.Fatalf("SearchTicketIDs の回数 = %d, want 1", len(q.ticket.searchParams))
+	}
+	sp := q.ticket.searchParams[0]
+	if sp.ProjectID != testProjectID || !slices.Equal(sp.Patterns, []string{`%認証%`, `%100\%%`}) {
+		t.Errorf("SearchTicketIDs の引数 = %+v", sp)
+	}
+	p := q.ticket.listParams[0]
+	if !p.KeywordSet || !slices.Equal(p.KeywordIds, []string{testTicketID}) {
+		t.Errorf("keyword = set:%v ids:%v, want 検索が返した ID", p.KeywordSet, p.KeywordIds)
+	}
+	if p.SeqFrom != 10 || p.SeqTo != 20 {
+		t.Errorf("seq = %d〜%d, want 10〜20", p.SeqFrom, p.SeqTo)
+	}
+	// 時差付きの瞬間をそのまま受ける（日の境界はサーバが作らない）
+	want := time.Date(2026, 8, 31, 15, 0, 0, 0, time.UTC)
+	if !p.StartedSince.Valid || !p.StartedSince.Time.Equal(want) {
+		t.Errorf("started_since = %+v, want %s", p.StartedSince, want)
+	}
+	if p.StartedBefore.Valid || p.ClosedSince.Valid || !p.ClosedBefore.Valid {
+		t.Errorf("指定しなかった範囲が効いている、または指定した範囲が落ちた: %+v", p)
+	}
+	if p.Sort != "closed_at" || p.SortOrder != "desc" {
+		t.Errorf("sort/order = %s/%s, want closed_at/desc", p.Sort, p.SortOrder)
+	}
+}
+
+// 検索の条件が無ければ SearchTicketIDs を呼ばず、一覧の引数も「指定なし」になる。
+// **空白だけの q も指定なし**——語が無いまま呼ぶと、当たらない語が無いので全件が一致する。
+func TestListTicketsWithoutSearchConditions(t *testing.T) {
+	q := ticketFake()
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.listTickets(rec, ticketReq(http.MethodGet,
+		"/projects/demo/tickets?q="+url.QueryEscape(" 　 "), "", ""))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if slices.Contains(q.opLog, "SearchTicketIDs") {
+		t.Error("語が無いのに SearchTicketIDs を呼んだ")
+	}
+	p := q.ticket.listParams[0]
+	if p.KeywordSet || p.KeywordIds == nil || p.SeqFrom != 0 || p.SeqTo != 0 ||
+		p.StartedSince.Valid || p.StartedBefore.Valid || p.ClosedSince.Valid || p.ClosedBefore.Valid {
+		t.Errorf("未指定の検索の条件が効いている: %+v", p)
 	}
 }
 
