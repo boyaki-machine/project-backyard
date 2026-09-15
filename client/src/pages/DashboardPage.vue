@@ -328,7 +328,7 @@ function ticketTo(seq: number): string {
 
 // ── 新規チケット（5.3 のヘッダ。5.4.3 のモーダルを使う）────────
 //
-// **語彙（タグ・スプリント・親の候補）は押したときに取りに行く。** 起動時の
+// **語彙（タグ・スプリント・エピック）は押したときに取りに行く。** 起動時の
 // 5本に足さない——作らない利用者に3本を払わせないためで、プロジェクト設定が
 // タブを開いたときにタグを取るのと同じ判断（5.9）。
 
@@ -336,7 +336,11 @@ const showNewModal = ref(false)
 const vocabLoading = ref(false)
 const tags = ref<Tag[]>([])
 const sprints = ref<Sprint[]>([])
-const candidates = ref<Ticket[]>([])
+/**
+ * エピック欄の選択肢（5.4.3「親チケットとエピック」。pb-14）。**ダッシュボードは
+ * 一覧を持たない**ので、親チケット欄は出ない（候補が0件）。
+ */
+const epics = ref<Ticket[]>([])
 const busy = ref(false)
 const newFieldErrors = ref<Record<string, string>>({})
 const createError = ref('')
@@ -347,7 +351,7 @@ async function openNewModal(): Promise<void> {
   showNewModal.value = true
   newFieldErrors.value = {}
   createError.value = ''
-  if (tags.value.length > 0 || sprints.value.length > 0 || candidates.value.length > 0) return
+  if (tags.value.length > 0 || sprints.value.length > 0 || epics.value.length > 0) return
   vocabLoading.value = true
   try {
     const [t, s, c] = await Promise.all([
@@ -357,13 +361,13 @@ async function openNewModal(): Promise<void> {
     ])
     tags.value = t.items
     sprints.value = s.items
-    candidates.value = c.items
+    epics.value = c.items
   } catch {
     // **語彙が取れなくてもモーダルは閉じない。** タイトルと種別だけで作れる
     // （`ApiDesign.md` 9.3 の必須はタイトルのみ）ので、選択肢が空のまま出す。
     tags.value = []
     sprints.value = []
-    candidates.value = []
+    epics.value = []
   } finally {
     vocabLoading.value = false
   }
@@ -577,7 +581,8 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
       :members="members"
       :tags="tags"
       :sprints="sprints"
-      :candidates="candidates"
+      :candidates="[]"
+      :epics="epics"
       :busy="busy || vocabLoading"
       :field-errors="newFieldErrors"
       @close="showNewModal = false"

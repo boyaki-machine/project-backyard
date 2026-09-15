@@ -41,6 +41,7 @@ import EmptyState from './EmptyState.vue'
  */
 import type MarkdownEditorComponent from './MarkdownEditor.vue'
 import NewTicketModal from './NewTicketModal.vue'
+import type { NewTicketDefaults } from './NewTicketModal.vue'
 import ReferenceModal from './ReferenceModal.vue'
 import StatusDropdown from './StatusDropdown.vue'
 import TicketActivity from './TicketActivity.vue'
@@ -116,8 +117,14 @@ const props = defineProps<{
   /**
    * 親の選択肢（5.5「編集の単位」）。**いま一覧に出ているチケット**から選ぶ。
    * バックログは最大200件を既に手元に持っており、追加の往復を要しない。
+   * **エピックは混ざっていても候補に出さない**（5.5「エピック欄」。pb-14）。
    */
   candidates: Ticket[]
+  /**
+   * エピック欄の選択肢（5.5「エピック欄」。pb-14）。バックログが持つ
+   * `GET /tickets?type=epic` の語彙で、追加の往復を要しない。
+   */
+  epics?: Ticket[]
 }>()
 
 const emit = defineEmits<{
@@ -876,15 +883,27 @@ function openNewChild(): void {
   showNewChild.value = true
 }
 
-/** 親の候補。**このチケット自身に固定する**ので1件だけ渡す */
+/**
+ * 親の候補。**このチケット自身に固定する**ので1件だけ渡す。
+ * **エピックなら親チケット欄には渡さず、エピック欄を固定する**（5.4.3「親チケットとエピック」。pb-14）
+ */
 const childParentCandidates = computed<Ticket[]>(() => {
   const t = ticket.value
-  if (t === null) return []
+  if (t === null || t.type === 'epic') return []
   const self = props.candidates.find((c) => c.seq === t.seq)
   return self ? [self] : []
 })
 
-const newChildDefaults = computed(() => ({ parent_seq: ticket.value?.seq }))
+/** エピック欄の候補。**エピックの子を作るときだけ**、このチケット自身を1件渡す */
+const childEpicCandidates = computed<Ticket[]>(() =>
+  ticket.value?.type === 'epic' ? [ticket.value] : [],
+)
+
+const newChildDefaults = computed<NewTicketDefaults>(() => {
+  const t = ticket.value
+  if (t === null) return {}
+  return t.type === 'epic' ? { epic_seq: t.seq } : { parent_seq: t.seq }
+})
 
 /**
  * 子チケットを作る。
@@ -975,10 +994,28 @@ const fullId = computed(() =>
 
 const body = computed(() => renderMarkdown(ticket.value?.body_md ?? ''))
 
-/** 親の候補。**自分自身は落とす**。子孫はサーバの 422 `parent_cycle` に任せる（5.5） */
+/**
+ * 親の候補。**自分自身は落とす**。子孫はサーバの 422 `parent_cycle` に任せる（5.5）。
+ * **エピックも落とす**——エピック欄で選ぶ（5.5「エピック欄」。pb-14）。
+ */
 const parentOptions = computed(() =>
-  props.candidates.filter((c) => c.seq !== props.seq),
+  props.candidates.filter((c) => c.seq !== props.seq && c.type !== 'epic'),
 )
+
+/**
+ * 親の欄に出す親。**親がエピックなら「親なし」と出す**——エピックはエピック欄が
+ * 出す（5.5「エピック欄」。pb-14）。保存されている `parent_seq` は同じ1列である。
+ */
+const parentTicket = computed(() => {
+  const p = ticket.value?.parent
+  return p && p.type !== 'epic' ? p : null
+})
+
+/**
+ * `parent_seq` の失敗を**どちらの欄の下に出すか**。親とエピックは同じ1列を送るので、
+ * サーバの `details[].field` だけでは決まらない——最後に触った欄の下に出す。
+ */
+const parentErrorAt = ref<'parent' | 'epic'>('parent')
 
 /**
  * 親の選択（5.5「親は選択式である」。pb-48）。
@@ -997,7 +1034,7 @@ const parentQuery = ref('')
  */
 const parentChoices = computed(() => {
   const list = [...parentOptions.value]
-  const cur = ticket.value?.parent
+  const cur = parentTicket.value
   if (cur && !list.some((c) => c.seq === cur.seq)) {
     list.unshift({ seq: cur.seq, title: cur.title } as (typeof list)[number])
   }
@@ -1025,7 +1062,35 @@ function openParentPicker(): void {
 
 async function pickParent(seq: number | null): Promise<void> {
   parentPickerOpen.value = false
-  if ((ticket.value?.parent?.seq ?? null) === seq) return // 変わらないなら送らない（5.5）
+  if ((parentTicket.value?.seq ?? null) === seq) return // 変わらないなら送らない（5.5）
+  parentErrorAt.value = 'parent'
+  // **親を外しても、祖先のエピックには残す**（5.5「エピック欄」。利用者の判断、
+  // 2026-09-15）。親を外す操作で、エピックという属性まで失わせない
+  await selectField({ parent_seq: seq ?? ticket.value?.epic?.seq ?? null }, 'parent_seq')
+}
+
+// ── エピック欄（5.5「エピック欄」。pb-14）─────────────────────
+
+/**
+ * エピックを選べるか。**親（エピック以外）が無いときだけ**——配下のツリーは親と
+ * 一緒にエピックへ属する（`ApiDesign.md` 9.2.1 の `parent` は部分木で絞る）。
+ */
+const epicSelectable = computed(() => parentTicket.value === null)
+
+/** 語彙に無い現在値も入れる。落とすと、選ばれている値が「なし」に見える */
+const epicChoices = computed(() => {
+  const list = [...(props.epics ?? [])]
+  const cur = ticket.value?.epic
+  if (cur && !list.some((e) => e.seq === cur.seq)) {
+    list.unshift({ seq: cur.seq, title: cur.title } as (typeof list)[number])
+  }
+  return list
+})
+
+async function pickEpic(value: string): Promise<void> {
+  const seq = value === '' ? null : Number(value)
+  if ((ticket.value?.epic?.seq ?? null) === seq) return // 変わらないなら送らない（5.5）
+  parentErrorAt.value = 'epic'
   await selectField({ parent_seq: seq }, 'parent_seq')
 }
 
@@ -1312,8 +1377,8 @@ function errorFor(field: string): string {
                   @click="parentPickerOpen ? (parentPickerOpen = false) : openParentPicker()"
                 >
                   <span class="parent-current">{{
-                    ticket.parent
-                      ? `${projectKey}-${ticket.parent.seq} ${ticket.parent.title}`
+                    parentTicket
+                      ? `${projectKey}-${parentTicket.seq} ${parentTicket.title}`
                       : '親なし'
                   }}</span>
                   <span class="caret" aria-hidden="true">▾</span>
@@ -1336,9 +1401,9 @@ function errorFor(field: string): string {
                       <button
                         type="button"
                         class="parent-option"
-                        :class="{ current: !ticket.parent }"
+                        :class="{ current: !parentTicket }"
                         role="option"
-                        :aria-selected="!ticket.parent"
+                        :aria-selected="!parentTicket"
                         @click="pickParent(null)"
                       >
                         親なし
@@ -1348,9 +1413,9 @@ function errorFor(field: string): string {
                       <button
                         type="button"
                         class="parent-option"
-                        :class="{ current: ticket.parent?.seq === c.seq }"
+                        :class="{ current: parentTicket?.seq === c.seq }"
                         role="option"
-                        :aria-selected="ticket.parent?.seq === c.seq"
+                        :aria-selected="parentTicket?.seq === c.seq"
                         @click="pickParent(c.seq)"
                       >
                         <code class="parent-seq">{{ projectKey }}-{{ c.seq }}</code>
@@ -1364,20 +1429,20 @@ function errorFor(field: string): string {
                   </ul>
                 </div>
               </template>
-              <span v-else-if="ticket.parent">
-                {{ projectKey }}-{{ ticket.parent.seq }} {{ ticket.parent.title }}
+              <span v-else-if="parentTicket">
+                {{ projectKey }}-{{ parentTicket.seq }} {{ parentTicket.title }}
               </span>
               <span v-else class="muted">—</span>
 
-              <!-- 親の詳細を同じペインで開く -->
+              <!-- 親の詳細を同じペインで開く。親がエピックならエピック欄が出す -->
               <RouterLink
-                v-if="ticket.parent"
+                v-if="parentTicket"
                 class="jump"
-                :to="`/p/${projectKey}/tickets/${ticket.parent.seq}`"
-                :aria-label="`親チケット ${projectKey}-${ticket.parent.seq} を開く`"
+                :to="`/p/${projectKey}/tickets/${parentTicket.seq}`"
+                :aria-label="`親チケット ${projectKey}-${parentTicket.seq} を開く`"
                 >↗</RouterLink
               >
-              <p v-if="errorFor('parent_seq')" class="field-error" role="alert">
+              <p v-if="parentErrorAt === 'parent' && errorFor('parent_seq')" class="field-error" role="alert">
                 {{ errorFor('parent_seq') }}
               </p>
             </dd>
@@ -1392,6 +1457,42 @@ function errorFor(field: string): string {
                    オンステージ段でスプリントを開始した瞬間である（5.4）。
                    `PATCH` もこの欄を受け付けない（ApiDesign.md 9.5.2）。 -->
               <span>{{ ticket.sprint?.name ?? '—' }}</span>
+            </dd>
+          </div>
+
+          <!-- エピック（5.5「エピック欄」。pb-14）。**保存するのは `parent_seq` だけ**で、
+               親（エピック以外）が無いときだけ選べる。親があれば配下のツリーは親と一緒に
+               エピックへ属するので、祖先のエピック（9.5.1 の `epic`）を出すだけにする。
+               **エピック自身には出さない**——入れ子を画面から作らない。
+               **2列ぶんを使う**——名前に「親チケットに従う」を添えると半分の幅では切れる -->
+          <div v-if="ticket.type !== 'epic'" class="meta-item wide">
+            <dt>エピック</dt>
+            <dd class="epic-cell">
+              <select
+                v-if="canEdit && epicSelectable"
+                :value="ticket.epic ? String(ticket.epic.seq) : ''"
+                :disabled="busy"
+                aria-label="エピック"
+                @change="pickEpic(($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">なし</option>
+                <option v-for="e in epicChoices" :key="e.seq" :value="String(e.seq)">
+                  {{ ticketTypeIcons.epic }} {{ projectKey }}-{{ e.seq }} {{ e.title }}
+                </option>
+              </select>
+              <span v-else-if="ticket.epic">{{ ticketTypeIcons.epic }} {{ projectKey }}-{{ ticket.epic.seq }} {{ ticket.epic.title }}</span>
+              <span v-else class="muted">なし</span>
+              <span v-if="!epicSelectable" class="muted">（親チケットに従う）</span>
+              <RouterLink
+                v-if="ticket.epic"
+                class="jump"
+                :to="`/p/${projectKey}/tickets/${ticket.epic.seq}`"
+                :aria-label="`エピック ${projectKey}-${ticket.epic.seq} を開く`"
+                >↗</RouterLink
+              >
+              <p v-if="parentErrorAt === 'epic' && errorFor('parent_seq')" class="field-error" role="alert">
+                {{ errorFor('parent_seq') }}
+              </p>
             </dd>
           </div>
 
@@ -1979,6 +2080,7 @@ function errorFor(field: string): string {
       :members="members"
       :tags="tags"
       :candidates="childParentCandidates"
+      :epics="childEpicCandidates"
       :defaults="newChildDefaults"
       lock-parent
       :busy="busy"
@@ -2320,12 +2422,14 @@ function errorFor(field: string): string {
   font-size: 13px;
 }
 
-.parent-cell .jump {
+.parent-cell .jump,
+.epic-cell .jump {
   flex: none;
   color: var(--pb-text-muted);
 }
 
-.parent-cell .jump:hover {
+.parent-cell .jump:hover,
+.epic-cell .jump:hover {
   color: var(--pb-text);
 }
 

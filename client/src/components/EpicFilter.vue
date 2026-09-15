@@ -18,6 +18,10 @@
  * **エピック自身もチケットである**ので、各行に詳細への導線を置く（5.4「編集」）。
  * **手順17b で実画面になった**——`↗` は右の詳細ペインを開く（2.2.1）。
  * **クエリを持ち回る**（3.2）ので、開いてもエピックの絞り込みは外れない。
+ *
+ * **末尾に `[+ 新規エピック]` を置く**（5.4「新規作成」。pb-14）。ここでは入力させず、
+ * 呼び出し側が新規チケットのモーダルを種別エピックで開く——このパネルは外側を押す・
+ * スクロールすると閉じるので、打ちかけのタイトルが消える。
  */
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from 'vue'
 
@@ -33,9 +37,11 @@ const props = defineProps<{
   /** 選択中の `seq`。URL のクエリ `parent` から復元される */
   selected: number[]
   projectKey: string
+  /** `[+ 新規エピック]` を出すか（`ticket.create`。5.4「新規作成」） */
+  canCreate?: boolean
 }>()
 
-const emit = defineEmits<{ update: [seqs: number[]] }>()
+const emit = defineEmits<{ update: [seqs: number[]]; create: [] }>()
 
 const open = ref(false)
 const trigger = useTemplateRef<HTMLButtonElement>('trigger')
@@ -58,7 +64,8 @@ function place(): void {
   const el = trigger.value
   if (!el) return
   const r = el.getBoundingClientRect()
-  const estimated = Math.max(props.epics.length, 1) * 34 + 8
+  // 行の数に `[+ 新規エピック]` の1行を足す
+  const estimated = (Math.max(props.epics.length, 1) + (props.canCreate ? 1 : 0)) * 34 + 8
   const below = window.innerHeight - r.bottom
   pos.value = {
     // 下に入らなければボタンの上へ出す（狭い窓で画面外へ落とさない）
@@ -131,6 +138,12 @@ function choose(seq: number): void {
   emit('update', next)
 }
 
+/** 新規エピック。**パネルを閉じてから**呼び出し側へ渡す——モーダルの下にパネルを残さない */
+function startCreate(): void {
+  close()
+  emit('create')
+}
+
 const panelStyle = computed(() => ({
   top: `${pos.value.top}px`,
   left: `${pos.value.left}px`,
@@ -153,9 +166,7 @@ const panelStyle = computed(() => ({
 
   <Teleport to="body">
     <div v-if="open" ref="panel" class="epic-panel" :style="panelStyle" @click.stop>
-      <p v-if="epics.length === 0" class="empty">
-        エピックがありません。種別「エピック」のチケットを作ると、ここに出ます
-      </p>
+      <p v-if="epics.length === 0" class="empty">エピックはまだありません</p>
       <div v-for="e in epics" :key="e.seq" class="epic-row">
         <label class="epic-choice">
           <input
@@ -176,6 +187,10 @@ const panelStyle = computed(() => ({
         >
           ↗
         </RouterLink>
+      </div>
+      <!-- 新規エピック（5.4「新規作成」。pb-14）。選択肢と混ざらないよう罫線で区切る -->
+      <div v-if="canCreate" class="epic-create">
+        <button type="button" class="epic-create-button" @click="startCreate">+ 新規エピック</button>
       </div>
     </div>
   </Teleport>
@@ -282,5 +297,27 @@ const panelStyle = computed(() => ({
   padding: var(--pb-space-2);
   color: var(--pb-text-muted);
   font-size: 13px;
+}
+
+.epic-create {
+  margin-top: var(--pb-space-1);
+  padding-top: var(--pb-space-1);
+  border-top: 1px solid var(--pb-border);
+}
+
+.epic-create-button {
+  width: 100%;
+  padding: var(--pb-space-2);
+  border: none;
+  border-radius: var(--pb-radius);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.epic-create-button:hover {
+  background: var(--pb-hover);
 }
 </style>

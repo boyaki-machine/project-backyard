@@ -7,6 +7,11 @@
  */
 export interface NewTicketDefaults {
   parent_seq?: number
+  /**
+   * エピック欄の初期値（5.4.3「親チケットとエピック」。pb-14）。**`parent_seq` と
+   * 同時には渡さない**——保存されるのは `parent_seq` の1列で、親チケットが勝つ。
+   */
+  epic_seq?: number
   tag_ids?: string[]
   assignee_id?: string
 }
@@ -47,11 +52,25 @@ const props = defineProps<{
   projectKey: string
   members: ProjectMember[]
   tags: Tag[]
-  /** 親の選択肢。バックログがいま表示しているチケット（5.4.3） */
+  /**
+   * 親チケットの選択肢。バックログがいま表示しているチケット（5.4.3）。
+   * **エピックは混ざっていても候補に出さない**（エピック欄で選ぶ。pb-14）。
+   */
   candidates: Ticket[]
+  /**
+   * エピック欄の選択肢（5.4.3「親チケットとエピック」。pb-14）。
+   * `GET /tickets?type=epic` の結果で、**空なら欄ごと出さない**。
+   */
+  epics?: Ticket[]
+  /**
+   * 新規エピックとして開く（5.4.3「新規エピック」。pb-14）。種別をエピックに固定し、
+   * **親チケットとエピックの欄を出さない**——エピックの入れ子を画面から作らない。
+   */
+  epicMode?: boolean
   defaults?: NewTicketDefaults
   /**
-   * 親を `defaults.parent_seq` に固定する（`GuiDesign.md` 5.5、手順17c）。
+   * 親を `defaults.parent_seq`（エピックなら `defaults.epic_seq`）に固定する
+   * （`GuiDesign.md` 5.5、手順17c）。
    *
    * チケット詳細の「子チケットを追加」から開くときに真にする。**「なし」を
    * 選べる状態のままにすると、子を作るつもりで開いたのにトップレベルの
@@ -70,11 +89,11 @@ const MAX_TITLE = 200
 
 /**
  * **選択肢はストーリーとタスクの2つ**（`GuiDesign.md` 5.4.3）。
- * エピックはフィルタであり、ここからは作らない。
+ * エピックは `エピック[…]` のパネルから、`epicMode` で開いて作る（pb-14）。
  */
-const types: TicketType[] = backlogTicketTypes
+const types: TicketType[] = props.epicMode ? ['epic'] : backlogTicketTypes
 
-const type = ref<TicketType>('task')
+const type = ref<TicketType>(props.epicMode ? 'epic' : 'task')
 const title = ref('')
 
 /**
@@ -86,6 +105,7 @@ const bodyMd = ref(newTicketBodyTemplate)
 const priority = ref<TicketPriority | ''>('')
 const assigneeId = ref(props.defaults?.assignee_id ?? '')
 const parentSeq = ref(props.defaults?.parent_seq !== undefined ? String(props.defaults.parent_seq) : '')
+const epicSeq = ref(props.defaults?.epic_seq !== undefined ? String(props.defaults.epic_seq) : '')
 const tagIds = ref<string[]>([...(props.defaults?.tag_ids ?? [])])
 const estimatePoint = ref('')
 const startDate = ref('')
@@ -143,6 +163,31 @@ function candidateLabel(t: Ticket): string {
   return `${props.projectKey}-${t.seq} ${t.title}`
 }
 
+// ── 親チケットとエピック（5.4.3。pb-14）──────────────────────
+//
+// **保存されるのは `parent_seq` の1列だけ**で、2つの欄はそこから導く。
+// エピックを選べるのは親チケットが無いときだけ——配下のツリーは親と一緒に
+// エピックへ属する（`ApiDesign.md` 9.2.1 の `parent` は部分木で絞る）。
+
+const parentOptions = computed(() => props.candidates.filter((c) => c.type !== 'epic'))
+
+/**
+ * 親チケット欄を出すか。**候補が0件なら出さない**（ダッシュボードは一覧を持たない）。
+ * 固定されているときは値があれば出す——エピックに固定したときは値が無いので出さない。
+ */
+const showParent = computed(
+  () =>
+    !props.epicMode &&
+    (parentSeq.value !== '' || (!props.lockParent && parentOptions.value.length > 0)),
+)
+
+const epicOptions = computed(() => props.epics ?? [])
+
+/** エピック欄を出すか。**エピックが1件も無ければ出さない**（5.4.3） */
+const showEpic = computed(
+  () => !props.epicMode && (epicSeq.value !== '' || epicOptions.value.length > 0),
+)
+
 /**
  * `POST` なので、**値が無い項目はキーごと落とす**（`ApiDesign.md` 9.3）。
  *
@@ -157,7 +202,11 @@ function submit(): void {
   if (bodyMd.value.trim() !== '') body.body_md = bodyMd.value
   if (priority.value !== '') body.priority = priority.value
   if (assigneeId.value !== '') body.assignee_id = assigneeId.value
-  if (parentSeq.value !== '') body.parent_seq = Number(parentSeq.value)
+  // 親チケットが勝つ。エピック欄はそのとき選べない状態で、値だけが残っている（5.4.3）
+  if (!props.epicMode) {
+    if (parentSeq.value !== '') body.parent_seq = Number(parentSeq.value)
+    else if (epicSeq.value !== '') body.parent_seq = Number(epicSeq.value)
+  }
   if (tagIds.value.length > 0) body.tag_ids = [...tagIds.value]
   if (estimatePoint.value !== '') body.estimate_point = Number(estimatePoint.value)
   if (startDate.value !== '') body.start_date = startDate.value
@@ -168,12 +217,13 @@ function submit(): void {
 </script>
 
 <template>
-  <Modal title="新規チケット" @close="emit('close')">
+  <Modal :title="epicMode ? '新規エピック' : '新規チケット'" @close="emit('close')">
     <form id="new-ticket-form" class="form" @submit.prevent="submit">
       <div class="row">
         <label class="field type">
           <span class="label">種別 <span class="required">*</span></span>
-          <select v-model="type">
+          <!-- 新規エピックでは変えられない（5.4.3「新規エピック」） -->
+          <select v-model="type" :disabled="epicMode">
             <option v-for="t in types" :key="t" :value="t">
               {{ ticketTypeIcons[t] }} {{ ticketTypeLabels[t] }}
             </option>
@@ -223,20 +273,35 @@ function submit(): void {
         </label>
       </div>
 
-      <div class="row">
-        <label class="field grow">
+      <div v-if="showParent || showEpic" class="row">
+        <label v-if="showParent" class="field grow">
           <span class="label">親チケット</span>
           <!-- **固定するときは「なし」を出さない。** 出したまま選べなくすると
                「選べるのに選べない」に見える（5.5、手順17c） -->
           <select v-model="parentSeq" :disabled="lockParent">
             <option v-if="!lockParent" value="">なし</option>
-            <option v-for="c in candidates" :key="c.seq" :value="String(c.seq)">
+            <option v-for="c in parentOptions" :key="c.seq" :value="String(c.seq)">
               {{ candidateLabel(c) }}
             </option>
           </select>
-          <span v-if="fieldErrors?.parent_seq" class="detail">✕ {{ fieldErrors.parent_seq }}</span>
+          <span v-if="parentSeq !== '' && fieldErrors?.parent_seq" class="detail">✕ {{ fieldErrors.parent_seq }}</span>
         </label>
 
+        <label v-if="showEpic" class="field grow">
+          <span class="label">エピック</span>
+          <!-- **親チケットがあるときは選べない**（5.4.3「親チケットとエピック」）。
+               値は捨てずに持っておき、親を「なし」に戻したら元の選択が見える -->
+          <select v-if="parentSeq !== ''" disabled>
+            <option>親チケットに従う</option>
+          </select>
+          <select v-else v-model="epicSeq" :disabled="lockParent">
+            <option v-if="!lockParent" value="">なし</option>
+            <option v-for="e in epicOptions" :key="e.seq" :value="String(e.seq)">
+              {{ ticketTypeIcons.epic }} {{ candidateLabel(e) }}
+            </option>
+          </select>
+          <span v-if="parentSeq === '' && fieldErrors?.parent_seq" class="detail">✕ {{ fieldErrors.parent_seq }}</span>
+        </label>
       </div>
 
       <!-- タグは複数付く（`ticket_tag` は多対多）。ここから新規作成はできない
