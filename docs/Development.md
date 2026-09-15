@@ -99,14 +99,13 @@ Makefile が `app_db_password` から `127.0.0.1:5432` 向けの接続文字列�
 ## 2.2 DBを起動してスキーマを作る
 
 ```
-make up        # docker compose up -d db（db のみ。app は Phase 2 では起動しない）
+make up        # docker compose up -d db（db のみ。app は起動しない）
 make migrate   # goose で 0001〜 を適用する。前進のみ（DbDesign.md 5.3）
 ```
 
-`make up` が起動するのは **db だけ**である。`deploy/Dockerfile` が未作成のため、
-app サービスは compose に定義してあっても起動対象から外してある。**`Design.md` 4.4 により
-Phase 2 では Dockerfile を作らない**ので、この状態は当面続く（PB 本体は `make run` か
-`make build` の単一バイナリで動かす）。
+`make up` が起動するのは **db だけ**である。**dev では PB 本体を `make run` か `make build` の
+単一バイナリでホストから動かす**ので、compose に定義してある app まで上げると 8080 番でぶつかる。
+コンテナで動かす一式は `make release TARGET=compose`（7.3。pb-123）で作る。
 
 **`make migrate` は `pb_owner` で接続する**（`db_password` から組み立てる）。実行時ロールの
 `pb_app` は DDL を実行できず、それがロール分離の目的である（`DbDesign.md` 3.4）。
@@ -462,10 +461,22 @@ make bump-build      # fix/* docs/* をマージする前に。ビルドのみ +
 ```
 make release TARGET=native OS=darwin ARCH=arm64                    # dist/pb-v<版>-native-darwin-arm64/
 make release TARGET=native OS=windows ARCH=amd64 OUT=/path/to/dir  # 出力先を指定する
+make release TARGET=compose ARCH=arm64                             # イメージの tar と compose の一式
+make release TARGET=docker ARCH=amd64 PUSH=<レジストリ>/pb:<タグ>  # tar の代わりにレジストリへ送る
 ```
 
-- **いま指定できる `TARGET` は `native` だけ**（docker / compose は pb-123、k8s は pb-124）
-- **client のビルド（`npm ci`）を毎回含む。** 組を変えて続けて作ると、そのたびに走る
+- **指定できる `TARGET` は `native`・`docker`・`compose`**（k8s は pb-124）
+- **native は client のビルド（`npm ci`）を毎回含む。** 組を変えて続けて作ると、そのたびに走る
+- **docker / compose はイメージの中でビルドするので、この端末の Go と Node を使わない**（docker buildx だけが要る）。
+  ビルドの段は `$BUILDPLATFORM` で動くので、**amd64 もエミュレーション無しで作れる。** 実測（pb-123）：
+  初回の compose/arm64 が 52秒、続けて docker/amd64 が 48秒（Go のクロスコンパイルだけやり直す）、docker/arm64 は 0秒
+- **compose の一式をこの端末で動かしても、Linux のサーバで秘密ファイルが読める証拠にはならない。**
+  Rancher Desktop が共有するパス（`/Users` や `/private/tmp`）は、所有者がコンテナの利用者に書き換わって見える。
+  **Linux の権限で確かめるなら、`rdctl shell` で VM の中にファイルを作り、そのパスを `docker run -v` で渡す**
+  （pb-123 で、644 は読める・600 と 700 のディレクトリ越しは読めないことを本物のイメージで実測した）
+- **手元にレジストリを立てて `PUSH` を試すなら、5000 番を避ける。** macOS では ControlCenter（AirPlay レシーバ）が
+  `*:5000` で待ち受けている（pb-123 で実測）。push は VM の中の docker が行うので VM の中のレジストリには届くが、
+  mac から中身を覗くと紛れる
 - **空でない出力先には書かない。** 作り直すなら、出力先を消してから叩く
 - **`OUT` を省くと `dist/` の下に出る。** `make stg-build` の既定の出力先（`deploy/stg/out`）は
   使わない——`make release` はコマンドラインで渡された `OUT` だけを見る

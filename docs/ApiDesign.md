@@ -323,7 +323,7 @@ GET /healthcheck
 | 副作用 | 無し。**DBへは接続しない** |
 | 応答 | 常に `200` と `{"status":"OK"}`。異常時はプロセスが応答しないことで検知する |
 | バージョン | 設定 `PB_HEALTH_SHOW_VERSION=true` のときのみ `version` を加える。**既定は false** |
-| 用途 | compose の `healthcheck`、Kubernetes の `livenessProbe` |
+| 用途 | Kubernetes の `livenessProbe`、外からの監視と確認。**配布用の compose と docker の一式は、コンテナの `healthcheck` を持たない**（イメージにこれを叩くコマンドが無く、叩き役も足さない。pb-123） |
 | アクセスログ | 既定では出さない（`Design.md` 10.1） |
 
 ```json
