@@ -463,9 +463,15 @@ make release TARGET=native OS=darwin ARCH=arm64                    # dist/pb-v<�
 make release TARGET=native OS=windows ARCH=amd64 OUT=/path/to/dir  # 出力先を指定する
 make release TARGET=compose ARCH=arm64                             # イメージの tar と compose の一式
 make release TARGET=docker ARCH=amd64 PUSH=<レジストリ>/pb:<タグ>  # tar の代わりにレジストリへ送る
+make release TARGET=k8s ARCH=arm64                                 # イメージの tar とマニフェスト一式
 ```
 
-- **指定できる `TARGET` は `native`・`docker`・`compose`**（k8s は pb-124）
+- **指定できる `TARGET` は `native`・`docker`・`compose`・`k8s`**
+- **k8s の一式をこの端末の k3s（Rancher Desktop）で確かめるなら、専用の namespace を作り、確かめたら namespace ごと消す**（pb-124）。
+  **この端末の k3s は dockerd で動いている**（`kubectl get nodes -o wide` の `CONTAINER-RUNTIME` が `docker://`）ので、
+  **`docker load` したイメージがそのまま Pod から使える。** `nerdctl -n k8s.io load` は containerd のときの手順で、ここでは確かめられない。
+  `k8s/db.yaml` の PVC は既定の StorageClass `local-path`（`reclaimPolicy: Delete`）に乗るので、namespace を消すとデータも消える
+- **port-forward の手元のポートは 8080 以外にしてよい**（`kubectl port-forward svc/pb 18124:8080`）。dev の `make run` とぶつけないため
 - **native は client のビルド（`npm ci`）を毎回含む。** 組を変えて続けて作ると、そのたびに走る
 - **docker / compose はイメージの中でビルドするので、この端末の Go と Node を使わない**（docker buildx だけが要る）。
   ビルドの段は `$BUILDPLATFORM` で動くので、**amd64 もエミュレーション無しで作れる。** 実測（pb-123）：
