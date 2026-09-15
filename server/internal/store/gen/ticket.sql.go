@@ -918,6 +918,46 @@ filtered AS (
            AND NOT EXISTS (SELECT 1 FROM open_desc od WHERE od.id = t.id)
          ))
     AND (cardinality($6::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
+    -- ── 検索の条件（ApiDesign.md 9.2.1「検索の条件」。pb-66）──────────
+    --
+    -- キーワードの一致は store/search（queries/search.sql）が済ませ、**一致した ID
+    -- だけを受け取る**（Design.md 4.6 の隔離）。keyword_set が偽なら絞らない——
+    -- 「語が無い」と「語はあったが0件に一致」を区別するためのフラグである。
+    AND (NOT $22::boolean OR t.id = ANY($23::text[]))
+    -- 番号の範囲は両端を含む。0 は指定なし（seq は1から始まる）。
+    AND ($24::int <= 0 OR t.seq >= $24::int)
+    AND ($25::int <= 0 OR t.seq <= $25::int)
+    -- 完了日時は since 以上・before 未満。**指定すると未完了は外れる**（NULL との比較は偽）。
+    AND ($26::timestamptz IS NULL
+         OR t.closed_at >= $26::timestamptz)
+    AND ($27::timestamptz IS NULL
+         OR t.closed_at < $27::timestamptz)
+    -- 着手日時（9.2.1「着手日時を導く」）。**状態が todo 区分から初めて出た遷移**の
+    -- occurred_at で、列を持たず activity から導く。完了を取り消して着手し直しても
+    -- min を採るので、最初の着手になる。区分はいまのワークフローで引くので、
+    -- いまのワークフローに無いキーの遷移は結合で落ちる。
+    AND (($28::timestamptz IS NULL
+          AND $29::timestamptz IS NULL)
+         OR EXISTS (
+           SELECT 1
+             FROM (SELECT min(a.occurred_at) AS started_at
+                     FROM activity a
+                     JOIN workflow_status os
+                       ON os.workflow_id = p.workflow_id AND os.key = a.old_value
+                     JOIN workflow_status ns
+                       ON ns.workflow_id = p.workflow_id AND ns.key = a.new_value
+                    WHERE a.entity_type = 'ticket'
+                      AND a.entity_id = t.id
+                      AND a.action = 'transition'
+                      AND a.field = 'status_key'
+                      AND os.category = 'todo'
+                      AND ns.category <> 'todo') st
+            WHERE st.started_at IS NOT NULL
+              AND ($28::timestamptz IS NULL
+                   OR st.started_at >= $28::timestamptz)
+              AND ($29::timestamptz IS NULL
+                   OR st.started_at < $29::timestamptz)
+         ))
 )
 SELECT
   f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at,
@@ -953,6 +993,9 @@ ORDER BY
   CASE WHEN $1::text = 'created_at' AND $2::text = 'desc' THEN f.created_at END DESC,
   CASE WHEN $1::text = 'updated_at' AND $2::text = 'asc'  THEN f.updated_at END ASC,
   CASE WHEN $1::text = 'updated_at' AND $2::text = 'desc' THEN f.updated_at END DESC,
+  -- 完了日時（pb-66。チケット検索の「完了日」の列）。**未完了（NULL）は昇順・降順とも末尾**（9.2.1）。
+  CASE WHEN $1::text = 'closed_at'  AND $2::text = 'asc'  THEN f.closed_at END ASC  NULLS LAST,
+  CASE WHEN $1::text = 'closed_at'  AND $2::text = 'desc' THEN f.closed_at END DESC NULLS LAST,
   -- 同値の行の順序が実行ごとに揺れないようにする最終キー。
   f.seq ASC
 LIMIT $4 OFFSET $3
@@ -980,6 +1023,14 @@ type ListTicketsParams struct {
 	OverdueOnly      bool
 	StaleDays        int32
 	IncludeRetired   bool
+	KeywordSet       bool
+	KeywordIds       []string
+	SeqFrom          int32
+	SeqTo            int32
+	ClosedSince      pgtype.Timestamptz
+	ClosedBefore     pgtype.Timestamptz
+	StartedSince     pgtype.Timestamptz
+	StartedBefore    pgtype.Timestamptz
 }
 
 type ListTicketsRow struct {
@@ -1038,8 +1089,8 @@ type ListTicketsRow struct {
 // ListTickets はバックログの唯一のデータ源（9.2）。
 //
 // **総件数と最終更新を同じクエリの窓関数で返す。** 2.6 の total と 2.7 の ETag の
-// 材料であり、別クエリにすると WHERE を二重に持つことになる。フィルタが13種類
-// あるため、写しが片方だけ古くなる危険が現実的に高い（user.sql の
+// 材料であり、別クエリにすると WHERE を二重に持つことになる。フィルタが20種類
+// あるため（pb-66 で検索の条件を7つ足した）、写しが片方だけ古くなる危険が現実的に高い（user.sql の
 // ListAdminUsers / SummarizeAdminUsers は「一字一句そろえる」と注記して2本に
 // 分けているが、あちらは条件が3つである）。窓関数は WHERE の後・LIMIT の前に
 // 評価されるので、ページを切っても総件数は絞り込み全体のものになる。
@@ -1103,6 +1154,14 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 		arg.OverdueOnly,
 		arg.StaleDays,
 		arg.IncludeRetired,
+		arg.KeywordSet,
+		arg.KeywordIds,
+		arg.SeqFrom,
+		arg.SeqTo,
+		arg.ClosedSince,
+		arg.ClosedBefore,
+		arg.StartedSince,
+		arg.StartedBefore,
 	)
 	if err != nil {
 		return nil, err
