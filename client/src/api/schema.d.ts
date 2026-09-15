@@ -5255,7 +5255,7 @@ export interface components {
             total: number;
             total_pages: number;
         };
-        /** @description 親チケットの要約（ApiDesign.md 9.5.1 の `parent`）。 */
+        /** @description チケットの要約（ApiDesign.md 9.5.1 の `parent` と `epic`）。 */
         TicketBrief: {
             /** Format: int32 */
             seq: number;
@@ -5292,6 +5292,11 @@ export interface components {
             /** @description 本文（Markdown ソース）。 */
             body_md: string | null;
             parent: components["schemas"]["TicketBrief"] | null;
+            /**
+             * @description 祖先をたどって最初に見つかるエピック（ApiDesign.md 9.5.1。pb-14）。
+             *     親がエピックなら親そのもの。**自分自身は数えない。** 無ければ `null`。
+             */
+            epic: components["schemas"]["TicketBrief"] | null;
             children: components["schemas"]["TicketChild"][];
             /**
              * @description 完了条件（ApiDesign.md 9.9）。**手順18a から実数を返す。**

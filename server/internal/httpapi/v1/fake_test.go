@@ -1395,6 +1395,9 @@ type ticketFakeState struct {
 	children  []gen.ListTicketChildrenBriefRow
 	idBySeq   map[int32]string
 
+	// epicAncestorByID は 9.5.1 の epic（pb-14）。nil のままなら全件 0行
+	epicAncestorByID map[string]gen.GetTicketEpicAncestorRow
+
 	nextSeq          int32
 	initialStatusKey string
 	created          []gen.CreateTicketParams
@@ -1600,6 +1603,17 @@ func (q *fakeQuerier) GetTicketBrief(_ context.Context, id string) (gen.GetTicke
 	row, ok := q.ticket.briefByID[id]
 	if !ok {
 		return gen.GetTicketBriefRow{}, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+// GetTicketEpicAncestor は 9.5.1 の epic（pb-14）。キーは起点のチケットの ID で、
+// 無ければ実物と同じく 0行（pgx.ErrNoRows）を返す。
+func (q *fakeQuerier) GetTicketEpicAncestor(_ context.Context, ticketID string) (gen.GetTicketEpicAncestorRow, error) {
+	q.opLog = append(q.opLog, "GetTicketEpicAncestor")
+	row, ok := q.ticket.epicAncestorByID[ticketID]
+	if !ok {
+		return gen.GetTicketEpicAncestorRow{}, pgx.ErrNoRows
 	}
 	return row, nil
 }

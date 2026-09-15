@@ -11,8 +11,10 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -145,6 +147,7 @@ type ticketDetailView struct {
 	ticketListItem
 	BodyMd       *string            `json:"body_md"`
 	Parent       *ticketBrief       `json:"parent"`
+	Epic         *ticketBrief       `json:"epic"`
 	Children     []ticketChildBrief `json:"children"`
 	DoD          []dodView          `json:"dod"`
 	Links        []linkView         `json:"links"`
@@ -309,6 +312,31 @@ func buildTicketDetail(
 			Title:  brief.Title,
 			Type:   brief.Type,
 			Status: statusView(brief.StatusKey, brief.StatusName, brief.StatusCategory),
+		}
+	}
+
+	// 9.5.1 の epic（pb-14）。祖先をたどって最初に見つかるエピックで、自分自身は数えない。
+	// **親がエピックなら往復を足さない**——答えは親そのものである。画面が一覧の手持ちから
+	// たどらないのは、フィルタで途中の親が落ちると答えが欠けるため（GuiDesign.md 5.5「エピック欄」）。
+	if view.Parent != nil {
+		if view.Parent.Type == ticketTypeEpic {
+			epic := *view.Parent
+			view.Epic = &epic
+		} else {
+			anc, err := q.GetTicketEpicAncestor(ctx, row.ID)
+			switch {
+			case errors.Is(err, pgx.ErrNoRows):
+				// 祖先にエピックが無い。epic は null のまま
+			case err != nil:
+				return ticketDetailView{}, fmt.Errorf("祖先のエピックを読めない: %w", err)
+			default:
+				view.Epic = &ticketBrief{
+					Seq:    anc.Seq,
+					Title:  anc.Title,
+					Type:   anc.Type,
+					Status: statusView(anc.StatusKey, anc.StatusName, anc.StatusCategory),
+				}
+			}
 		}
 	}
 

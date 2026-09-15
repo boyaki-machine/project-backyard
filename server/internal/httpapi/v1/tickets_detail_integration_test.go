@@ -112,6 +112,55 @@ func TestTicketDetailIntegration(t *testing.T) {
 		}
 	})
 
+	// ── 9.5.1 epic（pb-14）：GetTicketEpicAncestor の再帰CTEはここでしか通らない ──
+	t.Run("epic は祖先をたどって最も近いエピックを返す", func(t *testing.T) {
+		seqOf := func(v map[string]any) int { return int(v["seq"].(float64)) }
+		epicOf := func(v map[string]any) any {
+			if e, ok := v["epic"].(map[string]any); ok {
+				return int(e["seq"].(float64))
+			}
+			return v["epic"]
+		}
+
+		// 外側のエピック > 内側のエピック > ストーリー > タスク
+		outer := createTicketIT(t, r, session, base, `{"type":"epic","title":"決済"}`)
+		inner := createTicketIT(t, r, session, base,
+			fmt.Sprintf(`{"type":"epic","title":"カード決済","parent_seq":%d}`, seqOf(outer)))
+		story := createTicketIT(t, r, session, base,
+			fmt.Sprintf(`{"type":"story","title":"与信","parent_seq":%d}`, seqOf(inner)))
+		task := createTicketIT(t, r, session, base,
+			fmt.Sprintf(`{"type":"task","title":"与信API","parent_seq":%d}`, seqOf(story)))
+
+		cases := []struct {
+			name string
+			seq  int
+			want any
+		}{
+			{"孫（親はストーリー）は祖先のうち最も近いエピック", seqOf(task), seqOf(inner)},
+			{"子（親がエピック）は親そのもの", seqOf(story), seqOf(inner)},
+			{"エピック自身は数えず、その上のエピック", seqOf(inner), seqOf(outer)},
+			{"祖先にエピックが無ければ null", seqOf(outer), nil},
+		}
+		for _, c := range cases {
+			if got := epicOf(getTicketIT(t, r, session, base, c.seq)); got != c.want {
+				t.Errorf("%s: epic = %v, want %v", c.name, got, c.want)
+			}
+		}
+
+		// 作成の応答（9.3 は 9.5 の GET と同形式）にも載る。
+		if got := epicOf(task); got != seqOf(inner) {
+			t.Errorf("作成の応答の epic = %v, want %d", got, seqOf(inner))
+		}
+
+		// エピックの無い木では、祖先をたどっても null。
+		lone := createTicketIT(t, r, session, base, `{"type":"story","title":"単独"}`)
+		leaf := createTicketIT(t, r, session, base,
+			fmt.Sprintf(`{"type":"task","title":"単独の子","parent_seq":%d}`, seqOf(lone)))
+		if got := epicOf(getTicketIT(t, r, session, base, seqOf(leaf))); got != nil {
+			t.Errorf("エピックの無い木の epic = %v, want null", got)
+		}
+	})
+
 	// ── 9.5.2 PATCH：据え置きと NULL の撃ち分け ─────────────────
 	t.Run("PATCHは送った項目だけを更新する", func(t *testing.T) {
 		created := createTicketIT(t, r, session, base,

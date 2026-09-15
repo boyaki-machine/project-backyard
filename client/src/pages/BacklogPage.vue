@@ -589,6 +589,19 @@ async function loadVocabulary(): Promise<void> {
   if (e.status === 'fulfilled') epics.value = e.value.items
 }
 
+/**
+ * エピックの語彙だけを取り直す（5.4.3「新規エピック」。pb-14）。作ったエピックを
+ * フィルタの選択肢に出すためで、タグとスプリントは変わっていない。
+ * **失敗しても一覧は止めない**（`loadVocabulary` と同じ扱い）。
+ */
+async function reloadEpics(): Promise<void> {
+  try {
+    epics.value = (await ticketsApi.listTickets(projectKey.value, { type: 'epic' })).items
+  } catch {
+    // 選択肢が古いままになるだけで、作成そのものは成功している
+  }
+}
+
 const epicSeqSet = computed(() => new Set(epics.value.map((e) => e.seq)))
 
 /**
@@ -1578,20 +1591,21 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
 
 const showNewModal = ref(false)
 const newDefaults = ref<NewTicketDefaults>({})
+/** 新規エピックとして開いているか（5.4.3「新規エピック」。pb-14） */
+const newEpicMode = ref(false)
 const newFieldErrors = ref<Record<string, string>>({})
 
 /**
- * 親の選択肢（5.4.3）。**いま一覧に出ているチケット**から選ぶ。
+ * 親チケットの選択肢（5.4.3）。**いま一覧に出ているチケット**から選ぶ。
  *
  * **エピックで絞り込み中は「そのエピック配下かつ未完了」に絞る**——絞り込んで
  * 作業しているときに、視野の外のチケットを親に選べても選ぶ理由がない。
- * **選択中のエピック自身も候補に入れる**（直下にストーリーを足すのが普通の
- * 操作であり、エピックは行として出ないのでここでしか選べない）。
+ * **エピックは入れない**——エピック欄で選ぶ（5.4.3「親チケットとエピック」。pb-14）。
+ * 以前は、選択中のエピック自身をここへ足していた。
  */
 const parentCandidates = computed<Ticket[]>(() => {
   if (epicSeqs.value.length === 0) return tickets.value
-  const selected = epics.value.filter((e) => epicSeqs.value.includes(e.seq))
-  return [...selected, ...tickets.value.filter((t) => t.closed_at === null)]
+  return tickets.value.filter((t) => t.closed_at === null)
 })
 
 /**
@@ -1600,7 +1614,7 @@ const parentCandidates = computed<Ticket[]>(() => {
  * 状態の軸だけは初期値を持たない——ワークフローの入口はサーバが決めるため、
  * モーダルに状態の欄そのものが無い（9.3）。
  *
- * **エピックを1つだけ選んでいるときは、そのエピックが親の初期値になる**（5.4）。
+ * **エピックを1つだけ選んでいるときは、そのエピックがエピック欄の初期値になる**（5.4）。
  * 2つ以上のときは入れない——どちらの配下に作るのかを決められない。
  */
 function openNewModal(sectionKey?: string): void {
@@ -1611,17 +1625,41 @@ function openNewModal(sectionKey?: string): void {
     sectionKey !== 'none' &&
     sectionKey !== 'top'
   ) {
-    if (group.value === 'parent') defaults.parent_seq = Number(sectionKey)
+    if (group.value === 'parent') {
+      // エピックのセクションなら、エピック欄に入れる（親チケット欄の候補にエピックは無い。5.4.3）
+      const seq = Number(sectionKey)
+      if (epicSeqSet.value.has(seq)) defaults.epic_seq = seq
+      else defaults.parent_seq = seq
+    }
     if (group.value === 'tag') defaults.tag_ids = [sectionKey]
     // **スプリントの軸だけ初期値を持たない**（pb-6）。9.3 が `sprint_id` を
     // 受け付けなくなったためで、所属はスプリントを開始したときに決まる。
     // 状態の軸が初期値を持たないのと同じ形である。
     if (group.value === 'assignee') defaults.assignee_id = sectionKey
   }
-  if (defaults.parent_seq === undefined && epicSeqs.value.length === 1) {
-    defaults.parent_seq = epicSeqs.value[0]
+  if (
+    defaults.parent_seq === undefined &&
+    defaults.epic_seq === undefined &&
+    epicSeqs.value.length === 1
+  ) {
+    defaults.epic_seq = epicSeqs.value[0]
   }
+  newEpicMode.value = false
   newDefaults.value = defaults
+  newFieldErrors.value = {}
+  result.value = ''
+  showNewModal.value = true
+}
+
+/**
+ * 新規エピック（5.4.3「新規エピック」。pb-14）。`エピック[…]` のパネルから開く。
+ *
+ * **同じモーダルを種別エピックに固定して使う。** 初期値は持たない——絞り込み中の
+ * エピックを親に入れると、エピックの入れ子ができる。
+ */
+function openNewEpicModal(): void {
+  newEpicMode.value = true
+  newDefaults.value = {}
   newFieldErrors.value = {}
   result.value = ''
   showNewModal.value = true
@@ -1637,7 +1675,9 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
   try {
     const created = await ticketsApi.createTicket(projectKey.value, body)
     showNewModal.value = false
-    await loadTickets()
+    // **エピックは行に出ない**ので、取り直すのは語彙のほう（5.4.3「新規エピック」）
+    if (created.type === 'epic') await reloadEpics()
+    else await loadTickets()
     result.value = `✓ ${projectKey.value}-${created.seq}「${created.title}」を作成しました`
   } catch (e) {
     const err = toApiError(e)
@@ -1992,7 +2032,9 @@ watch(projectKey, (key) => {
             :epics="epics"
             :selected="epicSeqs"
             :project-key="projectKey"
+            :can-create="canCreate"
             @update="setQuery({ parent: $event.join(',') })"
+            @create="openNewEpicModal"
           />
         </div>
 
@@ -2457,6 +2499,8 @@ watch(projectKey, (key) => {
         :members="members"
         :tags="tags"
         :candidates="parentCandidates"
+        :epics="epics"
+        :epic-mode="newEpicMode"
         :defaults="newDefaults"
         :busy="busy"
         :field-errors="newFieldErrors"
@@ -2500,6 +2544,7 @@ watch(projectKey, (key) => {
         :tags="tags"
         :workflow="projectStore.current?.workflow ?? null"
         :candidates="tickets"
+        :epics="epics"
         @close="closeDetail"
         @updated="onDetailUpdated"
         @created="onDetailCreated"
