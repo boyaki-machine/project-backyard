@@ -192,15 +192,26 @@ postgres://pb_app:<app_db_password と同じ値>@db:5432/pb?sslmode=disable&appl
 
 ## 3.3 Kubernetes（任意）
 
-開発端末では compose を既定とする。K8s を使う場合は以下の構成を推奨する。
+開発端末では compose を既定とする。**K8s 向けの一式は `make release TARGET=k8s` が出力する**（`Design.md` 4.5。pb-124）。
+
+**PostgreSQL は「試す」と「運用する」で分ける**（利用者の判断、2026-09-13。pb-4）。
+
+| 段 | PostgreSQL | 位置づけ |
+|---|---|---|
+| **試す** | **素の StatefulSet 1台（PVC 付き）と Service。** `make release TARGET=k8s` がサンプルとして出す | 手元のクラスタで PB を動かしてみるためのもの。**バックアップ・フェイルオーバ・PITR を持たない** |
+| **運用する** | **CloudNativePG オペレータ**、または**外部の PostgreSQL**（クラウドのマネージドサービスなど） | **サンプルの StatefulSet を運用へ持ち込まない。** CloudNativePG は `Cluster` リソースでバックアップ・フェイルオーバ・PITR を宣言的に扱える |
+
+**サンプルのマニフェストには、外部の PostgreSQL へ繋ぐ設定をコメントアウトで併記する。** CloudNativePG の `Cluster` はサンプルにしない（同）。
 
 | 対象 | 方式 |
 |---|---|
-| PostgreSQL | **CloudNativePG オペレータ**。`Cluster` リソースでバックアップ・フェイルオーバ・PITR を宣言的に扱える。素の StatefulSet で自作しない |
-| PB本体 | `Deployment`（レプリカ1）＋ `Service` |
-| マイグレーション | Deployment の initContainer、または `Job` として分離 |
-| 資格情報 | `Secret`。CloudNativePG が生成する接続情報 Secret をそのまま参照する |
+| PB本体 | `Deployment`（レプリカ1、`strategy: Recreate`）＋ `Service` |
+| マイグレーション | Deployment の initContainer。PB 本体と同じイメージの `/goose` を使う |
+| 設定 | `ConfigMap` の `pb.yaml` を `PB_CONFIG_FILE` で読ませる。**第2層のキーは書かない**（`Design.md` 10.3） |
+| 資格情報 | `Secret` を**環境変数で渡す**（利用者の判断、2026-09-15。pb-124）。PB 本体は `PB_DATABASE_URL`、goose は `PGPASSWORD`（接続先はパスワードを含めずに引数へ書く）。**CloudNativePG が作る `<Cluster名>-app` の Secret は所有者（`pb_owner`）の資格情報であり、`pb_app` の分は別に作る**（3.4 のロール分離） |
 | 公開 | ローカル利用は `kubectl port-forward`。Ingress を張る場合はTLSを必須とする |
+
+運用で CloudNativePG を使うときの `Cluster` の概略を下に置く。**この構成は確かめていない。**
 
 ```yaml
 # 概略のみ
@@ -223,7 +234,11 @@ spec:
   storage: { size: 10Gi }
 ```
 
-**マイグレーションを initContainer に置くか Job にするか**は、レプリカ数を2以上にした時点で問題になる（同時実行）。Phase 1 はレプリカ1のため initContainer で足りるが、マイグレーションツール側のアドバイザリロックに依存する設計にしておく（5.3）。
+**マイグレーションを initContainer に置くか Job にするか**は、レプリカ数を2以上にした時点で問題になる（同時実行）。**レプリカ1のため initContainer で足りる**（pb-124）。
+
+**同時実行は、レプリカ1と `strategy: Recreate` で起こさない。** RollingUpdate では新旧の Pod が並ぶ時間ができ、新しい Pod の initContainer がスキーマを進めたあとも、古い版の Pod が新しいスキーマの上で動く。**代償として、版を入れ替えている間は PB が止まる。**
+
+**goose の CLI（v3.26.0）には、アドバイザリロックを有効にする引数が無い。** 5.3 の「ツールのアドバイザリロック」は、いまの一式では効いていない。**再検討の条件は、レプリカを2以上にするとき**——そのとき migrate を `Job` へ分けるか、ロックを持つ呼び方（goose をライブラリとして呼ぶ）にするかを決める。
 
 ## 3.4 DBロールと権限
 
@@ -477,7 +492,7 @@ server/migrations/                      ← Design.md 4.1。sqlc がスキーマ
 | 適用済みファイルを編集しない | 内容ハッシュが変わり、環境間で不整合になる |
 | 破壊的変更は2段階 | ①新列を追加してアプリを両対応にする → ②デプロイ後に旧列を削除する（expand / contract） |
 | 大規模テーブルへのインデックス | `CREATE INDEX CONCURRENTLY` を使う。**トランザクション外で実行する必要があるため、単独のマイグレーションファイルに分ける** |
-| 同時実行の防止 | ツールのアドバイザリロック機能を有効にする（K8sで複数Podが同時起動した場合の保護） |
+| 同時実行の防止 | ツールのアドバイザリロック機能を有効にする（K8sで複数Podが同時起動した場合の保護）。**goose の CLI にはこの引数が無く、K8s の一式ではレプリカ1と `strategy: Recreate` で防いでいる**（3.3） |
 | シードの冪等性 | `ON CONFLICT DO NOTHING` / `DO UPDATE` を使い、再実行しても壊れないようにする |
 
 ---
@@ -2892,7 +2907,7 @@ CREATE INDEX idx_contribution_actor ON contribution (actor_id);
 | 論理バックアップ | `pg_dump -Fc` を日次。開発端末では compose の `profiles` で任意起動するサイドカー、またはホスト側 cron |
 | 保持 | 直近7世代 |
 | リストア確認 | 月1回、別DBへ `pg_restore` して起動確認する。**取得できているだけでは復元できる保証にならない** |
-| K8s | CloudNativePG のバックアップ機能（オブジェクトストレージ＋WALアーカイブによるPITR） |
+| K8s | 運用では CloudNativePG のバックアップ機能（オブジェクトストレージ＋WALアーカイブによるPITR）か、外部の PostgreSQL が持つ機能。**`make release TARGET=k8s` のサンプルの StatefulSet は持たない**（3.3） |
 
 ```bash
 docker compose exec -T db pg_dump -U pb_owner -Fc pb > backup/pb_$(date +%Y%m%d).dump
