@@ -8218,7 +8218,7 @@ components:
           type: integer
 
     TicketBrief:
-      description: 親チケットの要約（ApiDesign.md 9.5.1 の `parent`）。
+      description: チケットの要約（ApiDesign.md 9.5.1 の `parent` と `epic`）。
       type: object
       required: [seq, title, type, status]
       properties:
@@ -8269,7 +8269,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/Ticket'
         - type: object
-          required: [body_md, parent, children, dod, links, references, comment_count,
+          required: [body_md, parent, epic, children, dod, links, references, comment_count,
                      execution_mode, readiness, readiness_note, scope]
           properties:
             body_md:
@@ -8279,6 +8279,12 @@ components:
             parent:
               allOf: [$ref: '#/components/schemas/TicketBrief']
               nullable: true
+            epic:
+              allOf: [$ref: '#/components/schemas/TicketBrief']
+              nullable: true
+              description: |
+                祖先をたどって最初に見つかるエピック（ApiDesign.md 9.5.1。pb-14）。
+                親がエピックなら親そのもの。**自分自身は数えない。** 無ければ `null`。
             children:
               type: array
               items:
