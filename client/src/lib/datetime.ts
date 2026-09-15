@@ -142,3 +142,51 @@ export function todayPlainDate(): string {
   const t = new Date()
   return `${t.getFullYear()}-${p2(t.getMonth() + 1)}-${p2(t.getDate())}`
 }
+
+/**
+ * `YYYY-MM-DD` に日数を足す（負も可）。形が違えば `null`。
+ *
+ * **タイムゾーンを通さない。** 暦の上の日付の計算であり、UTC の0時で組み立てて
+ * UTC で読むので、どの地域でも同じ答えになる（月末・年末の繰り上がりは `Date.UTC` が行う）。
+ */
+export function addDaysPlainDate(date: string, days: number): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  if (m === null) return null
+  const t = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + days))
+  return `${t.getUTCFullYear()}-${p2(t.getUTCMonth() + 1)}-${p2(t.getUTCDate())}`
+}
+
+/**
+ * その日の0時の瞬間を ISO8601 UTC で返す（`GuiDesign.md` 5.13。pb-66）。形が違えば `null`。
+ *
+ * **日の境界は `app_user.timezone` で作る**（未設定なら端末のローカル）。チケット検索の期間は
+ * `timestamptz`（完了日時・着手日時）を絞るもので、一覧は完了日を `formatDate`（同じ
+ * タイムゾーン）で出している。**境界を別の基準で作ると、見えている日付と絞り込みの日付が
+ * ずれる。** サーバは日付を解釈しない（`ApiDesign.md` 9.2.1「検索の条件」）。
+ *
+ * **時差を2回測る。** UTC の0時を仮に置いて時差を引くと、夏時間の切り替わりの前後では
+ * 引いた先で時差が変わっていることがある。
+ */
+export function startOfDayInstant(date: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  if (m === null) return null
+  const y = Number(m[1])
+  const mo = Number(m[2]) - 1
+  const d = Number(m[3])
+  if (timezone === null) {
+    const t = new Date(y, mo, d)
+    return Number.isNaN(t.getTime()) ? null : t.toISOString()
+  }
+  const guess = Date.UTC(y, mo, d)
+  let t = guess - offsetMs(guess)
+  t = guess - offsetMs(t)
+  return new Date(t).toISOString()
+}
+
+/** その瞬間の、設定タイムゾーンでの時差（壁時計 − UTC。ミリ秒。分の単位まで） */
+function offsetMs(utcMs: number): number {
+  const p = parts(new Date(utcMs).toISOString())
+  if (p === null) return 0
+  const wall = Date.UTC(Number(p.y), Number(p.mo) - 1, Number(p.d), Number(p.h), Number(p.mi))
+  return wall - Math.floor(utcMs / 60_000) * 60_000
+}

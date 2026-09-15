@@ -17,10 +17,10 @@ import { useUiStore } from '../stores/ui'
  * 出し分けは 4.3 の表に従う。**オペレータには「管理」セクションの見出しごと
  * 表示しない**（押せないメニューによる混乱を避ける）。
  *
- * 「P2」「P3」の項目（カンバン・ガント・チケット検索・進捗分析・承認キュー・
- * 認証プロバイダ）はまだ表示しない（4.1）。**アプリケーション設定は pb-2 で
- * 実装したので出す。** **チケットを見る視点は5つあるが
- * （4.1.1）、実装済みなのはバックログだけ**である。
+ * 「P2」「P3」の項目（カンバン・ガント・進捗分析・承認キュー・認証プロバイダ）は
+ * まだ表示しない（4.1）。**アプリケーション設定は pb-2 で実装したので出す。**
+ * **チケットを見る視点は5つあるが（4.1.1）、実装済みなのはバックログと
+ * チケット検索（5.13。pb-66）**である。
  *
  * **Docs は手順22b で出した**（4.3 の表。必要権限は `doc.view`）。**`doc.view` は
  * `project_viewer` まで全ロールが持つ**ので、プロジェクトに到達できる人には
@@ -84,6 +84,17 @@ const showAdmin = computed(
         >
           <span class="icon" aria-hidden="true">≡</span>
           <span v-if="!ui.menuCollapsed" class="label">バックログ</span>
+        </RouterLink>
+        <!-- チケット検索（4.1 / 5.13。pb-66）。**バックログの次に置く**——4.1 の図は間に
+             カンバンとガントを挟むが、どちらもまだ出していない。必要権限は同じ `ticket.view`（4.3） -->
+        <RouterLink
+          v-if="auth.canInProject(projectKey, 'ticket.view')"
+          class="item"
+          :to="`/p/${projectKey}/search`"
+          title="チケット検索"
+        >
+          <span class="icon" aria-hidden="true">⌕</span>
+          <span v-if="!ui.menuCollapsed" class="label">チケット検索</span>
         </RouterLink>
         <!-- Docs（4.3 の表。手順22b）。**プロジェクト設定より上に置く**——
              4.1 の並びが「視点 → Docs → 設定」で、設定は最後に来る -->

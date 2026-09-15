@@ -39,6 +39,11 @@ const props = defineProps<{
   projectKey: string
   /** `[+ 新規エピック]` を出すか（`ticket.create`。5.4「新規作成」） */
   canCreate?: boolean
+  /**
+   * `↗` の行き先に足すクエリ（pb-66）。チケット検索は `{ from: 'search' }` を渡す
+   * ——**落とすと、押した先の詳細の後ろがバックログに変わる**（`GuiDesign.md` 3.2）
+   */
+  linkQuery?: Record<string, string>
 }>()
 
 const emit = defineEmits<{ update: [seqs: number[]]; create: [] }>()
@@ -181,7 +186,10 @@ const panelStyle = computed(() => ({
         <!-- エピック自身もチケットである（5.4「編集」）。詳細へ抜ける導線を置く -->
         <RouterLink
           class="epic-open"
-          :to="{ path: `/p/${projectKey}/tickets/${e.seq}`, query: $route.query }"
+          :to="{
+            path: `/p/${projectKey}/tickets/${e.seq}`,
+            query: { ...$route.query, ...(linkQuery ?? {}) },
+          }"
           :aria-label="`${projectKey}-${e.seq} ${e.title} の詳細を開く`"
           :title="`${projectKey}-${e.seq} の詳細を開く`"
         >

@@ -2,7 +2,6 @@ import type { RouteRecordRaw } from 'vue-router'
 
 import AgentSetupPage from '../pages/AgentSetupPage.vue'
 import AppSettingsPage from '../pages/AppSettingsPage.vue'
-import BacklogPage from '../pages/BacklogPage.vue'
 import DashboardPage from '../pages/DashboardPage.vue'
 import DocsPage from '../pages/DocsPage.vue'
 import ForbiddenPage from '../pages/ForbiddenPage.vue'
@@ -14,6 +13,7 @@ import MyAgentsPage from '../pages/MyAgentsPage.vue'
 import MyTokensPage from '../pages/MyTokensPage.vue'
 import ProjectSettingsPage from '../pages/ProjectSettingsPage.vue'
 import ProjectsPage from '../pages/ProjectsPage.vue'
+import TicketViewsPage from '../pages/TicketViewsPage.vue'
 import UserDetailPage from '../pages/UserDetailPage.vue'
 import UsersPage from '../pages/UsersPage.vue'
 
@@ -96,11 +96,13 @@ export const routes: RouteRecordRaw[] = [
   // **チケットを見る「視点」はパスで分ける**（3.2）。`?view=` にしないのは、
   // 視点ごとにメニュー項目・権限・件数バッジを持てるようにするためである。
   //
-  // **下の `/p/:key/tickets/:seq` と同じコンポーネントである**（手順17b）。
-  // 詳細は一覧を消さず、その右にペインとして開く（2.2.1）。
+  // **下の `/p/:key/tickets/:seq`・`/p/:key/search` と同じコンポーネントである**
+  // （手順17b。pb-66 で入れ物の `TicketViewsPage` に替えた）。詳細は一覧を消さず、
+  // その右にペインとして開く（2.2.1）。入れ物がパスと `from` を見て、バックログか
+  // 検索かを出し分ける。
   {
     path: '/p/:key/backlog',
-    component: BacklogPage,
+    component: TicketViewsPage,
     meta: { permission: 'ticket.view' },
   },
 
@@ -117,19 +119,20 @@ export const routes: RouteRecordRaw[] = [
 
   // 実画面（GuiDesign.md 5.5）。手順17b でプレースホルダから差し替えた。
   //
-  // **component が BacklogPage なのは誤りではない。** チケット詳細は画面を
-  // 置き換えず、**一覧の右に3枚目のペインとして開く**（2.2.1）。同じ
+  // **component が一覧の入れ物（`TicketViewsPage`）なのは誤りではない。** チケット詳細は
+  // 画面を置き換えず、**一覧の右に3枚目のペインとして開く**（2.2.1）。一覧と同じ
   // コンポーネントを指すことで、行をクリックしても再マウントされず、
   // **一覧の取得結果・折りたたみ・スクロール位置がそのまま残る**
   // （5.4「戻したときに保つもの」）。
   //
   // **URL は `/p/:key/tickets/:seq` のまま変えない**（3.2）——チケット単体の
-  // 共有URLとして既に確定している。**バックログのフィルタはクエリで持ち回る**
-  // ので、クエリを解釈できない相手（共有された素のURL）でも壊れない
-  // （一覧がフィルタ無しで並ぶだけである）。
+  // 共有URLとして既に確定している。**一覧の条件はクエリで持ち回る**ので、クエリを
+  // 解釈できない相手（共有された素のURL）でも壊れない（バックログがフィルタ無しで
+  // 並ぶだけである）。**チケット検索から開いたときは `from=search` が付き**、後ろに
+  // 検索結果が残る（pb-66）。
   {
     path: '/p/:key/tickets/:seq',
-    component: BacklogPage,
+    component: TicketViewsPage,
     meta: { permission: 'ticket.view' },
   },
 
@@ -281,22 +284,14 @@ export const routes: RouteRecordRaw[] = [
     },
   },
 
+  // 実画面（GuiDesign.md 5.13）。pb-66 でプレースホルダから差し替えた。
+  //
+  // **バックログ・詳細と同じ入れ物を指す**——詳細を開いても検索画面が再マウントされず、
+  // 取得結果とスクロール位置が残る（上の `/p/:key/tickets/:seq` の注記）。
   {
     path: '/p/:key/search',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'ticket.view',
-      placeholder: {
-        title: 'チケット検索',
-        docRef: 'GuiDesign.md 10章',
-        status: 'PB のチケット pb-66',
-        planned: [
-          '全文検索（DbDesign.md 4.5 の trigram インデックス）',
-          'バックログのフィルタでは辿り着けない「1件を探す」用途に限る',
-          'ApiDesign.md 9.2 に q を足して開ける',
-        ],
-      },
-    },
+    component: TicketViewsPage,
+    meta: { permission: 'ticket.view' },
   },
 
 
