@@ -41,6 +41,7 @@ import type {
   SortOrder,
 } from '../api/tickets'
 import { formatPlainDate, todayPlainDate } from '../lib/datetime'
+import { zoneOf, type DropZone } from '../lib/dnd'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
 
@@ -1095,7 +1096,7 @@ const draggingSeq = ref<number | null>(null)
  * **掴んでいる間だけ値を持ち、落とせない相手の上では `null` に戻す**——
  * 線が残っていると、落ちない場所に落ちるように見える。
  */
-type DropSide = 'before' | 'after' | 'inside' | 'first' | 'last'
+type DropSide = DropZone | 'first' | 'last'
 
 const dropHint = ref<{ key: string; seq: number | null; side: DropSide } | null>(null)
 
@@ -1195,27 +1196,6 @@ function canUnparentInto(section: Section): boolean {
 }
 
 /**
- * ポインタが行のどこを指しているか（5.4「ドロップ先の見せ方」）。
- *
- * **上 1/4・下 1/4・中央 1/2。** 上下は兄弟（`sort_key`）、中央は子
- * （`parent_seq`）で、**1回のドロップで2軸のどちらを動かすかを決める**（pb-16）。
- * 半分で割る形では兄弟しか表せない。**5.10 の文書ツリーが先に採った形**で、
- * `DocTree.vue` の `zoneOf` と同じ割り方である。
- *
- * **掴んだ行がどこから来たかに依らない。** 「越えた向き」で決める方式は、
- * 行の下 1/4 を指しても上に入ることがあり、線を出した意味がなくなる。
- */
-function sideOf(e: DragEvent): 'before' | 'after' | 'inside' {
-  const el = e.currentTarget as HTMLElement | null
-  if (el === null) return 'after'
-  const r = el.getBoundingClientRect()
-  const y = e.clientY - r.top
-  if (y < r.height / 4) return 'before'
-  if (y > (r.height * 3) / 4) return 'after'
-  return 'inside'
-}
-
-/**
  * その行の**子にして**よいか（5.4「ドロップ先の見せ方」。pb-16）。
  *
  * **サーバが弾く条件を、そのまま画面の規則にする**——落とせない相手の上では
@@ -1267,7 +1247,10 @@ function isDescendant(seq: number, ancestorSeq: number): boolean {
  * から弾くと、落とせるように見えて何も起きない。
  */
 function onDragOverRow(e: DragEvent, row: Row, section: Section): void {
-  const side = sideOf(e)
+  // **バックログは3分割**（`lib/dnd.ts`）——上下 1/4 が兄弟（`sort_key`）、
+  // 中央 1/2 が子（`parent_seq`）で、**1回のドロップで2軸のどちらを動かすかを
+  // 決める**（pb-16）。半分で割る形では兄弟しか表せない
+  const side = zoneOf(e, { inside: true })
   const ok =
     side === 'inside'
       ? canDropInto(draggingSeq.value, row)
@@ -1414,7 +1397,7 @@ async function dropOnRow(e: DragEvent, row: Row, section: Section): Promise<void
   // **掴んでいた seq を先に控える。** `draggingSeq` を消してから判定に渡すと、
   // 判定側が null を見て必ず false になる（ドロップが一切効かなくなる）。
   const seq = draggingSeq.value
-  const side = sideOf(e)
+  const side = zoneOf(e, { inside: true })
   endDrag()
 
   if (side === 'inside') {
