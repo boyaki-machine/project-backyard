@@ -659,7 +659,7 @@ window.set = window.set || function (el, v) {
   **FIN が立つまで payload を溜めて連結する**（opcode `0x0` が継続フレーム）。
 - **ソケットに時間切れを持たせる。** `recv` がブロックしたままだと、
   待ち合わせのループに書いた期限が一度も評価されない
-  ——**「応答が来ない」ではなく「スクリプトが返らない」**という形になり、
+  ——「**応答が来ない」ではなく「スクリプトが返らない**」という形になり、
   どのコマンドで止まったのかも分からなくなる。
 - **`Runtime.evaluate` の包みを2種類持つ。** `(function(){…})()` の中では `await` が
   使えない（`SyntaxError: await is only valid in async functions`）。**ページ内 `fetch` で
