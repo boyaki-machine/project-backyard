@@ -28,6 +28,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"gopkg.in/yaml.v3"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/activity"
 	"github.com/boyaki-machine/project-backyard/server/internal/audit"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
@@ -163,6 +164,12 @@ type devTicket struct {
 	// **表示上のトップレベルにしか置けない**——親を持たないもの、または
 	// 親がエピックのもの（ApiDesign.md 9.4.1）。検証は validateSeedData で行う。
 	Staged bool `yaml:"staged"`
+	// History は業務履歴（activity）を書くか（pb-23）。**数件にだけ付ける**
+	// ——全件に書くと、変更履歴が投入の記録で埋まる（seedTickets のコメント）。
+	// 書くのは作成と、入口から status への遷移1回だけなので、**入口から1回の
+	// 遷移で届く状態のチケットに付ける**（届かない状態に付けると、ワークフローに
+	// 無い遷移が履歴に残る）
+	History bool `yaml:"history"`
 
 	// References は外部参照（DbDesign.md 6.12、手順17c）。
 	//
@@ -207,10 +214,21 @@ type devDoDItem struct {
 // **origin は書かせない。** 呼び出し元のアクター種別から決まる規則
 // （ApiDesign.md 9.8）を seed でも守り、author のメールから引く。
 // Phase 1 のデモアカウントはすべて人なので human になる。
+//
+// **返信と削除済みも書ける**（pb-24）。`in_reply_to` の両向きリンクと「削除されました」は
+// 実装済みでも、seed に無ければ画面で一度も踏まれない。返信先は位置ではなく**参照名**
+// （`ref`）で指す——親チケットをタイトルで指すのと同じで、並べ替えても壊れない。
 type devComment struct {
 	Author string `yaml:"author"`
 	Kind   string `yaml:"kind"`
 	Body   string `yaml:"body"`
+	// Ref は同じチケットの中で返信先として指すための名前。省略できる
+	Ref string `yaml:"ref"`
+	// ReplyTo は返信先の Ref。**同じチケットの、自分より前の、削除しないコメント**を
+	// 指す（ApiDesign.md 9.8 が未削除のコメントにしか返信させないため）
+	ReplyTo string `yaml:"reply_to"`
+	// Deleted は投入したあとに論理削除する。**ほかのコメントの返信先にはできない**
+	Deleted bool `yaml:"deleted"`
 }
 
 // devLink はチケット間リンク（DbDesign.md 6.6、手順18a）。
@@ -580,6 +598,8 @@ func (d *devData) validate() error {
 
 			// コメント（手順18a）。**author は必須**（comment.author_id が
 			// NOT NULL かつ ON DELETE RESTRICT。DbDesign.md 6.7）。
+			// 参照名 → 削除するか。**前から順に作る**ので、返信先は自分より前にしか置けない
+			commentRefs := map[string]bool{}
 			for k, c := range tk.Comments {
 				cAt := fmt.Sprintf("%s.comments[%d]", at, k)
 				if strings.TrimSpace(c.Body) == "" {
@@ -593,6 +613,21 @@ func (d *devData) validate() error {
 				}
 				if c.Kind != "" && !devCommentKinds[c.Kind] {
 					return fmt.Errorf("%s: kind が不正です（%q）", cAt, c.Kind)
+				}
+				if c.ReplyTo != "" {
+					deleted, ok := commentRefs[c.ReplyTo]
+					if !ok {
+						return fmt.Errorf("%s: reply_to %q がこのチケットの、自分より前のコメントの ref にありません", cAt, c.ReplyTo)
+					}
+					if deleted {
+						return fmt.Errorf("%s: reply_to %q は削除するコメントです（削除済みには返信できない。ApiDesign.md 9.8）", cAt, c.ReplyTo)
+					}
+				}
+				if c.Ref != "" {
+					if _, dup := commentRefs[c.Ref]; dup {
+						return fmt.Errorf("%s: ref %q が重複しています", cAt, c.Ref)
+					}
+					commentRefs[c.Ref] = c.Deleted
 				}
 			}
 
@@ -1044,8 +1079,10 @@ func seedSprints(ctx context.Context, q gen.Querier, projectID string, p devProj
 // reporter を project_admin に据える ②status をデモの都合で指定できる
 // ③完了済みを表すために closed_at を直接書く（本来は遷移の副作用。手順17）。
 //
-// **activity には記録しない。** デモデータの投入は業務上の出来事ではなく、
+// **activity は原則として記録しない。** デモデータの投入は業務上の出来事ではなく、
 // 変更履歴に「開発PMが48件作成した」が並んでも読み手の役に立たない。
+// **ただし `history: true` を付けた数件だけは書く**（pb-23。seedTicketHistory）
+// ——1行も無いと、ダッシュボードの「最近の動き」とチケットの履歴が画面で確かめられない。
 func seedTickets(
 	ctx context.Context, q gen.Querier, projectID string, p devProject,
 	actorIDs map[string]string, result *seedResult,
@@ -1076,7 +1113,7 @@ func seedTickets(
 	if err != nil {
 		return err
 	}
-	reporterID := actorIDs[strings.ToLower(projectCreator(p, actorIDs))]
+	reporterID := projectCreator(p, actorIDs)
 
 	// sort_key は定義ファイルの並び順で、末尾へ足していく（ApiDesign.md 9.4）。
 	sortKey, err := q.MaxTicketSortKey(ctx, projectID)
@@ -1217,6 +1254,12 @@ func seedTickets(
 		if err := seedTicketComments(ctx, q, ticketID, tk, actorIDs); err != nil {
 			return err
 		}
+		if tk.History {
+			if err := seedTicketHistory(ctx, q, projectID, ticketID, tk,
+				entryStatus(statuses).key, status.key, actorIDs, reporterID); err != nil {
+				return err
+			}
+		}
 		if err := seedTicketLinks(ctx, q, ticketID, tk, idByTitle, reporterID); err != nil {
 			return err
 		}
@@ -1225,6 +1268,52 @@ func seedTickets(
 		result.ticketsCreated++
 	}
 	return nil
+}
+
+// seedTicketHistory は `history: true` のチケットに業務履歴を書く（pb-23）。
+//
+// **API が書く行と同じ形にする**——作成は項目なし（tickets_create.go）、遷移は
+// field='status_key' に遷移前後のキー（tickets_transition.go）。画面は値を
+// そのまま読むので、形が違うと「最近の動き」の文言が崩れる。
+//
+// **コメントの行は書かない。** API は `commentSummaryOf`（comments.go）で要約を
+// 作っており、seed に写すと二重持ちになる。作成と遷移だけで「最近の動き」と
+// 履歴は空でなくなる。
+//
+// **実行者**は、作成が reporter、遷移が担当（いなければ reporter）。request_id は
+// 持たない（リクエストが無い）。
+func seedTicketHistory(
+	ctx context.Context, q gen.Querier, projectID, ticketID string, tk devTicket,
+	entryKey, statusKey string, actorIDs map[string]string, reporterID string,
+) error {
+	insert := func(actorID string, action activity.Action, field, oldValue, newValue string) error {
+		if err := q.InsertActivity(ctx, gen.InsertActivityParams{
+			ID:         ulidgen.New(),
+			ProjectID:  projectID,
+			EntityType: activity.EntityTicket,
+			EntityID:   ticketID,
+			ActorID:    nullText(actorID),
+			Action:     string(action),
+			Field:      nullText(field),
+			OldValue:   nullText(oldValue),
+			NewValue:   nullText(newValue),
+		}); err != nil {
+			return fmt.Errorf("チケット %q の履歴（%s）を書けない: %w", tk.Title, action, err)
+		}
+		return nil
+	}
+
+	if err := insert(reporterID, activity.Create, "", "", ""); err != nil {
+		return err
+	}
+	if statusKey == entryKey {
+		return nil
+	}
+	actorID := reporterID
+	if id := actorIDs[strings.ToLower(tk.Assignee)]; tk.Assignee != "" && id != "" {
+		actorID = id
+	}
+	return insert(actorID, activity.Transition, "status_key", entryKey, statusKey)
 }
 
 // seedTicketReferences はチケットの外部参照を投入する（DbDesign.md 6.12、手順17c）。
@@ -1299,6 +1388,8 @@ func seedTicketComments(
 	ctx context.Context, q gen.Querier, ticketID string, tk devTicket,
 	actorIDs map[string]string,
 ) error {
+	// 参照名 → comment.id。返信先の解決に使う（検証で前にあることを確かめてある）
+	idByRef := map[string]string{}
 	for _, c := range tk.Comments {
 		authorID := actorIDs[strings.ToLower(c.Author)]
 		if authorID == "" {
@@ -1308,15 +1399,25 @@ func seedTicketComments(
 		if kind == "" {
 			kind = "discussion"
 		}
+		id := ulidgen.New()
 		if err := q.CreateComment(ctx, gen.CreateCommentParams{
-			ID:       ulidgen.New(),
-			TicketID: ticketID,
-			AuthorID: authorID,
-			BodyMd:   c.Body,
-			Kind:     kind,
-			Origin:   "human",
+			ID:        id,
+			TicketID:  ticketID,
+			AuthorID:  authorID,
+			BodyMd:    c.Body,
+			Kind:      kind,
+			Origin:    "human",
+			InReplyTo: nullText(idByRef[c.ReplyTo]),
 		}); err != nil {
 			return fmt.Errorf("チケット %q にコメントを足せない: %w", tk.Title, err)
+		}
+		if c.Ref != "" {
+			idByRef[c.Ref] = id
+		}
+		if c.Deleted {
+			if _, err := q.SoftDeleteComment(ctx, gen.SoftDeleteCommentParams{TicketID: ticketID, ID: id}); err != nil {
+				return fmt.Errorf("チケット %q のコメントを削除済みにできない: %w", tk.Title, err)
+			}
 		}
 	}
 	return nil

@@ -180,9 +180,23 @@ dev-reset:
 # （DbDesign.md 7.6.3 の安全装置その1）。配布したバイナリを本番で直接叩いた場合は
 # 環境変数が無いので止まり、あっても接続先ホストの検査（安全装置その2）が残る。
 # @ を付けて実行するのは、パスワードを含むコマンドをエコーさせないため。
+#
+# **最後に放置のチケットを1件作る**（pb-23。DbDesign.md 7.6.4、Development.md 8.6 と同じ SQL）。
+# updated_at はトリガが now() で上書きし、止められるのはテーブルの所有者だけなので、
+# pb_app で動く seed 本体ではなく、ここで pb_owner として振る。**打つたびに振り直す**
+# （触って放置でなくなっても、dev-seed を打てば戻る）。対象はタイトルで指すので、
+# dev-data.yaml でタイトルを変えたらここも直す。
+DEV_STALE_TICKET := アーカイブの冪等性が怪しい
+
 dev-seed:
 	@cd server && PB_ALLOW_DEV_SEED=1 PB_DATABASE_URL="$(PB_DATABASE_URL_APP)" \
 		go run ./cmd/pb dev seed --file "$(DEV_SEED_FILE)"
+	@echo "==> 放置のチケットを1件作る（$(DEV_STALE_TICKET)。updated_at を20日前へ）"
+	@$(COMPOSE) exec -T db psql -U pb_owner -d pb -v ON_ERROR_STOP=1 -c \
+		"ALTER TABLE ticket DISABLE TRIGGER trg_ticket_updated; \
+		 UPDATE ticket SET updated_at = now() - interval '20 days' \
+		  WHERE title = '$(DEV_STALE_TICKET)' AND project_id = (SELECT id FROM project WHERE key = 'demo'); \
+		 ALTER TABLE ticket ENABLE TRIGGER trg_ticket_updated;"
 
 ## 開発用：URL とデモアカウント一覧を表示する
 # DBには接続しない。パスワードや URL を探す時間をなくすためのもの（DbDesign.md 7.6.6）。
