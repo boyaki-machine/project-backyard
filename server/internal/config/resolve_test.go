@@ -216,6 +216,15 @@ func TestOverlayDatabase(t *testing.T) {
 		}
 	})
 
+	t.Run("bind の既定はこの端末に閉じる（pb-125）", func(t *testing.T) {
+		// **何も設定しないまま起動したとき、平文ですべてのアドレスへ出さない**
+		// （`Requirements.md` 10.10.2）。**コンテナは自分で `PB_BIND` を明示する。**
+		v, _ := Defaults().Get(KeyBind)
+		if v.Value != "127.0.0.1:8080" || v.Source != SourceDefault {
+			t.Errorf("bind の既定 = %q（%s）, want 127.0.0.1:8080（default）", v.Value, v.Source)
+		}
+	})
+
 	t.Run("bind は DB から重なる（pb-99）", func(t *testing.T) {
 		out := OverlayDatabase(Defaults(), []Row{{Key: KeyBind, Value: "0.0.0.0:9999"}})
 		v, _ := out.Get(KeyBind)

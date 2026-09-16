@@ -168,8 +168,15 @@ var definitions = []Definition{
 		//
 		// **再起動は要らない**（pb-106 で張り替えられるようにした）。
 		// **確認しないと元へ戻す**（pb-97）——ポートを誤ると画面へ到達できない。
+		//
+		// **既定はこの端末からだけ届く形にする**（`Requirements.md` 10.10.2
+		// 「既定では 127.0.0.1 にのみバインドする」。pb-125）。**何も設定しないまま
+		// 起動したときに、平文ですべてのアドレスへ出さない**ためである。
+		// **コンテナは自分で `PB_BIND=0.0.0.0:8080` を明示する**（`deploy/Dockerfile`
+		// の `ENV` と `deploy/base/compose.yaml`）——中で 127.0.0.1 に閉じると、
+		// 公開範囲を決めるはずの `ports` を通っても外から届かない。
 		Layer: LayerRuntime, Type: TypeString,
-		Default: "0.0.0.0:8080", NeedsConfirm: true,
+		Default: "127.0.0.1:8080", NeedsConfirm: true,
 		DisplayName: "待受アドレス",
 		Description: "HTTP を待ち受けるアドレスとポート。切り替えは即時で、期限内に確認しないと元へ戻ります。コンテナで動かしている場合は、公開側の設定（compose の ports や Service の targetPort）も合わせて変えてください",
 	},

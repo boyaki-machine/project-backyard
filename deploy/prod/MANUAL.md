@@ -242,8 +242,8 @@ schtasks /Create /TN "Project Backyard" /SC ONSTART /RU SYSTEM `
 
 1. 画面の「管理 → 設定」で証明書を登録し、TLS を有効にする。**有効にしたあと、期限内に確認しないと元に戻る**
 2. `https://localhost:8080` で開けることを確かめる
-3. `run.sh`（Windows は `run.ps1`）の `PB_BIND=127.0.0.1:8080` を、外から届くアドレス
-   （例：`0.0.0.0:8443`）に直して、起動し直す
+3. 画面の「管理 → 設定」で「待受アドレス」を、外から届くアドレス（例：`0.0.0.0:8443`）に
+   変える。**切り替えは即時で、期限内に確認しないと元に戻る**（再起動は要らない）
 4. 画面で「Cookie に Secure を付ける」を有効にする
 
 証明書の作り方は、リポジトリの `docs/Development.md` 14章にある。
@@ -259,7 +259,7 @@ schtasks /Create /TN "Project Backyard" /SC ONSTART /RU SYSTEM `
 # ② 設定と秘密を引き継ぐ
 cp -p <今の一式>/secrets/app_database_url <今の一式>/secrets/pgpass <新しい一式>/secrets/
 cp -p <今の一式>/migrate.conf <今の一式>/pb.yaml <新しい一式>/
-#    run.sh の PB_BIND を直していたなら、新しい run.sh にも同じ変更を入れる
+#    待受アドレスを画面で変えていたなら、その値は DB にあるので引き継ぎは要らない
 
 # ③ バックアップを取ってから止める（3.5）
 
@@ -295,9 +295,9 @@ mv <新しい一式> <今の一式>
 | 起動が `password authentication failed for user "pb_app"` | `secrets/app_database_url` のパスワードが違う。記号は URL の書き方にする（3.4） |
 | migrate が `extension "…" is not available` | PostgreSQL に contrib が入っていない（3.2） |
 | 一覧を開くと `collation "ja-JP-x-icu" … does not exist` | PostgreSQL が ICU なしでビルドされている（3.2） |
-| `bind: address already in use` | 8080 番を別のプロセスが使っている。止めるか、`run.sh` の `PB_BIND` のポートを変える |
+| `bind: address already in use` | 8080 番を別のプロセスが使っている。止めるか、`PB_BIND=127.0.0.1:<空いている番号>` を付けて起動し直す（起動できたら画面の「待受アドレス」で変えられる） |
 | ログインしても入れない（http で開いている） | 「Cookie に Secure を付ける」を http のまま有効にした。`PB_COOKIE_SECURE=false` を付けて起動し、画面で無効に戻す |
-| 画面の「待受アドレス」を変えられない | `run.sh` が固定しているため（3.10） |
+| 画面の「待受アドレス」を変えられない | `pb.yaml` に `bind:` を書いている（3.9）か、`PB_BIND` を付けて起動している。**どちらもしていなければ画面から変えられる**（既定は `127.0.0.1:8080`） |
 
 ---
 
