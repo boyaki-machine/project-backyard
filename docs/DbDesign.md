@@ -94,7 +94,7 @@
 ## 3.2 docker-compose（開発端末での既定構成）
 
 ```yaml
-# deploy/base/compose.yaml（deploy/dev/compose.yaml で環境差分を重ねる）
+# deploy/base/compose.yaml（dev はこれをそのまま使う。stg は deploy/stg/compose.yaml を重ねる）
 name: project-backyard
 
 services:
