@@ -204,7 +204,7 @@ func (h *handler) parseSetupClients(r *http.Request) ([]string, *apierr.Error) {
 
 // publicBaseURL は PB の公開 URL を組み立てる（ApiDesign.md 5.7.1）。
 //
-// **PB は自分の公開 URL を知らない。** 設定にあるのは PB_BIND（0.0.0.0:8080）だけで、
+// **PB は自分の公開 URL を知らない。** 設定にあるのは待受アドレス（PB_BIND）だけで、
 // これは URL に使えない。**外から見えるアドレスを伝えるのはリクエストの Host ヘッダ
 // だけ**なので、暫定としてそこから組む。dev（:8080）と stg（:8081）は、利用者が
 // いま開いている側が自動で入る。

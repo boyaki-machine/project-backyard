@@ -70,7 +70,7 @@ func usage() {
   pb help           このヘルプを表示する
 
 環境変数:
-  PB_BIND                  待受アドレス（既定 0.0.0.0:8080）
+  PB_BIND                  待受アドレス（既定 127.0.0.1:8080）
   PB_ALLOW_DEV_SEED        pb dev seed の実行を許可する（1 のときのみ）
   PB_DATABASE_URL          接続文字列（pb_app）
   PB_DATABASE_URL_FILE     同上をファイル経由で渡す場合のパス（こちらを優先）

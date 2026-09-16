@@ -1866,7 +1866,7 @@ GET /api/v1/projects/:key/agent-setup.zip?client=claude_code&client=codex
 
 #### `base_url` はリクエストの `Host` から組み立てる（暫定）
 
-**PB は自分の公開 URL を知らない。** 設定にあるのは `PB_BIND`（`0.0.0.0:8080`）だけで、
+**PB は自分の公開 URL を知らない。** 設定にあるのは待受アドレス（`PB_BIND`）だけで、
 これは URL に使えない。**外から見えるアドレスを伝えるのはリクエストの `Host` ヘッダだけ**である。
 
 **利用者がいま画面を開いている URL がそのまま入る**ので、dev（`:8080`）と stg（`:8081`）は
