@@ -30,8 +30,6 @@ import StatCard from '../components/StatCard.vue'
 import { ApiError } from '../api/client'
 import * as dashboardApi from '../api/dashboard'
 import type { Activity, ProjectStats } from '../api/dashboard'
-import * as sprintsApi from '../api/sprints'
-import type { Sprint } from '../api/sprints'
 import * as tagsApi from '../api/tags'
 import type { Tag } from '../api/tags'
 import * as ticketsApi from '../api/tickets'
@@ -125,7 +123,7 @@ const hasMoreActivity = computed(() => activityPage.value < activityTotalPages.v
  * 表示名を解決する手がかり（`lib/activity.ts`）。
  *
  * **スプリント表は渡さない**（5.5 と同じ）。ダッシュボードは
- * `GET /sprints` を起動時に呼ばず、`activity.ts` 側で
+ * `GET /sprints` を呼ばず、`activity.ts` 側で
  * 「スプリントを変更」に落ちる。
  */
 const labelContext = computed<ActivityLabelContext>(() => ({
@@ -328,14 +326,13 @@ function ticketTo(seq: number): string {
 
 // ── 新規チケット（5.3 のヘッダ。5.4.3 のモーダルを使う）────────
 //
-// **語彙（タグ・スプリント・エピック）は押したときに取りに行く。** 起動時の
-// 5本に足さない——作らない利用者に3本を払わせないためで、プロジェクト設定が
+// **語彙（タグ・エピック）は押したときに取りに行く。** 起動時の
+// 5本に足さない——作らない利用者に2本を払わせないためで、プロジェクト設定が
 // タブを開いたときにタグを取るのと同じ判断（5.9）。
 
 const showNewModal = ref(false)
 const vocabLoading = ref(false)
 const tags = ref<Tag[]>([])
-const sprints = ref<Sprint[]>([])
 /**
  * エピック欄の選択肢（5.4.3「親チケットとエピック」。pb-14）。**ダッシュボードは
  * 一覧を持たない**ので、親チケット欄は出ない（候補が0件）。
@@ -351,22 +348,19 @@ async function openNewModal(): Promise<void> {
   showNewModal.value = true
   newFieldErrors.value = {}
   createError.value = ''
-  if (tags.value.length > 0 || sprints.value.length > 0 || epics.value.length > 0) return
+  if (tags.value.length > 0 || epics.value.length > 0) return
   vocabLoading.value = true
   try {
-    const [t, s, c] = await Promise.all([
+    const [t, c] = await Promise.all([
       tagsApi.listTags(props.projectKey),
-      sprintsApi.listSprints(props.projectKey),
       ticketsApi.listTickets(props.projectKey, { type: 'epic' }),
     ])
     tags.value = t.items
-    sprints.value = s.items
     epics.value = c.items
   } catch {
     // **語彙が取れなくてもモーダルは閉じない。** タイトルと種別だけで作れる
     // （`ApiDesign.md` 9.3 の必須はタイトルのみ）ので、選択肢が空のまま出す。
     tags.value = []
-    sprints.value = []
     epics.value = []
   } finally {
     vocabLoading.value = false
@@ -580,7 +574,6 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
       :project-key="projectKey"
       :members="members"
       :tags="tags"
-      :sprints="sprints"
       :candidates="[]"
       :epics="epics"
       :busy="busy || vocabLoading"
