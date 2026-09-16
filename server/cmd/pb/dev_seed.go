@@ -207,10 +207,21 @@ type devDoDItem struct {
 // **origin は書かせない。** 呼び出し元のアクター種別から決まる規則
 // （ApiDesign.md 9.8）を seed でも守り、author のメールから引く。
 // Phase 1 のデモアカウントはすべて人なので human になる。
+//
+// **返信と削除済みも書ける**（pb-24）。`in_reply_to` の両向きリンクと「削除されました」は
+// 実装済みでも、seed に無ければ画面で一度も踏まれない。返信先は位置ではなく**参照名**
+// （`ref`）で指す——親チケットをタイトルで指すのと同じで、並べ替えても壊れない。
 type devComment struct {
 	Author string `yaml:"author"`
 	Kind   string `yaml:"kind"`
 	Body   string `yaml:"body"`
+	// Ref は同じチケットの中で返信先として指すための名前。省略できる
+	Ref string `yaml:"ref"`
+	// ReplyTo は返信先の Ref。**同じチケットの、自分より前の、削除しないコメント**を
+	// 指す（ApiDesign.md 9.8 が未削除のコメントにしか返信させないため）
+	ReplyTo string `yaml:"reply_to"`
+	// Deleted は投入したあとに論理削除する。**ほかのコメントの返信先にはできない**
+	Deleted bool `yaml:"deleted"`
 }
 
 // devLink はチケット間リンク（DbDesign.md 6.6、手順18a）。
@@ -580,6 +591,8 @@ func (d *devData) validate() error {
 
 			// コメント（手順18a）。**author は必須**（comment.author_id が
 			// NOT NULL かつ ON DELETE RESTRICT。DbDesign.md 6.7）。
+			// 参照名 → 削除するか。**前から順に作る**ので、返信先は自分より前にしか置けない
+			commentRefs := map[string]bool{}
 			for k, c := range tk.Comments {
 				cAt := fmt.Sprintf("%s.comments[%d]", at, k)
 				if strings.TrimSpace(c.Body) == "" {
@@ -593,6 +606,21 @@ func (d *devData) validate() error {
 				}
 				if c.Kind != "" && !devCommentKinds[c.Kind] {
 					return fmt.Errorf("%s: kind が不正です（%q）", cAt, c.Kind)
+				}
+				if c.ReplyTo != "" {
+					deleted, ok := commentRefs[c.ReplyTo]
+					if !ok {
+						return fmt.Errorf("%s: reply_to %q がこのチケットの、自分より前のコメントの ref にありません", cAt, c.ReplyTo)
+					}
+					if deleted {
+						return fmt.Errorf("%s: reply_to %q は削除するコメントです（削除済みには返信できない。ApiDesign.md 9.8）", cAt, c.ReplyTo)
+					}
+				}
+				if c.Ref != "" {
+					if _, dup := commentRefs[c.Ref]; dup {
+						return fmt.Errorf("%s: ref %q が重複しています", cAt, c.Ref)
+					}
+					commentRefs[c.Ref] = c.Deleted
 				}
 			}
 
@@ -1299,6 +1327,8 @@ func seedTicketComments(
 	ctx context.Context, q gen.Querier, ticketID string, tk devTicket,
 	actorIDs map[string]string,
 ) error {
+	// 参照名 → comment.id。返信先の解決に使う（検証で前にあることを確かめてある）
+	idByRef := map[string]string{}
 	for _, c := range tk.Comments {
 		authorID := actorIDs[strings.ToLower(c.Author)]
 		if authorID == "" {
@@ -1308,15 +1338,25 @@ func seedTicketComments(
 		if kind == "" {
 			kind = "discussion"
 		}
+		id := ulidgen.New()
 		if err := q.CreateComment(ctx, gen.CreateCommentParams{
-			ID:       ulidgen.New(),
-			TicketID: ticketID,
-			AuthorID: authorID,
-			BodyMd:   c.Body,
-			Kind:     kind,
-			Origin:   "human",
+			ID:        id,
+			TicketID:  ticketID,
+			AuthorID:  authorID,
+			BodyMd:    c.Body,
+			Kind:      kind,
+			Origin:    "human",
+			InReplyTo: nullText(idByRef[c.ReplyTo]),
 		}); err != nil {
 			return fmt.Errorf("チケット %q にコメントを足せない: %w", tk.Title, err)
+		}
+		if c.Ref != "" {
+			idByRef[c.Ref] = id
+		}
+		if c.Deleted {
+			if _, err := q.SoftDeleteComment(ctx, gen.SoftDeleteCommentParams{TicketID: ticketID, ID: id}); err != nil {
+				return fmt.Errorf("チケット %q のコメントを削除済みにできない: %w", tk.Title, err)
+			}
 		}
 	}
 	return nil

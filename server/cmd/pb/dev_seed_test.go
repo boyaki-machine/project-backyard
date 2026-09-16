@@ -233,6 +233,58 @@ func TestDevDataValidateStaged(t *testing.T) {
 	})
 }
 
+// コメントの返信と削除済み（pb-24。ApiDesign.md 9.8）。
+//
+// **「置ける」ことを先に確かめてから「置けない」を測る**（TestDevDataValidateStaged と同じ）。
+func TestDevDataValidateCommentReplies(t *testing.T) {
+	base := func(comments ...devComment) devData {
+		return devData{
+			Password: "pbdev-password",
+			Users: []devUser{
+				{Email: "pm@example.com", DisplayName: "PM", SystemRole: "operator"},
+			},
+			Projects: []devProject{{
+				Key: "demo", Name: "デモ", WorkflowTemplate: "simple",
+				Members: []devMember{{Email: "pm@example.com", Role: "project_admin"}},
+				Tickets: []devTicket{{Title: "議論", Type: "task", Comments: comments}},
+			}},
+		}
+	}
+	c := func(ref, replyTo string, deleted bool) devComment {
+		return devComment{Author: "pm@example.com", Body: "本文", Ref: ref, ReplyTo: replyTo, Deleted: deleted}
+	}
+
+	t.Run("前のコメントへ返信でき、返信の無いコメントは削除できる", func(t *testing.T) {
+		d := base(c("q", "", false), c("", "q", false), c("", "", true))
+		if err := d.validate(); err != nil {
+			t.Fatalf("置けるはずのものが弾かれた: %v", err)
+		}
+	})
+
+	tests := []struct {
+		name     string
+		comments []devComment
+		want     string
+	}{
+		{"後ろのコメントへは返信できない", []devComment{c("", "q", false), c("q", "", false)}, "自分より前"},
+		{"無い参照名へは返信できない", []devComment{c("q", "", false), c("", "ghost", false)}, "自分より前"},
+		{"削除するコメントへは返信できない", []devComment{c("q", "", true), c("", "q", false)}, "削除済みには返信できない"},
+		{"参照名の重複", []devComment{c("q", "", false), c("q", "", false)}, "重複"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := base(tt.comments...)
+			err := d.validate()
+			if err == nil {
+				t.Fatal("エラーになるはず")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("エラーに %q を含むはず。実際: %v", tt.want, err)
+			}
+		})
+	}
+}
+
 // 7.6.3 の安全装置。いずれかに掛かったら何もせず終了する。
 func TestCheckDevSeedAllowed(t *testing.T) {
 	const localURL = "postgres://pb_app:secret@127.0.0.1:5432/pb?sslmode=disable"

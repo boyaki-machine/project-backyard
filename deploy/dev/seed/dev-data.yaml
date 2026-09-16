@@ -274,7 +274,18 @@ projects:
               省略すると照合順がロケール依存になり、並びが端末で変わる。
           - author: pm@example.com
             kind: discussion
+            ref: etag-page
             body: ETag にページ番号を混ぜないと、2ページ目が1ページ目と同じ値になりませんか？
+          # **返信と削除済み**（pb-24）。`↩ 返信先:` と `返信 N件:` の両向きリンク、
+          # 「削除されました」を画面で確かめられるようにする
+          - author: member@example.com
+            kind: discussion
+            reply_to: etag-page
+            body: 混ぜます。ページ番号と per_page の両方をハッシュに入れる形にしました。
+          - author: member@example.com
+            kind: discussion
+            deleted: true
+            body: （別チケットへ書くつもりのコメント）
         # **関連チケット**（GuiDesign.md 5.5、手順18a）。**target は自分より前に
         # 書かれたチケット**である（前から順に作るため）。逆向き（incoming）は
         # 相手側から自動的に見える——1本の GET が双方向を返す（9.10.1）。
