@@ -184,6 +184,10 @@ projects:
         type: task
         parent: チケットを扱えるようにする
         status: in_progress
+        # **業務履歴を書く**（pb-23）。作成と「未着手 → 進行中」の2行が入り、
+        # ダッシュボードの「最近の動き」とチケットの履歴が空でなくなる。
+        # 入口から1回の遷移で届く状態のチケットにだけ付ける
+        history: true
         priority: high
         assignee: member@example.com
         tags: [API]

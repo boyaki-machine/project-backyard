@@ -723,8 +723,9 @@ DBを丸ごと作り直してよい場面では、**個別に戻すより `make 
 **`updated_at` は通常の `UPDATE` では過去へ置けない。** `0006` の
 `trg_ticket_updated`（BEFORE UPDATE）が `now()` を書くためである。
 `ApiDesign.md` 9.13.1 の `stale`（14日以上更新のないチケット）や、
-`GuiDesign.md` 5.3 の「要対応」の放置の行は、**seed のデータでは
-一度も画面に出ない**（`pb dev seed` の投入時刻がそのまま入る）。
+`GuiDesign.md` 5.3 の「要対応」の放置の行は、`pb dev seed` の投入時刻が
+そのまま入るので出ない。**`make dev-seed` は最後に1件（「アーカイブの冪等性が怪しい」）
+だけを20日前へ振る**（pb-23。`DbDesign.md` 7.6.4）——それ以外の日数やチケットが要るときは、
 
 **トリガを一時停止して振る。**
 
