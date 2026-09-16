@@ -54,7 +54,7 @@ STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@1
 	stg-init stg-up stg-down stg-psql stg-migrate stg-build stg-run stg-stop stg-admin-create \
 	dev-client gen-api build-client sync-webui build clean-webui release \
 	version version-check bump-build bump-minor bump-major release-tag \
-	docs-size fmt-check
+	docs-size docs-emphasis fmt-check
 
 ## DB を起動する
 # **app は起動しない。** dev では PB 本体を make run でホストから動かしており、app の
@@ -374,3 +374,16 @@ docs-size:
 		exit 1; \
 	fi; \
 	echo "OK: 予算内（残り $$(( $(DOCS_BUDGET) - total )) バイト）"
+
+# ── 閉じない強調記号（Testing.md 7.7）────────────────────────
+
+# 見る文書。差し替えれば任意のファイルを見られる（make docs-emphasis EMPHASIS_DOCS=a.md）
+EMPHASIS_DOCS ?= docs/*.md docs/history/*.md
+
+## 描画しても ** が残る段落を数える（1件でもあれば非ゼロ終了。client の markdown-it を使う）
+docs-emphasis:
+	@if [ ! -d "$(CURDIR)/client/node_modules/markdown-it" ]; then \
+		echo "NG: client/node_modules に markdown-it が無い。先に cd client && npm ci を打つ"; \
+		exit 1; \
+	fi
+	@node client/scripts/check-emphasis.mjs $(EMPHASIS_DOCS)
