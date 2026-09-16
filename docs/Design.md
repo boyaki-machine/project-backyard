@@ -274,8 +274,7 @@ ProjectBackyard/
     │   ├── compose.yaml
     │   ├── initdb/01_roles.sql    ← DBロール分離（DbDesign 3.4）
     │   └── env.example
-    ├── dev/                       ← 開発検証環境
-    │   ├── compose.yaml           ← base への上書き
+    ├── dev/                       ← 開発検証環境（compose は持たず base をそのまま使う。4.3）
     │   ├── reset.sh               ← DBを作り直してデモを投入（DbDesign 7.6.6）
     │   ├── seed/dev-data.yaml     ← デモデータの定義（DbDesign 7.6.4。コミットする）
     │   └── secrets/               ← .gitignore（.example のみコミット）
@@ -325,10 +324,14 @@ build: sync-webui                   # 単一バイナリ
 
 ## 4.3 deploy/base に置くもの
 
-「全環境で同じ」ものを `base/` に集約し、環境ごとの差分のみを `dev/` `stg/` に置く。docker compose は複数ファイルの重ね合わせに対応している。**配布用の `prod/compose/` は base に重ねず、単体で動く**——受け取った人は base を持たない（4.5）。
+「全環境で同じ」ものを `base/` に集約し、環境ごとの差分を重ねる。docker compose は複数ファイルの重ね合わせに対応している。**いま差分を持っているのは `stg/` だけで、dev は base をそのまま使う**（下記）。**配布用の `prod/compose/` は base に重ねず、単体で動く**——受け取った人は base を持たない（4.5）。
 
 ```
-docker compose -f deploy/base/compose.yaml -f deploy/dev/compose.yaml up -d
+# dev（base だけ。Makefile の COMPOSE がこれである）
+docker compose -f deploy/base/compose.yaml up -d
+
+# stg（base に stg を重ねる。Makefile の STG_COMPOSE）
+docker compose -f deploy/base/compose.yaml -f deploy/stg/compose.yaml up -d
 ```
 
 | 置き場所 | 内容 |
@@ -337,10 +340,10 @@ docker compose -f deploy/base/compose.yaml -f deploy/dev/compose.yaml up -d
 | `base/initdb/` | DBロール作成（`DbDesign.md` 3.4）。環境によらず同一 |
 | `base/env.example` | 必要な環境変数の一覧と説明。**第1層と第2層に分けてある**（10.3） |
 | `base/pb.yaml.example` | **設定ファイル（YAML）の雛形。** `PB_CONFIG_FILE` で位置を渡す（10.3）。任意——置かなくても環境変数と既定値で動く |
-| `dev/compose.yaml` | ポートを `127.0.0.1` に公開、ログ詳細化、ソースのバインドマウント、開発用シード |
+| `stg/compose.yaml` | **stg の差分。** DB だけを別の compose プロジェクト（`pb-stg`）と別のポート（`:5433`）で立てる（4.4） |
 | `prod/compose/compose.yaml` | **配布用。base に重ねず単体で動く。** イメージの参照は `make release` が埋め、DB のポートは外へ出さない。秘密は同梱の `init.sh` が作る（4.5） |
 
-**`base/` の中身が育つまでは、`dev/compose.yaml` 単体で始めてよい。** 環境が1つしかない段階で共通化を先取りすると、共通部分の判断材料がないまま構造だけが増える。
+**dev は差分を持たず、base をそのまま使う。** `deploy/dev/` にあるのは `reset.sh`・`seed/`・`secrets/` だけで、**compose のファイルは無い**——ポートを `127.0.0.1` に公開することもログの設定も base が持っており、重ねるべき差分が出ていないためである。**差分が出た時点で `dev/compose.yaml` を足す**（そのとき Makefile の `COMPOSE` も base＋dev に変える）。
 
 ## 4.4 stg の扱い
 
