@@ -41,12 +41,28 @@ const open = ref(false)
 const query = ref('')
 
 const trigger = useTemplateRef<HTMLButtonElement>('trigger')
-// **パネル自体の参照は持たない。** `StatusDropdown` はパネルへフォーカスを移すが、
-// こちらは開いた直後に検索欄へ入れるので要らない
+// **パネルの参照は高さを測るためだけに持つ**（`place`）。`StatusDropdown` はパネルへ
+// フォーカスを移すが、こちらは開いた直後に検索欄へ入れる
+const panel = useTemplateRef<HTMLElement>('panel')
 const search = useTemplateRef<HTMLInputElement>('search')
 
-/** パネルの位置。開いた時点のボタンの実測位置から決める（`StatusDropdown` と同じ） */
-const pos = ref({ top: 0, left: 0, width: 0 })
+/**
+ * パネルの位置。開いた時点のボタンの実測位置から決める（`StatusDropdown` と同じ）。
+ * **上へ出すときは `top` ではなく `bottom` で置く**——絞り込みで候補が減っても、
+ * 下端がボタンに揃ったまま離れない
+ */
+const pos = ref<{ top?: number; bottom?: number; left: number; width: number; maxHeight?: number }>(
+  { top: 0, left: 0, width: 0 },
+)
+
+/** 候補の欄の上限（40vh）は `.options` が持つので、ここではパネル全体を余白に収めるだけ */
+const panelStyle = computed(() => ({
+  top: pos.value.top === undefined ? undefined : `${pos.value.top}px`,
+  bottom: pos.value.bottom === undefined ? undefined : `${pos.value.bottom}px`,
+  left: `${pos.value.left}px`,
+  minWidth: `${pos.value.width}px`,
+  maxHeight: pos.value.maxHeight === undefined ? undefined : `${pos.value.maxHeight}px`,
+}))
 
 /**
  * 絞り込んだ候補。**表示名で前方一致ではなく部分一致**にする——姓で引く人と
@@ -63,13 +79,28 @@ function mark(kind: string): string {
   return kind === 'agent' ? '🤖' : '👤'
 }
 
-function place(): void {
+/**
+ * **高さが推定できない**（候補の件数で変わる）ので、いったん下へ描いて実寸を測り、
+ * 下に入らず上のほうが広ければ上へ出す。最大高は出した側の余白まで縮める
+ * （5.4「一覧で担当を選ぶ」の「位置」。`StatusDropdown` と同じ判断。pb-92）。
+ * **絞り込みでは置き直さない**——打っている最中にパネルが跳ねない
+ */
+async function place(): Promise<void> {
   const el = trigger.value
   if (!el) return
   const r = el.getBoundingClientRect()
-  // **高さが読めない**（候補の件数で変わる）ので、素直に下へ出して最大高で
-  // スクロールさせる。`StatusDropdown` と同じ判断
-  pos.value = { top: r.bottom + 4, left: r.left, width: Math.max(r.width, 220) }
+  const width = Math.max(r.width, 220)
+  pos.value = { top: r.bottom + 4, left: r.left, width }
+  await nextTick()
+  if (!panel.value) return
+  const height = panel.value.offsetHeight
+  // 4 はボタンとの隙間、8 は画面の端に残す余白
+  const below = window.innerHeight - r.bottom - 12
+  const above = r.top - 12
+  pos.value =
+    height <= below || below >= above
+      ? { top: r.bottom + 4, left: r.left, width, maxHeight: below }
+      : { bottom: window.innerHeight - r.top + 4, left: r.left, width, maxHeight: above }
 }
 
 function detach(): void {
@@ -91,10 +122,10 @@ async function toggle(): Promise<void> {
     return
   }
   if (!props.canAssign || props.busy) return
-  place()
   open.value = true
   window.addEventListener('scroll', close, true)
   window.addEventListener('resize', close)
+  await place()
   // **開いたら検索欄へ入る。** 絞り込みが主目的の部品なので、開いてから
   // もう一度クリックさせない
   await nextTick()
@@ -147,8 +178,9 @@ defineExpose({ close })
       <!-- 外側を押したら閉じる。`StatusDropdown` と同じ透明の膜 -->
       <div class="scrim" @click="close" @contextmenu.prevent="close"></div>
       <div
+        ref="panel"
         class="panel"
-        :style="{ top: `${pos.top}px`, left: `${pos.left}px`, minWidth: `${pos.width}px` }"
+        :style="panelStyle"
         @keydown.escape="close"
       >
         <!-- **インクリメンタルサーチ**（5.4）。打つたびに下の一覧が絞られる -->

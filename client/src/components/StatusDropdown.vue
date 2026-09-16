@@ -69,20 +69,49 @@ const loadError = ref('')
 const trigger = useTemplateRef<HTMLButtonElement>('trigger')
 const panel = useTemplateRef<HTMLElement>('panel')
 
-/** パネルの位置。開いた時点のボタンの実測位置から決める（`UserActionsMenu` と同じ） */
-const pos = ref({ top: 0, left: 0, width: 0 })
+/**
+ * パネルの位置。開いた時点のボタンの実測位置から決める（`UserActionsMenu` と同じ）。
+ * **上へ出すときは `top` ではなく `bottom` で置く**——下端をボタンに揃えておく
+ */
+const pos = ref<{ top?: number; bottom?: number; left: number; width: number; maxHeight?: number }>(
+  { top: 0, left: 0, width: 0 },
+)
+
+/** 60vh は `.panel` の上限。余白に合わせて縮めるときも超えない */
+const panelStyle = computed(() => ({
+  top: pos.value.top === undefined ? undefined : `${pos.value.top}px`,
+  bottom: pos.value.bottom === undefined ? undefined : `${pos.value.bottom}px`,
+  left: `${pos.value.left}px`,
+  minWidth: `${pos.value.width}px`,
+  maxHeight: pos.value.maxHeight === undefined ? undefined : `min(60vh, ${pos.value.maxHeight}px)`,
+}))
 
 const allBlocked = computed(
   () => items.value.length > 0 && items.value.every((i) => !i.allowed),
 )
 
-function place(): void {
+/**
+ * **項目に2行目（`reason`）が付き、件数も開いてから届くので高さが推定できない。**
+ * `UserActionsMenu` のように推定せず、いったん下へ描いて実寸を測り、下に入らず
+ * 上のほうが広ければ上へ出す（5.5「位置」。pb-92）。最大高は出した側の余白まで
+ * 縮め、一覧の最終行でも項目を画面の外に出さない。**中身が変わるたびに呼ぶ**
+ */
+async function place(): Promise<void> {
   const el = trigger.value
   if (!el) return
   const r = el.getBoundingClientRect()
-  // **項目に2行目（`reason`）が付くので高さが読めない。** 下に入らないときだけ
-  // 上へ出す判定にすると外すため、素直に下へ出して最大高でスクロールさせる
-  pos.value = { top: r.bottom + 4, left: r.left, width: Math.max(r.width, 260) }
+  const width = Math.max(r.width, 260)
+  pos.value = { top: r.bottom + 4, left: r.left, width }
+  await nextTick()
+  if (!panel.value) return
+  const height = panel.value.offsetHeight
+  // 4 はボタンとの隙間、8 は画面の端に残す余白
+  const below = window.innerHeight - r.bottom - 12
+  const above = r.top - 12
+  pos.value =
+    height <= below || below >= above
+      ? { top: r.bottom + 4, left: r.left, width, maxHeight: below }
+      : { bottom: window.innerHeight - r.top + 4, left: r.left, width, maxHeight: above }
 }
 
 function detach(): void {
@@ -103,12 +132,11 @@ async function toggle(): Promise<void> {
     return
   }
   if (!props.canTransition || props.busy) return
-  place()
   open.value = true
   window.addEventListener('scroll', close, true)
   window.addEventListener('resize', close)
   emit('open')
-  await nextTick()
+  await place()
   panel.value?.focus()
 }
 
@@ -117,6 +145,7 @@ function setItems(next: TicketTransitionOption[]): void {
   items.value = next
   loading.value = false
   loadError.value = ''
+  if (open.value) void place()
 }
 
 function setLoading(): void {
@@ -129,6 +158,7 @@ function setError(message: string): void {
   loading.value = false
   loadError.value = message
   items.value = []
+  if (open.value) void place()
 }
 
 function choose(item: TicketTransitionOption): void {
@@ -168,7 +198,7 @@ defineExpose({ setItems, setLoading, setError, close })
         class="panel"
         role="listbox"
         tabindex="-1"
-        :style="{ top: `${pos.top}px`, left: `${pos.left}px`, minWidth: `${pos.width}px` }"
+        :style="panelStyle"
         @keydown.escape="close"
       >
         <p v-if="loading" class="note">読み込み中…</p>
