@@ -1076,7 +1076,7 @@ func seedTickets(
 	if err != nil {
 		return err
 	}
-	reporterID := actorIDs[strings.ToLower(projectCreator(p, actorIDs))]
+	reporterID := projectCreator(p, actorIDs)
 
 	// sort_key は定義ファイルの並び順で、末尾へ足していく（ApiDesign.md 9.4）。
 	sortKey, err := q.MaxTicketSortKey(ctx, projectID)
