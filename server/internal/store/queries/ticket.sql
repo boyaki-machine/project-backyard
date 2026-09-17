@@ -84,6 +84,21 @@ open_desc AS (
   SELECT c.id FROM ticket c JOIN open_desc o ON c.parent_id = o.id
    WHERE c.type <> 'epic'
 ),
+-- staged（9.2.1「オンステージで絞る」。pb-138）。**staged_at を持つ行とその全子孫**で、
+-- エピックを除く。スプリントの開始（sprint.sql の ListOnstageTicketIDs）と同じ定義である
+-- ——**段を決めるのは親で、子は staged_at が NULL のまま親と一緒に運ばれる**（9.4.1）。
+--
+-- **棚に戻ったものはここでは外さない。** 下の retired の条件がそのまま効くので、
+-- 既定では外れ、retired=true を一緒に送れば含まれる（条件は種類ごとに独立）。
+staged_tree AS (
+  SELECT id FROM ticket
+   WHERE project_id = @project_id::text
+     AND staged_at IS NOT NULL
+     AND type <> 'epic'
+  UNION
+  SELECT c.id FROM ticket c JOIN staged_tree s ON c.parent_id = s.id
+   WHERE c.type <> 'epic'
+),
 filtered AS (
   SELECT
     t.id,
@@ -201,6 +216,7 @@ filtered AS (
            AND NOT EXISTS (SELECT 1 FROM open_desc od WHERE od.id = t.id)
          ))
     AND (cardinality(@parent_seqs::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
+    AND (NOT @staged_only::boolean OR t.id IN (SELECT id FROM staged_tree))
     -- ── 検索の条件（ApiDesign.md 9.2.1「検索の条件」。pb-66）──────────
     --
     -- キーワードの一致は store/search（queries/search.sql）が済ませ、**一致した ID

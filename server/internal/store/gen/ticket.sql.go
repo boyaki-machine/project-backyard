@@ -801,6 +801,15 @@ open_desc AS (
   SELECT c.id FROM ticket c JOIN open_desc o ON c.parent_id = o.id
    WHERE c.type <> 'epic'
 ),
+staged_tree AS (
+  SELECT id FROM ticket
+   WHERE project_id = $5::text
+     AND staged_at IS NOT NULL
+     AND type <> 'epic'
+  UNION
+  SELECT c.id FROM ticket c JOIN staged_tree s ON c.parent_id = s.id
+   WHERE c.type <> 'epic'
+),
 filtered AS (
   SELECT
     t.id,
@@ -918,26 +927,27 @@ filtered AS (
            AND NOT EXISTS (SELECT 1 FROM open_desc od WHERE od.id = t.id)
          ))
     AND (cardinality($6::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
+    AND (NOT $22::boolean OR t.id IN (SELECT id FROM staged_tree))
     -- ── 検索の条件（ApiDesign.md 9.2.1「検索の条件」。pb-66）──────────
     --
     -- キーワードの一致は store/search（queries/search.sql）が済ませ、**一致した ID
     -- だけを受け取る**（Design.md 4.6 の隔離）。keyword_set が偽なら絞らない——
     -- 「語が無い」と「語はあったが0件に一致」を区別するためのフラグである。
-    AND (NOT $22::boolean OR t.id = ANY($23::text[]))
+    AND (NOT $23::boolean OR t.id = ANY($24::text[]))
     -- 番号の範囲は両端を含む。0 は指定なし（seq は1から始まる）。
-    AND ($24::int <= 0 OR t.seq >= $24::int)
-    AND ($25::int <= 0 OR t.seq <= $25::int)
+    AND ($25::int <= 0 OR t.seq >= $25::int)
+    AND ($26::int <= 0 OR t.seq <= $26::int)
     -- 完了日時は since 以上・before 未満。**指定すると未完了は外れる**（NULL との比較は偽）。
-    AND ($26::timestamptz IS NULL
-         OR t.closed_at >= $26::timestamptz)
     AND ($27::timestamptz IS NULL
-         OR t.closed_at < $27::timestamptz)
+         OR t.closed_at >= $27::timestamptz)
+    AND ($28::timestamptz IS NULL
+         OR t.closed_at < $28::timestamptz)
     -- 着手日時（9.2.1「着手日時を導く」）。**状態が todo 区分から初めて出た遷移**の
     -- occurred_at で、列を持たず activity から導く。完了を取り消して着手し直しても
     -- min を採るので、最初の着手になる。区分はいまのワークフローで引くので、
     -- いまのワークフローに無いキーの遷移は結合で落ちる。
-    AND (($28::timestamptz IS NULL
-          AND $29::timestamptz IS NULL)
+    AND (($29::timestamptz IS NULL
+          AND $30::timestamptz IS NULL)
          OR EXISTS (
            SELECT 1
              FROM (SELECT min(a.occurred_at) AS started_at
@@ -953,10 +963,10 @@ filtered AS (
                       AND os.category = 'todo'
                       AND ns.category <> 'todo') st
             WHERE st.started_at IS NOT NULL
-              AND ($28::timestamptz IS NULL
-                   OR st.started_at >= $28::timestamptz)
               AND ($29::timestamptz IS NULL
-                   OR st.started_at < $29::timestamptz)
+                   OR st.started_at >= $29::timestamptz)
+              AND ($30::timestamptz IS NULL
+                   OR st.started_at < $30::timestamptz)
          ))
 )
 SELECT
@@ -1023,6 +1033,7 @@ type ListTicketsParams struct {
 	OverdueOnly      bool
 	StaleDays        int32
 	IncludeRetired   bool
+	StagedOnly       bool
 	KeywordSet       bool
 	KeywordIds       []string
 	SeqFrom          int32
@@ -1131,6 +1142,12 @@ type ListTicketsRow struct {
 //
 // 起点を「未完了かつエピックでない行」に絞ることで、**表示上のトップレベル
 // （親が無いか、親がエピック。ApiDesign.md 9.4.1）から下だけを見る**形になる。
+// staged（9.2.1「オンステージで絞る」。pb-138）。**staged_at を持つ行とその全子孫**で、
+// エピックを除く。スプリントの開始（sprint.sql の ListOnstageTicketIDs）と同じ定義である
+// ——**段を決めるのは親で、子は staged_at が NULL のまま親と一緒に運ばれる**（9.4.1）。
+//
+// **棚に戻ったものはここでは外さない。** 下の retired の条件がそのまま効くので、
+// 既定では外れ、retired=true を一緒に送れば含まれる（条件は種類ごとに独立）。
 func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error) {
 	rows, err := q.db.Query(ctx, listTickets,
 		arg.Sort,
@@ -1154,6 +1171,7 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 		arg.OverdueOnly,
 		arg.StaleDays,
 		arg.IncludeRetired,
+		arg.StagedOnly,
 		arg.KeywordSet,
 		arg.KeywordIds,
 		arg.SeqFrom,

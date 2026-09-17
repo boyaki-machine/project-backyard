@@ -8698,6 +8698,13 @@ export interface operations {
                  */
                 due_within?: string;
                 /**
+                 * @description `true` で**オンステージの行とその全子孫**に限る（ApiDesign.md 9.2.1「オンステージで絞る」。pb-138）。
+                 *     エピックは除く。棚に戻ったものは `retired` の既定どおり外れる。
+                 *
+                 *     **バックログ画面は使わない**（全件を1回で取り、二段を手元で分ける）。MCP の `pb_list_tasks` のための条件である。
+                 */
+                staged?: "true";
+                /**
                  * @description `true` で**期限を過ぎた未完了のもの**（`due_date < 今日` かつ
                  *     `closed_at IS NULL`）。9.13.1 の `overdue` と同じ条件で数える。
                  *

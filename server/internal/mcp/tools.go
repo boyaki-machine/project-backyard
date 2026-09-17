@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -41,15 +42,20 @@ type schema struct {
 // （Requirements.md 10.6.1 のレポート）が配列とオブジェクトの入れ子を持つため
 // である。**ここが表せないと、モデルは中身の形を知らないまま埋めることになる**
 // ——description で言葉にするより、スキーマで宣言したほうが取り違えが減る。
+//
+// **AdditionalProperties は pb-134 で足した。** pb_get_context の charter_versions が
+// 「文書のパス → 版」の対応で、キーを先に列挙できないためである。値の型（整数）を
+// ここで宣言しておくと、クライアントが渡す前に検査できる。
 type property struct {
-	Type        string              `json:"type"`
-	Description string              `json:"description"`
-	Enum        []string            `json:"enum,omitempty"`
-	Minimum     *int                `json:"minimum,omitempty"`
-	Maximum     *int                `json:"maximum,omitempty"`
-	Items       *property           `json:"items,omitempty"`
-	Properties  map[string]property `json:"properties,omitempty"`
-	Required    []string            `json:"required,omitempty"`
+	Type                 string              `json:"type"`
+	Description          string              `json:"description"`
+	Enum                 []string            `json:"enum,omitempty"`
+	Minimum              *int                `json:"minimum,omitempty"`
+	Maximum              *int                `json:"maximum,omitempty"`
+	Items                *property           `json:"items,omitempty"`
+	Properties           map[string]property `json:"properties,omitempty"`
+	AdditionalProperties *property           `json:"additionalProperties,omitempty"`
+	Required             []string            `json:"required,omitempty"`
 }
 
 // objectItems は「オブジェクトの配列」を1行で書くための小道具。
@@ -155,8 +161,10 @@ func readTools() []tool {
 					"status_category": {Type: "string", Description: "todo / in_progress / review / done のいずれか。ワークフローに依存しない4値で、カンマ区切りで複数指定すると OR"},
 					"assignee": {Type: "string", Description: "担当者。me で自分（エージェントのトークンでは所有者）、" +
 						"none で未割当、アクターの ULID も渡せる。カンマ区切りで複数指定すると OR"},
-					"open":     {Type: "boolean", Description: "true で未完了のものだけ、false で完了したものだけ"},
-					"parent":   {Type: "string", Description: "チケット番号（seq）。そのチケットと全子孫に絞る。カンマ区切りで複数指定すると OR"},
+					"open":   {Type: "boolean", Description: "true で未完了のものだけ、false で完了したものだけ"},
+					"parent": {Type: "string", Description: "チケット番号（seq）。そのチケットと全子孫に絞る。カンマ区切りで複数指定すると OR"},
+					"staged": {Type: "boolean", Description: "true でオンステージのチケット（段に出ている行とその配下。エピックを除く）だけに絞る。" +
+						"「オンステージのチケットに着手して」と頼まれたら、未完了の全件を取らずにこれを使う。false は指定なしと同じ"},
 					"per_page": {Type: "integer", Description: "返す件数。既定 200、上限 200", Minimum: intPtr(1), Maximum: intPtr(perPageMax)},
 				},
 			},
@@ -314,7 +322,10 @@ type listArgs struct {
 	Assignee       string     `json:"assignee"`
 	Open           *bool      `json:"open"`
 	Parent         flexString `json:"parent"`
-	PerPage        flexInt    `json:"per_page"`
+	// Staged は true のときだけ staged=true を送る（pb-138）。**REST は true しか受けない**
+	// （overdue と同じ）ので、false は指定なしとして扱う。
+	Staged  *bool   `json:"staged"`
+	PerPage flexInt `json:"per_page"`
 }
 
 func callListTasks(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
@@ -330,6 +341,9 @@ func callListTasks(h *Handler, r *http.Request, key string, args json.RawMessage
 	setIfNotEmpty(q, "parent", in.Parent.value)
 	if in.Open != nil {
 		q.Set("open", strconv.FormatBool(*in.Open))
+	}
+	if in.Staged != nil && *in.Staged {
+		q.Set("staged", "true")
 	}
 	if in.PerPage.set {
 		if in.PerPage.value < 1 || in.PerPage.value > perPageMax {
@@ -438,6 +452,55 @@ func lighten(body []byte) ([]byte, error) {
 	return json.Marshal(out)
 }
 
+// pickFields は REST の応答から keys の項目だけを、keys の順に残す（Design.md 8.5.1 / 8.5.3）。
+//
+// **書いた直後の応答に、チケットの本文や送った本文をもう一度載せない**（pb-136 / pb-137）。
+// エージェントは本文を手元に持っているか、pb_get_task で読める。lighten と同じく
+// **選別だけを行い**、値は REST の JSON を写す。
+//
+// **応答に無い項目は出さない。** null を作ると、REST 側が項目を落としたときに
+// MCP 層が値をでっち上げることになる。
+func pickFields(body []byte, keys ...string) ([]byte, error) {
+	var in map[string]json.RawMessage
+	if err := json.Unmarshal(body, &in); err != nil {
+		return nil, err
+	}
+	var b bytes.Buffer
+	b.WriteByte('{')
+	n := 0
+	for _, k := range keys {
+		v, ok := in[k]
+		if !ok {
+			continue
+		}
+		if n > 0 {
+			b.WriteByte(',')
+		}
+		name, _ := json.Marshal(k)
+		b.Write(name)
+		b.WriteByte(':')
+		if err := json.Compact(&b, v); err != nil {
+			return nil, err
+		}
+		n++
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
+}
+
+// 書き込み系の応答に残す項目（Design.md 8.5.1。pb-137）。
+//
+// **書いた内容を応答で返さない。** 本文は送った本人の手元にあり、要るなら
+// pb_get_task / pb_get_doc で読める。残すのは、続けて使う値と、書けたことを
+// 確かめる値だけである。pb_put_dod（足した項目の id が次の update / delete に要る）と
+// pb_add_reference（短い1件）は揃えていない。
+var (
+	createTicketResultFields = []string{"id", "seq", "status", "version", "parent_seq"}
+	updateTicketResultFields = []string{"seq", "status", "version", "updated_at"}
+	putDocResultFields       = []string{"path", "version", "updated_at"}
+	postNoteResultFields     = []string{"id", "kind", "created_at"}
+)
+
 // ── 共通の組み立て ──────────────────────────────────────────
 
 // passThrough は REST の応答をそのままテキストにする（Design.md 8.5）。
@@ -449,6 +512,24 @@ func passThrough(r *http.Request, res restResult, err error) (toolResult, *rpcEr
 		return failed(r, res), nil
 	}
 	return textResult(string(res.body)), nil
+}
+
+// passThroughFields は成功した応答から keys の項目だけを返す（Design.md 8.5.1 / 8.5.3）。
+//
+// **失敗は passThrough と同じく本文ごと返す。** 理由の文（message）と、次の一手を
+// 選ぶための情報が落ちないようにするためである。
+func passThroughFields(r *http.Request, res restResult, err error, keys ...string) (toolResult, *rpcError) {
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, err.Error())
+	}
+	if !res.ok() {
+		return failed(r, res), nil
+	}
+	out, err := pickFields(res.body, keys...)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "応答を解釈できない: "+err.Error())
+	}
+	return textResult(string(out)), nil
 }
 
 // failed は REST の 4xx / 5xx を isError のツール結果にする（Design.md 8.4）。
@@ -589,7 +670,9 @@ func writeTools() []tool {
 			Name: "pb_create_ticket",
 			Description: "チケットを1件起票する。議論の結果として「これは別の作業だ」と決まったものを、" +
 				"その場で PB に残すために使う。作ったチケットは必ずバックログに入り、" +
-				"担当も状態も後から人が決められる。**勝手に着手しないこと。**",
+				"担当も状態も後から人が決められる。**勝手に着手しないこと。**" +
+				"応答は要点（id / seq / status / version / parent_seq）だけで、送った本文は含まない。" +
+				"本文が要るなら pb_get_task で読む。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
@@ -619,7 +702,8 @@ func writeTools() []tool {
 				"仕様の矛盾や書き漏れに気づいたとき、その場で直すために使う——" +
 				"直せないまま人に渡すと、誤った記述がチケットに残り続ける。" +
 				"**開けていない項目がある**——種別（type）の切り替え、実行モード・readiness・" +
-				"スコープ境界・実行者・実績時間・スプリントは、いずれも人が決めるものである。",
+				"スコープ境界・実行者・実績時間・スプリントは、いずれも人が決めるものである。" +
+				"応答は要点（seq / status / version / updated_at）だけで、本文は含まない。本文が要るなら pb_get_task で読む。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
@@ -671,7 +755,8 @@ func writeTools() []tool {
 			Name: "pb_post_note",
 			Description: "チケットにコメントを1件書く。途中経過・判明した事実・試して駄目だったことを、" +
 				"次に同じ場所を触る人が読める形で残すために使う。" +
-				"kind で種類を選ぶと、あとから決定や注意点だけを拾える。",
+				"kind で種類を選ぶと、あとから決定や注意点だけを拾える。" +
+				"応答は要点（id / kind / created_at）だけで、書いた本文は含まない。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
@@ -717,7 +802,8 @@ func writeTools() []tool {
 			Description: "プロジェクト文書（憲章）の本文を書き換える。**全置換である**——" +
 				"pb_get_doc で全文を読み、直した全文を渡すこと。章だけを差し替える口は無い。" +
 				"**憲章は全参加者を縛るので、権限を持つ人が明示的に指示したときにだけ呼ぶこと。**" +
-				"自分の判断で書き換えてはならない。",
+				"自分の判断で書き換えてはならない。" +
+				"応答は要点（path / version / updated_at）だけで、本文は含まない。本文が要るなら pb_get_doc で読む。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
@@ -813,7 +899,7 @@ func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	}
 	res, err := h.callREST(r, http.MethodPost,
 		"/projects/"+url.PathEscape(key)+"/tickets", nil, raw, nil)
-	return passThrough(r, res, err)
+	return passThroughFields(r, res, err, createTicketResultFields...)
 }
 
 // ── pb_update_ticket（Design.md 8.5.1。pb-75 / pb-76）─────────
@@ -932,7 +1018,7 @@ func callUpdateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 		return errorResult("このチケットは、読んでから書くまでのあいだに他の人が更新した。" +
 			"pb_get_task で読み直してから、もう一度直すこと。"), nil
 	}
-	return passThrough(r, res, nil)
+	return passThroughFields(r, res, nil, updateTicketResultFields...)
 }
 
 // ── pb_put_dod（Design.md 8.5.1。pb-75）───────────────────────
@@ -1086,7 +1172,7 @@ func callPostNote(h *Handler, r *http.Request, key string, args json.RawMessage)
 	res, err := h.callREST(r, http.MethodPost,
 		"/projects/"+url.PathEscape(key)+"/tickets/"+strconv.FormatInt(in.Seq.value, 10)+"/comments",
 		nil, raw, nil)
-	return passThrough(r, res, err)
+	return passThroughFields(r, res, err, postNoteResultFields...)
 }
 
 // addReferenceArgs は pb_add_reference の引数（Design.md 8.5.1）。
@@ -1229,10 +1315,7 @@ func callPutDoc(h *Handler, r *http.Request, key string, args json.RawMessage) (
 			"pb_get_doc で読み直し、その内容に自分の変更を重ねてから、もう一度 pb_put_doc を呼ぶこと。\n" +
 			string(res.body)), nil
 	}
-	if !res.ok() {
-		return failed(r, res), nil
-	}
-	return textResult(string(res.body)), nil
+	return passThroughFields(r, res, nil, putDocResultFields...)
 }
 
 // ── 遷移系（手順26b。Design.md 8.5.3）──────────────────────
@@ -1274,7 +1357,9 @@ func transitionTools() []tool {
 				"（同時に「自分が処理している」という記録がチケットに残る）。" +
 				"**進められるのは、自分の所有者が担当になっているチケットだけである。**" +
 				"担当が付いていなければ、進めずに利用者へ伝えること。" +
-				"**チケットを完了にすることはできない**——完了は人が確認して行う。",
+				"**チケットを完了にすることはできない**——完了は人が確認して行う。" +
+				"応答は状態の要点（seq / status / version / working_agent / updated_at / closed_at）だけで、" +
+				"チケットの本文は含まない。本文が要るなら pb_get_task を呼ぶ。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
@@ -1322,6 +1407,10 @@ func callListTransitions(h *Handler, r *http.Request, key string, args json.RawM
 // **working_agent_id は MCP 層では触らない。** REST 側の副作用であり
 // （ApiDesign.md 9.6）、人が画面から遷移したときと同じ経路を通る。ここで書くと
 // 同じ規則が2か所に生まれる（8.1）。
+//
+// **応答は状態の要点だけにする**（Design.md 8.5.3。pb-136）。エージェントは着手前に
+// pb_get_task で本文を読んでいるので、9.5.1 をそのまま返すと遷移のたびに同じ本文を
+// もう一度運ぶ。
 func callTransitionTask(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
 	var in transitionArgs
 	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
@@ -1346,8 +1435,14 @@ func callTransitionTask(h *Handler, r *http.Request, key string, args json.RawMe
 	res, err := h.callREST(r, http.MethodPost,
 		"/projects/"+url.PathEscape(key)+"/tickets/"+
 			strconv.FormatInt(in.Seq.value, 10)+"/transition", nil, raw, nil)
-	return passThrough(r, res, err)
+	return passThroughFields(r, res, err, transitionResultFields...)
 }
+
+// transitionResultFields は pb_transition_task の応答に残す項目（Design.md 8.5.3。pb-136）。
+//
+// 遷移の結果を確かめるのに要るものだけである——どこへ進んだか（status）、自分が
+// 記録されたか（working_agent）、続けて書くときの If-Match（version）。
+var transitionResultFields = []string{"seq", "status", "version", "working_agent", "updated_at", "closed_at"}
 
 // ── 完了レポート系（手順26c。Design.md 8.5.4）───────────────
 

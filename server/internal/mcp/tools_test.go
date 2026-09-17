@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -370,8 +371,9 @@ func TestCreateTicketPostsToREST(t *testing.T) {
 	if out.IsError {
 		t.Errorf("成功のはずが isError: %s", out.Content[0].Text)
 	}
-	if out.Content[0].Text != rest.body {
-		t.Errorf("応答をそのまま返していない（8.5）: %s", out.Content[0].Text)
+	// **書いた内容を返さない**（Design.md 8.5.1。pb-137）。要点は TestWriteToolsReturnOnlySummary で見る。
+	if out.Content[0].Text != `{"seq":31}` {
+		t.Errorf("応答の要点が違う: %s", out.Content[0].Text)
 	}
 }
 
@@ -773,5 +775,165 @@ func TestSubmitResultLeavesStatusValidationToREST(t *testing.T) {
 	}
 	if !strings.Contains(out.Content[0].Text, "validation_failed") {
 		t.Errorf("本文をそのまま添えていない: %s", out.Content[0].Text)
+	}
+}
+
+// ── 遷移系の応答（Design.md 8.5.3。pb-136）──────────────────────
+
+// fullTicketJSON は 9.5.1 の応答（本文・完了条件・関連リンクつき）の1件。
+const fullTicketJSON = `{"id":"01K2","seq":31,"type":"task","title":"認証APIの実装",
+	"status":{"key":"in_progress","name":"進行中","category":"in_progress"},
+	"priority":"high","assignee":{"id":"01U","kind":"user","display_name":"田中"},
+	"working_agent":{"id":"01A","kind":"agent","display_name":"Claude Code"},
+	"parent_seq":12,"version":4,"created_at":"2026-09-01T00:00:00Z",
+	"updated_at":"2026-09-17T01:00:00Z","closed_at":null,
+	"body_md":"ここに長い本文がある","dod":[{"id":"01D","body":"テストが通ること"}],
+	"links":[],"references":[],"children":[],"comment_count":2}`
+
+func TestTransitionTaskReturnsOnlyStatusSummary(t *testing.T) {
+	rest := &fakeREST{status: http.StatusOK, body: fullTicketJSON}
+	h := New(rest, "v0")
+
+	out := callTool1(t, h, toolCallBody("pb_transition_task", `{"seq":31,"to":"in_progress"}`))
+	if out.IsError {
+		t.Fatalf("成功のはずが isError: %s", out.Content[0].Text)
+	}
+
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out.Content[0].Text), &got); err != nil {
+		t.Fatalf("応答が JSON でない: %v（%s）", err, out.Content[0].Text)
+	}
+	var keys []string
+	for k := range got {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	want := append([]string(nil), transitionResultFields...)
+	sort.Strings(want)
+	if strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Errorf("応答の項目 = %v, want %v", keys, want)
+	}
+	// **値は REST の JSON をそのまま写す**（null も null のまま）。
+	if string(got["version"]) != "4" || string(got["closed_at"]) != "null" {
+		t.Errorf("値が写っていない: %s", out.Content[0].Text)
+	}
+	if strings.Contains(out.Content[0].Text, "ここに長い本文がある") {
+		t.Errorf("本文を返している: %s", out.Content[0].Text)
+	}
+}
+
+func TestTransitionTaskKeepsFailureBody(t *testing.T) {
+	// **失敗は今までどおり本文ごと返す**——理由の文が次の一手を決める。
+	rest := &fakeREST{status: http.StatusForbidden,
+		body: `{"error":{"code":"forbidden","message":"担当が所有者でないチケットは進められません"}}`}
+	h := New(rest, "v0")
+
+	out := callTool1(t, h, toolCallBody("pb_transition_task", `{"seq":31,"to":"in_progress"}`))
+
+	if !out.IsError {
+		t.Fatalf("失敗のはずが成功している: %s", out.Content[0].Text)
+	}
+	if !strings.Contains(out.Content[0].Text, "担当が所有者でないチケットは進められません") {
+		t.Errorf("理由の文が落ちている: %s", out.Content[0].Text)
+	}
+}
+
+// ── 書いた内容を応答で返さない（Design.md 8.5.1。pb-137）──────────────
+
+// responseKeys は応答 JSON のキーを名前順に返す。
+func responseKeys(t *testing.T, text string) []string {
+	t.Helper()
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("応答が JSON でない: %v（%s）", err, text)
+	}
+	keys := make([]string, 0, len(got))
+	for k := range got {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func TestWriteToolsReturnOnlySummary(t *testing.T) {
+	const docJSON = `{"id":"01DOC","path":"rules","title":"規約","body_md":"ここに長い本文がある",
+		"outline":[{"section":"命名","level":2}],"version":4,"updated_at":"2026-09-17T01:00:00Z"}`
+	const commentJSON = `{"id":"01C","body_md":"ここに長い本文がある","kind":"caveat","in_reply_to":null,
+		"origin":"agent","author":{"id":"01A","kind":"agent","display_name":"Claude Code"},
+		"created_at":"2026-09-17T01:00:00Z","updated_at":"2026-09-17T01:00:00Z"}`
+
+	cases := []struct {
+		name  string
+		tool  string
+		args  string
+		steps []fakeStep
+		want  []string
+	}{
+		{"起票", "pb_create_ticket", `{"type":"task","title":"認証APIの実装","body_md":"ここに長い本文がある"}`,
+			[]fakeStep{{status: http.StatusCreated, body: fullTicketJSON}}, createTicketResultFields},
+		{"更新", "pb_update_ticket", `{"seq":31,"body_md":"ここに長い本文がある"}`,
+			[]fakeStep{{status: http.StatusOK, body: fullTicketJSON}, {status: http.StatusOK, body: fullTicketJSON}},
+			updateTicketResultFields},
+		{"文書", "pb_put_doc", `{"path":"rules","body_md":"ここに長い本文がある"}`,
+			[]fakeStep{{status: http.StatusOK, body: docJSON}, {status: http.StatusOK, body: docJSON}}, putDocResultFields},
+		{"コメント", "pb_post_note", `{"seq":31,"body_md":"ここに長い本文がある"}`,
+			[]fakeStep{{status: http.StatusCreated, body: commentJSON}}, postNoteResultFields},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := New(&fakeREST{steps: c.steps}, "v0")
+
+			out := callTool1(t, h, toolCallBody(c.tool, c.args))
+			if out.IsError {
+				t.Fatalf("成功のはずが isError: %s", out.Content[0].Text)
+			}
+			want := append([]string(nil), c.want...)
+			sort.Strings(want)
+			if got := responseKeys(t, out.Content[0].Text); strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Errorf("応答の項目 = %v, want %v", got, want)
+			}
+			if strings.Contains(out.Content[0].Text, "ここに長い本文がある") {
+				t.Errorf("書いた本文を返している: %s", out.Content[0].Text)
+			}
+		})
+	}
+}
+
+func TestWriteToolsKeepFailureBody(t *testing.T) {
+	// **失敗は本文ごと返す**——422 の details[] が次の一手を決める。
+	rest := &fakeREST{status: http.StatusUnprocessableEntity,
+		body: `{"error":{"code":"validation_failed","message":"入力に誤りがあります","details":[{"field":"title","code":"too_long"}]}}`}
+	h := New(rest, "v0")
+
+	out := callTool1(t, h, toolCallBody("pb_create_ticket", `{"type":"task","title":"長すぎる表題"}`))
+
+	if !out.IsError || !strings.Contains(out.Content[0].Text, `"too_long"`) {
+		t.Errorf("失敗の details が落ちている: %+v", out)
+	}
+}
+
+// ── オンステージで絞る（Design.md 8.5.2。pb-138）──────────────────
+
+func TestListTasksPassesStagedOnlyWhenTrue(t *testing.T) {
+	// **REST は true しか受けない**（ApiDesign.md 9.2.1。overdue と同じ）ので、false は送らない。
+	for _, c := range []struct {
+		args string
+		want string
+	}{
+		{`{"staged":true}`, "true"},
+		{`{"staged":false}`, ""},
+		{`{}`, ""},
+	} {
+		rest := &fakeREST{body: listBody}
+		h := New(rest, "v0")
+
+		out := callTool1(t, h, toolCallBody("pb_list_tasks", c.args))
+
+		if out.IsError {
+			t.Fatalf("%s: 成功のはずが isError: %s", c.args, out.Content[0].Text)
+		}
+		if got := rest.gotQuery.Get("staged"); got != c.want {
+			t.Errorf("%s: staged = %q, want %q", c.args, got, c.want)
+		}
 	}
 }

@@ -36,11 +36,19 @@ func contextTools() []tool {
 				"スコープ境界（触ってよい範囲・いけない範囲）、実行モードと Readiness、" +
 				"プロジェクトの憲章、依存・関連するチケットが入る。" +
 				"**実装に着手する前に必ず呼び、書かれた前提に従うこと。**" +
-				"チケットの本文と完了条件は含まないので、それらは pb_get_task で読む。",
+				"チケットの本文と完了条件は含まないので、それらは pb_get_task で読む。" +
+				"**同じセッションで2件目以降に呼ぶときは、前のパックの末尾にある「憲章の版」を charter_versions にそのまま渡すこと。**" +
+				"変わっていない文書の本文が省かれる。会話の要約などで憲章の本文が手元に無ければ、渡さずに呼ぶ。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
 					"seq": {Type: "integer", Description: "チケット番号（プロジェクト内で一意の連番）", Minimum: intPtr(1)},
+					"charter_versions": {Type: "object",
+						Description: "このセッションで既に読んだ憲章の版。文書のパスから版への対応で、" +
+							"前のパックの末尾にある「憲章の版」をそのまま渡す（例: {\"rules\":7,\"vision\":2}）。" +
+							"/pb-onboard で pb_list_docs から控えた版でもよいが、全文を読んだ文書と判断の記録だけを渡すこと。" +
+							"版が一致した文書は本文を省く。手元に本文が無いなら渡さない",
+						AdditionalProperties: &property{Type: "integer", Description: "文書の版（pb_list_docs の version）", Minimum: intPtr(1)}},
 				},
 				Required: []string{"seq"},
 			},
@@ -53,6 +61,12 @@ func contextTools() []tool {
 // （Design.md 8.5.5。Requirements.md 10.3.2 の task_id は改訂した）。
 type contextArgs struct {
 	Seq flexInt `json:"seq"`
+	// CharterVersions はエージェントが既に読んだ憲章の版（pb-134）。
+	//
+	// **省かれる向きには、一致したときしか倒れない。** 渡した値に誤りや漏れがあっても、
+	// 起きるのは余分に全文が届くことだけである。整数として読めない値は decodeArgs が
+	// 引数の誤りとして返す。
+	CharterVersions map[string]flexInt `json:"charter_versions"`
 }
 
 // ── 内部呼び出しの応答から読む形 ────────────────────────────
@@ -111,6 +125,7 @@ type packTicket struct {
 type packDocNode struct {
 	Path     string        `json:"path"`
 	Title    string        `json:"title"`
+	Version  int64         `json:"version"`
 	Outline  []packOutline `json:"outline"`
 	Children []packDocNode `json:"children"`
 
@@ -127,12 +142,15 @@ type packOutline struct {
 // packDoc は憲章に載せる文書1件。
 //
 // **OutlineOnly のときは本文を引かず、Outline を目次として描く**（判断の記録。Design.md 8.5.5）。
+// **Unchanged のときは本文も目次も描かない**（渡された版と一致した。pb-134）。
 type packDoc struct {
 	Path        string
 	Title       string
+	Version     int64
 	BodyMD      string
 	Outline     []packOutline
 	OutlineOnly bool
+	Unchanged   bool
 }
 
 func callGetContext(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
@@ -163,7 +181,13 @@ func callGetContext(h *Handler, r *http.Request, key string, args json.RawMessag
 	}
 
 	// ── 憲章（10.2 の目次 → 10.3 の本文）──────────────────────
-	ch, rpcErr := h.fetchCharter(r, base)
+	known := map[string]int64{}
+	for path, v := range in.CharterVersions {
+		if v.set {
+			known[path] = v.value
+		}
+	}
+	ch, rpcErr := h.fetchCharter(r, base, known)
 	if rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
@@ -203,6 +227,8 @@ type charter struct {
 	excludedOnboarding bool
 	// outlinedDecisions は decisionsDocPath を目次だけにしたかどうか。
 	outlinedDecisions bool
+	// omittedUnchanged は、渡された版と一致して省いた文書が1件でもあるかどうか（pb-134）。
+	omittedUnchanged bool
 }
 
 // fetchCharter は憲章を集める（Design.md 8.5.5）。判断の記録だけは本文を引かず、目次を持つ。
@@ -214,7 +240,11 @@ type charter struct {
 // パックは役に立つ。
 //
 // 返す note は、憲章を省いたときにその理由を書いた1行である（省いていなければ空）。
-func (h *Handler) fetchCharter(r *http.Request, base string) (charter, *rpcError) {
+//
+// **known（エージェントが渡した版）と目次の版が一致した文書は、本文を引かない**（pb-134）。
+// 載せる文書の版は、本文と同じ 10.3 の応答から取る——目次を読んでから本文を読むまでの
+// 間に更新されても、載せた本文と末尾に出す版が食い違わない。
+func (h *Handler) fetchCharter(r *http.Request, base string, known map[string]int64) (charter, *rpcError) {
 	q := url.Values{}
 	q.Set("outline", "1")
 	res, err := h.getREST(r, base+"/docs", q)
@@ -247,16 +277,25 @@ func (h *Handler) fetchCharter(r *http.Request, base string) (charter, *rpcError
 		outlinedDecisions:  markOutlineOnly(items, decisionsDocPath),
 	}
 	for _, node := range flattenDocTree(items) {
-		// **判断の記録は本文を引かない。** 目次は 10.2 の ?outline=1 がすでに返している。
-		if node.outlineOnly {
-			ch.docs = append(ch.docs, packDoc{Path: node.Path, Title: node.Title, Outline: node.Outline, OutlineOnly: true})
+		// **版が一致したら本文を引かない**（判断の記録も同じく比べる。pb-134）。
+		// 版は 1 から始まるので、0 以下が一致しても省かない。
+		if v, ok := known[node.Path]; ok && v >= 1 && v == node.Version {
+			ch.docs = append(ch.docs, packDoc{Path: node.Path, Title: node.Title, Version: node.Version,
+				OutlineOnly: node.outlineOnly, Unchanged: true})
+			ch.omittedUnchanged = true
 			continue
 		}
-		body, rpcErr := h.fetchDocBody(r, base, node.Path)
+		// **判断の記録は本文を引かない。** 目次は 10.2 の ?outline=1 がすでに返している。
+		if node.outlineOnly {
+			ch.docs = append(ch.docs, packDoc{Path: node.Path, Title: node.Title, Version: node.Version,
+				Outline: node.Outline, OutlineOnly: true})
+			continue
+		}
+		body, version, rpcErr := h.fetchDocBody(r, base, node.Path)
 		if rpcErr != nil {
 			return charter{}, rpcErr
 		}
-		ch.docs = append(ch.docs, packDoc{Path: node.Path, Title: node.Title, BodyMD: body})
+		ch.docs = append(ch.docs, packDoc{Path: node.Path, Title: node.Title, Version: version, BodyMD: body})
 	}
 	return ch, nil
 }
@@ -301,23 +340,24 @@ func setOutlineOnly(n *packDocNode) {
 	}
 }
 
-// fetchDocBody は文書1件の本文を引く（10.3）。
-func (h *Handler) fetchDocBody(r *http.Request, base, path string) (string, *rpcError) {
+// fetchDocBody は文書1件の本文と版を引く（10.3）。
+func (h *Handler) fetchDocBody(r *http.Request, base, path string) (string, int64, *rpcError) {
 	res, err := h.getREST(r, base+"/docs/"+escapePath(path), nil)
 	if err != nil {
-		return "", newError(codeInternalError, err.Error())
+		return "", 0, newError(codeInternalError, err.Error())
 	}
 	if !res.ok() {
-		return "", newError(codeInternalError,
+		return "", 0, newError(codeInternalError,
 			fmt.Sprintf("文書 %s を読めない（HTTP %d）: %s", path, res.status, string(res.body)))
 	}
 	var doc struct {
-		BodyMD string `json:"body_md"`
+		BodyMD  string `json:"body_md"`
+		Version int64  `json:"version"`
 	}
 	if err := json.Unmarshal(res.body, &doc); err != nil {
-		return "", newError(codeInternalError, "文書の応答を解釈できない: "+err.Error())
+		return "", 0, newError(codeInternalError, "文書の応答を解釈できない: "+err.Error())
 	}
-	return doc.BodyMD, nil
+	return doc.BodyMD, doc.Version, nil
 }
 
 // flattenDocTree は木を目次の順（親→子）で1本に並べる。
@@ -366,15 +406,28 @@ func renderContextPack(projectKey string, t packTicket, ch charter) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "# コンテキストパック — %s-%d「%s」\n\n", projectKey, t.Seq, t.Title)
-	b.WriteString("**着手する前に、この文書の全体に目を通すこと。** " +
-		"ここに書かれた前提は、チケットの指示より先に効く。\n" +
-		"チケットの本文と完了条件は含まれていない（pb_get_task で読む）。\n\n")
 
+	// **定型文は、版が一致して本文を1件でも省いたときに畳む**（Design.md 8.5.5。pb-139）。
+	// 「1件でも省いた」が、このセッションで憲章を既に受け取った証拠になる。
+	// **畳んだ文にも要旨を残す**——/pb-onboard の版を渡すと、定型文の全文を一度も
+	// 見ないまま1件目から畳まれることがある。
+	folded := ch.omittedUnchanged
+	if folded {
+		b.WriteString("**前提はチケットの指示より先に効く**（パックの読み方は前回と同じ）。" +
+			"本文と完了条件は `pb_get_task` で読む。\n\n")
+	} else {
+		b.WriteString("**着手する前に、この文書の全体に目を通すこと。** " +
+			"ここに書かれた前提は、チケットの指示より先に効く。\n" +
+			"チケットの本文と完了条件は含まれていない（pb_get_task で読む）。\n\n")
+	}
+
+	// **1・2・4節は畳まない**（チケットごとに違う）。
 	writeScopeSection(&b, t.Scope)
 	writeExecutionSection(&b, t)
 	writeCharterSection(&b, ch)
 	writeRelatedSection(&b, projectKey, t)
-	writeNextStepsSection(&b, t.Seq)
+	writeNextStepsSection(&b, t.Seq, folded)
+	writeCharterVersions(&b, ch, folded)
 
 	return b.String()
 }
@@ -511,12 +564,29 @@ func writeCharterSection(b *strings.Builder, ch charter) {
 		b.WriteString("**このプロジェクトには、判断の拠りどころになる文書が1件も無い。**\n" +
 			"規約・価値観・判断の記録が書かれていないということなので、" +
 			"**判断が要る場面では推測せず利用者に確認すること。**\n\n")
+	} else if ch.omittedUnchanged {
+		// **省いたことと、戻り方を書く**（pb-134）。本文が要約で手元から消えても、
+		// サーバはそれを知り得ないので、判断はエージェントに置く。
+		// **前置きの3段落はここで1段落に畳む**（pb-139）。参画情報と判断の記録の句は、
+		// 実際にそうしたときだけ足す（下の2段落と同じ条件）。
+		b.WriteString("**全参加者を縛る。** 版（`charter_versions`）が一致した文書は本文を省き、それ以外は全文を載せた。" +
+			"**手元に本文が無ければ（会話の要約で消えたときなど）、`charter_versions` を渡さずに呼び直すこと。**")
+		switch {
+		case ch.excludedOnboarding && ch.outlinedDecisions:
+			b.WriteString(" 前回と同じく、参画情報（`" + onboardingDocPath + "`）は載せず、判断の記録（`" + decisionsDocPath + "`）は目次だけを載せた。")
+		case ch.excludedOnboarding:
+			b.WriteString(" 前回と同じく、参画情報（`" + onboardingDocPath + "`）は載せていない。")
+		case ch.outlinedDecisions:
+			b.WriteString(" 前回と同じく、判断の記録（`" + decisionsDocPath + "`）は目次だけを載せた。")
+		}
+		b.WriteString("\n\n")
 	} else {
 		b.WriteString("**プロジェクトの規約・価値観・判断の記録である。全参加者を縛る。**\n" +
 			"以下は全文であり、切り詰めていない。\n\n")
 	}
 	// **落としたことを1行書く**（10.4.3 の 4）。実際に落ちたときだけ出す。
-	if ch.excludedOnboarding {
+	// 畳んだとき（pb-139）は上の1段落に句として入れてあるので、ここでは出さない。
+	if ch.excludedOnboarding && !ch.omittedUnchanged {
 		// **強調は文ではなく句を囲む**（DbDesign.md 8.1.2）。閉じる ** が句点に続き
 		// 直後が全角文字だと、CommonMark の right-flanking にならず ** が地の文に残る。
 		b.WriteString("ただし「エージェントの参画情報」（`" + onboardingDocPath + "`）は**含めていない**。" +
@@ -525,12 +595,20 @@ func writeCharterSection(b *strings.Builder, ch charter) {
 	}
 	// **目次だけにしたことも1行書く**（同じ理由）。実際に目次だけにしたときだけ出すので、
 	// 判断の記録を別のパスへ移すとこの1行が消え、移した人が気づける。
-	if ch.outlinedDecisions {
+	if ch.outlinedDecisions && !ch.omittedUnchanged {
 		b.WriteString("判断の記録（`" + decisionsDocPath + "`）は**目次だけ**を載せている。" +
 			"追記で増え続ける文書なので、着手する作業に関わる判断だけを見出しで引いて読むこと。\n\n")
 	}
 	for _, d := range ch.docs {
 		fmt.Fprintf(b, "### %s（`%s`）\n\n", d.Title, d.Path)
+		if d.Unchanged {
+			what := "本文"
+			if d.OutlineOnly {
+				what = "目次"
+			}
+			fmt.Fprintf(b, "前回から変わっていない（版 %d）。%sを省いた。\n\n", d.Version, what)
+			continue
+		}
 		if d.OutlineOnly {
 			writeDocOutline(b, d)
 			continue
@@ -656,12 +734,51 @@ func writeRelatedSection(b *strings.Builder, projectKey string, t packTicket) {
 //
 // **いまは切り詰めが起きないが、入口だけは先に出す**（Design.md 8.5.5）
 // ——パックに無いものを探す手段が書かれていないと、モデルは推測で埋める。
-func writeNextStepsSection(b *strings.Builder, seq int32) {
+//
+// **畳んだときは1行にする**（pb-139）。チケット番号の入った入口は残す。
+func writeNextStepsSection(b *strings.Builder, seq int32, folded bool) {
 	b.WriteString("## 5. 足りないときの調べ方\n\n")
+	if folded {
+		fmt.Fprintf(b, "前回と同じ：`pb_get_task(seq=%d)`（本文・完了条件）・`pb_list_transitions(seq=%d)`（進める先）"+
+			"・`pb_get_doc(path, section)`・`pb_list_tasks(assignee=\"me\")`\n", seq, seq)
+		return
+	}
 	fmt.Fprintf(b, "- チケットの本文・完了条件・関連リンク：`pb_get_task(seq=%d)`\n", seq)
 	fmt.Fprintf(b, "- いまどの状態へ進めるか（進めない理由も返る）：`pb_list_transitions(seq=%d)`\n", seq)
 	b.WriteString("- 憲章の章をもう一度読む：`pb_get_doc(path, section)`（目次は `pb_list_docs`）\n")
 	b.WriteString("- ボードの状況・自分の担当：`pb_list_tasks(assignee=\"me\")`\n")
+}
+
+// writeCharterVersions はパックの末尾に、載せた憲章の版を1行出す（Design.md 8.5.5。pb-134）。
+//
+// **エージェントは次の呼び出しでこの値をそのまま charter_versions に渡す。** 写すだけで
+// 済むように、引数と同じ JSON の形で出す。キーは目次の順に並べる（map を Marshal すると
+// 名前順になり、節3 の並びと読み比べにくい）。
+//
+// **憲章を載せていないとき（doc.view が無い・文書が無い）は出さない。** 渡すものが無い。
+//
+// **畳んだとき（pb-139）は説明を括弧書きに縮める。** 値は畳まない。
+func writeCharterVersions(b *strings.Builder, ch charter, folded bool) {
+	if ch.note != "" || len(ch.docs) == 0 {
+		return
+	}
+	var v strings.Builder
+	v.WriteString("{")
+	for i, d := range ch.docs {
+		if i > 0 {
+			v.WriteString(",")
+		}
+		key, _ := json.Marshal(d.Path)
+		fmt.Fprintf(&v, "%s:%d", key, d.Version)
+	}
+	v.WriteString("}")
+	if folded {
+		fmt.Fprintf(b, "\n**憲章の版**：`%s`（次の `charter_versions` にそのまま渡す）\n", v.String())
+		return
+	}
+	fmt.Fprintf(b, "\n**憲章の版**：`%s`\n"+
+		"同じセッションで次に `pb_get_context` を呼ぶときは、この値をそのまま `charter_versions` に渡すと、"+
+		"変わっていない文書の本文を省ける。\n", v.String())
 }
 
 // actorLabel は担当・実行者の1語。**エージェントには印を付ける**

@@ -571,6 +571,8 @@ func TestMCPIntegration(t *testing.T) {
 		if isErr {
 			t.Fatalf("起票できない: %s", text)
 		}
+		// **応答は要点だけである**（Design.md 8.5.1。pb-137）。書いた結果は読み直して確かめる。
+		text = readBackTicket(t, tool, fullToken, text)
 
 		var got struct {
 			Seq      int    `json:"seq"`
@@ -630,17 +632,27 @@ func TestMCPIntegration(t *testing.T) {
 			t.Fatalf("コメントを書けない: %s", text)
 		}
 
+		// **応答は要点（id / kind / created_at）だけである**（Design.md 8.5.1。pb-137）。
+		// origin と author は応答に無いので、書いた行を DB で引いて確かめる。
 		var got struct {
 			ID     string `json:"id"`
 			Kind   string `json:"kind"`
-			Origin string `json:"origin"`
+			Origin string
 			Author struct {
-				ID   string `json:"id"`
-				Kind string `json:"kind"`
-			} `json:"author"`
+				ID   string
+				Kind string
+			}
 		}
 		if err := json.Unmarshal([]byte(text), &got); err != nil {
 			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		if strings.Contains(text, "並列実行すると落ちる") {
+			t.Errorf("書いた本文を応答で返している: %s", text)
+		}
+		if err := pool.QueryRow(ctx, `
+			SELECT c.origin, a.id, a.kind FROM comment c JOIN actor a ON a.id = c.author_id
+			WHERE c.id = $1`, got.ID).Scan(&got.Origin, &got.Author.ID, &got.Author.Kind); err != nil {
+			t.Fatalf("書いたコメントを引けない: %v（%s）", err, text)
 		}
 		if got.Kind != "caveat" {
 			t.Errorf("kind = %q, want caveat", got.Kind)
@@ -725,15 +737,32 @@ func TestMCPIntegration(t *testing.T) {
 			t.Fatalf("書き換えられない: %s", text)
 		}
 
+		// **応答は要点（path / version / updated_at）だけである**（Design.md 8.5.1。pb-137）。
+		// updated_by は応答に無いので、文書の行を DB で引いて確かめる。
 		var got struct {
 			Version   int `json:"version"`
 			UpdatedBy *struct {
-				ID   string `json:"id"`
-				Kind string `json:"kind"`
-			} `json:"updated_by"`
+				ID   string
+				Kind string
+			}
 		}
 		if err := json.Unmarshal([]byte(text), &got); err != nil {
 			t.Fatalf("応答を読めない: %v（%s）", err, text)
+		}
+		if strings.Contains(text, "エージェントが書き換えた") {
+			t.Errorf("書いた本文を応答で返している: %s", text)
+		}
+		var updatedByID, updatedByKind *string
+		if err := pool.QueryRow(ctx, `
+			SELECT d.updated_by, a.kind FROM document d LEFT JOIN actor a ON a.id = d.updated_by
+			WHERE d.id = $1`, docID).Scan(&updatedByID, &updatedByKind); err != nil {
+			t.Fatalf("文書を引けない: %v", err)
+		}
+		if updatedByID != nil && updatedByKind != nil {
+			got.UpdatedBy = &struct {
+				ID   string
+				Kind string
+			}{*updatedByID, *updatedByKind}
 		}
 		// **If-Match が効いている証拠。** GET で読んだ version の次になる。
 		if got.Version < 2 {
@@ -1402,6 +1431,11 @@ func TestMCPIntegration(t *testing.T) {
 		if isErr {
 			t.Fatalf("直せない: %s", text)
 		}
+		// **応答は要点だけである**（Design.md 8.5.1。pb-137）。書いた結果は読み直して確かめる。
+		if strings.Contains(text, "直した本文") {
+			t.Errorf("書いた本文を応答で返している: %s", text)
+		}
+		text = readBackTicket(t, tool, agentToken, text)
 		var got struct {
 			Title  string `json:"title"`
 			BodyMD string `json:"body_md"`
@@ -1644,6 +1678,7 @@ func TestMCPIntegration(t *testing.T) {
 		if isErr {
 			t.Fatalf("起票できない: %s", text)
 		}
+		text = readBackTicket(t, tool, agentToken, text)
 		var got struct {
 			Seq           int      `json:"seq"`
 			EstimatePoint *float64 `json:"estimate_point"`
@@ -1671,6 +1706,31 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
+}
+
+// readBackTicket は、書き込み系ツールの応答（要点だけ。Design.md 8.5.1）から seq を取り、
+// pb_get_task で読み直した全体を返す。**書いた結果は、エージェントと同じ経路で読み直して確かめる。**
+func readBackTicket(t *testing.T, tool func(*testing.T, string, string, string) (string, bool), token, summary string) string {
+	t.Helper()
+	var s struct {
+		Seq     int             `json:"seq"`
+		BodyMD  json.RawMessage `json:"body_md"`
+		Version int             `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(summary), &s); err != nil {
+		t.Fatalf("応答を読めない: %v（%s）", err, summary)
+	}
+	if s.Seq < 1 || s.Version < 1 {
+		t.Fatalf("応答から seq / version が読めない: %s", summary)
+	}
+	if s.BodyMD != nil {
+		t.Errorf("書き込みの応答に body_md が載っている: %s", summary)
+	}
+	text, isErr := tool(t, token, "pb_get_task", `{"seq":`+strconv.Itoa(s.Seq)+`}`)
+	if isErr {
+		t.Fatalf("読み直せない: %s", text)
+	}
+	return text
 }
 
 // contains は文字列の並びに v があるかを返す。

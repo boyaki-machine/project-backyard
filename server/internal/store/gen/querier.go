@@ -1445,6 +1445,12 @@ type Querier interface {
 	//
 	// 起点を「未完了かつエピックでない行」に絞ることで、**表示上のトップレベル
 	// （親が無いか、親がエピック。ApiDesign.md 9.4.1）から下だけを見る**形になる。
+	// staged（9.2.1「オンステージで絞る」。pb-138）。**staged_at を持つ行とその全子孫**で、
+	// エピックを除く。スプリントの開始（sprint.sql の ListOnstageTicketIDs）と同じ定義である
+	// ——**段を決めるのは親で、子は staged_at が NULL のまま親と一緒に運ばれる**（9.4.1）。
+	//
+	// **棚に戻ったものはここでは外さない。** 下の retired の条件がそのまま効くので、
+	// 既定では外れ、retired=true を一緒に送れば含まれる（条件は種類ごとに独立）。
 	ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error)
 	// ListUserIdentities は 6.3 の identities[] を引く。
 	//
