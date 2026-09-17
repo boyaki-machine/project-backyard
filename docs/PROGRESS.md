@@ -152,6 +152,7 @@ pb-58 の 0030、pb-2 の 0031、pb-3 の 0032 と 0033、pb-97 の 0034、pb-10
 | `[GitHub へ公開するとき]` | **配布物（`make release TARGET=native`）の Windows 向け一式は、一度も実行していない**（pb-122。この端末に Windows も pwsh も無い）。**Windows の実機は当面用意せず、確かめるチケットも作らない**（利用者の判断、2026-09-13）。**公開するとき、README.md に「Windows は未確認」と書く。** darwin/amd64・linux/amd64 も `file` の検査まで |
 | `[実機で触るとき]` | **コンテナの一式（pb-123）を Linux のサーバで動かしていない。** 秘密の権限は VM の中で pb の読み取りだけ確かめた（mac の共有パスでは違いが見えない）。未確認は ①compose＋外部の PostgreSQL ②Linux の `host.docker.internal` ③複数 CPU をまとめた push。**k8s の一式（pb-124）は、この端末の k3s（dockerd）でだけ通した。** 未確認は ④containerd への取り込み（`nerdctl -n k8s.io load`）⑤レジストリから引く（`imagePullSecrets`）⑥外部の PostgreSQL ⑦TLS を有効にしたあとの `scheme: HTTPS` と外への公開 |
 | `[実機で触るとき]` | **DB の `LC_CTYPE=C.UTF-8`（pb-143）は、compose の DB と使い捨てのコンテナでだけ確かめた。** 未確認は ①mac の PostgreSQL（`C.UTF-8` が無い可能性）②CloudNativePG の `localeCType` ③クラウドの PostgreSQL ④Kubernetes のサンプル DB での移し替え（`deploy/prod/MANUAL.md` 6.2）。**stg の移し替えは利用者が行う**（`Development.md` 11.6。利用者の判断、2026-09-17） |
+| `[実機で触るとき]` | **DB タブ（pb-110）は、`sslmode=disable` の TCP で繋ぐ dev でだけ確かめた。** 未確認は ①TLS で繋ぐ DB で「暗号化 あり（TLS）」と出るか（ドライバのソケットが `*tls.Conn` かで決めている）②Unix ソケットで繋ぐときの接続先の表示 ③複数のプロセスで動かしたときのプールの値 |
 | `[日本語の本文を書く手順]` | **CommonMark の強調は日本語の約物と相性が悪い**（`DbDesign.md` 8.1.2 に表）。`**…。**個` は閉じず、`これが**「読` は開かない。**文ではなく句を強調し、書いたら一度描画して確かめる** |
 | `[保留]` | **ログインIDと連絡先メールは同じ列**（`app_user.email`）。分けるのはスキーマ変更を伴うため、必要になった時点で判断する |
 | `[保留]` | **`CLAUDE.md` の規約強化**——①自律の線引き ②実現したい価値・世界観の明文化 ③手順番号ではなく目的で指示を受ける入口。**必要性が再度現れたときに判断する** |

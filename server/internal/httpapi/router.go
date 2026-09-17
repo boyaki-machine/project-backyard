@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
+	"github.com/boyaki-machine/project-backyard/server/internal/dbstat"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	v1 "github.com/boyaki-machine/project-backyard/server/internal/httpapi/v1"
@@ -53,6 +54,10 @@ type Deps struct {
 	TLSListening bool
 	// ListenURL は実際に待ち受けているスキームとアドレス（ApiDesign.md 11.4）。
 	ListenURL string
+
+	// DBStats は DB の接続状態と統計を読む口（ApiDesign.md 11.10。pb-110）。
+	// **nil なら Pool から作る。** Pool も nil なら nil のまま渡る。
+	DBStats v1.DatabaseStats
 }
 
 // BasePath は API のベースパス（ApiDesign.md 2.1）。
@@ -87,6 +92,13 @@ func NewRouter(deps Deps) http.Handler {
 	tx := deps.Tx
 	if tx == nil && deps.Pool != nil {
 		tx = store.NewTxRunner(deps.Pool)
+	}
+	// **Pool が nil のときに dbstat.New(nil) を入れない。** 中身が nil の
+	// ポインタをインターフェースに入れると nil と判定されず、ハンドラが
+	// 500 ではなく panic する。
+	dbStats := deps.DBStats
+	if dbStats == nil && deps.Pool != nil {
+		dbStats = dbstat.New(deps.Pool)
 	}
 
 	r := chi.NewRouter()
@@ -132,6 +144,7 @@ func NewRouter(deps Deps) http.Handler {
 		Certs:             deps.Certs,
 		TLSListening:      deps.TLSListening,
 		ListenURL:         deps.ListenURL,
+		DBStats:           dbStats,
 	}
 
 	r.Route(BasePath, func(r chi.Router) {

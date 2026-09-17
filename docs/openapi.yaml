@@ -5234,6 +5234,38 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/admin/database:
+    get:
+      tags: [settings]
+      summary: DB の接続状態と統計
+      operationId: getDatabaseStatus
+      description: |
+        PB が繋いでいる DB の接続状態と統計を返す（ApiDesign.md 11.10、GuiDesign.md 5.12.2）。pb-110。
+        **必要権限は `system.settings`。** **読み取り専用で、変更の口は持たない。**
+
+        **パスワードは応答のどこにも入らない。**
+
+        **件数は推定値ではなく `count(*)` の正確な数である。** 全表を1つの文で数えるので、
+        表どうしの件数が同じ時点のものになる。代償は行数に比例する時間で、
+        `statement_timeout`（15秒）を超えれば 500 になる。
+
+        **ページネーションも ETag も持たない**——表は数十である。
+      responses:
+        '200':
+          description: DB の接続状態と統計。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseStatus'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /healthcheck:
     get:
       tags: [ops]
@@ -8003,6 +8035,108 @@ components:
             `env`（PB_SECRET_KEY で与えられた）／ `generated`（PB が作って DB に保存した）。
             **鍵そのものは返さない。** 画面が代償を出すために要る——**生成した鍵は DB に
             あるので、`pg_dump` に鍵と暗号文の両方が入る。**
+
+    DatabaseStatus:
+      type: object
+      required:
+        [fetched_at, connection, server, migration_version, sessions, pool, size_bytes, tables]
+      description: |
+        ApiDesign.md 11.10。**読み取り専用の状態であって、設定ではない。**
+      properties:
+        fetched_at:
+          type: string
+          format: date-time
+          description: サーバが値を取得した時刻。**画面は定期的に引かないので、表示がいつの値かを示すために出す。**
+        connection:
+          type: object
+          required: [host, port, database, user, tls]
+          properties:
+            host:
+              type: string
+              description: |
+                **PB に与えられた接続先のホスト**（`PB_DATABASE_URL`）。Unix ソケットならディレクトリのパス。
+            port:
+              type: integer
+            database:
+              type: string
+              description: 実際に繋いでいる DB（`current_database()`）。
+            user:
+              type: string
+              description: 実際に繋いでいるロール（`current_user`）。
+            tls:
+              type: boolean
+              description: |
+                この要求が使った接続が TLS か。**`pg_stat_ssl` ではなく接続そのもの（ドライバが
+                握っているソケット）を見て決める**——問い合わせが要らず、view の見え方にも依らない。
+        server:
+          type: object
+          required: [version, started_at, max_connections]
+          properties:
+            version:
+              type: string
+              description: '`server_version` の値をそのまま返す。'
+            started_at:
+              type: string
+              format: date-time
+              description: '`pg_postmaster_start_time()`。'
+            max_connections:
+              type: integer
+              description: '**サーバ全体の上限である**（DB ごとではない）。'
+        migration_version:
+          type: integer
+          format: int64
+          description: '`goose_db_version` で適用済みの最大の番号。'
+        sessions:
+          type: object
+          required: [database, pb]
+          properties:
+            database:
+              type: integer
+              description: '`pg_stat_activity` のうち、この DB に繋いでいるものの数。'
+            pb:
+              type: integer
+              description: |
+                そのうち `application_name` が PB の値（既定 `pb`）のもの。**PB のプロセスが複数あれば全部を含む。**
+        pool:
+          type: object
+          required: [total, acquired, idle, max]
+          description: |
+            **この要求を受けたプロセスの接続プール。** 問い合わせを始める前の値で、この要求自身の接続を含まない。
+          properties:
+            total:
+              type: integer
+            acquired:
+              type: integer
+            idle:
+              type: integer
+            max:
+              type: integer
+        size_bytes:
+          type: integer
+          format: int64
+          description: '`pg_database_size(current_database())`。'
+        tables:
+          type: array
+          description: '`public` スキーマの表。**大きさの降順、同じなら名前の昇順。**'
+          items:
+            $ref: '#/components/schemas/DatabaseTable'
+
+    DatabaseTable:
+      type: object
+      required: [name, rows, size_bytes]
+      properties:
+        name:
+          type: string
+        rows:
+          type: [integer, 'null']
+          format: int64
+          description: |
+            `count(*)` の正確な数。**`pb_app` が `SELECT` できない表では `null`**——
+            数えられない表で応答全体を 500 にせず、一覧から黙って落とすこともしない。
+        size_bytes:
+          type: integer
+          format: int64
+          description: 索引と TOAST を含む大きさ（`pg_total_relation_size`）。
 
     TLSCertificate:
       type: object

@@ -3281,6 +3281,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/database": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * DB の接続状態と統計
+         * @description PB が繋いでいる DB の接続状態と統計を返す（ApiDesign.md 11.10、GuiDesign.md 5.12.2）。pb-110。
+         *     **必要権限は `system.settings`。** **読み取り専用で、変更の口は持たない。**
+         *
+         *     **パスワードは応答のどこにも入らない。**
+         *
+         *     **件数は推定値ではなく `count(*)` の正確な数である。** 全表を1つの文で数えるので、
+         *     表どうしの件数が同じ時点のものになる。代償は行数に比例する時間で、
+         *     `statement_timeout`（15秒）を超えれば 500 になる。
+         *
+         *     **ページネーションも ETag も持たない**——表は数十である。
+         */
+        get: operations["getDatabaseStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthcheck": {
         parameters: {
             query?: never;
@@ -5080,6 +5109,78 @@ export interface components {
              * @enum {string}
              */
             secret_key_origin: "env" | "generated";
+        };
+        /** @description ApiDesign.md 11.10。**読み取り専用の状態であって、設定ではない。** */
+        DatabaseStatus: {
+            /**
+             * Format: date-time
+             * @description サーバが値を取得した時刻。**画面は定期的に引かないので、表示がいつの値かを示すために出す。**
+             */
+            fetched_at: string;
+            connection: {
+                /** @description **PB に与えられた接続先のホスト**（`PB_DATABASE_URL`）。Unix ソケットならディレクトリのパス。 */
+                host: string;
+                port: number;
+                /** @description 実際に繋いでいる DB（`current_database()`）。 */
+                database: string;
+                /** @description 実際に繋いでいるロール（`current_user`）。 */
+                user: string;
+                /**
+                 * @description この要求が使った接続が TLS か。**`pg_stat_ssl` ではなく接続そのもの（ドライバが
+                 *     握っているソケット）を見て決める**——問い合わせが要らず、view の見え方にも依らない。
+                 */
+                tls: boolean;
+            };
+            server: {
+                /** @description `server_version` の値をそのまま返す。 */
+                version: string;
+                /**
+                 * Format: date-time
+                 * @description `pg_postmaster_start_time()`。
+                 */
+                started_at: string;
+                /** @description **サーバ全体の上限である**（DB ごとではない）。 */
+                max_connections: number;
+            };
+            /**
+             * Format: int64
+             * @description `goose_db_version` で適用済みの最大の番号。
+             */
+            migration_version: number;
+            sessions: {
+                /** @description `pg_stat_activity` のうち、この DB に繋いでいるものの数。 */
+                database: number;
+                /** @description そのうち `application_name` が PB の値（既定 `pb`）のもの。**PB のプロセスが複数あれば全部を含む。** */
+                pb: number;
+            };
+            /** @description **この要求を受けたプロセスの接続プール。** 問い合わせを始める前の値で、この要求自身の接続を含まない。 */
+            pool: {
+                total: number;
+                acquired: number;
+                idle: number;
+                max: number;
+            };
+            /**
+             * Format: int64
+             * @description `pg_database_size(current_database())`。
+             */
+            size_bytes: number;
+            /** @description `public` スキーマの表。**大きさの降順、同じなら名前の昇順。** */
+            tables: components["schemas"]["DatabaseTable"][];
+        };
+        DatabaseTable: {
+            name: string;
+            /**
+             * Format: int64
+             * @description `count(*)` の正確な数。**`pb_app` が `SELECT` できない表では `null`**——
+             *     数えられない表で応答全体を 500 にせず、一覧から黙って落とすこともしない。
+             */
+            rows: number | null;
+            /**
+             * Format: int64
+             * @description 索引と TOAST を含む大きさ（`pg_total_relation_size`）。
+             */
+            size_bytes: number;
         };
         /** @description 証明書1件（ApiDesign.md 11.4）。**`private_key` は含まれない。** */
         TLSCertificate: {
@@ -11127,6 +11228,30 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDatabaseStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description DB の接続状態と統計。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseStatus"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

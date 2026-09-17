@@ -160,10 +160,13 @@ fmt-check:
 # 対象を -run Integration に絞るのは、結合テストの命名規約がこれであるため
 # （Development.md 6.1）。RUN= で individual なテストへ絞れる。
 #   make test-db RUN=TestMeTokensIntegration
+#
+# **パッケージを足したら並びにも足す。** dbstat（pb-110）は、pb_app から見える
+# カタログと統計を確かめるので、実 DB でしか意味を持たない。
 RUN ?= Integration
 test-db:
 	@cd server && PB_TEST_DATABASE_URL="$(PB_DATABASE_URL_APP)" \
-		go test ./internal/httpapi/... -run '$(RUN)' -count=1 -v
+		go test ./internal/httpapi/... ./internal/dbstat/... -run '$(RUN)' -count=1 -v
 
 # ── 開発用デモデータ（DbDesign.md 7.6）────────────────────────
 # 本番シード（マイグレーション 0010）とは別物。開発端末でしか使わない。

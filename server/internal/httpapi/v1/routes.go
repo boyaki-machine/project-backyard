@@ -55,6 +55,10 @@ type Deps struct {
 	TLSListening bool
 	// ListenURL は実際に待ち受けているスキームとアドレス（ApiDesign.md 11.4）。
 	ListenURL string
+
+	// DBStats は DB の接続状態と統計を読む口（ApiDesign.md 11.10。pb-110）。
+	// **nil なら GET /admin/database は 500 を返す。**
+	DBStats DatabaseStats
 }
 
 // Mount は /api/v1 のルートを r に並べる。
@@ -81,6 +85,7 @@ func Mount(r chi.Router, deps Deps) {
 		certs:             deps.Certs,
 		tlsListening:      deps.TLSListening,
 		listenURL:         deps.ListenURL,
+		dbStats:           deps.DBStats,
 	}
 
 	// ── 認証不要 ────────────────────────────────
@@ -593,6 +598,13 @@ func Mount(r chi.Router, deps Deps) {
 		// ならない**という循環がある。この口がそれを断つ。
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Get("/admin/tls/certificates/{id}/certificate.zip", h.downloadTLSCertificate)
+
+		// ── DB の接続状態と統計（ApiDesign.md 11.10。pb-110）──────────
+		//
+		// **設定ではなく状態だが、触れる人は設定と同じである。** 接続先や
+		// 表ごとの件数は、設定を変える人が障害の切り分けに使う。
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Get("/admin/database", h.getDatabaseStatus)
 	})
 }
 
@@ -620,4 +632,7 @@ type handler struct {
 	// listenURL は実際に待ち受けているスキームとアドレス（ApiDesign.md 11.4）。
 	// **設定の bind から画面が組み立てない**ので、ここで組み立てて渡す。
 	listenURL string
+
+	// dbStats は DB の接続状態と統計を読む口（ApiDesign.md 11.10）。
+	dbStats DatabaseStats
 }
