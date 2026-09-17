@@ -446,6 +446,46 @@ func TestListTicketsSearchConditions(t *testing.T) {
 	}
 }
 
+// 語がすべて trigram を作れるときだけ、trgm を使う形へ振り分ける（DbDesign.md 4.5。pb-143）。
+//
+// **同じ語でも DB の LC_CTYPE で行き先が変わる。** C の DB では日本語から trigram を
+// 取り出せないので、インデックスを使う形にすると遅くなる。
+func TestListTicketsSearchChoosesQueryByCtype(t *testing.T) {
+	cases := []struct {
+		name, ctype, q string
+		trigram        bool
+	}{
+		{"C.UTF-8 で3文字以上の日本語", "C.UTF-8", "ケルベロス　サーバ", true},
+		{"C では日本語を trgm へ回さない", "C", "ケルベロス　サーバ", false},
+		{"C でも英数字3文字以上なら回す", "C", "sqlc API", true},
+		{"2文字の語が混じれば回さない", "C.UTF-8", "ケルベロス 認証", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q := ticketFake()
+			q.ticket.searchCtype = c.ctype
+			q.ticket.searchIDs = []string{testTicketID}
+			h, _ := ticketHandler(q)
+			rec := httptest.NewRecorder()
+			h.listTickets(rec, ticketReq(http.MethodGet,
+				"/projects/demo/tickets?q="+url.QueryEscape(c.q), "", ""))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			gotTrigram := len(q.ticket.trigramSearchParams) == 1 && len(q.ticket.searchParams) == 0
+			gotPlain := len(q.ticket.searchParams) == 1 && len(q.ticket.trigramSearchParams) == 0
+			if c.trigram && !gotTrigram || !c.trigram && !gotPlain {
+				t.Errorf("trgm の形 %d 回・今の形 %d 回, want trigram=%v",
+					len(q.ticket.trigramSearchParams), len(q.ticket.searchParams), c.trigram)
+			}
+			// どちらへ行っても、一覧へ渡る ID は検索が返したもの
+			if p := q.ticket.listParams[0]; !slices.Equal(p.KeywordIds, []string{testTicketID}) {
+				t.Errorf("keyword ids = %v, want 検索が返した ID", p.KeywordIds)
+			}
+		})
+	}
+}
+
 // 検索の条件が無ければ SearchTicketIDs を呼ばず、一覧の引数も「指定なし」になる。
 // **空白だけの q も指定なし**——語が無いまま呼ぶと、当たらない語が無いので全件が一致する。
 func TestListTicketsWithoutSearchConditions(t *testing.T) {

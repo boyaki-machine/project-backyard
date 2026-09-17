@@ -34,3 +34,44 @@ SELECT t.id
         )
       )
    );
+
+-- SearchTicketIDsByTrigram は SearchTicketIDs と**同じ集合**を、pg_trgm の GIN
+-- インデックスを使える形で返す（DbDesign.md 4.5。pb-143）。
+--
+-- **語ごと・列ごとに「当たる ID」を集め、すべての語に当たったものを残す。**
+-- SearchTicketIDs の NOT EXISTS はチケットを1件ずつ読んで ILIKE を当てるので、
+-- インデックスを1本も使えない（3万件で数百 ms）。ここでは列ごとに別の SELECT に
+-- 分けるので、title / body_md / comment.body_md の各インデックスが語ごとに効く。
+--
+-- **使えるのは、どの語からも trigram を取り出せるときだけ**である。取り出せない語
+-- （2文字以下、または DB の ctype が C のときの日本語）が1つでもあると、インデックスが
+-- 全件を返して今の形より遅くなる。切り替えは store/search の TrigramUsable が行う。
+--
+-- NULL の本文は ILIKE が NULL を返すので、当たる側に入らない（SearchTicketIDs の
+-- 「NULL を先に落とす」はここでは要らない）。
+-- name: SearchTicketIDsByTrigram :many
+SELECT h.id
+  FROM (
+    SELECT p.pattern, x.id
+      FROM unnest(@patterns::text[]) AS p(pattern)
+      CROSS JOIN LATERAL (
+        SELECT t.id FROM ticket t WHERE t.title ILIKE p.pattern
+        UNION
+        SELECT t.id FROM ticket t WHERE t.body_md ILIKE p.pattern
+        UNION
+        SELECT c.ticket_id AS id FROM comment c
+         WHERE c.body_md ILIKE p.pattern AND c.deleted_at IS NULL
+      ) x
+  ) h
+  JOIN ticket t ON t.id = h.id AND t.project_id = @project_id::pg_catalog.bpchar
+ GROUP BY h.id
+HAVING count(DISTINCT h.pattern) = cardinality(@patterns::text[]);
+
+-- CurrentDatabaseCtype は接続先 DB の LC_CTYPE を返す（DbDesign.md 3.1 / 4.5。pb-143）。
+--
+-- **pg_trgm が日本語から trigram を取り出せるかは、DB を作ったときの LC_CTYPE で決まる。**
+-- C では英数字しか語の文字として数えない。検索の切り替えとサーバ起動時の警告が読む。
+-- **pg_catalog. と修飾して書く。** 修飾しないと sqlc がマイグレーションに無い表として拒む。
+-- current_setting('lc_ctype') は使えない——PostgreSQL 16 で設定から外れた。
+-- name: CurrentDatabaseCtype :one
+SELECT d.datctype::text AS lc_ctype FROM pg_catalog.pg_database d WHERE d.datname = current_database();

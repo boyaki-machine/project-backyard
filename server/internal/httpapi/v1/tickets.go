@@ -158,11 +158,12 @@ type ticketFilters struct {
 
 	// 検索の条件（9.2.1「検索の条件」。pb-66）。
 	//
-	// keywordPatterns は q を ILIKE のパターンにしたもの（store/search が作る）。
-	// **一致の判定は一覧のクエリに持ち込まず**、store/search で ID に変えてから渡す
-	// （Design.md 4.6 の隔離）。keywordSet は「q に語が1つ以上あった」。
-	keywordPatterns []string
-	keywordSet      bool
+	// keywordTerms は q を語に分けたもの（store/search が作る）。**パターンへの変換と
+	// 問い合わせの形の選択も store/search が行う**（pb-143）。一致の判定は一覧のクエリに
+	// 持ち込まず、ID に変えてから渡す（Design.md 4.6 の隔離）。keywordSet は
+	// 「q に語が1つ以上あった」。
+	keywordTerms []string
+	keywordSet   bool
 
 	// seqFrom / seqTo は両端を含む。**0 は指定なし**（seq は1から始まる）。
 	seqFrom int32
@@ -207,7 +208,7 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 	// Design.md 4.6 の隔離）。**一覧のクエリは語もパターンも知らない。**
 	keywordIDs := []string{}
 	if filters.keywordSet {
-		ids, err := search.TicketIDs(r.Context(), h.q, projectID, filters.keywordPatterns)
+		ids, err := search.TicketIDs(r.Context(), h.q, projectID, filters.keywordTerms)
 		if err != nil {
 			apierr.Write(w, r, apierr.New(apierr.InternalError).
 				WithCause(fmt.Errorf("キーワード検索を行えない: %w", err)))
@@ -522,7 +523,7 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 			})
 		} else if terms := search.Terms(raw); len(terms) > 0 {
 			f.keywordSet = true
-			f.keywordPatterns = search.Patterns(terms)
+			f.keywordTerms = terms
 			sorted := slices.Clone(terms)
 			slices.Sort(sorted)
 			parts = append(parts, "q="+strings.Join(sorted, " "))

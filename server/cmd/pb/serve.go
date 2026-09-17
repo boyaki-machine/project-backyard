@@ -22,6 +22,7 @@ import (
 	v1 "github.com/boyaki-machine/project-backyard/server/internal/httpapi/v1"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
+	"github.com/boyaki-machine/project-backyard/server/internal/store/search"
 	"github.com/boyaki-machine/project-backyard/server/internal/tlscert"
 )
 
@@ -197,6 +198,8 @@ func serve(ctx context.Context) error {
 	slog.Info("サーバを起動した",
 		slog.String("bind", server.Addr()), slog.String("scheme", scheme),
 		slog.String("version", version))
+
+	warnIfCtypeIsC(ctx, pool)
 
 	// **期限を数える主体は2つある**（pb-97）。起動時の点検（上）と、この定期点検。
 	// **どちらも DB の expires_at を見る**ので、判定は1つである。
@@ -451,4 +454,22 @@ func parseLevel(level string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+// warnIfCtypeIsC は、DB の LC_CTYPE が C のままなら WARN を1件出す（DbDesign.md 4.5。pb-143）。
+//
+// **C の DB では、日本語のキーワード検索でインデックスが効かない**——pg_trgm が日本語から
+// trigram を取り出せないためである。検索そのものは動き、store/search が遅くならない形を
+// 選ぶので、**止めずに知らせるだけにする。** pb-143 より前に作った DB はすべて C なので、
+// 更新しただけの環境で気づける場所がここしかない。
+//
+// **読めなかったら何も出さない。** 起動を妨げる理由にはしない。
+func warnIfCtypeIsC(ctx context.Context, pool *pgxpool.Pool) {
+	ctype, err := gen.New(pool).CurrentDatabaseCtype(ctx)
+	if err != nil || search.UnicodeCtype(ctype) {
+		return
+	}
+	slog.Warn("DB の LC_CTYPE が C のため、日本語のキーワード検索でインデックスが効かない。"+
+		"DB を LC_CTYPE=C.UTF-8 で作り直す手順は deploy/prod/MANUAL.md にある",
+		slog.String("lc_ctype", ctype))
 }

@@ -26,7 +26,7 @@ services:
       POSTGRES_DB: pb
       POSTGRES_USER: pb_owner
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C --lc-ctype=C.UTF-8"  # DbDesign.md 3.1 / 4.5
       TZ: UTC
       PGTZ: UTC
     secrets:

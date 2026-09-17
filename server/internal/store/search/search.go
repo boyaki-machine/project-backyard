@@ -9,6 +9,7 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"unicode"
@@ -56,10 +57,75 @@ func Patterns(terms []string) []string {
 	return out
 }
 
-// TicketIDs は、すべてのパターンを含むチケットの ID を返す（語ごとに、タイトル・本文・
+// TicketIDs は、すべての語を含むチケットの ID を返す（語ごとに、タイトル・本文・
 // 削除されていないコメントのどれかに当たればよい）。
 //
-// **patterns が空なら呼ばないこと**——当たらない語が1つも無いので、全件が返る。
-func TicketIDs(ctx context.Context, q gen.Querier, projectID string, patterns []string) ([]string, error) {
+// **問い合わせを2つの形で切り替える**（DbDesign.md 4.5。pb-143）。どの語からも
+// trigram を取り出せるなら SearchTicketIDsByTrigram（GIN インデックスを使う）、
+// 1つでも取り出せない語があれば SearchTicketIDs（全件に ILIKE を当てる）。
+// 取り出せない語でインデックスを使うと、インデックスが全件を返して遅くなるためである。
+// **どちらも同じ集合を返す。**
+//
+// **取り出せるかは DB の LC_CTYPE で変わる**ので、毎回引く（カタログを1行読むだけ）。
+//
+// **terms が空なら呼ばないこと**——当たらない語が1つも無いので、全件が返る。
+func TicketIDs(ctx context.Context, q gen.Querier, projectID string, terms []string) ([]string, error) {
+	ctype, err := q.CurrentDatabaseCtype(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("DB の LC_CTYPE を読めない: %w", err)
+	}
+	patterns := Patterns(terms)
+	if AllTrigramUsable(terms, UnicodeCtype(ctype)) {
+		return q.SearchTicketIDsByTrigram(ctx, gen.SearchTicketIDsByTrigramParams{
+			ProjectID: projectID, Patterns: patterns,
+		})
+	}
 	return q.SearchTicketIDs(ctx, gen.SearchTicketIDsParams{ProjectID: projectID, Patterns: patterns})
+}
+
+// UnicodeCtype は、DB の LC_CTYPE で pg_trgm が英数字以外（日本語など）も語の文字として
+// 数えるかを返す（pb-143）。**C と POSIX だけが英数字に限られる。**
+func UnicodeCtype(ctype string) bool {
+	return ctype != "C" && ctype != "POSIX"
+}
+
+// AllTrigramUsable は、すべての語から trigram を取り出せるかを返す。
+func AllTrigramUsable(terms []string, unicodeCtype bool) bool {
+	if len(terms) == 0 {
+		return false
+	}
+	for _, t := range terms {
+		if !TrigramUsable(t, unicodeCtype) {
+			return false
+		}
+	}
+	return true
+}
+
+// TrigramUsable は、語から pg_trgm が trigram を1つ以上取り出せるかを返す。
+//
+// **pg_trgm は語の文字（英数字）が3つ以上続く部分からしか trigram を作らない。**
+// 記号や空白は区切りになるので、`pb-66` は `pb` と `66` に分かれて取り出せない。
+// 語の文字は DB の LC_CTYPE で決まり、C では ASCII の英数字だけである——
+// **C の DB では日本語の語からは1つも取り出せない**（show_trgm('ログイン') が空）。
+func TrigramUsable(term string, unicodeCtype bool) bool {
+	run := 0
+	for _, r := range term {
+		if isTrigramRune(r, unicodeCtype) {
+			run++
+			if run >= 3 {
+				return true
+			}
+			continue
+		}
+		run = 0
+	}
+	return false
+}
+
+func isTrigramRune(r rune, unicodeCtype bool) bool {
+	if r < utf8.RuneSelf {
+		return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9'
+	}
+	return unicodeCtype && (unicode.IsLetter(r) || unicode.IsDigit(r))
 }

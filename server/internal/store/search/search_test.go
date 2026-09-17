@@ -41,3 +41,56 @@ func TestTooLongCountsRunesNotBytes(t *testing.T) {
 		t.Errorf("%d文字で上限を超えたと判定しない", MaxQueryRunes+1)
 	}
 }
+
+// trigram を取り出せるかは「語の文字が3つ以上続くか」と DB の LC_CTYPE で決まる（pb-143）。
+//
+// **C の DB では日本語が語の文字にならない**——show_trgm('ログイン') は空である。
+// 記号は区切りになるので、pb-66 は pb と 66 に分かれて取り出せない。
+func TestTrigramUsable(t *testing.T) {
+	cases := []struct {
+		term    string
+		unicode bool
+		want    bool
+	}{
+		{"ログイン", false, false},
+		{"ログイン", true, true},
+		{"認証", true, false},
+		{"API", false, true},
+		{"AP", false, false},
+		{"pb-66", true, false},
+		{"100%", false, true},
+		{"率1_0", true, false},
+		{"sqlcの設定", false, true},
+		{"コメントで", true, true},
+	}
+	for _, c := range cases {
+		if got := TrigramUsable(c.term, c.unicode); got != c.want {
+			t.Errorf("TrigramUsable(%q, unicode=%v) = %v, want %v", c.term, c.unicode, got, c.want)
+		}
+	}
+}
+
+// 1つでも取り出せない語があれば、インデックスを使う形にしない。語が無いときも使わない。
+func TestAllTrigramUsable(t *testing.T) {
+	if !AllTrigramUsable([]string{"ケルベロス", "サーバ"}, true) {
+		t.Error("どの語も3文字以上の日本語で、C.UTF-8 なのに使えないと判定した")
+	}
+	if AllTrigramUsable([]string{"ケルベロス", "認証"}, true) {
+		t.Error("2文字の語が混じっているのに使えると判定した")
+	}
+	if AllTrigramUsable([]string{"ケルベロス"}, false) {
+		t.Error("C の DB で日本語の語を使えると判定した")
+	}
+	if AllTrigramUsable(nil, true) {
+		t.Error("語が無いのに使えると判定した")
+	}
+}
+
+// C と POSIX だけが英数字に限られる。
+func TestUnicodeCtype(t *testing.T) {
+	for ctype, want := range map[string]bool{"C": false, "POSIX": false, "C.UTF-8": true, "ja_JP.UTF-8": true} {
+		if got := UnicodeCtype(ctype); got != want {
+			t.Errorf("UnicodeCtype(%q) = %v, want %v", ctype, got, want)
+		}
+	}
+}

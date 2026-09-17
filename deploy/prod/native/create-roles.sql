@@ -28,9 +28,12 @@ CREATE ROLE pb_app LOGIN;
 
 -- ── データベース ────────────────────────────────────────
 
--- 文字コードは UTF8、既定の照合順序は C（DbDesign.md 3.1）。
+-- 文字コードは UTF8、既定の照合順序は C、文字の種類（LC_CTYPE）は C.UTF-8（DbDesign.md 3.1）。
+-- **LC_CTYPE を C にしない。** C では pg_trgm が日本語から trigram を取り出せず、キーワード
+-- 検索でインデックスが効かない（4.5。pb-143）。C.UTF-8 がサーバに無い OS では作成が失敗する
+-- ——その場合は UTF-8 のロケール（例：ja_JP.UTF-8）を LC_CTYPE に指定する。
 -- template0 から作るのは、サーバ既定のロケールを引き継がないため。
-CREATE DATABASE pb OWNER pb_owner ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0;
+CREATE DATABASE pb OWNER pb_owner ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C.UTF-8' TEMPLATE template0;
 
 \connect pb
 
