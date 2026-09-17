@@ -56,19 +56,6 @@ const emit = defineEmits<{ confirm: []; cancel: [] }>()
   white-space: pre-line;
 }
 
-.secondary,
-.primary,
-.danger {
-  display: inline-flex;
-  align-items: center;
-  height: 32px;
-  padding: 0 var(--pb-space-3);
-  border-radius: var(--pb-radius);
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
 button:disabled {
   cursor: default;
   opacity: 0.6;

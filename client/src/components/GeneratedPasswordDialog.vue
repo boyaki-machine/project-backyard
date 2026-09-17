@@ -171,19 +171,6 @@ dd:last-child {
   line-height: 1.7;
 }
 
-.primary,
-.secondary {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  height: 32px;
-  padding: 0 var(--pb-space-4);
-  border-radius: var(--pb-radius);
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
 .primary:hover {
   border-color: var(--pb-accent-hover);
   background: var(--pb-accent-hover);

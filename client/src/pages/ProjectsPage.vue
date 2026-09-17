@@ -382,20 +382,6 @@ async function retry() {
   color: var(--pb-text-muted);
 }
 
-.primary {
-  display: inline-flex;
-  align-items: center;
-  height: 32px;
-  padding: 0 var(--pb-space-3);
-  border: 1px solid var(--pb-accent);
-  border-radius: var(--pb-radius);
-  background: var(--pb-accent);
-  color: var(--pb-on-accent);
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
 .primary:hover {
   border-color: var(--pb-accent-hover);
   background: var(--pb-accent-hover);

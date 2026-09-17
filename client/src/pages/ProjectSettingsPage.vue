@@ -1732,23 +1732,4 @@ tr.drop-after td {
 .new-row td {
   background: var(--pb-hover);
 }
-
-.danger {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  height: 32px;
-  padding: 0 var(--pb-space-3);
-  border: 1px solid var(--pb-danger-border);
-  border-radius: var(--pb-radius);
-  background: var(--pb-surface);
-  color: var(--pb-danger-text);
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.danger:hover:not(:disabled) {
-  background: var(--pb-danger-bg);
-}
 </style>

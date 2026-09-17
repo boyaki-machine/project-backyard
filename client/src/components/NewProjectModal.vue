@@ -431,20 +431,4 @@ textarea[aria-invalid='true'] {
   padding: var(--pb-space-1) 0;
   cursor: pointer;
 }
-
-/* ── フッタのボタン ────────────────────────────────────── */
-.primary,
-.secondary {
-  height: 32px;
-  padding: 0 var(--pb-space-4);
-  border-radius: var(--pb-radius);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.primary:disabled,
-.secondary:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
 </style>

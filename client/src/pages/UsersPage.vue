@@ -966,18 +966,6 @@ async function retry(): Promise<void> {
   padding: var(--pb-space-6);
 }
 
-.primary,
-.secondary {
-  display: inline-flex;
-  align-items: center;
-  height: 32px;
-  padding: 0 var(--pb-space-3);
-  border-radius: var(--pb-radius);
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
 .primary:hover {
   border-color: var(--pb-accent-hover);
   background: var(--pb-accent-hover);
@@ -1302,7 +1290,7 @@ td.date {
 
 .placeholder-list {
   margin: 0;
-  padding-left: var(--pb-space-5);
+  padding-left: var(--pb-space-6);
   color: var(--pb-text-muted);
   font-size: 13px;
   line-height: 1.8;

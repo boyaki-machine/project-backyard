@@ -679,12 +679,12 @@ function asApiError(e: unknown): ApiError {
   word-break: break-all;
 }
 .ok {
-  color: var(--pb-success-fg);
-  font-size: var(--pb-fs-sm);
+  color: var(--pb-text);
+  font-size: 12px;
   margin: var(--pb-space-1) 0;
 }
 .note {
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
   margin: 0 0 var(--pb-space-2);
 }
 .upload {
@@ -722,40 +722,40 @@ function asApiError(e: unknown): ApiError {
 }
 .status code {
   font-family: var(--pb-font-mono);
-  font-size: var(--pb-fs-md);
+  font-size: 14px;
   word-break: break-all;
 }
 .status code.secure {
-  color: var(--pb-success-fg);
+  color: var(--pb-text);
 }
 .status .note {
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
 }
 
 .block {
-  margin-bottom: var(--pb-space-5);
+  margin-bottom: var(--pb-space-6);
 }
 .block h3 {
-  font-size: var(--pb-fs-md);
+  font-size: 14px;
   margin: 0 0 var(--pb-space-2);
   border-bottom: 1px solid var(--pb-border);
   padding-bottom: var(--pb-space-1);
 }
 .muted {
-  color: var(--pb-fg-muted);
+  color: var(--pb-text-muted);
 }
 .notice {
-  color: var(--pb-success-fg);
+  color: var(--pb-text);
 }
 .error {
-  color: var(--pb-danger-fg);
+  color: var(--pb-danger-text);
 }
 .warn {
-  color: var(--pb-warning-fg);
+  color: var(--pb-warning-text);
 }
 .cert {
   border: 1px solid var(--pb-border);
-  border-radius: var(--pb-radius-md);
+  border-radius: var(--pb-radius);
   padding: var(--pb-space-3);
   margin-bottom: var(--pb-space-3);
 }
@@ -775,9 +775,9 @@ function asApiError(e: unknown): ApiError {
   font-weight: 600;
 }
 .badge {
-  font-size: var(--pb-fs-xs);
+  font-size: 11px;
   padding: 0 var(--pb-space-2);
-  border-radius: var(--pb-radius-sm);
+  border-radius: var(--pb-radius);
   border: 1px solid var(--pb-border);
 }
 .badge.st-active {
@@ -785,8 +785,8 @@ function asApiError(e: unknown): ApiError {
   color: var(--pb-accent);
 }
 .badge.st-expired {
-  color: var(--pb-danger-fg);
-  border-color: var(--pb-danger-fg);
+  color: var(--pb-danger-text);
+  border-color: var(--pb-danger-text);
 }
 .kind,
 .period,
@@ -794,7 +794,7 @@ function asApiError(e: unknown): ApiError {
 .san,
 .fp,
 .by {
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
   margin: var(--pb-space-1) 0 0;
 }
 .fp {
@@ -803,7 +803,7 @@ function asApiError(e: unknown): ApiError {
 }
 .foot {
   margin-top: var(--pb-space-2);
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
   display: flex;
   gap: var(--pb-space-3);
   align-items: baseline;
@@ -840,21 +840,21 @@ function asApiError(e: unknown): ApiError {
 }
 .field span {
   display: block;
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
   margin-bottom: var(--pb-space-1);
 }
 .field textarea {
   width: 100%;
   font-family: var(--pb-font-mono);
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
 }
 .field textarea:disabled {
   /* **欄は見せるが触れないことを見た目で示す**（利用者の指摘、2026-09-12） */
-  background: var(--pb-bg-subtle);
+  background: var(--pb-surface);
   cursor: not-allowed;
 }
 .hint {
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
 }
 .actions {
   display: flex;
@@ -869,16 +869,16 @@ function asApiError(e: unknown): ApiError {
 }
 .howto pre {
   overflow-x: auto;
-  background: var(--pb-bg-subtle);
+  background: var(--pb-surface);
   padding: var(--pb-space-2);
-  border-radius: var(--pb-radius-sm);
-  font-size: var(--pb-fs-sm);
+  border-radius: var(--pb-radius);
+  font-size: 12px;
 }
 .howto ul {
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
   padding-left: var(--pb-space-4);
 }
 .docref {
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
 }
 </style>
