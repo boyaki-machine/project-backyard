@@ -448,7 +448,7 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 | `pb_update_ticket` | write | 2 | **`seq`**, ＋ `pb_create_ticket` の任意引数から **`type` を除いたもの**（**送ったものだけ更新**） | 9.5.1 の応答をそのまま | **起票したあと直す。** 線は「**作れるものは直せる。ただし `type` を除く**」——**種別の切り替えは人が行う**（盤面の見え方が変わるため）。`execution_mode` / `readiness` / `scope` / `working_agent_id` / `actual_hours` / `sprint_id` も**開けない**。**必要権限は `ticket.self_edit`**（0029）。pb-75 |
 | `pb_put_dod` | write | 2 | **`seq`**, `add?[]`, `update?[]`, `delete?[]` | 9.9 の一覧をそのまま | **完了条件を整える。** いまある一覧に対する追加・編集・削除を1回でまとめて受ける（**全置換ではない**）。**`is_satisfied` は開けない**——`pb_submit_result` の「盤面を動かさない」と正面からぶつかる。**必要権限は `ticket.self_edit`**。pb-75 |
 | `pb_list_tags` | read | 2 | — | 9.11 の一覧をそのまま | **プロジェクトのタグを列挙する。** `tag_ids` を渡すのに ULID が要るため（`Design.md` 8.5.1）。**`pb_list_sprints` は作らない**——スプリントは 0028 以降どの経路からも設定できない。pb-76 |
-| `pb_transition_task` | write | 2 | **`seq`**, `to`, `comment?` | 9.5.1 の応答をそのまま | **状態を進める。** `to` はワークフローのステータスキー。**着手の宣言もこれで行う**（`working_agent_id` が自動で立つ）。手順26b |
+| `pb_transition_task` | write | 2 | **`seq`**, `to`, `comment?` | **状態の要点だけ**（`seq` / `status` / `version` / `working_agent` / `updated_at` / `closed_at`。本文は返さない。`Design.md` 8.5.3。pb-136） | **状態を進める。** `to` はワークフローのステータスキー。**着手の宣言もこれで行う**（`working_agent_id` が自動で立つ）。手順26b |
 | `pb_list_transitions` | read | 2 | **`seq`** | 9.7 の応答をそのまま | **いまどの状態へ進めるか**と、進めない先の理由。手順26b |
 | `pb_post_note` | write | 2 | **`seq`**, `body_md`, `kind?` | 9.8 の1件をそのまま | 途中経過・判明した事実の記録。**`refs` は落とした**——`ApiDesign.md` 9.8 に対応するフィールドが無い（`Design.md` 8.5.1） |
 | `pb_put_doc` | write | 2 | `path`, `body_md`, `change_reason?` | 10.3 の応答をそのまま | **文書の更新。** 権限を持つ人の指示で呼ぶ（10.6.2）。**本文の全置換**で、`If-Match` は MCP 層が付ける（`Design.md` 8.5.1） |

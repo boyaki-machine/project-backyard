@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -443,6 +444,42 @@ func lighten(body []byte) ([]byte, error) {
 	return json.Marshal(out)
 }
 
+// pickFields は REST の応答から keys の項目だけを、keys の順に残す（Design.md 8.5.1 / 8.5.3）。
+//
+// **書いた直後の応答に、チケットの本文や送った本文をもう一度載せない**（pb-136 / pb-137）。
+// エージェントは本文を手元に持っているか、pb_get_task で読める。lighten と同じく
+// **選別だけを行い**、値は REST の JSON を写す。
+//
+// **応答に無い項目は出さない。** null を作ると、REST 側が項目を落としたときに
+// MCP 層が値をでっち上げることになる。
+func pickFields(body []byte, keys ...string) ([]byte, error) {
+	var in map[string]json.RawMessage
+	if err := json.Unmarshal(body, &in); err != nil {
+		return nil, err
+	}
+	var b bytes.Buffer
+	b.WriteByte('{')
+	n := 0
+	for _, k := range keys {
+		v, ok := in[k]
+		if !ok {
+			continue
+		}
+		if n > 0 {
+			b.WriteByte(',')
+		}
+		name, _ := json.Marshal(k)
+		b.Write(name)
+		b.WriteByte(':')
+		if err := json.Compact(&b, v); err != nil {
+			return nil, err
+		}
+		n++
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
+}
+
 // ── 共通の組み立て ──────────────────────────────────────────
 
 // passThrough は REST の応答をそのままテキストにする（Design.md 8.5）。
@@ -454,6 +491,24 @@ func passThrough(r *http.Request, res restResult, err error) (toolResult, *rpcEr
 		return failed(r, res), nil
 	}
 	return textResult(string(res.body)), nil
+}
+
+// passThroughFields は成功した応答から keys の項目だけを返す（Design.md 8.5.1 / 8.5.3）。
+//
+// **失敗は passThrough と同じく本文ごと返す。** 理由の文（message）と、次の一手を
+// 選ぶための情報が落ちないようにするためである。
+func passThroughFields(r *http.Request, res restResult, err error, keys ...string) (toolResult, *rpcError) {
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, err.Error())
+	}
+	if !res.ok() {
+		return failed(r, res), nil
+	}
+	out, err := pickFields(res.body, keys...)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "応答を解釈できない: "+err.Error())
+	}
+	return textResult(string(out)), nil
 }
 
 // failed は REST の 4xx / 5xx を isError のツール結果にする（Design.md 8.4）。
@@ -1279,7 +1334,9 @@ func transitionTools() []tool {
 				"（同時に「自分が処理している」という記録がチケットに残る）。" +
 				"**進められるのは、自分の所有者が担当になっているチケットだけである。**" +
 				"担当が付いていなければ、進めずに利用者へ伝えること。" +
-				"**チケットを完了にすることはできない**——完了は人が確認して行う。",
+				"**チケットを完了にすることはできない**——完了は人が確認して行う。" +
+				"応答は状態の要点（seq / status / version / working_agent / updated_at / closed_at）だけで、" +
+				"チケットの本文は含まない。本文が要るなら pb_get_task を呼ぶ。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
@@ -1327,6 +1384,10 @@ func callListTransitions(h *Handler, r *http.Request, key string, args json.RawM
 // **working_agent_id は MCP 層では触らない。** REST 側の副作用であり
 // （ApiDesign.md 9.6）、人が画面から遷移したときと同じ経路を通る。ここで書くと
 // 同じ規則が2か所に生まれる（8.1）。
+//
+// **応答は状態の要点だけにする**（Design.md 8.5.3。pb-136）。エージェントは着手前に
+// pb_get_task で本文を読んでいるので、9.5.1 をそのまま返すと遷移のたびに同じ本文を
+// もう一度運ぶ。
 func callTransitionTask(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
 	var in transitionArgs
 	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
@@ -1351,8 +1412,14 @@ func callTransitionTask(h *Handler, r *http.Request, key string, args json.RawMe
 	res, err := h.callREST(r, http.MethodPost,
 		"/projects/"+url.PathEscape(key)+"/tickets/"+
 			strconv.FormatInt(in.Seq.value, 10)+"/transition", nil, raw, nil)
-	return passThrough(r, res, err)
+	return passThroughFields(r, res, err, transitionResultFields...)
 }
+
+// transitionResultFields は pb_transition_task の応答に残す項目（Design.md 8.5.3。pb-136）。
+//
+// 遷移の結果を確かめるのに要るものだけである——どこへ進んだか（status）、自分が
+// 記録されたか（working_agent）、続けて書くときの If-Match（version）。
+var transitionResultFields = []string{"seq", "status", "version", "working_agent", "updated_at", "closed_at"}
 
 // ── 完了レポート系（手順26c。Design.md 8.5.4）───────────────
 

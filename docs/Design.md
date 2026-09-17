@@ -1456,7 +1456,7 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 | ツール | 引数 | 叩く REST | 応答 |
 |---|---|---|---|
 | `pb_list_transitions` | `seq` | `GET /projects/:key/tickets/:seq/transitions` | 9.7 の応答をそのまま |
-| `pb_transition_task` | `seq`, `to`, `comment?` | `POST /projects/:key/tickets/:seq/transition` | 9.5.1 の応答をそのまま |
+| `pb_transition_task` | `seq`, `to`, `comment?` | `POST /projects/:key/tickets/:seq/transition` | **状態の要点だけ**（9.5.1 の応答から `seq` / `status` / `version` / `working_agent` / `updated_at` / `closed_at`。pb-136） |
 
 **`pb_list_transitions` を別のツールとして出す。** 9.7 は**遷移できない先も `allowed: false` と日本語の理由を付けて返す**ので、エージェントが盲目的に `pb_transition_task` を試して失敗を繰り返すのを防げる。9.6 の検証6（担当が所有者でない）もここに現れるため、**「なぜ進められないか」を1往復で知れる。**
 
@@ -1467,6 +1467,18 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 **`comment` を開けている。** 9.6 が「同じトランザクションで `kind='progress'` のコメントを作る」と定めており、**遷移だけ通って経緯が残らない状態を作らない**ためである。`pb_post_note` を別に呼ばせると2往復になり、途中で落ちると遷移だけが残る。
 
 **`done` への遷移は開けなくてよい。** 3つのワークフローテンプレートすべてで `done` は `is_agent_reachable = false` かつ遷移の `allowed_actor_kinds` が `["user"]` であり（`DbDesign.md` 7.4）、**DB とワークフローが拒む**（`Requirements.md` 10.8.6 の禁止事項）。MCP 層に `if` を置かない（8.1）。
+
+**応答は状態の要点だけにし、チケットの本文を返さない**（pb-136。利用者の判断、2026-09-17）。
+エージェントは着手前に `pb_get_task` で本文を読んでいるので、9.5.1 をそのまま返すと**遷移のたびに同じ本文をもう一度受け取る**
+（2026-09-17 のセッションで13回、約2万字。見積り）。
+
+- **残すのは、遷移の結果を確かめるのに要る6項目である。** `status`（どこへ進んだか）、`working_agent`（自分が記録されたか）、
+  `version`（続けて書くときの `If-Match`）、`updated_at` / `closed_at`、`seq`
+- **本文・完了条件・関連リンク（`body_md` / `dod` / `links` / `references` / `children` など）は落とす。** 要るなら `pb_get_task` を呼ぶ。
+  ツールの説明文にもそう書く
+- **失敗（403 / 409）は今までどおり本文ごと返す**（`failed`）。理由の文（`message`）が次の一手を決めるためである
+- **REST（9.6）の応答は変えない。** 画面が使っている。MCP 層で項目を選ぶのは `pb_list_tasks` の軽量化（8.5.2）と同じ形で、
+  8.1 の表が MCP の持ち物とする「応答の整形、トークン予算」に当たる
 
 **遷移に成功すると `ticket.working_agent_id` が呼び出し元のエージェントになる**（`ApiDesign.md` 9.6）。**MCP 層は何もしない**——REST 側の副作用であり、人が画面から遷移したときと同じ経路を通る。
 

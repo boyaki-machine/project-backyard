@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -773,5 +774,65 @@ func TestSubmitResultLeavesStatusValidationToREST(t *testing.T) {
 	}
 	if !strings.Contains(out.Content[0].Text, "validation_failed") {
 		t.Errorf("本文をそのまま添えていない: %s", out.Content[0].Text)
+	}
+}
+
+// ── 遷移系の応答（Design.md 8.5.3。pb-136）──────────────────────
+
+// fullTicketJSON は 9.5.1 の応答（本文・完了条件・関連リンクつき）の1件。
+const fullTicketJSON = `{"id":"01K2","seq":31,"type":"task","title":"認証APIの実装",
+	"status":{"key":"in_progress","name":"進行中","category":"in_progress"},
+	"priority":"high","assignee":{"id":"01U","kind":"user","display_name":"田中"},
+	"working_agent":{"id":"01A","kind":"agent","display_name":"Claude Code"},
+	"parent_seq":12,"version":4,"created_at":"2026-09-01T00:00:00Z",
+	"updated_at":"2026-09-17T01:00:00Z","closed_at":null,
+	"body_md":"ここに長い本文がある","dod":[{"id":"01D","body":"テストが通ること"}],
+	"links":[],"references":[],"children":[],"comment_count":2}`
+
+func TestTransitionTaskReturnsOnlyStatusSummary(t *testing.T) {
+	rest := &fakeREST{status: http.StatusOK, body: fullTicketJSON}
+	h := New(rest, "v0")
+
+	out := callTool1(t, h, toolCallBody("pb_transition_task", `{"seq":31,"to":"in_progress"}`))
+	if out.IsError {
+		t.Fatalf("成功のはずが isError: %s", out.Content[0].Text)
+	}
+
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out.Content[0].Text), &got); err != nil {
+		t.Fatalf("応答が JSON でない: %v（%s）", err, out.Content[0].Text)
+	}
+	var keys []string
+	for k := range got {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	want := append([]string(nil), transitionResultFields...)
+	sort.Strings(want)
+	if strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Errorf("応答の項目 = %v, want %v", keys, want)
+	}
+	// **値は REST の JSON をそのまま写す**（null も null のまま）。
+	if string(got["version"]) != "4" || string(got["closed_at"]) != "null" {
+		t.Errorf("値が写っていない: %s", out.Content[0].Text)
+	}
+	if strings.Contains(out.Content[0].Text, "ここに長い本文がある") {
+		t.Errorf("本文を返している: %s", out.Content[0].Text)
+	}
+}
+
+func TestTransitionTaskKeepsFailureBody(t *testing.T) {
+	// **失敗は今までどおり本文ごと返す**——理由の文が次の一手を決める。
+	rest := &fakeREST{status: http.StatusForbidden,
+		body: `{"error":{"code":"forbidden","message":"担当が所有者でないチケットは進められません"}}`}
+	h := New(rest, "v0")
+
+	out := callTool1(t, h, toolCallBody("pb_transition_task", `{"seq":31,"to":"in_progress"}`))
+
+	if !out.IsError {
+		t.Fatalf("失敗のはずが成功している: %s", out.Content[0].Text)
+	}
+	if !strings.Contains(out.Content[0].Text, "担当が所有者でないチケットは進められません") {
+		t.Errorf("理由の文が落ちている: %s", out.Content[0].Text)
 	}
 }
