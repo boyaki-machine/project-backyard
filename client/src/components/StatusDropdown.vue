@@ -115,8 +115,17 @@ async function place(): Promise<void> {
 }
 
 function detach(): void {
-  window.removeEventListener('scroll', close, true)
+  window.removeEventListener('scroll', onScroll, true)
   window.removeEventListener('resize', close)
+}
+
+/**
+ * 閉じるのは**パネルの外側**のスクロールだけ（`GuiDesign.md` 6.1「浮かせたパネルを閉じる規則」。
+ * pb-131）。capture で拾うので、候補の欄のスクロールもここへ届く。
+ */
+function onScroll(e: Event): void {
+  if (e.target instanceof Node && panel.value?.contains(e.target)) return
+  close()
 }
 
 function close(): void {
@@ -133,7 +142,7 @@ async function toggle(): Promise<void> {
   }
   if (!props.canTransition || props.busy) return
   open.value = true
-  window.addEventListener('scroll', close, true)
+  window.addEventListener('scroll', onScroll, true)
   window.addEventListener('resize', close)
   emit('open')
   await place()

@@ -80,6 +80,15 @@ function place(): void {
   }
 }
 
+/**
+ * 閉じるのは**パネルの外側**のスクロールだけ（`GuiDesign.md` 6.1「浮かせたパネルを閉じる規則」。
+ * pb-131）。capture で拾うので、候補の欄のスクロールもここへ届く。
+ */
+function onScroll(e: Event): void {
+  if (e.target instanceof Node && panel.value?.contains(e.target)) return
+  close()
+}
+
 function close(): void {
   if (!open.value) return
   open.value = false
@@ -113,20 +122,19 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 /**
- * スクロールしたら閉じる（`UserActionsMenu` と同じ扱い）。`fixed` で置いている
- * ので追随には毎フレーム測り直すことになり、開いている時間の短いパネルには重い。
+ * 外側のスクロールと窓の大きさの変化で閉じる（`GuiDesign.md` 6.1「浮かせたパネルを閉じる規則」）。
  */
 function attach(): void {
   document.addEventListener('pointerdown', onDocumentPointerDown, true)
   window.addEventListener('keydown', onKeydown)
-  window.addEventListener('scroll', close, true)
+  window.addEventListener('scroll', onScroll, true)
   window.addEventListener('resize', close)
 }
 
 function detach(): void {
   document.removeEventListener('pointerdown', onDocumentPointerDown, true)
   window.removeEventListener('keydown', onKeydown)
-  window.removeEventListener('scroll', close, true)
+  window.removeEventListener('scroll', onScroll, true)
   window.removeEventListener('resize', close)
 }
 
