@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -935,5 +936,34 @@ func TestListTasksPassesStagedOnlyWhenTrue(t *testing.T) {
 		if got := rest.gotQuery.Get("staged"); got != c.want {
 			t.Errorf("%s: staged = %q, want %q", c.args, got, c.want)
 		}
+	}
+}
+
+// ── 着手では pb_list_transitions を省ける（Design.md 8.5.3。pb-140）──────────
+
+// TestStartConditionIsWrittenTheSameEverywhere は、ツールの説明文2つと /pb-implement の
+// 手順4 が、同じ条件（着手（未着手→進行中））を書いていることを見る。
+//
+// **手順書だけに書くと、種別の違うエージェントには届かない**（CLAUDE.md「規約の正本は PB にある」）。
+// 説明文だけに書くと、手順4 の「先に確かめる」習慣が残る。片方だけ直した状態を機械で拾う。
+func TestStartConditionIsWrittenTheSameEverywhere(t *testing.T) {
+	const cond = "着手（未着手→進行中）"
+
+	for _, tl := range transitionTools() {
+		if !strings.Contains(tl.Description, cond) {
+			t.Errorf("%s の説明文に %q が無い", tl.Name, cond)
+		}
+		if !strings.Contains(tl.Description, "pb_list_transitions を") && tl.Name == "pb_transition_task" {
+			t.Errorf("pb_transition_task の説明文が、省ける相手（pb_list_transitions）を名指ししていない")
+		}
+	}
+
+	body, err := os.ReadFile("../agentsetup/templates/body/pb-implement.md")
+	if err != nil {
+		t.Fatalf("手順書の本文を読めない: %v", err)
+	}
+	want := cond + "では、先に `pb_list_transitions` を呼ばなくてよい。"
+	if !strings.Contains(string(body), want) {
+		t.Errorf("/pb-implement の本文に %q が無い", want)
 	}
 }
