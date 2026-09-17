@@ -573,6 +573,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agent-scopes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * エージェント用トークンのスコープ
+         * @description エージェント用トークンの既定スコープと、既定に足せる権限（ApiDesign.md 4.5.9。pb-93）。
+         *
+         *     **必要権限は不要**（認証済みであればよい）。`/agent-client-kinds` と同じ扱い。
+         *
+         *     **画面に既定スコープの写しを持たせないために在る。** `POST /me/agents/:id/tokens` の
+         *     `scopes` は絶対指定なので、画面が「既定に `doc.edit` を足す」を送るには既定の中身が要る。
+         *     許可リストは `default` ∪ `grantable`。
+         */
+        get: operations["getAgentScopes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/agents": {
         parameters: {
             query?: never;
@@ -3386,6 +3412,32 @@ export interface components {
         /** @description ApiDesign.md 4.5.7。ページネーションも ETag も持たない。 */
         AgentClientKindList: {
             items: components["schemas"]["AgentClientKind"][];
+        };
+        /** @description ApiDesign.md 4.5.9。ページネーションも ETag も持たない。 */
+        AgentScopes: {
+            /**
+             * @description `scopes` を省略したときに入る既定（Design.md 6.5）。昇順。
+             * @example [
+             *       "agent.run",
+             *       "comment.create",
+             *       "doc.view",
+             *       "project.view",
+             *       "ticket.assign",
+             *       "ticket.create",
+             *       "ticket.reference.edit",
+             *       "ticket.self_edit",
+             *       "ticket.transition",
+             *       "ticket.view"
+             *     ]
+             */
+            default: string[];
+            /**
+             * @description 既定に足せる権限。
+             * @example [
+             *       "doc.edit"
+             *     ]
+             */
+            grantable: string[];
         };
         /** @description ApiDesign.md 5.7.1。リポジトリにコミットする配置ファイル一式。 */
         AgentSetup: {
@@ -7421,6 +7473,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentClientKindList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
+    getAgentScopes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 既定スコープと足せる権限。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentScopes"];
                 };
             };
             401: components["responses"]["Unauthenticated"];

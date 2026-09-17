@@ -946,6 +946,29 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthenticated'
 
+  /api/v1/agent-scopes:
+    get:
+      tags: [agents]
+      summary: エージェント用トークンのスコープ
+      operationId: getAgentScopes
+      description: |
+        エージェント用トークンの既定スコープと、既定に足せる権限（ApiDesign.md 4.5.9。pb-93）。
+
+        **必要権限は不要**（認証済みであればよい）。`/agent-client-kinds` と同じ扱い。
+
+        **画面に既定スコープの写しを持たせないために在る。** `POST /me/agents/:id/tokens` の
+        `scopes` は絶対指定なので、画面が「既定に `doc.edit` を足す」を送るには既定の中身が要る。
+        許可リストは `default` ∪ `grantable`。
+      responses:
+        '200':
+          description: 既定スコープと足せる権限。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentScopes'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+
   /api/v1/me/agents:
     get:
       tags: [me]
@@ -5771,6 +5794,23 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AgentClientKind'
+
+    AgentScopes:
+      description: ApiDesign.md 4.5.9。ページネーションも ETag も持たない。
+      type: object
+      required: [default, grantable]
+      properties:
+        default:
+          type: array
+          description: |
+            `scopes` を省略したときに入る既定（Design.md 6.5）。昇順。
+          items: { type: string }
+          example: [agent.run, comment.create, doc.view, project.view, ticket.assign, ticket.create, ticket.reference.edit, ticket.self_edit, ticket.transition, ticket.view]
+        grantable:
+          type: array
+          description: 既定に足せる権限。
+          items: { type: string }
+          example: [doc.edit]
 
     AgentSetup:
       description: |

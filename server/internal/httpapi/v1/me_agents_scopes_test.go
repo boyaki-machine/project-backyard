@@ -1,67 +1,70 @@
 package v1
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
+	"slices"
+	"strings"
 	"testing"
 )
 
-// clientScopesPath は画面が持つ既定スコープの写し（pb-90）。
+// TestGetAgentScopes は、4.5.9 の応答が 4.5.3 の検証と同じ定義を返すことを見る
+// （ApiDesign.md 4.5.9。pb-93）。
 //
-// **Go のテストからクライアントのソースを読む唯一の場所である。** 常道ではないが、
-// **写しのずれは片方だけを見ても分からない**——両方を同時に開ける場所が要る。
-// 写しそのものを無くす案は pb-93 にある。
-const clientScopesPath = "../../../../client/src/lib/agents.ts"
+// **pb-90 の検査を組み替えたものである。** pb-90 は画面の写し（lib/agents.ts の
+// AGENT_DEFAULT_SCOPES）とサーバの定義の一致を見ていた。pb-93 で写しを無くし、
+// 画面はこの口から引くので、見るのは「口が返すもの＝発行時に受け付けるもの」になる。
+// **ずれると「チェックを付けたほうが狭くなる」**（scopes は絶対指定）。
+func TestGetAgentScopes(t *testing.T) {
+	rec := httptest.NewRecorder()
+	agentHandler(agentFake(t)).getAgentScopes(rec,
+		httptest.NewRequest(http.MethodGet, "/agent-scopes", nil))
 
-// clientScopesRe は AGENT_DEFAULT_SCOPES の配列本体を取り出す。
-var clientScopesRe = regexp.MustCompile(
-	`(?s)export const AGENT_DEFAULT_SCOPES = \[(.*?)\] as const`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Default   []string `json:"default"`
+		Grantable []string `json:"grantable"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("応答を読めない: %v", err)
+	}
+	if !slices.Equal(got.Default, agentDefaultScopes) {
+		t.Errorf("default = %v, want %v", got.Default, agentDefaultScopes)
+	}
+	if !slices.Equal(got.Grantable, agentGrantableScopes) {
+		t.Errorf("grantable = %v, want %v", got.Grantable, agentGrantableScopes)
+	}
 
-// clientScopeItemRe は配列の中の 'key' を1件ずつ拾う。
-var clientScopeItemRe = regexp.MustCompile(`'([^']+)'`)
+	// **口が返す組み合わせは、そのまま発行で受け付けられること。** 画面は
+	// default ∪ grantable を送るので、ここが 422 になると押したときだけ落ちる。
+	send := append(slices.Clone(got.Default), got.Grantable...)
+	resolved, apiErr := resolveAgentScopes(send)
+	if apiErr != nil {
+		t.Fatalf("default ∪ grantable が発行で拒まれた: %v", apiErr)
+	}
+	if len(resolved) != len(send) {
+		t.Errorf("発行で受け付けた件数 = %d, want %d", len(resolved), len(send))
+	}
+}
 
-// TestAgentDefaultScopesMatchClient は、サーバの既定スコープと画面の写しが
-// 一致することを見る（ApiDesign.md 4.5.3。pb-90）。
+// TestClientHoldsNoDefaultScopes は、画面が既定スコープの写しを持っていないことを見る
+// （pb-93）。
 //
-// **ずれると「チェックを付けたほうが狭くなる」。** 画面は doc.edit の
-// チェックが入ったときだけ scopes を送り、その中身がこの写しである。
-// scopes は絶対指定なので（resolveAgentScopes）、**写しが1件足りないと、
-// doc.edit つきで発行したトークンだけがその1件を失う。** 発行は成功し、
-// 画面にも何も出ないため、エージェントが 403 を踏むまで誰も気づかない。
-//
-// **実際に2回続けて起きた**——ticket.reference.edit（0027／pb-68）と
-// ticket.self_edit（0029／pb-75）。どちらも権限を足した本人が写しを直していない。
-func TestAgentDefaultScopesMatchClient(t *testing.T) {
-	src, err := os.ReadFile(filepath.FromSlash(clientScopesPath))
+// **Go のテストからクライアントのソースを読む唯一の場所である**（pb-90 から引き継いだ）。
+// 写しは権限を足すたびに2回続けて腐ったので、**戻ってきたら落とす。** 名前だけを
+// 見るので、別名で書き戻したものは拾えない。
+func TestClientHoldsNoDefaultScopes(t *testing.T) {
+	const path = "../../../../client/src/lib/agents.ts"
+	src, err := os.ReadFile(filepath.FromSlash(path))
 	if err != nil {
-		t.Fatalf("画面の写しを読めない（%s）: %v", clientScopesPath, err)
+		t.Fatalf("%s を読めない: %v", path, err)
 	}
-
-	m := clientScopesRe.FindSubmatch(src)
-	if m == nil {
-		t.Fatalf("%s に AGENT_DEFAULT_SCOPES の配列が見つからない。"+
-			"定数名か書き方を変えたなら、この検査も一緒に直すこと", clientScopesPath)
-	}
-
-	var client []string
-	for _, item := range clientScopeItemRe.FindAllSubmatch(m[1], -1) {
-		client = append(client, string(item[1]))
-	}
-
-	// **並びまで見る。** どちらも昇順で持つと決めてあり（agentDefaultScopes の
-	// コメント）、並びが揃っていれば応答と突き合わせるときに並べ替えが要らない。
-	if len(client) != len(agentDefaultScopes) {
-		t.Fatalf("既定スコープの件数が違う: サーバ %d 件 / 画面 %d 件\n"+
-			"  サーバ: %v\n  画面  : %v\n"+
-			"  権限を足したら %s も直すこと",
-			len(agentDefaultScopes), len(client), agentDefaultScopes, client, clientScopesPath)
-	}
-	for i, want := range agentDefaultScopes {
-		if client[i] != want {
-			t.Errorf("既定スコープの %d 件目が違う: サーバ %q / 画面 %q\n"+
-				"  権限を足したら %s も直すこと（昇順で持つ）",
-				i+1, want, client[i], clientScopesPath)
-		}
+	if strings.Contains(string(src), "AGENT_DEFAULT_SCOPES") {
+		t.Errorf("%s に AGENT_DEFAULT_SCOPES が戻っている。既定は GET /agent-scopes（ApiDesign.md 4.5.9）から引くこと", path)
 	}
 }

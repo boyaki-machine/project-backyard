@@ -372,6 +372,32 @@ func (h *handler) listAgentClientKinds(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, catalog[agentClientKindView]{Items: items})
 }
 
+// ── GET /api/v1/agent-scopes（4.5.9。pb-93）────────────────────
+
+// agentScopesView はエージェント用トークンのスコープ（ApiDesign.md 4.5.9）。
+type agentScopesView struct {
+	// Default は scopes を省略したときに入る既定（Design.md 6.5）。昇順。
+	Default []string `json:"default"`
+	// Grantable は既定に足せるもの。許可リストは Default ∪ Grantable。
+	Grantable []string `json:"grantable"`
+}
+
+// getAgentScopes は既定スコープと足せる権限を返す（ApiDesign.md 4.5.9）。
+//
+// **画面に既定スコープの写しを持たせないために在る**（pb-93）。4.5.3 の scopes は
+// 絶対指定なので、画面が「既定に doc.edit を足す」を送るには既定の中身が要る。
+// 写しは権限を足すたびに2回続けて腐った（pb-90）。listAgentClientKinds と同じく、
+// **必要権限は無い**（認証済みであればよい）。
+//
+// **返すのは agentDefaultScopes / agentGrantableScopes そのもの**で、4.5.3 の
+// 検証（agentAllowedScopes）と同じ定義を読む。別に並べると、ここが新しい写しになる。
+func (h *handler) getAgentScopes(w http.ResponseWriter, r *http.Request) {
+	WriteJSON(w, http.StatusOK, agentScopesView{
+		Default:   agentDefaultScopes,
+		Grantable: agentGrantableScopes,
+	})
+}
+
 // ── POST /api/v1/me/agents（4.5.2）──────────────────────────
 
 type createAgentRequest struct {
