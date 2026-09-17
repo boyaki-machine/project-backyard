@@ -406,16 +406,28 @@ func renderContextPack(projectKey string, t packTicket, ch charter) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "# コンテキストパック — %s-%d「%s」\n\n", projectKey, t.Seq, t.Title)
-	b.WriteString("**着手する前に、この文書の全体に目を通すこと。** " +
-		"ここに書かれた前提は、チケットの指示より先に効く。\n" +
-		"チケットの本文と完了条件は含まれていない（pb_get_task で読む）。\n\n")
 
+	// **定型文は、版が一致して本文を1件でも省いたときに畳む**（Design.md 8.5.5。pb-139）。
+	// 「1件でも省いた」が、このセッションで憲章を既に受け取った証拠になる。
+	// **畳んだ文にも要旨を残す**——/pb-onboard の版を渡すと、定型文の全文を一度も
+	// 見ないまま1件目から畳まれることがある。
+	folded := ch.omittedUnchanged
+	if folded {
+		b.WriteString("**前提はチケットの指示より先に効く**（パックの読み方は前回と同じ）。" +
+			"本文と完了条件は `pb_get_task` で読む。\n\n")
+	} else {
+		b.WriteString("**着手する前に、この文書の全体に目を通すこと。** " +
+			"ここに書かれた前提は、チケットの指示より先に効く。\n" +
+			"チケットの本文と完了条件は含まれていない（pb_get_task で読む）。\n\n")
+	}
+
+	// **1・2・4節は畳まない**（チケットごとに違う）。
 	writeScopeSection(&b, t.Scope)
 	writeExecutionSection(&b, t)
 	writeCharterSection(&b, ch)
 	writeRelatedSection(&b, projectKey, t)
-	writeNextStepsSection(&b, t.Seq)
-	writeCharterVersions(&b, ch)
+	writeNextStepsSection(&b, t.Seq, folded)
+	writeCharterVersions(&b, ch, folded)
 
 	return b.String()
 }
@@ -555,16 +567,26 @@ func writeCharterSection(b *strings.Builder, ch charter) {
 	} else if ch.omittedUnchanged {
 		// **省いたことと、戻り方を書く**（pb-134）。本文が要約で手元から消えても、
 		// サーバはそれを知り得ないので、判断はエージェントに置く。
-		b.WriteString("**プロジェクトの規約・価値観・判断の記録である。全参加者を縛る。**\n" +
-			"渡された版（`charter_versions`）と一致した文書は、**本文を省いた**（前回受け取ったものから変わっていない）。" +
-			"**手元に本文が無ければ（会話の要約で消えたときなど）、`charter_versions` を渡さずに呼び直すこと。** " +
-			"それ以外は全文であり、切り詰めていない。\n\n")
+		// **前置きの3段落はここで1段落に畳む**（pb-139）。参画情報と判断の記録の句は、
+		// 実際にそうしたときだけ足す（下の2段落と同じ条件）。
+		b.WriteString("**全参加者を縛る。** 版（`charter_versions`）が一致した文書は本文を省き、それ以外は全文を載せた。" +
+			"**手元に本文が無ければ（会話の要約で消えたときなど）、`charter_versions` を渡さずに呼び直すこと。**")
+		switch {
+		case ch.excludedOnboarding && ch.outlinedDecisions:
+			b.WriteString(" 前回と同じく、参画情報（`" + onboardingDocPath + "`）は載せず、判断の記録（`" + decisionsDocPath + "`）は目次だけを載せた。")
+		case ch.excludedOnboarding:
+			b.WriteString(" 前回と同じく、参画情報（`" + onboardingDocPath + "`）は載せていない。")
+		case ch.outlinedDecisions:
+			b.WriteString(" 前回と同じく、判断の記録（`" + decisionsDocPath + "`）は目次だけを載せた。")
+		}
+		b.WriteString("\n\n")
 	} else {
 		b.WriteString("**プロジェクトの規約・価値観・判断の記録である。全参加者を縛る。**\n" +
 			"以下は全文であり、切り詰めていない。\n\n")
 	}
 	// **落としたことを1行書く**（10.4.3 の 4）。実際に落ちたときだけ出す。
-	if ch.excludedOnboarding {
+	// 畳んだとき（pb-139）は上の1段落に句として入れてあるので、ここでは出さない。
+	if ch.excludedOnboarding && !ch.omittedUnchanged {
 		// **強調は文ではなく句を囲む**（DbDesign.md 8.1.2）。閉じる ** が句点に続き
 		// 直後が全角文字だと、CommonMark の right-flanking にならず ** が地の文に残る。
 		b.WriteString("ただし「エージェントの参画情報」（`" + onboardingDocPath + "`）は**含めていない**。" +
@@ -573,7 +595,7 @@ func writeCharterSection(b *strings.Builder, ch charter) {
 	}
 	// **目次だけにしたことも1行書く**（同じ理由）。実際に目次だけにしたときだけ出すので、
 	// 判断の記録を別のパスへ移すとこの1行が消え、移した人が気づける。
-	if ch.outlinedDecisions {
+	if ch.outlinedDecisions && !ch.omittedUnchanged {
 		b.WriteString("判断の記録（`" + decisionsDocPath + "`）は**目次だけ**を載せている。" +
 			"追記で増え続ける文書なので、着手する作業に関わる判断だけを見出しで引いて読むこと。\n\n")
 	}
@@ -712,8 +734,15 @@ func writeRelatedSection(b *strings.Builder, projectKey string, t packTicket) {
 //
 // **いまは切り詰めが起きないが、入口だけは先に出す**（Design.md 8.5.5）
 // ——パックに無いものを探す手段が書かれていないと、モデルは推測で埋める。
-func writeNextStepsSection(b *strings.Builder, seq int32) {
+//
+// **畳んだときは1行にする**（pb-139）。チケット番号の入った入口は残す。
+func writeNextStepsSection(b *strings.Builder, seq int32, folded bool) {
 	b.WriteString("## 5. 足りないときの調べ方\n\n")
+	if folded {
+		fmt.Fprintf(b, "前回と同じ：`pb_get_task(seq=%d)`（本文・完了条件）・`pb_list_transitions(seq=%d)`（進める先）"+
+			"・`pb_get_doc(path, section)`・`pb_list_tasks(assignee=\"me\")`\n", seq, seq)
+		return
+	}
 	fmt.Fprintf(b, "- チケットの本文・完了条件・関連リンク：`pb_get_task(seq=%d)`\n", seq)
 	fmt.Fprintf(b, "- いまどの状態へ進めるか（進めない理由も返る）：`pb_list_transitions(seq=%d)`\n", seq)
 	b.WriteString("- 憲章の章をもう一度読む：`pb_get_doc(path, section)`（目次は `pb_list_docs`）\n")
@@ -727,7 +756,9 @@ func writeNextStepsSection(b *strings.Builder, seq int32) {
 // 名前順になり、節3 の並びと読み比べにくい）。
 //
 // **憲章を載せていないとき（doc.view が無い・文書が無い）は出さない。** 渡すものが無い。
-func writeCharterVersions(b *strings.Builder, ch charter) {
+//
+// **畳んだとき（pb-139）は説明を括弧書きに縮める。** 値は畳まない。
+func writeCharterVersions(b *strings.Builder, ch charter, folded bool) {
 	if ch.note != "" || len(ch.docs) == 0 {
 		return
 	}
@@ -741,6 +772,10 @@ func writeCharterVersions(b *strings.Builder, ch charter) {
 		fmt.Fprintf(&v, "%s:%d", key, d.Version)
 	}
 	v.WriteString("}")
+	if folded {
+		fmt.Fprintf(b, "\n**憲章の版**：`%s`（次の `charter_versions` にそのまま渡す）\n", v.String())
+		return
+	}
 	fmt.Fprintf(b, "\n**憲章の版**：`%s`\n"+
 		"同じセッションで次に `pb_get_context` を呼ぶときは、この値をそのまま `charter_versions` に渡すと、"+
 		"変わっていない文書の本文を省ける。\n", v.String())

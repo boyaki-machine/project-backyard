@@ -707,3 +707,102 @@ func TestGetContextDeclaresVersionsAsIntegerMap(t *testing.T) {
 		t.Errorf("JSON に additionalProperties が出ていない: %s", raw)
 	}
 }
+
+// ── 2件目以降は定型文を畳む（Design.md 8.5.5。pb-139）──────────────
+
+// unfoldedBoilerplate は1件目にだけ出る定型文（畳んだら消える文）。
+var unfoldedBoilerplate = []string{
+	"**着手する前に、この文書の全体に目を通すこと。**",
+	"以下は全文であり、切り詰めていない。",
+	"参画のときに一度読む手順であって、判断の拠りどころではないためである。",
+	"追記で増え続ける文書なので、着手する作業に関わる判断だけを見出しで引いて読むこと。",
+	"- ボードの状況・自分の担当：",
+	"同じセッションで次に `pb_get_context` を呼ぶときは",
+}
+
+func TestGetContextFoldsBoilerplateWhenDocsAreOmitted(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"red"`)},
+		{status: http.StatusOK, body: versionedOutline()},
+		{status: http.StatusOK, body: rulesBody},
+	}}
+	h := New(rest, "v0")
+
+	// vision と decisions だけ一致（rules は更新されていて全文が届く）。
+	text := callTool1(t, h, toolCallBody("pb_get_context",
+		`{"seq":31,"charter_versions":{"vision":2,"rules":6,"decisions":5}}`)).Content[0].Text
+
+	for _, s := range unfoldedBoilerplate {
+		if strings.Contains(text, s) {
+			t.Errorf("畳むはずの %q が残っている:\n%s", s, text)
+		}
+	}
+	for _, s := range []string{
+		// 畳んだ文にも要旨を残す。
+		"**前提はチケットの指示より先に効く**",
+		"本文と完了条件は `pb_get_task` で読む。",
+		"`charter_versions` を渡さずに呼び直すこと。**",
+		"前回と同じく、参画情報（`agent-onboarding`）は載せず、判断の記録（`decisions`）は目次だけを載せた。",
+		// 5節はチケット番号の入った入口を残す。
+		"`pb_get_task(seq=31)`",
+		"`pb_list_transitions(seq=31)`",
+		"**憲章の版**：`{\"vision\":2,\"rules\":7,\"decisions\":5}`（次の `charter_versions` にそのまま渡す）",
+		// 1・2・4節は畳まない（未設定の注意文・赤の Readiness の指示を含む）。
+		"**このチケットにスコープ境界は設定されていない。**",
+		"**Readiness が赤である。",
+		"**完了していない前提のチケットがあるなら、着手前に利用者へ伝えること。**",
+		// 更新された文書は全文で届く。
+		"推測で実装しない。",
+		// 節の見出しは残す（Testing.md 7.6 の測り方がこれを使う）。
+		"## 3. 憲章",
+		"## 4. 依存・関連するチケット",
+		"## 5. 足りないときの調べ方",
+	} {
+		if !strings.Contains(text, s) {
+			t.Errorf("パックに %q が無い:\n%s", s, text)
+		}
+	}
+}
+
+func TestGetContextKeepsBoilerplateWhenNothingIsOmitted(t *testing.T) {
+	// **「渡しただけ」では畳まない。** 全文書が更新されて全文が届いた回は、読み方の説明も出す。
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: versionedOutline()},
+		{status: http.StatusOK, body: visionBody},
+		{status: http.StatusOK, body: rulesBody},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context",
+		`{"seq":31,"charter_versions":{"vision":1,"rules":6,"decisions":4}}`)).Content[0].Text
+
+	for _, s := range unfoldedBoilerplate {
+		if !strings.Contains(text, s) {
+			t.Errorf("1件も省いていないのに %q が畳まれている:\n%s", s, text)
+		}
+	}
+	if strings.Contains(text, "前回と同じ") {
+		t.Errorf("1件も省いていないのに「前回と同じ」と書いている:\n%s", text)
+	}
+}
+
+func TestGetContextFoldsOnlyTheClausesThatApply(t *testing.T) {
+	// 参画情報も判断の記録も無いプロジェクトでは、その句を足さない。
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"items":[
+			{"path":"vision","title":"価値観・世界観","version":2,"outline":[],"children":[]}]}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context",
+		`{"seq":31,"charter_versions":{"vision":2}}`)).Content[0].Text
+
+	if !strings.Contains(text, "`charter_versions` を渡さずに呼び直すこと。**\n") {
+		t.Errorf("前置きが呼び直し方で終わっていない:\n%s", text)
+	}
+	if strings.Contains(text, "前回と同じく、") {
+		t.Errorf("起きていない除外を書いている:\n%s", text)
+	}
+}
