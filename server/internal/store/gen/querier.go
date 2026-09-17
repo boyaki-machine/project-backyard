@@ -1245,6 +1245,15 @@ type Querier interface {
 	// closed_at は遷移の副作用としてのみ動く（DbDesign.md 6.6）ため、
 	// ワークフローの定義が違うプロジェクトでも意味が変わらない。
 	ListSprintsByProject(ctx context.Context, projectID string) ([]ListSprintsByProjectRow, error)
+	// スプリント中にオンステージへ入った部分木の id を返す（ApiDesign.md 9.12.3。pb-129）。
+	//
+	// **ticket_id の表示上の根がオンステージに居るときだけ返す**（居なければ0行）。
+	// 根のたどり方は GetDisplayRootForStaging と同じ（親が無いか、親がエピック）。
+	// **棚に戻った根（完了し、最後のスプリントが completed）は対象にしない**——
+	// ListOnstageTicketIDs が開始の対象から外すのと同じ判定である。
+	//
+	// 返すのは ticket_id を根とする部分木で、エピックを除く。
+	ListSubtreeIDsJoiningSprint(ctx context.Context, arg ListSubtreeIDsJoiningSprintParams) ([]string, error)
 	// TLS 証明書のクエリ（DbDesign.md 6.15、ApiDesign.md 11.4〜11.6）。pb-3。
 	//
 	// **Design.md 10.3 の第3層である。** 秘密鍵は secret_key で暗号化されて入っており、
