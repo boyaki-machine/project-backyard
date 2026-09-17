@@ -188,7 +188,7 @@ func (q *Queries) GetSprintByID(ctx context.Context, arg GetSprintByIDParams) (G
 const listOnstageTicketIDs = `-- name: ListOnstageTicketIDs :many
 WITH RECURSIVE roots AS (
   SELECT id FROM ticket
-   WHERE project_id = $1::text
+   WHERE project_id = $1::pg_catalog.bpchar
      AND staged_at IS NOT NULL
      AND type <> 'epic'
      AND NOT (
@@ -317,7 +317,7 @@ const listSubtreeIDsJoiningSprint = `-- name: ListSubtreeIDsJoiningSprint :many
 WITH RECURSIVE up AS (
   SELECT t.id, t.parent_id, 0 AS depth
     FROM ticket t
-   WHERE t.project_id = $1::text AND t.id = $2::text
+   WHERE t.project_id = $1::pg_catalog.bpchar AND t.id = $2::pg_catalog.bpchar
   UNION ALL
   SELECT p.id, p.parent_id, up.depth + 1
     FROM ticket p JOIN up ON p.id = up.parent_id
@@ -344,7 +344,7 @@ onstage AS (
 ),
 subtree AS (
   SELECT t.id FROM ticket t
-   WHERE t.id = $2::text AND t.type <> 'epic'
+   WHERE t.id = $2::pg_catalog.bpchar AND t.type <> 'epic'
      AND EXISTS (SELECT 1 FROM onstage)
   UNION
   SELECT c.id FROM ticket c JOIN subtree s ON c.parent_id = s.id
@@ -402,7 +402,7 @@ func (q *Queries) MarkSprintMembershipRemoved(ctx context.Context, sprintID stri
 
 const setTicketsSprintID = `-- name: SetTicketsSprintID :exec
 UPDATE ticket SET sprint_id = $1
- WHERE project_id = $2::text AND id = ANY($3::text[])
+ WHERE project_id = $2::pg_catalog.bpchar AND id = ANY($3::pg_catalog.bpchar[])
 `
 
 type SetTicketsSprintIDParams struct {
@@ -425,7 +425,7 @@ func (q *Queries) SetTicketsSprintID(ctx context.Context, arg SetTicketsSprintID
 
 const unstageClosedTicketsInSprint = `-- name: UnstageClosedTicketsInSprint :execrows
 UPDATE ticket SET staged_at = NULL
- WHERE project_id = $1::text
+ WHERE project_id = $1::pg_catalog.bpchar
    AND sprint_id = $2
    AND staged_at IS NOT NULL
    AND closed_at IS NOT NULL

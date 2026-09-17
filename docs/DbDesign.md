@@ -340,6 +340,15 @@ PgBouncer は Phase 1 では不要。単一プロセス・少人数利用のた�
 
 `COLLATE "C"` を明示するのは、**ロケール依存の文字列比較を避けてBツリー比較を最速にする**ため。DB既定 collation を `C` にしているため冗長だが、将来DB既定を変えた場合の事故を防ぐため列に明記する。
 
+**問い合わせで ID を `text` にキャストしない**（pb-96）。`char(26)` の列を `@x::text` と比べると、PostgreSQL は**列の側を `text` に変換して**比べるので、その列のインデックスが使えない。sqlc に型を伝えるためにキャストが要る場所では **`@x::pg_catalog.bpchar`**（配列は `::pg_catalog.bpchar[]`）と書く。**`::bpchar` と書くと sqlc が Go の型を `interface{}` にする**（修飾名でないと型の対応を引けない）。キャストが要らない場所（`t.ticket_id = @ticket_id` のように列と直接比べる）は、sqlc が列から型を推すので何も書かない。
+
+| 比べ方 | コメント10万件から `ticket_id` で引く（generic plan） |
+|---|---|
+| `ticket_id = $1`（`$1` が `text`） | Seq Scan、14.3ms |
+| `ticket_id = $1`（`$1` が `bpchar`） | Bitmap Index Scan、0.03ms |
+
+**行数が少ないうちは差が見えない**——数百行ならどちらの形でも PostgreSQL は Seq Scan を選ぶので、stg の実測や結合テストでは気づけない。pb-96 で直すまで、`ListTickets` / 業務履歴 / 集計 / 検索 / スプリントの問い合わせで28か所（うち配列10か所）がこの形だった。
+
 ## 4.3 タイムスタンプと `updated_at` トリガ
 
 すべてのテーブルに `created_at`、更新のあるテーブルに `updated_at` を置く。
@@ -377,6 +386,8 @@ SELECT * FROM app_user ORDER BY display_name COLLATE "ja-JP-x-icu";
 | PGroonga | 形態素解析・スコアリングまで対応。高機能だが導入と運用の重さが原則（軽快さ）と衝突する |
 
 Phase 1 は `pg_trgm` とし、実運用で不足が確認された時点で `pg_bigm` へ移行する。**移行時に影響するのはインデックス定義と検索クエリのみで、スキーマ本体は変わらない**よう、検索は `store/search/` に隔離する（`Design.md` 4.6。pb-66 で作った）。
+
+**いまの検索の問い合わせは、この GIN インデックスを使えない形になっている**（pb-96 で実測。語ごとの AND を相関副問い合わせで書いているため、stg で4本とも一度も使われておらず、dev の合成データでチケット3万件・コメント10万件の2語検索が 420ms）。書き換えるか、インデックスを消すかは PB #143 で決める。
 
 ## 4.6 削除方針
 
@@ -2938,7 +2949,7 @@ docker compose exec -T db pg_dump -U pb_owner -Fc pb > backup/pb_$(date +%Y%m%d)
 | スロークエリ | `log_min_duration_statement = 200ms` |
 | 接続状況 | `pg_stat_activity`（`application_name = 'pb'` で識別） |
 | 統計 | `pg_stat_statements` を Phase 2 で有効化 |
-| autovacuum | 既定のまま。`activity` / `audit_log` は追記のみで肥大するため、Phase 2 で監視対象に加える |
+| autovacuum | **既定のまま**（pb-96 で確かめた）。stg で `ticket` などに自動の VACUUM / ANALYZE が走っている。追記だけの `activity` / `audit_log` も、PostgreSQL 13 以降の `autovacuum_vacuum_insert_scale_factor`（既定 0.2）で拾われる。**設定を見直すきっかけは、9.3 の保持期間ポリシーを入れて大量の削除が起きるようになったとき**である（削除は不要行を一度に作る） |
 
 ## 9.3 データ量の見積り
 
@@ -2948,6 +2959,8 @@ docker compose exec -T db pg_dump -U pb_owner -Fc pb > backup/pb_$(date +%Y%m%d)
 | `comment` | 数万 |
 | `activity` | 数十万（フィールド単位で記録するため最多） |
 | `audit_log` | 数万 |
+
+**参照する側の列にインデックスを置いていない外部キーが31本ある**（pb-96 で数えた。多くは `created_by` / `updated_by` / `actor_id` のように `actor` を指す列）。**使われるのは、参照される行を消すときの存在確認と、エージェントを消すときの付け替え（`me_agents.go`）だけ**で、日常の一覧や検索はこれらの列で絞らない。dev の合成データ（`activity` 30万件・`comment` 10万件）で、参照先を消すときの確認が 30ms、付け替え前の件数が 13ms だったので、足していない。**足すきっかけは、エージェントやユーザーの削除が日常の操作になったとき**である。
 
 `activity` の肥大が最初に問題化する見込み。**Phase 2 で保持期間ポリシー（例：2年経過分をアーカイブテーブルへ移動）を検討する。** パーティショニング（`occurred_at` によるレンジ分割）は、その時点で必要なら導入する。
 
