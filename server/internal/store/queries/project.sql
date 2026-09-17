@@ -124,6 +124,7 @@ WITH visible AS (
   ) t
   WHERE (pm.actor_id IS NOT NULL OR @is_administrator::boolean)
     AND (@status_filter::text = 'all' OR p.status = @status_filter::text)
+    AND (sqlc.narg('only_project_id')::text IS NULL OR p.id = sqlc.narg('only_project_id')::text)
 )
 SELECT
   v.id, v.key, v.name, v.description, v.status, v.updated_at,
@@ -158,7 +159,9 @@ FROM project p
 LEFT JOIN project_member pm
        ON pm.project_id = p.id AND pm.actor_id = @actor_id
 WHERE (pm.actor_id IS NOT NULL OR @is_administrator::boolean)
-  AND (@status_filter::text = 'all' OR p.status = @status_filter::text);
+  AND (@status_filter::text = 'all' OR p.status = @status_filter::text)
+  -- トークンに紐づくプロジェクトだけに絞る（ApiDesign.md 5.1。pb-38）
+  AND (sqlc.narg('only_project_id')::text IS NULL OR p.id = sqlc.narg('only_project_id')::text);
 
 -- ── 詳細（ApiDesign.md 5.4。POST /projects の応答も同じ形）───────
 

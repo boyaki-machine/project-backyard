@@ -18,6 +18,7 @@
 package v1
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -261,3 +262,48 @@ func (h *handler) finishSprint(w http.ResponseWriter, r *http.Request) {
 // **writeErr に応答を積んでからこれを返す**——RunInTx は error が返ると
 // ロールバックするので、9.6 の errTicketReference と同じ形である。
 var errSprintConflict = errors.New("sprint conflict")
+
+// joinActiveSprint は、スプリント中にオンステージへ入った部分木を、その場で進行中の
+// スプリントへ所属させる（9.12.3。pb-129）。
+//
+// **所属を書くのが開始だけだと、途中で加わった配下が棚に戻らない。** 9.2.1 の
+// 条件2 は「最後に属したスプリントが completed」を見るので、所属を持たない配下は
+// 根と一緒に完了しても、終了後にバックログへ残る（stg で #81 の配下5件）。
+//
+// 呼ぶのは入口4つ——作成（9.3）・親の付け替え（9.5.2）・段の移動（9.4.1）・
+// 着手による段上げ（9.6）。**ticketID を根とする部分木**を所属させるので、段へ
+// 上げた根を渡せば配下ごと入る。進行中のスプリントが無いか、表示上の根が
+// オンステージに居なければ何もしない。**書き方は開始（startSprint）と同じ**で、
+// 既に所属していれば AddTicketsToSprint の ON CONFLICT で何も起きない。
+func joinActiveSprint(ctx context.Context, q gen.Querier, projectID, ticketID string) error {
+	active, err := q.GetActiveSprint(ctx, projectID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("進行中のスプリントを読めない: %w", err)
+	}
+	ids, err := q.ListSubtreeIDsJoiningSprint(ctx, gen.ListSubtreeIDsJoiningSprintParams{
+		ProjectID: projectID, TicketID: ticketID,
+	})
+	if err != nil {
+		return fmt.Errorf("スプリントへ入れる部分木を読めない: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := q.AddTicketsToSprint(ctx, gen.AddTicketsToSprintParams{
+		TicketIds: ids,
+		SprintID:  active.ID,
+	}); err != nil {
+		return fmt.Errorf("スプリントの対象を記録できない: %w", err)
+	}
+	if err := q.SetTicketsSprintID(ctx, gen.SetTicketsSprintIDParams{
+		SprintID:  pgtype.Text{String: active.ID, Valid: true},
+		ProjectID: projectID,
+		TicketIds: ids,
+	}); err != nil {
+		return fmt.Errorf("チケットのスプリントを更新できない: %w", err)
+	}
+	return nil
+}

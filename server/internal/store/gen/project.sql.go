@@ -357,6 +357,7 @@ WITH visible AS (
   ) t
   WHERE (pm.actor_id IS NOT NULL OR $6::boolean)
     AND ($7::text = 'all' OR p.status = $7::text)
+    AND ($8::text IS NULL OR p.id = $8::text)
 )
 SELECT
   v.id, v.key, v.name, v.description, v.status, v.updated_at,
@@ -385,6 +386,7 @@ type ListProjectsParams struct {
 	ActorID         string
 	IsAdministrator bool
 	StatusFilter    string
+	OnlyProjectID   pgtype.Text
 }
 
 type ListProjectsRow struct {
@@ -433,6 +435,7 @@ func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]L
 		arg.ActorID,
 		arg.IsAdministrator,
 		arg.StatusFilter,
+		arg.OnlyProjectID,
 	)
 	if err != nil {
 		return nil, err
@@ -611,12 +614,15 @@ LEFT JOIN project_member pm
        ON pm.project_id = p.id AND pm.actor_id = $1
 WHERE (pm.actor_id IS NOT NULL OR $2::boolean)
   AND ($3::text = 'all' OR p.status = $3::text)
+  -- トークンに紐づくプロジェクトだけに絞る（ApiDesign.md 5.1。pb-38）
+  AND ($4::text IS NULL OR p.id = $4::text)
 `
 
 type SummarizeProjectsParams struct {
 	ActorID         string
 	IsAdministrator bool
 	StatusFilter    string
+	OnlyProjectID   pgtype.Text
 }
 
 type SummarizeProjectsRow struct {
@@ -631,7 +637,12 @@ type SummarizeProjectsRow struct {
 // （「プロジェクト集合の MAX(updated_at) と件数から生成する」）。**同じ WHERE を
 // 2回書かないよう1文にまとめてある。** 0件のとき last_updated_at は NULL。
 func (q *Queries) SummarizeProjects(ctx context.Context, arg SummarizeProjectsParams) (SummarizeProjectsRow, error) {
-	row := q.db.QueryRow(ctx, summarizeProjects, arg.ActorID, arg.IsAdministrator, arg.StatusFilter)
+	row := q.db.QueryRow(ctx, summarizeProjects,
+		arg.ActorID,
+		arg.IsAdministrator,
+		arg.StatusFilter,
+		arg.OnlyProjectID,
+	)
 	var i SummarizeProjectsRow
 	err := row.Scan(&i.Total, &i.LastUpdatedAt)
 	return i, err

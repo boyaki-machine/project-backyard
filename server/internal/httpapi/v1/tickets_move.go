@@ -220,6 +220,13 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return fmt.Errorf("チケット %d の並び順を更新できない: %w", seq, err)
 		}
+		// **オンステージに置いたら、配下ごと進行中のスプリントへ入れる**（9.12.3。pb-129）。
+		// 段の中の並べ替えでも呼ぶが、既に所属していれば何も起きない
+		if targetStaged {
+			if err := joinActiveSprint(ctx, q, projectID, row.ID); err != nil {
+				return err
+			}
+		}
 		resp.Seq = moved.Seq
 		resp.SortKey = moved.SortKey.String
 		resp.StagedAt = apiTimestamptz(moved.StagedAt)
