@@ -47,7 +47,7 @@ WITH RECURSIVE subtree AS (
   -- その配下のエピックを同時に選んだときに同じ行が2度出る。IN で使う限り
   -- 結果は変わらないが、重複を運ぶ意味がない。
   SELECT id FROM ticket
-   WHERE project_id = @project_id::text AND seq = ANY(@parent_seqs::int[])
+   WHERE project_id = @project_id::pg_catalog.bpchar AND seq = ANY(@parent_seqs::int[])
   UNION
   SELECT c.id FROM ticket c JOIN subtree s ON c.parent_id = s.id
 ),
@@ -77,7 +77,7 @@ WITH RECURSIVE subtree AS (
 -- （親が無いか、親がエピック。ApiDesign.md 9.4.1）から下だけを見る**形になる。
 open_desc AS (
   SELECT id FROM ticket
-   WHERE project_id = @project_id::text
+   WHERE project_id = @project_id::pg_catalog.bpchar
      AND closed_at IS NULL
      AND type <> 'epic'
   UNION
@@ -92,7 +92,7 @@ open_desc AS (
 -- 既定では外れ、retired=true を一緒に送れば含まれる（条件は種類ごとに独立）。
 staged_tree AS (
   SELECT id FROM ticket
-   WHERE project_id = @project_id::text
+   WHERE project_id = @project_id::pg_catalog.bpchar
      AND staged_at IS NOT NULL
      AND type <> 'epic'
   UNION
@@ -142,7 +142,7 @@ filtered AS (
   LEFT JOIN actor  wa ON wa.id = t.working_agent_id
   LEFT JOIN ticket pt ON pt.id = t.parent_id
   LEFT JOIN sprint sp ON sp.id = t.sprint_id
-  WHERE t.project_id = @project_id::text
+  WHERE t.project_id = @project_id::pg_catalog.bpchar
     AND (cardinality(@status_keys::text[]) = 0
          OR t.status_key = ANY(@status_keys::text[]))
     AND (cardinality(@status_categories::text[]) = 0
@@ -152,20 +152,20 @@ filtered AS (
     AND (cardinality(@priorities::text[]) = 0
          OR t.priority = ANY(@priorities::text[]))
     AND (
-      (cardinality(@assignee_ids::text[]) = 0 AND NOT @assignee_none::boolean)
-      OR t.assignee_id = ANY(@assignee_ids::text[])
+      (cardinality(@assignee_ids::pg_catalog.bpchar[]) = 0 AND NOT @assignee_none::boolean)
+      OR t.assignee_id = ANY(@assignee_ids::pg_catalog.bpchar[])
       OR (@assignee_none::boolean AND t.assignee_id IS NULL)
     )
     AND (
-      (cardinality(@tag_ids::text[]) = 0 AND NOT @tag_none::boolean)
+      (cardinality(@tag_ids::pg_catalog.bpchar[]) = 0 AND NOT @tag_none::boolean)
       OR EXISTS (SELECT 1 FROM ticket_tag tt
-                  WHERE tt.ticket_id = t.id AND tt.tag_id = ANY(@tag_ids::text[]))
+                  WHERE tt.ticket_id = t.id AND tt.tag_id = ANY(@tag_ids::pg_catalog.bpchar[]))
       OR (@tag_none::boolean
           AND NOT EXISTS (SELECT 1 FROM ticket_tag tt2 WHERE tt2.ticket_id = t.id))
     )
     AND (
-      (cardinality(@sprint_ids::text[]) = 0 AND NOT @sprint_none::boolean)
-      OR t.sprint_id = ANY(@sprint_ids::text[])
+      (cardinality(@sprint_ids::pg_catalog.bpchar[]) = 0 AND NOT @sprint_none::boolean)
+      OR t.sprint_id = ANY(@sprint_ids::pg_catalog.bpchar[])
       OR (@sprint_none::boolean AND t.sprint_id IS NULL)
     )
     -- open（9.2.1）。true で未完了のみ、false で完了のみ。
@@ -222,7 +222,7 @@ filtered AS (
     -- キーワードの一致は store/search（queries/search.sql）が済ませ、**一致した ID
     -- だけを受け取る**（Design.md 4.6 の隔離）。keyword_set が偽なら絞らない——
     -- 「語が無い」と「語はあったが0件に一致」を区別するためのフラグである。
-    AND (NOT @keyword_set::boolean OR t.id = ANY(@keyword_ids::text[]))
+    AND (NOT @keyword_set::boolean OR t.id = ANY(@keyword_ids::pg_catalog.bpchar[]))
     -- 番号の範囲は両端を含む。0 は指定なし（seq は1から始まる）。
     AND (@seq_from::int <= 0 OR t.seq >= @seq_from::int)
     AND (@seq_to::int <= 0 OR t.seq <= @seq_to::int)
@@ -308,7 +308,7 @@ LIMIT @page_limit OFFSET @page_offset;
 SELECT tt.ticket_id, tg.id, tg.name
   FROM ticket_tag tt
   JOIN tag tg ON tg.id = tt.tag_id
- WHERE tt.ticket_id = ANY(@ticket_ids::text[])
+ WHERE tt.ticket_id = ANY(@ticket_ids::pg_catalog.bpchar[])
  ORDER BY tg.sort_order, tg.name;
 
 -- ── 詳細（ApiDesign.md 9.5.1。手順16b では POST の応答にだけ使う）────
@@ -466,7 +466,7 @@ SELECT id FROM ticket WHERE project_id = @project_id AND seq = @seq;
 -- 渡した件数と一致しなければ、他プロジェクトのタグか存在しない ID が混ざっている。
 -- name: CountProjectTagsByIDs :one
 SELECT count(*)::bigint FROM tag
- WHERE project_id = @project_id AND id = ANY(@ids::text[]);
+ WHERE project_id = @project_id AND id = ANY(@ids::pg_catalog.bpchar[]);
 
 
 -- IsProjectMember は assignee_id の検証に使う（9.3 の not_a_member）。

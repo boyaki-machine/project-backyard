@@ -19,7 +19,7 @@
 -- name: SearchTicketIDs :many
 SELECT t.id
   FROM ticket t
- WHERE t.project_id = @project_id::text
+ WHERE t.project_id = @project_id::pg_catalog.bpchar
    AND NOT EXISTS (
      SELECT 1
        FROM unnest(@patterns::text[]) AS p(pattern)

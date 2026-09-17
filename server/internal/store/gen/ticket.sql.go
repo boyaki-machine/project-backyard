@@ -52,7 +52,7 @@ func (q *Queries) CountOpenChildren(ctx context.Context, parentID pgtype.Text) (
 
 const countProjectTagsByIDs = `-- name: CountProjectTagsByIDs :one
 SELECT count(*)::bigint FROM tag
- WHERE project_id = $1 AND id = ANY($2::text[])
+ WHERE project_id = $1 AND id = ANY($2::pg_catalog.bpchar[])
 `
 
 type CountProjectTagsByIDsParams struct {
@@ -621,7 +621,7 @@ const listTagsForTickets = `-- name: ListTagsForTickets :many
 SELECT tt.ticket_id, tg.id, tg.name
   FROM ticket_tag tt
   JOIN tag tg ON tg.id = tt.tag_id
- WHERE tt.ticket_id = ANY($1::text[])
+ WHERE tt.ticket_id = ANY($1::pg_catalog.bpchar[])
  ORDER BY tg.sort_order, tg.name
 `
 
@@ -788,13 +788,13 @@ WITH RECURSIVE subtree AS (
   -- その配下のエピックを同時に選んだときに同じ行が2度出る。IN で使う限り
   -- 結果は変わらないが、重複を運ぶ意味がない。
   SELECT id FROM ticket
-   WHERE project_id = $5::text AND seq = ANY($6::int[])
+   WHERE project_id = $5::pg_catalog.bpchar AND seq = ANY($6::int[])
   UNION
   SELECT c.id FROM ticket c JOIN subtree s ON c.parent_id = s.id
 ),
 open_desc AS (
   SELECT id FROM ticket
-   WHERE project_id = $5::text
+   WHERE project_id = $5::pg_catalog.bpchar
      AND closed_at IS NULL
      AND type <> 'epic'
   UNION
@@ -803,7 +803,7 @@ open_desc AS (
 ),
 staged_tree AS (
   SELECT id FROM ticket
-   WHERE project_id = $5::text
+   WHERE project_id = $5::pg_catalog.bpchar
      AND staged_at IS NOT NULL
      AND type <> 'epic'
   UNION
@@ -853,7 +853,7 @@ filtered AS (
   LEFT JOIN actor  wa ON wa.id = t.working_agent_id
   LEFT JOIN ticket pt ON pt.id = t.parent_id
   LEFT JOIN sprint sp ON sp.id = t.sprint_id
-  WHERE t.project_id = $5::text
+  WHERE t.project_id = $5::pg_catalog.bpchar
     AND (cardinality($7::text[]) = 0
          OR t.status_key = ANY($7::text[]))
     AND (cardinality($8::text[]) = 0
@@ -863,20 +863,20 @@ filtered AS (
     AND (cardinality($10::text[]) = 0
          OR t.priority = ANY($10::text[]))
     AND (
-      (cardinality($11::text[]) = 0 AND NOT $12::boolean)
-      OR t.assignee_id = ANY($11::text[])
+      (cardinality($11::pg_catalog.bpchar[]) = 0 AND NOT $12::boolean)
+      OR t.assignee_id = ANY($11::pg_catalog.bpchar[])
       OR ($12::boolean AND t.assignee_id IS NULL)
     )
     AND (
-      (cardinality($13::text[]) = 0 AND NOT $14::boolean)
+      (cardinality($13::pg_catalog.bpchar[]) = 0 AND NOT $14::boolean)
       OR EXISTS (SELECT 1 FROM ticket_tag tt
-                  WHERE tt.ticket_id = t.id AND tt.tag_id = ANY($13::text[]))
+                  WHERE tt.ticket_id = t.id AND tt.tag_id = ANY($13::pg_catalog.bpchar[]))
       OR ($14::boolean
           AND NOT EXISTS (SELECT 1 FROM ticket_tag tt2 WHERE tt2.ticket_id = t.id))
     )
     AND (
-      (cardinality($15::text[]) = 0 AND NOT $16::boolean)
-      OR t.sprint_id = ANY($15::text[])
+      (cardinality($15::pg_catalog.bpchar[]) = 0 AND NOT $16::boolean)
+      OR t.sprint_id = ANY($15::pg_catalog.bpchar[])
       OR ($16::boolean AND t.sprint_id IS NULL)
     )
     -- open（9.2.1）。true で未完了のみ、false で完了のみ。
@@ -933,7 +933,7 @@ filtered AS (
     -- キーワードの一致は store/search（queries/search.sql）が済ませ、**一致した ID
     -- だけを受け取る**（Design.md 4.6 の隔離）。keyword_set が偽なら絞らない——
     -- 「語が無い」と「語はあったが0件に一致」を区別するためのフラグである。
-    AND (NOT $23::boolean OR t.id = ANY($24::text[]))
+    AND (NOT $23::boolean OR t.id = ANY($24::pg_catalog.bpchar[]))
     -- 番号の範囲は両端を含む。0 は指定なし（seq は1から始まる）。
     AND ($25::int <= 0 OR t.seq >= $25::int)
     AND ($26::int <= 0 OR t.seq <= $26::int)

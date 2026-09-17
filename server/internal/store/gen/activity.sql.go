@@ -81,8 +81,8 @@ SELECT
 FROM activity a
 LEFT JOIN ticket t ON t.id = a.entity_id AND a.entity_type = 'ticket'
 LEFT JOIN actor ac ON ac.id = a.actor_id
-WHERE a.project_id = $1::text
-  AND ($2::text = ''     OR a.entity_id = $2::text)
+WHERE a.project_id = $1::pg_catalog.bpchar
+  AND ($2::pg_catalog.bpchar = ''     OR (a.entity_type = 'ticket' AND a.entity_id = $2::pg_catalog.bpchar))
   AND ($3::text = '' OR a.action    = $3::text)
 ORDER BY a.occurred_at DESC, a.id DESC
 LIMIT $5 OFFSET $4
@@ -181,8 +181,8 @@ SELECT
   count(*)::bigint                 AS total,
   max(occurred_at)::timestamptz    AS last_occurred_at
 FROM activity
-WHERE project_id = $1::text
-  AND ($2::text = ''     OR entity_id = $2::text)
+WHERE project_id = $1::pg_catalog.bpchar
+  AND ($2::pg_catalog.bpchar = ''     OR (entity_type = 'ticket' AND entity_id = $2::pg_catalog.bpchar))
   AND ($3::text = '' OR action    = $3::text)
 `
 

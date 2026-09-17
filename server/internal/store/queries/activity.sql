@@ -39,6 +39,11 @@ INSERT INTO activity (
 -- チケットを指されたときに空文字を渡してはならない**——全件が返る。呼び出し側は
 -- 解決に失敗した時点で空の一覧を返す（activity.go）。
 --
+-- **@entity_id には entity_type = 'ticket' を添える**（pb-96）。9.13.2 の `entity` は
+-- `ticket:<seq>` だけなので意味は変わらないが、添えないと idx_activity_entity
+-- （entity_type, entity_id, occurred_at）が使えず、チケット1件の履歴を引くたびに
+-- プロジェクトの履歴を全部読む。**ID は ::pg_catalog.bpchar で受ける**（DbDesign.md 4.2）。
+--
 -- name: ListActivity :many
 SELECT
   a.id,
@@ -59,8 +64,8 @@ SELECT
 FROM activity a
 LEFT JOIN ticket t ON t.id = a.entity_id AND a.entity_type = 'ticket'
 LEFT JOIN actor ac ON ac.id = a.actor_id
-WHERE a.project_id = @project_id::text
-  AND (@entity_id::text = ''     OR a.entity_id = @entity_id::text)
+WHERE a.project_id = @project_id::pg_catalog.bpchar
+  AND (@entity_id::pg_catalog.bpchar = ''     OR (a.entity_type = 'ticket' AND a.entity_id = @entity_id::pg_catalog.bpchar))
   AND (@action_filter::text = '' OR a.action    = @action_filter::text)
 ORDER BY a.occurred_at DESC, a.id DESC
 LIMIT @page_limit OFFSET @page_offset;
@@ -75,6 +80,6 @@ SELECT
   count(*)::bigint                 AS total,
   max(occurred_at)::timestamptz    AS last_occurred_at
 FROM activity
-WHERE project_id = @project_id::text
-  AND (@entity_id::text = ''     OR entity_id = @entity_id::text)
+WHERE project_id = @project_id::pg_catalog.bpchar
+  AND (@entity_id::pg_catalog.bpchar = ''     OR (entity_type = 'ticket' AND entity_id = @entity_id::pg_catalog.bpchar))
   AND (@action_filter::text = '' OR action    = @action_filter::text);

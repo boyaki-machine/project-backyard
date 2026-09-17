@@ -104,7 +104,7 @@ SELECT id, name FROM sprint
 -- name: ListOnstageTicketIDs :many
 WITH RECURSIVE roots AS (
   SELECT id FROM ticket
-   WHERE project_id = @project_id::text
+   WHERE project_id = @project_id::pg_catalog.bpchar
      AND staged_at IS NOT NULL
      AND type <> 'epic'
      AND NOT (
@@ -133,7 +133,7 @@ SELECT id FROM subtree;
 WITH RECURSIVE up AS (
   SELECT t.id, t.parent_id, 0 AS depth
     FROM ticket t
-   WHERE t.project_id = @project_id::text AND t.id = @ticket_id::text
+   WHERE t.project_id = @project_id::pg_catalog.bpchar AND t.id = @ticket_id::pg_catalog.bpchar
   UNION ALL
   SELECT p.id, p.parent_id, up.depth + 1
     FROM ticket p JOIN up ON p.id = up.parent_id
@@ -160,7 +160,7 @@ onstage AS (
 ),
 subtree AS (
   SELECT t.id FROM ticket t
-   WHERE t.id = @ticket_id::text AND t.type <> 'epic'
+   WHERE t.id = @ticket_id::pg_catalog.bpchar AND t.type <> 'epic'
      AND EXISTS (SELECT 1 FROM onstage)
   UNION
   SELECT c.id FROM ticket c JOIN subtree s ON c.parent_id = s.id
@@ -187,7 +187,7 @@ ON CONFLICT (ticket_id, sprint_id) DO NOTHING;
 -- updated_at は trg_ticket_updated が動かすので、一覧の再取得は効く。
 -- name: SetTicketsSprintID :exec
 UPDATE ticket SET sprint_id = @sprint_id
- WHERE project_id = @project_id::text AND id = ANY(@ticket_ids::text[]);
+ WHERE project_id = @project_id::pg_catalog.bpchar AND id = ANY(@ticket_ids::pg_catalog.bpchar[]);
 
 -- スプリントを終える（ApiDesign.md 9.12.2）。
 --
@@ -217,7 +217,7 @@ UPDATE ticket_sprint SET removed_at = now()
 -- 続ける——9.2.1 の判定がこれを読むので、ここで NULL にすると材料が消える。
 -- name: UnstageClosedTicketsInSprint :execrows
 UPDATE ticket SET staged_at = NULL
- WHERE project_id = @project_id::text
+ WHERE project_id = @project_id::pg_catalog.bpchar
    AND sprint_id = @sprint_id
    AND staged_at IS NOT NULL
    AND closed_at IS NOT NULL;

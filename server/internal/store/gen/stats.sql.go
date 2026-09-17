@@ -30,7 +30,7 @@ FROM ticket t
 JOIN project p ON p.id = t.project_id
 LEFT JOIN workflow_status ws
        ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
-WHERE t.project_id = $2::text
+WHERE t.project_id = $2::pg_catalog.bpchar
   AND t.type <> 'epic'
 `
 

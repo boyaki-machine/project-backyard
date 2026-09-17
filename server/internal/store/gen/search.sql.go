@@ -13,7 +13,7 @@ const searchTicketIDs = `-- name: SearchTicketIDs :many
 
 SELECT t.id
   FROM ticket t
- WHERE t.project_id = $1::text
+ WHERE t.project_id = $1::pg_catalog.bpchar
    AND NOT EXISTS (
      SELECT 1
        FROM unnest($2::text[]) AS p(pattern)
