@@ -4,7 +4,7 @@ argument-hint: <ticket-id>
 allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 ---
 
-<!-- pb-workflow-version: 2 -->
+<!-- pb-workflow-version: 3 -->
 
 チケット #$1 の実装を行う。以下の手順を順守すること。
 
@@ -15,6 +15,9 @@ allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 
 ## 2. 前提情報の取得
 - `pb_get_context` で境界・実行の前提・憲章・依存するチケットを取得する
+- **このセッションで憲章を読んでいるなら、その版を `charter_versions` に渡す**（直前のパックの末尾にある
+  「憲章の版」、または `/pb-onboard` で控えた版）。変わっていない文書の本文が省かれる
+- **会話の要約などで憲章の本文が手元に無いなら、`charter_versions` を渡さずに呼ぶ**
 - 不足があれば `pb_list_docs` で憲章の目次を見て、`pb_get_doc` で該当章を読む
 - **プロジェクトの経緯を推測で判断しない。必ず PB に問い合わせる**
 

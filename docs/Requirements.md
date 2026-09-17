@@ -443,7 +443,7 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 | `pb_get_doc` | read | 2 | `path`, `section?` | 文書本文（Markdown） | **`section` で章を指定できる。** 全文しか返せない設計にしない（10.6.2） |
 | `pb_get_task` | read | 2 | **`seq`** | チケット本文、種別、DoD、スコープ境界、実行主体属性、readinessスコア | チケットの契約内容を取得。**引数は `seq`**（画面と URL に出るチケット番号。`Design.md` 8.5） |
 | `pb_list_tasks` | read | 2 | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `per_page?` | チケット一覧（軽量） | ボードの状況把握。**`assignee=me` で自分のチケット**——エージェントのトークンでは**所有者**を指す（`Design.md` 8.5） |
-| `pb_get_context` | read | 2 | **`seq`** | **コンテキストパック（Markdown 1枚。10.4）** | **着手前に押し付ける前提一式。** スコープ境界・実行の前提・憲章・依存タスク・深掘りの入口の5節。**引数は `seq`**（`pb_get_task` と同じ理由。`Design.md` 8.5.5）。**`budget` は受けない**——憲章が全文で 3,601 文字であり予算が効かない（10.4.3）。**チケット本文と完了条件は入れない**（`pb_get_task` と重ねない）。手順27 |
+| `pb_get_context` | read | 2 | **`seq`**, `charter_versions?` | **コンテキストパック（Markdown 1枚。10.4）** | **着手前に押し付ける前提一式。** スコープ境界・実行の前提・憲章・依存タスク・深掘りの入口の5節。**`charter_versions` に読んだ憲章の版（`{"rules":7,…}`）を渡すと、版が一致した文書の本文を省く**——1セッションで複数のチケットを消化するとき、同じ憲章を毎回運ばない。パックの末尾に載せた版を出す（`Design.md` 8.5.5。pb-134）。**引数は `seq`**（`pb_get_task` と同じ理由。`Design.md` 8.5.5）。**`budget` は受けない**——憲章が全文で 3,601 文字であり予算が効かない（10.4.3）。**チケット本文と完了条件は入れない**（`pb_get_task` と重ねない）。手順27 |
 | `pb_create_ticket` | write | 2 | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?`, `tag_ids?`, `estimate_point?`, `estimate_hours?`, `start_date?`, `due_date?` | 9.5.1 の応答をそのまま | **議論の結果をその場で起票する。** 10.0.2 の 1・3 への手当。**引数名は REST の本体フィールドに揃える**（`Design.md` 8.5.1）。**後半5つは pb-76 で開けた** |
 | `pb_update_ticket` | write | 2 | **`seq`**, ＋ `pb_create_ticket` の任意引数から **`type` を除いたもの**（**送ったものだけ更新**） | 9.5.1 の応答をそのまま | **起票したあと直す。** 線は「**作れるものは直せる。ただし `type` を除く**」——**種別の切り替えは人が行う**（盤面の見え方が変わるため）。`execution_mode` / `readiness` / `scope` / `working_agent_id` / `actual_hours` / `sprint_id` も**開けない**。**必要権限は `ticket.self_edit`**（0029）。pb-75 |
 | `pb_put_dod` | write | 2 | **`seq`**, `add?[]`, `update?[]`, `delete?[]` | 9.9 の一覧をそのまま | **完了条件を整える。** いまある一覧に対する追加・編集・削除を1回でまとめて受ける（**全置換ではない**）。**`is_satisfied` は開けない**——`pb_submit_result` の「盤面を動かさない」と正面からぶつかる。**必要権限は `ticket.self_edit`**。pb-75 |
@@ -1181,7 +1181,7 @@ allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs,
                mcp__pb__pb_get_doc, mcp__pb__pb_list_tasks
 ---
 
-<!-- pb-workflow-version: 2 -->
+<!-- pb-workflow-version: 3 -->
 
 このプロジェクトの前提を PB から読み込む。以下の手順を順守すること。
 
@@ -1190,12 +1190,15 @@ allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs,
 - 応答に警告が含まれていたら、そのままユーザーに伝える（10.9.3）
 
 ## 2. 憲章を読む
-- `pb_list_docs` で文書の目次を取得する
+- `pb_list_docs` で文書の目次を取得する。**本文より先に読み、文書ごとの `version` を控える**
 - **価値観・規約・学びと知見にあたる文書は全文を読む**（`pb_get_doc`）
 - **判断の記録にあたる文書は、目次から関わる判断だけを読む**（`pb_get_doc` の `section` に見出しを渡す）
 - **「エージェントの参画情報」（`agent-onboarding`）があれば必ず読む。** 作業材料の取り方と参画の合図が書かれている。**無ければ利用者に尋ねる**——PB は取り方を知らない
 - それ以外は目次の見出しだけを控え、必要になった時点で章を指定して読む
 - **文書を全文まとめて読み込まない。** 目次から必要な章を特定して、その章だけを読む
+- **全文を読んだ文書と判断の記録の版だけを残す**（例：`{"vision":2,"rules":7,"learnings":2,"decisions":5}`）。
+  チケットに着手するとき `pb_get_context` の `charter_versions` に渡すと、読んだ本文が省かれる。
+  **読んでいない文書の版は渡さない**——省かれて一度も届かなくなる
 
 ## 3. 自分の担当を知る
 - `pb_list_tasks` で自分に割り当てられた未完了のチケットを取得する
@@ -1222,6 +1225,11 @@ allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs,
 読ませる先が無ければ、文書を作っても誰も読みに行かない。**「勝手に取得しない」と書くのは、
 参画が読み取りのコマンドだからである**——取得は作業場所を書き換える。
 
+**手順2 で版を控えるのは pb-134 である**（`Design.md` 8.5.5）。参画で読んだ憲章を、1件目の
+`pb_get_context` でもう一度受け取らないためである。**控えるのは全文を読んだ文書と判断の記録だけ**
+——読んでいない文書の版まで渡すと、その文書は省かれ続けて一度も届かない。**目次を本文より先に読む**
+のは、間に更新されたとき控えた版のほうが古くなり、次のパックで全文が届く向きに倒すためである。
+
 **あわせて「このリポジトリ」を「この作業場所」へ改めた。** リポジトリを持たないプロジェクト
 （10.9.1 の MCP 型）でも同じ文面が使われる。
 
@@ -1238,7 +1246,7 @@ argument-hint: <ticket-id>
 allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 ---
 
-<!-- pb-workflow-version: 2 -->
+<!-- pb-workflow-version: 3 -->
 
 チケット #$1 の実装を行う。以下の手順を順守すること。
 
@@ -1249,6 +1257,9 @@ allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 
 ## 2. 前提情報の取得
 - `pb_get_context` で設計方針・過去の決定・既知の注意点・失敗記録を取得する
+- **このセッションで憲章を読んでいるなら、その版を `charter_versions` に渡す**（直前のパックの末尾にある
+  「憲章の版」、または `/pb-onboard` で控えた版）。変わっていない文書の本文が省かれる
+- **会話の要約などで憲章の本文が手元に無いなら、`charter_versions` を渡さずに呼ぶ**
 - 不足があれば `pb_list_docs` で憲章の目次を見て、`pb_get_doc` で該当章を読む
 - **プロジェクトの経緯を推測で判断しない。必ずPBに問い合わせる**
 
@@ -1312,7 +1323,7 @@ description: PBのチケット記述を改善する
 argument-hint: <ticket-id>
 ---
 
-<!-- pb-workflow-version: 2 -->
+<!-- pb-workflow-version: 3 -->
 
 チケット #$1 の記述を、AIエージェントが自律実行できる水準まで引き上げる。
 

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -502,5 +503,207 @@ func TestGetContextSaysDecisionsHasNoHeadings(t *testing.T) {
 	// **判断の記録は目次の形で載っている**ので、「1件も無い」とは言わない。
 	if strings.Contains(text, "1件も無い") {
 		t.Errorf("判断の記録があるのに「1件も無い」と言っている:\n%s", text)
+	}
+}
+
+// ── 読んだ憲章の版を受ける（Design.md 8.5.5。pb-134）──────────────
+
+// versionedOutline は版を持つ目次（vision v2 / rules v7 / decisions v5）。
+func versionedOutline() string {
+	return `{"items":[
+		{"path":"agent-onboarding","title":"エージェントの参画情報","version":3,"outline":[],"children":[]},
+		{"path":"vision","title":"価値観・世界観","version":2,"outline":[],"children":[]},
+		{"path":"rules","title":"規約","version":7,"outline":[],"children":[]},
+		{"path":"decisions","title":"判断の記録","version":5,"outline":[{"section":"技術選定","level":2}],"children":[]}]}`
+}
+
+const (
+	visionBody = `{"body_md":"人とエージェントの器である。","version":2}`
+	rulesBody  = `{"body_md":"推測で実装しない。","version":7}`
+)
+
+func TestGetContextWithoutVersionsPrintsThemAtTheEnd(t *testing.T) {
+	// **渡さなければ今までと同じ応答**で、末尾に版の1行が増えるだけ。
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: versionedOutline()},
+		{status: http.StatusOK, body: visionBody},
+		// 目次を読んでから本文を読むまでに更新された——**出す版は本文と同じ応答から取る**。
+		{status: http.StatusOK, body: `{"body_md":"推測で実装しない。","version":8}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+
+	for _, s := range []string{
+		"以下は全文であり、切り詰めていない。",
+		"人とエージェントの器である。",
+		"推測で実装しない。",
+		"- 技術選定\n",
+		"**憲章の版**：`{\"vision\":2,\"rules\":8,\"decisions\":5}`",
+	} {
+		if !strings.Contains(text, s) {
+			t.Errorf("パックに %q が無い:\n%s", s, text)
+		}
+	}
+	if strings.Contains(text, "前回から変わっていない") {
+		t.Errorf("版を渡していないのに省いている:\n%s", text)
+	}
+	// **版の行はパックの末尾に置く**（5節の後）。
+	if strings.Index(text, "**憲章の版**") < strings.Index(text, "## 5. 足りないときの調べ方") {
+		t.Errorf("版の行が末尾にない:\n%s", text)
+	}
+}
+
+func TestGetContextOmitsDocsWhoseVersionMatches(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{"allow":["src/**"]}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: versionedOutline()},
+	}}
+	h := New(rest, "v0")
+
+	out := callTool1(t, h, toolCallBody("pb_get_context",
+		`{"seq":31,"charter_versions":{"vision":2,"rules":7,"decisions":5}}`))
+	if out.IsError {
+		t.Fatalf("成功のはずが isError: %s", out.Content[0].Text)
+	}
+	text := out.Content[0].Text
+
+	// **一致した文書の本文は引かない**（10.3 を叩かない）。
+	want := []string{"/api/v1/projects/demo/tickets/31", "/api/v1/projects/demo/docs"}
+	if strings.Join(rest.gotPaths, ",") != strings.Join(want, ",") {
+		t.Errorf("叩いた REST = %v, want %v", rest.gotPaths, want)
+	}
+	for _, s := range []string{
+		// 1・2・4・5節は毎回出す。
+		"`src/**`",
+		"## 2. 実行の前提",
+		"## 4. 依存・関連するチケット",
+		"## 5. 足りないときの調べ方",
+		// 省いたことと、戻り方。
+		"`charter_versions` を渡さずに呼び直すこと。",
+		"### 規約（`rules`）\n\n前回から変わっていない（版 7）。本文を省いた。",
+		"### 判断の記録（`decisions`）\n\n前回から変わっていない（版 5）。目次を省いた。",
+		"**憲章の版**：`{\"vision\":2,\"rules\":7,\"decisions\":5}`",
+	} {
+		if !strings.Contains(text, s) {
+			t.Errorf("パックに %q が無い:\n%s", s, text)
+		}
+	}
+	for _, s := range []string{"以下は全文であり", "推測で実装しない。", "- 技術選定"} {
+		if strings.Contains(text, s) {
+			t.Errorf("省くはずの %q が載っている:\n%s", s, text)
+		}
+	}
+}
+
+func TestGetContextSendsOnlyTheChangedDoc(t *testing.T) {
+	// **途中で誰かが規約を直しても、その文書だけは届く。** 渡されていない文書（decisions）も載る。
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: versionedOutline()},
+		{status: http.StatusOK, body: rulesBody},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context",
+		`{"seq":31,"charter_versions":{"vision":2,"rules":6}}`)).Content[0].Text
+
+	want := []string{
+		"/api/v1/projects/demo/tickets/31",
+		"/api/v1/projects/demo/docs",
+		"/api/v1/projects/demo/docs/rules",
+	}
+	if strings.Join(rest.gotPaths, ",") != strings.Join(want, ",") {
+		t.Errorf("叩いた REST = %v, want %v", rest.gotPaths, want)
+	}
+	for _, s := range []string{
+		"### 価値観・世界観（`vision`）\n\n前回から変わっていない（版 2）。",
+		"推測で実装しない。",
+		"- 技術選定\n",
+		"**憲章の版**：`{\"vision\":2,\"rules\":7,\"decisions\":5}`",
+	} {
+		if !strings.Contains(text, s) {
+			t.Errorf("パックに %q が無い:\n%s", s, text)
+		}
+	}
+	if strings.Contains(text, "人とエージェントの器である。") {
+		t.Errorf("変わっていない vision の本文が載っている:\n%s", text)
+	}
+}
+
+func TestGetContextIgnoresUnknownPathsInVersions(t *testing.T) {
+	// 参画情報（パックに載せない）と、もう無い文書の版は無視する。0 は版として扱わない。
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"items":[
+			{"path":"agent-onboarding","title":"エージェントの参画情報","version":3,"outline":[],"children":[]},
+			{"path":"vision","title":"価値観・世界観","version":0,"outline":[],"children":[]}]}`},
+		{status: http.StatusOK, body: `{"body_md":"人とエージェントの器である。","version":0}`},
+	}}
+	h := New(rest, "v0")
+
+	out := callTool1(t, h, toolCallBody("pb_get_context",
+		`{"seq":31,"charter_versions":{"agent-onboarding":3,"gone":4,"vision":0}}`))
+	if out.IsError {
+		t.Fatalf("知らないパスで失敗している: %s", out.Content[0].Text)
+	}
+	text := out.Content[0].Text
+	if !strings.Contains(text, "人とエージェントの器である。") || strings.Contains(text, "前回から変わっていない") {
+		t.Errorf("一致していないのに省いている:\n%s", text)
+	}
+	if strings.Contains(text, "agent-onboarding\":") || strings.Contains(text, "\"gone\"") {
+		t.Errorf("載せていない文書の版を出している:\n%s", text)
+	}
+}
+
+func TestGetContextRejectsMalformedVersions(t *testing.T) {
+	for _, args := range []string{
+		`{"seq":31,"charter_versions":{"rules":"v7"}}`,
+		`{"seq":31,"charter_versions":"rules:7"}`,
+	} {
+		h := New(&fakeREST{steps: charterSteps(ticketJSON(`{}`, "agent_draft", `"green"`))}, "v0")
+
+		res := decodeRPC(t, callMCP(t, h, agentPrincipal(), toolCallBody("pb_get_context", args)))
+
+		if res.Error == nil || res.Error.Code != codeInvalidParams {
+			t.Errorf("%s: エラー = %+v, want %d", args, res.Error, codeInvalidParams)
+		}
+	}
+}
+
+func TestGetContextOmitsVersionsWithoutDocView(t *testing.T) {
+	// **doc.view が無いときは今までどおり憲章を丸ごと省き、版の行も出さない**（渡すものが無い）。
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusForbidden, body: `{"error":{"code":"forbidden","message":"権限がありません"}}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context",
+		`{"seq":31,"charter_versions":{"rules":7}}`)).Content[0].Text
+
+	if !strings.Contains(text, "doc.view") {
+		t.Errorf("省いた理由を書いていない:\n%s", text)
+	}
+	if strings.Contains(text, "憲章の版") || strings.Contains(text, "前回から変わっていない") {
+		t.Errorf("憲章を読めないのに版を扱っている:\n%s", text)
+	}
+}
+
+func TestGetContextDeclaresVersionsAsIntegerMap(t *testing.T) {
+	// **値の型をスキーマで宣言する**（引数をオブジェクトで受ける理由。Design.md 8.5.5）。
+	var got property
+	for _, tl := range contextTools() {
+		if tl.Name == "pb_get_context" {
+			got = tl.InputSchema.Properties["charter_versions"]
+		}
+	}
+	if got.Type != "object" || got.AdditionalProperties == nil || got.AdditionalProperties.Type != "integer" {
+		t.Errorf("charter_versions のスキーマ = %+v", got)
+	}
+	raw, _ := json.Marshal(got)
+	if !strings.Contains(string(raw), `"additionalProperties":{"type":"integer"`) {
+		t.Errorf("JSON に additionalProperties が出ていない: %s", raw)
 	}
 }

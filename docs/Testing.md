@@ -240,6 +240,8 @@ for p, n in size.items(): print("  ", p, n)
 print("3文書の合計 :", sum(size.get(p, 0) for p in ("rules", "vision", "learnings")), "文字")'
 ```
 
+**`charter_versions` を渡さずに叩く。** 渡すと版が一致した文書の本文が省かれ、字数が測れない（`Design.md` 8.5.5。pb-134）。
+
 **stg は TLS で動いている**ので、`https` と `--cacert` で叩く（証明書の渡し方は `Development.md` 14.2）。
 `http://localhost:8081` を叩くと 400 が返り、JSON を読めずに落ちる。
 

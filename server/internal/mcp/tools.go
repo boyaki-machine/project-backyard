@@ -41,15 +41,20 @@ type schema struct {
 // （Requirements.md 10.6.1 のレポート）が配列とオブジェクトの入れ子を持つため
 // である。**ここが表せないと、モデルは中身の形を知らないまま埋めることになる**
 // ——description で言葉にするより、スキーマで宣言したほうが取り違えが減る。
+//
+// **AdditionalProperties は pb-134 で足した。** pb_get_context の charter_versions が
+// 「文書のパス → 版」の対応で、キーを先に列挙できないためである。値の型（整数）を
+// ここで宣言しておくと、クライアントが渡す前に検査できる。
 type property struct {
-	Type        string              `json:"type"`
-	Description string              `json:"description"`
-	Enum        []string            `json:"enum,omitempty"`
-	Minimum     *int                `json:"minimum,omitempty"`
-	Maximum     *int                `json:"maximum,omitempty"`
-	Items       *property           `json:"items,omitempty"`
-	Properties  map[string]property `json:"properties,omitempty"`
-	Required    []string            `json:"required,omitempty"`
+	Type                 string              `json:"type"`
+	Description          string              `json:"description"`
+	Enum                 []string            `json:"enum,omitempty"`
+	Minimum              *int                `json:"minimum,omitempty"`
+	Maximum              *int                `json:"maximum,omitempty"`
+	Items                *property           `json:"items,omitempty"`
+	Properties           map[string]property `json:"properties,omitempty"`
+	AdditionalProperties *property           `json:"additionalProperties,omitempty"`
+	Required             []string            `json:"required,omitempty"`
 }
 
 // objectItems は「オブジェクトの配列」を1行で書くための小道具。

@@ -30,8 +30,9 @@ import (
 // 値だけ先に置く。
 //
 // **手順ファイルの本文を変えたら、ここを上げる。** 2 は pb-119（pb-onboard が判断の記録を
-// 目次から読むようにした）。28b・28c では本文を変えても上げていなかったので、1 の中身は一定ではない。
-const WorkflowVersion = 2
+// 目次から読むようにした）、3 は pb-134（pb-onboard が憲章の版を控え、pb-implement が
+// charter_versions に渡すようにした）。28b・28c では本文を変えても上げていなかったので、1 の中身は一定ではない。
+const WorkflowVersion = 3
 
 //go:embed templates/body/*.md
 var bodyFS embed.FS

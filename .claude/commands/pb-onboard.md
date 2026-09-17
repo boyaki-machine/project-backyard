@@ -3,7 +3,7 @@ description: PB のプロジェクトに参画する（規約と担当を読む�
 allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs, mcp__pb__pb_get_doc, mcp__pb__pb_list_tasks
 ---
 
-<!-- pb-workflow-version: 2 -->
+<!-- pb-workflow-version: 3 -->
 
 このプロジェクトの前提を PB から読み込む。以下の手順を順守すること。
 
@@ -12,11 +12,14 @@ allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs, mcp__pb__pb_get_d
 - 応答に警告が含まれていたら、そのままユーザーに伝える
 
 ## 2. 憲章を読む
-- `pb_list_docs` で文書の目次を取得する
+- `pb_list_docs` で文書の目次を取得する。**本文より先に読み、文書ごとの `version` を控える**
 - **価値観・規約・学びと知見にあたる文書は全文を読む**（`pb_get_doc`）
 - **判断の記録にあたる文書は、目次から関わる判断だけを読む**（`pb_get_doc` の `section` に見出しを渡す）
 - それ以外は目次の見出しだけを控え、必要になった時点で章を指定して読む
 - **文書を全文まとめて読み込まない。** 目次から必要な章を特定して、その章だけを読む
+- **全文を読んだ文書と判断の記録の版だけを残す**（例：`{"vision":2,"rules":7,"learnings":2,"decisions":5}`）。
+  チケットに着手するとき `pb_get_context` の `charter_versions` に渡すと、読んだ本文が省かれる。
+  **読んでいない文書の版は渡さない**——省かれて一度も届かなくなる
 
 ## 3. 自分の担当を知る
 - `pb_list_tasks` で自分に割り当てられた未完了のチケットを取得する
