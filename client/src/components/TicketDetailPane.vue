@@ -66,9 +66,16 @@ import {
   executionModeOptions,
   priorityLabels,
   priorityOrder,
+  readinessLabels,
+  readinessOptions,
+  scopeKeys,
+  scopeText,
   ticketTypeIcons,
   ticketTypeLabels,
+  unknownScopeEntries,
+  withScopeLines,
 } from '../api/tickets'
+import type { ScopeKey } from '../api/tickets'
 import type {
   CreateTicketRequest,
   Ticket,
@@ -201,6 +208,19 @@ type EditField =
   | 'actual_hours'
   | 'start_date'
   | 'due_date'
+  | 'readiness_note'
+  | ScopeField
+
+/** スコープ境界はキーごとに1欄（5.5「スコープ境界」。pb-45） */
+type ScopeField = `scope.${ScopeKey}`
+
+function isScopeField(field: EditField): field is ScopeField {
+  return field.startsWith('scope.')
+}
+
+function scopeKeyOf(field: ScopeField): ScopeKey {
+  return field.slice('scope.'.length) as ScopeKey
+}
 
 const editing = ref<EditField | null>(null)
 const draft = ref('')
@@ -209,11 +229,14 @@ const fieldError = ref<{ field: string; message: string } | null>(null)
 
 const editorRef = useTemplateRef<InstanceType<typeof MarkdownEditorComponent>>('editorRef')
 const inputRef = useTemplateRef<HTMLInputElement>('inputRef')
+/** `v-for` の中に置くので配列で返る。開いているのは常に1つだけ */
+const scopeRef = useTemplateRef<HTMLTextAreaElement[]>('scopeRef')
 
 /** いまの値を編集用の文字列にする。**数値の `null` は空文字**（未設定と 0 を分ける） */
 function currentText(field: EditField): string {
   const t = ticket.value
   if (t === null) return ''
+  if (isScopeField(field)) return scopeText(t.scope, scopeKeyOf(field))
   const v = t[field]
   return v === null || v === undefined ? '' : String(v)
 }
@@ -230,6 +253,7 @@ async function startEdit(field: EditField): Promise<void> {
   fieldError.value = null
   await nextTick()
   if (field === 'body_md') editorRef.value?.focus()
+  else if (isScopeField(field)) scopeRef.value?.[0]?.focus()
   else inputRef.value?.focus()
 }
 
@@ -293,6 +317,20 @@ async function commitEdit(): Promise<void> {
   const field = editing.value
   if (field === null || ticket.value === null) return
   const raw = draftText()
+
+  // スコープ境界は**整えた後で**比べる。空行や前後の空白だけを足した編集で
+  // `PATCH` を送らない（5.5「スコープ境界」）
+  if (isScopeField(field)) {
+    const key = scopeKeyOf(field)
+    const next = withScopeLines(ticket.value.scope, key, raw)
+    if (scopeText(next, key) === currentText(field)) {
+      cancelEdit()
+      return
+    }
+    await save({ scope: next }, field)
+    return
+  }
+
   if (raw === currentText(field)) {
     cancelEdit()
     return
@@ -301,6 +339,8 @@ async function commitEdit(): Promise<void> {
   const patch: UpdateTicketRequest = {}
   if (field === 'title') {
     patch.title = raw.trim()
+  } else if (field === 'readiness_note') {
+    patch.readiness_note = raw.trim() === '' ? null : raw.trim()
   } else if (field === 'body_md') {
     patch.body_md = raw === '' ? null : raw
   } else if (field === 'start_date' || field === 'due_date') {
@@ -1525,6 +1565,62 @@ function errorFor(field: string): string {
             </dd>
           </div>
 
+          <!-- Readiness（5.5「Readiness」。pb-45）。**いま着手してよいか**の信号で、
+               パックの「2. 実行の前提」に理由と一緒に出る。**実行モードと違い
+               未判定（`null`）を持つ**。理由が自由文なので2列ぶんを使う -->
+          <div class="meta-item wide">
+            <dt>Readiness</dt>
+            <dd>
+              <select
+                v-if="canEdit"
+                :value="ticket.readiness ?? ''"
+                :disabled="busy"
+                aria-label="Readiness"
+                @change="
+                  selectField(
+                    { readiness: (($event.target as HTMLSelectElement).value || null) as never },
+                    'readiness',
+                  )
+                "
+              >
+                <option value="">未判定</option>
+                <option v-for="r in readinessOptions" :key="r" :value="r">
+                  {{ readinessLabels[r] }}
+                </option>
+              </select>
+              <span v-else>{{ ticket.readiness ? readinessLabels[ticket.readiness] : '未判定' }}</span>
+              <p v-if="errorFor('readiness')" class="field-error" role="alert">
+                {{ errorFor('readiness') }}
+              </p>
+              <div class="readiness-note">
+                <input
+                  v-if="editing === 'readiness_note'"
+                  ref="inputRef"
+                  v-model="draft"
+                  type="text"
+                  aria-label="Readiness の理由"
+                  @keydown.escape="cancelEdit"
+                  @keydown.enter="onEnterCommit($event, commitEdit)"
+                  @blur="commitEdit"
+                />
+                <button
+                  v-else
+                  type="button"
+                  class="value-view"
+                  :disabled="!canEdit"
+                  :title="canEdit ? 'クリックして理由を編集' : ''"
+                  @click="startEdit('readiness_note')"
+                >
+                  <span v-if="ticket.readiness_note">{{ ticket.readiness_note }}</span>
+                  <span v-else class="muted">理由なし</span>
+                </button>
+              </div>
+              <p v-if="errorFor('readiness_note')" class="field-error" role="alert">
+                {{ errorFor('readiness_note') }}
+              </p>
+            </dd>
+          </div>
+
           <!-- タグは2列ぶんを使う。数が読めないので1列に押し込むと折り返しが荒れる -->
           <div class="meta-item wide">
             <dt>タグ</dt>
@@ -1902,6 +1998,68 @@ function errorFor(field: string): string {
           <p v-if="errorFor('references')" class="field-error" role="alert">
             {{ errorFor('references') }}
           </p>
+        </section>
+
+        <!-- スコープ境界（5.5「スコープ境界」。pb-45）。**空（`{}`）でも見出しを出す**——
+             ここから入力できるので、隠すと設定できることに気づけない。
+             **知らないキーは落とさず、読み取り専用で出す**（`withScopeLines` が丸ごと写す） -->
+        <section class="block">
+          <h3 class="block-title">スコープ境界</h3>
+          <dl class="scope-list">
+            <div v-for="s in scopeKeys" :key="s.key" class="scope-row">
+              <dt>{{ s.label }}</dt>
+              <dd>
+                <template v-if="editing === `scope.${s.key}`">
+                  <textarea
+                    ref="scopeRef"
+                    v-model="draft"
+                    class="scope-input"
+                    rows="4"
+                    placeholder="1行に1件"
+                    :aria-label="s.label"
+                    @keydown.escape="cancelEdit"
+                  ></textarea>
+                  <div class="block-actions">
+                    <button type="button" class="secondary" :disabled="busy" @click="cancelEdit">
+                      取消
+                    </button>
+                    <button type="button" class="primary" :disabled="busy" @click="commitEdit">
+                      保存
+                    </button>
+                  </div>
+                </template>
+                <button
+                  v-else
+                  type="button"
+                  class="scope-view"
+                  :class="{ readonly: !canEdit }"
+                  :disabled="!canEdit"
+                  :title="canEdit ? `クリックして${s.label}を編集` : ''"
+                  @click="startEdit(`scope.${s.key}`)"
+                >
+                  <template v-if="scopeText(ticket.scope, s.key) !== ''">
+                    <code
+                      v-for="(line, i) in scopeText(ticket.scope, s.key).split('\n')"
+                      :key="i"
+                      class="scope-item"
+                      >{{ line }}</code
+                    >
+                  </template>
+                  <span v-else class="muted">なし</span>
+                </button>
+                <p v-if="errorFor(`scope.${s.key}`)" class="field-error" role="alert">
+                  {{ errorFor(`scope.${s.key}`) }}
+                </p>
+              </dd>
+            </div>
+            <div v-for="[k, v] in unknownScopeEntries(ticket.scope)" :key="k" class="scope-row">
+              <dt>{{ k }}</dt>
+              <dd>
+                <code class="scope-item">{{ v }}</code>
+                <span class="muted">（画面からは編集できない）</span>
+              </dd>
+            </div>
+          </dl>
         </section>
 
         <!-- 完了条件（5.5「完了条件（DoD）」）。**0件でも見出しを出す**——
@@ -2570,6 +2728,76 @@ function errorFor(field: string): string {
 
 .body-view.readonly {
   cursor: default;
+}
+
+/* ── Readiness の理由とスコープ境界（5.5。pb-45）──────────────── */
+
+/* 理由は値の下の行に回す。値と同じ行に並べると、自由文が選択肢を押し縮める */
+.readiness-note {
+  display: flex;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.scope-list {
+  display: grid;
+  gap: var(--pb-space-2);
+  margin: 0;
+}
+
+.scope-row dt {
+  color: var(--pb-text-muted);
+  font-size: 13px;
+}
+
+.scope-row dd {
+  margin: 0;
+}
+
+/* **1件を1行に出す。** 横に流すと、空白を含む1件と2件の区別がつかない
+   （`client/src/ docs/…` が1つのパスに読める。実機で見た） */
+.scope-view {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-height: 28px;
+  padding: var(--pb-space-1);
+  border: 1px solid transparent;
+  border-radius: var(--pb-radius);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: text;
+}
+
+.scope-view:hover:not(:disabled) {
+  border-color: var(--pb-border);
+}
+
+.scope-view.readonly {
+  cursor: default;
+}
+
+.scope-item {
+  overflow-wrap: anywhere;
+}
+
+.scope-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--pb-space-1);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-bg);
+  color: inherit;
+  font-family: var(--pb-font-mono);
+  font-size: 13px;
+  resize: vertical;
 }
 
 /* ── 子チケット ───────────────────────────────────────────── */
