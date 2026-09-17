@@ -4,7 +4,7 @@ argument-hint: <ticket-id>
 allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 ---
 
-<!-- pb-workflow-version: 4 -->
+<!-- pb-workflow-version: 5 -->
 
 チケット #$1 の実装を行う。以下の手順を順守すること。
 
@@ -31,11 +31,8 @@ allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
   応答に理由が返るので、そのままユーザーに伝える
 - **進められるのは、自分の所有者が担当になっているチケットだけである。** 担当が付いて
   いなければ、実装せずユーザーに伝える
-- 作業用の worktree とブランチを作成する
-  `git worktree add ../<repo>-pb-<番号> -b <接頭辞>/pb-<番号>-<スラッグ>`
-  接頭辞は作業の種別で決める（`feature` / `fix` / `docs`）
-- **作った worktree は畳むまでが1組である。** マージし終えた時点、または feature
-  ブランチを削除した時点で `git worktree remove` する（**規約「worktree は作ったら畳む」**）
+- 作業場所とブランチを用意する。**作り方はプロジェクトの規約に従い、規約に無ければユーザーに確認する**
+- **用意した作業場所は、作業を終えたら後始末する。** いつ・どう片付けるかも規約に従う
 
 ## 5. 実装
 - スコープ境界（`scope.allow` / `scope.deny`）の外にあるファイルは変更しない

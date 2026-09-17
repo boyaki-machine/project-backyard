@@ -852,7 +852,7 @@ PM が「文書へ反映せよ」と指示したときに `pb_put_doc` が呼ば
 
 1台のマシンで複数タスクを並行実行する場合、同一リポジトリの同一ブランチで複数エージェントが動くと即座に破綻する。
 
-**タスク単位で git worktree を切る**運用を推奨する。
+**タスク単位で git worktree を切る**運用を推奨する。**推奨はプロジェクトの規約に書き、配布する手順書には書かない**（10.8.6。pb-141）。
 
 ```
 git worktree add ../my-app-pb-123 -b feature/pb-123-<スラッグ>
@@ -1181,7 +1181,7 @@ allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs,
                mcp__pb__pb_get_doc, mcp__pb__pb_list_tasks
 ---
 
-<!-- pb-workflow-version: 4 -->
+<!-- pb-workflow-version: 5 -->
 
 このプロジェクトの前提を PB から読み込む。以下の手順を順守すること。
 
@@ -1246,7 +1246,7 @@ argument-hint: <ticket-id>
 allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 ---
 
-<!-- pb-workflow-version: 4 -->
+<!-- pb-workflow-version: 5 -->
 
 チケット #$1 の実装を行う。以下の手順を順守すること。
 
@@ -1274,9 +1274,8 @@ allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
   応答に理由が返るので、そのままユーザーに伝える（`Design.md` 8.5.3。pb-140）
 - **進められるのは、自分の所有者が担当になっているチケットだけである。** 担当が付いて
   いなければ、実装せず利用者に伝える（`ApiDesign.md` 9.6 の検証6）
-- 作業用の worktree とブランチを作成する
-  `git worktree add ../<repo>-pb-$1 -b <接頭辞>/pb-$1-<スラッグ>`
-  接頭辞は作業の種別で決める（`feature` / `fix` / `docs`。10.7.3）
+- 作業場所とブランチを用意する。**作り方はプロジェクトの規約に従い、規約に無ければユーザーに確認する**
+- **用意した作業場所は、作業を終えたら後始末する。** いつ・どう片付けるかも規約に従う
 
 ## 5. 実装
 - スコープ境界（`scope.allow` / `scope.deny`）の外にあるファイルは変更しない
@@ -1312,6 +1311,13 @@ allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 `.github/prompts/pb-implement.prompt.md` と `.agents/skills/pb-implement/SKILL.md` も**同一内容**とし、
 フロントマターのみ各クライアントの形式に合わせる。
 
+**手順4 は作業場所の作り方と後始末を書かず、プロジェクトの規約に任せる**（pb-141。利用者の判断、2026-09-17）。
+改訂前は `git worktree add` のコマンドと接頭辞の説明を持っていたが、**後始末が無く**、PB 自身のプロジェクトでは
+規約（ブランチとバージョン ＞ worktree は作ったら畳む）が「使う」と「後始末」の両方を持っていて二重になっていた。
+**作業場所の作り方は進め方の規約であり、手順書に書き込まない**（`CLAUDE.md`「規約の正本は PB にある」）。
+規約に記述が無いプロジェクトでは、エージェントは利用者に確認する。**10.7.3 の推奨を新規プロジェクトの
+規約テンプレートに入れるかは PB #142 で決める。**
+
 **本節の記述は、実装済みのツールに合わせて改訂した**（2026-09-06、手順28a）。改訂前は
 `pb_propose_subtasks`（Phase 3。存在しない）を呼ばせ、実行モードを `human-only`、readiness を
 「赤」と書いていた（実装値は `human_only` / `red`）。**手順ファイルは実行されるプロンプトである**
@@ -1325,7 +1331,7 @@ description: PBのチケット記述を改善する
 argument-hint: <ticket-id>
 ---
 
-<!-- pb-workflow-version: 4 -->
+<!-- pb-workflow-version: 5 -->
 
 チケット #$1 の記述を、AIエージェントが自律実行できる水準まで引き上げる。
 
