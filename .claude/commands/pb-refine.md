@@ -3,7 +3,7 @@ description: PB のチケット記述を、エージェントが自律実行で�
 argument-hint: <ticket-id>
 ---
 
-<!-- pb-workflow-version: 4 -->
+<!-- pb-workflow-version: 5 -->
 
 チケット #$1 の記述を、AIエージェントが自律実行できる水準まで引き上げる。
 

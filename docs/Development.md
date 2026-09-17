@@ -1012,6 +1012,8 @@ stg では使っていない（第2層は画面から変える。12章）。
 `pb-refine.md` と `.claude/settings.json` の許可がそれで、**直したいときは
 テンプレート（`server/internal/agentsetup/templates/body/`）を直して取り直す。**
 手で直すと、次に取り直したときに消える。
+**写しとテンプレートがずれると `go test` が落ちる**（`agentsetup` の `TestRepositoryCommandsMatchTemplates`。pb-141）。
+手順28c ではテンプレートだけが、2026-09-12 には写しだけが直り、どちらも気づかれないまま残っていた。
 
 **`.mcp.json` は履歴管理の対象外である**（`Requirements.md` 10.8.1。2026-09-06 に
 `.gitignore` へ移した）。各人のネットワーク事情で書き換えるファイルなので、コミットすると

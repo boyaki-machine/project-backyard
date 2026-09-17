@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -331,4 +332,29 @@ func dropLinesContaining(s, needle string) string {
 		out = append(out, l)
 	}
 	return strings.Join(out, "\n")
+}
+
+// TestRepositoryCommandsMatchTemplates は、このリポジトリの .claude/commands/ にある
+// 配布物の写しが、テンプレートから生成したものと一字一句同じであることを見る（pb-141）。
+//
+// **写しだけを直すと、配布先には届かない。** 手順28c ではテンプレートだけが、2026-09-12 には
+// 写しだけが直り、どちらも人が比べるまで気づかれなかった。**直す場所はテンプレートで、
+// 写しは生成して置く。** pb-step / pb-review はリポジトリ専用で、配布しないので対象外。
+func TestRepositoryCommandsMatchTemplates(t *testing.T) {
+	files, err := Render([]string{"claude_code"}, testParams())
+	if err != nil {
+		t.Fatalf("Render が失敗した: %v", err)
+	}
+	for _, name := range specs["claude_code"].commands {
+		p := ".claude/commands/" + name + ".md"
+		want := findFile(t, files, p).Content
+		got, err := os.ReadFile(filepath.Join("..", "..", "..", p))
+		if err != nil {
+			t.Fatalf("リポジトリの %s を読めない: %v", p, err)
+		}
+		if string(got) != want {
+			t.Errorf("%s がテンプレートから生成したものと違う。"+
+				"テンプレート（templates/body/）を直し、生成したものを写しに置くこと", p)
+		}
+	}
 }
