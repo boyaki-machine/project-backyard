@@ -22,11 +22,15 @@ import MarkdownIt from 'markdown-it'
  *
  * `linkify` は生の URL を自動でリンクにする。`typographer` は入れない
  * （引用符や省略記号を勝手に置き換えると、コード片を地の文に書いたときに壊れる）。
+ *
+ * **`breaks: true`**（段落の中の改行を `<br>` にする。`GuiDesign.md` 5.5、pb-36）。
+ * CommonMark どおりの `false` では、日本語で Enter を打った位置に半角空白が見えていた。
+ * 漢字・かなの間だけ詰める案は、Enter で改行したつもりの文が1行につながるので採らない。
  */
 const md = new MarkdownIt({
   html: false,
   linkify: true,
-  breaks: false,
+  breaks: true,
 })
 
 /**
