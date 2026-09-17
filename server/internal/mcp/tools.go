@@ -161,8 +161,10 @@ func readTools() []tool {
 					"status_category": {Type: "string", Description: "todo / in_progress / review / done のいずれか。ワークフローに依存しない4値で、カンマ区切りで複数指定すると OR"},
 					"assignee": {Type: "string", Description: "担当者。me で自分（エージェントのトークンでは所有者）、" +
 						"none で未割当、アクターの ULID も渡せる。カンマ区切りで複数指定すると OR"},
-					"open":     {Type: "boolean", Description: "true で未完了のものだけ、false で完了したものだけ"},
-					"parent":   {Type: "string", Description: "チケット番号（seq）。そのチケットと全子孫に絞る。カンマ区切りで複数指定すると OR"},
+					"open":   {Type: "boolean", Description: "true で未完了のものだけ、false で完了したものだけ"},
+					"parent": {Type: "string", Description: "チケット番号（seq）。そのチケットと全子孫に絞る。カンマ区切りで複数指定すると OR"},
+					"staged": {Type: "boolean", Description: "true でオンステージのチケット（段に出ている行とその配下。エピックを除く）だけに絞る。" +
+						"「オンステージのチケットに着手して」と頼まれたら、未完了の全件を取らずにこれを使う。false は指定なしと同じ"},
 					"per_page": {Type: "integer", Description: "返す件数。既定 200、上限 200", Minimum: intPtr(1), Maximum: intPtr(perPageMax)},
 				},
 			},
@@ -320,7 +322,10 @@ type listArgs struct {
 	Assignee       string     `json:"assignee"`
 	Open           *bool      `json:"open"`
 	Parent         flexString `json:"parent"`
-	PerPage        flexInt    `json:"per_page"`
+	// Staged は true のときだけ staged=true を送る（pb-138）。**REST は true しか受けない**
+	// （overdue と同じ）ので、false は指定なしとして扱う。
+	Staged  *bool   `json:"staged"`
+	PerPage flexInt `json:"per_page"`
 }
 
 func callListTasks(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
@@ -336,6 +341,9 @@ func callListTasks(h *Handler, r *http.Request, key string, args json.RawMessage
 	setIfNotEmpty(q, "parent", in.Parent.value)
 	if in.Open != nil {
 		q.Set("open", strconv.FormatBool(*in.Open))
+	}
+	if in.Staged != nil && *in.Staged {
+		q.Set("staged", "true")
 	}
 	if in.PerPage.set {
 		if in.PerPage.value < 1 || in.PerPage.value > perPageMax {

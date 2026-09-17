@@ -2483,6 +2483,16 @@ paths:
             type: string
             pattern: '^[0-9]+d$'
           example: 7d
+        - name: staged
+          in: query
+          description: |
+            `true` で**オンステージの行とその全子孫**に限る（ApiDesign.md 9.2.1「オンステージで絞る」。pb-138）。
+            エピックは除く。棚に戻ったものは `retired` の既定どおり外れる。
+
+            **バックログ画面は使わない**（全件を1回で取り、二段を手元で分ける）。MCP の `pb_list_tasks` のための条件である。
+          schema:
+            type: string
+            enum: ['true']
         - name: overdue
           in: query
           description: |

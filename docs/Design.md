@@ -1546,7 +1546,7 @@ Phase 3 であり、人が読んで要ると判断すれば `pb_create_ticket`�
 | `pb_list_docs` | — | `GET /projects/:key/docs?outline=1` | 10.2 の応答をそのまま（**目次と見出しだけ。本文は含まない**） |
 | `pb_get_doc` | `path`, `section?` | `GET /projects/:key/docs/*path` | **本文の Markdown**。`section` を指定すればその章だけ |
 | `pb_get_task` | `seq` | `GET /projects/:key/tickets/:seq` | 9.5.1 の応答をそのまま |
-| `pb_list_tasks` | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `per_page?` | `GET /projects/:key/tickets` | **軽量な部分集合**（下記） |
+| `pb_list_tasks` | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `staged?`, `per_page?` | `GET /projects/:key/tickets` | **軽量な部分集合**（下記） |
 
 **`pb_get_task` の引数は `seq` である**（`Requirements.md` 10.3.2 は `id` と書いていた）。9.1 が「URL とチケット番号を一致させる」と定めており、人が画面で見る番号も `/pb-implement <id>` に渡す値も `seq` である。`id`（ULID）を名乗ると、ULID を渡す呼び出しが必ず出る。
 
@@ -1560,6 +1560,8 @@ seq / type / title / status / priority / assignee / working_agent
 **`working_agent` は手順26b で11項目目にした。** 排他が無いため（`ApiDesign.md` 9.6 は上書きを許す）、**同じ所有者の別のエージェントが既に触ったチケットを、それと知らずにもう一度進めることが起こりうる。** `/pb-onboard` の `pb_list_tasks(assignee=me)` で見えていれば、モデルが気づける。
 
 落とすのは `id`（`seq` で足りる）、`sort_key`（画面の並べ替え用）、`tags` `sprint` `has_children` `reporter`、見積3種、`start_date` `closed_at` `version` `created_at` である。**ボードの状況把握に要らない項目を、一覧の件数ぶん掛け算しない。** 1件の詳細が要るときは `pb_get_task` が全項目を返す。
+
+**`staged` は `true` のときだけ `staged=true` を送る**（pb-138。`ApiDesign.md` 9.2.1「オンステージで絞る」）。オンステージの行とその配下が返る。**`false` は指定なしと同じに扱う**——REST は `true` しか受けない（`overdue` と同じ）ので、そのまま送ると `422` になる。「オンステージのチケットに着手して」と頼まれたときに、未完了の全件を取らずに済ませるための条件である。
 
 **`assignee` に `me` を渡したときは、エージェントの所有者を指す。** エージェントのアクターに担当は付かない（担当は人が持つ）ため、`me` を文字どおり解釈すると `/pb-onboard` の「自分の担当を知る」が必ず0件になる。**6.5 の委譲が「権限の根拠は所有者」と定めているのと同じ理由で、担当の視点も所有者に置く**。引数の値を書き換えるだけなので、MCP 層が独自のルールを持つことにはならない（8.1）。人のトークン（`token_type='api'`）で叩いたときは、従来どおりその人自身を指す。
 

@@ -178,6 +178,10 @@ type ticketFilters struct {
 	// スプリントを終えて棚に戻ったものを一覧から外す。
 	includeRetired bool
 
+	// stagedOnly は staged（9.2.1「オンステージで絞る」。pb-138）。**画面は送らない**
+	// ——MCP の pb_list_tasks が、オンステージの行とその配下だけを取るための条件である。
+	stagedOnly bool
+
 	// normalized は ETag の材料（9.2.5）。解析後の値から作るので、
 	// 同じ意味の違う書き方（?type=bug,task と ?type=task,bug）が同じ値になる。
 	normalized string
@@ -241,6 +245,7 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		ClosedSince:      filters.closedSince,
 		ClosedBefore:     filters.closedBefore,
 		IncludeRetired:   filters.includeRetired,
+		StagedOnly:       filters.stagedOnly,
 		Sort:             page.Sort,
 		SortOrder:        page.Order,
 		PageLimit:        int32(page.Limit()),
@@ -425,6 +430,20 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 	// overdue（9.2.1。手順19b）。**true 以外は受け付けない**——false は
 	// 「期限を過ぎていないもの」ではなく「絞らない」であり、それはキーを
 	// 送らないことで表せる。値を2つ持つと同じ意味の書き方が2通りになる。
+	// staged（9.2.1「オンステージで絞る」。pb-138）。**true 以外は受け付けない**
+	// ——overdue と同じ形で、バックログ段だけを取る用途が無い。
+	switch v := q.Get("staged"); v {
+	case "":
+	case "true":
+		f.stagedOnly = true
+		parts = append(parts, "staged=true")
+	default:
+		details = append(details, apierr.Detail{
+			Field: "staged", Code: "invalid",
+			Message: "staged は true で指定してください",
+		})
+	}
+
 	switch v := q.Get("overdue"); v {
 	case "":
 	case "true":

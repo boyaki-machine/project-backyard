@@ -911,3 +911,29 @@ func TestWriteToolsKeepFailureBody(t *testing.T) {
 		t.Errorf("失敗の details が落ちている: %+v", out)
 	}
 }
+
+// ── オンステージで絞る（Design.md 8.5.2。pb-138）──────────────────
+
+func TestListTasksPassesStagedOnlyWhenTrue(t *testing.T) {
+	// **REST は true しか受けない**（ApiDesign.md 9.2.1。overdue と同じ）ので、false は送らない。
+	for _, c := range []struct {
+		args string
+		want string
+	}{
+		{`{"staged":true}`, "true"},
+		{`{"staged":false}`, ""},
+		{`{}`, ""},
+	} {
+		rest := &fakeREST{body: listBody}
+		h := New(rest, "v0")
+
+		out := callTool1(t, h, toolCallBody("pb_list_tasks", c.args))
+
+		if out.IsError {
+			t.Fatalf("%s: 成功のはずが isError: %s", c.args, out.Content[0].Text)
+		}
+		if got := rest.gotQuery.Get("staged"); got != c.want {
+			t.Errorf("%s: staged = %q, want %q", c.args, got, c.want)
+		}
+	}
+}
