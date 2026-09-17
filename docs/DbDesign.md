@@ -2968,7 +2968,7 @@ docker compose exec -T db pg_dump -U pb_owner -Fc pb > backup/pb_$(date +%Y%m%d)
 | 項目 | 設定 |
 |---|---|
 | スロークエリ | `log_min_duration_statement = 200ms` |
-| 接続状況 | `pg_stat_activity`（`application_name = 'pb'` で識別） |
+| 接続状況 | `pg_stat_activity`（`application_name = 'pb'` で識別）。**セッション数・DB の大きさ・表ごとの件数は画面でも見られる**（アプリケーション設定の DB タブ。`GuiDesign.md` 5.12.2、pb-110） |
 | 統計 | `pg_stat_statements` を Phase 2 で有効化 |
 | autovacuum | **既定のまま**（pb-96 で確かめた）。stg で `ticket` などに自動の VACUUM / ANALYZE が走っている。追記だけの `activity` / `audit_log` も、PostgreSQL 13 以降の `autovacuum_vacuum_insert_scale_factor`（既定 0.2）で拾われる。**設定を見直すきっかけは、9.3 の保持期間ポリシーを入れて大量の削除が起きるようになったとき**である（削除は不要行を一度に作る） |
 

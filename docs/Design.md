@@ -253,6 +253,7 @@ ProjectBackyard/
 │   │   │   ├── queries/*.sql      ← 手書きSQL（sqlc の入力）
 │   │   │   ├── gen/               ← sqlc 生成物（コミットする）
 │   │   │   └── search/            ← 全文検索の実装を隔離（DbDesign 4.5）
+│   │   ├── dbstat/                ← DB の接続状態と統計。sqlc を通さずカタログを読む（ApiDesign 11.10。pb-110）
 │   │   ├── webui/                 ← 静的配信（3.4）
 │   │   │   ├── embed.go           ← //go:embed all:dist
 │   │   │   └── dist/              ← client のビルド成果物（.gitignore、雛形のみコミット）

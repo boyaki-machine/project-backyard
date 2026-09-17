@@ -42,7 +42,7 @@ Phase 1 の全APIを定義する。**9章までは実装済みである**（**4.
 | 6・7 | ユーザー管理・ロール・権限 | アカウント / 権限管理（5.6） |
 | 9 | チケット（一覧・詳細・コメント・DoD・リンク・タグ・スプリント・集計） | バックログ（5.4）、チケット詳細（5.5）、ダッシュボード（5.3） |
 | 10 | **プロジェクト文書（憲章）**。Phase 2 | Docs（5.10）。**MCP の `pb_list_docs` / `pb_get_doc` / `pb_put_doc` もここを通る** |
-| 11 | **アプリケーション設定と TLS 証明書**。Phase 2（pb-2 / pb-3） | アプリケーション設定（5.12）。**設定の3層は `Design.md` 10.3、TLS は 6.6.1 が正本** |
+| 11 | **アプリケーション設定・TLS 証明書・DB の状態**。Phase 2（pb-2 / pb-3 / pb-110） | アプリケーション設定（5.12）。**設定の3層は `Design.md` 10.3、TLS は 6.6.1 が正本** |
 
 MCPサーバ向けのツール定義は本書の範囲外である（`Design.md` 8章、Phase 2）。
 
@@ -2341,6 +2341,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | **エージェント連携セットアップ（Phase 2）** | `GET /agent-client-kinds`<br>`GET /projects/:key/agent-setup`<br>`GET /projects/:key/agent-setup.zip`（ダウンロード） |
 | **アプリケーション設定（Phase 2）** | `GET /admin/settings`<br>`PUT /admin/settings`（保存） |
 | **TLS証明書（Phase 2）** | `GET /admin/tls/certificates`<br>`POST /admin/tls/certificates`（登録）<br>`DELETE /admin/tls/certificates/:id` |
+| **DB（Phase 2）** | `GET /admin/database`（タブを開いたときと再読み込み） |
 | **Docs（Phase 2）** | `GET /projects/:key/docs`（目次）<br>`GET /projects/:key/docs/*path`（本文）<br>`PATCH|DELETE /projects/:key/docs/*path`・`POST /projects/:key/docs`<br>`GET /projects/:key/docs/*path/_revisions`（履歴） |
 
 **各画面が起動時に呼ぶAPIは1〜2本に収まっている。** 設計方針3が満たされていることの確認になる。
@@ -4314,7 +4315,9 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 
 **11.4 以降は TLS 証明書を扱う**（pb-3）。あれは第3層（`Design.md` 6.6.1）で、**値が秘密である点と有効期間で選ばれる点**が第2層と違うため、`app_setting` とは別の表・別のエンドポイントになっている。
 
-**必要権限はどちらも `system.settings`。** この権限は Phase 1 のシード（`DbDesign.md` 7.2）から存在していたが、**本章が最初の利用者である。**
+**11.10 は DB の接続状態と統計を返す**（pb-110）。設定ではなく**状態**であり、変更の口を持たない。
+
+**必要権限はいずれも `system.settings`。** この権限は Phase 1 のシード（`DbDesign.md` 7.2）から存在していたが、**本章が最初の利用者である。**
 
 ## 11.1 `GET /api/v1/admin/settings`
 
@@ -4759,6 +4762,87 @@ pb-cert-pb.example.com.zip
 ### 一般利用者には見せない
 
 **権限は設定一覧と同じ `system.settings`。** 一般利用者に「いま管理者が設定を変えている」を見せる必要はなく、**確認を押す権限も無い**（11.8）。画面は権限を持つ人だけがこの口を引く。
+
+## 11.10 `GET /api/v1/admin/database`
+
+**必要権限**：`system.settings`
+
+**PB が繋いでいる DB の接続状態と統計を返す**（pb-110。`GuiDesign.md` 5.12.2）。**読み取り専用で、
+変更の口は持たない。** バックアップと復元は pb-144、プロジェクト単位の書き出しは pb-145 で扱う。
+
+```json
+{
+  "fetched_at": "2026-09-17T05:03:12Z",
+  "connection": { "host": "127.0.0.1", "port": 5432, "database": "pb", "user": "pb_app", "tls": false },
+  "server": { "version": "17.10 (Debian 17.10-1.pgdg12+1)",
+              "started_at": "2026-09-17T02:17:59Z", "max_connections": 50 },
+  "migration_version": 38,
+  "sessions": { "database": 7, "pb": 5 },
+  "pool": { "total": 5, "acquired": 1, "idle": 4, "max": 10 },
+  "size_bytes": 79712256,
+  "tables": [
+    { "name": "comment", "rows": 7, "size_bytes": 43778048 },
+    { "name": "ticket", "rows": 15, "size_bytes": 24100864 }
+  ]
+}
+```
+
+| 項目 | 内容 |
+|---|---|
+| `connection.host` `port` | **PB に与えられた接続先**（`PB_DATABASE_URL` のホストとポート）。Unix ソケットならディレクトリのパスが入る |
+| `connection.database` `user` | **実際に繋いでいる DB とロール**（`current_database()` / `current_user`） |
+| `connection.tls` | **この要求が使った接続が TLS か。** 接続そのものを見て決める（下記） |
+| `server.version` | `server_version` の値をそのまま返す |
+| `server.max_connections` | **サーバ全体の上限である**（DB ごとではない） |
+| `migration_version` | `goose_db_version` で適用済みの最大の番号 |
+| `sessions.database` | `pg_stat_activity` のうち、**この DB に繋いでいるもの**の数 |
+| `sessions.pb` | そのうち `application_name` が PB の値（既定 `pb`。`DbDesign.md` 3.5）のもの。**PB のプロセスが複数あれば全部を含む** |
+| `pool` | **この要求を受けたプロセスの接続プール**（`total` / `acquired` / `idle` / `max`）。**問い合わせを始める前の値**で、この要求自身の接続を含まない |
+| `size_bytes` | `pg_database_size(current_database())` |
+| `tables[]` | `public` スキーマの表。`rows` は `count(*)` の**正確な数**、`size_bytes` は索引と TOAST を含む大きさ（`pg_total_relation_size`）。**大きさの降順、同じなら名前の昇順** |
+| `tables[].rows` | **`pb_app` が `SELECT` できない表では `null`**（下記） |
+
+**秘密は返さない。** パスワードは応答のどこにも入らない。接続文字列そのものは
+11.1 の `database_url` で、これまでどおり `secret: true` として値を返さない。
+
+**ページネーションも `ETag` も持たない**——表は数十である。
+
+### 件数を推定値ではなく `count(*)` で数える
+
+**推定値（`pg_stat_user_tables.n_live_tup`）は実数とずれる**（pb-110 の dev で `document` 15→10、
+`workflow_transition` 26→22）。自動の VACUUM / ANALYZE が走るまで追いつかない。
+
+**正確な数は、バックアップと復元の突き合わせに使う**（pb-144）。推定値では、戻したあとに
+件数が合っているかを確かめられない。
+
+**全表を1つの文で数える**（`UNION ALL`）。**1つの文は1つのスナップショットで読む**ので、
+数えている途中に書き込みがあっても、表どうしの件数が同じ時点のものになる。
+**代償は行数に比例する時間である**——`pb_app` の `statement_timeout`（15秒。`DbDesign.md` 3.5）を
+超えれば 500 になる。
+
+### `connection.tls` を接続そのものから決める
+
+**`pg_stat_ssl` を引かず、PB 側の接続（ドライバが握っているソケット）を見る。** 問い合わせが
+要らず、DB 側の view の見え方にも依らない。
+
+**`pg_stat_ssl` でも自分の接続の行は読める**（`pb_app` の接続で実測。他のセッションの行は返らない）。
+**ただし `SET ROLE pb_app` で確かめると、自分の行も返らない**——行を見せるかの判定が
+接続したロールで行われるためで、pb-110 ではこれを「読めない」と取り違えかけた。
+**実行時のロールで何が見えるかは、そのロールで接続して確かめる。**
+
+### 読めない表を落とさず `null` で返す
+
+**`pb_app` は既定の権限で `public` の全表を読める**（`DbDesign.md` 3.4 の `ALTER DEFAULT PRIVILEGES`）。
+それでも権限の外に表ができたとき、**`count(*)` が失敗して応答全体が 500 になる**のを避け、
+**一覧から黙って落とすこともしない。** 落とすと、表があることに誰も気づかない。
+
+### 他のセッションの状態（active / idle）を返さない
+
+**`pb_app` からは見えない。** `pg_stat_activity` は、見る側のロールが権限を持たない
+セッションの `state` と `query` を隠す（pb-110 で `pb_app` の接続から確かめた。`pb_owner` の
+セッションは `state` が `NULL`、`query` が `<insufficient privilege>` になる。`pb_app` 自身のセッションは見える）。見せるには
+`pg_read_all_stats` を `pb_app` に与える必要があり、**実行時のロールに他のセッションの
+問い合わせ文を読ませることになる。**
 
 ---
 

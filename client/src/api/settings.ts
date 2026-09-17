@@ -124,3 +124,18 @@ export function confirmSettings(): Promise<void> {
 export function certificateZipUrl(id: string): string {
   return `${BASE_PATH}/admin/tls/certificates/${encodeURIComponent(id)}/certificate.zip`
 }
+
+export type DatabaseStatus = components['schemas']['DatabaseStatus']
+export type DatabaseTable = components['schemas']['DatabaseTable']
+
+/**
+ * DB の接続状態と統計（`ApiDesign.md` 11.10。pb-110）。
+ *
+ * **件数は全表の `count(*)` である。** 行が増えるほど重くなるので、定期的に
+ * 引かない——タブを開いたときと [再読み込み] のときだけ呼ぶ（`GuiDesign.md` 5.12.2）。
+ *
+ * **必要権限は `system.settings`。** パスワードは応答に含まれない。
+ */
+export function getDatabaseStatus(): Promise<DatabaseStatus> {
+  return api.get<DatabaseStatus>('/admin/database')
+}

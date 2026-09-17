@@ -23,13 +23,16 @@ import type { Setting, SettingSource } from '../api/settings'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import PageHeader from '../components/PageHeader.vue'
 import { formatDateTime } from '../lib/datetime'
+import DatabaseTab from './DatabaseTab.vue'
 import TlsCertificatesTab from './TlsCertificatesTab.vue'
 
 /**
  * タブ（`GuiDesign.md` 5.12）。**証明書が設定の一覧に収まらないので分けた**
  * ——1件が複数行の情報を持ち、登録と削除という操作を伴う。
+ *
+ * **DB（5.12.2。pb-110）は設定ではなく状態である。** 変更の操作を持たない。
  */
-type Tab = 'general' | 'tls'
+type Tab = 'general' | 'tls' | 'database'
 const tab = ref<Tab>('general')
 
 const items = ref<Setting[]>([])
@@ -243,11 +246,21 @@ function asApiError(e: unknown): ApiError {
       >
         TLS 証明書
       </button>
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="tab === 'database'"
+        :class="{ on: tab === 'database' }"
+        @click="tab = 'database'"
+      >
+        DB
+      </button>
     </div>
 
     <div class="page-body">
       <div class="page-inner">
     <TlsCertificatesTab v-if="tab === 'tls'" />
+    <DatabaseTab v-else-if="tab === 'database'" />
 
     <template v-else>
     <p v-if="loading" class="muted">読み込み中…</p>
