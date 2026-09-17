@@ -999,6 +999,32 @@ stg では使っていない（第2層は画面から変える。12章）。
 | 起動して即座に落ちる | `deploy/stg/secrets/app_database_url` のパスワードが DB のロールと食い違っている。**秘密を作り直したなら DB も作り直す**（initdb はボリュームが空のときしか走らない） |
 | `docker compose ls` に `pb-stg` が出ない | `make stg-up` |
 
+## 11.6 DB の文字の種類を C.UTF-8 へ移す（pb-143）
+
+**pb-143 より前に作った dev と stg の DB は `LC_CTYPE=C` である。** `C` では pg_trgm が日本語から trigram を取り出せず、キーワード検索のインデックスが日本語に効かない（`DbDesign.md` 4.5）。PB は動くが、**起動時に WARN が出る**。
+
+**dev** は `make dev-reset` で作り直せば新しい設定（`deploy/base/compose.yaml` の `POSTGRES_INITDB_ARGS`）で作られる。データを残したいなら、下の stg と同じ手順を `docker compose -f deploy/base/compose.yaml` で打つ。
+
+**stg** はリポジトリ直下で打つ。**コマンドを変数にまとめない**——zsh は変数に入れたコマンドを単語に分けず、何も実行されない（pb-143 で踏んだ）。手順は配布先向けの `deploy/prod/MANUAL.md` 6章と同じで、**dev で同じコマンドを通して、件数（チケット・コメント・文書・履歴・監査・アクター・マイグレーション）が一致することを確かめてある**（pb-143）。
+
+```
+make stg-stop
+docker compose -f deploy/base/compose.yaml -f deploy/stg/compose.yaml exec -T db pg_dump -U pb_owner -Fc pb > pb-stg-before-ctype.dump
+docker compose -f deploy/base/compose.yaml -f deploy/stg/compose.yaml exec -T db psql -U pb_owner -d postgres -v ON_ERROR_STOP=1 \
+  -c "CREATE DATABASE pb_ctype OWNER pb_owner ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C.UTF-8' TEMPLATE template0"
+docker compose -f deploy/base/compose.yaml -f deploy/stg/compose.yaml exec -T db pg_restore -U pb_owner -d pb_ctype --exit-on-error < pb-stg-before-ctype.dump
+docker compose -f deploy/base/compose.yaml -f deploy/stg/compose.yaml exec -T db psql -U pb_owner -d postgres -v ON_ERROR_STOP=1 \
+  -c "GRANT CONNECT ON DATABASE pb_ctype TO pb_app" \
+  -c "ALTER DATABASE pb RENAME TO pb_before_ctype" \
+  -c "ALTER DATABASE pb_ctype RENAME TO pb"
+make stg-run
+```
+
+- **確かめる**：`make stg-psql` で `SELECT datname, datctype FROM pg_database WHERE datname LIKE 'pb%';`。`pb` が `C.UTF-8` で、`make stg-run` のログに `LC_CTYPE が C` の WARN が出ないこと
+- **戻す**：`make stg-stop` のあと `ALTER DATABASE pb RENAME TO pb_ctype;` と `ALTER DATABASE pb_before_ctype RENAME TO pb;`
+- **片付ける**：確かめ終えたら `DROP DATABASE pb_before_ctype;`。**ダンプはパスワードのハッシュと暗号化した秘密を含む**ので、消すか秘密と同じ扱いで置く
+- **`GRANT CONNECT` を飛ばすと PB がつながらない。** DB 単位の接続権限はダンプに入らない
+
 ---
 
 # 12. エージェントを MCP でつなぐ

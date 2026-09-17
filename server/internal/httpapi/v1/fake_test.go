@@ -1401,6 +1401,10 @@ type ticketFakeState struct {
 	// searchIDs / searchParams は 9.2.1「検索の条件」（pb-66）。返す ID と、受けた引数
 	searchIDs    []string
 	searchParams []gen.SearchTicketIDsParams
+	// searchCtype / trigramSearchParams は pb-143。DB の LC_CTYPE（空なら C）と、
+	// trgm を使う形が受けた引数
+	searchCtype         string
+	trigramSearchParams []gen.SearchTicketIDsByTrigramParams
 
 	nextSeq          int32
 	initialStatusKey string
@@ -1585,6 +1589,24 @@ func (q *fakeQuerier) ListTickets(_ context.Context, arg gen.ListTicketsParams) 
 		return nil, q.ticket.listErr
 	}
 	return q.ticket.rows, nil
+}
+
+// CurrentDatabaseCtype は DB の LC_CTYPE（pb-143）。**既定は C**——検索は英数字の語だけ
+// trgm の形へ切り替わる。searchCtype で差し替えられる。
+func (q *fakeQuerier) CurrentDatabaseCtype(_ context.Context) (string, error) {
+	q.opLog = append(q.opLog, "CurrentDatabaseCtype")
+	if q.ticket.searchCtype == "" {
+		return "C", nil
+	}
+	return q.ticket.searchCtype, nil
+}
+
+// SearchTicketIDsByTrigram は trgm を使う形（pb-143）。SearchTicketIDs と同じく
+// 受けたパターンを記録し、searchIDs を返す。
+func (q *fakeQuerier) SearchTicketIDsByTrigram(_ context.Context, arg gen.SearchTicketIDsByTrigramParams) ([]string, error) {
+	q.opLog = append(q.opLog, "SearchTicketIDsByTrigram")
+	q.ticket.trigramSearchParams = append(q.ticket.trigramSearchParams, arg)
+	return q.ticket.searchIDs, nil
 }
 
 // SearchTicketIDs は 9.2.1「検索の条件」（pb-66）。受けたパターンを記録し、searchIDs を返す。

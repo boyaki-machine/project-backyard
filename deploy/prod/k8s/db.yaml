@@ -92,8 +92,10 @@ spec:
                 secretKeyRef:
                   name: pb
                   key: owner_password
+            # 並び順は C、文字の種類は C.UTF-8（DbDesign.md 3.1 / 4.5）。C.UTF-8 でないと
+            # pg_trgm が日本語から trigram を取り出せず、キーワード検索でインデックスが効かない
             - name: POSTGRES_INITDB_ARGS
-              value: "--encoding=UTF8 --locale=C"
+              value: "--encoding=UTF8 --locale=C --lc-ctype=C.UTF-8"
             # **データは PVC の根ではなくサブディレクトリに置く。** 根に lost+found を作る
             # StorageClass では、空でないディレクトリに initdb が失敗する。
             - name: PGDATA

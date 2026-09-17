@@ -333,6 +333,13 @@ type Querier interface {
 	CreateWebauthnChallenge(ctx context.Context, arg CreateWebauthnChallengeParams) error
 	CreateWorkflowStatus(ctx context.Context, arg CreateWorkflowStatusParams) error
 	CreateWorkflowTransition(ctx context.Context, arg CreateWorkflowTransitionParams) error
+	// CurrentDatabaseCtype は接続先 DB の LC_CTYPE を返す（DbDesign.md 3.1 / 4.5。pb-143）。
+	//
+	// **pg_trgm が日本語から trigram を取り出せるかは、DB を作ったときの LC_CTYPE で決まる。**
+	// C では英数字しか語の文字として数えない。検索の切り替えとサーバ起動時の警告が読む。
+	// **pg_catalog. と修飾して書く。** 修飾しないと sqlc がマイグレーションに無い表として拒む。
+	// current_setting('lc_ctype') は使えない——PostgreSQL 16 で設定から外れた。
+	CurrentDatabaseCtype(ctx context.Context) (string, error)
 	// actor を消せば app_user / user_identity / local_credential /
 	// project_member / access_token は ON DELETE CASCADE で追従する（DbDesign.md 6.2 / 6.3）。
 	DeleteActorByEmail(ctx context.Context, email string) (int64, error)
@@ -916,6 +923,11 @@ type Querier interface {
 	// @entity_id と @action_filter は空文字で「絞らない」を表す。**存在しない
 	// チケットを指されたときに空文字を渡してはならない**——全件が返る。呼び出し側は
 	// 解決に失敗した時点で空の一覧を返す（activity.go）。
+	//
+	// **@entity_id には entity_type = 'ticket' を添える**（pb-96）。9.13.2 の `entity` は
+	// `ticket:<seq>` だけなので意味は変わらないが、添えないと idx_activity_entity
+	// （entity_type, entity_id, occurred_at）が使えず、チケット1件の履歴を引くたびに
+	// プロジェクトの履歴を全部読む。**ID は ::pg_catalog.bpchar で受ける**（DbDesign.md 4.2）。
 	//
 	ListActivity(ctx context.Context, arg ListActivityParams) ([]ListActivityRow, error)
 	// ── ユーザー管理（ApiDesign.md 6章、手順12a）─────────────────────
@@ -1700,6 +1712,21 @@ type Querier interface {
 	//
 	// patterns が空なら全件が返る。呼び出し側は語が無いときに呼ばない。
 	SearchTicketIDs(ctx context.Context, arg SearchTicketIDsParams) ([]string, error)
+	// SearchTicketIDsByTrigram は SearchTicketIDs と**同じ集合**を、pg_trgm の GIN
+	// インデックスを使える形で返す（DbDesign.md 4.5。pb-143）。
+	//
+	// **語ごと・列ごとに「当たる ID」を集め、すべての語に当たったものを残す。**
+	// SearchTicketIDs の NOT EXISTS はチケットを1件ずつ読んで ILIKE を当てるので、
+	// インデックスを1本も使えない（3万件で数百 ms）。ここでは列ごとに別の SELECT に
+	// 分けるので、title / body_md / comment.body_md の各インデックスが語ごとに効く。
+	//
+	// **使えるのは、どの語からも trigram を取り出せるときだけ**である。取り出せない語
+	// （2文字以下、または DB の ctype が C のときの日本語）が1つでもあると、インデックスが
+	// 全件を返して今の形より遅くなる。切り替えは store/search の TrigramUsable が行う。
+	//
+	// NULL の本文は ILIKE が NULL を返すので、当たる側に入らない（SearchTicketIDs の
+	// 「NULL を先に落とす」はここでは要らない）。
+	SearchTicketIDsByTrigram(ctx context.Context, arg SearchTicketIDsByTrigramParams) ([]string, error)
 	// SetProjectStatus は archive / unarchive を1文で行う（5.6）。
 	//
 	// archived_at は archive で now()、unarchive で NULL（5.6 の表）。

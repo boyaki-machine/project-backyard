@@ -127,7 +127,7 @@ psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f create-roles.sql
   - mac / Linux：`openssl rand -hex 16`
   - Windows（PowerShell）：`$b = New-Object byte[] 16; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); ($b | % { $_.ToString('x2') }) -join ''`
 - **作られるもの**：ロール `pb_owner`（スキーマの持ち主。goose が使う）と `pb_app`
-  （PB 本体が使う。テーブルを作れない・消せない）、DB `pb`（UTF8、照合順序 C）、拡張3つ
+  （PB 本体が使う。テーブルを作れない・消せない）、DB `pb`（UTF8、照合順序 C、文字の種類 C.UTF-8）、拡張3つ
 - **2回目は最初の `CREATE ROLE` で止まる。** やり直すときは、先に
   `DROP DATABASE pb; DROP ROLE pb_app; DROP ROLE pb_owner;` を流す（**中身は消える**）
 - **スーパーユーザを持てない PostgreSQL**（クラウドのサービスなど）では、そのサービスの管理用ロールで流す。
@@ -682,3 +682,72 @@ kubectl delete namespace <ns>
 | Pod が再起動を繰り返し、Events に `Liveness probe failed` | 画面で TLS を有効にしたのに、probe が http のまま（5.8 の2） |
 | port-forward の画面でログインしても入れない（http で開いている） | 「Cookie に Secure を付ける」を http のまま有効にした。`kubectl set env -n <ns> deployment/pb PB_COOKIE_SECURE=false` で入り、画面で無効に戻してから `kubectl set env -n <ns> deployment/pb PB_COOKIE_SECURE-` で外す |
 | `exec format error` | ノードの CPU と違う一式を使っている（5.1） |
+
+## 6. DB の文字の種類を C.UTF-8 へ移す（以前の一式で作った DB）
+
+**起動時のログに `DB の LC_CTYPE が C のため、日本語のキーワード検索でインデックスが効かない` と出たら、この章の対象である。** 2.44.147 までの一式は、DB の文字の種類（`LC_CTYPE`）を `C` で作っていた。`C` では PostgreSQL が日本語を「語の文字」として数えないため、キーワード検索のインデックスが日本語に効かない（`DbDesign.md` 4.5）。
+
+- **移さなくても PB は動く。** 日本語の検索が、チケットやコメントが増えるほど遅くなるだけである
+- **文字の種類は DB を作るときに決まり、あとから変えられない。** そこで、別名の DB を `C.UTF-8` で作って中身を移し、名前を入れ替える。**元の DB は別名で残る**ので、名前を戻せば元どおりになる
+- **移している間は PB を止める。** かかる時間は DB の大きさによる
+- **ダンプにはパスワードのハッシュや暗号化した秘密が入る。** 終わったら消すか、秘密ファイルと同じ扱いで保管する
+
+### 6.1 compose（サンプルの DB）
+
+一式のディレクトリで打つ。**名前の入れ替えは、DB につながっているものがあると失敗する**（`database "pb" is being accessed by other users`）ので、先に PB を止める。
+
+```
+docker compose stop app
+docker compose exec -T db pg_dump -U pb_owner -Fc pb > pb-before-ctype.dump
+docker compose exec -T db psql -U pb_owner -d postgres -v ON_ERROR_STOP=1 \
+  -c "CREATE DATABASE pb_ctype OWNER pb_owner ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C.UTF-8' TEMPLATE template0"
+docker compose exec -T db pg_restore -U pb_owner -d pb_ctype --exit-on-error < pb-before-ctype.dump
+docker compose exec -T db psql -U pb_owner -d postgres -v ON_ERROR_STOP=1 \
+  -c "GRANT CONNECT ON DATABASE pb_ctype TO pb_app" \
+  -c "ALTER DATABASE pb RENAME TO pb_before_ctype" \
+  -c "ALTER DATABASE pb_ctype RENAME TO pb"
+docker compose up -d
+```
+
+**`GRANT CONNECT` を忘れない。** DB 単位の接続権限はダンプに入らないので、付けないと PB がつながらない。
+
+### 6.2 Kubernetes（`k8s/db.yaml` のサンプルの DB）
+
+```
+kubectl scale -n <ns> deployment/pb --replicas=0
+kubectl exec -n <ns> pb-db-0 -- pg_dump -U pb_owner -Fc pb > pb-before-ctype.dump
+kubectl exec -n <ns> pb-db-0 -- psql -U pb_owner -d postgres -v ON_ERROR_STOP=1 \
+  -c "CREATE DATABASE pb_ctype OWNER pb_owner ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C.UTF-8' TEMPLATE template0"
+kubectl exec -i -n <ns> pb-db-0 -- pg_restore -U pb_owner -d pb_ctype --exit-on-error < pb-before-ctype.dump
+kubectl exec -n <ns> pb-db-0 -- psql -U pb_owner -d postgres -v ON_ERROR_STOP=1 \
+  -c "GRANT CONNECT ON DATABASE pb_ctype TO pb_app" \
+  -c "ALTER DATABASE pb RENAME TO pb_before_ctype" \
+  -c "ALTER DATABASE pb_ctype RENAME TO pb"
+kubectl scale -n <ns> deployment/pb --replicas=1
+```
+
+**この手順は Kubernetes では確かめていない**（同じ SQL を compose の DB で通した）。
+
+### 6.3 native・外部の PostgreSQL
+
+6.1 と同じ SQL を、`psql -h <ホスト> -U pb_owner -d postgres` で流す（ダンプと復元は `pg_dump -h …` / `pg_restore -h …`）。**`C.UTF-8` が無い OS の PostgreSQL では `CREATE DATABASE` が失敗する。** その場合は、サーバにある UTF-8 のロケール（`locale -a` で探す。例：`ja_JP.UTF-8`、`en_US.UTF-8`）を `LC_CTYPE` に指定する。`LC_COLLATE` は `C` のままにする。**mac の PostgreSQL とクラウドの PostgreSQL では確かめていない。**
+
+### 6.4 確かめる・戻す・片付ける
+
+**確かめる**
+
+```
+SELECT datname, datcollate, datctype FROM pg_database WHERE datname LIKE 'pb%';
+```
+
+`pb` が `C` / `C.UTF-8`、`pb_before_ctype` が `C` / `C` になっていればよい。PB を起動して、**ログに 6章冒頭の警告が出ないこと**、ログインしてチケットとコメントが見えることを確かめる。
+
+**戻す**（PB を止めてから）
+
+```
+ALTER DATABASE pb RENAME TO pb_ctype;
+ALTER DATABASE pb_before_ctype RENAME TO pb;
+```
+
+**片付ける**：確かめ終えたら `DROP DATABASE pb_before_ctype;` とダンプを消す。
+
