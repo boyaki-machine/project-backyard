@@ -324,20 +324,4 @@ input[aria-invalid='true'] {
   gap: var(--pb-space-2);
   cursor: pointer;
 }
-
-/* ── フッタのボタン ────────────────────────────────────── */
-.primary,
-.secondary {
-  height: 32px;
-  padding: 0 var(--pb-space-4);
-  border-radius: var(--pb-radius);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.primary:disabled,
-.secondary:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
 </style>

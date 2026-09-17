@@ -198,22 +198,4 @@ input[aria-invalid='true'] {
   color: var(--pb-danger-text);
   font-size: 13px;
 }
-
-.primary,
-.secondary {
-  display: inline-flex;
-  align-items: center;
-  height: 32px;
-  padding: 0 var(--pb-space-3);
-  border-radius: var(--pb-radius);
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 </style>
