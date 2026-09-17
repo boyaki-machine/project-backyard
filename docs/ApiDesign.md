@@ -1659,6 +1659,8 @@ GET /api/v1/projects?status=active&sort=updated_at&order=desc&page=1&per_page=25
 
 **`progress` はサーバで計算して返す。** 「完了数 ÷ 全数」の定義をフロントに散らさないため。`ticket_count = 0` のときは `0` を返す（`null` にしない）。
 
+**トークンで絞る**（利用者の判断、2026-09-17。pb-38）。**エージェントのトークンでは、所有者のメンバーシップで引く**——5.4 と同じ委譲で、エージェント自身は `project_member` の行を持たないので、自分の ID で引くと必ず0件になる。**トークンにプロジェクトが紐づいていれば（`access_token.project_id`）、そのプロジェクト1件だけを返す**。所有者が他のプロジェクトのメンバーでも、管理者でも返さない（`Design.md` 6.5「他プロジェクトへのアクセス」）。**人のトークンにプロジェクトが紐づいている場合も同じ**で、個別のプロジェクト API が拒む範囲（`CanReachProject`）と一覧に出る範囲を揃える。`total` と `ETag` も同じ条件で数える。
+
 ## 5.2 `GET /api/v1/projects/check-key`
 
 **必要権限**：`project.create`
