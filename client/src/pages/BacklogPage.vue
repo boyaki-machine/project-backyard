@@ -2636,7 +2636,7 @@ watch(projectKey, (key) => {
    使っており、scoped スタイルは見た目を分けても DOM のクラス名は分けない。
    `document.querySelectorAll('.section')` が両方に当たる（検証で実際に踏んだ） */
 .group-section + .group-section {
-  margin-top: var(--pb-space-5);
+  margin-top: var(--pb-space-6);
 }
 
 /* **見出しを面で出す。** 中央寄せや太字は位置と強さの情報であって、

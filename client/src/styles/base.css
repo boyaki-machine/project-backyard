@@ -79,13 +79,7 @@ code,
 kbd,
 samp,
 pre {
-  font-family:
-    ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    'Noto Sans Mono',
-    monospace;
+  font-family: var(--pb-font-mono);
 }
 
 :focus-visible {

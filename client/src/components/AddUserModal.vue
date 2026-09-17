@@ -315,7 +315,7 @@ input[aria-invalid='true'] {
 
 .password-field {
   margin-top: var(--pb-space-2);
-  margin-left: var(--pb-space-5);
+  margin-left: var(--pb-space-6);
 }
 
 .checkbox {

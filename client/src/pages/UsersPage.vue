@@ -1302,7 +1302,7 @@ td.date {
 
 .placeholder-list {
   margin: 0;
-  padding-left: var(--pb-space-5);
+  padding-left: var(--pb-space-6);
   color: var(--pb-text-muted);
   font-size: 13px;
   line-height: 1.8;

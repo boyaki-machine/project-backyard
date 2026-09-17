@@ -54,7 +54,7 @@ STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@1
 	stg-init stg-up stg-down stg-psql stg-migrate stg-build stg-run stg-stop stg-admin-create \
 	dev-client gen-api build-client sync-webui build clean-webui release \
 	version version-check bump-build bump-minor bump-major release-tag \
-	docs-size docs-emphasis fmt-check
+	docs-size docs-emphasis css-tokens fmt-check
 
 ## DB を起動する
 # **app は起動しない。** dev では PB 本体を make run でホストから動かしており、app の
@@ -401,3 +401,9 @@ docs-emphasis:
 		exit 1; \
 	fi
 	@node client/scripts/check-emphasis.mjs $(EMPHASIS_DOCS)
+
+# ── 定義されていないデザイントークン（GuiDesign.md 8.5。pb-102）──────────
+
+## client/src が使う --pb-* がすべて定義されているかを見る（1件でもあれば非ゼロ終了）
+css-tokens:
+	@node client/scripts/check-tokens.mjs client/src

@@ -110,7 +110,7 @@ const matched = computed(() => typed.value.trim() === props.displayName.trim())
 
 .effects {
   margin: 0;
-  padding-left: var(--pb-space-5);
+  padding-left: var(--pb-space-6);
   color: var(--pb-text-muted);
   font-size: 13px;
   list-style: disc;

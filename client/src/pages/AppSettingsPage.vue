@@ -405,42 +405,42 @@ function asApiError(e: unknown): ApiError {
   border-bottom: 2px solid transparent;
   padding: var(--pb-space-2) var(--pb-space-3);
   cursor: pointer;
-  color: var(--pb-fg-muted);
+  color: var(--pb-text-muted);
 }
 .tabs button.on {
-  color: var(--pb-fg);
+  color: var(--pb-text);
   border-bottom-color: var(--pb-accent);
   font-weight: 600;
 }
 .muted {
-  color: var(--pb-fg-muted);
+  color: var(--pb-text-muted);
 }
 .file {
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
   margin-bottom: var(--pb-space-3);
 }
 .notice {
-  color: var(--pb-success-fg);
+  color: var(--pb-text);
 }
 .error {
-  color: var(--pb-danger-fg);
+  color: var(--pb-danger-text);
 }
 .group {
-  margin-top: var(--pb-space-5);
+  margin-top: var(--pb-space-6);
 }
 .section-title {
-  font-size: var(--pb-fs-md);
+  font-size: 14px;
   font-weight: 600;
   border-bottom: 1px solid var(--pb-border);
   padding-bottom: var(--pb-space-1);
 }
 .hint {
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
   margin: var(--pb-space-1) 0 var(--pb-space-3);
 }
 .row {
   padding: var(--pb-space-3) 0;
-  border-bottom: 1px solid var(--pb-border-subtle);
+  border-bottom: 1px solid var(--pb-line);
 }
 .head {
   display: flex;
@@ -451,11 +451,11 @@ function asApiError(e: unknown): ApiError {
   font-weight: 600;
 }
 .badge {
-  font-size: var(--pb-fs-xs);
+  font-size: 11px;
   padding: 0 var(--pb-space-2);
-  border-radius: var(--pb-radius-sm);
+  border-radius: var(--pb-radius);
   border: 1px solid var(--pb-border);
-  color: var(--pb-fg-muted);
+  color: var(--pb-text-muted);
 }
 .src-database {
   border-color: var(--pb-accent);
@@ -486,22 +486,22 @@ function asApiError(e: unknown): ApiError {
 }
 .desc,
 .reason {
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
   margin: var(--pb-space-1) 0 0;
 }
 .desc {
-  color: var(--pb-fg-muted);
+  color: var(--pb-text-muted);
 }
 .warn {
-  font-size: var(--pb-fs-sm);
-  color: var(--pb-warning-fg);
+  font-size: 12px;
+  color: var(--pb-warning-text);
   margin: var(--pb-space-1) 0 0;
 }
 .foot {
   display: flex;
   align-items: center;
   gap: var(--pb-space-3);
-  font-size: var(--pb-fs-sm);
+  font-size: 12px;
   margin-top: var(--pb-space-2);
 }
 .dirty {
