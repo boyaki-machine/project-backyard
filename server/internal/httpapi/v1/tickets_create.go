@@ -166,6 +166,11 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
+		// **オンステージの配下に作ったら、進行中のスプリントへ入れる**（9.12.3。pb-129）
+		if err := joinActiveSprint(ctx, q, projectID, ticketID); err != nil {
+			return err
+		}
+
 		// 応答は 9.5 と同形式（9.3）。作成直後の状態を同じトランザクションから読む。
 		v, err := buildTicketDetail(ctx, q, projectID, seq)
 		if err != nil {

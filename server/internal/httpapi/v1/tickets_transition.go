@@ -232,7 +232,7 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 		// 「オンステージだけを見れば仕掛りが全部わかる」という段の約束を、
 		// 手の操作に頼らずに保つ（GuiDesign.md 5.4）——上げ忘れた仕掛りが
 		// バックログ段に埋もれると、上の段は仕掛りの一覧でなくなる。
-		if err := stageDisplayRootOnStart(ctx, q, wf, before, *target); err != nil {
+		if err := stageDisplayRootOnStart(ctx, q, projectID, wf, before, *target); err != nil {
 			return err
 		}
 
@@ -377,7 +377,7 @@ func cascadeParentsToInProgress(
 // （DbDesign.md 6.6）、やり直しのために状態を戻した行が仕掛りから消えるのは
 // 誤りである。降ろすのは手で戻すか、スプリントを終えるかの2つだけである。
 func stageDisplayRootOnStart(
-	ctx context.Context, q gen.Querier, wf ticketWorkflow,
+	ctx context.Context, q gen.Querier, projectID string, wf ticketWorkflow,
 	before gen.GetTicketBySeqRow, target gen.ListWorkflowStatusesRow,
 ) error {
 	// 未着手カテゴリを出たときだけ動く。遷移前が todo でなければ、
@@ -407,7 +407,8 @@ func stageDisplayRootOnStart(
 	}); err != nil {
 		return fmt.Errorf("チケットをオンステージへ上げられない: %w", err)
 	}
-	return nil
+	// **上げた根は、配下ごと進行中のスプリントへ入れる**（9.12.3。pb-129）
+	return joinActiveSprint(ctx, q, projectID, root.ID)
 }
 
 // transitionDenied は denyTransition の理由を 9.6 の応答へ翻訳する。

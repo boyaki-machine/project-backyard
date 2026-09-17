@@ -313,6 +313,79 @@ func (q *Queries) ListSprintsByProject(ctx context.Context, projectID string) ([
 	return items, nil
 }
 
+const listSubtreeIDsJoiningSprint = `-- name: ListSubtreeIDsJoiningSprint :many
+WITH RECURSIVE up AS (
+  SELECT t.id, t.parent_id, 0 AS depth
+    FROM ticket t
+   WHERE t.project_id = $1::text AND t.id = $2::text
+  UNION ALL
+  SELECT p.id, p.parent_id, up.depth + 1
+    FROM ticket p JOIN up ON p.id = up.parent_id
+   WHERE up.depth < 32
+),
+root AS (
+  SELECT u.id
+    FROM up u
+    LEFT JOIN ticket pt ON pt.id = u.parent_id
+   WHERE u.parent_id IS NULL OR pt.type = 'epic'
+   ORDER BY u.depth
+   LIMIT 1
+),
+onstage AS (
+  SELECT 1
+    FROM ticket r JOIN root ON r.id = root.id
+   WHERE r.staged_at IS NOT NULL
+     AND r.type <> 'epic'
+     AND NOT (
+       r.closed_at IS NOT NULL
+       AND EXISTS (SELECT 1 FROM sprint os
+                    WHERE os.id = r.sprint_id AND os.status = 'completed')
+     )
+),
+subtree AS (
+  SELECT t.id FROM ticket t
+   WHERE t.id = $2::text AND t.type <> 'epic'
+     AND EXISTS (SELECT 1 FROM onstage)
+  UNION
+  SELECT c.id FROM ticket c JOIN subtree s ON c.parent_id = s.id
+   WHERE c.type <> 'epic'
+)
+SELECT id FROM subtree
+`
+
+type ListSubtreeIDsJoiningSprintParams struct {
+	ProjectID string
+	TicketID  string
+}
+
+// スプリント中にオンステージへ入った部分木の id を返す（ApiDesign.md 9.12.3。pb-129）。
+//
+// **ticket_id の表示上の根がオンステージに居るときだけ返す**（居なければ0行）。
+// 根のたどり方は GetDisplayRootForStaging と同じ（親が無いか、親がエピック）。
+// **棚に戻った根（完了し、最後のスプリントが completed）は対象にしない**——
+// ListOnstageTicketIDs が開始の対象から外すのと同じ判定である。
+//
+// 返すのは ticket_id を根とする部分木で、エピックを除く。
+func (q *Queries) ListSubtreeIDsJoiningSprint(ctx context.Context, arg ListSubtreeIDsJoiningSprintParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listSubtreeIDsJoiningSprint, arg.ProjectID, arg.TicketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markSprintMembershipRemoved = `-- name: MarkSprintMembershipRemoved :exec
 UPDATE ticket_sprint SET removed_at = now()
  WHERE sprint_id = $1 AND removed_at IS NULL

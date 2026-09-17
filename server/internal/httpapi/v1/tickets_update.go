@@ -224,6 +224,14 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
+		// **オンステージの配下へ付け替えたら、部分木ごと進行中のスプリントへ入れる**
+		// （9.12.3。pb-129）。外す方向（null）は扱わない
+		if patch.ParentSeq.Set && !patch.ParentSeq.Null {
+			if err := joinActiveSprint(ctx, q, projectID, before.ID); err != nil {
+				return err
+			}
+		}
+
 		v, err := buildTicketDetail(ctx, q, projectID, seq)
 		if err != nil {
 			return fmt.Errorf("更新したチケットを読めない: %w", err)
