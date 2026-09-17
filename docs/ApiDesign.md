@@ -746,7 +746,7 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 改訂前の 6.5 は `ticket:read` / `ticket:claim` / `result:submit` / `context:read` という別語彙を
 挙げていたが、**その語彙で発行すると実効権限が0件になる**ため、権限キーへ置き換えた。
 **エージェント用トークンは 4.5.3 が発行する。** スコープは**許可リストの中から選べる**
-（省略時は 6.5 の既定8件。2026-09-05 に「選ばせない」から改めた。手順26a）。
+（省略時は 6.5 の既定。中身は 4.5.9 が返す。2026-09-05 に「選ばせない」から改めた。手順26a）。
 
 **Phase 1 の画面はスコープを選ばせない**（`GuiDesign.md` 5.8）。常に `[]` で発行するため、
 発行されたトークンは本人の権限をそのまま持つ。どの権限をまとめて選ばせるかは、
@@ -929,7 +929,8 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 // 201 Created — token は「この応答でのみ」返る
 { "id": "01K3...", "token": "pb_agt_7f3c...", "token_prefix": "pb_agt_7",
   "scopes": ["agent.run","comment.create","doc.view","project.view",
-             "ticket.assign","ticket.create","ticket.transition","ticket.view"],
+             "ticket.assign","ticket.create","ticket.reference.edit",
+             "ticket.self_edit","ticket.transition","ticket.view"],
   "issued_at": "2026-08-30T09:03:12Z",
   "expires_at": "2026-11-28T09:03:12Z", "status": "active" }
 ```
@@ -940,6 +941,8 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 |---|---|
 | `expires_in_days` | **必須**。1〜365 の整数。無期限は許さない（`Design.md` 6.5「有効期限必須」） |
 | `scopes` | 省略可。**省略すると `Design.md` 6.5 の既定10件**。渡すときは**許可リストの中だけ**（下記）。カタログに無い値・許可リスト外の値は `422` |
+
+**画面は既定と許可リストを 4.5.9 から引く**（pb-93）。`scopes` が絶対指定なので、「既定に `doc.edit` を足す」を送るには既定の中身が要るが、**画面に写しを持たせない。**
 
 **許可リストは「6.5 の既定10件 ∪ `doc.edit`」の11件である**（2026-09-05 に改訂＝手順26a、2026-09-08 に `ticket.reference.edit`、2026-09-09 に `ticket.self_edit` を既定へ足した＝pb-68 / pb-75）。
 
@@ -1306,6 +1309,33 @@ clone 直後には存在せず、**主経路では上書きの相手がいない
 置くと、動かないのに正しく見える**——実測では起動できず、症状はクライアント側の
 「サーバが起動しない」だけで、PB には何も出ない。
 
+
+### 4.5.9 `GET /api/v1/agent-scopes` — エージェント用トークンのスコープ（pb-93）
+
+**必要権限**：**不要**（認証済みであればよい）。4.5.7 と同じ扱いで、中身は秘密ではない。
+
+```json
+{
+  "default": ["agent.run", "comment.create", "doc.view", "project.view", "ticket.assign",
+              "ticket.create", "ticket.reference.edit", "ticket.self_edit",
+              "ticket.transition", "ticket.view"],
+  "grantable": ["doc.edit"]
+}
+```
+
+| 項目 | 内容 |
+|---|---|
+| `default` | 4.5.3 で `scopes` を省略したときに入る既定（`Design.md` 6.5）。昇順 |
+| `grantable` | 既定に足せるもの。4.5.3 の許可リストは `default` ∪ `grantable` である |
+
+**画面に既定スコープの写しを持たせないために在る。** 4.5.3 の `scopes` は絶対指定なので、画面が「既定に `doc.edit` を足す」を送るには既定の中身が要る。pb-90 まで画面は写しを持っており、**権限を既定に足すたびに2回続けて腐った**（`ticket.reference.edit` と `ticket.self_edit`）。写しが古いと、**`doc.edit` つきで発行したトークンだけが足した権限を欠き**、エージェントが 403 を踏むまで誰も気づかない。クライアント種別（4.5.7）とロールの表示名（7.1）を写しからサーバへ寄せたのと同じ形である。
+
+**ページネーションも `ETag` も持たない**（4.5.7 と同じ）。**トークンが実際に持つ権限は所有者との積**なので（4.5.3）、ここに並ぶ権限がすべて付くとは限らない。
+
+**採らなかった案**
+
+- **`GET /me/agents` か `GET /permissions` に載せる。** 口は増えないが、本人のデータ（または権限カタログ全体）と、エージェント用の既定という意味の違うものが同じ応答に同居する。**再検討のきっかけは、カタログの口が増えて画面を開くときの往復が問題になったとき**である
+- **要求を「足すものだけ」（`add_scopes`）に変える。** 写しそのものが要らなくなるが、`scopes` を絞る用途（read だけを持つエージェント）の口を別に設計し直すことになる。**再検討のきっかけは、read だけを持つエージェントの役割が現れたとき**である（`docs/PROGRESS.md` の `[read only のエージェントが要るとき]`。pb-93 の時点では現れていない）
 
 ## 4.6 `/api/v1/me/mfa` — 自分の第2要素（Phase 2。pb-103）
 

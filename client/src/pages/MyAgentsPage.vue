@@ -31,8 +31,8 @@ import Modal from '../components/Modal.vue'
 import PageHeader from '../components/PageHeader.vue'
 import UserActionsMenu from '../components/UserActionsMenu.vue'
 import type { ActionItem } from '../components/UserActionsMenu.vue'
-import { AGENT_DEFAULT_SCOPES, clientKindLabel } from '../lib/agents'
-import type { AgentClientKind } from '../api/me'
+import { clientKindLabel } from '../lib/agents'
+import type { AgentClientKind, AgentScopes } from '../api/me'
 import { formatDate, formatDateTime } from '../lib/datetime'
 
 /** 有効期限の選択肢（`GuiDesign.md` 5.8.1 と同じ3つ。値域は 1〜365） */
@@ -46,6 +46,15 @@ const EXPIRY_CHOICES = [30, 90, 365] as const
  * 種別の欄が空になるより読める。
  */
 const clientKinds = ref<AgentClientKind[]>([])
+
+/**
+ * 既定スコープと足せる権限（`ApiDesign.md` 4.5.9。pb-93）。
+ *
+ * **引けなかったら `null` のままにし、「追加の権限」を押せなくする**
+ * （`GuiDesign.md` 5.8.2）。既定を知らないまま `doc.edit` だけを送ると、
+ * 既定を失ったトークンが出る——`scopes` は絶対指定である（4.5.3）。
+ */
+const agentScopes = ref<AgentScopes | null>(null)
 
 const items = ref<MyAgent[]>([])
 const loading = ref(false)
@@ -79,12 +88,14 @@ async function load() {
   try {
     // **カタログの失敗で一覧を落とさない。** 表示名が引けないだけで、
     // エージェントそのものは出せる。
-    const [agents, kinds] = await Promise.all([
+    const [agents, kinds, scopes] = await Promise.all([
       meApi.listAgents(),
       meApi.listAgentClientKinds().catch(() => ({ items: [] as AgentClientKind[] })),
+      meApi.getAgentScopes().catch(() => null),
     ])
     items.value = agents.items
     clientKinds.value = kinds.items
+    agentScopes.value = scopes
   } catch (e: unknown) {
     loadError.value = asApiError(e)
   } finally {
@@ -183,9 +194,14 @@ const newExpiresInDays = ref<number>(90)
  * 憲章の編集（`doc.edit`）を許すか（`ApiDesign.md` 4.5.3。手順26a）。
  *
  * **既定は外す。** `Design.md` 6.5 が「載せるかはそのエージェントが誰に
- * 付いているかで決まる」と定めており、押さなければ従来どおりの8件になる。
+ * 付いているかで決まる」と定めており、押さなければ既定のまま（4.5.9）になる。
  */
 const allowDocEdit = ref(false)
+
+/** 「追加の権限」を押せるか。既定が引けていて、足せるものに `doc.edit` があるとき */
+const canAllowDocEdit = computed(
+  () => agentScopes.value !== null && agentScopes.value.grantable.includes('doc.edit'),
+)
 
 /** 1回だけ出す発行結果。閉じると二度と出せない（4.5.3） */
 const issued = ref<IssuedAgentToken | null>(null)
@@ -219,12 +235,13 @@ async function issueToken() {
   issuing.value = true
   issueError.value = null
   try {
-    // **`scopes` は押されたときだけ送る**（4.5.3）。省略すると
-    // `Design.md` 6.5 の既定8件が入るので、既定の写しを画面に持たない
-    // ——持つと 6.5 が変わったときに片方だけ古くなる。
+    // **`scopes` は押されたときだけ送る**（4.5.3）。省略すると `Design.md` 6.5 の
+    // 既定が入る。押されたときは、既定を `GET /agent-scopes`（4.5.9）から取って
+    // `doc.edit` を足す——**写しを画面に持たない**（pb-93）。
+    const scopes = agentScopes.value
     const token = await meApi.issueAgentToken(target.id, {
       expires_in_days: newExpiresInDays.value,
-      ...(allowDocEdit.value ? { scopes: [...AGENT_DEFAULT_SCOPES, 'doc.edit'] } : {}),
+      ...(allowDocEdit.value && scopes ? { scopes: [...scopes.default, 'doc.edit'] } : {}),
     })
     issueTarget.value = null
     // **先に平文を出す。** 一覧の読み直しが失敗しても、二度と出せない値を
@@ -618,15 +635,17 @@ function subtitle(agent: MyAgent): string {
 
         <!-- **追加の権限は `doc.edit` の1件だけ**（4.5.3 の許可リスト。手順26a）。
              既定は外す——`Design.md` 6.5 が「載せるかはそのエージェントが誰に
-             付いているかで決まる」と定めており、押さなければ従来どおりの8件になる。
+             付いているかで決まる」と定めており、押さなければ既定のまま（4.5.9）になる。
+             **既定が引けなかったら押せなくする**（pb-93。`GuiDesign.md` 5.8.2）
              **権限キーを画面に出さない**（24b で決めた形。発行結果も日本語で出す） -->
         <fieldset class="field">
           <legend class="label">追加の権限</legend>
           <label class="check">
-            <input v-model="allowDocEdit" type="checkbox" :disabled="issuing" />
+            <input v-model="allowDocEdit" type="checkbox" :disabled="issuing || !canAllowDocEdit" />
             <span>プロジェクト文書の編集を許す</span>
           </label>
-          <span class="hint">憲章を書き換えられるようになります。</span>
+          <span v-if="!canAllowDocEdit" class="detail">既定の権限を読み込めなかったため、いまは選べません。画面を開き直してください。</span>
+          <span v-else class="hint">憲章を書き換えられるようになります。</span>
         </fieldset>
 
         <!-- **再発行が既存を暗黙に失効させることを、押す前に出す**（4.5.3）。

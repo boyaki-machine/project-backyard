@@ -182,6 +182,9 @@ func Mount(r chi.Router, deps Deps) {
 		//
 		// **/me の配下に置かない。** 本人のデータではなくカタログである。
 		r.Get("/agent-client-kinds", h.listAgentClientKinds)
+		// エージェント用トークンの既定スコープ（ApiDesign.md 4.5.9。pb-93）。
+		// 4.5.7 と同じく**必要権限は無い**。画面に写しを持たせないための口である。
+		r.Get("/agent-scopes", h.getAgentScopes)
 
 		// ── プロジェクト（ApiDesign.md 5章）──────────────────
 		//
