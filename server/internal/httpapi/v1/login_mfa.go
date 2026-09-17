@@ -13,7 +13,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -23,7 +22,6 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/audit"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
-	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	"github.com/boyaki-machine/project-backyard/server/internal/mfa"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/tlscert"
@@ -318,51 +316,18 @@ func (h *handler) handleMFAMismatch(
 
 // completeMFALogin は 3.1 の手順6〜8 を行う。
 //
-// **パスワードだけで通ったときと同じ経路を通る。** セッションの発行・
-// last_login_at・実効権限のキャッシュ・login.success の監査を二重に実装しない。
+// **パスワードだけで通ったときと同じ関数を通る**（finishLogin。pb-115）。
+// ここで決めるのは、利用者の属性と監査の detail だけである。
 func (h *handler) completeMFALogin(
 	w http.ResponseWriter, r *http.Request, rec *audit.Recorder,
 	row gen.FindMfaLoginChallengeRow, credentialID string,
 ) {
-	ctx := r.Context()
-
-	session, err := h.issueSession(ctx, row.UserID, r.UserAgent())
-	if err != nil {
-		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
-		return
-	}
-
-	if err := h.q.TouchLastLoginAt(ctx, row.UserID); err != nil {
-		// 付随情報のため、失敗しても認証は通す（login.go と同じ）。
-		slog.WarnContext(ctx, "last_login_at を更新できなかった",
-			slog.String("request_id", apierr.RequestIDFromContext(ctx)),
-			slog.String("actor_id", row.UserID),
-			slog.String("cause", err.Error()))
-	}
-
 	method := mfaMethodTOTP
 	if credentialID == "" {
 		method = mfaMethodRecoveryCode
 	}
-	rec.WithToken(session.TokenID).RecordOrLog(ctx, h.q, audit.Entry{
-		Action:     audit.LoginSuccess,
-		Result:     audit.Success,
-		TargetType: "access_token",
-		TargetID:   session.TokenID,
-		// **第2要素で通ったことを残す**（ApiDesign.md 3.4）。
-		Detail: map[string]any{"provider_key": "local", "mfa": method},
-	})
-
-	systemPerms, err := middleware.ComputeSystemPermissions(ctx, h.q, row.SystemRole, nil)
-	if err != nil {
-		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
-		return
-	}
-	middleware.SaveSystemPermissionCache(ctx, h.q, session.TokenID, row.SystemRole, systemPerms)
-
-	view, err := h.buildSessionView(ctx, h.q, profile{
+	h.finishLogin(w, r, rec, profile{
 		ActorID:            row.UserID,
-		Kind:               auth.ActorKindUser,
 		DisplayName:        row.DisplayName,
 		Email:              row.Email,
 		SystemRole:         row.SystemRole,
@@ -371,14 +336,9 @@ func (h *handler) completeMFALogin(
 		Theme:              row.Theme,
 		Hue:                row.Hue,
 		MustChangePassword: row.MustChange.Bool,
-	}, systemPerms, nil, &session.ExpiresAt)
-	if err != nil {
-		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
-		return
-	}
-
-	h.setSessionCookies(w, session)
-	WriteJSON(w, http.StatusOK, view)
+	},
+		// **第2要素で通ったことを残す**（ApiDesign.md 3.4）。
+		map[string]any{"provider_key": "local", "mfa": method})
 }
 
 // recordMFAFailure は login.mfa_failure を1件残す（ApiDesign.md 4.6.6）。

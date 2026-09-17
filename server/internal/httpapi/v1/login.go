@@ -214,18 +214,48 @@ func (h *handler) completeLogin(
 
 	h.rehashIfStale(ctx, row, password)
 
+	h.finishLogin(w, r, rec, profile{
+		ActorID:            row.ActorID,
+		DisplayName:        row.DisplayName,
+		Email:              row.Email,
+		SystemRole:         row.SystemRole,
+		Locale:             row.Locale,
+		Timezone:           row.Timezone,
+		Theme:              row.Theme,
+		Hue:                row.Hue,
+		MustChangePassword: row.MustChange,
+	}, map[string]any{"provider_key": "local"})
+}
+
+// finishLogin は 3.1 の手順6〜8 を行う（pb-115）。
+//
+// **照合を終えた3経路が、すべてここを通る**——パスワード（completeLogin）・
+// 第2要素（completeMFALogin）・パスキー（completePasskeyLogin）。並びは
+// セッションの発行 → last_login_at → login.success の監査 → 実効権限の計算と
+// キャッシュ → 応答と Cookie で、**経路ごとに違うのは利用者の属性（p）と監査の
+// detail だけ**である。以前は3か所に写っており（pb-104 で3か所目）、監査や
+// セッションの発行を変えるたびに直し忘れた経路だけ記録が食い違いうる形だった。
+//
+// **p.Kind は見ない。** ログインするのは常に人なので、ここで user に決める。
+func (h *handler) finishLogin(
+	w http.ResponseWriter, r *http.Request, rec *audit.Recorder,
+	p profile, detail map[string]any,
+) {
+	ctx := r.Context()
+	p.Kind = auth.ActorKindUser
+
 	// 手順6。
-	session, err := h.issueSession(ctx, row.ActorID, r.UserAgent())
+	session, err := h.issueSession(ctx, p.ActorID, r.UserAgent())
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return
 	}
 
 	// last_login_at は付随情報のため、失敗しても認証は通す。
-	if err := h.q.TouchLastLoginAt(ctx, row.ActorID); err != nil {
+	if err := h.q.TouchLastLoginAt(ctx, p.ActorID); err != nil {
 		slog.WarnContext(ctx, "last_login_at を更新できなかった",
 			slog.String("request_id", apierr.RequestIDFromContext(ctx)),
-			slog.String("actor_id", row.ActorID),
+			slog.String("actor_id", p.ActorID),
 			slog.String("cause", err.Error()))
 	}
 
@@ -235,32 +265,21 @@ func (h *handler) completeLogin(
 		Result:     audit.Success,
 		TargetType: "access_token",
 		TargetID:   session.TokenID,
-		Detail:     map[string]any{"provider_key": "local"},
+		Detail:     detail,
 	})
 
 	// Design.md 6.4.5「ログインごとに実効権限を計算し、セッションにキャッシュする」。
 	// 発行したばかりのトークンにキャッシュは無いので、必ずDBから計算する。
-	systemPerms, err := middleware.ComputeSystemPermissions(ctx, h.q, row.SystemRole, nil)
+	systemPerms, err := middleware.ComputeSystemPermissions(ctx, h.q, p.SystemRole, nil)
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return
 	}
-	middleware.SaveSystemPermissionCache(ctx, h.q, session.TokenID, row.SystemRole, systemPerms)
+	middleware.SaveSystemPermissionCache(ctx, h.q, session.TokenID, p.SystemRole, systemPerms)
 
 	// ログイン応答は GET /me と同じ内容を返す（ApiDesign.md 3.1）。
 	// 新しいセッションは scopes を持たないため、縮小は起きない。
-	view, err := h.buildSessionView(ctx, h.q, profile{
-		ActorID:            row.ActorID,
-		Kind:               auth.ActorKindUser,
-		DisplayName:        row.DisplayName,
-		Email:              row.Email,
-		SystemRole:         row.SystemRole,
-		Locale:             row.Locale,
-		Timezone:           row.Timezone,
-		Theme:              row.Theme,
-		Hue:                row.Hue,
-		MustChangePassword: row.MustChange,
-	}, systemPerms, nil, &session.ExpiresAt)
+	view, err := h.buildSessionView(ctx, h.q, p, systemPerms, nil, &session.ExpiresAt)
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return
