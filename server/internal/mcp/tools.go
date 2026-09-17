@@ -480,6 +480,19 @@ func pickFields(body []byte, keys ...string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+// 書き込み系の応答に残す項目（Design.md 8.5.1。pb-137）。
+//
+// **書いた内容を応答で返さない。** 本文は送った本人の手元にあり、要るなら
+// pb_get_task / pb_get_doc で読める。残すのは、続けて使う値と、書けたことを
+// 確かめる値だけである。pb_put_dod（足した項目の id が次の update / delete に要る）と
+// pb_add_reference（短い1件）は揃えていない。
+var (
+	createTicketResultFields = []string{"id", "seq", "status", "version", "parent_seq"}
+	updateTicketResultFields = []string{"seq", "status", "version", "updated_at"}
+	putDocResultFields       = []string{"path", "version", "updated_at"}
+	postNoteResultFields     = []string{"id", "kind", "created_at"}
+)
+
 // ── 共通の組み立て ──────────────────────────────────────────
 
 // passThrough は REST の応答をそのままテキストにする（Design.md 8.5）。
@@ -649,7 +662,9 @@ func writeTools() []tool {
 			Name: "pb_create_ticket",
 			Description: "チケットを1件起票する。議論の結果として「これは別の作業だ」と決まったものを、" +
 				"その場で PB に残すために使う。作ったチケットは必ずバックログに入り、" +
-				"担当も状態も後から人が決められる。**勝手に着手しないこと。**",
+				"担当も状態も後から人が決められる。**勝手に着手しないこと。**" +
+				"応答は要点（id / seq / status / version / parent_seq）だけで、送った本文は含まない。" +
+				"本文が要るなら pb_get_task で読む。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
@@ -679,7 +694,8 @@ func writeTools() []tool {
 				"仕様の矛盾や書き漏れに気づいたとき、その場で直すために使う——" +
 				"直せないまま人に渡すと、誤った記述がチケットに残り続ける。" +
 				"**開けていない項目がある**——種別（type）の切り替え、実行モード・readiness・" +
-				"スコープ境界・実行者・実績時間・スプリントは、いずれも人が決めるものである。",
+				"スコープ境界・実行者・実績時間・スプリントは、いずれも人が決めるものである。" +
+				"応答は要点（seq / status / version / updated_at）だけで、本文は含まない。本文が要るなら pb_get_task で読む。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
@@ -731,7 +747,8 @@ func writeTools() []tool {
 			Name: "pb_post_note",
 			Description: "チケットにコメントを1件書く。途中経過・判明した事実・試して駄目だったことを、" +
 				"次に同じ場所を触る人が読める形で残すために使う。" +
-				"kind で種類を選ぶと、あとから決定や注意点だけを拾える。",
+				"kind で種類を選ぶと、あとから決定や注意点だけを拾える。" +
+				"応答は要点（id / kind / created_at）だけで、書いた本文は含まない。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
@@ -777,7 +794,8 @@ func writeTools() []tool {
 			Description: "プロジェクト文書（憲章）の本文を書き換える。**全置換である**——" +
 				"pb_get_doc で全文を読み、直した全文を渡すこと。章だけを差し替える口は無い。" +
 				"**憲章は全参加者を縛るので、権限を持つ人が明示的に指示したときにだけ呼ぶこと。**" +
-				"自分の判断で書き換えてはならない。",
+				"自分の判断で書き換えてはならない。" +
+				"応答は要点（path / version / updated_at）だけで、本文は含まない。本文が要るなら pb_get_doc で読む。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
@@ -873,7 +891,7 @@ func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	}
 	res, err := h.callREST(r, http.MethodPost,
 		"/projects/"+url.PathEscape(key)+"/tickets", nil, raw, nil)
-	return passThrough(r, res, err)
+	return passThroughFields(r, res, err, createTicketResultFields...)
 }
 
 // ── pb_update_ticket（Design.md 8.5.1。pb-75 / pb-76）─────────
@@ -992,7 +1010,7 @@ func callUpdateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 		return errorResult("このチケットは、読んでから書くまでのあいだに他の人が更新した。" +
 			"pb_get_task で読み直してから、もう一度直すこと。"), nil
 	}
-	return passThrough(r, res, nil)
+	return passThroughFields(r, res, nil, updateTicketResultFields...)
 }
 
 // ── pb_put_dod（Design.md 8.5.1。pb-75）───────────────────────
@@ -1146,7 +1164,7 @@ func callPostNote(h *Handler, r *http.Request, key string, args json.RawMessage)
 	res, err := h.callREST(r, http.MethodPost,
 		"/projects/"+url.PathEscape(key)+"/tickets/"+strconv.FormatInt(in.Seq.value, 10)+"/comments",
 		nil, raw, nil)
-	return passThrough(r, res, err)
+	return passThroughFields(r, res, err, postNoteResultFields...)
 }
 
 // addReferenceArgs は pb_add_reference の引数（Design.md 8.5.1）。
@@ -1289,10 +1307,7 @@ func callPutDoc(h *Handler, r *http.Request, key string, args json.RawMessage) (
 			"pb_get_doc で読み直し、その内容に自分の変更を重ねてから、もう一度 pb_put_doc を呼ぶこと。\n" +
 			string(res.body)), nil
 	}
-	if !res.ok() {
-		return failed(r, res), nil
-	}
-	return textResult(string(res.body)), nil
+	return passThroughFields(r, res, nil, putDocResultFields...)
 }
 
 // ── 遷移系（手順26b。Design.md 8.5.3）──────────────────────

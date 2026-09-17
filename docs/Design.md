@@ -1379,12 +1379,12 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 
 | ツール | 引数 | 叩く REST | 応答 |
 |---|---|---|---|
-| `pb_create_ticket` | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?`, `tag_ids?`, `estimate_point?`, `estimate_hours?`, `start_date?`, `due_date?` | `POST /projects/:key/tickets` | 9.5.1 の応答をそのまま |
-| `pb_update_ticket` | `seq`, ＋ 上の任意引数から **`type` を除いたもの**（**送ったものだけ更新**） | `PATCH /projects/:key/tickets/:seq` | 9.5.1 の応答をそのまま |
+| `pb_create_ticket` | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?`, `tag_ids?`, `estimate_point?`, `estimate_hours?`, `start_date?`, `due_date?` | `POST /projects/:key/tickets` | **要点だけ**（`id` / `seq` / `status` / `version` / `parent_seq`。pb-137） |
+| `pb_update_ticket` | `seq`, ＋ 上の任意引数から **`type` を除いたもの**（**送ったものだけ更新**） | `PATCH /projects/:key/tickets/:seq` | **要点だけ**（`seq` / `status` / `version` / `updated_at`。pb-137） |
 | `pb_put_dod` | `seq`, `add?[]`, `update?[]`, `delete?[]` | 9.9 の `POST` / `PATCH` / `DELETE` | 9.9 の一覧をそのまま |
 | `pb_list_tags` | （なし） | `GET /projects/:key/tags` | 9.11 の一覧をそのまま |
-| `pb_put_doc` | `path`, `body_md`, `change_reason?` | `GET` してから `PATCH /projects/:key/docs/*path` | 10.3 の応答をそのまま |
-| `pb_post_note` | `seq`, `body_md`, `kind?` | `POST /projects/:key/tickets/:seq/comments` | 9.8 の1件をそのまま |
+| `pb_put_doc` | `path`, `body_md`, `change_reason?` | `GET` してから `PATCH /projects/:key/docs/*path` | **要点だけ**（`path` / `version` / `updated_at`。pb-137） |
+| `pb_post_note` | `seq`, `body_md`, `kind?` | `POST /projects/:key/tickets/:seq/comments` | **要点だけ**（`id` / `kind` / `created_at`。pb-137） |
 | `pb_add_reference` | `seq`, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | `POST /projects/:key/tickets/:seq/references` | 9.10.2 の1件をそのまま |
 
 **引数の名前は `ApiDesign.md` の本体フィールドに揃える**（`body` ではなく `body_md`、`parent` ではなく `parent_seq`）。8.5 の冒頭が述べるとおり、名前が一致していればエージェントは迷ったときに設計文書を引ける。`Requirements.md` 10.3.2 は `body` / `parent` / `task_id` と書いていたが、**あちらを実装に合わせて改訂した**。
@@ -1433,7 +1433,25 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 
 **`pb_put_doc` は本文を全置換する。** 10.4 の `PATCH` がそうであり、章だけを差し替える口は無い。`?section=` は読む側（10.3）にしかない。**エージェントは `pb_get_doc` で全文を読み、直した全文を渡す。**
 
-**write 系も応答は REST の JSON をそのままである。** `Requirements.md` 10.3.2 は戻り値を「チケットID・`seq`」「リビジョン番号」と書いていたが、**絞ると 8.1 の「整形の規則を MCP 層に置かない」に反する**うえ、`PATCH .../docs` の応答は `revision_no` を持たない（10.3 の形）。**あちらを改訂した。**
+**書いた内容を応答で返さない**（pb-137。利用者の判断、2026-09-17）。起票・更新・文書・コメントの4ツールは、REST の応答から要点だけを返す。
+**本文は送った本人の手元にある**ので、そのまま返すと同じ文をもう一度運ぶ（2026-09-17 のセッションで起票2件とコメント2件、約5千字。見積り）。
+
+| ツール | 残す項目 | 使いみち |
+|---|---|---|
+| `pb_create_ticket` | `id` / `seq` / `status` / `version` / `parent_seq` | `seq` を続けて `parent_seq` や `pb_transition_task` に使う |
+| `pb_update_ticket` | `seq` / `status` / `version` / `updated_at` | 直ったこと（版が進んだこと）を確かめる |
+| `pb_put_doc` | `path` / `version` / `updated_at` | 10.3 の応答は**本文の全文**を持つ。版は `pb_get_context` の `charter_versions`（8.5.5）に使える |
+| `pb_post_note` | `id` / `kind` / `created_at` | 書けたことを確かめる |
+
+- **本文が要るなら読み直す**（`pb_get_task` / `pb_get_doc`）。ツールの説明文にもそう書く
+- **失敗（403 / 409 / 422）は今までどおり本文ごと返す。** 理由の文と `details[]` が次の一手を決める
+- **`pb_put_dod` と `pb_add_reference` は揃えない。** 前者の一覧は、足した項目の `id` を次の `update` / `delete` に渡すための材料であり、後者の1件は短く、送った本文が長くなる欄を持たない
+- **REST の応答（9.3 / 9.5.2 / 9.8 / 10.4）は変えない。** 画面が使っている
+
+**改訂前は「write 系も応答は REST の JSON をそのまま」だった。** `Requirements.md` 10.3.2 の戻り値（「チケットID・`seq`」「リビジョン番号」）を、
+**絞ると 8.1 の「整形の規則を MCP 層に置かない」に反する**として退けていた。**しかし 8.1 の表は「応答の整形、トークン予算」を MCP の持ち物としており**、
+項目の選別は `pb_list_tasks` の軽量化（8.5.2）で既に行っている。選別は規則ではなく形の変換なので、同じ規則が2か所に生まれることにはならない。
+なお `PATCH .../docs` の応答は `revision_no` を持たない（10.3 の形）ので、「リビジョン番号」の代わりに `version` を返す。
 
 **冪等キー（`idempotency_key`）は受けない**（`Requirements.md` 10.3.4 の改訂。再検討の条件は 8.6）。
 

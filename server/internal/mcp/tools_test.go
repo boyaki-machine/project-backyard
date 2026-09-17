@@ -371,8 +371,9 @@ func TestCreateTicketPostsToREST(t *testing.T) {
 	if out.IsError {
 		t.Errorf("成功のはずが isError: %s", out.Content[0].Text)
 	}
-	if out.Content[0].Text != rest.body {
-		t.Errorf("応答をそのまま返していない（8.5）: %s", out.Content[0].Text)
+	// **書いた内容を返さない**（Design.md 8.5.1。pb-137）。要点は TestWriteToolsReturnOnlySummary で見る。
+	if out.Content[0].Text != `{"seq":31}` {
+		t.Errorf("応答の要点が違う: %s", out.Content[0].Text)
 	}
 }
 
@@ -834,5 +835,79 @@ func TestTransitionTaskKeepsFailureBody(t *testing.T) {
 	}
 	if !strings.Contains(out.Content[0].Text, "担当が所有者でないチケットは進められません") {
 		t.Errorf("理由の文が落ちている: %s", out.Content[0].Text)
+	}
+}
+
+// ── 書いた内容を応答で返さない（Design.md 8.5.1。pb-137）──────────────
+
+// responseKeys は応答 JSON のキーを名前順に返す。
+func responseKeys(t *testing.T, text string) []string {
+	t.Helper()
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("応答が JSON でない: %v（%s）", err, text)
+	}
+	keys := make([]string, 0, len(got))
+	for k := range got {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func TestWriteToolsReturnOnlySummary(t *testing.T) {
+	const docJSON = `{"id":"01DOC","path":"rules","title":"規約","body_md":"ここに長い本文がある",
+		"outline":[{"section":"命名","level":2}],"version":4,"updated_at":"2026-09-17T01:00:00Z"}`
+	const commentJSON = `{"id":"01C","body_md":"ここに長い本文がある","kind":"caveat","in_reply_to":null,
+		"origin":"agent","author":{"id":"01A","kind":"agent","display_name":"Claude Code"},
+		"created_at":"2026-09-17T01:00:00Z","updated_at":"2026-09-17T01:00:00Z"}`
+
+	cases := []struct {
+		name  string
+		tool  string
+		args  string
+		steps []fakeStep
+		want  []string
+	}{
+		{"起票", "pb_create_ticket", `{"type":"task","title":"認証APIの実装","body_md":"ここに長い本文がある"}`,
+			[]fakeStep{{status: http.StatusCreated, body: fullTicketJSON}}, createTicketResultFields},
+		{"更新", "pb_update_ticket", `{"seq":31,"body_md":"ここに長い本文がある"}`,
+			[]fakeStep{{status: http.StatusOK, body: fullTicketJSON}, {status: http.StatusOK, body: fullTicketJSON}},
+			updateTicketResultFields},
+		{"文書", "pb_put_doc", `{"path":"rules","body_md":"ここに長い本文がある"}`,
+			[]fakeStep{{status: http.StatusOK, body: docJSON}, {status: http.StatusOK, body: docJSON}}, putDocResultFields},
+		{"コメント", "pb_post_note", `{"seq":31,"body_md":"ここに長い本文がある"}`,
+			[]fakeStep{{status: http.StatusCreated, body: commentJSON}}, postNoteResultFields},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := New(&fakeREST{steps: c.steps}, "v0")
+
+			out := callTool1(t, h, toolCallBody(c.tool, c.args))
+			if out.IsError {
+				t.Fatalf("成功のはずが isError: %s", out.Content[0].Text)
+			}
+			want := append([]string(nil), c.want...)
+			sort.Strings(want)
+			if got := responseKeys(t, out.Content[0].Text); strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Errorf("応答の項目 = %v, want %v", got, want)
+			}
+			if strings.Contains(out.Content[0].Text, "ここに長い本文がある") {
+				t.Errorf("書いた本文を返している: %s", out.Content[0].Text)
+			}
+		})
+	}
+}
+
+func TestWriteToolsKeepFailureBody(t *testing.T) {
+	// **失敗は本文ごと返す**——422 の details[] が次の一手を決める。
+	rest := &fakeREST{status: http.StatusUnprocessableEntity,
+		body: `{"error":{"code":"validation_failed","message":"入力に誤りがあります","details":[{"field":"title","code":"too_long"}]}}`}
+	h := New(rest, "v0")
+
+	out := callTool1(t, h, toolCallBody("pb_create_ticket", `{"type":"task","title":"長すぎる表題"}`))
+
+	if !out.IsError || !strings.Contains(out.Content[0].Text, `"too_long"`) {
+		t.Errorf("失敗の details が落ちている: %+v", out)
 	}
 }
