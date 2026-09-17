@@ -129,6 +129,74 @@ export const executionModeOptions: TicketExecutionMode[] = [
   'agent_only',
 ]
 
+/** Readiness（`DbDesign.md` 6.6 の `CHECK` が持つ3値）。未判定は `null` で、ここには含めない */
+export type TicketReadiness = NonNullable<TicketDetail['readiness']>
+
+/**
+ * Readiness の表示名（`GuiDesign.md` 5.5「Readiness」）。
+ *
+ * **サーバと同じ語を使う**——`server/internal/mcp/context_pack.go` の
+ * `readinessLabels` が同じ3語をコンテキストパックに出している（実行モードと同じ理由）。
+ */
+export const readinessLabels: Record<TicketReadiness, string> = {
+  red: '赤（前提が足りていない）',
+  yellow: '黄（不明点が残っている）',
+  green: '緑（着手してよい）',
+}
+
+/** 選択肢の並び。**止まれ → 注意 → 進め**。未判定（`null`）は画面が先頭に足す */
+export const readinessOptions: TicketReadiness[] = ['red', 'yellow', 'green']
+
+/**
+ * スコープ境界の既知のキー（`ApiDesign.md` 9.5.2、`GuiDesign.md` 5.5「スコープ境界」）。
+ *
+ * **並びと語はサーバと同じ**——`context_pack.go` の `scopeKeyLabels` がこの順で
+ * パックの「1. スコープ境界と制約」に出している。
+ */
+export const scopeKeys = [
+  { key: 'allow', label: '触ってよい範囲' },
+  { key: 'deny', label: '触ってはいけない範囲' },
+  { key: 'repositories', label: 'リポジトリ' },
+  { key: 'external_apis', label: '外部API' },
+] as const
+
+export type ScopeKey = (typeof scopeKeys)[number]['key']
+
+type TicketScope = TicketDetail['scope']
+
+/** `scope` の1キーを、1行1件の文字列にする。文字列の配列でなければ空 */
+export function scopeText(scope: TicketScope, key: ScopeKey): string {
+  const v = scope[key]
+  if (!Array.isArray(v)) return ''
+  return v.filter((s): s is string => typeof s === 'string').join('\n')
+}
+
+/**
+ * 1キーだけを、1行1件の文字列で差し替えた**新しい** `scope` を返す。
+ *
+ * **知らないキーを落とさない**（5.5）。`PATCH` は `scope` を丸ごと置き換えるので、
+ * 受け取ったものを写してから差し替える。各行の前後の空白を落とし、空の行は捨てる。
+ * **全行が空ならキーごと消す**——`[]` を残さない（未設定は `{}`。9.5.2）。
+ */
+export function withScopeLines(scope: TicketScope, key: ScopeKey, text: string): TicketScope {
+  const lines = text
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+  const next: TicketScope = { ...scope }
+  if (lines.length === 0) delete next[key]
+  else next[key] = lines
+  return next
+}
+
+/** 画面が知らないキーと、その値の JSON（読み取り専用で出す。5.5） */
+export function unknownScopeEntries(scope: TicketScope): [string, string][] {
+  const known: readonly string[] = scopeKeys.map((s) => s.key)
+  return Object.entries(scope)
+    .filter(([k]) => !known.includes(k))
+    .map(([k, v]) => [k, JSON.stringify(v)])
+}
+
 export const priorityLabels: Record<TicketPriority, string> = {
   highest: '最高',
   high: '高',
