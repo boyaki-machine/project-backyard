@@ -3,7 +3,7 @@ description: PB のプロジェクトに参画する（規約と担当を読む�
 allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs, mcp__pb__pb_get_doc, mcp__pb__pb_list_tasks
 ---
 
-<!-- pb-workflow-version: 3 -->
+<!-- pb-workflow-version: 4 -->
 
 このプロジェクトの前提を PB から読み込む。以下の手順を順守すること。
 

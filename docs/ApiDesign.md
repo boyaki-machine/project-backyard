@@ -1817,7 +1817,7 @@ GET /api/v1/projects/:key/agent-setup.zip?client=claude_code&client=codex
 {
   "project": { "key": "pb", "name": "Project Backyard" },
   "base_url": "http://localhost:8081",
-  "workflow_version": 3,
+  "workflow_version": 4,
   "clients": ["claude_code", "codex"],
   "files": [
     { "path": ".claude/commands/pb-onboard.md",
@@ -1827,9 +1827,9 @@ GET /api/v1/projects/:key/agent-setup.zip?client=claude_code&client=codex
     { "path": "CLAUDE.md",
       "client_kind": "claude_code",
       "mode": "append", "language": "markdown",
-      "marker_begin": "<!-- PB:BEGIN v3",
+      "marker_begin": "<!-- PB:BEGIN v4",
       "marker_end": "<!-- PB:END -->",
-      "content": "<!-- PB:BEGIN v3 (Project Backyard が生成・管理します。…" },
+      "content": "<!-- PB:BEGIN v4 (Project Backyard が生成・管理します。…" },
     { "path": ".gitignore",
       "client_kind": null,
       "mode": "append", "language": "text",

@@ -4,7 +4,7 @@ argument-hint: <ticket-id>
 allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 ---
 
-<!-- pb-workflow-version: 3 -->
+<!-- pb-workflow-version: 4 -->
 
 チケット #$1 の実装を行う。以下の手順を順守すること。
 
@@ -27,6 +27,8 @@ allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 
 ## 4. 着手
 - 承認後、`pb_transition_task` で状態を進行中へ進める（**他の参加者からボードで見える**）
+- **着手（未着手→進行中）では、先に `pb_list_transitions` を呼ばなくてよい。** 進められなければ
+  応答に理由が返るので、そのままユーザーに伝える
 - **進められるのは、自分の所有者が担当になっているチケットだけである。** 担当が付いて
   いなければ、実装せずユーザーに伝える
 - 作業用の worktree とブランチを作成する

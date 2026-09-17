@@ -1334,12 +1334,16 @@ func callPutDoc(h *Handler, r *http.Request, key string, args json.RawMessage) (
 //
 // **並び順は「見てから動かす」。** 先に pb_list_transitions を置くのは、進める先と
 // 進めない理由を1往復で知ってから pb_transition_task を呼ぶ流れにするためである。
+//
+// **ただし着手（未着手→進行中）では先に呼ばなくてよい**（Design.md 8.5.3。pb-140）。
+// 答えが毎回同じで、進められないときは pb_transition_task の失敗の応答に同じ理由が返る。
 func transitionTools() []tool {
 	return []tool{
 		{
 			Name: "pb_list_transitions",
 			Description: "このチケットがいまどの状態へ進めるかを、進めない先の理由つきで返す。" +
 				"状態を変える前にこれを呼ぶこと。" +
+				"**ただし着手（未着手→進行中）では呼ばなくてよい**——進められなければ、pb_transition_task の応答に同じ理由が返る。" +
 				"進めない理由には「担当が自分の所有者でない」「人しか通せない順路である」などがあり、" +
 				"そのまま利用者に伝えれば次に何をすればよいかが分かる。",
 			InputSchema: schema{
@@ -1359,13 +1363,16 @@ func transitionTools() []tool {
 				"担当が付いていなければ、進めずに利用者へ伝えること。" +
 				"**チケットを完了にすることはできない**——完了は人が確認して行う。" +
 				"応答は状態の要点（seq / status / version / working_agent / updated_at / closed_at）だけで、" +
-				"チケットの本文は含まない。本文が要るなら pb_get_task を呼ぶ。",
+				"チケットの本文は含まない。本文が要るなら pb_get_task を呼ぶ。" +
+				"**着手（未着手→進行中）では、先に pb_list_transitions を呼ばなくてよい。** " +
+				"進められなければ応答に理由が返るので、そのまま利用者に伝える。それ以外の遷移では先に pb_list_transitions で進める先を確かめる。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
 					"seq": {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
 					"to": {Type: "string", Description: "遷移先のステータスキー（例: in_progress、review）。" +
-						"表示名（「進行中」）ではない。pb_list_transitions が返す key をそのまま渡す"},
+						"表示名（「進行中」）ではない。pb_list_transitions が返す key をそのまま渡す。" +
+						"着手ではテンプレートのキー in_progress を渡してよく、違えば 422（unknown_status）が返る"},
 					"comment": {Type: "string", Description: "この遷移に添えるコメント（Markdown）。" +
 						"なぜこの状態にしたかを1〜2行で書くと、次に見た人が経緯を辿れる。" +
 						"チケットのコメント欄に残る"},

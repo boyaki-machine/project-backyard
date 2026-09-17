@@ -449,7 +449,7 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 | `pb_put_dod` | write | 2 | **`seq`**, `add?[]`, `update?[]`, `delete?[]` | 9.9 の一覧をそのまま | **完了条件を整える。** いまある一覧に対する追加・編集・削除を1回でまとめて受ける（**全置換ではない**）。**`is_satisfied` は開けない**——`pb_submit_result` の「盤面を動かさない」と正面からぶつかる。**必要権限は `ticket.self_edit`**。pb-75 |
 | `pb_list_tags` | read | 2 | — | 9.11 の一覧をそのまま | **プロジェクトのタグを列挙する。** `tag_ids` を渡すのに ULID が要るため（`Design.md` 8.5.1）。**`pb_list_sprints` は作らない**——スプリントは 0028 以降どの経路からも設定できない。pb-76 |
 | `pb_transition_task` | write | 2 | **`seq`**, `to`, `comment?` | **状態の要点だけ**（`seq` / `status` / `version` / `working_agent` / `updated_at` / `closed_at`。本文は返さない。`Design.md` 8.5.3。pb-136） | **状態を進める。** `to` はワークフローのステータスキー。**着手の宣言もこれで行う**（`working_agent_id` が自動で立つ）。手順26b |
-| `pb_list_transitions` | read | 2 | **`seq`** | 9.7 の応答をそのまま | **いまどの状態へ進めるか**と、進めない先の理由。手順26b |
+| `pb_list_transitions` | read | 2 | **`seq`** | 9.7 の応答をそのまま | **いまどの状態へ進めるか**と、進めない先の理由。手順26b。**着手（未着手→進行中）では先に呼ばなくてよい**——失敗の応答に同じ理由が返る（`Design.md` 8.5.3。pb-140） |
 | `pb_post_note` | write | 2 | **`seq`**, `body_md`, `kind?` | **要点だけ**（`id` / `kind` / `created_at`。pb-137） | 途中経過・判明した事実の記録。**`refs` は落とした**——`ApiDesign.md` 9.8 に対応するフィールドが無い（`Design.md` 8.5.1） |
 | `pb_put_doc` | write | 2 | `path`, `body_md`, `change_reason?` | **要点だけ**（`path` / `version` / `updated_at`。pb-137） | **文書の更新。** 権限を持つ人の指示で呼ぶ（10.6.2）。**本文の全置換**で、`If-Match` は MCP 層が付ける（`Design.md` 8.5.1） |
 | `pb_add_reference` | write | 2 | **`seq`**, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | 9.10.2 の1件をそのまま | **作業の跡（ブランチ・コミット）をチケットに積む。** `ticket_reference` の `kind='code'`（`DbDesign.md` 6.12）。**追記専用**で、直す・消すは人が画面から行う。**必要権限は `ticket.reference.edit`**（0027）。pb-68 |
@@ -1181,7 +1181,7 @@ allowed-tools: mcp__pb__pb_get_project, mcp__pb__pb_list_docs,
                mcp__pb__pb_get_doc, mcp__pb__pb_list_tasks
 ---
 
-<!-- pb-workflow-version: 3 -->
+<!-- pb-workflow-version: 4 -->
 
 このプロジェクトの前提を PB から読み込む。以下の手順を順守すること。
 
@@ -1246,7 +1246,7 @@ argument-hint: <ticket-id>
 allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 ---
 
-<!-- pb-workflow-version: 3 -->
+<!-- pb-workflow-version: 4 -->
 
 チケット #$1 の実装を行う。以下の手順を順守すること。
 
@@ -1270,6 +1270,8 @@ allowed-tools: mcp__pb__*, Bash(git *), Read, Edit, Write
 ## 4. 着手
 - 承認後、`pb_transition_task` で状態を進行中へ進める（**他の参加者からボードで見える**。
   同時に `ticket.working_agent_id` が自分になる。`ApiDesign.md` 9.6）
+- **着手（未着手→進行中）では、先に `pb_list_transitions` を呼ばなくてよい。** 進められなければ
+  応答に理由が返るので、そのままユーザーに伝える（`Design.md` 8.5.3。pb-140）
 - **進められるのは、自分の所有者が担当になっているチケットだけである。** 担当が付いて
   いなければ、実装せず利用者に伝える（`ApiDesign.md` 9.6 の検証6）
 - 作業用の worktree とブランチを作成する
@@ -1323,7 +1325,7 @@ description: PBのチケット記述を改善する
 argument-hint: <ticket-id>
 ---
 
-<!-- pb-workflow-version: 3 -->
+<!-- pb-workflow-version: 4 -->
 
 チケット #$1 の記述を、AIエージェントが自律実行できる水準まで引き上げる。
 
