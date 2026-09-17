@@ -1474,7 +1474,8 @@ func reportTools() []tool {
 					"status": {Type: "string", Enum: []string{"completed", "blocked", "partial"},
 						Description: "作業の結果。completed=やり切った / blocked=進められない / partial=一部だけ終わった"},
 					"artifacts": objectItems(
-						"作った成果物。プルリクエスト・変更したファイルなど",
+						"作った成果物。プルリクエスト・変更したファイルなど。"+
+							"**コミット ID はここに入れず、pb_add_reference で積むこと**（リポジトリ・ブランチ・コミットを別々の欄に持つ）",
 						map[string]property{
 							"type": {Type: "string", Description: "種別（例: pull_request、file）"},
 							"url":  {Type: "string", Description: "URL（プルリクエスト等）"},
