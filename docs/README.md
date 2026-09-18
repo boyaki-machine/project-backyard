@@ -56,6 +56,7 @@ clone 直後には存在しない（規約は `Design.md` 11.0）。
 | プロジェクト文書（Docs） | `DbDesign.md` 8.1、`ApiDesign.md` 10章、`GuiDesign.md` 5.10 |
 | **アプリケーション設定（設定の3層）** | **`Design.md` 10.3**、`DbDesign.md` 6.14、`ApiDesign.md` 11.1〜11.3、`GuiDesign.md` 5.12 |
 | **TLS 終端と証明書** | **`Design.md` 6.6.1**、`DbDesign.md` 6.15、`ApiDesign.md` 11.4〜11.6、`GuiDesign.md` 5.12.1 |
+| **バックアップと復元** | **`DbDesign.md` 9.1**、`ApiDesign.md` 11.11〜11.13、`GuiDesign.md` 5.12.2、`Design.md` 10.4（保守モード） |
 | 画面・UI・配色 | `GuiDesign.md` |
 | 開発フェーズ・実装順序 | `Design.md` 11章 |
 | ブランチ運用・バージョン番号 | `Design.md` 11.0〜11.1 |
@@ -88,6 +89,9 @@ clone 直後には存在しない（規約は `Design.md` 11.0）。
 | **単独開発で足りることを PB に作らない。** PB が要るのは参加者が複数になってから | `Design.md` 1.1 原則8、`Requirements.md` 10.0 |
 | **文書の型はテンプレートで配り、データモデルに語彙を持たせない**（ワークフローテンプレートと同じ機構） | `DbDesign.md` 8.1 |
 | **文書の章は永続化しない。** 保存する参照は `document.id` のみ | `DbDesign.md` 8.1.3 |
+| **バックアップは PB 独自の形式と `pg_dump` を併用する。** 前者は配置に依らず打てるがスキーマを持たず、後者はその逆 | `DbDesign.md` 9.1 |
+| **取り込みは、行を消して入れ直すのではなく、表を落として作り直す。** 書き出した時点のスキーマまで戻してから行を入れる | `DbDesign.md` 9.1.1 |
+| **PB は `pb_owner` の資格情報を持たない。** 取り込みのときだけ画面で受け取り、終わったら捨てる | `DbDesign.md` 3.4 |
 
 ## 開発フェーズ
 
