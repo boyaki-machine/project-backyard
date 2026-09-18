@@ -5266,6 +5266,130 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/admin/backup.tar.gz:
+    get:
+      tags: [settings]
+      summary: PB 全体の書き出し（tar.gz ダウンロード）
+      operationId: downloadBackup
+      description: |
+        PB 全体を1つの書庫に書き出して返す（ApiDesign.md 11.11、DbDesign.md 9.1.1）。pb-144。
+        **必要権限は `system.settings`。**
+
+        **全表を `REPEATABLE READ` の1トランザクションで読む。** 表ごとに別の
+        トランザクションにすると、**読んでいる途中の書き込みが表のあいだで食い違い**、
+        戻したときに外部キーが通らない書庫ができる。
+
+        **このトランザクションのあいだだけ `statement_timeout` を外す**
+        （`SET LOCAL statement_timeout = 0`）。書き出しは行数に比例して長くなる。
+
+        **保守モードには入らない**——読むだけなので、書き込みを止める必要が無い。
+
+        **書庫そのものを秘密として扱う。** `app_secret` の鍵と、それで暗号化した
+        暗号文の両方が入る（DbDesign.md 6.16 の「代償を隠さない」）。
+
+        **`Content-Length` は返せない**（gzip した大きさが書き終わるまで分からない）。
+      responses:
+        '200':
+          description: |
+            PB 全体を収めた tar.gz。`Content-Disposition` でファイル名が付く。
+            中身は `meta.json` と `data/<表名>.jsonl`（DbDesign.md 9.1.1）。
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              example: attachment; filename="pb-backup-20260918-150405.tar.gz"
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Maintenance'
+
+  /api/v1/admin/restore:
+    post:
+      tags: [settings]
+      summary: PB 全体の取り込み（復元）
+      operationId: restoreBackup
+      description: |
+        書庫を取り込み、PB 全体をその時点へ戻す（ApiDesign.md 11.12、DbDesign.md 9.1.1）。pb-144。
+        **必要権限は `system.settings`。**
+
+        **段取りは「保守モードに入る → 書庫を検査 → 表を落とす → 書庫の版まで
+        マイグレーション → `TRUNCATE` で払う → 行を入れる → 数えて突き合わせる →
+        最新までマイグレーション → 操作者のセッションを入れ直す → 保守モードを出る」。**
+
+        **`TRUNCATE` が要るのは、マイグレーションがスキーマだけでなく行も入れるから**
+        である（0010 の権限カタログ、0037・0038 のテンプレート本文）。払わないと、
+        書庫の同じ行と主キーで衝突する。
+
+        **`multipart/form-data` で受ける。** 書庫は流しながら読む必要がある
+        （K8s の Pod は `readOnlyRootFilesystem: true` で一時ファイルを書けない）。
+        **パートはこの順で送る**——`archive` が最後でないと、資格情報を読む前に
+        書庫が流れ込む。
+
+        **PB は `pb_owner` の資格情報を持たない**（DbDesign.md 3.4）。取り込みの
+        あいだだけ接続を張り、終わったら捨てる。**保存せず、応答にもログにも残さない。**
+
+        **権限は資格情報を読む前に確かめる**——持っていない人に入力させない。
+
+        **`422` までは DB を触っていない。** 書庫の検査と資格情報の確認は、
+        表を落とす前に済ませる。**`500` のときは DB が中途半端なまま残る**ので、
+        `message` にそう書き、同じ書庫でのやり直しを案内する（段取りは表を落とす
+        ところから始まるので回復する）。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RestoreRequest'
+            encoding:
+              archive:
+                contentType: application/gzip
+      responses:
+        '200':
+          description: |
+            取り込みの結果と、件数の突き合わせ。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreResult'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: |
+            書庫のマイグレーション番号が、いまの PB より新しい（`backup_too_new`）。
+            **知らない列を推測して埋めることになるので取り込まない。**
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: |
+            書庫が壊れている・`format_version` が読めない、または
+            `owner_password` が違う（`validation_failed`）。
+            **後者は `details[].field` が `owner_password` になる。**
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Maintenance'
+
   /healthcheck:
     get:
       tags: [ops]
@@ -5529,6 +5653,15 @@ components:
     CSRFFailed:
       description: |
         CSRF トークンの不一致（`csrf_failed`）。Cookie 欠落・ヘッダ欠落・不一致を区別しない。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Maintenance:
+      description: |
+        保守モード中（`maintenance`。ApiDesign.md 11.13）。書庫の取り込み
+        （11.12）のあいだ、`/api` と `/mcp` はこれを返す。**`Retry-After` は
+        伴わない**——かかる時間は書庫の大きさで決まり、PB は見積もれない。
       content:
         application/json:
           schema:
@@ -8137,6 +8270,103 @@ components:
           type: integer
           format: int64
           description: 索引と TOAST を含む大きさ（`pg_total_relation_size`）。
+
+    RestoreRequest:
+      type: object
+      required: [owner_user, owner_password, archive]
+      description: |
+        ApiDesign.md 11.12。**この順で送る**——`archive` が最後でないと、
+        資格情報を読む前に書庫が流れ込む。
+      properties:
+        owner_user:
+          type: string
+          description: '`pb_owner` にあたるロール名（既定 `pb_owner`）。'
+          example: pb_owner
+        owner_password:
+          type: string
+          format: password
+          description: |
+            そのロールのパスワード。**PB は保存せず、取り込みのあいだだけ
+            接続に使って捨てる。** 応答にも構造化ログにも監査ログにも残さない。
+        archive:
+          type: string
+          format: binary
+          description: '書き出した書庫（tar.gz。DbDesign.md 9.1.1）。'
+
+    RestoreResult:
+      type: object
+      required:
+        [restored_at, backup, migration_version, session_kept, tables, mismatched]
+      description: |
+        ApiDesign.md 11.12。**`expected` と `rows` を両方返す**——片方だけでは、
+        戻せたのか戻したつもりなのかが分からない。
+      properties:
+        restored_at:
+          type: string
+          format: date-time
+        backup:
+          $ref: '#/components/schemas/BackupMeta'
+        migration_version:
+          type: integer
+          description: |
+            取り込みが終わったあとの版。**`backup.migration_version` より
+            進んでいることがある**（古い書庫を取り込んでから最新まで進めるため）。
+        session_kept:
+          type: boolean
+          description: |
+            操作者のセッションを維持できたか。**復元後のデータに本人の `actor` 行が
+            無ければ `false`** になり、画面はログイン画面へ送る。
+        tables:
+          type: array
+          description: '全表。**一致した表も落とさない。**'
+          items:
+            $ref: '#/components/schemas/RestoreTable'
+        mismatched:
+          type: array
+          description: |
+            `expected` と `rows` が食い違った表の名前。**空なら全表が一致した。**
+            **`access_token` の +1 はここに入れない**（下記）。
+          items:
+            type: string
+
+    BackupMeta:
+      type: object
+      required: [format_version, migration_version, created_at, pb_version]
+      description: '書庫の `meta.json`（DbDesign.md 9.1.1）をそのまま返す。'
+      properties:
+        format_version:
+          type: integer
+          description: |
+            書庫の形式の版。**後から形式を変えると、既に取ったバックアップを
+            戻せなくなる**ので、読めない版を黙って読もうとしない。
+        migration_version:
+          type: integer
+          description: '書き出した時点で適用済みだった最大のマイグレーション番号。'
+        created_at:
+          type: string
+          format: date-time
+        pb_version:
+          type: string
+          example: 2.43.140
+
+    RestoreTable:
+      type: object
+      required: [name, expected, rows]
+      properties:
+        name:
+          type: string
+        expected:
+          type: integer
+          format: int64
+          description: '書庫の `meta.json` が持つ件数。'
+        rows:
+          type: integer
+          format: int64
+          description: |
+            **行を入れた直後に数えた `count(*)`**（DbDesign.md 9.1.1 の⑦）。
+            **最新の版へ進める前に数える**——あとから走るマイグレーションが行を
+            足す表は、遅らせると `meta.json` より多くなり、正しく入ったものまで
+            食い違いとして出る。**操作者のセッション1行も、数えたあとに足す。**
 
     TLSCertificate:
       type: object

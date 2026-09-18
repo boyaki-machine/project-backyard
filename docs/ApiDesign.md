@@ -185,10 +185,12 @@ Header:  X-PB-CSRF: <同じ値>
 | 409 | `already_exists` | 一意なキーが既に使われている（プロジェクトキーなど。5.3） |
 | 409 | `last_administrator` | 最後の管理者を降格・無効化・削除しようとした |
 | 409 | `self_modification_forbidden` | 自分自身のロール変更・削除 |
+| 409 | `backup_too_new` | 書庫のマイグレーション番号が、いまの PB より新しい（11.12） |
 | 422 | `validation_failed` | 入力値の検証エラー（`details` を伴う） |
 | 423 | `account_locked` | ログイン失敗回数超過によるロック |
 | 429 | `rate_limited` | レート制限（`Retry-After` ヘッダを伴う） |
 | 500 | `internal_error` | サーバ内部エラー |
+| 503 | `maintenance` | 保守モード中（11.13）。**`Retry-After` は伴わない** |
 
 ## 2.6 一覧のページネーション
 
@@ -2341,7 +2343,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | **エージェント連携セットアップ（Phase 2）** | `GET /agent-client-kinds`<br>`GET /projects/:key/agent-setup`<br>`GET /projects/:key/agent-setup.zip`（ダウンロード） |
 | **アプリケーション設定（Phase 2）** | `GET /admin/settings`<br>`PUT /admin/settings`（保存） |
 | **TLS証明書（Phase 2）** | `GET /admin/tls/certificates`<br>`POST /admin/tls/certificates`（登録）<br>`DELETE /admin/tls/certificates/:id` |
-| **DB（Phase 2）** | `GET /admin/database`（タブを開いたときと再読み込み） |
+| **DB（Phase 2）** | `GET /admin/database`（タブを開いたときと再読み込み）<br>`GET /admin/backup.tar.gz`（書き出し）<br>`POST /admin/restore`（取り込み） |
 | **Docs（Phase 2）** | `GET /projects/:key/docs`（目次）<br>`GET /projects/:key/docs/*path`（本文）<br>`PATCH|DELETE /projects/:key/docs/*path`・`POST /projects/:key/docs`<br>`GET /projects/:key/docs/*path/_revisions`（履歴） |
 
 **各画面が起動時に呼ぶAPIは1〜2本に収まっている。** 設計方針3が満たされていることの確認になる。
@@ -4845,6 +4847,204 @@ pb-cert-pb.example.com.zip
 問い合わせ文を読ませることになる。**
 
 ---
+
+## 11.11 `GET /api/v1/admin/backup.tar.gz`
+
+**必要権限**：`system.settings`
+
+**PB 全体を1つの書庫に書き出して返す**（pb-144。形式は `DbDesign.md` 9.1.1、画面は `GuiDesign.md` 5.12.2）。
+
+- 成功 → `200`、`Content-Type: application/gzip`
+- 保守モード中 → `503` / `maintenance`（11.13）
+
+```
+Content-Disposition: attachment; filename="pb-backup-20260918-150405.tar.gz"
+```
+
+**ファイル名の時刻は UTC である。** 画面の日時は利用者のタイムゾーンで出すが（`GuiDesign.md` 7.5）、
+**ファイル名は端末をまたいで並ぶ**ので、並べたときに時系列になる UTC で固定する。
+
+### 全表を1つのトランザクションで読む
+
+**`REPEATABLE READ` の1トランザクションで全表を読む。** 表ごとに別のトランザクションで読むと、
+**読んでいる途中の書き込みが表のあいだで食い違い**、戻したときに外部キーが通らない書庫ができる。
+
+**書庫は取り込みのときに制約を効かせたまま入れる**（`DbDesign.md` 9.1.1）ので、
+**整合していない書庫は取り込みで初めて失敗する。** 書き出す側で揃えておく。
+
+### `statement_timeout` を外す
+
+**`pb_app` の既定は 15 秒である**（`DbDesign.md` 3.5）。書き出しは**行数に比例して長くなる**ので、
+このトランザクションのあいだだけ `SET LOCAL statement_timeout = 0` で外す。
+
+**`SET LOCAL` にする。** 接続はプールに戻るので、**外した設定を他の要求へ持ち越さない。**
+
+### 保守モードには入らない
+
+**書き出しは読むだけである。** 1つのスナップショットで読むので、**書き込みを止める必要が無い。**
+**止めるのは取り込みのときだけ**（11.12）。
+
+### 大きさの上限を持たない
+
+**流しながら書く**ので、応答全体をメモリに載せない。**`Content-Length` は返せない**
+（gzip したあとの大きさが書き終わるまで分からない）——ブラウザは進捗を出さずに落とし続ける。
+
+### 監査ログ（2.10）
+
+| action | 対象 |
+|---|---|
+| `database.backup` | `resource_type = "database"` |
+
+**秘密は入らないが、持ち出した事実は残す。** 書庫には `app_secret` の鍵と暗号文の両方が入る
+（`DbDesign.md` 9.1.1）ので、**証明書の取り出し（11.7）とは扱いが違う。**
+
+## 11.12 `POST /api/v1/admin/restore`
+
+**必要権限**：`system.settings`
+
+**書庫を取り込み、PB 全体をその時点へ戻す**（pb-144）。**段取りは `DbDesign.md` 9.1.1 にある**——
+表を落とし、書庫の版までマイグレーションし、**マイグレーションが入れた行を `TRUNCATE` で払ってから**
+書庫の行を入れ、数えてから最新の版まで進める。
+
+### 要求
+
+**`multipart/form-data` で受ける。** 書庫はテキストではなく、**流しながら読む**必要がある
+（K8s の Pod は `readOnlyRootFilesystem: true` で一時ファイルを書けない。`DbDesign.md` 9.1.1）。
+**11.5 が JSON なのは PEM がテキストだから**であり、ここは事情が違う。
+
+| パート | 内容 |
+|---|---|
+| `owner_user` | `pb_owner` にあたるロール名（既定 `pb_owner`） |
+| `owner_password` | そのロールのパスワード |
+| `archive` | 書庫（`application/gzip`） |
+
+**この順で送る。** サーバはパートを**先頭から順に**読むので、**`archive` が最後でないと
+資格情報を読む前に書庫が流れ込む。** 画面はこの順で組み立てる。
+
+**資格情報を保存しない。** 取り込みのあいだだけ `pb_owner` の接続を張り、終わったら捨てる
+（`DbDesign.md` 3.4）。**応答にも構造化ログにも監査ログにも、ロール名だけを残しパスワードは残さない。**
+
+**権限は資格情報を読む前に確かめる。** `system.settings` を持たない要求は `403` で拒む——
+**持っていない人に入力させない**（利用者の判断、2026-09-18）。
+
+### 応答
+
+```json
+{
+  "restored_at": "2026-09-18T15:04:05Z",
+  "backup": {
+    "format_version": 1,
+    "migration_version": 36,
+    "created_at": "2026-09-15T02:00:00Z",
+    "pb_version": "2.43.140"
+  },
+  "migration_version": 38,
+  "session_kept": true,
+  "tables": [
+    { "name": "ticket",       "expected": 15, "rows": 15 },
+    { "name": "comment",      "expected": 7,  "rows": 7 },
+    { "name": "access_token", "expected": 3,  "rows": 3 }
+  ],
+  "mismatched": []
+}
+```
+
+| 項目 | 内容 |
+|---|---|
+| `backup` | **書庫の `meta.json` をそのまま返す。** 何を戻したのかを画面が言える |
+| `migration_version` | **取り込みが終わったあとの版。** `backup.migration_version` より進んでいることがある（`DbDesign.md` 9.1.1 の⑧） |
+| `session_kept` | **操作者のセッションを維持できたか**（下記） |
+| `tables[].expected` | `meta.json` の件数 |
+| `tables[].rows` | **行を入れた直後に数えた `count(*)`**（`DbDesign.md` 9.1.1 の⑦） |
+| `mismatched` | `expected` と `rows` が食い違った表の名前。**空なら全表が一致した** |
+
+**`expected` と `rows` を両方返す。** 片方だけでは、**戻せたのか、戻したつもりなのかが分からない。**
+画面は `mismatched` が空でないときに警告を出す（`GuiDesign.md` 5.12.2）。
+
+**数えるのは、最新の版へ進める前である**（`DbDesign.md` 9.1.1 の⑦）。**突き合わせが答えるのは**
+「書庫を忠実に入れられたか」であって、いまの件数ではない。**あとから走るマイグレーションが
+行を足す表は、数えるのを遅らせると `meta.json` より多くなり、正しく入ったものまで食い違いとして出る。**
+
+**操作者のセッション1行も、数えたあとに足す**（下記）。**`rows` には現れない。**
+
+**いまの件数は 11.10 で見る。** `rows` と一致しないことがあるのは、**そのあとのマイグレーションと
+セッション1行の分**である。
+
+### 操作者のセッションだけは維持する
+
+**復元すると `access_token` ごと入れ替わるので、全員がログアウトする。** 操作した本人まで
+締め出されると、**戻ったかどうかを確かめに行けない**（利用者の判断、2026-09-18）。
+
+**取り込みの前にこの要求のセッション行を控え、終わったあとに入れ直す。** `token_hash` は
+SHA-256 であり `app_secret` に依存しない（`DbDesign.md` 6.2）ので、**そのまま書き戻せば
+同じクッキーで続けられる。**
+
+**入れ直せる条件は、復元後のデータに本人の `actor` 行が在ることである。** 別の PB の書庫を
+入れたときなど、在らなければ**外部キーが通らない**。そのときは `session_kept: false` を返し、
+**画面はログイン画面へ送る。**
+
+**権限は復元後のデータで決まる。** 戻したデータで `system.settings` を持たなければ、
+**繋がったまま権限だけ失う。** これは隠さず、そのまま起こしてよい——**戻したデータが
+正しい姿**である。
+
+### 失敗したとき
+
+| 状況 | 応答 |
+|---|---|
+| 権限が無い | `403` / `forbidden`（**資格情報を読む前に**） |
+| 書庫が壊れている・`format_version` が読めない | `422` / `validation_failed` |
+| `owner_password` が違う | `422` / `validation_failed`（`details[].field = "owner_password"`） |
+| 書庫の版がいまの PB より新しい | `409` / `backup_too_new` |
+| 既に別の取り込みが走っている | `503` / `maintenance` |
+| 取り込みの途中で落ちた | `500` / `internal_error` |
+
+**`422` までは DB を触っていない。** 書庫の検査と資格情報の確認は、**表を落とす前に済ませる。**
+
+**`500` のとき、DB は中途半端なまま残る。** 表が落ちたあと、行が入る前で止まりうる。
+**`message` にそう書き、同じ書庫でもう一度取り込むよう案内する**——段取りは表を落とすところから
+始まるので（`DbDesign.md` 9.1.1 の③）、**やり直せば回復する。**
+
+### 監査ログ（2.10）
+
+| action | 対象 |
+|---|---|
+| `database.restore` | `resource_type = "database"` |
+
+**取り込みが終わったあと、別のトランザクションで書く。** `audit_log` 自身が入れ替わるので、
+**同じトランザクションで書くと、書いた行ごと消える。**
+
+**`detail` に書庫の `created_at` と `migration_version`、`mismatched` の有無を残す。**
+**資格情報は残さない**（ロール名だけ）。
+
+**失敗したときも残す。** 表を落としたあとで落ちた場合、**この記録だけが何が起きたかを伝える。**
+
+## 11.13 保守モード中の応答
+
+**取り込み（11.12）のあいだ、PB は要求を受け付けない**（`Design.md` 10.4）。
+
+| 宛先 | 応答 |
+|---|---|
+| `/api` と `/mcp` | `503` と 2.5 のエラー形式。`code` は `maintenance` |
+| それ以外のパス | `503` と、**単一の静的な HTML**。SPA（`index.html`）を返さない |
+| `/healthcheck` | **対象外。`200` のまま**（2.11） |
+| `POST /api/v1/admin/restore` | **対象外**（自分を止めることになる） |
+
+```json
+{
+  "error": {
+    "code": "maintenance",
+    "message": "バックアップの取り込み中です。終わるまでお待ちください",
+    "request_id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S"
+  }
+}
+```
+
+**`Retry-After` を返さない。** かかる時間は書庫の大きさで決まり、**PB は見積もれない。**
+`account_locked` や `rate_limited`（2.5）とは違い、**返せる数字が無い。**
+
+**ステータスは人向けの画面でも `503` にする。** ブラウザはステータスに関わらず本文を描くので
+画面は成立し、**`200` にするとエージェントと監視が成功と読む。**
+
 
 # 12. 未解決の検討事項
 
