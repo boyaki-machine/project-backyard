@@ -82,6 +82,14 @@ const (
 	PasskeyRegister   Action = "passkey.register"
 	PasskeyUnregister Action = "passkey.unregister"
 	PasskeyReset      Action = "passkey.reset"
+
+	// DatabaseBackup / DatabaseRestore は PB 全体の書き出しと取り込み
+	// （ApiDesign.md 11.11 / 11.12。pb-147）。target_type は "database"。
+	//
+	// **書き出しにも残す。** 書庫には app_secret の鍵と暗号文の両方が入るので、
+	// 持ち出した事実そのものが監査の対象である（証明書の取り出し＝11.7 とは扱いが違う）。
+	DatabaseBackup  Action = "database.backup"
+	DatabaseRestore Action = "database.restore"
 	// LoginPasskeyFailure はパスキーでのログインの失敗。**login.failure と分けてある**
 	// ——挑戦が誰にも結び付いていないため、アカウントを特定できないことが多い。
 	LoginPasskeyFailure Action = "login.passkey_failure"

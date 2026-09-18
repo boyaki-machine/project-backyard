@@ -17,9 +17,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/backup"
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi"
 	v1 "github.com/boyaki-machine/project-backyard/server/internal/httpapi/v1"
+	"github.com/boyaki-machine/project-backyard/server/internal/maintenance"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/search"
@@ -162,6 +164,18 @@ func serve(ctx context.Context) error {
 
 	// **TLS の有無で Handler ごと作り直す。** 応答に出る tls_enabled と
 	// listen_url は実際の待受であり（11.4）、設定の実効値ではない。
+	// **保守モードの旗と、書き出し・取り込みの口は1つだけ作る**（pb-147）。
+	// build は待受を張り替えるたびに呼ばれるので、この中で作ると**張り替えのたびに
+	// 旗が別物になり**、保守モード中であることが失われる。
+	maint := maintenance.New(func(on bool) {
+		if on {
+			slog.Warn("保守モードに入った。取り込みが終わるまで要求を受け付けない")
+		} else {
+			slog.Info("保守モードを出た")
+		}
+	})
+	backups := backup.NewService(pool, cfg.DatabaseURL, version)
+
 	build := func(addr string, tc *tls.Config) *http.Server {
 		return &http.Server{
 			Addr:      addr,
@@ -174,7 +188,10 @@ func serve(ctx context.Context) error {
 				Certs:             certs,
 				TLSListening:      tc != nil,
 				// **アドレスも張り替わる**（pb-99）ので、いま張ったものを使う。
-				ListenURL: listenURL(addr, tc != nil),
+				ListenURL:   listenURL(addr, tc != nil),
+				Backups:     backups,
+				DatabaseURL: cfg.DatabaseURL,
+				Maintenance: maint,
 			}),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,

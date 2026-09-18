@@ -95,7 +95,7 @@ func TestRestoreRoundTripIntegration(t *testing.T) {
 	archive := dumpNow(t, ctx)
 	owner := scratchDB(t, ctx)
 
-	res, err := NewRestorer().Restore(ctx, owner, bytes.NewReader(archive))
+	res, err := NewRestorer().Restore(ctx, owner, bytes.NewReader(archive), nil)
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestRestoreTooNewIntegration(t *testing.T) {
 	// **meta.json の版だけを差し替えた書庫を作る。**
 	tooNew := rewriteMetaVersion(t, archive, 99999)
 
-	_, err := NewRestorer().Restore(ctx, owner, bytes.NewReader(tooNew))
+	_, err := NewRestorer().Restore(ctx, owner, bytes.NewReader(tooNew), nil)
 	if err == nil {
 		t.Fatal("新しい版の書庫が拒まれなかった")
 	}
@@ -165,11 +165,11 @@ func TestRestoreBadArchiveIntegration(t *testing.T) {
 	owner := scratchDB(t, ctx)
 
 	// **先に1回入れて、表がある状態にする。**
-	if _, err := NewRestorer().Restore(ctx, owner, bytes.NewReader(dumpNow(t, ctx))); err != nil {
+	if _, err := NewRestorer().Restore(ctx, owner, bytes.NewReader(dumpNow(t, ctx)), nil); err != nil {
 		t.Fatalf("下ごしらえの取り込みに失敗: %v", err)
 	}
 
-	_, err := NewRestorer().Restore(ctx, owner, strings.NewReader("これは tar.gz ではない"))
+	_, err := NewRestorer().Restore(ctx, owner, strings.NewReader("これは tar.gz ではない"), nil)
 	if err == nil {
 		t.Fatal("壊れた書庫が拒まれなかった")
 	}
@@ -204,7 +204,7 @@ func TestRestoreBadOwnerCredentialsIntegration(t *testing.T) {
 	if bad == owner {
 		t.Skip("接続文字列の形が想定と違うためスキップする")
 	}
-	_, err := NewRestorer().Restore(ctx, bad, bytes.NewReader(archive))
+	_, err := NewRestorer().Restore(ctx, bad, bytes.NewReader(archive), nil)
 	if err == nil {
 		t.Fatal("誤った資格情報が拒まれなかった")
 	}

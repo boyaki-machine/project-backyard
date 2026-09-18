@@ -24,6 +24,12 @@ type Result struct {
 	Tables           []TableResult
 	// Mismatched は expected と rows が食い違った表の名前。**空なら全表が一致した。**
 	Mismatched []string
+	// SessionKept は操作者のセッションを維持できたか（ApiDesign.md 11.12）。
+	//
+	// **維持できる条件は、復元後のデータに本人の actor 行が在ることである。**
+	// 別の PB の書庫を入れたときなど、在らなければ false になり、画面は
+	// ログイン画面へ送る。
+	SessionKept bool
 }
 
 // TableResult は表1つの突き合わせ。
@@ -62,7 +68,8 @@ func NewRestorer() *Restorer { return &Restorer{now: time.Now} }
 // **保守モードへの出入りは呼び出し側が行う**——この関数は DB だけを見る。
 //
 // currentVersion はいまの PB が持つ最新のマイグレーション番号である。
-func (rs *Restorer) Restore(ctx context.Context, ownerURL string, src io.Reader) (Result, error) {
+// keep は取り込みをまたいで持ち越す行（操作者のセッション）。nil なら維持しない。
+func (rs *Restorer) Restore(ctx context.Context, ownerURL string, src io.Reader, keep *KeptRow) (Result, error) {
 	ar, err := NewReader(src)
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %w", ErrBadArchive, err)
@@ -133,6 +140,11 @@ func (rs *Restorer) Restore(ctx context.Context, ownerURL string, src io.Reader)
 	}
 	if res.MigrationVersion, err = provider.GetDBVersion(ctx); err != nil {
 		return Result{}, fmt.Errorf("取り込んだあとの版を読めない: %w", err)
+	}
+
+	// ⑨ 操作者のセッション行を入れ直す。**⑦ で数えたあとなので、突き合わせには現れない。**
+	if res.SessionKept, err = insertKept(ctx, conn, keep); err != nil {
+		return Result{}, err
 	}
 	res.RestoredAt = rs.now().UTC()
 	return res, nil

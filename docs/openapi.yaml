@@ -5664,9 +5664,12 @@ components:
             $ref: '#/components/schemas/Error'
     Maintenance:
       description: |
-        保守モード中（`maintenance`。ApiDesign.md 11.13）。書庫の取り込み
+        保守モード中（`maintenance`。ApiDesign.md 11.13、2.5.1）。書庫の取り込み
         （11.12）のあいだ、`/api` と `/mcp` はこれを返す。**`Retry-After` は
         伴わない**——かかる時間は書庫の大きさで決まり、PB は見積もれない。
+
+        **ブラウザが開くパスには、単一の静的な HTML を同じ 503 で返す**——
+        SPA を返すと、画面は動き出してから API で失敗する。
       content:
         application/json:
           schema:

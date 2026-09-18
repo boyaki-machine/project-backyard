@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -8,11 +9,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/backup"
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/dbstat"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	v1 "github.com/boyaki-machine/project-backyard/server/internal/httpapi/v1"
+	"github.com/boyaki-machine/project-backyard/server/internal/maintenance"
 	"github.com/boyaki-machine/project-backyard/server/internal/mcp"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -58,6 +61,16 @@ type Deps struct {
 	// DBStats は DB の接続状態と統計を読む口（ApiDesign.md 11.10。pb-110）。
 	// **nil なら Pool から作る。** Pool も nil なら nil のまま渡る。
 	DBStats v1.DatabaseStats
+
+	// Backups は PB 全体の書き出しと取り込みの口（ApiDesign.md 11.11〜11.12。pb-147）。
+	// **nil なら Pool と DatabaseURL から作る。**
+	Backups v1.Backups
+	// DatabaseURL は PB がいま繋いでいる接続文字列（pb_app）。**取り込みで
+	// 接続先だけを取り出すために要る**——ロールとパスワードは画面から受け取る。
+	DatabaseURL string
+
+	// Maintenance は保守モードの旗（Design.md 10.4。pb-147）。**nil なら作る。**
+	Maintenance *maintenance.Flag
 }
 
 // BasePath は API のベースパス（ApiDesign.md 2.1）。
@@ -101,11 +114,29 @@ func NewRouter(deps Deps) http.Handler {
 		dbStats = dbstat.New(deps.Pool)
 	}
 
+	backups := deps.Backups
+	if backups == nil && deps.Pool != nil {
+		backups = backup.NewService(deps.Pool, deps.DatabaseURL, deps.Version)
+	}
+	flag := deps.Maintenance
+	if flag == nil {
+		flag = maintenance.New(func(on bool) {
+			if on {
+				slog.Warn("保守モードに入った。取り込みが終わるまで要求を受け付けない")
+			} else {
+				slog.Info("保守モードを出た")
+			}
+		})
+	}
+
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
 	// /healthcheck は probe が短間隔で叩くため DEBUG に落とす（Design.md 10.1）。
 	r.Use(middleware.AccessLog(HealthPath))
+	// **保守モード中は要求を止める**（ApiDesign.md 11.13、Design.md 10.4。pb-147）。
+	// **RequestID とアクセスログの内側に置く**——止めた要求もログに残す。
+	r.Use(middleware.Maintenance(flag, maintenanceExempt))
 
 	// chi の既定は本文なしの 404 / 405 を返すため、2.5 の形式に置き換える。
 	//
@@ -145,6 +176,8 @@ func NewRouter(deps Deps) http.Handler {
 		TLSListening:      deps.TLSListening,
 		ListenURL:         deps.ListenURL,
 		DBStats:           dbStats,
+		Backups:           backups,
+		Maintenance:       flag,
 	}
 
 	r.Route(BasePath, func(r chi.Router) {
@@ -154,6 +187,17 @@ func NewRouter(deps Deps) http.Handler {
 	mountMCP(r, q, v1Deps, deps.Version)
 
 	return r
+}
+
+// maintenanceExempt は保守モードでも素通しする要求を選ぶ（ApiDesign.md 11.13）。
+//
+//	/healthcheck        監視が落ちたと読まないように 200 のまま（2.11）
+//	POST /admin/restore 取り込みの口そのもの。止めると自分を止めることになる
+func maintenanceExempt(r *http.Request) bool {
+	if r.URL.Path == HealthPath {
+		return true
+	}
+	return r.Method == http.MethodPost && r.URL.Path == BasePath+"/admin/restore"
 }
 
 // mountMCP は MCP サーバを /mcp/{key} に並べる（Design.md 8.3）。
