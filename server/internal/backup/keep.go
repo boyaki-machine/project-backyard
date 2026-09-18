@@ -108,9 +108,21 @@ func insertKept(ctx context.Context, conn *pgx.Conn, kept *KeptRow) (bool, error
 	}
 	if _, err := tx.Exec(ctx, insertStmt(*t), args...); err != nil {
 		var pgErr *pgconn.PgError
-		// 23503 = 外部キー違反、23505 = 一意制約違反（書庫に同じ行があった）。
-		if errors.As(err, &pgErr) && (pgErr.Code == "23503" || pgErr.Code == "23505") {
-			return false, nil
+		if errors.As(err, &pgErr) {
+			switch pgErr.Code {
+			case "23505":
+				// **一意制約違反＝書庫に同じ行が入っていた。** 自分で取った書庫を
+				// 戻したときの、いちばん普通の場合である。**行は既に在るので
+				// 「維持できた」**——入れ直す必要が無かっただけである。
+				//
+				// **ここを「維持できなかった」と返すと、画面が不要にログイン画面へ
+				// 飛ばす**（pb-147 で実サーバを叩いて分かった）。
+				return true, nil
+			case "23503":
+				// **外部キー違反＝参照先の行が復元後のデータに無い。** 別の PB の
+				// 書庫を入れたときである。**維持できない。**
+				return false, nil
+			}
 		}
 		return false, fmt.Errorf("控えた行を入れ直せない: %w", err)
 	}

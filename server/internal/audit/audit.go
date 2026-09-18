@@ -95,7 +95,7 @@ const (
 	LoginPasskeyFailure Action = "login.passkey_failure"
 )
 
-// actions は ApiDesign.md 2.10 が列挙する30件。
+// actions は ApiDesign.md 2.10 が列挙する32件。
 var actions = map[Action]bool{
 	LoginSuccess: true, LoginFailure: true, Logout: true,
 	PasswordChange: true, PasswordReset: true,
@@ -110,6 +110,8 @@ var actions = map[Action]bool{
 	LoginMFAFailure: true,
 	PasskeyRegister: true, PasskeyUnregister: true, PasskeyReset: true,
 	LoginPasskeyFailure: true,
+	DatabaseBackup:      true,
+	DatabaseRestore:     true,
 }
 
 // Result は audit_log.result（DbDesign.md 6.8 の CHECK 制約）。

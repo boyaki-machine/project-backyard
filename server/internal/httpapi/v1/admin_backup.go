@@ -85,13 +85,17 @@ func (h *handler) recordBackup(r *http.Request, rec *audit.Recorder, result audi
 	if h.tx == nil {
 		return
 	}
-	_ = h.tx.RunInTx(context.WithoutCancel(r.Context()), func(q gen.Querier) error {
-		rec.RecordOrLog(context.WithoutCancel(r.Context()), q, audit.Entry{
+	ctx := context.WithoutCancel(r.Context())
+	if err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		rec.RecordOrLog(ctx, q, audit.Entry{
 			Action: audit.DatabaseBackup, Result: result,
 			TargetType: "database", Detail: detail,
 		})
 		return nil
-	})
+	}); err != nil {
+		// **握り潰さない。** 書き出したことが記録に残らないのは、それ自体が異常である。
+		slog.ErrorContext(ctx, "書き出しの監査ログを書けない", slog.String("cause", err.Error()))
+	}
 }
 
 // restoreResponse は 11.12 の応答。

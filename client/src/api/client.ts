@@ -148,8 +148,11 @@ async function request<T>(
   body?: unknown,
   options: RequestOptions = {},
 ): Promise<T> {
+  const isForm = body instanceof FormData
   const headers: Record<string, string> = { Accept: 'application/json' }
-  if (body !== undefined) headers['Content-Type'] = 'application/json; charset=utf-8'
+  // **FormData には Content-Type を付けない。** 付けると boundary が欠けて
+  // サーバがパートを切り出せない（fetch が付けるのに任せる）。
+  if (body !== undefined && !isForm) headers['Content-Type'] = 'application/json; charset=utf-8'
 
   if (!SAFE_METHODS.includes(method)) {
     const csrf = readCookie(CSRF_COOKIE)
@@ -169,7 +172,7 @@ async function request<T>(
       headers,
       // 同一オリジンで配信する（Design.md 3.4）。既定でも送られるが明示する。
       credentials: 'same-origin',
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
     })
   } catch {
     // サーバまで届かなかった場合。2.5 の応答が無いので、ここだけは
@@ -216,4 +219,14 @@ export const api = {
   // `delete` は予約語なので名前を変える。呼び出し側は `api.del(...)` と書く
   del: <T>(path: string, options?: RequestOptions) =>
     request<T>('DELETE', path, undefined, options),
+  /**
+   * `multipart/form-data` で送る（`ApiDesign.md` 11.12。pb-147）。
+   *
+   * **`FormData` の詰めた順がそのままパートの順になる。** サーバは先頭から順に
+   * 読むので、**書庫を最後に詰めること**——先だと、資格情報を読む前に書庫が流れ込む。
+   *
+   * **`Content-Type` を自分で付けない。** `fetch` が boundary 付きで付ける。
+   */
+  postForm: <T>(path: string, form: FormData, options?: RequestOptions) =>
+    request<T>('POST', path, form, options),
 }

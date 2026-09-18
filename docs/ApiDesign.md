@@ -284,7 +284,8 @@ If-Match: "3"
 `agent.register` / `agent.update` / `agent.delete` / `setting.update` /
 `tls.certificate.upload` / `tls.certificate.delete` / `mfa.register` / `mfa.unregister` /
 `mfa.recovery_codes.regenerate` / `mfa.reset` / `login.mfa_failure` /
-`passkey.register` / `passkey.unregister` / `passkey.reset` / `login.passkey_failure`
+`passkey.register` / `passkey.unregister` / `passkey.reset` / `login.passkey_failure` /
+`database.backup` / `database.restore`
 
 **`agent.` の3件は Phase 2 で加わった**（4.5.6）。**`agent.register` / `agent.update` は 0019**、
 **`agent.delete` は手順26a**（2026-09-05）である。エージェントの登録・変更・削除は
@@ -302,6 +303,13 @@ If-Match: "3"
 `otpauth_uri`・リカバリコードを `detail` に入れない**——同じ理由である。
 **`login.mfa_failure` を `login.failure` と分けてある**のは、前者ではパスワードが
 既に通っており、**総当たりの調査で見る対象が違う**ためである。
+
+**`database.*` の2件は pb-147 で加わった**（11.11 / 11.12）。**書き出しにも残す**——書庫には
+`app_secret` の鍵と暗号文の両方が入るので、**持ち出した事実そのものが監査の対象**である
+（証明書の取り出し＝11.7 が記録を残さないのとは扱いが違う）。**`detail` に
+`owner_password` を入れない**——ロール名だけを残す。**取り込みは終わったあと、別の
+トランザクションで書く**（`audit_log` 自身が入れ替わるため）。**失敗したときも残す**
+——表を落としたあとで落ちた場合、この記録だけが何が起きたかを伝える。
 
 **`passkey.*` の3件と `login.passkey_failure` は pb-104 で加わった**（4.7.5・6.10）。**公開鍵も
 `credential_id` も `detail` に入れない**——秘密ではないが、長期保存する記録に鍵の材料を残す理由が無い。
@@ -4994,9 +5002,18 @@ DB 側は `statement_timeout` を外した1つのトランザクションに閉�
 SHA-256 であり `app_secret` に依存しない（`DbDesign.md` 6.2）ので、**そのまま書き戻せば
 同じクッキーで続けられる。**
 
-**入れ直せる条件は、復元後のデータに本人の `actor` 行が在ることである。** 別の PB の書庫を
-入れたときなど、在らなければ**外部キーが通らない**。そのときは `session_kept: false` を返し、
-**画面はログイン画面へ送る。**
+**`session_kept` が答えるのは「このあとも同じクッキーで続けられるか」である。** 真になるのは2つ。
+
+- **書庫に自分のセッション行が入っていた**——自分で取った書庫を戻したときの、いちばん普通の場合。
+  **入れ直す必要が無かっただけ**で、行は在る
+- **書庫に無かったが、入れ直せた**——復元後のデータに本人の `actor` 行が在った
+
+**偽になるのは、参照先の `actor` 行が無いときだけである**（別の PB の書庫を入れたときなど）。
+外部キーが通らないので入れ直せない。**そのときだけ、画面はログイン画面へ送る。**
+
+**「入れ直せたか」で答えない。** 書庫に同じ行があると入れ直しは一意制約で弾かれるが、
+**セッションは生きている**——これを偽と答えると、画面が不要にログイン画面へ飛ばす
+（pb-147 で実サーバを叩いて分かった）。
 
 **権限は復元後のデータで決まる。** 戻したデータで `system.settings` を持たなければ、
 **繋がったまま権限だけ失う。** これは隠さず、そのまま起こしてよい——**戻したデータが

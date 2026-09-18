@@ -3310,6 +3310,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/backup.tar.gz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * PB 全体の書き出し（tar.gz ダウンロード）
+         * @description PB 全体を1つの書庫に書き出して返す（ApiDesign.md 11.11、DbDesign.md 9.1.1）。pb-144。
+         *     **必要権限は `system.settings`。**
+         *
+         *     **全表を `REPEATABLE READ` の1トランザクションで読む。** 表ごとに別の
+         *     トランザクションにすると、**読んでいる途中の書き込みが表のあいだで食い違い**、
+         *     戻したときに外部キーが通らない書庫ができる。
+         *
+         *     **このトランザクションのあいだだけ `statement_timeout` を外す**
+         *     （`SET LOCAL statement_timeout = 0`）。書き出しは行数に比例して長くなる。
+         *
+         *     **保守モードには入らない**——読むだけなので、書き込みを止める必要が無い。
+         *
+         *     **書庫そのものを秘密として扱う。** `app_secret` の鍵と、それで暗号化した
+         *     暗号文の両方が入る（DbDesign.md 6.16 の「代償を隠さない」）。
+         *
+         *     **`Content-Length` は返せない**（gzip した大きさが書き終わるまで分からない）。
+         */
+        get: operations["downloadBackup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * PB 全体の取り込み（復元）
+         * @description 書庫を取り込み、PB 全体をその時点へ戻す（ApiDesign.md 11.12、DbDesign.md 9.1.1）。pb-144。
+         *     **必要権限は `system.settings`。**
+         *
+         *     **段取りは「保守モードに入る → 書庫を検査 → 表を落とす → 書庫の版まで
+         *     マイグレーション → `TRUNCATE` で払う → 外部キーを遅延させて行を入れる →
+         *     数えて突き合わせる → 最新までマイグレーション → 操作者のセッションを
+         *     入れ直す → 保守モードを出る」。**
+         *
+         *     **`TRUNCATE` が要るのは、マイグレーションがスキーマだけでなく行も入れるから**
+         *     である（0010 の権限カタログ、0037・0038 のテンプレート本文）。払わないと、
+         *     書庫の同じ行と主キーで衝突する。
+         *
+         *     **外部キーを遅延させるのは、行ごとの検査がその場で走るからである。**
+         *     `ticket.parent_id` のような自己参照では、子を親より先に入れた時点で落ちる。
+         *     遅延した検査は `COMMIT` でまとめて走るので、**整合していない書庫はそこで弾かれる。**
+         *
+         *     **`multipart/form-data` で受ける。** 書庫は流しながら読む必要がある
+         *     （K8s の Pod は `readOnlyRootFilesystem: true` で一時ファイルを書けない）。
+         *     **パートはこの順で送る**——`archive` が最後でないと、資格情報を読む前に
+         *     書庫が流れ込む。
+         *
+         *     **PB は `pb_owner` の資格情報を持たない**（DbDesign.md 3.4）。取り込みの
+         *     あいだだけ接続を張り、終わったら捨てる。**保存せず、応答にもログにも残さない。**
+         *
+         *     **権限は資格情報を読む前に確かめる**——持っていない人に入力させない。
+         *
+         *     **`422` までは DB を触っていない。** 書庫の検査と資格情報の確認は、
+         *     表を落とす前に済ませる。**`500` のときは DB が中途半端なまま残る**ので、
+         *     `message` にそう書き、同じ書庫でのやり直しを案内する（段取りは表を落とす
+         *     ところから始まるので回復する）。
+         */
+        post: operations["restoreBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthcheck": {
         parameters: {
             query?: never;
@@ -5182,6 +5266,84 @@ export interface components {
              */
             size_bytes: number;
         };
+        /**
+         * @description ApiDesign.md 11.12。**この順で送る**——`archive` が最後でないと、
+         *     資格情報を読む前に書庫が流れ込む。
+         */
+        RestoreRequest: {
+            /**
+             * @description `pb_owner` にあたるロール名（既定 `pb_owner`）。
+             * @example pb_owner
+             */
+            owner_user: string;
+            /**
+             * Format: password
+             * @description そのロールのパスワード。**PB は保存せず、取り込みのあいだだけ
+             *     接続に使って捨てる。** 応答にも構造化ログにも監査ログにも残さない。
+             */
+            owner_password: string;
+            /**
+             * Format: binary
+             * @description 書き出した書庫（tar.gz。DbDesign.md 9.1.1）。
+             */
+            archive: string;
+        };
+        /**
+         * @description ApiDesign.md 11.12。**`expected` と `rows` を両方返す**——片方だけでは、
+         *     戻せたのか戻したつもりなのかが分からない。
+         */
+        RestoreResult: {
+            /** Format: date-time */
+            restored_at: string;
+            backup: components["schemas"]["BackupMeta"];
+            /**
+             * @description 取り込みが終わったあとの版。**`backup.migration_version` より
+             *     進んでいることがある**（古い書庫を取り込んでから最新まで進めるため）。
+             */
+            migration_version: number;
+            /**
+             * @description 操作者のセッションを維持できたか。**復元後のデータに本人の `actor` 行が
+             *     無ければ `false`** になり、画面はログイン画面へ送る。
+             */
+            session_kept: boolean;
+            /** @description 全表。**一致した表も落とさない。** */
+            tables: components["schemas"]["RestoreTable"][];
+            /**
+             * @description `expected` と `rows` が食い違った表の名前。**空なら全表が一致した。**
+             *     **`access_token` の +1 はここに入れない**（下記）。
+             */
+            mismatched: string[];
+        };
+        /** @description 書庫の `meta.json`（DbDesign.md 9.1.1）をそのまま返す。 */
+        BackupMeta: {
+            /**
+             * @description 書庫の形式の版。**後から形式を変えると、既に取ったバックアップを
+             *     戻せなくなる**ので、読めない版を黙って読もうとしない。
+             */
+            format_version: number;
+            /** @description 書き出した時点で適用済みだった最大のマイグレーション番号。 */
+            migration_version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** @example 2.43.140 */
+            pb_version: string;
+        };
+        RestoreTable: {
+            name: string;
+            /**
+             * Format: int64
+             * @description 書庫の `meta.json` が持つ件数。
+             */
+            expected: number;
+            /**
+             * Format: int64
+             * @description **行を入れた直後に数えた `count(*)`**（DbDesign.md 9.1.1 の⑦）。
+             *     **最新の版へ進める前に数える**——あとから走るマイグレーションが行を
+             *     足す表は、遅らせると `meta.json` より多くなり、正しく入ったものまで
+             *     食い違いとして出る。**操作者のセッション1行も、数えたあとに足す。**
+             */
+            rows: number;
+        };
         /** @description 証明書1件（ApiDesign.md 11.4）。**`private_key` は含まれない。** */
         TLSCertificate: {
             /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
@@ -6466,6 +6628,22 @@ export interface components {
         };
         /** @description CSRF トークンの不一致（`csrf_failed`）。Cookie 欠落・ヘッダ欠落・不一致を区別しない。 */
         CSRFFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /**
+         * @description 保守モード中（`maintenance`。ApiDesign.md 11.13、2.5.1）。書庫の取り込み
+         *     （11.12）のあいだ、`/api` と `/mcp` はこれを返す。**`Retry-After` は
+         *     伴わない**——かかる時間は書庫の大きさで決まり、PB は見積もれない。
+         *
+         *     **ブラウザが開くパスには、単一の静的な HTML を同じ 503 で返す**——
+         *     SPA を返すと、画面は動き出してから API で失敗する。
+         */
+        Maintenance: {
             headers: {
                 [name: string]: unknown;
             };
@@ -11254,6 +11432,90 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    downloadBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description PB 全体を収めた tar.gz。`Content-Disposition` でファイル名が付く。
+             *     中身は `meta.json` と `data/<表名>.jsonl`（DbDesign.md 9.1.1）。
+             */
+            200: {
+                headers: {
+                    /** @example attachment; filename="pb-backup-20260918-150405.tar.gz" */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": string;
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["Maintenance"];
+        };
+    };
+    restoreBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["RestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description 取り込みの結果と、件数の突き合わせ。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /**
+             * @description 書庫のマイグレーション番号が、いまの PB より新しい（`backup_too_new`）。
+             *     **知らない列を推測して埋めることになるので取り込まない。**
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description 書庫が壊れている・`format_version` が読めない、または
+             *     `owner_password` が違う（`validation_failed`）。
+             *     **後者は `details[].field` が `owner_password` になる。**
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["Maintenance"];
         };
     };
     healthcheck: {

@@ -6,12 +6,18 @@
  *
  * **定期的に引かない。** 件数は全表の `count(*)` なので、行が増えるほど1回が
  * 重くなる。開いたときと [再読み込み] のときだけ引き、**いつの値かを横に出す。**
+ *
+ * **下半分はバックアップと復元である**（pb-147）。上半分（状態）は読み取り専用、
+ * 下半分は画面を変える操作なので、**区切りで分ける。**
  */
 import { computed, onMounted, ref } from 'vue'
 
+import RestoreBackupDialog from '../components/RestoreBackupDialog.vue'
 import { ApiError } from '../api/client'
 import * as settingsApi from '../api/settings'
-import type { DatabaseStatus } from '../api/settings'
+import type { DatabaseStatus, RestoreResult } from '../api/settings'
+import { readBackupMeta } from '../lib/backupArchive'
+import type { BackupMeta } from '../lib/backupArchive'
 import { formatDateTime } from '../lib/datetime'
 
 const status = ref<DatabaseStatus | null>(null)
@@ -67,6 +73,94 @@ const uptime = computed(() => {
 
 function formatCount(n: number): string {
   return n.toLocaleString('ja-JP')
+}
+
+// ── バックアップと復元（`ApiDesign.md` 11.11〜11.12。pb-147）────────────
+
+const backupUrl = settingsApi.backupUrl()
+
+/**
+ * 書き出し中か。**押したら終わるまで押せなくする。**
+ *
+ * `Content-Length` が返らないので進捗は出せない（11.11）。**押した直後に
+ * 何も変わらないと、押せていないと読まれる。**
+ */
+const dumping = ref(false)
+
+function startDump() {
+  dumping.value = true
+  // **落とし始めたかは分からない**（`<a>` の遷移は検知できない）。**大きいと
+  // 時間がかかると先に書いてあるので、一定時間で戻す。**
+  window.setTimeout(() => {
+    dumping.value = false
+  }, 4000)
+}
+
+const fileInput = ref<HTMLInputElement | null>(null)
+const chosen = ref<File | null>(null)
+const chosenMeta = ref<BackupMeta | null>(null)
+const confirming = ref(false)
+const restoring = ref(false)
+const restoreError = ref<string | null>(null)
+const restored = ref<RestoreResult | null>(null)
+
+async function chooseFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0] ?? null
+  chosen.value = file
+  chosenMeta.value = null
+  restored.value = null
+  restoreError.value = null
+  if (!file) return
+  // **押す前に中身を読んで見せる**（5.12.2）。読めなくても誤りにしない。
+  chosenMeta.value = await readBackupMeta(file)
+}
+
+function openConfirm() {
+  if (!chosen.value) return
+  restoreError.value = null
+  confirming.value = true
+}
+
+function cancelConfirm() {
+  confirming.value = false
+}
+
+async function runRestore(ownerUser: string, ownerPassword: string) {
+  const file = chosen.value
+  if (!file) return
+  restoring.value = true
+  restoreError.value = null
+  try {
+    const res = await settingsApi.restoreBackup(ownerUser, ownerPassword, file)
+    restored.value = res
+    confirming.value = false
+    clearChosen()
+    if (!res.session_kept) {
+      // **セッションを維持できなかった**（11.12）。この画面はもう自分の権限を
+      // 確かめられないので、ログイン画面へ送る。
+      window.location.assign('/login')
+      return
+    }
+    // **上半分を引き直す。** 件数も接続もすべて変わっている。
+    await load()
+  } catch (e) {
+    restoreError.value =
+      e instanceof ApiError ? e.message : '取り込みに失敗しました。もう一度お試しください'
+  } finally {
+    restoring.value = false
+  }
+}
+
+function clearChosen() {
+  chosen.value = null
+  chosenMeta.value = null
+  if (fileInput.value) fileInput.value.value = ''
+}
+
+/** 突き合わせで食い違った表かどうか */
+function isMismatched(name: string): boolean {
+  return restored.value?.mismatched.includes(name) ?? false
 }
 
 /**
@@ -169,7 +263,97 @@ function formatBytes(n: number): string {
           </table>
         </div>
       </section>
+
+      <!-- ── バックアップと復元（5.12.2。pb-147）──────────────── -->
+      <section class="block ops">
+        <h3>バックアップ</h3>
+
+        <p class="lead">
+          PB 全体を1つのファイルに書き出します。利用者・エージェント・暗号鍵も含まれます。
+          <strong>ファイルそのものを秘密として扱ってください。</strong>
+        </p>
+        <p class="muted small">
+          データが多いと時間がかかります。進捗は出ません（ファイルの大きさが最後まで分からないためです）。
+        </p>
+        <p class="actions">
+          <a class="button secondary" :href="backupUrl" :aria-disabled="dumping" @click="startDump">
+            {{ dumping ? '書き出しています…' : '書き出す' }}
+          </a>
+        </p>
+
+        <hr class="sep" />
+
+        <p class="lead">
+          書き出したファイルから、PB 全体をその時点へ戻します。
+          <strong>いまのデータはすべて置き換わります。</strong>
+        </p>
+        <p class="actions file-row">
+          <input
+            ref="fileInput"
+            type="file"
+            accept=".gz,.tgz,application/gzip"
+            :disabled="restoring"
+            @change="chooseFile"
+          />
+          <button type="button" class="danger small" :disabled="!chosen || restoring" @click="openConfirm">
+            取り込む…
+          </button>
+        </p>
+
+        <p v-if="restoring" class="restoring" role="status">
+          取り込んでいます。このページを閉じないでください
+        </p>
+        <p v-else-if="restoreError" class="error" role="alert">✕ {{ restoreError }}</p>
+
+        <!-- 突き合わせ（11.12）。**expected と rows を両方出す** -->
+        <div v-if="restored" class="result">
+          <p class="lead">
+            {{ formatDateTime(restored.backup.created_at) }} の書き出し（版
+            {{ String(restored.backup.migration_version).padStart(4, '0') }}）を取り込み、版
+            {{ String(restored.migration_version).padStart(4, '0') }} まで進めました。
+            <strong v-if="restored.mismatched.length === 0">
+              全 {{ restored.tables.length }} 表の件数が一致しています
+            </strong>
+            <strong v-else class="bad">
+              {{ restored.mismatched.length }} 表の件数が食い違っています
+            </strong>
+          </p>
+          <p class="muted small">
+            この数は取り込んだ直後のものです。いまの件数は上の「容量」で見てください（このあと
+            マイグレーションが行を足すことがあります）。
+          </p>
+          <div class="table-scroll">
+            <table class="tables">
+              <thead>
+                <tr>
+                  <th class="name">表</th>
+                  <th class="num">書庫</th>
+                  <th class="num">取り込み後</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="t in restored.tables" :key="t.name" :class="{ bad: isMismatched(t.name) }">
+                  <td class="name"><code>{{ t.name }}</code></td>
+                  <td class="num">{{ formatCount(t.expected) }}</td>
+                  <td class="num">{{ formatCount(t.rows) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
     </template>
+
+    <RestoreBackupDialog
+      v-if="confirming && chosen && status"
+      :file="chosen"
+      :meta="chosenMeta"
+      :database-name="status.connection.database"
+      :busy="restoring"
+      :error-message="restoreError"
+      @confirm="runRestore"
+      @cancel="cancelConfirm"
+    />
   </div>
 </template>
 
@@ -264,5 +448,64 @@ code {
 .note {
   font-size: 12px;
   margin-left: var(--pb-space-2);
+}
+
+/* ── バックアップと復元（pb-147）────────────────────────── */
+
+/*
+ * **状態を出す欄と、操作する欄を区切りで分ける**（5.12.2）。DB タブは pb-110 では
+ * 読み取り専用だったので、どこから先が画面を変える操作かが見て分かる必要がある。
+ */
+.ops {
+  border-top: 2px solid var(--pb-border);
+  padding-top: var(--pb-space-4);
+}
+.ops .lead {
+  margin: 0 0 var(--pb-space-2);
+}
+.small {
+  font-size: 12px;
+}
+.actions {
+  margin: 0 0 var(--pb-space-4);
+}
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-3);
+  flex-wrap: wrap;
+}
+.file-row input[type='file'] {
+  font-size: 13px;
+  min-width: 0;
+}
+.sep {
+  border: 0;
+  border-top: 1px solid var(--pb-line);
+  margin: var(--pb-space-4) 0;
+}
+/* `<a>` をボタンに見せる。**サーバの Content-Disposition にそのまま乗せる**ため */
+a.button {
+  display: inline-block;
+  text-decoration: none;
+}
+a.button[aria-disabled='true'] {
+  pointer-events: none;
+  opacity: 0.6;
+}
+.restoring {
+  margin: 0 0 var(--pb-space-3);
+  padding: var(--pb-space-2) var(--pb-space-3);
+  border-left: 3px solid var(--pb-warning);
+  background: var(--pb-warning-bg);
+}
+.result {
+  margin-top: var(--pb-space-3);
+}
+.bad {
+  color: var(--pb-danger-text);
+}
+.tables tr.bad td {
+  background: var(--pb-danger-bg);
 }
 </style>
