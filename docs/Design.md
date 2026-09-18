@@ -131,9 +131,9 @@ MCP サーバ、AI機能、ガント描画は Phase 1 の対象外である（�
 |---|---|---|
 | **サーバ言語** | **Go 1.26 以上** | `Requirements.md` 1章の候補（Rust / Go）から確定。ビルドの速さ、単一バイナリ配布、学習コストの低さを優先。**pb-104 で 1.24 から上げた**（パスキーの検証に使う go-webauthn が go 1.26.0 を要求するため。6.8.5） |
 | HTTPルータ | **chi v5** | `net/http` 互換。ミドルウェア連鎖とルートグループのみを足す薄い層 |
-| DBドライバ | **pgx v5**（`database/sql` を経由しない） | `timestamptz` `jsonb` `inet` をネイティブに扱えるため |
+| DBドライバ | **pgx v5**（`database/sql` を経由しない） | `timestamptz` `jsonb` `inet` をネイティブに扱えるため。**非経由なのはアプリのデータ経路である**——マイグレーションの実行だけは例外（下の goose） |
 | クエリ | **sqlc**（pgx/v5 モード） | SQLを書くとGoの型付き関数が生成される。設計原則2と一致 |
-| マイグレーション | **goose v3** | SQLファイルベース。アドバイザリロック対応（`DbDesign.md` 5.3） |
+| マイグレーション | **goose v3** | SQLファイルベース。アドバイザリロック対応（`DbDesign.md` 5.3）。**pb-147 でサーバ本体の依存にもなった**（書庫の取り込みが版を動かすため。`DbDesign.md` 9.1.1）。**goose の API は `*sql.DB` しか取らない**ので、`database/sql` と `pgx/v5/stdlib` が**マイグレーションを走らせる箇所だけ**に入る |
 | パスワード | `golang.org/x/crypto/argon2` | PHC文字列の入出力は `alexedwards/argon2id` を利用 |
 | 対話入力 | `golang.org/x/term` | `pb admin create` のパスワードを非表示で読む（`DbDesign.md` 7.5） |
 | YAML | `gopkg.in/yaml.v3` | **設定ファイル（`PB_CONFIG_FILE` が指す `pb.yaml`。10.3）と `pb dev seed` の定義ファイル**（`DbDesign.md` 7.6.4）。**pb-2 で実行時の依存になった**——それまでは `pb dev seed` だけで、実行時の推移依存を持たなかった |

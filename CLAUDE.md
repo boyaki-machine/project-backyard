@@ -48,7 +48,7 @@
 |---|---|---|
 | 言語 | Go 1.26+ | |
 | ルータ | chi v5 | 権限はミドルウェアとしてルート定義に宣言する（`docs/Design.md` 6.4.4） |
-| DB | pgx v5（`database/sql` 非経由） | |
+| DB | pgx v5（`database/sql` 非経由） | **非経由なのはデータの読み書き。** マイグレーションの実行だけ goose のため `database/sql` を通す |
 | クエリ | sqlc（pgx/v5 モード） | `migrations/` をスキーマ源として読む |
 | マイグレーション | goose v3 | 前進のみ。`down` を書かない（`docs/DbDesign.md` 5.3） |
 | ログ | `log/slog`（JSON） | |
