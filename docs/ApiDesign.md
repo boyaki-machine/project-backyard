@@ -344,6 +344,25 @@ GET /healthcheck
 
 **バージョンを既定で返さないのは、未認証の呼び出し元に対する情報開示だからである。** 稼働中のバージョンを知られると、既知の脆弱性との突き合わせを許す。デプロイ後の確認に使いたい環境でのみ有効にする。
 
+## 2.12 セキュリティヘッダ
+
+**すべての応答に付ける**（画面・API・`/mcp`・`/healthcheck` を問わない）。理由は `Design.md` 6.6.2。
+
+| ヘッダ | 値 |
+|---|---|
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'` |
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Referrer-Policy` | `same-origin` |
+
+**`Strict-Transport-Security` は出さない**（6.6.2）。
+
+**`style-src` にだけ `'unsafe-inline'` が要る。** Vue の `:style` 束縛と CodeMirror が実行時にスタイルを当てるためで、**`script-src` は `'self'` のままである**——スクリプトの実行を止めるのはそちらであり、こちらを緩めても注入の道にはならない。
+
+**`img-src` に `data:` が要る。** TOTP の QR を `QRCode.toDataURL` が `data:image/png;base64,…` で返す（4.6.2）。
+
+**API の応答にも付ける。** CSP は JSON には効かないが、**`nosniff` は効く**——`Content-Type` を無視して別の型として解釈させる経路を塞ぐ。
+
 **DBの疎通は見ない。** DB断でプロセスを再起動しても復旧しないため、liveness で落とすと不要な再起動ループを招く。DBを含む可用性確認が必要になった時点で `/ready` を別に足す（Phase 1 では作らない）。
 
 **SPAフォールバックの例外にあたる。** `Design.md` 3.4 は「`/api` `/mcp` 以外で未知のパスは `index.html` を返す」としているため、`/healthcheck` を明示的な例外として扱う。
