@@ -4,7 +4,6 @@ package tlscert
 import (
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -50,9 +49,6 @@ type Entry struct {
 // 選ばれたものの ID を第2返り値に返す（空なら有効なものが無い）。
 func Select(entries []Entry, now time.Time) (map[string]Status, string) {
 	status := make(map[string]Status, len(entries))
-	activeID := ""
-	var activeFrom time.Time
-
 	for _, e := range entries {
 		switch {
 		case now.Before(e.NotBefore):
@@ -60,18 +56,35 @@ func Select(entries []Entry, now time.Time) (map[string]Status, string) {
 		case now.After(e.NotAfter):
 			status[e.ID] = StatusExpired
 		default:
-			// 有効。いちばん新しいものを探す。
+			// 有効。**選ばれた1枚だけを下で active に上書きする。**
 			status[e.ID] = StatusSuperseded
-			if activeID == "" || e.NotBefore.After(activeFrom) {
-				activeID = e.ID
-				activeFrom = e.NotBefore
-			}
 		}
 	}
-	if activeID != "" {
+	activeID := ""
+	if i := selectActive(entries, now); i >= 0 {
+		activeID = entries[i].ID
 		status[activeID] = StatusActive
 	}
 	return status, activeID
+}
+
+// selectActive は出す1枚を選び、entries の添字を返す（無ければ -1）。
+//
+// **全件の状態が要るのは画面だけである**（ApiDesign.md 11.4）。ハンドシェイクの
+// たびに要るのは選ばれた1枚なので、**そこで map を組み立てて捨てない**ように
+// 選定だけを切り出してある。添字で返すので、呼び出し側は ID から引き直さずに済む。
+func selectActive(entries []Entry, now time.Time) int {
+	active := -1
+	var activeFrom time.Time
+	for i, e := range entries {
+		if now.Before(e.NotBefore) || now.After(e.NotAfter) {
+			continue
+		}
+		if active < 0 || e.NotBefore.After(activeFrom) {
+			active, activeFrom = i, e.NotBefore
+		}
+	}
+	return active
 }
 
 // ErrNoUsableCertificate は有効な証明書が1枚も無いこと。
@@ -102,15 +115,15 @@ func (h *Holder) Replace(entries []Entry) {
 	h.warned = false
 	h.mu.Unlock()
 
-	_, activeID := Select(entries, time.Now())
-	if activeID == "" {
+	i := selectActive(entries, time.Now())
+	if i < 0 {
 		slog.Warn("有効な TLS 証明書が無い状態になった",
 			slog.Int("registered", len(entries)),
 			slog.String("hint", "PB_TLS_ENABLED=false を与えて起動し直すと平文へ戻せる"))
 		return
 	}
 	slog.Info("出す TLS 証明書が決まった",
-		slog.String("certificate_id", activeID), slog.Int("registered", len(entries)))
+		slog.String("certificate_id", entries[i].ID), slog.Int("registered", len(entries)))
 }
 
 // Count は登録されている件数を返す。
@@ -124,24 +137,21 @@ func (h *Holder) Count() int {
 //
 // **毎ハンドシェイクで選ぶ。** 期限による切り替えも時刻の比較だけで起きるので、
 // 切り替えのための仕掛けを持たない（Design.md 6.6.1）。
+//
+// **Select ではなく selectActive を呼ぶ。** あちらは全件の状態を map に組み立てる
+// ——接続のたびにそれを作って捨てることになるうえ、返った ID から Pair を引くのに
+// もう一度走査が要る。**添字で受ければどちらも要らない。**
 func (h *Holder) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	h.mu.RLock()
 	entries := h.entries
 	h.mu.RUnlock()
 
-	_, activeID := Select(entries, time.Now())
-	if activeID == "" {
+	i := selectActive(entries, time.Now())
+	if i < 0 {
 		h.warnOnce()
 		return nil, ErrNoUsableCertificate
 	}
-	for i := range entries {
-		if entries[i].ID == activeID {
-			return entries[i].Pair, nil
-		}
-	}
-	// Select が返した ID が entries に無いことは起こらないが、
-	// 起きたら平文へ落とさず失敗させる。
-	return nil, fmt.Errorf("選んだ証明書が見つからない（id=%s）", activeID)
+	return entries[i].Pair, nil
 }
 
 // warnOnce は「有効な証明書が無い」を一度だけ記録する。

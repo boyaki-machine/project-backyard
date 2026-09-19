@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -158,17 +157,17 @@ func callGetContext(h *Handler, r *http.Request, key string, args json.RawMessag
 	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
-	if !in.Seq.set || in.Seq.value < 1 {
-		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
-	seq := strconv.FormatInt(in.Seq.value, 10)
-	base := "/projects/" + url.PathEscape(key)
+	base := projectPath(key)
 
 	// ── チケット（9.5.1）────────────────────────────────────
 	//
 	// **これが読めなければパックは成り立たない**ので、失敗はそのまま
 	// isError のツール結果にする（Design.md 8.4 / 8.5.5）。
-	res, err := h.getREST(r, base+"/tickets/"+seq, nil)
+	res, err := h.getREST(r, ticketPath(key, seq), nil)
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, err.Error())
 	}

@@ -141,7 +141,7 @@ func (d Definition) Validate(value string) error {
 				return nil
 			}
 		}
-		return fmt.Errorf("%s のいずれかを指定してください", joinJa(d.Allowed))
+		return fmt.Errorf("%s のいずれかを指定してください", strings.Join(d.Allowed, " / "))
 	case TypeString:
 		if value == "" {
 			return fmt.Errorf("空にできません")
@@ -246,16 +246,4 @@ func Lookup(key string) (Definition, bool) {
 		}
 	}
 	return Definition{}, false
-}
-
-// joinJa は候補を「a / b / c」の形に並べる。
-func joinJa(vs []string) string {
-	out := ""
-	for i, v := range vs {
-		if i > 0 {
-			out += " / "
-		}
-		out += v
-	}
-	return out
 }

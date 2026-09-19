@@ -237,20 +237,20 @@ func (h *Handler) callTool(r *http.Request, req rpcRequest) rpcResponse {
 // ── ツール本体 ──────────────────────────────────────────────
 
 func callGetProject(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
-	if rpcErr := rejectUnknownArgs(args); rpcErr != nil {
+	if rpcErr := requireObjectArgs(args); rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
-	res, err := h.getREST(r, "/projects/"+url.PathEscape(key), nil)
+	res, err := h.getREST(r, projectPath(key), nil)
 	return passThrough(r, res, err)
 }
 
 func callListDocs(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
-	if rpcErr := rejectUnknownArgs(args); rpcErr != nil {
+	if rpcErr := requireObjectArgs(args); rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
 	// **目次は常に outline つきで取る**（ApiDesign.md 10.2）。見出しが無いと、
 	// エージェントは「どの章を読むか」を決められず全文を読むことになる。
-	res, err := h.getREST(r, "/projects/"+url.PathEscape(key)+"/docs", url.Values{"outline": {"1"}})
+	res, err := h.getREST(r, projectPath(key)+"/docs", url.Values{"outline": {"1"}})
 	return passThrough(r, res, err)
 }
 
@@ -274,7 +274,7 @@ func callGetDoc(h *Handler, r *http.Request, key string, args json.RawMessage) (
 	if in.Section != "" {
 		q.Set("section", in.Section)
 	}
-	res, err := h.getREST(r, "/projects/"+url.PathEscape(key)+"/docs/"+escapePath(path), q)
+	res, err := h.getREST(r, projectPath(key)+"/docs/"+escapePath(path), q)
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, err.Error())
 	}
@@ -303,12 +303,12 @@ func callGetTask(h *Handler, r *http.Request, key string, args json.RawMessage) 
 	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
-	if !in.Seq.set || in.Seq.value < 1 {
-		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
 
-	res, err := h.getREST(r,
-		"/projects/"+url.PathEscape(key)+"/tickets/"+strconv.FormatInt(in.Seq.value, 10), nil)
+	res, err := h.getREST(r, ticketPath(key, seq), nil)
 	return passThrough(r, res, err)
 }
 
@@ -353,7 +353,7 @@ func callListTasks(h *Handler, r *http.Request, key string, args json.RawMessage
 		q.Set("per_page", strconv.FormatInt(in.PerPage.value, 10))
 	}
 
-	res, err := h.getREST(r, "/projects/"+url.PathEscape(key)+"/tickets", q)
+	res, err := h.getREST(r, projectPath(key)+"/tickets", q)
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, err.Error())
 	}
@@ -503,6 +503,64 @@ var (
 
 // ── 共通の組み立て ──────────────────────────────────────────
 
+// projectPath は /projects/<key> を組み立てる。
+//
+// **キーは必ずエスケープする。** URL から取った値がそのまま REST のパスへ入る
+// ので、組み立てを各ツールに散らすと1か所だけ素通しになりうる。
+func projectPath(key string) string {
+	return "/projects/" + url.PathEscape(key)
+}
+
+// ticketPath は /projects/<key>/tickets/<seq> を組み立てる。
+func ticketPath(key string, seq int64) string {
+	return projectPath(key) + "/tickets/" + strconv.FormatInt(seq, 10)
+}
+
+// requireSeq は seq を検証して値を返す。
+//
+// **同じ検証を8つのツールが書いていた。** 文言もここ1か所にしておかないと、
+// 直したときに片方だけ古い言い方で残る。
+func requireSeq(seq flexInt) (int64, *rpcError) {
+	if !seq.set || seq.value < 1 {
+		return 0, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	}
+	return seq.value, nil
+}
+
+// readVersion は If-Match に載せる版を、書き込む先と同じ REST から読む（8.5.1）。
+//
+// **pb_update_ticket と pb_put_doc が同じ形で使う。** どちらもエージェントが
+// version を持てないので（pb_get_doc は本文しか返さない）、MCP 層が GET で取る。
+//
+// 戻り値は3つある。**2つ目が非 nil なら、それをそのままツールの結果として返すこと**
+// ——403 / 404 は「呼び出しの結果」であって、プロトコルの誤りではない（8.4）。
+// what は誤りの文に入れる語（「チケット」「文書」）。
+func (h *Handler) readVersion(r *http.Request, path, what string) (int64, *toolResult, *rpcError) {
+	cur, err := h.getREST(r, path, nil)
+	if err != nil {
+		return 0, nil, newError(codeInternalError, err.Error())
+	}
+	if !cur.ok() {
+		res := failed(r, cur)
+		return 0, &res, nil
+	}
+	var body struct {
+		Version int64 `json:"version"`
+	}
+	if err := json.Unmarshal(cur.body, &body); err != nil {
+		return 0, nil, newError(codeInternalError, what+"の応答を解釈できない: "+err.Error())
+	}
+	if body.Version < 1 {
+		return 0, nil, newError(codeInternalError, what+"の応答に version が無い")
+	}
+	return body.Version, nil, nil
+}
+
+// ifMatch は版を entity-tag の形のヘッダにする（2.8 / 5.5 の例と同じ形）。
+func ifMatch(version int64) http.Header {
+	return http.Header{"If-Match": []string{`"` + strconv.FormatInt(version, 10) + `"`}}
+}
+
 // passThrough は REST の応答をそのままテキストにする（Design.md 8.5）。
 func passThrough(r *http.Request, res restResult, err error) (toolResult, *rpcError) {
 	if err != nil {
@@ -585,12 +643,14 @@ func decodeArgs(args json.RawMessage, dst any) *rpcError {
 	return nil
 }
 
-// rejectUnknownArgs は引数を取らないツールのための検証。
+// requireObjectArgs は引数を取らないツールのための検証。
 //
-// **知らない引数は黙って捨てる。** 弾くと、気を利かせて余分な欄を付けた
-// クライアントが1つも呼べなくなる。ここでは形（オブジェクトであること）
-// だけを見る。
-func rejectUnknownArgs(args json.RawMessage) *rpcError {
+// **見るのは形（オブジェクトであること）だけである。** 知らない欄は黙って
+// 捨てる——弾くと、気を利かせて余分な欄を付けたクライアントが1つも呼べなくなる。
+//
+// **名前で「知らない引数を拒む」と読めてはいけない。** 拒まないのが仕様であり、
+// 以前の名前（rejectUnknownArgs）は中身と反対のことを言っていた。
+func requireObjectArgs(args json.RawMessage) *rpcError {
 	if len(args) == 0 || string(args) == "null" {
 		return nil
 	}
@@ -897,8 +957,7 @@ func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
-	res, err := h.callREST(r, http.MethodPost,
-		"/projects/"+url.PathEscape(key)+"/tickets", nil, raw, nil)
+	res, err := h.callREST(r, http.MethodPost, projectPath(key)+"/tickets", nil, raw, nil)
 	return passThroughFields(r, res, err, createTicketResultFields...)
 }
 
@@ -939,8 +998,9 @@ func callUpdateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
-	if !in.Seq.set || in.Seq.value < 1 {
-		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
 
 	body := map[string]any{}
@@ -982,24 +1042,15 @@ func callUpdateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 			"直す項目を1つ以上渡すこと（seq だけでは何も変わらない）")
 	}
 
-	seqPath := "/projects/" + url.PathEscape(key) + "/tickets/" + strconv.FormatInt(in.Seq.value, 10)
+	seqPath := ticketPath(key, seq)
 
 	// ① いまの version を読む。**403 / 404 はここで出る**ので、書く前に返せる。
-	cur, err := h.getREST(r, seqPath, nil)
-	if err != nil {
-		return toolResult{}, newError(codeInternalError, err.Error())
+	version, failedRes, rpcErr := h.readVersion(r, seqPath, "チケット")
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
-	if !cur.ok() {
-		return failed(r, cur), nil
-	}
-	var ticket struct {
-		Version int64 `json:"version"`
-	}
-	if err := json.Unmarshal(cur.body, &ticket); err != nil {
-		return toolResult{}, newError(codeInternalError, "チケットの応答を解釈できない: "+err.Error())
-	}
-	if ticket.Version < 1 {
-		return toolResult{}, newError(codeInternalError, "チケットの応答に version が無い")
+	if failedRes != nil {
+		return *failedRes, nil
 	}
 
 	// ② 書き戻す。
@@ -1007,9 +1058,8 @@ func callUpdateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
-	header := http.Header{"If-Match": []string{`"` + strconv.FormatInt(ticket.Version, 10) + `"`}}
 
-	res, err := h.callREST(r, http.MethodPatch, seqPath, nil, raw, header)
+	res, err := h.callREST(r, http.MethodPatch, seqPath, nil, raw, ifMatch(version))
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, err.Error())
 	}
@@ -1060,16 +1110,16 @@ func callPutDoD(h *Handler, r *http.Request, key string, args json.RawMessage) (
 	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
-	if !in.Seq.set || in.Seq.value < 1 {
-		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
 	if len(in.Add) == 0 && len(in.Update) == 0 && len(in.Delete) == 0 {
 		return toolResult{}, newError(codeInvalidParams,
 			"add / update / delete のいずれかを渡すこと（seq だけでは何も変わらない）")
 	}
 
-	base := "/projects/" + url.PathEscape(key) + "/tickets/" +
-		strconv.FormatInt(in.Seq.value, 10) + "/dod"
+	base := ticketPath(key, seq) + "/dod"
 
 	// ① 消す
 	for _, id := range in.Delete {
@@ -1154,8 +1204,9 @@ func callPostNote(h *Handler, r *http.Request, key string, args json.RawMessage)
 	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
-	if !in.Seq.set || in.Seq.value < 1 {
-		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
 	if strings.TrimSpace(in.BodyMD) == "" {
 		return toolResult{}, newError(codeInvalidParams, "body_md は必須である")
@@ -1169,9 +1220,7 @@ func callPostNote(h *Handler, r *http.Request, key string, args json.RawMessage)
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
-	res, err := h.callREST(r, http.MethodPost,
-		"/projects/"+url.PathEscape(key)+"/tickets/"+strconv.FormatInt(in.Seq.value, 10)+"/comments",
-		nil, raw, nil)
+	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/comments", nil, raw, nil)
 	return passThroughFields(r, res, err, postNoteResultFields...)
 }
 
@@ -1208,8 +1257,9 @@ func callAddReference(h *Handler, r *http.Request, key string, args json.RawMess
 	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
-	if !in.Seq.set || in.Seq.value < 1 {
-		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
 
 	// **本文は「送られた項目だけ」を組み立てる**（callCreateTicket と同じ）。
@@ -1235,9 +1285,7 @@ func callAddReference(h *Handler, r *http.Request, key string, args json.RawMess
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
-	res, err := h.callREST(r, http.MethodPost,
-		"/projects/"+url.PathEscape(key)+"/tickets/"+strconv.FormatInt(in.Seq.value, 10)+"/references",
-		nil, raw, nil)
+	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/references", nil, raw, nil)
 	return passThrough(r, res, err)
 }
 
@@ -1272,24 +1320,15 @@ func callPutDoc(h *Handler, r *http.Request, key string, args json.RawMessage) (
 			"body_md は必須である（本文を全置換するツールなので、空では呼べない）")
 	}
 
-	docPath := "/projects/" + url.PathEscape(key) + "/docs/" + escapePath(path)
+	docPath := projectPath(key) + "/docs/" + escapePath(path)
 
 	// ① いまの version を読む。**403 / 404 はここで出る**ので、書く前に返せる。
-	cur, err := h.getREST(r, docPath, nil)
-	if err != nil {
-		return toolResult{}, newError(codeInternalError, err.Error())
+	version, failedRes, rpcErr := h.readVersion(r, docPath, "文書")
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
-	if !cur.ok() {
-		return failed(r, cur), nil
-	}
-	var doc struct {
-		Version int64 `json:"version"`
-	}
-	if err := json.Unmarshal(cur.body, &doc); err != nil {
-		return toolResult{}, newError(codeInternalError, "文書の応答を解釈できない: "+err.Error())
-	}
-	if doc.Version < 1 {
-		return toolResult{}, newError(codeInternalError, "文書の応答に version が無い")
+	if failedRes != nil {
+		return *failedRes, nil
 	}
 
 	// ② 書き戻す。
@@ -1301,10 +1340,7 @@ func callPutDoc(h *Handler, r *http.Request, key string, args json.RawMessage) (
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
-	// 引用符付きの entity-tag で送る（2.8 / 5.5 の例と同じ形）。
-	header := http.Header{"If-Match": []string{`"` + strconv.FormatInt(doc.Version, 10) + `"`}}
-
-	res, err := h.callREST(r, http.MethodPatch, docPath, nil, raw, header)
+	res, err := h.callREST(r, http.MethodPatch, docPath, nil, raw, ifMatch(version))
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, err.Error())
 	}
@@ -1396,12 +1432,11 @@ func callListTransitions(h *Handler, r *http.Request, key string, args json.RawM
 	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
-	if !in.Seq.set || in.Seq.value < 1 {
-		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
-	res, err := h.getREST(r,
-		"/projects/"+url.PathEscape(key)+"/tickets/"+
-			strconv.FormatInt(in.Seq.value, 10)+"/transitions", nil)
+	res, err := h.getREST(r, ticketPath(key, seq)+"/transitions", nil)
 	return passThrough(r, res, err)
 }
 
@@ -1423,8 +1458,9 @@ func callTransitionTask(h *Handler, r *http.Request, key string, args json.RawMe
 	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
-	if !in.Seq.set || in.Seq.value < 1 {
-		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
 	if strings.TrimSpace(in.To) == "" {
 		return toolResult{}, newError(codeInvalidParams,
@@ -1439,9 +1475,7 @@ func callTransitionTask(h *Handler, r *http.Request, key string, args json.RawMe
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
-	res, err := h.callREST(r, http.MethodPost,
-		"/projects/"+url.PathEscape(key)+"/tickets/"+
-			strconv.FormatInt(in.Seq.value, 10)+"/transition", nil, raw, nil)
+	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/transition", nil, raw, nil)
 	return passThroughFields(r, res, err, transitionResultFields...)
 }
 
@@ -1546,9 +1580,13 @@ func callSubmitResult(h *Handler, r *http.Request, key string, args json.RawMess
 	if !ok {
 		return toolResult{}, newError(codeInvalidParams, "seq は必須である")
 	}
-	var seq flexInt
-	if err := seq.UnmarshalJSON(rawSeq); err != nil || !seq.set || seq.value < 1 {
+	var parsed flexInt
+	if err := parsed.UnmarshalJSON(rawSeq); err != nil {
 		return toolResult{}, newError(codeInvalidParams, "seq は 1 以上の整数である")
+	}
+	seq, rpcErr := requireSeq(parsed)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
 	delete(fields, "seq")
 
@@ -1556,9 +1594,7 @@ func callSubmitResult(h *Handler, r *http.Request, key string, args json.RawMess
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
-	res, err := h.callREST(r, http.MethodPost,
-		"/projects/"+url.PathEscape(key)+"/tickets/"+
-			strconv.FormatInt(seq.value, 10)+"/reports", nil, body, nil)
+	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/reports", nil, body, nil)
 	return passThrough(r, res, err)
 }
 
@@ -1572,7 +1608,12 @@ func callSubmitResult(h *Handler, r *http.Request, key string, args json.RawMess
 // **pb_list_sprints は作っていない。** スプリントは 0028 以降どの経路からも
 // 設定できないので（9.5.2 の use_sprint_endpoint）、**列挙する用途が無い**
 // ——読むだけなら pb_get_task の応答が sprint: {id, name} を返している。
-func callListTags(h *Handler, r *http.Request, key string, _ json.RawMessage) (toolResult, *rpcError) {
-	res, err := h.getREST(r, "/projects/"+url.PathEscape(key)+"/tags", nil)
+func callListTags(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	// **引数を取らない他の2件（pb_get_project / pb_list_docs）と形を揃える。**
+	// ここだけ素通しにすると、オブジェクトでない arguments の扱いが1件だけ違う。
+	if rpcErr := requireObjectArgs(args); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	res, err := h.getREST(r, projectPath(key)+"/tags", nil)
 	return passThrough(r, res, err)
 }

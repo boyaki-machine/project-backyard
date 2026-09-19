@@ -113,6 +113,11 @@ func countAll(ctx context.Context, tx pgx.Tx, tables []Table) ([]TableCount, err
 		if err := rows.Scan(&i, &n); err != nil {
 			return nil, fmt.Errorf("件数を数えられない: %w", err)
 		}
+		// **添字を確かめてから引く。** 埋めたのは自分なので範囲外は来ないが、
+		// 来たときに落ちるのが panic では原因が読めない（dbstat も同じ形で守っている）。
+		if i < 0 || i >= len(tables) {
+			return nil, fmt.Errorf("件数の行が表と対応しない: %d", i)
+		}
 		out = append(out, TableCount{Name: tables[i].Name, Rows: n})
 	}
 	return out, rows.Err()
