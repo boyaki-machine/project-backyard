@@ -7,6 +7,7 @@ package v1
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -56,6 +57,10 @@ type Page struct {
 func (p Page) Limit() int { return p.PerPage }
 
 // Offset は SQL の OFFSET に渡す値。
+//
+// **受け側は int32 である**（sqlc が生成する `PageOffset`）。ParsePage が
+// `(page-1) × per_page` の上限を見ているので、**ここへ来る値は必ず収まる**。
+// 上限の検査を外すと、ラップアラウンドした負の OFFSET が DB へ届く。
 func (p Page) Offset() int { return (p.Page - 1) * p.PerPage }
 
 // List は一覧応答の共通エンベロープ（ApiDesign.md 2.6）。
@@ -162,6 +167,23 @@ func ParsePage(r *http.Request, spec SortSpec) (Page, *apierr.Error) {
 				Field: "order", Code: "invalid", Message: "order は asc または desc で指定してください",
 			})
 		}
+	}
+
+	// **OFFSET は int32 である**（sqlc が生成する `PageOffset int32`）。
+	// **page 単独では判定できない**ので、per_page が決まってから積を見る。
+	//
+	// **これを見ないと、利用者の入力で 500 が出る。** int で計算した OFFSET が
+	// int32 へ渡るときにラップアラウンドして負になり、PostgreSQL が
+	// `OFFSET must not be negative` で拒む——`page=85899347&per_page=25` が
+	// 境界であることを実サーバで確かめた（pb-152）。**2.6 は「範囲外は 422」と
+	// 定めており、500 はその規定に反する。**
+	//
+	// 既に他の誤りがあるときは足さない。**先に直すべきものが霞む。**
+	if len(details) == 0 && int64(page-1)*int64(perPage) > math.MaxInt32 {
+		details = append(details, apierr.Detail{
+			Field: "page", Code: "out_of_range",
+			Message: "page が大きすぎます。per_page を小さくするか、page を減らしてください",
+		})
 	}
 
 	if len(details) > 0 {
