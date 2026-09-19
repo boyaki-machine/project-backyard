@@ -67,6 +67,36 @@ SELECT h.id
  GROUP BY h.id
 HAVING count(DISTINCT h.pattern) = cardinality(@patterns::text[]);
 
+-- SearchBacklogTicketIDs は番号・タイトル・祖先エピック名・タグ名を全件検索する（pb-84）。
+-- 祖先の補完は ListTickets が他のフィルタを適用した後に行う。
+-- name: SearchBacklogTicketIDs :many
+WITH RECURSIVE epic_tree AS (
+  SELECT id, id AS epic_id FROM ticket
+   WHERE project_id = @project_id::pg_catalog.bpchar AND type = 'epic'
+  UNION
+  SELECT c.id, e.epic_id FROM ticket c JOIN epic_tree e ON c.parent_id = e.id
+   WHERE c.project_id = @project_id::pg_catalog.bpchar
+)
+SELECT t.id
+  FROM ticket t JOIN project pr ON pr.id = t.project_id
+ WHERE t.project_id = @project_id::pg_catalog.bpchar
+   AND NOT EXISTS (
+     SELECT 1 FROM unnest(@patterns::text[]) AS p(pattern)
+      WHERE NOT (
+        t.seq::text ILIKE p.pattern
+        OR (p.pattern !~ '^%[0-9]+%$' AND (pr.key || '-' || t.seq::text) ILIKE p.pattern)
+        OR t.title ILIKE p.pattern
+        OR EXISTS (
+          SELECT 1 FROM ticket_tag tt JOIN tag tg ON tg.id = tt.tag_id
+           WHERE tt.ticket_id = t.id AND tg.name ILIKE p.pattern
+        )
+        OR EXISTS (
+          SELECT 1 FROM epic_tree et JOIN ticket e ON e.id = et.epic_id
+           WHERE et.id = t.id AND e.title ILIKE p.pattern
+        )
+      )
+   );
+
 -- CurrentDatabaseCtype は接続先 DB の LC_CTYPE を返す（DbDesign.md 3.1 / 4.5。pb-143）。
 --
 -- **pg_trgm が日本語から trigram を取り出せるかは、DB を作ったときの LC_CTYPE で決まる。**

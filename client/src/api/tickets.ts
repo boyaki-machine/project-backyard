@@ -278,6 +278,8 @@ export interface ListTicketsQuery {
   retired?: 'true'
   /** キーワード（9.2.1「検索の条件」。pb-66）。空白で区切った語をすべて含むもの */
   q?: string
+  /** バックログは番号・タイトル・祖先エピック・タグを検索し、祖先を補完する（pb-84） */
+  search_mode?: 'fulltext' | 'backlog'
   /** 番号の範囲（両端を含む）。**URL のクエリの値をそのまま渡す**ので文字列で持つ */
   seq_from?: string
   seq_to?: string

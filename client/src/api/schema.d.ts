@@ -9089,6 +9089,12 @@ export interface operations {
                  * @example 認証 API
                  */
                 q?: string;
+                /**
+                 * @description qの検索対象。backlogは番号・タイトル・祖先エピック名・タグ名を全件検索し、
+                 *     既存フィルタを満たす一致チケットの祖先も補完する。親を含めてtotalを数え、ページングする。
+                 *     qが空なら通常の一覧と同じ。fulltextはタイトル・本文・コメントを検索する。
+                 */
+                search_mode?: "fulltext" | "backlog";
                 /** @description チケット番号の範囲の下限（**含む**）。`seq_to` と片方だけでもよい。 */
                 seq_from?: number;
                 /** @description チケット番号の範囲の上限（**含む**）。`seq_from` より小さいと 422。 */

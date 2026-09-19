@@ -26,6 +26,62 @@ func (q *Queries) CurrentDatabaseCtype(ctx context.Context) (string, error) {
 	return lc_ctype, err
 }
 
+const searchBacklogTicketIDs = `-- name: SearchBacklogTicketIDs :many
+WITH RECURSIVE epic_tree AS (
+  SELECT id, id AS epic_id FROM ticket
+   WHERE project_id = $1::pg_catalog.bpchar AND type = 'epic'
+  UNION
+  SELECT c.id, e.epic_id FROM ticket c JOIN epic_tree e ON c.parent_id = e.id
+   WHERE c.project_id = $1::pg_catalog.bpchar
+)
+SELECT t.id
+  FROM ticket t JOIN project pr ON pr.id = t.project_id
+ WHERE t.project_id = $1::pg_catalog.bpchar
+   AND NOT EXISTS (
+     SELECT 1 FROM unnest($2::text[]) AS p(pattern)
+      WHERE NOT (
+        t.seq::text ILIKE p.pattern
+        OR (p.pattern !~ '^%[0-9]+%$' AND (pr.key || '-' || t.seq::text) ILIKE p.pattern)
+        OR t.title ILIKE p.pattern
+        OR EXISTS (
+          SELECT 1 FROM ticket_tag tt JOIN tag tg ON tg.id = tt.tag_id
+           WHERE tt.ticket_id = t.id AND tg.name ILIKE p.pattern
+        )
+        OR EXISTS (
+          SELECT 1 FROM epic_tree et JOIN ticket e ON e.id = et.epic_id
+           WHERE et.id = t.id AND e.title ILIKE p.pattern
+        )
+      )
+   )
+`
+
+type SearchBacklogTicketIDsParams struct {
+	ProjectID string
+	Patterns  []string
+}
+
+// SearchBacklogTicketIDs は番号・タイトル・祖先エピック名・タグ名を全件検索する（pb-84）。
+// 祖先の補完は ListTickets が他のフィルタを適用した後に行う。
+func (q *Queries) SearchBacklogTicketIDs(ctx context.Context, arg SearchBacklogTicketIDsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, searchBacklogTicketIDs, arg.ProjectID, arg.Patterns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchTicketIDs = `-- name: SearchTicketIDs :many
 
 SELECT t.id
