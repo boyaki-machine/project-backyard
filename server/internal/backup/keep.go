@@ -47,13 +47,7 @@ func CaptureRow(ctx context.Context, pool *pgxpool.Pool, table, col, val string)
 	if err != nil {
 		return nil, err
 	}
-	var t *Table
-	for i := range tables {
-		if tables[i].Name == table {
-			t = &tables[i]
-			break
-		}
-	}
+	t := findTable(tables, table)
 	if t == nil {
 		return nil, fmt.Errorf("表 %q が無い", table)
 	}
@@ -90,13 +84,7 @@ func insertKept(ctx context.Context, conn *pgx.Conn, kept *KeptRow) (bool, error
 	if err != nil {
 		return false, err
 	}
-	var t *Table
-	for i := range tables {
-		if tables[i].Name == kept.Table {
-			t = &tables[i]
-			break
-		}
-	}
+	t := findTable(tables, kept.Table)
 	if t == nil {
 		return false, nil
 	}

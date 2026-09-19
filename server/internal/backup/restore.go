@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -278,7 +279,7 @@ func truncateAll(ctx context.Context, conn *pgx.Conn) error {
 	for _, n := range names {
 		list = append(list, quoteIdent(n))
 	}
-	_, err = conn.Exec(ctx, "TRUNCATE "+joinComma(list)+" CASCADE")
+	_, err = conn.Exec(ctx, "TRUNCATE "+strings.Join(list, ", ")+" CASCADE")
 	if err != nil {
 		return fmt.Errorf("表を空にできない: %w", err)
 	}
@@ -311,17 +312,6 @@ func allTableNames(ctx context.Context, conn *pgx.Conn, includeGoose bool) ([]st
 		out = append(out, n)
 	}
 	return out, rows.Err()
-}
-
-func joinComma(ss []string) string {
-	out := ""
-	for i, s := range ss {
-		if i > 0 {
-			out += ", "
-		}
-		out += s
-	}
-	return out
 }
 
 // loadAll は書庫の行を入れ、入れた直後の件数を数える（⑥⑦）。
@@ -374,7 +364,8 @@ func (rs *Restorer) loadAll(ctx context.Context, conn *pgx.Conn, ar *Reader, met
 		byName[t.Name] = t
 	}
 
-	loaded := map[string]int64{}
+	// **入れた件数はここで控えない。** ⑦ が同じトランザクションで count(*) を
+	// 数え直し、それが meta.json との突き合わせに使う唯一の値である。
 	for {
 		name, body, err := ar.NextTable()
 		if errors.Is(err, io.EOF) {
@@ -390,11 +381,9 @@ func (rs *Restorer) loadAll(ctx context.Context, conn *pgx.Conn, ar *Reader, met
 			return Result{}, fmt.Errorf(
 				"%w: 書庫にある表 %q が、この版のスキーマに無い", ErrBadArchive, name)
 		}
-		n, err := loadTable(ctx, tx, t, body)
-		if err != nil {
+		if _, err := loadTable(ctx, tx, t, body); err != nil {
 			return Result{}, err
 		}
-		loaded[name] = n
 	}
 
 	// ⑦ 数えて突き合わせる。**最新の版へ進める前である**（ApiDesign.md 11.12）。

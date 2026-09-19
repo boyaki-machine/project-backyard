@@ -99,23 +99,30 @@ func Verify(secret, code string, now time.Time, lastUsedStep int64) (int64, erro
 	}
 
 	current := Step(now)
-	// **新しい刻みから先に試す。** 正しく打っている人は当刻みで一致するので、
-	// HMAC の計算回数が1回で済む。
-	for _, step := range []int64{current, current - 1, current + 1} {
-		if step > current+SkewSteps || step < current-SkewSteps {
-			continue
+	// **当刻みから先に試し、そこから前後へ1刻みずつ広げる。** 正しく打っている人は
+	// 当刻みで一致するので、HMAC の計算回数が1回で済む。
+	//
+	// **窓の広さは SkewSteps だけが決める。** 試す刻みを固定の並びで書くと、
+	// 定数を変えても窓が変わらない形になる（配列なので割り当ては起きない）。
+	for d := int64(0); d <= SkewSteps; d++ {
+		around := [2]int64{current - d, current + d}
+		n := len(around)
+		if d == 0 {
+			n = 1 // current-0 と current+0 は同じ刻みである
 		}
-		want, err := Code(secret, step)
-		if err != nil {
-			return 0, err
-		}
-		// **定数時間で比べる。** 桁ごとに早く抜けると、
-		// 応答時間から正しい桁が読めてしまう。
-		if hmac.Equal([]byte(want), []byte(code)) {
-			if step <= lastUsedStep {
-				return 0, ErrCodeReused
+		for _, step := range around[:n] {
+			want, err := Code(secret, step)
+			if err != nil {
+				return 0, err
 			}
-			return step, nil
+			// **定数時間で比べる。** 桁ごとに早く抜けると、
+			// 応答時間から正しい桁が読めてしまう。
+			if hmac.Equal([]byte(want), []byte(code)) {
+				if step <= lastUsedStep {
+					return 0, ErrCodeReused
+				}
+				return step, nil
+			}
 		}
 	}
 	return 0, ErrCodeMismatch

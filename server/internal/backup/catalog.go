@@ -107,6 +107,19 @@ func ForeignKeys(ctx context.Context, tx pgx.Tx) ([]Constraint, error) {
 	return out, rows.Err()
 }
 
+// findTable は一覧から表を名前で引く。無ければ nil。
+//
+// **ListTables が返した並びへの参照を返す。** 呼び出し側は中身を写さずに
+// selectJSON / insertStmt へ渡すので、複製する意味がない。
+func findTable(tables []Table, name string) *Table {
+	for i := range tables {
+		if tables[i].Name == name {
+			return &tables[i]
+		}
+	}
+	return nil
+}
+
 // Constraint は外部キー制約1つ。
 type Constraint struct {
 	Table string

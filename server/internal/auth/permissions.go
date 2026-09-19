@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 )
 
@@ -106,7 +105,7 @@ func EffectivePermissions(rolePermissions, projectPermissions, scopes []string) 
 	for p := range granted {
 		out = append(out, p)
 	}
-	slices.SortFunc(out, strings.Compare)
+	slices.Sort(out)
 	return out
 }
 
