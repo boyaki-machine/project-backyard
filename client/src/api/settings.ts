@@ -139,3 +139,39 @@ export type DatabaseTable = components['schemas']['DatabaseTable']
 export function getDatabaseStatus(): Promise<DatabaseStatus> {
   return api.get<DatabaseStatus>('/admin/database')
 }
+
+export type RestoreResult = components['schemas']['RestoreResult']
+export type RestoreTable = components['schemas']['RestoreTable']
+export type BackupMeta = components['schemas']['BackupMeta']
+
+/**
+ * PB 全体を書き出す URL（`ApiDesign.md` 11.11。pb-147）。
+ *
+ * **`<a href>` で開く**（証明書の取り出しと同じ。11.7）。Cookie 認証なので追加の
+ * ヘッダが要らず、サーバが付ける `Content-Disposition` がそのままブラウザの保存に乗る。
+ *
+ * **`Content-Length` が返らない**ので、ブラウザは進捗を出さずに落とし続ける。
+ */
+export function backupUrl(): string {
+  return `${BASE_PATH}/admin/backup.tar.gz`
+}
+
+/**
+ * 書庫を取り込む（`ApiDesign.md` 11.12。pb-147）。
+ *
+ * **パートの順が意味を持つ**——サーバは先頭から順に読むので、`archive` を最後に
+ * 詰める。先だと、資格情報を読む前に書庫が流れ込む。
+ *
+ * **`owner_password` は送るだけで、どこにも残さない。** 応答にも監査ログにも出ない。
+ */
+export function restoreBackup(
+  ownerUser: string,
+  ownerPassword: string,
+  archive: File,
+): Promise<RestoreResult> {
+  const form = new FormData()
+  form.append('owner_user', ownerUser)
+  form.append('owner_password', ownerPassword)
+  form.append('archive', archive)
+  return api.postForm<RestoreResult>('/admin/restore', form)
+}

@@ -39,12 +39,14 @@ var table = []struct {
 	{AccountLocked, 423},
 	{RateLimited, 429},
 	{InternalError, 500},
+	{Maintenance, 503},
 }
 
 // 領域ごとの追加コード。**2.5.1 の表に「加わるもの」**として、章ごとに定義される。
 //
-// いまは 9.14（チケット）の2件である。ここへ足すときは、必ず設計文書側の
-// 表にも同じ行があること——**実装だけに在るコードは、消費者が知りようがない。**
+// いまは 9.14（チケット）の2件と、11.12（バックアップの取り込み）の1件である。
+// ここへ足すときは、必ず設計文書側の表にも同じ行があること
+// ——**実装だけに在るコードは、消費者が知りようがない。**
 var domainTable = []struct {
 	code   Code
 	status int
@@ -52,6 +54,7 @@ var domainTable = []struct {
 }{
 	{InvalidTransition, 409, "ApiDesign.md 9.14"},
 	{ChildrenNotClosed, 409, "ApiDesign.md 9.14"},
+	{BackupTooNew, 409, "ApiDesign.md 11.12"},
 }
 
 func TestStatusMatchesApiDesign(t *testing.T) {

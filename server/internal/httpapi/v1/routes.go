@@ -8,6 +8,7 @@ import (
 
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
+	"github.com/boyaki-machine/project-backyard/server/internal/maintenance"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/tlscert"
 )
@@ -59,6 +60,14 @@ type Deps struct {
 	// DBStats は DB の接続状態と統計を読む口（ApiDesign.md 11.10。pb-110）。
 	// **nil なら GET /admin/database は 500 を返す。**
 	DBStats DatabaseStats
+
+	// Backups は PB 全体の書き出しと取り込みの口（ApiDesign.md 11.11〜11.12。pb-147）。
+	// **nil なら 500 を返す。**
+	Backups Backups
+
+	// Maintenance は保守モードの旗（Design.md 10.4。pb-147）。**取り込みが
+	// 自分で立てて自分で降ろす。** nil なら保守モードに入らない。
+	Maintenance *maintenance.Flag
 }
 
 // Mount は /api/v1 のルートを r に並べる。
@@ -86,6 +95,8 @@ func Mount(r chi.Router, deps Deps) {
 		tlsListening:      deps.TLSListening,
 		listenURL:         deps.ListenURL,
 		dbStats:           deps.DBStats,
+		backups:           deps.Backups,
+		maintenance:       deps.Maintenance,
 	}
 
 	// ── 認証不要 ────────────────────────────────
@@ -605,6 +616,16 @@ func Mount(r chi.Router, deps Deps) {
 		// 表ごとの件数は、設定を変える人が障害の切り分けに使う。
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Get("/admin/database", h.getDatabaseStatus)
+
+		// ── バックアップと復元（ApiDesign.md 11.11〜11.12。pb-147）────
+		//
+		// **書き出しは読むだけ、取り込みは PB 全体を入れ替える。** 権限は
+		// 同じ system.settings だが、取り込みは**画面で pb_owner の資格情報も
+		// 受け取る**（DbDesign.md 3.4）——PB はそれを持たない。
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Get("/admin/backup.tar.gz", h.downloadBackup)
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Post("/admin/restore", h.restoreBackup)
 	})
 }
 
@@ -635,4 +656,9 @@ type handler struct {
 
 	// dbStats は DB の接続状態と統計を読む口（ApiDesign.md 11.10）。
 	dbStats DatabaseStats
+
+	// backups は PB 全体の書き出しと取り込みの口（ApiDesign.md 11.11〜11.12。pb-147）。
+	backups Backups
+	// maintenance は保守モードの旗（Design.md 10.4）。
+	maintenance *maintenance.Flag
 }

@@ -201,6 +201,7 @@ func TestAllDocumentedActionsAreAccepted(t *testing.T) {
 		"mfa.register", "mfa.unregister", "mfa.recovery_codes.regenerate",
 		"mfa.reset", "login.mfa_failure",
 		"passkey.register", "passkey.unregister", "passkey.reset", "login.passkey_failure",
+		"database.backup", "database.restore",
 	}
 	if len(actions) != len(documented) {
 		t.Errorf("アクション数 = %d, want %d（ApiDesign.md 2.10）", len(actions), len(documented))

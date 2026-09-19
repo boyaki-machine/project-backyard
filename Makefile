@@ -162,11 +162,15 @@ fmt-check:
 #   make test-db RUN=TestMeTokensIntegration
 #
 # **パッケージを足したら並びにも足す。** dbstat（pb-110）は、pb_app から見える
-# カタログと統計を確かめるので、実 DB でしか意味を持たない。
+# カタログと統計を確かめるので、実 DB でしか意味を持たない。backup（pb-147）も同じで、
+# **書き出しは pb_app、取り込みは pb_owner** の2つのロールで確かめる必要がある
+# （DbDesign.md 9.1.1）。オーナーの接続文字列も渡すのはそのためである。
 RUN ?= Integration
 test-db:
 	@cd server && PB_TEST_DATABASE_URL="$(PB_DATABASE_URL_APP)" \
-		go test ./internal/httpapi/... ./internal/dbstat/... -run '$(RUN)' -count=1 -v
+		PB_TEST_DATABASE_URL_OWNER="$(GOOSE_DBSTRING_OWNER)" \
+		go test ./internal/httpapi/... ./internal/dbstat/... ./internal/backup/... \
+			-run '$(RUN)' -count=1 -v
 
 # ── 開発用デモデータ（DbDesign.md 7.6）────────────────────────
 # 本番シード（マイグレーション 0010）とは別物。開発端末でしか使わない。

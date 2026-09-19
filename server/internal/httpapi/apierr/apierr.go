@@ -53,6 +53,20 @@ const (
 	// どちらも「盤面がその遷移を許さない」であり、利用者が次に取る行動が
 	// 「別の何かを先に済ませる」で共通するためである。
 	ChildrenNotClosed Code = "children_not_closed"
+
+	// BackupTooNew は、取り込もうとした書庫のマイグレーション番号が、いまの PB より
+	// 新しい（ApiDesign.md 11.12、2.5.1。pb-147）。**知らない列を推測して埋めることに
+	// なるので取り込まない。**
+	//
+	// **Conflict と分けてあるのは、利用者が取る行動が違うため**である——競合は読み直せば
+	// 済むが、こちらは PB を新しくするまで何度やっても通らない。
+	BackupTooNew Code = "backup_too_new"
+
+	// Maintenance は保守モード中である（ApiDesign.md 11.13、Design.md 10.4。pb-147）。
+	// 書庫の取り込みのあいだ、/api と /mcp はこれを返す。
+	//
+	// **Retry-After を伴わない。** かかる時間は書庫の大きさで決まり、PB は見積もれない。
+	Maintenance Code = "maintenance"
 )
 
 // statuses は ApiDesign.md 2.5.1 の Status 列。
@@ -74,6 +88,8 @@ var statuses = map[Code]int{
 	InternalError:             http.StatusInternalServerError,
 	InvalidTransition:         http.StatusConflict,
 	ChildrenNotClosed:         http.StatusConflict,
+	BackupTooNew:              http.StatusConflict,
+	Maintenance:               http.StatusServiceUnavailable,
 }
 
 // messages は各コードの既定文言。
@@ -103,6 +119,9 @@ var messages = map[Code]string{
 	// 検証7 も denyTransition が同じ文言を作って上書きする（9.7 の reason と
 	// 揃えるため）。ここは呼び出し漏れの保険である。
 	ChildrenNotClosed: "未完了の子チケットが残っているため完了にできません",
+	// 書庫と PB の版を入れた文言で上書きする（11.12）。ここは呼び出し漏れの保険である。
+	BackupTooNew: "このバックアップは、いまの PB より新しいバージョンで作られています。取り込めません",
+	Maintenance:  "バックアップの取り込み中です。終わるまでお待ちください",
 }
 
 // Detail はフィールド単位のエラー。フォームの各入力欄に紐づける（ApiDesign.md 2.5）。
