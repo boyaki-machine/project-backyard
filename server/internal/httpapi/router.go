@@ -131,6 +131,9 @@ func NewRouter(deps Deps) http.Handler {
 
 	r := chi.NewRouter()
 
+	// **最も外側に積む**（ApiDesign.md 2.12、Design.md 6.6.2。pb-152）。
+	// 保守モードで止めた応答にも、エラー応答にも付くようにするため。
+	r.Use(middleware.SecurityHeaders)
 	r.Use(middleware.RequestID)
 	// /healthcheck は probe が短間隔で叩くため DEBUG に落とす（Design.md 10.1）。
 	r.Use(middleware.AccessLog(HealthPath))
