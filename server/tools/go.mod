@@ -2,6 +2,8 @@ module github.com/boyaki-machine/project-backyard/server/tools
 
 go 1.26.0
 
+toolchain go1.26.6
+
 tool (
 	github.com/pressly/goose/v3/cmd/goose
 	github.com/sqlc-dev/sqlc/cmd/sqlc

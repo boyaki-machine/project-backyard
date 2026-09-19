@@ -2,6 +2,8 @@ module github.com/boyaki-machine/project-backyard/server
 
 go 1.26.0
 
+toolchain go1.26.6
+
 require (
 	github.com/alexedwards/argon2id v1.0.0
 	github.com/go-chi/chi/v5 v5.3.1

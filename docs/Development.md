@@ -42,6 +42,7 @@
 |---|---|---|---|
 | コンテナランタイム | `docker info` | エラーにならない（起動している） | 付録 A.1 |
 | Go | `go version` | **`go1.26` 以上**（`Design.md` 3.1。pb-104 で 1.24 から上げた） | 付録 A.2 |
+| | | ↑ これは**入口の版**である。**実際にビルドへ使う版は `go.mod` の `toolchain` が固定**しており、手元がそれより古ければ **go コマンドが自動で取ってくる**（`GOTOOLCHAIN=auto`。pb-152） | |
 | Node.js / npm | `node -v && npm -v` | 表示される（client のビルドに必要） | 付録 A.3 |
 | Google Chrome | `ls "/Applications/Google Chrome.app"` | 存在する（**画面の動作確認（8章）に使うだけ。任意**） | 付録 A.4 |
 
