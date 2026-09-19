@@ -28,7 +28,8 @@
 -- 「指定なし」は空配列で表す。none（未割当・未分類）は別のフラグに分けてある
 -- ——配列の中に 'none' という値を混ぜると、その ULID を持つ行と区別できない。
 --
--- **フィルタは行単位で適用し、親を補完しない**（9.2.4）。親が条件に合わない子は
+-- 通常のフィルタは行単位で適用する（9.2.4）。backlog_search のときだけ、
+-- 一致した子の祖先を補完し、補完した親も total と上限に含める。親が条件に合わない子は
 -- parent_seq を保ったまま返り、画面がトップレベルに並べる。補完すると、条件に
 -- 合致しない行が一覧に現れて total と表示件数が食い違う。
 --
@@ -222,7 +223,7 @@ filtered AS (
     -- キーワードの一致は store/search（queries/search.sql）が済ませ、**一致した ID
     -- だけを受け取る**（Design.md 4.6 の隔離）。keyword_set が偽なら絞らない——
     -- 「語が無い」と「語はあったが0件に一致」を区別するためのフラグである。
-    AND (NOT @keyword_set::boolean OR t.id = ANY(@keyword_ids::pg_catalog.bpchar[]))
+    AND (NOT @keyword_set::boolean OR @backlog_search::boolean OR t.id = ANY(@keyword_ids::pg_catalog.bpchar[]))
     -- 番号の範囲は両端を含む。0 は指定なし（seq は1から始まる）。
     AND (@seq_from::int <= 0 OR t.seq >= @seq_from::int)
     AND (@seq_to::int <= 0 OR t.seq <= @seq_to::int)
@@ -257,12 +258,25 @@ filtered AS (
               AND (sqlc.narg('started_before')::timestamptz IS NULL
                    OR st.started_at < sqlc.narg('started_before')::timestamptz)
          ))
+),
+-- 一致した子の祖先を、他のフィルタを適用した後で補完する（pb-84）。
+-- 検索に当たっても他の条件から外れた子を起点にしない。UNION で重複・循環を防ぐ。
+backlog_matches AS (
+  SELECT t.id, t.parent_id FROM ticket t JOIN filtered f ON f.id = t.id
+   WHERE @backlog_search::boolean AND t.id = ANY(@keyword_ids::pg_catalog.bpchar[])
+  UNION
+  SELECT p.id, p.parent_id FROM ticket p JOIN backlog_matches m ON p.id = m.parent_id
+   WHERE p.project_id = @project_id::pg_catalog.bpchar
+),
+search_filtered AS (
+  SELECT f.* FROM filtered f
+   WHERE NOT @backlog_search::boolean OR f.id IN (SELECT id FROM backlog_matches)
 )
 SELECT
   f.*,
   count(*) OVER ()                        AS total,
   (max(f.updated_at) OVER ())::timestamptz AS last_updated_at
-FROM filtered f
+FROM search_filtered f
 ORDER BY
   -- 既定は sort_key の昇順（9.2.1）。人が手で並べた順を既定の見え方にする。
   -- **sort_key が NULL の行は末尾**（利用者の判断、2026-08-23）。

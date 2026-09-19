@@ -1425,7 +1425,8 @@ type Querier interface {
 	// 「指定なし」は空配列で表す。none（未割当・未分類）は別のフラグに分けてある
 	// ——配列の中に 'none' という値を混ぜると、その ULID を持つ行と区別できない。
 	//
-	// **フィルタは行単位で適用し、親を補完しない**（9.2.4）。親が条件に合わない子は
+	// 通常のフィルタは行単位で適用する（9.2.4）。backlog_search のときだけ、
+	// 一致した子の祖先を補完し、補完した親も total と上限に含める。親が条件に合わない子は
 	// parent_seq を保ったまま返り、画面がトップレベルに並べる。補完すると、条件に
 	// 合致しない行が一覧に現れて total と表示件数が食い違う。
 	//
@@ -1463,6 +1464,8 @@ type Querier interface {
 	//
 	// **棚に戻ったものはここでは外さない。** 下の retired の条件がそのまま効くので、
 	// 既定では外れ、retired=true を一緒に送れば含まれる（条件は種類ごとに独立）。
+	// 一致した子の祖先を、他のフィルタを適用した後で補完する（pb-84）。
+	// 検索に当たっても他の条件から外れた子を起点にしない。UNION で重複・循環を防ぐ。
 	ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error)
 	// ListUserIdentities は 6.3 の identities[] を引く。
 	//
@@ -1694,6 +1697,9 @@ type Querier interface {
 	// 呼び出し側がシステムロールを持たないアクターを除いているため、ここへは来ない。
 	//
 	SaveTokenPermissionCache(ctx context.Context, arg SaveTokenPermissionCacheParams) error
+	// SearchBacklogTicketIDs は番号・タイトル・祖先エピック名・タグ名を全件検索する（pb-84）。
+	// 祖先の補完は ListTickets が他のフィルタを適用した後に行う。
+	SearchBacklogTicketIDs(ctx context.Context, arg SearchBacklogTicketIDsParams) ([]string, error)
 	// キーワード検索（ApiDesign.md 9.2.1「検索の条件」。pb-66）。
 	//
 	// **全文検索の実装は、このファイルと store/search/ に閉じる**（Design.md 4.6、

@@ -2560,6 +2560,16 @@ paths:
             type: string
             maxLength: 200
           example: 認証 API
+        - name: search_mode
+          in: query
+          description: |
+            qの検索対象。backlogは番号・タイトル・祖先エピック名・タグ名を全件検索し、
+            既存フィルタを満たす一致チケットの祖先も補完する。親を含めてtotalを数え、ページングする。
+            qが空なら通常の一覧と同じ。fulltextはタイトル・本文・コメントを検索する。
+          schema:
+            type: string
+            enum: [fulltext, backlog]
+            default: fulltext
         - name: seq_from
           in: query
           description: チケット番号の範囲の下限（**含む**）。`seq_to` と片方だけでもよい。

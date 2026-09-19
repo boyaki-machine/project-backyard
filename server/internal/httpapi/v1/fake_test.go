@@ -1399,8 +1399,9 @@ type ticketFakeState struct {
 	epicAncestorByID map[string]gen.GetTicketEpicAncestorRow
 
 	// searchIDs / searchParams は 9.2.1「検索の条件」（pb-66）。返す ID と、受けた引数
-	searchIDs    []string
-	searchParams []gen.SearchTicketIDsParams
+	searchIDs           []string
+	searchParams        []gen.SearchTicketIDsParams
+	backlogSearchParams []gen.SearchBacklogTicketIDsParams
 	// searchCtype / trigramSearchParams は pb-143。DB の LC_CTYPE（空なら C）と、
 	// trgm を使う形が受けた引数
 	searchCtype         string
@@ -1593,6 +1594,12 @@ func (q *fakeQuerier) ListTickets(_ context.Context, arg gen.ListTicketsParams) 
 
 // CurrentDatabaseCtype は DB の LC_CTYPE（pb-143）。**既定は C**——検索は英数字の語だけ
 // trgm の形へ切り替わる。searchCtype で差し替えられる。
+func (q *fakeQuerier) SearchBacklogTicketIDs(_ context.Context, arg gen.SearchBacklogTicketIDsParams) ([]string, error) {
+	q.opLog = append(q.opLog, "SearchBacklogTicketIDs")
+	q.ticket.backlogSearchParams = append(q.ticket.backlogSearchParams, arg)
+	return q.ticket.searchIDs, nil
+}
+
 func (q *fakeQuerier) CurrentDatabaseCtype(_ context.Context) (string, error) {
 	q.opLog = append(q.opLog, "CurrentDatabaseCtype")
 	if q.ticket.searchCtype == "" {

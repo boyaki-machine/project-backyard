@@ -162,8 +162,9 @@ type ticketFilters struct {
 	// 問い合わせの形の選択も store/search が行う**（pb-143）。一致の判定は一覧のクエリに
 	// 持ち込まず、ID に変えてから渡す（Design.md 4.6 の隔離）。keywordSet は
 	// 「q に語が1つ以上あった」。
-	keywordTerms []string
-	keywordSet   bool
+	keywordTerms  []string
+	keywordSet    bool
+	backlogSearch bool
 
 	// seqFrom / seqTo は両端を含む。**0 は指定なし**（seq は1から始まる）。
 	seqFrom int32
@@ -208,7 +209,11 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 	// Design.md 4.6 の隔離）。**一覧のクエリは語もパターンも知らない。**
 	keywordIDs := []string{}
 	if filters.keywordSet {
-		ids, err := search.TicketIDs(r.Context(), h.q, projectID, filters.keywordTerms)
+		searchIDs := search.TicketIDs
+		if filters.backlogSearch {
+			searchIDs = search.BacklogTicketIDs
+		}
+		ids, err := searchIDs(r.Context(), h.q, projectID, filters.keywordTerms)
 		if err != nil {
 			apierr.Write(w, r, apierr.New(apierr.InternalError).
 				WithCause(fmt.Errorf("キーワード検索を行えない: %w", err)))
@@ -238,6 +243,7 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		StaleDays:        filters.staleDays,
 		ParentSeqs:       filters.parentSeqs,
 		KeywordSet:       filters.keywordSet,
+		BacklogSearch:    filters.backlogSearch && filters.keywordSet,
 		KeywordIds:       keywordIDs,
 		SeqFrom:          filters.seqFrom,
 		SeqTo:            filters.seqTo,
@@ -528,6 +534,15 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 			slices.Sort(sorted)
 			parts = append(parts, "q="+strings.Join(sorted, " "))
 		}
+	}
+
+	switch mode := q.Get("search_mode"); mode {
+	case "", "fulltext":
+	case "backlog":
+		f.backlogSearch = true
+		parts = append(parts, "search_mode=backlog")
+	default:
+		details = append(details, apierr.Detail{Field: "search_mode", Code: "invalid", Message: "search_mode は fulltext または backlog で指定してください"})
 	}
 
 	f.seqFrom, details = parseTicketSeqBound(q.Get("seq_from"), "seq_from", details)

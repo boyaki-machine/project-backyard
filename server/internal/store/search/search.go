@@ -83,6 +83,14 @@ func TicketIDs(ctx context.Context, q gen.Querier, projectID string, terms []str
 	return q.SearchTicketIDs(ctx, gen.SearchTicketIDsParams{ProjectID: projectID, Patterns: patterns})
 }
 
+// BacklogTicketIDs はバックログの番号・タイトル・エピック・タグ検索を行う。
+// 対象を取得件数で制限せず、ListTickets で祖先補完・件数計算・ページングする。
+func BacklogTicketIDs(ctx context.Context, q gen.Querier, projectID string, terms []string) ([]string, error) {
+	return q.SearchBacklogTicketIDs(ctx, gen.SearchBacklogTicketIDsParams{
+		ProjectID: projectID, Patterns: Patterns(terms),
+	})
+}
+
 // UnicodeCtype は、DB の LC_CTYPE で pg_trgm が英数字以外（日本語など）も語の文字として
 // 数えるかを返す（pb-143）。**C と POSIX だけが英数字に限られる。**
 func UnicodeCtype(ctype string) bool {

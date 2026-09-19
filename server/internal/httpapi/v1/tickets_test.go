@@ -278,6 +278,7 @@ func TestListTicketsFilters(t *testing.T) {
 // 解釈できない値は既定へ丸めず 422（2.6）。**項目ごとに details を並べる。**
 func TestListTicketsRejectsInvalidFilters(t *testing.T) {
 	cases := []struct{ name, query, field string }{
+		{"検索モード", "search_mode=unknown", "search_mode"},
 		{"種別", "type=epic,unknown", "type"},
 		{"優先度", "priority=urgent", "priority"},
 		{"分類", "status_category=blocked", "status_category"},
@@ -1308,4 +1309,40 @@ func countOps(opLog []string, name string) int {
 		}
 	}
 	return n
+}
+
+// pb-84: バックログ検索は専用の検索対象と祖先補完を選び、空白なら検索しない。
+func TestListTicketsBacklogSearch(t *testing.T) {
+	for _, keyword := range []string{"認証　100%", "　 "} {
+		t.Run(keyword, func(t *testing.T) {
+			q := ticketFake()
+			q.ticket.searchIDs = []string{testTicketID}
+			h, _ := ticketHandler(q)
+			rec := httptest.NewRecorder()
+			h.listTickets(rec, ticketReq(http.MethodGet, "/projects/demo/tickets?search_mode=backlog&q="+url.QueryEscape(keyword), "", ""))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			p := q.ticket.listParams[0]
+			if strings.TrimSpace(keyword) == "" {
+				if p.BacklogSearch || p.KeywordSet || len(q.ticket.backlogSearchParams) != 0 {
+					t.Fatal("空白で検索した")
+				}
+				return
+			}
+			if !p.BacklogSearch || !p.KeywordSet || !slices.Equal(p.KeywordIds, q.ticket.searchIDs) {
+				t.Fatalf("検索の引数=%+v", p)
+			}
+			if len(q.ticket.backlogSearchParams) != 1 {
+				t.Fatal("バックログ検索へ渡らない")
+			}
+			got := q.ticket.backlogSearchParams[0]
+			if got.ProjectID != testProjectID || !slices.Equal(got.Patterns, []string{`%認証%`, `%100\%%`}) {
+				t.Fatalf("パターン=%+v", got)
+			}
+			if len(q.ticket.searchParams) != 0 || len(q.ticket.trigramSearchParams) != 0 {
+				t.Fatal("通常検索を呼んだ")
+			}
+		})
+	}
 }

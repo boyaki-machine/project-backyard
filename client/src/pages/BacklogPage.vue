@@ -127,7 +127,7 @@ const detailSeq = computed<number | null>(() => {
  */
 const shrunk = computed(() => detailSeq.value !== null)
 
-/** 縮小中のフィルタ行は `[絞り込み ▾]` の1行に畳む（5.4）。押すとその場で開く */
+/** 狭い一覧では検索以外のフィルタを畳む（5.4）。押すと2行目に開く */
 const filtersOpen = ref(false)
 
 /** 一覧の現在のフィルタを保ったまま行き先を作る。**クエリを落とさない**（3.2） */
@@ -377,6 +377,7 @@ const staleDays = computed(() => {
 /** 素の状態か。`[解除]` を出すかどうかの判定に使う */
 const isPristine = computed(
   () =>
+    keyword.value.trim() === '' &&
     FILTER_KEYS.every((k) => filters.value[k] === '') &&
     stateValue.value === '' &&
     dueValue.value === '' &&
@@ -401,8 +402,73 @@ function setQuery(patch: Record<string, string>): void {
   void router.replace({ path: route.path, query: next })
 }
 
+const KEYWORD_DEBOUNCE_MS = 400
+
+const keyword = ref(queryValue('q'))
+let keywordTimer: ReturnType<typeof setTimeout> | undefined
+/** 打ってからまだ URL へ載せていない。**その間は URL の値で欄を上書きしない** */
+let keywordPending = false
+/** 日本語の変換中は検索を送らない（5.4）。 */
+let composing = false
+
+function commitKeyword(): void {
+  if (composing) return
+  clearTimeout(keywordTimer)
+  keywordTimer = undefined
+  keywordPending = false
+  // 空白だけの語はサーバでも指定なしと同じ（9.2.1）。URL を汚さないようにキーごと落とす
+  const v = keyword.value.trim() === '' ? '' : keyword.value
+  if (v !== queryValue('q')) setQuery({ q: v })
+}
+
+function scheduleKeyword(): void {
+  if (composing) return
+  clearTimeout(keywordTimer)
+  keywordTimer = setTimeout(commitKeyword, KEYWORD_DEBOUNCE_MS)
+}
+
+function onKeywordInput(): void {
+  keywordPending = true
+  scheduleKeyword()
+}
+
+function onCompositionStart(): void {
+  clearTimeout(keywordTimer)
+  composing = true
+}
+
+function onCompositionEnd(): void {
+  composing = false
+  scheduleKeyword()
+}
+
+/**
+ * `Enter` は待たずに送る。**変換を確定する `Enter` では送らない**（5.5「`Enter` で
+ * 確定するか」と同じ判定）。
+ */
+function onKeywordKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'Enter' || composing || e.isComposing || e.keyCode === 229) return
+  e.preventDefault()
+  commitKeyword()
+}
+
+// `[解除]` や「戻る」で URL が外から変わったら欄を合わせる
+watch(
+  () => queryValue('q'),
+  (next) => {
+    if (!keywordPending && next !== keyword.value) keyword.value = next
+  },
+)
+
+onUnmounted(() => clearTimeout(keywordTimer))
+
+const searching = computed(() => queryValue('q').trim() !== '')
+
 /** `[解除]`：フィルタ・グループ化・ソートを素の状態へ戻す（5.4） */
 function clearAll(): void {
+  clearTimeout(keywordTimer)
+  keywordPending = false
+  keyword.value = ''
   void router.replace({ path: route.path })
 }
 
@@ -533,6 +599,8 @@ async function loadTickets(): Promise<void> {
   try {
     const res = await ticketsApi.listTickets(projectKey.value, {
       ...filters.value,
+      q: queryValue('q'),
+      search_mode: 'backlog',
       // **種別が「すべて」のときは `story,task` を送る**（5.4）。エピックを
       // 画面側で捨てると、下部に出す総件数（サーバの `total`）と食い違う。
       type: filters.value.type === '' ? backlogTicketTypes.join(',') : filters.value.type,
@@ -727,8 +795,8 @@ function shownInStage(t: Ticket): boolean {
  * `parent_seq` からツリーを組む。
  *
  * **親が結果に含まれていない子はトップレベルに並べる**（`ApiDesign.md` 9.2.4）。
- * サーバはフィルタを行単位で適用し、親を補完しない——補完すると、フィルタに
- * 合致しない行が一覧に現れて `total` と表示件数が食い違う。**エピックを行から
+ * 通常のフィルタは行単位で適用する。入力検索は祖先を補完し、
+ * 補完した親も `total` と200件上限に含める（pb-84）。**エピックを行から
  * 外す帰結として、エピック配下のチケットはここでトップレベルになる。**
  */
 function buildTree(items: Ticket[]): Row[] {
@@ -772,7 +840,7 @@ function buildTree(items: Ticket[]): Row[] {
         parentKey: depth === 0 ? null : t.parent_seq,
       })
       if (kids === undefined) continue
-      if (treeCollapsed.value.has(t.seq)) markReached(kids)
+      if (!searching.value && treeCollapsed.value.has(t.seq)) markReached(kids)
       else walk(kids, depth + 1)
     }
   }
@@ -939,6 +1007,7 @@ function loadCollapsed(): void {
 }
 
 function toggleSection(key: string): void {
+  if (searching.value) return
   const next = new Set(collapsed.value)
   if (next.has(key)) next.delete(key)
   else next.add(key)
@@ -968,6 +1037,7 @@ function loadTreeCollapsed(): void {
 }
 
 function toggleTree(seq: number): void {
+  if (searching.value) return
   const next = new Set(treeCollapsed.value)
   if (next.has(seq)) next.delete(seq)
   else next.add(seq)
@@ -1042,7 +1112,7 @@ function openRow(t: Ticket, e: MouseEvent): void {
  * 作業で、そのたびに全幅へ戻すことになっていた。
  */
 const canReorder = computed(
-  () => canEdit.value && sort.value === 'sort_key' && order.value === 'asc',
+  () => !searching.value && canEdit.value && sort.value === 'sort_key' && order.value === 'asc',
 )
 
 /**
@@ -1833,6 +1903,10 @@ watch(queryKey, () => {
 
 // プロジェクトを切り替えたら語彙とプロジェクト詳細も取り直す（4.4）
 watch(projectKey, (key) => {
+  clearTimeout(keywordTimer)
+  keywordPending = false
+  composing = false
+  keyword.value = queryValue('q')
   if (key === '') return
   result.value = ''
   tags.value = []
@@ -1876,173 +1950,183 @@ watch(projectKey, (key) => {
       </PageHeader>
 
     <div class="page-body" :class="{ shrunk }">
-      <!-- 縮小中はフィルタ行を1行に畳む（5.4「詳細を開いているときの一覧」）。
-           押すとその場で開く -->
-      <button
-        v-if="shrunk"
-        type="button"
-        class="filters-toggle"
-        :aria-expanded="filtersOpen"
-        @click="filtersOpen = !filtersOpen"
-      >
-        絞り込み
-        <span class="caret" aria-hidden="true">{{ filtersOpen ? '▾' : '▸' }}</span>
-        <span v-if="!isPristine" class="filters-dot" aria-label="絞り込み中">●</span>
-      </button>
-
-      <!-- フィルタ行（5.4）。条件は URL のクエリに載る -->
-      <div v-if="!shrunk || filtersOpen" class="filters">
-        <!-- 状態（5.4「状態と期限のフィルタ」。手順19b）。
-             **1つの箱で3系列を出し入れする**——進み具合（`open` / `stale`）・
-             区分（`status_category`）・ステータス（`status`）。同じ軸の値なので
-             箱を分けず、`optgroup` の見出しで区別する。**見出しが無いと、
-             `simple` / `with_review` で区分とステータスが同じ語になって読めない** -->
-        <label class="filter">
-          <span class="filter-label">状態</span>
-          <select
-            :value="stateValue"
-            @change="setExclusive(STATE_KEYS, ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">すべて</option>
-            <optgroup label="進み具合">
-              <option value="open:true">未完了</option>
-              <option value="open:false">完了</option>
-              <option :value="`stale:${staleDays}d`">{{ staleDays }}日以上更新なし</option>
-            </optgroup>
-            <optgroup label="区分">
-              <option
-                v-for="c in statusCategoryOrder"
-                :key="c"
-                :value="`status_category:${c}`"
-              >
-                {{ statusCategoryLabels[c] }}
-              </option>
-            </optgroup>
-            <optgroup label="ステータス">
-              <option v-for="s in statuses" :key="s.key" :value="`status:${s.key}`">
-                {{ s.name }}
-              </option>
-            </optgroup>
-          </select>
-        </label>
-
-        <label class="filter">
-          <span class="filter-label">種別</span>
-          <select
-            :value="filters.type"
-            @change="setQuery({ type: ($event.target as HTMLSelectElement).value })"
-          >
-            <option value="">すべて</option>
-            <option v-for="t in typeOptions" :key="t" :value="t">
-              {{ ticketTypeIcons[t] }} {{ ticketTypeLabels[t] }}
-            </option>
-          </select>
-        </label>
-
-        <label class="filter">
-          <span class="filter-label">担当</span>
-          <select
-            :value="filters.assignee"
-            @change="setQuery({ assignee: ($event.target as HTMLSelectElement).value })"
-          >
-            <option value="">すべて</option>
-            <option value="me">自分</option>
-            <option value="none">未割当</option>
-            <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
-              {{ m.kind === 'agent' ? '🤖' : '👤' }} {{ m.display_name }}
-            </option>
-          </select>
-        </label>
-
-        <label class="filter">
-          <span class="filter-label">優先</span>
-          <select
-            :value="filters.priority"
-            @change="setQuery({ priority: ($event.target as HTMLSelectElement).value })"
-          >
-            <option value="">すべて</option>
-            <option v-for="p in priorityOptions" :key="p" :value="p">
-              {{ priorityLabels[p] }}
-            </option>
-          </select>
-        </label>
-
-        <label class="filter">
-          <span class="filter-label">タグ</span>
-          <select
-            :value="filters.tag"
-            @change="setQuery({ tag: ($event.target as HTMLSelectElement).value })"
-          >
-            <option value="">すべて</option>
-            <option value="none">未分類</option>
-            <option v-for="t in tags" :key="t.id" :value="t.id">{{ t.name }}</option>
-          </select>
-        </label>
-
-        <label class="filter">
-          <span class="filter-label">スプリント</span>
-          <select
-            :value="filters.sprint"
-            @change="setQuery({ sprint: ($event.target as HTMLSelectElement).value })"
-          >
-            <option value="">すべて</option>
-            <option value="none">スプリント未設定</option>
-            <option v-for="s in sprints" :key="s.id" :value="s.id">{{ s.name }}</option>
-          </select>
-        </label>
-
-        <!-- 期限（5.4「状態と期限のフィルタ」。手順19b）。
-             **「期限超過」は `due_within=0d` ではない**——あちらは「今日以前」で
-             今日が期限のものを含み、`stats.overdue` と1日ぶんずれる（9.2.1） -->
-        <label class="filter">
-          <span class="filter-label">期限</span>
-          <select
-            :value="dueValue"
-            @change="setExclusive(DUE_KEYS, ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">すべて</option>
-            <option value="overdue:true">期限超過</option>
-            <option value="due_within:0d">今日まで</option>
-            <option value="due_within:7d">7日以内</option>
-            <option value="due_within:30d">30日以内</option>
-          </select>
-        </label>
-
-        <!-- エピックだけは複数選択（5.4）。URL 上の実体は `parent` である -->
-        <div class="filter">
-          <span class="filter-label" aria-hidden="true">エピック</span>
-          <EpicFilter
-            :epics="epics"
-            :selected="epicSeqs"
-            :project-key="projectKey"
-            :can-create="canCreate"
-            @update="setQuery({ parent: $event.join(',') })"
-            @create="openNewEpicModal"
-          />
+      <!-- 検索欄は常に出し、狭い一覧ではその他の条件を2行目に開閉する（pb-84） -->
+      <div class="backlog-filters" :class="{ 'backlog-filters-open': filtersOpen }">
+        <div class="backlog-filter-primary">
+          <label class="filter backlog-keyword">
+            <span class="filter-label">検索</span>
+            <input
+              v-model="keyword"
+              type="search"
+              maxlength="200"
+              placeholder="番号・タイトル・エピック・タグ"
+              aria-label="バックログを検索"
+              @input="onKeywordInput"
+              @compositionstart="onCompositionStart"
+              @compositionend="onCompositionEnd"
+              @keydown="onKeywordKeydown"
+            />
+          </label>
+          <button type="button" class="secondary backlog-filter-toggle"
+            :aria-expanded="filtersOpen" aria-controls="backlog-filter-options"
+            @click="filtersOpen = !filtersOpen">
+            絞り込み {{ filtersOpen ? '▾' : '▸' }}
+            <span v-if="!isPristine" aria-label="絞り込み中">●</span>
+          </button>
         </div>
+        <div id="backlog-filter-options" class="backlog-filter-options">
+          <!-- 状態（5.4「状態と期限のフィルタ」。手順19b）。
+               **1つの箱で3系列を出し入れする**——進み具合（`open` / `stale`）・
+               区分（`status_category`）・ステータス（`status`）。同じ軸の値なので
+               箱を分けず、`optgroup` の見出しで区別する。**見出しが無いと、
+               `simple` / `with_review` で区分とステータスが同じ語になって読めない** -->
+          <label class="filter backlog-filter-top">
+            <span class="filter-label">状態</span>
+            <select
+              :value="stateValue"
+              @change="setExclusive(STATE_KEYS, ($event.target as HTMLSelectElement).value)"
+            >
+              <option value="">すべて</option>
+              <optgroup label="進み具合">
+                <option value="open:true">未完了</option>
+                <option value="open:false">完了</option>
+                <option :value="`stale:${staleDays}d`">{{ staleDays }}日以上更新なし</option>
+              </optgroup>
+              <optgroup label="区分">
+                <option
+                  v-for="c in statusCategoryOrder"
+                  :key="c"
+                  :value="`status_category:${c}`"
+                >
+                  {{ statusCategoryLabels[c] }}
+                </option>
+              </optgroup>
+              <optgroup label="ステータス">
+                <option v-for="s in statuses" :key="s.key" :value="`status:${s.key}`">
+                  {{ s.name }}
+                </option>
+              </optgroup>
+            </select>
+          </label>
 
-        <!-- グループ化と解除は右端に寄せる（5.4 のワイヤー） -->
-        <label class="filter push">
-          <span class="filter-label">グループ化</span>
-          <select
-            :value="group"
-            @change="setQuery({ group: ($event.target as HTMLSelectElement).value })"
+          <label class="filter backlog-filter-top">
+            <span class="filter-label">種別</span>
+            <select
+              :value="filters.type"
+              @change="setQuery({ type: ($event.target as HTMLSelectElement).value })"
+            >
+              <option value="">すべて</option>
+              <option v-for="t in typeOptions" :key="t" :value="t">
+                {{ ticketTypeIcons[t] }} {{ ticketTypeLabels[t] }}
+              </option>
+            </select>
+          </label>
+
+          <label class="filter backlog-filter-top">
+            <span class="filter-label">担当</span>
+            <select
+              :value="filters.assignee"
+              @change="setQuery({ assignee: ($event.target as HTMLSelectElement).value })"
+            >
+              <option value="">すべて</option>
+              <option value="me">自分</option>
+              <option value="none">未割当</option>
+              <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
+                {{ m.kind === 'agent' ? '🤖' : '👤' }} {{ m.display_name }}
+              </option>
+            </select>
+          </label>
+
+          <label class="filter">
+            <span class="filter-label">優先</span>
+            <select
+              :value="filters.priority"
+              @change="setQuery({ priority: ($event.target as HTMLSelectElement).value })"
+            >
+              <option value="">すべて</option>
+              <option v-for="p in priorityOptions" :key="p" :value="p">
+                {{ priorityLabels[p] }}
+              </option>
+            </select>
+          </label>
+
+          <label class="filter">
+            <span class="filter-label">タグ</span>
+            <select
+              :value="filters.tag"
+              @change="setQuery({ tag: ($event.target as HTMLSelectElement).value })"
+            >
+              <option value="">すべて</option>
+              <option value="none">未分類</option>
+              <option v-for="t in tags" :key="t.id" :value="t.id">{{ t.name }}</option>
+            </select>
+          </label>
+
+          <label class="filter backlog-filter-sprint">
+            <span class="filter-label">スプリント</span>
+            <select
+              :value="filters.sprint"
+              @change="setQuery({ sprint: ($event.target as HTMLSelectElement).value })"
+            >
+              <option value="">すべて</option>
+              <option value="none">スプリント未設定</option>
+              <option v-for="s in sprints" :key="s.id" :value="s.id">{{ s.name }}</option>
+            </select>
+          </label>
+
+          <!-- 期限（5.4「状態と期限のフィルタ」。手順19b）。
+               **「期限超過」は `due_within=0d` ではない**——あちらは「今日以前」で
+               今日が期限のものを含み、`stats.overdue` と1日ぶんずれる（9.2.1） -->
+          <label class="filter">
+            <span class="filter-label">期限</span>
+            <select
+              :value="dueValue"
+              @change="setExclusive(DUE_KEYS, ($event.target as HTMLSelectElement).value)"
+            >
+              <option value="">すべて</option>
+              <option value="overdue:true">期限超過</option>
+              <option value="due_within:0d">今日まで</option>
+              <option value="due_within:7d">7日以内</option>
+              <option value="due_within:30d">30日以内</option>
+            </select>
+          </label>
+
+          <!-- エピックだけは複数選択（5.4）。URL 上の実体は `parent` である -->
+          <div class="filter">
+            <span class="filter-label" aria-hidden="true">エピック</span>
+            <EpicFilter
+              :epics="epics"
+              :selected="epicSeqs"
+              :project-key="projectKey"
+              :can-create="canCreate"
+              @update="setQuery({ parent: $event.join(',') })"
+              @create="openNewEpicModal"
+            />
+          </div>
+
+          <!-- グループ化と解除は右端に寄せる（5.4 のワイヤー） -->
+          <label class="filter">
+            <span class="filter-label">グループ化</span>
+            <select
+              :value="group"
+              @change="setQuery({ group: ($event.target as HTMLSelectElement).value })"
+            >
+              <option v-for="axis in GROUP_AXES" :key="axis" :value="axis">
+                {{ groupLabels[axis] }}
+              </option>
+            </select>
+          </label>
+
+          <button
+            type="button"
+            class="secondary"
+            :disabled="isPristine"
+            title="フィルタ・グループ化・ソートを元に戻す"
+            @click="clearAll"
           >
-            <option v-for="axis in GROUP_AXES" :key="axis" :value="axis">
-              {{ groupLabels[axis] }}
-            </option>
-          </select>
-        </label>
-
-        <button
-          type="button"
-          class="secondary"
-          :disabled="isPristine"
-          title="フィルタ・グループ化・ソートを元に戻す"
-          @click="clearAll"
-        >
-          解除
-        </button>
+            解除
+          </button>
+        </div>
       </div>
 
       <!-- 操作の結果は操作した場所に出す（6.4）。作成・並べ替え・段の行き来で使い回す -->
@@ -2102,11 +2186,12 @@ watch(projectKey, (key) => {
             <button
               type="button"
               class="section-toggle"
-              :aria-expanded="!collapsed.has(section.key)"
+              :disabled="searching"
+              :aria-expanded="(searching || !collapsed.has(section.key))"
               @click="toggleSection(section.key)"
             >
               <span class="caret" aria-hidden="true">
-                {{ collapsed.has(section.key) ? '▸' : '▾' }}
+                {{ !searching && collapsed.has(section.key) ? '▸' : '▾' }}
               </span>
               <span class="section-name">{{ section.label }}</span>
               <span class="section-count">({{ section.rows.length }})</span>
@@ -2161,7 +2246,7 @@ watch(projectKey, (key) => {
             </template>
           </div>
 
-          <template v-if="!collapsed.has(section.key)">
+          <template v-if="(searching || !collapsed.has(section.key))">
             <table v-if="section.rows.length > 0" class="table">
               <thead>
                 <tr>
@@ -2283,11 +2368,12 @@ watch(projectKey, (key) => {
                         v-if="row.hasChildren"
                         type="button"
                         class="tree-toggle"
-                        :aria-expanded="!treeCollapsed.has(row.ticket.seq)"
+                        :disabled="searching"
+                        :aria-expanded="(searching || !treeCollapsed.has(row.ticket.seq))"
                         :aria-label="`${row.ticket.title} の配下を開閉する`"
                         @click.stop="toggleTree(row.ticket.seq)"
                       >
-                        {{ treeCollapsed.has(row.ticket.seq) ? '▸' : '▾' }}
+                        {{ !searching && treeCollapsed.has(row.ticket.seq) ? '▸' : '▾' }}
                       </button>
                       <span v-else class="tree-spacer" aria-hidden="true"></span>
                       <span class="type-icon" :title="ticketTypeLabels[row.ticket.type]">
@@ -2306,11 +2392,12 @@ watch(projectKey, (key) => {
                         v-if="row.hasChildren"
                         type="button"
                         class="tree-toggle"
-                        :aria-expanded="!treeCollapsed.has(row.ticket.seq)"
+                        :disabled="searching"
+                        :aria-expanded="(searching || !treeCollapsed.has(row.ticket.seq))"
                         :aria-label="`${row.ticket.title} の配下を開閉する`"
                         @click.stop="toggleTree(row.ticket.seq)"
                       >
-                        {{ treeCollapsed.has(row.ticket.seq) ? '▸' : '▾' }}
+                        {{ !searching && treeCollapsed.has(row.ticket.seq) ? '▸' : '▾' }}
                       </button>
                       <span v-else class="tree-spacer" aria-hidden="true"></span>
                       <span class="type-icon" :title="ticketTypeLabels[row.ticket.type]">
@@ -2551,35 +2638,6 @@ watch(projectKey, (key) => {
 
 /* ── 縮小中（詳細ペインを開いているとき。5.4）───────────── */
 
-/* 畳んだフィルタ行（`[絞り込み ▾]` の1行）。**新しい帯は足していない**
-   ——フィルタ行そのものを1行に置き換えている */
-.filters-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--pb-space-1);
-  height: 28px;
-  padding: 0 var(--pb-space-2);
-  margin-bottom: var(--pb-space-3);
-  border: 1px solid var(--pb-border);
-  border-radius: var(--pb-radius);
-  background: var(--pb-bg);
-  color: inherit;
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.filters-toggle:hover {
-  background: var(--pb-hover);
-}
-
-/* 畳んでいても「絞り込みが効いている」ことは読めるようにする。
-   **色ではなく点の有無で示す**（8.6） */
-.filters-dot {
-  color: var(--pb-text-muted);
-  font-size: 10px;
-}
-
 /* 縮小中は左右の余白を詰める。450px のうち 48px を余白に使うと、
    タイトル列の取り分がそのぶん減る（3列の合計は変わらないので、
    削れるのはタイトルだけである） */
@@ -2588,41 +2646,53 @@ watch(projectKey, (key) => {
 }
 
 /* ── フィルタ行 ─────────────────────────────────────────── */
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--pb-space-3);
+.backlog-filters {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: var(--pb-space-2);
   margin-bottom: var(--pb-space-4);
 }
-
+.backlog-filter-primary { grid-column: 1 / span 5; grid-row: 1; min-width: 0; }
+.backlog-filter-options { display: contents; }
+.backlog-filter-top { grid-row: 1; }
+.backlog-filter-options > :not(.backlog-filter-top) { grid-row: 2; }
+.backlog-filter-sprint { grid-column: span 2; }
 .filter {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--pb-space-1);
   min-width: 0;
 }
-
-/* グループ化から右は右端へ寄せる。狭い窓では折り返して先頭に来る */
-.push {
-  margin-left: auto;
-}
-
-.filter-label {
-  color: var(--pb-text-muted);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.filters select {
+.filter-label { color: var(--pb-text-muted); font-size: 13px; white-space: nowrap; }
+.backlog-filters select, .backlog-keyword input {
   height: 32px;
-  max-width: 180px;
+  min-width: 0;
+  width: 100%;
   padding: 0 var(--pb-space-2);
   border: 1px solid var(--pb-border);
   border-radius: var(--pb-radius);
   background: var(--pb-bg);
   color: inherit;
   font: inherit;
+}
+.backlog-filter-toggle { display: none; white-space: nowrap; }
+/* 狭い一覧でも検索を残し、他の条件は横スクロールできる1行へ畳む。 */
+.page-body { container-type: inline-size; }
+@container (max-width: 1050px) {
+  .backlog-filters { display: flex; flex-direction: column; }
+  .backlog-filter-primary { display: flex; gap: var(--pb-space-2); }
+  .backlog-keyword { flex: 1; }
+  .backlog-filter-toggle { display: block; }
+  .backlog-filter-options { display: none; }
+  .backlog-filters-open .backlog-filter-options {
+    display: flex;
+    gap: var(--pb-space-2);
+    overflow-x: auto;
+    padding-bottom: var(--pb-space-1);
+  }
+  .backlog-filter-options > .filter { flex: 0 0 auto; }
+  .backlog-filter-options select { width: auto; max-width: 170px; }
+  .backlog-filter-options > button { flex: 0 0 auto; }
 }
 
 .ok {

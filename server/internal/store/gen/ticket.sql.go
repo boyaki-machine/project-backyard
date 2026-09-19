@@ -933,21 +933,21 @@ filtered AS (
     -- キーワードの一致は store/search（queries/search.sql）が済ませ、**一致した ID
     -- だけを受け取る**（Design.md 4.6 の隔離）。keyword_set が偽なら絞らない——
     -- 「語が無い」と「語はあったが0件に一致」を区別するためのフラグである。
-    AND (NOT $23::boolean OR t.id = ANY($24::pg_catalog.bpchar[]))
+    AND (NOT $23::boolean OR $24::boolean OR t.id = ANY($25::pg_catalog.bpchar[]))
     -- 番号の範囲は両端を含む。0 は指定なし（seq は1から始まる）。
-    AND ($25::int <= 0 OR t.seq >= $25::int)
-    AND ($26::int <= 0 OR t.seq <= $26::int)
+    AND ($26::int <= 0 OR t.seq >= $26::int)
+    AND ($27::int <= 0 OR t.seq <= $27::int)
     -- 完了日時は since 以上・before 未満。**指定すると未完了は外れる**（NULL との比較は偽）。
-    AND ($27::timestamptz IS NULL
-         OR t.closed_at >= $27::timestamptz)
     AND ($28::timestamptz IS NULL
-         OR t.closed_at < $28::timestamptz)
+         OR t.closed_at >= $28::timestamptz)
+    AND ($29::timestamptz IS NULL
+         OR t.closed_at < $29::timestamptz)
     -- 着手日時（9.2.1「着手日時を導く」）。**状態が todo 区分から初めて出た遷移**の
     -- occurred_at で、列を持たず activity から導く。完了を取り消して着手し直しても
     -- min を採るので、最初の着手になる。区分はいまのワークフローで引くので、
     -- いまのワークフローに無いキーの遷移は結合で落ちる。
-    AND (($29::timestamptz IS NULL
-          AND $30::timestamptz IS NULL)
+    AND (($30::timestamptz IS NULL
+          AND $31::timestamptz IS NULL)
          OR EXISTS (
            SELECT 1
              FROM (SELECT min(a.occurred_at) AS started_at
@@ -963,17 +963,28 @@ filtered AS (
                       AND os.category = 'todo'
                       AND ns.category <> 'todo') st
             WHERE st.started_at IS NOT NULL
-              AND ($29::timestamptz IS NULL
-                   OR st.started_at >= $29::timestamptz)
               AND ($30::timestamptz IS NULL
-                   OR st.started_at < $30::timestamptz)
+                   OR st.started_at >= $30::timestamptz)
+              AND ($31::timestamptz IS NULL
+                   OR st.started_at < $31::timestamptz)
          ))
+),
+backlog_matches AS (
+  SELECT t.id, t.parent_id FROM ticket t JOIN filtered f ON f.id = t.id
+   WHERE $24::boolean AND t.id = ANY($25::pg_catalog.bpchar[])
+  UNION
+  SELECT p.id, p.parent_id FROM ticket p JOIN backlog_matches m ON p.id = m.parent_id
+   WHERE p.project_id = $5::pg_catalog.bpchar
+),
+search_filtered AS (
+  SELECT f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at FROM filtered f
+   WHERE NOT $24::boolean OR f.id IN (SELECT id FROM backlog_matches)
 )
 SELECT
   f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at,
   count(*) OVER ()                        AS total,
   (max(f.updated_at) OVER ())::timestamptz AS last_updated_at
-FROM filtered f
+FROM search_filtered f
 ORDER BY
   -- 既定は sort_key の昇順（9.2.1）。人が手で並べた順を既定の見え方にする。
   -- **sort_key が NULL の行は末尾**（利用者の判断、2026-08-23）。
@@ -1035,6 +1046,7 @@ type ListTicketsParams struct {
 	IncludeRetired   bool
 	StagedOnly       bool
 	KeywordSet       bool
+	BacklogSearch    bool
 	KeywordIds       []string
 	SeqFrom          int32
 	SeqTo            int32
@@ -1110,7 +1122,8 @@ type ListTicketsRow struct {
 // 「指定なし」は空配列で表す。none（未割当・未分類）は別のフラグに分けてある
 // ——配列の中に 'none' という値を混ぜると、その ULID を持つ行と区別できない。
 //
-// **フィルタは行単位で適用し、親を補完しない**（9.2.4）。親が条件に合わない子は
+// 通常のフィルタは行単位で適用する（9.2.4）。backlog_search のときだけ、
+// 一致した子の祖先を補完し、補完した親も total と上限に含める。親が条件に合わない子は
 // parent_seq を保ったまま返り、画面がトップレベルに並べる。補完すると、条件に
 // 合致しない行が一覧に現れて total と表示件数が食い違う。
 //
@@ -1148,6 +1161,8 @@ type ListTicketsRow struct {
 //
 // **棚に戻ったものはここでは外さない。** 下の retired の条件がそのまま効くので、
 // 既定では外れ、retired=true を一緒に送れば含まれる（条件は種類ごとに独立）。
+// 一致した子の祖先を、他のフィルタを適用した後で補完する（pb-84）。
+// 検索に当たっても他の条件から外れた子を起点にしない。UNION で重複・循環を防ぐ。
 func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error) {
 	rows, err := q.db.Query(ctx, listTickets,
 		arg.Sort,
@@ -1173,6 +1188,7 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 		arg.IncludeRetired,
 		arg.StagedOnly,
 		arg.KeywordSet,
+		arg.BacklogSearch,
 		arg.KeywordIds,
 		arg.SeqFrom,
 		arg.SeqTo,
