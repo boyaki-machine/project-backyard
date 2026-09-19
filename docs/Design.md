@@ -990,17 +990,27 @@ GET /api/v1/me
 （いまは `tls_enabled` を切り替えられる形になっている）。そのとき、
 TLS が有効なときだけ出す形にできるかを併せて見る。
 
-#### 実機で確かめること（pb-152 の時点で未確認）
+#### 実機で確かめた（pb-152、2026-09-19）
 
-**リカバリコードの保存が `blob:` の URL を作る**（`RecoveryCodesDialog.vue` の
-`URL.createObjectURL`）。**CSP の仕様では `a[download]` によるダウンロードは
-フェッチディレクティブの対象外**なので `default-src 'self'` のままで通るはずだが、
-**実機で確かめていない。** 壊れていたら `blob:` を許す形へ直す。
+**画面を回して CSP 違反が1件も出ないことを見た。** DevTools の Console を
+`Refused` で絞って **0 件**である（CSP 違反はこの語で始まる）。
 
-**確かめる画面**：ログイン ／ バックログ ／ チケット詳細（Markdown と CodeMirror）
-／ Docs ／ 設定（TLS・DB タブ）／ TOTP の登録（QR が `data:` で出る）
-／ リカバリコードの保存 ／ エージェントの接続設定（zip のダウンロード）。
-**コンソールに CSP 違反が1件も出ないこと**を見る（`Development.md` 8.2）。
+| 見たもの | 結果 |
+|---|---|
+| ログイン画面 | Vue がマウントする。**`script-src 'self'` が JS の実行を妨げていない** |
+| チケット詳細・Docs（Markdown と CodeMirror） | 描画・編集ともに違反なし |
+| TOTP の登録 | **QR が出る**（`img-src data:` が効いている） |
+| **リカバリコードの保存** | **ファイルが落ちる**（後述） |
+| 画面 / 静的アセット / API の 401 / 未ビルド時の 503 | 4つのヘッダがすべて付く |
+
+**`blob:` は許さなくてよい。** リカバリコードの保存は `URL.createObjectURL` で
+`blob:` の URL を作るが（`RecoveryCodesDialog.vue`）、**`default-src 'self'` のまま
+保存できた**——**CSP の `a[download]` によるダウンロードはフェッチディレクティブの
+対象外**である、という仕様どおりの挙動である。**実機で確かめた事実**として残す。
+
+**コンソールのノイズに注意する。** 検証時、Chrome 拡張機能由来のエラー
+（`FrameDoesNotExistError` など、`background.js` から出るもの）が70件近く出ていた。
+**PB とは無関係なので、`Refused` で絞ってから数えること。**
 
 ## 6.7 多要素認証（TOTP。pb-103）
 
