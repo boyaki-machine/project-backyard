@@ -54,7 +54,7 @@ STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@1
 	stg-init stg-up stg-down stg-psql stg-migrate stg-build stg-run stg-stop stg-admin-create \
 	dev-client gen-api build-client sync-webui build clean-webui release \
 	version version-check bump-build bump-minor bump-major release-tag \
-	docs-size docs-emphasis css-tokens fmt-check
+	docs-size docs-emphasis css-tokens fmt-check vuln-check
 
 ## DB を起動する
 # **app は起動しない。** dev では PB 本体を make run でホストから動かしており、app の
@@ -151,6 +151,30 @@ fmt-check:
 		exit 1; \
 	fi; \
 	echo "OK: gofmt は未整形を報告しない"
+
+## 依存の既知脆弱性を照合する（pb-152）
+# **govulncheck の版は server/tools/go.mod の tool ディレクティブで固定する**
+# ——goose・sqlc と同じ型である。go install でグローバルに入れると版が揃わず、
+# 走らせる人によって結果が変わる。
+#
+# **-C で server を指す。** ツールは tools モジュールが持ち、解析の対象は
+# 本体のモジュールなので、この2つは別である。
+#
+# **「呼んでいない」ものは既定では出ない。** govulncheck は到達可能性を見るので、
+# import しているだけの脆弱性は件数の要約にしか現れない（全部見るなら -show verbose）。
+#
+# **片方が落ちても、もう片方は走らせる。** 素直に2行並べると Go 側で止まって
+# client を一度も見ないまま終わる——**残りが何件あるかを知りたいのに、
+# 最初の1件で調査が打ち切られる。** 両方の結果を出してから、どちらかが
+# 落ちていれば非ゼロで返す（CI を置く日にそのまま関門として使える）。
+vuln-check:
+	@rc=0; \
+	echo "── Go ──"; \
+	(cd server/tools && go tool govulncheck -C .. ./...) || rc=1; \
+	echo "── client ──"; \
+	(cd client && npm audit) || rc=1; \
+	if [ $$rc -ne 0 ]; then echo "NG: 未対処の脆弱性がある"; else echo "OK: 既知の脆弱性は無い"; fi; \
+	exit $$rc
 
 ## 実DBを使う結合テストを実行する（Development.md 6.1）
 # PB_TEST_DATABASE_URL が無いとテスト側が SKIP するため、通常の make test では
