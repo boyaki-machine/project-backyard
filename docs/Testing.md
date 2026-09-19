@@ -325,13 +325,21 @@ print("3文書の合計 :", sum(size.get(p, 0) for p in ("rules", "vision", "lea
 **`go install ...@latest` でグローバルに入れない**——版が揃わず、走らせる人によって結果が変わる。
 Makefile が `-C` でツールのモジュールと解析対象のモジュールを分けているのはこのためである。
 
-**手元の Go の版が結果に出る。** 標準ライブラリの脆弱性は**ビルドに使う Go** で決まるので、
-`deploy/Dockerfile` の `golang:` を上げても**手元で `make build` したバイナリには効かない**。
-両方を揃えること。
+**標準ライブラリの脆弱性は「ビルドに使う Go」で決まる。** その版は `go.mod` の
+`toolchain` 行が固定しており（`server/go.mod` と `server/tools/go.mod`）、
+**`GOTOOLCHAIN=auto`（既定）の go コマンドが、手元の Go より新しければ自動で取ってくる**。
+
+- **端末の Go を上げる必要はない。** `brew` の Go が古いままでも、`toolchain` が指す版で
+  ビルドも試験も走る（初回だけダウンロード、以降はキャッシュ）
+- **`deploy/Dockerfile` の `golang:` と揃えること。** ずれると、手元と Docker で
+  違う版のバイナリができる
+- **標準ライブラリの脆弱性が出たら、直す場所はこの2つである**（依存ライブラリなら `go get`）
 
 **これまでに直した数。** 2026-09-19（pb-152）に初回を走らせ、Go で到達可能な5件と client の high 2件が出た。
 **pgx の SQL インジェクション（GO-2026-5004）を v5.9.2 で塞ぎ**、標準ライブラリの4件は
-`Dockerfile` を go1.26.6 へ、client の2件は `npm audit fix` で 0 件にした。
+`toolchain go1.26.6` と `Dockerfile` の `golang:1.26.6` で、client の2件は `npm audit fix` で
+0 件にした。**この時点で `make vuln-check` は「OK: 既知の脆弱性は無い」を返す**
+——**落ちる側だけでなく通る側も見た**、という意味でもある。
 
 ## 8. DDL の検証
 
