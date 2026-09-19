@@ -137,3 +137,47 @@ func TestOffsetOfFirstPage(t *testing.T) {
 		t.Errorf("offset = %d, want 0", p.Offset())
 	}
 }
+
+// **OFFSET は int32 である**（sqlc の PageOffset）。積が超える組は 422 で弾く。
+//
+// **弾かないとラップアラウンドした負の OFFSET が DB へ届き、500 になる**
+// ——`page=85899347&per_page=25` が境界であることを実サーバで測った（pb-152）。
+// **境界の内側と外側の両方を見る**——内側だけだと、上限を厳しくしすぎても気づかない。
+func TestParsePageRejectsOffsetOverflow(t *testing.T) {
+	// 内側：(85899346-1) × 25 = 2,147,483,625 ≤ MaxInt32
+	p, e := parse(t, "?page=85899346&per_page=25")
+	if e != nil {
+		t.Fatalf("境界の内側が弾かれた: %+v", e)
+	}
+	if p.Offset() != 2147483625 {
+		t.Errorf("offset = %d, want 2147483625", p.Offset())
+	}
+	// **int32 に収まることを型で確かめる。** ここが崩れると DB へ負の値が届く。
+	if int64(int32(p.Offset())) != int64(p.Offset()) {
+		t.Errorf("offset %d が int32 に収まっていない", p.Offset())
+	}
+
+	// 外側：(85899347-1) × 25 = 2,147,483,650 > MaxInt32
+	_, e = parse(t, "?page=85899347&per_page=25")
+	if e == nil {
+		t.Fatal("境界の外側が通ってしまった（500 になる経路が残っている）")
+	}
+	if e.Code != apierr.ValidationFailed || e.Status() != http.StatusUnprocessableEntity {
+		t.Errorf("code/status = %q/%d, want validation_failed/422", e.Code, e.Status())
+	}
+	if len(e.Details) == 0 || e.Details[0].Field != "page" {
+		t.Errorf("details = %+v, want field=page", e.Details)
+	}
+}
+
+// per_page が変われば境界も動く（page 単独では判定できないことの確認）。
+func TestParsePageOverflowDependsOnPerPage(t *testing.T) {
+	// per_page=200 では、同じ page でも積が4倍になって超える。
+	if _, e := parse(t, "?page=85899346&per_page=200"); e == nil {
+		t.Error("per_page=200 で超えるはずの組が通った")
+	}
+	// per_page=1 なら、その page は余裕で収まる。
+	if _, e := parse(t, "?page=85899346&per_page=1"); e != nil {
+		t.Errorf("per_page=1 で収まるはずの組が弾かれた: %+v", e)
+	}
+}

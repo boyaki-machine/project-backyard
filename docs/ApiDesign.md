@@ -213,7 +213,7 @@ GET /api/v1/projects?page=1&per_page=25
 | 項目 | 規約 |
 |---|---|
 | 既定 | `page=1`、`per_page=25` |
-| 上限 | `per_page` は最大 200 |
+| 上限 | `per_page` は最大 200。**`page` は `(page - 1) × per_page` が int32 に収まる範囲**（OFFSET の型。pb-152） |
 | ソート | `sort=updated_at&order=desc`。許可する項目はエンドポイントごとに列挙 |
 | 総件数 | 常に返す。Phase 1 の規模では `COUNT(*)` のコストは問題にならない |
 
@@ -226,6 +226,7 @@ GET /api/v1/projects?page=1&per_page=25
 | `?page=0` `?page=-1` `?per_page=0` | 422。`details[].field` に `page` / `per_page` |
 | `?per_page=201` | 422（200 へ丸めない） |
 | `?page=abc` | 422 |
+| `?page=85899347&per_page=25` | 422（`(page-1) × per_page` が int32 を超える。`details[].field` は `page`） |
 | `?sort=<許可リスト外>` `?order=<asc,desc 以外>` | 422 |
 | 未指定 | 既定値（`page=1` / `per_page=25` / エンドポイントごとの既定 `sort`・`order`） |
 
