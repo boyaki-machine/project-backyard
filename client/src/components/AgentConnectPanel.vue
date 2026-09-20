@@ -145,8 +145,12 @@ function preview(content: string): string {
         <p v-if="transport === 'bridge'" class="warn-note">
           ⓘ ブリッジは TLS 検証を無効化しません。PB の証明書を OS の信頼ストアへ登録できない場合だけ、
           <code>PB_MCP_CA_FILE</code> に CA PEM ファイルを指定します。<code>pb-mcp-bridge</code> を
-          PATH 上へ置いてから、この設定を使ってください。削除時は設定の <code>pb</code> 節、ブリッジ実行ファイル、
+          この zip には <code>pb-mcp-bridge</code> 自体も入ります。PATH 上へ置いてから、この設定を使ってください。削除時は設定の <code>pb</code> 節、ブリッジ実行ファイル、
           CA PEM と環境変数を削除します。
+        </p>
+        <p v-else class="hint">
+          公的 CA の証明書は通常そのまま接続できます。自己署名・社内 CA では、OS の信頼ストアへ登録します。
+          登録と削除の手順は、この zip の <code>PB-README.md</code> にあります。変更できない端末ではブリッジを選びます。
         </p>
       </template>
 

@@ -92,6 +92,16 @@ type Connect struct {
 	// ${input:pb-token} を使って環境変数を読まず、Claude Desktop は**GUI アプリ
 	// なのでシェルの環境が届かない**（トークンは設定ファイルの env に書く）。
 	UsesTokenEnvVar bool
+	// Assets are binary files included only in the downloaded connection ZIP.
+	// They never appear in files[] because they are not configuration to merge.
+	Assets []Asset
+}
+
+// Asset is a downloadable local helper such as the stdio bridge.
+type Asset struct {
+	Path    string
+	Content []byte
+	Mode    uint32
 }
 
 // ReadmeName は zip に入れる手引きのファイル名（ApiDesign.md 4.5.8.5）。
@@ -242,6 +252,9 @@ func renderReadme(name, kind string, spec connectSpec, p ConnectParams) (string,
 	}
 	if spec.configPath != "" {
 		rp.ZipEntryName = blockName(spec.configPath)
+		if kind == "codex" {
+			rp.ZipEntryName = "_codex/" + path.Base(rp.ZipEntryName)
+		}
 	}
 	// **系統A が持つ「起動の言い方」をそのまま使う**（Codex は誘発、他はコマンド）。
 	// **無い種別（gemini / other）では既定の日本語のまま**にする。

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"io/fs"
 	"path"
 	"sort"
 	"strings"
@@ -434,5 +435,37 @@ func ConnectZip(c Connect) ([]byte, error) {
 		Content:  c.Readme,
 	})
 	files = append(files, c.Files...)
-	return Zip(files)
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	for _, f := range files {
+		name := f.Path
+		if f.Mode != ModeCreate {
+			name = blockName(f.Path)
+			if f.ClientKind == "codex" {
+				name = "_codex/" + path.Base(name)
+			}
+		}
+		e, err := w.Create(name)
+		if err != nil {
+			return nil, fmt.Errorf("zip に %s を作れない: %w", name, err)
+		}
+		if _, err := e.Write([]byte(f.Content)); err != nil {
+			return nil, fmt.Errorf("zip へ %s を書けない: %w", name, err)
+		}
+	}
+	for _, a := range c.Assets {
+		h := &zip.FileHeader{Name: a.Path, Method: zip.Deflate}
+		h.SetMode(fs.FileMode(a.Mode))
+		e, err := w.CreateHeader(h)
+		if err != nil {
+			return nil, fmt.Errorf("zip に %s を作れない: %w", a.Path, err)
+		}
+		if _, err := e.Write(a.Content); err != nil {
+			return nil, fmt.Errorf("zip へ %s を書けない: %w", a.Path, err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		return nil, fmt.Errorf("zip を閉じられない: %w", err)
+	}
+	return buf.Bytes(), nil
 }

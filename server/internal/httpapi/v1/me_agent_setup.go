@@ -22,6 +22,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -79,6 +82,14 @@ func (h *handler) getMyAgentSetupZip(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, e)
 		return
 	}
+	if view.Transport == agentsetup.TransportBridge {
+		asset, err := bridgeAsset()
+		if err != nil {
+			apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+			return
+		}
+		connect.Assets = []agentsetup.Asset{asset}
+	}
 
 	blob, err := agentsetup.ConnectZip(connect)
 	if err != nil {
@@ -97,6 +108,24 @@ func (h *handler) getMyAgentSetupZip(w http.ResponseWriter, r *http.Request) {
 	// **書き込み失敗（クライアント切断など）はこの時点で回復手段がない**
 	// （WriteJSON と同じ扱い。paging.go）。
 	_, _ = w.Write(blob)
+}
+
+// bridgeAsset reads the helper shipped next to the currently running PB
+// executable. It never builds code or accepts a client-provided path.
+func bridgeAsset() (agentsetup.Asset, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return agentsetup.Asset{}, fmt.Errorf("PB 実行ファイルの場所を取得できない: %w", err)
+	}
+	name := "pb-mcp-bridge"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary, err := os.ReadFile(filepath.Join(filepath.Dir(exe), name))
+	if err != nil {
+		return agentsetup.Asset{}, fmt.Errorf("同梱の %s を読めない: %w", name, err)
+	}
+	return agentsetup.Asset{Path: name, Content: binary, Mode: 0o755}, nil
 }
 
 // buildAgentConnect は2本のハンドラが共通で行う組み立て。
