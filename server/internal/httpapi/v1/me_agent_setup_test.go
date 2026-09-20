@@ -125,6 +125,27 @@ func TestGetMyAgentSetupClaudeCode(t *testing.T) {
 	}
 }
 
+func TestGetMyAgentSetupCodexBridge(t *testing.T) {
+	h := &handler{q: connectFake("codex", "MY_LAPTOP")}
+	req := connectReq()
+	q := req.URL.Query()
+	q.Set("transport", "bridge")
+	req.URL.RawQuery = q.Encode()
+	rec := httptest.NewRecorder()
+	h.getMyAgentSetup(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	v := decodeConnect(t, rec)
+	if v.Transport != "bridge" {
+		t.Errorf("transport: got %q, want bridge", v.Transport)
+	}
+	if len(v.Files) != 1 || !bytes.Contains([]byte(v.Files[0].Content), []byte(`command = "pb-mcp-bridge"`)) {
+		t.Fatalf("Codex bridge の stdio 設定がない: %+v", v.Files)
+	}
+}
+
 // TestGetMyAgentSetupCopilotHasNoExportLine は export_line の出し分けを確かめる
 // （ApiDesign.md 4.5.8.2）。
 //

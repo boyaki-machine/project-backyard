@@ -3608,6 +3608,11 @@ export interface components {
              */
             mcp_url: string;
             /**
+             * @description Codex の接続方式。`direct` は HTTPS、`bridge` はローカル stdio bridge。
+             * @enum {string}
+             */
+            transport: "direct" | "bridge";
+            /**
              * @description トークンを環境変数へ置く行。**`null` になる種別が2つある**（4.5.8.2）
              *     ——Copilot は `${input:pb-token}` を使って環境変数を読まず、
              *     Claude Desktop は **GUI アプリなのでシェルの環境が届かない**

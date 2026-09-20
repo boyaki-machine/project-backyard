@@ -49,10 +49,11 @@ type agentConnectAgentView struct {
 
 // agentConnectView は 4.5.8.1 の応答。
 type agentConnectView struct {
-	Agent   agentConnectAgentView `json:"agent"`
-	Project projectRef            `json:"project"`
-	BaseURL string                `json:"base_url"`
-	MCPURL  string                `json:"mcp_url"`
+	Agent     agentConnectAgentView `json:"agent"`
+	Project   projectRef            `json:"project"`
+	BaseURL   string                `json:"base_url"`
+	MCPURL    string                `json:"mcp_url"`
+	Transport string                `json:"transport"`
 	// ExportLine は環境変数へトークンを置く行。**null になる種別がある**（4.5.8.2）。
 	ExportLine *string              `json:"export_line"`
 	Files      []agentSetupFileView `json:"files"`
@@ -127,6 +128,10 @@ func (h *handler) buildAgentConnect(
 	// 組まれると、黙ってずれる（4.5.1 が token_env_name について定めたのと同じ）。
 	mcpURL := base + "/mcp/" + ag.ProjectKey.String
 
+	transport := r.URL.Query().Get("transport")
+	if transport == "" {
+		transport = agentsetup.TransportDirect
+	}
 	params := agentsetup.ConnectParams{
 		ProjectKey:        ag.ProjectKey.String,
 		ProjectName:       ag.ProjectName.String,
@@ -134,6 +139,7 @@ func (h *handler) buildAgentConnect(
 		TokenEnvName:      agentTokenEnvName(ag.TokenEnvSuffix, ag.ActorID),
 		DisplayName:       ag.DisplayName,
 		ClientDisplayName: h.clientKindLabel(ctx, ag.ClientKind),
+		Transport:         transport,
 	}
 
 	connect, err := agentsetup.RenderConnect(ag.ClientKind, params)
@@ -161,10 +167,11 @@ func (h *handler) buildAgentConnect(
 			ClientDisplayName: params.ClientDisplayName,
 			TokenEnvName:      params.TokenEnvName,
 		},
-		Project: projectRef{Key: ag.ProjectKey.String, Name: ag.ProjectName.String},
-		BaseURL: base,
-		MCPURL:  mcpURL,
-		Files:   files,
+		Project:   projectRef{Key: ag.ProjectKey.String, Name: ag.ProjectName.String},
+		BaseURL:   base,
+		MCPURL:    mcpURL,
+		Transport: transport,
+		Files:     files,
 	}
 	// **2種別で null になる**（4.5.8.2）。Copilot は ${input:pb-token} を使って
 	// 環境変数を読まず、Claude Desktop は GUI アプリなのでシェルの環境が届かない。

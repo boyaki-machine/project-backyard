@@ -49,6 +49,12 @@ CGO_ENABLED=0 go -C "${repo_root}/server" build \
 	-trimpath -ldflags "-s -w -X main.version=${version}" \
 	-o "${out_dir}/pb" ./cmd/pb
 
+echo "==> pb-mcp-bridge を作る"
+CGO_ENABLED=0 go -C "${repo_root}/server" build \
+	-trimpath -ldflags "-s -w" \
+	-o "${out_dir}/pb-mcp-bridge" ./cmd/pb-mcp-bridge
+chmod +x "${out_dir}/pb-mcp-bridge"
+
 echo
 echo "==> 設定と秘密を同梱する"
 cp "${stg_dir}/pb.env" "${out_dir}/pb.env"

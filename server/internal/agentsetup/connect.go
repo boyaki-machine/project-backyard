@@ -65,7 +65,15 @@ type ConnectParams struct {
 	// ClientDisplayName はカタログの表示名（ApiDesign.md 4.5.7）。
 	// **配置ファイルを持たない種別でも手引きは出す**ので、常に要る。
 	ClientDisplayName string
+	// Transport is "direct" (the Codex HTTP MCP client) or "bridge" (a local
+	// stdio process).  Only Codex supports the latter.
+	Transport string
 }
+
+const (
+	TransportDirect = "direct"
+	TransportBridge = "bridge"
+)
 
 // Connect は系統B の成果物一式（ApiDesign.md 4.5.8）。
 type Connect struct {
@@ -167,6 +175,15 @@ func ExportLine(tokenEnvName string) string {
 // URL も変数名も正しく決まっている。** 5.7.1 が未対応の種別を 422 で拒むのは
 // **これから選ぶ**ものだからで、こちらは**既に選ばれた結果**である。
 func RenderConnect(kind string, p ConnectParams) (Connect, error) {
+	if p.Transport == "" {
+		p.Transport = TransportDirect
+	}
+	if p.Transport != TransportDirect && p.Transport != TransportBridge {
+		return Connect{}, fmt.Errorf("未知の接続方式: %s", p.Transport)
+	}
+	if p.Transport == TransportBridge && kind != "codex" {
+		return Connect{}, fmt.Errorf("stdio ブリッジは Codex でのみ使えます")
+	}
 	spec, ok := connectSpecs[kind]
 	if !ok {
 		readme, err := renderReadme("none.md", kind, connectSpec{}, p)
@@ -393,8 +410,13 @@ func renderClaudeDesktopConfig(p ConnectParams) (string, error) {
 func renderCodexConfig(p ConnectParams) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[mcp_servers.%s]\n", mcpServerName)
-	fmt.Fprintf(&b, "url = %q\n", p.MCPURL)
-	fmt.Fprintf(&b, "bearer_token_env_var = %q\n", p.TokenEnvName)
+	if p.Transport == TransportBridge {
+		b.WriteString("command = \"pb-mcp-bridge\"\n")
+		fmt.Fprintf(&b, "args = [\"--url\", %q, \"--token-env\", %q]\n", p.MCPURL, p.TokenEnvName)
+	} else {
+		fmt.Fprintf(&b, "url = %q\n", p.MCPURL)
+		fmt.Fprintf(&b, "bearer_token_env_var = %q\n", p.TokenEnvName)
+	}
 	b.WriteString("default_tools_approval_mode = \"prompt\"\n")
 	for _, tool := range autoApprovedTools {
 		fmt.Fprintf(&b, "\n[mcp_servers.%s.tools.%s]\n", mcpServerName, tool)

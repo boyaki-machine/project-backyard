@@ -6032,7 +6032,7 @@ components:
         **`AgentSetup`（系統A）とは別物である**——あちらはリポジトリにコミットする
         ファイル、こちらは各人の手元にしか残らないもの。
       type: object
-      required: [agent, project, base_url, mcp_url, export_line, files]
+      required: [agent, project, base_url, mcp_url, transport, export_line, files]
       properties:
         agent:
           type: object
@@ -6069,6 +6069,10 @@ components:
             `base_url` ＋ `/mcp/<project_key>`（Design.md 8.3）。
             **`files[]` の中に埋まっているものと同じ文字列である。**
           example: http://localhost:8081/mcp/pb
+        transport:
+          type: string
+          enum: [direct, bridge]
+          description: Codex の接続方式。`direct` は HTTPS、`bridge` はローカル stdio bridge。
         export_line:
           type: string
           nullable: true
