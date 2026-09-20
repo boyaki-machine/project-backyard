@@ -2527,6 +2527,23 @@ paths:
           schema:
             type: string
             enum: ['true']
+        - name: planned_from
+          in: query
+          description: |
+            予定期間の下限（含む）。チケットの `start_date`〜`due_date` と1日でも
+            重なるものを返す。片方だけの日付を持つチケットはその日1日として扱い、
+            両方が未設定のチケットは除外する。`planned_to` と片方だけでもよい。
+          schema:
+            type: string
+            format: date
+        - name: planned_to
+          in: query
+          description: |
+            予定期間の上限（含む）。`planned_from` と両方あるとき、
+            `planned_from` 以上でなければ 422。
+          schema:
+            type: string
+            format: date
         - name: stale
           in: query
           description: |

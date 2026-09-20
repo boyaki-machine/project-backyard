@@ -10,6 +10,7 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import NewTicketModal from '../components/NewTicketModal.vue'
 import type { NewTicketDefaults } from '../components/NewTicketModal.vue'
 import PageHeader from '../components/PageHeader.vue'
+import PlannedPeriodFilter from '../components/PlannedPeriodFilter.vue'
 import SplitPane from '../components/SplitPane.vue'
 import StatusDropdown from '../components/StatusDropdown.vue'
 import SprintStartModal from '../components/SprintStartModal.vue'
@@ -220,7 +221,7 @@ const SORTS: TicketSort[] = [
 ]
 
 /** ドロップダウンで選ぶフィルタ。**API のクエリ名をそのまま使う**（5.4） */
-const FILTER_KEYS = ['status', 'type', 'assignee', 'priority', 'tag', 'sprint'] as const
+const FILTER_KEYS = ['status', 'type', 'assignee', 'priority', 'tag'] as const
 type FilterKey = (typeof FILTER_KEYS)[number]
 
 /**
@@ -292,7 +293,6 @@ const filters = computed<Record<FilterKey, string>>(() => ({
   assignee: queryValue('assignee'),
   priority: queryValue('priority'),
   tag: queryValue('tag'),
-  sprint: queryValue('sprint'),
 }))
 
 /**
@@ -381,6 +381,8 @@ const isPristine = computed(
     FILTER_KEYS.every((k) => filters.value[k] === '') &&
     stateValue.value === '' &&
     dueValue.value === '' &&
+    queryValue('planned_from') === '' &&
+    queryValue('planned_to') === '' &&
     epicSeqs.value.length === 0 &&
     group.value === '' &&
     sort.value === 'sort_key' &&
@@ -615,6 +617,8 @@ async function loadTickets(): Promise<void> {
       // 「期限」の箱が出す2系列（同上）
       overdue: queryValue('overdue') === 'true' ? 'true' : undefined,
       due_within: queryValue('due_within'),
+      planned_from: queryValue('planned_from'),
+      planned_to: queryValue('planned_to'),
       // エピックフィルタの実体（9.2.1）。空なら `listTickets` がキーごと落とす
       parent: epicSeqs.value.join(','),
       sort: sort.value,
@@ -1950,8 +1954,50 @@ watch(projectKey, (key) => {
       </PageHeader>
 
     <div class="page-body" :class="{ shrunk }">
-      <!-- 検索欄は常に出し、狭い一覧ではその他の条件を2行目に開閉する（pb-84） -->
+      <!-- エピック・タグ・担当は狭い一覧でも常に出す。検索は2段目の左（pb-8）。 -->
       <div class="backlog-filters" :class="{ 'backlog-filters-open': filtersOpen }">
+        <div class="backlog-always-filters">
+          <!-- エピックだけは複数選択。URL 上の実体は `parent`（部分木）である -->
+          <div class="filter backlog-filter-epic">
+            <span class="filter-label" aria-hidden="true">エピック</span>
+            <EpicFilter
+              :epics="epics"
+              :selected="epicSeqs"
+              :project-key="projectKey"
+              :can-create="canCreate"
+              @update="setQuery({ parent: $event.join(',') })"
+              @create="openNewEpicModal"
+            />
+          </div>
+
+          <label class="filter backlog-filter-tag">
+            <span class="filter-label">タグ</span>
+            <select
+              :value="filters.tag"
+              @change="setQuery({ tag: ($event.target as HTMLSelectElement).value })"
+            >
+              <option value="">すべて</option>
+              <option value="none">未分類</option>
+              <option v-for="t in tags" :key="t.id" :value="t.id">{{ t.name }}</option>
+            </select>
+          </label>
+
+          <label class="filter backlog-filter-assignee">
+            <span class="filter-label">担当</span>
+            <select
+              :value="filters.assignee"
+              @change="setQuery({ assignee: ($event.target as HTMLSelectElement).value })"
+            >
+              <option value="">すべて</option>
+              <option value="me">自分</option>
+              <option value="none">未割当</option>
+              <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
+                {{ m.kind === 'agent' ? '🤖' : '👤' }} {{ m.display_name }}
+              </option>
+            </select>
+          </label>
+        </div>
+
         <div class="backlog-filter-primary">
           <label class="filter backlog-keyword">
             <span class="filter-label">検索</span>
@@ -1975,12 +2021,12 @@ watch(projectKey, (key) => {
           </button>
         </div>
         <div id="backlog-filter-options" class="backlog-filter-options">
-          <!-- 状態（5.4「状態と期限のフィルタ」。手順19b）。
+          <!-- 状態（5.4「状態と予定日のフィルタ」。手順19b）。
                **1つの箱で3系列を出し入れする**——進み具合（`open` / `stale`）・
                区分（`status_category`）・ステータス（`status`）。同じ軸の値なので
                箱を分けず、`optgroup` の見出しで区別する。**見出しが無いと、
                `simple` / `with_review` で区分とステータスが同じ語になって読めない** -->
-          <label class="filter backlog-filter-top">
+          <label class="filter backlog-filter-state">
             <span class="filter-label">状態</span>
             <select
               :value="stateValue"
@@ -2009,7 +2055,7 @@ watch(projectKey, (key) => {
             </select>
           </label>
 
-          <label class="filter backlog-filter-top">
+          <label class="filter backlog-filter-type">
             <span class="filter-label">種別</span>
             <select
               :value="filters.type"
@@ -2022,22 +2068,7 @@ watch(projectKey, (key) => {
             </select>
           </label>
 
-          <label class="filter backlog-filter-top">
-            <span class="filter-label">担当</span>
-            <select
-              :value="filters.assignee"
-              @change="setQuery({ assignee: ($event.target as HTMLSelectElement).value })"
-            >
-              <option value="">すべて</option>
-              <option value="me">自分</option>
-              <option value="none">未割当</option>
-              <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
-                {{ m.kind === 'agent' ? '🤖' : '👤' }} {{ m.display_name }}
-              </option>
-            </select>
-          </label>
-
-          <label class="filter">
+          <label class="filter backlog-filter-priority">
             <span class="filter-label">優先</span>
             <select
               :value="filters.priority"
@@ -2050,34 +2081,19 @@ watch(projectKey, (key) => {
             </select>
           </label>
 
-          <label class="filter">
-            <span class="filter-label">タグ</span>
-            <select
-              :value="filters.tag"
-              @change="setQuery({ tag: ($event.target as HTMLSelectElement).value })"
-            >
-              <option value="">すべて</option>
-              <option value="none">未分類</option>
-              <option v-for="t in tags" :key="t.id" :value="t.id">{{ t.name }}</option>
-            </select>
-          </label>
+          <div class="filter backlog-filter-planned">
+            <span class="filter-label" aria-hidden="true">予定期間</span>
+            <PlannedPeriodFilter
+              :from="queryValue('planned_from')"
+              :to="queryValue('planned_to')"
+              @update="setQuery({ planned_from: $event.from, planned_to: $event.to })"
+            />
+          </div>
 
-          <label class="filter backlog-filter-sprint">
-            <span class="filter-label">スプリント</span>
-            <select
-              :value="filters.sprint"
-              @change="setQuery({ sprint: ($event.target as HTMLSelectElement).value })"
-            >
-              <option value="">すべて</option>
-              <option value="none">スプリント未設定</option>
-              <option v-for="s in sprints" :key="s.id" :value="s.id">{{ s.name }}</option>
-            </select>
-          </label>
-
-          <!-- 期限（5.4「状態と期限のフィルタ」。手順19b）。
+          <!-- 期限（5.4「状態と予定日のフィルタ」。手順19b）。
                **「期限超過」は `due_within=0d` ではない**——あちらは「今日以前」で
                今日が期限のものを含み、`stats.overdue` と1日ぶんずれる（9.2.1） -->
-          <label class="filter">
+          <label class="filter backlog-filter-due">
             <span class="filter-label">期限</span>
             <select
               :value="dueValue"
@@ -2091,21 +2107,8 @@ watch(projectKey, (key) => {
             </select>
           </label>
 
-          <!-- エピックだけは複数選択（5.4）。URL 上の実体は `parent` である -->
-          <div class="filter">
-            <span class="filter-label" aria-hidden="true">エピック</span>
-            <EpicFilter
-              :epics="epics"
-              :selected="epicSeqs"
-              :project-key="projectKey"
-              :can-create="canCreate"
-              @update="setQuery({ parent: $event.join(',') })"
-              @create="openNewEpicModal"
-            />
-          </div>
-
           <!-- グループ化と解除は右端に寄せる（5.4 のワイヤー） -->
-          <label class="filter">
+          <label class="filter backlog-filter-group">
             <span class="filter-label">グループ化</span>
             <select
               :value="group"
@@ -2119,7 +2122,7 @@ watch(projectKey, (key) => {
 
           <button
             type="button"
-            class="secondary"
+            class="secondary backlog-filter-clear"
             :disabled="isPristine"
             title="フィルタ・グループ化・ソートを元に戻す"
             @click="clearAll"
@@ -2648,15 +2651,23 @@ watch(projectKey, (key) => {
 /* ── フィルタ行 ─────────────────────────────────────────── */
 .backlog-filters {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: var(--pb-space-2);
   margin-bottom: var(--pb-space-4);
 }
-.backlog-filter-primary { grid-column: 1 / span 5; grid-row: 1; min-width: 0; }
+.backlog-always-filters { display: contents; }
+.backlog-filter-epic { grid-column: 1 / span 2; grid-row: 1; }
+.backlog-filter-tag { grid-column: 3 / span 2; grid-row: 1; }
+.backlog-filter-assignee { grid-column: 5 / span 2; grid-row: 1; }
+.backlog-filter-state { grid-column: 7 / span 2; grid-row: 1; }
+.backlog-filter-type { grid-column: 9 / span 2; grid-row: 1; }
+.backlog-filter-priority { grid-column: 11 / span 2; grid-row: 1; }
+.backlog-filter-primary { grid-column: 1 / span 5; grid-row: 2; min-width: 0; }
 .backlog-filter-options { display: contents; }
-.backlog-filter-top { grid-row: 1; }
-.backlog-filter-options > :not(.backlog-filter-top) { grid-row: 2; }
-.backlog-filter-sprint { grid-column: span 2; }
+.backlog-filter-planned { grid-column: 6 / span 2; grid-row: 2; }
+.backlog-filter-due { grid-column: 8 / span 2; grid-row: 2; }
+.backlog-filter-group { grid-column: 10 / span 2; grid-row: 2; }
+.backlog-filter-clear { grid-column: 12; grid-row: 2; min-width: 0; }
 .filter {
   display: flex;
   align-items: center;
@@ -2664,6 +2675,7 @@ watch(projectKey, (key) => {
   min-width: 0;
 }
 .filter-label { color: var(--pb-text-muted); font-size: 13px; white-space: nowrap; }
+.backlog-filter-epic :deep(.trigger) { width: 100%; }
 .backlog-filters select, .backlog-keyword input {
   height: 32px;
   min-width: 0;
@@ -2676,23 +2688,37 @@ watch(projectKey, (key) => {
   font: inherit;
 }
 .backlog-filter-toggle { display: none; white-space: nowrap; }
-/* 狭い一覧でも検索を残し、他の条件は横スクロールできる1行へ畳む。 */
+/* 狭い一覧ではエピック・タグ・担当を3列で残し、他の条件は折り返す。 */
 .page-body { container-type: inline-size; }
 @container (max-width: 1050px) {
   .backlog-filters { display: flex; flex-direction: column; }
+  .backlog-always-filters {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--pb-space-2);
+  }
+  .backlog-always-filters .filter { display: grid; align-content: start; gap: 2px; }
+  .backlog-always-filters select { width: 100%; }
   .backlog-filter-primary { display: flex; gap: var(--pb-space-2); }
   .backlog-keyword { flex: 1; }
   .backlog-filter-toggle { display: block; }
   .backlog-filter-options { display: none; }
   .backlog-filters-open .backlog-filter-options {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--pb-space-2);
-    overflow-x: auto;
     padding-bottom: var(--pb-space-1);
   }
-  .backlog-filter-options > .filter { flex: 0 0 auto; }
-  .backlog-filter-options select { width: auto; max-width: 170px; }
-  .backlog-filter-options > button { flex: 0 0 auto; }
+  .backlog-filter-options > .filter {
+    display: grid;
+    grid-column: auto;
+    grid-row: auto;
+    align-content: start;
+    gap: 2px;
+  }
+  .backlog-filter-options select { width: 100%; }
+  .backlog-filter-planned { grid-column: span 2; }
+  .backlog-filter-clear { min-height: 32px; }
 }
 
 .ok {

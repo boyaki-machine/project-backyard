@@ -896,11 +896,21 @@ filtered AS (
          OR (t.closed_at IS NULL
              AND t.due_date IS NOT NULL
              AND t.due_date < CURRENT_DATE))
+    -- planned_from / planned_to（9.2.1。pb-8）。**予定期間が1日でも重なるもの**。
+    -- 片方だけの日付を持つチケットはその日1日の点として扱う。両方 NULL は
+    -- COALESCE も NULL になるため、期間を指定したときに外れる。
+    AND (($20::date IS NULL
+          AND $21::date IS NULL)
+         OR (COALESCE(t.start_date, t.due_date) IS NOT NULL
+             AND ($21::date IS NULL
+                  OR COALESCE(t.start_date, t.due_date) <= $21::date)
+             AND ($20::date IS NULL
+                  OR COALESCE(t.due_date, t.start_date) >= $20::date)))
     -- stale（9.2.1。手順19b）。**stats.sql の stale と同じ条件**。
     -- 日数を引数に取るのは、閾値の正本がサーバ側の定数だからである（9.13.1）。
-    AND ($20::int < 0
+    AND ($22::int < 0
          OR (t.closed_at IS NULL
-             AND t.updated_at < now() - make_interval(days => $20::int)))
+             AND t.updated_at < now() - make_interval(days => $22::int)))
     -- retired（9.2.1。pb-5 / pb-6）。**スプリントを終えて棚に戻ったものを
     -- 既定で外す。** 3つすべてを満たす行が対象である。
     --
@@ -919,7 +929,7 @@ filtered AS (
     -- **t.sprint_id を読む**（ticket_sprint を並べ直さない）。sprint_id は
     -- 「いま属しているスプリント」を指す非正規化された写しであり
     -- （DbDesign.md 6.9.1）、最後の1件を引く結合と同じ答えになる。
-    AND ($21::boolean
+    AND ($23::boolean
          OR NOT (
            t.closed_at IS NOT NULL
            AND EXISTS (SELECT 1 FROM sprint rs
@@ -927,27 +937,27 @@ filtered AS (
            AND NOT EXISTS (SELECT 1 FROM open_desc od WHERE od.id = t.id)
          ))
     AND (cardinality($6::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
-    AND (NOT $22::boolean OR t.id IN (SELECT id FROM staged_tree))
+    AND (NOT $24::boolean OR t.id IN (SELECT id FROM staged_tree))
     -- ── 検索の条件（ApiDesign.md 9.2.1「検索の条件」。pb-66）──────────
     --
     -- キーワードの一致は store/search（queries/search.sql）が済ませ、**一致した ID
     -- だけを受け取る**（Design.md 4.6 の隔離）。keyword_set が偽なら絞らない——
     -- 「語が無い」と「語はあったが0件に一致」を区別するためのフラグである。
-    AND (NOT $23::boolean OR $24::boolean OR t.id = ANY($25::pg_catalog.bpchar[]))
+    AND (NOT $25::boolean OR $26::boolean OR t.id = ANY($27::pg_catalog.bpchar[]))
     -- 番号の範囲は両端を含む。0 は指定なし（seq は1から始まる）。
-    AND ($26::int <= 0 OR t.seq >= $26::int)
-    AND ($27::int <= 0 OR t.seq <= $27::int)
+    AND ($28::int <= 0 OR t.seq >= $28::int)
+    AND ($29::int <= 0 OR t.seq <= $29::int)
     -- 完了日時は since 以上・before 未満。**指定すると未完了は外れる**（NULL との比較は偽）。
-    AND ($28::timestamptz IS NULL
-         OR t.closed_at >= $28::timestamptz)
-    AND ($29::timestamptz IS NULL
-         OR t.closed_at < $29::timestamptz)
+    AND ($30::timestamptz IS NULL
+         OR t.closed_at >= $30::timestamptz)
+    AND ($31::timestamptz IS NULL
+         OR t.closed_at < $31::timestamptz)
     -- 着手日時（9.2.1「着手日時を導く」）。**状態が todo 区分から初めて出た遷移**の
     -- occurred_at で、列を持たず activity から導く。完了を取り消して着手し直しても
     -- min を採るので、最初の着手になる。区分はいまのワークフローで引くので、
     -- いまのワークフローに無いキーの遷移は結合で落ちる。
-    AND (($30::timestamptz IS NULL
-          AND $31::timestamptz IS NULL)
+    AND (($32::timestamptz IS NULL
+          AND $33::timestamptz IS NULL)
          OR EXISTS (
            SELECT 1
              FROM (SELECT min(a.occurred_at) AS started_at
@@ -963,22 +973,22 @@ filtered AS (
                       AND os.category = 'todo'
                       AND ns.category <> 'todo') st
             WHERE st.started_at IS NOT NULL
-              AND ($30::timestamptz IS NULL
-                   OR st.started_at >= $30::timestamptz)
-              AND ($31::timestamptz IS NULL
-                   OR st.started_at < $31::timestamptz)
+              AND ($32::timestamptz IS NULL
+                   OR st.started_at >= $32::timestamptz)
+              AND ($33::timestamptz IS NULL
+                   OR st.started_at < $33::timestamptz)
          ))
 ),
 backlog_matches AS (
   SELECT t.id, t.parent_id FROM ticket t JOIN filtered f ON f.id = t.id
-   WHERE $24::boolean AND t.id = ANY($25::pg_catalog.bpchar[])
+   WHERE $26::boolean AND t.id = ANY($27::pg_catalog.bpchar[])
   UNION
   SELECT p.id, p.parent_id FROM ticket p JOIN backlog_matches m ON p.id = m.parent_id
    WHERE p.project_id = $5::pg_catalog.bpchar
 ),
 search_filtered AS (
   SELECT f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at FROM filtered f
-   WHERE NOT $24::boolean OR f.id IN (SELECT id FROM backlog_matches)
+   WHERE NOT $26::boolean OR f.id IN (SELECT id FROM backlog_matches)
 )
 SELECT
   f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at,
@@ -1042,6 +1052,8 @@ type ListTicketsParams struct {
 	OpenFilter       string
 	DueWithinDays    int32
 	OverdueOnly      bool
+	PlannedFrom      pgtype.Date
+	PlannedTo        pgtype.Date
 	StaleDays        int32
 	IncludeRetired   bool
 	StagedOnly       bool
@@ -1184,6 +1196,8 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 		arg.OpenFilter,
 		arg.DueWithinDays,
 		arg.OverdueOnly,
+		arg.PlannedFrom,
+		arg.PlannedTo,
 		arg.StaleDays,
 		arg.IncludeRetired,
 		arg.StagedOnly,

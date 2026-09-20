@@ -261,6 +261,9 @@ export interface ListTicketsQuery {
   due_within?: string
   /** `true` で**期限を過ぎた未完了のもの**（9.2.1。手順19b）。`false` は受け付けない */
   overdue?: 'true'
+  /** 予定期間の境界（YYYY-MM-DD、両端を含む）。チケットの予定との重なりで絞る（pb-8） */
+  planned_from?: string
+  planned_to?: string
   /** `14d` 形式。**その日数より前から更新されていない未完了のもの**（9.2.1。手順19b） */
   stale?: string
   /**

@@ -113,7 +113,7 @@ func TestTicketsIntegration(t *testing.T) {
 	}
 
 	child := createTicketIT(t, r, session, base,
-		fmt.Sprintf(`{"type":"task","title":"子の仕事","priority":"low","parent_seq":1,"assignee_id":%q}`, adminID))
+		fmt.Sprintf(`{"type":"task","title":"子の仕事","priority":"low","parent_seq":1,"assignee_id":%q,"start_date":"2026-08-20"}`, adminID))
 	if child["seq"].(float64) != 2 {
 		t.Errorf("2件目の seq = %v, want 2", child["seq"])
 	}
@@ -124,7 +124,7 @@ func TestTicketsIntegration(t *testing.T) {
 	grandchild := createTicketIT(t, r, session, base,
 		`{"type":"task","title":"孫の仕事","priority":"medium","parent_seq":2}`)
 	loner := createTicketIT(t, r, session, base,
-		`{"type":"story","title":"独りの仕事","priority":"lowest"}`)
+		`{"type":"story","title":"独りの仕事","priority":"lowest","due_date":"2026-09-05"}`)
 	// **優先度を持たないチケットを必ず1件混ぜる。** 一覧の SELECT に順位の列を
 	// 出していた版では、この行があると NULL を読めずに 500 になった（実サーバの
 	// 検証で気づいた）。単体テストはフェイクを返すので、この経路を通らない。
@@ -217,7 +217,13 @@ func TestTicketsIntegration(t *testing.T) {
 		{"部分木の複数指定は OR", "?parent=1,4", []int{1, 2, 3, 4}},
 		{"部分木の複数指定（重なる）", "?parent=1,2", []int{1, 2, 3}},
 		// due_within は期限超過を含み、due_date が NULL のものは除く
-		{"期限あり", "?due_within=3650d", []int{1}},
+		{"期限あり", "?due_within=3650d", []int{1, 4}},
+		// 予定期間は重なりを取り、片方だけの日付はその日1日の点として扱う。
+		// 両方未設定（3, 5）は期間を指定した時点で外れる。
+		{"予定期間（両端）", "?planned_from=2026-08-15&planned_to=2026-08-31", []int{2}},
+		{"予定期間（チケット期間の内側）", "?planned_from=2026-08-10&planned_to=2026-08-12", []int{1}},
+		{"予定期間（下限のみ）", "?planned_from=2026-08-20", []int{2, 4}},
+		{"予定期間（上限のみ）", "?planned_to=2026-08-20", []int{1, 2}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
