@@ -1247,11 +1247,12 @@ GET /api/v1/me/agents/:id/setup.zip
 
 #### 4.5.8.1a Codex の TLS と stdio ブリッジ
 
-`direct` は Codex の Streamable HTTP 接続であり、証明書の信頼は OS の信頼ストアに従う。
-PB は TLS 検証を無効にする設定を返さない。信頼ストアを変更できない場合だけ、Codex の設定を
-`?transport=bridge` で取り直す。生成物は `pb-mcp-bridge --url <https MCP URL> --token-env <name>` を
-stdio 子プロセスとして起動する。ブリッジは待受を持たず、`PB_MCP_CA_FILE` の PEM を OS の既定
-信頼ストアへ追加するだけである。ZIP の `PB-README.md` は、信頼登録とブリッジ双方について
+`direct` は Codex の Streamable HTTP 接続であり、公開 CA の証明書に使う。Codex 標準の HTTP MCP
+クライアントは、OS の信頼ストアへ登録した自己署名・社内 CA の証明書を受け付けないため、その場合は
+Codex の設定を `?transport=bridge` で取り直す。PB は TLS 検証を無効にする設定を返さない。
+生成物は `pb-mcp-bridge --url <https MCP URL> --token-env <name>` を stdio 子プロセスとして起動する。
+ブリッジは待受を持たず、OS の信頼ストアを使う。`PB_MCP_CA_FILE` が指定された場合は、その PEM を
+OS の既定信頼ストアへ追加する。ZIP の `PB-README.md` は、証明書登録または CA 指定とブリッジの
 導入・削除手順を含む。
 
 **`ETag` もページネーションも持たない**（4.5.1 と同じ）。
@@ -1320,7 +1321,7 @@ clone 直後には存在せず、**主経路では上書きの相手がいない
 | 接続設定（**別名**） | `.mcp.pb-block.json` |
 | **手引き** | `PB-README.md` |
 
-Codex では `transport=direct` と `transport=bridge` で手引きも分ける。直接接続ZIPは公的CA／自己署名・社内CAのOS信頼ストア登録・削除だけを、ブリッジZIPは `pb-mcp-bridge` バイナリ、CA PEM、`PB_MCP_CA_FILE` の導入・削除だけを記す。Codex の設定は Finder 等で隠れない `_codex/config.pb-block.toml` として入れ、手引きで `.codex/config.toml` への改名を案内する。ブリッジZIPは実行ファイルも同梱する。
+Codex では `transport=direct` と `transport=bridge` で手引きも分ける。直接接続ZIPは公開 CA に使うことと、自己署名・社内 CA ではブリッジを選び直すことを記す。ブリッジZIPは `pb-mcp-bridge` バイナリ、OS の信頼ストアへの登録または CA PEM と `PB_MCP_CA_FILE` の指定、導入・削除を記す。Codex の設定は Finder 等で隠れない `_codex/config.pb-block.toml` として入れ、手引きで `.codex/config.toml` への改名を案内する。ブリッジZIPは実行ファイルも同梱する。
 
 **`PB-README.md` は JSON の `files[]` に含めない。** **画面が同じ内容を節として描いている**
 ためで、`files[]` に入れると「これも置くファイルだ」と読まれる。**zip にだけ入れるのは、

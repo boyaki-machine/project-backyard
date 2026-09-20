@@ -316,6 +316,17 @@ func TestRenderConnectCodex(t *testing.T) {
 	if got := strings.Count(f.Content, `approval_mode = "auto"`); got != len(autoApprovedTools) {
 		t.Errorf(`approval_mode = "auto" の件数: got %d, want %d`, got, len(autoApprovedTools))
 	}
+
+	// **直接接続は公開 CA 用である。** 自己署名・社内 CA を OS に登録すれば
+	// Codex 標準クライアントで使える、という古い案内へ戻さない（pb-160）。
+	for _, want := range []string{"公開 CA", "ローカル stdio ブリッジ"} {
+		if !strings.Contains(c.Readme, want) {
+			t.Errorf("直接接続の手引きに %q が無い:\n%s", want, c.Readme)
+		}
+	}
+	if strings.Contains(c.Readme, "自己署名・社内 CA のときだけ、発行元 CA を OS の信頼ストアへ登録") {
+		t.Errorf("直接接続の手引きに古い自己署名証明書の案内が残っている:\n%s", c.Readme)
+	}
 }
 
 // TestRenderConnectCodexBridge keeps the local bridge a stdio server rather
@@ -338,6 +349,18 @@ func TestRenderConnectCodexBridge(t *testing.T) {
 	}
 	if strings.Contains(content, "bearer_token_env_var") || strings.Contains(content, "InsecureSkipVerify") {
 		t.Errorf("bridge 設定に直接 HTTPS 用または TLS 無効化の設定が混ざっている: %s", content)
+	}
+	// **ブリッジも TLS 検証を行う。** OS の信頼ストアと CA PEM のどちらを
+	// 使う場合も、導入と後始末が ZIP の手引きだけで完結する（pb-160）。
+	for _, want := range []string{
+		"自己署名・社内 CA",
+		"OS の信頼ストアへ登録",
+		"PB_MCP_CA_FILE",
+		"登録した CA だけを削除",
+	} {
+		if !strings.Contains(c.Readme, want) {
+			t.Errorf("bridge の手引きに %q が無い:\n%s", want, c.Readme)
+		}
 	}
 }
 
