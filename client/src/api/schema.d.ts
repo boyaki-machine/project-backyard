@@ -9070,6 +9070,17 @@ export interface operations {
                  */
                 overdue?: "true";
                 /**
+                 * @description 予定期間の下限（含む）。チケットの `start_date`〜`due_date` と1日でも
+                 *     重なるものを返す。片方だけの日付を持つチケットはその日1日として扱い、
+                 *     両方が未設定のチケットは除外する。`planned_to` と片方だけでもよい。
+                 */
+                planned_from?: string;
+                /**
+                 * @description 予定期間の上限（含む）。`planned_from` と両方あるとき、
+                 *     `planned_from` 以上でなければ 422。
+                 */
+                planned_to?: string;
+                /**
                  * @description `14d` 形式。**その日数より前から更新されていない未完了のもの**
                  *     （`updated_at < now() - N日` かつ `closed_at IS NULL`）。
                  *     9.13.1 の `stale` と同じ条件で数える。上限は `3650d`。

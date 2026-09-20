@@ -225,6 +225,9 @@ func TestListTicketsDefaults(t *testing.T) {
 	if p.OpenFilter != "all" || p.DueWithinDays != -1 || len(p.ParentSeqs) != 0 {
 		t.Errorf("未指定のフィルタが効いている: %+v", p)
 	}
+	if p.PlannedFrom.Valid || p.PlannedTo.Valid {
+		t.Errorf("未指定の予定期間が効いている: from=%+v to=%+v", p.PlannedFrom, p.PlannedTo)
+	}
 	// overdue / stale の「指定なし」（9.2.1。手順19b）。**stale は 0 ではなく負**
 	// ——0 は「0日以上更新なし」＝全件になってしまい、指定なしと区別できない。
 	if p.OverdueOnly || p.StaleDays != -1 {
@@ -247,7 +250,7 @@ func TestListTicketsFilters(t *testing.T) {
 		"/projects/demo/tickets?type=story,task&priority=high,highest"+
 			"&assignee=me,none&tag=01K2TAG00000000000000001,none&sprint=none"+
 			"&open=true&due_within=7d&parent=12,30&status=todo,in_progress"+
-			"&status_category=todo", "", ""))
+			"&status_category=todo&planned_from=2026-09-01&planned_to=2026-09-30", "", ""))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -269,6 +272,10 @@ func TestListTicketsFilters(t *testing.T) {
 	if p.OpenFilter != "open" || p.DueWithinDays != 7 {
 		t.Errorf("open/due_within の解釈が違う: %+v", p)
 	}
+	if !p.PlannedFrom.Valid || p.PlannedFrom.Time.Format(time.DateOnly) != "2026-09-01" ||
+		!p.PlannedTo.Valid || p.PlannedTo.Time.Format(time.DateOnly) != "2026-09-30" {
+		t.Errorf("予定期間の解釈が違う: from=%+v to=%+v", p.PlannedFrom, p.PlannedTo)
+	}
 	// parent は**カンマ区切りで複数指定できる**（9.2.1）。エピックフィルタが使う。
 	if len(p.ParentSeqs) != 2 || p.ParentSeqs[0] != 12 || p.ParentSeqs[1] != 30 {
 		t.Errorf("parent=12,30 の解釈が違う: %v", p.ParentSeqs)
@@ -285,6 +292,8 @@ func TestListTicketsRejectsInvalidFilters(t *testing.T) {
 		{"open", "open=yes", "open"},
 		{"期限", "due_within=7days", "due_within"},
 		{"期限超過", "overdue=false", "overdue"},
+		{"予定開始日の書式", "planned_from=2026/09/01", "planned_from"},
+		{"予定期間の向き", "planned_from=2026-09-30&planned_to=2026-09-01", "planned_to"},
 		{"放置の書式", "stale=14days", "stale"},
 		{"放置の上限", "stale=3651d", "stale"},
 		{"親", "parent=0", "parent"},
@@ -394,6 +403,9 @@ func TestTicketsETagVariesByFilterAndPage(t *testing.T) {
 	}
 	if a, b := etag("seq_from=10"), etag("seq_from=11"); a == b {
 		t.Errorf("番号の範囲が違うのに ETag が同じ: %q", a)
+	}
+	if a, b := etag("planned_from=2026-09-01"), etag("planned_from=2026-09-02"); a == b {
+		t.Errorf("予定期間が違うのに ETag が同じ: %q", a)
 	}
 	if a, b := etag("closed_since=2026-09-01T00:00:00Z"),
 		etag("closed_since="+url.QueryEscape("2026-09-01T09:00:00+09:00")); a != b {

@@ -153,6 +153,8 @@ type ticketFilters struct {
 	openFilter       string
 	dueWithinDays    int32
 	overdueOnly      bool
+	plannedFrom      pgtype.Date
+	plannedTo        pgtype.Date
 	staleDays        int32
 	parentSeqs       []int32
 
@@ -240,6 +242,8 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		OpenFilter:       filters.openFilter,
 		DueWithinDays:    filters.dueWithinDays,
 		OverdueOnly:      filters.overdueOnly,
+		PlannedFrom:      filters.plannedFrom,
+		PlannedTo:        filters.plannedTo,
 		StaleDays:        filters.staleDays,
 		ParentSeqs:       filters.parentSeqs,
 		KeywordSet:       filters.keywordSet,
@@ -463,6 +467,23 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 		})
 	}
 
+	// 予定期間（9.2.1。pb-8）は日付列どうしを比べるため、時差を持たない
+	// YYYY-MM-DD で受ける。started_* は実際の着手日時なので流用しない。
+	f.plannedFrom, details = parseTicketDate(q.Get("planned_from"), "planned_from", details)
+	f.plannedTo, details = parseTicketDate(q.Get("planned_to"), "planned_to", details)
+	if f.plannedFrom.Valid && f.plannedTo.Valid && f.plannedFrom.Time.After(f.plannedTo.Time) {
+		details = append(details, apierr.Detail{
+			Field: "planned_to", Code: "invalid",
+			Message: "planned_to は planned_from 以降の日付で指定してください",
+		})
+	}
+	if f.plannedFrom.Valid {
+		parts = append(parts, "planned_from="+f.plannedFrom.Time.Format(time.DateOnly))
+	}
+	if f.plannedTo.Valid {
+		parts = append(parts, "planned_to="+f.plannedTo.Time.Format(time.DateOnly))
+	}
+
 	// stale（9.2.1。手順19b）。書式は due_within と同じ <N>d で、上限も同じ。
 	if v := q.Get("stale"); v != "" {
 		m := dueWithinPattern.FindStringSubmatch(v)
@@ -593,6 +614,21 @@ func parseTicketSeqBound(raw, field string, details []apierr.Detail) (int32, []a
 		})
 	}
 	return int32(n), details
+}
+
+// parseTicketDate は予定日の境界を読む。DB の date 列と同じく時刻・時差を持たない。
+func parseTicketDate(raw, field string, details []apierr.Detail) (pgtype.Date, []apierr.Detail) {
+	if raw == "" {
+		return pgtype.Date{}, details
+	}
+	d, err := time.Parse(time.DateOnly, raw)
+	if err != nil {
+		return pgtype.Date{}, append(details, apierr.Detail{
+			Field: field, Code: "invalid",
+			Message: field + " は YYYY-MM-DD 形式の日付で指定してください",
+		})
+	}
+	return pgtype.Date{Time: d, Valid: true}, details
 }
 
 // parseTicketInstant は started_* / closed_* を読む（9.2.1「検索の条件」）。

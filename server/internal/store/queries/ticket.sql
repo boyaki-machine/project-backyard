@@ -186,6 +186,16 @@ filtered AS (
          OR (t.closed_at IS NULL
              AND t.due_date IS NOT NULL
              AND t.due_date < CURRENT_DATE))
+    -- planned_from / planned_to（9.2.1。pb-8）。**予定期間が1日でも重なるもの**。
+    -- 片方だけの日付を持つチケットはその日1日の点として扱う。両方 NULL は
+    -- COALESCE も NULL になるため、期間を指定したときに外れる。
+    AND ((sqlc.narg('planned_from')::date IS NULL
+          AND sqlc.narg('planned_to')::date IS NULL)
+         OR (COALESCE(t.start_date, t.due_date) IS NOT NULL
+             AND (sqlc.narg('planned_to')::date IS NULL
+                  OR COALESCE(t.start_date, t.due_date) <= sqlc.narg('planned_to')::date)
+             AND (sqlc.narg('planned_from')::date IS NULL
+                  OR COALESCE(t.due_date, t.start_date) >= sqlc.narg('planned_from')::date)))
     -- stale（9.2.1。手順19b）。**stats.sql の stale と同じ条件**。
     -- 日数を引数に取るのは、閾値の正本がサーバ側の定数だからである（9.13.1）。
     AND (@stale_days::int < 0
