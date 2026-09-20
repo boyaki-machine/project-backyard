@@ -50,6 +50,8 @@ vendor/
 # ─────────────────────────────────────────────
 node_modules/
 .vite/
+client/test-results/
+client/playwright-report/
 *.tsbuildinfo
 npm-debug.log*
 pnpm-debug.log*

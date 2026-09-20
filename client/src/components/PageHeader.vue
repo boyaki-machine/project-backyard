@@ -159,4 +159,14 @@ const emit = defineEmits<{ 'title-click': [] }>()
   align-items: center;
   gap: var(--pb-space-2);
 }
+
+/*
+ * 768px 未満ではメニュートグルが左上へ浮遊する（GuiDesign.md 2.4）。
+ * 通常の左余白に折りたたみメニュー幅を足し、タイトル行をボタンの右へ逃がす。
+ */
+@media (max-width: 767px) {
+  .page-header {
+    padding-left: calc(var(--pb-menu-w-collapsed) + var(--pb-space-6));
+  }
+}
 </style>
