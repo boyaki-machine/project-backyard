@@ -85,6 +85,7 @@ LEARNINGS.md
 # Codex（ローカル設定は共有しない）
 # ─────────────────────────────────────────────
 .codex/config.toml
+.codex/pb_mcp.py
 
 # Codex のセッションから得た進め方の教訓。個人のセッション履歴を含むため共有しない
 LEARNINGS_CODEX.md
