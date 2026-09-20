@@ -1224,6 +1224,7 @@ GET /api/v1/me/agents/:id/setup.zip
   "project": { "key": "pb", "name": "Project Backyard" },
   "base_url": "http://localhost:8081",
   "mcp_url": "http://localhost:8081/mcp/pb",
+  "transport": "direct",
   "export_line": "export PB_TOKEN_MY_LAPTOP='ここに発行したトークンを貼る'",
   "files": [
     { "path": ".mcp.json",
@@ -1239,9 +1240,19 @@ GET /api/v1/me/agents/:id/setup.zip
 | `agent.client_display_name` | カタログの表示名（4.5.7）。**画面が対応表を持たないため**に返す（4.5.1 と同じ形） |
 | `agent.token_env_name` | 接頭を付けた実際の変数名。**組み立てはサーバの1か所**（4.5.1） |
 | `mcp_url` | `base_url` ＋ `/mcp/<project_key>`（`Design.md` 8.3）。**`files[]` の中に埋まっているものと同じ文字列**である |
+| `transport` | `direct`（既定）または Codex の `bridge`。クエリ `?transport=bridge` は Codex のみ受け付ける。`bridge` の設定はローカル stdio の `pb-mcp-bridge` を起動する |
 | `base_url` | **リクエストの `Host` から組み立てた暫定値**（5.7.1 と同じ規則。スキームは `PB_COOKIE_SECURE`） |
 | `export_line` | 環境変数へトークンを置く行。**`null` になることがある**（下記） |
 | `files[]` | **5.7.1 の `files[]` と同じ形**（`AgentSetupFile`）。**接続設定の1枚だけ**で、`.gitignore` も手順ファイルも入らない |
+
+#### 4.5.8.1a Codex の TLS と stdio ブリッジ
+
+`direct` は Codex の Streamable HTTP 接続であり、証明書の信頼は OS の信頼ストアに従う。
+PB は TLS 検証を無効にする設定を返さない。信頼ストアを変更できない場合だけ、Codex の設定を
+`?transport=bridge` で取り直す。生成物は `pb-mcp-bridge --url <https MCP URL> --token-env <name>` を
+stdio 子プロセスとして起動する。ブリッジは待受を持たず、`PB_MCP_CA_FILE` の PEM を OS の既定
+信頼ストアへ追加するだけである。ZIP の `PB-README.md` は、信頼登録とブリッジ双方について
+導入・削除手順を含む。
 
 **`ETag` もページネーションも持たない**（4.5.1 と同じ）。
 

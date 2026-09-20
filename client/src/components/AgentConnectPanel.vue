@@ -15,7 +15,7 @@
  * 持っており、**畳んでいるときも見えている必要がある**——「繋がったか確かめに戻る」
  * 場面では、パネルを開く動機がない。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import * as setupApi from '../api/agentSetup'
 import type { AgentConnect } from '../api/agentSetup'
@@ -37,6 +37,8 @@ const loadError = ref<ApiError | null>(null)
 
 /** 本文を開いているか（既定は畳む。5.11 と同じ作法） */
 const expanded = ref(false)
+/** Codex は HTTPS 直結と、ローカル stdio ブリッジを選べる。 */
+const transport = ref('direct')
 /** 節ごとのコピー結果（`GuiDesign.md` 6.4。トーストを使わない） */
 const copied = ref<Record<string, CopyState>>({})
 
@@ -58,8 +60,9 @@ const CLIENT_KIND_CLAUDE_DESKTOP = 'claude_desktop'
 const isDesktop = computed(
   () => setup.value?.agent.client_kind === CLIENT_KIND_CLAUDE_DESKTOP,
 )
+const isCodex = computed(() => setup.value?.agent.client_kind === 'codex')
 
-const zipHref = computed(() => setupApi.agentConnectZipURL(props.agentId))
+const zipHref = computed(() => setupApi.agentConnectZipURL(props.agentId, transport.value))
 
 /**
  * 作業材料の取り方を書く文書の `slug`（`DbDesign.md` 8.1.2、`GuiDesign.md` 5.8.2）。
@@ -80,7 +83,7 @@ async function load() {
   loading.value = true
   loadError.value = null
   try {
-    setup.value = await setupApi.getAgentConnect(props.agentId)
+    setup.value = await setupApi.getAgentConnect(props.agentId, transport.value)
   } catch (e: unknown) {
     loadError.value =
       e instanceof ApiError
@@ -92,6 +95,7 @@ async function load() {
 }
 // **開いた時点で読む。** 親は畳んでいる間このコンポーネントを描かない。
 onMounted(load)
+watch(transport, () => { expanded.value = false; void load() })
 
 async function copy(key: string, value: string, elementID: string) {
   // **コピーに失敗しても内容は画面に残す**（`lib/clipboard.ts` の作法）
@@ -131,6 +135,20 @@ function preview(content: string): string {
 
       <!-- 2. 接続設定 ─────────────────────────────────────── -->
       <h4 class="step">2. 接続設定を置く</h4>
+
+      <template v-if="isCodex">
+        <fieldset class="transport">
+          <legend>接続方式</legend>
+          <label><input v-model="transport" type="radio" value="direct" /> HTTPS へ直接接続（推奨）</label>
+          <label><input v-model="transport" type="radio" value="bridge" /> ローカル stdio ブリッジを使う</label>
+        </fieldset>
+        <p v-if="transport === 'bridge'" class="warn-note">
+          ⓘ ブリッジは TLS 検証を無効化しません。PB の証明書を OS の信頼ストアへ登録できない場合だけ、
+          <code>PB_MCP_CA_FILE</code> に CA PEM ファイルを指定します。<code>pb-mcp-bridge</code> を
+          PATH 上へ置いてから、この設定を使ってください。削除時は設定の <code>pb</code> 節、ブリッジ実行ファイル、
+          CA PEM と環境変数を削除します。
+        </p>
+      </template>
 
       <template v-if="file">
         <div class="file-head">
@@ -376,4 +394,15 @@ function preview(content: string): string {
 .values dt {
   color: var(--pb-text-muted);
 }
+
+.transport {
+  display: flex;
+  gap: var(--pb-space-2);
+  flex-wrap: wrap;
+  border: 0;
+  padding: 0;
+  font-size: 12px;
+}
+
+.transport legend { font-weight: 600; }
 </style>

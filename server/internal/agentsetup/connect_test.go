@@ -318,6 +318,29 @@ func TestRenderConnectCodex(t *testing.T) {
 	}
 }
 
+// TestRenderConnectCodexBridge keeps the local bridge a stdio server rather
+// than silently relaxing the HTTP client's TLS checks.
+func TestRenderConnectCodexBridge(t *testing.T) {
+	p := testConnectParams()
+	p.Transport = TransportBridge
+	c, err := RenderConnect("codex", p)
+	if err != nil {
+		t.Fatalf("RenderConnect が失敗した: %v", err)
+	}
+	content := c.Files[0].Content
+	for _, want := range []string{
+		`command = "pb-mcp-bridge"`,
+		`args = ["--url", "http://localhost:8081/mcp/pb", "--token-env", "PB_TOKEN_MY_LAPTOP"]`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("%q が無い:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "bearer_token_env_var") || strings.Contains(content, "InsecureSkipVerify") {
+		t.Errorf("bridge 設定に直接 HTTPS 用または TLS 無効化の設定が混ざっている: %s", content)
+	}
+}
+
 // TestClaudeSettingsAndCodexShareTheList は、2つの書式が同じ一覧から出ることを確かめる。
 //
 // **同じ意図を2つの書式で表すので、元を1つにしておかないと片方だけ足して気づかない。**

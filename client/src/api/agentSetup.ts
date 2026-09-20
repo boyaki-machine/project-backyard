@@ -61,8 +61,8 @@ export type AgentConnect = components['schemas']['AgentConnect']
  * **接続できたかどうかはここに無い**——`GET /me/agents` の `token.last_used_at` が
  * それを表す（同じ事実を2か所から出さない）。
  */
-export function getAgentConnect(agentID: string): Promise<AgentConnect> {
-  return api.get<AgentConnect>(`/me/agents/${encodeURIComponent(agentID)}/setup`)
+export function getAgentConnect(agentID: string, transport = 'direct'): Promise<AgentConnect> {
+  return api.get<AgentConnect>(`/me/agents/${encodeURIComponent(agentID)}/setup?transport=${encodeURIComponent(transport)}`)
 }
 
 /**
@@ -71,6 +71,6 @@ export function getAgentConnect(agentID: string): Promise<AgentConnect> {
  * **`fetch` ではなく `<a download href>` に渡す**（系統A と同じ。認証は Cookie）。
  * zip には手引き（`PB-README.md`）と、**改名した**接続設定が入る。
  */
-export function agentConnectZipURL(agentID: string): string {
-  return `${BASE_PATH}/me/agents/${encodeURIComponent(agentID)}/setup.zip`
+export function agentConnectZipURL(agentID: string, transport = 'direct'): string {
+  return `${BASE_PATH}/me/agents/${encodeURIComponent(agentID)}/setup.zip?transport=${encodeURIComponent(transport)}`
 }

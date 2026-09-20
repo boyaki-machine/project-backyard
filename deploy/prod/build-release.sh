@@ -158,6 +158,11 @@ build_native() {
 		-trimpath -ldflags "-s -w -X main.version=${version}" \
 		-o "${out}/pb${exe}" ./cmd/pb
 
+	echo "==> pb-mcp-bridge を作る（${os}/${arch}）"
+	GOOS=${os} GOARCH=${arch} CGO_ENABLED=0 go -C "${repo_root}/server" build \
+		-trimpath -ldflags "-s -w" \
+		-o "${out}/pb-mcp-bridge${exe}" ./cmd/pb-mcp-bridge
+
 	echo "==> goose を作る（postgres のドライバだけ）"
 	GOOS=${os} GOARCH=${arch} CGO_ENABLED=0 go -C "${repo_root}/server/tools" build \
 		-tags "${goose_tags}" -trimpath -ldflags "-s -w" \
@@ -188,7 +193,7 @@ build_native() {
 		;;
 	*)
 		cp "${native_dir}/run.sh" "${native_dir}/migrate.sh" "${out}/"
-		chmod +x "${out}/run.sh" "${out}/migrate.sh" "${out}/pb" "${out}/goose"
+		chmod +x "${out}/run.sh" "${out}/migrate.sh" "${out}/pb" "${out}/goose" "${out}/pb-mcp-bridge"
 		;;
 	esac
 
