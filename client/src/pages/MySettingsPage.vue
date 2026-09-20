@@ -31,6 +31,8 @@ import PageHeader from '../components/PageHeader.vue'
 import PasskeyRegisterModal from '../components/PasskeyRegisterModal.vue'
 import RecoveryCodesDialog from '../components/RecoveryCodesDialog.vue'
 import { formatDateTime } from '../lib/datetime'
+import { normalizeLocale } from '../locales'
+import type { SupportedLocale } from '../locales'
 import { IP_ADDRESS_REASON, openedByIPAddress, passkeySupported } from '../lib/passkey'
 import { useAuthStore } from '../stores/auth'
 import type { Hue, ThemePreference } from '../stores/ui'
@@ -60,7 +62,7 @@ const MAX_EMAIL = 254
 
 const displayName = ref('')
 const email = ref('')
-const locale = ref('ja')
+const locale = ref<SupportedLocale>('ja')
 const timezone = ref('Asia/Tokyo')
 
 const savingProfile = ref(false)
@@ -79,7 +81,7 @@ function loadFromStore() {
   if (!actor) return
   displayName.value = actor.display_name
   email.value = actor.email ?? ''
-  locale.value = actor.locale ?? 'ja'
+  locale.value = normalizeLocale(actor.locale)
   timezone.value = actor.timezone ?? 'Asia/Tokyo'
 }
 watch(() => auth.actor, loadFromStore, { immediate: true })
@@ -94,7 +96,7 @@ const profileChanges = computed<UpdateMeRequest>(() => {
   if (!actor) return body
   if (displayName.value !== actor.display_name) body.display_name = displayName.value
   if (email.value !== (actor.email ?? '')) body.email = email.value
-  if (locale.value !== (actor.locale ?? '')) body.locale = locale.value as 'ja'
+  if (locale.value !== normalizeLocale(actor.locale)) body.locale = locale.value
   if (timezone.value !== (actor.timezone ?? '')) body.timezone = timezone.value
   return body
 })
@@ -486,6 +488,7 @@ function asApiError(e: unknown): ApiError {
               <span class="label">言語</span>
               <select v-model="locale" name="locale" :disabled="savingProfile">
                 <option value="ja">日本語</option>
+                <option value="en">English</option>
               </select>
               <span v-if="profileDetail('locale')" class="detail">
                 {{ profileDetail('locale')?.message }}

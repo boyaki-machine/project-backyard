@@ -218,7 +218,7 @@ func TestPatchMeValidatesEnums(t *testing.T) {
 	}{
 		{"テーマ", `{"theme":"sepia"}`, "theme"},
 		{"色相", `{"hue":"red"}`, "hue"},
-		{"言語", `{"locale":"en"}`, "locale"},
+		{"言語", `{"locale":"fr"}`, "locale"},
 		{"タイムゾーン", `{"timezone":"Mars/Olympus"}`, "timezone"},
 		// **"Local" は time.LoadLocation が解決してしまう。**
 		// 誰のローカルかがサーバ設定に依存するので、明示的に弾く。
@@ -243,6 +243,21 @@ func TestPatchMeValidatesEnums(t *testing.T) {
 	}
 }
 
+// 英語は pb-17 で追加した2つ目の表示言語。DBへ渡る値まで確かめる。
+func TestPatchMeAcceptsEnglish(t *testing.T) {
+	q := meFake(t)
+	h, _ := newUserHandler(q)
+	rec := httptest.NewRecorder()
+	h.patchMe(rec, meReq(http.MethodPatch, "/api/v1/me", `{"locale":"en"}`, selfPrincipal()))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+	}
+	if len(q.myProfileParams) != 1 || q.myProfileParams[0].Locale.String != localeEn {
+		t.Fatalf("locale の引数 = %+v, want en", q.myProfileParams)
+	}
+}
+
 // UTC は名前だけで一意に定まるので通す（"Local" との対比）。
 func TestPatchMeAcceptsUTC(t *testing.T) {
 	q := meFake(t)
@@ -262,7 +277,7 @@ func TestPatchMeReportsEveryInvalidField(t *testing.T) {
 	h, _ := newUserHandler(q)
 	rec := httptest.NewRecorder()
 	h.patchMe(rec, meReq(http.MethodPatch, "/api/v1/me",
-		`{"theme":"sepia","hue":"red","locale":"en"}`, selfPrincipal()))
+		`{"theme":"sepia","hue":"red","locale":"fr"}`, selfPrincipal()))
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422（body=%s）", rec.Code, rec.Body.String())

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+
 /**
  * 「自分の設定」のタブ（`GuiDesign.md` 5.8）。
  *
@@ -18,17 +20,19 @@ defineProps<{
   /** いま開いているタブ */
   current: 'general' | 'tokens' | 'agents'
 }>()
+
+const { t } = useI18n()
 </script>
 
 <template>
-  <nav class="tabs" aria-label="設定の種類">
+  <nav class="tabs" :aria-label="t('menu.settingsTabs.label')">
     <RouterLink
       to="/me"
       class="tab"
       :class="{ selected: current === 'general' }"
       :aria-current="current === 'general' ? 'page' : undefined"
     >
-      一般
+      {{ t('menu.settingsTabs.general') }}
     </RouterLink>
     <RouterLink
       to="/me/tokens"
@@ -36,7 +40,7 @@ defineProps<{
       :class="{ selected: current === 'tokens' }"
       :aria-current="current === 'tokens' ? 'page' : undefined"
     >
-      アクセストークン
+      {{ t('menu.settingsTabs.accessTokens') }}
     </RouterLink>
     <RouterLink
       to="/me/agents"
@@ -44,7 +48,7 @@ defineProps<{
       :class="{ selected: current === 'agents' }"
       :aria-current="current === 'agents' ? 'page' : undefined"
     >
-      エージェント
+      {{ t('menu.settingsTabs.agents') }}
     </RouterLink>
   </nav>
 </template>

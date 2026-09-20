@@ -644,6 +644,9 @@ Set-Cookie: pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
   "theme": "dark", "hue": "green" }
 ```
 
+`locale` は `ja`（日本語）または `en`（英語）。言語コードは BCP 47 に合わせ、
+日本語には国コードの `jp` ではなく言語コードの `ja` を使う。
+
 `theme` / `hue` は `GuiDesign.md` 8.11 のテーマ設定。`app_user` の列に保持する。
 
 **`system_role` は変更不可**（管理者が 6.4 で変更する）。送られた場合は無視せず `422` を返す。

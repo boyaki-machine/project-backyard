@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { useAuthStore } from '../stores/auth'
@@ -20,15 +21,16 @@ import { APP_VERSION } from '../version'
 const auth = useAuthStore()
 const ui = useUiStore()
 const router = useRouter()
+const { t } = useI18n()
 
 const open = ref(false)
 const loggingOut = ref(false)
 
-const themes: { value: ThemePreference; label: string }[] = [
-  { value: 'light', label: 'ライト' },
-  { value: 'dark', label: 'ダーク' },
-  { value: 'system', label: 'システム' },
-]
+const themes = computed<{ value: ThemePreference; label: string }[]>(() => [
+  { value: 'light', label: t('menu.user.themes.light') },
+  { value: 'dark', label: t('menu.user.themes.dark') },
+  { value: 'system', label: t('menu.user.themes.system') },
+])
 
 async function logout() {
   if (loggingOut.value) return
@@ -47,17 +49,17 @@ async function logout() {
   <div class="user" @keydown.esc="open = false">
     <div v-if="open" class="dropdown">
       <RouterLink class="item" to="/me" @click="open = false">
-        <span class="icon" aria-hidden="true">⚙</span> 自分の設定
+        <span class="icon" aria-hidden="true">⚙</span> {{ t('menu.user.settings') }}
       </RouterLink>
       <RouterLink class="item" to="/me/tokens" @click="open = false">
-        <span class="icon" aria-hidden="true">🔑</span> アクセストークン
+        <span class="icon" aria-hidden="true">🔑</span> {{ t('menu.user.accessTokens') }}
       </RouterLink>
 
       <div class="sep"></div>
 
       <div class="theme">
-        <p class="theme-label"><span class="icon" aria-hidden="true">◑</span> テーマ</p>
-        <span class="choices" role="group" aria-label="テーマ">
+        <p class="theme-label"><span class="icon" aria-hidden="true">◑</span> {{ t('menu.user.theme') }}</p>
+        <span class="choices" role="group" :aria-label="t('menu.user.theme')">
           <button
             v-for="t in themes"
             :key="t.value"
@@ -75,7 +77,7 @@ async function logout() {
 
       <p class="version"><span class="icon" aria-hidden="true">ⓘ</span> PB v{{ APP_VERSION }}</p>
       <button type="button" class="item" :disabled="loggingOut" @click="logout">
-        <span class="icon" aria-hidden="true">⏻</span> ログアウト
+        <span class="icon" aria-hidden="true">⏻</span> {{ t('menu.user.logout') }}
       </button>
     </div>
 
@@ -83,12 +85,12 @@ async function logout() {
       type="button"
       class="row"
       :aria-expanded="open"
-      :aria-label="`${auth.actor?.display_name ?? ''} のメニュー`"
+      :aria-label="t('menu.user.menuLabel', { name: auth.actor?.display_name ?? '' })"
       @click="open = !open"
     >
       <span class="avatar" aria-hidden="true">👤</span>
-      <span v-if="!ui.menuCollapsed" class="name">{{ auth.actor?.display_name }}</span>
-      <span v-if="!ui.menuCollapsed" class="caret" aria-hidden="true">{{ open ? '▾' : '▴' }}</span>
+      <span v-if="ui.narrow || !ui.menuCollapsed" class="name">{{ auth.actor?.display_name }}</span>
+      <span v-if="ui.narrow || !ui.menuCollapsed" class="caret" aria-hidden="true">{{ open ? '▾' : '▴' }}</span>
     </button>
   </div>
 </template>

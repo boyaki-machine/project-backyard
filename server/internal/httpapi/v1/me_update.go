@@ -39,11 +39,14 @@ const (
 	hueGreen = "green"
 )
 
-// localeJa は Phase 1 が受け付ける唯一の言語（GuiDesign.md 5.8 の「日本語」）。
+// localeJa / localeEn は画面が対応する表示言語（GuiDesign.md 5.8）。
 //
 // **DB に CHECK 制約が無い列である**（DbDesign.md 6.2）。値域を決めるのは
 // アプリ側であり、増やすときはここと画面の選択肢を同時に足す。
-const localeJa = "ja"
+const (
+	localeJa = "ja"
+	localeEn = "en"
+)
 
 // timezoneMaxLen は timezone の上限。IANA のタイムゾーン名で最も長いものが
 // 32文字程度（America/Argentina/ComodRivadavia）なので、余裕を見て倍に取る。
@@ -314,12 +317,13 @@ func validateUpdateMe(req updateMeRequest) (updateMeFields, *apierr.Error) {
 	}
 
 	if req.Locale != nil {
-		if *req.Locale == localeJa {
+		switch *req.Locale {
+		case localeJa, localeEn:
 			f.locale = req.Locale
-		} else {
+		default:
 			details = append(details, apierr.Detail{
 				Field: "locale", Code: "invalid",
-				Message: "言語は日本語（ja）のみ選択できます",
+				Message: "言語は日本語（ja）または英語（en）を選択してください",
 			})
 		}
 	}

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { useAuthStore } from '../stores/auth'
@@ -18,6 +19,7 @@ const props = defineProps<{ currentKey: string }>()
 
 const auth = useAuthStore()
 const router = useRouter()
+const { t } = useI18n()
 
 const open = ref(false)
 const filter = ref('')
@@ -74,8 +76,8 @@ function switchTo(key: string) {
         v-model="filter"
         class="filter"
         type="search"
-        placeholder="絞り込み"
-        aria-label="プロジェクトを絞り込む"
+        :placeholder="t('menu.projectSwitcher.filterPlaceholder')"
+        :aria-label="t('menu.projectSwitcher.filterLabel')"
       />
 
       <ul v-if="visible.length > 0" class="list">
@@ -89,12 +91,16 @@ function switchTo(key: string) {
       <!-- 空状態を後回しにしない（GuiDesign.md 6.2）。所属していないプロジェクトを
            見ているアドミニストレータでは、/me の projects[] が空になりうる -->
       <p v-else class="empty">
-        {{ auth.projects.length === 0 ? '所属しているプロジェクトはありません' : '該当なし' }}
+        {{
+          auth.projects.length === 0
+            ? t('menu.projectSwitcher.noProjects')
+            : t('menu.projectSwitcher.noMatches')
+        }}
       </p>
 
       <div class="footer">
         <RouterLink class="item" to="/projects" @click="close">
-          <span class="mark" aria-hidden="true">⌂</span> プロジェクト一覧
+          <span class="mark" aria-hidden="true">⌂</span> {{ t('menu.projectSwitcher.projects') }}
         </RouterLink>
         <!-- 3.2 が唯一 URL を許すモーダル。開く処理は手順10b で /projects に載る -->
         <RouterLink
@@ -103,7 +109,7 @@ function switchTo(key: string) {
           :to="{ path: '/projects', query: { new: '1' } }"
           @click="close"
         >
-          <span class="mark" aria-hidden="true">+</span> 新規プロジェクト
+          <span class="mark" aria-hidden="true">+</span> {{ t('menu.projectSwitcher.newProject') }}
         </RouterLink>
       </div>
     </div>
