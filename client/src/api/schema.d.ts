@@ -9095,7 +9095,7 @@ export interface operations {
                  */
                 q?: string;
                 /**
-                 * @description qの検索対象。backlogは番号・タイトル・祖先エピック名・タグ名を全件検索し、
+                 * @description qの検索対象。backlogは番号・タイトル・本文・祖先エピック名・タグ名を全件検索し、
                  *     既存フィルタを満たす一致チケットの祖先も補完する。親を含めてtotalを数え、ページングする。
                  *     qが空なら通常の一覧と同じ。fulltextはタイトル・本文・コメントを検索する。
                  */
