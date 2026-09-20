@@ -3460,8 +3460,11 @@ export interface components {
              * @enum {string|null}
              */
             system_role: "administrator" | "operator" | null;
-            /** @example ja */
-            locale: string | null;
+            /**
+             * @example ja
+             * @enum {string|null}
+             */
+            locale: "ja" | "en" | null;
             /** @example Asia/Tokyo */
             timezone: string | null;
             /**
@@ -3501,10 +3504,10 @@ export interface components {
              */
             email?: string;
             /**
-             * @description Phase 1 は `ja` のみ。
+             * @description 表示言語。`ja`（日本語）または `en`（英語）。
              * @enum {string}
              */
-            locale?: "ja";
+            locale?: "ja" | "en";
             /**
              * @description IANA のタイムゾーン名。サーバは `time.LoadLocation` で解決できるかを
              *     見る（値の一覧を持たない）。`Local` は弾く——誰のローカルかがサーバの

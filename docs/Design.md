@@ -146,6 +146,7 @@ MCP サーバ、AI機能、ガント描画は Phase 1 の対象外である（�
 | DB | **PostgreSQL 17** | `DbDesign.md` 2章。SQLite 先行案は廃止 |
 | DB拡張 | `pgcrypto` / `citext` / `pg_trgm`（Phase 1）、`vector`（Phase 3） | `DbDesign.md` 3.1 |
 | フロント | Vue 3 + TypeScript + Vite | SPA。サーバから静的配信 |
+| 国際化 | **Vue I18n v11**（Composition API） | `client/src/locales/<locale>/` に言語別メッセージを置く。利用者の `app_user.locale` を正とし、未認証時と未対応値は `ja` へフォールバックする |
 | UIコンポーネント | 未確定（自前の軽量実装で開始） | `GuiDesign.md` 1.1 |
 | Markdownエディタ | **CodeMirror 6**（`codemirror` ＋ `@codemirror/lang-markdown`） | `GuiDesign.md` 5.5 の説明欄。`Requirements.md` 7章が「フルスクラッチのリッチエディタは避ける」と定める |
 | Markdown描画 | `markdown-it` ＋ `dompurify` | 同じ欄のライブプレビュー側 |

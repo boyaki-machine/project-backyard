@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
 import ProjectSwitcher from './ProjectSwitcher.vue'
@@ -35,6 +36,7 @@ import { useUiStore } from '../stores/ui'
 const auth = useAuthStore()
 const ui = useUiStore()
 const route = useRoute()
+const { t } = useI18n()
 
 /** 選択中のプロジェクト。URL の :key から決まる（3.2 の /p/:key/...） */
 const projectKey = computed(() => {
@@ -54,36 +56,40 @@ const showAdmin = computed(
 </script>
 
 <template>
-  <nav class="menu" :class="{ collapsed: ui.menuCollapsed }" aria-label="メインメニュー">
+  <nav
+    class="menu"
+    :class="{ collapsed: !ui.narrow && ui.menuCollapsed }"
+    :aria-label="t('menu.main.label')"
+  >
     <div class="brand">
       <SideMenuToggle />
-      <RouterLink v-if="!ui.menuCollapsed" class="brand-name" to="/projects">
+      <RouterLink v-if="ui.narrow || !ui.menuCollapsed" class="brand-name" to="/projects">
         Project Backyard
       </RouterLink>
     </div>
 
     <div class="sections">
-      <RouterLink class="item" to="/projects" title="プロジェクト一覧">
+      <RouterLink class="item" to="/projects" :title="t('menu.main.projects')">
         <span class="icon" aria-hidden="true">⌂</span>
-        <span v-if="!ui.menuCollapsed" class="label">プロジェクト一覧</span>
+        <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.projects') }}</span>
       </RouterLink>
 
       <template v-if="showProject && projectKey">
-        <ProjectSwitcher v-if="!ui.menuCollapsed" :current-key="projectKey" />
+        <ProjectSwitcher v-if="ui.narrow || !ui.menuCollapsed" :current-key="projectKey" />
         <div v-else class="rail-sep" aria-hidden="true"></div>
 
-        <RouterLink class="item" :to="`/p/${projectKey}`" title="ダッシュボード">
+        <RouterLink class="item" :to="`/p/${projectKey}`" :title="t('menu.main.dashboard')">
           <span class="icon" aria-hidden="true">▤</span>
-          <span v-if="!ui.menuCollapsed" class="label">ダッシュボード</span>
+          <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.dashboard') }}</span>
         </RouterLink>
         <RouterLink
           v-if="auth.canInProject(projectKey, 'ticket.view')"
           class="item"
           :to="`/p/${projectKey}/backlog`"
-          title="バックログ"
+          :title="t('menu.main.backlog')"
         >
           <span class="icon" aria-hidden="true">≡</span>
-          <span v-if="!ui.menuCollapsed" class="label">バックログ</span>
+          <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.backlog') }}</span>
         </RouterLink>
         <!-- チケット検索（4.1 / 5.13。pb-66）。**バックログの次に置く**——4.1 の図は間に
              カンバンとガントを挟むが、どちらもまだ出していない。必要権限は同じ `ticket.view`（4.3） -->
@@ -91,10 +97,10 @@ const showAdmin = computed(
           v-if="auth.canInProject(projectKey, 'ticket.view')"
           class="item"
           :to="`/p/${projectKey}/search`"
-          title="チケット検索"
+          :title="t('menu.main.search')"
         >
           <span class="icon" aria-hidden="true">⌕</span>
-          <span v-if="!ui.menuCollapsed" class="label">チケット検索</span>
+          <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.search') }}</span>
         </RouterLink>
         <!-- Docs（4.3 の表。手順22b）。**プロジェクト設定より上に置く**——
              4.1 の並びが「視点 → Docs → 設定」で、設定は最後に来る -->
@@ -102,52 +108,52 @@ const showAdmin = computed(
           v-if="auth.canInProject(projectKey, 'doc.view')"
           class="item"
           :to="`/p/${projectKey}/docs`"
-          title="Docs"
+          :title="t('menu.main.docs')"
         >
           <span class="icon" aria-hidden="true">▣</span>
-          <span v-if="!ui.menuCollapsed" class="label">Docs</span>
+          <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.docs') }}</span>
         </RouterLink>
         <RouterLink
           v-if="auth.canInProject(projectKey, 'project.edit')"
           class="item"
           :to="`/p/${projectKey}/settings`"
-          title="プロジェクト設定"
+          :title="t('menu.main.projectSettings')"
         >
           <span class="icon" aria-hidden="true">⚙</span>
-          <span v-if="!ui.menuCollapsed" class="label">プロジェクト設定</span>
+          <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.projectSettings') }}</span>
         </RouterLink>
       </template>
 
       <template v-if="showAdmin">
-        <p v-if="!ui.menuCollapsed" class="section">─── 管理 ────────</p>
+        <p v-if="ui.narrow || !ui.menuCollapsed" class="section">─── {{ t('menu.main.administration') }} ────────</p>
         <div v-else class="rail-sep" aria-hidden="true"></div>
 
         <RouterLink
           v-if="auth.can('user.manage')"
           class="item"
           to="/admin/users"
-          title="アカウント / 権限"
+          :title="t('menu.main.accounts')"
         >
           <span class="icon" aria-hidden="true">⚇</span>
-          <span v-if="!ui.menuCollapsed" class="label">アカウント / 権限</span>
+          <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.accounts') }}</span>
         </RouterLink>
         <RouterLink
           v-if="auth.can('auditlog.view')"
           class="item"
           to="/admin/audit"
-          title="監査ログ"
+          :title="t('menu.main.auditLog')"
         >
           <span class="icon" aria-hidden="true">⛨</span>
-          <span v-if="!ui.menuCollapsed" class="label">監査ログ</span>
+          <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.auditLog') }}</span>
         </RouterLink>
         <RouterLink
           v-if="auth.can('system.settings')"
           class="item"
           to="/admin/settings"
-          title="アプリケーション設定"
+          :title="t('menu.main.appSettings')"
         >
           <span class="icon" aria-hidden="true">⚙</span>
-          <span v-if="!ui.menuCollapsed" class="label">アプリケーション設定</span>
+          <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.appSettings') }}</span>
         </RouterLink>
       </template>
     </div>

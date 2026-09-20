@@ -1,0 +1,42 @@
+export default {
+  main: {
+    label: 'Main menu',
+    toggle: 'Toggle main menu',
+    projects: 'Projects',
+    dashboard: 'Dashboard',
+    backlog: 'Backlog',
+    search: 'Ticket search',
+    docs: 'Docs',
+    projectSettings: 'Project settings',
+    administration: 'Administration',
+    accounts: 'Accounts / permissions',
+    auditLog: 'Audit log',
+    appSettings: 'Application settings',
+  },
+  projectSwitcher: {
+    filterPlaceholder: 'Filter',
+    filterLabel: 'Filter projects',
+    noProjects: 'You do not belong to any projects',
+    noMatches: 'No matches',
+    projects: 'Projects',
+    newProject: 'New project',
+  },
+  user: {
+    settings: 'My settings',
+    accessTokens: 'Access tokens',
+    theme: 'Theme',
+    themes: {
+      light: 'Light',
+      dark: 'Dark',
+      system: 'System',
+    },
+    logout: 'Log out',
+    menuLabel: '{name} menu',
+  },
+  settingsTabs: {
+    label: 'Settings sections',
+    general: 'General',
+    accessTokens: 'Access tokens',
+    agents: 'Agents',
+  },
+}

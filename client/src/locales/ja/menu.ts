@@ -1,0 +1,42 @@
+export default {
+  main: {
+    label: 'メインメニュー',
+    toggle: 'メインメニューの表示を切り替える',
+    projects: 'プロジェクト一覧',
+    dashboard: 'ダッシュボード',
+    backlog: 'バックログ',
+    search: 'チケット検索',
+    docs: 'Docs',
+    projectSettings: 'プロジェクト設定',
+    administration: '管理',
+    accounts: 'アカウント / 権限',
+    auditLog: '監査ログ',
+    appSettings: 'アプリケーション設定',
+  },
+  projectSwitcher: {
+    filterPlaceholder: '絞り込み',
+    filterLabel: 'プロジェクトを絞り込む',
+    noProjects: '所属しているプロジェクトはありません',
+    noMatches: '該当なし',
+    projects: 'プロジェクト一覧',
+    newProject: '新規プロジェクト',
+  },
+  user: {
+    settings: '自分の設定',
+    accessTokens: 'アクセストークン',
+    theme: 'テーマ',
+    themes: {
+      light: 'ライト',
+      dark: 'ダーク',
+      system: 'システム',
+    },
+    logout: 'ログアウト',
+    menuLabel: '{name} のメニュー',
+  },
+  settingsTabs: {
+    label: '設定の種類',
+    general: '一般',
+    accessTokens: 'アクセストークン',
+    agents: 'エージェント',
+  },
+}

@@ -13,6 +13,7 @@ import { computed, ref } from 'vue'
 import * as authApi from '../api/auth'
 import type { MfaChallenge, Session, SessionProject } from '../api/auth'
 import { ApiError } from '../api/client'
+import { setLocale } from '../i18n'
 import * as mfaApi from '../api/mfa'
 import * as passkeysApi from '../api/passkeys'
 import { setTimezone } from '../lib/datetime'
@@ -101,6 +102,7 @@ export const useAuthStore = defineStore('auth', () => {
     session.value = next
     loaded.value = true
     useUiStore().syncFromServer(next.actor.theme, next.actor.hue)
+    setLocale(next.actor.locale)
     setTimezone(next.actor.timezone)
   }
 
@@ -110,6 +112,7 @@ export const useAuthStore = defineStore('auth', () => {
     loaded.value = true
     // **前の利用者のタイムゾーンを残さない。** 同じ端末で別の人がログインする
     // までの間、ログイン画面に前の設定が効いたままになるのを避ける。
+    setLocale('ja')
     setTimezone(null)
   }
 

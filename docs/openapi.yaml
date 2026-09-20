@@ -5918,6 +5918,7 @@ components:
           enum: [administrator, operator, null]
         locale:
           type: [string, 'null']
+          enum: [ja, en, null]
           examples: ['ja']
         timezone:
           type: [string, 'null']
@@ -5962,9 +5963,9 @@ components:
           maxLength: 254
           examples: ['tanaka@example.com']
         locale:
-          description: Phase 1 は `ja` のみ。
+          description: 表示言語。`ja`（日本語）または `en`（英語）。
           type: string
-          enum: [ja]
+          enum: [ja, en]
         timezone:
           description: |
             IANA のタイムゾーン名。サーバは `time.LoadLocation` で解決できるかを
