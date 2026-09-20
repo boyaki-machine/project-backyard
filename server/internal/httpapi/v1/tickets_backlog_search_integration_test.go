@@ -56,7 +56,14 @@ func TestBacklogSearchIntegration(t *testing.T) {
 	parent := create(fmt.Sprintf(`{"type":"story","title":"親の設計","parent_seq":%d}`, epic))
 	child := create(fmt.Sprintf(`{"type":"task","title":"中間の実装","parent_seq":%d}`, parent))
 	leaf := create(fmt.Sprintf(`{"type":"task","title":"日本語の探索対象100%%_確認","parent_seq":%d}`, child))
-	bodyOnly := create(`{"type":"task","title":"キーワードは本文だけ","body_md":"日本語の探索対象"}`)
+	bodyOnly := create(`{"type":"task","title":"キーワードは本文だけ","body_md":"本文限定キーワード"}`)
+	bodyParent := create(`{"type":"story","title":"本文一致の親"}`)
+	bodyChild := create(fmt.Sprintf(`{"type":"task","title":"本文一致の子","body_md":"子の説明だけにある語","parent_seq":%d}`, bodyParent))
+	rec = postWithCookie(r, fmt.Sprintf("%s/tickets/%d/comments", base, bodyOnly), session,
+		`{"body_md":"コメント限定キーワード","kind":"discussion"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatal(rec.Body.String())
+	}
 	rec = postWithCookie(r, base+"/tags", session, `{"name":"検索タグ"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatal(rec.Body.String())
@@ -98,6 +105,11 @@ func TestBacklogSearchIntegration(t *testing.T) {
 	t.Run("日本語の子が一致すると祖先を重複なく補完", func(t *testing.T) { check(t, "日本語", []int{parent, child, leaf}) })
 	t.Run("エピック名で子孫を検索", func(t *testing.T) { check(t, "基盤エピック", []int{parent, child, leaf}) })
 	t.Run("タグ名", func(t *testing.T) { check(t, "検索タグ", []int{tagged}) })
+	t.Run("本文だけの語", func(t *testing.T) { check(t, "本文限定キーワード", []int{bodyOnly}) })
+	t.Run("コメントだけの語は対象外", func(t *testing.T) { check(t, "コメント限定キーワード", []int{}) })
+	t.Run("子の本文が一致すると祖先を補完", func(t *testing.T) {
+		check(t, "子の説明だけにある語", []int{bodyParent, bodyChild})
+	})
 	t.Run("番号とキー付き番号と大文字", func(t *testing.T) {
 		check(t, fmt.Sprint(tagged), []int{tagged})
 		check(t, strings.ToUpper(fmt.Sprintf("%s-%d", key, tagged)), []int{tagged})
@@ -107,14 +119,22 @@ func TestBacklogSearchIntegration(t *testing.T) {
 		check(t, "100%X", []int{})
 		check(t, "日本語 検索タグ", []int{})
 	})
-	t.Run("空白は通常一覧で本文は通常検索だけ", func(t *testing.T) {
+	t.Run("空白は通常一覧で通常検索も維持", func(t *testing.T) {
 		got := fetch(t, "search_mode=backlog&q="+url.QueryEscape("　 "))
-		if got.Total != 5 {
-			t.Errorf("total=%d want=5", got.Total)
+		if got.Total != 7 {
+			t.Errorf("total=%d want=7", got.Total)
 		}
 		got = fetch(t, "q="+url.QueryEscape("日本語の探索対象"))
-		if !slices.Equal(seqs(got), []int{leaf, bodyOnly}) {
+		if !slices.Equal(seqs(got), []int{leaf}) {
 			t.Errorf("通常検索を変えた: %v", seqs(got))
+		}
+		got = fetch(t, "q="+url.QueryEscape("本文限定キーワード"))
+		if !slices.Equal(seqs(got), []int{bodyOnly}) {
+			t.Errorf("通常検索の本文一致を変えた: %v", seqs(got))
+		}
+		got = fetch(t, "q="+url.QueryEscape("コメント限定キーワード"))
+		if !slices.Equal(seqs(got), []int{bodyOnly}) {
+			t.Errorf("通常検索のコメント一致を変えた: %v", seqs(got))
 		}
 	})
 	t.Run("既存フィルタから外れた子の祖先を出さない", func(t *testing.T) {
@@ -129,11 +149,13 @@ func TestBacklogSearchIntegration(t *testing.T) {
 			filler = append(filler, create(fmt.Sprintf(`{"type":"task","title":"上限試験 %d"}`, i)))
 		}
 		outside := create(`{"type":"task","title":"取得範囲外の固有キーワード"}`)
+		bodyOutside := create(`{"type":"task","title":"取得範囲外の本文試験","body_md":"201件以降の本文固有キーワード"}`)
 		before := fetch(t, "")
-		if len(before.Items) != 200 || slices.Contains(seqs(before), outside) {
+		if len(before.Items) != 200 || slices.Contains(seqs(before), outside) || slices.Contains(seqs(before), bodyOutside) {
 			t.Fatal("始点が200件の外になっていない")
 		}
 		check(t, "取得範囲外の固有キーワード", []int{outside})
+		check(t, "201件以降の本文固有キーワード", []int{bodyOutside})
 		got := fetch(t, "search_mode=backlog&q="+url.QueryEscape("上限試験"))
 		if len(got.Items) != 200 || got.Total != len(filler) || !slices.Equal(seqs(got), filler[:200]) {
 			t.Errorf("limit=%d total=%d", len(got.Items), got.Total)

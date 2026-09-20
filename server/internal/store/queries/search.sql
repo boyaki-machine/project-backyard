@@ -67,7 +67,7 @@ SELECT h.id
  GROUP BY h.id
 HAVING count(DISTINCT h.pattern) = cardinality(@patterns::text[]);
 
--- SearchBacklogTicketIDs は番号・タイトル・祖先エピック名・タグ名を全件検索する（pb-84）。
+-- SearchBacklogTicketIDs は番号・タイトル・本文・祖先エピック名・タグ名を全件検索する（pb-84 / pb-155）。
 -- 祖先の補完は ListTickets が他のフィルタを適用した後に行う。
 -- name: SearchBacklogTicketIDs :many
 WITH RECURSIVE epic_tree AS (
@@ -86,6 +86,7 @@ SELECT t.id
         t.seq::text ILIKE p.pattern
         OR (p.pattern !~ '^%[0-9]+%$' AND (pr.key || '-' || t.seq::text) ILIKE p.pattern)
         OR t.title ILIKE p.pattern
+        OR (t.body_md IS NOT NULL AND t.body_md ILIKE p.pattern)
         OR EXISTS (
           SELECT 1 FROM ticket_tag tt JOIN tag tg ON tg.id = tt.tag_id
            WHERE tt.ticket_id = t.id AND tg.name ILIKE p.pattern

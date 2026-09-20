@@ -1697,7 +1697,7 @@ type Querier interface {
 	// 呼び出し側がシステムロールを持たないアクターを除いているため、ここへは来ない。
 	//
 	SaveTokenPermissionCache(ctx context.Context, arg SaveTokenPermissionCacheParams) error
-	// SearchBacklogTicketIDs は番号・タイトル・祖先エピック名・タグ名を全件検索する（pb-84）。
+	// SearchBacklogTicketIDs は番号・タイトル・本文・祖先エピック名・タグ名を全件検索する（pb-84 / pb-155）。
 	// 祖先の補完は ListTickets が他のフィルタを適用した後に行う。
 	SearchBacklogTicketIDs(ctx context.Context, arg SearchBacklogTicketIDsParams) ([]string, error)
 	// キーワード検索（ApiDesign.md 9.2.1「検索の条件」。pb-66）。
