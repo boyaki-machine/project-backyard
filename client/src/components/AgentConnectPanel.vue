@@ -139,18 +139,21 @@ function preview(content: string): string {
       <template v-if="isCodex">
         <fieldset class="transport">
           <legend>接続方式</legend>
-          <label><input v-model="transport" type="radio" value="direct" /> HTTPS へ直接接続（推奨）</label>
-          <label><input v-model="transport" type="radio" value="bridge" /> ローカル stdio ブリッジを使う</label>
+          <label><input v-model="transport" type="radio" value="direct" /> HTTPS へ直接接続（公開 CA）</label>
+          <label><input v-model="transport" type="radio" value="bridge" /> ローカル stdio ブリッジを使う（自己署名・社内 CA）</label>
         </fieldset>
         <p v-if="transport === 'bridge'" class="warn-note">
-          ⓘ ブリッジは TLS 検証を無効化しません。PB の証明書を OS の信頼ストアへ登録できない場合だけ、
-          <code>PB_MCP_CA_FILE</code> に CA PEM ファイルを指定します。<code>pb-mcp-bridge</code> を
-          この zip には <code>pb-mcp-bridge</code> 自体も入ります。PATH 上へ置いてから、この設定を使ってください。削除時は設定の <code>pb</code> 節、ブリッジ実行ファイル、
-          CA PEM と環境変数を削除します。
+          ⓘ Codex 標準の HTTP MCP クライアントでは自己署名・社内 CA の証明書を利用できないため、
+          ローカル PB ではこの方式を使います。ブリッジも TLS 検証を行うので、証明書を OS の
+          信頼ストアへ登録するか、<code>PB_MCP_CA_FILE</code> で発行元 CA を指定します。
+          配置・証明書登録または CA 指定・設定・後始末の詳細は、この zip の
+          <code>PB-README.md</code> にあります。
         </p>
         <p v-else class="hint">
-          公的 CA の証明書は通常そのまま接続できます。自己署名・社内 CA では、OS の信頼ストアへ登録します。
-          登録と削除の手順は、この zip の <code>PB-README.md</code> にあります。変更できない端末ではブリッジを選びます。
+          公開 CA の証明書では直接接続できます。自己署名・社内 CA の証明書では、
+          OS の信頼ストアへ登録しても Codex 標準の HTTP MCP クライアントが受け付けないため、
+          ローカル stdio ブリッジを選びます。詳しい手順は、この zip の
+          <code>PB-README.md</code> にあります。
         </p>
       </template>
 
