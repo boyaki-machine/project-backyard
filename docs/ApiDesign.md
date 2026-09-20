@@ -1320,6 +1320,8 @@ clone 直後には存在せず、**主経路では上書きの相手がいない
 | 接続設定（**別名**） | `.mcp.pb-block.json` |
 | **手引き** | `PB-README.md` |
 
+Codex では `transport=direct` と `transport=bridge` で手引きも分ける。直接接続ZIPは公的CA／自己署名・社内CAのOS信頼ストア登録・削除だけを、ブリッジZIPは `pb-mcp-bridge` バイナリ、CA PEM、`PB_MCP_CA_FILE` の導入・削除だけを記す。Codex の設定は Finder 等で隠れない `_codex/config.pb-block.toml` として入れ、手引きで `.codex/config.toml` への改名を案内する。ブリッジZIPは実行ファイルも同梱する。
+
 **`PB-README.md` は JSON の `files[]` に含めない。** **画面が同じ内容を節として描いている**
 ためで、`files[]` に入れると「これも置くファイルだ」と読まれる。**zip にだけ入れるのは、
 落として後日展開した人に画面の注意書きが届かないからである**（`GuiDesign.md` 5.11 が

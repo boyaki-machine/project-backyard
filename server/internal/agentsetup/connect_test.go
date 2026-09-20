@@ -432,7 +432,7 @@ func TestConnectReadmeIsPerKind(t *testing.T) {
 		{
 			kind:  "codex",
 			label: "OpenAI Codex",
-			wants: []string{".codex/config.pb-block.toml", "信頼済み", "export PB_TOKEN_MY_LAPTOP",
+			wants: []string{"_codex/config.pb-block.toml", "信頼済み", "export PB_TOKEN_MY_LAPTOP",
 				"スラッシュコマンドがありません"},
 		},
 	}
@@ -472,6 +472,39 @@ func TestConnectReadmeIsPerKind(t *testing.T) {
 				t.Errorf("手引きにトークンらしき文字列がある:\n%s", c.Readme)
 			}
 		})
+	}
+}
+
+func TestConnectZipCodexUsesVisibleFolderAndIncludesAsset(t *testing.T) {
+	p := testConnectParams()
+	p.Transport = TransportBridge
+	c, err := RenderConnect("codex", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Assets = []Asset{{Path: "pb-mcp-bridge", Content: []byte("binary"), Mode: 0o755}}
+	blob, err := ConnectZip(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(blob), int64(len(blob)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]*zip.File{}
+	for _, f := range zr.File {
+		got[f.Name] = f
+	}
+	if _, ok := got["_codex/config.pb-block.toml"]; !ok {
+		t.Error("Finder で見える _codex 設定が無い")
+	}
+	if f, ok := got["pb-mcp-bridge"]; !ok {
+		t.Error("bridge バイナリが無い")
+	} else if f.Mode()&0o111 == 0 {
+		t.Error("bridge バイナリに実行権限が無い")
+	}
+	if !strings.Contains(c.Readme, "ローカル stdio ブリッジ") || strings.Contains(c.Readme, "HTTPS 直接接続** 用") {
+		t.Error("bridge 用 README が方式別になっていない")
 	}
 }
 
