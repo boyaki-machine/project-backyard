@@ -25,6 +25,12 @@
 プロジェクト設定の「エージェント連携セットアップ」が生成する `.gitignore` には
 既に入っています。**入っていないまま commit すると、あなたの環境が履歴に残ります。**
 
+{{if eq .Transport "bridge"}}
+同梱の `pb-mcp-bridge` を作業フォルダ内へ置く場合は、`.gitignore` にも
+`pb-mcp-bridge`（Windows では `pb-mcp-bridge.exe`）を追加してください。実行ファイルは
+端末・OS ごとに異なるため、共有リポジトリへ commit しません。
+{{end}}
+
 ## 3. トークンを環境変数へ置く
 
 ```
