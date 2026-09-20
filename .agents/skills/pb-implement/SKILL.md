@@ -34,7 +34,7 @@ description: "Use when the user asks Codex to implement, process, or work on a P
 - `develop` と `main` では作業しない。チケット番号を含むfeature/fix/docsブランチを、プロジェクト規約に従って作成する。
 - チケット作業でworktreeが必要な場合は作成し、完了後に規約どおり後始末する。
 - `develop` へのマージ、`main` へのマージ、push、ブランチ削除は、完了時に利用者へ提案し、明示的な承認を得るまで実行しない。
-- バージョン管理がある場合は、マージ前に種別に応じた `make bump-minor`、`make bump-build`、または `make bump-major` を実行する。マージ後に `make version-check` を実行する。
+- **`develop` へマージする変更では、必ずバージョンを更新する。** `VERSION` は feature/fix/docs ブランチ上で更新して同じコミット列へ含める。`feature/*` は `make bump-minor`、`fix/*` と `docs/*` は `make bump-build`、メジャーの区切りだけは `make bump-major` を**マージ前**に実行する。マージ後は `develop` で必ず `make version-check` を実行し、`VERSION` のビルド番号と develop のマージ回数が一致することを確認する。
 - 他のエージェントの差分を戻したり上書きしたりしない。
 - Claude側の `LEARNINGS.md`、`.mcp.json`、`.claude/` 配下は変更しない。
 
