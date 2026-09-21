@@ -190,7 +190,7 @@ defineExpose({ setItems, setLoading, setError, close })
     :disabled="!canTransition || busy"
     :aria-expanded="open"
     aria-haspopup="listbox"
-    :title="canTransition ? '状態を変える' : '状態を変える権限がありません'"
+    :title="canTransition ? $ui('状態を変える') : $ui('状態を変える権限がありません')"
     @click="toggle"
   >
     <span class="status-mark" aria-hidden="true">{{ statusMarks[current.category] }}</span>
@@ -210,13 +210,13 @@ defineExpose({ setItems, setLoading, setError, close })
         :style="panelStyle"
         @keydown.escape="close"
       >
-        <p v-if="loading" class="note">読み込み中…</p>
+        <p v-if="loading" class="note">{{ $ui('読み込み中…') }}</p>
         <p v-else-if="loadError" class="note">{{ loadError }}</p>
 
         <template v-else>
           <!-- **全項目が不可のときは先頭に1行出す**（5.5）。ドロップダウンは
                開いたままにして、理由が読める状態にする -->
-          <p v-if="allBlocked" class="note">いま進められる状態はありません</p>
+          <p v-if="allBlocked" class="note">{{ $ui('いま進められる状態はありません') }}</p>
 
           <button
             v-for="item in items"
@@ -237,7 +237,7 @@ defineExpose({ setItems, setLoading, setError, close })
             <span v-if="!item.allowed && item.reason" class="reason">{{ item.reason }}</span>
           </button>
 
-          <p v-if="items.length === 0" class="note">遷移先がありません</p>
+          <p v-if="items.length === 0" class="note">{{ $ui('遷移先がありません') }}</p>
         </template>
       </div>
     </template>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * チケットのコメント（`GuiDesign.md` 5.5「コメント」、`ApiDesign.md` 9.8）。手順18b。
  *
@@ -89,7 +90,7 @@ const hasMore = computed(() => page.value < totalPages.value)
 function toApiError(e: unknown): ApiError {
   return e instanceof ApiError
     ? e
-    : new ApiError({ status: 0, code: 'network_error', message: '通信に失敗しました' })
+    : new ApiError({ status: 0, code: 'network_error', message: uiText("通信に失敗しました") })
 }
 
 async function load(): Promise<void> {
@@ -339,8 +340,8 @@ const deleteMessage = computed(() => {
   const c = toDelete.value
   if (c === null) return ''
   const mine = myActorId.value !== null && c.author.id === myActorId.value
-  const head = 'このコメントを削除します。本文は画面から読めなくなります。'
-  return mine ? head : `${head}\n${c.author.display_name} さんが書いたコメントです。`
+  const head = uiText("このコメントを削除します。本文は画面から読めなくなります。")
+  return mine ? head : uiText("{value0}\n{value1} さんが書いたコメントです。", { value0: head, value1: c.author.display_name })
 })
 
 async function runDelete(): Promise<void> {
@@ -404,10 +405,10 @@ defineExpose({ reload: load })
 
 <template>
   <div class="tc">
-    <p v-if="loading" class="tc-note">読み込み中…</p>
+    <p v-if="loading" class="tc-note">{{ $ui('読み込み中…') }}</p>
     <p v-else-if="loadError" class="tc-note tc-error" role="alert">
       {{ loadError }}
-      <button type="button" class="tc-retry" @click="load">再試行</button>
+      <button type="button" class="tc-retry" @click="load">{{ $ui('再試行') }}</button>
     </p>
 
     <template v-else>
@@ -420,7 +421,7 @@ defineExpose({ reload: load })
         :disabled="loadingMore"
         @click="loadMore"
       >
-        {{ loadingMore ? '読み込み中…' : `以前のコメントを読む（残り ${total - items.length} 件）` }}
+        {{ loadingMore ? $ui("読み込み中…") : $ui("以前のコメントを読む（残り {value0} 件）", { value0: total - items.length }) }}
       </button>
 
       <ol v-if="items.length > 0" class="tc-list">
@@ -438,7 +439,7 @@ defineExpose({ reload: load })
               <span class="tc-author">{{ c.author.display_name }}</span>
               <span class="tc-kind">{{ commentKindLabels[c.kind] }}</span>
               <span class="tc-time">{{ formatDateTime(c.created_at) }}</span>
-              <span v-if="isEdited(c)" class="tc-edited">（編集済み）</span>
+              <span v-if="isEdited(c)" class="tc-edited">{{ $ui('（編集済み）') }}</span>
 
               <span class="tc-actions">
                 <button
@@ -446,39 +447,30 @@ defineExpose({ reload: load })
                   type="button"
                   class="tc-action"
                   @click="startReply(c)"
-                >
-                  返信
-                </button>
+                > {{ $ui('返信') }} </button>
                 <button
                   v-if="canEdit(c) && editingId !== c.id"
                   type="button"
                   class="tc-action"
                   @click="startEdit(c)"
-                >
-                  編集
-                </button>
+                > {{ $ui('編集') }} </button>
                 <button
                   v-if="canDelete(c)"
                   type="button"
                   class="tc-action tc-danger"
                   @click="toDelete = c"
-                >
-                  削除
-                </button>
+                > {{ $ui('削除') }} </button>
               </span>
             </div>
 
             <!-- 返信 → 親（5.5）。**親が未読み込みならリンクにしない** -->
             <p v-if="c.in_reply_to !== null" class="tc-reply-to">
               <span aria-hidden="true">↩</span>
-              <template v-if="parentOf(c)">
-                返信先:
-                <button type="button" class="tc-jump" @click="jumpTo(c.in_reply_to)">
+              <template v-if="parentOf(c)"> {{ $ui('返信先:') }} <button type="button" class="tc-jump" @click="jumpTo(c.in_reply_to)">
                   {{ briefOf(parentOf(c)!) }}
                 </button>
               </template>
-              <template v-else>
-                返信先: <span class="tc-muted">以前のコメント</span>
+              <template v-else> {{ $ui('返信先:') }} <span class="tc-muted">{{ $ui('以前のコメント') }}</span>
               </template>
             </p>
 
@@ -487,7 +479,7 @@ defineExpose({ reload: load })
               <MarkdownEditor v-model="editDraft" @cancel="cancelEdit" />
               <div class="tc-editbar">
                 <label class="tc-kind-pick">
-                  <span class="tc-kind-label">類型</span>
+                  <span class="tc-kind-label">{{ $ui('類型') }}</span>
                   <select v-model="editKind">
                     <option v-for="k in commentKindOptions" :key="k" :value="k">
                       {{ commentKindLabels[k] }}
@@ -495,29 +487,25 @@ defineExpose({ reload: load })
                   </select>
                 </label>
                 <span class="tc-spacer"></span>
-                <button type="button" class="secondary" @click="cancelEdit">キャンセル</button>
+                <button type="button" class="secondary" @click="cancelEdit">{{ $ui('キャンセル') }}</button>
                 <button
                   type="button"
                   class="primary"
                   :disabled="editDraft.trim() === '' || busy"
                   @click="commitEdit"
-                >
-                  保存
-                </button>
+                > {{ $ui('保存') }} </button>
               </div>
               <p v-if="editError" class="tc-field-error" role="alert">{{ editError }}</p>
             </template>
 
             <!-- 削除済みは本文の代わりに1行（9.8。行そのものは残す） -->
-            <p v-else-if="c.deleted_at !== null" class="tc-removed-note">削除されました</p>
+            <p v-else-if="c.deleted_at !== null" class="tc-removed-note">{{ $ui('削除されました') }}</p>
 
             <!-- eslint-disable-next-line vue/no-v-html -- lib/markdown.ts の dompurify を通っている -->
             <div v-else class="markdown-body tc-text" v-html="rendered(c)"></div>
 
             <!-- 親 → 返信（5.5）。**常に完全である**（返信は親より新しい） -->
-            <p v-if="repliesOf.get(c.id)?.length" class="tc-replies">
-              返信 {{ repliesOf.get(c.id)!.length }}件:
-              <button
+            <p v-if="repliesOf.get(c.id)?.length" class="tc-replies"> {{ $ui('返信') }} {{ repliesOf.get(c.id)!.length }}{{ $ui('件:') }} <button
                 v-for="r in repliesOf.get(c.id)!"
                 :key="r.id"
                 type="button"
@@ -531,7 +519,7 @@ defineExpose({ reload: load })
         </li>
       </ol>
 
-      <p v-else class="tc-empty">コメントはまだありません</p>
+      <p v-else class="tc-empty">{{ $ui('コメントはまだありません') }}</p>
 
       <p v-if="deleteError" class="tc-field-error" role="alert">{{ deleteError }}</p>
 
@@ -539,12 +527,11 @@ defineExpose({ reload: load })
       <div v-if="canCreate" class="tc-composer">
         <!-- 返信先のチップ。`×` で通常の投稿に戻る -->
         <p v-if="replyTo" class="tc-replying">
-          <span aria-hidden="true">↩</span>
-          返信先: {{ briefOf(replyTo) }}
+          <span aria-hidden="true">↩</span> {{ $ui('返信先:') }} {{ briefOf(replyTo) }}
           <button
             type="button"
             class="tc-chip-clear"
-            aria-label="返信をやめる"
+            :aria-label="$ui('返信をやめる')"
             @click="replyTo = null"
           >
             ✕
@@ -556,7 +543,7 @@ defineExpose({ reload: load })
           v-if="!composerOpen"
           class="tc-seed"
           rows="1"
-          placeholder="コメントを書く…"
+          :placeholder="$ui('コメントを書く…')"
           @focus="openComposer"
         ></textarea>
 
@@ -564,7 +551,7 @@ defineExpose({ reload: load })
           <MarkdownEditor ref="composerRef" v-model="draft" @cancel="closeComposer" />
           <div class="tc-editbar">
             <label class="tc-kind-pick">
-              <span class="tc-kind-label">類型</span>
+              <span class="tc-kind-label">{{ $ui('類型') }}</span>
               <select v-model="draftKind">
                 <option v-for="k in commentKindOptions" :key="k" :value="k">
                   {{ commentKindLabels[k] }}
@@ -572,10 +559,8 @@ defineExpose({ reload: load })
               </select>
             </label>
             <span class="tc-spacer"></span>
-            <button type="button" class="secondary" @click="closeComposer">キャンセル</button>
-            <button type="button" class="primary" :disabled="!canPost" @click="post">
-              投稿
-            </button>
+            <button type="button" class="secondary" @click="closeComposer">{{ $ui('キャンセル') }}</button>
+            <button type="button" class="primary" :disabled="!canPost" @click="post"> {{ $ui('投稿') }} </button>
           </div>
           <p v-if="postError" class="tc-field-error" role="alert">{{ postError }}</p>
         </template>
@@ -584,9 +569,9 @@ defineExpose({ reload: load })
 
     <ConfirmDialog
       v-if="toDelete"
-      title="コメントを削除しますか？"
+      :title="$ui('コメントを削除しますか？')"
       :message="deleteMessage"
-      confirm-label="削除する"
+      :confirm-label="$ui('削除する')"
       danger
       :busy="busy"
       @cancel="toDelete = null"

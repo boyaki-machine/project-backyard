@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * エージェントタブ `/me/agents`（`GuiDesign.md` 5.8.2）。
  *
@@ -153,7 +154,7 @@ async function submitForm(payload: {
           : { token_env_suffix: payload.token_env_suffix }),
       })
       showForm.value = false
-      notice.value = `✓ エージェント「${updated.display_name}」を更新しました`
+      notice.value = uiText("✓ エージェント「{value0}」を更新しました", { value0: updated.display_name })
       actionError.value = null
       await load()
     } else {
@@ -169,7 +170,7 @@ async function submitForm(payload: {
           : { token_env_suffix: payload.token_env_suffix }),
       })
       showForm.value = false
-      notice.value = `✓ エージェント「${created.display_name}」を登録しました`
+      notice.value = uiText("✓ エージェント「{value0}」を登録しました", { value0: created.display_name })
       actionError.value = null
       await load()
       // **登録が成功したら、続けて発行モーダルを開く**（`ApiDesign.md` 4.5.2 が
@@ -248,7 +249,7 @@ async function issueToken() {
     // 落とさないためである（5.8.1 と同じ判断）。
     issuedAgent.value = target
     issued.value = token
-    notice.value = `✓ 「${target.display_name}」のトークンを発行しました`
+    notice.value = uiText("✓ 「{value0}」のトークンを発行しました", { value0: target.display_name })
     actionError.value = null
     await load()
   } catch (e: unknown) {
@@ -267,8 +268,8 @@ const revokeMessage = computed(() => {
   const a = revokeTarget.value
   if (!a) return ''
   return (
-    `「${a.display_name}」のトークンを失効させます。復元はできません。\n` +
-    'このエージェントは次のリクエストから 401 になります。'
+    uiText("「{value0}」のトークンを失効させます。復元はできません。\n", { value0: a.display_name }) +
+    uiText("このエージェントは次のリクエストから 401 になります。")
   )
 })
 
@@ -280,7 +281,7 @@ async function revokeToken() {
   try {
     await meApi.revokeAgentToken(target.id, target.token.id)
     revokeTarget.value = null
-    notice.value = `✓ 「${target.display_name}」のトークンを失効させました`
+    notice.value = uiText("✓ 「{value0}」のトークンを失効させました", { value0: target.display_name })
     await load()
   } catch (e: unknown) {
     actionError.value = asApiError(e)
@@ -300,9 +301,9 @@ const deactivateMessage = computed(() => {
   const a = deactivateTarget.value
   if (!a) return ''
   return (
-    `「${a.display_name}」を無効化します。\n` +
-    'このエージェントのトークンも同時に失効し、次のリクエストから 401 になります。\n' +
-    'あとから有効化できますが、トークンは発行し直しになります。'
+    uiText("「{value0}」を無効化します。\n", { value0: a.display_name }) +
+    uiText("このエージェントのトークンも同時に失効し、次のリクエストから 401 になります。\n") +
+    uiText("あとから有効化できますが、トークンは発行し直しになります。")
   )
 })
 
@@ -314,8 +315,8 @@ async function setActive(agent: MyAgent, active: boolean) {
     await meApi.updateAgent(agent.id, { is_active: active })
     deactivateTarget.value = null
     notice.value = active
-      ? `✓ 「${agent.display_name}」を有効化しました`
-      : `✓ 「${agent.display_name}」を無効化しました`
+      ? uiText("✓ 「{value0}」を有効化しました", { value0: agent.display_name })
+      : uiText("✓ 「{value0}」を無効化しました", { value0: agent.display_name })
     await load()
     // 無効化した行が畳まれて消えるので、開いて見せる
     if (!active) showInactive.value = true
@@ -344,9 +345,9 @@ const deleteMessage = computed(() => {
   const a = deleteTarget.value
   if (!a) return ''
   return (
-    `「${a.display_name}」を削除します。この操作は取り消せません。\n` +
-    '消えるもの：登録と、発行済みのトークン。\n' +
-    '残るもの：このエージェントが書いたコメント（書き手は「削除されたエージェント」になります）と、監査ログ。'
+    uiText("「{value0}」を削除します。この操作は取り消せません。\n", { value0: a.display_name }) +
+    uiText("消えるもの：登録と、発行済みのトークン。\n") +
+    uiText("残るもの：このエージェントが書いたコメント（書き手は「削除されたエージェント」になります）と、監査ログ。")
   )
 })
 
@@ -358,7 +359,7 @@ async function deleteAgent() {
   try {
     await meApi.deleteAgent(target.id)
     deleteTarget.value = null
-    notice.value = `✓ 「${target.display_name}」を削除しました`
+    notice.value = uiText("✓ 「{value0}」を削除しました", { value0: target.display_name })
     await load()
   } catch (e: unknown) {
     actionError.value = asApiError(e)
@@ -375,24 +376,24 @@ function menuItems(agent: MyAgent): ActionItem[] {
   return [
     {
       key: 'reissue',
-      label: 'トークンを再発行',
+      label: uiText("トークンを再発行"),
       disabled: !agent.is_active,
-      reason: '無効なエージェントには発行できません',
+      reason: uiText("無効なエージェントには発行できません"),
     },
     {
       key: 'revoke',
-      label: 'トークンを失効',
+      label: uiText("トークンを失効"),
       danger: true,
       disabled: agent.token === null,
-      reason: '有効なトークンがありません',
+      reason: uiText("有効なトークンがありません"),
     },
-    { key: 'edit', label: '編集' },
+    { key: 'edit', label: uiText("編集") },
     agent.is_active
-      ? { key: 'deactivate', label: '無効化', danger: true }
-      : { key: 'activate', label: '有効化' },
+      ? { key: 'deactivate', label: uiText("無効化"), danger: true }
+      : { key: 'activate', label: uiText("有効化") },
     // **削除は下段に置く**（5.8.2）。5.6 が人について「無効化を既定の導線にし、
     // 削除は `⋯` の下段」と定めているのと同じ形である。
-    { key: 'delete', label: '削除', danger: true, separated: true },
+    { key: 'delete', label: uiText("削除"), danger: true, separated: true },
   ]
 }
 
@@ -409,7 +410,7 @@ function onMenuSelect(agent: MyAgent, key: string) {
 
 function asApiError(e: unknown): ApiError {
   if (e instanceof ApiError) return e
-  return new ApiError({ status: 0, code: 'network_error', message: '通信に失敗しました' })
+  return new ApiError({ status: 0, code: 'network_error', message: uiText("通信に失敗しました") })
 }
 
 // ── 接続パネル（`GuiDesign.md` 5.8.2、手順28b）──────────────
@@ -456,24 +457,20 @@ function subtitle(agent: MyAgent): string {
 
 <template>
   <div class="page">
-    <PageHeader title="自分の設定" />
+    <PageHeader :title="$ui('自分の設定')" />
 
     <div class="page-body">
       <MeTabs current="agents" />
 
       <section class="block">
         <div class="block-head">
-          <h2 class="block-title">エージェント</h2>
-          <button type="button" class="primary" :disabled="loading" @click="openCreate">
-            + 登録
-          </button>
+          <h2 class="block-title">{{ $ui('エージェント') }}</h2>
+          <button type="button" class="primary" :disabled="loading" @click="openCreate"> {{ $ui('+ 登録') }} </button>
         </div>
 
         <!-- **画面に出す日本語は1行に収める**（GuiDesign.md 6.6）。
              HTML は改行を半角空白にするので、途中で折ると全角のあいだに空きが出る -->
-        <p class="hint">
-          ⓘ 自分の端末で動くクライアント（Claude Code / Claude Desktop / VS Code など）を登録し、その資格情報を発行します。エージェントはあなたの権限の範囲で動きます。
-        </p>
+        <p class="hint"> {{ $ui('ⓘ 自分の端末で動くクライアント（Claude Code / Claude Desktop / VS Code など）を登録し、その資格情報を発行します。エージェントはあなたの権限の範囲で動きます。') }} </p>
 
         <!-- 結果は操作した場所に出す（6.4）。登録・発行・失効・無効化で共通 -->
         <p v-if="actionError" class="alert" role="alert">{{ actionError.message }}</p>
@@ -481,7 +478,7 @@ function subtitle(agent: MyAgent): string {
 
         <p v-if="loadError" class="alert" role="alert">
           {{ loadError.message }}
-          <button type="button" class="secondary" @click="load">再試行</button>
+          <button type="button" class="secondary" @click="load">{{ $ui('再試行') }}</button>
         </p>
 
         <div v-else-if="loading" class="cards" aria-busy="true">
@@ -493,8 +490,8 @@ function subtitle(agent: MyAgent): string {
 
         <EmptyState
           v-else-if="items.length === 0"
-          title="エージェントはまだ登録されていません"
-          description="自分の端末で動くクライアントを登録すると、そのための資格情報を発行できます。"
+          :title="$ui('エージェントはまだ登録されていません')"
+          :description="$ui('自分の端末で動くクライアントを登録すると、そのための資格情報を発行できます。')"
         />
 
         <template v-else>
@@ -510,48 +507,44 @@ function subtitle(agent: MyAgent): string {
                 <Avatar :name="a.display_name" kind="agent" :size="24" />
                 <h3 class="agent-name">{{ a.display_name }}</h3>
                 <!-- 状態を色だけで示さない（9.2） -->
-                <span v-if="!a.is_active" class="state-off">無効</span>
+                <span v-if="!a.is_active" class="state-off">{{ $ui('無効') }}</span>
                 <UserActionsMenu
                   :items="menuItems(a)"
-                  :label="`${a.display_name} の操作メニュー`"
+                  :label="$ui('{value0} の操作メニュー', { value0: a.display_name })"
                   compact
                   @select="(k) => onMenuSelect(a, k)"
                 />
               </div>
 
               <p class="agent-meta">{{ subtitle(a) }}</p>
-              <p class="agent-meta">登録 {{ formatDateTime(a.created_at) }}</p>
+              <p class="agent-meta">{{ $ui('登録') }} {{ formatDateTime(a.created_at) }}</p>
               <!-- **環境変数名を出す**（手順28a）。ここに出さないと、登録のときに
                    決めた名前を後から確かめる場所が無い。**`export` 行そのものと
                    接続設定は手順28b** -->
-              <p class="agent-meta">
-                環境変数 <code class="env-name">{{ a.token_env_name }}</code>
+              <p class="agent-meta"> {{ $ui('環境変数') }} <code class="env-name">{{ a.token_env_name }}</code>
               </p>
 
               <div class="token-box">
                 <template v-if="a.token">
                   <div class="token-head">
                     <code class="prefix">{{ a.token.token_prefix }}</code>
-                    <span v-if="a.token.status === 'active'">● 有効</span>
-                    <span v-else class="expired">期限切れ</span>
+                    <span v-if="a.token.status === 'active'">{{ $ui('● 有効') }}</span>
+                    <span v-else class="expired">{{ $ui('期限切れ') }}</span>
                     <!-- **接続確認は `token.last_used_at` で測る**（5.8.2、手順28b）。
                          新しい口を作らない。**畳んでいるときも見えている必要がある**ので
                          パネルではなくここに出す。状態を色だけで示さない（9.2） -->
-                    <span v-if="connectedAt(a)" class="connected">
-                      ✓ 接続済み（最終利用 {{ formatDateTime(connectedAt(a)!) }}）
+                    <span v-if="connectedAt(a)" class="connected"> {{ $ui('✓ 接続済み（最終利用') }} {{ formatDateTime(connectedAt(a)!) }}）
                     </span>
-                    <span v-else class="not-connected">未接続</span>
+                    <span v-else class="not-connected">{{ $ui('未接続') }}</span>
                   </div>
-                  <p class="token-meta">
-                    発行 {{ formatDateTime(a.token.issued_at) }}
+                  <p class="token-meta"> {{ $ui('発行') }} {{ formatDateTime(a.token.issued_at) }}
                   </p>
-                  <p class="token-meta">
-                    有効期限 {{ a.token.expires_at ? formatDate(a.token.expires_at) : '無期限' }}
+                  <p class="token-meta"> {{ $ui('有効期限') }} {{ a.token.expires_at ? formatDate(a.token.expires_at) : $ui("無期限") }}
                   </p>
                 </template>
                 <div v-else class="token-head">
-                  <span class="token-label">トークン</span>
-                  <span class="none">未発行</span>
+                  <span class="token-label">{{ $ui('トークン') }}</span>
+                  <span class="none">{{ $ui('未発行') }}</span>
                   <!-- **未発行のときだけ主ボタンで出す**（5.8.2）。登録直後の行は
                        必ずここに来るので、次の一歩を `[⋯]` に隠さない -->
                   <button
@@ -559,9 +552,7 @@ function subtitle(agent: MyAgent): string {
                     class="primary issue-button"
                     :disabled="!a.is_active"
                     @click="openIssue(a)"
-                  >
-                    トークンを発行
-                  </button>
+                  > {{ $ui('トークンを発行') }} </button>
                 </div>
               </div>
 
@@ -570,7 +561,7 @@ function subtitle(agent: MyAgent): string {
                    上のトークンの箱に出る -->
               <div class="panel-row">
                 <button type="button" class="secondary panel-toggle" @click="togglePanel(a)">
-                  {{ openPanel === a.id ? '接続の手順を畳む ▴' : '接続の手順を開く ▾' }}
+                  {{ openPanel === a.id ? $ui("接続の手順を畳む ▴") : $ui("接続の手順を開く ▾") }}
                 </button>
               </div>
               <AgentConnectPanel
@@ -585,7 +576,7 @@ function subtitle(agent: MyAgent): string {
           <!-- **無効なものは既定で畳む**（5.8.2）。0件ならこの行ごと出さない -->
           <label v-if="inactiveCount > 0" class="show-inactive">
             <input v-model="showInactive" type="checkbox" />
-            <span>無効にしたエージェントも表示（{{ inactiveCount }}件）</span>
+            <span>{{ $ui('無効にしたエージェントも表示（') }}{{ inactiveCount }}{{ $ui('件）') }}</span>
           </label>
         </template>
       </section>
@@ -604,7 +595,7 @@ function subtitle(agent: MyAgent): string {
     <!-- ── 発行モーダル（5.8.2）────────────────────────────── -->
     <Modal
       v-if="issueTarget"
-      title="エージェント用トークンを発行"
+      :title="$ui('エージェント用トークンを発行')"
       @close="issueTarget = null"
     >
       <form id="issue-agent-token" class="issue-form" @submit.prevent="issueToken">
@@ -613,7 +604,7 @@ function subtitle(agent: MyAgent): string {
         </p>
 
         <fieldset class="field choices">
-          <legend class="label">有効期限</legend>
+          <legend class="label">{{ $ui('有効期限') }}</legend>
           <div class="choices-row">
             <label v-for="d in EXPIRY_CHOICES" :key="d">
               <input
@@ -624,13 +615,13 @@ function subtitle(agent: MyAgent): string {
                 :disabled="issuing"
                 @change="newExpiresInDays = d"
               />
-              <span>{{ d }}日</span>
+              <span>{{ d }}{{ $ui('日') }}</span>
             </label>
           </div>
           <span v-if="issueError?.detailFor('expires_in_days')" class="detail">
             {{ issueError.detailFor('expires_in_days')?.message }}
           </span>
-          <span v-else class="hint">{{ newExpiryDate }} まで有効です。</span>
+          <span v-else class="hint">{{ newExpiryDate }} {{ $ui('まで有効です。') }}</span>
         </fieldset>
 
         <!-- **追加の権限は `doc.edit` の1件だけ**（4.5.3 の許可リスト。手順26a）。
@@ -639,21 +630,19 @@ function subtitle(agent: MyAgent): string {
              **既定が引けなかったら押せなくする**（pb-93。`GuiDesign.md` 5.8.2）
              **権限キーを画面に出さない**（24b で決めた形。発行結果も日本語で出す） -->
         <fieldset class="field">
-          <legend class="label">追加の権限</legend>
+          <legend class="label">{{ $ui('追加の権限') }}</legend>
           <label class="check">
             <input v-model="allowDocEdit" type="checkbox" :disabled="issuing || !canAllowDocEdit" />
-            <span>プロジェクト文書の編集を許す</span>
+            <span>{{ $ui('プロジェクト文書の編集を許す') }}</span>
           </label>
-          <span v-if="!canAllowDocEdit" class="detail">既定の権限を読み込めなかったため、いまは選べません。画面を開き直してください。</span>
-          <span v-else class="hint">憲章を書き換えられるようになります。</span>
+          <span v-if="!canAllowDocEdit" class="detail">{{ $ui('既定の権限を読み込めなかったため、いまは選べません。画面を開き直してください。') }}</span>
+          <span v-else class="hint">{{ $ui('憲章を書き換えられるようになります。') }}</span>
         </fieldset>
 
         <!-- **再発行が既存を暗黙に失効させることを、押す前に出す**（4.5.3）。
              利用者は「再発行した」としか認識しないため、書かないと動いていた
              端末が黙って 401 になる -->
-        <p v-if="issueTarget.token" class="warn">
-          ⚠ いま有効なトークン（{{ issueTarget.token.token_prefix }}）は失効します。
-        </p>
+        <p v-if="issueTarget.token" class="warn"> {{ $ui('⚠ いま有効なトークン（') }}{{ issueTarget.token.token_prefix }}{{ $ui('）は失効します。') }} </p>
 
         <p v-if="issueError && !issueError.detailFor('expires_in_days')" class="alert" role="alert">
           {{ issueError.message }}
@@ -661,11 +650,9 @@ function subtitle(agent: MyAgent): string {
       </form>
 
       <template #footer>
-        <button type="button" class="secondary" :disabled="issuing" @click="issueTarget = null">
-          キャンセル
-        </button>
+        <button type="button" class="secondary" :disabled="issuing" @click="issueTarget = null"> {{ $ui('キャンセル') }} </button>
         <button type="submit" form="issue-agent-token" class="primary" :disabled="issuing">
-          {{ issuing ? '発行中…' : '発行' }}
+          {{ issuing ? $ui("発行中…") : $ui("発行") }}
         </button>
       </template>
     </Modal>
@@ -673,9 +660,9 @@ function subtitle(agent: MyAgent): string {
     <!-- ── 削除の確認（4.5.4。手順26a）───────────────────── -->
     <ConfirmDialog
       v-if="deleteTarget"
-      title="エージェントを削除"
+      :title="$ui('エージェントを削除')"
       :message="deleteMessage"
-      confirm-label="削除する"
+      :confirm-label="$ui('削除する')"
       danger
       :busy="deleting"
       @confirm="deleteAgent"
@@ -693,9 +680,9 @@ function subtitle(agent: MyAgent): string {
     <!-- ── 失効の確認（6.3）──────────────────────────────── -->
     <ConfirmDialog
       v-if="revokeTarget"
-      title="トークンを失効"
+      :title="$ui('トークンを失効')"
       :message="revokeMessage"
-      confirm-label="失効させる"
+      :confirm-label="$ui('失効させる')"
       danger
       :busy="revoking"
       @confirm="revokeToken"
@@ -705,9 +692,9 @@ function subtitle(agent: MyAgent): string {
     <!-- ── 無効化の確認（6.3）────────────────────────────── -->
     <ConfirmDialog
       v-if="deactivateTarget"
-      title="エージェントを無効化"
+      :title="$ui('エージェントを無効化')"
       :message="deactivateMessage"
-      confirm-label="無効化する"
+      :confirm-label="$ui('無効化する')"
       danger
       :busy="togglingActive"
       @confirm="setActive(deactivateTarget, false)"

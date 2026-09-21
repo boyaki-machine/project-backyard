@@ -71,37 +71,35 @@ const scopeLabels = computed(() =>
 </script>
 
 <template>
-  <Modal title="エージェント用トークンを発行しました" @close="emit('close')">
+  <Modal :title="$ui('エージェント用トークンを発行しました')" @close="emit('close')">
     <div class="body">
       <!-- warning は「面」で表す（8.4.1）。文字色はベースのまま -->
-      <p class="warn">⚠ このトークンはこの画面でしか確認できません。閉じると再表示できません。</p>
+      <p class="warn">{{ $ui('⚠ このトークンはこの画面でしか確認できません。閉じると再表示できません。') }}</p>
 
       <dl class="fields">
-        <dt>エージェント</dt>
+        <dt>{{ $ui('エージェント') }}</dt>
         <dd>{{ agent.display_name }}</dd>
-        <dt>プロジェクト</dt>
+        <dt>{{ $ui('プロジェクト') }}</dt>
         <dd>{{ agent.project.name }}</dd>
-        <dt>有効期限</dt>
-        <dd>{{ token.expires_at ? formatDate(token.expires_at) : '無期限' }}</dd>
-        <dt>トークン</dt>
+        <dt>{{ $ui('有効期限') }}</dt>
+        <dd>{{ token.expires_at ? formatDate(token.expires_at) : $ui("無期限") }}</dd>
+        <dt>{{ $ui('トークン') }}</dt>
         <dd>
           <div class="token-line">
             <code ref="tokenEl" class="token">{{ token.token }}</code>
-            <button type="button" class="secondary" @click="copy">コピー</button>
+            <button type="button" class="secondary" @click="copy">{{ $ui('コピー') }}</button>
           </div>
           <!-- 状態を色だけで示さない（9.2）ので記号か文言を必ず添える -->
-          <p v-if="copied === 'ok'" class="note" role="status">✓ コピーしました</p>
-          <p v-else-if="copied === 'manual'" class="note" role="status">
-            自動でコピーできませんでした。選択した状態にしたので ⌘C（Ctrl+C）でコピーしてください。
-          </p>
+          <p v-if="copied === 'ok'" class="note" role="status">{{ $ui('✓ コピーしました') }}</p>
+          <p v-else-if="copied === 'manual'" class="note" role="status"> {{ $ui('自動でコピーできませんでした。選択した状態にしたので ⌘C（Ctrl+C）でコピーしてください。') }} </p>
         </dd>
       </dl>
 
       <section class="scopes">
-        <h3 class="scopes-title">このトークンでできること</h3>
+        <h3 class="scopes-title">{{ $ui('このトークンでできること') }}</h3>
         <!-- **補間のまわりに空白を置かない**（6.6）。全角のあいだに空きが出る -->
-        <p class="hint">ⓘ 対象は{{ agent.project.name }}だけです。他のプロジェクトには届きません。</p>
-        <p class="hint">ⓘ 下のうち、あなた自身にできないことは、エージェントにもできません。</p>
+        <p class="hint">{{ $ui('ⓘ 対象は') }}{{ agent.project.name }}{{ $ui('だけです。他のプロジェクトには届きません。') }}</p>
+        <p class="hint">{{ $ui('ⓘ 下のうち、あなた自身にできないことは、エージェントにもできません。') }}</p>
         <ul class="scope-list">
           <li v-for="(label, i) in scopeLabels" :key="token.scopes[i]">{{ label }}</li>
         </ul>
@@ -109,7 +107,7 @@ const scopeLabels = computed(() =>
     </div>
 
     <template #footer>
-      <button type="button" class="primary" @click="emit('close')">閉じる</button>
+      <button type="button" class="primary" @click="emit('close')">{{ $ui('閉じる') }}</button>
     </template>
   </Modal>
 </template>

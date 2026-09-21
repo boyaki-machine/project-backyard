@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * 文書の新規作成と、移動・改名（`GuiDesign.md` 5.10）。
  *
@@ -115,17 +116,17 @@ const parentOptions = computed<ParentOption[]>(() => {
 const titleError = computed(() => {
   if (serverDetails.value.title) return serverDetails.value.title
   const v = title.value.trim()
-  if (v === '') return 'タイトルを入力してください'
-  if (v.length > MAX_TITLE) return `${MAX_TITLE}文字以内で入力してください`
+  if (v === '') return uiText("タイトルを入力してください")
+  if (v.length > MAX_TITLE) return uiText("{value0}文字以内で入力してください", { value0: MAX_TITLE })
   return null
 })
 
 const slugError = computed(() => {
   if (serverDetails.value.slug) return serverDetails.value.slug
   const v = slug.value.trim()
-  if (v === '') return 'スラッグを入力してください'
+  if (v === '') return uiText("スラッグを入力してください")
   if (!SLUG_PATTERN.test(v)) {
-    return '英小文字・数字・ハイフンのみ、先頭は英小文字か数字で、64文字以内'
+    return uiText("英小文字・数字・ハイフンのみ、先頭は英小文字か数字で、64文字以内")
   }
   return null
 })
@@ -146,7 +147,7 @@ const canSave = computed(
  */
 function applyError(e: unknown): void {
   if (!(e instanceof ApiError)) {
-    formError.value = editing.value ? '文書を更新できませんでした' : '文書を作成できませんでした'
+    formError.value = editing.value ? uiText("文書を更新できませんでした") : uiText("文書を作成できませんでした")
     return
   }
   if (e.code === 'already_exists') {
@@ -206,12 +207,12 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <Modal :title="editing ? '移動・改名' : '文書を追加'" @close="emit('close')">
+  <Modal :title="editing ? $ui('移動・改名') : $ui('文書を追加')" @close="emit('close')">
     <form id="doc-form" class="form" @submit.prevent="submit">
       <p v-if="formError" class="form-error">✕ {{ formError }}</p>
 
       <label class="field">
-        <span class="label">タイトル <span class="required">*</span></span>
+        <span class="label">{{ $ui('タイトル') }} <span class="required">*</span></span>
         <input
           v-model="title"
           type="text"
@@ -223,7 +224,7 @@ async function submit(): Promise<void> {
       </label>
 
       <label class="field">
-        <span class="label">スラッグ <span class="required">*</span></span>
+        <span class="label">{{ $ui('スラッグ') }} <span class="required">*</span></span>
         <input
           v-model="slug"
           type="text"
@@ -238,8 +239,7 @@ async function submit(): Promise<void> {
         />
         <!-- **URL になることを入力の時点で見せる**（`ApiDesign.md` 10.1）。
              後から直すと共有リンクが切れるので、決める前に形を見せる -->
-        <span class="hint">
-          URL になります：/p/{{ projectKey }}/docs/{{
+        <span class="hint"> {{ $ui('URL になります：/p/') }}{{ projectKey }}/docs/{{
             parentPath === '' ? '' : `${parentPath}/`
           }}{{ slug.trim() === '' ? '…' : slug.trim() }}
         </span>
@@ -247,28 +247,24 @@ async function submit(): Promise<void> {
       </label>
 
       <label class="field">
-        <span class="label">親の文書</span>
+        <span class="label">{{ $ui('親の文書') }}</span>
         <select v-model="parentPath">
-          <option value="">（トップレベル）</option>
+          <option value="">{{ $ui('（トップレベル）') }}</option>
           <option v-for="o in parentOptions" :key="o.path" :value="o.path">
             {{ o.label }}
           </option>
         </select>
         <!-- **部分木ごと動くことを先に伝える**（10.4）。畳んでいると、
              一緒に動く範囲が画面から見えない（削除の確認と同じ考え方。6.3） -->
-        <span v-if="editing && doc && doc.children.length > 0" class="hint">
-          配下の文書も一緒に移動し、それぞれの URL が変わります
-        </span>
+        <span v-if="editing && doc && doc.children.length > 0" class="hint"> {{ $ui('配下の文書も一緒に移動し、それぞれの URL が変わります') }} </span>
         <span v-if="parentError" class="detail">✕ {{ parentError }}</span>
       </label>
     </form>
 
     <template #footer>
-      <button type="button" class="secondary" :disabled="busy" @click="emit('close')">
-        キャンセル
-      </button>
+      <button type="button" class="secondary" :disabled="busy" @click="emit('close')"> {{ $ui('キャンセル') }} </button>
       <button type="submit" form="doc-form" class="primary" :disabled="!canSave">
-        {{ editing ? '保存' : '追加' }}
+        {{ editing ? $ui("保存") : $ui("追加") }}
       </button>
     </template>
   </Modal>

@@ -171,7 +171,7 @@ defineExpose({ close })
     :disabled="!canAssign || busy"
     :aria-expanded="open"
     aria-haspopup="listbox"
-    :title="canAssign ? '担当を変える' : '担当を変える権限がありません'"
+    :title="canAssign ? $ui('担当を変える') : $ui('担当を変える権限がありません')"
     @click="toggle"
   >
     <span v-if="current" class="assignee-name">
@@ -198,8 +198,8 @@ defineExpose({ close })
           v-model="query"
           type="text"
           class="search"
-          placeholder="名前で絞り込む"
-          aria-label="担当を名前で絞り込む"
+          :placeholder="$ui('名前で絞り込む')"
+          :aria-label="$ui('担当を名前で絞り込む')"
           @keydown.enter.prevent="onEnter"
         />
 
@@ -213,7 +213,7 @@ defineExpose({ close })
             :aria-selected="current === null"
             @click="choose(null)"
           >
-            <span class="muted">未割当</span>
+            <span class="muted">{{ $ui('未割当') }}</span>
           </button>
 
           <button
@@ -229,7 +229,7 @@ defineExpose({ close })
             {{ m.display_name }}
           </button>
 
-          <p v-if="filtered.length === 0" class="note">該当する人がいません</p>
+          <p v-if="filtered.length === 0" class="note">{{ $ui('該当する人がいません') }}</p>
         </div>
       </div>
     </template>

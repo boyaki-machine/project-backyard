@@ -40,7 +40,11 @@ export function openedByIPAddress(hostname: string = window.location.hostname): 
 }
 
 /** IP アドレスで開いているときに出す文言（`GuiDesign.md` 5.1.2 / 5.8） */
-export const IP_ADDRESS_REASON = 'IP アドレスで開いた画面ではパスキーを使えません'
+import { uiText } from '../locales/ui'
+
+export function ipAddressReason(): string {
+  return uiText('IP アドレスで開いた画面ではパスキーを使えません')
+}
 
 /**
  * 利用者が端末のダイアログを閉じたか。
@@ -68,7 +72,7 @@ export async function getPasskey(options: PasskeyOptionsEnvelope): Promise<unkno
   )
   const credential = await navigator.credentials.get({ publicKey })
   if (!(credential instanceof PublicKeyCredential)) {
-    throw new Error('パスキーを取得できませんでした')
+    throw new Error(uiText('パスキーを取得できませんでした'))
   }
   return credential.toJSON()
 }
@@ -80,7 +84,7 @@ export async function createPasskey(options: PasskeyOptionsEnvelope): Promise<un
   )
   const credential = await navigator.credentials.create({ publicKey })
   if (!(credential instanceof PublicKeyCredential)) {
-    throw new Error('パスキーを作成できませんでした')
+    throw new Error(uiText('パスキーを作成できませんでした'))
   }
   return credential.toJSON()
 }

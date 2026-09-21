@@ -15,6 +15,7 @@
  */
 import { api } from './client'
 import type { components } from './schema'
+import { uiText } from '../locales/ui'
 
 export type TicketComment = components['schemas']['TicketComment']
 export type TicketCommentList = components['schemas']['TicketCommentList']
@@ -32,12 +33,12 @@ export type CommentKind = TicketComment['kind']
  * コメント欄で見たものと同じ言葉を見られるようにするため。
  */
 export const commentKindLabels: Record<CommentKind, string> = {
-  discussion: '議論',
-  decision: '決定',
-  artifact: '成果物',
-  caveat: '注意',
-  reference: '参照',
-  progress: '経過',
+  get discussion() { return uiText('議論') },
+  get decision() { return uiText('決定') },
+  get artifact() { return uiText('成果物') },
+  get caveat() { return uiText('注意') },
+  get reference() { return uiText('参照') },
+  get progress() { return uiText('経過') },
 }
 
 /**

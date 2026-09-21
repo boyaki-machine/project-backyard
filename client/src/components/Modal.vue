@@ -107,7 +107,7 @@ onBeforeUnmount(() => {
     >
       <header class="head">
         <h2 class="title">{{ title }}</h2>
-        <button type="button" class="close" aria-label="閉じる" @click="emit('close')">✕</button>
+        <button type="button" class="close" :aria-label="$ui('閉じる')" @click="emit('close')">✕</button>
       </header>
 
       <div class="body">

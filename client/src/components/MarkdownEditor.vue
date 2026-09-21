@@ -104,10 +104,10 @@ defineExpose({
     <!-- プレビュー。**打つたびに追随する**（5.5「説明欄」のライブプレビュー）。
          Docs（5.10）は可視化ペインを別に持つので、ここは出さない -->
     <template v-if="preview">
-      <div class="preview-label">プレビュー</div>
+      <div class="preview-label">{{ $ui('プレビュー') }}</div>
       <!-- eslint-disable-next-line vue/no-v-html -- lib/markdown.ts の dompurify を通っている -->
       <div v-if="previewHtml" class="markdown-body preview" v-html="previewHtml"></div>
-      <p v-else class="preview empty">まだ何も書かれていません</p>
+      <p v-else class="preview empty">{{ $ui('まだ何も書かれていません') }}</p>
     </template>
   </div>
 </template>

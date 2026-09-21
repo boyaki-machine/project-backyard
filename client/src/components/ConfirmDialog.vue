@@ -34,9 +34,7 @@ const emit = defineEmits<{ confirm: []; cancel: [] }>()
     <p class="message">{{ message }}</p>
 
     <template #footer>
-      <button type="button" class="secondary" :disabled="busy" @click="emit('cancel')">
-        キャンセル
-      </button>
+      <button type="button" class="secondary" :disabled="busy" @click="emit('cancel')"> {{ $ui('キャンセル') }} </button>
       <button
         type="button"
         :class="danger ? 'danger' : 'primary'"

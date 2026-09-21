@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * チケット詳細（`GuiDesign.md` 5.5）。
  *
@@ -173,7 +174,7 @@ function toApiError(e: unknown): ApiError {
     : new ApiError({
         status: 0,
         code: 'internal_error',
-        message: '予期しないエラーが発生しました',
+        message: uiText("予期しないエラーが発生しました"),
       })
 }
 
@@ -350,7 +351,7 @@ async function commitEdit(): Promise<void> {
   } else {
     const n = numberOrNull(raw)
     if (n === undefined) {
-      fieldError.value = { field, message: '数値で入力してください' }
+      fieldError.value = { field, message: uiText("数値で入力してください") }
       return
     }
     patch[field] = n
@@ -472,22 +473,22 @@ const confirmDelete = ref(false)
 const actionItems = computed<ActionItem[]>(() => [
   {
     key: 'add-child',
-    label: '子チケットを追加',
+    label: uiText("子チケットを追加"),
     disabled: !canCreate.value,
-    reason: canCreate.value ? undefined : 'チケットを作成する権限がありません',
+    reason: canCreate.value ? undefined : uiText("チケットを作成する権限がありません"),
   },
   {
     key: 'add-reference',
-    label: '参考リンクを追加',
+    label: uiText("参考リンクを追加"),
     disabled: !canEdit.value,
-    reason: canEdit.value ? undefined : 'チケットを編集する権限がありません',
+    reason: canEdit.value ? undefined : uiText("チケットを編集する権限がありません"),
   },
   {
     key: 'delete',
-    label: 'このチケットを削除',
+    label: uiText("このチケットを削除"),
     danger: true,
     disabled: !canDelete.value,
-    reason: canDelete.value ? undefined : 'チケットを削除する権限がありません',
+    reason: canDelete.value ? undefined : uiText("チケットを削除する権限がありません"),
   },
 ])
 
@@ -495,9 +496,9 @@ const actionItems = computed<ActionItem[]>(() => [
 const deleteMessage = computed(() => {
   const t = ticket.value
   if (t === null) return ''
-  const head = `${fullId.value}「${t.title}」を削除します。元に戻せません。`
+  const head = uiText("{value0}「{value1}」を削除します。元に戻せません。", { value0: fullId.value, value1: t.title })
   if (t.children.length === 0) return head
-  return `${head}\n${t.children.length}件の子チケットは削除されず、親のないチケットになります。`
+  return uiText("{value0}\n{value1}件の子チケットは削除されず、親のないチケットになります。", { value0: head, value1: t.children.length })
 })
 
 async function runDelete(): Promise<void> {
@@ -640,12 +641,12 @@ function compareReferences(a: TicketReference, b: TicketReference): number {
 const deleteReferenceMessage = computed(() => {
   const r = refToDelete.value
   if (r === null) return ''
-  const what = r.kind === 'code' ? 'コード' : '参考リンク'
+  const what = r.kind === 'code' ? uiText("コード") : uiText("参考リンク")
   const summary = r.kind === 'code' ? codeSummary(r) : docSummary(r)
-  const head = `${what}「${summary}」を削除します。元に戻せません。`
+  const head = uiText("{value0}「{value1}」を削除します。元に戻せません。", { value0: what, value1: summary })
   // **code は画面から入れ直せない**（追加の導線を持たない。5.5）
   return r.kind === 'code'
-    ? `${head}\nコードは画面から追加できないため、消すと入れ直せません。`
+    ? uiText("{value0}\nコードは画面から追加できないため、消すと入れ直せません。", { value0: head })
     : head
 })
 
@@ -883,9 +884,9 @@ const deleteLinkMessage = computed(() => {
   const l = linkToDelete.value
   if (l === null) return ''
   const label = linkLabel(l.link_type, l.direction)
-  const head = `「${label}」の関連（${props.projectKey}-${l.ticket.seq}「${l.ticket.title}」）を解除します。`
+  const head = uiText("「{value0}」の関連（{value1}-{value2}「{value3}」）を解除します。", { value0: label, value1: props.projectKey, value2: l.ticket.seq, value3: l.ticket.title })
   return l.direction === 'incoming'
-    ? `${head}\n相手のチケットが起点の関連なので、戻すには ${props.projectKey}-${l.ticket.seq} を開く必要があります。`
+    ? uiText("{value0}\n相手のチケットが起点の関連なので、戻すには {value1}-{value2} を開く必要があります。", { value0: head, value1: props.projectKey, value2: l.ticket.seq })
     : head
 })
 
@@ -1193,7 +1194,7 @@ function errorFor(field: string): string {
 </script>
 
 <template>
-  <section class="detail" aria-label="チケット詳細">
+  <section class="detail" :aria-label="$ui('チケット詳細')">
     <!-- 48px のページヘッダ（2.5）。**`<h1>` にはしない**——このペインは画面を
          置き換えないので、`<h1>` は一覧側の「バックログ」1つのままにする（9.2） -->
     <header class="detail-header">
@@ -1212,7 +1213,7 @@ function errorFor(field: string): string {
             class="title-input"
             type="text"
             maxlength="200"
-            aria-label="タイトル"
+            :aria-label="$ui('タイトル')"
             @keydown.escape="cancelEdit"
             @keydown.enter="onEnterCommit($event, commitEdit)"
             @blur="commitEdit"
@@ -1224,23 +1225,23 @@ function errorFor(field: string): string {
           class="title-view"
           :class="{ readonly: !canEdit }"
           :disabled="!canEdit"
-          :title="canEdit ? `クリックしてタイトルを編集：${ticket.title}` : ticket.title"
+          :title="canEdit ? $ui('クリックしてタイトルを編集：{value0}', { value0: ticket.title }) : ticket.title"
           @click="startEdit('title')"
         >
           {{ ticket.title }}
         </button>
       </template>
-      <h2 v-else class="detail-id">チケット</h2>
+      <h2 v-else class="detail-id">{{ $ui('チケット') }}</h2>
 
       <div class="header-actions">
         <UserActionsMenu
           v-if="ticket"
           :items="actionItems"
-          :label="`${fullId} の操作メニュー`"
+          :label="$ui('{value0} の操作メニュー', { value0: fullId })"
           compact
           @select="onAction"
         />
-        <button type="button" class="icon-button" aria-label="詳細を閉じる" @click="emit('close')">
+        <button type="button" class="icon-button" :aria-label="$ui('詳細を閉じる')" @click="emit('close')">
           ✕
         </button>
       </div>
@@ -1250,11 +1251,11 @@ function errorFor(field: string): string {
       <!-- エラー（6.2）。原因はサーバが返した message をそのまま出す -->
       <EmptyState
         v-if="loadError"
-        title="チケットを取得できませんでした"
+        :title="$ui('チケットを取得できませんでした')"
         :description="loadError.message"
       >
         <template #action>
-          <button type="button" class="primary" @click="load">再試行</button>
+          <button type="button" class="primary" @click="load">{{ $ui('再試行') }}</button>
         </template>
       </EmptyState>
 
@@ -1270,7 +1271,7 @@ function errorFor(field: string): string {
         <!-- メタ情報（5.5）。**2列のラベル＋値のグリッド** -->
         <dl class="meta">
           <div class="meta-item">
-            <dt>状態</dt>
+            <dt>{{ $ui('状態') }}</dt>
             <dd>
               <StatusDropdown
                 ref="statusRef"
@@ -1287,14 +1288,14 @@ function errorFor(field: string): string {
           </div>
 
           <div class="meta-item">
-            <dt>担当</dt>
+            <dt>{{ $ui('担当') }}</dt>
             <dd>
               <!-- **`ticket.assign` が要る**（9.5.2）。持たないときは値だけ出す -->
               <select
                 v-if="canEdit && canAssign"
                 :value="ticket.assignee?.id ?? ''"
                 :disabled="busy"
-                aria-label="担当"
+                :aria-label="$ui('担当')"
                 @change="
                   selectField(
                     { assignee_id: ($event.target as HTMLSelectElement).value || null },
@@ -1302,7 +1303,7 @@ function errorFor(field: string): string {
                   )
                 "
               >
-                <option value="">未割当</option>
+                <option value="">{{ $ui('未割当') }}</option>
                 <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
                   {{ actorMark(m.kind) }} {{ m.display_name }}
                 </option>
@@ -1324,7 +1325,7 @@ function errorFor(field: string): string {
                （9.6 の遷移の副作用）。ピッカーを置くと、人が指名した実行者と
                実際に動いたエージェントが食い違う状態を作れてしまう。 -->
           <div v-if="ticket.working_agent" class="meta-item wide">
-            <dt>実行者</dt>
+            <dt>{{ $ui('実行者') }}</dt>
             <dd>
               <span>
                 <span aria-hidden="true">{{ actorMark(ticket.working_agent.kind) }}</span>
@@ -1338,9 +1339,7 @@ function errorFor(field: string): string {
                 class="ref-action"
                 :disabled="busy"
                 @click="selectField({ working_agent_id: null }, 'working_agent_id')"
-              >
-                解除
-              </button>
+              > {{ $ui('解除') }} </button>
               <p v-if="errorFor('working_agent_id')" class="field-error" role="alert">
                 {{ errorFor('working_agent_id') }}
               </p>
@@ -1348,13 +1347,13 @@ function errorFor(field: string): string {
           </div>
 
           <div class="meta-item">
-            <dt>優先度</dt>
+            <dt>{{ $ui('優先度') }}</dt>
             <dd>
               <select
                 v-if="canEdit"
                 :value="ticket.priority ?? ''"
                 :disabled="busy"
-                aria-label="優先度"
+                :aria-label="$ui('優先度')"
                 @change="
                   selectField(
                     { priority: (($event.target as HTMLSelectElement).value || null) as never },
@@ -1362,7 +1361,7 @@ function errorFor(field: string): string {
                   )
                 "
               >
-                <option value="">未設定</option>
+                <option value="">{{ $ui('未設定') }}</option>
                 <option v-for="p in priorityOptions" :key="p" :value="p">
                   {{ priorityLabels[p] }}
                 </option>
@@ -1375,7 +1374,7 @@ function errorFor(field: string): string {
           </div>
 
           <div class="meta-item">
-            <dt>種別</dt>
+            <dt>{{ $ui('種別') }}</dt>
             <dd>
               <!-- **オンステージのチケットを `epic` にすると 422**（`not_stageable`）。
                    サーバが弾いた理由をそのまま欄の下に出す（9.5.2） -->
@@ -1383,7 +1382,7 @@ function errorFor(field: string): string {
                 v-if="canEdit"
                 :value="ticket.type"
                 :disabled="busy"
-                aria-label="種別"
+                :aria-label="$ui('種別')"
                 @change="
                   selectField(
                     { type: ($event.target as HTMLSelectElement).value as never },
@@ -1401,7 +1400,7 @@ function errorFor(field: string): string {
           </div>
 
           <div class="meta-item">
-            <dt>親</dt>
+            <dt>{{ $ui('親') }}</dt>
             <dd class="parent-cell">
               <!-- **選択式である**（5.5）。親の実体は `parent_seq` の数値で、
                    番号を手で打たせる形はどの画面にも無い。**絞り込みができる
@@ -1413,13 +1412,13 @@ function errorFor(field: string): string {
                   :disabled="busy"
                   aria-haspopup="listbox"
                   :aria-expanded="parentPickerOpen"
-                  aria-label="親チケット"
+                  :aria-label="$ui('親チケット')"
                   @click="parentPickerOpen ? (parentPickerOpen = false) : openParentPicker()"
                 >
                   <span class="parent-current">{{
                     parentTicket
                       ? `${projectKey}-${parentTicket.seq} ${parentTicket.title}`
-                      : '親なし'
+                      : $ui("親なし")
                   }}</span>
                   <span class="caret" aria-hidden="true">▾</span>
                 </button>
@@ -1432,8 +1431,8 @@ function errorFor(field: string): string {
                     v-model="parentQuery"
                     type="text"
                     class="parent-search"
-                    placeholder="番号かタイトルで絞り込む"
-                    aria-label="親チケットを絞り込む"
+                    :placeholder="$ui('番号かタイトルで絞り込む')"
+                    :aria-label="$ui('親チケットを絞り込む')"
                     @keydown.escape="parentPickerOpen = false"
                   />
                   <ul class="parent-list" role="listbox">
@@ -1445,9 +1444,7 @@ function errorFor(field: string): string {
                         role="option"
                         :aria-selected="!parentTicket"
                         @click="pickParent(null)"
-                      >
-                        親なし
-                      </button>
+                      > {{ $ui('親なし') }} </button>
                     </li>
                     <li v-for="c in parentMatches" :key="c.seq">
                       <button
@@ -1463,9 +1460,7 @@ function errorFor(field: string): string {
                       </button>
                     </li>
                     <!-- **0件でも黙って空にしない**（6.2） -->
-                    <li v-if="parentMatches.length === 0" class="parent-empty">
-                      一致するチケットがありません
-                    </li>
+                    <li v-if="parentMatches.length === 0" class="parent-empty"> {{ $ui('一致するチケットがありません') }} </li>
                   </ul>
                 </div>
               </template>
@@ -1479,7 +1474,7 @@ function errorFor(field: string): string {
                 v-if="parentTicket"
                 class="jump"
                 :to="`/p/${projectKey}/tickets/${parentTicket.seq}`"
-                :aria-label="`親チケット ${projectKey}-${parentTicket.seq} を開く`"
+                :aria-label="$ui('親チケット {value0}-{value1} を開く', { value0: projectKey, value1: parentTicket.seq })"
                 >↗</RouterLink
               >
               <p v-if="parentErrorAt === 'parent' && errorFor('parent_seq')" class="field-error" role="alert">
@@ -1489,7 +1484,7 @@ function errorFor(field: string): string {
           </div>
 
           <div class="meta-item">
-            <dt>スプリント</dt>
+            <dt>{{ $ui('スプリント') }}</dt>
             <dd>
               <!-- **読み取り専用である**（5.5「スプリントは選べない」。pb-6）。
                    スプリントは「チケットにあらかじめ付ける属性」ではなく
@@ -1506,28 +1501,28 @@ function errorFor(field: string): string {
                **エピック自身には出さない**——入れ子を画面から作らない。
                **2列ぶんを使う**——名前に「親チケットに従う」を添えると半分の幅では切れる -->
           <div v-if="ticket.type !== 'epic'" class="meta-item wide">
-            <dt>エピック</dt>
+            <dt>{{ $ui('エピック') }}</dt>
             <dd class="epic-cell">
               <select
                 v-if="canEdit && epicSelectable"
                 :value="ticket.epic ? String(ticket.epic.seq) : ''"
                 :disabled="busy"
-                aria-label="エピック"
+                :aria-label="$ui('エピック')"
                 @change="pickEpic(($event.target as HTMLSelectElement).value)"
               >
-                <option value="">なし</option>
+                <option value="">{{ $ui('なし') }}</option>
                 <option v-for="e in epicChoices" :key="e.seq" :value="String(e.seq)">
                   {{ ticketTypeIcons.epic }} {{ projectKey }}-{{ e.seq }} {{ e.title }}
                 </option>
               </select>
               <span v-else-if="ticket.epic">{{ ticketTypeIcons.epic }} {{ projectKey }}-{{ ticket.epic.seq }} {{ ticket.epic.title }}</span>
-              <span v-else class="muted">なし</span>
-              <span v-if="!epicSelectable" class="muted">（親チケットに従う）</span>
+              <span v-else class="muted">{{ $ui('なし') }}</span>
+              <span v-if="!epicSelectable" class="muted">{{ $ui('（親チケットに従う）') }}</span>
               <RouterLink
                 v-if="ticket.epic"
                 class="jump"
                 :to="`/p/${projectKey}/tickets/${ticket.epic.seq}`"
-                :aria-label="`エピック ${projectKey}-${ticket.epic.seq} を開く`"
+                :aria-label="$ui('エピック {value0}-{value1} を開く', { value0: projectKey, value1: ticket.epic.seq })"
                 >↗</RouterLink
               >
               <p v-if="parentErrorAt === 'epic' && errorFor('parent_seq')" class="field-error" role="alert">
@@ -1540,13 +1535,13 @@ function errorFor(field: string): string {
                手を出してよいか**を決める欄で、エージェントは着手前にこれを読む。
                **「未設定」を持たない**——列が `NOT NULL` で、`null` を送ると 422（9.5.2） -->
           <div class="meta-item wide">
-            <dt>実行モード</dt>
+            <dt>{{ $ui('実行モード') }}</dt>
             <dd>
               <select
                 v-if="canEdit"
                 :value="ticket.execution_mode"
                 :disabled="busy"
-                aria-label="実行モード"
+                :aria-label="$ui('実行モード')"
                 @change="
                   selectField(
                     { execution_mode: ($event.target as HTMLSelectElement).value as never },
@@ -1583,12 +1578,12 @@ function errorFor(field: string): string {
                   )
                 "
               >
-                <option value="">未判定</option>
+                <option value="">{{ $ui('未判定') }}</option>
                 <option v-for="r in readinessOptions" :key="r" :value="r">
                   {{ readinessLabels[r] }}
                 </option>
               </select>
-              <span v-else>{{ ticket.readiness ? readinessLabels[ticket.readiness] : '未判定' }}</span>
+              <span v-else>{{ ticket.readiness ? readinessLabels[ticket.readiness] : $ui("未判定") }}</span>
               <p v-if="errorFor('readiness')" class="field-error" role="alert">
                 {{ errorFor('readiness') }}
               </p>
@@ -1598,7 +1593,7 @@ function errorFor(field: string): string {
                   ref="inputRef"
                   v-model="draft"
                   type="text"
-                  aria-label="Readiness の理由"
+                  :aria-label="$ui('Readiness の理由')"
                   @keydown.escape="cancelEdit"
                   @keydown.enter="onEnterCommit($event, commitEdit)"
                   @blur="commitEdit"
@@ -1608,11 +1603,11 @@ function errorFor(field: string): string {
                   type="button"
                   class="value-view"
                   :disabled="!canEdit"
-                  :title="canEdit ? 'クリックして理由を編集' : ''"
+                  :title="canEdit ? $ui('クリックして理由を編集') : ''"
                   @click="startEdit('readiness_note')"
                 >
                   <span v-if="ticket.readiness_note">{{ ticket.readiness_note }}</span>
-                  <span v-else class="muted">理由なし</span>
+                  <span v-else class="muted">{{ $ui('理由なし') }}</span>
                 </button>
               </div>
               <p v-if="errorFor('readiness_note')" class="field-error" role="alert">
@@ -1623,7 +1618,7 @@ function errorFor(field: string): string {
 
           <!-- タグは2列ぶんを使う。数が読めないので1列に押し込むと折り返しが荒れる -->
           <div class="meta-item wide">
-            <dt>タグ</dt>
+            <dt>{{ $ui('タグ') }}</dt>
             <dd class="tag-cell">
               <span v-for="t in ticket.tags" :key="t.id" class="tag">
                 {{ t.name }}
@@ -1632,7 +1627,7 @@ function errorFor(field: string): string {
                   type="button"
                   class="tag-remove"
                   :disabled="busy"
-                  :aria-label="`タグ ${t.name} を外す`"
+                  :aria-label="$ui('タグ {value0} を外す', { value0: t.name })"
                   @click="toggleTag(t.id, false)"
                 >
                   ✕
@@ -1647,8 +1642,8 @@ function errorFor(field: string): string {
                   type="button"
                   class="tag-add"
                   :disabled="busy || unusedTags.length === 0"
-                  :title="unusedTags.length === 0 ? '付けられるタグがありません' : 'タグを付ける'"
-                  aria-label="タグを付ける"
+                  :title="unusedTags.length === 0 ? $ui('付けられるタグがありません') : $ui('タグを付ける')"
+                  :aria-label="$ui('タグを付ける')"
                   @click="showTagPicker = !showTagPicker"
                 >
                   +
@@ -1674,7 +1669,7 @@ function errorFor(field: string): string {
           <!-- 見積は3つ（5.5）。**実績だけが左に1つで並ぶ**のは、開始と期限を
                同じ行に残すためである -->
           <div class="meta-item">
-            <dt>見積</dt>
+            <dt>{{ $ui('見積') }}</dt>
             <dd>
               <input
                 v-if="editing === 'estimate_point'"
@@ -1683,7 +1678,7 @@ function errorFor(field: string): string {
                 type="number"
                 min="0"
                 step="0.5"
-                aria-label="見積（ポイント）"
+                :aria-label="$ui('見積（ポイント）')"
                 @keydown.escape="cancelEdit"
                 @keydown.enter="onEnterCommit($event, commitEdit)"
                 @blur="commitEdit"
@@ -1704,7 +1699,7 @@ function errorFor(field: string): string {
           </div>
 
           <div class="meta-item">
-            <dt>見積（時間）</dt>
+            <dt>{{ $ui('見積（時間）') }}</dt>
             <dd>
               <input
                 v-if="editing === 'estimate_hours'"
@@ -1713,7 +1708,7 @@ function errorFor(field: string): string {
                 type="number"
                 min="0"
                 step="0.5"
-                aria-label="見積（時間）"
+                :aria-label="$ui('見積（時間）')"
                 @keydown.escape="cancelEdit"
                 @keydown.enter="onEnterCommit($event, commitEdit)"
                 @blur="commitEdit"
@@ -1734,7 +1729,7 @@ function errorFor(field: string): string {
           </div>
 
           <div class="meta-item">
-            <dt>実績</dt>
+            <dt>{{ $ui('実績') }}</dt>
             <dd>
               <input
                 v-if="editing === 'actual_hours'"
@@ -1743,7 +1738,7 @@ function errorFor(field: string): string {
                 type="number"
                 min="0"
                 step="0.5"
-                aria-label="実績（時間）"
+                :aria-label="$ui('実績（時間）')"
                 @keydown.escape="cancelEdit"
                 @keydown.enter="onEnterCommit($event, commitEdit)"
                 @blur="commitEdit"
@@ -1767,7 +1762,7 @@ function errorFor(field: string): string {
           <div class="meta-item spacer" aria-hidden="true"></div>
 
           <div class="meta-item">
-            <dt>開始</dt>
+            <dt>{{ $ui('開始') }}</dt>
             <dd>
               <!-- **`date` 列であって時刻を持たない**（9.2.2）。`input[type=date]` の
                    値がそのまま `YYYY-MM-DD` なので、`new Date()` を通さない -->
@@ -1776,7 +1771,7 @@ function errorFor(field: string): string {
                 ref="inputRef"
                 v-model="draft"
                 type="date"
-                aria-label="開始日"
+                :aria-label="$ui('開始日')"
                 @keydown.escape="cancelEdit"
                 @keydown.enter="onEnterCommit($event, commitEdit)"
                 @blur="commitEdit"
@@ -1797,14 +1792,14 @@ function errorFor(field: string): string {
           </div>
 
           <div class="meta-item">
-            <dt>期限</dt>
+            <dt>{{ $ui('期限') }}</dt>
             <dd>
               <input
                 v-if="editing === 'due_date'"
                 ref="inputRef"
                 v-model="draft"
                 type="date"
-                aria-label="期限"
+                :aria-label="$ui('期限')"
                 @keydown.escape="cancelEdit"
                 @keydown.enter="onEnterCommit($event, commitEdit)"
                 @blur="commitEdit"
@@ -1828,16 +1823,12 @@ function errorFor(field: string): string {
         <!-- 説明（5.5「説明欄」）。読み取り時はレンダリング結果、クリックで
              ソース＋プレビューへ入る -->
         <section class="block">
-          <h3 class="block-title">説明</h3>
+          <h3 class="block-title">{{ $ui('説明') }}</h3>
           <template v-if="editing === 'body_md'">
             <MarkdownEditor ref="editorRef" v-model="draft" @cancel="cancelEdit" />
             <div class="block-actions">
-              <button type="button" class="secondary" :disabled="busy" @click="cancelEdit">
-                取消
-              </button>
-              <button type="button" class="primary" :disabled="busy" @click="commitEdit">
-                保存
-              </button>
+              <button type="button" class="secondary" :disabled="busy" @click="cancelEdit"> {{ $ui('取消') }} </button>
+              <button type="button" class="primary" :disabled="busy" @click="commitEdit"> {{ $ui('保存') }} </button>
             </div>
           </template>
           <template v-else>
@@ -1846,12 +1837,12 @@ function errorFor(field: string): string {
               class="body-view"
               :class="{ readonly: !canEdit }"
               :disabled="!canEdit"
-              :title="canEdit ? 'クリックして説明を編集' : ''"
+              :title="canEdit ? $ui('クリックして説明を編集') : ''"
               @click="startEdit('body_md')"
             >
               <!-- eslint-disable-next-line vue/no-v-html -- lib/markdown.ts の dompurify を通っている -->
               <span v-if="body" class="markdown-body" v-html="body"></span>
-              <span v-else class="muted">説明はまだありません</span>
+              <span v-else class="muted">{{ $ui('説明はまだありません') }}</span>
             </button>
           </template>
           <p v-if="errorFor('body_md')" class="field-error" role="alert">
@@ -1863,7 +1854,7 @@ function errorFor(field: string): string {
              **子が無いときはセクションごと出さない**（空の見出しを置かない） -->
         <section v-if="ticket.children.length > 0" class="block">
           <div class="block-head">
-            <h3 class="block-title">子チケット ({{ ticket.children.length }})</h3>
+            <h3 class="block-title">{{ $ui('子チケット (') }}{{ ticket.children.length }})</h3>
             <!-- **見出し右の追加**（5.5）。0件だとこのセクションごと消えるので、
                  最初の1件は `[⋯]` から作る -->
             <button
@@ -1871,9 +1862,7 @@ function errorFor(field: string): string {
               type="button"
               class="block-add"
               @click="openNewChild"
-            >
-              + 追加
-            </button>
+            > {{ $ui('+ 追加') }} </button>
           </div>
           <ul class="children">
             <li v-for="c in ticket.children" :key="c.seq" class="child-row">
@@ -1894,7 +1883,7 @@ function errorFor(field: string): string {
                   v-if="canEdit"
                   :value="c.assignee?.id ?? ''"
                   :disabled="busy"
-                  :aria-label="`${projectKey}-${c.seq} の担当`"
+                  :aria-label="$ui('{value0}-{value1} の担当', { value0: projectKey, value1: c.seq })"
                   @change="
                     setChildAssignee(
                       c.seq,
@@ -1902,7 +1891,7 @@ function errorFor(field: string): string {
                     )
                   "
                 >
-                  <option value="">未割当</option>
+                  <option value="">{{ $ui('未割当') }}</option>
                   <!-- **メンバーの識別子は `actor_id`**（`id` ではない） -->
                   <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
                     {{ actorMark(m.kind) }} {{ m.display_name }}
@@ -1922,7 +1911,7 @@ function errorFor(field: string): string {
              この欄はエージェントの作業記録で、人が手で書くものではない。
              **0件なら見出しごと出さない**（何もできない空の箱になるため） -->
         <section v-if="codeRefs.length > 0" class="block">
-          <h3 class="block-title">コード</h3>
+          <h3 class="block-title">{{ $ui('コード') }}</h3>
           <ul class="refs">
             <li v-for="r in codeRefs" :key="r.id" class="ref-row">
               <!-- `url` があればリンク。**ブラウザで開けるものだけ**（5.5） -->
@@ -1945,9 +1934,7 @@ function errorFor(field: string): string {
                 type="button"
                 class="ref-action ref-danger"
                 @click="refToDelete = r"
-              >
-                削除
-              </button>
+              > {{ $ui('削除') }} </button>
             </li>
           </ul>
         </section>
@@ -1956,15 +1943,13 @@ function errorFor(field: string): string {
              唯一の入口であり、隠すと機能へ到達できない -->
         <section class="block">
           <div class="block-head">
-            <h3 class="block-title">参考リンク</h3>
+            <h3 class="block-title">{{ $ui('参考リンク') }}</h3>
             <button
               v-if="canEdit"
               type="button"
               class="block-add"
               @click="openNewReference"
-            >
-              + 追加
-            </button>
+            > {{ $ui('+ 追加') }} </button>
           </div>
           <ul v-if="docRefs.length > 0" class="refs">
             <li v-for="r in docRefs" :key="r.id" class="ref-row">
@@ -1985,16 +1970,12 @@ function errorFor(field: string): string {
               </span>
               <span v-if="r.note" class="ref-label">{{ r.note }}</span>
               <template v-if="canEdit">
-                <button type="button" class="ref-action" @click="openEditReference(r)">
-                  編集
-                </button>
-                <button type="button" class="ref-action ref-danger" @click="refToDelete = r">
-                  削除
-                </button>
+                <button type="button" class="ref-action" @click="openEditReference(r)"> {{ $ui('編集') }} </button>
+                <button type="button" class="ref-action ref-danger" @click="refToDelete = r"> {{ $ui('削除') }} </button>
               </template>
             </li>
           </ul>
-          <p v-else class="ref-empty">参考リンクはまだありません</p>
+          <p v-else class="ref-empty">{{ $ui('参考リンクはまだありません') }}</p>
           <p v-if="errorFor('references')" class="field-error" role="alert">
             {{ errorFor('references') }}
           </p>
@@ -2004,7 +1985,7 @@ function errorFor(field: string): string {
              ここから入力できるので、隠すと設定できることに気づけない。
              **知らないキーは落とさず、読み取り専用で出す**（`withScopeLines` が丸ごと写す） -->
         <section class="block">
-          <h3 class="block-title">スコープ境界</h3>
+          <h3 class="block-title">{{ $ui('スコープ境界') }}</h3>
           <dl class="scope-list">
             <div v-for="s in scopeKeys" :key="s.key" class="scope-row">
               <dt>{{ s.label }}</dt>
@@ -2015,17 +1996,13 @@ function errorFor(field: string): string {
                     v-model="draft"
                     class="scope-input"
                     rows="4"
-                    placeholder="1行に1件"
+                    :placeholder="$ui('1行に1件')"
                     :aria-label="s.label"
                     @keydown.escape="cancelEdit"
                   ></textarea>
                   <div class="block-actions">
-                    <button type="button" class="secondary" :disabled="busy" @click="cancelEdit">
-                      取消
-                    </button>
-                    <button type="button" class="primary" :disabled="busy" @click="commitEdit">
-                      保存
-                    </button>
+                    <button type="button" class="secondary" :disabled="busy" @click="cancelEdit"> {{ $ui('取消') }} </button>
+                    <button type="button" class="primary" :disabled="busy" @click="commitEdit"> {{ $ui('保存') }} </button>
                   </div>
                 </template>
                 <button
@@ -2034,7 +2011,7 @@ function errorFor(field: string): string {
                   class="scope-view"
                   :class="{ readonly: !canEdit }"
                   :disabled="!canEdit"
-                  :title="canEdit ? `クリックして${s.label}を編集` : ''"
+                  :title="canEdit ? $ui('クリックして{value0}を編集', { value0: s.label }) : ''"
                   @click="startEdit(`scope.${s.key}`)"
                 >
                   <template v-if="scopeText(ticket.scope, s.key) !== ''">
@@ -2045,7 +2022,7 @@ function errorFor(field: string): string {
                       >{{ line }}</code
                     >
                   </template>
-                  <span v-else class="muted">なし</span>
+                  <span v-else class="muted">{{ $ui('なし') }}</span>
                 </button>
                 <p v-if="errorFor(`scope.${s.key}`)" class="field-error" role="alert">
                   {{ errorFor(`scope.${s.key}`) }}
@@ -2056,7 +2033,7 @@ function errorFor(field: string): string {
               <dt>{{ k }}</dt>
               <dd>
                 <code class="scope-item">{{ v }}</code>
-                <span class="muted">（画面からは編集できない）</span>
+                <span class="muted">{{ $ui('（画面からは編集できない）') }}</span>
               </dd>
             </div>
           </dl>
@@ -2065,7 +2042,7 @@ function errorFor(field: string): string {
         <!-- 完了条件（5.5「完了条件（DoD）」）。**0件でも見出しを出す**——
              追加の入口がこのセクションの中にあり、隠すと到達できない -->
         <section class="block">
-          <h3 class="block-title">完了条件 (DoD)</h3>
+          <h3 class="block-title">{{ $ui('完了条件 (DoD)') }}</h3>
           <ul v-if="dodItems.length > 0" class="dod-list">
             <li v-for="d in dodItems" :key="d.id" class="dod-row">
               <!-- **付け外した時点で `PATCH`**（選択式と同じ扱い。5.5） -->
@@ -2075,7 +2052,7 @@ function errorFor(field: string): string {
                 class="dod-check"
                 :checked="d.is_satisfied"
                 :disabled="!canEdit || busy"
-                :aria-label="`完了条件「${d.body}」を満たした`"
+                :aria-label="$ui('完了条件「{value0}」を満たした', { value0: d.body })"
                 @change="toggleDoD(d, ($event.target as HTMLInputElement).checked)"
               />
 
@@ -2085,7 +2062,7 @@ function errorFor(field: string): string {
                   v-model="dodDraft"
                   type="text"
                   class="dod-input"
-                  aria-label="完了条件の本文"
+                  :aria-label="$ui('完了条件の本文')"
                   :disabled="busy"
                   @keydown.enter="onEnterCommit($event, commitDoDEdit)"
                   @keydown.escape="cancelDoDEdit"
@@ -2110,12 +2087,10 @@ function errorFor(field: string): string {
                 type="button"
                 class="ref-action ref-danger"
                 @click="dodToDelete = d"
-              >
-                削除
-              </button>
+              > {{ $ui('削除') }} </button>
             </li>
           </ul>
-          <p v-else class="ref-empty">完了条件はまだありません</p>
+          <p v-else class="ref-empty">{{ $ui('完了条件はまだありません') }}</p>
 
           <!-- **追加はモーダルにしない**（5.5）。列挙するときは続けて何件も打つ -->
           <form v-if="canEdit" class="dod-add" @submit.prevent="addDoD">
@@ -2123,13 +2098,11 @@ function errorFor(field: string): string {
               v-model="newDoD"
               type="text"
               class="dod-input"
-              placeholder="完了条件を追加…"
-              aria-label="完了条件を追加"
+              :placeholder="$ui('完了条件を追加…')"
+              :aria-label="$ui('完了条件を追加')"
               :disabled="busy"
             />
-            <button type="submit" class="secondary" :disabled="newDoD.trim() === '' || busy">
-              追加
-            </button>
+            <button type="submit" class="secondary" :disabled="newDoD.trim() === '' || busy"> {{ $ui('追加') }} </button>
           </form>
           <p v-if="dodError" class="field-error" role="alert">{{ dodError }}</p>
         </section>
@@ -2138,10 +2111,8 @@ function errorFor(field: string): string {
              ——サーバが `outgoing` と `incoming` の両方を1本で返す（9.10.1） -->
         <section class="block">
           <div class="block-head">
-            <h3 class="block-title">関連チケット</h3>
-            <button v-if="canEdit" type="button" class="block-add" @click="openLinkModal">
-              + 追加
-            </button>
+            <h3 class="block-title">{{ $ui('関連チケット') }}</h3>
+            <button v-if="canEdit" type="button" class="block-add" @click="openLinkModal"> {{ $ui('+ 追加') }} </button>
           </div>
           <ul v-if="links.length > 0" class="rel-list">
             <li v-for="l in links" :key="l.id" class="rel-row">
@@ -2171,19 +2142,17 @@ function errorFor(field: string): string {
                 type="button"
                 class="ref-action ref-danger"
                 @click="linkToDelete = l"
-              >
-                削除
-              </button>
+              > {{ $ui('削除') }} </button>
             </li>
           </ul>
-          <p v-else class="ref-empty">関連チケットはまだありません</p>
+          <p v-else class="ref-empty">{{ $ui('関連チケットはまだありません') }}</p>
           <p v-if="linkError" class="field-error" role="alert">{{ linkError }}</p>
         </section>
 
         <!-- コメント（5.5「コメント」）。**見出しの数は `comment_count`**
              （`deleted_at IS NULL`）で、一覧の `total` ではない（9.8） -->
         <section class="block">
-          <h3 class="block-title">コメント ({{ ticket.comment_count }})</h3>
+          <h3 class="block-title">{{ $ui('コメント (') }}{{ ticket.comment_count }})</h3>
           <TicketComments
             :project-key="projectKey"
             :seq="ticket.seq"
@@ -2201,7 +2170,7 @@ function errorFor(field: string): string {
             :workflow="workflow"
             :members="members"
           >
-            <template #title><h3 class="block-title bare">履歴</h3></template>
+            <template #title><h3 class="block-title bare">{{ $ui('履歴') }}</h3></template>
           </TicketActivity>
         </section>
 
@@ -2223,9 +2192,9 @@ function errorFor(field: string): string {
 
     <ConfirmDialog
       v-if="refToDelete"
-      :title="refToDelete.kind === 'code' ? 'コードを削除しますか？' : '参考リンクを削除しますか？'"
+      :title="refToDelete.kind === 'code' ? $ui('コードを削除しますか？') : $ui('参考リンクを削除しますか？')"
       :message="deleteReferenceMessage"
-      confirm-label="削除する"
+      :confirm-label="$ui('削除する')"
       danger
       :busy="busy"
       @cancel="refToDelete = null"
@@ -2249,9 +2218,9 @@ function errorFor(field: string): string {
 
     <ConfirmDialog
       v-if="confirmDelete"
-      title="チケットを削除しますか？"
+      :title="$ui('チケットを削除しますか？')"
       :message="deleteMessage"
-      confirm-label="削除する"
+      :confirm-label="$ui('削除する')"
       danger
       :busy="busy"
       @cancel="confirmDelete = false"
@@ -2271,9 +2240,9 @@ function errorFor(field: string): string {
 
     <ConfirmDialog
       v-if="dodToDelete"
-      title="完了条件を削除しますか？"
-      :message="`「${dodToDelete.body}」を削除します。元に戻せません。`"
-      confirm-label="削除する"
+      :title="$ui('完了条件を削除しますか？')"
+      :message="$ui('「{value0}」を削除します。元に戻せません。', { value0: dodToDelete.body })"
+      :confirm-label="$ui('削除する')"
       danger
       :busy="busy"
       @cancel="dodToDelete = null"
@@ -2282,9 +2251,9 @@ function errorFor(field: string): string {
 
     <ConfirmDialog
       v-if="linkToDelete"
-      title="関連を解除しますか？"
+      :title="$ui('関連を解除しますか？')"
       :message="deleteLinkMessage"
-      confirm-label="解除する"
+      :confirm-label="$ui('解除する')"
       danger
       :busy="busy"
       @cancel="linkToDelete = null"

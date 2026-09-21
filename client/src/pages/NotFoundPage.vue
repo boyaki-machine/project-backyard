@@ -9,9 +9,9 @@ import { RouterLink } from 'vue-router'
   -->
   <div class="error-page">
     <p class="code">404</p>
-    <h1 class="title">ページが見つかりません</h1>
-    <p class="detail">URLが変更されたか、アクセスできないページです。</p>
-    <RouterLink class="back" to="/projects">プロジェクト一覧へ戻る</RouterLink>
+    <h1 class="title">{{ $ui('ページが見つかりません') }}</h1>
+    <p class="detail">{{ $ui('URLが変更されたか、アクセスできないページです。') }}</p>
+    <RouterLink class="back" to="/projects">{{ $ui('プロジェクト一覧へ戻る') }}</RouterLink>
   </div>
 </template>
 

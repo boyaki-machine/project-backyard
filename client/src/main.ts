@@ -4,6 +4,7 @@ import { createPinia } from 'pinia'
 import { setUnauthorizedHandler } from './api/client'
 import App from './App.vue'
 import { i18n } from './i18n'
+import { uiText } from './locales/ui'
 import { router } from './router'
 import { REDIRECT_QUERY } from './router/guards'
 import { useAuthStore } from './stores/auth'
@@ -12,6 +13,8 @@ import './styles/tokens.css'
 import './styles/base.css'
 
 const app = createApp(App)
+
+app.config.globalProperties.$ui = uiText
 
 app.use(createPinia())
 app.use(i18n)

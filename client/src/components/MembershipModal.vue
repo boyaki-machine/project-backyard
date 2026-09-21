@@ -70,25 +70,23 @@ onMounted(() => {
 </script>
 
 <template>
-  <Modal title="プロジェクトの権限を追加" @close="emit('cancel')">
+  <Modal :title="$ui('プロジェクトの権限を追加')" @close="emit('cancel')">
     <form class="body" @submit.prevent="submit">
       <label class="field">
-        <span class="label">プロジェクト <span class="required">*</span></span>
+        <span class="label">{{ $ui('プロジェクト') }} <span class="required">*</span></span>
         <select v-model="projectKey" name="project_key" :disabled="busy || loading">
           <option value="" disabled>
-            {{ loading ? '読み込み中…' : 'プロジェクトを選択' }}
+            {{ loading ? $ui("読み込み中…") : $ui("プロジェクトを選択") }}
           </option>
           <option v-for="p in candidates" :key="p.key" :value="p.key">
             {{ p.key }} — {{ p.name }}
           </option>
         </select>
-        <span v-if="!loading && candidates.length === 0" class="hint">
-          追加できるプロジェクトがありません（すべてに権限が設定されています）。
-        </span>
+        <span v-if="!loading && candidates.length === 0" class="hint"> {{ $ui('追加できるプロジェクトがありません（すべてに権限が設定されています）。') }} </span>
       </label>
 
       <label class="field">
-        <span class="label">ロール <span class="required">*</span></span>
+        <span class="label">{{ $ui('ロール') }} <span class="required">*</span></span>
         <select v-model="role" name="role" :disabled="busy">
           <option v-for="r in projectRoles" :key="r.key" :value="r.key">
             {{ r.display_name }}
@@ -101,10 +99,8 @@ onMounted(() => {
     </form>
 
     <template #footer>
-      <button type="button" class="secondary" :disabled="busy" @click="emit('cancel')">
-        キャンセル
-      </button>
-      <button type="button" class="primary" :disabled="!canSubmit" @click="submit">追加</button>
+      <button type="button" class="secondary" :disabled="busy" @click="emit('cancel')"> {{ $ui('キャンセル') }} </button>
+      <button type="button" class="primary" :disabled="!canSubmit" @click="submit">{{ $ui('追加') }}</button>
     </template>
   </Modal>
 </template>

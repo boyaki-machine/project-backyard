@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * 認証アプリの登録ダイアログ（`GuiDesign.md` 5.8「登録ダイアログ」）。
  *
@@ -116,16 +117,16 @@ function detail(field: string) {
 
 function asApiError(e: unknown): ApiError {
   if (e instanceof ApiError) return e
-  return new ApiError({ status: 0, code: 'network_error', message: '通信に失敗しました' })
+  return new ApiError({ status: 0, code: 'network_error', message: uiText("通信に失敗しました") })
 }
 </script>
 
 <template>
-  <Modal title="認証アプリを追加" @close="emit('close')">
+  <Modal :title="$ui('認証アプリを追加')" @close="emit('close')">
     <div class="body">
       <!-- 名前は最初に決める（QR を読ませたあとに訊かない） -->
       <label class="field">
-        <span class="label">名前 <span class="required">*</span></span>
+        <span class="label">{{ $ui('名前') }} <span class="required">*</span></span>
         <input
           v-model="name"
           type="text"
@@ -136,7 +137,7 @@ function asApiError(e: unknown): ApiError {
           :disabled="started !== null || starting"
         />
         <span v-if="detail('name')" class="detail">{{ detail('name')?.message }}</span>
-        <span v-else class="hint">どの端末の認証アプリかを、あとで見分けるための名前です。</span>
+        <span v-else class="hint">{{ $ui('どの端末の認証アプリかを、あとで見分けるための名前です。') }}</span>
       </label>
 
       <div v-if="started === null" class="actions-inline">
@@ -146,7 +147,7 @@ function asApiError(e: unknown): ApiError {
           :disabled="name.trim() === '' || starting"
           @click="start"
         >
-          {{ starting ? '準備中…' : 'QRコードを出す' }}
+          {{ starting ? $ui("準備中…") : $ui("QRコードを出す") }}
         </button>
       </div>
 
@@ -156,29 +157,25 @@ function asApiError(e: unknown): ApiError {
             <!-- alt を空にする。**この画像は装飾ではなく秘密**なので、
                  読み上げに値そのものを流さない（下の文字列が代替である） -->
             <img v-if="qrDataUri" :src="qrDataUri" alt="" class="qr" width="180" height="180" />
-            <p v-else-if="qrFailed" class="qr-fallback">
-              QRコードを描けませんでした。下の文字列を手で入力してください。
-            </p>
-            <p v-else class="qr-fallback">QRコードを準備しています…</p>
+            <p v-else-if="qrFailed" class="qr-fallback"> {{ $ui('QRコードを描けませんでした。下の文字列を手で入力してください。') }} </p>
+            <p v-else class="qr-fallback">{{ $ui('QRコードを準備しています…') }}</p>
           </div>
 
           <div class="qr-text">
-            <p class="hint">認証アプリでこのQRコードを読み取ってください。</p>
-            <p class="hint">読み取れないときは、この文字列を手で入力します。</p>
+            <p class="hint">{{ $ui('認証アプリでこのQRコードを読み取ってください。') }}</p>
+            <p class="hint">{{ $ui('読み取れないときは、この文字列を手で入力します。') }}</p>
             <div class="secret-line">
               <code ref="secretEl" class="secret">{{ started.secret }}</code>
-              <button type="button" class="secondary" @click="copy">コピー</button>
+              <button type="button" class="secondary" @click="copy">{{ $ui('コピー') }}</button>
             </div>
             <!-- 状態を色だけで示さない（9.2） -->
-            <p v-if="copied === 'ok'" class="note" role="status">✓ コピーしました</p>
-            <p v-else-if="copied === 'manual'" class="note" role="status">
-              自動でコピーできませんでした。選択した状態にしたので ⌘C（Ctrl+C）でコピーしてください。
-            </p>
+            <p v-if="copied === 'ok'" class="note" role="status">{{ $ui('✓ コピーしました') }}</p>
+            <p v-else-if="copied === 'manual'" class="note" role="status"> {{ $ui('自動でコピーできませんでした。選択した状態にしたので ⌘C（Ctrl+C）でコピーしてください。') }} </p>
           </div>
         </div>
 
         <label class="field">
-          <span class="label">表示された6桁のコード <span class="required">*</span></span>
+          <span class="label">{{ $ui('表示された6桁のコード') }} <span class="required">*</span></span>
           <input
             v-model="code"
             type="text"
@@ -190,9 +187,7 @@ function asApiError(e: unknown): ApiError {
             :disabled="confirming"
           />
           <span v-if="detail('code')" class="detail">{{ detail('code')?.message }}</span>
-          <span v-else class="hint">
-            ⓘ 登録を終えるには、いまアプリに出ているコードが必要です。
-          </span>
+          <span v-else class="hint"> {{ $ui('ⓘ 登録を終えるには、いまアプリに出ているコードが必要です。') }} </span>
         </label>
       </template>
 
@@ -203,14 +198,14 @@ function asApiError(e: unknown): ApiError {
     </div>
 
     <template #footer>
-      <button type="button" class="secondary" @click="emit('close')">キャンセル</button>
+      <button type="button" class="secondary" @click="emit('close')">{{ $ui('キャンセル') }}</button>
       <button
         type="button"
         class="primary"
         :disabled="started === null || code.trim() === '' || confirming"
         @click="confirm"
       >
-        {{ confirming ? '登録中…' : '登録' }}
+        {{ confirming ? $ui("登録中…") : $ui("登録") }}
       </button>
     </template>
   </Modal>

@@ -16,6 +16,7 @@
  */
 import { api } from './client'
 import type { components } from './schema'
+import { uiText } from '../locales/ui'
 
 export type TicketLink = components['schemas']['TicketLink']
 export type TicketLinkList = components['schemas']['TicketLinkList']
@@ -36,9 +37,9 @@ export type LinkDirection = TicketLink['direction']
  * ためである（重複はどちらを閉じても片方が片づく同値の関係）。
  */
 export function linkLabel(type: LinkType, direction: LinkDirection): string {
-  if (type === 'blocks') return direction === 'outgoing' ? '自先行' : '自後行'
-  if (type === 'duplicates') return '重複'
-  if (type === 'relates') return '関連'
+  if (type === 'blocks') return direction === 'outgoing' ? uiText('自先行') : uiText('自後行')
+  if (type === 'duplicates') return uiText('重複')
+  if (type === 'relates') return uiText('関連')
   // `FS`〜`SF` は画面から作れないが、MCP が積んだ行は一覧に混ざりうる。
   // **キーをそのまま出す**——訳を当てても読む画面（ガント）が Phase 1 に無い。
   return type
@@ -48,12 +49,12 @@ export function linkLabel(type: LinkType, direction: LinkDirection): string {
 export function linkLabelTitle(type: LinkType, direction: LinkDirection): string {
   if (type === 'blocks') {
     return direction === 'outgoing'
-      ? '自先行 = このチケットが先行。相手がこのチケットの完了を待つ'
-      : '自後行 = このチケットが後行。このチケットが相手の完了を待つ'
+      ? uiText('自先行 = このチケットが先行。相手がこのチケットの完了を待つ')
+      : uiText('自後行 = このチケットが後行。このチケットが相手の完了を待つ')
   }
-  if (type === 'duplicates') return '重複 = 同じことを指している'
-  if (type === 'relates') return '関連 = 関わりがある'
-  return `${type}（ガント用の依存。Phase 1 の画面からは作れない）`
+  if (type === 'duplicates') return uiText('重複 = 同じことを指している')
+  if (type === 'relates') return uiText('関連 = 関わりがある')
+  return uiText('{type}（ガント用の依存。Phase 1 の画面からは作れない）', { type })
 }
 
 /**
@@ -79,17 +80,17 @@ export interface LinkChoice {
 }
 
 export const linkChoices: LinkChoice[] = [
-  { value: 'relates', label: '関連', hint: '関わりがある' },
-  { value: 'duplicates', label: '重複', hint: '同じことを指している' },
+  { value: 'relates', get label() { return uiText('関連') }, get hint() { return uiText('関わりがある') } },
+  { value: 'duplicates', get label() { return uiText('重複') }, get hint() { return uiText('同じことを指している') } },
   {
     value: 'blocks_out',
-    label: '自先行',
-    hint: 'このチケットが先行。相手がこのチケットの完了を待つ',
+    get label() { return uiText('自先行') },
+    get hint() { return uiText('このチケットが先行。相手がこのチケットの完了を待つ') },
   },
   {
     value: 'blocks_in',
-    label: '自後行',
-    hint: 'このチケットが後行。このチケットが相手の完了を待つ',
+    get label() { return uiText('自後行') },
+    get hint() { return uiText('このチケットが後行。このチケットが相手の完了を待つ') },
   },
 ]
 

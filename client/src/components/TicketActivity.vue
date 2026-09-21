@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * チケットの履歴（`GuiDesign.md` 5.5「履歴」、`ApiDesign.md` 9.13.2）。手順19b。
  *
@@ -73,7 +74,7 @@ const labelContext = computed<ActivityLabelContext>(() => ({
 }))
 
 function toMessage(e: unknown): string {
-  return e instanceof ApiError ? e.message : '通信に失敗しました'
+  return e instanceof ApiError ? e.message : uiText("通信に失敗しました")
 }
 
 async function load(): Promise<void> {
@@ -154,20 +155,20 @@ defineExpose({ reload: load })
     <div class="ta-head">
       <slot name="title" />
       <button type="button" class="ta-toggle" :aria-expanded="open" @click="toggle">
-        <span>{{ open ? '閉じる' : '開く' }}</span>
+        <span>{{ open ? $ui("閉じる") : $ui("開く") }}</span>
         <span class="ta-caret" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
       </button>
     </div>
 
     <div v-if="open" class="ta-body">
-      <p v-if="loading" class="ta-note">読み込み中…</p>
+      <p v-if="loading" class="ta-note">{{ $ui('読み込み中…') }}</p>
       <p v-else-if="loadError" class="ta-note ta-error" role="alert">
         {{ loadError }}
-        <button type="button" class="ta-retry" @click="load">再試行</button>
+        <button type="button" class="ta-retry" @click="load">{{ $ui('再試行') }}</button>
       </p>
 
       <template v-else>
-        <p v-if="items.length === 0" class="ta-note">まだ履歴がありません</p>
+        <p v-if="items.length === 0" class="ta-note">{{ $ui('まだ履歴がありません') }}</p>
 
         <ol v-else class="ta-list">
           <li v-for="a in items" :key="a.id" class="ta-item">
@@ -198,7 +199,7 @@ defineExpose({ reload: load })
           :disabled="loadingMore"
           @click="loadMore"
         >
-          {{ loadingMore ? '読み込み中…' : `以前の履歴を読む（残り ${total - items.length} 件）` }}
+          {{ loadingMore ? $ui("読み込み中…") : $ui("以前の履歴を読む（残り {value0} 件）", { value0: total - items.length }) }}
         </button>
       </template>
     </div>

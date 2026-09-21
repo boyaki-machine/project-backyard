@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * アクターのアバター（`GuiDesign.md` 6.1 / 8.4.2）。手順18b で実体化した。
  *
@@ -41,7 +42,7 @@ const px = computed(() => props.size ?? 24)
 
 /** **形が唯一の区別である**ため、読み上げにも言葉で残す（8.4.2） */
 const title = computed(
-  () => `${props.name}（${isAgent.value ? 'エージェント' : '人'}）`,
+  () => uiText("{value0}（{value1}）", { value0: props.name, value1: isAgent.value ? uiText("エージェント") : uiText("人") }),
 )
 </script>
 

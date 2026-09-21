@@ -35,35 +35,33 @@ async function copy() {
 </script>
 
 <template>
-  <Modal title="アクセストークンを発行しました" @close="emit('close')">
+  <Modal :title="$ui('アクセストークンを発行しました')" @close="emit('close')">
     <div class="body">
       <!-- warning は「面」で表す（8.4.1）。文字色はベースのまま -->
-      <p class="warn">⚠ このトークンはこの画面でしか確認できません。閉じると再表示できません。</p>
+      <p class="warn">{{ $ui('⚠ このトークンはこの画面でしか確認できません。閉じると再表示できません。') }}</p>
 
       <dl class="fields">
-        <dt>名前</dt>
+        <dt>{{ $ui('名前') }}</dt>
         <dd>{{ token.name }}</dd>
-        <dt>有効期限</dt>
-        <dd>{{ token.expires_at ? formatDate(token.expires_at) : '無期限' }}</dd>
-        <dt>トークン</dt>
+        <dt>{{ $ui('有効期限') }}</dt>
+        <dd>{{ token.expires_at ? formatDate(token.expires_at) : $ui("無期限") }}</dd>
+        <dt>{{ $ui('トークン') }}</dt>
         <dd>
           <div class="token-line">
             <code ref="tokenEl" class="token">{{ token.token }}</code>
-            <button type="button" class="secondary" @click="copy">コピー</button>
+            <button type="button" class="secondary" @click="copy">{{ $ui('コピー') }}</button>
           </div>
           <!-- 状態を色だけで示さない（9.2）ので記号か文言を必ず添える -->
-          <p v-if="copied === 'ok'" class="note" role="status">✓ コピーしました</p>
-          <p v-else-if="copied === 'manual'" class="note" role="status">
-            自動でコピーできませんでした。選択した状態にしたので ⌘C（Ctrl+C）でコピーしてください。
-          </p>
+          <p v-if="copied === 'ok'" class="note" role="status">{{ $ui('✓ コピーしました') }}</p>
+          <p v-else-if="copied === 'manual'" class="note" role="status"> {{ $ui('自動でコピーできませんでした。選択した状態にしたので ⌘C（Ctrl+C）でコピーしてください。') }} </p>
         </dd>
       </dl>
 
-      <p class="hint">ⓘ CLI やスクリプトからは Authorization: Bearer &lt;トークン&gt; の形で送ります。</p>
+      <p class="hint">{{ $ui('ⓘ CLI やスクリプトからは Authorization: Bearer <トークン> の形で送ります。') }}</p>
     </div>
 
     <template #footer>
-      <button type="button" class="primary" @click="emit('close')">閉じる</button>
+      <button type="button" class="primary" @click="emit('close')">{{ $ui('閉じる') }}</button>
     </template>
   </Modal>
 </template>

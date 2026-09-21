@@ -30,6 +30,7 @@
 import type { Activity } from '../api/dashboard'
 import { priorityLabels, ticketTypeLabels } from '../api/tickets'
 import type { TicketPriority, TicketType } from '../api/tickets'
+import { uiText } from '../locales/ui'
 
 /**
  * 値を名前に直すための手がかり。**持っているものだけ渡す。**
@@ -48,12 +49,12 @@ export interface ActivityLabelContext {
 
 /** チケットの完全形 ID（`my-app-31`）。`seq` が無ければ「削除されたチケット」 */
 export function ticketLabel(projectKey: string, seq: number | null | undefined): string {
-  return seq === null || seq === undefined ? '削除されたチケット' : `${projectKey}-${seq}`
+  return seq === null || seq === undefined ? uiText('削除されたチケット') : `${projectKey}-${seq}`
 }
 
 /** 実行者の表示名。`actor` は `null` になりうる（9.13.2） */
 export function actorLabel(a: Activity['actor']): string {
-  return a === null || a === undefined ? '削除されたユーザー' : a.display_name
+  return a === null || a === undefined ? uiText('削除されたユーザー') : a.display_name
 }
 
 /** 値が空か（`null` / 空文字）。サーバは削除を `new_value: null` で表す */
@@ -81,11 +82,11 @@ function childChange(a: Activity): 'added' | 'edited' | 'removed' {
  * 裸にすると、`の期限を2026-09-30 に変更` のように**前の語と値が地続きになって
  * どこからが値か読めない**（実機のスクリーンショットで判明。手順19b）。
  */
-function transition(oldValue: string, newValue: string): string {
-  if (oldValue === '' && newValue === '') return 'を変更'
-  if (oldValue === '') return `を「${newValue}」に変更`
-  if (newValue === '') return `を「${oldValue}」から未設定に変更`
-  return `を「${oldValue}」から「${newValue}」に変更`
+function transition(field: string, oldValue: string, newValue: string): string {
+  if (oldValue === '' && newValue === '') return uiText('{field}を変更', { field })
+  if (oldValue === '') return uiText('{field}を「{newValue}」に変更', { field, newValue })
+  if (newValue === '') return uiText('{field}を「{oldValue}」から未設定に変更', { field, oldValue })
+  return uiText('{field}を「{oldValue}」から「{newValue}」に変更', { field, oldValue, newValue })
 }
 
 /** 表示用に値を整える。空なら「なし」 */
@@ -121,82 +122,82 @@ function priorityName(v: string | null | undefined): string {
  * 返る文は「〜を作成」「〜を『進行中』に変更」のように**述部だけ**である。
  */
 export function activitySummary(a: Activity, ctx: ActivityLabelContext): string {
-  if (a.action === 'create') return 'を作成'
-  if (a.action === 'delete') return 'を削除'
+  if (a.action === 'create') return uiText('を作成')
+  if (a.action === 'delete') return uiText('を削除')
 
   // 遷移（9.6）。**status_key は必ずワークフローに在る**ので表示名に直せる。
   if (a.action === 'transition' || a.field === 'status_key') {
     const to = statusName(ctx, a.new_value)
-    return to === '' ? 'の状態を変更' : `を「${to}」に変更`
+    return to === '' ? uiText('の状態を変更') : uiText('を「{value}」に変更', { value: to })
   }
 
   switch (a.field) {
     case 'title':
-      return 'のタイトルを変更'
+      return uiText('のタイトルを変更')
     case 'body_md':
       // 値を持たない（9.5.2）。「説明が変わった」ことだけが残る。
-      return 'の説明を変更'
+      return uiText('の説明を変更')
     case 'type': {
       const to = typeName(a.new_value)
-      return to === '' ? 'の種別を変更' : `の種別を「${to}」に変更`
+      return to === '' ? uiText('の種別を変更') : uiText('の種別を「{value}」に変更', { value: to })
     }
     case 'priority': {
       const to = priorityName(a.new_value)
-      return to === '' ? 'の優先度を変更' : `の優先度を「${to}」に変更`
+      return to === '' ? uiText('の優先度を変更') : uiText('の優先度を「{value}」に変更', { value: to })
     }
     case 'assignee_id': {
       // ULID をそのまま出さない。解決できたときだけ名前を添える。
       const to = actorName(ctx, a.new_value)
-      if (blank(a.new_value)) return 'の担当を未設定に変更'
-      return to === '' ? 'の担当を変更' : `の担当を ${to} に変更`
+      if (blank(a.new_value)) return uiText('の担当を未設定に変更')
+      return to === '' ? uiText('の担当を変更') : uiText('の担当を {value} に変更', { value: to })
     }
     case 'sprint_id':
       // **スプリント表を持つ画面が無い**（5.5）。値は出さない。
-      return blank(a.new_value) ? 'のスプリントを未設定に変更' : 'のスプリントを変更'
+      return blank(a.new_value) ? uiText('のスプリントを未設定に変更') : uiText('のスプリントを変更')
     case 'parent_id': {
       // parent_id には `seq` が入る（`tickets_update.go` の int4StrPtr）。
-      if (blank(a.new_value)) return 'の親を未設定に変更'
-      return `の親を ${ctx.projectKey}-${shown(a.new_value)} に変更`
+      if (blank(a.new_value)) return uiText('の親を未設定に変更')
+      return uiText('の親を {value} に変更', { value: `${ctx.projectKey}-${shown(a.new_value)}` })
     }
     case 'estimate_point':
-      return `の見積(pt)${transition(shown(a.old_value), shown(a.new_value))}`
+      return transition(uiText('見積(pt)'), shown(a.old_value), shown(a.new_value))
     case 'estimate_hours':
-      return `の見積(時間)${transition(shown(a.old_value), shown(a.new_value))}`
+      return transition(uiText('見積(時間)'), shown(a.old_value), shown(a.new_value))
     case 'actual_hours':
-      return `の実績(時間)${transition(shown(a.old_value), shown(a.new_value))}`
+      return transition(uiText('実績(時間)'), shown(a.old_value), shown(a.new_value))
     case 'start_date':
-      return `の開始日${transition(shown(a.old_value), shown(a.new_value))}`
+      return transition(uiText('開始日'), shown(a.old_value), shown(a.new_value))
     case 'due_date':
-      return `の期限${transition(shown(a.old_value), shown(a.new_value))}`
+      return transition(uiText('期限'), shown(a.old_value), shown(a.new_value))
     case 'comment':
-      return { added: 'にコメントを追加', edited: 'のコメントを編集', removed: 'のコメントを削除' }[
+      return { added: uiText('にコメントを追加'), edited: uiText('のコメントを編集'), removed: uiText('のコメントを削除') }[
         childChange(a)
       ]
     case 'dod':
       return {
-        added: 'に完了条件を追加',
-        edited: 'の完了条件を変更',
-        removed: 'の完了条件を削除',
+        added: uiText('に完了条件を追加'),
+        edited: uiText('の完了条件を変更'),
+        removed: uiText('の完了条件を削除'),
       }[childChange(a)]
     case 'link':
       return {
-        added: 'に関連チケットを追加',
-        edited: 'の関連チケットを変更',
-        removed: 'の関連チケットを削除',
+        added: uiText('に関連チケットを追加'),
+        edited: uiText('の関連チケットを変更'),
+        removed: uiText('の関連チケットを削除'),
       }[childChange(a)]
     case 'reference.code':
-      return { added: 'にコードを追加', edited: 'のコードを変更', removed: 'のコードを削除' }[
+      return { added: uiText('にコードを追加'), edited: uiText('のコードを変更'), removed: uiText('のコードを削除') }[
         childChange(a)
       ]
     case 'reference.doc':
       return {
-        added: 'に参考リンクを追加',
-        edited: 'の参考リンクを変更',
-        removed: 'の参考リンクを削除',
+        added: uiText('に参考リンクを追加'),
+        edited: uiText('の参考リンクを変更'),
+        removed: uiText('の参考リンクを削除'),
       }[childChange(a)]
     default:
       // 9.13.2 の表に無い field。**空行にせず既定の文へ落とす。**
-      return 'を更新'
+      return uiText('を更新')
   }
 }
 

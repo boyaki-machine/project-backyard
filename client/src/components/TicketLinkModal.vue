@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * 関連チケットの追加（`GuiDesign.md` 5.5「関連チケット」「追加のモーダル」）。手順18b。
  *
@@ -60,7 +61,7 @@ const filtered = computed(() => {
 })
 
 const targetError = computed(() =>
-  targetSeq.value === null ? '関連づけるチケットを選んでください' : null,
+  targetSeq.value === null ? uiText("関連づけるチケットを選んでください") : null,
 )
 
 const canSave = computed(() => targetError.value === null && props.busy !== true)
@@ -77,10 +78,10 @@ function submit(): void {
 </script>
 
 <template>
-  <Modal title="関連チケットを追加" @close="emit('close')">
+  <Modal :title="$ui('関連チケットを追加')" @close="emit('close')">
     <form id="ticket-link-form" class="form" @submit.prevent="submit">
       <div class="field">
-        <span class="label">関係 <span class="required">*</span></span>
+        <span class="label">{{ $ui('関係') }} <span class="required">*</span></span>
         <!-- **ラジオで出す。** 4つしかなく、`hint` の1行を各項目に添えたい
              ——`<option>` に入れると幅で切れる（5.5 の状態ドロップダウンと同じ理由） -->
         <div class="choices">
@@ -96,16 +97,16 @@ function submit(): void {
       </div>
 
       <div class="field">
-        <span class="label">相手のチケット <span class="required">*</span></span>
+        <span class="label">{{ $ui('相手のチケット') }} <span class="required">*</span></span>
         <input
           v-model="filter"
           type="text"
           class="filter"
-          placeholder="ID・タイトルで絞り込む"
+          :placeholder="$ui('ID・タイトルで絞り込む')"
           autocapitalize="off"
           autocomplete="off"
         />
-        <div class="candidates" role="listbox" aria-label="関連づけるチケット">
+        <div class="candidates" role="listbox" :aria-label="$ui('関連づけるチケット')">
           <label v-for="c in filtered" :key="c.seq" class="candidate">
             <input v-model="targetSeq" type="radio" name="link-target" :value="c.seq" />
             <span class="type-icon" :title="ticketTypeLabels[c.type]" aria-hidden="true">
@@ -116,14 +117,14 @@ function submit(): void {
             <span class="candidate-status">{{ c.status.name }}</span>
           </label>
           <p v-if="filtered.length === 0" class="empty">
-            {{ candidates.length === 0 ? '関連づけられるチケットがありません' : '一致するチケットがありません' }}
+            {{ candidates.length === 0 ? $ui("関連づけられるチケットがありません") : $ui("一致するチケットがありません") }}
           </p>
         </div>
         <span v-if="touched && targetError" class="detail">✕ {{ targetError }}</span>
         <span v-else-if="errorFor('target_seq')" class="detail">
           ✕ {{ errorFor('target_seq') }}
         </span>
-        <span v-else class="hint">いま一覧に出ているチケットから選びます</span>
+        <span v-else class="hint">{{ $ui('いま一覧に出ているチケットから選びます') }}</span>
       </div>
 
       <!-- 欄に紐づかない誤り（409 `already_exists`）。**モーダルを閉じずにここへ出す**
@@ -132,10 +133,8 @@ function submit(): void {
     </form>
 
     <template #footer>
-      <button type="button" class="secondary" @click="emit('close')">キャンセル</button>
-      <button type="submit" form="ticket-link-form" class="primary" :disabled="!canSave">
-        追加
-      </button>
+      <button type="button" class="secondary" @click="emit('close')">{{ $ui('キャンセル') }}</button>
+      <button type="submit" form="ticket-link-form" class="primary" :disabled="!canSave"> {{ $ui('追加') }} </button>
     </template>
   </Modal>
 </template>

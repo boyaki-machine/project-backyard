@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * アプリケーション設定 `/admin/settings`（`GuiDesign.md` 5.12）。
  *
@@ -57,12 +58,16 @@ const saving = ref(false)
 const confirmingLockout = ref(false)
 
 /** 出どころの札（`GuiDesign.md` 5.12）。並びは優先順と同じ */
-const SOURCE_LABEL: Record<SettingSource, string> = {
+const sourceLabelSources: Record<SettingSource, string> = {
   secret_file: '秘密ファイル',
   config_file: '設定ファイル',
   env: '環境変数',
   database: 'DB',
   default: '既定',
+}
+
+function sourceLabel(source: SettingSource): string {
+  return uiText(sourceLabelSources[source])
 }
 
 /**
@@ -119,6 +124,33 @@ function currentValue(s: Setting): string {
   const d = draft.value[s.key]
   if (d !== undefined) return d ?? (s.default_value ?? '')
   return s.value ?? ''
+}
+
+/** サーバの設定キーを正本に、アプリ所有の表示名と説明を現在の言語へ直す。 */
+function settingName(s: Setting): string {
+  const settingNameSources: Record<string, string> = {
+    bind: '待受アドレス',
+    secret_key: '秘密の暗号鍵',
+    tls_enabled: 'TLS で待ち受ける',
+    log_format: 'ログ形式',
+    log_level: 'ログレベル',
+    health_show_version: 'ヘルスチェックにバージョンを含める',
+    cookie_secure: 'Cookie に Secure を付ける',
+  }
+  return settingNameSources[s.key] ? uiText(settingNameSources[s.key]) : s.display_name
+}
+
+function settingDescription(s: Setting): string {
+  const settingDescriptionSources: Record<string, string> = {
+    bind: 'HTTP を待ち受けるアドレスとポート。切り替えは即時で、期限内に確認しないと元へ戻ります。コンテナで動かしている場合は、公開側の設定（compose の ports や Service の targetPort）も合わせて変えてください',
+    secret_key: 'TLS の秘密鍵を暗号化するための鍵。32バイトを base64 で与えます。証明書を登録しないなら不要です',
+    tls_enabled: '有効にすると HTTPS で待ち受けます。証明書の登録が別途必要です。切り替えは即時で、期限内に確認しないと元へ戻ります',
+    log_format: '標準出力へ書くログの形式。text は開発時に人が読むためのものです',
+    log_level: '記録するログの最低レベル。debug では /healthcheck のアクセスログも出ます',
+    health_show_version: 'GET /healthcheck の応答にバージョンを入れます。未認証の呼び出し元への情報開示になるため既定は無効です',
+    cookie_secure: 'HTTPS で公開する環境では有効にします',
+  }
+  return settingDescriptionSources[s.key] ? uiText(settingDescriptionSources[s.key]) : s.description
 }
 
 /** 編集されたか。**`null`（既定に戻す）も変更として数える** */
@@ -186,10 +218,10 @@ async function save() {
     // **確認が要る設定を変えたなら、押さないと戻ることを書く**（pb-107）。
     // 改訂前は件数だけで、**期限に一言も触れていなかった。**
     notice.value = res.pending_confirmation
-      ? `${payload.length}件の設定を保存しました。` +
-        '画面下の「アクセスできました」を押してください。' +
-        '押さないまま300秒が過ぎると、元の設定へ戻ります。'
-      : `${payload.length}件の設定を保存しました。`
+      ? uiText("{value0}件の設定を保存しました。", { value0: payload.length }) +
+        uiText("画面下の「アクセスできました」を押してください。") +
+        uiText("押さないまま300秒が過ぎると、元の設定へ戻ります。")
+      : uiText("{value0}件の設定を保存しました。", { value0: payload.length })
   } catch (e: unknown) {
     actionError.value = asApiError(e)
   } finally {
@@ -203,15 +235,15 @@ async function save() {
  */
 function pinnedReason(s: Setting): string {
   if (s.restart_required && s.layer === 1) {
-    return `起動前に要る設定です。${s.env_key} か設定ファイルの ${s.config_file_key} で与えてください`
+    return uiText("起動前に要る設定です。{value0} か設定ファイルの {value1} で与えてください", { value0: s.env_key, value1: s.config_file_key })
   }
   switch (s.source) {
     case 'secret_file':
-      return `${s.env_key}_FILE が指すファイルで固定されています`
+      return uiText("{value0}_FILE が指すファイルで固定されています", { value0: s.env_key })
     case 'config_file':
-      return `設定ファイルの ${s.config_file_key} で固定されています`
+      return uiText("設定ファイルの {value0} で固定されています", { value0: s.config_file_key })
     case 'env':
-      return `${s.env_key} で固定されています`
+      return uiText("{value0} で固定されています", { value0: s.env_key })
     default:
       return ''
   }
@@ -219,13 +251,13 @@ function pinnedReason(s: Setting): string {
 
 function asApiError(e: unknown): ApiError {
   if (e instanceof ApiError) return e
-  return new ApiError({ status: 0, code: 'network_error', message: '通信に失敗しました' })
+  return new ApiError({ status: 0, code: 'network_error', message: uiText("通信に失敗しました") })
 }
 </script>
 
 <template>
   <div class="page">
-    <PageHeader title="アプリケーション設定" />
+    <PageHeader :title="$ui('アプリケーション設定')" />
 
     <div class="tabs" role="tablist">
       <button
@@ -234,18 +266,14 @@ function asApiError(e: unknown): ApiError {
         :aria-selected="tab === 'general'"
         :class="{ on: tab === 'general' }"
         @click="tab = 'general'"
-      >
-        一般
-      </button>
+      > {{ $ui('一般') }} </button>
       <button
         type="button"
         role="tab"
         :aria-selected="tab === 'tls'"
         :class="{ on: tab === 'tls' }"
         @click="tab = 'tls'"
-      >
-        TLS 証明書
-      </button>
+      > {{ $ui('TLS 証明書') }} </button>
       <button
         type="button"
         role="tab"
@@ -263,28 +291,27 @@ function asApiError(e: unknown): ApiError {
     <DatabaseTab v-else-if="tab === 'database'" />
 
     <template v-else>
-    <p v-if="loading" class="muted">読み込み中…</p>
+    <p v-if="loading" class="muted">{{ $ui('読み込み中…') }}</p>
     <p v-else-if="loadError" class="error" role="alert">{{ loadError.message }}</p>
 
     <template v-else>
       <p v-if="notice" class="notice" role="status">{{ notice }}</p>
       <p v-if="actionError" class="error" role="alert">{{ actionError.message }}</p>
 
-      <p v-if="configFilePath" class="muted file">
-        設定ファイル: <code>{{ configFilePath }}</code>
+      <p v-if="configFilePath" class="muted file"> {{ $ui('設定ファイル:') }} <code>{{ configFilePath }}</code>
       </p>
 
       <section v-for="group in [
-        { title: '実行時の設定', hint: '変更は次のリクエストから効きます', list: runtimeItems },
-        { title: '起動時の設定', hint: '変更には再起動が要ります', list: bootItems },
+        { title: $ui('実行時の設定'), hint: $ui('変更は次のリクエストから効きます'), list: runtimeItems },
+        { title: $ui('起動時の設定'), hint: $ui('変更には再起動が要ります'), list: bootItems },
       ]" :key="group.title" class="group">
         <h2 class="section-title">{{ group.title }}</h2>
         <p class="muted hint">{{ group.hint }}</p>
 
         <div v-for="s in group.list" :key="s.key" class="row">
           <div class="head">
-            <span class="name">{{ s.display_name }}</span>
-            <span class="badge" :class="`src-${s.source}`">{{ SOURCE_LABEL[s.source] }}</span>
+            <span class="name">{{ settingName(s) }}</span>
+            <span class="badge" :class="`src-${s.source}`">{{ sourceLabel(s.source) }}</span>
           </div>
 
           <!-- 秘密は値を出さない（11.1 が value を返さない） -->
@@ -308,7 +335,7 @@ function asApiError(e: unknown): ApiError {
                     setValue(s, ($event.target as HTMLInputElement).checked ? 'true' : 'false')
                   "
                 />
-                <span>{{ currentValue(s) === 'true' ? '有効' : '無効' }}</span>
+                <span>{{ currentValue(s) === 'true' ? $ui("有効") : $ui("無効") }}</span>
               </span>
               <input
                 v-else
@@ -325,16 +352,14 @@ function asApiError(e: unknown): ApiError {
             <p class="muted reason">{{ pinnedReason(s) }}</p>
           </template>
 
-          <p class="desc">{{ s.description }}</p>
+          <p class="desc">{{ settingDescription(s) }}</p>
 
-          <p v-if="s.key === 'cookie_secure' && s.editable" class="warn">
-            ⚠ http で提供している場合、有効にするとログインできなくなります
-          </p>
+          <p v-if="s.key === 'cookie_secure' && s.editable" class="warn"> {{ $ui('⚠ http で提供している場合、有効にするとログインできなくなります') }} </p>
 
           <div class="foot">
             <span v-if="s.updated_at" class="muted">
               {{ formatDateTime(s.updated_at) }}
-              <template v-if="s.updated_by">{{ s.updated_by.display_name }} が変更</template>
+              <template v-if="s.updated_by">{{ s.updated_by.display_name }} {{ $ui('が変更') }}</template>
             </span>
             <!-- 既定に戻すは [DB] にだけ出す。[既定] は押しても何も変わらない -->
             <button
@@ -342,19 +367,17 @@ function asApiError(e: unknown): ApiError {
               type="button"
               class="link"
               @click="resetToDefault(s)"
-            >
-              既定に戻す
-            </button>
-            <span v-if="isDirty(s)" class="dirty">変更あり</span>
+            > {{ $ui('既定に戻す') }} </button>
+            <span v-if="isDirty(s)" class="dirty">{{ $ui('変更あり') }}</span>
           </div>
         </div>
       </section>
 
       <!-- 保存は1つだけ。変更が無いときは押せないようにする（設計原則4） -->
       <div class="actions">
-        <button v-if="hasChanges" type="button" class="link" @click="discard">破棄</button>
+        <button v-if="hasChanges" type="button" class="link" @click="discard">{{ $ui('破棄') }}</button>
         <button type="button" class="primary" :disabled="!hasChanges || saving" @click="requestSave">
-          {{ saving ? '保存中…' : '変更を保存' }}
+          {{ saving ? $ui("保存中…") : $ui("変更を保存") }}
         </button>
       </div>
     </template>
@@ -365,9 +388,9 @@ function asApiError(e: unknown): ApiError {
     <Teleport to="body">
       <ConfirmDialog
         v-if="confirmingLockout"
-        title="Cookie に Secure を付けますか？"
-        message="http で提供している場合、この変更でログインできなくなります。復旧するには環境変数 PB_COOKIE_SECURE=false を与えて起動し直す必要があります。"
-        confirm-label="有効にする"
+        :title="$ui('Cookie に Secure を付けますか？')"
+        :message="$ui('http で提供している場合、この変更でログインできなくなります。復旧するには環境変数 PB_COOKIE_SECURE=false を与えて起動し直す必要があります。')"
+        :confirm-label="$ui('有効にする')"
         danger
         :busy="saving"
         @confirm="save"

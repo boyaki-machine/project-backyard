@@ -185,27 +185,27 @@ function submit() {
 </script>
 
 <template>
-  <Modal :title="isEdit ? 'エージェントを編集' : 'エージェントを登録'" @close="emit('close')">
+  <Modal :title="isEdit ? $ui('エージェントを編集') : $ui('エージェントを登録')" @close="emit('close')">
     <form id="agent-form" class="agent-form" @submit.prevent="submit">
       <label class="field">
-        <span class="label">名前 <span class="required">*</span></span>
+        <span class="label">{{ $ui('名前') }} <span class="required">*</span></span>
         <input
           v-model="displayName"
           type="text"
           name="display_name"
           :maxlength="MAX_NAME"
-          placeholder="私の Claude Code"
+          :placeholder="$ui('私の Claude Code')"
           :aria-invalid="detail('display_name') !== undefined"
           :disabled="busy"
           @blur="fillEnvSuffixSuggestion"
         />
         <span v-if="detail('display_name')" class="detail">{{ detail('display_name')?.message }}</span>
-        <span v-else class="hint">どの端末のどのクライアントかが分かる名前を付けてください。</span>
+        <span v-else class="hint">{{ $ui('どの端末のどのクライアントかが分かる名前を付けてください。') }}</span>
       </label>
 
       <!-- 編集では変えられない（4.5.4）。値は読めるように残す -->
       <div class="field">
-        <span class="label">プロジェクト <span v-if="!isEdit" class="required">*</span></span>
+        <span class="label">{{ $ui('プロジェクト') }} <span v-if="!isEdit" class="required">*</span></span>
         <p v-if="isEdit" class="fixed">{{ agent?.project.name }}</p>
         <template v-else>
           <select
@@ -217,17 +217,15 @@ function submit() {
             <option v-for="p in projects" :key="p.key" :value="p.key">{{ p.name }}</option>
           </select>
           <span v-if="detail('project_key')" class="detail">{{ detail('project_key')?.message }}</span>
-          <span v-else-if="noProjects" class="detail">
-            参加しているプロジェクトがありません。プロジェクトに参加してから登録してください。
-          </span>
-          <span v-else class="hint">参加しているプロジェクトから選びます。あとで変更できません。</span>
+          <span v-else-if="noProjects" class="detail"> {{ $ui('参加しているプロジェクトがありません。プロジェクトに参加してから登録してください。') }} </span>
+          <span v-else class="hint">{{ $ui('参加しているプロジェクトから選びます。あとで変更できません。') }}</span>
         </template>
       </div>
 
       <!-- **`<select>` で出す**（5.8.2）。値域は今後も増えるのでラジオでは早晩あふれる。
            **選択肢は `GET /agent-client-kinds` から取る**——画面は対応表を持たない -->
       <label class="field">
-        <span class="label">クライアント <span class="required">*</span></span>
+        <span class="label">{{ $ui('クライアント') }} <span class="required">*</span></span>
         <select
           v-model="clientKind"
           name="client_kind"
@@ -239,13 +237,11 @@ function submit() {
         <span v-if="detail('client_kind')" class="detail">{{ detail('client_kind')?.message }}</span>
         <!-- **「VS Code」という語が選択肢に無い**ので、自分の使い方をどれに当てるか迷う。
              5.8.2 の対応表を1行に畳んでその場に出す -->
-        <span v-else class="hint">
-          VS Code をお使いの場合は、その中で動いているものを選びます（Claude 拡張なら Claude Code、GitHub Copilot なら GitHub Copilot）。
-        </span>
+        <span v-else class="hint"> {{ $ui('VS Code をお使いの場合は、その中で動いているものを選びます（Claude 拡張なら Claude Code、GitHub Copilot なら GitHub Copilot）。') }} </span>
       </label>
 
       <label class="field">
-        <span class="label">モデル名</span>
+        <span class="label">{{ $ui('モデル名') }}</span>
         <input
           v-model="modelName"
           type="text"
@@ -258,7 +254,7 @@ function submit() {
       </label>
 
       <label class="field">
-        <span class="label">モデルバージョン</span>
+        <span class="label">{{ $ui('モデルバージョン') }}</span>
         <input
           v-model="modelVersion"
           type="text"
@@ -272,7 +268,7 @@ function submit() {
       <!-- **接尾だけを入力させる**（5.8.2）。接頭は固定文字として左に出し、
            編集させない——`PATH` や `HOME` を作れないようにするためである -->
       <label class="field">
-        <span class="label">環境変数名</span>
+        <span class="label">{{ $ui('環境変数名') }}</span>
         <div class="env-row">
           <span class="env-prefix">{{ ENV_SUFFIX_PREFIX }}</span>
           <input
@@ -288,12 +284,8 @@ function submit() {
         <span v-if="detail('token_env_suffix')" class="detail">
           {{ detail('token_env_suffix')?.message }}
         </span>
-        <span v-else-if="isEdit" class="hint">
-          変えたら接続設定を取り直してください。設定ファイルに古い変数名が残っていると繋がりません。
-        </span>
-        <span v-else class="hint">
-          トークンを入れる環境変数です。端末が分かる名前にしてください（同じ端末で複数のエージェントを使うときに区別できます）。
-        </span>
+        <span v-else-if="isEdit" class="hint"> {{ $ui('変えたら接続設定を取り直してください。設定ファイルに古い変数名が残っていると繋がりません。') }} </span>
+        <span v-else class="hint"> {{ $ui('トークンを入れる環境変数です。端末が分かる名前にしてください（同じ端末で複数のエージェントを使うときに区別できます）。') }} </span>
       </label>
 
       <p v-if="kindsError" class="alert" role="alert">{{ kindsError.message }}</p>
@@ -308,11 +300,9 @@ function submit() {
     </form>
 
     <template #footer>
-      <button type="button" class="secondary" :disabled="busy" @click="emit('close')">
-        キャンセル
-      </button>
+      <button type="button" class="secondary" :disabled="busy" @click="emit('close')"> {{ $ui('キャンセル') }} </button>
       <button type="submit" form="agent-form" class="primary" :disabled="!canSubmit">
-        {{ busy ? (isEdit ? '保存中…' : '登録中…') : isEdit ? '保存' : '登録' }}
+        {{ busy ? (isEdit ? $ui("保存中…") : $ui("登録中…")) : isEdit ? $ui("保存") : $ui("登録") }}
       </button>
     </template>
   </Modal>

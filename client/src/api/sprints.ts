@@ -7,6 +7,7 @@
  */
 import { api } from './client'
 import type { components } from './schema'
+import { uiText } from '../locales/ui'
 
 export type Sprint = components['schemas']['Sprint']
 export type SprintList = components['schemas']['SprintList']
@@ -22,9 +23,9 @@ export type StartSprintRequest = components['schemas']['StartSprintRequest']
  * キーであり、日本語は画面が持つ。
  */
 export const sprintStatusLabels: Record<SprintStatus, string> = {
-  planned: '計画中',
-  active: '進行中',
-  completed: '完了',
+  get planned() { return uiText('計画中') },
+  get active() { return uiText('進行中') },
+  get completed() { return uiText('完了') },
 }
 
 /**

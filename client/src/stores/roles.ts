@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { uiText } from '../locales/ui'
 import { computed, ref } from 'vue'
 
 import { getPermissions, getRoles, type Permission, type Role, type RoleScope } from '../api/roles'
@@ -61,7 +62,7 @@ export const useRolesStore = defineStore('roles', () => {
         loadedScope.value = scope
         error.value = null
       } catch (e) {
-        error.value = e instanceof Error ? e.message : 'ロールを取得できませんでした'
+        error.value = e instanceof Error ? e.message : uiText('ロールを取得できませんでした')
       } finally {
         rolesInFlight = null
       }
@@ -121,7 +122,7 @@ export const useRolesStore = defineStore('roles', () => {
    */
   function userRoleLabel(kind: string, systemRole: string | null | undefined): string {
     if (systemRole != null) return roleLabel(systemRole)
-    return kind === 'agent' ? 'エージェント' : '—'
+    return kind === 'agent' ? uiText('エージェント') : '—'
   }
 
   return {

@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 
 import PageHeader from '../components/PageHeader.vue'
 import { useAuthStore } from '../stores/auth'
+import { uiText } from '../locales/ui'
 
 /**
  * 未実装・設計未確定の画面に出すプレースホルダ（GuiDesign.md 6.5）。
@@ -26,9 +27,9 @@ const placeholder = computed(() => route.meta.placeholder)
 const heading = computed(() => {
   const p = placeholder.value
   if (!p) return ''
-  if (p.projectHeading === undefined) return p.title
+  if (p.projectHeading === undefined) return uiText(p.title)
   const key = typeof route.params.key === 'string' ? route.params.key : ''
-  return `${auth.projectByKey(key)?.name ?? key} ${p.projectHeading}`
+  return `${auth.projectByKey(key)?.name ?? key} ${uiText(p.projectHeading)}`
 })
 
 /** 定義側のパス（/p/:key）を出す。実際のURLではなくルートの形を示すため */
@@ -41,23 +42,23 @@ const routePath = computed(() => route.matched[route.matched.length - 1]?.path ?
 
     <div class="page-body">
       <div class="card">
-        <p class="lead"><span class="icon" aria-hidden="true">▤</span> このページは未実装です</p>
-        <p class="plan-title">{{ placeholder.title }}のページ予定</p>
+        <p class="lead"><span class="icon" aria-hidden="true">▤</span> {{ $ui('このページは未実装です') }}</p>
+        <p class="plan-title">{{ $ui(placeholder.title) }}{{ $ui('のページ予定') }}</p>
 
         <section v-if="placeholder.planned.length > 0" class="planned">
-          <h2 class="planned-title">予定している内容</h2>
+          <h2 class="planned-title">{{ $ui('予定している内容') }}</h2>
           <ul class="planned-list">
-            <li v-for="item in placeholder.planned" :key="item">{{ item }}</li>
+            <li v-for="item in placeholder.planned" :key="item">{{ $ui(item) }}</li>
           </ul>
         </section>
 
         <dl class="meta">
-          <dt>設計文書</dt>
-          <dd>{{ placeholder.docRef }}</dd>
-          <dt>ルート</dt>
+          <dt>{{ $ui('設計文書') }}</dt>
+          <dd>{{ $ui(placeholder.docRef) }}</dd>
+          <dt>{{ $ui('ルート') }}</dt>
           <dd><code>{{ routePath }}</code></dd>
-          <dt>状態</dt>
-          <dd>{{ placeholder.status }}</dd>
+          <dt>{{ $ui('状態') }}</dt>
+          <dd>{{ $ui(placeholder.status) }}</dd>
         </dl>
       </div>
     </div>

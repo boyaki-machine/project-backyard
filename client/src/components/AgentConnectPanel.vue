@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * 接続パネル（`GuiDesign.md` 5.8.2「接続パネル」、手順28b）。
  *
@@ -88,7 +89,7 @@ async function load() {
     loadError.value =
       e instanceof ApiError
         ? e
-        : new ApiError({ status: 0, code: 'network_error', message: '通信に失敗しました' })
+        : new ApiError({ status: 0, code: 'network_error', message: uiText("通信に失敗しました") })
   } finally {
     loading.value = false
   }
@@ -114,58 +115,43 @@ function preview(content: string): string {
 </script>
 
 <template>
-  <section class="panel" aria-label="接続の手順">
+  <section class="panel" :aria-label="$ui('接続の手順')">
     <p v-if="loadError" class="alert" role="alert">
       {{ loadError.message }}
-      <button type="button" class="secondary" @click="load">再試行</button>
+      <button type="button" class="secondary" @click="load">{{ $ui('再試行') }}</button>
     </p>
 
-    <p v-else-if="loading" class="hint">読み込んでいます…</p>
+    <p v-else-if="loading" class="hint">{{ $ui('読み込んでいます…') }}</p>
 
     <template v-else-if="setup">
       <!-- 1. 作業フォルダ ────────────────────────────────────
            **PB は材料の取り方を知らない**（`Requirements.md` 10.9.1）。
            リポジトリ型・配布型・MCP 型があり、指定するのはプロジェクト管理者で、
            置き場は PB の文書である。ここは深リンクだけを出す（手順28c） -->
-      <h4 class="step">1. 作業フォルダを用意する</h4>
-      <p class="hint">
-        材料の取り方（リポジトリの clone、配布物の展開など）はプロジェクトの文書にあります。
-        <RouterLink :to="onboardingDocHref">エージェントの参画情報を開く</RouterLink>
+      <h4 class="step">{{ $ui('1. 作業フォルダを用意する') }}</h4>
+      <p class="hint"> {{ $ui('材料の取り方（リポジトリの clone、配布物の展開など）はプロジェクトの文書にあります。') }} <RouterLink :to="onboardingDocHref">{{ $ui('エージェントの参画情報を開く') }}</RouterLink>
       </p>
 
       <!-- 2. 接続設定 ─────────────────────────────────────── -->
-      <h4 class="step">2. 接続設定を置く</h4>
+      <h4 class="step">{{ $ui('2. 接続設定を置く') }}</h4>
 
       <template v-if="isCodex">
         <fieldset class="transport">
-          <legend>接続方式</legend>
-          <label><input v-model="transport" type="radio" value="direct" /> HTTPS へ直接接続（公開 CA）</label>
-          <label><input v-model="transport" type="radio" value="bridge" /> ローカル stdio ブリッジを使う（自己署名・社内 CA）</label>
+          <legend>{{ $ui('接続方式') }}</legend>
+          <label><input v-model="transport" type="radio" value="direct" /> {{ $ui('HTTPS へ直接接続（公開 CA）') }}</label>
+          <label><input v-model="transport" type="radio" value="bridge" /> {{ $ui('ローカル stdio ブリッジを使う（自己署名・社内 CA）') }}</label>
         </fieldset>
-        <p v-if="transport === 'bridge'" class="warn-note">
-          ⓘ Codex 標準の HTTP MCP クライアントでは自己署名・社内 CA の証明書を利用できないため、
-          ローカル PB ではこの方式を使います。ブリッジも TLS 検証を行うので、証明書を OS の
-          信頼ストアへ登録するか、<code>PB_MCP_CA_FILE</code> で発行元 CA を指定します。
-          配置・証明書登録または CA 指定・設定・後始末の詳細は、この zip の
-          <code>PB-README.md</code> にあります。
-        </p>
-        <p v-else class="hint">
-          公開 CA の証明書では直接接続できます。自己署名・社内 CA の証明書では、
-          OS の信頼ストアへ登録しても Codex 標準の HTTP MCP クライアントが受け付けないため、
-          ローカル stdio ブリッジを選びます。詳しい手順は、この zip の
-          <code>PB-README.md</code> にあります。
-        </p>
+        <p v-if="transport === 'bridge'" class="warn-note"> {{ $ui('ⓘ Codex 標準の HTTP MCP クライアントでは自己署名・社内 CA の証明書を利用できないため、 ローカル PB ではこの方式を使います。ブリッジも TLS 検証を行うので、証明書を OS の 信頼ストアへ登録するか、') }}<code>PB_MCP_CA_FILE</code> {{ $ui('で発行元 CA を指定します。 配置・証明書登録または CA 指定・設定・後始末の詳細は、この zip の') }} <code>PB-README.md</code> {{ $ui('にあります。') }} </p>
+        <p v-else class="hint"> {{ $ui('公開 CA の証明書では直接接続できます。自己署名・社内 CA の証明書では、 OS の信頼ストアへ登録しても Codex 標準の HTTP MCP クライアントが受け付けないため、 ローカル stdio ブリッジを選びます。詳しい手順は、この zip の') }} <code>PB-README.md</code> {{ $ui('にあります。') }} </p>
       </template>
 
       <template v-if="file">
         <div class="file-head">
           <code class="path">{{ file.path }}</code>
           <!-- 状態を色だけで示さない（9.2）。`mode` は常に merge（4.5.8.4） -->
-          <span class="mode warn">⚠ 統合</span>
+          <span class="mode warn">{{ $ui('⚠ 統合') }}</span>
           <span class="spacer" />
-          <button type="button" class="secondary" @click="copy('file', file.content, 'pb-cnx-file')">
-            コピー
-          </button>
+          <button type="button" class="secondary" @click="copy('file', file.content, 'pb-cnx-file')"> {{ $ui('コピー') }} </button>
           <a class="secondary download" :href="zipHref" download>⬇ zip</a>
         </div>
 
@@ -173,74 +159,49 @@ function preview(content: string): string {
              開き、履歴管理とは関係しない。同じ文言を出すと嘘になる -->
         <template v-if="isDesktop">
           <p class="hint">
-            {{ setup.agent.client_display_name }} の
-            <strong>Settings &gt; Developer &gt; Edit Config</strong> から
-            <code>{{ file.path }}</code> を開いて、中の <code>mcpServers</code> に
-            <code>pb</code> の項を足します。
-          </p>
-          <p class="warn-note">
-            ⚠ 設定 &gt; コネクタ（カスタムコネクタ）からは繋がりません。あちらの接続は
-            あなたの端末ではなく <strong>Anthropic のクラウドから</strong>届くため、
-            手元の PB には到達せず https も必要になります<br />
-            ⚠ <code>"command": "npx"</code> のままでは起動しません。GUI アプリはシェルの
-            <code>PATH</code> を継承しないので、<strong>貼り替える欄が2つ</strong>あります
-            （<code>which npx</code> と <code>dirname $(which node)</code>）<br />
-            ⚠ 既に他の MCP サーバを登録している場合は、丸ごと置き換えないでください<br />
-            ⓘ 橋（<code>mcp-remote</code>）が PB と往復することは実測しました。
-            {{ setup.agent.client_display_name }} 自身がこの設定を読んで起動するところは
-            <strong>まだ確かめられていません</strong>
+            {{ setup.agent.client_display_name }} {{ $ui('の') }} <strong>Settings &gt; Developer &gt; Edit Config</strong> {{ $ui('から') }} <code>{{ file.path }}</code> {{ $ui('を開いて、中の') }} <code>mcpServers</code> {{ $ui('に') }} <code>pb</code> {{ $ui('の項を足します。') }} </p>
+          <p class="warn-note"> {{ $ui('⚠ 設定 > コネクタ（カスタムコネクタ）からは繋がりません。あちらの接続は あなたの端末ではなく') }} <strong>{{ $ui('Anthropic のクラウドから') }}</strong>{{ $ui('届くため、 手元の PB には到達せず https も必要になります') }}<br />
+            ⚠ <code>"command": "npx"</code> {{ $ui('のままでは起動しません。GUI アプリはシェルの') }} <code>PATH</code> {{ $ui('を継承しないので、') }}<strong>{{ $ui('貼り替える欄が2つ') }}</strong>{{ $ui('あります （') }}<code>which npx</code> {{ $ui('と') }} <code>dirname $(which node)</code>）<br /> {{ $ui('⚠ 既に他の MCP サーバを登録している場合は、丸ごと置き換えないでください') }}<br /> {{ $ui('ⓘ 橋（') }}<code>mcp-remote</code>{{ $ui('）が PB と往復することは実測しました。') }} {{ setup.agent.client_display_name }} {{ $ui('自身がこの設定を読んで起動するところは') }} <strong>{{ $ui('まだ確かめられていません') }}</strong>
           </p>
         </template>
         <template v-else>
-          <p class="hint">
-            1 のフォルダの直下に <code>{{ file.path }}</code> として置きます。
-          </p>
+          <p class="hint"> {{ $ui('1 のフォルダの直下に') }} <code>{{ file.path }}</code> {{ $ui('として置きます。') }} </p>
           <!-- **既存を壊しうることを、押す前に出す。** zip では別名で入るが、
                コピーして貼る人には別名という手当てが効かない -->
-          <p class="warn-note">
-            ⓘ これは各自の環境です。履歴管理には入れません（<code>.gitignore</code> に入っています）<br />
-            ⚠ 既に <code>{{ file.path }}</code> がある場合は、丸ごと置き換えないでください。
-            中の該当キーに <code>pb</code> の項だけを足します<br />
-            ⚠ zip の中は <code>{{ file.path }}</code> ではなく別名です。展開してから元の名前へ戻します
-          </p>
+          <p class="warn-note"> {{ $ui('ⓘ これは各自の環境です。履歴管理には入れません（') }}<code>.gitignore</code> {{ $ui('に入っています）') }}<br /> {{ $ui('⚠ 既に') }} <code>{{ file.path }}</code> {{ $ui('がある場合は、丸ごと置き換えないでください。 中の該当キーに') }} <code>pb</code> {{ $ui('の項だけを足します') }}<br /> {{ $ui('⚠ zip の中は') }} <code>{{ file.path }}</code> {{ $ui('ではなく別名です。展開してから元の名前へ戻します') }} </p>
         </template>
 
-        <p v-if="copied.file === 'ok'" class="ok" role="status">✓ コピーしました</p>
-        <p v-else-if="copied.file === 'manual'" class="hint" role="status">
-          コピーできませんでした。下の内容を選択して ⌘C でコピーしてください。
-        </p>
+        <p v-if="copied.file === 'ok'" class="ok" role="status">{{ $ui('✓ コピーしました') }}</p>
+        <p v-else-if="copied.file === 'manual'" class="hint" role="status"> {{ $ui('コピーできませんでした。下の内容を選択して ⌘C でコピーしてください。') }} </p>
 
         <pre id="pb-cnx-file" class="content">{{
           expanded ? file.content : preview(file.content)
         }}</pre>
         <button type="button" class="secondary more" @click="expanded = !expanded">
-          {{ expanded ? '畳む' : '全文を見る' }}
+          {{ expanded ? $ui("畳む") : $ui("全文を見る") }}
         </button>
       </template>
 
       <!-- **配置ファイルを持たない種別**（4.5.8.3）。カードは消さず、
            自分で書くのに要る値を出す -->
       <template v-else>
-        <p class="warn-note">
-          ⓘ PB は {{ setup.agent.client_display_name }} 向けの接続設定を持っていません。
-          下の値を使って、お使いのクライアントの作法で設定してください。
-        </p>
+        <p class="warn-note"> {{ $ui('ⓘ PB は') }} {{ setup.agent.client_display_name }} {{ $ui('向けの接続設定を持っていません。 下の値を使って、お使いのクライアントの作法で設定してください。') }} </p>
         <dl class="values">
-          <dt>接続先</dt>
+          <dt>{{ $ui('接続先') }}</dt>
           <dd><code>{{ setup.mcp_url }}</code></dd>
-          <dt>認証</dt>
-          <dd><code>Authorization: Bearer &lt;トークン&gt;</code></dd>
-          <dt>環境変数</dt>
+          <dt>{{ $ui('認証') }}</dt>
+          <dd><code>{{ $ui('Authorization: Bearer <トークン>') }}</code></dd>
+          <dt>{{ $ui('環境変数') }}</dt>
           <dd><code>{{ setup.agent.token_env_name }}</code></dd>
         </dl>
-        <a class="secondary download" :href="zipHref" download>⬇ 手引きを zip で落とす</a>
+        <a class="secondary download" :href="zipHref" download>{{ $ui('⬇ 手引きを zip で落とす') }}</a>
       </template>
 
       <!-- 3. 環境変数 ─────────────────────────────────────
            **`export_line` が null の種別では節ごと落とす**（4.5.8.2）。
            意味のない行を出すと、利用者は書かれていない前提を自分の期待で埋める -->
       <template v-if="setup.export_line">
-        <h4 class="step">3. トークンを環境変数へ置く</h4>
+        <h4 class="step">{{ $ui('3. トークンを環境変数へ置く') }}</h4>
         <div class="file-head">
           <code id="pb-cnx-export" class="export">{{ setup.export_line }}</code>
           <span class="spacer" />
@@ -248,58 +209,36 @@ function preview(content: string): string {
             type="button"
             class="secondary"
             @click="copy('export', setup.export_line, 'pb-cnx-export')"
-          >
-            コピー
-          </button>
+          > {{ $ui('コピー') }} </button>
         </div>
-        <p v-if="copied.export === 'ok'" class="ok" role="status">✓ コピーしました</p>
-        <p v-else-if="copied.export === 'manual'" class="hint" role="status">
-          コピーできませんでした。上の行を選択して ⌘C でコピーしてください。
-        </p>
+        <p v-if="copied.export === 'ok'" class="ok" role="status">{{ $ui('✓ コピーしました') }}</p>
+        <p v-else-if="copied.export === 'manual'" class="hint" role="status"> {{ $ui('コピーできませんでした。上の行を選択して ⌘C でコピーしてください。') }} </p>
         <p class="hint">
-          <code>~/.zshrc</code> か direnv に追記し、値を差し替えます。
-        </p>
+          <code>~/.zshrc</code> {{ $ui('か direnv に追記し、値を差し替えます。') }} </p>
         <!-- **平文はここに出せない**（`Requirements.md` 10.10.1）。
              失った場合の復旧経路は再発行である -->
-        <p v-if="hasToken" class="hint">
-          ⓘ 値は発行時に一度だけ表示されます。控えていない場合は [⋯] → トークンを再発行 で取り直します。
-        </p>
-        <p v-else class="warn-note">
-          ⚠ このエージェントはトークンが未発行です。先に [ トークンを発行 ] を押してください。
-        </p>
+        <p v-if="hasToken" class="hint"> {{ $ui('ⓘ 値は発行時に一度だけ表示されます。控えていない場合は [⋯] → トークンを再発行 で取り直します。') }} </p>
+        <p v-else class="warn-note"> {{ $ui('⚠ このエージェントはトークンが未発行です。先に [ トークンを発行 ] を押してください。') }} </p>
       </template>
       <template v-else>
-        <h4 class="step">3. トークンを渡す</h4>
+        <h4 class="step">{{ $ui('3. トークンを渡す') }}</h4>
         <!-- **同じ null でも渡し方が違う**（4.5.8.2）。Copilot はクライアントが
              入力を求め、Desktop は設定ファイルの env に平文で書く -->
         <p v-if="isDesktop" class="hint">
-          {{ setup.agent.client_display_name }} は環境変数を使いません（GUI アプリにシェルの環境は届きません）。
-          上の設定の <code>env</code> の <code>{{ setup.agent.token_env_name }}</code> に、発行時に一度だけ表示された値を貼ります。
-        </p>
+          {{ setup.agent.client_display_name }} {{ $ui('は環境変数を使いません（GUI アプリにシェルの環境は届きません）。 上の設定の') }} <code>env</code> {{ $ui('の') }} <code>{{ setup.agent.token_env_name }}</code> {{ $ui('に、発行時に一度だけ表示された値を貼ります。') }} </p>
         <p v-else class="hint">
-          {{ setup.agent.client_display_name }} は環境変数を使いません。初回の接続時に入力を求められるので、発行時に一度だけ表示された値を貼ります。
-        </p>
-        <p v-if="isDesktop" class="warn-note">
-          ⚠ トークンの平文が設定ファイルに残ります。このファイルは共有しないでください
-        </p>
-        <p v-if="!hasToken" class="warn-note">
-          ⚠ このエージェントはトークンが未発行です。先に [ トークンを発行 ] を押してください。
-        </p>
+          {{ setup.agent.client_display_name }} {{ $ui('は環境変数を使いません。初回の接続時に入力を求められるので、発行時に一度だけ表示された値を貼ります。') }} </p>
+        <p v-if="isDesktop" class="warn-note"> {{ $ui('⚠ トークンの平文が設定ファイルに残ります。このファイルは共有しないでください') }} </p>
+        <p v-if="!hasToken" class="warn-note"> {{ $ui('⚠ このエージェントはトークンが未発行です。先に [ トークンを発行 ] を押してください。') }} </p>
       </template>
 
       <!-- 4. 起動 ────────────────────────────────────────── -->
-      <h4 class="step">4. エージェントを起動して参画の手順を実行する</h4>
+      <h4 class="step">{{ $ui('4. エージェントを起動して参画の手順を実行する') }}</h4>
       <p v-if="isDesktop" class="hint">
-        <strong>窓を閉じるだけでは足りません。</strong>
-        {{ setup.agent.client_display_name }} を完全に終了してから起動し直し、「PB に参画して」と伝えます。
-      </p>
-      <p class="hint">
-        繋がると、上のトークンの欄に「接続済み」のチェックが付きます。
-      </p>
-      <p v-if="isDesktop" class="hint">
-        ⓘ 起動しないときは、原因が {{ setup.agent.client_display_name }} 側に出ません。
-        同梱の手引き（zip）に切り分けの表があります。
-      </p>
+        <strong>{{ $ui('窓を閉じるだけでは足りません。') }}</strong>
+        {{ setup.agent.client_display_name }} {{ $ui('を完全に終了してから起動し直し、「PB に参画して」と伝えます。') }} </p>
+      <p class="hint"> {{ $ui('繋がると、上のトークンの欄に「接続済み」のチェックが付きます。') }} </p>
+      <p v-if="isDesktop" class="hint"> {{ $ui('ⓘ 起動しないときは、原因が') }} {{ setup.agent.client_display_name }} {{ $ui('側に出ません。 同梱の手引き（zip）に切り分けの表があります。') }} </p>
     </template>
   </section>
 </template>

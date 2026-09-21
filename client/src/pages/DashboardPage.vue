@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * プロジェクトダッシュボード（`GuiDesign.md` 5.3）。必要権限は `project.view`。手順19b。
  *
@@ -86,13 +87,13 @@ const canCreate = computed(() => auth.canInProject(props.projectKey, 'ticket.cre
  */
 const heading = computed(() => {
   const name = auth.projectByKey(props.projectKey)?.name ?? props.projectKey
-  return `${name} ダッシュボード`
+  return uiText("{value0} ダッシュボード", { value0: name })
 })
 
 // ── ブロックごとの状態（6.2）───────────────────────────────
 
 function toMessage(e: unknown): string {
-  return e instanceof ApiError ? e.message : '通信に失敗しました'
+  return e instanceof ApiError ? e.message : uiText("通信に失敗しました")
 }
 
 const stats = ref<ProjectStats | null>(null)
@@ -294,21 +295,21 @@ const attention = computed(() => {
   if (s.stale.count > 0) {
     rows.push({
       key: 'stale',
-      text: `${s.stale.count}件のチケットが${s.stale.threshold_days}日以上更新されていません`,
+      text: uiText("{value0}件のチケットが{value1}日以上更新されていません", { value0: s.stale.count, value1: s.stale.threshold_days }),
       to: backlogTo({ stale: `${s.stale.threshold_days}d` }),
     })
   }
   if (s.overdue > 0) {
     rows.push({
       key: 'overdue',
-      text: `${s.overdue}件のチケットが期限を超過しています`,
+      text: uiText("{value0}件のチケットが期限を超過しています", { value0: s.overdue }),
       to: backlogTo({ overdue: 'true' }),
     })
   }
   if (s.unassigned > 0) {
     rows.push({
       key: 'unassigned',
-      text: `${s.unassigned}件のチケットに担当者が割り当てられていません`,
+      text: uiText("{value0}件のチケットに担当者が割り当てられていません", { value0: s.unassigned }),
       to: backlogTo({ assignee: 'none', open: 'true' }),
     })
   }
@@ -400,9 +401,7 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
   <div class="dash">
     <PageHeader :title="heading">
       <template #actions>
-        <button v-if="canCreate" type="button" class="primary" @click="openNewModal">
-          + 新規チケット
-        </button>
+        <button v-if="canCreate" type="button" class="primary" @click="openNewModal"> {{ $ui('+ 新規チケット') }} </button>
       </template>
     </PageHeader>
 
@@ -410,10 +409,10 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
       <p v-if="createError" class="dash-error" role="alert">{{ createError }}</p>
 
       <!-- 集計カード（5.3）。**押すとバックログをその区分で絞って開く** -->
-      <section class="dash-cards" aria-label="ステータス集計">
+      <section class="dash-cards" :aria-label="$ui('ステータス集計')">
         <p v-if="statsError" class="dash-error" role="alert">
           {{ statsError }}
-          <button type="button" class="dash-retry" @click="loadStats">再試行</button>
+          <button type="button" class="dash-retry" @click="loadStats">{{ $ui('再試行') }}</button>
         </p>
         <template v-else>
           <StatCard
@@ -423,24 +422,24 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
             :label="c.label"
             :value="c.value"
             :to="canViewTickets ? backlogTo({ status_category: c.category }) : undefined"
-            :link-label="`${c.label}のチケットをバックログで見る`"
+            :link-label="$ui('{value0}のチケットをバックログで見る', { value0: c.label })"
           />
         </template>
       </section>
 
       <div class="dash-columns">
         <!-- 自分の担当（5.3）─────────────────────────────── -->
-        <section v-if="canViewTickets" class="dash-block" aria-label="自分の担当">
+        <section v-if="canViewTickets" class="dash-block" :aria-label="$ui('自分の担当')">
           <div class="dash-block-head">
-            <h2 class="dash-block-title">自分の担当</h2>
+            <h2 class="dash-block-title">{{ $ui('自分の担当') }}</h2>
           </div>
 
-          <p v-if="mineLoading" class="dash-note">読み込み中…</p>
+          <p v-if="mineLoading" class="dash-note">{{ $ui('読み込み中…') }}</p>
           <p v-else-if="mineError" class="dash-note dash-error" role="alert">
             {{ mineError }}
-            <button type="button" class="dash-retry" @click="loadMine">再試行</button>
+            <button type="button" class="dash-retry" @click="loadMine">{{ $ui('再試行') }}</button>
           </p>
-          <EmptyState v-else-if="mine.length === 0" title="担当しているチケットはありません" />
+          <EmptyState v-else-if="mine.length === 0" :title="$ui('担当しているチケットはありません')" />
           <ul v-else class="dash-list">
             <li v-for="t in mine" :key="t.id" class="dash-row">
               <RouterLink class="dash-row-link" :to="ticketTo(t.seq)">
@@ -458,23 +457,21 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
             v-if="mine.length > 0"
             class="dash-more-link"
             :to="backlogTo({ assignee: 'me', open: 'true' })"
-          >
-            すべて見る（{{ mineTotal }}件） →
-          </RouterLink>
+          > {{ $ui('すべて見る（') }}{{ mineTotal }}{{ $ui('件） →') }} </RouterLink>
         </section>
 
         <!-- 期限が近い（5.3）───────────────────────────── -->
-        <section v-if="canViewTickets" class="dash-block" aria-label="期限が近い">
+        <section v-if="canViewTickets" class="dash-block" :aria-label="$ui('期限が近い')">
           <div class="dash-block-head">
-            <h2 class="dash-block-title">期限が近い</h2>
+            <h2 class="dash-block-title">{{ $ui('期限が近い') }}</h2>
           </div>
 
-          <p v-if="dueLoading" class="dash-note">読み込み中…</p>
+          <p v-if="dueLoading" class="dash-note">{{ $ui('読み込み中…') }}</p>
           <p v-else-if="dueError" class="dash-note dash-error" role="alert">
             {{ dueError }}
-            <button type="button" class="dash-retry" @click="loadDue">再試行</button>
+            <button type="button" class="dash-retry" @click="loadDue">{{ $ui('再試行') }}</button>
           </p>
-          <EmptyState v-else-if="due.length === 0" title="7日以内に期限のチケットはありません" />
+          <EmptyState v-else-if="due.length === 0" :title="$ui('7日以内に期限のチケットはありません')" />
           <ul v-else class="dash-list">
             <li v-for="t in due" :key="t.id" class="dash-row">
               <RouterLink class="dash-row-link" :to="ticketTo(t.seq)">
@@ -493,24 +490,22 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
             v-if="due.length > 0"
             class="dash-more-link"
             :to="backlogTo({ due_within: '7d', open: 'true' })"
-          >
-            すべて見る（{{ dueTotal }}件） →
-          </RouterLink>
+          > {{ $ui('すべて見る（') }}{{ dueTotal }}{{ $ui('件） →') }} </RouterLink>
         </section>
       </div>
 
       <!-- 最近の動き（5.3）。**リンクを持たず、ここで続きを足す** -->
-      <section class="dash-block" aria-label="最近の動き">
+      <section class="dash-block" :aria-label="$ui('最近の動き')">
         <div class="dash-block-head">
-          <h2 class="dash-block-title">最近の動き</h2>
+          <h2 class="dash-block-title">{{ $ui('最近の動き') }}</h2>
         </div>
 
-        <p v-if="activityLoading" class="dash-note">読み込み中…</p>
+        <p v-if="activityLoading" class="dash-note">{{ $ui('読み込み中…') }}</p>
         <p v-else-if="activityError" class="dash-note dash-error" role="alert">
           {{ activityError }}
-          <button type="button" class="dash-retry" @click="loadActivity">再試行</button>
+          <button type="button" class="dash-retry" @click="loadActivity">{{ $ui('再試行') }}</button>
         </p>
-        <EmptyState v-else-if="activity.length === 0" title="まだ動きがありません" />
+        <EmptyState v-else-if="activity.length === 0" :title="$ui('まだ動きがありません')" />
         <template v-else>
           <ol class="dash-activity">
             <li v-for="a in activity" :key="a.id" class="dash-act">
@@ -546,24 +541,22 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
           >
             {{
               activityLoadingMore
-                ? '読み込み中…'
-                : `以前の動きを読む（残り ${activityTotal - activity.length} 件）`
+                ? $ui("読み込み中…")
+                : $ui("以前の動きを読む（残り {value0} 件）", { value0: activityTotal - activity.length })
             }}
           </button>
         </template>
       </section>
 
       <!-- 要対応（5.3）。**件数の文で述べ、押すとバックログで絞る** -->
-      <section v-if="stats !== null && attention.length > 0" class="dash-block" aria-label="要対応">
+      <section v-if="stats !== null && attention.length > 0" class="dash-block" :aria-label="$ui('要対応')">
         <div class="dash-block-head">
-          <h2 class="dash-block-title">要対応</h2>
+          <h2 class="dash-block-title">{{ $ui('要対応') }}</h2>
         </div>
         <ul class="dash-attention">
           <li v-for="row in attention" :key="row.key" class="dash-att">
             <span class="dash-att-text"><span aria-hidden="true">⚠</span> {{ row.text }}</span>
-            <RouterLink v-if="canViewTickets" class="dash-more-link" :to="row.to">
-              確認する →
-            </RouterLink>
+            <RouterLink v-if="canViewTickets" class="dash-more-link" :to="row.to"> {{ $ui('確認する →') }} </RouterLink>
           </li>
         </ul>
       </section>

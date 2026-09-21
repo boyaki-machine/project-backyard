@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * 新規プロジェクト作成モーダル（GuiDesign.md 5.2.1）。
  *
@@ -36,9 +37,9 @@ const workflowTemplate = ref<WorkflowTemplate>('simple')
 
 /** ワークフローの選択肢。ラベルは 5.2.1 の図のまま。実体は `DbDesign.md` 7.4 */
 const templates: { value: WorkflowTemplate; label: string }[] = [
-  { value: 'simple', label: 'シンプル（未着手 / 進行中 / 完了）' },
-  { value: 'with_review', label: 'レビュー付き（+ レビュー中）' },
-  { value: 'with_approval', label: '承認フロー付き（ウォーターフォール向け）' },
+  { value: 'simple', label: uiText("シンプル（未着手 / 進行中 / 完了）") },
+  { value: 'with_review', label: uiText("レビュー付き（+ レビュー中）") },
+  { value: 'with_approval', label: uiText("承認フロー付き（ウォーターフォール向け）") },
 ]
 
 /** 利用者がキー欄を自分で触ったか。触った後は名前からの自動入力を止める */
@@ -59,17 +60,17 @@ const keyState = ref<KeyState>('idle')
 const keyReason = ref<string | null>(null)
 
 const KEY_REASON_TEXT: Record<string, string> = {
-  invalid_format: '半角英小文字・数字・ハイフン、2〜20文字で入力してください',
-  reserved: 'このキーは予約できません',
-  already_exists: 'このキーは既に使われています',
+  invalid_format: uiText("半角英小文字・数字・ハイフン、2〜20文字で入力してください"),
+  reserved: uiText("このキーは予約できません"),
+  already_exists: uiText("このキーは既に使われています"),
 }
 
 const keyMessage = computed(() => {
-  if (keyState.value === 'ok') return '使用可能です'
+  if (keyState.value === 'ok') return uiText("使用可能です")
   if (keyState.value === 'ng') {
     return keyReason.value !== null
-      ? (KEY_REASON_TEXT[keyReason.value] ?? 'このキーは使用できません')
-      : 'このキーは使用できません'
+      ? (KEY_REASON_TEXT[keyReason.value] ?? uiText("このキーは使用できません"))
+      : uiText("このキーは使用できません")
   }
   return ''
 })
@@ -176,7 +177,7 @@ async function submit() {
         : new ApiError({
             status: 0,
             code: 'internal_error',
-            message: '予期しないエラーが発生しました',
+            message: uiText("予期しないエラーが発生しました"),
           })
     // 409 で戻ってきたキーは使えない。判定表示も合わせておく
     if (error.value.detailFor('key')) {
@@ -190,12 +191,12 @@ async function submit() {
 </script>
 
 <template>
-  <Modal title="新規プロジェクト" @close="emit('close')">
+  <Modal :title="$ui('新規プロジェクト')" @close="emit('close')">
     <form id="new-project-form" class="form" @submit.prevent="submit">
       <p v-if="generalError" class="alert" role="alert">{{ generalError }}</p>
 
       <label class="field">
-        <span class="label">プロジェクト名 <span class="required">*</span></span>
+        <span class="label">{{ $ui('プロジェクト名') }} <span class="required">*</span></span>
         <input
           v-model="name"
           type="text"
@@ -208,7 +209,7 @@ async function submit() {
       </label>
 
       <label class="field">
-        <span class="label">プロジェクトキー <span class="required">*</span></span>
+        <span class="label">{{ $ui('プロジェクトキー') }} <span class="required">*</span></span>
         <input
           v-model="key"
           type="text"
@@ -236,30 +237,30 @@ async function submit() {
         >
           <template v-if="keyState === 'ok'">✓ {{ keyMessage }}</template>
           <template v-else-if="keyState === 'ng'">✕ {{ keyMessage }}</template>
-          <template v-else-if="keyState === 'checking'">確認中…</template>
+          <template v-else-if="keyState === 'checking'">{{ $ui('確認中…') }}</template>
         </span>
       </label>
 
       <!-- 変更不可の明示（5.2.1）。用途一覧と警告を常時表示する -->
       <div class="note">
-        <p class="note-head">ⓘ 以下で使われる短い識別子です。</p>
+        <p class="note-head">{{ $ui('ⓘ 以下で使われる短い識別子です。') }}</p>
         <dl class="uses">
-          <dt>チケット番号</dt>
+          <dt>{{ $ui('チケット番号') }}</dt>
           <dd>my-app-123</dd>
           <dt>URL</dt>
           <dd>/p/my-app/…</dd>
-          <dt>エージェント連携</dt>
+          <dt>{{ $ui('エージェント連携') }}</dt>
           <dd>/mcp/my-app</dd>
-          <dt>Gitブランチ規約</dt>
+          <dt>{{ $ui('Gitブランチ規約') }}</dt>
           <dd>pb/123</dd>
         </dl>
-        <p class="rule">半角英小文字・数字・ハイフン、2〜20文字。</p>
+        <p class="rule">{{ $ui('半角英小文字・数字・ハイフン、2〜20文字。') }}</p>
         <!-- warning は「面」で表す（8.4.1）。文字はベース色のまま -->
-        <p class="warn">⚠ 作成後は変更できません。</p>
+        <p class="warn">{{ $ui('⚠ 作成後は変更できません。') }}</p>
       </div>
 
       <label class="field">
-        <span class="label">説明</span>
+        <span class="label">{{ $ui('説明') }}</span>
         <textarea
           v-model="description"
           name="description"
@@ -272,7 +273,7 @@ async function submit() {
       </label>
 
       <fieldset class="field">
-        <legend class="label">ワークフロー</legend>
+        <legend class="label">{{ $ui('ワークフロー') }}</legend>
         <label v-for="t in templates" :key="t.value" class="radio">
           <input
             v-model="workflowTemplate"
@@ -287,11 +288,9 @@ async function submit() {
     </form>
 
     <template #footer>
-      <button type="button" class="secondary" :disabled="submitting" @click="emit('close')">
-        キャンセル
-      </button>
+      <button type="button" class="secondary" :disabled="submitting" @click="emit('close')"> {{ $ui('キャンセル') }} </button>
       <button type="submit" form="new-project-form" class="primary" :disabled="!canSubmit">
-        {{ submitting ? '作成中…' : '作成' }}
+        {{ submitting ? $ui("作成中…") : $ui("作成") }}
       </button>
     </template>
   </Modal>

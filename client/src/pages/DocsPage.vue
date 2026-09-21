@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * Docs（`GuiDesign.md` 5.10）。必要権限は `doc.view`、編集は `doc.edit`。手順22b。
  *
@@ -76,7 +77,7 @@ async function loadTree(): Promise<void> {
     // 読むか」を決めるための情報で、この画面は使わない
     tree.value = (await docsApi.listDocs(props.projectKey)).items
   } catch (e) {
-    treeError.value = e instanceof ApiError ? e.message : '文書の一覧を取得できませんでした'
+    treeError.value = e instanceof ApiError ? e.message : uiText("文書の一覧を取得できませんでした")
   } finally {
     treeLoading.value = false
   }
@@ -215,7 +216,7 @@ async function loadDoc(path: string | null): Promise<void> {
     expandAncestors(path)
   } catch (e) {
     doc.value = null
-    docError.value = e instanceof ApiError ? e.message : '文書を取得できませんでした'
+    docError.value = e instanceof ApiError ? e.message : uiText("文書を取得できませんでした")
   } finally {
     docLoading.value = false
   }
@@ -298,7 +299,7 @@ async function save(): Promise<void> {
     saveError.value =
       e instanceof ApiError
         ? e
-        : new ApiError({ status: 0, code: 'internal_error', message: '保存できませんでした' })
+        : new ApiError({ status: 0, code: 'internal_error', message: uiText("保存できませんでした") })
   } finally {
     saving.value = false
   }
@@ -314,7 +315,7 @@ async function reloadLatest(): Promise<void> {
     draft.value = doc.value.body_md
     saveError.value = null
   } catch (e) {
-    docError.value = e instanceof ApiError ? e.message : '文書を取得できませんでした'
+    docError.value = e instanceof ApiError ? e.message : uiText("文書を取得できませんでした")
   } finally {
     docLoading.value = false
   }
@@ -353,12 +354,12 @@ const deleteMessage = computed(() => {
   const target = deleteTarget.value
   if (target === null) return ''
   const n = descendantCount(target)
-  const head = `「${target.title}」を削除します。`
+  const head = uiText("「{value0}」を削除します。", { value0: target.title })
   const scope =
     n === 0
-      ? 'この文書と、その変更履歴が消えます。'
-      : `この文書と配下の ${n} 件、およびそれぞれの変更履歴が消えます。`
-  return `${head}\n${scope}\n取り消せません。`
+      ? uiText("この文書と、その変更履歴が消えます。")
+      : uiText("この文書と配下の {value0} 件、およびそれぞれの変更履歴が消えます。", { value0: n })
+  return uiText("{value0}\n{value1}\n取り消せません。", { value0: head, value1: scope })
 })
 
 async function confirmDelete(): Promise<void> {
@@ -376,7 +377,7 @@ async function confirmDelete(): Promise<void> {
     // いた場合も一覧へ戻す（10.4）
     if (removedCurrent) await router.push(`/p/${props.projectKey}/docs`)
   } catch (e) {
-    docError.value = e instanceof ApiError ? e.message : '文書を削除できませんでした'
+    docError.value = e instanceof ApiError ? e.message : uiText("文書を削除できませんでした")
     deleteTarget.value = null
   } finally {
     deleting.value = false
@@ -490,7 +491,7 @@ async function onDrop(payload: { item: DocTreeItem; zone: DocDropZone }): Promis
   } catch (e) {
     // **原子的ではない**（`ApiDesign.md` 12.2 のタグと同じ）。途中まで反映された
     // 状態が実際に起こりうるので、取り直していまの姿を見せる
-    moveError.value = e instanceof ApiError ? e.message : '文書を移動できませんでした'
+    moveError.value = e instanceof ApiError ? e.message : uiText("文書を移動できませんでした")
     await loadTree()
   } finally {
     moving.value = false
@@ -499,11 +500,11 @@ async function onDrop(payload: { item: DocTreeItem; zone: DocDropZone }): Promis
 
 // ── `[⋯]` の項目 ───────────────────────────────────────────
 
-const docActions: ActionItem[] = [
-  { key: 'move', label: '移動・改名' },
-  { key: 'history', label: '履歴' },
-  { key: 'delete', label: '削除', danger: true },
-]
+const docActions = computed<ActionItem[]>(() => [
+  { key: 'move', label: uiText("移動・改名") },
+  { key: 'history', label: uiText("履歴") },
+  { key: 'delete', label: uiText("削除"), danger: true },
+])
 
 /** 「移動・改名」の対象。**目次の行を渡す**——`version` を持つので `If-Match` に足りる */
 const moveTarget = ref<DocTreeItem | null>(null)
@@ -599,9 +600,9 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
     :default-secondary="240"
   >
     <template #secondary>
-      <nav class="docs-tree-pane" aria-label="文書ツリー">
+      <nav class="docs-tree-pane" :aria-label="$ui('文書ツリー')">
         <div class="docs-tree-scroll">
-          <p v-if="treeLoading" class="docs-tree-note">読み込み中…</p>
+          <p v-if="treeLoading" class="docs-tree-note">{{ $ui('読み込み中…') }}</p>
           <p v-else-if="treeError" class="docs-tree-note docs-tree-error">✕ {{ treeError }}</p>
           <DocTree
             v-else-if="tree.length > 0"
@@ -626,9 +627,7 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
           <!-- 並べ替えの誤りは木のそばに出す（6.4）。**目次は取り直してあるので、
                画面に出ているのは失敗した後のいまの姿である** -->
           <p v-if="moveError" class="docs-tree-note docs-tree-error">✕ {{ moveError }}</p>
-          <button type="button" class="secondary docs-add" @click="openCreate(null)">
-            + 文書を追加
-          </button>
+          <button type="button" class="secondary docs-add" @click="openCreate(null)"> {{ $ui('+ 文書を追加') }} </button>
         </div>
       </nav>
     </template>
@@ -640,18 +639,16 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
         <template #actions>
           <template v-if="doc !== null && canEdit">
             <template v-if="editing">
-              <button type="button" class="secondary" :disabled="saving" @click="cancelEdit">
-                取消
-              </button>
+              <button type="button" class="secondary" :disabled="saving" @click="cancelEdit"> {{ $ui('取消') }} </button>
               <button type="button" class="primary" :disabled="saving" @click="save">
-                {{ saving ? '保存中…' : '保存' }}
+                {{ saving ? $ui("保存中…") : $ui("保存") }}
               </button>
             </template>
             <template v-else>
-              <button type="button" class="secondary" @click="startEdit">編集</button>
+              <button type="button" class="secondary" @click="startEdit">{{ $ui('編集') }}</button>
               <UserActionsMenu
                 :items="docActions"
-                :label="`${doc.title} の操作メニュー`"
+                :label="$ui('{value0} の操作メニュー', { value0: doc.title })"
                 @select="onHeaderAction"
               />
             </template>
@@ -672,18 +669,14 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
         :default-secondary="480"
       >
         <template #secondary>
-          <section class="docs-editor" aria-label="編集">
+          <section class="docs-editor" :aria-label="$ui('編集')">
             <div class="docs-editor-scroll">
               <!-- 競合（5.10）。**入力欄の内容は保持したまま**その場に出す（6.4） -->
               <div v-if="conflict" class="docs-conflict">
                 <p class="docs-conflict-message">⚠ {{ saveError?.message }}</p>
                 <div class="docs-conflict-actions">
-                  <button type="button" class="secondary" @click="reloadLatest">
-                    最新を読み込む
-                  </button>
-                  <button type="button" class="secondary" @click="saveAsCopy">
-                    別名で保存
-                  </button>
+                  <button type="button" class="secondary" @click="reloadLatest"> {{ $ui('最新を読み込む') }} </button>
+                  <button type="button" class="secondary" @click="saveAsCopy"> {{ $ui('別名で保存') }} </button>
                 </div>
               </div>
               <p v-else-if="saveError" class="docs-save-error">✕ {{ saveError.message }}</p>
@@ -698,45 +691,41 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
 
             <!-- 更新理由は編集ペインの最下部（5.10）。本文とは線で分ける -->
             <label class="docs-reason">
-              <span class="docs-reason-label">更新理由（任意）</span>
+              <span class="docs-reason-label">{{ $ui('更新理由（任意）') }}</span>
               <input
                 v-model="changeReason"
                 type="text"
                 maxlength="200"
-                placeholder="ブランチ命名にチケット番号を入れる"
+                :placeholder="$ui('ブランチ命名にチケット番号を入れる')"
               />
             </label>
           </section>
         </template>
 
         <template #primary>
-          <section class="docs-preview" aria-label="本文">
-            <p v-if="docLoading" class="docs-note">読み込み中…</p>
+          <section class="docs-preview" :aria-label="$ui('本文')">
+            <p v-if="docLoading" class="docs-note">{{ $ui('読み込み中…') }}</p>
             <p v-else-if="docError" class="docs-note docs-tree-error">✕ {{ docError }}</p>
 
             <!-- 文書が1件も無いとき（5.10「空状態」）。**`doc.edit` を持たない人には
                  一言だけを出し、ボタンを置かない**（設計原則4） -->
             <EmptyState
               v-else-if="tree.length === 0 && !treeLoading"
-              title="文書がありません"
+              :title="$ui('文書がありません')"
               :description="
                 canEdit
-                  ? '最初の文書を作成して、このプロジェクトの規約や判断の基準を書き始めましょう'
-                  : 'このプロジェクトにはまだ文書がありません。編集できる人が作成するのを待ってください'
+                  ? $ui('最初の文書を作成して、このプロジェクトの規約や判断の基準を書き始めましょう')
+                  : $ui('このプロジェクトにはまだ文書がありません。編集できる人が作成するのを待ってください')
               "
             >
               <template v-if="canEdit" #action>
-                <button type="button" class="primary" @click="openCreate(null)">
-                  + 文書を追加
-                </button>
+                <button type="button" class="primary" @click="openCreate(null)"> {{ $ui('+ 文書を追加') }} </button>
               </template>
             </EmptyState>
 
             <!-- どの文書も選んでいない（5.10）。木全体を目次として出す -->
             <div v-else-if="doc === null" class="docs-outline">
-              <p class="docs-outline-lead">
-                左の文書ツリーから選ぶか、下の一覧から開いてください。
-              </p>
+              <p class="docs-outline-lead"> {{ $ui('左の文書ツリーから選ぶか、下の一覧から開いてください。') }} </p>
               <ul class="docs-outline-list">
                 <li v-for="f in flatDocs" :key="f.item.id" class="docs-outline-item">
                   <RouterLink
@@ -754,7 +743,7 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
 
             <article v-else class="docs-article">
               <p class="docs-meta">
-                <span class="docs-meta-label">更新</span>
+                <span class="docs-meta-label">{{ $ui('更新') }}</span>
                 <span>{{ formatDateTime(doc.updated_at) }}</span>
                 <!-- **`updated_by` は `null` になりうる**（10.3。`ON DELETE SET NULL`）
                      ——文書は書いた人が消えても内容が生き続ける -->
@@ -771,16 +760,16 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
 
               <!-- 保存の結果は操作した場所に出す（6.4）。**サーバの値と一致して
                    いる間だけ出す**ので、次の編集を始めた時点で自然に消える -->
-              <p v-if="savedVersion === doc.version" class="docs-saved">✓ 保存しました</p>
+              <p v-if="savedVersion === doc.version" class="docs-saved">{{ $ui('✓ 保存しました') }}</p>
 
               <!-- eslint-disable-next-line vue/no-v-html -- lib/markdown.ts の dompurify を通っている -->
               <div v-if="bodyHtml" class="markdown-body" v-html="bodyHtml"></div>
-              <p v-else class="docs-note">まだ何も書かれていません</p>
+              <p v-else class="docs-note">{{ $ui('まだ何も書かれていません') }}</p>
 
               <!-- 配下の文書（5.10）。**画面が目次から生成する。本文に書かせない**
                    ——手で書いたリンクは移動・改名の直後に必ず古くなる -->
               <section v-if="children.length > 0" class="docs-children">
-                <h2 class="docs-children-title">配下の文書</h2>
+                <h2 class="docs-children-title">{{ $ui('配下の文書') }}</h2>
                 <ul class="docs-children-list">
                   <li v-for="child in children" :key="child.id">
                     <RouterLink :to="`/p/${projectKey}/docs/${child.path}`">
@@ -829,9 +818,9 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
 
   <ConfirmDialog
     v-if="deleteTarget"
-    title="文書を削除"
+    :title="$ui('文書を削除')"
     :message="deleteMessage"
-    confirm-label="削除"
+    :confirm-label="$ui('削除')"
     danger
     :busy="deleting"
     @cancel="deleteTarget = null"

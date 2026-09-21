@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiNumber, uiText } from '../locales/ui'
 /**
  * DB タブ（`GuiDesign.md` 5.12.2）。pb-110。
  *
@@ -35,7 +36,7 @@ async function load() {
     loadError.value =
       e instanceof ApiError
         ? e
-        : new ApiError({ status: 0, code: 'network_error', message: '通信に失敗しました' })
+        : new ApiError({ status: 0, code: 'network_error', message: uiText("通信に失敗しました") })
   } finally {
     loading.value = false
   }
@@ -47,7 +48,7 @@ onMounted(load)
 const endpoint = computed(() => {
   const c = status.value?.connection
   if (!c) return ''
-  if (c.host.startsWith('/')) return `${c.host}（ポート ${c.port}）`
+  if (c.host.startsWith('/')) return uiText("{value0}（ポート {value1}）", { value0: c.host, value1: c.port })
   if (c.host.includes(':')) return `[${c.host}]:${c.port}`
   return `${c.host}:${c.port}`
 })
@@ -66,13 +67,13 @@ const uptime = computed(() => {
   const min = Math.floor(ms / 60000)
   const days = Math.floor(min / 1440)
   const hours = Math.floor((min % 1440) / 60)
-  if (days > 0) return `${days}日${hours}時間`
-  if (hours > 0) return `${hours}時間${min % 60}分`
-  return `${min}分`
+  if (days > 0) return uiText("{value0}日{value1}時間", { value0: days, value1: hours })
+  if (hours > 0) return uiText("{value0}時間{value1}分", { value0: hours, value1: min % 60 })
+  return uiText("{value0}分", { value0: min })
 })
 
 function formatCount(n: number): string {
-  return n.toLocaleString('ja-JP')
+  return uiNumber(n)
 }
 
 // ── バックアップと復元（`ApiDesign.md` 11.11〜11.12。pb-147）────────────
@@ -146,7 +147,7 @@ async function runRestore(ownerUser: string, ownerPassword: string) {
     await load()
   } catch (e) {
     restoreError.value =
-      e instanceof ApiError ? e.message : '取り込みに失敗しました。もう一度お試しください'
+      e instanceof ApiError ? e.message : uiText("取り込みに失敗しました。もう一度お試しください")
   } finally {
     restoring.value = false
   }
@@ -183,60 +184,58 @@ function formatBytes(n: number): string {
 <template>
   <div class="tab">
     <div class="toolbar">
-      <span v-if="status" class="muted fetched">{{ formatDateTime(status.fetched_at) }} に取得</span>
-      <button type="button" class="secondary small" :disabled="loading" @click="load">
-        再読み込み
-      </button>
+      <span v-if="status" class="muted fetched">{{ formatDateTime(status.fetched_at) }} {{ $ui('に取得') }}</span>
+      <button type="button" class="secondary small" :disabled="loading" @click="load"> {{ $ui('再読み込み') }} </button>
     </div>
 
     <p v-if="loadError" class="error" role="alert">{{ loadError.message }}</p>
-    <p v-if="loading && !status" class="muted">読み込み中…</p>
+    <p v-if="loading && !status" class="muted">{{ $ui('読み込み中…') }}</p>
 
     <template v-if="status">
       <section class="block">
-        <h3>接続</h3>
+        <h3>{{ $ui('接続') }}</h3>
         <dl class="kv">
-          <dt>接続先</dt>
+          <dt>{{ $ui('接続先') }}</dt>
           <dd><code>{{ endpoint }}</code></dd>
-          <dt>データベース</dt>
+          <dt>{{ $ui('データベース') }}</dt>
           <dd><code>{{ status.connection.database }}</code></dd>
-          <dt>ユーザー</dt>
+          <dt>{{ $ui('ユーザー') }}</dt>
           <dd><code>{{ status.connection.user }}</code></dd>
-          <dt>暗号化</dt>
-          <dd>{{ status.connection.tls ? 'あり（TLS）' : 'なし' }}</dd>
+          <dt>{{ $ui('暗号化') }}</dt>
+          <dd>{{ status.connection.tls ? $ui("あり（TLS）") : $ui("なし") }}</dd>
         </dl>
       </section>
 
       <section class="block">
-        <h3>サーバ</h3>
+        <h3>{{ $ui('サーバ') }}</h3>
         <dl class="kv">
           <dt>PostgreSQL</dt>
           <dd>{{ status.server.version }}</dd>
-          <dt>起動</dt>
+          <dt>{{ $ui('起動') }}</dt>
           <!-- **1行に書く。** 改行すると括弧の前に空白が入る（`GuiDesign.md` 6.7） -->
-          <dd>{{ formatDateTime(status.server.started_at) }}<span v-if="uptime" class="muted nowrap">（稼働 {{ uptime }}）</span></dd>
-          <dt>マイグレーション</dt>
+          <dd>{{ formatDateTime(status.server.started_at) }}<span v-if="uptime" class="muted nowrap">{{ $ui('（稼働') }} {{ uptime }}）</span></dd>
+          <dt>{{ $ui('マイグレーション') }}</dt>
           <dd><code>{{ migration }}</code></dd>
         </dl>
       </section>
 
       <section class="block">
-        <h3>セッション</h3>
+        <h3>{{ $ui('セッション') }}</h3>
         <dl class="kv">
-          <dt>この DB への接続</dt>
-          <dd>{{ formatCount(status.sessions.database) }}<span class="muted nowrap">（サーバ全体の上限 {{ formatCount(status.server.max_connections) }}）</span></dd>
-          <dt>うち PB</dt>
+          <dt>{{ $ui('この DB への接続') }}</dt>
+          <dd>{{ formatCount(status.sessions.database) }}<span class="muted nowrap">{{ $ui('（サーバ全体の上限') }} {{ formatCount(status.server.max_connections) }}）</span></dd>
+          <dt>{{ $ui('うち PB') }}</dt>
           <dd>{{ formatCount(status.sessions.pb) }}</dd>
           <!-- **「このプロセスの」と書く。** 複数のプロセスでは引くたびに別の値になりうる（5.12.2） -->
-          <dt>このプロセスのプール</dt>
-          <dd>使用中 {{ status.pool.acquired }} ・ 待機 {{ status.pool.idle }} ・ 上限 {{ status.pool.max }}</dd>
+          <dt>{{ $ui('このプロセスのプール') }}</dt>
+          <dd>{{ $ui('使用中') }} {{ status.pool.acquired }} {{ $ui('・ 待機') }} {{ status.pool.idle }} {{ $ui('・ 上限') }} {{ status.pool.max }}</dd>
         </dl>
       </section>
 
       <section class="block">
-        <h3>容量</h3>
+        <h3>{{ $ui('容量') }}</h3>
         <dl class="kv">
-          <dt>DB の大きさ</dt>
+          <dt>{{ $ui('DB の大きさ') }}</dt>
           <dd>{{ formatBytes(status.size_bytes) }}</dd>
         </dl>
 
@@ -244,9 +243,9 @@ function formatBytes(n: number): string {
           <table class="tables">
             <thead>
               <tr>
-                <th class="name">表</th>
-                <th class="num">件数</th>
-                <th class="num">大きさ</th>
+                <th class="name">{{ $ui('表') }}</th>
+                <th class="num">{{ $ui('件数') }}</th>
+                <th class="num">{{ $ui('大きさ') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -254,7 +253,7 @@ function formatBytes(n: number): string {
                 <td class="name">
                   <code>{{ t.name }}</code>
                   <!-- **落とさずに理由を出す**——一覧から消すと、表があることに誰も気づかない -->
-                  <span v-if="t.rows === null" class="muted note">読む権限がありません</span>
+                  <span v-if="t.rows === null" class="muted note">{{ $ui('読む権限がありません') }}</span>
                 </td>
                 <td class="num">{{ t.rows === null ? '—' : formatCount(t.rows) }}</td>
                 <td class="num">{{ formatBytes(t.size_bytes) }}</td>
@@ -266,26 +265,20 @@ function formatBytes(n: number): string {
 
       <!-- ── バックアップと復元（5.12.2。pb-147）──────────────── -->
       <section class="block ops">
-        <h3>バックアップ</h3>
+        <h3>{{ $ui('バックアップ') }}</h3>
 
-        <p class="lead">
-          PB 全体を1つのファイルに書き出します。利用者・エージェント・暗号鍵も含まれます。
-          <strong>ファイルそのものを秘密として扱ってください。</strong>
+        <p class="lead"> {{ $ui('PB 全体を1つのファイルに書き出します。利用者・エージェント・暗号鍵も含まれます。') }} <strong>{{ $ui('ファイルそのものを秘密として扱ってください。') }}</strong>
         </p>
-        <p class="muted small">
-          データが多いと時間がかかります。進捗は出ません（ファイルの大きさが最後まで分からないためです）。
-        </p>
+        <p class="muted small"> {{ $ui('データが多いと時間がかかります。進捗は出ません（ファイルの大きさが最後まで分からないためです）。') }} </p>
         <p class="actions">
           <a class="button secondary" :href="backupUrl" :aria-disabled="dumping" @click="startDump">
-            {{ dumping ? '書き出しています…' : '書き出す' }}
+            {{ dumping ? $ui("書き出しています…") : $ui("書き出す") }}
           </a>
         </p>
 
         <hr class="sep" />
 
-        <p class="lead">
-          書き出したファイルから、PB 全体をその時点へ戻します。
-          <strong>いまのデータはすべて置き換わります。</strong>
+        <p class="lead"> {{ $ui('書き出したファイルから、PB 全体をその時点へ戻します。') }} <strong>{{ $ui('いまのデータはすべて置き換わります。') }}</strong>
         </p>
         <p class="actions file-row">
           <input
@@ -295,40 +288,27 @@ function formatBytes(n: number): string {
             :disabled="restoring"
             @change="chooseFile"
           />
-          <button type="button" class="danger small" :disabled="!chosen || restoring" @click="openConfirm">
-            取り込む…
-          </button>
+          <button type="button" class="danger small" :disabled="!chosen || restoring" @click="openConfirm"> {{ $ui('取り込む…') }} </button>
         </p>
 
-        <p v-if="restoring" class="restoring" role="status">
-          取り込んでいます。このページを閉じないでください
-        </p>
+        <p v-if="restoring" class="restoring" role="status"> {{ $ui('取り込んでいます。このページを閉じないでください') }} </p>
         <p v-else-if="restoreError" class="error" role="alert">✕ {{ restoreError }}</p>
 
         <!-- 突き合わせ（11.12）。**expected と rows を両方出す** -->
         <div v-if="restored" class="result">
           <p class="lead">
-            {{ formatDateTime(restored.backup.created_at) }} の書き出し（版
-            {{ String(restored.backup.migration_version).padStart(4, '0') }}）を取り込み、版
-            {{ String(restored.migration_version).padStart(4, '0') }} まで進めました。
-            <strong v-if="restored.mismatched.length === 0">
-              全 {{ restored.tables.length }} 表の件数が一致しています
-            </strong>
+            {{ formatDateTime(restored.backup.created_at) }} {{ $ui('の書き出し（版') }} {{ String(restored.backup.migration_version).padStart(4, '0') }}{{ $ui('）を取り込み、版') }} {{ String(restored.migration_version).padStart(4, '0') }} {{ $ui('まで進めました。') }} <strong v-if="restored.mismatched.length === 0"> {{ $ui('全') }} {{ restored.tables.length }} {{ $ui('表の件数が一致しています') }} </strong>
             <strong v-else class="bad">
-              {{ restored.mismatched.length }} 表の件数が食い違っています
-            </strong>
+              {{ restored.mismatched.length }} {{ $ui('表の件数が食い違っています') }} </strong>
           </p>
-          <p class="muted small">
-            この数は取り込んだ直後のものです。いまの件数は上の「容量」で見てください（このあと
-            マイグレーションが行を足すことがあります）。
-          </p>
+          <p class="muted small"> {{ $ui('この数は取り込んだ直後のものです。いまの件数は上の「容量」で見てください（このあと マイグレーションが行を足すことがあります）。') }} </p>
           <div class="table-scroll">
             <table class="tables">
               <thead>
                 <tr>
-                  <th class="name">表</th>
-                  <th class="num">書庫</th>
-                  <th class="num">取り込み後</th>
+                  <th class="name">{{ $ui('表') }}</th>
+                  <th class="num">{{ $ui('書庫') }}</th>
+                  <th class="num">{{ $ui('取り込み後') }}</th>
                 </tr>
               </thead>
               <tbody>

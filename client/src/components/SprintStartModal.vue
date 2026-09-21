@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * スプリントを開始する（`GuiDesign.md` 5.4「スプリントを開始・終了する」。pb-6）。
  *
@@ -62,8 +63,8 @@ function todayISO(): string {
 
 const nameError = computed(() => {
   const v = name.value.trim()
-  if (v === '') return 'スプリント名を入力してください'
-  if (v.length > MAX_NAME) return `${MAX_NAME}文字以内で入力してください`
+  if (v === '') return uiText("スプリント名を入力してください")
+  if (v.length > MAX_NAME) return uiText("{value0}文字以内で入力してください", { value0: MAX_NAME })
   return null
 })
 
@@ -73,7 +74,7 @@ const nameError = computed(() => {
  */
 const dateError = computed(() => {
   if (startDate.value === '' || endDate.value === '') return null
-  if (startDate.value > endDate.value) return '終了日は開始日以降の日付を指定してください'
+  if (startDate.value > endDate.value) return uiText("終了日は開始日以降の日付を指定してください")
   return null
 })
 
@@ -92,10 +93,10 @@ function submit() {
 </script>
 
 <template>
-  <Modal title="スプリントを開始" @close="emit('close')">
+  <Modal :title="$ui('スプリントを開始')" @close="emit('close')">
     <form id="sprint-start-form" class="form" @submit.prevent="submit">
       <label class="field">
-        <span class="label">スプリント名 <span class="required">*</span></span>
+        <span class="label">{{ $ui('スプリント名') }} <span class="required">*</span></span>
         <input
           v-model="name"
           type="text"
@@ -109,17 +110,17 @@ function submit() {
       </label>
 
       <label class="field">
-        <span class="label">ゴール</span>
-        <input v-model="goal" type="text" placeholder="このスプリントで達成したいこと" />
+        <span class="label">{{ $ui('ゴール') }}</span>
+        <input v-model="goal" type="text" :placeholder="$ui('このスプリントで達成したいこと')" />
       </label>
 
       <div class="dates">
         <label class="field">
-          <span class="label">開始日</span>
+          <span class="label">{{ $ui('開始日') }}</span>
           <input v-model="startDate" type="date" />
         </label>
         <label class="field">
-          <span class="label">終了日</span>
+          <span class="label">{{ $ui('終了日') }}</span>
           <input v-model="endDate" type="date" :aria-invalid="dateError !== null" />
         </label>
       </div>
@@ -131,27 +132,19 @@ function submit() {
         （GuiDesign.md 5.4）——期間を先に切ってから積む進め方がある。
       -->
       <p class="scope">
-        <template v-if="onstageCount > 0">
-          オンステージの <strong>{{ onstageCount }}</strong> 件が対象になります。
-        </template>
-        <template v-else>
-          オンステージは空です。対象が無いままスプリントを始められます。
-        </template>
+        <template v-if="onstageCount > 0"> {{ $ui('オンステージの') }} <strong>{{ onstageCount }}</strong> {{ $ui('件が対象になります。') }} </template>
+        <template v-else> {{ $ui('オンステージは空です。対象が無いままスプリントを始められます。') }} </template>
       </p>
     </form>
 
     <template #footer>
-      <button type="button" class="secondary" :disabled="busy" @click="emit('close')">
-        キャンセル
-      </button>
+      <button type="button" class="secondary" :disabled="busy" @click="emit('close')"> {{ $ui('キャンセル') }} </button>
       <button
         type="submit"
         form="sprint-start-form"
         class="primary"
         :disabled="!canStart || busy"
-      >
-        開始
-      </button>
+      > {{ $ui('開始') }} </button>
     </template>
   </Modal>
 </template>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 import { computed, nextTick, onMounted, ref, useTemplateRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -6,7 +7,7 @@ import type { MfaChallenge } from '../api/auth'
 import { ApiError } from '../api/client'
 import * as passkeysApi from '../api/passkeys'
 import {
-  IP_ADDRESS_REASON,
+  ipAddressReason,
   getPasskey,
   isPasskeyCancelled,
   openedByIPAddress,
@@ -115,7 +116,7 @@ function asApiError(e: unknown): ApiError {
   return new ApiError({
     status: 0,
     code: 'internal_error',
-    message: '予期しないエラーが発生しました',
+    message: uiText("予期しないエラーが発生しました"),
   })
 }
 
@@ -206,7 +207,7 @@ async function submit() {
       <p v-if="generalError" class="alert" role="alert">{{ generalError }}</p>
 
       <label class="field">
-        <span class="label">{{ useRecovery ? 'リカバリコード' : '確認コード' }}</span>
+        <span class="label">{{ useRecovery ? $ui("リカバリコード") : $ui("確認コード") }}</span>
         <input
           ref="codeInput"
           v-model="code"
@@ -222,14 +223,14 @@ async function submit() {
         <span v-else class="hint">
           {{
             useRecovery
-              ? '保存しておいたリカバリコードを1本入力します。'
-              : 'ⓘ 認証アプリに表示されている6桁を入力します。'
+              ? $ui("保存しておいたリカバリコードを1本入力します。")
+              : $ui("ⓘ 認証アプリに表示されている6桁を入力します。")
           }}
         </span>
       </label>
 
       <button type="submit" class="submit" :disabled="submitting || code.trim() === ''">
-        {{ submitting ? '確認中…' : '確認' }}
+        {{ submitting ? $ui("確認中…") : $ui("確認") }}
       </button>
 
       <!-- **出せない選択肢を出さない**（`methods` に無ければ導線も出さない） -->
@@ -239,13 +240,11 @@ async function submit() {
         class="link"
         @click="useRecovery = !useRecovery"
       >
-        {{ useRecovery ? '認証アプリのコードを使う' : 'リカバリコードを使う' }}
+        {{ useRecovery ? $ui("認証アプリのコードを使う") : $ui("リカバリコードを使う") }}
       </button>
 
       <!-- **行き止まりにしない**（5.1.1） -->
-      <button type="button" class="link" @click="backToPassword">
-        ← メールアドレスから入力
-      </button>
+      <button type="button" class="link" @click="backToPassword"> {{ $ui('← メールアドレスから入力') }} </button>
     </form>
 
     <form v-else class="card" @submit.prevent="submit">
@@ -254,7 +253,7 @@ async function submit() {
       <p v-if="generalError" class="alert" role="alert">{{ generalError }}</p>
 
       <label class="field">
-        <span class="label">メールアドレス</span>
+        <span class="label">{{ $ui('メールアドレス') }}</span>
         <input
           ref="emailInput"
           v-model="email"
@@ -268,7 +267,7 @@ async function submit() {
       </label>
 
       <label class="field">
-        <span class="label">パスワード</span>
+        <span class="label">{{ $ui('パスワード') }}</span>
         <span class="password">
           <input
             v-model="password"
@@ -281,7 +280,7 @@ async function submit() {
           <button
             type="button"
             class="reveal"
-            :aria-label="showPassword ? 'パスワードを隠す' : 'パスワードを表示する'"
+            :aria-label="showPassword ? $ui('パスワードを隠す') : $ui('パスワードを表示する')"
             :aria-pressed="showPassword"
             @click="showPassword = !showPassword"
           >
@@ -292,22 +291,22 @@ async function submit() {
       </label>
 
       <button type="submit" class="submit" :disabled="submitting">
-        {{ submitting && !passkeyBusy ? 'ログイン中…' : 'ログイン' }}
+        {{ submitting && !passkeyBusy ? $ui("ログイン中…") : $ui("ログイン") }}
       </button>
 
       <!-- ── パスキー（5.1.2。pb-104）────────────────────────
            **パスワードの欄より上に置かない。** WebAuthn の無いブラウザでは出さない -->
       <template v-if="showPasskey">
-        <div class="or" aria-hidden="true">または</div>
+        <div class="or" aria-hidden="true">{{ $ui('または') }}</div>
         <button
           type="button"
           class="passkey"
           :disabled="submitting || passkeyBlocked"
           @click="loginWithPasskey"
         >
-          {{ passkeyBusy ? '確認中…' : '🔑 パスキーでログイン' }}
+          {{ passkeyBusy ? $ui("確認中…") : $ui("🔑 パスキーでログイン") }}
         </button>
-        <span v-if="passkeyBlocked" class="hint">{{ IP_ADDRESS_REASON }}</span>
+        <span v-if="passkeyBlocked" class="hint">{{ ipAddressReason() }}</span>
       </template>
     </form>
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * エピックの複数選択フィルタ（`GuiDesign.md` 5.4「エピックをフィルタにする」）。
  *
@@ -59,7 +60,7 @@ const panel = useTemplateRef<HTMLElement>('panel')
  * 位置が動いて押し間違える。
  */
 const label = computed(() =>
-  props.selected.length === 0 ? 'すべて' : `${props.selected.length}件選択`,
+  props.selected.length === 0 ? uiText("すべて") : uiText("{value0}件選択", { value0: props.selected.length }),
 )
 
 /** パネルの位置。開いた時点のボタンの実測位置から決める */
@@ -168,7 +169,7 @@ const panelStyle = computed(() => ({
     ref="trigger"
     type="button"
     class="trigger"
-    :aria-label="`エピック：${label}`"
+    :aria-label="$ui('エピック：{value0}', { value0: label })"
     :aria-expanded="open"
     aria-haspopup="true"
     @click.stop="toggle"
@@ -179,7 +180,7 @@ const panelStyle = computed(() => ({
 
   <Teleport to="body">
     <div v-if="open" ref="panel" class="epic-panel" :style="panelStyle" @click.stop>
-      <p v-if="epics.length === 0" class="empty">エピックはまだありません</p>
+      <p v-if="epics.length === 0" class="empty">{{ $ui('エピックはまだありません') }}</p>
       <div v-for="e in epics" :key="e.seq" class="epic-row">
         <label class="epic-choice">
           <input
@@ -198,15 +199,15 @@ const panelStyle = computed(() => ({
             path: `/p/${projectKey}/tickets/${e.seq}`,
             query: { ...$route.query, ...(linkQuery ?? {}) },
           }"
-          :aria-label="`${projectKey}-${e.seq} ${e.title} の詳細を開く`"
-          :title="`${projectKey}-${e.seq} の詳細を開く`"
+          :aria-label="$ui('{value0}-{value1} {value2} の詳細を開く', { value0: projectKey, value1: e.seq, value2: e.title })"
+          :title="$ui('{value0}-{value1} の詳細を開く', { value0: projectKey, value1: e.seq })"
         >
           ↗
         </RouterLink>
       </div>
       <!-- 新規エピック（5.4「新規作成」。pb-14）。選択肢と混ざらないよう罫線で区切る -->
       <div v-if="canCreate" class="epic-create">
-        <button type="button" class="epic-create-button" @click="startCreate">+ 新規エピック</button>
+        <button type="button" class="epic-create-button" @click="startCreate">{{ $ui('+ 新規エピック') }}</button>
       </div>
     </div>
   </Teleport>

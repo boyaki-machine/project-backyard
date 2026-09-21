@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * 文書の履歴（`GuiDesign.md` 5.10「表示と編集」／`ApiDesign.md` 10.5）。手順22c。
  *
@@ -81,7 +82,7 @@ async function loadList(): Promise<void> {
     totalPages.value = res.total_pages
     if (res.page === 1 && res.items.length > 0) latestNo.value = res.items[0]!.revision_no
   } catch (e) {
-    listError.value = e instanceof ApiError ? e.message : '履歴を取得できませんでした'
+    listError.value = e instanceof ApiError ? e.message : uiText("履歴を取得できませんでした")
     items.value = []
   } finally {
     listLoading.value = false
@@ -110,7 +111,7 @@ async function select(no: number): Promise<void> {
   try {
     revision.value = await getDocRevision(props.projectKey, props.doc.path, no)
   } catch (e) {
-    bodyError.value = e instanceof ApiError ? e.message : '版の本文を取得できませんでした'
+    bodyError.value = e instanceof ApiError ? e.message : uiText("版の本文を取得できませんでした")
   } finally {
     bodyLoading.value = false
   }
@@ -158,7 +159,7 @@ async function revert(): Promise<void> {
       // **戻したことを履歴に残す。** `change_reason` は「その版の中身を説明する」
       // ものであり（10.5）、書き戻しの中身はまさに「#N の内容」である。
       // 空のまま積むと、手で編集した版と見分けがつかない
-      change_reason: `#${rev.revision_no} の内容に戻した`,
+      change_reason: uiText("#{value0} の内容に戻した", { value0: rev.revision_no }),
     })
     currentVersion.value = next.version
     emit('reverted', next)
@@ -167,7 +168,7 @@ async function revert(): Promise<void> {
     await loadList()
     await select(rev.revision_no)
   } catch (e) {
-    revertError.value = e instanceof ApiError ? e.message : 'この版に戻せませんでした'
+    revertError.value = e instanceof ApiError ? e.message : uiText("この版に戻せませんでした")
   } finally {
     reverting.value = false
   }
@@ -183,14 +184,14 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Modal size="wide" :title="`履歴：${doc.title}`" @close="emit('close')">
+  <Modal size="wide" :title="$ui('履歴：{value0}', { value0: doc.title })" @close="emit('close')">
     <div class="rev-layout">
       <!-- ── 左：一覧（10.5）────────────────────────────── -->
       <div class="rev-list-pane">
         <div class="rev-list-scroll">
-          <p v-if="listLoading" class="rev-note">読み込み中…</p>
+          <p v-if="listLoading" class="rev-note">{{ $ui('読み込み中…') }}</p>
           <p v-else-if="listError" class="rev-note rev-error">✕ {{ listError }}</p>
-          <p v-else-if="items.length === 0" class="rev-note">履歴がありません</p>
+          <p v-else-if="items.length === 0" class="rev-note">{{ $ui('履歴がありません') }}</p>
           <ul v-else class="rev-list">
             <li v-for="r in items" :key="r.revision_no">
               <button
@@ -202,7 +203,7 @@ onMounted(async () => {
               >
                 <span class="rev-item-head">
                   <span class="rev-no">#{{ r.revision_no }}</span>
-                  <span v-if="r.revision_no === latestNo" class="rev-current">現在の版</span>
+                  <span v-if="r.revision_no === latestNo" class="rev-current">{{ $ui('現在の版') }}</span>
                   <span class="rev-date">{{ formatDateTime(r.created_at) }}</span>
                 </span>
                 <span class="rev-item-who">
@@ -226,34 +227,30 @@ onMounted(async () => {
 
         <!-- 件数は常に、ページャは2ページ以上のときだけ出す（`UsersPage` と同じ体裁） -->
         <div v-if="!listError && !listLoading" class="rev-pager">
-          <span class="rev-count">{{ total }}件</span>
+          <span class="rev-count">{{ total }}{{ $ui('件') }}</span>
           <template v-if="totalPages > 1">
             <button
               type="button"
               class="rev-page-button"
               :disabled="page <= 1"
               @click="goToPage(page - 1)"
-            >
-              ◀ 前
-            </button>
+            > {{ $ui('◀ 前') }} </button>
             <span class="rev-page-number">{{ page }} / {{ totalPages }}</span>
             <button
               type="button"
               class="rev-page-button"
               :disabled="page >= totalPages"
               @click="goToPage(page + 1)"
-            >
-              次 ▶
-            </button>
+            > {{ $ui('次 ▶') }} </button>
           </template>
         </div>
       </div>
 
       <!-- ── 右：選んだ版の本文（10.5）──────────────────── -->
       <div class="rev-detail-pane">
-        <p v-if="bodyLoading" class="rev-note">読み込み中…</p>
+        <p v-if="bodyLoading" class="rev-note">{{ $ui('読み込み中…') }}</p>
         <p v-else-if="bodyError" class="rev-note rev-error">✕ {{ bodyError }}</p>
-        <p v-else-if="revision === null" class="rev-note">左の一覧から版を選んでください</p>
+        <p v-else-if="revision === null" class="rev-note">{{ $ui('左の一覧から版を選んでください') }}</p>
         <template v-else>
           <div class="rev-detail-head">
             <h3 class="rev-detail-title">
@@ -271,22 +268,19 @@ onMounted(async () => {
               </template>
               <span v-else class="rev-muted">—</span>
             </p>
-            <p class="rev-detail-reason">
-              更新理由：{{ revision.change_reason ?? '—' }}
+            <p class="rev-detail-reason"> {{ $ui('更新理由：') }}{{ revision.change_reason ?? '—' }}
             </p>
           </div>
           <!-- eslint-disable-next-line vue/no-v-html -- lib/markdown.ts の dompurify を通っている -->
           <div v-if="bodyHtml" class="markdown-body" v-html="bodyHtml"></div>
-          <p v-else class="rev-note">この版には本文がありません</p>
+          <p v-else class="rev-note">{{ $ui('この版には本文がありません') }}</p>
         </template>
       </div>
     </div>
 
     <template #footer>
       <p v-if="revertError" class="rev-foot-error">✕ {{ revertError }}</p>
-      <button type="button" class="secondary" :disabled="reverting" @click="emit('close')">
-        閉じる
-      </button>
+      <button type="button" class="secondary" :disabled="reverting" @click="emit('close')"> {{ $ui('閉じる') }} </button>
       <!-- **最新の版には出さない**（5.10）。戻しても `version` が +1 するだけになる -->
       <button
         v-if="canEdit && revision !== null && !isLatest"
@@ -295,7 +289,7 @@ onMounted(async () => {
         :disabled="reverting"
         @click="revert"
       >
-        {{ reverting ? '戻しています…' : 'この版に戻す' }}
+        {{ reverting ? $ui("戻しています…") : $ui("この版に戻す") }}
       </button>
     </template>
   </Modal>

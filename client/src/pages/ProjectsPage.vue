@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -72,11 +73,11 @@ async function onCreated(project: ProjectDetail) {
  * `closed_count` を含まないため。
  */
 const columns: { label: string; sort?: ProjectSort; numeric?: boolean }[] = [
-  { label: '名前', sort: 'name' },
-  { label: 'タスク', sort: 'ticket_count', numeric: true },
-  { label: '完了', numeric: true },
-  { label: '進捗', sort: 'progress', numeric: true },
-  { label: '最終更新', sort: 'updated_at' },
+  { label: uiText("名前"), sort: 'name' },
+  { label: uiText("タスク"), sort: 'ticket_count', numeric: true },
+  { label: uiText("完了"), numeric: true },
+  { label: uiText("進捗"), sort: 'progress', numeric: true },
+  { label: uiText("最終更新"), sort: 'updated_at' },
 ]
 
 const rowLinks = useTemplateRef<HTMLAnchorElement[]>('rowLink')
@@ -166,13 +167,13 @@ async function retry() {
 
 <template>
   <div class="page">
-    <PageHeader title="プロジェクト">
+    <PageHeader :title="$ui('プロジェクト')">
       <template #actions>
         <div class="more" @keydown.esc="menuOpen = false">
           <button
             type="button"
             class="icon-button"
-            aria-label="その他の操作"
+            :aria-label="$ui('その他の操作')"
             :aria-expanded="menuOpen"
             @click="menuOpen = !menuOpen"
           >
@@ -185,9 +186,7 @@ async function retry() {
               :aria-pressed="store.includeArchived"
               @click="toggleArchived"
             >
-              <span class="mark" aria-hidden="true">{{ store.includeArchived ? '✓' : '' }}</span>
-              アーカイブを表示
-            </button>
+              <span class="mark" aria-hidden="true">{{ store.includeArchived ? '✓' : '' }}</span> {{ $ui('アーカイブを表示') }} </button>
           </div>
         </div>
 
@@ -195,9 +194,7 @@ async function retry() {
           v-if="canCreate"
           class="primary"
           :to="{ path: '/projects', query: { new: '1' } }"
-        >
-          + 新規プロジェクト
-        </RouterLink>
+        > {{ $ui('+ 新規プロジェクト') }} </RouterLink>
       </template>
     </PageHeader>
 
@@ -205,11 +202,11 @@ async function retry() {
       <!-- エラー（6.2）。原因はサーバが返した message をそのまま出す（ApiDesign.md 2.5） -->
       <EmptyState
         v-if="store.error"
-        title="プロジェクト一覧を取得できませんでした"
+        :title="$ui('プロジェクト一覧を取得できませんでした')"
         :description="store.error.message"
       >
         <template #action>
-          <button type="button" class="primary" @click="retry">再試行</button>
+          <button type="button" class="primary" @click="retry">{{ $ui('再試行') }}</button>
         </template>
       </EmptyState>
 
@@ -257,7 +254,7 @@ async function retry() {
                   </a>
                 </RouterLink>
                 <span class="key">{{ p.key }}</span>
-                <span v-if="p.status === 'archived'" class="archived">アーカイブ済み</span>
+                <span v-if="p.status === 'archived'" class="archived">{{ $ui('アーカイブ済み') }}</span>
               </span>
               <span v-if="p.description" class="description">{{ p.description }}</span>
             </td>
@@ -272,40 +269,34 @@ async function retry() {
       <!-- 空（5.2）。`project.create` を持たない利用者にはボタンを出さない -->
       <EmptyState
         v-else-if="canCreate"
-        title="プロジェクトがありません"
-        description="最初のプロジェクトを作成して、チケットの管理を始めましょう"
+        :title="$ui('プロジェクトがありません')"
+        :description="$ui('最初のプロジェクトを作成して、チケットの管理を始めましょう')"
       >
         <template #action>
-          <RouterLink class="primary" :to="{ path: '/projects', query: { new: '1' } }">
-            + 新規プロジェクト
-          </RouterLink>
+          <RouterLink class="primary" :to="{ path: '/projects', query: { new: '1' } }"> {{ $ui('+ 新規プロジェクト') }} </RouterLink>
         </template>
       </EmptyState>
       <EmptyState
         v-else
-        title="参加しているプロジェクトがありません"
-        description="管理者に招待を依頼してください"
+        :title="$ui('参加しているプロジェクトがありません')"
+        :description="$ui('管理者に招待を依頼してください')"
       />
 
       <div v-if="!store.error && store.totalPages > 1" class="pager">
-        <span class="range">{{ rangeStart }}〜{{ rangeEnd }} / 全 {{ store.total }} 件</span>
+        <span class="range">{{ rangeStart }}〜{{ rangeEnd }} {{ $ui('/ 全') }} {{ store.total }} {{ $ui('件') }}</span>
         <button
           type="button"
           class="page-button"
           :disabled="store.page <= 1"
           @click="store.goToPage(store.page - 1)"
-        >
-          ◀ 前
-        </button>
+        > {{ $ui('◀ 前') }} </button>
         <span class="page-number">{{ store.page }} / {{ store.totalPages }}</span>
         <button
           type="button"
           class="page-button"
           :disabled="store.page >= store.totalPages"
           @click="store.goToPage(store.page + 1)"
-        >
-          次 ▶
-        </button>
+        > {{ $ui('次 ▶') }} </button>
       </div>
     </div>
 

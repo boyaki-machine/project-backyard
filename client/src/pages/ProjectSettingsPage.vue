@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * プロジェクト設定（`GuiDesign.md` 5.9）。必要権限は `project.edit`。
  *
@@ -81,7 +82,7 @@ function toApiError(e: unknown): ApiError {
     : new ApiError({
         status: 0,
         code: 'internal_error',
-        message: '予期しないエラーが発生しました',
+        message: uiText("予期しないエラーが発生しました"),
       })
 }
 
@@ -227,7 +228,7 @@ function startAddTag(): void {
 async function submitNewTag(): Promise<void> {
   const name = (newTagName.value ?? '').trim()
   if (name === '') {
-    newTagError.value = 'タグ名を入力してください'
+    newTagError.value = uiText("タグ名を入力してください")
     return
   }
   tagBusy.value = true
@@ -237,7 +238,7 @@ async function submitNewTag(): Promise<void> {
     // 応答は1件。並び（sort_order 昇順・同値は name 昇順）を手元でも保つ。
     tags.value = [...tags.value, created].sort(compareTags)
     newTagName.value = null
-    tagResult.value = `✓ タグ「${created.name}」を追加しました`
+    tagResult.value = uiText("✓ タグ「{value0}」を追加しました", { value0: created.name })
   } catch (e) {
     const err = toApiError(e)
     newTagError.value = err.message
@@ -256,7 +257,7 @@ function startRenameTag(tag: Tag): void {
 async function submitRenameTag(tag: Tag): Promise<void> {
   const name = renamingTagName.value.trim()
   if (name === '') {
-    renameTagError.value = 'タグ名を入力してください'
+    renameTagError.value = uiText("タグ名を入力してください")
     return
   }
   if (name === tag.name) {
@@ -269,7 +270,7 @@ async function submitRenameTag(tag: Tag): Promise<void> {
     const updated = await tagsApi.updateTag(projectKey.value, tag.id, { name })
     tags.value = tags.value.map((t) => (t.id === updated.id ? updated : t)).sort(compareTags)
     renamingTagId.value = null
-    tagResult.value = `✓ タグ「${updated.name}」に変更しました`
+    tagResult.value = uiText("✓ タグ「{value0}」に変更しました", { value0: updated.name })
   } catch (e) {
     renameTagError.value = toApiError(e).message
   } finally {
@@ -285,7 +286,7 @@ async function confirmDeleteTag(): Promise<void> {
     await tagsApi.deleteTag(projectKey.value, tag.id)
     tags.value = tags.value.filter((t) => t.id !== tag.id)
     deletingTag.value = null
-    tagResult.value = `✓ タグ「${tag.name}」を削除しました`
+    tagResult.value = uiText("✓ タグ「{value0}」を削除しました", { value0: tag.name })
   } catch (e) {
     tagsError.value = toApiError(e)
     deletingTag.value = null
@@ -340,7 +341,7 @@ async function dropTag(e: DragEvent, target: Tag): Promise<void> {
   try {
     const sent = await tagsApi.reorderTags(projectKey.value, next)
     if (sent > 0) await loadTags()
-    tagResult.value = '✓ 並び順を変更しました'
+    tagResult.value = uiText("✓ 並び順を変更しました")
   } catch (e) {
     tags.value = before
     tagsError.value = toApiError(e)
@@ -394,10 +395,10 @@ async function saveSprint(body: CreateSprintRequest): Promise<void> {
   try {
     if (target === 'new') {
       await sprintsApi.createSprint(projectKey.value, body)
-      sprintResult.value = `✓ スプリント「${body.name}」を追加しました`
+      sprintResult.value = uiText("✓ スプリント「{value0}」を追加しました", { value0: body.name })
     } else {
       await sprintsApi.updateSprint(projectKey.value, target.id, body)
-      sprintResult.value = `✓ スプリント「${body.name}」を更新しました`
+      sprintResult.value = uiText("✓ スプリント「{value0}」を更新しました", { value0: body.name })
     }
     editingSprint.value = null
     // 並びが start_date に依るので、作成・更新のたびに取り直す。
@@ -428,7 +429,7 @@ async function confirmDeleteSprint(): Promise<void> {
     await sprintsApi.deleteSprint(projectKey.value, sprint.id)
     sprints.value = sprints.value.filter((s) => s.id !== sprint.id)
     deletingSprint.value = null
-    sprintResult.value = `✓ スプリント「${sprint.name}」を削除しました`
+    sprintResult.value = uiText("✓ スプリント「{value0}」を削除しました", { value0: sprint.name })
   } catch (e) {
     sprintsError.value = toApiError(e)
     deletingSprint.value = null
@@ -446,8 +447,8 @@ async function confirmDeleteSprint(): Promise<void> {
  */
 function sprintPeriod(s: Sprint): string {
   if (!s.start_date && !s.end_date) return '—'
-  const from = s.start_date ? formatPlainDate(s.start_date) : '未定'
-  const to = s.end_date ? formatPlainDate(s.end_date) : '未定'
+  const from = s.start_date ? formatPlainDate(s.start_date) : uiText("未定")
+  const to = s.end_date ? formatPlainDate(s.end_date) : uiText("未定")
   return `${from} — ${to}`
 }
 
@@ -494,8 +495,8 @@ watch(dirty, (d) => {
 // ── 入力の検証（サーバ側の検証が正本。ここは押す前に気づかせるためのもの）──
 const nameError = computed(() => {
   const v = name.value.trim()
-  if (v === '') return 'プロジェクト名を入力してください'
-  if (v.length > MAX_NAME) return `${MAX_NAME}文字以内で入力してください`
+  if (v === '') return uiText("プロジェクト名を入力してください")
+  if (v.length > MAX_NAME) return uiText("{value0}文字以内で入力してください", { value0: MAX_NAME })
   return null
 })
 
@@ -697,13 +698,11 @@ function kindIcon(kind: string): string {
 
 <template>
   <div class="page">
-    <PageHeader title="プロジェクト設定">
+    <PageHeader :title="$ui('プロジェクト設定')">
       <template #actions>
         <!-- **タブにしない**（5.9）。独立したルートで必要権限も違うため、
              タブ列に混ぜると「同じ画面の続き」に見える -->
-        <RouterLink v-if="canSetupAgents" class="secondary setup-link" :to="agentSetupPath">
-          エージェント連携セットアップ →
-        </RouterLink>
+        <RouterLink v-if="canSetupAgents" class="secondary setup-link" :to="agentSetupPath"> {{ $ui('エージェント連携セットアップ →') }} </RouterLink>
       </template>
     </PageHeader>
 
@@ -711,11 +710,11 @@ function kindIcon(kind: string): string {
       <!-- エラー（6.2）。原因はサーバが返した message をそのまま出す -->
       <EmptyState
         v-if="store.currentError && !store.current"
-        title="プロジェクトを取得できませんでした"
+        :title="$ui('プロジェクトを取得できませんでした')"
         :description="store.currentError.message"
       >
         <template #action>
-          <button type="button" class="primary" @click="load">再試行</button>
+          <button type="button" class="primary" @click="load">{{ $ui('再試行') }}</button>
         </template>
       </EmptyState>
 
@@ -737,9 +736,7 @@ function kindIcon(kind: string): string {
             :class="{ selected: tab === 'general' }"
             :aria-selected="tab === 'general'"
             @click="tab = 'general'"
-          >
-            一般
-          </button>
+          > {{ $ui('一般') }} </button>
           <button
             type="button"
             role="tab"
@@ -747,9 +744,7 @@ function kindIcon(kind: string): string {
             :class="{ selected: tab === 'members' }"
             :aria-selected="tab === 'members'"
             @click="tab = 'members'"
-          >
-            メンバー
-          </button>
+          > {{ $ui('メンバー') }} </button>
           <button
             type="button"
             role="tab"
@@ -757,9 +752,7 @@ function kindIcon(kind: string): string {
             :class="{ selected: tab === 'tags' }"
             :aria-selected="tab === 'tags'"
             @click="tab = 'tags'"
-          >
-            タグ
-          </button>
+          > {{ $ui('タグ') }} </button>
           <button
             type="button"
             role="tab"
@@ -767,20 +760,18 @@ function kindIcon(kind: string): string {
             :class="{ selected: tab === 'sprints' }"
             :aria-selected="tab === 'sprints'"
             @click="tab = 'sprints'"
-          >
-            スプリント
-          </button>
+          > {{ $ui('スプリント') }} </button>
         </div>
 
         <!-- ── 一般タブ（5.9.1）──────────────────────────────── -->
         <div v-if="tab === 'general'" class="blocks" role="tabpanel">
           <form class="block" @submit.prevent="save">
-            <h2 class="block-title">基本情報</h2>
+            <h2 class="block-title">{{ $ui('基本情報') }}</h2>
 
             <!-- 名前が先頭。キーは「一意に指すための識別子」であって
                  プロジェクトの一属性にすぎない（5.9.1） -->
             <label class="field">
-              <span class="label">プロジェクト名 <span class="required">*</span></span>
+              <span class="label">{{ $ui('プロジェクト名') }} <span class="required">*</span></span>
               <input
                 v-model="name"
                 type="text"
@@ -794,14 +785,14 @@ function kindIcon(kind: string): string {
             </label>
 
             <div class="field">
-              <span class="label">プロジェクトキー</span>
+              <span class="label">{{ $ui('プロジェクトキー') }}</span>
               <p class="static-value">{{ store.current.key }}</p>
               <!-- warning は「面」で表す（8.4.1）。理由は 5.2.1 にある -->
-              <p class="warn">⚠ キーは変更できません</p>
+              <p class="warn">{{ $ui('⚠ キーは変更できません') }}</p>
             </div>
 
             <label class="field">
-              <span class="label">説明</span>
+              <span class="label">{{ $ui('説明') }}</span>
               <textarea
                 v-model="description"
                 name="description"
@@ -816,21 +807,16 @@ function kindIcon(kind: string): string {
             <!-- リポジトリ（5.9.1）。PBはこのURLで自動的に何もしない -->
             <div class="field">
               <div class="field-head">
-                <span class="label">リポジトリ</span>
+                <span class="label">{{ $ui('リポジトリ') }}</span>
                 <button
                   type="button"
                   class="secondary small"
                   :disabled="saving || repositories.length >= MAX_REPOSITORIES"
                   @click="addRepository"
-                >
-                  + 追加
-                </button>
+                > {{ $ui('+ 追加') }} </button>
               </div>
 
-              <p v-if="repositories.length === 0" class="hint">
-                関連するリポジトリを登録できます。画面からリンクで開けるほか、
-                エージェントがMCP経由でプロジェクトの情報として受け取ります。
-              </p>
+              <p v-if="repositories.length === 0" class="hint"> {{ $ui('関連するリポジトリを登録できます。画面からリンクで開けるほか、 エージェントがMCP経由でプロジェクトの情報として受け取ります。') }} </p>
 
               <!-- 一覧は表。編集はモーダル（5.9.1）。入力欄を並べると
                    件数ぶん縦に伸び、他の設定が画面から押し出される -->
@@ -838,9 +824,9 @@ function kindIcon(kind: string): string {
                 <thead>
                   <tr>
                     <th scope="col">URL</th>
-                    <th scope="col">表示名</th>
-                    <th scope="col">説明</th>
-                    <th scope="col"><span class="sr-only">操作</span></th>
+                    <th scope="col">{{ $ui('表示名') }}</th>
+                    <th scope="col">{{ $ui('説明') }}</th>
+                    <th scope="col"><span class="sr-only">{{ $ui('操作') }}</span></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -872,39 +858,33 @@ function kindIcon(kind: string): string {
                         class="link-button"
                         :disabled="saving"
                         @click.stop="removeRepository(i)"
-                      >
-                        削除
-                      </button>
+                      > {{ $ui('削除') }} </button>
                     </td>
                   </tr>
                 </tbody>
               </table>
 
-              <p v-if="repositories.length >= MAX_REPOSITORIES" class="hint">
-                登録できるのは{{ MAX_REPOSITORIES }}件までです。
-              </p>
+              <p v-if="repositories.length >= MAX_REPOSITORIES" class="hint"> {{ $ui('登録できるのは') }}{{ MAX_REPOSITORIES }}{{ $ui('件までです。') }} </p>
             </div>
 
             <!-- 結果は操作した場所に出す（6.4）。トーストは使わない -->
             <div class="actions">
               <p v-if="generalSaveError" class="alert" role="alert">
                 {{ generalSaveError }}
-                <button v-if="conflict" type="button" class="link-button" @click="reload">
-                  最新の内容を取得
-                </button>
+                <button v-if="conflict" type="button" class="link-button" @click="reload"> {{ $ui('最新の内容を取得') }} </button>
               </p>
-              <p v-else-if="saved" class="ok" role="status">✓ 保存しました</p>
+              <p v-else-if="saved" class="ok" role="status">{{ $ui('✓ 保存しました') }}</p>
               <span v-else class="spacer"></span>
 
               <button type="submit" class="primary" :disabled="!canSave">
-                {{ saving ? '保存中…' : '保存' }}
+                {{ saving ? $ui("保存中…") : $ui("保存") }}
               </button>
             </div>
           </form>
 
           <!-- ワークフロー（参照のみ。5.9.1。拡充か削除かは実物を見て決める） -->
           <section class="block">
-            <h2 class="block-title">ワークフロー<span class="note">（参照のみ）</span></h2>
+            <h2 class="block-title">{{ $ui('ワークフロー') }}<span class="note">{{ $ui('（参照のみ）') }}</span></h2>
             <template v-if="store.current.workflow">
               <p class="static-value">{{ store.current.workflow.name }}</p>
               <p class="statuses">
@@ -913,16 +893,16 @@ function kindIcon(kind: string): string {
                 </span>
               </p>
             </template>
-            <p v-else class="hint">ワークフローが設定されていません。</p>
+            <p v-else class="hint">{{ $ui('ワークフローが設定されていません。') }}</p>
           </section>
 
           <!-- プロジェクトの状態（5.6 / 6.3）。権限が無ければブロックごと出さない -->
           <section v-if="canArchive" class="block">
-            <h2 class="block-title">プロジェクトの状態</h2>
+            <h2 class="block-title">{{ $ui('プロジェクトの状態') }}</h2>
             <div class="state-line">
               <!-- 状態を色だけで示さない（9.2）ので文字で出す -->
               <p class="static-value">
-                {{ isArchived ? '● アーカイブ済み' : '● 有効' }}
+                {{ isArchived ? $ui("● アーカイブ済み") : $ui("● 有効") }}
               </p>
               <button
                 type="button"
@@ -930,13 +910,11 @@ function kindIcon(kind: string): string {
                 :disabled="archiving"
                 @click="requestArchiveToggle"
               >
-                {{ isArchived ? 'アーカイブを解除' : 'アーカイブする' }}
+                {{ isArchived ? $ui("アーカイブを解除") : $ui("アーカイブする") }}
               </button>
             </div>
             <p v-if="archiveError" class="alert" role="alert">{{ archiveError.message }}</p>
-            <p v-else class="hint">
-              アーカイブすると、プロジェクト一覧の既定の表示から外れます。解除もできます。
-            </p>
+            <p v-else class="hint"> {{ $ui('アーカイブすると、プロジェクト一覧の既定の表示から外れます。解除もできます。') }} </p>
           </section>
         </div>
 
@@ -946,17 +924,17 @@ function kindIcon(kind: string): string {
             <table class="table">
               <thead>
                 <tr>
-                  <th scope="col" class="icon-col"><span class="sr-only">種別</span></th>
-                  <th scope="col">名前</th>
-                  <th scope="col">メール</th>
-                  <th scope="col">ロール</th>
-                  <th scope="col">参加日</th>
+                  <th scope="col" class="icon-col"><span class="sr-only">{{ $ui('種別') }}</span></th>
+                  <th scope="col">{{ $ui('名前') }}</th>
+                  <th scope="col">{{ $ui('メール') }}</th>
+                  <th scope="col">{{ $ui('ロール') }}</th>
+                  <th scope="col">{{ $ui('参加日') }}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="m in store.current.members" :key="m.actor_id">
                   <td class="icon-col">
-                    <span :aria-label="m.kind === 'agent' ? 'エージェント' : '利用者'">
+                    <span :aria-label="m.kind === 'agent' ? $ui('エージェント') : $ui('利用者')">
                       {{ kindIcon(m.kind) }}
                     </span>
                   </td>
@@ -969,8 +947,8 @@ function kindIcon(kind: string): string {
               </tbody>
             </table>
 
-            <p class="count">{{ store.current.members.length }}件</p>
-            <p class="hint">ⓘ メンバーの追加・変更は「アカウント / 権限」から行います。</p>
+            <p class="count">{{ store.current.members.length }}{{ $ui('件') }}</p>
+            <p class="hint">{{ $ui('ⓘ メンバーの追加・変更は「アカウント / 権限」から行います。') }}</p>
           </section>
         </div>
 
@@ -978,15 +956,13 @@ function kindIcon(kind: string): string {
         <div v-else-if="tab === 'tags'" class="blocks" role="tabpanel">
           <section class="block">
             <div class="block-head">
-              <h2 class="block-title">タグ</h2>
+              <h2 class="block-title">{{ $ui('タグ') }}</h2>
               <button
                 type="button"
                 class="secondary"
                 :disabled="tagBusy || newTagName !== null"
                 @click="startAddTag"
-              >
-                + 追加
-              </button>
+              > {{ $ui('+ 追加') }} </button>
             </div>
 
             <!-- 操作の結果は操作した場所に出す（6.4）。追加・改名・削除・
@@ -1002,10 +978,10 @@ function kindIcon(kind: string): string {
             <table v-else-if="tags.length > 0 || newTagName !== null" class="table tags">
               <thead>
                 <tr>
-                  <th scope="col" class="grip-col"><span class="sr-only">並べ替え</span></th>
-                  <th scope="col">名前</th>
-                  <th scope="col" class="count-col">使用中</th>
-                  <th scope="col" class="actions-col"><span class="sr-only">操作</span></th>
+                  <th scope="col" class="grip-col"><span class="sr-only">{{ $ui('並べ替え') }}</span></th>
+                  <th scope="col">{{ $ui('名前') }}</th>
+                  <th scope="col" class="count-col">{{ $ui('使用中') }}</th>
+                  <th scope="col" class="actions-col"><span class="sr-only">{{ $ui('操作') }}</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -1027,7 +1003,7 @@ function kindIcon(kind: string): string {
                       class="grip"
                       draggable="true"
                       role="button"
-                      :aria-label="`${tag.name} を並べ替える`"
+                      :aria-label="$ui('{value0} を並べ替える', { value0: tag.name })"
                       @dragstart="draggingTagId = tag.id"
                       @dragend="endTagDrag()"
                       >⠿</span
@@ -1041,26 +1017,22 @@ function kindIcon(kind: string): string {
                           type="text"
                           class="tag-name-input"
                           :maxlength="30"
-                          :aria-label="`${tag.name} の新しい名前`"
+                          :aria-label="$ui('{value0} の新しい名前', { value0: tag.name })"
                           @keydown.esc="renamingTagId = null"
                         />
-                        <button type="submit" class="primary small" :disabled="tagBusy">
-                          変更
-                        </button>
+                        <button type="submit" class="primary small" :disabled="tagBusy"> {{ $ui('変更') }} </button>
                         <button
                           type="button"
                           class="secondary small"
                           :disabled="tagBusy"
                           @click="renamingTagId = null"
-                        >
-                          取消
-                        </button>
+                        > {{ $ui('取消') }} </button>
                       </form>
                       <span v-if="renameTagError" class="detail">✕ {{ renameTagError }}</span>
                     </template>
                     <template v-else>{{ tag.name }}</template>
                   </td>
-                  <td class="count-col">{{ tag.ticket_count }}件</td>
+                  <td class="count-col">{{ tag.ticket_count }}{{ $ui('件') }}</td>
                   <td class="actions-col">
                     <div class="row-actions">
                       <button
@@ -1068,17 +1040,13 @@ function kindIcon(kind: string): string {
                         class="secondary small"
                         :disabled="tagBusy || renamingTagId === tag.id"
                         @click="startRenameTag(tag)"
-                      >
-                        名前を変更
-                      </button>
+                      > {{ $ui('名前を変更') }} </button>
                       <button
                         type="button"
                         class="danger small"
                         :disabled="tagBusy"
                         @click="deletingTag = tag"
-                      >
-                        削除
-                      </button>
+                      > {{ $ui('削除') }} </button>
                     </div>
                   </td>
                 </tr>
@@ -1093,19 +1061,17 @@ function kindIcon(kind: string): string {
                         type="text"
                         class="tag-name-input"
                         :maxlength="30"
-                        aria-label="新しいタグの名前"
-                        placeholder="タグ名"
+                        :aria-label="$ui('新しいタグの名前')"
+                        :placeholder="$ui('タグ名')"
                         @keydown.esc="newTagName = null"
                       />
-                      <button type="submit" class="primary small" :disabled="tagBusy">追加</button>
+                      <button type="submit" class="primary small" :disabled="tagBusy">{{ $ui('追加') }}</button>
                       <button
                         type="button"
                         class="secondary small"
                         :disabled="tagBusy"
                         @click="newTagName = null"
-                      >
-                        取消
-                      </button>
+                      > {{ $ui('取消') }} </button>
                     </form>
                     <span v-if="newTagError" class="detail">✕ {{ newTagError }}</span>
                   </td>
@@ -1117,13 +1083,11 @@ function kindIcon(kind: string): string {
 
             <EmptyState
               v-else
-              title="タグがありません"
-              message="タグはチケットを横断的に分類します。[+ 追加] から作成してください。"
+              :title="$ui('タグがありません')"
+              :message="$ui('タグはチケットを横断的に分類します。[+ 追加] から作成してください。')"
             />
 
-            <p class="hint">
-              ⓘ タグはチケットを横断的に分類します。「どの大きな仕事の一部か」はチケットの親子関係で表します
-            </p>
+            <p class="hint"> {{ $ui('ⓘ タグはチケットを横断的に分類します。「どの大きな仕事の一部か」はチケットの親子関係で表します') }} </p>
           </section>
         </div>
 
@@ -1131,15 +1095,13 @@ function kindIcon(kind: string): string {
         <div v-else class="blocks" role="tabpanel">
           <section class="block">
             <div class="block-head">
-              <h2 class="block-title">スプリント</h2>
+              <h2 class="block-title">{{ $ui('スプリント') }}</h2>
               <button
                 type="button"
                 class="secondary"
                 :disabled="sprintBusy"
                 @click="openSprintModal('new')"
-              >
-                + 追加
-              </button>
+              > {{ $ui('+ 追加') }} </button>
             </div>
 
             <p v-if="sprintResult" class="ok" role="status">{{ sprintResult }}</p>
@@ -1153,11 +1115,11 @@ function kindIcon(kind: string): string {
             <table v-else-if="sprints.length > 0" class="table sprints">
               <thead>
                 <tr>
-                  <th scope="col">名前</th>
-                  <th scope="col">期間</th>
-                  <th scope="col" class="status-col">状態</th>
-                  <th scope="col" class="count-col">進捗</th>
-                  <th scope="col" class="actions-col"><span class="sr-only">操作</span></th>
+                  <th scope="col">{{ $ui('名前') }}</th>
+                  <th scope="col">{{ $ui('期間') }}</th>
+                  <th scope="col" class="status-col">{{ $ui('状態') }}</th>
+                  <th scope="col" class="count-col">{{ $ui('進捗') }}</th>
+                  <th scope="col" class="actions-col"><span class="sr-only">{{ $ui('操作') }}</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -1177,17 +1139,13 @@ function kindIcon(kind: string): string {
                         class="secondary small"
                         :disabled="sprintBusy"
                         @click="openSprintModal(s)"
-                      >
-                        編集
-                      </button>
+                      > {{ $ui('編集') }} </button>
                       <button
                         type="button"
                         class="danger small"
                         :disabled="sprintBusy"
                         @click="deletingSprint = s"
-                      >
-                        削除
-                      </button>
+                      > {{ $ui('削除') }} </button>
                     </div>
                   </td>
                 </tr>
@@ -1196,8 +1154,8 @@ function kindIcon(kind: string): string {
 
             <EmptyState
               v-else
-              title="スプリントがありません"
-              message="[+ 追加] から作成すると、チケットに割り当てられるようになります。"
+              :title="$ui('スプリントがありません')"
+              :message="$ui('[+ 追加] から作成すると、チケットに割り当てられるようになります。')"
             />
           </section>
         </div>
@@ -1214,9 +1172,9 @@ function kindIcon(kind: string): string {
 
     <ConfirmDialog
       v-if="confirmOpen"
-      title="プロジェクトをアーカイブ"
-      :message="`「${store.current?.name ?? ''}」をアーカイブします。\nプロジェクト一覧の既定の表示から外れます。あとで解除できます。`"
-      confirm-label="アーカイブする"
+      :title="$ui('プロジェクトをアーカイブ')"
+      :message="$ui('「{value0}」をアーカイブします。\nプロジェクト一覧の既定の表示から外れます。あとで解除できます。', { value0: store.current?.name ?? '' })"
+      :confirm-label="$ui('アーカイブする')"
       :busy="archiving"
       @confirm="runArchiveToggle"
       @cancel="confirmOpen = false"
@@ -1226,13 +1184,11 @@ function kindIcon(kind: string): string {
          何件から外れるのかを知ったうえで押せるようにする -->
     <ConfirmDialog
       v-if="deletingTag"
-      title="タグを削除"
-      :message="`タグ「${deletingTag.name}」を削除します。\n${
-        deletingTag.ticket_count > 0
-          ? `${deletingTag.ticket_count}件のチケットで使われています。チケットは消えず、このタグが外れます。`
-          : 'このタグはどのチケットでも使われていません。'
-      }`"
-      confirm-label="削除する"
+      :title="$ui('タグを削除')"
+      :message="$ui('タグ「{value0}」を削除します。\n{value1}', { value0: deletingTag.name, value1: deletingTag.ticket_count > 0
+          ? $ui('{value0}件のチケットで使われています。チケットは消えず、このタグが外れます。', { value0: deletingTag.ticket_count })
+          : $ui('このタグはどのチケットでも使われていません。') })"
+      :confirm-label="$ui('削除する')"
       danger
       :busy="tagBusy"
       @confirm="confirmDeleteTag"
@@ -1242,9 +1198,9 @@ function kindIcon(kind: string): string {
     <!-- スプリントの削除（6.3）。**チケットは消えない**旨を明記する -->
     <ConfirmDialog
       v-if="deletingSprint"
-      title="スプリントを削除"
-      :message="`スプリント「${deletingSprint.name}」を削除します。\n割り当てられている${deletingSprint.ticket_count}件のチケットは消えず、スプリント未設定に戻ります。`"
-      confirm-label="削除する"
+      :title="$ui('スプリントを削除')"
+      :message="$ui('スプリント「{value0}」を削除します。\n割り当てられている{value1}件のチケットは消えず、スプリント未設定に戻ります。', { value0: deletingSprint.name, value1: deletingSprint.ticket_count })"
+      :confirm-label="$ui('削除する')"
       danger
       :busy="sprintBusy"
       @confirm="confirmDeleteSprint"

@@ -47,34 +47,28 @@ function submit(): void {
 </script>
 
 <template>
-  <Modal title="状態を変更しますか？" @close="emit('close')">
+  <Modal :title="$ui('状態を変更しますか？')" @close="emit('close')">
     <form id="transition-form" class="form" @submit.prevent="submit">
       <p class="summary">
         <span class="from">{{ fromName }}</span>
         <span class="arrow" aria-hidden="true">→</span>
-        <span class="to">{{ toName }}</span>
-        へ変更します。
-      </p>
+        <span class="to">{{ toName }}</span> {{ $ui('へ変更します。') }} </p>
 
       <label class="field">
-        <span class="label">コメント（任意）</span>
+        <span class="label">{{ $ui('コメント（任意）') }}</span>
         <textarea
           v-model="comment"
           class="comment"
           rows="3"
-          placeholder="なぜこの状態にしたかを残せます"
+          :placeholder="$ui('なぜこの状態にしたかを残せます')"
         ></textarea>
-        <span class="hint">
-          書くと「経過」のコメントとして下の一覧に並びます。空のままでも変更できます
-        </span>
+        <span class="hint"> {{ $ui('書くと「経過」のコメントとして下の一覧に並びます。空のままでも変更できます') }} </span>
       </label>
     </form>
 
     <template #footer>
-      <button type="button" class="secondary" @click="emit('close')">キャンセル</button>
-      <button type="submit" form="transition-form" class="primary" :disabled="busy">
-        変更する
-      </button>
+      <button type="button" class="secondary" @click="emit('close')">{{ $ui('キャンセル') }}</button>
+      <button type="submit" form="transition-form" class="primary" :disabled="busy"> {{ $ui('変更する') }} </button>
     </template>
   </Modal>
 </template>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * 生成されたパスワードの1回表示（`GuiDesign.md` 5.6.1）。
  *
@@ -40,9 +41,9 @@ withDefaults(
     footerNote?: string
   }>(),
   {
-    title: '初期パスワード',
-    leadSuffix: 'を追加しました。',
-    footerNote: '本人には、このパスワードと次回ログイン後に変更する必要があることを伝えてください。',
+    title: uiText("初期パスワード"),
+    leadSuffix: uiText("を追加しました。"),
+    footerNote: uiText("本人には、このパスワードと次回ログイン後に変更する必要があることを伝えてください。"),
   },
 )
 
@@ -70,22 +71,20 @@ async function copy(password: string) {
       <p class="lead"><strong>{{ displayName }}</strong> {{ leadSuffix }}</p>
 
       <!-- warning は「面」で表す（8.4.1）。文字色はベースのまま -->
-      <p class="warn">⚠ このパスワードはこの画面でしか確認できません。閉じると再表示できません。</p>
+      <p class="warn">{{ $ui('⚠ このパスワードはこの画面でしか確認できません。閉じると再表示できません。') }}</p>
 
       <dl class="fields">
-        <dt>メールアドレス</dt>
+        <dt>{{ $ui('メールアドレス') }}</dt>
         <dd>{{ email }}</dd>
-        <dt>初期パスワード</dt>
+        <dt>{{ $ui('初期パスワード') }}</dt>
         <dd>
           <div class="password-line">
             <code ref="passwordEl" class="password">{{ password }}</code>
-            <button type="button" class="secondary" @click="copy(password)">コピー</button>
+            <button type="button" class="secondary" @click="copy(password)">{{ $ui('コピー') }}</button>
           </div>
           <!-- 状態を色だけで示さない（9.2）ので記号か文言を必ず添える -->
-          <p v-if="copied === 'ok'" class="note" role="status">✓ コピーしました</p>
-          <p v-else-if="copied === 'manual'" class="note" role="status">
-            自動でコピーできませんでした。選択した状態にしたので ⌘C（Ctrl+C）でコピーしてください。
-          </p>
+          <p v-if="copied === 'ok'" class="note" role="status">{{ $ui('✓ コピーしました') }}</p>
+          <p v-else-if="copied === 'manual'" class="note" role="status"> {{ $ui('自動でコピーできませんでした。選択した状態にしたので ⌘C（Ctrl+C）でコピーしてください。') }} </p>
         </dd>
       </dl>
 
@@ -93,7 +92,7 @@ async function copy(password: string) {
     </div>
 
     <template #footer>
-      <button type="button" class="primary" @click="emit('close')">閉じる</button>
+      <button type="button" class="primary" @click="emit('close')">{{ $ui('閉じる') }}</button>
     </template>
   </Modal>
 </template>

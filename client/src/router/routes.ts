@@ -60,7 +60,7 @@ declare module 'vue-router' {
  * 未実装・設計未確定の画面には PlaceholderPage を置く（Design.md 11.3）。
  * 権限はプレースホルダの段階から実画面と同じ値を設定する（GuiDesign.md 6.5 規約）。
  */
-export const routes: RouteRecordRaw[] = [
+const routeSources: RouteRecordRaw[] = [
   // ログイン後の初期画面は /projects（GuiDesign.md 3.1 / 5.2）。
   { path: '/', redirect: '/projects' },
 
@@ -402,3 +402,5 @@ export const routes: RouteRecordRaw[] = [
   { path: '/404', component: NotFoundPage, meta: { public: true } },
   { path: '/:pathMatch(.*)*', component: NotFoundPage, meta: { public: true } },
 ]
+
+export const routes = routeSources

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /** バックログの予定期間フィルタ（GuiDesign.md 5.4、pb-8）。 */
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 
@@ -22,9 +23,9 @@ watch(
 )
 
 const label = computed(() => {
-  if (props.from === '' && props.to === '') return '指定なし'
+  if (props.from === '' && props.to === '') return uiText("指定なし")
   if (props.from !== '' && props.to !== '') return `${props.from}〜${props.to}`
-  return props.from !== '' ? `${props.from}以降` : `${props.to}まで`
+  return props.from !== '' ? uiText("{value0}以降", { value0: props.from }) : uiText("{value0}まで", { value0: props.to })
 })
 
 const rangeInvalid = computed(
@@ -119,7 +120,7 @@ const panelStyle = computed(() => ({ top: `${pos.value.top}px`, left: `${pos.val
     type="button"
     class="trigger"
     :title="label"
-    :aria-label="`予定期間：${label}`"
+    :aria-label="$ui('予定期間：{value0}', { value0: label })"
     :aria-expanded="open"
     aria-haspopup="dialog"
     @click="toggle"
@@ -134,21 +135,19 @@ const panelStyle = computed(() => ({ top: `${pos.value.top}px`, left: `${pos.val
       class="planned-panel"
       :style="panelStyle"
       role="dialog"
-      aria-label="予定期間を指定"
+      :aria-label="$ui('予定期間を指定')"
     >
-      <label>開始日<input v-model="draftFrom" type="date" aria-label="予定期間の開始日" /></label>
-      <label>終了日<input v-model="draftTo" type="date" aria-label="予定期間の終了日" /></label>
-      <p v-if="rangeInvalid" class="error" role="alert">終了日は開始日以降にしてください</p>
+      <label>{{ $ui('開始日') }}<input v-model="draftFrom" type="date" :aria-label="$ui('予定期間の開始日')" /></label>
+      <label>{{ $ui('終了日') }}<input v-model="draftTo" type="date" :aria-label="$ui('予定期間の終了日')" /></label>
+      <p v-if="rangeInvalid" class="error" role="alert">{{ $ui('終了日は開始日以降にしてください') }}</p>
       <div class="actions">
         <button
           type="button"
           class="secondary"
           :disabled="props.from === '' && props.to === ''"
           @click="clear"
-        >
-          解除
-        </button>
-        <button type="button" class="primary" :disabled="rangeInvalid" @click="apply">適用</button>
+        > {{ $ui('解除') }} </button>
+        <button type="button" class="primary" :disabled="rangeInvalid" @click="apply">{{ $ui('適用') }}</button>
       </div>
     </section>
   </Teleport>

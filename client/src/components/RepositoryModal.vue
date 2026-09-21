@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * リポジトリの追加・編集（`GuiDesign.md` 5.9.1）。
  *
@@ -38,8 +39,8 @@ const touched = ref(false)
 
 const urlError = computed(() => {
   const v = url.value.trim()
-  if (v === '') return 'URLを入力してください'
-  if (v.length > MAX_URL) return `${MAX_URL}文字以内で入力してください`
+  if (v === '') return uiText("URLを入力してください")
+  if (v.length > MAX_URL) return uiText("{value0}文字以内で入力してください", { value0: MAX_URL })
   return null
 })
 
@@ -57,7 +58,7 @@ function submit() {
 </script>
 
 <template>
-  <Modal :title="isNew ? 'リポジトリを追加' : 'リポジトリを編集'" @close="emit('close')">
+  <Modal :title="isNew ? $ui('リポジトリを追加') : $ui('リポジトリを編集')" @close="emit('close')">
     <form id="repository-form" class="form" @submit.prevent="submit">
       <label class="field">
         <span class="label">URL <span class="required">*</span></span>
@@ -65,7 +66,7 @@ function submit() {
           v-model="url"
           type="text"
           class="url"
-          placeholder="https://… または git@host:org/repo.git"
+          :placeholder="$ui('https://… または git@host:org/repo.git')"
           autocapitalize="off"
           autocomplete="off"
           spellcheck="false"
@@ -78,20 +79,20 @@ function submit() {
       </label>
 
       <label class="field">
-        <span class="label">表示名</span>
+        <span class="label">{{ $ui('表示名') }}</span>
         <input v-model="name" type="text" :maxlength="MAX_NAME" />
       </label>
 
       <label class="field">
-        <span class="label">説明</span>
+        <span class="label">{{ $ui('説明') }}</span>
         <input v-model="description" type="text" :maxlength="MAX_DESCRIPTION" />
       </label>
     </form>
 
     <template #footer>
-      <button type="button" class="secondary" @click="emit('close')">キャンセル</button>
+      <button type="button" class="secondary" @click="emit('close')">{{ $ui('キャンセル') }}</button>
       <button type="submit" form="repository-form" class="primary" :disabled="!canSave">
-        {{ isNew ? '追加' : '更新' }}
+        {{ isNew ? $ui("追加") : $ui("更新") }}
       </button>
     </template>
   </Modal>
