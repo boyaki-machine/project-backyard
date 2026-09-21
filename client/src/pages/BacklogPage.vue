@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiNumber, uiText } from '../locales/ui'
 import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -186,7 +187,7 @@ function onDetailCreated(): void {
 function onDetailDeleted(seq: number, title: string): void {
   tickets.value = tickets.value.filter((t) => t.seq !== seq)
   total.value = Math.max(total.value - 1, 0)
-  result.value = `✓ ${projectKey.value}-${seq}「${title}」を削除しました`
+  result.value = uiText("✓ {value0}-{value1}「{value2}」を削除しました", { value0: projectKey.value, value1: seq, value2: title })
   closeDetail()
   // **子は消えず親を失ってトップレベルへ上がる**（9.5.3）。手元の行では
   // 親子の付け替えが起きているので、そこだけ取り直す
@@ -201,12 +202,12 @@ type GroupAxis = '' | 'parent' | 'tag' | 'sprint' | 'assignee' | 'status'
 const GROUP_AXES: GroupAxis[] = ['', 'parent', 'tag', 'sprint', 'assignee', 'status']
 
 const groupLabels: Record<GroupAxis, string> = {
-  '': 'なし',
-  parent: '親チケット',
-  tag: 'タグ',
-  sprint: 'スプリント',
-  assignee: '担当',
-  status: '状態',
+  '': uiText("なし"),
+  parent: uiText("親チケット"),
+  tag: uiText("タグ"),
+  sprint: uiText("スプリント"),
+  assignee: uiText("担当"),
+  status: uiText("状態"),
 }
 
 const SORTS: TicketSort[] = [
@@ -590,7 +591,7 @@ function toApiError(e: unknown): ApiError {
     : new ApiError({
         status: 0,
         code: 'internal_error',
-        message: '予期しないエラーが発生しました',
+        message: uiText("予期しないエラーが発生しました"),
       })
 }
 
@@ -873,22 +874,22 @@ function sectionsOf(t: Ticket): { key: string; label: string }[] {
   switch (group.value) {
     case 'parent':
       return t.parent_seq === null
-        ? [{ key: 'top', label: 'トップレベル' }]
+        ? [{ key: 'top', label: uiText("トップレベル") }]
         : [{ key: String(t.parent_seq), label: parentLabel(t.parent_seq) }]
     case 'tag':
       return t.tags.length === 0
-        ? [{ key: 'none', label: '未分類' }]
+        ? [{ key: 'none', label: uiText("未分類") }]
         : t.tags.map((tag) => ({ key: tag.id, label: tag.name }))
     case 'sprint':
       return [
         t.sprint === null
-          ? { key: 'none', label: 'スプリント未設定' }
+          ? { key: 'none', label: uiText("スプリント未設定") }
           : { key: t.sprint.id, label: t.sprint.name },
       ]
     case 'assignee':
       return [
         t.assignee === null
-          ? { key: 'none', label: '未割当' }
+          ? { key: 'none', label: uiText("未割当") }
           : { key: t.assignee.id, label: t.assignee.display_name },
       ]
     case 'status':
@@ -940,13 +941,13 @@ const sections = computed<Section[]>(() => {
     return [
       {
         key: 'staged',
-        label: 'オンステージ',
+        label: uiText("オンステージ"),
         rows: treeMode.value ? buildTree(staged.value.staged) : flatRows(staged.value.staged),
         stage: true,
       },
       {
         key: 'backlog',
-        label: 'バックログ',
+        label: uiText("バックログ"),
         rows: treeMode.value ? buildTree(staged.value.backlog) : flatRows(staged.value.backlog),
         stage: false,
       },
@@ -1067,7 +1068,7 @@ function isOverdue(t: Ticket): boolean {
 
 /** 件数は端末の設定に依らない形で区切る（`ja-JP` を明示する） */
 function withComma(n: number): string {
-  return n.toLocaleString('ja-JP')
+  return uiNumber(n)
 }
 
 /** チケットIDは**完全形**で出す（5.4「ID列」）。`-31` は負の数に見える */
@@ -1362,10 +1363,10 @@ function moveMessage(t: Ticket, stagedChange: boolean | undefined, unparented: b
   const id = `${fullId(t)}「${t.title}」`
   // **ルート化を先に言う。** 同じ操作で段も動きうるが、利用者が意図したのは
   // 親を外すことである（5.4。pb-70）
-  if (unparented) return `✓ ${id}をルートにしました`
-  if (stagedChange === true) return `✓ ${id}をオンステージへ上げました`
-  if (stagedChange === false) return `✓ ${id}をバックログへ戻しました`
-  return `✓ ${id}の並び順を変更しました`
+  if (unparented) return uiText("✓ {value0}をルートにしました", { value0: id })
+  if (stagedChange === true) return uiText("✓ {value0}をオンステージへ上げました", { value0: id })
+  if (stagedChange === false) return uiText("✓ {value0}をバックログへ戻しました", { value0: id })
+  return uiText("✓ {value0}の並び順を変更しました", { value0: id })
 }
 
 /**
@@ -1450,7 +1451,7 @@ async function dropInto(source: Ticket, parent: Ticket): Promise<void> {
       parent_seq: parent.seq,
     })
     await loadTickets()
-    result.value = `✓ ${fullId(source)}「${source.title}」を ${fullId(parent)}「${parent.title}」の子にしました`
+    result.value = uiText("✓ {value0}「{value1}」を {value2}「{value3}」の子にしました", { value0: fullId(source), value1: source.title, value2: fullId(parent), value3: parent.title })
   } catch (err) {
     error.value = toApiError(err)
     await loadTickets()
@@ -1735,7 +1736,7 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
     // **エピックは行に出ない**ので、取り直すのは語彙のほう（5.4.3「新規エピック」）
     if (created.type === 'epic') await reloadEpics()
     else await loadTickets()
-    result.value = `✓ ${projectKey.value}-${created.seq}「${created.title}」を作成しました`
+    result.value = uiText("✓ {value0}-{value1}「{value2}」を作成しました", { value0: projectKey.value, value1: created.seq, value2: created.title })
   } catch (e) {
     const err = toApiError(e)
     if (err.status === 422) {
@@ -1773,7 +1774,7 @@ async function runStartSprint(body: StartSprintRequest): Promise<void> {
     const sprint = await sprintsApi.startSprint(projectKey.value, body)
     showSprintStart.value = false
     await Promise.all([loadVocabulary(), loadTickets()])
-    result.value = `✓ スプリント「${sprint.name}」を開始しました（対象 ${sprint.ticket_count} 件）`
+    result.value = uiText("✓ スプリント「{value0}」を開始しました（対象 {value1} 件）", { value0: sprint.name, value1: sprint.ticket_count })
   } catch (e) {
     const err = toApiError(e)
     if (err.status === 422) {
@@ -1807,7 +1808,7 @@ async function runFinishSprint(): Promise<void> {
     const done = await sprintsApi.finishSprint(projectKey.value, sprint.id)
     confirmSprintFinish.value = false
     await Promise.all([loadVocabulary(), loadTickets()])
-    result.value = `✓ スプリント「${done.name}」を終了しました（完了 ${done.closed_count} / ${done.ticket_count} 件）`
+    result.value = uiText("✓ スプリント「{value0}」を終了しました（完了 {value1} / {value2} 件）", { value0: done.name, value1: done.closed_count, value2: done.ticket_count })
   } catch (e) {
     confirmSprintFinish.value = false
     error.value = toApiError(e)
@@ -1932,8 +1933,8 @@ watch(projectKey, (key) => {
            ——足すと行の縦位置がずれる。**全幅のときはボタンにしない**
            （押しても何も起きないものをボタンに見せない） -->
       <PageHeader
-        title="バックログ"
-        :title-action-label="shrunk ? 'バックログを全幅に戻す' : undefined"
+        :title="$ui('バックログ')"
+        :title-action-label="shrunk ? $ui('バックログを全幅に戻す') : undefined"
         :title-action-icon="shrunk ? '⤢' : undefined"
         @title-click="closeDetail"
       >
@@ -1944,11 +1945,11 @@ watch(projectKey, (key) => {
             type="button"
             class="primary"
             :class="{ 'icon-only': shrunk }"
-            :aria-label="shrunk ? '新規チケット' : undefined"
-            :title="shrunk ? '新規チケット' : undefined"
+            :aria-label="shrunk ? $ui('新規チケット') : undefined"
+            :title="shrunk ? $ui('新規チケット') : undefined"
             @click="openNewModal()"
           >
-            {{ shrunk ? '+' : '+ 新規チケット' }}
+            {{ shrunk ? '+' : $ui("+ 新規チケット") }}
           </button>
         </template>
       </PageHeader>
@@ -1959,7 +1960,7 @@ watch(projectKey, (key) => {
         <div class="backlog-always-filters">
           <!-- エピックだけは複数選択。URL 上の実体は `parent`（部分木）である -->
           <div class="filter backlog-filter-epic">
-            <span class="filter-label" aria-hidden="true">エピック</span>
+            <span class="filter-label" aria-hidden="true">{{ $ui('エピック') }}</span>
             <EpicFilter
               :epics="epics"
               :selected="epicSeqs"
@@ -1971,26 +1972,26 @@ watch(projectKey, (key) => {
           </div>
 
           <label class="filter backlog-filter-tag">
-            <span class="filter-label">タグ</span>
+            <span class="filter-label">{{ $ui('タグ') }}</span>
             <select
               :value="filters.tag"
               @change="setQuery({ tag: ($event.target as HTMLSelectElement).value })"
             >
-              <option value="">すべて</option>
-              <option value="none">未分類</option>
+              <option value="">{{ $ui('すべて') }}</option>
+              <option value="none">{{ $ui('未分類') }}</option>
               <option v-for="t in tags" :key="t.id" :value="t.id">{{ t.name }}</option>
             </select>
           </label>
 
           <label class="filter backlog-filter-assignee">
-            <span class="filter-label">担当</span>
+            <span class="filter-label">{{ $ui('担当') }}</span>
             <select
               :value="filters.assignee"
               @change="setQuery({ assignee: ($event.target as HTMLSelectElement).value })"
             >
-              <option value="">すべて</option>
-              <option value="me">自分</option>
-              <option value="none">未割当</option>
+              <option value="">{{ $ui('すべて') }}</option>
+              <option value="me">{{ $ui('自分') }}</option>
+              <option value="none">{{ $ui('未割当') }}</option>
               <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
                 {{ m.kind === 'agent' ? '🤖' : '👤' }} {{ m.display_name }}
               </option>
@@ -2000,13 +2001,13 @@ watch(projectKey, (key) => {
 
         <div class="backlog-filter-primary">
           <label class="filter backlog-keyword">
-            <span class="filter-label">検索</span>
+            <span class="filter-label">{{ $ui('検索') }}</span>
             <input
               v-model="keyword"
               type="search"
               maxlength="200"
-              placeholder="番号・タイトル・エピック・タグ"
-              aria-label="バックログを検索"
+              :placeholder="$ui('番号・タイトル・エピック・タグ')"
+              :aria-label="$ui('バックログを検索')"
               @input="onKeywordInput"
               @compositionstart="onCompositionStart"
               @compositionend="onCompositionEnd"
@@ -2015,9 +2016,8 @@ watch(projectKey, (key) => {
           </label>
           <button type="button" class="secondary backlog-filter-toggle"
             :aria-expanded="filtersOpen" aria-controls="backlog-filter-options"
-            @click="filtersOpen = !filtersOpen">
-            絞り込み {{ filtersOpen ? '▾' : '▸' }}
-            <span v-if="!isPristine" aria-label="絞り込み中">●</span>
+            @click="filtersOpen = !filtersOpen"> {{ $ui('絞り込み') }} {{ filtersOpen ? '▾' : '▸' }}
+            <span v-if="!isPristine" :aria-label="$ui('絞り込み中')">●</span>
           </button>
         </div>
         <div id="backlog-filter-options" class="backlog-filter-options">
@@ -2027,18 +2027,18 @@ watch(projectKey, (key) => {
                箱を分けず、`optgroup` の見出しで区別する。**見出しが無いと、
                `simple` / `with_review` で区分とステータスが同じ語になって読めない** -->
           <label class="filter backlog-filter-state">
-            <span class="filter-label">状態</span>
+            <span class="filter-label">{{ $ui('状態') }}</span>
             <select
               :value="stateValue"
               @change="setExclusive(STATE_KEYS, ($event.target as HTMLSelectElement).value)"
             >
-              <option value="">すべて</option>
-              <optgroup label="進み具合">
-                <option value="open:true">未完了</option>
-                <option value="open:false">完了</option>
-                <option :value="`stale:${staleDays}d`">{{ staleDays }}日以上更新なし</option>
+              <option value="">{{ $ui('すべて') }}</option>
+              <optgroup :label="$ui('進み具合')">
+                <option value="open:true">{{ $ui('未完了') }}</option>
+                <option value="open:false">{{ $ui('完了') }}</option>
+                <option :value="`stale:${staleDays}d`">{{ staleDays }}{{ $ui('日以上更新なし') }}</option>
               </optgroup>
-              <optgroup label="区分">
+              <optgroup :label="$ui('区分')">
                 <option
                   v-for="c in statusCategoryOrder"
                   :key="c"
@@ -2047,7 +2047,7 @@ watch(projectKey, (key) => {
                   {{ statusCategoryLabels[c] }}
                 </option>
               </optgroup>
-              <optgroup label="ステータス">
+              <optgroup :label="$ui('ステータス')">
                 <option v-for="s in statuses" :key="s.key" :value="`status:${s.key}`">
                   {{ s.name }}
                 </option>
@@ -2056,12 +2056,12 @@ watch(projectKey, (key) => {
           </label>
 
           <label class="filter backlog-filter-type">
-            <span class="filter-label">種別</span>
+            <span class="filter-label">{{ $ui('種別') }}</span>
             <select
               :value="filters.type"
               @change="setQuery({ type: ($event.target as HTMLSelectElement).value })"
             >
-              <option value="">すべて</option>
+              <option value="">{{ $ui('すべて') }}</option>
               <option v-for="t in typeOptions" :key="t" :value="t">
                 {{ ticketTypeIcons[t] }} {{ ticketTypeLabels[t] }}
               </option>
@@ -2069,12 +2069,12 @@ watch(projectKey, (key) => {
           </label>
 
           <label class="filter backlog-filter-priority">
-            <span class="filter-label">優先</span>
+            <span class="filter-label">{{ $ui('優先') }}</span>
             <select
               :value="filters.priority"
               @change="setQuery({ priority: ($event.target as HTMLSelectElement).value })"
             >
-              <option value="">すべて</option>
+              <option value="">{{ $ui('すべて') }}</option>
               <option v-for="p in priorityOptions" :key="p" :value="p">
                 {{ priorityLabels[p] }}
               </option>
@@ -2082,7 +2082,7 @@ watch(projectKey, (key) => {
           </label>
 
           <div class="filter backlog-filter-planned">
-            <span class="filter-label" aria-hidden="true">予定期間</span>
+            <span class="filter-label" aria-hidden="true">{{ $ui('予定期間') }}</span>
             <PlannedPeriodFilter
               :from="queryValue('planned_from')"
               :to="queryValue('planned_to')"
@@ -2094,22 +2094,22 @@ watch(projectKey, (key) => {
                **「期限超過」は `due_within=0d` ではない**——あちらは「今日以前」で
                今日が期限のものを含み、`stats.overdue` と1日ぶんずれる（9.2.1） -->
           <label class="filter backlog-filter-due">
-            <span class="filter-label">期限</span>
+            <span class="filter-label">{{ $ui('期限') }}</span>
             <select
               :value="dueValue"
               @change="setExclusive(DUE_KEYS, ($event.target as HTMLSelectElement).value)"
             >
-              <option value="">すべて</option>
-              <option value="overdue:true">期限超過</option>
-              <option value="due_within:0d">今日まで</option>
-              <option value="due_within:7d">7日以内</option>
-              <option value="due_within:30d">30日以内</option>
+              <option value="">{{ $ui('すべて') }}</option>
+              <option value="overdue:true">{{ $ui('期限超過') }}</option>
+              <option value="due_within:0d">{{ $ui('今日まで') }}</option>
+              <option value="due_within:7d">{{ $ui('7日以内') }}</option>
+              <option value="due_within:30d">{{ $ui('30日以内') }}</option>
             </select>
           </label>
 
           <!-- グループ化と解除は右端に寄せる（5.4 のワイヤー） -->
           <label class="filter backlog-filter-group">
-            <span class="filter-label">グループ化</span>
+            <span class="filter-label">{{ $ui('グループ化') }}</span>
             <select
               :value="group"
               @change="setQuery({ group: ($event.target as HTMLSelectElement).value })"
@@ -2124,11 +2124,9 @@ watch(projectKey, (key) => {
             type="button"
             class="secondary backlog-filter-clear"
             :disabled="isPristine"
-            title="フィルタ・グループ化・ソートを元に戻す"
+            :title="$ui('フィルタ・グループ化・ソートを元に戻す')"
             @click="clearAll"
-          >
-            解除
-          </button>
+          > {{ $ui('解除') }} </button>
         </div>
       </div>
 
@@ -2138,11 +2136,11 @@ watch(projectKey, (key) => {
       <!-- エラー（6.2）。原因はサーバが返した message をそのまま出す -->
       <EmptyState
         v-if="error"
-        title="チケットを取得できませんでした"
+        :title="$ui('チケットを取得できませんでした')"
         :description="error.message"
       >
         <template #action>
-          <button type="button" class="primary" @click="retry">再試行</button>
+          <button type="button" class="primary" @click="retry">{{ $ui('再試行') }}</button>
         </template>
       </EmptyState>
 
@@ -2158,20 +2156,20 @@ watch(projectKey, (key) => {
       <!-- 空（6.2）。作れない利用者にはボタンを出さない -->
       <EmptyState
         v-else-if="tickets.length === 0 && isPristine"
-        title="チケットがありません"
-        description="最初のチケットを作って、やることを並べていきましょう"
+        :title="$ui('チケットがありません')"
+        :description="$ui('最初のチケットを作って、やることを並べていきましょう')"
       >
         <template v-if="canCreate" #action>
-          <button type="button" class="primary" @click="openNewModal()">+ 新規チケット</button>
+          <button type="button" class="primary" @click="openNewModal()">{{ $ui('+ 新規チケット') }}</button>
         </template>
       </EmptyState>
       <EmptyState
         v-else-if="tickets.length === 0"
-        title="条件に合うチケットがありません"
-        description="フィルタを緩めるか、解除してください"
+        :title="$ui('条件に合うチケットがありません')"
+        :description="$ui('フィルタを緩めるか、解除してください')"
       >
         <template #action>
-          <button type="button" class="secondary" @click="clearAll">解除</button>
+          <button type="button" class="secondary" @click="clearAll">{{ $ui('解除') }}</button>
         </template>
       </EmptyState>
 
@@ -2206,7 +2204,7 @@ watch(projectKey, (key) => {
               v-if="canCreate && section.stage === undefined"
               type="button"
               class="secondary small"
-              :aria-label="`${section.label} にチケットを追加`"
+              :aria-label="$ui('{value0} にチケットを追加', { value0: section.label })"
               @click="openNewModal(section.key)"
             >
               +
@@ -2234,18 +2232,14 @@ watch(projectKey, (key) => {
                 class="secondary small"
                 :disabled="busy"
                 @click="confirmSprintFinish = true"
-              >
-                スプリントを終了
-              </button>
+              > {{ $ui('スプリントを終了') }} </button>
               <button
                 v-else
                 type="button"
                 class="secondary small"
                 :disabled="busy"
                 @click="showSprintStart = true"
-              >
-                スプリントを開始
-              </button>
+              > {{ $ui('スプリントを開始') }} </button>
             </template>
           </div>
 
@@ -2265,8 +2259,8 @@ watch(projectKey, (key) => {
                     <button
                       type="button"
                       class="sort grip-sort"
-                      aria-label="手動の並び順にする"
-                      title="手動の並び順にする"
+                      :aria-label="$ui('手動の並び順にする')"
+                      :title="$ui('手動の並び順にする')"
                       @click="sortBy('sort_key')"
                     >
                       ⠿
@@ -2288,17 +2282,13 @@ watch(projectKey, (key) => {
                     </button>
                   </th>
                   <th scope="col" :aria-sort="ariaSort('title')">
-                    <button type="button" class="sort" @click="sortBy('title')">
-                      タイトル
-                      <span class="caret" aria-hidden="true">{{
+                    <button type="button" class="sort" @click="sortBy('title')"> {{ $ui('タイトル') }} <span class="caret" aria-hidden="true">{{
                         sort === 'title' ? (order === 'asc' ? '▴' : '▾') : ''
                       }}</span>
                     </button>
                   </th>
                   <th scope="col" class="status-col" :aria-sort="ariaSort('status')">
-                    <button type="button" class="sort" @click="sortBy('status')">
-                      状態
-                      <span class="caret" aria-hidden="true">{{
+                    <button type="button" class="sort" @click="sortBy('status')"> {{ $ui('状態') }} <span class="caret" aria-hidden="true">{{
                         sort === 'status' ? (order === 'asc' ? '▴' : '▾') : ''
                       }}</span>
                     </button>
@@ -2312,19 +2302,15 @@ watch(projectKey, (key) => {
                     class="priority-col"
                     :aria-sort="ariaSort('priority')"
                   >
-                    <button type="button" class="sort" @click="sortBy('priority')">
-                      優先
-                      <span class="caret" aria-hidden="true">{{
+                    <button type="button" class="sort" @click="sortBy('priority')"> {{ $ui('優先') }} <span class="caret" aria-hidden="true">{{
                         sort === 'priority' ? (order === 'asc' ? '▴' : '▾') : ''
                       }}</span>
                     </button>
                   </th>
                   <!-- 担当だけソートできない（`ApiDesign.md` 9.2.1 の sort に無い） -->
-                  <th v-if="!shrunk" scope="col" class="assignee-col">担当</th>
+                  <th v-if="!shrunk" scope="col" class="assignee-col">{{ $ui('担当') }}</th>
                   <th v-if="!shrunk" scope="col" class="due-col" :aria-sort="ariaSort('due_date')">
-                    <button type="button" class="sort" @click="sortBy('due_date')">
-                      期限
-                      <span class="caret" aria-hidden="true">{{
+                    <button type="button" class="sort" @click="sortBy('due_date')"> {{ $ui('期限') }} <span class="caret" aria-hidden="true">{{
                         sort === 'due_date' ? (order === 'asc' ? '▴' : '▾') : ''
                       }}</span>
                     </button>
@@ -2359,7 +2345,7 @@ watch(projectKey, (key) => {
                         class="grip"
                         draggable="true"
                         role="button"
-                        :aria-label="`${row.ticket.title} を並べ替える`"
+                        :aria-label="$ui('{value0} を並べ替える', { value0: row.ticket.title })"
                         @click.stop
                         @dragstart="draggingSeq = row.ticket.seq"
                         @dragend="endDrag()"
@@ -2373,7 +2359,7 @@ watch(projectKey, (key) => {
                         class="tree-toggle"
                         :disabled="searching"
                         :aria-expanded="(searching || !treeCollapsed.has(row.ticket.seq))"
-                        :aria-label="`${row.ticket.title} の配下を開閉する`"
+                        :aria-label="$ui('{value0} の配下を開閉する', { value0: row.ticket.title })"
                         @click.stop="toggleTree(row.ticket.seq)"
                       >
                         {{ !searching && treeCollapsed.has(row.ticket.seq) ? '▸' : '▾' }}
@@ -2397,7 +2383,7 @@ watch(projectKey, (key) => {
                         class="tree-toggle"
                         :disabled="searching"
                         :aria-expanded="(searching || !treeCollapsed.has(row.ticket.seq))"
-                        :aria-label="`${row.ticket.title} の配下を開閉する`"
+                        :aria-label="$ui('{value0} の配下を開閉する', { value0: row.ticket.title })"
                         @click.stop="toggleTree(row.ticket.seq)"
                       >
                         {{ !searching && treeCollapsed.has(row.ticket.seq) ? '▸' : '▾' }}
@@ -2439,7 +2425,7 @@ watch(projectKey, (key) => {
                       <span
                         v-if="shrunk && isOverdue(row.ticket)"
                         class="overdue"
-                        :title="`期限超過（${row.ticket.due_date}）`"
+                        :title="$ui('期限超過（{value0}）', { value0: row.ticket.due_date })"
                         >⚠</span
                       >
                       <!-- タグは枠線＋文字（8.6）。色は使わない。
@@ -2519,7 +2505,7 @@ watch(projectKey, (key) => {
                       <span
                         v-if="row.ticket.working_agent"
                         class="working-agent"
-                        :title="`${row.ticket.working_agent.display_name} が処理しています`"
+                        :title="$ui('{value0} が処理しています', { value0: row.ticket.working_agent.display_name })"
                         >🤖</span
                       >
                     </span>
@@ -2545,10 +2531,8 @@ watch(projectKey, (key) => {
               @dragover="onDragOverSection($event, section, 'last')"
               @drop.prevent="dropOnSection(section, 'last')"
             >
-              <template v-if="section.stage === true && canReorder">
-                いま取りかかるものを ⠿ でここへドラッグすると、オンステージへ上がります
-              </template>
-              <template v-else>この段にチケットはありません</template>
+              <template v-if="section.stage === true && canReorder"> {{ $ui('いま取りかかるものを ⠿ でここへドラッグすると、オンステージへ上がります') }} </template>
+              <template v-else>{{ $ui('この段にチケットはありません') }}</template>
             </p>
 
           </template>
@@ -2559,9 +2543,8 @@ watch(projectKey, (key) => {
              （5.4「配下の行き先」。pb-46） -->
         <p class="total">
           <template v-if="truncated">
-            {{ withComma(total) }}件中 {{ withComma(perPage) }}件を表示しています。フィルタで絞り込んでください
-          </template>
-          <template v-else>{{ withComma(total) }}件</template>
+            {{ $ui('全{total}件中{shown}件を表示しています。フィルタで絞り込んでください', { total: withComma(total), shown: withComma(perPage) }) }} </template>
+          <template v-else>{{ withComma(total) }}{{ $ui('件') }}</template>
         </p>
       </template>
     </div>
@@ -2597,9 +2580,9 @@ watch(projectKey, (key) => {
            取り返しのつく操作に使わない（6.3）。だから `danger` も付けない -->
       <ConfirmDialog
         v-if="confirmSprintFinish && activeSprint"
-        title="スプリントを終了しますか？"
-        :message="`${activeSprint.name} を終了します。対象の ${finishPreview.total} 件のうち、完了しているのは ${finishPreview.closed} 件です。完了したものは一覧から外れ、未完了の ${finishPreview.remaining} 件はオンステージに残ります。`"
-        confirm-label="終了する"
+        :title="$ui('スプリントを終了しますか？')"
+        :message="$ui('{value0} を終了します。対象の {value1} 件のうち、完了しているのは {value2} 件です。完了したものは一覧から外れ、未完了の {value3} 件はオンステージに残ります。', { value0: activeSprint.name, value1: finishPreview.total, value2: finishPreview.closed, value3: finishPreview.remaining })"
+        :confirm-label="$ui('終了する')"
         :busy="busy"
         @cancel="confirmSprintFinish = false"
         @confirm="runFinishSprint"

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * ユーザー詳細・編集（`GuiDesign.md` 5.6.2）。必要権限は `user.manage`。
  *
@@ -69,7 +70,7 @@ function toApiError(e: unknown): ApiError {
     : new ApiError({
         status: 0,
         code: 'internal_error',
-        message: '予期しないエラーが発生しました',
+        message: uiText("予期しないエラーが発生しました"),
       })
 }
 
@@ -174,17 +175,17 @@ function cancelEdit(): void {
 
 const nameError = computed(() => {
   const v = displayName.value.trim()
-  if (v === '') return '表示名を入力してください'
-  if (v.length > MAX_DISPLAY_NAME) return `${MAX_DISPLAY_NAME}文字以内で入力してください`
+  if (v === '') return uiText("表示名を入力してください")
+  if (v.length > MAX_DISPLAY_NAME) return uiText("{value0}文字以内で入力してください", { value0: MAX_DISPLAY_NAME })
   return null
 })
 
 const emailError = computed(() => {
   const v = email.value.trim()
-  if (v === '') return 'メールアドレスを入力してください'
-  if (v.length > MAX_EMAIL) return `${MAX_EMAIL}文字以内で入力してください`
+  if (v === '') return uiText("メールアドレスを入力してください")
+  if (v.length > MAX_EMAIL) return uiText("{value0}文字以内で入力してください", { value0: MAX_EMAIL })
   // 形式の正本はサーバ側。ここは押す前に気づかせるための最小の確認にとどめる
-  if (!v.includes('@')) return 'メールアドレスの形式で入力してください'
+  if (!v.includes('@')) return uiText("メールアドレスの形式で入力してください")
   return null
 })
 
@@ -336,7 +337,7 @@ async function addMembership(value: { projectKey: string; role: string }): Promi
     await usersApi.putMembership(u.id, value.projectKey, value.role)
     addOpen.value = false
     membershipError.value = null
-    membershipNotice.value = `${value.projectKey} の権限を追加しました`
+    membershipNotice.value = uiText("{value0} の権限を追加しました", { value0: value.projectKey })
     // 応答は1件ぶんなので、一覧と `version` を合わせるために取り直す
     await reloadDetail()
   } catch (e: unknown) {
@@ -355,7 +356,7 @@ async function changeMembershipRole(projectKey: string, role: string): Promise<v
   membershipNotice.value = null
   try {
     await usersApi.putMembership(u.id, projectKey, role)
-    membershipNotice.value = `${projectKey} のロールを ${rolesStore.roleLabel(role)} に変更しました`
+    membershipNotice.value = uiText("{value0} のロールを {value1} に変更しました", { value0: projectKey, value1: rolesStore.roleLabel(role) })
     await reloadDetail()
   } catch (e: unknown) {
     membershipError.value = toApiError(e)
@@ -375,7 +376,7 @@ async function removeMembership(projectKey: string): Promise<void> {
   membershipNotice.value = null
   try {
     await usersApi.deleteMembership(u.id, projectKey)
-    membershipNotice.value = `${projectKey} の権限を削除しました`
+    membershipNotice.value = uiText("{value0} の権限を削除しました", { value0: projectKey })
     await reloadDetail()
   } catch (e: unknown) {
     membershipError.value = toApiError(e)
@@ -416,7 +417,7 @@ async function runPasswordReset(): Promise<void> {
   try {
     const res = await usersApi.resetUserPassword(u.id)
     generated.value = res.generated_password
-    credentialNotice.value = 'パスワードをリセットし、すべてのセッションを失効しました'
+    credentialNotice.value = uiText("パスワードをリセットし、すべてのセッションを失効しました")
     resetConfirmOpen.value = false
     // `password_updated_at` とセッション一覧が変わる（6.6）
     await reloadDetail()
@@ -448,7 +449,7 @@ async function runMfaReset(): Promise<void> {
   credentialNotice.value = null
   try {
     await usersApi.resetUserMfa(u.id)
-    credentialNotice.value = '第2要素を解除しました。次のログインからパスワードだけで入れます'
+    credentialNotice.value = uiText("第2要素を解除しました。次のログインからパスワードだけで入れます")
     mfaConfirmOpen.value = false
     // `mfa_credential_count` が変わる（6.3）
     await reloadDetail()
@@ -481,7 +482,7 @@ async function runPasskeyReset(): Promise<void> {
   credentialNotice.value = null
   try {
     await usersApi.resetUserPasskeys(u.id)
-    credentialNotice.value = 'パスキーをすべて削除しました。パスワードでは引き続きログインできます'
+    credentialNotice.value = uiText("パスキーをすべて削除しました。パスワードでは引き続きログインできます")
     passkeyConfirmOpen.value = false
     // `passkey_count` が変わる（6.3）
     await reloadDetail()
@@ -517,8 +518,8 @@ async function runRevokeSessions(): Promise<void> {
     await usersApi.revokeUserSessions(u.id)
     sessionNotice.value =
       before === 0
-        ? '有効なセッションはありませんでした'
-        : `${before}件のセッションを失効しました`
+        ? uiText("有効なセッションはありませんでした")
+        : uiText("{value0}件のセッションを失効しました", { value0: before })
     revokeConfirmOpen.value = false
     await reloadDetail()
   } catch (e: unknown) {
@@ -581,7 +582,7 @@ async function runDelete(): Promise<void> {
     // URL には残さない（再読み込みで通知が復活しないように）
     await router.replace({
       path: '/admin/users',
-      state: { notice: `${u.display_name} を削除しました` },
+      state: { notice: uiText("{value0} を削除しました", { value0: u.display_name }) },
     })
   } catch (e: unknown) {
     deleteError.value = toApiError(e)
@@ -595,33 +596,33 @@ async function runDelete(): Promise<void> {
 // **編集は入れない。** 同じ画面の「基本情報」ブロックの `[編集]` が担う（5.6.2）。
 // ここに置くのは、この画面のブロックに現れない操作である。
 const menuItems = computed<ActionItem[]>(() => [
-  { key: 'password-reset', label: 'パスワードをリセット' },
-  { key: 'revoke-sessions', label: 'セッションを全失効' },
+  { key: 'password-reset', label: uiText("パスワードをリセット") },
+  { key: 'revoke-sessions', label: uiText("セッションを全失効") },
   {
     key: 'reset-mfa',
-    label: '多要素認証を解除',
+    label: uiText("多要素認証を解除"),
     // **登録が0件なら押せない。** 黙って消さず、理由を添える（5.6.2 の作法）
     disabled: mfaCount.value === 0,
-    reason: '登録がないため解除できません',
+    reason: uiText("登録がないため解除できません"),
   },
   {
     key: 'reset-passkeys',
-    label: 'パスキーを全削除',
+    label: uiText("パスキーを全削除"),
     disabled: passkeyCount.value === 0,
-    reason: '登録がないため削除できません',
+    reason: uiText("登録がないため削除できません"),
   },
   {
     key: 'toggle-active',
-    label: isActive.value ? '無効化' : '有効化',
+    label: isActive.value ? uiText("無効化") : uiText("有効化"),
     disabled: isSelf.value && isActive.value,
-    reason: '自分自身は無効化できません',
+    reason: uiText("自分自身は無効化できません"),
   },
   {
     key: 'delete',
-    label: '削除',
+    label: uiText("削除"),
     danger: true,
     disabled: isSelf.value,
-    reason: '自分自身は削除できません',
+    reason: uiText("自分自身は削除できません"),
   },
 ])
 
@@ -640,11 +641,11 @@ function onMenuSelect(key: string): void {
 
 <template>
   <div class="page">
-    <PageHeader :title="user ? `👤 ${user.display_name}` : 'ユーザー詳細'">
+    <PageHeader :title="user ? `👤 ${user.display_name}` : $ui('ユーザー詳細')">
       <template #lead>
         <!-- 戻り先は一覧で固定する。`router.back()` は直リンクで開いたとき
              どこへ戻るか分からない -->
-        <RouterLink class="back" to="/admin/users" aria-label="アカウント / 権限へ戻る">
+        <RouterLink class="back" to="/admin/users" :aria-label="$ui('アカウント / 権限へ戻る')">
           <span aria-hidden="true">←</span>
         </RouterLink>
       </template>
@@ -654,7 +655,7 @@ function onMenuSelect(key: string): void {
       <template v-if="user" #actions>
         <UserActionsMenu
           :items="menuItems"
-          :label="`${user.display_name} の操作メニュー`"
+          :label="$ui('{value0} の操作メニュー', { value0: user.display_name })"
           @select="onMenuSelect"
         />
       </template>
@@ -664,11 +665,11 @@ function onMenuSelect(key: string): void {
       <!-- エラー（6.2）。原因はサーバが返した message をそのまま出す（2.5） -->
       <EmptyState
         v-if="loadError"
-        title="ユーザーを取得できませんでした"
+        :title="$ui('ユーザーを取得できませんでした')"
         :description="loadError.message"
       >
         <template #action>
-          <button type="button" class="primary" @click="load">再試行</button>
+          <button type="button" class="primary" @click="load">{{ $ui('再試行') }}</button>
         </template>
       </EmptyState>
 
@@ -685,43 +686,41 @@ function onMenuSelect(key: string): void {
         <!-- ── 基本情報 ─────────────────────────────────────── -->
         <section class="block">
           <div class="block-head">
-            <h2 class="block-title">基本情報</h2>
+            <h2 class="block-title">{{ $ui('基本情報') }}</h2>
             <button
               v-if="!editing"
               type="button"
               class="secondary small"
               @click="startEdit"
-            >
-              編集
-            </button>
+            > {{ $ui('編集') }} </button>
           </div>
 
           <!-- 表示（5.6.2 の5項目） -->
           <dl v-if="!editing" class="fields">
-            <dt>表示名</dt>
+            <dt>{{ $ui('表示名') }}</dt>
             <dd>{{ user.display_name }}</dd>
 
-            <dt>メール</dt>
+            <dt>{{ $ui('メール') }}</dt>
             <dd>{{ user.email }}</dd>
 
             <!-- 状態を色だけで示さない（9.2）。記号と文字の両方を出す -->
-            <dt>状態</dt>
+            <dt>{{ $ui('状態') }}</dt>
             <dd :class="{ inactive: !user.is_active }">
               <span aria-hidden="true">{{ user.is_active ? '●' : '○' }}</span>
-              {{ user.is_active ? '有効' : '無効' }}
+              {{ user.is_active ? $ui("有効") : $ui("無効") }}
             </dd>
 
-            <dt>最終ログイン</dt>
+            <dt>{{ $ui('最終ログイン') }}</dt>
             <dd>{{ user.last_login_at === null ? '—' : formatDateTime(user.last_login_at) }}</dd>
 
-            <dt>作成</dt>
+            <dt>{{ $ui('作成') }}</dt>
             <dd>{{ formatDate(user.created_at) }}</dd>
           </dl>
 
           <!-- 編集（5.6.2）。表示名とメールの両方を編集可能にする -->
           <form v-else class="form" @submit.prevent="saveBasic">
             <label class="field">
-              <span class="label">表示名 <span class="required">*</span></span>
+              <span class="label">{{ $ui('表示名') }} <span class="required">*</span></span>
               <input
                 v-model="displayName"
                 type="text"
@@ -735,7 +734,7 @@ function onMenuSelect(key: string): void {
             </label>
 
             <label class="field">
-              <span class="label">メールアドレス <span class="required">*</span></span>
+              <span class="label">{{ $ui('メールアドレス') }} <span class="required">*</span></span>
               <input
                 v-model="email"
                 type="email"
@@ -749,9 +748,7 @@ function onMenuSelect(key: string): void {
               />
               <span v-if="emailDetail" class="detail">{{ emailDetail.message }}</span>
               <span v-else-if="emailError" class="detail">✕ {{ emailError }}</span>
-              <span class="hint">
-                変更するとログインに使うアドレスも変わります（本人に伝えてください）。
-              </span>
+              <span class="hint"> {{ $ui('変更するとログインに使うアドレスも変わります（本人に伝えてください）。') }} </span>
             </label>
 
             <div class="actions-row">
@@ -760,15 +757,13 @@ function onMenuSelect(key: string): void {
                 class="secondary"
                 :disabled="savingBasic"
                 @click="cancelEdit"
-              >
-                キャンセル
-              </button>
-              <button type="submit" class="primary" :disabled="!canSaveBasic">保存</button>
+              > {{ $ui('キャンセル') }} </button>
+              <button type="submit" class="primary" :disabled="!canSaveBasic">{{ $ui('保存') }}</button>
             </div>
           </form>
 
           <!-- 結果は操作した場所に出す（6.4） -->
-          <p v-if="basicSaved" class="ok" role="status">✓ 保存しました</p>
+          <p v-if="basicSaved" class="ok" role="status">{{ $ui('✓ 保存しました') }}</p>
           <p v-if="generalBasicError" class="error" role="alert">
             ✕ {{ generalBasicError }}
             <button
@@ -776,17 +771,15 @@ function onMenuSelect(key: string): void {
               type="button"
               class="secondary small"
               @click="load"
-            >
-              最新の内容を取得
-            </button>
+            > {{ $ui('最新の内容を取得') }} </button>
           </p>
         </section>
 
         <!-- ── システムロール ───────────────────────────────── -->
         <section class="block">
-          <h2 class="block-title">システムロール</h2>
+          <h2 class="block-title">{{ $ui('システムロール') }}</h2>
 
-          <div class="choices" role="radiogroup" aria-label="システムロール">
+          <div class="choices" role="radiogroup" :aria-label="$ui('システムロール')">
             <label v-for="r in systemRoles" :key="r.key" class="choice">
               <input
                 v-model="roleDraft"
@@ -804,18 +797,16 @@ function onMenuSelect(key: string): void {
 
           <div class="actions-row">
             <!-- 押せない理由を添える（5.6.2）。項目そのものは消さない -->
-            <span v-if="isSelf" class="hint">自分自身のロールは変更できません</span>
+            <span v-if="isSelf" class="hint">{{ $ui('自分自身のロールは変更できません') }}</span>
             <button
               type="button"
               class="primary"
               :disabled="!roleChanged || savingRole || isSelf"
               @click="saveRole"
-            >
-              保存
-            </button>
+            > {{ $ui('保存') }} </button>
           </div>
 
-          <p v-if="roleSaved" class="ok" role="status">✓ 保存しました</p>
+          <p v-if="roleSaved" class="ok" role="status">{{ $ui('✓ 保存しました') }}</p>
           <p v-if="roleError" class="error" role="alert">
             ✕ {{ roleError.message }}
             <button
@@ -823,31 +814,27 @@ function onMenuSelect(key: string): void {
               type="button"
               class="secondary small"
               @click="load"
-            >
-              最新の内容を取得
-            </button>
+            > {{ $ui('最新の内容を取得') }} </button>
           </p>
         </section>
 
         <!-- ── プロジェクトごとの権限 ───────────────────────── -->
         <section class="block">
           <div class="block-head">
-            <h2 class="block-title">プロジェクトごとの権限</h2>
-            <button type="button" class="secondary small" @click="openAdd">+ 追加</button>
+            <h2 class="block-title">{{ $ui('プロジェクトごとの権限') }}</h2>
+            <button type="button" class="secondary small" @click="openAdd">{{ $ui('+ 追加') }}</button>
           </div>
 
           <!-- 日本語は行を折り返すとその位置に空白が入る。1行に収める -->
-          <p v-if="memberships.length === 0" class="hint">
-            プロジェクトの権限がありません。アドミニストレータはメンバーでなくてもすべてのプロジェクトを見られます。
-          </p>
+          <p v-if="memberships.length === 0" class="hint"> {{ $ui('プロジェクトの権限がありません。アドミニストレータはメンバーでなくてもすべてのプロジェクトを見られます。') }} </p>
 
           <table v-else class="table">
             <thead>
               <tr>
-                <th scope="col">プロジェクト</th>
-                <th scope="col" class="role-col">ロール</th>
-                <th scope="col" class="joined">参加</th>
-                <th scope="col"><span class="visually-hidden">操作</span></th>
+                <th scope="col">{{ $ui('プロジェクト') }}</th>
+                <th scope="col" class="role-col">{{ $ui('ロール') }}</th>
+                <th scope="col" class="joined">{{ $ui('参加') }}</th>
+                <th scope="col"><span class="visually-hidden">{{ $ui('操作') }}</span></th>
               </tr>
             </thead>
             <tbody>
@@ -863,7 +850,7 @@ function onMenuSelect(key: string): void {
                   <select
                     :value="m.role"
                     :disabled="membershipBusy !== null"
-                    :aria-label="`${m.project_key} のロール`"
+                    :aria-label="$ui('{value0} のロール', { value0: m.project_key })"
                     @change="
                       changeMembershipRole(
                         m.project_key,
@@ -883,9 +870,7 @@ function onMenuSelect(key: string): void {
                     class="secondary small"
                     :disabled="membershipBusy !== null"
                     @click="removeMembership(m.project_key)"
-                  >
-                    削除
-                  </button>
+                  > {{ $ui('削除') }} </button>
                 </td>
               </tr>
             </tbody>
@@ -897,17 +882,15 @@ function onMenuSelect(key: string): void {
 
         <!-- ── 認証手段（`DbDesign.md` 6.2 の user_identity）───── -->
         <section class="block">
-          <h2 class="block-title">認証手段</h2>
+          <h2 class="block-title">{{ $ui('認証手段') }}</h2>
 
           <!-- **1つの表にまとめる。** 別の table に分けると列幅が独立して決まり、
                2行の「最終更新」と「登録済み」が縦に揃わない（実測、2026-09-13） -->
           <table class="table">
             <tbody>
               <tr v-if="localIdentity">
-                <td>ローカルパスワード</td>
-                <td class="muted">
-                  最終更新
-                  {{
+                <td>{{ $ui('ローカルパスワード') }}</td>
+                <td class="muted"> {{ $ui('最終更新') }} {{
                     localIdentity.password_updated_at === null
                       ? '—'
                       : formatDate(localIdentity.password_updated_at)
@@ -919,14 +902,12 @@ function onMenuSelect(key: string): void {
                     class="secondary small"
                     :disabled="resetting"
                     @click="resetConfirmOpen = true"
-                  >
-                    リセット
-                  </button>
+                  > {{ $ui('リセット') }} </button>
                 </td>
               </tr>
               <tr v-else>
-                <td>ローカルパスワード</td>
-                <td class="muted">設定されていません</td>
+                <td>{{ $ui('ローカルパスワード') }}</td>
+                <td class="muted">{{ $ui('設定されていません') }}</td>
                 <td class="row-actions"></td>
               </tr>
 
@@ -934,9 +915,9 @@ function onMenuSelect(key: string): void {
                    管理者が「この人はどうやってログインするか」を1か所で読むために
                    同じブロックへ置く。**出すのは件数だけ** -->
               <tr>
-                <td>多要素認証（TOTP）</td>
+                <td>{{ $ui('多要素認証（TOTP）') }}</td>
                 <td class="muted">
-                  {{ mfaCount === 0 ? '登録されていません' : `${mfaCount}件 登録済み` }}
+                  {{ mfaCount === 0 ? $ui("登録されていません") : $ui("{value0}件 登録済み", { value0: mfaCount }) }}
                 </td>
                 <td class="row-actions">
                   <!-- **黙って消さず、押せない理由を添える**（5.6.2 の作法） -->
@@ -944,37 +925,33 @@ function onMenuSelect(key: string): void {
                     type="button"
                     class="secondary small"
                     :disabled="mfaCount === 0 || mfaResetting"
-                    :title="mfaCount === 0 ? '登録がないため解除できません' : undefined"
+                    :title="mfaCount === 0 ? $ui('登録がないため解除できません') : undefined"
                     @click="mfaConfirmOpen = true"
-                  >
-                    解除
-                  </button>
+                  > {{ $ui('解除') }} </button>
                 </td>
               </tr>
 
               <!-- パスキー（pb-104。`DbDesign.md` 6.19）。第2要素と同じく
                    **user_identity ではない**が、同じブロックに**件数だけ**を出す -->
               <tr>
-                <td>パスキー</td>
+                <td>{{ $ui('パスキー') }}</td>
                 <td class="muted">
-                  {{ passkeyCount === 0 ? '登録されていません' : `${passkeyCount}件 登録済み` }}
+                  {{ passkeyCount === 0 ? $ui("登録されていません") : $ui("{value0}件 登録済み", { value0: passkeyCount }) }}
                 </td>
                 <td class="row-actions">
                   <button
                     type="button"
                     class="secondary small"
                     :disabled="passkeyCount === 0 || passkeyResetting"
-                    :title="passkeyCount === 0 ? '登録がないため削除できません' : undefined"
+                    :title="passkeyCount === 0 ? $ui('登録がないため削除できません') : undefined"
                     @click="passkeyConfirmOpen = true"
-                  >
-                    全削除
-                  </button>
+                  > {{ $ui('全削除') }} </button>
                 </td>
               </tr>
             </tbody>
           </table>
 
-          <p class="hint">（OIDC/SAML 連携は Phase 3）</p>
+          <p class="hint">{{ $ui('（OIDC/SAML 連携は Phase 3）') }}</p>
 
           <p v-if="credentialNotice" class="ok" role="status">✓ {{ credentialNotice }}</p>
           <p v-if="credentialError" class="error" role="alert">✕ {{ credentialError.message }}</p>
@@ -982,20 +959,18 @@ function onMenuSelect(key: string): void {
 
         <!-- ── 有効なセッション ─────────────────────────────── -->
         <section class="block">
-          <h2 class="block-title">有効なセッション</h2>
+          <h2 class="block-title">{{ $ui('有効なセッション') }}</h2>
 
-          <p v-if="sessions.length === 0" class="hint">有効なセッションはありません。</p>
+          <p v-if="sessions.length === 0" class="hint">{{ $ui('有効なセッションはありません。') }}</p>
 
           <table v-else class="table">
             <tbody>
               <!-- 行ごとの失効は持たない（5.6.2）。一覧は参照のみ -->
               <tr v-for="s in sessions" :key="s.id">
-                <td>{{ s.client_info ?? '不明なクライアント' }}</td>
-                <td class="muted">
-                  最終利用 {{ s.last_used_at === null ? '—' : formatDateTime(s.last_used_at) }}
+                <td>{{ s.client_info ?? $ui("不明なクライアント") }}</td>
+                <td class="muted"> {{ $ui('最終利用') }} {{ s.last_used_at === null ? '—' : formatDateTime(s.last_used_at) }}
                 </td>
-                <td class="muted">
-                  期限 {{ s.expires_at === null ? '無期限' : formatDateTime(s.expires_at) }}
+                <td class="muted"> {{ $ui('期限') }} {{ s.expires_at === null ? $ui("無期限") : formatDateTime(s.expires_at) }}
                 </td>
               </tr>
             </tbody>
@@ -1007,9 +982,7 @@ function onMenuSelect(key: string): void {
               class="secondary"
               :disabled="revoking"
               @click="revokeConfirmOpen = true"
-            >
-              すべてのセッションを失効
-            </button>
+            > {{ $ui('すべてのセッションを失効') }} </button>
           </div>
 
           <p v-if="sessionNotice" class="ok" role="status">✓ {{ sessionNotice }}</p>
@@ -1021,9 +994,9 @@ function onMenuSelect(key: string): void {
     <!-- ── 確認と結果のダイアログ ───────────────────────────── -->
     <ConfirmDialog
       v-if="resetConfirmOpen"
-      title="パスワードをリセット"
-      :message="`${user?.display_name ?? ''} のパスワードを新しく生成します。\n現在のパスワードは使えなくなり、有効なセッションはすべて失効します。`"
-      confirm-label="リセットする"
+      :title="$ui('パスワードをリセット')"
+      :message="$ui('{value0} のパスワードを新しく生成します。\n現在のパスワードは使えなくなり、有効なセッションはすべて失効します。', { value0: user?.display_name ?? '' })"
+      :confirm-label="$ui('リセットする')"
       danger
       :busy="resetting"
       @confirm="runPasswordReset"
@@ -1032,9 +1005,9 @@ function onMenuSelect(key: string): void {
 
     <ConfirmDialog
       v-if="mfaConfirmOpen"
-      title="多要素認証を解除"
-      :message="`${user?.display_name ?? ''} の第2要素の保護が外れ、次のログインからパスワードだけで入れるようになります。\n登録済みの認証アプリとリカバリコードはすべて削除されます。\nパスワードとセッションには影響しません。`"
-      confirm-label="解除する"
+      :title="$ui('多要素認証を解除')"
+      :message="$ui('{value0} の第2要素の保護が外れ、次のログインからパスワードだけで入れるようになります。\n登録済みの認証アプリとリカバリコードはすべて削除されます。\nパスワードとセッションには影響しません。', { value0: user?.display_name ?? '' })"
+      :confirm-label="$ui('解除する')"
       danger
       :busy="mfaResetting"
       @confirm="runMfaReset"
@@ -1043,9 +1016,9 @@ function onMenuSelect(key: string): void {
 
     <ConfirmDialog
       v-if="passkeyConfirmOpen"
-      title="パスキーを全削除"
-      :message="`${user?.display_name ?? ''} の登録済みのパスキーをすべて削除します。対象はパスキーでログインできなくなりますが、パスワードでは入れます。\n乗っ取りを疑っているなら、パスワードのリセットとセッションの失効も別に行ってください。`"
-      confirm-label="全削除する"
+      :title="$ui('パスキーを全削除')"
+      :message="$ui('{value0} の登録済みのパスキーをすべて削除します。対象はパスキーでログインできなくなりますが、パスワードでは入れます。\n乗っ取りを疑っているなら、パスワードのリセットとセッションの失効も別に行ってください。', { value0: user?.display_name ?? '' })"
+      :confirm-label="$ui('全削除する')"
       danger
       :busy="passkeyResetting"
       @confirm="runPasskeyReset"
@@ -1054,9 +1027,9 @@ function onMenuSelect(key: string): void {
 
     <ConfirmDialog
       v-if="revokeConfirmOpen"
-      title="すべてのセッションを失効"
-      :message="`${user?.display_name ?? ''} のログイン中のセッションとアクセストークンをすべて失効します。\n本人は次のリクエストからログインし直す必要があります。`"
-      confirm-label="失効する"
+      :title="$ui('すべてのセッションを失効')"
+      :message="$ui('{value0} のログイン中のセッションとアクセストークンをすべて失効します。\n本人は次のリクエストからログインし直す必要があります。', { value0: user?.display_name ?? '' })"
+      :confirm-label="$ui('失効する')"
       danger
       :busy="revoking"
       @confirm="runRevokeSessions"
@@ -1065,9 +1038,9 @@ function onMenuSelect(key: string): void {
 
     <ConfirmDialog
       v-if="activeConfirmOpen"
-      title="ユーザーを無効化"
-      :message="`${user?.display_name ?? ''} を無効化します。\n本人は次のリクエストからログインできなくなります。有効なセッションは失効しません（必要なら別に失効してください）。`"
-      confirm-label="無効化する"
+      :title="$ui('ユーザーを無効化')"
+      :message="$ui('{value0} を無効化します。\n本人は次のリクエストからログインできなくなります。有効なセッションは失効しません（必要なら別に失効してください）。', { value0: user?.display_name ?? '' })"
+      :confirm-label="$ui('無効化する')"
       danger
       :busy="activeBusy"
       @confirm="runToggleActive"
@@ -1097,11 +1070,11 @@ function onMenuSelect(key: string): void {
     <!-- 生成されたパスワードはこの1回しか出せない（6.6） -->
     <GeneratedPasswordDialog
       v-if="generated && user"
-      title="パスワードをリセットしました"
-      lead-suffix="のパスワードを再発行しました。"
+      :title="$ui('パスワードをリセットしました')"
+      :lead-suffix="$ui('のパスワードを再発行しました。')"
       :footer-note="
         isSelf
-          ? 'このパスワードで入り直し、次回ログイン後に新しいものへ変更してください。'
+          ? $ui('このパスワードで入り直し、次回ログイン後に新しいものへ変更してください。')
           : undefined
       "
       :display-name="user.display_name"

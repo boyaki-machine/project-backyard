@@ -22,17 +22,14 @@ const pendingStore = usePendingStore()
   <div v-if="pendingStore.pending" class="bar" :class="{ urgent: pendingStore.urgent }" role="alert">
     <div class="inner">
       <p class="head">
-        <strong>設定の変更を確認してください</strong>
-        <span class="remain">あと {{ pendingStore.remainSeconds }} 秒</span>
+        <strong>{{ $ui('設定の変更を確認してください') }}</strong>
+        <span class="remain">{{ $ui('あと') }} {{ pendingStore.remainSeconds }} {{ $ui('秒') }}</span>
       </p>
       <p class="body">
-        <template v-if="pendingStore.changedByMe">あなたが</template>
+        <template v-if="pendingStore.changedByMe">{{ $ui('あなたが') }}</template>
         <template v-else-if="pendingStore.pending.changed_by">
-          {{ pendingStore.pending.changed_by.display_name }} が
-        </template>
-        {{ pendingStore.pending.keys.join(', ') }} を変えました。
-        <strong>この設定で画面へ入れていることを確かめて、右のボタンを押してください。</strong>
-        押さないまま期限が過ぎると<strong>元の設定へ戻ります</strong>。
+          {{ pendingStore.pending.changed_by.display_name }} {{ $ui('が') }} </template>
+        {{ pendingStore.pending.keys.join(', ') }} {{ $ui('を変えました。') }} <strong>{{ $ui('この設定で画面へ入れていることを確かめて、右のボタンを押してください。') }}</strong> {{ $ui('押さないまま期限が過ぎると') }}<strong>{{ $ui('元の設定へ戻ります') }}</strong>。
       </p>
       <p v-if="pendingStore.error" class="err">{{ pendingStore.error }}</p>
     </div>
@@ -42,7 +39,7 @@ const pendingStore = usePendingStore()
       :disabled="pendingStore.confirming"
       @click="pendingStore.confirm()"
     >
-      {{ pendingStore.confirming ? '確認中…' : 'アクセスできました' }}
+      {{ pendingStore.confirming ? $ui("確認中…") : $ui("アクセスできました") }}
     </button>
   </div>
 </template>

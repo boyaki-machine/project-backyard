@@ -160,7 +160,7 @@ function hints(item: DocTreeItem, zone: DocDropZone): boolean {
           type="button"
           class="doc-tree-twisty"
           :aria-expanded="!collapsed.has(item.path)"
-          :aria-label="`${item.title} の配下を開閉する`"
+          :aria-label="$ui('{value0} の配下を開閉する', { value0: item.title })"
           @click.stop="emit('toggle', item.path)"
         >
           {{ collapsed.has(item.path) ? '▸' : '▾' }}
@@ -191,7 +191,7 @@ function hints(item: DocTreeItem, zone: DocDropZone): boolean {
           <UserActionsMenu
             compact
             :items="actions"
-            :label="`${item.title} の操作メニュー`"
+            :label="$ui('{value0} の操作メニュー', { value0: item.title })"
             @select="(key: string) => emit('action', { key, item })"
           />
         </span>

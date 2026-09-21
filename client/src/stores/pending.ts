@@ -10,6 +10,7 @@
  * 変えている」を見せる必要はなく、確認を押す権限も無い。
  */
 import { defineStore } from 'pinia'
+import { uiText } from '../locales/ui'
 import { computed, ref } from 'vue'
 
 import * as settingsApi from '../api/settings'
@@ -82,7 +83,7 @@ export const usePendingStore = defineStore('pending', () => {
     } catch (e: unknown) {
       // **サーバの文面をそのまま出す。** 確認の条件はキーごとに違い、
       // 画面が組み立て直すと片方が古くなる（11.8）。
-      error.value = e instanceof Error ? e.message : '確認できませんでした'
+      error.value = e instanceof Error ? e.message : uiText('確認できませんでした')
       await refresh()
     } finally {
       confirming.value = false

@@ -1,4 +1,5 @@
 <script lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * 選択肢の1件。
  *
@@ -48,7 +49,7 @@ const trigger = useTemplateRef<HTMLButtonElement>('trigger')
 const panel = useTemplateRef<HTMLElement>('panel')
 
 const buttonLabel = computed(() =>
-  props.selected.length === 0 ? 'すべて' : `${props.selected.length}件選択`,
+  props.selected.length === 0 ? uiText("すべて") : uiText("{value0}件選択", { value0: props.selected.length }),
 )
 
 /** パネルの位置。開いた時点のボタンの実測位置から決める */
@@ -158,7 +159,7 @@ const panelStyle = computed(() => ({
 
   <Teleport to="body">
     <div v-if="open" ref="panel" class="multi-select-panel" :style="panelStyle" @click.stop>
-      <p v-if="options.length === 0" class="multi-select-empty">選択肢がありません</p>
+      <p v-if="options.length === 0" class="multi-select-empty">{{ $ui('選択肢がありません') }}</p>
       <label v-for="o in options" :key="o.value" class="multi-select-choice">
         <input
           type="checkbox"

@@ -80,6 +80,8 @@ test('言語設定を英語で保存すると各メニューが即時に切り�
   await page.locator('form').first().getByRole('button', { name: '保存' }).click()
 
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+  await expect(page.getByRole('heading', { level: 1, name: 'My settings' })).toBeVisible()
+  expect(await page.locator('body').innerText()).not.toMatch(/[ぁ-んァ-ヶ一-龠]/u)
   const mainMenu = page.getByRole('navigation', { name: 'Main menu' })
   await expect(mainMenu.getByText('Projects', { exact: true })).toBeVisible()
   await expect(mainMenu.getByText('Application settings', { exact: true })).toBeVisible()

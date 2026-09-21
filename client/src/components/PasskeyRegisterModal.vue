@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * パスキーの登録ダイアログ（`GuiDesign.md` 5.8「パスキーの一覧」）。
  *
@@ -43,7 +44,7 @@ const pending = ref<unknown>(null)
 const nameTaken = computed(() => props.existingNames.includes(name.value.trim()))
 
 const nameError = computed(() => {
-  if (nameTaken.value) return 'その名前は既に使われています。別の名前を指定してください'
+  if (nameTaken.value) return uiText("その名前は既に使われています。別の名前を指定してください")
   return error.value?.detailFor('name')?.message ?? ''
 })
 
@@ -64,7 +65,7 @@ async function register() {
     error.value = asApiError(e)
     // 名前の重複（409 already_exists）のときだけ、端末の応答を持ち越す。
     // それ以外の失敗では挑戦が消費されているので、次は最初からやり直す。
-    if (!(e instanceof ApiError && e.code === 'already_exists' && e.message.includes('名前'))) {
+    if (!(e instanceof ApiError && e.code === 'already_exists' && e.message.includes(uiText("名前")))) {
       pending.value = null
     }
   } finally {
@@ -78,22 +79,22 @@ function asApiError(e: unknown): ApiError {
     return new ApiError({
       status: 0,
       code: 'network_error',
-      message: 'この端末のパスキーは登録済みです',
+      message: uiText("この端末のパスキーは登録済みです"),
     })
   }
   return new ApiError({
     status: 0,
     code: 'network_error',
-    message: 'パスキーを作成できませんでした',
+    message: uiText("パスキーを作成できませんでした"),
   })
 }
 </script>
 
 <template>
-  <Modal title="パスキーを追加" @close="emit('close')">
+  <Modal :title="$ui('パスキーを追加')" @close="emit('close')">
     <div class="body">
       <label class="field">
-        <span class="label">名前 <span class="required">*</span></span>
+        <span class="label">{{ $ui('名前') }} <span class="required">*</span></span>
         <input
           v-model="name"
           type="text"
@@ -105,12 +106,10 @@ function asApiError(e: unknown): ApiError {
           @keydown.enter.prevent="register"
         />
         <span v-if="nameError" class="detail">{{ nameError }}</span>
-        <span v-else class="hint">どの端末のパスキーかを、あとで見分けるための名前です。</span>
+        <span v-else class="hint">{{ $ui('どの端末のパスキーかを、あとで見分けるための名前です。') }}</span>
       </label>
 
-      <p class="hint">
-        ⓘ [ 次へ ] を押すと、端末がパスキーの作成を求めます。生体認証か PIN で確認してください。
-      </p>
+      <p class="hint"> {{ $ui('ⓘ [ 次へ ] を押すと、端末がパスキーの作成を求めます。生体認証か PIN で確認してください。') }} </p>
 
       <!-- details に紐づかない失敗はここに出す（6.4） -->
       <p v-if="error && !error.detailFor('name')" class="alert" role="alert">
@@ -119,14 +118,14 @@ function asApiError(e: unknown): ApiError {
     </div>
 
     <template #footer>
-      <button type="button" class="secondary" @click="emit('close')">キャンセル</button>
+      <button type="button" class="secondary" @click="emit('close')">{{ $ui('キャンセル') }}</button>
       <button
         type="button"
         class="primary"
         :disabled="name.trim() === '' || nameTaken || busy"
         @click="register"
       >
-        {{ busy ? '確認中…' : '次へ' }}
+        {{ busy ? $ui("確認中…") : $ui("次へ") }}
       </button>
     </template>
   </Modal>

@@ -6,9 +6,9 @@ import { RouterLink } from 'vue-router'
   <!-- 権限が無いルートへ入ろうとしたときの遷移先（GuiDesign.md 7.2 手順3） -->
   <div class="error-page">
     <p class="code">403</p>
-    <h1 class="title">このページを表示する権限がありません</h1>
-    <p class="detail">必要な権限が付与されていない可能性があります。管理者に確認してください。</p>
-    <RouterLink class="back" to="/projects">プロジェクト一覧へ戻る</RouterLink>
+    <h1 class="title">{{ $ui('このページを表示する権限がありません') }}</h1>
+    <p class="detail">{{ $ui('必要な権限が付与されていない可能性があります。管理者に確認してください。') }}</p>
+    <RouterLink class="back" to="/projects">{{ $ui('プロジェクト一覧へ戻る') }}</RouterLink>
   </div>
 </template>
 

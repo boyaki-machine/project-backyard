@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * エージェント連携セットアップ `/p/:key/settings/agents`（`GuiDesign.md` 5.11）。
  *
@@ -136,9 +137,9 @@ function isAppend(file: AgentSetupFile): boolean {
 }
 
 function modeLabel(file: AgentSetupFile): string {
-  if (file.mode === 'append') return '⚠ 追記'
-  if (file.mode === 'merge') return '⚠ 統合'
-  return '新規'
+  if (file.mode === 'append') return uiText("⚠ 追記")
+  if (file.mode === 'merge') return uiText("⚠ 統合")
+  return uiText("新規")
 }
 
 /**
@@ -161,12 +162,12 @@ function hasMarker(file: AgentSetupFile): boolean {
  */
 function appendHint(file: AgentSetupFile): string {
   if (file.mode === 'merge') {
-    return `既に ${file.path} があるなら、permissions.allow にこの中身を足してください（丸ごと置き換えると既存の設定が消えます）。`
+    return uiText("既に {value0} があるなら、permissions.allow にこの中身を足してください（丸ごと置き換えると既存の設定が消えます）。", { value0: file.path })
   }
   if (hasMarker(file)) {
-    return `既存の ${file.path} の末尾へ貼ります。${file.marker_begin} 〜 ${file.marker_end} の間だけが PB の管理範囲です。`
+    return uiText("既存の {value0} の末尾へ貼ります。{value1} 〜 {value2} の間だけが PB の管理範囲です。", { value0: file.path, value1: file.marker_begin, value2: file.marker_end })
   }
-  return `既存の ${file.path} の末尾へ貼ります。同じ行が既にあれば足しません。`
+  return uiText("既存の {value0} の末尾へ貼ります。同じ行が既にあれば足しません。", { value0: file.path })
 }
 
 function backToSettings() {
@@ -175,33 +176,27 @@ function backToSettings() {
 
 function asApiError(e: unknown): ApiError {
   if (e instanceof ApiError) return e
-  return new ApiError({ status: 0, code: 'network_error', message: '通信に失敗しました' })
+  return new ApiError({ status: 0, code: 'network_error', message: uiText("通信に失敗しました") })
 }
 </script>
 
 <template>
   <div class="page">
     <!-- 戻る導線は actions スロットへ置く（PageHeader は名前付きスロットしか描かない） -->
-    <PageHeader title="エージェント連携セットアップ">
+    <PageHeader :title="$ui('エージェント連携セットアップ')">
       <template #actions>
-        <button type="button" class="secondary" @click="backToSettings">
-          ← プロジェクト設定へ
-        </button>
+        <button type="button" class="secondary" @click="backToSettings"> {{ $ui('← プロジェクト設定へ') }} </button>
       </template>
     </PageHeader>
 
     <div class="page-body">
       <section class="block">
-        <p class="hint">
-          ⓘ リポジトリに置くファイルを生成します。1リポジトリにつき1回の作業で、成果物は
-          コミットして全員で共有します。参加する人ごとの接続設定とトークンは、各自の
-          <RouterLink to="/me/agents">自分の設定 → エージェント</RouterLink> で受け取ります。
-        </p>
+        <p class="hint"> {{ $ui('ⓘ リポジトリに置くファイルを生成します。1リポジトリにつき1回の作業で、成果物は コミットして全員で共有します。参加する人ごとの接続設定とトークンは、各自の') }} <RouterLink to="/me/agents">{{ $ui('自分の設定 → エージェント') }}</RouterLink> {{ $ui('で受け取ります。') }} </p>
 
-        <h2 class="step">1. 使うクライアントに印を付ける</h2>
+        <h2 class="step">{{ $ui('1. 使うクライアントに印を付ける') }}</h2>
         <p v-if="kindsError" class="alert" role="alert">
           {{ kindsError.message }}
-          <button type="button" class="secondary" @click="loadKinds">再試行</button>
+          <button type="button" class="secondary" @click="loadKinds">{{ $ui('再試行') }}</button>
         </p>
         <div v-else class="kinds">
           <label v-for="k in templateKinds" :key="k.key" class="kind">
@@ -213,36 +208,33 @@ function asApiError(e: unknown): ApiError {
             <span>{{ k.display_name }}</span>
           </label>
         </div>
-        <p class="hint">両方（または3つとも）を使う人がいるなら、まとめて印を付けてください。</p>
+        <p class="hint">{{ $ui('両方（または3つとも）を使う人がいるなら、まとめて印を付けてください。') }}</p>
 
         <template v-if="setup">
-          <h2 class="step">2. 接続先</h2>
+          <h2 class="step">{{ $ui('2. 接続先') }}</h2>
           <p class="endpoint"><code>{{ setup.base_url }}/mcp/{{ setup.project.key }}</code></p>
-          <p class="hint">
-            エージェントはこの URL へ接続します。この値は PB を開いているアドレスから
-            組み立てています。
-          </p>
+          <p class="hint"> {{ $ui('エージェントはこの URL へ接続します。この値は PB を開いているアドレスから 組み立てています。') }} </p>
         </template>
 
-        <h2 class="step">3. 置くファイル</h2>
+        <h2 class="step">{{ $ui('3. 置くファイル') }}</h2>
 
         <p v-if="loadError" class="alert" role="alert">
           {{ loadError.message }}
-          <button type="button" class="secondary" @click="loadSetup">再試行</button>
+          <button type="button" class="secondary" @click="loadSetup">{{ $ui('再試行') }}</button>
         </p>
 
         <EmptyState
           v-else-if="!hasSelection"
-          title="クライアントを選んでください"
-          description="印を付けると、そのクライアント向けの配置ファイルが並びます。"
+          :title="$ui('クライアントを選んでください')"
+          :description="$ui('印を付けると、そのクライアント向けの配置ファイルが並びます。')"
         />
 
-        <p v-else-if="loading" class="hint">生成しています…</p>
+        <p v-else-if="loading" class="hint">{{ $ui('生成しています…') }}</p>
 
         <template v-else-if="setup">
           <div class="files-head">
-            <span class="count">{{ setup.files.length }}件</span>
-            <a class="primary download" :href="zipHref" download>⬇ 一式をダウンロード</a>
+            <span class="count">{{ setup.files.length }}{{ $ui('件') }}</span>
+            <a class="primary download" :href="zipHref" download>{{ $ui('⬇ 一式をダウンロード') }}</a>
           </div>
 
           <ul class="files">
@@ -252,40 +244,30 @@ function asApiError(e: unknown): ApiError {
                 <span class="mode" :class="{ warn: isAppend(f) }">{{ modeLabel(f) }}</span>
                 <span v-if="f.client_kind" class="kind-tag">{{ kindLabel(f.client_kind) }}</span>
                 <span class="spacer" />
-                <button type="button" class="secondary" @click="copyFile(f)">コピー</button>
+                <button type="button" class="secondary" @click="copyFile(f)">{{ $ui('コピー') }}</button>
               </div>
 
               <p v-if="isAppend(f)" class="hint">{{ appendHint(f) }}</p>
               <!-- 利用者の要望（2026-09-06）。生成物にも同じ2行を埋めてある。
                    **マーカーを持つ行にだけ出す**——差し替えの話なので、
                    `.gitignore` のような素の追記には当たらない -->
-              <p v-if="hasMarker(f)" class="warn-note">
-                ⚠ 貼る前に <code>git pull</code> して、リポジトリに新しい版が入っていないか
-                確かめてください<br />
-                ⚠ 貼った後に <code>git diff</code> でこのブロックを見て、他の人の更新を
-                潰していないか確かめてください
-              </p>
+              <p v-if="hasMarker(f)" class="warn-note"> {{ $ui('⚠ 貼る前に') }} <code>git pull</code> {{ $ui('して、リポジトリに新しい版が入っていないか 確かめてください') }}<br /> {{ $ui('⚠ 貼った後に') }} <code>git diff</code> {{ $ui('でこのブロックを見て、他の人の更新を 潰していないか確かめてください') }} </p>
 
-              <p v-if="copied[f.path] === 'ok'" class="ok" role="status">✓ コピーしました</p>
-              <p v-else-if="copied[f.path] === 'manual'" class="hint" role="status">
-                コピーできませんでした。下の内容を選択して ⌘C でコピーしてください。
-              </p>
+              <p v-if="copied[f.path] === 'ok'" class="ok" role="status">{{ $ui('✓ コピーしました') }}</p>
+              <p v-else-if="copied[f.path] === 'manual'" class="hint" role="status"> {{ $ui('コピーできませんでした。下の内容を選択して ⌘C でコピーしてください。') }} </p>
 
               <pre :id="`pb-file-${cssID(f.path)}`" class="content">{{
                 expanded.has(f.path) ? f.content : preview(f.content)
               }}</pre>
               <button type="button" class="secondary more" @click="toggleExpanded(f.path)">
-                {{ expanded.has(f.path) ? '畳む' : '全文を見る' }}
+                {{ expanded.has(f.path) ? $ui("畳む") : $ui("全文を見る") }}
               </button>
             </li>
           </ul>
 
-          <h2 class="step">4. コミットする</h2>
+          <h2 class="step">{{ $ui('4. コミットする') }}</h2>
           <p class="hint">
-            <code>.gitignore</code> の追記を反映してから、生成したファイルをコミットして
-            ください。接続設定（<code>.mcp.json</code> など）は含まれません——各自の環境なので
-            履歴に入れません。
-          </p>
+            <code>.gitignore</code> {{ $ui('の追記を反映してから、生成したファイルをコミットして ください。接続設定（') }}<code>.mcp.json</code> {{ $ui('など）は含まれません——各自の環境なので 履歴に入れません。') }} </p>
         </template>
       </section>
     </div>

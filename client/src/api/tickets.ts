@@ -13,6 +13,7 @@
  */
 import { api } from './client'
 import type { components } from './schema'
+import { uiText } from '../locales/ui'
 
 export type Ticket = components['schemas']['Ticket']
 export type TicketList = components['schemas']['TicketList']
@@ -65,9 +66,9 @@ export const ticketTypeIcons: Record<TicketType, string> = {
 
 /** 種別の表示名。サーバはキーしか返さないので、日本語は画面が持つ */
 export const ticketTypeLabels: Record<TicketType, string> = {
-  epic: 'エピック',
-  story: 'ストーリー',
-  task: 'タスク',
+  get epic() { return uiText('エピック') },
+  get story() { return uiText('ストーリー') },
+  get task() { return uiText('タスク') },
 }
 
 /**
@@ -90,7 +91,9 @@ export const backlogTicketTypes: TicketType[] = ['story', 'task']
  * **プロジェクトごとに変えられるようにはしない**（同 5.4.3。`project.settings`
  * に置く案は見送った）。必要になってから決める。
  */
-export const newTicketBodyTemplate = '# 概要\n\n# ゴール条件\n\n# 制約条件\n'
+export function newTicketBodyTemplate(): string {
+  return uiText('# 概要\n\n# ゴール条件\n\n# 制約条件\n')
+}
 
 /**
  * 優先度の記号（`GuiDesign.md` 8.7）。**色を使わず記号のみ。**
@@ -114,9 +117,9 @@ export const priorityMarks: Record<TicketPriority, string> = {
  * **語が違うと、人が「エージェントに見えているもの」を確かめられない。**
  */
 export const executionModeLabels: Record<TicketExecutionMode, string> = {
-  human_only: '人が行う',
-  agent_draft: 'エージェントが下書きし、人が仕上げる',
-  agent_only: 'エージェントに任せてよい',
+  get human_only() { return uiText('人が行う') },
+  get agent_draft() { return uiText('エージェントが下書きし、人が仕上げる') },
+  get agent_only() { return uiText('エージェントに任せてよい') },
 }
 
 /**
@@ -139,9 +142,9 @@ export type TicketReadiness = NonNullable<TicketDetail['readiness']>
  * `readinessLabels` が同じ3語をコンテキストパックに出している（実行モードと同じ理由）。
  */
 export const readinessLabels: Record<TicketReadiness, string> = {
-  red: '赤（前提が足りていない）',
-  yellow: '黄（不明点が残っている）',
-  green: '緑（着手してよい）',
+  get red() { return uiText('赤（前提が足りていない）') },
+  get yellow() { return uiText('黄（不明点が残っている）') },
+  get green() { return uiText('緑（着手してよい）') },
 }
 
 /** 選択肢の並び。**止まれ → 注意 → 進め**。未判定（`null`）は画面が先頭に足す */
@@ -154,10 +157,10 @@ export const readinessOptions: TicketReadiness[] = ['red', 'yellow', 'green']
  * パックの「1. スコープ境界と制約」に出している。
  */
 export const scopeKeys = [
-  { key: 'allow', label: '触ってよい範囲' },
-  { key: 'deny', label: '触ってはいけない範囲' },
-  { key: 'repositories', label: 'リポジトリ' },
-  { key: 'external_apis', label: '外部API' },
+  { key: 'allow', get label() { return uiText('触ってよい範囲') } },
+  { key: 'deny', get label() { return uiText('触ってはいけない範囲') } },
+  { key: 'repositories', get label() { return uiText('リポジトリ') } },
+  { key: 'external_apis', get label() { return uiText('外部API') } },
 ] as const
 
 export type ScopeKey = (typeof scopeKeys)[number]['key']
@@ -198,11 +201,11 @@ export function unknownScopeEntries(scope: TicketScope): [string, string][] {
 }
 
 export const priorityLabels: Record<TicketPriority, string> = {
-  highest: '最高',
-  high: '高',
-  medium: '中',
-  low: '低',
-  lowest: '最低',
+  get highest() { return uiText('最高') },
+  get high() { return uiText('高') },
+  get medium() { return uiText('中') },
+  get low() { return uiText('低') },
+  get lowest() { return uiText('最低') },
 }
 
 /** 優先度の並び（低い順）。フィルタの選択肢を作るのに使う */
@@ -234,10 +237,10 @@ export const statusMarks: Record<StatusCategory, string> = {
  * （`DbDesign.md` 7.4）。同じ語だからといって同じものではない。
  */
 export const statusCategoryLabels: Record<StatusCategory, string> = {
-  todo: '未着手',
-  in_progress: '進行中',
-  review: 'レビュー中',
-  done: '完了',
+  get todo() { return uiText('未着手') },
+  get in_progress() { return uiText('進行中') },
+  get review() { return uiText('レビュー中') },
+  get done() { return uiText('完了') },
 }
 
 /** 集計カードとフィルタで使う区分の並び（9.13.1 の `by_category` と同じ順） */

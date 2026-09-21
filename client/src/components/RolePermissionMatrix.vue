@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * 権限マトリクス（`GuiDesign.md` 5.6.3）。
  *
@@ -61,7 +62,7 @@ const scopeGroups = computed(() => {
     }
     groups.push({
       scope: role.scope,
-      label: role.scope === 'system' ? 'システム' : 'プロジェクト',
+      label: role.scope === 'system' ? uiText("システム") : uiText("プロジェクト"),
       count: 1,
       // 2つ目以降の群は、左端に縦罫を引いて切れ目を示す
       boundary: groups.length > 0,
@@ -124,7 +125,7 @@ async function load() {
     // ロールの取得はストアが例外を握りつぶすため、失敗は error で受け取る。
     if (rolesStore.error) failure.value = rolesStore.error
   } catch (e) {
-    failure.value = e instanceof Error ? e.message : '権限カタログを取得できませんでした'
+    failure.value = e instanceof Error ? e.message : uiText("権限カタログを取得できませんでした")
   } finally {
     loading.value = false
   }
@@ -145,19 +146,17 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureHead))
   <div ref="panel" class="matrix-panel">
     <!-- 5.6.3 のワイヤーどおり。Phase 1 が参照のみであることを最初に伝える -->
     <p class="notice">
-      <span aria-hidden="true">ⓘ</span>
-      組み込みロールの権限は Phase 1 では変更できません（参照のみ）
-    </p>
+      <span aria-hidden="true">ⓘ</span> {{ $ui('組み込みロールの権限は Phase 1 では変更できません（参照のみ）') }} </p>
 
-    <p v-if="loading" class="loading" role="status">読み込み中…</p>
+    <p v-if="loading" class="loading" role="status">{{ $ui('読み込み中…') }}</p>
 
     <EmptyState
       v-else-if="failure"
-      title="権限カタログを取得できませんでした"
+      :title="$ui('権限カタログを取得できませんでした')"
       :description="failure"
     >
       <template #action>
-        <button type="button" class="primary" @click="load">再試行</button>
+        <button type="button" class="primary" @click="load">{{ $ui('再試行') }}</button>
       </template>
     </EmptyState>
 
@@ -168,7 +167,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureHead))
       <table class="matrix">
         <thead>
           <tr ref="headRow">
-            <th rowspan="2" scope="col" class="perm corner">権限</th>
+            <th rowspan="2" scope="col" class="perm corner">{{ $ui('権限') }}</th>
             <th
               v-for="g in scopeGroups"
               :key="g.scope"
@@ -217,7 +216,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureHead))
                 :class="{ 'group-start': isGroupStart(i) }"
               >
                 <span class="mark-glyph" aria-hidden="true">{{ has(r.key, p.key) ? '✓' : '—' }}</span>
-                <span class="visually-hidden">{{ has(r.key, p.key) ? 'あり' : 'なし' }}</span>
+                <span class="visually-hidden">{{ has(r.key, p.key) ? $ui("あり") : $ui("なし") }}</span>
               </td>
             </tr>
           </template>

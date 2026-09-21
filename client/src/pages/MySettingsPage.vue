@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * 自分の設定 `/me`（`GuiDesign.md` 5.8）。
  *
@@ -33,7 +34,7 @@ import RecoveryCodesDialog from '../components/RecoveryCodesDialog.vue'
 import { formatDateTime } from '../lib/datetime'
 import { normalizeLocale } from '../locales'
 import type { SupportedLocale } from '../locales'
-import { IP_ADDRESS_REASON, openedByIPAddress, passkeySupported } from '../lib/passkey'
+import { ipAddressReason, openedByIPAddress, passkeySupported } from '../lib/passkey'
 import { useAuthStore } from '../stores/auth'
 import type { Hue, ThemePreference } from '../stores/ui'
 import { useUiStore } from '../stores/ui'
@@ -264,7 +265,7 @@ const showRecoveryRow = computed(() => totpItems.value.length > 0)
  */
 async function onRegistered(result: ConfirmedTotp) {
   registerOpen.value = false
-  mfaNotice.value = `✓ 「${result.credential.name}」を登録しました`
+  mfaNotice.value = uiText("✓ 「{value0}」を登録しました", { value0: result.credential.name })
   if (result.recovery_codes && result.recovery_codes.length > 0) {
     shownCodes.value = result.recovery_codes
   }
@@ -280,12 +281,12 @@ const deleteMessage = computed(() => {
   if (!deleting.value) return ''
   const name = deleting.value.name
   if (totpItems.value.length > 1) {
-    return `「${name}」で作ったコードは使えなくなります。\n他の認証アプリはそのまま使えます。`
+    return uiText("「{value0}」で作ったコードは使えなくなります。\n他の認証アプリはそのまま使えます。", { value0: name })
   }
   return (
-    `「${name}」を削除すると多要素認証が無効になり、` +
-    '次のログインからパスワードだけで入れるようになります。\n' +
-    'リカバリコードもあわせて削除されます。'
+    uiText("「{value0}」を削除すると多要素認証が無効になり、", { value0: name }) +
+    uiText("次のログインからパスワードだけで入れるようになります。\n") +
+    uiText("リカバリコードもあわせて削除されます。")
   )
 })
 
@@ -296,7 +297,7 @@ async function confirmDelete() {
   mfaError.value = null
   try {
     await mfaApi.deleteTotp(target.id)
-    mfaNotice.value = `✓ 「${target.name}」を削除しました`
+    mfaNotice.value = uiText("✓ 「{value0}」を削除しました", { value0: target.name })
     deleting.value = null
     await loadMfa()
   } catch (e: unknown) {
@@ -356,10 +357,10 @@ const currentHost = window.location.hostname
  * **在るはずの操作が黙って消えるより、押せない理由が読めるほうがよい**（5.8.1 の作法）。
  */
 const passkeyAddBlockedReason = computed(() => {
-  if (passkeyUnsupported) return 'このブラウザはパスキーに対応していません'
-  if (passkeyOnIPAddress) return IP_ADDRESS_REASON
+  if (passkeyUnsupported) return uiText("このブラウザはパスキーに対応していません")
+  if (passkeyOnIPAddress) return ipAddressReason()
   if (passkeys.value.length >= MAX_PASSKEYS) {
-    return `登録できるのは${MAX_PASSKEYS}件までです。追加するには、いずれかを削除してください。`
+    return uiText("登録できるのは{value0}件までです。追加するには、いずれかを削除してください。", { value0: MAX_PASSKEYS })
   }
   return ''
 })
@@ -376,7 +377,7 @@ onMounted(loadPasskeys)
 
 async function onPasskeyRegistered(created: Passkey) {
   passkeyRegisterOpen.value = false
-  passkeyNotice.value = `✓ 「${created.name}」を登録しました`
+  passkeyNotice.value = uiText("✓ 「{value0}」を登録しました", { value0: created.name })
   await loadPasskeys()
 }
 
@@ -389,8 +390,8 @@ async function onPasskeyRegistered(created: Passkey) {
 const passkeyDeleteMessage = computed(() => {
   if (!deletingPasskey.value) return ''
   return (
-    `「${deletingPasskey.value.name}」では PB にログインできなくなります。\n` +
-    '端末の中のパスキーは消えません。不要なら端末の設定から削除してください。'
+    uiText("「{value0}」では PB にログインできなくなります。\n", { value0: deletingPasskey.value.name }) +
+    uiText("端末の中のパスキーは消えません。不要なら端末の設定から削除してください。")
   )
 })
 
@@ -401,7 +402,7 @@ async function confirmPasskeyDelete() {
   passkeyError.value = null
   try {
     await passkeysApi.deletePasskey(target.id)
-    passkeyNotice.value = `✓ 「${target.name}」を削除しました`
+    passkeyNotice.value = uiText("✓ 「{value0}」を削除しました", { value0: target.name })
     deletingPasskey.value = null
     await loadPasskeys()
   } catch (e: unknown) {
@@ -430,13 +431,13 @@ const timezones = computed(() => {
 
 function asApiError(e: unknown): ApiError {
   if (e instanceof ApiError) return e
-  return new ApiError({ status: 0, code: 'network_error', message: '通信に失敗しました' })
+  return new ApiError({ status: 0, code: 'network_error', message: uiText("通信に失敗しました") })
 }
 </script>
 
 <template>
   <div class="page">
-    <PageHeader title="自分の設定" />
+    <PageHeader :title="$ui('自分の設定')" />
 
     <div class="page-body">
       <MeTabs current="general" />
@@ -444,16 +445,16 @@ function asApiError(e: unknown): ApiError {
       <div class="blocks">
         <!-- ── 基本情報 ──────────────────────────────────── -->
         <form class="block" @submit.prevent="saveProfile">
-          <h2 class="block-title">基本情報</h2>
+          <h2 class="block-title">{{ $ui('基本情報') }}</h2>
 
           <div class="field">
-            <span class="label">ログインID</span>
+            <span class="label">{{ $ui('ログインID') }}</span>
             <p class="static-value">{{ loginId }}</p>
-            <p class="hint">現在はメールアドレスと同じ値です。</p>
+            <p class="hint">{{ $ui('現在はメールアドレスと同じ値です。') }}</p>
           </div>
 
           <label class="field">
-            <span class="label">表示名 <span class="required">*</span></span>
+            <span class="label">{{ $ui('表示名') }} <span class="required">*</span></span>
             <input
               v-model="displayName"
               type="text"
@@ -468,7 +469,7 @@ function asApiError(e: unknown): ApiError {
           </label>
 
           <label class="field">
-            <span class="label">メールアドレス <span class="required">*</span></span>
+            <span class="label">{{ $ui('メールアドレス') }} <span class="required">*</span></span>
             <input
               v-model="email"
               type="text"
@@ -480,14 +481,14 @@ function asApiError(e: unknown): ApiError {
             <span v-if="profileDetail('email')" class="detail">
               {{ profileDetail('email')?.message }}
             </span>
-            <span v-else class="hint">変更するとログインIDも同じ値になります。</span>
+            <span v-else class="hint">{{ $ui('変更するとログインIDも同じ値になります。') }}</span>
           </label>
 
           <div class="pair">
             <label class="field">
-              <span class="label">言語</span>
+              <span class="label">{{ $ui('言語') }}</span>
               <select v-model="locale" name="locale" :disabled="savingProfile">
-                <option value="ja">日本語</option>
+                <option value="ja">{{ $ui('日本語') }}</option>
                 <option value="en">English</option>
               </select>
               <span v-if="profileDetail('locale')" class="detail">
@@ -496,7 +497,7 @@ function asApiError(e: unknown): ApiError {
             </label>
 
             <label class="field">
-              <span class="label">タイムゾーン</span>
+              <span class="label">{{ $ui('タイムゾーン') }}</span>
               <select v-model="timezone" name="timezone" :disabled="savingProfile">
                 <option v-for="tz in timezones" :key="tz" :value="tz">{{ tz }}</option>
               </select>
@@ -509,21 +510,21 @@ function asApiError(e: unknown): ApiError {
           <!-- 結果は操作した場所に出す（6.4）。トーストは使わない -->
           <div class="actions">
             <p v-if="profileError" class="alert" role="alert">{{ profileError.message }}</p>
-            <p v-else-if="showProfileSaved" class="ok" role="status">✓ 保存しました</p>
+            <p v-else-if="showProfileSaved" class="ok" role="status">{{ $ui('✓ 保存しました') }}</p>
             <span v-else class="spacer"></span>
 
             <button type="submit" class="primary" :disabled="!profileDirty || savingProfile">
-              {{ savingProfile ? '保存中…' : '保存' }}
+              {{ savingProfile ? $ui("保存中…") : $ui("保存") }}
             </button>
           </div>
         </form>
 
         <!-- ── デザイン（8.11）───────────────────────────── -->
         <section class="block">
-          <h2 class="block-title">デザイン</h2>
+          <h2 class="block-title">{{ $ui('デザイン') }}</h2>
 
           <fieldset class="field choices">
-            <legend class="label">テーマ</legend>
+            <legend class="label">{{ $ui('テーマ') }}</legend>
             <div class="choices-row">
               <label v-for="t in (['light', 'dark', 'system'] as ThemePreference[])" :key="t">
                 <input
@@ -533,13 +534,13 @@ function asApiError(e: unknown): ApiError {
                   :checked="ui.theme === t"
                   @change="chooseTheme(t)"
                 />
-                <span>{{ { light: 'ライト', dark: 'ダーク', system: 'システムに従う' }[t] }}</span>
+                <span>{{ { light: $ui("ライト"), dark: $ui("ダーク"), system: $ui("システムに従う") }[t] }}</span>
               </label>
             </div>
           </fieldset>
 
           <fieldset class="field choices">
-            <legend class="label">色相</legend>
+            <legend class="label">{{ $ui('色相') }}</legend>
             <div class="choices-row">
               <label v-for="h in (['blue', 'green'] as Hue[])" :key="h">
                 <input
@@ -549,7 +550,7 @@ function asApiError(e: unknown): ApiError {
                   :checked="ui.hue === h"
                   @change="chooseHue(h)"
                 />
-                <span>{{ { blue: 'ブルー', green: 'グリーン' }[h] }}</span>
+                <span>{{ { blue: $ui("ブルー"), green: $ui("グリーン") }[h] }}</span>
               </label>
             </div>
           </fieldset>
@@ -560,19 +561,17 @@ function asApiError(e: unknown): ApiError {
 
         <!-- ── セキュリティ ──────────────────────────────── -->
         <form class="block" @submit.prevent="changePassword">
-          <h2 class="block-title">セキュリティ</h2>
+          <h2 class="block-title">{{ $ui('セキュリティ') }}</h2>
 
           <!-- 要パスワード変更（`ApiDesign.md` 3.1）。変更するまで他の画面へ
                行けないので、なぜここに留まるのかをその場に書く -->
-          <p v-if="auth.mustChangePassword" class="warn">
-            ⚠ パスワードの変更が必要です。変更するまで他の画面には移動できません。
-          </p>
+          <p v-if="auth.mustChangePassword" class="warn"> {{ $ui('⚠ パスワードの変更が必要です。変更するまで他の画面には移動できません。') }} </p>
 
-          <h3 class="sub-title">パスワード</h3>
+          <h3 class="sub-title">{{ $ui('パスワード') }}</h3>
 
           <div class="pair">
             <label class="field">
-              <span class="label">現在のパスワード</span>
+              <span class="label">{{ $ui('現在のパスワード') }}</span>
               <input
                 v-model="currentPassword"
                 type="password"
@@ -587,7 +586,7 @@ function asApiError(e: unknown): ApiError {
             </label>
 
             <label class="field">
-              <span class="label">新しいパスワード</span>
+              <span class="label">{{ $ui('新しいパスワード') }}</span>
               <input
                 v-model="newPassword"
                 type="password"
@@ -599,21 +598,19 @@ function asApiError(e: unknown): ApiError {
               <span v-if="passwordDetail('new_password')" class="detail">
                 {{ passwordDetail('new_password')?.message }}
               </span>
-              <span v-else class="hint">{{ MIN_PASSWORD }}文字以上。</span>
+              <span v-else class="hint">{{ MIN_PASSWORD }}{{ $ui('文字以上。') }}</span>
             </label>
           </div>
 
-          <p class="hint">ⓘ 変更すると、他のセッションはすべてログアウトされます。</p>
+          <p class="hint">{{ $ui('ⓘ 変更すると、他のセッションはすべてログアウトされます。') }}</p>
 
           <div class="actions">
             <p v-if="passwordError" class="alert" role="alert">{{ passwordError.message }}</p>
-            <p v-else-if="showPasswordChanged" class="ok" role="status">
-              ✓ パスワードを変更しました
-            </p>
+            <p v-else-if="showPasswordChanged" class="ok" role="status"> {{ $ui('✓ パスワードを変更しました') }} </p>
             <span v-else class="spacer"></span>
 
             <button type="submit" class="primary" :disabled="!canChangePassword">
-              {{ changingPassword ? '変更中…' : '変更' }}
+              {{ changingPassword ? $ui("変更中…") : $ui("変更") }}
             </button>
           </div>
 
@@ -625,33 +622,27 @@ function asApiError(e: unknown): ApiError {
 
           <div class="sub-block">
             <div class="sub-head">
-              <h3 class="sub-title">多要素認証（MFA）</h3>
+              <h3 class="sub-title">{{ $ui('多要素認証（MFA）') }}</h3>
               <button
                 type="button"
                 class="secondary"
                 :disabled="atTotpLimit"
                 @click="registerOpen = true"
-              >
-                + 認証アプリを追加
-              </button>
+              > {{ $ui('+ 認証アプリを追加') }} </button>
             </div>
 
-            <p class="hint">
-              ⓘ ログインのときに、パスワードに加えて認証アプリの6桁のコードを求めます。
-            </p>
+            <p class="hint"> {{ $ui('ⓘ ログインのときに、パスワードに加えて認証アプリの6桁のコードを求めます。') }} </p>
             <!-- **在るはずの操作が黙って消えるより、押せない理由が読めるほうがよい**
                  （5.8.1 と同じ作法） -->
-            <p v-if="atTotpLimit" class="hint">
-              登録できるのは{{ MAX_TOTP }}件までです。追加するには、いずれかを削除してください。
-            </p>
+            <p v-if="atTotpLimit" class="hint"> {{ $ui('登録できるのは') }}{{ MAX_TOTP }}{{ $ui('件までです。追加するには、いずれかを削除してください。') }} </p>
 
             <table v-if="totpItems.length > 0" class="mfa-table">
               <thead>
                 <tr>
-                  <th scope="col">名前</th>
-                  <th scope="col">登録</th>
-                  <th scope="col">最終利用</th>
-                  <th scope="col"><span class="sr-only">操作</span></th>
+                  <th scope="col">{{ $ui('名前') }}</th>
+                  <th scope="col">{{ $ui('登録') }}</th>
+                  <th scope="col">{{ $ui('最終利用') }}</th>
+                  <th scope="col"><span class="sr-only">{{ $ui('操作') }}</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -660,36 +651,31 @@ function asApiError(e: unknown): ApiError {
                   <td>{{ formatDateTime(c.created_at) }}</td>
                   <td>{{ c.last_used_at ? formatDateTime(c.last_used_at) : '—' }}</td>
                   <td class="row-actions">
-                    <button type="button" class="secondary" @click="deleting = c">削除</button>
+                    <button type="button" class="secondary" @click="deleting = c">{{ $ui('削除') }}</button>
                   </td>
                 </tr>
               </tbody>
             </table>
-            <p v-else class="empty">登録されていません。</p>
+            <p v-else class="empty">{{ $ui('登録されていません。') }}</p>
 
             <!-- リカバリコード。**認証器が0件のときは行そのものを出さない**
                  （作れないため。`ApiDesign.md` 4.6.5 が 409） -->
             <div v-if="showRecoveryRow" class="recovery">
               <div class="recovery-head">
-                <span class="label">リカバリコード</span>
+                <span class="label">{{ $ui('リカバリコード') }}</span>
                 <!-- **残り0本と「1本も作っていない」を区別して出す**（4.6.1） -->
-                <span v-if="mfa?.recovery_codes" class="recovery-count">
-                  残り {{ mfa.recovery_codes.remaining }} 本
-                </span>
-                <span v-else class="recovery-count warn-text">⚠ リカバリコードがありません</span>
+                <span v-if="mfa?.recovery_codes" class="recovery-count"> {{ $ui('残り') }} {{ mfa.recovery_codes.remaining }} {{ $ui('本') }} </span>
+                <span v-else class="recovery-count warn-text">{{ $ui('⚠ リカバリコードがありません') }}</span>
                 <button
                   type="button"
                   class="secondary"
                   :disabled="regenerating"
                   @click="regenerateCodes"
                 >
-                  {{ mfa?.recovery_codes ? '作り直す' : '作成' }}
+                  {{ mfa?.recovery_codes ? $ui("作り直す") : $ui("作成") }}
                 </button>
               </div>
-              <p class="hint">
-                ⚠ 認証アプリを使えなくなったときは、このコードでログインします。
-                作り直すと、いまのコードはすべて使えなくなります。
-              </p>
+              <p class="hint"> {{ $ui('⚠ 認証アプリを使えなくなったときは、このコードでログインします。 作り直すと、いまのコードはすべて使えなくなります。') }} </p>
             </div>
 
             <!-- 結果は MFA の表の直上ではなくこの領域に出す（6.4）。
@@ -706,30 +692,26 @@ function asApiError(e: unknown): ApiError {
 
           <div class="sub-block">
             <div class="sub-head">
-              <h3 class="sub-title">パスキー</h3>
+              <h3 class="sub-title">{{ $ui('パスキー') }}</h3>
               <button
                 type="button"
                 class="secondary"
                 :disabled="passkeyAddBlockedReason !== ''"
                 @click="passkeyRegisterOpen = true"
-              >
-                + パスキーを追加
-              </button>
+              > {{ $ui('+ パスキーを追加') }} </button>
             </div>
 
-            <p class="hint">
-              ⓘ パスワードの代わりに、この端末の生体認証や PIN でログインできます。
-            </p>
+            <p class="hint"> {{ $ui('ⓘ パスワードの代わりに、この端末の生体認証や PIN でログインできます。') }} </p>
             <p v-if="passkeyAddBlockedReason" class="hint">{{ passkeyAddBlockedReason }}</p>
 
             <table v-if="passkeys.length > 0" class="mfa-table">
               <thead>
                 <tr>
-                  <th scope="col">名前</th>
-                  <th scope="col">登録</th>
-                  <th scope="col">最終利用</th>
-                  <th scope="col">同期</th>
-                  <th scope="col"><span class="sr-only">操作</span></th>
+                  <th scope="col">{{ $ui('名前') }}</th>
+                  <th scope="col">{{ $ui('登録') }}</th>
+                  <th scope="col">{{ $ui('最終利用') }}</th>
+                  <th scope="col">{{ $ui('同期') }}</th>
+                  <th scope="col"><span class="sr-only">{{ $ui('操作') }}</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -741,21 +723,17 @@ function asApiError(e: unknown): ApiError {
                     <!-- 状態を色だけで示さない（9.2） -->
                     <td>{{ pk.backed_up ? '✓' : '—' }}</td>
                     <td class="row-actions">
-                      <button type="button" class="secondary" @click="deletingPasskey = pk">
-                        削除
-                      </button>
+                      <button type="button" class="secondary" @click="deletingPasskey = pk"> {{ $ui('削除') }} </button>
                     </td>
                   </tr>
                   <!-- **登録したホスト名と違えば使えない**（`Design.md` 6.8.3）。削除は押せる -->
                   <tr v-if="pk.rp_id !== currentHost">
-                    <td colspan="5" class="warn-text">
-                      ⚠ このアドレスでは使えません（{{ pk.rp_id }} で登録）
-                    </td>
+                    <td colspan="5" class="warn-text"> {{ $ui('⚠ このアドレスでは使えません（') }}{{ pk.rp_id }} {{ $ui('で登録）') }} </td>
                   </tr>
                 </template>
               </tbody>
             </table>
-            <p v-else class="empty">登録されていません。</p>
+            <p v-else class="empty">{{ $ui('登録されていません。') }}</p>
 
             <!-- 結果はパスキーの項目の中に出す（6.4）。MFA の結果欄は使わない -->
             <p v-if="passkeyError" class="alert" role="alert">{{ passkeyError.message }}</p>
@@ -780,9 +758,9 @@ function asApiError(e: unknown): ApiError {
 
     <ConfirmDialog
       v-if="deletingPasskey"
-      title="パスキーを削除"
+      :title="$ui('パスキーを削除')"
       :message="passkeyDeleteMessage"
-      confirm-label="削除する"
+      :confirm-label="$ui('削除する')"
       danger
       :busy="passkeyDeleteBusy"
       @confirm="confirmPasskeyDelete"
@@ -797,9 +775,9 @@ function asApiError(e: unknown): ApiError {
 
     <ConfirmDialog
       v-if="deleting"
-      title="認証アプリを削除しますか？"
+      :title="$ui('認証アプリを削除しますか？')"
       :message="deleteMessage"
-      confirm-label="削除"
+      :confirm-label="$ui('削除')"
       danger
       :busy="deleteBusy"
       @confirm="confirmDelete"

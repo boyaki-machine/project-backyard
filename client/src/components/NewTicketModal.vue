@@ -1,4 +1,5 @@
 <script lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * グループ化中のセクションから開いたときの初期値（`GuiDesign.md` 5.4.3）。
  *
@@ -101,7 +102,7 @@ const title = ref('')
  * 1文字打つと見出しごと消えてしまい、書かせたい項目に機能しないためである。
  * 触らずに作成した場合もそのまま本文として送る（初期値であるとはそういう意味）。
  */
-const bodyMd = ref(newTicketBodyTemplate)
+const bodyMd = ref(newTicketBodyTemplate())
 const priority = ref<TicketPriority | ''>('')
 const assigneeId = ref(props.defaults?.assignee_id ?? '')
 const parentSeq = ref(props.defaults?.parent_seq !== undefined ? String(props.defaults.parent_seq) : '')
@@ -119,8 +120,8 @@ const priorities = computed(() => [...priorityOrder].reverse())
 
 const titleError = computed(() => {
   const v = title.value.trim()
-  if (v === '') return 'タイトルを入力してください'
-  if (v.length > MAX_TITLE) return `${MAX_TITLE}文字以内で入力してください`
+  if (v === '') return uiText("タイトルを入力してください")
+  if (v.length > MAX_TITLE) return uiText("{value0}文字以内で入力してください", { value0: MAX_TITLE })
   return null
 })
 
@@ -132,14 +133,14 @@ const titleError = computed(() => {
  */
 const dateError = computed(() => {
   if (startDate.value === '' || dueDate.value === '') return null
-  if (startDate.value > dueDate.value) return '期限は開始日以降の日付を指定してください'
+  if (startDate.value > dueDate.value) return uiText("期限は開始日以降の日付を指定してください")
   return null
 })
 
 const estimateError = computed(() => {
   if (estimatePoint.value === '') return null
   const n = Number(estimatePoint.value)
-  if (!Number.isFinite(n) || n < 0) return '0以上の数値を入力してください'
+  if (!Number.isFinite(n) || n < 0) return uiText("0以上の数値を入力してください")
   return null
 })
 
@@ -217,11 +218,11 @@ function submit(): void {
 </script>
 
 <template>
-  <Modal :title="epicMode ? '新規エピック' : '新規チケット'" @close="emit('close')">
+  <Modal :title="epicMode ? $ui('新規エピック') : $ui('新規チケット')" @close="emit('close')">
     <form id="new-ticket-form" class="form" @submit.prevent="submit">
       <div class="row">
         <label class="field type">
-          <span class="label">種別 <span class="required">*</span></span>
+          <span class="label">{{ $ui('種別') }} <span class="required">*</span></span>
           <!-- 新規エピックでは変えられない（5.4.3「新規エピック」） -->
           <select v-model="type" :disabled="epicMode">
             <option v-for="t in types" :key="t" :value="t">
@@ -231,7 +232,7 @@ function submit(): void {
         </label>
 
         <label class="field grow">
-          <span class="label">タイトル <span class="required">*</span></span>
+          <span class="label">{{ $ui('タイトル') }} <span class="required">*</span></span>
           <input
             v-model="title"
             type="text"
@@ -246,26 +247,26 @@ function submit(): void {
       </div>
 
       <label class="field">
-        <span class="label">説明</span>
+        <span class="label">{{ $ui('説明') }}</span>
         <!-- Markdown のライブプレビューはチケット詳細（5.5）の役目。
              ここは素の textarea に留める -->
-        <textarea v-model="bodyMd" rows="7" placeholder="Markdown で書けます"></textarea>
+        <textarea v-model="bodyMd" rows="7" :placeholder="$ui('Markdown で書けます')"></textarea>
       </label>
 
       <div class="row">
         <label class="field grow">
-          <span class="label">優先度</span>
+          <span class="label">{{ $ui('優先度') }}</span>
           <select v-model="priority">
-            <option value="">未設定</option>
+            <option value="">{{ $ui('未設定') }}</option>
             <option v-for="p in priorities" :key="p" :value="p">{{ priorityLabels[p] }}</option>
           </select>
         </label>
 
         <label class="field grow">
-          <span class="label">担当</span>
+          <span class="label">{{ $ui('担当') }}</span>
           <!-- 選択肢はプロジェクトのメンバーに限る（9.3 は非メンバーを 422 で弾く） -->
           <select v-model="assigneeId">
-            <option value="">未割当</option>
+            <option value="">{{ $ui('未割当') }}</option>
             <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
               {{ m.kind === 'agent' ? '🤖' : '👤' }} {{ m.display_name }}
             </option>
@@ -275,11 +276,11 @@ function submit(): void {
 
       <div v-if="showParent || showEpic" class="row">
         <label v-if="showParent" class="field grow">
-          <span class="label">親チケット</span>
+          <span class="label">{{ $ui('親チケット') }}</span>
           <!-- **固定するときは「なし」を出さない。** 出したまま選べなくすると
                「選べるのに選べない」に見える（5.5、手順17c） -->
           <select v-model="parentSeq" :disabled="lockParent">
-            <option v-if="!lockParent" value="">なし</option>
+            <option v-if="!lockParent" value="">{{ $ui('なし') }}</option>
             <option v-for="c in parentOptions" :key="c.seq" :value="String(c.seq)">
               {{ candidateLabel(c) }}
             </option>
@@ -288,14 +289,14 @@ function submit(): void {
         </label>
 
         <label v-if="showEpic" class="field grow">
-          <span class="label">エピック</span>
+          <span class="label">{{ $ui('エピック') }}</span>
           <!-- **親チケットがあるときは選べない**（5.4.3「親チケットとエピック」）。
                値は捨てずに持っておき、親を「なし」に戻したら元の選択が見える -->
           <select v-if="parentSeq !== ''" disabled>
-            <option>親チケットに従う</option>
+            <option>{{ $ui('親チケットに従う') }}</option>
           </select>
           <select v-else v-model="epicSeq" :disabled="lockParent">
-            <option v-if="!lockParent" value="">なし</option>
+            <option v-if="!lockParent" value="">{{ $ui('なし') }}</option>
             <option v-for="e in epicOptions" :key="e.seq" :value="String(e.seq)">
               {{ ticketTypeIcons.epic }} {{ candidateLabel(e) }}
             </option>
@@ -307,7 +308,7 @@ function submit(): void {
       <!-- タグは複数付く（`ticket_tag` は多対多）。ここから新規作成はできない
            ——定義はプロジェクト設定のタグタブ（5.9.4） -->
       <fieldset v-if="tags.length > 0" class="field tags">
-        <legend class="label">タグ</legend>
+        <legend class="label">{{ $ui('タグ') }}</legend>
         <div class="tag-list">
           <label v-for="t in tags" :key="t.id" class="tag-choice">
             <input
@@ -323,7 +324,7 @@ function submit(): void {
 
       <div class="row">
         <label class="field estimate">
-          <span class="label">見積（ポイント）</span>
+          <span class="label">{{ $ui('見積（ポイント）') }}</span>
           <input
             v-model="estimatePoint"
             type="number"
@@ -335,12 +336,12 @@ function submit(): void {
         </label>
 
         <label class="field grow">
-          <span class="label">開始日</span>
+          <span class="label">{{ $ui('開始日') }}</span>
           <input v-model="startDate" type="date" />
         </label>
 
         <label class="field grow">
-          <span class="label">期限</span>
+          <span class="label">{{ $ui('期限') }}</span>
           <input v-model="dueDate" type="date" :aria-invalid="dateError !== null" />
         </label>
       </div>
@@ -349,17 +350,13 @@ function submit(): void {
     </form>
 
     <template #footer>
-      <button type="button" class="secondary" :disabled="busy" @click="emit('close')">
-        キャンセル
-      </button>
+      <button type="button" class="secondary" :disabled="busy" @click="emit('close')"> {{ $ui('キャンセル') }} </button>
       <button
         type="submit"
         form="new-ticket-form"
         class="primary"
         :disabled="!canSave || busy"
-      >
-        作成
-      </button>
+      > {{ $ui('作成') }} </button>
     </template>
   </Modal>
 </template>

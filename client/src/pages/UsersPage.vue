@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * アカウント / 権限管理（`GuiDesign.md` 5.6）。必要権限は `user.manage`。
  *
@@ -140,7 +141,7 @@ async function fetchUsers(): Promise<void> {
         : new ApiError({
             status: 0,
             code: 'internal_error',
-            message: '予期しないエラーが発生しました',
+            message: uiText("予期しないエラーが発生しました"),
           })
     // 古い一覧を新しい条件の結果として見せない（6.2）
     items.value = []
@@ -205,7 +206,7 @@ interface Column {
   fixed?: boolean
 }
 
-const COLUMNS: Column[] = [
+const columnSources: Column[] = [
   { key: 'kind', label: '', className: 'kind', width: 40, min: 32 },
   { key: 'name', label: '名前', sort: 'display_name', className: 'name-col', width: 240, min: 100 },
   { key: 'email', label: 'メール', sort: 'email', className: 'email', width: 260, min: 100 },
@@ -219,7 +220,7 @@ const COLUMNS: Column[] = [
 ]
 
 /** 幅調整に参加する列。**操作列を除いた並び**が 5.6 の規則の対象になる */
-const FLEX_COLUMNS = COLUMNS.filter((c) => c.fixed !== true)
+const FLEX_COLUMNS = columnSources.filter((c) => c.fixed !== true)
 
 /** 余りを受け取る列（5.6）。操作列を足した後も「作成」のままである */
 const LAST_FLEX = FLEX_COLUMNS[FLEX_COLUMNS.length - 1]!
@@ -242,12 +243,12 @@ function resizable(col: Column): boolean {
  * 置かない（原則3）。
  */
 const widths = ref<Record<string, number>>(
-  Object.fromEntries(COLUMNS.map((c) => [c.key, c.width])),
+  Object.fromEntries(columnSources.map((c) => [c.key, c.width])),
 )
 
 /** 表の幅は列幅の合計。領域より広ければ、表だけが横スクロールする */
 const tableWidth = computed(() =>
-  COLUMNS.reduce((sum, c) => sum + (widths.value[c.key] ?? c.width), 0),
+  columnSources.reduce((sum, c) => sum + (widths.value[c.key] ?? c.width), 0),
 )
 
 /**
@@ -269,7 +270,7 @@ function fitToContainer(): void {
   if (available <= 0) return
 
   // 操作列は固定幅なので、その幅を差し引いた残りを配る
-  const others = COLUMNS.filter((c) => c.key !== LAST_FLEX.key).reduce(
+  const others = columnSources.filter((c) => c.key !== LAST_FLEX.key).reduce(
     (sum, c) => sum + (widths.value[c.key] ?? c.width),
     0,
   )
@@ -380,7 +381,7 @@ function kindIcon(k: string): string {
 
 /** 状態を色だけで示さない（9.2）。文字で出す */
 function activeLabel(active: boolean): string {
-  return active ? '有効' : '無効'
+  return active ? uiText("有効") : uiText("無効")
 }
 
 function goToPage(next: number): void {
@@ -431,16 +432,16 @@ const dialogOpen = computed(
 function menuItems(u: UserListItem): ActionItem[] {
   const self = auth.actor?.id === u.id
   return [
-    { key: 'edit', label: '編集' },
-    { key: 'password-reset', label: 'パスワードをリセット' },
-    { key: 'revoke-sessions', label: 'セッションを全失効' },
+    { key: 'edit', label: uiText("編集") },
+    { key: 'password-reset', label: uiText("パスワードをリセット") },
+    { key: 'revoke-sessions', label: uiText("セッションを全失効") },
     {
       key: 'toggle-active',
-      label: u.is_active ? '無効化' : '有効化',
+      label: u.is_active ? uiText("無効化") : uiText("有効化"),
       disabled: self && u.is_active,
-      reason: '自分自身は無効化できません',
+      reason: uiText("自分自身は無効化できません"),
     },
-    { key: 'delete', label: '削除', danger: true, disabled: self, reason: '自分自身は削除できません' },
+    { key: 'delete', label: uiText("削除"), danger: true, disabled: self, reason: uiText("自分自身は削除できません") },
   ]
 }
 
@@ -486,17 +487,17 @@ async function runAction(): Promise<void> {
     if (action === 'password-reset') {
       const res = await usersApi.resetUserPassword(u.id)
       resetResult.value = { user: u, password: res.generated_password }
-      notice.value = `${u.display_name} のパスワードをリセットしました`
+      notice.value = uiText("{value0} のパスワードをリセットしました", { value0: u.display_name })
     } else if (action === 'revoke-sessions') {
       await usersApi.revokeUserSessions(u.id)
-      notice.value = `${u.display_name} のセッションをすべて失効しました`
+      notice.value = uiText("{value0} のセッションをすべて失効しました", { value0: u.display_name })
     } else if (action === 'toggle-active') {
       const detail = await usersApi.getUser(u.id)
       await usersApi.updateUser(detail.id, detail.version, { is_active: !detail.is_active })
-      notice.value = `${u.display_name} を${detail.is_active ? '無効化' : '有効化'}しました`
+      notice.value = uiText("{value0} を{value1}しました", { value0: u.display_name, value1: detail.is_active ? uiText("無効化") : uiText("有効化") })
     } else {
       await usersApi.deleteUser(u.id)
-      notice.value = `${u.display_name} を削除しました`
+      notice.value = uiText("{value0} を削除しました", { value0: u.display_name })
     }
     closeAction()
     void fetchUsers()
@@ -507,7 +508,7 @@ async function runAction(): Promise<void> {
         : new ApiError({
             status: 0,
             code: 'internal_error',
-            message: '予期しないエラーが発生しました',
+            message: uiText("予期しないエラーが発生しました"),
           })
     actionError.value = err
     // 削除は入力欄のあるダイアログの中で伝える。他はダイアログを閉じて表の上に出す
@@ -597,7 +598,7 @@ onUnmounted(() => {
  */
 function onCreated(user: CreatedUser): void {
   addOpen.value = false
-  notice.value = `${user.display_name} を追加しました`
+  notice.value = uiText("{value0} を追加しました", { value0: user.display_name })
   if (user.generated_password !== null) created.value = user
   // 追加したユーザーが見えるように、絞り込みは触らず現在の条件で取り直す
   void fetchUsers()
@@ -611,13 +612,11 @@ async function retry(): Promise<void> {
 
 <template>
   <div class="page">
-    <PageHeader title="アカウント / 権限">
+    <PageHeader :title="$ui('アカウント / 権限')">
       <template #actions>
         <!-- 追加できるのはユーザータブだけ。エージェント（Phase 2）とロールと権限
              （Phase 1 は参照のみ。5.6.3）では、押しても行き先が無い -->
-        <button v-if="tab === 'users'" type="button" class="primary" @click="addOpen = true">
-          + ユーザー追加
-        </button>
+        <button v-if="tab === 'users'" type="button" class="primary" @click="addOpen = true"> {{ $ui('+ ユーザー追加') }} </button>
       </template>
     </PageHeader>
 
@@ -630,9 +629,7 @@ async function retry(): Promise<void> {
           :class="{ selected: tab === 'users' }"
           :aria-selected="tab === 'users'"
           @click="tab = 'users'"
-        >
-          ユーザー
-        </button>
+        > {{ $ui('ユーザー') }} </button>
         <button
           type="button"
           role="tab"
@@ -640,9 +637,7 @@ async function retry(): Promise<void> {
           :class="{ selected: tab === 'agents' }"
           :aria-selected="tab === 'agents'"
           @click="tab = 'agents'"
-        >
-          エージェント
-        </button>
+        > {{ $ui('エージェント') }} </button>
         <button
           type="button"
           role="tab"
@@ -650,9 +645,7 @@ async function retry(): Promise<void> {
           :class="{ selected: tab === 'roles' }"
           :aria-selected="tab === 'roles'"
           @click="tab = 'roles'"
-        >
-          ロールと権限
-        </button>
+        > {{ $ui('ロールと権限') }} </button>
       </div>
 
       <!-- ── ユーザータブ（5.6）───────────────────────────── -->
@@ -660,12 +653,12 @@ async function retry(): Promise<void> {
         <!-- 検索と絞り込みは常時表示する（5.6）。件数で出し入れしない -->
         <div class="filters">
           <label class="search">
-            <span class="visually-hidden">名前・メールで検索</span>
+            <span class="visually-hidden">{{ $ui('名前・メールで検索') }}</span>
             <input
               v-model="q"
               type="search"
               name="q"
-              placeholder="名前・メールで検索"
+              :placeholder="$ui('名前・メールで検索')"
               autocapitalize="off"
               autocomplete="off"
               spellcheck="false"
@@ -673,11 +666,11 @@ async function retry(): Promise<void> {
           </label>
 
           <label class="filter">
-            <span class="filter-label">状態</span>
+            <span class="filter-label">{{ $ui('状態') }}</span>
             <select v-model="isActive">
-              <option value="all">すべて</option>
-              <option value="true">有効</option>
-              <option value="false">無効</option>
+              <option value="all">{{ $ui('すべて') }}</option>
+              <option value="true">{{ $ui('有効') }}</option>
+              <option value="false">{{ $ui('無効') }}</option>
             </select>
           </label>
         </div>
@@ -685,7 +678,7 @@ async function retry(): Promise<void> {
         <!-- 追加の結果は操作した場所（一覧の直上）に出す（6.4） -->
         <p v-if="notice" class="notice" role="status">
           <span aria-hidden="true">✓</span> {{ notice }}
-          <button type="button" class="notice-close" aria-label="閉じる" @click="notice = null">
+          <button type="button" class="notice-close" :aria-label="$ui('閉じる')" @click="notice = null">
             ✕
           </button>
         </p>
@@ -696,7 +689,7 @@ async function retry(): Promise<void> {
           <button
             type="button"
             class="notice-close"
-            aria-label="閉じる"
+            :aria-label="$ui('閉じる')"
             @click="actionError = null"
           >
             ✕
@@ -706,11 +699,11 @@ async function retry(): Promise<void> {
         <!-- エラー（6.2）。原因はサーバの message をそのまま出す（`ApiDesign.md` 2.5） -->
         <EmptyState
           v-if="error"
-          title="ユーザー一覧を取得できませんでした"
+          :title="$ui('ユーザー一覧を取得できませんでした')"
           :description="error.message"
         >
           <template #action>
-            <button type="button" class="primary" @click="retry">再試行</button>
+            <button type="button" class="primary" @click="retry">{{ $ui('再試行') }}</button>
           </template>
         </EmptyState>
 
@@ -719,19 +712,19 @@ async function retry(): Promise<void> {
         <div v-else-if="loading || !isEmpty" ref="scroller" class="table-scroll">
           <table class="table" :style="{ width: `${tableWidth}px` }">
             <colgroup>
-              <col v-for="col in COLUMNS" :key="col.key" :style="{ width: `${widths[col.key]}px` }" />
+              <col v-for="col in columnSources" :key="col.key" :style="{ width: `${widths[col.key]}px` }" />
             </colgroup>
             <thead>
               <tr>
                 <th
-                  v-for="col in COLUMNS"
+                  v-for="col in columnSources"
                   :key="col.key"
                   scope="col"
                   :class="col.className"
                   :aria-sort="ariaSort(col.sort)"
                 >
                   <button v-if="col.sort" type="button" class="sort" @click="sortBy(col.sort)">
-                    {{ col.label }}
+                  {{ $ui(col.label) }}
                     <span class="caret" aria-hidden="true">
                       {{ sort === col.sort ? (order === 'asc' ? '▴' : '▾') : '' }}
                     </span>
@@ -755,7 +748,7 @@ async function retry(): Promise<void> {
             <!-- 読み込み中はスケルトン。実際の行の形を模す（6.2） -->
             <tbody v-if="loading" aria-busy="true">
               <tr v-for="n in skeletonRows" :key="n" class="skeleton-row">
-                <td v-for="col in COLUMNS" :key="col.key" :class="col.className">
+                <td v-for="col in columnSources" :key="col.key" :class="col.className">
                   <span class="skeleton"></span>
                 </td>
               </tr>
@@ -775,7 +768,7 @@ async function retry(): Promise<void> {
                   <!-- 種別は記号だけにしない。読み上げ用の文字を添える（9.2） -->
                   <span aria-hidden="true">{{ kindIcon(u.kind) }}</span>
                   <span class="visually-hidden">{{
-                    u.kind === 'agent' ? 'エージェント' : 'ユーザー'
+                    u.kind === 'agent' ? $ui("エージェント") : $ui("ユーザー")
                   }}</span>
                 </td>
                 <td class="name-col">
@@ -799,7 +792,7 @@ async function retry(): Promise<void> {
                 <td class="actions-col" @click.stop>
                   <UserActionsMenu
                     :items="menuItems(u)"
-                    :label="`${u.display_name} の操作メニュー`"
+                    :label="$ui('{value0} の操作メニュー', { value0: u.display_name })"
                     compact
                     @select="onMenuSelect(u, $event)"
                   />
@@ -812,29 +805,28 @@ async function retry(): Promise<void> {
         <!-- 空（6.2）。絞り込みの結果かどうかで次の行動が変わる -->
         <EmptyState
           v-else-if="filtered"
-          title="条件に一致するユーザーがいません"
-          description="検索語や絞り込みを変えてください"
+          :title="$ui('条件に一致するユーザーがいません')"
+          :description="$ui('検索語や絞り込みを変えてください')"
         >
           <template #action>
-            <button type="button" class="secondary" @click="clearFilters">条件をクリア</button>
+            <button type="button" class="secondary" @click="clearFilters">{{ $ui('条件をクリア') }}</button>
           </template>
         </EmptyState>
         <EmptyState
           v-else
-          title="ユーザーがいません"
-          description="最初のユーザーを追加してください"
+          :title="$ui('ユーザーがいません')"
+          :description="$ui('最初のユーザーを追加してください')"
         >
           <template #action>
-            <button type="button" class="primary" @click="addOpen = true">+ ユーザー追加</button>
+            <button type="button" class="primary" @click="addOpen = true">{{ $ui('+ ユーザー追加') }}</button>
           </template>
         </EmptyState>
 
         <!-- 件数は常に、ページャは2ページ以上のときだけ出す（5.6 のフッタ） -->
         <div v-if="!error && loaded" class="pager">
           <span v-if="totalPages > 1" class="range">
-            {{ rangeStart }}〜{{ rangeEnd }} / 全 {{ total }} 件
-          </span>
-          <span v-else class="range">{{ total }}件</span>
+            {{ rangeStart }}〜{{ rangeEnd }} {{ $ui('/ 全') }} {{ total }} {{ $ui('件') }} </span>
+          <span v-else class="range">{{ total }}{{ $ui('件') }}</span>
 
           <template v-if="totalPages > 1">
             <button
@@ -842,18 +834,14 @@ async function retry(): Promise<void> {
               class="page-button"
               :disabled="page <= 1"
               @click="goToPage(page - 1)"
-            >
-              ◀ 前
-            </button>
+            > {{ $ui('◀ 前') }} </button>
             <span class="page-number">{{ page }} / {{ totalPages }}</span>
             <button
               type="button"
               class="page-button"
               :disabled="page >= totalPages"
               @click="goToPage(page + 1)"
-            >
-              次 ▶
-            </button>
+            > {{ $ui('次 ▶') }} </button>
           </template>
         </div>
       </div>
@@ -862,14 +850,14 @@ async function retry(): Promise<void> {
       <!-- `agent` テーブルは Phase 2 のマイグレーションで作られるため、Phase 1 には
            1件も存在しない。人間と持つ情報が違うのでタブを分けてある -->
       <div v-else-if="tab === 'agents'" class="placeholder" role="tabpanel">
-        <p class="placeholder-title">エージェントのページ予定</p>
+        <p class="placeholder-title">{{ $ui('エージェントのページ予定') }}</p>
         <p class="placeholder-doc">GuiDesign.md 5.6 / ApiDesign.md 6.1</p>
         <ul class="placeholder-list">
-          <li>登録済みエージェントの一覧（名前・クライアント種別・モデル・プロジェクト・信頼度）</li>
-          <li>人間とは持つ情報が違うため、ユーザータブとは別の列構成にする</li>
-          <li>行の操作メニューも異なる（パスワードのリセットは無い）</li>
+          <li>{{ $ui('登録済みエージェントの一覧（名前・クライアント種別・モデル・プロジェクト・信頼度）') }}</li>
+          <li>{{ $ui('人間とは持つ情報が違うため、ユーザータブとは別の列構成にする') }}</li>
+          <li>{{ $ui('行の操作メニューも異なる（パスワードのリセットは無い）') }}</li>
         </ul>
-        <p class="placeholder-status">Phase 2 で実装（agent テーブルの作成後）</p>
+        <p class="placeholder-status">{{ $ui('Phase 2 で実装（agent テーブルの作成後）') }}</p>
       </div>
 
       <!-- ── ロールと権限タブ（5.6.3）──────────────────────── -->
@@ -893,9 +881,9 @@ async function retry(): Promise<void> {
     <!-- ── `[⋯]` の確認（6.3）─────────────────────────────── -->
     <ConfirmDialog
       v-if="pending === 'password-reset' && target"
-      title="パスワードをリセット"
-      :message="`${target.display_name} のパスワードを新しく生成します。\n現在のパスワードは使えなくなり、有効なセッションはすべて失効します。`"
-      confirm-label="リセットする"
+      :title="$ui('パスワードをリセット')"
+      :message="$ui('{value0} のパスワードを新しく生成します。\n現在のパスワードは使えなくなり、有効なセッションはすべて失効します。', { value0: target.display_name })"
+      :confirm-label="$ui('リセットする')"
       danger
       :busy="actionBusy"
       @confirm="runAction"
@@ -904,9 +892,9 @@ async function retry(): Promise<void> {
 
     <ConfirmDialog
       v-if="pending === 'revoke-sessions' && target"
-      title="すべてのセッションを失効"
-      :message="`${target.display_name} のログイン中のセッションとアクセストークンをすべて失効します。\n本人は次のリクエストからログインし直す必要があります。`"
-      confirm-label="失効する"
+      :title="$ui('すべてのセッションを失効')"
+      :message="$ui('{value0} のログイン中のセッションとアクセストークンをすべて失効します。\n本人は次のリクエストからログインし直す必要があります。', { value0: target.display_name })"
+      :confirm-label="$ui('失効する')"
       danger
       :busy="actionBusy"
       @confirm="runAction"
@@ -915,9 +903,9 @@ async function retry(): Promise<void> {
 
     <ConfirmDialog
       v-if="pending === 'toggle-active' && target"
-      title="ユーザーを無効化"
-      :message="`${target.display_name} を無効化します。\n本人は次のリクエストからログインできなくなります。`"
-      confirm-label="無効化する"
+      :title="$ui('ユーザーを無効化')"
+      :message="$ui('{value0} を無効化します。\n本人は次のリクエストからログインできなくなります。', { value0: target.display_name })"
+      :confirm-label="$ui('無効化する')"
       danger
       :busy="actionBusy"
       @confirm="runAction"
@@ -938,11 +926,11 @@ async function retry(): Promise<void> {
     <!-- リセットで生成された値は、この1回しか出せない（6.6） -->
     <GeneratedPasswordDialog
       v-if="resetResult"
-      title="パスワードをリセットしました"
-      lead-suffix="のパスワードを再発行しました。"
+      :title="$ui('パスワードをリセットしました')"
+      :lead-suffix="$ui('のパスワードを再発行しました。')"
       :footer-note="
         auth.actor?.id === resetResult.user.id
-          ? 'このパスワードで入り直し、次回ログイン後に新しいものへ変更してください。'
+          ? $ui('このパスワードで入り直し、次回ログイン後に新しいものへ変更してください。')
           : undefined
       "
       :display-name="resetResult.user.display_name"

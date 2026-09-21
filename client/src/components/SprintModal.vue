@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * スプリントの追加・編集（`GuiDesign.md` 5.9.5）。
  *
@@ -48,8 +49,8 @@ const statusOptions = Object.entries(sprintStatusLabels) as [SprintStatus, strin
 
 const nameError = computed(() => {
   const v = name.value.trim()
-  if (v === '') return 'スプリント名を入力してください'
-  if (v.length > MAX_NAME) return `${MAX_NAME}文字以内で入力してください`
+  if (v === '') return uiText("スプリント名を入力してください")
+  if (v.length > MAX_NAME) return uiText("{value0}文字以内で入力してください", { value0: MAX_NAME })
   return null
 })
 
@@ -61,7 +62,7 @@ const nameError = computed(() => {
  */
 const dateError = computed(() => {
   if (startDate.value === '' || endDate.value === '') return null
-  if (startDate.value > endDate.value) return '終了日は開始日以降の日付を指定してください'
+  if (startDate.value > endDate.value) return uiText("終了日は開始日以降の日付を指定してください")
   return null
 })
 
@@ -84,10 +85,10 @@ function submit() {
 </script>
 
 <template>
-  <Modal :title="isNew ? 'スプリントを追加' : 'スプリントを編集'" @close="emit('close')">
+  <Modal :title="isNew ? $ui('スプリントを追加') : $ui('スプリントを編集')" @close="emit('close')">
     <form id="sprint-form" class="form" @submit.prevent="submit">
       <label class="field">
-        <span class="label">スプリント名 <span class="required">*</span></span>
+        <span class="label">{{ $ui('スプリント名') }} <span class="required">*</span></span>
         <input
           v-model="name"
           type="text"
@@ -101,17 +102,17 @@ function submit() {
       </label>
 
       <label class="field">
-        <span class="label">ゴール</span>
-        <input v-model="goal" type="text" placeholder="このスプリントで達成したいこと" />
+        <span class="label">{{ $ui('ゴール') }}</span>
+        <input v-model="goal" type="text" :placeholder="$ui('このスプリントで達成したいこと')" />
       </label>
 
       <div class="dates">
         <label class="field">
-          <span class="label">開始日</span>
+          <span class="label">{{ $ui('開始日') }}</span>
           <input v-model="startDate" type="date" />
         </label>
         <label class="field">
-          <span class="label">終了日</span>
+          <span class="label">{{ $ui('終了日') }}</span>
           <input
             v-model="endDate"
             type="date"
@@ -123,7 +124,7 @@ function submit() {
       <span v-else-if="fieldErrors?.end_date" class="detail">✕ {{ fieldErrors.end_date }}</span>
 
       <label class="field">
-        <span class="label">状態</span>
+        <span class="label">{{ $ui('状態') }}</span>
         <select v-model="status">
           <option v-for="[key, label] in statusOptions" :key="key" :value="key">
             {{ label }}
@@ -133,11 +134,9 @@ function submit() {
     </form>
 
     <template #footer>
-      <button type="button" class="secondary" :disabled="busy" @click="emit('close')">
-        キャンセル
-      </button>
+      <button type="button" class="secondary" :disabled="busy" @click="emit('close')"> {{ $ui('キャンセル') }} </button>
       <button type="submit" form="sprint-form" class="primary" :disabled="!canSave || busy">
-        {{ isNew ? '追加' : '更新' }}
+        {{ isNew ? $ui("追加") : $ui("更新") }}
       </button>
     </template>
   </Modal>

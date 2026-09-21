@@ -15,6 +15,7 @@
  */
 import { api } from './client'
 import type { components } from './schema'
+import { uiText } from '../locales/ui'
 
 export type TicketReference = components['schemas']['TicketReference']
 export type TicketReferenceList = components['schemas']['TicketReferenceList']
@@ -27,8 +28,8 @@ export type ReferenceKind = TicketReference['kind']
 
 /** 見出しに出す名前（`GuiDesign.md` 5.5）。 */
 export const referenceSectionLabels: Record<ReferenceKind, string> = {
-  code: 'コード',
-  doc: '参考リンク',
+  get code() { return uiText('コード') },
+  get doc() { return uiText('参考リンク') },
 }
 
 function base(key: string, seq: number): string {
@@ -88,7 +89,7 @@ export function codeSummary(ref: TicketReference): string {
   const parts = [ref.repository, ref.branch, ref.commit_sha].filter(
     (p): p is string => p != null && p !== '',
   )
-  return parts.length > 0 ? parts.join(' : ') : '(コード)'
+  return parts.length > 0 ? parts.join(' : ') : uiText('(コード)')
 }
 
 /**
@@ -96,5 +97,5 @@ export function codeSummary(ref: TicketReference): string {
  */
 export function docSummary(ref: TicketReference): string {
   if (ref.label != null && ref.label !== '') return ref.label
-  return ref.url ?? '(参考リンク)'
+  return ref.url ?? uiText('(参考リンク)')
 }

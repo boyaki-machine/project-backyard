@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * アクセストークン管理 `/me/tokens`（`GuiDesign.md` 5.8.1）。
  *
@@ -112,7 +113,7 @@ async function issueToken() {
     // **先に平文を出す。** 一覧の読み直しが失敗しても、二度と出せない値を
     // 落とさないためである。
     issued.value = token
-    notice.value = `✓ アクセストークン「${token.name}」を発行しました`
+    notice.value = uiText("✓ アクセストークン「{value0}」を発行しました", { value0: token.name })
     actionError.value = null
     await load()
   } catch (e: unknown) {
@@ -132,8 +133,8 @@ const revokeMessage = computed(() => {
   const t = revokeTarget.value
   if (!t) return ''
   return (
-    `「${t.name}」を失効させます。復元はできません。\n` +
-    'このトークンを使っている CLI やスクリプトは、次のリクエストから 401 になります。'
+    uiText("「{value0}」を失効させます。復元はできません。\n", { value0: t.name }) +
+    uiText("このトークンを使っている CLI やスクリプトは、次のリクエストから 401 になります。")
   )
 })
 
@@ -145,7 +146,7 @@ async function revoke() {
   try {
     await meApi.revokeToken(target.id)
     revokeTarget.value = null
-    notice.value = `✓ アクセストークン「${target.name}」を失効させました`
+    notice.value = uiText("✓ アクセストークン「{value0}」を失効させました", { value0: target.name })
     await load()
   } catch (e: unknown) {
     actionError.value = asApiError(e)
@@ -160,32 +161,27 @@ async function revoke() {
 
 function asApiError(e: unknown): ApiError {
   if (e instanceof ApiError) return e
-  return new ApiError({ status: 0, code: 'network_error', message: '通信に失敗しました' })
+  return new ApiError({ status: 0, code: 'network_error', message: uiText("通信に失敗しました") })
 }
 </script>
 
 <template>
   <div class="page">
-    <PageHeader title="自分の設定" />
+    <PageHeader :title="$ui('自分の設定')" />
 
     <div class="page-body">
       <MeTabs current="tokens" />
 
       <section class="block">
         <div class="block-head">
-          <h2 class="block-title">アクセストークン</h2>
-          <button type="button" class="primary" :disabled="atLimit || loading" @click="openIssueModal">
-            + 発行
-          </button>
+          <h2 class="block-title">{{ $ui('アクセストークン') }}</h2>
+          <button type="button" class="primary" :disabled="atLimit || loading" @click="openIssueModal"> {{ $ui('+ 発行') }} </button>
         </div>
 
-        <p class="hint">
-          ⓘ CLI やスクリプトから API を呼ぶためのトークンです。Authorization: Bearer &lt;トークン&gt; で送ります。
-        </p>
+        <p class="hint"> {{ $ui('ⓘ CLI やスクリプトから API を呼ぶためのトークンです。Authorization: Bearer <トークン> で送ります。') }} </p>
         <!-- 押せない理由をその場に出す（5.6.2 と同じ。黙って消さない） -->
         <p v-if="atLimit" class="hint">
-          {{ MAX_TOKENS }}本まで発行できます。新しく発行するには、いずれかを失効させてください。
-        </p>
+          {{ MAX_TOKENS }}{{ $ui('本まで発行できます。新しく発行するには、いずれかを失効させてください。') }} </p>
 
         <!-- 結果は操作した場所に出す（6.4）。発行と失効で同じ欄を使い回す -->
         <p v-if="actionError" class="alert" role="alert">{{ actionError.message }}</p>
@@ -193,26 +189,26 @@ function asApiError(e: unknown): ApiError {
 
         <p v-if="loadError" class="alert" role="alert">
           {{ loadError.message }}
-          <button type="button" class="secondary" @click="load">再試行</button>
+          <button type="button" class="secondary" @click="load">{{ $ui('再試行') }}</button>
         </p>
 
         <EmptyState
           v-else-if="!loading && items.length === 0"
-          title="アクセストークンはまだありません"
-          description="CLI やスクリプトから API を呼ぶときに発行します。"
+          :title="$ui('アクセストークンはまだありません')"
+          :description="$ui('CLI やスクリプトから API を呼ぶときに発行します。')"
         />
 
         <div v-else class="table-scroll">
           <table class="tokens">
             <thead>
               <tr>
-                <th class="name">名前</th>
-                <th class="prefix">接頭辞</th>
-                <th class="when">発行</th>
-                <th class="when">最終利用</th>
-                <th class="when">有効期限</th>
-                <th class="status">状態</th>
-                <th class="actions"><span class="sr-only">操作</span></th>
+                <th class="name">{{ $ui('名前') }}</th>
+                <th class="prefix">{{ $ui('接頭辞') }}</th>
+                <th class="when">{{ $ui('発行') }}</th>
+                <th class="when">{{ $ui('最終利用') }}</th>
+                <th class="when">{{ $ui('有効期限') }}</th>
+                <th class="status">{{ $ui('状態') }}</th>
+                <th class="actions"><span class="sr-only">{{ $ui('操作') }}</span></th>
               </tr>
             </thead>
             <tbody v-if="loading" aria-busy="true">
@@ -226,14 +222,14 @@ function asApiError(e: unknown): ApiError {
                 <td class="prefix"><code>{{ t.token_prefix }}</code></td>
                 <td class="when">{{ formatDateTime(t.issued_at) }}</td>
                 <td class="when">{{ t.last_used_at ? formatDateTime(t.last_used_at) : '—' }}</td>
-                <td class="when">{{ t.expires_at ? formatDate(t.expires_at) : '無期限' }}</td>
+                <td class="when">{{ t.expires_at ? formatDate(t.expires_at) : $ui("無期限") }}</td>
                 <!-- 状態を色だけで示さない（9.2）ので記号か文言を必ず添える -->
                 <td class="status">
-                  <span v-if="t.status === 'active'">● 有効</span>
-                  <span v-else class="expired">期限切れ</span>
+                  <span v-if="t.status === 'active'">{{ $ui('● 有効') }}</span>
+                  <span v-else class="expired">{{ $ui('期限切れ') }}</span>
                 </td>
                 <td class="actions">
-                  <button type="button" class="secondary" @click="revokeTarget = t">失効</button>
+                  <button type="button" class="secondary" @click="revokeTarget = t">{{ $ui('失効') }}</button>
                 </td>
               </tr>
             </tbody>
@@ -243,10 +239,10 @@ function asApiError(e: unknown): ApiError {
     </div>
 
     <!-- ── 発行モーダル（5.8.1）──────────────────────────────── -->
-    <Modal v-if="showIssueModal" title="アクセストークンを発行" @close="showIssueModal = false">
+    <Modal v-if="showIssueModal" :title="$ui('アクセストークンを発行')" @close="showIssueModal = false">
       <form id="issue-token" class="issue-form" @submit.prevent="issueToken">
         <label class="field">
-          <span class="label">名前 <span class="required">*</span></span>
+          <span class="label">{{ $ui('名前') }} <span class="required">*</span></span>
           <input
             v-model="newName"
             type="text"
@@ -257,11 +253,11 @@ function asApiError(e: unknown): ApiError {
             :disabled="issuing"
           />
           <span v-if="issueDetail('name')" class="detail">{{ issueDetail('name')?.message }}</span>
-          <span v-else class="hint">どの端末・どの用途かが分かる名前を付けてください。</span>
+          <span v-else class="hint">{{ $ui('どの端末・どの用途かが分かる名前を付けてください。') }}</span>
         </label>
 
         <fieldset class="field choices">
-          <legend class="label">有効期限</legend>
+          <legend class="label">{{ $ui('有効期限') }}</legend>
           <div class="choices-row">
             <label v-for="d in EXPIRY_CHOICES" :key="d">
               <input
@@ -272,13 +268,13 @@ function asApiError(e: unknown): ApiError {
                 :disabled="issuing"
                 @change="newExpiresInDays = d"
               />
-              <span>{{ d }}日</span>
+              <span>{{ d }}{{ $ui('日') }}</span>
             </label>
           </div>
           <span v-if="issueDetail('expires_in_days')" class="detail">
             {{ issueDetail('expires_in_days')?.message }}
           </span>
-          <span v-else class="hint">{{ newExpiryDate }} まで有効です。</span>
+          <span v-else class="hint">{{ newExpiryDate }} {{ $ui('まで有効です。') }}</span>
         </fieldset>
 
         <p v-if="issueError && !issueDetail('name') && !issueDetail('expires_in_days')"
@@ -288,11 +284,9 @@ function asApiError(e: unknown): ApiError {
       </form>
 
       <template #footer>
-        <button type="button" class="secondary" :disabled="issuing" @click="showIssueModal = false">
-          キャンセル
-        </button>
+        <button type="button" class="secondary" :disabled="issuing" @click="showIssueModal = false"> {{ $ui('キャンセル') }} </button>
         <button type="submit" form="issue-token" class="primary" :disabled="!canIssue">
-          {{ issuing ? '発行中…' : '発行' }}
+          {{ issuing ? $ui("発行中…") : $ui("発行") }}
         </button>
       </template>
     </Modal>
@@ -303,9 +297,9 @@ function asApiError(e: unknown): ApiError {
     <!-- ── 失効の確認（6.3）───────────────────────────────────── -->
     <ConfirmDialog
       v-if="revokeTarget"
-      title="アクセストークンを失効"
+      :title="$ui('アクセストークンを失効')"
       :message="revokeMessage"
-      confirm-label="失効させる"
+      :confirm-label="$ui('失効させる')"
       danger
       :busy="revoking"
       @confirm="revoke"

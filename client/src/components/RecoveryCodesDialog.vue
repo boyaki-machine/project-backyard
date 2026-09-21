@@ -52,35 +52,29 @@ function save() {
 </script>
 
 <template>
-  <Modal title="リカバリコードを保存してください" @close="emit('close')">
+  <Modal :title="$ui('リカバリコードを保存してください')" @close="emit('close')">
     <div class="body">
       <!-- warning は「面」で表す（8.4.1）。文字色はベースのまま -->
-      <p class="warn">
-        ⚠ この{{ codes.length }}本はこの画面でしか確認できません。閉じると再表示できません。
-      </p>
+      <p class="warn"> {{ $ui('⚠ この') }}{{ codes.length }}{{ $ui('本はこの画面でしか確認できません。閉じると再表示できません。') }} </p>
 
       <ul ref="codesEl" class="codes">
         <li v-for="c in codes" :key="c">{{ c }}</li>
       </ul>
 
       <div class="actions-inline">
-        <button type="button" class="secondary" @click="copy">コピー</button>
-        <button type="button" class="secondary" @click="save">テキストで保存</button>
+        <button type="button" class="secondary" @click="copy">{{ $ui('コピー') }}</button>
+        <button type="button" class="secondary" @click="save">{{ $ui('テキストで保存') }}</button>
       </div>
 
       <!-- 状態を色だけで示さない（9.2）ので記号か文言を必ず添える -->
-      <p v-if="copied === 'ok'" class="note" role="status">✓ コピーしました</p>
-      <p v-else-if="copied === 'manual'" class="note" role="status">
-        自動でコピーできませんでした。選択した状態にしたので ⌘C（Ctrl+C）でコピーしてください。
-      </p>
+      <p v-if="copied === 'ok'" class="note" role="status">{{ $ui('✓ コピーしました') }}</p>
+      <p v-else-if="copied === 'manual'" class="note" role="status"> {{ $ui('自動でコピーできませんでした。選択した状態にしたので ⌘C（Ctrl+C）でコピーしてください。') }} </p>
 
-      <p class="hint">
-        ⓘ 認証アプリを使えなくなったとき、1本で1回ログインできます。使った分は元に戻りません。
-      </p>
+      <p class="hint"> {{ $ui('ⓘ 認証アプリを使えなくなったとき、1本で1回ログインできます。使った分は元に戻りません。') }} </p>
     </div>
 
     <template #footer>
-      <button type="button" class="primary" @click="emit('close')">閉じる</button>
+      <button type="button" class="primary" @click="emit('close')">{{ $ui('閉じる') }}</button>
     </template>
   </Modal>
 </template>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiNumber, uiText } from '../locales/ui'
 import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -321,7 +322,7 @@ function onDetailCreated(): void {
 function onDetailDeleted(seq: number, title: string): void {
   tickets.value = tickets.value.filter((t) => t.seq !== seq)
   total.value = Math.max(total.value - 1, 0)
-  result.value = `✓ ${projectKey.value}-${seq}「${title}」を削除しました`
+  result.value = uiText("✓ {value0}-{value1}「{value2}」を削除しました", { value0: projectKey.value, value1: seq, value2: title })
   closeDetail()
   void loadTickets()
 }
@@ -353,7 +354,7 @@ function toApiError(e: unknown): ApiError {
     : new ApiError({
         status: 0,
         code: 'internal_error',
-        message: '予期しないエラーが発生しました',
+        message: uiText("予期しないエラーが発生しました"),
       })
 }
 
@@ -451,15 +452,17 @@ const statusOptions = computed<MultiSelectOption[]>(() =>
 )
 
 /** 種別は3つとも選べる。**エピックも行に出す**（5.13） */
-const typeOptions: MultiSelectOption[] = (['epic', 'story', 'task'] as TicketType[]).map((t) => ({
-  value: t,
-  label: ticketTypeLabels[t],
-  icon: ticketTypeIcons[t],
-}))
+const typeOptions = computed<MultiSelectOption[]>(() =>
+  (['epic', 'story', 'task'] as TicketType[]).map((t) => ({
+    value: t,
+    label: ticketTypeLabels[t],
+    icon: ticketTypeIcons[t],
+  })),
+)
 
 /** 担当は「未割当」も選べる（`ApiDesign.md` 9.2.1 の `none`） */
 const assigneeOptions = computed<MultiSelectOption[]>(() => [
-  { value: 'none', label: '未割当' },
+  { value: 'none', label: uiText("未割当") },
   ...members.value.map((m) => ({
     value: m.actor_id,
     label: m.display_name,
@@ -477,7 +480,7 @@ function isOverdue(t: Ticket): boolean {
 }
 
 function withComma(n: number): string {
-  return n.toLocaleString('ja-JP')
+  return uiNumber(n)
 }
 
 /** チケットIDは**完全形**で出す（5.4「ID列」） */
@@ -549,8 +552,8 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
       <!-- **縮小中はヘッダの左側全体が「全幅へ戻す」の当たり所になる**（5.4「一覧へ戻る導線」
            と同じ）。全幅のときはボタンにしない。**新規チケットの口は置かない**（5.13） -->
       <PageHeader
-        title="チケット検索"
-        :title-action-label="shrunk ? 'チケット検索を全幅に戻す' : undefined"
+        :title="$ui('チケット検索')"
+        :title-action-label="shrunk ? $ui('チケット検索を全幅に戻す') : undefined"
         :title-action-icon="shrunk ? '⤢' : undefined"
         @title-click="closeDetail"
       />
@@ -563,21 +566,19 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
           class="search-conditions-toggle"
           :aria-expanded="conditionsOpen"
           @click="conditionsOpen = !conditionsOpen"
-        >
-          検索条件
-          <span class="caret" aria-hidden="true">{{ conditionsOpen ? '▾' : '▸' }}</span>
-          <span v-if="!isPristine" class="search-conditions-dot" aria-label="条件あり">●</span>
+        > {{ $ui('検索条件') }} <span class="caret" aria-hidden="true">{{ conditionsOpen ? '▾' : '▸' }}</span>
+          <span v-if="!isPristine" class="search-conditions-dot" :aria-label="$ui('条件あり')">●</span>
         </button>
 
         <!-- 検索の条件（5.13）。条件は URL のクエリに載る -->
         <div v-if="!shrunk || conditionsOpen" class="search-conditions">
           <div class="search-conditions-row">
             <label class="search-filter search-keyword">
-              <span class="search-filter-label">キーワード</span>
+              <span class="search-filter-label">{{ $ui('キーワード') }}</span>
               <input
                 v-model="keyword"
                 type="search"
-                placeholder="タイトル・本文・コメント"
+                :placeholder="$ui('タイトル・本文・コメント')"
                 @input="onKeywordInput"
                 @compositionstart="onCompositionStart"
                 @compositionend="onCompositionEnd"
@@ -585,12 +586,12 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
               />
             </label>
             <div class="search-filter">
-              <span class="search-filter-label" aria-hidden="true">番号</span>
+              <span class="search-filter-label" aria-hidden="true">{{ $ui('番号') }}</span>
               <span class="search-range">
                 <input
                   type="number"
                   min="1"
-                  aria-label="番号の下限"
+                  :aria-label="$ui('番号の下限')"
                   :value="queryValue('seq_from')"
                   @change="setQuery({ seq_from: ($event.target as HTMLInputElement).value })"
                 />
@@ -598,7 +599,7 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
                 <input
                   type="number"
                   min="1"
-                  aria-label="番号の上限"
+                  :aria-label="$ui('番号の上限')"
                   :value="queryValue('seq_to')"
                   @change="setQuery({ seq_to: ($event.target as HTMLInputElement).value })"
                 />
@@ -608,18 +609,18 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
 
           <div class="search-conditions-row">
             <div class="search-filter">
-              <span class="search-filter-label" aria-hidden="true">状態</span>
+              <span class="search-filter-label" aria-hidden="true">{{ $ui('状態') }}</span>
               <MultiSelectFilter
-                label="状態"
+                :label="$ui('状態')"
                 :options="statusOptions"
                 :selected="statusKeys"
                 @update="setQuery({ status: $event.join(',') })"
               />
             </div>
             <div class="search-filter">
-              <span class="search-filter-label" aria-hidden="true">種別</span>
+              <span class="search-filter-label" aria-hidden="true">{{ $ui('種別') }}</span>
               <MultiSelectFilter
-                label="種別"
+                :label="$ui('種別')"
                 :options="typeOptions"
                 :selected="types"
                 @update="setQuery({ type: $event.join(',') })"
@@ -628,7 +629,7 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
             <!-- エピックは詳細への導線（↗）を持つので `EpicFilter` のまま使う。
                  **↗ にも `from=search` を持たせる**——落とすと、押した先がバックログに変わる -->
             <div class="search-filter">
-              <span class="search-filter-label" aria-hidden="true">エピック</span>
+              <span class="search-filter-label" aria-hidden="true">{{ $ui('エピック') }}</span>
               <EpicFilter
                 :epics="epics"
                 :selected="epicSeqs"
@@ -638,9 +639,9 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
               />
             </div>
             <div class="search-filter">
-              <span class="search-filter-label" aria-hidden="true">担当</span>
+              <span class="search-filter-label" aria-hidden="true">{{ $ui('担当') }}</span>
               <MultiSelectFilter
-                label="担当"
+                :label="$ui('担当')"
                 :options="assigneeOptions"
                 :selected="assignees"
                 @update="setQuery({ assignee: $event.join(',') })"
@@ -650,36 +651,36 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
 
           <div class="search-conditions-row">
             <div class="search-filter">
-              <span class="search-filter-label" aria-hidden="true">着手日</span>
+              <span class="search-filter-label" aria-hidden="true">{{ $ui('着手日') }}</span>
               <span class="search-range">
                 <input
                   type="date"
-                  aria-label="着手日の始まり"
+                  :aria-label="$ui('着手日の始まり')"
                   :value="sinceDate('started_since')"
                   @change="setSince('started_since', ($event.target as HTMLInputElement).value)"
                 />
                 <span aria-hidden="true">〜</span>
                 <input
                   type="date"
-                  aria-label="着手日の終わり"
+                  :aria-label="$ui('着手日の終わり')"
                   :value="beforeDate('started_before')"
                   @change="setBefore('started_before', ($event.target as HTMLInputElement).value)"
                 />
               </span>
             </div>
             <div class="search-filter">
-              <span class="search-filter-label" aria-hidden="true">完了日</span>
+              <span class="search-filter-label" aria-hidden="true">{{ $ui('完了日') }}</span>
               <span class="search-range">
                 <input
                   type="date"
-                  aria-label="完了日の始まり"
+                  :aria-label="$ui('完了日の始まり')"
                   :value="sinceDate('closed_since')"
                   @change="setSince('closed_since', ($event.target as HTMLInputElement).value)"
                 />
                 <span aria-hidden="true">〜</span>
                 <input
                   type="date"
-                  aria-label="完了日の終わり"
+                  :aria-label="$ui('完了日の終わり')"
                   :value="beforeDate('closed_before')"
                   @change="setBefore('closed_before', ($event.target as HTMLInputElement).value)"
                 />
@@ -690,18 +691,16 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
               class="secondary search-clear"
               :disabled="isPristine"
               @click="clearAll"
-            >
-              解除
-            </button>
+            > {{ $ui('解除') }} </button>
           </div>
         </div>
 
         <p v-if="result" class="search-result">{{ result }}</p>
         <p v-if="error" class="search-error" role="alert">✕ {{ errorMessage }}</p>
 
-        <p v-if="loading && !loaded" class="search-muted" aria-busy="true">読み込み中…</p>
+        <p v-if="loading && !loaded" class="search-muted" aria-busy="true">{{ $ui('読み込み中…') }}</p>
         <template v-else-if="!error">
-          <p v-if="tickets.length === 0" class="search-empty">条件に一致するチケットはありません</p>
+          <p v-if="tickets.length === 0" class="search-empty">{{ $ui('条件に一致するチケットはありません') }}</p>
 
           <table v-else class="search-table" :aria-busy="loading">
             <thead>
@@ -712,31 +711,26 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
                   </button>
                 </th>
                 <th scope="col" :aria-sort="ariaSort('title')">
-                  <button type="button" class="search-sort" @click="sortBy('title')">
-                    タイトル <span class="caret" aria-hidden="true">{{ caret('title') }}</span>
+                  <button type="button" class="search-sort" @click="sortBy('title')"> {{ $ui('タイトル') }} <span class="caret" aria-hidden="true">{{ caret('title') }}</span>
                   </button>
                 </th>
                 <th scope="col" class="search-status-col" :aria-sort="ariaSort('status')">
-                  <button type="button" class="search-sort" @click="sortBy('status')">
-                    状態 <span class="caret" aria-hidden="true">{{ caret('status') }}</span>
+                  <button type="button" class="search-sort" @click="sortBy('status')"> {{ $ui('状態') }} <span class="caret" aria-hidden="true">{{ caret('status') }}</span>
                   </button>
                 </th>
                 <!-- 優先・担当・期限・完了日は縮小中に落とす（5.13。いずれも詳細側に出ている） -->
                 <th v-if="!shrunk" scope="col" class="search-priority-col" :aria-sort="ariaSort('priority')">
-                  <button type="button" class="search-sort" @click="sortBy('priority')">
-                    優先 <span class="caret" aria-hidden="true">{{ caret('priority') }}</span>
+                  <button type="button" class="search-sort" @click="sortBy('priority')"> {{ $ui('優先') }} <span class="caret" aria-hidden="true">{{ caret('priority') }}</span>
                   </button>
                 </th>
                 <!-- 担当は並べ替えられない（`ApiDesign.md` 9.2.1 の `sort` に無い） -->
-                <th v-if="!shrunk" scope="col" class="search-assignee-col">担当</th>
+                <th v-if="!shrunk" scope="col" class="search-assignee-col">{{ $ui('担当') }}</th>
                 <th v-if="!shrunk" scope="col" class="search-due-col" :aria-sort="ariaSort('due_date')">
-                  <button type="button" class="search-sort" @click="sortBy('due_date')">
-                    期限 <span class="caret" aria-hidden="true">{{ caret('due_date') }}</span>
+                  <button type="button" class="search-sort" @click="sortBy('due_date')"> {{ $ui('期限') }} <span class="caret" aria-hidden="true">{{ caret('due_date') }}</span>
                   </button>
                 </th>
                 <th v-if="!shrunk" scope="col" class="search-closed-col" :aria-sort="ariaSort('closed_at')">
-                  <button type="button" class="search-sort" @click="sortBy('closed_at')">
-                    完了日 <span class="caret" aria-hidden="true">{{ caret('closed_at') }}</span>
+                  <button type="button" class="search-sort" @click="sortBy('closed_at')"> {{ $ui('完了日') }} <span class="caret" aria-hidden="true">{{ caret('closed_at') }}</span>
                   </button>
                 </th>
               </tr>
@@ -765,7 +759,7 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
                     <span
                       v-if="shrunk && isOverdue(t)"
                       class="search-overdue"
-                      :title="`期限超過（${t.due_date}）`"
+                      :title="$ui('期限超過（{value0}）', { value0: t.due_date })"
                       >⚠</span
                     >
                     <!-- タグは枠線＋文字（8.6）。**縮小中は出さない**（5.4 と同じ理由） -->
@@ -806,7 +800,7 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
                     <span
                       v-if="t.working_agent"
                       class="search-working-agent"
-                      :title="`${t.working_agent.display_name} が処理しています`"
+                      :title="$ui('{value0} が処理しています', { value0: t.working_agent.display_name })"
                       >🤖</span
                     >
                   </span>
@@ -830,9 +824,8 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
 
           <p v-if="tickets.length > 0" class="search-total">
             <template v-if="truncated">
-              {{ withComma(total) }}件中 {{ withComma(perPage) }}件を表示しています。条件で絞り込んでください
-            </template>
-            <template v-else>{{ withComma(total) }}件</template>
+              {{ withComma(total) }}{{ $ui('件中') }} {{ withComma(perPage) }}{{ $ui('件を表示しています。条件で絞り込んでください') }} </template>
+            <template v-else>{{ withComma(total) }}{{ $ui('件') }}</template>
           </p>
         </template>
       </div>

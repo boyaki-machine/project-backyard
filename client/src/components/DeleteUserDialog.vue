@@ -40,25 +40,22 @@ const matched = computed(() => typed.value.trim() === props.displayName.trim())
 </script>
 
 <template>
-  <Modal title="ユーザーを削除" @close="emit('cancel')">
+  <Modal :title="$ui('ユーザーを削除')" @close="emit('cancel')">
     <div class="body">
       <p class="lead">
-        <strong>{{ displayName }}</strong>（{{ email }}）を削除します。
-      </p>
+        <strong>{{ displayName }}</strong>（{{ email }}{{ $ui('）を削除します。') }} </p>
 
       <!-- warning は「面」で表す（8.4.1）。文字色はベースのまま -->
-      <p class="warn">⚠ この操作は取り消せません。無効化するだけなら「無効化」を使ってください。</p>
+      <p class="warn">{{ $ui('⚠ この操作は取り消せません。無効化するだけなら「無効化」を使ってください。') }}</p>
 
       <ul class="effects">
-        <li>ログイン情報・アクセストークン・プロジェクトの権限が消えます</li>
-        <li>担当していたチケットは残り、担当者が未設定になります</li>
-        <li>書き込んだコメントは残り、投稿者が「削除されたユーザー」になります</li>
+        <li>{{ $ui('ログイン情報・アクセストークン・プロジェクトの権限が消えます') }}</li>
+        <li>{{ $ui('担当していたチケットは残り、担当者が未設定になります') }}</li>
+        <li>{{ $ui('書き込んだコメントは残り、投稿者が「削除されたユーザー」になります') }}</li>
       </ul>
 
       <label class="field">
-        <span class="label">
-          確認のため、表示名 <code>{{ displayName }}</code> を入力してください
-        </span>
+        <span class="label"> {{ $ui('確認のため、表示名') }} <code>{{ displayName }}</code> {{ $ui('を入力してください') }} </span>
         <input
           v-model="typed"
           type="text"
@@ -74,17 +71,13 @@ const matched = computed(() => typed.value.trim() === props.displayName.trim())
     </div>
 
     <template #footer>
-      <button type="button" class="secondary" :disabled="busy" @click="emit('cancel')">
-        キャンセル
-      </button>
+      <button type="button" class="secondary" :disabled="busy" @click="emit('cancel')"> {{ $ui('キャンセル') }} </button>
       <button
         type="button"
         class="danger"
         :disabled="busy || !matched"
         @click="emit('confirm')"
-      >
-        削除する
-      </button>
+      > {{ $ui('削除する') }} </button>
     </template>
   </Modal>
 </template>

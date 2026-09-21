@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiLocaleTag, uiText } from '../locales/ui'
 /**
  * TLS 証明書タブ（`GuiDesign.md` 5.12.1）。pb-3。
  *
@@ -84,11 +85,15 @@ const showFormal = ref(false)
 const uploadFirst = computed(() => items.value.length === 0)
 
 /** 状態の札（5.12.1） */
-const STATUS_LABEL: Record<CertificateStatus, string> = {
+const statusLabelSources: Record<CertificateStatus, string> = {
   active: '使用中',
   pending: '待機中',
   expired: '期限切れ',
   superseded: '世代交代',
+}
+
+function statusLabel(status: CertificateStatus): string {
+  return uiText(statusLabelSources[status])
 }
 
 /** openssl の1コマンド。**手で打ち写すと subjectAltName を落としやすい**ので、コピーさせる */
@@ -159,8 +164,8 @@ async function submit() {
     keyPem.value = ''
     notice.value =
       created.status === 'active'
-        ? `${created.common_name} を登録しました。この証明書を使い始めます。`
-        : `${created.common_name} を登録しました。${formatDateTime(created.not_before)} から自動で使われます。`
+        ? uiText("{value0} を登録しました。この証明書を使い始めます。", { value0: created.common_name })
+        : uiText("{value0} を登録しました。{value1} から自動で使われます。", { value0: created.common_name, value1: formatDateTime(created.not_before) })
     await load()
   } catch (e: unknown) {
     actionError.value = asApiError(e)
@@ -232,12 +237,12 @@ async function toggleTls(next: boolean) {
     // 改訂前は「開き直してください」だけで、**押さないと300秒で戻ることが
     // どこにも書かれていなかった。**
     const confirmNote =
-      '開き直したら画面下の「アクセスできました」を押してください。' +
-      '押さないまま300秒が過ぎると、元の設定へ戻ります。'
+      uiText("開き直したら画面下の「アクセスできました」を押してください。") +
+      uiText("押さないまま300秒が過ぎると、元の設定へ戻ります。")
     notice.value = next
-      ? `TLS で待ち受けるようにしました。${listenUrlIfEnabled.value} で開き直してください。${confirmNote}` +
-        '（切り替わらなかったときは証明書を確かめてください）'
-      : `平文で待ち受けるようにしました。${listenUrl.value.replace(/^https:/, 'http:')} で開き直してください。${confirmNote}`
+      ? uiText("TLS で待ち受けるようにしました。{value0} で開き直してください。{value1}", { value0: listenUrlIfEnabled.value, value1: confirmNote }) +
+        uiText("（切り替わらなかったときは証明書を確かめてください）")
+      : uiText("平文で待ち受けるようにしました。{value0} で開き直してください。{value1}", { value0: listenUrl.value.replace(/^https:/, 'http:'), value1: confirmNote })
   } catch (e: unknown) {
     actionError.value = asApiError(e)
   } finally {
@@ -253,7 +258,7 @@ async function confirmDelete() {
   actionError.value = null
   try {
     await settingsApi.deleteCertificate(target.id)
-    notice.value = `${target.common_name} を削除しました。`
+    notice.value = uiText("{value0} を削除しました。", { value0: target.common_name })
     deleting.value = null
     await load()
   } catch (e: unknown) {
@@ -267,7 +272,7 @@ async function confirmDelete() {
 async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text)
-    notice.value = 'コマンドをコピーしました。'
+    notice.value = uiText("コマンドをコピーしました。")
   } catch {
     // クリップボードが使えない環境では何もしない（選択してコピーできる）。
   }
@@ -275,13 +280,13 @@ async function copy(text: string) {
 
 function asApiError(e: unknown): ApiError {
   if (e instanceof ApiError) return e
-  return new ApiError({ status: 0, code: 'network_error', message: '通信に失敗しました' })
+  return new ApiError({ status: 0, code: 'network_error', message: uiText("通信に失敗しました") })
 }
 </script>
 
 <template>
   <div class="tab">
-    <p v-if="loading" class="muted">読み込み中…</p>
+    <p v-if="loading" class="muted">{{ $ui('読み込み中…') }}</p>
     <p v-else-if="loadError" class="error" role="alert">{{ loadError.message }}</p>
 
     <template v-else>
@@ -290,12 +295,12 @@ function asApiError(e: unknown): ApiError {
         待受のスキームとホストとポートがそのまま読めるようにする。
       -->
       <dl class="status">
-        <dt>動作状況</dt>
+        <dt>{{ $ui('動作状況') }}</dt>
         <dd>
           <code :class="{ secure: tlsEnabled }">{{ listenUrl }}</code>
           <span class="muted note">
-            <template v-if="tlsEnabled">TLS で終端しています</template>
-            <template v-else>TLS は無効です</template>
+            <template v-if="tlsEnabled">{{ $ui('TLS で終端しています') }}</template>
+            <template v-else>{{ $ui('TLS は無効です') }}</template>
           </span>
         </dd>
       </dl>
@@ -308,11 +313,10 @@ function asApiError(e: unknown): ApiError {
         設定の実効値と実際の待受はずれるので、**両方を出す。**
       -->
       <section v-if="tlsSetting" class="block toggle">
-        <h3>TLS で待ち受ける</h3>
-        <p v-if="!tlsSetting.editable" class="muted">
-          この設定は{{
-            tlsSetting.source === 'env' ? `環境変数 ${tlsSetting.env_key}` : '設定ファイル'
-          }}で固定されています（いまの値: {{ tlsSetting.value }}）
+        <h3>{{ $ui('TLS で待ち受ける') }}</h3>
+        <p v-if="!tlsSetting.editable" class="muted"> {{ $ui('この設定は') }}{{
+            tlsSetting.source === 'env' ? $ui("環境変数 {value0}", { value0: tlsSetting.env_key }) : $ui("設定ファイル")
+          }}{{ $ui('で固定されています（いまの値:') }} {{ tlsSetting.value }}）
         </p>
         <template v-else>
           <!--
@@ -321,47 +325,32 @@ function asApiError(e: unknown): ApiError {
             わからないので、有効ボタンを押す前に確認がしたい」。
           -->
           <dl v-if="tlsSetting.value !== 'true'" class="preview">
-            <dt>有効にすると</dt>
-            <dd><code>{{ listenUrlIfEnabled }}</code> で待ち受けます</dd>
+            <dt>{{ $ui('有効にすると') }}</dt>
+            <dd><code>{{ listenUrlIfEnabled }}</code> {{ $ui('で待ち受けます') }}</dd>
           </dl>
 
           <!--
             **鍵の出どころが変わると、登録済みの証明書を復号できなくなる**（pb-98）。
             **このまま有効にして再起動すると起動に失敗する**ので、押す前に出す。
           -->
-          <p v-if="noneDecryptable" class="warn">
-            ⚠ 登録済みの証明書は<strong>別の鍵で暗号化されています。</strong>
-            このままでは TLS を有効にできません。元の鍵（<code>PB_SECRET_KEY</code>）に
-            戻すか、証明書を登録し直してください。
-          </p>
-          <p v-else-if="undecryptableCount > 0" class="warn">
-            ⚠ 一部の証明書を復号できません（{{ undecryptableCount }} 件）。
-            別の鍵で暗号化されています。
-          </p>
+          <p v-if="noneDecryptable" class="warn"> {{ $ui('⚠ 登録済みの証明書は') }}<strong>{{ $ui('別の鍵で暗号化されています。') }}</strong> {{ $ui('このままでは TLS を有効にできません。元の鍵（') }}<code>PB_SECRET_KEY</code>{{ $ui('）に 戻すか、証明書を登録し直してください。') }} </p>
+          <p v-else-if="undecryptableCount > 0" class="warn"> {{ $ui('⚠ 一部の証明書を復号できません（') }}{{ undecryptableCount }} {{ $ui('件）。 別の鍵で暗号化されています。') }} </p>
 
           <!--
             証明書の名前とアクセス先が合っているか。**判定はサーバが返す**
             （`ApiDesign.md` 11.4）。画面は結果を出すだけである。
           -->
-          <p v-if="listenHostMatch === 'uncovered'" class="warn">
-            ⚠ いま使う証明書は <code>{{ listenHost }}</code> を覆っていません（証明書の名前:
-            {{ (activeCert && sanText(activeCert)) || '—' }}）。
-            <strong>このままではブラウザが警告を出します。</strong>
-            アクセスに使うホスト名を SAN に含む証明書を登録してください。
-          </p>
-          <p v-else-if="listenHostMatch === 'covered'" class="ok">
-            ✓ いま使う証明書は <code>{{ listenHost }}</code> を覆っています
-          </p>
+          <p v-if="listenHostMatch === 'uncovered'" class="warn"> {{ $ui('⚠ いま使う証明書は') }} <code>{{ listenHost }}</code> {{ $ui('を覆っていません（証明書の名前:') }} {{ (activeCert && sanText(activeCert)) || '—' }}）。
+            <strong>{{ $ui('このままではブラウザが警告を出します。') }}</strong> {{ $ui('アクセスに使うホスト名を SAN に含む証明書を登録してください。') }} </p>
+          <p v-else-if="listenHostMatch === 'covered'" class="ok"> {{ $ui('✓ いま使う証明書は') }} <code>{{ listenHost }}</code> {{ $ui('を覆っています') }} </p>
           <!--
             **`0.0.0.0` は待受の表記であって接続先のホスト名ではない**（pb-100）。
             「判定できません」とだけ書くと、利用者は `0.0.0.0` を証明書に入れて
             解決しようとする——**入れても一致しない**ことまで書く。
           -->
-          <p v-else-if="listenHostMatch === 'unspecific'" class="warn">
-            すべてのアドレスで待ち受けています（<code>{{ listenUrl }}</code>）。
-            <strong>アクセスに使うホスト名が証明書に入っているか確かめてください。</strong>
-            <code>0.0.0.0</code> を証明書に入れても一致しません。
-          </p>
+          <p v-else-if="listenHostMatch === 'unspecific'" class="warn"> {{ $ui('すべてのアドレスで待ち受けています（') }}<code>{{ listenUrl }}</code>）。
+            <strong>{{ $ui('アクセスに使うホスト名が証明書に入っているか確かめてください。') }}</strong>
+            <code>0.0.0.0</code> {{ $ui('を証明書に入れても一致しません。') }} </p>
 
           <!--
             **自己署名だとエージェントが黙って繋がらなくなる**（pb-100。stg で実際に
@@ -369,35 +358,24 @@ function asApiError(e: unknown): ApiError {
             用途では困らない。
           -->
           <template v-if="activeIsSelfSigned">
-            <p class="warn">
-              ⚠ この証明書は自己署名です。ブラウザは警告を出し、<strong
-                >エージェントの MCP 接続は失敗します。</strong
-              >
-              繋がるようにするには、証明書をクライアントへ渡す設定が要ります。
-            </p>
+            <p class="warn"> {{ $ui('⚠ この証明書は自己署名です。ブラウザは警告を出し、') }}<strong
+                >{{ $ui('エージェントの MCP 接続は失敗します。') }}</strong
+              > {{ $ui('繋がるようにするには、証明書をクライアントへ渡す設定が要ります。') }} </p>
             <details class="trust">
-              <summary>クライアントに信頼させる</summary>
+              <summary>{{ $ui('クライアントに信頼させる') }}</summary>
               <ol class="muted">
                 <li>
-                  <strong>証明書を保存します。</strong>下の一覧の「保存（zip）」から取れます。
-                  <strong>展開して出てくる <code>.crt</code> を渡します。</strong>
-                  <strong>HTTPS にする前に取っておいてください</strong
-                  >——HTTPS にしたあとは、繋げないクライアントからは取れません
+                  <strong>{{ $ui('証明書を保存します。') }}</strong>{{ $ui('下の一覧の「保存（zip）」から取れます。') }} <strong>{{ $ui('展開して出てくる') }} <code>.crt</code> {{ $ui('を渡します。') }}</strong>
+                  <strong>{{ $ui('HTTPS にする前に取っておいてください') }}</strong
+                  >{{ $ui('——HTTPS にしたあとは、繋げないクライアントからは取れません') }} </li>
+                <li>
+                  <strong>{{ $ui('クライアントに渡します。') }}</strong>{{ $ui('Node.js で動くクライアント （Claude Code など）は次の環境変数を読みます') }} <pre>{{ TRUST_ENV }}</pre>
+                  <button type="button" class="link" @click="copy(TRUST_ENV)">{{ $ui('コピー') }}</button>
                 </li>
                 <li>
-                  <strong>クライアントに渡します。</strong>Node.js で動くクライアント
-                  （Claude Code など）は次の環境変数を読みます
-                  <pre>{{ TRUST_ENV }}</pre>
-                  <button type="button" class="link" @click="copy(TRUST_ENV)">コピー</button>
-                </li>
-                <li>
-                  <strong>クライアントを再起動します。</strong>環境変数は起動時にしか
-                  読まれません
-                </li>
+                  <strong>{{ $ui('クライアントを再起動します。') }}</strong>{{ $ui('環境変数は起動時にしか 読まれません') }} </li>
               </ol>
-              <p class="muted">
-                切り分けの手順は <code>docs/Development.md</code> 14.5 にあります。
-              </p>
+              <p class="muted"> {{ $ui('切り分けの手順は') }} <code>docs/Development.md</code> {{ $ui('14.5 にあります。') }} </p>
             </details>
           </template>
 
@@ -408,23 +386,18 @@ function asApiError(e: unknown): ApiError {
               :disabled="togglingTls"
               @click="toggleTls(tlsSetting.value !== 'true')"
             >
-              {{ tlsSetting.value === 'true' ? '無効にする' : '有効にする' }}
+              {{ tlsSetting.value === 'true' ? $ui("無効にする") : $ui("有効にする") }}
             </button>
-            <span class="muted">設定値: {{ tlsSetting.value === 'true' ? '有効' : '無効' }}</span>
+            <span class="muted">{{ $ui('設定値:') }} {{ tlsSetting.value === 'true' ? $ui("有効") : $ui("無効") }}</span>
           </div>
           <!--
             **切り替えは即時である**（pb-106）。それでもずれるのは、証明書を
             読めずに切り替えが起きなかったときで、**再起動しても同じところで
             失敗する**（`GuiDesign.md` 5.12.1）。
           -->
-          <p v-if="(tlsSetting.value === 'true') !== tlsEnabled" class="warn">
-            ⚠ 設定と実際の待受がずれています。<strong>証明書を確かめてください。</strong>
-            再起動しても直りません。
-          </p>
-          <p v-if="tlsSetting.value === 'true' && items.length === 0" class="error">
-            証明書が1枚も登録されていません。この状態では<strong>TLS に切り替わりません</strong
-            >。証明書を登録するか、TLS を無効に戻してください。
-          </p>
+          <p v-if="(tlsSetting.value === 'true') !== tlsEnabled" class="warn"> {{ $ui('⚠ 設定と実際の待受がずれています。') }}<strong>{{ $ui('証明書を確かめてください。') }}</strong> {{ $ui('再起動しても直りません。') }} </p>
+          <p v-if="tlsSetting.value === 'true' && items.length === 0" class="error"> {{ $ui('証明書が1枚も登録されていません。この状態では') }}<strong>{{ $ui('TLS に切り替わりません') }}</strong
+            >{{ $ui('。証明書を登録するか、TLS を無効に戻してください。') }} </p>
         </template>
       </section>
 
@@ -433,7 +406,7 @@ function asApiError(e: unknown): ApiError {
         0枚のときだけ一覧より先に来る。
       -->
       <section class="block upload" :class="{ 'upload-first': uploadFirst }">
-        <h3>証明書を登録する</h3>
+        <h3>{{ $ui('証明書を登録する') }}</h3>
 
         <!--
           **欄を隠さず、無効化して理由を添える**（利用者の指摘、2026-09-12）。
@@ -445,22 +418,17 @@ function asApiError(e: unknown): ApiError {
           **鍵は PB が用意するので、登録の前に利用者が何かする必要はない**
           （利用者の決定、2026-09-12）。ただし**既定では代償があるので隠さない。**
         -->
-        <p v-if="secretKeyOrigin === 'generated'" class="muted note">
-          秘密鍵は PB が生成した鍵で暗号化されます。その鍵は DB にあるため、<strong
-            >データベースのバックアップを持ち出せる人は秘密鍵も取り出せます</strong
-          >。それを防ぐには <code>PB_SECRET_KEY</code> を与えてください（<code
+        <p v-if="secretKeyOrigin === 'generated'" class="muted note"> {{ $ui('秘密鍵は PB が生成した鍵で暗号化されます。その鍵は DB にあるため、') }}<strong
+            >{{ $ui('データベースのバックアップを持ち出せる人は秘密鍵も取り出せます') }}</strong
+          >{{ $ui('。それを防ぐには') }} <code>PB_SECRET_KEY</code> {{ $ui('を与えてください（') }}<code
             >openssl rand -base64 32</code
           >）。
         </p>
-        <p v-else-if="secretKeyOrigin === 'env'" class="muted note">
-          秘密鍵は <code>PB_SECRET_KEY</code> で与えられた鍵で暗号化されます。
-        </p>
-        <p v-if="!secretKeyPresent" class="error">
-          いまは登録できません。暗号鍵を用意できていません。
-        </p>
+        <p v-else-if="secretKeyOrigin === 'env'" class="muted note"> {{ $ui('秘密鍵は') }} <code>PB_SECRET_KEY</code> {{ $ui('で与えられた鍵で暗号化されます。') }} </p>
+        <p v-if="!secretKeyPresent" class="error"> {{ $ui('いまは登録できません。暗号鍵を用意できていません。') }} </p>
 
         <label class="field">
-          <span>証明書（.crt / PEM 形式）</span>
+          <span>{{ $ui('証明書（.crt / PEM 形式）') }}</span>
           <textarea
             v-model="certPem"
             rows="6"
@@ -469,7 +437,7 @@ function asApiError(e: unknown): ApiError {
           ></textarea>
         </label>
         <label class="field">
-          <span>秘密鍵（.key / PEM 形式）</span>
+          <span>{{ $ui('秘密鍵（.key / PEM 形式）') }}</span>
           <textarea
             v-model="keyPem"
             rows="6"
@@ -477,10 +445,8 @@ function asApiError(e: unknown): ApiError {
             placeholder="-----BEGIN PRIVATE KEY-----"
           ></textarea>
         </label>
-        <p class="muted hint">
-          秘密鍵は暗号化して保存され、<strong>二度と表示されません</strong
-          >。手元の鍵を残しておいてください。
-        </p>
+        <p class="muted hint"> {{ $ui('秘密鍵は暗号化して保存され、') }}<strong>{{ $ui('二度と表示されません') }}</strong
+          >{{ $ui('。手元の鍵を残しておいてください。') }} </p>
         <div class="actions">
           <button
             type="button"
@@ -488,21 +454,21 @@ function asApiError(e: unknown): ApiError {
             :disabled="!canSubmit || submitting"
             @click="submit"
           >
-            {{ submitting ? '登録中…' : '登録' }}
+            {{ submitting ? $ui("登録中…") : $ui("登録") }}
           </button>
         </div>
       </section>
 
       <!-- ③ 登録済みの証明書 -->
       <section class="block list">
-        <h3>登録済みの証明書</h3>
-        <p v-if="items.length === 0" class="muted">まだ証明書が登録されていません。</p>
+        <h3>{{ $ui('登録済みの証明書') }}</h3>
+        <p v-if="items.length === 0" class="muted">{{ $ui('まだ証明書が登録されていません。') }}</p>
 
         <div v-for="c in items" :key="c.id" class="cert" :class="`st-${c.status}`">
           <div class="head">
             <span class="cn">{{ c.common_name }}</span>
-            <span class="badge" :class="`st-${c.status}`">{{ STATUS_LABEL[c.status] }}</span>
-            <span class="muted kind">{{ c.is_self_signed ? '自己署名' : '認証局発行' }}</span>
+            <span class="badge" :class="`st-${c.status}`">{{ statusLabel(c.status) }}</span>
+            <span class="muted kind">{{ c.is_self_signed ? $ui("自己署名") : $ui("認証局発行") }}</span>
           </div>
 
           <!--
@@ -510,28 +476,27 @@ function asApiError(e: unknown): ApiError {
             別の軸である（`ApiDesign.md` 11.4）。**選定はその行を選んでいて、
             出せないのは鍵のせいである**、というのがここで伝えたいことである。
           -->
-          <p v-if="!c.decryptable" class="warn">
-            ⚠ 別の鍵で暗号化されています。<strong>この証明書は出せません</strong>
+          <p v-if="!c.decryptable" class="warn"> {{ $ui('⚠ 別の鍵で暗号化されています。') }}<strong>{{ $ui('この証明書は出せません') }}</strong>
           </p>
 
           <p class="period">
-            {{ new Date(c.not_before).toLocaleDateString('ja-JP') }} 〜
-            {{ new Date(c.not_after).toLocaleDateString('ja-JP') }}
+            {{ new Date(c.not_before).toLocaleDateString(uiLocaleTag()) }} 〜
+            {{ new Date(c.not_after).toLocaleDateString(uiLocaleTag()) }}
             <span v-if="c.status === 'active'" :class="{ warn: daysLeft(c) < 30 }"
-              >（あと {{ daysLeft(c) }} 日）</span
+              >{{ $ui('（あと') }} {{ daysLeft(c) }} {{ $ui('日）') }}</span
             >
           </p>
 
           <!-- 「いつから使われるか」は、自動で切り替わることを確かめられる唯一の場所 -->
           <p v-if="c.status === 'pending'" class="from">
-            <strong>{{ formatDateTime(c.not_before) }} から自動で使われます</strong>
+            <strong>{{ formatDateTime(c.not_before) }} {{ $ui('から自動で使われます') }}</strong>
           </p>
 
           <p v-if="sanText(c)" class="muted san">SAN: {{ sanText(c) }}</p>
-          <p class="muted fp">指紋: {{ c.fingerprint }}</p>
+          <p class="muted fp">{{ $ui('指紋:') }} {{ c.fingerprint }}</p>
           <p class="muted by">
             {{ formatDateTime(c.uploaded_at) }}
-            <template v-if="c.uploaded_by">{{ c.uploaded_by.display_name }} が登録</template>
+            <template v-if="c.uploaded_by">{{ c.uploaded_by.display_name }} {{ $ui('が登録') }}</template>
           </p>
 
           <div class="foot">
@@ -540,14 +505,12 @@ function asApiError(e: unknown): ApiError {
               まで、エージェントは PB へ繋げない。`Content-Disposition` はサーバが
               付けるので、画面は Blob を組み立てない。
             -->
-            <a class="save" :href="zipUrl(c.id)" download>保存（zip）</a>
-            <button v-if="canDelete(c)" type="button" class="link danger" @click="deleting = c">
-              削除
-            </button>
+            <a class="save" :href="zipUrl(c.id)" download>{{ $ui('保存（zip）') }}</a>
+            <button v-if="canDelete(c)" type="button" class="link danger" @click="deleting = c"> {{ $ui('削除') }} </button>
             <span v-else class="muted"
-              >これを消すと HTTPS で待ち受けられなくなります。平文へ戻すには「一般」タブの<strong
-                >TLS で待ち受ける</strong
-              >を無効にしてください</span
+              >{{ $ui('これを消すと HTTPS で待ち受けられなくなります。平文へ戻すには「一般」タブの') }}<strong
+                >{{ $ui('TLS で待ち受ける') }}</strong
+              >{{ $ui('を無効にしてください') }}</span
             >
           </div>
         </div>
@@ -555,74 +518,55 @@ function asApiError(e: unknown): ApiError {
 
       <!-- ④ 作り方。**セクションを分け、必要なところだけ開く**（利用者の指示） -->
       <section class="block howto">
-        <h3>証明書の作り方</h3>
+        <h3>{{ $ui('証明書の作り方') }}</h3>
 
         <details :open="showSelfSigned">
-          <summary>自己署名証明書を作る（openssl）</summary>
-          <p class="muted">
-            開発端末や LAN の中で試すときに使います。ブラウザは警告を出しますが、PB の動作は
-            認証局発行の証明書と変わりません。
-          </p>
+          <summary>{{ $ui('自己署名証明書を作る（openssl）') }}</summary>
+          <p class="muted"> {{ $ui('開発端末や LAN の中で試すときに使います。ブラウザは警告を出しますが、PB の動作は 認証局発行の証明書と変わりません。') }} </p>
           <pre>{{ SELF_SIGNED_CMD }}</pre>
-          <button type="button" class="link" @click="copy(SELF_SIGNED_CMD)">コピー</button>
+          <button type="button" class="link" @click="copy(SELF_SIGNED_CMD)">{{ $ui('コピー') }}</button>
           <ul class="muted">
             <li>
-              <code>-nodes</code> は<strong>パスフレーズを付けない</strong
-              >指定です。PB はパスフレーズ付きの秘密鍵を受け付けません
-            </li>
+              <code>-nodes</code> {{ $ui('は') }}<strong>{{ $ui('パスフレーズを付けない') }}</strong
+              >{{ $ui('指定です。PB はパスフレーズ付きの秘密鍵を受け付けません') }} </li>
             <li>
-              <strong><code>subjectAltName</code> にアクセスに使うホスト名を必ず入れます。</strong>
-              ブラウザが見るのはこちらで、<code>CN</code> だけでは受け付けません
-            </li>
+              <strong><code>subjectAltName</code> {{ $ui('にアクセスに使うホスト名を必ず入れます。') }}</strong> {{ $ui('ブラウザが見るのはこちらで、') }}<code>CN</code> {{ $ui('だけでは受け付けません') }} </li>
           </ul>
           <p class="muted">
-            <code>pb.crt</code> を「証明書」、<code>pb.key</code> を「秘密鍵」の欄に貼ります。
-          </p>
+            <code>pb.crt</code> {{ $ui('を「証明書」、') }}<code>pb.key</code> {{ $ui('を「秘密鍵」の欄に貼ります。') }} </p>
         </details>
 
         <details :open="showFormal">
-          <summary>認証局が発行した証明書を登録する</summary>
-          <p class="muted">
-            サイバートラスト・DigiCert・GlobalSign・Let's Encrypt など、発行元によらず手順は
-            同じです。
-          </p>
-          <p class="muted"><strong>① 秘密鍵と CSR を作る</strong></p>
+          <summary>{{ $ui('認証局が発行した証明書を登録する') }}</summary>
+          <p class="muted"> {{ $ui('サイバートラスト・DigiCert・GlobalSign・Let\'s Encrypt など、発行元によらず手順は 同じです。') }} </p>
+          <p class="muted"><strong>{{ $ui('① 秘密鍵と CSR を作る') }}</strong></p>
           <pre>{{ CSR_CMD }}</pre>
-          <button type="button" class="link" @click="copy(CSR_CMD)">コピー</button>
+          <button type="button" class="link" @click="copy(CSR_CMD)">{{ $ui('コピー') }}</button>
           <p class="muted">
-            <code>pb.key</code> は手元に残し、<strong>発行元には渡しません</strong>。<code
+            <code>pb.key</code> {{ $ui('は手元に残し、') }}<strong>{{ $ui('発行元には渡しません') }}</strong>。<code
               >pb.csr</code
-            >
-            を発行元の申込画面へ提出します。
-          </p>
-          <p class="muted"><strong>② 受け取ったものを1つにまとめる</strong></p>
+            > {{ $ui('を発行元の申込画面へ提出します。') }} </p>
+          <p class="muted"><strong>{{ $ui('② 受け取ったものを1つにまとめる') }}</strong></p>
+          <p class="muted"> {{ $ui('発行元からはサーバ証明書と中間証明書が別々に届くことが多いです。証明書の欄には') }}<strong
+              >{{ $ui('サーバ証明書 → 中間証明書の順') }}</strong
+            >{{ $ui('で続けて貼ってください。逆にすると「証明書が信頼できない」と出ます。') }}<strong
+              >{{ $ui('ルート証明書は貼らなくてよい') }}</strong
+            >{{ $ui('です。') }} </p>
+          <p class="muted"><strong>{{ $ui('③ 更新するとき') }}</strong></p>
           <p class="muted">
-            発行元からはサーバ証明書と中間証明書が別々に届くことが多いです。証明書の欄には<strong
-              >サーバ証明書 → 中間証明書の順</strong
-            >で続けて貼ってください。逆にすると「証明書が信頼できない」と出ます。<strong
-              >ルート証明書は貼らなくてよい</strong
-            >です。
-          </p>
-          <p class="muted"><strong>③ 更新するとき</strong></p>
-          <p class="muted">
-            <strong>古いものを消さずに、新しいものを登録します。</strong>
-            新しい証明書が有効になった時点で自動的に切り替わり、再起動は要りません。
-          </p>
+            <strong>{{ $ui('古いものを消さずに、新しいものを登録します。') }}</strong> {{ $ui('新しい証明書が有効になった時点で自動的に切り替わり、再起動は要りません。') }} </p>
         </details>
 
-        <p class="muted docref">
-          発行元ごとの申込手順、連鎖の確かめ方、つまずいたときの対処は
-          <code>docs/Development.md</code> 14章にあります。
-        </p>
+        <p class="muted docref"> {{ $ui('発行元ごとの申込手順、連鎖の確かめ方、つまずいたときの対処は') }} <code>docs/Development.md</code> {{ $ui('14章にあります。') }} </p>
       </section>
     </template>
 
     <Teleport to="body">
       <ConfirmDialog
         v-if="deleting"
-        title="証明書を削除しますか？"
-        :message="`${deleting.common_name}（${deleting.fingerprint.slice(0, 23)}…）を削除します。この操作は取り消せません。`"
-        confirm-label="削除する"
+        :title="$ui('証明書を削除しますか？')"
+        :message="$ui('{value0}（{value1}…）を削除します。この操作は取り消せません。', { value0: deleting.common_name, value1: deleting.fingerprint.slice(0, 23) })"
+        :confirm-label="$ui('削除する')"
         danger
         :busy="submitting"
         @confirm="confirmDelete"

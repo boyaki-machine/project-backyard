@@ -9,6 +9,7 @@
  * フィールドは snake_case のまま扱う（2.2）。変換層を挟まない。
  */
 import type { components } from './schema'
+import { uiText } from '../locales/ui'
 
 /**
  * API のベースパス（`ApiDesign.md` 2.1）。
@@ -122,17 +123,78 @@ async function toApiError(res: Response): Promise<ApiError> {
     return new ApiError({
       status: res.status,
       code: 'internal_error',
-      message: `サーバでエラーが発生しました（HTTP ${res.status}）`,
+      message: uiText('サーバでエラーが発生しました（HTTP {status}）', { status: res.status }),
     })
   }
   return new ApiError({
     status: res.status,
     code: err.code,
-    message: err.message,
-    details: err.details,
+    message: localizedErrorMessage(err.code, err.message),
+    details: err.details?.map((detail) => ({
+      ...detail,
+      message: localizedDetailMessage(detail.code, detail.message),
+    })),
     retryAfterSec: err.retry_after_sec,
     requestId: err.request_id,
   })
+}
+
+const errorMessageSources: Partial<Record<ErrorCode, string>> = {
+  bad_request: 'リクエストの内容が正しくありません',
+  unauthenticated: 'ログインが必要です',
+  invalid_credentials: '認証情報が正しくありません',
+  forbidden: 'この操作を行う権限がありません',
+  csrf_failed: '画面の有効期限が切れました。再読み込みしてください',
+  not_found: '対象が見つかりません',
+  method_not_allowed: 'この操作は利用できません',
+  conflict: 'ほかの変更と競合しました。再読み込みしてください',
+  already_exists: '同じ内容がすでに登録されています',
+  last_administrator: '最後の管理者は変更または削除できません',
+  self_modification_forbidden: '自分自身にはこの操作を行えません',
+  validation_failed: '入力内容を確認してください',
+  account_locked: 'アカウントがロックされています',
+  rate_limited: '操作が多すぎます。しばらく待ってから再試行してください',
+  internal_error: 'サーバでエラーが発生しました',
+}
+
+const detailMessageSources: Record<string, string> = {
+  already_exists: 'すでに登録されています',
+  attempts_exceeded: '試行回数の上限を超えました',
+  cycle: '循環する関係は指定できません',
+  duplicated: '値が重複しています',
+  expired: '有効期限が切れています',
+  immutable_field: 'この項目は変更できません',
+  invalid: '値が正しくありません',
+  invalid_format: '形式が正しくありません',
+  mismatch: '値が一致しません',
+  not_a_member: 'プロジェクトのメンバーではありません',
+  not_allowed: '指定できない値です',
+  not_found: '対象が見つかりません',
+  not_stageable: 'オンステージに移動できません',
+  out_of_range: '指定できる範囲を超えています',
+  parent_cycle: '親子関係が循環します',
+  required: '入力してください',
+  reserved: '予約されているため使用できません',
+  self_link: '同じ対象は指定できません',
+  too_long: '入力が長すぎます',
+  too_short: '入力が短すぎます',
+  unknown: '不明な値です',
+  unknown_field: '不明な項目です',
+  unknown_status: '不明な状態です',
+  unsupported: '対応していない値です',
+  use_move_endpoint: '移動操作を使用してください',
+  use_sprint_endpoint: 'スプリント操作を使用してください',
+  use_transition_endpoint: '状態変更操作を使用してください',
+}
+
+function localizedErrorMessage(code: ErrorCode, fallback: string): string {
+  const source = errorMessageSources[code]
+  return source ? uiText(source) : fallback
+}
+
+function localizedDetailMessage(code: string, fallback: string): string {
+  const source = detailMessageSources[code]
+  return source ? uiText(source) : fallback
 }
 
 /**
@@ -180,7 +242,7 @@ async function request<T>(
     throw new ApiError({
       status: 0,
       code: 'network_error',
-      message: 'サーバに接続できませんでした。ネットワークの状態を確認してください',
+      message: uiText('サーバに接続できませんでした。ネットワークの状態を確認してください'),
     })
   }
 

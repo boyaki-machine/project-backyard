@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * 参考リンクの追加・編集（`GuiDesign.md` 5.5「コードと参考リンク」）。手順17c。
  *
@@ -48,8 +49,8 @@ const touched = ref(false)
 
 const urlError = computed(() => {
   const v = url.value.trim()
-  if (v === '') return 'URLを入力してください'
-  if (v.length > MAX_URL) return `${MAX_URL}文字以内で入力してください`
+  if (v === '') return uiText("URLを入力してください")
+  if (v.length > MAX_URL) return uiText("{value0}文字以内で入力してください", { value0: MAX_URL })
   return null
 })
 
@@ -73,7 +74,7 @@ function submit(): void {
 </script>
 
 <template>
-  <Modal :title="isNew ? '参考リンクを追加' : '参考リンクを編集'" @close="emit('close')">
+  <Modal :title="isNew ? $ui('参考リンクを追加') : $ui('参考リンクを編集')" @close="emit('close')">
     <form id="reference-form" class="form" @submit.prevent="submit">
       <label class="field">
         <span class="label">URL <span class="required">*</span></span>
@@ -92,29 +93,27 @@ function submit(): void {
         <!-- 状態を色だけで示さない（9.2）ので記号を添える -->
         <span v-if="touched && urlError" class="detail">✕ {{ urlError }}</span>
         <span v-else-if="errorFor('url')" class="detail">✕ {{ errorFor('url') }}</span>
-        <span v-else class="hint">
-          https:// か http:// で始まるものはリンクになります
-        </span>
+        <span v-else class="hint"> {{ $ui('https:// か http:// で始まるものはリンクになります') }} </span>
       </label>
 
       <label class="field">
-        <span class="label">ラベル</span>
-        <input v-model="label" type="text" :maxlength="MAX_LABEL" placeholder="認証設計メモ" />
+        <span class="label">{{ $ui('ラベル') }}</span>
+        <input v-model="label" type="text" :maxlength="MAX_LABEL" :placeholder="$ui('認証設計メモ')" />
         <span v-if="errorFor('label')" class="detail">✕ {{ errorFor('label') }}</span>
-        <span v-else class="hint">省略するとURLをそのまま見せます</span>
+        <span v-else class="hint">{{ $ui('省略するとURLをそのまま見せます') }}</span>
       </label>
 
       <label class="field">
-        <span class="label">メモ</span>
+        <span class="label">{{ $ui('メモ') }}</span>
         <input v-model="note" type="text" :maxlength="MAX_NOTE" />
         <span v-if="errorFor('note')" class="detail">✕ {{ errorFor('note') }}</span>
       </label>
     </form>
 
     <template #footer>
-      <button type="button" class="secondary" @click="emit('close')">キャンセル</button>
+      <button type="button" class="secondary" @click="emit('close')">{{ $ui('キャンセル') }}</button>
       <button type="submit" form="reference-form" class="primary" :disabled="!canSave">
-        {{ isNew ? '追加' : '更新' }}
+        {{ isNew ? $ui("追加") : $ui("更新") }}
       </button>
     </template>
   </Modal>

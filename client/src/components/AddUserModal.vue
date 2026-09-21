@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { uiText } from '../locales/ui'
 /**
  * ユーザー追加モーダル（`GuiDesign.md` 5.6.1）。
  *
@@ -109,7 +110,7 @@ async function submit() {
         : new ApiError({
             status: 0,
             code: 'internal_error',
-            message: '予期しないエラーが発生しました',
+            message: uiText("予期しないエラーが発生しました"),
           })
   } finally {
     submitting.value = false
@@ -118,12 +119,12 @@ async function submit() {
 </script>
 
 <template>
-  <Modal title="ユーザーを追加" @close="emit('close')">
+  <Modal :title="$ui('ユーザーを追加')" @close="emit('close')">
     <form id="add-user-form" class="form" @submit.prevent="submit">
       <p v-if="generalError" class="alert" role="alert">{{ generalError }}</p>
 
       <label class="field">
-        <span class="label">表示名 <span class="required">*</span></span>
+        <span class="label">{{ $ui('表示名') }} <span class="required">*</span></span>
         <input
           v-model="displayName"
           type="text"
@@ -136,7 +137,7 @@ async function submit() {
       </label>
 
       <label class="field">
-        <span class="label">メールアドレス <span class="required">*</span></span>
+        <span class="label">{{ $ui('メールアドレス') }} <span class="required">*</span></span>
         <input
           v-model="email"
           type="email"
@@ -152,7 +153,7 @@ async function submit() {
       </label>
 
       <fieldset class="field">
-        <legend class="label">システムロール <span class="required">*</span></legend>
+        <legend class="label">{{ $ui('システムロール') }} <span class="required">*</span></legend>
         <label v-for="r in roles" :key="r.key" class="choice">
           <input
             v-model="systemRole"
@@ -169,7 +170,7 @@ async function submit() {
       </fieldset>
 
       <fieldset class="field">
-        <legend class="label">初期パスワード</legend>
+        <legend class="label">{{ $ui('初期パスワード') }}</legend>
         <label class="choice">
           <input
             v-model="passwordMode"
@@ -179,8 +180,8 @@ async function submit() {
             :disabled="submitting"
           />
           <span class="choice-body">
-            <span class="choice-label">自動生成して表示する</span>
-            <span class="choice-description">作成後に一度だけ表示します（再表示できません）</span>
+            <span class="choice-label">{{ $ui('自動生成して表示する') }}</span>
+            <span class="choice-description">{{ $ui('作成後に一度だけ表示します（再表示できません）') }}</span>
           </span>
         </label>
         <label class="choice">
@@ -192,8 +193,8 @@ async function submit() {
             :disabled="submitting"
           />
           <span class="choice-body">
-            <span class="choice-label">手動で設定する</span>
-            <span class="choice-description">{{ MIN_PASSWORD }}文字以上</span>
+            <span class="choice-label">{{ $ui('手動で設定する') }}</span>
+            <span class="choice-description">{{ MIN_PASSWORD }}{{ $ui('文字以上') }}</span>
           </span>
         </label>
 
@@ -201,7 +202,7 @@ async function submit() {
              確認用の再入力欄も 5.6.1 に無い。自動生成の値を平文で見せるのと
              同じ扱いにそろえる -->
         <label v-if="passwordMode === 'manual'" class="field password-field">
-          <span class="label">パスワード <span class="required">*</span></span>
+          <span class="label">{{ $ui('パスワード') }} <span class="required">*</span></span>
           <input
             v-model="password"
             type="text"
@@ -218,16 +219,14 @@ async function submit() {
 
       <label class="checkbox">
         <input v-model="mustChangePassword" type="checkbox" :disabled="submitting" />
-        <span>初回ログイン時にパスワード変更を要求</span>
+        <span>{{ $ui('初回ログイン時にパスワード変更を要求') }}</span>
       </label>
     </form>
 
     <template #footer>
-      <button type="button" class="secondary" :disabled="submitting" @click="emit('close')">
-        キャンセル
-      </button>
+      <button type="button" class="secondary" :disabled="submitting" @click="emit('close')"> {{ $ui('キャンセル') }} </button>
       <button type="submit" form="add-user-form" class="primary" :disabled="!canSubmit">
-        {{ submitting ? '追加中…' : '追加' }}
+        {{ submitting ? $ui("追加中…") : $ui("追加") }}
       </button>
     </template>
   </Modal>

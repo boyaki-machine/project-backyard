@@ -13,6 +13,7 @@ import { computed, ref } from 'vue'
 import * as projectsApi from '../api/projects'
 import type { ProjectDetail, ProjectListItem, ProjectSort, SortOrder } from '../api/projects'
 import { ApiError } from '../api/client'
+import { uiText } from '../locales/ui'
 
 /** 1ページの件数。`ApiDesign.md` 2.6 / 5.1 のサーバ既定と同じ値を明示する */
 const PER_PAGE = 25
@@ -75,7 +76,7 @@ export const useProjectStore = defineStore('project', () => {
           : new ApiError({
               status: 0,
               code: 'internal_error',
-              message: '予期しないエラーが発生しました',
+              message: uiText('予期しないエラーが発生しました'),
             })
       // エラー時は前回の内容を残さない。古い一覧を新しい条件の結果として
       // 見せないため（6.2 のエラー状態は原因＋再試行を出す）。
@@ -152,7 +153,7 @@ export const useProjectStore = defineStore('project', () => {
           : new ApiError({
               status: 0,
               code: 'internal_error',
-              message: '予期しないエラーが発生しました',
+              message: uiText('予期しないエラーが発生しました'),
             })
       current.value = null
     } finally {

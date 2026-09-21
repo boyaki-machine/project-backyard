@@ -58,32 +58,29 @@ function confirm() {
 </script>
 
 <template>
-  <Modal title="バックアップを取り込む" @close="emit('cancel')">
+  <Modal :title="$ui('バックアップを取り込む')" @close="emit('cancel')">
     <div class="body">
       <p class="lead">
         <code class="file">{{ file.name }}</code>
       </p>
       <p v-if="meta" class="meta muted">
-        {{ formatDateTime(meta.created_at) }} に書き出し ／ スキーマの版
-        {{ String(meta.migration_version).padStart(4, '0') }} ／ PB {{ meta.pb_version }}
+        {{ formatDateTime(meta.created_at) }} {{ $ui('に書き出し ／ スキーマの版') }} {{ String(meta.migration_version).padStart(4, '0') }} ／ PB {{ meta.pb_version }}
       </p>
-      <p v-else class="meta error-text">
-        ✕ このファイルから書き出しの情報を読めませんでした。PB が書き出したファイルを選んでください
-      </p>
+      <p v-else class="meta error-text"> {{ $ui('✕ このファイルから書き出しの情報を読めませんでした。PB が書き出したファイルを選んでください') }} </p>
 
       <!-- warning は「面」で表す（8.4.1）。文字色はベースのまま -->
-      <p class="warn">⚠ いまの PB のデータは、すべて置き換わります。</p>
+      <p class="warn">{{ $ui('⚠ いまの PB のデータは、すべて置き換わります。') }}</p>
 
       <ul class="effects">
-        <li>ログインしている他の利用者とエージェントは、全員ログアウトします</li>
-        <li>待ち受け・TLS 証明書などの設定も、この時点に戻ります</li>
-        <li>取り込みのあいだ、PB は誰からも使えません</li>
+        <li>{{ $ui('ログインしている他の利用者とエージェントは、全員ログアウトします') }}</li>
+        <li>{{ $ui('待ち受け・TLS 証明書などの設定も、この時点に戻ります') }}</li>
+        <li>{{ $ui('取り込みのあいだ、PB は誰からも使えません') }}</li>
       </ul>
 
       <fieldset class="creds">
-        <legend>DB のオーナー権限が要ります</legend>
+        <legend>{{ $ui('DB のオーナー権限が要ります') }}</legend>
         <label class="field">
-          <span class="label">ロール</span>
+          <span class="label">{{ $ui('ロール') }}</span>
           <input
             v-model="ownerUser"
             type="text"
@@ -95,7 +92,7 @@ function confirm() {
           />
         </label>
         <label class="field">
-          <span class="label">パスワード</span>
+          <span class="label">{{ $ui('パスワード') }}</span>
           <!-- **ブラウザに覚えさせない**（5.12.2）。送ったら欄からも消す -->
           <input
             v-model="ownerPassword"
@@ -108,9 +105,7 @@ function confirm() {
       </fieldset>
 
       <label class="field">
-        <span class="label">
-          取り込むには、データベース名 <code>{{ databaseName }}</code> を入力してください
-        </span>
+        <span class="label"> {{ $ui('取り込むには、データベース名') }} <code>{{ databaseName }}</code> {{ $ui('を入力してください') }} </span>
         <input
           v-model="typed"
           type="text"
@@ -126,12 +121,8 @@ function confirm() {
     </div>
 
     <template #footer>
-      <button type="button" class="secondary" :disabled="busy" @click="emit('cancel')">
-        やめる
-      </button>
-      <button type="button" class="danger" :disabled="busy || !ready" @click="confirm">
-        取り込む
-      </button>
+      <button type="button" class="secondary" :disabled="busy" @click="emit('cancel')"> {{ $ui('やめる') }} </button>
+      <button type="button" class="danger" :disabled="busy || !ready" @click="confirm"> {{ $ui('取り込む') }} </button>
     </template>
   </Modal>
 </template>
