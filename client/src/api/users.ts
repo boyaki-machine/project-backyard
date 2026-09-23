@@ -1,7 +1,7 @@
 /**
  * ユーザー管理のエンドポイント（`ApiDesign.md` 6.1 / 6.2）。
  *
- * すべて **アドミニストレータ専用**（`user.manage`）。型は `docs/openapi.yaml` の
+ * すべて **アドミニストレータ専用**（`user.manage`）。型は `docs/design/openapi.yaml` の
  * 生成物をそのまま使う。ここで別名を定義し直さない（`projects.ts` と同じ方針）。
  */
 import { api } from './client'

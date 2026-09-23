@@ -1,7 +1,7 @@
 /**
  * プロジェクトのエンドポイント（`ApiDesign.md` 5.1〜5.6）。
  *
- * 型は `docs/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない。
+ * 型は `docs/design/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない。
  */
 import { api } from './client'
 import type { components } from './schema'

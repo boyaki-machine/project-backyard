@@ -73,7 +73,7 @@ WHERE id = @id
 -- **subject は入力されたメールではなく、手順2で引き当てた app_user.email と
 -- 突き合わせる。** user_identity.subject は text（大小を区別する）であり、
 -- 利用者が入力した表記でそのまま引くと、手順2は通るのに手順3で外れる
--- （PROGRESS.md「メールアドレスの大小の扱い」）。JOIN 条件に u.email を
+-- （Design.md 6.2.1）。JOIN 条件に u.email を
 -- 使えば、比較の対象は常にDBに保存された表記そのものになる。
 --
 -- **有効性（actor.is_active / locked_until）を WHERE で絞らない。**

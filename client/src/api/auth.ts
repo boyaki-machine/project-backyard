@@ -1,7 +1,7 @@
 /**
  * 認証まわりのエンドポイント（`ApiDesign.md` 3.1 / 3.2 / 4.1）。
  *
- * 型は `docs/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない。
+ * 型は `docs/design/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない。
  */
 import { api } from './client'
 import type { components } from './schema'

@@ -284,7 +284,7 @@ LIMIT 1
 // 無いためである（DbDesign.md 6.2 の actor には key に相当する列がない）。
 // Phase 1 でシステムアクターはこの1件しか作られないので成り立つが、
 // **Phase 2 でシステムアクターが増えるなら識別子を決める必要がある**
-// （docs/PROGRESS.md の引き継ぎに起票済み）。
+// （DbDesign.md 10章「未解決の検討事項」）。
 func (q *Queries) FindDeletedUserActor(ctx context.Context, displayName string) (string, error) {
 	row := q.db.QueryRow(ctx, findDeletedUserActor, displayName)
 	var id string

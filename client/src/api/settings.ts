@@ -1,7 +1,7 @@
 /**
  * アプリケーション設定のエンドポイント（`ApiDesign.md` 11.1 / 11.2）。
  *
- * 型は `docs/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない
+ * 型は `docs/design/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない
  * （`roles.ts` と同じ方針）。
  */
 import { api, BASE_PATH } from './client'

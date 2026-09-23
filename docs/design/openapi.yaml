@@ -18,7 +18,7 @@ info:
   description: |
     人間とAIエージェントが共同で使うプロジェクト管理ツールの REST API。
 
-    実装済みの範囲のみを記述する。設計の正本は `docs/ApiDesign.md`。
+    実装済みの範囲のみを記述する。設計の正本は `docs/design/ApiDesign.md`。
 
 servers:
   # /healthcheck は唯一 /api/v1 の外にあるため（ApiDesign.md 2.11）、

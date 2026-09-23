@@ -488,7 +488,7 @@ type Querier interface {
 	// 無いためである（DbDesign.md 6.2 の actor には key に相当する列がない）。
 	// Phase 1 でシステムアクターはこの1件しか作られないので成り立つが、
 	// **Phase 2 でシステムアクターが増えるなら識別子を決める必要がある**
-	// （docs/PROGRESS.md の引き継ぎに起票済み）。
+	// （DbDesign.md 10章「未解決の検討事項」）。
 	//
 	FindDeletedUserActor(ctx context.Context, displayName string) (string, error)
 	// ── パスワードリセットとセッション失効（ApiDesign.md 6.6 / 6.7）──
@@ -507,7 +507,7 @@ type Querier interface {
 	// **subject は入力されたメールではなく、手順2で引き当てた app_user.email と
 	// 突き合わせる。** user_identity.subject は text（大小を区別する）であり、
 	// 利用者が入力した表記でそのまま引くと、手順2は通るのに手順3で外れる
-	// （PROGRESS.md「メールアドレスの大小の扱い」）。JOIN 条件に u.email を
+	// （Design.md 6.2.1）。JOIN 条件に u.email を
 	// 使えば、比較の対象は常にDBに保存された表記そのものになる。
 	//
 	// **有効性（actor.is_active / locked_until）を WHERE で絞らない。**

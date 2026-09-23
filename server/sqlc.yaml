@@ -27,6 +27,6 @@ sql:
         overrides:
           # citext は拡張型のため sqlc が既定の対応を持たない。
           # 値は通常の文字列として扱い、大小を無視した照合はDB側に委ねる
-          # （DbDesign.md 3.1 / 4.1、PROGRESS.md「メールアドレスの大小の扱い」）。
+          # （DbDesign.md 3.1 / 4.1、Design.md 6.2.1）。
           - db_type: citext
             go_type: string

@@ -39,7 +39,7 @@ export interface PlaceholderMeta {
   docRef: string
   /** 予定している内容（設計文書からの転記） */
   planned: string[]
-  /** Phase と実装予定（docs/PROGRESS.md の手順番号） */
+  /** Phase と実装予定（PB のチケット番号） */
   status: string
 }
 
@@ -108,8 +108,8 @@ const routeSources: RouteRecordRaw[] = [
 
   // 画面を持たず /p/:key/backlog へリダイレクトする（GuiDesign.md 3.2）。
   //
-  // 改訂前はここがチケット一覧だった。**リダイレクトを残すのは、既存の
-  // ブックマークと docs/history/ の記録を壊さないため**である。
+  // 以前はここがチケット一覧だった。**リダイレクトを残すのは、既存の
+  // ブックマークを壊さないため**である。
   // **クエリは引き継ぐ**——5.4 のフィルタ条件は URL に載っており、
   // 落とすと共有されたリンクが素の状態で開く。
   {
@@ -202,7 +202,7 @@ const routeSources: RouteRecordRaw[] = [
       placeholder: {
         title: '監査ログ',
         docRef: 'GuiDesign.md 5.7',
-        status: 'Phase 1 内で未定（docs/PROGRESS.md）',
+        status: '未定（pb-181）',
         planned: [
           '期間・操作・実行者・結果によるフィルタ',
           '日時・実行者・操作・対象・結果の一覧',

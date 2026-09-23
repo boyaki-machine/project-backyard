@@ -3,8 +3,7 @@
 **開発端末で PB を動かし、直し、確かめるための手順書。**
 
 - 設計の正本は `Design.md` / `DbDesign.md` / `ApiDesign.md` / `GuiDesign.md` にある。本書は**それらを実際に動かす手順**だけを扱う
-- **実装済みの範囲だけを書く。** 未実装の手順は書かない（`docs/PROGRESS.md` の進捗と揃える）
-- 実装の進捗そのものと「いつ何を判断したか」は `docs/PROGRESS.md` にある
+- **実装済みの範囲だけを書く。** 未実装の手順は書かない
 
 > **本書のコマンドは、断りがない限りすべてリポジトリ直下で実行する。**
 > `make` はカレントディレクトリの Makefile しか見ないため、下位ディレクトリで叩くと
@@ -41,8 +40,8 @@
 | 必要なもの | 確認コマンド | 期待する結果 | 無いとき |
 |---|---|---|---|
 | コンテナランタイム | `docker info` | エラーにならない（起動している） | 付録 A.1 |
-| Go | `go version` | **`go1.26` 以上**（`Design.md` 3.1。pb-104 で 1.24 から上げた） | 付録 A.2 |
-| | | ↑ これは**入口の版**である。**実際にビルドへ使う版は `go.mod` の `toolchain` が固定**しており、手元がそれより古ければ **go コマンドが自動で取ってくる**（`GOTOOLCHAIN=auto`。pb-152） | |
+| Go | `go version` | **`go1.26` 以上**（`Design.md` 3.1） | 付録 A.2 |
+| | | ↑ これは**入口の版**である。**実際にビルドへ使う版は `go.mod` の `toolchain` が固定**しており、手元がそれより古ければ **go コマンドが自動で取ってくる**（`GOTOOLCHAIN=auto`） | |
 | Node.js / npm | `node -v && npm -v` | 表示される（client のビルドに必要） | 付録 A.3 |
 | Google Chrome | `ls "/Applications/Google Chrome.app"` | 存在する（**画面の動作確認（8章）に使うだけ。任意**） | 付録 A.4 |
 
@@ -106,7 +105,7 @@ make migrate   # goose で 0001〜 を適用する。前進のみ（DbDesign.md 
 
 `make up` が起動するのは **db だけ**である。**dev では PB 本体を `make run` か `make build` の
 単一バイナリでホストから動かす**ので、compose に定義してある app まで上げると 8080 番でぶつかる。
-コンテナで動かす一式は `make release TARGET=compose`（7.3。pb-123）で作る。
+コンテナで動かす一式は `make release TARGET=compose`（7.3）で作る。
 
 **`make migrate` は `pb_owner` で接続する**（`db_password` から組み立てる）。実行時ロールの
 `pb_app` は DDL を実行できず、それがロール分離の目的である（`DbDesign.md` 3.4）。
@@ -318,7 +317,7 @@ lsof -nP -iTCP:8080 -sTCP:LISTEN                 # サーバが残っていな�
 | `member@example.com` | operator | project_member | プロジェクト設定が触れない |
 | `viewer@example.com` | operator | project_viewer | 閲覧のみ |
 
-**`admin@example.com` は `demo` のメンバーではない。** `pb dev seed` は**プロジェクトの作成者をメンバーとして登録しない**（`server/cmd/pb/dev_seed.go`）。登録するのは `POST /projects`（画面から作ったとき）だけで、そちらは作成者が `project_admin` になる（`ApiDesign.md` 5.2）。**この非対称を忘れると「管理者だが非メンバー」の前提を取り違える**——手順24b の検証で実際に4件が偽の FAIL になった。**`make dev-info` は定義ファイルを読むので、DB を引いた結果とは別物である。**
+**`admin@example.com` は `demo` のメンバーではない。** `pb dev seed` は**プロジェクトの作成者をメンバーとして登録しない**（`server/cmd/pb/dev_seed.go`）。登録するのは `POST /projects`（画面から作ったとき）だけで、そちらは作成者が `project_admin` になる（`ApiDesign.md` 5.2）。**この非対称を忘れると「管理者だが非メンバー」の前提を取り違える。`make dev-info` は定義ファイルを読むので、DB を引いた結果とは別物である。**
 
 ## 4.2 本番DBへ流れない仕組み
 
@@ -339,14 +338,14 @@ lsof -nP -iTCP:8080 -sTCP:LISTEN                 # サーバが残っていな�
 | コマンド | 入力 → 出力 |
 |---|---|
 | `make sqlc` | `server/internal/store/queries/*.sql`（＋スキーマ源の `server/migrations/`）→ `server/internal/store/gen/` |
-| `make gen-api` | `docs/openapi.yaml` → `client/src/api/schema.d.ts` |
+| `make gen-api` | `docs/design/openapi.yaml` → `client/src/api/schema.d.ts` |
 
 **`make gen-api` が生成するのは型だけである。** API の呼び出しは手書きの薄いラッパ
 （`client/src/api/client.ts`）が持つ。CSRF ヘッダ・Cookie の送出・`ApiDesign.md` 2.5 の
 エラー形式といった共通規約を1か所に集めるためで、生成器にハンドラや呼び出しを作らせない
 方針は `Design.md` 3.3 にある。
 
-**`docs/openapi.yaml` は設計の写しではなく「実装済みAPIの現状」である**（`ApiDesign.md` 1.3）。
+**`docs/design/openapi.yaml` は設計の写しではなく「実装済みAPIの現状」である**（`ApiDesign.md` 1.3）。
 APIを足したステップの成果物に、この yaml の更新と `make gen-api` の結果を含める。
 
 ---
@@ -379,9 +378,13 @@ make test-db RUN=TestMeTokensIntegration
 フェイクで差し替えたテストでは `queries/*.sql` が一度も実行されないため、
 列名・JOIN の向き・条件の取りこぼしが検出できない。それを埋めるためのものである。
 
+- **worktree では走らない。** `deploy/dev/secrets/` は履歴管理の対象外なので、worktree にはチェックアウトされない。
+  結合テストは元の作業ディレクトリで走らせる（単体テストは worktree でも走る）
+- **dev と同じ DB を使う。** 走らせるたびに dev の `audit_log` が増える
+
 ## 6.2 テストを書くときの落とし穴
 
-実際に踏んだものだけを挙げる。
+踏みやすいものを挙げる。
 
 | 落とし穴 | 対処 |
 |---|---|
@@ -399,7 +402,7 @@ DDL が要るなら `pb_owner` を使うのではなくマイグレーション�
 ## 6.3 openapi.yaml のドリフト検出
 
 `make test` に含まれる（`server/internal/httpapi/openapi_drift_test.go`）。
-`chi.Walk` で得た実装のルート一覧と `docs/openapi.yaml` の `paths` を突き合わせ、
+`chi.Walk` で得た実装のルート一覧と `docs/design/openapi.yaml` の `paths` を突き合わせ、
 **実装にあって yaml に無い／yaml にあって実装に無い**の両方向を報告する。
 
 エンドポイントを足して yaml を忘れると、ここで落ちる。
@@ -436,8 +439,7 @@ make clean-webui  # ← コミット前に必ず実行する
 … but also statically imported by src/components/TicketComments.vue…
 ```
 
-**この警告が利用者を名指しする**ので、`grep` で数えるより速い。手順22b では
-`MarkdownEditor` の利用者を2つと数えて実際は3つあり、**警告で3つ目に気づいた**。
+**この警告が利用者を名指しする**ので、`grep` で数えるより速く、数え漏れも拾える。
 効いていれば出力にチャンクが増える（`dist/assets/MarkdownEditor-*.js`）。
 
 ## 7.2 バージョン
@@ -468,27 +470,24 @@ make release TARGET=k8s ARCH=arm64                                 # イメー�
 ```
 
 - **指定できる `TARGET` は `native`・`docker`・`compose`・`k8s`**
-- **k8s の一式をこの端末の k3s（Rancher Desktop）で確かめるなら、専用の namespace を作り、確かめたら namespace ごと消す**（pb-124）。
-  **この端末の k3s は dockerd で動いている**（`kubectl get nodes -o wide` の `CONTAINER-RUNTIME` が `docker://`）ので、
-  **`docker load` したイメージがそのまま Pod から使える。** `nerdctl -n k8s.io load` は containerd のときの手順で、ここでは確かめられない。
+- **k8s の一式を手元の k3s（Rancher Desktop など）で確かめるなら、専用の namespace を作り、確かめたら namespace ごと消す。**
+  **k3s が dockerd で動いているなら**（`kubectl get nodes -o wide` の `CONTAINER-RUNTIME` が `docker://`）、
+  **`docker load` したイメージがそのまま Pod から使える。** containerd で動いているなら `nerdctl -n k8s.io load` を使う。
   `k8s/db.yaml` の PVC は既定の StorageClass `local-path`（`reclaimPolicy: Delete`）に乗るので、namespace を消すとデータも消える
 - **port-forward の手元のポートは 8080 以外にしてよい**（`kubectl port-forward svc/pb 18124:8080`）。dev の `make run` とぶつけないため
 - **native は client のビルド（`npm ci`）を毎回含む。** 組を変えて続けて作ると、そのたびに走る
 - **docker / compose はイメージの中でビルドするので、この端末の Go と Node を使わない**（docker buildx だけが要る）。
-  ビルドの段は `$BUILDPLATFORM` で動くので、**amd64 もエミュレーション無しで作れる。** 実測（pb-123）：
-  初回の compose/arm64 が 52秒、続けて docker/amd64 が 48秒（Go のクロスコンパイルだけやり直す）、docker/arm64 は 0秒
+  ビルドの段は `$BUILDPLATFORM` で動くので、**amd64 もエミュレーション無しで作れる**（組を変えて続けて作ると、Go のクロスコンパイルだけをやり直す）
 - **compose の一式をこの端末で動かしても、Linux のサーバで秘密ファイルが読める証拠にはならない。**
   Rancher Desktop が共有するパス（`/Users` や `/private/tmp`）は、所有者がコンテナの利用者に書き換わって見える。
   **Linux の権限で確かめるなら、`rdctl shell` で VM の中にファイルを作り、そのパスを `docker run -v` で渡す**
-  （pb-123 で、644 は読める・600 と 700 のディレクトリ越しは読めないことを本物のイメージで実測した）
 - **手元にレジストリを立てて `PUSH` を試すなら、5000 番を避ける。** macOS では ControlCenter（AirPlay レシーバ）が
-  `*:5000` で待ち受けている（pb-123 で実測）。push は VM の中の docker が行うので VM の中のレジストリには届くが、
+  `*:5000` で待ち受けている。push は VM の中の docker が行うので VM の中のレジストリには届くが、
   mac から中身を覗くと紛れる
 - **空でない出力先には書かない。** 作り直すなら、出力先を消してから叩く
 - **`OUT` を省くと `dist/` の下に出る。** `make stg-build` の既定の出力先（`deploy/stg/out`）は
   使わない——`make release` はコマンドラインで渡された `OUT` だけを見る
-- **Windows 向けは、この端末では動かせない。** ビルドと中身の検査までで、`run.ps1`／`migrate.ps1` は
-  一度も実行していない（pb-122。この端末に Windows も pwsh も無い）
+- **Windows 向けは、ビルドと中身の検査までで、`run.ps1`／`migrate.ps1` はまだ実機で実行していない**
 - 作ったあとは `make clean-webui` で embed 対象を戻してよい（7.1）
 
 ---
@@ -512,18 +511,17 @@ Playwright / Puppeteer は入れていない（`Design.md` 3.1 の採用技術�
 
 `--dump-dom` では足りない。`--headless=new --remote-debugging-port=9222` で起動し、
 **CDP（Chrome DevTools Protocol）を WebSocket で叩く使い捨てスクリプト**を書く
-（手順8では Python の標準ライブラリだけで書いた。`Runtime.evaluate` / `Page.navigate` /
+（Python の標準ライブラリだけで書ける。`Runtime.evaluate` / `Page.navigate` /
 `Page.captureScreenshot` / `Emulation.setDeviceMetricsOverride`）。
 
-**`websocket-client` はこの端末に入っていない**（2026-09-06 に実測）。**WebSocket は
-標準ライブラリだけで書く**——CDP のフレームはテキスト1種類しか来ないので、
+**WebSocket も標準ライブラリだけで書ける**——CDP のフレームはテキスト1種類しか来ないので、
 **クライアント側のマスク（必須）・断片化・ping/pong の読み飛ばし**の3つを扱えば足りる。
 
 **注意点が2つある。**
 
 - **ウィンドウ幅を必ず指定する**（`--window-size=1440,900`）。既定のままでは 768px 未満と判定され、
   メニューがオーバーレイになる（`GuiDesign.md` 2.4）。「メニューが出ない」と誤読しやすい
-- **セレクタは DOM を1回出してから書く**（手順26c で2回外した）。ログイン画面の入力欄は
+- **セレクタは DOM を1回出してから書く。**ログイン画面の入力欄は
   `id` を持たず `name` だけを持ち、`form button` は**パスワードの表示切替（`👁`）を先に拾う**
   ——`document.querySelectorAll('input')` と `button[type=submit]` が確実である。
   **外したときの症状は「ログインできない」ではなく「ログイン画面のまま先へ進む」ことである**。
@@ -531,7 +529,7 @@ Playwright / Puppeteer は入れていない（`Design.md` 3.1 の採用技術�
 - **確認ダイアログのボタンを文言で拾わない。** 一覧の行と確認ダイアログは**同じ文言のボタン**を
   持つ（`[削除]` と `[削除]`）。`querySelectorAll('button')` の順では**行のほうが先に来る**ので、
   文言で `find` するとダイアログではなく行を押し直す。**症状は「消えない」**で、実装が正しくても
-  FAIL になる（pb-103 で踏んだ）。**`[role=dialog] .foot button.danger` のように場所で名指しする**
+  FAIL になる。**`[role=dialog] .foot button.danger` のように場所で名指しする**
 - `v-model` の入力欄に値を入れるときは、`el.value = v` ではなく**ネイティブの value セッターを
   呼んでから `input` イベントを発火**する。前者では Vue が変更に気づかない
 
@@ -550,7 +548,7 @@ window.set = window.set || function (el, v) {
 - **`--remote-debugging-port` は Chrome のインスタンスごとに別の番号にする。**
   固定にすると2つ目の Chrome が bind に失敗し、**1つ目の DevTools につながる**。
   同じプロファイルの Cookie を書き換えるため、管理者のセッションで検証していたつもりが
-  別の利用者のセッションに変わる（手順13b で実際に起きた）。空きポートは
+  別の利用者のセッションに変わる。空きポートは
   `socket.bind(('127.0.0.1', 0))` で取る
 - **`Runtime.evaluate` から返すのは値だけにする**（真偽・数・文字列）。DOM 要素は `{}` に
   直列化され、Python 側では偽になる
@@ -558,13 +556,12 @@ window.set = window.set || function (el, v) {
   ヘッドレスの窓は既定でフォーカスを持たず（`document.hasFocus()` が `false`）、
   その状態では `el.blur()` が **blur イベントを発火しない**。
   `GuiDesign.md` 5.5 のインライン編集（「別の領域をクリックしてフォーカスを外す」＝保存）は
-  これに当たり、呼ばないと**実装は正しいのに「保存されない」という FAIL**になる
-  （手順17b で実際に踏んだ）。`activeElement` は正しく入るので、そちらだけ見ても気づけない
+  これに当たり、呼ばないと**実装は正しいのに「保存されない」という FAIL**になる。
+  `activeElement` は正しく入るので、そちらだけ見ても気づけない
 - **値を入れる `Runtime.evaluate` と、押す `Runtime.evaluate` を分ける。**
   Vue は `:disabled` の DOM 反映を **nextTick で行う**ので、**同じ evaluate の中で
   入力してすぐ送信ボタンを押すと、まだ `disabled` のボタンを押す**ことになり
-  何も起きない。症状は「追加されない」で、**実装は正しいのに FAIL になる**
-  （手順18b で実際に踏んだ）。押す前に `!btn.disabled` を待つとさらに固い。
+  何も起きない。症状は「追加されない」で、**実装は正しいのに FAIL になる**。押す前に `!btn.disabled` を待つとさらに固い。
 
   ```python
   c.js("pbset(document.querySelector('#x'), '値'); return 1;")   # 入れる
@@ -573,8 +570,7 @@ window.set = window.set || function (el, v) {
   ```
 
 - **`Input.insertText` は「いまのカーソル位置」へ入る。** CodeMirror を開いた直後の
-  カーソルは**先頭**なので、そのまま打つと本文の**前**に付く（手順18b で、追記した
-  つもりの文字列が前に付き、印による後片付けが空振りした）。**置き換えたいときは
+  カーソルは**先頭**なので、そのまま打つと本文の**前**に付く。**置き換えたいときは
   全選択してから入れる**——`Input.dispatchKeyEvent` に `commands: ["selectAll"]` を添える。
 
 - **`captureBeyondViewport: true` は「画面の下が切れている」を隠す。** 文書全体を1枚に
@@ -590,32 +586,28 @@ window.set = window.set || function (el, v) {
 
   **`AppShell` の `.content` は `overflow: hidden` で、各ページが自前のスクロール枠を
   持つ約束である**（`UsersPage` の `.page-body`）。置き忘れると下が切れて操作できない。
-  **pb-3 の設定画面でこれを踏み、自動検証は全 PASS のまま stg で利用者が見つけた**
-  （2026-09-12）。**下までスクロールして最下部の要素が見えることまで測る。**
+  **自動検証が全 PASS でも起きるので、下までスクロールして最下部の要素が見えることまで測る。**
 
 - **`Page.captureScreenshot` の `captureBeyondViewport: true` では `position: fixed` の要素が写らない。**
   文書全体を1枚に収めるモードなので、画面に固定した要素（`<Teleport>` で body へ出した
   ドロップダウンやメニュー）が抜ける。**開いたパネルを撮るときは `false` にする**
-  （手順16d-b で、パネルが出ているのにスクリーンショットに無いという形で踏んだ）
 - **`Page.captureScreenshot` は PNG では返ってこない。JPEG で撮る**（Chrome 152 /
-  `--headless=new`。pb-6 で実測、2026-09-09）。`fromSurface` を足しても `clip` を
+  `--headless=new`）。`fromSurface` を足しても `clip` を
   足しても同じで、**`{format: 'jpeg', quality: 92, fromSurface: true}` なら返る**
   （`fromSurface: false` も返らない）。**症状はエラーではなく無応答**なので、
   待ち時間を延ばす方向へ探しに行くと当たらない。**形式を変えて1回試すのが早い。**
 - **撮る前に落ち着くのを待ち、駄目なら撮り直す。** 描画が安定する前に要求すると
-  応答が来ないことがあり、一度きりで諦めると「この画面は撮れない」に見える
-  （pb-6 で実測）。**`setDeviceMetricsOverride` の直後に1秒待ち、失敗したら
+  応答が来ないことがあり、一度きりで諦めると「この画面は撮れない」に見える。
+  **`setDeviceMetricsOverride` の直後に1秒待ち、失敗したら
   間隔を延ばして3回まで**で足りた。
 - **画面を切り替えた直後の DOM を測らない。** マスター・ディテール（`GuiDesign.md`
   2.2.1）は開閉の途中で**行も列も見出しも揃っていない中間の DOM** を返す
-  ——pb-6 では、3列になっているはずの一覧で `thead th` が 2、`.section-head` が 0
-  だった。**同じ瞬間に撮ったスクリーンショットは正しかった**ので、
+  ——同じ瞬間に撮ったスクリーンショットは正しいことがあるので、
   「実装が壊れている」と読み違える。**目当ての要素が現れるまで待つ形にする。**
 - **ドラッグ&ドロップを合成した `DragEvent` で確かめてはいけない。**
   `dispatchEvent(new DragEvent('dragstart'))` はハンドラを呼ぶだけで、**Chrome の
   ドラッグ機構を一度も通らない**。ドラッグが実際に始まるか、途中で取り消されないかを
-  測れず、**手順16d-b では「32件 PASS」のままバックログの行が一度も掴めない欠陥を見逃した**
-  （利用者の実機確認で判明、2026-08-24）。**測っていたのは自分のハンドラであって、画面ではない。**
+  測れない。**測っているのは自分のハンドラであって、画面ではない。**
   本物で回すには `Input` ドメインを使う。
 
   ```
@@ -626,9 +618,8 @@ window.set = window.set || function (el, v) {
   ```
 
 - **`dragOver` は同じ落とし先の中で位置を変えるとき、1回では届かないことがある。**
-  **x を 1px ずらして2回送る**のを既定にする。手順22c で、行を3つに割る落とし先
-  （上1/4・下1/4・中央1/2）のうち**中央だけがアプリに届かず、直前のゾーンの目印が
-  残ったまま**になった。**実装は3ゾーンとも正しかった。**
+  **x を 1px ずらして2回送る**のを既定にする。届かないと、行を複数のゾーンに割る落とし先で
+  **直前のゾーンの目印が残ったまま**になり、実装が正しくても失敗に見える。
   切り分けは `document` に素の listener を張って `clientY` を数えるだけで済む
   ——**送った3件のうち2件しか届いていない**ことが1回で分かる。
 
@@ -644,15 +635,14 @@ window.set = window.set || function (el, v) {
   WebSocket に応答とイベントが混ざって流れるので、`id` が一致する行だけを拾って
   残りを捨てる作りにすると、**`Input.dragIntercepted` のような1回きりのイベントが消える**。
   待つ側で溜めておき、あとから取り出す。
-- **検証端末に `websocket-client` は入っていない。** CDP を叩くには
-  **WebSocket を標準ライブラリで書く**（RFC 6455。ハンドシェイク、テキストフレーム、
+- **CDP を叩く WebSocket は標準ライブラリで書く**（RFC 6455。ハンドシェイク、テキストフレーム、
   **クライアント側のマスクは必須**、継続フレームの連結で足りる）。
   **`Sec-WebSocket-Accept` の magic GUID は `258EAFA5-E914-47DA-95CA-C5AB0DC85B11`**
-  （36文字。手順23 で末尾の区切りを取り違えて書き、**ハンドシェイクは 101 で成功するのに
-  検算だけが合わない**という形で 15 分溶かした）。**書いたら RFC 6455 の例で1回検算する**
+  （36文字）。取り違えると、**ハンドシェイクは 101 で成功するのに検算だけが合わない。**
+  **書いたら RFC 6455 の例で1回検算する**
   ——`dGhlIHNhbXBsZSBub25jZQ==` → `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`。
 - **継続フレームを連結しないと、大きな応答が「永久に届かない」ように見える。**
-  上の「継続フレームの連結で足りる」を落とすと起きる（pb-6 で実測、2026-09-09）。
+  上の「継続フレームの連結で足りる」を落とすと起きる。
   Chrome は**スクリーンショットの画像のような大きな応答を複数フレームに割る**ので、
   FIN ビットを見ずに最初のフレームだけを1メッセージとして返すと、`id` が一致する
   行がいつまでも現れない。**症状は「そのコマンドだけが時間切れになる」**で、
@@ -667,14 +657,11 @@ window.set = window.set || function (el, v) {
   APIを叩く検証**は必ず `await` を要るので、`(async function(){…})()` で包む版を別に用意する。
 - **ページ内 `fetch` で書き込み系APIを叩くと、Cookie も CSRF もそのまま乗る。**
   トークンは `document.cookie` の `pb_csrf` から取り、ヘッダ名は **`X-PB-CSRF`**
-  （`client/src/api/client.ts`）。**画面を操作するより速く、権限や応答の形をそのまま測れる**
-  ——手順23 では憲章の本文を4件 `PATCH` して `?outline=1` の章立てまでを1本で確かめた。
+  （`client/src/api/client.ts`）。**画面を操作するより速く、権限や応答の形をそのまま測れる。**
   `If-Match` は `"<version>"`（引用符ごと）。
 - **画面を測る前に `make build` を通す。** dev のサーバは **client を embed している**ので
   （`Design.md` 3.4）、`make run` で起動し直すだけでは**古い画面が出続ける**。症状は
-  「押しても何も起きない」で、**実装のバグに見える**——pb-69 では、`pb-55` で廃止したはずの
-  確認モーダルが開いていて、選択肢を押しても `POST` が飛ばなかった。**測っていたのは
-  数世代前の画面である。** 1コマンドで済ませるなら `make restart`（停止→ビルド→DB起動→起動）。
+  「押しても何も起きない」で、**実装のバグに見える。** 1コマンドで済ませるなら `make restart`（停止→ビルド→DB起動→起動）。
   疑ったときは `/healthcheck` の `version` を見る（`PB_HEALTH_SHOW_VERSION=true` のとき出る）。
 - **`dragstart` を機に落とし場所を描き足すと、Chrome がドラッグを取り消す。**
   掴んだ行の位置が直後にずれるためで、症状は「`dragstart` の 1〜2ms 後に `dragend` が来て、
@@ -715,8 +702,8 @@ DBを丸ごと作り直してよい場面では、**個別に戻すより `make 
 
 | 規則 | 理由 |
 |---|---|
-| **「動いたこと」を先に確かめてから「動かないこと」を確かめる** | ガードの検証は、ガードに当たらない操作が成功することを先に見る。順序を逆にすると**ガードを検証していないまま緑になる**——手順16c で `⠿` のドロップが一度も効かない実装を書いたが、「元に戻る」も「別の親へは動かない」も**周囲3件は PASS のまま**だった。何も動かないので両方通る |
-| **「戻る」「消える」「ゼロになる」を測るなら、先に始点を作る** | 終わりの値だけを書くと、**実装が何もしなくても通る。** 手順13a で `failed_attempts` のリセットを測ったとき、**リセット前が0でないことを一度も確かめていなかった**（そのうえ測る位置も、故意に失敗させたログインの後だった）——「0になった」は最初から0でも成り立つ。**始点が意味のある値であることを1件測ってから、終点を測る** |
+| **「動いたこと」を先に確かめてから「動かないこと」を確かめる** | ガードの検証は、ガードに当たらない操作が成功することを先に見る。順序を逆にすると**ガードを検証していないまま緑になる**——何も動かない実装なら、「元に戻る」も「別の親へは動かない」も両方通る |
+| **「戻る」「消える」「ゼロになる」を測るなら、先に始点を作る** | 終わりの値だけを書くと、**実装が何もしなくても通る。** 例えば `failed_attempts` のリセットを測るなら、リセット前が0でないことを先に確かめる——「0になった」は最初から0でも成り立つ。**始点が意味のある値であることを1件測ってから、終点を測る** |
 | **一覧の並びは「APIの応答と同じ順か」で見る** | 並び順の正本はサーバで、`display_name` は `COLLATE "ja-JP-x-icu"`（`DbDesign.md` 4.4）で比較される。**検証側で並べ直して突き合わせると、日本語の読み順と食い違って誤検知する** |
 
 ## 8.6 seed に無い状態を作る（放置チケット・古い更新日時）
@@ -726,7 +713,7 @@ DBを丸ごと作り直してよい場面では、**個別に戻すより `make 
 `ApiDesign.md` 9.13.1 の `stale`（14日以上更新のないチケット）や、
 `GuiDesign.md` 5.3 の「要対応」の放置の行は、`pb dev seed` の投入時刻が
 そのまま入るので出ない。**`make dev-seed` は最後に1件（「アーカイブの冪等性が怪しい」）
-だけを20日前へ振る**（pb-23。`DbDesign.md` 7.6.4）——それ以外の日数やチケットが要るときは、
+だけを20日前へ振る**（`DbDesign.md` 7.6.4）——それ以外の日数やチケットが要るときは、
 
 **トリガを一時停止して振る。**
 
@@ -744,14 +731,13 @@ SQL
 
 **振った後にそのチケットを触ると元へ戻る。** `PATCH` も `transition` も
 トリガを起こして `updated_at` が `now()` になるので、**他の検証を全部
-終えてから最後に振る**（手順19b で、振った直後に `PATCH` して
-「放置0件」に戻り、4件の FAIL を出した）。
+終えてから最後に振る。**
 
 後始末は 8.4 に従い、チケットを消し、**積まれた `activity` も消す**——
 ULID は単調増加なので、検証前に `SELECT max(id) FROM activity` を控えておけば
 `DELETE FROM activity WHERE id > '<控えたID>'` で落とせる。
 
-## 8.7 パスキーを確かめる（CDP の仮想認証器。pb-104）
+## 8.7 パスキーを確かめる（CDP の仮想認証器）
 
 **実機の生体認証が無くても、CDP の `WebAuthn` ドメインで仮想の認証器を差し込めば、
 登録からログインまで画面で通せる。**
@@ -777,7 +763,7 @@ WebAuthn.clearCredentials {authenticatorId}                    ← やり直す�
   `POST /me/passkeys` が出ないのが正しい
 - **パスキーの項目はセキュリティセクションの最下部にあり、1440×900 でもビューポートの外である。**
   撮る前に `scrollIntoView({block: 'center'})` し、`getBoundingClientRect()` で収まったことを
-  測る——pb-104 で、全項目 PASS のまま**パスキーの写っていない画像を4枚撮った**
+  測る。測らないと、全項目 PASS のままパスキーの写っていない画像を撮ってしまう
 - **後始末**：`webauthn_challenge` の行は5分で失効し、次の挑戦を作るときに消える。登録した
   パスキーは画面の削除か `ApiDesign.md` 6.10 の全削除で消す。監査の `passkey.*` と
   `login.passkey_failure` も 8.4 に従って消す
@@ -791,7 +777,7 @@ WebAuthn.clearCredentials {authenticatorId}                    ← やり直す�
 | `make: *** No rule to make target 'migrate'` / `no makefile found` | **リポジトリ直下以外で実行している。** `make` は親ディレクトリを探しに行かない。`pwd` を確認して直下へ戻るか、`make -C <リポジトリのパス> migrate` と書く |
 | `make up` が `failed to connect to the docker API` | コンテナランタイムが停止している。Rancher Desktop を起動し、`docker info` が通るまで待つ（約30秒） |
 | `make run` が `bind: address already in use` | 前のセッションの `pb` が :8080 を掴んでいる。`lsof -nP -iTCP:8080 -sTCP:LISTEN` で確認する。`make stop-server` で落とすか、他人のプロセスを残すなら `PB_BIND=127.0.0.1:8099` のように待受を変えて起動する |
-| **バックグラウンドで起動したら、`/healthcheck` の `version` を `make version` と突き合わせる** | `make run &` は失敗しても画面に出ない。**古いプロセスが :8080 を掴んでいると、healthcheck は 200 を返し続ける**ので「起動した」と誤読する（手順26c で実際に踏み、足したばかりの MCP ツールが `tools/list` に出ないことで初めて気づいた）。**版が一致しなければ、動いているのは自分のビルドではない** |
+| **バックグラウンドで起動したら、`/healthcheck` の `version` を `make version` と突き合わせる** | `make run &` は失敗しても画面に出ない。**古いプロセスが :8080 を掴んでいると、healthcheck は 200 を返し続ける**ので「起動した」と誤読する。**版が一致しなければ、動いているのは自分のビルドではない** |
 | `make migrate` が認証に失敗する | `deploy/dev/secrets/db_password` と DB の実際のパスワードがずれている。initdb は**初回起動時にしか走らない**ため、後から `.example` を書き換えても反映されない。`make dev-reset` で作り直す |
 | アプリだけDBに繋がらない | `app_db_password` と `app_database_url` のパスワードが不一致（2.1） |
 | `npm run build` が `ERR_PACKAGE_PATH_NOT_EXPORTED` | `typescript` が 7.x になっている。**`^5` に固定すること**（vue-tsc 3.3.9 が `typescript/lib/tsc` を require できない） |
@@ -804,10 +790,15 @@ WebAuthn.clearCredentials {authenticatorId}                    ← やり直す�
 | `go version` が 1.26 未満 | 付録 A.2。goose / sqlc も Go 経由で動くため、ここが古いとマイグレーションから先に進めない |
 | `make down` したらデータも消えたのでは、と不安になる | 消えていない。`-v` を付けていないのでボリュームは残る（3.4）。`docker volume ls \| grep backyard` に `project-backyard_pgdata` があれば無事 |
 | 端末が重い。PB を止めたのにメモリが空かない | `make down` はコンテナだけ。**コンテナランタイムの VM は動いたまま**（3.4）。アプリごと終了する |
-| **認証アプリを失って画面に入れない**（pb-103） | `make admin-mfa-reset EMAIL=<アドレス>` で第2要素を外す（`Design.md` 6.7.5）。**管理者が他にいるなら画面から解除できる**（`GuiDesign.md` 5.6.2）ので、この口は管理者が1人だけのときのためにある。パスワードには触らない |
+| **認証アプリを失って画面に入れない** | `make admin-mfa-reset EMAIL=<アドレス>` で第2要素を外す（`Design.md` 6.7.5）。**管理者が他にいるなら画面から解除できる**（`GuiDesign.md` 5.6.2）ので、この口は管理者が1人だけのときのためにある。パスワードには触らない |
 | 第2要素の検証で、正しいはずのコードが 401 になる | **確定に使った刻みのコードを、そのままログインでも使っている。** 同じ刻みは再利用として拒まれる（`Design.md` 6.7.2）。検証では `mfa.Step(time.Now())+1`（許容窓の内側）で作り直す。**実装ではなく検証の誤りである** |
-| **パスキーのボタンが押せない**（「IP アドレスで開いた画面ではパスキーを使えません」。pb-104） | `http://127.0.0.1:8080` で開いている。**IP アドレスは RP ID になれない**（`Design.md` 6.8.3）。`http://localhost:8080` で開き直す。**stg（`localhost:8081`）と Cookie が上書きし合う**ので（11章）、両方を開くならブラウザのプロファイルを分ける |
+| **パスキーのボタンが押せない**（「IP アドレスで開いた画面ではパスキーを使えません」） | `http://127.0.0.1:8080` で開いている。**IP アドレスは RP ID になれない**（`Design.md` 6.8.3）。`http://localhost:8080` で開き直す。**stg（`localhost:8081`）と Cookie が上書きし合う**ので（11章）、両方を開くならブラウザのプロファイルを分ける |
 | パスキーの一覧に「このアドレスでは使えません」と出る | 登録したときのホスト名（`rp_id`）と、いま開いているホスト名が違う。**パスキーはホスト名に結び付く**（`localhost` と `pb.localhost` も別物）。登録した側のアドレスで開くか、このアドレスで登録し直す |
+| `openapi.yaml` だけを直したのに、ドリフト検出が再実行されない | **`go test` の結果がキャッシュされている。** `openapi.yaml` は Go のソースではないので、キャッシュが無効にならない。`make test`（`-count=1` 付き）で走らせる（6.3） |
+| 足したばかりの MCP ツールを、エージェントが呼べない | **MCP クライアントのツール一覧は、セッションの開始時に固定される。** 新しいセッションで呼ぶか、`curl` で `POST /mcp/<key>`（`$PB_TOKEN` を使う）を叩いて確かめる（12章） |
+| エージェントが `deploy/*/secrets/` を読めない・書けない | **`.claude/settings.json` で拒否している**（`.example` も含む）。秘密を要する操作は `make` のターゲット経由で行い、新しい環境の秘密は利用者が置く |
+| CDP の `Runtime.evaluate` が構文エラーになる | **式が `await` を含むのに、包む即時関数が `async` でない**（8.2） |
+| 一覧から消えたことを確かめる検証が、消えているのに FAIL になる | **`document.body.innerText` で名前を探している。** 成功通知に名前が出るので、消えても見つかる。行の DOM を数える（8.2） |
 
 ---
 
@@ -824,10 +815,6 @@ WebAuthn.clearCredentials {authenticatorId}                    ← やり直す�
 | goose | **v3.26.0**（`server/tools/go.mod`） | v3.27.3 以降は `go 1.25.7` を要求する |
 | sqlc | **v1.30.0**（同上） | v1.31.1 は `go 1.26.0` を要求する（v1.30.0 自体は `go 1.23.0` 要求） |
 | `typescript`（client） | **`^5`** | vue-tsc 3.3.9 が TS 7 の `typescript/lib/tsc` を require できない（症状は9章） |
-
-**`golang.org/x/term` / `x/sys` の固定は pb-104 で外した。** 「最新版が go 1.25 を要求し、go ディレクティブを
-勝手に引き上げる」が理由だったが、本体の go ディレクティブが 1.26 になって理由が消えた
-（go-webauthn が `x/sys` v0.48.0 を要求する）。
 
 **`go get` の後は `head -3 server/go.mod` と `head -3 server/tools/go.mod` を見て、
 go ディレクティブが `1.26.0` と `1.24` のままか確認する。**
@@ -862,29 +849,28 @@ go ディレクティブも 1.25 へ上がる）。
 
 **生成器の推論を説得しようとせず、2〜3手で当たらなければ「型」ではなく「値」で表す。**
 sqlc は `LEFT JOIN LATERAL` の右辺が NULL になることを推論できず、NOT NULL 列を `string` と出す
-（実行時に `cannot scan NULL into *string` で落ちる）。`::text` → スカラ副問い合わせ →
-ELSE 無しの `CASE` → `NULLIF` と4手外したあと、`(COALESCE(t.id::text, ''))::text` で決着した
-——ULID は空文字になりえないので、**値で「無い」を表せる**。
+（実行時に `cannot scan NULL into *string` で落ちる）。このときは `(COALESCE(t.id::text, ''))::text`
+のように書く——ULID は空文字になりえないので、**値で「無い」を表せる**。
 **判断の境目は「推論を変えたいのか、NULL を扱いたいのか」。**
 あわせて、**次の手を選ぶ前に生成物を1回読む**（`grep 'TokenID '` 1回で済む）。
 
 ## 10.4 実行時の依存
 
 **Go（`server/go.mod` の直接依存）**：`jackc/pgx/v5` / `oklog/ulid/v2` /
-`alexedwards/argon2id` / `golang.org/x/term` / `go-chi/chi/v5` / `gopkg.in/yaml.v3`（pb-2）/
-`go-webauthn/webauthn`（pb-104。`Design.md` 6.8.5）の7つ。**go-webauthn は推移依存を連れてくる**
+`alexedwards/argon2id` / `golang.org/x/term` / `go-chi/chi/v5` / `gopkg.in/yaml.v3` /
+`go-webauthn/webauthn`（`Design.md` 6.8.5）の7つ。**go-webauthn は推移依存を連れてくる**
 （CBOR・JWT・TPM など。多くは attestation と MDS 用で、PB は使わない）。
 トークンのハッシュと乱数は標準ライブラリ（`crypto/sha256` / `crypto/rand`）で足りる。
 
-**client（`client/package.json`）**：`vue` / `vue-router` / `pinia` に、
-**後から足した4つ**——`codemirror` / `@codemirror/lang-markdown` / `markdown-it` /
-`dompurify` を加えた**7つ**。後半4つは**チケット詳細の説明欄だけが使う**
+**client（`client/package.json`）**：`vue` / `vue-router` / `pinia` / `vue-i18n`（表示言語の切り替え）/
+`qrcode`（多要素認証の登録）と、Markdown を扱う4つ——`codemirror` / `@codemirror/lang-markdown` /
+`markdown-it` / `dompurify`——の**9つ**。Markdown の4つは説明欄・コメント・プロジェクト文書が使う
 （`GuiDesign.md` 5.5「説明欄」。Markdownソース＋ライブプレビュー）。
 `dompurify` は `markdown-it` の出力を描画の直前に通すためのもので、
 **本文の書き手がエージェントでもありうる**ことによる（`Design.md` 3.1）。
 
-dev に `vite` / `@vitejs/plugin-vue` / `typescript` / `vue-tsc` / `openapi-typescript`、
-および `markdown-it` の型（`@types/markdown-it`）。
+dev に `vite` / `@vitejs/plugin-vue` / `typescript` / `vue-tsc` / `openapi-typescript` /
+`@playwright/test`、および型（`@types/markdown-it` / `@types/qrcode`）。
 **`openapi-typescript` と `@types/*` は型のためだけで実行時には入らない。**
 `npm run build` は型検査（`vue-tsc --noEmit`）を通してから `vite build` する
 （型エラーはビルドを止める）。`make build-client` は `npm ci` を使うため
@@ -963,7 +949,7 @@ lsof -nP -iTCP:8081 -sTCP:LISTEN                 # サーバが動いている�
 
 ## 11.3 マイグレーションを足したとき
 
-**`stg` にも適用する。** これは手順20 以降ずっと続く運用である（`Design.md` 11章）。
+**`stg` にも適用する。**
 
 ```
 make migrate       # dev
@@ -1000,13 +986,13 @@ stg では使っていない（第2層は画面から変える。12章）。
 | 起動して即座に落ちる | `deploy/stg/secrets/app_database_url` のパスワードが DB のロールと食い違っている。**秘密を作り直したなら DB も作り直す**（initdb はボリュームが空のときしか走らない） |
 | `docker compose ls` に `pb-stg` が出ない | `make stg-up` |
 
-## 11.6 DB の文字の種類を C.UTF-8 へ移す（pb-143）
+## 11.6 DB の文字の種類を C.UTF-8 へ移す
 
-**pb-143 より前に作った dev と stg の DB は `LC_CTYPE=C` である。** `C` では pg_trgm が日本語から trigram を取り出せず、キーワード検索のインデックスが日本語に効かない（`DbDesign.md` 4.5）。PB は動くが、**起動時に WARN が出る**。
+**以前の版で作った dev と stg の DB は `LC_CTYPE=C` である。** `C` では pg_trgm が日本語から trigram を取り出せず、キーワード検索のインデックスが日本語に効かない（`DbDesign.md` 4.5）。PB は動くが、**起動時に WARN が出る**。
 
 **dev** は `make dev-reset` で作り直せば新しい設定（`deploy/base/compose.yaml` の `POSTGRES_INITDB_ARGS`）で作られる。データを残したいなら、下の stg と同じ手順を `docker compose -f deploy/base/compose.yaml` で打つ。
 
-**stg** はリポジトリ直下で打つ。**コマンドを変数にまとめない**——zsh は変数に入れたコマンドを単語に分けず、何も実行されない（pb-143 で踏んだ）。手順は配布先向けの `deploy/prod/MANUAL.md` 6章と同じで、**dev で同じコマンドを通して、件数（チケット・コメント・文書・履歴・監査・アクター・マイグレーション）が一致することを確かめてある**（pb-143）。
+**stg** はリポジトリ直下で打つ。**コマンドを変数にまとめない**——zsh は変数に入れたコマンドを単語に分けず、何も実行されない。手順は配布先向けの `deploy/prod/MANUAL.md` 6章と同じで、**dev で同じコマンドを通して、件数（チケット・コメント・文書・履歴・監査・アクター・マイグレーション）が一致することを確かめてある**。
 
 ```
 make stg-stop
@@ -1034,18 +1020,16 @@ make stg-run
 
 ## 12.1 このリポジトリの配置ファイル
 
-**手順28a から、手順ファイルは PB が生成したものである**（`/p/<key>/settings/agents`。
+**このリポジトリの手順ファイルは、PB が生成したものである**（`/p/<key>/settings/agents`。
 `GuiDesign.md` 5.11）。`.claude/commands/pb-onboard.md` / `pb-implement.md` /
 `pb-refine.md` と `.claude/settings.json` の許可がそれで、**直したいときは
 テンプレート（`server/internal/agentsetup/templates/body/`）を直して取り直す。**
 手で直すと、次に取り直したときに消える。
-**写しとテンプレートがずれると `go test` が落ちる**（`agentsetup` の `TestRepositoryCommandsMatchTemplates`。pb-141）。
-手順28c ではテンプレートだけが、2026-09-12 には写しだけが直り、どちらも気づかれないまま残っていた。
+**写しとテンプレートがずれると `go test` が落ちる**（`agentsetup` の `TestRepositoryCommandsMatchTemplates`）。
 
-**`.mcp.json` は履歴管理の対象外である**（`Requirements.md` 10.8.1。2026-09-06 に
-`.gitignore` へ移した）。各人のネットワーク事情で書き換えるファイルなので、コミットすると
+**`.mcp.json` は履歴管理の対象外である**（`Requirements.md` 10.8.1）。各人のネットワーク事情で書き換えるファイルなので、コミットすると
 **個人環境が履歴に残り、参加者どうしで上書き合戦になる**。**clone した人は自分で用意する**
-——**手で書かない。`/me/agents` の接続パネルから落とす**（手順28b。下の 12.2）。
+——**手で書かない。`/me/agents` の接続パネルから落とす**（下の 12.2）。
 
 **stg（`:8081`）を指すエージェントを登録する。** PB 自身の管理に PB を使うためで
 （`Design.md` 4.4）、**dev（`:8080`）ではない**——`make dev-reset` で消えるインスタンスを
@@ -1054,13 +1038,10 @@ make stg-run
 ログインセッションが上書きし合う。11.5）。
 
 **環境変数名は本人が決める**（`ApiDesign.md` 4.5.2 の `token_env_suffix`）。
-**0023 より前に登録したエージェントは接尾が未設定**で、その場合は
+**接尾を設定していないエージェントは**
 `PB_TOKEN_<エージェントの id>` になる（4.5.1 のフォールバック）。**決めた名前へ揃えるなら、
 `/me/agents` の編集で接尾を入れてから接続設定を落とし直し、`~/.zshrc` の変数名も変える**
 ——**片方だけ変えると「繋がらない」になる**（症状は 12.4 の 401）。
-
-> **2026-09-06 の実測**：この作業ディレクトリに `.mcp.json` は無い。改訂前の本節は
-> 「`${PB_TOKEN}` のまま置いてある」と書いていたが、**実物は存在しなかった**。
 
 ## 12.2 つなぐ（初回）
 
@@ -1074,7 +1055,7 @@ make stg-stop && make stg-run  # 起動し直す（前景。背景は 11.2）
    **環境変数名の接尾は端末が分かる名前**にする）
 3. トークンを発行し、**一度だけ表示される全文**を控える
 4. **同じカードの `[ 接続の手順を開く ]` を押し、接続設定をコピーするか zip で落とす**
-   （手順28b）。zip の中は**別名**なので、展開してから元の名前へ戻す
+   zip の中は**別名**なので、展開してから元の名前へ戻す
 
    | クライアント | 置き場 | zip の中の名前 |
    |---|---|---|
@@ -1136,7 +1117,7 @@ curl -s http://127.0.0.1:8080/mcp/demo \
 ## 12.5 手順外で気づいた問題を起票する
 
 **手順の範囲外で見つけた不具合・改善候補は、stg の PB にチケットとして起票する**
-（`CLAUDE.md`「進捗と作業の進め方」）。**`docs/PROGRESS.md` には番号と1行要約だけを置く。**
+（PB の規約「作業の単位」）。**進捗の正本はチケットであり、リポジトリには写さない。**
 
 ```
 # 12.2 でつないだ MCP から
@@ -1146,9 +1127,6 @@ pb_create_ticket(project="pb", type=..., title=..., body_md=...)
 - **プロジェクトは stg の `pb`。** dev は `make dev-reset` で消えるので起票先にしない
 - **必要なのは `ticket.create` を含むトークン**（既定スコープ8件に入っている。`ApiDesign.md` 4.5.3）
 - **その場で実装しない。** 起票して手順の作業へ戻る（`pb-step.md` 手順7）
-- **stg のバイナリが `pb_create_ticket` を持たないときは起票できない**——
-  write 系3件は手順26a（2026-09-05）で入ったので、それ以前のビルドで動いている stg では
-  `tools/list` に出ない。`make stg-build` → 再起動 → **クライアントの MCP 接続を張り直す**
 
 ---
 
@@ -1249,9 +1227,7 @@ CHECK に書いていない。`DbDesign.md` 6.14）。
 | 画面で変えたのに効かない | **上の層が勝っている。** 札が `[DB]` になっているか見る。`[環境変数]` のままなら、そちらを外す |
 | `cookie_secure` を有効にしたらログインできなくなった | http で提供しているため（`Design.md` 6.2.1）。**画面から直せない**ので、`PB_COOKIE_SECURE=false` を環境変数で与えて起動し直す（環境変数が DB に勝つ。この復旧経路のためにこの順にしてある） |
 | 起動時に「設定の行を読めなかった」と出る | DB に繋がっていないか `app_setting` が無い。**起動は続く**（ファイルと環境変数と既定値で動く）。`make migrate` を当てる |
-| `make docs-size` が予算を超えた | 本書は対象外（毎セッション読む4文書のみ）。`CLAUDE.md` 「文書の分量」を見る |
-
----
+| `make docs-size` が予算を超えた | 本書は対象外（毎セッション読む3文書のみ）。`CLAUDE.md` 「文書の分量」を見る |
 
 ---
 
@@ -1259,7 +1235,7 @@ CHECK に書いていない。`DbDesign.md` 6.14）。
 
 **設計の正本は `Design.md` 6.6.1。** ここに置くのは操作の手順である。
 
-**PB は自分で TLS を終端できる。** 前段にリバースプロキシを置く構成も従来どおり使える。
+**PB は自分で TLS を終端できる。** 前段にリバースプロキシを置く構成も使える。
 
 ## 14.1 2ステップで始める
 
@@ -1278,10 +1254,10 @@ CHECK に書いていない。`DbDesign.md` 6.14）。
 ### ② TLS を有効にする
 
 同じ「TLS 証明書」タブで「TLS で待ち受ける」を有効にする。**再起動は要らない**——
-待受はその場で張り替わる（pb-106）。
+待受はその場で張り替わる。
 
 **画面が案内する `https://…` で開き直し、「アクセスできました」を押す。**
-**押さないまま300秒が過ぎると、元の設定へ戻る**（pb-97 / pb-107）。**締め出されない
+**押さないまま300秒が過ぎると、元の設定へ戻る。締め出されない
 ための仕掛けなので、押し忘れると平文へ戻る。**
 
 いま TLS で終端しているかは、同じタブの「動作状況」に出る。次に起動したときの
@@ -1451,8 +1427,7 @@ openssl s_client -connect pb.example.com:8443 -servername pb.example.com
 
 ## 14.5 クライアントに証明書を信頼させる
 
-**TLS を有効にすると、エージェントが MCP で PB へ繋げなくなることがある**（pb-100。
-2026-09-12 に stg で実際に起きた）。
+**TLS を有効にすると、エージェントが MCP で PB へ繋げなくなることがある。**
 
 ```
 pb (DEPTH_ZERO_SELF_SIGNED_CERT): "self signed certificate"
@@ -1466,8 +1441,6 @@ pb (DEPTH_ZERO_SELF_SIGNED_CERT): "self signed certificate"
 信頼していないクライアントは同じく落ちる。**
 
 ### 落とし穴は3つある
-
-**pb-3 の動作確認で順に踏んだ。**
 
 | # | 落とし穴 | 症状と対処 |
 |---|---|---|
@@ -1486,7 +1459,7 @@ pb (DEPTH_ZERO_SELF_SIGNED_CERT): "self signed certificate"
 **HTTPS にする前に取っておける**のがこの導線の要点である。
 
 **落ちてくるのは zip である。** 展開すると `<ホスト名>.crt` が1つ出てくるので、
-**そちらのパスを②で使う**（`.crt` をそのまま返すとブラウザが拒むため包んでいる。pb-108）。
+**そちらのパスを②で使う**（`.crt` をそのまま返すとブラウザが拒むため包んでいる）。
 
 ```
 unzip pb-cert-pb.example.com.zip
@@ -1514,7 +1487,7 @@ export NODE_EXTRA_CA_CERTS=/absolute/path/to/pb.crt
 **これをしないと効かない。** 環境変数は起動時にしか読まれない。
 
 **GUI から起動するクライアントでは、シェルで `export` しても届かないことがある**
-（macOS の launchd 配下など）。**本書で実機確認したのは Claude Code（CLI）だけである。**
+（macOS の launchd 配下など）。**実機で確認してあるのは Claude Code（CLI）だけである。**
 
 ### 切り分け
 
@@ -1560,8 +1533,7 @@ docker info      # エラーにならなければ導入・起動できている
 
 ## A.2 Go
 
-**1.26 以上**（`Design.md` 3.1。**pb-104 で 1.24 から上げた**——パスキーの検証に使う go-webauthn が
-go 1.26.0 を要求するため）。サーバ本体に加えて、`goose`（マイグレーション）と
+**1.26 以上**（`Design.md` 3.1。パスキーの検証に使う go-webauthn が go 1.26.0 を要求するため）。サーバ本体に加えて、`goose`（マイグレーション）と
 `sqlc`（コード生成）も `go tool` 経由で動くため、これが無いと 2.2 から先へ進めない。
 
 ```
@@ -1610,6 +1582,4 @@ ls "/Applications/Google Chrome.app"
 | DBの実行環境・スキーマ・初期データ・デモデータの仕様 | `DbDesign.md` 3章・5〜7章 |
 | API の規約（エラー形式・CSRF・レート制限） | `ApiDesign.md` 2章 |
 | 画面の構造・配色・ルーティング | `GuiDesign.md` |
-| どこまで実装したか・次の手順への引き継ぎ・環境メモ | `docs/PROGRESS.md` |
-| 過去の判断の経緯 | `docs/history/decisions.md` |
-| どの手順で何を作ったか・当時の検証内容 | `docs/history/steps.md` |
+| 開発の記録（いつ何を確定したか） | `docs/history/chronicle.md` |

@@ -1,7 +1,7 @@
 /**
  * タグのエンドポイント（`ApiDesign.md` 9.11）。
  *
- * 型は `docs/openapi.yaml` の生成物をそのまま使う（`roles.ts` と同じ方針）。
+ * 型は `docs/design/openapi.yaml` の生成物をそのまま使う（`roles.ts` と同じ方針）。
  *
  * **読みと書きで必要権限が違う。** 一覧は `ticket.view`、定義の変更は
  * `project.edit` である。呼び出す画面（プロジェクト設定のタグタブ、

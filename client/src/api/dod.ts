@@ -1,7 +1,7 @@
 /**
  * チケットの完了条件（DoD）のエンドポイント（`ApiDesign.md` 9.9）。手順18b。
  *
- * 型は `docs/openapi.yaml` の生成物をそのまま使う（`tags.ts` と同じ方針）。
+ * 型は `docs/design/openapi.yaml` の生成物をそのまま使う（`tags.ts` と同じ方針）。
  *
  * **一覧を呼ぶ画面は無い。** 詳細応答（9.5.1）の `dod` に同じものが入っているので、
  * チケット詳細は `GET /tickets/:seq` 1本で足りる（`GuiDesign.md` 5.5、

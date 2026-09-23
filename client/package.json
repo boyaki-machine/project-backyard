@@ -9,7 +9,7 @@
     "check:i18n": "node scripts/check-i18n.mjs",
     "typecheck": "vue-tsc --noEmit",
     "test:e2e": "playwright test",
-    "gen:api": "openapi-typescript ../docs/openapi.yaml -o src/api/schema.d.ts",
+    "gen:api": "openapi-typescript ../docs/design/openapi.yaml -o src/api/schema.d.ts",
     "preview": "vite preview"
   },
   "dependencies": {

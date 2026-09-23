@@ -727,7 +727,7 @@ export const uiMessages: Record<string, string> = {
   "GET /healthcheck の応答にバージョンを入れます。未認証の呼び出し元への情報開示になるため既定は無効です": "Include version in the response to GET /healthcheck. Disabled by default as it may disclose information to unauthenticated callers.",
   "HTTPS で公開する環境では有効にします": "Enable for environments publishing over HTTPS",
   "監査ログ": "Audit Log",
-  "Phase 1 内で未定（docs/PROGRESS.md）": "Undetermined in Phase 1 (docs/PROGRESS.md)",
+  "未定（pb-181）": "Undetermined (pb-181)",
   "期間・操作・実行者・結果によるフィルタ": "Filter by period, operation, executor, and result",
   "日時・実行者・操作・対象・結果の一覧": "List of date and time, executor, operation, subject, and result",
   "行クリックで詳細（IP、User-Agent、detail）を展開": "Expand details (IP, User-Agent, detail) by clicking on a row.",

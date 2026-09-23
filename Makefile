@@ -307,7 +307,7 @@ stg-admin-create:
 dev-client:
 	cd client && npm run dev
 
-## docs/openapi.yaml から client の型を生成する（Design.md 3.3）
+## docs/design/openapi.yaml から client の型を生成する（Design.md 3.3）
 # 生成するのは型だけで、呼び出しは client/src/api/client.ts が持つ。
 # openapi.yaml を更新したら実行し、生成物（schema.d.ts）もコミットする。
 gen-api:
@@ -395,7 +395,7 @@ release-tag: version-check
 # ── 文書の分量（CLAUDE.md「文書の分量」）────────────────────────
 
 # 毎セッション必ず読む文書。合計にだけ予算を置く（個別の閾値は持たない）。
-SESSION_DOCS := CLAUDE.md LEARNINGS.md docs/PROGRESS.md .claude/commands/pb-step.md
+SESSION_DOCS := CLAUDE.md LEARNINGS.md .claude/commands/pb-step.md
 DOCS_BUDGET  := 81920
 
 ## 毎セッション読む文書の合計サイズを測る（予算 80KB。超過で非ゼロ終了）
@@ -423,7 +423,7 @@ docs-size:
 # ── 閉じない強調記号（Testing.md 7.7）────────────────────────
 
 # 見る文書。差し替えれば任意のファイルを見られる（make docs-emphasis EMPHASIS_DOCS=a.md）
-EMPHASIS_DOCS ?= docs/*.md docs/history/*.md
+EMPHASIS_DOCS ?= docs/*.md docs/design/*.md docs/history/*.md
 
 ## 描画しても ** が残る段落を数える（1件でもあれば非ゼロ終了。client の markdown-it を使う）
 docs-emphasis:

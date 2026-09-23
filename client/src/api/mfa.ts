@@ -3,7 +3,7 @@
  *
  * 画面は `GuiDesign.md` 5.8 のセキュリティセクションと 5.1.1。
  *
- * 型は `docs/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない。
+ * 型は `docs/design/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない。
  */
 import { api } from './client'
 import type { Session } from './auth'
