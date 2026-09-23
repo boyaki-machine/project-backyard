@@ -27,7 +27,7 @@
 6. [AI エージェントを繋ぐ](#6-ai-エージェントを繋ぐ)
 7. [設定とメンテナンス](#7-設定とメンテナンス)
 8. [ライセンスと謝辞](#8-ライセンスと謝辞)
-9. [開発者向け](#9-開発者向け)
+9. [設計と開発](#9-設計と開発)
 
 ---
 
@@ -298,19 +298,21 @@ PB は、次のオープンソースソフトウェアの上に成り立って�
 
 ---
 
-## 9. 開発者向け
+## 9. 設計と開発
 
-**設計文書は [docs/](docs/) にあります。** 索引は [docs/README.md](docs/README.md) です。
+**PB は、ある程度の完成形に至るまで、作者が一人で開発を進めています。** 現時点では、開発への参加（プルリクエストなど）は募集していません。
+
+設計文書は [docs/](docs/) にあります。索引は [docs/README.md](docs/README.md) です。
 
 | 文書 | 中身 |
 |---|---|
 | [Requirements.md](docs/design/Requirements.md) | 要件と構想。何を・なぜ作るか |
-| [Design.md](docs/design/Design.md) | 全体設計。技術選定・認証と認可・MCP・開発の進め方 |
+| [Design.md](docs/design/Design.md) | 全体設計。技術選定・認証と認可・MCP |
 | [DbDesign.md](docs/design/DbDesign.md) | DB のスキーマとマイグレーション |
 | [ApiDesign.md](docs/design/ApiDesign.md)・[openapi.yaml](docs/design/openapi.yaml) | REST API |
 | [GuiDesign.md](docs/design/GuiDesign.md) | 画面・画面遷移・配色 |
-| [Development.md](docs/Development.md) | **開発環境の立ち上げ方**（設計ではなく手順） |
-| [Testing.md](docs/Testing.md) | 試験の設計と、どこまで確かめたら完了か |
+| [Development.md](docs/Development.md) | ソースから動かす手順 |
+| [Testing.md](docs/Testing.md) | 試験の設計 |
 
 ### 技術スタック
 
@@ -320,7 +322,7 @@ PB は、次のオープンソースソフトウェアの上に成り立って�
 | DB | PostgreSQL 17 |
 | 画面 | Vue 3、TypeScript、Vite、Pinia |
 
-### 開発環境
+### ソースから動かす
 
 ```sh
 make up        # DB を起動する（docker compose）
@@ -331,7 +333,5 @@ make test
 
 秘密ファイルの置き方やデモデータの入れ方など、最初の準備は [docs/Development.md](docs/Development.md) 2章にあります。
 
-### 開発の進め方
-
-PB 自身の開発は PB で管理し、実装は AI エージェントが行っています。
-エージェント向けの入口は [CLAUDE.md](CLAUDE.md)（Claude Code）と [AGENTS.md](AGENTS.md)（Codex）です。
+PB 自身の開発も PB で管理しており、実装は AI エージェント（Claude Code と Codex）が行っています。
+[CLAUDE.md](CLAUDE.md) と [AGENTS.md](AGENTS.md) は、そのエージェントが読む取扱説明です。

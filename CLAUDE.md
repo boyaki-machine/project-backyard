@@ -24,7 +24,7 @@
 
 ## 設計文書（実装前に該当箇所を読むこと）
 
-**設計文書はすべて `docs/design/` 配下にある。** 手順書（Development / Testing）は `docs/` 直下、過去の記録は `docs/history/`。
+**設計文書はすべて `docs/design/` 配下にある。** 手順書（Development / Testing）は `docs/` 直下、開発の記録は `docs/history/chronicle.md`。
 
 | 領域 | 正本 |
 |---|---|
@@ -68,7 +68,7 @@ client/   Vue 3                deploy/   環境別の実行設定（base/dev/stg
 ## 開発コマンド
 
 ```
-make up          # docker compose up -d（DB + アプリ）
+make up          # docker compose up -d db（DB だけを起動する）
 make down
 make migrate     # goose によるマイグレーション適用
 make sqlc        # sqlc generate（server/migrations/ からスキーマを推論）
@@ -116,9 +116,8 @@ make stg-migrate # stg：マイグレーション適用（migrate と同時に�
 **手順の中身はこのリポジトリの成果物**であり、規約は PB にある——`.claude/commands/` を直すときは、
 規約に当たる記述を書き込まないこと。
 
-**完了した手順の詳しい記録は `docs/history/` にある**（`decisions.md` = 判断の経緯、
-`steps.md` = 作ったファイルと検証結果）。**毎セッションで読む文書ではない。**
-**各ファイルの先頭に索引がある**ので、そこで見出しを特定してから該当節だけを引く。
+**開発の記録は `docs/history/chronicle.md` にある**（いつ何を確定したか、何が問題だったか）。
+**毎セッションで読む文書ではない。** 判断の理由は PB の「判断の記録」とチケットにある。
 
 **セッションを始めるとき、`LEARNINGS.md` を読む。** 過去のセッションで得た**進め方**の教訓
 （設計や進捗ではない）。短い文書なので毎回読む。**個人のセッション履歴から抽出した内容を含むため
@@ -132,7 +131,6 @@ make stg-migrate # stg：マイグレーション適用（migrate と同時に�
 
 - **4ステップごとに必ず棚卸しする**（`pb-step.md` 手順7）。超えてから動くと毎回大手術になる
 - **閾値の引き上げを提案しない。** 引き上げるかどうかは利用者だけが判断する
-  （過去3回、掃除ではなく閾値のほうが動いた。8KB→40KB→80KB）
 
 **PB 側の憲章は別に測る。** `make docs-size` の対象ではなく、**規約・価値観・学びと知見は全文がコンテキストパックに乗る**
 （判断の記録は目次だけ。`Design.md` 8.5.5）。**PB の文書へ何かを移したら、`Testing.md` 7.6 の手順で1回数える。**
