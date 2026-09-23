@@ -1,4 +1,4 @@
-// docs/openapi.yaml と実装のルート一覧を突き合わせる（Design.md 3.3）。
+// docs/design/openapi.yaml と実装のルート一覧を突き合わせる（Design.md 3.3）。
 //
 // openapi.yaml は「実装済みAPIの現状」を名乗る（ApiDesign.md 1.3）。名乗りと
 // 実態のずれは最悪のケースになるため、仕組みで捕まえる。スキーマの中身までは
@@ -21,7 +21,7 @@ import (
 
 // openAPIPath は本テストから見た openapi.yaml の位置。
 // server/internal/httpapi → リポジトリルート。
-const openAPIPath = "../../../docs/openapi.yaml"
+const openAPIPath = "../../../docs/design/openapi.yaml"
 
 // operation は「メソッド＋パス」の1件。表示のために文字列で持つ。
 //
@@ -88,11 +88,11 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 	documented := readOpenAPIOperations(t)
 
 	for _, op := range diff(implemented, documented) {
-		t.Errorf("%s が実装されているが docs/openapi.yaml に無い"+
+		t.Errorf("%s が実装されているが docs/design/openapi.yaml に無い"+
 			"（APIを追加したステップの成果物に openapi.yaml の更新を含めること）", op)
 	}
 	for _, op := range diff(documented, implemented) {
-		t.Errorf("%s が docs/openapi.yaml にあるが実装されていない"+
+		t.Errorf("%s が docs/design/openapi.yaml にあるが実装されていない"+
 			"（openapi.yaml は設計ではなく実装済みの現状を書く。ApiDesign.md 1.3）", op)
 	}
 }
@@ -148,14 +148,14 @@ func readOpenAPIOperations(t *testing.T) map[operation]bool {
 
 	b, err := os.ReadFile(filepath.Clean(openAPIPath))
 	if err != nil {
-		t.Fatalf("docs/openapi.yaml を読めない: %v", err)
+		t.Fatalf("docs/design/openapi.yaml を読めない: %v", err)
 	}
 
 	var doc struct {
 		Paths map[string]map[string]yaml.Node `yaml:"paths"`
 	}
 	if err := yaml.Unmarshal(b, &doc); err != nil {
-		t.Fatalf("docs/openapi.yaml が YAML として壊れている: %v", err)
+		t.Fatalf("docs/design/openapi.yaml が YAML として壊れている: %v", err)
 	}
 
 	ops := map[operation]bool{}
@@ -169,7 +169,7 @@ func readOpenAPIOperations(t *testing.T) map[operation]bool {
 		}
 	}
 	if len(ops) == 0 {
-		t.Fatal("docs/openapi.yaml に paths が1つも無い")
+		t.Fatal("docs/design/openapi.yaml に paths が1つも無い")
 	}
 	return ops
 }

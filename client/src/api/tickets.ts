@@ -1,7 +1,7 @@
 /**
  * チケットのエンドポイント（`ApiDesign.md` 9.2 〜 9.7）。
  *
- * 型は `docs/openapi.yaml` の生成物をそのまま使う（`tags.ts` と同じ方針）。
+ * 型は `docs/design/openapi.yaml` の生成物をそのまま使う（`tags.ts` と同じ方針）。
  *
  * **Phase 1 の消費者はバックログ画面と、その右に開く詳細ペインの2つ**
  * （`GuiDesign.md` 5.4 / 5.5）。カンバン・ガント（Phase 2）も 9.2 の同じ

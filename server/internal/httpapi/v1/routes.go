@@ -326,7 +326,7 @@ func Mount(r chi.Router, deps Deps) {
 		// ticket.create と ticket.edit を持つ（migration 0010）。project_viewer 側で
 		// 絞っても、システムロール側から通る。**この宣言が効くのは、権限の
 		// 全体像を見直して operator の持ち物を減らしたときである**
-		// （PROGRESS.md「権限の全体像を再整理する」）。
+		// （stg の PB の pb-175）。
 		//
 		// **子資源なので RequireProjectPermission を通す。** 非メンバーには
 		// 404 が返る（Design.md 6.4.5）。{seq} で指す行も project_id で
@@ -352,7 +352,7 @@ func Mount(r chi.Router, deps Deps) {
 		// operator（システムロール）は ticket.delete を持たず、持つのは
 		// administrator と project_admin だけである（migration 0010）。
 		// 他の3つは operator が持つため、宣言が効き始めるのは権限の全体像を
-		// 見直してからになる（PROGRESS.md「権限の全体像を再整理する」）。
+		// 見直してからになる（stg の PB の pb-175）。
 		//
 		// **PATCH の assignee_id だけは、これに加えて ticket.assign を要する**
 		// （9.5.2）。必要権限がリクエスト本文の内容で変わるため、ミドルウェアの

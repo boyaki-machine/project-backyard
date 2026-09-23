@@ -38,6 +38,7 @@
 - 手順15b — `GET|POST /me/tokens`・`DELETE /me/tokens/:id` とアクセストークン管理画面（2026-08-22）
 - 手順16b — チケットAPI（一覧・作成・並べ替え）と dev seed のチケット（2026-08-23、`feature/step-16b-ticket-api`）
 - 手順16c（バックログ画面）— 2026-08-23
+- PROGRESS.md を廃止した時点の記録（2026-09-23）
 - 手順16d-a（種別の3値化とオンステージ）— 2026-08-23
 - 手順16d-b（バックログ画面の作り直し）— 2026-08-23
 - 手順17a（チケット1件のAPI）— 2026-08-26
@@ -4580,3 +4581,67 @@ Cookie jar・トークン・Chrome プロファイル（`/tmp/pb-cdp-*`）を削
 検証用DB・サーバ・ブラウザを停止し、専用ポートが閉じたこととDBコンテナの削除を確認した。資格情報・ブラウザプロファイル・一時ビルド・依存への一時リンクも削除済み。確認用画像だけを一時領域に保持した。
 
 利用者からdevelopへのマージ承認を得た。チケットの完了判定とクローズは人の確認待ちである。検索中も既存フィルタは有効で、祖先も他のフィルタから外れる場合や200件上限の先にある場合は表示されない。
+
+---
+
+## PROGRESS.md を廃止した時点の記録（2026-09-23）
+
+`docs/PROGRESS.md` を廃止したときに、次の手順へ効く要点として残っていた節を原文のまま移した。
+**現況の正本は stg の PB（プロジェクト `pb`）のチケットである。** 「次の手順への引き継ぎ」の各行は
+チケットとして起票し、環境メモは `Development.md`（6.1・9章）へ移した。
+
+### 現況（廃止時点）
+
+| Phase | 内容 | 状態 |
+|---|---|---|
+| **1** | 認証・認可、プロジェクト、チケットの基礎（手順1〜19） | **完了**（2026-08-28、v1.36.55） |
+| 2 | **複数人とエージェントが同じプロジェクトを進められるようにする**（手順20〜28） | **手順は全部完了**（**28c** まで。2026-09-06）。**残るのは受け入れ**＝下の通しを測ること |
+| 3 | AI機能・分析、承認キュー、プロジェクトメモリ、OIDC/SAML（手順29〜38） | 未着手 |
+
+手順の一覧と完了条件は `Design.md` 11章。**Phase 2 の受け入れは通しで測る**——新しく clone した
+作業ディレクトリで `/pb-onboard` → `/pb-implement <id>` が走り、チケットが1件消化される
+（Claude Code と VS Code の両方で）。
+
+### Phase 2 の完了した手順（廃止時点）
+
+**経緯・実測値・判断の理由は `history/steps.md`「手順24a〜26a の現況記録」**（20〜23 は
+「手順20〜23 の現況記録」）。ここに残すのは**次の手順に効く要点だけ**である。
+
+| 手順 | 完了 | 次に効く要点 |
+|---|---|---|
+| 20 | 08-29 | **stg は `:8081` と `:5433`**（compose プロジェクト `pb-stg`）。`make dev-reset` の影響を受けない |
+| 21 | 08-30 | 0017 で `document` / `document_revision` と `doc.view` / `doc.edit`。**`doc.edit` は `project_admin` だけが持つ** |
+| 22 | 08-30 | 文書APIと Docs 画面（3ペイン）。`member@` は読めて 200、書くと 403 |
+| 23 | 08-30 | プロジェクト作成を `internal/project` に1本化。**stg の `pb` に PB 自身の憲章がある** |
+| 24a | 09-02 | 0019 で `agent` / `task_lease`。**実効権限 =（所有者のシステムロール ∪ プロジェクトロール）∩ トークンのスコープ**。`agent.owner_actor_id` は NOT NULL（`NULL` を自立エージェントに充てる余地を残した） |
+| 24b | 09-02 | `/me/agents` タブ（カード表示）。0020 で `agent_client_kind`。**`client_kind` が効くのは手順28 だけ** |
+| 25 | 09-05 | `POST /mcp/<project_key>` と read 系5件。**公式 SDK を使わず自前**（乗り換えの条件は `Design.md` 8.6）。**MCP 層は REST を内部 HTTP で叩く**（`RequireProjectPermission` を経路で強制）。必要権限は `agent.run`、**Bearer のみ**（Cookie 不可） |
+| 26b | 09-05 | **リースを採らず、状態遷移を開けた**（利用者の判断）。`pb_transition_task` / `pb_list_transitions` と 0021 の `ticket.working_agent_id`（実行者の自己申告）。**エージェントは「担当が自分の所有者」のチケットしか進められない**（`ApiDesign.md` 9.6 の検証6）。**`pb_claim_task` / `pb_release_task` は Phase 3 へ**（再検討の条件は `pb_next_task`） |
+| 26a | 09-05 | write 系3件（`pb_create_ticket` / `pb_post_note` / `pb_put_doc`）と `DELETE /me/agents/:id`。**`ApiDesign.md` 4.5.3 に許可リスト（既定8件 ∪ `doc.edit`）**。`pb_put_doc` は内部で2往復（`If-Match` のため）。**冪等キーは受けない** |
+| 26c | 09-05 | `pb_submit_result` と `POST .../tickets/:seq/reports`（`ApiDesign.md` 9.15）。0022 で `agent_run` / `agent_report` / `context_pack_log`。**1提出＝1 run で、Phase 2 の `status` は `completed` だけ。** **盤面を動かさない**——`dod_item.is_satisfied` も状態も触らず、`unsatisfied_dod` は自己申告との突き合わせ。**人が読む面は `kind='progress'` のコメント**（画面の実装は不要）。必要権限は `ticket.transition`、9.6 の検証6 は掛けない |
+| 27 | 09-05 | `pb_get_context`（**Markdown 1枚**。5節＝境界／実行の前提／憲章／依存・関連／調べ方）。**合成は MCP 層で、REST に専用の口を作らない**（`Design.md` 8.5.5）。**憲章は全文**（実測3,601文字。`budget` は受けず `context_pack_log` にも書かない。**28c で `agent-onboarding` 1件だけ外した**）。**9.5.1 / 9.5.2 に `execution_mode` / `readiness` / `readiness_note` / `scope` を足した**——これで `pb_get_task` が `Requirements.md` 10.3.2 の約束を果たす |
+| 28a | 09-06 | **配置ファイルの生成**（`GET /projects/:key/agent-setup` と `.zip`）と**セットアップ画面**（`GuiDesign.md` 5.11）。**接続設定は履歴管理の対象外にした**（`Requirements.md` 10.8.1。利用者の判断）ので、系統A が出すのは**手順・常時コンテキスト・`.gitignore` だけ**。0023 で `agent.token_env_suffix`（トークンを載せる環境変数名を本人が決める）と `agent_client_kind.has_setup_template`。**Codex は `.codex/config.toml` + `.agents/skills/` + `AGENTS.md` で、スラッシュコマンドを持たない**（起動は `description` の誘発）|
+| 28b | 09-06 | **系統B：自分の接続設定**（`GET /me/agents/:id/setup` と `.zip`。`ApiDesign.md` 4.5.8）と `/me/agents` の接続パネル（`GuiDesign.md` 5.8.2）。**出すのは「MCP が使える状態になるまで」だけ**——**clone は出さない**（利用者の指摘、2026-09-06。PB はソフトウェア開発専用ではなく、材料の取り方は3通りある）。**接続設定の `mode` は常に `merge` で zip では別名**（`.mcp.pb-block.json`）、**種別ごとの `PB-README.md` を同梱**。**`export` 行は Copilot に出さない**（`${input:…}` を使う）。**接続確認は `token.last_used_at`**（口を増やさない）。**Codex のツール許可は接続設定と同居する**ので系統B が配る（`Requirements.md` 10.8.4.1）。マイグレーションは無し |
+| 28c | 09-06 | **作業材料の取り方を PB の文書で指定する。** 0024 で文書テンプレートの5件目 `agent-onboarding`「エージェントの参画情報」（`sort_order` 50）。**PB は取り方を知らない**ので、書く場所を用意して指し示すだけである。**接続パネル step 1 は `/p/<key>/docs/agent-onboarding` へ深リンク**（無くても左の木は残る）。**この1件だけはコンテキストパックの憲章から外す**（`Design.md` 8.5.5。`path` の完全一致。落としたことを1行出す）。**MCP 型で系統A に置き場が無い件は、文書に「参画の合図」を書くことで手当てし、実装は足さなかった**（`Requirements.md` 10.9.1） |
+
+**マイグレーションの採番**：0017〜**0038** まで使用済み。**Phase 3 は 0039〜0043**（正本は
+`DbDesign.md` 8章の冒頭。**8.1.1 ではない**——pb-103 まで本書が指し先を間違えていた）。
+手順で6回（23 の 0018、24b の 0020、26b の 0021、26c の 0022、28a の 0023、28c の 0024）、
+**チケットで14回**（pb-65 の 0025、pb-69 の 0026、pb-68 の 0027、pb-6 の 0028、pb-75 の 0029、
+pb-58 の 0030、pb-2 の 0031、pb-3 の 0032 と 0033、pb-97 の 0034、pb-103 の 0035、pb-104 の 0036、pb-142 の 0037、pb-121 の 0038）動いた。
+**ずれではなく、先頭から1本ずつ Phase 2 側へ移っている。次に足す番号は 0039 である。**
+**直すのは 8章の本文と一覧の両方**——pb-6 のとき、本文だけが直っていて一覧が2本ぶん古かった。
+**pb-97 の 0034 は両方から落ちていた**（6.17 には節として書かれていた）。pb-103 で補った。
+
+**手順21 以降、マイグレーションを足したら `make stg-migrate` と `make stg-build` も実行する。**
+
+### バージョンの区切り（廃止時点）
+
+| 区切り | 値 |
+|---|---|
+| Phase 1 の到達点 | **v1.36.55**（2026-08-29。`main` にタグ） |
+| Phase 2 の最初のマージ | **v2.1.56**（手順20） |
+
+**`make bump-major` と `make bump-minor` は2回に分けて叩く**（1回にまとめると `VERSION :=` が
+一度しか展開されない）。**次に効くのは Phase 3 の入口。**
+規約は `Design.md` 11.1、経緯は `history/steps.md`「ビルド番号とマージの対応（1〜20）」。

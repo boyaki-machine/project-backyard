@@ -3,8 +3,8 @@
 **開発端末で PB を動かし、直し、確かめるための手順書。**
 
 - 設計の正本は `Design.md` / `DbDesign.md` / `ApiDesign.md` / `GuiDesign.md` にある。本書は**それらを実際に動かす手順**だけを扱う
-- **実装済みの範囲だけを書く。** 未実装の手順は書かない（`docs/PROGRESS.md` の進捗と揃える）
-- 実装の進捗そのものと「いつ何を判断したか」は `docs/PROGRESS.md` にある
+- **実装済みの範囲だけを書く。** 未実装の手順は書かない
+- 実装の進捗そのものは stg の PB のチケットに、「いつ何を判断したか」は `docs/history/decisions.md` にある
 
 > **本書のコマンドは、断りがない限りすべてリポジトリ直下で実行する。**
 > `make` はカレントディレクトリの Makefile しか見ないため、下位ディレクトリで叩くと
@@ -339,14 +339,14 @@ lsof -nP -iTCP:8080 -sTCP:LISTEN                 # サーバが残っていな�
 | コマンド | 入力 → 出力 |
 |---|---|
 | `make sqlc` | `server/internal/store/queries/*.sql`（＋スキーマ源の `server/migrations/`）→ `server/internal/store/gen/` |
-| `make gen-api` | `docs/openapi.yaml` → `client/src/api/schema.d.ts` |
+| `make gen-api` | `docs/design/openapi.yaml` → `client/src/api/schema.d.ts` |
 
 **`make gen-api` が生成するのは型だけである。** API の呼び出しは手書きの薄いラッパ
 （`client/src/api/client.ts`）が持つ。CSRF ヘッダ・Cookie の送出・`ApiDesign.md` 2.5 の
 エラー形式といった共通規約を1か所に集めるためで、生成器にハンドラや呼び出しを作らせない
 方針は `Design.md` 3.3 にある。
 
-**`docs/openapi.yaml` は設計の写しではなく「実装済みAPIの現状」である**（`ApiDesign.md` 1.3）。
+**`docs/design/openapi.yaml` は設計の写しではなく「実装済みAPIの現状」である**（`ApiDesign.md` 1.3）。
 APIを足したステップの成果物に、この yaml の更新と `make gen-api` の結果を含める。
 
 ---
@@ -379,6 +379,10 @@ make test-db RUN=TestMeTokensIntegration
 フェイクで差し替えたテストでは `queries/*.sql` が一度も実行されないため、
 列名・JOIN の向き・条件の取りこぼしが検出できない。それを埋めるためのものである。
 
+- **worktree では走らない。** `deploy/dev/secrets/` は履歴管理の対象外なので、worktree にはチェックアウトされない。
+  結合テストは元の作業ディレクトリで走らせる（単体テストは worktree でも走る）
+- **dev と同じ DB を使う。** 走らせるたびに dev の `audit_log` が増える
+
 ## 6.2 テストを書くときの落とし穴
 
 実際に踏んだものだけを挙げる。
@@ -399,7 +403,7 @@ DDL が要るなら `pb_owner` を使うのではなくマイグレーション�
 ## 6.3 openapi.yaml のドリフト検出
 
 `make test` に含まれる（`server/internal/httpapi/openapi_drift_test.go`）。
-`chi.Walk` で得た実装のルート一覧と `docs/openapi.yaml` の `paths` を突き合わせ、
+`chi.Walk` で得た実装のルート一覧と `docs/design/openapi.yaml` の `paths` を突き合わせ、
 **実装にあって yaml に無い／yaml にあって実装に無い**の両方向を報告する。
 
 エンドポイントを足して yaml を忘れると、ここで落ちる。
@@ -808,6 +812,11 @@ WebAuthn.clearCredentials {authenticatorId}                    ← やり直す�
 | 第2要素の検証で、正しいはずのコードが 401 になる | **確定に使った刻みのコードを、そのままログインでも使っている。** 同じ刻みは再利用として拒まれる（`Design.md` 6.7.2）。検証では `mfa.Step(time.Now())+1`（許容窓の内側）で作り直す。**実装ではなく検証の誤りである** |
 | **パスキーのボタンが押せない**（「IP アドレスで開いた画面ではパスキーを使えません」。pb-104） | `http://127.0.0.1:8080` で開いている。**IP アドレスは RP ID になれない**（`Design.md` 6.8.3）。`http://localhost:8080` で開き直す。**stg（`localhost:8081`）と Cookie が上書きし合う**ので（11章）、両方を開くならブラウザのプロファイルを分ける |
 | パスキーの一覧に「このアドレスでは使えません」と出る | 登録したときのホスト名（`rp_id`）と、いま開いているホスト名が違う。**パスキーはホスト名に結び付く**（`localhost` と `pb.localhost` も別物）。登録した側のアドレスで開くか、このアドレスで登録し直す |
+| `openapi.yaml` だけを直したのに、ドリフト検出が再実行されない | **`go test` の結果がキャッシュされている。** `openapi.yaml` は Go のソースではないので、キャッシュが無効にならない。`make test`（`-count=1` 付き）で走らせる（6.3） |
+| 足したばかりの MCP ツールを、エージェントが呼べない | **MCP クライアントのツール一覧は、セッションの開始時に固定される。** 新しいセッションで呼ぶか、`curl` で `POST /mcp/<key>`（`$PB_TOKEN` を使う）を叩いて確かめる（12章） |
+| エージェントが `deploy/*/secrets/` を読めない・書けない | **`.claude/settings.json` で拒否している**（`.example` も含む）。秘密を要する操作は `make` のターゲット経由で行い、新しい環境の秘密は利用者が置く |
+| CDP の `Runtime.evaluate` が構文エラーになる | **式が `await` を含むのに、包む即時関数が `async` でない**（8.2） |
+| 一覧から消えたことを確かめる検証が、消えているのに FAIL になる | **`document.body.innerText` で名前を探している。** 成功通知に名前が出るので、消えても見つかる。行の DOM を数える（8.2） |
 
 ---
 
@@ -1136,7 +1145,7 @@ curl -s http://127.0.0.1:8080/mcp/demo \
 ## 12.5 手順外で気づいた問題を起票する
 
 **手順の範囲外で見つけた不具合・改善候補は、stg の PB にチケットとして起票する**
-（`CLAUDE.md`「進捗と作業の進め方」）。**`docs/PROGRESS.md` には番号と1行要約だけを置く。**
+（PB の規約「作業の単位」）。**進捗の正本はチケットであり、リポジトリには写さない。**
 
 ```
 # 12.2 でつないだ MCP から
@@ -1610,6 +1619,6 @@ ls "/Applications/Google Chrome.app"
 | DBの実行環境・スキーマ・初期データ・デモデータの仕様 | `DbDesign.md` 3章・5〜7章 |
 | API の規約（エラー形式・CSRF・レート制限） | `ApiDesign.md` 2章 |
 | 画面の構造・配色・ルーティング | `GuiDesign.md` |
-| どこまで実装したか・次の手順への引き継ぎ・環境メモ | `docs/PROGRESS.md` |
+| どこまで実装したか・次の手順への引き継ぎ | stg の PB のチケット |
 | 過去の判断の経緯 | `docs/history/decisions.md` |
 | どの手順で何を作ったか・当時の検証内容 | `docs/history/steps.md` |

@@ -1,7 +1,7 @@
 /**
  * REST API の呼び出し口（`ApiDesign.md` 2章）。
  *
- * 型は `docs/openapi.yaml` から生成する（`npm run gen:api`。`Design.md` 3.3 が
+ * 型は `docs/design/openapi.yaml` から生成する（`npm run gen:api`。`Design.md` 3.3 が
  * 「コード生成は TypeScript クライアントのみ」と定める）。**生成するのは型だけ**で、
  * 呼び出しそのものはこの薄いラッパが持つ。2.4 の CSRF・2.5 のエラー形式・
  * Cookie の送出といった共通規約を1か所に集めるため。

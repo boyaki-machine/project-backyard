@@ -1,7 +1,7 @@
 /**
  * チケットの外部参照のエンドポイント（`ApiDesign.md` 9.10.2）。手順17c。
  *
- * 型は `docs/openapi.yaml` の生成物をそのまま使う（`tags.ts` と同じ方針）。
+ * 型は `docs/design/openapi.yaml` の生成物をそのまま使う（`tags.ts` と同じ方針）。
  *
  * **一覧を呼ぶ画面は無い。** 詳細応答（9.5.1）の `references` に同じものが
  * 入っているので、チケット詳細は `GET /tickets/:seq` 1本で足りる

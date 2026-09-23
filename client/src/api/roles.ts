@@ -1,7 +1,7 @@
 /**
  * ロール・権限カタログのエンドポイント（`ApiDesign.md` 7.1 / 7.2）。
  *
- * 型は `docs/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない
+ * 型は `docs/design/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない
  * （`users.ts` と同じ方針）。
  */
 import { api } from './client'

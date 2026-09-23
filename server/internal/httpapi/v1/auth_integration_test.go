@@ -46,7 +46,7 @@ func TestLoginIntegration(t *testing.T) {
 
 	// **メールは大小混在で作る。** 小文字で入力しても citext が引き当て、
 	// その値で user_identity.subject を引けることを確かめるため
-	// （PROGRESS.md「メールアドレスの大小の扱い」）。
+	// （history/decisions.md「メールアドレスの大小の扱い」）。
 	email := "Integration-" + actorID + "@Example.com"
 
 	seedLocalUser(t, ctx, pool, q, actorID, email, testPassword)

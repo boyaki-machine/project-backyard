@@ -1,7 +1,7 @@
 /**
  * プロジェクト文書のエンドポイント（`ApiDesign.md` 10章）。
  *
- * 型は `docs/openapi.yaml` の生成物をそのまま使う（`tags.ts` と同じ方針）。
+ * 型は `docs/design/openapi.yaml` の生成物をそのまま使う（`tags.ts` と同じ方針）。
  *
  * **読みと書きで必要権限が違う。** 目次と本文は `doc.view`、作成・更新・削除は
  * **`doc.edit`** で、**`doc.edit` は `operator` と `project_member` が持たない**

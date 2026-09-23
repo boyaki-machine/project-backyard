@@ -351,7 +351,7 @@ func retryAfterSec(until, now time.Time) int {
 // 同じ関数を通した値を保存しているため（cmd/pb/admin_create.go）、
 // 表示名つきの入力（"田中" <tanaka@example.com>）でも同じ表記で突き合わせられる。
 // 大文字小文字は変換しない。照合は app_user.email の citext に委ねる
-// （PROGRESS.md「メールアドレスの大小の扱い」）。
+// （history/decisions.md「メールアドレスの大小の扱い」）。
 func validateLoginRequest(req loginRequest) (string, *apierr.Error) {
 	var details []apierr.Detail
 	var email string

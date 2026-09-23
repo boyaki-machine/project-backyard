@@ -4,7 +4,7 @@
  * `GET /me` は `api/auth.ts` にある——起動時の復元で使うものであり、
  * 「自分の設定」画面の持ち物ではないためである。
  *
- * 型は `docs/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない。
+ * 型は `docs/design/openapi.yaml` の生成物をそのまま使う。ここで別名を定義し直さない。
  */
 import { api } from './client'
 import type { Session } from './auth'

@@ -39,7 +39,7 @@ export interface PlaceholderMeta {
   docRef: string
   /** 予定している内容（設計文書からの転記） */
   planned: string[]
-  /** Phase と実装予定（docs/PROGRESS.md の手順番号） */
+  /** Phase と実装予定（PB のチケット番号） */
   status: string
 }
 
@@ -202,7 +202,7 @@ const routeSources: RouteRecordRaw[] = [
       placeholder: {
         title: '監査ログ',
         docRef: 'GuiDesign.md 5.7',
-        status: 'Phase 1 内で未定（docs/PROGRESS.md）',
+        status: '未定（pb-181）',
         planned: [
           '期間・操作・実行者・結果によるフィルタ',
           '日時・実行者・操作・対象・結果の一覧',
