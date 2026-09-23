@@ -5,11 +5,8 @@
 > **文書体系**：`Requirements.md`（要件）→ `Design.md`（全体設計）→ 本書 / `ApiDesign.md` / `GuiDesign.md`（領域別の正本）
 >
 > - 対象読者：サーバ実装者（人間およびAIエージェント）
-> - **方針変更**：SQLite先行をやめ、**初期から PostgreSQL を前提とする**（2章）
 > - 関連：`Design.md`（全体設計・認証設計）、`ApiDesign.md`、`GuiDesign.md`、`Requirements.md`
-> - 状態：Phase 1 のDDL・シードは確定・適用済み（0001〜0016）。**Phase 2 は 0021 まで適用済み**（0017 = 8.1 の器、0018 = 8.1.2 の初期本文の直し、0019 = 8.2 の器、0020 = クライアント種別、0021 = 6.6 の `working_agent_id`）。以降の Phase 2/3 はテーブル構成案
-
-**`Design.md` 旧第5章「データベース設計」は本書に統合された。** 以降、DBに関する記述は本書を正とする。
+> - 適用済みのマイグレーションは 5.2 の一覧のとおり。Phase 3 の章はテーブル構成案である
 
 ---
 
@@ -18,7 +15,7 @@
 | 章 | 内容 |
 |---|---|
 | 1 | 本書の位置づけ |
-| 2 | 方針変更：PostgreSQL 前提へ |
+| 2 | PostgreSQL を使う理由と、DB の規約 |
 | 3 | 実行環境（docker-compose / Kubernetes） |
 | 4 | 共通規約 |
 | 5 | マイグレーション運用 |
@@ -42,28 +39,22 @@
 
 ---
 
-# 2. 方針変更：PostgreSQL 前提へ
+# 2. PostgreSQL を使う理由と、DB の規約
 
-## 2.1 変更の理由
-
-当初は「単一バイナリ＋SQLite ファイルで起動が速い」ことを重視し、SQLite先行・PostgreSQL移行という方針を採っていた。これを改め、**開発初期から PostgreSQL を使う**。
+## 2.1 PostgreSQL を使う理由
 
 | 理由 | 内容 |
 |---|---|
-| 移行コストの回避 | 両対応のために課していた制約（JSON内部を検索しない、全文検索を分離する等）は、実装の自由度を恒常的に下げる。**移行が確実に来るなら、最初から移行後の姿で作る方が安い** |
+| 実装の自由度 | `jsonb` の内部検索・全文検索・トリガ・`RETURNING`・配列型をそのまま使える。複数の DB に対応するための制約を課さない |
 | 実行環境が整っている | 開発端末で PB をコンテナとして動かす前提であり、DBコンテナを1つ増やす追加コストは小さい |
-| エージェント並行アクセス | Phase 2 で複数エージェントが同時に書き込む。SQLite の単一ライタ制約は旧設計で未解決事項として挙げていたが、PostgreSQL 採用で消える |
+| エージェント並行アクセス | 複数のエージェントが同時に書き込む。単一ライタの制約を持たない |
 | 拡張機能 | pgvector（`Requirements.md` 6.5 のRAG）、`LISTEN/NOTIFY`（`Requirements.md` 1章のリアルタイム更新）が最初から使える |
 
-旧方針が課していた制約（日時を `TEXT`、真偽を `INTEGER`、`jsonb` の内部検索を禁止、トリガ禁止、`RETURNING` 回避、配列型の禁止など）は**すべて解除された**。現在の型と規約は 4.1（型の対応）と6章のDDLが正本である。
+型と規約は 4.1（型の対応）と6章のDDLが正本である。
 
-**解除された制約の一覧は本改訂で削除した**。0001 以降のすべてが PostgreSQL 前提で書かれ、実装が進んだ段階で、**もう存在しない制約を読ませる意味がなくなった**ためである。
+## 2.2 DB の規約
 
-## 2.2 維持する規約
-
-方針変更後も以下は維持する。理由が SQLite 互換性ではなかったため。
-
-| 規約 | 維持する理由 |
+| 規約 | 理由 |
 |---|---|
 | **IDは ULID をアプリで生成**（自動採番を使わない） | ①エージェントが並行生成しても衝突しない、②時系列順に並ぶ、③URL・ログ上で読める |
 | **ENUM型を使わず `text` + `CHECK`** | `ALTER TYPE ... ADD VALUE` は可能だが、値の削除・改名が困難。CHECK制約なら通常のマイグレーションで書き換えられる |
@@ -137,7 +128,7 @@ services:
     image: project-backyard:dev
     build:
       context: ../..                 # リポジトリルート（client/ と server/ を含む）
-      dockerfile: deploy/Dockerfile  # `Design.md` 4.5（pb-123）。dev の make up は db だけを起動する
+      dockerfile: deploy/Dockerfile  # `Design.md` 4.5。dev の make up は db だけを起動する
     restart: unless-stopped
     depends_on:
       db:
@@ -313,7 +304,7 @@ SQL
 昇格の口を常時開けるより、**操作のたびに人が資格情報を出すほうが、開いている時間が短い。**
 
 **書き出しには要らない。** `pb_app` は `ALTER DEFAULT PRIVILEGES` により `public` の全表を
-`SELECT` できる（pb-144 の dev で確かめた）。
+`SELECT` できる。
 
 ## 3.5 接続プール
 
@@ -365,7 +356,7 @@ PgBouncer は Phase 1 では不要。単一プロセス・少人数利用のた�
 | `ticket_id = $1`（`$1` が `text`） | Seq Scan、14.3ms |
 | `ticket_id = $1`（`$1` が `bpchar`） | Bitmap Index Scan、0.03ms |
 
-**行数が少ないうちは差が見えない**——数百行ならどちらの形でも PostgreSQL は Seq Scan を選ぶので、stg の実測や結合テストでは気づけない。pb-96 で直すまで、`ListTickets` / 業務履歴 / 集計 / 検索 / スプリントの問い合わせで28か所（うち配列10か所）がこの形だった。
+**行数が少ないうちは差が見えない**——数百行ならどちらの形でも PostgreSQL は Seq Scan を選ぶので、小さなデータの実測や結合テストでは気づけない。
 
 ## 4.3 タイムスタンプと `updated_at` トリガ
 
@@ -403,12 +394,12 @@ SELECT * FROM app_user ORDER BY display_name COLLATE "ja-JP-x-icu";
 | `pg_bigm` | 日本語向けbigram索引。2文字クエリに強い。カスタムイメージのビルドが必要 |
 | PGroonga | 形態素解析・スコアリングまで対応。高機能だが導入と運用の重さが原則（軽快さ）と衝突する |
 
-Phase 1 は `pg_trgm` とし、実運用で不足が確認された時点で `pg_bigm` へ移行する。**移行時に影響するのはインデックス定義と検索クエリのみで、スキーマ本体は変わらない**よう、検索は `store/search/` に隔離する（`Design.md` 4.6。pb-66 で作った）。
+`pg_trgm` を使い、実運用で不足が確認された時点で `pg_bigm` へ移行する。**移行時に影響するのはインデックス定義と検索クエリのみで、スキーマ本体は変わらない**よう、検索は `store/search/` に隔離する（`Design.md` 4.6）。
 
-**DB の `LC_CTYPE` を `C.UTF-8` にする**（3.1）。pg_trgm は「語の文字」（英数字）が続く部分からだけ trigram を作り、語の文字かどうかを **DB を作ったときの libc の `LC_CTYPE`** で決める。**`C` では日本語が語の文字にならず、日本語の語から trigram が1つも取れない**（`show_trgm('ログイン')` が空）。pb-143 より前の DB はすべて `C` だったので、**日本語の検索ではインデックスが一度も効いていなかった**。
+**DB の `LC_CTYPE` を `C.UTF-8` にする**（3.1）。pg_trgm は「語の文字」（英数字）が続く部分からだけ trigram を作り、語の文字かどうかを **DB を作ったときの libc の `LC_CTYPE`** で決める。**`C` では日本語が語の文字にならず、日本語の語から trigram が1つも取れない**（`show_trgm('ログイン')` が空）ので、**日本語の検索ではインデックスが効かない**。
 
 - **`LC_COLLATE` は `C` のまま**にする。並び順（バイト順、4.2）は変わらない
-- **PostgreSQL 17 の builtin プロバイダ（`C.UTF-8`）では足りない。** ILIKE は全角の大小まで畳むようになるが、pg_trgm は libc の `LC_CTYPE`（`C`）を見るので日本語は取れないままだった
+- **PostgreSQL 17 の builtin プロバイダ（`C.UTF-8`）では足りない。** ILIKE は全角の大小まで畳むようになるが、pg_trgm は libc の `LC_CTYPE`（`C`）を見るので日本語は取れない
 - **ctype は DB を作るときにしか決められない。** 既存の DB は、別名で作って復元し名前を入れ替える（`deploy/prod/MANUAL.md` 6章、`Development.md` 11.6）。**移していない DB では、サーバが起動時に WARN を出す**
 - **ILIKE で大小を区別しない範囲が広がる。** `C.UTF-8` では全角の英字なども畳む（`ApiDesign.md` 9.2.1）
 
@@ -492,9 +483,9 @@ sqlc:
 | 権限の伝播 | 3.4 の `ALTER DEFAULT PRIVILEGES FOR ROLE pb_owner` により、goose が作ったテーブルにも `pb_app` の DML 権限が自動で付く。マイグレーション後に `GRANT` を流す必要はない |
 | 生成物 | `server/internal/store/gen/` は**コミットする**（`Design.md` 4.6）。sqlc を導入していない環境でもビルドが通る状態を保つ |
 
-**配布物には goose を別の実行ファイルとして同梱する**（`Design.md` 4.5）。`make release` が `server/tools` からビルドするので、**版はここで固定したものと同じになる。** postgres 以外のドライバはビルドタグで外す（全ドライバ入りで約 38MB、外すと 11〜12MB。タグの一覧の正本は `deploy/prod/build-release.sh`）。**`pb` 本体には入れない**——上に書いた理由（ツールの依存をアプリの依存グラフに混ぜない）がそのまま効く。本体へ入れる案の材料と再検討の条件は pb-4 のコメントにある。
+**配布物には goose を別の実行ファイルとして同梱する**（`Design.md` 4.5）。`make release` が `server/tools` からビルドするので、**版はここで固定したものと同じになる。** postgres 以外のドライバはビルドタグで外す（全ドライバ入りで約 38MB、外すと 11〜12MB。タグの一覧の正本は `deploy/prod/build-release.sh`）。**`pb` 本体には入れない**——上に書いた理由（ツールの依存をアプリの依存グラフに混ぜない）がそのまま効く。
 
-**`server/tools/go.mod` の `go` ディレクティブは 1.24 のまま据え置く。** 本体（`server/go.mod`）は pb-104 で 1.26 へ上げたが（`Design.md` 3.1）、ツールまで上げる理由は無い。`go get -tool` は依存を最新へ引き上げる際にこの値も書き換えることがあるので、ツールを追加・更新したら `head -3 server/tools/go.mod` で確認する。
+**`server/tools/go.mod` の `go` ディレクティブは 1.24 のまま据え置く。** 本体（`server/go.mod`）は 1.26 だが（`Design.md` 3.1）、ツールまで上げる理由は無い。`go get -tool` は依存を最新へ引き上げる際にこの値も書き換えることがあるので、ツールを追加・更新したら `head -3 server/tools/go.mod` で確認する。
 
 **各ファイルの冒頭に `-- +goose Up` を置く。** `down` は書かない（5.3）。`set_updated_at()` のように本体に `;` を含む定義は、goose のパーサがステートメント境界を誤らないよう `-- +goose StatementBegin` / `-- +goose StatementEnd` で囲む。
 
@@ -881,7 +872,7 @@ CREATE TABLE ticket (
   staged_at      timestamptz,               -- 0015 で追加。NULL＝バックログ
 
   -- エージェント連携（Phase 1 で列のみ先行定義）
-  -- 既定は 0025 で 'human_only' から 'agent_draft' へ変えた（pb-65）
+  -- 既定は 'agent_draft'（0025）
   execution_mode text    NOT NULL DEFAULT 'agent_draft'
                  CHECK (execution_mode IN ('human_only','agent_only','agent_draft')),
   readiness      text    CHECK (readiness IN ('red','yellow','green')),
@@ -1088,7 +1079,7 @@ CREATE INDEX idx_audit_action ON audit_log (action, occurred_at DESC);
 CREATE INDEX idx_audit_actor  ON audit_log (actor_id, occurred_at DESC);
 ```
 
-**`ip` に `inet` 型を使う。** PostgreSQL 採用により、IPアドレスの正規化とサブネット検索がDB側でできるようになった。
+**`ip` に `inet` 型を使う。** IPアドレスの正規化とサブネット検索がDB側でできる。
 
 `actor_label` を持たせるのは、**ユーザー削除後に「誰を消したか」を追えなくなることを防ぐ**ため（`ApiDesign.md` 6.5）。
 
@@ -1128,7 +1119,7 @@ ALTER TABLE ticket
 
 **スプリントの CRUD は Phase 1 で開ける**（`ApiDesign.md` 9.12）。表だけあって作る手段が無いと、チケット詳細のスプリント欄が常に空のドロップダウンになるためである。バーンダウン・ベロシティを含むスプリント管理画面は Phase 2（`GuiDesign.md` 10章）で、Phase 1 は**定義のみ**をプロジェクト設定のスプリントタブで行う。
 
-**Phase 2 で、スプリントを動かす主体をチケットからオンステージへ移した**。**定義**（名前・期間を作る）はプロジェクト設定のスプリントタブに残り、**運用**（開始・終了）はバックログのオンステージ段が持つ。チケット詳細のスプリント欄は**読み取り専用**になる（`GuiDesign.md` 5.5）。
+**スプリントを動かす主体はオンステージである**。**定義**（名前・期間を作る）はプロジェクト設定のスプリントタブに残り、**運用**（開始・終了）はバックログのオンステージ段が持つ。チケット詳細のスプリント欄は**読み取り専用**になる（`GuiDesign.md` 5.5）。
 
 ### 6.9.1 チケットとスプリントの所属（0028）
 
@@ -1230,7 +1221,7 @@ CREATE TRIGGER trg_dod_updated BEFORE UPDATE ON dod_item
 
 `config` の例：`task_ref` は `{"ticket_id":"01K2..."}`、`assertion` は `{"command":"pytest tests/auth/","expect":"pass"}`。
 
-**この表は本改訂で 8.2.3（Phase 2）から移した。** `GuiDesign.md` 5.5 は「完了条件は Phase 1 で `manual` 型のみ実装」と定めているのに、その置き場所が Phase 2 にあり、文書どうしが食い違っていた。手動のチェックリストは AI 抜きでも人間だけで価値があり、`Requirements.md` 10.1.1「チケットは依頼メモから実行契約へ」の土台にもなるため、**Phase 1 側に合わせた**。
+**完了条件は Phase 1 の表である。** 手動のチェックリストは AI 抜きでも人間だけで価値があり、`Requirements.md` 10.1.1「チケットは依頼メモから実行契約へ」の土台にもなる。
 
 **列と `CHECK` は Phase 2 の形のまま作り、API が受け付ける `type` だけを `manual` に絞る**（`ApiDesign.md` 9.9）。後から列を足すより、使わない列を持つほうが安い。`assertion`（コマンド実行）・`artifact`（成果物の存在確認）・`review`・`task_ref` は Phase 2 で開ける（`Requirements.md` 10.5.2）。
 
@@ -1291,8 +1282,7 @@ PB の外にあるものを指す。`ticket_link` は `target_ticket_id` に FK 
 表記を突き合わせる責務はアプリ側にも置かない——**プロジェクト設定に無いリポジトリ名を
 書いても受け付ける**。エージェントが作業した事実のほうが、設定の登録漏れより優先する。
 
-**Phase 1 では画面から `code` を追加できない。** エージェント用のアクターと MCP は
-Phase 2（`Design.md` 11章 手順24・25）であり、Phase 1 の書き手は
+**画面から `code` は追加しない。** 書き手は、MCP の `pb_add_reference` を使うエージェントと、
 **`/me/tokens` で発行した API トークンを持つクライアント**である（`ApiDesign.md` 4.4）。
 画面が持つのは**表示と削除**だけで、誤って積まれた行を人が始末できるようにする
 （`GuiDesign.md` 5.5）。`doc` は Phase 1 から人が画面で追加・編集できる。
@@ -1363,7 +1353,7 @@ ON CONFLICT DO NOTHING;
 
 **`PATCH /tickets/:seq` と DoD の更新系を、エージェントに開ける範囲だけ `ticket.edit` から切り出す**（`ApiDesign.md` 9.5.2 / 9.9）。**0027 の `ticket.reference.edit` と同じ形である。**
 
-**きっかけは 6.12.1 と同じ構図だった。** エージェントは起票できるのに、**起票したあと何も直せない**。pb-72 の実装中にチケットの記述そのものの矛盾を踏んだとき、エージェントには直す手段が無く、修正案をコメントに置いて人に貼り替えてもらう形になった。**仕様の矛盾を最初に踏むのは実装する側である。**
+**理由は 6.12.1 と同じである。** エージェントは起票できるので、**起票したあと直せなければならない。** 仕様の矛盾を最初に踏むのは実装する側であり、直す手段が無ければ修正案をコメントに置いて人に貼り替えてもらうしかない。
 
 **許可リストへ `ticket.edit` を足す案は、0027 のときと同じ理由で棄却した。** `ticket.edit` は 9.5.2 の全項目を開ける——そこには `execution_mode` / `readiness` / `readiness_note` / `scope` が含まれる。**これらはエージェントを縛る側が書くものであり**（9.5.2「スコープ境界は縛る側が書くものである」）、**自分で緩められては意味がない。**
 
@@ -1374,7 +1364,7 @@ ON CONFLICT DO NOTHING;
 | `title` `body_md` `priority` `parent_seq` `assignee_id` | `type` `execution_mode` `readiness` `readiness_note` `scope` |
 | `tag_ids` `estimate_point` `estimate_hours` `start_date` `due_date` | `working_agent_id` `actual_hours` `sprint_id` |
 
-**線は「作れるものは直せる。ただし `type` を除く」である。** 起票（9.3）で選べる項目を直せないのは筋が通らないが、**種別の切り替えは人が行う**。`tag_ids` と見積・日付が加わるのは pb-76 の判断による。
+**線は「作れるものは直せる。ただし `type` を除く」である。** 起票（9.3）で選べる項目を直せないのは筋が通らないが、**種別の切り替えは人が行う**。直せる項目には `tag_ids` と見積・日付も含む。
 
 **`type` を外したのは、切り替えの影響が記述の修正に収まらないからである。** エピックはバックログに行として出ず、複数選択できるフィルタになる（6.6、`GuiDesign.md` 5.4）。**タスクをエピックへ変えると、その行は一覧から消えてフィルタの選択肢になる**——エージェントが記述を整えるつもりで盤面の見え方を変えてしまう。**起票のときに選ぶのは、まだ盤面に無いものについての選択なので事情が違う。**
 
@@ -2170,47 +2160,47 @@ make dev-info    # URL とデモアカウント一覧を表示
 
 # 8. Phase 2 / 3 の拡張
 
-Phase 1 のテーブルは変更せず、**テーブル追加のみ**で拡張する。本章のDDLは構成案であり、各Phase着手時に確定させる。
+Phase 1 のテーブルは変更せず、**テーブル追加のみ**で拡張する。**Phase 2 の DDL は適用済みで、Phase 3 の DDL は構成案である**（着手時に確定させる）。
 
 ```
 Phase 2
-  0017_document.sql       document, document_revision, doc 権限, 文書テンプレート  ← 適用済み
+  0017_document.sql       document, document_revision, doc 権限, 文書テンプレート
   0018_document_template_text.sql
-                          文書テンプレートの初期本文を直す（DDLなし）            ← 適用済み
-  0019_agent.sql          agent, task_lease, agent.run の再配布            ← 適用済み
+                          文書テンプレートの初期本文を直す（DDLなし）
+  0019_agent.sql          agent, task_lease, agent.run の再配布
   0020_agent_client_kind.sql
-                          agent_client_kind（クライアント種別のカタログ）と FK 化 ← 適用済み
+                          agent_client_kind（クライアント種別のカタログ）と FK 化
   0021_ticket_working_agent.sql
-                          ticket.working_agent_id（実行者の自己申告。6.6）  ← 適用済み
+                          ticket.working_agent_id（実行者の自己申告。6.6）
   0022_agent_run.sql      agent_run, agent_report, context_pack_log,
-                          comment.agent_run_id の FK 付与（8.2.4）        ← 適用済み
+                          comment.agent_run_id の FK 付与（8.2.4）
   0023_agent_setup.sql    agent.token_env_suffix（8.2.1）,
-                          agent_client_kind.has_setup_template（8.2.1.1） ← 適用済み
+                          agent_client_kind.has_setup_template（8.2.1.1）
   0024_document_template_agent_onboarding.sql
-                          文書テンプレートに agent-onboarding を足す（8.1.2）← 適用済み
+                          文書テンプレートに agent-onboarding を足す（8.1.2）
   0025_ticket_execution_mode_default.sql
-                          ticket.execution_mode の既定を agent_draft へ（6.6）← 適用済み
+                          ticket.execution_mode の既定を agent_draft へ（6.6）
   0026_workflow_reopen.sql
-                          done → in_progress の再オープン（7.4。pb-69）     ← 適用済み
+                          done → in_progress の再オープン（7.4）
   0027_ticket_reference_permission.sql
-                          ticket.reference.edit（6.12。pb-68）             ← 適用済み
-  0028_ticket_sprint.sql  ticket_sprint（チケットとスプリントの所属。6.9.1。pb-6）
+                          ticket.reference.edit（6.12）
+  0028_ticket_sprint.sql  ticket_sprint（チケットとスプリントの所属。6.9.1）
   0029_ticket_self_edit.sql
-                          ticket.self_edit（6.13。pb-75 / pb-76）
+                          ticket.self_edit（6.13）
   0030_agent_client_kind_claude_desktop.sql
-                          agent_client_kind に claude_desktop（8.2.1.1。pb-58）
-  0031_app_setting.sql    app_setting（6.14。pb-2）
-  0032_tls_certificate.sql tls_certificate（6.15。pb-3）
-  0033_app_secret.sql     app_secret（6.16。pb-3）
+                          agent_client_kind に claude_desktop（8.2.1.1）
+  0031_app_setting.sql    app_setting（6.14）
+  0032_tls_certificate.sql tls_certificate（6.15）
+  0033_app_secret.sql     app_secret（6.16）
   0034_pending_setting_change.sql
-                          pending_setting_change（6.17。pb-97）
+                          pending_setting_change（6.17）
   0035_mfa.sql            user_mfa_credential, mfa_login_challenge,
-                          mfa_recovery_code（6.18。pb-103）
-  0036_passkey.sql        user_passkey, webauthn_challenge（6.19。pb-104）
+                          mfa_recovery_code（6.18）
+  0036_passkey.sql        user_passkey, webauthn_challenge（6.19）
   0037_document_template_rules_workspace.sql
-                          規約テンプレートの案内に作業場所を例示（DDLなし。8.1.2。pb-142）
+                          規約テンプレートの案内に作業場所を例示（DDLなし。8.1.2）
   0038_document_template_decisions_headings.sql
-                          判断の記録テンプレートに1判断＝1見出し（DDLなし。8.1.2。pb-121）
+                          判断の記録テンプレートに1判断＝1見出し（DDLなし。8.1.2）
 Phase 3
   0039_knowledge.sql      knowledge, knowledge_revision, proposal
   0040_comment_signal.sql comment_signal
@@ -2219,9 +2209,9 @@ Phase 3
   0043_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 2 の途中でも同じことが起きる**——**Phase 2 の途中で5回ずれた**——手順23 で 0018（初期本文の直し）を挟んで `agent` が 0018 から 0019 へ、手順24b で 0020（クライアント種別のカタログ）を足して Phase 3 が1つ後ろへ動き、手順26b で 0021（`ticket.working_agent_id`）がもう1つ動かし、**手順26c で 0022（`agent_run` / `agent_report`）が Phase 3 から Phase 2 へ移った**。**Phase 3 は 0019〜0024 → 0020〜0025 → 0021〜0026 → 0022〜0027 → 0023〜0027 → 0024〜0028 → 0026〜0030 → 0027〜0031 → 0028〜0032 → 0029〜0033 → 0030〜0034 → 0031〜0035 → 0032〜0036 → 0033〜0037 → 0034〜0038 → 0035〜0039 → 0036〜0040 → 0037〜0041 → 0038〜0042 → 0039〜0043** である（手順26c の 0022 で4回目、手順28a の 0023 で5回目、**pb-65 で 0024 と 0025 を足して7回目**、**pb-69 の 0026（`done → in_progress` の再オープン）で8回目**、**pb-68 の 0027（`ticket.reference.edit`）で9回目**、**pb-6 の 0028（`ticket_sprint`。6.9.1）で10回目**、**pb-75 の 0029（`ticket.self_edit`。6.13）で11回目**、**pb-58 の 0030（`claude_desktop` をカタログへ追加。8.2.1.1）で12回目**、**pb-2 の 0031（`app_setting`。6.14）で13回目**、**pb-3 の 0032（`tls_certificate`。6.15）で14回目**、**pb-3 の 0033（`app_secret`。6.16）で15回目**、**pb-97 の 0034（`pending_setting_change`。6.17）で16回目**、**pb-103 の 0035（MFA の3表。6.18）で17回目**、**pb-104 の 0036（パスキーの2表。6.19）で18回目**、**pb-142 の 0037（規約テンプレートの本文。8.1.2）で19回目**、**pb-121 の 0038（判断の記録テンプレートの本文。8.1.2）で20回目**。**4回目のときだけ本数が6本から5本へ減った**——ずれたのではなく、先頭の1本が Phase 2 側へ移ったためである。**6回目にあたる 0024（`agent-onboarding` の追加）は、足したときに本一覧へ書き足されていなかった**——pb-65 で採番をずらす際に気づいて補った。**8回目の 0026 も同じく書き足されておらず、pb-68 のときに気づいて補った**——**手順ではなくチケットで駆動するようになってから2回続けて漏れている**ので、マイグレーションを足したら本段落を直すこと。**pb-6 のとき、本段落は直っていたが上の一覧が 0026・0027 を欠いたままだった**——**直す対象は本段落と上の一覧の両方である**。**pb-97 の 0034 は、本段落と上の一覧の両方から落ちていた**——6.17 には節として書かれていたので、**節を足したことと採番を直すことが別の作業として扱われている**。pb-103 で気づいて補った）。Phase 1 の途中で 0011（`audit_log.request_id` の追加、6.8）、0012（`access_token` の実効権限キャッシュ、6.2）、0013（タグ、6.10）、0014（完了条件、6.11）、0015（種別の縮小と `staged_at`、6.6）、0016（外部参照、6.12）を足した。**Phase 1 でスキーマを足すたびにこの採番は後ろへずれる**——実際、本改訂までに2回ずれている。本章のDDLは各Phase着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 3 の番号は、それまでに足したマイグレーションの分だけ後ろへずれる。** Phase 3 の DDL は着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
-**`dod_item` は本章から 6.11（Phase 1）へ移した。** 経緯は 6.11 に記す。
+**マイグレーションを足したら、上の一覧も直す。** 節（6章・8章）を足すことと、一覧の採番を直すことは別の作業として漏れやすい。
 
 ## 8.1 プロジェクト文書（Phase 2）
 
@@ -2301,24 +2291,23 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 
 **`slug` に `knowledge` を使わない。** 8.3.1 のテーブル `knowledge`（Phase 3 のプロジェクトメモリ）と、7.2 の権限 `knowledge.view` / `knowledge.propose` / `knowledge.approve` が既に同じ語を使っている。**同名にすると、権限マトリクス（`GuiDesign.md` 5.6.3）で `knowledge.view` を見た人が「この文書の閲覧権限だ」と読む**が、文書に効くのは `doc.view` である。`learnings` はうまくいったことも含む語で、「駄目だったこと」に寄る `caveats` より 10.6.2 の意図に近い。
 
-**5件目の `agent-onboarding` は手順28c で足した**（0024）。**PB が完成品として出せるのは「MCP が使える状態になるまで」で、その先——作業材料をどこからどう手元に用意するか——は PB が知らない**（`Requirements.md` 10.9.1）。材料の取り方はリポジトリ型・配布型・MCP 型の3通りあり、指定するのはプロジェクト管理者である。**置き場を `settings` ではなく文書にしたのは、MCP 型で辻褄が合う唯一の置き場だからである**——手元に材料を持たず PB から読む型では、取り方の説明そのものも `pb_get_doc` で読めなければならない。
+**5件目の `agent-onboarding` は 0024 で足した。PB が完成品として出せるのは「MCP が使える状態になるまで」で、その先——作業材料をどこからどう手元に用意するか——は PB が知らない**（`Requirements.md` 10.9.1）。材料の取り方はリポジトリ型・配布型・MCP 型の3通りあり、指定するのはプロジェクト管理者である。**置き場を `settings` ではなく文書にしたのは、MCP 型で辻褄が合う唯一の置き場だからである**——手元に材料を持たず PB から読む型では、取り方の説明そのものも `pb_get_doc` で読めなければならない。
 
 **`slug` に `agents` を使わない。** `/me/agents`（`GuiDesign.md` 5.8.2）と `/p/:key/settings/agents`（5.11）が既に同じ語を画面のパスに使っており、**文書の `path` が `agents` になると、同じ語が「エージェントの一覧」と「参画の手引き」の2つを指す。** ハイフンを含む `slug` は `^[a-z0-9][a-z0-9-]{0,63}$` の範囲内である（`ApiDesign.md` 10.4）。
 
-**`sort_order` は 50 とし、先頭へ挿さない。** 既存プロジェクト（stg の `pb`、dev の demo）は 10〜40 で複製済みで、**先頭へ挿すと新規プロジェクトとの並びが食い違う。** 憲章の4件は「なぜ→守ること→決めたこと→学んだこと」で互いに順序の意味を持つ組だが、参画情報は性質の違う運用情報である。
+**`sort_order` は 50 とし、先頭へ挿さない。** 既存のプロジェクトは 10〜40 で複製済みで、**先頭へ挿すと新規プロジェクトとの並びが食い違う。** 憲章の4件は「なぜ→守ること→決めたこと→学んだこと」で互いに順序の意味を持つ組だが、参画情報は性質の違う運用情報である。
 
 **この1件だけはコンテキストパックの憲章に入れない**（`Design.md` 8.5.5）。**参画時に一度読むもので、チケットごとのパックに毎回運ぶものではない。** 除外は `path` の完全一致で見るので、**この文書を他の文書の下へ移すと憲章に戻る。**
 
 **本文を空にしない。** 各文書に「ここに何を書くか」の短い案内を初期本文として入れる。空の文書が並ぶと、何を書く場所か分からないまま放置される。
 
 **初期本文の正本は 0018 である。** `agent-onboarding` の本文は 0024、`rules` の本文は 0037、`decisions` の本文は 0038 が正本である。 0017 が入れた本文は段落の途中で改行しており、
-**画面で読むと全角文字の間に半角空白が出た**（6か所。手順23 で初めて画面に並べたときに判明）。
+**画面で読むと全角文字の間に半角空白が出る。**
 `GuiDesign.md` 6.6 の「画面に出す日本語は1行に収める」は、**設計文書ではなくアプリが表示する
 文字列すべてに効く**。0017 は適用済みなので編集せず（5.3）、0018 で本文だけを差し替えた。
 
 **CommonMark の強調は、日本語の約物と相性が悪い。** `**` が開くか閉じるかは前後の文字種で
-決まる（flanking の規則）ため、**約物に接する `**` は黙って働かなくなる**。手順23 で両方向とも
-実測した（markdown-it）。
+決まる（flanking の規則）ため、**約物に接する `**` は黙って働かなくなる**（markdown-it で両方向とも確かめてある）。
 
 | 書き方 | 何が起きるか | 直し方 |
 |---|---|---|
@@ -2338,7 +2327,7 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 **判断の記録の案内には、「1判断＝1見出し」の書き方を入れる**（0038）。コンテキストパックは判断の記録を本文ではなく目次だけ載せ、エージェントは見出しを指定して1件ずつ読む（`Design.md` 8.5.5）。**見出しの無い判断の記録は、パックに1件も届かない**——見出しが無いときは本文を載せない。0018 の案内には見出しで書く指示が無く、案内どおりに書くとこの形になっていた。
 
 - **書き方の例（`### <日付> / <何を決めたか>`）はインラインコードで示し、見出しそのものは置かない。** 下の「初期本文に見出しを置かない」を崩さないため
-- **形の組み替え（見出しの付け方・章の移し替え）を許す一文は入れない。** stg の `pb` の冒頭には入っているが、あれは見出しの無い記録を組み替えた既存プロジェクトの事情で、新しいプロジェクトには組み替える記録が無い
+- **形の組み替え（見出しの付け方・章の移し替え）を許す一文は入れない。** 組み替えが要るのは見出しの無い記録を持つ既存プロジェクトだけで、新しいプロジェクトには組み替える記録が無い
 - **再検討の条件は、パックが判断の記録を目次以外の形（本文の抜粋など）で運ぶようになったとき**である。そのとき見出しを強いる理由が変わる
 
 **初期本文に見出し（`##`）を置かない。** `ApiDesign.md` 10.2 の `?outline=1` は**エージェントが「どの章を読むか」を決めるため**に使う。中身の無い見出しを並べると、目次だけを見た相手に「読むべき章がある」と読まれる。
@@ -2353,7 +2342,7 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 
 **既存プロジェクトには波及しない。** 複製が走るのはプロジェクト作成時だけなので、**それ以前に作られたプロジェクトの文書は0件のまま**である（`GuiDesign.md` 5.10「空状態」）。テンプレートを後から適用する口は持たない。
 
-**テンプレートに件数を足したときも同じである。** 0024 で `agent-onboarding` を足したが、**それ以前に作られたプロジェクトには入らない**（stg の `pb` は4件のまま）。**そこは欠落ではなく、プロジェクト管理者が自分で1件書く場面である**——`Requirements.md` 10.9.1 の「立ち上げ相」がそれに当たる。
+**テンプレートに件数を足したときも同じである。** 0024 で `agent-onboarding` を足したが、**それ以前に作られたプロジェクトには入らない。そこは欠落ではなく、プロジェクト管理者が自分で1件書く場面である**——`Requirements.md` 10.9.1 の「立ち上げ相」がそれに当たる。
 
 **後から足す文書は自由でよい。** 階層も slug も利用者が決める。テンプレートは出発点であって制約ではない。
 
@@ -2434,7 +2423,7 @@ CREATE INDEX idx_agent_owner ON agent (owner_actor_id);
 CREATE TRIGGER trg_agent_updated BEFORE UPDATE ON agent
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- 0023（手順28a）
+-- 0023
 ALTER TABLE agent ADD COLUMN token_env_suffix text
   CHECK (token_env_suffix IS NULL
       OR token_env_suffix ~ '^[A-Z][A-Z0-9_]{0,40}$');
@@ -2448,8 +2437,7 @@ CREATE UNIQUE INDEX uq_agent_env_suffix
 
 #### `token_env_suffix` — トークンを載せる環境変数の名前（0023 で追加）
 
-**接続設定ファイルが読む環境変数の名前を、本人が決める**（`Requirements.md` 10.8.3、
-利用者の判断 2026-09-06）。**格納するのは接尾だけ**で、`PB_TOKEN_` の接頭はアプリが付ける。
+**接続設定ファイルが読む環境変数の名前を、本人が決める**（`Requirements.md` 10.8.3）。**格納するのは接尾だけ**で、`PB_TOKEN_` の接頭はアプリが付ける。
 
 ```
 token_env_suffix = 'MY_LAPTOP'   →   PB_TOKEN_MY_LAPTOP
@@ -2495,13 +2483,13 @@ CREATE TABLE agent_client_kind (
   sort_order   integer NOT NULL
 );
 
--- 0023（手順28a）
+-- 0023
 ALTER TABLE agent_client_kind
   ADD COLUMN has_setup_template boolean NOT NULL DEFAULT false;
 UPDATE agent_client_kind SET has_setup_template = true
  WHERE key IN ('claude_code', 'copilot', 'codex');
 
--- 0030（pb-58）。**行の追加だけで済む**——0020 が参照テーブルにした狙いの実物である。
+-- 0030。**行の追加だけで済む**——0020 が参照テーブルにした狙いの実物である。
 INSERT INTO agent_client_kind (key, display_name, sort_order, has_setup_template) VALUES
   ('claude_desktop', 'Claude Desktop', 15, false);
 ```
@@ -2528,8 +2516,7 @@ Codex / Gemini CLI が Zed・JetBrains・Neovim の中で動く）。**軸をエ
 値が表すのは事業者ではなく置き場である。**`claude_code` と `copilot` は 0019 からの綴りを
 変えない**（既存の行がある）。
 
-**CHECK ではなく参照テーブルにした理由**（利用者の判断、2026-09-02——「業界は流動的で
-今後増える可能性も存分にある」）。
+**CHECK ではなく参照テーブルにした理由**——クライアントの種類は流動的で、今後も増える。
 
 | | 得るもの |
 |---|---|
@@ -2555,16 +2542,12 @@ Codex / Gemini CLI が Zed・JetBrains・Neovim の中で動く）。**軸をエ
 **同じ人が複数のクライアントを使うなら、エージェントごとに違うものを渡す必要がある**
 （`Requirements.md` 10.9.1 の系統B）。
 
-**改訂前は「列は持たない」だった**（0020 の時点。「使うものが無いうちに入口を作ると意味が固まる」
-——`trust_level` を 0019 で受け取らなかったのと同じ判断）。**手順28a でテンプレートを書いたので、
-予告どおり列を足した。**
-
 **`other` を残す。** OSS のエージェント（Cline / Goose / OpenCode / OpenHands / Aider /
 Continue など）や、事業者系でも PB がまだ手順を持たないものがここへ入る。
 **個別のテンプレートを書いたものから、行として独立させ `has_setup_template` を立てる。**
 `gemini` は行として在るがテンプレートが無いので false である。
 
-**`claude_desktop` が false なのは理由が違う**（0030／pb-58）。書いていないからではなく、
+**`claude_desktop` が false なのは理由が違う**（0030）。書いていないからではなく、
 **置き場が存在しないからである**——系統A が作るのは作業フォルダへ置くファイルだが、
 **Claude Desktop に作業フォルダは無い**（`Requirements.md` 10.9.1「MCP 型では系統A に
 置き場が無い」）。**したがって、テンプレートを書けば true になる種別ではない。**
@@ -2579,11 +2562,11 @@ Continue など）や、事業者系でも PB がまだ手順を持たないも�
 
 #### `owner_actor_id` — エージェントは人に紐づく（0019 で追加）
 
-**利用者の判断。** 現状のAIエージェントは人の支援を行う形態なので、**エージェントはプロジェクトメンバの誰かに紐づけて登録する。** その人の持つ権限がベースになり、そこにエージェント独自の権限を整理して割り当てる。
+現状のAIエージェントは人の支援を行う形態なので、**エージェントはプロジェクトメンバの誰かに紐づけて登録する。** その人の持つ権限がベースになり、そこにエージェント独自の権限を整理して割り当てる。
 
 参照先を `actor` ではなく **`app_user`** にしているのは、所有者が人間に限られるためである。エージェントがエージェントを所有することはない。
 
-**この列が無いと「その人の権限がベース」を構造で守れない。** 改訂前の本節にはこの列が無く、`Requirements.md` 10.10.3 が属性に挙げる「**どの参加者に付いているか**」が DDL のどこにも無かった。
+**この列が無いと「その人の権限がベース」を構造で守れない。** `Requirements.md` 10.10.3 が属性に挙げる「**どの参加者に付いているか**」を DDL で表すのがこの列である。
 
 #### 権限は所有者から導く（委譲）
 
@@ -2631,15 +2614,13 @@ CREATE INDEX idx_task_lease_expiry ON task_lease (expires_at) WHERE released_at 
 
 **器を消さずに残す。** 前進のみのマイグレーション（5.3）では、使わない表を落とすより寝かせるほうが安い。
 
-### 8.2.3 `dod_item` — 6.11 へ移動
+### 8.2.3 `dod_item` — 6.11 にある
 
-**Phase 1 へ前倒しした。** `GuiDesign.md` 5.5 が完了条件を Phase 1 の実装対象としており、置き場所だけが Phase 2 に残っていた。DDL と判断根拠は 6.11 にある。Phase 2 で開けるのは `manual` 以外の `type`（`assertion` / `artifact` / `review` / `task_ref`）であり、**テーブルの追加は要らない**。
+DDL と判断根拠は 6.11 にある。Phase 2 以降で開けるのは `manual` 以外の `type`（`assertion` / `artifact` / `review` / `task_ref`）であり、**テーブルの追加は要らない**。
 
-### 8.2.4 `agent_run` / `agent_report`（0022。手順26c で Phase 2 へ戻した）
+### 8.2.4 `agent_run` / `agent_report`（0022）
 
-**本節は Phase 3 に置いていた**（`Design.md` 11章「Phase 3 へ送ったもの」）。**手順26c で
-Phase 2 へ戻した**——`pb_submit_result` を Phase 2 で実装すると
-決めたためで、格納先がこの2表である。**DDL は送ったときの形のまま転記する。**
+**`pb_submit_result`（完了レポート）の格納先である。**
 
 ```sql
 CREATE TABLE agent_run (
@@ -2684,8 +2665,7 @@ ALTER TABLE comment
 
 #### Phase 2 での書き手は `pb_submit_result` ひとつである
 
-**1回の提出が `agent_run` 1行と `agent_report` 1行を同時に作る**（利用者の判断、2026-09-05。
-`ApiDesign.md` 9.15）。**開始を告げる口を Phase 2 は持たない**——`pb_claim_task` は Phase 3 へ
+**1回の提出が `agent_run` 1行と `agent_report` 1行を同時に作る**（`ApiDesign.md` 9.15）。**開始を告げる口を Phase 2 は持たない**——`pb_claim_task` は Phase 3 へ
 送られ（8.2.2）、`pb_transition_task` の副作用は `ticket.working_agent_id` だけと決めた（6.6）。
 
 **「走っている run」を読む者が Phase 2 に居ないので、開始の口を作らない。** 「いま誰が
@@ -2746,7 +2726,7 @@ CREATE INDEX idx_context_pack_run ON context_pack_log (agent_run_id);
 同じ理由で寝かせたのと同じ扱いで**（8.2.2）、前進のみのマイグレーション（5.3）では使わない表を
 落とすより寝かせるほうが安い。
 
-**手順27 で `pb_get_context` を実装したが、書き手は置かなかった**。
+**`pb_get_context` は `context_pack_log` を書かない。**
 **結び先が無いためである**——`agent_run` は `pb_submit_result` のときにしか作られないので
 （8.2.4）、パックを返す時点では **`agent_run_id` が必ず `NULL` になる。** `Requirements.md`
 10.4.4 の効果計測は **`agent_report.status` との突き合わせ**が本体であり、**結べない行を
@@ -2780,9 +2760,9 @@ ON CONFLICT DO NOTHING;
 
 ## 8.3 知識還流（Phase 3）
 
-**本節は Phase 2 から Phase 3 へ送った**。知識はまず **8.1 の文書として運用し、押し付けたい粒度が実測で見えてから**エンティティに切り出す（`Requirements.md` 10.6.2 の末尾）。先に器を作ると、要らなかったときに戻せない。
+**本節は Phase 3 で作る。** 知識はまず **8.1 の文書として運用し、押し付けたい粒度が実測で見えてから**エンティティに切り出す（`Requirements.md` 10.6.2 の末尾）。先に器を作ると、要らなかったときに戻せない。
 
-**承認キュー（`proposal`）も同時に送っている。** 承認の対象だった `knowledge` と文書差分の両方が Phase 2 から外れると、**Phase 2 に残る承認対象がサブタスク提案だけになり、画面を作る理由が薄い**（`Requirements.md` 10.12）。Phase 2 では文書の編集を権限（`doc.edit`）で直接行う。
+**承認キュー（`proposal`）も Phase 3 である。** 承認の対象になる `knowledge` と文書差分の両方が Phase 2 に無いと、**Phase 2 に残る承認対象がサブタスク提案だけになり、画面を作る理由が薄い**（`Requirements.md` 10.12）。Phase 2 では文書の編集を権限（`doc.edit`）で直接行う。
 
 ### 8.3.1 `knowledge` — プロジェクトメモリ
 
@@ -3070,7 +3050,7 @@ goose が作るもので、行として運ぶと**履歴と実際のスキーマ
 
 **マイグレーションは表以外も作る。** 0001 は `set_updated_at()` という関数を作っており、
 **表を落としても関数は残る。** 残ったまま④を走らせると
-`function "set_updated_at" already exists` で止まる（pb-147 で実機を見て分かった）。
+`function "set_updated_at" already exists` で止まる。
 
 **`public` にある、拡張が持っていないものを全て落とす**——表・ビュー・順序・関数・型。
 **拡張が持つものは落とさない**（`pg_depend` の `deptype = 'e'` で除く）。`citext` や
@@ -3095,7 +3075,7 @@ EXISTS` で作られるので、残っていて構わない**（④が何度走�
 
 ##### ⑥ で外部キーを遅延させる
 
-**「整合した行の集合なら、どの順で入れても通る」は成り立たない**（pb-147 で実機を見て分かった）。
+**「整合した行の集合なら、どの順で入れても通る」は成り立たない。**
 **外部キーは行ごとに、その場で検査される。** `ticket.parent_id` のような自己参照では、
 **子を親より先に入れた時点で落ちる。**
 
@@ -3144,8 +3124,7 @@ EXISTS` で作られるので、残っていて構わない**（④が何度走�
 **3.4 の「実行時の SQL インジェクションが成立してもテーブルを落とせない」が成り立たなくなる。**
 昇格の口を常時開けるより、**操作のたびに人が資格情報を出すほうが、開いている時間が短い。**
 
-**書き出しには要らない。** `pb_app` は全表を `SELECT` できる（3.4 の `ALTER DEFAULT PRIVILEGES`。
-pb-144 の dev で確かめた）。
+**書き出しには要らない。** `pb_app` は全表を `SELECT` できる（3.4 の `ALTER DEFAULT PRIVILEGES`）。
 
 #### goose は全配置に同梱済みである
 
@@ -3161,7 +3140,7 @@ pb-144 の dev で確かめた）。
 `/goose` を起こす案は採らない**——配置ごとに在処が違い、distroless に「外のコマンドを起こす」
 前提を作ることになる。
 
-**これに伴って `database/sql` が入る**（pb-147 で判明）。**goose の API は
+**これに伴って `database/sql` が入る。goose の API は
 `*sql.DB` しか取らない**ので、`database/sql` と `pgx/v5/stdlib` を避けられない。
 
 **入るのは、マイグレーションを走らせる箇所だけである。** 書庫の読み書きも、アプリのデータの
@@ -3203,7 +3182,7 @@ PB は `pb_app` で繋いでいる。**手順は `deploy/prod/MANUAL.md` にあ�
 | スロークエリ | `log_min_duration_statement = 200ms` |
 | 接続状況 | `pg_stat_activity`（`application_name = 'pb'` で識別）。**セッション数・DB の大きさ・表ごとの件数は画面でも見られる**（アプリケーション設定の DB タブ。`GuiDesign.md` 5.12.2） |
 | 統計 | `pg_stat_statements` を Phase 2 で有効化 |
-| autovacuum | **既定のまま**（pb-96 で確かめた）。stg で `ticket` などに自動の VACUUM / ANALYZE が走っている。追記だけの `activity` / `audit_log` も、PostgreSQL 13 以降の `autovacuum_vacuum_insert_scale_factor`（既定 0.2）で拾われる。**設定を見直すきっかけは、9.3 の保持期間ポリシーを入れて大量の削除が起きるようになったとき**である（削除は不要行を一度に作る） |
+| autovacuum | **既定のまま**。`ticket` などに自動の VACUUM / ANALYZE が走ることを確かめてある。追記だけの `activity` / `audit_log` も、PostgreSQL 13 以降の `autovacuum_vacuum_insert_scale_factor`（既定 0.2）で拾われる。**設定を見直すきっかけは、9.3 の保持期間ポリシーを入れて大量の削除が起きるようになったとき**である（削除は不要行を一度に作る） |
 
 ## 9.3 データ量の見積り
 
@@ -3214,7 +3193,7 @@ PB は `pb_app` で繋いでいる。**手順は `deploy/prod/MANUAL.md` にあ�
 | `activity` | 数十万（フィールド単位で記録するため最多） |
 | `audit_log` | 数万 |
 
-**参照する側の列にインデックスを置いていない外部キーが31本ある**（pb-96 で数えた。多くは `created_by` / `updated_by` / `actor_id` のように `actor` を指す列）。**使われるのは、参照される行を消すときの存在確認と、エージェントを消すときの付け替え（`me_agents.go`）だけ**で、日常の一覧や検索はこれらの列で絞らない。dev の合成データ（`activity` 30万件・`comment` 10万件）で、参照先を消すときの確認が 30ms、付け替え前の件数が 13ms だったので、足していない。**足すきっかけは、エージェントやユーザーの削除が日常の操作になったとき**である。
+**参照する側の列にインデックスを置いていない外部キーが31本ある**（多くは `created_by` / `updated_by` / `actor_id` のように `actor` を指す列）。**使われるのは、参照される行を消すときの存在確認と、エージェントを消すときの付け替え（`me_agents.go`）だけ**で、日常の一覧や検索はこれらの列で絞らない。dev の合成データ（`activity` 30万件・`comment` 10万件）で、参照先を消すときの確認が 30ms、付け替え前の件数が 13ms だったので、足していない。**足すきっかけは、エージェントやユーザーの削除が日常の操作になったとき**である。
 
 `activity` の肥大が最初に問題化する見込み。**Phase 2 で保持期間ポリシー（例：2年経過分をアーカイブテーブルへ移動）を検討する。** パーティショニング（`occurred_at` によるレンジ分割）は、その時点で必要なら導入する。
 
@@ -3228,7 +3207,7 @@ PB は `pb_app` で繋いでいる。**手順は `deploy/prod/MANUAL.md` にあ�
 - `sort_key`（LexoRank）の実装方式と再採番が必要になる境界条件。再採番が起きたことは `ApiDesign.md` 9.4 の `rebalanced` で呼び出し側へ伝える
 - **タグを軸（`tag_group`）へ拡張するかの判断時期**（6.10）。フラットなタグは「1チケットが複数タグを持つ」ため、タグでグループ化すると複数のセクションに重複表示される。「領域」「工程」のような軸を導入して軸ごとに単一選択とすれば重複は消えるが、必要性はバックログを使ってみるまで分からない。**判断はバックログを実運用に載せてから**行う
 - ワークフローの `definition`（jsonb 原本）と正規化テーブルの同期方法。どちらを正とするか
-- 日本語検索を `pg_trgm` から `pg_bigm` へ移行する判断基準（データ量・検索頻度・精度の不満）。**pb-143 で `LC_CTYPE=C.UTF-8` と、語の長さによる問い合わせの切り替えを入れた**（4.5）。残るのは2文字の語で、**2文字の語の検索が遅いと実際に言われたとき**に判断する
+- 日本語検索を `pg_trgm` から `pg_bigm` へ移行する判断基準（データ量・検索頻度・精度の不満）。**`LC_CTYPE=C.UTF-8` と、語の長さによる問い合わせの切り替えは入れてある**（4.5）。残るのは2文字の語で、**2文字の語の検索が遅いと実際に言われたとき**に判断する
 - Phase 2 でエージェントが並行書き込みする際のトランザクション分離レベル（既定の Read Committed で足りるか、`task_lease` 取得時に `SELECT FOR UPDATE` が必要か）
 - **リポジトリを `project.settings`（jsonb）に置いた**（6.4）。リポジトリ単位のトークン発行や横断検索（`Requirements.md` 10.9）が要件になったら `project_repository` テーブルへ移す
 - **`kind='system'` の actor に一意なキー列が無い**（6.2）。ユーザー削除時のコメント付け替え先「削除されたユーザー」を `display_name` で引いている。**システムアクターが2種類目になった時点で壊れる。** `agent` テーブル（8.2）を設計するときに、システムアクターの識別子も決める
