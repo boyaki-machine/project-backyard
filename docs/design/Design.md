@@ -471,7 +471,7 @@ out/
 | 決めたこと | 理由 |
 |---|---|
 | **nonroot（uid 65532）で動かし、秘密ファイルはディレクトリ 700・ファイル 644 で置く** | コンテナの利用者に読ませるには、ファイルの権限で開けるしかない——**compose は secrets の `uid`・`mode` を無視する**（compose v5.3.1 で確認）。**700 のディレクトリごと渡すと 644 でも読めない**ので、ファイルを1つずつ渡す。**mac の共有パスは所有者が書き換わって見えるので、Linux の権限は VM の中で確かめる** |
-| **コンテナの healthcheck を持たない**（同） | distroless に `/healthcheck` を叩くコマンドが無く、叩き役（`pb healthcheck`）も足さない。健全かは外から見る。再検討の条件は `history/decisions.md`「コンテナイメージと docker／compose の一式」 |
+| **コンテナの healthcheck を持たない**（同） | distroless に `/healthcheck` を叩くコマンドが無く、叩き役（`pb healthcheck`）も足さない。健全かは外から見る。再検討の条件は、**compose に「app が健全になってから」を待つサービスを足すとき** |
 | **tar は buildx の `type=docker`** | `docker load` のほか nerdctl や podman も読める。取り込める相手の広さで選ぶ |
 | **`pb_owner` のパスワードは passfile で渡す** | native と揃える。compose では秘密の1つとして渡し、`PGPASSFILE` にその位置を入れる |
 | **`.dockerignore` は送るものを名指しで許す**（`VERSION`・`client/`・`server/`） | 除く形だと、あとから増えた秘密（`deploy/*/secrets/` など）を送り漏らしうる |
