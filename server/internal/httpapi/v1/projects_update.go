@@ -260,8 +260,8 @@ func buildUpdateProjectParams(
 
 	if req.Settings != nil {
 		// settings は jsonb をそのまま入れる（5.4 も列の内容をそのまま返す）。
-		// 中身の構造は Phase 1 では定義されていない（5.4 の例にある
-		// max_concurrent_agents は Phase 2）。**JSON オブジェクトであることだけ**
+		// 中身の構造は定義していない（5.4 の例にある max_concurrent_agents は
+		// 未実装）。**JSON オブジェクトであることだけ**
 		// を確かめる。配列や数値を入れると、後から項目を足せなくなる。
 		var probe map[string]any
 		if err := json.Unmarshal(req.Settings, &probe); err != nil {

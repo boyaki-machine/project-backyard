@@ -25,8 +25,7 @@ func ownerURL(t *testing.T) string {
 // scratchDB は使い捨ての DB を作り、その pb_owner 接続文字列を返す。
 //
 // **取り込みは開発用の DB を壊す。** 表を落として作り直すので、dev をそのまま
-// 相手にすると、途中で落ちたときに開発が止まる（pb-147 で実際に起きた）。
-// **#147 の完了の見分け方も「別の DB の PB へ取り込む」と言っている。**
+// 相手にすると、途中で落ちたときに開発が止まる。
 //
 // 後始末は t.Cleanup で行う（Testing.md 7「状態を変える検証とあとしまつ」）。
 func scratchDB(t *testing.T, ctx context.Context) string {

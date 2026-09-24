@@ -22,7 +22,7 @@ import (
 // actorView は応答の actor 部分（ApiDesign.md 3.1）。
 //
 // email / system_role / locale / timezone をポインタにしているのは、
-// エージェント（Phase 2）が app_user の行を持たないためである。
+// エージェントが app_user の行を持たないためである。
 // 「kind によって意味を持たないフィールドは null を返し、フィールド自体を
 // 省略しない」（ApiDesign.md 6.1）に従う。
 type actorView struct {

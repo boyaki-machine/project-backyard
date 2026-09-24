@@ -21,7 +21,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
 )
 
-// パスキー（ApiDesign.md 3.5 / 3.6 / 4.7 / 6.10）を**実際のDBに対して**通す（pb-104）。
+// パスキー（ApiDesign.md 3.5 / 3.6 / 4.7 / 6.10）を**実際のDBに対して**通す。
 //
 // フェイクでは確かめられないものがここにある。
 //

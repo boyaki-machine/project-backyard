@@ -7,11 +7,11 @@
 //
 // **人とエージェントが読み書きする一次資料である**（Requirements.md 6.5 / 10章）。
 // kind は情報の類型（decision / discussion / artifact / caveat / reference /
-// progress）で、Phase 3 の LLM 分類・要約がこの列を土台にする。
+// progress）で、LLM による分類・要約（構想）がこの列を土台にする。
 //
 // **チケットの子資源で唯一 2.6 のページネーションと 2.7 の ETag を持つ**（9.8）。
 // DoD・リンク・外部参照は1チケットあたり数件に収まるが、コメントは議論の量だけ
-// 増える。ETag は Phase 2 のエージェントが「新しいコメントが付いたか」を安く
+// 増える。ETag はエージェントが「新しいコメントが付いたか」を安く
 // 見る口になる。
 //
 // **削除は論理削除である**（DbDesign.md 4.6 / 6.7）。items に残し body_md を
@@ -179,7 +179,7 @@ func (h *handler) listTicketComments(w http.ResponseWriter, r *http.Request) {
 		total, lastUpdated = sum.Total, sum.LastUpdatedAt
 	}
 
-	// 差分取得（2.7 / 9.8）。Phase 1 では If-None-Match を解釈せずヘッダだけ出す
+	// 差分取得（2.7 / 9.8）。If-None-Match は解釈せずヘッダだけ出す
 	// （9.2.5 と同じ）。**論理削除も updated_at を動かす**ので、削除が 304 に
 	// 埋もれることはない（DbDesign.md 6.7 の trg_comment_updated）。
 	w.Header().Set("ETag", commentsETag(page, total, lastUpdated))

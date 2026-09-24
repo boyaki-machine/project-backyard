@@ -42,7 +42,7 @@ func TestTooLongCountsRunesNotBytes(t *testing.T) {
 	}
 }
 
-// trigram を取り出せるかは「語の文字が3つ以上続くか」と DB の LC_CTYPE で決まる（pb-143）。
+// trigram を取り出せるかは「語の文字が3つ以上続くか」と DB の LC_CTYPE で決まる。
 //
 // **C の DB では日本語が語の文字にならない**——show_trgm('ログイン') は空である。
 // 記号は区切りになるので、pb-66 は pb と 66 に分かれて取り出せない。

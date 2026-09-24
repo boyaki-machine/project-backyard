@@ -24,8 +24,8 @@ type healthResponse struct {
 //
 // DBの疎通を見ないのは、DB断がプロセスの再起動では復旧しないためである。
 // liveness に含めると不要な再起動ループを招く（Design.md 10.2）。
-// **showVersion は関数で受ける。** pb-2 でこの設定が画面から変えられるように
-// なったため、組み立て時に bool を畳み込むと変更が効かない（Design.md 10.3 の第2層）。
+// **showVersion は関数で受ける。** この設定は画面から変えられるので、
+// 組み立て時に bool を畳み込むと変更が効かない（Design.md 10.3 の第2層）。
 func health(version string, showVersion func() bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body := healthResponse{Status: "OK"}

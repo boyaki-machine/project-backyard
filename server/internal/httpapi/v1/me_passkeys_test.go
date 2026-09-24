@@ -16,7 +16,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
-// パスキーの管理（ApiDesign.md 4.7。pb-104）のハンドラ単体テスト。
+// パスキーの管理（ApiDesign.md 4.7）のハンドラ単体テスト。
 //
 // 認証はミドルウェアの責務なので通さない（me_mfa_test.go と同じ）。
 // **登録の応答はソフトウェアの認証器で作り、go-webauthn の検証を本当に通す。**

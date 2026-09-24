@@ -125,7 +125,7 @@ type FindMyLocalCredentialRow struct {
 // FindMyLocalCredential は POST /me/password が現在のパスワードを検証するために
 // 資格情報を引く。
 //
-// **local プロバイダに限る。** OIDC/SAML のみのユーザー（Phase 3）は行が
+// **local プロバイダに限る。** OIDC/SAML のみのユーザー（構想）は行が
 // 返らず、呼び出し側が 409 conflict に倒す（ApiDesign.md 4.3）。
 //
 // **結合条件は FindLocalLoginByEmail と揃える**（i.subject = u.email）。
@@ -168,7 +168,7 @@ type ListMyAPITokensRow struct {
 // ── アクセストークン（ApiDesign.md 4.4）──────────────────────────────
 //
 // **いずれも token_type = 'api' に限る。** ブラウザのセッション
-// （token_type='session'）とエージェント用（'agent'、Phase 2）を混ぜない。
+// （token_type='session'）とエージェント用（'agent'）を混ぜない。
 // 本人が自分のセッションを見る・切る画面を持たないと決めており
 // （GuiDesign.md 5.8）、混ぜると「一覧に出ているのに失効させられない行」が
 // 生まれる。DELETE の対象からも外れるので、現在のセッションを /me/tokens 経由で

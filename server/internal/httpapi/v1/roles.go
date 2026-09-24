@@ -4,7 +4,7 @@
 //	GET /api/v1/permissions  7.2
 //
 // どちらも読み取り専用で、返すのは DbDesign.md 7.2 / 7.3 のシードそのもの
-// である。カスタムロールの作成・権限の編集は Phase 3（7.3）。
+// である。カスタムロールの作成・権限の編集は構想である（7.3）。
 //
 // **監査ログには残さない。** 参照だけの操作であり、ApiDesign.md 2.10 が
 // 対象と定める「認証・権限変更・データ変更」のいずれでもない。
@@ -125,13 +125,12 @@ func (h *handler) listRoles(w http.ResponseWriter, r *http.Request) {
 
 // listPermissions は GET /api/v1/permissions を処理する（ApiDesign.md 7.2）。
 //
-// **必要権限は無い**（認証済みであればよい。2026-09-02 に user.manage から変更）。
+// **必要権限は無い**（認証済みであればよい。user.manage を求めない）。
 // 消費者が2つある——GuiDesign.md 5.6.3 の権限マトリクスと、5.8.2 の
 // エージェント用トークンの発行結果である。**後者の必要権限は「本人」**なので、
 // user.manage を要求したままだと description を引けない。
 //
-// **description を画面へ焼き込む案は退けた。** 手順24a が「旧語彙で発行すると
-// 実効権限が0件になる」という形で、写しが腐る失敗を踏んだばかりである。
+// **description を画面へ焼き込まない。** 写しは権限を足すたびに腐る。
 func (h *handler) listPermissions(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.q.ListPermissions(r.Context())
 	if err != nil {

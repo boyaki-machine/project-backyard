@@ -47,7 +47,7 @@ const copied = ref<Record<string, CopyState>>({})
 const file = computed(() => setup.value?.files?.[0] ?? null)
 
 /**
- * Claude Desktop だけ、置き場も渡し方も他と違う（pb-58）。
+ * Claude Desktop だけ、置き場も渡し方も他と違う。
  *
  * **画面に種別の対応表は持たない**という 5.8.2 の作法は表示名の話であり、
  * ここで見ているのは**手順そのものが違う**という事実である。他の種別は
@@ -155,7 +155,7 @@ function preview(content: string): string {
           <a class="secondary download" :href="zipHref" download>⬇ zip</a>
         </div>
 
-        <!-- **Desktop は作業フォルダを持たない**（pb-58）。設定はアプリのメニューから
+        <!-- **Desktop は作業フォルダを持たない**。設定はアプリのメニューから
              開き、履歴管理とは関係しない。同じ文言を出すと嘘になる -->
         <template v-if="isDesktop">
           <p class="hint">

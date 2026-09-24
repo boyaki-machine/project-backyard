@@ -69,7 +69,7 @@
   --pb-space-1: 4px;  --pb-space-2:  8px; --pb-space-3: 12px;
   --pb-space-4: 16px; --pb-space-6: 24px;
 
-  /* ── 等幅（コード・指紋・PEM。pb-102）───────────────────── */
+  /* ── 等幅（コード・指紋・PEM）───────────────────── */
   --pb-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Noto Sans Mono', monospace;
 
   /* ── 角丸・影 ───────────────────────────────────────── */

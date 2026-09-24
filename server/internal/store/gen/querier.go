@@ -146,8 +146,6 @@ type Querier interface {
 	//
 	// comment.author_id は NOT NULL かつ ON DELETE RESTRICT である。**DBが
 	// 「システムアクターへ付け替えてからでないと消せない」という順序を強制する。**
-	// Phase 1 は comment を作る経路が無い（チケットAPIは手順16）ため常に0件だが、
-	// 実装は先に通しておく。
 	//
 	CountCommentsByAuthor(ctx context.Context, authorID string) (int64, error)
 	// CountConfirmedMfaCredentials は上限（5件）とログイン時の分岐に使う。
@@ -165,7 +163,7 @@ type Querier interface {
 	// 実行すると、同時に2本 POST されたときに上限を超える。
 	//
 	CountMyAPITokens(ctx context.Context, actorID string) (int64, error)
-	// ── 親子の連動（ApiDesign.md 9.6 の検証7 と「子が動いたら親を進行中に」。pb-72）──
+	// ── 親子の連動（ApiDesign.md 9.6 の検証7 と「子が動いたら親を進行中に」）──
 	// CountOpenChildren は検証7 の材料（9.6）。**直下の子だけを数える。**
 	//
 	// 孫まで数えないのは、同じ規則が子にも掛かるためである——孫が未完了なら子も
@@ -215,21 +213,21 @@ type Querier interface {
 	CreateAgentReport(ctx context.Context, arg CreateAgentReportParams) error
 	// エージェントの完了レポート（DbDesign.md 8.2.4、ApiDesign.md 9.15）。手順26c。
 	//
-	// **Phase 2 での書き手は pb_submit_result ひとつである**（DbDesign.md 8.2.4）。
+	// **書き手は pb_submit_result ひとつである**（DbDesign.md 8.2.4）。
 	// 1回の提出が agent_run 1行・agent_report 1行・完了レポートのコメント1件を
 	// 同じトランザクションで作る。
 	//
-	// **読み取りのクエリを置かない。** Phase 2 で人が読むのは完了レポートのコメント
+	// **読み取りのクエリを置かない。** 人が読むのは完了レポートのコメント
 	// であり（GuiDesign.md 5.5）、agent_report の行そのものを読む面が無い（9.15 が
 	// GET .../reports を置かないと決めた）。**要るようになってから足す。**
 	// CreateAgentRun は1回の実行記録を作る。
 	//
-	// **Phase 2 で status に入るのは completed だけである**（DbDesign.md 8.2.4）。
+	// **status に入るのは completed だけである**（DbDesign.md 8.2.4）。
 	// 開始を告げる口が無いので running は作られず、failed / abandoned は「レポートを
 	// 出さずに終わった run」で観測する口が無い。
 	//
 	// **workflow_version は渡さない**（NULL のまま）。workflow に版の列が無く
-	// （DbDesign.md 6.5）、陳腐化検出は Phase 3 である。
+	// （DbDesign.md 6.5）、陳腐化検出は構想である。
 	//
 	// **started_at はレポートの cost.wall_clock_min から逆算した値が入る。**
 	// 無ければ呼び出し側が ended_at と同じ値を渡す（DbDesign.md 8.2.4）。
@@ -256,7 +254,6 @@ type Querier interface {
 	// 「既定で作られたのか意図して選ばれたのか」が行から読めなくなるためである。
 	//
 	// **origin は呼び出し元の actor.kind から決める**（human / agent）。
-	// Phase 1 にエージェントは実在しないので常に 'human' になる。
 	// **in_reply_to は手順18a で足した**（9.8 の返信）。9.6 の遷移コメントは返信を
 	// 持たないので、あちらは NULL を渡す——列を増やすより、呼び出し側が「返信では
 	// ない」を明示するほうが、後から読んだときに意図が残る。
@@ -292,7 +289,7 @@ type Querier interface {
 	//
 	// created_at を返すのは、201 の応答に DB の値をそのまま載せるためである。
 	CreatePasskey(ctx context.Context, arg CreatePasskeyParams) (pgtype.Timestamptz, error)
-	// 未確認の設定変更のクエリ（DbDesign.md 6.17、Design.md 10.3）。pb-97。
+	// 未確認の設定変更のクエリ（DbDesign.md 6.17、Design.md 10.3）。
 	//
 	// **行は0か1つである。** 未確認が残っている間は次の危険な変更を受け付けない
 	// （ApiDesign.md 11.2 が 409 を返す）ので、複数行を前提にした操作を持たない。
@@ -311,14 +308,14 @@ type Querier interface {
 	// CreateSystemActor はシステムアクターを1件作る。
 	//
 	// **シードで先に置かず、最初に必要になった削除で作る**（手順13a の判断）。
-	// Phase 1 に comment を作る経路が無く、置いても一度も参照されないため。
+	// コメントを持たない環境では、置いても一度も参照されないため。
 	//
 	CreateSystemActor(ctx context.Context, arg CreateSystemActorParams) error
 	// 1件を作る。**指紋の一意制約に当たると誤りが返る**ので、
 	// 呼び出し側が 409 へ写す（ApiDesign.md 11.5）。
 	CreateTLSCertificate(ctx context.Context, arg CreateTLSCertificateParams) (CreateTLSCertificateRow, error)
 	CreateTag(ctx context.Context, arg CreateTagParams) error
-	// **sprint_id を受け取らない**（ApiDesign.md 9.3。pb-6）。作られたチケットは
+	// **sprint_id を受け取らない**（ApiDesign.md 9.3）。作られたチケットは
 	// 必ずスプリント未所属で始まり、次にスプリントを開始したときに入る。
 	CreateTicket(ctx context.Context, arg CreateTicketParams) error
 	CreateTicketLink(ctx context.Context, arg CreateTicketLinkParams) error
@@ -333,7 +330,7 @@ type Querier interface {
 	CreateWebauthnChallenge(ctx context.Context, arg CreateWebauthnChallengeParams) error
 	CreateWorkflowStatus(ctx context.Context, arg CreateWorkflowStatusParams) error
 	CreateWorkflowTransition(ctx context.Context, arg CreateWorkflowTransitionParams) error
-	// CurrentDatabaseCtype は接続先 DB の LC_CTYPE を返す（DbDesign.md 3.1 / 4.5。pb-143）。
+	// CurrentDatabaseCtype は接続先 DB の LC_CTYPE を返す（DbDesign.md 3.1 / 4.5）。
 	//
 	// **pg_trgm が日本語から trigram を取り出せるかは、DB を作ったときの LC_CTYPE で決まる。**
 	// C では英数字しか語の文字として数えない。検索の切り替えとサーバ起動時の警告が読む。
@@ -486,15 +483,15 @@ type Querier interface {
 	//
 	// **display_name で引いている。** kind='system' のアクターに一意なキー列が
 	// 無いためである（DbDesign.md 6.2 の actor には key に相当する列がない）。
-	// Phase 1 でシステムアクターはこの1件しか作られないので成り立つが、
-	// **Phase 2 でシステムアクターが増えるなら識別子を決める必要がある**
+	// システムアクターはこの1件しか作られないので成り立つが、
+	// **システムアクターが増えるなら識別子を決める必要がある**
 	// （DbDesign.md 10章「未解決の検討事項」）。
 	//
 	FindDeletedUserActor(ctx context.Context, displayName string) (string, error)
 	// ── パスワードリセットとセッション失効（ApiDesign.md 6.6 / 6.7）──
 	// FindLocalCredentialByActor はリセット対象の資格情報を引く。
 	//
-	// 行が無い＝local_credential を持たない（IdP のみ、Phase 3）で、
+	// 行が無い＝local_credential を持たない（IdP のみ。構想）で、
 	// 6.6 はこれを 409 conflict と定める。
 	//
 	FindLocalCredentialByActor(ctx context.Context, userID string) (string, error)
@@ -542,7 +539,7 @@ type Querier interface {
 	// FindMyLocalCredential は POST /me/password が現在のパスワードを検証するために
 	// 資格情報を引く。
 	//
-	// **local プロバイダに限る。** OIDC/SAML のみのユーザー（Phase 3）は行が
+	// **local プロバイダに限る。** OIDC/SAML のみのユーザー（構想）は行が
 	// 返らず、呼び出し側が 409 conflict に倒す（ApiDesign.md 4.3）。
 	//
 	// **結合条件は FindLocalLoginByEmail と揃える**（i.subject = u.email）。
@@ -623,7 +620,7 @@ type Querier interface {
 	// 空の items[] を返す——どちらも「行ける先が無い」という同じ事実を表す。
 	FindProjectWorkflowID(ctx context.Context, projectID string) (pgtype.Text, error)
 	// FindTicketIDBySeq は parent_seq（9.3）の解決に使う。**同一プロジェクトに
-	// 限る**——親もリンク先も同一プロジェクト内に限るのが Phase 1 の前提である（9.1）。
+	// 限る**——親もリンク先も同一プロジェクト内に限る（9.1）。
 	FindTicketIDBySeq(ctx context.Context, arg FindTicketIDBySeqParams) (string, error)
 	// FindWebauthnChallenge は clientDataJSON の challenge で挑戦を引く。
 	//
@@ -639,13 +636,13 @@ type Querier interface {
 	// ここに依存しないが、あとから振り返る材料になる。
 	FinishSprint(ctx context.Context, arg FinishSprintParams) (int64, error)
 	// ─────────────────────────────────────────────────────────────
-	// スプリントの運用（開始・終了）。ApiDesign.md 9.12.1 / 9.12.2。pb-6。
+	// スプリントの運用（開始・終了）。ApiDesign.md 9.12.1 / 9.12.2。
 	//
 	// **定義（上の CRUD）と運用を分ける。** 上はプロジェクト設定のスプリントタブ
 	// （GuiDesign.md 5.9.5）が使い、ここはバックログのオンステージ段（同 5.4）が使う。
 	// ─────────────────────────────────────────────────────────────
-	// 進行中のスプリントは同時に1本だけである（ApiDesign.md 9.12.1。利用者の判断、
-	// 2026-09-08）。開始の前にこれを引き、在れば 409 active_sprint_exists にする。
+	// 進行中のスプリントは同時に1本だけである（ApiDesign.md 9.12.1）。
+	// 開始の前にこれを引き、在れば 409 active_sprint_exists にする。
 	//
 	// **LIMIT 1 を置くのは保険である。** 0028 より前に作られたデータや、9.12 の
 	// PATCH で status を直接 active にした行が複数あると2件返りうる。:one は
@@ -662,7 +659,7 @@ type Querier interface {
 	// 保存しても GET /me が返さなければ、別の端末で同じ見た目にならない**——
 	// 8.11 が app_user と localStorage の両方に保存すると定めた目的がそれである。
 	//
-	// **すべて LEFT JOIN にする。** エージェント（Phase 2）は app_user を持たず、
+	// **すべて LEFT JOIN にする。** エージェントは app_user を持たず、
 	// 将来の OIDC 専用ユーザーは local_credential を持たない。行が返らないことと
 	// 「そのアクターが存在しない」ことを取り違えないようにする。
 	//
@@ -674,7 +671,7 @@ type Querier interface {
 	// その列は app_user にしかない。app_user の行を持たないアクター
 	// （エージェント・システム）を 200 で返すと、PATCH（6.4）の楽観ロックが
 	// 成立しないものを画面に開かせることになる。エージェントの詳細は
-	// agent テーブル（DbDesign.md 8.1）ができる Phase 2 で列構成ごと設計する。
+	// 未実装で、列構成ごと設計する（DbDesign.md 8.2.1）。
 	//
 	// したがって app_user は LEFT ではなく INNER JOIN であり、
 	// **行が返らない＝404** となる（ApiDesign.md 1.2-5）。
@@ -695,14 +692,14 @@ type Querier interface {
 	// 呼び出し側は pgx.ErrNoRows を「エージェントではない」として扱う。
 	//
 	GetAgentRuntimeInfo(ctx context.Context, actorID string) (GetAgentRuntimeInfoRow, error)
-	// 秘密の暗号鍵のクエリ（DbDesign.md 6.16、Design.md 6.6.1）。pb-3。
+	// 秘密の暗号鍵のクエリ（DbDesign.md 6.16、Design.md 6.6.1）。
 	//
 	// **PB が初回に生成した鍵を読む／書く。** PB_SECRET_KEY を与えたときは
 	// この表を読まない（環境変数が勝つ）。
 	// 鍵を引く。無ければ行が返らない（初回）。
 	GetAppSecret(ctx context.Context, keyID string) (GetAppSecretRow, error)
 	// 表示上のトップレベルの祖先（自分を含む）を返す（ApiDesign.md 9.6
-	// 「着手したら、オンステージへ上げる」。pb-5）。
+	// 「着手したら、オンステージへ上げる」）。
 	//
 	// **段に置けるのは表示上のトップレベルだけである**（9.4.1）——親を持たないか、
 	// 親がエピックのもの。着手したのが子タスクでも、動かすべきなのは**その子を
@@ -733,7 +730,7 @@ type Querier interface {
 	GetParentForCascade(ctx context.Context, childID string) (GetParentForCascadeRow, error)
 	// 未確認を引く。**画面が残り時間と「誰が変えたか」を出すために使う。**
 	//
-	// **変えた人の表示名も返す**（pb-107）。画面は「あなたが変えました」と
+	// **変えた人の表示名も返す**。画面は「あなたが変えました」と
 	// 「〇〇 が変えました」で文言を分ける——押す前に確かめることが違う。
 	GetPendingSettingChange(ctx context.Context) (GetPendingSettingChangeRow, error)
 	// ── 詳細（ApiDesign.md 5.4。POST /projects の応答も同じ形）───────
@@ -812,7 +809,7 @@ type Querier interface {
 	GetTicketComment(ctx context.Context, arg GetTicketCommentParams) (GetTicketCommentRow, error)
 	// 1件だけ返す形。POST / PATCH の応答（9.9）と、更新前の読み取りに使う。
 	GetTicketDoDItem(ctx context.Context, arg GetTicketDoDItemParams) (GetTicketDoDItemRow, error)
-	// GetTicketEpicAncestor は 9.5.1 の epic（pb-14）を引く——祖先をたどって最初に
+	// GetTicketEpicAncestor は 9.5.1 の epic を引く——祖先をたどって最初に
 	// 見つかるエピック。**自分自身は数えない**（エピックの詳細では、その上のエピック）。
 	// 無ければ 0行で、呼び出し側が null にする。
 	//
@@ -871,8 +868,7 @@ type Querier interface {
 	// 1つだけ消しても他の経路から古い権限で通れてしまう。
 	//
 	// 呼び出し側は ApiDesign.md 6.4 の PATCH /admin/users/:id（system_role の
-	// 変更）と、メンバーシップの操作である。**いずれも手順10 のエンドポイント**
-	// であり、Phase 1 の現時点では呼び出し元がまだ無い。
+	// 変更）と、メンバーシップの操作である。
 	//
 	// 権限を消す操作なので、失敗したら業務処理ごと失敗させること（RecordOrLog
 	// ではなく Record と同じ扱い）。消せなかったまま成功を返すと、降格したはずの
@@ -924,7 +920,7 @@ type Querier interface {
 	// チケットを指されたときに空文字を渡してはならない**——全件が返る。呼び出し側は
 	// 解決に失敗した時点で空の一覧を返す（activity.go）。
 	//
-	// **@entity_id には entity_type = 'ticket' を添える**（pb-96）。9.13.2 の `entity` は
+	// **@entity_id には entity_type = 'ticket' を添える**。9.13.2 の `entity` は
 	// `ticket:<seq>` だけなので意味は変わらないが、添えないと idx_activity_entity
 	// （entity_type, entity_id, occurred_at）が使えず、チケット1件の履歴を引くたびに
 	// プロジェクトの履歴を全部読む。**ID は ::pg_catalog.bpchar で受ける**（DbDesign.md 4.2）。
@@ -941,7 +937,7 @@ type Querier interface {
 	//
 	// **kind = 'system' の actor は除く。** 6.1 が列挙するのは user / agent / all の
 	// 3つで、システムアクター（バッチ等が使う DbDesign.md 6.2 の3種目）は
-	// 利用者が管理する対象ではない。Phase 1 のシードは system アクターを作らないが、
+	// 利用者が管理する対象ではない。シードは system アクターを作らないが、
 	// 将来作られても一覧に紛れ込まないようにここで落とす。
 	//
 	// **project_count は project_member の行数**で、アーカイブ済みプロジェクトも
@@ -957,7 +953,7 @@ type Querier interface {
 	//
 	// **system_role は role.sort_order で並べる**（ApiDesign.md 6.1）。表示名の
 	// 五十音順ではない——シードが意図して序列を持っており（オペレータ 10 →
-	// アドミニストレータ 20。DbDesign.md 7.3）、Phase 3 でカスタムロールが増えたとき
+	// アドミニストレータ 20。DbDesign.md 7.3）、カスタムロール（構想）が増えたとき
 	// 表示名順では意味のない並びになる。**ロールを持たない行（エージェント）は
 	// 昇順・降順とも末尾に置く**（NULLS LAST を両方に明示する。Postgres の既定は
 	// DESC で NULLS FIRST であり、明示しないと先頭へ来る）。
@@ -975,7 +971,7 @@ type Querier interface {
 	// 今後も増える（DbDesign.md 8.2.1.1）ので、写しを置くと必ず腐る。
 	//
 	ListAgentClientKinds(ctx context.Context) ([]ListAgentClientKindsRow, error)
-	// アプリケーション設定に関するクエリ（DbDesign.md 6.14、ApiDesign.md 11章）。pb-2。
+	// アプリケーション設定に関するクエリ（DbDesign.md 6.14、ApiDesign.md 11章）。
 	//
 	// **Design.md 10.3 の第2層の置き場である。** 第1層（接続文字列・待受）は
 	// 環境変数と設定ファイルにしか置けないので、ここには現れない。
@@ -989,7 +985,7 @@ type Querier interface {
 	// 知らないキーを読み飛ばすため（config.OverlayDatabase）。
 	// 起動時に1回、設定の保存ごとに1回しか呼ばれない。
 	ListAppSettings(ctx context.Context) ([]ListAppSettingsRow, error)
-	// 多要素認証のクエリ（DbDesign.md 6.18、Design.md 6.7）。pb-103。
+	// 多要素認証のクエリ（DbDesign.md 6.18、Design.md 6.7）。
 	//
 	// **未確定の行（confirmed_at IS NULL）を、確定済みを引くクエリに混ぜない。**
 	// 認証の要素として数えないためであり、条件はクエリ側に閉じ込めてある——
@@ -1030,7 +1026,7 @@ type Querier interface {
 	ListDocumentTemplates(ctx context.Context, templateKey pgtype.Text) ([]ListDocumentTemplatesRow, error)
 	// プロジェクト文書に関するクエリ（DbDesign.md 8.1、ApiDesign.md 10章）。
 	//
-	// 手順22a で追加。消費者は Docs 画面（GuiDesign.md 5.10）と、Phase 2 後半の
+	// 手順22a で追加。消費者は Docs 画面（GuiDesign.md 5.10）と、
 	// MCP（pb_list_docs / pb_get_doc / pb_put_doc。Design.md 8章）である。
 	//
 	// **path は列ではない。** 文書の位置は parent_id の連なりで表し、ApiDesign.md 10.1 の
@@ -1064,7 +1060,7 @@ type Querier interface {
 	// ── アクセストークン（ApiDesign.md 4.4）──────────────────────────────
 	//
 	// **いずれも token_type = 'api' に限る。** ブラウザのセッション
-	// （token_type='session'）とエージェント用（'agent'、Phase 2）を混ぜない。
+	// （token_type='session'）とエージェント用（'agent'）を混ぜない。
 	// 本人が自分のセッションを見る・切る画面を持たないと決めており
 	// （GuiDesign.md 5.8）、混ぜると「一覧に出ているのに失効させられない行」が
 	// 生まれる。DELETE の対象からも外れるので、現在のセッションを /me/tokens 経由で
@@ -1107,7 +1103,7 @@ type Querier interface {
 	//
 	// **棚に戻ったものを明示的に外す。** 9.12.2 は終了の時点で完了していた根だけを
 	// 降ろすので、**終了したあとに完了した根はオンステージに残ったままになる**
-	// （実データで判明、2026-09-08）。そのまま次を始めると、画面から消えている
+	// そのまま次を始めると、画面から消えている
 	// はずの行が次のスプリントの対象に入り、ticket_count が実態と合わなくなる。
 	// 判定は 9.2.1 の条件1・2 と同じで、根は表示上のトップレベルなので条件3 は
 	// 自動的に満たされる。
@@ -1126,7 +1122,7 @@ type Querier interface {
 	// **同じホスト名で登録したものだけを返す。** RP ID が違うパスキーは、
 	// ブラウザがそもそも同じ認証器として扱わない（Design.md 6.8.3）。
 	ListPasskeyDescriptors(ctx context.Context, arg ListPasskeyDescriptorsParams) ([]ListPasskeyDescriptorsRow, error)
-	// パスキーのクエリ（DbDesign.md 6.19、Design.md 6.8）。pb-104。
+	// パスキーのクエリ（DbDesign.md 6.19、Design.md 6.8）。
 	//
 	// **公開鍵と credential_id は、一覧のクエリで返さない。** 画面に要らず
 	// （ApiDesign.md 4.7.1）、返す口を増やすほど鍵の材料が漏れる経路が増える。
@@ -1134,7 +1130,7 @@ type Querier interface {
 	// ── パスキー ──────────────────────────────────────────────
 	// ListPasskeys は本人のパスキーを返す（ApiDesign.md 4.7.1）。
 	ListPasskeys(ctx context.Context, userID string) ([]ListPasskeysRow, error)
-	// 未確認を全部引く。**起動時に使う**（pb-97 の改訂、2026-09-12）。
+	// 未確認を全部引く。**起動時に使う。**
 	//
 	// **起動時は期限を見ない。** 締め出された人が最初に試すのは再起動であり、
 	// そこで戻さないと**その設定では起動に失敗する場合に永遠に戻らない**
@@ -1238,7 +1234,7 @@ type Querier interface {
 	// **並びは role.sort_order である**（7.1、GuiDesign.md 5.6）。表示名の
 	// 五十音順ではない。シードが意図して序列を持っており（DbDesign.md 7.3、
 	// オペレータ 10 → アドミニストレータ 20 → プロジェクト管理者 30 → …）、
-	// Phase 3 でカスタムロールが増えたときに表示名順では意味のない並びになる。
+	// カスタムロール（構想）が増えたときに表示名順では意味のない並びになる。
 	// 同着のときは key で並べ、応答が呼ぶたびに入れ替わらないようにする。
 	//
 	ListRoles(ctx context.Context, scopeFilter string) ([]Role, error)
@@ -1247,8 +1243,8 @@ type Querier interface {
 	// 手順16a で追加。プロジェクト設定のスプリントタブ（GuiDesign.md 5.9.5）が
 	// 消費者で、手順17 のチケット詳細サイドバーが選択肢として同じ一覧を読む。
 	//
-	// **Phase 1 で開けるのは定義だけ**である。バーンダウン・ベロシティを含む
-	// スプリント管理画面は Phase 2（GuiDesign.md 10章）。
+	// **スプリントの定義を扱う。** 開始・終了は下の 9.12.1 / 9.12.2 のクエリで、
+	// バーンダウン・ベロシティは進捗分析（構想。GuiDesign.md 10章）が持つ。
 	// items[] は start_date 降順（NULL は末尾）、同値は created_at 降順
 	// （ApiDesign.md 9.12）。新しいものが上に来る並びで、5.9.5 の図と一致する。
 	//
@@ -1257,7 +1253,7 @@ type Querier interface {
 	// closed_at は遷移の副作用としてのみ動く（DbDesign.md 6.6）ため、
 	// ワークフローの定義が違うプロジェクトでも意味が変わらない。
 	ListSprintsByProject(ctx context.Context, projectID string) ([]ListSprintsByProjectRow, error)
-	// スプリント中にオンステージへ入った部分木の id を返す（ApiDesign.md 9.12.3。pb-129）。
+	// スプリント中にオンステージへ入った部分木の id を返す（ApiDesign.md 9.12.3）。
 	//
 	// **ticket_id の表示上の根がオンステージに居るときだけ返す**（居なければ0行）。
 	// 根のたどり方は GetDisplayRootForStaging と同じ（親が無いか、親がエピック）。
@@ -1266,7 +1262,7 @@ type Querier interface {
 	//
 	// 返すのは ticket_id を根とする部分木で、エピックを除く。
 	ListSubtreeIDsJoiningSprint(ctx context.Context, arg ListSubtreeIDsJoiningSprintParams) ([]string, error)
-	// TLS 証明書のクエリ（DbDesign.md 6.15、ApiDesign.md 11.4〜11.6）。pb-3。
+	// TLS 証明書のクエリ（DbDesign.md 6.15、ApiDesign.md 11.4〜11.6）。
 	//
 	// **Design.md 10.3 の第3層である。** 秘密鍵は secret_key で暗号化されて入っており、
 	// **復号はアプリ側（internal/tlscert）で行う。** DB は暗号文を運ぶだけである。
@@ -1333,11 +1329,11 @@ type Querier interface {
 	// **すべてのクエリが ticket_id で閉じている**（reference.sql と同じ）。DoD はチケットの
 	// 子資源であり、他チケットの ID を渡されても行が返らないようにするためである。
 	//
-	// **Phase 1 が受け付ける type は manual だけである**（9.9）。表と CHECK は Phase 2 の
-	// 形のまま作ってあり（DbDesign.md 6.11）、絞るのは API の仕事なので SQL には現れない。
+	// **受け付ける type は manual だけである**（9.9）。表と CHECK は他の型も入る
+	// 形で作ってあり（DbDesign.md 6.11）、絞るのは API の仕事なので SQL には現れない。
 	//
-	// **config / evidence / origin は SELECT しない。** Phase 1 の応答に載せないため
-	// （9.9）。列は残っており、Phase 2 で type を開けるときに同じ改訂で足す。
+	// **config / evidence / origin は SELECT しない。** 応答に載せないため
+	// （9.9）。列は残っており、manual 以外の type を開けるときに同じ改訂で足す。
 	//
 	// **satisfied_by は LEFT JOIN で引く。** actor は ON DELETE SET NULL なので、
 	// チェックした人を消した後も行は残る——条件を満たした事実は消えない。
@@ -1400,7 +1396,7 @@ type Querier interface {
 	// チケットに関するクエリ（DbDesign.md 6.6、ApiDesign.md 9.2 / 9.3 / 9.4）。
 	//
 	// 手順16b で追加。消費者はバックログ画面（GuiDesign.md 5.4、手順16c）と、
-	// Phase 2 のカンバン・ガントである。いずれも同じ ListTickets を読む。
+	// 未実装のカンバン・ガントである。いずれも同じ ListTickets を読む。
 	//
 	// **すべてのクエリが project_id で閉じている。** チケットはプロジェクトの資源で
 	// あり、他プロジェクトの ID を渡されても行が返らないようにするためである。到達
@@ -1416,7 +1412,7 @@ type Querier interface {
 	//
 	// **総件数と最終更新を同じクエリの窓関数で返す。** 2.6 の total と 2.7 の ETag の
 	// 材料であり、別クエリにすると WHERE を二重に持つことになる。フィルタが20種類
-	// あるため（pb-66 で検索の条件を7つ足した）、写しが片方だけ古くなる危険が現実的に高い（user.sql の
+	// あるため、写しが片方だけ古くなる危険が現実的に高い（user.sql の
 	// ListAdminUsers / SummarizeAdminUsers は「一字一句そろえる」と注記して2本に
 	// 分けているが、あちらは条件が3つである）。窓関数は WHERE の後・LIMIT の前に
 	// 評価されるので、ページを切っても総件数は絞り込み全体のものになる。
@@ -1431,15 +1427,15 @@ type Querier interface {
 	// 合致しない行が一覧に現れて total と表示件数が食い違う。
 	//
 	// has_children は「プロジェクト内に子がいるか」であって「結果の中に子がいるか」
-	// ではない（利用者の判断、2026-08-23）。結果の中で数えると、親が絞り込みで
+	// ではない。結果の中で数えると、親が絞り込みで
 	// 落ちた瞬間に子の有無まで消える。
 	//
-	// **未完了の行と、その全子孫**（9.2.1 の retired の条件3。pb-5）。
+	// **未完了の行と、その全子孫**（9.2.1 の retired の条件3）。
 	//
 	// ここに入る行は棚に戻さない。「自分が未完了」か「**未完了の祖先を持つ**」の
 	// どちらかだからである。
 	//
-	// **直下の親だけを見る形では足りない**（実データで判明、2026-09-08）。
+	// **直下の親だけを見る形では足りない。**
 	// 親→子→孫で子と孫だけを完了させると、孫の直下の親（子）は完了しているので
 	// 孫が消える。**だが子は、その親が未完了なので残る**——結果として
 	// 「子は見えるのに孫だけ消えた」歯抜けが起きる。**条件3 が防ごうとしていた
@@ -1450,7 +1446,7 @@ type Querier interface {
 	// たどるのは、0026 の再オープン（done → in_progress）が、完了した親の下に
 	// 未完了の子が居る状態を作れるためである。**
 	//
-	// **エピックは祖先に数えない**（実データで判明、2026-09-09）。エピックは
+	// **エピックは祖先に数えない。** エピックは
 	// グルーピング専用で**行として出ない**ので（GuiDesign.md 5.4）、完了しない
 	// まま残っていても歯抜けを作らない。数えてしまうと、**エピック配下の
 	// チケットが永久に棚へ戻らなくなる**——実運用のバックログはたいてい
@@ -1458,23 +1454,23 @@ type Querier interface {
 	//
 	// 起点を「未完了かつエピックでない行」に絞ることで、**表示上のトップレベル
 	// （親が無いか、親がエピック。ApiDesign.md 9.4.1）から下だけを見る**形になる。
-	// staged（9.2.1「オンステージで絞る」。pb-138）。**staged_at を持つ行とその全子孫**で、
+	// staged（9.2.1「オンステージで絞る」）。**staged_at を持つ行とその全子孫**で、
 	// エピックを除く。スプリントの開始（sprint.sql の ListOnstageTicketIDs）と同じ定義である
 	// ——**段を決めるのは親で、子は staged_at が NULL のまま親と一緒に運ばれる**（9.4.1）。
 	//
 	// **棚に戻ったものはここでは外さない。** 下の retired の条件がそのまま効くので、
 	// 既定では外れ、retired=true を一緒に送れば含まれる（条件は種類ごとに独立）。
-	// 一致した子の祖先を、他のフィルタを適用した後で補完する（pb-84）。
+	// 一致した子の祖先を、他のフィルタを適用した後で補完する。
 	// 検索に当たっても他の条件から外れた子を起点にしない。UNION で重複・循環を防ぐ。
 	ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error)
 	// ListUserIdentities は 6.3 の identities[] を引く。
 	//
-	// **配列であることが Phase 3 の IdP 連携をそのまま受け入れる**（ApiDesign.md 6.3、
+	// **配列であることが IdP 連携（構想）をそのまま受け入れる**（ApiDesign.md 6.3、
 	// DbDesign.md 6.2）。OIDC を足しても要素が1つ増えるだけで、応答の形は変わらない。
 	//
 	// password_updated_at は local_credential の列で、ローカル以外のプロバイダでは
-	// NULL になる。**LEFT JOIN にするのはそのため**で、INNER にすると Phase 3 の
-	// OIDC identity が一覧から消える。
+	// NULL になる。**LEFT JOIN にするのはそのため**で、INNER にすると
+	// OIDC の identity が一覧から消える。
 	//
 	// provider_type は auth_provider.type（DbDesign.md 6.2、7.1 のシード）。
 	// 画面が「ローカルパスワード」と出すか IdP 名を出すかをこの値で決める。
@@ -1697,10 +1693,10 @@ type Querier interface {
 	// 呼び出し側がシステムロールを持たないアクターを除いているため、ここへは来ない。
 	//
 	SaveTokenPermissionCache(ctx context.Context, arg SaveTokenPermissionCacheParams) error
-	// SearchBacklogTicketIDs は番号・タイトル・本文・祖先エピック名・タグ名を全件検索する（pb-84 / pb-155）。
+	// SearchBacklogTicketIDs は番号・タイトル・本文・祖先エピック名・タグ名を全件検索する。
 	// 祖先の補完は ListTickets が他のフィルタを適用した後に行う。
 	SearchBacklogTicketIDs(ctx context.Context, arg SearchBacklogTicketIDsParams) ([]string, error)
-	// キーワード検索（ApiDesign.md 9.2.1「検索の条件」。pb-66）。
+	// キーワード検索（ApiDesign.md 9.2.1「検索の条件」）。
 	//
 	// **全文検索の実装は、このファイルと store/search/ に閉じる**（Design.md 4.6、
 	// DbDesign.md 4.5）。日本語検索を pg_trgm から pg_bigm へ替えるとき、変わるのは
@@ -1719,7 +1715,7 @@ type Querier interface {
 	// patterns が空なら全件が返る。呼び出し側は語が無いときに呼ばない。
 	SearchTicketIDs(ctx context.Context, arg SearchTicketIDsParams) ([]string, error)
 	// SearchTicketIDsByTrigram は SearchTicketIDs と**同じ集合**を、pg_trgm の GIN
-	// インデックスを使える形で返す（DbDesign.md 4.5。pb-143）。
+	// インデックスを使える形で返す（DbDesign.md 4.5）。
 	//
 	// **語ごと・列ごとに「当たる ID」を集め、すべての語に当たったものを残す。**
 	// SearchTicketIDs の NOT EXISTS はチケットを1件ずつ読んで ILIKE を当てるので、
@@ -1791,8 +1787,7 @@ type Querier interface {
 	SetTicketWorkingAgent(ctx context.Context, arg SetTicketWorkingAgentParams) error
 	// ticket.sprint_id を「いま属しているスプリント」へ揃える（DbDesign.md 6.9.1）。
 	//
-	// **version を上げない**（利用者の判断の範囲外だが、9.5.2 が sprint_id を
-	// 編集不可にしたことの帰結である）。sprint_id は PATCH で書けない欄なので、
+	// **version を上げない**（9.5.2 が sprint_id を編集不可にしたことの帰結である）。sprint_id は PATCH で書けない欄なので、
 	// 開いている詳細ペインの If-Match が古くなっても**失われる編集が無い**。
 	// 逆に上げると、スプリントを開始するたびに開いている全ペインが 409 になる。
 	// updated_at は trg_ticket_updated が動かすので、一覧の再取得は効く。
@@ -1800,7 +1795,7 @@ type Querier interface {
 	// SoftDeleteComment は論理削除（DbDesign.md 4.6 / 6.7）。
 	//
 	// **body_md は消さない。** 列が NOT NULL であり、応答で null にするのは view の
-	// 仕事である（9.8）。DB に本文を残すのは、誤削除からの復旧手段を Phase 1 で
+	// 仕事である（9.8）。DB に本文を残すのは、誤削除からの復旧手段を
 	// 捨てないためでもある。
 	//
 	// **updated_at はトリガが動かす**（trg_comment_updated）ので、削除も ETag に効く。

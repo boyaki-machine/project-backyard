@@ -69,7 +69,7 @@ func (h *handler) changeMyPassword(w http.ResponseWriter, r *http.Request) {
 	err = h.tx.RunInTx(ctx, func(q gen.Querier) error {
 		cred, err := q.FindMyLocalCredential(ctx, p.ActorID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			// パスワード認証を使っていない（IdP のみ、Phase 3）。6.6 と同じ扱い。
+			// パスワード認証を使っていない（IdP のみ。構想）。6.6 と同じ扱い。
 			return apierr.New(apierr.Conflict).
 				WithMessage("パスワード認証を使っていないアカウントのため、変更できません")
 		} else if err != nil {

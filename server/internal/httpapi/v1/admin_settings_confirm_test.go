@@ -28,7 +28,7 @@ func pendingRow(t *testing.T, previous map[string]*string, expiresIn time.Durati
 	}
 }
 
-// TestUpdateSettingsRecordsPending は締め出されうる設定の保存が未確認を残すことを見る（pb-97）。
+// TestUpdateSettingsRecordsPending は締め出されうる設定の保存が未確認を残すことを見る。
 func TestUpdateSettingsRecordsPending(t *testing.T) {
 	t.Run("tls_enabled を変えると未確認が残る", func(t *testing.T) {
 		r, q, token := settingsRouter(t, config.LiveDefaults())
@@ -152,7 +152,7 @@ func TestConfirmSettings(t *testing.T) {
 	t.Run("bind は実際の待受と一致しないと 409", func(t *testing.T) {
 		// **張り替えに失敗して古い待受のままのことがある**（新しいポートが
 		// 使用中だったなど）。**そこへ届いた確認を受け取ると、繋がらない
-		// 設定を確定してしまう**（pb-99）。
+		// 設定を確定してしまう**。
 		live := config.LiveDefaults()
 		live.Replace(config.OverlayDatabase(live.Base(),
 			[]config.Row{{Key: config.KeyBind, Value: "0.0.0.0:9999"}}))
@@ -210,7 +210,7 @@ func TestConfirmSettings(t *testing.T) {
 	})
 }
 
-// TestSettingsGuardRevertsExpired は期限切れを戻すことを見る（pb-97）。
+// TestSettingsGuardRevertsExpired は期限切れを戻すことを見る。
 func TestSettingsGuardRevertsExpired(t *testing.T) {
 	t.Run("行が無かったものは消して戻す", func(t *testing.T) {
 		q := newFake(t)
@@ -268,7 +268,7 @@ func TestSettingsGuardRevertsExpired(t *testing.T) {
 	})
 
 	t.Run("起動時は期限に関わらず戻す", func(t *testing.T) {
-		// **締め出された人が最初に試すのは再起動である**（改訂、2026-09-12）。
+		// **締め出された人が最初に試すのは再起動である。**
 		// 期限内でも戻さないと、**その設定では起動に失敗する場合に永遠に
 		// 戻らない**——プロセスが上がらないのでタイマも動かない。
 		q := newFake(t)

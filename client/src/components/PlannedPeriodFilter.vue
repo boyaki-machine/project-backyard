@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { uiText } from '../locales/ui'
-/** バックログの予定期間フィルタ（GuiDesign.md 5.4、pb-8）。 */
+/** バックログの予定期間フィルタ（GuiDesign.md 5.4）。 */
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 
 const props = defineProps<{ from: string; to: string }>()

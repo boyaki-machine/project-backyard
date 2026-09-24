@@ -316,7 +316,7 @@ func (h *handler) handleMFAMismatch(
 
 // completeMFALogin は 3.1 の手順6〜8 を行う。
 //
-// **パスワードだけで通ったときと同じ関数を通る**（finishLogin。pb-115）。
+// **パスワードだけで通ったときと同じ関数を通る**（finishLogin）。
 // ここで決めるのは、利用者の属性と監査の detail だけである。
 func (h *handler) completeMFALogin(
 	w http.ResponseWriter, r *http.Request, rec *audit.Recorder,

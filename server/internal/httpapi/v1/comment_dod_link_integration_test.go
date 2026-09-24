@@ -278,13 +278,13 @@ func TestCommentDoDLinkIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("POST は Phase 2 の type を拒む", func(t *testing.T) {
+	t.Run("POST は manual 以外の type を拒む", func(t *testing.T) {
 		rec := postWithCookie(r, dod, session, `{"type":"assertion","body":"pytest が通る"}`)
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("status = %d, want 422（body=%s）", rec.Code, rec.Body.String())
 		}
-		if !strings.Contains(rec.Body.String(), "phase_2_only") {
-			t.Errorf("details[].code に phase_2_only が無い: %s", rec.Body.String())
+		if !strings.Contains(rec.Body.String(), "unsupported_type") {
+			t.Errorf("details[].code に unsupported_type が無い: %s", rec.Body.String())
 		}
 	})
 
@@ -360,7 +360,7 @@ func TestCommentDoDLinkIntegration(t *testing.T) {
 			t.Errorf("ticket = %v, want seq=%d", v["ticket"], otherSeq)
 		}
 		if v["origin"] != "human" {
-			t.Errorf("origin = %v, want human（Phase 1）", v["origin"])
+			t.Errorf("origin = %v, want human", v["origin"])
 		}
 	})
 

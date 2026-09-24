@@ -13,7 +13,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
-// パスキーでのログイン（ApiDesign.md 3.5 / 3.6、Design.md 6.8.2。pb-104）のテスト。
+// パスキーでのログイン（ApiDesign.md 3.5 / 3.6、Design.md 6.8.2）のテスト。
 //
 // **ルータを通して叩く。** ルート定義（認証不要のまま置く・CSRF の対象外）ごと
 // 確かめたいためで、login_mfa_test.go と同じ形である。
@@ -198,7 +198,7 @@ func TestPasskeyLoginOptionsRejectsIPAddress(t *testing.T) {
 
 func TestPasskeyLoginIssuesSession(t *testing.T) {
 	q := newFake(t)
-	// **TOTP を登録していても第2要素を求めない**（Design.md 6.8.2。利用者の判断）
+	// **TOTP を登録していても第2要素を求めない**（Design.md 6.8.2）
 	withConfirmedTOTP(t, q)
 
 	a := newSoftAuthenticator(t, testActorID)

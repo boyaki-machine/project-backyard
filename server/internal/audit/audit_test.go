@@ -185,10 +185,9 @@ func TestRecordRejectsBadResult(t *testing.T) {
 
 func TestAllDocumentedActionsAreAccepted(t *testing.T) {
 	// ApiDesign.md 2.10 が列挙する30件。定数の取りこぼしを検出する。
-	// agent. の3件は Phase 2 で加わった（ApiDesign.md 4.5.6）——agent.register と
-	// agent.update は 0019、agent.delete は手順26a である。
-	// setting.update は pb-2（ApiDesign.md 11.2）。tls.certificate.* は pb-3（11.5 / 11.6）。
-	// mfa.* と login.mfa_failure は pb-103（4.6.6）。passkey.* と login.passkey_failure は pb-104（4.7.5）。
+	// agent. の3件は ApiDesign.md 4.5.6。
+	// setting.update は ApiDesign.md 11.2。tls.certificate.* は 11.5 / 11.6。
+	// mfa.* と login.mfa_failure は 4.6.6。passkey.* と login.passkey_failure は 4.7.5。
 	documented := []Action{
 		"login.success", "login.failure", "logout",
 		"password.change", "password.reset",

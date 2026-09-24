@@ -1,6 +1,6 @@
 // GET /api/v1/projects/{key}/tickets（ApiDesign.md 9.2）。
 //
-// **バックログ画面（GuiDesign.md 5.4）の唯一のデータ源**であり、Phase 2 の
+// **バックログ画面（GuiDesign.md 5.4）の唯一のデータ源**であり、未実装の
 // カンバン・ガントも同じエンドポイントを読む。同一データの別の描き方であって、
 // 別のクエリではない（4.1.1）。
 //
@@ -54,7 +54,7 @@ const (
 	permTicketAssign = "ticket.assign"
 
 	// permTicketEdit / permTicketSelfEdit は 9.5.2 と 9.9 の「どの項目を送ったか
-	// で可否が決まる」判定に使う（0029。pb-75）。
+	// で可否が決まる」判定に使う（0029）。
 	//
 	// **ルート定義は RequireAnyProjectPermission で両方を並べる**ので、
 	// どちらか一方を持っていれば通る。**狭いほうしか持たない呼び出し元に
@@ -74,7 +74,7 @@ const (
 // execution_mode / readiness / readiness_note / scope がそれである
 // （9.5.2「スコープ境界は縛る側が書くものである」）。
 //
-// **type も入る**（利用者の判断、2026-09-09）。種別の切り替えは盤面の見え方を
+// **type も入る**。種別の切り替えは盤面の見え方を
 // 変える——タスクをエピックへ変えると、その行はバックログから消えてフィルタの
 // 選択肢になる（GuiDesign.md 5.4）。
 //
@@ -111,7 +111,7 @@ var ticketSortSpec = SortSpec{
 	Allowed: []string{
 		"sort_key", "seq", "title", "status", "priority",
 		"due_date", "created_at", "updated_at",
-		// closed_at はチケット検索の「完了日」の列（9.2.1。pb-66）
+		// closed_at はチケット検索の「完了日」の列（9.2.1）
 		"closed_at",
 	},
 	DefaultSort:    "sort_key",
@@ -158,10 +158,10 @@ type ticketFilters struct {
 	staleDays        int32
 	parentSeqs       []int32
 
-	// 検索の条件（9.2.1「検索の条件」。pb-66）。
+	// 検索の条件（9.2.1「検索の条件」）。
 	//
 	// keywordTerms は q を語に分けたもの（store/search が作る）。**パターンへの変換と
-	// 問い合わせの形の選択も store/search が行う**（pb-143）。一致の判定は一覧のクエリに
+	// 問い合わせの形の選択も store/search が行う**。一致の判定は一覧のクエリに
 	// 持ち込まず、ID に変えてから渡す（Design.md 4.6 の隔離）。keywordSet は
 	// 「q に語が1つ以上あった」。
 	keywordTerms  []string
@@ -178,11 +178,11 @@ type ticketFilters struct {
 	closedSince   pgtype.Timestamptz
 	closedBefore  pgtype.Timestamptz
 
-	// includeRetired は retired（9.2.1。pb-5 / pb-6）。**既定は false** で、
+	// includeRetired は retired（9.2.1）。**既定は false** で、
 	// スプリントを終えて棚に戻ったものを一覧から外す。
 	includeRetired bool
 
-	// stagedOnly は staged（9.2.1「オンステージで絞る」。pb-138）。**画面は送らない**
+	// stagedOnly は staged（9.2.1「オンステージで絞る」）。**画面は送らない**
 	// ——MCP の pb_list_tasks が、オンステージの行とその配下だけを取るための条件である。
 	stagedOnly bool
 
@@ -288,7 +288,7 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		total, lastUpdated = row.Total, row.LastUpdatedAt
 	}
 
-	// 差分取得（2.7 / 9.2.5）。Phase 1 では If-None-Match を解釈せず
+	// 差分取得（2.7 / 9.2.5）。If-None-Match は解釈せず
 	// ヘッダだけ出す（5.1 / 6.1 と同じ）。
 	w.Header().Set("ETag", ticketsETag(filters.normalized, page, total, lastUpdated))
 
@@ -387,7 +387,7 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 		parts = append(parts, "sprint_none=1")
 	}
 
-	// retired（9.2.1。pb-5 / pb-6）。**棚に戻ったものを出すかどうか**で、
+	// retired（9.2.1）。**棚に戻ったものを出すかどうか**で、
 	// 既定は出さない。バックログの状態フィルタで完了を明示的に選んだときに
 	// 画面が送る（GuiDesign.md 5.4「状態と期限のフィルタ」）。
 	switch v := q.Get("retired"); v {
@@ -441,7 +441,7 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 	// overdue（9.2.1。手順19b）。**true 以外は受け付けない**——false は
 	// 「期限を過ぎていないもの」ではなく「絞らない」であり、それはキーを
 	// 送らないことで表せる。値を2つ持つと同じ意味の書き方が2通りになる。
-	// staged（9.2.1「オンステージで絞る」。pb-138）。**true 以外は受け付けない**
+	// staged（9.2.1「オンステージで絞る」）。**true 以外は受け付けない**
 	// ——overdue と同じ形で、バックログ段だけを取る用途が無い。
 	switch v := q.Get("staged"); v {
 	case "":
@@ -467,7 +467,7 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 		})
 	}
 
-	// 予定期間（9.2.1。pb-8）は日付列どうしを比べるため、時差を持たない
+	// 予定期間（9.2.1）は日付列どうしを比べるため、時差を持たない
 	// YYYY-MM-DD で受ける。started_* は実際の着手日時なので流用しない。
 	f.plannedFrom, details = parseTicketDate(q.Get("planned_from"), "planned_from", details)
 	f.plannedTo, details = parseTicketDate(q.Get("planned_to"), "planned_to", details)
@@ -538,7 +538,7 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 		}
 	}
 
-	// ── 検索の条件（9.2.1「検索の条件」。pb-66）────────────────────
+	// ── 検索の条件（9.2.1「検索の条件」）────────────────────
 	//
 	// **語は並べ替えて正規化する**（9.2.5）。語どうしは AND なので、順番違いは
 	// 同じ意味である。空白だけの q は指定なしと同じ。

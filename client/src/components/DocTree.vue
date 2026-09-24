@@ -5,7 +5,7 @@ import type { DropZone } from '../lib/dnd'
  * ドロップ先（`GuiDesign.md` 5.10「木の操作」）。**行を3つに割る**——上 1/4 が
  * `before`（前の兄弟へ）、下 1/4 が `after`（後ろの兄弟へ）、中央 1/2 が
  * `inside`（その行の子へ、末尾）。**割り方の正本は `lib/dnd.ts` の `zoneOf`**
- * で、3か所（5.4 / 5.10 / 5.9.4）が同じ判定を使う（pb-28）。
+ * で、3か所（5.4 / 5.10 / 5.9.4）が同じ判定を使う。
  *
  * **`<script setup>` は export を持てない**ので、型はここに置く
  * （`UserActionsMenu.vue` の `ActionItem` と同じ形）。**別名を残すのは、木の

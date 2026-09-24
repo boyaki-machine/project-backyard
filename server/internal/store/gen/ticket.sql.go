@@ -32,7 +32,7 @@ SELECT count(*) FROM ticket
  WHERE parent_id = $1 AND closed_at IS NULL
 `
 
-// ── 親子の連動（ApiDesign.md 9.6 の検証7 と「子が動いたら親を進行中に」。pb-72）──
+// ── 親子の連動（ApiDesign.md 9.6 の検証7 と「子が動いたら親を進行中に」）──
 // CountOpenChildren は検証7 の材料（9.6）。**直下の子だけを数える。**
 //
 // 孫まで数えないのは、同じ規則が子にも掛かるためである——孫が未完了なら子も
@@ -100,7 +100,7 @@ type CreateTicketParams struct {
 	SortKey       pgtype.Text
 }
 
-// **sprint_id を受け取らない**（ApiDesign.md 9.3。pb-6）。作られたチケットは
+// **sprint_id を受け取らない**（ApiDesign.md 9.3）。作られたチケットは
 // 必ずスプリント未所属で始まり、次にスプリントを開始したときに入る。
 func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) error {
 	_, err := q.db.Exec(ctx, createTicket,
@@ -171,7 +171,7 @@ type FindTicketIDBySeqParams struct {
 }
 
 // FindTicketIDBySeq は parent_seq（9.3）の解決に使う。**同一プロジェクトに
-// 限る**——親もリンク先も同一プロジェクト内に限るのが Phase 1 の前提である（9.1）。
+// 限る**——親もリンク先も同一プロジェクト内に限る（9.1）。
 func (q *Queries) FindTicketIDBySeq(ctx context.Context, arg FindTicketIDBySeqParams) (string, error) {
 	row := q.db.QueryRow(ctx, findTicketIDBySeq, arg.ProjectID, arg.Seq)
 	var id string
@@ -222,7 +222,7 @@ type GetDisplayRootForStagingRow struct {
 }
 
 // 表示上のトップレベルの祖先（自分を含む）を返す（ApiDesign.md 9.6
-// 「着手したら、オンステージへ上げる」。pb-5）。
+// 「着手したら、オンステージへ上げる」）。
 //
 // **段に置けるのは表示上のトップレベルだけである**（9.4.1）——親を持たないか、
 // 親がエピックのもの。着手したのが子タスクでも、動かすべきなのは**その子を
@@ -485,7 +485,7 @@ type GetTicketEpicAncestorRow struct {
 	StatusCategory pgtype.Text
 }
 
-// GetTicketEpicAncestor は 9.5.1 の epic（pb-14）を引く——祖先をたどって最初に
+// GetTicketEpicAncestor は 9.5.1 の epic を引く——祖先をたどって最初に
 // 見つかるエピック。**自分自身は数えない**（エピックの詳細では、その上のエピック）。
 // 無ければ 0行で、呼び出し側が null にする。
 //
@@ -896,7 +896,7 @@ filtered AS (
          OR (t.closed_at IS NULL
              AND t.due_date IS NOT NULL
              AND t.due_date < CURRENT_DATE))
-    -- planned_from / planned_to（9.2.1。pb-8）。**予定期間が1日でも重なるもの**。
+    -- planned_from / planned_to（9.2.1）。**予定期間が1日でも重なるもの**。
     -- 片方だけの日付を持つチケットはその日1日の点として扱う。両方 NULL は
     -- COALESCE も NULL になるため、期間を指定したときに外れる。
     AND (($20::date IS NULL
@@ -911,7 +911,7 @@ filtered AS (
     AND ($22::int < 0
          OR (t.closed_at IS NULL
              AND t.updated_at < now() - make_interval(days => $22::int)))
-    -- retired（9.2.1。pb-5 / pb-6）。**スプリントを終えて棚に戻ったものを
+    -- retired（9.2.1）。**スプリントを終えて棚に戻ったものを
     -- 既定で外す。** 3つすべてを満たす行が対象である。
     --
     --   1. 完了している
@@ -938,7 +938,7 @@ filtered AS (
          ))
     AND (cardinality($6::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
     AND (NOT $24::boolean OR t.id IN (SELECT id FROM staged_tree))
-    -- ── 検索の条件（ApiDesign.md 9.2.1「検索の条件」。pb-66）──────────
+    -- ── 検索の条件（ApiDesign.md 9.2.1「検索の条件」）──────────
     --
     -- キーワードの一致は store/search（queries/search.sql）が済ませ、**一致した ID
     -- だけを受け取る**（Design.md 4.6 の隔離）。keyword_set が偽なら絞らない——
@@ -997,7 +997,7 @@ SELECT
 FROM search_filtered f
 ORDER BY
   -- 既定は sort_key の昇順（9.2.1）。人が手で並べた順を既定の見え方にする。
-  -- **sort_key が NULL の行は末尾**（利用者の判断、2026-08-23）。
+  -- **sort_key が NULL の行は末尾**。
   CASE WHEN $1::text = 'sort_key'   AND $2::text = 'asc'  THEN f.sort_key COLLATE "C" END ASC  NULLS LAST,
   CASE WHEN $1::text = 'sort_key'   AND $2::text = 'desc' THEN f.sort_key COLLATE "C" END DESC NULLS LAST,
   CASE WHEN $1::text = 'seq'        AND $2::text = 'asc'  THEN f.seq END ASC,
@@ -1007,7 +1007,7 @@ ORDER BY
   -- 状態はワークフローの sort_order で並べる（キーの辞書順ではない）。
   CASE WHEN $1::text = 'status'     AND $2::text = 'asc'  THEN f.status_sort_order END ASC  NULLS LAST,
   CASE WHEN $1::text = 'status'     AND $2::text = 'desc' THEN f.status_sort_order END DESC NULLS LAST,
-  -- **優先度は意味の順**（利用者の判断、2026-08-23）。キーの辞書順だと high が
+  -- **優先度は意味の順**。キーの辞書順だと high が
   -- lowest より前に来て、「優先度で並べた」と読めない結果になる。
   --
   -- **順位を SELECT 側の列にしない。** CASE 式を列として出すと、優先度が未設定の
@@ -1024,7 +1024,7 @@ ORDER BY
   CASE WHEN $1::text = 'created_at' AND $2::text = 'desc' THEN f.created_at END DESC,
   CASE WHEN $1::text = 'updated_at' AND $2::text = 'asc'  THEN f.updated_at END ASC,
   CASE WHEN $1::text = 'updated_at' AND $2::text = 'desc' THEN f.updated_at END DESC,
-  -- 完了日時（pb-66。チケット検索の「完了日」の列）。**未完了（NULL）は昇順・降順とも末尾**（9.2.1）。
+  -- 完了日時（チケット検索の「完了日」の列）。**未完了（NULL）は昇順・降順とも末尾**（9.2.1）。
   CASE WHEN $1::text = 'closed_at'  AND $2::text = 'asc'  THEN f.closed_at END ASC  NULLS LAST,
   CASE WHEN $1::text = 'closed_at'  AND $2::text = 'desc' THEN f.closed_at END DESC NULLS LAST,
   -- 同値の行の順序が実行ごとに揺れないようにする最終キー。
@@ -1109,7 +1109,7 @@ type ListTicketsRow struct {
 // チケットに関するクエリ（DbDesign.md 6.6、ApiDesign.md 9.2 / 9.3 / 9.4）。
 //
 // 手順16b で追加。消費者はバックログ画面（GuiDesign.md 5.4、手順16c）と、
-// Phase 2 のカンバン・ガントである。いずれも同じ ListTickets を読む。
+// 未実装のカンバン・ガントである。いずれも同じ ListTickets を読む。
 //
 // **すべてのクエリが project_id で閉じている。** チケットはプロジェクトの資源で
 // あり、他プロジェクトの ID を渡されても行が返らないようにするためである。到達
@@ -1125,7 +1125,7 @@ type ListTicketsRow struct {
 //
 // **総件数と最終更新を同じクエリの窓関数で返す。** 2.6 の total と 2.7 の ETag の
 // 材料であり、別クエリにすると WHERE を二重に持つことになる。フィルタが20種類
-// あるため（pb-66 で検索の条件を7つ足した）、写しが片方だけ古くなる危険が現実的に高い（user.sql の
+// あるため、写しが片方だけ古くなる危険が現実的に高い（user.sql の
 // ListAdminUsers / SummarizeAdminUsers は「一字一句そろえる」と注記して2本に
 // 分けているが、あちらは条件が3つである）。窓関数は WHERE の後・LIMIT の前に
 // 評価されるので、ページを切っても総件数は絞り込み全体のものになる。
@@ -1140,15 +1140,15 @@ type ListTicketsRow struct {
 // 合致しない行が一覧に現れて total と表示件数が食い違う。
 //
 // has_children は「プロジェクト内に子がいるか」であって「結果の中に子がいるか」
-// ではない（利用者の判断、2026-08-23）。結果の中で数えると、親が絞り込みで
+// ではない。結果の中で数えると、親が絞り込みで
 // 落ちた瞬間に子の有無まで消える。
 //
-// **未完了の行と、その全子孫**（9.2.1 の retired の条件3。pb-5）。
+// **未完了の行と、その全子孫**（9.2.1 の retired の条件3）。
 //
 // ここに入る行は棚に戻さない。「自分が未完了」か「**未完了の祖先を持つ**」の
 // どちらかだからである。
 //
-// **直下の親だけを見る形では足りない**（実データで判明、2026-09-08）。
+// **直下の親だけを見る形では足りない。**
 // 親→子→孫で子と孫だけを完了させると、孫の直下の親（子）は完了しているので
 // 孫が消える。**だが子は、その親が未完了なので残る**——結果として
 // 「子は見えるのに孫だけ消えた」歯抜けが起きる。**条件3 が防ごうとしていた
@@ -1159,7 +1159,7 @@ type ListTicketsRow struct {
 // たどるのは、0026 の再オープン（done → in_progress）が、完了した親の下に
 // 未完了の子が居る状態を作れるためである。**
 //
-// **エピックは祖先に数えない**（実データで判明、2026-09-09）。エピックは
+// **エピックは祖先に数えない。** エピックは
 // グルーピング専用で**行として出ない**ので（GuiDesign.md 5.4）、完了しない
 // まま残っていても歯抜けを作らない。数えてしまうと、**エピック配下の
 // チケットが永久に棚へ戻らなくなる**——実運用のバックログはたいてい
@@ -1167,13 +1167,13 @@ type ListTicketsRow struct {
 //
 // 起点を「未完了かつエピックでない行」に絞ることで、**表示上のトップレベル
 // （親が無いか、親がエピック。ApiDesign.md 9.4.1）から下だけを見る**形になる。
-// staged（9.2.1「オンステージで絞る」。pb-138）。**staged_at を持つ行とその全子孫**で、
+// staged（9.2.1「オンステージで絞る」）。**staged_at を持つ行とその全子孫**で、
 // エピックを除く。スプリントの開始（sprint.sql の ListOnstageTicketIDs）と同じ定義である
 // ——**段を決めるのは親で、子は staged_at が NULL のまま親と一緒に運ばれる**（9.4.1）。
 //
 // **棚に戻ったものはここでは外さない。** 下の retired の条件がそのまま効くので、
 // 既定では外れ、retired=true を一緒に送れば含まれる（条件は種類ごとに独立）。
-// 一致した子の祖先を、他のフィルタを適用した後で補完する（pb-84）。
+// 一致した子の祖先を、他のフィルタを適用した後で補完する。
 // 検索に当たっても他の条件から外れた子を起点にしない。UNION で重複・循環を防ぐ。
 func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error) {
 	rows, err := q.db.Query(ctx, listTickets,
@@ -1596,7 +1596,7 @@ UPDATE ticket SET
   assignee_id    = CASE WHEN $7::boolean    THEN $8    ELSE assignee_id END,
   working_agent_id = CASE WHEN $9::boolean THEN $10 ELSE working_agent_id END,
   parent_id      = CASE WHEN $11::boolean      THEN $12      ELSE parent_id END,
-  -- sprint_id は 9.5.2 から外した（pb-6）。スプリントの開始・終了だけが動かす
+  -- sprint_id は 9.5.2 から外した。スプリントの開始・終了だけが動かす
   -- （sprint.sql の SetTicketsSprintID）。DbDesign.md 6.9.1。
   estimate_point = CASE WHEN $13::boolean THEN $14 ELSE estimate_point END,
   estimate_hours = CASE WHEN $15::boolean THEN $16 ELSE estimate_hours END,

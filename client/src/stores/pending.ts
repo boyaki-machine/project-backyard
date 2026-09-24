@@ -1,10 +1,9 @@
 /**
- * 確認を待っている設定変更の監視（`ApiDesign.md` 11.9、`GuiDesign.md` 2.6）。pb-107。
+ * 確認を待っている設定変更の監視（`ApiDesign.md` 11.9、`GuiDesign.md` 2.6）。
  *
- * **どの画面にいても未確認を出すために、ここで一元に持つ。** 改訂前は
- * アプリケーション設定ページの中だけで持っていたため、**設定を変えたあと
- * 別の画面へ移ると確認ボタンがどこにも無い状態で期限が過ぎた**（stg での
- * 利用者の指摘、2026-09-12）。
+ * **どの画面にいても未確認を出すために、ここで一元に持つ。** アプリケーション
+ * 設定ページの中だけで持つと、**設定を変えたあと別の画面へ移ったとき、確認ボタンが
+ * どこにも無い状態で期限が過ぎる。**
  *
  * **`system.settings` を持つ人だけが引く。** 一般利用者に「いま管理者が設定を
  * 変えている」を見せる必要はなく、確認を押す権限も無い。
@@ -51,7 +50,7 @@ export const usePendingStore = defineStore('pending', () => {
   /** 残りが少ないか。**枠線と数字を赤にする合図**（8.4） */
   const urgent = computed(() => pending.value !== null && remainSeconds.value <= URGENT_SECONDS)
 
-  /** 変えたのが自分か。**文言を分ける**（pb-107） */
+  /** 変えたのが自分か。**文言を分ける** */
   const changedByMe = computed(
     () => pending.value?.changed_by?.id !== undefined && pending.value.changed_by.id === auth.actor?.id,
   )

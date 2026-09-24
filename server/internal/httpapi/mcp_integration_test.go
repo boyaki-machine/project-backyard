@@ -185,7 +185,7 @@ func TestMCPIntegration(t *testing.T) {
 
 	// doc.view を含めないトークン。**これが権限による出し分けの負の側になる**
 	// （Design.md 付録A 論点③）——所有者は doc.view を持つが、積で消える。
-	// **実際のエージェントが持つ既定スコープのトークン**（Design.md 6.5。pb-75）。
+	// **実際のエージェントが持つ既定スコープのトークン**（Design.md 6.5）。
 	//
 	// **fullToken では ticket.self_edit の絞り込みを測れない。** あちらは
 	// スコープが空＝絞り込みなしなので所有者の ticket.edit まで通り、
@@ -571,7 +571,7 @@ func TestMCPIntegration(t *testing.T) {
 		if isErr {
 			t.Fatalf("起票できない: %s", text)
 		}
-		// **応答は要点だけである**（Design.md 8.5.1。pb-137）。書いた結果は読み直して確かめる。
+		// **応答は要点だけである**（Design.md 8.5.1）。書いた結果は読み直して確かめる。
 		text = readBackTicket(t, tool, fullToken, text)
 
 		var got struct {
@@ -632,7 +632,7 @@ func TestMCPIntegration(t *testing.T) {
 			t.Fatalf("コメントを書けない: %s", text)
 		}
 
-		// **応答は要点（id / kind / created_at）だけである**（Design.md 8.5.1。pb-137）。
+		// **応答は要点（id / kind / created_at）だけである**（Design.md 8.5.1）。
 		// origin と author は応答に無いので、書いた行を DB で引いて確かめる。
 		var got struct {
 			ID     string `json:"id"`
@@ -737,7 +737,7 @@ func TestMCPIntegration(t *testing.T) {
 			t.Fatalf("書き換えられない: %s", text)
 		}
 
-		// **応答は要点（path / version / updated_at）だけである**（Design.md 8.5.1。pb-137）。
+		// **応答は要点（path / version / updated_at）だけである**（Design.md 8.5.1）。
 		// updated_by は応答に無いので、文書の行を DB で引いて確かめる。
 		var got struct {
 			Version   int `json:"version"`
@@ -1233,7 +1233,7 @@ func TestMCPIntegration(t *testing.T) {
 			t.Fatalf("agent_run を引けない: %v", err)
 		}
 		if runStatus != "completed" {
-			t.Errorf("agent_run.status = %q, want completed（Phase 2 はこれだけ）", runStatus)
+			t.Errorf("agent_run.status = %q, want completed（いまはこれだけ）", runStatus)
 		}
 		if clientKind != "claude_code" {
 			t.Errorf("client_kind = %q, want claude_code", clientKind)
@@ -1380,7 +1380,7 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
-	// ── pb-75 / pb-76：起票したあと直す ────────────────────────
+	// ── 起票したあと直す ─────────────────────────────────────
 	//
 	// **フェイクでは権限の積を測れない**（Design.md 6.4.1 の
 	// 「所有者のロール ∩ トークンのスコープ」）。ここが唯一の場所である。
@@ -1431,7 +1431,7 @@ func TestMCPIntegration(t *testing.T) {
 		if isErr {
 			t.Fatalf("直せない: %s", text)
 		}
-		// **応答は要点だけである**（Design.md 8.5.1。pb-137）。書いた結果は読み直して確かめる。
+		// **応答は要点だけである**（Design.md 8.5.1）。書いた結果は読み直して確かめる。
 		if strings.Contains(text, "直した本文") {
 			t.Errorf("書いた本文を応答で返している: %s", text)
 		}
@@ -1458,7 +1458,7 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
-	// **縛る側の項目は断られる**（9.5.2。0029）。ここが pb-75 の制約条件
+	// **縛る側の項目は断られる**（9.5.2。0029）。ここが制約条件
 	// 「エージェントが自分の縛りを緩められる状態を作らない」の実測である。
 	//
 	// **REST を直接叩く。** pb_update_ticket はこれらの引数を宣言していないので、

@@ -192,7 +192,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * パスキーの応答でログインする（`ApiDesign.md` 3.6。pb-104）。
+   * パスキーの応答でログインする（`ApiDesign.md` 3.6）。
    *
    * **第2要素の挑戦は返らない**（`Design.md` 6.8.2）。成功すればそのままセッションになる。
    * 端末の手続き（`navigator.credentials.get()`）は呼び出し側が済ませてから渡す。

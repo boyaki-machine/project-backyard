@@ -13,7 +13,7 @@
 //
 //   - **タグ・スプリントの定義変更**（9.1.1）。activity の読み手はチケットの
 //     変更履歴であり、9.13.2 の entity は `ticket:31` の形しか受け付けない
-//   - **並べ替え（POST /tickets/:seq/move）**（利用者の判断、2026-08-23）。
+//   - **並べ替え（POST /tickets/:seq/move）**。
 //     sort_key だけの更新であり、記録するとバックログを一度並べ替えただけで
 //     チケット詳細の変更履歴が埋まる。「誰がどこへドラッグしたか」は業務履歴
 //     として読む価値が薄い
@@ -50,8 +50,7 @@ var actions = map[Action]bool{
 	Create: true, Update: true, Delete: true, Transition: true,
 }
 
-// EntityTicket は entity_type の値。Phase 1 で記録するのはチケットだけである
-// （9.1.1。コメント・DoD・リンクは手順18 で足す）。
+// EntityTicket は entity_type の値。記録するのはチケットだけである（9.1.1）。
 const EntityTicket = "ticket"
 
 // Entry は1件の業務履歴。

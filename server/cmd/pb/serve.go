@@ -39,7 +39,7 @@ const (
 	// 停止時に処理中のリクエストを待つ上限。
 	shutdownTimeout = 15 * time.Second
 
-	// settingsGuardInterval は未確認の設定変更の期限を点検する間隔（pb-97）。
+	// settingsGuardInterval は未確認の設定変更の期限を点検する間隔。
 	//
 	// **設定にしない**（Design.md 10.3）。期限の既定は 300 秒なので、
 	// この粒度で「期限から最大10秒遅れて戻る」ことになる。
@@ -79,9 +79,9 @@ func serve(ctx context.Context) error {
 		set = live.ApplyRows(overlay)
 	}
 
-	// **未確認の設定変更を、待受を張る前に全部戻す**（pb-97、DbDesign.md 6.17）。
+	// **未確認の設定変更を、待受を張る前に全部戻す**（DbDesign.md 6.17）。
 	//
-	// **起動時は期限を見ない**（改訂、2026-09-12）。**締め出された人が最初に
+	// **起動時は期限を見ない。** **締め出された人が最初に
 	// 試すのは再起動**であり、そこで戻さないと**その設定では起動に失敗する
 	// 場合に永遠に戻らない**——プロセスが上がらないのでタイマも動かず、
 	// 何度再起動しても同じところで落ちる。
@@ -111,7 +111,7 @@ func serve(ctx context.Context) error {
 
 	bind := set.String(config.KeyBind)
 
-	// **待受は張り替えられる**（pb-106、Design.md 10.3）。tls_enabled を画面から
+	// **待受は張り替えられる**（Design.md 10.3）。tls_enabled を画面から
 	// 変えた時点で切り替わり、再起動は要らない。
 	var server *swappableServer
 
@@ -127,7 +127,7 @@ func serve(ctx context.Context) error {
 		swapMu.Lock()
 		defer swapMu.Unlock()
 
-		// **待受のアドレスも画面から変わる**（pb-99）。tls_enabled と同じ
+		// **待受のアドレスも画面から変わる**。tls_enabled と同じ
 		// 張り替えに載るので、2つを1回の判定でまとめて見る。
 		wantAddr := s.String(config.KeyBind)
 		wantTLS := s.Bool(config.KeyTLSEnabled)
@@ -164,7 +164,7 @@ func serve(ctx context.Context) error {
 
 	// **TLS の有無で Handler ごと作り直す。** 応答に出る tls_enabled と
 	// listen_url は実際の待受であり（11.4）、設定の実効値ではない。
-	// **保守モードの旗と、書き出し・取り込みの口は1つだけ作る**（pb-147）。
+	// **保守モードの旗と、書き出し・取り込みの口は1つだけ作る**。
 	// build は待受を張り替えるたびに呼ばれるので、この中で作ると**張り替えのたびに
 	// 旗が別物になり**、保守モード中であることが失われる。
 	maint := maintenance.New(func(on bool) {
@@ -187,7 +187,7 @@ func serve(ctx context.Context) error {
 				OnSettingsChanged: onChanged,
 				Certs:             certs,
 				TLSListening:      tc != nil,
-				// **アドレスも張り替わる**（pb-99）ので、いま張ったものを使う。
+				// **アドレスも張り替わる** ので、いま張ったものを使う。
 				ListenURL:   listenURL(addr, tc != nil),
 				Backups:     backups,
 				DatabaseURL: cfg.DatabaseURL,
@@ -201,7 +201,7 @@ func serve(ctx context.Context) error {
 	}
 	server = newSwappableServer(build)
 
-	// **待受を先に張り、成立してからログを書く**（pb-29）。bind に失敗したのに
+	// **待受を先に張り、成立してからログを書く**。bind に失敗したのに
 	// 「サーバを起動した」が先に出ると、2026-08-30 のような読み違えを生む。
 	if err := server.Start(bind, tlsConfig); err != nil {
 		return fmt.Errorf("サーバを起動できない: %w", err)
@@ -218,7 +218,7 @@ func serve(ctx context.Context) error {
 
 	warnIfCtypeIsC(ctx, pool)
 
-	// **期限を数える主体は2つある**（pb-97）。起動時の点検（上）と、この定期点検。
+	// **期限を数える主体は2つある**。起動時の点検（上）と、この定期点検。
 	// **どちらも DB の expires_at を見る**ので、判定は1つである。
 	//
 	// **間隔は設定にしない**（Design.md 10.3。設定の反映を設定で決めると、
@@ -267,7 +267,7 @@ func serve(ctx context.Context) error {
 //
 // **slog.LevelVar を使うのは、ハンドラを作り直さずにレベルを変えられるからである。**
 // レベルだけなら差し替えが要らず、形式（json / text）が変わったときだけ
-// ハンドラを組み直す（pb-2、Design.md 10.3 の第2層）。
+// ハンドラを組み直す（Design.md 10.3 の第2層）。
 var logLevelVar = new(slog.LevelVar)
 
 // listenURL は待受のスキームとアドレスを組み立てる（ApiDesign.md 11.4）。
@@ -294,7 +294,7 @@ func listenURL(bind string, tls bool) string {
 // **有効な証明書が1枚も無い状態でも起動する。** ハンドシェイクは失敗するが、
 // 起動自体を止めると PB_TLS_ENABLED=false で戻す以外の手が無くなり、
 // 「なぜ上がらないのか」をログでしか伝えられない。
-// warnIfKeyChanged は、登録済みの証明書をいまの鍵で復号できるかを起動時に1回見る（pb-98）。
+// warnIfKeyChanged は、登録済みの証明書をいまの鍵で復号できるかを起動時に1回見る。
 //
 // **止めない。** TLS で待ち受けないなら、読めない証明書があっても動作に影響しない。
 // **止めると平文へ戻す経路が細くなる**——鍵を取り違えた利用者が、画面を開いて直す
@@ -333,7 +333,7 @@ func warnIfKeyChanged(ctx context.Context, pool *pgxpool.Pool, set *config.Set) 
 
 func setupTLS(ctx context.Context, pool *pgxpool.Pool, set *config.Set) (*tlscert.Holder, *tls.Config, error) {
 	if !set.Bool(config.KeyTLSEnabled) {
-		// **TLS で上がらないときも、鍵の食い違いは知らせる**（pb-98）。
+		// **TLS で上がらないときも、鍵の食い違いは知らせる**。
 		// 気づくのが「次に TLS で起動したとき」では遅い——そのとき起動は失敗し、
 		// ローリングアップデートの途中なら**一部の Pod だけが落ちる**形で現れる。
 		warnIfKeyChanged(ctx, pool, set)
@@ -473,12 +473,12 @@ func parseLevel(level string) slog.Level {
 	}
 }
 
-// warnIfCtypeIsC は、DB の LC_CTYPE が C のままなら WARN を1件出す（DbDesign.md 4.5。pb-143）。
+// warnIfCtypeIsC は、DB の LC_CTYPE が C のままなら WARN を1件出す（DbDesign.md 4.5）。
 //
 // **C の DB では、日本語のキーワード検索でインデックスが効かない**——pg_trgm が日本語から
 // trigram を取り出せないためである。検索そのものは動き、store/search が遅くならない形を
-// 選ぶので、**止めずに知らせるだけにする。** pb-143 より前に作った DB はすべて C なので、
-// 更新しただけの環境で気づける場所がここしかない。
+// 選ぶので、**止めずに知らせるだけにする。** 既存の DB を引き継いだ環境では、
+// 気づける場所がここしかない。
 //
 // **読めなかったら何も出さない。** 起動を妨げる理由にはしない。
 func warnIfCtypeIsC(ctx context.Context, pool *pgxpool.Pool) {

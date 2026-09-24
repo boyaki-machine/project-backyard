@@ -243,7 +243,7 @@ func TestPatchMeValidatesEnums(t *testing.T) {
 	}
 }
 
-// 英語は pb-17 で追加した2つ目の表示言語。DBへ渡る値まで確かめる。
+// 英語は2つ目の表示言語。DBへ渡る値まで確かめる。
 func TestPatchMeAcceptsEnglish(t *testing.T) {
 	q := meFake(t)
 	h, _ := newUserHandler(q)
@@ -480,7 +480,7 @@ func TestChangeMyPasswordValidatesPolicy(t *testing.T) {
 	}
 }
 
-// パスワード認証を使っていないアカウント（IdP のみ、Phase 3）は 409。
+// パスワード認証を使っていないアカウント（IdP のみ。構想）は 409。
 // 6.6（管理者によるリセット）と同じ扱いにする。
 func TestChangeMyPasswordConflictsWithoutLocalCredential(t *testing.T) {
 	q := meFake(t)

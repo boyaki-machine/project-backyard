@@ -434,7 +434,7 @@ type ListDocumentTreeRow struct {
 
 // プロジェクト文書に関するクエリ（DbDesign.md 8.1、ApiDesign.md 10章）。
 //
-// 手順22a で追加。消費者は Docs 画面（GuiDesign.md 5.10）と、Phase 2 後半の
+// 手順22a で追加。消費者は Docs 画面（GuiDesign.md 5.10）と、
 // MCP（pb_list_docs / pb_get_doc / pb_put_doc。Design.md 8章）である。
 //
 // **path は列ではない。** 文書の位置は parent_id の連なりで表し、ApiDesign.md 10.1 の

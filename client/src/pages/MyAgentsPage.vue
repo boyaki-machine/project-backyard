@@ -49,7 +49,7 @@ const EXPIRY_CHOICES = [30, 90, 365] as const
 const clientKinds = ref<AgentClientKind[]>([])
 
 /**
- * 既定スコープと足せる権限（`ApiDesign.md` 4.5.9。pb-93）。
+ * 既定スコープと足せる権限（`ApiDesign.md` 4.5.9）。
  *
  * **引けなかったら `null` のままにし、「追加の権限」を押せなくする**
  * （`GuiDesign.md` 5.8.2）。既定を知らないまま `doc.edit` だけを送ると、
@@ -69,7 +69,7 @@ const actionError = ref<ApiError | null>(null)
  * 無効なエージェントを出すか（5.8.2）。
  *
  * **無効化しても行は消えない**ので、使わなくなったものが視界に溜まり続ける。
- * **既定で畳み、件数を添えて開けるようにする**（利用者の指摘、2026-09-02）。
+ * **既定で畳み、件数を添えて開けるようにする**。
  *
  * **手順26a で削除（`ApiDesign.md` 4.5.4）が入ったが、畳むのはやめない**——
  * 「いま止めたいが記録は残したい」と「消したい」は別の要求であり、
@@ -148,7 +148,7 @@ async function submitForm(payload: {
         model_version: payload.model_version,
         // **空文字は送らない。** サーバの COALESCE は空文字を「値の指定」として
         // 扱うため、未設定へ戻す意味にはならない（4.5.4）。**空にする経路は
-        // Phase 2 では作らない。**
+        // 作らない。**
         ...(payload.token_env_suffix === ''
           ? {}
           : { token_env_suffix: payload.token_env_suffix }),
@@ -238,7 +238,7 @@ async function issueToken() {
   try {
     // **`scopes` は押されたときだけ送る**（4.5.3）。省略すると `Design.md` 6.5 の
     // 既定が入る。押されたときは、既定を `GET /agent-scopes`（4.5.9）から取って
-    // `doc.edit` を足す——**写しを画面に持たない**（pb-93）。
+    // `doc.edit` を足す——**写しを画面に持たない**。
     const scopes = agentScopes.value
     const token = await meApi.issueAgentToken(target.id, {
       expires_in_days: newExpiresInDays.value,
@@ -627,7 +627,7 @@ function subtitle(agent: MyAgent): string {
         <!-- **追加の権限は `doc.edit` の1件だけ**（4.5.3 の許可リスト。手順26a）。
              既定は外す——`Design.md` 6.5 が「載せるかはそのエージェントが誰に
              付いているかで決まる」と定めており、押さなければ既定のまま（4.5.9）になる。
-             **既定が引けなかったら押せなくする**（pb-93。`GuiDesign.md` 5.8.2）
+             **既定が引けなかったら押せなくする**（`GuiDesign.md` 5.8.2）
              **権限キーを画面に出さない**（24b で決めた形。発行結果も日本語で出す） -->
         <fieldset class="field">
           <legend class="label">{{ $ui('追加の権限') }}</legend>

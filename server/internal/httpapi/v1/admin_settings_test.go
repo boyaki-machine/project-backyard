@@ -120,8 +120,7 @@ func TestListSettings(t *testing.T) {
 		if items[config.KeyLogLevel]["restart_required"] != false {
 			t.Error("log_level に再起動が要るとある")
 		}
-		// **bind も第2層である**（pb-99）。pb-106 で待受を張り替えられるように
-		// したので、再起動は要らない。
+		// **bind も第2層である**。待受を張り替えるので、再起動は要らない。
 		if items[config.KeyBind]["restart_required"] != false {
 			t.Error("bind に再起動が要るとある")
 		}
@@ -238,7 +237,7 @@ func TestUpdateSettingsRejects(t *testing.T) {
 		{"真偽値でない値は 422", `{"items":[{"key":"cookie_secure","value":"maybe"}]}`, http.StatusUnprocessableEntity},
 		{"同じキーを2回は 422", `{"items":[{"key":"log_level","value":"warn"},{"key":"log_level","value":"debug"}]}`, http.StatusUnprocessableEntity},
 		// **第1層は 409。** 値の誤りではなく、画面から変えられないという状態の衝突である。
-		// **bind はここから外れた**（pb-99 で第2層へ移した）。
+		// **bind は第1層ではない**（第2層である）。
 		{"第1層は 409", `{"items":[{"key":"secret_key","value":"x"}]}`, http.StatusConflict},
 		{"秘密も 409", `{"items":[{"key":"database_url","value":"postgres://y"}]}`, http.StatusConflict},
 	}
@@ -305,10 +304,9 @@ func TestUpdateSettingsAppliesImmediately(t *testing.T) {
 
 // 既定に戻すと、応答の実効値も既定へ戻る。
 //
-// **実サーバ検証で見つけた退行の回帰試験である**（pb-2、2026-09-11）。行は
-// 消えていたのに、応答は source=database のままだった——**重ねる土台に前回の
-// 重ね結果を使っていた**ためで、OverlayDatabase は足すだけなので消えた行の
-// 影響が残った。土台は必ず Live.Base（DB を含まない Set）から取る。
+// **回帰試験である。** **重ねる土台に前回の重ね結果を使う**と、行は消えても応答が
+// source=database のままになる。OverlayDatabase は足すだけなので、消えた行の影響が
+// 残る。土台は必ず Live.Base（DB を含まない Set）から取る。
 func TestUpdateSettingsResetReflectsInResponse(t *testing.T) {
 	live := config.LiveDefaults()
 	r, q, token := settingsRouter(t, live)

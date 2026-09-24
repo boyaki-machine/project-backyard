@@ -17,7 +17,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
 )
 
-// pb-84: 実DBで、検索→祖先補完→件数計算→200件制限の順序を確かめる。
+// 実DBで、検索→祖先補完→件数計算→200件制限の順序を確かめる。
 func TestBacklogSearchIntegration(t *testing.T) {
 	dsn := os.Getenv("PB_TEST_DATABASE_URL")
 	if dsn == "" {

@@ -78,7 +78,7 @@ func (h *handler) listTicketTransitions(w http.ResponseWriter, r *http.Request) 
 		// 選択肢が押した瞬間に断られることがない。
 		assigneeIsOwner: agentMayWorkOn(p, row.AssigneeID),
 	}
-	// 検証7 の材料（9.6。pb-72）。**9.6 と同じ関数を通すので、ここで数えないと
+	// 検証7 の材料（9.6）。**9.6 と同じ関数を通すので、ここで数えないと
 	// 「押せる完了」を出したあとで 409 になる。**
 	openChildren, err := h.q.CountOpenChildren(ctx,
 		pgtype.Text{String: row.ID, Valid: true})

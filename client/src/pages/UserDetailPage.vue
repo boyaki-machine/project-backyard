@@ -13,7 +13,7 @@ import { uiText } from '../locales/ui'
  * （無効化なら「基本情報」、リセットなら「認証手段」）。
  *
  * **`kind='user'` のアクターだけが対象**である（6.3）。エージェントは 404 に
- * なり、詳細は `agent` テーブルができる Phase 2 で列構成ごと設計する。
+ * なる。エージェントの詳細画面は未実装で、列構成ごと設計する。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -42,7 +42,7 @@ const MAX_EMAIL = 254
 /**
  * `[+ 追加]` の候補を引く件数（13a の引き継ぎ）。
  *
- * アドミニストレータには全件見えるので、200件を超える環境は Phase 1 では
+ * アドミニストレータには全件見えるので、200件を超える環境は
  * 想定しない。超えたら検索付きの選択に変える。
  */
 const PROJECT_CANDIDATES_PER_PAGE = 200
@@ -402,7 +402,7 @@ const resetConfirmOpen = ref(false)
 /** 生成されたパスワード。**この応答でしか手に入らない**（6.6） */
 const generated = ref<string | null>(null)
 
-/** Phase 1 は `local` のみ（`DbDesign.md` 7.1 のシード） */
+/** 認証プロバイダは `local` のみ（`DbDesign.md` 7.1 のシード） */
 const localIdentity = computed(
   () => user.value?.identities.find((i) => i.provider_type === 'local') ?? null,
 )
@@ -429,7 +429,7 @@ async function runPasswordReset(): Promise<void> {
   }
 }
 
-// ── 第2要素の解除（5.6.2 / `ApiDesign.md` 6.9。pb-103）──────────
+// ── 第2要素の解除（5.6.2 / `ApiDesign.md` 6.9）──────────
 //
 // **6.6 のパスワードリセットと同じブロックに置くが、別の操作である。**
 // 締め出しの原因が2つある——パスワードを忘れた人と、認証アプリを失った人は
@@ -461,7 +461,7 @@ async function runMfaReset(): Promise<void> {
   }
 }
 
-// ── パスキーの全削除（5.6.2 / `ApiDesign.md` 6.10。pb-104）──────
+// ── パスキーの全削除（5.6.2 / `ApiDesign.md` 6.10）──────
 //
 // **乗っ取りの疑いがあるときの口である**（`Design.md` 6.8.6）。パスキーは
 // パスワード無しで入れる鍵なので、6.6 のリセットも 6.9 の解除もそれを消さない。
@@ -532,7 +532,7 @@ async function runRevokeSessions(): Promise<void> {
 
 // ── 状態の切り替えと削除（5.6.2 の `[⋯]`）──────────────────────
 //
-// **無効化は管理者が当該ユーザーのメニューから行う**（利用者の判断、2026-08-21）。
+// **無効化は管理者が当該ユーザーのメニューから行う**。
 // 無効なユーザーでは同じ項目が「有効化」になる——`ApiDesign.md` 6.4 は
 // `is_active` を両方向に変えられると定めており、画面から戻せないと無効化が
 // 事実上の不可逆操作になる。
@@ -885,7 +885,7 @@ function onMenuSelect(key: string): void {
           <h2 class="block-title">{{ $ui('認証手段') }}</h2>
 
           <!-- **1つの表にまとめる。** 別の table に分けると列幅が独立して決まり、
-               2行の「最終更新」と「登録済み」が縦に揃わない（実測、2026-09-13） -->
+               2行の「最終更新」と「登録済み」が縦に揃わない -->
           <table class="table">
             <tbody>
               <tr v-if="localIdentity">
@@ -911,7 +911,7 @@ function onMenuSelect(key: string): void {
                 <td class="row-actions"></td>
               </tr>
 
-              <!-- 第2要素（pb-103。`DbDesign.md` 6.18）。**user_identity ではない**が、
+              <!-- 第2要素（`DbDesign.md` 6.18）。**user_identity ではない**が、
                    管理者が「この人はどうやってログインするか」を1か所で読むために
                    同じブロックへ置く。**出すのは件数だけ** -->
               <tr>
@@ -931,7 +931,7 @@ function onMenuSelect(key: string): void {
                 </td>
               </tr>
 
-              <!-- パスキー（pb-104。`DbDesign.md` 6.19）。第2要素と同じく
+              <!-- パスキー（`DbDesign.md` 6.19）。第2要素と同じく
                    **user_identity ではない**が、同じブロックに**件数だけ**を出す -->
               <tr>
                 <td>{{ $ui('パスキー') }}</td>
@@ -951,7 +951,7 @@ function onMenuSelect(key: string): void {
             </tbody>
           </table>
 
-          <p class="hint">{{ $ui('（OIDC/SAML 連携は Phase 3）') }}</p>
+          <p class="hint">{{ $ui('（OIDC/SAML 連携は構想）') }}</p>
 
           <p v-if="credentialNotice" class="ok" role="status">✓ {{ credentialNotice }}</p>
           <p v-if="credentialError" class="error" role="alert">✕ {{ credentialError.message }}</p>

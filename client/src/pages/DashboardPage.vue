@@ -17,7 +17,7 @@ import { uiText } from '../locales/ui'
  * サーバ側は `stats` からエピックを除き（9.13.1）、`overdue` / `stale` を
  * `GET /tickets` のパラメータとして持つ（9.2.1）。
  *
- * **日時は絶対表記**（利用者の判断、2026-08-28）。相対表記は文化によって
+ * **日時は絶対表記**。相対表記は文化によって
  * 読みやすさが分かれる。
  */
 import { computed, ref, watch } from 'vue'
@@ -335,7 +335,7 @@ const showNewModal = ref(false)
 const vocabLoading = ref(false)
 const tags = ref<Tag[]>([])
 /**
- * エピック欄の選択肢（5.4.3「親チケットとエピック」。pb-14）。**ダッシュボードは
+ * エピック欄の選択肢（5.4.3「親チケットとエピック」）。**ダッシュボードは
  * 一覧を持たない**ので、親チケット欄は出ない（候補が0件）。
  */
 const epics = ref<Ticket[]>([])

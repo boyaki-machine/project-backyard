@@ -4,8 +4,8 @@ import { uiText } from '../locales/ui'
  * 権限マトリクス（`GuiDesign.md` 5.6.3）。
  *
  * `Design.md` 6.4.2 の権限カタログ（正本は `DbDesign.md` 7.2 のシード）を
- * そのまま表示する。**Phase 1 は読み取り専用**で、カスタムロールの作成と
- * 権限の編集は Phase 3（`ApiDesign.md` 7.3）。
+ * そのまま表示する。**読み取り専用**で、カスタムロールの作成と
+ * 権限の編集は構想である（`ApiDesign.md` 7.3）。
  *
  * 読み取り専用でも画面を用意するのは、「オペレータに何ができるか」を管理者が
  * 確認できることが運用上必要だからである（5.6.3）。
@@ -74,7 +74,7 @@ const scopeGroups = computed(() => {
 /**
  * 行。`permission.category` ごとに区切る（5.6.3）。
  *
- * 権限は30件あり `ticket.*` だけで7件連続する。`sort_order` は category ごとに
+ * 権限は32件あり `ticket.*` だけで9件連続する。`sort_order` は category ごとに
  * 連続する番号帯で採番されているため、順に見て変わり目で切ればよい。
  */
 const categories = computed(() => {
@@ -106,8 +106,8 @@ function has(roleKey: string, permissionKey: string): boolean {
 /**
  * その列が群（`role.scope`）の先頭か。
  *
- * **中央寄せの見出しだけでは、どこまでが「システム」か読めない**（利用者の
- * 実機確認、2026-08-22）。境目に縦罫を1本引いて示す。先頭の群には引かない
+ * **中央寄せの見出しだけでは、どこまでが「システム」か読めない**。
+ * 境目に縦罫を1本引いて示す。先頭の群には引かない
  * ——左隣は権限列で、そちらは既に右罫を持つ。
  */
 function isGroupStart(index: number): boolean {
@@ -144,9 +144,9 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureHead))
 
 <template>
   <div ref="panel" class="matrix-panel">
-    <!-- 5.6.3 のワイヤーどおり。Phase 1 が参照のみであることを最初に伝える -->
+    <!-- 5.6.3 のワイヤーどおり。参照のみであることを最初に伝える -->
     <p class="notice">
-      <span aria-hidden="true">ⓘ</span> {{ $ui('組み込みロールの権限は Phase 1 では変更できません（参照のみ）') }} </p>
+      <span aria-hidden="true">ⓘ</span> {{ $ui('組み込みロールの権限は変更できません（参照のみ）') }} </p>
 
     <p v-if="loading" class="loading" role="status">{{ $ui('読み込み中…') }}</p>
 
@@ -339,7 +339,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureHead))
 }
 
 /*
- * 群（`role.scope`）の境目に縦罫を1本入れる（利用者の実機確認、2026-08-22）。
+ * 群（`role.scope`）の境目に縦罫を1本入れる。
  *
  * **1本だけにする。** 全列に引くと格子になり、一覧（`GuiDesign.md` 5.6）や
  * メンバー表（5.9.2）が横罫だけで組まれているのと見た目が揃わない。読みたいのは

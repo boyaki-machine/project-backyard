@@ -141,7 +141,7 @@ func TestOffsetOfFirstPage(t *testing.T) {
 // **OFFSET は int32 である**（sqlc の PageOffset）。積が超える組は 422 で弾く。
 //
 // **弾かないとラップアラウンドした負の OFFSET が DB へ届き、500 になる**
-// ——`page=85899347&per_page=25` が境界であることを実サーバで測った（pb-152）。
+// ——`page=85899347&per_page=25` が境界であることを実サーバで測った。
 // **境界の内側と外側の両方を見る**——内側だけだと、上限を厳しくしすぎても気づかない。
 func TestParsePageRejectsOffsetOverflow(t *testing.T) {
 	// 内側：(85899346-1) × 25 = 2,147,483,625 ≤ MaxInt32

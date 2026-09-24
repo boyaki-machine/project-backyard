@@ -17,7 +17,7 @@
 // **3〜6 が Requirements.md 10.10.4「承認ゲートをAPIレベルで強制する」の実体**
 // であり、画面側の制御に依存しない。
 //
-// **検証7 は権限ではなく盤面の整合である**（pb-72）。人にもエージェントにも等しく
+// **検証7 は権限ではなく盤面の整合である**。人にもエージェントにも等しく
 // 掛かる——「未完了の子を抱えた親が完了している」状態は、誰が作っても壊れている。
 package v1
 
@@ -46,8 +46,8 @@ const actorKindAgent = "agent"
 // ticketWorkflow はプロジェクトのワークフロー1つぶんの定義。
 //
 // **1リクエストで1回だけ読む。** 9.7 は全ステータスと全遷移を突き合わせるので、
-// ステータスごとに引くと N+1 になる。Phase 1 のテンプレートは最大5ステータス・
-// 7遷移（DbDesign.md 7.4）で、まとめて読んでも小さい。
+// ステータスごとに引くと N+1 になる。テンプレートは最大5ステータス・
+// 8遷移（DbDesign.md 7.4）で、まとめて読んでも小さい。
 type ticketWorkflow struct {
 	statuses    []gen.ListWorkflowStatusesRow
 	transitions []gen.ListWorkflowTransitionsRow
@@ -94,7 +94,7 @@ func (wf ticketWorkflow) findStatus(key string) *gen.ListWorkflowStatusesRow {
 }
 
 // firstStatusInCategory はカテゴリに属するステータスのうち、sort_order が最小の
-// ものを返す。無ければ nil（親子の連動で使う。ApiDesign.md 9.6。pb-72）。
+// ものを返す。無ければ nil（親子の連動で使う。ApiDesign.md 9.6）。
 //
 // **statuses は sort_order 昇順で読んである**（ListWorkflowStatuses の ORDER BY）
 // ので、最初に見つかったものがそれである。
@@ -215,7 +215,7 @@ func (wf ticketWorkflow) denyTransition(
 		return "このチケットの担当者があなたの所有者ではないため、エージェントからは変更できません"
 	}
 
-	// 検証7：未完了の子が残っている親は完了にできない（pb-72）。
+	// 検証7：未完了の子が残っている親は完了にできない。
 	//
 	// **人にもエージェントにも等しく掛ける。** 検証6 と違って種別で分けないのは、
 	// これが**盤面の整合**についての規則だからである——「未完了の子を抱えた親が
@@ -243,7 +243,7 @@ const childrenNotClosedReason = "未完了の子チケットが残っている�
 // **解けなかったときは空を返す。** 呼び出し側は「制限なし」として扱う——
 // 列の既定値は '["user","agent"]' であり（DbDesign.md 6.5）、壊れた値で
 // 全員を締め出すより、検証4・5 に判断を委ねるほうが害が小さい。
-// 値を書くのはマイグレーションだけで、API から変える経路は Phase 1 に無い。
+// 値を書くのはマイグレーションだけで、API から変える経路は無い。
 func decodeActorKinds(raw []byte) ([]string, error) {
 	if len(raw) == 0 {
 		return nil, nil

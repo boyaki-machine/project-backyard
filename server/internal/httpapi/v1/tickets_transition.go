@@ -132,7 +132,7 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 		// **同じステータスへの遷移は定義されえない**（ck_workflow_transition_diff）。
 		// 検証2 が 409 に倒すので、ここで特別扱いはしない。
 
-		// 検証7 の材料（9.6。pb-72）。**完了へ進むときだけ数える**——
+		// 検証7 の材料（9.6）。**完了へ進むときだけ数える**——
 		// それ以外の遷移では結果に効かないので、毎回1本増やす理由が無い。
 		var hasOpenChildren bool
 		if target.Category == statusCategoryDone {
@@ -219,7 +219,7 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		// **子が未着手を出たら、祖先を進行中にする**（9.6。pb-72）。
+		// **子が未着手を出たら、祖先を進行中にする**（9.6）。
 		//
 		// **同じトランザクションで行う。** 連動が落ちて子だけ進むと、盤面が
 		// 「子は動いているのに親は未着手」のまま残る——それを直す操作が画面に無い。
@@ -227,7 +227,7 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		// **着手したら、オンステージへ上げる**（9.6。pb-5）。
+		// **着手したら、オンステージへ上げる**（9.6）。
 		//
 		// 「オンステージだけを見れば仕掛りが全部わかる」という段の約束を、
 		// 手の操作に頼らずに保つ（GuiDesign.md 5.4）——上げ忘れた仕掛りが
@@ -257,14 +257,14 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 }
 
 // statusCategoryTodo / statusCategoryInProgress は親子の連動が見るカテゴリ
-// （9.6「子が動いたら、親を進行中にする」。pb-72）。
+// （9.6「子が動いたら、親を進行中にする」）。
 const (
 	statusCategoryTodo       = "todo"
 	statusCategoryInProgress = "in_progress"
 )
 
 // cascadeParentsToInProgress は、子が未着手カテゴリを出たときに祖先を進行中へ動かす
-// （ApiDesign.md 9.6「子が動いたら、親を進行中にする」。pb-72）。
+// （ApiDesign.md 9.6「子が動いたら、親を進行中にする」）。
 //
 // **掛ける検証は2（順路の定義）だけである。** 検証3〜7 は掛けない——連動は
 // **すでに認可された操作の帰結**であって、新しい操作ではない。ここで検証5（権限）や
@@ -355,7 +355,7 @@ func cascadeParentsToInProgress(
 
 // stageDisplayRootOnStart は、未着手カテゴリを出たチケットの「表示上の
 // トップレベルの祖先」をオンステージへ上げる（ApiDesign.md 9.6
-// 「着手したら、オンステージへ上げる」。pb-5。利用者の判断、2026-09-08）。
+// 「着手したら、オンステージへ上げる」）。
 //
 // **上げるのは自分ではなく祖先である。** 段に置けるのは表示上のトップレベル
 // だけで（9.4.1 の not_stageable）、配下は親と一緒に運ばれる。子タスクに
@@ -407,7 +407,7 @@ func stageDisplayRootOnStart(
 	}); err != nil {
 		return fmt.Errorf("チケットをオンステージへ上げられない: %w", err)
 	}
-	// **上げた根は、配下ごと進行中のスプリントへ入れる**（9.12.3。pb-129）
+	// **上げた根は、配下ごと進行中のスプリントへ入れる**（9.12.3）
 	return joinActiveSprint(ctx, q, projectID, root.ID)
 }
 
@@ -417,7 +417,7 @@ func stageDisplayRootOnStart(
 // （9.6 の表）。前者は「このワークフローではその順路が存在しない」、後者は
 // 「順路はあるがあなたには通れない」であり、利用者が次に取る行動が違う。
 //
-// **検証7 は 409 children_not_closed**（pb-72）。403 に混ぜないのは、これが
+// **検証7 は 409 children_not_closed**。403 に混ぜないのは、これが
 // 権限の問題ではないためである——**同じ人が、子を完了させたあとなら通る。**
 //
 // **理由の文字列で見分ける。** denyTransition が返すのは日本語1本なので、

@@ -43,7 +43,7 @@ type schema struct {
 // である。**ここが表せないと、モデルは中身の形を知らないまま埋めることになる**
 // ——description で言葉にするより、スキーマで宣言したほうが取り違えが減る。
 //
-// **AdditionalProperties は pb-134 で足した。** pb_get_context の charter_versions が
+// **AdditionalProperties を持つ。** pb_get_context の charter_versions が
 // 「文書のパス → 版」の対応で、キーを先に列挙できないためである。値の型（整数）を
 // ここで宣言しておくと、クライアントが渡す前に検査できる。
 type property struct {
@@ -104,9 +104,9 @@ func errorResult(text string) toolResult {
 // perPageMax は 9.2.1 と 2.6 が定める一覧の上限。
 const perPageMax = 200
 
-// readTools は手順25 で実装した read 系5件を返す（Design.md 8.2 の read 行から
-// pb_get_context を除いたもの。あれは手順27 の contextTools で、context_pack.go
-// にある——REST を1本叩くだけの5件と違い、3種類の応答を合成するため）。
+// readTools は read 系6件を返す（Design.md 8.2 の read 行から pb_get_context を
+// 除いたもの。あれは contextTools で、context_pack.go にある——REST を1本叩くだけの
+// 6件と違い、3種類の応答を合成するため）。
 //
 // **並び順がそのまま tools/list の順になる。** /pb-onboard が呼ぶ順
 // （Requirements.md 10.8.5）に並べてある。
@@ -322,7 +322,7 @@ type listArgs struct {
 	Assignee       string     `json:"assignee"`
 	Open           *bool      `json:"open"`
 	Parent         flexString `json:"parent"`
-	// Staged は true のときだけ staged=true を送る（pb-138）。**REST は true しか受けない**
+	// Staged は true のときだけ staged=true を送る。**REST は true しか受けない**
 	// （overdue と同じ）ので、false は指定なしとして扱う。
 	Staged  *bool   `json:"staged"`
 	PerPage flexInt `json:"per_page"`
@@ -454,7 +454,7 @@ func lighten(body []byte) ([]byte, error) {
 
 // pickFields は REST の応答から keys の項目だけを、keys の順に残す（Design.md 8.5.1 / 8.5.3）。
 //
-// **書いた直後の応答に、チケットの本文や送った本文をもう一度載せない**（pb-136 / pb-137）。
+// **書いた直後の応答に、チケットの本文や送った本文をもう一度載せない**。
 // エージェントは本文を手元に持っているか、pb_get_task で読める。lighten と同じく
 // **選別だけを行い**、値は REST の JSON を写す。
 //
@@ -488,7 +488,7 @@ func pickFields(body []byte, keys ...string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// 書き込み系の応答に残す項目（Design.md 8.5.1。pb-137）。
+// 書き込み系の応答に残す項目（Design.md 8.5.1）。
 //
 // **書いた内容を応答で返さない。** 本文は送った本人の手元にあり、要るなら
 // pb_get_task / pb_get_doc で読める。残すのは、続けて使う値と、書けたことを
@@ -715,7 +715,7 @@ func (f *flexString) UnmarshalJSON(b []byte) error {
 
 // ── write 系（手順26a。Design.md 8.5.1）─────────────────────
 
-// writeTools は write 系を返す（手順26a の3件と、pb-68 の pb_add_reference）。
+// writeTools は write 系6件を返す（Design.md 8.2）。
 //
 // **並び順は 10.7.1 の開発フローに合わせてある**——議論の結果を起票し
 // （pb_create_ticket）、実装中に分かったことを書き（pb_post_note）、作業の跡を
@@ -885,9 +885,8 @@ func writeTools() []tool {
 // assignee と書いていたが、名前が ApiDesign.md と一致していれば、エージェントは
 // 迷ったときに設計文書を引ける（8.5）。
 //
-// **tag_ids / 見積 / 日付は pb-76 で開けた。** 見積と日付は数値と日付であって
-// ULID ではなく、**閉じていた理由が最初から当てはまっていなかった**。タグは
-// pb_list_tags で列挙できるようになったので ULID を渡せる。
+// **tag_ids / 見積 / 日付も開ける。** 見積と日付は数値と日付であって ULID ではない。
+// タグは pb_list_tags で列挙できるので ULID を渡せる。
 //
 // **sprint_id と actual_hours は開けない。** 前者は 0028 以降どの経路からも
 // 書けず（9.5.2 の use_sprint_endpoint）、後者は pb_submit_result の
@@ -935,7 +934,7 @@ func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	if a := resolveAssignee(in.AssigneeID, auth.PrincipalFromContext(r.Context())); a != "" {
 		body["assignee_id"] = a
 	}
-	// pb-76 で開けた5つ。**空は載せない**（上と同じ理由——9.3 が任意と定める
+	// タグ・見積・日付の5つ。**空は載せない**（上と同じ理由——9.3 が任意と定める
 	// 欄に空を明示すると、既定の解釈が変わりうる）。
 	if len(in.TagIDs) > 0 {
 		body["tag_ids"] = in.TagIDs
@@ -961,7 +960,7 @@ func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	return passThroughFields(r, res, err, createTicketResultFields...)
 }
 
-// ── pb_update_ticket（Design.md 8.5.1。pb-75 / pb-76）─────────
+// ── pb_update_ticket（Design.md 8.5.1）─────────
 
 // updateTicketArgs は pb_update_ticket の引数。
 //
@@ -969,7 +968,7 @@ func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 // ので、**送っていないことと空を送ったことを区別できなければならない**。
 // 素の string だと、省略が空文字として届いて欄を消してしまう。
 //
-// **type は開けていない**（利用者の判断、2026-09-09）。種別の切り替えは
+// **type は開けていない**。種別の切り替えは
 // 盤面の見え方を変える——タスクをエピックへ変えると、その行はバックログから
 // 消えてフィルタの選択肢になる（GuiDesign.md 5.4）。**塞いでいるのは REST 側
 // である**（ticket.self_edit が type を受けない）ので、ここで落としているのは
@@ -1071,7 +1070,7 @@ func callUpdateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	return passThroughFields(r, res, nil, updateTicketResultFields...)
 }
 
-// ── pb_put_dod（Design.md 8.5.1。pb-75）───────────────────────
+// ── pb_put_dod（Design.md 8.5.1）───────────────────────
 
 // putDoDArgs は pb_put_dod の引数。
 //
@@ -1242,7 +1241,7 @@ type addReferenceArgs struct {
 
 // callAddReference は ticket_reference を1行足す（ApiDesign.md 9.10.2）。
 //
-// **必要権限は ticket.reference.edit**（0027／pb-68）。エージェントの既定スコープに
+// **必要権限は ticket.reference.edit**（0027）。エージェントの既定スコープに
 // 入っているが、**既に発行済みのトークンには入っていない**——scopes は発行時に固定
 // されるので、古いトークンでは 403 になる（ApiDesign.md 4.5.3）。
 //
@@ -1358,20 +1357,20 @@ func callPutDoc(h *Handler, r *http.Request, key string, args json.RawMessage) (
 
 // transitionTools は手順26b で実装する2件を返す。
 //
-// **叩く REST（9.6 / 9.7）は Phase 1 から在る。** 設計原則7 が「エージェントから
+// **叩く REST は 9.6 / 9.7 である。** 設計原則7 が「エージェントから
 // 見える面は MCP のみ」と定めているのに、状態遷移だけが REST に在って MCP に
 // 無かった——Requirements.md 10.3.2 が pb_claim_task の説明に「着手宣言。
 // ステータスを『実装中』へ」と書いていたため、**状態を動かす機能がリースの中に
 // 埋まって見えなくなっていた**（Design.md 8.2）。
 //
-// **リース（pb_claim_task / pb_release_task）は Phase 3 へ送った**
+// **リース（pb_claim_task / pb_release_task）は持たない（構想）**
 // （Requirements.md 10.3.3）。排他が実際に要るのは自律取得（pb_next_task）からで、
-// Phase 2 は人がチケット番号を指定して走らせる。
+// いまは人がチケット番号を指定して走らせる。
 //
 // **並び順は「見てから動かす」。** 先に pb_list_transitions を置くのは、進める先と
 // 進めない理由を1往復で知ってから pb_transition_task を呼ぶ流れにするためである。
 //
-// **ただし着手（未着手→進行中）では先に呼ばなくてよい**（Design.md 8.5.3。pb-140）。
+// **ただし着手（未着手→進行中）では先に呼ばなくてよい**（Design.md 8.5.3）。
 // 答えが毎回同じで、進められないときは pb_transition_task の失敗の応答に同じ理由が返る。
 func transitionTools() []tool {
 	return []tool{
@@ -1450,7 +1449,7 @@ func callListTransitions(h *Handler, r *http.Request, key string, args json.RawM
 // （ApiDesign.md 9.6）、人が画面から遷移したときと同じ経路を通る。ここで書くと
 // 同じ規則が2か所に生まれる（8.1）。
 //
-// **応答は状態の要点だけにする**（Design.md 8.5.3。pb-136）。エージェントは着手前に
+// **応答は状態の要点だけにする**（Design.md 8.5.3）。エージェントは着手前に
 // pb_get_task で本文を読んでいるので、9.5.1 をそのまま返すと遷移のたびに同じ本文を
 // もう一度運ぶ。
 func callTransitionTask(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
@@ -1479,7 +1478,7 @@ func callTransitionTask(h *Handler, r *http.Request, key string, args json.RawMe
 	return passThroughFields(r, res, err, transitionResultFields...)
 }
 
-// transitionResultFields は pb_transition_task の応答に残す項目（Design.md 8.5.3。pb-136）。
+// transitionResultFields は pb_transition_task の応答に残す項目（Design.md 8.5.3）。
 //
 // 遷移の結果を確かめるのに要るものだけである——どこへ進んだか（status）、自分が
 // 記録されたか（working_agent）、続けて書くときの If-Match（version）。
@@ -1598,7 +1597,7 @@ func callSubmitResult(h *Handler, r *http.Request, key string, args json.RawMess
 	return passThrough(r, res, err)
 }
 
-// ── pb_list_tags（Design.md 8.5.1。pb-76）─────────────────────
+// ── pb_list_tags（Design.md 8.5.1）─────────────────────
 
 // callListTags は 9.11 の一覧をそのまま返す。
 //

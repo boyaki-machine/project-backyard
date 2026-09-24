@@ -44,7 +44,7 @@ type CreatePendingSettingChangeRow struct {
 	CreatedAt pgtype.Timestamptz
 }
 
-// 未確認の設定変更のクエリ（DbDesign.md 6.17、Design.md 10.3）。pb-97。
+// 未確認の設定変更のクエリ（DbDesign.md 6.17、Design.md 10.3）。
 //
 // **行は0か1つである。** 未確認が残っている間は次の危険な変更を受け付けない
 // （ApiDesign.md 11.2 が 409 を返す）ので、複数行を前提にした操作を持たない。
@@ -109,7 +109,7 @@ type GetPendingSettingChangeRow struct {
 
 // 未確認を引く。**画面が残り時間と「誰が変えたか」を出すために使う。**
 //
-// **変えた人の表示名も返す**（pb-107）。画面は「あなたが変えました」と
+// **変えた人の表示名も返す**。画面は「あなたが変えました」と
 // 「〇〇 が変えました」で文言を分ける——押す前に確かめることが違う。
 func (q *Queries) GetPendingSettingChange(ctx context.Context) (GetPendingSettingChangeRow, error) {
 	row := q.db.QueryRow(ctx, getPendingSettingChange)
@@ -172,7 +172,7 @@ type ListPendingSettingChangesRow struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
-// 未確認を全部引く。**起動時に使う**（pb-97 の改訂、2026-09-12）。
+// 未確認を全部引く。**起動時に使う。**
 //
 // **起動時は期限を見ない。** 締め出された人が最初に試すのは再起動であり、
 // そこで戻さないと**その設定では起動に失敗する場合に永遠に戻らない**

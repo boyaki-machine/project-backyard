@@ -1,4 +1,4 @@
--- TLS 証明書のクエリ（DbDesign.md 6.15、ApiDesign.md 11.4〜11.6）。pb-3。
+-- TLS 証明書のクエリ（DbDesign.md 6.15、ApiDesign.md 11.4〜11.6）。
 --
 -- **Design.md 10.3 の第3層である。** 秘密鍵は secret_key で暗号化されて入っており、
 -- **復号はアプリ側（internal/tlscert）で行う。** DB は暗号文を運ぶだけである。

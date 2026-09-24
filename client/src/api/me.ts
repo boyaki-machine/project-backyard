@@ -121,11 +121,11 @@ export function listAgentClientKinds(): Promise<{ items: AgentClientKind[] }> {
 export type AgentScopes = components['schemas']['AgentScopes']
 
 /**
- * エージェント用トークンの既定スコープと、既定に足せる権限（`ApiDesign.md` 4.5.9。pb-93）。
+ * エージェント用トークンの既定スコープと、既定に足せる権限（`ApiDesign.md` 4.5.9）。
  *
  * **画面に既定の写しを持たせないために在る。** 発行の `scopes` は絶対指定なので
  * （4.5.3）、「既定に `doc.edit` を足す」を送るには既定の中身が要る。写しは
- * 権限を足すたびに2回続けて腐った（pb-90）。
+ * 権限を足すたびに2回続けて腐った。
  */
 export function getAgentScopes(): Promise<AgentScopes> {
   return api.get<AgentScopes>('/agent-scopes')

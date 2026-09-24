@@ -4,7 +4,7 @@ import "net/http"
 
 // contentSecurityPolicy は全応答に付ける CSP（ApiDesign.md 2.12、Design.md 6.6.2）。
 //
-// **値は実測で決めた**（pb-152）。ビルド後の index.html はインラインスクリプトを
+// **値は実測で決めた**。ビルド後の index.html はインラインスクリプトを
 // 持たず（Vite が外部ファイルを参照する）、CSS は外部リソースを読まず、client の
 // ソースに外部ドメインの参照も無い。**だから `script-src 'self'` で足りる。**
 //
@@ -27,9 +27,8 @@ const contentSecurityPolicy = "default-src 'self'; " +
 
 // SecurityHeaders は全応答にセキュリティヘッダを付ける（ApiDesign.md 2.12）。
 //
-// **いまの防御が崩れた日の受け皿である。** pb-152 の点検では XSS の穴は
-// 見つからなかったが、**そのガードを誰かが外した日に止めるものが無かった**
-// （Design.md 6.6.2）。
+// **いまの防御が崩れた日の受け皿である。** XSS のガードを誰かが外した日に、
+// **止めるものがここ以外に無い**（Design.md 6.6.2）。
 //
 // **最も外側に積む。** 保守モードで止めた応答にも、エラー応答にも付くようにする。
 //

@@ -16,7 +16,7 @@ export interface MultiSelectOption {
 
 <script setup lang="ts">
 /**
- * 複数選択のフィルタ（`GuiDesign.md` 5.13「複数選択」。pb-66）。
+ * 複数選択のフィルタ（`GuiDesign.md` 5.13「複数選択」）。
  *
  * **`EpicFilter`（5.4）と同じ作りにする。** `<select multiple>` を使わない——縦に伸びて
  * 条件の行の高さがそろわず、画面の縦を食う（原則1）。`<Teleport>` で body へ出し、
@@ -70,8 +70,8 @@ function place(): void {
 }
 
 /**
- * 閉じるのは**パネルの外側**のスクロールだけ（`GuiDesign.md` 6.1「浮かせたパネルを閉じる規則」。
- * pb-131）。capture で拾うので、候補の欄のスクロールもここへ届く。
+ * 閉じるのは**パネルの外側**のスクロールだけ（`GuiDesign.md` 6.1「浮かせたパネルを閉じる規則」）。
+ * capture で拾うので、候補の欄のスクロールもここへ届く。
  */
 function onScroll(e: Event): void {
   if (e.target instanceof Node && panel.value?.contains(e.target)) return

@@ -84,7 +84,7 @@ export type PendingConfirmation = components['schemas']['PendingConfirmation']
  * 確認を待っている設定変更を引く（`ApiDesign.md` 11.9）。
  *
  * **設定一覧と分けた軽い口である。** どの画面にいても未確認を出すために
- * 定期的に引くので、全設定の一覧を運ばない（pb-107）。
+ * 定期的に引くので、全設定の一覧を運ばない。
  *
  * **必要権限は `system.settings`。** 持たなければ 403 になるので、
  * 呼び出し側が権限を見てから叩くこと。
@@ -116,9 +116,9 @@ export function confirmSettings(): Promise<void> {
  * 組み立てない。**
  *
  * **この口は循環を断つためにある**——自己署名証明書では、その証明書を持って
- * いないクライアントが PB へ繋げない（pb-100）。
+ * いないクライアントが PB へ繋げない。
  *
- * **落ちてくるのは zip である**（pb-108）。**`.crt` をそのまま返すとブラウザが
+ * **落ちてくるのは zip である**。**`.crt` をそのまま返すとブラウザが
  * 「不審なファイル」として拒み、200 が返っているので失敗がどこにも残らない。**
  */
 export function certificateZipUrl(id: string): string {
@@ -129,7 +129,7 @@ export type DatabaseStatus = components['schemas']['DatabaseStatus']
 export type DatabaseTable = components['schemas']['DatabaseTable']
 
 /**
- * DB の接続状態と統計（`ApiDesign.md` 11.10。pb-110）。
+ * DB の接続状態と統計（`ApiDesign.md` 11.10）。
  *
  * **件数は全表の `count(*)` である。** 行が増えるほど重くなるので、定期的に
  * 引かない——タブを開いたときと [再読み込み] のときだけ呼ぶ（`GuiDesign.md` 5.12.2）。
@@ -145,7 +145,7 @@ export type RestoreTable = components['schemas']['RestoreTable']
 export type BackupMeta = components['schemas']['BackupMeta']
 
 /**
- * PB 全体を書き出す URL（`ApiDesign.md` 11.11。pb-147）。
+ * PB 全体を書き出す URL（`ApiDesign.md` 11.11）。
  *
  * **`<a href>` で開く**（証明書の取り出しと同じ。11.7）。Cookie 認証なので追加の
  * ヘッダが要らず、サーバが付ける `Content-Disposition` がそのままブラウザの保存に乗る。
@@ -157,7 +157,7 @@ export function backupUrl(): string {
 }
 
 /**
- * 書庫を取り込む（`ApiDesign.md` 11.12。pb-147）。
+ * 書庫を取り込む（`ApiDesign.md` 11.12）。
  *
  * **パートの順が意味を持つ**——サーバは先頭から順に読むので、`archive` を最後に
  * 詰める。先だと、資格情報を読む前に書庫が流れ込む。

@@ -12,7 +12,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
-// passkeyFakeState はパスキーが触るものを持つ（pb-104。ApiDesign.md 3.5 / 3.6 / 4.7 / 6.10）。
+// passkeyFakeState はパスキーが触るものを持つ（ApiDesign.md 3.5 / 3.6 / 4.7 / 6.10）。
 //
 // **挑戦は作ったときの引数から引き返す。** 3.5 → 3.6、4.7.2 → 4.7.3 の流れを
 // ルータ越しにそのまま通すためで、テストが挑戦の行を手で組むと、SessionData の

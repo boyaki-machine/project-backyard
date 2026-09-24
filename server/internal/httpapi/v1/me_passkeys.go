@@ -1,4 +1,4 @@
-// 自分自身に関するAPI（ApiDesign.md 4章）のうち、パスキーの管理（4.7。pb-104）。
+// 自分自身に関するAPI（ApiDesign.md 4章）のうち、パスキーの管理（4.7）。
 //
 //	GET    /api/v1/me/passkeys           4.7.1
 //	POST   /api/v1/me/passkeys/options   4.7.2

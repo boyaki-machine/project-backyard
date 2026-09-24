@@ -2,8 +2,8 @@
 //
 //	POST /api/v1/admin/users/:id/password-reset    6.6
 //	POST /api/v1/admin/users/:id/sessions/revoke   6.7
-//	POST /api/v1/admin/users/:id/mfa/reset         6.9（pb-103）
-//	POST /api/v1/admin/users/:id/passkeys/reset    6.10（pb-104）
+//	POST /api/v1/admin/users/:id/mfa/reset         6.9
+//	POST /api/v1/admin/users/:id/passkeys/reset    6.10
 //
 // **どちらも当人を締め出す操作である。** 6.6 はパスワードを差し替えたうえで
 // 全セッションを失効し、6.7 は失効だけを行う。
@@ -27,7 +27,7 @@ import (
 
 // passwordResetModeGenerate は 6.6 の mode。
 //
-// **Phase 1 は generate だけを受ける**（手順13a の判断）。6.6 の応答は
+// **generate だけを受ける**（手順13a の判断）。6.6 の応答は
 // generated_password しか持たず、管理者が手で決めた値を返す意味が無い。
 // 画面（GuiDesign.md 5.6.2）の導線も [リセット] の1つだけである。
 // 必要になれば 6.2 と同じ password_mode / password を足す。
@@ -54,7 +54,7 @@ type passwordResetResponse struct {
 // resetUserPassword は POST /api/v1/admin/users/:id/password-reset を
 // 処理する（ApiDesign.md 6.6）。
 //
-// **local_credential を持たないユーザー（IdP のみ、Phase 3）は 409 conflict**。
+// **local_credential を持たないユーザー（IdP のみ。構想）は 409 conflict**。
 func (h *handler) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 	p, id, ok := h.adminUserContext(w, r, "POST /admin/users/{id}/password-reset")
 	if !ok {
@@ -122,9 +122,9 @@ func (h *handler) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		// という用途を果たさない。
 		//
 		// **ただし自分自身へのリセットでは、いま操作しているセッションを残す**
-		// （6.6 の改訂。pb-82）。切ってしまうと、**画面は generated_password を
+		// （6.6）。切ってしまうと、**画面は generated_password を
 		// 表示する前に 401 を受けてログイン画面へ飛ぶ**。あの値はこの応答でしか
-		// 手に入らないので、**押した本人が自分を締め出す**（実測、2026-09-12）。
+		// 手に入らないので、**押した本人が自分を締め出す**。
 		//
 		// **用途は壊れない。** 自分で押したなら、いま操作している端末は本人の
 		// ものである。他の端末はすべて切れる（4.3 と同じ扱い）。
@@ -172,7 +172,7 @@ func (h *handler) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 //
 // **エージェントのトークンにも適用される**（6.7）ため、token_type で
 // 絞らずアクターの全トークンを失効させる（RevokeActorSessions）。
-// ただし Phase 1 に到達できるのは kind='user' だけである（6.3 の判断）。
+// ただし到達できるのは kind='user' だけである（6.3 の判断）。
 //
 // **冪等である。** 既に1本も無くても 204 を返す。何度呼んでも
 // 「入れない」状態に収束する。
@@ -247,7 +247,7 @@ func validatePasswordReset(req passwordResetRequest) *apierr.Error {
 }
 
 // resetUserMfa は POST /api/v1/admin/users/:id/mfa/reset を処理する
-// （ApiDesign.md 6.9。pb-103）。
+// （ApiDesign.md 6.9）。
 //
 // **本人がリカバリコードまで失ったときの口である**（Design.md 6.7.5）。
 // 対象の認証器・リカバリコード・未消費の挑戦をすべて消し、次のログインから
@@ -313,7 +313,7 @@ func (h *handler) resetUserMfa(w http.ResponseWriter, r *http.Request) {
 }
 
 // resetUserPasskeys は POST /api/v1/admin/users/:id/passkeys/reset を処理する
-// （ApiDesign.md 6.10。pb-104）。
+// （ApiDesign.md 6.10）。
 //
 // **乗っ取りの疑いがあるときの口である**（Design.md 6.8.6）。パスキーはパスワード
 // 無しで入れる鍵なので、乗っ取った人が登録した1本は、6.6 のリセットも 6.7 の

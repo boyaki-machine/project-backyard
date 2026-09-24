@@ -94,7 +94,7 @@ func TestRenderClaudeCode(t *testing.T) {
 	}
 	// **存在しないツールを書かない**（Requirements.md 10.8.6 を実装に合わせて改訂した）。
 	if strings.Contains(impl.Content, "pb_propose_subtasks") {
-		t.Error("Phase 3 のツール pb_propose_subtasks を手順ファイルに書いている")
+		t.Error("構想のツール pb_propose_subtasks を手順ファイルに書いている")
 	}
 	// **実装値と綴りを合わせる**（0006 の CHECK は human_only / red）。
 	if strings.Contains(impl.Content, "human-only") {
@@ -120,7 +120,7 @@ func TestRenderClaudeCode(t *testing.T) {
 	if !strings.Contains(block.Content, block.MarkerEnd) {
 		t.Error("本文に marker_end が無い")
 	}
-	// **利用者の要望（2026-09-06）**：貼る前・貼った後のチェックを生成物に埋める。
+	// 貼る前・貼った後のチェックを生成物に埋める。
 	if !strings.Contains(block.Content, "git pull") || !strings.Contains(block.Content, "git diff") {
 		t.Error("常時コンテキストに反映時のチェック（git pull / git diff）が無い")
 	}
@@ -174,7 +174,7 @@ func TestRenderAllClients(t *testing.T) {
 		}
 	}
 	if !strings.Contains(ig.Content, "各自の環境") {
-		t.Error(".gitignore に「各自の環境。共有しない」の説明が無い（利用者の指摘）")
+		t.Error(".gitignore に「各自の環境。共有しない」の説明が無い")
 	}
 
 	// **Codex にはスラッシュコマンドが無い**（Requirements.md 10.8.2）ので、
@@ -335,11 +335,10 @@ func dropLinesContaining(s, needle string) string {
 }
 
 // TestRepositoryCommandsMatchTemplates は、このリポジトリの .claude/commands/ にある
-// 配布物の写しが、テンプレートから生成したものと一字一句同じであることを見る（pb-141）。
+// 配布物の写しが、テンプレートから生成したものと一字一句同じであることを見る。
 //
-// **写しだけを直すと、配布先には届かない。** 手順28c ではテンプレートだけが、2026-09-12 には
-// 写しだけが直り、どちらも人が比べるまで気づかれなかった。**直す場所はテンプレートで、
-// 写しは生成して置く。** pb-step / pb-review はリポジトリ専用で、配布しないので対象外。
+// **写しだけを直すと、配布先には届かない。** 片方だけが直っても、人が比べるまで
+// 気づけない。**直す場所はテンプレートで、写しは生成して置く。** pb-step / pb-review はリポジトリ専用で、配布しないので対象外。
 func TestRepositoryCommandsMatchTemplates(t *testing.T) {
 	files, err := Render([]string{"claude_code"}, testParams())
 	if err != nil {

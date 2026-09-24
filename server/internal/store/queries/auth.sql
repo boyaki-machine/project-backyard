@@ -178,7 +178,7 @@ WHERE actor_id = @actor_id;
 -- 保存しても GET /me が返さなければ、別の端末で同じ見た目にならない**——
 -- 8.11 が app_user と localStorage の両方に保存すると定めた目的がそれである。
 --
--- **すべて LEFT JOIN にする。** エージェント（Phase 2）は app_user を持たず、
+-- **すべて LEFT JOIN にする。** エージェントは app_user を持たず、
 -- 将来の OIDC 専用ユーザーは local_credential を持たない。行が返らないことと
 -- 「そのアクターが存在しない」ことを取り違えないようにする。
 --

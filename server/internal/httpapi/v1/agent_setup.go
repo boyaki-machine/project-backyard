@@ -214,7 +214,7 @@ func (h *handler) parseSetupClients(r *http.Request) ([]string, *apierr.Error) {
 // 『HTTPS で公開しているのに Secure が付かない』を招く」と書いており、**同じ問題を
 // 同じ設定で解く**。r.TLS だけを見ると、プロキシの背後で必ず http:// になる。
 //
-// **新しい設定項目は足さない**（利用者の判断、2026-09-06）。着地は
+// **新しい設定項目は足さない**。着地は
 // アプリケーション設定画面（Design.md 10.3）である。
 func (h *handler) publicBaseURL(r *http.Request) string {
 	scheme := "http"

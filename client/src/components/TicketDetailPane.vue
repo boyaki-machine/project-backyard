@@ -17,8 +17,7 @@ import { uiText } from '../locales/ui'
  * **画面全体を編集モードにしない**（5.5「編集の単位」）。選べるものは選んだ時点で
  * `PATCH`、文字・数値・日付はその領域をクリックして編集モードに入る。
  *
- * **まだ出さないセクションは見出しごと出さない**（5.5）——Phase 1 で残っている
- * のは履歴（19）だけである。空の枠を置くと「実装済みで中身が無い」に見え、
+ * **まだ出さないセクションは見出しごと出さない**（5.5）。空の枠を置くと「実装済みで中身が無い」に見え、
  * `comment_count` が実数を返すぶん誤解が強くなる。
  *
  * **完了条件・関連チケット・コメントは手順18b で足した**（5.5、`ApiDesign.md`
@@ -125,11 +124,11 @@ const props = defineProps<{
   /**
    * 親の選択肢（5.5「編集の単位」）。**いま一覧に出ているチケット**から選ぶ。
    * バックログは最大200件を既に手元に持っており、追加の往復を要しない。
-   * **エピックは混ざっていても候補に出さない**（5.5「エピック欄」。pb-14）。
+   * **エピックは混ざっていても候補に出さない**（5.5「エピック欄」）。
    */
   candidates: Ticket[]
   /**
-   * エピック欄の選択肢（5.5「エピック欄」。pb-14）。バックログが持つ
+   * エピック欄の選択肢（5.5「エピック欄」）。バックログが持つ
    * `GET /tickets?type=epic` の語彙で、追加の往復を要しない。
    */
   epics?: Ticket[]
@@ -143,7 +142,7 @@ const emit = defineEmits<{
    * **行が増えた。** `updated` と分けているのは、受け側の扱いが違うからである
    * ——`updated` は既にある行の差し替えで済むが、**新しい行は一覧の結果集合に
    * 一度も入っていない**ので、フィルタに合うか・`sort_key` のどこに入るかを
-   * 一覧側では決められない。`deleted` が取り直しているのと同じ理由（pb-15）。
+   * 一覧側では決められない。`deleted` が取り直しているのと同じ理由。
    */
   created: [ticket: TicketDetail]
   deleted: [seq: number, title: string]
@@ -212,7 +211,7 @@ type EditField =
   | 'readiness_note'
   | ScopeField
 
-/** スコープ境界はキーごとに1欄（5.5「スコープ境界」。pb-45） */
+/** スコープ境界はキーごとに1欄（5.5「スコープ境界」） */
 type ScopeField = `scope.${ScopeKey}`
 
 function isScopeField(field: EditField): field is ScopeField {
@@ -264,8 +263,7 @@ async function startEdit(field: EditField): Promise<void> {
  * 日本語入力では、変換候補を確定する `Enter` も `keydown` として飛んでくる。
  * その keydown は `isComposing: true`（`keyCode` は 229）で来るが、**Vue の
  * `.enter` 修飾子はこれを区別しない**。素直に書くと、**変換を確定したつもりの
- * `Enter` が欄の確定として処理され、変換前の文字列のまま編集モードを抜ける**
- * （pb-42。利用者の報告、2026-09-05）。
+ * `Enter` が欄の確定として処理され、変換前の文字列のまま編集モードを抜ける。**
  *
  * **`.prevent` を修飾子で付けてはいけない。** あちらはハンドラより先に
  * `preventDefault()` を呼ぶので、**変換確定そのものを止めてしまう**。
@@ -366,7 +364,7 @@ async function commitEdit(): Promise<void> {
  */
 async function selectField(patch: UpdateTicketRequest, field: string): Promise<void> {
   // **編集中の欄があれば先に保存する**（5.5「別の領域をクリックしてフォーカスを
-  // 外す」＝保存。pb-43）。`startEdit` が既に持っている作法を、選ぶ側にも広げる
+  // 外す」＝保存）。`startEdit` が既に持っている作法を、選ぶ側にも広げる
   // ——広げないと、**タグを1つ足しただけで説明の下書きが消える**。
   //
   // **先の保存が失敗したらそこで止める。** 失敗を踏み越えて別の変更を通すと、
@@ -396,7 +394,7 @@ async function save(patch: UpdateTicketRequest, field: string): Promise<void> {
   try {
     const next = await ticketsApi.updateTicket(props.projectKey, current.seq, current.version, patch)
     ticket.value = next
-    // **閉じるのは、いま編集している欄を保存したときだけ**（pb-43）。
+    // **閉じるのは、いま編集している欄を保存したときだけ**。
     // 以前は成功のたびに閉じていたので、**関係のない欄の `PATCH` が成功しただけで
     // 編集中の下書きが（保存もされずに）消えていた**。
     if (editing.value === field) cancelEdit()
@@ -428,12 +426,12 @@ async function loadTransitions(): Promise<void> {
 }
 
 /**
- * 遷移させる（9.6）。**選んだ時点で送る**（5.5「状態のドロップダウン」。pb-55）。
+ * 遷移させる（9.6）。**選んだ時点で送る**（5.5「状態のドロップダウン」）。
  *
  * **確認モーダルは廃止した。** 手順18b で「なぜ動かしたかを残せる場所を同じ操作の
  * 中に置く価値が、クリック1つより大きい」として足したものだが、**実運用では逆
- * だった**——状態変更は頻度が高く、毎回ダイアログを挟むのは現実的でない
- * （利用者の判断、2026-09-06）。「選べるものは選んだ時点で `PATCH`」という
+ * だった**——状態変更は頻度が高く、毎回ダイアログを挟むのは現実的でない。
+ * 「選べるものは選んだ時点で `PATCH`」という
  * 5.5 の原則へ戻した。
  *
  * **履歴は `activity` が持つ**（9.8）。誰がどの状態からどの状態へ変えたかは
@@ -465,7 +463,7 @@ const confirmDelete = ref(false)
 /**
  * `[⋯]` の項目（5.5「`[⋯]` メニューの項目」）。
  *
- * **追加の2つは、セクションの見出し右と二重に置く**（利用者の判断、2026-08-27）。
+ * **追加の2つは、セクションの見出し右と二重に置く**。
  * 見出し右はそのセクションを読んでいる最中の導線、`[⋯]` は**セクションが画面に
  * 出ていなくても届く**導線で、役割が違う。**子チケットは0件だとセクションごと
  * 消える**ので、`[⋯]` が無いと最初の1件を作れない。
@@ -926,7 +924,7 @@ function openNewChild(): void {
 
 /**
  * 親の候補。**このチケット自身に固定する**ので1件だけ渡す。
- * **エピックなら親チケット欄には渡さず、エピック欄を固定する**（5.4.3「親チケットとエピック」。pb-14）
+ * **エピックなら親チケット欄には渡さず、エピック欄を固定する**（5.4.3「親チケットとエピック」）
  */
 const childParentCandidates = computed<Ticket[]>(() => {
   const t = ticket.value
@@ -963,7 +961,7 @@ async function createChild(body: CreateTicketRequest): Promise<void> {
     const child = await ticketsApi.createTicket(props.projectKey, { ...body, parent_seq: t.seq })
     showNewChild.value = false
     await load()
-    // **`updated` ではなく `created` を流す**（pb-15）。親の行を差し替えるだけでは
+    // **`updated` ではなく `created` を流す**。親の行を差し替えるだけでは
     // **作った子が一覧に一度も現れない**——バックログは詳細を開いたまま子を
     // 増やせるので、リロードするまで見えない状態が残っていた。
     emit('created', child)
@@ -981,7 +979,7 @@ async function createChild(body: CreateTicketRequest): Promise<void> {
 }
 
 /**
- * 子チケットの担当を、一覧の行から変える（5.5「子チケット」。pb-60）。
+ * 子チケットの担当を、一覧の行から変える（5.5「子チケット」）。
  *
  * **`children` は `version` を持たない**（`ApiDesign.md` 9.5.1 の `TicketChild` は
  * `seq` / `title` / `type` / `status` / `assignee` だけ）。`PATCH` は `If-Match` が
@@ -1037,7 +1035,7 @@ const body = computed(() => renderMarkdown(ticket.value?.body_md ?? ''))
 
 /**
  * 親の候補。**自分自身は落とす**。子孫はサーバの 422 `parent_cycle` に任せる（5.5）。
- * **エピックも落とす**——エピック欄で選ぶ（5.5「エピック欄」。pb-14）。
+ * **エピックも落とす**——エピック欄で選ぶ（5.5「エピック欄」）。
  */
 const parentOptions = computed(() =>
   props.candidates.filter((c) => c.seq !== props.seq && c.type !== 'epic'),
@@ -1045,7 +1043,7 @@ const parentOptions = computed(() =>
 
 /**
  * 親の欄に出す親。**親がエピックなら「親なし」と出す**——エピックはエピック欄が
- * 出す（5.5「エピック欄」。pb-14）。保存されている `parent_seq` は同じ1列である。
+ * 出す（5.5「エピック欄」）。保存されている `parent_seq` は同じ1列である。
  */
 const parentTicket = computed(() => {
   const p = ticket.value?.parent
@@ -1059,11 +1057,11 @@ const parentTicket = computed(() => {
 const parentErrorAt = ref<'parent' | 'epic'>('parent')
 
 /**
- * 親の選択（5.5「親は選択式である」。pb-48）。
+ * 親の選択（5.5「親は選択式である」）。
  *
  * **`<select>` をやめて、絞り込みのできる一覧にした。** チケットが増えると
- * `<option>` を目で探すのが現実的でなくなる（利用者の報告、2026-09-06）。
- * **候補の出どころは変えていない**——いま一覧に出ているチケット（最大200件）で、
+ * `<option>` を目で探すのが現実的でなくなる。
+ * **候補は**いま一覧に出ているチケット（最大200件）で、
  * 追加の往復を要しない。
  */
 const parentPickerOpen = ref(false)
@@ -1105,12 +1103,12 @@ async function pickParent(seq: number | null): Promise<void> {
   parentPickerOpen.value = false
   if ((parentTicket.value?.seq ?? null) === seq) return // 変わらないなら送らない（5.5）
   parentErrorAt.value = 'parent'
-  // **親を外しても、祖先のエピックには残す**（5.5「エピック欄」。利用者の判断、
-  // 2026-09-15）。親を外す操作で、エピックという属性まで失わせない
+  // **親を外しても、祖先のエピックには残す**（5.5「エピック欄」）。
+  // 親を外す操作で、エピックという属性まで失わせない
   await selectField({ parent_seq: seq ?? ticket.value?.epic?.seq ?? null }, 'parent_seq')
 }
 
-// ── エピック欄（5.5「エピック欄」。pb-14）─────────────────────
+// ── エピック欄（5.5「エピック欄」）─────────────────────
 
 /**
  * エピックを選べるか。**親（エピック以外）が無いときだけ**——配下のツリーは親と
@@ -1202,7 +1200,7 @@ function errorFor(field: string): string {
         <span class="type-icon" :title="ticketTypeLabels[ticket.type]" aria-hidden="true">
           {{ ticketTypeIcons[ticket.type] }}
         </span>
-        <!-- **ID の右にタイトルを並べる**（5.5。pb-10）。1段目は領域が余っており、
+        <!-- **ID の右にタイトルを並べる**（5.5）。1段目は領域が余っており、
              2段目を畳めば1行ぶんの縦が本文へ回る。**ID は残す**——5.4「ID列」が
              完全形を出すと定めており、詳細から消えると照合できなくなる -->
         <h2 class="detail-id">{{ fullId }}</h2>
@@ -1264,7 +1262,7 @@ function errorFor(field: string): string {
       </div>
 
       <template v-else-if="ticket">
-        <!-- タイトルはヘッダ段へ移した（5.5。pb-10）。**失敗の文言だけは本文側に
+        <!-- タイトルはヘッダ段へ移した（5.5）。**失敗の文言だけは本文側に
              残す**——48px のヘッダに複数行を入れると段の高さが動く（6.4） -->
         <p v-if="errorFor('title')" class="field-error" role="alert">{{ errorFor('title') }}</p>
 
@@ -1404,7 +1402,7 @@ function errorFor(field: string): string {
             <dd class="parent-cell">
               <!-- **選択式である**（5.5）。親の実体は `parent_seq` の数値で、
                    番号を手で打たせる形はどの画面にも無い。**絞り込みができる
-                   一覧にした**（pb-48）——`<option>` を目で探せる件数を超えた -->
+                   一覧にした**——`<option>` を目で探せる件数を超えた -->
               <template v-if="canEdit">
                 <button
                   type="button"
@@ -1486,7 +1484,7 @@ function errorFor(field: string): string {
           <div class="meta-item">
             <dt>{{ $ui('スプリント') }}</dt>
             <dd>
-              <!-- **読み取り専用である**（5.5「スプリントは選べない」。pb-6）。
+              <!-- **読み取り専用である**（5.5「スプリントは選べない」）。
                    スプリントは「チケットにあらかじめ付ける属性」ではなく
                    「いまどの期間で消化しようとしているか」であり、決まるのは
                    オンステージ段でスプリントを開始した瞬間である（5.4）。
@@ -1495,7 +1493,7 @@ function errorFor(field: string): string {
             </dd>
           </div>
 
-          <!-- エピック（5.5「エピック欄」。pb-14）。**保存するのは `parent_seq` だけ**で、
+          <!-- エピック（5.5「エピック欄」）。**保存するのは `parent_seq` だけ**で、
                親（エピック以外）が無いときだけ選べる。親があれば配下のツリーは親と一緒に
                エピックへ属するので、祖先のエピック（9.5.1 の `epic`）を出すだけにする。
                **エピック自身には出さない**——入れ子を画面から作らない。
@@ -1531,7 +1529,7 @@ function errorFor(field: string): string {
             </dd>
           </div>
 
-          <!-- 実行モード（5.5「実行モード」。pb-65）。**このチケットにエージェントが
+          <!-- 実行モード（5.5「実行モード」）。**このチケットにエージェントが
                手を出してよいか**を決める欄で、エージェントは着手前にこれを読む。
                **「未設定」を持たない**——列が `NOT NULL` で、`null` を送ると 422（9.5.2） -->
           <div class="meta-item wide">
@@ -1560,7 +1558,7 @@ function errorFor(field: string): string {
             </dd>
           </div>
 
-          <!-- Readiness（5.5「Readiness」。pb-45）。**いま着手してよいか**の信号で、
+          <!-- Readiness（5.5「Readiness」）。**いま着手してよいか**の信号で、
                パックの「2. 実行の前提」に理由と一緒に出る。**実行モードと違い
                未判定（`null`）を持つ**。理由が自由文なので2列ぶんを使う -->
           <div class="meta-item wide">
@@ -1867,7 +1865,7 @@ function errorFor(field: string): string {
           <ul class="children">
             <li v-for="c in ticket.children" :key="c.seq" class="child-row">
               <!-- **行クリックでその子の詳細を開く**（同じペインが差し替わる）。
-                   **担当のセルはリンクの外に出す**（pb-60）——`<select>` をリンクの
+                   **担当のセルはリンクの外に出す**——`<select>` をリンクの
                    中に置くと、開こうとしただけで子の詳細へ飛ぶ -->
               <RouterLink class="child" :to="`/p/${projectKey}/tickets/${c.seq}`">
                 <span class="type-icon" :title="ticketTypeLabels[c.type]" aria-hidden="true">
@@ -1981,7 +1979,7 @@ function errorFor(field: string): string {
           </p>
         </section>
 
-        <!-- スコープ境界（5.5「スコープ境界」。pb-45）。**空（`{}`）でも見出しを出す**——
+        <!-- スコープ境界（5.5「スコープ境界」）。**空（`{}`）でも見出しを出す**——
              ここから入力できるので、隠すと設定できることに気づけない。
              **知らないキーは落とさず、読み取り専用で出す**（`withScopeLines` が丸ごと写す） -->
         <section class="block">
@@ -2284,7 +2282,7 @@ function errorFor(field: string): string {
 
 .detail-id {
   /* **ID は縮まない**（5.4「ID列」は完全形を出すと定めている）。
-     余りを取って省略記号で切れるのはタイトルのほうである（pb-10） */
+     余りを取って省略記号で切れるのはタイトルのほうである */
   flex: none;
   font-size: 15px;
   font-weight: 600;
@@ -2322,7 +2320,7 @@ function errorFor(field: string): string {
   padding: var(--pb-space-4);
 }
 
-/* ── タイトル（ヘッダ段。5.5。pb-10）─────────────────────── */
+/* ── タイトル（ヘッダ段。5.5）─────────────────────── */
 
 /* 押せる領域だが、読むときはただの見出しに見せる（クリックで編集に入る）。
    **余りを取り、長いタイトルは省略記号で切る**——48px の段に収めるので
@@ -2448,7 +2446,7 @@ function errorFor(field: string): string {
   cursor: default;
 }
 
-/* ── 親の選択（5.5。pb-48）─────────────────────────────────
+/* ── 親の選択（5.5）─────────────────────────────────
    **絞り込みの一覧は、そのセルの中に絶対配置で開く。** `<Teleport>` を使わない
    ——このペインは自分でスクロールするので、body へ出すと**スクロールに追随せず
    置き去りになる**（StatusDropdown は fixed で追随を自前で持っている） */
@@ -2699,7 +2697,7 @@ function errorFor(field: string): string {
   cursor: default;
 }
 
-/* ── Readiness の理由とスコープ境界（5.5。pb-45）──────────────── */
+/* ── Readiness の理由とスコープ境界（5.5）──────────────── */
 
 /* 理由は値の下の行に回す。値と同じ行に並べると、自由文が選択肢を押し縮める */
 .readiness-note {
@@ -2775,7 +2773,7 @@ function errorFor(field: string): string {
   list-style: none;
 }
 
-/* **行は「リンク部分」と「担当のセル」の2つに割れている**（pb-60）。
+/* **行は「リンク部分」と「担当のセル」の2つに割れている**。
    担当を変える操作がリンクの遷移と食い合わないようにするため */
 .child-row {
   display: flex;
@@ -2929,7 +2927,7 @@ function errorFor(field: string): string {
   text-overflow: ellipsis;
 }
 
-/* **行の操作は `[編集]` / `[削除]` の文字列**（5.5、利用者の判断 2026-08-27）。
+/* **行の操作は `[編集]` / `[削除]` の文字列**（5.5）。
    行そのものがリンクなので、行クリックに編集の意味を持たせられない */
 .ref-action {
   flex: none;

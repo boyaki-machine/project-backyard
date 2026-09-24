@@ -82,7 +82,7 @@ func TestBuildCertificateListListenHostMatch(t *testing.T) {
 			wantHost:  "127.0.0.1",
 		},
 		{
-			// **落とし穴2**：DNS の SAN だけでは IP に一致しない（pb-100）。
+			// **落とし穴2**：DNS の SAN だけでは IP に一致しない。
 			name:      "DNS の SAN だけでは IP を覆えない",
 			listenURL: "https://127.0.0.1:8443",
 			rows:      []gen.ListTLSCertificatesRow{row("a", dnsOnly)},
@@ -90,7 +90,7 @@ func TestBuildCertificateListListenHostMatch(t *testing.T) {
 			wantHost:  "127.0.0.1",
 		},
 		{
-			// **落とし穴1**：0.0.0.0 は接続先のホスト名ではない（pb-100）。
+			// **落とし穴1**：0.0.0.0 は接続先のホスト名ではない。
 			name:      "全アドレスの待受では突き合わせない",
 			listenURL: "https://0.0.0.0:8443",
 			rows:      []gen.ListTLSCertificatesRow{row("a", withIP)},
@@ -126,7 +126,7 @@ func TestBuildCertificateListListenHostMatch(t *testing.T) {
 	}
 }
 
-// TestBuildCertificateListDecryptable は 11.4 の decryptable を見る（pb-98）。
+// TestBuildCertificateListDecryptable は 11.4 の decryptable を見る。
 //
 // **key_id の突き合わせでは検出できない**ので、行ごとに復号を試している。
 // **鍵を変えたあとに登録したものと混在しうる**ので、行ごとに出ることを確かめる。
@@ -169,7 +169,7 @@ func TestBuildCertificateListDecryptable(t *testing.T) {
 	}
 }
 
-// TestDownloadTLSCertificateZip は 11.7 の取り出し口が zip を返すことを見る（pb-108）。
+// TestDownloadTLSCertificateZip は 11.7 の取り出し口が zip を返すことを見る。
 //
 // **`.crt` をそのまま返すとブラウザが拒む**ので包んでいる。**包んだ中身が元の PEM と
 // 一致することまで見る**——形式だけ変えて中身を落としたら、渡した先で使えない。

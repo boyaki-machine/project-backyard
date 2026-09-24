@@ -1,4 +1,4 @@
--- パスキーのクエリ（DbDesign.md 6.19、Design.md 6.8）。pb-104。
+-- パスキーのクエリ（DbDesign.md 6.19、Design.md 6.8）。
 --
 -- **公開鍵と credential_id は、一覧のクエリで返さない。** 画面に要らず
 -- （ApiDesign.md 4.7.1）、返す口を増やすほど鍵の材料が漏れる経路が増える。

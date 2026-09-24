@@ -160,7 +160,7 @@ export function resetUserPassword(id: string): Promise<GeneratedPassword> {
  * 全セッションの失効（`ApiDesign.md` 6.7）。`204`。
  *
  * **冪等**で、有効なトークンが1本も無くても `204` を返す。
- * **個別のセッションを失効させる API は Phase 1 では持たない**——一覧は参照のみ
+ * **個別のセッションを失効させる API は持たない**——一覧は参照のみ
  * で、行ごとの `[失効]` は出さない（`GuiDesign.md` 5.6.2、13a の判断）。
  */
 export function revokeUserSessions(id: string): Promise<void> {
@@ -168,7 +168,7 @@ export function revokeUserSessions(id: string): Promise<void> {
 }
 
 /**
- * 第2要素の解除（`ApiDesign.md` 6.9。pb-103）。`204`。
+ * 第2要素の解除（`ApiDesign.md` 6.9）。`204`。
  *
  * **本人がリカバリコードまで失ったときの口である。** 対象は次のログインから
  * パスワードだけで入れるようになる。**パスワードには触らず、セッションも切らない**
@@ -181,7 +181,7 @@ export function resetUserMfa(id: string): Promise<void> {
 }
 
 /**
- * パスキーの全削除（`ApiDesign.md` 6.10。pb-104）。`204`。
+ * パスキーの全削除（`ApiDesign.md` 6.10）。`204`。
  *
  * **乗っ取りの疑いがあるときの口である。** パスキーはパスワード無しで入れる鍵なので、
  * 乗っ取った人が登録した1本は、パスワードのリセットも第2要素の解除も消さない。

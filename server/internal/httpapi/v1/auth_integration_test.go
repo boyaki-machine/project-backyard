@@ -74,7 +74,7 @@ func TestLoginIntegration(t *testing.T) {
 		t.Errorf("actor.email = %v, want %q（保存された表記）", got, email)
 	}
 	// administrator は全権限（DbDesign.md 7.3）。**件数は permission 表から読む**
-	// ——書き下すと、権限を足した日に嘘になる（pb-85。0027 で実際に落ちた）。
+	// ——書き下すと、権限を足した日に嘘になる（0027 で実際に落ちた）。
 	// ここで測っているのは「role_permission を引けているか」である。
 	wantPerms := permissionCatalogSize(t, ctx, pool)
 	if perms := loginView["permissions"].([]any); len(perms) != wantPerms {

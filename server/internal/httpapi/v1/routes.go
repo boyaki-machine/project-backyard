@@ -57,15 +57,15 @@ type Deps struct {
 	// ListenURL は実際に待ち受けているスキームとアドレス（ApiDesign.md 11.4）。
 	ListenURL string
 
-	// DBStats は DB の接続状態と統計を読む口（ApiDesign.md 11.10。pb-110）。
+	// DBStats は DB の接続状態と統計を読む口（ApiDesign.md 11.10）。
 	// **nil なら GET /admin/database は 500 を返す。**
 	DBStats DatabaseStats
 
-	// Backups は PB 全体の書き出しと取り込みの口（ApiDesign.md 11.11〜11.12。pb-147）。
+	// Backups は PB 全体の書き出しと取り込みの口（ApiDesign.md 11.11〜11.12）。
 	// **nil なら 500 を返す。**
 	Backups Backups
 
-	// Maintenance は保守モードの旗（Design.md 10.4。pb-147）。**取り込みが
+	// Maintenance は保守モードの旗（Design.md 10.4）。**取り込みが
 	// 自分で立てて自分で降ろす。** nil なら保守モードに入らない。
 	Maintenance *maintenance.Flag
 }
@@ -106,13 +106,13 @@ func Mount(r chi.Router, deps Deps) {
 	r.With(middleware.RateLimit(loginRateLimit, loginRateWindow, middleware.ClientIPKey)).
 		Post("/auth/login", h.login)
 
-	// ログインの第2要素（ApiDesign.md 3.4。pb-103）。**認証不要のまま置く**
+	// ログインの第2要素（ApiDesign.md 3.4）。**認証不要のまま置く**
 	// ——挑戦トークンが本人であることの証明を兼ねるので、Cookie も Bearer も
 	// 持たない状態で叩かれる。CSRF（2.4）の対象にもならない。
 	r.With(middleware.RateLimit(loginRateLimit, loginRateWindow, middleware.ClientIPKey)).
 		Post("/auth/login/mfa", h.loginMFA)
 
-	// パスキーでのログイン（ApiDesign.md 3.5 / 3.6。pb-104）。**認証不要のまま置く**
+	// パスキーでのログイン（ApiDesign.md 3.5 / 3.6）。**認証不要のまま置く**
 	// ——パスワードの代わりに本人を特定する手段であり、Cookie も Bearer も持たない
 	// 状態で叩かれる。**アカウント単位の制限もロックも持たない**（2.9）。
 	r.With(middleware.RateLimit(loginRateLimit, loginRateWindow, middleware.ClientIPKey)).
@@ -151,7 +151,7 @@ func Mount(r chi.Router, deps Deps) {
 		// アクセストークン（4.4）。**扱うのは token_type='api' だけ**であり、
 		// 対象の絞り込みはクエリ側（me.sql）にある。他人のトークンとセッションは
 		// 「見つからない」に寄せるため、認可ミドルウェアでは表現できない。
-		// 第2要素（ApiDesign.md 4.6。pb-103）。**必要権限は「本人」**であり、
+		// 第2要素（ApiDesign.md 4.6）。**必要権限は「本人」**であり、
 		// 4章の他の節と同じく権限キーを要求しない。触れる範囲はハンドラが
 		// p.ActorID で閉じている。
 		r.Get("/me/mfa", h.getMyMfa)
@@ -159,7 +159,7 @@ func Mount(r chi.Router, deps Deps) {
 		r.Post("/me/mfa/totp/{id}/confirm", h.confirmMyTotp)
 		r.Delete("/me/mfa/totp/{id}", h.deleteMyTotp)
 		r.Post("/me/mfa/recovery-codes", h.regenerateMyRecoveryCodes)
-		// パスキー（ApiDesign.md 4.7。pb-104）。4.6 と同じく「本人」であり、
+		// パスキー（ApiDesign.md 4.7）。4.6 と同じく「本人」であり、
 		// 触れる範囲はハンドラが p.ActorID で閉じている。**/options は /{id} より
 		// 先に一致する**（chi は静的なセグメントを優先する）が、メソッドも違う。
 		r.Get("/me/passkeys", h.listMyPasskeys)
@@ -170,7 +170,7 @@ func Mount(r chi.Router, deps Deps) {
 		r.Get("/me/tokens", h.listMyTokens)
 		r.Post("/me/tokens", h.createMyToken)
 		r.Delete("/me/tokens/{id}", h.deleteMyToken)
-		// 自分のエージェント（4.5、Phase 2）。**RequirePermission を付けない。**
+		// 自分のエージェント（4.5）。**RequirePermission を付けない。**
 		//
 		// agent.register / agent.token.issue は project_admin と administrator が
 		// 持つ権限だが（DbDesign.md 7.3）、**それは「他人のエージェントを管理する」
@@ -198,7 +198,7 @@ func Mount(r chi.Router, deps Deps) {
 		//
 		// **/me の配下に置かない。** 本人のデータではなくカタログである。
 		r.Get("/agent-client-kinds", h.listAgentClientKinds)
-		// エージェント用トークンの既定スコープ（ApiDesign.md 4.5.9。pb-93）。
+		// エージェント用トークンの既定スコープ（ApiDesign.md 4.5.9）。
 		// 4.5.7 と同じく**必要権限は無い**。画面に写しを持たせないための口である。
 		r.Get("/agent-scopes", h.getAgentScopes)
 
@@ -213,7 +213,7 @@ func Mount(r chi.Router, deps Deps) {
 		// 誰でも叩けると、キーの当たりを付けてプロジェクトの存在を探れる。
 		r.With(middleware.RequirePermission(deps.Queries, "project.create")).
 			Get("/projects/check-key", h.checkProjectKey)
-		// Phase 1 では project.create を持つのはアドミニストレータのみ（5.3、
+		// project.create を持つのはアドミニストレータのみ（5.3、
 		// DbDesign.md 7.3）。ここで役割を名指ししないのは、権限の割り当てが
 		// role_permission のデータ側で決まるためである（Design.md 6.4.2）。
 		r.With(middleware.RequirePermission(deps.Queries, "project.create")).
@@ -244,7 +244,7 @@ func Mount(r chi.Router, deps Deps) {
 		// **どちらも project.view である**（9.13）。チケットを数える／チケットの
 		// 変更履歴を返すのに ticket.view ではないのは、**9.13 がプロジェクト
 		// ダッシュボードのデータ源として定義している**ためで、読み手は
-		// 「そのプロジェクトを開ける人」である。Phase 1 では project.view を
+		// 「そのプロジェクトを開ける人」である。project.view を
 		// 持たずに ticket.view を持つロールは存在しない（migration 0010）。
 		//
 		// **子資源なので RequireProjectPermission を通す。** 非メンバーには
@@ -302,7 +302,7 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
 			Delete("/projects/{key}/sprints/{id}", h.deleteSprint)
 
-		// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2。pb-6）。
+		// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2）。
 		//
 		// **start は {id} を取らない。** 開始は常に新規作成であり、既にある
 		// planned のスプリントを開始する形にはしていない（9.12.1）。
@@ -320,13 +320,12 @@ func Mount(r chi.Router, deps Deps) {
 		// **3本とも必要権限が違う。** 読みは ticket.view、作成は ticket.create、
 		// 並べ替えは ticket.edit（9.4 が「並べ替えは編集である」と定める）。
 		//
-		// **ただし Phase 1 に「作成できない人」は実在しない。** 実効権限は
-		// システムロール ∪ プロジェクトロール（Design.md 6.4.1）で、Phase 1 の
+		// **ただし「作成できない人」は実在しない。** 実効権限は
+		// システムロール ∪ プロジェクトロール（Design.md 6.4.1）で、
 		// システムロールは administrator と operator の2つしかなく、operator は
 		// ticket.create と ticket.edit を持つ（migration 0010）。project_viewer 側で
 		// 絞っても、システムロール側から通る。**この宣言が効くのは、権限の
-		// 全体像を見直して operator の持ち物を減らしたときである**
-		// （stg の PB の pb-175）。
+		// 全体像を見直して operator の持ち物を減らしたときである**。
 		//
 		// **子資源なので RequireProjectPermission を通す。** 非メンバーには
 		// 404 が返る（Design.md 6.4.5）。{seq} で指す行も project_id で
@@ -348,11 +347,11 @@ func Mount(r chi.Router, deps Deps) {
 		// **4つとも必要権限が違う。** 読みは ticket.view、編集は ticket.edit、
 		// 削除は ticket.delete、遷移は ticket.transition。
 		//
-		// **ticket.delete だけは Phase 1 に「持たない人」が実在する**——
+		// **ticket.delete だけは「持たない人」が実在する**——
 		// operator（システムロール）は ticket.delete を持たず、持つのは
 		// administrator と project_admin だけである（migration 0010）。
 		// 他の3つは operator が持つため、宣言が効き始めるのは権限の全体像を
-		// 見直してからになる（stg の PB の pb-175）。
+		// 見直してからになる。
 		//
 		// **PATCH の assignee_id だけは、これに加えて ticket.assign を要する**
 		// （9.5.2）。必要権限がリクエスト本文の内容で変わるため、ミドルウェアの
@@ -365,7 +364,7 @@ func Mount(r chi.Router, deps Deps) {
 		// 変わる値なので、宣言ではなくDBから読む（ticket_workflow.go）。
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}", h.getTicket)
-		// **ticket.edit と ticket.self_edit の OR である**（9.5.2。0029。pb-75）。
+		// **ticket.edit と ticket.self_edit の OR である**（9.5.2。0029）。
 		// 狭いほうしか持たない呼び出し元には、**送れる項目をハンドラが絞る**
 		// ——どの項目を送ったかで可否が決まるので、6.4.4 の宣言では表せない
 		// （9.8 のコメント削除に続く2例目の OR）。
@@ -382,7 +381,7 @@ func Mount(r chi.Router, deps Deps) {
 		// ── チケットの外部参照（ApiDesign.md 9.10.2。手順17c）───────
 		//
 		// **読みは ticket.view、更新系は ticket.reference.edit**（9.10.2。
-		// 0027／pb-68 で ticket.edit から切り出した）。**切り出したのは、
+		// 0027 で ticket.edit から切り出した）。**切り出したのは、
 		// エージェントに開けたい範囲がここで初めて ticket.edit より狭く
 		// なったからである**——6.12 が「kind='code' の書き手はエージェント」
 		// と定めるのに、4.5.3 の許可リストは ticket.edit を含まなかった。
@@ -392,9 +391,8 @@ func Mount(r chi.Router, deps Deps) {
 		// ことはチケットを編集することであり、新しい権限は増やしていない
 		// （DbDesign.md 7.2 の28件は Design.md 付録Aで確定済み）。
 		//
-		// **Phase 1 の書き手は /me/tokens の API トークンを持つクライアント
-		// である**（9.10.2）。エージェント用のアクターと MCP は Phase 2
-		// （手順24・25）で、それまでは人のトークンで叩く。画面は kind='code'
+		// **書き手は MCP の pb_add_reference を使うエージェントと、/me/tokens の
+		// API トークンを持つクライアントである**（9.10.2）。画面は kind='code'
 		// の追加を持たず、表示と削除だけを行う（GuiDesign.md 5.5）——つまり
 		// POST の主な呼び手はブラウザではない。
 		//
@@ -440,7 +438,7 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}/dod", h.listTicketDoD)
 		// **ticket.self_edit でも通る。ただし is_satisfied は書けない**
-		// （9.9。0029。pb-75）——完了の判定は人が行う。
+		// （9.9。0029）——完了の判定は人が行う。
 		r.With(middleware.RequireAnyProjectPermission(deps.Queries,
 			"ticket.edit", "ticket.self_edit")).
 			Post("/projects/{key}/tickets/{seq}/dod", h.createDoDItem)
@@ -458,7 +456,7 @@ func Mount(r chi.Router, deps Deps) {
 		// 足さない——DbDesign.md 7.2 は権限キーを削除しないと定めており、
 		// **使い分ける必要が現れる前にカタログを増やさない。**
 		//
-		// **GET を置かない**（9.15）。Phase 2 で人が読むのは完了レポートの
+		// **GET を置かない**（9.15）。人が読むのは完了レポートの
 		// コメントであり、agent_report の行そのものを読む面が無い。
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).
 			Post("/projects/{key}/tickets/{seq}/reports", h.submitTicketReport)
@@ -480,7 +478,7 @@ func Mount(r chi.Router, deps Deps) {
 		// operator と project_member が持たない**（DbDesign.md 8.1.4）——
 		// 憲章は全参加者を縛るため、更新できる人を絞る。
 		//
-		// **Phase 1 に「その操作ができない人」が実在しないという問題
+		// **「その操作ができない人」が実在しないという問題
 		// （Design.md 付録A）に対する、最初の実例である。** これまでの宣言は
 		// すべて operator がシステムロール側から通ってしまい、負の側を
 		// 検証できなかった。ここで初めて 403 を実際に出せる。
@@ -521,8 +519,8 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequirePermissionUnlessQuery(
 			deps.Queries, "user.manage", "scope", roleScopeProject)).
 			Get("/roles", h.listRoles)
-		// 権限カタログは**認証済みなら誰でも読める**（ApiDesign.md 7.2、
-		// 2026-09-02 に user.manage から変更）。消費者が2つになったためである
+		// 権限カタログは**認証済みなら誰でも読める**（ApiDesign.md 7.2。
+		// user.manage を求めない）。消費者が2つあるためである
 		// ——GuiDesign.md 5.6.3 の権限マトリクス（/admin/users の中）と、
 		// 5.8.2 のエージェント用トークンの発行結果（/me/agents。必要権限は「本人」）。
 		// **後者は user.manage を持たない。**
@@ -535,7 +533,7 @@ func Mount(r chi.Router, deps Deps) {
 		//
 		// **6章はすべてアドミニストレータ専用**（同章の前書き）。プロジェクト層は
 		// 関係しないので RequirePermission で足りる。user.manage を持つのは
-		// Phase 1 ではアドミニストレータのみ（DbDesign.md 7.3）だが、ここで
+		// アドミニストレータのみ（DbDesign.md 7.3）だが、ここで
 		// 役割を名指ししないのは割り当てが role_permission のデータ側で
 		// 決まるためである（Design.md 6.4.2）。
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
@@ -563,11 +561,11 @@ func Mount(r chi.Router, deps Deps) {
 			Post("/admin/users/{id}/password-reset", h.resetUserPassword)
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
 			Post("/admin/users/{id}/sessions/revoke", h.revokeUserSessions)
-		// 第2要素の解除（ApiDesign.md 6.9。pb-103）。**6.6 のリセットと同じ
+		// 第2要素の解除（ApiDesign.md 6.9）。**6.6 のリセットと同じ
 		// 権限だが別の操作である**——あちらはパスワード、こちらは認証器。
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
 			Post("/admin/users/{id}/mfa/reset", h.resetUserMfa)
-		// パスキーの全削除（ApiDesign.md 6.10。pb-104）。**6.9 と同じ権限だが別の操作
+		// パスキーの全削除（ApiDesign.md 6.10）。**6.9 と同じ権限だが別の操作
 		// である**——あちらは第2要素、こちらはパスワードの代わりになる鍵。
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
 			Post("/admin/users/{id}/passkeys/reset", h.resetUserPasskeys)
@@ -579,22 +577,22 @@ func Mount(r chi.Router, deps Deps) {
 		// ── アプリケーション設定（ApiDesign.md 11章）──────────────
 		//
 		// **system.settings は 0010 から存在していたが、ここが最初の利用者
-		// である**（pb-2）。user.manage とは別の権限なので、ユーザー管理を
+		// である**。user.manage とは別の権限なので、ユーザー管理を
 		// 持たない役割に設定だけを配ることができる。
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Get("/admin/settings", h.listSettings)
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Put("/admin/settings", h.updateSettings)
-		// **締め出されうる設定の確認**（11.8。pb-97）。**新しい設定を通って
+		// **締め出されうる設定の確認**（11.8）。**新しい設定を通って
 		// 届いたか**を見るので、平文で来た確認は受け取らない。
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Post("/admin/settings/confirm", h.confirmSettings)
-		// **未確認だけを返す軽い口**（11.9。pb-107）。画面がこれを定期的に
+		// **未確認だけを返す軽い口**（11.9）。画面がこれを定期的に
 		// 引いて、**どの画面にいても確認ボタンを出す。**
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Get("/admin/settings/pending", h.getPendingSettings)
 
-		// ── TLS 証明書（ApiDesign.md 11.4〜11.6。pb-3）──────────────
+		// ── TLS 証明書（ApiDesign.md 11.4〜11.6）──────────────
 		//
 		// **設定と同じ system.settings である。** 第3層（Design.md 6.6.1）で、
 		// app_setting とは別の表・別のエンドポイントだが、触れる人は同じである。
@@ -604,20 +602,20 @@ func Mount(r chi.Router, deps Deps) {
 			Post("/admin/tls/certificates", h.uploadTLSCertificate)
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Delete("/admin/tls/certificates/{id}", h.deleteTLSCertificate)
-		// **取り出す口（11.7。pb-100）。** 証明書をクライアントへ渡すまで
+		// **取り出す口（11.7）。** 証明書をクライアントへ渡すまで
 		// エージェントは PB へ繋げないので、**繋げない相手から取ってこなければ
 		// ならない**という循環がある。この口がそれを断つ。
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Get("/admin/tls/certificates/{id}/certificate.zip", h.downloadTLSCertificate)
 
-		// ── DB の接続状態と統計（ApiDesign.md 11.10。pb-110）──────────
+		// ── DB の接続状態と統計（ApiDesign.md 11.10）──────────
 		//
 		// **設定ではなく状態だが、触れる人は設定と同じである。** 接続先や
 		// 表ごとの件数は、設定を変える人が障害の切り分けに使う。
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Get("/admin/database", h.getDatabaseStatus)
 
-		// ── バックアップと復元（ApiDesign.md 11.11〜11.12。pb-147）────
+		// ── バックアップと復元（ApiDesign.md 11.11〜11.12）────
 		//
 		// **書き出しは読むだけ、取り込みは PB 全体を入れ替える。** 権限は
 		// 同じ system.settings だが、取り込みは**画面で pb_owner の資格情報も
@@ -635,7 +633,7 @@ type handler struct {
 	tx TxRunner
 
 	// settings は実行中の設定（Design.md 10.3 の第2層）。**cookieSecure を
-	// bool で持っていたのを置き換えた**（pb-2）——画面から変えられるように
+	// bool で持っていたのを置き換えた**——画面から変えられるように
 	// なったので、組み立て時の値を握り続けると変更が効かない。
 	settings *config.Live
 
@@ -657,7 +655,7 @@ type handler struct {
 	// dbStats は DB の接続状態と統計を読む口（ApiDesign.md 11.10）。
 	dbStats DatabaseStats
 
-	// backups は PB 全体の書き出しと取り込みの口（ApiDesign.md 11.11〜11.12。pb-147）。
+	// backups は PB 全体の書き出しと取り込みの口（ApiDesign.md 11.11〜11.12）。
 	backups Backups
 	// maintenance は保守モードの旗（Design.md 10.4）。
 	maintenance *maintenance.Flag

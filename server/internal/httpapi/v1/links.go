@@ -16,9 +16,9 @@
 // **PATCH は持たない**（9.10.1）。一意制約が (source, target, link_type) である
 // 以上、link_type の変更は別の行になるのと同じである。
 //
-// **Phase 1 の画面が出す link_type は relates / duplicates / blocks の3つだけ**
-// （利用者の判断、2026-08-27）。FS〜SF と lag_days はガントの依存線のためのもので、
-// ガントは Phase 2 である。**API は7種すべて受け続ける**——MCP とエージェントが
+// **画面が出す link_type は relates / duplicates / blocks の3つだけ**。
+// FS〜SF と lag_days はガントの依存線のためのもので、
+// ガントは未実装である。**API は7種すべて受け続ける**——MCP とエージェントが
 // ガント用の依存を先に積むことは妨げない。
 package v1
 
@@ -45,12 +45,12 @@ import (
 // ここで狭めると MCP からガント用の依存を積めなくなる。
 var linkTypes = []string{"FS", "SS", "FF", "SF", "relates", "duplicates", "blocks"}
 
-// linkOriginHuman は Phase 1 が作る唯一の origin（9.10.1）。
+// linkOriginHuman は API が作る唯一の origin（9.10.1）。
 //
 // **ticket_link.origin の値域は human / ai_suggested で、comment.origin とは違う**
 // （DbDesign.md 6.6 / 6.7）。エージェントが API から作った行も human である——
 // あちらの ai_suggested は「AIが提案し、人がまだ採用していない」を表す状態で
-// あって、書き手の種別ではない（Phase 2）。
+// あって、書き手の種別ではない（未実装）。
 const linkOriginHuman = "human"
 
 // errLinkHandled は RunInTx を巻き戻さずに抜けるための番人。

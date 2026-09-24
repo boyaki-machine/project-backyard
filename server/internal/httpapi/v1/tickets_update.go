@@ -48,7 +48,7 @@ var (
 	}
 	ticketMoveOnlyFields       = []string{"sort_key", "staged_at"}
 	ticketTransitionOnlyFields = []string{"status_key", "closed_at"}
-	// **sprint_id は 0028 で書けなくなった**（9.5.2。pb-6）。スプリントは
+	// **sprint_id は 0028 で書けなくなった**（9.5.2）。スプリントは
 	// 「チケットにあらかじめ付ける属性」ではなく「いまどの期間で消化しようと
 	// しているか」であり、付け替えはオンステージ全体に対して1回起きる。
 	ticketSprintOnlyFields = []string{"sprint_id"}
@@ -138,7 +138,7 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// **ticket.self_edit だけの呼び出し元は、送れる項目が絞られる**（9.5.2、
-	// DbDesign.md 6.13。0029。pb-75）。ルートは ticket.edit と
+	// DbDesign.md 6.13。0029）。ルートは ticket.edit と
 	// ticket.self_edit を OR で宣言しているので、狭いほうしか持たない
 	// 相手をここで見る。
 	//
@@ -225,7 +225,7 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// **オンステージの配下へ付け替えたら、部分木ごと進行中のスプリントへ入れる**
-		// （9.12.3。pb-129）。外す方向（null）は扱わない
+		// （9.12.3）。外す方向（null）は扱わない
 		if patch.ParentSeq.Set && !patch.ParentSeq.Null {
 			if err := joinActiveSprint(ctx, q, projectID, before.ID); err != nil {
 				return err
@@ -970,7 +970,7 @@ func equalStringPtr(a, b *string) bool {
 }
 
 // denySelfEditFields は ticket.self_edit だけを持つ呼び出し元が、開けていない
-// 項目を送っていないかを見る（ApiDesign.md 9.5.2、DbDesign.md 6.13。pb-75）。
+// 項目を送っていないかを見る（ApiDesign.md 9.5.2、DbDesign.md 6.13）。
 //
 // **ticket.edit を持っていれば何もしない。** 人が画面から編集する経路は
 // 従来どおりで、**ticket.self_edit は ticket.edit の部分集合**である。

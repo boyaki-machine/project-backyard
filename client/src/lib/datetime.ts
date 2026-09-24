@@ -157,7 +157,7 @@ export function addDaysPlainDate(date: string, days: number): string | null {
 }
 
 /**
- * その日の0時の瞬間を ISO8601 UTC で返す（`GuiDesign.md` 5.13。pb-66）。形が違えば `null`。
+ * その日の0時の瞬間を ISO8601 UTC で返す（`GuiDesign.md` 5.13）。形が違えば `null`。
  *
  * **日の境界は `app_user.timezone` で作る**（未設定なら端末のローカル）。チケット検索の期間は
  * `timestamptz`（完了日時・着手日時）を絞るもので、一覧は完了日を `formatDate`（同じ

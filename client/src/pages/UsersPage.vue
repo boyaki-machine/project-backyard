@@ -115,9 +115,9 @@ async function fetchUsers(): Promise<void> {
   error.value = null
   try {
     const res = await usersApi.listUsers({
-      // **タブが種別を決める**（5.6）。エージェントは別タブで、実装は Phase 2。
-      // Phase 1 にエージェントは1件も存在しないが、`all` ではなく `user` を送るのは
-      // タブの意味と一致させるためで、Phase 2 で増えても混ざらない。
+      // **タブが種別を決める**（5.6）。エージェントは別タブ（未実装）である。
+      // `all` ではなく `user` を送るのは、タブの意味と一致させてエージェントを
+      // 混ぜないためである。
       kind: 'user',
       is_active: isActive.value,
       q: appliedQ.value === '' ? undefined : appliedQ.value,
@@ -214,7 +214,7 @@ const columnSources: Column[] = [
   { key: 'status', label: '状態', sort: 'is_active', className: 'status', width: 70, min: 56 },
   { key: 'last', label: '最終ログイン', sort: 'last_login_at', className: 'datetime', width: 150, min: 110 },
   { key: 'created', label: '作成', sort: 'created_at', className: 'date', width: 110, min: 90 },
-  // `⋯` の記号は暫定の表示（利用者の判断、2026-08-21。5.6 のワイヤーの `[⋯]` は
+  // `⋯` の記号は暫定の表示（5.6 のワイヤーの `[⋯]` は
   // メニューアイコンのプレースホルダである）。見出しの文字は持たない
   { key: 'actions', label: '', className: 'actions-col', width: 44, min: 44, fixed: true },
 ]
@@ -286,7 +286,7 @@ function fitToContainer(): void {
  * 予測できるためで、全列へ按分すると1つ広げたつもりが表全体の見た目を変える。
  * 右隣が下限に達したらそこで止まる。
  *
- * **キーボードでは操作できない**——9.2 の例外として明記してある（利用者の判断）。
+ * **キーボードでは操作できない**——9.2 の例外として明記してある。
  * 幅は表示上の都合であり、列の内容は横スクロールで到達できる。
  */
 let dragging:
@@ -614,8 +614,8 @@ async function retry(): Promise<void> {
   <div class="page">
     <PageHeader :title="$ui('アカウント / 権限')">
       <template #actions>
-        <!-- 追加できるのはユーザータブだけ。エージェント（Phase 2）とロールと権限
-             （Phase 1 は参照のみ。5.6.3）では、押しても行き先が無い -->
+        <!-- 追加できるのはユーザータブだけ。エージェント（未実装）とロールと権限
+             （参照のみ。5.6.3）では、押しても行き先が無い -->
         <button v-if="tab === 'users'" type="button" class="primary" @click="addOpen = true"> {{ $ui('+ ユーザー追加') }} </button>
       </template>
     </PageHeader>
@@ -846,9 +846,8 @@ async function retry(): Promise<void> {
         </div>
       </div>
 
-      <!-- ── エージェントタブ（5.6。実装は Phase 2）────────────── -->
-      <!-- `agent` テーブルは Phase 2 のマイグレーションで作られるため、Phase 1 には
-           1件も存在しない。人間と持つ情報が違うのでタブを分けてある -->
+      <!-- ── エージェントタブ（5.6。未実装）──────────────────── -->
+      <!-- 人間と持つ情報が違うのでタブを分けてある -->
       <div v-else-if="tab === 'agents'" class="placeholder" role="tabpanel">
         <p class="placeholder-title">{{ $ui('エージェントのページ予定') }}</p>
         <p class="placeholder-doc">GuiDesign.md 5.6 / ApiDesign.md 6.1</p>
@@ -857,7 +856,7 @@ async function retry(): Promise<void> {
           <li>{{ $ui('人間とは持つ情報が違うため、ユーザータブとは別の列構成にする') }}</li>
           <li>{{ $ui('行の操作メニューも異なる（パスワードのリセットは無い）') }}</li>
         </ul>
-        <p class="placeholder-status">{{ $ui('Phase 2 で実装（agent テーブルの作成後）') }}</p>
+        <p class="placeholder-status">{{ $ui('未定') }}</p>
       </div>
 
       <!-- ── ロールと権限タブ（5.6.3）──────────────────────── -->

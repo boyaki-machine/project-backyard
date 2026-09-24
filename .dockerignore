@@ -1,4 +1,4 @@
-# docker build に送る材料（deploy/Dockerfile。pb-123）
+# docker build に送る材料（deploy/Dockerfile）
 #
 # **送るものを名指しで許す形にする。** 材料はビルドを担うデーモンへ丸ごと送られるので、
 # 除く形だと、あとから増えた秘密（deploy/*/secrets/ など）を送り漏らしうる。

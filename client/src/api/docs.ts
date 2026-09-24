@@ -80,7 +80,7 @@ export function createDoc(key: string, body: CreateDocRequest): Promise<Doc> {
  * 文書を部分更新する（10.4）。
  *
  * **`If-Match` は必須である。** 省略すると 422、食い違えば `409 conflict` になる。
- * **人とエージェントが同じ文書を触るため、Phase 1 のプロジェクト設定より競合が
+ * **人とエージェントが同じ文書を触るため、プロジェクト設定より競合が
  * 起きやすい**——呼び出し側は 409 を必ず扱うこと（`GuiDesign.md` 5.10「競合したとき」）。
  *
  * `title` か `body_md` が実際に変わったときだけリビジョンが1行積まれる。

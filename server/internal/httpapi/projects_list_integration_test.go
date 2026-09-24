@@ -19,7 +19,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
 )
 
-// GET /api/v1/projects のトークンによる絞り込み（ApiDesign.md 5.1。pb-38）。
+// GET /api/v1/projects のトークンによる絞り込み（ApiDesign.md 5.1）。
 //
 // **mcp_integration_test.go と同じ作り**（所有者＋エージェント＋2プロジェクト）。
 // 所有者を**両方の**プロジェクトのメンバーにする——片方だけだと、絞り込みが

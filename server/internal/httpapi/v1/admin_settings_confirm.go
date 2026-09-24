@@ -1,4 +1,4 @@
-// 締め出されうる設定の「確認しないと元に戻す」仕組み（pb-97、Design.md 10.3）。
+// 締め出されうる設定の「確認しないと元に戻す」仕組み（Design.md 10.3）。
 //
 //	① 設定を変える            → 「未確認」として記録し、期限を置く
 //	② 新しい設定で画面へ入る   → 「アクセスできました」を押す
@@ -32,7 +32,7 @@ import (
 
 // ConfirmWindow は未確認のままでいられる時間（Design.md 10.3）。
 //
-// **設定にしない**（利用者の判断、2026-09-12）。設定にすると、**その設定自身を
+// **設定にしない**。設定にすると、**その設定自身を
 // 誤ったときに戻せない**——10.3 の「反映の間隔を設定にしない」と同じ形である。
 const ConfirmWindow = 300 * time.Second
 
@@ -42,7 +42,7 @@ type pendingView struct {
 	Keys []string `json:"keys"`
 	// ExpiresAt を過ぎると元へ戻る。画面は残り時間をここから出す。
 	ExpiresAt time.Time `json:"expires_at"`
-	// ChangedBy は変えた人（分からなければ null）。pb-107。
+	// ChangedBy は変えた人（分からなければ null）。
 	//
 	// **画面が文言を分けるために要る**——「あなたが変えました」と
 	// 「別の人が変えました」では、押す前に確かめることが違う。
@@ -186,7 +186,7 @@ func (h *handler) confirmSettings(w http.ResponseWriter, r *http.Request) {
 func (h *handler) checkConfirmReached(r *http.Request, prev map[string]*string) *apierr.Error {
 	set := h.settings.Snapshot()
 
-	// **bind：実際の待受が設定値と一致していること**（pb-99）。
+	// **bind：実際の待受が設定値と一致していること**。
 	//
 	// **待受が1つなので、届いた時点で新しい待受である**——ただし**張り替えに
 	// 失敗して古いままのことがある**（新しいポートが使用中だったなど）。
@@ -237,7 +237,7 @@ func pendingKeys(prev map[string]*string) []string {
 	return keys
 }
 
-// SettingsGuard は期限の切れた未確認の変更を元へ戻す（pb-97）。
+// SettingsGuard は期限の切れた未確認の変更を元へ戻す。
 //
 // **起動時とプロセス内のタイマの両方から呼ぶ。** 期限は DB の expires_at が
 // 正本で、どちらも同じ行を見る——**プロセス内のタイマだけでは、再起動を
@@ -268,7 +268,7 @@ func (g SettingsGuard) RevertExpired(ctx context.Context) (int, error) {
 	return g.revert(ctx, targets, "期限内に確認されなかったため元へ戻した")
 }
 
-// RevertAll は未確認を全部戻す。**起動時に呼ぶ**（改訂、2026-09-12）。
+// RevertAll は未確認を全部戻す。**起動時に呼ぶ。**
 //
 // **起動時は期限を見ない。** 締め出された人が最初に試すのは再起動であり、
 // **そこで戻さないと、その設定では起動に失敗する場合に永遠に戻らない**
@@ -353,7 +353,7 @@ func (g SettingsGuard) revert(ctx context.Context, rows []pendingTarget, reason 
 // reload は戻した結果を実効値へ反映し、フックを呼ぶ。
 //
 // **フックを呼ぶのが要点である。** tls_enabled を戻したなら、ここで待受が
-// 張り替わる（pb-106）。呼ばないと DB だけが戻り、待受は新しいままになる。
+// 張り替わる。呼ばないと DB だけが戻り、待受は新しいままになる。
 func (g SettingsGuard) reload(ctx context.Context) error {
 	rows, err := g.Q.ListAppSettings(ctx)
 	if err != nil {
@@ -425,7 +425,7 @@ func recordPending(
 	return &expires, nil
 }
 
-// withPending は応答に未確認の変更を載せる（11.1 / 11.2。pb-97）。
+// withPending は応答に未確認の変更を載せる（11.1 / 11.2）。
 //
 // **引けなくても応答を落とさない。** 未確認の有無は設定一覧の付随情報であり、
 // ここで 500 にすると**締め出しの手当てが、設定画面自体を壊す**ことになる。
@@ -454,7 +454,7 @@ type pendingResponse struct {
 	PendingConfirmation *pendingView `json:"pending_confirmation"`
 }
 
-// getPendingSettings は GET /api/v1/admin/settings/pending を処理する（11.9。pb-107）。
+// getPendingSettings は GET /api/v1/admin/settings/pending を処理する（11.9）。
 //
 // **設定一覧と分けて軽い口にする。** 画面はこれを定期的に引いて、**どの画面に
 // いても未確認を出す**（GuiDesign.md 2.6）。全設定の一覧をポーリングで運ぶのは無駄である。

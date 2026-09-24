@@ -42,7 +42,7 @@ var activityActions = map[string]bool{
 
 // entityTicketPrefix は entity パラメータの唯一の形（9.13.2）。
 //
-// Phase 1 の entity_type はチケットだけである（9.1.1）。タグ・スプリントの
+// entity_type はチケットだけである（9.1.1）。タグ・スプリントの
 // 定義変更はどちらにも記録しておらず、読む画面も無い。
 const entityTicketPrefix = "ticket:"
 
@@ -175,7 +175,7 @@ func (h *handler) listProjectActivity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 差分取得（2.7 / 9.13.2）。Phase 1 では If-None-Match を解釈せず
+	// 差分取得（2.7 / 9.13.2）。If-None-Match は解釈せず
 	// ヘッダだけ出す（9.2.5 と同じ）。
 	w.Header().Set("ETag", activityETag(filters.normalized, page, total, lastOccurredAt))
 
@@ -199,7 +199,7 @@ func (h *handler) parseActivityFilters(
 
 	if v := q.Get("action"); v != "" {
 		// **カンマ区切りの OR を受け付けない**（9.13.2）。9.2.1 のフィルタ群と
-		// 違う扱いだが、複数選択を要する画面が Phase 1 に無い。
+		// 違う扱いだが、複数選択を要する画面が無い。
 		if activityActions[v] {
 			f.action = v
 			parts = append(parts, "action="+v)
@@ -254,7 +254,7 @@ func (h *handler) parseActivityFilters(
 
 // parseEntityTicketSeq は `ticket:31` から 31 を取り出す（9.13.2）。
 //
-// **Phase 1 に受け付ける entity_type はチケットだけである**（9.1.1）。
+// **受け付ける entity_type はチケットだけである**（9.1.1）。
 // 接頭辞が違うもの、seq が整数でないもの、区切りを欠くものはすべて誤りとする。
 func parseEntityTicketSeq(v string) (int32, error) {
 	rest, ok := strings.CutPrefix(v, entityTicketPrefix)

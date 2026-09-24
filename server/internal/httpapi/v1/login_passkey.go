@@ -1,4 +1,4 @@
-// パスキーでのログイン（ApiDesign.md 3.5・3.6、Design.md 6.8.2。pb-104）。
+// パスキーでのログイン（ApiDesign.md 3.5・3.6、Design.md 6.8.2）。
 //
 //	POST /api/v1/auth/passkey/options   → 挑戦を作り、navigator.credentials.get() の options を返す
 //	POST /api/v1/auth/login/passkey     → 応答を検証し、セッションを発行する
@@ -351,7 +351,7 @@ func passkeyLoginUser(row gen.FindPasskeyLoginRow) *passkey.User {
 
 // completePasskeyLogin は 3.1 の手順6〜8 を行う（ApiDesign.md 3.6）。
 //
-// **パスワードで通ったときと同じ関数を通る**（finishLogin。pb-115）。
+// **パスワードで通ったときと同じ関数を通る**（finishLogin）。
 // ここで決めるのは、利用者の属性と監査の detail だけである。
 func (h *handler) completePasskeyLogin(
 	w http.ResponseWriter, r *http.Request, rec *audit.Recorder, row gen.FindPasskeyLoginRow,

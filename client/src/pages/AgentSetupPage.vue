@@ -248,7 +248,7 @@ function asApiError(e: unknown): ApiError {
               </div>
 
               <p v-if="isAppend(f)" class="hint">{{ appendHint(f) }}</p>
-              <!-- 利用者の要望（2026-09-06）。生成物にも同じ2行を埋めてある。
+              <!-- 生成物にも同じ2行を埋めてある。
                    **マーカーを持つ行にだけ出す**——差し替えの話なので、
                    `.gitignore` のような素の追記には当たらない -->
               <p v-if="hasMarker(f)" class="warn-note"> {{ $ui('⚠ 貼る前に') }} <code>git pull</code> {{ $ui('して、リポジトリに新しい版が入っていないか 確かめてください') }}<br /> {{ $ui('⚠ 貼った後に') }} <code>git diff</code> {{ $ui('でこのブロックを見て、他の人の更新を 潰していないか確かめてください') }} </p>

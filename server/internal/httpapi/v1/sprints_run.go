@@ -1,4 +1,4 @@
-// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2）。pb-6。
+// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2）。
 //
 //	POST /api/v1/projects/{key}/sprints/start        project.edit
 //	POST /api/v1/projects/{key}/sprints/{id}/finish  project.edit
@@ -48,8 +48,7 @@ type startSprintRequest struct {
 // startSprint はスプリントを新しく作り、active にし、オンステージに載っている
 // ものを対象に入れる（9.12.1）。
 //
-// **既にある planned のスプリントを開始する形にはしない**（利用者の判断、
-// 2026-09-08）。チケットの本文が「新規スプリント開始のダイアログ」と定めており、
+// **既にある planned のスプリントを開始する形にはしない。**
 // 始めるたびに名前と期間を決めるほうが、先に作った定義を探して選ぶより短い。
 func (h *handler) startSprint(w http.ResponseWriter, r *http.Request) {
 	_, key, projectID, ok := projectScopeContext(w, r, h.q,
@@ -87,8 +86,8 @@ func (h *handler) startSprint(w http.ResponseWriter, r *http.Request) {
 	)
 
 	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
-		// **進行中のスプリントは同時に1本だけである**（9.12.1。利用者の判断、
-		// 2026-09-08）。オンステージは1つしかなく、「いまどの期間で消化しようと
+		// **進行中のスプリントは同時に1本だけである**（9.12.1）。
+		// オンステージは1つしかなく、「いまどの期間で消化しようと
 		// しているか」の答えが2つあると、開始のたびにどちらへ入れるかを選ぶ
 		// ことになる。**複数チームの並行はプロジェクトを分ける形で表す。**
 		active, err := q.GetActiveSprint(ctx, projectID)
@@ -264,7 +263,7 @@ func (h *handler) finishSprint(w http.ResponseWriter, r *http.Request) {
 var errSprintConflict = errors.New("sprint conflict")
 
 // joinActiveSprint は、スプリント中にオンステージへ入った部分木を、その場で進行中の
-// スプリントへ所属させる（9.12.3。pb-129）。
+// スプリントへ所属させる（9.12.3）。
 //
 // **所属を書くのが開始だけだと、途中で加わった配下が棚に戻らない。** 9.2.1 の
 // 条件2 は「最後に属したスプリントが completed」を見るので、所属を持たない配下は

@@ -222,7 +222,7 @@ func TestMeTokensIntegration(t *testing.T) {
 			t.Fatalf("権限キーの status = %d, want 201（body=%s）", ok.Code, ok.Body.String())
 		}
 
-		// 4.4 の旧例。権限カタログに無いので 422。
+		// 権限キーではない語彙。権限カタログに無いので 422。
 		ng := issue(r, session,
 			`{"name":"旧語彙","expires_in_days":30,"scopes":["ticket:read"]}`)
 		if ng.Code != http.StatusUnprocessableEntity {

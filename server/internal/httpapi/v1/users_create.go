@@ -46,7 +46,7 @@ const (
 // app_user.email 側には長さ制限が無いため、ここが唯一の関門になる。
 const emailMaxLen = 254
 
-// localProviderKey は Phase 1 唯一の認証プロバイダ（DbDesign.md 7.1）。
+// localProviderKey は唯一の認証プロバイダ（DbDesign.md 7.1）。
 const localProviderKey = "local"
 
 // adminUsersPath は 201 の Location ヘッダに使う（ApiDesign.md 6.2 / 6.3）。

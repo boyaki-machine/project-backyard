@@ -115,7 +115,7 @@ func (h *handler) listProjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	admin := p.IsAdministrator()
-	// **メンバーシップは所有者で引き、範囲はトークンで絞る**（5.1。pb-38）。
+	// **メンバーシップは所有者で引き、範囲はトークンで絞る**（5.1）。
 	// エージェントは project_member の行を持たないので、自分の ID では必ず0件になる。
 	// トークンに project_id があれば、所有者が管理者でもその1件だけにする
 	// （CanReachProject と同じ軸。Design.md 6.5）。
@@ -166,7 +166,7 @@ func (h *handler) listProjects(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// 差分取得（ApiDesign.md 2.7）。Phase 1 ではポーリングを実装しないため
+	// 差分取得（ApiDesign.md 2.7）。ポーリングを実装していないため
 	// If-None-Match は解釈せず、ヘッダだけ先に出す。後から全一覧エンドポイントを
 	// 改修せずに済むようにするための先行実装である。
 	w.Header().Set("ETag", projectsETag(summary.Total, summary.LastUpdatedAt))

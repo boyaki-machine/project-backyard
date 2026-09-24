@@ -31,7 +31,7 @@ import TlsCertificatesTab from './TlsCertificatesTab.vue'
  * タブ（`GuiDesign.md` 5.12）。**証明書が設定の一覧に収まらないので分けた**
  * ——1件が複数行の情報を持ち、登録と削除という操作を伴う。
  *
- * **DB（5.12.2。pb-110）は設定ではなく状態である。** 変更の操作を持たない。
+ * **DB（5.12.2）は設定ではなく状態である。** 変更の操作を持たない。
  */
 type Tab = 'general' | 'tls' | 'database'
 const tab = ref<Tab>('general')
@@ -71,11 +71,11 @@ function sourceLabel(source: SettingSource): string {
 }
 
 /**
- * 未確認の設定変更は**アプリの枠のフッターが持つ**（pb-107）。
+ * 未確認の設定変更は**アプリの枠のフッターが持つ**。
  *
- * **改訂前はこのページの中に帯を置いていた。** そのため**設定を変えたあと
- * 別の画面へ移ると、確認ボタンがどこにも無い状態で期限が過ぎた**（stg での
- * 利用者の指摘、2026-09-12）。保存したときにフッターへ知らせる。
+ * **このページの中に帯を置かない。** 置くと、**設定を変えたあと別の画面へ
+ * 移ったとき、確認ボタンがどこにも無い状態で期限が過ぎる。** 保存したときに
+ * フッターへ知らせる。
  */
 const pendingStore = usePendingStore()
 
@@ -86,7 +86,7 @@ async function load() {
     const res = await settingsApi.getSettings()
     items.value = res.items
     configFilePath.value = res.config_file_path
-    // **フッターへ知らせる**（pb-107）。ここで読み捨てると、保存直後に帯が出ない。
+    // **フッターへ知らせる**。ここで読み捨てると、保存直後に帯が出ない。
     void pendingStore.refresh()
     draft.value = {}
   } catch (e: unknown) {
@@ -112,7 +112,7 @@ const bootItems = computed(() =>
 )
 
 /**
- * **TLS 証明書タブが扱う設定**（利用者の指摘、2026-09-12）。
+ * **TLS 証明書タブが扱う設定**。
  *
  * 一般タブには出さない——**関係するものが2つのタブに分かれているのは筋が悪い。**
  * `secret_key` も TLS のためだけの設定なので、あちらで扱う。
@@ -215,8 +215,8 @@ async function save() {
     items.value = res.items
     configFilePath.value = res.config_file_path
     draft.value = {}
-    // **確認が要る設定を変えたなら、押さないと戻ることを書く**（pb-107）。
-    // 改訂前は件数だけで、**期限に一言も触れていなかった。**
+    // **確認が要る設定を変えたなら、押さないと戻ることを書く**。
+    // 件数だけでは、**期限があることが伝わらない。**
     notice.value = res.pending_confirmation
       ? uiText("{value0}件の設定を保存しました。", { value0: payload.length }) +
         uiText("画面下の「アクセスできました」を押してください。") +
@@ -405,7 +405,7 @@ function asApiError(e: unknown): ApiError {
 /**
  * **AppShell の .content は overflow:hidden なので、各ページが自前のスクロール枠を
  * 持つ約束である**（UsersPage と同じ形）。置き忘れると画面の下が切れて
- * スクロールもできない——stg で利用者が踏んだ（2026-09-12）。
+ * スクロールもできない。
  */
 .page {
   display: flex;
@@ -416,7 +416,7 @@ function asApiError(e: unknown): ApiError {
 /**
  * **スクロールする箱は全幅にする。** ここに max-width を付けると、
  * スクロールバーがコンテンツペインの右端ではなく**内側の右端に出る**
- * ——stg で利用者が「真ん中にスクロールバーが出る」として見つけた（2026-09-12）。
+ * （画面の真ん中にスクロールバーが出て見える）。
  * 幅の制限は内側の .page-inner が持つ。
  */
 .page-body {

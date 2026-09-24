@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * チケットを見る視点の入れ物（`GuiDesign.md` 3.2 / 5.13。pb-66）。
+ * チケットを見る視点の入れ物（`GuiDesign.md` 3.2 / 5.13）。
  *
  * `/p/:key/backlog`・`/p/:key/search`・`/p/:key/tickets/:seq` の3本のルートが
  * このコンポーネントを指し、**パスと `from` を見て、バックログか検索かを出し分ける。**

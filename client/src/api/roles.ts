@@ -33,9 +33,10 @@ export function getRoles(scope: RoleScope = 'all'): Promise<RoleList> {
 }
 
 /**
- * 権限のカタログ28件（`ApiDesign.md` 7.2）。**`user.manage` が要る。**
+ * 権限のカタログ32件（`ApiDesign.md` 7.2）。**必要権限は無い**（認証済みであればよい）。
  *
- * 消費者は `GuiDesign.md` 5.6.3 の権限マトリクスだけである。
+ * 消費者は `GuiDesign.md` 5.6.3 の権限マトリクスと、5.8.2 のエージェント用トークンの
+ * 発行結果である。
  */
 export function getPermissions(): Promise<PermissionList> {
   return api.get<PermissionList>('/permissions')

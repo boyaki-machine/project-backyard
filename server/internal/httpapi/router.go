@@ -40,8 +40,8 @@ type Deps struct {
 
 	// Settings は実行中の設定（Design.md 10.3 の第2層）。
 	//
-	// **HealthShowVersion と CookieSecure を bool で持っていたのを置き換えた**
-	// （pb-2）。どちらも画面から変えられるようになったので、組み立て時の値を
+	// **HealthShowVersion と CookieSecure を bool で持たない。**
+	// どちらも画面から変えられるので、組み立て時の値を
 	// 畳み込むと変更が効かない。**nil なら既定値だけの Live を組む。**
 	Settings *config.Live
 
@@ -58,18 +58,18 @@ type Deps struct {
 	// ListenURL は実際に待ち受けているスキームとアドレス（ApiDesign.md 11.4）。
 	ListenURL string
 
-	// DBStats は DB の接続状態と統計を読む口（ApiDesign.md 11.10。pb-110）。
+	// DBStats は DB の接続状態と統計を読む口（ApiDesign.md 11.10）。
 	// **nil なら Pool から作る。** Pool も nil なら nil のまま渡る。
 	DBStats v1.DatabaseStats
 
-	// Backups は PB 全体の書き出しと取り込みの口（ApiDesign.md 11.11〜11.12。pb-147）。
+	// Backups は PB 全体の書き出しと取り込みの口（ApiDesign.md 11.11〜11.12）。
 	// **nil なら Pool と DatabaseURL から作る。**
 	Backups v1.Backups
 	// DatabaseURL は PB がいま繋いでいる接続文字列（pb_app）。**取り込みで
 	// 接続先だけを取り出すために要る**——ロールとパスワードは画面から受け取る。
 	DatabaseURL string
 
-	// Maintenance は保守モードの旗（Design.md 10.4。pb-147）。**nil なら作る。**
+	// Maintenance は保守モードの旗（Design.md 10.4）。**nil なら作る。**
 	Maintenance *maintenance.Flag
 }
 
@@ -131,13 +131,13 @@ func NewRouter(deps Deps) http.Handler {
 
 	r := chi.NewRouter()
 
-	// **最も外側に積む**（ApiDesign.md 2.12、Design.md 6.6.2。pb-152）。
+	// **最も外側に積む**（ApiDesign.md 2.12、Design.md 6.6.2）。
 	// 保守モードで止めた応答にも、エラー応答にも付くようにするため。
 	r.Use(middleware.SecurityHeaders)
 	r.Use(middleware.RequestID)
 	// /healthcheck は probe が短間隔で叩くため DEBUG に落とす（Design.md 10.1）。
 	r.Use(middleware.AccessLog(HealthPath))
-	// **保守モード中は要求を止める**（ApiDesign.md 11.13、Design.md 10.4。pb-147）。
+	// **保守モード中は要求を止める**（ApiDesign.md 11.13、Design.md 10.4）。
 	// **RequestID とアクセスログの内側に置く**——止めた要求もログに残す。
 	r.Use(middleware.Maintenance(flag, maintenanceExempt))
 
@@ -255,7 +255,7 @@ func mountMCP(r chi.Router, q gen.Querier, v1Deps v1.Deps, version string) {
 
 // isAPIPath は SPA のフォールバック対象外とするパスかを返す。
 //
-// 対象は REST（/api）と MCP（/mcp、Phase 2）の2つ。ここに該当するパスは、
+// 対象は REST（/api）と MCP（/mcp）の2つ。ここに該当するパスは、
 // 未定義であっても index.html ではなく 2.5 形式の 404 を返す。
 func isAPIPath(p string) bool {
 	for _, prefix := range []string{"/api", "/mcp"} {

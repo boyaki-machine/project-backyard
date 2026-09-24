@@ -13,7 +13,7 @@
 //
 // 手順2〜3は FindLocalLoginByEmail が1文で行う（queries/auth.sql）。
 //
-// **手順5と6のあいだに第2要素の分岐がある**（pb-103。Design.md 6.7.4）。
+// **手順5と6のあいだに第2要素の分岐がある**（Design.md 6.7.4）。
 // 確定済みの認証器があれば、セッションを出さずに挑戦を返し、手順6〜8 を
 // 次の要求（POST /auth/login/mfa。login_mfa.go）へ持ち越す。
 package v1
@@ -227,14 +227,14 @@ func (h *handler) completeLogin(
 	}, map[string]any{"provider_key": "local"})
 }
 
-// finishLogin は 3.1 の手順6〜8 を行う（pb-115）。
+// finishLogin は 3.1 の手順6〜8 を行う。
 //
 // **照合を終えた3経路が、すべてここを通る**——パスワード（completeLogin）・
 // 第2要素（completeMFALogin）・パスキー（completePasskeyLogin）。並びは
 // セッションの発行 → last_login_at → login.success の監査 → 実効権限の計算と
 // キャッシュ → 応答と Cookie で、**経路ごとに違うのは利用者の属性（p）と監査の
-// detail だけ**である。以前は3か所に写っており（pb-104 で3か所目）、監査や
-// セッションの発行を変えるたびに直し忘れた経路だけ記録が食い違いうる形だった。
+// detail だけ**である。経路ごとに写すと、監査やセッションの発行を変えるたびに
+// 直し忘れた経路だけ記録が食い違いうる。
 //
 // **p.Kind は見ない。** ログインするのは常に人なので、ここで user に決める。
 func (h *handler) finishLogin(

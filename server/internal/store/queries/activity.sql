@@ -39,7 +39,7 @@ INSERT INTO activity (
 -- チケットを指されたときに空文字を渡してはならない**——全件が返る。呼び出し側は
 -- 解決に失敗した時点で空の一覧を返す（activity.go）。
 --
--- **@entity_id には entity_type = 'ticket' を添える**（pb-96）。9.13.2 の `entity` は
+-- **@entity_id には entity_type = 'ticket' を添える**。9.13.2 の `entity` は
 -- `ticket:<seq>` だけなので意味は変わらないが、添えないと idx_activity_entity
 -- （entity_type, entity_id, occurred_at）が使えず、チケット1件の履歴を引くたびに
 -- プロジェクトの履歴を全部読む。**ID は ::pg_catalog.bpchar で受ける**（DbDesign.md 4.2）。

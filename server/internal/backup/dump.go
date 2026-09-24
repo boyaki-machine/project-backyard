@@ -172,7 +172,7 @@ func dumpExpr(c Column) string {
 	q := quoteIdent(c.Name)
 	switch {
 	case c.IsArray:
-		// **配列は JSON の配列にする。** 要素の型は text[] しか無い（pb-147 で数えた）。
+		// **配列は JSON の配列にする。** 要素の型は text[] しか無い。
 		return "to_jsonb(" + q + ")"
 	case c.Type == "bytea":
 		// **base64 にする**（DbDesign.md 9.1.1）。

@@ -54,7 +54,7 @@ DELETE FROM actor WHERE id = (SELECT actor_id FROM app_user WHERE email = @email
 --
 -- **kind = 'system' の actor は除く。** 6.1 が列挙するのは user / agent / all の
 -- 3つで、システムアクター（バッチ等が使う DbDesign.md 6.2 の3種目）は
--- 利用者が管理する対象ではない。Phase 1 のシードは system アクターを作らないが、
+-- 利用者が管理する対象ではない。シードは system アクターを作らないが、
 -- 将来作られても一覧に紛れ込まないようにここで落とす。
 --
 -- **project_count は project_member の行数**で、アーカイブ済みプロジェクトも
@@ -70,7 +70,7 @@ DELETE FROM actor WHERE id = (SELECT actor_id FROM app_user WHERE email = @email
 --
 -- **system_role は role.sort_order で並べる**（ApiDesign.md 6.1）。表示名の
 -- 五十音順ではない——シードが意図して序列を持っており（オペレータ 10 →
--- アドミニストレータ 20。DbDesign.md 7.3）、Phase 3 でカスタムロールが増えたとき
+-- アドミニストレータ 20。DbDesign.md 7.3）、カスタムロール（構想）が増えたとき
 -- 表示名順では意味のない並びになる。**ロールを持たない行（エージェント）は
 -- 昇順・降順とも末尾に置く**（NULLS LAST を両方に明示する。Postgres の既定は
 -- DESC で NULLS FIRST であり、明示しないと先頭へ来る）。
@@ -176,7 +176,7 @@ WHERE a.kind <> 'system'
 -- その列は app_user にしかない。app_user の行を持たないアクター
 -- （エージェント・システム）を 200 で返すと、PATCH（6.4）の楽観ロックが
 -- 成立しないものを画面に開かせることになる。エージェントの詳細は
--- agent テーブル（DbDesign.md 8.1）ができる Phase 2 で列構成ごと設計する。
+-- 未実装で、列構成ごと設計する（DbDesign.md 8.2.1）。
 --
 -- したがって app_user は LEFT ではなく INNER JOIN であり、
 -- **行が返らない＝404** となる（ApiDesign.md 1.2-5）。
@@ -192,12 +192,12 @@ SELECT
   u.system_role,
   u.last_login_at,
   u.version,
-  -- 確定済みの第2要素の件数（ApiDesign.md 6.3。pb-103）。
+  -- 確定済みの第2要素の件数（ApiDesign.md 6.3）。
   -- **件数だけを引く。** 画面が出すのも件数であり（GuiDesign.md 5.6.2）、
   -- 認証器の名前は他人の管理に要らない。**未確定の行は数えない。**
   (SELECT count(*) FROM user_mfa_credential mc
     WHERE mc.user_id = a.id AND mc.confirmed_at IS NOT NULL) AS mfa_credential_count,
-  -- 登録済みのパスキーの件数（ApiDesign.md 6.3。pb-104）。第2要素と同じく件数だけを引く。
+  -- 登録済みのパスキーの件数（ApiDesign.md 6.3）。第2要素と同じく件数だけを引く。
   (SELECT count(*) FROM user_passkey pk WHERE pk.user_id = a.id) AS passkey_count
 FROM actor a
 JOIN app_user u ON u.actor_id = a.id
@@ -205,12 +205,12 @@ WHERE a.id = @actor_id AND a.kind = 'user';
 
 -- ListUserIdentities は 6.3 の identities[] を引く。
 --
--- **配列であることが Phase 3 の IdP 連携をそのまま受け入れる**（ApiDesign.md 6.3、
+-- **配列であることが IdP 連携（構想）をそのまま受け入れる**（ApiDesign.md 6.3、
 -- DbDesign.md 6.2）。OIDC を足しても要素が1つ増えるだけで、応答の形は変わらない。
 --
 -- password_updated_at は local_credential の列で、ローカル以外のプロバイダでは
--- NULL になる。**LEFT JOIN にするのはそのため**で、INNER にすると Phase 3 の
--- OIDC identity が一覧から消える。
+-- NULL になる。**LEFT JOIN にするのはそのため**で、INNER にすると
+-- OIDC の identity が一覧から消える。
 --
 -- provider_type は auth_provider.type（DbDesign.md 6.2、7.1 のシード）。
 -- 画面が「ローカルパスワード」と出すか IdP 名を出すかをこの値で決める。
@@ -358,8 +358,6 @@ SELECT EXISTS (SELECT 1 FROM app_user WHERE actor_id = @actor_id);
 --
 -- comment.author_id は NOT NULL かつ ON DELETE RESTRICT である。**DBが
 -- 「システムアクターへ付け替えてからでないと消せない」という順序を強制する。**
--- Phase 1 は comment を作る経路が無い（チケットAPIは手順16）ため常に0件だが、
--- 実装は先に通しておく。
 --
 -- name: CountCommentsByAuthor :one
 SELECT count(*) FROM comment WHERE author_id = @author_id;
@@ -368,8 +366,8 @@ SELECT count(*) FROM comment WHERE author_id = @author_id;
 --
 -- **display_name で引いている。** kind='system' のアクターに一意なキー列が
 -- 無いためである（DbDesign.md 6.2 の actor には key に相当する列がない）。
--- Phase 1 でシステムアクターはこの1件しか作られないので成り立つが、
--- **Phase 2 でシステムアクターが増えるなら識別子を決める必要がある**
+-- システムアクターはこの1件しか作られないので成り立つが、
+-- **システムアクターが増えるなら識別子を決める必要がある**
 -- （DbDesign.md 10章「未解決の検討事項」）。
 --
 -- name: FindDeletedUserActor :one
@@ -381,7 +379,7 @@ LIMIT 1;
 -- CreateSystemActor はシステムアクターを1件作る。
 --
 -- **シードで先に置かず、最初に必要になった削除で作る**（手順13a の判断）。
--- Phase 1 に comment を作る経路が無く、置いても一度も参照されないため。
+-- コメントを持たない環境では、置いても一度も参照されないため。
 --
 -- name: CreateSystemActor :exec
 INSERT INTO actor (id, kind, display_name) VALUES (@id, 'system', @display_name);
@@ -407,7 +405,7 @@ DELETE FROM actor WHERE id = @actor_id AND kind = 'user';
 
 -- FindLocalCredentialByActor はリセット対象の資格情報を引く。
 --
--- 行が無い＝local_credential を持たない（IdP のみ、Phase 3）で、
+-- 行が無い＝local_credential を持たない（IdP のみ。構想）で、
 -- 6.6 はこれを 409 conflict と定める。
 --
 -- name: FindLocalCredentialByActor :one

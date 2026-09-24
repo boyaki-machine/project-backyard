@@ -452,7 +452,7 @@ func (h *handler) handleConfirmFailure(
 
 // deleteMyTotp は認証器を削除する。
 //
-// **現在のパスワードを求めない**（4.2 の扱いに揃える。利用者の判断、2026-09-13）。
+// **現在のパスワードを求めない**（4.2 の扱いに揃える）。
 // **最後の1件ならリカバリコードも消す**（Design.md 6.7.5）。
 func (h *handler) deleteMyTotp(w http.ResponseWriter, r *http.Request) {
 	p, e := requirePrincipal(r, "DELETE /me/mfa/totp/{id}")

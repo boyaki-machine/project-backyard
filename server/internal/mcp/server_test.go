@@ -314,7 +314,7 @@ func initializeOf(t *testing.T, res rpcResponse) initializeResult {
 }
 
 func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
-	// Design.md 8.2 の read 行の6件（手順27 で pb_get_context が揃った）。
+	// Design.md 8.2 のツール16件。
 	h := New(&fakeREST{}, "v0")
 	res := decodeRPC(t, callMCP(t, h, agentPrincipal(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 	if res.Error != nil {
@@ -351,19 +351,17 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 		}
 	}
 
-	// read 5件（/pb-onboard が呼ぶ順）＋ コンテキストパック1件（手順27。
-	// /pb-implement が「契約を読む → 前提を読む」の順で呼ぶので pb_get_task の
-	// 直後）＋ write 4件（10.7.1 の開発フローの順。pb_add_reference は「実装中に
-	// 分かったことを書く」の隣＝作業の跡を積む位置。pb-68）＋ 遷移2件（見てから動かす順。
-	// 手順26b）＋ 完了レポート1件（手順26c。/pb-implement の流れの終端）。
+	// read 6件（/pb-onboard が呼ぶ順。pb_list_tags はタグの語彙で pb_get_doc の隣）
+	// ＋ コンテキストパック1件（手順27。/pb-implement が「契約を読む → 前提を読む」の
+	// 順で呼ぶので pb_get_task の直後）＋ write 6件（10.7.1 の開発フローの順。
+	// pb_update_ticket と pb_put_dod は起票したあと直すので pb_create_ticket の隣、
+	// pb_add_reference は「実装中に分かったことを書く」の隣＝作業の跡を積む位置）
+	// ＋ 遷移2件（見てから動かす順。手順26b）＋ 完了レポート1件（手順26c。
+	// /pb-implement の流れの終端）。
 	//
-	// **pb_claim_task / pb_release_task は Phase 3 へ送った**
+	// **pb_claim_task / pb_release_task は持たない（構想）**
 	// （Requirements.md 10.3.3——排他が実際に要るのは自律取得 pb_next_task から
 	// である）。
-	//
-	// **pb-75 / pb-76 で3件増えた**——pb_list_tags（タグの語彙。read 系の
-	// pb_get_doc の隣）、pb_update_ticket と pb_put_dod（起票したあと直す。
-	// pb_create_ticket の隣）。
 	want := []string{
 		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tags",
 		"pb_list_tasks", "pb_get_task", "pb_get_context",

@@ -37,7 +37,7 @@ const email = ref('')
  * `operator` / `administrator` の2つ。**選択肢そのものは `GET /roles` から
  * 来る**（下の roles）が、送信の型は openapi の生成物に合わせる。
  *
- * Phase 3 でカスタムのシステムロールを作れるようにするなら、6.2 の enum を
+ * カスタムのシステムロール（構想）を作れるようにするなら、6.2 の enum を
  * 広げる改訂が先に要る。ここで `string` へ緩めて先回りしない。
  */
 type SystemRoleKey = NonNullable<usersApi.CreateUserRequest['system_role']>

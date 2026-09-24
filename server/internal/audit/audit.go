@@ -45,7 +45,7 @@ const (
 	ProjectCreate    Action = "project.create"
 	ProjectArchive   Action = "project.archive"
 	PermissionDenied Action = "permission.denied"
-	// 以下は 0019（Phase 2）で加わった（ApiDesign.md 4.5.6）。
+	// 以下はエージェントの操作（ApiDesign.md 4.5.6）。
 	// エージェントの登録と更新はアカウントの作成・変更と同じ重みを持つ。
 	AgentRegister Action = "agent.register"
 	AgentUpdate   Action = "agent.update"
@@ -53,17 +53,17 @@ const (
 	// write 系ツールが入り、資格情報を「完全に取り消す」操作が要るようになった。
 	AgentDelete Action = "agent.delete"
 
-	// SettingUpdate は pb-2 で加わった（ApiDesign.md 11.2）。**1回の保存が1行**で、
+	// SettingUpdate はアプリケーション設定の保存（ApiDesign.md 11.2）。**1回の保存が1行**で、
 	// detail.changes[] に変更したキーと新旧の実効値を並べる。サーバ全体の設定を
 	// 変える操作であり、影響範囲が1プロジェクトに収まらないため記録する。
 	SettingUpdate Action = "setting.update"
 
-	// TLSCertificateUpload / TLSCertificateDelete は pb-3（ApiDesign.md 11.5 / 11.6）。
+	// TLSCertificateUpload / TLSCertificateDelete は TLS 証明書（ApiDesign.md 11.5 / 11.6）。
 	// **detail には指紋・common_name・有効期間を入れ、PEM と秘密鍵は入れない。**
 	TLSCertificateUpload Action = "tls.certificate.upload"
 	TLSCertificateDelete Action = "tls.certificate.delete"
 
-	// 以下5件は pb-103（ApiDesign.md 4.6.6）。
+	// 以下5件は第2要素（ApiDesign.md 4.6.6）。
 	//
 	// **detail に共有秘密・otpauth URI・リカバリコードを入れない。** audit_log は
 	// 管理者が読めるため（DbDesign.md 6.8）、入れると他人の第2要素を作れる。
@@ -75,7 +75,7 @@ const (
 	// ——パスワードは通っているので、総当たりの調査で見る対象が違う。
 	LoginMFAFailure Action = "login.mfa_failure"
 
-	// 以下4件は pb-104（ApiDesign.md 4.7.5）。
+	// 以下4件はパスキー（ApiDesign.md 4.7.5）。
 	//
 	// **detail に公開鍵・credential_id・clientDataJSON を入れない。** 秘密ではないが、
 	// 長期保存する記録に鍵の材料を残す理由が無い（ApiDesign.md 2.10）。
@@ -84,7 +84,7 @@ const (
 	PasskeyReset      Action = "passkey.reset"
 
 	// DatabaseBackup / DatabaseRestore は PB 全体の書き出しと取り込み
-	// （ApiDesign.md 11.11 / 11.12。pb-147）。target_type は "database"。
+	// （ApiDesign.md 11.11 / 11.12）。target_type は "database"。
 	//
 	// **書き出しにも残す。** 書庫には app_secret の鍵と暗号文の両方が入るので、
 	// 持ち出した事実そのものが監査の対象である（証明書の取り出し＝11.7 とは扱いが違う）。
@@ -295,7 +295,7 @@ func text(s string) pgtype.Text {
 // audit_log.ip（inet 型）とアクセスログの ip を**同じ値**にするため、
 // 両者がこの関数を共有する（Design.md 10.1）。
 //
-// プロキシ経由の実IP解決（X-Forwarded-For 等）は Phase 1 では行わない。
+// プロキシ経由の実IP解決（X-Forwarded-For 等）は行わない。
 // 詐称可能なヘッダを検証なしに信じると、監査ログの発信元を偽装できてしまう。
 func ClientIP(r *http.Request) netip.Addr {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

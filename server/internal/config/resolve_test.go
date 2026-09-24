@@ -207,7 +207,7 @@ func TestOverlayDatabase(t *testing.T) {
 	t.Run("第1層のキーには重ならない", func(t *testing.T) {
 		// **接続文字列を DB から読むことはない。** 直接 SQL で書かれても無視する。
 		//
-		// **bind はここから外れた**（pb-99 で第2層へ移した）。第1層に残るのは
+		// **bind は第1層ではない**（第2層である）。第1層に残るのは
 		// **DB に到るために要るもの**だけである。
 		out := OverlayDatabase(Defaults(), []Row{{Key: KeyDatabaseURL, Value: "postgres://x"}})
 		v, _ := out.Get(KeyDatabaseURL)
@@ -216,7 +216,7 @@ func TestOverlayDatabase(t *testing.T) {
 		}
 	})
 
-	t.Run("bind の既定はこの端末に閉じる（pb-125）", func(t *testing.T) {
+	t.Run("bind の既定はこの端末に閉じる", func(t *testing.T) {
 		// **何も設定しないまま起動したとき、平文ですべてのアドレスへ出さない**
 		// （`Requirements.md` 10.10.2）。**コンテナは自分で `PB_BIND` を明示する。**
 		v, _ := Defaults().Get(KeyBind)
@@ -225,7 +225,7 @@ func TestOverlayDatabase(t *testing.T) {
 		}
 	})
 
-	t.Run("bind は DB から重なる（pb-99）", func(t *testing.T) {
+	t.Run("bind は DB から重なる", func(t *testing.T) {
 		out := OverlayDatabase(Defaults(), []Row{{Key: KeyBind, Value: "0.0.0.0:9999"}})
 		v, _ := out.Get(KeyBind)
 		if v.Value != "0.0.0.0:9999" || v.Source != SourceDatabase {
@@ -262,7 +262,7 @@ func TestEditable(t *testing.T) {
 		{KeyLogLevel, SourceEnv, false},
 		{KeyLogLevel, SourceConfigFile, false},
 		{KeyLogLevel, SourceSecretFile, false},
-		// **bind は第2層へ移した**（pb-99）。既定と DB なら編集できる。
+		// **bind は第2層へ移した**。既定と DB なら編集できる。
 		{KeyBind, SourceDefault, true},
 		{KeyBind, SourceEnv, false},
 		// 第1層はどの出どころでも編集できない。

@@ -181,7 +181,7 @@ func TestListTicketsReturnsItemsWithTagsAndHierarchy(t *testing.T) {
 }
 
 // 一覧に本文とエージェント連携の列を載せない（9.2.2）。
-func TestListTicketsOmitsBodyAndPhase2Columns(t *testing.T) {
+func TestListTicketsOmitsBodyAndAgentColumns(t *testing.T) {
 	q := ticketFake()
 	q.ticket.rows = []gen.ListTicketsRow{sampleTicketRow(testTicketID, 31, "本文は出さない")}
 
@@ -299,7 +299,7 @@ func TestListTicketsRejectsInvalidFilters(t *testing.T) {
 		{"親", "parent=0", "parent"},
 		{"ソート", "sort=body_md", "sort"},
 		{"件数", "per_page=201", "per_page"},
-		// 検索の条件（9.2.1「検索の条件」。pb-66）。**範囲が逆なら空の結果にせず 422**
+		// 検索の条件（9.2.1「検索の条件」）。**範囲が逆なら空の結果にせず 422**
 		{"キーワードの長さ", "q=" + url.QueryEscape(strings.Repeat("あ", 201)), "q"},
 		{"番号の下限", "seq_from=0", "seq_from"},
 		{"番号の書式", "seq_to=abc", "seq_to"},
@@ -393,7 +393,7 @@ func TestTicketsETagVariesByFilterAndPage(t *testing.T) {
 	if a, b := etag("stale=14d"), etag("stale=30d"); a == b {
 		t.Errorf("stale の日数が違うのに ETag が同じ: %q", a)
 	}
-	// 検索の条件も ETag に混ざる（9.2.5。pb-66）。**語の順番違いと、同じ瞬間の時差違いは
+	// 検索の条件も ETag に混ざる（9.2.5）。**語の順番違いと、同じ瞬間の時差違いは
 	// 同じ意味**なので同じ値になる。
 	if a, b := etag("q="+url.QueryEscape("認証 API")), etag("q="+url.QueryEscape("API 認証")); a != b {
 		t.Errorf("語の順番違いで ETag が変わった: %q vs %q", a, b)
@@ -413,7 +413,7 @@ func TestTicketsETagVariesByFilterAndPage(t *testing.T) {
 	}
 }
 
-// 検索の条件（9.2.1「検索の条件」。pb-66）がクエリの値どおりに渡る。
+// 検索の条件（9.2.1「検索の条件」）がクエリの値どおりに渡る。
 //
 // **キーワードは store/search で ID に変えてから一覧へ渡す**（Design.md 4.6）。
 // 検索へ渡ったパターンと、一覧へ渡った ID の両方を見る。
@@ -459,7 +459,7 @@ func TestListTicketsSearchConditions(t *testing.T) {
 	}
 }
 
-// 語がすべて trigram を作れるときだけ、trgm を使う形へ振り分ける（DbDesign.md 4.5。pb-143）。
+// 語がすべて trigram を作れるときだけ、trgm を使う形へ振り分ける（DbDesign.md 4.5）。
 //
 // **同じ語でも DB の LC_CTYPE で行き先が変わる。** C の DB では日本語から trigram を
 // 取り出せないので、インデックスを使う形にすると遅くなる。
@@ -765,7 +765,7 @@ func TestCreateTicketRejectsForeignReferences(t *testing.T) {
 	}
 }
 
-// sprint_id は 9.3 が受け付けない（pb-6）。**黙って捨てず 422 に倒す**
+// sprint_id は 9.3 が受け付けない。**黙って捨てず 422 に倒す**
 // ——decodeJSON は未知のキーを無視するので、struct から落とすだけだと
 // 送った側は設定できたつもりでスプリント無しのチケットが出来る。
 func TestCreateTicketRejectsSprintID(t *testing.T) {
@@ -1085,7 +1085,7 @@ func TestMoveTicketNotFound(t *testing.T) {
 	}
 }
 
-// 並べ替えは activity に記録しない（利用者の判断、2026-08-23）。
+// 並べ替えは activity に記録しない。
 func TestMoveTicketDoesNotRecordActivity(t *testing.T) {
 	q := moveFake()
 	h, _ := ticketHandler(q)
@@ -1323,7 +1323,7 @@ func countOps(opLog []string, name string) int {
 	return n
 }
 
-// pb-84: バックログ検索は専用の検索対象と祖先補完を選び、空白なら検索しない。
+// バックログ検索は専用の検索対象と祖先補完を選び、空白なら検索しない。
 func TestListTicketsBacklogSearch(t *testing.T) {
 	for _, keyword := range []string{"認証　100%", "　 "} {
 		t.Run(keyword, func(t *testing.T) {

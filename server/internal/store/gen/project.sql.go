@@ -614,7 +614,7 @@ LEFT JOIN project_member pm
        ON pm.project_id = p.id AND pm.actor_id = $1
 WHERE (pm.actor_id IS NOT NULL OR $2::boolean)
   AND ($3::text = 'all' OR p.status = $3::text)
-  -- トークンに紐づくプロジェクトだけに絞る（ApiDesign.md 5.1。pb-38）
+  -- トークンに紐づくプロジェクトだけに絞る（ApiDesign.md 5.1）
   AND ($4::text IS NULL OR p.id = $4::text)
 `
 

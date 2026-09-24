@@ -95,7 +95,7 @@ func fetch(t *testing.T, url string) (string, error) {
 	return string(b), err
 }
 
-// TestSwappableServerSwitchesTLS は待受の張り替えを見る（pb-106）。
+// TestSwappableServerSwitchesTLS は待受の張り替えを見る。
 //
 // **起動ログではなく実際の接続で確かめる**（チケットの完了の見分け方）。
 func TestSwappableServerSwitchesTLS(t *testing.T) {
@@ -129,7 +129,7 @@ func TestSwappableServerSwitchesTLS(t *testing.T) {
 	//
 	// **接続の失敗にはならない。** Go の http.Server は TLS の待受へ平文で来た
 	// 接続に「Client sent an HTTP request to an HTTPS server.」を 400 で返す
-	// （実測、2026-09-12）。**ハンドラまで届いていないことを見る。**
+	// （実測）。**ハンドラまで届いていないことを見る。**
 	if got, _ := fetch(t, "http://"+addr); got == "http" {
 		t.Error("TLS にしたのに平文の待受が残っている")
 	}
@@ -144,7 +144,7 @@ func TestSwappableServerSwitchesTLS(t *testing.T) {
 }
 
 // TestSwapFromInsideHandlerReturnsResponse は、**張り替えを指示した
-// リクエスト自身が応答を返せる**ことを見る（pb-106）。
+// リクエスト自身が応答を返せる**ことを見る。
 //
 // **ここが方式の要点である。** 張り替えでは旧サーバを Shutdown するが、
 // Shutdown は処理中のリクエストの完了を待つ。**同期で待つと、自分の完了を
@@ -205,7 +205,7 @@ func TestSwapFromInsideHandlerReturnsResponse(t *testing.T) {
 	}
 }
 
-// TestSwapChangesAddress は**待受のアドレスを張り替えられる**ことを見る（pb-99）。
+// TestSwapChangesAddress は**待受のアドレスを張り替えられる**ことを見る。
 //
 // **画面から待受を変える**のがこの機能である。開けなかったときに**アドレスごと
 // 元へ戻る**ことも見る——ポートを誤ると新しい待受は開けないので、実際に通る経路である。

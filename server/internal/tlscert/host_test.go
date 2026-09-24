@@ -17,7 +17,7 @@ import (
 //
 // **makeCert は DNSNames を CN と localhost に固定している**ので、IP の SAN と
 // 「SAN が1つも無い」を試せない。落とし穴の再現（DNS:127.0.0.1 は IP で
-// 一致しない。pb-100）にはこちらを使う。
+// 一致しない）にはこちらを使う。
 func makeCertSAN(t *testing.T, cn string, dns []string, ips []net.IP) string {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -46,7 +46,7 @@ func TestListenHost(t *testing.T) {
 		listenURL string
 		want      string
 	}{
-		// **0.0.0.0 は待受の表記であって接続先のホスト名ではない**（pb-100）。
+		// **0.0.0.0 は待受の表記であって接続先のホスト名ではない**。
 		{"全アドレス（IPv4）", "https://0.0.0.0:8443", ""},
 		{"全アドレス（平文）", "http://0.0.0.0:8080", ""},
 		{"全アドレス（IPv6）", "https://[::]:8443", ""},
@@ -68,7 +68,7 @@ func TestCoversHost(t *testing.T) {
 	dnsOnly := makeCertSAN(t, "pb.example.com", []string{"pb.example.com"}, nil)
 	wildcard := makeCertSAN(t, "example.com", []string{"*.example.com"}, nil)
 	withIP := makeCertSAN(t, "localhost", []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")})
-	// **落とし穴2の再現**：IP を DNS: として入れた証明書（pb-100）。
+	// **落とし穴2の再現**：IP を DNS: として入れた証明書。
 	ipAsDNS := makeCertSAN(t, "127.0.0.1", []string{"127.0.0.1"}, nil)
 	// **SAN が1つも無い証明書。** CN だけでは現代のブラウザが受けない。
 	cnOnly := makeCertSAN(t, "pb.example.com", nil, nil)

@@ -1,4 +1,4 @@
-// Package maintenance は保守モードの旗を持つ（Design.md 10.4）。pb-147。
+// Package maintenance は保守モードの旗を持つ（Design.md 10.4）。
 //
 // **旗はプロセスの中に持ち、DB には置かない。** 保守モードに入るのは書庫の取り込みの
 // あいだであり、取り込みは DB そのものを入れ替える。app_setting に置くと、**落とす表の

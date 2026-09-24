@@ -6,15 +6,15 @@
 //	DELETE /api/v1/projects/{key}/tickets/{seq}/dod/{id}   ticket.edit
 //
 // **このチケットを「終わった」と言うための条件の一覧である。** 人が列挙して
-// チェックし、Phase 2 でエージェントが assertion / artifact により自動判定する
+// チェックし、将来エージェントが assertion / artifact により自動判定する
 // 土台になる（Requirements.md 10.5.2）。
 //
-// **Phase 1 が受け付ける type は manual だけである**（9.9）。表と CHECK は
-// Phase 2 の形のまま作ってあり（DbDesign.md 6.11）、絞るのは API の仕事——
+// **受け付ける type は manual だけである**（9.9）。表と CHECK は
+// 他の型も入る形で作ってあり（DbDesign.md 6.11）、絞るのは API の仕事——
 // 後から列を足すより、使わない列を持つほうが安い。
 //
 // **満たしていなくても done への遷移は止めない**（9.9）。9.6 の検証の順序に
-// DoD は含まれず、Phase 1 のチェックリストは人が読む道具である。判定できない
+// DoD は含まれず、チェックリストは人が読む道具である。判定できない
 // 型で遷移を止めると、人が自分のチェック漏れで進めなくなるだけになる。
 package v1
 
@@ -46,23 +46,23 @@ import (
 // 埋め尽くさない長さにしてある。
 const dodBodyMaxLen = 500
 
-// dodTypeManual は Phase 1 が受け付ける唯一の type（9.9）。
+// dodTypeManual は受け付ける唯一の type（9.9）。
 const dodTypeManual = "manual"
 
-// dodPhase2Types は DbDesign.md 6.11 の CHECK が許すが Phase 1 では開けない型。
+// dodUnsupportedTypes は DbDesign.md 6.11 の CHECK が許すが、まだ開けない型。
 //
-// **値そのものを持っておく**のは、`422 phase_2_only` と「綴りが違う」を
+// **値そのものを持っておく**のは、`422 unsupported_type` と「綴りが違う」を
 // 区別して返すためである——`asertion` と書いた人には「正しくありません」、
-// `assertion` と書いた人には「Phase 2 で使えるようになります」と伝わるほうが速い。
-var dodPhase2Types = []string{"task_ref", "assertion", "artifact", "review"}
+// `assertion` と書いた人には「まだ使えません」と伝わるほうが速い。
+var dodUnsupportedTypes = []string{"task_ref", "assertion", "artifact", "review"}
 
 // errDoDHandled は RunInTx を巻き戻さずに抜けるための番人。
 var errDoDHandled = errors.New("dod: handled")
 
 // dodView は 9.9 が返す1行。
 //
-// **config / evidence / origin は持たない**（9.9）。いずれも Phase 2 の型と
-// AI提案のためのもので、Phase 1 の API が受け付けない値を応答に並べると
+// **config / evidence / origin は持たない**（9.9）。いずれも manual 以外の型と
+// AI提案のためのもので、API が受け付けない値を応答に並べると
 // 「使える」ように見える。列は DbDesign.md 6.11 のまま残っている。
 type dodView struct {
 	ID          string    `json:"id"`
@@ -132,7 +132,7 @@ func (h *handler) createDoDItem(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, e)
 		return
 	}
-	// **ticket.self_edit では is_satisfied を送れない**（9.9。0029。pb-75）。
+	// **ticket.self_edit では is_satisfied を送れない**（9.9。0029）。
 	if req.IsSatisfied != nil {
 		if e := denyDoDSatisfied(r, scope.key); e != nil {
 			apierr.Write(w, r, e)
@@ -418,9 +418,9 @@ func validateNewDoD(req createDoDRequest) (body string, satisfied bool, apiErr *
 		switch {
 		case t == dodTypeManual:
 			// 明示の manual は受ける。
-		case slices.Contains(dodPhase2Types, t):
+		case slices.Contains(dodUnsupportedTypes, t):
 			details = append(details, apierr.Detail{
-				Field: "type", Code: "phase_2_only",
+				Field: "type", Code: "unsupported_type",
 				Message: "この種別は今後のバージョンで使えるようになります",
 			})
 		default:
@@ -455,7 +455,7 @@ func validateNewDoD(req createDoDRequest) (body string, satisfied bool, apiErr *
 
 // parseDoDPatch は PATCH の本文を解く（9.9）。
 //
-// **type は送ると 422**（作成後は変えられない）。Phase 1 で取りうる値が1つしか
+// **type は送ると 422**（作成後は変えられない）。取りうる値が1つしか
 // ない以上、変更を受け付けても何も起こせない。
 func parseDoDPatch(raw map[string]json.RawMessage) (dodPatch, *apierr.Error) {
 	var (
@@ -563,7 +563,7 @@ func dodSummaryOf(v dodView) string {
 }
 
 // denyDoDSatisfied は ticket.self_edit だけを持つ呼び出し元が is_satisfied を
-// 書こうとしていないかを見る（ApiDesign.md 9.9。0029。pb-75）。
+// 書こうとしていないかを見る（ApiDesign.md 9.9。0029）。
 //
 // **pb_submit_result が「盤面を動かさない」と決めた判断と正面からぶつかる**
 // （9.15、手順26c）。完了の判定は人が行うので、エージェントに開けるのは

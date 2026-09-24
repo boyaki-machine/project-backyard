@@ -1,4 +1,4 @@
-// Package migrations は goose のマイグレーションを埋め込む（DbDesign.md 9.1.1）。pb-147。
+// Package migrations は goose のマイグレーションを埋め込む（DbDesign.md 9.1.1）。
 //
 // **書庫の取り込みが版を動かすために要る。** 取り込みは表を落として作り直すので、
 // 書庫の版までスキーマを進め、行を入れてから最新まで進める。

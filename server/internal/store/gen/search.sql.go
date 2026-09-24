@@ -13,7 +13,7 @@ const currentDatabaseCtype = `-- name: CurrentDatabaseCtype :one
 SELECT d.datctype::text AS lc_ctype FROM pg_catalog.pg_database d WHERE d.datname = current_database()
 `
 
-// CurrentDatabaseCtype は接続先 DB の LC_CTYPE を返す（DbDesign.md 3.1 / 4.5。pb-143）。
+// CurrentDatabaseCtype は接続先 DB の LC_CTYPE を返す（DbDesign.md 3.1 / 4.5）。
 //
 // **pg_trgm が日本語から trigram を取り出せるかは、DB を作ったときの LC_CTYPE で決まる。**
 // C では英数字しか語の文字として数えない。検索の切り替えとサーバ起動時の警告が読む。
@@ -61,7 +61,7 @@ type SearchBacklogTicketIDsParams struct {
 	Patterns  []string
 }
 
-// SearchBacklogTicketIDs は番号・タイトル・本文・祖先エピック名・タグ名を全件検索する（pb-84 / pb-155）。
+// SearchBacklogTicketIDs は番号・タイトル・本文・祖先エピック名・タグ名を全件検索する。
 // 祖先の補完は ListTickets が他のフィルタを適用した後に行う。
 func (q *Queries) SearchBacklogTicketIDs(ctx context.Context, arg SearchBacklogTicketIDsParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, searchBacklogTicketIDs, arg.ProjectID, arg.Patterns)
@@ -109,7 +109,7 @@ type SearchTicketIDsParams struct {
 	Patterns  []string
 }
 
-// キーワード検索（ApiDesign.md 9.2.1「検索の条件」。pb-66）。
+// キーワード検索（ApiDesign.md 9.2.1「検索の条件」）。
 //
 // **全文検索の実装は、このファイルと store/search/ に閉じる**（Design.md 4.6、
 // DbDesign.md 4.5）。日本語検索を pg_trgm から pg_bigm へ替えるとき、変わるのは
@@ -171,7 +171,7 @@ type SearchTicketIDsByTrigramParams struct {
 }
 
 // SearchTicketIDsByTrigram は SearchTicketIDs と**同じ集合**を、pg_trgm の GIN
-// インデックスを使える形で返す（DbDesign.md 4.5。pb-143）。
+// インデックスを使える形で返す（DbDesign.md 4.5）。
 //
 // **語ごと・列ごとに「当たる ID」を集め、すべての語に当たったものを残す。**
 // SearchTicketIDs の NOT EXISTS はチケットを1件ずつ読んで ILIKE を当てるので、

@@ -164,7 +164,7 @@ type devTicket struct {
 	// **表示上のトップレベルにしか置けない**——親を持たないもの、または
 	// 親がエピックのもの（ApiDesign.md 9.4.1）。検証は validateSeedData で行う。
 	Staged bool `yaml:"staged"`
-	// History は業務履歴（activity）を書くか（pb-23）。**数件にだけ付ける**
+	// History は業務履歴（activity）を書くか。**数件にだけ付ける**
 	// ——全件に書くと、変更履歴が投入の記録で埋まる（seedTickets のコメント）。
 	// 書くのは作成と、入口から status への遷移1回だけなので、**入口から1回の
 	// 遷移で届く状態のチケットに付ける**（届かない状態に付けると、ワークフローに
@@ -200,7 +200,7 @@ type devTicket struct {
 
 // devDoDItem はチケットの完了条件（DbDesign.md 6.11、手順18a）。
 //
-// **type を書かせない。** Phase 1 が受け付けるのは manual だけであり
+// **type を書かせない。** 受け付けるのは manual だけであり
 // （ApiDesign.md 9.9）、選べない項目を定義ファイルに置くと「他も書ける」に見える。
 type devDoDItem struct {
 	Body string `yaml:"body"`
@@ -213,9 +213,9 @@ type devDoDItem struct {
 //
 // **origin は書かせない。** 呼び出し元のアクター種別から決まる規則
 // （ApiDesign.md 9.8）を seed でも守り、author のメールから引く。
-// Phase 1 のデモアカウントはすべて人なので human になる。
+// デモアカウントはすべて人なので human になる。
 //
-// **返信と削除済みも書ける**（pb-24）。`in_reply_to` の両向きリンクと「削除されました」は
+// **返信と削除済みも書ける**。`in_reply_to` の両向きリンクと「削除されました」は
 // 実装済みでも、seed に無ければ画面で一度も踏まれない。返信先は位置ではなく**参照名**
 // （`ref`）で指す——親チケットをタイトルで指すのと同じで、並べ替えても壊れない。
 type devComment struct {
@@ -246,9 +246,8 @@ type devLink struct {
 // validateSeedData で行い、DB の CHECK に落とす前に定義ファイルの誤りとして返す。
 //
 // **created_by は書かない。** 定義ファイルに ULID を書かせない方針（タグ・
-// スプリントと同じ）で、投入時はチケットの reporter を据える。Phase 1 の
-// 書き手は人の API トークンを持つクライアントなので（ApiDesign.md 9.10.2）、
-// 人のアクターが入るのが実態に合う。
+// スプリントと同じ）で、投入時はチケットの reporter を据える。デモデータに
+// エージェントは居ないので、人のアクターが入るのが実態に合う（ApiDesign.md 9.10.2）。
 type devReference struct {
 	Kind       string `yaml:"kind"`
 	Label      string `yaml:"label"`
@@ -1081,7 +1080,7 @@ func seedSprints(ctx context.Context, q gen.Querier, projectID string, p devProj
 //
 // **activity は原則として記録しない。** デモデータの投入は業務上の出来事ではなく、
 // 変更履歴に「開発PMが48件作成した」が並んでも読み手の役に立たない。
-// **ただし `history: true` を付けた数件だけは書く**（pb-23。seedTicketHistory）
+// **ただし `history: true` を付けた数件だけは書く**（seedTicketHistory）
 // ——1行も無いと、ダッシュボードの「最近の動き」とチケットの履歴が画面で確かめられない。
 func seedTickets(
 	ctx context.Context, q gen.Querier, projectID string, p devProject,
@@ -1213,7 +1212,7 @@ func seedTickets(
 			}
 		}
 
-		// スプリントの所属（DbDesign.md 6.9.1。pb-6）。
+		// スプリントの所属（DbDesign.md 6.9.1）。
 		//
 		// **CreateTicket では入れられなくなった**（ApiDesign.md 9.3）。
 		// スプリントは開始のときに決まるものになったので、seed も
@@ -1270,7 +1269,7 @@ func seedTickets(
 	return nil
 }
 
-// seedTicketHistory は `history: true` のチケットに業務履歴を書く（pb-23）。
+// seedTicketHistory は `history: true` のチケットに業務履歴を書く。
 //
 // **API が書く行と同じ形にする**——作成は項目なし（tickets_create.go）、遷移は
 // field='status_key' に遷移前後のキー（tickets_transition.go）。画面は値を
@@ -1378,7 +1377,7 @@ func seedTicketDoD(
 
 // seedTicketComments はチケットのコメントを投入する（DbDesign.md 6.7、手順18a）。
 //
-// **origin は author のアクター種別から決まる**（ApiDesign.md 9.8）。Phase 1 の
+// **origin は author のアクター種別から決まる**（ApiDesign.md 9.8）。
 // デモアカウントはすべて人なので human になるが、**規則そのものを seed でも
 // 守る**——ここで固定値を書くと、エージェントが増えたときに嘘になる。
 //
@@ -1431,7 +1430,7 @@ func seedTicketComments(
 //
 // **origin は human 固定である。** ticket_link.origin の値域は
 // human / ai_suggested で、ai_suggested は「AIが提案し人がまだ採用していない」
-// という状態を表す（Phase 2）。書き手の種別ではないので、comment とは違う。
+// という状態を表す（未実装）。書き手の種別ではないので、comment とは違う。
 func seedTicketLinks(
 	ctx context.Context, q gen.Querier, ticketID string, tk devTicket,
 	idByTitle map[string]string, reporterID string,

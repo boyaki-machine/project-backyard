@@ -31,8 +31,8 @@ func testConnectParams() ConnectParams {
 // **片方だけに種別が足されると、画面は種別を出すのに接続設定が空になる**——
 // 症状は「落とせない」で、サーバ側には何も出ない。
 //
-// **逆は成り立たない**（pb-58 で改訂）。改訂前は「種別の集合は同じ」を両向きに
-// 見ていたが、**claude_desktop は接続設定を持ち、配置ファイルを持たない**——
+// **逆は成り立たない。** 「種別の集合は同じ」を両向きには見ない——
+// **claude_desktop は接続設定を持ち、配置ファイルを持たない**——
 // 作業フォルダが無いのでコミットする先が無い（Requirements.md 10.9.1）。
 // **逆向きの歯止めは TestConnectSpecsAreInCatalog へ移した。**
 func TestConnectSpecsCoverClients(t *testing.T) {
@@ -78,9 +78,9 @@ func TestConnectSpecsAreInCatalog(t *testing.T) {
 }
 
 // TestRenderConnectClaudeDesktop は claude_desktop_config.json を確かめる
-// （Requirements.md 10.8.4.2、pb-58）。
+// （Requirements.md 10.8.4.2）。
 //
-// **実測で踏んだ罠を、そのまま検査にしている**——貼り替える欄が消えると
+// **実機で確かめた罠を、そのまま検査にしている**——貼り替える欄が消えると
 // 「起動しない」で終わり、原因が Desktop 側に出ない。
 func TestRenderConnectClaudeDesktop(t *testing.T) {
 	p := testConnectParams()
@@ -318,7 +318,7 @@ func TestRenderConnectCodex(t *testing.T) {
 	}
 
 	// **直接接続は公開 CA 用である。** 自己署名・社内 CA を OS に登録すれば
-	// Codex 標準クライアントで使える、という古い案内へ戻さない（pb-160）。
+	// Codex 標準クライアントで使える、という古い案内へ戻さない。
 	for _, want := range []string{"公開 CA", "ローカル stdio ブリッジ"} {
 		if !strings.Contains(c.Readme, want) {
 			t.Errorf("直接接続の手引きに %q が無い:\n%s", want, c.Readme)
@@ -351,7 +351,7 @@ func TestRenderConnectCodexBridge(t *testing.T) {
 		t.Errorf("bridge 設定に直接 HTTPS 用または TLS 無効化の設定が混ざっている: %s", content)
 	}
 	// **ブリッジも TLS 検証を行う。** OS の信頼ストアと CA PEM のどちらを
-	// 使う場合も、導入と後始末が ZIP の手引きだけで完結する（pb-160）。
+	// 使う場合も、導入と後始末が ZIP の手引きだけで完結する。
 	for _, want := range []string{
 		"自己署名・社内 CA",
 		"OS の信頼ストアへ登録",
@@ -428,8 +428,7 @@ func TestRenderConnectWithoutTemplate(t *testing.T) {
 	}
 }
 
-// TestConnectReadmeIsPerKind は手引きが種別ごとに違うことを確かめる
-// （利用者の判断、2026-09-06）。
+// TestConnectReadmeIsPerKind は手引きが種別ごとに違うことを確かめる。
 //
 // **置き場も、改名の要否も、.gitignore の扱いも種別で変わる。**
 func TestConnectReadmeIsPerKind(t *testing.T) {
