@@ -1454,6 +1454,8 @@ pb (DEPTH_ZERO_SELF_SIGNED_CERT): "self signed certificate"
 **自己署名だけの問題ではない。** 社内の認証局が発行した証明書でも、**その認証局を
 信頼していないクライアントは同じく落ちる。**
 
+**ローカル CA を使えば、この手当てを OS への1回の登録にまとめられる**（14.6）。
+
 ### 落とし穴は3つある
 
 | # | 落とし穴 | 症状と対処 |
@@ -1525,6 +1527,76 @@ curl --cacert pb.crt https://127.0.0.1:8443/healthcheck
 ```
 openssl x509 -in pb.crt -noout -subject -ext subjectAltName
 ```
+
+## 14.6 ローカル CA で作る（mkcert）
+
+**自己署名の証明書は、クライアントごとに証明書そのものを信頼させる手当てが要る**（14.5）。
+**自分の端末に CA を作り、その CA で証明書を発行すれば、CA を OS の信頼ストアへ1回登録するだけで、
+そこを読むクライアントは何も渡さずに繋がる。** 画面の TLS タブにも同じ手順の要点がある
+（`GuiDesign.md` 5.12.1）。
+
+### 入れる
+
+| OS | コマンド | 確かめたこと |
+|---|---|---|
+| macOS | `brew install mkcert` | mkcert v1.4.4 で確認 |
+| Windows | `choco install mkcert` または `scoop install mkcert` | **実機未確認**（[配布元](https://github.com/FiloSottile/mkcert)の記載） |
+| Linux | 配布元の手順 | **実機未確認** |
+
+### CA を登録し、証明書を作る
+
+```
+mkcert -install
+mkcert pb.example.com localhost 127.0.0.1
+```
+
+- **`mkcert -install` は1回だけ。** 2つのことをする
+  - **CA を作る**（初回だけ）：`mkcert -CAROOT` の場所（macOS は `~/Library/Application Support/mkcert/`）に、
+    CA の証明書 `rootCA.pem`（公開してよい。RSA 3072bit・10年）と秘密鍵 `rootCA-key.pem`（持ち主だけが読める権限）を作る。
+    **「CA を作る」とは、この鍵の対と「自分は証明書を発行してよい」と書いた自己署名の証明書を1組作ることで、
+    ネットワーク上に何かが立つわけではない**
+  - **その CA を OS に「信頼する」と登録する**：macOS ではシステムのキーチェーンに、SSL の信頼の起点として入る
+    （**管理者の認証を求められる**）。キーチェーンアクセスの「システム」→「証明書」に `mkcert <ユーザー>@<端末> (<フルネーム>)` の名前で見える。
+    Firefox 用の NSS があればそちらにも入る
+- **証明書を作るコマンドは、フォルダにある crt や key を読まない。** 読むのは CA（`rootCA.pem` と
+  `rootCA-key.pem`）だけで、サーバ用の鍵の対を新しく作り（RSA 2048bit）、指定した名前を SAN に入れた証明書へ
+  CA の秘密鍵で署名する。**同じ名前のファイルがあると確認なしで上書きする。** 何回作っても証明書はそれぞれ独立で、
+  どれも同じ CA の署名付きなので、CA を信頼する端末からはどれも信頼される
+- **出力は `pb.example.com+2.pem`（証明書）と `pb.example.com+2-key.pem`（秘密鍵）である。**
+  `+2` は名前の数で変わる。それぞれを画面の「証明書」「秘密鍵」の欄に貼る（PB の登録の検証を通ることを確認済み）
+- **CN を持たない。** 名前は SAN だけにある。画面の一覧と通知は SAN の先頭を名前として出す。
+  保存（zip）の中のファイル名は `certificate.crt` になる（`ApiDesign.md` 11.7 の既定）
+- 有効期限は約2年3か月（v1.4.4）。発行元が本物の CA なので、**Key Usage が付いていても 14.2 の問題
+  （自己署名での自己検証）には当たらない**
+- **`rootCA-key.pem` を共有しない。** この端末の通信を偽装できる鍵である。証明書を作る端末から出さない
+
+### クライアントに信頼させる
+
+**Node は既定では OS の信頼ストアを読まない**ので、Node で動くクライアントにだけ手当てが要る。
+
+| クライアント | 手当て | 確かめたこと |
+|---|---|---|
+| Claude Code（ネイティブ版） | 不要。既定で OS の信頼ストアを読む（`CLAUDE_CODE_CERT_STORE` の既定は `bundled,system`。[公式](https://code.claude.com/docs/en/network-config)） | **確認**（stg を mkcert の証明書へ切り替え、`NODE_EXTRA_CA_CERTS` の無い Claude Code 2.1.281 から MCP で繋がった。2026-09-25） |
+| Codex（stdio ブリッジ） | 不要。ブリッジ（Go）が OS の信頼ストアを読む。`PB_MCP_CA_FILE` でも渡せる | Go の既定の HTTP クライアントで確認（ブリッジそのものでは未確認） |
+| Codex（HTTPS 直結） | `CODEX_CA_CERTIFICATE=<rootCA.pem>`。**公式は「ログイン・HTTPS・WebSocket」に効くとし、MCP には明記が無い**（[公式](https://learn.chatgpt.com/docs/auth.md)） | **実機未確認** |
+| Claude Desktop（`mcp-remote`＝Node） | 設定の `env` に `NODE_USE_SYSTEM_CA=1`、または `NODE_EXTRA_CA_CERTS=<rootCA.pem>` | Node 24.14 で両方を確認（`mcp-remote` 経由は未確認） |
+| その他の Node 製（Gemini CLI など） | 同上（シェルで `export`） | 同上 |
+| Copilot（VS Code） | `http.systemCertificates`（既定で有効）で読むはず。MCP で自己署名に失敗する報告がある（[#248245](https://github.com/microsoft/vscode/issues/248245)） | **実機未確認** |
+| curl（macOS） | 不要 | 確認 |
+
+`<rootCA.pem>` は `"$(mkcert -CAROOT)/rootCA.pem"` である。**環境変数はクライアントの起動時にしか読まれない**ので、
+設定したらクライアントを再起動する（14.5 ③）。
+
+### 片付ける（元に戻す）
+
+**順番が大事である。先に PB の証明書を差し替えないと、CA を外した時点でエージェントが繋がらなくなる。**
+
+1. **PB の証明書を差し替える**：TLS タブで別の証明書を登録し、mkcert の証明書を削除する
+   （削除すると、1つ前の有効な証明書が使用中に戻る）。自己署名へ戻すなら、クライアントに証明書を渡し直す（14.5）
+2. **CA の登録を外す**：`mkcert -uninstall`（管理者の認証を求められる）。**OS の信頼ストアから外すだけで、ファイルは残る**
+3. **CA を消す**：`rm -rf "$(mkcert -CAROOT)"`。**元に戻せない。** この CA で作った証明書はすべて使えなくなる
+4. **作った証明書と鍵を消す**：`pb.example.com+2.pem` と `pb.example.com+2-key.pem`
+5. **mkcert を消す**：入れたときの逆（macOS は `brew uninstall mkcert`）
 
 
 # 付録A. 環境の構築
