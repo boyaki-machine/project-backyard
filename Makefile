@@ -2,7 +2,24 @@
 #
 # 各ターゲットは実装手順の進行に合わせて追加していく。
 
-COMPOSE := docker compose -f deploy/base/compose.yaml
+# ── dev の作業ツリー（秘密と compose の置き場）──────────────────
+# **dev の秘密（deploy/dev/secrets/）は履歴管理の外なので、git worktree には
+# チェックアウトされない。** worktree で打ったときは、本体の作業ツリーのものを使う
+# （本体の位置は git の共通ディレクトリの親）。作業ツリー自身に置いてあれば、そちらが先。
+#
+# **compose も本体のファイルを使う。** プロジェクト名は project-backyard に固定なので、
+# どの作業ツリーから打っても同じ DB のコンテナを指す。worktree 側の compose は秘密の
+# 相対パス（../dev/secrets）を解決できず、同じコンテナを別の定義で作り直そうとする。
+#
+# パスワードは recipe の中で読む（下の GOOSE_DBSTRING_OWNER など）。エージェントは
+# 秘密を読めない（.claude/settings.json の deny）が、make 経由なら読まずに DB へ繋がる。
+GIT_COMMON_ROOT := $(patsubst %/.git,%,$(shell git -C $(CURDIR) rev-parse --path-format=absolute --git-common-dir 2>/dev/null))
+DEV_ROOT := $(if $(wildcard $(CURDIR)/deploy/dev/secrets/db_password),$(CURDIR),$(or $(GIT_COMMON_ROOT),$(CURDIR)))
+
+# worktree から本体の秘密を使うときだけ、その場所を1行出す（どの DB に繋いだかを取り違えない）。
+dev_root_note = $(if $(filter-out $(CURDIR),$(DEV_ROOT)),@echo "（worktree：dev の秘密と compose は $(DEV_ROOT) のものを使う）")
+
+COMPOSE := docker compose -f $(DEV_ROOT)/deploy/base/compose.yaml
 
 # ドッグフーディング用インスタンス（Design.md 4.4）。base に stg を重ねる。
 # **compose プロジェクト名が pb-stg に変わる**ので、コンテナ・ネットワーク・
@@ -31,13 +48,13 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 
 # マイグレーションは DDL を実行するため pb_owner で接続する（DbDesign.md 3.4）。
 # パスワードは secret ファイルから recipe 内で読む。Makefile にも argv にも残さない。
-DB_PASSWORD_FILE := $(CURDIR)/deploy/dev/secrets/db_password
+DB_PASSWORD_FILE := $(DEV_ROOT)/deploy/dev/secrets/db_password
 GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(DB_PASSWORD_FILE))@127.0.0.1:5432/pb?sslmode=disable
 
 # アプリ（および pb admin create）は実行時ロール pb_app で接続する（DbDesign.md 3.4）。
 # deploy/dev/secrets/app_database_url はコンテナ内から見た db:5432 を指すため、
 # ホストで動かすターゲットでは app_db_password から 127.0.0.1 向けに組み立てる。
-APP_DB_PASSWORD_FILE := $(CURDIR)/deploy/dev/secrets/app_db_password
+APP_DB_PASSWORD_FILE := $(DEV_ROOT)/deploy/dev/secrets/app_db_password
 PB_DATABASE_URL_APP = postgres://pb_app:$$(cat $(APP_DB_PASSWORD_FILE))@127.0.0.1:5432/pb?sslmode=disable&application_name=pb
 
 # stg の DB（:5433）。**接続文字列は deploy/stg/secrets/app_database_url に
@@ -59,6 +76,7 @@ STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@1
 # **app は起動しない。** dev では PB 本体を make run でホストから動かしており、app の
 # コンテナまで上げると 8080 番でぶつかる。コンテナの一式は make release TARGET=compose。
 up:
+	$(dev_root_note)
 	$(COMPOSE) up -d db
 
 ## コンテナを停止する（pgdata ボリュームは残す）
@@ -94,6 +112,7 @@ psql:
 # （indirect 80件超）を持ち込まないため（DbDesign.md 5.1）。
 # @ を付けて実行するのは、パスワードを含むコマンドをエコーさせないため。
 migrate:
+	$(dev_root_note)
 	@cd server/tools && GOOSE_DRIVER=postgres GOOSE_DBSTRING="$(GOOSE_DBSTRING_OWNER)" \
 		go tool goose -dir ../migrations up
 
@@ -111,6 +130,7 @@ sqlc:
 # PB_HEALTH_SHOW_VERSION を開発時だけ true にするのは、起動しているバイナリの
 # バージョンを /healthcheck で確かめられるようにするため。既定は false（ApiDesign.md 2.11）。
 run:
+	$(dev_root_note)
 	@cd server && PB_BIND=127.0.0.1:8080 PB_HEALTH_SHOW_VERSION=true \
 		PB_DATABASE_URL="$(PB_DATABASE_URL_APP)" \
 		go run -ldflags "-X main.version=$(VERSION)" ./cmd/pb serve
@@ -191,6 +211,7 @@ vuln-check:
 # （DbDesign.md 9.1.1）。オーナーの接続文字列も渡すのはそのためである。
 RUN ?= Integration
 test-db:
+	$(dev_root_note)
 	@cd server && PB_TEST_DATABASE_URL="$(PB_DATABASE_URL_APP)" \
 		PB_TEST_DATABASE_URL_OWNER="$(GOOSE_DBSTRING_OWNER)" \
 		go test ./internal/httpapi/... ./internal/dbstat/... ./internal/backup/... \
