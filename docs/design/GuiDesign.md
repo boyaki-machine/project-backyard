@@ -4189,7 +4189,7 @@ PB へ繋げないので、繋げない相手から取ってこなければな�
 
 | 見出し | 中身 |
 |---|---|
-| `自己署名証明書の作り方（openssl）` | `openssl req -x509 …` の1コマンドと、`-nodes` と `subjectAltName` が要る理由 |
+| `自己署名証明書の作り方（openssl）` | `openssl req -x509 …` の1コマンドと、`-nodes` と `subjectAltName` が要る理由。**SAN・Basic Constraints（`CA:FALSE`）・Key Usage・Extended Key Usage（`serverAuth`）を明示し、サーバ証明書としてだけ使える形にする**。本文は `client/src/pages/tls-self-signed.sh` に置き、サーバの試験が同じファイルを走らせる |
 | `認証局が発行した証明書を登録する` | CSR の作り方、**サーバ証明書 → 中間証明書の順で貼ること**、連鎖の確かめ方 |
 
 **折りたたむのは、毎回読むものではないからである**（原則1。縦のピクセルを死守する）。

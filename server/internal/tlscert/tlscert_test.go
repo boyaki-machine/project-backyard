@@ -17,7 +17,8 @@ import (
 // makeCert は試験用の証明書と鍵を PEM で作る。
 //
 // **openssl を呼ばない。** 端末に openssl が無くても走るようにするためで、
-// 実物の openssl 出力に対する検証は実サーバで行う。
+// 実物の openssl 出力に対する検証は TestSelfSignedCommand（画面のサンプルを走らせる）と
+// 実サーバで行う。
 //
 // **issuerCN を渡すと、その名前の CA を作って署名する。** `Issuer` を
 // テンプレートに書くだけでは効かない——`x509.CreateCertificate` は親の
