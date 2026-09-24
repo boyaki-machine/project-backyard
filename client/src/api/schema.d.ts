@@ -414,7 +414,7 @@ export interface paths {
          * 認証アプリを削除
          * @description 登録済みの認証器を削除する（ApiDesign.md 4.6.4）。必要権限は「本人」。
          *
-         *     **現在のパスワードを求めない**（4.2 の扱いに揃える。利用者の判断、2026-09-13）。
+         *     **現在のパスワードを求めない**（4.2 の扱いに揃える）。
          *
          *     **最後の認証器を削除したら、リカバリコードも消える**（Design.md 6.7.5）。
          *     MFA が無効な状態でコードだけ残しても入口が無く、次に有効化したときに古い
@@ -582,7 +582,7 @@ export interface paths {
         };
         /**
          * エージェント用トークンのスコープ
-         * @description エージェント用トークンの既定スコープと、既定に足せる権限（ApiDesign.md 4.5.9。pb-93）。
+         * @description エージェント用トークンの既定スコープと、既定に足せる権限（ApiDesign.md 4.5.9）。
          *
          *     **必要権限は不要**（認証済みであればよい）。`/agent-client-kinds` と同じ扱い。
          *
@@ -1365,7 +1365,7 @@ export interface paths {
         /**
          * スプリントの開始
          * @description スプリントを新しく作り、`active` にし、**オンステージに載っているものを対象に
-         *     入れる**（ApiDesign.md 9.12.1。pb-6）。必要権限は `project.edit`。
+         *     入れる**（ApiDesign.md 9.12.1）。必要権限は `project.edit`。
          *     3つを1つのトランザクションで行う。
          *
          *     対象は **`staged_at IS NOT NULL` の行とその子孫**である。`staged_at` だけで
@@ -1407,7 +1407,7 @@ export interface paths {
         put?: never;
         /**
          * スプリントの終了
-         * @description スプリントを終える（ApiDesign.md 9.12.2。pb-6）。必要権限は `project.edit`。
+         * @description スプリントを終える（ApiDesign.md 9.12.2）。必要権限は `project.edit`。
          *     **本文を取らない。**
          *
          *     `status` を `completed` にし、`end_date` が空なら今日を入れる。所属
@@ -1517,7 +1517,7 @@ export interface paths {
          *     応答を数十倍にする。`execution_mode` / `readiness` / `scope` / `custom_fields` も
          *     同じ理由で含めない（GuiDesign.md 5.5 が「Phase 1 では非表示」と決めている）。
          *
-         *     **検索の条件**（9.2.1「検索の条件」。pb-66）：`q`・`seq_from` / `seq_to`・
+         *     **検索の条件**（9.2.1「検索の条件」）：`q`・`seq_from` / `seq_to`・
          *     `started_since` / `started_before`・`closed_since` / `closed_before`。
          *     **範囲の前後が逆なら 422** を返す（黙って空の結果を返さない）。
          *
@@ -1556,7 +1556,7 @@ export interface paths {
          *     |---|---|
          *     | `not_a_member` | `assignee_id` に指定したアクターがプロジェクトのメンバーでない（9.14） |
          *     | `not_found` | `parent_seq` / `tag_ids` の参照先がこのプロジェクトに無い |
-         *     | `use_sprint_endpoint` | `sprint_id` を送った（スプリントの開始・終了が動かす。pb-6） |
+         *     | `use_sprint_endpoint` | `sprint_id` を送った（スプリントの開始・終了が動かす） |
          *     | `required` / `invalid` / `too_long` / `out_of_range` | 2.5 の一般の検証エラー |
          */
         post: operations["createTicket"];
@@ -1599,9 +1599,8 @@ export interface paths {
          *     既定で畳まれている。画面は起動時に本エンドポイントと `GET .../comments` の
          *     **2本**を呼ぶ。
          *
-         *     **`dod` / `links` は手順18 まで空の配列である。** `comment_count` は
-         *     **手順17 から実数**——9.6 の遷移が `kind='progress'` のコメントを作るため、
-         *     0 を固定で返すと事実と食い違う。
+         *     **`comment_count` は実数である**——9.6 の遷移が `kind='progress'` のコメントを
+         *     作るため、0 を固定で返すと事実と食い違う。
          *
          *     **`ETag` を返さない。** 2.7 の `ETag` は一覧（9.2.5）のためのもので、1件の詳細は
          *     軽く、競合検出は 9.5.2 の楽観ロック（`version` + `If-Match`）が担う。同じ資源に
@@ -1643,7 +1642,7 @@ export interface paths {
          *     `ticket.assign` も必要**——この追加分だけはリクエスト本文の内容で決まるため、
          *     ルート定義の宣言ではなくハンドラ内で見ている。
          *
-         *     **`ticket.self_edit` では開ける項目が絞られる**（0029。pb-75）。
+         *     **`ticket.self_edit` では開ける項目が絞られる**（0029）。
          *     エージェントに渡す権限であり、**自分の縛りを緩められては意味がない**
          *     （DbDesign.md 6.13）。次を送ると `403` になる。
          *
@@ -1684,7 +1683,7 @@ export interface paths {
          *     | `not_stageable` | **オンステージのチケットを、段に置けなくなる `type` / `parent_seq` へ変えようとした** |
          *     | `not_a_member` | 担当者に指定したアクターがプロジェクトのメンバーでない |
          *     | `not_found` | `parent_seq` / `tag_ids` の参照先がこのプロジェクトに無い |
-         *     | `use_sprint_endpoint` | `sprint_id` を送った（スプリントの開始・終了が動かす。pb-6） |
+         *     | `use_sprint_endpoint` | `sprint_id` を送った（スプリントの開始・終了が動かす） |
          *
          *     **`not_stageable` は 9.4.1 が `move` で弾いている条件と同じものである。**
          *     `staged_at` が入っている行を `epic` にする、またはエピック以外の子にすると、
@@ -1743,7 +1742,7 @@ export interface paths {
          *     **3〜6 が Requirements.md 10.10.4「承認ゲートをAPIレベルで強制する」の実体である。**
          *     画面側の制御に依存しない。
          *
-         *     **検証6 は手順26b で足した。** エージェントが状態を変えてよいのは、担当が自分の
+         *     **検証6 はエージェントにだけ掛かる。** エージェントが状態を変えてよいのは、担当が自分の
          *     所有者であるチケットに限る（担当が未割当のものも進められない）。**呼び出し元が
          *     人のときは適用しない**——全員に掛けると `ticket.transition` を持つ人が他人の担当を
          *     進められなくなる。`Design.md` 6.5 の委譲（権限の根拠は所有者）に、作業の根拠も
@@ -2073,7 +2072,7 @@ export interface paths {
          * 完了条件の追加
          * @description 完了条件を1件足す（ApiDesign.md 9.9）。**必要権限は `ticket.edit` または
          *     `ticket.self_edit`。ただし `ticket.self_edit` では `is_satisfied` を送れない**
-         *     （0029。pb-75）——送ると `403`。`pb_submit_result` が「盤面を動かさない」と
+         *     （0029）——送ると `403`。`pb_submit_result` が「盤面を動かさない」と
          *     決めた判断と正面からぶつかるためで、**完了の判定は人が行う**。
          *
          *     **Phase 1 が受け付ける `type` は `manual` だけである**（省略時も `manual`）。
@@ -2121,7 +2120,7 @@ export interface paths {
         /**
          * 完了条件の削除
          * @description 完了条件を1件消す（ApiDesign.md 9.9）。**必要権限は `ticket.edit` または
-         *     `ticket.self_edit`**（0029。pb-75）。
+         *     `ticket.self_edit`**（0029）。
          *
          *     削除も `activity` に記録する（`old_value` に要約、`new_value` は `null`）。
          */
@@ -2132,7 +2131,7 @@ export interface paths {
          * 完了条件の更新
          * @description 完了条件を部分更新する（ApiDesign.md 9.9）。**必要権限は `ticket.edit` または
          *     `ticket.self_edit`。ただし `ticket.self_edit` では `is_satisfied` を送れない**
-         *     （0029。pb-75）——送ると `403`。**`sort_order` は開ける**（並べ替えは記述の
+         *     （0029）——送ると `403`。**`sort_order` は開ける**（並べ替えは記述の
          *     整理であって、盤面の判定ではない）。
          *
          *     **`is_satisfied` を `true` にすると、サーバが `satisfied_at` と
@@ -2435,7 +2434,7 @@ export interface paths {
          *     **二段（バックログ／オンステージ）も同じ1本を共有する**（9.4、DbDesign.md 6.6）。
          *
          *     **`activity` には記録しない。** `sort_key` だけの更新であり、記録するとチケット詳細の
-         *     変更履歴が並べ替えで埋まる（利用者の判断、2026-08-23）。
+         *     変更履歴が並べ替えで埋まる。
          *
          *     `position` と `after_seq` / `before_seq` の同時指定は 422。いずれも無い場合も 422。
          *
@@ -3056,9 +3055,9 @@ export interface paths {
          * 権限カタログ
          * @description 権限カタログの30件（ApiDesign.md 7.2、正本は DbDesign.md 7.2 のシード28件と
          *     8.1.4 の doc 権限2件）。
-         *     **必要権限は不要**（認証済みであればよい。2026-09-02 に `user.manage` から変更）。
+         *     **必要権限は不要**（認証済みであればよい。`user.manage` を求めない）。
          *
-         *     消費者が2つになったため開放した——GuiDesign.md 5.6.3 の権限マトリクス
+         *     消費者が2つあるため開放している——GuiDesign.md 5.6.3 の権限マトリクス
          *     （`/admin/users` の中）と、5.8.2 のエージェント用トークンの発行結果
          *     （`/me/agents`。必要権限は「本人」）である。カタログ自体は Design.md 6.4.2 に
          *     全文があり、本人の実効権限は `GET /me` が既に返しているので、開放しても
@@ -3085,7 +3084,7 @@ export interface paths {
         };
         /**
          * 確認を待っている設定変更
-         * @description 確認を待っている変更だけを返す（ApiDesign.md 11.9）。pb-107。
+         * @description 確認を待っている変更だけを返す（ApiDesign.md 11.9）。
          *     **必要権限は `system.settings`。**
          *
          *     **設定一覧と分けた軽い口である。** 画面はこれを定期的に引いて、
@@ -3115,7 +3114,7 @@ export interface paths {
         put?: never;
         /**
          * 締め出されうる設定変更の確定
-         * @description 未確認の設定変更を確定する（ApiDesign.md 11.8、Design.md 10.3）。pb-97。
+         * @description 未確認の設定変更を確定する（ApiDesign.md 11.8、Design.md 10.3）。
          *     **必要権限は `system.settings`。**
          *
          *     **確定すると以後は元へ戻らない。** 押されなければ期限で元の値へ戻る。
@@ -3239,11 +3238,11 @@ export interface paths {
          *
          *     **この口は循環を断つためにある**——自己署名証明書では、その証明書を持って
          *     いないクライアントが PB へ繋げない。**証明書は PB の DB にあるので、
-         *     繋げない相手から取ってこなければならない**（pb-100。stg で実際に起きた）。
+         *     繋げない相手から取ってこなければならない。**
          *     **HTTPS にする前に取っておける。**
          *
-         *     **zip で包むのは、`.crt` をそのまま返すとブラウザが拒むためである**
-         *     （pb-108）。**PB は 200 を返しているので、失敗が画面にもログにも残らない。**
+         *     **zip で包むのは、`.crt` をそのまま返すとブラウザが拒むためである**。
+         *     **PB は 200 を返しているので、失敗が画面にもログにも残らない。**
          */
         get: operations["downloadTLSCertificate"];
         put?: never;
@@ -3290,7 +3289,7 @@ export interface paths {
         };
         /**
          * DB の接続状態と統計
-         * @description PB が繋いでいる DB の接続状態と統計を返す（ApiDesign.md 11.10、GuiDesign.md 5.12.2）。pb-110。
+         * @description PB が繋いでいる DB の接続状態と統計を返す（ApiDesign.md 11.10、GuiDesign.md 5.12.2）。
          *     **必要権限は `system.settings`。** **読み取り専用で、変更の口は持たない。**
          *
          *     **パスワードは応答のどこにも入らない。**
@@ -3319,7 +3318,7 @@ export interface paths {
         };
         /**
          * PB 全体の書き出し（tar.gz ダウンロード）
-         * @description PB 全体を1つの書庫に書き出して返す（ApiDesign.md 11.11、DbDesign.md 9.1.1）。pb-144。
+         * @description PB 全体を1つの書庫に書き出して返す（ApiDesign.md 11.11、DbDesign.md 9.1.1）。
          *     **必要権限は `system.settings`。**
          *
          *     **全表を `REPEATABLE READ` の1トランザクションで読む。** 表ごとに別の
@@ -3356,7 +3355,7 @@ export interface paths {
         put?: never;
         /**
          * PB 全体の取り込み（復元）
-         * @description 書庫を取り込み、PB 全体をその時点へ戻す（ApiDesign.md 11.12、DbDesign.md 9.1.1）。pb-144。
+         * @description 書庫を取り込み、PB 全体をその時点へ戻す（ApiDesign.md 11.12、DbDesign.md 9.1.1）。
          *     **必要権限は `system.settings`。**
          *
          *     **段取りは「保守モードに入る → 書庫を検査 → 表を落とす → 書庫の版まで
@@ -3566,9 +3565,9 @@ export interface components {
             base_url: string;
             /**
              * @description 生成した手順ファイルに埋まる版番号（Requirements.md 10.9.3）。
-             *     **手順ファイルの本文を変えたら上がる**（pb-119 で 2）。「PB 側が古いと
-             *     判断して警告を返す」経路はまだ無く、埋めるところまでが手順28a の範囲である。
-             * @example 2
+             *     **手順ファイルの本文を変えたら上がる。** 「PB 側が古いと判断して警告を返す」
+             *     経路は無く、手順ファイルに埋めるだけである。
+             * @example 5
              */
             workflow_version: number;
             /** @description 実際に組み立てた種別（重複を畳み、カタログの順に並べたもの）。 */
@@ -3778,8 +3777,8 @@ export interface components {
             token_prefix: string;
             /**
              * @description **このトークンが持つ権限キーの全部。** 要求で `scopes` を省けば
-             *     Design.md 6.5 の既定10件、送ればその並びがそのまま入る
-             *     （手順26a で選べるようにした）。`ticket.close` は許可リストの外なので
+             *     Design.md 6.5 の既定10件、送ればその並びがそのまま入る。
+             *     `ticket.close` は許可リストの外なので
              *     決して含まれない。
              *
              *     **発行時のスコープを読めるのはこの応答だけである。** `AgentToken`
@@ -3854,7 +3853,7 @@ export interface components {
              */
             expires_in_days: number;
             /**
-             * @description 省略可（手順26a で足した）。**省略すると Design.md 6.5 の既定10件**
+             * @description 省略可。**省略すると Design.md 6.5 の既定10件**
              *     （`agent.run` `comment.create` `doc.view` `project.view`
              *     `ticket.assign` `ticket.create` `ticket.reference.edit`
              *     `ticket.self_edit` `ticket.transition` `ticket.view`）。
@@ -3867,7 +3866,7 @@ export interface components {
              *     **`scopes` は絶対指定であって、足すものの並びではない。** 送ると
              *     そのトークンが持つ権限の全部になるので、**既定に1件足したいときも
              *     既定の全件を並べて送る**。既定より短い並びを送ると、**その差は
-             *     黙って落ちる**（pb-90 で実際に2件落ちた）。
+             *     黙って落ちる**。
              *
              *     **`doc.edit` を足せるのは `pb_put_doc` のためである**（Design.md 8.2）。
              *     載せるかは「そのエージェントが誰に付いているか」で決まる——
@@ -4462,14 +4461,14 @@ export interface components {
              */
             sessions: components["schemas"]["UserSession"][];
             /**
-             * @description 確定済みの第2要素の件数（pb-103。DbDesign.md 6.18）。**配列ではなく
+             * @description 確定済みの第2要素の件数（DbDesign.md 6.18）。**配列ではなく
              *     件数だけを返す**——画面（GuiDesign.md 5.6.2）が出すのも件数で、
              *     他人の端末の名前は管理に要らない。**未確定の登録は数えない。**
              *     0 なら第2要素の解除（6.9）を disabled にする根拠になる。
              */
             mfa_credential_count: number;
             /**
-             * @description 登録済みのパスキーの件数（pb-104。DbDesign.md 6.19）。`mfa_credential_count` と
+             * @description 登録済みのパスキーの件数（DbDesign.md 6.19）。`mfa_credential_count` と
              *     同じ理由で件数だけを返す。0 ならパスキーの全削除（6.10）を disabled にする根拠になる。
              */
             passkey_count: number;
@@ -4915,7 +4914,7 @@ export interface components {
             status?: components["schemas"]["SprintStatus"];
         };
         /**
-         * @description スプリントを始めるときに決めるもの（ApiDesign.md 9.12.1。pb-6）。
+         * @description スプリントを始めるときに決めるもの（ApiDesign.md 9.12.1）。
          *
          *     **`status` を受け取らない。** 開始は必ず `active` であり、選ばせる意味がない。
          */
@@ -5057,7 +5056,7 @@ export interface components {
              */
             config_file_path: string | null;
             /**
-             * @description 確認を待っている設定変更（無ければ `null`）。pb-97。
+             * @description 確認を待っている設定変更（無ければ `null`）。
              *
              *     **期限までに確認されないと元の値へ戻る**（ApiDesign.md 11.8、
              *     Design.md 10.3）。画面は残り時間をここから出す。
@@ -5083,7 +5082,7 @@ export interface components {
              */
             expires_at: string;
             /**
-             * @description 変えた人（分からなければ `null`）。pb-107。
+             * @description 変えた人（分からなければ `null`）。
              *
              *     **画面が文言を分けるために要る**——「あなたが変えました」と
              *     「田中 が変えました」では、押す前に確かめることが違う。
@@ -5107,7 +5106,7 @@ export interface components {
             description: string;
             /**
              * @description 1=起動前（ファイルと環境変数にしか置けない）／2=実行時の共有設定（DB）／
-             *     3=共有される秘密（未実装。pb-3）。Design.md 10.3。
+             *     3=共有される秘密（未実装）。Design.md 10.3。
              * @enum {integer}
              */
             layer: 1 | 2 | 3;
@@ -5178,14 +5177,14 @@ export interface components {
             /**
              * @description **接続に使うホスト名**（`listen_url` のホスト部）。**`0.0.0.0` と `::` では
              *     `null` である**——あれらは待受の表記であって接続先のホスト名ではなく、
-             *     **`0.0.0.0` を SAN に入れた証明書はどのクライアントからも一致しない**（pb-100）。
+             *     **`0.0.0.0` を SAN に入れた証明書はどのクライアントからも一致しない**。
              * @example 127.0.0.1
              */
             listen_host: string | null;
             /**
              * @description いま出す証明書が `listen_host` を覆っているか（ApiDesign.md 11.4）。
-             *     **判定はサーバが行う**——画面が `dns_names` と照合していたときは
-             *     **IP の SAN が抜け落ちていた**（pb-100 で実測）。
+             *     **判定はサーバが行う**——画面が `dns_names` と照合すると、
+             *     **IP の SAN が抜け落ちる**。
              *
              *     `unspecific` は `listen_host` が `null` のとき、`no_certificate` は
              *     いま出す1枚が無いときである。
@@ -5363,7 +5362,7 @@ export interface components {
             /**
              * @description SAN の IP アドレス。**キーは常に返す**（無ければ空配列）。
              *
-             *     **列には無く、`cert_pem` を解析して返す**（pb-100）。`dns_names` は
+             *     **列には無く、`cert_pem` を解析して返す**。`dns_names` は
              *     `DNS:` の SAN しか持たないので、**画面がこちらを並べて出さないと
              *     「SAN: localhost」と「127.0.0.1 を覆っています」が並んで見える。**
              * @example [
@@ -5372,7 +5371,7 @@ export interface components {
              */
             ip_addresses: string[];
             /**
-             * @description **いまの鍵で秘密鍵を復号できるか**（pb-98）。偽なら**その証明書は出せない**
+             * @description **いまの鍵で秘密鍵を復号できるか**。偽なら**その証明書は出せない**
              *     ——暗号鍵の出どころが登録時から変わっている。
              *
              *     **`key_id` の突き合わせでは検出できない**（行の `key_id` は常に `v1` で、
@@ -5599,17 +5598,11 @@ export interface components {
             assignee: components["schemas"]["ActorRef"] | null;
         };
         /**
-         * @description チケット1件の詳細（ApiDesign.md 9.5.1）。**9.2 の `items[]` に6項目を加えたもの。**
-         *     手順16b では `POST /tickets` の応答として返る（9.3 が「応答は 9.5 の `GET` と
-         *     同形式」と定めるため）。`GET /tickets/:seq` そのものは手順17 で足す。
+         * @description チケット1件の詳細（ApiDesign.md 9.5.1）。**9.2 の `items[]` に項目を加えたもの。**
+         *     `POST /tickets` の応答もこの形である（9.3 が「応答は 9.5 の `GET` と
+         *     同形式」と定めるため）。
          *
-         *     **`dod` / `links` は手順18a から実数である**（9.9 / 9.10.1）。それまでは
-         *     空配列を返していた——作りたてのチケットではどちらも空が正しい値であり、
-         *     実装が入ったときに項目が生えたように見せないためである。
-         *     **`references` は手順17c から、`comment_count` は手順17a から実数である。**
-         *
-         *     **`execution_mode` / `readiness` / `readiness_note` / `scope` は手順27 で足した。**
-         *     9.2.2 が「Phase 2 で有効化する際に足す」と書いていたもので、**一覧には含めない**
+         *     **`execution_mode` / `readiness` / `readiness_note` / `scope` は一覧には含めない**
          *     （`pb_get_task` と `pb_get_context` はどちらもチケット1件を指して呼ぶ）。
          */
         TicketDetail: components["schemas"]["Ticket"] & {
@@ -5617,23 +5610,23 @@ export interface components {
             body_md: string | null;
             parent: components["schemas"]["TicketBrief"] | null;
             /**
-             * @description 祖先をたどって最初に見つかるエピック（ApiDesign.md 9.5.1。pb-14）。
+             * @description 祖先をたどって最初に見つかるエピック（ApiDesign.md 9.5.1）。
              *     親がエピックなら親そのもの。**自分自身は数えない。** 無ければ `null`。
              */
             epic: components["schemas"]["TicketBrief"] | null;
             children: components["schemas"]["TicketChild"][];
             /**
-             * @description 完了条件（ApiDesign.md 9.9）。**手順18a から実数を返す。**
+             * @description 完了条件（ApiDesign.md 9.9）。
              *     `sort_order` → `created_at` の昇順。
              */
             dod: components["schemas"]["TicketDoDItem"][];
             /**
-             * @description 関連チケット（ApiDesign.md 9.10.1）。**手順18a から実数を返す。**
+             * @description 関連チケット（ApiDesign.md 9.10.1）。
              *     **双方向**（`outgoing` → `incoming`）で、`ticket` に入るのは相手である。
              */
             links: components["schemas"]["TicketLink"][];
             /**
-             * @description 外部参照（ApiDesign.md 9.10.2）。**手順17c から実数を返す。**
+             * @description 外部参照（ApiDesign.md 9.10.2）。
              *     `kind` 昇順、同じ `kind` の中は `sort_order` → `created_at` の昇順。
              *
              *     **別の `GET` に切らず詳細応答へ入れる**のは、画面を開いた時点で
@@ -5647,21 +5640,21 @@ export interface components {
              */
             comment_count: number;
             /**
-             * @description 実行主体属性（Requirements.md 10.5.4、DbDesign.md 6.6）。**手順27 で追加。**
+             * @description 実行主体属性（Requirements.md 10.5.4、DbDesign.md 6.6）。
              *     `/pb-implement` は `human_only` のとき実装せず利用者へ返す
              *     （Requirements.md 10.8.6）。
              * @enum {string}
              */
             execution_mode: "human_only" | "agent_only" | "agent_draft";
             /**
-             * @description 実行可能性の信号（Requirements.md 10.5.1）。未判定は null。**手順27 で追加。**
+             * @description 実行可能性の信号（Requirements.md 10.5.1）。未判定は null。
              * @enum {string|null}
              */
             readiness: "red" | "yellow" | "green" | null;
-            /** @description Readiness の理由。未設定は null。**手順27 で追加。** */
+            /** @description Readiness の理由。未設定は null。 */
             readiness_note: string | null;
             /**
-             * @description スコープ境界（Requirements.md 10.5.3）。**手順27 で追加。** 未設定は `{}`。
+             * @description スコープ境界（Requirements.md 10.5.3）。未設定は `{}`。
              *     既知の4キー（allow / deny / repositories / external_apis）は文字列の配列で、
              *     **未知のキーはそのまま保存する**（ApiDesign.md 9.5.2）。
              *     コンテキストパックの最優先項目として渡る（Design.md 8.5.5）。
@@ -5722,7 +5715,7 @@ export interface components {
          * @description プロジェクトの集計（ApiDesign.md 9.13.1）。ダッシュボード（GuiDesign.md 5.3）の
          *     4枚のカードと「要対応」ブロックが読む。
          *
-         *     **エピック（`type='epic'`）はどの項目にも数えない**（手順19b で変更）。
+         *     **エピック（`type='epic'`）はどの項目にも数えない。**
          *     エピックはグルーピング専用であり（DbDesign.md 6.10）、バックログも行として
          *     出さない。**4枚のカードは押すとバックログをそのカテゴリで絞って開く**ので、
          *     除かないとカードの数と押した先の件数が一致しない。
@@ -5817,8 +5810,8 @@ export interface components {
              *     `parent_id` `estimate_point` `estimate_hours` `actual_hours`
              *     `start_date` `due_date`（本体の更新）／`comment` `dod` `link`
              *     `reference.code` `reference.doc`（子資源の更新）の17種類である。
-             *     **`sprint_id` は pb-6 で外れた**——9.5.2 で書けなくなり、動くのは
-             *     スプリントの開始・終了のときだけになった（あの2つは記録しない）。
+             *     **`sprint_id` は含まない**——9.5.2 で書けず、動くのは
+             *     スプリントの開始・終了のときだけである（あの2つは記録しない）。
              * @example status_key
              */
             field: string | null;
@@ -6216,7 +6209,7 @@ export interface components {
              */
             due_date?: string | null;
             /**
-             * @description 実行主体属性（Requirements.md 10.5.4）。**手順27 で開いた。**
+             * @description 実行主体属性（Requirements.md 10.5.4）。
              *     **`null` は受け付けない**（列が NOT NULL。422 の `invalid`）。
              *     **`ticket.assign` は要らない**——追加の権限が要るのは「誰がやるか」を
              *     決める操作だけで、これは「何をしてよいか」である（9.5.2）。
@@ -6224,18 +6217,18 @@ export interface components {
              */
             execution_mode?: "human_only" | "agent_only" | "agent_draft";
             /**
-             * @description 実行可能性の信号（Requirements.md 10.5.1）。**手順27 で開いた。**
+             * @description 実行可能性の信号（Requirements.md 10.5.1）。
              *     `null` で未判定へ戻す。
              * @enum {string|null}
              */
             readiness?: "red" | "yellow" | "green" | null;
             /**
-             * @description Readiness の理由。**手順27 で開いた。** `null` で消す。
+             * @description Readiness の理由。`null` で消す。
              *     **長さの上限を置かない**（`body_md` と同じ扱い）。
              */
             readiness_note?: string | null;
             /**
-             * @description スコープ境界（Requirements.md 10.5.3）。**手順27 で開いた。**
+             * @description スコープ境界（Requirements.md 10.5.3）。
              *     **`null` は受け付けない**（列が NOT NULL DEFAULT `'{}'`）。`{}` で空に戻す。
              *
              *     既知の4キー（`allow` / `deny` / `repositories` / `external_apis`）は
@@ -6257,8 +6250,7 @@ export interface components {
             to: string;
             /**
              * @description 添えるコメント。**同じトランザクションで `kind='progress'` のコメントが作られる**
-             *     （DbDesign.md 6.7）。**長さの上限は置いていない**——コメントAPI（9.8）は
-             *     手順18 であり、先にここだけ決めると2か所で食い違う。
+             *     （DbDesign.md 6.7）。**長さの上限は置いていない。**
              * @example レビューをお願いします
              */
             comment?: string;
@@ -9035,7 +9027,7 @@ export interface operations {
                 /** @description `true` で `closed_at IS NULL` のもののみ。`false` で完了のみ。 */
                 open?: "true" | "false";
                 /**
-                 * @description **棚に戻ったものを返すかどうか**（ApiDesign.md 9.2.1。pb-5 / pb-6）。
+                 * @description **棚に戻ったものを返すかどうか**（ApiDesign.md 9.2.1）。
                  *     既定は `false`。
                  *
                  *     次の3つをすべて満たす行が「棚に戻った」ものであり、既定で一覧から外れる。
@@ -9058,7 +9050,7 @@ export interface operations {
                  */
                 due_within?: string;
                 /**
-                 * @description `true` で**オンステージの行とその全子孫**に限る（ApiDesign.md 9.2.1「オンステージで絞る」。pb-138）。
+                 * @description `true` で**オンステージの行とその全子孫**に限る（ApiDesign.md 9.2.1「オンステージで絞る」）。
                  *     エピックは除く。棚に戻ったものは `retired` の既定どおり外れる。
                  *
                  *     **バックログ画面は使わない**（全件を1回で取り、二段を手元で分ける）。MCP の `pb_list_tasks` のための条件である。
@@ -9102,7 +9094,7 @@ export interface operations {
                  */
                 parent?: string;
                 /**
-                 * @description **キーワード**（ApiDesign.md 9.2.1「検索の条件」。pb-66）。空白で区切った語を
+                 * @description **キーワード**（ApiDesign.md 9.2.1「検索の条件」）。空白で区切った語を
                  *     **すべて含む**もの。各語はタイトル・本文・コメント（削除済みを除く）のいずれかに
                  *     部分一致すればよい。大文字小文字を区別しない。`%` と `_` は文字として扱う。
                  * @example 認証 API
@@ -9133,7 +9125,7 @@ export interface operations {
                  * @description 既定は `sort_key`。**`priority` と `status` は意味の順で並ぶ**——
                  *     `priority` は `lowest`→`highest`、`status` はワークフローの `sort_order` で、
                  *     キーの辞書順ではない（`high` が `lowest` より前に来ると「優先度で並べた」と
-                 *     読めないため）。`closed_at` は未完了が末尾に来る（pb-66）。
+                 *     読めないため）。`closed_at` は未完了が末尾に来る。
                  */
                 sort?: "sort_key" | "seq" | "title" | "status" | "priority" | "due_date" | "created_at" | "updated_at" | "closed_at";
                 order?: "asc" | "desc";
