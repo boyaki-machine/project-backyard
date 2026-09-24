@@ -1306,8 +1306,14 @@ PB_SECRET_KEY=<上で出た値> ./pb serve
 openssl req -x509 -newkey rsa:2048 -sha256 -days 365 -nodes \
   -keyout pb.key -out pb.crt \
   -subj "/CN=pb.example.com" \
-  -addext "subjectAltName=DNS:pb.example.com,DNS:localhost"
+  -addext "subjectAltName=DNS:pb.example.com,DNS:localhost" \
+  -addext "basicConstraints=critical,CA:FALSE" \
+  -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
+  -addext "extendedKeyUsage=serverAuth"
 ```
+
+**画面のサンプルと同じものである**（正本は `client/src/pages/tls-self-signed.sh`。画面はこれを読み、
+`server/internal/tlscert` の `TestSelfSignedCommand` が実際に走らせて拡張領域を確かめる）。
 
 | 指定 | 意味 |
 |---|---|
@@ -1315,6 +1321,9 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 365 -nodes \
 | `-subj "/CN=…"` | 画面の一覧に出る名前 |
 | `-addext "subjectAltName=DNS:…"` | **ブラウザが見るのはこちらである。** `CN` だけでは最近のブラウザが受けない。**アクセスに使うホスト名を必ず入れる** |
 | `IP:` | **IP アドレスで繋ぐなら `DNS:` ではなく `IP:` で入れる**（`subjectAltName=DNS:localhost,IP:127.0.0.1`）。`DNS:127.0.0.1` は一致しない（14.5） |
+| `-addext "basicConstraints=critical,CA:FALSE"` | **CA にしない。** OpenSSL 3 の `req -x509` は既定で `CA:TRUE` を付けるので、明示して上書きする。LibreSSL と OpenSSL 3 のどちらでも同じ証明書になる |
+| `-addext "keyUsage=critical,digitalSignature,keyEncipherment"` | 鍵の用途を**サーバ証明書に要るものだけ**に絞る |
+| `-addext "extendedKeyUsage=serverAuth"` | **TLS のサーバとしてだけ**使える。クライアント証明書やコード署名には使えない |
 | `-days` | 有効日数。**切れると画面が見えなくなる**ので、更新の予定と合わせる |
 
 **`pb.crt` を「証明書」、`pb.key` を「秘密鍵」の欄に貼る。**
