@@ -86,7 +86,7 @@ type AgentReport struct {
 	SubmittedAt     pgtype.Timestamptz
 }
 
-// エージェントの実行記録。Phase 2 では pb_submit_result が1提出につき1行作る。DbDesign.md 8.2.4
+// エージェントの実行記録。pb_submit_result が1提出につき1行作る。DbDesign.md 8.2.4
 type AgentRun struct {
 	ID              string
 	TicketID        string
@@ -197,7 +197,7 @@ type Comment struct {
 	DeletedAt  pgtype.Timestamptz
 }
 
-// コンテキストパックの生成記録。Phase 2 では書き手を持たない（器のみ）。DbDesign.md 8.2.5
+// コンテキストパックの生成記録。書き手はまだ無い（器のみ）。DbDesign.md 8.2.5
 type ContextPackLog struct {
 	ID           string
 	TicketID     string
@@ -284,7 +284,7 @@ type MfaRecoveryCode struct {
 	CreatedAt pgtype.Timestamptz
 }
 
-// 未確認の設定変更。期限内に確認されなければ previous へ戻す（pb-97）
+// 未確認の設定変更。期限内に確認されなければ previous へ戻す
 type PendingSettingChange struct {
 	ID        string
 	Previous  []byte
@@ -480,7 +480,7 @@ type UserIdentity struct {
 	LastUsedAt  pgtype.Timestamptz
 }
 
-// 第2要素の認証器（DbDesign.md 6.18）。Phase 2 は TOTP のみ
+// 第2要素の認証器（DbDesign.md 6.18）。種別は TOTP のみ
 type UserMfaCredential struct {
 	ID             string
 	UserID         string

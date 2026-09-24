@@ -2202,12 +2202,13 @@ Phase 2
                           規約テンプレートの案内に作業場所を例示（DDLなし。8.1.2）
   0038_document_template_decisions_headings.sql
                           判断の記録テンプレートに1判断＝1見出し（DDLなし。8.1.2）
+  0039_table_comments.sql 表のコメントを書き直す（DDLなし）
 Phase 3
-  0039_knowledge.sql      knowledge, knowledge_revision, proposal
-  0040_comment_signal.sql comment_signal
-  0041_embedding.sql      vector 拡張 + embedding
-  0042_project_event.sql  project_event
-  0043_analytics.sql      estimate_record, contribution
+  0040_knowledge.sql      knowledge, knowledge_revision, proposal
+  0041_comment_signal.sql comment_signal
+  0042_embedding.sql      vector 拡張 + embedding
+  0043_project_event.sql  project_event
+  0044_analytics.sql      estimate_record, contribution
 ```
 
 採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 3 の番号は、それまでに足したマイグレーションの分だけ後ろへずれる。** Phase 3 の DDL は着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
