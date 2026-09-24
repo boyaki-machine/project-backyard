@@ -141,6 +141,13 @@ if [ "${container}" = true ] && ! docker buildx version >/dev/null 2>&1; then
 	exit 1
 fi
 
+# put_licenses は PB のライセンスと第三者のライセンス表示を一式の直下に置く。
+# **鮮度はここでは見ない。** native は make sync-webui が、コンテナは Dockerfile が
+# make licenses-check と同じ検査を通しており、古ければそこで止まっている。
+put_licenses() {
+	cp "${repo_root}/LICENSE" "${repo_root}/THIRD_PARTY_NOTICES.txt" "${out}/"
+}
+
 # ── native─────────────────────────────────────────
 build_native() {
 	local exe=""
@@ -171,6 +178,8 @@ build_native() {
 	echo "==> マイグレーションと雛形を置く"
 	mkdir -p "${out}/migrations"
 	cp "${repo_root}"/server/migrations/*.sql "${out}/migrations/"
+
+	put_licenses
 
 	cp "${prod_dir}/MANUAL.md" "${out}/MANUAL.md"
 	cp "${native_dir}/pb.yaml" "${native_dir}/migrate.conf" "${native_dir}/create-roles.sql" "${out}/"
@@ -259,6 +268,7 @@ build_container() {
 	echo
 	echo "==> 雛形を置く（TARGET=${target}）"
 	cp "${prod_dir}/MANUAL.md" "${out}/MANUAL.md"
+	put_licenses
 	# 用意済みの PostgreSQL にロールを作る SQL。compose と k8s でも、外部の PostgreSQL へ繋ぐときに使う。
 	cp "${native_dir}/create-roles.sql" "${out}/create-roles.sql"
 

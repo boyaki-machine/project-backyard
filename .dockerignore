@@ -4,6 +4,8 @@
 # 除く形だと、あとから増えた秘密（deploy/*/secrets/ など）を送り漏らしうる。
 *
 !VERSION
+!LICENSE
+!THIRD_PARTY_NOTICES.txt
 !client/
 !server/
 

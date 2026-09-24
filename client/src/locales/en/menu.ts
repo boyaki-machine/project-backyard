@@ -32,6 +32,7 @@ export default {
     },
     logout: 'Log out',
     menuLabel: '{name} menu',
+    licenses: 'Licenses',
   },
   settingsTabs: {
     label: 'Settings sections',

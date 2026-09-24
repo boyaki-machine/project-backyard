@@ -80,6 +80,7 @@ make build       # client をビルドして embed し、単一バイナリを�
 make version     # 現在のバージョンと develop へのマージ回数を表示
 make bump-minor  # 機能追加のマージ前に実行（fix/ docs/ は bump-build）
 make test
+make licenses    # 依存を変えたら：THIRD_PARTY_NOTICES.txt を作り直す（make test が鮮度を見る）
 make psql        # DBコンソール
 make dev-reset   # 開発用：DBを作り直してデモデータを投入
 make dev-seed    # 開発用：デモデータのみ投入（冪等）
