@@ -227,7 +227,8 @@ make dev-client   # :5173。ブラウザで開くのはこちら
 |---|---|
 | `make psql` | DBコンソール（`pb_owner` で接続） |
 | `make dev-info` | URL とデモアカウントの一覧。**パスワードを探す時間をなくすためのもの** |
-| `make test` | Go のテスト |
+| `make test` | Go のテスト。先に整形（`fmt-check`）と第三者のライセンス表示の鮮度（`licenses-check`）を見る |
+| `make licenses` | **依存を足した・外した・上げたら打つ。** `THIRD_PARTY_NOTICES.txt` を作り直す（`Design.md` 4.5）。結果をコミットする |
 | **`make restart`** | **停止 → ビルド → DB起動 → サーバ起動をまとめて行う**（3.1）。画面を直したあとはこれ1つでよい |
 | `make stop-server` | :8080 を掴んでいるサーバを PID で止める（3.1「止め方」） |
 | `make down` | コンテナを停止する。**`pgdata` ボリュームは残る**ので、次の `make up` でデータは戻る（3.4） |
@@ -353,8 +354,11 @@ APIを足したステップの成果物に、この yaml の更新と `make gen-
 # 6. テスト
 
 ```
-make test      # cd server && go test ./...
+make test      # fmt-check と licenses-check のあと cd server && go test ./...
 ```
+
+**`client/node_modules` が要る**（`cd client && npm ci`）。ライセンス表示の鮮度を見るのに、
+バンドルに入った npm パッケージを Vite で数えるため。落ちたら `make licenses` を打ってコミットする。
 
 ## 6.1 DBを使う結合テスト
 

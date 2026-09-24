@@ -199,6 +199,7 @@ Design.md         全体設計（本書）── システム構成・技術選�
 - `index.html` が無いとき（client が未ビルド）は、このプレースホルダを **`503 Service Unavailable`** で返す。`200` にすると監視や自動確認から「画面が出ている」と区別が付かない
 - SPA のため、`/api` `/mcp` `/healthcheck` 以外で未知のパスは `index.html` を返す（フォールバック）。`/healthcheck` は `/api/v1` の外に置く唯一のエンドポイントであり、フォールバックの例外になる（`ApiDesign.md` 2.11）
 - キャッシュ制御：ハッシュ付きアセットは `immutable`、`index.html` は `no-cache`
+- **第三者のライセンス表示（`THIRD_PARTY_NOTICES.txt`）も embed 対象へ置き、`/THIRD_PARTY_NOTICES.txt` で配信する**（4.5「第三者のライセンス表示」）。既存の静的配信に載るだけで、専用のハンドラを持たない。Vite の開発サーバには無い
 
 **バイナリは `CGO_ENABLED=0` で静的リンクできる。** pgx が pure Go 実装であるため C ライブラリに依存せず、distroless / scratch イメージで動作する。クロスコンパイルも `GOOS` / `GOARCH` の指定だけで済む（`Design.md` 4.2）。
 
@@ -317,9 +318,10 @@ ProjectBackyard/
 build-client:                       # client/dist を生成
 	cd client && npm ci && npm run build
 
-sync-webui: build-client            # embed 対象へコピー（//go:embed は親を辿れない）
+sync-webui: build-client licenses-check   # embed 対象へコピー（//go:embed は親を辿れない）
 	rm -rf server/internal/webui/dist && mkdir -p server/internal/webui/dist
 	cp -R client/dist/. server/internal/webui/dist/
+	cp THIRD_PARTY_NOTICES.txt server/internal/webui/dist/
 
 build: sync-webui                   # 単一バイナリ
 	cd server && CGO_ENABLED=0 go build -trimpath -o ../bin/pb ./cmd/pb
@@ -446,6 +448,7 @@ out/
 ├── create-roles.sql          既存の PostgreSQL に DB とロールを作る（psql で1回）
 ├── secrets/                  app_database_url.example / pgpass.example
 ├── launchd/（darwin）・systemd/（linux）   常駐の雛形
+├── LICENSE・THIRD_PARTY_NOTICES.txt       PB のライセンスと第三者のライセンス表示（全 TARGET に置く）
 └── MANUAL.md                 deploy/prod/MANUAL.md の写し
 ```
 
@@ -460,7 +463,7 @@ out/
 
 #### docker / compose の一式
 
-**イメージ**は `deploy/Dockerfile` の3段（client → pb と goose → 実行）で作る。中身は `/pb`（入口。既定の引数は `serve`）・`/goose`（postgres のドライバだけ）・`/migrations`。実行の段は `gcr.io/distroless/static-debian12:nonroot` で、利用者は uid 65532。
+**イメージ**は `deploy/Dockerfile` の3段（client → pb と goose → 実行）で作る。中身は `/pb`（入口。既定の引数は `serve`）・`/goose`（postgres のドライバだけ）・`/migrations`・`/LICENSE`・`/THIRD_PARTY_NOTICES.txt`。実行の段は `gcr.io/distroless/static-debian12:nonroot` で、利用者は uid 65532。
 
 | | compose | docker |
 |---|---|---|
@@ -476,7 +479,7 @@ out/
 | **コンテナの healthcheck を持たない**（同） | distroless に `/healthcheck` を叩くコマンドが無く、叩き役（`pb healthcheck`）も足さない。健全かは外から見る。再検討の条件は、**compose に「app が健全になってから」を待つサービスを足すとき** |
 | **tar は buildx の `type=docker`** | `docker load` のほか nerdctl や podman も読める。取り込める相手の広さで選ぶ |
 | **`pb_owner` のパスワードは passfile で渡す** | native と揃える。compose では秘密の1つとして渡し、`PGPASSFILE` にその位置を入れる |
-| **`.dockerignore` は送るものを名指しで許す**（`VERSION`・`client/`・`server/`） | 除く形だと、あとから増えた秘密（`deploy/*/secrets/` など）を送り漏らしうる |
+| **`.dockerignore` は送るものを名指しで許す**（`VERSION`・`LICENSE`・`THIRD_PARTY_NOTICES.txt`・`client/`・`server/`） | 除く形だと、あとから増えた秘密（`deploy/*/secrets/` など）を送り漏らしうる |
 | **compose のプロジェクト名は `pb-prod` で、DB のポートは外へ出さない** | dev の compose（`project-backyard`）と同じ名前だと、同じ端末で DB のボリュームを共有する。DB へは compose の中からだけ繋ぐ |
 | **イメージに `ENV PB_BIND=0.0.0.0:8080` を持たせる** | **PB の既定値は `127.0.0.1:8080` である**。コンテナの中で 127.0.0.1 に閉じると、公開範囲を決めるはずの `-p` や `ports` を通っても外から届かない。**画面の「待受アドレス」は環境変数で固定になる** |
 | **`make up` は db だけのまま** | dev は PB 本体を `make run` でホストから動かす。app のコンテナまで上げると 8080 番でぶつかる（`Development.md` 2.2） |
@@ -493,6 +496,7 @@ out/
 │   └── db.yaml           試すための DB：ConfigMap（ロール作成）・headless Service・StatefulSet（PVC 付き）
 ├── secret.example.yaml   Secret の雛形（値は CHANGE_ME）
 ├── create-roles.sql      外部の PostgreSQL 用（native と同じもの）
+├── LICENSE・THIRD_PARTY_NOTICES.txt
 └── MANUAL.md
 ```
 
@@ -508,6 +512,25 @@ out/
 | **Secret の雛形は `k8s/` の外に置く** | `kubectl apply -f k8s/` で、値の入っていない Secret まで入れないため |
 | **ロール作成のスクリプトは、ビルドのときに ConfigMap へ埋め込む** | 正本を `deploy/base/initdb/01_roles.sh` の1つに保ったまま、一式を `kubectl` だけで入れられる |
 | **マニフェストに namespace を書かない** | 入れる先は apply するときの `-n` で決める |
+
+#### 第三者のライセンス表示
+
+**配布物に入る第三者のソフトウェアの著作権表示とライセンスの本文を、`THIRD_PARTY_NOTICES.txt` の1枚にまとめてリポジトリ直下に置く。** MIT・BSD・Apache-2.0 は、バイナリで再配布するときにこれらの同梱を求める。**`make licenses` が生成し、手で編集しない。**
+
+| 対象 | 拾い方 |
+|---|---|
+| Go のモジュール | 配布する実行ファイル（`pb`・`pb-mcp-bridge`・`goose`）ごとに `go list -deps` で、**リンクされるもの**を拾う。OS で依存が変わりうるので、配布する3つの OS の和を取る。本文はモジュールの直下の LICENSE・NOTICE・PATENTS（`server/tools/notices`） |
+| Go の標準ライブラリ | ツールチェーンの `LICENSE`・`PATENTS` |
+| npm のパッケージ | **バンドルに実際に入ったものだけ**を、Vite 8 の `build.license` で拾う（`client/scripts/npm-licenses.mjs`） |
+
+| 決めたこと | 理由 |
+|---|---|
+| **goose の依存も対象にする** | native の一式とイメージに同梱しており、`pb` と依存が違う（`godotenv`・`xflag` と、`pgx`・`go-retry` の別の版） |
+| **npm は `package.json` の依存ではなく、バンドルに入ったものを拾う** | vite・typescript などビルドにしか使わないものは配布物に入らない。**依存を足さずに拾える**ので、Vite に組み込みの機能を使う |
+| **出力に時刻もツールチェーンの版も入れず、並びを固定する** | 同じ依存からは毎回同じ内容になるので、作り直した結果と比べるだけで鮮度が分かる |
+| **`make licenses-check` を `make test` と `make sync-webui`（＝`make build`・`make stg-build`・native の `make release`）の前に置き、Dockerfile でも同じ検査を通す** | 依存を足したり上げたりして作り直さないまま、古い表示を配らない。**このため `make test` にも `client/node_modules`（`npm ci`）が要る** |
+| **goose のビルドタグは `build-release.sh` から読み出す** | タグで goose の依存が変わる。正本を増やさない |
+| **画面からはユーザーメニューの版の行のリンクで読む**（`GuiDesign.md` 4.2） | 静的なテキストを別タブで開くだけで、画面を作らない |
 
 **`CGO_ENABLED=0` で静的バイナリになる。** pgx が pure Go 実装であるため C ライブラリに依存せず、`scratch` や distroless イメージで動作する。開発端末（arm64 macOS）から Linux/amd64 向けを出すのもフラグ指定のみで済む。
 
