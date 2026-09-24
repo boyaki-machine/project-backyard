@@ -8,7 +8,8 @@
 # CPU のエミュレーションが無い端末でも、amd64 と arm64 の両方を作れる。
 #
 # イメージの中身：/pb（client を embed した単一バイナリ）、/goose（postgres のドライバだけ）、
-# /migrations、/LICENSE と /THIRD_PARTY_NOTICES.txt（第三者のライセンス表示）。
+# /migrations、/LICENSE と /NOTICE（PB のライセンスと著作権表示）、
+# /THIRD_PARTY_NOTICES.txt（第三者のライセンス表示）。
 # 利用者は uid 65532（nonroot）。秘密ファイルの置き方は MANUAL.md の4章。
 #
 # **コンテナの healthcheck は持たない**。distroless には
@@ -65,7 +66,7 @@ LABEL org.opencontainers.image.title="Project Backyard" \
 COPY --from=server /out/pb /pb
 COPY --from=server /out/goose /goose
 COPY server/migrations/ /migrations/
-COPY LICENSE THIRD_PARTY_NOTICES.txt /
+COPY LICENSE NOTICE THIRD_PARTY_NOTICES.txt /
 # **コンテナの中ではすべてのアドレスで待ち受け、外への公開範囲は docker の -p や compose の
 # ports で決める**（DbDesign.md 3.2）。イメージで決めておくのは、PB の既定値が変わっても
 # コンテナの外から届かなくならないため。この値は画面では「環境変数で固定」と出る。

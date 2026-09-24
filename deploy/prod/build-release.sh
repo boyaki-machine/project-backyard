@@ -141,11 +141,11 @@ if [ "${container}" = true ] && ! docker buildx version >/dev/null 2>&1; then
 	exit 1
 fi
 
-# put_licenses は PB のライセンスと第三者のライセンス表示を一式の直下に置く。
+# put_licenses は PB のライセンスと著作権表示（NOTICE）、第三者のライセンス表示を一式の直下に置く。
 # **鮮度はここでは見ない。** native は make sync-webui が、コンテナは Dockerfile が
 # make licenses-check と同じ検査を通しており、古ければそこで止まっている。
 put_licenses() {
-	cp "${repo_root}/LICENSE" "${repo_root}/THIRD_PARTY_NOTICES.txt" "${out}/"
+	cp "${repo_root}/LICENSE" "${repo_root}/NOTICE" "${repo_root}/THIRD_PARTY_NOTICES.txt" "${out}/"
 }
 
 # ── native─────────────────────────────────────────

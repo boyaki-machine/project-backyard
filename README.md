@@ -264,6 +264,8 @@ native を常駐させる雛形（launchd / systemd / タスクスケジュー�
 
 PB は **Apache License 2.0** で公開しています。全文は [LICENSE](LICENSE) にあります。
 
+Copyright 2026 boyaki-machine（著作権表示は [NOTICE](NOTICE) にもあり、配布物に同梱しています）
+
 ### 利用しているソフトウェア
 
 PB は、次のオープンソースソフトウェアの上に成り立っています。作者の皆さんに感謝します。
