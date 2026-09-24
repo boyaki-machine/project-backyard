@@ -92,6 +92,7 @@ make release TARGET=<docker|compose|k8s> ARCH=<amd64|arm64> [OUT=<出力先>] [P
 ├── launchd/           常駐の雛形（mac の一式だけ）
 ├── systemd/           常駐の雛形（Linux の一式だけ）
 ├── LICENSE            PB のライセンス（Apache License 2.0）
+├── NOTICE             PB の著作権表示
 ├── THIRD_PARTY_NOTICES.txt  同梱する第三者のソフトウェアのライセンス表示
 └── MANUAL.md          この文書
 ```
@@ -318,7 +319,7 @@ mv <新しい一式> <今の一式>
 | `/pb` | PB 本体（画面も入った単一の実行ファイル）。コンテナの入口で、既定の引数は `serve` |
 | `/goose` | スキーマを進める道具（postgres のドライバだけ） |
 | `/migrations/` | スキーマの定義 |
-| `/LICENSE`・`/THIRD_PARTY_NOTICES.txt` | PB のライセンスと、同梱する第三者のソフトウェアのライセンス表示 |
+| `/LICENSE`・`/NOTICE`・`/THIRD_PARTY_NOTICES.txt` | PB のライセンスと著作権表示、同梱する第三者のソフトウェアのライセンス表示 |
 
 - **利用者は uid 65532（root ではない）。** シェルも `curl` も入っていない
 - **コンテナの中の待受は `0.0.0.0:8080`** で、イメージが環境変数 `PB_BIND` で決めている（画面では
@@ -337,6 +338,7 @@ mv <新しい一式> <今の一式>
 ├── initdb/01_roles.sh   DB の初回起動で pb_app のロールを作る
 ├── create-roles.sql     外部の PostgreSQL へ繋ぐときに使う（4.5）
 ├── LICENSE              PB のライセンス（Apache License 2.0）
+├── NOTICE               PB の著作権表示
 ├── THIRD_PARTY_NOTICES.txt  同梱する第三者のソフトウェアのライセンス表示
 └── MANUAL.md            この文書
 ```
@@ -352,6 +354,7 @@ mv <新しい一式> <今の一式>
 ├── create-roles.sql     用意済みの PostgreSQL に DB とロールを作る（3.3）
 ├── secrets/             app_database_url.example / pgpass.example
 ├── LICENSE              PB のライセンス（Apache License 2.0）
+├── NOTICE               PB の著作権表示
 ├── THIRD_PARTY_NOTICES.txt  同梱する第三者のソフトウェアのライセンス表示
 └── MANUAL.md            この文書
 ```
@@ -530,6 +533,7 @@ docker stop pb && docker rm pb
 ├── secret.example.yaml  Secret の雛形（値は入っていない。5.3）
 ├── create-roles.sql     外部の PostgreSQL へ繋ぐときに使う（5.7）
 ├── LICENSE              PB のライセンス（Apache License 2.0）
+├── NOTICE               PB の著作権表示
 ├── THIRD_PARTY_NOTICES.txt  同梱する第三者のソフトウェアのライセンス表示
 └── MANUAL.md            この文書
 ```
