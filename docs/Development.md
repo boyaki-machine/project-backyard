@@ -382,8 +382,10 @@ make test-db RUN=TestMeTokensIntegration
 フェイクで差し替えたテストでは `queries/*.sql` が一度も実行されないため、
 列名・JOIN の向き・条件の取りこぼしが検出できない。それを埋めるためのものである。
 
-- **worktree では走らない。** `deploy/dev/secrets/` は履歴管理の対象外なので、worktree にはチェックアウトされない。
-  結合テストは元の作業ディレクトリで走らせる（単体テストは worktree でも走る）
+- **worktree でも走る。** `deploy/dev/secrets/` は履歴管理の対象外で worktree にはチェックアウトされないが、
+  **Makefile が本体の作業ツリーの秘密と compose を既定で使う**（`DEV_ROOT`。worktree 自身に秘密があればそちらが先）。
+  使っているときは `（worktree：dev の秘密と compose は … のものを使う）` と1行出る。`make run`・`make migrate`・
+  `make up` も同じで、**本体と同じ DB（compose プロジェクト `project-backyard`）を指す**
 - **dev と同じ DB を使う。** 走らせるたびに dev の `audit_log` が増える
 
 ## 6.2 テストを書くときの落とし穴
