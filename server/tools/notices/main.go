@@ -273,9 +273,8 @@ func render(mods []*goModule, modFiles [][]file, stdUsers []string, stdFiles []f
 	var b strings.Builder
 	b.WriteString(`Project Backyard — 第三者のソフトウェアのライセンス表示
 
-このファイルは make licenses が生成する。手で編集しない。
-PB の配布物に含まれる第三者のソフトウェアについて、著作権表示とライセンスの本文を載せる。
-PB 自身のライセンスは LICENSE（Apache License 2.0）にある。
+PB の配布物に含まれる第三者のソフトウェアについて、著作権表示とライセンスの本文を載せます。
+PB 自身のライセンスは、同梱のファイル LICENSE（Apache License 2.0）に記載されています。
 
 `)
 	b.WriteString(indexMark + "\n\n")
