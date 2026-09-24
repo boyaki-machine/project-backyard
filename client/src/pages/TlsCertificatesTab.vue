@@ -537,7 +537,9 @@ function asApiError(e: unknown): ApiError {
             <li>
               <strong><code>subjectAltName</code> {{ $ui('にアクセスに使うホスト名を必ず入れます。') }}</strong> {{ $ui('ブラウザが見るのはこちらで、') }}<code>CN</code> {{ $ui('だけでは受け付けません') }} </li>
             <li>
-              <code>basicConstraints</code>・<code>keyUsage</code>・<code>extendedKeyUsage</code> {{ $ui('は、') }}<strong>{{ $ui('サーバ証明書としてだけ使える') }}</strong>{{ $ui('ようにする指定です。CA として他の証明書に署名することはできません') }} </li>
+              <code>basicConstraints</code>・<code>extendedKeyUsage</code> {{ $ui('は、') }}<strong>{{ $ui('サーバ証明書としてだけ使える') }}</strong>{{ $ui('ようにする指定です。CA として他の証明書に署名することはできません') }} </li>
+            <li>
+              <code>keyUsage</code> {{ $ui('は') }}<strong>{{ $ui('付けません。') }}</strong>{{ $ui('付けると、Claude Code などがこの証明書を直接信頼できなくなります') }} </li>
           </ul>
           <p class="muted">
             <code>pb.crt</code> {{ $ui('を「証明書」、') }}<code>pb.key</code> {{ $ui('を「秘密鍵」の欄に貼ります。') }} </p>
