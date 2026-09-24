@@ -1310,7 +1310,6 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 365 -nodes \
   -subj "/CN=pb.example.com" \
   -addext "subjectAltName=DNS:pb.example.com,DNS:localhost" \
   -addext "basicConstraints=critical,CA:FALSE" \
-  -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
   -addext "extendedKeyUsage=serverAuth"
 ```
 
@@ -1324,7 +1323,7 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 365 -nodes \
 | `-addext "subjectAltName=DNS:…"` | **ブラウザが見るのはこちらである。** `CN` だけでは最近のブラウザが受けない。**アクセスに使うホスト名を必ず入れる** |
 | `IP:` | **IP アドレスで繋ぐなら `DNS:` ではなく `IP:` で入れる**（`subjectAltName=DNS:localhost,IP:127.0.0.1`）。`DNS:127.0.0.1` は一致しない（14.5） |
 | `-addext "basicConstraints=critical,CA:FALSE"` | **CA にしない。** OpenSSL 3 の `req -x509` は既定で `CA:TRUE` を付けるので、明示して上書きする。LibreSSL と OpenSSL 3 のどちらでも同じ証明書になる |
-| `-addext "keyUsage=critical,digitalSignature,keyEncipherment"` | 鍵の用途を**サーバ証明書に要るものだけ**に絞る |
+| （`keyUsage` は付けない） | **付けると Claude Code などから繋がらなくなる。** 自己署名の証明書を直接信頼させると、証明書は自分の発行元として扱われる。OpenSSL 1.0 系（Claude Code が動く Bun の BoringSSL、LibreSSL）は、そのとき `keyCertSign` が無いと発行元と認めず `UNABLE_TO_VERIFY_LEAF_SIGNATURE` で落ちる。`keyCertSign` を足すのは `CA:FALSE` と矛盾する（RFC 5280 4.2.1.9）。**OpenSSL 3・Node・Go・macOS の curl は区別しないので、そちらで通っても安心できない**（pb-201） |
 | `-addext "extendedKeyUsage=serverAuth"` | **TLS のサーバとしてだけ**使える。クライアント証明書やコード署名には使えない |
 | `-days` | 有効日数。**切れると画面が見えなくなる**ので、更新の予定と合わせる |
 
