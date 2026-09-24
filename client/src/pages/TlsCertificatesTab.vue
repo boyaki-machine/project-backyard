@@ -75,6 +75,7 @@ const deleting = ref<TLSCertificate | null>(null)
 
 /** 作り方の折りたたみ。**0枚のときは開いて出す**（5.12.1） */
 const showSelfSigned = ref(false)
+const showLocalCA = ref(false)
 const showFormal = ref(false)
 
 /**
@@ -108,6 +109,17 @@ function statusLabel(status: CertificateStatus): string {
  */
 const SELF_SIGNED_CMD = selfSignedCmdRaw.trim()
 
+/**
+ * ローカル CA（mkcert）で作る2コマンド（pb-199）。**自己署名と違い、CA を OS の信頼ストアへ
+ * 1回登録すれば、そこを読むクライアント（Claude Code・curl・Go のブリッジ）は何も渡さずに繋がる。**
+ * 名前は自己署名のサンプルと揃える。手順の全文と種別ごとの信頼のさせ方は `Development.md` 14.6。
+ */
+const LOCAL_CA_CMD = `mkcert -install
+mkcert pb.example.com localhost`
+
+/** Node で動くクライアントへ CA を渡す1行（`Development.md` 14.6）。Node は既定では OS の信頼ストアを読まない */
+const LOCAL_CA_NODE_ENV = 'export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"'
+
 const CSR_CMD = `openssl req -new -newkey rsa:2048 -nodes \\
   -keyout pb.key -out pb.csr \\
   -subj "/C=JP/ST=Tokyo/O=Example Inc./CN=pb.example.com"`
@@ -131,6 +143,7 @@ async function load() {
     // 0枚なら作り方を開いて出す（初回は必ず要る）。
     if (res.items.length === 0) {
       showSelfSigned.value = true
+      showLocalCA.value = true
       showFormal.value = true
     }
   } catch (e: unknown) {
@@ -170,8 +183,8 @@ async function submit() {
     keyPem.value = ''
     notice.value =
       created.status === 'active'
-        ? uiText("{value0} を登録しました。この証明書を使い始めます。", { value0: created.common_name })
-        : uiText("{value0} を登録しました。{value1} から自動で使われます。", { value0: created.common_name, value1: formatDateTime(created.not_before) })
+        ? uiText("{value0} を登録しました。この証明書を使い始めます。", { value0: certName(created) })
+        : uiText("{value0} を登録しました。{value1} から自動で使われます。", { value0: certName(created), value1: formatDateTime(created.not_before) })
     await load()
   } catch (e: unknown) {
     actionError.value = asApiError(e)
@@ -204,6 +217,16 @@ const activeIsSelfSigned = computed(() => activeCert.value?.is_self_signed === t
  */
 function sanText(c: TLSCertificate): string {
   return [...c.dns_names, ...c.ip_addresses].join(', ')
+}
+
+/**
+ * 一覧と通知に出す証明書の名前。**CN が空なら SAN の先頭で代える。**
+ *
+ * mkcert が作る証明書は CN を持たない（名前は SAN だけ）。そのまま出すと一覧の名前が空になり、
+ * 通知が「 を登録しました」になる（pb-199）。DB と API の common_name は空のまま変えない。
+ */
+function certName(c: Pick<TLSCertificate, 'common_name' | 'dns_names' | 'ip_addresses'>): string {
+  return c.common_name || c.dns_names[0] || c.ip_addresses[0] || '—'
 }
 
 /**
@@ -263,7 +286,7 @@ async function confirmDelete() {
   actionError.value = null
   try {
     await settingsApi.deleteCertificate(target.id)
-    notice.value = uiText("{value0} を削除しました。", { value0: target.common_name })
+    notice.value = uiText("{value0} を削除しました。", { value0: certName(target) })
     deleting.value = null
     await load()
   } catch (e: unknown) {
@@ -471,7 +494,7 @@ function asApiError(e: unknown): ApiError {
 
         <div v-for="c in items" :key="c.id" class="cert" :class="`st-${c.status}`">
           <div class="head">
-            <span class="cn">{{ c.common_name }}</span>
+            <span class="cn">{{ certName(c) }}</span>
             <span class="badge" :class="`st-${c.status}`">{{ statusLabel(c.status) }}</span>
             <span class="muted kind">{{ c.is_self_signed ? $ui("自己署名") : $ui("認証局発行") }}</span>
           </div>
@@ -545,6 +568,24 @@ function asApiError(e: unknown): ApiError {
             <code>pb.crt</code> {{ $ui('を「証明書」、') }}<code>pb.key</code> {{ $ui('を「秘密鍵」の欄に貼ります。') }} </p>
         </details>
 
+        <details :open="showLocalCA">
+          <summary>{{ $ui('ローカル CA で作る（mkcert）') }}</summary>
+          <p class="muted"> {{ $ui('自分の端末に CA を作り、その CA で証明書を発行します。CA を OS に1回登録すれば、ブラウザもエージェントも警告なしで繋がります。') }} </p>
+          <pre>{{ LOCAL_CA_CMD }}</pre>
+          <button type="button" class="link" @click="copy(LOCAL_CA_CMD)">{{ $ui('コピー') }}</button>
+          <ul class="muted">
+            <li>
+              <code>mkcert -install</code> {{ $ui('は CA を OS の信頼ストアへ登録します（1回だけ。管理者の認証を求められます）') }} </li>
+            <li>
+              <code>pb.example.com+1.pem</code> {{ $ui('を「証明書」、') }}<code>pb.example.com+1-key.pem</code> {{ $ui('を「秘密鍵」の欄に貼ります。') }} </li>
+            <li>
+              <strong>{{ $ui('Node で動くクライアント（Claude Desktop の mcp-remote など）は OS の信頼ストアを読みません。') }}</strong> {{ $ui('次の環境変数で CA を渡します') }} <pre>{{ LOCAL_CA_NODE_ENV }}</pre>
+            </li>
+            <li>
+              <strong><code>rootCA-key.pem</code> {{ $ui('は共有しません。') }}</strong>{{ $ui('この端末の通信を偽装できる鍵です') }} </li>
+          </ul>
+        </details>
+
         <details :open="showFormal">
           <summary>{{ $ui('認証局が発行した証明書を登録する') }}</summary>
           <p class="muted"> {{ $ui('サイバートラスト・DigiCert・GlobalSign・Let\'s Encrypt など、発行元によらず手順は 同じです。') }} </p>
@@ -574,7 +615,7 @@ function asApiError(e: unknown): ApiError {
       <ConfirmDialog
         v-if="deleting"
         :title="$ui('証明書を削除しますか？')"
-        :message="$ui('{value0}（{value1}…）を削除します。この操作は取り消せません。', { value0: deleting.common_name, value1: deleting.fingerprint.slice(0, 23) })"
+        :message="$ui('{value0}（{value1}…）を削除します。この操作は取り消せません。', { value0: certName(deleting), value1: deleting.fingerprint.slice(0, 23) })"
         :confirm-label="$ui('削除する')"
         danger
         :busy="submitting"
