@@ -27,7 +27,8 @@ const (
 	LayerBoot Layer = 1
 	// LayerRuntime は実行時の共有設定。DB の app_setting に置き、画面から変えられる。
 	LayerRuntime Layer = 2
-	// LayerSharedSecret は共有される秘密（TLS 証明書と秘密鍵）。
+	// LayerSharedSecret は共有される秘密（TLS 証明書と秘密鍵）。**この表には載せない**
+	// ——専用の表（tls_certificate）に暗号化して持つ（DbDesign.md 6.15）。
 	LayerSharedSecret Layer = 3
 )
 

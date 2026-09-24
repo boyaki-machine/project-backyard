@@ -74,7 +74,7 @@ const scopeGroups = computed(() => {
 /**
  * 行。`permission.category` ごとに区切る（5.6.3）。
  *
- * 権限は30件あり `ticket.*` だけで7件連続する。`sort_order` は category ごとに
+ * 権限は32件あり `ticket.*` だけで9件連続する。`sort_order` は category ごとに
  * 連続する番号帯で採番されているため、順に見て変わり目で切ればよい。
  */
 const categories = computed(() => {
@@ -146,7 +146,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureHead))
   <div ref="panel" class="matrix-panel">
     <!-- 5.6.3 のワイヤーどおり。Phase 1 が参照のみであることを最初に伝える -->
     <p class="notice">
-      <span aria-hidden="true">ⓘ</span> {{ $ui('組み込みロールの権限は Phase 1 では変更できません（参照のみ）') }} </p>
+      <span aria-hidden="true">ⓘ</span> {{ $ui('組み込みロールの権限は変更できません（参照のみ）') }} </p>
 
     <p v-if="loading" class="loading" role="status">{{ $ui('読み込み中…') }}</p>
 

@@ -130,8 +130,7 @@ func (h *handler) listRoles(w http.ResponseWriter, r *http.Request) {
 // エージェント用トークンの発行結果である。**後者の必要権限は「本人」**なので、
 // user.manage を要求したままだと description を引けない。
 //
-// **description を画面へ焼き込む案は退けた。** 手順24a が「旧語彙で発行すると
-// 実効権限が0件になる」という形で、写しが腐る失敗を踏んだばかりである。
+// **description を画面へ焼き込まない。** 写しは権限を足すたびに腐る。
 func (h *handler) listPermissions(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.q.ListPermissions(r.Context())
 	if err != nil {

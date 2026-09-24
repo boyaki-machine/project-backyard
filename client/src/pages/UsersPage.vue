@@ -857,7 +857,7 @@ async function retry(): Promise<void> {
           <li>{{ $ui('人間とは持つ情報が違うため、ユーザータブとは別の列構成にする') }}</li>
           <li>{{ $ui('行の操作メニューも異なる（パスワードのリセットは無い）') }}</li>
         </ul>
-        <p class="placeholder-status">{{ $ui('Phase 2 で実装（agent テーブルの作成後）') }}</p>
+        <p class="placeholder-status">{{ $ui('未定') }}</p>
       </div>
 
       <!-- ── ロールと権限タブ（5.6.3）──────────────────────── -->

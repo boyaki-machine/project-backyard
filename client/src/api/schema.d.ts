@@ -2689,8 +2689,7 @@ export interface paths {
          *     `actor` 統合設計）。**必要権限は `user.manage`**（Phase 1 = アドミニストレータのみ）。
          *
          *     `kind` によって意味を持たないフィールドは `null` を返し、フィールド自体を
-         *     省略しない。**`agent` は Phase 1 では常に `null`**（中身にあたる
-         *     `agent` テーブルは Phase 2 で作られる）。
+         *     省略しない。**`agent` は `kind='agent'` の行にだけ入る**（人間の行では `null`）。
          *
          *     `kind = 'system'` の actor は返さない。
          *
@@ -3053,8 +3052,8 @@ export interface paths {
         };
         /**
          * 権限カタログ
-         * @description 権限カタログの30件（ApiDesign.md 7.2、正本は DbDesign.md 7.2 のシード28件と
-         *     8.1.4 の doc 権限2件）。
+         * @description 権限カタログの32件（ApiDesign.md 7.2、正本は DbDesign.md 7.2 のシード28件と
+         *     8.1.4 の doc 権限2件、6.12.1 の `ticket.reference.edit`、6.13 の `ticket.self_edit`）。
          *     **必要権限は不要**（認証済みであればよい。`user.manage` を求めない）。
          *
          *     消費者が2つあるため開放している——GuiDesign.md 5.6.3 の権限マトリクス
@@ -4329,9 +4328,9 @@ export interface components {
              */
             system_role: "operator" | "administrator" | null;
             /**
-             * @description **Phase 1 では常に `null`。** 中身（`client_kind` / `model_name` /
-             *     `project_key` / `trust_level`）は DbDesign.md 8.1 の `agent` テーブルの列で、
-             *     そのテーブルは Phase 2 で作られる。
+             * @description **`kind='agent'` の行にだけ入る**（人間の行では `null`）。中身（`client_kind` /
+             *     `model_name` / `project_key` / `trust_level`）は DbDesign.md 8.2.1 の
+             *     `agent` テーブルの列である。
              */
             agent: components["schemas"]["AgentInfo"] | null;
             is_active: boolean;
@@ -4348,10 +4347,7 @@ export interface components {
             /** Format: date-time */
             created_at: string;
         };
-        /**
-         * @description エージェントの付帯情報（ApiDesign.md 6.1）。**Phase 1 では返らない**
-         *     （対応する `agent` テーブルが Phase 2 で作られるため）。
-         */
+        /** @description エージェントの付帯情報（ApiDesign.md 6.1）。`kind='agent'` の行にだけ返る。 */
         AgentInfo: {
             client_kind: string;
             model_name: string;
@@ -5106,7 +5102,8 @@ export interface components {
             description: string;
             /**
              * @description 1=起動前（ファイルと環境変数にしか置けない）／2=実行時の共有設定（DB）／
-             *     3=共有される秘密（未実装）。Design.md 10.3。
+             *     3=共有される秘密。Design.md 10.3。**この一覧には現れない**——TLS 証明書と
+             *     秘密鍵は専用の口（ApiDesign.md 11.4〜11.6）で扱う。
              * @enum {integer}
              */
             layer: 1 | 2 | 3;

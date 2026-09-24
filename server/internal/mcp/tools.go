@@ -104,9 +104,9 @@ func errorResult(text string) toolResult {
 // perPageMax は 9.2.1 と 2.6 が定める一覧の上限。
 const perPageMax = 200
 
-// readTools は手順25 で実装した read 系5件を返す（Design.md 8.2 の read 行から
-// pb_get_context を除いたもの。あれは手順27 の contextTools で、context_pack.go
-// にある——REST を1本叩くだけの5件と違い、3種類の応答を合成するため）。
+// readTools は read 系6件を返す（Design.md 8.2 の read 行から pb_get_context を
+// 除いたもの。あれは contextTools で、context_pack.go にある——REST を1本叩くだけの
+// 6件と違い、3種類の応答を合成するため）。
 //
 // **並び順がそのまま tools/list の順になる。** /pb-onboard が呼ぶ順
 // （Requirements.md 10.8.5）に並べてある。
@@ -715,7 +715,7 @@ func (f *flexString) UnmarshalJSON(b []byte) error {
 
 // ── write 系（手順26a。Design.md 8.5.1）─────────────────────
 
-// writeTools は write 系を返す（手順26a の3件と、pb_add_reference ほか）。
+// writeTools は write 系6件を返す（Design.md 8.2）。
 //
 // **並び順は 10.7.1 の開発フローに合わせてある**——議論の結果を起票し
 // （pb_create_ticket）、実装中に分かったことを書き（pb_post_note）、作業の跡を

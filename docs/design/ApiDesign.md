@@ -764,7 +764,7 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 
 #### スコープの語彙は権限キーである
 
-**`scopes[]` に入るのは権限カタログのキー**（`ticket.view` / `user.manage` 等。Phase 1 は28件、0017 で30件。
+**`scopes[]` に入るのは権限カタログのキー**（`ticket.view` / `user.manage` 等。32件。
 `Design.md` 6.4.2、`DbDesign.md` 7.2 のシードが正本）。カタログに無い値は `422`。
 
 `Design.md` 6.4.1 の実効権限は
