@@ -233,7 +233,7 @@ func TestDevDataValidateStaged(t *testing.T) {
 	})
 }
 
-// コメントの返信と削除済み（pb-24。ApiDesign.md 9.8）。
+// コメントの返信と削除済み（ApiDesign.md 9.8）。
 //
 // **「置ける」ことを先に確かめてから「置けない」を測る**（TestDevDataValidateStaged と同じ）。
 func TestDevDataValidateCommentReplies(t *testing.T) {

@@ -1,6 +1,6 @@
 // チケットの子資源（コメント・DoD・リンク）が共通して行う入口の処理。手順18a。
 //
-// **3つの層を順に通す**（手順16b の引き継ぎ、2026-08-23）。
+// **3つの層を順に通す**（手順16b の引き継ぎ）。
 //
 //	projectScopeContext   プリンシパルと {key} を解き、project_id まで解決する
 //	ticketSeqParam        {seq} を解く（9.1）
@@ -63,7 +63,7 @@ const (
 //
 // route は 403 / 404 の監査に載せる識別子で、projectScopeContext がそのまま使う。
 //
-// **外部参照の4本もこれを通す**（pb-26）。references.go に同型の referenceScope が
+// **外部参照の4本もこれを通す**。references.go に同型の referenceScope が
 // 並んでいたが、**返す構造体の名前だけが違う35行の写し**だった。片方に直しが入ると
 // もう片方が置き去りになるので、上位集合であるこちらへ寄せた。
 func (h *handler) ticketScope(

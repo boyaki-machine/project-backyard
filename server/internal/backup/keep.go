@@ -104,7 +104,7 @@ func insertKept(ctx context.Context, conn *pgx.Conn, kept *KeptRow) (bool, error
 				// 「維持できた」**——入れ直す必要が無かっただけである。
 				//
 				// **ここを「維持できなかった」と返すと、画面が不要にログイン画面へ
-				// 飛ばす**（pb-147 で実サーバを叩いて分かった）。
+				// 飛ばす**（実サーバで確かめた）。
 				return true, nil
 			case "23503":
 				// **外部キー違反＝参照先の行が復元後のデータに無い。** 別の PB の

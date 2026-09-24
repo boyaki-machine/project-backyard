@@ -29,7 +29,7 @@ export type LinkDirection = TicketLink['direction']
 /**
  * 行に出すラベル（`GuiDesign.md` 5.5「`link_type` の日本語ラベル」）。
  *
- * **`blocks` だけ主語を書く**（利用者の判断、2026-08-27）。**行に描かれるのは
+ * **`blocks` だけ主語を書く**。**行に描かれるのは
  * 常に相手**なので、「先行」とだけ書くと**その行のチケットが先行だと読める**
  * ——実際に先行なのはこのチケットのほうである。`自` の1文字が主語を固定する。
  *
@@ -60,8 +60,8 @@ export function linkLabelTitle(type: LinkType, direction: LinkDirection): string
 /**
  * 追加のモーダルに出す選択肢（`GuiDesign.md` 5.5「追加のモーダル」）。
  *
- * **画面が作れるのは `relates` / `duplicates` / `blocks` の3種だけである**
- * （利用者の判断、2026-08-27）。`FS` / `SS` / `FF` / `SF` と `lag_days` は
+ * **画面が作れるのは `relates` / `duplicates` / `blocks` の3種だけである**。
+ * `FS` / `SS` / `FF` / `SF` と `lag_days` は
  * ガントの依存線のためのもので、ガントは Phase 2——**読む画面が無い値を
  * 人に選ばせても、入れた本人が結果を確かめられない。** **API は7種すべて
  * 受け続ける**（MCP とエージェントが先に積むのは妨げない）。

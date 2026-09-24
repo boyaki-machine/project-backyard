@@ -1,4 +1,4 @@
-# PB のコンテナイメージ（Design.md 4.5。pb-123）。
+# PB のコンテナイメージ（Design.md 4.5）。
 #
 #   make release TARGET=docker|compose ARCH=<amd64|arm64>      ← 通常はこちらから作る
 #   docker buildx build --platform linux/arm64 -f deploy/Dockerfile .   ← リポジトリ直下で
@@ -10,7 +10,7 @@
 # イメージの中身：/pb（client を embed した単一バイナリ）、/goose（postgres のドライバだけ）、
 # /migrations。利用者は uid 65532（nonroot）。秘密ファイルの置き方は MANUAL.md の4章。
 #
-# **コンテナの healthcheck は持たない**（利用者の判断、2026-09-15）。distroless には
+# **コンテナの healthcheck は持たない**。distroless には
 # /healthcheck を叩くコマンドが無く、叩き役も足さない。健全かは外から /healthcheck を見る。
 
 # ── 1. client ─────────────────────────────────────────────
@@ -57,7 +57,7 @@ COPY --from=server /out/goose /goose
 COPY server/migrations/ /migrations/
 # **コンテナの中ではすべてのアドレスで待ち受け、外への公開範囲は docker の -p や compose の
 # ports で決める**（DbDesign.md 3.2）。イメージで決めておくのは、PB の既定値が変わっても
-# コンテナの外から届かなくならないため（pb-125）。この値は画面では「環境変数で固定」と出る。
+# コンテナの外から届かなくならないため。この値は画面では「環境変数で固定」と出る。
 ENV PB_BIND=0.0.0.0:8080
 EXPOSE 8080
 # 数値で書く。K8s の runAsNonRoot は名前では利用者を確かめられない。

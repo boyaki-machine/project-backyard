@@ -15,7 +15,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
 )
 
-// スプリント中にオンステージへ入ったものを、その場で所属させる（ApiDesign.md 9.12.3。pb-129）。
+// スプリント中にオンステージへ入ったものを、その場で所属させる（ApiDesign.md 9.12.3）。
 //
 // **入口4つを1本の盤面で通す。** 所属を書くのが開始だけだと、途中で加わった配下は
 // 9.2.1 の条件2 を満たせず、根が棚に戻ったあともバックログに残る——**stg で起きた形

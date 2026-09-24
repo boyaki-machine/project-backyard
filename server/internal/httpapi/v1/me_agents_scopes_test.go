@@ -12,11 +12,10 @@ import (
 )
 
 // TestGetAgentScopes は、4.5.9 の応答が 4.5.3 の検証と同じ定義を返すことを見る
-// （ApiDesign.md 4.5.9。pb-93）。
+// （ApiDesign.md 4.5.9）。
 //
-// **pb-90 の検査を組み替えたものである。** pb-90 は画面の写し（lib/agents.ts の
-// AGENT_DEFAULT_SCOPES）とサーバの定義の一致を見ていた。pb-93 で写しを無くし、
-// 画面はこの口から引くので、見るのは「口が返すもの＝発行時に受け付けるもの」になる。
+// **画面は写しを持たず、この口から引く**ので、見るのは「口が返すもの＝発行時に
+// 受け付けるもの」である。
 // **ずれると「チェックを付けたほうが狭くなる」**（scopes は絶対指定）。
 func TestGetAgentScopes(t *testing.T) {
 	rec := httptest.NewRecorder()
@@ -52,10 +51,9 @@ func TestGetAgentScopes(t *testing.T) {
 	}
 }
 
-// TestClientHoldsNoDefaultScopes は、画面が既定スコープの写しを持っていないことを見る
-// （pb-93）。
+// TestClientHoldsNoDefaultScopes は、画面が既定スコープの写しを持っていないことを見る。
 //
-// **Go のテストからクライアントのソースを読む唯一の場所である**（pb-90 から引き継いだ）。
+// **Go のテストからクライアントのソースを読む唯一の場所である。**
 // 写しは権限を足すたびに2回続けて腐ったので、**戻ってきたら落とす。** 名前だけを
 // 見るので、別名で書き戻したものは拾えない。
 func TestClientHoldsNoDefaultScopes(t *testing.T) {

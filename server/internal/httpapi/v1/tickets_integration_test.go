@@ -201,7 +201,7 @@ func TestTicketsIntegration(t *testing.T) {
 		{"担当（未割当）", "?assignee=none", []int{1, 3, 4, 5}},
 		{"タグ", "?tag=" + tagID, []int{1}},
 		{"タグ（未分類）", "?tag=none", []int{2, 3, 4, 5}},
-		// **作成ではスプリントに入らない**（9.3 は sprint_id を受けない。pb-6）。
+		// **作成ではスプリントに入らない**（9.3 は sprint_id を受けない）。
 		// 所属が付く経路は 9.12.1 の start だけで、それは
 		// TestSprintLifecycleIntegration が実データで通す。
 		{"スプリント", "?sprint=" + sprintID, nil},
@@ -488,7 +488,7 @@ func TestTicketsIntegration(t *testing.T) {
 		t.Errorf("次の seq = %v, want 6（422 で終わった要求は採番を消費しない）", got)
 	}
 
-	// **作成時の execution_mode は DDL の既定で決まる**（ApiDesign.md 9.3。pb-65）。
+	// **作成時の execution_mode は DDL の既定で決まる**（ApiDesign.md 9.3）。
 	// `INSERT` は値を送っておらず、0025 が `agent_draft` を既定にした。
 	// **フェイクでは測れない**——あちらは列の既定を持たず、書いた値がそのまま返る。
 	if got := next["execution_mode"]; got != "agent_draft" {

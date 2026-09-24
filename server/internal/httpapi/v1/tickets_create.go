@@ -52,7 +52,7 @@ type createTicketRequest struct {
 	AssigneeID string   `json:"assignee_id"`
 	ParentSeq  *int32   `json:"parent_seq"`
 	TagIDs     []string `json:"tag_ids"`
-	// **sprint_id は 0028 で受け付けなくなった**（9.3。pb-6）。struct から
+	// **sprint_id は 0028 で受け付けなくなった**（9.3）。struct から
 	// 落とさず受けてから 422 に倒すのは、**黙って捨てると送った側が設定できた
 	// つもりになる**ためである（decodeJSON は未知のキーを無視する）。
 	SprintID      *string  `json:"sprint_id"`
@@ -166,7 +166,7 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		// **オンステージの配下に作ったら、進行中のスプリントへ入れる**（9.12.3。pb-129）
+		// **オンステージの配下に作ったら、進行中のスプリントへ入れる**（9.12.3）
 		if err := joinActiveSprint(ctx, q, projectID, ticketID); err != nil {
 			return err
 		}
@@ -210,7 +210,7 @@ var errTicketReference = fmt.Errorf("チケットの参照先が不正")
 func validateCreateTicket(req *createTicketRequest) (pgtype.Date, pgtype.Date, *apierr.Error) {
 	var details []apierr.Detail
 
-	// **sprint_id は受け付けない**（9.3。pb-6）。9.5.2 の PATCH と同じ
+	// **sprint_id は受け付けない**（9.3）。9.5.2 の PATCH と同じ
 	// use_sprint_endpoint に倒す——作成時にだけ設定できて後から変えられないのは、
 	// どちらの規則としても読めない中途半端な状態になる。
 	if req.SprintID != nil {

@@ -1,4 +1,4 @@
-// Package passkey はパスキー（Design.md 6.8。pb-104）のうち、HTTP にも DB にも
+// Package passkey はパスキー（Design.md 6.8）のうち、HTTP にも DB にも
 // 依存しない部分を持つ。
 //
 // **検証そのものは go-webauthn に任せる**（Design.md 6.8.5）。ここに置くのは、

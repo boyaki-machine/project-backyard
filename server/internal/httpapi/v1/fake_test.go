@@ -46,7 +46,7 @@ func txt(s string) pgtype.Text { return pgtype.Text{String: s, Valid: true} }
 //
 // 埋め込んだ gen.Querier は nil のままなので、実装し忘れたメソッドを
 // 呼べば panic して気づける。
-// sprintRunFakeState は 9.12.1 / 9.12.2 が触るものを持つ（pb-6）。
+// sprintRunFakeState は 9.12.1 / 9.12.2 が触るものを持つ。
 //
 // **書き込みを配列で溜める。** 何を渡したかを検査したいためで、
 // 「オンステージの部分木が対象に入ったか」「完了した根だけを降ろしたか」は
@@ -65,7 +65,7 @@ type sprintRunFakeState struct {
 	unstagedRows int64
 }
 
-// appSettingFakeState は app_setting が触るものを持つ（pb-2。ApiDesign.md 11章）。
+// appSettingFakeState は app_setting が触るものを持つ（ApiDesign.md 11章）。
 //
 // **書き込みを配列で溜める。** 何を渡したかを検査したいためで、
 // 「既定へ戻すときに DELETE が走ったか」「変わらないキーを書いていないか」は
@@ -77,7 +77,7 @@ type appSettingFakeState struct {
 	upserted []gen.UpsertAppSettingParams
 	deleted  []string
 
-	// 未確認の設定変更（pb-97。ApiDesign.md 11.8）。
+	// 未確認の設定変更（ApiDesign.md 11.8）。
 	//
 	// **pending が nil なら「未確認は無い」**（pgx.ErrNoRows を返す）。
 	pending        *gen.GetPendingSettingChangeRow
@@ -86,7 +86,7 @@ type appSettingFakeState struct {
 	expiredPending []gen.ListExpiredPendingSettingChangesRow
 }
 
-// mfaFakeState は第2要素が触るものを持つ（pb-103。ApiDesign.md 4.6 / 3.4）。
+// mfaFakeState は第2要素が触るものを持つ（ApiDesign.md 4.6 / 3.4）。
 //
 // **書き込みを配列で溜める。** 何を渡したかを検査したいためで、
 // 「未確定の行を先に捨てたか」「リカバリコードを10本入れたか」
@@ -129,13 +129,13 @@ type mfaFakeState struct {
 type fakeQuerier struct {
 	gen.Querier
 
-	// 第2要素（pb-103。ApiDesign.md 4.6 / 3.4）
+	// 第2要素（ApiDesign.md 4.6 / 3.4）
 	mfa mfaFakeState
 
-	// パスキー（pb-104。ApiDesign.md 3.5 / 3.6 / 4.7 / 6.10）。型とメソッドは passkey_fake_test.go
+	// パスキー（ApiDesign.md 3.5 / 3.6 / 4.7 / 6.10）。型とメソッドは passkey_fake_test.go
 	passkey passkeyFakeState
 
-	// アプリケーション設定（pb-2。ApiDesign.md 11章）
+	// アプリケーション設定（ApiDesign.md 11章）
 	settings appSettingFakeState
 
 	// login 経路
@@ -174,7 +174,7 @@ type fakeQuerier struct {
 	updateSprintErr      error
 	deletedSprints       []gen.DeleteSprintParams
 
-	// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2。pb-6）
+	// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2）
 	sprint sprintRunFakeState
 
 	// プロフィールと権限
@@ -376,7 +376,7 @@ type fakeQuerier struct {
 	deletedUserActorID     string
 	createdSystemActorName string
 
-	// TLS 証明書の取り出し（ApiDesign.md 11.7。pb-108）
+	// TLS 証明書の取り出し（ApiDesign.md 11.7）
 	certPEMRow gen.GetTLSCertificatePEMRow
 	certPEMErr error
 }
@@ -445,7 +445,7 @@ func (q *fakeQuerier) RecordLoginFailure(_ context.Context, arg gen.RecordLoginF
 	return nil
 }
 
-// ── 秘密の暗号鍵（pb-3 の app_secret。pb-103 が単体テストで使い始めた）──
+// ── 秘密の暗号鍵（app_secret）──────────────────────────────
 //
 // **鍵は固定の32バイトを返す。** tlscert.ResolveKey は「無ければ作って保存し、
 // 必ず読み直す」ので、行がある状態にしておけば生成の経路を通らない。
@@ -461,7 +461,7 @@ func (q *fakeQuerier) CreateAppSecretIfAbsent(_ context.Context, _ gen.CreateApp
 	return nil
 }
 
-// ── 第2要素（pb-103）──────────────────────────────────────
+// ── 第2要素──────────────────────────────────────
 //
 // **既定は「1件も登録されていない」である。** そうしないと、第2要素と関係の
 // ない既存のログインのテストが全部 MFA の分岐へ落ちる。
@@ -1395,14 +1395,14 @@ type ticketFakeState struct {
 	children  []gen.ListTicketChildrenBriefRow
 	idBySeq   map[int32]string
 
-	// epicAncestorByID は 9.5.1 の epic（pb-14）。nil のままなら全件 0行
+	// epicAncestorByID は 9.5.1 の epic。nil のままなら全件 0行
 	epicAncestorByID map[string]gen.GetTicketEpicAncestorRow
 
-	// searchIDs / searchParams は 9.2.1「検索の条件」（pb-66）。返す ID と、受けた引数
+	// searchIDs / searchParams は 9.2.1「検索の条件」。返す ID と、受けた引数
 	searchIDs           []string
 	searchParams        []gen.SearchTicketIDsParams
 	backlogSearchParams []gen.SearchBacklogTicketIDsParams
-	// searchCtype / trigramSearchParams は pb-143。DB の LC_CTYPE（空なら C）と、
+	// searchCtype / trigramSearchParams は、DB の LC_CTYPE（空なら C）と、
 	// trgm を使う形が受けた引数
 	searchCtype         string
 	trigramSearchParams []gen.SearchTicketIDsByTrigramParams
@@ -1416,7 +1416,7 @@ type ticketFakeState struct {
 	projectTagCount int64
 	isMember        bool
 
-	// 9.6 の「着手したらオンステージへ上げる」（pb-5）。
+	// 9.6 の「着手したらオンステージへ上げる」。
 	// 表示上のトップレベルの祖先を id から引く。
 	displayRoot map[string]gen.GetDisplayRootForStagingRow
 	// SetTicketStagedAt に渡ったもの（誰を段へ上げたか）
@@ -1453,7 +1453,7 @@ type ticketFakeState struct {
 	commentNum int64
 	updateErr  error
 
-	// ── pb-72（9.6 の検証7 と、子が動いたら親を進行中にする）──────
+	// ── 9.6 の検証7 と、子が動いたら親を進行中にする ──────────
 	//
 	// **openChildren は「未完了の子の件数」をそのまま返す。** 実物は
 	// closed_at IS NULL を数えるが、フェイクで木を組み立てても検証の対象は
@@ -1592,7 +1592,7 @@ func (q *fakeQuerier) ListTickets(_ context.Context, arg gen.ListTicketsParams) 
 	return q.ticket.rows, nil
 }
 
-// CurrentDatabaseCtype は DB の LC_CTYPE（pb-143）。**既定は C**——検索は英数字の語だけ
+// CurrentDatabaseCtype は DB の LC_CTYPE。**既定は C**——検索は英数字の語だけ
 // trgm の形へ切り替わる。searchCtype で差し替えられる。
 func (q *fakeQuerier) SearchBacklogTicketIDs(_ context.Context, arg gen.SearchBacklogTicketIDsParams) ([]string, error) {
 	q.opLog = append(q.opLog, "SearchBacklogTicketIDs")
@@ -1608,7 +1608,7 @@ func (q *fakeQuerier) CurrentDatabaseCtype(_ context.Context) (string, error) {
 	return q.ticket.searchCtype, nil
 }
 
-// SearchTicketIDsByTrigram は trgm を使う形（pb-143）。SearchTicketIDs と同じく
+// SearchTicketIDsByTrigram は trgm を使う形。SearchTicketIDs と同じく
 // 受けたパターンを記録し、searchIDs を返す。
 func (q *fakeQuerier) SearchTicketIDsByTrigram(_ context.Context, arg gen.SearchTicketIDsByTrigramParams) ([]string, error) {
 	q.opLog = append(q.opLog, "SearchTicketIDsByTrigram")
@@ -1616,7 +1616,7 @@ func (q *fakeQuerier) SearchTicketIDsByTrigram(_ context.Context, arg gen.Search
 	return q.ticket.searchIDs, nil
 }
 
-// SearchTicketIDs は 9.2.1「検索の条件」（pb-66）。受けたパターンを記録し、searchIDs を返す。
+// SearchTicketIDs は 9.2.1「検索の条件」。受けたパターンを記録し、searchIDs を返す。
 func (q *fakeQuerier) SearchTicketIDs(_ context.Context, arg gen.SearchTicketIDsParams) ([]string, error) {
 	q.opLog = append(q.opLog, "SearchTicketIDs")
 	q.ticket.searchParams = append(q.ticket.searchParams, arg)
@@ -1647,7 +1647,7 @@ func (q *fakeQuerier) GetTicketBrief(_ context.Context, id string) (gen.GetTicke
 	return row, nil
 }
 
-// GetTicketEpicAncestor は 9.5.1 の epic（pb-14）。キーは起点のチケットの ID で、
+// GetTicketEpicAncestor は 9.5.1 の epic。キーは起点のチケットの ID で、
 // 無ければ実物と同じく 0行（pgx.ErrNoRows）を返す。
 func (q *fakeQuerier) GetTicketEpicAncestor(_ context.Context, ticketID string) (gen.GetTicketEpicAncestorRow, error) {
 	q.opLog = append(q.opLog, "GetTicketEpicAncestor")
@@ -1663,7 +1663,7 @@ func (q *fakeQuerier) ListTicketChildrenBrief(context.Context, pgtype.Text) ([]g
 	return q.ticket.children, nil
 }
 
-// ── pb-72（ApiDesign.md 9.6）─────────────────────────────────
+// ── 子と親の連動（ApiDesign.md 9.6）──────────────────────────
 
 func (q *fakeQuerier) CountOpenChildren(context.Context, pgtype.Text) (int64, error) {
 	q.opLog = append(q.opLog, "CountOpenChildren")
@@ -1687,8 +1687,8 @@ func (q *fakeQuerier) SetTicketStagedAt(_ context.Context, arg gen.SetTicketStag
 	return nil
 }
 
-// GetDisplayRootForStaging は 9.6 の「着手したらオンステージへ上げる」が使う
-// （pb-5）。**未設定なら pgx.ErrNoRows を返す**——祖先が見つからない場合と
+// GetDisplayRootForStaging は 9.6 の「着手したらオンステージへ上げる」が使う。
+// **未設定なら pgx.ErrNoRows を返す**——祖先が見つからない場合と
 // 同じ扱いで、連動は静かに何もしない。
 func (q *fakeQuerier) GetDisplayRootForStaging(
 	_ context.Context, ticketID string,
@@ -1735,7 +1735,7 @@ func (q *fakeQuerier) CreateTicket(_ context.Context, arg gen.CreateTicketParams
 		AssigneeID: arg.AssigneeID, ReporterID: arg.ReporterID,
 		EstimatePoint: arg.EstimatePoint, EstimateHours: arg.EstimateHours,
 		StartDate: arg.StartDate, DueDate: arg.DueDate,
-		// **sprint_id は 9.3 が受けなくなった**（pb-6）。作りたての
+		// **sprint_id は 9.3 が受けなくなった**。作りたての
 		// チケットは必ずスプリント未所属で始まる。
 		SortKey: arg.SortKey,
 		// DDL の既定（DbDesign.md 6.6）。9.3 は3つとも受けないので、
@@ -1757,7 +1757,7 @@ func (q *fakeQuerier) CountProjectTagsByIDs(_ context.Context, _ gen.CountProjec
 	return q.ticket.projectTagCount, nil
 }
 
-// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2。pb-6）。
+// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2）。
 //
 // **SprintExistsInProject は消えた**——9.3 / 9.5.2 が sprint_id を受け付け
 // なくなり、参照先を確かめる場面が無くなったためである。
@@ -2814,7 +2814,7 @@ func (q *fakeQuerier) GetAgentRuntimeInfo(
 	return *q.ticket.agentInfo, nil
 }
 
-// ── アプリケーション設定（pb-2。ApiDesign.md 11章）──────────────
+// ── アプリケーション設定（ApiDesign.md 11章）──────────────
 
 func (q *fakeQuerier) ListAppSettings(ctx context.Context) ([]gen.ListAppSettingsRow, error) {
 	if q.settings.err != nil {
@@ -2824,8 +2824,7 @@ func (q *fakeQuerier) ListAppSettings(ctx context.Context) ([]gen.ListAppSetting
 }
 
 // **書いた結果を rows に映す。** 映さないと、保存後の引き直しが常に同じ行を
-// 返すことになり、**「既定に戻す」が効いていないことを検査できない**——
-// 実際にその形で実サーバ検証まで漏れた（pb-2、2026-09-11）。
+// 返すことになり、**「既定に戻す」が効いていないことを検査できない。**
 func (q *fakeQuerier) UpsertAppSetting(ctx context.Context, arg gen.UpsertAppSettingParams) error {
 	q.settings.upserted = append(q.settings.upserted, arg)
 	for i := range q.settings.rows {
@@ -2853,7 +2852,7 @@ func (q *fakeQuerier) DeleteAppSetting(ctx context.Context, key string) error {
 	return nil
 }
 
-// ── 未確認の設定変更（pb-97）──────────────────────────────
+// ── 未確認の設定変更──────────────────────────────
 
 func (q *fakeQuerier) GetPendingSettingChange(
 	context.Context,

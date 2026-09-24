@@ -5,7 +5,7 @@
 //	PATCH  /api/v1/projects/{key}/tickets/{seq}/references/{id}    ticket.reference.edit
 //	DELETE /api/v1/projects/{key}/tickets/{seq}/references/{id}    ticket.reference.edit
 //
-// **更新系は 0027（pb-68）で ticket.edit から切り出した**（DbDesign.md 6.12.1）。
+// **更新系は 0027 で ticket.edit から切り出した**（DbDesign.md 6.12.1）。
 // エージェントが MCP から commit / ブランチを積めるようにするためで、ticket.edit を
 // そのまま許可リストへ入れると本文・担当・期日の書き換えまで開いてしまう。
 // **ticket.edit を持つロールには機械的に配ってあるので、人から見た可否は変わらない。**
@@ -24,7 +24,7 @@
 // **親チケットの version も updated_at も動かさない**——参照の増減は ticket の
 // 列を変えないためで、ticket_tag を動かす 9.2.5 とはここが違う。
 //
-// **変更は activity に記録する**（9.1.1 / 9.10.2、利用者の判断 2026-08-27）。
+// **変更は activity に記録する**（9.1.1 / 9.10.2）。
 // action は常に update で、create / delete は使わない——ticket:31 の
 // action='delete' は「そのチケットが消された」を意味しており（9.5.3）、
 // 参照1行の削除に同じ値を当てるとチケットごと消えたように見える。

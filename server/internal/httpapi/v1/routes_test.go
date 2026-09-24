@@ -519,7 +519,7 @@ func TestTicketSeqAndSubroutesDoNotCollide(t *testing.T) {
 }
 
 // **外部参照の更新系は ticket.edit ではなく ticket.reference.edit を要る**
-// （9.10.2。0027／pb-68）。
+// （9.10.2。0027）。
 //
 // **ticket.edit を持っていても通らないことを測る。** 切り出しの目的は
 // 「エージェントに開ける範囲を ticket.edit より狭くする」ことなので、

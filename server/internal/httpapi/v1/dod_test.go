@@ -204,7 +204,7 @@ func TestCreateDoDRejectsEmptyBody(t *testing.T) {
 	}
 }
 
-// withTicketEdit は ticket.edit を持つ認可結果を文脈に載せる（pb-75）。
+// withTicketEdit は ticket.edit を持つ認可結果を文脈に載せる。
 //
 // **本番ではミドルウェアが必ず載せる**（RequireAnyProjectPermission）。
 // 0029 で is_satisfied の可否がハンドラの判定になったので、単体テストでも
@@ -214,7 +214,7 @@ func withTicketEdit(req *http.Request) *http.Request {
 	return withDeleteAny(req, permTicketEdit)
 }
 
-// withSelfEditOnly は ticket.self_edit だけを持つ認可結果を載せる（pb-75）。
+// withSelfEditOnly は ticket.self_edit だけを持つ認可結果を載せる。
 func withSelfEditOnly(req *http.Request) *http.Request {
 	return withDeleteAny(req, permTicketSelfEdit)
 }
@@ -486,7 +486,7 @@ func TestTicketDetailIncludesDoDAndLinks(t *testing.T) {
 	}
 }
 
-// ── ticket.self_edit では is_satisfied を書けない（9.9。0029。pb-75）──
+// ── ticket.self_edit では is_satisfied を書けない（9.9。0029）──
 //
 // **まず通る側を確かめてから、断られる側を測る**（憲章「動いたことを先に
 // 確かめてから、動かないことを確かめる」）。上の4件が通る側である。

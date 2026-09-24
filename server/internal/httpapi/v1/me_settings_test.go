@@ -243,7 +243,7 @@ func TestPatchMeValidatesEnums(t *testing.T) {
 	}
 }
 
-// 英語は pb-17 で追加した2つ目の表示言語。DBへ渡る値まで確かめる。
+// 英語は2つ目の表示言語。DBへ渡る値まで確かめる。
 func TestPatchMeAcceptsEnglish(t *testing.T) {
 	q := meFake(t)
 	h, _ := newUserHandler(q)

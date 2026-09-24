@@ -10,7 +10,7 @@
 // **鍵のずれはテストが確かめる。** 系統A を持つ種別は必ず系統B も持ち
 // （TestConnectSpecsCoverClients）、系統B の鍵はカタログに在る
 // （TestConnectSpecsAreInCatalog）。**逆は成り立たない**——claude_desktop は
-// 接続設定だけを持つ（pb-58。作業フォルダが無いのでコミットする先が無い）。
+// 接続設定だけを持つ（作業フォルダが無いのでコミットする先が無い）。
 package agentsetup
 
 import (
@@ -150,7 +150,7 @@ var connectSpecs = map[string]connectSpec{
 		language:        "toml",
 		readme:          "codex.md",
 	},
-	// **系統A（specs）に対応する行が無い唯一の種別である**（pb-58）。
+	// **系統A（specs）に対応する行が無い唯一の種別である**。
 	// Claude Desktop は作業フォルダを持たないので、リポジトリにコミットする
 	// 配置ファイルの置き場が無い（Requirements.md 10.9.1）。**接続設定だけが在る。**
 	"claude_desktop": {
@@ -363,11 +363,11 @@ const (
 // mcpRemotePackage は stdio と Streamable HTTP を繋ぐ橋（Requirements.md 10.8.4.2）。
 //
 // **Claude Desktop の設定ファイルは stdio のサーバしか書けない**ので、
-// HTTP の PB へ繋ぐには橋が要る。**0.8.5 で実測した**（pb-58）。
+// HTTP の PB へ繋ぐには橋が要る。**0.8.5 で実測した**。
 const mcpRemotePackage = "mcp-remote"
 
 // renderClaudeDesktopConfig は claude_desktop_config.json を組み立てる
-// （Requirements.md 10.8.4.2、手順は pb-58 で実測）。
+// （Requirements.md 10.8.4.2。手順は実機で確かめた）。
 //
 // **カスタムコネクタでは繋がらない。** あちらの接続は利用者の端末からではなく
 // Anthropic のクラウドから届くので、手元の PB には到達しない（https も要る）。

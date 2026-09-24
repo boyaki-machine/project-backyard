@@ -168,7 +168,7 @@ export function revokeUserSessions(id: string): Promise<void> {
 }
 
 /**
- * 第2要素の解除（`ApiDesign.md` 6.9。pb-103）。`204`。
+ * 第2要素の解除（`ApiDesign.md` 6.9）。`204`。
  *
  * **本人がリカバリコードまで失ったときの口である。** 対象は次のログインから
  * パスワードだけで入れるようになる。**パスワードには触らず、セッションも切らない**
@@ -181,7 +181,7 @@ export function resetUserMfa(id: string): Promise<void> {
 }
 
 /**
- * パスキーの全削除（`ApiDesign.md` 6.10。pb-104）。`204`。
+ * パスキーの全削除（`ApiDesign.md` 6.10）。`204`。
  *
  * **乗っ取りの疑いがあるときの口である。** パスキーはパスワード無しで入れる鍵なので、
  * 乗っ取った人が登録した1本は、パスワードのリセットも第2要素の解除も消さない。

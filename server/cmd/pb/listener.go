@@ -11,14 +11,14 @@ import (
 	"sync"
 )
 
-// swappableServer は待受を張り替えられる HTTP サーバ（pb-106、Design.md 10.3）。
+// swappableServer は待受を張り替えられる HTTP サーバ（Design.md 10.3）。
 //
 // **TLS の切り替えに再起動を要らなくする。** 画面から `tls_enabled` を変えた
-// 時点で待受が変わる。**pb-97「確認しないと元に戻す」の成立条件**でもある——
+// 時点で待受が変わる。**「確認しないと元に戻す」の成立条件**でもある——
 // 戻す操作がプロセス内で完結しないと、**プロセスは自分を確実に再起動できない**
 // （監視プロセスがある保証がない）。
 //
-// **サーバごと作り直す**（利用者の判断、2026-09-12）。棄却したのは、素のリスナを
+// **サーバごと作り直す**。棄却したのは、素のリスナを
 // 1つ持ち続けて `tls.Server` で包むかをフラグで決める案である。待受を閉じないので
 // 単純だが、**HTTP/2 が使えなくなる**——`http.Server` が HTTP/2 を有効にするのは
 // `ServeTLS` を通ったときだけで、自分で包むと平文の `Serve` 扱いになる。
@@ -32,7 +32,7 @@ type swappableServer struct {
 	build func(addr string, tlsConfig *tls.Config) *http.Server
 
 	mu sync.Mutex
-	// addr はいま張っている待受のアドレス。**画面から変えられる**（pb-99）。
+	// addr はいま張っている待受のアドレス。**画面から変えられる**。
 	addr    string
 	srv     *http.Server
 	ln      net.Listener
@@ -48,7 +48,7 @@ func newSwappableServer(build func(string, *tls.Config) *http.Server) *swappable
 	return &swappableServer{build: build, serveErr: make(chan error, 1)}
 }
 
-// Start は待受を張る。**成立してから返る**ので、呼び出し側はここでログを書ける（pb-29）。
+// Start は待受を張る。**成立してから返る**ので、呼び出し側はここでログを書ける。
 func (s *swappableServer) Start(addr string, tlsConfig *tls.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -88,7 +88,7 @@ func (s *swappableServer) Swap(addr string, tlsConfig *tls.Config) error {
 	}()
 
 	if err := s.listen(addr, tlsConfig); err != nil {
-		// **アドレスごと元へ戻す**（pb-99）。**ポートを誤ると新しい待受は
+		// **アドレスごと元へ戻す**。**ポートを誤ると新しい待受は
 		// 開けない**ので、ここが実際に通る経路になる。
 		if back := s.listen(prevAddr, prevTLS); back != nil {
 			return fmt.Errorf("待受を張り替えられず、元にも戻せない（%v）: %w", err, back)
@@ -115,7 +115,7 @@ func (s *swappableServer) Shutdown(ctx context.Context) error {
 }
 
 // Addr はいま実際に掴んでいるアドレス。**設定の文字列ではない**ので、
-// ポートに 0 を指定したときも実物が返る（pb-29）。
+// ポートに 0 を指定したときも実物が返る。
 func (s *swappableServer) Addr() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

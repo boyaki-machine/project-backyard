@@ -372,7 +372,7 @@ func TestCreateTicketPostsToREST(t *testing.T) {
 	if out.IsError {
 		t.Errorf("成功のはずが isError: %s", out.Content[0].Text)
 	}
-	// **書いた内容を返さない**（Design.md 8.5.1。pb-137）。要点は TestWriteToolsReturnOnlySummary で見る。
+	// **書いた内容を返さない**（Design.md 8.5.1）。要点は TestWriteToolsReturnOnlySummary で見る。
 	if out.Content[0].Text != `{"seq":31}` {
 		t.Errorf("応答の要点が違う: %s", out.Content[0].Text)
 	}
@@ -474,7 +474,7 @@ func TestPostNoteRequiresSeqAndBody(t *testing.T) {
 	}
 }
 
-// ── pb_add_reference（pb-68。Design.md 8.5.1）────────────────
+// ── pb_add_reference（Design.md 8.5.1）────────────────
 
 // TestAddReferencePostsReference は 9.10.2 を叩くことを見る。
 //
@@ -779,7 +779,7 @@ func TestSubmitResultLeavesStatusValidationToREST(t *testing.T) {
 	}
 }
 
-// ── 遷移系の応答（Design.md 8.5.3。pb-136）──────────────────────
+// ── 遷移系の応答（Design.md 8.5.3）──────────────────────
 
 // fullTicketJSON は 9.5.1 の応答（本文・完了条件・関連リンクつき）の1件。
 const fullTicketJSON = `{"id":"01K2","seq":31,"type":"task","title":"認証APIの実装",
@@ -839,7 +839,7 @@ func TestTransitionTaskKeepsFailureBody(t *testing.T) {
 	}
 }
 
-// ── 書いた内容を応答で返さない（Design.md 8.5.1。pb-137）──────────────
+// ── 書いた内容を応答で返さない（Design.md 8.5.1）──────────────
 
 // responseKeys は応答 JSON のキーを名前順に返す。
 func responseKeys(t *testing.T, text string) []string {
@@ -913,7 +913,7 @@ func TestWriteToolsKeepFailureBody(t *testing.T) {
 	}
 }
 
-// ── オンステージで絞る（Design.md 8.5.2。pb-138）──────────────────
+// ── オンステージで絞る（Design.md 8.5.2）──────────────────
 
 func TestListTasksPassesStagedOnlyWhenTrue(t *testing.T) {
 	// **REST は true しか受けない**（ApiDesign.md 9.2.1。overdue と同じ）ので、false は送らない。
@@ -939,7 +939,7 @@ func TestListTasksPassesStagedOnlyWhenTrue(t *testing.T) {
 	}
 }
 
-// ── 着手では pb_list_transitions を省ける（Design.md 8.5.3。pb-140）──────────
+// ── 着手では pb_list_transitions を省ける（Design.md 8.5.3）──────────
 
 // TestStartConditionIsWrittenTheSameEverywhere は、ツールの説明文2つと /pb-implement の
 // 手順4 が、同じ条件（着手（未着手→進行中））を書いていることを見る。

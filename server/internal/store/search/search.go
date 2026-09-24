@@ -4,7 +4,7 @@
 // queries/search.sql とインデックス定義だけにする。** 一覧のクエリ（queries/ticket.sql
 // の ListTickets）は語もパターンも知らず、ここが返したチケットの ID だけを受け取る。
 //
-// 規則の正本は ApiDesign.md 9.2.1「検索の条件」（pb-66）。
+// 規則の正本は ApiDesign.md 9.2.1「検索の条件」。
 package search
 
 import (
@@ -60,7 +60,7 @@ func Patterns(terms []string) []string {
 // TicketIDs は、すべての語を含むチケットの ID を返す（語ごとに、タイトル・本文・
 // 削除されていないコメントのどれかに当たればよい）。
 //
-// **問い合わせを2つの形で切り替える**（DbDesign.md 4.5。pb-143）。どの語からも
+// **問い合わせを2つの形で切り替える**（DbDesign.md 4.5）。どの語からも
 // trigram を取り出せるなら SearchTicketIDsByTrigram（GIN インデックスを使う）、
 // 1つでも取り出せない語があれば SearchTicketIDs（全件に ILIKE を当てる）。
 // 取り出せない語でインデックスを使うと、インデックスが全件を返して遅くなるためである。
@@ -92,7 +92,7 @@ func BacklogTicketIDs(ctx context.Context, q gen.Querier, projectID string, term
 }
 
 // UnicodeCtype は、DB の LC_CTYPE で pg_trgm が英数字以外（日本語など）も語の文字として
-// 数えるかを返す（pb-143）。**C と POSIX だけが英数字に限られる。**
+// 数えるかを返す。**C と POSIX だけが英数字に限られる。**
 func UnicodeCtype(ctype string) bool {
 	return ctype != "C" && ctype != "POSIX"
 }

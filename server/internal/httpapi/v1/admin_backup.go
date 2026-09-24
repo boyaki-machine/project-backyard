@@ -1,4 +1,4 @@
-// PB 全体のバックアップと復元（ApiDesign.md 11.11〜11.13）。pb-147。
+// PB 全体のバックアップと復元（ApiDesign.md 11.11〜11.13）。
 //
 //	GET  /api/v1/admin/backup.tar.gz   11.11
 //	POST /api/v1/admin/restore         11.12

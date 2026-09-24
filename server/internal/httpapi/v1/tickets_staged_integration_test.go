@@ -14,7 +14,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
 )
 
-// オンステージで絞る条件（ApiDesign.md 9.2.1「オンステージで絞る」。pb-138）を**実際のDBに対して**通す。
+// オンステージで絞る条件（ApiDesign.md 9.2.1「オンステージで絞る」）を**実際のDBに対して**通す。
 //
 // 単体テストはフェイクを差し替えるので、ListTickets の staged_tree は一度も実行されない。
 // **ここでしか確かめられないものが3つある。**

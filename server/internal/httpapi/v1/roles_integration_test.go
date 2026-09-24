@@ -31,7 +31,7 @@ import (
 //
 //	PB_TEST_DATABASE_URL='postgres://pb_app:...@127.0.0.1:5432/pb' go test ./internal/httpapi/v1/ -run Integration -v
 //
-// permissionCatalogSize は permission 表の行数を返す（pb-85）。
+// permissionCatalogSize は permission 表の行数を返す。
 //
 // **期待値を決め打ちしない**（憲章「期待値の作り方」）。権限カタログの正本は
 // マイグレーションが入れるこの表であり（DbDesign.md 7.2 / 8.1.4 ほか）、
@@ -132,7 +132,7 @@ func TestRolesCatalogIntegration(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 			t.Fatalf("応答が JSON でない: %v", err)
 		}
-		// **件数を書き下さない**（憲章「期待値の作り方」。pb-85）。カタログの
+		// **件数を書き下さない**（憲章「期待値の作り方」）。カタログの
 		// 正本はマイグレーションが入れる permission 表であり、0010 以降も
 		// 0017（doc.view / doc.edit）・0019（agent 系）・0027
 		// （ticket.reference.edit）と増え続ける。**数を書くと、正本を直した日に
@@ -267,7 +267,7 @@ func TestRolesCatalogIntegration(t *testing.T) {
 		}
 	})
 
-	// **権限カタログは user.manage を要さない**（ApiDesign.md 7.2、2026-09-02 に変更）。
+	// **権限カタログは user.manage を要さない**（ApiDesign.md 7.2）。
 	//
 	// 消費者が2つになったための開放である——GuiDesign.md 5.6.3 の権限マトリクスと、
 	// 5.8.2 のエージェント用トークンの発行結果。**後者の必要権限は「本人」**で、

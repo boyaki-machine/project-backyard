@@ -30,7 +30,7 @@ import { APP_VERSION } from '../version'
  * IdP ボタン（GET /auth/providers）は置いていない。Phase 1 の認証手段は
  * local のみで 5.1 も「非表示」としており、API も未実装のため。
  *
- * **パスキーのボタンはパスワードの欄の下に置く**（5.1.2。pb-104）。
+ * **パスキーのボタンはパスワードの欄の下に置く**（5.1.2）。
  * パスキーは第2要素ではないので、5.1.1 のコード入力には出さない。
  */
 const route = useRoute()
@@ -134,7 +134,7 @@ const generalError = computed(() => {
 
 const version = APP_VERSION
 
-// ── パスキーでログイン（5.1.2。pb-104）──────────────────────
+// ── パスキーでログイン（5.1.2）──────────────────────
 
 /**
  * パスキーのボタンを出すか。**WebAuthn の無いブラウザでは出さない**（5.1.2）。
@@ -294,7 +294,7 @@ async function submit() {
         {{ submitting && !passkeyBusy ? $ui("ログイン中…") : $ui("ログイン") }}
       </button>
 
-      <!-- ── パスキー（5.1.2。pb-104）────────────────────────
+      <!-- ── パスキー（5.1.2）────────────────────────
            **パスワードの欄より上に置かない。** WebAuthn の無いブラウザでは出さない -->
       <template v-if="showPasskey">
         <div class="or" aria-hidden="true">{{ $ui('または') }}</div>

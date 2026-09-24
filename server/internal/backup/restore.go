@@ -180,7 +180,7 @@ func mustParse(url string) *pgx.ConnConfig {
 // dropAll は public にある、拡張が持っていないものを落とす（DbDesign.md 9.1.1 の③）。
 //
 // **表だけでは足りない。** 0001 は set_updated_at() という関数を作っており、表を落としても
-// 残る。残ったまま④を走らせると function … already exists で止まる（pb-147 で実機を見た）。
+// 残る。残ったまま④を走らせると function … already exists で止まる。
 //
 // **拡張が持つものは落とさない。** citext と pg_trgm は public にたくさんの関数と型を作るが、
 // CREATE EXTENSION IF NOT EXISTS で作られるので残っていて構わない。

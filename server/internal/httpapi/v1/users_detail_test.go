@@ -633,11 +633,11 @@ func callPasswordReset(q *fakeQuerier, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// TestResetPasswordOnSelfKeepsCurrentSession は 6.6 の改訂を見る（pb-82）。
+// TestResetPasswordOnSelfKeepsCurrentSession は 6.6 の自分自身へのリセットを見る。
 //
 // **自分自身へのリセットで全セッションを切ると、押した本人が自分を締め出す。**
 // 画面は generated_password を表示する前に 401 を受けてログイン画面へ飛び、
-// **その値はこの応答でしか手に入らないので永久に失われる**（実測、2026-09-12）。
+// **その値はこの応答でしか手に入らないので永久に失われる。**
 func TestResetPasswordOnSelfKeepsCurrentSession(t *testing.T) {
 	q := userFake(t)
 	q.revokedSessions = 2
@@ -698,8 +698,7 @@ func TestResetPasswordReturnsGeneratedPasswordAndRevokesSessions(t *testing.T) {
 	if pw == "" {
 		t.Fatalf("generated_password が空: %s", rec.Body.String())
 	}
-	// 6.2.1 の形式（<形容詞>-<名詞>-<4桁数字>-<名詞>）。**6.6 の応答例とも揃った**
-	// （pb-40 で強度を 2^21.3 から 2^31.3 へ上げたときに、例のほうも直した）。
+	// 6.2.1 の形式（<形容詞>-<名詞>-<4桁数字>-<名詞>）。**6.6 の応答例とも揃う。**
 	if strings.Count(pw, "-") != 3 {
 		t.Errorf("generated_password = %q, want <形容詞>-<名詞>-<4桁数字>-<名詞>", pw)
 	}
@@ -939,7 +938,7 @@ func TestDeleteMembershipIsIdempotentAndSkipsAudit(t *testing.T) {
 	}
 }
 
-// ── POST /admin/users/:id/mfa/reset（ApiDesign.md 6.9。pb-103）──
+// ── POST /admin/users/:id/mfa/reset（ApiDesign.md 6.9）──
 
 func callMfaReset(q *fakeQuerier) *httptest.ResponseRecorder {
 	h, _ := newUserHandler(q)

@@ -106,8 +106,8 @@ function has(roleKey: string, permissionKey: string): boolean {
 /**
  * その列が群（`role.scope`）の先頭か。
  *
- * **中央寄せの見出しだけでは、どこまでが「システム」か読めない**（利用者の
- * 実機確認、2026-08-22）。境目に縦罫を1本引いて示す。先頭の群には引かない
+ * **中央寄せの見出しだけでは、どこまでが「システム」か読めない**。
+ * 境目に縦罫を1本引いて示す。先頭の群には引かない
  * ——左隣は権限列で、そちらは既に右罫を持つ。
  */
 function isGroupStart(index: number): boolean {
@@ -339,7 +339,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureHead))
 }
 
 /*
- * 群（`role.scope`）の境目に縦罫を1本入れる（利用者の実機確認、2026-08-22）。
+ * 群（`role.scope`）の境目に縦罫を1本入れる。
  *
  * **1本だけにする。** 全列に引くと格子になり、一覧（`GuiDesign.md` 5.6）や
  * メンバー表（5.9.2）が横罫だけで組まれているのと見た目が揃わない。読みたいのは

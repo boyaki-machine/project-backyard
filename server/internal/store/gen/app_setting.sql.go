@@ -47,7 +47,7 @@ type ListAppSettingsRow struct {
 	UpdatedByDisplayName pgtype.Text
 }
 
-// アプリケーション設定に関するクエリ（DbDesign.md 6.14、ApiDesign.md 11章）。pb-2。
+// アプリケーション設定に関するクエリ（DbDesign.md 6.14、ApiDesign.md 11章）。
 //
 // **Design.md 10.3 の第2層の置き場である。** 第1層（接続文字列・待受）は
 // 環境変数と設定ファイルにしか置けないので、ここには現れない。

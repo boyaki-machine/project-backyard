@@ -401,7 +401,7 @@ func TestGetContextSaysCharterIsEmptyWhenOnlyOnboardingExists(t *testing.T) {
 	}
 }
 
-// ── 「判断の記録」は目次だけを載せる（pb-119）──────────────────
+// ── 「判断の記録」は目次だけを載せる──────────────────
 //
 // 期待値は Design.md 8.5.5「判断の記録は本文を載せず、目次と引き方だけを載せる」から取る。
 // **追記で一方的に増える文書**なので、全チケットに全文を運ばない。
@@ -478,7 +478,7 @@ func TestGetContextKeepsDecisionsDocWhenMoved(t *testing.T) {
 }
 
 func TestGetContextSaysDecisionsHasNoHeadings(t *testing.T) {
-	// **見出しが1つも無いときも本文を載せない**（Design.md 8.5.5。利用者の判断、2026-09-13）。
+	// **見出しが1つも無いときも本文を載せない**（Design.md 8.5.5）。
 	// 新規プロジェクトのテンプレート本文には見出しが無い（PB #121）。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
@@ -506,7 +506,7 @@ func TestGetContextSaysDecisionsHasNoHeadings(t *testing.T) {
 	}
 }
 
-// ── 読んだ憲章の版を受ける（Design.md 8.5.5。pb-134）──────────────
+// ── 読んだ憲章の版を受ける（Design.md 8.5.5）──────────────
 
 // versionedOutline は版を持つ目次（vision v2 / rules v7 / decisions v5）。
 func versionedOutline() string {
@@ -708,7 +708,7 @@ func TestGetContextDeclaresVersionsAsIntegerMap(t *testing.T) {
 	}
 }
 
-// ── 2件目以降は定型文を畳む（Design.md 8.5.5。pb-139）──────────────
+// ── 2件目以降は定型文を畳む（Design.md 8.5.5）──────────────
 
 // unfoldedBoilerplate は1件目にだけ出る定型文（畳んだら消える文）。
 var unfoldedBoilerplate = []string{

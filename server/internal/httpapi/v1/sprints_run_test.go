@@ -10,7 +10,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
-// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2）の単体テスト。pb-6。
+// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2）の単体テスト。
 //
 // **見るのは「盤面がどう動いたか」である。** 応答の形は 9.12 の CRUD と同じなので
 // あちらが押さえており、ここで確かめる価値があるのは

@@ -1,4 +1,4 @@
-// アプリケーション設定API（ApiDesign.md 11章）。pb-2。
+// アプリケーション設定API（ApiDesign.md 11章）。
 //
 //	GET /api/v1/admin/settings   11.1
 //	PUT /api/v1/admin/settings   11.2
@@ -69,7 +69,7 @@ type settingsResponse struct {
 	// ConfigFilePath は効いている設定ファイルの位置（使っていなければ null）。
 	// 「どこを直せばよいか」を画面が言うために返す。
 	ConfigFilePath *string `json:"config_file_path"`
-	// PendingConfirmation は確認を待っている変更（無ければ null）。pb-97。
+	// PendingConfirmation は確認を待っている変更（無ければ null）。
 	//
 	// **画面はここから残り時間を出す。** 期限までに確認されないと元へ戻る
 	// （Design.md 10.3）。
@@ -140,7 +140,7 @@ func (h *handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 
 	// **1トランザクションで書き、監査ログも1行にする**（11.2）。
 	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
-		// **締め出されうる設定を含むなら、未確認として記録する**（pb-97）。
+		// **締め出されうる設定を含むなら、未確認として記録する**。
 		// 設定を書くのと1つの単位にする——**片方だけ残ると、戻せない変更や
 		// 戻す先の無い記録ができる。**
 		//

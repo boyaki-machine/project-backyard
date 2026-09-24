@@ -214,7 +214,7 @@ const columnSources: Column[] = [
   { key: 'status', label: '状態', sort: 'is_active', className: 'status', width: 70, min: 56 },
   { key: 'last', label: '最終ログイン', sort: 'last_login_at', className: 'datetime', width: 150, min: 110 },
   { key: 'created', label: '作成', sort: 'created_at', className: 'date', width: 110, min: 90 },
-  // `⋯` の記号は暫定の表示（利用者の判断、2026-08-21。5.6 のワイヤーの `[⋯]` は
+  // `⋯` の記号は暫定の表示（5.6 のワイヤーの `[⋯]` は
   // メニューアイコンのプレースホルダである）。見出しの文字は持たない
   { key: 'actions', label: '', className: 'actions-col', width: 44, min: 44, fixed: true },
 ]
@@ -286,7 +286,7 @@ function fitToContainer(): void {
  * 予測できるためで、全列へ按分すると1つ広げたつもりが表全体の見た目を変える。
  * 右隣が下限に達したらそこで止まる。
  *
- * **キーボードでは操作できない**——9.2 の例外として明記してある（利用者の判断）。
+ * **キーボードでは操作できない**——9.2 の例外として明記してある。
  * 幅は表示上の都合であり、列の内容は横スクロールで到達できる。
  */
 let dragging:

@@ -58,7 +58,7 @@ STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@1
 
 ## DB を起動する
 # **app は起動しない。** dev では PB 本体を make run でホストから動かしており、app の
-# コンテナまで上げると 8080 番でぶつかる。コンテナの一式は make release TARGET=compose（pb-123）。
+# コンテナまで上げると 8080 番でぶつかる。コンテナの一式は make release TARGET=compose。
 up:
 	$(COMPOSE) up -d db
 
@@ -122,7 +122,7 @@ run:
 admin-create:
 	@cd server && PB_DATABASE_URL="$(PB_DATABASE_URL_APP)" go run ./cmd/pb admin create
 
-## 第2要素（TOTP・リカバリコード）を解除する（Design.md 6.7.5。pb-103）
+## 第2要素（TOTP・リカバリコード）を解除する（Design.md 6.7.5）
 # **画面から解除できなくなった人のための口である。** 管理者が1人だけの構成で、
 # その人が認証アプリとリカバリコードの両方を失うと、画面側の口（ApiDesign.md 6.9）は
 # 誰も呼べない。使い方: make admin-mfa-reset EMAIL=tanaka@example.com
@@ -132,15 +132,15 @@ admin-mfa-reset:
 		go run ./cmd/pb admin mfa-reset --email "$(EMAIL)"
 
 ## テストを実行する
-# **整形の検査を先に通す**（pb-21）。gofmt は go test が見ないので、
+# **整形の検査を先に通す**。gofmt は go test が見ないので、
 # 打つ人がいなければ発火しない。起票から4日間、誰も気づかないまま
 # 別のチケットが偶然直した、という経緯が根拠である。
 test: fmt-check
 	@cd server && go test ./...
 
-## 整形されていない Go のファイルが無いことを見る（pb-21）
+## 整形されていない Go のファイルが無いことを見る
 # **パイプ越しに判定しない。** `gofmt -l . | ...` の $? は常にパイプの
-# 最後のコマンドのものになり、判定が常に成功する（pb-31 で踏んだ）。
+# 最後のコマンドのものになり、判定が常に成功する。
 # 出力を変数に取ってから中身の有無で見る。
 fmt-check:
 	@out=$$(cd server && gofmt -l ./cmd ./internal ./tools); \
@@ -152,7 +152,7 @@ fmt-check:
 	fi; \
 	echo "OK: gofmt は未整形を報告しない"
 
-## 依存の既知脆弱性を照合する（pb-152）
+## 依存の既知脆弱性を照合する
 # **govulncheck の版は server/tools/go.mod の tool ディレクティブで固定する**
 # ——goose・sqlc と同じ型である。go install でグローバルに入れると版が揃わず、
 # 走らせる人によって結果が変わる。
@@ -185,8 +185,8 @@ vuln-check:
 # （Development.md 6.1）。RUN= で individual なテストへ絞れる。
 #   make test-db RUN=TestMeTokensIntegration
 #
-# **パッケージを足したら並びにも足す。** dbstat（pb-110）は、pb_app から見える
-# カタログと統計を確かめるので、実 DB でしか意味を持たない。backup（pb-147）も同じで、
+# **パッケージを足したら並びにも足す。** dbstat は、pb_app から見える
+# カタログと統計を確かめるので、実 DB でしか意味を持たない。backup も同じで、
 # **書き出しは pb_app、取り込みは pb_owner** の2つのロールで確かめる必要がある
 # （DbDesign.md 9.1.1）。オーナーの接続文字列も渡すのはそのためである。
 RUN ?= Integration
@@ -212,7 +212,7 @@ dev-reset:
 # 環境変数が無いので止まり、あっても接続先ホストの検査（安全装置その2）が残る。
 # @ を付けて実行するのは、パスワードを含むコマンドをエコーさせないため。
 #
-# **最後に放置のチケットを1件作る**（pb-23。DbDesign.md 7.6.4、Development.md 8.6 と同じ SQL）。
+# **最後に放置のチケットを1件作る**（DbDesign.md 7.6.4、Development.md 8.6 と同じ SQL）。
 # updated_at はトリガが now() で上書きし、止められるのはテーブルの所有者だけなので、
 # pb_app で動く seed 本体ではなく、ここで pb_owner として振る。**打つたびに振り直す**
 # （触って放置でなくなっても、dev-seed を打てば戻る）。対象はタイトルで指すので、
@@ -433,7 +433,7 @@ docs-emphasis:
 	fi
 	@node client/scripts/check-emphasis.mjs $(EMPHASIS_DOCS)
 
-# ── 定義されていないデザイントークン（GuiDesign.md 8.5。pb-102）──────────
+# ── 定義されていないデザイントークン（GuiDesign.md 8.5）──────────
 
 ## client/src が使う --pb-* がすべて定義されているかを見る（1件でもあれば非ゼロ終了）
 css-tokens:

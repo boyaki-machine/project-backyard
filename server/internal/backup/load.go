@@ -25,12 +25,12 @@ func loadExpr(c Column, n int) string {
 	switch {
 	case c.IsArray:
 		// **JSON の配列を配列にする。** `::text::text[]` は配列リテラルを要求するので通らない。
-		// **CASE が要る**——無いと NULL が空の配列になる（pb-147 で実機を見て分かった）。
+		// **CASE が要る**——無いと NULL が空の配列になる（実機で確かめた）。
 		return "CASE WHEN " + p + "::text IS NULL THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(" +
 			p + "::text::jsonb)) END::" + c.Type
 	case c.Type == "bytea":
 		// **base64 を解く。** `::text::bytea` は base64 を解釈せず、文字列をそのまま
-		// バイト列にしてしまう（pb-147 で実機を見て分かった）。
+		// バイト列にしてしまう（実機で確かめた）。
 		return "decode(" + p + "::text, 'base64')"
 	case dumpExpr(c) == "":
 		return ""

@@ -54,13 +54,13 @@ type userDetailView struct {
 	ProjectMemberships []userMembershipView `json:"project_memberships"`
 	Sessions           []userSessionView    `json:"sessions"`
 
-	// MFACredentialCount は確定済みの第2要素の件数（pb-103。ApiDesign.md 6.3）。
+	// MFACredentialCount は確定済みの第2要素の件数（ApiDesign.md 6.3）。
 	//
 	// **配列ではなく件数だけを返す。** 画面（GuiDesign.md 5.6.2）が出すのも
 	// 件数であり、他人の端末の名前は管理に要らない。
 	MFACredentialCount int64 `json:"mfa_credential_count"`
 
-	// PasskeyCount は登録済みのパスキーの件数（pb-104。ApiDesign.md 6.3）。
+	// PasskeyCount は登録済みのパスキーの件数（ApiDesign.md 6.3）。
 	// MFACredentialCount と同じ理由で件数だけを返す。
 	PasskeyCount int64 `json:"passkey_count"`
 }

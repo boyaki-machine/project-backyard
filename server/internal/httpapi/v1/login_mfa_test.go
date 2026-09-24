@@ -14,7 +14,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
-// ログインの第2要素（ApiDesign.md 3.1 の後半・3.4。pb-103）のテスト。
+// ログインの第2要素（ApiDesign.md 3.1 の後半・3.4）のテスト。
 //
 // **ルータを通して叩く。** ルート定義（認証不要のまま置く・CSRF の対象外）
 // ごと確かめたいためで、login_test.go と同じ形である。

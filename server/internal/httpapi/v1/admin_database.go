@@ -1,4 +1,4 @@
-// DB の接続状態と統計（ApiDesign.md 11.10）。pb-110。
+// DB の接続状態と統計（ApiDesign.md 11.10）。
 //
 //	GET /api/v1/admin/database   11.10
 //

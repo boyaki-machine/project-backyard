@@ -1,4 +1,4 @@
-// Package backup は PB 全体の書き出しと取り込みを行う（DbDesign.md 9.1.1）。pb-147。
+// Package backup は PB 全体の書き出しと取り込みを行う（DbDesign.md 9.1.1）。
 //
 // **書庫は tar.gz である。** zip は末尾の索引を読まないと中身を取り出せず、取り込みで
 // 全体をメモリか一時ファイルに載せることになる。**K8s の Pod は readOnlyRootFilesystem

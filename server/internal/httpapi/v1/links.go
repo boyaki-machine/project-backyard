@@ -16,8 +16,8 @@
 // **PATCH は持たない**（9.10.1）。一意制約が (source, target, link_type) である
 // 以上、link_type の変更は別の行になるのと同じである。
 //
-// **Phase 1 の画面が出す link_type は relates / duplicates / blocks の3つだけ**
-// （利用者の判断、2026-08-27）。FS〜SF と lag_days はガントの依存線のためのもので、
+// **Phase 1 の画面が出す link_type は relates / duplicates / blocks の3つだけ**。
+// FS〜SF と lag_days はガントの依存線のためのもので、
 // ガントは Phase 2 である。**API は7種すべて受け続ける**——MCP とエージェントが
 // ガント用の依存を先に積むことは妨げない。
 package v1

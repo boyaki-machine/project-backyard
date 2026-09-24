@@ -28,7 +28,7 @@ const KeySize = 32
 // CurrentKeyID はいま暗号化に使う鍵の識別子。
 //
 // **行に持たせるのは、鍵を交換する日にどの行がまだ古い鍵かを引けるようにするため**
-// である（Design.md 6.6.1）。交換の手順は pb-3 では作らないので、いまは1つだけ。
+// である（Design.md 6.6.1）。交換の手順はまだ無いので、いまは1つだけ。
 const CurrentKeyID = "v1"
 
 // Parsed は登録する証明書から取り出した値。DbDesign.md 6.15 の列に一対一で対応する。
@@ -196,7 +196,7 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 
 // ListenHostMatch は待受のホスト名と、いま出す証明書の突き合わせの結果
 // （ApiDesign.md 11.4）。**判定はサーバの1か所に置く**——画面が dns_names と
-// 照合していたときは IP の SAN が抜け落ちていた（pb-100 で実測）。
+// 照合すると、IP の SAN が抜け落ちる。
 type ListenHostMatch string
 
 const (
@@ -215,7 +215,7 @@ const (
 // **0.0.0.0 と :: では空を返す。** あれらは待受の表記であって接続先のホスト名では
 // なく、**すべてのアドレスで待ち受けるという意味しか持たない**（ApiDesign.md 11.4）。
 // ここで 0.0.0.0 を返すと、利用者は 0.0.0.0 を SAN に入れた証明書を作ってしまう——
-// **その証明書はどのクライアントからも一致しない**（pb-100 で実測）。
+// **その証明書はどのクライアントからも一致しない**（実測）。
 func ListenHost(listenURL string) string {
 	u, err := url.Parse(listenURL)
 	if err != nil {
@@ -233,7 +233,7 @@ func ListenHost(listenURL string) string {
 //
 // **照合は crypto/x509 の VerifyHostname に任せる。** ワイルドカードと IP の規則を
 // 自分で書くと、標準ライブラリと同じものを2度実装することになる。**IP アドレスは
-// IPAddresses の SAN と照合される**ので、DNS:127.0.0.1 では一致しない（pb-100）。
+// IPAddresses の SAN と照合される**ので、DNS:127.0.0.1 では一致しない。
 //
 // **CN へのフォールバックはしない**（Go 1.15 以降の VerifyHostname がそうである）。
 // **現代のブラウザも CN を見ない**ので、SAN の無い証明書は覆っていないと判定する

@@ -30,11 +30,8 @@ import (
 // まだ無い（10.8.8）。**種を蒔いておかないと、後から突き合わせる材料が作れない**ため、
 // 値だけ先に置く。
 //
-// **手順ファイルの本文を変えたら、ここを上げる。** 2 は pb-119（pb-onboard が判断の記録を
-// 目次から読むようにした）、3 は pb-134（pb-onboard が憲章の版を控え、pb-implement が
-// charter_versions に渡すようにした）、4 は pb-140（pb-implement の着手で pb_list_transitions を
-// 省けるようにした）、5 は pb-141（pb-implement の手順4 から worktree のコマンドを外し、作り方と
-// 後始末を規約に任せた）。28b・28c では本文を変えても上げていなかったので、1 の中身は一定ではない。
+// **手順ファイルの本文を変えたら、ここを上げる。** 28b・28c では本文を変えても
+// 上げていなかったので、1 の中身は一定ではない。
 const WorkflowVersion = 5
 
 //go:embed templates/body/*.md
@@ -55,7 +52,7 @@ const (
 	//
 	// **JSON は追記できないので append と分けている。** このリポジトリの
 	// .claude/settings.json が130行あり、丸ごと置き換えると Bash の許可設定が
-	// 全部消える——**実装中に自分のリポジトリで踏んだ**ので、モードを1つ足した。
+	// 全部消える。そのためモードを分ける。
 	ModeMerge Mode = "merge"
 )
 
@@ -364,7 +361,7 @@ func renderBody(name string, bp bodyParams) (string, error) {
 //
 // **「これは各自の環境。共有しない」を必ず添える。** 経験の浅い参加者が
 // 「自分のエージェントに関するファイルがコミットされる」と読むこと自体が事故のもとで、
-// **どちらがどちらかを .gitignore そのものに書いておく**のが手当てである（利用者の指摘）。
+// **どちらがどちらかを .gitignore そのものに書いておく**のが手当てである。
 func renderGitignore(paths []string) string {
 	var b strings.Builder
 	b.WriteString("# Project Backyard — 接続設定は各自の環境。共有しない\n")

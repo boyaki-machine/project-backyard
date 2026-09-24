@@ -112,7 +112,7 @@ func TestTicketDetailIntegration(t *testing.T) {
 		}
 	})
 
-	// ── 9.5.1 epic（pb-14）：GetTicketEpicAncestor の再帰CTEはここでしか通らない ──
+	// ── 9.5.1 epic：GetTicketEpicAncestor の再帰CTEはここでしか通らない ──
 	t.Run("epic は祖先をたどって最も近いエピックを返す", func(t *testing.T) {
 		seqOf := func(v map[string]any) int { return int(v["seq"].(float64)) }
 		epicOf := func(v map[string]any) any {
@@ -527,7 +527,7 @@ func TestTicketDetailIntegration(t *testing.T) {
 	})
 
 	// **0026 が3テンプレートすべてに再オープンを入れたこと**を、複製元の行で測る
-	// （DbDesign.md 7.4。pb-69）。**プロジェクトのワークフローはテンプレートの複製**
+	// （DbDesign.md 7.4）。**プロジェクトのワークフローはテンプレートの複製**
 	// なので、ここが欠けると新しく作るプロジェクトすべてで完了から戻せなくなる。
 	t.Run("再オープンはテンプレート3件すべてに入っている", func(t *testing.T) {
 		got := scalarInt(t, pool, `
@@ -542,7 +542,7 @@ func TestTicketDetailIntegration(t *testing.T) {
 		}
 	})
 
-	// **完了から進行中へ戻せる**（DbDesign.md 7.4「再オープン」。0026。pb-69）。
+	// **完了から進行中へ戻せる**（DbDesign.md 7.4「再オープン」。0026）。
 	//
 	// **9.6 の表の下半分——closed_at が NULL へ帰る——を、API から実際に作った完了
 	// 状態に対して測る。** 0026 の前はテンプレートが done から出る遷移を1つも持たず、
@@ -585,7 +585,7 @@ func TestTicketDetailIntegration(t *testing.T) {
 	})
 
 	// **再オープンに要るのは ticket.transition ではなく ticket.close である**
-	// （DbDesign.md 7.4。pb-69）。
+	// （DbDesign.md 7.4）。
 	//
 	// **プロジェクトロールでは測れない。** 実効権限はシステムロールとプロジェクト
 	// ロールの和であり（auth.EffectivePermissions）、システムロールは operator と
@@ -599,7 +599,7 @@ func TestTicketDetailIntegration(t *testing.T) {
 	// ことの証跡でもある。
 	t.Run("ticket.closeを持たないトークンは再オープンできない", func(t *testing.T) {
 		rec := bodyWithCookie(r, http.MethodPost, "/api/v1/me/tokens", session,
-			`{"name":"pb-69 再オープンの実測","expires_in_days":30,`+
+			`{"name":"再オープンの実測","expires_in_days":30,`+
 				`"scopes":["project.view","ticket.view","ticket.transition"]}`, "")
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("トークン発行の status = %d（body=%s）", rec.Code, rec.Body.String())

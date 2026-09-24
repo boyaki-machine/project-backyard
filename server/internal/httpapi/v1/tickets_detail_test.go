@@ -36,7 +36,7 @@ func ticketDetailFake() *fakeQuerier {
 	q.ticket.updateRows = 1
 	q.ticket.deleteRows = 1
 	q.ticket.projectTagCount = 2
-	// sprint_id は 9.3 / 9.5.2 から外れた（pb-6）ので、参照先の検証は無くなった。
+	// sprint_id は 9.3 / 9.5.2 から外れたので、参照先の検証は無くなった。
 	q.ticket.isMember = true
 	return q
 }
@@ -58,8 +58,7 @@ func ticketDetailRow() gen.GetTicketBySeqRow {
 		ReporterName:   txt("田中"),
 		SortKey:        txt("0|n:"),
 		// **DDL の既定と同じ値を置く**（DbDesign.md 6.6）。実物では
-		// execution_mode が NOT NULL DEFAULT 'agent_draft'（0025 で
-		// 'human_only' から変えた。pb-65）、scope が NOT NULL DEFAULT '{}'
+		// execution_mode が NOT NULL DEFAULT 'agent_draft'（0025）、scope が NOT NULL DEFAULT '{}'
 		// であり、零値のフェイクだと 9.5.1 の応答が実サーバと違う形になる（手順27）。
 		ExecutionMode: "agent_draft",
 		Scope:         []byte(`{}`),
@@ -178,7 +177,7 @@ func TestGetTicketReturnsDetailShape(t *testing.T) {
 	if view["parent"] != nil {
 		t.Errorf("parent = %v, want null（親を持たない行）", view["parent"])
 	}
-	// epic（pb-14）は**キーごと在って null**。親が無ければ祖先もたどらない。
+	// epic は**キーごと在って null**。親が無ければ祖先もたどらない。
 	if v, ok := view["epic"]; !ok || v != nil {
 		t.Errorf("epic = %v（在る=%v）, want null（親を持たない行）", v, ok)
 	}
@@ -187,7 +186,7 @@ func TestGetTicketReturnsDetailShape(t *testing.T) {
 	}
 }
 
-// ── 9.5.1 epic（pb-14）──────────────────────────────────────
+// ── 9.5.1 epic──────────────────────────────────────
 
 // detailWithParent は seq=31 の親を seq=12 にしたフェイクを返す。parentType が親の種別。
 func detailWithParent(parentType string) *fakeQuerier {
@@ -1202,7 +1201,7 @@ func decodeTransitions(t *testing.T, rec *httptest.ResponseRecorder) transitions
 }
 
 // **items[] はワークフローの全ステータス（現在を除く）**（A-5／D-1）。
-// ── 検証7：未完了の子が残っている親は完了にできない（9.6。pb-72）──────
+// ── 検証7：未完了の子が残っている親は完了にできない（9.6）──────
 
 // **まず通る側を測る。** これが無いと、下の 409 は「完了へは常に 409」の実装でも
 // 緑になる（LEARNINGS #139）。
@@ -1301,7 +1300,7 @@ func TestListTransitionsMarksOpenChildren(t *testing.T) {
 	}
 }
 
-// ── 子が動いたら親を進行中にする（9.6。pb-72）──────────────────
+// ── 子が動いたら親を進行中にする（9.6）──────────────────
 
 // cascadeFake は seq=31 が未着手で、親（seq=44）を持つ状態を作る。
 func cascadeFake(t *testing.T) *fakeQuerier {
@@ -1598,7 +1597,7 @@ func TestListTransitionsNotFound(t *testing.T) {
 	}
 }
 
-// ── 着手したらオンステージへ上げる（9.6。pb-5）────────────────
+// ── 着手したらオンステージへ上げる（9.6）────────────────
 
 // stagingFake は seq=31 が未着手で、表示上のトップレベルの祖先を持つ状態を作る。
 //
@@ -1689,7 +1688,7 @@ func TestTransitionWithinTodoDoesNotStage(t *testing.T) {
 	}
 }
 
-// ── ticket.self_edit の絞り込み（9.5.2。0029。pb-75）────────────
+// ── ticket.self_edit の絞り込み（9.5.2。0029）────────────
 //
 // **まず通る側を確かめてから、断られる側を測る**（憲章）。狭い権限でも
 // 記述の修正は通ること、縛りの側の項目だけが 403 になることの両方を見る。
@@ -1713,7 +1712,7 @@ func TestPatchAllowsDescriptionForSelfEdit(t *testing.T) {
 }
 
 // **縛る側の項目は断る。** エージェントが自分の実行モードやスコープ境界を
-// 緩められては、pb-75 の制約条件が成り立たない。
+// 緩められては、自己編集の制約条件が成り立たない。
 func TestPatchRejectsGuardFieldsForSelfEdit(t *testing.T) {
 	cases := []struct {
 		name  string

@@ -282,7 +282,7 @@ export const api = {
   del: <T>(path: string, options?: RequestOptions) =>
     request<T>('DELETE', path, undefined, options),
   /**
-   * `multipart/form-data` で送る（`ApiDesign.md` 11.12。pb-147）。
+   * `multipart/form-data` で送る（`ApiDesign.md` 11.12）。
    *
    * **`FormData` の詰めた順がそのままパートの順になる。** サーバは先頭から順に
    * 読むので、**書庫を最後に詰めること**——先だと、資格情報を読む前に書庫が流れ込む。

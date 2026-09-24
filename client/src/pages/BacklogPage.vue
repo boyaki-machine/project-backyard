@@ -93,9 +93,9 @@ const canCreate = computed(() => auth.canInProject(projectKey.value, 'ticket.cre
  */
 const canRunSprint = computed(() => auth.canInProject(projectKey.value, 'project.edit'))
 const canEdit = computed(() => auth.canInProject(projectKey.value, 'ticket.edit'))
-/** 一覧から状態を変えるのに要る（`ApiDesign.md` 9.6。pb-63） */
+/** 一覧から状態を変えるのに要る（`ApiDesign.md` 9.6） */
 const canTransition = computed(() => auth.canInProject(projectKey.value, 'ticket.transition'))
-/** 一覧から担当を変えるのに要る（9.5.2 は `ticket.edit` に加えてこれを要求する。pb-64） */
+/** 一覧から担当を変えるのに要る（9.5.2 は `ticket.edit` に加えてこれを要求する） */
 const canAssign = computed(
   () => canEdit.value && auth.canInProject(projectKey.value, 'ticket.assign'),
 )
@@ -174,7 +174,7 @@ function onDetailUpdated(next: TicketDetail): void {
  * 下部の総件数と食い違う**（9.2.2 / 5.4）。
  *
  * **`onDetailDeleted` が既に同じ判断をしている。** 行が増減したときは取り直す、
- * 行の中身が変わっただけのときは差し替える、という切り分けである（pb-15）。
+ * 行の中身が変わっただけのときは差し替える、という切り分けである。
  *
  * **結果の一言は出さない。** 操作したのは詳細ペインであり、作られた子は
  * あちらの「子チケット」の節に現れる（6.4「操作結果は操作した場所に出す」）。
@@ -245,12 +245,12 @@ const STATE_KEYS = ['status', 'status_category', 'open', 'stale'] as const
 const DUE_KEYS = ['overdue', 'due_within'] as const
 
 /**
- * 状態フィルタが「完了」を指しているか（5.4「状態と期限のフィルタ」。pb-5 / pb-6）。
+ * 状態フィルタが「完了」を指しているか（5.4「状態と期限のフィルタ」）。
  *
  * **これが `retired=true` を送る唯一の条件である。** スプリントを終えて棚に
  * 戻ったチケットは既定で一覧から外れるので（`ApiDesign.md` 9.2.1）、
  * **完了を明示的に選んだときだけ戻す。** 当初は検索画面ができるまでの逃げ道だったが、
- * **チケット検索（5.13。pb-66）ができた後も残す**（利用者の判断、2026-09-16）。
+ * **チケット検索（5.13）ができた後も残す**。
  *
  * **「すべて」では送らない。** 素の状態のバックログは「これからやるべき仕事」を
  * 並べる面であり、終わった仕事が混ざると走査の妨げになる。
@@ -514,7 +514,7 @@ const sprints = ref<Sprint[]>([])
 /** エピックの選択肢（5.4「フィルタ」）。タグ・スプリントと同じ「語彙の取得」である */
 const epics = ref<Ticket[]>([])
 
-/** スプリントの開始ダイアログ（5.4「開始のダイアログ」。pb-6） */
+/** スプリントの開始ダイアログ（5.4「開始のダイアログ」） */
 const showSprintStart = ref(false)
 /** スプリントの終了確認（5.4「終了の確認」） */
 const confirmSprintFinish = ref(false)
@@ -559,7 +559,7 @@ const onstageCount = computed(() => staged.value.staged.length)
  * 終了したときの内訳（5.4「終了の確認」）。**押す前に数で出す。**
  *
  * **数えるのはスプリントの対象であって、オンステージ段の行ではない**
- * （実機で判明、2026-09-09）。手元の行から数えていたときは、
+ * 手元の行から数えると、
  *
  * - **オンステージから降りた対象が漏れる**（対象に入ったあとバックログ段へ
  *   戻した行）。実際に「完了した 0 件」と出しながら1件が消えた
@@ -613,7 +613,7 @@ async function loadTickets(): Promise<void> {
       status_category: queryValue('status_category'),
       open: queryValue('open') === 'true' ? 'true' : queryValue('open') === 'false' ? 'false' : undefined,
       stale: queryValue('stale'),
-      // **完了を明示的に選んだときだけ棚に戻ったものを出す**（5.4。pb-5 / pb-6）
+      // **完了を明示的に選んだときだけ棚に戻ったものを出す**（5.4）
       retired: wantsRetired.value ? 'true' : undefined,
       // 「期限」の箱が出す2系列（同上）
       overdue: queryValue('overdue') === 'true' ? 'true' : undefined,
@@ -664,7 +664,7 @@ async function loadVocabulary(): Promise<void> {
 }
 
 /**
- * エピックの語彙だけを取り直す（5.4.3「新規エピック」。pb-14）。作ったエピックを
+ * エピックの語彙だけを取り直す（5.4.3「新規エピック」）。作ったエピックを
  * フィルタの選択肢に出すためで、タグとスプリントは変わっていない。
  * **失敗しても一覧は止めない**（`loadVocabulary` と同じ扱い）。
  */
@@ -744,8 +744,8 @@ const treeMode = computed(
 /**
  * 段ごとに振り分ける（5.4「二段」）。
  *
- * **上げた行の配下は、オンステージ段に親の下として出す**（5.4「配下の行き先」。
- * 利用者の判断、2026-09-06。pb-46）。**バックログ段には出さない**——「行は
+ * **上げた行の配下は、オンステージ段に親の下として出す**（5.4「配下の行き先」）。
+ * **バックログ段には出さない**——「行は
  * 片方の段にしか出ない」という大原則を保つためで、両方に出すと上下を
  * 見比べる作業が復活する。
  *
@@ -787,7 +787,7 @@ const staged = computed(() => splitByStage(tickets.value))
 
 /**
  * **その行がいまどちらの段に出ているか。** `staged_at` で判定してはいけない
- * （pb-46）——オンステージへ上げた行の配下は `staged_at` が `NULL` のまま
+ * ——オンステージへ上げた行の配下は `staged_at` が `NULL` のまま
  * オンステージ段に現れるためで、**段を決めるのは親である**（9.4.1）。
  */
 const stagedSeqs = computed(() => new Set(staged.value.staged.map((t) => t.seq)))
@@ -801,7 +801,7 @@ function shownInStage(t: Ticket): boolean {
  *
  * **親が結果に含まれていない子はトップレベルに並べる**（`ApiDesign.md` 9.2.4）。
  * 通常のフィルタは行単位で適用する。入力検索は祖先を補完し、
- * 補完した親も `total` と200件上限に含める（pb-84）。**エピックを行から
+ * 補完した親も `total` と200件上限に含める。**エピックを行から
  * 外す帰結として、エピック配下のチケットはここでトップレベルになる。**
  */
 function buildTree(items: Ticket[]): Row[] {
@@ -934,7 +934,7 @@ function sectionOrder(): string[] {
 }
 
 const sections = computed<Section[]>(() => {
-  // 二段（5.4）。**両方の段が親子のインデントと折りたたみを持つ**（pb-46）。
+  // 二段（5.4）。**両方の段が親子のインデントと折りたたみを持つ**。
   // オンステージ段には親と一緒に運ばれた配下が来るので、バックログ段と
   // 同じ条件でツリーに組み直す（グループ化が「なし」かつ `sort_key` の昇順）。
   if (twoTier.value) {
@@ -1112,7 +1112,7 @@ function openRow(t: Ticket, e: MouseEvent): void {
  * 掴めるのは**ソートが `sort_key` の昇順のとき**だけである（5.4）。
  * 他の並びでは、画面上の位置と `after_seq` の意味が一致しない。
  *
- * **縮小中も掴める**（5.4「掴みしろ」。pb-7）。以前は `!shrunk` を
+ * **縮小中も掴める**（5.4「掴みしろ」）。以前は `!shrunk` を
  * 条件に持っていたが、**詳細を開いたまま消化順を組み替える**のは実際に起きる
  * 作業で、そのたびに全幅へ戻すことになっていた。
  */
@@ -1123,7 +1123,7 @@ const canReorder = computed(
 /**
  * 掴みしろを行そのものに置くか（5.4「掴みしろ」）。
  *
- * **全幅でも縮小中でも行全体を掴む**（利用者の要望、2026-09-07。pb-71）。
+ * **全幅でも縮小中でも行全体を掴む**。
  * かつては縮小中だけがこの形だった——450px では `⠿` の列を持てないためで、
  * **全幅では `⠿` の28px だけが掴みしろ**だった。実運用では**幅の広いほうが
  * 狙いにくい**と分かった。行が長いほど `⠿` は遠く、並べ替えのたびに左端まで
@@ -1136,10 +1136,10 @@ const canReorder = computed(
 const grabWholeRow = canReorder
 
 /**
- * ポインタが**操作を持つセル**（状態・担当）の上にあるか（5.4「掴みしろ」。pb-71）。
+ * ポインタが**操作を持つセル**（状態・担当）の上にあるか（5.4「掴みしろ」）。
  *
- * **`draggable="false"` を子孫に置いても親のドラッグは止まらない**（実測、
- * 2026-09-07）。`dragstart` はドラッグ元——つまり `draggable` な `<tr>`——で
+ * **`draggable="false"` を子孫に置いても親のドラッグは止まらない**（実測）。
+ * `dragstart` はドラッグ元——つまり `draggable` な `<tr>`——で
  * 発火するので、`<td>` に `@dragstart.stop.prevent` を書いても**イベントの経路に
  * 入らず一度も呼ばれない**。属性 `draggable="false"` も、Chrome は上位の
  * `draggable="true"` まで遡るため効かない。
@@ -1159,7 +1159,7 @@ const overActionCell = ref(false)
  * 掴んだ行の位置がずれると、**Chrome はドラッグを取り消す**（`dragstart` の
  * 1ms 後に `dragend` が来る）。手順16d-b では「〜の末尾へ」の帯を掴んだ瞬間に
  * 出しており、オンステージ側の帯がバックログ表の上に入るため、
- * **バックログの行だけ一度もドラッグできなかった**（利用者の実機確認、2026-08-24）。
+ * **バックログの行だけ一度もドラッグできなかった。**
  * 見た目だけを変える（`opacity` など）のは安全である。
  */
 const draggingSeq = ref<number | null>(null)
@@ -1201,8 +1201,8 @@ const rowIndex = computed(() => {
  *
  * **`parent_seq` で比べない。** エピックを行として出さないので、エピック配下の
  * チケットは `parent_seq` を持ったまま根として並ぶ。`parent_seq` で比べると
- * 画面上で同じ深さに見える行どうしが入れ替えられなくなる（実機で判明。
- * 利用者の指摘、2026-08-23）。**表示が動かないのはインデントされた行だけ**で、
+ * 画面上で同じ深さに見える行どうしが入れ替えられなくなる。
+ * **表示が動かないのはインデントされた行だけ**で、
  * 根は `sort_key` の順に並ぶので `move` の結果がそのまま出る。
  */
 function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolean {
@@ -1212,7 +1212,7 @@ function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolea
   const source = sourceRow.ticket
 
   if (section.stage !== undefined) {
-    // **インデントされた行を根の並びへ落とすとルートになる**（5.4。pb-70）。
+    // **インデントされた行を根の並びへ落とすとルートになる**（5.4）。
     // 親を外すことと位置決めが `move` 1本で決まるので、線を出してよい。
     // **兄弟の中での並べ替えは従来どおり**——同じ親を持つ行の上下へは、
     // 親を触らずに落とせる。
@@ -1221,7 +1221,7 @@ function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolea
       return sourceRow.parentKey === row.parentKey && shownInStage(source) === section.stage
     }
     // **同じ段の中なら、表示上の親が同じ行どうし**（オンステージ段にも
-    // インデントされた行が出るようになったので、根だけとは限らない。pb-46）
+    // インデントされた行が出るようになったので、根だけとは限らない）
     if (shownInStage(source) === section.stage) {
       return sourceRow.parentKey === row.parentKey
     }
@@ -1241,7 +1241,7 @@ function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolea
  * | 掴んでいる行 | 落としたときに起きること |
  * |---|---|
  * | 表示上の根 | その段の先頭／末尾へ動く（`move`）。段をまたいでもよい |
- * | インデントされた行 | **ルートになる**（`PATCH parent_seq: null`。pb-70）。**バックログ段だけ** |
+ * | インデントされた行 | **ルートになる**（`PATCH parent_seq: null`）。**バックログ段だけ** |
  *
  * **インデントされた行に `position` を送らない。** その行は親の下で兄弟の端へ
  * 動くだけで、「その段の先頭／末尾へ」という表示と食い違う。**ルート化は
@@ -1257,7 +1257,7 @@ function canDropOnSection(sourceSeq: number | null, section: Section): boolean {
 }
 
 /**
- * インデントされた行をこの段へ落として**ルートにできる**か（5.4。pb-70）。
+ * インデントされた行をこの段へ落として**ルートにできる**か（5.4）。
  *
  * **バックログ段だけである。** サーバは `parent_seq: null` と `staged` を同時に
  * 受け取れるが（`ApiDesign.md` 9.4.2）、**画面の落とし先は絞る**——ルートにする
@@ -1271,7 +1271,7 @@ function canUnparentInto(section: Section): boolean {
 }
 
 /**
- * その行の**子にして**よいか（5.4「ドロップ先の見せ方」。pb-16）。
+ * その行の**子にして**よいか（5.4「ドロップ先の見せ方」）。
  *
  * **サーバが弾く条件を、そのまま画面の規則にする**——落とせない相手の上では
  * 面を出さず、カーソルを禁止の形にする。
@@ -1324,7 +1324,7 @@ function isDescendant(seq: number, ancestorSeq: number): boolean {
 function onDragOverRow(e: DragEvent, row: Row, section: Section): void {
   // **バックログは3分割**（`lib/dnd.ts`）——上下 1/4 が兄弟（`sort_key`）、
   // 中央 1/2 が子（`parent_seq`）で、**1回のドロップで2軸のどちらを動かすかを
-  // 決める**（pb-16）。半分で割る形では兄弟しか表せない
+  // 決める**。半分で割る形では兄弟しか表せない
   const side = zoneOf(e, { inside: true })
   const ok =
     side === 'inside'
@@ -1362,7 +1362,7 @@ function hintsSection(section: Section, side: 'first' | 'last'): boolean {
 function moveMessage(t: Ticket, stagedChange: boolean | undefined, unparented: boolean): string {
   const id = `${fullId(t)}「${t.title}」`
   // **ルート化を先に言う。** 同じ操作で段も動きうるが、利用者が意図したのは
-  // 親を外すことである（5.4。pb-70）
+  // 親を外すことである（5.4）
   if (unparented) return uiText("✓ {value0}をルートにしました", { value0: id })
   if (stagedChange === true) return uiText("✓ {value0}をオンステージへ上げました", { value0: id })
   if (stagedChange === false) return uiText("✓ {value0}をバックログへ戻しました", { value0: id })
@@ -1416,7 +1416,7 @@ async function runMove(
 /**
  * 段が変わるか。変わらないときは `undefined`（`move` に `staged` を送らない）。
  *
- * **`staged_at` ではなく「いま出ている段」で比べる**（pb-46）。配下の行は
+ * **`staged_at` ではなく「いま出ている段」で比べる**。配下の行は
  * `staged_at` が `NULL` のままオンステージ段に居るので、`staged_at` で比べると
  * **同じ段の中で動かしただけなのに `staged: true` を送り**、親を持つ行なので
  * 422 `not_stageable` になる（9.4.1）。
@@ -1433,7 +1433,7 @@ function optimisticRow(source: Ticket, stagedChange: boolean | undefined): Ticke
 }
 
 /**
- * その行の子にする（5.4「ドロップ先の見せ方」の中央 1/2。pb-16）。
+ * その行の子にする（5.4「ドロップ先の見せ方」の中央 1/2）。
  *
  * **送るのは `PATCH` の `parent_seq` だけで、`move` は呼ばない。**
  * 新しい親の下での位置は、続けて並べ替えれば決められる。2本続けて送ると
@@ -1490,7 +1490,7 @@ async function dropOnRow(e: DragEvent, row: Row, section: Section): Promise<void
   const source = tickets.value[from]!
   const stagedChange = stageChangeOf(source, section)
 
-  // **インデントされた行を根の並びへ落としたらルートにする**（5.4。pb-70）。
+  // **インデントされた行を根の並びへ落としたらルートにする**（5.4）。
   // **親と位置を `move` 1本で送る**（`ApiDesign.md` 9.4.2）——2本に分けると
   // 「ルートにはなったが位置は元のまま」が残りうる。
   const unparenting = rowIndex.value.get(seq!)?.parentKey != null && row.parentKey === null
@@ -1542,7 +1542,7 @@ async function dropOnSection(section: Section, position: 'first' | 'last'): Prom
   const stagedChange = stageChangeOf(source, section)
   const body: MoveTicketRequest = { position }
   if (stagedChange !== undefined) body.staged = stagedChange
-  // **インデントされた行はルートにして、その段の先頭／末尾へ置く**（5.4。pb-70）。
+  // **インデントされた行はルートにして、その段の先頭／末尾へ置く**（5.4）。
   // 親と位置が `move` 1本で決まるので、見出しの線と着地が一致する。
   if (sourceIsChild) body.parent_seq = null
 
@@ -1551,7 +1551,7 @@ async function dropOnSection(section: Section, position: 'first' | 'last'): Prom
   await runMove(source, body, null, stagedChange, sourceIsChild)
 }
 
-// ── 一覧から状態を変える（5.4「一覧で状態を変える」。pb-63）──────
+// ── 一覧から状態を変える（5.4「一覧で状態を変える」）──────
 
 /**
  * 行ごとの `StatusDropdown`（5.5 の部品をそのまま使う）。
@@ -1591,11 +1591,11 @@ async function loadRowTransitions(seq: number): Promise<void> {
 /**
  * 遷移させる（9.6）。**選んだ時点で送る**——確認は挟まない。
  *
- * 5.5 が pb-55 で確認モーダルを廃止しており（「状態変更は頻度が高く、毎回
- * ダイアログを挟むのは現実的でない」）、**一覧はさらに頻度が高い。**
+ * 5.5 も確認モーダルを挟まない（「状態変更は頻度が高く、毎回
+ * ダイアログを挟むのは現実的でない」）。**一覧はさらに頻度が高い。**
  *
  * **応答をそのまま行へ差し替える。** `onDetailUpdated` と同じ判断で、
- * 行の中身が変わっただけなら取り直さない（pb-15）。**フィルタから外れる行が
+ * 行の中身が変わっただけなら取り直さない。**フィルタから外れる行が
  * 残ることはある**——`status=todo` で絞っている最中に進行中へ変えた場合で、
  * これは詳細ペインから変えたときと同じ振る舞いである。
  *
@@ -1615,7 +1615,7 @@ async function transitionRow(ticket: Ticket, to: TicketTransitionOption): Promis
   }
 }
 
-// ── 一覧から担当を変える（5.4「一覧で担当を選ぶ」。pb-64）────────
+// ── 一覧から担当を変える（5.4「一覧で担当を選ぶ」）────────
 
 /**
  * 担当を差し替える（`ApiDesign.md` 9.5.2）。**選んだ時点で送る**——状態と同じで、
@@ -1625,7 +1625,7 @@ async function transitionRow(ticket: Ticket, to: TicketTransitionOption): Promis
  * `move` の応答で更新されており、他人が同時に変えていれば 409 が返る——**黙って
  * 上書きしない。**
  *
- * **応答をその行へ差し替える**（`onDetailUpdated` と同じ判断。pb-15）。行の増減が
+ * **応答をその行へ差し替える**（`onDetailUpdated` と同じ判断）。行の増減が
  * 起きないので取り直さない。**担当で絞り込み中に外れる行が残ることはある**が、
  * これは状態を変えたときと同じ振る舞いである。
  */
@@ -1649,7 +1649,7 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
 
 const showNewModal = ref(false)
 const newDefaults = ref<NewTicketDefaults>({})
-/** 新規エピックとして開いているか（5.4.3「新規エピック」。pb-14） */
+/** 新規エピックとして開いているか（5.4.3「新規エピック」） */
 const newEpicMode = ref(false)
 const newFieldErrors = ref<Record<string, string>>({})
 
@@ -1658,7 +1658,7 @@ const newFieldErrors = ref<Record<string, string>>({})
  *
  * **エピックで絞り込み中は「そのエピック配下かつ未完了」に絞る**——絞り込んで
  * 作業しているときに、視野の外のチケットを親に選べても選ぶ理由がない。
- * **エピックは入れない**——エピック欄で選ぶ（5.4.3「親チケットとエピック」。pb-14）。
+ * **エピックは入れない**——エピック欄で選ぶ（5.4.3「親チケットとエピック」）。
  * 以前は、選択中のエピック自身をここへ足していた。
  */
 const parentCandidates = computed<Ticket[]>(() => {
@@ -1690,7 +1690,7 @@ function openNewModal(sectionKey?: string): void {
       else defaults.parent_seq = seq
     }
     if (group.value === 'tag') defaults.tag_ids = [sectionKey]
-    // **スプリントの軸だけ初期値を持たない**（pb-6）。9.3 が `sprint_id` を
+    // **スプリントの軸だけ初期値を持たない**。9.3 が `sprint_id` を
     // 受け付けなくなったためで、所属はスプリントを開始したときに決まる。
     // 状態の軸が初期値を持たないのと同じ形である。
     if (group.value === 'assignee') defaults.assignee_id = sectionKey
@@ -1710,7 +1710,7 @@ function openNewModal(sectionKey?: string): void {
 }
 
 /**
- * 新規エピック（5.4.3「新規エピック」。pb-14）。`エピック[…]` のパネルから開く。
+ * 新規エピック（5.4.3「新規エピック」）。`エピック[…]` のパネルから開く。
  *
  * **同じモーダルを種別エピックに固定して使う。** 初期値は持たない——絞り込み中の
  * エピックを親に入れると、エピックの入れ子ができる。
@@ -1756,7 +1756,7 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
   }
 }
 
-// ── スプリントの運用（5.4「スプリントを開始・終了する」。pb-6）──────
+// ── スプリントの運用（5.4「スプリントを開始・終了する」）──────
 
 /**
  * スプリントを始める（`ApiDesign.md` 9.12.1）。
@@ -1955,7 +1955,7 @@ watch(projectKey, (key) => {
       </PageHeader>
 
     <div class="page-body" :class="{ shrunk }">
-      <!-- エピック・タグ・担当は狭い一覧でも常に出す。検索は2段目の左（pb-8）。 -->
+      <!-- エピック・タグ・担当は狭い一覧でも常に出す。検索は2段目の左。 -->
       <div class="backlog-filters" :class="{ 'backlog-filters-open': filtersOpen }">
         <div class="backlog-always-filters">
           <!-- エピックだけは複数選択。URL 上の実体は `parent`（部分木）である -->
@@ -2210,7 +2210,7 @@ watch(projectKey, (key) => {
               +
             </button>
 
-            <!-- スプリントの運用（5.4「スプリントを開始・終了する」。pb-6）。
+            <!-- スプリントの運用（5.4「スプリントを開始・終了する」）。
                  **オンステージ段の見出しにだけ出す**——対象がオンステージに
                  載っているもの全部だからで、別の画面で選び直させると同じ
                  集合を2回作ることになる。
@@ -2442,7 +2442,7 @@ watch(projectKey, (key) => {
                     </span>
                   </td>
 
-                  <!-- **一覧から状態を変えられる**（5.4「一覧で状態を変える」。pb-63）。
+                  <!-- **一覧から状態を変えられる**（5.4「一覧で状態を変える」）。
                        5.5 と同じ `StatusDropdown` を `dense` で置く——遷移できない先も
                        理由つきで出る規則（9.7）ごと共有される。**`ticket.transition` を
                        持たないときは部品側が押せないボタンにする**ので、出し分けを
@@ -2490,7 +2490,7 @@ watch(projectKey, (key) => {
                     @mouseleave="overActionCell = false"
                   >
                     <span class="assignee-cell">
-                      <!-- **一覧から担当を選べる**（5.4「一覧で担当を選ぶ」。pb-64）。
+                      <!-- **一覧から担当を選べる**（5.4「一覧で担当を選ぶ」）。
                            `ticket.assign` を持たないときは押せない表示になるので、
                            出し分けをここに書かない -->
                       <AssigneePicker
@@ -2540,7 +2540,7 @@ watch(projectKey, (key) => {
 
         <!-- 総件数は**チケットの実数**で、タグの重複を含まない（5.4.1）。
              **上下の件数の合計と一致する**——伏せる行が無くなったため
-             （5.4「配下の行き先」。pb-46） -->
+             （5.4「配下の行き先」） -->
         <p class="total">
           <template v-if="truncated">
             {{ $ui('全{total}件中{shown}件を表示しています。フィルタで絞り込んでください', { total: withComma(total), shown: withComma(perPage) }) }} </template>
@@ -2564,7 +2564,7 @@ watch(projectKey, (key) => {
         @save="createTicket"
       />
 
-      <!-- スプリントの開始（5.4「開始のダイアログ」。pb-6） -->
+      <!-- スプリントの開始（5.4「開始のダイアログ」） -->
       <SprintStartModal
         v-if="showSprintStart"
         :onstage-count="onstageCount"
@@ -2831,7 +2831,7 @@ watch(projectKey, (key) => {
   opacity: 0.5;
 }
 
-/* **行そのものが掴みしろである**（5.4「掴みしろ」。pb-7 → pb-71 で全幅にも広げた）。
+/* **行そのものが掴みしろである**（5.4「掴みしろ」）。全幅が掴みしろになる。
    **行クリックで詳細が開く**ことは変わらないので `pointer` を上書きしない
    ——`grab` は「掴める」を足すのであって、「押せない」を意味しない */
 .row.grabbable {
@@ -2865,7 +2865,7 @@ watch(projectKey, (key) => {
   box-shadow: inset 0 -2px 0 0 var(--pb-accent);
 }
 
-/* **中央 1/2 は面で塗る**（5.4「ドロップ先の見せ方」。pb-16）。
+/* **中央 1/2 は面で塗る**（5.4「ドロップ先の見せ方」）。
    線が「行と行の**間**」、面が「行**そのもの**」を指す。
    **線と並べたときに一目で別物と読める強さ**にする——2px の線と淡い背景色
    では、どちらに入るのかが手元で判別できない（5.10 と同じ判断） */
@@ -2896,7 +2896,7 @@ watch(projectKey, (key) => {
   box-shadow: inset 0 -2px 0 0 var(--pb-accent);
 }
 
-/* 進行中のスプリント（5.4「スプリントを開始・終了する」。pb-6）。
+/* 進行中のスプリント（5.4「スプリントを開始・終了する」）。
    **見出しの1行に収める**——名前が長いときは名前のほうを省略し、
    期間は縮ませない（日付が切れると読めない）。 */
 .sprint-active {
@@ -2982,7 +2982,7 @@ watch(projectKey, (key) => {
    **実行者（🤖）も同じセルに入る**（5.4。手順26b）。列を足さないのは、8列が既に
    横幅の上限であることと、実行者を読みたい場面が「担当は誰か」を読む場面と
    同じだからである */
-/* **`▾` のぶん 16px 広げた**（5.4「一覧で担当を選ぶ」。pb-64）。130px は
+/* **`▾` のぶん 16px 広げた**（5.4「一覧で担当を選ぶ」）。130px は
    `👤開発メンバー` でほぼ埋まる幅で、キャレットを足すと名前が省略記号で切れる
    ——**押せることを示す記号のために、読みたい情報を削らない。**
    広げたぶんはタイトル列（可変）から取る */
@@ -3105,12 +3105,11 @@ watch(projectKey, (key) => {
   line-height: 18px;
 }
 
-/* ステータスのバッジは `StatusDropdown` が持つ（5.4「一覧で状態を変える」。pb-63）。
+/* ステータスのバッジは `StatusDropdown` が持つ（5.4「一覧で状態を変える」）。
    **輝度差＋記号で表す規則（8.7）ごとあちらへ移した**——同じ見た目を2か所に
    置くと、片方だけ直る。ここに残っていた `.status` 系は使い手を失ったので消した */
 
-/* 担当の名前と種別の記号は `AssigneePicker` が持つ（5.4「一覧で担当を選ぶ」。
-   pb-64）。ここに残っていた `.assignee-name` / `.actor-mark` は使い手を失った */
+/* 担当の名前と種別の記号は `AssigneePicker` が持つ（5.4「一覧で担当を選ぶ」） */
 .priority {
   color: var(--pb-text-muted);
 }

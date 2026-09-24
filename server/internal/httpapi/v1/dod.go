@@ -132,7 +132,7 @@ func (h *handler) createDoDItem(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, e)
 		return
 	}
-	// **ticket.self_edit では is_satisfied を送れない**（9.9。0029。pb-75）。
+	// **ticket.self_edit では is_satisfied を送れない**（9.9。0029）。
 	if req.IsSatisfied != nil {
 		if e := denyDoDSatisfied(r, scope.key); e != nil {
 			apierr.Write(w, r, e)
@@ -563,7 +563,7 @@ func dodSummaryOf(v dodView) string {
 }
 
 // denyDoDSatisfied は ticket.self_edit だけを持つ呼び出し元が is_satisfied を
-// 書こうとしていないかを見る（ApiDesign.md 9.9。0029。pb-75）。
+// 書こうとしていないかを見る（ApiDesign.md 9.9。0029）。
 //
 // **pb_submit_result が「盤面を動かさない」と決めた判断と正面からぶつかる**
 // （9.15、手順26c）。完了の判定は人が行うので、エージェントに開けるのは

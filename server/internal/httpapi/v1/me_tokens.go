@@ -49,7 +49,7 @@ const (
 	tokenMinExpiresInDays = 1
 	tokenMaxExpiresInDays = 365
 
-	// maxAPITokensPerActor は1人あたりの発行本数の上限（利用者の判断、2026-08-22）。
+	// maxAPITokensPerActor は1人あたりの発行本数の上限。
 	//
 	// 大量に発行するユースケースが無く、増えるほど「どこからアクセスしているのか」を
 	// 本人が把握できなくなる。**数えるのは失効していないもので、期限切れを含む**

@@ -20,7 +20,7 @@ import { uiText } from '../locales/ui'
  * **手順17b で実画面になった**——`↗` は右の詳細ペインを開く（2.2.1）。
  * **クエリを持ち回る**（3.2）ので、開いてもエピックの絞り込みは外れない。
  *
- * **末尾に `[+ 新規エピック]` を置く**（5.4「新規作成」。pb-14）。ここでは入力させず、
+ * **末尾に `[+ 新規エピック]` を置く**（5.4「新規作成」）。ここでは入力させず、
  * 呼び出し側が新規チケットのモーダルを種別エピックで開く——このパネルは外側を押す・
  * スクロールすると閉じるので、打ちかけのタイトルが消える。
  */
@@ -41,7 +41,7 @@ const props = defineProps<{
   /** `[+ 新規エピック]` を出すか（`ticket.create`。5.4「新規作成」） */
   canCreate?: boolean
   /**
-   * `↗` の行き先に足すクエリ（pb-66）。チケット検索は `{ from: 'search' }` を渡す
+   * `↗` の行き先に足すクエリ。チケット検索は `{ from: 'search' }` を渡す
    * ——**落とすと、押した先の詳細の後ろがバックログに変わる**（`GuiDesign.md` 3.2）
    */
   linkQuery?: Record<string, string>
@@ -82,8 +82,8 @@ function place(): void {
 }
 
 /**
- * 閉じるのは**パネルの外側**のスクロールだけ（`GuiDesign.md` 6.1「浮かせたパネルを閉じる規則」。
- * pb-131）。capture で拾うので、候補の欄のスクロールもここへ届く。
+ * 閉じるのは**パネルの外側**のスクロールだけ（`GuiDesign.md` 6.1「浮かせたパネルを閉じる規則」）。
+ * capture で拾うので、候補の欄のスクロールもここへ届く。
  */
 function onScroll(e: Event): void {
   if (e.target instanceof Node && panel.value?.contains(e.target)) return
@@ -205,7 +205,7 @@ const panelStyle = computed(() => ({
           ↗
         </RouterLink>
       </div>
-      <!-- 新規エピック（5.4「新規作成」。pb-14）。選択肢と混ざらないよう罫線で区切る -->
+      <!-- 新規エピック（5.4「新規作成」）。選択肢と混ざらないよう罫線で区切る -->
       <div v-if="canCreate" class="epic-create">
         <button type="button" class="epic-create-button" @click="startCreate">{{ $ui('+ 新規エピック') }}</button>
       </div>

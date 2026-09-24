@@ -125,7 +125,7 @@ func (h *handler) listRoles(w http.ResponseWriter, r *http.Request) {
 
 // listPermissions は GET /api/v1/permissions を処理する（ApiDesign.md 7.2）。
 //
-// **必要権限は無い**（認証済みであればよい。2026-09-02 に user.manage から変更）。
+// **必要権限は無い**（認証済みであればよい。user.manage を求めない）。
 // 消費者が2つある——GuiDesign.md 5.6.3 の権限マトリクスと、5.8.2 の
 // エージェント用トークンの発行結果である。**後者の必要権限は「本人」**なので、
 // user.manage を要求したままだと description を引けない。

@@ -15,7 +15,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/tlscert"
 )
 
-// 第2要素の管理（ApiDesign.md 4.6。pb-103）のハンドラ単体テスト。
+// 第2要素の管理（ApiDesign.md 4.6）のハンドラ単体テスト。
 //
 // 認証はミドルウェアの責務なので通さない（routes_test.go が別に見ている）。
 // ここで確かめるのは**応答の形・検証の分岐・書き込みに何を渡すか**である。

@@ -14,7 +14,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
 )
 
-// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2）を**実際のDBに対して**通す。pb-6。
+// スプリントの運用（ApiDesign.md 9.12.1 / 9.12.2）を**実際のDBに対して**通す。
 //
 // 単体テストはフェイクを差し替えるため queries/sprint.sql が一度も実行されない。
 // **ここでしか確かめられないものが4つある。**
@@ -77,7 +77,7 @@ func TestSprintLifecycleIntegration(t *testing.T) {
 		fmt.Sprintf(`{"type":"task","title":"孫の仕事","parent_seq":%d}`, seqOf(child)))
 	backlogOnly := createTicketIT(t, r, session, base, `{"type":"story","title":"まだやらない"}`)
 
-	// ── ⓪ 着手すると、表示上のトップレベルの祖先が段へ上がる（9.6。pb-5）──
+	// ── ⓪ 着手すると、表示上のトップレベルの祖先が段へ上がる（9.6）──
 	//
 	// **孫に着手する。** 上がるのは孫でも子でもなく、**部分木の根である親**
 	// ——段に置けるのは表示上のトップレベルだけで、配下は親と一緒に運ばれる。
@@ -147,7 +147,7 @@ func TestSprintLifecycleIntegration(t *testing.T) {
 	// ── ③ 完了させる：親の前に子を完了させる（9.6 の検証7）──────
 	//
 	// **孫 → 子 → 親の順でしか完了できない。** 未完了の子を抱えた親は
-	// done へ進めない（pb-72）。
+	// done へ進めない。
 	closeTicket(t, r, session, base, seqOf(grandchild))
 	closeTicket(t, r, session, base, seqOf(child))
 
@@ -186,7 +186,7 @@ func TestSprintLifecycleIntegration(t *testing.T) {
 	if got := ticketSeqs(t, r, session, base, ""); !equalInts(got, wantVisible) {
 		t.Errorf("棚に戻ったあとの一覧 = %v, want %v", got, wantVisible)
 	}
-	// **retired=true で棚に戻ったものも返る**（9.2.1）。チケット検索（pb-66）は常にこれを送る。
+	// **retired=true で棚に戻ったものも返る**（9.2.1）。チケット検索は常にこれを送る。
 	if got := ticketSeqs(t, r, session, base, "?retired=true"); !equalInts(got, all) {
 		t.Errorf("retired=true の一覧 = %v, want %v", got, all)
 	}
@@ -232,7 +232,7 @@ func seqOf(ticket map[string]any) int {
 func closeTicket(t *testing.T, r http.Handler, session, base string, seq int) {
 	t.Helper()
 	// **中間の in_progress は既に済んでいることがある。** 子が未着手を出た
-	// 時点で pb-72 の連動が祖先を進行中にするためで、409 は「もうそこに居る」
+	// 時点で子と親の連動（9.6）が祖先を進行中にするためで、409 は「もうそこに居る」
 	// を意味する。**完了への遷移だけは必ず通ること**を要求する。
 	rec := postWithCookie(r, fmt.Sprintf("%s/tickets/%d/transition", base, seq), session,
 		`{"to":"in_progress"}`)

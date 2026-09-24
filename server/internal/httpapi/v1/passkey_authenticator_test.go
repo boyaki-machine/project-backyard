@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// softAuthenticator はパスキーのテストで使う、ソフトウェアの認証器（pb-104）。
+// softAuthenticator はパスキーのテストで使う、ソフトウェアの認証器。
 //
 // **本物の認証器とブラウザが作る応答を、テストの中で組み立てる。** go-webauthn は
 // 署名・rpIdHash・origin・UV を実際に検証するので、形だけを真似た値では通らない

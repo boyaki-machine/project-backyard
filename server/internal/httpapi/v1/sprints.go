@@ -306,7 +306,7 @@ func (h *handler) sprintByID(ctx context.Context, projectID, id string) (sprintV
 	return sprintByIDWith(ctx, h.q, projectID, id)
 }
 
-// sprintByIDWith は sprintByID の Querier を差し替えられる形（pb-6）。
+// sprintByIDWith は sprintByID の Querier を差し替えられる形。
 //
 // **トランザクションの中から呼ぶために分けた。** 9.12.1 / 9.12.2 は書き込みと
 // 同じトランザクションで応答用の行を読む必要があり、h.q（プール）で読むと

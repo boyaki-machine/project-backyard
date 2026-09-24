@@ -106,16 +106,15 @@ func validateAgentEnvSuffix(v string) (string, *apierr.Detail) {
 
 // agentDefaultScopes はエージェント用トークンの既定スコープ（Design.md 6.5）。
 //
-// **語彙は権限カタログのキーそのものである**（6.4.1）。改訂前の 6.5 は
-// ticket:read / context:read / ticket:claim / note:write / result:submit /
-// proposal:create という別語彙を挙げていたが、**その語彙で発行すると
-// 実効権限が0件になる**——積は権限キーどうしの完全一致で取るためである。
+// **語彙は権限カタログのキーそのものである**（6.4.1）。ticket:read のような
+// 別語彙で発行すると、**実効権限が0件になる**——積は権限キーどうしの完全一致で
+// 取るためである。
 //
 // **ticket.close を入れない**（6.5 の禁止）。**doc.edit も入れない**——
 // pb_put_doc に要る権限だが、載せるかは「そのエージェントが誰に付いているか」で
 // 決まる（Design.md 8.2）。そもそも所有者が持たなければ積で消える。
 //
-// **ticket.reference.edit は入れる**（0027／pb-68。利用者の判断、2026-09-08）。
+// **ticket.reference.edit は入れる**（0027）。
 // pb_add_reference が要求する権限で、**作業の跡（ブランチ・コミット）を残すのは
 // 実装エージェントの通常の仕事**だから既定に置く——doc.edit のように「誰に付いて
 // いるか」で変わらない。既定から外すと「コミットを記録できないエージェント」が
@@ -123,7 +122,7 @@ func validateAgentEnvSuffix(v string) (string, *apierr.Detail) {
 // 本文・担当・期日の書き換えや並べ替えまで開くためで、そこを切り出すために 0027 で
 // 権限を新設した（DbDesign.md 6.12.1）。
 //
-// **ticket.self_edit も入れる**（0029／pb-75。利用者の判断、2026-09-09）。
+// **ticket.self_edit も入れる**（0029）。
 // pb_update_ticket と pb_put_dod が要求する権限で、**起票したチケットを直すのは
 // 実装エージェントの通常の仕事**である。ticket.reference.edit と同じ判断で、
 // **ticket.edit を渡す案は同じ理由で棄却した**——あちらは execution_mode /
@@ -372,7 +371,7 @@ func (h *handler) listAgentClientKinds(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, catalog[agentClientKindView]{Items: items})
 }
 
-// ── GET /api/v1/agent-scopes（4.5.9。pb-93）────────────────────
+// ── GET /api/v1/agent-scopes（4.5.9）────────────────────
 
 // agentScopesView はエージェント用トークンのスコープ（ApiDesign.md 4.5.9）。
 type agentScopesView struct {
@@ -384,9 +383,9 @@ type agentScopesView struct {
 
 // getAgentScopes は既定スコープと足せる権限を返す（ApiDesign.md 4.5.9）。
 //
-// **画面に既定スコープの写しを持たせないために在る**（pb-93）。4.5.3 の scopes は
+// **画面に既定スコープの写しを持たせないために在る**。4.5.3 の scopes は
 // 絶対指定なので、画面が「既定に doc.edit を足す」を送るには既定の中身が要る。
-// 写しは権限を足すたびに2回続けて腐った（pb-90）。listAgentClientKinds と同じく、
+// 写しは権限を足すたびに2回続けて腐った。listAgentClientKinds と同じく、
 // **必要権限は無い**（認証済みであればよい）。
 //
 // **返すのは agentDefaultScopes / agentGrantableScopes そのもの**で、4.5.3 の

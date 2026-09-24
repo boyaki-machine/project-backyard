@@ -305,7 +305,7 @@ func TestCreateUserGeneratesPassword(t *testing.T) {
 	if !ok || pw == "" {
 		t.Fatalf("generated_password = %v, want 生成された平文", body["generated_password"])
 	}
-	// 形式は <形容詞>-<名詞>-<4桁>-<名詞>（6.2.1。pb-40 で語を1つ足した）。
+	// 形式は <形容詞>-<名詞>-<4桁>-<名詞>（6.2.1）。
 	if parts := strings.Split(pw, "-"); len(parts) != 4 || len(parts[2]) != 4 {
 		t.Errorf("generated_password = %q, want <形容詞>-<名詞>-<4桁数字>-<名詞>", pw)
 	}

@@ -97,7 +97,7 @@ const routeSources: RouteRecordRaw[] = [
   // 視点ごとにメニュー項目・権限・件数バッジを持てるようにするためである。
   //
   // **下の `/p/:key/tickets/:seq`・`/p/:key/search` と同じコンポーネントである**
-  // （手順17b。pb-66 で入れ物の `TicketViewsPage` に替えた）。詳細は一覧を消さず、
+  // （入れ物の `TicketViewsPage`）。詳細は一覧を消さず、
   // その右にペインとして開く（2.2.1）。入れ物がパスと `from` を見て、バックログか
   // 検索かを出し分ける。
   {
@@ -129,7 +129,7 @@ const routeSources: RouteRecordRaw[] = [
   // 共有URLとして既に確定している。**一覧の条件はクエリで持ち回る**ので、クエリを
   // 解釈できない相手（共有された素のURL）でも壊れない（バックログがフィルタ無しで
   // 並ぶだけである）。**チケット検索から開いたときは `from=search` が付き**、後ろに
-  // 検索結果が残る（pb-66）。
+  // 検索結果が残る。
   {
     path: '/p/:key/tickets/:seq',
     component: TicketViewsPage,
@@ -183,7 +183,7 @@ const routeSources: RouteRecordRaw[] = [
     meta: { permission: 'user.manage' },
   },
 
-  // 実画面（GuiDesign.md 5.12）。pb-2 で足した。
+  // 実画面（GuiDesign.md 5.12）。
   //
   // **/admin/system（認証プロバイダ、Phase 3）とは別画面である。** 必要権限が
   // system.settings と authprovider.manage で分かれており、ユーザー管理を
@@ -202,7 +202,7 @@ const routeSources: RouteRecordRaw[] = [
       placeholder: {
         title: '監査ログ',
         docRef: 'GuiDesign.md 5.7',
-        status: '未定（pb-181）',
+        status: '未定',
         planned: [
           '期間・操作・実行者・結果によるフィルタ',
           '日時・実行者・操作・対象・結果の一覧',
@@ -245,13 +245,11 @@ const routeSources: RouteRecordRaw[] = [
 
   // ── チケットで駆動する視点（GuiDesign.md 3.2 / 10章）──────────
   //
-  // **Phase 番号を割り当てない**（利用者の判断、2026-09-09。pb-62）。
-  // 駆動を手順番号からチケットへ移したため（Design.md 11章、2026-09-06）、
-  // **表示は Phase ではなく PB のチケット番号**にする。
+  // **Phase 番号を割り当てない。** 状態は「未定」と出す。
   //
-  // **WBS とスプリント管理の2ルートは消した**（同）。WBS が指していたのは
+  // **WBS とスプリント管理のルートは持たない。** WBS が指すのは
   // チケットの親子階層で、**バックログが既にその面である**。バーンダウン・
-  // ベロシティは進捗分析（/p/:key/insights）へ寄せた。
+  // ベロシティは進捗分析（/p/:key/insights）が持つ。
   {
     path: '/p/:key/board',
     component: PlaceholderPage,
@@ -260,7 +258,7 @@ const routeSources: RouteRecordRaw[] = [
       placeholder: {
         title: 'カンバンボード',
         docRef: 'GuiDesign.md 10章',
-        status: 'PB のチケット pb-87',
+        status: '未定',
         planned: [
           '列＝ワークフローのステータス',
           'ドラッグ&ドロップによる遷移',
@@ -278,13 +276,13 @@ const routeSources: RouteRecordRaw[] = [
       placeholder: {
         title: 'ガントチャート',
         docRef: 'GuiDesign.md 10章',
-        status: 'PB のチケット pb-88',
+        status: '未定',
         planned: ['集中モード（2.3.2）の主な用途', '仮想スクロールによる大量行への対応'],
       },
     },
   },
 
-  // 実画面（GuiDesign.md 5.13）。pb-66 でプレースホルダから差し替えた。
+  // 実画面（GuiDesign.md 5.13）。
   //
   // **バックログ・詳細と同じ入れ物を指す**——詳細を開いても検索画面が再マウントされず、
   // 取得結果とスクロール位置が残る（上の `/p/:key/tickets/:seq` の注記）。

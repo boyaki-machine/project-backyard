@@ -27,7 +27,7 @@ const (
 	LayerBoot Layer = 1
 	// LayerRuntime は実行時の共有設定。DB の app_setting に置き、画面から変えられる。
 	LayerRuntime Layer = 2
-	// LayerSharedSecret は共有される秘密（TLS 証明書と秘密鍵）。**未実装**。pb-3 の範囲。
+	// LayerSharedSecret は共有される秘密（TLS 証明書と秘密鍵）。
 	LayerSharedSecret Layer = 3
 )
 
@@ -85,7 +85,7 @@ type Definition struct {
 	Secret bool
 	// RestartRequired が真なら、変更が効くまでに再起動が要る。
 	RestartRequired bool
-	// NeedsConfirm が真なら、**変えたあと確認しないと元へ戻す**（pb-97、Design.md 10.3）。
+	// NeedsConfirm が真なら、**変えたあと確認しないと元へ戻す**（Design.md 10.3）。
 	//
 	// **判定の基準は「その変更で、その画面へ戻れなくなるか」だけである。**
 	// 重要かどうかで決めない——重要さは人によって違う。
@@ -162,15 +162,15 @@ var definitions = []Definition{
 	},
 	{
 		Key: "bind", EnvKey: "PB_BIND",
-		// **第2層へ移した**（pb-99）。**待受は「起動の順序をそう決めている」だけ**
+		// **第2層へ移した**。**待受は「起動の順序をそう決めている」だけ**
 		// であり、接続文字列のように原理的に DB へ置けないものではない——
 		// サーバは DB へ繋いだあとに待受を張っている。
 		//
-		// **再起動は要らない**（pb-106 で張り替えられるようにした）。
-		// **確認しないと元へ戻す**（pb-97）——ポートを誤ると画面へ到達できない。
+		// **再起動は要らない**（待受を張り替える）。
+		// **確認しないと元へ戻す**——ポートを誤ると画面へ到達できない。
 		//
 		// **既定はこの端末からだけ届く形にする**（`Requirements.md` 10.10.2
-		// 「既定では 127.0.0.1 にのみバインドする」。pb-125）。**何も設定しないまま
+		// 「既定では 127.0.0.1 にのみバインドする」）。**何も設定しないまま
 		// 起動したときに、平文ですべてのアドレスへ出さない**ためである。
 		// **コンテナは自分で `PB_BIND=0.0.0.0:8080` を明示する**（`deploy/Dockerfile`
 		// の `ENV` と `deploy/base/compose.yaml`）——中で 127.0.0.1 に閉じると、
@@ -190,8 +190,8 @@ var definitions = []Definition{
 	{
 		Key: "tls_enabled", EnvKey: "PB_TLS_ENABLED",
 		Layer: LayerRuntime, Type: TypeBool,
-		// **再起動は要らない**（pb-106 で待受を張り替えられるようにした）。
-		// **確認しないと元へ戻す**（pb-97）——http で入っていた人が https へ
+		// **再起動は要らない**（待受を張り替える）。
+		// **確認しないと元へ戻す**——http で入っていた人が https へ
 		// 移れないと締め出される。
 		Default: "false", NeedsConfirm: true,
 		DisplayName: "TLS で待ち受ける",
@@ -221,7 +221,7 @@ var definitions = []Definition{
 	{
 		Key: "cookie_secure", EnvKey: "PB_COOKIE_SECURE",
 		Layer: LayerRuntime, Type: TypeBool,
-		// **確認しないと元へ戻す**（pb-97）——http で有効にすると Cookie が
+		// **確認しないと元へ戻す**——http で有効にすると Cookie が
 		// 送られず、**ログインが黙って失敗する。**
 		Default: "false", NeedsConfirm: true,
 		DisplayName: "Cookie に Secure を付ける",

@@ -1,4 +1,4 @@
-// TLS 証明書API（ApiDesign.md 11.4〜11.6）。pb-3。
+// TLS 証明書API（ApiDesign.md 11.4〜11.6）。
 //
 //	GET    /api/v1/admin/tls/certificates       11.4
 //	POST   /api/v1/admin/tls/certificates       11.5
@@ -45,7 +45,7 @@ type certificateView struct {
 	DNSNames   []string `json:"dns_names"`
 	// IPAddresses は IP の SAN（11.4）。**列には無く、cert_pem から採る**——
 	// dns_names は DNS: の SAN しか持たないので、**これを出さないと画面の
-	// 「SAN」欄と突き合わせの結果が食い違って見える**（pb-100 の実画面で踏んだ）。
+	// 「SAN」欄と突き合わせの結果が食い違って見える**。
 	IPAddresses  []string  `json:"ip_addresses"`
 	NotBefore    time.Time `json:"not_before"`
 	NotAfter     time.Time `json:"not_after"`
@@ -54,7 +54,7 @@ type certificateView struct {
 	IsSelfSigned bool      `json:"is_self_signed"`
 	// Status はサーバが決める（11.4）。画面が日付から組み立てない。
 	Status string `json:"status"`
-	// Decryptable はいまの鍵で秘密鍵を復号できるか（11.4。pb-98）。
+	// Decryptable はいまの鍵で秘密鍵を復号できるか（11.4）。
 	//
 	// **key_id の突き合わせでは検出できない**——行の key_id は常に v1 で、
 	// 鍵の出どころを記録していない。**行ごとに復号を試して決める。**
@@ -76,12 +76,12 @@ type certificateListResponse struct {
 	// 待受の変更には再起動が要るので、両者は再起動をまたぐとずれる。
 	ListenURL string `json:"listen_url"`
 	// ListenHost は接続に使うホスト名。**0.0.0.0 と :: では null である**（11.4）。
-	// **あれらは待受の表記であって接続先のホスト名ではない**（pb-100 で実測）。
+	// **あれらは待受の表記であって接続先のホスト名ではない**。
 	ListenHost *string `json:"listen_host"`
 	// ListenHostMatch はいま出す証明書が ListenHost を覆っているか（11.4）。
 	//
 	// **判定はサーバが行い、画面は結果を出すだけである。** 画面が dns_names と
-	// 照合していたときは IP の SAN が抜け落ちていた（pb-100）。
+	// 照合していたときは IP の SAN が抜け落ちていた。
 	ListenHostMatch tlscert.ListenHostMatch `json:"listen_host_match"`
 	// SecretKeyPresent は鍵が使える状態か。**PB が作るので通常は真である。**
 	SecretKeyPresent bool `json:"secret_key_present"`
@@ -311,10 +311,9 @@ func (h *handler) deleteTLSCertificate(w http.ResponseWriter, r *http.Request) {
 //
 //	PB_SECRET_KEY があればそれ ＞ DB の行 ＞ 生成して DB へ保存
 //
-// **利用者の操作を要らなくするため、無ければ PB が作る。** 改訂前は環境変数を
-// 必須にして 409 を返していたが、**証明書を1枚登録するために環境変数の設定と
-// 再起動を要求する形は「設定は WebGUI を第一の口とする」方針と矛盾していた**
-// （stg での利用者の指摘、2026-09-12）。
+// **利用者の操作を要らなくするため、無ければ PB が作る。** 環境変数を必須にすると、
+// **証明書を1枚登録するために環境変数の設定と再起動を要求することになり、
+// 「設定は WebGUI を第一の口とする」方針と矛盾する。**
 func (h *handler) secretKey(ctx context.Context) ([]byte, tlscert.KeyOrigin, *apierr.Error) {
 	encoded := h.settings.Snapshot().String(config.KeySecretKey)
 	key, origin, err := tlscert.ResolveKey(ctx, SecretStore{Q: h.q}, encoded)
@@ -418,7 +417,7 @@ func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow, key []
 	return resp
 }
 
-// decryptable はいまの鍵でこの行の秘密鍵を復号できるかを返す（11.4。pb-98）。
+// decryptable はいまの鍵でこの行の秘密鍵を復号できるかを返す（11.4）。
 //
 // **X509KeyPair までは見ない。** 見たいのは**鍵の出どころが変わっていないか**で
 // あり、登録時に証明書と鍵の対応は検証済みである（11.5）。
@@ -445,7 +444,7 @@ func activePEM(rows []gen.ListTLSCertificatesRow, activeID string) string {
 //
 // **証明書だけを返す。** 秘密鍵はこの口にも現れない（11.4）。
 //
-// **zip に包む**（pb-108）。`.crt` をそのまま返すとブラウザが拒み、**PB は 200 を
+// **zip に包む**。`.crt` をそのまま返すとブラウザが拒み、**PB は 200 を
 // 返しているので失敗がどこにも残らない。**
 //
 // **監査ログを残さない。** 証明書は接続してきた誰にでも提示されるもので、

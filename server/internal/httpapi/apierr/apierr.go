@@ -46,7 +46,7 @@ const (
 	InvalidTransition Code = "invalid_transition"
 
 	// ChildrenNotClosed は遷移先が完了カテゴリなのに、未完了の子チケットが
-	// 残っている（ApiDesign.md 9.6 の検証7、9.14。pb-72）。
+	// 残っている（ApiDesign.md 9.6 の検証7、9.14）。
 	//
 	// **403 ではなく 409 なのは、権限の問題ではないためである**——同じ人が、
 	// 子を完了させたあとなら通る。InvalidTransition と同じ 409 に置くのは、
@@ -55,14 +55,14 @@ const (
 	ChildrenNotClosed Code = "children_not_closed"
 
 	// BackupTooNew は、取り込もうとした書庫のマイグレーション番号が、いまの PB より
-	// 新しい（ApiDesign.md 11.12、2.5.1。pb-147）。**知らない列を推測して埋めることに
+	// 新しい（ApiDesign.md 11.12、2.5.1）。**知らない列を推測して埋めることに
 	// なるので取り込まない。**
 	//
 	// **Conflict と分けてあるのは、利用者が取る行動が違うため**である——競合は読み直せば
 	// 済むが、こちらは PB を新しくするまで何度やっても通らない。
 	BackupTooNew Code = "backup_too_new"
 
-	// Maintenance は保守モード中である（ApiDesign.md 11.13、Design.md 10.4。pb-147）。
+	// Maintenance は保守モード中である（ApiDesign.md 11.13、Design.md 10.4）。
 	// 書庫の取り込みのあいだ、/api と /mcp はこれを返す。
 	//
 	// **Retry-After を伴わない。** かかる時間は書庫の大きさで決まり、PB は見積もれない。

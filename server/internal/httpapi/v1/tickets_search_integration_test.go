@@ -18,7 +18,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
 )
 
-// チケット検索の条件（ApiDesign.md 9.2.1「検索の条件」。pb-66）を**実際のDBに対して**通す。
+// チケット検索の条件（ApiDesign.md 9.2.1「検索の条件」）を**実際のDBに対して**通す。
 //
 // 単体テストはフェイクを差し替えるので、queries/search.sql も ListTickets の検索の
 // 条件も一度も実行されない。**ここでしか確かめられないものが6つある。**

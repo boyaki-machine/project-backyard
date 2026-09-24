@@ -9,8 +9,8 @@
 # **出力は「配置すれば動く一式」である**（stg の build.sh と同じ考え方。Design.md 4.4）。
 # 同梱のスクリプトは自分の位置へ移ってから動くので、一式を丸ごと任意のパスへ置ける。
 #
-# TARGET は native（pb-122）と docker / compose（pb-123）と k8s（pb-124）。
-# **CPU は 64bit の2種だけを受ける**（利用者の判断、2026-09-13。pb-4）。
+# TARGET は native と docker / compose と k8s。
+# **CPU は 64bit の2種だけを受ける**。
 #
 # **macOS 標準の bash 3.2 でも動くように書く。** ${var,,} や連想配列を使わない。
 set -euo pipefail
@@ -23,7 +23,7 @@ compose_dir="${prod_dir}/compose"
 k8s_dir="${prod_dir}/k8s"
 
 # **goose には postgres のドライバだけを入れる。** 全ドライバ入りは約 38MB、絞ると
-# 11〜12MB になる（pb-4 で実測）。版は server/tools/go.mod が固定しているので
+# 11〜12MB になる（実測）。版は server/tools/go.mod が固定しているので
 # （DbDesign.md 5.1）、ここには書かない。**コンテナイメージにも --build-arg で渡す。**
 goose_tags="no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_vertica no_ydb"
 
@@ -104,7 +104,7 @@ if [ "${container}" = true ] && [ "${os}" != linux ]; then
 	die "TARGET=${target} の行き先は linux だけ（コンテナは Linux で動く）。OS は省くか linux を指定すること"
 fi
 
-# **x86 は amd64 と読む**（利用者の判断。「x64 と x86 を amd64 として読む」）。
+# **x86 は amd64 と読む**（「x64 と x86 を amd64 として読む」）。
 # 32bit を名指しする表記だけを拒む。
 case "$(lower "${arch}")" in
 amd64 | x64 | x86_64 | x86) arch=amd64 ;;
@@ -141,7 +141,7 @@ if [ "${container}" = true ] && ! docker buildx version >/dev/null 2>&1; then
 	exit 1
 fi
 
-# ── native（pb-122）─────────────────────────────────────────
+# ── native─────────────────────────────────────────
 build_native() {
 	local exe=""
 	if [ "${os}" = windows ]; then
@@ -210,7 +210,7 @@ build_native() {
 	esac
 }
 
-# ── docker / compose（pb-123）・k8s（pb-124）─────────────────
+# ── docker / compose ・k8s─────────────────
 # build_image はイメージを作り、一式の雛形に埋める参照を image_ref に入れる。
 image_ref=""
 build_image() {
@@ -223,7 +223,7 @@ build_image() {
 			--tag "${push}" --push "${repo_root}"
 	else
 		image_ref="project-backyard:${version}"
-		# **type=docker の tar にする**（利用者の判断に異論なし、2026-09-15）。docker load のほか、
+		# **type=docker の tar にする**。docker load のほか、
 		# nerdctl や podman も読める。
 		docker buildx build --platform "linux/${arch}" -f "${repo_root}/deploy/Dockerfile" \
 			--build-arg "VERSION=${version}" --build-arg "GOOSE_TAGS=${goose_tags}" \
