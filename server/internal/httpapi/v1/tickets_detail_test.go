@@ -1179,6 +1179,68 @@ func TestTransitionTicketRequiresTo(t *testing.T) {
 	}
 }
 
+// **コメントの上限は 9.8 と同じ20000字**（9.6）。ちょうどは通る。
+// 多バイト文字で数える——バイト数で数えると日本語が3分の1で弾かれる。
+func TestTransitionTicketCommentAtLimit(t *testing.T) {
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	comment := strings.Repeat("あ", commentBodyMaxLen)
+	rec := callTransition(q, `{"to":"review","comment":"`+comment+`"}`, "ticket.transition")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String()[:200])
+	}
+	if len(q.ticket.comments) != 1 || q.ticket.comments[0].BodyMd != comment {
+		t.Errorf("コメント = %d件, want 上限ちょうどの1件", len(q.ticket.comments))
+	}
+}
+
+// **上限を超えたら 422 で、遷移もコメントも履歴も起きない**（9.6「本体の検査を先に行う」）。
+func TestTransitionTicketRejectsLongComment(t *testing.T) {
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	comment := strings.Repeat("あ", commentBodyMaxLen+1)
+	rec := callTransition(q, `{"to":"review","comment":"`+comment+`"}`, "ticket.transition")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (%s)", rec.Code, rec.Body.String())
+	}
+	if !hasDetail(errorOf(t, rec), "comment", "too_long") {
+		t.Errorf("details = %v, want comment/too_long", errorOf(t, rec).Details)
+	}
+	if len(q.ticket.statusSet) != 0 {
+		t.Errorf("SetTicketStatus = %v, want 呼ばれない（状態は変わらない）", q.ticket.statusSet)
+	}
+	if len(q.ticket.comments) != 0 || len(q.ticket.activities) != 0 {
+		t.Errorf("コメント %d件・activity %d件, want どちらも0件",
+			len(q.ticket.comments), len(q.ticket.activities))
+	}
+}
+
+// **前後の空白は数えない**（9.8 と同じ数え方）。作るコメントも空白を除いた本文である。
+func TestTransitionTicketCountsCommentWithoutSpaces(t *testing.T) {
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	comment := "  " + strings.Repeat("あ", commentBodyMaxLen) + "  "
+	rec := callTransition(q, `{"to":"review","comment":"`+comment+`"}`, "ticket.transition")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// **本体の誤りはまとめて返す。** to の欠けと comment の長すぎを1回で知らせる。
+func TestTransitionTicketReportsAllBodyErrors(t *testing.T) {
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	comment := strings.Repeat("あ", commentBodyMaxLen+1)
+	rec := callTransition(q, `{"comment":"`+comment+`"}`, "ticket.transition")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (%s)", rec.Code, rec.Body.String())
+	}
+	e := errorOf(t, rec)
+	if !hasDetail(e, "to", "required") || !hasDetail(e, "comment", "too_long") {
+		t.Errorf("details = %v, want to/required と comment/too_long", e.Details)
+	}
+}
+
 // ワークフローを持たないプロジェクトでは、どの遷移も 422 unknown_status（検証1）。
 func TestTransitionTicketWithoutWorkflow(t *testing.T) {
 	q := ticketDetailFake() // workflowID は無効のまま

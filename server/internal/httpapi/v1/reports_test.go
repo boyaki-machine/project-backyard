@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -107,6 +108,57 @@ func decodeReport(t *testing.T, rec *httptest.ResponseRecorder) reportJSON {
 }
 
 // ── 提出（9.15）─────────────────────────────────────────────
+
+// reportWithFinding は findings に本文1件を持つレポートを返す。
+func reportWithFinding(body string) string {
+	return `{"status":"completed","findings":[{"kind":"caveat","body":"` + body + `"}]}`
+}
+
+// **整形後の本文が20000字ちょうどなら通る**（9.15。上限は 9.8 と同じ）。
+// 整形で付く見出しや表の字数を差し引いて、findings の本文の長さを合わせる。
+func TestSubmitReportAcceptsCommentAtLimit(t *testing.T) {
+	q := reportFake()
+	req, e := reportOf(rawOf(t, reportWithFinding("あ")))
+	if e != nil {
+		t.Fatalf("reportOf: %v", e)
+	}
+	dod, err := q.ListTicketDoD(context.Background(), testTicketID)
+	if err != nil {
+		t.Fatalf("ListTicketDoD: %v", err)
+	}
+	overhead := utf8.RuneCountInString(renderReportComment(req, dod)) - 1
+	body := strings.Repeat("あ", commentBodyMaxLen-overhead)
+
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.submitTicketReport(rec, agentReportReq(reportWithFinding(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+	if n := utf8.RuneCountInString(q.ticket.comments[0].BodyMd); n != commentBodyMaxLen {
+		t.Errorf("コメント = %d字, want ちょうど %d字（境界を測れていない）", n, commentBodyMaxLen)
+	}
+}
+
+// **超えたら 422 で、実行記録・レポート・コメントのどれも作らない**（9.15）。
+// 切り詰めない——切った部分を人が読む手段が無い。
+func TestSubmitReportRejectsLongComment(t *testing.T) {
+	q := reportFake()
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.submitTicketReport(rec, agentReportReq(reportWithFinding(strings.Repeat("あ", commentBodyMaxLen))))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (%s)", rec.Code, rec.Body.String())
+	}
+	e := errorOf(t, rec)
+	if !hasDetail(e, "report", "too_long") {
+		t.Errorf("details = %v, want report/too_long", e.Details)
+	}
+	if len(q.ticket.agentRuns) != 0 || len(q.ticket.agentReports) != 0 || len(q.ticket.comments) != 0 {
+		t.Errorf("agent_run %d・agent_report %d・コメント %d, want すべて0",
+			len(q.ticket.agentRuns), len(q.ticket.agentReports), len(q.ticket.comments))
+	}
+}
 
 // 1回の提出が agent_run 1行・agent_report 1行・コメント1件を作る（9.15）。
 func TestSubmitReportWritesRunReportAndComment(t *testing.T) {

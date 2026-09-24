@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -138,6 +139,20 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// **コメントの本文はトランザクションの前に組み立てて長さを見る**（9.15）。
+	// 上限は 9.8 と同じ commentBodyMaxLen。超えたら何も作らずに弾く——切ると
+	// 切った部分を人が読む手段が無く、そのまま入れると PATCH で保存し直せない。
+	body := renderReportComment(req, dod)
+	if n := utf8.RuneCountInString(body); n > commentBodyMaxLen {
+		apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+			Field: "report", Code: "too_long",
+			Message: fmt.Sprintf(
+				"完了レポートが長すぎます（整形後%d文字、上限%d文字）。findings や failures を短くして出し直してください",
+				n, commentBodyMaxLen),
+		}))
+		return
+	}
+
 	p := auth.PrincipalFromContext(ctx)
 	rec := activity.FromRequest(r)
 	runID, reportID, commentID := ulidgen.New(), ulidgen.New(), ulidgen.New()
@@ -176,7 +191,7 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 			ID:         commentID,
 			TicketID:   ticketID,
 			AuthorID:   scope.actorID,
-			BodyMd:     renderReportComment(req, dod),
+			BodyMd:     body,
 			Kind:       commentKindProgress,
 			Origin:     scope.origin(),
 			InReplyTo:  pgtype.Text{},
