@@ -1,8 +1,7 @@
 Project Backyard — 第三者のソフトウェアのライセンス表示
 
-このファイルは make licenses が生成する。手で編集しない。
-PB の配布物に含まれる第三者のソフトウェアについて、著作権表示とライセンスの本文を載せる。
-PB 自身のライセンスは LICENSE（Apache License 2.0）にある。
+PB の配布物に含まれる第三者のソフトウェアについて、著作権表示とライセンスの本文を載せます。
+PB 自身のライセンスは、同梱のファイル LICENSE（Apache License 2.0）に記載されています。
 
 ■ 一覧
 
@@ -61,6 +60,7 @@ npm（画面。実行ファイル pb に埋め込まれる。右は package.json
   @lezer/lr 1.4.10                                                     MIT
   @lezer/markdown 1.7.2                                                MIT
   @marijn/find-cluster-break 1.0.4                                     MIT
+  @vitejs/plugin-vue 6.0.8                                             MIT
   @vue/reactivity 3.5.41                                               MIT
   @vue/runtime-core 3.5.41                                             MIT
   @vue/runtime-dom 3.5.41                                              MIT
@@ -75,8 +75,10 @@ npm（画面。実行ファイル pb に埋め込まれる。右は package.json
   pinia 4.0.3                                                          MIT
   punycode.js 2.3.1                                                    MIT
   qrcode 1.5.4                                                         MIT
+  rolldown 1.2.4                                                       MIT
   style-mod 4.1.3                                                      MIT
   uc.micro 2.1.0                                                       MIT
+  vite 8.2.1                                                           MIT
   vue-i18n 11.4.12                                                     MIT
   vue-router 5.2.0                                                     MIT
   w3c-keyname 2.2.8                                                    MIT
@@ -2463,6 +2465,34 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ================================================================================
+@vitejs/plugin-vue 6.0.8
+画面（pb に埋め込み）。ライセンス: MIT
+--------------------------------------------------------------------------------
+LICENSE
+
+MIT License
+
+Copyright (c) 2019-present, Yuxi (Evan) You and Vite contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
 @vue/reactivity 3.5.41
 画面（pb に埋め込み）。ライセンス: MIT
 --------------------------------------------------------------------------------
@@ -3036,6 +3066,38 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ================================================================================
+rolldown 1.2.4
+画面（pb に埋め込み）。ライセンス: MIT
+--------------------------------------------------------------------------------
+LICENSE
+
+MIT License
+
+Copyright (c) 2024-present VoidZero Inc. & Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+end of terms and conditions
+
+The licenses of externally maintained libraries from which parts of the Software is derived are listed [here](https://github.com/rolldown/rolldown/blob/main/THIRD-PARTY-LICENSE).
+
+================================================================================
 style-mod 4.1.3
 画面（pb に埋め込み）。ライセンス: MIT
 --------------------------------------------------------------------------------
@@ -3087,6 +3149,37 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+================================================================================
+vite 8.2.1
+画面（pb に埋め込み）。ライセンス: MIT
+--------------------------------------------------------------------------------
+LICENSE
+
+# Vite core license
+Vite is released under the MIT license:
+
+MIT License
+
+Copyright (c) 2019-present, VoidZero Inc. and Vite contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ================================================================================
 vue-i18n 11.4.12
