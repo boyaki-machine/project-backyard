@@ -515,13 +515,14 @@ out/
 
 #### 第三者のライセンス表示
 
-**配布物に入る第三者のソフトウェアの著作権表示とライセンスの本文を、`THIRD_PARTY_NOTICES.txt` の1枚にまとめてリポジトリ直下に置く。** MIT・BSD・Apache-2.0 は、バイナリで再配布するときにこれらの同梱を求める。**`make licenses` が生成し、手で編集しない。**
+**配布物に入る第三者のソフトウェアの著作権表示とライセンスの本文を、`THIRD_PARTY_NOTICES.txt` の1枚にまとめてリポジトリ直下に置く。** MIT・BSD・Apache-2.0 は、バイナリで再配布するときにこれらの同梱を求める。**`make licenses` が生成し、手で編集しない**（文書の本文にはこの旨を書かない。読むのは配布物と画面の利用者であるため）。
 
 | 対象 | 拾い方 |
 |---|---|
 | Go のモジュール | 配布する実行ファイル（`pb`・`pb-mcp-bridge`・`goose`）ごとに `go list -deps` で、**リンクされるもの**を拾う。OS で依存が変わりうるので、配布する3つの OS の和を取る。本文はモジュールの直下の LICENSE・NOTICE・PATENTS（`server/tools/notices`） |
 | Go の標準ライブラリ | ツールチェーンの `LICENSE`・`PATENTS` |
 | npm のパッケージ | **バンドルに実際に入ったものだけ**を、Vite 8 の `build.license` で拾う（`client/scripts/npm-licenses.mjs`） |
+| ビルドの道具が注入するコード | `build.license` が数えない仮想モジュール（ID が `\0` で始まる）を集め、持ち主（vite・`@vitejs/plugin-vue`・rolldown）の LICENSE を足す。**持ち主を対応づけていない仮想モジュールが現れたら失敗する** |
 
 | 決めたこと | 理由 |
 |---|---|
@@ -529,6 +530,7 @@ out/
 | **npm は `package.json` の依存ではなく、バンドルに入ったものを拾う** | vite・typescript などビルドにしか使わないものは配布物に入らない。**依存を足さずに拾える**ので、Vite に組み込みの機能を使う |
 | **出力に時刻もツールチェーンの版も入れず、並びを固定する** | 同じ依存からは毎回同じ内容になるので、作り直した結果と比べるだけで鮮度が分かる |
 | **`make licenses-check` を `make test` と `make sync-webui`（＝`make build`・`make stg-build`・native の `make release`）の前に置き、Dockerfile でも同じ検査を通す** | 依存を足したり上げたりして作り直さないまま、古い表示を配らない。**このため `make test` にも `client/node_modules`（`npm ci`）が要る** |
+| **Vite の LICENSE.md は先頭の節（Vite 自身の MIT）だけを載せる** | 後ろに続くのは Vite が内部に抱える依存のライセンスで、ビルド時に動くコードでありバンドルに入らない（約11万字） |
 | **goose のビルドタグは `build-release.sh` から読み出す** | タグで goose の依存が変わる。正本を増やさない |
 | **画面からはユーザーメニューの版の行のリンクで読む**（`GuiDesign.md` 4.2） | 静的なテキストを別タブで開くだけで、画面を作らない |
 
