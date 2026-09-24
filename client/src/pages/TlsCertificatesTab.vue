@@ -24,6 +24,9 @@ import type {
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { formatDateTime } from '../lib/datetime'
 
+// `?raw` は Vite の機能で、型は `vite/client` に含まれる（`version.ts` と同じ読み方）。
+import selfSignedCmdRaw from './tls-self-signed.sh?raw'
+
 const items = ref<TLSCertificate[]>([])
 /** **実際に TLS で待ち受けているか。** 設定の実効値ではない（`ApiDesign.md` 11.4） */
 const tlsEnabled = ref(false)
@@ -96,11 +99,14 @@ function statusLabel(status: CertificateStatus): string {
   return uiText(statusLabelSources[status])
 }
 
-/** openssl の1コマンド。**手で打ち写すと subjectAltName を落としやすい**ので、コピーさせる */
-const SELF_SIGNED_CMD = `openssl req -x509 -newkey rsa:2048 -sha256 -days 365 -nodes \\
-  -keyout pb.key -out pb.crt \\
-  -subj "/CN=pb.example.com" \\
-  -addext "subjectAltName=DNS:pb.example.com,DNS:localhost"`
+/**
+ * openssl の1コマンド。**手で打ち写すと subjectAltName を落としやすい**ので、コピーさせる。
+ *
+ * **本文は tls-self-signed.sh に置く。** サーバの試験（`tlscert` の
+ * `TestSelfSignedCommand`）が同じファイルを実際に走らせ、出来た証明書の拡張領域を
+ * 確かめる——画面と試験で別々に持つと、片方だけ直す事故を生む。
+ */
+const SELF_SIGNED_CMD = selfSignedCmdRaw.trim()
 
 const CSR_CMD = `openssl req -new -newkey rsa:2048 -nodes \\
   -keyout pb.key -out pb.csr \\
@@ -530,6 +536,8 @@ function asApiError(e: unknown): ApiError {
               >{{ $ui('指定です。PB はパスフレーズ付きの秘密鍵を受け付けません') }} </li>
             <li>
               <strong><code>subjectAltName</code> {{ $ui('にアクセスに使うホスト名を必ず入れます。') }}</strong> {{ $ui('ブラウザが見るのはこちらで、') }}<code>CN</code> {{ $ui('だけでは受け付けません') }} </li>
+            <li>
+              <code>basicConstraints</code>・<code>keyUsage</code>・<code>extendedKeyUsage</code> {{ $ui('は、') }}<strong>{{ $ui('サーバ証明書としてだけ使える') }}</strong>{{ $ui('ようにする指定です。CA として他の証明書に署名することはできません') }} </li>
           </ul>
           <p class="muted">
             <code>pb.crt</code> {{ $ui('を「証明書」、') }}<code>pb.key</code> {{ $ui('を「秘密鍵」の欄に貼ります。') }} </p>
