@@ -36,8 +36,7 @@ import (
 // （DbDesign.md 6.7）。comment.author_id の付け替え先である。
 //
 // **このアクターはシードに無く、最初に必要になった削除で作る**（手順13a の判断）。
-// Phase 1 には comment を作る経路が無く（チケットAPIは手順16）、置いても
-// 一度も参照されないため。
+// コメントを持たない環境では、置いても一度も参照されないため。
 const deletedUserDisplayName = "削除されたユーザー"
 
 // updateUserRequest は 6.4 のリクエスト本体。
@@ -250,8 +249,8 @@ func (h *handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 // comment.author_id は NOT NULL かつ ON DELETE RESTRICT であり、**DBが
 // 「付け替えてからでないと消せない」という順序を強制する。**
 //
-// **コメントが1件も無ければ何もしない。** Phase 1 は comment を作る経路が
-// 無いため常にこちらを通り、システムアクターも作られない。
+// **コメントが1件も無ければ何もしない。** そのときはシステムアクターも
+// 作られない。
 func reassignCommentsToSystemActor(ctx context.Context, q gen.Querier, actorID string) error {
 	n, err := q.CountCommentsByAuthor(ctx, actorID)
 	if err != nil {
@@ -314,7 +313,7 @@ func guardUserUpdate(
 
 // guardUserDelete は 6.5 の表を判定する。
 //
-// task_lease（Phase 2）の条件は実装しない。テーブルがまだ存在しない。
+// task_lease の条件は見ない。リース（Requirements.md 10.3.3）は構想で、行が作られない。
 func guardUserDelete(
 	ctx context.Context, q gen.Querier, p *auth.Principal, cur gen.GetAdminUserRow,
 ) error {

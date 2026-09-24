@@ -49,7 +49,7 @@ func (s ticketScopeInfo) origin() string {
 // origin の値域（DbDesign.md 6.7 の comment.origin）。
 //
 // **ticket_link.origin は human / ai_suggested で値域が違う**（DbDesign.md 6.6）。
-// Phase 1 が作るのは human だけなので、リンク側は originHuman だけを使う。
+// API が作るのは human だけなので、リンク側は originHuman だけを使う。
 const (
 	originHuman = "human"
 	originAgent = "agent"

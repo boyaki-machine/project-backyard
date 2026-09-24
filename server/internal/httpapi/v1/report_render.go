@@ -180,7 +180,7 @@ func writeFailures(b *strings.Builder, raw json.RawMessage) {
 // writeProposedSubtasks は分割の提案（10.6.1 の proposed_subtasks）。
 //
 // **ここに書くだけで、チケットは作らない**（9.15）。承認キュー（proposal）は
-// Phase 3 であり、人が読んで要ると判断すれば pb_create_ticket を呼ばせれば済む。
+// 構想であり、人が読んで要ると判断すれば pb_create_ticket を呼ばせれば済む。
 // **承認なしに盤面が増える経路を作らない。**
 func writeProposedSubtasks(b *strings.Builder, raw json.RawMessage) {
 	type subtask struct {

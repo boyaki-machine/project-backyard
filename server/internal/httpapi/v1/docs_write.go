@@ -5,11 +5,11 @@
 //	DELETE /api/v1/projects/{key}/docs/*path   doc.edit
 //
 // **doc.edit は operator と project_member が持たない**（DbDesign.md 8.1.4）。
-// 憲章は全参加者を縛るため、更新できる人を絞る。**Phase 1 に「その操作ができない人」が
-// 実在しないという問題（Design.md 付録A）に対する、最初の実例でもある。**
+// 憲章は全参加者を縛るため、更新できる人を絞る。**「その操作ができない人」が
+// 実在する例でもある**（Design.md 付録A）。
 //
 // **PATCH は If-Match を要求する**（2.8 / 10.4）。人とエージェントが同じ文書を触るため、
-// Phase 1 のプロジェクト設定より競合が起きやすい。
+// プロジェクト設定より競合が起きやすい。
 package v1
 
 import (

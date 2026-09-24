@@ -5,13 +5,13 @@
 //	PATCH  /api/v1/projects/{key}/sprints/{id}   project.edit
 //	DELETE /api/v1/projects/{key}/sprints/{id}   project.edit
 //
-// **Phase 1 で開けるのは定義だけである。** バーンダウン・ベロシティを含む
-// スプリント管理画面は Phase 2 の /p/:key/sprints（GuiDesign.md 10章）で、
+// **スプリントの定義を扱う。** 開始・終了は sprints_run.go（ApiDesign.md 9.12.1 /
+// 9.12.2）、バーンダウン・ベロシティは進捗分析（構想。GuiDesign.md 10章）が持つ。
 // ここはプロジェクト設定のスプリントタブ（同 5.9.5）が消費者になる。
 //
-// **定義を Phase 1 に置く理由。** sprint 表は Phase 1（DbDesign.md 6.9）にあり、
-// チケット詳細のサイドバー（GuiDesign.md 5.5）もスプリント欄を Phase 1 として
-// 並べている。作る手段が無いと、常に空のドロップダウンになる。
+// **定義を作る口が要る理由。** チケット詳細のサイドバー（GuiDesign.md 5.5）が
+// スプリント欄を並べており（DbDesign.md 6.9）、作る手段が無いと常に空の
+// ドロップダウンになる。
 //
 // **audit_log にも activity にも記録しない**（9.1.1）。理由はタグと同じ。
 package v1

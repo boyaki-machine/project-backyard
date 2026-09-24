@@ -103,8 +103,7 @@ WHERE actor_id = $1
 // 1つだけ消しても他の経路から古い権限で通れてしまう。
 //
 // 呼び出し側は ApiDesign.md 6.4 の PATCH /admin/users/:id（system_role の
-// 変更）と、メンバーシップの操作である。**いずれも手順10 のエンドポイント**
-// であり、Phase 1 の現時点では呼び出し元がまだ無い。
+// 変更）と、メンバーシップの操作である。
 //
 // 権限を消す操作なので、失敗したら業務処理ごと失敗させること（RecordOrLog
 // ではなく Record と同じ扱い）。消せなかったまま成功を返すと、降格したはずの
@@ -314,7 +313,7 @@ ORDER BY sort_order, key
 // **並びは role.sort_order である**（7.1、GuiDesign.md 5.6）。表示名の
 // 五十音順ではない。シードが意図して序列を持っており（DbDesign.md 7.3、
 // オペレータ 10 → アドミニストレータ 20 → プロジェクト管理者 30 → …）、
-// Phase 3 でカスタムロールが増えたときに表示名順では意味のない並びになる。
+// カスタムロール（構想）が増えたときに表示名順では意味のない並びになる。
 // 同着のときは key で並べ、応答が呼ぶたびに入れ替わらないようにする。
 func (q *Queries) ListRoles(ctx context.Context, scopeFilter string) ([]Role, error) {
 	rows, err := q.db.Query(ctx, listRoles, scopeFilter)

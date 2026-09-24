@@ -6,11 +6,11 @@
 -- **すべてのクエリが ticket_id で閉じている**（reference.sql と同じ）。DoD はチケットの
 -- 子資源であり、他チケットの ID を渡されても行が返らないようにするためである。
 --
--- **Phase 1 が受け付ける type は manual だけである**（9.9）。表と CHECK は Phase 2 の
--- 形のまま作ってあり（DbDesign.md 6.11）、絞るのは API の仕事なので SQL には現れない。
+-- **受け付ける type は manual だけである**（9.9）。表と CHECK は他の型も入る
+-- 形で作ってあり（DbDesign.md 6.11）、絞るのは API の仕事なので SQL には現れない。
 --
--- **config / evidence / origin は SELECT しない。** Phase 1 の応答に載せないため
--- （9.9）。列は残っており、Phase 2 で type を開けるときに同じ改訂で足す。
+-- **config / evidence / origin は SELECT しない。** 応答に載せないため
+-- （9.9）。列は残っており、manual 以外の type を開けるときに同じ改訂で足す。
 --
 -- **satisfied_by は LEFT JOIN で引く。** actor は ON DELETE SET NULL なので、
 -- チェックした人を消した後も行は残る——条件を満たした事実は消えない。

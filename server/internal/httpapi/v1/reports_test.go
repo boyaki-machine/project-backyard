@@ -134,7 +134,7 @@ func TestSubmitReportWritesRunReportAndComment(t *testing.T) {
 	}
 
 	run := q.ticket.agentRuns[0]
-	// **Phase 2 で status に立つのは completed だけである**（DbDesign.md 8.2.4）。
+	// **status に立つのは completed だけである**（DbDesign.md 8.2.4）。
 	if run.Status != runStatusCompleted {
 		t.Errorf("agent_run.status = %q, want %q", run.Status, runStatusCompleted)
 	}

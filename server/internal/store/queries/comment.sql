@@ -14,7 +14,6 @@
 -- 「既定で作られたのか意図して選ばれたのか」が行から読めなくなるためである。
 --
 -- **origin は呼び出し元の actor.kind から決める**（human / agent）。
--- Phase 1 にエージェントは実在しないので常に 'human' になる。
 -- **in_reply_to は手順18a で足した**（9.8 の返信）。9.6 の遷移コメントは返信を
 -- 持たないので、あちらは NULL を渡す——列を増やすより、呼び出し側が「返信では
 -- ない」を明示するほうが、後から読んだときに意図が残る。
@@ -141,7 +140,7 @@ WHERE ticket_id = @ticket_id AND id = @id AND deleted_at IS NULL;
 -- SoftDeleteComment は論理削除（DbDesign.md 4.6 / 6.7）。
 --
 -- **body_md は消さない。** 列が NOT NULL であり、応答で null にするのは view の
--- 仕事である（9.8）。DB に本文を残すのは、誤削除からの復旧手段を Phase 1 で
+-- 仕事である（9.8）。DB に本文を残すのは、誤削除からの復旧手段を
 -- 捨てないためでもある。
 --
 -- **updated_at はトリガが動かす**（trg_comment_updated）ので、削除も ETag に効く。

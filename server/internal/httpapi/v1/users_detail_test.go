@@ -568,7 +568,7 @@ func TestDeleteUserRemovesActorAndAuditsFirst(t *testing.T) {
 	}
 }
 
-// **コメントが1件も無ければ付け替えない**（Phase 1 は常にこちら）。
+// **コメントが1件も無ければ付け替えない。**
 func TestDeleteUserSkipsReassignWhenNoComments(t *testing.T) {
 	q := userFake(t)
 	q.commentCount = 0
@@ -754,7 +754,7 @@ func TestResetPasswordRejectsOtherModes(t *testing.T) {
 	}
 }
 
-// **local_credential を持たないユーザーは 409**（IdP のみ、Phase 3）。
+// **local_credential を持たないユーザーは 409**（IdP のみ。構想）。
 func TestResetPasswordConflictsWithoutLocalCredential(t *testing.T) {
 	q := userFake(t)
 	q.credentialErr = pgx.ErrNoRows

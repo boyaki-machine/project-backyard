@@ -1357,15 +1357,15 @@ func callPutDoc(h *Handler, r *http.Request, key string, args json.RawMessage) (
 
 // transitionTools は手順26b で実装する2件を返す。
 //
-// **叩く REST（9.6 / 9.7）は Phase 1 から在る。** 設計原則7 が「エージェントから
+// **叩く REST は 9.6 / 9.7 である。** 設計原則7 が「エージェントから
 // 見える面は MCP のみ」と定めているのに、状態遷移だけが REST に在って MCP に
 // 無かった——Requirements.md 10.3.2 が pb_claim_task の説明に「着手宣言。
 // ステータスを『実装中』へ」と書いていたため、**状態を動かす機能がリースの中に
 // 埋まって見えなくなっていた**（Design.md 8.2）。
 //
-// **リース（pb_claim_task / pb_release_task）は Phase 3 へ送った**
+// **リース（pb_claim_task / pb_release_task）は持たない（構想）**
 // （Requirements.md 10.3.3）。排他が実際に要るのは自律取得（pb_next_task）からで、
-// Phase 2 は人がチケット番号を指定して走らせる。
+// いまは人がチケット番号を指定して走らせる。
 //
 // **並び順は「見てから動かす」。** 先に pb_list_transitions を置くのは、進める先と
 // 進めない理由を1往復で知ってから pb_transition_task を呼ぶ流れにするためである。

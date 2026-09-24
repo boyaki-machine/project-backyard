@@ -111,7 +111,7 @@ func TestListDoDReturnsItems(t *testing.T) {
 }
 
 // **config / evidence / origin は応答に出さない**（9.9）。
-func TestDoDResponseOmitsPhase2Fields(t *testing.T) {
+func TestDoDResponseOmitsUnsupportedFields(t *testing.T) {
 	q := dodFake()
 	q.ticket.dodRows = []gen.GetTicketDoDItemRow{sampleDoD(testDoDID, "x", false, 10)}
 	h, _ := ticketHandler(q)
@@ -121,7 +121,7 @@ func TestDoDResponseOmitsPhase2Fields(t *testing.T) {
 
 	for _, field := range []string{`"config"`, `"evidence"`, `"origin"`} {
 		if strings.Contains(rec.Body.String(), field) {
-			t.Errorf("応答に %s が出ている（Phase 1 では返さない）: %s", field, rec.Body.String())
+			t.Errorf("応答に %s が出ている（返さない項目）: %s", field, rec.Body.String())
 		}
 	}
 }
@@ -154,9 +154,9 @@ func TestCreateDoDDefaultsToManual(t *testing.T) {
 	}
 }
 
-// **Phase 2 の型は phase_2_only で弾く**（9.9 / 9.14）。
-func TestCreateDoDRejectsPhase2Type(t *testing.T) {
-	for _, tp := range dodPhase2Types {
+// **manual 以外の型は unsupported_type で弾く**（9.9 / 9.14）。
+func TestCreateDoDRejectsUnsupportedType(t *testing.T) {
+	for _, tp := range dodUnsupportedTypes {
 		rec := httptest.NewRecorder()
 		q := dodFake()
 		h, _ := ticketHandler(q)
@@ -166,8 +166,8 @@ func TestCreateDoDRejectsPhase2Type(t *testing.T) {
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("type=%s: status = %d, want 422 (%s)", tp, rec.Code, rec.Body.String())
 		}
-		if !strings.Contains(rec.Body.String(), "phase_2_only") {
-			t.Errorf("type=%s: details[].code に phase_2_only が無い: %s", tp, rec.Body.String())
+		if !strings.Contains(rec.Body.String(), "unsupported_type") {
+			t.Errorf("type=%s: details[].code に unsupported_type が無い: %s", tp, rec.Body.String())
 		}
 		if len(q.ticket.dodCreated) != 0 {
 			t.Errorf("type=%s: 作られてしまった", tp)
@@ -175,7 +175,7 @@ func TestCreateDoDRejectsPhase2Type(t *testing.T) {
 	}
 }
 
-// **綴り違いは invalid**（phase_2_only と区別する）。
+// **綴り違いは invalid**（unsupported_type と区別する）。
 func TestCreateDoDRejectsUnknownType(t *testing.T) {
 	q := dodFake()
 	h, _ := ticketHandler(q)
@@ -187,8 +187,8 @@ func TestCreateDoDRejectsUnknownType(t *testing.T) {
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422 (%s)", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "phase_2_only") {
-		t.Errorf("綴り違いに phase_2_only を返している: %s", rec.Body.String())
+	if strings.Contains(rec.Body.String(), "unsupported_type") {
+		t.Errorf("綴り違いに unsupported_type を返している: %s", rec.Body.String())
 	}
 }
 

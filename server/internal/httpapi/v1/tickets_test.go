@@ -181,7 +181,7 @@ func TestListTicketsReturnsItemsWithTagsAndHierarchy(t *testing.T) {
 }
 
 // 一覧に本文とエージェント連携の列を載せない（9.2.2）。
-func TestListTicketsOmitsBodyAndPhase2Columns(t *testing.T) {
+func TestListTicketsOmitsBodyAndAgentColumns(t *testing.T) {
 	q := ticketFake()
 	q.ticket.rows = []gen.ListTicketsRow{sampleTicketRow(testTicketID, 31, "本文は出さない")}
 

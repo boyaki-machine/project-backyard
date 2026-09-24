@@ -148,7 +148,7 @@ async function submitForm(payload: {
         model_version: payload.model_version,
         // **空文字は送らない。** サーバの COALESCE は空文字を「値の指定」として
         // 扱うため、未設定へ戻す意味にはならない（4.5.4）。**空にする経路は
-        // Phase 2 では作らない。**
+        // 作らない。**
         ...(payload.token_env_suffix === ''
           ? {}
           : { token_env_suffix: payload.token_env_suffix }),

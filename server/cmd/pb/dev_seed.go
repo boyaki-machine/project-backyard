@@ -200,7 +200,7 @@ type devTicket struct {
 
 // devDoDItem はチケットの完了条件（DbDesign.md 6.11、手順18a）。
 //
-// **type を書かせない。** Phase 1 が受け付けるのは manual だけであり
+// **type を書かせない。** 受け付けるのは manual だけであり
 // （ApiDesign.md 9.9）、選べない項目を定義ファイルに置くと「他も書ける」に見える。
 type devDoDItem struct {
 	Body string `yaml:"body"`
@@ -213,7 +213,7 @@ type devDoDItem struct {
 //
 // **origin は書かせない。** 呼び出し元のアクター種別から決まる規則
 // （ApiDesign.md 9.8）を seed でも守り、author のメールから引く。
-// Phase 1 のデモアカウントはすべて人なので human になる。
+// デモアカウントはすべて人なので human になる。
 //
 // **返信と削除済みも書ける**。`in_reply_to` の両向きリンクと「削除されました」は
 // 実装済みでも、seed に無ければ画面で一度も踏まれない。返信先は位置ではなく**参照名**
@@ -246,9 +246,8 @@ type devLink struct {
 // validateSeedData で行い、DB の CHECK に落とす前に定義ファイルの誤りとして返す。
 //
 // **created_by は書かない。** 定義ファイルに ULID を書かせない方針（タグ・
-// スプリントと同じ）で、投入時はチケットの reporter を据える。Phase 1 の
-// 書き手は人の API トークンを持つクライアントなので（ApiDesign.md 9.10.2）、
-// 人のアクターが入るのが実態に合う。
+// スプリントと同じ）で、投入時はチケットの reporter を据える。デモデータに
+// エージェントは居ないので、人のアクターが入るのが実態に合う（ApiDesign.md 9.10.2）。
 type devReference struct {
 	Kind       string `yaml:"kind"`
 	Label      string `yaml:"label"`
@@ -1378,7 +1377,7 @@ func seedTicketDoD(
 
 // seedTicketComments はチケットのコメントを投入する（DbDesign.md 6.7、手順18a）。
 //
-// **origin は author のアクター種別から決まる**（ApiDesign.md 9.8）。Phase 1 の
+// **origin は author のアクター種別から決まる**（ApiDesign.md 9.8）。
 // デモアカウントはすべて人なので human になるが、**規則そのものを seed でも
 // 守る**——ここで固定値を書くと、エージェントが増えたときに嘘になる。
 //
@@ -1431,7 +1430,7 @@ func seedTicketComments(
 //
 // **origin は human 固定である。** ticket_link.origin の値域は
 // human / ai_suggested で、ai_suggested は「AIが提案し人がまだ採用していない」
-// という状態を表す（Phase 2）。書き手の種別ではないので、comment とは違う。
+// という状態を表す（未実装）。書き手の種別ではないので、comment とは違う。
 func seedTicketLinks(
 	ctx context.Context, q gen.Querier, ticketID string, tk devTicket,
 	idByTitle map[string]string, reporterID string,

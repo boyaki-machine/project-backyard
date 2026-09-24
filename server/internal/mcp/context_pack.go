@@ -549,8 +549,8 @@ func writeExecutionSection(b *strings.Builder, t packTicket) {
 	b.WriteString("\n")
 }
 
-// writeCharterSection は 10.4.2 の優先度2。**Phase 2 は文書がメモリの代わりである**
-// （DbDesign.md 8.3 が knowledge を Phase 3 へ送っているため）。
+// writeCharterSection は 10.4.2 の優先度2。**文書がメモリの代わりである**
+// （DbDesign.md 8.3 の knowledge は構想であるため）。
 func writeCharterSection(b *strings.Builder, ch charter) {
 	b.WriteString("## 3. 憲章\n\n")
 	if ch.note != "" {

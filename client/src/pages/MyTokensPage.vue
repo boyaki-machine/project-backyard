@@ -103,7 +103,7 @@ async function issueToken() {
   issuing.value = true
   issueError.value = null
   try {
-    // **スコープは送らない**（`ApiDesign.md` 4.4.2）。Phase 1 は常に
+    // **スコープは送らない**（`ApiDesign.md` 4.4.2）。常に
     // 「絞り込みなし」で発行する。選択UIはトークンの使われ方が決まってから。
     const token = await meApi.createToken({
       name: newName.value.trim(),

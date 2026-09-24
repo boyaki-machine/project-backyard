@@ -46,8 +46,8 @@ const actorKindAgent = "agent"
 // ticketWorkflow はプロジェクトのワークフロー1つぶんの定義。
 //
 // **1リクエストで1回だけ読む。** 9.7 は全ステータスと全遷移を突き合わせるので、
-// ステータスごとに引くと N+1 になる。Phase 1 のテンプレートは最大5ステータス・
-// 7遷移（DbDesign.md 7.4）で、まとめて読んでも小さい。
+// ステータスごとに引くと N+1 になる。テンプレートは最大5ステータス・
+// 8遷移（DbDesign.md 7.4）で、まとめて読んでも小さい。
 type ticketWorkflow struct {
 	statuses    []gen.ListWorkflowStatusesRow
 	transitions []gen.ListWorkflowTransitionsRow
@@ -243,7 +243,7 @@ const childrenNotClosedReason = "未完了の子チケットが残っている�
 // **解けなかったときは空を返す。** 呼び出し側は「制限なし」として扱う——
 // 列の既定値は '["user","agent"]' であり（DbDesign.md 6.5）、壊れた値で
 // 全員を締め出すより、検証4・5 に判断を委ねるほうが害が小さい。
-// 値を書くのはマイグレーションだけで、API から変える経路は Phase 1 に無い。
+// 値を書くのはマイグレーションだけで、API から変える経路は無い。
 func decodeActorKinds(raw []byte) ([]string, error) {
 	if len(raw) == 0 {
 		return nil, nil

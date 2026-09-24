@@ -116,7 +116,7 @@ func TestRolesCatalogIntegration(t *testing.T) {
 					i, items[i].Key, items[i].Scope, items[i].DisplayName, w.key, w.scope, w.name)
 			}
 			if !items[i].IsBuiltin {
-				t.Errorf("%s の is_builtin = false。Phase 1 は組み込みのみ", w.key)
+				t.Errorf("%s の is_builtin = false。ロールは組み込みのみ", w.key)
 			}
 		}
 	})

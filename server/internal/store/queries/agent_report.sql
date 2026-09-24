@@ -1,21 +1,21 @@
 -- エージェントの完了レポート（DbDesign.md 8.2.4、ApiDesign.md 9.15）。手順26c。
 --
--- **Phase 2 での書き手は pb_submit_result ひとつである**（DbDesign.md 8.2.4）。
+-- **書き手は pb_submit_result ひとつである**（DbDesign.md 8.2.4）。
 -- 1回の提出が agent_run 1行・agent_report 1行・完了レポートのコメント1件を
 -- 同じトランザクションで作る。
 --
--- **読み取りのクエリを置かない。** Phase 2 で人が読むのは完了レポートのコメント
+-- **読み取りのクエリを置かない。** 人が読むのは完了レポートのコメント
 -- であり（GuiDesign.md 5.5）、agent_report の行そのものを読む面が無い（9.15 が
 -- GET .../reports を置かないと決めた）。**要るようになってから足す。**
 
 -- CreateAgentRun は1回の実行記録を作る。
 --
--- **Phase 2 で status に入るのは completed だけである**（DbDesign.md 8.2.4）。
+-- **status に入るのは completed だけである**（DbDesign.md 8.2.4）。
 -- 開始を告げる口が無いので running は作られず、failed / abandoned は「レポートを
 -- 出さずに終わった run」で観測する口が無い。
 --
 -- **workflow_version は渡さない**（NULL のまま）。workflow に版の列が無く
--- （DbDesign.md 6.5）、陳腐化検出は Phase 3 である。
+-- （DbDesign.md 6.5）、陳腐化検出は構想である。
 --
 -- **started_at はレポートの cost.wall_clock_min から逆算した値が入る。**
 -- 無ければ呼び出し側が ended_at と同じ値を渡す（DbDesign.md 8.2.4）。

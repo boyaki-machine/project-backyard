@@ -5,7 +5,7 @@
 //
 // **プロジェクト文書（憲章）の供給経路である**（Requirements.md 10.6.2）。規約・
 // 価値観・判断の基準を1か所に置き、全参加者のエージェントが同じものを読む。
-// Phase 2 後半の MCP（pb_list_docs / pb_get_doc）も、このデータを同じ形で配る。
+// MCP（pb_list_docs / pb_get_doc）も、このデータを同じ形で配る。
 package v1
 
 import (

@@ -123,7 +123,7 @@ export function unarchiveProject(key: string): Promise<ProjectDetail> {
 /**
  * `project.settings` の `repositories`（`DbDesign.md` 6.4）。
  *
- * **Phase 1 が `settings` に定義する唯一のキー**である。PBがこのURLを使って
+ * **`settings` に定義する唯一のキー**である。PBがこのURLを使って
  * 自動で何かを行うことはない。用途は画面のリンクと、MCP経由でエージェントが
  * プロジェクト情報として受け取ることの2つ（`GuiDesign.md` 5.9.1）。
  */
@@ -162,7 +162,7 @@ export function readRepositories(settings: ProjectDetail['settings']): ProjectRe
  * `repositories` だけを差し替えた `settings` を作る。
  *
  * **`PATCH` の `settings` は丸ごと置き換わる**（5.5）。取得した `settings` を
- * 土台にしないと、画面が知らないキー（Phase 2 の設定など）が消える。
+ * 土台にしないと、画面が知らないキー（将来足す設定など）が消える。
  *
  * 空の項目は落とし、`name` / `description` は値があるときだけ入れる
  * （空文字を保存すると、次に読んだとき「設定された空の名前」と区別できない）。

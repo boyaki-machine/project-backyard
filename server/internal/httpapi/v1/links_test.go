@@ -160,7 +160,7 @@ func TestCreateLink(t *testing.T) {
 		t.Errorf("source/target = %q/%q", arg.SourceTicketID, arg.TargetTicketID)
 	}
 	if arg.Origin != linkOriginHuman {
-		t.Errorf("origin = %q, want human（Phase 1）", arg.Origin)
+		t.Errorf("origin = %q, want human", arg.Origin)
 	}
 	got := decodeLink(t, rec)
 	if got.Direction != "outgoing" || got.Ticket.Seq != 12 {

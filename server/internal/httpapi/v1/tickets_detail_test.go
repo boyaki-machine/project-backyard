@@ -1104,8 +1104,7 @@ func TestTransitionTicketRejectsMissingRequiredPermission(t *testing.T) {
 
 // 検証3：allowed_actor_kinds に含まれない種別 → 403。
 //
-// **Phase 1 にエージェントは実在しないので、実サーバでは測れない**
-// （手順当時の引き継ぎ）。フェイクでのみ負の側を作れる。
+// **フェイクで負の側を作る。**
 func TestTransitionTicketRejectsDisallowedActorKind(t *testing.T) {
 	q := ticketDetailFake()
 	withReviewWorkflow(q)

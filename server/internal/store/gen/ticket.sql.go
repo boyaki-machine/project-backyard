@@ -171,7 +171,7 @@ type FindTicketIDBySeqParams struct {
 }
 
 // FindTicketIDBySeq は parent_seq（9.3）の解決に使う。**同一プロジェクトに
-// 限る**——親もリンク先も同一プロジェクト内に限るのが Phase 1 の前提である（9.1）。
+// 限る**——親もリンク先も同一プロジェクト内に限る（9.1）。
 func (q *Queries) FindTicketIDBySeq(ctx context.Context, arg FindTicketIDBySeqParams) (string, error) {
 	row := q.db.QueryRow(ctx, findTicketIDBySeq, arg.ProjectID, arg.Seq)
 	var id string
@@ -1109,7 +1109,7 @@ type ListTicketsRow struct {
 // チケットに関するクエリ（DbDesign.md 6.6、ApiDesign.md 9.2 / 9.3 / 9.4）。
 //
 // 手順16b で追加。消費者はバックログ画面（GuiDesign.md 5.4、手順16c）と、
-// Phase 2 のカンバン・ガントである。いずれも同じ ListTickets を読む。
+// 未実装のカンバン・ガントである。いずれも同じ ListTickets を読む。
 //
 // **すべてのクエリが project_id で閉じている。** チケットはプロジェクトの資源で
 // あり、他プロジェクトの ID を渡されても行が返らないようにするためである。到達

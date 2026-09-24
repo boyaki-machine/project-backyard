@@ -146,8 +146,6 @@ type Querier interface {
 	//
 	// comment.author_id は NOT NULL かつ ON DELETE RESTRICT である。**DBが
 	// 「システムアクターへ付け替えてからでないと消せない」という順序を強制する。**
-	// Phase 1 は comment を作る経路が無い（チケットAPIは手順16）ため常に0件だが、
-	// 実装は先に通しておく。
 	//
 	CountCommentsByAuthor(ctx context.Context, authorID string) (int64, error)
 	// CountConfirmedMfaCredentials は上限（5件）とログイン時の分岐に使う。
@@ -215,21 +213,21 @@ type Querier interface {
 	CreateAgentReport(ctx context.Context, arg CreateAgentReportParams) error
 	// エージェントの完了レポート（DbDesign.md 8.2.4、ApiDesign.md 9.15）。手順26c。
 	//
-	// **Phase 2 での書き手は pb_submit_result ひとつである**（DbDesign.md 8.2.4）。
+	// **書き手は pb_submit_result ひとつである**（DbDesign.md 8.2.4）。
 	// 1回の提出が agent_run 1行・agent_report 1行・完了レポートのコメント1件を
 	// 同じトランザクションで作る。
 	//
-	// **読み取りのクエリを置かない。** Phase 2 で人が読むのは完了レポートのコメント
+	// **読み取りのクエリを置かない。** 人が読むのは完了レポートのコメント
 	// であり（GuiDesign.md 5.5）、agent_report の行そのものを読む面が無い（9.15 が
 	// GET .../reports を置かないと決めた）。**要るようになってから足す。**
 	// CreateAgentRun は1回の実行記録を作る。
 	//
-	// **Phase 2 で status に入るのは completed だけである**（DbDesign.md 8.2.4）。
+	// **status に入るのは completed だけである**（DbDesign.md 8.2.4）。
 	// 開始を告げる口が無いので running は作られず、failed / abandoned は「レポートを
 	// 出さずに終わった run」で観測する口が無い。
 	//
 	// **workflow_version は渡さない**（NULL のまま）。workflow に版の列が無く
-	// （DbDesign.md 6.5）、陳腐化検出は Phase 3 である。
+	// （DbDesign.md 6.5）、陳腐化検出は構想である。
 	//
 	// **started_at はレポートの cost.wall_clock_min から逆算した値が入る。**
 	// 無ければ呼び出し側が ended_at と同じ値を渡す（DbDesign.md 8.2.4）。
@@ -256,7 +254,6 @@ type Querier interface {
 	// 「既定で作られたのか意図して選ばれたのか」が行から読めなくなるためである。
 	//
 	// **origin は呼び出し元の actor.kind から決める**（human / agent）。
-	// Phase 1 にエージェントは実在しないので常に 'human' になる。
 	// **in_reply_to は手順18a で足した**（9.8 の返信）。9.6 の遷移コメントは返信を
 	// 持たないので、あちらは NULL を渡す——列を増やすより、呼び出し側が「返信では
 	// ない」を明示するほうが、後から読んだときに意図が残る。
@@ -311,7 +308,7 @@ type Querier interface {
 	// CreateSystemActor はシステムアクターを1件作る。
 	//
 	// **シードで先に置かず、最初に必要になった削除で作る**（手順13a の判断）。
-	// Phase 1 に comment を作る経路が無く、置いても一度も参照されないため。
+	// コメントを持たない環境では、置いても一度も参照されないため。
 	//
 	CreateSystemActor(ctx context.Context, arg CreateSystemActorParams) error
 	// 1件を作る。**指紋の一意制約に当たると誤りが返る**ので、
@@ -486,15 +483,15 @@ type Querier interface {
 	//
 	// **display_name で引いている。** kind='system' のアクターに一意なキー列が
 	// 無いためである（DbDesign.md 6.2 の actor には key に相当する列がない）。
-	// Phase 1 でシステムアクターはこの1件しか作られないので成り立つが、
-	// **Phase 2 でシステムアクターが増えるなら識別子を決める必要がある**
+	// システムアクターはこの1件しか作られないので成り立つが、
+	// **システムアクターが増えるなら識別子を決める必要がある**
 	// （DbDesign.md 10章「未解決の検討事項」）。
 	//
 	FindDeletedUserActor(ctx context.Context, displayName string) (string, error)
 	// ── パスワードリセットとセッション失効（ApiDesign.md 6.6 / 6.7）──
 	// FindLocalCredentialByActor はリセット対象の資格情報を引く。
 	//
-	// 行が無い＝local_credential を持たない（IdP のみ、Phase 3）で、
+	// 行が無い＝local_credential を持たない（IdP のみ。構想）で、
 	// 6.6 はこれを 409 conflict と定める。
 	//
 	FindLocalCredentialByActor(ctx context.Context, userID string) (string, error)
@@ -542,7 +539,7 @@ type Querier interface {
 	// FindMyLocalCredential は POST /me/password が現在のパスワードを検証するために
 	// 資格情報を引く。
 	//
-	// **local プロバイダに限る。** OIDC/SAML のみのユーザー（Phase 3）は行が
+	// **local プロバイダに限る。** OIDC/SAML のみのユーザー（構想）は行が
 	// 返らず、呼び出し側が 409 conflict に倒す（ApiDesign.md 4.3）。
 	//
 	// **結合条件は FindLocalLoginByEmail と揃える**（i.subject = u.email）。
@@ -623,7 +620,7 @@ type Querier interface {
 	// 空の items[] を返す——どちらも「行ける先が無い」という同じ事実を表す。
 	FindProjectWorkflowID(ctx context.Context, projectID string) (pgtype.Text, error)
 	// FindTicketIDBySeq は parent_seq（9.3）の解決に使う。**同一プロジェクトに
-	// 限る**——親もリンク先も同一プロジェクト内に限るのが Phase 1 の前提である（9.1）。
+	// 限る**——親もリンク先も同一プロジェクト内に限る（9.1）。
 	FindTicketIDBySeq(ctx context.Context, arg FindTicketIDBySeqParams) (string, error)
 	// FindWebauthnChallenge は clientDataJSON の challenge で挑戦を引く。
 	//
@@ -662,7 +659,7 @@ type Querier interface {
 	// 保存しても GET /me が返さなければ、別の端末で同じ見た目にならない**——
 	// 8.11 が app_user と localStorage の両方に保存すると定めた目的がそれである。
 	//
-	// **すべて LEFT JOIN にする。** エージェント（Phase 2）は app_user を持たず、
+	// **すべて LEFT JOIN にする。** エージェントは app_user を持たず、
 	// 将来の OIDC 専用ユーザーは local_credential を持たない。行が返らないことと
 	// 「そのアクターが存在しない」ことを取り違えないようにする。
 	//
@@ -674,7 +671,7 @@ type Querier interface {
 	// その列は app_user にしかない。app_user の行を持たないアクター
 	// （エージェント・システム）を 200 で返すと、PATCH（6.4）の楽観ロックが
 	// 成立しないものを画面に開かせることになる。エージェントの詳細は
-	// agent テーブル（DbDesign.md 8.1）ができる Phase 2 で列構成ごと設計する。
+	// 未実装で、列構成ごと設計する（DbDesign.md 8.2.1）。
 	//
 	// したがって app_user は LEFT ではなく INNER JOIN であり、
 	// **行が返らない＝404** となる（ApiDesign.md 1.2-5）。
@@ -871,8 +868,7 @@ type Querier interface {
 	// 1つだけ消しても他の経路から古い権限で通れてしまう。
 	//
 	// 呼び出し側は ApiDesign.md 6.4 の PATCH /admin/users/:id（system_role の
-	// 変更）と、メンバーシップの操作である。**いずれも手順10 のエンドポイント**
-	// であり、Phase 1 の現時点では呼び出し元がまだ無い。
+	// 変更）と、メンバーシップの操作である。
 	//
 	// 権限を消す操作なので、失敗したら業務処理ごと失敗させること（RecordOrLog
 	// ではなく Record と同じ扱い）。消せなかったまま成功を返すと、降格したはずの
@@ -941,7 +937,7 @@ type Querier interface {
 	//
 	// **kind = 'system' の actor は除く。** 6.1 が列挙するのは user / agent / all の
 	// 3つで、システムアクター（バッチ等が使う DbDesign.md 6.2 の3種目）は
-	// 利用者が管理する対象ではない。Phase 1 のシードは system アクターを作らないが、
+	// 利用者が管理する対象ではない。シードは system アクターを作らないが、
 	// 将来作られても一覧に紛れ込まないようにここで落とす。
 	//
 	// **project_count は project_member の行数**で、アーカイブ済みプロジェクトも
@@ -957,7 +953,7 @@ type Querier interface {
 	//
 	// **system_role は role.sort_order で並べる**（ApiDesign.md 6.1）。表示名の
 	// 五十音順ではない——シードが意図して序列を持っており（オペレータ 10 →
-	// アドミニストレータ 20。DbDesign.md 7.3）、Phase 3 でカスタムロールが増えたとき
+	// アドミニストレータ 20。DbDesign.md 7.3）、カスタムロール（構想）が増えたとき
 	// 表示名順では意味のない並びになる。**ロールを持たない行（エージェント）は
 	// 昇順・降順とも末尾に置く**（NULLS LAST を両方に明示する。Postgres の既定は
 	// DESC で NULLS FIRST であり、明示しないと先頭へ来る）。
@@ -1030,7 +1026,7 @@ type Querier interface {
 	ListDocumentTemplates(ctx context.Context, templateKey pgtype.Text) ([]ListDocumentTemplatesRow, error)
 	// プロジェクト文書に関するクエリ（DbDesign.md 8.1、ApiDesign.md 10章）。
 	//
-	// 手順22a で追加。消費者は Docs 画面（GuiDesign.md 5.10）と、Phase 2 後半の
+	// 手順22a で追加。消費者は Docs 画面（GuiDesign.md 5.10）と、
 	// MCP（pb_list_docs / pb_get_doc / pb_put_doc。Design.md 8章）である。
 	//
 	// **path は列ではない。** 文書の位置は parent_id の連なりで表し、ApiDesign.md 10.1 の
@@ -1064,7 +1060,7 @@ type Querier interface {
 	// ── アクセストークン（ApiDesign.md 4.4）──────────────────────────────
 	//
 	// **いずれも token_type = 'api' に限る。** ブラウザのセッション
-	// （token_type='session'）とエージェント用（'agent'、Phase 2）を混ぜない。
+	// （token_type='session'）とエージェント用（'agent'）を混ぜない。
 	// 本人が自分のセッションを見る・切る画面を持たないと決めており
 	// （GuiDesign.md 5.8）、混ぜると「一覧に出ているのに失効させられない行」が
 	// 生まれる。DELETE の対象からも外れるので、現在のセッションを /me/tokens 経由で
@@ -1238,7 +1234,7 @@ type Querier interface {
 	// **並びは role.sort_order である**（7.1、GuiDesign.md 5.6）。表示名の
 	// 五十音順ではない。シードが意図して序列を持っており（DbDesign.md 7.3、
 	// オペレータ 10 → アドミニストレータ 20 → プロジェクト管理者 30 → …）、
-	// Phase 3 でカスタムロールが増えたときに表示名順では意味のない並びになる。
+	// カスタムロール（構想）が増えたときに表示名順では意味のない並びになる。
 	// 同着のときは key で並べ、応答が呼ぶたびに入れ替わらないようにする。
 	//
 	ListRoles(ctx context.Context, scopeFilter string) ([]Role, error)
@@ -1247,8 +1243,8 @@ type Querier interface {
 	// 手順16a で追加。プロジェクト設定のスプリントタブ（GuiDesign.md 5.9.5）が
 	// 消費者で、手順17 のチケット詳細サイドバーが選択肢として同じ一覧を読む。
 	//
-	// **Phase 1 で開けるのは定義だけ**である。バーンダウン・ベロシティを含む
-	// スプリント管理画面は Phase 2（GuiDesign.md 10章）。
+	// **スプリントの定義を扱う。** 開始・終了は下の 9.12.1 / 9.12.2 のクエリで、
+	// バーンダウン・ベロシティは進捗分析（構想。GuiDesign.md 10章）が持つ。
 	// items[] は start_date 降順（NULL は末尾）、同値は created_at 降順
 	// （ApiDesign.md 9.12）。新しいものが上に来る並びで、5.9.5 の図と一致する。
 	//
@@ -1333,11 +1329,11 @@ type Querier interface {
 	// **すべてのクエリが ticket_id で閉じている**（reference.sql と同じ）。DoD はチケットの
 	// 子資源であり、他チケットの ID を渡されても行が返らないようにするためである。
 	//
-	// **Phase 1 が受け付ける type は manual だけである**（9.9）。表と CHECK は Phase 2 の
-	// 形のまま作ってあり（DbDesign.md 6.11）、絞るのは API の仕事なので SQL には現れない。
+	// **受け付ける type は manual だけである**（9.9）。表と CHECK は他の型も入る
+	// 形で作ってあり（DbDesign.md 6.11）、絞るのは API の仕事なので SQL には現れない。
 	//
-	// **config / evidence / origin は SELECT しない。** Phase 1 の応答に載せないため
-	// （9.9）。列は残っており、Phase 2 で type を開けるときに同じ改訂で足す。
+	// **config / evidence / origin は SELECT しない。** 応答に載せないため
+	// （9.9）。列は残っており、manual 以外の type を開けるときに同じ改訂で足す。
 	//
 	// **satisfied_by は LEFT JOIN で引く。** actor は ON DELETE SET NULL なので、
 	// チェックした人を消した後も行は残る——条件を満たした事実は消えない。
@@ -1400,7 +1396,7 @@ type Querier interface {
 	// チケットに関するクエリ（DbDesign.md 6.6、ApiDesign.md 9.2 / 9.3 / 9.4）。
 	//
 	// 手順16b で追加。消費者はバックログ画面（GuiDesign.md 5.4、手順16c）と、
-	// Phase 2 のカンバン・ガントである。いずれも同じ ListTickets を読む。
+	// 未実装のカンバン・ガントである。いずれも同じ ListTickets を読む。
 	//
 	// **すべてのクエリが project_id で閉じている。** チケットはプロジェクトの資源で
 	// あり、他プロジェクトの ID を渡されても行が返らないようにするためである。到達
@@ -1469,12 +1465,12 @@ type Querier interface {
 	ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error)
 	// ListUserIdentities は 6.3 の identities[] を引く。
 	//
-	// **配列であることが Phase 3 の IdP 連携をそのまま受け入れる**（ApiDesign.md 6.3、
+	// **配列であることが IdP 連携（構想）をそのまま受け入れる**（ApiDesign.md 6.3、
 	// DbDesign.md 6.2）。OIDC を足しても要素が1つ増えるだけで、応答の形は変わらない。
 	//
 	// password_updated_at は local_credential の列で、ローカル以外のプロバイダでは
-	// NULL になる。**LEFT JOIN にするのはそのため**で、INNER にすると Phase 3 の
-	// OIDC identity が一覧から消える。
+	// NULL になる。**LEFT JOIN にするのはそのため**で、INNER にすると
+	// OIDC の identity が一覧から消える。
 	//
 	// provider_type は auth_provider.type（DbDesign.md 6.2、7.1 のシード）。
 	// 画面が「ローカルパスワード」と出すか IdP 名を出すかをこの値で決める。
@@ -1799,7 +1795,7 @@ type Querier interface {
 	// SoftDeleteComment は論理削除（DbDesign.md 4.6 / 6.7）。
 	//
 	// **body_md は消さない。** 列が NOT NULL であり、応答で null にするのは view の
-	// 仕事である（9.8）。DB に本文を残すのは、誤削除からの復旧手段を Phase 1 で
+	// 仕事である（9.8）。DB に本文を残すのは、誤削除からの復旧手段を
 	// 捨てないためでもある。
 	//
 	// **updated_at はトリガが動かす**（trg_comment_updated）ので、削除も ETag に効く。

@@ -835,7 +835,7 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 				ModelVersion: nargText(req.ModelVersion),
 				ClientKind:   nargText(req.ClientKind),
 				// **空文字を送ると「未設定へ戻す」にはならない**——COALESCE が
-				// 現在値を残す。空にする経路は Phase 2 では作らない（画面が
+				// 現在値を残す。空にする経路は作らない（画面が
 				// 空欄を送らない。GuiDesign.md 5.8.2）。
 				TokenEnvSuffix: nargText(req.TokenEnvSuffix),
 			}); err != nil {

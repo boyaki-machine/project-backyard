@@ -13,7 +13,7 @@ import { uiText } from '../locales/ui'
  * （無効化なら「基本情報」、リセットなら「認証手段」）。
  *
  * **`kind='user'` のアクターだけが対象**である（6.3）。エージェントは 404 に
- * なり、詳細は `agent` テーブルができる Phase 2 で列構成ごと設計する。
+ * なる。エージェントの詳細画面は未実装で、列構成ごと設計する。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -42,7 +42,7 @@ const MAX_EMAIL = 254
 /**
  * `[+ 追加]` の候補を引く件数（13a の引き継ぎ）。
  *
- * アドミニストレータには全件見えるので、200件を超える環境は Phase 1 では
+ * アドミニストレータには全件見えるので、200件を超える環境は
  * 想定しない。超えたら検索付きの選択に変える。
  */
 const PROJECT_CANDIDATES_PER_PAGE = 200
@@ -402,7 +402,7 @@ const resetConfirmOpen = ref(false)
 /** 生成されたパスワード。**この応答でしか手に入らない**（6.6） */
 const generated = ref<string | null>(null)
 
-/** Phase 1 は `local` のみ（`DbDesign.md` 7.1 のシード） */
+/** 認証プロバイダは `local` のみ（`DbDesign.md` 7.1 のシード） */
 const localIdentity = computed(
   () => user.value?.identities.find((i) => i.provider_type === 'local') ?? null,
 )
@@ -951,7 +951,7 @@ function onMenuSelect(key: string): void {
             </tbody>
           </table>
 
-          <p class="hint">{{ $ui('（OIDC/SAML 連携は Phase 3）') }}</p>
+          <p class="hint">{{ $ui('（OIDC/SAML 連携は構想）') }}</p>
 
           <p v-if="credentialNotice" class="ok" role="status">✓ {{ credentialNotice }}</p>
           <p v-if="credentialError" class="error" role="alert">✕ {{ credentialError.message }}</p>

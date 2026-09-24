@@ -94,7 +94,7 @@ func TestRenderClaudeCode(t *testing.T) {
 	}
 	// **存在しないツールを書かない**（Requirements.md 10.8.6 を実装に合わせて改訂した）。
 	if strings.Contains(impl.Content, "pb_propose_subtasks") {
-		t.Error("Phase 3 のツール pb_propose_subtasks を手順ファイルに書いている")
+		t.Error("構想のツール pb_propose_subtasks を手順ファイルに書いている")
 	}
 	// **実装値と綴りを合わせる**（0006 の CHECK は human_only / red）。
 	if strings.Contains(impl.Content, "human-only") {

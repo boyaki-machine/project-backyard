@@ -166,7 +166,7 @@ func (h *handler) listProjects(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// 差分取得（ApiDesign.md 2.7）。Phase 1 ではポーリングを実装しないため
+	// 差分取得（ApiDesign.md 2.7）。ポーリングを実装していないため
 	// If-None-Match は解釈せず、ヘッダだけ先に出す。後から全一覧エンドポイントを
 	// 改修せずに済むようにするための先行実装である。
 	w.Header().Set("ETag", projectsETag(summary.Total, summary.LastUpdatedAt))

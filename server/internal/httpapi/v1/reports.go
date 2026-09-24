@@ -44,7 +44,7 @@ var reportStatuses = []string{"completed", "blocked", "partial"}
 // knowledge_impact の値域（同上）。
 var knowledgeImpacts = []string{"none", "minor", "major"}
 
-// runStatusCompleted は Phase 2 で agent_run.status に立つ唯一の値
+// runStatusCompleted は agent_run.status に立つ唯一の値
 // （DbDesign.md 8.2.4）。failed / abandoned は「レポートを出さずに終わった run」で、
 // それを観測する口が無い。running は開始を告げる口が無いので作られない。
 const runStatusCompleted = "completed"
@@ -305,7 +305,7 @@ func negativeCost(field string) apierr.Detail {
 
 // buildAgentRun は 1回の実行記録を組み立てる（DbDesign.md 8.2.4）。
 //
-// **1提出 = 1 run である。** 開始を告げる口を Phase 2 は持たず、「走っている run」を
+// **1提出 = 1 run である。** 開始を告げる口を持たず、「走っている run」を
 // 読む者も居ない（ticket.working_agent_id が「いま誰が処理しているか」を担う）。
 // **再提出は別の run になる**——その修正は、エージェントが実際に作業をやり直した
 // ことを意味する。

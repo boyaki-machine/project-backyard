@@ -157,8 +157,8 @@ func (h *handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// 差分取得（ApiDesign.md 2.7）。projects と同じく、Phase 1 では
-	// If-None-Match を解釈せずヘッダだけ先に出す。
+	// 差分取得（ApiDesign.md 2.7）。projects と同じく、
+	// If-None-Match は解釈せずヘッダだけ先に出す。
 	w.Header().Set("ETag", usersETag(summary.Total, summary.LastUpdatedAt))
 
 	WriteJSON(w, http.StatusOK, NewList(items, page, int(summary.Total)))

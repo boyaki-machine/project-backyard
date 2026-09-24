@@ -9,9 +9,9 @@
  * **追加・削除のあとに手元の配列を取り直したくなったときの逃げ道**としてで、
  * 既定の経路ではない（`references.ts` と同じ位置づけ）。
  *
- * **Phase 1 が扱う `type` は `manual` だけである。** `assertion` / `artifact` /
- * `review` / `task_ref` は Phase 2（`Requirements.md` 10.5.2）で、サーバは
- * 422 `phase_2_only` を返す。**画面に型の選択そのものを置かない。**
+ * **扱う `type` は `manual` だけである。** `assertion` / `artifact` /
+ * `review` / `task_ref` は未実装（`Requirements.md` 10.5.2）で、サーバは
+ * 422 `unsupported_type` を返す。**画面に型の選択そのものを置かない。**
  */
 import { api } from './client'
 import type { components } from './schema'

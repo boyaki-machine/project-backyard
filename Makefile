@@ -1,7 +1,6 @@
 # 開発・ビルドの入口（Design.md 4.1 / 4.2）
 #
 # 各ターゲットは実装手順の進行に合わせて追加していく。
-# 現在は Phase 1 手順2（マイグレーションの適用）までに必要なものだけを定義している。
 
 COMPOSE := docker compose -f deploy/base/compose.yaml
 

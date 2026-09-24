@@ -12,7 +12,7 @@ import { uiText } from '../locales/ui'
  * **結果はセクションごとに出す**（6.4）。トーストは使わない。デザインだけは
  * 見た目が即座に変わることが結果の表示を兼ねるため、成功時の文言を出さない。
  *
- * **「ログインID」と「メールアドレス」は Phase 1 ではどちらも `email` を指す**
+ * **「ログインID」と「メールアドレス」はどちらも `email` を指す**
  * （`ApiDesign.md` 4.2）。ログインIDは読み取り専用で、メールアドレス欄の変更に
  * 追随する。2行に分けてあるのは、将来ログインのIDと連絡先を別々に登録できる
  * ようにするためであり、そのとき画面の形を変えずに済む。
@@ -87,7 +87,7 @@ function loadFromStore() {
 }
 watch(() => auth.actor, loadFromStore, { immediate: true })
 
-/** ログインID。Phase 1 はメールアドレスと同じ値（`ApiDesign.md` 4.2） */
+/** ログインID。メールアドレスと同じ値（`ApiDesign.md` 4.2） */
 const loginId = computed(() => auth.actor?.email ?? '')
 
 /** 変更された項目だけを送る（部分更新。`ApiDesign.md` 4.2） */

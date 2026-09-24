@@ -22,9 +22,9 @@ import (
 
 // fallbackStatusCategory はワークフローに無いステータスキーを見たときの category。
 //
-// **Phase 1 でここへ来る経路は無い。** status_key を書くのはサーバだけで、値は
+// **ここへ来る経路は無い。** status_key を書くのはサーバだけで、値は
 // 必ずプロジェクトのワークフローから取る（9.3 の ResolveInitialStatusKey、
-// 手順17 の遷移）。ワークフローを差し替える画面も Phase 1 には無い。
+// 9.6 の遷移）。ワークフローを差し替える画面も無い。
 // それでも NULL を素通しできないのは、画面がこの値でバッジの見た目を選ぶため
 // （GuiDesign.md 8.7）で、未着手側に寄せるのが最も害が小さい。
 const fallbackStatusCategory = "todo"
@@ -64,7 +64,7 @@ type sprintRef struct {
 // **body_md を持たない**（9.2.2）。一覧は本文を表示せず、200件分の Markdown は
 // 応答を数十倍にする。**execution_mode / readiness / scope / custom_fields も
 // 持たない**——列は DbDesign.md 6.6 に先行定義されているが、GuiDesign.md 5.5 が
-// 「Phase 1 では非表示」と決めている。画面が使わない項目を応答に載せない。
+// 非表示と決めている。画面が使わない項目を応答に載せない。
 type ticketListItem struct {
 	ID       string           `json:"id"`
 	Seq      int32            `json:"seq"`
@@ -134,8 +134,8 @@ type ticketChildBrief struct {
 // コメントを作る（DbDesign.md 6.7）ので、0 を固定で返すと事実と食い違う。
 // コメントAPI（9.8）そのものは手順18 だが、件数の供給元は先に要る。
 //
-// **execution_mode / readiness / readiness_note / scope は手順27 で足した**（9.5.1）。
-// 9.2.2 が「Phase 2 で有効化する際に足す」と書いていたもので、**一覧には足していない**
+// **execution_mode / readiness / readiness_note / scope は詳細にだけ載せる**（9.5.1）。
+// **一覧には足していない**
 // ——読む相手（pb_get_task と pb_get_context）はどちらもチケット1件を指して呼ぶ。
 //
 // **足した理由は、pb_get_task が果たせていない約束があったためである**（9.5.1）。

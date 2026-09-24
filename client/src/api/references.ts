@@ -10,8 +10,8 @@
  * 取り直したくなったときの逃げ道**としてで、既定の経路ではない。
  *
  * **`kind='code'` の追加は画面に無い**（5.5）。この欄はエージェントの作業記録で
- * あり、人が手で書くものではない。Phase 1 の書き手は `/me/tokens` で発行した
- * API トークンを持つクライアントである。
+ * あり、人が手で書くものではない。書き手は MCP の `pb_add_reference` を使う
+ * エージェントと、`/me/tokens` で発行した API トークンを持つクライアントである。
  */
 import { api } from './client'
 import type { components } from './schema'

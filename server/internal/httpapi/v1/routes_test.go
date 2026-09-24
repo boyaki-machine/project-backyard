@@ -428,7 +428,7 @@ func TestTicketDetailRoutesSplitPermissions(t *testing.T) {
 	}
 }
 
-// **ticket.delete だけは Phase 1 に「持たない人」が実在する**——operator は
+// **ticket.delete だけは「持たない人」が実在する**——operator は
 // 持たず、administrator と project_admin だけが持つ（migration 0010）。
 // ここでは編集・遷移が通ることと、削除だけが 403 になることを並べて見る。
 func TestTicketDeleteNeedsItsOwnPermission(t *testing.T) {
@@ -708,7 +708,7 @@ func TestDashboardRoutesDoNotCollideWithTicketRoutes(t *testing.T) {
 // ── プロジェクト文書のルート（手順22a。ApiDesign.md 10章）────────────
 //
 // **doc.edit は operator と project_member が持たない**（DbDesign.md 8.1.4）。
-// **Phase 1 では作れなかった「その操作ができない人」が、ここで初めて実在する**
+// **「その操作ができない人」が、ここでは実在する**
 // ——これまでの宣言は operator がシステムロール側から通ってしまい、403 を
 // 一度も出せなかった（Design.md 付録A の論点③）。
 

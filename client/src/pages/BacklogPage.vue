@@ -50,7 +50,7 @@ import { useProjectStore } from '../stores/project'
 /**
  * バックログ（`GuiDesign.md` 5.4）。
  *
- * チケットを見る5つの視点（4.1.1）のうち Phase 1 で実装する唯一のもので、
+ * チケットを見る5つの視点（4.1.1）の1つで、
  * **全体を並び順・階層・グループで見て、次に何をやるかを決める**画面である。
  *
  * **上下二段**（5.4「二段」）。上が**オンステージ**（いま仕掛り中で、直近の
@@ -1724,8 +1724,7 @@ function openNewEpicModal(): void {
 }
 
 /**
- * 作成する。**チケット詳細へは飛ばさない**（Phase 1 の詳細はまだ
- * プレースホルダである）。一覧を取り直し、結果を操作した場所に出す（6.4）。
+ * 作成する。**チケット詳細へは飛ばさない。** 一覧を取り直し、結果を操作した場所に出す（6.4）。
  */
 async function createTicket(body: CreateTicketRequest): Promise<void> {
   busy.value = true

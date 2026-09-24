@@ -1233,7 +1233,7 @@ func TestMCPIntegration(t *testing.T) {
 			t.Fatalf("agent_run を引けない: %v", err)
 		}
 		if runStatus != "completed" {
-			t.Errorf("agent_run.status = %q, want completed（Phase 2 はこれだけ）", runStatus)
+			t.Errorf("agent_run.status = %q, want completed（いまはこれだけ）", runStatus)
 		}
 		if clientKind != "claude_code" {
 			t.Errorf("client_kind = %q, want claude_code", clientKind)

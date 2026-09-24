@@ -160,7 +160,7 @@ export function resetUserPassword(id: string): Promise<GeneratedPassword> {
  * 全セッションの失効（`ApiDesign.md` 6.7）。`204`。
  *
  * **冪等**で、有効なトークンが1本も無くても `204` を返す。
- * **個別のセッションを失効させる API は Phase 1 では持たない**——一覧は参照のみ
+ * **個別のセッションを失効させる API は持たない**——一覧は参照のみ
  * で、行ごとの `[失効]` は出さない（`GuiDesign.md` 5.6.2、13a の判断）。
  */
 export function revokeUserSessions(id: string): Promise<void> {

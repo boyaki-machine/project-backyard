@@ -39,7 +39,7 @@ export interface PlaceholderMeta {
   docRef: string
   /** 予定している内容（設計文書からの転記） */
   planned: string[]
-  /** Phase と実装予定（PB のチケット番号） */
+  /** 状態（「未定」「構想」など） */
   status: string
 }
 
@@ -185,7 +185,7 @@ const routeSources: RouteRecordRaw[] = [
 
   // 実画面（GuiDesign.md 5.12）。
   //
-  // **/admin/system（認証プロバイダ、Phase 3）とは別画面である。** 必要権限が
+  // **/admin/system（認証プロバイダ、構想）とは別画面である。** 必要権限が
   // system.settings と authprovider.manage で分かれており、ユーザー管理を
   // 持たない役割に設定だけを配ることができる。
   {
@@ -245,7 +245,7 @@ const routeSources: RouteRecordRaw[] = [
 
   // ── チケットで駆動する視点（GuiDesign.md 3.2 / 10章）──────────
   //
-  // **Phase 番号を割り当てない。** 状態は「未定」と出す。
+  // 状態は「未定」と出す。
   //
   // **WBS とスプリント管理のルートは持たない。** WBS が指すのは
   // チケットの親子階層で、**バックログが既にその面である**。バーンダウン・
@@ -308,7 +308,7 @@ const routeSources: RouteRecordRaw[] = [
     meta: { permission: 'agent.register' },
   },
 
-  // ── Phase 3（GuiDesign.md 10章）─────────────────────────────
+  // ── 構想（GuiDesign.md 10章）───────────────────────────────
   //
   // **必要権限は画面ごとに違う**（3.2 が正本）。承認キューは `proposal.review`、
   // プロジェクトメモリは `knowledge.view`、進捗分析とヒストリーは `project.view`
@@ -321,7 +321,7 @@ const routeSources: RouteRecordRaw[] = [
       placeholder: {
         title: '承認キュー',
         docRef: 'GuiDesign.md 10章',
-        status: 'Phase 3',
+        status: '構想',
         planned: [
           'AIの提案（知識更新・サブタスク・ドキュメント差分）を差分ビューで一括レビュー',
           'proposal テーブル1つを源とする単一画面',
@@ -339,7 +339,7 @@ const routeSources: RouteRecordRaw[] = [
       placeholder: {
         title: 'プロジェクトメモリ',
         docRef: 'GuiDesign.md 10章',
-        status: 'Phase 3',
+        status: '構想',
         planned: ['知識の一覧・編集・履歴', 'kind（規約／決定／注意／失敗）によるフィルタ'],
       },
     },
@@ -353,7 +353,7 @@ const routeSources: RouteRecordRaw[] = [
       placeholder: {
         title: '進捗分析',
         docRef: 'GuiDesign.md 10章',
-        status: 'Phase 3',
+        status: '構想',
         planned: [
           'チケットの消化状況・残存チケットの傾向',
           'バックログ・カンバン・ガントが「いま何があるか」を見せるのに対し、この画面だけが「どう進んでいるか」を集計で答える',
@@ -371,7 +371,7 @@ const routeSources: RouteRecordRaw[] = [
       placeholder: {
         title: 'プロジェクトヒストリー・要約',
         docRef: 'GuiDesign.md 10章',
-        status: 'Phase 3',
+        status: '構想',
         planned: [
           '年表形式の履歴',
           'AIによるプロジェクト要約の集約（日次バッチで事前生成）',
@@ -389,7 +389,7 @@ const routeSources: RouteRecordRaw[] = [
       placeholder: {
         title: '認証プロバイダ（OIDC/SAML）',
         docRef: 'GuiDesign.md 10章',
-        status: 'Phase 3',
+        status: '構想',
         planned: ['OIDC/SAML の設定', 'auth_provider テーブルの編集UI'],
       },
     },

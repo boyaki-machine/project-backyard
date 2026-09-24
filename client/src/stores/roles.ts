@@ -100,7 +100,7 @@ export const useRolesStore = defineStore('roles', () => {
   /**
    * 表示名を引く。**未知のキーはそのまま返す。**
    *
-   * カタログはシードで増えうる（カスタムロールは Phase 3）。空欄にすると
+   * カタログはシードで増えうる（カスタムロールは構想）。空欄にすると
    * 行の意味が読めなくなるので、表示できるものを表示する。
    */
   function roleLabel(key: string): string {

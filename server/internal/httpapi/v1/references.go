@@ -71,7 +71,7 @@ var referenceImmutableFields = []string{"kind"}
 
 // referenceView は 9.10.2 が返す1行。
 //
-// **created_by を返すが、Phase 1 の画面は使わない**（9.10.2、GuiDesign.md 5.5）。
+// **created_by を返すが、画面は使わない**（9.10.2、GuiDesign.md 5.5）。
 // このセクションが表すのは「チケットの成果物としてリポジトリ・ブランチ・
 // コミットが紐づいている」という関係であって、行を登録したのが誰かではない。
 // それでも返して DB にも残すのは、将来エージェントの書いた行を区別したく

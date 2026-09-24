@@ -104,7 +104,7 @@ func TestListUsersDefaults(t *testing.T) {
 		}
 	}
 	if item["agent"] != nil {
-		t.Errorf("agent = %v, want null（Phase 1 に agent テーブルが無い）", item["agent"])
+		t.Errorf("agent = %v, want null（人の行）", item["agent"])
 	}
 	if item["project_count"] != float64(3) {
 		t.Errorf("project_count = %v, want 3", item["project_count"])

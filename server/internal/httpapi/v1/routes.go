@@ -170,7 +170,7 @@ func Mount(r chi.Router, deps Deps) {
 		r.Get("/me/tokens", h.listMyTokens)
 		r.Post("/me/tokens", h.createMyToken)
 		r.Delete("/me/tokens/{id}", h.deleteMyToken)
-		// 自分のエージェント（4.5、Phase 2）。**RequirePermission を付けない。**
+		// 自分のエージェント（4.5）。**RequirePermission を付けない。**
 		//
 		// agent.register / agent.token.issue は project_admin と administrator が
 		// 持つ権限だが（DbDesign.md 7.3）、**それは「他人のエージェントを管理する」
@@ -213,7 +213,7 @@ func Mount(r chi.Router, deps Deps) {
 		// 誰でも叩けると、キーの当たりを付けてプロジェクトの存在を探れる。
 		r.With(middleware.RequirePermission(deps.Queries, "project.create")).
 			Get("/projects/check-key", h.checkProjectKey)
-		// Phase 1 では project.create を持つのはアドミニストレータのみ（5.3、
+		// project.create を持つのはアドミニストレータのみ（5.3、
 		// DbDesign.md 7.3）。ここで役割を名指ししないのは、権限の割り当てが
 		// role_permission のデータ側で決まるためである（Design.md 6.4.2）。
 		r.With(middleware.RequirePermission(deps.Queries, "project.create")).
@@ -244,7 +244,7 @@ func Mount(r chi.Router, deps Deps) {
 		// **どちらも project.view である**（9.13）。チケットを数える／チケットの
 		// 変更履歴を返すのに ticket.view ではないのは、**9.13 がプロジェクト
 		// ダッシュボードのデータ源として定義している**ためで、読み手は
-		// 「そのプロジェクトを開ける人」である。Phase 1 では project.view を
+		// 「そのプロジェクトを開ける人」である。project.view を
 		// 持たずに ticket.view を持つロールは存在しない（migration 0010）。
 		//
 		// **子資源なので RequireProjectPermission を通す。** 非メンバーには
@@ -320,8 +320,8 @@ func Mount(r chi.Router, deps Deps) {
 		// **3本とも必要権限が違う。** 読みは ticket.view、作成は ticket.create、
 		// 並べ替えは ticket.edit（9.4 が「並べ替えは編集である」と定める）。
 		//
-		// **ただし Phase 1 に「作成できない人」は実在しない。** 実効権限は
-		// システムロール ∪ プロジェクトロール（Design.md 6.4.1）で、Phase 1 の
+		// **ただし「作成できない人」は実在しない。** 実効権限は
+		// システムロール ∪ プロジェクトロール（Design.md 6.4.1）で、
 		// システムロールは administrator と operator の2つしかなく、operator は
 		// ticket.create と ticket.edit を持つ（migration 0010）。project_viewer 側で
 		// 絞っても、システムロール側から通る。**この宣言が効くのは、権限の
@@ -347,7 +347,7 @@ func Mount(r chi.Router, deps Deps) {
 		// **4つとも必要権限が違う。** 読みは ticket.view、編集は ticket.edit、
 		// 削除は ticket.delete、遷移は ticket.transition。
 		//
-		// **ticket.delete だけは Phase 1 に「持たない人」が実在する**——
+		// **ticket.delete だけは「持たない人」が実在する**——
 		// operator（システムロール）は ticket.delete を持たず、持つのは
 		// administrator と project_admin だけである（migration 0010）。
 		// 他の3つは operator が持つため、宣言が効き始めるのは権限の全体像を
@@ -391,9 +391,8 @@ func Mount(r chi.Router, deps Deps) {
 		// ことはチケットを編集することであり、新しい権限は増やしていない
 		// （DbDesign.md 7.2 の28件は Design.md 付録Aで確定済み）。
 		//
-		// **Phase 1 の書き手は /me/tokens の API トークンを持つクライアント
-		// である**（9.10.2）。エージェント用のアクターと MCP は Phase 2
-		// （手順24・25）で、それまでは人のトークンで叩く。画面は kind='code'
+		// **書き手は MCP の pb_add_reference を使うエージェントと、/me/tokens の
+		// API トークンを持つクライアントである**（9.10.2）。画面は kind='code'
 		// の追加を持たず、表示と削除だけを行う（GuiDesign.md 5.5）——つまり
 		// POST の主な呼び手はブラウザではない。
 		//
@@ -457,7 +456,7 @@ func Mount(r chi.Router, deps Deps) {
 		// 足さない——DbDesign.md 7.2 は権限キーを削除しないと定めており、
 		// **使い分ける必要が現れる前にカタログを増やさない。**
 		//
-		// **GET を置かない**（9.15）。Phase 2 で人が読むのは完了レポートの
+		// **GET を置かない**（9.15）。人が読むのは完了レポートの
 		// コメントであり、agent_report の行そのものを読む面が無い。
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).
 			Post("/projects/{key}/tickets/{seq}/reports", h.submitTicketReport)
@@ -479,7 +478,7 @@ func Mount(r chi.Router, deps Deps) {
 		// operator と project_member が持たない**（DbDesign.md 8.1.4）——
 		// 憲章は全参加者を縛るため、更新できる人を絞る。
 		//
-		// **Phase 1 に「その操作ができない人」が実在しないという問題
+		// **「その操作ができない人」が実在しないという問題
 		// （Design.md 付録A）に対する、最初の実例である。** これまでの宣言は
 		// すべて operator がシステムロール側から通ってしまい、負の側を
 		// 検証できなかった。ここで初めて 403 を実際に出せる。
@@ -534,7 +533,7 @@ func Mount(r chi.Router, deps Deps) {
 		//
 		// **6章はすべてアドミニストレータ専用**（同章の前書き）。プロジェクト層は
 		// 関係しないので RequirePermission で足りる。user.manage を持つのは
-		// Phase 1 ではアドミニストレータのみ（DbDesign.md 7.3）だが、ここで
+		// アドミニストレータのみ（DbDesign.md 7.3）だが、ここで
 		// 役割を名指ししないのは割り当てが role_permission のデータ側で
 		// 決まるためである（Design.md 6.4.2）。
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).

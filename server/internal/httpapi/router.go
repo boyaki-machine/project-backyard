@@ -255,7 +255,7 @@ func mountMCP(r chi.Router, q gen.Querier, v1Deps v1.Deps, version string) {
 
 // isAPIPath は SPA のフォールバック対象外とするパスかを返す。
 //
-// 対象は REST（/api）と MCP（/mcp、Phase 2）の2つ。ここに該当するパスは、
+// 対象は REST（/api）と MCP（/mcp）の2つ。ここに該当するパスは、
 // 未定義であっても index.html ではなく 2.5 形式の 404 を返す。
 func isAPIPath(p string) bool {
 	for _, prefix := range []string{"/api", "/mcp"} {

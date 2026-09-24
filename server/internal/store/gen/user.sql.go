@@ -89,8 +89,6 @@ SELECT count(*) FROM comment WHERE author_id = $1
 //
 // comment.author_id は NOT NULL かつ ON DELETE RESTRICT である。**DBが
 // 「システムアクターへ付け替えてからでないと消せない」という順序を強制する。**
-// Phase 1 は comment を作る経路が無い（チケットAPIは手順16）ため常に0件だが、
-// 実装は先に通しておく。
 func (q *Queries) CountCommentsByAuthor(ctx context.Context, authorID string) (int64, error) {
 	row := q.db.QueryRow(ctx, countCommentsByAuthor, authorID)
 	var count int64
@@ -162,7 +160,7 @@ type CreateSystemActorParams struct {
 // CreateSystemActor はシステムアクターを1件作る。
 //
 // **シードで先に置かず、最初に必要になった削除で作る**（手順13a の判断）。
-// Phase 1 に comment を作る経路が無く、置いても一度も参照されないため。
+// コメントを持たない環境では、置いても一度も参照されないため。
 func (q *Queries) CreateSystemActor(ctx context.Context, arg CreateSystemActorParams) error {
 	_, err := q.db.Exec(ctx, createSystemActor, arg.ID, arg.DisplayName)
 	return err
@@ -282,8 +280,8 @@ LIMIT 1
 //
 // **display_name で引いている。** kind='system' のアクターに一意なキー列が
 // 無いためである（DbDesign.md 6.2 の actor には key に相当する列がない）。
-// Phase 1 でシステムアクターはこの1件しか作られないので成り立つが、
-// **Phase 2 でシステムアクターが増えるなら識別子を決める必要がある**
+// システムアクターはこの1件しか作られないので成り立つが、
+// **システムアクターが増えるなら識別子を決める必要がある**
 // （DbDesign.md 10章「未解決の検討事項」）。
 func (q *Queries) FindDeletedUserActor(ctx context.Context, displayName string) (string, error) {
 	row := q.db.QueryRow(ctx, findDeletedUserActor, displayName)
@@ -303,7 +301,7 @@ WHERE i.user_id = $1 AND i.provider_key = 'local'
 // ── パスワードリセットとセッション失効（ApiDesign.md 6.6 / 6.7）──
 // FindLocalCredentialByActor はリセット対象の資格情報を引く。
 //
-// 行が無い＝local_credential を持たない（IdP のみ、Phase 3）で、
+// 行が無い＝local_credential を持たない（IdP のみ。構想）で、
 // 6.6 はこれを 409 conflict と定める。
 func (q *Queries) FindLocalCredentialByActor(ctx context.Context, userID string) (string, error) {
 	row := q.db.QueryRow(ctx, findLocalCredentialByActor, userID)
@@ -357,7 +355,7 @@ type GetAdminUserRow struct {
 // その列は app_user にしかない。app_user の行を持たないアクター
 // （エージェント・システム）を 200 で返すと、PATCH（6.4）の楽観ロックが
 // 成立しないものを画面に開かせることになる。エージェントの詳細は
-// agent テーブル（DbDesign.md 8.1）ができる Phase 2 で列構成ごと設計する。
+// 未実装で、列構成ごと設計する（DbDesign.md 8.2.1）。
 //
 // したがって app_user は LEFT ではなく INNER JOIN であり、
 // **行が返らない＝404** となる（ApiDesign.md 1.2-5）。
@@ -523,7 +521,7 @@ type ListAdminUsersRow struct {
 //
 // **kind = 'system' の actor は除く。** 6.1 が列挙するのは user / agent / all の
 // 3つで、システムアクター（バッチ等が使う DbDesign.md 6.2 の3種目）は
-// 利用者が管理する対象ではない。Phase 1 のシードは system アクターを作らないが、
+// 利用者が管理する対象ではない。シードは system アクターを作らないが、
 // 将来作られても一覧に紛れ込まないようにここで落とす。
 //
 // **project_count は project_member の行数**で、アーカイブ済みプロジェクトも
@@ -539,7 +537,7 @@ type ListAdminUsersRow struct {
 //
 // **system_role は role.sort_order で並べる**（ApiDesign.md 6.1）。表示名の
 // 五十音順ではない——シードが意図して序列を持っており（オペレータ 10 →
-// アドミニストレータ 20。DbDesign.md 7.3）、Phase 3 でカスタムロールが増えたとき
+// アドミニストレータ 20。DbDesign.md 7.3）、カスタムロール（構想）が増えたとき
 // 表示名順では意味のない並びになる。**ロールを持たない行（エージェント）は
 // 昇順・降順とも末尾に置く**（NULLS LAST を両方に明示する。Postgres の既定は
 // DESC で NULLS FIRST であり、明示しないと先頭へ来る）。
@@ -621,12 +619,12 @@ type ListUserIdentitiesRow struct {
 
 // ListUserIdentities は 6.3 の identities[] を引く。
 //
-// **配列であることが Phase 3 の IdP 連携をそのまま受け入れる**（ApiDesign.md 6.3、
+// **配列であることが IdP 連携（構想）をそのまま受け入れる**（ApiDesign.md 6.3、
 // DbDesign.md 6.2）。OIDC を足しても要素が1つ増えるだけで、応答の形は変わらない。
 //
 // password_updated_at は local_credential の列で、ローカル以外のプロバイダでは
-// NULL になる。**LEFT JOIN にするのはそのため**で、INNER にすると Phase 3 の
-// OIDC identity が一覧から消える。
+// NULL になる。**LEFT JOIN にするのはそのため**で、INNER にすると
+// OIDC の identity が一覧から消える。
 //
 // provider_type は auth_provider.type（DbDesign.md 6.2、7.1 のシード）。
 // 画面が「ローカルパスワード」と出すか IdP 名を出すかをこの値で決める。

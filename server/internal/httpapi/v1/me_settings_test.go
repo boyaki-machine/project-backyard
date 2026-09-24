@@ -480,7 +480,7 @@ func TestChangeMyPasswordValidatesPolicy(t *testing.T) {
 	}
 }
 
-// パスワード認証を使っていないアカウント（IdP のみ、Phase 3）は 409。
+// パスワード認証を使っていないアカウント（IdP のみ。構想）は 409。
 // 6.6（管理者によるリセット）と同じ扱いにする。
 func TestChangeMyPasswordConflictsWithoutLocalCredential(t *testing.T) {
 	q := meFake(t)

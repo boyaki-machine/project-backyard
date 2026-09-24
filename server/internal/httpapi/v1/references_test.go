@@ -233,7 +233,7 @@ func TestCreateReferenceCreatesCodeRow(t *testing.T) {
 	if got := q.ticket.refCreated[0].SortOrder; got != 10 {
 		t.Errorf("sort_order = %d, want 10", got)
 	}
-	// **書き手はプリンシパル**（9.10.2）。Phase 1 は API トークンの持ち主。
+	// **書き手はプリンシパル**（9.10.2）。API トークンの持ち主が入る。
 	if got := q.ticket.refCreated[0].CreatedBy; got.String != testActorID {
 		t.Errorf("created_by = %q, want %q", got.String, testActorID)
 	}

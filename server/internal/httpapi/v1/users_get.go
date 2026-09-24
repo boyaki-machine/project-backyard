@@ -67,7 +67,7 @@ type userDetailView struct {
 
 // userIdentityView は 6.3 の identities[] 要素（DbDesign.md 6.2 の user_identity）。
 //
-// **この配列が Phase 3 の IdP 連携をそのまま受け入れる。** OIDC を追加しても
+// **この配列が IdP 連携（構想）をそのまま受け入れる。** OIDC を追加しても
 // 要素が1つ増えるだけで、応答構造もUIも変わらない。
 //
 // password_updated_at は local_credential の列であり、ローカル以外の
@@ -266,7 +266,7 @@ func (h *handler) adminUserContext(
 //
 // **行が無いのは 404。** kind が user でないアクター（エージェント・システム）も
 // GetAdminUser が 0 行を返すため、ここに合流する（手順13a の判断。6章が扱うのは
-// 人間のアカウントであり、エージェントの詳細は Phase 2 で設計する）。
+// 人間のアカウントであり、エージェントの詳細は未実装）。
 func writeUserDetailError(w http.ResponseWriter, r *http.Request, id string, err error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		apierr.Write(w, r, apierr.New(apierr.NotFound).

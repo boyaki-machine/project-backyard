@@ -7,8 +7,8 @@
 // **扱うのは token_type='api' の行だけである。** ブラウザのセッション
 // （'session'）は現れない——本人が自分のセッションを見る・切る画面を持たないと
 // 決めており（GuiDesign.md 5.8）、混ぜると「一覧に出ているのに失効させられない
-// 行」が生まれる。エージェント用（'agent'、Phase 2）はプロジェクト設定側から
-// 発行する（Design.md 6.5）。
+// 行」が生まれる。エージェント用（'agent'）は /me/agents から発行する
+// （Design.md 6.5）。
 //
 // **6.7（管理者による全失効）と役割が違う。** あちらは他人の端末を丸ごと切る
 // もので、こちらは本人が自分の1本を選んで切る。共有するのは access_token という
@@ -250,7 +250,7 @@ func (h *handler) createMyToken(w http.ResponseWriter, r *http.Request) {
 			TokenPrefix: text(auth.TokenPrefix(plaintext)),
 			Name:        text(fields.name),
 			// project_id は NULL（全プロジェクト）。プロジェクト単位のトークンは
-			// Phase 2 のエージェント用である（Design.md 6.5）。
+			// エージェント用である（Design.md 6.5）。
 			Scopes:    encodedScopes,
 			ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
 			// client_info はセッション（User-Agent）用の列。CLI トークンには

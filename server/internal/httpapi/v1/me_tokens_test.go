@@ -232,7 +232,7 @@ func TestCreateMyTokenIssuesPlaintextOnce(t *testing.T) {
 		t.Errorf("name = %q", arg.Name.String)
 	}
 	if arg.ProjectID.Valid {
-		t.Error("project_id が入っている。Phase 1 は常に NULL（全プロジェクト）")
+		t.Error("project_id が入っている。人のトークンは常に NULL（全プロジェクト）")
 	}
 	if string(arg.Scopes) != `[]` {
 		t.Errorf("scopes = %s, want []（絞り込みなし）", arg.Scopes)

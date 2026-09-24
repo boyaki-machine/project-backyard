@@ -296,8 +296,8 @@ func validateCreateTicket(req *createTicketRequest) (pgtype.Date, pgtype.Date, *
 
 // resolveTicketParent は parent_seq を ticket.id へ解決する（9.3）。
 //
-// **同一プロジェクトに限る。** 親もリンク先も同一プロジェクト内に限るのが
-// Phase 1 の前提である（9.1）。**循環の検査は要らない**——作りたてのチケットに
+// **同一プロジェクトに限る。** 親もリンク先も同一プロジェクト内に限る
+// （9.1）。**循環の検査は要らない**——作りたてのチケットに
 // 子孫はいないため、9.5.2 の parent_cycle は更新のときだけ起こる。
 func resolveTicketParent(
 	ctx context.Context, q gen.Querier, projectID string, parentSeq *int32,

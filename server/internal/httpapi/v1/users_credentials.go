@@ -27,7 +27,7 @@ import (
 
 // passwordResetModeGenerate は 6.6 の mode。
 //
-// **Phase 1 は generate だけを受ける**（手順13a の判断）。6.6 の応答は
+// **generate だけを受ける**（手順13a の判断）。6.6 の応答は
 // generated_password しか持たず、管理者が手で決めた値を返す意味が無い。
 // 画面（GuiDesign.md 5.6.2）の導線も [リセット] の1つだけである。
 // 必要になれば 6.2 と同じ password_mode / password を足す。
@@ -54,7 +54,7 @@ type passwordResetResponse struct {
 // resetUserPassword は POST /api/v1/admin/users/:id/password-reset を
 // 処理する（ApiDesign.md 6.6）。
 //
-// **local_credential を持たないユーザー（IdP のみ、Phase 3）は 409 conflict**。
+// **local_credential を持たないユーザー（IdP のみ。構想）は 409 conflict**。
 func (h *handler) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 	p, id, ok := h.adminUserContext(w, r, "POST /admin/users/{id}/password-reset")
 	if !ok {
@@ -172,7 +172,7 @@ func (h *handler) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 //
 // **エージェントのトークンにも適用される**（6.7）ため、token_type で
 // 絞らずアクターの全トークンを失効させる（RevokeActorSessions）。
-// ただし Phase 1 に到達できるのは kind='user' だけである（6.3 の判断）。
+// ただし到達できるのは kind='user' だけである（6.3 の判断）。
 //
 // **冪等である。** 既に1本も無くても 204 を返す。何度呼んでも
 // 「入れない」状態に収束する。

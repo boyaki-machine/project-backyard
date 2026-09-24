@@ -45,7 +45,7 @@ const (
 	ProjectCreate    Action = "project.create"
 	ProjectArchive   Action = "project.archive"
 	PermissionDenied Action = "permission.denied"
-	// 以下は 0019（Phase 2）で加わった（ApiDesign.md 4.5.6）。
+	// 以下はエージェントの操作（ApiDesign.md 4.5.6）。
 	// エージェントの登録と更新はアカウントの作成・変更と同じ重みを持つ。
 	AgentRegister Action = "agent.register"
 	AgentUpdate   Action = "agent.update"
@@ -295,7 +295,7 @@ func text(s string) pgtype.Text {
 // audit_log.ip（inet 型）とアクセスログの ip を**同じ値**にするため、
 // 両者がこの関数を共有する（Design.md 10.1）。
 //
-// プロキシ経由の実IP解決（X-Forwarded-For 等）は Phase 1 では行わない。
+// プロキシ経由の実IP解決（X-Forwarded-For 等）は行わない。
 // 詐称可能なヘッダを検証なしに信じると、監査ログの発信元を偽装できてしまう。
 func ClientIP(r *http.Request) netip.Addr {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

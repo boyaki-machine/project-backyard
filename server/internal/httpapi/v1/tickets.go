@@ -1,6 +1,6 @@
 // GET /api/v1/projects/{key}/tickets（ApiDesign.md 9.2）。
 //
-// **バックログ画面（GuiDesign.md 5.4）の唯一のデータ源**であり、Phase 2 の
+// **バックログ画面（GuiDesign.md 5.4）の唯一のデータ源**であり、未実装の
 // カンバン・ガントも同じエンドポイントを読む。同一データの別の描き方であって、
 // 別のクエリではない（4.1.1）。
 //
@@ -288,7 +288,7 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		total, lastUpdated = row.Total, row.LastUpdatedAt
 	}
 
-	// 差分取得（2.7 / 9.2.5）。Phase 1 では If-None-Match を解釈せず
+	// 差分取得（2.7 / 9.2.5）。If-None-Match は解釈せず
 	// ヘッダだけ出す（5.1 / 6.1 と同じ）。
 	w.Header().Set("ETag", ticketsETag(filters.normalized, page, total, lastUpdated))
 

@@ -50,8 +50,7 @@ var actions = map[Action]bool{
 	Create: true, Update: true, Delete: true, Transition: true,
 }
 
-// EntityTicket は entity_type の値。Phase 1 で記録するのはチケットだけである
-// （9.1.1。コメント・DoD・リンクは手順18 で足す）。
+// EntityTicket は entity_type の値。記録するのはチケットだけである（9.1.1）。
 const EntityTicket = "ticket"
 
 // Entry は1件の業務履歴。

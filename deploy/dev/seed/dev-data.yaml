@@ -372,7 +372,7 @@ projects:
 
           # 制約条件
 
-          - Phase 2 の手順22。**Phase 1 では足場だけ**
+          - 手順22 で扱う。**ここでは足場だけ**
       - title: MCP のツール定義を決める
         type: task
         parent: MCP サーバの足場を作る
