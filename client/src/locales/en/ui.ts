@@ -1133,6 +1133,8 @@ export const uiMessages: Record<string, string> = {
   "は、": " ",
   "サーバ証明書としてだけ使える": "restrict this certificate to server use only",
   "ようにする指定です。CA として他の証明書に署名することはできません": ". It cannot act as a CA and sign other certificates.",
+  "付けません。": "is not set.",
+  "付けると、Claude Code などがこの証明書を直接信頼できなくなります": " Setting it prevents clients such as Claude Code from trusting this certificate directly.",
   "を「証明書」、": "as \"Certificate\",",
   "を「秘密鍵」の欄に貼ります。": "paste it into the \"Private Key\" field.",
   "認証局が発行した証明書を登録する": "Register a certificate issued by a Certificate Authority",

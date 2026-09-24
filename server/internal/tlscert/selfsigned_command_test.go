@@ -19,8 +19,8 @@ import (
 // ここで走らせるものと利用者がコピーするものは同じである。
 const selfSignedCommandPath = "../../../client/src/pages/tls-self-signed.sh"
 
-// 拡張領域の OID（RFC 5280 4.2.1）。critical の有無は x509.Certificate の欄に出ないので、
-// Extensions から直接見る。
+// 拡張領域の OID（RFC 5280 4.2.1）。critical の有無と「付いていないこと」は
+// x509.Certificate の欄では見分けられないので、Extensions から直接見る。
 var (
 	oidKeyUsage         = asn1.ObjectIdentifier{2, 5, 29, 15}
 	oidBasicConstraints = asn1.ObjectIdentifier{2, 5, 29, 19}
@@ -28,6 +28,13 @@ var (
 
 // TestSelfSignedCommand は画面の openssl サンプルを実際に走らせ、出来た証明書が
 // サーバ証明書としてだけ使える形であることと、PB が登録を受け付けることを確かめる。
+//
+// **Key Usage は付けない形を正とする**（pb-201）。自己署名の証明書をクライアントに
+// 直接信頼させると、証明書は自分自身の発行元として扱われる。OpenSSL 1.0 系
+// （BoringSSL・LibreSSL。Claude Code が動く Bun は BoringSSL）は、そのとき Key Usage に
+// keyCertSign が無いと発行元と認めず、UNABLE_TO_VERIFY_LEAF_SIGNATURE で落ちる。
+// keyCertSign を足すのは CA:FALSE と矛盾する（RFC 5280 4.2.1.9）ので、Key Usage ごと外す。
+// **Go と OpenSSL 3 はこの形の違いを区別しない**ので、最後に LibreSSL でも確かめる。
 //
 // **openssl が無い端末では skip する。** 他の試験（makeCert）は openssl を呼ばずに
 // 走るので、この1本だけが openssl に依存する。macOS は LibreSSL を標準で持つ。
@@ -86,14 +93,12 @@ func TestSelfSignedCommand(t *testing.T) {
 	if !cert.BasicConstraintsValid || cert.IsCA {
 		t.Errorf("Basic Constraints: valid=%v isCA=%v、CA:FALSE を明示すること", cert.BasicConstraintsValid, cert.IsCA)
 	}
-	// Key Usage：署名と鍵の暗号化だけ。critical で付ける。
-	if want := x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment; cert.KeyUsage != want {
-		t.Errorf("Key Usage = %b、want %b", cert.KeyUsage, want)
+	if !extensionCritical(cert, oidBasicConstraints) {
+		t.Error("Basic Constraints が critical でない")
 	}
-	for _, oid := range []asn1.ObjectIdentifier{oidBasicConstraints, oidKeyUsage} {
-		if !extensionCritical(cert, oid) {
-			t.Errorf("拡張 %v が critical でない", oid)
-		}
+	// Key Usage：付けない（上の説明）。
+	if hasExtension(cert, oidKeyUsage) {
+		t.Errorf("Key Usage が付いている（%b）。BoringSSL 系のクライアントが自己署名を信頼できなくなる", cert.KeyUsage)
 	}
 	// Extended Key Usage：サーバ認証だけ。
 	if !slices.Equal(cert.ExtKeyUsage, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}) {
@@ -121,6 +126,44 @@ func TestSelfSignedCommand(t *testing.T) {
 	if !p.IsSelfSigned {
 		t.Error("自己署名として識別されない")
 	}
+
+	// OpenSSL 1.0 系で、自分自身を信頼の起点にして検証が通る（Claude Code の代わりに LibreSSL で見る）。
+	t.Run("LibreSSL", func(t *testing.T) {
+		bin := libreSSL()
+		if bin == "" {
+			t.Skip("LibreSSL が無い（macOS は /usr/bin/openssl が LibreSSL）")
+		}
+		crt := filepath.Join(dir, "pb.crt")
+		out, err := exec.Command(bin, "verify", "-CAfile", crt, "-purpose", "sslserver", crt).CombinedOutput()
+		if err != nil || !strings.HasSuffix(strings.TrimSpace(string(out)), ": OK") {
+			t.Errorf("LibreSSL が信頼の起点として受け付けない: %v\n%s", err, out)
+		}
+	})
+}
+
+// libreSSL は LibreSSL の openssl を返す。無ければ空。
+// PATH の先頭が OpenSSL 3（Homebrew など）の端末もあるので、/usr/bin/openssl も見る。
+func libreSSL() string {
+	cands := []string{"/usr/bin/openssl"}
+	if p, err := exec.LookPath("openssl"); err == nil {
+		cands = append([]string{p}, cands...)
+	}
+	for _, c := range cands {
+		out, err := exec.Command(c, "version").Output()
+		if err == nil && strings.HasPrefix(string(out), "LibreSSL") {
+			return c
+		}
+	}
+	return ""
+}
+
+func hasExtension(c *x509.Certificate, oid asn1.ObjectIdentifier) bool {
+	for _, e := range c.Extensions {
+		if e.Id.Equal(oid) {
+			return true
+		}
+	}
+	return false
 }
 
 func extensionCritical(c *x509.Certificate, oid asn1.ObjectIdentifier) bool {
