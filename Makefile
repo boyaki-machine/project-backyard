@@ -53,7 +53,7 @@ STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@1
 	stg-init stg-up stg-down stg-psql stg-migrate stg-build stg-run stg-stop stg-admin-create \
 	dev-client gen-api build-client sync-webui build clean-webui release \
 	version version-check bump-build bump-minor bump-major release-tag \
-	docs-size docs-emphasis css-tokens fmt-check vuln-check
+	docs-size docs-emphasis css-tokens fmt-check vuln-check licenses licenses-check
 
 ## DB を起動する
 # **app は起動しない。** dev では PB 本体を make run でホストから動かしており、app の
@@ -134,7 +134,8 @@ admin-mfa-reset:
 # **整形の検査を先に通す**。gofmt は go test が見ないので、
 # 打つ人がいなければ発火しない。起票から4日間、誰も気づかないまま
 # 別のチケットが偶然直した、という経緯が根拠である。
-test: fmt-check
+# **第三者のライセンス表示の鮮度も先に見る**（依存を足して再生成し忘れたまま進めない）。
+test: fmt-check licenses-check
 	@cd server && go test ./...
 
 ## 整形されていない Go のファイルが無いことを見る
@@ -320,10 +321,14 @@ build-client:
 # **placeholder.html だけは消さない。** 追跡対象であり、消すと作業ツリーが汚れる。
 # rm -rf ではなく find にしているのはそのため。古い成果物は残さず一掃する
 # （ハッシュ付きのファイル名は毎ビルド変わるので、残すと binary に溜まり続ける）。
-sync-webui: build-client
+#
+# **第三者のライセンス表示も同じ場所へ置く**（画面から /THIRD_PARTY_NOTICES.txt で読む。
+# GuiDesign.md 4.2）。古い表示のまま埋め込まないよう、先に鮮度を見る。
+sync-webui: build-client licenses-check
 	mkdir -p server/internal/webui/dist
 	find server/internal/webui/dist -mindepth 1 ! -name placeholder.html -delete
 	cp -R client/dist/. server/internal/webui/dist/
+	cp THIRD_PARTY_NOTICES.txt server/internal/webui/dist/
 
 ## client を埋め込んだ単一バイナリを作る（bin/pb）
 build: sync-webui
@@ -335,6 +340,37 @@ build: sync-webui
 # git clean は追跡済みの placeholder.html を消さない。
 clean-webui:
 	git -C $(CURDIR) clean -fdxq server/internal/webui/dist
+
+# ── 第三者のライセンス表示（Design.md 4.5）────────────────────
+
+# goose のビルドタグ。**正本は deploy/prod/build-release.sh** で、ここでは読み出すだけ。
+# タグで goose の依存（＝同梱するライセンス）が変わるので、別の値を持たない。
+GOOSE_TAGS := $(shell sed -n 's/^goose_tags="\(.*\)"$$/\1/p' $(CURDIR)/deploy/prod/build-release.sh)
+
+# npm 側（バンドルに入ったもの）を一時ファイルへ出し、Go 側と合わせて生成器へ渡す。
+# 生成器は server/tools/notices。$(1) に -check を渡すと、書かずに比べる。
+define run_notices
+	@if [ ! -d "$(CURDIR)/client/node_modules/vite" ]; then \
+		echo "NG: client/node_modules に vite が無い。先に cd client && npm ci を打つ"; \
+		exit 1; \
+	fi
+	@if [ -z "$(GOOSE_TAGS)" ]; then \
+		echo "NG: deploy/prod/build-release.sh から goose_tags を読めない"; \
+		exit 1; \
+	fi
+	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
+	node client/scripts/npm-licenses.mjs "$$tmp/npm.json" && \
+	go -C server/tools run ./notices $(1) -npm "$$tmp/npm.json" -goose-tags "$(GOOSE_TAGS)" \
+		-o "$(CURDIR)/THIRD_PARTY_NOTICES.txt"
+endef
+
+## 第三者のライセンス表示（THIRD_PARTY_NOTICES.txt）を作り直す。依存を変えたら打ってコミットする
+licenses:
+	$(call run_notices)
+
+## THIRD_PARTY_NOTICES.txt が依存と一致するかを見る（make test と make build が先に呼ぶ）
+licenses-check:
+	$(call run_notices,-check)
 
 # ── リリース用の一式（Design.md 4.5）──────────────────────────
 

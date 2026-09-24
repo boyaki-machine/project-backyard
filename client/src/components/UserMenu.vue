@@ -75,7 +75,13 @@ async function logout() {
 
       <div class="sep"></div>
 
-      <p class="version"><span class="icon" aria-hidden="true">ⓘ</span> PB v{{ APP_VERSION }}</p>
+      <p class="version">
+        <span class="icon" aria-hidden="true">ⓘ</span> PB v{{ APP_VERSION }}
+        <!-- 第三者のライセンス表示。embed した静的なテキストを別タブで開く（4.2） -->
+        <a class="licenses" href="/THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener noreferrer">
+          {{ t('menu.user.licenses') }}<span aria-hidden="true">↗</span>
+        </a>
+      </p>
       <button type="button" class="item" :disabled="loggingOut" @click="logout">
         <span class="icon" aria-hidden="true">⏻</span> {{ t('menu.user.logout') }}
       </button>
@@ -214,5 +220,15 @@ async function logout() {
   padding: var(--pb-space-1) var(--pb-space-2);
   color: var(--pb-text-muted);
   font-size: 13px;
+}
+
+.licenses {
+  margin-left: auto;
+  color: inherit;
+  white-space: nowrap;
+}
+
+.licenses:hover {
+  text-decoration: underline;
 }
 </style>

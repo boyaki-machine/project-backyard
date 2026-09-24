@@ -32,6 +32,7 @@ export default {
     },
     logout: 'ログアウト',
     menuLabel: '{name} のメニュー',
+    licenses: 'ライセンス',
   },
   settingsTabs: {
     label: '設定の種類',
