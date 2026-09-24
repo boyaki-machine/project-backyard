@@ -4185,11 +4185,12 @@ PB へ繋げないので、繋げない相手から取ってこなければな�
 
 #### 証明書の作り方を画面から辿れるようにする
 
-**登録欄のそばに折りたたみで2つ置く。**
+**登録欄のそばに折りたたみで3つ置く。**
 
 | 見出し | 中身 |
 |---|---|
 | `自己署名証明書の作り方（openssl）` | `openssl req -x509 …` の1コマンドと、`-nodes` と `subjectAltName` が要る理由。**SAN・Basic Constraints（`CA:FALSE`）・Extended Key Usage（`serverAuth`）を明示し、サーバ証明書としてだけ使える形にする。Key Usage は付けない**（付けると BoringSSL 系のクライアントが自己署名を信頼できない。`Development.md` 14.2）。本文は `client/src/pages/tls-self-signed.sh` に置き、サーバの試験が同じファイルを走らせる |
+| `ローカル CA で作る（mkcert）` | `mkcert -install` と `mkcert <名前>` の2コマンド、出力の貼り先、Node で動くクライアントに CA を渡す1行（`NODE_EXTRA_CA_CERTS`）、`rootCA-key.pem` を共有しないこと。**CN を持たない証明書なので、一覧と通知は SAN の先頭を名前として出す**。手順の全文は `Development.md` 14.6（pb-199） |
 | `認証局が発行した証明書を登録する` | CSR の作り方、**サーバ証明書 → 中間証明書の順で貼ること**、連鎖の確かめ方 |
 
 **折りたたむのは、毎回読むものではないからである**（原則1。縦のピクセルを死守する）。
