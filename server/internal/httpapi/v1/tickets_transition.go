@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -50,9 +51,8 @@ const commentKindProgress = "progress"
 
 // transitionRequest は 9.6 のリクエスト。
 //
-// comment は任意。**長さの上限を置いていない**——コメントAPI（9.8）は手順18 で
-// あり、上限を決めるならそちらと同じ値にする必要がある。先にここだけ決めると
-// 2か所で食い違う。
+// comment は任意。**上限は 9.8 のコメントと同じ commentBodyMaxLen である**——
+// 同じ comment 表に入る本文を、口によって違う長さで受けない。
 type transitionRequest struct {
 	To      string `json:"to"`
 	Comment string `json:"comment"`
@@ -77,11 +77,24 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, e)
 		return
 	}
+	// **本体の検査はワークフローを読む前に行う**（9.6）。ここで弾けば遷移は起きず、
+	// 「遷移だけ通ってコメントが落ちる」状態を作らない。
 	req.To = strings.TrimSpace(req.To)
+	var details []apierr.Detail
 	if req.To == "" {
-		apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+		details = append(details, apierr.Detail{
 			Field: "to", Code: "required", Message: "遷移先のステータスを指定してください",
-		}))
+		})
+	}
+	// **数え方は 9.8 と同じく前後の空白を除く。** 作るコメントも TrimSpace した本文である。
+	if utf8.RuneCountInString(strings.TrimSpace(req.Comment)) > commentBodyMaxLen {
+		details = append(details, apierr.Detail{
+			Field: "comment", Code: "too_long",
+			Message: fmt.Sprintf("コメントは%d文字以内で入力してください", commentBodyMaxLen),
+		})
+	}
+	if len(details) > 0 {
+		apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(details...))
 		return
 	}
 

@@ -839,6 +839,33 @@ func TestTransitionTaskKeepsFailureBody(t *testing.T) {
 	}
 }
 
+// **長さの上限（422 too_long）も本文ごと返す**（ApiDesign.md 9.6 / 9.15）。
+// エージェントは details の文を読んで、短くして出し直す。
+func TestTooLongIsReturnedToAgent(t *testing.T) {
+	cases := []struct {
+		tool, args, field, message string
+	}{
+		{"pb_transition_task", `{"seq":31,"to":"review","comment":"x"}`,
+			"comment", "コメントは20000文字以内で入力してください"},
+		{"pb_submit_result", `{"seq":31,"status":"completed"}`,
+			"report", "完了レポートが長すぎます（整形後20500文字、上限20000文字）。findings や failures を短くして出し直してください"},
+	}
+	for _, c := range cases {
+		t.Run(c.tool, func(t *testing.T) {
+			rest := &fakeREST{status: http.StatusUnprocessableEntity,
+				body: `{"error":{"code":"validation_failed","message":"入力内容に誤りがあります",` +
+					`"details":[{"field":"` + c.field + `","code":"too_long","message":"` + c.message + `"}]}}`}
+			out := callTool1(t, New(rest, "v0"), toolCallBody(c.tool, c.args))
+			if !out.IsError {
+				t.Fatalf("失敗のはずが成功している: %s", out.Content[0].Text)
+			}
+			if !strings.Contains(out.Content[0].Text, c.message) {
+				t.Errorf("details の文が落ちている: %s", out.Content[0].Text)
+			}
+		})
+	}
+}
+
 // ── 書いた内容を応答で返さない（Design.md 8.5.1）──────────────
 
 // responseKeys は応答 JSON のキーを名前順に返す。
