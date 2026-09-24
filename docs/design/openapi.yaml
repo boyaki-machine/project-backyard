@@ -7050,7 +7050,7 @@ components:
       description: |
         エージェントの付帯情報（ApiDesign.md 6.1）。`kind='agent'` の行にだけ返る。
       type: object
-      required: [client_kind, model_name, project_key, trust_level]
+      required: [client_kind, model_name, project_key, trust_level, owner]
       properties:
         client_kind:
           type: string
@@ -7060,6 +7060,21 @@ components:
           type: string
         trust_level:
           type: integer
+        owner:
+          description: |
+            このエージェントが付いている人（`agent.owner_actor_id`。ApiDesign.md 6.1）。
+            **実効権限はこの人から導かれる**（Design.md 6.5 の委譲）。登録した人ではない。
+            所有者を引けなければ `null`。
+          type: object
+          nullable: true
+          required: [id, display_name]
+          properties:
+            id:
+              type: string
+              example: 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+            display_name:
+              type: string
+              example: 田中
 
     CreateUserRequest:
       description: ユーザーの作成（ApiDesign.md 6.2）。

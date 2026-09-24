@@ -4353,6 +4353,17 @@ export interface components {
             model_name: string;
             project_key: string;
             trust_level: number;
+            /**
+             * @description このエージェントが付いている人（`agent.owner_actor_id`。ApiDesign.md 6.1）。
+             *     **実効権限はこの人から導かれる**（Design.md 6.5 の委譲）。登録した人ではない。
+             *     所有者を引けなければ `null`。
+             */
+            owner: {
+                /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+                id: string;
+                /** @example 田中 */
+                display_name: string;
+            } | null;
         };
         /** @description ユーザーの作成（ApiDesign.md 6.2）。 */
         CreateUserRequest: {
