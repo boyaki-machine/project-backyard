@@ -6,7 +6,7 @@
 >
 > - 対象読者：サーバ／フロントエンド実装者（人間およびAIエージェント）
 > - 関連：`DbDesign.md`（スキーマ）、`GuiDesign.md`（画面）、`Design.md` 6章（認証・認可）
-> - 状態：**Phase 1 のAPIは確定・実装済み**（チケットAPI＝9章を含む）。MCP系は未着手（`Design.md` 8章）
+> - 状態：**確定・実装済み**（本文で「未実装」「構想」と書いたものを除く）。MCP のツールは `Design.md` 8章
 
 ---
 
@@ -17,14 +17,15 @@
 | 1 | 本書の範囲と方針 | 確定 |
 | 2 | 共通仕様 | 確定 |
 | **3** | **認証・セッションAPI** | **確定** |
-| **4** | **自分自身に関するAPI（/me・トークン・エージェント・第2要素・パスキー）** | **確定**（4.5〜4.7 は Phase 2） |
+| **4** | **自分自身に関するAPI（/me・トークン・エージェント・第2要素・パスキー）** | **確定** |
 | **5** | **プロジェクトAPI** | **確定** |
 | **6** | **ユーザー管理API** | **確定** |
 | **7** | **ロール・権限API** | **確定** |
 | 8 | 画面とAPIの対応 | 確定 |
 | **9** | **チケットAPI** | **確定** |
-| **10** | **プロジェクト文書API** | **確定**（Phase 2） |
-| 11 | 未解決の検討事項 | 確定 |
+| **10** | **プロジェクト文書API** | **確定** |
+| **11** | **アプリケーション設定API** | **確定** |
+| 12 | 未解決の検討事項 | — |
 
 ---
 
@@ -32,19 +33,19 @@
 
 ## 1.1 本書が定義する範囲
 
-Phase 1 の全APIを定義する。**9章までは実装済みである**（**4.5 を除く。同節は Phase 2**）。**10章（プロジェクト文書）と11章（アプリケーション設定）は Phase 2 で実装する。**
+PB の全APIを定義する。**本文で「未実装」「構想」と書いたものを除き、実装済みである。**
 
 | 章 | 範囲 | 主な消費者（`GuiDesign.md`） |
 |---|---|---|
 | 3 | 認証・セッション | ログイン（5.1） |
-| 4 | 自分自身（`/me`・トークン・**エージェント**） | 自分の設定（5.8）。`GET /me` は全画面が起動時に依存する。**4.5（エージェント）は Phase 2** |
+| 4 | 自分自身（`/me`・トークン・**エージェント**） | 自分の設定（5.8）。`GET /me` は全画面が起動時に依存する |
 | 5 | プロジェクト | プロジェクト一覧・作成（5.2）、プロジェクト設定（5.9） |
 | 6・7 | ユーザー管理・ロール・権限 | アカウント / 権限管理（5.6） |
 | 9 | チケット（一覧・詳細・コメント・DoD・リンク・タグ・スプリント・集計） | バックログ（5.4）、チケット詳細（5.5）、ダッシュボード（5.3） |
-| 10 | **プロジェクト文書（憲章）**。Phase 2 | Docs（5.10）。**MCP の `pb_list_docs` / `pb_get_doc` / `pb_put_doc` もここを通る** |
-| 11 | **アプリケーション設定・TLS 証明書・DB の状態**。Phase 2 | アプリケーション設定（5.12）。**設定の3層は `Design.md` 10.3、TLS は 6.6.1 が正本** |
+| 10 | **プロジェクト文書（憲章）** | Docs（5.10）。**MCP の `pb_list_docs` / `pb_get_doc` / `pb_put_doc` もここを通る** |
+| 11 | **アプリケーション設定・TLS 証明書・DB の状態** | アプリケーション設定（5.12）。**設定の3層は `Design.md` 10.3、TLS は 6.6.1 が正本** |
 
-MCPサーバ向けのツール定義は本書の範囲外である（`Design.md` 8章、Phase 2）。
+MCPサーバ向けのツール定義は本書の範囲外である（`Design.md` 8章）。
 
 ## 1.2 設計方針
 
@@ -215,7 +216,7 @@ GET /api/v1/projects?page=1&per_page=25
 | 既定 | `page=1`、`per_page=25` |
 | 上限 | `per_page` は最大 200。**`page` は `(page - 1) × per_page` が int32 に収まる範囲**（OFFSET の型） |
 | ソート | `sort=updated_at&order=desc`。許可する項目はエンドポイントごとに列挙 |
-| 総件数 | 常に返す。Phase 1 の規模では `COUNT(*)` のコストは問題にならない |
+| 総件数 | 常に返す。想定する規模では `COUNT(*)` のコストは問題にならない |
 
 **カーソルページネーションは採らない。** 対象データ量が小さく、画面が「48件中 1-25件」のような表示を必要とするため（`GuiDesign.md` 5.4）。
 
@@ -242,7 +243,7 @@ GET /api/v1/projects?page=1&per_page=25
 ← 304 Not Modified
 ```
 
-ETag はプロジェクト集合の `MAX(updated_at)` と件数から生成する。Phase 1 ではポーリングを実装しないが、**応答ヘッダだけ先に用意しておく**（後から追加すると全エンドポイントの改修になるため）。
+ETag はプロジェクト集合の `MAX(updated_at)` と件数から生成する。ポーリングは実装していないが、**応答ヘッダだけ先に用意しておく**（後から追加すると全エンドポイントの改修になるため）。
 
 **弱い検証子の `W/` は引用符の外に置く**（RFC 9110 8.8.3 の `entity-tag = [ weak ] opaque-tag`）。`"W/proj-…"` と内側に書くと、値そのものが `W/proj-…` という文字列の**強い**検証子になり、弱い比較の意味を失う。
 
@@ -255,7 +256,7 @@ PATCH /api/v1/projects/my-app
 If-Match: "3"
 ```
 
-不一致時は `409 conflict`。Phase 1 で対象とするのは `project` と `app_user` のみ。チケットは9章で扱う。
+不一致時は `409 conflict`。本章で対象とするのは `project` と `app_user` のみ。チケットは9章、文書は10章で扱う。
 
 **`If-Match` を伴わない更新は受け付けない。** 省略時は `422 validation_failed` とし、`details` に
 `{ "field": "If-Match", "code": "required" }` を載せる。ヘッダを付け忘れた実装が黙って上書きできると、
@@ -363,7 +364,7 @@ GET /healthcheck
 
 **API の応答にも付ける。** CSP は JSON には効かないが、**`nosniff` は効く**——`Content-Type` を無視して別の型として解釈させる経路を塞ぐ。
 
-**DBの疎通は見ない。** DB断でプロセスを再起動しても復旧しないため、liveness で落とすと不要な再起動ループを招く。DBを含む可用性確認が必要になった時点で `/ready` を別に足す（Phase 1 では作らない）。
+**DBの疎通は見ない。** DB断でプロセスを再起動しても復旧しないため、liveness で落とすと不要な再起動ループを招く。DBを含む可用性確認が必要になった時点で `/ready` を別に足す（いまは作らない）。
 
 **SPAフォールバックの例外にあたる。** `Design.md` 3.4 は「`/api` `/mcp` 以外で未知のパスは `index.html` を返す」としているため、`/healthcheck` を明示的な例外として扱う。
 
@@ -471,7 +472,7 @@ CSRF トークンが無い状態になる。以後すべての状態変更系が
 }
 ```
 
-Phase 1 では `local` の1件のみ。**Phase 3 で OIDC/SAML を追加しても、フロントの改修が不要になる**ようこの形にしておく（`Design.md` 6.2.3）。`config` や `secret_ref` は**絶対に返さない**。
+`local` の1件のみ。**OIDC/SAML（構想）を追加しても、フロントの改修が不要になる**ようこの形にしておく（`Design.md` 6.2.3）。`config` や `secret_ref` は**絶対に返さない**。
 
 
 ## 3.4 `POST /api/v1/auth/login/mfa`
@@ -653,7 +654,7 @@ Set-Cookie: pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
 **`email` は本人が変更できる。** この列はログインIDでもあるため（`Design.md` 6.2.1 手順2〜3 が
 `user_identity.subject` と突き合わせる）、変更時は `subject` も同じトランザクションで
 追随させる。追随させないと当人がログインできなくなる。**現在のパスワードの再入力は求めない**
-——既にセッションを持つ本人の操作であり、Phase 1 で再認証を求める箇所を他に持たないためである。
+——既にセッションを持つ本人の操作であり、再認証を求める箇所を他に持たないためである。
 
 | 状況 | 応答 |
 |---|---|
@@ -666,7 +667,7 @@ Set-Cookie: pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
 ただし `app_user.version` は加算し、6.4 の楽観ロックが壊れないようにする。
 
 **画面上は「ログインID」と「メールアドレス」の2行に分かれている**（`GuiDesign.md` 5.8）が、
-Phase 1 ではどちらも本列を指す。ログインIDは読み取り専用で、メールアドレス欄の変更に追随する。
+どちらも本列を指す。ログインIDは読み取り専用で、メールアドレス欄の変更に追随する。
 **ログインIDと連絡先を別々に登録できるようにするのは、必要になった時点でのスキーマ変更を伴う**
 。
 
@@ -680,7 +681,7 @@ Phase 1 ではどちらも本列を指す。ログインIDは読み取り専用�
 
 - 現在のパスワード検証に失敗 → `401 invalid_credentials`
 - ポリシー違反（12文字未満等） → `422 validation_failed`
-- `local_credential` を持たないユーザー（IdP のみ、Phase 3） → `409 conflict`（6.6 と同じ）
+- `local_credential` を持たないユーザー（IdP のみ。構想） → `409 conflict`（6.6 と同じ）
 - 成功 → `204`。**現在のセッションを除く全セッションを失効**（`Design.md` 6.3）
 
 **成功時に `local_credential.must_change` を `false` にする。** これをしないと、
@@ -780,13 +781,13 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 **エージェント用トークンは 4.5.3 が発行する。** スコープは**許可リストの中から選べる**
 （省略時は 6.5 の既定。中身は 4.5.9 が返す）。
 
-**Phase 1 の画面はスコープを選ばせない**（`GuiDesign.md` 5.8）。常に `[]` で発行するため、
-発行されたトークンは本人の権限をそのまま持つ。どの権限をまとめて選ばせるかは、
-トークンで実際に何をするか（Phase 2 の MCP 連携）が決まってから設計する。
+**`/me/tokens` の画面はスコープを選ばせない**（`GuiDesign.md` 5.8）。常に `[]` で発行するため、
+発行されたトークンは本人の権限をそのまま持つ。エージェントに渡すトークンは 4.5 で
+スコープを持たせて発行する。
 
 **スコープを使い始めたら、この3本自身をスコープの対象にする必要がある。** 4章は権限キーを
 要求しないため、**絞ったトークンで `POST /me/tokens` を叩き、絞っていないトークンを
-発行し直せる**。Phase 1 では常に `[]` なので昇格にならない（そのトークンは既に本人の
+発行し直せる**。画面から発行するものは常に `[]` なので昇格にならない（そのトークンは既に本人の
 全権を持つ）が、スコープが意味を持った時点で経路として残る。
 
 #### 発行本数の上限
@@ -834,7 +835,7 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 `audit_log.token_id` は**操作に使ったトークン**（通常はブラウザのセッション）であり、
 発行・失効の対象とは別である。
 
-## 4.5 `/api/v1/me/agents` — 自分のエージェント（Phase 2）
+## 4.5 `/api/v1/me/agents` — 自分のエージェント
 
 **必要権限**：本人
 
@@ -935,7 +936,7 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 | `model_version` | 省略可。1〜100文字 |
 | `token_env_suffix` | 省略可。**`^[A-Z][A-Z0-9_]{0,40}$`**。同じ所有者の中で一意（重複は `409 already_exists`）。省略・`null` は「未設定」で、`token_env_name` が id へフォールバックする |
 
-**`trust_level` は受け取らない。** 段階的な権限昇格の材料（`agent_run` の実績）が Phase 3 の
+**`trust_level` は受け取らない。** 段階的な権限昇格の材料（`agent_run` の実績）が構想の
 ため、既定値の 1 で作る（`Design.md` 6.5）。
 
 **`capabilities` も受け取らない。** 何を能力として並べるかが決まっていない。
@@ -1107,11 +1108,10 @@ DB レベルでも担保される。`DbDesign.md` 7.4）。
 |---|---|
 | 成功 | `204` |
 | 他人のエージェント・存在しない `id` | `404 not_found` |
-| 有効な `task_lease` を保持中（**Phase 3 以降**） | `409 conflict` |
+| 有効な `task_lease` を保持中（**構想**） | `409 conflict` |
 
-**リースのガードは Phase 3 で足す。** `task_lease` に行を書く経路（`pb_claim_task`）が
-**Phase 3 である**ため（`Requirements.md` 10.3.3。Phase 2 はリースを持たない）、
-それまでこの状況は起こらない。**6.5 が人について同じガードを定めている**ので、形は揃っている。
+**リースのガードはまだ無い。** `task_lease` に行を書く経路（`pb_claim_task`）が
+**構想である**ため（`Requirements.md` 10.3.3）、この状況は起こらない。**6.5 が人について同じガードを定めている**ので、形は揃っている。
 
 **`ticket.working_agent_id` は削除を妨げない。** 列は `ON DELETE SET NULL` で、
 消したエージェントが処理していたチケットは残り、欄だけが空になる（`DbDesign.md` 6.6）。
@@ -1374,7 +1374,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
 - **`GET /me/agents` か `GET /permissions` に載せる。** 口は増えないが、本人のデータ（または権限カタログ全体）と、エージェント用の既定という意味の違うものが同じ応答に同居する。**再検討のきっかけは、カタログの口が増えて画面を開くときの往復が問題になったとき**である
 - **要求を「足すものだけ」（`add_scopes`）に変える。** 写しそのものが要らなくなるが、`scopes` を絞る用途（read だけを持つエージェント）の口を別に設計し直すことになる。**再検討のきっかけは、read だけを持つエージェントの役割が現れたとき**である
 
-## 4.6 `/api/v1/me/mfa` — 自分の第2要素（Phase 2）
+## 4.6 `/api/v1/me/mfa` — 自分の第2要素
 
 **必要権限**：本人（4章の他の節と同じ。権限キーを要求しない）
 
@@ -1483,7 +1483,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
 
 `204 No Content`。存在しない・他人のものは `404`。
 
-**現在のパスワードを求めない。** 4.2 が「既にセッションを持つ本人の操作であり、Phase 1 で
+**現在のパスワードを求めない。** 4.2 が「既にセッションを持つ本人の操作であり、
 再認証を求める箇所を他に持たない」と定めた扱いに揃える。
 **再検討の条件は、セッションの盗用を想定した見直しを行うとき**である。そのときは
 パスワード変更・メール変更・第2要素の削除を**まとめて**再認証の対象にする——
@@ -1527,7 +1527,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
 `audit_log` は管理者が読めるため（`DbDesign.md` 6.8）、**入れると他人の第2要素を作れる。**
 
 
-## 4.7 `/api/v1/me/passkeys` — 自分のパスキー（Phase 2）
+## 4.7 `/api/v1/me/passkeys` — 自分のパスキー
 
 **必要権限**：本人（4.6 と同じ。権限キーを要求しない）
 
@@ -1753,7 +1753,7 @@ GET /api/v1/projects/check-key?key=my-app
 
 ## 5.3 `POST /api/v1/projects`
 
-**必要権限**：`project.create`（Phase 1 = アドミニストレータのみ）
+**必要権限**：`project.create`（アドミニストレータのみ）
 
 ```json
 {
@@ -1808,7 +1808,7 @@ GET /api/v1/projects/check-key?key=my-app
 
 `:key` はプロジェクトキー（ULIDではない）。URL・チケット番号と一致させ、開発時のデバッグを容易にする。
 
-`settings` は `project.settings`（jsonb）をそのまま返す。**Phase 1 が定義するキーは `repositories` のみ**で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は Phase 2）。
+`settings` は `project.settings`（jsonb）をそのまま返す。**定義するキーは `repositories` のみ**で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は未実装）。
 
 **`my_role` と `my_permissions` は、エージェントのトークンでは所有者のものが出る**（`Design.md` 6.5 の委譲）。エージェントは `project_member` の行を持たないため、自分自身で引くと `my_role` が常に `null` になり、**`my_permissions` からプロジェクトロールの層が丸ごと落ちる**——認可は所有者のロールで通る（6.4.1）ので、「できるのに、できないと応答している」状態になる。`GET /me`（4.1）も同じ規則である。
 
@@ -1846,7 +1846,7 @@ GET /api/v1/projects/check-key?key=my-app
 
 **必要権限**：`project.archive`
 
-`status` を切り替える。**物理削除のAPIは Phase 1 では提供しない。** チケット・コメント・監査記録を巻き込むため、必要になった時点で「削除の確認方法」と併せて設計する。
+`status` を切り替える。**物理削除のAPIは提供しない。** チケット・コメント・監査記録を巻き込むため、必要になった時点で「削除の確認方法」と併せて設計する。
 
 | | archive | unarchive |
 |---|---|---|
@@ -1909,7 +1909,7 @@ GET /api/v1/projects/:key/agent-setup.zip?client=claude_code&client=codex
 |---|---|
 | `client` | **繰り返し指定**。`agent_client_kind` の `key` のうち **`has_setup_template` が真のもの**（4.5.7）。1件以上必須 |
 | `base_url` | **リクエストの `Host` から組み立てた PB の公開 URL**（下記） |
-| `workflow_version` | 生成した手順ファイルに埋まる版番号（`Requirements.md` 10.9.3）。**Phase 2 では常に `1`** |
+| `workflow_version` | 生成した手順ファイルに埋まる版番号（`Requirements.md` 10.9.3）。**手順ファイルの本文を変えたら上がる**（いまは `5`） |
 | `files[].mode` | `create`（そのまま置く）／`append`（既存の末尾へ追記する）／**`merge`**（既存の構造へ該当キーだけを足す） |
 | `files[].client_kind` | どのクライアント向けか。**共通のもの（`.gitignore`）は `null`** |
 | `files[].marker_begin` / `marker_end` | `append` のときだけ入る。**マーカーの内側だけが PB の管理範囲**（`Requirements.md` 10.8.8） |
@@ -2007,7 +2007,7 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 
 **`kind` によって意味を持たないフィールドは `null` を返し、フィールド自体を省略しない。** フロントの分岐を単純にするため。
 
-**`sort=system_role` は `role.sort_order` で並べる**（`DbDesign.md` 7.3 のシード。オペレータ 10 → アドミニストレータ 20）。表示名の五十音順ではない——シードが意図して序列を持っており、Phase 3 でカスタムロールが増えたときに表示名順では意味のない並びになるため。**`system_role` を持たない行（エージェント）は昇順・降順とも末尾に置く**（`NULLS LAST`）。ロールを持たない行が先頭に来ると、ロールで並べた意味が薄れる。
+**`sort=system_role` は `role.sort_order` で並べる**（`DbDesign.md` 7.3 のシード。オペレータ 10 → アドミニストレータ 20）。表示名の五十音順ではない——シードが意図して序列を持っており、カスタムロール（構想）が増えたときに表示名順では意味のない並びになるため。**`system_role` を持たない行（エージェント）は昇順・降順とも末尾に置く**（`NULLS LAST`）。ロールを持たない行が先頭に来ると、ロールで並べた意味が薄れる。
 
 **`sort=is_active` の昇順は無効が先**（`false < true`）。状態で並べ替える動機は「無効な利用者を探す」ことが多いため、そのままにしている。
 
@@ -2098,7 +2098,7 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
 }
 ```
 
-**`identities` 配列が Phase 3 の IdP 連携をそのまま受け入れる。** OIDC を追加しても要素が1つ増えるだけで、レスポンス構造もUIも変わらない（`DbDesign.md` 6.2）。
+**`identities` 配列が IdP 連携（構想）をそのまま受け入れる。** OIDC を追加しても要素が1つ増えるだけで、レスポンス構造もUIも変わらない（`DbDesign.md` 6.2）。
 
 **`mfa_credential_count` は確定済みの認証器の件数である**（`DbDesign.md` 6.18）。
 **配列ではなく件数だけを返す。** 画面（`GuiDesign.md` 5.6.2）が出すのも件数で、
@@ -2156,7 +2156,7 @@ FK の向きは `agent.actor_id → actor(id)` なので、**エージェント�
 |---|---|
 | 自分自身 | `409 self_modification_forbidden` |
 | 最後の有効なアドミニストレータ | `409 last_administrator` |
-| 有効な `task_lease` を保持中（**Phase 3**） | `409 conflict` |
+| 有効な `task_lease` を保持中（**構想**） | `409 conflict` |
 
 **「最後の有効なアドミニストレータ」は 6.4 と同じ数え方をする**——`system_role='administrator'` かつ `actor.is_active` の人数で判定する。無効なアドミニストレータは認証を通れないため、管理者として「残っている」ことにならない。
 
@@ -2178,7 +2178,7 @@ FK の向きは `agent.actor_id → actor(id)` なので、**エージェント�
 
 | フィールド | 既定 | 説明 |
 |---|---|---|
-| `mode` | `generate` | **Phase 1 は `generate` のみ受け付ける**（他は `422`）。応答が `generated_password` しか持たず、管理者が手で決めた値を返す意味が無いため。必要になれば 6.2 と同じ `password_mode` / `password` を足す |
+| `mode` | `generate` | **`generate` のみ受け付ける**（他は `422`）。応答が `generated_password` しか持たず、管理者が手で決めた値を返す意味が無いため。必要になれば 6.2 と同じ `password_mode` / `password` を足す |
 | `must_change_password` | `true` | 6.2 と同じ既定。管理者が決めたパスワードを本人が使い続ける状態を既定にしない |
 
 **生成される値の形式は 6.2.1 と同一である**（`<形容詞>-<名詞>-<4桁数字>-<名詞>`）。作成とリセットで生成器を2つ持たない。
@@ -2197,13 +2197,13 @@ FK の向きは `agent.actor_id → actor(id)` なので、**エージェント�
 
 監査は `password.reset` の1件のみとし、**あわせて行う失効を `session.revoke` として別に記録しない**（2.10）。1つの操作が2行になると、監査ログの読み手が二重に数える。失効した本数は `detail` に入れる。`session.revoke` を記録するのは 6.7 の単独の失効だけである。
 
-`local_credential` を持たないユーザー（IdP のみ、Phase 3）に対しては `409 conflict`。
+`local_credential` を持たないユーザー（IdP のみ。構想）に対しては `409 conflict`。
 
 ## 6.7 `POST /api/v1/admin/users/:id/sessions/revoke`
 
 全セッションを失効。`204`。エージェントのトークンにも適用される（`kind='agent'` の場合）。**冪等**であり、有効なトークンが1本も無くても `204` を返す。
 
-**個別のセッションだけを失効させるAPIは Phase 1 では持たない。** 管理者が他人の1セッションを選んで切る場面は考えにくく、怪しいセッションが1つあるなら全部を切るのが実務の動きである。要望が出た時点で `DELETE /admin/users/:id/sessions/:sid` を足す。
+**個別のセッションだけを失効させるAPIは持たない。** 管理者が他人の1セッションを選んで切る場面は考えにくく、怪しいセッションが1つあるなら全部を切るのが実務の動きである。要望が出た時点で `DELETE /admin/users/:id/sessions/:sid` を足す。
 
 **本人が自分のセッションを一覧・失効させるAPIも持たない**。
 セッションの管理は管理者の作業であり、6.3 の一覧と本節の全失効で足りる。本人が他の端末を
@@ -2218,7 +2218,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 `PUT` は追加と変更を兼ねる（冪等）。`GuiDesign.md` 5.6.2 の「プロジェクトごとの権限」ブロックに対応する。
 
-プロジェクト側からも同じ操作ができるよう、Phase 2 で `POST /api/v1/projects/:key/members` を追加する。**同一の状態を2経路で変更することになるため、内部実装は共通の1関数に集約する。**
+プロジェクト側からも同じ操作ができるよう、`POST /api/v1/projects/:key/members` を追加する（未実装）。**同一の状態を2経路で変更することになるため、内部実装は共通の1関数に集約する。**
 
 
 ## 6.9 `POST /api/v1/admin/users/:id/mfa/reset`
@@ -2307,13 +2307,13 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 `GuiDesign.md` 5.9.2 のメンバータブは「`GET /roles`（7.1）を実装した時点で（画面が持つ対応表を）置き換える」と定める一方、同節は「**プロジェクト管理者はこの画面を開ける**」とも書いている。`user.manage` 必須のままでは両立しない。
 
-開放しても渡る情報はほとんど増えない。プロジェクトロールのキーとその実効権限は、`POST /auth/login` と `GET /me` の `projects[]` で**既に本人へ渡っている**（3.1 / 4.1）。新たに渡るのは、本人が就いていないプロジェクトロールの権限セットだけである。Phase 2 で `POST /projects/:key/members`（6.8）が入れば、プロジェクト管理者はそれらを割り当てる側になる。
+開放しても渡る情報はほとんど増えない。プロジェクトロールのキーとその実効権限は、`POST /auth/login` と `GET /me` の `projects[]` で**既に本人へ渡っている**（3.1 / 4.1）。新たに渡るのは、本人が就いていないプロジェクトロールの権限セットだけである。`POST /projects/:key/members`（6.8。未実装）が入れば、プロジェクト管理者はそれらを割り当てる側になる。
 
 **これは暫定である。** `project.edit` を要求して「プロジェクト管理者であること」を確認する案がある。`scope` 別の必要権限を含めて、権限の全体像を再整理するときに決める（`Design.md` 付録A）。
 
 ### `scope` の値域を閉じる理由
 
-**プロジェクトIDやユーザIDは受け付けない。** `role` テーブルは `project_id` を持たず（`DbDesign.md` 6.3）、Phase 3 のカスタムロール（7.3）も `is_builtin = 0` の行として同じグローバルな表に入るため、**プロジェクトIDで絞っても結果が変わらない**。
+**プロジェクトIDやユーザIDは受け付けない。** `role` テーブルは `project_id` を持たず（`DbDesign.md` 6.3）、カスタムロール（7.3。構想）も `is_builtin = 0` の行として同じグローバルな表に入るため、**プロジェクトIDで絞っても結果が変わらない**。
 
 **「そのユーザに与えられたロール」は 6.3 の `GET /admin/users/:id` が返す**（`system_role` と `project_memberships[]`）。`?user=` を足すと同じ状態への読み取り経路が2本できる。6.8 が書き込み側について「同一の状態を2経路で変更することになるため、内部実装は共通の1関数に集約する」と警告しているのと同じ問題である。
 
@@ -2347,9 +2347,9 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 `GuiDesign.md` 5.6.3 の権限マトリクス表は、7.1 と 7.2 の2レスポンスから組み立てる。**マトリクス専用のエンドポイントは作らない**（データが重複し、片方だけ更新される事故を招くため）。
 
-## 7.3 Phase 3 で追加するもの
+## 7.3 構想：カスタムロール
 
-`POST/PATCH/DELETE /api/v1/roles` によるカスタムロール（`role.is_builtin = 0`）。Phase 1 は読み取り専用（`GuiDesign.md` 5.6.3）。
+`POST/PATCH/DELETE /api/v1/roles` によるカスタムロール（`role.is_builtin = 0`）。いまは読み取り専用（`GuiDesign.md` 5.6.3）。
 
 ---
 
@@ -2371,14 +2371,14 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | アカウント / 権限（ロールタブ） | `GET /roles` + `GET /permissions` |
 | 自分の設定 | `PATCH /me`<br>`POST /me/password` |
 | アクセストークン | `GET|POST /me/tokens`<br>`DELETE /me/tokens/:id` |
-| **エージェント（Phase 2）** | `GET|POST /me/agents`<br>`PATCH /me/agents/:id`<br>`POST /me/agents/:id/tokens`<br>`DELETE /me/agents/:id/tokens/:token_id`<br>`GET /agent-client-kinds` |
+| **エージェント** | `GET|POST /me/agents`<br>`PATCH /me/agents/:id`<br>`POST /me/agents/:id/tokens`<br>`DELETE /me/agents/:id/tokens/:token_id`<br>`GET /agent-client-kinds` |
 | プロジェクト設定（タグタブ） | `GET|POST /projects/:key/tags`<br>`PATCH|DELETE /projects/:key/tags/:id` |
 | プロジェクト設定（スプリントタブ） | `GET|POST /projects/:key/sprints`<br>`PATCH|DELETE /projects/:key/sprints/:id` |
-| **エージェント連携セットアップ（Phase 2）** | `GET /agent-client-kinds`<br>`GET /projects/:key/agent-setup`<br>`GET /projects/:key/agent-setup.zip`（ダウンロード） |
-| **アプリケーション設定（Phase 2）** | `GET /admin/settings`<br>`PUT /admin/settings`（保存） |
-| **TLS証明書（Phase 2）** | `GET /admin/tls/certificates`<br>`POST /admin/tls/certificates`（登録）<br>`DELETE /admin/tls/certificates/:id` |
-| **DB（Phase 2）** | `GET /admin/database`（タブを開いたときと再読み込み）<br>`GET /admin/backup.tar.gz`（書き出し）<br>`POST /admin/restore`（取り込み） |
-| **Docs（Phase 2）** | `GET /projects/:key/docs`（目次）<br>`GET /projects/:key/docs/*path`（本文）<br>`PATCH|DELETE /projects/:key/docs/*path`・`POST /projects/:key/docs`<br>`GET /projects/:key/docs/*path/_revisions`（履歴） |
+| **エージェント連携セットアップ** | `GET /agent-client-kinds`<br>`GET /projects/:key/agent-setup`<br>`GET /projects/:key/agent-setup.zip`（ダウンロード） |
+| **アプリケーション設定** | `GET /admin/settings`<br>`PUT /admin/settings`（保存） |
+| **TLS証明書** | `GET /admin/tls/certificates`<br>`POST /admin/tls/certificates`（登録）<br>`DELETE /admin/tls/certificates/:id` |
+| **DB** | `GET /admin/database`（タブを開いたときと再読み込み）<br>`GET /admin/backup.tar.gz`（書き出し）<br>`POST /admin/restore`（取り込み） |
+| **Docs** | `GET /projects/:key/docs`（目次）<br>`GET /projects/:key/docs/*path`（本文）<br>`PATCH|DELETE /projects/:key/docs/*path`・`POST /projects/:key/docs`<br>`GET /projects/:key/docs/*path/_revisions`（履歴） |
 
 **各画面が起動時に呼ぶAPIは1〜2本に収まっている。** 設計方針3が満たされていることの確認になる。
 
@@ -2407,11 +2407,11 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 理由は3つ。
 
-1. 親もリンク先も**同一プロジェクト内に限る**（Phase 1）。プロジェクトが URL で決まっているため、`seq` だけで一意に定まる
+1. 親もリンク先も**同一プロジェクト内に限る**。プロジェクトが URL で決まっているため、`seq` だけで一意に定まる
 2. `GuiDesign.md` 3.2 が既にルーティングを `seq` で決めている。画面が ULID を別に持ち回らずに済む
 3. MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる（`Requirements.md` 10.3）。人が読める番号のまま API を組み立てられる
 
-`id` を応答に残すのは、`activity.entity_id`（`DbDesign.md` 6.8）との突き合わせと、Phase 2 以降のエージェント連携（`task_lease.ticket_id` 等）が ULID を使うためである。
+`id` を応答に残すのは、`activity.entity_id`（`DbDesign.md` 6.8）との突き合わせと、エージェント連携（`task_lease.ticket_id` 等）が ULID を使うためである。
 
 **完全形 `my-app-31` はサーバが組み立てない。** プロジェクトキーは URL に含まれており、フロントが `${key}-${seq}` を組める。応答に冗長な文字列を載せない。
 
@@ -2425,7 +2425,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 2.10 が `audit_log` の対象としているのは認証・権限・トークン・ユーザー管理であり、いずれも**インスタンス管理者が追うべき事象**である。チケットの変更は業務履歴であり、読み手はプロジェクトのメンバー（`GuiDesign.md` 5.5 の「変更履歴」）である。両者を混ぜると、監査ログがチケット更新で埋まって本来の用途に使えなくなる。
 
-**タグとスプリントの定義変更（9.11 / 9.12）は、どちらにも記録しない。** `audit_log` の対象ではなく（上記のカタログに入らない）、`activity` の読み手はチケットの変更履歴であって、9.13.2 の `entity` も `ticket:31` の形しか受け付けない。**記録しても Phase 1 に読む画面が無い。**
+**タグとスプリントの定義変更（9.11 / 9.12）は、どちらにも記録しない。** `audit_log` の対象ではなく（上記のカタログに入らない）、`activity` の読み手はチケットの変更履歴であって、9.13.2 の `entity` も `ticket:31` の形しか受け付けない。**記録しても読む画面が無い。**
 
 ただし**タグの削除は、`ticket_tag` を `CASCADE` で消して全チケットからそのタグを外す**（`DbDesign.md` 6.10）。「使用中だったタグを誰が消したか」を後から追えない状態であり、運用に載せてから困ることがありうる。**その時点で `activity` に `entity_type='tag'` / `'sprint'` を足す**（11.2）。先に入れないのは、読む画面の無い記録が形だけ固まるのを避けるためである。
 
@@ -2433,7 +2433,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 **必要権限**：`ticket.view`（メンバーでない場合はプロジェクトごと `404`。1.2-5）
 
-バックログ画面（`GuiDesign.md` 5.4）とチケット検索（`GuiDesign.md` 5.13）のデータ源であり、カンバン・ガント（Phase 2）も同じエンドポイントを使う。
+バックログ画面（`GuiDesign.md` 5.4）とチケット検索（`GuiDesign.md` 5.13）のデータ源であり、カンバン・ガント（未実装）も同じエンドポイントを使う。
 
 ### 9.2.1 クエリパラメータ
 
@@ -2542,7 +2542,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 **`per_page` の既定が他の一覧（25）と違う。** バックログはページャを持たず、フィルタ後の全件を1回で取り切る画面だからである（9.2.3）。**`sort` の既定が `sort_key` であることも本エンドポイント固有**で、これは人が手で並べた順序（9.4）を既定の見え方にするためである。
 
-**`status` と `status_category` の使い分け。** 画面のフィルタは `status`（プロジェクトのワークフローに定義されたキー）を使う。`status_category` は**ワークフローが違うプロジェクトを跨いでも意味が変わらない4値**であり、ダッシュボードの集計（9.13）とカンバンの列（Phase 2）が使う。
+**`status` と `status_category` の使い分け。** 画面のフィルタは `status`（プロジェクトのワークフローに定義されたキー）を使う。`status_category` は**ワークフローが違うプロジェクトを跨いでも意味が変わらない4値**であり、ダッシュボードの集計（9.13）とカンバンの列（未実装）が使う。
 
 #### オンステージで絞る
 
@@ -2617,7 +2617,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 `total > per_page` になったとき、画面は件数とともに「フィルタで絞り込んでください」を表示する。**サーバは 200 件で打ち切るだけで、エラーにはしない。**
 
-**全件を返す専用のモード（`per_page=all` 等）は設けない。** 上限を外すと、応答サイズが利用者の入力ではなくデータ量で決まるようになり、性能の予測が立たなくなる。Phase 1〜2 の規模で 200 件を超えるプロジェクトは、フィルタを使うか、ビューを分ける（スプリント・タグ）べき段階にある。
+**全件を返す専用のモード（`per_page=all` 等）は設けない。** 上限を外すと、応答サイズが利用者の入力ではなくデータ量で決まるようになり、性能の予測が立たなくなる。想定する規模で 200 件を超えるプロジェクトは、フィルタを使うか、ビューを分ける（スプリント・タグ）べき段階にある。
 
 ### 9.2.4 フィルタで親が落ちた子の扱い
 
@@ -3190,8 +3190,8 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/comments/:id
 **論理削除も `updated_at` を動かす**ので（`DbDesign.md` 6.7 の `trg_comment_updated`）、
 削除が `304` に埋もれない。
 
-**`ETag` を持つ子資源はコメントだけである。** 2.7 が「Phase 1 ではポーリングを実装しないが
-応答ヘッダだけ先に用意する」と定めており、**Phase 2 のエージェントが「新しいコメントが
+**`ETag` を持つ子資源はコメントだけである。** 2.7 が「ポーリングは実装していないが
+応答ヘッダだけ先に用意する」と定めており、**エージェントが「新しいコメントが
 付いたか」を安く見る口がここになる**（`Requirements.md` 1章）。DoD とリンクは画面を
 開いた時点で詳細応答（9.5.1）に入っており、単独で追う対象にならない。
 
@@ -3241,18 +3241,18 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/dod/:id
 
 | フィールド | 検証 |
 |---|---|
-| `type` | **Phase 1 は `manual` のみ**。他の値は `422`（`details[].code = "phase_2_only"`） |
+| `type` | **`manual` のみ**。他の値は `422`（`details[].code = "unsupported_type"`） |
 | `body` | 必須。完了条件の文 |
 | `is_satisfied` | 真偽値。`PATCH` でチェックを付け外しする |
 | `sort_order` | 並び順。省略時は末尾 |
 
 `is_satisfied` を `true` にしたとき、サーバが `satisfied_at` と `satisfied_by`（呼び出し元）を設定する。`false` に戻すと両方 `NULL` へ戻す。
 
-`assertion`（コマンド実行）・`artifact`（成果物の存在確認）・`review`・`task_ref` は Phase 2（`Requirements.md` 10.5.2、`GuiDesign.md` 5.5）。**表とその列は Phase 1 から `DbDesign.md` 6.11 の形で作り、API が受け付ける `type` だけを絞る。** 後から列を足すより、使わない列を持つほうが安い。
+`assertion`（コマンド実行）・`artifact`（成果物の存在確認）・`review`・`task_ref` は未実装（`Requirements.md` 10.5.2、`GuiDesign.md` 5.5）。**表とその列は `DbDesign.md` 6.11 の形で作ってあり、API が受け付ける `type` だけを絞る。** 後から列を足すより、使わない列を持つほうが安い。
 
 **`type` は `POST` で省略できる**（既定 `manual`）。**`PATCH` で送ると `422`、
-`details[].code = "immutable_field"`**——Phase 1 で取りうる値が1つしかない以上、
-変更を受け付けても何も起こせない。Phase 2 で他の型を開けるときに、
+`details[].code = "immutable_field"`**——取りうる値が1つしかない以上、
+変更を受け付けても何も起こせない。他の型を開けるときに、
 **型ごとに `config` の形が違う**（`DbDesign.md` 6.11）ので、そこで改めて設計する。
 
 ### 完了条件の応答
@@ -3284,8 +3284,8 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/dod/:id
 **条件を満たした事実は消えず、誰が満たしたかだけが分からなくなる。**
 
 **`config` / `evidence` / `origin` は返さない**（`DbDesign.md` 6.11 の列としては残る）。
-いずれも Phase 2 の型と AI提案のためのもので、**Phase 1 の API が受け付けない値を
-応答に並べると「使える」ように見える。** Phase 2 で `type` を開けるときに、
+いずれも `manual` 以外の型と AI提案のためのもので、**API が受け付けない値を
+応答に並べると「使える」ように見える。** 他の `type` を開けるときに、
 同じ改訂でこの3つも応答へ足す。
 
 **`sort_order` を省略したときは末尾（現在の最大値 + 10）。** 9.10.2 の外部参照と同じ
@@ -3300,9 +3300,9 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/dod/:id
 チェックが立つと型の定義に反する。** レポートは未充足の項目を応答で返すだけで、盤面は
 人が動かす。
 
-**完了条件を満たしていなくても、`done` への遷移は止めない**（Phase 1）。9.6 の
+**完了条件を満たしていなくても、`done` への遷移は止めない**。9.6 の
 検証の順序（`DbDesign.md` 6.5）に DoD は含まれず、**チェックリストは人が読む道具**である。
-自動判定に基づいて遷移を止めるのは、`assertion` / `artifact` が入る Phase 2
+自動判定に基づいて遷移を止めるのは、`assertion` / `artifact` が入ってから
 （`Requirements.md` 10.5.2「AIが完了と言ったから完了」の回避）——**判定できない型で
 遷移を止めると、人が自分のチェック漏れで進めなくなるだけになる。**
 
@@ -3372,7 +3372,7 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 
 **逆向き（`target` → `source`）の同じ `link_type` は別の行として作れる。** 一意制約が
 向きを含むためである。`A blocks B` と `B blocks A` は業務上は矛盾するが、
-**それを禁じるのは DB でもこの API でもない**——依存の循環検出は Phase 2 のガントで扱う（10.2）。
+**それを禁じるのは DB でもこの API でもない**——依存の循環検出はガント（未実装）で扱う（10.2）。
 
 `GET` の応答は、**当該チケットが `source` である行と `target` である行の両方**を返し、`direction` を付けて区別する。
 
@@ -3410,19 +3410,19 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 
 **`PATCH` は持たない。** 一意制約が `(source, target, link_type)` である以上、
 `link_type` の変更は**別の行になるのと同じ**であり、消して作り直すのと変わらない。
-`lag_days` だけのために1本増やす利得も無い——**Phase 1 に `lag_days` を読む画面が無い**（下記）。
+`lag_days` だけのために1本増やす利得も無い——**`lag_days` を読む画面が無い**（下記）。
 
 **ページネーション・`ETag`・`If-Match` はいずれも持たない**（9.10.2 と同じ）。
 **親チケットの `version` と `updated_at` も動かさず、相手側のチケットも動かさない**
 ——リンクの増減はどちらの `ticket` の列も変えないためである。
 
-**プロジェクトを跨ぐリンクは Phase 1 では作れない。** `DbDesign.md` 6.6 の `ticket_link` に制約は無いが、API が `target_seq` で受ける以上、同一プロジェクトに閉じる（9.1）。跨ぐ必要が出た時点で `target` の指定方法ごと設計する（10.2）。
+**プロジェクトを跨ぐリンクは作れない。** `DbDesign.md` 6.6 の `ticket_link` に制約は無いが、API が `target_seq` で受ける以上、同一プロジェクトに閉じる（9.1）。跨ぐ必要が出た時点で `target` の指定方法ごと設計する（10.2）。
 
-`origin` は `human` / `ai_suggested`。**Phase 1 は `human` のみ作られる**（AI提案の採用・却下は Phase 2。`GuiDesign.md` 5.5）。
+`origin` は `human` / `ai_suggested`。**`human` のみ作られる**（AI提案の採用・却下は未実装。`GuiDesign.md` 5.5）。
 
-**Phase 1 の画面が出す `link_type` は `relates` / `duplicates` / `blocks` の3つだけである**
+**画面が出す `link_type` は `relates` / `duplicates` / `blocks` の3つだけである**
 （`GuiDesign.md` 5.5）。`FS` / `SS` / `FF` / `SF` と `lag_days` は
-**ガントの依存線**のためのもので、ガントは Phase 2（`GuiDesign.md` 3.2）。
+**ガントの依存線**のためのもので、ガントは未実装（`GuiDesign.md` 3.2）。
 **読む画面が無い値を人に選ばせても、入れた本人が結果を確かめられない。**
 **API は7種すべて受け続ける**——MCP とエージェントがガント用の依存を先に積むことは
 妨げない（`Requirements.md` 10.5）。
@@ -3500,7 +3500,7 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/references/:id
 **`items[]` は `kind` 昇順（`code` → `doc`）、同じ `kind` の中は `sort_order` → `created_at` の昇順。**
 第2・第3キーを置くのは、9.11 と同じく**順序が実行ごとに揺れないようにする**ためである。
 
-**`created_by` は返すが、Phase 1 の画面は使わない**。
+**`created_by` は返すが、画面は使わない**。
 `actor.kind`（`user` / `agent` / `system`）が入るので人が書いた行とエージェントが
 書いた行を見分けられるが、**`GuiDesign.md` 5.5 は書き手のアイコンを出さないと決めた**
 ——このセクションが表すのは「このチケットの成果物としてリポジトリ・ブランチ・
@@ -3522,7 +3522,7 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/references/:id
 
 **`kind='code'` は積み上がる。** エージェントが作業の経過として「このブランチで始めた」
 「このコミットを積んだ」を残していくため、1チケットに複数行が並ぶ
-（`Requirements.md` 10.6.1 の `artifacts` の Phase 1 版）。
+（`Requirements.md` 10.6.1 の `artifacts` にあたる）。
 
 **書き手は、MCP の `pb_add_reference` を使うエージェントと、`/me/tokens` の API トークンを持つ
 クライアントである**（4.4）。画面は `code` の追加を持たず、表示と削除だけを行う
@@ -3659,9 +3659,9 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 
 `DELETE` は `ticket.sprint_id` を `SET NULL` にする（`DbDesign.md` 6.9 の `fk_ticket_sprint`）。**チケットは消えない。**
 
-**Phase 1 でスプリントの CRUD を定義する理由。** `sprint` 表は Phase 1（0009）にあり、`GuiDesign.md` 5.5 のチケット詳細もスプリント欄を Phase 1 のメタ情報として並べている。**作る手段が無いまま選択欄だけを置くと、常に空のドロップダウンになる。** バーンダウン・ベロシティを含むスプリント管理画面（`/p/:key/sprints`、Phase 2）とは別に、**定義だけをプロジェクト設定のスプリントタブで行う**（`GuiDesign.md` 5.9）。
+**スプリントの CRUD を定義する理由。** `GuiDesign.md` 5.5 のチケット詳細がスプリント欄をメタ情報として並べている（`sprint` 表は 0009）。**作る手段が無いまま選択欄だけを置くと、常に空のドロップダウンになる。** **定義はプロジェクト設定のスプリントタブで行う**（`GuiDesign.md` 5.9）。バーンダウン・ベロシティは進捗分析（構想。`GuiDesign.md` 10章）が持つ。
 
-**Phase 2 で、運用（開始・終了）を足した**。**定義はスプリントタブのまま、運用はバックログのオンステージ段が持つ**（`GuiDesign.md` 5.4）。**スプリントは「チケットにあらかじめ付ける属性」ではなく「いまどの期間で消化しようとしているか」**であり、対象は1件ずつ選ぶものではなく**オンステージに載っているもの全部**である。
+**運用（開始・終了）は 9.12.1 / 9.12.2 である。** **定義はスプリントタブ、運用はバックログのオンステージ段が持つ**（`GuiDesign.md` 5.4）。**スプリントは「チケットにあらかじめ付ける属性」ではなく「いまどの期間で消化しようとしているか」**であり、対象は1件ずつ選ぶものではなく**オンステージに載っているもの全部**である。
 
 ### 9.12.1 `POST /projects/:key/sprints/start` — 始める
 
@@ -3765,7 +3765,7 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 
 `overdue` は `due_date < 今日` かつ `closed_at IS NULL`。`stale` は `updated_at` が `threshold_days` 日より前で `closed_at IS NULL`。**閾値はサーバが持ち、応答に含めて返す**（画面に「14日以上」と出すため。文言をフロントで組み立てない）。
 
-**`threshold_days` は 14 で固定する**（Phase 1）。5.3 のワイヤーフレームの文言と一致させたもので、プロジェクトごとの設定にはしない——**放置の基準を変えたくなるのは運用に載せてからであり、いま設定項目を作ると使われないまま形が固まる。**
+**`threshold_days` は 14 で固定する**。5.3 のワイヤーフレームの文言と一致させたもので、プロジェクトごとの設定にはしない——**放置の基準を変えたくなるのは運用に載せてからであり、いま設定項目を作ると使われないまま形が固まる。**
 
 **`unassigned` にも `closed_at IS NULL` が掛かる。** `assignee_id IS NULL` かつ未完了の件数である。完了したチケットに担当者が無いのは要対応ではなく、`overdue` / `stale` と条件が揃う。
 
@@ -3787,7 +3787,7 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 
 **`action` はカンマ区切りの OR を受け付けない。** 9.2.1 のフィルタ群と違う扱いだが、**本エンドポイントの消費者は2つとも「全件を時系列で読む」**（`GuiDesign.md` 5.3 の最近の動きと 5.5 の履歴）であり、複数選択を要する画面が無い。要るようになった時点で 9.2.1 と同じ形へ広げる。
 
-**`entity` の書式違反は 422**（`error.code` は `validation_failed`、`details[].code` は `invalid`）。`ticket:abc` のように `seq` が整数でないもの、`foo:1` のように Phase 1 に存在しない `entity_type`、区切りを欠くものが該当する。
+**`entity` の書式違反は 422**（`error.code` は `validation_failed`、`details[].code` は `invalid`）。`ticket:abc` のように `seq` が整数でないもの、`foo:1` のように存在しない `entity_type`、区切りを欠くものが該当する。
 
 **存在しない `seq` を指した場合は、空の一覧を `200` で返す**（`404` にしない）。`entity` は**資源の指定ではなくフィルタ**であり、9.2.1 の `assignee` や `tag` に存在しない ULID を渡したときと同じ挙動になる。**同じ理由で、削除されたチケットの履歴には `entity` で到達できない**——`seq` からチケットの ULID を引く経路が消えるためで、その行はプロジェクト全体の一覧（`entity` 省略）にだけ現れる。
 
@@ -3821,7 +3821,7 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 ETag: W/"act-a3f19c2b-142-1723372992000000000"
 ```
 
-**`field` の値域は実装が定める。** Phase 1 では次の18種類が入る（`create` / `delete` は `field` が `null`）。
+**`field` の値域は実装が定める。** 次の17種類が入る（`create` / `delete` は `field` が `null`）。
 
 | 由来 | `field` |
 |---|---|
@@ -3860,7 +3860,7 @@ ETag: W/"act-a3f19c2b-142-1723372992000000000"
 | `use_sprint_endpoint` | `sprint_id` を `PATCH` / `POST` で書こうとした（9.5.2 / 9.3） |
 | `not_stageable` | 表示上のトップレベルでないチケットを `staged: true` で上げようとした（9.4.1）。**オンステージのチケットを、段に置けなくなる `type` / `parent_seq` へ変えようとした場合も同じ**（9.5.2） |
 | `use_transition_endpoint` | `status_key` / `closed_at` を `PATCH` で変えようとした（9.5.2） |
-| `phase_2_only` | Phase 2 でのみ有効な値を指定した（DoD の `type` など。9.9） |
+| `unsupported_type` | まだ受け付けていない値を指定した（DoD の `type` など。9.9） |
 
 ## 9.15 完了レポート
 
@@ -3986,7 +3986,7 @@ DoD の型は `manual` ひとつで（9.9）、その定義は「**人間がチ�
 | `ticket.transition` を持たない | `403 forbidden` |
 | チケットが無い・他プロジェクト | `404 not_found` |
 
-**`GET .../reports` を置かない。** Phase 2 で人が読むのは**完了レポートのコメント**であり
+**`GET .../reports` を置かない。** 人が読むのは**完了レポートのコメント**であり
 （下記）、`agent_report` の行そのものを読む面が無い。**置くのは、チケット詳細に完了レポートの
 セクションを作るときである**（`GuiDesign.md` 5.5。レポートが時系列に埋もれたとき、または
 `agent_report` を集計に使い始めたときが、その再検討の条件）。
@@ -4049,12 +4049,12 @@ DoD の型は `manual` ひとつで（9.9）、その定義は「**人間がチ�
 ```
 
 **`proposed_subtasks` はここに書くだけで、チケットを作らない**。
-承認キュー（`proposal`）は Phase 3 である（`DbDesign.md` 8.3.2。`Design.md` 11章）。
+承認キュー（`proposal`）は構想である（`DbDesign.md` 8.3.2）。
 **人が読んで要ると判断すれば、その場で `pb_create_ticket` を呼ばせれば済む。承認なしに盤面が増える経路を作らない。**
 
 **コメントの削除はレポートを消さない。** 人がこのコメントを消しても `agent_report` の行は
 残る（`comment.agent_run_id` は `ON DELETE SET NULL` の向きが逆で、コメント側が参照している）。
-**Phase 2 では読む面が消えるだけで、集計の材料は残る。**
+**読む面が消えるだけで、集計の材料は残る。**
 
 ### `activity` への記録
 
@@ -4088,7 +4088,7 @@ GET           /api/v1/projects/:key/docs/*path/_revisions/:no
 | `POST` / `PATCH` / `DELETE` | **`doc.edit`** |
 
 **`doc.edit` は `operator` と `project_member` が持たない**（`DbDesign.md` 8.1.4）。憲章は
-全参加者を縛るため、更新できる人を絞る。**Phase 1 に「その操作ができない人」が実在しない
+全参加者を縛るため、更新できる人を絞る。**「その操作ができない人」が実在しない
 という問題（`Design.md` 付録A）に対する、最初の実例でもある。**
 
 ## 10.1 パスによる指定
@@ -4241,7 +4241,7 @@ GET /api/v1/projects/my-app/docs/rules?section=命名
 **加えて `change_reason`（任意、200文字以内）を受ける**。
 
 **`If-Match` を要求する**（2.8）。`document` は `version` 列を持つ。**人とエージェントが
-同じ文書を触るため、Phase 1 のプロジェクト設定より競合が起きやすい。** 不一致は `409 conflict`。
+同じ文書を触るため、プロジェクト設定より競合が起きやすい。** 不一致は `409 conflict`。
 
 ### リビジョンを作る条件
 
@@ -4356,7 +4356,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 
 **11.10 は DB の接続状態と統計を返す**。設定ではなく**状態**であり、変更の口を持たない。
 
-**必要権限はいずれも `system.settings`。** この権限は Phase 1 のシード（`DbDesign.md` 7.2）から存在していたが、**本章が最初の利用者である。**
+**必要権限はいずれも `system.settings`。** この権限は `DbDesign.md` 7.2 のシードにある。
 
 ## 11.1 `GET /api/v1/admin/settings`
 
@@ -5109,17 +5109,17 @@ SHA-256 であり `app_secret` に依存しない（`DbDesign.md` 6.2）ので�
 ## 12.2 未解決の検討事項
 
 - **`GET /me` のキャッシュ戦略**。ロール変更が他セッションへ反映されるまでの許容遅延をどう決めるか（毎リクエスト検証はコスト、長期キャッシュは権限剥奪が効かない）
-- 一覧APIの `total` を返し続けるコストが問題になる規模の見極め（Phase 2 のチケット一覧で再検討）
+- 一覧APIの `total` を返し続けるコストが問題になる規模の見極め（チケットが増えたときに再検討）
 - **`POST /tickets/:seq/move` が `version` を +1 することの是非**（9.4）。並べ替えの直後に詳細画面の `PATCH` が `409` を返す。2.8 の規約を1本に保つことを優先したが、ドラッグ&ドロップの頻度によっては 2.8 ごと「順序の変更は `version` を動かさない」へ見直す
 - **バックログの 200 件上限に達したときのフィルタ誘導が実運用で足りるか**（9.2.3）。足りなければ、スプリント・タグによるビューの分割か、`sort_key` に沿った範囲取得を検討する
 - **チケット本文（`body_md`）の版管理**（9.5.2）。`activity` は「いつ誰が本文を変えたか」までを記録し、本文そのものは持たない（一覧APIの応答が重くなるため）。「前の説明に戻したい」が要件になったら、`activity` の拡張ではなく別の仕組みとして設計する
 - **プロジェクトを跨ぐチケットリンク**（9.10.1）。`target_seq` は同一プロジェクトに閉じている。跨ぐ必要が出たときの指定方法（`{project_key, seq}` か ULID か）
-- **`ticket.custom_fields` を API でどう開けるか**（`DbDesign.md` 6.6）。列はあるが Phase 1 の応答に含めていない。カスタムフィールドの定義（どのキーが存在するか）をプロジェクト設定に持たせるかどうかから決める必要がある
+- **`ticket.custom_fields` を API でどう開けるか**（`DbDesign.md` 6.6）。列はあるが応答に含めていない。カスタムフィールドの定義（どのキーが存在するか）をプロジェクト設定に持たせるかどうかから決める必要がある
 - **タグの並べ替えに原子性が要るか**（9.11.1）。いまは `PATCH /tags/:id` を複数回送る形で、途中で失敗すると順序が中途半端に残る。必要になったら ID の配列を受ける一括更新を足す
-- **タグ・スプリントの定義変更を `activity` に残すか**（9.1.1）。読む画面が無いため Phase 1 では記録しない。タグ削除の追跡が運用上必要になった時点で `entity_type` を足す
+- **タグ・スプリントの定義変更を `activity` に残すか**（9.1.1）。読む画面が無いため記録しない。タグ削除の追跡が運用上必要になった時点で `entity_type` を足す
 - **スプリントを「終える」経路が2つある**（9.12.2）。`PATCH` で `status` を `completed` にしても所属も段も動かない。**同じ結果を2通りで作れる状態は望ましくない**が、`PATCH` から `status` を落とすと 5.9.5 のスプリントタブが状態を直せなくなる。運用が固まったらどちらかへ寄せる
 - **進行中のスプリントを1本に限る制約が実運用で足りるか**（9.12.1）。複数チームが並行して回す場合はプロジェクトを分ける前提だが、**分けると横断のボードが無くなる**。要求が出たら、オンステージ段を複数持つ形から設計し直す
-- エラーメッセージの多言語化。Phase 1 は日本語固定とするが、`code` を機械可読にしてあるためフロント側での差し替えは可能
+- エラーメッセージの多言語化。いまは日本語固定とするが、`code` を機械可読にしてあるためフロント側での差し替えは可能
 - **`project.settings`（jsonb）の中身をサーバは検証しない**（5.5。JSONオブジェクトであることのみ）。`repositories` の必須・上限（10件／URL 1000文字／説明 200文字）は画面だけが持つ。**設定項目が増えるなら、サーバ側の検証をどこに置くかを決める必要がある**
 - **`GET /admin/users/:id` は `kind='user'` しか返さない**（6.3。エージェント・システムアクターは 404）。**0019 で実データが入ったので、この行の条件は満たされた**——一覧（6.1）はエージェントを返すのに、行から詳細へ飛べない。**詳細への導線を種別で分けるか、エージェントを 6.3 が返せるようにするかを決める**（`GuiDesign.md` 5.6 のエージェントタブを作る手順で）
 - **一覧の検索（`q`）はロールの表示名に当たるが、「エージェント」には当たらない**（6.1）。この文字列は `system_role` が `null` のときに画面が作っている代替表示でDBに無い。**0019 以降は `agent.client_kind` / `model_name` / 所有者の表示名が実在する**ので、種別で探せる形をそれらから選ぶ

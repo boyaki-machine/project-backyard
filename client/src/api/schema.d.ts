@@ -158,7 +158,7 @@ export interface paths {
          *
          *     **`scopes` の語彙は権限カタログのキー**（`ticket.view` 等30件。Design.md
          *     6.4.2）。カタログに無い値は 422。空配列は「絞り込みなし」＝本人の実効権限
-         *     そのままで、Phase 1 の画面は常にこれで発行する。
+         *     そのままで、画面は常にこれで発行する。
          *
          *     **失効していないトークンが既に5本あると 409。** 期限切れも数える
          *     （`GET /me/tokens` が返す行と一致させるため）。
@@ -635,7 +635,7 @@ export interface paths {
          *     ので、自分が入っていないプロジェクトのエージェントを作っても権限0件になる。
          *
          *     **`trust_level` と `capabilities` は受け取らない**（Design.md 6.5）。
-         *     昇格の材料が Phase 3 のため、既定値で作る。
+         *     昇格の材料が構想のため、既定値で作る。
          */
         post: operations["createMyAgent"];
         delete?: never;
@@ -881,7 +881,7 @@ export interface paths {
         /**
          * プロジェクトの作成
          * @description プロジェクトを作成する（ApiDesign.md 5.3）。必要権限は `project.create`
-         *     （Phase 1 = アドミニストレータのみ）。
+         *     （アドミニストレータのみ）。
          *
          *     サーバ側は `project` 作成・`project_counter` 初期化・テンプレートからの
          *     ワークフロー複製・**テンプレートからの文書複製**・作成者の `project_admin` 登録・
@@ -1189,7 +1189,7 @@ export interface paths {
          *     ——`seq` から ULID を引く経路が消えるためで、その行はプロジェクト全体の
          *     一覧にだけ現れる。
          *
-         *     Phase 1 は `If-None-Match` を解釈せず、ヘッダだけ出す（9.2.5 と同じ）。
+         *     `If-None-Match` は解釈せず、ヘッダだけ出す（9.2.5 と同じ）。
          */
         get: operations["listProjectActivity"];
         put?: never;
@@ -1332,8 +1332,8 @@ export interface paths {
          * スプリントの作成
          * @description スプリントを1件作る（ApiDesign.md 9.12）。**必要権限は `project.edit`**。
          *
-         *     **Phase 1 で開けるのは定義だけである。** バーンダウン・ベロシティを含む運用画面は
-         *     Phase 2（GuiDesign.md 10章）。定義を Phase 1 に置くのは、作る手段が無いと
+         *     **スプリントの定義を扱う。** 開始・終了は 9.12.1 / 9.12.2、バーンダウン・ベロシティは
+         *     進捗分析（構想。GuiDesign.md 10章）が持つ。定義を作る口が要るのは、作る手段が無いと
          *     チケット詳細のスプリント欄が常に空のドロップダウンになるためである。
          *
          *     **`name` に一意制約は無い**（DbDesign.md 6.9）。同名のスプリントを作れる。
@@ -1493,7 +1493,7 @@ export interface paths {
          *     （メンバーでない場合はプロジェクトごと 404）。
          *
          *     バックログ画面（GuiDesign.md 5.4）とチケット検索（GuiDesign.md 5.13）のデータ源であり、
-         *     Phase 2 のカンバン・ガントも同じエンドポイントから描く。
+         *     未実装のカンバン・ガントも同じエンドポイントから描く。
          *
          *     **既定が他の一覧と2か所ちがう**（9.2.1）。
          *
@@ -1515,7 +1515,7 @@ export interface paths {
          *
          *     **`body_md` は含めない**（9.2.2）。一覧は本文を表示せず、200件分の Markdown は
          *     応答を数十倍にする。`execution_mode` / `readiness` / `scope` / `custom_fields` も
-         *     同じ理由で含めない（GuiDesign.md 5.5 が「Phase 1 では非表示」と決めている）。
+         *     同じ理由で含めない（GuiDesign.md 5.5 が非表示と決めている）。
          *
          *     **検索の条件**（9.2.1「検索の条件」）：`q`・`seq_from` / `seq_to`・
          *     `started_since` / `started_before`・`closed_since` / `closed_before`。
@@ -1524,7 +1524,7 @@ export interface paths {
          *     `ETag` は「フィルタ条件を正規化した文字列のハッシュ・件数・`MAX(updated_at)`」から
          *     作る（9.2.5）。**`sort` / `order` / `page` / `per_page` も混ぜる**——ETag は応答本文を
          *     指す検証子であり、並び順やページが違えば本文も違う。
-         *     **Phase 1 では `If-None-Match` を解釈しない**（304 を返さない）。
+         *     **`If-None-Match` は解釈しない**（304 を返さない）。
          */
         get: operations["listTickets"];
         put?: never;
@@ -1578,7 +1578,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -1614,7 +1614,7 @@ export interface paths {
          * @description 物理削除（ApiDesign.md 9.5.3、DbDesign.md 4.6 の既定）。
          *     **必要権限は `ticket.delete`**。
          *
-         *     **Phase 1 で「持たない人」が実在する唯一のチケット権限である**——`operator`
+         *     **「持たない人」が実在する唯一のチケット権限である**——`operator`
          *     （システムロール）は `ticket.delete` を持たず、持つのは `administrator` と
          *     `project_admin` だけである（migration 0010）。
          *
@@ -1711,7 +1711,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -1786,7 +1786,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -1818,10 +1818,9 @@ export interface paths {
          * @description 外部参照を1件足す（ApiDesign.md 9.10.2）。**必要権限は `ticket.reference.edit`**
          *     （0027 で `ticket.edit` から切り出した。読みは `ticket.view` のまま）。
          *
-         *     **`kind='code'` の主な書き手はエージェントである。** Phase 1 ではエージェント用の
-         *     アクターも MCP も無い（Design.md 11章 手順24・25）ため、書き手は `/me/tokens` で
-         *     発行した API トークンを持つクライアントになる。**画面は `code` の追加を持たず、
-         *     表示と削除だけを行う**（GuiDesign.md 5.5）。`doc` は Phase 1 から人が画面で
+         *     **`kind='code'` の主な書き手はエージェントである**（MCP の `pb_add_reference`）。
+         *     `/me/tokens` で発行した API トークンを持つクライアントも書ける。**画面は `code` の追加を持たず、
+         *     表示と削除だけを行う**（GuiDesign.md 5.5）。`doc` は人が画面で
          *     追加・編集できる。
          *
          *     必須は `kind` と、`kind` に応じて `repository`（`code`）または `url`（`doc`）。
@@ -1853,7 +1852,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -1914,7 +1913,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -1928,7 +1927,7 @@ export interface paths {
          *
          *     **チケットの子資源で唯一 2.6 のページネーションと 2.7 の `ETag` を持つ。**
          *     DoD（9.9）・リンク（9.10.1）・外部参照（9.10.2）は1チケットあたり数件に
-         *     収まるが、**コメントは議論の量だけ増える**。`ETag` は Phase 2 の
+         *     収まるが、**コメントは議論の量だけ増える**。`ETag` は
          *     エージェントが「新しいコメントが付いたか」を安く見る口になる。
          *
          *     **許可する `sort` は `created_at` だけ**で、既定は `asc`・`per_page=50`。
@@ -1938,7 +1937,7 @@ export interface paths {
          *     ——`items` に残す以上、外すとページの件数と合わない。**9.5.1 の
          *     `comment_count` だけは `deleted_at IS NULL` で数える**（読めるコメントの件数）。
          *
-         *     Phase 1 は `If-None-Match` を解釈せず、ヘッダだけ出す（9.2.5 と同じ）。
+         *     `If-None-Match` は解釈せず、ヘッダだけ出す（9.2.5 と同じ）。
          */
         get: operations["listTicketComments"];
         put?: never;
@@ -1979,7 +1978,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -2043,7 +2042,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -2057,7 +2056,7 @@ export interface paths {
          *     `ticket.view`**。
          *
          *     **このチケットを「終わった」と言うための条件の一覧である。** 人が列挙して
-         *     チェックし、Phase 2 でエージェントが `assertion` / `artifact` により自動
+         *     チェックし、将来エージェントが `assertion` / `artifact` により自動
          *     判定する土台になる（Requirements.md 10.5.2）。
          *
          *     **`items[]` は `sort_order` → `created_at` の昇順。**
@@ -2075,9 +2074,9 @@ export interface paths {
          *     （0029）——送ると `403`。`pb_submit_result` が「盤面を動かさない」と
          *     決めた判断と正面からぶつかるためで、**完了の判定は人が行う**。
          *
-         *     **Phase 1 が受け付ける `type` は `manual` だけである**（省略時も `manual`）。
+         *     **受け付ける `type` は `manual` だけである**（省略時も `manual`）。
          *     `task_ref` / `assertion` / `artifact` / `review` は 422 `validation_failed`、
-         *     `details[].code` は `phase_2_only`。**綴り違いは `invalid`** で返し分ける
+         *     `details[].code` は `unsupported_type`。**綴り違いは `invalid`** で返し分ける
          *     ——「今後使える」と「正しくない」は、呼び出し元が取る行動が違う。
          *
          *     **`sort_order` を省略すると末尾**（現在の最大値 + 10。9.10.2 と同じ採番）。
@@ -2104,7 +2103,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -2138,7 +2137,7 @@ export interface paths {
          *     `satisfied_by`（呼び出し元）を設定する。`false` に戻すと両方 `null` へ戻る。**
          *     3つは同時に動き、別々には送れない。
          *
-         *     **`type` は作成後に変えられない**（422 `immutable_field`）。Phase 1 で
+         *     **`type` は作成後に変えられない**（422 `immutable_field`）。
          *     取りうる値が1つしかない以上、変更を受け付けても何も起こせない。
          *
          *     **`If-Match` は要らない**（`dod_item` は `version` 列を持たない。2.8）。
@@ -2161,7 +2160,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -2203,10 +2202,10 @@ export interface paths {
          *     （`uq_ticket_link`）。`conflict` は使わない——あちらは `If-Match` 不一致の
          *     ような**状態**の競合で、こちらは**値**が既存の行と衝突している。
          *
-         *     **`link_type` は7種すべて受ける。** ただし**Phase 1 の画面が出すのは
+         *     **`link_type` は7種すべて受ける。** ただし**画面が出すのは
          *     `relates` / `duplicates` / `blocks` の3つだけ**である（GuiDesign.md 5.5）
          *     ——`FS` / `SS` / `FF` / `SF` と `lag_days` はガントの依存線のためのもので、
-         *     ガントは Phase 2。**API を絞らないのは、MCP とエージェントがガント用の
+         *     ガントは未実装。**API を絞らないのは、MCP とエージェントがガント用の
          *     依存を先に積むことを妨げないためである。**
          *
          *     **親チケットの `version` と `updated_at` は動かない。相手側も動かない。**
@@ -2230,7 +2229,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -2279,7 +2278,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -2319,7 +2318,7 @@ export interface paths {
          *     **9.6 の検証6（エージェントは所有者の担当だけ）は適用しない**——あの規則は
          *     ボードの状態を動かすことへの制約であり、レポートは状態を動かさない。
          *
-         *     **`GET` を置かない。** Phase 2 で人が読むのは完了レポートのコメントで
+         *     **`GET` を置かない。** 人が読むのは完了レポートのコメントで
          *     あり、`agent_report` の行そのものを読む面が無い。
          */
         post: operations["submitTicketReport"];
@@ -2341,7 +2340,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -2407,7 +2406,7 @@ export interface paths {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -2568,7 +2567,7 @@ export interface paths {
          *
          *     **`If-Match` は必須**（2.8）。省略すると 422（`details[].field` が `If-Match`）、
          *     現在の `version` と食い違えば 409 `conflict`。**人とエージェントが同じ文書を触るため、
-         *     Phase 1 のプロジェクト設定より競合が起きやすい。**
+         *     プロジェクト設定より競合が起きやすい。**
          *
          *     **`parent_path` と `slug` の変更が移動・改名である。** 部分木ごと移動する（`path` は
          *     子孫の分も付け替わる）。自分自身または自分の子孫を `parent_path` に指定すると 422
@@ -2686,7 +2685,7 @@ export interface paths {
         /**
          * ユーザー一覧
          * @description 人間とエージェントを同じ一覧に返す（ApiDesign.md 6.1、DbDesign.md 6.2 の
-         *     `actor` 統合設計）。**必要権限は `user.manage`**（Phase 1 = アドミニストレータのみ）。
+         *     `actor` 統合設計）。**必要権限は `user.manage`**（アドミニストレータのみ）。
          *
          *     `kind` によって意味を持たないフィールドは `null` を返し、フィールド自体を
          *     省略しない。**`agent` は `kind='agent'` の行にだけ入る**（人間の行では `null`）。
@@ -2739,8 +2738,7 @@ export interface paths {
          *     **`kind='user'` のアクターだけを返す。** エージェント・システムアクターは
          *     404 になる（手順13a の判断）。応答の `version` は `app_user` の列であり、
          *     `app_user` の行を持たないアクターでは 6.4 の楽観ロックが成立しないため。
-         *     エージェントの詳細は `agent` テーブル（DbDesign.md 8.1）ができる
-         *     Phase 2 で、列構成ごと設計する。
+         *     エージェントの詳細は未実装で、列構成ごと設計する（DbDesign.md 8.2.1）。
          *
          *     **一覧（6.1）と違い `ETag` は返さない。** 鮮度は本体の `version` が表す。
          */
@@ -2758,8 +2756,8 @@ export interface paths {
          *     `comment.author_id` は `NOT NULL` かつ `ON DELETE RESTRICT` のため、
          *     **削除前にシステムアクター（`kind='system'` の「削除されたユーザー」）へ
          *     付け替える**（DbDesign.md 6.7）。このアクターはシードに無く、**最初に
-         *     必要になった削除で作る**（手順13a の判断。Phase 1 は `comment` を作る
-         *     経路が無いため、実際には作られない）。
+         *     必要になった削除で作る**（手順13a の判断。コメントを持たない環境では
+         *     作られない）。
          *
          *     削除前に `audit_log` へ `user.delete` を記録し、`detail` に削除時点の
          *     表示名・メール・ロールを保存する。
@@ -2860,7 +2858,7 @@ export interface paths {
          *
          *     **冪等である。** 有効なトークンが1本も無くても 204 を返す。
          *
-         *     **個別のセッションを失効させる API は Phase 1 では持たない**
+         *     **個別のセッションを失効させる API は持たない**
          *     （GuiDesign.md 5.6.2 の行ごとの `[失効]` は出さない。手順13a の判断）。
          */
         post: operations["revokeUserSessions"];
@@ -2983,7 +2981,7 @@ export interface paths {
          *     無効化する（Design.md 6.4.1 / 6.4.5）。監査は `role.change`
          *     （`target_type='project_member'`）。
          *
-         *     **Phase 2 で `POST /projects/:key/members` が同じ状態を変えるようになる。**
+         *     **未実装の `POST /projects/:key/members` も同じ状態を変える。**
          *     6.8 が定めるとおり、内部実装は共通の1関数に集約すること。
          */
         put: operations["putUserMembership"];
@@ -3497,7 +3495,7 @@ export interface components {
             /**
              * Format: email
              * @description **ログインIDでもある**（ApiDesign.md 4.2）。画面では「ログインID」と
-             *     「メールアドレス」の2行に分かれるが、Phase 1 ではどちらも本項目を指す。
+             *     「メールアドレス」の2行に分かれるが、どちらも本項目を指す。
              * @example tanaka@example.com
              */
             email?: string;
@@ -3732,8 +3730,8 @@ export interface components {
              */
             token_env_name: string;
             /**
-             * @description 0〜3（既定 1）。**Phase 2 では使わない**——段階的な権限昇格の材料
-             *     （`agent_run` の実績）が Phase 3 のため、既定値のまま置く。
+             * @description 0〜3（既定 1）。**使わない**——段階的な権限昇格の材料
+             *     （`agent_run` の実績）が構想のため、既定値のまま置く。
              */
             trust_level: number;
             /** @description `false` は無効化されたエージェント。行は残る。 */
@@ -4161,7 +4159,7 @@ export interface components {
             last_used_at?: string | null;
             /**
              * Format: date-time
-             * @description Phase 1 は必ず入る（無期限を許さない。ApiDesign.md 4.4.2）。列としては
+             * @description 必ず入る（無期限を許さない。ApiDesign.md 4.4.2）。列としては
              *     NULL を許すため nullable にしてある。
              */
             expires_at?: string | null;
@@ -4211,8 +4209,8 @@ export interface components {
              */
             expires_in_days: number;
             /**
-             * @description 権限カタログのキー（Design.md 6.4.2 の30件）。カタログに無い値は 422。
-             *     省略時と空配列は「絞り込みなし」。**Phase 1 の画面は常に空で送る。**
+             * @description 権限カタログのキー（Design.md 6.4.2 の32件）。カタログに無い値は 422。
+             *     省略時と空配列は「絞り込みなし」。**画面は常に空で送る。**
              * @example []
              */
             scopes?: string[];
@@ -4267,8 +4265,8 @@ export interface components {
             /** @description 選択肢の下に添える説明。`role.description` は NULL 許容。 */
             description: string | null;
             /**
-             * @description 組み込みロールか。Phase 1 は常に `true`。カスタムロール（`false`）の
-             *     作成は Phase 3（ApiDesign.md 7.3）。
+             * @description 組み込みロールか。常に `true`。カスタムロール（`false`）の
+             *     作成は構想である（ApiDesign.md 7.3）。
              */
             is_builtin: boolean;
             /** @description 並び順。表示名の五十音順ではない（GuiDesign.md 5.6）。 */
@@ -4429,7 +4427,7 @@ export interface components {
             /** @description ULID（`actor.id`）。 */
             id: string;
             /**
-             * @description **Phase 1 は `user` のみ。** エージェントは 404 になる。
+             * @description **`user` のみ。** エージェントは 404 になる。
              * @enum {string}
              */
             kind: "user";
@@ -4452,8 +4450,8 @@ export interface components {
              */
             version: number;
             /**
-             * @description 認証手段（`DbDesign.md` 6.2 の `user_identity`）。**この配列が Phase 3 の
-             *     IdP 連携をそのまま受け入れる**——OIDC を追加しても要素が1つ増えるだけで、
+             * @description 認証手段（`DbDesign.md` 6.2 の `user_identity`）。**この配列が
+             *     IdP 連携（構想）をそのまま受け入れる**——OIDC を追加しても要素が1つ増えるだけで、
              *     応答構造もUIも変わらない。
              */
             identities: components["schemas"]["UserIdentity"][];
@@ -4483,7 +4481,7 @@ export interface components {
         /** @description 認証手段1件（ApiDesign.md 6.3 の `identities[]`）。 */
         UserIdentity: {
             id: string;
-            /** @description Phase 1 は `local` のみ（DbDesign.md 7.1 のシード）。 */
+            /** @description `local` のみ（DbDesign.md 7.1 のシード）。 */
             provider_key: string;
             /** @enum {string} */
             provider_type: "local" | "oidc" | "saml";
@@ -4539,7 +4537,7 @@ export interface components {
             last_used_at: string | null;
             /**
              * Format: date-time
-             * @description 無期限なら `null`（Phase 1 のセッションは必ず入る）。
+             * @description 無期限なら `null`（セッションは必ず入る）。
              */
             expires_at: string | null;
         };
@@ -4671,7 +4669,7 @@ export interface components {
              * @description `project.settings`（jsonb）をそのまま置き換える。**部分更新ではない**ので、
              *     取得した値を保持し、変更するキーだけ差し替えて全体を送ること。
              *
-             *     サーバは JSON オブジェクトであることしか検証しない。Phase 1 の画面が
+             *     サーバは JSON オブジェクトであることしか検証しない。画面が
              *     使うキーは `repositories` のみで、構造の正本は DbDesign.md 6.4 にある。
              */
             settings?: {
@@ -4705,7 +4703,7 @@ export interface components {
              */
             my_permissions: string[];
             /**
-             * @description `project.settings`（jsonb）をそのまま返す。Phase 1 の画面が使うキーは
+             * @description `project.settings`（jsonb）をそのまま返す。画面が使うキーは
              *     `repositories` のみで、構造の正本は DbDesign.md 6.4 にある。
              */
             settings: {
@@ -5006,7 +5004,7 @@ export interface components {
                 reason?: string;
             }[];
             /**
-             * @description 分割の提案。**チケットにはならない**——承認キュー（`proposal`）は Phase 3 で
+             * @description 分割の提案。**チケットにはならない**——承認キュー（`proposal`）は構想で
              *     あり、人が読んで要ると判断すれば `pb_create_ticket` を呼ばせれば済む。
              */
             proposed_subtasks?: {
@@ -5475,7 +5473,7 @@ export interface components {
          *     数十倍にする。本文が要るのは詳細（9.5）だけである。
          *     **`execution_mode` / `readiness` / `readiness_note` / `scope` / `custom_fields` も
          *     持たない**——列は DbDesign.md 6.6 に先行定義されているが、GuiDesign.md 5.5 が
-         *     「Phase 1 では非表示」と決めている。画面が使わない項目を応答に載せない
+         *     非表示と決めている。画面が使わない項目を応答に載せない
          *     （載せると、使われないまま形が固まる）。
          *
          *     **完全形 `my-app-31` はサーバが組み立てない**（9.1）。プロジェクトキーは URL に
@@ -5484,7 +5482,7 @@ export interface components {
         Ticket: {
             /**
              * @description ULID。**リクエストでチケットを指定する箇所はすべて `seq`** であり、この項目は
-             *     `activity.entity_id` との突き合わせと Phase 2 のエージェント連携が使う（9.1）。
+             *     `activity.entity_id` との突き合わせとエージェント連携が使う（9.1）。
              * @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S
              */
             id: string;
@@ -5686,7 +5684,7 @@ export interface components {
              */
             body_md: string | null;
             /**
-             * @description 情報の類型（Requirements.md 6.5）。Phase 3 の LLM 分類・要約がこの列を
+             * @description 情報の類型（Requirements.md 6.5）。LLM による分類・要約（構想）がこの列を
              *     土台にする。**`progress` は 9.6 の遷移コメントが使う。**
              * @enum {string}
              */
@@ -5767,7 +5765,7 @@ export interface components {
                 /** @example 3 */
                 count: number;
                 /**
-                 * @description **Phase 1 では 14 で固定**（プロジェクトごとの設定にしない）。
+                 * @description **14 で固定**（プロジェクトごとの設定にしない）。
                  * @example 14
                  */
                 threshold_days: number;
@@ -5783,7 +5781,7 @@ export interface components {
             /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
             id: string;
             /**
-             * @description **Phase 1 は `ticket` だけ**（9.1.1）。
+             * @description **`ticket` だけ**（9.1.1）。
              * @enum {string}
              */
             entity_type: "ticket";
@@ -5813,7 +5811,7 @@ export interface components {
             /** @enum {string} */
             action: "create" | "update" | "delete" | "transition";
             /**
-             * @description 変更した項目。**`create` / `delete` では `null`。** Phase 1 の値域は
+             * @description 変更した項目。**`create` / `delete` では `null`。** 値域は
              *     `status_key`（遷移）／`type` `title` `body_md` `priority` `assignee_id`
              *     `parent_id` `estimate_point` `estimate_hours` `actual_hours`
              *     `start_date` `due_date`（本体の更新）／`comment` `dod` `link`
@@ -5894,15 +5892,15 @@ export interface components {
          * @description チケットの完了条件（ApiDesign.md 9.9、DbDesign.md 6.11）。
          *
          *     **`config` / `evidence` / `origin` は返さない**（列としては残る）。いずれも
-         *     Phase 2 の型と AI提案のためのもので、**Phase 1 の API が受け付けない値を
+         *     `manual` 以外の型と AI提案のためのもので、**API が受け付けない値を
          *     応答に並べると「使える」ように見える。**
          */
         TicketDoDItem: {
             /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
             id: string;
             /**
-             * @description **Phase 1 は `manual` のみ。** `task_ref` / `assertion` / `artifact` /
-             *     `review` は Phase 2（Requirements.md 10.5.2）で、`DbDesign.md` 6.11 の
+             * @description **`manual` のみ。** `task_ref` / `assertion` / `artifact` /
+             *     `review` は未実装（Requirements.md 10.5.2）で、`DbDesign.md` 6.11 の
              *     `CHECK` には既に含まれている。
              * @enum {string}
              */
@@ -5938,7 +5936,7 @@ export interface components {
         /** @description 完了条件の追加（ApiDesign.md 9.9）。 */
         CreateTicketDoDRequest: {
             /**
-             * @description **Phase 2 の型を送ると 422 `phase_2_only`**、綴り違いは `invalid`。
+             * @description **`manual` 以外の型を送ると 422 `unsupported_type`**、綴り違いは `invalid`。
              * @default manual
              * @enum {string}
              */
@@ -5999,8 +5997,8 @@ export interface components {
              */
             direction: "outgoing" | "incoming";
             /**
-             * @description **`FS` / `SS` / `FF` / `SF` はガント用の依存**（Phase 2）。
-             *     **Phase 1 の画面が出すのは `relates` / `duplicates` / `blocks` の3つだけ**
+             * @description **`FS` / `SS` / `FF` / `SF` はガント用の依存**（ガントは未実装）。
+             *     **画面が出すのは `relates` / `duplicates` / `blocks` の3つだけ**
              *     である（GuiDesign.md 5.5）が、**API は7種すべて受ける**。
              * @enum {string}
              */
@@ -6008,11 +6006,11 @@ export interface components {
             ticket: components["schemas"]["TicketLinkTicketRef"];
             /**
              * Format: int32
-             * @description `FS`〜`SF` のときのみ意味を持つ。Phase 1 に読む画面は無い。
+             * @description `FS`〜`SF` のときのみ意味を持つ。読む画面は無い。
              */
             lag_days: number;
             /**
-             * @description **Phase 1 は `human` のみ作られる**（AI提案の採用・却下は Phase 2）。
+             * @description **`human` のみ作られる**（AI提案の採用・却下は未実装）。
              *     **`comment.origin` とは値域が違う**——あちらは書き手の種別
              *     （`human` / `agent`）で、こちらは「AIが提案し人がまだ採用していない」
              *     という状態である。
@@ -6052,7 +6050,7 @@ export interface components {
          *     `commit_sha` を伴い、`doc` は `url` が必須である。1つの表にまとめてあるので、
          *     使わない項目は `null` になる。
          *
-         *     **`created_by` は返すが Phase 1 の画面は使わない**（GuiDesign.md 5.5）。この
+         *     **`created_by` は返すが画面は使わない**（GuiDesign.md 5.5）。この
          *     セクションが表すのは「チケットの成果物としてリポジトリ・ブランチ・コミットが
          *     紐づいている」という関係であって、行を登録したのが誰かではない。**コミットの
          *     committer でもない**——PB はリポジトリへ問い合わせない。それでも返して DB にも
@@ -6914,7 +6912,7 @@ export interface components {
         TicketLinkID: string;
         /**
          * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-         *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+         *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
          *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
          *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
          */
@@ -7160,7 +7158,7 @@ export interface operations {
             };
             /**
              * @description パスワード認証を使っていないアカウント（`conflict`）。
-             *     IdP のみのユーザー（Phase 3）が該当する。
+             *     IdP のみのユーザー（構想）が該当する。
              */
             409: {
                 headers: {
@@ -8128,7 +8126,7 @@ export interface operations {
                 headers: {
                     /**
                      * @description 弱い検証子 `W/"proj-<件数>-<MAX(updated_at) のナノ秒>"`（ApiDesign.md 2.7）。
-                     *     **Phase 1 では `If-None-Match` を解釈しない**（304 を返さない）。
+                     *     **`If-None-Match` は解釈しない**（304 を返さない）。
                      */
                     ETag?: string;
                     [name: string]: unknown;
@@ -8571,14 +8569,14 @@ export interface operations {
         parameters: {
             query?: {
                 /**
-                 * @description `ticket:31` の形。省略時はプロジェクト全体。**Phase 1 に受け付ける
+                 * @description `ticket:31` の形。省略時はプロジェクト全体。**受け付ける
                  *     `entity_type` はチケットだけである**（9.1.1）。
                  * @example ticket:31
                  */
                 entity?: string;
                 /**
                  * @description **単一値のみ。** カンマ区切りの OR を受け付けない——9.2.1 のフィルタ群と
-                 *     違う扱いだが、複数選択を要する画面が Phase 1 に無い。
+                 *     違う扱いだが、複数選択を要する画面が無い。
                  */
                 action?: "create" | "update" | "delete" | "transition";
                 page?: number;
@@ -9225,7 +9223,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9263,7 +9261,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9310,7 +9308,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9375,7 +9373,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9444,7 +9442,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9482,7 +9480,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9527,7 +9525,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9568,7 +9566,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9623,7 +9621,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9667,7 +9665,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9712,7 +9710,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9750,7 +9748,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9795,7 +9793,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9833,7 +9831,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9878,7 +9876,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9916,7 +9914,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9961,7 +9959,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -9999,7 +9997,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -10045,7 +10043,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -10086,7 +10084,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -10131,7 +10129,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -10169,7 +10167,7 @@ export interface operations {
                 key: components["parameters"]["ProjectKey"];
                 /**
                  * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
-                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り（Phase 1）、
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
                  *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
                  *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
                  */
@@ -10555,7 +10553,7 @@ export interface operations {
                     /**
                      * @description 弱い検証子 `W/"user-<件数>-<MAX(updated_at) のナノ秒>"`（ApiDesign.md 2.7）。
                      *     `updated_at` は `actor` と `app_user` の新しいほうを採る。
-                     *     **Phase 1 では `If-None-Match` を解釈しない**（304 を返さない）。
+                     *     **`If-None-Match` は解釈しない**（304 を返さない）。
                      */
                     ETag?: string;
                     [name: string]: unknown;
@@ -10844,7 +10842,7 @@ export interface operations {
                 };
             };
             /**
-             * @description `local_credential` を持たないユーザー（IdP のみ、Phase 3）に対する
+             * @description `local_credential` を持たないユーザー（IdP のみ。構想）に対する
              *     リセット（`conflict`。ApiDesign.md 6.6）。
              */
             409: {

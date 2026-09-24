@@ -425,30 +425,30 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 
 ### 10.3.2 ツール一覧
 
-| ツール | 種別 | Phase | 引数 | 戻り値 | 説明 |
+| ツール | 種別 | 状態 | 引数 | 戻り値 | 説明 |
 |---|---|---|---|---|---|
-| `pb_get_project` | read | 2 | — | プロジェクト名・キー・説明・**リポジトリ一覧**・自分の役割 | **参画時に最初に呼ぶ。** リポジトリは `project.settings.repositories`（`DbDesign.md` 6.4） |
-| `pb_list_docs` | read | 2 | — | プロジェクト文書の目次（階層・見出し） | **憲章の目次。** 全文を返さない |
-| `pb_get_doc` | read | 2 | `path`, `section?` | 文書本文（Markdown） | **`section` で章を指定できる。** 全文しか返せない設計にしない（10.6.2） |
-| `pb_get_task` | read | 2 | **`seq`** | チケット本文、種別、DoD、スコープ境界、実行主体属性、readinessスコア | チケットの契約内容を取得。**引数は `seq`**（画面と URL に出るチケット番号。`Design.md` 8.5） |
-| `pb_list_tasks` | read | 2 | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `staged?`, `per_page?` | チケット一覧（軽量） | ボードの状況把握。**`assignee=me` で自分のチケット**——エージェントのトークンでは**所有者**を指す（`Design.md` 8.5）。**`staged=true` でオンステージの行とその配下だけ** |
-| `pb_get_context` | read | 2 | **`seq`**, `charter_versions?` | **コンテキストパック（Markdown 1枚。10.4）** | **着手前に押し付ける前提一式。** スコープ境界・実行の前提・憲章・依存タスク・深掘りの入口の5節。**`charter_versions` に読んだ憲章の版（`{"rules":7,…}`）を渡すと、版が一致した文書の本文を省く**——1セッションで複数のチケットを消化するとき、同じ憲章を毎回運ばない。パックの末尾に載せた版を出す（`Design.md` 8.5.5）。**引数は `seq`**（`pb_get_task` と同じ理由。`Design.md` 8.5.5）。**`budget` は受けない**——憲章が全文で 3,601 文字であり予算が効かない（10.4.3）。**チケット本文と完了条件は入れない**（`pb_get_task` と重ねない）。手順27 |
-| `pb_create_ticket` | write | 2 | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?`, `tag_ids?`, `estimate_point?`, `estimate_hours?`, `start_date?`, `due_date?` | **要点だけ**（`id` / `seq` / `status` / `version` / `parent_seq`。`Design.md` 8.5.1） | **議論の結果をその場で起票する。** 10.0.2 の 1・3 への手当。**引数名は REST の本体フィールドに揃える**（`Design.md` 8.5.1） |
-| `pb_update_ticket` | write | 2 | **`seq`**, ＋ `pb_create_ticket` の任意引数から **`type` を除いたもの**（**送ったものだけ更新**） | **要点だけ**（`seq` / `status` / `version` / `updated_at`） | **起票したあと直す。** 線は「**作れるものは直せる。ただし `type` を除く**」——**種別の切り替えは人が行う**（盤面の見え方が変わるため）。`execution_mode` / `readiness` / `scope` / `working_agent_id` / `actual_hours` / `sprint_id` も**開けない**。**必要権限は `ticket.self_edit`**（0029） |
-| `pb_put_dod` | write | 2 | **`seq`**, `add?[]`, `update?[]`, `delete?[]` | 9.9 の一覧をそのまま | **完了条件を整える。** いまある一覧に対する追加・編集・削除を1回でまとめて受ける（**全置換ではない**）。**`is_satisfied` は開けない**——`pb_submit_result` の「盤面を動かさない」と正面からぶつかる。**必要権限は `ticket.self_edit`** |
-| `pb_list_tags` | read | 2 | — | 9.11 の一覧をそのまま | **プロジェクトのタグを列挙する。** `tag_ids` を渡すのに ULID が要るため（`Design.md` 8.5.1）。**`pb_list_sprints` は作らない**——スプリントはどの経路からも設定できない |
-| `pb_transition_task` | write | 2 | **`seq`**, `to`, `comment?` | **状態の要点だけ**（`seq` / `status` / `version` / `working_agent` / `updated_at` / `closed_at`。本文は返さない。`Design.md` 8.5.3） | **状態を進める。** `to` はワークフローのステータスキー。**着手の宣言もこれで行う**（`working_agent_id` が自動で立つ） |
-| `pb_list_transitions` | read | 2 | **`seq`** | 9.7 の応答をそのまま | **いまどの状態へ進めるか**と、進めない先の理由。**着手（未着手→進行中）では先に呼ばなくてよい**——失敗の応答に同じ理由が返る（`Design.md` 8.5.3） |
-| `pb_post_note` | write | 2 | **`seq`**, `body_md`, `kind?` | **要点だけ**（`id` / `kind` / `created_at`） | 途中経過・判明した事実の記録。**`refs` は落とした**——`ApiDesign.md` 9.8 に対応するフィールドが無い（`Design.md` 8.5.1） |
-| `pb_put_doc` | write | 2 | `path`, `body_md`, `change_reason?` | **要点だけ**（`path` / `version` / `updated_at`） | **文書の更新。** 権限を持つ人の指示で呼ぶ（10.6.2）。**本文の全置換**で、`If-Match` は MCP 層が付ける（`Design.md` 8.5.1） |
-| `pb_add_reference` | write | 2 | **`seq`**, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | 9.10.2 の1件をそのまま | **作業の跡（ブランチ・コミット）をチケットに積む。** `ticket_reference` の `kind='code'`（`DbDesign.md` 6.12）。**追記専用**で、直す・消すは人が画面から行う。**必要権限は `ticket.reference.edit`**（0027） |
-| `pb_submit_result` | write | 2 | **`seq`**, `status`, `artifacts?`, `dod_results?`, `findings?`, `failures?`, `proposed_subtasks?`, `knowledge_impact?`, `cost?` | 9.15 の応答をそのまま（`unsatisfied_dod` を含む） | 完了レポートの返却。**引数は 10.6.1 のレポートを平らにしたもの**で、名前は REST の本体フィールドに揃う（`Design.md` 8.5.4）。**状態は進めずクローズもしない** |
-| `pb_claim_task` | write | **3** | `seq` | `lease_id`, `expires_at` | 着手時のリース取得。**Phase 3 へ送った**（10.3.3） |
-| `pb_release_task` | write | **3** | `seq`, `reason` | — | 中断時のリース解放。**Phase 3 へ送った**（同上） |
-| `pb_search` | read | 3 | `query`, `scope?`, `top_k?` | 該当コメント/決定/文書 | 履歴横断のRAG検索 |
-| `pb_next_task` | read | 3 | `capabilities?`, `agent_id?` | 実行可能なチケット | 依存解決済み・readiness良好なものをPB側が選定 |
-| `pb_propose_subtasks` | write | 3 | `task_id`, `subtasks[]`, `rationale` | 提案ID | 分割提案（承認待ちキューへ） |
-| `pb_propose_memory` | write | 3 | `scope`, `kind`, `body`, `source_task_id` | 提案ID | 知識候補を承認キューへ |
+| `pb_get_project` | read | 実装済み | — | プロジェクト名・キー・説明・**リポジトリ一覧**・自分の役割 | **参画時に最初に呼ぶ。** リポジトリは `project.settings.repositories`（`DbDesign.md` 6.4） |
+| `pb_list_docs` | read | 実装済み | — | プロジェクト文書の目次（階層・見出し） | **憲章の目次。** 全文を返さない |
+| `pb_get_doc` | read | 実装済み | `path`, `section?` | 文書本文（Markdown） | **`section` で章を指定できる。** 全文しか返せない設計にしない（10.6.2） |
+| `pb_get_task` | read | 実装済み | **`seq`** | チケット本文、種別、DoD、スコープ境界、実行主体属性、readinessスコア | チケットの契約内容を取得。**引数は `seq`**（画面と URL に出るチケット番号。`Design.md` 8.5） |
+| `pb_list_tasks` | read | 実装済み | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `staged?`, `per_page?` | チケット一覧（軽量） | ボードの状況把握。**`assignee=me` で自分のチケット**——エージェントのトークンでは**所有者**を指す（`Design.md` 8.5）。**`staged=true` でオンステージの行とその配下だけ** |
+| `pb_get_context` | read | 実装済み | **`seq`**, `charter_versions?` | **コンテキストパック（Markdown 1枚。10.4）** | **着手前に押し付ける前提一式。** スコープ境界・実行の前提・憲章・依存タスク・深掘りの入口の5節。**`charter_versions` に読んだ憲章の版（`{"rules":7,…}`）を渡すと、版が一致した文書の本文を省く**——1セッションで複数のチケットを消化するとき、同じ憲章を毎回運ばない。パックの末尾に載せた版を出す（`Design.md` 8.5.5）。**引数は `seq`**（`pb_get_task` と同じ理由。`Design.md` 8.5.5）。**`budget` は受けない**——憲章が全文で 3,601 文字であり予算が効かない（10.4.3）。**チケット本文と完了条件は入れない**（`pb_get_task` と重ねない）。手順27 |
+| `pb_create_ticket` | write | 実装済み | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?`, `tag_ids?`, `estimate_point?`, `estimate_hours?`, `start_date?`, `due_date?` | **要点だけ**（`id` / `seq` / `status` / `version` / `parent_seq`。`Design.md` 8.5.1） | **議論の結果をその場で起票する。** 10.0.2 の 1・3 への手当。**引数名は REST の本体フィールドに揃える**（`Design.md` 8.5.1） |
+| `pb_update_ticket` | write | 実装済み | **`seq`**, ＋ `pb_create_ticket` の任意引数から **`type` を除いたもの**（**送ったものだけ更新**） | **要点だけ**（`seq` / `status` / `version` / `updated_at`） | **起票したあと直す。** 線は「**作れるものは直せる。ただし `type` を除く**」——**種別の切り替えは人が行う**（盤面の見え方が変わるため）。`execution_mode` / `readiness` / `scope` / `working_agent_id` / `actual_hours` / `sprint_id` も**開けない**。**必要権限は `ticket.self_edit`**（0029） |
+| `pb_put_dod` | write | 実装済み | **`seq`**, `add?[]`, `update?[]`, `delete?[]` | 9.9 の一覧をそのまま | **完了条件を整える。** いまある一覧に対する追加・編集・削除を1回でまとめて受ける（**全置換ではない**）。**`is_satisfied` は開けない**——`pb_submit_result` の「盤面を動かさない」と正面からぶつかる。**必要権限は `ticket.self_edit`** |
+| `pb_list_tags` | read | 実装済み | — | 9.11 の一覧をそのまま | **プロジェクトのタグを列挙する。** `tag_ids` を渡すのに ULID が要るため（`Design.md` 8.5.1）。**`pb_list_sprints` は作らない**——スプリントはどの経路からも設定できない |
+| `pb_transition_task` | write | 実装済み | **`seq`**, `to`, `comment?` | **状態の要点だけ**（`seq` / `status` / `version` / `working_agent` / `updated_at` / `closed_at`。本文は返さない。`Design.md` 8.5.3） | **状態を進める。** `to` はワークフローのステータスキー。**着手の宣言もこれで行う**（`working_agent_id` が自動で立つ） |
+| `pb_list_transitions` | read | 実装済み | **`seq`** | 9.7 の応答をそのまま | **いまどの状態へ進めるか**と、進めない先の理由。**着手（未着手→進行中）では先に呼ばなくてよい**——失敗の応答に同じ理由が返る（`Design.md` 8.5.3） |
+| `pb_post_note` | write | 実装済み | **`seq`**, `body_md`, `kind?` | **要点だけ**（`id` / `kind` / `created_at`） | 途中経過・判明した事実の記録。**`refs` は落とした**——`ApiDesign.md` 9.8 に対応するフィールドが無い（`Design.md` 8.5.1） |
+| `pb_put_doc` | write | 実装済み | `path`, `body_md`, `change_reason?` | **要点だけ**（`path` / `version` / `updated_at`） | **文書の更新。** 権限を持つ人の指示で呼ぶ（10.6.2）。**本文の全置換**で、`If-Match` は MCP 層が付ける（`Design.md` 8.5.1） |
+| `pb_add_reference` | write | 実装済み | **`seq`**, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | 9.10.2 の1件をそのまま | **作業の跡（ブランチ・コミット）をチケットに積む。** `ticket_reference` の `kind='code'`（`DbDesign.md` 6.12）。**追記専用**で、直す・消すは人が画面から行う。**必要権限は `ticket.reference.edit`**（0027） |
+| `pb_submit_result` | write | 実装済み | **`seq`**, `status`, `artifacts?`, `dod_results?`, `findings?`, `failures?`, `proposed_subtasks?`, `knowledge_impact?`, `cost?` | 9.15 の応答をそのまま（`unsatisfied_dod` を含む） | 完了レポートの返却。**引数は 10.6.1 のレポートを平らにしたもの**で、名前は REST の本体フィールドに揃う（`Design.md` 8.5.4）。**状態は進めずクローズもしない** |
+| `pb_claim_task` | write | 構想 | `seq` | `lease_id`, `expires_at` | 着手時のリース取得（10.3.3） |
+| `pb_release_task` | write | 構想 | `seq`, `reason` | — | 中断時のリース解放（同上） |
+| `pb_search` | read | 構想 | `query`, `scope?`, `top_k?` | 該当コメント/決定/文書 | 履歴横断のRAG検索 |
+| `pb_next_task` | read | 構想 | `capabilities?`, `agent_id?` | 実行可能なチケット | 依存解決済み・readiness良好なものをPB側が選定 |
+| `pb_propose_subtasks` | write | 構想 | `task_id`, `subtasks[]`, `rationale` | 提案ID | 分割提案（承認待ちキューへ） |
+| `pb_propose_memory` | write | 構想 | `scope`, `kind`, `body`, `source_task_id` | 提案ID | 知識候補を承認キューへ |
 
 **read / write の分離**が重要である。Claude Code 側のツール許可設定で「read系は自動承認、write系は都度確認」という運用ができ、エージェントの副作用を人間が段階的に制御できる。
 
@@ -456,23 +456,23 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 
 `kind` の値は第6.5節で定義した情報類型（`decision` / `discussion` / `artifact` / `caveat` / `reference`）をそのまま用いる。**`comment.kind` が既にこの5値を持つ**（`DbDesign.md` 6.7）ため、`pb_post_note` は新しいテーブルを必要としない。エージェントは構造化して報告できるため、人間のコメントより分類の精度が高く、6.5で想定していたLLMによる事後分類のコストを削減できる。
 
-### 10.3.3 リース（lease）モデル — **Phase 3 へ送った**
+### 10.3.3 リース（lease）モデル — **構想**
 
-**Phase 2 では実装しない**。**代わりに置いたのは `ticket.working_agent_id`（実行者の自己申告）と、`ApiDesign.md` 9.6 の検証6（エージェントは所有者の担当だけを進められる）である。**
+**実装していない**。**代わりに置いたのは `ticket.working_agent_id`（実行者の自己申告）と、`ApiDesign.md` 9.6 の検証6（エージェントは所有者の担当だけを進められる）である。**
 
-**送った理由は、リースが解こうとしていた3つのうち、Phase 2 で成立するものが無かったことである。**
+**実装しない理由は、リースが解こうとしていた3つのうち、いま成立するものが無いことである。**
 
-| 解こうとしていたもの | Phase 2 での判定 |
+| 解こうとしていたもの | 判定 |
 |---|---|
 | **可視性**（いま誰が触っているか。10.0.2 の 4） | **状態・担当・実行者の3欄で足りる。** 下記の TTL 30分は**エージェントのセッションの時間尺度**であり、**PB は分野を問わないプロジェクト管理を目指す**（10.0）。建築・法務・企画の「進行中」に30分の失効は合わない |
-| **排他**（同じチケットを2つのエージェントが同時に処理しない） | **Phase 2 では発生しない。** 10.8.6 の `/pb-implement <seq>` は**人がチケット番号を指定し、方針の承認を経てから**走る。エージェントが自律的に拾うのは `pb_next_task`（Phase 3） |
+| **排他**（同じチケットを2つのエージェントが同時に処理しない） | **発生しない。** 10.8.6 の `/pb-implement <seq>` は**人がチケット番号を指定し、方針の承認を経てから**走る。エージェントが自律的に拾うのは `pb_next_task`（構想） |
 | **詰まり防止**（放置された占有を解く） | 占有しないので詰まらない |
 
 **もう1つの理由は、本節が定めるリースが実際には何も排他しないことである。** 本節自身が「**第一の目的は、いま誰がどのチケットを触っているかを他の参加者に見せること**」「少人数運用では**緩やかな整合**で実害はない」と書いており、**設計文書のどこにも「リース保持中は他者の◯◯を拒む」という規定が無い**（`Design.md` 8.2）。**`lease_token` という名前だけが錠前の語彙を持ち込んでいた。**
 
 **再検討の条件は、自律取得（`pb_next_task`）を実装するときである。** そのときは `working_agent_id` を「宣言」から「条件」へ格上げすれば足り、テーブルを足さずに済む（`DbDesign.md` 6.6）。**TTL による失効（`stale` の検知）が要ると分かった時点で**、`DbDesign.md` 8.2.2 の器を起こす。器は 0019 で既に在る。
 
-以下は Phase 3 で起こすときの設計である。
+以下は起こすときの設計である。
 
 タスクの take は排他ロックではなく **リース** とする。
 
@@ -519,11 +519,11 @@ Runner による外形監視がないため厳密なハートビートは取れ�
 
 ### 10.4.3 トークン予算制御
 
-**Phase 2 では実装しない**。**`pb_get_context` は `budget` を
+**実装していない**。**`pb_get_context` は `budget` を
 受けず、憲章を全文で載せる**（判断の記録だけは目次と引き方にした。`Design.md` 8.5.5）。**憲章は数千文字の規模で**、
 切り詰めが起きる規模に届いていない。**予算制御の器を先に作ると、要らなかったときに
 戻せない**（`Design.md` 8.5.5）。**再検討の条件は `Design.md` 8.6** にある——
-`docs/history/` が PB の文書へ移ったとき、または Phase 3 の `knowledge` が入ったとき。
+開発の記録のような大きな文書が PB の文書へ移ったとき、または `knowledge`（構想）が入ったとき。
 
 **そのとき予算は、呼び出し側の引数ではなくサーバ側の上限として置く。** `budget` を引数にすると
 **モデルが概算トークン数を1つ発明する**ことになり、値の根拠がどこにも無い。
@@ -582,7 +582,7 @@ Runner による外形監視がないため厳密なハートビートは取れ�
 
 `pb_submit_result` は未充足のDoD項目を応答として返し、エージェントに修正を促す。
 
-**Phase 2 の実装では、これは「レポートの `dod_results` に `passed: true` として現れなかった
+**いまの実装では、これは「レポートの `dod_results` に `passed: true` として現れなかった
 項目」である**（`ApiDesign.md` 9.15）。**`dod_item.is_satisfied` は書き換えない**——上表の
 とおり `manual` の検証者は人間であり、いま API が開けている型は `manual` だけだからである。
 **客観判定（`assertion` / `artifact`）が入るまで、盤面のチェックは人が付ける。**
@@ -726,10 +726,10 @@ PM が「文書へ反映せよ」と指示したときに `pb_put_doc` が呼ば
 書き残さない限り他の参加者には届かない。
 
 **陳腐化と矛盾の検出**：長期間参照されていない記述、新しい決定と矛盾する記述を検出して提示する。
-**古い知識が残り続ける方が、知識がない状態より危険**である。**これは Phase 3 で扱う**——
+**古い知識が残り続ける方が、知識がない状態より危険**である。**これは構想である**——
 検出の材料（参照実績）が、運用を始めるまで手に入らないため。
 
-**粒の細かいエンティティ化は Phase 3 へ送る。** 知識を1件1事実の行として持ち、スコープと種別で
+**粒の細かいエンティティ化は構想である。** 知識を1件1事実の行として持ち、スコープと種別で
 絞ってコンテキストパックに全文で載せる構想（`scope` / `kind` / `usefulness` を持つ
 プロジェクトメモリ）は有用だが、**まず文書として運用し、押し付けたい粒度が実測で見えてから**
 エンティティに切り出す。先に器を作ると、要らなかったときに戻せない。
@@ -773,7 +773,7 @@ PM が「文書へ反映せよ」と指示したときに `pb_put_doc` が呼ば
 プロジェクト全体の約束を変える変更か。`kind`（`caveat` は自動採用、`convention` は承認必須）の
 ような軸は汚染対策としての軸であり、合意形成の軸ではない。
 
-**本節の機構は Phase 3 で作る**（`Design.md` 11章）。Phase 2 では文書の編集を権限で直接行う
+**本節の機構は構想である。** いまは文書の編集を権限で直接行う
 （10.6.2）ため、承認の対象になるものが揃わない。
 
 ### 10.6.4 プロジェクトヒストリーとの接続
@@ -1563,7 +1563,7 @@ export PB_TOKEN_MY_LAPTOP="pb_agt_xxxxxxxxxxxxxxxx"
 **B の登録・発行・失効は `ApiDesign.md` 4.5**、画面は `GuiDesign.md` 5.8.2 のエージェントタブである。**2・3・4 は `ApiDesign.md` 4.5.8** にある。
 
 **「閲覧用＝read only」のトークンは作らない。** **情報を見るだけのエージェントが
-何をするのかが Phase 2 では決まっていない**ため。**再検討の条件は、read だけを持つ
+何をするのかが決まっていない**ため。**再検討の条件は、read だけを持つ
 エージェントの役割が現れたとき**——そのとき `ApiDesign.md` 4.5.3 の `scopes` を絞る用途として
 設計する（`client/src/lib/agents.ts` の写しはそのために絶対指定のまま置いてある）。
 
@@ -1745,9 +1745,9 @@ pull型を採用したことで、当初懸念した「PBがオーケストレ�
 
 **第1段階（AIエージェント連携の最小構成）**
 
-1. チケット管理の基本機能（既存章のとおり、AI機能なしでも完成度の高い状態）**← Phase 1 で完了**
+1. チケット管理の基本機能（既存章のとおり、AI機能なしでも完成度の高い状態）**← 実装済み**
 2. **プロジェクト文書（憲章）とテンプレート**（10.6.2）。全参加者のエージェントが同じ規約と価値観を読む
-3. **MCPサーバ**（REST APIの薄いラッパ。10.3.2 の Phase 2 列にあるツール）
+3. **MCPサーバ**（REST APIの薄いラッパ。10.3.2 で「実装済み」のツール）
 4. **コンテキストパックの生成**（初期は「憲章の該当章＋スコープ境界＋依存タスク」程度の単純な選定でよい）
 5. **セットアップ画面と設定ファイル生成**（`.mcp.json`、`.claude/commands/`、`CLAUDE.md` ブロック）。**「リポジトリの初回接続」と「メンバーの参画」の2系統**を出す（10.9.1）
 
@@ -1777,7 +1777,7 @@ pull型を採用したことで、当初懸念した「PBがオーケストレ�
 - ~~**憲章の章をどう指し示すか**~~（10.6.2） **決着した**（文書の設計、`DbDesign.md` 8.1.3）。**章はどこにも保存しない**——`pb_get_doc` の `section` は見出しテキストそのもので、保存する参照は `document.id` だけである。**見出しを改名しても参照が壊れない**ので、アンカー記法も番号付けも要らなくなった
 - Readiness 判定のプロンプト設計と、判定結果のキャリブレーション（厳しすぎると使われなくなる）
 - **承認粒度のポリシー**（10.6.3）。影響範囲を軸にすると決めたが、「そのコンポーネントに閉じる」を何で判定するかが未定
-- 憲章の矛盾検出ロジック（10.6.2 の末尾。Phase 3）
+- 憲章の矛盾検出ロジック（10.6.2 の末尾。構想）
 - MCPツールの description の文面設計（実質的にこれがエージェントの行動を規定するため、プロンプトエンジニアリングの対象となる）
 - Copilot コーディングエージェント（GitHub Issue 連携型）との統合方式
 - worktree 運用の自動化範囲（コマンド内で行うか、PB側がスクリプトを生成するか）

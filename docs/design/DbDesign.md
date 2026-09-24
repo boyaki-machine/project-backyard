@@ -6,7 +6,7 @@
 >
 > - 対象読者：サーバ実装者（人間およびAIエージェント）
 > - 関連：`Design.md`（全体設計・認証設計）、`ApiDesign.md`、`GuiDesign.md`、`Requirements.md`
-> - 適用済みのマイグレーションは 5.2 の一覧のとおり。Phase 3 の章はテーブル構成案である
+> - 適用済みのマイグレーションは 5.2 と 8章冒頭の一覧のとおり。8.3・8.4（構想）はテーブル構成案である
 
 ---
 
@@ -19,9 +19,9 @@
 | 3 | 実行環境（docker-compose / Kubernetes） |
 | 4 | 共通規約 |
 | 5 | マイグレーション運用 |
-| 6 | スキーマ定義（Phase 1） |
+| 6 | スキーマ定義 |
 | 7 | 初期データ |
-| 8 | Phase 2 / 3 の拡張（DDL構成案） |
+| 8 | 拡張（文書・エージェント連携と、構想のDDL構成案） |
 | 9 | 運用 |
 | 10 | 未解決の検討事項 |
 
@@ -34,7 +34,7 @@
 - PostgreSQL のバージョン・拡張・ロール設計
 - 開発端末での実行環境（docker-compose / Kubernetes）
 - マイグレーションの運用規則とファイル構成
-- Phase 1 の完全なDDL
+- 完全なDDL
 - 初期データ（権限カタログ、ロール、ワークフローテンプレート、初期管理者）
 
 ---
@@ -76,12 +76,12 @@
 | 日本語の並び順 | **ICU collation を明示指定**（4.4） |
 | タイムゾーン | `UTC` |
 
-| 拡張 | 用途 | Phase |
+| 拡張 | 用途 | 状態 |
 |---|---|---|
-| `pgcrypto` | ランダム値生成（`gen_random_bytes`） | 1 |
-| `citext` | メールアドレスの大文字小文字を区別しない一意制約 | 1 |
-| `pg_trgm` | 日本語を含む部分一致検索の高速化（4.5） | 1 |
-| `vector` | 埋め込みベクトル（`Requirements.md` 6.5） | 3 |
+| `pgcrypto` | ランダム値生成（`gen_random_bytes`） | 導入済み |
+| `citext` | メールアドレスの大文字小文字を区別しない一意制約 | 導入済み |
+| `pg_trgm` | 日本語を含む部分一致検索の高速化（4.5） | 導入済み |
+| `vector` | 埋め込みベクトル（`Requirements.md` 6.5） | 構想 |
 
 ## 3.2 docker-compose（開発端末での既定構成）
 
@@ -315,7 +315,7 @@ SQL
 | `application_name` | `pb`。`pg_stat_activity` での識別に使う |
 | ステートメントタイムアウト | 実行時ロールに `SET statement_timeout = '15s'` を既定として付与（3.4 の initdb で `ALTER ROLE` する） |
 
-PgBouncer は Phase 1 では不要。単一プロセス・少人数利用のため。
+PgBouncer は不要。単一プロセス・少人数利用のため。
 
 ---
 
@@ -334,7 +334,7 @@ PgBouncer は Phase 1 では不要。単一プロセス・少人数利用のた�
 | メール | `citext` | 大文字小文字を区別しない一意制約 |
 | 構造化データ | `jsonb` | 既定値を `'{}'::jsonb` / `'[]'::jsonb` とし `NULL` を避ける |
 | 数値 | `integer` / `double precision` | 金額を扱わないため `numeric` は不要 |
-| ベクトル | `vector(n)` | Phase 3。専用テーブルに隔離（8.4） |
+| ベクトル | `vector(n)` | 構想。専用テーブルに隔離（8.4） |
 
 **`varchar(n)` を使わない理由**：PostgreSQL では `text` と `varchar` に性能差がなく、長さ変更が `ALTER TABLE` を要する。長さ制限は `CHECK (length(title) <= 200)` として表現し、変更時はCHECK制約の張り替えで済ませる。
 
@@ -345,7 +345,7 @@ PgBouncer は Phase 1 では不要。単一プロセス・少人数利用のた�
 | **ULID（`char(26)`）** | 時系列順、URL・ログで読める、コピペしやすい | 26バイト。`uuid` より10バイト大きい |
 | UUIDv7（`uuid`） | 16バイト、標準型 | 表示が長く読みにくい（36文字表記） |
 
-**ULID を採る。** インデックスサイズの差は Phase 1〜2 の規模（数万行）では無視できる一方、開発中にIDを目視・コピペする頻度は高い。
+**ULID を採る。** インデックスサイズの差は想定する規模（数万行）では無視できる一方、開発中にIDを目視・コピペする頻度は高い。
 
 `COLLATE "C"` を明示するのは、**ロケール依存の文字列比較を避けてBツリー比較を最速にする**ため。DB既定 collation を `C` にしているため冗長だが、将来DB既定を変えた場合の事故を防ぐため列に明記する。
 
@@ -390,7 +390,7 @@ SELECT * FROM app_user ORDER BY display_name COLLATE "ja-JP-x-icu";
 
 | 方式 | 評価 |
 |---|---|
-| **`pg_trgm` + GIN**（Phase 1 で採用） | 標準contribで導入が容易。`ILIKE '%キーワード%'` を高速化できる。**語の文字が3つ以上続く部分を含む語にだけ効く**（2文字の語には効かない）。**日本語に効くのは DB の `LC_CTYPE` が `C` でないときだけ**（下記） |
+| **`pg_trgm` + GIN**（採用） | 標準contribで導入が容易。`ILIKE '%キーワード%'` を高速化できる。**語の文字が3つ以上続く部分を含む語にだけ効く**（2文字の語には効かない）。**日本語に効くのは DB の `LC_CTYPE` が `C` でないときだけ**（下記） |
 | `pg_bigm` | 日本語向けbigram索引。2文字クエリに強い。カスタムイメージのビルドが必要 |
 | PGroonga | 形態素解析・スコアリングまで対応。高機能だが導入と運用の重さが原則（軽快さ）と衝突する |
 
@@ -423,7 +423,7 @@ SELECT * FROM app_user ORDER BY display_name COLLATE "ja-JP-x-icu";
 |---|---|
 | 既定 | 物理削除。監査は `audit_log` / `activity` に残る |
 | `comment` | `deleted_at` を持ち「削除されました」表示を維持 |
-| `knowledge`（Phase 2） | `deprecated_at` で無効化し履歴を保つ |
+| `knowledge`（構想） | `deprecated_at` で無効化し履歴を保つ |
 | 外部キー | 子の存在意義が親に依存するなら `CASCADE`、参照が失われても本体が意味を持つなら `SET NULL` |
 
 ## 4.7 命名規約
@@ -515,11 +515,11 @@ server/migrations/                      ← Design.md 4.1。sqlc がスキーマ
 │                                       ticket.staged_at を追加（6.6）
 ├── 0016_ticket_reference.sql           ticket_reference（6.12）
 ├── 0017_document.sql                   document, document_revision,
-│                                       doc 権限, 文書テンプレート（8.1。Phase 2）
-└── 0018_document_template_text.sql     文書テンプレートの初期本文を直す（8.1.2。Phase 2）
+│                                       doc 権限, 文書テンプレート（8.1）
+└── 0018_document_template_text.sql     文書テンプレートの初期本文を直す（8.1.2）
 ```
 
-**0011〜0016 は Phase 1 の途中で足したものである**（`ApiDesign.md` 9章の確定にともなって、使う前にファイルだけ先に置いたものを含む）。**0017 が Phase 2 の最初の1本**である（8章）。**0018 はDDLを持たず、0017 で入れた初期本文の誤りだけを直す**（8.1.2）。前進のみの規則（5.3）に従い、既存のファイルは編集していない。**ファイルを先に置くのは、`make sqlc` が `migrations/` をスキーマ源に読むため**である。
+**0011〜0016 は後から足したものである**（`ApiDesign.md` 9章の確定にともなって、使う前にファイルだけ先に置いたものを含む）。**0017 以降は8章の一覧にある**。**0018 はDDLを持たず、0017 で入れた初期本文の誤りだけを直す**（8.1.2）。前進のみの規則（5.3）に従い、既存のファイルは編集していない。**ファイルを先に置くのは、`make sqlc` が `migrations/` をスキーマ源に読むため**である。
 
 `project.workflow_id` と `ticket.sprint_id` は後続テーブルを参照するため、**FK制約のみ後から `ALTER TABLE ... ADD CONSTRAINT` で付与する**（0005 / 0009 の末尾）。PostgreSQL は前方参照を許さないためである。
 
@@ -536,7 +536,7 @@ server/migrations/                      ← Design.md 4.1。sqlc がスキーマ
 
 ---
 
-# 6. スキーマ定義（Phase 1）
+# 6. スキーマ定義
 
 ## 6.1 拡張と共通関数（0001）
 
@@ -593,7 +593,7 @@ CREATE INDEX idx_app_user_role ON app_user (system_role);
 CREATE TRIGGER trg_app_user_updated BEFORE UPDATE ON app_user
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- 認証プロバイダ定義（Phase 1 は 'local' のみ）
+-- 認証プロバイダ定義（'local' のみ。OIDC/SAML は構想）
 CREATE TABLE auth_provider (
   key                  text        PRIMARY KEY,
   type                 text        NOT NULL CHECK (type IN ('local','oidc','saml')),
@@ -753,7 +753,7 @@ ALTER TABLE access_token
 
 **`key` の形式検証をDBの `CHECK` にも置く。** アプリ側（`ApiDesign.md` 5.3）と二重になるが、URLとMCPエンドポイントに直結する値であり、不正値が入ると経路そのものが壊れるため。
 
-**`settings` で Phase 1 が定義するキーは `repositories` のみ**である。
+**`settings` で定義するキーは `repositories` のみ**である。
 
 ```jsonc
 {
@@ -773,7 +773,7 @@ ALTER TABLE access_token
 
 **列にせず `settings` に置くのは、用途がまだ「画面にリンクを出す」「MCP がプロジェクト情報として返す」に限られるためである。** どちらも値を読んで返すだけで、一意制約・並び替え・結合を必要としない。リポジトリ単位のトークン発行や横断検索（`Requirements.md` 10.9）が要件になった時点で、`project_repository` テーブルへ移す。**逆にテーブルを先に作ると、要らなかったときに戻せない。**
 
-**検証はフロントのみで、サーバは JSON オブジェクトであることしか見ない**（`ApiDesign.md` 5.5）。`settings` は Phase 1 では自由形式だからである。
+**検証はフロントのみで、サーバは JSON オブジェクトであることしか見ない**（`ApiDesign.md` 5.5）。`settings` は自由形式だからである。
 
 ### 6.4.1 チケット採番
 
@@ -786,7 +786,7 @@ RETURNING last_ticket_seq;
 
 1文で行ロックと採番が完了する。**シーケンス（`CREATE SEQUENCE`）を使わない**理由は2つある。①プロジェクトごとにシーケンスを作ると DDL が動的になる、②シーケンスはトランザクションが巻き戻っても値を消費するため**欠番が出る**。チケット番号は人が読む識別子であり、`my-app-31` の次が `my-app-33` になるのは望ましくない。
 
-同一プロジェクトへの同時作成はこの行で直列化されるが、Phase 1〜2 の規模では競合しない。
+同一プロジェクトへの同時作成はこの行で直列化されるが、想定する規模では競合しない。
 
 ## 6.5 ワークフロー（0005）
 
@@ -871,7 +871,7 @@ CREATE TABLE ticket (
   sort_key       text,                      -- LexoRank 方式の並び順
   staged_at      timestamptz,               -- 0015 で追加。NULL＝バックログ
 
-  -- エージェント連携（Phase 1 で列のみ先行定義）
+  -- エージェント連携（列のみ先行定義）
   -- 既定は 'agent_draft'（0025）
   execution_mode text    NOT NULL DEFAULT 'agent_draft'
                  CHECK (execution_mode IN ('human_only','agent_only','agent_draft')),
@@ -977,12 +977,12 @@ CREATE INDEX idx_ticket_link_target ON ticket_link (target_ticket_id);
 
 #### `task_lease` を採らなかった
 
-**8.2.2 の `task_lease` は Phase 2 では使わない**。`Requirements.md` 10.3.3 のリースが解こうとしていた3つを分解した結果である。
+**8.2.2 の `task_lease` は使わない**。`Requirements.md` 10.3.3 のリースが解こうとしていた3つを分解した結果である。
 
-| 解こうとしていたもの | Phase 2 での扱い |
+| 解こうとしていたもの | 扱い |
 |---|---|
 | **可視性**（いま誰が触っているか） | `assignee_id` ＋ `working_agent_id` ＋ `status_key` で足りる。リースの TTL（30分）は**エージェントのセッションの時間尺度**であり、PB が目指す分野横断のプロジェクト管理には合わない |
-| **排他**（同じチケットを2つのエージェントが同時に処理しない） | **Phase 2 では発生しない。** `/pb-implement <seq>` は人がチケット番号を指定し、方針の承認を経てから走る。エージェントが自律的に拾うのは `pb_next_task`（Phase 3） |
+| **排他**（同じチケットを2つのエージェントが同時に処理しない） | **発生しない。** `/pb-implement <seq>` は人がチケット番号を指定し、方針の承認を経てから走る。エージェントが自律的に拾うのは `pb_next_task`（構想） |
 | **詰まり防止**（放置された占有を解く） | 占有しないので詰まらない |
 
 **再検討の条件は「自律取得（`pb_next_task`）を実装するとき」である。** そのときは `working_agent_id` を「宣言」から「条件」へ格上げすればよく（自分でなければ拒む）、**テーブルを足さずに済む。** TTL による失効（`stale` の検知）が要ると分かった時点で、8.2.2 の器を起こす。
@@ -1000,7 +1000,7 @@ CREATE TABLE comment (
                                'reference','progress')),
   in_reply_to  char(26) COLLATE "C" REFERENCES comment(id) ON DELETE SET NULL,
   origin       text    NOT NULL DEFAULT 'human' CHECK (origin IN ('human','agent')),
-  agent_run_id char(26) COLLATE "C",          -- Phase 2 で FK を付与
+  agent_run_id char(26) COLLATE "C",          -- FK は 0022 が付与（8.2.4）
   created_at   timestamptz NOT NULL DEFAULT now(),
   updated_at   timestamptz NOT NULL DEFAULT now(),
   deleted_at   timestamptz
@@ -1117,7 +1117,7 @@ ALTER TABLE ticket
   FOREIGN KEY (sprint_id) REFERENCES sprint(id) ON DELETE SET NULL;
 ```
 
-**スプリントの CRUD は Phase 1 で開ける**（`ApiDesign.md` 9.12）。表だけあって作る手段が無いと、チケット詳細のスプリント欄が常に空のドロップダウンになるためである。バーンダウン・ベロシティを含むスプリント管理画面は Phase 2（`GuiDesign.md` 10章）で、Phase 1 は**定義のみ**をプロジェクト設定のスプリントタブで行う。
+**スプリントの CRUD を開ける**（`ApiDesign.md` 9.12）。表だけあって作る手段が無いと、チケット詳細のスプリント欄が常に空のドロップダウンになるためである。**定義**はプロジェクト設定のスプリントタブ、開始・終了はバックログで行う。バーンダウン・ベロシティは進捗分析（構想。`GuiDesign.md` 10章）が持つ。
 
 **スプリントを動かす主体はオンステージである**。**定義**（名前・期間を作る）はプロジェクト設定のスプリントタブに残り、**運用**（開始・終了）はバックログのオンステージ段が持つ。チケット詳細のスプリント欄は**読み取り専用**になる（`GuiDesign.md` 5.5）。
 
@@ -1221,9 +1221,9 @@ CREATE TRIGGER trg_dod_updated BEFORE UPDATE ON dod_item
 
 `config` の例：`task_ref` は `{"ticket_id":"01K2..."}`、`assertion` は `{"command":"pytest tests/auth/","expect":"pass"}`。
 
-**完了条件は Phase 1 の表である。** 手動のチェックリストは AI 抜きでも人間だけで価値があり、`Requirements.md` 10.1.1「チケットは依頼メモから実行契約へ」の土台にもなる。
+**完了条件は基本の表である。** 手動のチェックリストは AI 抜きでも人間だけで価値があり、`Requirements.md` 10.1.1「チケットは依頼メモから実行契約へ」の土台にもなる。
 
-**列と `CHECK` は Phase 2 の形のまま作り、API が受け付ける `type` だけを `manual` に絞る**（`ApiDesign.md` 9.9）。後から列を足すより、使わない列を持つほうが安い。`assertion`（コマンド実行）・`artifact`（成果物の存在確認）・`review`・`task_ref` は Phase 2 で開ける（`Requirements.md` 10.5.2）。
+**列と `CHECK` は他の型も入る形で作り、API が受け付ける `type` だけを `manual` に絞る**（`ApiDesign.md` 9.9）。後から列を足すより、使わない列を持つほうが安い。`assertion`（コマンド実行）・`artifact`（成果物の存在確認）・`review`・`task_ref` は未実装である（`Requirements.md` 10.5.2）。
 
 ## 6.12 チケットの外部参照（0016）
 
@@ -1266,7 +1266,7 @@ PB の外にあるものを指す。`ticket_link` は `target_ticket_id` に FK 
 **必須項目は `CHECK` で DB に守らせる**（アプリ側の検証と二重にする）。
 
 **`origin` 列は持たない。** 書き手は `created_by` から `actor.kind`（`user` / `agent` /
-`system`。6.1）で分かる。**ただし Phase 1 の画面はこれを表示しない**——`GuiDesign.md` 5.5
+`system`。6.1）で分かる。**ただし画面はこれを表示しない**——`GuiDesign.md` 5.5
 が書き手のアイコンを出さないと決めたため。**列とAPIの応答は
 残す**（将来区別したくなったときに遡れるようにする）。`ticket_link` と `dod_item` は `origin` を持つが、あちらが表すのは
 **「AI の提案か、確定した事実か」**という別の軸である（`ai_suggested` は承認待ちを意味する）。
@@ -1274,7 +1274,7 @@ PB の外にあるものを指す。`ticket_link` は `target_ticket_id` に FK 
 
 **`kind='code'` は追記されて積み上がる。** エージェントが作業の経過として
 「このブランチで始めた」「このコミットを積んだ」を残していくため、1チケットに複数行が並ぶ
-（`Requirements.md` 10.6.1 の構造化完了レポートにある `artifacts` の Phase 1 版にあたる）。
+（`Requirements.md` 10.6.1 の構造化完了レポートにある `artifacts` にあたる）。
 **並びは `sort_order` ではなく `created_at` が実質の軸**になるので、索引に両方を入れてある。
 
 **`repository` はリポジトリを識別する文字列であり、FK ではない。** リポジトリの定義は
@@ -1285,7 +1285,7 @@ PB の外にあるものを指す。`ticket_link` は `target_ticket_id` に FK 
 **画面から `code` は追加しない。** 書き手は、MCP の `pb_add_reference` を使うエージェントと、
 **`/me/tokens` で発行した API トークンを持つクライアント**である（`ApiDesign.md` 4.4）。
 画面が持つのは**表示と削除**だけで、誤って積まれた行を人が始末できるようにする
-（`GuiDesign.md` 5.5）。`doc` は Phase 1 から人が画面で追加・編集できる。
+（`GuiDesign.md` 5.5）。`doc` は人が画面で追加・編集できる。
 
 ### 6.12.1 権限（0027）
 
@@ -1582,7 +1582,7 @@ CREATE TABLE pending_setting_change (
 ## 6.18 多要素認証（0035）
 
 ```sql
--- 第2要素の認証器。Phase 2 は TOTP だけ（Design.md 6.7）
+-- 第2要素の認証器。TOTP だけ（Design.md 6.7）
 CREATE TABLE user_mfa_credential (
   id              char(26) COLLATE "C" PRIMARY KEY,
   user_id         char(26) COLLATE "C" NOT NULL
@@ -1634,7 +1634,7 @@ CREATE INDEX idx_mfa_recovery_code_user ON mfa_recovery_code (user_id)
 ### 認証器は `app_user` に吊る。`user_identity` には吊らない
 
 **第2要素は「誰であるかを特定する手段」ではなく、特定できたあとに重ねる関門である**
-（`Design.md` 6.7.1）。`user_identity` に吊ると、Phase 3 で OIDC を足したときに
+（`Design.md` 6.7.1）。`user_identity` に吊ると、OIDC（構想）を足したときに
 **同じ人が手段ごとに別の認証器を登録することになる。**
 
 ### `confirmed_at` が NULL の行を要素として数えない
@@ -1829,8 +1829,8 @@ ON CONFLICT (key) DO UPDATE
 
 | 追加 | 権限 | 置き場 |
 |---|---|---|
-| 0017（Phase 2） | `doc.view` / `doc.edit` を新設 | 8.1.4 |
-| 0019（Phase 2） | **キーは足さず、`agent.run` の割り当てを広げる** | 8.2.6 |
+| 0017 | `doc.view` / `doc.edit` を新設 | 8.1.4 |
+| 0019 | **キーは足さず、`agent.run` の割り当てを広げる** | 8.2.6 |
 | 0027 | `ticket.reference.edit` を新設 | **6.12.1** |
 | 0029 | `ticket.self_edit` を新設 | **6.13** |
 
@@ -2143,7 +2143,7 @@ projects:
 | `member@example.com` | operator | project_member | プロジェクト設定が触れない |
 | `viewer@example.com` | operator | project_viewer | 閲覧のみ |
 
-**プロジェクトロールのUIは Phase 3 だが、`project_member` テーブルは Phase 1 に存在し `GET /me` の `projects[].role` に反映される**（`ApiDesign.md` 4.1）。したがってメニューの権限による出し分けの検証にそのまま使える。
+**プロジェクトロールのUIは構想だが、`project_member` テーブルは存在し `GET /me` の `projects[].role` に反映される**（`ApiDesign.md` 4.1）。したがってメニューの権限による出し分けの検証にそのまま使える。
 
 ### 7.6.6 Makefile ターゲット
 
@@ -2159,12 +2159,12 @@ make dev-info    # URL とデモアカウント一覧を表示
 
 ---
 
-# 8. Phase 2 / 3 の拡張
+# 8. 拡張
 
-Phase 1 のテーブルは変更せず、**テーブル追加のみ**で拡張する。**Phase 2 の DDL は適用済みで、Phase 3 の DDL は構成案である**（着手時に確定させる）。
+6章のテーブルは変更せず、**テーブル追加のみ**で拡張する。**8.1・8.2 の DDL は適用済みで、8.3・8.4（構想）の DDL は構成案である**（着手時に確定させる）。
 
 ```
-Phase 2
+適用済み
   0017_document.sql       document, document_revision, doc 権限, 文書テンプレート
   0018_document_template_text.sql
                           文書テンプレートの初期本文を直す（DDLなし）
@@ -2203,7 +2203,7 @@ Phase 2
   0038_document_template_decisions_headings.sql
                           判断の記録テンプレートに1判断＝1見出し（DDLなし。8.1.2）
   0039_table_comments.sql 表のコメントを書き直す（DDLなし）
-Phase 3
+構想
   0040_knowledge.sql      knowledge, knowledge_revision, proposal
   0041_comment_signal.sql comment_signal
   0042_embedding.sql      vector 拡張 + embedding
@@ -2211,11 +2211,11 @@ Phase 3
   0044_analytics.sql      estimate_record, contribution
 ```
 
-採番が 0017 から始まるのは、Phase 1 が 0016 まで使うためである。**Phase 3 の番号は、それまでに足したマイグレーションの分だけ後ろへずれる。** Phase 3 の DDL は着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
+0016 までは 5.2 の一覧にある。**構想の番号は、それまでに足したマイグレーションの分だけ後ろへずれる。** 構想の DDL は着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
 
 **マイグレーションを足したら、上の一覧も直す。** 節（6章・8章）を足すことと、一覧の採番を直すことは別の作業として漏れやすい。
 
-## 8.1 プロジェクト文書（Phase 2）
+## 8.1 プロジェクト文書
 
 `Requirements.md` 10.6.2 のプロジェクト文書（憲章）を保持する。**規約・価値観・判断の基準を1か所に置き、全参加者のエージェントが同じものを読む**ための器である。
 
@@ -2271,7 +2271,7 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 
 **一意制約を2本に分けている。** 実文書はプロジェクト内で、テンプレートは `template_key` の中で、それぞれ「同じ親の下に同じ slug は1つ」を保証する。**`NULLS NOT DISTINCT` が要るのは `parent_id IS NULL`（トップレベル）のため**である。既定の `UNIQUE` は NULL どうしを別物として扱うので、これが無いとトップレベルで slug が重複できてしまう。**PostgreSQL 15 以降の機能**で、本プロジェクトは 17（3.1）。
 
-**`version` は楽観ロック用**で、`project`（6.4）と同じ使い方をする。**人とエージェントが同じ文書を触る**ため、Phase 1 のプロジェクト設定より競合が起きやすい。競合時の扱いは `ApiDesign.md` に置く。
+**`version` は楽観ロック用**で、`project`（6.4）と同じ使い方をする。**人とエージェントが同じ文書を触る**ため、プロジェクト設定より競合が起きやすい。競合時の扱いは `ApiDesign.md` に置く。
 
 **削除は物理削除**（4.6 の既定）。本文の履歴は `document_revision` に残るため、`deleted_at` を持たせても復元の役には立たない。`parent_id` の `CASCADE` により、親を消すと部分木ごと消える。
 
@@ -2291,7 +2291,7 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 
 **`sort_order` は 10 刻みにする。** `ApiDesign.md` 10.4 が「省略時は同じ親の中の末尾（現在の最大値 + 10）」と定めているので、既定で足される文書がテンプレートの後ろに並ぶ。1 刻みにすると、間に1件挿し込むだけで全件の付け替えが要る。
 
-**`slug` に `knowledge` を使わない。** 8.3.1 のテーブル `knowledge`（Phase 3 のプロジェクトメモリ）と、7.2 の権限 `knowledge.view` / `knowledge.propose` / `knowledge.approve` が既に同じ語を使っている。**同名にすると、権限マトリクス（`GuiDesign.md` 5.6.3）で `knowledge.view` を見た人が「この文書の閲覧権限だ」と読む**が、文書に効くのは `doc.view` である。`learnings` はうまくいったことも含む語で、「駄目だったこと」に寄る `caveats` より 10.6.2 の意図に近い。
+**`slug` に `knowledge` を使わない。** 8.3.1 のテーブル `knowledge`（構想のプロジェクトメモリ）と、7.2 の権限 `knowledge.view` / `knowledge.propose` / `knowledge.approve` が既に同じ語を使っている。**同名にすると、権限マトリクス（`GuiDesign.md` 5.6.3）で `knowledge.view` を見た人が「この文書の閲覧権限だ」と読む**が、文書に効くのは `doc.view` である。`learnings` はうまくいったことも含む語で、「駄目だったこと」に寄る `caveats` より 10.6.2 の意図に近い。
 
 **5件目の `agent-onboarding` は 0024 で足した。PB が完成品として出せるのは「MCP が使える状態になるまで」で、その先——作業材料をどこからどう手元に用意するか——は PB が知らない**（`Requirements.md` 10.9.1）。材料の取り方はリポジトリ型・配布型・MCP 型の3通りあり、指定するのはプロジェクト管理者である。**置き場を `settings` ではなく文書にしたのは、MCP 型で辻褄が合う唯一の置き場だからである**——手元に材料を持たず PB から読む型では、取り方の説明そのものも `pb_get_doc` で読めなければならない。
 
@@ -2399,11 +2399,11 @@ ON CONFLICT DO NOTHING;
 
 ひとつは `Requirements.md` 10.6.2 との整合である。**憲章は全参加者を縛る**ので、更新できる人を絞る。編集そのものは「PM が自分のエージェントに指示して行う」形を想定している（同 10.7.5）。
 
-もうひとつは検証上の理由である。`Design.md` 付録A が「**Phase 1 に『チケットを作れない人』が実在しない**」（`operator` が `ticket.*` を持つため）と記し、その帰結として「**画面の権限による出し分けの負の側を検証できない**」を積み残していた。**`doc.edit` は、`operator` が持たない最初の権限になる**——「読めるが編集できない人」が実在するので、出し分けの負の側をここで初めて確かめられる。
+もうひとつは検証上の理由である。`Design.md` 付録A が「**『チケットを作れない人』が実在しない**」（`operator` が `ticket.*` を持つため）と記し、その帰結として「**画面の権限による出し分けの負の側を検証できない**」を積み残していた。**`doc.edit` は、`operator` が持たない最初の権限になる**——「読めるが編集できない人」が実在するので、出し分けの負の側をここで初めて確かめられる。
 
 **これは権限モデル全体の再整理ではない。** 付録A の論点①（`GET /roles?scope=project` を権限不要としたのが暫定であること）は未決のまま残る。
 
-## 8.2 エージェント連携（Phase 2）
+## 8.2 エージェント連携
 
 ### 8.2.1 `agent` — エージェントの登録
 
@@ -2474,7 +2474,7 @@ token_env_suffix = 'MY_LAPTOP'   →   PB_TOKEN_MY_LAPTOP
 
 `model_name` / `model_version` を保持するのは、`Requirements.md` 10.10.3 の「モデル更新後に品質が変化した際の切り分け」のため。`agent_run` にも実行時点の値をコピーする（後からモデルを変えても過去の実行記録が壊れないよう非正規化する）。
 
-`trust_level` は`Requirements.md` 10.10.3 の段階的権限昇格に対応する。**0019 の時点では既定値のまま置き、APIも画面も受け取らない**——昇格の材料になる実績（`agent_run`、Phase 3）がまだ無く、使うものが無いうちに入口を作ると意味が固まるためである。
+`trust_level` は`Requirements.md` 10.10.3 の段階的権限昇格に対応する。**0019 の時点では既定値のまま置き、APIも画面も受け取らない**——昇格の材料になる実績（`agent_run` の集計。構想）がまだ無く、使うものが無いうちに入口を作ると意味が固まるためである。
 
 #### 8.2.1.1 `agent_client_kind` — クライアント種別のカタログ（0020 で追加）
 
@@ -2610,7 +2610,7 @@ CREATE INDEX idx_task_lease_expiry ON task_lease (expires_at) WHERE released_at 
 
 **部分一意インデックスで「1チケットに有効なリースは1つ」をDBレベルで保証する。** アプリ側の排他制御に依存しないため、エージェントが並行して claim しても破綻しない。
 
-**この器は Phase 2 では使わない**。**行を1行も書かない。** 判断の理由と再検討の条件は 6.6「`task_lease` を採らなかった」にある。要点だけ再掲すると——**排他が実際に要るのは自律取得（`pb_next_task`、Phase 3）からで、Phase 2 は人がチケット番号を指定して走らせる**ため、同じチケットを2つのエージェントが取り合う状況が起きない。
+**この器は使わない**。**行を1行も書かない。** 判断の理由と再検討の条件は 6.6「`task_lease` を採らなかった」にある。要点だけ再掲すると——**排他が実際に要るのは自律取得（`pb_next_task`、構想）からで、いまは人がチケット番号を指定して走らせる**ため、同じチケットを2つのエージェントが取り合う状況が起きない。
 
 **`lease_token` の用途を本節は定義していなかった。** 分散リースの定型でいう**能力トークン**——リースを取った側に秘密値を渡し、以降の操作でその提示を求めることで、呼び出し元の身元とは独立に所持を証明させるもの——を意図した列である。**PB では要らない**：MCP の口は Bearer 必須で呼び出し元のアクターが常に判明しており（`Design.md` 8.3）、`uq_task_lease_active` が「1チケットに有効なリースは1つ」を保証するので、`actor_id` の一致だけで所持証明が済む。**要るようになるのは、同じエージェント登録で複数のセッションを同時に走らせたとき**（同一トークンを2つの端末で `export` した場合）である。`Requirements.md` 10.10.3 が「Claude Code と VS Code を使えば2行になる」と定めるので、クライアントが違うだけなら `actor_id` で区別できる。
 
@@ -2618,7 +2618,7 @@ CREATE INDEX idx_task_lease_expiry ON task_lease (expires_at) WHERE released_at 
 
 ### 8.2.3 `dod_item` — 6.11 にある
 
-DDL と判断根拠は 6.11 にある。Phase 2 以降で開けるのは `manual` 以外の `type`（`assertion` / `artifact` / `review` / `task_ref`）であり、**テーブルの追加は要らない**。
+DDL と判断根拠は 6.11 にある。将来開けるのは `manual` 以外の `type`（`assertion` / `artifact` / `review` / `task_ref`）であり、**テーブルの追加は要らない**。
 
 ### 8.2.4 `agent_run` / `agent_report`（0022）
 
@@ -2665,26 +2665,26 @@ ALTER TABLE comment
 
 `workflow_version` は`Requirements.md` 10.9.3 の陳腐化検出、`retry_count` は 10.10.5 のサーキットブレーカー判定に用いる。
 
-#### Phase 2 での書き手は `pb_submit_result` ひとつである
+#### 書き手は `pb_submit_result` ひとつである
 
-**1回の提出が `agent_run` 1行と `agent_report` 1行を同時に作る**（`ApiDesign.md` 9.15）。**開始を告げる口を Phase 2 は持たない**——`pb_claim_task` は Phase 3 へ
-送られ（8.2.2）、`pb_transition_task` の副作用は `ticket.working_agent_id` だけと決めた（6.6）。
+**1回の提出が `agent_run` 1行と `agent_report` 1行を同時に作る**（`ApiDesign.md` 9.15）。**開始を告げる口を持たない**——`pb_claim_task` は構想で
+（8.2.2）、`pb_transition_task` の副作用は `ticket.working_agent_id` だけと決めた（6.6）。
 
-**「走っている run」を読む者が Phase 2 に居ないので、開始の口を作らない。** 「いま誰が
+**「走っている run」を読む者が居ないので、開始の口を作らない。** 「いま誰が
 処理しているか」は `ticket.working_agent_id` が既に担っており（6.6）、`status='running'` の行を
 足すと**同じ事実が2か所になる**。**再提出は別の run になる**——`/pb-implement` の手順7
 （`Requirements.md` 10.8.6）は「未充足の完了条件が返ったら修正して再提出する」と定めており、
 その修正はエージェントが実際に作業をやり直したことを意味する。
 
-この帰結を4つ書き下す。**列の意味が Phase 2 と Phase 3 で変わらないよう、埋めない列は
+この帰結を4つ書き下す。**列の意味が後から変わらないよう、埋めない列は
 埋めないままにする。**
 
-| 列 | Phase 2 での扱い |
+| 列 | 扱い |
 |---|---|
 | `status` | **`completed` しか立たない。** `failed` / `abandoned` は「レポートを出さずに終わった run」で、それを観測する口が無い。`running` は上記のとおり作らない |
 | `started_at` | `report.cost.wall_clock_min` があればそこから逆算し、無ければ `now()`。**エージェントの自己申告である** |
 | `ended_at` | 提出時刻。`agent_report.submitted_at` と同じ値になる |
-| `workflow_version` | **NULL のまま。** `workflow` に版の列が無く（6.5）、`Requirements.md` 10.9.3 の陳腐化検出は Phase 3 である |
+| `workflow_version` | **NULL のまま。** `workflow` に版の列が無く（6.5）、`Requirements.md` 10.9.3 の陳腐化検出は構想である |
 | `retry_count` | **同じ（チケット × アクター）の既存の run 数**を入れる。初回は 0 |
 
 `token_id` / `client_kind` / `model_name` / `model_version` は**提出時点の値を写す**
@@ -2694,9 +2694,9 @@ ALTER TABLE comment
 
 #### `comment.agent_run_id` の FK は本節で使い手を得る
 
-0007 が「Phase 2 で FK を付与」と書いて空けていた列である（6.7）。**0022 が FK を付け、
+0007 が FK を付けずに空けていた列である（6.7）。**0022 が FK を付け、
 `pb_submit_result` が作る完了レポートのコメントがこの列を埋める**（`ApiDesign.md` 9.15）。
-**Phase 2 でこの列を埋めるのはそのコメント1種類だけである**——`pb_post_note` が作る
+**この列を埋めるのはそのコメント1種類だけである**——`pb_post_note` が作る
 コメントは run を持たない（作業中に run が存在しないため）。
 
 #### `actor_id` は `ON DELETE RESTRICT` である
@@ -2723,7 +2723,7 @@ CREATE INDEX idx_context_pack_run ON context_pack_log (agent_run_id);
 
 **1テーブルで2つの要件を満たす。** `Requirements.md` 10.10.7（監査：エージェントが何を見たか）と 10.4.4（効果計測：どの情報を含めたときに成功率が上がったか）は、記録すべき内容が同一である。`agent_report.status` と突き合わせることで有用性スコアを算出する。
 
-**0022 で器だけ作り、Phase 2 では書かない。** `agent_run` への FK を持つので同じファイルに
+**0022 で器だけ作り、書かない。** `agent_run` への FK を持つので同じファイルに
 入れる必要があり、8章の採番表も 0022 の中身としてこの表を挙げている。**0019 が `task_lease` を
 同じ理由で寝かせたのと同じ扱いで**（8.2.2）、前進のみのマイグレーション（5.3）では使わない表を
 落とすより寝かせるほうが安い。
@@ -2733,7 +2733,7 @@ CREATE INDEX idx_context_pack_run ON context_pack_log (agent_run_id);
 （8.2.4）、パックを返す時点では **`agent_run_id` が必ず `NULL` になる。** `Requirements.md`
 10.4.4 の効果計測は **`agent_report.status` との突き合わせ**が本体であり、**結べない行を
 貯めても計測にならない。** 10.10.7 の監査（何を見せたか）だけなら成り立つが、**そのために
-書き手を置くと、Phase 3 で結べる形へ変えるときに既存行の扱いが要る。**
+書き手を置くと、結べる形へ変えるときに既存行の扱いが要る。**
 
 **再検討の条件は、run の開始を告げる口ができたときである**（`agent_run.status` に `running` を
 立てる経路。`Design.md` 8.5.5）。そのとき `pb_get_context` が `agent_run_id` を受け取れるようになる。
@@ -2760,11 +2760,11 @@ ON CONFLICT DO NOTHING;
 
 `agent.register` / `agent.token.issue` の割り当ては**変えない**。登録とトークン発行は本人の操作（`ApiDesign.md` 4.5）であり、`/me/tokens` と同じく権限キーを要求しないためである。この2つは**他人のエージェントを管理する側**の権限として `project_admin` に残る。
 
-## 8.3 知識還流（Phase 3）
+## 8.3 知識還流（構想）
 
-**本節は Phase 3 で作る。** 知識はまず **8.1 の文書として運用し、押し付けたい粒度が実測で見えてから**エンティティに切り出す（`Requirements.md` 10.6.2 の末尾）。先に器を作ると、要らなかったときに戻せない。
+**本節は構想である。** 知識はまず **8.1 の文書として運用し、押し付けたい粒度が実測で見えてから**エンティティに切り出す（`Requirements.md` 10.6.2 の末尾）。先に器を作ると、要らなかったときに戻せない。
 
-**承認キュー（`proposal`）も Phase 3 である。** 承認の対象になる `knowledge` と文書差分の両方が Phase 2 に無いと、**Phase 2 に残る承認対象がサブタスク提案だけになり、画面を作る理由が薄い**（`Requirements.md` 10.12）。Phase 2 では文書の編集を権限（`doc.edit`）で直接行う。
+**承認キュー（`proposal`）も構想である。** 承認の対象になる `knowledge` と文書差分の両方が無いと、**残る承認対象がサブタスク提案だけになり、画面を作る理由が薄い**（`Requirements.md` 10.12）。いまは文書の編集を権限（`doc.edit`）で直接行う。
 
 ### 8.3.1 `knowledge` — プロジェクトメモリ
 
@@ -2847,7 +2847,7 @@ ALTER TABLE knowledge_revision
 
 `auto_applied` は、`Requirements.md` 10.6.3 の承認ポリシー（**影響範囲を軸に、自動採用と承認必須を分ける**）で自動反映されたものを表す。**自動反映であっても proposal 行は必ず残す**ことで、後から遡って取り消せる。
 
-## 8.4 AI機能・分析（Phase 3）
+## 8.4 AI機能・分析（構想）
 
 ### 8.4.1 `comment_signal` — コメント重要度
 
@@ -3183,7 +3183,7 @@ PB は `pb_app` で繋いでいる。**手順は `deploy/prod/MANUAL.md` にあ�
 |---|---|
 | スロークエリ | `log_min_duration_statement = 200ms` |
 | 接続状況 | `pg_stat_activity`（`application_name = 'pb'` で識別）。**セッション数・DB の大きさ・表ごとの件数は画面でも見られる**（アプリケーション設定の DB タブ。`GuiDesign.md` 5.12.2） |
-| 統計 | `pg_stat_statements` を Phase 2 で有効化 |
+| 統計 | `pg_stat_statements` を有効化する（未実装） |
 | autovacuum | **既定のまま**。`ticket` などに自動の VACUUM / ANALYZE が走ることを確かめてある。追記だけの `activity` / `audit_log` も、PostgreSQL 13 以降の `autovacuum_vacuum_insert_scale_factor`（既定 0.2）で拾われる。**設定を見直すきっかけは、9.3 の保持期間ポリシーを入れて大量の削除が起きるようになったとき**である（削除は不要行を一度に作る） |
 
 ## 9.3 データ量の見積り
@@ -3197,7 +3197,7 @@ PB は `pb_app` で繋いでいる。**手順は `deploy/prod/MANUAL.md` にあ�
 
 **参照する側の列にインデックスを置いていない外部キーが31本ある**（多くは `created_by` / `updated_by` / `actor_id` のように `actor` を指す列）。**使われるのは、参照される行を消すときの存在確認と、エージェントを消すときの付け替え（`me_agents.go`）だけ**で、日常の一覧や検索はこれらの列で絞らない。dev の合成データ（`activity` 30万件・`comment` 10万件）で、参照先を消すときの確認が 30ms、付け替え前の件数が 13ms だったので、足していない。**足すきっかけは、エージェントやユーザーの削除が日常の操作になったとき**である。
 
-`activity` の肥大が最初に問題化する見込み。**Phase 2 で保持期間ポリシー（例：2年経過分をアーカイブテーブルへ移動）を検討する。** パーティショニング（`occurred_at` によるレンジ分割）は、その時点で必要なら導入する。
+`activity` の肥大が最初に問題化する見込み。**保持期間ポリシー（例：2年経過分をアーカイブテーブルへ移動）を検討する。** パーティショニング（`occurred_at` によるレンジ分割）は、その時点で必要なら導入する。
 
 ---
 
@@ -3210,7 +3210,7 @@ PB は `pb_app` で繋いでいる。**手順は `deploy/prod/MANUAL.md` にあ�
 - **タグを軸（`tag_group`）へ拡張するかの判断時期**（6.10）。フラットなタグは「1チケットが複数タグを持つ」ため、タグでグループ化すると複数のセクションに重複表示される。「領域」「工程」のような軸を導入して軸ごとに単一選択とすれば重複は消えるが、必要性はバックログを使ってみるまで分からない。**判断はバックログを実運用に載せてから**行う
 - ワークフローの `definition`（jsonb 原本）と正規化テーブルの同期方法。どちらを正とするか
 - 日本語検索を `pg_trgm` から `pg_bigm` へ移行する判断基準（データ量・検索頻度・精度の不満）。**`LC_CTYPE=C.UTF-8` と、語の長さによる問い合わせの切り替えは入れてある**（4.5）。残るのは2文字の語で、**2文字の語の検索が遅いと実際に言われたとき**に判断する
-- Phase 2 でエージェントが並行書き込みする際のトランザクション分離レベル（既定の Read Committed で足りるか、`task_lease` 取得時に `SELECT FOR UPDATE` が必要か）
+- エージェントが並行書き込みする際のトランザクション分離レベル（既定の Read Committed で足りるか、`task_lease` 取得時に `SELECT FOR UPDATE` が必要か）
 - **リポジトリを `project.settings`（jsonb）に置いた**（6.4）。リポジトリ単位のトークン発行や横断検索（`Requirements.md` 10.9）が要件になったら `project_repository` テーブルへ移す
 - **`kind='system'` の actor に一意なキー列が無い**（6.2）。ユーザー削除時のコメント付け替え先「削除されたユーザー」を `display_name` で引いている。**システムアクターが2種類目になった時点で壊れる。** `agent` テーブル（8.2）を設計するときに、システムアクターの識別子も決める
-- マルチテナント（スキーマ分離）を導入する場合の移行手順。Phase 1〜2 は単一テナント前提のためテナントID列を持たない
+- マルチテナント（スキーマ分離）を導入する場合の移行手順。いまは単一テナント前提のためテナントID列を持たない
