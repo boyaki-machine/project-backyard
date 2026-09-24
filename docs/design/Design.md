@@ -448,7 +448,7 @@ out/
 ├── create-roles.sql          既存の PostgreSQL に DB とロールを作る（psql で1回）
 ├── secrets/                  app_database_url.example / pgpass.example
 ├── launchd/（darwin）・systemd/（linux）   常駐の雛形
-├── LICENSE・THIRD_PARTY_NOTICES.txt       PB のライセンスと第三者のライセンス表示（全 TARGET に置く）
+├── LICENSE・NOTICE・THIRD_PARTY_NOTICES.txt  PB のライセンスと著作権表示、第三者のライセンス表示（全 TARGET に置く）
 └── MANUAL.md                 deploy/prod/MANUAL.md の写し
 ```
 
@@ -463,7 +463,7 @@ out/
 
 #### docker / compose の一式
 
-**イメージ**は `deploy/Dockerfile` の3段（client → pb と goose → 実行）で作る。中身は `/pb`（入口。既定の引数は `serve`）・`/goose`（postgres のドライバだけ）・`/migrations`・`/LICENSE`・`/THIRD_PARTY_NOTICES.txt`。実行の段は `gcr.io/distroless/static-debian12:nonroot` で、利用者は uid 65532。
+**イメージ**は `deploy/Dockerfile` の3段（client → pb と goose → 実行）で作る。中身は `/pb`（入口。既定の引数は `serve`）・`/goose`（postgres のドライバだけ）・`/migrations`・`/LICENSE`・`/NOTICE`・`/THIRD_PARTY_NOTICES.txt`。実行の段は `gcr.io/distroless/static-debian12:nonroot` で、利用者は uid 65532。
 
 | | compose | docker |
 |---|---|---|
@@ -479,7 +479,7 @@ out/
 | **コンテナの healthcheck を持たない**（同） | distroless に `/healthcheck` を叩くコマンドが無く、叩き役（`pb healthcheck`）も足さない。健全かは外から見る。再検討の条件は、**compose に「app が健全になってから」を待つサービスを足すとき** |
 | **tar は buildx の `type=docker`** | `docker load` のほか nerdctl や podman も読める。取り込める相手の広さで選ぶ |
 | **`pb_owner` のパスワードは passfile で渡す** | native と揃える。compose では秘密の1つとして渡し、`PGPASSFILE` にその位置を入れる |
-| **`.dockerignore` は送るものを名指しで許す**（`VERSION`・`LICENSE`・`THIRD_PARTY_NOTICES.txt`・`client/`・`server/`） | 除く形だと、あとから増えた秘密（`deploy/*/secrets/` など）を送り漏らしうる |
+| **`.dockerignore` は送るものを名指しで許す**（`VERSION`・`LICENSE`・`NOTICE`・`THIRD_PARTY_NOTICES.txt`・`client/`・`server/`） | 除く形だと、あとから増えた秘密（`deploy/*/secrets/` など）を送り漏らしうる |
 | **compose のプロジェクト名は `pb-prod` で、DB のポートは外へ出さない** | dev の compose（`project-backyard`）と同じ名前だと、同じ端末で DB のボリュームを共有する。DB へは compose の中からだけ繋ぐ |
 | **イメージに `ENV PB_BIND=0.0.0.0:8080` を持たせる** | **PB の既定値は `127.0.0.1:8080` である**。コンテナの中で 127.0.0.1 に閉じると、公開範囲を決めるはずの `-p` や `ports` を通っても外から届かない。**画面の「待受アドレス」は環境変数で固定になる** |
 | **`make up` は db だけのまま** | dev は PB 本体を `make run` でホストから動かす。app のコンテナまで上げると 8080 番でぶつかる（`Development.md` 2.2） |
@@ -496,7 +496,7 @@ out/
 │   └── db.yaml           試すための DB：ConfigMap（ロール作成）・headless Service・StatefulSet（PVC 付き）
 ├── secret.example.yaml   Secret の雛形（値は CHANGE_ME）
 ├── create-roles.sql      外部の PostgreSQL 用（native と同じもの）
-├── LICENSE・THIRD_PARTY_NOTICES.txt
+├── LICENSE・NOTICE・THIRD_PARTY_NOTICES.txt
 └── MANUAL.md
 ```
 
@@ -531,6 +531,7 @@ out/
 | **出力に時刻もツールチェーンの版も入れず、並びを固定する** | 同じ依存からは毎回同じ内容になるので、作り直した結果と比べるだけで鮮度が分かる |
 | **`make licenses-check` を `make test` と `make sync-webui`（＝`make build`・`make stg-build`・native の `make release`）の前に置き、Dockerfile でも同じ検査を通す** | 依存を足したり上げたりして作り直さないまま、古い表示を配らない。**このため `make test` にも `client/node_modules`（`npm ci`）が要る** |
 | **Vite の LICENSE.md は先頭の節（Vite 自身の MIT）だけを載せる** | 後ろに続くのは Vite が内部に抱える依存のライセンスで、ビルド時に動くコードでありバンドルに入らない（約11万字） |
+| **PB 自身の著作権表示は `NOTICE` の2行（`Project Backyard` と `Copyright 2026 boyaki-machine`）に置き、`LICENSE` と同じく全 TARGET とイメージに同梱する** | Apache-2.0 の 4(d) により、`NOTICE` は再配布する人が残す対象になる。**残させるものなので短く保つ**（第三者の表示は `THIRD_PARTY_NOTICES.txt` に分ける）。README 8章にも同じ1行を書く |
 | **goose のビルドタグは `build-release.sh` から読み出す** | タグで goose の依存が変わる。正本を増やさない |
 | **画面からはユーザーメニューの版の行のリンクで読む**（`GuiDesign.md` 4.2） | 静的なテキストを別タブで開くだけで、画面を作らない |
 
