@@ -76,6 +76,8 @@ const deleting = ref<TLSCertificate | null>(null)
 /** 作り方の折りたたみ。**0枚のときは開いて出す**（5.12.1） */
 const showSelfSigned = ref(false)
 const showLocalCA = ref(false)
+/** ローカル CA の「構築する」。0枚のときだけ開く。「片付ける」は常に畳んで出す */
+const showLocalCASetup = ref(false)
 const showFormal = ref(false)
 
 /**
@@ -110,12 +112,18 @@ function statusLabel(status: CertificateStatus): string {
 const SELF_SIGNED_CMD = selfSignedCmdRaw.trim()
 
 /**
- * ローカル CA（mkcert）で作る2コマンド（pb-199）。**自己署名と違い、CA を OS の信頼ストアへ
+ * ローカル CA（mkcert）の構築と片付け（pb-199）。**自己署名と違い、CA を OS の信頼ストアへ
  * 1回登録すれば、そこを読むクライアント（Claude Code・curl・Go のブリッジ）は何も渡さずに繋がる。**
- * 名前は自己署名のサンプルと揃える。手順の全文と種別ごとの信頼のさせ方は `Development.md` 14.6。
+ *
+ * **コマンドだけでなく、それで何が起きるかと戻し方を画面に置く**（`GuiDesign.md` 5.12.1 の例外）。
+ * `-install` は端末の信頼設定を変え、`rootCA-key.pem` はどんな名前の証明書でも作れる鍵なので、
+ * 知らずに打つと戻し方が分からなくなる。名前は自己署名のサンプルと揃える。
+ * 手順の全文と種別ごとの信頼のさせ方は `Development.md` 14.6。
  */
-const LOCAL_CA_CMD = `mkcert -install
-mkcert pb.example.com localhost`
+const LOCAL_CA_INSTALL_CMD = 'mkcert -install'
+const LOCAL_CA_CERT_CMD = 'mkcert pb.example.com localhost'
+const LOCAL_CA_UNINSTALL_CMD = 'mkcert -uninstall'
+const LOCAL_CA_REMOVE_CMD = 'rm -rf "$(mkcert -CAROOT)"'
 
 /** Node で動くクライアントへ CA を渡す1行（`Development.md` 14.6）。Node は既定では OS の信頼ストアを読まない */
 const LOCAL_CA_NODE_ENV = 'export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"'
@@ -144,6 +152,7 @@ async function load() {
     if (res.items.length === 0) {
       showSelfSigned.value = true
       showLocalCA.value = true
+      showLocalCASetup.value = true
       showFormal.value = true
     }
   } catch (e: unknown) {
@@ -571,19 +580,56 @@ function asApiError(e: unknown): ApiError {
         <details :open="showLocalCA">
           <summary>{{ $ui('ローカル CA で作る（mkcert）') }}</summary>
           <p class="muted"> {{ $ui('自分の端末に CA を作り、その CA で証明書を発行します。CA を OS に1回登録すれば、ブラウザもエージェントも警告なしで繋がります。') }} </p>
-          <pre>{{ LOCAL_CA_CMD }}</pre>
-          <button type="button" class="link" @click="copy(LOCAL_CA_CMD)">{{ $ui('コピー') }}</button>
-          <ul class="muted">
-            <li>
-              <code>mkcert -install</code> {{ $ui('は CA を OS の信頼ストアへ登録します（1回だけ。管理者の認証を求められます）') }} </li>
-            <li>
-              <code>pb.example.com+1.pem</code> {{ $ui('を「証明書」、') }}<code>pb.example.com+1-key.pem</code> {{ $ui('を「秘密鍵」の欄に貼ります。') }} </li>
-            <li>
-              <strong>{{ $ui('Node で動くクライアント（Claude Desktop の mcp-remote など）は OS の信頼ストアを読みません。') }}</strong> {{ $ui('次の環境変数で CA を渡します') }} <pre>{{ LOCAL_CA_NODE_ENV }}</pre>
-            </li>
-            <li>
-              <strong><code>rootCA-key.pem</code> {{ $ui('は共有しません。') }}</strong>{{ $ui('この端末の通信を偽装できる鍵です') }} </li>
-          </ul>
+
+          <details class="sub" :open="showLocalCASetup">
+            <summary>{{ $ui('構築する') }}</summary>
+
+            <p class="step">{{ $ui('① CA を作って OS に登録する（初回だけ）') }}</p>
+            <pre>{{ LOCAL_CA_INSTALL_CMD }}</pre>
+            <button type="button" class="link" @click="copy(LOCAL_CA_INSTALL_CMD)">{{ $ui('コピー') }}</button>
+            <ul class="muted">
+              <li> {{ $ui('CA の証明書（') }}<code>rootCA.pem</code>{{ $ui('）と秘密鍵（') }}<code>rootCA-key.pem</code>{{ $ui('）を') }} <code>mkcert -CAROOT</code> {{ $ui('の場所に作ります') }} </li>
+              <li>
+                <code>rootCA.pem</code> {{ $ui('を OS の信頼ストアへ登録します（管理者の認証を求められます）。macOS ではキーチェーンアクセスの「システム」に「mkcert <ユーザー>@<端末>」の名前で入ります') }} </li>
+              <li>
+                <strong><code>rootCA-key.pem</code> {{ $ui('は共有しません。') }}</strong>{{ $ui('どんな名前の証明書でも作れる鍵です') }} </li>
+            </ul>
+
+            <p class="step">{{ $ui('② サーバ証明書を作る') }}</p>
+            <pre>{{ LOCAL_CA_CERT_CMD }}</pre>
+            <button type="button" class="link" @click="copy(LOCAL_CA_CERT_CMD)">{{ $ui('コピー') }}</button>
+            <ul class="muted">
+              <li> {{ $ui('フォルダにある crt や key は読みません。CA で署名した新しい鍵と証明書を作り、いまのフォルダへ書き出します') }} </li>
+              <li> {{ $ui('同じ名前のファイルがあると、確認なしで上書きします') }} </li>
+              <li>
+                <code>pb.example.com+1.pem</code> {{ $ui('を「証明書」、') }}<code>pb.example.com+1-key.pem</code> {{ $ui('を「秘密鍵」の欄に貼ります。') }} </li>
+            </ul>
+
+            <p class="step">{{ $ui('③ クライアントに信頼させる') }}</p>
+            <ul class="muted">
+              <li> {{ $ui('OS の信頼ストアを読むクライアント（Claude Code・curl・Codex のブリッジ）は、何もしなくて繋がります') }} </li>
+              <li>
+                <strong>{{ $ui('Node で動くクライアント（Claude Desktop の mcp-remote など）は OS の信頼ストアを読みません。') }}</strong> {{ $ui('次の環境変数で CA を渡します') }} </li>
+            </ul>
+            <pre>{{ LOCAL_CA_NODE_ENV }}</pre>
+            <button type="button" class="link" @click="copy(LOCAL_CA_NODE_ENV)">{{ $ui('コピー') }}</button>
+          </details>
+
+          <details class="sub">
+            <summary>{{ $ui('片付ける（元に戻す）') }}</summary>
+            <p class="warn"> {{ $ui('⚠ 先にこの画面で証明書を差し替えてください。CA を外した時点で、この CA の証明書を使う PB へ繋がらなくなります') }} </p>
+            <ol class="muted">
+              <li> {{ $ui('別の証明書を登録し、mkcert の証明書を削除します') }} </li>
+              <li>
+                <code>{{ LOCAL_CA_UNINSTALL_CMD }}</code> <button type="button" class="link" @click="copy(LOCAL_CA_UNINSTALL_CMD)">{{ $ui('コピー') }}</button>
+                {{ $ui('— OS の信頼ストアから外します（管理者の認証。ファイルは残ります）') }} </li>
+              <li>
+                <code>{{ LOCAL_CA_REMOVE_CMD }}</code> <button type="button" class="link" @click="copy(LOCAL_CA_REMOVE_CMD)">{{ $ui('コピー') }}</button>
+                {{ $ui('— CA を消します。') }}<strong>{{ $ui('元に戻せません') }}</strong>{{ $ui('。この CA で作った証明書はすべて使えなくなります') }} </li>
+              <li> {{ $ui('作った証明書と鍵（') }}<code>pb.example.com+1.pem</code> / <code>pb.example.com+1-key.pem</code>{{ $ui('）を消します') }} </li>
+              <li> {{ $ui('mkcert 自体は、入れたときの逆で消します（macOS は') }} <code>brew uninstall mkcert</code>{{ $ui('）') }} </li>
+            </ol>
+          </details>
         </details>
 
         <details :open="showFormal">
@@ -868,9 +914,19 @@ function asApiError(e: unknown): ApiError {
   border-radius: var(--pb-radius);
   font-size: 12px;
 }
-.howto ul {
+.howto ul,
+.howto ol {
   font-size: 12px;
   padding-left: var(--pb-space-4);
+}
+/* ローカル CA の「構築する」「片付ける」。親の折りたたみの中で1段下げる */
+.howto details.sub {
+  margin: var(--pb-space-2) 0 var(--pb-space-2) var(--pb-space-3);
+}
+.howto .step {
+  margin-top: var(--pb-space-2);
+  font-size: 13px;
+  font-weight: 600;
 }
 .docref {
   font-size: 12px;
