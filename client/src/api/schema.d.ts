@@ -4953,7 +4953,9 @@ export interface components {
          *     **`task_id` を持たない**——チケットは URL が指す（9.1）。
          *
          *     **ここに書かれていないキーも受け付け、`report` jsonb にそのまま保存する。**
-         *     検証するのは列へ展開される値だけである。
+         *     検証するのは列へ展開される値と、**整形したコメント本文の長さ**である——
+         *     整形後が20000字（9.8 のコメントと同じ上限）を超えると 422
+         *     （`details[].field = "report"`、`code = "too_long"`）で、何も作らない。
          */
         SubmitTicketReportRequest: {
             /**
@@ -6256,7 +6258,8 @@ export interface components {
             to: string;
             /**
              * @description 添えるコメント。**同じトランザクションで `kind='progress'` のコメントが作られる**
-             *     （DbDesign.md 6.7）。**長さの上限は置いていない。**
+             *     （DbDesign.md 6.7）。**前後の空白を除いて20000字以内**（9.8 のコメントと同じ上限）。
+             *     超えると 422（`details[].field = "comment"`、`code = "too_long"`）で、遷移は起きない。
              * @example レビューをお願いします
              */
             comment?: string;

@@ -2936,6 +2936,8 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 { "to": "in_review", "comment": "レビューをお願いします" }
 ```
 
+**本体の検査を先に行う。** `to` は必須（`required`）。`comment` は任意で、**前後の空白を除いて20000字以内**（9.8 のコメントと同じ上限）。超えると `422 validation_failed`、`details[].field = "comment"`、`code = "too_long"`。**どちらもワークフローを読む前に返すので、弾かれたときに遷移は起きない**——遷移だけ通ってコメントが落ちる状態を作らない。
+
 **検証の順序**（`DbDesign.md` 6.5）
 
 | # | 検証 | 失敗時 |
@@ -3127,9 +3129,11 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/comments/:id
 
 | フィールド | 検証 |
 |---|---|
-| `body_md` | 必須。1文字以上 |
+| `body_md` | 必須。1文字以上、**20000字以内**（前後の空白を除いて数える）。超えると `too_long` |
 | `kind` | `discussion`（既定） / `decision` / `artifact` / `caveat` / `reference` / `progress` |
 | `in_reply_to` | 任意。同じチケットのコメントの ULID |
+
+**20000字の上限は、コメントを作るすべての口に掛かる**——遷移に添える `comment`（9.6）と、完了レポートから組み立てるコメント（9.15）も同じである。**どの口から入った本文も、`PATCH` で保存し直せる長さに収める。** 上限はチケットの説明欄と同じ値で、1件で応答を膨らませる本文を弾くためにある。
 
 **`in_reply_to` の参照先は、同じチケットの、削除されていないコメントであること。**
 満たさない場合は `422 validation_failed`、`details[].code = "not_found"`（9.14）。
@@ -3908,9 +3912,10 @@ URL が指す。9.1 が「URL とチケット番号を一致させる」と定�
 | `dod_results[].id` | このチケットの完了条件の `id`。**このチケットに無い `id` は `not_found`** |
 | `dod_results[].passed` | 真偽値。他の型は `invalid` |
 | その他のキー | **形（配列かオブジェクトか）だけを見て、そのまま保存する** |
+| 整形したコメントの本文 | **20000字以内**（9.8 と同じ上限）。超えると `details[].field = "report"`、`code = "too_long"` |
 
 **`details[].code` は既存の語彙だけを使う**（`required` / `invalid` / `out_of_range` /
-`not_found`）。**新しいコードを発明しない**——9.14 の表に加わるものは無い。
+`not_found` / `too_long`）。**新しいコードを発明しない**——9.14 の表に加わるものは無い。
 
 **検証を「列に出す値」だけ厳しくする。** `status` と `knowledge_impact` は `agent_report` の
 列に、`cost.tokens` / `cost.turns` は `agent_run.tokens_used` / `turns` に展開されるので
@@ -3982,7 +3987,7 @@ DoD の型は `manual` ひとつで（9.9）、その定義は「**人間がチ�
 | 状況 | 応答 |
 |---|---|
 | 成功 | `201`。上の本体 |
-| `status` が無い・値域外／`dod_results[].id` が不明 | `422 validation_failed` |
+| `status` が無い・値域外／`dod_results[].id` が不明／整形後の本文が長すぎる | `422 validation_failed` |
 | `ticket.transition` を持たない | `403 forbidden` |
 | チケットが無い・他プロジェクト | `404 not_found` |
 
@@ -4006,6 +4011,7 @@ DoD の型は `manual` ひとつで（9.9）、その定義は「**人間がチ�
 | `origin` | `agent`（呼び出し元の `actor.kind` から決まる。9.8 と同じ） |
 | `author_id` | 呼び出し元。**エージェントが自分の名前で書く** |
 | `agent_run_id` | 作った `agent_run` の `id`。**0007 が空けていた列がここで埋まる**（`DbDesign.md` 6.7） |
+| 長さ | **整形後が20000字（9.8）を超えたら弾く**。切り詰めない——**切った部分を人が読む手段が無い**（`agent_report` に全文が残るが、読む API も画面も無い）。そのまま入れもしない——`PATCH` で保存し直せないコメントが生まれる。**弾くのはトランザクションの前**で、実行記録・レポート・コメントのどれも作らない |
 
 **整形は REST 層が行う。** MCP 層に置くと、同じ整形の規則が2か所に生まれる
 （`Design.md` 8.1）。**人が画面から提出する経路は無いが、規則の置き場は経路の数で決めない。**
