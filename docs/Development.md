@@ -1587,6 +1587,10 @@ mkcert pb.example.com localhost 127.0.0.1
 `<rootCA.pem>` は `"$(mkcert -CAROOT)/rootCA.pem"` である。**環境変数はクライアントの起動時にしか読まれない**ので、
 設定したらクライアントを再起動する（14.5 ③）。
 
+**この表は `/me/agents` の接続パネルと zip の手引きに出る手順の正本の事実である**（`ApiDesign.md` 4.5.8.1b）。
+**行・変数名・「確かめたこと」を変えたら、`server/internal/agentsetup/templates/connect/catrust/` も直す**
+——`go test ./internal/agentsetup/` が突き合わせて落ちる。行を足したらテストの対応表（`caTrustDocRowKeys`）にも足す。
+
 ### 片付ける（元に戻す）
 
 **順番が大事である。先に PB の証明書を差し替えないと、CA を外した時点でエージェントが繋がらなくなる。**

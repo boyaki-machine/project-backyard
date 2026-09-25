@@ -3629,6 +3629,22 @@ export interface components {
              *     **zip に入る `PB-README.md` はここに含まれない**（4.5.8.5）。
              */
             files: components["schemas"]["AgentSetupFile"][];
+            /**
+             * @description 「HTTPS の証明書を信頼させる」手順（4.5.8.1b）。**種別ごとに違い、Codex は
+             *     `transport` でも変わる。** **`null` にしない**——接続先が http でも返す
+             *     （後から HTTPS にする人が先に読めるように、画面は常に畳んで出す）。
+             */
+            ca_trust: {
+                /**
+                 * @description 実機で確かめたか。`verified`＝そのクライアントで繋がるところまで、
+                 *     `partial`＝下の層（Node 単体・Go の既定のクライアント）だけ、
+                 *     `unverified`＝確かめていない。
+                 * @enum {string}
+                 */
+                verification: "verified" | "partial" | "unverified";
+                /** @description 本文（Markdown。見出しを持たない）。**zip の `PB-README.md` の同じ節と同じ文である。** */
+                body_md: string;
+            };
         };
         /**
          * @description ApiDesign.md 5.7.1 の `files[]`。**`mode` が要点である**——これが無いと、

@@ -60,6 +60,17 @@ type agentConnectView struct {
 	// ExportLine は環境変数へトークンを置く行。**null になる種別がある**（4.5.8.2）。
 	ExportLine *string              `json:"export_line"`
 	Files      []agentSetupFileView `json:"files"`
+	// CATrust は「HTTPS の証明書を信頼させる」手順（4.5.8.1b）。**null にしない**
+	// ——接続先が http でも返す（後から HTTPS にする人が先に読めるように）。
+	CATrust agentCATrustView `json:"ca_trust"`
+}
+
+// agentCATrustView は種別ごとの「CA を信頼させる」手順（4.5.8.1b）。
+type agentCATrustView struct {
+	// Verification は実機で確かめたか（verified / partial / unverified）。
+	Verification string `json:"verification"`
+	// BodyMD は本文（Markdown）。**zip の PB-README.md の同じ節と同じ文である。**
+	BodyMD string `json:"body_md"`
 }
 
 // getMyAgentSetup は接続設定を JSON で返す（ApiDesign.md 4.5.8.1）。
@@ -201,6 +212,10 @@ func (h *handler) buildAgentConnect(
 		MCPURL:    mcpURL,
 		Transport: transport,
 		Files:     files,
+		CATrust: agentCATrustView{
+			Verification: string(connect.CATrust.Verification),
+			BodyMD:       connect.CATrust.BodyMD,
+		},
 	}
 	// **2種別で null になる**（4.5.8.2）。Copilot は ${input:pb-token} を使って
 	// 環境変数を読まず、Claude Desktop は GUI アプリなのでシェルの環境が届かない。

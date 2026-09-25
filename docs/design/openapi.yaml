@@ -6046,7 +6046,7 @@ components:
         **`AgentSetup`（系統A）とは別物である**——あちらはリポジトリにコミットする
         ファイル、こちらは各人の手元にしか残らないもの。
       type: object
-      required: [agent, project, base_url, mcp_url, transport, export_line, files]
+      required: [agent, project, base_url, mcp_url, transport, export_line, files, ca_trust]
       properties:
         agent:
           type: object
@@ -6108,6 +6108,25 @@ components:
             **zip に入る `PB-README.md` はここに含まれない**（4.5.8.5）。
           items:
             $ref: '#/components/schemas/AgentSetupFile'
+        ca_trust:
+          type: object
+          description: |
+            「HTTPS の証明書を信頼させる」手順（4.5.8.1b）。**種別ごとに違い、Codex は
+            `transport` でも変わる。** **`null` にしない**——接続先が http でも返す
+            （後から HTTPS にする人が先に読めるように、画面は常に畳んで出す）。
+          required: [verification, body_md]
+          properties:
+            verification:
+              type: string
+              enum: [verified, partial, unverified]
+              description: |
+                実機で確かめたか。`verified`＝そのクライアントで繋がるところまで、
+                `partial`＝下の層（Node 単体・Go の既定のクライアント）だけ、
+                `unverified`＝確かめていない。
+            body_md:
+              type: string
+              description: |
+                本文（Markdown。見出しを持たない）。**zip の `PB-README.md` の同じ節と同じ文である。**
 
     AgentSetupFile:
       description: |

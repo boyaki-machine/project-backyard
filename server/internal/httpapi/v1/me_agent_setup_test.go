@@ -277,3 +277,45 @@ func TestGetMyAgentSetupZip(t *testing.T) {
 		t.Errorf("zip の中身: got %v", names)
 	}
 }
+
+// TestGetMyAgentSetupReturnsCATrust は「HTTPS の証明書を信頼させる」手順を返すことを確かめる
+// （ApiDesign.md 4.5.8.1b）。
+//
+// **接続先が http でも返す**（画面は常に畳んで出す）。**Codex は接続方式で手順が変わる。**
+// 本文の中身は internal/agentsetup のテストが見る。
+func TestGetMyAgentSetupReturnsCATrust(t *testing.T) {
+	cases := []struct {
+		kind, transport, want string
+	}{
+		{"claude_code", "", "verified"},
+		{"codex", "", "unverified"},
+		{"codex", "bridge", "partial"},
+		{"gemini", "", "partial"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind+"/"+tc.transport, func(t *testing.T) {
+			h := &handler{q: connectFake(tc.kind, "MY_LAPTOP")}
+			req := connectReq()
+			if tc.transport != "" {
+				q := req.URL.Query()
+				q.Set("transport", tc.transport)
+				req.URL.RawQuery = q.Encode()
+			}
+			rec := httptest.NewRecorder()
+			h.getMyAgentSetup(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status: got %d, want 200 (%s)", rec.Code, rec.Body.String())
+			}
+			v := decodeConnect(t, rec)
+			if v.CATrust.Verification != tc.want {
+				t.Errorf("ca_trust.verification: got %q, want %q", v.CATrust.Verification, tc.want)
+			}
+			if v.CATrust.BodyMD == "" {
+				t.Error("ca_trust.body_md が空（http でも返す）")
+			}
+			if !bytes.Contains(rec.Body.Bytes(), []byte(`"ca_trust":{"verification":`)) {
+				t.Errorf("応答に ca_trust が無い: %s", rec.Body.String())
+			}
+		})
+	}
+}
