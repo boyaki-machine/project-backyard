@@ -1,17 +1,23 @@
-**{{.ClientDisplayName}} が起動する橋（`mcp-remote`）は Node で動き、Node は既定では OS の信頼ストアを読みません。** 設定ファイルの `env` に、次のどちらかを足します。
+**手順**
 
-OS の信頼ストアを読ませる（古い Node では効かないことがあります。そのときは次の方法を使います）：
+1. 設定ファイル（`claude_desktop_config.json`）の `pb` の `env` に、次の1行が入っていることを確かめます。PB が生成した設定には最初から入っています。それより前に置いた設定には無いので、足します。
 
-```
-"NODE_USE_SYSTEM_CA": "1"
-```
+   ```
+   "NODE_USE_SYSTEM_CA": "1"
+   ```
 
-CA の証明書を渡す（Node の版を問わない）。**`$(…)` は展開されないので、絶対パスを書きます**（`mkcert -CAROOT` が出す場所の `rootCA.pem`）：
+2. {{.ClientDisplayName}} を完全に終了してから、起動し直します。
+3. 「PB に参画して」と伝え、繋がることを確かめます。
 
-```
-"NODE_EXTRA_CA_CERTS": "<rootCA.pem の絶対パス>"
-```
+**うまくいかないとき**
 
-足したら、{{.ClientDisplayName}} を完全に終了してから起動し直します。
+- 古い Node では 1 の行が効かないことがあります。代わりに、CA の証明書を絶対パスで渡します（`$(…)` は展開されません。`mkcert -CAROOT` が出す場所の `rootCA.pem` です）。
 
-**確かめたこと**：Node 24.14 単体で、どちらの設定も効くことを確認しました。**`mcp-remote` を経由した接続と、{{.ClientDisplayName}} からの起動は未確認です。**
+  ```
+  "NODE_EXTRA_CA_CERTS": "<rootCA.pem の絶対パス>"
+  ```
+
+- ログ（macOS では `~/Library/Logs/Claude/mcp-server-pb.log`）に `UNABLE_TO_VERIFY_LEAF_SIGNATURE` が出る：1 の行が効いていません。完全に終了してから起動し直したかも見ます。
+- ログに `DEPTH_ZERO_SELF_SIGNED_CERT` が出る：PB の証明書が自己署名です（この手順の対象外）。
+
+**確かめたこと**：橋（`mcp-remote` 0.14.3）を {{.ClientDisplayName}} と同じ起動のしかた（設定の `command`・`args`・`env`）で動かし、1 の行があると繋がり（`initialize` と `tools/list`）、無いと `UNABLE_TO_VERIFY_LEAF_SIGNATURE` で落ちることを確認しました。**{{.ClientDisplayName}} のアプリが設定を読んで繋がるところは未確認です。**

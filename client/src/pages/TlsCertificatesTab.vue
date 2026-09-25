@@ -609,7 +609,10 @@ function asApiError(e: unknown): ApiError {
             <ul class="muted">
               <li> {{ $ui('OS の信頼ストアを読むクライアント（Claude Code・curl・Codex のブリッジ）は、何もしなくて繋がります') }} </li>
               <li>
-                <strong>{{ $ui('Node で動くクライアント（Claude Desktop の mcp-remote など）は OS の信頼ストアを読みません。') }}</strong> {{ $ui('次の環境変数で CA を渡します') }} </li>
+                <strong>{{ $ui('Node で動くクライアント（Gemini CLI など）は OS の信頼ストアを読みません。') }}</strong> {{ $ui('次の環境変数で CA を渡します') }} </li>
+              <!-- **Claude Desktop はシェルの環境変数が届かない**（GUI アプリ）。手当ては
+                   接続の手順が生成する設定の env に最初から入っている（pb-202） -->
+              <li> {{ $ui('Claude Desktop は、自分の設定 → エージェント の接続の手順が生成する設定に、手当てが最初から入っています') }} </li>
             </ul>
             <pre>{{ LOCAL_CA_NODE_ENV }}</pre>
             <button type="button" class="link" @click="copy(LOCAL_CA_NODE_ENV)">{{ $ui('コピー') }}</button>

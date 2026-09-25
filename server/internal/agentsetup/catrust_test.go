@@ -191,9 +191,22 @@ func TestCATrustIsAlwaysRenderedAndSharedWithReadme(t *testing.T) {
 			if c.CATrust.BodyMD == "" || c.CATrust.Verification == "" {
 				t.Fatalf("http でも手順を返す: %+v", c.CATrust)
 			}
-			// 前置き（公開 CA なら不要）が先頭に付く
-			if !strings.HasPrefix(c.CATrust.BodyMD, "**公開 CA の証明書なら") {
+			// 前置き（いつ要るか・先に済ませておくこと）が先頭に付く
+			if !strings.HasPrefix(c.CATrust.BodyMD, "**この手順が要るとき**") {
 				t.Errorf("前置きが先頭に無い:\n%s", c.CATrust.BodyMD)
+			}
+			// **手順は番号付きの箇条書きにし、前提と確かめたことは箇条書きの外に分ける**
+			// （pb-202 の stg 確認で利用者が求めた形）。
+			body := c.CATrust.BodyMD
+			order := []string{"**この手順が要るとき**", "**先に済ませておくこと**", "**手順**\n\n1. ", "**確かめたこと"}
+			pos := 0
+			for _, want := range order {
+				i := strings.Index(body[pos:], want)
+				if i < 0 {
+					t.Errorf("本文に %q が（この順で）無い:\n%s", want, body)
+					break
+				}
+				pos += i + len(want)
 			}
 			if !strings.Contains(c.Readme, c.CATrust.BodyMD) {
 				t.Errorf("手引きに画面と同じ本文が無い:\n%s", c.Readme)
@@ -209,13 +222,15 @@ func TestCATrustIsAlwaysRenderedAndSharedWithReadme(t *testing.T) {
 			}
 			// **段落を折り返さない。** 画面の Markdown は改行を <br> にする（lib/markdown.ts の
 			// breaks: true）ので、テンプレートで折り返した位置で文が切れて見える（実画面で発見）。
+			// 箇条書きの項目と、項目の中へ字下げした行は段落の折り返しではない。
+			listItem := regexp.MustCompile(`^(?:[-*] |\d+\. |\s)`)
 			inCode, prevText := false, false
 			for _, line := range strings.Split(c.CATrust.BodyMD, "\n") {
-				if strings.HasPrefix(line, "```") {
+				if strings.HasPrefix(strings.TrimSpace(line), "```") {
 					inCode, prevText = !inCode, false
 					continue
 				}
-				text := !inCode && strings.TrimSpace(line) != ""
+				text := !inCode && strings.TrimSpace(line) != "" && !listItem.MatchString(line)
 				if text && prevText {
 					t.Errorf("段落が折り返されている（画面では文の途中で改行になる）: %s", line)
 				}

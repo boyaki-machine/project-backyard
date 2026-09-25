@@ -1573,14 +1573,16 @@ mkcert pb.example.com localhost 127.0.0.1
 ### クライアントに信頼させる
 
 **Node は既定では OS の信頼ストアを読まない**ので、Node で動くクライアントにだけ手当てが要る。
+**`NODE_USE_SYSTEM_CA=1` は同梱の CA に OS の CA を足すだけで、置き換えない**（Node 24.14 で既定 146 件＝同梱 144 件＋OS 2 件。
+公開 CA のサイトにもそのまま繋がる）。
 
 | クライアント | 手当て | 確かめたこと |
 |---|---|---|
 | Claude Code（ネイティブ版） | 不要。既定で OS の信頼ストアを読む（`CLAUDE_CODE_CERT_STORE` の既定は `bundled,system`。[公式](https://code.claude.com/docs/en/network-config)） | **確認**（stg を mkcert の証明書へ切り替え、`NODE_EXTRA_CA_CERTS` の無い Claude Code 2.1.281 から MCP で繋がった。2026-09-25） |
 | Codex（stdio ブリッジ） | 不要。ブリッジ（Go）が OS の信頼ストアを読む。`PB_MCP_CA_FILE` でも渡せる | Go の既定の HTTP クライアントで確認（ブリッジそのものでは未確認） |
 | Codex（HTTPS 直結） | `CODEX_CA_CERTIFICATE=<rootCA.pem>`。**公式は「ログイン・HTTPS・WebSocket」に効くとし、MCP には明記が無い**（[公式](https://learn.chatgpt.com/docs/auth.md)） | **実機未確認** |
-| Claude Desktop（`mcp-remote`＝Node） | 設定の `env` に `NODE_USE_SYSTEM_CA=1`、または `NODE_EXTRA_CA_CERTS=<rootCA.pem>` | Node 24.14 で両方を確認（`mcp-remote` 経由は未確認） |
-| その他の Node 製（Gemini CLI など） | 同上（シェルで `export`） | 同上 |
+| Claude Desktop（`mcp-remote`＝Node） | 設定の `env` に `NODE_USE_SYSTEM_CA=1`（**PB が生成する設定に最初から入る**）。古い Node では `NODE_EXTRA_CA_CERTS=<rootCA.pem>` | `mcp-remote` 0.14.3 を Claude Desktop と同じ起動のしかたで動かし、`NODE_USE_SYSTEM_CA=1` の有無で繋がる／`UNABLE_TO_VERIFY_LEAF_SIGNATURE` で落ちるを確認（Claude Desktop のアプリからは未確認。2026-09-25） |
+| その他の Node 製（Gemini CLI など） | シェルで `export NODE_USE_SYSTEM_CA=1`、または `NODE_EXTRA_CA_CERTS=<rootCA.pem>` | Node 24.14 単体で両方を確認（クライアント経由は未確認） |
 | Copilot（VS Code） | `http.systemCertificates`（既定で有効）で読むはず。MCP で自己署名に失敗する報告がある（[#248245](https://github.com/microsoft/vscode/issues/248245)） | **実機未確認** |
 | curl（macOS） | 不要 | 確認 |
 

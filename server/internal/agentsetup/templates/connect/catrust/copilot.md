@@ -1,3 +1,10 @@
-**VS Code は `http.systemCertificates`（既定で有効）で OS の信頼ストアを読みます。** 設定を変えていなければ、手当ては要らない見込みです。繋がらないときは、VS Code の設定でこの項目が有効かを見てください。
+**手順**
+
+1. 何もしなくて構わない見込みです。VS Code は `http.systemCertificates`（既定で有効）で OS の信頼ストアを読みます。
+2. Copilot をエージェントモードにして参画の手順を実行し、繋がることを確かめます。
+
+**うまくいかないとき**
+
+- VS Code の設定で `http.systemCertificates` が有効かを見ます。
 
 **確かめたこと：ありません。** VS Code の MCP では、自己署名の証明書で接続に失敗する報告があります（microsoft/vscode#248245）。
