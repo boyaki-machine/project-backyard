@@ -22,6 +22,7 @@ import * as setupApi from '../api/agentSetup'
 import type { AgentConnect } from '../api/agentSetup'
 import { ApiError } from '../api/client'
 import { copySecret, type CopyState } from '../lib/clipboard'
+import { renderMarkdown } from '../lib/markdown'
 
 const props = defineProps<{
   /** 対象のエージェント（`ApiDesign.md` 4.5.1 の id） */
@@ -64,6 +65,27 @@ const isDesktop = computed(
 const isCodex = computed(() => setup.value?.agent.client_kind === 'codex')
 
 const zipHref = computed(() => setupApi.agentConnectZipURL(props.agentId, transport.value))
+
+/**
+ * 「HTTPS の証明書を信頼させる」手順（`ApiDesign.md` 4.5.8.1b、`GuiDesign.md` 5.8.2）。
+ *
+ * **本文はサーバが返す。** 種別ごとの違いが種別の数だけあり、画面の分岐で持つと zip の
+ * `PB-README.md` と同じ文を2か所に書くことになる（pb-202。上の「3つ目が現れたら」の実現）。
+ * **本文は日本語だけである**——手引き（zip）と同じ扱い。
+ */
+const caTrustHtml = computed(() => renderMarkdown(setup.value?.ca_trust.body_md ?? ''))
+
+/** 実機で確かめたか（4.5.8.1b）。**状態を色だけで示さない**（9.2）ので記号と文言で出す */
+const caTrustLabel = computed(() => {
+  switch (setup.value?.ca_trust.verification) {
+    case 'verified':
+      return uiText('✓ 実機で確認済み')
+    case 'partial':
+      return uiText('△ 一部だけ実機で確認')
+    default:
+      return uiText('? 実機では未確認')
+  }
+})
 
 /**
  * 作業材料の取り方を書く文書の `slug`（`DbDesign.md` 8.1.2、`GuiDesign.md` 5.8.2）。
@@ -141,8 +163,10 @@ function preview(content: string): string {
           <label><input v-model="transport" type="radio" value="direct" /> {{ $ui('HTTPS へ直接接続（公開 CA）') }}</label>
           <label><input v-model="transport" type="radio" value="bridge" /> {{ $ui('ローカル stdio ブリッジを使う（自己署名・社内 CA）') }}</label>
         </fieldset>
-        <p v-if="transport === 'bridge'" class="warn-note"> {{ $ui('ⓘ Codex 標準の HTTP MCP クライアントでは自己署名・社内 CA の証明書を利用できないため、 ローカル PB ではこの方式を使います。ブリッジも TLS 検証を行うので、証明書を OS の 信頼ストアへ登録するか、') }}<code>PB_MCP_CA_FILE</code> {{ $ui('で発行元 CA を指定します。 配置・証明書登録または CA 指定・設定・後始末の詳細は、この zip の') }} <code>PB-README.md</code> {{ $ui('にあります。') }} </p>
-        <p v-else class="hint"> {{ $ui('公開 CA の証明書では直接接続できます。自己署名・社内 CA の証明書では、 OS の信頼ストアへ登録しても Codex 標準の HTTP MCP クライアントが受け付けないため、 ローカル stdio ブリッジを選びます。詳しい手順は、この zip の') }} <code>PB-README.md</code> {{ $ui('にあります。') }} </p>
+        <p v-if="transport === 'bridge'" class="warn-note"> {{ $ui('ⓘ ローカル CA・社内 CA・自己署名の証明書を使うローカル PB では、この方式を使います。ブリッジも TLS 検証を行うので、証明書を OS の信頼ストアへ登録するか、') }}<code>PB_MCP_CA_FILE</code> {{ $ui('で発行元 CA を指定します。 配置・証明書登録または CA 指定・設定・後始末の詳細は、この zip の') }} <code>PB-README.md</code> {{ $ui('にあります。') }} </p>
+        <!-- **直接接続の断定を弱めた**（pb-202）。自己署名で受け付けなかったのは観測だが、
+             ローカル CA と CODEX_CA_CERTIFICATE での直接接続は誰も確かめていない -->
+        <p v-else class="hint"> {{ $ui('公開 CA の証明書では直接接続できます。ローカル CA・社内 CA・自己署名の証明書では、ローカル stdio ブリッジを選びます（自己署名の証明書は、OS の信頼ストアへ登録しても直接接続では受け付けられませんでした。ローカル CA での直接接続は実機で確かめていません）。詳しい手順は、この zip の') }} <code>PB-README.md</code> {{ $ui('にあります。') }} </p>
       </template>
 
       <template v-if="file">
@@ -196,6 +220,18 @@ function preview(content: string): string {
         </dl>
         <a class="secondary download" :href="zipHref" download>{{ $ui('⬇ 手引きを zip で落とす') }}</a>
       </template>
+
+      <!-- 2 の末尾：証明書を信頼させる ─────────────────────────
+           **常に畳んで出す**（pb-202）。接続先が http でも、後から HTTPS にする人が先に読める。
+           **番号を振らない**——振り直すと手引き（zip）の節番号と食い違う -->
+      <details class="ca-trust">
+        <summary>
+          {{ $ui('HTTPS の証明書を信頼させる（ローカル CA・社内 CA のとき）') }}
+          <span class="verification" :class="setup.ca_trust.verification">{{ caTrustLabel }}</span>
+        </summary>
+        <!-- eslint-disable-next-line vue/no-v-html -- lib/markdown.ts の dompurify を通っている -->
+        <div class="markdown-body ca-trust-body" v-html="caTrustHtml"></div>
+      </details>
 
       <!-- 3. 環境変数 ─────────────────────────────────────
            **`export_line` が null の種別では節ごと落とす**（4.5.8.2）。
@@ -351,4 +387,37 @@ function preview(content: string): string {
 }
 
 .transport legend { font-weight: 600; }
+
+/* 2 の末尾の畳んだ節。毎回読むものではない（TLS タブの .trust と同じ作法） */
+.ca-trust summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 状態を色だけで示さない（9.2）。記号と文言が主で、面は補助 */
+.verification {
+  margin-left: var(--pb-space-2);
+  padding: 0 var(--pb-space-2);
+  border: 1px solid var(--pb-line);
+  border-radius: var(--pb-radius);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.verification.unverified {
+  border-color: var(--pb-warning-border);
+  background: var(--pb-warning-bg);
+}
+
+.ca-trust-body {
+  margin-top: var(--pb-space-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 広いコードはこの箱の中だけで横スクロールさせる（6.7） */
+.ca-trust-body :deep(pre) {
+  overflow-x: auto;
+}
 </style>

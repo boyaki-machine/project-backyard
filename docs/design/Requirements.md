@@ -1076,8 +1076,9 @@ approval_mode = "auto"
 #### HTTPS 直接接続と stdio ブリッジ
 
 **既定は HTTPS 直接接続**であり、公開 CA の証明書に使う。Codex 標準の HTTP MCP クライアントは、
-OS の信頼ストアへ登録した自己署名・社内 CA の証明書を受け付けないため、その場合は PB リリースに
-同梱する `pb-mcp-bridge` を使う。TLS 検証を無効化する設定は配らない。
+OS の信頼ストアへ登録した自己署名の証明書を受け付けなかったため、ローカル CA・社内 CA・自己署名の
+証明書では PB リリースに同梱する `pb-mcp-bridge` を使う（ローカル CA での直接接続は実機未確認。
+`ApiDesign.md` 4.5.8.1a）。TLS 検証を無効化する設定は配らない。
 
 ブリッジは Codex の stdio 子プロセスとして動き、HTTPS PB MCP へ転送するだけで、待受ポートを
 開かず、`InsecureSkipVerify` を使わない。OS の信頼ストアを使い、`PB_MCP_CA_FILE` が指定された

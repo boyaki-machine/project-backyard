@@ -207,6 +207,20 @@ func TestCATrustIsAlwaysRenderedAndSharedWithReadme(t *testing.T) {
 					t.Errorf("手順の本文に見出しがある: %s", line)
 				}
 			}
+			// **段落を折り返さない。** 画面の Markdown は改行を <br> にする（lib/markdown.ts の
+			// breaks: true）ので、テンプレートで折り返した位置で文が切れて見える（実画面で発見）。
+			inCode, prevText := false, false
+			for _, line := range strings.Split(c.CATrust.BodyMD, "\n") {
+				if strings.HasPrefix(line, "```") {
+					inCode, prevText = !inCode, false
+					continue
+				}
+				text := !inCode && strings.TrimSpace(line) != ""
+				if text && prevText {
+					t.Errorf("段落が折り返されている（画面では文の途中で改行になる）: %s", line)
+				}
+				prevText = text
+			}
 			for _, bad := range []string{"{{", "<no value>", "pb_agt_"} {
 				if strings.Contains(c.CATrust.BodyMD, bad) {
 					t.Errorf("手順に %q が残っている:\n%s", bad, c.CATrust.BodyMD)
