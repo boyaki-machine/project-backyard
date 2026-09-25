@@ -244,7 +244,8 @@ print("3文書の合計 :", sum(size.get(p, 0) for p in ("rules", "vision", "lea
 ## 7.7 閉じない強調記号を数える
 
 **CommonMark の強調は日本語の約物と相性が悪い**（`DbDesign.md` 8.1.2）。**目視では見つからない**
-ので、**`make docs-emphasis` で数える**。`docs/` 配下の Markdown を `markdown-it` に通し、
+ので、**`make docs-emphasis` で数える**。`docs/` 配下の Markdown と、エージェント連携の生成物の
+テンプレート（`server/internal/agentsetup/templates/` 配下。zip の手引きや手順ファイルになる）を `markdown-it` に通し、
 **描画しても `**` が残る段落**を `ファイル:行: 段落の書き出し` の形で並べ、1件でもあれば非ゼロで終わる。
 
 - **文書を書き換えたら打つ。** 測る仕掛けが無いと、一度 0 件にした文書も戻っていく
