@@ -23,7 +23,7 @@ import (
 	"text/template"
 )
 
-//go:embed templates/connect/*.md
+//go:embed templates/connect/*.md templates/connect/catrust/*.md
 var connectFS embed.FS
 
 // autoApprovedTools は確認なしで走らせる読み取りツール（Requirements.md 10.8.2）。
@@ -95,6 +95,86 @@ type Connect struct {
 	// Assets are binary files included only in the downloaded connection ZIP.
 	// They never appear in files[] because they are not configuration to merge.
 	Assets []Asset
+	// CATrust は「HTTPS の証明書を信頼させる」手順（ApiDesign.md 4.5.8.1b）。
+	//
+	// **画面と手引き（Readme）が同じ文を使う。** 種別ごとの違いが種別の数だけあり、
+	// 画面の分岐で持つと zip の手引きと2か所に同じ文を書くことになる（pb-202）。
+	CATrust CATrust
+}
+
+// CATrustVerification は「CA を信頼させる」手順を実機で確かめたか（ApiDesign.md 4.5.8.1b）。
+//
+// **確かめていない手順を、確かめたものと同じ顔で出さない。** クライアントの TLS 実装は
+// 系統ごとに振る舞いが違い、ある系統で通った手順が別の系統で通る保証は無い。
+type CATrustVerification string
+
+const (
+	// CATrustVerified はそのクライアントで繋がるところまで確かめた。
+	CATrustVerified CATrustVerification = "verified"
+	// CATrustPartial は下の層（Node 単体・Go の既定のクライアント）だけで確かめた。
+	CATrustPartial CATrustVerification = "partial"
+	// CATrustUnverified は確かめていない（実機が無い）。
+	CATrustUnverified CATrustVerification = "unverified"
+)
+
+// label は手引きに書く札。**画面は同じ値を自分の文言で出す**（翻訳するため）。
+func (v CATrustVerification) label() string {
+	switch v {
+	case CATrustVerified:
+		return "✓ 実機で確認済み"
+	case CATrustPartial:
+		return "△ 一部だけ実機で確認"
+	default:
+		return "? 実機では未確認"
+	}
+}
+
+// CATrust は種別ごとの「CA を信頼させる」手順。
+type CATrust struct {
+	Verification CATrustVerification
+	// BodyMD は手順の本文（Markdown）。**見出しを持たない**——画面は畳んだ節の中に、
+	// 手引きは自分の見出しの下に置く。
+	BodyMD string
+}
+
+// caTrustSpec は種別ごとの「CA を信頼させる」手順の仕様。
+type caTrustSpec struct {
+	// name は templates/connect/catrust/ の中のテンプレート名。
+	name         string
+	verification CATrustVerification
+}
+
+// caTrustSpecs は種別ごとの手順（Development.md 14.6 の表が正本の事実。
+// TestCATrustMatchesDevelopmentMD が突き合わせる）。
+//
+// **Codex だけ接続方式で分かれる**ので、ブリッジは "codex/bridge" で引く。
+// **connectSpecs の種別はすべてここに在る**（TestCATrustSpecsCoverConnectSpecs）
+// ——無いと none.md の一般論へ黙って落ちる。
+var caTrustSpecs = map[string]caTrustSpec{
+	"claude_code":    {name: "claude_code.md", verification: CATrustVerified},
+	"codex":          {name: "codex_direct.md", verification: CATrustUnverified},
+	"codex/bridge":   {name: "codex_bridge.md", verification: CATrustPartial},
+	"claude_desktop": {name: "claude_desktop.md", verification: CATrustPartial},
+	"copilot":        {name: "copilot.md", verification: CATrustUnverified},
+}
+
+// caTrustFallback は PB が接続設定を持たない種別（gemini / other）の手順。
+// Node 製を例に一般論を書く。
+var caTrustFallback = caTrustSpec{name: "none.md", verification: CATrustPartial}
+
+// caTrustCommon は全種別の先頭に置く前置き（公開 CA なら不要・自己署名は対象外）。
+const caTrustCommon = "common.md"
+
+func caTrustSpecFor(kind, transport string) caTrustSpec {
+	if transport == TransportBridge {
+		if s, ok := caTrustSpecs[kind+"/"+TransportBridge]; ok {
+			return s
+		}
+	}
+	if s, ok := caTrustSpecs[kind]; ok {
+		return s
+	}
+	return caTrustFallback
 }
 
 // Asset is a downloadable local helper such as the stdio bridge.
@@ -194,22 +274,26 @@ func RenderConnect(kind string, p ConnectParams) (Connect, error) {
 	if p.Transport == TransportBridge && kind != "codex" {
 		return Connect{}, fmt.Errorf("stdio ブリッジは Codex でのみ使えます")
 	}
+	caTrust, err := renderCATrust(kind, p)
+	if err != nil {
+		return Connect{}, err
+	}
 	spec, ok := connectSpecs[kind]
 	if !ok {
-		readme, err := renderReadme("none.md", kind, connectSpec{}, p)
+		readme, err := renderReadme("none.md", kind, connectSpec{}, p, caTrust)
 		if err != nil {
 			return Connect{}, err
 		}
 		// **環境変数は勧める側で出す。** 自分で書く人にとって、変数名は
 		// PB が決めた事実であって選択肢ではない。
-		return Connect{Files: nil, Readme: readme, UsesTokenEnvVar: true}, nil
+		return Connect{Files: nil, Readme: readme, UsesTokenEnvVar: true, CATrust: caTrust}, nil
 	}
 
 	content, err := spec.render(p)
 	if err != nil {
 		return Connect{}, err
 	}
-	readme, err := renderReadme(spec.readme, kind, spec, p)
+	readme, err := renderReadme(spec.readme, kind, spec, p, caTrust)
 	if err != nil {
 		return Connect{}, err
 	}
@@ -226,7 +310,26 @@ func RenderConnect(kind string, p ConnectParams) (Connect, error) {
 		}},
 		Readme:          readme,
 		UsesTokenEnvVar: spec.usesTokenEnvVar,
+		CATrust:         caTrust,
 	}, nil
+}
+
+// renderCATrust は前置きと種別ごとの手順を組み立てる（ApiDesign.md 4.5.8.1b）。
+//
+// **接続先が http でも組み立てる。** 後から HTTPS にする人が先に読めるように、
+// 画面は常に畳んで出す（pb-202 で決めた）。
+func renderCATrust(kind string, p ConnectParams) (CATrust, error) {
+	spec := caTrustSpecFor(kind, p.Transport)
+	rp := readmeParams{ConnectParams: p}
+	var body strings.Builder
+	for _, name := range []string{caTrustCommon, spec.name} {
+		s, err := renderTemplate(path.Join("templates/connect/catrust", name), rp)
+		if err != nil {
+			return CATrust{}, err
+		}
+		body.WriteString(s)
+	}
+	return CATrust{Verification: spec.verification, BodyMD: body.String()}, nil
 }
 
 // readmeParams は手引きへ差し込む値。
@@ -240,15 +343,21 @@ type readmeParams struct {
 	// OnboardRef は参画をどう起動するか。**系統A の specs から借りる**
 	// ——同じ文言を2か所に置くと必ずずれる（Codex はスラッシュコマンドを持たない）。
 	OnboardRef string
+	// CATrust と CATrustLabel は「HTTPS の証明書を信頼させる」の節（4.5.8.1b）。
+	// **画面の API が返すものと同じ本文である。**
+	CATrust      CATrust
+	CATrustLabel string
 }
 
 // renderReadme は templates/connect/<name> を差し込む。
-func renderReadme(name, kind string, spec connectSpec, p ConnectParams) (string, error) {
+func renderReadme(name, kind string, spec connectSpec, p ConnectParams, caTrust CATrust) (string, error) {
 	rp := readmeParams{
 		ConnectParams: p,
 		ConfigPath:    spec.configPath,
 		ExportLine:    ExportLine(p.TokenEnvName),
 		OnboardRef:    "参画の手順",
+		CATrust:       caTrust,
+		CATrustLabel:  caTrust.Verification.label(),
 	}
 	if spec.configPath != "" {
 		rp.ZipEntryName = blockName(spec.configPath)
@@ -267,7 +376,12 @@ func renderReadme(name, kind string, spec connectSpec, p ConnectParams) (string,
 		rp.OnboardRef = a.onboardRef
 	}
 
-	raw, err := connectFS.ReadFile(path.Join("templates/connect", name))
+	return renderTemplate(path.Join("templates/connect", name), rp)
+}
+
+// renderTemplate は connectFS の1枚を差し込む。
+func renderTemplate(name string, rp readmeParams) (string, error) {
+	raw, err := connectFS.ReadFile(name)
 	if err != nil {
 		return "", fmt.Errorf("手引き %s を読めない: %w", name, err)
 	}

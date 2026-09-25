@@ -32,6 +32,12 @@
 
 **`.envrc` も履歴管理から外します。** 実体が入るためです。
 
+## HTTPS の証明書を信頼させる（ローカル CA・社内 CA のとき）
+
+**実機での確認**：{{.CATrustLabel}}
+
+{{.CATrust.BodyMD}}
+
 ## 4. 起動して参画する
 
 新しいシェルで {{.ClientDisplayName}} を起動し、{{.OnboardRef}} を実行します。
