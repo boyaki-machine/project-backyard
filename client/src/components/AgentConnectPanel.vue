@@ -366,15 +366,27 @@ function preview(content: string): string {
   white-space: pre;
 }
 
+/*
+ * **値の列を 0 まで縮められるようにする**（pb-204）。`auto 1fr` では 1fr の最小幅が中身
+ * （折り返せない URL）になり、狭い幅で箱の外へはみ出したうえ、見出しの列が1文字ずつ縦に折れた。
+ */
 .values {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: max-content minmax(0, 1fr);
   gap: var(--pb-space-1) var(--pb-space-3);
   font-size: 12px;
 }
 
 .values dt {
   color: var(--pb-text-muted);
+  white-space: nowrap;
+}
+
+/* 長い値はこの箱の中だけで横スクロールさせる（6.7） */
+.values dd {
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 
 .transport {
