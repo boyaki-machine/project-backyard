@@ -1123,7 +1123,8 @@ ZIP の `PB-README.md` に含める。
                "--header", "Authorization:Bearer ${PB_TOKEN_DESKTOP}"],
       "env": {
         "PATH": "<node のあるディレクトリ>:/usr/bin:/bin",
-        "PB_TOKEN_DESKTOP": "<発行したトークン>"
+        "PB_TOKEN_DESKTOP": "<発行したトークン>",
+        "NODE_USE_SYSTEM_CA": "1"
       }
     }
   }
@@ -1157,6 +1158,11 @@ PB が決められる値は入れ、決められない値は「ここに貼る�
 
 **コロンの後に空白を入れない**（`Authorization:Bearer ${…}`）。`mcp-remote` が引数の空白で
 割れる形を避けるための書き方である。
+
+**`NODE_USE_SYSTEM_CA` を最初から入れる**（pb-202）。橋は Node で動き、**Node は既定では OS の
+信頼ストアを読まない**ので、ローカル CA・社内 CA の証明書の PB へは繋がらない
+（`UNABLE_TO_VERIFY_LEAF_SIGNATURE`）。**手で足す手順にしたら、stg で見落とされた。**
+同梱の CA に足すだけで置き換えないので、公開 CA や http の PB でも害は無い（`Development.md` 14.6）。
 
 **症状が読めないことを、手引きに書いておく必要がある。** 401 を受けると `mcp-remote` は
 OAuth を試みて例外で終了し、**Claude Desktop には「サーバが起動しない」としか出ない。**
