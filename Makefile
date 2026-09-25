@@ -479,7 +479,10 @@ docs-size:
 # ── 閉じない強調記号（Testing.md 7.7）────────────────────────
 
 # 見る文書。差し替えれば任意のファイルを見られる（make docs-emphasis EMPHASIS_DOCS=a.md）
-EMPHASIS_DOCS ?= docs/*.md docs/design/*.md docs/history/*.md
+# **エージェント連携の生成物のテンプレートも見る**（pb-203）。zip の PB-README.md や手順ファイルとして
+# 利用者の手元で Markdown として開かれ、接続パネルでは画面にも描かれる。
+EMPHASIS_DOCS ?= docs/*.md docs/design/*.md docs/history/*.md \
+	server/internal/agentsetup/templates/*/*.md server/internal/agentsetup/templates/connect/catrust/*.md
 
 ## 描画しても ** が残る段落を数える（1件でもあれば非ゼロ終了。client の markdown-it を使う）
 docs-emphasis:
