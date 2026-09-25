@@ -150,6 +150,12 @@ func TestRenderConnectClaudeDesktop(t *testing.T) {
 		t.Errorf("env のトークンは placeholder のはず: got %q", srv.Env[p.TokenEnvName])
 	}
 
+	// **OS の信頼ストアを読ませる行が最初から入っていること**（pb-202）。
+	// 手で足す手順にしたら見落とされ、ローカル CA の PB に繋がらなかった。
+	if srv.Env["NODE_USE_SYSTEM_CA"] != "1" {
+		t.Errorf("env に NODE_USE_SYSTEM_CA=1 が無い: %v", srv.Env)
+	}
+
 	// **手引きは Desktop 専用のものが出ること**（none.md へ落ちていない）。
 	if !strings.Contains(c.Readme, "Settings > Developer > Edit Config") {
 		t.Error("手引きが claude_desktop.md ではない（設定ファイルの開き方が無い）")

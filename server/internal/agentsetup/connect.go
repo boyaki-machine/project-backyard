@@ -474,6 +474,15 @@ const (
 	desktopTokenPlaceholder   = "ここに発行したトークンを貼る"
 )
 
+// nodeUseSystemCAEnv は Node に OS の信頼ストアも読ませる環境変数（Requirements.md 10.8.4.2）。
+//
+// **Claude Desktop の設定に最初から入れる**（pb-202）。橋（mcp-remote）は Node で動き、
+// Node は既定では OS の信頼ストアを読まないので、ローカル CA・社内 CA の PB へ繋がらない
+// （UNABLE_TO_VERIFY_LEAF_SIGNATURE）。**手で足す手順にしたら見落とされた**（stg で実測）。
+// **同梱の CA に足すだけで置き換えない**ので、公開 CA や http の PB でも害は無い
+// （Node 24.14 で既定 146 件＝同梱 144 件＋OS 2 件を確認）。古い Node では無視される。
+const nodeUseSystemCAEnv = "NODE_USE_SYSTEM_CA"
+
 // mcpRemotePackage は stdio と Streamable HTTP を繋ぐ橋（Requirements.md 10.8.4.2）。
 //
 // **Claude Desktop の設定ファイルは stdio のサーバしか書けない**ので、
@@ -515,8 +524,9 @@ func renderClaudeDesktopConfig(p ConnectParams) (string, error) {
 					"--header", fmt.Sprintf("Authorization:Bearer ${%s}", p.TokenEnvName),
 				},
 				Env: map[string]string{
-					"PATH":         desktopPathPlaceholder,
-					p.TokenEnvName: desktopTokenPlaceholder,
+					"PATH":             desktopPathPlaceholder,
+					p.TokenEnvName:     desktopTokenPlaceholder,
+					nodeUseSystemCAEnv: "1",
 				},
 			},
 		},
