@@ -534,6 +534,9 @@ func TestConnectZipCodexUsesVisibleFolderAndIncludesAsset(t *testing.T) {
 	if !strings.Contains(c.Readme, "ローカル stdio ブリッジ") || strings.Contains(c.Readme, "HTTPS 直接接続** 用") {
 		t.Error("bridge 用 README が方式別になっていない")
 	}
+	if !strings.Contains(c.Readme, "システム設定 → プライバシーとセキュリティ") || !strings.Contains(c.Readme, "このまま開く") {
+		t.Error("bridge 用 README に macOS の初回起動拒否の解除手順が無い")
+	}
 }
 
 // TestConnectZip は zip の中の名前を確かめる（ApiDesign.md 4.5.8.5）。
