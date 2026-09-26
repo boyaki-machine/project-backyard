@@ -13,6 +13,7 @@ description: "Use when the user asks Codex to implement, process, or work on a P
 - `execution_mode` が `human_only` なら実装せず、理由を報告して終了する。
 - `readiness` が `red` なら不足点を示し、実装へ進むか利用者に確認する。
 - 担当が自分の所有者でない、または担当が無い場合は実装せず利用者に伝える。
+- PBにMCP接続できない場合は、そこで止めて利用者に伝える。規約を読まずに進めない。
 
 ## 2. 前提を取得する
 
