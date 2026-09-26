@@ -50,6 +50,7 @@ import TicketLinkModal from './TicketLinkModal.vue'
 import UserActionsMenu from './UserActionsMenu.vue'
 import type { ActionItem } from './UserActionsMenu.vue'
 import { ApiError } from '../api/client'
+import { statusLabel } from '../lib/catalogLabels'
 import * as dodApi from '../api/dod'
 import type { TicketDoDItem } from '../api/dod'
 import * as linksApi from '../api/links'
@@ -1873,7 +1874,7 @@ function errorFor(field: string): string {
                 </span>
                 <code class="child-id">{{ projectKey }}-{{ c.seq }}</code>
                 <span class="child-title">{{ c.title }}</span>
-                <span class="child-status">{{ c.status.name }}</span>
+                <span class="child-status">{{ statusLabel(c.status.key, c.status.name) }}</span>
               </RouterLink>
               <span class="child-assignee">
                 <!-- 選択肢は親自身の担当欄と同じ語彙（プロジェクトのメンバー＋未割当） -->
@@ -2133,7 +2134,7 @@ function errorFor(field: string): string {
                 </span>
                 <code class="child-id">{{ projectKey }}-{{ l.ticket.seq }}</code>
                 <span class="child-title">{{ l.ticket.title }}</span>
-                <span class="child-status">{{ l.ticket.status.name }}</span>
+                <span class="child-status">{{ statusLabel(l.ticket.status.key, l.ticket.status.name) }}</span>
               </RouterLink>
               <button
                 v-if="canEdit"

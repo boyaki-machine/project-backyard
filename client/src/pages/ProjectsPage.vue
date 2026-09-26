@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { uiText } from '../locales/ui'
+import { uiLocaleTag, uiText } from '../locales/ui'
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -210,7 +210,7 @@ async function retry() {
         </template>
       </EmptyState>
 
-      <table v-else-if="store.loading || !store.isEmpty" class="table">
+      <table v-else-if="store.loading || !store.isEmpty" class="table" :class="{ 'english-dates': uiLocaleTag() === 'en-US' }">
         <thead>
           <tr>
             <th
@@ -400,6 +400,10 @@ th:nth-child(4) {
 
 th:nth-child(5) {
   width: 160px;
+}
+
+.table.english-dates th:nth-child(5) {
+  width: 210px;
 }
 
 th {

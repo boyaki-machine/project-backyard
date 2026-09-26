@@ -163,8 +163,8 @@ async function submit() {
             :disabled="submitting"
           />
           <span class="choice-body">
-            <span class="choice-label">{{ r.display_name }}</span>
-            <span class="choice-description">{{ r.description }}</span>
+            <span class="choice-label">{{ rolesStore.roleLabel(r.key) }}</span>
+            <span class="choice-description">{{ rolesStore.roleDescription(r.key) }}</span>
           </span>
         </label>
       </fieldset>

@@ -89,7 +89,7 @@ onMounted(() => {
         <span class="label">{{ $ui('ロール') }} <span class="required">*</span></span>
         <select v-model="role" name="role" :disabled="busy">
           <option v-for="r in projectRoles" :key="r.key" :value="r.key">
-            {{ r.display_name }}
+            {{ rolesStore.roleLabel(r.key) }}
           </option>
         </select>
         <span class="hint">{{ roleDescription }}</span>

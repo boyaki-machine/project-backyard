@@ -28,6 +28,7 @@ import type { ProjectMember, Workflow } from '../api/projects'
 import { activityDetail, activitySummary, actorLabel, ticketLabel } from '../lib/activity'
 import type { ActivityLabelContext } from '../lib/activity'
 import { formatDateTime } from '../lib/datetime'
+import { statusLabel } from '../lib/catalogLabels'
 
 const props = defineProps<{
   projectKey: string
@@ -65,7 +66,7 @@ const hasMore = computed(() => page.value < totalPages.value)
 const labelContext = computed<ActivityLabelContext>(() => ({
   projectKey: props.projectKey,
   statusNames: Object.fromEntries(
-    (props.workflow?.statuses ?? []).map((s) => [s.key, s.name]),
+    (props.workflow?.statuses ?? []).map((s) => [s.key, statusLabel(s.key, s.name)]),
   ),
   actorNames: Object.fromEntries(
     (props.members ?? []).map((m) => [m.actor_id, m.display_name]),

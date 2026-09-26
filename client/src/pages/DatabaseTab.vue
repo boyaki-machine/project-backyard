@@ -283,11 +283,14 @@ function formatBytes(n: number): string {
         <p class="actions file-row">
           <input
             ref="fileInput"
+            class="file-input"
             type="file"
             accept=".gz,.tgz,application/gzip"
             :disabled="restoring"
             @change="chooseFile"
           />
+          <button type="button" class="secondary small" :disabled="restoring" @click="fileInput?.click()">{{ $ui('ファイルを選択') }}</button>
+          <span class="file-name">{{ chosen?.name ?? $ui('選択されていません') }}</span>
           <button type="button" class="danger small" :disabled="!chosen || restoring" @click="openConfirm"> {{ $ui('取り込む…') }} </button>
         </p>
 
@@ -455,9 +458,12 @@ code {
   gap: var(--pb-space-3);
   flex-wrap: wrap;
 }
-.file-row input[type='file'] {
+.file-input {
+  display: none;
+}
+.file-name {
   font-size: 13px;
-  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .sep {
   border: 0;

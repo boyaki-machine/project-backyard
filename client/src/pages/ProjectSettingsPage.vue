@@ -31,6 +31,7 @@ import * as sprintsApi from '../api/sprints'
 import { sprintStatusLabels } from '../api/sprints'
 import type { CreateSprintRequest, Sprint } from '../api/sprints'
 import { formatDate, formatPlainDate } from '../lib/datetime'
+import { statusLabel } from '../lib/catalogLabels'
 import { zoneOf, type DropZone } from '../lib/dnd'
 import { isWebUrl } from '../lib/url'
 import { useRolesStore } from '../stores/roles'
@@ -889,7 +890,7 @@ function kindIcon(kind: string): string {
               <p class="static-value">{{ store.current.workflow.name }}</p>
               <p class="statuses">
                 <span v-for="(s, i) in store.current.workflow.statuses" :key="s.key">
-                  <span v-if="i > 0" class="sep" aria-hidden="true"> ─ </span>{{ s.name }}
+                  <span v-if="i > 0" class="sep" aria-hidden="true"> ─ </span>{{ statusLabel(s.key, s.name) }}
                 </span>
               </p>
             </template>
@@ -921,6 +922,7 @@ function kindIcon(kind: string): string {
         <!-- ── メンバータブ（5.9.2）─────────────────────────── -->
         <div v-else-if="tab === 'members'" class="blocks" role="tabpanel">
           <section class="block">
+            <div class="members-table-scroll">
             <table class="table">
               <thead>
                 <tr>
@@ -946,6 +948,7 @@ function kindIcon(kind: string): string {
                 </tr>
               </tbody>
             </table>
+            </div>
 
             <p class="count">{{ store.current.members.length }}{{ $ui('件') }}</p>
             <p class="hint">{{ $ui('ⓘ メンバーの追加・変更は「アカウント / 権限」から行います。') }}</p>
@@ -1508,6 +1511,9 @@ button:disabled {
 .table {
   width: 100%;
   border-collapse: collapse;
+}
+.members-table-scroll {
+  overflow-x: auto;
 }
 
 th {

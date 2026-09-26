@@ -187,7 +187,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureHead))
               class="role"
               :class="{ 'group-start': isGroupStart(i) }"
             >
-              {{ r.display_name }}
+              {{ rolesStore.roleLabel(r.key) }}
             </th>
           </tr>
         </thead>
