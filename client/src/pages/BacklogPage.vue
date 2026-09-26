@@ -1290,7 +1290,7 @@ function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolea
  * | 掴んでいる行 | 落としたときに起きること |
  * |---|---|
  * | 表示上の根 | その段の先頭／末尾へ動く（`move`）。段をまたいでもよい |
- * | インデントされた行 | **ルートになる**（`PATCH parent_seq: null`）。**バックログ段だけ** |
+ * | インデントされた行 | **その段のルートになる**（`move` で `parent_seq: null` と段・位置を同時に指定） |
  *
  * **インデントされた行に `position` を送らない。** その行は親の下で兄弟の端へ
  * 動くだけで、「その段の先頭／末尾へ」という表示と食い違う。**ルート化は
@@ -1308,15 +1308,11 @@ function canDropOnSection(sourceSeq: number | null, section: Section): boolean {
 /**
  * インデントされた行をこの段へ落として**ルートにできる**か（5.4）。
  *
- * **バックログ段だけである。** サーバは `parent_seq: null` と `staged` を同時に
- * 受け取れるが（`ApiDesign.md` 9.4.2）、**画面の落とし先は絞る**——ルートにする
- * のと段へ上げるのは別の判断であり、1回のドラッグに2つ込めると誤操作が戻し
- * にくい。**ルートになった行は `staged_at` が `NULL` のままなので、必ずバック
- * ログへ出る**（配下は親と一緒に運ばれていただけ。5.4「配下の行き先」）
- * ——落とし先と着地が一致する。
+ * サーバは `parent_seq: null` と `staged` を同時に受け取る（9.4.2）。
+ * 表示中の段なら、子をその段の根にできる。
  */
 function canUnparentInto(section: Section): boolean {
-  return section.stage === false
+  return section.stage !== undefined
 }
 
 /**
@@ -1537,13 +1533,14 @@ async function dropOnRow(e: DragEvent, row: Row, section: Section): Promise<void
   const from = tickets.value.findIndex((t) => t.seq === seq)
   if (from < 0) return
   const source = tickets.value[from]!
-  const stagedChange = stageChangeOf(source, section)
+  const unparenting = rowIndex.value.get(seq!)?.parentKey != null && row.parentKey === null
+  // 子の `staged_at` は親の段に居ても NULL になりうる。親を外す場合は
+  // 表示上の段を必ず明示し、着地先と実際の段を一致させる。
+  const stagedChange = unparenting ? section.stage : stageChangeOf(source, section)
 
   // **インデントされた行を根の並びへ落としたらルートにする**（5.4）。
   // **親と位置を `move` 1本で送る**（`ApiDesign.md` 9.4.2）——2本に分けると
   // 「ルートにはなったが位置は元のまま」が残りうる。
-  const unparenting = rowIndex.value.get(seq!)?.parentKey != null && row.parentKey === null
-
   const body: MoveTicketRequest =
     side === 'before' ? { before_seq: row.ticket.seq } : { after_seq: row.ticket.seq }
   if (stagedChange !== undefined) body.staged = stagedChange
@@ -1588,7 +1585,7 @@ async function dropOnSection(section: Section, position: 'first' | 'last'): Prom
   const source = rowIndex.value.get(seq!)?.ticket
   if (source === undefined || section.stage === undefined) return
 
-  const stagedChange = stageChangeOf(source, section)
+  const stagedChange = sourceIsChild ? section.stage : stageChangeOf(source, section)
   const body: MoveTicketRequest = { position }
   if (stagedChange !== undefined) body.staged = stagedChange
   // **インデントされた行はルートにして、その段の先頭／末尾へ置く**（5.4）。

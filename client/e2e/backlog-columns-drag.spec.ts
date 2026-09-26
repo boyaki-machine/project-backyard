@@ -46,7 +46,7 @@ async function mockBacklog(page: Page, moves: unknown[], items = rows) {
   })
 }
 
-test('列幅は全セクションへ反映される', async ({ page }, testInfo) => {
+test('列幅は全セクションへ反映され、子をオンステージの根へ移せる', async ({ page }, testInfo) => {
   const moves: unknown[] = []
   await page.setViewportSize({ width: 1366, height: 900 })
   await mockBacklog(page, moves)
@@ -70,6 +70,25 @@ test('列幅は全セクションへ反映される', async ({ page }, testInfo)
   expect(await scrollArea.evaluate((el) => el.scrollWidth)).toBeGreaterThan(await scrollArea.evaluate((el) => el.clientWidth))
   await page.screenshot({ path: testInfo.outputPath('backlog-1366.png'), fullPage: true })
 
+  await page.getByText('移動する子', { exact: true }).dragTo(page.locator('.group-section').first().locator('.section-head'))
+  await expect.poll(() => moves.length).toBe(1)
+  expect(moves[0]).toMatchObject({ parent_seq: null, staged: true, position: 'first' })
+
   await page.setViewportSize({ width: 1024, height: 900 })
   await page.screenshot({ path: testInfo.outputPath('backlog-1024.png'), fullPage: true })
+})
+
+test('オンステージ配下の子をバックログの根へ移せる', async ({ page }) => {
+  const moves: unknown[] = []
+  const items = [
+    ticket(1, 'バックログの根', null, null),
+    ticket(2, 'オンステージの根', null, '2026-09-01T00:00:00Z'),
+    ticket(3, '移動する子', 2, null),
+  ]
+  await mockBacklog(page, moves, items)
+  await page.goto('/p/demo/backlog')
+  await expect(page.locator('.group-section').first().locator('.row')).toHaveCount(2)
+  await page.getByText('移動する子', { exact: true }).dragTo(page.locator('.group-section').last().locator('.section-head'))
+  await expect.poll(() => moves.length).toBe(1)
+  expect(moves[0]).toMatchObject({ parent_seq: null, staged: false, position: 'first' })
 })
