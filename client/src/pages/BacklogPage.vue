@@ -130,6 +130,54 @@ const detailSeq = computed<number | null>(() => {
  */
 const shrunk = computed(() => detailSeq.value !== null)
 
+type ColumnKey = 'grip' | 'id' | 'title' | 'status' | 'priority' | 'assignee' | 'due'
+const columnKeys: ColumnKey[] = ['grip', 'id', 'title', 'status', 'priority', 'assignee', 'due']
+const columnMinimums: Record<ColumnKey, number> = {
+  grip: 48, id: 90, title: 160, status: 80, priority: 48, assignee: 100, due: 90,
+}
+const columnWidths = ref<Record<ColumnKey, number> | null>(null)
+const resizedTableWidth = computed(() => columnWidths.value
+  ? columnKeys.reduce((sum, key) => sum + columnWidths.value![key], 0)
+  : null)
+let stopColumnResize: (() => void) | null = null
+
+function startColumnResize(event: PointerEvent, key: ColumnKey): void {
+  if (shrunk.value) return
+  const table = (event.currentTarget as HTMLElement).closest('table')
+  if (!table) return
+  event.preventDefault()
+  event.stopPropagation()
+  stopColumnResize?.()
+  if (!columnWidths.value) {
+    const widths = {} as Record<ColumnKey, number>
+    for (const column of columnKeys) {
+      const head = table.querySelector<HTMLElement>(`th[data-column="${column}"]`)
+      if (!head) return
+      widths[column] = head.getBoundingClientRect().width
+    }
+    columnWidths.value = widths
+  }
+  const startX = event.clientX
+  const startWidth = columnWidths.value[key]
+  const move = (e: PointerEvent) => {
+    columnWidths.value = {
+      ...columnWidths.value!,
+      [key]: Math.max(columnMinimums[key], Math.round(startWidth + e.clientX - startX)),
+    }
+  }
+  const stop = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', stop)
+    window.removeEventListener('pointercancel', stop)
+    stopColumnResize = null
+  }
+  stopColumnResize = stop
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', stop)
+  window.addEventListener('pointercancel', stop)
+}
+onUnmounted(() => stopColumnResize?.())
+
 /** 狭い一覧では検索以外のフィルタを畳む（5.4）。押すと2行目に開く */
 const filtersOpen = ref(false)
 
@@ -2244,7 +2292,11 @@ watch(projectKey, (key) => {
           </div>
 
           <template v-if="(searching || !collapsed.has(section.key))">
-            <table v-if="section.rows.length > 0" class="table">
+            <div v-if="section.rows.length > 0" class="table-scroll">
+            <table class="table" :style="!shrunk && resizedTableWidth !== null ? { width: `${resizedTableWidth}px` } : undefined">
+              <colgroup v-if="!shrunk && columnWidths">
+                <col v-for="key in columnKeys" :key="key" :style="{ width: `${columnWidths[key]}px` }" />
+              </colgroup>
               <thead>
                 <tr>
                   <!-- 縮小中は `⠿` 列を出さない（5.4「詳細を開いているときの一覧」）
@@ -2253,6 +2305,7 @@ watch(projectKey, (key) => {
                     v-if="!shrunk"
                     scope="col"
                     class="grip-col"
+                    data-column="grip"
                     :aria-sort="ariaSort('sort_key')"
                   >
                     <!-- `⠿` 列のヘッダが `sort_key` へ戻すボタンを兼ねる（5.4） -->
@@ -2265,12 +2318,14 @@ watch(projectKey, (key) => {
                     >
                       ⠿
                     </button>
+                    <span class="column-resize" role="separator" :aria-label="$ui('並び替え列の幅を変更')" @pointerdown="startColumnResize($event, 'grip')" @click.stop></span>
                   </th>
                   <!-- **`table-layout: fixed` は先頭行のセルで列幅が決まる。**
                        縮小中の追加幅は `<td>` ではなくここへ書かないと効かない -->
                   <th
                     scope="col"
                     class="id-col"
+                    data-column="id"
                     :class="{ 'with-gutter': shrunk }"
                     :aria-sort="ariaSort('seq')"
                   >
@@ -2280,18 +2335,21 @@ watch(projectKey, (key) => {
                         sort === 'seq' ? (order === 'asc' ? '▴' : '▾') : ''
                       }}</span>
                     </button>
+                    <span v-if="!shrunk" class="column-resize" role="separator" :aria-label="$ui('ID列の幅を変更')" @pointerdown="startColumnResize($event, 'id')" @click.stop></span>
                   </th>
-                  <th scope="col" :aria-sort="ariaSort('title')">
+                  <th scope="col" data-column="title" :aria-sort="ariaSort('title')">
                     <button type="button" class="sort" @click="sortBy('title')"> {{ $ui('タイトル') }} <span class="caret" aria-hidden="true">{{
                         sort === 'title' ? (order === 'asc' ? '▴' : '▾') : ''
                       }}</span>
                     </button>
+                    <span v-if="!shrunk" class="column-resize" role="separator" :aria-label="$ui('タイトル列の幅を変更')" @pointerdown="startColumnResize($event, 'title')" @click.stop></span>
                   </th>
-                  <th scope="col" class="status-col" :aria-sort="ariaSort('status')">
+                  <th scope="col" class="status-col" data-column="status" :aria-sort="ariaSort('status')">
                     <button type="button" class="sort" @click="sortBy('status')"> {{ $ui('状態') }} <span class="caret" aria-hidden="true">{{
                         sort === 'status' ? (order === 'asc' ? '▴' : '▾') : ''
                       }}</span>
                     </button>
+                    <span v-if="!shrunk" class="column-resize" role="separator" :aria-label="$ui('状態列の幅を変更')" @pointerdown="startColumnResize($event, 'status')" @click.stop></span>
                   </th>
                   <!-- 優先・担当・期限は縮小中に落とす（5.4）。**いずれも詳細側に
                        出ているもの**で、残すのは「次にどれを開くか」を決めるのに
@@ -2300,20 +2358,23 @@ watch(projectKey, (key) => {
                     v-if="!shrunk"
                     scope="col"
                     class="priority-col"
+                    data-column="priority"
                     :aria-sort="ariaSort('priority')"
                   >
                     <button type="button" class="sort" @click="sortBy('priority')"> {{ $ui('優先') }} <span class="caret" aria-hidden="true">{{
                         sort === 'priority' ? (order === 'asc' ? '▴' : '▾') : ''
                       }}</span>
                     </button>
+                    <span class="column-resize" role="separator" :aria-label="$ui('優先列の幅を変更')" @pointerdown="startColumnResize($event, 'priority')" @click.stop></span>
                   </th>
                   <!-- 担当だけソートできない（`ApiDesign.md` 9.2.1 の sort に無い） -->
-                  <th v-if="!shrunk" scope="col" class="assignee-col">{{ $ui('担当') }}</th>
-                  <th v-if="!shrunk" scope="col" class="due-col" :aria-sort="ariaSort('due_date')">
+                  <th v-if="!shrunk" scope="col" class="assignee-col" data-column="assignee">{{ $ui('担当') }}<span class="column-resize" role="separator" :aria-label="$ui('担当列の幅を変更')" @pointerdown="startColumnResize($event, 'assignee')" @click.stop></span></th>
+                  <th v-if="!shrunk" scope="col" class="due-col" data-column="due" :aria-sort="ariaSort('due_date')">
                     <button type="button" class="sort" @click="sortBy('due_date')"> {{ $ui('期限') }} <span class="caret" aria-hidden="true">{{
                         sort === 'due_date' ? (order === 'asc' ? '▴' : '▾') : ''
                       }}</span>
                     </button>
+                    <span class="column-resize" role="separator" :aria-label="$ui('期限列の幅を変更')" @pointerdown="startColumnResize($event, 'due')" @click.stop></span>
                   </th>
                 </tr>
               </thead>
@@ -2521,6 +2582,7 @@ watch(projectKey, (key) => {
                 </tr>
               </tbody>
             </table>
+            </div>
 
             <!-- 空の段（5.4）。**見出しごと消さない**——落とし場所が無くなると、
                  最初の1件をオンステージへ上げられない -->
@@ -2779,6 +2841,38 @@ watch(projectKey, (key) => {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.table th {
+  position: relative;
+}
+
+.column-resize {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.column-resize::after {
+  content: '';
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  right: 3px;
+  border-right: 1px solid var(--pb-border);
+}
+
+.column-resize:hover::after {
+  border-color: var(--pb-accent);
 }
 
 .table th,
