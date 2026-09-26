@@ -2475,6 +2475,12 @@ func (q *fakeQuerier) UpdateTicket(_ context.Context, arg gen.UpdateTicketParams
 	if arg.ActualHoursSet {
 		row.ActualHours = arg.ActualHours
 	}
+	if arg.ActualPointSet {
+		row.ActualPoint = arg.ActualPoint
+	}
+	if arg.ActualPointVersionSet {
+		row.ActualPointVersion = arg.ActualPointVersion
+	}
 	if arg.StartDateSet {
 		row.StartDate = arg.StartDate
 	}

@@ -152,6 +152,7 @@ const emit = defineEmits<{
 const auth = useAuthStore()
 
 const canEdit = computed(() => auth.canInProject(props.projectKey, 'ticket.edit'))
+const canEditActualPoint = computed(() => auth.canInProject(props.projectKey, 'ticket.actual_point.edit'))
 const canAssign = computed(() => auth.canInProject(props.projectKey, 'ticket.assign'))
 const canTransition = computed(() => auth.canInProject(props.projectKey, 'ticket.transition'))
 const canDelete = computed(() => auth.canInProject(props.projectKey, 'ticket.delete'))
@@ -205,6 +206,7 @@ type EditField =
   | 'title'
   | 'body_md'
   | 'estimate_point'
+  | 'actual_point'
   | 'estimate_hours'
   | 'actual_hours'
   | 'start_date'
@@ -225,6 +227,7 @@ function scopeKeyOf(field: ScopeField): ScopeKey {
 
 const editing = ref<EditField | null>(null)
 const draft = ref('')
+const draftVersion = ref('actual-v0')
 /** 失敗した欄と、その直下に出すサーバの `message`（5.5 / 6.4） */
 const fieldError = ref<{ field: string; message: string } | null>(null)
 
@@ -244,6 +247,7 @@ function currentText(field: EditField): string {
 
 async function startEdit(field: EditField): Promise<void> {
   if (!canEdit.value || busy.value) return
+  if (field === 'actual_point' && !canEditActualPoint.value) return
   // 別の欄を開いていたら、そちらは保存してから移る（5.5「別の領域をクリック」）
   if (editing.value !== null && editing.value !== field) {
     await commitEdit()
@@ -251,6 +255,7 @@ async function startEdit(field: EditField): Promise<void> {
   }
   editing.value = field
   draft.value = currentText(field)
+  if (field === 'actual_point') draftVersion.value = ticket.value?.actual_point_version ?? 'actual-v0'
   fieldError.value = null
   await nextTick()
   if (field === 'body_md') editorRef.value?.focus()
@@ -328,6 +333,21 @@ async function commitEdit(): Promise<void> {
       return
     }
     await save({ scope: next }, field)
+    return
+  }
+
+  if (field === 'actual_point') {
+    const n = numberOrNull(raw)
+    if (n === undefined) {
+      fieldError.value = { field, message: uiText('数値で入力してください') }
+      return
+    }
+    const version = n === null ? null : draftVersion.value.trim()
+    if (n === ticket.value.actual_point && version === ticket.value.actual_point_version) {
+      cancelEdit()
+      return
+    }
+    await save({ actual_point: n, actual_point_version: version }, field)
     return
   }
 
@@ -1698,6 +1718,22 @@ function errorFor(field: string): string {
           </div>
 
           <div class="meta-item">
+            <dt>{{ $ui('実績（ポイント）') }}</dt>
+            <dd>
+              <div v-if="editing === 'actual_point'" class="actual-point-editor">
+                <input ref="inputRef" v-model="draft" type="number" min="0" step="1" :aria-label="$ui('実績（ポイント）')" @keydown.escape="cancelEdit" />
+                <input v-model="draftVersion" type="text" :aria-label="$ui('算出式の版')" placeholder="actual-v0" @keydown.escape="cancelEdit" @keydown.enter="onEnterCommit($event, commitEdit)" />
+                <button type="button" :disabled="busy" @click="commitEdit">{{ $ui('保存') }}</button>
+                <button type="button" :disabled="busy" @click="cancelEdit">{{ $ui('取消') }}</button>
+              </div>
+              <button v-else type="button" class="value-view" :disabled="!canEdit || !canEditActualPoint" @click="startEdit('actual_point')">
+                {{ num(ticket.actual_point, 'pt') }}<span v-if="ticket.actual_point_version" class="muted">（{{ ticket.actual_point_version }}）</span>
+              </button>
+              <p v-if="errorFor('actual_point')" class="field-error" role="alert">{{ errorFor('actual_point') }}</p>
+            </dd>
+          </div>
+
+          <div class="meta-item">
             <dt>{{ $ui('見積（時間）') }}</dt>
             <dd>
               <input
@@ -2382,6 +2418,14 @@ function errorFor(field: string): string {
   gap: var(--pb-space-2);
   min-width: 0;
 }
+
+.actual-point-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pb-space-1);
+}
+.actual-point-editor input[type="number"] { width: 5em; }
+.actual-point-editor input[type="text"] { width: 8em; }
 
 /* タグは行いっぱいを使う。数が読めないので1列に押し込むと折り返しが荒れる */
 .meta-item.wide {

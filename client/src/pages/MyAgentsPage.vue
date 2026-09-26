@@ -198,10 +198,14 @@ const newExpiresInDays = ref<number>(90)
  * 付いているかで決まる」と定めており、押さなければ既定のまま（4.5.9）になる。
  */
 const allowDocEdit = ref(false)
+const allowActualPointEdit = ref(false)
 
 /** 「追加の権限」を押せるか。既定が引けていて、足せるものに `doc.edit` があるとき */
 const canAllowDocEdit = computed(
   () => agentScopes.value !== null && agentScopes.value.grantable.includes('doc.edit'),
+)
+const canAllowActualPointEdit = computed(
+  () => agentScopes.value !== null && agentScopes.value.grantable.includes('ticket.actual_point.edit'),
 )
 
 /** 1回だけ出す発行結果。閉じると二度と出せない（4.5.3） */
@@ -227,6 +231,7 @@ function openIssue(agent: MyAgent) {
   // **毎回外す。** 前に発行したときの選択を引き継ぐと、憲章を編集できる
   // トークンが気づかないうちに配られる。
   allowDocEdit.value = false
+  allowActualPointEdit.value = false
   issueError.value = null
 }
 
@@ -242,7 +247,13 @@ async function issueToken() {
     const scopes = agentScopes.value
     const token = await meApi.issueAgentToken(target.id, {
       expires_in_days: newExpiresInDays.value,
-      ...(allowDocEdit.value && scopes ? { scopes: [...scopes.default, 'doc.edit'] } : {}),
+      ...((allowDocEdit.value || allowActualPointEdit.value) && scopes ? {
+        scopes: [
+          ...scopes.default,
+          ...(allowDocEdit.value ? ['doc.edit'] : []),
+          ...(allowActualPointEdit.value ? ['ticket.actual_point.edit'] : []),
+        ],
+      } : {}),
     })
     issueTarget.value = null
     // **先に平文を出す。** 一覧の読み直しが失敗しても、二度と出せない値を
@@ -624,7 +635,7 @@ function subtitle(agent: MyAgent): string {
           <span v-else class="hint">{{ newExpiryDate }} {{ $ui('まで有効です。') }}</span>
         </fieldset>
 
-        <!-- **追加の権限は `doc.edit` の1件だけ**（4.5.3 の許可リスト。手順26a）。
+        <!-- **追加の権限は `doc.edit` と `ticket.actual_point.edit`**（4.5.3 の許可リスト。手順26a）。
              既定は外す——`Design.md` 6.5 が「載せるかはそのエージェントが誰に
              付いているかで決まる」と定めており、押さなければ既定のまま（4.5.9）になる。
              **既定が引けなかったら押せなくする**（`GuiDesign.md` 5.8.2）
@@ -634,6 +645,10 @@ function subtitle(agent: MyAgent): string {
           <label class="check">
             <input v-model="allowDocEdit" type="checkbox" :disabled="issuing || !canAllowDocEdit" />
             <span>{{ $ui('プロジェクト文書の編集を許す') }}</span>
+          </label>
+          <label class="check">
+            <input v-model="allowActualPointEdit" type="checkbox" :disabled="issuing || !canAllowActualPointEdit" />
+            <span>{{ $ui('実績ポイントの記録を許す') }}</span>
           </label>
           <span v-if="!canAllowDocEdit" class="detail">{{ $ui('既定の権限を読み込めなかったため、いまは選べません。画面を開き直してください。') }}</span>
           <span v-else class="hint">{{ $ui('憲章を書き換えられるようになります。') }}</span>

@@ -339,6 +339,8 @@ SELECT
   t.estimate_point,
   t.estimate_hours,
   t.actual_hours,
+  t.actual_point,
+  t.actual_point_version,
   t.start_date,
   t.due_date,
   t.closed_at,
@@ -368,43 +370,45 @@ type GetTicketBySeqParams struct {
 }
 
 type GetTicketBySeqRow struct {
-	ID               string
-	Seq              int32
-	Type             string
-	Title            string
-	BodyMd           pgtype.Text
-	StatusKey        string
-	StatusName       pgtype.Text
-	StatusCategory   pgtype.Text
-	Priority         pgtype.Text
-	AssigneeID       pgtype.Text
-	AssigneeKind     pgtype.Text
-	AssigneeName     pgtype.Text
-	ReporterID       pgtype.Text
-	ReporterKind     pgtype.Text
-	ReporterName     pgtype.Text
-	WorkingAgentID   pgtype.Text
-	WorkingAgentKind pgtype.Text
-	WorkingAgentName pgtype.Text
-	ParentSeq        pgtype.Int4
-	HasChildren      bool
-	StagedAt         pgtype.Timestamptz
-	SortKey          pgtype.Text
-	SprintID         pgtype.Text
-	SprintName       pgtype.Text
-	EstimatePoint    pgtype.Float8
-	EstimateHours    pgtype.Float8
-	ActualHours      pgtype.Float8
-	StartDate        pgtype.Date
-	DueDate          pgtype.Date
-	ClosedAt         pgtype.Timestamptz
-	Version          int32
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	ExecutionMode    string
-	Readiness        pgtype.Text
-	ReadinessNote    pgtype.Text
-	Scope            []byte
+	ID                 string
+	Seq                int32
+	Type               string
+	Title              string
+	BodyMd             pgtype.Text
+	StatusKey          string
+	StatusName         pgtype.Text
+	StatusCategory     pgtype.Text
+	Priority           pgtype.Text
+	AssigneeID         pgtype.Text
+	AssigneeKind       pgtype.Text
+	AssigneeName       pgtype.Text
+	ReporterID         pgtype.Text
+	ReporterKind       pgtype.Text
+	ReporterName       pgtype.Text
+	WorkingAgentID     pgtype.Text
+	WorkingAgentKind   pgtype.Text
+	WorkingAgentName   pgtype.Text
+	ParentSeq          pgtype.Int4
+	HasChildren        bool
+	StagedAt           pgtype.Timestamptz
+	SortKey            pgtype.Text
+	SprintID           pgtype.Text
+	SprintName         pgtype.Text
+	EstimatePoint      pgtype.Float8
+	EstimateHours      pgtype.Float8
+	ActualHours        pgtype.Float8
+	ActualPoint        pgtype.Float8
+	ActualPointVersion pgtype.Text
+	StartDate          pgtype.Date
+	DueDate            pgtype.Date
+	ClosedAt           pgtype.Timestamptz
+	Version            int32
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	ExecutionMode      string
+	Readiness          pgtype.Text
+	ReadinessNote      pgtype.Text
+	Scope              []byte
 }
 
 // ── 詳細（ApiDesign.md 9.5.1。手順16b では POST の応答にだけ使う）────
@@ -441,6 +445,8 @@ func (q *Queries) GetTicketBySeq(ctx context.Context, arg GetTicketBySeqParams) 
 		&i.EstimatePoint,
 		&i.EstimateHours,
 		&i.ActualHours,
+		&i.ActualPoint,
+		&i.ActualPointVersion,
 		&i.StartDate,
 		&i.DueDate,
 		&i.ClosedAt,
@@ -839,6 +845,8 @@ filtered AS (
     t.estimate_point,
     t.estimate_hours,
     t.actual_hours,
+    t.actual_point,
+    t.actual_point_version,
     t.start_date,
     t.due_date,
     t.closed_at,
@@ -987,11 +995,11 @@ backlog_matches AS (
    WHERE p.project_id = $5::pg_catalog.bpchar
 ),
 search_filtered AS (
-  SELECT f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at FROM filtered f
+  SELECT f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.actual_point, f.actual_point_version, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at FROM filtered f
    WHERE NOT $26::boolean OR f.id IN (SELECT id FROM backlog_matches)
 )
 SELECT
-  f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at,
+  f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.actual_point, f.actual_point_version, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at,
   count(*) OVER ()                        AS total,
   (max(f.updated_at) OVER ())::timestamptz AS last_updated_at
 FROM search_filtered f
@@ -1069,41 +1077,43 @@ type ListTicketsParams struct {
 }
 
 type ListTicketsRow struct {
-	ID               string
-	Seq              int32
-	Type             string
-	Title            string
-	StatusKey        string
-	StatusName       pgtype.Text
-	StatusCategory   pgtype.Text
-	StatusSortOrder  pgtype.Int4
-	Priority         pgtype.Text
-	AssigneeID       pgtype.Text
-	AssigneeKind     pgtype.Text
-	AssigneeName     pgtype.Text
-	ReporterID       pgtype.Text
-	ReporterKind     pgtype.Text
-	ReporterName     pgtype.Text
-	WorkingAgentID   pgtype.Text
-	WorkingAgentKind pgtype.Text
-	WorkingAgentName pgtype.Text
-	ParentSeq        pgtype.Int4
-	HasChildren      bool
-	SortKey          pgtype.Text
-	StagedAt         pgtype.Timestamptz
-	SprintID         pgtype.Text
-	SprintName       pgtype.Text
-	EstimatePoint    pgtype.Float8
-	EstimateHours    pgtype.Float8
-	ActualHours      pgtype.Float8
-	StartDate        pgtype.Date
-	DueDate          pgtype.Date
-	ClosedAt         pgtype.Timestamptz
-	Version          int32
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	Total            int64
-	LastUpdatedAt    pgtype.Timestamptz
+	ID                 string
+	Seq                int32
+	Type               string
+	Title              string
+	StatusKey          string
+	StatusName         pgtype.Text
+	StatusCategory     pgtype.Text
+	StatusSortOrder    pgtype.Int4
+	Priority           pgtype.Text
+	AssigneeID         pgtype.Text
+	AssigneeKind       pgtype.Text
+	AssigneeName       pgtype.Text
+	ReporterID         pgtype.Text
+	ReporterKind       pgtype.Text
+	ReporterName       pgtype.Text
+	WorkingAgentID     pgtype.Text
+	WorkingAgentKind   pgtype.Text
+	WorkingAgentName   pgtype.Text
+	ParentSeq          pgtype.Int4
+	HasChildren        bool
+	SortKey            pgtype.Text
+	StagedAt           pgtype.Timestamptz
+	SprintID           pgtype.Text
+	SprintName         pgtype.Text
+	EstimatePoint      pgtype.Float8
+	EstimateHours      pgtype.Float8
+	ActualHours        pgtype.Float8
+	ActualPoint        pgtype.Float8
+	ActualPointVersion pgtype.Text
+	StartDate          pgtype.Date
+	DueDate            pgtype.Date
+	ClosedAt           pgtype.Timestamptz
+	Version            int32
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	Total              int64
+	LastUpdatedAt      pgtype.Timestamptz
 }
 
 // チケットに関するクエリ（DbDesign.md 6.6、ApiDesign.md 9.2 / 9.3 / 9.4）。
@@ -1246,6 +1256,8 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 			&i.EstimatePoint,
 			&i.EstimateHours,
 			&i.ActualHours,
+			&i.ActualPoint,
+			&i.ActualPointVersion,
 			&i.StartDate,
 			&i.DueDate,
 			&i.ClosedAt,
@@ -1601,51 +1613,57 @@ UPDATE ticket SET
   estimate_point = CASE WHEN $13::boolean THEN $14 ELSE estimate_point END,
   estimate_hours = CASE WHEN $15::boolean THEN $16 ELSE estimate_hours END,
   actual_hours   = CASE WHEN $17::boolean   THEN $18   ELSE actual_hours END,
-  start_date     = CASE WHEN $19::boolean     THEN $20     ELSE start_date END,
-  due_date       = CASE WHEN $21::boolean       THEN $22       ELSE due_date END,
+  actual_point   = CASE WHEN $19::boolean   THEN $20   ELSE actual_point END,
+  actual_point_version = CASE WHEN $21::boolean THEN $22 ELSE actual_point_version END,
+  start_date     = CASE WHEN $23::boolean     THEN $24     ELSE start_date END,
+  due_date       = CASE WHEN $25::boolean       THEN $26       ELSE due_date END,
   -- 9.5.2 で開けた4項目（手順27）。**execution_mode と scope は NOT NULL** なので
   -- COALESCE で足りる（null を送れば 422 で先に落ちる）。readiness と
   -- readiness_note は null が「未判定へ戻す」を表すので _set の形が要る。
-  execution_mode = COALESCE($23, execution_mode),
-  readiness      = CASE WHEN $24::boolean      THEN $25      ELSE readiness END,
-  readiness_note = CASE WHEN $26::boolean THEN $27 ELSE readiness_note END,
-  scope          = COALESCE($28, scope),
+  execution_mode = COALESCE($27, execution_mode),
+  readiness      = CASE WHEN $28::boolean      THEN $29      ELSE readiness END,
+  readiness_note = CASE WHEN $30::boolean THEN $31 ELSE readiness_note END,
+  scope          = COALESCE($32, scope),
   version        = version + 1
-WHERE project_id = $29 AND seq = $30 AND version = $31
+WHERE project_id = $33 AND seq = $34 AND version = $35
 `
 
 type UpdateTicketParams struct {
-	Type              pgtype.Text
-	Title             pgtype.Text
-	BodyMdSet         bool
-	BodyMd            pgtype.Text
-	PrioritySet       bool
-	Priority          pgtype.Text
-	AssigneeIDSet     bool
-	AssigneeID        pgtype.Text
-	WorkingAgentIDSet bool
-	WorkingAgentID    pgtype.Text
-	ParentIDSet       bool
-	ParentID          pgtype.Text
-	EstimatePointSet  bool
-	EstimatePoint     pgtype.Float8
-	EstimateHoursSet  bool
-	EstimateHours     pgtype.Float8
-	ActualHoursSet    bool
-	ActualHours       pgtype.Float8
-	StartDateSet      bool
-	StartDate         pgtype.Date
-	DueDateSet        bool
-	DueDate           pgtype.Date
-	ExecutionMode     pgtype.Text
-	ReadinessSet      bool
-	Readiness         pgtype.Text
-	ReadinessNoteSet  bool
-	ReadinessNote     pgtype.Text
-	Scope             []byte
-	ProjectID         string
-	Seq               int32
-	Version           int32
+	Type                  pgtype.Text
+	Title                 pgtype.Text
+	BodyMdSet             bool
+	BodyMd                pgtype.Text
+	PrioritySet           bool
+	Priority              pgtype.Text
+	AssigneeIDSet         bool
+	AssigneeID            pgtype.Text
+	WorkingAgentIDSet     bool
+	WorkingAgentID        pgtype.Text
+	ParentIDSet           bool
+	ParentID              pgtype.Text
+	EstimatePointSet      bool
+	EstimatePoint         pgtype.Float8
+	EstimateHoursSet      bool
+	EstimateHours         pgtype.Float8
+	ActualHoursSet        bool
+	ActualHours           pgtype.Float8
+	ActualPointSet        bool
+	ActualPoint           pgtype.Float8
+	ActualPointVersionSet bool
+	ActualPointVersion    pgtype.Text
+	StartDateSet          bool
+	StartDate             pgtype.Date
+	DueDateSet            bool
+	DueDate               pgtype.Date
+	ExecutionMode         pgtype.Text
+	ReadinessSet          bool
+	Readiness             pgtype.Text
+	ReadinessNoteSet      bool
+	ReadinessNote         pgtype.Text
+	Scope                 []byte
+	ProjectID             string
+	Seq                   int32
+	Version               int32
 }
 
 // ── 更新・削除・遷移（ApiDesign.md 9.5.2 / 9.5.3 / 9.6。手順17a）──────
@@ -1690,6 +1708,10 @@ func (q *Queries) UpdateTicket(ctx context.Context, arg UpdateTicketParams) (int
 		arg.EstimateHours,
 		arg.ActualHoursSet,
 		arg.ActualHours,
+		arg.ActualPointSet,
+		arg.ActualPoint,
+		arg.ActualPointVersionSet,
+		arg.ActualPointVersion,
 		arg.StartDateSet,
 		arg.StartDate,
 		arg.DueDateSet,

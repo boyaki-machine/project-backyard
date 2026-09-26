@@ -745,7 +745,7 @@ type VerifiedIdentity struct {
 
 ### 6.4.2 権限カタログ
 
-権限をコードのif文ではなく**データとして定義**する（原則5）。カタログは32件（0010 の28件に、0017 の `doc.view` / `doc.edit`、0027 の `ticket.reference.edit`、0029 の `ticket.self_edit` を足したもの）。`DbDesign.md` 7.2（0010）・8.1.4（0017）・6.12.1（0027）・6.13（0029）のシードが正本。
+権限をコードのif文ではなく**データとして定義**する（原則5）。カタログは33件（0010 の28件に、0017 の `doc.view` / `doc.edit`、0027 の `ticket.reference.edit`、0029 の `ticket.self_edit`、0044 の `ticket.actual_point.edit` を足したもの）。`DbDesign.md` 7.2（0010）・8.1.4（0017）・6.12.1（0027）・6.13（0029）のシードが正本。
 
 | カテゴリ | 権限キー |
 |---|---|
@@ -831,7 +831,7 @@ GET /api/v1/me
 | **権限** | **所有者から導く（委譲）。** 下の式を参照 |
 | トークン | `access_token(token_type='agent')`。プロジェクトスコープ必須、有効期限必須。接頭辞は `pb_agt_` |
 | 発行 | **本人が自分の設定から**（`/me/agents`。`ApiDesign.md` 4.5、`Requirements.md` 10.9.1 系統B）。**発行時に一度だけ全文表示** |
-| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run` `ticket.reference.edit` `ticket.self_edit`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit` だけを足せる**（`ApiDesign.md` 4.5.3 の許可リスト） |
+| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run` `ticket.reference.edit` `ticket.self_edit`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit` と `ticket.actual_point.edit` を足せる**（`ApiDesign.md` 4.5.3 の許可リスト） |
 | 禁止 | `ticket.close`、`knowledge` の直接更新、他プロジェクトへのアクセス。`doc.edit` は既定では与えず、発行時に追加できる |
 | 信頼度 | `agent.trust_level` に応じて既定スコープを段階的に拡大（`Requirements.md` 10.10.3）。**実績の供給源が構想のため、既定値のまま使わない** |
 | 失効 | 本人と管理画面から即時失効。サーキットブレーカー作動時は自動失効も選択可 |
@@ -855,7 +855,7 @@ GET /api/v1/me
 
 **`doc.edit` は既定に入れないが、発行時に足せる。** `pb_put_doc` にこの権限が要る（8.2）が、載せるかは**そのエージェントが誰に付いているか**で決まる——PM のエージェントは持ち、実装だけを行うエージェントは持たない。**そもそも所有者が `doc.edit` を持たなければ、スコープに書いても積で消える**（持つのは `project_admin` だけである。`DbDesign.md` 8.1.4）。
 
-**発行の口は許可リスト（既定 ∪ `doc.edit`）を受ける**（`ApiDesign.md` 4.5.3）。本節の「誰に付いているかで決まる」を、発行時に表せる。**`ticket.close` は許可リストにも入れない**——本節の禁止のうち、`doc.edit` だけが「決まる」と書かれている。
+**発行の口は許可リスト（既定 ∪ `doc.edit` ∪ `ticket.actual_point.edit`）を受ける**（`ApiDesign.md` 4.5.3）。本節の「誰に付いているかで決まる」を、発行時に表せる。**`ticket.close` は許可リストにも入れない**——本節の禁止のうち、`doc.edit` だけが「決まる」と書かれている。
 
 **`agent.run` を既定に含める。** `DbDesign.md` 8.2.6 で `operator` / `project_member` / `project_viewer` へ配り直しており、所有者が持つ権限になった。
 
@@ -1444,7 +1444,7 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 | ツール | 引数 | 叩く REST | 応答 |
 |---|---|---|---|
 | `pb_create_ticket` | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?`, `tag_ids?`, `estimate_point?`, `estimate_hours?`, `start_date?`, `due_date?` | `POST /projects/:key/tickets` | **要点だけ**（`id` / `seq` / `status` / `version` / `parent_seq`） |
-| `pb_update_ticket` | `seq`, ＋ 上の任意引数から **`type` を除いたもの**（**送ったものだけ更新**） | `PATCH /projects/:key/tickets/:seq` | **要点だけ**（`seq` / `status` / `version` / `updated_at`） |
+| `pb_update_ticket` | `seq`, ＋ 上の任意引数から **`type` を除いたもの**、`actual_point` と `actual_point_version` の対（**送ったものだけ更新**） | `PATCH /projects/:key/tickets/:seq` | **要点だけ**（`seq` / `status` / `version` / `updated_at`） |
 | `pb_put_dod` | `seq`, `add?[]`, `update?[]`, `delete?[]` | 9.9 の `POST` / `PATCH` / `DELETE` | 9.9 の一覧をそのまま |
 | `pb_list_tags` | （なし） | `GET /projects/:key/tags` | 9.11 の一覧をそのまま |
 | `pb_create_doc` | `slug`, `title`, `parent_path?`, `body_md?`, `sort_order?` | `POST /projects/:key/docs` | **要点だけ**（`path` / `version` / `updated_at`） |

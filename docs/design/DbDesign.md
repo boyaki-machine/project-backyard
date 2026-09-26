@@ -864,6 +864,12 @@ CREATE TABLE ticket (
   estimate_point double precision,
   estimate_hours double precision,
   actual_hours   double precision,
+  actual_point   double precision,          -- 0044。ポイント単位の実績
+  actual_point_version text,                -- 0044。例: actual-v0
+  CONSTRAINT ck_ticket_actual_point CHECK (
+    (actual_point IS NULL AND actual_point_version IS NULL)
+    OR (actual_point >= 0 AND actual_point_version ~ '^actual-v[0-9]+$')
+  ),
 
   start_date     date,
   due_date       date,
@@ -1371,6 +1377,10 @@ ON CONFLICT DO NOTHING;
 **`working_agent_id` を開けないのは、あれが自己申告の欄だからである**（6.6）。遷移の副作用として自動で立つので（`ApiDesign.md` 9.6）、書く経路をもう1つ作る理由が無い。**`actual_hours` は `pb_submit_result` の `cost` と二重になる**ため開けない。**`sprint_id` は 0028 以降どの経路からも書けない**（9.5.2 の `use_sprint_endpoint`）。
 
 **DoD は `body` の追加・編集・削除までで、`is_satisfied` は開けない**（`ApiDesign.md` 9.9）。**`pb_submit_result` が「盤面を動かさない」と決めた判断と正面からぶつかる**ためで、完了の判定は人が行う。
+
+**0044 の `ticket.actual_point.edit` は実績ポイントと算出式の版だけを更新する追加権限である。** `project_admin` と `administrator` に配り、PM のエージェントは発行時にこの scope を選べる。通常の `ticket.self_edit` や `ticket.edit` だけでは書けない。2項目は対で更新し、DB の CHECK で非負値と `actual-v<番号>` の版を保証する。
+
+**0044 は既存の reference コメント「実績 v0（たたき台）」の JSON から移す。** `method = actual-v0` と数値の `point` を採り、`point = null` は空欄のまま残す。stg で移行前に123件を確認し、114件が数値、9件が null だった。コメントは根拠として保持する。
 
 **`ticket.self_edit` は `ticket.edit` の部分集合であって、上位ではない。** `ticket.edit` を持つ人は本表の「開ける」側も当然に編集でき、**画面の振る舞いは何も変わらない。**
 
@@ -2219,12 +2229,18 @@ make dev-info    # URL とデモアカウント一覧を表示
                           operator の権限を閲覧・出力・MCP 接続に絞る（6.20）
   0041_revoke_agent_api_tokens.sql
                           エージェント名義の不整合な資格情報を失効（6.21）
+  0042_document_pack_mode.sql
+                          文書ごとのコンテキストパック掲載方法（8.1.1）
+  0043_project_management_note_template.sql
+                          新規プロジェクト向け規約案内と運営ノート（8.1.2）
+  0044_ticket_actual_point.sql
+                          実績ポイント・算出式の版と PM エージェント用権限（6.6）
 構想
-  0042_knowledge.sql      knowledge, knowledge_revision, proposal
-  0043_comment_signal.sql comment_signal
-  0044_embedding.sql      vector 拡張 + embedding
-  0045_project_event.sql  project_event
-  0046_analytics.sql      estimate_record, contribution
+  knowledge.sql           knowledge, knowledge_revision, proposal
+  comment_signal.sql      comment_signal
+  embedding.sql           vector 拡張 + embedding
+  project_event.sql       project_event
+  analytics.sql           estimate_record, contribution
 ```
 
 0016 までは 5.2 の一覧にある。**構想の番号は、それまでに足したマイグレーションの分だけ後ろへずれる。** 構想の DDL は着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
@@ -2352,7 +2368,7 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 - **形の組み替え（見出しの付け方・章の移し替え）を許す一文は入れない。** 組み替えが要るのは見出しの無い記録を持つ既存プロジェクトだけで、新しいプロジェクトには組み替える記録が無い
 - **再検討の条件は、パックが判断の記録を目次以外の形（本文の抜粋など）で運ぶようになったとき**である。そのとき見出しを強いる理由が変わる
 
-**初期本文に見出し（`##`）を置かない。** `ApiDesign.md` 10.2 の `?outline=1` は**エージェントが「どの章を読むか」を決めるため**に使う。中身の無い見出しを並べると、目次だけを見た相手に「読むべき章がある」と読まれる。
+**最初の5文書の初期本文には見出し（`##`）を置かない。** `ApiDesign.md` 10.2 の `?outline=1` は**エージェントが「どの章を読むか」を決めるため**に使う。中身の無い見出しを並べると、目次だけを見た相手に「読むべき章がある」と読まれる。0043 の運営ノートだけは、記入先を示す「見積・実績」「実績」「見積」の骨組みを置き、`pack_mode = none` でパックには載せない。
 
 **複製はプロジェクト作成時に行う**（7.4 のワークフローテンプレートと同じ手順の中で）。複製後はそのプロジェクトのものになり、テンプレート側を直しても既存プロジェクトには波及しない。**プロジェクト作成の経路は `POST /projects` と `pb dev seed` の2つがあり、どちらも同じ手順を通る**（実体は `server/internal/project`）。
 

@@ -982,13 +982,13 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 
 **画面は既定と許可リストを 4.5.9 から引く**。`scopes` が絶対指定なので、「既定に `doc.edit` を足す」を送るには既定の中身が要るが、**画面に写しを持たせない。**
 
-**許可リストは「6.5 の既定10件 ∪ `doc.edit`」の11件である。**
+**許可リストは「6.5 の既定10件 ∪ `doc.edit` ∪ `ticket.actual_point.edit`」の12件である。**
 
 ```
 agent.run  comment.create  doc.view  project.view
 ticket.assign  ticket.create  ticket.transition  ticket.view
 ticket.reference.edit  ticket.self_edit                         ← 既定の10件
-doc.edit                                                        ← 発行時に足せる
+doc.edit  ticket.actual_point.edit                              ← 発行時に足せる
 ```
 
 **`ticket.self_edit` も既定に入れる**。`ticket.reference.edit` と同じ理由である——**起票したチケットを直すのは実装エージェントの通常の仕事**であり、付く相手で変わらない。**`ticket.edit` は許可リストに入れない**。あれは 9.5.2 の全項目を開けるので、**エージェントが `execution_mode` や `scope` を自分で緩められる**（`DbDesign.md` 6.13）。
@@ -1395,7 +1395,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
   "default": ["agent.run", "comment.create", "doc.view", "project.view", "ticket.assign",
               "ticket.create", "ticket.reference.edit", "ticket.self_edit",
               "ticket.transition", "ticket.view"],
-  "grantable": ["doc.edit"]
+  "grantable": ["doc.edit", "ticket.actual_point.edit"]
 }
 ```
 
@@ -2620,6 +2620,8 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
       "estimate_point": 5,
       "estimate_hours": null,
       "actual_hours": 3.5,
+      "actual_point": 5,
+      "actual_point_version": "actual-v0",
       "start_date": "2026-08-09",
       "due_date": "2026-08-14",
       "closed_at": null,
@@ -2862,7 +2864,9 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 `If-Match: "3"` による楽観ロック（2.8）。**省略時は `422`**。成功すると `version` が +1 される。送られたフィールドだけを更新する。
 
-変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `estimate_point` `estimate_hours` `actual_hours` `start_date` `due_date` `execution_mode` `readiness` `readiness_note` `scope`
+**`actual_point` と `actual_point_version` は対で送り、追加の `ticket.actual_point.edit` 権限が要る。** どちらか一方だけ、または値と null の混在は 422 とする。
+
+変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `estimate_point` `estimate_hours` `actual_hours` `actual_point` `actual_point_version` `start_date` `due_date` `execution_mode` `readiness` `readiness_note` `scope`
 
 **含められないフィールド**
 

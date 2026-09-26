@@ -1651,6 +1651,8 @@ export interface paths {
          *     |---|---|
          *     | `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_date` `due_date` | `type` `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
          *
+         *     `actual_point` と `actual_point_version` は対で更新する。`ticket.actual_point.edit` が追加で必要であり、PM のエージェントにはトークン発行時にこの scope を指定できる。
+         *
          *     **`type` を外したのは、切り替えが盤面の見え方を変えるからである**
          *     ——タスクをエピックへ変えると、その行はバックログから消えてフィルタの
          *     選択肢になる（GuiDesign.md 5.4）。**`sprint_id` は 0028 以降どちらの権限でも
@@ -5562,6 +5564,13 @@ export interface components {
             /** Format: double */
             actual_hours: number | null;
             /**
+             * Format: double
+             * @description 実績ポイント。時間とは別の相対尺度。
+             */
+            actual_point: number | null;
+            /** @description 算出式の版。例：actual-v0。 */
+            actual_point_version: string | null;
+            /**
              * Format: date
              * @description **`date` 列であって時刻を持たない**（DbDesign.md 6.6）。画面は
              *     `new Date()` を通さずに整形すること——UTC より西の地域で前日へずれる。
@@ -6223,6 +6232,13 @@ export interface components {
             estimate_hours?: number | null;
             /** Format: double */
             actual_hours?: number | null;
+            /**
+             * Format: double
+             * @description actual_point_version と同時に指定する。PM の追加権限が必要。
+             */
+            actual_point?: number | null;
+            /** @description actual_point と同時に指定する。 */
+            actual_point_version?: string | null;
             /**
              * Format: date
              * @description `YYYY-MM-DD`。**時刻つきは受け付けない**（date 列であり、通すと タイムゾーンによって前日へずれる）。

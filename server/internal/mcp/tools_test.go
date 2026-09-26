@@ -715,6 +715,25 @@ func TestPutDocRejectsEmptyBody(t *testing.T) {
 	}
 }
 
+func TestUpdateTicketPassesActualPointAndVersion(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: `{"seq":31,"version":3}`},
+		{status: http.StatusOK, body: `{"seq":31,"version":4}`},
+	}}
+	h := New(rest, "v0")
+	out := callTool1(t, h, toolCallBody("pb_update_ticket", `{"seq":31,"actual_point":5,"actual_point_version":"actual-v0"}`))
+	if out.IsError {
+		t.Fatalf("更新に失敗: %s", out.Content[0].Text)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(rest.gotBody), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent["actual_point"] != float64(5) || sent["actual_point_version"] != "actual-v0" {
+		t.Errorf("REST へ送った値 = %v", sent)
+	}
+}
+
 // ── 完了レポート系（手順26c。Design.md 8.5.4）───────────────
 
 // TestSubmitResultPostsReport は seq を URL へ、残りを本文へ写すことを見る。

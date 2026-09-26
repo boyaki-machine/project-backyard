@@ -164,7 +164,7 @@ var agentDefaultScopes = []string{
 // /me/agents を叩ける本人が user.manage を載せたトークンを自分のエージェントへ
 // 渡せる——所有者との積で消えるとはいえ、アドミニストレータが所有者のときは
 // 消えない。
-var agentGrantableScopes = []string{"doc.edit"}
+var agentGrantableScopes = []string{"doc.edit", "ticket.actual_point.edit"}
 
 // agentAllowedScopes は発行時に受け付ける権限の全体（既定 ∪ 足せるもの）。
 func agentAllowedScopes() map[string]bool {

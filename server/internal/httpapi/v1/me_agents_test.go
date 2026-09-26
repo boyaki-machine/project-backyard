@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -907,6 +908,24 @@ func TestCreateMyAgentTokenAcceptsDocEdit(t *testing.T) {
 	// **昇順で返す**（auth.EffectivePermissions と並びを揃える）。
 	if !sort.StringsAreSorted(got.Scopes) {
 		t.Errorf("scopes が昇順でない: %v", got.Scopes)
+	}
+}
+
+func TestCreateMyAgentTokenAcceptsActualPointEdit(t *testing.T) {
+	scopes, err := json.Marshal(append(append([]string{}, agentDefaultScopes...), "ticket.actual_point.edit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := issueWithScopes(t, `{"expires_in_days":90,"scopes":`+string(scopes)+`}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+	var got issuedAgentTokenJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got.Scopes, "ticket.actual_point.edit") {
+		t.Errorf("追加権限が無い: %v", got.Scopes)
 	}
 }
 
