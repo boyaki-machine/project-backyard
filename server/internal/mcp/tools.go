@@ -763,6 +763,7 @@ func writeTools() []tool {
 				"直せないまま人に渡すと、誤った記述がチケットに残り続ける。" +
 				"**開けていない項目がある**——種別（type）の切り替え、実行モード・readiness・" +
 				"スコープ境界・実行者・実績時間・スプリントは、いずれも人が決めるものである。" +
+				"実績ポイントと算出式の版は、PM が追加権限を付けたエージェントだけが更新できる。" +
 				"応答は要点（seq / status / version / updated_at）だけで、本文は含まない。本文が要るなら pb_get_task で読む。",
 			InputSchema: schema{
 				Type: "object",
@@ -777,10 +778,12 @@ func writeTools() []tool {
 					"tag_ids": {Type: "array", Description: "タグの ULID の配列。**丸ごと置き換える**（空配列で全部外す）。" +
 						"pb_list_tags で列挙できる",
 						Items: &property{Type: "string"}},
-					"estimate_point": {Type: "number", Description: "見積もり（ポイント）。0以上"},
-					"estimate_hours": {Type: "number", Description: "見積もり（時間）。0以上"},
-					"start_date":     {Type: "string", Description: "開始日。YYYY-MM-DD"},
-					"due_date":       {Type: "string", Description: "期限。YYYY-MM-DD"},
+					"estimate_point":       {Type: "number", Description: "見積もり（ポイント）。0以上"},
+					"estimate_hours":       {Type: "number", Description: "見積もり（時間）。0以上"},
+					"actual_point":         {Type: "number", Description: "実績（ポイント）。0以上。actual_point_version と一緒に指定"},
+					"actual_point_version": {Type: "string", Description: "算出式の版。例: actual-v0。actual_point と一緒に指定"},
+					"start_date":           {Type: "string", Description: "開始日。YYYY-MM-DD"},
+					"due_date":             {Type: "string", Description: "期限。YYYY-MM-DD"},
 				},
 				Required: []string{"seq"},
 			},
@@ -856,6 +859,23 @@ func writeTools() []tool {
 				Required: []string{"seq"},
 			},
 			call: callAddReference,
+		},
+		{
+			Name: "pb_create_doc",
+			Description: "プロジェクト文書を新しく作る。doc.edit が必要。slug は ^[a-z0-9][a-z0-9-]{0,63}$（小文字・数字・ハイフン）で、.md は付けない。" +
+				"同じ親の下に同じ slug があれば 409 already_exists。応答は要点（path / version / updated_at）だけ。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"slug":        {Type: "string", Description: "文書名。^[a-z0-9][a-z0-9-]{0,63}$。大文字や .md は使えない"},
+					"title":       {Type: "string", Description: "表示名。1〜200文字"},
+					"parent_path": {Type: "string", Description: "親文書のパス。省略すると最上位"},
+					"body_md":     {Type: "string", Description: "初期本文（Markdown）。省略時は空文字"},
+					"sort_order":  {Type: "integer", Description: "同じ親の中の並び順。省略時は末尾"},
+				},
+				Required: []string{"slug", "title"},
+			},
+			call: callCreateDoc,
 		},
 		{
 			Name: "pb_put_doc",
@@ -974,17 +994,19 @@ func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 // である**（ticket.self_edit が type を受けない）ので、ここで落としているのは
 // 引数の定義だけで、8.1 の「MCP に独自の規則を置かない」は保たれている。
 type updateTicketArgs struct {
-	Seq           flexInt   `json:"seq"`
-	Title         *string   `json:"title"`
-	BodyMD        *string   `json:"body_md"`
-	Priority      *string   `json:"priority"`
-	ParentSeq     flexInt   `json:"parent_seq"`
-	AssigneeID    *string   `json:"assignee_id"`
-	TagIDs        *[]string `json:"tag_ids"`
-	EstimatePoint *float64  `json:"estimate_point"`
-	EstimateHours *float64  `json:"estimate_hours"`
-	StartDate     *string   `json:"start_date"`
-	DueDate       *string   `json:"due_date"`
+	Seq                flexInt   `json:"seq"`
+	Title              *string   `json:"title"`
+	BodyMD             *string   `json:"body_md"`
+	Priority           *string   `json:"priority"`
+	ParentSeq          flexInt   `json:"parent_seq"`
+	AssigneeID         *string   `json:"assignee_id"`
+	TagIDs             *[]string `json:"tag_ids"`
+	EstimatePoint      *float64  `json:"estimate_point"`
+	EstimateHours      *float64  `json:"estimate_hours"`
+	ActualPoint        *float64  `json:"actual_point"`
+	ActualPointVersion *string   `json:"actual_point_version"`
+	StartDate          *string   `json:"start_date"`
+	DueDate            *string   `json:"due_date"`
 }
 
 // callUpdateTicket は 9.5.2 の PATCH を叩く。
@@ -1027,6 +1049,12 @@ func callUpdateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	}
 	if in.EstimateHours != nil {
 		body["estimate_hours"] = *in.EstimateHours
+	}
+	if in.ActualPoint != nil {
+		body["actual_point"] = *in.ActualPoint
+	}
+	if in.ActualPointVersion != nil {
+		body["actual_point_version"] = *in.ActualPointVersion
 	}
 	if in.StartDate != nil {
 		body["start_date"] = *in.StartDate
@@ -1286,6 +1314,40 @@ func callAddReference(h *Handler, r *http.Request, key string, args json.RawMess
 	}
 	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/references", nil, raw, nil)
 	return passThrough(r, res, err)
+}
+
+type createDocArgs struct {
+	Slug       string  `json:"slug"`
+	Title      string  `json:"title"`
+	ParentPath *string `json:"parent_path"`
+	BodyMD     *string `json:"body_md"`
+	SortOrder  *int    `json:"sort_order"`
+}
+
+func callCreateDoc(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in createDocArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if in.Slug == "" || strings.TrimSpace(in.Title) == "" {
+		return toolResult{}, newError(codeInvalidParams, "slug と title は必須である")
+	}
+	body := map[string]any{"slug": in.Slug, "title": in.Title}
+	if in.ParentPath != nil {
+		body["parent_path"] = *in.ParentPath
+	}
+	if in.BodyMD != nil {
+		body["body_md"] = *in.BodyMD
+	}
+	if in.SortOrder != nil {
+		body["sort_order"] = *in.SortOrder
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost, projectPath(key)+"/docs", nil, raw, nil)
+	return passThroughFields(r, res, err, putDocResultFields...)
 }
 
 // putDocArgs は pb_put_doc の引数（Design.md 8.5.1）。

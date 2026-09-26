@@ -140,6 +140,10 @@ func callPatch(q *fakeQuerier, body, ifMatch string, perms ...string) *httptest.
 
 func TestGetTicketReturnsDetailShape(t *testing.T) {
 	q := ticketDetailFake()
+	row := q.ticket.bySeq[31]
+	row.ActualPoint = pgtype.Float8{Float64: 5, Valid: true}
+	row.ActualPointVersion = txt("actual-v0")
+	q.ticket.bySeq[31] = row
 	q.ticket.commentNum = 4
 	q.ticket.children = []gen.ListTicketChildrenBriefRow{
 		{Seq: 44, Title: "ログイン", Type: "task", StatusKey: "todo",
@@ -154,6 +158,9 @@ func TestGetTicketReturnsDetailShape(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
 	view := viewOf(t, rec)
+	if view["actual_point"] != float64(5) || view["actual_point_version"] != "actual-v0" {
+		t.Errorf("実績ポイントと版 = %v / %v", view["actual_point"], view["actual_point_version"])
+	}
 
 	// 9.5.1 は「9.2 の items[] に6項目を加えたもの」。**6項目すべてが在ること。**
 	for _, key := range []string{"body_md", "parent", "children", "dod", "links", "comment_count"} {
@@ -402,6 +409,9 @@ func TestPatchTicketValidation(t *testing.T) {
 		{"優先度が不正", `{"priority":"urgent"}`, "priority", "invalid"},
 		{"見積が負", `{"estimate_point":-1}`, "estimate_point", "out_of_range"},
 		{"実績が負", `{"actual_hours":-0.5}`, "actual_hours", "out_of_range"},
+		{"実績ポイントが負", `{"actual_point":-1,"actual_point_version":"actual-v0"}`, "actual_point", "out_of_range"},
+		{"算出式の版が無い", `{"actual_point":3}`, "actual_point_version", "required"},
+		{"算出式の版が不正", `{"actual_point":3,"actual_point_version":"old"}`, "actual_point_version", "invalid"},
 		{"日付の形式", `{"due_date":"2026/08/14"}`, "due_date", "invalid"},
 		{"日付に時刻", `{"due_date":"2026-08-14T00:00:00Z"}`, "due_date", "invalid"},
 		{"親の番号が0", `{"parent_seq":0}`, "parent_seq", "invalid"},
@@ -417,6 +427,25 @@ func TestPatchTicketValidation(t *testing.T) {
 				t.Errorf("details = %v, want %s/%s", errorOf(t, rec).Details, c.field, c.code)
 			}
 		})
+	}
+}
+
+func TestPatchActualPointRequiresPMGrantAndStoresPair(t *testing.T) {
+	body := `{"actual_point":5,"actual_point_version":"actual-v0"}`
+	for _, perms := range [][]string{{"ticket.edit"}, {"ticket.self_edit"}} {
+		q := ticketDetailFake()
+		rec := callPatch(q, body, `"3"`, perms...)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%v: status=%d, want 403 (%s)", perms, rec.Code, rec.Body.String())
+		}
+	}
+	q := ticketDetailFake()
+	rec := callPatch(q, body, `"3"`, "ticket.self_edit", permTicketActualPointEdit)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.ticket.updated) != 1 || !q.ticket.updated[0].ActualPoint.Valid || q.ticket.updated[0].ActualPoint.Float64 != 5 || q.ticket.updated[0].ActualPointVersion.String != "actual-v0" {
+		t.Errorf("更新内容=%+v", q.ticket.updated)
 	}
 }
 

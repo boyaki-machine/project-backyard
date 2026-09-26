@@ -199,10 +199,7 @@
 ## 7.6 憲章の分量を測る
 
 **`make docs-size` は PB 側の憲章を測らない**（対象は毎セッション読むローカル3文書だけ）。
-**規約・価値観・学びと知見（`rules` / `vision` / `learnings`）は全文がコンテキストパックに乗り、
-判断の記録（`decisions`）は目次だけが乗る**（`Design.md` 8.5.5）。**PB の文書へ何かを移したら、
-そのたびに1回数える。** 判断の材料は `Design.md` 8.6——**3文書の合計が1万字を超えたら切り替え時**
-である。判断の記録は数えない。
+**文書ごとの掲載方法は `pack_mode` で決まる**（`Design.md` 8.5.5）。全文で載る文書の合計とパック全体を測る。文書を足す・掲載方法を変える・全文掲載の文書を増やすたびに1回数える。**全文掲載の合計が1万字を超えたら切り替え時**である。目次だけ・載せない文書の本文は数えない。
 
 ```bash
 curl -s --cacert <証明書> -H "Authorization: Bearer $PB_TOKEN_<接尾>" -H 'Content-Type: application/json' \
@@ -220,7 +217,9 @@ size={re.search(r"（`([^`]+)`）$", parts[i]).group(1): len(parts[i])+len(parts
 print("パック全体  :", len(t), "文字")
 print("憲章の節    :", len(m.group(1)), "文字")
 for p, n in size.items(): print("  ", p, n)
-print("3文書の合計 :", sum(size.get(p, 0) for p in ("rules", "vision", "learnings")), "文字")'
+outlined=set(re.findall(r"(?m)^\*\*目次だけ載せる文書\*\*：([^\n]*)", m.group(1)))
+outline_paths=set(re.findall(r"`([^`]+)`", next(iter(outlined), "")))
+print("全文掲載の合計:", sum(n for p, n in size.items() if p not in outline_paths), "文字")'
 ```
 
 **`charter_versions` を渡さずに叩く。** 渡すと版が一致した文書の本文が省かれ、字数が測れない（`Design.md` 8.5.5）。
@@ -235,8 +234,8 @@ print("3文書の合計 :", sum(size.get(p, 0) for p in ("rules", "vision", "lea
 **目安を超えたとき、畳むか選定に切り替えるかは利用者だけが判断する**
 （`CLAUDE.md` の「閾値の引き上げを提案しない」と同じ扱い）。
 
-**`rules` と `learnings` と `vision` は、追記のたびに全チケットのパックへ全文で乗る**ので、
-**足す前に「これは毎回運ぶ価値があるか」を1度問う**こと。`decisions` は目次の1行ぶんしか増えない。
+**全文掲載の文書は、追記のたびに全チケットのパックへ全文で乗る**ので、
+**足す前に「これは毎回運ぶ価値があるか」を1度問う**こと。目次だけの文書は見出しの分だけ増える。
 
 **「取れない」と出たら、それ自体が異常である**——`## 3. 憲章` と `## 4.` の見出しは
 `Design.md` 8.5.5 が定める5節構成なので、取れないなら節の構成が変わっている。

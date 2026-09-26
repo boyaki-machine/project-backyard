@@ -745,7 +745,7 @@ type VerifiedIdentity struct {
 
 ### 6.4.2 権限カタログ
 
-権限をコードのif文ではなく**データとして定義**する（原則5）。カタログは32件（0010 の28件に、0017 の `doc.view` / `doc.edit`、0027 の `ticket.reference.edit`、0029 の `ticket.self_edit` を足したもの）。`DbDesign.md` 7.2（0010）・8.1.4（0017）・6.12.1（0027）・6.13（0029）のシードが正本。
+権限をコードのif文ではなく**データとして定義**する（原則5）。カタログは33件（0010 の28件に、0017 の `doc.view` / `doc.edit`、0027 の `ticket.reference.edit`、0029 の `ticket.self_edit`、0044 の `ticket.actual_point.edit` を足したもの）。`DbDesign.md` 7.2（0010）・8.1.4（0017）・6.12.1（0027）・6.13（0029）のシードが正本。
 
 | カテゴリ | 権限キー |
 |---|---|
@@ -831,7 +831,7 @@ GET /api/v1/me
 | **権限** | **所有者から導く（委譲）。** 下の式を参照 |
 | トークン | `access_token(token_type='agent')`。プロジェクトスコープ必須、有効期限必須。接頭辞は `pb_agt_` |
 | 発行 | **本人が自分の設定から**（`/me/agents`。`ApiDesign.md` 4.5、`Requirements.md` 10.9.1 系統B）。**発行時に一度だけ全文表示** |
-| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run` `ticket.reference.edit` `ticket.self_edit`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit` だけを足せる**（`ApiDesign.md` 4.5.3 の許可リスト） |
+| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run` `ticket.reference.edit` `ticket.self_edit`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit` と `ticket.actual_point.edit` を足せる**（`ApiDesign.md` 4.5.3 の許可リスト） |
 | 禁止 | `ticket.close`、`knowledge` の直接更新、他プロジェクトへのアクセス。`doc.edit` は既定では与えず、発行時に追加できる |
 | 信頼度 | `agent.trust_level` に応じて既定スコープを段階的に拡大（`Requirements.md` 10.10.3）。**実績の供給源が構想のため、既定値のまま使わない** |
 | 失効 | 本人と管理画面から即時失効。サーキットブレーカー作動時は自動失効も選択可 |
@@ -855,7 +855,7 @@ GET /api/v1/me
 
 **`doc.edit` は既定に入れないが、発行時に足せる。** `pb_put_doc` にこの権限が要る（8.2）が、載せるかは**そのエージェントが誰に付いているか**で決まる——PM のエージェントは持ち、実装だけを行うエージェントは持たない。**そもそも所有者が `doc.edit` を持たなければ、スコープに書いても積で消える**（持つのは `project_admin` だけである。`DbDesign.md` 8.1.4）。
 
-**発行の口は許可リスト（既定 ∪ `doc.edit`）を受ける**（`ApiDesign.md` 4.5.3）。本節の「誰に付いているかで決まる」を、発行時に表せる。**`ticket.close` は許可リストにも入れない**——本節の禁止のうち、`doc.edit` だけが「決まる」と書かれている。
+**発行の口は許可リスト（既定 ∪ `doc.edit` ∪ `ticket.actual_point.edit`）を受ける**（`ApiDesign.md` 4.5.3）。本節の「誰に付いているかで決まる」を、発行時に表せる。**`ticket.close` は許可リストにも入れない**——本節の禁止のうち、`doc.edit` だけが「決まる」と書かれている。
 
 **`agent.run` を既定に含める。** `DbDesign.md` 8.2.6 で `operator` / `project_member` / `project_viewer` へ配り直しており、所有者が持つ権限になった。
 
@@ -1360,6 +1360,7 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 | `pb_update_ticket` | `PATCH /projects/:key/tickets/:seq` | **`ticket.self_edit`** |
 | `pb_put_dod` | `GET|POST|PATCH|DELETE /projects/:key/tickets/:seq/dod` | **`ticket.self_edit`** |
 | `pb_list_tags` | `GET /projects/:key/tags` | `ticket.view` |
+| `pb_create_doc` | `POST /projects/:key/docs` | **`doc.edit`** |
 | `pb_put_doc` | `PATCH /projects/:key/docs/*path` | **`doc.edit`** |
 | `pb_post_note` | `POST /projects/:key/tickets/:seq/comments` | `comment.create` |
 | `pb_add_reference` | `POST /projects/:key/tickets/:seq/references` | **`ticket.reference.edit`** |
@@ -1443,14 +1444,17 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 | ツール | 引数 | 叩く REST | 応答 |
 |---|---|---|---|
 | `pb_create_ticket` | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?`, `tag_ids?`, `estimate_point?`, `estimate_hours?`, `start_date?`, `due_date?` | `POST /projects/:key/tickets` | **要点だけ**（`id` / `seq` / `status` / `version` / `parent_seq`） |
-| `pb_update_ticket` | `seq`, ＋ 上の任意引数から **`type` を除いたもの**（**送ったものだけ更新**） | `PATCH /projects/:key/tickets/:seq` | **要点だけ**（`seq` / `status` / `version` / `updated_at`） |
+| `pb_update_ticket` | `seq`, ＋ 上の任意引数から **`type` を除いたもの**、`actual_point` と `actual_point_version` の対（**送ったものだけ更新**） | `PATCH /projects/:key/tickets/:seq` | **要点だけ**（`seq` / `status` / `version` / `updated_at`） |
 | `pb_put_dod` | `seq`, `add?[]`, `update?[]`, `delete?[]` | 9.9 の `POST` / `PATCH` / `DELETE` | 9.9 の一覧をそのまま |
 | `pb_list_tags` | （なし） | `GET /projects/:key/tags` | 9.11 の一覧をそのまま |
+| `pb_create_doc` | `slug`, `title`, `parent_path?`, `body_md?`, `sort_order?` | `POST /projects/:key/docs` | **要点だけ**（`path` / `version` / `updated_at`） |
 | `pb_put_doc` | `path`, `body_md`, `change_reason?` | `GET` してから `PATCH /projects/:key/docs/*path` | **要点だけ**（`path` / `version` / `updated_at`） |
 | `pb_post_note` | `seq`, `body_md`, `kind?` | `POST /projects/:key/tickets/:seq/comments` | **要点だけ**（`id` / `kind` / `created_at`） |
 | `pb_add_reference` | `seq`, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | `POST /projects/:key/tickets/:seq/references` | 9.10.2 の1件をそのまま |
 
 **引数の名前は `ApiDesign.md` の本体フィールドに揃える**（`body` ではなく `body_md`、`parent` ではなく `parent_seq`）。8.5 の冒頭が述べるとおり、名前が一致していればエージェントは迷ったときに設計文書を引ける。
+
+**`pb_create_doc` の `slug` は `^[a-z0-9][a-z0-9-]{0,63}$` に従う。** 大文字や `.md` は付けない。同じ親の下に同名があれば REST の `409 already_exists` を返す。`doc.edit` を持つトークンだけが作成できる。配布する接続設定の自動承認一覧には入れず、書き込みのたびに確認する。
 
 **`assignee_id` は `me` を受ける。** read 系の `assignee` と同じ写し方をする（下記）——**エージェントはアクターの ULID を知らない**ため、`me` を通さないと担当を付ける経路が実質無い。ULID をそのまま渡すこともできる。
 
@@ -1501,6 +1505,7 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 |---|---|---|
 | `pb_create_ticket` | `id` / `seq` / `status` / `version` / `parent_seq` | `seq` を続けて `parent_seq` や `pb_transition_task` に使う |
 | `pb_update_ticket` | `seq` / `status` / `version` / `updated_at` | 直ったこと（版が進んだこと）を確かめる |
+| `pb_create_doc` | `path` / `version` / `updated_at` | 続けて `pb_put_doc` で直すときのパスを得る |
 | `pb_put_doc` | `path` / `version` / `updated_at` | 10.3 の応答は**本文の全文**を持つ。版は `pb_get_context` の `charter_versions`（8.5.5）に使える |
 | `pb_post_note` | `id` / `kind` / `created_at` | 書けたことを確かめる |
 
@@ -1698,38 +1703,11 @@ JSON が無い**——パックは複数の応答を組み直したものなの�
 境界を書くのは人であり（`ApiDesign.md` 9.5.2）、**多くのチケットは空のまま**で
 あり、空欄を見たモデルが「制約が無い」と読むのは、境界が無いことより悪い。
 
-**憲章は全文を載せる**（8.6）。**該当章を選ばない。** 例外は3つある——参画情報を載せず
-、判断の記録は目次だけにし（下記）、**エージェントが渡した版と一致した
-文書は本文を省く**（下の「読んだ憲章の版を受け、変わっていない文書を省く」）。
+**憲章は文書ごとの `pack_mode`（`full` / `outline` / `none`）に従って載せる。** `full` は全文、`outline` は目次と `pb_get_doc` での引き方、`none` は掲載しない。新規文書の初期値は `outline`。既存文書は 0042 の移行で、従来の掲載状態を引き継ぐ。文書の場所や名前で掲載方法を判定しない。
 
-**「エージェントの参画情報」（`agent-onboarding`）は載せない**。これは
-**参画時に一度読む手順**であって、判断の拠りどころではない（`Requirements.md` 10.6.2）。
-**チケットごとのパックに毎回運ぶと、押し付けたいもの（スコープ境界・規約）が薄まる**
-——本文と完了条件を入れない理由と同じである。
+**親の設定は子孫の上限になる。** 親が `none` なら子孫も載らず、親が `outline` なら子孫の `full` も目次だけになる。親が `full` のときは子それぞれの設定に従う。掲載しないパスと目次だけのパスを応答に明示し、必要な文書は `pb_get_doc` で読む。目次は 10.2 の `?outline=1` から取り、目次掲載の文書は本文取得を省く。見出しが無い文書も本文を代わりに載せず、全文の引き方を示す。
 
-**除外は `path` の完全一致で見る。** 木のどこにあっても効く規則にすると、**たまたま同じ
-`slug` を付けた別の文書まで黙って落ちる。** この文書を他の文書の下へ移すと憲章に戻るが、
-**落としたことは応答に1行出るので、移した人が気づける**（下記）。
-
-**落としたことを1行書く。** 10.4.3 の 4「切り詰めた事実を応答に明記する」がそのまま当たる。
-`doc.view` を持たないトークンで憲章ごと省くときに理由の1行を出しているのと同じ形で、
-**実際に落ちたときだけ出す**（文書が無いプロジェクトでは何も出ない）。
-
-**「判断の記録」（`decisions`）は本文を載せず、目次と引き方だけを載せる。** 判断の記録は**追記で一方的に増える文書**であり、全文を全チケットに運ぶと、
-押し付けたいもの（スコープ境界・規約）が薄まる。1判断＝1見出しで書くので、**目次がそのまま索引になる**——エージェントは着手する作業に関わる判断
-だけを `pb_get_doc(path="decisions", section="<見出し>")` で引く。
-
-- **見分け方は参画情報と同じく `path` の完全一致である。** 節点ごと扱うので、その下に置いた
-  文書も目次だけになる。他の文書の下へ移すと全文に戻り、目次だけにした旨の1行も消える
-- **目次は 10.2 の `?outline=1` がすでに返している**ので往復は増えない。10.3 で本文を引かない
-  ぶん、1本減る
-- **見出しが1つも無いときも本文を載せない。** その旨と全文の引き方（`pb_get_doc(path="decisions")`）
-  を1行出す。規則を「判断の記録は目次だけ」の1つに保ち、字数の管理
-  から漏らさないためである。新規プロジェクトのテンプレート本文は、1判断＝1見出しの書き方を
-  案内している（`DbDesign.md` 8.1.2）
-- **憲章の基準の字数に数えない**（8.6）
-- **文書ごとに「全文／目次だけ／載せない」を設定できる形は採らない。再検討の条件は、他のプロジェクトで同じ扱いにしたい文書が別の名前で現れたとき**
-  である
+**`charter_versions` が一致した文書は内容を省く。** ただし、子の実効掲載方法は親の変更でも変わるため、親を持つ文書には版一致による省略を適用しない。
 
 **埋め込むとき、本文の見出しを2段下げる。** パックは `#`（表題）→ `##`（節）→
 `###`（文書）を使うので、文書の中の見出しは4段目から始まる。下げないと、本文が `##` で
@@ -1744,7 +1722,7 @@ JSON が無い**——パックは複数の応答を組み直したものなの�
 
 **5節目に深掘りの入口を書く**（`pb_get_doc` / `pb_list_transitions` / `pb_get_task`）。
 10.4.3 の 4 が「切り詰めた事実と、深掘り用のクエリ例を応答に明記する」と定めており、
-**いまは切り詰めが起きないが、入口だけは先に出しておく**——パックに無いものを探す手段が
+**掲載しない文書や目次だけの文書を読む入口も出す**——パックに無いものを探す手段が
 書かれていないと、モデルは推測で埋める。**2件目以降は1行に畳む**（下の「2件目以降は定型文を畳む」）。
 
 #### 読んだ憲章の版を受け、変わっていない文書を省く
@@ -1866,11 +1844,7 @@ PB が持てる。**
   - **判断の材料は「再送で何が二重になるか」を1つ言えるかである。** 言えないうちは器を作らない
 
 - **ツール description の文面設計**（`Requirements.md` 10.13）。**実質的にこれがエージェントの行動を規定する**ため、プロンプトエンジニアリングの対象になる。**いまは日本語で書いている**——憲章・チケット・文書がすべて日本語であり、description が指示する語彙と、エージェントが読む対象の語彙を揃えるためである（英語より毎セッション数百トークン多く消費する）
-- **コンテキストパックに選定と切り詰めを入れるか。** いまは**憲章を選定せず全文を載せ、応答は Markdown 1枚とし、`budget` は受けない**（8.5.5。「エージェントの参画情報」は載せず、「判断の記録」は目次だけにする）。憲章は数千文字の規模で、**選定の機構を挟むほうが「外したことに誰も気づけない」危険だけを持ち込む。** 10.4.1 の「検索させず、押し付ける」に最も忠実な形でもある。**次のいずれかが起きたら、選定と切り詰めを入れる**
-  - **開発の記録のような大きな文書を PB の文書へ移したとき。** 移れば憲章は**いまの1桁上**になり、全文送出は成り立たない
-  - **`knowledge`（プロジェクトメモリ。構想）が入ったとき**（`DbDesign.md` 8.3）。10.4.2 の優先度2 が文書から粒の細かい行へ移り、**選定の母数が桁で増える**
-  - **判断の材料は、規約・価値観・学びと知見（`rules` / `vision` / `learnings`）の3文書の字数である。** **3文書で1万字を超えたら、そこが切り替え時である。** 判断の記録は数えない——追記で一方的に増える文書なので、目次だけを載せる（8.5.5）
-  - **憲章は `make docs-size` の対象外である。** **憲章へ何かを移したら、そのたびに `pb_get_context` を1回叩いて3文書の字数を数える**——歯止めの無い置き場は必ず育ち、**育ったことに誰も気づけないのが最も悪い**。数え方は `Testing.md` 7.6 に置く
+- **コンテキストパックをさらに自動選定・切り詰めするか。** 現在は文書ごとの掲載方法を管理者が選び（8.5.5）、応答は Markdown 1枚で `budget` を受けない。掲載しない文書と目次だけの文書は応答に明示する。**全文掲載の文書が合計1万字を超えたら再検討する。** `make docs-size` は PB の文書を測らないので、追加・掲載方法の変更時に `pb_get_context` で測る（`Testing.md` 7.6）。
 ---
 
 # 9. 画面設計

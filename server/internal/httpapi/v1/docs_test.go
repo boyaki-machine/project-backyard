@@ -369,6 +369,9 @@ func TestCreateDocMakesFirstRevision(t *testing.T) {
 		t.Fatalf("作成 = %d件, want 1 (%s)", len(q.docs.created), rec.Body.String())
 	}
 	created := q.docs.created[0]
+	if created.PackMode != "outline" {
+		t.Errorf("pack_mode = %q, want outline", created.PackMode)
+	}
 	if created.Slug != "decisions" || created.Title != "判断の記録" {
 		t.Errorf("作成内容 = %+v", created)
 	}
@@ -492,6 +495,7 @@ func TestPatchDocRevisionCondition(t *testing.T) {
 		{"タイトルが変わった", `{"title":"新しい題"}`, true},
 		{"同じ本文の送り直し", `{"body_md":"本書は規約である。\n\n## 命名\n\n- 単数形\n\n## ブランチ\n\n- main へ直接コミットしない\n"}`, false},
 		{"sort_order だけ", `{"sort_order":50}`, false},
+		{"pack_mode だけ", `{"pack_mode":"none"}`, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

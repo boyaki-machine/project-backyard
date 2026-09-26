@@ -241,6 +241,25 @@ const saveError = ref<ApiError | null>(null)
  * 「サーバの値と一致している間だけ出す」と宣言的に書く（6.4）。
  */
 const savedVersion = ref<number | null>(null)
+const packModeSaving = ref(false)
+const packModeError = ref('')
+
+async function changePackMode(event: Event): Promise<void> {
+  if (!doc.value || !canEdit.value || packModeSaving.value) return
+  const value = (event.target as HTMLSelectElement).value as Doc['pack_mode']
+  if (value === doc.value.pack_mode) return
+  packModeSaving.value = true
+  packModeError.value = ''
+  try {
+    doc.value = await docsApi.updateDoc(props.projectKey, doc.value.path, doc.value.version, { pack_mode: value })
+    await loadTree()
+  } catch (e) {
+    packModeError.value = e instanceof ApiError ? e.message : uiText('掲載方法を変更できませんでした')
+    ;(event.target as HTMLSelectElement).value = doc.value.pack_mode
+  } finally {
+    packModeSaving.value = false
+  }
+}
 
 const conflict = computed(() => saveError.value?.status === 409)
 
@@ -742,6 +761,15 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
             </div>
 
             <article v-else class="docs-article">
+              <label class="docs-pack-mode">
+                <span>{{ $ui('コンテキストパックへの掲載') }}</span>
+                <select :value="doc.pack_mode" :disabled="!canEdit || packModeSaving || editing" @change="changePackMode">
+                  <option value="full">{{ $ui('全文') }}</option>
+                  <option value="outline">{{ $ui('目次だけ') }}</option>
+                  <option value="none">{{ $ui('載せない') }}</option>
+                </select>
+              </label>
+              <p v-if="packModeError" class="docs-save-error" role="alert">{{ packModeError }}</p>
               <p class="docs-meta">
                 <span class="docs-meta-label">{{ $ui('更新') }}</span>
                 <span>{{ formatDateTime(doc.updated_at) }}</span>
@@ -941,6 +969,24 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
 
 .docs-article {
   min-width: 0;
+}
+
+.docs-pack-mode {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--pb-space-3);
+  color: var(--pb-text-muted);
+}
+
+.docs-pack-mode select {
+  min-height: 32px;
+  padding: 0 var(--pb-space-2);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-bg);
+  color: var(--pb-text);
 }
 
 .docs-meta {

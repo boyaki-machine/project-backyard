@@ -88,9 +88,11 @@ type ticketListItem struct {
 	Tags     []ticketTagRef `json:"tags"`
 	Sprint   *sprintRef     `json:"sprint"`
 
-	EstimatePoint *float64 `json:"estimate_point"`
-	EstimateHours *float64 `json:"estimate_hours"`
-	ActualHours   *float64 `json:"actual_hours"`
+	EstimatePoint      *float64 `json:"estimate_point"`
+	EstimateHours      *float64 `json:"estimate_hours"`
+	ActualHours        *float64 `json:"actual_hours"`
+	ActualPoint        *float64 `json:"actual_point"`
+	ActualPointVersion *string  `json:"actual_point_version"`
 
 	StartDate *Date `json:"start_date"`
 	DueDate   *Date `json:"due_date"`
@@ -183,30 +185,32 @@ func buildTicketListItem(row gen.ListTicketsRow, tags []ticketTagRef) ticketList
 		tags = []ticketTagRef{}
 	}
 	return ticketListItem{
-		ID:            row.ID,
-		Seq:           row.Seq,
-		Type:          row.Type,
-		Title:         row.Title,
-		Status:        statusView(row.StatusKey, row.StatusName, row.StatusCategory),
-		Priority:      textPtr(row.Priority),
-		Assignee:      actorRefOf(row.AssigneeID, row.AssigneeKind, row.AssigneeName),
-		Reporter:      actorRefOf(row.ReporterID, row.ReporterKind, row.ReporterName),
-		WorkingAgent:  actorRefOf(row.WorkingAgentID, row.WorkingAgentKind, row.WorkingAgentName),
-		ParentSeq:     int4Ptr(row.ParentSeq),
-		HasChildren:   row.HasChildren,
-		SortKey:       textPtr(row.SortKey),
-		StagedAt:      apiTimestamptz(row.StagedAt),
-		Tags:          tags,
-		Sprint:        sprintRefOf(row.SprintID, row.SprintName),
-		EstimatePoint: float8Ptr(row.EstimatePoint),
-		EstimateHours: float8Ptr(row.EstimateHours),
-		ActualHours:   float8Ptr(row.ActualHours),
-		StartDate:     apiDate(row.StartDate),
-		DueDate:       apiDate(row.DueDate),
-		ClosedAt:      apiTimestamptz(row.ClosedAt),
-		Version:       row.Version,
-		CreatedAt:     Time(row.CreatedAt.Time),
-		UpdatedAt:     Time(row.UpdatedAt.Time),
+		ID:                 row.ID,
+		Seq:                row.Seq,
+		Type:               row.Type,
+		Title:              row.Title,
+		Status:             statusView(row.StatusKey, row.StatusName, row.StatusCategory),
+		Priority:           textPtr(row.Priority),
+		Assignee:           actorRefOf(row.AssigneeID, row.AssigneeKind, row.AssigneeName),
+		Reporter:           actorRefOf(row.ReporterID, row.ReporterKind, row.ReporterName),
+		WorkingAgent:       actorRefOf(row.WorkingAgentID, row.WorkingAgentKind, row.WorkingAgentName),
+		ParentSeq:          int4Ptr(row.ParentSeq),
+		HasChildren:        row.HasChildren,
+		SortKey:            textPtr(row.SortKey),
+		StagedAt:           apiTimestamptz(row.StagedAt),
+		Tags:               tags,
+		Sprint:             sprintRefOf(row.SprintID, row.SprintName),
+		EstimatePoint:      float8Ptr(row.EstimatePoint),
+		EstimateHours:      float8Ptr(row.EstimateHours),
+		ActualHours:        float8Ptr(row.ActualHours),
+		ActualPoint:        float8Ptr(row.ActualPoint),
+		ActualPointVersion: textPtr(row.ActualPointVersion),
+		StartDate:          apiDate(row.StartDate),
+		DueDate:            apiDate(row.DueDate),
+		ClosedAt:           apiTimestamptz(row.ClosedAt),
+		Version:            row.Version,
+		CreatedAt:          Time(row.CreatedAt.Time),
+		UpdatedAt:          Time(row.UpdatedAt.Time),
 	}
 }
 
@@ -258,30 +262,32 @@ func buildTicketDetail(
 
 	view := ticketDetailView{
 		ticketListItem: ticketListItem{
-			ID:            row.ID,
-			Seq:           row.Seq,
-			Type:          row.Type,
-			Title:         row.Title,
-			Status:        statusView(row.StatusKey, row.StatusName, row.StatusCategory),
-			Priority:      textPtr(row.Priority),
-			Assignee:      actorRefOf(row.AssigneeID, row.AssigneeKind, row.AssigneeName),
-			Reporter:      actorRefOf(row.ReporterID, row.ReporterKind, row.ReporterName),
-			WorkingAgent:  actorRefOf(row.WorkingAgentID, row.WorkingAgentKind, row.WorkingAgentName),
-			ParentSeq:     int4Ptr(row.ParentSeq),
-			HasChildren:   row.HasChildren,
-			SortKey:       textPtr(row.SortKey),
-			StagedAt:      apiTimestamptz(row.StagedAt),
-			Tags:          tagsOrEmpty(tags[row.ID]),
-			Sprint:        sprintRefOf(row.SprintID, row.SprintName),
-			EstimatePoint: float8Ptr(row.EstimatePoint),
-			EstimateHours: float8Ptr(row.EstimateHours),
-			ActualHours:   float8Ptr(row.ActualHours),
-			StartDate:     apiDate(row.StartDate),
-			DueDate:       apiDate(row.DueDate),
-			ClosedAt:      apiTimestamptz(row.ClosedAt),
-			Version:       row.Version,
-			CreatedAt:     Time(row.CreatedAt.Time),
-			UpdatedAt:     Time(row.UpdatedAt.Time),
+			ID:                 row.ID,
+			Seq:                row.Seq,
+			Type:               row.Type,
+			Title:              row.Title,
+			Status:             statusView(row.StatusKey, row.StatusName, row.StatusCategory),
+			Priority:           textPtr(row.Priority),
+			Assignee:           actorRefOf(row.AssigneeID, row.AssigneeKind, row.AssigneeName),
+			Reporter:           actorRefOf(row.ReporterID, row.ReporterKind, row.ReporterName),
+			WorkingAgent:       actorRefOf(row.WorkingAgentID, row.WorkingAgentKind, row.WorkingAgentName),
+			ParentSeq:          int4Ptr(row.ParentSeq),
+			HasChildren:        row.HasChildren,
+			SortKey:            textPtr(row.SortKey),
+			StagedAt:           apiTimestamptz(row.StagedAt),
+			Tags:               tagsOrEmpty(tags[row.ID]),
+			Sprint:             sprintRefOf(row.SprintID, row.SprintName),
+			EstimatePoint:      float8Ptr(row.EstimatePoint),
+			EstimateHours:      float8Ptr(row.EstimateHours),
+			ActualHours:        float8Ptr(row.ActualHours),
+			ActualPoint:        float8Ptr(row.ActualPoint),
+			ActualPointVersion: textPtr(row.ActualPointVersion),
+			StartDate:          apiDate(row.StartDate),
+			DueDate:            apiDate(row.DueDate),
+			ClosedAt:           apiTimestamptz(row.ClosedAt),
+			Version:            row.Version,
+			CreatedAt:          Time(row.CreatedAt.Time),
+			UpdatedAt:          Time(row.UpdatedAt.Time),
 		},
 		BodyMd:       textPtr(row.BodyMd),
 		Children:     []ticketChildBrief{},

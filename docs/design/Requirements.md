@@ -441,6 +441,7 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 | `pb_list_transitions` | read | 実装済み | **`seq`** | 9.7 の応答をそのまま | **いまどの状態へ進めるか**と、進めない先の理由。**着手（未着手→進行中）では先に呼ばなくてよい**——失敗の応答に同じ理由が返る（`Design.md` 8.5.3） |
 | `pb_post_note` | write | 実装済み | **`seq`**, `body_md`, `kind?` | **要点だけ**（`id` / `kind` / `created_at`） | 途中経過・判明した事実の記録。**`refs` は落とした**——`ApiDesign.md` 9.8 に対応するフィールドが無い（`Design.md` 8.5.1） |
 | `pb_put_doc` | write | 実装済み | `path`, `body_md`, `change_reason?` | **要点だけ**（`path` / `version` / `updated_at`） | **文書の更新。** 権限を持つ人の指示で呼ぶ（10.6.2）。**本文の全置換**で、`If-Match` は MCP 層が付ける（`Design.md` 8.5.1） |
+| `pb_create_doc` | write | 実装済み | `slug`, `title`, `parent_path?`, `body_md?`, `sort_order?` | **要点だけ**（`path` / `version` / `updated_at`） | **文書の新規作成。** `doc.edit` が必要。`slug` は `^[a-z0-9][a-z0-9-]{0,63}$`。同じ親の下の重複は `409 already_exists`（`Design.md` 8.5.1） |
 | `pb_add_reference` | write | 実装済み | **`seq`**, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | 9.10.2 の1件をそのまま | **作業の跡（ブランチ・コミット）をチケットに積む。** `ticket_reference` の `kind='code'`（`DbDesign.md` 6.12）。**追記専用**で、直す・消すは人が画面から行う。**必要権限は `ticket.reference.edit`**（0027） |
 | `pb_submit_result` | write | 実装済み | **`seq`**, `status`, `artifacts?`, `dod_results?`, `findings?`, `failures?`, `proposed_subtasks?`, `knowledge_impact?`, `cost?` | 9.15 の応答をそのまま（`unsatisfied_dod` を含む） | 完了レポートの返却。**引数は 10.6.1 のレポートを平らにしたもの**で、名前は REST の本体フィールドに揃う（`Design.md` 8.5.4）。**状態は進めずクローズもしない** |
 | `pb_claim_task` | write | 構想 | `seq` | `lease_id`, `expires_at` | 着手時のリース取得（10.3.3） |
@@ -701,6 +702,7 @@ cost:
 | **判断の記録** | なぜそう決めたか、何を検討して棄却したか | 決着済みの再交渉を防ぐ |
 | **学びと知見** | やってみて分かったこと。**うまくいったことと駄目だったことの両方** | 同じ躓きを繰り返さず、効いた手は引き継がれる |
 | **エージェントの参画情報** | 作業材料をどう手元に用意するか、参画の合図、資格情報の要否 | **始めるまでに人へ口頭で聞かなくて済む** |
+| **プロジェクトマネジメントノート** | 見積・実績の材料、算出式、記録の置き場、確かめ方 | 運営と計測の方法をプロジェクトごとに定める。コンテキストパックには載せない |
 
 **5件目の「エージェントの参画情報」だけは性質が違う。**上の4件が「判断の拠りどころ」であるのに対し、これは**作業を始めるための手順**である。**PB が完成品として出せるのは「MCP が使える状態になるまで」で、その先は PB が知らない**（10.9.1）ので、書く場所だけを用意して指し示す。**この1件はコンテキストパックの憲章に入れない**（`Design.md` 8.5.5）——**参画時に一度読むもので、チケットごとに毎回運ぶものではない。**
 

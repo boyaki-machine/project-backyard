@@ -47,11 +47,11 @@ func createFake(t *testing.T) (*fakeQuerier, *fakeTxRunner) {
 	// フェイクには子を1件入れてある**——平坦な4件では、親子の張り替えが
 	// 落ちていても気づけない。
 	q.docs.templates = []gen.ListDocumentTemplatesRow{
-		{ID: "01TPLD1", Slug: "vision", Title: "価値観・世界観", BodyMd: "価値観の案内", SortOrder: 10},
-		{ID: "01TPLD2", Slug: "rules", Title: "規約", BodyMd: "規約の案内", SortOrder: 20},
+		{ID: "01TPLD1", Slug: "vision", Title: "価値観・世界観", BodyMd: "価値観の案内", PackMode: "full", SortOrder: 10},
+		{ID: "01TPLD2", Slug: "rules", Title: "規約", BodyMd: "規約の案内", PackMode: "outline", SortOrder: 20},
 		{
 			ID: "01TPLD3", ParentID: txt("01TPLD2"), Slug: "naming", Title: "命名",
-			BodyMd: "命名の案内", SortOrder: 10,
+			BodyMd: "命名の案内", PackMode: "none", SortOrder: 10,
 		},
 	}
 	q.memberRows = []gen.ListProjectMembersRow{
@@ -224,6 +224,9 @@ func TestCreateProjectCopiesDocumentTemplates(t *testing.T) {
 		}
 		if got := bySlug[tpl.Slug].BodyMd; got != tpl.BodyMd {
 			t.Errorf("%s の body_md = %q, want %q", tpl.Slug, got, tpl.BodyMd)
+		}
+		if got := bySlug[tpl.Slug].PackMode; got != tpl.PackMode {
+			t.Errorf("%s の pack_mode = %q, want %q", tpl.Slug, got, tpl.PackMode)
 		}
 	}
 

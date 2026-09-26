@@ -583,6 +583,45 @@ func TestAddReferenceRequiresSeq(t *testing.T) {
 //
 // **エージェントは version を持てない**（pb_get_doc は Markdown しか返さない）ので、
 // MCP 層が GET で読んで載せる。
+func TestCreateDocUsesRESTAndCanBeUpdated(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusCreated, body: `{"path":"project-management-note","version":1,"updated_at":"2026-09-26T00:00:00Z","body_md":"初稿"}`},
+		{status: http.StatusOK, body: `{"path":"project-management-note","version":1}`},
+		{status: http.StatusOK, body: `{"path":"project-management-note","version":2,"updated_at":"2026-09-26T00:01:00Z"}`},
+	}}
+	h := New(rest, "v0")
+	out := callTool1(t, h, toolCallBody("pb_create_doc", `{"slug":"project-management-note","title":"運営ノート","body_md":"初稿"}`))
+	if out.IsError || strings.Contains(out.Content[0].Text, "初稿") || !strings.Contains(out.Content[0].Text, `"path":"project-management-note"`) {
+		t.Fatalf("作成結果 = %+v", out)
+	}
+	updated := callTool1(t, h, toolCallBody("pb_put_doc", `{"path":"project-management-note","body_md":"改稿"}`))
+	if updated.IsError || rest.calls != 3 || strings.Join(rest.gotMethods, ",") != "POST,GET,PATCH" {
+		t.Fatalf("作成後の更新 = %+v, REST = %v", updated, rest.gotMethods)
+	}
+	if rest.gotPaths[0] != "/api/v1/projects/demo/docs" || rest.gotPaths[1] != "/api/v1/projects/demo/docs/project-management-note" {
+		t.Errorf("REST のパス = %v", rest.gotPaths)
+	}
+}
+
+func TestCreateDocPassesThroughConflictAndForbidden(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		code   string
+	}{
+		{"duplicate", http.StatusConflict, "already_exists"},
+		{"no doc.edit", http.StatusForbidden, "forbidden"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rest := &fakeREST{status: tc.status, body: `{"error":{"code":"` + tc.code + `","message":"拒否しました"}}`}
+			out := callTool1(t, New(rest, "v0"), toolCallBody("pb_create_doc", `{"slug":"rules","title":"規約"}`))
+			if !out.IsError || !strings.Contains(out.Content[0].Text, tc.code) || rest.calls != 1 {
+				t.Fatalf("REST の拒否が戻らない: %+v, calls=%d", out, rest.calls)
+			}
+		})
+	}
+}
+
 func TestPutDocReadsVersionThenPatches(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: `{"path":"rules","version":3}`},
@@ -673,6 +712,25 @@ func TestPutDocRejectsEmptyBody(t *testing.T) {
 	}
 	if rest.calls != 0 {
 		t.Errorf("REST を叩いている: %d回", rest.calls)
+	}
+}
+
+func TestUpdateTicketPassesActualPointAndVersion(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: `{"seq":31,"version":3}`},
+		{status: http.StatusOK, body: `{"seq":31,"version":4}`},
+	}}
+	h := New(rest, "v0")
+	out := callTool1(t, h, toolCallBody("pb_update_ticket", `{"seq":31,"actual_point":5,"actual_point_version":"actual-v0"}`))
+	if out.IsError {
+		t.Fatalf("更新に失敗: %s", out.Content[0].Text)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(rest.gotBody), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent["actual_point"] != float64(5) || sent["actual_point_version"] != "actual-v0" {
+		t.Errorf("REST へ送った値 = %v", sent)
 	}
 }
 

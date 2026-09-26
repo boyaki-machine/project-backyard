@@ -253,6 +253,7 @@ func copyDocumentTemplates(ctx context.Context, q gen.Querier, p CreateParams) e
 			Title:     t.Title,
 			BodyMd:    t.BodyMd,
 			SortOrder: t.SortOrder,
+			PackMode:  t.PackMode,
 			CreatedBy: p.CreatedBy,
 		}); err != nil {
 			return fmt.Errorf("文書 %q を複製できない: %w", t.Slug, err)

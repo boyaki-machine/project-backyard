@@ -864,6 +864,12 @@ CREATE TABLE ticket (
   estimate_point double precision,
   estimate_hours double precision,
   actual_hours   double precision,
+  actual_point   double precision,          -- 0044。ポイント単位の実績
+  actual_point_version text,                -- 0044。例: actual-v0
+  CONSTRAINT ck_ticket_actual_point CHECK (
+    (actual_point IS NULL AND actual_point_version IS NULL)
+    OR (actual_point >= 0 AND actual_point_version ~ '^actual-v[0-9]+$')
+  ),
 
   start_date     date,
   due_date       date,
@@ -1371,6 +1377,10 @@ ON CONFLICT DO NOTHING;
 **`working_agent_id` を開けないのは、あれが自己申告の欄だからである**（6.6）。遷移の副作用として自動で立つので（`ApiDesign.md` 9.6）、書く経路をもう1つ作る理由が無い。**`actual_hours` は `pb_submit_result` の `cost` と二重になる**ため開けない。**`sprint_id` は 0028 以降どの経路からも書けない**（9.5.2 の `use_sprint_endpoint`）。
 
 **DoD は `body` の追加・編集・削除までで、`is_satisfied` は開けない**（`ApiDesign.md` 9.9）。**`pb_submit_result` が「盤面を動かさない」と決めた判断と正面からぶつかる**ためで、完了の判定は人が行う。
+
+**0044 の `ticket.actual_point.edit` は実績ポイントと算出式の版だけを更新する追加権限である。** `project_admin` と `administrator` に配り、PM のエージェントは発行時にこの scope を選べる。通常の `ticket.self_edit` や `ticket.edit` だけでは書けない。2項目は対で更新し、DB の CHECK で非負値と `actual-v<番号>` の版を保証する。
+
+**0044 は既存の reference コメント「実績 v0（たたき台）」の JSON から移す。** `method = actual-v0` と数値の `point` を採り、`point = null` は空欄のまま残す。stg で移行前に123件を確認し、114件が数値、9件が null だった。コメントは根拠として保持する。
 
 **`ticket.self_edit` は `ticket.edit` の部分集合であって、上位ではない。** `ticket.edit` を持つ人は本表の「開ける」側も当然に編集でき、**画面の振る舞いは何も変わらない。**
 
@@ -2219,12 +2229,18 @@ make dev-info    # URL とデモアカウント一覧を表示
                           operator の権限を閲覧・出力・MCP 接続に絞る（6.20）
   0041_revoke_agent_api_tokens.sql
                           エージェント名義の不整合な資格情報を失効（6.21）
+  0042_document_pack_mode.sql
+                          文書ごとのコンテキストパック掲載方法（8.1.1）
+  0043_project_management_note_template.sql
+                          新規プロジェクト向け規約案内と運営ノート（8.1.2）
+  0044_ticket_actual_point.sql
+                          実績ポイント・算出式の版と PM エージェント用権限（6.6）
 構想
-  0042_knowledge.sql      knowledge, knowledge_revision, proposal
-  0043_comment_signal.sql comment_signal
-  0044_embedding.sql      vector 拡張 + embedding
-  0045_project_event.sql  project_event
-  0046_analytics.sql      estimate_record, contribution
+  knowledge.sql           knowledge, knowledge_revision, proposal
+  comment_signal.sql      comment_signal
+  embedding.sql           vector 拡張 + embedding
+  project_event.sql       project_event
+  analytics.sql           estimate_record, contribution
 ```
 
 0016 までは 5.2 の一覧にある。**構想の番号は、それまでに足したマイグレーションの分だけ後ろへずれる。** 構想の DDL は着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
@@ -2247,6 +2263,7 @@ CREATE TABLE document (
   slug         text        NOT NULL CHECK (slug ~ '^[a-z0-9][a-z0-9-]{0,63}$'),
   title        text        NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
   body_md      text        NOT NULL DEFAULT '',
+  pack_mode    text        NOT NULL DEFAULT 'outline' CHECK (pack_mode IN ('full', 'outline', 'none')),
   sort_order   integer     NOT NULL DEFAULT 0,
   is_template  boolean     NOT NULL DEFAULT false,
   template_key text,
@@ -2293,9 +2310,9 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 
 **`body_md` に GIN トライグラムインデックスを張る**のは、`knowledge`（8.3.1）と同じ理由による。日本語の部分一致検索を `pg_trgm` で賄う（4.5）。
 
-### 8.1.2 文書テンプレート（0017 の初期データ、本文は 0018、5件目は 0024、規約の本文は 0037、判断の記録の本文は 0038）
+### 8.1.2 文書テンプレート（0017 の初期データ、本文は 0018、5件目は 0024、規約の本文は 0037 と 0043、判断の記録の本文は 0038、6件目は 0043）
 
-`template_key = 'default'` の5件を置く。`Requirements.md` 10.6.2 の表に対応する。
+`template_key = 'default'` の6件を置く。`Requirements.md` 10.6.2 の表に対応する。
 
 | `slug` | `title` | `sort_order` | 役割 |
 |---|---|---|---|
@@ -2304,6 +2321,9 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 | `decisions` | 判断の記録 | 30 | なぜそう決めたか。追記のみで使い、**1判断＝1見出し**で書く |
 | `learnings` | 学びと知見 | 40 | やってみて分かったこと。**うまくいったことと駄目だったことの両方** |
 | `agent-onboarding` | エージェントの参画情報 | 50 | **新しい参加者とそのエージェントが作業を始められるようになるまでに要ること。** 作業材料の取り方、参画の合図、資格情報の要否（**秘密そのものは書かない**） |
+| `project-management-note` | プロジェクトマネジメントノート | 60 | 見積・実績の算出と検証をプロジェクトごとに記録する。`pack_mode = none` |
+
+**0043 は新規プロジェクト向けの規約案内に、完了レポートの `cost`（トークン数・やり取りの回数・掛かった分、束ねたセッションの按分）と `findings`（モデルの名前と版）を例として加える。** 具体的な単位や按分方法は各プロジェクトで決める。運営ノートには「見積・実績」章の下に「実績」と「見積」を置き、材料、算出式、記録の置き場、確かめ方を記入する骨組みにする。既存プロジェクトの文書は書き換えない。
 
 **`sort_order` は 10 刻みにする。** `ApiDesign.md` 10.4 が「省略時は同じ親の中の末尾（現在の最大値 + 10）」と定めているので、既定で足される文書がテンプレートの後ろに並ぶ。1 刻みにすると、間に1件挿し込むだけで全件の付け替えが要る。
 
@@ -2315,7 +2335,7 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 
 **`sort_order` は 50 とし、先頭へ挿さない。** 既存のプロジェクトは 10〜40 で複製済みで、**先頭へ挿すと新規プロジェクトとの並びが食い違う。** 憲章の4件は「なぜ→守ること→決めたこと→学んだこと」で互いに順序の意味を持つ組だが、参画情報は性質の違う運用情報である。
 
-**この1件だけはコンテキストパックの憲章に入れない**（`Design.md` 8.5.5）。**参画時に一度読むもので、チケットごとのパックに毎回運ぶものではない。** 除外は `path` の完全一致で見るので、**この文書を他の文書の下へ移すと憲章に戻る。**
+**0042 で `agent-onboarding` と子孫は `pack_mode = none` に移行する。** 参画時に一度読む文書であり、チケットごとのパックには載せない。管理者は文書ごとに変更できる（`Design.md` 8.5.5）。
 
 **本文を空にしない。** 各文書に「ここに何を書くか」の短い案内を初期本文として入れる。空の文書が並ぶと、何を書く場所か分からないまま放置される。
 
@@ -2342,13 +2362,13 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 - **何も足さない案は採らなかった。** 規約に記述が無ければエージェントは毎回利用者に確認することになり、`Requirements.md` 10.7.3 の推奨（タスク単位で worktree を切り、完了時に破棄する）を書く場所があることが、どこからも見えない
 - **再検討の条件は、プロジェクトの型（リポジトリ型など）をテンプレートの選び分けに使うようになったとき**である。型ごとに雛形を分けられれば、リポジトリ型にだけ具体的な規約を入れられる
 
-**判断の記録の案内には、「1判断＝1見出し」の書き方を入れる**（0038）。コンテキストパックは判断の記録を本文ではなく目次だけ載せ、エージェントは見出しを指定して1件ずつ読む（`Design.md` 8.5.5）。**見出しの無い判断の記録は、パックに1件も届かない**——見出しが無いときは本文を載せない。0018 の案内には見出しで書く指示が無く、案内どおりに書くとこの形になっていた。
+**判断の記録の案内には、「1判断＝1見出し」の書き方を入れる**（0038）。初期設定ではコンテキストパックは判断の記録を本文ではなく目次だけ載せ、エージェントは見出しを指定して1件ずつ読む（`Design.md` 8.5.5）。**見出しの無い判断の記録は、パックに1件も届かない**——見出しが無いときは本文を載せない。0018 の案内には見出しで書く指示が無く、案内どおりに書くとこの形になっていた。
 
 - **書き方の例（`### <日付> / <何を決めたか>`）はインラインコードで示し、見出しそのものは置かない。** 下の「初期本文に見出しを置かない」を崩さないため
 - **形の組み替え（見出しの付け方・章の移し替え）を許す一文は入れない。** 組み替えが要るのは見出しの無い記録を持つ既存プロジェクトだけで、新しいプロジェクトには組み替える記録が無い
 - **再検討の条件は、パックが判断の記録を目次以外の形（本文の抜粋など）で運ぶようになったとき**である。そのとき見出しを強いる理由が変わる
 
-**初期本文に見出し（`##`）を置かない。** `ApiDesign.md` 10.2 の `?outline=1` は**エージェントが「どの章を読むか」を決めるため**に使う。中身の無い見出しを並べると、目次だけを見た相手に「読むべき章がある」と読まれる。
+**最初の5文書の初期本文には見出し（`##`）を置かない。** `ApiDesign.md` 10.2 の `?outline=1` は**エージェントが「どの章を読むか」を決めるため**に使う。中身の無い見出しを並べると、目次だけを見た相手に「読むべき章がある」と読まれる。0043 の運営ノートだけは、記入先を示す「見積・実績」「実績」「見積」の骨組みを置き、`pack_mode = none` でパックには載せない。
 
 **複製はプロジェクト作成時に行う**（7.4 のワークフローテンプレートと同じ手順の中で）。複製後はそのプロジェクトのものになり、テンプレート側を直しても既存プロジェクトには波及しない。**プロジェクト作成の経路は `POST /projects` と `pb dev seed` の2つがあり、どちらも同じ手順を通る**（実体は `server/internal/project`）。
 

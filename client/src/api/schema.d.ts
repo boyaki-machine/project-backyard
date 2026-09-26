@@ -64,6 +64,7 @@ export interface paths {
          *     `permissions` はシステムロール由来の実効権限、`projects[].permissions` は
          *     当該プロジェクトでの実効権限（システムロール ∪ プロジェクトロール ∩ スコープ。
          *     Design.md 6.4.1）。`projects[]` にはアーカイブ済みのプロジェクトも含む。
+         *     プロジェクト専用トークンでは、そのプロジェクトだけを返す。
          */
         get: operations["getMe"];
         put?: never;
@@ -1649,6 +1650,8 @@ export interface paths {
          *     | `ticket.self_edit` で変えられる | 変えられない |
          *     |---|---|
          *     | `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_date` `due_date` | `type` `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
+         *
+         *     `actual_point` と `actual_point_version` は対で更新する。`ticket.actual_point.edit` が追加で必要であり、PM のエージェントにはトークン発行時にこの scope を指定できる。
          *
          *     **`type` を外したのは、切り替えが盤面の見え方を変えるからである**
          *     ——タスクをエピックへ変えると、その行はバックログから消えてフィルタの
@@ -5561,6 +5564,13 @@ export interface components {
             /** Format: double */
             actual_hours: number | null;
             /**
+             * Format: double
+             * @description 実績ポイント。時間とは別の相対尺度。
+             */
+            actual_point: number | null;
+            /** @description 算出式の版。例：actual-v0。 */
+            actual_point_version: string | null;
+            /**
              * Format: date
              * @description **`date` 列であって時刻を持たない**（DbDesign.md 6.6）。画面は
              *     `new Date()` を通さずに整形すること——UTC より西の地域で前日へずれる。
@@ -6223,6 +6233,13 @@ export interface components {
             /** Format: double */
             actual_hours?: number | null;
             /**
+             * Format: double
+             * @description actual_point_version と同時に指定する。PM の追加権限が必要。
+             */
+            actual_point?: number | null;
+            /** @description actual_point と同時に指定する。 */
+            actual_point_version?: string | null;
+            /**
              * Format: date
              * @description `YYYY-MM-DD`。**時刻つきは受け付けない**（date 列であり、通すと タイムゾーンによって前日へずれる）。
              */
@@ -6448,6 +6465,8 @@ export interface components {
             title: string;
             /** @example 10 */
             sort_order: number;
+            /** @enum {string} */
+            pack_mode: "full" | "outline" | "none";
             /**
              * @description 楽観ロックの現在値（2.8）。**木のドラッグ&ドロップが `If-Match` に使う**
              *     （GuiDesign.md 5.10）。
@@ -6505,6 +6524,8 @@ export interface components {
             outline: components["schemas"]["DocOutlineItem"][];
             /** @example 20 */
             sort_order: number;
+            /** @enum {string} */
+            pack_mode: "full" | "outline" | "none";
             /** @example 3 */
             version: number;
             created_by: components["schemas"]["ActorRef"] | null;
@@ -6560,6 +6581,11 @@ export interface components {
             body_md?: string;
             /** @description 省略時は同じ親の中の末尾（現在の最大値 + 10）。 */
             sort_order?: number;
+            /**
+             * @description 省略時は outline（目次だけ）。
+             * @enum {string}
+             */
+            pack_mode?: "full" | "outline" | "none";
         };
         /**
          * @description 文書の部分更新（ApiDesign.md 10.4）。**送られた項目だけを更新する。**
@@ -6573,6 +6599,8 @@ export interface components {
             slug?: string;
             parent_path?: string | null;
             sort_order?: number;
+            /** @enum {string} */
+            pack_mode?: "full" | "outline" | "none";
             /**
              * @description 200文字以内。`document_revision.change_reason` に入る。**リビジョンを作らない
              *     更新で送っても捨てる**（422 にはしない）。

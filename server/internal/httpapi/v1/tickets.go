@@ -63,8 +63,9 @@ const (
 	// **これが「行を読んでから決まる判定」の3例目である**（9.6 の検証6、
 	// 9.8 の comment.edit_own に続く）。Design.md 付録A 論点①（権限の
 	// 全体像の再整理）は、ApiDesign.md 9.5.2 の改訂でここに置いた。
-	permTicketEdit     = "ticket.edit"
-	permTicketSelfEdit = "ticket.self_edit"
+	permTicketEdit            = "ticket.edit"
+	permTicketSelfEdit        = "ticket.self_edit"
+	permTicketActualPointEdit = "ticket.actual_point.edit"
 )
 
 // selfEditDeniedFields は ticket.self_edit だけを持つ呼び出し元が送れない項目
@@ -89,9 +90,10 @@ var selfEditDeniedFields = []string{
 
 // チケットの値域（ApiDesign.md 9.2.1 / 9.3、DbDesign.md 6.6 の CHECK と同じ）。
 var (
-	ticketTypes        = []string{"epic", "story", "task"}
-	ticketPriorities   = []string{"lowest", "low", "medium", "high", "highest"}
-	ticketStatusCatego = []string{"todo", "in_progress", "review", "done"}
+	actualPointVersionPattern = regexp.MustCompile(`^actual-v[0-9]+$`)
+	ticketTypes               = []string{"epic", "story", "task"}
+	ticketPriorities          = []string{"lowest", "low", "medium", "high", "highest"}
+	ticketStatusCatego        = []string{"todo", "in_progress", "review", "done"}
 
 	// 手順27 で PATCH に開けた3つ（ApiDesign.md 9.5.2、DbDesign.md 6.6 の CHECK）。
 	ticketExecutionModes = []string{"human_only", "agent_only", "agent_draft"}

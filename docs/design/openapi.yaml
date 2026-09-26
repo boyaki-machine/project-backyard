@@ -2811,6 +2811,8 @@ paths:
         |---|---|
         | `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_date` `due_date` | `type` `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
 
+        `actual_point` と `actual_point_version` は対で更新する。`ticket.actual_point.edit` が追加で必要であり、PM のエージェントにはトークン発行時にこの scope を指定できる。
+
         **`type` を外したのは、切り替えが盤面の見え方を変えるからである**
         ——タスクをエピックへ変えると、その行はバックログから消えてフィルタの
         選択肢になる（GuiDesign.md 5.4）。**`sprint_id` は 0028 以降どちらの権限でも
@@ -8608,7 +8610,7 @@ components:
       required:
         [id, seq, type, title, status, priority, assignee, reporter, working_agent,
          parent_seq, has_children, sort_key, staged_at, tags, sprint, estimate_point,
-         estimate_hours, actual_hours, start_date, due_date, closed_at, version,
+         estimate_hours, actual_hours, actual_point, actual_point_version, start_date, due_date, closed_at, version,
          created_at, updated_at]
       properties:
         id:
@@ -8700,6 +8702,15 @@ components:
           type: number
           format: double
           nullable: true
+        actual_point:
+          type: number
+          format: double
+          nullable: true
+          description: 実績ポイント。時間とは別の相対尺度。
+        actual_point_version:
+          type: string
+          nullable: true
+          description: 算出式の版。例：actual-v0。
         start_date:
           type: string
           format: date
@@ -9589,6 +9600,17 @@ components:
           format: double
           minimum: 0
           nullable: true
+        actual_point:
+          type: number
+          format: double
+          minimum: 0
+          nullable: true
+          description: actual_point_version と同時に指定する。PM の追加権限が必要。
+        actual_point_version:
+          type: string
+          pattern: '^actual-v[0-9]+$'
+          nullable: true
+          description: actual_point と同時に指定する。
         start_date:
           type: string
           format: date
@@ -9858,7 +9880,7 @@ components:
         目次の1件（ApiDesign.md 10.2）。**`body_md` を持たない。**
         `children` は各階層で `sort_order` 昇順、同値は `slug` 昇順。
       type: object
-      required: [id, path, slug, title, sort_order, version, updated_at, children]
+      required: [id, path, slug, title, sort_order, pack_mode, version, updated_at, children]
       properties:
         id:
           type: string
@@ -9876,6 +9898,9 @@ components:
         sort_order:
           type: integer
           example: 10
+        pack_mode:
+          type: string
+          enum: [full, outline, none]
         version:
           description: |
             楽観ロックの現在値（2.8）。**木のドラッグ&ドロップが `If-Match` に使う**
@@ -9928,7 +9953,7 @@ components:
         **憲章に「エージェントが最後に更新した」と出ることは正常である。**
       type: object
       required:
-        [id, path, slug, parent_path, title, body_md, outline, sort_order, version,
+        [id, path, slug, parent_path, title, body_md, outline, sort_order, pack_mode, version,
          created_by, updated_by, created_at, updated_at]
       properties:
         id:
@@ -9957,6 +9982,9 @@ components:
         sort_order:
           type: integer
           example: 20
+        pack_mode:
+          type: string
+          enum: [full, outline, none]
         version:
           type: integer
           example: 3
@@ -10031,6 +10059,10 @@ components:
         sort_order:
           description: 省略時は同じ親の中の末尾（現在の最大値 + 10）。
           type: integer
+        pack_mode:
+          description: 省略時は outline（目次だけ）。
+          type: string
+          enum: [full, outline, none]
 
     PatchDocRequest:
       description: |
@@ -10054,6 +10086,9 @@ components:
           nullable: true
         sort_order:
           type: integer
+        pack_mode:
+          type: string
+          enum: [full, outline, none]
         change_reason:
           description: |
             200文字以内。`document_revision.change_reason` に入る。**リビジョンを作らない

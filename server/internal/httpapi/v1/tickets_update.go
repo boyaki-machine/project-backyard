@@ -80,9 +80,11 @@ type ticketPatch struct {
 	ParentSeq      optional[int32]
 	TagIDs         optional[[]string]
 
-	EstimatePoint optional[float64]
-	EstimateHours optional[float64]
-	ActualHours   optional[float64]
+	EstimatePoint      optional[float64]
+	EstimateHours      optional[float64]
+	ActualHours        optional[float64]
+	ActualPoint        optional[float64]
+	ActualPointVersion optional[string]
 
 	StartDate optional[pgtype.Date]
 	DueDate   optional[pgtype.Date]
@@ -147,6 +149,14 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 	if e := denySelfEditFields(r, key, raw); e != nil {
 		apierr.Write(w, r, e)
 		return
+	}
+	_, point := raw["actual_point"]
+	_, versionField := raw["actual_point_version"]
+	if point || versionField {
+		if e := requireActualPointPermission(r, key); e != nil {
+			apierr.Write(w, r, e)
+			return
+		}
 	}
 
 	// **担当者を変えるなら ticket.assign が要る**（9.5.2）。ルートの宣言
@@ -273,6 +283,8 @@ func (h *handler) resolveTicketPatch(
 	params.EstimatePointSet, params.EstimatePoint = floatParam(patch.EstimatePoint)
 	params.EstimateHoursSet, params.EstimateHours = floatParam(patch.EstimateHours)
 	params.ActualHoursSet, params.ActualHours = floatParam(patch.ActualHours)
+	params.ActualPointSet, params.ActualPoint = floatParam(patch.ActualPoint)
+	params.ActualPointVersionSet, params.ActualPointVersion = textParam(patch.ActualPointVersion)
 	params.StartDateSet, params.StartDate = dateParam(patch.StartDate)
 	params.DueDateSet, params.DueDate = dateParam(patch.DueDate)
 
@@ -494,6 +506,12 @@ func recordTicketFieldChanges(
 	if patch.ActualHours.Set {
 		add("actual_hours", float8StrPtr(before.ActualHours), optionalFloatStrPtr(patch.ActualHours))
 	}
+	if patch.ActualPoint.Set {
+		add("actual_point", float8StrPtr(before.ActualPoint), optionalFloatStrPtr(patch.ActualPoint))
+	}
+	if patch.ActualPointVersion.Set {
+		add("actual_point_version", textPtr(before.ActualPointVersion), optionalStrPtr(patch.ActualPointVersion))
+	}
 	if patch.StartDate.Set {
 		add("start_date", dateStrPtr(before.StartDate), optionalDateStrPtr(patch.StartDate))
 	}
@@ -628,6 +646,16 @@ func parseTicketPatch(raw updateTicketRequest) (ticketPatch, *apierr.Error) {
 	patch.EstimatePoint, details = optionalFloatField(raw, "estimate_point", details)
 	patch.EstimateHours, details = optionalFloatField(raw, "estimate_hours", details)
 	patch.ActualHours, details = optionalFloatField(raw, "actual_hours", details)
+	patch.ActualPoint, details = optionalFloatField(raw, "actual_point", details)
+	patch.ActualPointVersion, details = optionalStringField(raw, "actual_point_version", details, func(s string) *apierr.Detail {
+		if actualPointVersionPattern.MatchString(s) {
+			return nil
+		}
+		return &apierr.Detail{Field: "actual_point_version", Code: "invalid", Message: "算出式の版は actual-v0 の形で指定してください"}
+	})
+	if patch.ActualPoint.Set != patch.ActualPointVersion.Set || (patch.ActualPoint.Set && patch.ActualPoint.Null != patch.ActualPointVersion.Null) {
+		details = append(details, apierr.Detail{Field: "actual_point_version", Code: "required", Message: "実績ポイントと算出式の版は一緒に指定してください"})
+	}
 
 	patch.StartDate, details = optionalDateField(raw, "start_date", details)
 	patch.DueDate, details = optionalDateField(raw, "due_date", details)
@@ -1005,4 +1033,13 @@ func denySelfEditFields(r *http.Request, key string, raw updateTicketRequest) *a
 		WithMessage(fmt.Sprintf("次の項目を変更する権限がありません: %s",
 			strings.Join(denied, " / "))).
 		WithCause(fmt.Errorf("ticket.self_edit では書けない項目が来た: %v", denied))
+}
+
+// 実績ポイントは PM の専用権限で更新する。ticket.edit だけでは足りない。
+func requireActualPointPermission(r *http.Request, key string) *apierr.Error {
+	a := auth.ProjectAuthzFromContext(r.Context(), key)
+	if a != nil && auth.HasPermission(a.Permissions, permTicketActualPointEdit) {
+		return nil
+	}
+	return apierr.New(apierr.Forbidden).WithMessage("実績ポイントを変更する権限がありません")
 }

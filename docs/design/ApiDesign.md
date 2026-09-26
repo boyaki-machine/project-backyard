@@ -982,13 +982,13 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 
 **画面は既定と許可リストを 4.5.9 から引く**。`scopes` が絶対指定なので、「既定に `doc.edit` を足す」を送るには既定の中身が要るが、**画面に写しを持たせない。**
 
-**許可リストは「6.5 の既定10件 ∪ `doc.edit`」の11件である。**
+**許可リストは「6.5 の既定10件 ∪ `doc.edit` ∪ `ticket.actual_point.edit`」の12件である。**
 
 ```
 agent.run  comment.create  doc.view  project.view
 ticket.assign  ticket.create  ticket.transition  ticket.view
 ticket.reference.edit  ticket.self_edit                         ← 既定の10件
-doc.edit                                                        ← 発行時に足せる
+doc.edit  ticket.actual_point.edit                              ← 発行時に足せる
 ```
 
 **`ticket.self_edit` も既定に入れる**。`ticket.reference.edit` と同じ理由である——**起票したチケットを直すのは実装エージェントの通常の仕事**であり、付く相手で変わらない。**`ticket.edit` は許可リストに入れない**。あれは 9.5.2 の全項目を開けるので、**エージェントが `execution_mode` や `scope` を自分で緩められる**（`DbDesign.md` 6.13）。
@@ -1395,7 +1395,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
   "default": ["agent.run", "comment.create", "doc.view", "project.view", "ticket.assign",
               "ticket.create", "ticket.reference.edit", "ticket.self_edit",
               "ticket.transition", "ticket.view"],
-  "grantable": ["doc.edit"]
+  "grantable": ["doc.edit", "ticket.actual_point.edit"]
 }
 ```
 
@@ -2620,6 +2620,8 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
       "estimate_point": 5,
       "estimate_hours": null,
       "actual_hours": 3.5,
+      "actual_point": 5,
+      "actual_point_version": "actual-v0",
       "start_date": "2026-08-09",
       "due_date": "2026-08-14",
       "closed_at": null,
@@ -2862,7 +2864,9 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 `If-Match: "3"` による楽観ロック（2.8）。**省略時は `422`**。成功すると `version` が +1 される。送られたフィールドだけを更新する。
 
-変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `estimate_point` `estimate_hours` `actual_hours` `start_date` `due_date` `execution_mode` `readiness` `readiness_note` `scope`
+**`actual_point` と `actual_point_version` は対で送り、追加の `ticket.actual_point.edit` 権限が要る。** どちらか一方だけ、または値と null の混在は 422 とする。
+
+変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `estimate_point` `estimate_hours` `actual_hours` `actual_point` `actual_point_version` `start_date` `due_date` `execution_mode` `readiness` `readiness_note` `scope`
 
 **含められないフィールド**
 
@@ -4159,14 +4163,14 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
 {
   "items": [
     { "id": "01K2...", "path": "vision", "slug": "vision",
-      "title": "価値観・世界観", "sort_order": 10, "version": 1,
+      "title": "価値観・世界観", "pack_mode": "full", "sort_order": 10, "version": 1,
       "updated_at": "2026-08-29T04:12:00Z", "children": [] },
     { "id": "01K2...", "path": "rules", "slug": "rules",
-      "title": "規約", "sort_order": 20, "version": 3,
+      "title": "規約", "pack_mode": "full", "sort_order": 20, "version": 3,
       "updated_at": "2026-08-29T05:00:00Z",
       "children": [
         { "id": "01K2...", "path": "rules/naming", "slug": "naming",
-          "title": "命名", "sort_order": 10, "version": 1,
+          "title": "命名", "pack_mode": "outline", "sort_order": 10, "version": 1,
           "updated_at": "2026-08-29T05:00:00Z", "children": [] }
       ] }
   ]
@@ -4223,6 +4227,7 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
   "parent_path": null,
   "title": "規約",
   "body_md": "本書はこのプロジェクトの規約である。\n\n## 命名\n…",
+  "pack_mode": "full",
   "outline": [ { "section": "命名", "level": 2 } ],
   "sort_order": 20,
   "version": 3,
@@ -4280,9 +4285,10 @@ GET /api/v1/projects/my-app/docs/rules?section=命名
 | `title` | 必須。1〜200文字。前後の空白を取り除いてから検証する |
 | `parent_path` | 任意。省略・`null` でトップレベル。存在しないパスは `422`、`details[].code = "not_found"` |
 | `body_md` | 任意。既定は空文字 |
+| `pack_mode` | 任意。`full` / `outline` / `none`。既定は `outline` |
 | `sort_order` | 任意。省略時は同じ親の中の末尾（現在の最大値 + 10） |
 
-`PATCH` は `title` / `body_md` / `slug` / `parent_path` / `sort_order` を任意の組み合わせで受け、
+`PATCH` は `title` / `body_md` / `slug` / `parent_path` / `sort_order` / `pack_mode` を任意の組み合わせで受け、
 **加えて `change_reason`（任意、200文字以内）を受ける**。
 
 **`If-Match` を要求する**（2.8）。`document` は `version` 列を持つ。**人とエージェントが

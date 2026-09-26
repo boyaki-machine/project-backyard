@@ -224,6 +224,7 @@ type Document struct {
 	Version     int32
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
+	PackMode    string
 }
 
 type DocumentRevision struct {
@@ -407,7 +408,9 @@ type Ticket struct {
 	UpdatedAt       pgtype.Timestamptz
 	StagedAt        pgtype.Timestamptz
 	// 実行者（誰が実際に処理しているか）。エージェントが遷移時に自己申告する。DbDesign.md 6.6
-	WorkingAgentID pgtype.Text
+	WorkingAgentID     pgtype.Text
+	ActualPoint        pgtype.Float8
+	ActualPointVersion pgtype.Text
 }
 
 type TicketLink struct {
