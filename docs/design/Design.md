@@ -1360,6 +1360,7 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 | `pb_update_ticket` | `PATCH /projects/:key/tickets/:seq` | **`ticket.self_edit`** |
 | `pb_put_dod` | `GET|POST|PATCH|DELETE /projects/:key/tickets/:seq/dod` | **`ticket.self_edit`** |
 | `pb_list_tags` | `GET /projects/:key/tags` | `ticket.view` |
+| `pb_create_doc` | `POST /projects/:key/docs` | **`doc.edit`** |
 | `pb_put_doc` | `PATCH /projects/:key/docs/*path` | **`doc.edit`** |
 | `pb_post_note` | `POST /projects/:key/tickets/:seq/comments` | `comment.create` |
 | `pb_add_reference` | `POST /projects/:key/tickets/:seq/references` | **`ticket.reference.edit`** |
@@ -1446,11 +1447,14 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 | `pb_update_ticket` | `seq`, ＋ 上の任意引数から **`type` を除いたもの**（**送ったものだけ更新**） | `PATCH /projects/:key/tickets/:seq` | **要点だけ**（`seq` / `status` / `version` / `updated_at`） |
 | `pb_put_dod` | `seq`, `add?[]`, `update?[]`, `delete?[]` | 9.9 の `POST` / `PATCH` / `DELETE` | 9.9 の一覧をそのまま |
 | `pb_list_tags` | （なし） | `GET /projects/:key/tags` | 9.11 の一覧をそのまま |
+| `pb_create_doc` | `slug`, `title`, `parent_path?`, `body_md?`, `sort_order?` | `POST /projects/:key/docs` | **要点だけ**（`path` / `version` / `updated_at`） |
 | `pb_put_doc` | `path`, `body_md`, `change_reason?` | `GET` してから `PATCH /projects/:key/docs/*path` | **要点だけ**（`path` / `version` / `updated_at`） |
 | `pb_post_note` | `seq`, `body_md`, `kind?` | `POST /projects/:key/tickets/:seq/comments` | **要点だけ**（`id` / `kind` / `created_at`） |
 | `pb_add_reference` | `seq`, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | `POST /projects/:key/tickets/:seq/references` | 9.10.2 の1件をそのまま |
 
 **引数の名前は `ApiDesign.md` の本体フィールドに揃える**（`body` ではなく `body_md`、`parent` ではなく `parent_seq`）。8.5 の冒頭が述べるとおり、名前が一致していればエージェントは迷ったときに設計文書を引ける。
+
+**`pb_create_doc` の `slug` は `^[a-z0-9][a-z0-9-]{0,63}$` に従う。** 大文字や `.md` は付けない。同じ親の下に同名があれば REST の `409 already_exists` を返す。`doc.edit` を持つトークンだけが作成できる。配布する接続設定の自動承認一覧には入れず、書き込みのたびに確認する。
 
 **`assignee_id` は `me` を受ける。** read 系の `assignee` と同じ写し方をする（下記）——**エージェントはアクターの ULID を知らない**ため、`me` を通さないと担当を付ける経路が実質無い。ULID をそのまま渡すこともできる。
 
@@ -1501,6 +1505,7 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 |---|---|---|
 | `pb_create_ticket` | `id` / `seq` / `status` / `version` / `parent_seq` | `seq` を続けて `parent_seq` や `pb_transition_task` に使う |
 | `pb_update_ticket` | `seq` / `status` / `version` / `updated_at` | 直ったこと（版が進んだこと）を確かめる |
+| `pb_create_doc` | `path` / `version` / `updated_at` | 続けて `pb_put_doc` で直すときのパスを得る |
 | `pb_put_doc` | `path` / `version` / `updated_at` | 10.3 の応答は**本文の全文**を持つ。版は `pb_get_context` の `charter_versions`（8.5.5）に使える |
 | `pb_post_note` | `id` / `kind` / `created_at` | 書けたことを確かめる |
 

@@ -366,7 +366,7 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tags",
 		"pb_list_tasks", "pb_get_task", "pb_get_context",
 		"pb_create_ticket", "pb_update_ticket", "pb_put_dod",
-		"pb_post_note", "pb_add_reference", "pb_put_doc",
+		"pb_post_note", "pb_add_reference", "pb_create_doc", "pb_put_doc",
 		"pb_list_transitions", "pb_transition_task",
 		"pb_submit_result",
 	}

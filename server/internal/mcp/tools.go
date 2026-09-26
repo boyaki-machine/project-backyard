@@ -858,6 +858,23 @@ func writeTools() []tool {
 			call: callAddReference,
 		},
 		{
+			Name: "pb_create_doc",
+			Description: "プロジェクト文書を新しく作る。doc.edit が必要。slug は ^[a-z0-9][a-z0-9-]{0,63}$（小文字・数字・ハイフン）で、.md は付けない。" +
+				"同じ親の下に同じ slug があれば 409 already_exists。応答は要点（path / version / updated_at）だけ。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"slug":        {Type: "string", Description: "文書名。^[a-z0-9][a-z0-9-]{0,63}$。大文字や .md は使えない"},
+					"title":       {Type: "string", Description: "表示名。1〜200文字"},
+					"parent_path": {Type: "string", Description: "親文書のパス。省略すると最上位"},
+					"body_md":     {Type: "string", Description: "初期本文（Markdown）。省略時は空文字"},
+					"sort_order":  {Type: "integer", Description: "同じ親の中の並び順。省略時は末尾"},
+				},
+				Required: []string{"slug", "title"},
+			},
+			call: callCreateDoc,
+		},
+		{
 			Name: "pb_put_doc",
 			Description: "プロジェクト文書（憲章）の本文を書き換える。**全置換である**——" +
 				"pb_get_doc で全文を読み、直した全文を渡すこと。章だけを差し替える口は無い。" +
@@ -1286,6 +1303,40 @@ func callAddReference(h *Handler, r *http.Request, key string, args json.RawMess
 	}
 	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/references", nil, raw, nil)
 	return passThrough(r, res, err)
+}
+
+type createDocArgs struct {
+	Slug       string  `json:"slug"`
+	Title      string  `json:"title"`
+	ParentPath *string `json:"parent_path"`
+	BodyMD     *string `json:"body_md"`
+	SortOrder  *int    `json:"sort_order"`
+}
+
+func callCreateDoc(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in createDocArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if in.Slug == "" || strings.TrimSpace(in.Title) == "" {
+		return toolResult{}, newError(codeInvalidParams, "slug と title は必須である")
+	}
+	body := map[string]any{"slug": in.Slug, "title": in.Title}
+	if in.ParentPath != nil {
+		body["parent_path"] = *in.ParentPath
+	}
+	if in.BodyMD != nil {
+		body["body_md"] = *in.BodyMD
+	}
+	if in.SortOrder != nil {
+		body["sort_order"] = *in.SortOrder
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost, projectPath(key)+"/docs", nil, raw, nil)
+	return passThroughFields(r, res, err, putDocResultFields...)
 }
 
 // putDocArgs は pb_put_doc の引数（Design.md 8.5.1）。
