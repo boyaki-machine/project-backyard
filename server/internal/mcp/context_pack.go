@@ -125,6 +125,7 @@ type packDocNode struct {
 	Path     string        `json:"path"`
 	Title    string        `json:"title"`
 	Version  int64         `json:"version"`
+	PackMode string        `json:"pack_mode"`
 	Outline  []packOutline `json:"outline"`
 	Children []packDocNode `json:"children"`
 
@@ -194,38 +195,16 @@ func callGetContext(h *Handler, r *http.Request, key string, args json.RawMessag
 	return textResult(renderContextPack(key, ticket, ch)), nil
 }
 
-// onboardingDocPath は憲章から外す1件のパス（Design.md 8.5.5、DbDesign.md 8.1.2）。
-//
-// **「エージェントの参画情報」は参画のときに一度読む手順であって、判断の
-// 拠りどころではない**（Requirements.md 10.6.2）。**チケットごとのパックに毎回
-// 運ぶと、押し付けたいもの（スコープ境界・規約）が薄まる**——本文と完了条件を
-// 入れない理由と同じである。
-//
-// **完全一致で見る。** 木のどこにあっても効く規則にすると、**たまたま同じ slug を
-// 付けた別の文書まで黙って落ちる。** 他の文書の下へ移されると憲章に戻るが、
-// **落としたことは応答に1行出る**ので、移した人が気づける。
-const onboardingDocPath = "agent-onboarding"
-
-// decisionsDocPath は本文を載せず、目次だけを載せる文書のパス（Design.md 8.5.5）。
-//
-// **判断の記録は追記で一方的に増える文書である。** 全文を全チケットに運ぶと、
-// 押し付けたいもの（スコープ境界・規約）が薄まる。1判断＝1見出しで書くので
-// 目次がそのまま索引になり、エージェントは関わる判断だけを section で引ける。
-//
-// **見分け方は onboardingDocPath と同じく完全一致である。** 他の文書の下へ移されると
-// 全文に戻り、目次だけにした旨の1行も出なくなる。
-const decisionsDocPath = "decisions"
-
 // charter は憲章の取り込み結果（Design.md 8.5.5）。
 type charter struct {
 	// docs は目次の順に積んだ文書。判断の記録は OutlineOnly で、本文を持たない。
 	docs []packDoc
 	// note は憲章を丸ごと省いたときの理由（省いていなければ空）。
 	note string
-	// excludedOnboarding は onboardingDocPath を落としたかどうか。
-	excludedOnboarding bool
-	// outlinedDecisions は decisionsDocPath を目次だけにしたかどうか。
-	outlinedDecisions bool
+	// omitted は「載せない」により本文を落とした文書のパス。
+	omitted []string
+	// outlined は目次だけ載せた文書のパス。
+	outlined []string
 	// omittedUnchanged は、渡された版と一致して省いた文書が1件でもあるかどうか。
 	omittedUnchanged bool
 }
@@ -269,22 +248,21 @@ func (h *Handler) fetchCharter(r *http.Request, base string, known map[string]in
 
 	// **本文を引く前に落とす。** 目次の段階で外しておかないと、捨てる文書のために
 	// 10.3 を1往復ぶん余計に叩くことになる。
-	items, excluded := dropOnboardingDoc(outline.Items)
-
-	ch := charter{
-		excludedOnboarding: excluded,
-		outlinedDecisions:  markOutlineOnly(items, decisionsDocPath),
-	}
+	items, omitted, outlined := selectPackDocs(outline.Items, "full")
+	ch := charter{omitted: omitted, outlined: outlined}
 	for _, node := range flattenDocTree(items) {
 		// **版が一致したら本文を引かない**（判断の記録も同じく比べる）。
 		// 版は 1 から始まるので、0 以下が一致しても省かない。
-		if v, ok := known[node.Path]; ok && v >= 1 && v == node.Version {
+		// 子の有効モードは親の設定でも変わる。子自身の version はそのまま
+		// なので、親を持つ文書は版一致による省略をしない。
+		hasParent := strings.Contains(node.Path, "/")
+		if v, ok := known[node.Path]; ok && !hasParent && v >= 1 && v == node.Version {
 			ch.docs = append(ch.docs, packDoc{Path: node.Path, Title: node.Title, Version: node.Version,
 				OutlineOnly: node.outlineOnly, Unchanged: true})
 			ch.omittedUnchanged = true
 			continue
 		}
-		// **判断の記録は本文を引かない。** 目次は 10.2 の ?outline=1 がすでに返している。
+		// 目次掲載の文書は本文を引かない。見出しは ?outline=1 ですでに返っている。
 		if node.outlineOnly {
 			ch.docs = append(ch.docs, packDoc{Path: node.Path, Title: node.Title, Version: node.Version,
 				Outline: node.Outline, OutlineOnly: true})
@@ -299,44 +277,36 @@ func (h *Handler) fetchCharter(r *http.Request, base string, known map[string]in
 	return ch, nil
 }
 
-// dropOnboardingDoc は onboardingDocPath の節点を目次から外す。
-//
-// **トップレベルだけを見る**（テンプレートが置く位置。上の const を参照）。
-// 節点ごと外すので、**その下に置かれた文書も一緒に落ちる**——参画の細目を
-// ぶら下げた人の意図に沿う。
-func dropOnboardingDoc(nodes []packDocNode) ([]packDocNode, bool) {
-	for i, n := range nodes {
-		if n.Path != onboardingDocPath {
+// selectPackDocs は親の設定を上限として、各文書の掲載方法を決める。
+// none の子はすべて除外し、outline の子は全文に戻さない。
+func selectPackDocs(nodes []packDocNode, parentMode string) ([]packDocNode, []string, []string) {
+	var included []packDocNode
+	var omitted, outlined []string
+	for _, node := range nodes {
+		mode := node.PackMode
+		if mode == "" {
+			mode = "outline"
+		}
+		if parentMode == "none" || mode == "none" {
+			omitted = append(omitted, node.Path)
+			_, childrenOmitted, _ := selectPackDocs(node.Children, "none")
+			omitted = append(omitted, childrenOmitted...)
 			continue
 		}
-		out := make([]packDocNode, 0, len(nodes)-1)
-		out = append(out, nodes[:i]...)
-		out = append(out, nodes[i+1:]...)
-		return out, true
-	}
-	return nodes, false
-}
-
-// markOutlineOnly は path の節点とその下の文書に、目次だけを載せる印を付ける。
-//
-// **トップレベルだけを見る**（dropOnboardingDoc と同じく、テンプレートが置く位置）。
-// 節点ごと扱うので、**その下に置いた文書も目次だけになる**。印を付けたら true を返す。
-func markOutlineOnly(nodes []packDocNode, path string) bool {
-	for i := range nodes {
-		if nodes[i].Path == path {
-			setOutlineOnly(&nodes[i])
-			return true
+		if parentMode == "outline" {
+			mode = "outline"
 		}
+		if mode == "outline" {
+			node.outlineOnly = true
+			outlined = append(outlined, node.Path)
+		}
+		children, childrenOmitted, childrenOutlined := selectPackDocs(node.Children, mode)
+		node.Children = children
+		included = append(included, node)
+		omitted = append(omitted, childrenOmitted...)
+		outlined = append(outlined, childrenOutlined...)
 	}
-	return false
-}
-
-// setOutlineOnly は節点とその子孫に outlineOnly を立てる。
-func setOutlineOnly(n *packDocNode) {
-	n.outlineOnly = true
-	for i := range n.Children {
-		setOutlineOnly(&n.Children[i])
-	}
+	return included, omitted, outlined
 }
 
 // fetchDocBody は文書1件の本文と版を引く（10.3）。
@@ -558,45 +528,27 @@ func writeCharterSection(b *strings.Builder, ch charter) {
 		return
 	}
 	if len(ch.docs) == 0 {
-		// **件数を数え上げない。** 参画情報を落とした後で「1件も無い」と
-		// 言い切ると、実際には1件ある場合に嘘になる。
-		b.WriteString("**このプロジェクトには、判断の拠りどころになる文書が1件も無い。**\n" +
-			"規約・価値観・判断の記録が書かれていないということなので、" +
-			"**判断が要る場面では推測せず利用者に確認すること。**\n\n")
+		b.WriteString("**このパックに掲載する文書は無い。** 判断が要る場面では推測せず利用者に確認すること。\n\n")
 	} else if ch.omittedUnchanged {
-		// **省いたことと、戻り方を書く**。本文が要約で手元から消えても、
-		// サーバはそれを知り得ないので、判断はエージェントに置く。
-		// **前置きの3段落はここで1段落に畳む**。参画情報と判断の記録の句は、
-		// 実際にそうしたときだけ足す（下の2段落と同じ条件）。
-		b.WriteString("**全参加者を縛る。** 版（`charter_versions`）が一致した文書は本文を省き、それ以外は全文を載せた。" +
+		b.WriteString("文書ごとの設定に従い全文または目次を載せた。版（`charter_versions`）が一致した文書は内容を省いた。" +
 			"**手元に本文が無ければ（会話の要約で消えたときなど）、`charter_versions` を渡さずに呼び直すこと。**")
-		switch {
-		case ch.excludedOnboarding && ch.outlinedDecisions:
-			b.WriteString(" 前回と同じく、参画情報（`" + onboardingDocPath + "`）は載せず、判断の記録（`" + decisionsDocPath + "`）は目次だけを載せた。")
-		case ch.excludedOnboarding:
-			b.WriteString(" 前回と同じく、参画情報（`" + onboardingDocPath + "`）は載せていない。")
-		case ch.outlinedDecisions:
-			b.WriteString(" 前回と同じく、判断の記録（`" + decisionsDocPath + "`）は目次だけを載せた。")
-		}
 		b.WriteString("\n\n")
 	} else {
-		b.WriteString("**プロジェクトの規約・価値観・判断の記録である。全参加者を縛る。**\n" +
-			"以下は全文であり、切り詰めていない。\n\n")
+		b.WriteString("文書ごとの設定に従い、全文または目次を載せた。\n\n")
 	}
-	// **落としたことを1行書く**（10.4.3 の 4）。実際に落ちたときだけ出す。
-	// 畳んだときは上の1段落に句として入れてあるので、ここでは出さない。
-	if ch.excludedOnboarding && !ch.omittedUnchanged {
-		// **強調は文ではなく句を囲む**（DbDesign.md 8.1.2）。閉じる ** が句点に続き
-		// 直後が全角文字だと、CommonMark の right-flanking にならず ** が地の文に残る。
-		b.WriteString("ただし「エージェントの参画情報」（`" + onboardingDocPath + "`）は**含めていない**。" +
-			"参画のときに一度読む手順であって、判断の拠りどころではないためである。" +
-			"作業材料の取り方や参画の合図が要るなら `pb_get_doc(path=\"" + onboardingDocPath + "\")` で読む。\n\n")
+	if len(ch.omitted) > 0 {
+		b.WriteString("**掲載しない文書**（必要なら `pb_get_doc` で読む）：")
+		for _, path := range ch.omitted {
+			fmt.Fprintf(b, " `%s`", path)
+		}
+		b.WriteString("\n\n")
 	}
-	// **目次だけにしたことも1行書く**（同じ理由）。実際に目次だけにしたときだけ出すので、
-	// 判断の記録を別のパスへ移すとこの1行が消え、移した人が気づける。
-	if ch.outlinedDecisions && !ch.omittedUnchanged {
-		b.WriteString("判断の記録（`" + decisionsDocPath + "`）は**目次だけ**を載せている。" +
-			"追記で増え続ける文書なので、着手する作業に関わる判断だけを見出しで引いて読むこと。\n\n")
+	if len(ch.outlined) > 0 {
+		b.WriteString("**目次だけ載せる文書**：")
+		for _, path := range ch.outlined {
+			fmt.Fprintf(b, " `%s`", path)
+		}
+		b.WriteString("\n\n")
 	}
 	for _, d := range ch.docs {
 		fmt.Fprintf(b, "### %s（`%s`）\n\n", d.Title, d.Path)
@@ -621,14 +573,13 @@ func writeCharterSection(b *strings.Builder, ch charter) {
 	}
 }
 
-// writeDocOutline は目次だけを載せる文書を描く（判断の記録。Design.md 8.5.5）。
+// writeDocOutline は目次だけを載せる文書を描く（Design.md 8.5.5）。
 //
 // **見出しは outline の section をそのまま並べる。** pb_get_doc の section は見出しの
 // 生テキストとの完全一致で引くので、手を加えると引けなくなる。入れ子は level の差で
 // 表し、いちばん浅い見出しを行頭に置く。
 //
-// **見出しが1つも無いときも本文を載せない**。規則を
-// 「判断の記録は目次だけ」の1つに保ち、字数の管理から漏らさないためである。
+// **見出しが1つも無いときも本文を載せない**。掲載設定を守る。
 func writeDocOutline(b *strings.Builder, d packDoc) {
 	if len(d.Outline) == 0 {
 		fmt.Fprintf(b, "見出しが1つも無いので、目次を出せない。読むときは `pb_get_doc(path=\"%s\")` で全文を引く。\n\n", d.Path)

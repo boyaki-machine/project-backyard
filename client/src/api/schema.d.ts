@@ -64,6 +64,7 @@ export interface paths {
          *     `permissions` はシステムロール由来の実効権限、`projects[].permissions` は
          *     当該プロジェクトでの実効権限（システムロール ∪ プロジェクトロール ∩ スコープ。
          *     Design.md 6.4.1）。`projects[]` にはアーカイブ済みのプロジェクトも含む。
+         *     プロジェクト専用トークンでは、そのプロジェクトだけを返す。
          */
         get: operations["getMe"];
         put?: never;
@@ -6448,6 +6449,8 @@ export interface components {
             title: string;
             /** @example 10 */
             sort_order: number;
+            /** @enum {string} */
+            pack_mode: "full" | "outline" | "none";
             /**
              * @description 楽観ロックの現在値（2.8）。**木のドラッグ&ドロップが `If-Match` に使う**
              *     （GuiDesign.md 5.10）。
@@ -6505,6 +6508,8 @@ export interface components {
             outline: components["schemas"]["DocOutlineItem"][];
             /** @example 20 */
             sort_order: number;
+            /** @enum {string} */
+            pack_mode: "full" | "outline" | "none";
             /** @example 3 */
             version: number;
             created_by: components["schemas"]["ActorRef"] | null;
@@ -6560,6 +6565,11 @@ export interface components {
             body_md?: string;
             /** @description 省略時は同じ親の中の末尾（現在の最大値 + 10）。 */
             sort_order?: number;
+            /**
+             * @description 省略時は outline（目次だけ）。
+             * @enum {string}
+             */
+            pack_mode?: "full" | "outline" | "none";
         };
         /**
          * @description 文書の部分更新（ApiDesign.md 10.4）。**送られた項目だけを更新する。**
@@ -6573,6 +6583,8 @@ export interface components {
             slug?: string;
             parent_path?: string | null;
             sort_order?: number;
+            /** @enum {string} */
+            pack_mode?: "full" | "outline" | "none";
             /**
              * @description 200文字以内。`document_revision.change_reason` に入る。**リビジョンを作らない
              *     更新で送っても捨てる**（422 にはしない）。

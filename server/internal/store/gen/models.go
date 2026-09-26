@@ -224,6 +224,7 @@ type Document struct {
 	Version     int32
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
+	PackMode    string
 }
 
 type DocumentRevision struct {

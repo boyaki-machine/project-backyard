@@ -55,6 +55,7 @@ type createDocRequest struct {
 	ParentPath *string `json:"parent_path"`
 	BodyMd     *string `json:"body_md"`
 	SortOrder  *int32  `json:"sort_order"`
+	PackMode   *string `json:"pack_mode"`
 }
 
 // updateDocRequest は 10.4 の PATCH。
@@ -69,7 +70,7 @@ type updateDocRequest map[string]json.RawMessage
 
 // 10.4 が PATCH で受け付ける項目。これ以外のキーは 422 で弾く。
 var docPatchableFields = []string{
-	"title", "body_md", "slug", "parent_path", "sort_order", "change_reason",
+	"title", "body_md", "slug", "parent_path", "sort_order", "pack_mode", "change_reason",
 }
 
 // ── POST /api/v1/projects/{key}/docs ────────────────────────
@@ -102,6 +103,13 @@ func (h *handler) createDoc(w http.ResponseWriter, r *http.Request) {
 	var details []apierr.Detail
 	slug := validateDocSlug(req.Slug, &details)
 	title := validateDocTitle(req.Title, &details)
+	packMode := "outline"
+	if req.PackMode != nil {
+		packMode = *req.PackMode
+		if !validDocPackMode(packMode) {
+			details = append(details, apierr.Detail{Field: "pack_mode", Code: "invalid_value", Message: "掲載方法は full、outline、none から選んでください"})
+		}
+	}
 
 	// parent_path は省略・null でトップレベル（10.4）。存在しないパスは 422 の
 	// details[].code = "not_found" であって 404 ではない——リクエストの「欄」が
@@ -153,6 +161,7 @@ func (h *handler) createDoc(w http.ResponseWriter, r *http.Request) {
 			Title:     title,
 			BodyMd:    body,
 			SortOrder: sortOrder,
+			PackMode:  packMode,
 			CreatedBy: actorID,
 		}); err != nil {
 			return err
@@ -398,6 +407,15 @@ func buildUpdateDocParams(
 		}
 	}
 
+	if raw, ok := req["pack_mode"]; ok {
+		v, err := decodeDocString(raw)
+		if err != nil || !validDocPackMode(v) {
+			details = append(details, apierr.Detail{Field: "pack_mode", Code: "invalid_value", Message: "掲載方法は full、outline、none から選んでください"})
+		} else {
+			params.PackMode = text(v)
+		}
+	}
+
 	// parent_path は「送られていない」「null（トップレベルへ）」「値（移動先）」の
 	// 3状態を持つ（10.4）。_set のフラグで区別する。
 	parent := node
@@ -467,6 +485,10 @@ func buildUpdateDocParams(
 		}
 	}
 	return params, plan, nil
+}
+
+func validDocPackMode(mode string) bool {
+	return mode == "full" || mode == "outline" || mode == "none"
 }
 
 // isDocSelfOrDescendant は target が node 自身または node の子孫かを見る（10.4）。

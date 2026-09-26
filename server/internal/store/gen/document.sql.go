@@ -13,11 +13,11 @@ import (
 
 const createDocument = `-- name: CreateDocument :exec
 INSERT INTO document (
-  id, project_id, parent_id, slug, title, body_md, sort_order,
+  id, project_id, parent_id, slug, title, body_md, sort_order, pack_mode,
   created_by, updated_by
 ) VALUES (
-  $1, $2, $3, $4, $5, $6, $7,
-  $8, $8
+  $1, $2, $3, $4, $5, $6, $7, $8,
+  $9, $9
 )
 `
 
@@ -29,6 +29,7 @@ type CreateDocumentParams struct {
 	Title     string
 	BodyMd    string
 	SortOrder int32
+	PackMode  string
 	CreatedBy pgtype.Text
 }
 
@@ -41,6 +42,7 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		arg.Title,
 		arg.BodyMd,
 		arg.SortOrder,
+		arg.PackMode,
 		arg.CreatedBy,
 	)
 	return err
@@ -103,6 +105,7 @@ SELECT
   d.slug,
   d.title,
   d.body_md,
+  d.pack_mode,
   d.sort_order,
   d.version,
   d.created_by,
@@ -125,6 +128,7 @@ type GetDocumentRow struct {
 	Slug          string
 	Title         string
 	BodyMd        string
+	PackMode      string
 	SortOrder     int32
 	Version       int32
 	CreatedBy     pgtype.Text
@@ -150,6 +154,7 @@ func (q *Queries) GetDocument(ctx context.Context, id string) (GetDocumentRow, e
 		&i.Slug,
 		&i.Title,
 		&i.BodyMd,
+		&i.PackMode,
 		&i.SortOrder,
 		&i.Version,
 		&i.CreatedBy,
@@ -353,6 +358,7 @@ SELECT
   d.slug,
   d.title,
   d.body_md,
+  d.pack_mode,
   d.sort_order
 FROM document d
 WHERE d.is_template AND d.template_key = $1
@@ -365,6 +371,7 @@ type ListDocumentTemplatesRow struct {
 	Slug      string
 	Title     string
 	BodyMd    string
+	PackMode  string
 	SortOrder int32
 }
 
@@ -393,6 +400,7 @@ func (q *Queries) ListDocumentTemplates(ctx context.Context, templateKey pgtype.
 			&i.Slug,
 			&i.Title,
 			&i.BodyMd,
+			&i.PackMode,
 			&i.SortOrder,
 		); err != nil {
 			return nil, err
@@ -413,6 +421,7 @@ SELECT
   d.slug,
   d.title,
   d.sort_order,
+  d.pack_mode,
   d.version,
   d.created_at,
   d.updated_at
@@ -427,6 +436,7 @@ type ListDocumentTreeRow struct {
 	Slug      string
 	Title     string
 	SortOrder int32
+	PackMode  string
 	Version   int32
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
@@ -477,6 +487,7 @@ func (q *Queries) ListDocumentTree(ctx context.Context, projectID pgtype.Text) (
 			&i.Slug,
 			&i.Title,
 			&i.SortOrder,
+			&i.PackMode,
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -540,9 +551,10 @@ UPDATE document SET
   title      = COALESCE($4, title),
   body_md    = COALESCE($5, body_md),
   sort_order = COALESCE($6, sort_order),
-  updated_by = $7,
+  pack_mode  = COALESCE($7, pack_mode),
+  updated_by = $8,
   version    = version + 1
-WHERE id = $8 AND version = $9
+WHERE id = $9 AND version = $10
 `
 
 type UpdateDocumentParams struct {
@@ -552,6 +564,7 @@ type UpdateDocumentParams struct {
 	Title       pgtype.Text
 	BodyMd      pgtype.Text
 	SortOrder   pgtype.Int4
+	PackMode    pgtype.Text
 	UpdatedBy   pgtype.Text
 	ID          string
 	Version     int32
@@ -583,6 +596,7 @@ func (q *Queries) UpdateDocument(ctx context.Context, arg UpdateDocumentParams) 
 		arg.Title,
 		arg.BodyMd,
 		arg.SortOrder,
+		arg.PackMode,
 		arg.UpdatedBy,
 		arg.ID,
 		arg.Version,

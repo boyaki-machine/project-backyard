@@ -42,9 +42,9 @@ func charterSteps(ticket string) []fakeStep {
 	return []fakeStep{
 		{status: http.StatusOK, body: ticket},
 		{status: http.StatusOK, body: `{"items":[
-			{"path":"vision","title":"価値観・世界観","children":[]},
-			{"path":"rules","title":"規約","children":[
-				{"path":"rules/naming","title":"命名","children":[]}]}]}`},
+			{"path":"vision","pack_mode":"full","title":"価値観・世界観","children":[]},
+			{"path":"rules","pack_mode":"full","title":"規約","children":[
+				{"path":"rules/naming","pack_mode":"full","title":"命名","children":[]}]}]}`},
 		{status: http.StatusOK, body: `{"body_md":"## PB とは何か\n\n人とエージェントの器である。"}`},
 		{status: http.StatusOK, body: `{"body_md":"## 実装の前に\n\n推測で実装しない。"}`},
 		{status: http.StatusOK, body: `{"body_md":"## 命名\n\nテーブルは単数形。"}`},
@@ -307,7 +307,7 @@ func TestGetContextSaysWhenCharterIsEmpty(t *testing.T) {
 
 	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
 
-	if !strings.Contains(text, "文書が1件も無い") {
+	if !strings.Contains(text, "このパックに掲載する文書は無い") {
 		t.Errorf("憲章が空であることを述べていない:\n%s", text)
 	}
 }
@@ -323,9 +323,9 @@ func TestGetContextExcludesOnboardingDoc(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
 		{status: http.StatusOK, body: `{"items":[
-			{"path":"vision","title":"価値観・世界観","children":[]},
-			{"path":"agent-onboarding","title":"エージェントの参画情報","children":[
-				{"path":"agent-onboarding/creds","title":"資格情報","children":[]}]}]}`},
+			{"path":"vision","pack_mode":"full","title":"価値観・世界観","children":[]},
+			{"path":"agent-onboarding","pack_mode":"none","title":"エージェントの参画情報","children":[
+				{"path":"agent-onboarding/creds","pack_mode":"none","title":"資格情報","children":[]}]}]}`},
 		{status: http.StatusOK, body: `{"body_md":"人とエージェントの器である。"}`},
 	}}
 	h := New(rest, "v0")
@@ -346,8 +346,8 @@ func TestGetContextExcludesOnboardingDoc(t *testing.T) {
 	}
 	// **落としたことを1行書く**（Requirements.md 10.4.3 の 4）。
 	for _, s := range []string{
-		"「エージェントの参画情報」（`agent-onboarding`）は**含めていない**",
-		`pb_get_doc(path="agent-onboarding")`,
+		"**掲載しない文書**（必要なら `pb_get_doc` で読む）： `agent-onboarding`",
+		"`agent-onboarding/creds`",
 		"### 価値観・世界観（`vision`）",
 	} {
 		if !strings.Contains(text, s) {
@@ -362,8 +362,8 @@ func TestGetContextKeepsOnboardingDocWhenMoved(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
 		{status: http.StatusOK, body: `{"items":[
-			{"path":"rules","title":"規約","children":[
-				{"path":"rules/agent-onboarding","title":"参画","children":[]}]}]}`},
+			{"path":"rules","pack_mode":"full","title":"規約","children":[
+				{"path":"rules/agent-onboarding","pack_mode":"full","title":"参画","children":[]}]}]}`},
 		{status: http.StatusOK, body: `{"body_md":"推測で実装しない。"}`},
 		{status: http.StatusOK, body: `{"body_md":"clone してから始める。"}`},
 	}}
@@ -385,15 +385,15 @@ func TestGetContextSaysCharterIsEmptyWhenOnlyOnboardingExists(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
 		{status: http.StatusOK, body: `{"items":[
-			{"path":"agent-onboarding","title":"エージェントの参画情報","children":[]}]}`},
+			{"path":"agent-onboarding","pack_mode":"none","title":"エージェントの参画情報","children":[]}]}`},
 	}}
 	h := New(rest, "v0")
 
 	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
 
 	for _, s := range []string{
-		"判断の拠りどころになる文書が1件も無い",
-		"「エージェントの参画情報」（`agent-onboarding`）は**含めていない**",
+		"このパックに掲載する文書は無い",
+		"**掲載しない文書**（必要なら `pb_get_doc` で読む）： `agent-onboarding`",
 	} {
 		if !strings.Contains(text, s) {
 			t.Errorf("パックに %q が無い:\n%s", s, text)
@@ -412,13 +412,13 @@ func TestGetContextListsDecisionsAsOutline(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
 		{status: http.StatusOK, body: `{"items":[
-			{"path":"rules","title":"規約","outline":[{"section":"実装の前に","level":2}],"children":[]},
-			{"path":"decisions","title":"判断の記録","outline":[
+			{"path":"rules","pack_mode":"full","title":"規約","outline":[{"section":"実装の前に","level":2}],"children":[]},
+			{"path":"decisions","pack_mode":"outline","title":"判断の記録","outline":[
 				{"section":"技術選定","level":2},
 				{"section":"2026-08 / サーバは Go とする","level":3}],"children":[
-				{"path":"decisions/archive","title":"古い判断","outline":[
+				{"path":"decisions/archive","pack_mode":"outline","title":"古い判断","outline":[
 					{"section":"2026-07 / 最初の判断","level":3}],"children":[]}]},
-			{"path":"learnings","title":"学びと知見","outline":[],"children":[]}]}`},
+			{"path":"learnings","pack_mode":"full","title":"学びと知見","outline":[],"children":[]}]}`},
 		{status: http.StatusOK, body: `{"body_md":"## 実装の前に\n\n推測で実装しない。"}`},
 		{status: http.StatusOK, body: `{"body_md":"失敗も成功も残す。"}`},
 	}}
@@ -436,7 +436,7 @@ func TestGetContextListsDecisionsAsOutline(t *testing.T) {
 		t.Errorf("叩いた REST = %v, want %v", rest.gotPaths, want)
 	}
 	for _, s := range []string{
-		"判断の記録（`decisions`）は**目次だけ**を載せている",
+		"**目次だけ載せる文書**： `decisions`",
 		"### 判断の記録（`decisions`）",
 		"- 技術選定\n  - 2026-08 / サーバは Go とする\n",
 		`pb_get_doc(path="decisions", section="<見出し>")`,
@@ -459,8 +459,8 @@ func TestGetContextKeepsDecisionsDocWhenMoved(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
 		{status: http.StatusOK, body: `{"items":[
-			{"path":"rules","title":"規約","outline":[],"children":[
-				{"path":"rules/decisions","title":"判断","outline":[
+			{"path":"rules","pack_mode":"full","title":"規約","outline":[],"children":[
+				{"path":"rules/decisions","pack_mode":"full","title":"判断","outline":[
 					{"section":"2026-08 / ID は ULID","level":3}],"children":[]}]}]}`},
 		{status: http.StatusOK, body: `{"body_md":"推測で実装しない。"}`},
 		{status: http.StatusOK, body: `{"body_md":"### 2026-08 / ID は ULID\n\nアプリ側で生成する。"}`},
@@ -477,13 +477,37 @@ func TestGetContextKeepsDecisionsDocWhenMoved(t *testing.T) {
 	}
 }
 
+func TestGetContextParentModeCapsChildren(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"items":[
+			{"path":"guide","pack_mode":"outline","title":"手引き","outline":[{"section":"入口","level":2}],"children":[
+				{"path":"guide/details","pack_mode":"full","title":"詳細","outline":[{"section":"詳細","level":2}],"children":[]}]},
+			{"path":"private","pack_mode":"none","title":"非掲載","children":[
+				{"path":"private/child","pack_mode":"full","title":"子","children":[]}]}]}`},
+	}}
+	h := New(rest, "v0")
+	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+	if len(rest.gotPaths) != 2 {
+		t.Errorf("目次掲載・非掲載の本文を引いている: %v", rest.gotPaths)
+	}
+	for _, want := range []string{"### 詳細（`guide/details`）", "**目次だけ載せる文書**： `guide` `guide/details`", "**掲載しない文書**（必要なら `pb_get_doc` で読む）： `private` `private/child`"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%q が無い:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "### 非掲載") || strings.Contains(text, "### 子（") {
+		t.Errorf("非掲載の部分木を含んでいる:\n%s", text)
+	}
+}
+
 func TestGetContextSaysDecisionsHasNoHeadings(t *testing.T) {
 	// **見出しが1つも無いときも本文を載せない**（Design.md 8.5.5）。
 	// 新規プロジェクトのテンプレート本文には見出しが無い（PB #121）。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
 		{status: http.StatusOK, body: `{"items":[
-			{"path":"decisions","title":"判断の記録","outline":[],"children":[]}]}`},
+			{"path":"decisions","pack_mode":"outline","title":"判断の記録","outline":[],"children":[]}]}`},
 	}}
 	h := New(rest, "v0")
 
@@ -511,10 +535,10 @@ func TestGetContextSaysDecisionsHasNoHeadings(t *testing.T) {
 // versionedOutline は版を持つ目次（vision v2 / rules v7 / decisions v5）。
 func versionedOutline() string {
 	return `{"items":[
-		{"path":"agent-onboarding","title":"エージェントの参画情報","version":3,"outline":[],"children":[]},
-		{"path":"vision","title":"価値観・世界観","version":2,"outline":[],"children":[]},
-		{"path":"rules","title":"規約","version":7,"outline":[],"children":[]},
-		{"path":"decisions","title":"判断の記録","version":5,"outline":[{"section":"技術選定","level":2}],"children":[]}]}`
+		{"path":"agent-onboarding","pack_mode":"none","title":"エージェントの参画情報","version":3,"outline":[],"children":[]},
+		{"path":"vision","pack_mode":"full","title":"価値観・世界観","version":2,"outline":[],"children":[]},
+		{"path":"rules","pack_mode":"full","title":"規約","version":7,"outline":[],"children":[]},
+		{"path":"decisions","pack_mode":"outline","title":"判断の記録","version":5,"outline":[{"section":"技術選定","level":2}],"children":[]}]}`
 }
 
 const (
@@ -536,7 +560,7 @@ func TestGetContextWithoutVersionsPrintsThemAtTheEnd(t *testing.T) {
 	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
 
 	for _, s := range []string{
-		"以下は全文であり、切り詰めていない。",
+		"文書ごとの設定に従い、全文または目次を載せた。",
 		"人とエージェントの器である。",
 		"推測で実装しない。",
 		"- 技術選定\n",
@@ -637,8 +661,8 @@ func TestGetContextIgnoresUnknownPathsInVersions(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
 		{status: http.StatusOK, body: `{"items":[
-			{"path":"agent-onboarding","title":"エージェントの参画情報","version":3,"outline":[],"children":[]},
-			{"path":"vision","title":"価値観・世界観","version":0,"outline":[],"children":[]}]}`},
+			{"path":"agent-onboarding","pack_mode":"none","title":"エージェントの参画情報","version":3,"outline":[],"children":[]},
+			{"path":"vision","pack_mode":"full","title":"価値観・世界観","version":0,"outline":[],"children":[]}]}`},
 		{status: http.StatusOK, body: `{"body_md":"人とエージェントの器である。","version":0}`},
 	}}
 	h := New(rest, "v0")
@@ -713,9 +737,7 @@ func TestGetContextDeclaresVersionsAsIntegerMap(t *testing.T) {
 // unfoldedBoilerplate は1件目にだけ出る定型文（畳んだら消える文）。
 var unfoldedBoilerplate = []string{
 	"**着手する前に、この文書の全体に目を通すこと。**",
-	"以下は全文であり、切り詰めていない。",
-	"参画のときに一度読む手順であって、判断の拠りどころではないためである。",
-	"追記で増え続ける文書なので、着手する作業に関わる判断だけを見出しで引いて読むこと。",
+	"文書ごとの設定に従い、全文または目次を載せた。",
 	"- ボードの状況・自分の担当：",
 	"同じセッションで次に `pb_get_context` を呼ぶときは",
 }
@@ -742,7 +764,8 @@ func TestGetContextFoldsBoilerplateWhenDocsAreOmitted(t *testing.T) {
 		"**前提はチケットの指示より先に効く**",
 		"本文と完了条件は `pb_get_task` で読む。",
 		"`charter_versions` を渡さずに呼び直すこと。**",
-		"前回と同じく、参画情報（`agent-onboarding`）は載せず、判断の記録（`decisions`）は目次だけを載せた。",
+		"**掲載しない文書**（必要なら `pb_get_doc` で読む）： `agent-onboarding`",
+		"**目次だけ載せる文書**： `decisions`",
 		// 5節はチケット番号の入った入口を残す。
 		"`pb_get_task(seq=31)`",
 		"`pb_list_transitions(seq=31)`",
@@ -792,7 +815,7 @@ func TestGetContextFoldsOnlyTheClausesThatApply(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
 		{status: http.StatusOK, body: `{"items":[
-			{"path":"vision","title":"価値観・世界観","version":2,"outline":[],"children":[]}]}`},
+			{"path":"vision","pack_mode":"full","title":"価値観・世界観","version":2,"outline":[],"children":[]}]}`},
 	}}
 	h := New(rest, "v0")
 

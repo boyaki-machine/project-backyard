@@ -36,6 +36,7 @@ SELECT
   d.slug,
   d.title,
   d.sort_order,
+  d.pack_mode,
   d.version,
   d.created_at,
   d.updated_at
@@ -64,6 +65,7 @@ SELECT
   d.slug,
   d.title,
   d.body_md,
+  d.pack_mode,
   d.sort_order,
   d.version,
   d.created_by,
@@ -95,10 +97,10 @@ WHERE project_id = @project_id
 
 -- name: CreateDocument :exec
 INSERT INTO document (
-  id, project_id, parent_id, slug, title, body_md, sort_order,
+  id, project_id, parent_id, slug, title, body_md, sort_order, pack_mode,
   created_by, updated_by
 ) VALUES (
-  @id, @project_id, sqlc.narg('parent_id'), @slug, @title, @body_md, @sort_order,
+  @id, @project_id, sqlc.narg('parent_id'), @slug, @title, @body_md, @sort_order, @pack_mode,
   sqlc.narg('created_by'), sqlc.narg('created_by')
 );
 
@@ -127,6 +129,7 @@ UPDATE document SET
   title      = COALESCE(sqlc.narg('title'), title),
   body_md    = COALESCE(sqlc.narg('body_md'), body_md),
   sort_order = COALESCE(sqlc.narg('sort_order'), sort_order),
+  pack_mode  = COALESCE(sqlc.narg('pack_mode'), pack_mode),
   updated_by = sqlc.narg('updated_by'),
   version    = version + 1
 WHERE id = @id AND version = @version;
@@ -225,6 +228,7 @@ SELECT
   d.slug,
   d.title,
   d.body_md,
+  d.pack_mode,
   d.sort_order
 FROM document d
 WHERE d.is_template AND d.template_key = @template_key

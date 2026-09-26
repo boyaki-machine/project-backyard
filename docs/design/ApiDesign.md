@@ -4159,14 +4159,14 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
 {
   "items": [
     { "id": "01K2...", "path": "vision", "slug": "vision",
-      "title": "価値観・世界観", "sort_order": 10, "version": 1,
+      "title": "価値観・世界観", "pack_mode": "full", "sort_order": 10, "version": 1,
       "updated_at": "2026-08-29T04:12:00Z", "children": [] },
     { "id": "01K2...", "path": "rules", "slug": "rules",
-      "title": "規約", "sort_order": 20, "version": 3,
+      "title": "規約", "pack_mode": "full", "sort_order": 20, "version": 3,
       "updated_at": "2026-08-29T05:00:00Z",
       "children": [
         { "id": "01K2...", "path": "rules/naming", "slug": "naming",
-          "title": "命名", "sort_order": 10, "version": 1,
+          "title": "命名", "pack_mode": "outline", "sort_order": 10, "version": 1,
           "updated_at": "2026-08-29T05:00:00Z", "children": [] }
       ] }
   ]
@@ -4223,6 +4223,7 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
   "parent_path": null,
   "title": "規約",
   "body_md": "本書はこのプロジェクトの規約である。\n\n## 命名\n…",
+  "pack_mode": "full",
   "outline": [ { "section": "命名", "level": 2 } ],
   "sort_order": 20,
   "version": 3,
@@ -4280,9 +4281,10 @@ GET /api/v1/projects/my-app/docs/rules?section=命名
 | `title` | 必須。1〜200文字。前後の空白を取り除いてから検証する |
 | `parent_path` | 任意。省略・`null` でトップレベル。存在しないパスは `422`、`details[].code = "not_found"` |
 | `body_md` | 任意。既定は空文字 |
+| `pack_mode` | 任意。`full` / `outline` / `none`。既定は `outline` |
 | `sort_order` | 任意。省略時は同じ親の中の末尾（現在の最大値 + 10） |
 
-`PATCH` は `title` / `body_md` / `slug` / `parent_path` / `sort_order` を任意の組み合わせで受け、
+`PATCH` は `title` / `body_md` / `slug` / `parent_path` / `sort_order` / `pack_mode` を任意の組み合わせで受け、
 **加えて `change_reason`（任意、200文字以内）を受ける**。
 
 **`If-Match` を要求する**（2.8）。`document` は `version` 列を持つ。**人とエージェントが

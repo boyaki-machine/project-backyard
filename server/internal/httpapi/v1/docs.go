@@ -30,6 +30,7 @@ type docTreeItem struct {
 	Slug      string `json:"slug"`
 	Title     string `json:"title"`
 	SortOrder int32  `json:"sort_order"`
+	PackMode  string `json:"pack_mode"`
 	Version   int32  `json:"version"`
 	UpdatedAt Time   `json:"updated_at"`
 	// Outline は ?outline=1 のときだけ現れる（10.2）。
@@ -59,6 +60,7 @@ type docView struct {
 	BodyMd     string           `json:"body_md"`
 	Outline    []docOutlineItem `json:"outline"`
 	SortOrder  int32            `json:"sort_order"`
+	PackMode   string           `json:"pack_mode"`
 	Version    int32            `json:"version"`
 	CreatedBy  *actorRef        `json:"created_by"`
 	UpdatedBy  *actorRef        `json:"updated_by"`
@@ -127,6 +129,7 @@ func docTreeItems(nodes []*docNode, outlines map[string][]docOutlineItem) []docT
 			Slug:      n.row.Slug,
 			Title:     n.row.Title,
 			SortOrder: n.row.SortOrder,
+			PackMode:  n.row.PackMode,
 			Version:   n.row.Version,
 			UpdatedAt: Time(n.row.UpdatedAt.Time),
 			Children:  docTreeItems(n.children, outlines),
@@ -208,6 +211,7 @@ func docViewOf(node *docNode, row gen.GetDocumentRow) docView {
 		BodyMd:     row.BodyMd,
 		Outline:    outlineItems(row.BodyMd),
 		SortOrder:  row.SortOrder,
+		PackMode:   row.PackMode,
 		Version:    row.Version,
 		CreatedBy:  actorRefOf(row.CreatedBy, row.CreatedByKind, row.CreatedByName),
 		UpdatedBy:  actorRefOf(row.UpdatedBy, row.UpdatedByKind, row.UpdatedByName),
