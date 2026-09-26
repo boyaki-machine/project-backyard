@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -55,8 +56,8 @@ func TestMeAgentsIntegration(t *testing.T) {
 	// ── 材料を作る ───────────────────────────────────────────
 	//
 	// 所有者は operator（システムロール）＋ project_admin（プロジェクトロール）。
-	// **project_admin にするのは doc.view を持たせるため**——8.1.4 により
-	// operator も project_member も doc.view / doc.edit を持たない。
+	// project_admin は doc.edit を持つ。operator は 0040 以降も
+	// doc.view を持つが、doc.edit はプロジェクトロールから得る。
 	ownerID := ulidgen.New()
 	ownerEmail := "agt-owner-" + uniq + "@example.com"
 	seedUserWithRole(t, ctx, pool, q, ownerID, ownerEmail, auth.SystemRoleOperator)
@@ -267,6 +268,38 @@ func TestMeAgentsIntegration(t *testing.T) {
 			}
 		}
 		// DB でも数える（応答の形ではなく実データで確かめる）。
+		active := scalarInt(t, pool,
+			`SELECT count(*) FROM access_token
+			  WHERE actor_id = $1 AND token_type = 'agent' AND revoked_at IS NULL`, ag.ID)
+		if active != 1 {
+			t.Errorf("有効なトークン = %d本, want 1", active)
+		}
+	})
+
+	t.Run("並行再発行でも有効なトークンは1本", func(t *testing.T) {
+		ag := register(t, ownerSession, "並行再発行の検証", projectKey, "copilot")
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		statuses := make(chan int, 2)
+		for range 2 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				rec := bodyWithCookie(r, http.MethodPost,
+					"/api/v1/me/agents/"+ag.ID+"/tokens", ownerSession,
+					`{"expires_in_days":30}`, "")
+				statuses <- rec.Code
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(statuses)
+		for status := range statuses {
+			if status != http.StatusCreated {
+				t.Errorf("並行再発行 status = %d, want 201", status)
+			}
+		}
 		active := scalarInt(t, pool,
 			`SELECT count(*) FROM access_token
 			  WHERE actor_id = $1 AND token_type = 'agent' AND revoked_at IS NULL`, ag.ID)

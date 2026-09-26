@@ -182,6 +182,15 @@ func TestMCPIntegration(t *testing.T) {
 	// **空のスコープは「絞り込みなし」である**（Design.md 6.4.1）。
 	fullToken := auth.AgentTokenPrefix + "full-" + suffix
 	issue("full", fullToken, projectID, []string{})
+	// 実行者の変更は人間の管理者が行う。operator の書き込み権限は 0040 で
+	// 剥奪したため、この検証用に本人の API トークンを別に用意する。
+	humanToken := auth.APITokenPrefix + "human-" + suffix
+	if err := q.CreateAccessToken(ctx, gen.CreateAccessTokenParams{
+		ID: ulidgen.New(), ActorID: ownerID, TokenType: auth.TokenTypeAPI,
+		TokenHash: auth.HashToken(humanToken), Scopes: []byte(`[]`),
+	}); err != nil {
+		t.Fatalf("人間用トークンを発行できない: %v", err)
+	}
 
 	// doc.view を含めないトークン。**これが権限による出し分けの負の側になる**
 	// （Design.md 付録A 論点③）——所有者は doc.view を持つが、積で消える。
@@ -1003,6 +1012,12 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
+	// この2検証だけ所有者を project_admin にする。実行者の変更には
+	// ticket.edit と ticket.assign が必要で、project_member は後者を持たない。
+	if _, err := pool.Exec(ctx, `UPDATE project_member SET role_key = 'project_admin'
+		WHERE project_id = $1 AND actor_id = $2`, projectID, ownerID); err != nil {
+		t.Fatalf("検証用のロールを変更できない: %v", err)
+	}
 	// restJSON は /api/v1 を Bearer トークンで1回叩く（PATCH の検証用）。
 	//
 	// **MCP の口を通さない。** working_agent_id を人が消す経路は REST の
@@ -1029,7 +1044,7 @@ func TestMCPIntegration(t *testing.T) {
 	t.Run("人は PATCH で実行者を消せる", func(t *testing.T) {
 		// 直前の遷移で seq 1 に実行者が立っている。**版を実物から取る**
 		// ——手で書いた期待値は、先行する検証が1つ増えるたびに腐る。
-		get := restJSON(http.MethodGet, "/projects/"+projectKey+"/tickets/1", fullToken, "", "")
+		get := restJSON(http.MethodGet, "/projects/"+projectKey+"/tickets/1", humanToken, "", "")
 		if get.Code != http.StatusOK {
 			t.Fatalf("チケットを読めない: %d（%s）", get.Code, get.Body.String())
 		}
@@ -1044,7 +1059,7 @@ func TestMCPIntegration(t *testing.T) {
 			t.Fatal("前提が崩れている：実行者が立っていない")
 		}
 
-		w := restJSON(http.MethodPatch, "/projects/"+projectKey+"/tickets/1", fullToken,
+		w := restJSON(http.MethodPatch, "/projects/"+projectKey+"/tickets/1", humanToken,
 			`{"working_agent_id":null}`, `"`+strconv.Itoa(cur.Version)+`"`)
 		if w.Code != http.StatusOK {
 			t.Fatalf("PATCH の status = %d, want 200（%s）", w.Code, w.Body.String())
@@ -1073,7 +1088,7 @@ func TestMCPIntegration(t *testing.T) {
 	})
 
 	t.Run("実行者に人を指定すると 422", func(t *testing.T) {
-		get := restJSON(http.MethodGet, "/projects/"+projectKey+"/tickets/1", fullToken, "", "")
+		get := restJSON(http.MethodGet, "/projects/"+projectKey+"/tickets/1", humanToken, "", "")
 		var cur struct {
 			Version int `json:"version"`
 		}
@@ -1082,7 +1097,7 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		// **所有者（人）の ULID を渡す。** 実行者の欄に人が入る経路を作らない
 		// ——担当と実行者を分けた意味が消える（DbDesign.md 6.6）。
-		w := restJSON(http.MethodPatch, "/projects/"+projectKey+"/tickets/1", fullToken,
+		w := restJSON(http.MethodPatch, "/projects/"+projectKey+"/tickets/1", humanToken,
 			`{"working_agent_id":"`+ownerID+`"}`, `"`+strconv.Itoa(cur.Version)+`"`)
 		if w.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("status = %d, want 422（%s）", w.Code, w.Body.String())
@@ -1091,6 +1106,10 @@ func TestMCPIntegration(t *testing.T) {
 			t.Errorf("not_found が返っていない: %s", w.Body.String())
 		}
 	})
+	if _, err := pool.Exec(ctx, `UPDATE project_member SET role_key = 'project_member'
+		WHERE project_id = $1 AND actor_id = $2`, projectID, ownerID); err != nil {
+		t.Fatalf("検証用のロールを戻せない: %v", err)
+	}
 
 	// ── コンテキストパック（手順27。Design.md 8.5.5）───────────
 	//

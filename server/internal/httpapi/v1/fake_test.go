@@ -340,7 +340,7 @@ type fakeQuerier struct {
 
 	// 書き込みの記録
 	created      []gen.CreateAccessTokenParams
-	failures     []gen.RecordLoginFailureParams
+	failures     []gen.RecordLoginFailureRow
 	resets       []string
 	rehashes     []gen.RehashPasswordParams
 	revoked      []string
@@ -437,12 +437,32 @@ func (q *fakeQuerier) CreateAccessToken(_ context.Context, arg gen.CreateAccessT
 	return nil
 }
 
-func (q *fakeQuerier) RecordLoginFailure(_ context.Context, arg gen.RecordLoginFailureParams) error {
+func (q *fakeQuerier) RecordLoginFailure(_ context.Context, identityID string) (gen.RecordLoginFailureRow, error) {
 	if q.failErr != nil {
-		return q.failErr
+		return gen.RecordLoginFailureRow{}, q.failErr
 	}
-	q.failures = append(q.failures, arg)
-	return nil
+	if identityID != q.loginRow.IdentityID {
+		return gen.RecordLoginFailureRow{}, pgx.ErrNoRows
+	}
+	now := time.Now()
+	attempts := q.loginRow.FailedAttempts + 1
+	if q.loginRow.LockedUntil.Valid {
+		if q.loginRow.LockedUntil.Time.After(now) {
+			attempts = q.loginRow.FailedAttempts
+		} else {
+			attempts = 1
+			q.loginRow.LockedUntil = pgtype.Timestamptz{}
+		}
+	} else if attempts >= maxFailedAttempts {
+		q.loginRow.LockedUntil = ts(now.Add(lockDuration))
+	}
+	q.loginRow.FailedAttempts = attempts
+	result := gen.RecordLoginFailureRow{
+		FailedAttempts: attempts,
+		LockedUntil:    q.loginRow.LockedUntil,
+	}
+	q.failures = append(q.failures, result)
+	return result, nil
 }
 
 // ── 秘密の暗号鍵（app_secret）──────────────────────────────
@@ -1144,6 +1164,11 @@ func (q *fakeQuerier) CountMyAPITokens(context.Context, string) (int64, error) {
 		return 0, q.myTokenCountErr
 	}
 	return q.myTokenCount, nil
+}
+
+func (q *fakeQuerier) LockActorForTokenIssue(_ context.Context, actorID string) (string, error) {
+	q.opLog = append(q.opLog, "LockActorForTokenIssue")
+	return actorID, nil
 }
 
 func (q *fakeQuerier) FindMyAPIToken(_ context.Context, arg gen.FindMyAPITokenParams) (gen.FindMyAPITokenRow, error) {

@@ -68,6 +68,75 @@ func TestLogoutWithBearerSkipsCSRF(t *testing.T) {
 	}
 }
 
+// 制限付きトークンから本人用の資格情報を作り直せない（ApiDesign.md 4.1）。
+// ルート定義からガードを外したときに検知できるよう、ルータ越しに確かめる。
+func TestSelfServiceRequiresHumanBrowserSession(t *testing.T) {
+	for _, tokenType := range []string{auth.TokenTypeAPI, auth.TokenTypeAgent} {
+		t.Run(tokenType, func(t *testing.T) {
+			q := newFake(t)
+			token := validToken(q, `["project.view","ticket.view"]`)
+			q.tokenRow.TokenType = tokenType
+			if tokenType == auth.TokenTypeAgent {
+				q.tokenRow.ActorKind = auth.ActorKindAgent
+				q.tokenRow.OwnerActorID = txt(testActorID)
+				q.tokenRow.ProjectID = txt(testProjectID)
+			}
+			r := router(q)
+			for _, endpoint := range []struct{ method, path, body string }{
+				{http.MethodPost, "/api/v1/me/tokens", `{"name":"昇格","expires_in_days":30}`},
+				{http.MethodPost, "/api/v1/me/agents", `{"display_name":"新規","project_key":"demo","client_kind":"codex"}`},
+				{http.MethodPost, "/api/v1/me/passkeys/options", ""},
+				{http.MethodPatch, "/api/v1/me", `{"display_name":"変更"}`},
+			} {
+				req := httptest.NewRequest(endpoint.method, endpoint.path, strings.NewReader(endpoint.body))
+				req.Header.Set("Authorization", "Bearer "+token)
+				rec := httptest.NewRecorder()
+				r.ServeHTTP(rec, req)
+				if rec.Code != http.StatusForbidden {
+					t.Errorf("%s %s = %d, want 403（body=%s）",
+						endpoint.method, endpoint.path, rec.Code, rec.Body.String())
+				}
+			}
+			if len(q.created) != 0 {
+				t.Error("制限付きトークンから新しい資格情報を発行した")
+			}
+		})
+	}
+}
+
+func TestSelfServiceRejectsSessionBearerAndAPICookie(t *testing.T) {
+	for _, c := range []struct {
+		name, tokenType string
+		cookie          bool
+	}{
+		{"session_bearer", auth.TokenTypeSession, false},
+		{"api_cookie", auth.TokenTypeAPI, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			q := newFake(t)
+			token := validToken(q, `[]`)
+			q.tokenRow.TokenType = c.tokenType
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/me/tokens",
+				strings.NewReader(`{"name":"拒否","expires_in_days":30}`))
+			if c.cookie {
+				req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: token})
+				req.AddCookie(&http.Cookie{Name: auth.CSRFCookieName, Value: "csrf"})
+				req.Header.Set(auth.CSRFHeaderName, "csrf")
+			} else {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			rec := httptest.NewRecorder()
+			router(q).ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden || errorOf(t, rec).Code != "forbidden" {
+				t.Errorf("status = %d（body=%s）, want 403 forbidden", rec.Code, rec.Body.String())
+			}
+			if len(q.created) != 0 {
+				t.Error("ブラウザの人間セッション以外から資格情報を発行した")
+			}
+		})
+	}
+}
+
 // ログインは IP あたり loginRateLimit 回/分（ApiDesign.md 2.9）。
 //
 // **成否によらず数える。** 本文を壊した 400 を並べているのは、ハンドラの

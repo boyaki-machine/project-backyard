@@ -30,7 +30,9 @@ tags:
   - name: auth
     description: 認証（ApiDesign.md 3章）
   - name: me
-    description: 自分自身（ApiDesign.md 4章）
+    description: |
+      自分自身（ApiDesign.md 4章）。GET /me は Bearer でも使える。
+      それ以外の /me の操作は人間のブラウザセッション（session Cookie）に限る。
   - name: projects
     description: プロジェクト（ApiDesign.md 5章）
   - name: admin
@@ -159,6 +161,7 @@ paths:
         `permissions` はシステムロール由来の実効権限、`projects[].permissions` は
         当該プロジェクトでの実効権限（システムロール ∪ プロジェクトロール ∩ スコープ。
         Design.md 6.4.1）。`projects[]` にはアーカイブ済みのプロジェクトも含む。
+        プロジェクト専用トークンでは、そのプロジェクトだけを返す。
       responses:
         '200':
           description: 認証中のアクター。

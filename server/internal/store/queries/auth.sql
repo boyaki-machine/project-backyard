@@ -105,14 +105,31 @@ JOIN user_identity i
 JOIN local_credential c ON c.identity_id = i.id
 WHERE u.email = @email;
 
--- RecordLoginFailure は失敗回数とロック期限を書く（Design.md 6.2.1 手順5、6.3）。
--- 閾値の判定はアプリ側で行い、その結果をそのまま反映する。
+-- RecordLoginFailure は1回の失敗を原子的に加算する（Design.md 6.3）。
+-- 読み取った回数をアプリ側で上書きすると、並行する失敗が失われる。
+-- ロック期限が切れていれば1回目から数え直す。ロック中なら値を保つ。
 --
--- name: RecordLoginFailure :exec
+-- name: RecordLoginFailure :one
 UPDATE local_credential
-SET failed_attempts = @failed_attempts,
-    locked_until    = @locked_until
-WHERE identity_id = @identity_id;
+SET failed_attempts = CASE
+      WHEN locked_until IS NOT NULL AND locked_until <= now() THEN 1
+      WHEN locked_until IS NOT NULL THEN failed_attempts
+      ELSE failed_attempts + 1
+    END,
+    locked_until = CASE
+      WHEN locked_until IS NOT NULL AND locked_until <= now() THEN NULL
+      WHEN locked_until IS NOT NULL THEN locked_until
+      WHEN failed_attempts + 1 >= 5 THEN now() + interval '15 minutes'
+      ELSE NULL
+    END
+WHERE identity_id = @identity_id
+RETURNING failed_attempts, locked_until;
+
+-- LockActorForTokenIssue は資格情報の発行をアクター単位で直列化する。
+-- 件数確認と INSERT を同じトランザクションで行うだけでは、並行する
+-- トランザクションが同じ件数を読み、上限を超えてしまう。
+-- name: LockActorForTokenIssue :one
+SELECT id FROM actor WHERE id = @actor_id FOR UPDATE;
 
 -- ResetLoginFailure はログイン成功時に失敗回数とロックを消す
 -- （Design.md 6.2.1 手順5 の「成功 → failed_attempts=0」）。

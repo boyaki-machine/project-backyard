@@ -299,24 +299,50 @@ func (q *Queries) GetActorProfile(ctx context.Context, actorID string) (GetActor
 	return i, err
 }
 
-const recordLoginFailure = `-- name: RecordLoginFailure :exec
-UPDATE local_credential
-SET failed_attempts = $1,
-    locked_until    = $2
-WHERE identity_id = $3
+const lockActorForTokenIssue = `-- name: LockActorForTokenIssue :one
+SELECT id FROM actor WHERE id = $1 FOR UPDATE
 `
 
-type RecordLoginFailureParams struct {
-	FailedAttempts int32
-	LockedUntil    pgtype.Timestamptz
-	IdentityID     string
+// LockActorForTokenIssue は資格情報の発行をアクター単位で直列化する。
+// 件数確認と INSERT を同じトランザクションで行うだけでは、並行する
+// トランザクションが同じ件数を読み、上限を超えてしまう。
+func (q *Queries) LockActorForTokenIssue(ctx context.Context, actorID string) (string, error) {
+	row := q.db.QueryRow(ctx, lockActorForTokenIssue, actorID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
-// RecordLoginFailure は失敗回数とロック期限を書く（Design.md 6.2.1 手順5、6.3）。
-// 閾値の判定はアプリ側で行い、その結果をそのまま反映する。
-func (q *Queries) RecordLoginFailure(ctx context.Context, arg RecordLoginFailureParams) error {
-	_, err := q.db.Exec(ctx, recordLoginFailure, arg.FailedAttempts, arg.LockedUntil, arg.IdentityID)
-	return err
+const recordLoginFailure = `-- name: RecordLoginFailure :one
+UPDATE local_credential
+SET failed_attempts = CASE
+      WHEN locked_until IS NOT NULL AND locked_until <= now() THEN 1
+      WHEN locked_until IS NOT NULL THEN failed_attempts
+      ELSE failed_attempts + 1
+    END,
+    locked_until = CASE
+      WHEN locked_until IS NOT NULL AND locked_until <= now() THEN NULL
+      WHEN locked_until IS NOT NULL THEN locked_until
+      WHEN failed_attempts + 1 >= 5 THEN now() + interval '15 minutes'
+      ELSE NULL
+    END
+WHERE identity_id = $1
+RETURNING failed_attempts, locked_until
+`
+
+type RecordLoginFailureRow struct {
+	FailedAttempts int32
+	LockedUntil    pgtype.Timestamptz
+}
+
+// RecordLoginFailure は1回の失敗を原子的に加算する（Design.md 6.3）。
+// 読み取った回数をアプリ側で上書きすると、並行する失敗が失われる。
+// ロック期限が切れていれば1回目から数え直す。ロック中なら値を保つ。
+func (q *Queries) RecordLoginFailure(ctx context.Context, identityID string) (RecordLoginFailureRow, error) {
+	row := q.db.QueryRow(ctx, recordLoginFailure, identityID)
+	var i RecordLoginFailureRow
+	err := row.Scan(&i.FailedAttempts, &i.LockedUntil)
+	return i, err
 }
 
 const rehashPassword = `-- name: RehashPassword :exec
