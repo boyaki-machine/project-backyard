@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { uiText } from '../locales/ui'
+import { uiLocaleTag, uiText } from '../locales/ui'
 import { computed, ref } from 'vue'
 
 import { getPermissions, getRoles, type Permission, type Role, type RoleScope } from '../api/roles'
@@ -104,12 +104,17 @@ export const useRolesStore = defineStore('roles', () => {
    * 行の意味が読めなくなるので、表示できるものを表示する。
    */
   function roleLabel(key: string): string {
-    return roles.value.find((r) => r.key === key)?.display_name ?? key
+    const role = roles.value.find((r) => r.key === key)
+    if (!role) return key
+    if (role.is_builtin && role.key === 'project_member' && uiLocaleTag() === 'en-US') return 'Member'
+    return role.is_builtin ? uiText(role.display_name) : role.display_name
   }
 
   /** 選択肢の下に添える説明（`role.description`）。無ければ空文字 */
   function roleDescription(key: string): string {
-    return roles.value.find((r) => r.key === key)?.description ?? ''
+    const role = roles.value.find((r) => r.key === key)
+    if (!role) return ''
+    return role.is_builtin ? uiText(role.description ?? '') : (role.description ?? '')
   }
 
   /**

@@ -44,6 +44,7 @@ import type { CreateTicketRequest, StatusCategory, Ticket } from '../api/tickets
 import { activitySummary, actorLabel, ticketLabel } from '../lib/activity'
 import type { ActivityLabelContext } from '../lib/activity'
 import { formatDateTime, formatPlainDate, todayPlainDate } from '../lib/datetime'
+import { statusLabel } from '../lib/catalogLabels'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
 
@@ -130,7 +131,7 @@ const hasMoreActivity = computed(() => activityPage.value < activityTotalPages.v
 const labelContext = computed<ActivityLabelContext>(() => ({
   projectKey: props.projectKey,
   statusNames: Object.fromEntries(
-    (projectStore.current?.workflow?.statuses ?? []).map((s) => [s.key, s.name]),
+    (projectStore.current?.workflow?.statuses ?? []).map((s) => [s.key, statusLabel(s.key, s.name)]),
   ),
   actorNames: Object.fromEntries(
     (projectStore.current?.members ?? []).map((m) => [m.actor_id, m.display_name]),
@@ -447,7 +448,7 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
                 <span class="dash-title">{{ t.title }}</span>
                 <span class="dash-status">
                   <span aria-hidden="true">{{ statusMarks[t.status.category] }}</span>
-                  {{ t.status.name }}
+                  {{ statusLabel(t.status.key, t.status.name) }}
                 </span>
               </RouterLink>
             </li>

@@ -32,6 +32,7 @@ import {
   startOfDayInstant,
   todayPlainDate,
 } from '../lib/datetime'
+import { statusLabel } from '../lib/catalogLabels'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
 
@@ -448,7 +449,7 @@ watch(projectKey, (key) => void projectStore.fetchCurrent(key))
 // ── 条件の選択肢 ─────────────────────────────────────────────
 
 const statusOptions = computed<MultiSelectOption[]>(() =>
-  statuses.value.map((s) => ({ value: s.key, label: s.name })),
+  statuses.value.map((s) => ({ value: s.key, label: statusLabel(s.key, s.name) })),
 )
 
 /** 種別は3つとも選べる。**エピックも行に出す**（5.13） */

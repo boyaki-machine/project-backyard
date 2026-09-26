@@ -23,6 +23,7 @@ import Modal from './Modal.vue'
 import { linkChoices } from '../api/links'
 import type { LinkChoice } from '../api/links'
 import { ticketTypeIcons, ticketTypeLabels } from '../api/tickets'
+import { statusLabel } from '../lib/catalogLabels'
 import type { Ticket } from '../api/tickets'
 
 const props = defineProps<{
@@ -114,7 +115,7 @@ function submit(): void {
             </span>
             <code class="candidate-id">{{ projectKey }}-{{ c.seq }}</code>
             <span class="candidate-title">{{ c.title }}</span>
-            <span class="candidate-status">{{ c.status.name }}</span>
+            <span class="candidate-status">{{ statusLabel(c.status.key, c.status.name) }}</span>
           </label>
           <p v-if="filtered.length === 0" class="empty">
             {{ candidates.length === 0 ? $ui("関連づけられるチケットがありません") : $ui("一致するチケットがありません") }}

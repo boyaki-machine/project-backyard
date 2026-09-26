@@ -129,6 +129,7 @@ function currentValue(s: Setting): string {
 /** サーバの設定キーを正本に、アプリ所有の表示名と説明を現在の言語へ直す。 */
 function settingName(s: Setting): string {
   const settingNameSources: Record<string, string> = {
+    database_url: 'DB接続文字列',
     bind: '待受アドレス',
     secret_key: '秘密の暗号鍵',
     tls_enabled: 'TLS で待ち受ける',
@@ -142,6 +143,7 @@ function settingName(s: Setting): string {
 
 function settingDescription(s: Setting): string {
   const settingDescriptionSources: Record<string, string> = {
+    database_url: 'pb_app での接続文字列。起動時に接続プールを張るため、変更には再起動が要ります',
     bind: 'HTTP を待ち受けるアドレスとポート。切り替えは即時で、期限内に確認しないと元へ戻ります。コンテナで動かしている場合は、公開側の設定（compose の ports や Service の targetPort）も合わせて変えてください',
     secret_key: 'TLS の秘密鍵を暗号化するための鍵。32バイトを base64 で与えます。証明書を登録しないなら不要です',
     tls_enabled: '有効にすると HTTPS で待ち受けます。証明書の登録が別途必要です。切り替えは即時で、期限内に確認しないと元へ戻ります',

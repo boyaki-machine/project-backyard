@@ -789,8 +789,8 @@ function onMenuSelect(key: string): void {
                 :disabled="savingRole || isSelf"
               />
               <span class="choice-body">
-                <span class="choice-label">{{ r.display_name }}</span>
-                <span class="choice-description">{{ r.description }}</span>
+                <span class="choice-label">{{ rolesStore.roleLabel(r.key) }}</span>
+                <span class="choice-description">{{ rolesStore.roleDescription(r.key) }}</span>
               </span>
             </label>
           </div>
@@ -859,7 +859,7 @@ function onMenuSelect(key: string): void {
                     "
                   >
                     <option v-for="r in projectRoles" :key="r.key" :value="r.key">
-                      {{ r.display_name }}
+                      {{ rolesStore.roleLabel(r.key) }}
                     </option>
                   </select>
                 </td>

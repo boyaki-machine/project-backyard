@@ -19,6 +19,8 @@
  * **モジュールの変数に置いてある。** 画面ごとに引き回すと、渡し忘れた場所
  * だけ端末のローカルで出てしまい、同じ画面に2つの時計が並ぶ。
  */
+import { uiLocaleTag } from '../locales/ui'
+
 let timezone: string | null = null
 
 /**
@@ -54,7 +56,7 @@ export function currentTimezone(): string | null {
  * **`Intl.DateTimeFormat` の `formatToParts` を使う。** `toLocaleString` の
  * 文字列を切り出すと、ロケールごとの区切りに依存して壊れる。
  */
-function parts(iso: string): { y: string; mo: string; d: string; h: string; mi: string } | null {
+function parts(iso: string): { y: string; mo: string; d: string; h: string; mi: string; s: string } | null {
   const t = new Date(iso)
   if (Number.isNaN(t.getTime())) return null
   if (timezone === null) {
@@ -64,6 +66,7 @@ function parts(iso: string): { y: string; mo: string; d: string; h: string; mi: 
       d: p2(t.getDate()),
       h: p2(t.getHours()),
       mi: p2(t.getMinutes()),
+      s: p2(t.getSeconds()),
     }
   }
   const f = new Intl.DateTimeFormat('en-CA', {
@@ -73,6 +76,7 @@ function parts(iso: string): { y: string; mo: string; d: string; h: string; mi: 
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
     // **24時間表記を明示する。** en-CA の既定は12時間で、`hour` が `01` の
     // ように出て午前・午後が落ちる。
     hour12: false,
@@ -87,6 +91,7 @@ function parts(iso: string): { y: string; mo: string; d: string; h: string; mi: 
     // `hour12: false` でも 24 を返す実装があるため 0 に丸める。
     h: got.hour === '24' ? '00' : (got.hour ?? '00'),
     mi: got.minute ?? '00',
+    s: got.second ?? '00',
   }
 }
 
@@ -96,13 +101,23 @@ const p2 = (n: number) => String(n).padStart(2, '0')
 export function formatDateTime(iso: string): string {
   const t = parts(iso)
   if (t === null) return iso
+  if (uiLocaleTag() === 'en-US') return `${t.mo}/${t.d}/${t.y} ${hour12(t.h)}:${t.mi}:${t.s} ${ampm(t.h)}`
   return `${t.y}-${t.mo}-${t.d} ${t.h}:${t.mi}`
+}
+
+function hour12(hour: string): number {
+  return Number(hour) % 12 || 12
+}
+
+function ampm(hour: string): 'AM' | 'PM' {
+  return Number(hour) < 12 ? 'AM' : 'PM'
 }
 
 /** `2026-08-11`。時刻に意味がない項目（参加日など）で使う */
 export function formatDate(iso: string): string {
   const t = parts(iso)
   if (t === null) return iso
+  if (uiLocaleTag() === 'en-US') return `${t.mo}/${t.d}/${t.y}`
   return `${t.y}-${t.mo}-${t.d}`
 }
 
@@ -121,7 +136,8 @@ export function formatDate(iso: string): string {
  * サーバは `YYYY-MM-DD` で返す（`apitime.go` の `Date`）。形が違えばそのまま返す。
  */
 export function formatPlainDate(date: string): string {
-  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : date
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  return match && uiLocaleTag() === 'en-US' ? `${match[2]}/${match[3]}/${match[1]}` : date
 }
 
 /**

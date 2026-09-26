@@ -30,6 +30,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from 'vue'
 
 import { statusMarks } from '../api/tickets'
+import { statusLabel } from '../lib/catalogLabels'
 import type { TicketStatus, TicketTransitionOption } from '../api/tickets'
 
 const props = defineProps<{
@@ -194,7 +195,7 @@ defineExpose({ setItems, setLoading, setError, close })
     @click="toggle"
   >
     <span class="status-mark" aria-hidden="true">{{ statusMarks[current.category] }}</span>
-    <span class="status-name">{{ current.name }}</span>
+    <span class="status-name">{{ statusLabel(current.key, current.name) }}</span>
     <span v-if="canTransition" class="caret" aria-hidden="true">▾</span>
   </button>
 
@@ -231,7 +232,7 @@ defineExpose({ setItems, setLoading, setError, close })
           >
             <span class="option-name">
               <span class="status-mark" aria-hidden="true">{{ statusMarks[item.category] }}</span>
-              {{ item.name }}
+              {{ statusLabel(item.key, item.name) }}
             </span>
             <!-- **`reason` はサーバの日本語をそのまま出す**（`ApiDesign.md` 2.5） -->
             <span v-if="!item.allowed && item.reason" class="reason">{{ item.reason }}</span>

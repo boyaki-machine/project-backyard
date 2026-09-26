@@ -43,6 +43,7 @@ import type {
   SortOrder,
 } from '../api/tickets'
 import { formatPlainDate, todayPlainDate } from '../lib/datetime'
+import { statusLabel } from '../lib/catalogLabels'
 import { zoneOf, type DropZone } from '../lib/dnd'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
@@ -893,7 +894,7 @@ function sectionsOf(t: Ticket): { key: string; label: string }[] {
           : { key: t.assignee.id, label: t.assignee.display_name },
       ]
     case 'status':
-      return [{ key: t.status.key, label: t.status.name }]
+      return [{ key: t.status.key, label: statusLabel(t.status.key, t.status.name) }]
     default:
       return []
   }
@@ -2048,7 +2049,7 @@ watch(projectKey, (key) => {
               </optgroup>
               <optgroup :label="$ui('ステータス')">
                 <option v-for="s in statuses" :key="s.key" :value="`status:${s.key}`">
-                  {{ s.name }}
+                  {{ statusLabel(s.key, s.name) }}
                 </option>
               </optgroup>
             </select>
