@@ -486,7 +486,7 @@ function asApiError(e: unknown): ApiError {
 
           <div class="pair">
             <label class="field">
-              <span class="label">{{ $ui('言語') }}</span>
+              <span class="label">{{ $ui('言語(Language)') }}</span>
               <select v-model="locale" name="locale" :disabled="savingProfile">
                 <option value="ja">{{ $ui('日本語') }}</option>
                 <option value="en">English</option>

@@ -353,7 +353,7 @@ export const uiMessages: Record<string, string> = {
   "ログインID": "Login ID",
   "現在はメールアドレスと同じ値です。": "Currently the same as your email address.",
   "変更するとログインIDも同じ値になります。": "Changing this will also change your Login ID to the same value.",
-  "言語": "Language",
+  "言語(Language)": "Language",
   "日本語": "Japanese",
   "タイムゾーン": "Timezone",
   "✓ 保存しました": "✓ Saved",

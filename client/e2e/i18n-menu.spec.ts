@@ -76,6 +76,17 @@ test('言語設定を英語で保存すると各メニューが即時に切り�
   await page.goto('/me')
 
   await expect(page.getByRole('navigation', { name: 'メインメニュー' })).toBeVisible()
+  await expect(page.locator('select[name="locale"]')).toHaveAccessibleName('言語(Language)')
+  const localeField = page.locator('select[name="locale"]')
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 })
+    const box = await localeField.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width)
+    await page.screenshot({ path: testInfo.outputPath(`me-ja-${width}.png`), fullPage: true })
+  }
+  await page.setViewportSize({ width: 1280, height: 900 })
   await page.locator('select[name="locale"]').selectOption('en')
   await page.locator('form').first().getByRole('button', { name: '保存' }).click()
 
