@@ -6919,6 +6919,12 @@ export interface components {
          *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
          */
         AgentID: string;
+        /** @description Codex の接続方式。既定は direct。 */
+        ConnectTransport: "direct" | "bridge";
+        /** @description transport=bridge のとき必須。direct では指定しない。 */
+        BridgeOS: "darwin" | "windows" | "linux";
+        /** @description transport=bridge のとき必須。direct では指定しない。 */
+        BridgeArch: "amd64" | "arm64";
         /** @description エージェント用トークンの ULID（`access_token.id`。ApiDesign.md 4.5.5）。 */
         AgentTokenID: string;
         /**
@@ -8073,7 +8079,14 @@ export interface operations {
     };
     getMyAgentSetup: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Codex の接続方式。既定は direct。 */
+                transport?: components["parameters"]["ConnectTransport"];
+                /** @description transport=bridge のとき必須。direct では指定しない。 */
+                os?: components["parameters"]["BridgeOS"];
+                /** @description transport=bridge のとき必須。direct では指定しない。 */
+                arch?: components["parameters"]["BridgeArch"];
+            };
             header?: never;
             path: {
                 /**
@@ -8108,13 +8121,21 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };
     };
     getMyAgentSetupZip: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Codex の接続方式。既定は direct。 */
+                transport?: components["parameters"]["ConnectTransport"];
+                /** @description transport=bridge のとき必須。direct では指定しない。 */
+                os?: components["parameters"]["BridgeOS"];
+                /** @description transport=bridge のとき必須。direct では指定しない。 */
+                arch?: components["parameters"]["BridgeArch"];
+            };
             header?: never;
             path: {
                 /**
@@ -8148,6 +8169,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

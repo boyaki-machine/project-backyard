@@ -61,8 +61,17 @@ export type AgentConnect = components['schemas']['AgentConnect']
  * **接続できたかどうかはここに無い**——`GET /me/agents` の `token.last_used_at` が
  * それを表す（同じ事実を2か所から出さない）。
  */
-export function getAgentConnect(agentID: string, transport = 'direct'): Promise<AgentConnect> {
-  return api.get<AgentConnect>(`/me/agents/${encodeURIComponent(agentID)}/setup?transport=${encodeURIComponent(transport)}`)
+function connectQuery(transport: string, os: string, arch: string): string {
+  const params = new URLSearchParams({ transport })
+  if (transport === 'bridge') {
+    params.set('os', os)
+    params.set('arch', arch)
+  }
+  return params.toString()
+}
+
+export function getAgentConnect(agentID: string, transport = 'direct', os = '', arch = ''): Promise<AgentConnect> {
+  return api.get<AgentConnect>(`/me/agents/${encodeURIComponent(agentID)}/setup?${connectQuery(transport, os, arch)}`)
 }
 
 /**
@@ -71,6 +80,6 @@ export function getAgentConnect(agentID: string, transport = 'direct'): Promise<
  * **`fetch` ではなく `<a download href>` に渡す**（系統A と同じ。認証は Cookie）。
  * zip には手引き（`PB-README.md`）と、**改名した**接続設定が入る。
  */
-export function agentConnectZipURL(agentID: string, transport = 'direct'): string {
-  return `${BASE_PATH}/me/agents/${encodeURIComponent(agentID)}/setup.zip?transport=${encodeURIComponent(transport)}`
+export function agentConnectZipURL(agentID: string, transport = 'direct', os = '', arch = ''): string {
+  return `${BASE_PATH}/me/agents/${encodeURIComponent(agentID)}/setup.zip?${connectQuery(transport, os, arch)}`
 }

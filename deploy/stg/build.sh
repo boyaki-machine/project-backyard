@@ -10,6 +10,7 @@
 #
 #   out/
 #   ├── pb                   client を embed した単一バイナリ
+#   ├── bridges/             接続ZIP用の6種類の pb-mcp-bridge
 #   ├── pb.env               動作を規定する設定（deploy/stg/pb.env の写し）
 #   ├── run.sh               pb.env を読んで pb serve を起動する
 #   ├── secrets/
@@ -49,11 +50,8 @@ CGO_ENABLED=0 go -C "${repo_root}/server" build \
 	-trimpath -ldflags "-s -w -X main.version=${version}" \
 	-o "${out_dir}/pb" ./cmd/pb
 
-echo "==> pb-mcp-bridge を作る"
-CGO_ENABLED=0 go -C "${repo_root}/server" build \
-	-trimpath -ldflags "-s -w" \
-	-o "${out_dir}/pb-mcp-bridge" ./cmd/pb-mcp-bridge
-chmod +x "${out_dir}/pb-mcp-bridge"
+echo "==> 全OS・CPU向けの pb-mcp-bridge を作る"
+bash "${repo_root}/deploy/build-bridges.sh" "${out_dir}/bridges"
 
 echo
 echo "==> 設定と秘密を同梱する"

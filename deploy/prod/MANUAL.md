@@ -80,6 +80,7 @@ make release TARGET=<docker|compose|k8s> ARCH=<amd64|arm64> [OUT=<出力先>] [P
 <一式>/
 ├── pb                 PB 本体（Windows は pb.exe）。画面も入った単一の実行ファイル
 ├── goose              スキーマを進める道具（Windows は goose.exe）
+├── bridges/           Codex の接続ZIP用ブリッジ（macOS・Windows・Linux × amd64・arm64）
 ├── migrations/        スキーマの定義（goose が読む）
 ├── run.sh             起動の入口（Windows は run.ps1）
 ├── migrate.sh         スキーマを進める入口（Windows は migrate.ps1）
@@ -763,4 +764,3 @@ ALTER DATABASE pb_before_ctype RENAME TO pb;
 ```
 
 **片付ける**：確かめ終えたら `DROP DATABASE pb_before_ctype;` とダンプを消す。
-

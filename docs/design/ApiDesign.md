@@ -1242,6 +1242,7 @@ GET /api/v1/me/agents/:id/setup.zip
 | `agent.token_env_name` | 接頭を付けた実際の変数名。**組み立てはサーバの1か所**（4.5.1） |
 | `mcp_url` | `base_url` ＋ `/mcp/<project_key>`（`Design.md` 8.3）。**`files[]` の中に埋まっているものと同じ文字列**である |
 | `transport` | `direct`（既定）または Codex の `bridge`。クエリ `?transport=bridge` は Codex のみ受け付ける。`bridge` の設定はローカル stdio の `pb-mcp-bridge` を起動する |
+| `os`・`arch` | `transport=bridge` のとき両方必須。`os` は `darwin` / `windows` / `linux`、`arch` は `amd64` / `arm64`。両エンドポイントに同じ値を渡す。不足・未知の値、`direct` との併用は `422 validation_failed` |
 | `base_url` | **リクエストの `Host` から組み立てた暫定値**（5.7.1 と同じ規則。スキームは `PB_COOKIE_SECURE`） |
 | `export_line` | 環境変数へトークンを置く行。**`null` になることがある**（下記） |
 | `files[]` | **5.7.1 の `files[]` と同じ形**（`AgentSetupFile`）。**接続設定の1枚だけ**で、`.gitignore` も手順ファイルも入らない |
@@ -1254,6 +1255,12 @@ GET /api/v1/me/agents/:id/setup.zip
 クライアントは、OS の信頼ストアへ登録した自己署名の証明書を受け付けなかった**（pb-160 の観測）。
 **ローカル CA の証明書と `CODEX_CA_CERTIFICATE` での直接接続は実機未確認**で、ブリッジを正とする（pb-202）。PB は TLS 検証を無効にする設定を返さない。
 生成物は `pb-mcp-bridge --url <https MCP URL> --token-env <name>` を stdio 子プロセスとして起動する。
+Windows 向けだけコマンド名を `pb-mcp-bridge.exe` とする。OS と CPU は利用者が画面で指定し、
+PB サーバの実行環境から推測しない。配布物は `darwin` / `windows` / `linux` × `amd64` / `arm64` の
+6種類を `bridges/<os>-<arch>/pb-mcp-bridge[.exe]` に持ち、ZIP には指定された1種類だけを入れる。
+該当するバイナリが無ければ、別の種類へフォールバックせずエラーにする。
+Windows 向けの `export_line` と手引きは PowerShell の `$env:` 構文を使い、同じセッションから
+Codex を起動するよう案内する。
 ブリッジは待受を持たず、OS の信頼ストアを使う。`PB_MCP_CA_FILE` が指定された場合は、その PEM を
 OS の既定信頼ストアへ追加する。ZIP の `PB-README.md` は、証明書登録または CA 指定とブリッジの
 導入・削除手順を含む。
@@ -1338,6 +1345,8 @@ clone 直後には存在せず、**主経路では上書きの相手がいない
 
 **`Content-Type: application/zip`**、
 `Content-Disposition: attachment; filename="pb-connect-<key>-<client_kind>.zip"`。
+Codex のブリッジZIPだけは `pb-connect-<key>-codex-<os>-<arch>.zip` とし、別の端末向けを
+取り直したときにファイル名でも区別できるようにする。
 
 **5.7.2 と違い、種別を名前に入れる。** 1人が同じプロジェクトに Claude Code と Copilot の
 2件を持つことがあり（4.5.1）、**同じ名前の zip が2つダウンロードフォルダに並ぶと
@@ -1351,7 +1360,7 @@ clone 直後には存在せず、**主経路では上書きの相手がいない
 | 接続設定（**別名**） | `.mcp.pb-block.json` |
 | **手引き** | `PB-README.md`（4.5.8.1b の `ca_trust` を「HTTPS の証明書を信頼させる」の節として含む） |
 
-Codex では `transport=direct` と `transport=bridge` で手引きも分ける。直接接続ZIPは公開 CA に使うことと、ローカル CA・社内 CA・自己署名ではブリッジを選び直すことを記す。ブリッジZIPは `pb-mcp-bridge` バイナリ、OS の信頼ストアへの登録または CA PEM と `PB_MCP_CA_FILE` の指定、導入・削除を記す。Codex の設定は Finder 等で隠れない `_codex/config.pb-block.toml` として入れ、手引きで `.codex/config.toml` への改名を案内する。ブリッジZIPは実行ファイルも同梱する。
+Codex では `transport=direct` と `transport=bridge` で手引きも分ける。直接接続ZIPは公開 CA に使うことと、ローカル CA・社内 CA・自己署名ではブリッジを選び直すことを記す。ブリッジZIPは選択した OS / CPU の `pb-mcp-bridge`（Windows は `.exe`）、OS の信頼ストアへの登録または CA PEM と `PB_MCP_CA_FILE` の指定、導入・削除を記す。Codex の設定は Finder 等で隠れない `_codex/config.pb-block.toml` として入れ、手引きで `.codex/config.toml` への改名を案内する。ブリッジZIPは実行ファイルも同梱する。
 
 **`PB-README.md` は JSON の `files[]` に含めない。** **画面が同じ内容を節として描いている**
 ためで、`files[]` に入れると「これも置くファイルだ」と読まれる。**zip にだけ入れるのは、

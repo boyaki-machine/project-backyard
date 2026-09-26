@@ -428,6 +428,13 @@ out/
 
 **CPU は 64bit の2種だけを受ける**。`386`・`armv7` など 32bit を名指しする値は、理由を出して止まる。DB の公開イメージ（`pgvector/pgvector:pg17`）も amd64 / arm64 しか無い。
 
+**PB が動く OS / CPU と、ZIP を受け取るエージェントの端末は別である。** `make build`、stg と
+native の一式、コンテナイメージには、`darwin` / `windows` / `linux` × `amd64` / `arm64` の
+6種類の `pb-mcp-bridge` を `bridges/<os>-<arch>/pb-mcp-bridge[.exe]` に置く。
+`deploy/build-bridges.sh` が共通のクロスビルドを担い、PB は利用者の選んだ1種類を ZIP に入れる。
+バイナリをリポジトリへはコミットしない。`make run` の `go run` は一時パスから実行するため、
+ブリッジZIPを試す際は `make build` で作った `bin/pb` を使う。
+
 **受けない指定は終了コード 2 で止まる。** ビルドそのものの失敗（1）と区別するため。
 
 **空でない出力先には書かない。** stg の `build.sh` は上書きするが、配布物では許さない——利用者が書き換えた起動スクリプトや設定が黙って元に戻り、動いている一式のバイナリを同じパスへ書き直すと実行中のプロセスが落ちうる。
@@ -440,6 +447,7 @@ out/
 <OUT>/
 ├── pb（pb.exe）              client を embed した単一バイナリ
 ├── goose（goose.exe）        postgres のドライバだけに絞った goose（DbDesign.md 5.1）
+├── bridges/                 6種類の pb-mcp-bridge（Codex の接続ZIP用）
 ├── migrations/               server/migrations/ の写し
 ├── run.sh（run.ps1）          起動の入口。設定ファイル・秘密の位置・待受を渡して pb を起動する
 ├── migrate.sh（migrate.ps1）  goose で migrate する
@@ -463,7 +471,7 @@ out/
 
 #### docker / compose の一式
 
-**イメージ**は `deploy/Dockerfile` の3段（client → pb と goose → 実行）で作る。中身は `/pb`（入口。既定の引数は `serve`）・`/goose`（postgres のドライバだけ）・`/migrations`・`/LICENSE`・`/NOTICE`・`/THIRD_PARTY_NOTICES.txt`。実行の段は `gcr.io/distroless/static-debian12:nonroot` で、利用者は uid 65532。
+**イメージ**は `deploy/Dockerfile` の3段（client → pb と goose → 実行）で作る。中身は `/pb`（入口。既定の引数は `serve`）・`/goose`（postgres のドライバだけ）・`/bridges`（6種類のブリッジ）・`/migrations`・`/LICENSE`・`/NOTICE`・`/THIRD_PARTY_NOTICES.txt`。実行の段は `gcr.io/distroless/static-debian12:nonroot` で、利用者は uid 65532。
 
 | | compose | docker |
 |---|---|---|

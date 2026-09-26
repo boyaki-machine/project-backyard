@@ -340,6 +340,8 @@ func TestRenderConnectCodex(t *testing.T) {
 func TestRenderConnectCodexBridge(t *testing.T) {
 	p := testConnectParams()
 	p.Transport = TransportBridge
+	p.BridgeOS = "darwin"
+	p.BridgeArch = "arm64"
 	c, err := RenderConnect("codex", p)
 	if err != nil {
 		t.Fatalf("RenderConnect が失敗した: %v", err)
@@ -366,6 +368,33 @@ func TestRenderConnectCodexBridge(t *testing.T) {
 	} {
 		if !strings.Contains(c.Readme, want) {
 			t.Errorf("bridge の手引きに %q が無い:\n%s", want, c.Readme)
+		}
+	}
+}
+
+func TestRenderConnectCodexWindowsBridge(t *testing.T) {
+	p := testConnectParams()
+	p.Transport = TransportBridge
+	p.BridgeOS, p.BridgeArch = "windows", "arm64"
+	c, err := RenderConnect("codex", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c.Files[0].Content, `command = "pb-mcp-bridge.exe"`) {
+		t.Errorf("Windows のコマンド名が違う: %s", c.Files[0].Content)
+	}
+	for _, want := range []string{"windows/arm64", "pb-mcp-bridge.exe", "$env:PB_TOKEN_MY_LAPTOP", "同じ PowerShell から Codex を起動"} {
+		if !strings.Contains(c.Readme, want) {
+			t.Errorf("Windows の手引きに %q がない", want)
+		}
+	}
+	for _, p := range []ConnectParams{
+		{Transport: TransportBridge, BridgeOS: "windows", BridgeArch: "386"},
+		{Transport: TransportBridge, BridgeOS: "", BridgeArch: "arm64"},
+		{Transport: TransportDirect, BridgeOS: "windows", BridgeArch: "arm64"},
+	} {
+		if _, err := RenderConnect("codex", p); err == nil {
+			t.Errorf("不正なOS/CPUを拒否しない: %+v", p)
 		}
 	}
 }
@@ -506,6 +535,8 @@ func TestConnectReadmeIsPerKind(t *testing.T) {
 func TestConnectZipCodexUsesVisibleFolderAndIncludesAsset(t *testing.T) {
 	p := testConnectParams()
 	p.Transport = TransportBridge
+	p.BridgeOS = "darwin"
+	p.BridgeArch = "arm64"
 	c, err := RenderConnect("codex", p)
 	if err != nil {
 		t.Fatal(err)

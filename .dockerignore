@@ -9,6 +9,8 @@
 !THIRD_PARTY_NOTICES.txt
 !client/
 !server/
+!deploy/
+!deploy/build-bridges.sh
 
 # 許したディレクトリの中でも送らないもの（イメージの中で作り直す）
 client/node_modules/
