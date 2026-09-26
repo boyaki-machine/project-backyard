@@ -67,13 +67,30 @@ type ConnectParams struct {
 	ClientDisplayName string
 	// Transport is "direct" (the Codex HTTP MCP client) or "bridge" (a local
 	// stdio process).  Only Codex supports the latter.
-	Transport string
+	Transport  string
+	BridgeOS   string
+	BridgeArch string
 }
 
 const (
 	TransportDirect = "direct"
 	TransportBridge = "bridge"
 )
+
+// BridgeBinaryName validates the selected client platform before it is used in
+// a ZIP filename or a filesystem path. The server's own platform is irrelevant.
+func BridgeBinaryName(osName, arch string) (string, error) {
+	if osName != "darwin" && osName != "windows" && osName != "linux" {
+		return "", fmt.Errorf("ブリッジの OS は darwin / windows / linux から選んでください")
+	}
+	if arch != "amd64" && arch != "arm64" {
+		return "", fmt.Errorf("ブリッジの CPU は amd64 / arm64 から選んでください")
+	}
+	if osName == "windows" {
+		return "pb-mcp-bridge.exe", nil
+	}
+	return "pb-mcp-bridge", nil
+}
 
 // Connect は系統B の成果物一式（ApiDesign.md 4.5.8）。
 type Connect struct {
@@ -258,6 +275,13 @@ func ExportLine(tokenEnvName string) string {
 	return fmt.Sprintf("export %s='ここに発行したトークンを貼る'", tokenEnvName)
 }
 
+func ExportLineForPlatform(tokenEnvName, osName string) string {
+	if osName == "windows" {
+		return fmt.Sprintf("$env:%s='ここに発行したトークンを貼る'", tokenEnvName)
+	}
+	return ExportLine(tokenEnvName)
+}
+
 // RenderConnect は1件のエージェントぶんの接続設定を組み立てる（ApiDesign.md 4.5.8）。
 //
 // **配置ファイルを持たない種別でも error にしない**（4.5.8.3）。Files を空にして、
@@ -273,6 +297,13 @@ func RenderConnect(kind string, p ConnectParams) (Connect, error) {
 	}
 	if p.Transport == TransportBridge && kind != "codex" {
 		return Connect{}, fmt.Errorf("stdio ブリッジは Codex でのみ使えます")
+	}
+	if p.Transport == TransportBridge {
+		if _, err := BridgeBinaryName(p.BridgeOS, p.BridgeArch); err != nil {
+			return Connect{}, err
+		}
+	} else if p.BridgeOS != "" || p.BridgeArch != "" {
+		return Connect{}, fmt.Errorf("OS と CPU は stdio ブリッジでのみ指定できます")
 	}
 	caTrust, err := renderCATrust(kind, p)
 	if err != nil {
@@ -335,6 +366,7 @@ func renderCATrust(kind string, p ConnectParams) (CATrust, error) {
 // readmeParams は手引きへ差し込む値。
 type readmeParams struct {
 	ConnectParams
+	BridgeBinaryName string
 	// ConfigPath は置き場。**空になりうる**（配置ファイルを持たない種別）。
 	ConfigPath string
 	// ZipEntryName は zip の中での名前。**改名を促すために出す。**
@@ -351,13 +383,22 @@ type readmeParams struct {
 
 // renderReadme は templates/connect/<name> を差し込む。
 func renderReadme(name, kind string, spec connectSpec, p ConnectParams, caTrust CATrust) (string, error) {
+	binaryName := ""
+	if p.Transport == TransportBridge {
+		var err error
+		binaryName, err = BridgeBinaryName(p.BridgeOS, p.BridgeArch)
+		if err != nil {
+			return "", err
+		}
+	}
 	rp := readmeParams{
-		ConnectParams: p,
-		ConfigPath:    spec.configPath,
-		ExportLine:    ExportLine(p.TokenEnvName),
-		OnboardRef:    "参画の手順",
-		CATrust:       caTrust,
-		CATrustLabel:  caTrust.Verification.label(),
+		ConnectParams:    p,
+		BridgeBinaryName: binaryName,
+		ConfigPath:       spec.configPath,
+		ExportLine:       ExportLineForPlatform(p.TokenEnvName, p.BridgeOS),
+		OnboardRef:       "参画の手順",
+		CATrust:          caTrust,
+		CATrustLabel:     caTrust.Verification.label(),
 	}
 	if spec.configPath != "" {
 		rp.ZipEntryName = blockName(spec.configPath)
@@ -548,7 +589,11 @@ func renderCodexConfig(p ConnectParams) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[mcp_servers.%s]\n", mcpServerName)
 	if p.Transport == TransportBridge {
-		b.WriteString("command = \"pb-mcp-bridge\"\n")
+		binaryName, err := BridgeBinaryName(p.BridgeOS, p.BridgeArch)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "command = %q\n", binaryName)
 		fmt.Fprintf(&b, "args = [\"--url\", %q, \"--token-env\", %q]\n", p.MCPURL, p.TokenEnvName)
 	} else {
 		fmt.Fprintf(&b, "url = %q\n", p.MCPURL)

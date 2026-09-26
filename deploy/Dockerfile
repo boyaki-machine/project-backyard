@@ -8,6 +8,7 @@
 # CPU のエミュレーションが無い端末でも、amd64 と arm64 の両方を作れる。
 #
 # イメージの中身：/pb（client を embed した単一バイナリ）、/goose（postgres のドライバだけ）、
+# /bridges（接続ZIP用の6種類の pb-mcp-bridge）、
 # /migrations、/LICENSE と /NOTICE（PB のライセンスと著作権表示）、
 # /THIRD_PARTY_NOTICES.txt（第三者のライセンス表示）。
 # 利用者は uid 65532（nonroot）。秘密ファイルの置き方は MANUAL.md の4章。
@@ -41,6 +42,7 @@ RUN go mod download
 COPY server/tools/go.mod server/tools/go.sum ./tools/
 RUN cd tools && go mod download
 COPY server/ ./
+COPY deploy/build-bridges.sh /src/deploy/build-bridges.sh
 COPY VERSION /src/VERSION
 # //go:embed は自パッケージの下しか見ないので、client の成果物を embed 対象へ置く（Design.md 3.4）。
 COPY --from=client /src/client/dist/ ./internal/webui/dist/
@@ -57,6 +59,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
 	&& cd tools \
 	&& CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -tags "$GOOSE_TAGS" \
 		-ldflags "-s -w" -o /out/goose github.com/pressly/goose/v3/cmd/goose
+RUN bash /src/deploy/build-bridges.sh /out/bridges
 
 # ── 3. 実行 ───────────────────────────────────────────────
 FROM gcr.io/distroless/static-debian12:nonroot
@@ -65,6 +68,7 @@ LABEL org.opencontainers.image.title="Project Backyard" \
 	org.opencontainers.image.version="$VERSION"
 COPY --from=server /out/pb /pb
 COPY --from=server /out/goose /goose
+COPY --from=server /out/bridges /bridges
 COPY server/migrations/ /migrations/
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.txt /
 # **コンテナの中ではすべてのアドレスで待ち受け、外への公開範囲は docker の -p や compose の

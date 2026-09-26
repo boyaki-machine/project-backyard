@@ -354,6 +354,7 @@ sync-webui: build-client licenses-check
 ## client を埋め込んだ単一バイナリを作る（bin/pb）
 build: sync-webui
 	cd server && CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o ../bin/pb ./cmd/pb
+	bash $(CURDIR)/deploy/build-bridges.sh $(CURDIR)/bin/bridges
 
 ## embed 対象をコミット済みのプレースホルダだけに戻す
 # **コミット前の必須手順ではない**（make build は追跡対象を上書きしないため、

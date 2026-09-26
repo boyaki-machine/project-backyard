@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -94,7 +93,7 @@ func (h *handler) getMyAgentSetupZip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if view.Transport == agentsetup.TransportBridge {
-		asset, err := bridgeAsset()
+		asset, err := bridgeAsset(r.URL.Query().Get("os"), r.URL.Query().Get("arch"))
 		if err != nil {
 			apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 			return
@@ -113,6 +112,10 @@ func (h *handler) getMyAgentSetupZip(w http.ResponseWriter, r *http.Request) {
 	// Claude Code と Copilot の2件を持つことがあり、同じ名前の zip が
 	// ダウンロードフォルダに並ぶとどちらがどちらか分からなくなる。
 	name := fmt.Sprintf("pb-connect-%s-%s.zip", view.Project.Key, view.Agent.ClientKind)
+	if view.Transport == agentsetup.TransportBridge {
+		name = fmt.Sprintf("pb-connect-%s-%s-%s-%s.zip", view.Project.Key, view.Agent.ClientKind,
+			r.URL.Query().Get("os"), r.URL.Query().Get("arch"))
+	}
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
 	w.WriteHeader(http.StatusOK)
@@ -123,16 +126,20 @@ func (h *handler) getMyAgentSetupZip(w http.ResponseWriter, r *http.Request) {
 
 // bridgeAsset reads the helper shipped next to the currently running PB
 // executable. It never builds code or accepts a client-provided path.
-func bridgeAsset() (agentsetup.Asset, error) {
+func bridgeAsset(osName, arch string) (agentsetup.Asset, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return agentsetup.Asset{}, fmt.Errorf("PB 実行ファイルの場所を取得できない: %w", err)
 	}
-	name := "pb-mcp-bridge"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
+	return bridgeAssetFromDir(filepath.Dir(exe), osName, arch)
+}
+
+func bridgeAssetFromDir(baseDir, osName, arch string) (agentsetup.Asset, error) {
+	name, err := agentsetup.BridgeBinaryName(osName, arch)
+	if err != nil {
+		return agentsetup.Asset{}, err
 	}
-	binary, err := os.ReadFile(filepath.Join(filepath.Dir(exe), name))
+	binary, err := os.ReadFile(filepath.Join(baseDir, "bridges", osName+"-"+arch, name))
 	if err != nil {
 		return agentsetup.Asset{}, fmt.Errorf("同梱の %s を読めない: %w", name, err)
 	}
@@ -172,6 +179,24 @@ func (h *handler) buildAgentConnect(
 	if transport == "" {
 		transport = agentsetup.TransportDirect
 	}
+	if transport != agentsetup.TransportDirect && transport != agentsetup.TransportBridge {
+		return nil, agentsetup.Connect{}, apierr.New(apierr.ValidationFailed).
+			WithMessage("接続方式は direct または bridge を指定してください")
+	}
+	if transport == agentsetup.TransportBridge && ag.ClientKind != "codex" {
+		return nil, agentsetup.Connect{}, apierr.New(apierr.ValidationFailed).
+			WithMessage("stdio ブリッジは Codex でのみ使えます")
+	}
+	bridgeOS := r.URL.Query().Get("os")
+	bridgeArch := r.URL.Query().Get("arch")
+	if transport == agentsetup.TransportBridge {
+		if _, err := agentsetup.BridgeBinaryName(bridgeOS, bridgeArch); err != nil {
+			return nil, agentsetup.Connect{}, apierr.New(apierr.ValidationFailed).WithMessage(err.Error())
+		}
+	} else if bridgeOS != "" || bridgeArch != "" {
+		return nil, agentsetup.Connect{}, apierr.New(apierr.ValidationFailed).
+			WithMessage("OS と CPU は stdio ブリッジでのみ指定できます")
+	}
 	params := agentsetup.ConnectParams{
 		ProjectKey:        ag.ProjectKey.String,
 		ProjectName:       ag.ProjectName.String,
@@ -180,6 +205,8 @@ func (h *handler) buildAgentConnect(
 		DisplayName:       ag.DisplayName,
 		ClientDisplayName: h.clientKindLabel(ctx, ag.ClientKind),
 		Transport:         transport,
+		BridgeOS:          bridgeOS,
+		BridgeArch:        bridgeArch,
 	}
 
 	connect, err := agentsetup.RenderConnect(ag.ClientKind, params)
@@ -221,7 +248,7 @@ func (h *handler) buildAgentConnect(
 	// 環境変数を読まず、Claude Desktop は GUI アプリなのでシェルの環境が届かない。
 	// **意味のない行を出すと、利用者は書かれていない前提を自分の期待で埋める。**
 	if connect.UsesTokenEnvVar {
-		line := agentsetup.ExportLine(params.TokenEnvName)
+		line := agentsetup.ExportLineForPlatform(params.TokenEnvName, params.BridgeOS)
 		view.ExportLine = &line
 	}
 	return view, connect, nil

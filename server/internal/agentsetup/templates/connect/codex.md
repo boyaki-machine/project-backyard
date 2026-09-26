@@ -26,8 +26,8 @@
 既に入っています。**入っていないまま commit すると、あなたの環境が履歴に残ります。**
 
 {{if eq .Transport "bridge"}}
-同梱の `pb-mcp-bridge` を作業フォルダ内へ置く場合は、`.gitignore` にも
-`pb-mcp-bridge`（Windows では `pb-mcp-bridge.exe`）を追加してください。実行ファイルは
+同梱の `{{.BridgeBinaryName}}` を作業フォルダ内へ置く場合は、`.gitignore` にも
+`{{.BridgeBinaryName}}` を追加してください。実行ファイルは
 端末・OS ごとに異なるため、共有リポジトリへ commit しません。
 {{end}}
 
@@ -37,18 +37,20 @@
 {{.ExportLine}}
 ```
 
-`~/.zshrc` か direnv（`.envrc`）に追記し、**発行時に一度だけ表示された値**を入れます。
+{{if eq .BridgeOS "windows"}}PowerShell で値を設定し、**同じ PowerShell から Codex を起動**します。
+{{else}}`~/.zshrc` か direnv（`.envrc`）に追記し、{{end}}**発行時に一度だけ表示された値**を入れます。
 控えていない場合は、PB の `自分の設定 → エージェント` で**再発行**してください
 （再発行すると、それまでのトークンは失効します）。
 
-**設定ファイルには変数名だけが書いてあります**（`bearer_token_env_var`）。
-実体はファイルに残りません。**`.envrc` も履歴管理から外します。**
+**設定ファイルには変数名だけが書いてあります**（{{if eq .Transport "bridge"}}`--token-env`{{else}}`bearer_token_env_var`{{end}}）。
+実体はファイルに残りません。{{if ne .BridgeOS "windows"}}**`.envrc` も履歴管理から外します。**{{end}}
 
 {{if eq .Transport "bridge"}}
 ## ブリッジを置く
 
 このZIPは **ローカル stdio ブリッジ** 用です。自己署名・社内 CA の証明書を使うローカル PB では、この方式を使います。
-同梱の `pb-mcp-bridge` を作業フォルダ外の安全なローカルディレクトリへ置き、実行可能にして PATH へ加えます。
+このZIPの対象は **{{.BridgeOS}}/{{.BridgeArch}}** です。端末のOSやCPUと違う場合は、画面で選び直してZIPを取り直します。
+同梱の `{{.BridgeBinaryName}}` を作業フォルダ外の安全なローカルディレクトリへ置き、{{if ne .BridgeOS "windows"}}実行可能にして{{end}}PATH へ加えます。
 
 ブリッジは待受ポートを開かず、TLS検証も無効化しません。証明書を信頼させる手順は、下の
 「HTTPS の証明書を信頼させる」にあります。
@@ -63,7 +65,7 @@
 Windows でも警告が出る場合がありますが、このブリッジでの初回起動手順は未確認です。
 警告が出たら、表示内容と配布元を確認してから実行可否を判断してください。
 
-削除時は `[mcp_servers.pb]` と配下の tool 節、`pb-mcp-bridge`、CA PEM、
+削除時は `[mcp_servers.pb]` と配下の tool 節、`{{.BridgeBinaryName}}`、CA PEM、
 `PB_MCP_CA_FILE` を削除します。OS の信頼ストアへ登録した場合は、登録した CA だけを削除してから
 {{.ClientDisplayName}} を再起動します。
 {{else}}
@@ -82,7 +84,7 @@ Windows でも警告が出る場合がありますが、このブリッジでの
 
 ## 4. 起動して参画する
 
-新しいシェルで {{.ClientDisplayName}} を起動し、{{.OnboardRef}}。
+{{if eq .BridgeOS "windows"}}トークンを設定した PowerShell から{{else}}新しいシェルで{{end}} {{.ClientDisplayName}} を起動し、{{.OnboardRef}}。
 うまくいけば、プロジェクトの概要・憲章・自分の担当チケットが返ります。
 
 **{{.ClientDisplayName}} にはスラッシュコマンドがありません。**

@@ -133,6 +133,9 @@ func TestCATrustMatchesDevelopmentMD(t *testing.T) {
 			p := testConnectParams()
 			p.MCPURL = "https://localhost:8443/mcp/pb"
 			p.Transport = row.transport
+			if p.Transport == TransportBridge {
+				p.BridgeOS, p.BridgeArch = "darwin", "arm64"
+			}
 			c, err := RenderConnect(row.kind, p)
 			if err != nil {
 				t.Fatalf("RenderConnect が失敗した: %v", err)
@@ -184,6 +187,9 @@ func TestCATrustIsAlwaysRenderedAndSharedWithReadme(t *testing.T) {
 		t.Run(tc.kind+"/"+tc.transport, func(t *testing.T) {
 			p := testConnectParams()
 			p.Transport = tc.transport
+			if p.Transport == TransportBridge {
+				p.BridgeOS, p.BridgeArch = "darwin", "arm64"
+			}
 			c, err := RenderConnect(tc.kind, p)
 			if err != nil {
 				t.Fatalf("RenderConnect が失敗した: %v", err)

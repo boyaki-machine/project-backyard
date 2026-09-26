@@ -1256,6 +1256,10 @@ paths:
       tags: [me]
       summary: 自分の接続設定（系統B）
       operationId: getMyAgentSetup
+      parameters:
+        - $ref: '#/components/parameters/ConnectTransport'
+        - $ref: '#/components/parameters/BridgeOS'
+        - $ref: '#/components/parameters/BridgeArch'
       description: |
         そのエージェントが PB に繋がるために、本人が自分の端末へ置くものを返す
         （ApiDesign.md 4.5.8、Requirements.md 10.9.1 の系統B）。必要権限は「本人」。
@@ -1290,6 +1294,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
         '429':
           $ref: '#/components/responses/RateLimited'
         '500':
@@ -1302,6 +1308,10 @@ paths:
       tags: [me]
       summary: 自分の接続設定（zip ダウンロード）
       operationId: getMyAgentSetupZip
+      parameters:
+        - $ref: '#/components/parameters/ConnectTransport'
+        - $ref: '#/components/parameters/BridgeOS'
+        - $ref: '#/components/parameters/BridgeArch'
       description: |
         `/setup` と同じ接続設定を zip で返す（ApiDesign.md 4.5.8.5）。
 
@@ -1314,7 +1324,8 @@ paths:
           「これも置くファイルだ」と読まれる
         - **`README.md` という名前にしない。** プロジェクト直下で展開されたときに
           本物の `README.md` を消す
-        - **ファイル名に種別を入れる**（`pb-connect-<key>-<client_kind>.zip`）。1人が同じ
+        - **ファイル名に種別を入れる**（`pb-connect-<key>-<client_kind>.zip`）。Codex のブリッジZIPは
+          `pb-connect-<key>-codex-<os>-<arch>.zip`。1人が同じ
           プロジェクトに2件持つことがあり、同じ名前の zip が並ぶと見分けられない
         - **別パスにしてあるのは、ブラウザの `<a download href>` で素直に落とすため**
       responses:
@@ -1338,6 +1349,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
         '429':
           $ref: '#/components/responses/RateLimited'
         '500':
@@ -5477,6 +5490,29 @@ components:
         **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
       schema:
         type: string
+
+    ConnectTransport:
+      name: transport
+      in: query
+      description: Codex の接続方式。既定は direct。
+      schema:
+        type: string
+        enum: [direct, bridge]
+        default: direct
+    BridgeOS:
+      name: os
+      in: query
+      description: transport=bridge のとき必須。direct では指定しない。
+      schema:
+        type: string
+        enum: [darwin, windows, linux]
+    BridgeArch:
+      name: arch
+      in: query
+      description: transport=bridge のとき必須。direct では指定しない。
+      schema:
+        type: string
+        enum: [amd64, arm64]
 
     AgentTokenID:
       name: token_id

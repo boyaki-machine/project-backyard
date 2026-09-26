@@ -5,14 +5,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/agentsetup"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
@@ -130,6 +134,8 @@ func TestGetMyAgentSetupCodexBridge(t *testing.T) {
 	req := connectReq()
 	q := req.URL.Query()
 	q.Set("transport", "bridge")
+	q.Set("os", "darwin")
+	q.Set("arch", "arm64")
 	req.URL.RawQuery = q.Encode()
 	rec := httptest.NewRecorder()
 	h.getMyAgentSetup(rec, req)
@@ -143,6 +149,120 @@ func TestGetMyAgentSetupCodexBridge(t *testing.T) {
 	}
 	if len(v.Files) != 1 || !bytes.Contains([]byte(v.Files[0].Content), []byte(`command = "pb-mcp-bridge"`)) {
 		t.Fatalf("Codex bridge の stdio 設定がない: %+v", v.Files)
+	}
+}
+
+func TestGetMyAgentSetupBridgePlatform(t *testing.T) {
+	h := &handler{q: connectFake("codex", "MY_LAPTOP")}
+	for _, tc := range []struct {
+		name, transport, osName, arch string
+		wantStatus                    int
+		wantCommand                   string
+	}{
+		{"windows", "bridge", "windows", "amd64", 200, `command = "pb-mcp-bridge.exe"`},
+		{"linux", "bridge", "linux", "arm64", 200, `command = "pb-mcp-bridge"`},
+		{"missing os", "bridge", "", "arm64", 422, ""},
+		{"missing arch", "bridge", "windows", "", 422, ""},
+		{"unknown os", "bridge", "freebsd", "amd64", 422, ""},
+		{"path traversal", "bridge", "../windows", "amd64", 422, ""},
+		{"unknown arch", "bridge", "windows", "386", 422, ""},
+		{"unknown transport", "serial", "", "", 422, ""},
+		{"direct with platform", "direct", "windows", "amd64", 422, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := connectReq()
+			q := req.URL.Query()
+			q.Set("transport", tc.transport)
+			q.Set("os", tc.osName)
+			q.Set("arch", tc.arch)
+			req.URL.RawQuery = q.Encode()
+			rec := httptest.NewRecorder()
+			h.getMyAgentSetup(rec, req)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status: got %d, want %d (%s)", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if tc.wantCommand != "" {
+				v := decodeConnect(t, rec)
+				if !bytes.Contains([]byte(v.Files[0].Content), []byte(tc.wantCommand)) {
+					t.Errorf("接続設定に %q がない", tc.wantCommand)
+				}
+				if tc.osName == "windows" && (v.ExportLine == nil || !bytes.Contains([]byte(*v.ExportLine), []byte("$env:"))) {
+					t.Errorf("Windows の export_line が PowerShell ではない: %v", v.ExportLine)
+				}
+			}
+		})
+	}
+}
+
+func TestBridgeAssetSelectsClientPlatform(t *testing.T) {
+	base := t.TempDir()
+	for _, osName := range []string{"darwin", "windows", "linux"} {
+		for _, arch := range []string{"amd64", "arm64"} {
+			name := "pb-mcp-bridge"
+			if osName == "windows" {
+				name += ".exe"
+			}
+			dir := filepath.Join(base, "bridges", osName+"-"+arch)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(osName+"/"+arch), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, osName := range []string{"darwin", "windows", "linux"} {
+		for _, arch := range []string{"amd64", "arm64"} {
+			a, err := bridgeAssetFromDir(base, osName, arch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(a.Content) != osName+"/"+arch {
+				t.Errorf("%s/%s の中身: %q", osName, arch, a.Content)
+			}
+			if osName == "windows" && a.Path != "pb-mcp-bridge.exe" {
+				t.Errorf("Windows のZIP名: %q", a.Path)
+			}
+			connect, err := agentsetup.RenderConnect("codex", agentsetup.ConnectParams{
+				Transport: agentsetup.TransportBridge, BridgeOS: osName, BridgeArch: arch,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			connect.Assets = []agentsetup.Asset{a}
+			blob, err := agentsetup.ConnectZip(connect)
+			if err != nil {
+				t.Fatal(err)
+			}
+			zr, err := zip.NewReader(bytes.NewReader(blob), int64(len(blob)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := 0
+			for _, f := range zr.File {
+				if f.Name == a.Path {
+					found++
+					rc, err := f.Open()
+					if err != nil {
+						t.Fatal(err)
+					}
+					content, err := io.ReadAll(rc)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_ = rc.Close()
+					if !bytes.Equal(content, a.Content) {
+						t.Errorf("ZIP の %s/%s のバイナリが違う", osName, arch)
+					}
+				}
+			}
+			if found != 1 {
+				t.Errorf("ZIP に選択したバイナリが1本ではない: %s/%s", osName, arch)
+			}
+		}
+	}
+	if _, err := bridgeAssetFromDir(base, "linux", "386"); err == nil {
+		t.Error("未対応のCPUを拒否しない")
 	}
 }
 
@@ -299,6 +419,10 @@ func TestGetMyAgentSetupReturnsCATrust(t *testing.T) {
 			if tc.transport != "" {
 				q := req.URL.Query()
 				q.Set("transport", tc.transport)
+				if tc.transport == "bridge" {
+					q.Set("os", "darwin")
+					q.Set("arch", "arm64")
+				}
 				req.URL.RawQuery = q.Encode()
 			}
 			rec := httptest.NewRecorder()
