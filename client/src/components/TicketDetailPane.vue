@@ -1685,10 +1685,9 @@ function errorFor(field: string): string {
             </dd>
           </div>
 
-          <!-- 見積は3つ（5.5）。**実績だけが左に1つで並ぶ**のは、開始と期限を
-               同じ行に残すためである -->
-          <div class="meta-item">
-            <dt>{{ $ui('見積') }}</dt>
+          <!-- 見積・実績と開始・終了は2列ずつ、3行に揃える（5.5） -->
+          <div class="meta-item measure">
+            <dt>{{ $ui('見積(point)') }}</dt>
             <dd>
               <input
                 v-if="editing === 'estimate_point'"
@@ -1717,8 +1716,8 @@ function errorFor(field: string): string {
             </dd>
           </div>
 
-          <div class="meta-item">
-            <dt>{{ $ui('実績（ポイント）') }}</dt>
+          <div class="meta-item measure">
+            <dt>{{ $ui('実績(point)') }}</dt>
             <dd>
               <div v-if="editing === 'actual_point'" class="actual-point-editor">
                 <input ref="inputRef" v-model="draft" type="number" min="0" step="1" :aria-label="$ui('実績（ポイント）')" @keydown.escape="cancelEdit" />
@@ -1733,8 +1732,8 @@ function errorFor(field: string): string {
             </dd>
           </div>
 
-          <div class="meta-item">
-            <dt>{{ $ui('見積（時間）') }}</dt>
+          <div class="meta-item measure">
+            <dt>{{ $ui('見積(時間)') }}</dt>
             <dd>
               <input
                 v-if="editing === 'estimate_hours'"
@@ -1763,8 +1762,8 @@ function errorFor(field: string): string {
             </dd>
           </div>
 
-          <div class="meta-item">
-            <dt>{{ $ui('実績') }}</dt>
+          <div class="meta-item measure">
+            <dt>{{ $ui('実績(時間)') }}</dt>
             <dd>
               <input
                 v-if="editing === 'actual_hours'"
@@ -1793,10 +1792,7 @@ function errorFor(field: string): string {
             </dd>
           </div>
 
-          <!-- 実績の右は空ける。開始と期限を同じ行に残すため（5.5） -->
-          <div class="meta-item spacer" aria-hidden="true"></div>
-
-          <div class="meta-item">
+          <div class="meta-item measure">
             <dt>{{ $ui('開始') }}</dt>
             <dd>
               <!-- **`date` 列であって時刻を持たない**（9.2.2）。`input[type=date]` の
@@ -1826,8 +1822,8 @@ function errorFor(field: string): string {
             </dd>
           </div>
 
-          <div class="meta-item">
-            <dt>{{ $ui('期限') }}</dt>
+          <div class="meta-item measure">
+            <dt>{{ $ui('終了') }}</dt>
             <dd>
               <input
                 v-if="editing === 'due_date'"
@@ -2432,15 +2428,23 @@ function errorFor(field: string): string {
   grid-column: 1 / -1;
 }
 
-.meta-item.spacer {
-  min-height: 0;
-}
-
 .meta dt {
   flex: none;
   width: 5.5em;
   color: var(--pb-text-muted);
   font-size: 13px;
+}
+
+.meta-item.measure dt {
+  width: 9.5em;
+  white-space: nowrap;
+}
+
+.meta-item.measure .value-view {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .meta dd {
