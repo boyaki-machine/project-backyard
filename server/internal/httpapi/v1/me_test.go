@@ -135,6 +135,32 @@ func TestMeFoldsProjectMemberships(t *testing.T) {
 	}
 }
 
+// プロジェクト専用トークンでは所有者の他プロジェクトを返さない（4.1）。
+func TestMeFiltersProjectsForScopedToken(t *testing.T) {
+	q := newFake(t)
+	token := validToken(q, `["project.view","ticket.view"]`)
+	q.tokenRow.TokenType = auth.TokenTypeAgent
+	q.tokenRow.ActorKind = auth.ActorKindAgent
+	q.tokenRow.OwnerActorID = txt("01OWNER0000000000000000000")
+	q.tokenRow.ProjectID = txt("01P1")
+	q.memberships = []gen.ListProjectMembershipsByActorRow{
+		{ProjectID: "01P1", ProjectKey: "allowed", ProjectName: "対象", RoleKey: "project_member"},
+		{ProjectID: "01P2", ProjectKey: "hidden", ProjectName: "別件", RoleKey: "project_admin"},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	router(q).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d（body=%s）", rec.Code, rec.Body.String())
+	}
+	projects := viewOf(t, rec)["projects"].([]any)
+	if len(projects) != 1 || projects[0].(map[string]any)["key"] != "allowed" {
+		t.Errorf("projects = %v, want 対象だけ", projects)
+	}
+}
+
 // トークンスコープは実効権限を縮小する（Design.md 6.4.1）。
 func TestMeAppliesTokenScopes(t *testing.T) {
 	q := newFake(t)
@@ -176,6 +202,7 @@ func TestMeNullFieldsForNonUserActor(t *testing.T) {
 	q := newFake(t)
 	token := validToken(q, `[]`)
 	q.tokenRow.ActorKind = auth.ActorKindAgent
+	q.tokenRow.TokenType = auth.TokenTypeAgent
 	q.tokenRow.SystemRole = pgNull()
 	q.tokenRow.Email = pgNull()
 	q.profileRow = gen.GetActorProfileRow{

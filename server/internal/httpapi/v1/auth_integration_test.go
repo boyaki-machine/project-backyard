@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,66 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
 )
+
+// 並行する誤入力でも5回目でロックし、期限後は1回目から数え直す（6.3）。
+func TestLoginFailureAtomicIntegration(t *testing.T) {
+	url := os.Getenv("PB_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("PB_TEST_DATABASE_URL が未設定のためスキップする")
+	}
+	ctx := context.Background()
+	pool, err := store.NewPool(ctx, url)
+	if err != nil {
+		t.Fatalf("DBに接続できない: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	q := gen.New(pool)
+	actorID := ulidgen.New()
+	email := "login-race-" + actorID + "@example.com"
+	seedLocalUser(t, ctx, pool, q, actorID, email, testPassword)
+	login, err := q.FindLocalLoginByEmail(ctx, email)
+	if err != nil {
+		t.Fatalf("identity を読めない: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make(chan error, maxFailedAttempts)
+	for range maxFailedAttempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := q.RecordLoginFailure(ctx, login.IdentityID)
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("失敗回数の加算: %v", err)
+		}
+	}
+	attempts, lockedUntil := credentialState(t, pool, actorID)
+	if attempts != maxFailedAttempts || lockedUntil == nil || !lockedUntil.After(time.Now()) {
+		t.Fatalf("並行失敗後 = %d / %v, want 5回でロック", attempts, lockedUntil)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE local_credential SET locked_until = now() - interval '1 minute'
+		WHERE identity_id = $1`, login.IdentityID); err != nil {
+		t.Fatalf("ロック期限を進められない: %v", err)
+	}
+	next, err := q.RecordLoginFailure(ctx, login.IdentityID)
+	if err != nil {
+		t.Fatalf("期限後の加算: %v", err)
+	}
+	if next.FailedAttempts != 1 || next.LockedUntil.Valid {
+		t.Errorf("期限後 = %+v, want 1回・ロックなし", next)
+	}
+}
 
 // ログイン → GET /me → ログアウトを**実際のDBに対して**通す。
 //

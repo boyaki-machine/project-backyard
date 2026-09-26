@@ -214,7 +214,7 @@ func (h *handler) buildMeView(
 		Theme:              row.Theme.String,
 		Hue:                row.Hue.String,
 		MustChangePassword: row.MustChange.Bool,
-	}, systemPerms, p.Scopes, p.ExpiresAt)
+	}, systemPerms, p.Scopes, p.ProjectID, p.ExpiresAt)
 }
 
 // ── 監査（ApiDesign.md 2.10）─────────────────────────────────

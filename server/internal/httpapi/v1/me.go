@@ -143,7 +143,7 @@ func (h *handler) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	view, err := h.buildSessionView(r.Context(), h.q, prof, systemPerms, p.Scopes, p.ExpiresAt)
+	view, err := h.buildSessionView(r.Context(), h.q, prof, systemPerms, p.Scopes, p.ProjectID, p.ExpiresAt)
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return
@@ -169,7 +169,7 @@ func (h *handler) me(w http.ResponseWriter, r *http.Request) {
 // 載らない（buildUserDetail が同じ理由で q を受けているのと同じ）。
 func (h *handler) buildSessionView(
 	ctx context.Context, q gen.Querier, prof profile,
-	systemPerms, scopes []string, expiresAt *time.Time,
+	systemPerms, scopes []string, projectID string, expiresAt *time.Time,
 ) (sessionView, error) {
 	if systemPerms == nil {
 		// permissions を JSON の null にしない。権限0件は [] で表す。
@@ -196,6 +196,10 @@ func (h *handler) buildSessionView(
 	var order []string
 	byID := map[string]*acc{}
 	for _, row := range rows {
+		// プロジェクト専用トークンへ、所有者のほかの所属を見せない（4.1）。
+		if projectID != "" && row.ProjectID != projectID {
+			continue
+		}
 		a, ok := byID[row.ProjectID]
 		if !ok {
 			a = &acc{view: projectView{

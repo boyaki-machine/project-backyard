@@ -102,6 +102,25 @@ func Authenticate(q gen.Querier) func(http.Handler) http.Handler {
 	}
 }
 
+// RequireHumanSession は本人の設定・資格情報を、人間のブラウザセッションに限る。
+// スコープ付き Bearer やエージェントのトークンから新しい無制限トークンを
+// 発行できないよう、権限キーを持たない /me の経路で使う（ApiDesign.md 4.1）。
+func RequireHumanSession(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := auth.PrincipalFromContext(r.Context())
+		if p == nil {
+			apierr.Write(w, r, apierr.New(apierr.InternalError).
+				WithCause(errors.New("RequireHumanSession が Authenticate より前にある")))
+			return
+		}
+		if !p.IsUser() || p.TokenType != auth.TokenTypeSession || p.Source != auth.SourceCookie {
+			apierr.WriteCode(w, r, apierr.Forbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // credential は資格情報を取り出し、その送出経路を返す。
 //
 // **Cookie を優先する。** ApiDesign.md 2.4 の CSRF は「Cookie 認証のときだけ
@@ -124,6 +143,12 @@ func credential(r *http.Request) (string, auth.CredentialSource) {
 func invalidReason(row gen.FindAccessTokenByHashRow) string {
 	if row.RevokedAt.Valid {
 		return "トークンが失効している（revoked_at）"
+	}
+	// 旧 /me/tokens 経由でエージェントが API トークンを発行できた。
+	// 種別の不一致を認証時にも拒み、既存の不正な資格情報を通さない。
+	if (row.ActorKind == auth.ActorKindAgent && row.TokenType != auth.TokenTypeAgent) ||
+		(row.ActorKind == auth.ActorKindUser && row.TokenType == auth.TokenTypeAgent) {
+		return "アクター種別とトークン種別が一致しない"
 	}
 	// expires_at は NULL 許容。NULL は無期限として扱う。
 	// セッションには手順5で必ず期限を設定する（ApiDesign.md 3.1 の Max-Age=1209600）。

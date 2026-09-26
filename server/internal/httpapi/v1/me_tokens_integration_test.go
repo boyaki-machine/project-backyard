@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -87,10 +88,10 @@ func TestMeTokensIntegration(t *testing.T) {
 				me.Code, me.Body.String())
 		}
 
-		// Bearer 認証は CSRF を要求しない（ApiDesign.md 2.4）。
+		// Bearer 認証は通るが、資格情報の管理にはブラウザセッションを要求する。
 		list := bearerGet(r, "/api/v1/me/tokens", issued.Token)
-		if list.Code != http.StatusOK {
-			t.Fatalf("Bearer での一覧 status = %d, want 200（body=%s）",
+		if list.Code != http.StatusForbidden {
+			t.Fatalf("Bearer での一覧 status = %d, want 403（body=%s）",
 				list.Code, list.Body.String())
 		}
 
@@ -110,6 +111,49 @@ func TestMeTokensIntegration(t *testing.T) {
 	})
 
 	// ── GET /me/tokens（4.4.1）─────────────────────────────────
+
+	t.Run("並行発行でも上限5本を超えない", func(t *testing.T) {
+		actorID, email := newSelf(t, "parallel")
+		session := loginAs(t, r, email)
+		body := `{"name":"並行テスト","expires_in_days":30}`
+		for range 4 {
+			if rec := issue(r, session, body); rec.Code != http.StatusCreated {
+				t.Fatalf("事前発行 status = %d（body=%s）", rec.Code, rec.Body.String())
+			}
+		}
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		statuses := make(chan int, 2)
+		for range 2 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				statuses <- issue(r, session, body).Code
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(statuses)
+		created, conflicts := 0, 0
+		for status := range statuses {
+			switch status {
+			case http.StatusCreated:
+				created++
+			case http.StatusConflict:
+				conflicts++
+			default:
+				t.Errorf("並行発行 status = %d", status)
+			}
+		}
+		if created != 1 || conflicts != 1 {
+			t.Errorf("作成=%d、上限拒否=%d、want 1/1", created, conflicts)
+		}
+		n, err := q.CountMyAPITokens(ctx, actorID)
+		if err != nil || n != 5 {
+			t.Errorf("発行本数=%d、err=%v、want 5", n, err)
+		}
+	})
 
 	t.Run("一覧はapiトークンだけを返し、セッションを含まない", func(t *testing.T) {
 		_, email := newSelf(t, "list")

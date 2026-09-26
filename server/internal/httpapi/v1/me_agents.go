@@ -983,6 +983,14 @@ func (h *handler) createMyAgentToken(w http.ResponseWriter, r *http.Request) {
 	var projectKey string
 
 	err = h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		// 再発行をエージェント単位で直列化する。ロックなしでは並行する
+		// 発行が互いの新トークンを見ず、有効なトークンを複数残し得る。
+		if _, err := q.LockActorForTokenIssue(ctx, agentID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return apierr.New(apierr.NotFound)
+			}
+			return fmt.Errorf("エージェントトークン発行のロックを取得できない: %w", err)
+		}
 		ag, err := q.FindMyAgent(ctx, gen.FindMyAgentParams{
 			ActorID: agentID, OwnerActorID: p.ActorID,
 		})

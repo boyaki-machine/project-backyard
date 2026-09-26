@@ -136,7 +136,8 @@ func Mount(r chi.Router, deps Deps) {
 
 		// ── 自分自身（ApiDesign.md 4章）────────────────────────
 		//
-		// **4章はすべて「認証済み・本人」であり、権限キーを要求しない。**
+		// **4章は権限キーを要求しない。** GET /me 以外は人間のブラウザ
+		// セッションに限定し、制限付きトークンから資格情報を作れないようにする。
 		// 対象が常に自分自身なので、誰のアカウントを触るかで必要権限が
 		// 変わることがない。オペレータでもアドミニストレータでも同じ経路を
 		// 通り、触れる範囲はハンドラが p.ActorID で閉じている。
@@ -146,30 +147,31 @@ func Mount(r chi.Router, deps Deps) {
 		// こちらは locale / timezone / theme / hue を変えられる代わりに、
 		// system_role が送られたら 422 で弾く（4.2）。
 		r.Get("/me", h.me)
-		r.Patch("/me", h.patchMe)
-		r.Post("/me/password", h.changeMyPassword)
+		self := r.With(middleware.RequireHumanSession)
+		self.Patch("/me", h.patchMe)
+		self.Post("/me/password", h.changeMyPassword)
 		// アクセストークン（4.4）。**扱うのは token_type='api' だけ**であり、
 		// 対象の絞り込みはクエリ側（me.sql）にある。他人のトークンとセッションは
 		// 「見つからない」に寄せるため、認可ミドルウェアでは表現できない。
 		// 第2要素（ApiDesign.md 4.6）。**必要権限は「本人」**であり、
 		// 4章の他の節と同じく権限キーを要求しない。触れる範囲はハンドラが
 		// p.ActorID で閉じている。
-		r.Get("/me/mfa", h.getMyMfa)
-		r.Post("/me/mfa/totp", h.startMyTotp)
-		r.Post("/me/mfa/totp/{id}/confirm", h.confirmMyTotp)
-		r.Delete("/me/mfa/totp/{id}", h.deleteMyTotp)
-		r.Post("/me/mfa/recovery-codes", h.regenerateMyRecoveryCodes)
+		self.Get("/me/mfa", h.getMyMfa)
+		self.Post("/me/mfa/totp", h.startMyTotp)
+		self.Post("/me/mfa/totp/{id}/confirm", h.confirmMyTotp)
+		self.Delete("/me/mfa/totp/{id}", h.deleteMyTotp)
+		self.Post("/me/mfa/recovery-codes", h.regenerateMyRecoveryCodes)
 		// パスキー（ApiDesign.md 4.7）。4.6 と同じく「本人」であり、
 		// 触れる範囲はハンドラが p.ActorID で閉じている。**/options は /{id} より
 		// 先に一致する**（chi は静的なセグメントを優先する）が、メソッドも違う。
-		r.Get("/me/passkeys", h.listMyPasskeys)
-		r.Post("/me/passkeys/options", h.startMyPasskeyRegistration)
-		r.Post("/me/passkeys", h.registerMyPasskey)
-		r.Delete("/me/passkeys/{id}", h.deleteMyPasskey)
+		self.Get("/me/passkeys", h.listMyPasskeys)
+		self.Post("/me/passkeys/options", h.startMyPasskeyRegistration)
+		self.Post("/me/passkeys", h.registerMyPasskey)
+		self.Delete("/me/passkeys/{id}", h.deleteMyPasskey)
 
-		r.Get("/me/tokens", h.listMyTokens)
-		r.Post("/me/tokens", h.createMyToken)
-		r.Delete("/me/tokens/{id}", h.deleteMyToken)
+		self.Get("/me/tokens", h.listMyTokens)
+		self.Post("/me/tokens", h.createMyToken)
+		self.Delete("/me/tokens/{id}", h.deleteMyToken)
 		// 自分のエージェント（4.5）。**RequirePermission を付けない。**
 		//
 		// agent.register / agent.token.issue は project_admin と administrator が
@@ -180,17 +182,17 @@ func Mount(r chi.Router, deps Deps) {
 		// 他人のエージェントを「見つからない」に寄せるのはクエリ側（agent.sql が
 		// すべて owner_actor_id を条件に含める）であり、ミドルウェアでは
 		// 表現できない。
-		r.Get("/me/agents", h.listMyAgents)
-		r.Post("/me/agents", h.createMyAgent)
-		r.Patch("/me/agents/{id}", h.updateMyAgent)
-		r.Delete("/me/agents/{id}", h.deleteMyAgent)
-		r.Post("/me/agents/{id}/tokens", h.createMyAgentToken)
+		self.Get("/me/agents", h.listMyAgents)
+		self.Post("/me/agents", h.createMyAgent)
+		self.Patch("/me/agents/{id}", h.updateMyAgent)
+		self.Delete("/me/agents/{id}", h.deleteMyAgent)
+		self.Post("/me/agents/{id}/tokens", h.createMyAgentToken)
 		// **系統B——各人が自分の端末へ置く接続設定**（ApiDesign.md 4.5.8、手順28b）。
 		// **必要権限は「本人」**（4.5 と同じ）。系統A（agent-setup）は
 		// agent.register を要るが、こちらは自分のエージェントの話である。
-		r.Get("/me/agents/{id}/setup", h.getMyAgentSetup)
-		r.Get("/me/agents/{id}/setup.zip", h.getMyAgentSetupZip)
-		r.Delete("/me/agents/{id}/tokens/{token_id}", h.deleteMyAgentToken)
+		self.Get("/me/agents/{id}/setup", h.getMyAgentSetup)
+		self.Get("/me/agents/{id}/setup.zip", h.getMyAgentSetupZip)
+		self.Delete("/me/agents/{id}/tokens/{token_id}", h.deleteMyAgentToken)
 
 		// クライアント種別のカタログ（ApiDesign.md 4.5.7）。**必要権限は無い**
 		// （認証済みであればよい）——消費者は GuiDesign.md 5.8.2 の画面で、
@@ -320,12 +322,8 @@ func Mount(r chi.Router, deps Deps) {
 		// **3本とも必要権限が違う。** 読みは ticket.view、作成は ticket.create、
 		// 並べ替えは ticket.edit（9.4 が「並べ替えは編集である」と定める）。
 		//
-		// **ただし「作成できない人」は実在しない。** 実効権限は
-		// システムロール ∪ プロジェクトロール（Design.md 6.4.1）で、
-		// システムロールは administrator と operator の2つしかなく、operator は
-		// ticket.create と ticket.edit を持つ（migration 0010）。project_viewer 側で
-		// 絞っても、システムロール側から通る。**この宣言が効くのは、権限の
-		// 全体像を見直して operator の持ち物を減らしたときである**。
+		// operator の書き込み権限は 0040 で剥奪した。project_viewer は
+		// ticket.create / ticket.edit を持たないため、この宣言で拒否される。
 		//
 		// **子資源なので RequireProjectPermission を通す。** 非メンバーには
 		// 404 が返る（Design.md 6.4.5）。{seq} で指す行も project_id で
@@ -347,11 +345,8 @@ func Mount(r chi.Router, deps Deps) {
 		// **4つとも必要権限が違う。** 読みは ticket.view、編集は ticket.edit、
 		// 削除は ticket.delete、遷移は ticket.transition。
 		//
-		// **ticket.delete だけは「持たない人」が実在する**——
-		// operator（システムロール）は ticket.delete を持たず、持つのは
-		// administrator と project_admin だけである（migration 0010）。
-		// 他の3つは operator が持つため、宣言が効き始めるのは権限の全体像を
-		// 見直してからになる。
+		// 0040 以降、operator はチケットの書き込み権限を持たない。
+		// 編集・削除・遷移はプロジェクトロールで許可される場合だけ通る。
 		//
 		// **PATCH の assignee_id だけは、これに加えて ticket.assign を要する**
 		// （9.5.2）。必要権限がリクエスト本文の内容で変わるため、ミドルウェアの

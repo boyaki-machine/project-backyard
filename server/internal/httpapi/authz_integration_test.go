@@ -43,6 +43,23 @@ func TestAuthorizationIntegration(t *testing.T) {
 	t.Cleanup(pool.Close)
 
 	q := gen.New(pool)
+	operatorPerms, err := q.ListRolePermissions(ctx, auth.SystemRoleOperator)
+	if err != nil {
+		t.Fatalf("operator の権限を読めない: %v", err)
+	}
+	allowedOperatorPerms := map[string]bool{
+		"project.view": true, "ticket.view": true, "knowledge.view": true,
+		"doc.view": true, "export.excel": true, "agent.run": true,
+	}
+	for _, perm := range operatorPerms {
+		if !allowedOperatorPerms[perm] {
+			t.Errorf("operator に書き込み権限 %s が残っている", perm)
+		}
+		delete(allowedOperatorPerms, perm)
+	}
+	for perm := range allowedOperatorPerms {
+		t.Errorf("operator の閲覧権限 %s が無い", perm)
+	}
 
 	operatorID := ulidgen.New()
 	adminID := ulidgen.New()
@@ -126,6 +143,14 @@ func TestAuthorizationIntegration(t *testing.T) {
 		Patch("/projects/{key}", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		})
+	r.With(middleware.RequireProjectPermission(q, "ticket.create")).
+		Post("/projects/{key}/tickets", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+	r.With(middleware.RequireProjectPermission(q, "ticket.close")).
+		Post("/projects/{key}/tickets/close", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
 
 	call := func(p *auth.Principal, method, target string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, target, nil)
@@ -186,14 +211,6 @@ func TestAuthorizationIntegration(t *testing.T) {
 			projectID, operatorID); err != nil {
 			t.Fatalf("project_member を作れない: %v", err)
 		}
-		t.Cleanup(func() {
-			if _, err := pool.Exec(context.Background(),
-				`DELETE FROM project_member WHERE project_id = $1 AND actor_id = $2`,
-				projectID, operatorID); err != nil {
-				t.Errorf("project_member の後始末に失敗した: %v", err)
-			}
-		})
-
 		if w := call(operator, http.MethodGet, "/projects/"+projectKey); w.Code != http.StatusNoContent {
 			t.Errorf("GET status = %d, want 204（body=%s）", w.Code, w.Body.String())
 		}
@@ -201,6 +218,28 @@ func TestAuthorizationIntegration(t *testing.T) {
 		// 到達はできるので 404 ではなく 403。
 		if w := call(operator, http.MethodPatch, "/projects/"+projectKey); w.Code != http.StatusForbidden {
 			t.Errorf("PATCH status = %d, want 403（body=%s）", w.Code, w.Body.String())
+		}
+		for _, path := range []string{
+			"/projects/" + projectKey + "/tickets",
+			"/projects/" + projectKey + "/tickets/close",
+		} {
+			if w := call(operator, http.MethodPost, path); w.Code != http.StatusForbidden {
+				t.Errorf("POST %s status = %d, want 403（body=%s）", path, w.Code, w.Body.String())
+			}
+		}
+	})
+
+	t.Run("メンバーへ変更すると作成できるがクローズはできない", func(t *testing.T) {
+		if _, err := pool.Exec(ctx,
+			`UPDATE project_member SET role_key = 'project_member'
+			 WHERE project_id = $1 AND actor_id = $2`, projectID, operatorID); err != nil {
+			t.Fatalf("メンバーへ変更できない: %v", err)
+		}
+		if w := call(operator, http.MethodPost, "/projects/"+projectKey+"/tickets"); w.Code != http.StatusNoContent {
+			t.Errorf("作成 status = %d, want 204（body=%s）", w.Code, w.Body.String())
+		}
+		if w := call(operator, http.MethodPost, "/projects/"+projectKey+"/tickets/close"); w.Code != http.StatusForbidden {
+			t.Errorf("クローズ status = %d, want 403（body=%s）", w.Code, w.Body.String())
 		}
 	})
 

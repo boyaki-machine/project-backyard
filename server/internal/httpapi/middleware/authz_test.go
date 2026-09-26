@@ -81,7 +81,7 @@ func seededQuerier() *authzQuerier {
 	return &authzQuerier{
 		rolePermissions: map[string][]string{
 			auth.SystemRoleOperator: {
-				"project.view", "ticket.view", "ticket.create", "ticket.close", "export.excel",
+				"project.view", "ticket.view", "export.excel", "agent.run",
 			},
 			auth.SystemRoleAdministrator: {
 				"project.view", "project.create", "project.edit", "project.archive",
@@ -324,11 +324,11 @@ func TestRequireProjectPermissionAllowsMember(t *testing.T) {
 }
 
 func TestRequireProjectPermissionUnionsSystemAndProjectRoles(t *testing.T) {
-	// project_viewer は ticket.close を持たないが、オペレータの
-	// システムロールが持つ。6.4.1 の式は和集合なので通る。
+	// project_viewer に ticket.close はないが、全体管理者は持つ。
+	// 6.4.1 の式は和集合なので通る。
 	q := seededQuerier().withMember("my-app", "project_viewer")
 
-	w, reached := serveAuthz(principal(auth.SystemRoleOperator), projectPattern, "/projects/my-app",
+	w, reached := serveAuthz(principal(auth.SystemRoleAdministrator), projectPattern, "/projects/my-app",
 		RequireProjectPermission(q, "ticket.close"))
 
 	if w.Code != http.StatusNoContent || !reached {

@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/audit"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
@@ -104,14 +103,6 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ロック期限が切れていたら失敗回数を 0 起点に戻す。
-	// Design.md 6.3 の「5回**連続**で」を満たすため。戻さないと、ロックが
-	// 明けた直後の1回の失敗で再びロックされ続ける。
-	attempts := int(row.FailedAttempts)
-	if row.LockedUntil.Valid && !row.LockedUntil.Time.After(now) {
-		attempts = 0
-	}
-
 	// 手順5。
 	ok, err := auth.VerifyPassword(req.Password, row.PasswordHash)
 	if err != nil {
@@ -120,7 +111,7 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		h.handleWrongPassword(w, r, rec, row, attempts, now, email)
+		h.handleWrongPassword(w, r, rec, row, email)
 		return
 	}
 
@@ -164,34 +155,24 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 // 401 を返すと利用者は理由が分からないまま次の試行でロックに当たる。
 func (h *handler) handleWrongPassword(
 	w http.ResponseWriter, r *http.Request, rec *audit.Recorder,
-	row gen.FindLocalLoginByEmailRow, attempts int, now time.Time, email string,
+	row gen.FindLocalLoginByEmailRow, email string,
 ) {
-	attempts++
-
-	var lockedUntil pgtype.Timestamptz
-	if attempts >= maxFailedAttempts {
-		lockedUntil = pgtype.Timestamptz{Time: now.Add(lockDuration), Valid: true}
-	}
-
-	if err := h.q.RecordLoginFailure(r.Context(), gen.RecordLoginFailureParams{
-		FailedAttempts: int32(attempts),
-		LockedUntil:    lockedUntil,
-		IdentityID:     row.IdentityID,
-	}); err != nil {
+	updated, err := h.q.RecordLoginFailure(r.Context(), row.IdentityID)
+	if err != nil {
 		// 記録できないまま通すと総当たりが無制限になる。落とす側に倒す。
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return
 	}
 
 	reason := "wrong_password"
-	if lockedUntil.Valid {
+	if updated.LockedUntil.Valid {
 		reason = "wrong_password_locked"
 	}
 	h.recordLoginFailure(r.Context(), rec, email, reason)
 
-	if lockedUntil.Valid {
+	if updated.LockedUntil.Valid {
 		apierr.Write(w, r, apierr.New(apierr.AccountLocked).
-			WithRetryAfter(retryAfterSec(lockedUntil.Time, now)))
+			WithRetryAfter(retryAfterSec(updated.LockedUntil.Time, time.Now())))
 		return
 	}
 	apierr.WriteCode(w, r, apierr.InvalidCredentials)
@@ -279,7 +260,7 @@ func (h *handler) finishLogin(
 
 	// ログイン応答は GET /me と同じ内容を返す（ApiDesign.md 3.1）。
 	// 新しいセッションは scopes を持たないため、縮小は起きない。
-	view, err := h.buildSessionView(ctx, h.q, p, systemPerms, nil, &session.ExpiresAt)
+	view, err := h.buildSessionView(ctx, h.q, p, systemPerms, nil, "", &session.ExpiresAt)
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return

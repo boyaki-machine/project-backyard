@@ -1499,6 +1499,10 @@ type Querier interface {
 	ListUserSessions(ctx context.Context, actorID string) ([]ListUserSessionsRow, error)
 	ListWorkflowStatuses(ctx context.Context, workflowID string) ([]ListWorkflowStatusesRow, error)
 	ListWorkflowTransitions(ctx context.Context, workflowID string) ([]ListWorkflowTransitionsRow, error)
+	// LockActorForTokenIssue は資格情報の発行をアクター単位で直列化する。
+	// 件数確認と INSERT を同じトランザクションで行うだけでは、並行する
+	// トランザクションが同じ件数を読み、上限を超えてしまう。
+	LockActorForTokenIssue(ctx context.Context, actorID string) (string, error)
 	// そのスプリントの所属を閉じる（DbDesign.md 6.9.1）。
 	//
 	// **完了・未完了を問わず立てる。** この列が答えるのは「そのスプリントの対象
@@ -1580,10 +1584,11 @@ type Querier interface {
 	// ReassignComments は投稿者を付け替える（DbDesign.md 6.7、ApiDesign.md 6.5）。
 	//
 	ReassignComments(ctx context.Context, arg ReassignCommentsParams) (int64, error)
-	// RecordLoginFailure は失敗回数とロック期限を書く（Design.md 6.2.1 手順5、6.3）。
-	// 閾値の判定はアプリ側で行い、その結果をそのまま反映する。
+	// RecordLoginFailure は1回の失敗を原子的に加算する（Design.md 6.3）。
+	// 読み取った回数をアプリ側で上書きすると、並行する失敗が失われる。
+	// ロック期限が切れていれば1回目から数え直す。ロック中なら値を保つ。
 	//
-	RecordLoginFailure(ctx context.Context, arg RecordLoginFailureParams) error
+	RecordLoginFailure(ctx context.Context, identityID string) (RecordLoginFailureRow, error)
 	// RecordMfaChallengeFailure は試行回数を加算し、加算後の値を返す。
 	RecordMfaChallengeFailure(ctx context.Context, id string) (int32, error)
 	// RecordMfaCredentialFailure は登録時の照合失敗を数える（5回で捨てる）。

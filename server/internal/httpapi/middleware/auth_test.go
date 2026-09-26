@@ -187,6 +187,14 @@ func TestAuthenticateRejects(t *testing.T) {
 	inactive := validRow()
 	inactive.IsActive = false
 
+	agentAPI := validRow()
+	agentAPI.ActorKind = auth.ActorKindAgent
+	agentAPI.TokenType = auth.TokenTypeAPI
+	agentAPI.OwnerActorID = txt("01K2F8QW3H7YRJ4M5N6P7Q8RAA")
+
+	userAgentToken := validRow()
+	userAgentToken.TokenType = auth.TokenTypeAgent
+
 	tests := []struct {
 		name    string
 		row     *gen.FindAccessTokenByHashRow // nil なら DB に無い
@@ -197,6 +205,8 @@ func TestAuthenticateRejects(t *testing.T) {
 		{name: "失効している", row: &revoked, useAuth: true},
 		{name: "期限切れ", row: &expired, useAuth: true},
 		{name: "アクターが無効", row: &inactive, useAuth: true},
+		{name: "エージェント名義のAPIトークン", row: &agentAPI, useAuth: true},
+		{name: "人間名義のエージェントトークン", row: &userAgentToken, useAuth: true},
 	}
 
 	for _, tt := range tests {

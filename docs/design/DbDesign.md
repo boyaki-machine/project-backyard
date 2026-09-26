@@ -1773,6 +1773,16 @@ CREATE INDEX idx_webauthn_challenge_expires ON webauthn_challenge (expires_at);
 （6.18 の挑戦を次のログインが片付けるのと同じ考え方）。**増える速さは IP 単位のレート制限（`ApiDesign.md` 2.9）が抑える。**
 登録の挑戦は、同じ利用者が始め直したら古いものを消す（`ApiDesign.md` 4.7.2）。
 
+## 6.20 閲覧者の権限を守る（0040）
+
+`Design.md` 6.4.1 の実効権限はシステムロールとプロジェクトロールの和である。0010 の `operator` はチケット作成・編集・クローズ等を持つため、`project_viewer` を割り当てても書き込みができていた。0040 で `operator` の権限を `project.view`、`ticket.view`、`knowledge.view`、`doc.view`、`export.excel`、`agent.run` に絞る。`agent.run` は MCP 接続の入口であり、個々の操作にはプロジェクト権限が別途必要である。
+
+**適用済みの 0010・0017・0019・0027・0029 は編集しない。** 0040 で `role_permission` の余分な割り当てを削除する。`administrator` は全体管理の例外として全権限を維持し、`project_member` と `project_admin` の割り当ては変えない。
+
+## 6.21 不整合なエージェント資格情報を失効する（0041）
+
+旧 `/me/tokens` はエージェントトークンでも通れたため、エージェント名義で `token_type='api'` の無制限トークンを作れた。0041 は既存の `actor.kind='agent'` かつ `token_type<>'agent'` の未失効トークンを失効する。認証処理でも種別の不一致を拒否し、今後の発行経路にも制約を掛ける（`Design.md` 6.5、`ApiDesign.md` 4.1）。
+
 ---
 
 # 7. 初期データ（0010）
@@ -1837,6 +1847,8 @@ ON CONFLICT (key) DO UPDATE
 **`Design.md` 付録A の「`permission` カタログの粒度は28件で確定」は、0010 時点の件数である。** 0017 適用後は30件、0027 適用後は31件、0029 適用後は32件になる。
 
 ## 7.3 ロールと権限の割り当て
+
+以下は 0010 の初期シードである。`operator` の書き込み権限は 0040 で剥奪する（6.20）。
 
 ```sql
 INSERT INTO role (key, scope, display_name, description, is_builtin, sort_order) VALUES
@@ -2032,7 +2044,7 @@ ON CONFLICT DO NOTHING;
 
 **再オープンだけ `required_permission` が `ticket.close` である。** 差し戻し遷移が `ticket.transition` なのは、あれが完了していないものを前段へ戻す操作で、**完了判定そのものは動いていない**からである。再オープンは完了判定の取り消しなので、**閉じられる人だけが開け直せる**（`ticket.close` は 7.3 で project_admin にだけ与えてある）。`allowed_actor_kinds` も `["user"]` にしてエージェントには通させない——「エージェントは自分でチケットをクローズできない」の裏返しである。**`closed_at` は遷移の副作用として NULL へ戻る**（`ApiDesign.md` 9.6 の表）ので、API 側に足すものは無い。
 
-**ただし、いまの構成では `ticket.close` で誰も締め出されない**——`Design.md` 付録A の論点②に既に挙がっている事実である。実効権限はシステムロールとプロジェクトロールの**和**で（`Design.md` 6.4.1）、`operator` も `administrator` も 7.3 で `ticket.close` を持つ。差が出るのは scope を絞ったトークンだけである（`ApiDesign.md` 4.4.2）。**これは再オープンに限らずクローズ（`in_progress → done`）にも等しく当てはまる既存の論点なので、ここでは動かさない。** 再オープンをクローズと同じ権限に揃えたこと自体は、`operator` の持ち物を減らした日に自動的に効く。
+**0040 以降は `ticket.close` を持つ `project_admin` または全体管理者だけが再オープンできる。** 0010 の `operator` もこの権限を持っていたが、6.20 で剥奪する。クローズ（`in_progress → done`）も同じ権限で守る。
 
 **`done → todo` は置かない。** 完了から未着手まで一息に戻す場面が挙がっていない。必要になってから足す。
 
@@ -2203,12 +2215,16 @@ make dev-info    # URL とデモアカウント一覧を表示
   0038_document_template_decisions_headings.sql
                           判断の記録テンプレートに1判断＝1見出し（DDLなし。8.1.2）
   0039_table_comments.sql 表のコメントを書き直す（DDLなし）
+  0040_operator_readonly.sql
+                          operator の権限を閲覧・出力・MCP 接続に絞る（6.20）
+  0041_revoke_agent_api_tokens.sql
+                          エージェント名義の不整合な資格情報を失効（6.21）
 構想
-  0040_knowledge.sql      knowledge, knowledge_revision, proposal
-  0041_comment_signal.sql comment_signal
-  0042_embedding.sql      vector 拡張 + embedding
-  0043_project_event.sql  project_event
-  0044_analytics.sql      estimate_record, contribution
+  0042_knowledge.sql      knowledge, knowledge_revision, proposal
+  0043_comment_signal.sql comment_signal
+  0044_embedding.sql      vector 拡張 + embedding
+  0045_project_event.sql  project_event
+  0046_analytics.sql      estimate_record, contribution
 ```
 
 0016 までは 5.2 の一覧にある。**構想の番号は、それまでに足したマイグレーションの分だけ後ろへずれる。** 構想の DDL は着手時に確定させる構成案であり、ファイル名を先に固定する意味はない。
@@ -2399,7 +2415,7 @@ ON CONFLICT DO NOTHING;
 
 ひとつは `Requirements.md` 10.6.2 との整合である。**憲章は全参加者を縛る**ので、更新できる人を絞る。編集そのものは「PM が自分のエージェントに指示して行う」形を想定している（同 10.7.5）。
 
-もうひとつは検証上の理由である。`Design.md` 付録A が「**『チケットを作れない人』が実在しない**」（`operator` が `ticket.*` を持つため）と記し、その帰結として「**画面の権限による出し分けの負の側を検証できない**」を積み残していた。**`doc.edit` は、`operator` が持たない最初の権限になる**——「読めるが編集できない人」が実在するので、出し分けの負の側をここで初めて確かめられる。
+もうひとつは検証上の理由である。0010 の時点では `operator` が `ticket.*` を持ち、チケット画面で「読めるが作れない人」を検証できなかった。`doc.edit` は当初から `operator` に付与せず、文書画面で権限による出し分けの負の側を検証できるようにした。0040 で `operator` のチケット書き込み権限も剥奪する（6.20）。
 
 **これは権限モデル全体の再整理ではない。** 付録A の論点①（`GET /roles?scope=project` を権限不要としたのが暫定であること）は未決のまま残る。
 
@@ -2756,7 +2772,7 @@ ON CONFLICT DO NOTHING;
 
 **`project_viewer` にも与える。** `Requirements.md` 10.9.1 の系統B が発行の用途に「実装用＝write可／**閲覧用＝read only**」を挙げており、読むだけのエージェントも走る必要がある。何を読み書きできるかは `agent.run` ではなく、トークンのスコープと個々のツールの必要権限（`Design.md` 8.2）が決める。
 
-**当面このキーは誰も拒まない。** `app_user.system_role` は `operator` か `administrator` のいずれかであり（6.2 の CHECK）、`operator` に与えた時点で全利用者が持つ。**実際に効き始めるのは `Design.md` 付録A 論点②（operator の持ち物を減らす）を片付けてから**であり、それまでは「所有者が持つべき権限」を表明しているだけである。**割り当てをカタログ側に正しく書いておくことに意味がある**——後で operator を絞ったときに、プロジェクトロール側が受け皿として既に用意されている。
+`app_user.system_role` は `operator` か `administrator` のいずれかであり（6.2 の CHECK）、`operator` に与えた時点で全利用者がこのキーを持つ。0040 でも `operator` の `agent.run` は維持する。MCP への接続を許し、個々の読み書きは別の権限とトークンスコープで制限する。
 
 `agent.register` / `agent.token.issue` の割り当ては**変えない**。登録とトークン発行は本人の操作（`ApiDesign.md` 4.5）であり、`/me/tokens` と同じく権限キーを要求しないためである。この2つは**他人のエージェントを管理する側**の権限として `project_admin` に残る。
 

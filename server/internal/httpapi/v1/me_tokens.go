@@ -229,8 +229,11 @@ func (h *handler) createMyToken(w http.ResponseWriter, r *http.Request) {
 	rec := audit.FromRequest(r)
 
 	err = h.tx.RunInTx(ctx, func(q gen.Querier) error {
-		// **数えるのと入れるのを同じトランザクションで行う**（4.4.2）。
-		// 分けると、同時に2本 POST されたときに上限を超える。
+		// アクター行をロックしてから数える。同じトランザクションだけでは
+		// 並行発行が同じ件数を読めるため、上限を保証できない。
+		if _, err := q.LockActorForTokenIssue(ctx, p.ActorID); err != nil {
+			return fmt.Errorf("トークン発行のロックを取得できない: %w", err)
+		}
 		n, err := q.CountMyAPITokens(ctx, p.ActorID)
 		if err != nil {
 			return fmt.Errorf("アクセストークンの本数を数えられない: %w", err)

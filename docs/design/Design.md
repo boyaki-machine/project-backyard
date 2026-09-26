@@ -735,6 +735,8 @@ type VerifiedIdentity struct {
 
 **トークンスコープを「縮小のみ」と定義することが重要である。** エージェント用トークンに読み取りだけを与えれば、そのトークンで実行される限り、たとえ紐づくアクターが管理者であっても他の操作はできない（`Requirements.md` 10.10.3）。
 
+**非管理者のシステムロールにはプロジェクトの書き込み権限を与えない。** 和集合で計算するため、`operator` に書き込み権限があると `project_viewer` の「閲覧のみ」が成立しない。`administrator` はインスタンス全体を管理する例外として全権限を持つ。現在の `operator` の割り当ては `DbDesign.md` 6.20 のマイグレーションで閲覧権限に絞る。
+
 **スコープの語彙は権限カタログのキーそのものである**（6.4.2。32件。`ApiDesign.md` 4.4.2）。上の積は権限キーどうしの完全一致で取るため、別の語彙を混ぜると、絞ったつもりのトークンが権限0件になるか、解釈できない語彙を通して逆に広がるかのどちらかになる。**空配列は「絞り込みなし」であって「権限0件」ではない。**
 
 **エージェントの既定スコープもこの語彙で書く**（6.5）。別の語彙で発行すると、実効権限が0件になる。
@@ -762,7 +764,7 @@ type VerifiedIdentity struct {
 
 | ロール | scope | 概要 |
 |---|---|---|
-| **operator** | system | プロジェクト・チケットの閲覧と編集、コメント、知識の提案、Excel出力 |
+| **operator** | system | プロジェクト・チケット・文書・知識の閲覧とExcel出力。書き込みはプロジェクトロールから得る |
 | **administrator** | system | **全権限**。ユーザー管理・認証設定・監査ログ・プロジェクト作成を含む |
 | project_admin | project | 当該プロジェクトの全操作＋承認（`knowledge.approve` `proposal.review`）＋エージェント管理 |
 | project_member | project | 当該プロジェクトのチケット作成・編集・遷移、コメント |
@@ -830,11 +832,13 @@ GET /api/v1/me
 | トークン | `access_token(token_type='agent')`。プロジェクトスコープ必須、有効期限必須。接頭辞は `pb_agt_` |
 | 発行 | **本人が自分の設定から**（`/me/agents`。`ApiDesign.md` 4.5、`Requirements.md` 10.9.1 系統B）。**発行時に一度だけ全文表示** |
 | スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run` `ticket.reference.edit` `ticket.self_edit`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit` だけを足せる**（`ApiDesign.md` 4.5.3 の許可リスト） |
-| 禁止 | `ticket.close`、`doc.edit`、`knowledge` の直接更新、他プロジェクトへのアクセス |
+| 禁止 | `ticket.close`、`knowledge` の直接更新、他プロジェクトへのアクセス。`doc.edit` は既定では与えず、発行時に追加できる |
 | 信頼度 | `agent.trust_level` に応じて既定スコープを段階的に拡大（`Requirements.md` 10.10.3）。**実績の供給源が構想のため、既定値のまま使わない** |
 | 失効 | 本人と管理画面から即時失効。サーキットブレーカー作動時は自動失効も選択可 |
 
 **権限は所有者から導く。** エージェントは `app_user` の行を持たないため、6.4.1 の式のうちシステムロールの層が必ず空になる。そこで**所有者の層をそのまま使う**。
+
+**認証時にもアクター種別とトークン種別を照合する。** エージェントは `token_type='agent'` だけを使い、人間は `session` または `api` を使う。旧 `/me/tokens` からエージェント名義の API トークンを発行できた経路があったため、発行時の制約だけに依存せず既存トークンも拒否する（`DbDesign.md` 6.21）。
 
 ```
 実効権限 = ( 所有者のシステムロール ∪ 所有者のプロジェクトロール ) ∩ トークンのスコープ
@@ -2521,6 +2525,6 @@ Phase 2 の成果物には**ブラウザに出ないものがある**——MCP �
 
 - `Requirements.md` 8章の「KEDAでスケール0」を PostgreSQL 常駐構成でどう扱うか
 - アプリケーションログと `audit_log` の使い分け（何を両方に書き、何を片方に留めるか）
-- **権限の全体像を再整理する。** `GET /roles?scope=project` を**権限不要**としているのは暫定である（`project.edit` を要求する案と `role.view` を新設する案がある）。また、実効権限はシステムロール ∪ プロジェクトロール（6.4.1）で、`operator` が `ticket.create` / `ticket.edit` / `ticket.close` を持つため、`project_viewer` を与えても到達できるプロジェクトではチケットを作れる。ルート定義の宣言が効き始めるのは、`operator` の持ち物を減らしてからである
+- **`GET /roles?scope=project` の必要権限を再整理する。** 認証済みなら誰でも読める現行方式は暫定である（`project.edit` を要求する案と `role.view` を新設する案がある）。
 - **HTTPサーバのタイムアウト値が実装（`serve.go`）にしかない。** 10章を扱うときに文書化する
 - **DBを使うテストの作法を本書に書くか**。手順は `Development.md` 6.1 / 6.2 にあるが、設計として持つかは未判断
