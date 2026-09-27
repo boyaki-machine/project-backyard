@@ -102,12 +102,14 @@ http://localhost:8080/api/v1
 |---|---|
 | Content-Type | `application/json; charset=utf-8` |
 | フィールド命名 | **snake_case**。DBスキーマ・MCPツールと表記を統一する。`jsonb` 列に対応するフィールドも `_json` 接尾辞を付けない（`DbDesign.md` 4.7） |
-| 日時 | ISO8601 UTC（`2026-08-11T09:03:12Z`）。`DbDesign.md` 4.1 の格納形式と一致 |
+| 日時 | **エポックミリ秒**（64bit 整数。`1786438992000`＝2026-08-11T09:03:12Z）。入力も同じ形で受ける。**MCP は ISO8601 UTC のまま**（`Design.md` 7章。エージェントはエポック値の換算を誤りやすい） |
 | 日付 | `2026-08-11` |
 | ID | ULID 26文字（`01K2F8...`） |
 | 真偽 | JSON boolean（DB も `boolean` 型のためそのまま対応） |
 | null | 「値がない」を表す。フィールド自体の省略と区別する（PATCH で意味が変わるため） |
 | 文字コード | UTF-8 のみ |
+
+**日時をエポックミリ秒にした**（pb-224、2026-09-27）。以前は ISO8601 UTC の文字列だった。サーバは `time.Time`、画面は数値で扱い、変換は JSON の境界1か所で行う（サーバは `apitime.go` の `Time`）。**監査ログの `detail` に保存済みの日時は記録であり、書いた時点の形（ISO8601）のまま返す。** 日付（その日）は瞬間ではないので `YYYY-MM-DD` のままである。
 
 **フロントエンドは snake_case のまま扱う。** 変換層を挟むとAPIドキュメントとコードの対応が読み取りにくくなるため、TypeScript の型もそのまま snake_case で生成する。
 
@@ -401,7 +403,7 @@ GET /healthcheck
     { "id": "01K2...", "key": "my-app", "name": "社内タスク管理の刷新",
       "role": "project_admin", "permissions": ["ticket.close", "..."] }
   ],
-  "expires_at": "2026-08-25T09:03:12Z"
+  "expires_at": 1787648592000
 }
 ```
 
@@ -437,7 +439,7 @@ CSRF トークンが無い状態になる。以後すべての状態変更系が
   "mfa_required": true,
   "mfa_token": "pb_mfa_...",
   "methods": ["totp", "recovery_code"],
-  "expires_at": "2026-09-13T02:16:40Z"
+  "expires_at": 1789265800000
 }
 ```
 
@@ -490,7 +492,7 @@ CSRF トークンが無い状態になる。以後すべての状態変更系が
 ```json
 // 200 OK — 本体は 3.1 の成功応答と同一構造
 { "actor": { "..." }, "permissions": ["..."], "projects": ["..."],
-  "expires_at": "2026-09-27T09:03:12Z" }
+  "expires_at": 1790499792000 }
 ```
 
 ```
@@ -545,7 +547,7 @@ Set-Cookie: pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
       "userVerification": "required"
     }
   },
-  "expires_at": "2026-09-13T02:16:40Z"
+  "expires_at": 1789265800000
 }
 ```
 
@@ -591,7 +593,7 @@ Set-Cookie: pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
 ```json
 // 200 OK — 本体は 3.1 の成功応答と同一構造
 { "actor": { "..." }, "permissions": ["..."], "projects": ["..."],
-  "expires_at": "2026-09-27T09:03:12Z" }
+  "expires_at": 1790499792000 }
 ```
 
 ```
@@ -728,8 +730,8 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 {
   "items": [
     { "id": "01K2...", "name": "CLI (MacBook)", "token_prefix": "pb_api_9",
-      "scopes": [], "issued_at": "2026-08-22T09:03:12Z",
-      "last_used_at": "2026-08-22T10:41:00Z", "expires_at": "2026-11-20T09:03:12Z",
+      "scopes": [], "issued_at": 1787389392000,
+      "last_used_at": 1787395260000, "expires_at": 1795165392000,
       "status": "active" }
   ]
 }
@@ -763,8 +765,8 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 ```json
 // 201 Created — token は「この応答でのみ」返る
 { "id": "01K2...", "name": "CLI (MacBook)", "token": "pb_api_9f3c...",
-  "token_prefix": "pb_api_9", "scopes": [], "issued_at": "2026-08-22T09:03:12Z",
-  "expires_at": "2026-11-20T09:03:12Z", "status": "active" }
+  "token_prefix": "pb_api_9", "scopes": [], "issued_at": 1787389392000,
+  "expires_at": 1795165392000, "status": "active" }
 ```
 
 **`token` を返すのはこの応答だけである。** 再表示するAPIは無く、DBにはSHA-256の
@@ -891,11 +893,11 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
       "project": { "key": "pb", "name": "Project Backyard" },
       "token_env_suffix": "MY_LAPTOP", "token_env_name": "PB_TOKEN_MY_LAPTOP",
       "trust_level": 1, "is_active": true,
-      "created_at": "2026-08-30T09:03:12Z",
+      "created_at": 1788080592000,
       "token": { "id": "01K3...", "token_prefix": "pb_agt_7",
-                 "issued_at": "2026-08-30T09:03:12Z",
-                 "last_used_at": "2026-08-30T10:41:00Z",
-                 "expires_at": "2026-11-28T09:03:12Z", "status": "active" } }
+                 "issued_at": 1788080592000,
+                 "last_used_at": 1788086460000,
+                 "expires_at": 1795856592000, "status": "active" } }
   ]
 }
 ```
@@ -939,7 +941,7 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
   "project": { "key": "pb", "name": "Project Backyard" },
   "token_env_suffix": "MY_LAPTOP", "token_env_name": "PB_TOKEN_MY_LAPTOP",
   "trust_level": 1, "is_active": true,
-  "created_at": "2026-08-30T09:03:12Z", "token": null }
+  "created_at": 1788080592000, "token": null }
 ```
 
 **トークンは同時に発行しない。** 登録と発行を分けるのは、**再発行が必要になったときに同じ
@@ -982,8 +984,8 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
   "scopes": ["agent.run","comment.create","doc.view","project.view",
              "ticket.assign","ticket.create","ticket.reference.edit",
              "ticket.self_edit","ticket.transition","ticket.view"],
-  "issued_at": "2026-08-30T09:03:12Z",
-  "expires_at": "2026-11-28T09:03:12Z", "status": "active" }
+  "issued_at": 1788080592000,
+  "expires_at": 1795856592000, "status": "active" }
 ```
 
 **`token` を返すのはこの応答だけである**（4.4.2 と同じ。DBには SHA-256 のハッシュしか残らない）。
@@ -1456,9 +1458,9 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
 {
   "totp": [
     { "id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S", "name": "iPhone",
-      "created_at": "2026-09-13T02:11:40Z", "last_used_at": "2026-09-13T08:20:02Z" }
+      "created_at": 1789265500000, "last_used_at": 1789287602000 }
   ],
-  "recovery_codes": { "remaining": 8, "generated_at": "2026-09-13T02:11:40Z" }
+  "recovery_codes": { "remaining": 8, "generated_at": 1789265500000 }
 }
 ```
 
@@ -1521,7 +1523,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
 // 200 OK — MFA を最初に有効にしたときだけ recovery_codes が入る
 {
   "credential": { "id": "01K2...", "name": "iPhone",
-                  "created_at": "2026-09-13T02:11:40Z", "last_used_at": null },
+                  "created_at": 1789265500000, "last_used_at": null },
   "recovery_codes": ["K7M2QX9B4T", "9FRD3HJ5PW", "..."]
 }
 ```
@@ -1612,7 +1614,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
   "items": [
     { "id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S", "name": "MacBook",
       "rp_id": "localhost", "backed_up": true,
-      "created_at": "2026-09-13T02:11:40Z", "last_used_at": "2026-09-13T08:20:02Z" }
+      "created_at": 1789265500000, "last_used_at": 1789287602000 }
   ]
 }
 ```
@@ -1650,7 +1652,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
       "attestation": "none"
     }
   },
-  "expires_at": "2026-09-13T02:16:40Z"
+  "expires_at": 1789265800000
 }
 ```
 
@@ -1692,7 +1694,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
 ```json
 // 201 Created
 { "id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S", "name": "MacBook", "rp_id": "localhost",
-  "backed_up": true, "created_at": "2026-09-13T02:11:40Z", "last_used_at": null }
+  "backed_up": true, "created_at": 1789265500000, "last_used_at": null }
 ```
 
 **名前は認証器の応答と一緒に送る。** 4.6.2 は名前を先に受けたが、こちらは登録の途中の行を持たないので、
@@ -1777,7 +1779,7 @@ GET /api/v1/projects?status=active&sort=updated_at&order=desc&page=1&per_page=25
       "closed_count": 36,
       "progress": 0.75,
       "my_role": "project_admin",
-      "updated_at": "2026-08-11T09:12:44Z"
+      "updated_at": 1786439564000
     }
   ],
   "page": 1, "per_page": 25, "total": 3, "total_pages": 1
@@ -2197,15 +2199,15 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
   "items": [
     { "id": "01K2...", "kind": "user", "display_name": "田中",
       "email": "tanaka@example.com", "system_role": "administrator",
-      "is_active": true, "last_login_at": "2026-08-11T09:03:12Z",
-      "project_count": 3, "created_at": "2026-07-01T00:00:00Z" },
+      "is_active": true, "last_login_at": 1786438992000,
+      "project_count": 3, "created_at": 1782864000000 },
     { "id": "01K2...", "kind": "agent", "display_name": "claude-code (my-app)",
       "email": null, "system_role": null,
       "agent": { "client_kind": "claude_code", "model_name": "claude-opus-5",
                  "project_key": "my-app", "trust_level": 1,
                  "owner": { "id": "01K2...", "display_name": "田中" } },
-      "is_active": true, "last_login_at": "2026-08-11T08:41:00Z",
-      "project_count": 1, "created_at": "2026-08-01T00:00:00Z" }
+      "is_active": true, "last_login_at": 1786437660000,
+      "project_count": 1, "created_at": 1785542400000 }
   ],
   "page": 1, "per_page": 25, "total": 4, "total_pages": 1
 }
@@ -2289,7 +2291,7 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
   "identities": [
     { "id": "01K2...", "provider_key": "local", "provider_type": "local",
       "subject": "yamada@example.com", "linked_at": "...", "last_used_at": "...",
-      "password_updated_at": "2026-07-01T00:00:00Z" }
+      "password_updated_at": 1782864000000 }
   ],
   "project_memberships": [
     { "project_id": "01K2...", "project_key": "my-app",
@@ -2664,8 +2666,8 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | `parent` | — | `seq` を指定すると、そのチケットとその全子孫（部分木）に限る。**カンマ区切りで複数指定は OR**（いずれかの部分木に含まれるもの） |
 | `q` | — | **キーワード**。以下は `search_mode=fulltext` の仕様。空白で区切った語を**すべて含む**もの。各語はタイトル・本文・コメント（削除済みを除く）の**いずれかに部分一致**すればよい。大文字小文字を区別しない（**全角の英字なども畳むのは、DB の `LC_CTYPE` が `C.UTF-8` のとき**。`DbDesign.md` 4.5）。`%` と `_` は文字として扱う。200文字まで（下記「検索の条件」） |
 | `seq_from` / `seq_to` | — | **チケット番号の範囲**。**両端を含む**。片方だけでもよい |
-| `started_since` / `started_before` | — | **実際に着手した日時の範囲**。`since` 以上・`before` 未満。ISO8601。着手の定義は下記「着手日時を導く」。**着手していないものは外れる** |
-| `closed_since` / `closed_before` | — | **完了した日時（`closed_at`）の範囲**。`since` 以上・`before` 未満。ISO8601。**未完了は外れる** |
+| `started_since` / `started_before` | — | **実際に着手した日時の範囲**。`since` 以上・`before` 未満。エポックミリ秒。着手の定義は下記「着手日時を導く」。**着手していないものは外れる** |
+| `closed_since` / `closed_before` | — | **完了した日時（`closed_at`）の範囲**。`since` 以上・`before` 未満。エポックミリ秒。**未完了は外れる** |
 | `sort` | `sort_key` | `sort_key` / `seq` / `title` / `status` / `priority` / `due_date` / `created_at` / `updated_at` / `closed_at` |
 | `order` | `asc` | `asc` / `desc` |
 | `page` | `1` | 2.6 |
@@ -2703,7 +2705,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | `%` と `_` | **文字として扱う**（エスケープする）。打った記号がワイルドカードとして効くと、利用者の意図と違う行が出る |
 | 実装の置き場 | **`store/search/` に隔離する**（`Design.md` 4.6）。語の分解とエスケープ、一致するチケットの抽出はそこで行い、一覧のクエリには一致した ID を渡す。**日本語検索の方式を `pg_bigm` へ替えるとき、影響をこの層に閉じ込めるため**である |
 | 範囲の向き | **番号は両端を含み、日時は半開区間**（`since` 以上・`before` 未満）。日時を半開にすると、画面は「9/1〜9/15」を「9/1 の0時以上・9/16 の0時未満」として送れ、境界の瞬間を二重に数えない |
-| 日の境界 | **サーバは日付を解釈しない。** 画面が利用者のタイムゾーン（`app_user.timezone`）で日の境界を作り、ISO8601 の瞬間として送る。画面は `closed_at` を同じタイムゾーンで表示しているので（`GuiDesign.md` 7.5）、**見えている日付と絞り込みの日付が一致する** |
+| 日の境界 | **サーバは日付を解釈しない。** 画面が利用者のタイムゾーン（`app_user.timezone`）で日の境界を作り、エポックミリ秒の瞬間として送る。画面は `closed_at` を同じタイムゾーンで表示しているので（`GuiDesign.md` 7.5）、**見えている日付と絞り込みの日付が一致する** |
 | 範囲が逆 | `seq_from > seq_to`、`since >= before` は `422`（`invalid`）。**黙って空の結果を返さない**——入力の誤りが「該当なし」に見える |
 | 片側だけの指定 | 受け付ける（`seq_from=100` は100番以降） |
 | 並べ替えの `closed_at` | 未完了（`NULL`）は昇順・降順とも**末尾**（`due_date` と同じ扱い） |
@@ -2794,8 +2796,8 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
       "due_date": "2026-08-14",
       "closed_at": null,
       "version": 3,
-      "created_at": "2026-08-09T01:00:00Z",
-      "updated_at": "2026-08-11T00:12:44Z"
+      "created_at": 1786237200000,
+      "updated_at": 1786407164000
     }
   ],
   "page": 1, "per_page": 200, "total": 48, "total_pages": 1
@@ -2925,7 +2927,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 `position` と `after_seq` / `before_seq` の同時指定は `422`。いずれも無い場合も `422`。
 
 ```json
-{ "seq": 31, "sort_key": "0|hzzzr:", "staged_at": "2026-08-23T11:20:00Z",
+{ "seq": 31, "sort_key": "0|hzzzr:", "staged_at": 1787484000000,
   "version": 4, "rebalanced": false }
 ```
 
@@ -3368,14 +3370,14 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/comments/:id
     { "id": "01K2...", "body_md": "レビューをお願いします",
       "kind": "progress", "in_reply_to": null, "origin": "human",
       "author": { "id": "01K2...", "kind": "user", "display_name": "田中" },
-      "created_at": "2026-08-27T02:10:00Z",
-      "updated_at": "2026-08-27T02:10:00Z", "deleted_at": null },
+      "created_at": 1787796600000,
+      "updated_at": 1787796600000, "deleted_at": null },
     { "id": "01K2...", "body_md": null,
       "kind": "discussion", "in_reply_to": "01K2...", "origin": "human",
       "author": { "id": "01K2...", "kind": "user", "display_name": "佐藤" },
-      "created_at": "2026-08-27T03:00:00Z",
-      "updated_at": "2026-08-27T04:00:00Z",
-      "deleted_at": "2026-08-27T04:00:00Z" }
+      "created_at": 1787799600000,
+      "updated_at": 1787803200000,
+      "deleted_at": 1787803200000 }
   ],
   "page": 1, "per_page": 50, "total": 2, "total_pages": 1
 }
@@ -3476,14 +3478,14 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/dod/:id
 {
   "items": [
     { "id": "01K2...", "type": "manual", "body": "ユニットテストが通ること",
-      "is_satisfied": true, "satisfied_at": "2026-08-27T05:00:00Z",
+      "is_satisfied": true, "satisfied_at": 1787806800000,
       "satisfied_by": { "id": "01K2...", "kind": "user", "display_name": "田中" },
       "sort_order": 10,
-      "created_at": "2026-08-27T02:10:00Z", "updated_at": "2026-08-27T05:00:00Z" },
+      "created_at": 1787796600000, "updated_at": 1787806800000 },
     { "id": "01K2...", "type": "manual", "body": "設計文書を更新すること",
       "is_satisfied": false, "satisfied_at": null, "satisfied_by": null,
       "sort_order": 20,
-      "created_at": "2026-08-27T02:11:00Z", "updated_at": "2026-08-27T02:11:00Z" }
+      "created_at": 1787796660000, "updated_at": 1787796660000 }
   ]
 }
 ```
@@ -3598,12 +3600,12 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
       "ticket": { "seq": 45, "title": "ticketテーブル定義", "type": "task",
                   "status": { "key": "todo", "name": "未着手", "category": "todo" } },
       "lag_days": 0, "origin": "human",
-      "created_at": "2026-08-27T02:10:00Z" },
+      "created_at": 1787796600000 },
     { "id": "01K2...", "direction": "incoming", "link_type": "blocks",
       "ticket": { "seq": 12, "title": "DB設計", "type": "story",
                   "status": { "key": "done", "name": "完了", "category": "done" } },
       "lag_days": 0, "origin": "human",
-      "created_at": "2026-08-27T02:11:00Z" }
+      "created_at": 1787796660000 }
   ]
 }
 ```
@@ -3707,7 +3709,7 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/references/:id
       "commit_sha": "a1b2c3d4e5", "url": "https://github.com/…/commit/a1b2c3d4e5",
       "label": "認証ハンドラを追加", "note": null, "sort_order": 0,
       "created_by": { "id": "01K2...", "kind": "agent", "display_name": "claude-code" },
-      "created_at": "2026-08-27T02:10:00Z", "updated_at": "2026-08-27T02:10:00Z" }
+      "created_at": 1787796600000, "updated_at": 1787796600000 }
   ]
 }
 ```
@@ -4014,7 +4016,7 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
       "actor": { "id": "01K2...", "kind": "user", "display_name": "田中" },
       "action": "transition", "field": "status_key",
       "old_value": "todo", "new_value": "in_progress",
-      "occurred_at": "2026-08-11T00:12:44Z" }
+      "occurred_at": 1786407164000 }
   ],
   "page": 1, "per_page": 20, "total": 142, "total_pages": 8
 }
@@ -4171,7 +4173,7 @@ DoD の型は `manual` ひとつで（9.9）、その定義は「**人間がチ�
 // 201 Created
 { "id": "01K5...", "agent_run_id": "01K5...", "seq": 31,
   "status": "completed", "knowledge_impact": "minor",
-  "submitted_at": "2026-09-05T12:00:00Z",
+  "submitted_at": 1788609600000,
   "submitted_by": { "id": "01K4...", "kind": "agent", "display_name": "claude-code" },
   "comment_id": "01K5...",
   "unsatisfied_dod": [
@@ -4332,14 +4334,14 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
   "items": [
     { "id": "01K2...", "path": "vision", "slug": "vision",
       "title": "価値観・世界観", "pack_mode": "full", "sort_order": 10, "version": 1,
-      "updated_at": "2026-08-29T04:12:00Z", "children": [] },
+      "updated_at": 1787976720000, "children": [] },
     { "id": "01K2...", "path": "rules", "slug": "rules",
       "title": "規約", "pack_mode": "full", "sort_order": 20, "version": 3,
-      "updated_at": "2026-08-29T05:00:00Z",
+      "updated_at": 1787979600000,
       "children": [
         { "id": "01K2...", "path": "rules/naming", "slug": "naming",
           "title": "命名", "pack_mode": "outline", "sort_order": 10, "version": 1,
-          "updated_at": "2026-08-29T05:00:00Z", "children": [] }
+          "updated_at": 1787979600000, "children": [] }
       ] }
   ]
 }
@@ -4369,7 +4371,7 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
 
 ```json
 { "id": "01K2...", "path": "rules", "title": "規約", "sort_order": 20, "version": 3,
-  "updated_at": "2026-08-29T05:00:00Z",
+  "updated_at": 1787979600000,
   "outline": [
     { "section": "命名", "level": 2 },
     { "section": "ブランチ", "level": 2 },
@@ -4401,8 +4403,8 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
   "version": 3,
   "created_by": { "id": "01K2...", "kind": "user", "display_name": "田中" },
   "updated_by": { "id": "01K2...", "kind": "agent", "display_name": "claude-code" },
-  "created_at": "2026-08-29T04:00:00Z",
-  "updated_at": "2026-08-29T05:00:00Z"
+  "created_at": 1787976000000,
+  "updated_at": 1787979600000
 }
 ```
 
@@ -4425,7 +4427,7 @@ GET /api/v1/projects/my-app/docs/rules?section=命名
 ```json
 { "id": "01K2...", "path": "rules", "title": "規約",
   "section": "命名", "body_md": "## 命名\n\n- テーブルは単数形…",
-  "version": 3, "updated_at": "2026-08-29T05:00:00Z" }
+  "version": 3, "updated_at": 1787979600000 }
 ```
 
 **見つからないときは `404 not_found` を返し、本体に `available_sections` を添える。**
@@ -4504,11 +4506,11 @@ GET /api/v1/projects/my-app/docs/rules?section=命名
     { "revision_no": 3, "title": "規約",
       "changed_by": { "id": "01K2...", "kind": "agent", "display_name": "claude-code" },
       "change_reason": "ブランチ命名にチケット番号を入れる",
-      "created_at": "2026-08-29T05:00:00Z" },
+      "created_at": 1787979600000 },
     { "revision_no": 2, "title": "規約",
       "changed_by": { "id": "01K2...", "kind": "user", "display_name": "田中" },
       "change_reason": null,
-      "created_at": "2026-08-29T04:30:00Z" }
+      "created_at": 1787977800000 }
   ],
   "page": 1, "per_page": 20, "total": 3, "total_pages": 1
 }
@@ -4529,7 +4531,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
   "body_md": "本書はこのプロジェクトの規約である。\n\n## 命名\n…",
   "changed_by": { "id": "01K2...", "kind": "user", "display_name": "田中" },
   "change_reason": null,
-  "created_at": "2026-08-29T04:30:00Z"
+  "created_at": 1787977800000
 }
 ```
 
@@ -4598,7 +4600,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
       "allowed": null, "default_value": "false",
       "source": "database", "editable": true, "restart_required": false,
       "secret": false, "env_key": "PB_COOKIE_SECURE",
-      "updated_at": "2026-09-11T04:10:00Z",
+      "updated_at": 1789099800000,
       "updated_by": { "id": "01K2...", "display_name": "田中" } },
 
     { "key": "database_url", "display_name": "DB接続文字列",
@@ -4698,7 +4700,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
   "config_file_path": null,
   "pending_confirmation": {
     "keys": ["tls_enabled"],
-    "expires_at": "2026-09-12T12:05:00Z",
+    "expires_at": 1789214700000,
     "changed_by": { "id": "01K2...", "kind": "user", "display_name": "田中" }
   }
 }
@@ -4734,7 +4736,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
       "not_before": "2026-09-01T00:00:00Z", "not_after": "2026-12-01T00:00:00Z",
       "serial_number": "0a1b2c3d", "fingerprint": "ab:cd:…",
       "is_self_signed": false, "status": "active", "decryptable": true,
-      "uploaded_at": "2026-09-11T04:10:00Z",
+      "uploaded_at": 1789099800000,
       "uploaded_by": { "id": "01K2...", "kind": "user", "display_name": "田中" } }
   ],
   "tls_enabled": true,
@@ -5027,10 +5029,10 @@ pb-cert-pb.example.com.zip
 
 ```json
 {
-  "fetched_at": "2026-09-17T05:03:12Z",
+  "fetched_at": 1789621392000,
   "connection": { "host": "127.0.0.1", "port": 5432, "database": "pb", "user": "pb_app", "tls": false },
   "server": { "version": "17.10 (Debian 17.10-1.pgdg12+1)",
-              "started_at": "2026-09-17T02:17:59Z", "max_connections": 50 },
+              "started_at": 1789611479000, "max_connections": 50 },
   "migration_version": 38,
   "sessions": { "database": 7, "pb": 5 },
   "pool": { "total": 5, "acquired": 1, "idle": 4, "max": 10 },
@@ -5196,11 +5198,11 @@ DB 側は `statement_timeout` を外した1つのトランザクションに閉�
 
 ```json
 {
-  "restored_at": "2026-09-18T15:04:05Z",
+  "restored_at": 1789743845000,
   "backup": {
     "format_version": 1,
     "migration_version": 36,
-    "created_at": "2026-09-15T02:00:00Z",
+    "created_at": 1789437600000,
     "pb_version": "2.43.140"
   },
   "migration_version": 38,

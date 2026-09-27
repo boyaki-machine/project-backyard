@@ -2973,26 +2973,26 @@ paths:
             **実際に着手した日時**がこの瞬間**以上**のもの（9.2.1「着手日時を導く」）。
             着手は、状態が `todo` 区分から初めて出た遷移の日時。着手していないものは外れる。
           schema:
-            type: string
-            format: date-time
+            type: integer
+            format: int64
         - name: started_before
           in: query
           description: 着手した日時がこの瞬間**未満**のもの。`started_since` 以下なら 422。
           schema:
-            type: string
-            format: date-time
+            type: integer
+            format: int64
         - name: closed_since
           in: query
           description: '`closed_at` がこの瞬間**以上**のもの。未完了は外れる。'
           schema:
-            type: string
-            format: date-time
+            type: integer
+            format: int64
         - name: closed_before
           in: query
           description: '`closed_at` がこの瞬間**未満**のもの。`closed_since` 以下なら 422。'
           schema:
-            type: string
-            format: date-time
+            type: integer
+            format: int64
         - name: sort
           in: query
           description: |
@@ -6270,8 +6270,8 @@ components:
             $ref: '#/components/schemas/SessionProject'
         expires_at:
           description: 現在のトークンの有効期限。無期限の API トークンでは null。
-          type: [string, 'null']
-          format: date-time
+          type: [integer, 'null']
+          format: int64
 
     Actor:
       type: object
@@ -6658,8 +6658,8 @@ components:
           type: boolean
           description: '`false` は無効化されたエージェント。行は残る。'
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         token:
           allOf:
             - $ref: '#/components/schemas/AgentToken'
@@ -6688,16 +6688,16 @@ components:
           type: string
           description: 先頭8文字（`pb_agt_` + 1文字）。検索キーではない。
         issued_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         last_used_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
           description: 一度も使われていなければ `null`。更新は1分粒度。
         expires_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
         status:
           type: string
@@ -6733,11 +6733,11 @@ components:
             を見る——ただしあれは**所有者のロールとの積**であって、
             発行時のスコープそのものではない。
         issued_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         expires_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
         status:
           type: string
@@ -6888,8 +6888,8 @@ components:
           examples: [['totp', 'recovery_code']]
         expires_at:
           description: 挑戦の期限（5分）。**セッションの期限ではない。**
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     LoginMfaRequest:
       description: |
@@ -6945,12 +6945,12 @@ components:
           type: string
           examples: ['iPhone']
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         last_used_at:
           description: 一度も使われていなければ null。
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
 
     RecoveryCodeStatus:
@@ -6964,8 +6964,8 @@ components:
           examples: [8]
         generated_at:
           description: 10本を作った時刻。
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     StartTotpRequest:
       description: ApiDesign.md 4.6.2。
@@ -7073,8 +7073,8 @@ components:
               type: string
         expires_at:
           description: 挑戦の期限（5分）。
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     LoginPasskeyRequest:
       description: ApiDesign.md 3.6。
@@ -7138,12 +7138,12 @@ components:
           description: 端末をまたいで同期されているか（`backup_state`）。
           type: boolean
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         last_used_at:
           description: 一度も使われていなければ null。
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
 
     AccessTokenList:
@@ -7185,19 +7185,19 @@ components:
             type: string
           examples: [[]]
         issued_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         last_used_at:
           description: 一度も使われていなければ null。更新は1分粒度（Design.md 6.2.2）。
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
         expires_at:
           description: |
             必ず入る（無期限を許さない。ApiDesign.md 4.4.2）。列としては
             NULL を許すため nullable にしてある。
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
         status:
           description: '`active`（有効）／ `expired`（`expires_at` を過ぎた）。'
@@ -7231,11 +7231,11 @@ components:
           items:
             type: string
         issued_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         expires_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
         status:
           type: string
@@ -7448,8 +7448,8 @@ components:
           type: boolean
         last_login_at:
           description: 一度もログインしていなければ `null`。
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
         project_count:
           description: |
@@ -7457,8 +7457,8 @@ components:
             （詳細画面の memberships と食い違わせないため）。
           type: integer
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     AgentInfo:
       description: |
@@ -7589,12 +7589,12 @@ components:
           type: boolean
         last_login_at:
           description: 一度もログインしていなければ `null`。
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         version:
           description: |
             楽観ロック用（`app_user.version`。ApiDesign.md 2.8）。`PATCH` の
@@ -7657,18 +7657,18 @@ components:
             この値も追随する**（そうしないとログインできなくなる）。
           type: string
         linked_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         last_used_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
         password_updated_at:
           description: |
             `local_credential` の列。ローカル以外のプロバイダでは `null`。
             画面（5.6.2 の「認証手段」ブロック）が「最終更新」として出す。
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
 
     UserMembership:
@@ -7691,8 +7691,8 @@ components:
           type: string
         joined_at:
           description: '**ロールを変えても動かない。**'
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     UserSession:
       description: |
@@ -7708,17 +7708,17 @@ components:
           type: string
           nullable: true
         issued_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         last_used_at:
           description: 一度も使われていなければ `null`。**1分粒度で間引いて更新される**（Design.md 6.2.2）。
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
         expires_at:
           description: 無期限なら `null`（セッションは必ず入る）。
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
 
     UpdateUserRequest:
@@ -7848,8 +7848,8 @@ components:
           type: [string, 'null']
           examples: ['project_admin']
         updated_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     CreateProjectRequest:
       type: object
@@ -7965,11 +7965,11 @@ components:
           description: 楽観ロック用（ApiDesign.md 2.8）。作成直後は 1。
           type: integer
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         updated_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     ProjectCalendar:
       description: 暦の取得元と取得の状態（ApiDesign.md 5.8.1）。
@@ -8011,18 +8011,18 @@ components:
           type: integer
         fetched_at:
           description: 最後に取り込めた時刻。一度も取れていなければ null。
-          type: [string, 'null']
-          format: date-time
+          type: [integer, 'null']
+          format: int64
         last_attempt_at:
-          type: [string, 'null']
-          format: date-time
+          type: [integer, 'null']
+          format: int64
         last_error:
           description: 最後の取得の失敗。画面にそのまま出せる日本語。成功で null に戻る。
           type: [string, 'null']
         next_fetch_at:
           description: 次に取得できる時刻。いま取得できるなら null。`file` では常に null。
-          type: [string, 'null']
-          format: date-time
+          type: [integer, 'null']
+          format: int64
 
     PutProjectCalendarSourceRequest:
       type: object
@@ -8157,8 +8157,8 @@ components:
           type: string
           examples: ['project_admin']
         joined_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     CheckKeyResult:
       type: object
@@ -8549,8 +8549,8 @@ components:
           enum: [none, minor, major]
           nullable: true
         submitted_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         submitted_by:
           $ref: '#/components/schemas/ActorRef'
         comment_id:
@@ -8611,8 +8611,8 @@ components:
           description: 確認を待っているキー。
           example: ['tls_enabled']
         expires_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           description: これを過ぎると元の値へ戻る。
         changed_by:
           oneOf:
@@ -8691,8 +8691,8 @@ components:
           type: string
           description: '`pb.yaml` に書くときのキー。`key` と同じ値。'
         updated_at:
-          type: [string, 'null']
-          format: date-time
+          type: [integer, 'null']
+          format: int64
           description: '**`source` が `database` のときだけ埋まる。**'
         updated_by:
           oneOf:
@@ -8782,8 +8782,8 @@ components:
         ApiDesign.md 11.10。**読み取り専用の状態であって、設定ではない。**
       properties:
         fetched_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           description: サーバが値を取得した時刻。**画面は定期的に引かないので、表示がいつの値かを示すために出す。**
         connection:
           type: object
@@ -8814,8 +8814,8 @@ components:
               type: string
               description: '`server_version` の値をそのまま返す。'
             started_at:
-              type: string
-              format: date-time
+              type: integer
+              format: int64
               description: '`pg_postmaster_start_time()`。'
             max_connections:
               type: integer
@@ -8907,8 +8907,8 @@ components:
         戻せたのか戻したつもりなのかが分からない。
       properties:
         restored_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         backup:
           $ref: '#/components/schemas/BackupMeta'
         migration_version:
@@ -8948,8 +8948,8 @@ components:
           type: integer
           description: '書き出した時点で適用済みだった最大のマイグレーション番号。'
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         pb_version:
           type: string
           example: 2.43.140
@@ -9016,11 +9016,11 @@ components:
             **`status` とは別の軸である。** `status` は日付で決まり、こちらは鍵で決まる。
             **`active` なのに復号できない**という状態がありうる。
         not_before:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         not_after:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         serial_number:
           type: string
           description: 16進。
@@ -9039,8 +9039,8 @@ components:
             `active`（**いま出している1枚。必ず1枚以下**）／ `pending`（`not_before` が未来）／
             `expired`（`not_after` を過ぎた）／ `superseded`（有効だが、より新しい有効なものがある）。
         uploaded_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         uploaded_by:
           oneOf:
             - $ref: '#/components/schemas/ActorRef'
@@ -9202,8 +9202,8 @@ components:
             並べ替えは `POST /tickets/:seq/move` で行う。
           example: '0|hzzzzz:'
         staged_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
           description: |
             「オンステージ」（9.2.2、DbDesign.md 6.6）。`null` がバックログ、
@@ -9253,8 +9253,8 @@ components:
           nullable: true
           example: '2026-08-14'
         closed_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
           description: |
             **ステータス遷移の副作用としてのみ動く**（DbDesign.md 6.6）。直接は更新できない。
@@ -9262,11 +9262,11 @@ components:
           type: integer
           format: int32
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         updated_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           description: |
             **`ticket_tag` の付け外しでも動く**（9.2.5）。動かさないと、タグだけを
             変えた場合に一覧の `ETag` が変わらない。
@@ -9459,14 +9459,14 @@ components:
             `ON DELETE RESTRICT` で、投稿者不在のコメントを DB が許さない
             （DbDesign.md 6.7）。
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         updated_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         deleted_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
           description: 論理削除の時刻（DbDesign.md 4.6 / 6.7）。未削除なら `null`。
 
@@ -9596,9 +9596,9 @@ components:
           nullable: true
           example: in_progress
         occurred_at:
-          type: string
-          format: date-time
-          example: '2026-08-11T00:12:44Z'
+          type: integer
+          format: int64
+          example: 1786407164000
 
     ActivityList:
       description: |
@@ -9706,8 +9706,8 @@ components:
         is_satisfied:
           type: boolean
         satisfied_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
           description: '`is_satisfied` を `true` にした時刻。`false` に戻すと `null`。'
         satisfied_by:
@@ -9721,11 +9721,11 @@ components:
           type: integer
           format: int32
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         updated_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     TicketDoDList:
       description: |
@@ -9844,8 +9844,8 @@ components:
             （`human` / `agent`）で、こちらは「AIが提案し人がまだ採用していない」
             という状態である。
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     TicketLinkList:
       description: |
@@ -9941,11 +9941,11 @@ components:
           nullable: true
           description: '書き手。`actor` の削除に `ON DELETE SET NULL` で追従するため `null` になりうる。'
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         updated_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     TicketReferenceList:
       description: |
@@ -10374,8 +10374,8 @@ components:
           type: string
           example: '0|hzzzr:'
         staged_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
           description: '移動後の段（9.4.1）。`null` がバックログ。'
         version:
@@ -10436,8 +10436,8 @@ components:
           type: integer
           example: 3
         updated_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         outline:
           description: '`?outline=1` を付けたときだけ現れる（10.2）。見出しが無くても `[]` を返す。'
           type: array
@@ -10523,11 +10523,11 @@ components:
           allOf: [$ref: '#/components/schemas/ActorRef']
           nullable: true
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
         updated_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     DocSection:
       description: |
@@ -10555,8 +10555,8 @@ components:
         version:
           type: integer
         updated_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     CreateDocRequest:
       description: 文書の作成（ApiDesign.md 10.4）。
@@ -10664,8 +10664,8 @@ components:
           nullable: true
           example: ブランチ命名にチケット番号を入れる
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     DocRevision:
       description: |
@@ -10688,8 +10688,8 @@ components:
           type: string
           nullable: true
         created_at:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
 
     ErrorCode:
       description: ApiDesign.md 2.5.1 の15コード。

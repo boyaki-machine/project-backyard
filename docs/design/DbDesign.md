@@ -326,7 +326,7 @@ PgBouncer は不要。単一プロセス・少人数利用のため。
 | 論理型 | PostgreSQL 型 | 備考 |
 |---|---|---|
 | ID | `char(26) COLLATE "C"` | ULID（Crockford Base32、26文字固定） |
-| 日時 | `timestamptz` | 既定値 `now()` |
+| 日時 | `timestamptz` | 既定値 `now()`。**Go では `time.Time` で受ける**（sqlc の override。`pgtype.Timestamptz` を生成コードの外へ出さない。pb-224） |
 | 日付 | `date` | 期限・開始日 |
 | 真偽 | `boolean` | |
 | 列挙 | `text` + `CHECK` | 2.3 のとおりENUM型は使わない |
@@ -3131,7 +3131,8 @@ pb-backup-<YYYYMMDD-HHMMSS>.tar.gz
 `readOnlyRootFilesystem` で動くことを採る。**
 
 **1行1レコードの JSON（JSONL）にする。** 表ごとに1ファイルで、**全件をメモリに載せずに
-読み書きできる。** 型の対応は 4.1 に従い、API の規約（`ApiDesign.md` 2.2）と同じにする。
+読み書きできる。** 型の対応は 4.1 に従う。**日時は ISO8601 のまま書き出す**——REST API は
+エポックミリ秒に変わった（`ApiDesign.md` 2.2、pb-224）が、書庫の形を変えると既存の書庫を取り込めなくなる。
 
 | 列の型 | 書き出す形 |
 |---|---|

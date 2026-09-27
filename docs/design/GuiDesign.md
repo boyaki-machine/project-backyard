@@ -4923,6 +4923,8 @@ router.beforeEach:
 | `timestamptz`（その瞬間） | `formatDate` |
 | `date` 列（その日） | **`formatPlainDate`** |
 
+**`timestamptz` はエポックミリ秒（数値）で届く**（`ApiDesign.md` 2.2、pb-224）。`formatDateTime` / `formatDate` は数値を受け、画面の中でも数値のまま持つ——並べ替え・差の計算は数値の比較で行い、文字列にしない。`date` 列は `YYYY-MM-DD` の文字列のままである。
+
 **`date` 列に `formatDate` を使うと、UTC より西の地域で前日へずれる。**
 `new Date('2026-08-19')` は仕様上 UTC の0時と解釈される一方 `getDate()` はローカルを返すため
 （`America/New_York` で `2026-08-18` になることを実測）。期限は「その日」であって
