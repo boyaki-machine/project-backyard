@@ -873,8 +873,9 @@ CREATE TABLE ticket (
     OR (actual_point >= 0 AND actual_point_version ~ '^actual-v[0-9]+$')
   ),
 
-  start_date     date,
-  due_date       date,
+  start_at       timestamptz,               -- 0047。予定の開始（6.6.1）
+  due_at         timestamptz,               -- 0047。予定の終わり（含まない）
+  all_day        boolean NOT NULL DEFAULT true, -- 0047。終日か
   sprint_id      char(26) COLLATE "C",
   sort_key       text,                      -- LexoRank 方式の並び順
   staged_at      timestamptz,               -- 0015 で追加。NULL＝バックログ
@@ -898,14 +899,14 @@ CREATE TABLE ticket (
   updated_at     timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT uq_ticket_project_seq UNIQUE (project_id, seq),
   CONSTRAINT ck_ticket_not_self_parent CHECK (parent_id IS NULL OR parent_id <> id),
-  CONSTRAINT ck_ticket_dates CHECK (start_date IS NULL OR due_date IS NULL
-                                    OR start_date <= due_date)
+  CONSTRAINT ck_ticket_schedule CHECK (start_at IS NULL OR due_at IS NULL
+                                       OR start_at <= due_at)   -- 0047
 );
 CREATE INDEX idx_ticket_project_status ON ticket (project_id, status_key);
 CREATE INDEX idx_ticket_assignee_open  ON ticket (assignee_id) WHERE closed_at IS NULL;
 CREATE INDEX idx_ticket_parent         ON ticket (parent_id);
 CREATE INDEX idx_ticket_sprint         ON ticket (sprint_id);
-CREATE INDEX idx_ticket_due_open       ON ticket (project_id, due_date) WHERE closed_at IS NULL;
+CREATE INDEX idx_ticket_due_open       ON ticket (project_id, due_at) WHERE closed_at IS NULL;  -- 0047 で張り替え
 CREATE INDEX idx_ticket_updated        ON ticket (project_id, updated_at DESC);
 CREATE INDEX idx_ticket_title_trgm     ON ticket USING gin (title gin_trgm_ops);
 CREATE INDEX idx_ticket_body_trgm      ON ticket USING gin (body_md gin_trgm_ops);
@@ -994,6 +995,29 @@ CREATE INDEX idx_ticket_link_target ON ticket_link (target_ticket_id);
 | **詰まり防止**（放置された占有を解く） | 占有しないので詰まらない |
 
 **再検討の条件は「自律取得（`pb_next_task`）を実装するとき」である。** そのときは `working_agent_id` を「宣言」から「条件」へ格上げすればよく（自分でなければ拒む）、**テーブルを足さずに済む。** TTL による失効（`stale` の検知）が要ると分かった時点で、8.2.2 の器を起こす。
+
+### 6.6.1 予定日時（0047）
+
+**予定は `timestamptz` の半開区間 `[start_at, due_at)` と、終日の印 `all_day` で持つ**（pb-217。スプリントは `[start_at, end_at)`）。
+以前は `start_date` / `due_date`（`date`）で、日単位しか表せなかった。文化祭のように1日で完結するプロジェクトでは時分が要る。
+
+| 規則 | 内容 |
+|---|---|
+| 終日 | `all_day = true` のとき、両端は**プロジェクトの基準タイムゾーン（6.23）の0時**。「9/30締切」は `due_at` が 10/1 の0時（iCal の `DTEND` と同じ約束事）。検証はアプリ側（`ApiDesign.md` 9.3.1。CHECK では基準タイムゾーンを引けない） |
+| 片側だけ | 許す（ガントのマイルストーン） |
+| 基準タイムゾーンの変更 | **保存した瞬間を保つ**（pb-217 の判断）。付け直さない |
+| アプリの内側 | Go は `time.Time`、REST はエポックミリ秒（4.1、`ApiDesign.md` 2.2） |
+
+**既存データの変換**（0047）：`start_at` ＝ `start_date` の基準タイムゾーンの0時、`due_at` ＝ `due_date + 1日` の基準タイムゾーンの0時、
+`all_day = true`。スプリントの `end_at` も `end_date + 1日` の0時。**古い列（`start_date` / `due_date` / `end_date`）と
+`ck_ticket_dates` / `ck_sprint_dates` は同じマイグレーションで落とす**（前進のみ。5.3）。
+
+```sql
+UPDATE ticket t SET
+  start_at = (t.start_date::timestamp AT TIME ZONE p.timezone),
+  due_at   = ((t.due_date + 1)::timestamp AT TIME ZONE p.timezone)
+FROM project p WHERE p.id = t.project_id;
+```
 
 ## 6.7 コメントと添付（0007）
 
@@ -1107,14 +1131,15 @@ CREATE TABLE sprint (
   project_id char(26) COLLATE "C" NOT NULL REFERENCES project(id) ON DELETE CASCADE,
   name       text NOT NULL,
   goal       text,
-  start_date date,
-  end_date   date,
+  start_at   timestamptz,                  -- 0047（6.6.1）
+  end_at     timestamptz,                  -- 0047。含まない
+  all_day    boolean NOT NULL DEFAULT true, -- 0047
   status     text NOT NULL DEFAULT 'planned'
              CHECK (status IN ('planned','active','completed')),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT ck_sprint_dates CHECK (start_date IS NULL OR end_date IS NULL
-                                    OR start_date <= end_date)
+  CONSTRAINT ck_sprint_schedule CHECK (start_at IS NULL OR end_at IS NULL
+                                       OR start_at <= end_at)   -- 0047
 );
 CREATE INDEX idx_sprint_project ON sprint (project_id, status);
 CREATE TRIGGER trg_sprint_updated BEFORE UPDATE ON sprint
@@ -1158,7 +1183,7 @@ ON CONFLICT DO NOTHING;
 | `added_at` | そのスプリントの対象になった時刻。**スプリント開始時**に入る |
 | `removed_at` | そのスプリントを離れた時刻。**スプリント終了時に、完了・未完了を問わず入る** |
 
-**`removed_at` を「未完了のときだけ立てない」という区別はしない。** 本表が答えるのは「**そのスプリントの対象だった期間**」であって「消化できたか」ではない。消化できたかは `ticket.closed_at` と `sprint.end_date` の突き合わせで後から言える。**1つの列に2つの問いを答えさせない。**
+**`removed_at` を「未完了のときだけ立てない」という区別はしない。** 本表が答えるのは「**そのスプリントの対象だった期間**」であって「消化できたか」ではない。消化できたかは `ticket.closed_at` と `sprint.end_at` の突き合わせで後から言える。**1つの列に2つの問いを答えさせない。**
 
 **行は消さない。** スプリントを削除したときだけ `ON DELETE CASCADE` で落ちる（`sprint` 自体が消えるので、属していた期間も意味を失う）。9.12 の `DELETE` が `ticket.sprint_id` を `SET NULL` にするのと揃う——**どちらもチケットは消えない。**
 
@@ -1370,7 +1395,7 @@ ON CONFLICT DO NOTHING;
 | 開ける | 開けない |
 |---|---|
 | `title` `body_md` `priority` `parent_seq` `assignee_id` | `type` `execution_mode` `readiness` `readiness_note` `scope` |
-| `tag_ids` `estimate_point` `estimate_hours` `start_date` `due_date` | `working_agent_id` `actual_hours` `sprint_id` |
+| `tag_ids` `estimate_point` `estimate_hours` `start_at` `due_at` `all_day` | `working_agent_id` `actual_hours` `sprint_id` |
 
 **線は「作れるものは直せる。ただし `type` を除く」である。** 起票（9.3）で選べる項目を直せないのは筋が通らないが、**種別の切り替えは人が行う**。直せる項目には `tag_ids` と見積・日付も含む。
 

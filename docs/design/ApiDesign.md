@@ -2658,17 +2658,17 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | `open` | — | `true` で `closed_at IS NULL` のもののみ。`false` で完了のみ |
 | `retired` | `false` | **`true` で「棚に戻ったもの」も返す**（下記「棚に戻ったものを既定で外す」）。既定では返さない |
 | `staged` | — | **`true` でオンステージの行とその全子孫に限る**（下記「オンステージで絞る」）。`true` 以外は `422` |
-| `due_within` | — | `7d` 形式。**今日から N 日以内に期限があるもの（期限超過を含む）**。`due_date IS NULL` は除外 |
-| `overdue` | — | `true` で**期限を過ぎた未完了のもの**（`due_date < 今日` かつ `closed_at IS NULL`）。9.13.1 の `overdue` と同じ条件 |
-| `planned_from` | — | 予定期間の下限（`YYYY-MM-DD`、含む）。チケットの予定期間と1日でも重なるもの。片方だけの日付を持つチケットはその日1日として扱い、両日未設定は除外 |
-| `planned_to` | — | 予定期間の上限（`YYYY-MM-DD`、含む）。`planned_from` と片方だけでもよい。両方あるとき `planned_from <= planned_to` |
+| `due_within` | — | `7d` 形式。**今日から N 日以内に期限があるもの（期限超過を含む）**。`due_at < (基準タイムゾーンの今日の0時 + (N+1)日)`。`due_at IS NULL` は除外（9.3.1） |
+| `overdue` | — | `true` で**期限を過ぎた未完了のもの**（`due_at <= now()` かつ `closed_at IS NULL`）。9.13.1 の `overdue` と同じ条件 |
+| `planned_from` | — | 予定期間の下限（エポックミリ秒、含む）。チケットの予定と少しでも重なるもの。両方未設定は除外 |
+| `planned_to` | — | 予定期間の上限（エポックミリ秒、**含まない**）。`planned_from` と片方だけでもよい。両方あるとき `planned_from < planned_to` |
 | `stale` | — | `14d` 形式。**その日数より前から更新されていない未完了のもの**（`updated_at < now() - N日` かつ `closed_at IS NULL`）。9.13.1 の `stale` と同じ条件 |
 | `parent` | — | `seq` を指定すると、そのチケットとその全子孫（部分木）に限る。**カンマ区切りで複数指定は OR**（いずれかの部分木に含まれるもの） |
 | `q` | — | **キーワード**。以下は `search_mode=fulltext` の仕様。空白で区切った語を**すべて含む**もの。各語はタイトル・本文・コメント（削除済みを除く）の**いずれかに部分一致**すればよい。大文字小文字を区別しない（**全角の英字なども畳むのは、DB の `LC_CTYPE` が `C.UTF-8` のとき**。`DbDesign.md` 4.5）。`%` と `_` は文字として扱う。200文字まで（下記「検索の条件」） |
 | `seq_from` / `seq_to` | — | **チケット番号の範囲**。**両端を含む**。片方だけでもよい |
 | `started_since` / `started_before` | — | **実際に着手した日時の範囲**。`since` 以上・`before` 未満。エポックミリ秒。着手の定義は下記「着手日時を導く」。**着手していないものは外れる** |
 | `closed_since` / `closed_before` | — | **完了した日時（`closed_at`）の範囲**。`since` 以上・`before` 未満。エポックミリ秒。**未完了は外れる** |
-| `sort` | `sort_key` | `sort_key` / `seq` / `title` / `status` / `priority` / `due_date` / `created_at` / `updated_at` / `closed_at` |
+| `sort` | `sort_key` | `sort_key` / `seq` / `title` / `status` / `priority` / `due_at` / `created_at` / `updated_at` / `closed_at` |
 | `order` | `asc` | `asc` / `desc` |
 | `page` | `1` | 2.6 |
 | `per_page` | **`200`** | 2.6。上限は 2.6 と同じ 200 |
@@ -2677,12 +2677,13 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 **バックログのエピックフィルタは `parent` を使う**（`GuiDesign.md` 5.4）。エピックは行として出さず、複数選択できるフィルタになるが、**絞り込みの実体は部分木であって種別ではない**（`DbDesign.md` 6.10）。`?parent=12,30` は「12 の部分木または 30 の部分木」で、エピック自身も部分木に含まれる（画面が行として捨てる）。**`epic` という専用パラメータを作らない**——作ると API が種別に依存し、グルーピングの実体が `parent_id` であるという定義と食い違う。
 
-**`overdue` / `stale` はダッシュボード（`GuiDesign.md` 5.3）の「要対応」から来る導線のために足した。**どちらも 9.13.1 の同名の集計とまったく同じ条件で数えるものであり、**ダッシュボードが出した件数と、押した先の一覧の件数が一致することが要件**である。`due_within=0d` で代用しない——あちらは「今日以前」で**今日が期限のもの**を含み、`overdue`（`due_date < 今日`）と1日ぶんずれる。
+**`overdue` / `stale` はダッシュボード（`GuiDesign.md` 5.3）の「要対応」から来る導線のために足した。**どちらも 9.13.1 の同名の集計とまったく同じ条件で数えるものであり、**ダッシュボードが出した件数と、押した先の一覧の件数が一致することが要件**である。`due_within=0d` で代用しない——あちらは「今日の終わりまで」で**今日が期限でまだ過ぎていないもの**を含み、`overdue`（`due_at <= now()`）とずれる。
 
-**`planned_from` / `planned_to` は予定日の重なりを見る。** チケット側の有効な開始を
-`COALESCE(start_date, due_date)`、有効な終了を `COALESCE(due_date, start_date)` とし、
-`有効な開始 <= planned_to AND 有効な終了 >= planned_from` で判定する。これにより片方だけの
-日付はその日1日の点になり、両日未設定は除外される。`started_since` / `started_before` は
+**`planned_from` / `planned_to` は予定の重なりを見る**（半開区間どうし。9.3.1）。チケット側の有効な開始を
+`COALESCE(start_at, due_at - 1ms)`、有効な終了を `COALESCE(due_at, start_at + 1ms)` とし、
+`有効な開始 < planned_to AND 有効な終了 > planned_from` で判定する。片方だけのチケットは長さ 1ms の点になる——
+期限だけのチケットは**期限の直前の瞬間**に置くので、終日の「9/30締切」（`due_at` は 10/1 の0時）は 9/30 に当たり、10/1 には当たらない。
+両方未設定は除外される。**日の境界は画面がプロジェクトの基準タイムゾーンで作る**（`GuiDesign.md` 5.4）。`started_since` / `started_before` は
 状態遷移から導く**実際の着手日時**なので、予定日の検索に流用しない。
 
 **`stale` が日数を取るのは、閾値の正本がサーバにあるからである**（9.13.1 の `threshold_days`）。ダッシュボードは `stats` の応答に載る値をそのままリンクへ載せ、**画面側に 14 を書かない**。`due_within` と同じ `<N>d` 形式にしてあるので、上限も同じ 3650 日である。
@@ -2708,13 +2709,13 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | 日の境界 | **サーバは日付を解釈しない。** 画面が利用者のタイムゾーン（`app_user.timezone`）で日の境界を作り、エポックミリ秒の瞬間として送る。画面は `closed_at` を同じタイムゾーンで表示しているので（`GuiDesign.md` 7.5）、**見えている日付と絞り込みの日付が一致する** |
 | 範囲が逆 | `seq_from > seq_to`、`since >= before` は `422`（`invalid`）。**黙って空の結果を返さない**——入力の誤りが「該当なし」に見える |
 | 片側だけの指定 | 受け付ける（`seq_from=100` は100番以降） |
-| 並べ替えの `closed_at` | 未完了（`NULL`）は昇順・降順とも**末尾**（`due_date` と同じ扱い） |
+| 並べ替えの `closed_at` | 未完了（`NULL`）は昇順・降順とも**末尾**（`due_at` と同じ扱い） |
 
 ##### 着手日時を導く
 
 **「着手」は、状態が `todo` 区分から初めて出た遷移である**。`activity` の `action='transition'` の行（9.6）のうち、遷移前の状態の区分が `todo` で遷移後が `todo` 以外のものを探し、**最も早い `occurred_at`** を着手日時とする。
 
-- **列を足さない。** `start_date` は予定の開始日で、人やエージェントが手で入れる欄であり、埋まっていないことが多い。実際の着手は遷移の履歴が持っている
+- **列を足さない。** `start_at` は予定の開始で、人やエージェントが手で入れる欄であり、埋まっていないことが多い。実際の着手は遷移の履歴が持っている
 - **完了を取り消して着手し直しても、最初の着手を採る。** 「いつから手を付けたか」を探す用途では、最初の着手が答えになる
 - **状態の区分は、いまのワークフローで引く。** 過去のキーがいまのワークフローに無ければ、その遷移は着手として数えない
 - **作成時の状態は遷移ではないので数えない。** `pb dev seed` が `activity` を書くのは `history: true` を付けたチケットだけ（`DbDesign.md` 7.6.4）なので、**それ以外のデモデータの進行中チケットは着手日時を持たない**
@@ -2792,8 +2793,9 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
       "actual_hours": 3.5,
       "actual_point": 5,
       "actual_point_version": "actual-v0",
-      "start_date": "2026-08-09",
-      "due_date": "2026-08-14",
+      "start_at": 1786201200000,
+      "due_at": 1786719600000,
+      "all_day": true,
       "closed_at": null,
       "version": 3,
       "created_at": 1786237200000,
@@ -2862,8 +2864,9 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
   "parent_seq": 12,
   "tag_ids": ["01K2..."],
   "estimate_point": 5,
-  "start_date": "2026-08-09",
-  "due_date": "2026-08-14"
+  "start_at": 1786201200000,
+  "due_at": 1786719600000,
+  "all_day": true
 }
 ```
 
@@ -2877,7 +2880,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 | `parent_seq` | 任意。同一プロジェクトに存在すること |
 | `tag_ids` | 任意。すべて当該プロジェクトのタグであること |
 | `estimate_point` / `estimate_hours` | 任意。0以上 |
-| `start_date` / `due_date` | 任意。両方あるとき `start_date <= due_date`（`DbDesign.md` 6.6 の `ck_ticket_dates`） |
+| `start_at` / `due_at` / `all_day` | 任意。9.3.1 の規則に従う |
 
 **サーバが決めるもの（リクエストに含められない）**
 
@@ -2969,6 +2972,26 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 
 **`ticket.edit` で足りる。** 親の付け替えは 9.5.2 も `ticket.edit` なので、権限の要求は変わらない。
 
+### 9.3.1 予定日時（`start_at` / `due_at` / `all_day`）
+
+**予定はエポックミリ秒の半開区間 `[start_at, due_at)` で持つ**（pb-217。`DbDesign.md` 6.6）。以前は
+`start_date` / `due_date`（`YYYY-MM-DD`）だった。
+
+| 項目 | 規則 |
+|---|---|
+| `start_at` | 開始の瞬間。`null` は未設定 |
+| `due_at` | **終わりの瞬間（含まない）**。`null` は未設定。両方あるとき `start_at <= due_at` |
+| `all_day` | 終日か。省略時は `true`。**終日なら `start_at` / `due_at` はプロジェクトの基準タイムゾーン（`DbDesign.md` 6.23）の0時でなければならない**。違えば `422`（`details[].code = "not_midnight"`） |
+
+**終日の「9/30締切」は `due_at` が 10/1 の0時になる**（iCal の `DTEND` と同じ約束事）。画面は1日戻して 9/30 と出す
+（`GuiDesign.md` 7.5）。**開始だけ・期限だけも許す**（ガントのマイルストーン。`GuiDesign.md` 10章）。
+
+**`all_day` は行ごとに1つ**で、開始と期限の両方に掛かる。**MCP は日付でも受ける**（`Design.md` 8.5.1）——エージェントが
+「翌日の0時」を計算して送ると誤りやすいので、MCP 層が基準タイムゾーンで変換してから REST へ渡す。
+
+**基準タイムゾーンを変えても保存した瞬間は動かさない**（pb-217 の判断）。終日の予定は、新しいタイムゾーンで見ると
+0時でなくなり、日付が前後にずれて見えうる。
+
 ## 9.5 `GET | PATCH | DELETE /api/v1/projects/:key/tickets/:seq`
 
 ### 9.5.1 `GET`
@@ -3024,7 +3047,7 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 | `ticket.self_edit` で変えられる | 変えられない |
 |---|---|
-| `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_date` `due_date` | **`type`** `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
+| `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_at` `due_at` `all_day` | **`type`** `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
 
 **`type` は `ticket.edit` を持つ人だけが変えられる**。**種別の切り替えは盤面の見え方を変える**——タスクをエピックへ変えると、その行はバックログから消えてフィルタの選択肢になる（`GuiDesign.md` 5.4）。
 
@@ -3036,7 +3059,7 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 **`actual_point` と `actual_point_version` は対で送り、追加の `ticket.actual_point.edit` 権限が要る。** どちらか一方だけ、または値と null の混在は 422 とする。
 
-変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `estimate_point` `estimate_hours` `actual_hours` `actual_point` `actual_point_version` `start_date` `due_date` `execution_mode` `readiness` `readiness_note` `scope`
+変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `estimate_point` `estimate_hours` `actual_hours` `actual_point` `actual_point_version` `start_at` `due_at` `all_day` `execution_mode` `readiness` `readiness_note` `scope`
 
 **含められないフィールド**
 
@@ -3848,7 +3871,7 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 {
   "items": [
     { "id": "01K2...", "name": "Sprint 3", "goal": "認証を通す",
-      "start_date": "2026-08-05", "end_date": "2026-08-18",
+      "start_at": 1785855600000, "end_at": 1787065200000, "all_day": true,
       "status": "active", "ticket_count": 12, "closed_count": 5 }
   ]
 }
@@ -3858,12 +3881,12 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 |---|---|
 | `name` | 必須。1〜50文字。**一意制約は無い**（`DbDesign.md` 6.9 に `UNIQUE` が無く、同名を作れる） |
 | `goal` | 任意 |
-| `start_date` / `end_date` | 任意。両方あるとき `start_date <= end_date`（`DbDesign.md` 6.9 の `ck_sprint_dates`） |
+| `start_at` / `end_at` / `all_day` | 任意。**チケットの `start_at` / `due_at` / `all_day` と同じ規則**（9.3.1。`end_at` は含まない） |
 | `status` | `planned`（既定） / `active` / `completed` |
 
 `name` は 9.11 と同じく**前後の空白を取り除いてから**検証する。
 
-`items[]` は **`start_date` 降順（`NULL` は末尾）、同値は `created_at` 降順**。新しいものが上に来る並びで、`GuiDesign.md` 5.9.5 の図（`Sprint 3` が上、`Sprint 2` が下）と一致する。この画面で触るのは「これから始める／いま動いている」スプリントであり、完了済みは下へ流れてよい。
+`items[]` は **`start_at` 降順（`NULL` は末尾）、同値は `created_at` 降順**。新しいものが上に来る並びで、`GuiDesign.md` 5.9.5 の図（`Sprint 3` が上、`Sprint 2` が下）と一致する。この画面で触るのは「これから始める／いま動いている」スプリントであり、完了済みは下へ流れてよい。
 
 | 集計 | 定義 |
 |---|---|
@@ -3884,7 +3907,7 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 
 ```json
 { "name": "Sprint 4", "goal": "スプリント運用を通す",
-  "start_date": "2026-09-08", "end_date": "2026-09-21" }
+  "start_at": 1788793200000, "end_at": 1790002800000, "all_day": true }
 ```
 
 **スプリントを新しく作り、`active` にし、オンステージに載っているものを対象に入れる**——この3つを1つのトランザクションで行う。
@@ -3903,7 +3926,7 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 |---|---|
 | `name` | 必須。1〜50文字。前後の空白を取り除いてから検証する（9.12 と同じ） |
 | `goal` | 任意 |
-| `start_date` / `end_date` | 任意。両方あるとき `start_date <= end_date` |
+| `start_at` / `end_at` / `all_day` | 任意。9.3.1 の規則に従う |
 
 **進行中のスプリントが既にあれば `409 active_sprint_exists`**。**`active` は同時に1本だけである**——オンステージは1つしかなく、「いまどの期間で消化しようとしているか」の答えが2つあると、開始のたびにどちらへ入れるかを選ぶことになる。**複数チームが並行してスプリントを回す運用は、プロジェクトを分ける形で表す。**
 
@@ -3919,7 +3942,7 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 
 | 段階 | 動き |
 |---|---|
-| 1 | `sprint.status` を **`completed`** にする。`end_date` が空なら `CURRENT_DATE` を入れる |
+| 1 | `sprint.status` を **`completed`** にする。`end_at` が空なら、終日のスプリントは**基準タイムゾーンの翌日の0時**（今日を含める）、時刻付きは `now()` を入れる |
 | 2 | そのスプリントの `ticket_sprint` すべてに `removed_at = now()` を立てる |
 | 3 | **完了しているオンステージの根を `staged_at = NULL` にする**（オンステージから降ろす） |
 | 4 | **未完了のものは `staged_at` を触らない**（オンステージに残り、次の `start` でそちらへ入る） |
@@ -3980,13 +4003,13 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 
 **`by_category` は常に4つのキーを持つ。** そのカテゴリのステータスがワークフローに1つも無くても `0` を返す。`simple` テンプレート（`DbDesign.md` 7.4）は `review` を持たないが、**キーが消えると画面のカードが3枚になり、「4つのカードの意味が変わらない」という上の目的が崩れる。**
 
-`overdue` は `due_date < 今日` かつ `closed_at IS NULL`。`stale` は `updated_at` が `threshold_days` 日より前で `closed_at IS NULL`。**閾値はサーバが持ち、応答に含めて返す**（画面に「14日以上」と出すため。文言をフロントで組み立てない）。
+`overdue` は `due_at <= now()` かつ `closed_at IS NULL`。`stale` は `updated_at` が `threshold_days` 日より前で `closed_at IS NULL`。**閾値はサーバが持ち、応答に含めて返す**（画面に「14日以上」と出すため。文言をフロントで組み立てない）。
 
 **`threshold_days` は 14 で固定する**。5.3 のワイヤーフレームの文言と一致させたもので、プロジェクトごとの設定にはしない——**放置の基準を変えたくなるのは運用に載せてからであり、いま設定項目を作ると使われないまま形が固まる。**
 
 **`unassigned` にも `closed_at IS NULL` が掛かる。** `assignee_id IS NULL` かつ未完了の件数である。完了したチケットに担当者が無いのは要対応ではなく、`overdue` / `stale` と条件が揃う。
 
-**「今日」は DB の `CURRENT_DATE` で決める**（9.2.1 の `due_within` と同じ）。`app_user.timezone` は混ぜない——混ぜると同じプロジェクトの集計が読み手ごとに変わり、「要対応が3件」という会話が成り立たなくなる。
+**「今日」はプロジェクトの基準タイムゾーンで決める**（pb-217。9.2.1 の `due_within` と同じ。以前は DB の `CURRENT_DATE`＝UTC だった）。`overdue` は瞬間の比較なので「今日」に依らない。`app_user.timezone` は混ぜない——混ぜると同じプロジェクトの集計が読み手ごとに変わり、「要対応が3件」という会話が成り立たなくなる。
 
 **`ETag`（2.7）は返さない。** 2.7 が対象とするのは一覧系 GET であり、本エンドポイントはページャを持たない。加えて **ETag の材料（件数と `MAX(updated_at)`）を採る走査が本体の集計とほぼ同じ**なので、付けても DB の仕事は減らない。
 
@@ -4038,13 +4061,15 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 ETag: W/"act-a3f19c2b-142-1723372992000000000"
 ```
 
-**`field` の値域は実装が定める。** 次の17種類が入る（`create` / `delete` は `field` が `null`）。
+**`field` の値域は実装が定める。** 次の18種類が入る（`create` / `delete` は `field` が `null`）。
 
 | 由来 | `field` |
 |---|---|
 | 遷移（9.6） | `status_key` |
-| 本体の更新（9.5.2） | `type` / `title` / `body_md` / `priority` / `assignee_id` / `parent_id` / `estimate_point` / `estimate_hours` / `actual_hours` / `start_date` / `due_date` |
+| 本体の更新（9.5.2） | `type` / `title` / `body_md` / `priority` / `assignee_id` / `parent_id` / `estimate_point` / `estimate_hours` / `actual_hours` / `start_at` / `due_at` / `all_day`（pb-217 より前の記録は `start_date` / `due_date`） |
 | 子資源の更新（9.8 / 9.9 / 9.10） | `comment` / `dod` / `link` / `reference.code` / `reference.doc` |
+
+**`start_at` / `due_at` の値は、終日なら `YYYY-MM-DD`（期限は締切日＝`due_at` の前日。基準タイムゾーン）、時刻付きならエポックミリ秒の文字列**である（pb-217）。履歴は読み返す記録なので、書いた時点の見え方で残す——後から基準タイムゾーンや `all_day` が変わっても、当時の「9/30締切」が読める。pb-217 より前の `start_date` / `due_date` は `YYYY-MM-DD` のままである。
 
 **`assignee_id` の値は ULID がそのまま入る。** 上の「表示名への変換は画面が行う」は `status_key` については成り立つ（ワークフローが 5.4 で手元にある）が、**これは解決先を持たない画面がありうる**——ダッシュボード（`GuiDesign.md` 5.3）はメンバー表を読まない。**画面がこの値をどう出すかは `GuiDesign.md` 5.3 / 5.5 の側で決める。**
 

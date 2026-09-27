@@ -1454,7 +1454,7 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 
 | ツール | 引数 | 叩く REST | 応答 |
 |---|---|---|---|
-| `pb_create_ticket` | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?`, `tag_ids?`, `estimate_point?`, `estimate_hours?`, `start_date?`, `due_date?` | `POST /projects/:key/tickets` | **要点だけ**（`id` / `seq` / `status` / `version` / `parent_seq`） |
+| `pb_create_ticket` | `type`, `title`, `body_md?`, `priority?`, `parent_seq?`, `assignee_id?`, `tag_ids?`, `estimate_point?`, `estimate_hours?`, `start_date?`, `due_date?`（終日。`YYYY-MM-DD`）, `start_at?`, `due_at?`（時刻付き。時差を含む ISO8601） | `POST /projects/:key/tickets` | **要点だけ**（`id` / `seq` / `status` / `version` / `parent_seq`） |
 | `pb_update_ticket` | `seq`, ＋ 上の任意引数から **`type` を除いたもの**、`actual_point` と `actual_point_version` の対（**送ったものだけ更新**） | `PATCH /projects/:key/tickets/:seq` | **要点だけ**（`seq` / `status` / `version` / `updated_at`） |
 | `pb_put_dod` | `seq`, `add?[]`, `update?[]`, `delete?[]` | 9.9 の `POST` / `PATCH` / `DELETE` | 9.9 の一覧をそのまま |
 | `pb_list_tags` | （なし） | `GET /projects/:key/tags` | 9.11 の一覧をそのまま |
@@ -1640,18 +1640,24 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 | `pb_get_task` | `seq` | `GET /projects/:key/tickets/:seq` | 9.5.1 の応答をそのまま |
 | `pb_list_tasks` | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `staged?`, `per_page?` | `GET /projects/:key/tickets` | **軽量な部分集合**（下記） |
 
+**予定は日付でも受ける**（pb-217）。REST は `start_at` / `due_at`（エポックミリ秒・半開区間）＋ `all_day` だけを受ける（`ApiDesign.md` 9.3.1）が、
+エージェントに「締切日の翌日の0時」を計算させると誤る。**MCP 層がプロジェクトの基準タイムゾーンを引いて変換する**——`due_date`
+（締切日を含む）は翌日の0時の `due_at` になり、`all_day = true` を添える。時刻付きの `start_at` / `due_at` を渡したときは
+`all_day = false` で送る。日付と時刻付きを同じ呼び出しで混ぜると `-32602`。**読み出し（`pb_get_task` / `pb_list_tasks`）は、
+終日のチケットに `start_date` / `due_date`（締切日を含む日付）を添える**——`due_at` だけを見ると締切が1日後に読める。
+
 **`pb_get_task` の引数は `seq` である**（`Requirements.md` 10.3.2 は `id` と書いていた）。9.1 が「URL とチケット番号を一致させる」と定めており、人が画面で見る番号も `/pb-implement <id>` に渡す値も `seq` である。`id`（ULID）を名乗ると、ULID を渡す呼び出しが必ず出る。
 
 **`pb_list_tasks` は軽量にする**（`Requirements.md` 10.3.2 の「チケット一覧（軽量）」）。9.2.2 の応答から次の11項目だけを残す。
 
 ```
 seq / type / title / status / priority / assignee / working_agent
-  / parent_seq / staged_at / due_date / updated_at
+  / parent_seq / staged_at / due_at（終日なら due_date も） / updated_at
 ```
 
 **`working_agent` を返す。** 排他が無いため（`ApiDesign.md` 9.6 は上書きを許す）、**同じ所有者の別のエージェントが既に触ったチケットを、それと知らずにもう一度進めることが起こりうる。** `/pb-onboard` の `pb_list_tasks(assignee=me)` で見えていれば、モデルが気づける。
 
-落とすのは `id`（`seq` で足りる）、`sort_key`（画面の並べ替え用）、`tags` `sprint` `has_children` `reporter`、見積3種、`start_date` `closed_at` `version` `created_at` である。**ボードの状況把握に要らない項目を、一覧の件数ぶん掛け算しない。** 1件の詳細が要るときは `pb_get_task` が全項目を返す。
+落とすのは `id`（`seq` で足りる）、`sort_key`（画面の並べ替え用）、`tags` `sprint` `has_children` `reporter`、見積3種、`start_at` `closed_at` `version` `created_at` である。**ボードの状況把握に要らない項目を、一覧の件数ぶん掛け算しない。** 1件の詳細が要るときは `pb_get_task` が全項目を返す。
 
 **`staged` は `true` のときだけ `staged=true` を送る**（`ApiDesign.md` 9.2.1「オンステージで絞る」）。オンステージの行とその配下が返る。**`false` は指定なしと同じに扱う**——REST は `true` しか受けない（`overdue` と同じ）ので、そのまま送ると `422` になる。「オンステージのチケットに着手して」と頼まれたときに、未完了の全件を取らずに済ませるための条件である。
 
