@@ -18,6 +18,8 @@ import { computed, ref } from 'vue'
 import Modal from './Modal.vue'
 import { sprintStatusLabels } from '../api/sprints'
 import type { CreateSprintRequest, Sprint, SprintStatus } from '../api/sprints'
+import { planDate, planInstant } from '../lib/datetime'
+import { useProjectStore } from '../stores/project'
 
 const props = defineProps<{
   /** 編集対象。新規追加のときは null */
@@ -38,8 +40,13 @@ const isNew = computed(() => props.sprint === null)
 // props をそのまま編集しない。キャンセルで元へ戻せるように複製して持つ。
 const name = ref(props.sprint?.name ?? '')
 const goal = ref(props.sprint?.goal ?? '')
-const startDate = ref(props.sprint?.start_date ?? '')
-const endDate = ref(props.sprint?.end_date ?? '')
+// **期間は日付の入力で扱う**（終日。`GuiDesign.md` 5.5：時刻付きの入力はチケット詳細だけ）。
+// 基準タイムゾーンの日付へ直して出し、送るときに0時（終わりは翌日の0時）へ戻す。
+const tz = useProjectStore().planTimezone
+const initialStart = props.sprint?.start_at != null ? planDate(props.sprint.start_at, tz) : ''
+const initialEnd = props.sprint?.end_at != null ? planDate(props.sprint.end_at, tz, true) : ''
+const startDate = ref(initialStart)
+const endDate = ref(initialEnd)
 const status = ref<SprintStatus>(props.sprint?.status ?? 'planned')
 
 /** 入力済みかどうか。触る前から赤く出さない */
@@ -74,13 +81,18 @@ function submit() {
 
   // **空文字は null で送る。** キーを落とすと PATCH では「据え置き」に
   // なってしまい、欄を空にする操作が効かない（`ApiDesign.md` 9.12）。
-  emit('save', {
+  // **変えた欄だけ送る**（新規は全部）。時刻付きのスプリントを日付の欄で開いて保存したとき、
+  // 触っていない端が黙って0時に変わらないようにする（pb-217）。
+  const body: CreateSprintRequest = {
     name: name.value.trim(),
     goal: goal.value.trim() === '' ? null : goal.value.trim(),
-    start_date: startDate.value === '' ? null : startDate.value,
-    end_date: endDate.value === '' ? null : endDate.value,
     status: status.value,
-  })
+  }
+  const toMs = (d: string, isEnd: boolean) => (d === '' ? null : planInstant(d, tz, isEnd))
+  if (isNew.value || startDate.value !== initialStart) body.start_at = toMs(startDate.value, false)
+  if (isNew.value || endDate.value !== initialEnd) body.end_at = toMs(endDate.value, true)
+  if (body.start_at !== undefined || body.end_at !== undefined) body.all_day = true
+  emit('save', body)
 }
 </script>
 
@@ -121,7 +133,7 @@ function submit() {
         </label>
       </div>
       <span v-if="dateError" class="detail">✕ {{ dateError }}</span>
-      <span v-else-if="fieldErrors?.end_date" class="detail">✕ {{ fieldErrors.end_date }}</span>
+      <span v-else-if="fieldErrors?.end_at" class="detail">✕ {{ fieldErrors.end_at }}</span>
 
       <label class="field">
         <span class="label">{{ $ui('状態') }}</span>

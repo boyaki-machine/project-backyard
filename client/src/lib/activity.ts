@@ -31,6 +31,7 @@ import type { Activity } from '../api/dashboard'
 import { priorityLabels, ticketTypeLabels } from '../api/tickets'
 import type { TicketPriority, TicketType } from '../api/tickets'
 import { uiText } from '../locales/ui'
+import { formatDateTime } from './datetime'
 
 /**
  * 値を名前に直すための手がかり。**持っているものだけ渡す。**
@@ -165,10 +166,19 @@ export function activitySummary(a: Activity, ctx: ActivityLabelContext): string 
       return transition(uiText('見積(時間)'), shown(a.old_value), shown(a.new_value))
     case 'actual_hours':
       return transition(uiText('実績(時間)'), shown(a.old_value), shown(a.new_value))
+    // pb-217 より前の記録（日付のまま）
     case 'start_date':
       return transition(uiText('開始日'), shown(a.old_value), shown(a.new_value))
     case 'due_date':
       return transition(uiText('期限'), shown(a.old_value), shown(a.new_value))
+    // 予定日時（pb-217。9.13.2）。**値は書いた時点の見え方**——終日は YYYY-MM-DD（期限は
+    // 締切日）、時刻付きはエポックミリ秒の文字列なので、形で見分けて出す
+    case 'start_at':
+      return transition(uiText('開始'), planValue(a.old_value), planValue(a.new_value))
+    case 'due_at':
+      return transition(uiText('期限'), planValue(a.old_value), planValue(a.new_value))
+    case 'all_day':
+      return a.new_value === 'true' ? uiText('を終日に変更') : uiText('を時刻付きに変更')
     case 'comment':
       return { added: uiText('にコメントを追加'), edited: uiText('のコメントを編集'), removed: uiText('のコメントを削除') }[
         childChange(a)
@@ -221,4 +231,10 @@ export function activityDetail(a: Activity): string | null {
   }
   const shownValue = childChange(a) === 'removed' ? a.old_value : a.new_value
   return blank(shownValue) ? null : (shownValue as string)
+}
+
+/** 予定日時の履歴の値を出す。数字だけならエポックミリ秒（時刻付き）、それ以外は日付のまま */
+function planValue(v: string | null | undefined): string {
+  if (v === null || v === undefined || v === '') return shown(v ?? null)
+  return /^\d+$/.test(v) ? formatDateTime(Number(v)) : shown(v)
 }

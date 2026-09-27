@@ -86,7 +86,7 @@ func TestTicketsIntegration(t *testing.T) {
 	//
 	// **欠番を出さないこと**（DbDesign.md 6.4.1）。作った順に 1,2,3… になる。
 	epic := createTicketIT(t, r, session, base,
-		fmt.Sprintf(`{"type":"epic","title":"親の仕事","priority":"highest","tag_ids":[%q],"due_date":"2026-08-14","start_date":"2026-08-09"}`,
+		fmt.Sprintf(`{"type":"epic","title":"親の仕事","priority":"highest","tag_ids":[%q],"due_at":`+msOf(jstEnd("2026-08-14"))+`,"start_at":`+msOf(jstAt("2026-08-09"))+`}`,
 			tagID))
 	if epic["seq"].(float64) != 1 {
 		t.Errorf("最初の seq = %v, want 1", epic["seq"])
@@ -105,15 +105,15 @@ func TestTicketsIntegration(t *testing.T) {
 		t.Errorf("sort_key = %v が LexoRank の形式でない", epic["sort_key"])
 	}
 	// **date 列は時刻を持たない**（前日へずれる経路を作らない）。
-	if epic["due_date"] != "2026-08-14" || epic["start_date"] != "2026-08-09" {
-		t.Errorf("日付 = %v / %v（YYYY-MM-DD のまま返すこと）", epic["start_date"], epic["due_date"])
+	if epic["due_at"] != float64(jstEnd("2026-08-14").UnixMilli()) || epic["start_at"] != float64(jstAt("2026-08-09").UnixMilli()) || epic["all_day"] != true {
+		t.Errorf("予定 = %v / %v / all_day=%v（エポックミリ秒の半開区間・終日）", epic["start_at"], epic["due_at"], epic["all_day"])
 	}
 	if tags, _ := epic["tags"].([]any); len(tags) != 1 {
 		t.Errorf("tags = %v, want 1件", epic["tags"])
 	}
 
 	child := createTicketIT(t, r, session, base,
-		fmt.Sprintf(`{"type":"task","title":"子の仕事","priority":"low","parent_seq":1,"assignee_id":%q,"start_date":"2026-08-20"}`, adminID))
+		fmt.Sprintf(`{"type":"task","title":"子の仕事","priority":"low","parent_seq":1,"assignee_id":%q,"start_at":`+msOf(jstAt("2026-08-20"))+`}`, adminID))
 	if child["seq"].(float64) != 2 {
 		t.Errorf("2件目の seq = %v, want 2", child["seq"])
 	}
@@ -124,7 +124,7 @@ func TestTicketsIntegration(t *testing.T) {
 	grandchild := createTicketIT(t, r, session, base,
 		`{"type":"task","title":"孫の仕事","priority":"medium","parent_seq":2}`)
 	loner := createTicketIT(t, r, session, base,
-		`{"type":"story","title":"独りの仕事","priority":"lowest","due_date":"2026-09-05"}`)
+		`{"type":"story","title":"独りの仕事","priority":"lowest","due_at":`+msOf(jstEnd("2026-09-05"))+`}`)
 	// **優先度を持たないチケットを必ず1件混ぜる。** 一覧の SELECT に順位の列を
 	// 出していた版では、この行があると NULL を読めずに 500 になった（実サーバの
 	// 検証で気づいた）。単体テストはフェイクを返すので、この経路を通らない。
@@ -216,14 +216,19 @@ func TestTicketsIntegration(t *testing.T) {
 		// **複数の部分木は OR**（9.2.1）。バックログのエピックフィルタが使う。
 		{"部分木の複数指定は OR", "?parent=1,4", []int{1, 2, 3, 4}},
 		{"部分木の複数指定（重なる）", "?parent=1,2", []int{1, 2, 3}},
-		// due_within は期限超過を含み、due_date が NULL のものは除く
+		// due_within は期限超過を含み、due_at が NULL のものは除く
 		{"期限あり", "?due_within=3650d", []int{1, 4}},
 		// 予定期間は重なりを取り、片方だけの日付はその日1日の点として扱う。
 		// 両方未設定（3, 5）は期間を指定した時点で外れる。
-		{"予定期間（両端）", "?planned_from=2026-08-15&planned_to=2026-08-31", []int{2}},
-		{"予定期間（チケット期間の内側）", "?planned_from=2026-08-10&planned_to=2026-08-12", []int{1}},
-		{"予定期間（下限のみ）", "?planned_from=2026-08-20", []int{2, 4}},
-		{"予定期間（上限のみ）", "?planned_to=2026-08-20", []int{1, 2}},
+		// 予定期間は日の境界（基準タイムゾーン）をエポックミリ秒の半開区間で送る（pb-217）。
+		// 1 は 8/9〜8/14、2 は開始 8/20 だけ、4 は締切 9/5 だけ。
+		{"予定期間（両端）", "?planned_from=" + msOf(jstAt("2026-08-15")) + "&planned_to=" + msOf(jstEnd("2026-08-31")), []int{2}},
+		{"予定期間（チケット期間の内側）", "?planned_from=" + msOf(jstAt("2026-08-10")) + "&planned_to=" + msOf(jstEnd("2026-08-12")), []int{1}},
+		{"予定期間（下限のみ）", "?planned_from=" + msOf(jstAt("2026-08-20")), []int{2, 4}},
+		{"予定期間（上限のみ）", "?planned_to=" + msOf(jstEnd("2026-08-20")), []int{1, 2}},
+		// 締切だけのチケットは締切日に当たり、翌日には当たらない（due_at は翌日の0時）
+		{"予定期間（締切日だけ）", "?planned_from=" + msOf(jstAt("2026-09-05")) + "&planned_to=" + msOf(jstEnd("2026-09-05")), []int{4}},
+		{"予定期間（締切日の翌日）", "?planned_from=" + msOf(jstAt("2026-09-06")) + "&planned_to=" + msOf(jstEnd("2026-09-06")), []int{}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

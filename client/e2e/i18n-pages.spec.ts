@@ -57,11 +57,11 @@ async function mockProjectCatalog(page: Page) {
     { key: 'project_admin', scope: 'project', display_name: 'プロジェクト管理者', description: '当該プロジェクトの全操作と承認ができます', is_builtin: true, sort_order: 30 },
   ] }))
   await page.route('**/api/v1/projects/demo/sprints', (route) => reply(route, { items: [
-    { id: '01K00000000000000000000003', name: 'Sprint One', goal: null, start_date: '2026-09-26', end_date: '2026-10-02', status: 'planned', ticket_count: 1, closed_count: 0 },
+    { id: '01K00000000000000000000003', name: 'Sprint One', goal: null, start_at: 1790348400000, end_at: 1790953200000, all_day: true, status: 'planned', ticket_count: 1, closed_count: 0 },
   ] }))
   await page.route('**/api/v1/projects/demo', (route) => reply(route, {
       id: session.projects[0].id, key: 'demo', name: 'Demo Project', description: null,
-      status: 'active', workflow: { id: '01K0000000000000000000000002', name: 'Simple', statuses: [
+      status: 'active', timezone: 'Asia/Tokyo', workflow: { id: '01K0000000000000000000000002', name: 'Simple', statuses: [
         { key: 'todo', name: '未着手', category: 'todo', sort_order: 1, requires_human_approval: false, is_agent_reachable: true },
         { key: 'done', name: '完了', category: 'done', sort_order: 2, requires_human_approval: true, is_agent_reachable: false },
       ] },

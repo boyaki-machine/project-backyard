@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -33,8 +34,8 @@ func (q *Queries) AddTicketsToSprint(ctx context.Context, arg AddTicketsToSprint
 }
 
 const createSprint = `-- name: CreateSprint :exec
-INSERT INTO sprint (id, project_id, name, goal, start_date, end_date, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO sprint (id, project_id, name, goal, start_at, end_at, all_day, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type CreateSprintParams struct {
@@ -42,8 +43,9 @@ type CreateSprintParams struct {
 	ProjectID string
 	Name      string
 	Goal      pgtype.Text
-	StartDate pgtype.Date
-	EndDate   pgtype.Date
+	StartAt   *time.Time
+	EndAt     *time.Time
+	AllDay    bool
 	Status    string
 }
 
@@ -53,8 +55,9 @@ func (q *Queries) CreateSprint(ctx context.Context, arg CreateSprintParams) erro
 		arg.ProjectID,
 		arg.Name,
 		arg.Goal,
-		arg.StartDate,
-		arg.EndDate,
+		arg.StartAt,
+		arg.EndAt,
+		arg.AllDay,
 		arg.Status,
 	)
 	return err
@@ -80,10 +83,15 @@ func (q *Queries) DeleteSprint(ctx context.Context, arg DeleteSprintParams) (int
 }
 
 const finishSprint = `-- name: FinishSprint :execrows
-UPDATE sprint
+UPDATE sprint s
    SET status = 'completed',
-       end_date = COALESCE(end_date, CURRENT_DATE)
- WHERE project_id = $1 AND id = $2 AND status = 'active'
+       end_at = COALESCE(s.end_at,
+                  CASE WHEN s.all_day
+                       THEN (date_trunc('day', now() AT TIME ZONE p.timezone) + interval '1 day')
+                            AT TIME ZONE p.timezone
+                       ELSE now() END)
+  FROM project p
+ WHERE p.id = s.project_id AND s.project_id = $1 AND s.id = $2 AND s.status = 'active'
 `
 
 type FinishSprintParams struct {
@@ -93,9 +101,10 @@ type FinishSprintParams struct {
 
 // スプリントを終える（ApiDesign.md 9.12.2）。
 //
-// **end_date が空なら今日を入れる。** 期間を切らずに始めたスプリントでも、
-// 終わった日付は残る——9.2.1 の「棚に戻ったか」の判定は status を見るので
-// ここに依存しないが、あとから振り返る材料になる。
+// **end_at が空なら終わった時点を入れる。** 期間を切らずに始めたスプリントでも、
+// 終わった日時は残る——9.2.1 の「棚に戻ったか」の判定は status を見るので
+// ここに依存しないが、あとから振り返る材料になる。**終日のスプリントは基準タイム
+// ゾーンの翌日の0時**（今日を含める。半開区間の終わり）、時刻付きは now()（pb-217）。
 func (q *Queries) FinishSprint(ctx context.Context, arg FinishSprintParams) (int64, error) {
 	result, err := q.db.Exec(ctx, finishSprint, arg.ProjectID, arg.ID)
 	if err != nil {
@@ -141,8 +150,9 @@ SELECT
   s.id,
   s.name,
   s.goal,
-  s.start_date,
-  s.end_date,
+  s.start_at,
+  s.end_at,
+  s.all_day,
   s.status,
   (SELECT count(*) FROM ticket t
     WHERE t.sprint_id = s.id)::bigint AS ticket_count,
@@ -161,8 +171,9 @@ type GetSprintByIDRow struct {
 	ID          string
 	Name        string
 	Goal        pgtype.Text
-	StartDate   pgtype.Date
-	EndDate     pgtype.Date
+	StartAt     *time.Time
+	EndAt       *time.Time
+	AllDay      bool
 	Status      string
 	TicketCount int64
 	ClosedCount int64
@@ -176,8 +187,9 @@ func (q *Queries) GetSprintByID(ctx context.Context, arg GetSprintByIDParams) (G
 		&i.ID,
 		&i.Name,
 		&i.Goal,
-		&i.StartDate,
-		&i.EndDate,
+		&i.StartAt,
+		&i.EndAt,
+		&i.AllDay,
 		&i.Status,
 		&i.TicketCount,
 		&i.ClosedCount,
@@ -247,8 +259,9 @@ SELECT
   s.id,
   s.name,
   s.goal,
-  s.start_date,
-  s.end_date,
+  s.start_at,
+  s.end_at,
+  s.all_day,
   s.status,
   (SELECT count(*) FROM ticket t
     WHERE t.sprint_id = s.id)::bigint AS ticket_count,
@@ -256,15 +269,16 @@ SELECT
     WHERE t.sprint_id = s.id AND t.closed_at IS NOT NULL)::bigint AS closed_count
 FROM sprint s
 WHERE s.project_id = $1
-ORDER BY s.start_date DESC NULLS LAST, s.created_at DESC
+ORDER BY s.start_at DESC NULLS LAST, s.created_at DESC
 `
 
 type ListSprintsByProjectRow struct {
 	ID          string
 	Name        string
 	Goal        pgtype.Text
-	StartDate   pgtype.Date
-	EndDate     pgtype.Date
+	StartAt     *time.Time
+	EndAt       *time.Time
+	AllDay      bool
 	Status      string
 	TicketCount int64
 	ClosedCount int64
@@ -277,7 +291,7 @@ type ListSprintsByProjectRow struct {
 //
 // **スプリントの定義を扱う。** 開始・終了は下の 9.12.1 / 9.12.2 のクエリで、
 // バーンダウン・ベロシティは進捗分析（構想。GuiDesign.md 10章）が持つ。
-// items[] は start_date 降順（NULL は末尾）、同値は created_at 降順
+// items[] は start_at 降順（NULL は末尾）、同値は created_at 降順
 // （ApiDesign.md 9.12）。新しいものが上に来る並びで、5.9.5 の図と一致する。
 //
 // closed_count は closed_at IS NOT NULL で数える。status_category = 'done'
@@ -297,8 +311,9 @@ func (q *Queries) ListSprintsByProject(ctx context.Context, projectID string) ([
 			&i.ID,
 			&i.Name,
 			&i.Goal,
-			&i.StartDate,
-			&i.EndDate,
+			&i.StartAt,
+			&i.EndAt,
+			&i.AllDay,
 			&i.Status,
 			&i.TicketCount,
 			&i.ClosedCount,
@@ -454,26 +469,28 @@ const updateSprint = `-- name: UpdateSprint :execrows
 UPDATE sprint SET
   name       = COALESCE($1, name),
   goal       = CASE WHEN $2::boolean       THEN $3       ELSE goal END,
-  start_date = CASE WHEN $4::boolean THEN $5 ELSE start_date END,
-  end_date   = CASE WHEN $6::boolean   THEN $7   ELSE end_date END,
-  status     = COALESCE($8, status)
-WHERE project_id = $9 AND id = $10
+  start_at   = CASE WHEN $4::boolean THEN $5 ELSE start_at END,
+  end_at     = CASE WHEN $6::boolean   THEN $7   ELSE end_at END,
+  all_day    = COALESCE($8, all_day),
+  status     = COALESCE($9, status)
+WHERE project_id = $10 AND id = $11
 `
 
 type UpdateSprintParams struct {
-	Name         pgtype.Text
-	SetGoal      bool
-	Goal         pgtype.Text
-	SetStartDate bool
-	StartDate    pgtype.Date
-	SetEndDate   bool
-	EndDate      pgtype.Date
-	Status       pgtype.Text
-	ProjectID    string
-	ID           string
+	Name       pgtype.Text
+	SetGoal    bool
+	Goal       pgtype.Text
+	SetStartAt bool
+	StartAt    *time.Time
+	SetEndAt   bool
+	EndAt      *time.Time
+	AllDay     pgtype.Bool
+	Status     pgtype.Text
+	ProjectID  string
+	ID         string
 }
 
-// COALESCE による部分更新。goal / start_date / end_date は NULL を
+// COALESCE による部分更新。goal / start_at / end_at は NULL を
 // 「値として設定する」ことがある（欄を空にする操作）ため、送られたかどうかを
 // COALESCE では区別できない。**明示的なフラグ引数で分ける**
 // （users_update.go の同種の扱いに揃える）。
@@ -482,10 +499,11 @@ func (q *Queries) UpdateSprint(ctx context.Context, arg UpdateSprintParams) (int
 		arg.Name,
 		arg.SetGoal,
 		arg.Goal,
-		arg.SetStartDate,
-		arg.StartDate,
-		arg.SetEndDate,
-		arg.EndDate,
+		arg.SetStartAt,
+		arg.StartAt,
+		arg.SetEndAt,
+		arg.EndAt,
+		arg.AllDay,
 		arg.Status,
 		arg.ProjectID,
 		arg.ID,

@@ -387,11 +387,12 @@ type Sprint struct {
 	ProjectID string
 	Name      string
 	Goal      pgtype.Text
-	StartDate pgtype.Date
-	EndDate   pgtype.Date
 	Status    string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	StartAt   *time.Time
+	EndAt     *time.Time
+	AllDay    bool
 }
 
 type Tag struct {
@@ -430,8 +431,6 @@ type Ticket struct {
 	EstimatePoint pgtype.Float8
 	EstimateHours pgtype.Float8
 	ActualHours   pgtype.Float8
-	StartDate     pgtype.Date
-	DueDate       pgtype.Date
 	SprintID      pgtype.Text
 	SortKey       pgtype.Text
 	// 実行モード。エージェントが着手してよいかを決める。既定は agent_draft（0025）。DbDesign.md 6.6
@@ -451,6 +450,9 @@ type Ticket struct {
 	WorkingAgentID     pgtype.Text
 	ActualPoint        pgtype.Float8
 	ActualPointVersion pgtype.Text
+	StartAt            *time.Time
+	DueAt              *time.Time
+	AllDay             bool
 }
 
 type TicketLink struct {

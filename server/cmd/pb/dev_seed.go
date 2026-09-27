@@ -1051,13 +1051,18 @@ func seedSprints(ctx context.Context, q gen.Querier, projectID string, p devProj
 		if status == "" {
 			status = "planned"
 		}
+		startAt, endAt, err := devSchedule(ctx, q, projectID, start, end)
+		if err != nil {
+			return err
+		}
 		if err := q.CreateSprint(ctx, gen.CreateSprintParams{
 			ID:        ulidgen.New(),
 			ProjectID: projectID,
 			Name:      sp.Name,
 			Goal:      nullText(sp.Goal),
-			StartDate: start,
-			EndDate:   end,
+			StartAt:   startAt,
+			EndAt:     endAt,
+			AllDay:    true,
 			Status:    status,
 		}); err != nil {
 			return fmt.Errorf("プロジェクト %s にスプリント %s を作れない: %w", p.Key, sp.Name, err)
@@ -1173,6 +1178,10 @@ func seedTickets(
 			estimate = pgtype.Float8{Float64: tk.EstimatePoint, Valid: true}
 		}
 
+		startAt, dueAt, err := devSchedule(ctx, q, projectID, start, due)
+		if err != nil {
+			return err
+		}
 		ticketID := ulidgen.New()
 		if err := q.CreateTicket(ctx, gen.CreateTicketParams{
 			ID:            ticketID,
@@ -1187,8 +1196,9 @@ func seedTickets(
 			AssigneeID:    assigneeID,
 			ReporterID:    nullText(reporterID),
 			EstimatePoint: estimate,
-			StartDate:     start,
-			DueDate:       due,
+			StartAt:       startAt,
+			DueAt:         dueAt,
+			AllDay:        true,
 			SortKey:       pgtype.Text{String: sortKey, Valid: true},
 		}); err != nil {
 			return fmt.Errorf("プロジェクト %s にチケット %q を作れない: %w", p.Key, tk.Title, err)
@@ -1623,4 +1633,31 @@ func nullText(s string) pgtype.Text {
 func nowPtr() *time.Time {
 	t := time.Now()
 	return &t
+}
+
+// devSchedule は定義ファイルの日付（開始日・締切日を含む）を、プロジェクトの基準タイム
+// ゾーンの半開区間へ直す（DbDesign.md 6.6.1、pb-217）。終わりは締切日の翌日の0時。
+// **定義ファイルは日付のまま書く**——人が書くものであり、「翌日の0時」を書かせると誤る。
+func devSchedule(
+	ctx context.Context, q gen.Querier, projectID string, start, end pgtype.Date,
+) (*time.Time, *time.Time, error) {
+	if !start.Valid && !end.Valid {
+		return nil, nil, nil
+	}
+	name, err := q.GetProjectTimezone(ctx, projectID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("基準タイムゾーンを読めない: %w", err)
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("基準タイムゾーン %q を解決できない: %w", name, err)
+	}
+	at := func(d pgtype.Date, days int) *time.Time {
+		if !d.Valid {
+			return nil
+		}
+		t := time.Date(d.Time.Year(), d.Time.Month(), d.Time.Day()+days, 0, 0, 0, 0, loc)
+		return &t
+	}
+	return at(start, 0), at(end, 1), nil
 }

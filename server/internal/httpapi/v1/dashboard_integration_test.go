@@ -26,7 +26,7 @@ import (
 //     stale / unassigned）
 //   - **status_key がワークフローに解決できないチケット**が、どのカテゴリにも
 //     入らないまま total には入ること（LEFT JOIN の帰結。合わせに行かない）
-//   - overdue の CURRENT_DATE と stale の make_interval が、境界の日付で
+//   - overdue の due_at <= now() と stale の make_interval が、境界の日付で
 //     期待どおりに効くこと（13日前は放置でなく、20日前は放置である）
 //   - **ORDER BY occurred_at DESC, id DESC の tie-break が SQL 側で効く**こと
 //     （同じ時刻の2行の並びは、フェイクではなく DB が決める）
@@ -100,7 +100,7 @@ func TestDashboardIntegration(t *testing.T) {
 		ticketType string
 		statusKey  string
 		closed     bool
-		dueInDays  *int32 // CURRENT_DATE からの日数。nil なら due_date は NULL
+		dueInDays  *int32 // 基準タイムゾーン（Asia/Tokyo）の今日からの日数（締切日）。nil なら due_at は NULL
 		assignee   bool
 		updatedAgo int32 // 何日前に更新されたことにするか
 	}{
@@ -125,9 +125,12 @@ func TestDashboardIntegration(t *testing.T) {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO ticket
 			  (id, project_id, seq, type, title, status_key,
-			   due_date, closed_at, assignee_id, created_at, updated_at)
+			   due_at, closed_at, assignee_id, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, 'ダッシュボード結合テスト', $5,
-			   CASE WHEN $6::int IS NULL THEN NULL ELSE CURRENT_DATE + $6::int END,
+			   -- 終日の「締切日＝今日+N日」は、その翌日の0時（半開区間の終わり。pb-217）
+			   CASE WHEN $6::int IS NULL THEN NULL
+			        ELSE timezone('Asia/Tokyo', date_trunc('day', timezone('Asia/Tokyo', now()))
+			                                    + ($6::int + 1) * interval '1 day') END,
 			   CASE WHEN $7::boolean THEN now() ELSE NULL END,
 			   $8,
 			   now(), now() - make_interval(days => $9::int))`,

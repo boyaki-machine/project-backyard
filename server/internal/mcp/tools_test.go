@@ -191,9 +191,9 @@ const listBody = `{"items":[{"id":"01TICKET00000000000000000","seq":31,"type":"t
 	`"working_agent":{"id":"01AGENT000000000000000000","kind":"agent","display_name":"claude-code"},` +
 	`"parent_seq":null,"has_children":true,"sort_key":"0|hzzzzz:","staged_at":null,` +
 	`"tags":[{"id":"01TAG00000000000000000000","name":"設計"}],"sprint":null,` +
-	`"estimate_point":5,"estimate_hours":null,"actual_hours":3.5,"start_date":"2026-08-09",` +
-	`"due_date":"2026-08-14","closed_at":null,"version":3,` +
-	`"created_at":"2026-08-09T01:00:00Z","updated_at":"2026-08-11T00:12:44Z"}],` +
+	`"estimate_point":5,"estimate_hours":null,"actual_hours":3.5,"start_at":1786201200000,` +
+	`"due_at":1786719600000,"all_day":false,"closed_at":null,"version":3,` +
+	`"created_at":1786237200000,"updated_at":1786407164000}],` +
 	`"page":1,"per_page":200,"total":48,"total_pages":1}`
 
 func TestListTasksKeepsExactlyElevenFields(t *testing.T) {
@@ -218,7 +218,7 @@ func TestListTasksKeepsExactlyElevenFields(t *testing.T) {
 	}
 
 	want := []string{"seq", "type", "title", "status", "priority", "assignee",
-		"working_agent", "parent_seq", "staged_at", "due_date", "updated_at"}
+		"working_agent", "parent_seq", "staged_at", "due_at", "updated_at"}
 	for _, k := range want {
 		if _, ok := got.Items[0][k]; !ok {
 			t.Errorf("%s が落ちている", k)
@@ -1050,5 +1050,66 @@ func TestStartConditionIsWrittenTheSameEverywhere(t *testing.T) {
 	want := cond + "では、先に `pb_list_transitions` を呼ばなくてよい。"
 	if !strings.Contains(string(body), want) {
 		t.Errorf("/pb-implement の本文に %q が無い", want)
+	}
+}
+
+// 終日のチケットは、一覧に締切日を含む due_date を添える（Design.md 8.5.1。pb-217）。
+// due_at は締切日の翌日の0時なので、それだけを見ると締切が1日後に読める。
+// **基準タイムゾーンは REST の GET /projects で引く**（2手目）。
+func TestListTasksAddsDueDateForAllDay(t *testing.T) {
+	allDay := strings.Replace(listBody, `"all_day":false`, `"all_day":true`, 1)
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: allDay},
+		{status: http.StatusOK, body: `{"key":"demo","timezone":"Asia/Tokyo"}`},
+	}}
+	h := New(rest, "v0")
+	out := callTool1(t, h, toolCallBody("pb_list_tasks", `{}`))
+
+	var got struct {
+		Items []map[string]json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out.Content[0].Text), &got); err != nil {
+		t.Fatalf("一覧を読めない: %v（%s）", err, out.Content[0].Text)
+	}
+	if d := string(got.Items[0]["due_date"]); d != `"2026-08-14"` {
+		t.Errorf("due_date = %s, want \"2026-08-14\"（due_at は 8/15 0:00 JST）", d)
+	}
+	if d := string(got.Items[0]["due_at"]); d != `"2026-08-14T15:00:00Z"` {
+		t.Errorf("due_at = %s, want ISO8601 UTC", d)
+	}
+	if _, ok := got.Items[0]["all_day"]; ok {
+		t.Error("all_day は出さない（11項目＋due_date）")
+	}
+}
+
+// 日付の引数は基準タイムゾーンでエポックへ直し、締切は翌日の0時にする（8.5.1。pb-217）。
+func TestCreateTicketConvertsDatesToEpoch(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: `{"key":"demo","timezone":"Asia/Tokyo"}`},
+		{status: http.StatusCreated, body: `{"id":"01T","seq":5,"status":{"key":"todo"},"version":1,"parent_seq":null}`},
+	}}
+	h := New(rest, "v0")
+	callTool1(t, h, toolCallBody("pb_create_ticket",
+		`{"type":"task","title":"x","start_date":"2026-08-09","due_date":"2026-08-14"}`))
+
+	var body map[string]any
+	if err := json.Unmarshal([]byte(rest.gotBody), &body); err != nil {
+		t.Fatalf("送った本文を読めない: %v（%s）", err, rest.gotBody)
+	}
+	if body["start_at"] != float64(1786201200000) || body["due_at"] != float64(1786719600000) || body["all_day"] != true {
+		t.Errorf("本文 = %v, want start_at=8/9 0:00 JST, due_at=8/15 0:00 JST, all_day=true", body)
+	}
+	if _, ok := body["start_date"]; ok {
+		t.Error("start_date を REST へそのまま送っている")
+	}
+}
+
+// 終日と時刻付きを同じ呼び出しで混ぜると -32602（8.5.1）。
+func TestCreateTicketRejectsMixedSchedule(t *testing.T) {
+	h := New(&fakeREST{body: `{}`}, "v0")
+	resp := decodeRPC(t, callMCP(t, h, agentPrincipal(), toolCallBody("pb_create_ticket",
+		`{"type":"task","title":"x","start_date":"2026-08-09","due_at":"2026-08-14T17:00:00+09:00"}`)))
+	if resp.Error == nil || resp.Error.Code != codeInvalidParams {
+		t.Fatalf("error = %+v, want -32602", resp.Error)
 	}
 }

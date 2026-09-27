@@ -7,10 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
@@ -49,14 +47,6 @@ func sprintFake() *fakeQuerier {
 	}
 }
 
-func date(s string) pgtype.Date {
-	t, err := time.Parse(time.DateOnly, s)
-	if err != nil {
-		panic(err)
-	}
-	return pgtype.Date{Time: t, Valid: true}
-}
-
 // sprintJSON は応答を読むための型。
 //
 // **sprintView をそのまま使わない。** Date / Time は表記を固定するための
@@ -66,8 +56,9 @@ type sprintJSON struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
 	Goal        *string `json:"goal"`
-	StartDate   *string `json:"start_date"`
-	EndDate     *string `json:"end_date"`
+	StartAt     *int64  `json:"start_at"`
+	EndAt       *int64  `json:"end_at"`
+	AllDay      bool    `json:"all_day"`
 	Status      string  `json:"status"`
 	TicketCount int64   `json:"ticket_count"`
 	ClosedCount int64   `json:"closed_count"`
@@ -92,10 +83,10 @@ func TestListSprintsReturnsCounts(t *testing.T) {
 	q := sprintFake()
 	q.sprintRows = []gen.ListSprintsByProjectRow{
 		{ID: "01K2SPRINT000000000000003", Name: "Sprint 3", Goal: txt("認証を通す"),
-			StartDate: date("2026-08-05"), EndDate: date("2026-08-18"),
+			StartAt: jstAt("2026-08-05"), EndAt: jstEnd("2026-08-18"), AllDay: true,
 			Status: "active", TicketCount: 12, ClosedCount: 5},
 		{ID: "01K2SPRINT000000000000002", Name: "Sprint 2",
-			StartDate: date("2026-07-22"), EndDate: date("2026-08-04"),
+			StartAt: jstAt("2026-07-22"), EndAt: jstEnd("2026-08-04"), AllDay: true,
 			Status: "completed", TicketCount: 14, ClosedCount: 14},
 	}
 	h := &handler{q: q}
@@ -131,18 +122,19 @@ func TestListSprintsFormatsDatesAsPlainDate(t *testing.T) {
 	q := sprintFake()
 	q.sprintRows = []gen.ListSprintsByProjectRow{
 		{ID: testSprintID, Name: "Sprint 3",
-			StartDate: date("2026-08-05"), EndDate: date("2026-08-18"), Status: "active"},
+			StartAt: jstAt("2026-08-05"), EndAt: jstEnd("2026-08-18"), AllDay: true, Status: "active"},
 	}
 	h := &handler{q: q}
 	rec := httptest.NewRecorder()
 	h.listSprints(rec, sprintReq(http.MethodGet, "/api/v1/projects/demo/sprints", "", ""))
 
 	got := rec.Body.String()
-	if !strings.Contains(got, `"start_date":"2026-08-05"`) {
-		t.Errorf("start_date が日付形式でない: %s", got)
+	// 予定はエポックミリ秒の半開区間（9.3.1）。終わりは締切日の翌日の0時。
+	if !strings.Contains(got, `"start_at":`+msOf(jstAt("2026-08-05"))) {
+		t.Errorf("start_at がエポックミリ秒でない: %s", got)
 	}
-	if !strings.Contains(got, `"end_date":"2026-08-18"`) {
-		t.Errorf("end_date が日付形式でない: %s", got)
+	if !strings.Contains(got, `"end_at":`+msOf(jstEnd("2026-08-18"))) || !strings.Contains(got, `"all_day":true`) {
+		t.Errorf("end_at / all_day が違う: %s", got)
 	}
 }
 
@@ -195,7 +187,7 @@ func TestCreateSprintStoresDatesAndGoal(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	h.createSprint(rec, sprintReq(http.MethodPost, "/api/v1/projects/demo/sprints",
-		`{"name":"Sprint 4","goal":"  バックログを作る  ","start_date":"2026-08-19","end_date":"2026-09-01","status":"active"}`, ""))
+		`{"name":"Sprint 4","goal":"  バックログを作る  ","start_at":`+msOf(jstAt("2026-08-19"))+`,"end_at":`+msOf(jstEnd("2026-09-01"))+`,"status":"active"}`, ""))
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
@@ -204,8 +196,8 @@ func TestCreateSprintStoresDatesAndGoal(t *testing.T) {
 	if got.Goal.String != "バックログを作る" {
 		t.Errorf("goal = %q（トリムしていない）", got.Goal.String)
 	}
-	if !got.StartDate.Valid || got.StartDate.Time.Format(time.DateOnly) != "2026-08-19" {
-		t.Errorf("start_date = %+v", got.StartDate)
+	if got.StartAt == nil || !got.StartAt.Equal(*jstAt("2026-08-19")) || !got.AllDay {
+		t.Errorf("start_at = %v all_day = %v", got.StartAt, got.AllDay)
 	}
 	if got.Status != "active" {
 		t.Errorf("status = %q, want active", got.Status)
@@ -238,9 +230,9 @@ func TestCreateSprintRejectsInvalidInput(t *testing.T) {
 		{"名前が空", `{"name":"  "}`, "name"},
 		{"51文字", `{"name":"` + strings.Repeat("あ", 51) + `"}`, "name"},
 		{"状態が値域外", `{"name":"S","status":"done"}`, "status"},
-		{"日付の形式違い", `{"name":"S","start_date":"2026/08/05"}`, "start_date"},
-		{"日付に時刻が混ざる", `{"name":"S","start_date":"2026-08-05T00:00:00Z"}`, "start_date"},
-		{"終了が開始より前", `{"name":"S","start_date":"2026-08-18","end_date":"2026-08-05"}`, "end_date"},
+		{"日時が文字列", `{"name":"S","start_at":"2026-08-05"}`, "start_at"},
+		{"終日なのに0時でない", `{"name":"S","start_at":` + msOf(plusMS(jstAt("2026-08-05"), 1)) + `}`, "start_at"},
+		{"終了が開始より前", `{"name":"S","start_at":` + msOf(jstAt("2026-08-18")) + `,"end_at":` + msOf(jstEnd("2026-08-05")) + `}`, "end_at"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -268,7 +260,7 @@ func TestCreateSprintAllowsSameDay(t *testing.T) {
 	h := &handler{q: q}
 	rec := httptest.NewRecorder()
 	h.createSprint(rec, sprintReq(http.MethodPost, "/api/v1/projects/demo/sprints",
-		`{"name":"S","start_date":"2026-08-05","end_date":"2026-08-05"}`, ""))
+		`{"name":"S","start_at":`+msOf(jstAt("2026-08-05"))+`,"end_at":`+msOf(jstEnd("2026-08-05"))+`}`, ""))
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201（開始と終了が同日は許す）(%s)", rec.Code, rec.Body.String())
@@ -281,13 +273,13 @@ func TestCreateSprintAllowsOnlyOneDate(t *testing.T) {
 	h := &handler{q: q}
 	rec := httptest.NewRecorder()
 	h.createSprint(rec, sprintReq(http.MethodPost, "/api/v1/projects/demo/sprints",
-		`{"name":"S","end_date":"2026-08-05"}`, ""))
+		`{"name":"S","end_at":`+msOf(jstEnd("2026-08-05"))+`}`, ""))
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
 	}
-	if q.createdSprints[0].StartDate.Valid {
-		t.Errorf("start_date が NULL でない: %+v", q.createdSprints[0].StartDate)
+	if q.createdSprints[0].StartAt != nil {
+		t.Errorf("start_at が NULL でない: %v", q.createdSprints[0].StartAt)
 	}
 }
 
@@ -299,14 +291,14 @@ func TestPatchSprintValidatesDatesAgainstCurrentValues(t *testing.T) {
 	q := sprintFake()
 	q.sprintByID[testSprintID] = gen.GetSprintByIDRow{
 		ID: testSprintID, Name: "Sprint 3",
-		StartDate: date("2026-08-05"), EndDate: date("2026-08-18"), Status: "active",
+		StartAt: jstAt("2026-08-05"), EndAt: jstEnd("2026-08-18"), AllDay: true, Status: "active",
 	}
 	h := &handler{q: q}
 
 	// 終了日だけを開始日より前へ動かす。
 	rec := httptest.NewRecorder()
 	h.patchSprint(rec, sprintReq(http.MethodPatch, "/api/v1/projects/demo/sprints/"+testSprintID,
-		`{"end_date":"2026-08-01"}`, testSprintID))
+		`{"end_at":`+msOf(jstEnd("2026-08-01"))+`}`, testSprintID))
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422（現在の start_date と矛盾する）(%s)", rec.Code, rec.Body.String())
@@ -321,20 +313,20 @@ func TestPatchSprintAcceptsBothDatesTogether(t *testing.T) {
 	q := sprintFake()
 	q.sprintByID[testSprintID] = gen.GetSprintByIDRow{
 		ID: testSprintID, Name: "Sprint 3",
-		StartDate: date("2026-08-05"), EndDate: date("2026-08-18"), Status: "active",
+		StartAt: jstAt("2026-08-05"), EndAt: jstEnd("2026-08-18"), AllDay: true, Status: "active",
 	}
 	h := &handler{q: q}
 
 	rec := httptest.NewRecorder()
 	h.patchSprint(rec, sprintReq(http.MethodPatch, "/api/v1/projects/demo/sprints/"+testSprintID,
-		`{"start_date":"2026-07-01","end_date":"2026-07-14"}`, testSprintID))
+		`{"start_at":`+msOf(jstAt("2026-07-01"))+`,"end_at":`+msOf(jstEnd("2026-07-14"))+`}`, testSprintID))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
 	got := decodeSprint(t, rec)
-	if got.StartDate == nil || *got.StartDate != "2026-07-01" {
-		t.Errorf("start_date が更新されていない: %+v", got.StartDate)
+	if got.StartAt == nil || *got.StartAt != jstAt("2026-07-01").UnixMilli() {
+		t.Errorf("start_at が更新されていない: %v", got.StartAt)
 	}
 }
 
@@ -343,7 +335,7 @@ func TestPatchSprintNullClearsAndAbsentKeeps(t *testing.T) {
 	q := sprintFake()
 	q.sprintByID[testSprintID] = gen.GetSprintByIDRow{
 		ID: testSprintID, Name: "Sprint 3", Goal: txt("認証を通す"),
-		StartDate: date("2026-08-05"), EndDate: date("2026-08-18"), Status: "active",
+		StartAt: jstAt("2026-08-05"), EndAt: jstEnd("2026-08-18"), AllDay: true, Status: "active",
 	}
 	h := &handler{q: q}
 
@@ -359,15 +351,15 @@ func TestPatchSprintNullClearsAndAbsentKeeps(t *testing.T) {
 		t.Errorf("goal を NULL にしていない: %+v", arg)
 	}
 	// 送っていない日付は触らない。
-	if arg.SetStartDate || arg.SetEndDate {
+	if arg.SetStartAt || arg.SetEndAt {
 		t.Errorf("送っていない日付を更新した: %+v", arg)
 	}
 	if got := decodeSprint(t, rec); got.Goal != nil {
 		t.Errorf("goal = %q, want null", *got.Goal)
 	}
 	// 据え置いた日付は残っている。
-	if got := decodeSprint(t, rec); got.StartDate == nil {
-		t.Errorf("据え置くはずの start_date が消えた")
+	if got := decodeSprint(t, rec); got.StartAt == nil {
+		t.Errorf("据え置くはずの start_at が消えた")
 	}
 }
 
@@ -376,19 +368,19 @@ func TestPatchSprintClearsDate(t *testing.T) {
 	q := sprintFake()
 	q.sprintByID[testSprintID] = gen.GetSprintByIDRow{
 		ID: testSprintID, Name: "Sprint 3",
-		StartDate: date("2026-08-05"), EndDate: date("2026-08-18"), Status: "active",
+		StartAt: jstAt("2026-08-05"), EndAt: jstEnd("2026-08-18"), AllDay: true, Status: "active",
 	}
 	h := &handler{q: q}
 
 	rec := httptest.NewRecorder()
 	h.patchSprint(rec, sprintReq(http.MethodPatch, "/api/v1/projects/demo/sprints/"+testSprintID,
-		`{"start_date":null}`, testSprintID))
+		`{"start_at":null}`, testSprintID))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
-	if got := decodeSprint(t, rec); got.StartDate != nil {
-		t.Errorf("start_date が消えていない: %v", *got.StartDate)
+	if got := decodeSprint(t, rec); got.StartAt != nil {
+		t.Errorf("start_at が消えていない: %v", *got.StartAt)
 	}
 }
 

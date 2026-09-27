@@ -20,11 +20,13 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
@@ -58,8 +60,12 @@ type createTicketRequest struct {
 	SprintID      *string  `json:"sprint_id"`
 	EstimatePoint *float64 `json:"estimate_point"`
 	EstimateHours *float64 `json:"estimate_hours"`
-	StartDate     string   `json:"start_date"`
-	DueDate       string   `json:"due_date"`
+	// 予定（9.3.1。pb-217）。エポックミリ秒。all_day の省略は終日。
+	// **RawMessage で受ける**——*int64 だと文字列が来たときに本文ごと 400 になり、
+	// どの欄が誤りかを 422 の details で返せない。
+	StartAt json.RawMessage `json:"start_at"`
+	DueAt   json.RawMessage `json:"due_at"`
+	AllDay  *bool           `json:"all_day"`
 }
 
 // createTicket はチケットを1件作る。201 + Location + 9.5 形式の本体。
@@ -75,14 +81,21 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 形だけで判定できる検証は、DBを引く前にまとめて済ませる。
-	startDate, dueDate, apiErr := validateCreateTicket(&req)
+	ctx := r.Context()
+	// 終日の予定は基準タイムゾーンの0時で検証する（9.3.1）ので、先に引く。
+	loc, err := projectLocation(ctx, h.q, projectID)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+		return
+	}
+
+	// 形だけで判定できる検証は、書き込みの前にまとめて済ませる。
+	sched, apiErr := validateCreateTicket(&req, loc)
 	if apiErr != nil {
 		apierr.Write(w, r, apiErr)
 		return
 	}
 
-	ctx := r.Context()
 	rec := activity.FromRequest(r)
 	ticketID := ulidgen.New()
 	var (
@@ -92,7 +105,7 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 		created bool
 	)
 
-	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+	err = h.tx.RunInTx(ctx, func(q gen.Querier) error {
 		// 参照先の検証はトランザクションの中で行う。外で確かめてから入ると、
 		// 確かめた行が消えていることがある（5.3 が check-key の結果を
 		// 信頼しないのと同じ理由）。
@@ -140,8 +153,9 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 			ReporterID:    pgtype.Text{String: p.ActorID, Valid: true},
 			EstimatePoint: float8Of(req.EstimatePoint),
 			EstimateHours: float8Of(req.EstimateHours),
-			StartDate:     startDate,
-			DueDate:       dueDate,
+			StartAt:       sched.start,
+			DueAt:         sched.due,
+			AllDay:        sched.allDay,
 			SortKey:       pgtype.Text{String: sortKey, Valid: true},
 		}); err != nil {
 			return fmt.Errorf("チケットを作成できない: %w", err)
@@ -207,7 +221,13 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 var errTicketReference = fmt.Errorf("チケットの参照先が不正")
 
 // validateCreateTicket は形だけで判定できる検証（9.3 の表）。
-func validateCreateTicket(req *createTicketRequest) (pgtype.Date, pgtype.Date, *apierr.Error) {
+// createSchedule は 9.3 の予定を検証した結果。
+type createSchedule struct {
+	start, due *time.Time
+	allDay     bool
+}
+
+func validateCreateTicket(req *createTicketRequest, loc *time.Location) (createSchedule, *apierr.Error) {
 	var details []apierr.Detail
 
 	// **sprint_id は受け付けない**（9.3）。9.5.2 の PATCH と同じ
@@ -261,37 +281,18 @@ func validateCreateTicket(req *createTicketRequest) (pgtype.Date, pgtype.Date, *
 	details = appendNonNegative(details, "estimate_point", req.EstimatePoint)
 	details = appendNonNegative(details, "estimate_hours", req.EstimateHours)
 
-	// 日付は date 列であって timestamptz ではない（DbDesign.md 6.6）。
-	// "2026-08-05T00:00:00Z" のような時刻つきは受けない（apitime.go）。
-	startDate, okStart := parseAPIDate(req.StartDate)
-	if !okStart {
-		details = append(details, apierr.Detail{
-			Field: "start_date", Code: "invalid",
-			Message: "開始日は YYYY-MM-DD の形式で指定してください",
-		})
-	}
-	dueDate, okDue := parseAPIDate(req.DueDate)
-	if !okDue {
-		details = append(details, apierr.Detail{
-			Field: "due_date", Code: "invalid",
-			Message: "期限は YYYY-MM-DD の形式で指定してください",
-		})
-	}
-	// DbDesign.md 6.6 の ck_ticket_dates。DB の CHECK に当てると 500 になるので、
-	// 同じ規則をここで先に見て 422 にする。
-	if okStart && okDue && startDate.Valid && dueDate.Valid &&
-		startDate.Time.After(dueDate.Time) {
-		details = append(details, apierr.Detail{
-			Field: "due_date", Code: "invalid",
-			Message: "期限は開始日以降の日付で指定してください",
-		})
-	}
+	// 予定（9.3.1）。前後関係は DbDesign.md 6.6 の ck_ticket_schedule と同じ規則で、
+	// DB の CHECK に当てると 500 になるので先に 422 にする。終日なら基準タイムゾーンの0時。
+	var startOpt, dueOpt optional[time.Time]
+	startOpt, details = parseOptionalInstant(req.StartAt, "start_at", details)
+	dueOpt, details = parseOptionalInstant(req.DueAt, "due_at", details)
+	sched := createSchedule{start: pick(startOpt, nil), due: pick(dueOpt, nil), allDay: boolOr(req.AllDay, true)}
+	details = validateSchedule(sched.start, sched.due, sched.allDay, loc, "due_at", details)
 
 	if len(details) > 0 {
-		return pgtype.Date{}, pgtype.Date{},
-			apierr.New(apierr.ValidationFailed).WithDetails(details...)
+		return createSchedule{}, apierr.New(apierr.ValidationFailed).WithDetails(details...)
 	}
-	return startDate, dueDate, nil
+	return sched, nil
 }
 
 // resolveTicketParent は parent_seq を ticket.id へ解決する（9.3）。

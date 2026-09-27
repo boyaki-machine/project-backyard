@@ -56,10 +56,13 @@ export function currentTimezone(): string | null {
  * **`Intl.DateTimeFormat` の `formatToParts` を使う。** `toLocaleString` の
  * 文字列を切り出すと、ロケールごとの区切りに依存して壊れる。
  */
-function parts(ms: number): { y: string; mo: string; d: string; h: string; mi: string; s: string } | null {
+function parts(
+  ms: number,
+  tz: string | null = timezone,
+): { y: string; mo: string; d: string; h: string; mi: string; s: string } | null {
   const t = new Date(ms)
   if (Number.isNaN(t.getTime())) return null
-  if (timezone === null) {
+  if (tz === null) {
     return {
       y: String(t.getFullYear()),
       mo: p2(t.getMonth() + 1),
@@ -70,7 +73,7 @@ function parts(ms: number): { y: string; mo: string; d: string; h: string; mi: s
     }
   }
   const f = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
+    timeZone: tz,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -208,10 +211,74 @@ export function startOfDayInstant(date: string): number | null {
   return t
 }
 
-/** その瞬間の、設定タイムゾーンでの時差（壁時計 − UTC。ミリ秒。分の単位まで） */
-function offsetMs(utcMs: number): number {
-  const p = parts(utcMs)
+/** その瞬間の、tz（既定は設定タイムゾーン）での時差（壁時計 − UTC。ミリ秒。分の単位まで） */
+function offsetMs(utcMs: number, tz: string | null = timezone): number {
+  const p = parts(utcMs, tz)
   if (p === null) return 0
   const wall = Date.UTC(Number(p.y), Number(p.mo) - 1, Number(p.d), Number(p.h), Number(p.mi))
   return wall - Math.floor(utcMs / 60_000) * 60_000
+}
+
+// ── 予定日時（pb-217。`GuiDesign.md` 7.5「予定日時の出し方」）──────────────
+//
+// 予定は `start_at` / `due_at`（エポックミリ秒の半開区間）＋ `all_day` で届く
+// （`ApiDesign.md` 9.3.1）。**終日はプロジェクトの基準タイムゾーンの日付**で扱い、
+// 見る人のタイムゾーン（`setTimezone`）を通さない——「9/30締切」はプロジェクトの暦の上の
+// 日付であり、瞬間として変換すると UTC より西の地域で前日へずれる。
+
+/**
+ * 終日の値を基準タイムゾーン `tz` の日付（`YYYY-MM-DD`）にする。
+ * **終わり（`isEnd`）は1日戻す**——`due_at` は締切日の翌日の0時である。
+ */
+export function planDate(ms: number, tz: string, isEnd = false): string {
+  const p = parts(isEnd ? ms - 1 : ms, tz)
+  return p === null ? '' : `${p.y}-${p.mo}-${p.d}`
+}
+
+/**
+ * 基準タイムゾーン `tz` の日付を、その0時の瞬間（エポックミリ秒）にする。
+ * **終わり（`isEnd`）は翌日の0時**——締切日を含めるための半開区間の終わりである。
+ * 形が違えば `null`。
+ */
+export function planInstant(date: string, tz: string, isEnd = false): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  if (m === null) return null
+  const guess = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + (isEnd ? 1 : 0))
+  // 時差を2回測る（startOfDayInstant と同じ。夏時間の切り替わりの前後で時差が変わる）
+  let t = guess - offsetMs(guess, tz)
+  t = guess - offsetMs(t, tz)
+  return t
+}
+
+/**
+ * 予定の1端を出す。終日なら基準タイムゾーンの日付、時刻付きなら見る人のタイムゾーンの日時。
+ * 値が無ければ空文字。
+ */
+export function formatPlan(ms: number | null | undefined, allDay: boolean, tz: string, isEnd = false): string {
+  if (ms === null || ms === undefined) return ''
+  return allDay ? formatPlainDate(planDate(ms, tz, isEnd)) : formatDateTime(ms)
+}
+
+/** 期限を過ぎたか（`due_at <= いま`。終日も時刻付きも同じ式。`ApiDesign.md` 9.2.1 の `overdue`） */
+export function isPastDue(dueAt: number | null | undefined): boolean {
+  return dueAt !== null && dueAt !== undefined && dueAt <= Date.now()
+}
+
+/**
+ * `input[type=datetime-local]` の値（`YYYY-MM-DDTHH:mm`）を、**見る人のタイムゾーン**
+ * （`setTimezone`。未設定なら端末）で作る。時刻付きの予定の入力に使う（7.5）。
+ */
+export function localInputOf(ms: number): string {
+  const p = parts(ms)
+  return p === null ? '' : `${p.y}-${p.mo}-${p.d}T${p.h}:${p.mi}`
+}
+
+/** `localInputOf` の逆。見る人のタイムゾーンの壁時計を瞬間（エポックミリ秒）へ直す。形が違えば `null` */
+export function instantOfLocalInput(value: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value)
+  if (m === null) return null
+  const guess = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]))
+  let t = guess - offsetMs(guess)
+  t = guess - offsetMs(t)
+  return t
 }

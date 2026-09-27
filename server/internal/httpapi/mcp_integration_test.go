@@ -1710,6 +1710,8 @@ func TestMCPIntegration(t *testing.T) {
 			EstimatePoint *float64 `json:"estimate_point"`
 			StartDate     *string  `json:"start_date"`
 			DueDate       *string  `json:"due_date"`
+			DueAt         *string  `json:"due_at"`
+			AllDay        bool     `json:"all_day"`
 			Tags          []struct {
 				ID string `json:"id"`
 			} `json:"tags"`
@@ -1720,7 +1722,12 @@ func TestMCPIntegration(t *testing.T) {
 		if got.EstimatePoint == nil || *got.EstimatePoint != 5 {
 			t.Errorf("estimate_point = %v, want 5", got.EstimatePoint)
 		}
-		// **date 列は時刻を持たない**（前日へずれる経路を作らない）。
+		// **日付で渡して日付で読める**（Design.md 8.5.1。pb-217）。MCP が基準タイムゾーン
+		// （既定の Asia/Tokyo）でエポックへ直して送り、読み出しでは終日の締切日を添える。
+		// due_at は締切日の翌日の0時（半開区間の終わり）を ISO8601 UTC で返す。
+		if got.DueAt == nil || *got.DueAt != "2026-09-21T15:00:00Z" || !got.AllDay {
+			t.Errorf("due_at = %v all_day = %v, want 2026-09-21T15:00:00Z（9/22 0:00 JST）/ true", got.DueAt, got.AllDay)
+		}
 		if got.StartDate == nil || *got.StartDate != "2026-09-09" {
 			t.Errorf("start_date = %v", got.StartDate)
 		}

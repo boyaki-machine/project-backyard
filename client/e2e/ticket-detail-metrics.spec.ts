@@ -12,7 +12,7 @@ const ticket = {
   parent_seq: null, has_children: false, sort_key: '0|1:', staged_at: null,
   tags: [], sprint: null, estimate_point: 5, actual_point: 5,
   actual_point_version: 'actual-v0', estimate_hours: 8, actual_hours: 3.5,
-  start_date: '2026-08-09', due_date: '2026-08-14', closed_at: null,
+  start_at: 1786201200000, due_at: 1786719600000, all_day: true, closed_at: null,
   version: 1, created_at: 1788220800000, updated_at: 1788220800000,
   body_md: '', parent: null, epic: null, children: [], dod: [], links: [], references: [],
   comment_count: 0, execution_mode: 'agent_draft', readiness: null, readiness_note: null, scope: {},

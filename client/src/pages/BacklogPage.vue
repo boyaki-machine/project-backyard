@@ -44,7 +44,7 @@ import type {
   TicketTransitionOption,
   SortOrder,
 } from '../api/tickets'
-import { formatPlainDate, todayPlainDate } from '../lib/datetime'
+import { formatDateTime, formatPlan, isPastDue, planDate, planInstant } from '../lib/datetime'
 import { statusLabel } from '../lib/catalogLabels'
 import { zoneOf, type DropZone } from '../lib/dnd'
 import { useAuthStore } from '../stores/auth'
@@ -276,7 +276,7 @@ const SORTS: TicketSort[] = [
   'title',
   'status',
   'priority',
-  'due_date',
+  'due_at',
   'created_at',
   'updated_at',
 ]
@@ -299,7 +299,7 @@ const STATE_KEYS = ['status', 'status_category', 'open', 'stale'] as const
  * 「期限」の箱が持つクエリ名（同上）。
  *
  * `overdue` と `due_within` は**別の条件**である（`ApiDesign.md` 9.2.1）——
- * `due_within=0d` は「今日以前」で今日締切を含み、`overdue`（`due_date < 今日`）
+ * `due_within=0d` は「今日の終わりまで」で今日締切を含み、`overdue`（`due_at <= いま`）
  * と1日ぶんずれる。
  */
 const DUE_KEYS = ['overdue', 'due_within'] as const
@@ -599,9 +599,12 @@ const activeSprint = computed(() => sprints.value.find((s) => s.status === 'acti
 const activeSprintPeriod = computed(() => {
   const sp = activeSprint.value
   if (!sp) return ''
-  const md = (d: string | null | undefined) => (d ? d.slice(5).replace('-', '/') : '')
-  const from = md(sp.start_date)
-  const to = md(sp.end_date)
+  // 終日は基準タイムゾーンの月/日（終わりは1日戻す）、時刻付きは見る人の日時（7.5。pb-217）
+  const tz = projectStore.planTimezone
+  const md = (ms: number | null, isEnd: boolean) =>
+    ms === null ? '' : sp.all_day ? planDate(ms, tz, isEnd).slice(5).replace('-', '/') : formatDateTime(ms)
+  const from = md(sp.start_at, false)
+  const to = md(sp.end_at, true)
   if (from === '' && to === '') return ''
   return `${from} — ${to}`
 })
@@ -678,8 +681,10 @@ async function loadTickets(): Promise<void> {
       // 「期限」の箱が出す2系列（同上）
       overdue: queryValue('overdue') === 'true' ? 'true' : undefined,
       due_within: queryValue('due_within'),
-      planned_from: queryValue('planned_from'),
-      planned_to: queryValue('planned_to'),
+      // 予定期間は URL では日付のまま持ち、API へは基準タイムゾーンの半開区間（エポック
+      // ミリ秒）で送る。終わりは翌日の0時（その日を含める。`ApiDesign.md` 9.2.1。pb-217）
+      planned_from: plannedParam(queryValue('planned_from'), false),
+      planned_to: plannedParam(queryValue('planned_to'), true),
       // エピックフィルタの実体（9.2.1）。空なら `listTickets` がキーごと落とす
       parent: epicSeqs.value.join(','),
       sort: sort.value,
@@ -1116,14 +1121,24 @@ function toggleTree(seq: number): void {
 // ── 表示のための小さな関数 ───────────────────────────────────
 
 /** 端末のローカル時刻での今日。`date` 列と文字列のまま比べる */
-const today = todayPlainDate()
 
 /**
  * 期限超過（5.4）。**完了したチケットは含めない**——期限を過ぎてから
  * 終わったものに `⚠` を出し続けても、次にやることの判断には使えない。
  */
 function isOverdue(t: Ticket): boolean {
-  return t.due_date !== null && t.closed_at === null && t.due_date < today
+  return isPastDue(t.due_at) && t.closed_at === null
+}
+
+/** 期限の表示（終日は基準タイムゾーンの締切日、時刻付きは見る人の日時。7.5） */
+function dueLabel(t: Ticket): string {
+  return formatPlan(t.due_at, t.all_day, projectStore.planTimezone, true)
+}
+
+/** 予定期間の日付（URL の値）を API の瞬間へ直す。空や形違いは送らない */
+function plannedParam(date: string, isEnd: boolean): string | undefined {
+  const ms = date === '' ? null : planInstant(date, projectStore.planTimezone, isEnd)
+  return ms === null ? undefined : String(ms)
 }
 
 /** 件数は端末の設定に依らない形で区切る（`ja-JP` を明示する） */
@@ -2368,9 +2383,9 @@ watch(projectKey, (key) => {
                   </th>
                   <!-- 担当だけソートできない（`ApiDesign.md` 9.2.1 の sort に無い） -->
                   <th v-if="!shrunk" scope="col" class="assignee-col" data-column="assignee">{{ $ui('担当') }}<span class="column-resize" role="separator" :aria-label="$ui('担当列の幅を変更')" @pointerdown="startColumnResize($event, 'assignee')" @click.stop></span></th>
-                  <th v-if="!shrunk" scope="col" class="due-col" data-column="due" :aria-sort="ariaSort('due_date')">
-                    <button type="button" class="sort" @click="sortBy('due_date')"> {{ $ui('期限') }} <span class="caret" aria-hidden="true">{{
-                        sort === 'due_date' ? (order === 'asc' ? '▴' : '▾') : ''
+                  <th v-if="!shrunk" scope="col" class="due-col" data-column="due" :aria-sort="ariaSort('due_at')">
+                    <button type="button" class="sort" @click="sortBy('due_at')"> {{ $ui('期限') }} <span class="caret" aria-hidden="true">{{
+                        sort === 'due_at' ? (order === 'asc' ? '▴' : '▾') : ''
                       }}</span>
                     </button>
                     <span class="column-resize" role="separator" :aria-label="$ui('期限列の幅を変更')" @pointerdown="startColumnResize($event, 'due')" @click.stop></span>
@@ -2485,7 +2500,7 @@ watch(projectKey, (key) => {
                       <span
                         v-if="shrunk && isOverdue(row.ticket)"
                         class="overdue"
-                        :title="$ui('期限超過（{value0}）', { value0: row.ticket.due_date })"
+                        :title="$ui('期限超過（{value0}）', { value0: dueLabel(row.ticket) })"
                         >⚠</span
                       >
                       <!-- タグは枠線＋文字（8.6）。色は使わない。
@@ -2572,9 +2587,9 @@ watch(projectKey, (key) => {
                   </td>
 
                   <td v-if="!shrunk" class="due-col">
-                    <span v-if="row.ticket.due_date" :class="{ overdue: isOverdue(row.ticket) }">
+                    <span v-if="row.ticket.due_at !== null" :class="{ overdue: isOverdue(row.ticket) }">
                       <span v-if="isOverdue(row.ticket)" aria-hidden="true">⚠ </span>
-                      {{ formatPlainDate(row.ticket.due_date) }}
+                      {{ dueLabel(row.ticket) }}
                     </span>
                     <span v-else class="muted">—</span>
                   </td>

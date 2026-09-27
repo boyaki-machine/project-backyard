@@ -130,6 +130,9 @@ type mfaFakeState struct {
 }
 
 type fakeQuerier struct {
+	// timezone は GetProjectTimezone が返す基準タイムゾーン（空なら Asia/Tokyo）。
+	timezone string
+
 	gen.Querier
 
 	// 第2要素（ApiDesign.md 4.6 / 3.4）
@@ -1352,7 +1355,7 @@ func (q *fakeQuerier) CreateSprint(_ context.Context, arg gen.CreateSprintParams
 	}
 	q.sprintByID[arg.ID] = gen.GetSprintByIDRow{
 		ID: arg.ID, Name: arg.Name, Goal: arg.Goal,
-		StartDate: arg.StartDate, EndDate: arg.EndDate, Status: arg.Status,
+		StartAt: arg.StartAt, EndAt: arg.EndAt, AllDay: arg.AllDay, Status: arg.Status,
 	}
 	return nil
 }
@@ -1376,11 +1379,14 @@ func (q *fakeQuerier) UpdateSprint(_ context.Context, arg gen.UpdateSprintParams
 	if arg.SetGoal {
 		row.Goal = arg.Goal
 	}
-	if arg.SetStartDate {
-		row.StartDate = arg.StartDate
+	if arg.SetStartAt {
+		row.StartAt = arg.StartAt
 	}
-	if arg.SetEndDate {
-		row.EndDate = arg.EndDate
+	if arg.SetEndAt {
+		row.EndAt = arg.EndAt
+	}
+	if arg.AllDay.Valid {
+		row.AllDay = arg.AllDay.Bool
 	}
 	q.sprintByID[arg.ID] = row
 	return 1, nil
@@ -1762,7 +1768,7 @@ func (q *fakeQuerier) CreateTicket(_ context.Context, arg gen.CreateTicketParams
 		BodyMd: arg.BodyMd, StatusKey: arg.StatusKey, Priority: arg.Priority,
 		AssigneeID: arg.AssigneeID, ReporterID: arg.ReporterID,
 		EstimatePoint: arg.EstimatePoint, EstimateHours: arg.EstimateHours,
-		StartDate: arg.StartDate, DueDate: arg.DueDate,
+		StartAt: arg.StartAt, DueAt: arg.DueAt, AllDay: arg.AllDay,
 		// **sprint_id は 9.3 が受けなくなった**。作りたての
 		// チケットは必ずスプリント未所属で始まる。
 		SortKey: arg.SortKey,
@@ -2484,11 +2490,14 @@ func (q *fakeQuerier) UpdateTicket(_ context.Context, arg gen.UpdateTicketParams
 	if arg.ActualPointVersionSet {
 		row.ActualPointVersion = arg.ActualPointVersion
 	}
-	if arg.StartDateSet {
-		row.StartDate = arg.StartDate
+	if arg.StartAtSet {
+		row.StartAt = arg.StartAt
 	}
-	if arg.DueDateSet {
-		row.DueDate = arg.DueDate
+	if arg.DueAtSet {
+		row.DueAt = arg.DueAt
+	}
+	if arg.AllDay.Valid {
+		row.AllDay = arg.AllDay.Bool
 	}
 	row.Version++
 	q.ticket.bySeq[arg.Seq] = row
@@ -2939,4 +2948,14 @@ func (q *fakeQuerier) ListExpiredPendingSettingChanges(
 	context.Context,
 ) ([]gen.ListExpiredPendingSettingChangesRow, error) {
 	return q.settings.expiredPending, nil
+}
+
+// GetProjectTimezone はプロジェクトの基準タイムゾーン（pb-217 の予定日時の検証と
+// due_within の境界）。偽物では q.timezone（空なら Asia/Tokyo）を返す。
+func (q *fakeQuerier) GetProjectTimezone(_ context.Context, _ string) (string, error) {
+	q.opLog = append(q.opLog, "GetProjectTimezone")
+	if q.timezone != "" {
+		return q.timezone, nil
+	}
+	return "Asia/Tokyo", nil
 }

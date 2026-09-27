@@ -260,6 +260,20 @@ func (q *Queries) GetProjectByKey(ctx context.Context, key string) (GetProjectBy
 	return i, err
 }
 
+const getProjectTimezone = `-- name: GetProjectTimezone :one
+SELECT timezone FROM project WHERE id = $1
+`
+
+// GetProjectTimezone はプロジェクトの基準タイムゾーン（DbDesign.md 6.23）を返す。
+// 予定日時の検証（終日は基準タイムゾーンの0時。ApiDesign.md 9.3.1）と、due_within の
+// 境界の計算（9.2.1）が使う。
+func (q *Queries) GetProjectTimezone(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, getProjectTimezone, id)
+	var timezone string
+	err := row.Scan(&timezone)
+	return timezone, err
+}
+
 const isProjectScopedRole = `-- name: IsProjectScopedRole :one
 SELECT EXISTS (SELECT 1 FROM role WHERE key = $1 AND scope = 'project')
 `

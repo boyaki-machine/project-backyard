@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -309,7 +310,19 @@ func callGetTask(h *Handler, r *http.Request, key string, args json.RawMessage) 
 	}
 
 	res, err := h.getREST(r, ticketPath(key, seq), nil)
-	return passThrough(r, res, err)
+	if err != nil || !res.ok() {
+		return passThrough(r, res, err)
+	}
+	// 終日なら締切日を含む start_date / due_date を添える（8.5.1。pb-217）。
+	// 基準タイムゾーンを引くのは終日のときだけ——REST をもう1回叩く。
+	if bytes.Contains(res.body, []byte(`"all_day":true`)) {
+		loc, rpcErr := h.projectLocation(r, key)
+		if rpcErr != nil {
+			return toolResult{}, rpcErr
+		}
+		res.body = withScheduleDates(res.body, loc)
+	}
+	return passThrough(r, res, nil)
 }
 
 // listArgs は pb_list_tasks の引数（Design.md 8.5）。
@@ -361,7 +374,13 @@ func callListTasks(h *Handler, r *http.Request, key string, args json.RawMessage
 		return failed(r, res), nil
 	}
 
-	light, err := lighten(res.body)
+	light, err := lighten(res.body, func() *time.Location {
+		loc, rpcErr := h.projectLocation(r, key)
+		if rpcErr != nil {
+			return nil
+		}
+		return loc
+	})
 	if err != nil {
 		return toolResult{}, newError(codeInternalError, "一覧の応答を解釈できない: "+err.Error())
 	}
@@ -411,8 +430,12 @@ type lightItem struct {
 	WorkingAgent json.RawMessage `json:"working_agent"`
 	ParentSeq    json.RawMessage `json:"parent_seq"`
 	StagedAt     json.RawMessage `json:"staged_at"`
-	DueDate      json.RawMessage `json:"due_date"`
-	UpdatedAt    json.RawMessage `json:"updated_at"`
+	// DueAt は期限（半開区間の終わり。pb-217）。終日なら DueDate に締切日を添える——
+	// due_at だけを見ると締切が1日後に読める（Design.md 8.5.1）。
+	DueAt     json.RawMessage `json:"due_at"`
+	AllDay    json.RawMessage `json:"all_day,omitempty"`
+	DueDate   string          `json:"due_date,omitempty"`
+	UpdatedAt json.RawMessage `json:"updated_at"`
 }
 
 // lightList は軽量化した一覧。ページングの4項目は 2.6 のまま残す。
@@ -428,7 +451,10 @@ type lightList struct {
 //
 // **落とした項目が要るときは pb_get_task が全部を返す。** ボードの状況把握に
 // 要らない項目を、件数ぶん掛け算しないための選別である。
-func lighten(body []byte) ([]byte, error) {
+//
+// loc は終日の締切日を出すための基準タイムゾーンを返す。**終日の期限を持つ行が
+// あるときだけ呼ぶ**（REST をもう1回叩くため）。nil を返したら締切日は添えない。
+func lighten(body []byte, loc func() *time.Location) ([]byte, error) {
 	var in struct {
 		Items      []lightItem     `json:"items"`
 		Page       json.RawMessage `json:"page"`
@@ -448,6 +474,25 @@ func lighten(body []byte) ([]byte, error) {
 	}
 	if out.Items == nil {
 		out.Items = []lightItem{}
+	}
+	var l *time.Location
+	for i := range out.Items {
+		it := &out.Items[i]
+		allDay := string(it.AllDay) == "true"
+		// **all_day は出さない**——11項目に数えず、終日なら due_date で表す（8.5）。
+		it.AllDay = nil
+		if !allDay || len(it.DueAt) == 0 || string(it.DueAt) == "null" {
+			continue
+		}
+		if l == nil {
+			if l = loc(); l == nil {
+				break
+			}
+		}
+		var due string
+		if json.Unmarshal(it.DueAt, &due) == nil {
+			_, it.DueDate = scheduleDates(map[string]any{"all_day": true, "due_at": due}, l)
+		}
 	}
 	return json.Marshal(out)
 }
@@ -749,8 +794,10 @@ func writeTools() []tool {
 						Items: &property{Type: "string"}},
 					"estimate_point": {Type: "number", Description: "見積もり（ポイント）。0以上"},
 					"estimate_hours": {Type: "number", Description: "見積もり（時間）。0以上"},
-					"start_date":     {Type: "string", Description: "開始日。YYYY-MM-DD"},
-					"due_date":       {Type: "string", Description: "期限。YYYY-MM-DD。start_date があるとき start_date 以降"},
+					"start_date":     {Type: "string", Description: "開始日（終日）。YYYY-MM-DD。プロジェクトの基準タイムゾーンの日付"},
+					"due_date":       {Type: "string", Description: "期限（終日）。YYYY-MM-DD。**締切日そのもの**を渡す（翌日にしない）。start_date があるとき start_date 以降"},
+					"start_at":       {Type: "string", Description: "開始（時刻付き）。時差を含む ISO8601（例: 2026-09-30T09:00:00+09:00）。start_date / due_date と混ぜない"},
+					"due_at":         {Type: "string", Description: "期限（時刻付き）。時差を含む ISO8601。この瞬間を含まない（その時刻に終わる）"},
 				},
 				Required: []string{"type", "title"},
 			},
@@ -782,8 +829,10 @@ func writeTools() []tool {
 					"estimate_hours":       {Type: "number", Description: "見積もり（時間）。0以上"},
 					"actual_point":         {Type: "number", Description: "実績（ポイント）。0以上。actual_point_version と一緒に指定"},
 					"actual_point_version": {Type: "string", Description: "算出式の版。例: actual-v0。actual_point と一緒に指定"},
-					"start_date":           {Type: "string", Description: "開始日。YYYY-MM-DD"},
-					"due_date":             {Type: "string", Description: "期限。YYYY-MM-DD"},
+					"start_date":           {Type: "string", Description: "開始日（終日）。YYYY-MM-DD。空文字で外す"},
+					"due_date":             {Type: "string", Description: "期限（終日）。YYYY-MM-DD。**締切日そのもの**。空文字で外す"},
+					"start_at":             {Type: "string", Description: "開始（時刻付き）。時差を含む ISO8601。start_date / due_date と混ぜない。空文字で外す"},
+					"due_at":               {Type: "string", Description: "期限（時刻付き）。時差を含む ISO8601。空文字で外す"},
 				},
 				Required: []string{"seq"},
 			},
@@ -923,6 +972,8 @@ type createTicketArgs struct {
 	EstimateHours *float64 `json:"estimate_hours"`
 	StartDate     string   `json:"start_date"`
 	DueDate       string   `json:"due_date"`
+	StartAt       string   `json:"start_at"`
+	DueAt         string   `json:"due_at"`
 }
 
 func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
@@ -965,11 +1016,18 @@ func callCreateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	if in.EstimateHours != nil {
 		body["estimate_hours"] = *in.EstimateHours
 	}
-	if in.StartDate != "" {
-		body["start_date"] = in.StartDate
+	// 予定（8.5.1。pb-217）。日付は基準タイムゾーンでエポックへ直す。空は載せない。
+	nonEmpty := func(v string) *string {
+		if v == "" {
+			return nil
+		}
+		return &v
 	}
-	if in.DueDate != "" {
-		body["due_date"] = in.DueDate
+	if rpcErr := h.applySchedule(r, key, scheduleArgs{
+		StartDate: nonEmpty(in.StartDate), DueDate: nonEmpty(in.DueDate),
+		StartAt: nonEmpty(in.StartAt), DueAt: nonEmpty(in.DueAt),
+	}, body); rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
 
 	raw, err := json.Marshal(body)
@@ -1007,6 +1065,8 @@ type updateTicketArgs struct {
 	ActualPointVersion *string   `json:"actual_point_version"`
 	StartDate          *string   `json:"start_date"`
 	DueDate            *string   `json:"due_date"`
+	StartAt            *string   `json:"start_at"`
+	DueAt              *string   `json:"due_at"`
 }
 
 // callUpdateTicket は 9.5.2 の PATCH を叩く。
@@ -1056,11 +1116,11 @@ func callUpdateTicket(h *Handler, r *http.Request, key string, args json.RawMess
 	if in.ActualPointVersion != nil {
 		body["actual_point_version"] = *in.ActualPointVersion
 	}
-	if in.StartDate != nil {
-		body["start_date"] = *in.StartDate
-	}
-	if in.DueDate != nil {
-		body["due_date"] = *in.DueDate
+	// 予定（8.5.1。pb-217）。空文字は「外す」。
+	if rpcErr := h.applySchedule(r, key, scheduleArgs{
+		StartDate: in.StartDate, DueDate: in.DueDate, StartAt: in.StartAt, DueAt: in.DueAt,
+	}, body); rpcErr != nil {
+		return toolResult{}, rpcErr
 	}
 	// **空の更新は断る。** 9.5.2 は受けても何もしないが、version だけが +1 する
 	// ので、呼んだ側は「直した」と誤解する。

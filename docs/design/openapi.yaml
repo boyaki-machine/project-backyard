@@ -2497,7 +2497,7 @@ paths:
       description: |
         プロジェクトのスプリントを返す（ApiDesign.md 9.12）。**必要権限は `ticket.view`**。
 
-        `items[]` は `start_date` 降順（`null` は末尾）、同値は `created_at` 降順。
+        `items[]` は `start_at` 降順（`null` は末尾）、同値は `created_at` 降順。
         新しいものが上に来る並びで、GuiDesign.md 5.9.5 の図と一致する。
 
         `ticket_count` は `ticket.sprint_id` が当該スプリントを指す行数、`closed_count` は
@@ -2534,7 +2534,7 @@ paths:
         チケット詳細のスプリント欄が常に空のドロップダウンになるためである。
 
         **`name` に一意制約は無い**（DbDesign.md 6.9）。同名のスプリントを作れる。
-        `start_date` と `end_date` の両方があるとき `start_date <= end_date`
+        `start_at` と `end_at` の両方があるとき `start_at <= end_at`
         （`ck_sprint_dates`）。
       requestBody:
         required: true
@@ -2644,7 +2644,7 @@ paths:
         スプリントを終える（ApiDesign.md 9.12.2）。必要権限は `project.edit`。
         **本文を取らない。**
 
-        `status` を `completed` にし、`end_date` が空なら今日を入れる。所属
+        `status` を `completed` にし、`end_at` が空なら終わった時点（終日は基準タイムゾーンの翌日の0時）を入れる。所属
         （`ticket_sprint`）すべてに `removed_at` を立て、**完了しているオンステージの
         根を段から降ろす**（`staged_at` を `null` に戻す）。**未完了のものは触らず、
         オンステージに残って次の開始でそちらへ入る。**
@@ -2693,7 +2693,7 @@ paths:
         スプリントの各項目を変える（ApiDesign.md 9.12）。必要権限は `project.edit`。
         タグと同じく **`If-Match` は要求しない**（`sprint` は `version` 列を持たない）。
 
-        送られなかった項目は据え置く。**`goal` / `start_date` / `end_date` は `null` を
+        送られなかった項目は据え置く。**`goal` / `start_at` / `end_at` は `null` を
         送ると値を消す**（キーが無い場合の「据え置き」と区別する）。
 
         `ck_sprint_dates` は更新後の2列の関係を見る制約であり、片方だけを送る場合は
@@ -2869,7 +2869,7 @@ paths:
           in: query
           description: |
             `7d` 形式。**今日から N 日以内に期限があるもの（期限超過を含む）**。
-            `due_date IS NULL` は除外する。上限は `3650d`。
+            「今日」はプロジェクトの基準タイムゾーンで区切る。`due_at IS NULL` は除外する。上限は `3650d`。
           schema:
             type: string
             pattern: '^[0-9]+d$'
@@ -2887,31 +2887,31 @@ paths:
         - name: overdue
           in: query
           description: |
-            `true` で**期限を過ぎた未完了のもの**（`due_date < 今日` かつ
+            `true` で**期限を過ぎた未完了のもの**（`due_at <= now()` かつ
             `closed_at IS NULL`）。9.13.1 の `overdue` と同じ条件で数える。
 
-            **`due_within=0d` で代用しない**——あちらは「今日以前」で
-            **今日が期限のもの**を含み、1日ぶんずれる。
+            **`due_within=0d` で代用しない**——あちらは「今日の終わりまで」で
+            **今日が期限でまだ過ぎていないもの**を含み、ずれる。
           schema:
             type: string
             enum: ['true']
         - name: planned_from
           in: query
           description: |
-            予定期間の下限（含む）。チケットの `start_date`〜`due_date` と1日でも
-            重なるものを返す。片方だけの日付を持つチケットはその日1日として扱い、
-            両方が未設定のチケットは除外する。`planned_to` と片方だけでもよい。
+            予定期間の下限（エポックミリ秒、含む）。チケットの予定（`start_at`〜`due_at`）と
+            少しでも重なるものを返す。期限だけのチケットは期限の直前の瞬間、開始だけのものは
+            開始の瞬間として扱い、両方が未設定のチケットは除外する（ApiDesign.md 9.2.1）。
           schema:
-            type: string
-            format: date
+            type: integer
+            format: int64
         - name: planned_to
           in: query
           description: |
-            予定期間の上限（含む）。`planned_from` と両方あるとき、
-            `planned_from` 以上でなければ 422。
+            予定期間の上限（エポックミリ秒、**含まない**）。`planned_from` と両方あるとき、
+            `planned_from` より後でなければ 422。
           schema:
-            type: string
-            format: date
+            type: integer
+            format: int64
         - name: stale
           in: query
           description: |
@@ -3002,7 +3002,7 @@ paths:
             読めないため）。`closed_at` は未完了が末尾に来る。
           schema:
             type: string
-            enum: [sort_key, seq, title, status, priority, due_date, created_at, updated_at, closed_at]
+            enum: [sort_key, seq, title, status, priority, due_at, created_at, updated_at, closed_at]
             default: sort_key
         - name: order
           in: query
@@ -3174,7 +3174,7 @@ paths:
 
         | `ticket.self_edit` で変えられる | 変えられない |
         |---|---|
-        | `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_date` `due_date` | `type` `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
+        | `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_at` `due_at` `all_day` | `type` `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
 
         `actual_point` と `actual_point_version` は対で更新する。`ticket.actual_point.edit` が追加で必要であり、PM のエージェントにはトークン発行時にこの scope を指定できる。
 
@@ -8313,7 +8313,7 @@ components:
     Sprint:
       description: スプリント1件（ApiDesign.md 9.12）。
       type: object
-      required: [id, name, goal, start_date, end_date, status, ticket_count, closed_count]
+      required: [id, name, goal, start_at, end_at, all_day, status, ticket_count, closed_count]
       properties:
         id:
           type: string
@@ -8327,16 +8327,20 @@ components:
           type: string
           nullable: true
           example: 認証を通す
-        start_date:
-          type: string
-          format: date
+        start_at:
+          type: integer
+          format: int64
           nullable: true
-          example: '2026-08-05'
-        end_date:
-          type: string
-          format: date
+          description: 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
+          example: 1785855600000
+        end_at:
+          type: integer
+          format: int64
           nullable: true
-          example: '2026-08-18'
+          description: 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。
+          example: 1787065200000
+        all_day:
+          type: boolean
         status:
           $ref: '#/components/schemas/SprintStatus'
         ticket_count:
@@ -8380,15 +8384,19 @@ components:
         goal:
           type: string
           nullable: true
-        start_date:
-          type: string
-          format: date
+        start_at:
+          type: integer
+          format: int64
           nullable: true
-        end_date:
-          type: string
-          format: date
+          description: 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
+        end_at:
+          type: integer
+          format: int64
           nullable: true
-          description: '`start_date` があるとき `start_date <= end_date`。'
+          description: 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。`start_at` 以上。終日なら両端は基準タイムゾーンの0時（違えば 422 `not_midnight`）。
+        all_day:
+          type: boolean
+          description: 省略時は true（終日）。
         status:
           $ref: '#/components/schemas/SprintStatus'
 
@@ -8408,19 +8416,23 @@ components:
         goal:
           type: string
           nullable: true
-        start_date:
-          type: string
-          format: date
+        start_at:
+          type: integer
+          format: int64
           nullable: true
-        end_date:
-          type: string
-          format: date
+          description: 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
+        end_at:
+          type: integer
+          format: int64
           nullable: true
-          description: '`start_date` があるとき `start_date <= end_date`。'
+          description: 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。`start_at` 以上。終日なら両端は基準タイムゾーンの0時（違えば 422 `not_midnight`）。
+        all_day:
+          type: boolean
+          description: 省略時は true（終日）。
 
     PatchSprintRequest:
       description: |
-        送られた項目だけを変える。**`goal` / `start_date` / `end_date` は `null` を
+        送られた項目だけを変える。**`goal` / `start_at` / `end_at` は `null` を
         送ると値を消す**（キーが無い場合の「据え置き」と区別する）。
       type: object
       properties:
@@ -8431,14 +8443,18 @@ components:
         goal:
           type: string
           nullable: true
-        start_date:
-          type: string
-          format: date
+        start_at:
+          type: integer
+          format: int64
           nullable: true
-        end_date:
-          type: string
-          format: date
+          description: 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
+        end_at:
+          type: integer
+          format: int64
           nullable: true
+          description: 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。終日なら両端は基準タイムゾーンの0時（違えば 422 `not_midnight`）。
+        all_day:
+          type: boolean
         status:
           $ref: '#/components/schemas/SprintStatus'
 
@@ -9138,7 +9154,7 @@ components:
       required:
         [id, seq, type, title, status, priority, assignee, reporter, working_agent,
          parent_seq, has_children, sort_key, staged_at, tags, sprint, estimate_point,
-         estimate_hours, actual_hours, actual_point, actual_point_version, start_date, due_date, closed_at, version,
+         estimate_hours, actual_hours, actual_point, actual_point_version, start_at, due_at, all_day, closed_at, version,
          created_at, updated_at]
       properties:
         id:
@@ -9239,19 +9255,20 @@ components:
           type: string
           nullable: true
           description: 算出式の版。例：actual-v0。
-        start_date:
-          type: string
-          format: date
+        start_at:
+          type: integer
+          format: int64
           nullable: true
-          description: |
-            **`date` 列であって時刻を持たない**（DbDesign.md 6.6）。画面は
-            `new Date()` を通さずに整形すること——UTC より西の地域で前日へずれる。
-          example: '2026-08-09'
-        due_date:
-          type: string
-          format: date
+          description: 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
+          example: 1786201200000
+        due_at:
+          type: integer
+          format: int64
           nullable: true
-          example: '2026-08-14'
+          description: 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。
+          example: 1786719600000
+        all_day:
+          type: boolean
         closed_at:
           type: integer
           format: int64
@@ -9505,7 +9522,7 @@ components:
           example: 30
         overdue:
           type: integer
-          description: '`due_date < CURRENT_DATE` かつ `closed_at IS NULL`。'
+          description: '`due_at <= now()` かつ `closed_at IS NULL`。'
           example: 2
         stale:
           type: object
@@ -9577,7 +9594,7 @@ components:
             変更した項目。**`create` / `delete` では `null`。** 値域は
             `status_key`（遷移）／`type` `title` `body_md` `priority` `assignee_id`
             `parent_id` `estimate_point` `estimate_hours` `actual_hours`
-            `start_date` `due_date`（本体の更新）／`comment` `dod` `link`
+            `start_at` `due_at` `all_day`（本体の更新。pb-217 より前は `start_date` `due_date`）／`comment` `dod` `link`
             `reference.code` `reference.doc`（子資源の更新）の17種類である。
             **`sprint_id` は含まない**——9.5.2 で書けず、動くのは
             スプリントの開始・終了のときだけである（あの2つは記録しない）。
@@ -10139,17 +10156,18 @@ components:
           pattern: '^actual-v[0-9]+$'
           nullable: true
           description: actual_point と同時に指定する。
-        start_date:
-          type: string
-          format: date
+        start_at:
+          type: integer
+          format: int64
           nullable: true
-          description: '`YYYY-MM-DD`。**時刻つきは受け付けない**（date 列であり、通すと
-            タイムゾーンによって前日へずれる）。'
-        due_date:
-          type: string
-          format: date
+          description: 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
+        due_at:
+          type: integer
+          format: int64
           nullable: true
-          description: '`YYYY-MM-DD`。開始日より前だと 422。'
+          description: 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。開始より前だと 422。終日なら両端は基準タイムゾーンの0時（違えば 422 `not_midnight`）。
+        all_day:
+          type: boolean
         execution_mode:
           type: string
           enum: [human_only, agent_only, agent_draft]
@@ -10294,16 +10312,19 @@ components:
           type: number
           format: double
           minimum: 0
-        start_date:
-          type: string
-          format: date
-          description: '`YYYY-MM-DD`。時刻つきの文字列は受け付けない。'
-        due_date:
-          type: string
-          format: date
-          description: |
-            `start_date` と両方あるとき `start_date <= due_date`
-            （DbDesign.md 6.6 の `ck_ticket_dates`）。
+        start_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
+        due_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。`start_at` 以上（DbDesign.md 6.6 の `ck_ticket_schedule`）。終日なら両端は基準タイムゾーンの0時（違えば 422 `not_midnight`）。
+        all_day:
+          type: boolean
+          description: 省略時は true（終日）。
 
     MoveTicketRequest:
       description: |

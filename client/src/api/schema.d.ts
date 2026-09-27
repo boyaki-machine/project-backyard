@@ -1535,7 +1535,7 @@ export interface paths {
          * スプリント一覧
          * @description プロジェクトのスプリントを返す（ApiDesign.md 9.12）。**必要権限は `ticket.view`**。
          *
-         *     `items[]` は `start_date` 降順（`null` は末尾）、同値は `created_at` 降順。
+         *     `items[]` は `start_at` 降順（`null` は末尾）、同値は `created_at` 降順。
          *     新しいものが上に来る並びで、GuiDesign.md 5.9.5 の図と一致する。
          *
          *     `ticket_count` は `ticket.sprint_id` が当該スプリントを指す行数、`closed_count` は
@@ -1555,7 +1555,7 @@ export interface paths {
          *     チケット詳細のスプリント欄が常に空のドロップダウンになるためである。
          *
          *     **`name` に一意制約は無い**（DbDesign.md 6.9）。同名のスプリントを作れる。
-         *     `start_date` と `end_date` の両方があるとき `start_date <= end_date`
+         *     `start_at` と `end_at` の両方があるとき `start_at <= end_at`
          *     （`ck_sprint_dates`）。
          */
         post: operations["createSprint"];
@@ -1628,7 +1628,7 @@ export interface paths {
          * @description スプリントを終える（ApiDesign.md 9.12.2）。必要権限は `project.edit`。
          *     **本文を取らない。**
          *
-         *     `status` を `completed` にし、`end_date` が空なら今日を入れる。所属
+         *     `status` を `completed` にし、`end_at` が空なら終わった時点（終日は基準タイムゾーンの翌日の0時）を入れる。所属
          *     （`ticket_sprint`）すべてに `removed_at` を立て、**完了しているオンステージの
          *     根を段から降ろす**（`staged_at` を `null` に戻す）。**未完了のものは触らず、
          *     オンステージに残って次の開始でそちらへ入る。**
@@ -1683,7 +1683,7 @@ export interface paths {
          * @description スプリントの各項目を変える（ApiDesign.md 9.12）。必要権限は `project.edit`。
          *     タグと同じく **`If-Match` は要求しない**（`sprint` は `version` 列を持たない）。
          *
-         *     送られなかった項目は据え置く。**`goal` / `start_date` / `end_date` は `null` を
+         *     送られなかった項目は据え置く。**`goal` / `start_at` / `end_at` は `null` を
          *     送ると値を消す**（キーが無い場合の「据え置き」と区別する）。
          *
          *     `ck_sprint_dates` は更新後の2列の関係を見る制約であり、片方だけを送る場合は
@@ -1866,7 +1866,7 @@ export interface paths {
          *
          *     | `ticket.self_edit` で変えられる | 変えられない |
          *     |---|---|
-         *     | `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_date` `due_date` | `type` `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
+         *     | `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_at` `due_at` `all_day` | `type` `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
          *
          *     `actual_point` と `actual_point_version` は対で更新する。`ticket.actual_point.edit` が追加で必要であり、PM のエージェントにはトークン発行時にこの scope を指定できる。
          *
@@ -5187,15 +5187,18 @@ export interface components {
             /** @example 認証を通す */
             goal: string | null;
             /**
-             * Format: date
-             * @example 2026-08-05
+             * Format: int64
+             * @description 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
+             * @example 1785855600000
              */
-            start_date: string | null;
+            start_at: number | null;
             /**
-             * Format: date
-             * @example 2026-08-18
+             * Format: int64
+             * @description 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。
+             * @example 1787065200000
              */
-            end_date: string | null;
+            end_at: number | null;
+            all_day: boolean;
             status: components["schemas"]["SprintStatus"];
             /**
              * Format: int64
@@ -5224,13 +5227,18 @@ export interface components {
             /** @description 前後の空白は取り除かれる。**一意制約は無い**（同名を作れる）。 */
             name: string;
             goal?: string | null;
-            /** Format: date */
-            start_date?: string | null;
             /**
-             * Format: date
-             * @description `start_date` があるとき `start_date <= end_date`。
+             * Format: int64
+             * @description 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
              */
-            end_date?: string | null;
+            start_at?: number | null;
+            /**
+             * Format: int64
+             * @description 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。`start_at` 以上。終日なら両端は基準タイムゾーンの0時（違えば 422 `not_midnight`）。
+             */
+            end_at?: number | null;
+            /** @description 省略時は true（終日）。 */
+            all_day?: boolean;
             status?: components["schemas"]["SprintStatus"];
         };
         /**
@@ -5242,25 +5250,37 @@ export interface components {
             /** @description 前後の空白は取り除かれる。**一意制約は無い**（同名を作れる）。 */
             name: string;
             goal?: string | null;
-            /** Format: date */
-            start_date?: string | null;
             /**
-             * Format: date
-             * @description `start_date` があるとき `start_date <= end_date`。
+             * Format: int64
+             * @description 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
              */
-            end_date?: string | null;
+            start_at?: number | null;
+            /**
+             * Format: int64
+             * @description 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。`start_at` 以上。終日なら両端は基準タイムゾーンの0時（違えば 422 `not_midnight`）。
+             */
+            end_at?: number | null;
+            /** @description 省略時は true（終日）。 */
+            all_day?: boolean;
         };
         /**
-         * @description 送られた項目だけを変える。**`goal` / `start_date` / `end_date` は `null` を
+         * @description 送られた項目だけを変える。**`goal` / `start_at` / `end_at` は `null` を
          *     送ると値を消す**（キーが無い場合の「据え置き」と区別する）。
          */
         PatchSprintRequest: {
             name?: string;
             goal?: string | null;
-            /** Format: date */
-            start_date?: string | null;
-            /** Format: date */
-            end_date?: string | null;
+            /**
+             * Format: int64
+             * @description 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
+             */
+            start_at?: number | null;
+            /**
+             * Format: int64
+             * @description 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。終日なら両端は基準タイムゾーンの0時（違えば 422 `not_midnight`）。
+             */
+            end_at?: number | null;
+            all_day?: boolean;
             status?: components["schemas"]["SprintStatus"];
         };
         /**
@@ -5867,17 +5887,18 @@ export interface components {
             /** @description 算出式の版。例：actual-v0。 */
             actual_point_version: string | null;
             /**
-             * Format: date
-             * @description **`date` 列であって時刻を持たない**（DbDesign.md 6.6）。画面は
-             *     `new Date()` を通さずに整形すること——UTC より西の地域で前日へずれる。
-             * @example 2026-08-09
+             * Format: int64
+             * @description 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
+             * @example 1786201200000
              */
-            start_date: string | null;
+            start_at: number | null;
             /**
-             * Format: date
-             * @example 2026-08-14
+             * Format: int64
+             * @description 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。
+             * @example 1786719600000
              */
-            due_date: string | null;
+            due_at: number | null;
+            all_day: boolean;
             /**
              * Format: int64
              * @description **ステータス遷移の副作用としてのみ動く**（DbDesign.md 6.6）。直接は更新できない。
@@ -6077,7 +6098,7 @@ export interface components {
              */
             open: number;
             /**
-             * @description `due_date < CURRENT_DATE` かつ `closed_at IS NULL`。
+             * @description `due_at <= now()` かつ `closed_at IS NULL`。
              * @example 2
              */
             overdue: number;
@@ -6138,7 +6159,7 @@ export interface components {
              * @description 変更した項目。**`create` / `delete` では `null`。** 値域は
              *     `status_key`（遷移）／`type` `title` `body_md` `priority` `assignee_id`
              *     `parent_id` `estimate_point` `estimate_hours` `actual_hours`
-             *     `start_date` `due_date`（本体の更新）／`comment` `dod` `link`
+             *     `start_at` `due_at` `all_day`（本体の更新。pb-217 より前は `start_date` `due_date`）／`comment` `dod` `link`
              *     `reference.code` `reference.doc`（子資源の更新）の17種類である。
              *     **`sprint_id` は含まない**——9.5.2 で書けず、動くのは
              *     スプリントの開始・終了のときだけである（あの2つは記録しない）。
@@ -6536,15 +6557,16 @@ export interface components {
             /** @description actual_point と同時に指定する。 */
             actual_point_version?: string | null;
             /**
-             * Format: date
-             * @description `YYYY-MM-DD`。**時刻つきは受け付けない**（date 列であり、通すと タイムゾーンによって前日へずれる）。
+             * Format: int64
+             * @description 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
              */
-            start_date?: string | null;
+            start_at?: number | null;
             /**
-             * Format: date
-             * @description `YYYY-MM-DD`。開始日より前だと 422。
+             * Format: int64
+             * @description 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。開始より前だと 422。終日なら両端は基準タイムゾーンの0時（違えば 422 `not_midnight`）。
              */
-            due_date?: string | null;
+            due_at?: number | null;
+            all_day?: boolean;
             /**
              * @description 実行主体属性（Requirements.md 10.5.4）。
              *     **`null` は受け付けない**（列が NOT NULL。422 の `invalid`）。
@@ -6650,16 +6672,17 @@ export interface components {
             /** Format: double */
             estimate_hours?: number;
             /**
-             * Format: date
-             * @description `YYYY-MM-DD`。時刻つきの文字列は受け付けない。
+             * Format: int64
+             * @description 予定の開始（エポックミリ秒。ApiDesign.md 9.3.1）。
              */
-            start_date?: string;
+            start_at?: number | null;
             /**
-             * Format: date
-             * @description `start_date` と両方あるとき `start_date <= due_date`
-             *     （DbDesign.md 6.6 の `ck_ticket_dates`）。
+             * Format: int64
+             * @description 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。`start_at` 以上（DbDesign.md 6.6 の `ck_ticket_schedule`）。終日なら両端は基準タイムゾーンの0時（違えば 422 `not_midnight`）。
              */
-            due_date?: string;
+            due_at?: number | null;
+            /** @description 省略時は true（終日）。 */
+            all_day?: boolean;
         };
         /**
          * @description 並べ替えの指定（ApiDesign.md 9.4）。
@@ -9766,7 +9789,7 @@ export interface operations {
                 retired?: "true" | "false";
                 /**
                  * @description `7d` 形式。**今日から N 日以内に期限があるもの（期限超過を含む）**。
-                 *     `due_date IS NULL` は除外する。上限は `3650d`。
+                 *     「今日」はプロジェクトの基準タイムゾーンで区切る。`due_at IS NULL` は除外する。上限は `3650d`。
                  * @example 7d
                  */
                 due_within?: string;
@@ -9778,24 +9801,24 @@ export interface operations {
                  */
                 staged?: "true";
                 /**
-                 * @description `true` で**期限を過ぎた未完了のもの**（`due_date < 今日` かつ
+                 * @description `true` で**期限を過ぎた未完了のもの**（`due_at <= now()` かつ
                  *     `closed_at IS NULL`）。9.13.1 の `overdue` と同じ条件で数える。
                  *
-                 *     **`due_within=0d` で代用しない**——あちらは「今日以前」で
-                 *     **今日が期限のもの**を含み、1日ぶんずれる。
+                 *     **`due_within=0d` で代用しない**——あちらは「今日の終わりまで」で
+                 *     **今日が期限でまだ過ぎていないもの**を含み、ずれる。
                  */
                 overdue?: "true";
                 /**
-                 * @description 予定期間の下限（含む）。チケットの `start_date`〜`due_date` と1日でも
-                 *     重なるものを返す。片方だけの日付を持つチケットはその日1日として扱い、
-                 *     両方が未設定のチケットは除外する。`planned_to` と片方だけでもよい。
+                 * @description 予定期間の下限（エポックミリ秒、含む）。チケットの予定（`start_at`〜`due_at`）と
+                 *     少しでも重なるものを返す。期限だけのチケットは期限の直前の瞬間、開始だけのものは
+                 *     開始の瞬間として扱い、両方が未設定のチケットは除外する（ApiDesign.md 9.2.1）。
                  */
-                planned_from?: string;
+                planned_from?: number;
                 /**
-                 * @description 予定期間の上限（含む）。`planned_from` と両方あるとき、
-                 *     `planned_from` 以上でなければ 422。
+                 * @description 予定期間の上限（エポックミリ秒、**含まない**）。`planned_from` と両方あるとき、
+                 *     `planned_from` より後でなければ 422。
                  */
-                planned_to?: string;
+                planned_to?: number;
                 /**
                  * @description `14d` 形式。**その日数より前から更新されていない未完了のもの**
                  *     （`updated_at < now() - N日` かつ `closed_at IS NULL`）。
@@ -9848,7 +9871,7 @@ export interface operations {
                  *     キーの辞書順ではない（`high` が `lowest` より前に来ると「優先度で並べた」と
                  *     読めないため）。`closed_at` は未完了が末尾に来る。
                  */
-                sort?: "sort_key" | "seq" | "title" | "status" | "priority" | "due_date" | "created_at" | "updated_at" | "closed_at";
+                sort?: "sort_key" | "seq" | "title" | "status" | "priority" | "due_at" | "created_at" | "updated_at" | "closed_at";
                 order?: "asc" | "desc";
                 page?: number;
                 per_page?: number;

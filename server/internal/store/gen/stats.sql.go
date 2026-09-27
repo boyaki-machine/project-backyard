@@ -19,8 +19,8 @@ SELECT
   count(*)::bigint                                            AS total,
   count(*) FILTER (WHERE t.closed_at IS NULL)::bigint         AS open_count,
   count(*) FILTER (WHERE t.closed_at IS NULL
-                     AND t.due_date IS NOT NULL
-                     AND t.due_date < CURRENT_DATE)::bigint   AS overdue,
+                     AND t.due_at IS NOT NULL
+                     AND t.due_at <= now())::bigint           AS overdue,
   count(*) FILTER (WHERE t.closed_at IS NULL
                      AND t.updated_at
                          < now() - make_interval(days => $1::int))::bigint AS stale,
@@ -67,7 +67,7 @@ type GetProjectTicketStatsRow struct {
 // by_category の合計は total と一致しないことがある。合わせに行かないのは、
 // 「分類できないチケットがある」ことを 0 で塗り潰さないためである。
 //
-// **「今日」は CURRENT_DATE**（9.13.1）。9.2.1 の due_within と同じ基準にする。
+// **overdue は瞬間の比較**（due_at <= now()。pb-217）。9.2.1 の overdue と同じ条件にする。
 // @stale_days は 9.13.1 が 14 に固定した閾値で、応答にも載せて画面へ渡す。
 //
 // **overdue / stale / unassigned はいずれも closed_at IS NULL が掛かる**

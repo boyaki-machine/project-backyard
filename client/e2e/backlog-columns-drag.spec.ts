@@ -11,7 +11,7 @@ const ticket = (seq: number, title: string, parent_seq: number | null, staged_at
   status, priority: null, assignee: null, reporter: actor, working_agent: null,
   parent_seq, has_children: seq === 2, sort_key: `0|${seq}:`, staged_at,
   tags: [], sprint: null, estimate_point: null, estimate_hours: null, actual_hours: null,
-  start_date: null, due_date: null, closed_at: null, version: 1,
+  start_at: null, due_at: null, all_day: true, closed_at: null, version: 1,
   created_at: 1788220800000, updated_at: 1788220800000,
 })
 const rows = [

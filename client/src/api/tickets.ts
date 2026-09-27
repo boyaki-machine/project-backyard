@@ -43,7 +43,7 @@ export type TicketSort =
   | 'title'
   | 'status'
   | 'priority'
-  | 'due_date'
+  | 'due_at'
   | 'created_at'
   | 'updated_at'
   /** 完了日時。チケット検索の「完了日」の列。未完了は昇順・降順とも末尾 */

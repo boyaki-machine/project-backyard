@@ -260,3 +260,9 @@ UPDATE project SET
   archived_at = CASE WHEN @status::text = 'archived' THEN now() ELSE NULL END,
   version     = version + 1
 WHERE key = @key AND status <> @status::text;
+
+-- GetProjectTimezone はプロジェクトの基準タイムゾーン（DbDesign.md 6.23）を返す。
+-- 予定日時の検証（終日は基準タイムゾーンの0時。ApiDesign.md 9.3.1）と、due_within の
+-- 境界の計算（9.2.1）が使う。
+-- name: GetProjectTimezone :one
+SELECT timezone FROM project WHERE id = @id;

@@ -115,7 +115,8 @@ type ticketItemJSON struct {
 	Sprint      *sprintRef       `json:"sprint"`
 	Version     int32            `json:"version"`
 	CreatedAt   int64            `json:"created_at"`
-	DueDate     *string          `json:"due_date"`
+	DueAt       *int64           `json:"due_at"`
+	AllDay      bool             `json:"all_day"`
 }
 
 func decodeTicketList(t *testing.T, rec *httptest.ResponseRecorder) List[ticketItemJSON] {
@@ -222,10 +223,10 @@ func TestListTicketsDefaults(t *testing.T) {
 	if p.Sort != "sort_key" || p.SortOrder != "asc" {
 		t.Errorf("sort/order の既定 = %s/%s（9.2.1 は sort_key/asc）", p.Sort, p.SortOrder)
 	}
-	if p.OpenFilter != "all" || p.DueWithinDays != -1 || len(p.ParentSeqs) != 0 {
+	if p.OpenFilter != "all" || p.DueBefore != nil || len(p.ParentSeqs) != 0 {
 		t.Errorf("未指定のフィルタが効いている: %+v", p)
 	}
-	if p.PlannedFrom.Valid || p.PlannedTo.Valid {
+	if p.PlannedFrom != nil || p.PlannedTo != nil {
 		t.Errorf("未指定の予定期間が効いている: from=%+v to=%+v", p.PlannedFrom, p.PlannedTo)
 	}
 	// overdue / stale の「指定なし」（9.2.1。手順19b）。**stale は 0 ではなく負**
@@ -250,7 +251,7 @@ func TestListTicketsFilters(t *testing.T) {
 		"/projects/demo/tickets?type=story,task&priority=high,highest"+
 			"&assignee=me,none&tag=01K2TAG00000000000000001,none&sprint=none"+
 			"&open=true&due_within=7d&parent=12,30&status=todo,in_progress"+
-			"&status_category=todo&planned_from=2026-09-01&planned_to=2026-09-30", "", ""))
+			"&status_category=todo&planned_from="+msOf(jstAt("2026-09-01"))+"&planned_to="+msOf(jstEnd("2026-09-30")), "", ""))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -269,12 +270,13 @@ func TestListTicketsFilters(t *testing.T) {
 	if len(p.SprintIds) != 0 || !p.SprintNone {
 		t.Errorf("sprint=none の解釈が違う: ids=%v none=%v", p.SprintIds, p.SprintNone)
 	}
-	if p.OpenFilter != "open" || p.DueWithinDays != 7 {
-		t.Errorf("open/due_within の解釈が違う: %+v", p)
+	// due_within は基準タイムゾーン（偽物は Asia/Tokyo）で「7日後の日の終わり」の瞬間になる（pb-217）
+	if want := dayStartIn(time.Now(), tokyo, 8); p.OpenFilter != "open" || p.DueBefore == nil || !p.DueBefore.Equal(want) {
+		t.Errorf("open/due_within の解釈が違う: open=%s due_before=%v want %s", p.OpenFilter, p.DueBefore, want)
 	}
-	if !p.PlannedFrom.Valid || p.PlannedFrom.Time.Format(time.DateOnly) != "2026-09-01" ||
-		!p.PlannedTo.Valid || p.PlannedTo.Time.Format(time.DateOnly) != "2026-09-30" {
-		t.Errorf("予定期間の解釈が違う: from=%+v to=%+v", p.PlannedFrom, p.PlannedTo)
+	if p.PlannedFrom == nil || !p.PlannedFrom.Equal(*jstAt("2026-09-01")) ||
+		p.PlannedTo == nil || !p.PlannedTo.Equal(*jstEnd("2026-09-30")) {
+		t.Errorf("予定期間の解釈が違う: from=%v to=%v", p.PlannedFrom, p.PlannedTo)
 	}
 	// parent は**カンマ区切りで複数指定できる**（9.2.1）。エピックフィルタが使う。
 	if len(p.ParentSeqs) != 2 || p.ParentSeqs[0] != 12 || p.ParentSeqs[1] != 30 {
@@ -292,8 +294,8 @@ func TestListTicketsRejectsInvalidFilters(t *testing.T) {
 		{"open", "open=yes", "open"},
 		{"期限", "due_within=7days", "due_within"},
 		{"期限超過", "overdue=false", "overdue"},
-		{"予定開始日の書式", "planned_from=2026/09/01", "planned_from"},
-		{"予定期間の向き", "planned_from=2026-09-30&planned_to=2026-09-01", "planned_to"},
+		{"予定期間は日付では受けない", "planned_from=2026-09-01", "planned_from"},
+		{"予定期間の向き", "planned_from=" + msOf(jstAt("2026-09-30")) + "&planned_to=" + msOf(jstAt("2026-09-01")), "planned_to"},
 		{"放置の書式", "stale=14days", "stale"},
 		{"放置の上限", "stale=3651d", "stale"},
 		{"親", "parent=0", "parent"},
@@ -404,7 +406,7 @@ func TestTicketsETagVariesByFilterAndPage(t *testing.T) {
 	if a, b := etag("seq_from=10"), etag("seq_from=11"); a == b {
 		t.Errorf("番号の範囲が違うのに ETag が同じ: %q", a)
 	}
-	if a, b := etag("planned_from=2026-09-01"), etag("planned_from=2026-09-02"); a == b {
+	if a, b := etag("planned_from="+msOf(jstAt("2026-09-01"))), etag("planned_from="+msOf(jstAt("2026-09-02"))); a == b {
 		t.Errorf("予定期間が違うのに ETag が同じ: %q", a)
 	}
 	if a, b := etag("closed_since=1788220800000"), etag("closed_since=1788220800001"); a == b {
@@ -676,9 +678,9 @@ func TestCreateTicketValidation(t *testing.T) {
 		{"タイトルが長い", `{"type":"task","title":"` + strings.Repeat("あ", 201) + `"}`, "title"},
 		{"優先度が値域外", `{"type":"task","title":"x","priority":"urgent"}`, "priority"},
 		{"見積が負", `{"type":"task","title":"x","estimate_point":-1}`, "estimate_point"},
-		{"日付の形式", `{"type":"task","title":"x","due_date":"2026/08/14"}`, "due_date"},
-		{"日付に時刻", `{"type":"task","title":"x","due_date":"2026-08-14T00:00:00Z"}`, "due_date"},
-		{"期限が開始より前", `{"type":"task","title":"x","start_date":"2026-08-14","due_date":"2026-08-09"}`, "due_date"},
+		{"日時が文字列", `{"type":"task","title":"x","due_at":"2026-08-14"}`, "due_at"},
+		{"終日なのに0時でない", `{"type":"task","title":"x","due_at":` + msOf(plusMS(jstEnd("2026-08-14"), 1)) + `}`, "due_at"},
+		{"期限が開始より前", `{"type":"task","title":"x","start_at":` + msOf(jstAt("2026-08-14")) + `,"due_at":` + msOf(jstEnd("2026-08-08")) + `}`, "due_at"},
 		{"親の番号が0", `{"type":"task","title":"x","parent_seq":0}`, "parent_seq"},
 	}
 	for _, tc := range cases {

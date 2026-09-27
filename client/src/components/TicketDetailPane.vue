@@ -89,7 +89,8 @@ import type {
   TicketType,
   UpdateTicketRequest,
 } from '../api/tickets'
-import { formatPlainDate } from '../lib/datetime'
+import { formatPlan, instantOfLocalInput, localInputOf, planDate, planInstant } from '../lib/datetime'
+import { useProjectStore } from '../stores/project'
 import { renderMarkdown } from '../lib/markdown'
 import { isWebUrl } from '../lib/url'
 import { useAuthStore } from '../stores/auth'
@@ -212,8 +213,8 @@ type EditField =
   | 'actual_point'
   | 'estimate_hours'
   | 'actual_hours'
-  | 'start_date'
-  | 'due_date'
+  | 'start_at'
+  | 'due_at'
   | 'readiness_note'
   | ScopeField
 
@@ -244,6 +245,7 @@ function currentText(field: EditField): string {
   const t = ticket.value
   if (t === null) return ''
   if (isScopeField(field)) return scopeText(t.scope, scopeKeyOf(field))
+  if (field === 'start_at' || field === 'due_at') return planInputOf(t[field], field === 'due_at')
   const v = t[field]
   return v === null || v === undefined ? '' : String(v)
 }
@@ -321,6 +323,44 @@ function numberOrNull(text: string): number | null | undefined {
  * **値が変わっていなければ送らない**（5.5）。フォーカスが外れるたびに `PATCH`
  * すると `version` が無駄に進み、次の編集が 409 になる。
  */
+// ── 予定日時（pb-217。7.5「予定日時の出し方」）──────────────────────
+const projectStore = useProjectStore()
+
+/** 予定の1端を入力欄の文字列にする。終日は基準タイムゾーンの日付、時刻付きは見る人の日時 */
+function planInputOf(ms: number | null, isEnd: boolean): string {
+  if (ms === null || ticket.value === null) return ''
+  return ticket.value.all_day ? planDate(ms, projectStore.planTimezone, isEnd) : localInputOf(ms)
+}
+
+/** 入力欄の文字列を瞬間へ戻す（planInputOf の逆） */
+function planInstantOf(raw: string, isEnd: boolean): number | null {
+  if (ticket.value?.all_day ?? true) return planInstant(raw, projectStore.planTimezone, isEnd)
+  return instantOfLocalInput(raw)
+}
+
+/** 予定の1端の表示 */
+function planLabel(ms: number | null, isEnd: boolean): string {
+  if (ms === null || ticket.value === null) return '—'
+  return formatPlan(ms, ticket.value.all_day, projectStore.planTimezone, isEnd)
+}
+
+/**
+ * 「終日」の切り替え。**終日にするときは両端を日の境界へ丸める**——開始はその日の0時、
+ * 期限はその日の終わり（翌日の0時）。サーバは終日で0時でない値を 422 で弾く（9.3.1）。
+ * 時刻付きにするときは値をそのまま保つ（0時の日時として見える）。
+ */
+async function toggleAllDay(next: boolean): Promise<void> {
+  const t = ticket.value
+  if (t === null || t.all_day === next) return
+  const patch: UpdateTicketRequest = { all_day: next }
+  if (next) {
+    const tz = projectStore.planTimezone
+    if (t.start_at !== null) patch.start_at = planInstant(planDate(t.start_at, tz), tz)
+    if (t.due_at !== null) patch.due_at = planInstant(planDate(t.due_at, tz, true), tz, true)
+  }
+  await selectField(patch, 'all_day')
+}
+
 async function commitEdit(): Promise<void> {
   const field = editing.value
   if (field === null || ticket.value === null) return
@@ -366,10 +406,15 @@ async function commitEdit(): Promise<void> {
     patch.readiness_note = raw.trim() === '' ? null : raw.trim()
   } else if (field === 'body_md') {
     patch.body_md = raw === '' ? null : raw
-  } else if (field === 'start_date' || field === 'due_date') {
-    // **`new Date()` を通さない**（`date` 列。`input[type=date]` の値がそのまま
-    // `YYYY-MM-DD` である）。通すと UTC より西の地域で前日へずれる
-    patch[field] = raw === '' ? null : raw
+  } else if (field === 'start_at' || field === 'due_at') {
+    // 終日は基準タイムゾーンの日付 → 0時（期限は翌日の0時）、時刻付きは見る人の
+    // タイムゾーンの壁時計 → 瞬間（7.5「予定日時の出し方」。pb-217）
+    const ms = raw === '' ? null : planInstantOf(raw, field === 'due_at')
+    if (raw !== '' && ms === null) {
+      fieldError.value = { field, message: uiText('日付または日時の形式で入力してください') }
+      return
+    }
+    patch[field] = ms
   } else {
     const n = numberOrNull(raw)
     if (n === undefined) {
@@ -1792,13 +1837,12 @@ function errorFor(field: string): string {
           <div class="meta-item measure">
             <dt>{{ $ui('開始') }}</dt>
             <dd>
-              <!-- **`date` 列であって時刻を持たない**（9.2.2）。`input[type=date]` の
-                   値がそのまま `YYYY-MM-DD` なので、`new Date()` を通さない -->
+              <!-- 終日は日付（基準タイムゾーン）、時刻付きは日時（見る人のタイムゾーン）。7.5 -->
               <input
-                v-if="editing === 'start_date'"
+                v-if="editing === 'start_at'"
                 ref="inputRef"
                 v-model="draft"
-                type="date"
+                :type="ticket.all_day ? 'date' : 'datetime-local'"
                 :aria-label="$ui('開始日')"
                 @keydown.escape="cancelEdit"
                 @keydown.enter="onEnterCommit($event, commitEdit)"
@@ -1809,12 +1853,12 @@ function errorFor(field: string): string {
                 type="button"
                 class="value-view"
                 :disabled="!canEdit"
-                @click="startEdit('start_date')"
+                @click="startEdit('start_at')"
               >
-                {{ ticket.start_date ? formatPlainDate(ticket.start_date) : '—' }}
+                {{ planLabel(ticket.start_at, false) }}
               </button>
-              <p v-if="errorFor('start_date')" class="field-error" role="alert">
-                {{ errorFor('start_date') }}
+              <p v-if="errorFor('start_at')" class="field-error" role="alert">
+                {{ errorFor('start_at') }}
               </p>
             </dd>
           </div>
@@ -1823,10 +1867,10 @@ function errorFor(field: string): string {
             <dt>{{ $ui('終了') }}</dt>
             <dd>
               <input
-                v-if="editing === 'due_date'"
+                v-if="editing === 'due_at'"
                 ref="inputRef"
                 v-model="draft"
-                type="date"
+                :type="ticket.all_day ? 'date' : 'datetime-local'"
                 :aria-label="$ui('期限')"
                 @keydown.escape="cancelEdit"
                 @keydown.enter="onEnterCommit($event, commitEdit)"
@@ -1837,16 +1881,30 @@ function errorFor(field: string): string {
                 type="button"
                 class="value-view"
                 :disabled="!canEdit"
-                @click="startEdit('due_date')"
+                @click="startEdit('due_at')"
               >
-                {{ ticket.due_date ? formatPlainDate(ticket.due_date) : '—' }}
+                {{ planLabel(ticket.due_at, true) }}
               </button>
-              <p v-if="errorFor('due_date')" class="field-error" role="alert">
-                {{ errorFor('due_date') }}
+              <p v-if="errorFor('due_at')" class="field-error" role="alert">
+                {{ errorFor('due_at') }}
               </p>
             </dd>
           </div>
         </dl>
+        <!-- 「終日」の切り替え（5.5。時刻付きの入力はこの画面だけが持つ。pb-217）。
+             **格子の外に置く**——「終了」の欄だけ高さが変わると、3行目の見出しが揃わない -->
+        <label class="all-day">
+          <input
+            type="checkbox"
+            :checked="ticket.all_day"
+            :disabled="!canEdit || busy"
+            @change="toggleAllDay(($event.target as HTMLInputElement).checked)"
+          />
+          {{ $ui('終日') }}
+        </label>
+        <p v-if="errorFor('all_day')" class="field-error" role="alert">
+          {{ errorFor('all_day') }}
+        </p>
 
         <!-- 説明（5.5「説明欄」）。読み取り時はレンダリング結果、クリックで
              ソース＋プレビューへ入る -->
@@ -3154,5 +3212,13 @@ function errorFor(field: string): string {
 
 .skeleton:nth-child(odd) {
   width: 70%;
+}
+.all-day {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pb-space-1);
+  margin-top: var(--pb-space-1);
+  color: var(--pb-text-muted);
+  font-size: 13px;
 }
 </style>

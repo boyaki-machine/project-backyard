@@ -649,9 +649,10 @@ type Querier interface {
 	FindWorkflowTemplate(ctx context.Context, templateKey pgtype.Text) (FindWorkflowTemplateRow, error)
 	// スプリントを終える（ApiDesign.md 9.12.2）。
 	//
-	// **end_date が空なら今日を入れる。** 期間を切らずに始めたスプリントでも、
-	// 終わった日付は残る——9.2.1 の「棚に戻ったか」の判定は status を見るので
-	// ここに依存しないが、あとから振り返る材料になる。
+	// **end_at が空なら終わった時点を入れる。** 期間を切らずに始めたスプリントでも、
+	// 終わった日時は残る——9.2.1 の「棚に戻ったか」の判定は status を見るので
+	// ここに依存しないが、あとから振り返る材料になる。**終日のスプリントは基準タイム
+	// ゾーンの翌日の0時**（今日を含める。半開区間の終わり）、時刻付きは now()（pb-217）。
 	FinishSprint(ctx context.Context, arg FinishSprintParams) (int64, error)
 	// ─────────────────────────────────────────────────────────────
 	// スプリントの運用（開始・終了）。ApiDesign.md 9.12.1 / 9.12.2。
@@ -795,7 +796,7 @@ type Querier interface {
 	// by_category の合計は total と一致しないことがある。合わせに行かないのは、
 	// 「分類できないチケットがある」ことを 0 で塗り潰さないためである。
 	//
-	// **「今日」は CURRENT_DATE**（9.13.1）。9.2.1 の due_within と同じ基準にする。
+	// **overdue は瞬間の比較**（due_at <= now()。pb-217）。9.2.1 の overdue と同じ条件にする。
 	// @stale_days は 9.13.1 が 14 に固定した閾値で、応答にも載せて画面へ渡す。
 	//
 	// **overdue / stale / unassigned はいずれも closed_at IS NULL が掛かる**
@@ -808,6 +809,10 @@ type Querier interface {
 	// のも実害がある——エピックに担当者を置く運用が無いので、常に「要対応」に見える。
 	//
 	GetProjectTicketStats(ctx context.Context, arg GetProjectTicketStatsParams) (GetProjectTicketStatsRow, error)
+	// GetProjectTimezone はプロジェクトの基準タイムゾーン（DbDesign.md 6.23）を返す。
+	// 予定日時の検証（終日は基準タイムゾーンの0時。ApiDesign.md 9.3.1）と、due_within の
+	// 境界の計算（9.2.1）が使う。
+	GetProjectTimezone(ctx context.Context, id string) (string, error)
 	// GetRecoveryCodeStatus は残数と発行時刻をまとめて返す。
 	//
 	// **1本も持たないときは行が返らない**ので、呼び出し側は null を返せる
@@ -1281,7 +1286,7 @@ type Querier interface {
 	//
 	// **スプリントの定義を扱う。** 開始・終了は下の 9.12.1 / 9.12.2 のクエリで、
 	// バーンダウン・ベロシティは進捗分析（構想。GuiDesign.md 10章）が持つ。
-	// items[] は start_date 降順（NULL は末尾）、同値は created_at 降順
+	// items[] は start_at 降順（NULL は末尾）、同値は created_at 降順
 	// （ApiDesign.md 9.12）。新しいものが上に来る並びで、5.9.5 の図と一致する。
 	//
 	// closed_count は closed_at IS NOT NULL で数える。status_category = 'done'
@@ -2062,7 +2067,7 @@ type Querier interface {
 	// 組み立てる（5.5 の応答は 5.4 と同形式）。同じ形を2か所で作らないため。
 	//
 	UpdateProject(ctx context.Context, arg UpdateProjectParams) (int64, error)
-	// COALESCE による部分更新。goal / start_date / end_date は NULL を
+	// COALESCE による部分更新。goal / start_at / end_at は NULL を
 	// 「値として設定する」ことがある（欄を空にする操作）ため、送られたかどうかを
 	// COALESCE では区別できない。**明示的なフラグ引数で分ける**
 	// （users_update.go の同種の扱いに揃える）。
