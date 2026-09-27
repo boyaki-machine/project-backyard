@@ -692,10 +692,6 @@ function roleLabel(role: string): string {
   return rolesStore.roleLabel(role)
 }
 
-/** 人間とエージェントを同じ一覧に並べる（設計原則5、`DbDesign.md` 6.2） */
-function kindIcon(kind: string): string {
-  return kind === 'agent' ? '🤖' : kind === 'system' ? '⚙' : '👤'
-}
 </script>
 
 <template>
@@ -937,11 +933,10 @@ function kindIcon(kind: string): string {
               <tbody>
                 <tr v-for="m in store.current.members" :key="m.actor_id">
                   <td class="icon-col">
-                    <span :aria-label="m.kind === 'agent' ? $ui('エージェント') : $ui('利用者')">
-                      {{ kindIcon(m.kind) }}
-                    </span>
+                    <span v-if="m.kind === 'system'" :aria-label="$ui('システム')">⚙</span>
+                    <Avatar v-else :name="m.display_name" :kind="m.kind" :id="m.actor_id" :size="20" />
                   </td>
-                  <td><Avatar :name="m.display_name" :kind="m.kind" :id="m.actor_id" :size="20" /> {{ m.display_name }}</td>
+                  <td>{{ m.display_name }}</td>
                   <!-- エージェントとシステムは app_user を持たないため null（5.9.2） -->
                   <td class="muted">{{ m.email ?? '—' }}</td>
                   <td>{{ roleLabel(m.role) }}</td>

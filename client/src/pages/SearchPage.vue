@@ -467,7 +467,7 @@ const assigneeOptions = computed<MultiSelectOption[]>(() => [
   ...members.value.map((m) => ({
     value: m.actor_id,
     label: m.display_name,
-    icon: m.kind === 'agent' ? '🤖' : '👤',
+    actor: { id: m.actor_id, kind: m.kind, display_name: m.display_name },
   })),
 ])
 

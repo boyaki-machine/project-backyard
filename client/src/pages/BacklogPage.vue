@@ -5,6 +5,8 @@ import type { ComponentPublicInstance } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AssigneePicker from '../components/AssigneePicker.vue'
+import ActorSelect from '../components/ActorSelect.vue'
+import type { ActorSelectOption } from '../components/ActorSelect.vue'
 import EmptyState from '../components/EmptyState.vue'
 import EpicFilter from '../components/EpicFilter.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
@@ -100,6 +102,15 @@ const canTransition = computed(() => auth.canInProject(projectKey.value, 'ticket
 const canAssign = computed(
   () => canEdit.value && auth.canInProject(projectKey.value, 'ticket.assign'),
 )
+const assigneeFilterOptions = computed<ActorSelectOption[]>(() => [
+  { value: '', label: uiText('すべて') },
+  { value: 'me', label: uiText('自分') },
+  { value: 'none', label: uiText('未割当') },
+  ...members.value.map((m) => ({
+    value: m.actor_id, label: m.display_name,
+    actor: { id: m.actor_id, kind: m.kind, display_name: m.display_name },
+  })),
+])
 
 // ── 詳細ペイン（2.2.1 / 5.5）─────────────────────────────────
 
@@ -2028,20 +2039,11 @@ watch(projectKey, (key) => {
             </select>
           </label>
 
-          <label class="filter backlog-filter-assignee">
+          <div class="filter backlog-filter-assignee">
             <span class="filter-label">{{ $ui('担当') }}</span>
-            <select
-              :value="filters.assignee"
-              @change="setQuery({ assignee: ($event.target as HTMLSelectElement).value })"
-            >
-              <option value="">{{ $ui('すべて') }}</option>
-              <option value="me">{{ $ui('自分') }}</option>
-              <option value="none">{{ $ui('未割当') }}</option>
-              <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
-                {{ m.kind === 'agent' ? '🤖' : '👤' }} {{ m.display_name }}
-              </option>
-            </select>
-          </label>
+            <ActorSelect :value="filters.assignee" :options="assigneeFilterOptions" :label="$ui('担当')"
+              @change="setQuery({ assignee: $event })" />
+          </div>
         </div>
 
         <div class="backlog-filter-primary">
@@ -3066,7 +3068,7 @@ watch(projectKey, (key) => {
   width: 56px;
 }
 
-/* `👤 開発メンバー` が 1440px で切れない幅。**狭い窓ではタイトルを優先する**が、
+/* アバターと担当者名が 1440px で切れない幅。**狭い窓ではタイトルを優先する**が、
    それは `.title` の下限（`min-width`）が担うので、ここは固定値のままにする
    ——メディアクエリを1つ足すより、下限を1か所に置くほうが読める。
 
@@ -3074,7 +3076,7 @@ watch(projectKey, (key) => {
    横幅の上限であることと、実行者を読みたい場面が「担当は誰か」を読む場面と
    同じだからである */
 /* **`▾` のぶん 16px 広げた**（5.4「一覧で担当を選ぶ」）。130px は
-   `👤開発メンバー` でほぼ埋まる幅で、キャレットを足すと名前が省略記号で切れる
+   アバターと担当者名でほぼ埋まる幅で、キャレットを足すと名前が省略記号で切れる
    ——**押せることを示す記号のために、読みたい情報を削らない。**
    広げたぶんはタイトル列（可変）から取る */
 .assignee-col {

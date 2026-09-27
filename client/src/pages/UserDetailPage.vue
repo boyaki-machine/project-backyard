@@ -642,13 +642,14 @@ function onMenuSelect(key: string): void {
 
 <template>
   <div class="page">
-    <PageHeader :title="user ? `👤 ${user.display_name}` : $ui('ユーザー詳細')">
+    <PageHeader :title="user?.display_name ?? $ui('ユーザー詳細')">
       <template #lead>
         <!-- 戻り先は一覧で固定する。`router.back()` は直リンクで開いたとき
              どこへ戻るか分からない -->
         <RouterLink class="back" to="/admin/users" :aria-label="$ui('アカウント / 権限へ戻る')">
           <span aria-hidden="true">←</span>
         </RouterLink>
+        <Avatar v-if="user" class="header-avatar" :name="user.display_name" kind="user" :id="user.id" :size="28" aria-hidden="true" />
       </template>
 
       <template v-if="user" #subtitle>{{ user.email }}</template>
@@ -1115,6 +1116,8 @@ function onMenuSelect(key: string): void {
   background: var(--pb-hover);
   color: var(--pb-text);
 }
+
+.header-avatar { margin-left: var(--pb-space-2); }
 
 /* ── ブロック（プロジェクト設定と同じ形にそろえる）─────────── */
 .blocks {

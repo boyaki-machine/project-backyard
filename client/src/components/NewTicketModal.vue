@@ -36,6 +36,8 @@ export interface NewTicketDefaults {
 import { computed, ref } from 'vue'
 
 import Modal from './Modal.vue'
+import ActorSelect from './ActorSelect.vue'
+import type { ActorSelectOption } from './ActorSelect.vue'
 import type { Tag } from '../api/tags'
 import {
   backlogTicketTypes,
@@ -105,6 +107,13 @@ const title = ref('')
 const bodyMd = ref(newTicketBodyTemplate())
 const priority = ref<TicketPriority | ''>('')
 const assigneeId = ref(props.defaults?.assignee_id ?? '')
+const assigneeOptions = computed<ActorSelectOption[]>(() => [
+  { value: '', label: uiText('未割当') },
+  ...props.members.map((m) => ({
+    value: m.actor_id, label: m.display_name,
+    actor: { id: m.actor_id, kind: m.kind, display_name: m.display_name },
+  })),
+])
 const parentSeq = ref(props.defaults?.parent_seq !== undefined ? String(props.defaults.parent_seq) : '')
 const epicSeq = ref(props.defaults?.epic_seq !== undefined ? String(props.defaults.epic_seq) : '')
 const tagIds = ref<string[]>([...(props.defaults?.tag_ids ?? [])])
@@ -262,16 +271,12 @@ function submit(): void {
           </select>
         </label>
 
-        <label class="field grow">
+        <div class="field grow">
           <span class="label">{{ $ui('担当') }}</span>
           <!-- 選択肢はプロジェクトのメンバーに限る（9.3 は非メンバーを 422 で弾く） -->
-          <select v-model="assigneeId">
-            <option value="">{{ $ui('未割当') }}</option>
-            <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
-              {{ m.kind === 'agent' ? '🤖' : '👤' }} {{ m.display_name }}
-            </option>
-          </select>
-        </label>
+          <ActorSelect :value="assigneeId" :options="assigneeOptions" :label="$ui('担当')"
+            variant="modal" :disabled="busy" @change="assigneeId = $event" />
+        </div>
       </div>
 
       <div v-if="showParent || showEpic" class="row">
