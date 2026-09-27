@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
+	"github.com/boyaki-machine/project-backyard/server/internal/holiday"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	"github.com/boyaki-machine/project-backyard/server/internal/maintenance"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -68,6 +69,10 @@ type Deps struct {
 	// Maintenance は保守モードの旗（Design.md 10.4）。**取り込みが
 	// 自分で立てて自分で降ろす。** nil なら保守モードに入らない。
 	Maintenance *maintenance.Flag
+
+	// Holidays は Google の祝日カレンダーを取りに行く口（ApiDesign.md 5.8.3）。
+	// **nil なら POST /calendar/fetch は 500 を返す。** テストは偽物を渡す。
+	Holidays holiday.Fetcher
 }
 
 // Mount は /api/v1 のルートを r に並べる。
@@ -97,6 +102,7 @@ func Mount(r chi.Router, deps Deps) {
 		dbStats:           deps.DBStats,
 		backups:           deps.Backups,
 		maintenance:       deps.Maintenance,
+		holidays:          deps.Holidays,
 	}
 
 	// ── 認証不要 ────────────────────────────────
@@ -297,6 +303,23 @@ func Mount(r chi.Router, deps Deps) {
 			Patch("/projects/{key}/tags/{id}", h.patchTag)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
 			Delete("/projects/{key}/tags/{id}", h.deleteTag)
+
+		// 暦（ApiDesign.md 5.8）。読むのは project.view、変えるのは project.edit
+		// ——タグ・スプリントの定義と同じく、プロジェクト全体の語彙である。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).
+			Get("/projects/{key}/calendar", h.getCalendar)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Put("/projects/{key}/calendar/source", h.putCalendarSource)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Post("/projects/{key}/calendar/fetch", h.fetchCalendar)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Post("/projects/{key}/calendar/import", h.importCalendar)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).
+			Get("/projects/{key}/calendar/days", h.listCalendarDays)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Put("/projects/{key}/calendar/days/{day}", h.putCalendarDay)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Delete("/projects/{key}/calendar/days/{day}", h.deleteCalendarDay)
 
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/sprints", h.listSprints)
@@ -657,4 +680,6 @@ type handler struct {
 	backups Backups
 	// maintenance は保守モードの旗（Design.md 10.4）。
 	maintenance *maintenance.Flag
+	// holidays は祝日カレンダーの取得口（ApiDesign.md 5.8.3）。
+	holidays holiday.Fetcher
 }

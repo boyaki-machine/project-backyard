@@ -1884,7 +1884,7 @@ GET /api/v1/projects/check-key?key=my-app
 
 変更可能：`name` `description` `settings` `timezone`。**送られたフィールドだけを更新する**（部分更新）。
 検証は 5.3 の表と同じ（`name` 1〜100文字、`description` 0〜1000文字）。
-`timezone` は IANA 名で、サーバと DB の両方が知っている名前だけを受ける（`DbDesign.md` 6.23）。知らない名前は `422`（`details[].field = "timezone"`、`code = "invalid_timezone"`）。**変えても既存の日時は動かさない**（保存した瞬間を保つ。pb-217 の判断）。
+`timezone` は IANA 名で、サーバと DB の両方が知っている名前だけを受ける（`DbDesign.md` 6.23）。知らない名前は `422`（`details[].field = "timezone"`、`code = "invalid"`。`PATCH /me` の `timezone` と同じ検証）。**変えても既存の日時は動かさない**（保存した瞬間を保つ。pb-217 の判断）。
 
 **`settings` は丸ごと置き換える**（部分更新ではない）。サーバは JSON オブジェクトであることだけを確かめ、中身は検証しない。**呼び出し側は取得した `settings` を保持し、変更するキーだけ差し替えて全体を送ること。** 知らないキーを落とすと、他の機能の設定が消える。
 

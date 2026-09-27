@@ -176,7 +176,7 @@ WHERE (pm.actor_id IS NOT NULL OR @is_administrator::boolean)
 --
 -- name: GetProjectByKey :one
 SELECT
-  p.id, p.key, p.name, p.description, p.status, p.settings,
+  p.id, p.key, p.name, p.description, p.status, p.settings, p.timezone,
   p.version, p.created_at, p.updated_at,
   w.id   AS workflow_id,
   w.name AS workflow_name
@@ -239,6 +239,7 @@ UPDATE project SET
   description = CASE WHEN @description_set::boolean THEN sqlc.narg('description')
                      ELSE description END,
   settings    = COALESCE(sqlc.narg('settings'), settings),
+  timezone    = COALESCE(sqlc.narg('timezone'), timezone),
   version     = version + 1
 WHERE key = @key AND version = @version;
 

@@ -261,6 +261,27 @@ type DodItem struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type HolidaySource struct {
+	ID             string
+	Kind           string
+	GoogleID       pgtype.Text
+	OwnerProjectID pgtype.Text
+	Name           pgtype.Text
+	ContentSha256  pgtype.Text
+	FetchedAt      pgtype.Timestamptz
+	LastAttemptAt  pgtype.Timestamptz
+	LastError      pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type HolidaySourceDay struct {
+	SourceID string
+	Day      pgtype.Date
+	Kind     string
+	Name     string
+}
+
 type LocalCredential struct {
 	IdentityID        string
 	PasswordHash      string
@@ -309,18 +330,29 @@ type Permission struct {
 }
 
 type Project struct {
-	ID          string
-	Key         string
-	Name        string
-	Description pgtype.Text
-	Status      string
-	WorkflowID  pgtype.Text
-	Settings    []byte
-	CreatedBy   pgtype.Text
-	Version     int32
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
-	ArchivedAt  pgtype.Timestamptz
+	ID              string
+	Key             string
+	Name            string
+	Description     pgtype.Text
+	Status          string
+	WorkflowID      pgtype.Text
+	Settings        []byte
+	CreatedBy       pgtype.Text
+	Version         int32
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	ArchivedAt      pgtype.Timestamptz
+	Timezone        string
+	HolidaySourceID pgtype.Text
+}
+
+type ProjectCalendarDay struct {
+	ProjectID string
+	Day       pgtype.Date
+	IsHoliday bool
+	Name      pgtype.Text
+	CreatedBy pgtype.Text
+	UpdatedAt pgtype.Timestamptz
 }
 
 type ProjectCounter struct {
