@@ -66,7 +66,14 @@ const isDesktop = computed(
 )
 const isCodex = computed(() => setup.value?.agent.client_kind === 'codex')
 
-const readyForSetup = computed(() => transport.value !== 'bridge' || (!!bridgeOS.value && !!bridgeArch.value))
+const bridgeArchOptions = computed(() => {
+  if (bridgeOS.value === 'darwin') return [{ value: 'arm64', label: 'Apple Silicon (ARM64)' }]
+  if (bridgeOS.value === 'windows' || bridgeOS.value === 'linux') {
+    return [{ value: 'amd64', label: 'x64' }, { value: 'arm64', label: 'ARM64' }]
+  }
+  return []
+})
+const readyForSetup = computed(() => transport.value !== 'bridge' || bridgeArchOptions.value.some((option) => option.value === bridgeArch.value))
 const zipHref = computed(() => setupApi.agentConnectZipURL(props.agentId, transport.value, bridgeOS.value, bridgeArch.value))
 
 /**
@@ -131,6 +138,7 @@ async function load() {
 }
 // **開いた時点で読む。** 親は畳んでいる間このコンポーネントを描かない。
 onMounted(load)
+watch(bridgeOS, () => { bridgeArch.value = '' })
 watch([transport, bridgeOS, bridgeArch], () => { expanded.value = false; void load() })
 
 async function copy(key: string, value: string, elementID: string) {
@@ -186,10 +194,9 @@ function preview(content: string): string {
             </select>
           </label>
           <label>{{ $ui('CPUアーキテクチャ') }}
-            <select v-model="bridgeArch" :aria-label="$ui('CPUアーキテクチャ')">
+            <select v-model="bridgeArch" :aria-label="$ui('CPUアーキテクチャ')" :disabled="!bridgeOS">
               <option value="">{{ $ui('選択してください') }}</option>
-              <option value="amd64">amd64 (x64)</option>
-              <option value="arm64">arm64</option>
+              <option v-for="option in bridgeArchOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
             </select>
           </label>
         </div>

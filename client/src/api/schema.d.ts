@@ -847,7 +847,8 @@ export interface paths {
          *       「これも置くファイルだ」と読まれる
          *     - **`README.md` という名前にしない。** プロジェクト直下で展開されたときに
          *       本物の `README.md` を消す
-         *     - **ファイル名に種別を入れる**（`pb-connect-<key>-<client_kind>.zip`）。1人が同じ
+         *     - **ファイル名に種別を入れる**（`pb-connect-<key>-<client_kind>.zip`）。Codex のブリッジZIPは
+         *       `pb-connect-<key>-codex-<os>-<arch>.zip`。1人が同じ
          *       プロジェクトに2件持つことがあり、同じ名前の zip が並ぶと見分けられない
          *     - **別パスにしてあるのは、ブラウザの `<a download href>` で素直に落とすため**
          */
@@ -6921,7 +6922,7 @@ export interface components {
         AgentID: string;
         /** @description Codex の接続方式。既定は direct。 */
         ConnectTransport: "direct" | "bridge";
-        /** @description transport=bridge のとき必須。direct では指定しない。 */
+        /** @description transport=bridge のとき必須。direct では指定しない。macOS は arm64 のみ対応。 */
         BridgeOS: "darwin" | "windows" | "linux";
         /** @description transport=bridge のとき必須。direct では指定しない。 */
         BridgeArch: "amd64" | "arm64";
@@ -8082,7 +8083,7 @@ export interface operations {
             query?: {
                 /** @description Codex の接続方式。既定は direct。 */
                 transport?: components["parameters"]["ConnectTransport"];
-                /** @description transport=bridge のとき必須。direct では指定しない。 */
+                /** @description transport=bridge のとき必須。direct では指定しない。macOS は arm64 のみ対応。 */
                 os?: components["parameters"]["BridgeOS"];
                 /** @description transport=bridge のとき必須。direct では指定しない。 */
                 arch?: components["parameters"]["BridgeArch"];
@@ -8131,7 +8132,7 @@ export interface operations {
             query?: {
                 /** @description Codex の接続方式。既定は direct。 */
                 transport?: components["parameters"]["ConnectTransport"];
-                /** @description transport=bridge のとき必須。direct では指定しない。 */
+                /** @description transport=bridge のとき必須。direct では指定しない。macOS は arm64 のみ対応。 */
                 os?: components["parameters"]["BridgeOS"];
                 /** @description transport=bridge のとき必須。direct では指定しない。 */
                 arch?: components["parameters"]["BridgeArch"];

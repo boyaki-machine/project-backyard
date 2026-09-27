@@ -86,6 +86,9 @@ func BridgeBinaryName(osName, arch string) (string, error) {
 	if arch != "amd64" && arch != "arm64" {
 		return "", fmt.Errorf("ブリッジの CPU は amd64 / arm64 から選んでください")
 	}
+	if osName == "darwin" && arch != "arm64" {
+		return "", fmt.Errorf("macOS のブリッジは Apple Silicon（arm64）のみ対応しています")
+	}
 	if osName == "windows" {
 		return "pb-mcp-bridge.exe", nil
 	}

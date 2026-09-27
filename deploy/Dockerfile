@@ -8,7 +8,7 @@
 # CPU のエミュレーションが無い端末でも、amd64 と arm64 の両方を作れる。
 #
 # イメージの中身：/pb（client を embed した単一バイナリ）、/goose（postgres のドライバだけ）、
-# /bridges（接続ZIP用の6種類の pb-mcp-bridge）、
+# /bridges（接続ZIP用の5種類の pb-mcp-bridge）、
 # /migrations、/LICENSE と /NOTICE（PB のライセンスと著作権表示）、
 # /THIRD_PARTY_NOTICES.txt（第三者のライセンス表示）。
 # 利用者は uid 65532（nonroot）。秘密ファイルの置き方は MANUAL.md の4章。

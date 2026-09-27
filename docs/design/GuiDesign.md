@@ -3143,8 +3143,10 @@ Codex のカードだけは、接続設定の前に「**HTTPS へ直接接続（
 登録または `PB_MCP_CA_FILE` と CA PEM の指定、導入、削除を同梱 ZIP に書く。ブリッジは TLS 検証を
 無効化せず、待受ポートも開かない。選択を変えると設定と ZIP を取り直す。Codex 以外には出さない。
 
-**ブリッジを選んだときだけ OS と CPU をそれぞれ選ぶ。** OS は macOS / Windows / Linux、CPU は
-amd64 / arm64。どちらも未選択の状態から始め、両方を選ぶまでは接続設定と ZIP を出さない。
+**ブリッジを選んだときだけ OS と CPU をそれぞれ選ぶ。** OS は macOS / Windows / Linux。
+CPU は macOS なら Apple Silicon（arm64）のみ、Windows / Linux なら x64（amd64）と ARM64（arm64）。
+どちらも未選択の状態から始め、OS を変更したら CPU の選択を解除する。
+両方を選ぶまでは接続設定と ZIP を出さない。
 選択値は `GET /me/agents/:id/setup` と `/setup.zip` の `os`・`arch` に同じ値を渡す。
 ZIP には選択した1種類の実行ファイルだけが入り、選択した OS / CPU は手引きにも書く。
 
