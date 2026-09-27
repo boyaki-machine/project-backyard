@@ -19,6 +19,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import Avatar from '../components/Avatar.vue'
 import DeleteUserDialog from '../components/DeleteUserDialog.vue'
 import EmptyState from '../components/EmptyState.vue'
 import GeneratedPasswordDialog from '../components/GeneratedPasswordDialog.vue'
@@ -698,7 +699,7 @@ function onMenuSelect(key: string): void {
           <!-- 表示（5.6.2 の5項目） -->
           <dl v-if="!editing" class="fields">
             <dt>{{ $ui('表示名') }}</dt>
-            <dd>{{ user.display_name }}</dd>
+            <dd><Avatar :name="user.display_name" kind="user" :id="user.id" :size="20" /> {{ user.display_name }}</dd>
 
             <dt>{{ $ui('メール') }}</dt>
             <dd>{{ user.email }}</dd>

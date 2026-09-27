@@ -8,25 +8,33 @@ import { uiText } from '../locales/ui'
  * 紫（`--pb-ai`）は「**未確認の**AI出力」という**状態**に予約してある。
  * 形で区別すれば、紫の総量が「レビューが追いついていない量」を表し続ける。
  *
- * **中身は表示名の先頭1文字である。** 画像を持たない——`actor` に
- * アバター画像の列が無く（`DbDesign.md` 6.1）、置き場も無い。
+ * **登録画像があれば画像、なければ表示名の先頭1文字を描く。**
+ * 画像は `actor_avatar` に保存する（pb-19）。
  *
  * **`ticket.ts` の `actorMark`（🤖 / 👤）とは役割が違う。** あちらは1行の中で
  * 担当を示す記号で、こちらは**書き手を面として示す**もの。コメントは書き手が
  * 読みの単位なので、行頭に箱が要る。
  */
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps<{
   /** `ActorRef.display_name` */
   name: string
   /** `ActorRef.kind`（`user` / `agent` / `system`） */
   kind: string
+  /** アクター参照では ID から画像取得口を組み立てる。 */
+  id?: string
+  /** セッションのように登録状態が分かるときは URL を直接渡す。 */
+  url?: string | null
   /** 24px（既定）か 20px。コメントは 24、密な一覧は 20 */
   size?: number
 }>()
 
 const isAgent = computed(() => props.kind === 'agent')
+const failed = ref(false)
+const ready = ref(false)
+const source = computed(() => props.kind === 'user' ? (props.url || (props.id ? `/api/v1/actors/${encodeURIComponent(props.id)}/avatar` : null)) : null)
+watch(source, () => { failed.value = false; ready.value = false })
 
 /**
  * 先頭1文字。**サロゲートペアで割らない**——絵文字や一部の漢字は
@@ -53,7 +61,8 @@ const title = computed(
     :style="{ width: `${px}px`, height: `${px}px`, fontSize: `${Math.round(px * 0.5)}px` }"
     :title="title"
   >
-    <span aria-hidden="true">{{ initial }}</span>
+    <img v-if="source && !failed" :src="source" alt="" aria-hidden="true" @load="ready = true" @error="failed = true" />
+    <span v-if="!ready || failed" aria-hidden="true">{{ initial }}</span>
     <span class="sr-only">{{ title }}</span>
   </span>
 </template>
@@ -86,6 +95,13 @@ const title = computed(
 /* **エージェントは角丸四角。** 色は変えない */
 .pb-avatar.agent {
   border-radius: 6px;
+}
+
+.pb-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
 }
 
 .sr-only {

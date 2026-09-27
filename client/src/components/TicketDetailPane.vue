@@ -34,6 +34,7 @@ import { uiText } from '../locales/ui'
 import { computed, defineAsyncComponent, nextTick, ref, useTemplateRef, watch } from 'vue'
 
 import ConfirmDialog from './ConfirmDialog.vue'
+import Avatar from './Avatar.vue'
 import EmptyState from './EmptyState.vue'
 /**
  * **型だけを取り込む。** `import type` は実行時の import を生まないので、
@@ -1328,7 +1329,7 @@ function errorFor(field: string): string {
                 </option>
               </select>
               <span v-else-if="ticket.assignee">
-                <span aria-hidden="true">{{ actorMark(ticket.assignee.kind) }}</span>
+                <Avatar :name="ticket.assignee.display_name" :kind="ticket.assignee.kind" :id="ticket.assignee.id" :size="20" />
                 {{ ticket.assignee.display_name }}
               </span>
               <span v-else class="muted">—</span>
@@ -1347,7 +1348,7 @@ function errorFor(field: string): string {
             <dt>{{ $ui('実行者') }}</dt>
             <dd>
               <span>
-                <span aria-hidden="true">{{ actorMark(ticket.working_agent.kind) }}</span>
+                <Avatar :name="ticket.working_agent.display_name" :kind="ticket.working_agent.kind" :id="ticket.working_agent.id" :size="20" />
                 {{ ticket.working_agent.display_name }}
               </span>
               <!-- **確認モーダルを出さない**（6.3）。失われるのは自己申告の1欄で、
@@ -1929,7 +1930,7 @@ function errorFor(field: string): string {
                   </option>
                 </select>
                 <template v-else-if="c.assignee">
-                  <span aria-hidden="true">{{ actorMark(c.assignee.kind) }}</span>
+                  <Avatar :name="c.assignee.display_name" :kind="c.assignee.kind" :id="c.assignee.id" :size="20" />
                   {{ c.assignee.display_name }}
                 </template>
                 <span v-else class="muted">—</span>

@@ -27,6 +27,8 @@ import type { ConfirmedTotp, MfaOverview, TotpCredential } from '../api/mfa'
 import * as passkeysApi from '../api/passkeys'
 import type { Passkey } from '../api/passkeys'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import Avatar from '../components/Avatar.vue'
+import AvatarCropModal from '../components/AvatarCropModal.vue'
 import MeTabs from '../components/MeTabs.vue'
 import PageHeader from '../components/PageHeader.vue'
 import PasskeyRegisterModal from '../components/PasskeyRegisterModal.vue'
@@ -41,6 +43,56 @@ import { useUiStore } from '../stores/ui'
 
 const auth = useAuthStore()
 const ui = useUiStore()
+const selectedAvatarFile = ref<File | null>(null)
+const avatarInput = ref<HTMLInputElement | null>(null)
+const avatarBusy = ref(false)
+const avatarMessage = ref('')
+const avatarError = ref('')
+
+function chooseAvatar(event: Event): void {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    avatarError.value = uiText('PNG、JPEG、WebP画像を選んでください')
+    return
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    avatarError.value = uiText('元の画像は20 MiB以下にしてください')
+    return
+  }
+  avatarError.value = ''
+  avatarMessage.value = ''
+  selectedAvatarFile.value = file
+}
+
+async function saveAvatar(blob: Blob): Promise<void> {
+  avatarBusy.value = true
+  avatarError.value = ''
+  try {
+    auth.setSession(await meApi.putAvatar(blob))
+    selectedAvatarFile.value = null
+    avatarMessage.value = uiText('アイコンを登録しました')
+  } catch (e: unknown) {
+    avatarError.value = asApiError(e).message
+  } finally {
+    avatarBusy.value = false
+  }
+}
+
+async function removeAvatar(): Promise<void> {
+  avatarBusy.value = true
+  avatarError.value = ''
+  try {
+    auth.setSession(await meApi.deleteAvatar())
+    avatarMessage.value = uiText('アイコンを削除しました')
+  } catch (e: unknown) {
+    avatarError.value = asApiError(e).message
+  } finally {
+    avatarBusy.value = false
+  }
+}
 
 /**
  * 登録ダイアログは遅延読み込みにする（`Development.md` 7.1）。
@@ -447,6 +499,18 @@ function asApiError(e: unknown): ApiError {
         <form class="block" @submit.prevent="saveProfile">
           <h2 class="block-title">{{ $ui('基本情報') }}</h2>
 
+          <div class="field avatar-field">
+            <span class="label">{{ $ui('アイコン') }}</span>
+            <div class="avatar-controls">
+              <Avatar :name="auth.actor?.display_name ?? ''" kind="user" :url="auth.actor?.avatar_url" :size="48" />
+              <input ref="avatarInput" class="avatar-file" type="file" accept="image/png,image/jpeg,image/webp" :disabled="avatarBusy" @change="chooseAvatar" />
+              <button type="button" class="secondary" :disabled="avatarBusy" @click="avatarInput?.click()">{{ auth.actor?.avatar_url ? $ui('変更') : $ui('登録') }}</button>
+              <button v-if="auth.actor?.avatar_url" type="button" class="secondary" :disabled="avatarBusy" @click="removeAvatar">{{ $ui('削除') }}</button>
+            </div>
+            <p v-if="avatarError" class="alert" role="alert">{{ avatarError }}</p>
+            <p v-else-if="avatarMessage" class="ok" role="status">{{ avatarMessage }}</p>
+          </div>
+
           <div class="field">
             <span class="label">{{ $ui('ログインID') }}</span>
             <p class="static-value">{{ loginId }}</p>
@@ -742,6 +806,7 @@ function asApiError(e: unknown): ApiError {
         </form>
       </div>
     </div>
+    <AvatarCropModal v-if="selectedAvatarFile" :file="selectedAvatarFile" :busy="avatarBusy" @close="selectedAvatarFile = null" @save="saveAvatar" />
 
     <TotpRegisterModal
       v-if="registerOpen"
@@ -821,6 +886,9 @@ function asApiError(e: unknown): ApiError {
   font-size: 14px;
   font-weight: 600;
 }
+
+.avatar-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pb-space-3); }
+.avatar-file { display: none; }
 
 .sub-title {
   margin: 0;

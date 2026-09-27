@@ -204,6 +204,7 @@ SELECT
   a.id   AS actor_id,
   a.kind,
   a.display_name,
+  a.avatar_url,
   u.email,
   u.system_role,
   u.locale,

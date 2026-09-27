@@ -159,7 +159,7 @@ type Querier interface {
 	// 揃えないと、一覧に7行出ているのに「上限5本」と言われ、どれを失効させれば
 	// 発行できるのかが画面から読めなくなる。
 	//
-	// **呼び出し側は CreateAccessToken と同じトランザクションで使うこと。** 別々に
+	// **呼び出し側はアクター行をロックし、CreateAccessToken と同じトランザクションで使うこと。** 別々に
 	// 実行すると、同時に2本 POST されたときに上限を超える。
 	//
 	CountMyAPITokens(ctx context.Context, actorID string) (int64, error)
@@ -337,6 +337,7 @@ type Querier interface {
 	// **pg_catalog. と修飾して書く。** 修飾しないと sqlc がマイグレーションに無い表として拒む。
 	// current_setting('lc_ctype') は使えない——PostgreSQL 16 で設定から外れた。
 	CurrentDatabaseCtype(ctx context.Context) (string, error)
+	DeleteActorAvatar(ctx context.Context, actorID string) error
 	// actor を消せば app_user / user_identity / local_credential /
 	// project_member / access_token は ON DELETE CASCADE で追従する（DbDesign.md 6.2 / 6.3）。
 	DeleteActorByEmail(ctx context.Context, email string) (int64, error)
@@ -648,6 +649,7 @@ type Querier interface {
 	// PATCH で status を直接 active にした行が複数あると2件返りうる。:one は
 	// 2行返ると失敗するので、いちばん新しい1件に倒す。
 	GetActiveSprint(ctx context.Context, projectID string) (GetActiveSprintRow, error)
+	GetActorAvatar(ctx context.Context, actorID string) (GetActorAvatarRow, error)
 	// GetActorProfile は GET /me（ApiDesign.md 4.1）が返す actor 部分を引く。
 	//
 	// 認証ミドルウェアが載せる Principal（Design.md 6.2.2）には locale / timezone /
@@ -1574,6 +1576,7 @@ type Querier interface {
 	// 委ね、check-key の結果を信頼しない」と定めている（TOCTOU 対策）。
 	//
 	ProjectKeyExists(ctx context.Context, key string) (bool, error)
+	PutActorAvatar(ctx context.Context, arg PutActorAvatarParams) error
 	// ReassignAgentRuns は実行記録のアクターを付け替える（ApiDesign.md 4.5.4）。
 	//
 	// **agent_run.actor_id は NOT NULL かつ ON DELETE RESTRICT である**
@@ -1734,6 +1737,7 @@ type Querier interface {
 	// NULL の本文は ILIKE が NULL を返すので、当たる側に入らない（SearchTicketIDs の
 	// 「NULL を先に落とす」はここでは要らない）。
 	SearchTicketIDsByTrigram(ctx context.Context, arg SearchTicketIDsByTrigramParams) ([]string, error)
+	SetActorAvatarURL(ctx context.Context, arg SetActorAvatarURLParams) error
 	// SetProjectStatus は archive / unarchive を1文で行う（5.6）。
 	//
 	// archived_at は archive で now()、unarchive で NULL（5.6 の表）。

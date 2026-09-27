@@ -237,6 +237,7 @@ SELECT
   a.id   AS actor_id,
   a.kind,
   a.display_name,
+  a.avatar_url,
   u.email,
   u.system_role,
   u.locale,
@@ -258,6 +259,7 @@ type GetActorProfileRow struct {
 	ActorID     string
 	Kind        string
 	DisplayName string
+	AvatarUrl   pgtype.Text
 	Email       pgtype.Text
 	SystemRole  pgtype.Text
 	Locale      pgtype.Text
@@ -288,6 +290,7 @@ func (q *Queries) GetActorProfile(ctx context.Context, actorID string) (GetActor
 		&i.ActorID,
 		&i.Kind,
 		&i.DisplayName,
+		&i.AvatarUrl,
 		&i.Email,
 		&i.SystemRole,
 		&i.Locale,

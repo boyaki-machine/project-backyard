@@ -19,6 +19,7 @@ import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vu
 import { useRouter } from 'vue-router'
 
 import AddUserModal from '../components/AddUserModal.vue'
+import Avatar from '../components/Avatar.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import DeleteUserDialog from '../components/DeleteUserDialog.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -777,7 +778,7 @@ async function retry(): Promise<void> {
                        クリックを素通しするので、Ctrl/⌘+クリックは新規タブになる -->
                   <RouterLink v-slot="{ href, navigate }" :to="`/admin/users/${u.id}`" custom>
                     <a ref="rowLink" class="name" :href="href" @click.stop="navigate">
-                      {{ u.display_name }}
+                      <Avatar :name="u.display_name" :kind="u.kind" :id="u.id" :size="20" /> {{ u.display_name }}
                     </a>
                   </RouterLink>
                 </td>

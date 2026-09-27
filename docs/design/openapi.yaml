@@ -234,6 +234,89 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/me/avatar:
+    put:
+      tags: [me]
+      summary: 自分のアイコンを登録または変更
+      operationId: putMyAvatar
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: 更新後のセッション
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CSRFFailed'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [me]
+      summary: 自分のアイコンを削除
+      operationId: deleteMyAvatar
+      responses:
+        '200':
+          description: 更新後のセッション
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/CSRFFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/actors/{id}/avatar:
+    get:
+      tags: [me]
+      summary: アクターのアイコン画像
+      operationId: getActorAvatar
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: PNG画像
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: アイコンが登録されていない。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/me/password:
     post:
       tags: [me]
@@ -5928,6 +6011,7 @@ components:
           id,
           kind,
           display_name,
+          avatar_url,
           email,
           system_role,
           locale,
@@ -5946,6 +6030,9 @@ components:
           enum: [user, agent]
         display_name:
           type: string
+        avatar_url:
+          type: [string, 'null']
+          description: 登録画像の取得 URL。未登録時は null。
         email:
           description: エージェントは null（ApiDesign.md 6.1。フィールド自体は省略しない）。
           type: [string, 'null']

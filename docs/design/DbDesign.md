@@ -1795,6 +1795,20 @@ CREATE INDEX idx_webauthn_challenge_expires ON webauthn_challenge (expires_at);
 
 ---
 
+## 6.22 ユーザーアイコン（0045）
+
+`actor.avatar_url` は表示 URL を保持し、画像本体は次の表に置く。DB に保存することで
+複数レプリカで共有でき、既存のバックアップに含まれる。
+
+```sql
+CREATE TABLE actor_avatar (
+  actor_id     char(26) COLLATE "C" PRIMARY KEY REFERENCES actor(id) ON DELETE CASCADE,
+  content_type text        NOT NULL CHECK (content_type = 'image/png'),
+  image_data   bytea       NOT NULL,
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+```
+
 # 7. 初期データ（0010）
 
 ## 7.1 認証プロバイダ

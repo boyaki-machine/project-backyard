@@ -22,6 +22,7 @@ import type {
   TLSCertificateList,
 } from '../api/settings'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import Avatar from '../components/Avatar.vue'
 import { formatDateTime } from '../lib/datetime'
 
 // `?raw` は Vite の機能で、型は `vite/client` に含まれる（`version.ts` と同じ読み方）。
@@ -533,7 +534,7 @@ function asApiError(e: unknown): ApiError {
           <p class="muted fp">{{ $ui('指紋:') }} {{ c.fingerprint }}</p>
           <p class="muted by">
             {{ formatDateTime(c.uploaded_at) }}
-            <template v-if="c.uploaded_by">{{ c.uploaded_by.display_name }} {{ $ui('が登録') }}</template>
+            <template v-if="c.uploaded_by"><Avatar :name="c.uploaded_by.display_name" :kind="c.uploaded_by.kind" :id="c.uploaded_by.id" :size="18" /> {{ c.uploaded_by.display_name }} {{ $ui('が登録') }}</template>
           </p>
 
           <div class="foot">

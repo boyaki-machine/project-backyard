@@ -147,8 +147,11 @@ func Mount(r chi.Router, deps Deps) {
 		// こちらは locale / timezone / theme / hue を変えられる代わりに、
 		// system_role が送られたら 422 で弾く（4.2）。
 		r.Get("/me", h.me)
+		r.Get("/actors/{id}/avatar", h.getActorAvatar)
 		self := r.With(middleware.RequireHumanSession)
 		self.Patch("/me", h.patchMe)
+		self.Put("/me/avatar", h.putMyAvatar)
+		self.Delete("/me/avatar", h.deleteMyAvatar)
 		self.Post("/me/password", h.changeMyPassword)
 		// アクセストークン（4.4）。**扱うのは token_type='api' だけ**であり、
 		// 対象の絞り込みはクエリ側（me.sql）にある。他人のトークンとセッションは

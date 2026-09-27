@@ -14,6 +14,7 @@
  * 枠線と数字を赤**にする——danger は文字・枠線、warning は面という役割分担を保つ。
  */
 import { usePendingStore } from '../stores/pending'
+import Avatar from './Avatar.vue'
 
 const pendingStore = usePendingStore()
 </script>
@@ -28,7 +29,7 @@ const pendingStore = usePendingStore()
       <p class="body">
         <template v-if="pendingStore.changedByMe">{{ $ui('あなたが') }}</template>
         <template v-else-if="pendingStore.pending.changed_by">
-          {{ pendingStore.pending.changed_by.display_name }} {{ $ui('が') }} </template>
+          <Avatar :name="pendingStore.pending.changed_by.display_name" :kind="pendingStore.pending.changed_by.kind" :id="pendingStore.pending.changed_by.id" :size="18" /> {{ pendingStore.pending.changed_by.display_name }} {{ $ui('が') }} </template>
         {{ pendingStore.pending.keys.join(', ') }} {{ $ui('を変えました。') }} <strong>{{ $ui('この設定で画面へ入れていることを確かめて、右のボタンを押してください。') }}</strong> {{ $ui('押さないまま期限が過ぎると') }}<strong>{{ $ui('元の設定へ戻ります') }}</strong>。
       </p>
       <p v-if="pendingStore.error" class="err">{{ pendingStore.error }}</p>

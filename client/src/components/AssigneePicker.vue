@@ -20,6 +20,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from 'vue'
 
 import type { ProjectMember } from '../api/projects'
+import Avatar from './Avatar.vue'
 
 const props = defineProps<{
   /** いまの担当。`null` は未割当 */
@@ -75,9 +76,6 @@ const filtered = computed<ProjectMember[]>(() => {
 })
 
 /** 種別の記号。一覧の担当セルと同じ（5.4「実行者を担当と同じセルに置く」） */
-function mark(kind: string): string {
-  return kind === 'agent' ? '🤖' : '👤'
-}
 
 /**
  * **高さが推定できない**（候補の件数で変わる）ので、いったん下へ描いて実寸を測り、
@@ -175,7 +173,7 @@ defineExpose({ close })
     @click="toggle"
   >
     <span v-if="current" class="assignee-name">
-      <span class="actor-mark" aria-hidden="true">{{ mark(current.kind) }}</span>
+      <Avatar :name="current.display_name" :kind="current.kind" :id="current.id" :size="20" />
       {{ current.display_name }}
     </span>
     <span v-else class="muted">—</span>
@@ -225,7 +223,7 @@ defineExpose({ close })
             :aria-selected="current?.id === m.actor_id"
             @click="choose(m.actor_id)"
           >
-            <span class="actor-mark" aria-hidden="true">{{ mark(m.kind) }}</span>
+            <Avatar :name="m.display_name" :kind="m.kind" :id="m.actor_id" :size="20" />
             {{ m.display_name }}
           </button>
 

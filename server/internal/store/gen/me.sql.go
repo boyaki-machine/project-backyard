@@ -51,7 +51,7 @@ WHERE actor_id = $1
 // 揃えないと、一覧に7行出ているのに「上限5本」と言われ、どれを失効させれば
 // 発行できるのかが画面から読めなくなる。
 //
-// **呼び出し側は CreateAccessToken と同じトランザクションで使うこと。** 別々に
+// **呼び出し側はアクター行をロックし、CreateAccessToken と同じトランザクションで使うこと。** 別々に
 // 実行すると、同時に2本 POST されたときに上限を超える。
 func (q *Queries) CountMyAPITokens(ctx context.Context, actorID string) (int64, error) {
 	row := q.db.QueryRow(ctx, countMyAPITokens, actorID)
