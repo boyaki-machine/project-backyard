@@ -751,6 +751,8 @@ ALTER TABLE access_token
   FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE CASCADE;
 ```
 
+**`timezone`（基準タイムゾーン）と `holiday_source_id`（祝日の取得元）は 0046 で足した**（6.23）。
+
 **`key` の形式検証をDBの `CHECK` にも置く。** アプリ側（`ApiDesign.md` 5.3）と二重になるが、URLとMCPエンドポイントに直結する値であり、不正値が入ると経路そのものが壊れるため。
 
 **`settings` で定義するキーは `repositories` のみ**である。
@@ -1808,6 +1810,91 @@ CREATE TABLE actor_avatar (
   updated_at   timestamptz NOT NULL DEFAULT now()
 );
 ```
+
+## 6.23 プロジェクトの暦（0046）
+
+**プロジェクトごとに基準タイムゾーンと休日の暦を持つ。** ガント（`GuiDesign.md` 10章）の土日祝の塗り分けと、
+予定日時のタイムスタンプ化（pb-217）が集計上の「今日」を決める基準になる。
+
+```sql
+ALTER TABLE project
+  ADD COLUMN timezone text NOT NULL DEFAULT 'Asia/Tokyo';   -- IANA 名。検証はアプリ側
+
+-- 祝日の取得元。Google の公開祝日カレンダーは google_id（= URL）単位で1行とし、複数プロジェクトで共有する。
+-- 取り込んだファイルはプロジェクトが所有する1行になる。
+CREATE TABLE holiday_source (
+  id               char(26) COLLATE "C" PRIMARY KEY,
+  kind             text NOT NULL CHECK (kind IN ('google','file')),
+  google_id        text UNIQUE CHECK (google_id ~ '^[a-z]{2}\.[a-z_]+$'),  -- 例: ja.japanese
+  owner_project_id char(26) COLLATE "C" REFERENCES project(id) ON DELETE CASCADE,
+  name             text,                   -- X-WR-CALNAME。画面に出す暦の名前
+  content_sha256   text,                   -- DTSTAMP を除いた本文のハッシュ。同じなら取り込み直さない
+  fetched_at       timestamptz,            -- 最後に取り込めた時刻
+  last_attempt_at  timestamptz,            -- 最後に取りに行った時刻（待ち時間の起点）
+  last_error       text,                   -- 最後の失敗。成功で NULL に戻す
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT ck_holiday_source_kind CHECK (
+    (kind = 'google' AND google_id IS NOT NULL AND owner_project_id IS NULL)
+    OR (kind = 'file' AND google_id IS NULL AND owner_project_id IS NOT NULL))
+);
+CREATE TRIGGER trg_holiday_source_updated BEFORE UPDATE ON holiday_source
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE holiday_source_day (
+  source_id char(26) COLLATE "C" NOT NULL REFERENCES holiday_source(id) ON DELETE CASCADE,
+  day       date NOT NULL,
+  kind      text NOT NULL CHECK (kind IN ('holiday','observance')),
+  name      text NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
+  PRIMARY KEY (source_id, day, name)
+);
+
+ALTER TABLE project
+  ADD COLUMN holiday_source_id char(26) COLLATE "C"
+             REFERENCES holiday_source(id) ON DELETE SET NULL;
+
+-- 日ごとの上書き。休日にする／しない（手動の追加・削除を兼ねる）
+CREATE TABLE project_calendar_day (
+  project_id char(26) COLLATE "C" NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  day        date    NOT NULL,
+  is_holiday boolean NOT NULL,
+  name       text    CHECK (name IS NULL OR length(name) BETWEEN 1 AND 200),
+  created_by char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (project_id, day)
+);
+```
+
+**`timezone` を `settings`（jsonb）に置かず列にする。** 集計の SQL（`stats.overdue` など。pb-217）が
+結合して使うためである。値は IANA 名で、**サーバが `time.LoadLocation` と PostgreSQL の
+`pg_timezone_names` の両方で引けることを確かめてから保存する**（CHECK に副問い合わせは書けない）。
+
+**ある日が休日かは、次の順で決まる。** 上の段が勝つ。
+
+| 順 | 根拠 | 休日か |
+|---|---|---|
+| 1 | `project_calendar_day` に行がある | `is_holiday` の値 |
+| 2 | 取得元の `holiday_source_day` に `kind = 'holiday'` の行がある | 休日 |
+| 3 | 土曜・日曜 | 休日 |
+| 4 | それ以外（`kind = 'observance'` の行事だけの日を含む） | 平日 |
+
+**土日は固定である。** 曜日の設定は持たない——土曜が出勤日なら、その日を上書きで平日にする。
+
+**祝日と行事は、iCal の `DESCRIPTION` の1行目で分ける。** Google の公開祝日カレンダーは両者を
+同じ暦に入れ、区別はこの欄にしかない（2026-09-27 実測。日本は「祝日」「祭日」、他国は
+`ja.` を付けても英語で `Public holiday` / `Public holiday in …` / `Observance`）。
+**1行目が「祭日」または `Observance` で始まれば `observance`、それ以外はすべて `holiday`。**
+同じ規則をファイルの取り込みにも使う——会社の休業日の暦のように `DESCRIPTION` を持たない暦は、
+全件が休日として入る。**行数では分けない**——半日休日と日付が暫定の祝日は、`Public holiday` の
+後ろに2行目が付く。
+
+**取得元を URL 単位で1行にする**のは、同じ暦を使う複数のプロジェクトから同じ URL へ取りに行かない
+ためである。取得の契機と待ち時間は `ApiDesign.md` 5.8.3。**Google 側は `ETag` も `Last-Modified` も
+返さない**（実測。条件付きで要求しても 200 で全体が返る）ため条件付き取得はできず、
+`content_sha256` の比較で「変わっていなければ書き換えない」に留める。
+
+**ファイルの取り込みはプロジェクト所有の行を作る。** 取り込み直すたびに同じ行の中身を入れ替え、
+Google の暦へ切り替えたり暦を外したりしたら所有の行は消す（参照されない所有物を残さない）。
 
 # 7. 初期データ（0010）
 
