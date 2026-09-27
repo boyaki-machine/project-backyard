@@ -22,6 +22,7 @@ import * as settingsApi from '../api/settings'
 import { usePendingStore } from '../stores/pending'
 import type { Setting, SettingSource } from '../api/settings'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import Avatar from '../components/Avatar.vue'
 import PageHeader from '../components/PageHeader.vue'
 import { formatDateTime } from '../lib/datetime'
 import DatabaseTab from './DatabaseTab.vue'
@@ -361,7 +362,7 @@ function asApiError(e: unknown): ApiError {
           <div class="foot">
             <span v-if="s.updated_at" class="muted">
               {{ formatDateTime(s.updated_at) }}
-              <template v-if="s.updated_by">{{ s.updated_by.display_name }} {{ $ui('が変更') }}</template>
+              <template v-if="s.updated_by"><Avatar :name="s.updated_by.display_name" :kind="s.updated_by.kind" :id="s.updated_by.id" :size="18" /> {{ s.updated_by.display_name }} {{ $ui('が変更') }}</template>
             </span>
             <!-- 既定に戻すは [DB] にだけ出す。[既定] は押しても何も変わらない -->
             <button

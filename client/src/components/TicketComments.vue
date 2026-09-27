@@ -432,7 +432,7 @@ defineExpose({ reload: load })
           class="tc-item"
           :class="{ highlight: highlightId === c.id, removed: c.deleted_at !== null }"
         >
-          <Avatar class="tc-avatar" :name="c.author.display_name" :kind="c.author.kind" />
+          <Avatar class="tc-avatar" :name="c.author.display_name" :kind="c.author.kind" :id="c.author.id" />
 
           <div class="tc-body">
             <div class="tc-head">
@@ -512,7 +512,7 @@ defineExpose({ reload: load })
                 class="tc-jump"
                 @click="jumpTo(r.id)"
               >
-                ↓{{ r.author.display_name }}
+                ↓<Avatar :name="r.author.display_name" :kind="r.author.kind" :id="r.author.id" :size="18" /> {{ r.author.display_name }}
               </button>
             </p>
           </div>

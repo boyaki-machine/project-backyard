@@ -778,6 +778,7 @@ watch(currentPath, (path) => void loadDoc(path), { immediate: true })
                 <template v-if="doc.updated_by">
                   <Avatar
                     :name="doc.updated_by.display_name"
+                    :id="doc.updated_by.id"
                     :kind="doc.updated_by.kind"
                     :size="20"
                   />

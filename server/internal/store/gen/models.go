@@ -52,6 +52,13 @@ type Actor struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type ActorAvatar struct {
+	ActorID     string
+	ContentType string
+	ImageData   []byte
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type Agent struct {
 	ActorID      string
 	OwnerActorID string

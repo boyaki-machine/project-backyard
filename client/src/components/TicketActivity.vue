@@ -175,6 +175,7 @@ defineExpose({ reload: load })
             <Avatar
               class="ta-avatar"
               :name="actorLabel(a.actor)"
+              :id="a.actor?.id"
               :kind="a.actor?.kind ?? 'system'"
               :size="20"
             />

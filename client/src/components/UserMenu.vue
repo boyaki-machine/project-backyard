@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/auth'
 import { useUiStore } from '../stores/ui'
 import type { ThemePreference } from '../stores/ui'
 import { APP_VERSION } from '../version'
+import Avatar from './Avatar.vue'
 
 /**
  * メニュー最下部のユーザー行とドロップダウン（GuiDesign.md 4.2）。
@@ -94,7 +95,7 @@ async function logout() {
       :aria-label="t('menu.user.menuLabel', { name: auth.actor?.display_name ?? '' })"
       @click="open = !open"
     >
-      <span class="avatar" aria-hidden="true">👤</span>
+      <Avatar class="avatar" :name="auth.actor?.display_name ?? ''" kind="user" :url="auth.actor?.avatar_url" :size="24" />
       <span v-if="ui.narrow || !ui.menuCollapsed" class="name">{{ auth.actor?.display_name }}</span>
       <span v-if="ui.narrow || !ui.menuCollapsed" class="caret" aria-hidden="true">{{ open ? '▾' : '▴' }}</span>
     </button>

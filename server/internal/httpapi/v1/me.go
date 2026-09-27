@@ -29,6 +29,7 @@ type actorView struct {
 	ID          string  `json:"id"`
 	Kind        string  `json:"kind"`
 	DisplayName string  `json:"display_name"`
+	AvatarURL   *string `json:"avatar_url"`
 	Email       *string `json:"email"`
 	SystemRole  *string `json:"system_role"`
 	Locale      *string `json:"locale"`
@@ -186,6 +187,14 @@ func (h *handler) buildSessionView(
 	if err != nil {
 		return sessionView{}, fmt.Errorf("所属プロジェクトを読めない: %w", err)
 	}
+	avatarProfile, err := q.GetActorProfile(ctx, prof.ActorID)
+	if err != nil && err != pgx.ErrNoRows {
+		return sessionView{}, fmt.Errorf("アイコンURLを読めない: %w", err)
+	}
+	var avatarURL *string
+	if err == nil {
+		avatarURL = nullable(avatarProfile.AvatarUrl.String)
+	}
 
 	// プロジェクトごとに複数行（権限の数だけ）返るので畳む。
 	// SQL 側が p.key 昇順で返すため、出現順がそのまま応答の順序になる。
@@ -231,6 +240,7 @@ func (h *handler) buildSessionView(
 			ID:                 prof.ActorID,
 			Kind:               prof.Kind,
 			DisplayName:        prof.DisplayName,
+			AvatarURL:          avatarURL,
 			Email:              nullable(prof.Email),
 			SystemRole:         nullable(prof.SystemRole),
 			Locale:             nullable(prof.Locale),

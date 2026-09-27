@@ -18,6 +18,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import Avatar from '../components/Avatar.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
 import RepositoryModal from '../components/RepositoryModal.vue'
@@ -940,7 +941,7 @@ function kindIcon(kind: string): string {
                       {{ kindIcon(m.kind) }}
                     </span>
                   </td>
-                  <td>{{ m.display_name }}</td>
+                  <td><Avatar :name="m.display_name" :kind="m.kind" :id="m.actor_id" :size="20" /> {{ m.display_name }}</td>
                   <!-- エージェントとシステムは app_user を持たないため null（5.9.2） -->
                   <td class="muted">{{ m.email ?? '—' }}</td>
                   <td>{{ roleLabel(m.role) }}</td>

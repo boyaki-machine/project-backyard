@@ -29,6 +29,14 @@ export function updateMe(body: UpdateMeRequest): Promise<Session> {
   return api.patch<Session>('/me', body)
 }
 
+export function putAvatar(image: Blob): Promise<Session> {
+  return api.putBlob<Session>('/me/avatar', image)
+}
+
+export function deleteAvatar(): Promise<Session> {
+  return api.del<Session>('/me/avatar')
+}
+
 /**
  * パスワードを変更する（`ApiDesign.md` 4.3）。
  *

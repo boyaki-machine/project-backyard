@@ -212,6 +212,7 @@ onMounted(async () => {
                   <template v-if="r.changed_by">
                     <Avatar
                       :name="r.changed_by.display_name"
+                      :id="r.changed_by.id"
                       :kind="r.changed_by.kind"
                       :size="18"
                     />
@@ -261,6 +262,7 @@ onMounted(async () => {
               <template v-if="revision.changed_by">
                 <Avatar
                   :name="revision.changed_by.display_name"
+                  :id="revision.changed_by.id"
                   :kind="revision.changed_by.kind"
                   :size="20"
                 />

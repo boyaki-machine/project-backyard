@@ -513,6 +513,7 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
               <Avatar
                 class="dash-act-avatar"
                 :name="actorLabel(a.actor)"
+                :id="a.actor?.id"
                 :kind="a.actor?.kind ?? 'system'"
                 :size="20"
               />
