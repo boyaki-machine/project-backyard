@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -101,8 +102,8 @@ type CreateAgentRunParams struct {
 	ClientKind   pgtype.Text
 	ModelName    pgtype.Text
 	ModelVersion pgtype.Text
-	StartedAt    pgtype.Timestamptz
-	EndedAt      pgtype.Timestamptz
+	StartedAt    time.Time
+	EndedAt      *time.Time
 	Status       string
 	TokensUsed   pgtype.Int8
 	Turns        pgtype.Int4

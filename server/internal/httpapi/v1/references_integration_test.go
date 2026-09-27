@@ -283,7 +283,7 @@ func TestTicketReferenceIntegration(t *testing.T) {
 	t.Run("親チケットの version と updated_at が動かない", func(t *testing.T) {
 		before := getTicketIT(t, r, session, base, seq)
 		beforeVersion := before["version"].(float64)
-		beforeUpdated := before["updated_at"].(string)
+		beforeUpdated := before["updated_at"].(float64)
 
 		rec := postWithCookie(r, refs, session,
 			`{"kind":"doc","url":"https://example.com/tmp.md"}`)
@@ -296,7 +296,7 @@ func TestTicketReferenceIntegration(t *testing.T) {
 		if got := after["version"].(float64); got != beforeVersion {
 			t.Errorf("version = %v, want %v（参照は ticket の列を変えない）", got, beforeVersion)
 		}
-		if got := after["updated_at"].(string); got != beforeUpdated {
+		if got := after["updated_at"].(float64); got != beforeUpdated {
 			t.Errorf("updated_at = %v, want %v", got, beforeUpdated)
 		}
 

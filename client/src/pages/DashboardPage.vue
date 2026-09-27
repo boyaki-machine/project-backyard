@@ -43,7 +43,7 @@ import {
 import type { CreateTicketRequest, StatusCategory, Ticket } from '../api/tickets'
 import { activitySummary, actorLabel, ticketLabel } from '../lib/activity'
 import type { ActivityLabelContext } from '../lib/activity'
-import { formatDateTime, formatPlainDate, todayPlainDate } from '../lib/datetime'
+import { formatDateTime, formatPlainDate, isoOf, todayPlainDate } from '../lib/datetime'
 import { statusLabel } from '../lib/catalogLabels'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
@@ -528,7 +528,7 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
                 <span v-else class="dash-act-target">{{ ticketLabel(projectKey, null) }}</span>
                 <span>{{ activitySummary(a, labelContext) }}</span>
               </p>
-              <time class="dash-act-time" :datetime="a.occurred_at">{{
+              <time class="dash-act-time" :datetime="isoOf(a.occurred_at)">{{
                 formatDateTime(a.occurred_at)
               }}</time>
             </li>

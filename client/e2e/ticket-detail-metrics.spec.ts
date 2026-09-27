@@ -13,7 +13,7 @@ const ticket = {
   tags: [], sprint: null, estimate_point: 5, actual_point: 5,
   actual_point_version: 'actual-v0', estimate_hours: 8, actual_hours: 3.5,
   start_date: '2026-08-09', due_date: '2026-08-14', closed_at: null,
-  version: 1, created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-01T00:00:00Z',
+  version: 1, created_at: 1788220800000, updated_at: 1788220800000,
   body_md: '', parent: null, epic: null, children: [], dod: [], links: [], references: [],
   comment_count: 0, execution_mode: 'agent_draft', readiness: null, readiness_note: null, scope: {},
 }
@@ -29,7 +29,7 @@ async function mockTicket(page: Page, locale: 'ja' | 'en') {
     if (path === '/api/v1/me') return reply(route, {
       actor: { ...actor, locale }, permissions: [],
       projects: [{ key: 'demo', name: 'Demo', role: 'project_admin', permissions: ['project.view', 'ticket.view', 'ticket.edit', 'ticket.actual_point.edit'] }],
-      expires_at: '2099-01-01T00:00:00Z',
+      expires_at: 4070908800000,
     })
     if (path === '/api/v1/projects/demo') return reply(route, {
       key: 'demo', name: 'Demo', members: [], workflow: { statuses: [status] },

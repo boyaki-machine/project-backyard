@@ -3655,10 +3655,10 @@ export interface components {
             /** @description 所属プロジェクトと、そこでの実効権限。`key` の昇順。 */
             projects: components["schemas"]["SessionProject"][];
             /**
-             * Format: date-time
+             * Format: int64
              * @description 現在のトークンの有効期限。無期限の API トークンでは null。
              */
-            expires_at: string | null;
+            expires_at: number | null;
         };
         Actor: {
             /**
@@ -3974,8 +3974,8 @@ export interface components {
             trust_level: number;
             /** @description `false` は無効化されたエージェント。行は残る。 */
             is_active: boolean;
-            /** Format: date-time */
-            created_at: string;
+            /** Format: int64 */
+            created_at: number;
             /** @description 有効なトークン1本。無ければ `null`。 */
             token: components["schemas"]["AgentToken"] | null;
         };
@@ -3989,15 +3989,15 @@ export interface components {
             id: string;
             /** @description 先頭8文字（`pb_agt_` + 1文字）。検索キーではない。 */
             token_prefix: string;
-            /** Format: date-time */
-            issued_at: string;
+            /** Format: int64 */
+            issued_at: number;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 一度も使われていなければ `null`。更新は1分粒度。
              */
-            last_used_at: string | null;
-            /** Format: date-time */
-            expires_at: string | null;
+            last_used_at: number | null;
+            /** Format: int64 */
+            expires_at: number | null;
             /** @enum {string} */
             status: "active" | "expired";
         };
@@ -4023,10 +4023,10 @@ export interface components {
              *     発行時のスコープそのものではない。
              */
             scopes: string[];
-            /** Format: date-time */
-            issued_at: string;
-            /** Format: date-time */
-            expires_at: string | null;
+            /** Format: int64 */
+            issued_at: number;
+            /** Format: int64 */
+            expires_at: number | null;
             /** @enum {string} */
             status: "active" | "expired";
         };
@@ -4143,10 +4143,10 @@ export interface components {
              */
             methods: ("totp" | "recovery_code")[];
             /**
-             * Format: date-time
+             * Format: int64
              * @description 挑戦の期限（5分）。**セッションの期限ではない。**
              */
-            expires_at: string;
+            expires_at: number;
         };
         /**
          * @description ApiDesign.md 3.4。**`code` と `recovery_code` はどちらか一方だけを送る**
@@ -4186,13 +4186,13 @@ export interface components {
              * @example iPhone
              */
             name: string;
-            /** Format: date-time */
-            created_at: string;
+            /** Format: int64 */
+            created_at: number;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 一度も使われていなければ null。
              */
-            last_used_at?: string | null;
+            last_used_at?: number | null;
         };
         /** @description リカバリコードの残数（ApiDesign.md 4.6.1）。**平文は含まない。** */
         RecoveryCodeStatus: {
@@ -4202,10 +4202,10 @@ export interface components {
              */
             remaining: number;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 10本を作った時刻。
              */
-            generated_at: string;
+            generated_at: number;
         };
         /** @description ApiDesign.md 4.6.2。 */
         StartTotpRequest: {
@@ -4298,10 +4298,10 @@ export interface components {
                 mediation?: string;
             };
             /**
-             * Format: date-time
+             * Format: int64
              * @description 挑戦の期限（5分）。
              */
-            expires_at: string;
+            expires_at: number;
         };
         /** @description ApiDesign.md 3.6。 */
         LoginPasskeyRequest: {
@@ -4350,13 +4350,13 @@ export interface components {
             rp_id: string;
             /** @description 端末をまたいで同期されているか（`backup_state`）。 */
             backed_up: boolean;
-            /** Format: date-time */
-            created_at: string;
+            /** Format: int64 */
+            created_at: number;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 一度も使われていなければ null。
              */
-            last_used_at: string | null;
+            last_used_at: number | null;
         };
         /**
          * @description ApiDesign.md 4.4.1。ページネーションも ETag も持たない（1人5本が上限で、
@@ -4388,19 +4388,19 @@ export interface components {
              * @example []
              */
             scopes: string[];
-            /** Format: date-time */
-            issued_at: string;
+            /** Format: int64 */
+            issued_at: number;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 一度も使われていなければ null。更新は1分粒度（Design.md 6.2.2）。
              */
-            last_used_at?: string | null;
+            last_used_at?: number | null;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 必ず入る（無期限を許さない。ApiDesign.md 4.4.2）。列としては
              *     NULL を許すため nullable にしてある。
              */
-            expires_at?: string | null;
+            expires_at?: number | null;
             /**
              * @description `active`（有効）／ `expired`（`expires_at` を過ぎた）。
              * @enum {string}
@@ -4424,10 +4424,10 @@ export interface components {
             /** @example pb_api_9 */
             token_prefix: string;
             scopes: string[];
-            /** Format: date-time */
-            issued_at: string;
-            /** Format: date-time */
-            expires_at?: string | null;
+            /** Format: int64 */
+            issued_at: number;
+            /** Format: int64 */
+            expires_at?: number | null;
             /** @enum {string} */
             status: "active" | "expired";
         };
@@ -4571,17 +4571,17 @@ export interface components {
             agent: components["schemas"]["AgentInfo"] | null;
             is_active: boolean;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 一度もログインしていなければ `null`。
              */
-            last_login_at: string | null;
+            last_login_at: number | null;
             /**
              * @description `project_member` の行数。**アーカイブ済みプロジェクトも数える**
              *     （詳細画面の memberships と食い違わせないため）。
              */
             project_count: number;
-            /** Format: date-time */
-            created_at: string;
+            /** Format: int64 */
+            created_at: number;
         };
         /** @description エージェントの付帯情報（ApiDesign.md 6.1）。`kind='agent'` の行にだけ返る。 */
         AgentInfo: {
@@ -4675,12 +4675,12 @@ export interface components {
             system_role: "operator" | "administrator";
             is_active: boolean;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 一度もログインしていなければ `null`。
              */
-            last_login_at: string | null;
-            /** Format: date-time */
-            created_at: string;
+            last_login_at: number | null;
+            /** Format: int64 */
+            created_at: number;
             /**
              * @description 楽観ロック用（`app_user.version`。ApiDesign.md 2.8）。`PATCH` の
              *     `If-Match` にこの値を入れる。**`display_name` や `is_active` を
@@ -4728,16 +4728,16 @@ export interface components {
              *     この値も追随する**（そうしないとログインできなくなる）。
              */
             subject: string;
-            /** Format: date-time */
-            linked_at: string;
-            /** Format: date-time */
-            last_used_at: string | null;
+            /** Format: int64 */
+            linked_at: number;
+            /** Format: int64 */
+            last_used_at: number | null;
             /**
-             * Format: date-time
+             * Format: int64
              * @description `local_credential` の列。ローカル以外のプロバイダでは `null`。
              *     画面（5.6.2 の「認証手段」ブロック）が「最終更新」として出す。
              */
-            password_updated_at: string | null;
+            password_updated_at: number | null;
         };
         /**
          * @description プロジェクトメンバーシップ1件（ApiDesign.md 6.3 の `project_memberships[]`）。
@@ -4753,10 +4753,10 @@ export interface components {
              */
             role: string;
             /**
-             * Format: date-time
+             * Format: int64
              * @description **ロールを変えても動かない。**
              */
-            joined_at: string;
+            joined_at: number;
         };
         /**
          * @description 有効なセッション1件（ApiDesign.md 6.3 の `sessions[]`）。
@@ -4766,18 +4766,18 @@ export interface components {
             id: string;
             /** @description 発行時の User-Agent（`access_token.client_info`）。 */
             client_info: string | null;
-            /** Format: date-time */
-            issued_at: string;
+            /** Format: int64 */
+            issued_at: number;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 一度も使われていなければ `null`。**1分粒度で間引いて更新される**（Design.md 6.2.2）。
              */
-            last_used_at: string | null;
+            last_used_at: number | null;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 無期限なら `null`（セッションは必ず入る）。
              */
-            expires_at: string | null;
+            expires_at: number | null;
         };
         /**
          * @description ユーザーの更新（ApiDesign.md 6.4）。**送られたフィールドだけを更新する。**
@@ -4871,8 +4871,8 @@ export interface components {
              * @example project_admin
              */
             my_role: string | null;
-            /** Format: date-time */
-            updated_at: string;
+            /** Format: int64 */
+            updated_at: number;
         };
         CreateProjectRequest: {
             /**
@@ -4956,10 +4956,10 @@ export interface components {
             };
             /** @description 楽観ロック用（ApiDesign.md 2.8）。作成直後は 1。 */
             version: number;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
+            /** Format: int64 */
+            created_at: number;
+            /** Format: int64 */
+            updated_at: number;
         };
         /** @description 暦の取得元と取得の状態（ApiDesign.md 5.8.1）。 */
         ProjectCalendar: {
@@ -4980,19 +4980,19 @@ export interface components {
             holiday_count: number;
             observance_count: number;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 最後に取り込めた時刻。一度も取れていなければ null。
              */
-            fetched_at: string | null;
-            /** Format: date-time */
-            last_attempt_at: string | null;
+            fetched_at: number | null;
+            /** Format: int64 */
+            last_attempt_at: number | null;
             /** @description 最後の取得の失敗。画面にそのまま出せる日本語。成功で null に戻る。 */
             last_error: string | null;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 次に取得できる時刻。いま取得できるなら null。`file` では常に null。
              */
-            next_fetch_at: string | null;
+            next_fetch_at: number | null;
         };
         PutProjectCalendarSourceRequest: {
             /** @description `^[a-z]{2}\.[a-z_]+$`。null で取得元を外す。 */
@@ -5066,8 +5066,8 @@ export interface components {
             email: string | null;
             /** @example project_admin */
             role: string;
-            /** Format: date-time */
-            joined_at: string;
+            /** Format: int64 */
+            joined_at: number;
         };
         CheckKeyResult: {
             key: string;
@@ -5346,8 +5346,8 @@ export interface components {
             status: "completed" | "blocked" | "partial";
             /** @enum {string|null} */
             knowledge_impact?: "none" | "minor" | "major" | null;
-            /** Format: date-time */
-            submitted_at: string;
+            /** Format: int64 */
+            submitted_at: number;
             submitted_by: components["schemas"]["ActorRef"];
             /**
              * @description 同じトランザクションで作った完了レポートのコメントの id。
@@ -5399,10 +5399,10 @@ export interface components {
              */
             keys: string[];
             /**
-             * Format: date-time
+             * Format: int64
              * @description これを過ぎると元の値へ戻る。
              */
-            expires_at: string;
+            expires_at: number;
             /**
              * @description 変えた人（分からなければ `null`）。
              *
@@ -5463,10 +5463,10 @@ export interface components {
             /** @description `pb.yaml` に書くときのキー。`key` と同じ値。 */
             config_file_key: string;
             /**
-             * Format: date-time
+             * Format: int64
              * @description **`source` が `database` のときだけ埋まる。**
              */
-            updated_at: string | null;
+            updated_at: number | null;
             /** @description **`source` が `database` のときだけ埋まる。** 値の履歴は持たない（audit_log を見る）。 */
             updated_by: components["schemas"]["ActorRef"] | null;
         };
@@ -5527,10 +5527,10 @@ export interface components {
         /** @description ApiDesign.md 11.10。**読み取り専用の状態であって、設定ではない。** */
         DatabaseStatus: {
             /**
-             * Format: date-time
+             * Format: int64
              * @description サーバが値を取得した時刻。**画面は定期的に引かないので、表示がいつの値かを示すために出す。**
              */
-            fetched_at: string;
+            fetched_at: number;
             connection: {
                 /** @description **PB に与えられた接続先のホスト**（`PB_DATABASE_URL`）。Unix ソケットならディレクトリのパス。 */
                 host: string;
@@ -5549,10 +5549,10 @@ export interface components {
                 /** @description `server_version` の値をそのまま返す。 */
                 version: string;
                 /**
-                 * Format: date-time
+                 * Format: int64
                  * @description `pg_postmaster_start_time()`。
                  */
-                started_at: string;
+                started_at: number;
                 /** @description **サーバ全体の上限である**（DB ごとではない）。 */
                 max_connections: number;
             };
@@ -5623,8 +5623,8 @@ export interface components {
          *     戻せたのか戻したつもりなのかが分からない。
          */
         RestoreResult: {
-            /** Format: date-time */
-            restored_at: string;
+            /** Format: int64 */
+            restored_at: number;
             backup: components["schemas"]["BackupMeta"];
             /**
              * @description 取り込みが終わったあとの版。**`backup.migration_version` より
@@ -5653,8 +5653,8 @@ export interface components {
             format_version: number;
             /** @description 書き出した時点で適用済みだった最大のマイグレーション番号。 */
             migration_version: number;
-            /** Format: date-time */
-            created_at: string;
+            /** Format: int64 */
+            created_at: number;
             /** @example 2.43.140 */
             pb_version: string;
         };
@@ -5704,10 +5704,10 @@ export interface components {
              *     **`active` なのに復号できない**という状態がありうる。
              */
             decryptable: boolean;
-            /** Format: date-time */
-            not_before: string;
-            /** Format: date-time */
-            not_after: string;
+            /** Format: int64 */
+            not_before: number;
+            /** Format: int64 */
+            not_after: number;
             /** @description 16進。 */
             serial_number: string;
             /** @description SHA-256 を `ab:cd:…` の形で。openssl の出力に揃えてある。 */
@@ -5723,8 +5723,8 @@ export interface components {
              * @enum {string}
              */
             status: "active" | "pending" | "expired" | "superseded";
-            /** Format: date-time */
-            uploaded_at: string;
+            /** Format: int64 */
+            uploaded_at: number;
             uploaded_by: components["schemas"]["ActorRef"] | null;
         };
         /** @description ApiDesign.md 11.5。**秘密鍵は暗号化して保存され、以後どの応答にも現れない。** */
@@ -5843,14 +5843,14 @@ export interface components {
              */
             sort_key: string | null;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 「オンステージ」（9.2.2、DbDesign.md 6.6）。`null` がバックログ、
              *     値が入っているものがオンステージで、値は**いつ上げたか**である。
              *     バックログ画面はこの1項目で上下二段に振り分ける（GuiDesign.md 5.4）。
              *     **進捗（`status`）とは独立した軸**で、「未着手だがオンステージ」を表せる。
              *     **段の出し入れは `POST /tickets/:seq/move`** で行う（9.4.1）。
              */
-            staged_at: string | null;
+            staged_at: number | null;
             tags: components["schemas"]["TicketTagRef"][];
             sprint: components["schemas"]["TicketSprintRef"] | null;
             /** Format: double */
@@ -5879,20 +5879,20 @@ export interface components {
              */
             due_date: string | null;
             /**
-             * Format: date-time
+             * Format: int64
              * @description **ステータス遷移の副作用としてのみ動く**（DbDesign.md 6.6）。直接は更新できない。
              */
-            closed_at: string | null;
+            closed_at: number | null;
             /** Format: int32 */
             version: number;
-            /** Format: date-time */
-            created_at: string;
+            /** Format: int64 */
+            created_at: number;
             /**
-             * Format: date-time
+             * Format: int64
              * @description **`ticket_tag` の付け外しでも動く**（9.2.5）。動かさないと、タグだけを
              *     変えた場合に一覧の `ETag` が変わらない。
              */
-            updated_at: string;
+            updated_at: number;
         };
         /**
          * @description チケットの一覧（ApiDesign.md 9.2.2）。**`page` / `per_page` / `total` /
@@ -6031,15 +6031,15 @@ export interface components {
              *     （DbDesign.md 6.7）。
              */
             author: components["schemas"]["ActorRef"];
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
+            /** Format: int64 */
+            created_at: number;
+            /** Format: int64 */
+            updated_at: number;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 論理削除の時刻（DbDesign.md 4.6 / 6.7）。未削除なら `null`。
              */
-            deleted_at: string | null;
+            deleted_at: number | null;
         };
         /**
          * @description プロジェクトの集計（ApiDesign.md 9.13.1）。ダッシュボード（GuiDesign.md 5.3）の
@@ -6156,10 +6156,10 @@ export interface components {
             /** @example in_progress */
             new_value: string | null;
             /**
-             * Format: date-time
-             * @example 2026-08-11T00:12:44Z
+             * Format: int64
+             * @example 1786407164000
              */
-            occurred_at: string;
+            occurred_at: number;
         };
         /**
          * @description 業務履歴の一覧（ApiDesign.md 9.13.2）。並びは `occurred_at DESC, id DESC` で
@@ -6233,10 +6233,10 @@ export interface components {
             body: string;
             is_satisfied: boolean;
             /**
-             * Format: date-time
+             * Format: int64
              * @description `is_satisfied` を `true` にした時刻。`false` に戻すと `null`。
              */
-            satisfied_at: string | null;
+            satisfied_at: number | null;
             /**
              * @description チェックした人。**`ON DELETE SET NULL`** なので、その人を消した後は
              *     `null` になる——**条件を満たした事実は消えず、誰が満たしたかだけが
@@ -6245,10 +6245,10 @@ export interface components {
             satisfied_by: components["schemas"]["ActorRef"] | null;
             /** Format: int32 */
             sort_order: number;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
+            /** Format: int64 */
+            created_at: number;
+            /** Format: int64 */
+            updated_at: number;
         };
         /**
          * @description 完了条件の一覧（ApiDesign.md 9.9）。**ページネーションも `ETag` も持たない**
@@ -6341,8 +6341,8 @@ export interface components {
              * @enum {string}
              */
             origin: "human" | "ai_suggested";
-            /** Format: date-time */
-            created_at: string;
+            /** Format: int64 */
+            created_at: number;
         };
         /** @description 関連チケットの一覧（ApiDesign.md 9.10.1）。**双方向を1本で返す。** */
         TicketLinkList: {
@@ -6410,10 +6410,10 @@ export interface components {
             sort_order: number;
             /** @description 書き手。`actor` の削除に `ON DELETE SET NULL` で追従するため `null` になりうる。 */
             created_by: components["schemas"]["ActorRef"] | null;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
+            /** Format: int64 */
+            created_at: number;
+            /** Format: int64 */
+            updated_at: number;
         };
         /**
          * @description 外部参照の一覧（ApiDesign.md 9.10.2）。**ページネーションを持たない**
@@ -6718,10 +6718,10 @@ export interface components {
             /** @example 0|hzzzr: */
             sort_key: string;
             /**
-             * Format: date-time
+             * Format: int64
              * @description 移動後の段（9.4.1）。`null` がバックログ。
              */
-            staged_at: string | null;
+            staged_at: number | null;
             /**
              * Format: int32
              * @description **`If-Match` を要求しないが、`version` は +1 される**（9.4）。
@@ -6769,8 +6769,8 @@ export interface components {
              * @example 3
              */
             version: number;
-            /** Format: date-time */
-            updated_at: string;
+            /** Format: int64 */
+            updated_at: number;
             /** @description `?outline=1` を付けたときだけ現れる（10.2）。見出しが無くても `[]` を返す。 */
             outline?: components["schemas"]["DocOutlineItem"][];
             children: components["schemas"]["DocTreeItem"][];
@@ -6826,10 +6826,10 @@ export interface components {
             version: number;
             created_by: components["schemas"]["ActorRef"] | null;
             updated_by: components["schemas"]["ActorRef"] | null;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
+            /** Format: int64 */
+            created_at: number;
+            /** Format: int64 */
+            updated_at: number;
         };
         /**
          * @description `?section=` を付けたときの応答（ApiDesign.md 10.3）。**章1つを読みに来た相手に
@@ -6852,8 +6852,8 @@ export interface components {
              */
             body_md: string;
             version: number;
-            /** Format: date-time */
-            updated_at: string;
+            /** Format: int64 */
+            updated_at: number;
         };
         /** @description 文書の作成（ApiDesign.md 10.4）。 */
         CreateDocRequest: {
@@ -6924,8 +6924,8 @@ export interface components {
             changed_by: components["schemas"]["ActorRef"] | null;
             /** @example ブランチ命名にチケット番号を入れる */
             change_reason: string | null;
-            /** Format: date-time */
-            created_at: string;
+            /** Format: int64 */
+            created_at: number;
         };
         /**
          * @description 履歴の1件（本文つき。ApiDesign.md 10.5）。**`version` も `outline` も持たない**
@@ -6938,8 +6938,8 @@ export interface components {
             body_md: string;
             changed_by: components["schemas"]["ActorRef"] | null;
             change_reason: string | null;
-            /** Format: date-time */
-            created_at: string;
+            /** Format: int64 */
+            created_at: number;
         };
         /**
          * @description ApiDesign.md 2.5.1 の15コード。
@@ -9835,13 +9835,13 @@ export interface operations {
                  * @description **実際に着手した日時**がこの瞬間**以上**のもの（9.2.1「着手日時を導く」）。
                  *     着手は、状態が `todo` 区分から初めて出た遷移の日時。着手していないものは外れる。
                  */
-                started_since?: string;
+                started_since?: number;
                 /** @description 着手した日時がこの瞬間**未満**のもの。`started_since` 以下なら 422。 */
-                started_before?: string;
+                started_before?: number;
                 /** @description `closed_at` がこの瞬間**以上**のもの。未完了は外れる。 */
-                closed_since?: string;
+                closed_since?: number;
                 /** @description `closed_at` がこの瞬間**未満**のもの。`closed_since` 以下なら 422。 */
-                closed_before?: string;
+                closed_before?: number;
                 /**
                  * @description 既定は `sort_key`。**`priority` と `status` は意味の順で並ぶ**——
                  *     `priority` は `lowest`→`highest`、`status` はワークフローの `sort_order` で、

@@ -88,7 +88,7 @@ LIMIT @page_limit OFFSET @page_offset;
 -- name: SummarizeTicketComments :one
 SELECT
   count(*)                        AS total,
-  max(updated_at)::timestamptz    AS last_updated_at
+  COALESCE(max(updated_at), 'epoch'::timestamptz)::timestamptz AS last_updated_at
 FROM comment
 WHERE ticket_id = @ticket_id;
 

@@ -30,3 +30,15 @@ sql:
           # （DbDesign.md 3.1 / 4.1、Design.md 6.2.1）。
           - db_type: citext
             go_type: string
+
+          # timestamptz は Go 標準の time.Time で受ける（DbDesign.md 4.1、pb-224）。
+          # DB 固有の pgtype.Timestamptz を生成コードの外へ出さない——RDBMS を
+          # 移るときに書き換えるのを DB アクセス層だけにするためである。
+          # NULL 可能な列は *time.Time（nil が SQL の NULL）。
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type:
+              type: time.Time
+              pointer: true

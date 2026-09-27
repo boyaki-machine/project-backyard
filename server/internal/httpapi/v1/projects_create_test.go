@@ -297,8 +297,8 @@ func TestCreateProjectReturnsDetailView(t *testing.T) {
 	if got, _ := view["version"].(float64); got != 1 {
 		t.Errorf("version = %v, want 1", view["version"])
 	}
-	if view["created_at"] != "2026-08-15T03:04:05Z" {
-		t.Errorf("created_at = %v, want ISO8601 UTC", view["created_at"])
+	if view["created_at"] != float64(1786763045000) { // 2026-08-15T03:04:05Z
+		t.Errorf("created_at = %v, want エポックミリ秒", view["created_at"])
 	}
 
 	wf, ok := view["workflow"].(map[string]any)

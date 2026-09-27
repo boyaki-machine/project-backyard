@@ -304,7 +304,7 @@ func ticketLinksFor(
 			},
 			LagDays:   row.LagDays,
 			Origin:    row.Origin,
-			CreatedAt: Time(row.CreatedAt.Time),
+			CreatedAt: Time(row.CreatedAt),
 		})
 	}
 	return items, nil

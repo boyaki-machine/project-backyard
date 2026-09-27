@@ -17,7 +17,7 @@ func validToken(q *fakeQuerier, scopes string) string {
 		TokenID:     "01K2F8QW3H7YRJ4M5N6P7Q8R9T",
 		TokenType:   auth.TokenTypeSession,
 		Scopes:      []byte(scopes),
-		ExpiresAt:   ts(time.Now().Add(SessionMaxAge)),
+		ExpiresAt:   tsp(time.Now().Add(SessionMaxAge)),
 		ActorID:     testActorID,
 		ActorKind:   auth.ActorKindUser,
 		DisplayName: "田中",
@@ -188,7 +188,7 @@ func TestMeRequiresAuthentication(t *testing.T) {
 func TestMeNullExpiresAtForTokenWithoutExpiry(t *testing.T) {
 	q := newFake(t)
 	token := validToken(q, `[]`)
-	q.tokenRow.ExpiresAt.Valid = false
+	q.tokenRow.ExpiresAt = nil
 
 	view := viewOf(t, authed(q, http.MethodGet, "/api/v1/me", token))
 	if view["expires_at"] != nil {
@@ -237,20 +237,17 @@ func TestExpiresAtFormat(t *testing.T) {
 	// 秒未満を落としてから既知の端数を足す。端数の有無を毎回同じ条件で測るため。
 	jst := time.FixedZone("JST", 9*3600)
 	exp := time.Now().In(jst).Add(SessionMaxAge).Truncate(time.Second).Add(123456 * time.Microsecond)
-	q.tokenRow.ExpiresAt = ts(exp)
+	q.tokenRow.ExpiresAt = tsp(exp)
 
 	rec := authed(q, http.MethodGet, "/api/v1/me", token)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
 	}
 
-	got, _ := viewOf(t, rec)["expires_at"].(string)
-	if want := exp.UTC().Format(time.RFC3339); got != want {
+	// **ミリ秒まで残り、それより下は落ちる**（ApiDesign.md 2.2、pb-224）。
+	// 端数 123.456ms は 123ms になる。
+	got, _ := viewOf(t, rec)["expires_at"].(float64)
+	if want := float64(exp.Truncate(time.Second).UnixMilli() + 123); got != want {
 		t.Errorf("expires_at = %v, want %v", got, want)
-	}
-	// want は実装（apitime.go）と同じ組み立てなので、両方同時に誤ると気づけない。
-	// 形だけは実装と独立に見る（ApiDesign.md 2.2）。
-	if !iso8601UTCSeconds.MatchString(got) {
-		t.Errorf("expires_at = %q は 2.2 の形（UTC・秒精度）でない", got)
 	}
 }

@@ -46,12 +46,12 @@ type certificateView struct {
 	// IPAddresses は IP の SAN（11.4）。**列には無く、cert_pem から採る**——
 	// dns_names は DNS: の SAN しか持たないので、**これを出さないと画面の
 	// 「SAN」欄と突き合わせの結果が食い違って見える**。
-	IPAddresses  []string  `json:"ip_addresses"`
-	NotBefore    time.Time `json:"not_before"`
-	NotAfter     time.Time `json:"not_after"`
-	SerialNumber string    `json:"serial_number"`
-	Fingerprint  string    `json:"fingerprint"`
-	IsSelfSigned bool      `json:"is_self_signed"`
+	IPAddresses  []string `json:"ip_addresses"`
+	NotBefore    Time     `json:"not_before"`
+	NotAfter     Time     `json:"not_after"`
+	SerialNumber string   `json:"serial_number"`
+	Fingerprint  string   `json:"fingerprint"`
+	IsSelfSigned bool     `json:"is_self_signed"`
 	// Status はサーバが決める（11.4）。画面が日付から組み立てない。
 	Status string `json:"status"`
 	// Decryptable はいまの鍵で秘密鍵を復号できるか（11.4）。
@@ -62,7 +62,7 @@ type certificateView struct {
 	// **status とは別の軸である。** status は日付で決まり、こちらは鍵で決まる。
 	// **active なのに復号できない**という状態がありうる。
 	Decryptable bool      `json:"decryptable"`
-	UploadedAt  time.Time `json:"uploaded_at"`
+	UploadedAt  Time      `json:"uploaded_at"`
 	UploadedBy  *actorRef `json:"uploaded_by"`
 }
 
@@ -169,8 +169,8 @@ func (h *handler) uploadTLSCertificate(w http.ResponseWriter, r *http.Request) {
 			ID:            id,
 			CommonName:    parsed.CommonName,
 			DnsNames:      parsed.DNSNames,
-			NotBefore:     pgtype.Timestamptz{Time: parsed.NotBefore, Valid: true},
-			NotAfter:      pgtype.Timestamptz{Time: parsed.NotAfter, Valid: true},
+			NotBefore:     parsed.NotBefore,
+			NotAfter:      parsed.NotAfter,
 			SerialNumber:  parsed.SerialNumber,
 			Fingerprint:   parsed.Fingerprint,
 			IsSelfSigned:  parsed.IsSelfSigned,
@@ -250,8 +250,8 @@ func (h *handler) deleteTLSCertificate(w http.ResponseWriter, r *http.Request) {
 		}
 		remaining = append(remaining, tlscert.Entry{
 			ID:        row.ID,
-			NotBefore: row.NotBefore.Time,
-			NotAfter:  row.NotAfter.Time,
+			NotBefore: row.NotBefore,
+			NotAfter:  row.NotAfter,
 		})
 	}
 	if !found {
@@ -352,7 +352,7 @@ func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow, key []
 	entries := make([]tlscert.Entry, 0, len(rows))
 	for _, row := range rows {
 		entries = append(entries, tlscert.Entry{
-			ID: row.ID, NotBefore: row.NotBefore.Time, NotAfter: row.NotAfter.Time,
+			ID: row.ID, NotBefore: row.NotBefore, NotAfter: row.NotAfter,
 		})
 	}
 	status, activeID := tlscert.Select(entries, time.Now())
@@ -364,14 +364,14 @@ func (h *handler) buildCertificateList(rows []gen.ListTLSCertificatesRow, key []
 			CommonName:   row.CommonName,
 			DNSNames:     row.DnsNames,
 			IPAddresses:  tlscert.IPAddresses(row.CertPem),
-			NotBefore:    row.NotBefore.Time.UTC(),
-			NotAfter:     row.NotAfter.Time.UTC(),
+			NotBefore:    Time(row.NotBefore),
+			NotAfter:     Time(row.NotAfter),
 			SerialNumber: row.SerialNumber,
 			Fingerprint:  row.Fingerprint,
 			IsSelfSigned: row.IsSelfSigned,
 			Status:       string(status[row.ID]),
 			Decryptable:  decryptable(row, key),
-			UploadedAt:   row.CreatedAt.Time.UTC(),
+			UploadedAt:   Time(row.CreatedAt),
 		}
 		if v.DNSNames == nil {
 			v.DNSNames = []string{}
@@ -506,7 +506,7 @@ func entriesFrom(rows []gen.ListTLSCertificatesRow, key []byte) []tlscert.Entry 
 			continue
 		}
 		out = append(out, tlscert.Entry{
-			ID: row.ID, NotBefore: row.NotBefore.Time, NotAfter: row.NotAfter.Time, Pair: pair,
+			ID: row.ID, NotBefore: row.NotBefore, NotAfter: row.NotAfter, Pair: pair,
 		})
 	}
 	return out

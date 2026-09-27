@@ -1206,7 +1206,7 @@ func seedTickets(
 		// スプリントの進捗（9.12）が closed_at を基準にしているため。
 		if status.category == "done" {
 			if err := q.SetTicketClosedAt(ctx, gen.SetTicketClosedAtParams{
-				ID: ticketID, ClosedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				ID: ticketID, ClosedAt: nowPtr(),
 			}); err != nil {
 				return fmt.Errorf("チケット %q を完了にできない: %w", tk.Title, err)
 			}
@@ -1238,7 +1238,7 @@ func seedTickets(
 		// 二段が動いていることを画面で確かめられない。
 		if tk.Staged {
 			if err := q.SetTicketStagedAt(ctx, gen.SetTicketStagedAtParams{
-				ID: ticketID, StagedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				ID: ticketID, StagedAt: nowPtr(),
 			}); err != nil {
 				return fmt.Errorf("チケット %q をオンステージにできない: %w", tk.Title, err)
 			}
@@ -1617,4 +1617,10 @@ func projectRolesOf(email string, projects []devProject) string {
 // nullText は空文字を NULL として渡す。
 func nullText(s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: s != ""}
+}
+
+// nowPtr は NULL 可能な timestamptz 列に入れる「いま」。
+func nowPtr() *time.Time {
+	t := time.Now()
+	return &t
 }

@@ -347,7 +347,7 @@ func TestLoginMFARejectsConsumedChallenge(t *testing.T) {
 	q := newFake(t)
 	secret := withConfirmedTOTP(t, q)
 	row := challengeRow(mfaChallengeTTL)
-	row.ConsumedAt = ts(time.Now().Add(-time.Minute))
+	row.ConsumedAt = tsp(time.Now().Add(-time.Minute))
 	q.mfa.challenge = row
 	code, _ := mfa.Code(secret, mfa.Step(time.Now()))
 

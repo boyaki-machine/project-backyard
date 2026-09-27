@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -30,7 +31,7 @@ type CreateAccessTokenParams struct {
 	Name        pgtype.Text
 	ProjectID   pgtype.Text
 	Scopes      []byte
-	ExpiresAt   pgtype.Timestamptz
+	ExpiresAt   *time.Time
 	ClientInfo  pgtype.Text
 }
 
@@ -92,11 +93,11 @@ type FindAccessTokenByHashRow struct {
 	TokenType           string
 	Scopes              []byte
 	ProjectID           pgtype.Text
-	ExpiresAt           pgtype.Timestamptz
-	RevokedAt           pgtype.Timestamptz
-	LastUsedAt          pgtype.Timestamptz
+	ExpiresAt           *time.Time
+	RevokedAt           *time.Time
+	LastUsedAt          *time.Time
 	CachedPermissions   []byte
-	PermissionsCachedAt pgtype.Timestamptz
+	PermissionsCachedAt *time.Time
 	ActorID             string
 	ActorKind           string
 	DisplayName         string
@@ -192,7 +193,7 @@ type FindLocalLoginByEmailRow struct {
 	PasswordHash   string
 	MustChange     bool
 	FailedAttempts int32
-	LockedUntil    pgtype.Timestamptz
+	LockedUntil    *time.Time
 }
 
 // ── ローカル ID/PW ログイン（Design.md 6.2.1、手順5） ────────────────
@@ -335,7 +336,7 @@ RETURNING failed_attempts, locked_until
 
 type RecordLoginFailureRow struct {
 	FailedAttempts int32
-	LockedUntil    pgtype.Timestamptz
+	LockedUntil    *time.Time
 }
 
 // RecordLoginFailure は1回の失敗を原子的に加算する（Design.md 6.3）。

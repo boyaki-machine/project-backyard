@@ -1,5 +1,5 @@
 /**
- * 日時の表示（`ApiDesign.md` 2.2 は ISO8601 UTC で返す）。
+ * 日時の表示（`ApiDesign.md` 2.2 はエポックミリ秒で返す。pb-224）。
  *
  * **`app_user.timezone` に従って出す**（`GuiDesign.md` 7.5。手順19b）。
  * 未設定なら端末のローカル時刻。auth ストアがセッション確定時に `setTimezone`
@@ -56,8 +56,8 @@ export function currentTimezone(): string | null {
  * **`Intl.DateTimeFormat` の `formatToParts` を使う。** `toLocaleString` の
  * 文字列を切り出すと、ロケールごとの区切りに依存して壊れる。
  */
-function parts(iso: string): { y: string; mo: string; d: string; h: string; mi: string; s: string } | null {
-  const t = new Date(iso)
+function parts(ms: number): { y: string; mo: string; d: string; h: string; mi: string; s: string } | null {
+  const t = new Date(ms)
   if (Number.isNaN(t.getTime())) return null
   if (timezone === null) {
     return {
@@ -98,9 +98,9 @@ function parts(iso: string): { y: string; mo: string; d: string; h: string; mi: 
 const p2 = (n: number) => String(n).padStart(2, '0')
 
 /** `2026-08-11 09:12` */
-export function formatDateTime(iso: string): string {
-  const t = parts(iso)
-  if (t === null) return iso
+export function formatDateTime(ms: number): string {
+  const t = parts(ms)
+  if (t === null) return String(ms)
   if (uiLocaleTag() === 'en-US') return `${t.mo}/${t.d}/${t.y} ${hour12(t.h)}:${t.mi}:${t.s} ${ampm(t.h)}`
   return `${t.y}-${t.mo}-${t.d} ${t.h}:${t.mi}`
 }
@@ -113,10 +113,19 @@ function ampm(hour: string): 'AM' | 'PM' {
   return Number(hour) < 12 ? 'AM' : 'PM'
 }
 
+/**
+ * `<time datetime>` に入れる ISO8601（UTC）。**画面に出す文字列ではない**——表示は
+ * `formatDateTime` / `formatDate` を使う。
+ */
+export function isoOf(ms: number): string {
+  const t = new Date(ms)
+  return Number.isNaN(t.getTime()) ? '' : t.toISOString()
+}
+
 /** `2026-08-11`。時刻に意味がない項目（参加日など）で使う */
-export function formatDate(iso: string): string {
-  const t = parts(iso)
-  if (t === null) return iso
+export function formatDate(ms: number): string {
+  const t = parts(ms)
+  if (t === null) return String(ms)
   if (uiLocaleTag() === 'en-US') return `${t.mo}/${t.d}/${t.y}`
   return `${t.y}-${t.mo}-${t.d}`
 }
@@ -173,7 +182,7 @@ export function addDaysPlainDate(date: string, days: number): string | null {
 }
 
 /**
- * その日の0時の瞬間を ISO8601 UTC で返す（`GuiDesign.md` 5.13）。形が違えば `null`。
+ * その日の0時の瞬間をエポックミリ秒で返す（`GuiDesign.md` 5.13）。形が違えば `null`。
  *
  * **日の境界は `app_user.timezone` で作る**（未設定なら端末のローカル）。チケット検索の期間は
  * `timestamptz`（完了日時・着手日時）を絞るもので、一覧は完了日を `formatDate`（同じ
@@ -183,25 +192,25 @@ export function addDaysPlainDate(date: string, days: number): string | null {
  * **時差を2回測る。** UTC の0時を仮に置いて時差を引くと、夏時間の切り替わりの前後では
  * 引いた先で時差が変わっていることがある。
  */
-export function startOfDayInstant(date: string): string | null {
+export function startOfDayInstant(date: string): number | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
   if (m === null) return null
   const y = Number(m[1])
   const mo = Number(m[2]) - 1
   const d = Number(m[3])
   if (timezone === null) {
-    const t = new Date(y, mo, d)
-    return Number.isNaN(t.getTime()) ? null : t.toISOString()
+    const t = new Date(y, mo, d).getTime()
+    return Number.isNaN(t) ? null : t
   }
   const guess = Date.UTC(y, mo, d)
   let t = guess - offsetMs(guess)
   t = guess - offsetMs(t)
-  return new Date(t).toISOString()
+  return t
 }
 
 /** その瞬間の、設定タイムゾーンでの時差（壁時計 − UTC。ミリ秒。分の単位まで） */
 function offsetMs(utcMs: number): number {
-  const p = parts(new Date(utcMs).toISOString())
+  const p = parts(utcMs)
   if (p === null) return 0
   const wall = Date.UTC(Number(p.y), Number(p.mo) - 1, Number(p.d), Number(p.h), Number(p.mi))
   return wall - Math.floor(utcMs / 60_000) * 60_000

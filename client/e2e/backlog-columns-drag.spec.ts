@@ -6,16 +6,16 @@ const actor = {
   timezone: 'Asia/Tokyo', theme: 'light', hue: 'blue', must_change_password: false,
 }
 const status = { key: 'todo', name: '未着手', category: 'todo', sort_order: 1 }
-const ticket = (seq: number, title: string, parent_seq: number | null, staged_at: string | null) => ({
+const ticket = (seq: number, title: string, parent_seq: number | null, staged_at: number | null) => ({
   id: `01K000000000000000000000${seq}`, seq, type: 'task', title,
   status, priority: null, assignee: null, reporter: actor, working_agent: null,
   parent_seq, has_children: seq === 2, sort_key: `0|${seq}:`, staged_at,
   tags: [], sprint: null, estimate_point: null, estimate_hours: null, actual_hours: null,
   start_date: null, due_date: null, closed_at: null, version: 1,
-  created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-01T00:00:00Z',
+  created_at: 1788220800000, updated_at: 1788220800000,
 })
 const rows = [
-  ticket(1, 'オンステージの根', null, '2026-09-01T00:00:00Z'),
+  ticket(1, 'オンステージの根', null, 1788220800000),
   ticket(2, 'バックログの根', null, null),
   ticket(3, '移動する子', 2, null),
 ]
@@ -30,14 +30,14 @@ async function mockBacklog(page: Page, moves: unknown[], items = rows) {
     const url = new URL(request.url())
     const path = url.pathname
     if (path === '/api/v1/me') {
-      await json(route, { actor, permissions: [], projects: [{ key: 'demo', name: 'Demo', role: 'project_admin', permissions: ['project.view', 'ticket.view', 'ticket.edit'] }], expires_at: '2099-01-01T00:00:00Z' })
+      await json(route, { actor, permissions: [], projects: [{ key: 'demo', name: 'Demo', role: 'project_admin', permissions: ['project.view', 'ticket.view', 'ticket.edit'] }], expires_at: 4070908800000 })
     } else if (path === '/api/v1/projects/demo') {
       await json(route, { key: 'demo', name: 'Demo', members: [], workflow: { statuses: [status] } })
     } else if (path === '/api/v1/projects/demo/tickets' && request.method() === 'GET') {
       await json(route, { items: url.searchParams.get('type') === 'epic' ? [] : items, total: 3, page: 1, per_page: 200, total_pages: 1 })
     } else if (path === '/api/v1/projects/demo/tickets/3/move') {
       moves.push(request.postDataJSON())
-      await json(route, { seq: 3, sort_key: '0|1.5:', staged_at: '2026-09-01T00:00:00Z', version: 2, rebalanced: false })
+      await json(route, { seq: 3, sort_key: '0|1.5:', staged_at: 1788220800000, version: 2, rebalanced: false })
     } else if (path.endsWith('/tags') || path.endsWith('/sprints')) {
       await json(route, { items: [] })
     } else {
@@ -82,7 +82,7 @@ test('オンステージ配下の子をバックログの根へ移せる', async
   const moves: unknown[] = []
   const items = [
     ticket(1, 'バックログの根', null, null),
-    ticket(2, 'オンステージの根', null, '2026-09-01T00:00:00Z'),
+    ticket(2, 'オンステージの根', null, 1788220800000),
     ticket(3, '移動する子', 2, null),
   ]
   await mockBacklog(page, moves, items)

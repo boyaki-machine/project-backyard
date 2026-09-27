@@ -238,8 +238,8 @@ func (h *handler) fetchCalendar(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return fmt.Errorf("取得元 %q をロックできない: %w", cur.ID, err)
 		}
-		if row.LastAttemptAt.Valid {
-			if next := row.LastAttemptAt.Time.Add(calendarFetchCooldown); time.Now().Before(next) {
+		if row.LastAttemptAt != nil {
+			if next := (*row.LastAttemptAt).Add(calendarFetchCooldown); time.Now().Before(next) {
 				wait = time.Until(next)
 				return nil
 			}
@@ -530,12 +530,12 @@ func calendarByProject(ctx context.Context, q gen.Querier, projectID string) (ca
 		Name:            textPtr(row.Name),
 		HolidayCount:    row.HolidayCount,
 		ObservanceCount: row.ObservanceCount,
-		FetchedAt:       apiTimestamptz(row.FetchedAt),
-		LastAttemptAt:   apiTimestamptz(row.LastAttemptAt),
+		FetchedAt:       apiTime(row.FetchedAt),
+		LastAttemptAt:   apiTime(row.LastAttemptAt),
 		LastError:       textPtr(row.LastError),
 	}
-	if row.Kind == "google" && row.LastAttemptAt.Valid {
-		if next := row.LastAttemptAt.Time.Add(calendarFetchCooldown); time.Now().Before(next) {
+	if row.Kind == "google" && row.LastAttemptAt != nil {
+		if next := (*row.LastAttemptAt).Add(calendarFetchCooldown); time.Now().Before(next) {
 			v := Time(next)
 			src.NextFetchAt = &v
 		}

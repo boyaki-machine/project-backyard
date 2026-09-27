@@ -3,10 +3,13 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -91,7 +94,67 @@ func (h *Handler) callREST(r *http.Request, method, path string, query url.Value
 	rec := &recorder{header: make(http.Header)}
 	h.rest.ServeHTTP(rec, req)
 
-	return restResult{status: rec.statusCode(), body: rec.body.Bytes()}, nil
+	return restResult{status: rec.statusCode(), body: isoTimes(rec.body.Bytes())}, nil
+}
+
+// isoTimes は REST の応答にある日時を ISO8601 UTC の文字列へ戻す（pb-224）。
+//
+// **REST はエポックミリ秒、MCP は ISO8601 UTC**（ApiDesign.md 2.2）。MCP は REST を
+// 内部で呼んで応答を読むので、ここで戻さないとエポック値がエージェントへ漏れる
+// ——エージェントはエポック値の換算を誤りやすい、というのが MCP を ISO に残した理由である。
+//
+// **名前で見分ける。** キーが `_at` で終わるか `not_before` / `not_after` で、値が整数の
+// ものだけを変える。REST の日時はすべてこの形の名前である（apitime.go の Time を
+// 通る項目）。JSON でない本文と、変える項目が無い本文はそのまま返す。
+func isoTimes(body []byte) []byte {
+	if len(body) == 0 || (body[0] != '{' && body[0] != '[') {
+		return body
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return body
+	}
+	if !rewriteTimes(v) {
+		return body
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// rewriteTimes は v の中の日時を書き換え、1つでも変えたら true を返す。
+func rewriteTimes(v any) bool {
+	changed := false
+	switch t := v.(type) {
+	case map[string]any:
+		for k, x := range t {
+			if n, ok := x.(json.Number); ok && isTimeKey(k) {
+				if ms, err := n.Int64(); err == nil {
+					t[k] = time.UnixMilli(ms).UTC().Format(time.RFC3339)
+					changed = true
+					continue
+				}
+			}
+			if rewriteTimes(x) {
+				changed = true
+			}
+		}
+	case []any:
+		for _, x := range t {
+			if rewriteTimes(x) {
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+func isTimeKey(k string) bool {
+	return strings.HasSuffix(k, "_at") || k == "not_before" || k == "not_after"
 }
 
 // getREST は REST の GET を内部で1回叩く。callREST の薄いラッパである。

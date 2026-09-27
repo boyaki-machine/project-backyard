@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -137,8 +138,8 @@ type GetDocumentRow struct {
 	UpdatedBy     pgtype.Text
 	UpdatedByKind pgtype.Text
 	UpdatedByName pgtype.Text
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // GetDocument は本文1件（10.3）。created_by / updated_by は LEFT JOIN である。
@@ -197,7 +198,7 @@ type GetDocumentRevisionRow struct {
 	ChangedByKind pgtype.Text
 	ChangedByName pgtype.Text
 	ChangeReason  pgtype.Text
-	CreatedAt     pgtype.Timestamptz
+	CreatedAt     time.Time
 }
 
 // GetDocumentRevision は1件ぶんの本文（10.5）。
@@ -311,7 +312,7 @@ type ListDocumentRevisionsRow struct {
 	ChangedByKind pgtype.Text
 	ChangedByName pgtype.Text
 	ChangeReason  pgtype.Text
-	CreatedAt     pgtype.Timestamptz
+	CreatedAt     time.Time
 	Total         int64
 }
 
@@ -438,8 +439,8 @@ type ListDocumentTreeRow struct {
 	SortOrder int32
 	PackMode  string
 	Version   int32
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // プロジェクト文書に関するクエリ（DbDesign.md 8.1、ApiDesign.md 10章）。

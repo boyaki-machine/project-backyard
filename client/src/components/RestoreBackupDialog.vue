@@ -64,7 +64,7 @@ function confirm() {
         <code class="file">{{ file.name }}</code>
       </p>
       <p v-if="meta" class="meta muted">
-        {{ formatDateTime(meta.created_at) }} {{ $ui('に書き出し ／ スキーマの版') }} {{ String(meta.migration_version).padStart(4, '0') }} ／ PB {{ meta.pb_version }}
+        {{ formatDateTime(Date.parse(meta.created_at)) }} {{ $ui('に書き出し ／ スキーマの版') }} {{ String(meta.migration_version).padStart(4, '0') }} ／ PB {{ meta.pb_version }}
       </p>
       <p v-else class="meta error-text"> {{ $ui('✕ このファイルから書き出しの情報を読めませんでした。PB が書き出したファイルを選んでください') }} </p>
 

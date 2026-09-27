@@ -56,7 +56,7 @@ type activityItem struct {
 	Field      *string `json:"field"`
 	OldValue   *string `json:"old_value"`
 	NewValue   *string `json:"new_value"`
-	OccurredAt string  `json:"occurred_at"`
+	OccurredAt int64   `json:"occurred_at"`
 }
 
 func decodeActivity(t *testing.T, rec *httptest.ResponseRecorder) List[activityItem] {
@@ -75,7 +75,7 @@ const (
 	actTicketB = "01K2ACT00000000000000TKTB"
 )
 
-func actAt(min int) pgtype.Timestamptz {
+func actAt(min int) time.Time {
 	return ts(time.Date(2026, 8, 27, 10, min, 0, 0, time.UTC))
 }
 
@@ -527,8 +527,8 @@ func assertDetail(t *testing.T, rec *httptest.ResponseRecorder, field, code stri
 	}
 }
 
-// **occurred_at は 2.2 の ISO8601 UTC・秒精度**（apitime.go の Time）。
-func TestListActivityFormatsOccurredAtAsUTCSeconds(t *testing.T) {
+// **occurred_at は 2.2 のエポックミリ秒**（apitime.go の Time。pb-224）。
+func TestListActivityFormatsOccurredAtAsEpochMillis(t *testing.T) {
 	q := activityFake()
 	h := &handler{q: q}
 
@@ -536,7 +536,7 @@ func TestListActivityFormatsOccurredAtAsUTCSeconds(t *testing.T) {
 	h.listProjectActivity(rec, dashReq(http.MethodGet, "/api/v1/projects/demo/activity"))
 
 	got := decodeActivity(t, rec)
-	if want := "2026-08-27T10:15:00Z"; got.Items[0].OccurredAt != want {
-		t.Errorf("occurred_at = %q, want %q", got.Items[0].OccurredAt, want)
+	if want := int64(1787825700000); got.Items[0].OccurredAt != want { // 2026-08-27T10:15:00Z
+		t.Errorf("occurred_at = %d, want %d", got.Items[0].OccurredAt, want)
 	}
 }

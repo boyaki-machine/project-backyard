@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -29,8 +30,8 @@ type ConfirmMfaCredentialRow struct {
 	ID         string
 	Name       string
 	Kind       string
-	CreatedAt  pgtype.Timestamptz
-	LastUsedAt pgtype.Timestamptz
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
 }
 
 // ConfirmMfaCredential は照合が通った行を確定させる。
@@ -156,7 +157,7 @@ type CreateMfaLoginChallengeParams struct {
 	ID        string
 	UserID    string
 	TokenHash string
-	ExpiresAt pgtype.Timestamptz
+	ExpiresAt time.Time
 }
 
 // ── ログインの挑戦 ──────────────────────────────────────
@@ -298,8 +299,8 @@ type FindMfaLoginChallengeRow struct {
 	ID          string
 	UserID      string
 	Attempts    int32
-	ExpiresAt   pgtype.Timestamptz
-	ConsumedAt  pgtype.Timestamptz
+	ExpiresAt   time.Time
+	ConsumedAt  *time.Time
 	DisplayName string
 	IsActive    bool
 	Email       string
@@ -384,7 +385,7 @@ HAVING count(*) > 0
 
 type GetRecoveryCodeStatusRow struct {
 	Remaining   int64
-	GeneratedAt pgtype.Timestamptz
+	GeneratedAt time.Time
 }
 
 // GetRecoveryCodeStatus は残数と発行時刻をまとめて返す。
@@ -414,8 +415,8 @@ type ListConfirmedMfaCredentialsRow struct {
 	ID         string
 	Name       string
 	Kind       string
-	CreatedAt  pgtype.Timestamptz
-	LastUsedAt pgtype.Timestamptz
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
 }
 
 // 多要素認証のクエリ（DbDesign.md 6.18、Design.md 6.7）。

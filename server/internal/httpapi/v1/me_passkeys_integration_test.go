@@ -95,7 +95,7 @@ func TestMePasskeysIntegration(t *testing.T) {
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("パスキーを読めない: rows=%d err=%v", len(rows), err)
 		}
-		if !rows[0].LastUsedAt.Valid {
+		if rows[0].LastUsedAt == nil {
 			t.Error("last_used_at が書き戻されていない")
 		}
 		if !rows[0].BackupState {
@@ -173,7 +173,7 @@ func TestMePasskeysIntegration(t *testing.T) {
 	// ── CHECK ─────────────────────────────────────────────
 	t.Run("登録の挑戦には利用者が要り、ログインの挑戦には要らない（CHECK）", func(t *testing.T) {
 		userID, _ := newSelf(t, "check", auth.SystemRoleOperator)
-		expires := pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true}
+		expires := ts(time.Now().Add(time.Minute))
 
 		cases := []struct {
 			name    string

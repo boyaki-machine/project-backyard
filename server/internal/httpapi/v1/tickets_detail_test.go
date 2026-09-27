@@ -622,7 +622,7 @@ func TestPatchTicketAllowsEpicWhenNotStaged(t *testing.T) {
 func TestPatchTicketRejectsEpicWhileStaged(t *testing.T) {
 	q := ticketDetailFake()
 	row := q.ticket.bySeq[31]
-	row.StagedAt = ts(time.Now())
+	row.StagedAt = tsp(time.Now())
 	q.ticket.bySeq[31] = row
 
 	rec := callPatch(q, `{"type":"epic"}`, `"3"`)
@@ -640,7 +640,7 @@ func TestPatchTicketRejectsEpicWhileStaged(t *testing.T) {
 func TestPatchTicketRejectsNonEpicParentWhileStaged(t *testing.T) {
 	q := ticketDetailFake()
 	row := q.ticket.bySeq[31]
-	row.StagedAt = ts(time.Now())
+	row.StagedAt = tsp(time.Now())
 	q.ticket.bySeq[31] = row
 	q.ticket.idBySeq[44] = testTicketID2
 	q.ticket.typeByID[testTicketID2] = "story" // エピックではない
@@ -658,7 +658,7 @@ func TestPatchTicketRejectsNonEpicParentWhileStaged(t *testing.T) {
 func TestPatchTicketAllowsEpicParentWhileStaged(t *testing.T) {
 	q := ticketDetailFake()
 	row := q.ticket.bySeq[31]
-	row.StagedAt = ts(time.Now())
+	row.StagedAt = tsp(time.Now())
 	q.ticket.bySeq[31] = row
 	q.ticket.idBySeq[12] = testTicketID4
 	q.ticket.typeByID[testTicketID4] = "epic"
@@ -1065,7 +1065,7 @@ func TestTransitionTicketClearsClosedAtLeavingDone(t *testing.T) {
 	withReviewWorkflow(q)
 	row := q.ticket.bySeq[31]
 	row.StatusKey = "review"
-	row.ClosedAt = ts(time.Now())
+	row.ClosedAt = tsp(time.Now())
 	q.ticket.bySeq[31] = row
 
 	rec := callTransition(q, `{"to":"in_progress"}`, "ticket.transition")
@@ -1721,7 +1721,7 @@ func TestTransitionFromTodoStagesDisplayRoot(t *testing.T) {
 	if got := q.ticket.stagedSet[0].ID; got != testTicketID2 {
 		t.Errorf("段へ上げた相手 = %q, want %q（表示上のトップレベルの祖先）", got, testTicketID2)
 	}
-	if !q.ticket.stagedSet[0].StagedAt.Valid {
+	if q.ticket.stagedSet[0].StagedAt == nil {
 		t.Error("staged_at に値が入っていない（NULL のままではバックログ段に残る）")
 	}
 	// **sort_key を動かさない**（9.4。二段は順序キーを1本共有する）。

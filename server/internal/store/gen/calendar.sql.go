@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -125,8 +126,8 @@ type GetProjectCalendarSourceRow struct {
 	GoogleID        pgtype.Text
 	OwnerProjectID  pgtype.Text
 	Name            pgtype.Text
-	FetchedAt       pgtype.Timestamptz
-	LastAttemptAt   pgtype.Timestamptz
+	FetchedAt       *time.Time
+	LastAttemptAt   *time.Time
 	LastError       pgtype.Text
 	HolidayCount    int64
 	ObservanceCount int64
@@ -276,7 +277,7 @@ type LockHolidaySourceRow struct {
 	Kind          string
 	GoogleID      pgtype.Text
 	ContentSha256 pgtype.Text
-	LastAttemptAt pgtype.Timestamptz
+	LastAttemptAt *time.Time
 }
 
 // 取得の前に待ち時間を判定するため、行をロックして読む（5.8.3）。

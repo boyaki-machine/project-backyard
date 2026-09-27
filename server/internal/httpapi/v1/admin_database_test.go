@@ -70,8 +70,8 @@ func TestGetDatabaseStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("応答を読めない: %v", err)
 	}
-	// **日時は UTC の ISO8601 で返す**（ApiDesign.md 2.2）。JST で渡しても Z になる。
-	if got := body["fetched_at"]; got != "2026-09-17T05:03:12Z" {
+	// **日時はエポックミリ秒で返す**（ApiDesign.md 2.2、pb-224）。JST で渡しても同じ瞬間になる。
+	if got := body["fetched_at"]; got != float64(1789621392000) { // 2026-09-17T05:03:12Z
 		t.Errorf("fetched_at = %v", got)
 	}
 	conn := body["connection"].(map[string]any)
@@ -80,7 +80,7 @@ func TestGetDatabaseStatus(t *testing.T) {
 		t.Errorf("connection = %v", conn)
 	}
 	server := body["server"].(map[string]any)
-	if server["started_at"] != "2026-09-17T02:17:59Z" || server["max_connections"] != float64(50) {
+	if server["started_at"] != float64(1789611479000) || server["max_connections"] != float64(50) { // 2026-09-17T02:17:59Z
 		t.Errorf("server = %v", server)
 	}
 	if body["migration_version"] != float64(38) || body["size_bytes"] != float64(79712256) {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -162,7 +163,7 @@ func (h *handler) listProjects(w http.ResponseWriter, r *http.Request) {
 			ClosedCount: row.ClosedCount,
 			Progress:    row.Progress,
 			MyRole:      textPtr(row.MyRole),
-			UpdatedAt:   Time(row.UpdatedAt.Time),
+			UpdatedAt:   Time(row.UpdatedAt),
 		})
 	}
 
@@ -260,11 +261,8 @@ func mergeValidationErrors(errs ...*apierr.Error) *apierr.Error {
 //
 // 秒ではなくナノ秒まで含める。同一秒内の更新で値が変わらないと、
 // 変わっていない一覧を「変わっていない」と誤って扱えてしまうため。
-func projectsETag(total int64, lastUpdated pgtype.Timestamptz) string {
-	var stamp int64
-	if lastUpdated.Valid {
-		stamp = lastUpdated.Time.UTC().UnixNano()
-	}
+func projectsETag(total int64, lastUpdated time.Time) string {
+	stamp := etagStamp(lastUpdated)
 	return fmt.Sprintf(`W/"proj-%d-%d"`, total, stamp)
 }
 

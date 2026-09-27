@@ -11,8 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-
-	"github.com/jackc/pgx/v5/pgtype"
+	"time"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -151,9 +150,9 @@ func (h *handler) listUsers(w http.ResponseWriter, r *http.Request) {
 			SystemRole:   textPtr(row.SystemRole),
 			Agent:        adminAgentView(row),
 			IsActive:     row.IsActive,
-			LastLoginAt:  apiTimestamptz(row.LastLoginAt),
+			LastLoginAt:  apiTime(row.LastLoginAt),
 			ProjectCount: row.ProjectCount,
-			CreatedAt:    Time(row.CreatedAt.Time),
+			CreatedAt:    Time(row.CreatedAt),
 		})
 	}
 
@@ -229,11 +228,8 @@ func likePattern(q string) string {
 // projectsETag と同じ作りで、接頭辞だけが違う。**弱い検証子として W/"..." の
 // 形で書く**（RFC 9110 8.8.3）。材料は総件数と MAX(updated_at) で、後者は
 // actor と app_user の新しいほうを採っている（SummarizeAdminUsers のコメント）。
-func usersETag(total int64, lastUpdated pgtype.Timestamptz) string {
-	var stamp int64
-	if lastUpdated.Valid {
-		stamp = lastUpdated.Time.UTC().UnixNano()
-	}
+func usersETag(total int64, lastUpdated time.Time) string {
+	stamp := etagStamp(lastUpdated)
 	return fmt.Sprintf(`W/"user-%d-%d"`, total, stamp)
 }
 

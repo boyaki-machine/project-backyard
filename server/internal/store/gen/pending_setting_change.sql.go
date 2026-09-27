@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -33,15 +34,15 @@ RETURNING id, previous, expires_at, created_at
 type CreatePendingSettingChangeParams struct {
 	ID        string
 	Previous  []byte
-	ExpiresAt pgtype.Timestamptz
+	ExpiresAt time.Time
 	CreatedBy pgtype.Text
 }
 
 type CreatePendingSettingChangeRow struct {
 	ID        string
 	Previous  []byte
-	ExpiresAt pgtype.Timestamptz
-	CreatedAt pgtype.Timestamptz
+	ExpiresAt time.Time
+	CreatedAt time.Time
 }
 
 // 未確認の設定変更のクエリ（DbDesign.md 6.17、Design.md 10.3）。
@@ -100,8 +101,8 @@ LIMIT 1
 type GetPendingSettingChangeRow struct {
 	ID                   string
 	Previous             []byte
-	ExpiresAt            pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
+	ExpiresAt            time.Time
+	CreatedAt            time.Time
 	CreatedBy            pgtype.Text
 	CreatedByKind        pgtype.Text
 	CreatedByDisplayName pgtype.Text
@@ -136,7 +137,7 @@ ORDER BY expires_at
 type ListExpiredPendingSettingChangesRow struct {
 	ID        string
 	Previous  []byte
-	ExpiresAt pgtype.Timestamptz
+	ExpiresAt time.Time
 }
 
 // 期限が来たものを全部引く。**起動時の点検と、プロセス内のタイマが使う。**
@@ -169,7 +170,7 @@ ORDER BY created_at
 type ListPendingSettingChangesRow struct {
 	ID        string
 	Previous  []byte
-	ExpiresAt pgtype.Timestamptz
+	ExpiresAt time.Time
 }
 
 // 未確認を全部引く。**起動時に使う。**

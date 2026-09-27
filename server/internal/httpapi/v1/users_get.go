@@ -16,10 +16,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
@@ -161,8 +161,8 @@ func buildUserDetail(ctx context.Context, q gen.Querier, actorID string) (userDe
 		Email:       u.Email,
 		SystemRole:  u.SystemRole,
 		IsActive:    u.IsActive,
-		LastLoginAt: apiTimestamptz(u.LastLoginAt),
-		CreatedAt:   Time(u.CreatedAt.Time),
+		LastLoginAt: apiTime(u.LastLoginAt),
+		CreatedAt:   Time(u.CreatedAt),
 		Version:     u.Version,
 		// **nil ではなく空スライスで初期化する。** JSON が null になると、
 		// 画面が配列として回せない（NewList が items に対して行うのと同じ理由）。
@@ -179,9 +179,9 @@ func buildUserDetail(ctx context.Context, q gen.Querier, actorID string) (userDe
 			ProviderKey:       row.ProviderKey,
 			ProviderType:      row.ProviderType,
 			Subject:           row.Subject,
-			LinkedAt:          Time(row.LinkedAt.Time),
-			LastUsedAt:        apiTimestamptz(row.LastUsedAt),
-			PasswordUpdatedAt: apiTimestamptz(row.PasswordUpdatedAt),
+			LinkedAt:          Time(row.LinkedAt),
+			LastUsedAt:        apiTime(row.LastUsedAt),
+			PasswordUpdatedAt: apiTime(row.PasswordUpdatedAt),
 		})
 	}
 	for _, row := range memberships {
@@ -193,9 +193,9 @@ func buildUserDetail(ctx context.Context, q gen.Querier, actorID string) (userDe
 		view.Sessions = append(view.Sessions, userSessionView{
 			ID:         row.ID,
 			ClientInfo: textPtr(row.ClientInfo),
-			IssuedAt:   Time(row.IssuedAt.Time),
-			LastUsedAt: apiTimestamptz(row.LastUsedAt),
-			ExpiresAt:  apiTimestamptz(row.ExpiresAt),
+			IssuedAt:   Time(row.IssuedAt),
+			LastUsedAt: apiTime(row.LastUsedAt),
+			ExpiresAt:  apiTime(row.ExpiresAt),
 		})
 	}
 	return view, nil
@@ -204,14 +204,14 @@ func buildUserDetail(ctx context.Context, q gen.Querier, actorID string) (userDe
 // newUserMembershipView は 6.3 と 6.8 で共有する要素の組み立て。
 // 引数を並べているのは、sqlc が2つのクエリに別々の Row 型を生成するためである。
 func newUserMembershipView(
-	projectID, projectKey, projectName, roleKey string, joinedAt pgtype.Timestamptz,
+	projectID, projectKey, projectName, roleKey string, joinedAt time.Time,
 ) userMembershipView {
 	return userMembershipView{
 		ProjectID:   projectID,
 		ProjectKey:  projectKey,
 		ProjectName: projectName,
 		Role:        roleKey,
-		JoinedAt:    Time(joinedAt.Time),
+		JoinedAt:    Time(joinedAt),
 	}
 }
 

@@ -56,7 +56,7 @@ type linkJSON struct {
 	Ticket    linkTicketBrief `json:"ticket"`
 	LagDays   int32           `json:"lag_days"`
 	Origin    string          `json:"origin"`
-	CreatedAt string          `json:"created_at"`
+	CreatedAt int64           `json:"created_at"`
 }
 
 type linkListJSON struct {

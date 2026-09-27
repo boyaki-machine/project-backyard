@@ -396,7 +396,7 @@ func (h *handler) resolveTicketPatch(
 	// PATCH からも迂回できないようにする。**自動で段から降ろす方式は採らない**
 	// ——種別や親を変えただけのつもりの利用者が、オンステージから消えたことに
 	// 気づく手段がないため（9.5.2）。
-	if before.StagedAt.Valid && (patch.Type.Set || patch.ParentSeq.Set) {
+	if before.StagedAt != nil && (patch.Type.Set || patch.ParentSeq.Set) {
 		newType := before.Type
 		if patch.Type.Set {
 			newType = patch.Type.Value

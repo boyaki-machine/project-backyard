@@ -1485,7 +1485,7 @@ function stageChangeOf(source: Ticket, section: Section): boolean | undefined {
 /** 段の見た目を先に変えるための行。正しい値はサーバ応答で上書きする */
 function optimisticRow(source: Ticket, stagedChange: boolean | undefined): Ticket {
   if (stagedChange === undefined) return source
-  return { ...source, staged_at: stagedChange ? new Date().toISOString() : null }
+  return { ...source, staged_at: stagedChange ? Date.now() : null }
 }
 
 /**

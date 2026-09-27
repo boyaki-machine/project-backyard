@@ -12,7 +12,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/dbstat"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
@@ -28,7 +27,7 @@ type DatabaseStats interface {
 
 // databaseStatusResponse は 11.10 の応答。
 type databaseStatusResponse struct {
-	FetchedAt        time.Time           `json:"fetched_at"`
+	FetchedAt        Time                `json:"fetched_at"`
 	Connection       databaseConnection  `json:"connection"`
 	Server           databaseServer      `json:"server"`
 	MigrationVersion int64               `json:"migration_version"`
@@ -47,9 +46,9 @@ type databaseConnection struct {
 }
 
 type databaseServer struct {
-	Version        string    `json:"version"`
-	StartedAt      time.Time `json:"started_at"`
-	MaxConnections int       `json:"max_connections"`
+	Version        string `json:"version"`
+	StartedAt      Time   `json:"started_at"`
+	MaxConnections int    `json:"max_connections"`
 }
 
 type databaseSessions struct {
@@ -95,13 +94,13 @@ func buildDatabaseStatus(s dbstat.Snapshot) databaseStatusResponse {
 		tables = append(tables, databaseTableView{Name: t.Name, Rows: t.Rows, SizeBytes: t.SizeBytes})
 	}
 	return databaseStatusResponse{
-		FetchedAt: s.FetchedAt.UTC(),
+		FetchedAt: Time(s.FetchedAt),
 		Connection: databaseConnection{
 			Host: s.Connection.Host, Port: s.Connection.Port,
 			Database: s.Connection.Database, User: s.Connection.User, TLS: s.Connection.TLS,
 		},
 		Server: databaseServer{
-			Version: s.Server.Version, StartedAt: s.Server.StartedAt.UTC(),
+			Version: s.Server.Version, StartedAt: Time(s.Server.StartedAt),
 			MaxConnections: s.Server.MaxConnections,
 		},
 		MigrationVersion: s.MigrationVersion,

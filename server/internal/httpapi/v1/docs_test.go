@@ -108,7 +108,7 @@ type docTreeItemJSON struct {
 	Title     string            `json:"title"`
 	SortOrder int32             `json:"sort_order"`
 	Version   int32             `json:"version"`
-	UpdatedAt string            `json:"updated_at"`
+	UpdatedAt int64             `json:"updated_at"`
 	Outline   *[]docOutlineItem `json:"outline"`
 	Children  []docTreeItemJSON `json:"children"`
 }
@@ -129,8 +129,8 @@ type docViewJSON struct {
 	Version    int32            `json:"version"`
 	CreatedBy  *actorRef        `json:"created_by"`
 	UpdatedBy  *actorRef        `json:"updated_by"`
-	CreatedAt  string           `json:"created_at"`
-	UpdatedAt  string           `json:"updated_at"`
+	CreatedAt  int64            `json:"created_at"`
+	UpdatedAt  int64            `json:"updated_at"`
 }
 
 type docSectionJSON struct {
@@ -140,7 +140,7 @@ type docSectionJSON struct {
 	Section   string `json:"section"`
 	BodyMd    string `json:"body_md"`
 	Version   int32  `json:"version"`
-	UpdatedAt string `json:"updated_at"`
+	UpdatedAt int64  `json:"updated_at"`
 }
 
 type docRevisionItemJSON struct {
@@ -148,7 +148,7 @@ type docRevisionItemJSON struct {
 	Title        string    `json:"title"`
 	ChangedBy    *actorRef `json:"changed_by"`
 	ChangeReason *string   `json:"change_reason"`
-	CreatedAt    string    `json:"created_at"`
+	CreatedAt    int64     `json:"created_at"`
 }
 
 type docRevisionJSON struct {
@@ -157,7 +157,7 @@ type docRevisionJSON struct {
 	BodyMd       string    `json:"body_md"`
 	ChangedBy    *actorRef `json:"changed_by"`
 	ChangeReason *string   `json:"change_reason"`
-	CreatedAt    string    `json:"created_at"`
+	CreatedAt    int64     `json:"created_at"`
 }
 
 func docHandler(q *fakeQuerier) *handler {

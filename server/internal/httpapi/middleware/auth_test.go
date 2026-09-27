@@ -43,7 +43,10 @@ func (q *tokenQuerier) TouchAccessTokenLastUsed(_ context.Context, id string) er
 	return q.touchErr
 }
 
-func ts(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }
+func ts(t time.Time) time.Time { return t }
+
+// tsp は NULL 可能な timestamptz 列（*time.Time）に入れる値。
+func tsp(t time.Time) *time.Time { return &t }
 
 func txt(s string) pgtype.Text { return pgtype.Text{String: s, Valid: true} }
 
@@ -53,7 +56,7 @@ func validRow() gen.FindAccessTokenByHashRow {
 		TokenID:     "01K2F8QW3H7YRJ4M5N6P7Q8R9T",
 		TokenType:   auth.TokenTypeSession,
 		Scopes:      []byte(`[]`),
-		ExpiresAt:   ts(time.Now().Add(24 * time.Hour)),
+		ExpiresAt:   tsp(time.Now().Add(24 * time.Hour)),
 		ActorID:     "01K2F8QW3H7YRJ4M5N6P7Q8R9S",
 		ActorKind:   auth.ActorKindUser,
 		DisplayName: "田中",
@@ -179,10 +182,10 @@ func TestAuthenticatePrefersCookieOverBearer(t *testing.T) {
 
 func TestAuthenticateRejects(t *testing.T) {
 	expired := validRow()
-	expired.ExpiresAt = ts(time.Now().Add(-time.Minute))
+	expired.ExpiresAt = tsp(time.Now().Add(-time.Minute))
 
 	revoked := validRow()
-	revoked.RevokedAt = ts(time.Now().Add(-time.Hour))
+	revoked.RevokedAt = tsp(time.Now().Add(-time.Hour))
 
 	inactive := validRow()
 	inactive.IsActive = false
@@ -244,7 +247,7 @@ func TestAuthenticateAcceptsNullExpiresAt(t *testing.T) {
 	// expires_at は NULL 許容。NULL は無期限として通す。
 	const plaintext = "pb_api_noexpiry"
 	row := validRow()
-	row.ExpiresAt = pgtype.Timestamptz{}
+	row.ExpiresAt = nil
 
 	q := &tokenQuerier{rows: map[string]gen.FindAccessTokenByHashRow{
 		auth.HashToken(plaintext): row,

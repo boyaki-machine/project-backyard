@@ -102,9 +102,9 @@ type commentJSON struct {
 	InReplyTo *string  `json:"in_reply_to"`
 	Origin    string   `json:"origin"`
 	Author    actorRef `json:"author"`
-	CreatedAt string   `json:"created_at"`
-	UpdatedAt string   `json:"updated_at"`
-	DeletedAt *string  `json:"deleted_at"`
+	CreatedAt int64    `json:"created_at"`
+	UpdatedAt int64    `json:"updated_at"`
+	DeletedAt *int64   `json:"deleted_at"`
 }
 
 type commentListJSON struct {
@@ -190,7 +190,7 @@ func TestListCommentsHonorsDescOrder(t *testing.T) {
 func TestListCommentsKeepsDeletedWithNullBody(t *testing.T) {
 	q := commentFake()
 	row := sampleComment(testCommentID, "消された発言", "discussion", testActorID, baseTime)
-	row.DeletedAt = ts(baseTime.Add(time.Hour))
+	row.DeletedAt = tsp(baseTime.Add(time.Hour))
 	q.ticket.commentRows = []gen.GetTicketCommentRow{row}
 	h, _ := ticketHandler(q)
 
@@ -501,7 +501,7 @@ func TestPatchCommentRejectsInReplyTo(t *testing.T) {
 func TestPatchCommentOnDeletedIsNotFound(t *testing.T) {
 	q := commentFake()
 	row := sampleComment(testCommentID, "消えた本文", "discussion", testActorID, baseTime)
-	row.DeletedAt = ts(baseTime.Add(time.Hour))
+	row.DeletedAt = tsp(baseTime.Add(time.Hour))
 	q.ticket.commentRows = []gen.GetTicketCommentRow{row}
 	h, _ := ticketHandler(q)
 
@@ -611,7 +611,7 @@ func TestDeleteOthersCommentWithDeleteAny(t *testing.T) {
 func TestDeleteCommentTwiceIsNotFound(t *testing.T) {
 	q := commentFake()
 	row := sampleComment(testCommentID, "本文", "discussion", testActorID, baseTime)
-	row.DeletedAt = ts(baseTime.Add(time.Hour))
+	row.DeletedAt = tsp(baseTime.Add(time.Hour))
 	q.ticket.commentRows = []gen.GetTicketCommentRow{row}
 	h, _ := ticketHandler(q)
 

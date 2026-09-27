@@ -154,7 +154,7 @@ LIMIT @page_limit OFFSET @page_offset;
 -- name: SummarizeAdminUsers :one
 SELECT
   count(*)                                                    AS total,
-  max(GREATEST(a.updated_at, COALESCE(u.updated_at, a.updated_at)))::timestamptz AS last_updated_at
+  COALESCE(max(GREATEST(a.updated_at, COALESCE(u.updated_at, a.updated_at))), 'epoch'::timestamptz)::timestamptz AS last_updated_at
 FROM actor a
 LEFT JOIN app_user u ON u.actor_id = a.id
 LEFT JOIN role r ON r.key = u.system_role AND r.scope = 'system'

@@ -40,7 +40,10 @@ SELECT
   -- '' が26個の空白に詰められ、「空かどうか」の判定が壊れる。
   (COALESCE(t.id::text, ''))::text AS token_id,
   t.token_prefix AS token_prefix,
-  t.issued_at    AS token_issued_at,
+  -- issued_at も同じ理由で NULL が来る（pb-224 で pgtype.Timestamptz をやめ、Go の
+  -- time.Time が NULL を受けられなくなった）。**token_id が '' のときは読まない**ので、
+  -- 番兵に 1970-01-01 を入れる。
+  COALESCE(t.issued_at, 'epoch'::timestamptz)::timestamptz AS token_issued_at,
   t.last_used_at AS token_last_used_at,
   t.expires_at   AS token_expires_at
 FROM agent ag

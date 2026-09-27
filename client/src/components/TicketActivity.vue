@@ -27,7 +27,7 @@ import type { Activity } from '../api/dashboard'
 import type { ProjectMember, Workflow } from '../api/projects'
 import { activityDetail, activitySummary, actorLabel, ticketLabel } from '../lib/activity'
 import type { ActivityLabelContext } from '../lib/activity'
-import { formatDateTime } from '../lib/datetime'
+import { formatDateTime, isoOf } from '../lib/datetime'
 import { statusLabel } from '../lib/catalogLabels'
 
 const props = defineProps<{
@@ -187,7 +187,7 @@ defineExpose({ reload: load })
               </p>
               <p v-if="activityDetail(a)" class="ta-detail">{{ activityDetail(a) }}</p>
             </div>
-            <time class="ta-time" :datetime="a.occurred_at">{{
+            <time class="ta-time" :datetime="isoOf(a.occurred_at)">{{
               formatDateTime(a.occurred_at)
             }}</time>
           </li>

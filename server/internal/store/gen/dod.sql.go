@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -82,10 +83,10 @@ type GetTicketDoDItemRow struct {
 	Type            string
 	Body            string
 	IsSatisfied     bool
-	SatisfiedAt     pgtype.Timestamptz
+	SatisfiedAt     *time.Time
 	SortOrder       int32
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 	SatisfiedBy     pgtype.Text
 	SatisfiedByKind pgtype.Text
 	SatisfiedByName pgtype.Text
@@ -136,10 +137,10 @@ type ListTicketDoDRow struct {
 	Type            string
 	Body            string
 	IsSatisfied     bool
-	SatisfiedAt     pgtype.Timestamptz
+	SatisfiedAt     *time.Time
 	SortOrder       int32
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 	SatisfiedBy     pgtype.Text
 	SatisfiedByKind pgtype.Text
 	SatisfiedByName pgtype.Text

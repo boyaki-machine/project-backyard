@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -26,8 +27,8 @@ type CreateTLSCertificateParams struct {
 	ID            string
 	CommonName    string
 	DnsNames      []string
-	NotBefore     pgtype.Timestamptz
-	NotAfter      pgtype.Timestamptz
+	NotBefore     time.Time
+	NotAfter      time.Time
 	SerialNumber  string
 	Fingerprint   string
 	IsSelfSigned  bool
@@ -40,7 +41,7 @@ type CreateTLSCertificateParams struct {
 
 type CreateTLSCertificateRow struct {
 	ID        string
-	CreatedAt pgtype.Timestamptz
+	CreatedAt time.Time
 }
 
 // 1件を作る。**指紋の一意制約に当たると誤りが返る**ので、
@@ -87,8 +88,8 @@ FROM tls_certificate WHERE id = $1
 type GetTLSCertificateRow struct {
 	ID          string
 	CommonName  string
-	NotBefore   pgtype.Timestamptz
-	NotAfter    pgtype.Timestamptz
+	NotBefore   time.Time
+	NotAfter    time.Time
 	Fingerprint string
 }
 
@@ -154,8 +155,8 @@ type ListTLSCertificatesRow struct {
 	ID                    string
 	CommonName            string
 	DnsNames              []string
-	NotBefore             pgtype.Timestamptz
-	NotAfter              pgtype.Timestamptz
+	NotBefore             time.Time
+	NotAfter              time.Time
 	SerialNumber          string
 	Fingerprint           string
 	IsSelfSigned          bool
@@ -163,7 +164,7 @@ type ListTLSCertificatesRow struct {
 	KeyCiphertext         []byte
 	KeyNonce              []byte
 	KeyID                 string
-	CreatedAt             pgtype.Timestamptz
+	CreatedAt             time.Time
 	UploadedBy            pgtype.Text
 	UploadedByKind        pgtype.Text
 	UploadedByDisplayName pgtype.Text

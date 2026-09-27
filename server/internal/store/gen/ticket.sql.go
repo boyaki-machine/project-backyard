@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -390,7 +391,7 @@ type GetTicketBySeqRow struct {
 	WorkingAgentName   pgtype.Text
 	ParentSeq          pgtype.Int4
 	HasChildren        bool
-	StagedAt           pgtype.Timestamptz
+	StagedAt           *time.Time
 	SortKey            pgtype.Text
 	SprintID           pgtype.Text
 	SprintName         pgtype.Text
@@ -401,10 +402,10 @@ type GetTicketBySeqRow struct {
 	ActualPointVersion pgtype.Text
 	StartDate          pgtype.Date
 	DueDate            pgtype.Date
-	ClosedAt           pgtype.Timestamptz
+	ClosedAt           *time.Time
 	Version            int32
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 	ExecutionMode      string
 	Readiness          pgtype.Text
 	ReadinessNote      pgtype.Text
@@ -528,7 +529,7 @@ type GetTicketSortRowRow struct {
 	ID         string
 	Type       string
 	SortKey    pgtype.Text
-	StagedAt   pgtype.Timestamptz
+	StagedAt   *time.Time
 	Version    int32
 	ParentType pgtype.Text
 }
@@ -1070,10 +1071,10 @@ type ListTicketsParams struct {
 	KeywordIds       []string
 	SeqFrom          int32
 	SeqTo            int32
-	ClosedSince      pgtype.Timestamptz
-	ClosedBefore     pgtype.Timestamptz
-	StartedSince     pgtype.Timestamptz
-	StartedBefore    pgtype.Timestamptz
+	ClosedSince      *time.Time
+	ClosedBefore     *time.Time
+	StartedSince     *time.Time
+	StartedBefore    *time.Time
 }
 
 type ListTicketsRow struct {
@@ -1098,7 +1099,7 @@ type ListTicketsRow struct {
 	ParentSeq          pgtype.Int4
 	HasChildren        bool
 	SortKey            pgtype.Text
-	StagedAt           pgtype.Timestamptz
+	StagedAt           *time.Time
 	SprintID           pgtype.Text
 	SprintName         pgtype.Text
 	EstimatePoint      pgtype.Float8
@@ -1108,12 +1109,12 @@ type ListTicketsRow struct {
 	ActualPointVersion pgtype.Text
 	StartDate          pgtype.Date
 	DueDate            pgtype.Date
-	ClosedAt           pgtype.Timestamptz
+	ClosedAt           *time.Time
 	Version            int32
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 	Total              int64
-	LastUpdatedAt      pgtype.Timestamptz
+	LastUpdatedAt      time.Time
 }
 
 // チケットに関するクエリ（DbDesign.md 6.6、ApiDesign.md 9.2 / 9.3 / 9.4）。
@@ -1346,7 +1347,7 @@ RETURNING seq, sort_key, staged_at, version
 type MoveTicketParams struct {
 	SortKey     pgtype.Text
 	ChangeStage bool
-	StagedAt    pgtype.Timestamptz
+	StagedAt    *time.Time
 	Unparent    bool
 	ProjectID   string
 	ID          string
@@ -1355,7 +1356,7 @@ type MoveTicketParams struct {
 type MoveTicketRow struct {
 	Seq      int32
 	SortKey  pgtype.Text
-	StagedAt pgtype.Timestamptz
+	StagedAt *time.Time
 	Version  int32
 }
 
@@ -1440,7 +1441,7 @@ UPDATE ticket SET closed_at = $1 WHERE id = $2
 `
 
 type SetTicketClosedAtParams struct {
-	ClosedAt pgtype.Timestamptz
+	ClosedAt *time.Time
 	ID       string
 }
 
@@ -1481,7 +1482,7 @@ UPDATE ticket SET staged_at = $1 WHERE id = $2
 `
 
 type SetTicketStagedAtParams struct {
-	StagedAt pgtype.Timestamptz
+	StagedAt *time.Time
 	ID       string
 }
 

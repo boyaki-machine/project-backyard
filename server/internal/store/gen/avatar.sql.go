@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -27,7 +28,7 @@ SELECT content_type, image_data, updated_at FROM actor_avatar WHERE actor_id = $
 type GetActorAvatarRow struct {
 	ContentType string
 	ImageData   []byte
-	UpdatedAt   pgtype.Timestamptz
+	UpdatedAt   time.Time
 }
 
 func (q *Queries) GetActorAvatar(ctx context.Context, actorID string) (GetActorAvatarRow, error) {

@@ -96,8 +96,8 @@ func buildProjectDetail(
 		Timezone:    row.Timezone,
 		Settings:    settingsJSON(row.Settings),
 		Version:     row.Version,
-		CreatedAt:   Time(row.CreatedAt.Time),
-		UpdatedAt:   Time(row.UpdatedAt.Time),
+		CreatedAt:   Time(row.CreatedAt),
+		UpdatedAt:   Time(row.UpdatedAt),
 	}
 
 	if row.WorkflowID.Valid {
@@ -141,7 +141,7 @@ func buildProjectDetail(
 			DisplayName: m.DisplayName,
 			Email:       email,
 			Role:        m.RoleKey,
-			JoinedAt:    Time(m.JoinedAt.Time),
+			JoinedAt:    Time(m.JoinedAt),
 		})
 		// **委譲：エージェントでは所有者のメンバーシップを見る**
 		// （Design.md 6.5、ApiDesign.md 5.4）。エージェントは project_member の

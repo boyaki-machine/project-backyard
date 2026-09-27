@@ -248,23 +248,23 @@ onBeforeUnmount(() => clearTimeout(keywordTimer))
  */
 function sinceDate(name: string): string {
   const v = queryValue(name)
-  return v === '' ? '' : formatDate(v)
+  return v === '' ? '' : formatDate(Number(v))
 }
 
 function beforeDate(name: string): string {
   const v = queryValue(name)
-  return v === '' ? '' : (addDaysPlainDate(formatDate(v), -1) ?? '')
+  return v === '' ? '' : (addDaysPlainDate(formatDate(Number(v)), -1) ?? '')
 }
 
 /** 期間の始まりの日付を「その日の0時以上」として載せる（`ApiDesign.md` 9.2.1 の半開区間） */
 function setSince(name: string, date: string): void {
-  setQuery({ [name]: date === '' ? '' : (startOfDayInstant(date) ?? '') })
+  setQuery({ [name]: date === '' ? '' : String(startOfDayInstant(date) ?? '') })
 }
 
 /** 期間の終わりの日付を「翌日の0時未満」として載せる。**その日を含める**ためである */
 function setBefore(name: string, date: string): void {
   const next = date === '' ? null : addDaysPlainDate(date, 1)
-  setQuery({ [name]: next === null ? '' : (startOfDayInstant(next) ?? '') })
+  setQuery({ [name]: next === null ? '' : String(startOfDayInstant(next) ?? '') })
 }
 
 // ── 詳細ペイン（2.2.1 / 5.5）─────────────────────────────────

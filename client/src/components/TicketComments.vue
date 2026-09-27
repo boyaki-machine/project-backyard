@@ -354,7 +354,7 @@ async function runDelete(): Promise<void> {
     // **論理削除なので行は残る**（9.8）。`204` は本体を返さないので、
     // サーバが返すのと同じ形へ手元で倒す——**画面に出るのは
     // 「削除されました」の1行だけ**で、`deleted_at` の値そのものは出さない
-    replaceItem({ ...c, body_md: null, deleted_at: new Date().toISOString() })
+    replaceItem({ ...c, body_md: null, deleted_at: Date.now() })
     emit('count-delta', -1)
     toDelete.value = null
   } catch (e) {

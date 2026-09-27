@@ -222,7 +222,7 @@ const issuedAgent = ref<MyAgent | null>(null)
 const newExpiryDate = computed(() => {
   const d = new Date()
   d.setDate(d.getDate() + newExpiresInDays.value)
-  return formatDate(d.toISOString())
+  return formatDate(d.getTime())
 })
 
 function openIssue(agent: MyAgent) {
@@ -448,7 +448,7 @@ function togglePanel(agent: MyAgent) {
  * **「初回接続」ではなく「最終利用」を出す。** 初回だけを覚える列が無く、
  * 足すと「いつ繋がったか」と「いま生きているか」を別々に持つことになる。
  */
-function connectedAt(agent: MyAgent): string | null {
+function connectedAt(agent: MyAgent): number | null {
   return agent.token?.last_used_at ?? null
 }
 

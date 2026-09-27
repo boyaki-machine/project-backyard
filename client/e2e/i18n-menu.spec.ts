@@ -29,7 +29,7 @@ const session = {
       permissions: ['project.view', 'project.edit', 'ticket.view', 'doc.view'],
     },
   ],
-  expires_at: '2099-01-01T00:00:00Z',
+  expires_at: 4070908800000,
 }
 
 async function json(route: Route, body: unknown) {

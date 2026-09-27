@@ -17,13 +17,13 @@ async function mockApi(page: Page, setupRequests: string[]) {
     const path = url.pathname
     if (path === '/api/v1/me') return reply(route, {
       actor, permissions: [], projects: [{ key: 'demo', name: 'Demo', role: 'project_admin', permissions: ['project.view'] }],
-      expires_at: '2099-01-01T00:00:00Z',
+      expires_at: 4070908800000,
     })
     if (path === '/api/v1/me/agents') return reply(route, { items: [{
       id: agentID, display_name: 'My Codex', client_kind: 'codex', model_name: null,
       model_version: null, project: { key: 'demo', name: 'Demo' }, token_env_suffix: 'TEST',
       token_env_name: 'PB_TOKEN_TEST', trust_level: 1, is_active: true,
-      created_at: '2026-09-01T00:00:00Z', token: null,
+      created_at: 1788220800000, token: null,
     }] })
     if (path === '/api/v1/agent-client-kinds') return reply(route, { items: [{ key: 'codex', display_name: 'OpenAI Codex', has_setup_template: true }] })
     if (path === '/api/v1/agent-scopes') return reply(route, { defaults: [], optional: [] })

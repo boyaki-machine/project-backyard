@@ -307,7 +307,7 @@ func (h *handler) listMyAgents(w http.ResponseWriter, r *http.Request) {
 
 			TrustLevel: row.TrustLevel,
 			IsActive:   row.IsActive,
-			CreatedAt:  Time(row.CreatedAt.Time),
+			CreatedAt:  Time(row.CreatedAt),
 		}
 		if row.ProjectKey.Valid {
 			v.Project = &projectRef{Key: row.ProjectKey.String, Name: row.ProjectName.String}
@@ -318,9 +318,9 @@ func (h *handler) listMyAgents(w http.ResponseWriter, r *http.Request) {
 			v.Token = &agentTokenView{
 				ID:          row.TokenID,
 				TokenPrefix: row.TokenPrefix.String,
-				IssuedAt:    Time(row.TokenIssuedAt.Time),
-				LastUsedAt:  apiTimestamptz(row.TokenLastUsedAt),
-				ExpiresAt:   apiTimestamptz(row.TokenExpiresAt),
+				IssuedAt:    Time(row.TokenIssuedAt),
+				LastUsedAt:  apiTime(row.TokenLastUsedAt),
+				ExpiresAt:   apiTime(row.TokenExpiresAt),
 				Status:      tokenStatus(row.TokenExpiresAt, now),
 			}
 		}
@@ -908,7 +908,7 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 
 		TrustLevel: updated.TrustLevel,
 		IsActive:   updated.IsActive,
-		CreatedAt:  Time(updated.CreatedAt.Time),
+		CreatedAt:  Time(updated.CreatedAt),
 	}
 	if updated.ProjectKey.Valid {
 		v.Project = &projectRef{Key: updated.ProjectKey.String, Name: updated.ProjectName.String}
@@ -1050,7 +1050,7 @@ func (h *handler) createMyAgentToken(w http.ResponseWriter, r *http.Request) {
 			// Principal.CanReachProject）。
 			ProjectID: ag.ProjectID,
 			Scopes:    encodedScopes,
-			ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+			ExpiresAt: &expiresAt,
 			// **client_info にクライアント種別を入れる**（ApiDesign.md 4.5.3）。
 			// api トークンでは空だった列で、エージェントには入れる値がある。
 			ClientInfo: text(ag.ClientKind),

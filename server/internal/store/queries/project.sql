@@ -149,12 +149,13 @@ LIMIT @page_limit OFFSET @page_offset;
 --
 -- total は 2.6 の「総件数は常に返す」。last_updated_at は 2.7 の ETag の材料
 -- （「プロジェクト集合の MAX(updated_at) と件数から生成する」）。**同じ WHERE を
--- 2回書かないよう1文にまとめてある。** 0件のとき last_updated_at は NULL。
+-- 2回書かないよう1文にまとめてある。** 0件のとき last_updated_at は 1970-01-01（epoch）。
+-- NULL を返すと Go の time.Time へ読めない（pb-224 で pgtype.Timestamptz をやめた）。
 --
 -- name: SummarizeProjects :one
 SELECT
   count(*)::bigint            AS total,
-  max(p.updated_at)::timestamptz AS last_updated_at
+  COALESCE(max(p.updated_at), 'epoch'::timestamptz)::timestamptz AS last_updated_at
 FROM project p
 LEFT JOIN project_member pm
        ON pm.project_id = p.id AND pm.actor_id = @actor_id

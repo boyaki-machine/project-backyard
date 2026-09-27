@@ -89,7 +89,7 @@ func TestLoginStoresOnlyHash(t *testing.T) {
 	if string(created.Scopes) != "[]" {
 		t.Errorf("scopes = %s, want []（セッションは絞り込みなし）", created.Scopes)
 	}
-	if !created.ExpiresAt.Valid {
+	if created.ExpiresAt == nil {
 		t.Error("expires_at が NULL。セッションには必ず期限を設定する")
 	}
 }
@@ -188,7 +188,7 @@ func TestLoginWrongPasswordIncrementsAttempts(t *testing.T) {
 	if q.failures[0].FailedAttempts != 2 {
 		t.Errorf("failed_attempts = %d, want 2", q.failures[0].FailedAttempts)
 	}
-	if q.failures[0].LockedUntil.Valid {
+	if q.failures[0].LockedUntil != nil {
 		t.Error("2回目でロックがかかった")
 	}
 	if got := q.auditActions(); len(got) != 1 || got[0] != "login.failure" {
@@ -217,7 +217,7 @@ func TestLoginLocksAfterFiveFailures(t *testing.T) {
 		t.Errorf("Retry-After ヘッダ = %q, want %d", h, got.RetryAfterSec)
 	}
 
-	if len(q.failures) != 1 || !q.failures[0].LockedUntil.Valid {
+	if len(q.failures) != 1 || q.failures[0].LockedUntil == nil {
 		t.Fatalf("locked_until が設定されていない: %+v", q.failures)
 	}
 	if q.failures[0].FailedAttempts != maxFailedAttempts {
@@ -228,7 +228,7 @@ func TestLoginLocksAfterFiveFailures(t *testing.T) {
 // ロック中は照合すらせず 423 を返す（Design.md 6.2.1 手順4）。
 func TestLoginWhileLocked(t *testing.T) {
 	q := newFake(t)
-	q.loginRow.LockedUntil = ts(time.Now().Add(10 * time.Minute))
+	q.loginRow.LockedUntil = tsp(time.Now().Add(10 * time.Minute))
 
 	// 正しいパスワードでも通さない。
 	rec := postLogin(q, `{"email":"tanaka@example.com","password":"`+testPassword+`"}`)
@@ -251,7 +251,7 @@ func TestLoginWhileLocked(t *testing.T) {
 func TestLoginResetsAttemptsAfterLockExpired(t *testing.T) {
 	q := newFake(t)
 	q.loginRow.FailedAttempts = maxFailedAttempts
-	q.loginRow.LockedUntil = ts(time.Now().Add(-time.Minute))
+	q.loginRow.LockedUntil = tsp(time.Now().Add(-time.Minute))
 
 	rec := postLogin(q, `{"email":"tanaka@example.com","password":"wrong-password-x"}`)
 
@@ -261,7 +261,7 @@ func TestLoginResetsAttemptsAfterLockExpired(t *testing.T) {
 	if len(q.failures) != 1 || q.failures[0].FailedAttempts != 1 {
 		t.Fatalf("failed_attempts = %+v, want 1", q.failures)
 	}
-	if q.failures[0].LockedUntil.Valid {
+	if q.failures[0].LockedUntil != nil {
 		t.Error("1回の失敗で再ロックされた")
 	}
 }

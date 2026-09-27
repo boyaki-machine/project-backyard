@@ -17,9 +17,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -133,7 +133,7 @@ func (h *handler) listProjectActivity(w http.ResponseWriter, r *http.Request) {
 	var (
 		items          = make([]activityView, 0, page.PerPage)
 		total          int64
-		lastOccurredAt pgtype.Timestamptz
+		lastOccurredAt time.Time
 	)
 
 	// 指定されたチケットが無いときは DB を引かない（9.13.2）。空文字を渡すと
@@ -278,7 +278,7 @@ func buildActivityView(row gen.ListActivityRow) activityView {
 		Field:      textPtr(row.Field),
 		OldValue:   textPtr(row.OldValue),
 		NewValue:   textPtr(row.NewValue),
-		OccurredAt: Time(row.OccurredAt.Time),
+		OccurredAt: Time(row.OccurredAt),
 	}
 	if row.EntitySeq.Valid {
 		seq := row.EntitySeq.Int32
@@ -302,13 +302,10 @@ func buildActivityView(row gen.ListActivityRow) activityView {
 // ——ETag は応答本文を指す検証子であり（RFC 9110 8.8.1）、2ページ目と1ページ目が
 // 同じ値になってはならない。**sort / order は含めない**（並び順が固定であり、
 // 指定そのものを 422 で弾いている）。
-func activityETag(normalized string, page Page, total int64, last pgtype.Timestamptz) string {
+func activityETag(normalized string, page Page, total int64, last time.Time) string {
 	h := fnv.New32a()
 	fmt.Fprintf(h, "%s|page=%d|per_page=%d", normalized, page.Page, page.PerPage)
 
-	var stamp int64
-	if last.Valid {
-		stamp = last.Time.UTC().UnixNano()
-	}
+	stamp := etagStamp(last)
 	return fmt.Sprintf(`W/"act-%08x-%d-%d"`, h.Sum32(), total, stamp)
 }

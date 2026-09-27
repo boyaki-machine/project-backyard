@@ -114,7 +114,7 @@ type ticketItemJSON struct {
 	Tags        []ticketTagRef   `json:"tags"`
 	Sprint      *sprintRef       `json:"sprint"`
 	Version     int32            `json:"version"`
-	CreatedAt   string           `json:"created_at"`
+	CreatedAt   int64            `json:"created_at"`
 	DueDate     *string          `json:"due_date"`
 }
 
@@ -305,9 +305,9 @@ func TestListTicketsRejectsInvalidFilters(t *testing.T) {
 		{"番号の書式", "seq_to=abc", "seq_to"},
 		{"番号の向き", "seq_from=20&seq_to=10", "seq_to"},
 		{"着手日時は日付だけでは受けない", "started_since=2026-09-01", "started_since"},
-		{"完了日時の向き", "closed_since=2026-09-16T00:00:00Z&closed_before=2026-09-01T00:00:00Z", "closed_before"},
-		// 時差が違っても同じ瞬間なら空の範囲である
-		{"同じ瞬間は空の範囲", "started_since=2026-09-01T00:00:00Z&started_before=2026-09-01T09:00:00%2B09:00", "started_before"},
+		{"着手日時は ISO8601 では受けない", "started_since=2026-09-01T00:00:00Z", "started_since"},
+		{"完了日時の向き", "closed_since=1789516800000&closed_before=1788220800000", "closed_before"},
+		{"同じ瞬間は空の範囲", "started_since=1788220800000&started_before=1788220800000", "started_before"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -407,9 +407,8 @@ func TestTicketsETagVariesByFilterAndPage(t *testing.T) {
 	if a, b := etag("planned_from=2026-09-01"), etag("planned_from=2026-09-02"); a == b {
 		t.Errorf("予定期間が違うのに ETag が同じ: %q", a)
 	}
-	if a, b := etag("closed_since=2026-09-01T00:00:00Z"),
-		etag("closed_since="+url.QueryEscape("2026-09-01T09:00:00+09:00")); a != b {
-		t.Errorf("同じ瞬間の時差違いで ETag が変わった: %q vs %q", a, b)
+	if a, b := etag("closed_since=1788220800000"), etag("closed_since=1788220800001"); a == b {
+		t.Errorf("完了日時の範囲が違うのに ETag が同じ: %q", a)
 	}
 }
 
@@ -425,8 +424,8 @@ func TestListTicketsSearchConditions(t *testing.T) {
 	h.listTickets(rec, ticketReq(http.MethodGet,
 		"/projects/demo/tickets?q="+url.QueryEscape("認証　100% 認証")+
 			"&seq_from=10&seq_to=20"+
-			"&started_since="+url.QueryEscape("2026-09-01T00:00:00+09:00")+
-			"&closed_before=2026-09-16T00:00:00Z&sort=closed_at&order=desc", "", ""))
+			"&started_since=1788188400000"+ // 2026-09-01T00:00:00+09:00
+			"&closed_before=1789516800000&sort=closed_at&order=desc", "", "")) // 2026-09-16T00:00:00Z
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -448,10 +447,10 @@ func TestListTicketsSearchConditions(t *testing.T) {
 	}
 	// 時差付きの瞬間をそのまま受ける（日の境界はサーバが作らない）
 	want := time.Date(2026, 8, 31, 15, 0, 0, 0, time.UTC)
-	if !p.StartedSince.Valid || !p.StartedSince.Time.Equal(want) {
+	if p.StartedSince == nil || !(*p.StartedSince).Equal(want) {
 		t.Errorf("started_since = %+v, want %s", p.StartedSince, want)
 	}
-	if p.StartedBefore.Valid || p.ClosedSince.Valid || !p.ClosedBefore.Valid {
+	if p.StartedBefore != nil || p.ClosedSince != nil || p.ClosedBefore == nil {
 		t.Errorf("指定しなかった範囲が効いている、または指定した範囲が落ちた: %+v", p)
 	}
 	if p.Sort != "closed_at" || p.SortOrder != "desc" {
@@ -516,7 +515,7 @@ func TestListTicketsWithoutSearchConditions(t *testing.T) {
 	}
 	p := q.ticket.listParams[0]
 	if p.KeywordSet || p.KeywordIds == nil || p.SeqFrom != 0 || p.SeqTo != 0 ||
-		p.StartedSince.Valid || p.StartedBefore.Valid || p.ClosedSince.Valid || p.ClosedBefore.Valid {
+		p.StartedSince != nil || p.StartedBefore != nil || p.ClosedSince != nil || p.ClosedBefore != nil {
 		t.Errorf("未指定の検索の条件が効いている: %+v", p)
 	}
 }
@@ -804,11 +803,11 @@ func moveFake() *fakeQuerier {
 // 1つの表記に固定するための「書く側」の型であり UnmarshalJSON を持たない
 // （apitime.go）。ticketItemJSON と同じ理由・同じ扱いである。
 type moveRespJSON struct {
-	Seq        int32   `json:"seq"`
-	SortKey    string  `json:"sort_key"`
-	StagedAt   *string `json:"staged_at"`
-	Version    int32   `json:"version"`
-	Rebalanced bool    `json:"rebalanced"`
+	Seq        int32  `json:"seq"`
+	SortKey    string `json:"sort_key"`
+	StagedAt   *int64 `json:"staged_at"`
+	Version    int32  `json:"version"`
+	Rebalanced bool   `json:"rebalanced"`
 }
 
 func decodeMove(t *testing.T, rec *httptest.ResponseRecorder) moveRespJSON {
@@ -1111,7 +1110,7 @@ func TestMoveTicketDoesNotRecordActivity(t *testing.T) {
 //   - 12 … epic。親を持たないが**エピック自身なので置けない**
 func stageFake() *fakeQuerier {
 	q := ticketFake()
-	staged := ts(time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
+	staged := tsp(time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
 	q.ticket.sortRowBySeq = map[int32]gen.GetTicketSortRowRow{
 		31: {ID: testTicketID, Type: "task", SortKey: txt("0|n:"), Version: 3},
 		44: {ID: testTicketID2, Type: "task", SortKey: txt("0|u:"), Version: 1,
@@ -1168,7 +1167,7 @@ func TestMoveTicketStagesTicket(t *testing.T) {
 	if len(q.ticket.moved) != 1 || !q.ticket.moved[0].ChangeStage {
 		t.Errorf("change_stage が立っていない: %+v", q.ticket.moved)
 	}
-	if !q.ticket.moved[0].StagedAt.Valid {
+	if q.ticket.moved[0].StagedAt == nil {
 		t.Error("staged_at に値を書いていない")
 	}
 }
@@ -1191,7 +1190,7 @@ func TestMoveTicketUnstagesTicket(t *testing.T) {
 	if len(q.ticket.moved) != 1 || !q.ticket.moved[0].ChangeStage {
 		t.Fatalf("change_stage が立っていない: %+v", q.ticket.moved)
 	}
-	if q.ticket.moved[0].StagedAt.Valid {
+	if q.ticket.moved[0].StagedAt != nil {
 		t.Error("staged_at を NULL にしていない")
 	}
 }
@@ -1277,7 +1276,7 @@ func TestMoveTicketAllowsStagingChildOfEpic(t *testing.T) {
 	q := stageFake()
 	// 44 をいったんバックログへ落としてから、上げ直せることを見る
 	row := q.ticket.sortRowBySeq[44]
-	row.StagedAt = pgtype.Timestamptz{}
+	row.StagedAt = nil
 	q.ticket.sortRowBySeq[44] = row
 
 	h, _ := ticketHandler(q)
@@ -1299,7 +1298,7 @@ func TestMoveTicketUnstageIsAlwaysAllowed(t *testing.T) {
 	q := stageFake()
 	// 45（親がタスク）が何らかの理由でオンステージに居る状態を作る
 	row := q.ticket.sortRowBySeq[45]
-	row.StagedAt = ts(time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
+	row.StagedAt = tsp(time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
 	q.ticket.sortRowBySeq[45] = row
 
 	h, _ := ticketHandler(q)

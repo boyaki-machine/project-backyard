@@ -32,12 +32,12 @@ import (
 // だけを持ち、読み戻す口が無い（tokenJSON と同じ事情）。
 
 type agentTokenJSON struct {
-	ID          string  `json:"id"`
-	TokenPrefix string  `json:"token_prefix"`
-	IssuedAt    string  `json:"issued_at"`
-	LastUsedAt  *string `json:"last_used_at"`
-	ExpiresAt   *string `json:"expires_at"`
-	Status      string  `json:"status"`
+	ID          string `json:"id"`
+	TokenPrefix string `json:"token_prefix"`
+	IssuedAt    int64  `json:"issued_at"`
+	LastUsedAt  *int64 `json:"last_used_at"`
+	ExpiresAt   *int64 `json:"expires_at"`
+	Status      string `json:"status"`
 }
 
 type agentJSON struct {
@@ -49,7 +49,7 @@ type agentJSON struct {
 	Project      *projectRefJSON `json:"project"`
 	TrustLevel   int32           `json:"trust_level"`
 	IsActive     bool            `json:"is_active"`
-	CreatedAt    string          `json:"created_at"`
+	CreatedAt    int64           `json:"created_at"`
 	Token        *agentTokenJSON `json:"token"`
 }
 
@@ -67,8 +67,8 @@ type issuedAgentTokenJSON struct {
 	Token       string   `json:"token"`
 	TokenPrefix string   `json:"token_prefix"`
 	Scopes      []string `json:"scopes"`
-	IssuedAt    string   `json:"issued_at"`
-	ExpiresAt   *string  `json:"expires_at"`
+	IssuedAt    int64    `json:"issued_at"`
+	ExpiresAt   *int64   `json:"expires_at"`
 	Status      string   `json:"status"`
 }
 
@@ -86,7 +86,7 @@ func agentFake(t *testing.T) *fakeQuerier {
 		DisplayName: "私の Claude Code",
 		IsActive:    true,
 		ClientKind:  "claude_code",
-		CreatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		CreatedAt:   ts(time.Now()),
 		ProjectID:   pgtype.Text{String: "01PROJECT00000000000000000", Valid: true},
 		ProjectKey:  pgtype.Text{String: "demo", Valid: true},
 		ProjectName: pgtype.Text{String: "デモプロジェクト", Valid: true},
@@ -165,15 +165,15 @@ func TestListMyAgentsShapesResponse(t *testing.T) {
 		ClientKind:    "claude_code",
 		ModelName:     pgtype.Text{String: "claude-opus-5", Valid: true},
 		TrustLevel:    1,
-		CreatedAt:     pgtype.Timestamptz{Time: issued, Valid: true},
+		CreatedAt:     ts(issued),
 		ProjectKey:    pgtype.Text{String: "demo", Valid: true},
 		ProjectName:   pgtype.Text{String: "デモプロジェクト", Valid: true},
 		TokenID:       "01TOKEN0000000000000000000",
 		TokenPrefix:   pgtype.Text{String: "pb_agt_7", Valid: true},
-		TokenIssuedAt: pgtype.Timestamptz{Time: issued, Valid: true},
+		TokenIssuedAt: ts(issued),
 		// **有効期限を未来に置く**——過去にすると status が expired になり、
 		// この検査が「書式」ではなく「期限判定」を測ることになる。
-		TokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
+		TokenExpiresAt: tsp(time.Now().Add(24 * time.Hour)),
 	}}
 
 	rec := httptest.NewRecorder()
@@ -222,7 +222,7 @@ func TestListMyAgentsWithoutTokenReturnsNull(t *testing.T) {
 		DisplayName: "トークン未発行",
 		IsActive:    true,
 		ClientKind:  "copilot",
-		CreatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		CreatedAt:   ts(time.Now()),
 		TokenID:     "", // 有効なトークンが無い
 	}}
 

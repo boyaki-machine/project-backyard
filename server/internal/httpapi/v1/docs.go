@@ -131,7 +131,7 @@ func docTreeItems(nodes []*docNode, outlines map[string][]docOutlineItem) []docT
 			SortOrder: n.row.SortOrder,
 			PackMode:  n.row.PackMode,
 			Version:   n.row.Version,
-			UpdatedAt: Time(n.row.UpdatedAt.Time),
+			UpdatedAt: Time(n.row.UpdatedAt),
 			Children:  docTreeItems(n.children, outlines),
 		}
 		if outlines != nil {
@@ -187,7 +187,7 @@ func (h *handler) getDoc(w http.ResponseWriter, r *http.Request) {
 			Section:   section,
 			BodyMd:    body,
 			Version:   row.Version,
-			UpdatedAt: Time(row.UpdatedAt.Time),
+			UpdatedAt: Time(row.UpdatedAt),
 		})
 		return
 	}
@@ -215,8 +215,8 @@ func docViewOf(node *docNode, row gen.GetDocumentRow) docView {
 		Version:    row.Version,
 		CreatedBy:  actorRefOf(row.CreatedBy, row.CreatedByKind, row.CreatedByName),
 		UpdatedBy:  actorRefOf(row.UpdatedBy, row.UpdatedByKind, row.UpdatedByName),
-		CreatedAt:  Time(row.CreatedAt.Time),
-		UpdatedAt:  Time(row.UpdatedAt.Time),
+		CreatedAt:  Time(row.CreatedAt),
+		UpdatedAt:  Time(row.UpdatedAt),
 	}
 }
 

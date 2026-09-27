@@ -1446,6 +1446,8 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 
 **MCP 層は REST を内部の HTTP 呼び出しで叩く**（同一プロセス内で同じ chi ルータへ渡す。`Authorization` ヘッダを引き継ぐ）。8.1 が定める「ビジネスルール・権限判定・検証は REST 層に置く」を、**経路として強制するため**である。ハンドラを直接呼ぶ形にすると `RequireProjectPermission` を通らない経路が生まれ、権限判定が2か所になる。
 
+**内部で読んだ応答の日時は ISO8601 UTC に戻して返す**（pb-224）。REST はエポックミリ秒（`ApiDesign.md` 2.2）だが、MCP は ISO8601 のまま残す——エージェントはエポック値の換算を誤りやすい。戻すのは名前が `_at` で終わる項目（と証明書の `not_before` / `not_after`）の整数で、実装は `mcp/rest.go` の `isoTimes` 1か所である。
+
 ## 8.5 ツールの引数と応答
 
 ### 8.5.1 write 系

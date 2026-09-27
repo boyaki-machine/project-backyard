@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -74,7 +75,7 @@ type CreatePasskeyParams struct {
 // CreatePasskey は検証の済んだパスキーを1件保存する（ApiDesign.md 4.7.3）。
 //
 // created_at を返すのは、201 の応答に DB の値をそのまま載せるためである。
-func (q *Queries) CreatePasskey(ctx context.Context, arg CreatePasskeyParams) (pgtype.Timestamptz, error) {
+func (q *Queries) CreatePasskey(ctx context.Context, arg CreatePasskeyParams) (time.Time, error) {
 	row := q.db.QueryRow(ctx, createPasskey,
 		arg.ID,
 		arg.UserID,
@@ -92,7 +93,7 @@ func (q *Queries) CreatePasskey(ctx context.Context, arg CreatePasskeyParams) (p
 		arg.BackupEligible,
 		arg.BackupState,
 	)
-	var created_at pgtype.Timestamptz
+	var created_at time.Time
 	err := row.Scan(&created_at)
 	return created_at, err
 }
@@ -109,7 +110,7 @@ type CreateWebauthnChallengeParams struct {
 	UserID    pgtype.Text
 	Challenge string
 	Session   []byte
-	ExpiresAt pgtype.Timestamptz
+	ExpiresAt time.Time
 }
 
 // ── WebAuthn の挑戦 ────────────────────────────────────────
@@ -305,8 +306,8 @@ type FindWebauthnChallengeRow struct {
 	Purpose    string
 	UserID     pgtype.Text
 	Session    []byte
-	ExpiresAt  pgtype.Timestamptz
-	ConsumedAt pgtype.Timestamptz
+	ExpiresAt  time.Time
+	ConsumedAt *time.Time
 }
 
 // FindWebauthnChallenge は clientDataJSON の challenge で挑戦を引く。
@@ -382,8 +383,8 @@ type ListPasskeysRow struct {
 	Name        string
 	RpID        string
 	BackupState bool
-	CreatedAt   pgtype.Timestamptz
-	LastUsedAt  pgtype.Timestamptz
+	CreatedAt   time.Time
+	LastUsedAt  *time.Time
 }
 
 // パスキーのクエリ（DbDesign.md 6.19、Design.md 6.8）。

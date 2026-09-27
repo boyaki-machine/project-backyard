@@ -100,7 +100,7 @@ func (h *handler) recordBackup(r *http.Request, rec *audit.Recorder, result audi
 
 // restoreResponse は 11.12 の応答。
 type restoreResponse struct {
-	RestoredAt       time.Time          `json:"restored_at"`
+	RestoredAt       Time               `json:"restored_at"`
 	Backup           restoreBackupMeta  `json:"backup"`
 	MigrationVersion int64              `json:"migration_version"`
 	SessionKept      bool               `json:"session_kept"`
@@ -109,10 +109,10 @@ type restoreResponse struct {
 }
 
 type restoreBackupMeta struct {
-	FormatVersion    int       `json:"format_version"`
-	MigrationVersion int64     `json:"migration_version"`
-	CreatedAt        time.Time `json:"created_at"`
-	PBVersion        string    `json:"pb_version"`
+	FormatVersion    int    `json:"format_version"`
+	MigrationVersion int64  `json:"migration_version"`
+	CreatedAt        Time   `json:"created_at"`
+	PBVersion        string `json:"pb_version"`
 }
 
 type restoreTableView struct {
@@ -277,11 +277,11 @@ func buildRestoreResponse(res backup.Result) restoreResponse {
 		mismatched = []string{}
 	}
 	return restoreResponse{
-		RestoredAt: res.RestoredAt.UTC(),
+		RestoredAt: Time(res.RestoredAt),
 		Backup: restoreBackupMeta{
 			FormatVersion:    res.Backup.FormatVersion,
 			MigrationVersion: res.Backup.MigrationVersion,
-			CreatedAt:        res.Backup.CreatedAt.UTC(),
+			CreatedAt:        Time(res.Backup.CreatedAt),
 			PBVersion:        res.Backup.PBVersion,
 		},
 		MigrationVersion: res.MigrationVersion,

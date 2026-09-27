@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -538,14 +539,20 @@ func TestMCPIntegration(t *testing.T) {
 			t.Fatalf("pb_get_task が失敗した: %s", text)
 		}
 		var got struct {
-			Seq   int    `json:"seq"`
-			Title string `json:"title"`
+			Seq       int    `json:"seq"`
+			Title     string `json:"title"`
+			CreatedAt any    `json:"created_at"`
 		}
 		if err := json.Unmarshal([]byte(text), &got); err != nil {
 			t.Fatalf("応答を読めない: %v（%s）", err, text)
 		}
 		if got.Seq != 1 || got.Title != "MCP から読むチケット" {
 			t.Errorf("チケット = %+v", got)
+		}
+		// **MCP の日時は ISO8601 UTC のまま**（ApiDesign.md 2.2、pb-224）。REST は
+		// エポックミリ秒なので、MCP が内部で読んだ応答を戻していなければ数値が漏れる。
+		if s, ok := got.CreatedAt.(string); !ok || !regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`).MatchString(s) {
+			t.Errorf("created_at = %v, want ISO8601 UTC の文字列", got.CreatedAt)
 		}
 	})
 

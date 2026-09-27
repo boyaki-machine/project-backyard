@@ -175,10 +175,10 @@ type ticketFilters struct {
 	seqTo   int32
 
 	// 日時の範囲は since 以上・before 未満。Valid が偽なら指定なし。
-	startedSince  pgtype.Timestamptz
-	startedBefore pgtype.Timestamptz
-	closedSince   pgtype.Timestamptz
-	closedBefore  pgtype.Timestamptz
+	startedSince  *time.Time
+	startedBefore *time.Time
+	closedSince   *time.Time
+	closedBefore  *time.Time
 
 	// includeRetired は retired（9.2.1）。**既定は false** で、
 	// スプリントを終えて棚に戻ったものを一覧から外す。
@@ -283,7 +283,7 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]ticketListItem, 0, len(rows))
 	var total int64
-	var lastUpdated pgtype.Timestamptz
+	var lastUpdated time.Time
 	for _, row := range rows {
 		items = append(items, buildTicketListItem(row, tagsByTicket[row.ID]))
 		// 窓関数の値はどの行も同じ。0件のときは 0 のままでよい。
@@ -635,21 +635,18 @@ func parseTicketDate(raw, field string, details []apierr.Detail) (pgtype.Date, [
 
 // parseTicketInstant は started_* / closed_* を読む（9.2.1「検索の条件」）。
 //
-// **時差を含む ISO8601 の瞬間だけを受ける。** 日付だけの `2026-09-01` は受けない
-// ——どのタイムゾーンの0時かをサーバが決めることになり、画面が利用者のタイムゾーンで
-// 表示している日付とずれうる（日の境界は画面が作る）。
-func parseTicketInstant(raw, field string, details []apierr.Detail) (pgtype.Timestamptz, []apierr.Detail) {
-	if raw == "" {
-		return pgtype.Timestamptz{}, details
-	}
-	t, err := time.Parse(time.RFC3339Nano, raw)
-	if err != nil {
-		return pgtype.Timestamptz{}, append(details, apierr.Detail{
+// **エポックミリ秒の瞬間だけを受ける**（ApiDesign.md 2.2、pb-224）。日付だけの
+// `2026-09-01` は受けない——どのタイムゾーンの0時かをサーバが決めることになり、
+// 画面が利用者のタイムゾーンで表示している日付とずれうる（日の境界は画面が作る）。
+func parseTicketInstant(raw, field string, details []apierr.Detail) (*time.Time, []apierr.Detail) {
+	t, ok := parseAPIInstant(raw)
+	if !ok {
+		return nil, append(details, apierr.Detail{
 			Field: field, Code: "invalid",
-			Message: field + " は時差を含む ISO8601 の日時で指定してください（例：2026-09-01T00:00:00+09:00）",
+			Message: field + " はエポックミリ秒の整数で指定してください（例：1788188400000）",
 		})
 	}
-	return pgtype.Timestamptz{Time: t, Valid: true}, details
+	return t, details
 }
 
 // appendTicketInstantRange は since < before を確かめ、正規化の材料を足す（9.2.1 / 9.2.5）。
@@ -657,20 +654,20 @@ func parseTicketInstant(raw, field string, details []apierr.Detail) (pgtype.Time
 // **前後が逆なら 422 にする。** 黙って空の結果を返すと、入力の誤りが「該当なし」に見える。
 // 正規化は UTC に揃える——同じ瞬間を違う時差で書いても同じ ETag になるようにする。
 func appendTicketInstantRange(
-	since, before pgtype.Timestamptz, sinceField, beforeField string,
+	since, before *time.Time, sinceField, beforeField string,
 	details []apierr.Detail, parts []string,
 ) ([]apierr.Detail, []string) {
-	if since.Valid && before.Valid && !since.Time.Before(before.Time) {
+	if since != nil && before != nil && !since.Before(*before) {
 		details = append(details, apierr.Detail{
 			Field: beforeField, Code: "invalid",
 			Message: beforeField + " は " + sinceField + " より後の日時で指定してください",
 		})
 	}
-	if since.Valid {
-		parts = append(parts, sinceField+"="+since.Time.UTC().Format(time.RFC3339Nano))
+	if since != nil {
+		parts = append(parts, sinceField+"="+since.UTC().Format(time.RFC3339Nano))
 	}
-	if before.Valid {
-		parts = append(parts, beforeField+"="+before.Time.UTC().Format(time.RFC3339Nano))
+	if before != nil {
+		parts = append(parts, beforeField+"="+before.UTC().Format(time.RFC3339Nano))
 	}
 	return details, parts
 }
@@ -722,14 +719,11 @@ func appendEnumErrors(
 // 指す検証子であり（RFC 9110 8.8.1）、並び順やページが違えば本文も違う。
 // 9.2.5 の「フィルタ条件」を条件節だけに読むと、2ページ目と1ページ目が
 // 同じ ETag になる。
-func ticketsETag(normalized string, page Page, total int64, lastUpdated pgtype.Timestamptz) string {
+func ticketsETag(normalized string, page Page, total int64, lastUpdated time.Time) string {
 	h := fnv.New32a()
 	fmt.Fprintf(h, "%s|sort=%s|order=%s|page=%d|per_page=%d",
 		normalized, page.Sort, page.Order, page.Page, page.PerPage)
 
-	var stamp int64
-	if lastUpdated.Valid {
-		stamp = lastUpdated.Time.UTC().UnixNano()
-	}
+	stamp := etagStamp(lastUpdated)
 	return fmt.Sprintf(`W/"tkt-%08x-%d-%d"`, h.Sum32(), total, stamp)
 }

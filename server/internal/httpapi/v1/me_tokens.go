@@ -26,7 +26,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/audit"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
@@ -136,9 +135,9 @@ func (h *handler) listMyTokens(w http.ResponseWriter, r *http.Request) {
 			Name:        row.Name.String,
 			TokenPrefix: row.TokenPrefix.String,
 			Scopes:      scopes,
-			IssuedAt:    Time(row.IssuedAt.Time),
-			LastUsedAt:  apiTimestamptz(row.LastUsedAt),
-			ExpiresAt:   apiTimestamptz(row.ExpiresAt),
+			IssuedAt:    Time(row.IssuedAt),
+			LastUsedAt:  apiTime(row.LastUsedAt),
+			ExpiresAt:   apiTime(row.ExpiresAt),
 			Status:      tokenStatus(row.ExpiresAt, now),
 		})
 	}
@@ -150,8 +149,8 @@ func (h *handler) listMyTokens(w http.ResponseWriter, r *http.Request) {
 //
 // expires_at が NULL（無期限）は active とする。4.4.2 は無期限の発行を許さないが、
 // 列としては NULL を許すため（DbDesign.md 6.2）、読む側は倒れないようにしておく。
-func tokenStatus(expiresAt pgtype.Timestamptz, now time.Time) string {
-	if expiresAt.Valid && !expiresAt.Time.After(now) {
+func tokenStatus(expiresAt *time.Time, now time.Time) string {
+	if expiresAt != nil && !expiresAt.After(now) {
 		return tokenStatusExpired
 	}
 	return tokenStatusActive
@@ -255,7 +254,7 @@ func (h *handler) createMyToken(w http.ResponseWriter, r *http.Request) {
 			// project_id は NULL（全プロジェクト）。プロジェクト単位のトークンは
 			// エージェント用である（Design.md 6.5）。
 			Scopes:    encodedScopes,
-			ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+			ExpiresAt: &expiresAt,
 			// client_info はセッション（User-Agent）用の列。CLI トークンには
 			// 相当するものが無く、本人が付ける name が識別子になる。
 		}); err != nil {
@@ -428,7 +427,7 @@ func (h *handler) deleteMyToken(w http.ResponseWriter, r *http.Request) {
 		} else if err != nil {
 			return fmt.Errorf("アクセストークンを引けない: %w", err)
 		}
-		if row.RevokedAt.Valid {
+		if row.RevokedAt != nil {
 			// 既に失効済み。冪等に成功として返し、記録は足さない。
 			return nil
 		}

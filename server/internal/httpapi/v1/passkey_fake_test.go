@@ -69,10 +69,10 @@ func (q *fakeQuerier) FindPasskeyByName(_ context.Context, _ gen.FindPasskeyByNa
 	return "", pgx.ErrNoRows
 }
 
-func (q *fakeQuerier) CreatePasskey(_ context.Context, arg gen.CreatePasskeyParams) (pgtype.Timestamptz, error) {
+func (q *fakeQuerier) CreatePasskey(_ context.Context, arg gen.CreatePasskeyParams) (time.Time, error) {
 	q.opLog = append(q.opLog, "CreatePasskey")
 	if q.passkey.createErr != nil {
-		return pgtype.Timestamptz{}, q.passkey.createErr
+		return time.Time{}, q.passkey.createErr
 	}
 	q.passkey.created = append(q.passkey.created, arg)
 	return ts(time.Now()), nil
@@ -132,7 +132,7 @@ func (q *fakeQuerier) FindWebauthnChallenge(_ context.Context, arg gen.FindWebau
 			Session: c.Session, ExpiresAt: c.ExpiresAt,
 		}
 		if slices.Contains(q.passkey.consumed, c.ID) {
-			row.ConsumedAt = ts(time.Now())
+			row.ConsumedAt = tsp(time.Now())
 		}
 		return row, nil
 	}

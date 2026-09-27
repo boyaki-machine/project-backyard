@@ -100,7 +100,7 @@ func (h *handler) getDocRevisions(
 			Title:        row.Title,
 			ChangedBy:    actorRefOf(row.ChangedBy, row.ChangedByKind, row.ChangedByName),
 			ChangeReason: textPtr(row.ChangeReason),
-			CreatedAt:    Time(row.CreatedAt.Time),
+			CreatedAt:    Time(row.CreatedAt),
 		})
 	}
 	WriteJSON(w, http.StatusOK, NewList(items, page, total))
@@ -130,6 +130,6 @@ func (h *handler) writeDocRevision(
 		BodyMd:       row.BodyMd,
 		ChangedBy:    actorRefOf(row.ChangedBy, row.ChangedByKind, row.ChangedByName),
 		ChangeReason: textPtr(row.ChangeReason),
-		CreatedAt:    Time(row.CreatedAt.Time),
+		CreatedAt:    Time(row.CreatedAt),
 	})
 }
