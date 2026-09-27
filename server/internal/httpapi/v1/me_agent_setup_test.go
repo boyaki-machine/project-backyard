@@ -161,6 +161,7 @@ func TestGetMyAgentSetupBridgePlatform(t *testing.T) {
 	}{
 		{"windows", "bridge", "windows", "amd64", 200, `command = "pb-mcp-bridge.exe"`},
 		{"linux", "bridge", "linux", "arm64", 200, `command = "pb-mcp-bridge"`},
+		{"mac Intel", "bridge", "darwin", "amd64", 422, ""},
 		{"missing os", "bridge", "", "arm64", 422, ""},
 		{"missing arch", "bridge", "windows", "", 422, ""},
 		{"unknown os", "bridge", "freebsd", "amd64", 422, ""},
@@ -196,69 +197,72 @@ func TestGetMyAgentSetupBridgePlatform(t *testing.T) {
 
 func TestBridgeAssetSelectsClientPlatform(t *testing.T) {
 	base := t.TempDir()
-	for _, osName := range []string{"darwin", "windows", "linux"} {
-		for _, arch := range []string{"amd64", "arm64"} {
-			name := "pb-mcp-bridge"
-			if osName == "windows" {
-				name += ".exe"
-			}
-			dir := filepath.Join(base, "bridges", osName+"-"+arch)
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(osName+"/"+arch), 0o755); err != nil {
-				t.Fatal(err)
-			}
+	platforms := []struct{ osName, arch string }{
+		{"darwin", "arm64"},
+		{"windows", "amd64"}, {"windows", "arm64"},
+		{"linux", "amd64"}, {"linux", "arm64"},
+	}
+	for _, platform := range platforms {
+		osName, arch := platform.osName, platform.arch
+		name := "pb-mcp-bridge"
+		if osName == "windows" {
+			name += ".exe"
+		}
+		dir := filepath.Join(base, "bridges", osName+"-"+arch)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(osName+"/"+arch), 0o755); err != nil {
+			t.Fatal(err)
 		}
 	}
-	for _, osName := range []string{"darwin", "windows", "linux"} {
-		for _, arch := range []string{"amd64", "arm64"} {
-			a, err := bridgeAssetFromDir(base, osName, arch)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(a.Content) != osName+"/"+arch {
-				t.Errorf("%s/%s の中身: %q", osName, arch, a.Content)
-			}
-			if osName == "windows" && a.Path != "pb-mcp-bridge.exe" {
-				t.Errorf("Windows のZIP名: %q", a.Path)
-			}
-			connect, err := agentsetup.RenderConnect("codex", agentsetup.ConnectParams{
-				Transport: agentsetup.TransportBridge, BridgeOS: osName, BridgeArch: arch,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			connect.Assets = []agentsetup.Asset{a}
-			blob, err := agentsetup.ConnectZip(connect)
-			if err != nil {
-				t.Fatal(err)
-			}
-			zr, err := zip.NewReader(bytes.NewReader(blob), int64(len(blob)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			found := 0
-			for _, f := range zr.File {
-				if f.Name == a.Path {
-					found++
-					rc, err := f.Open()
-					if err != nil {
-						t.Fatal(err)
-					}
-					content, err := io.ReadAll(rc)
-					if err != nil {
-						t.Fatal(err)
-					}
-					_ = rc.Close()
-					if !bytes.Equal(content, a.Content) {
-						t.Errorf("ZIP の %s/%s のバイナリが違う", osName, arch)
-					}
+	for _, platform := range platforms {
+		osName, arch := platform.osName, platform.arch
+		a, err := bridgeAssetFromDir(base, osName, arch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(a.Content) != osName+"/"+arch {
+			t.Errorf("%s/%s の中身: %q", osName, arch, a.Content)
+		}
+		if osName == "windows" && a.Path != "pb-mcp-bridge.exe" {
+			t.Errorf("Windows のZIP名: %q", a.Path)
+		}
+		connect, err := agentsetup.RenderConnect("codex", agentsetup.ConnectParams{
+			Transport: agentsetup.TransportBridge, BridgeOS: osName, BridgeArch: arch,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		connect.Assets = []agentsetup.Asset{a}
+		blob, err := agentsetup.ConnectZip(connect)
+		if err != nil {
+			t.Fatal(err)
+		}
+		zr, err := zip.NewReader(bytes.NewReader(blob), int64(len(blob)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := 0
+		for _, f := range zr.File {
+			if f.Name == a.Path {
+				found++
+				rc, err := f.Open()
+				if err != nil {
+					t.Fatal(err)
+				}
+				content, err := io.ReadAll(rc)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = rc.Close()
+				if !bytes.Equal(content, a.Content) {
+					t.Errorf("ZIP の %s/%s のバイナリが違う", osName, arch)
 				}
 			}
-			if found != 1 {
-				t.Errorf("ZIP に選択したバイナリが1本ではない: %s/%s", osName, arch)
-			}
+		}
+		if found != 1 {
+			t.Errorf("ZIP に選択したバイナリが1本ではない: %s/%s", osName, arch)
 		}
 	}
 	if _, err := bridgeAssetFromDir(base, "linux", "386"); err == nil {

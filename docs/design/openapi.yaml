@@ -5502,7 +5502,7 @@ components:
     BridgeOS:
       name: os
       in: query
-      description: transport=bridge のとき必須。direct では指定しない。
+      description: transport=bridge のとき必須。direct では指定しない。macOS は arm64 のみ対応。
       schema:
         type: string
         enum: [darwin, windows, linux]

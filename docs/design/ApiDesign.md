@@ -1242,7 +1242,7 @@ GET /api/v1/me/agents/:id/setup.zip
 | `agent.token_env_name` | 接頭を付けた実際の変数名。**組み立てはサーバの1か所**（4.5.1） |
 | `mcp_url` | `base_url` ＋ `/mcp/<project_key>`（`Design.md` 8.3）。**`files[]` の中に埋まっているものと同じ文字列**である |
 | `transport` | `direct`（既定）または Codex の `bridge`。クエリ `?transport=bridge` は Codex のみ受け付ける。`bridge` の設定はローカル stdio の `pb-mcp-bridge` を起動する |
-| `os`・`arch` | `transport=bridge` のとき両方必須。`os` は `darwin` / `windows` / `linux`、`arch` は `amd64` / `arm64`。両エンドポイントに同じ値を渡す。不足・未知の値、`direct` との併用は `422 validation_failed` |
+| `os`・`arch` | `transport=bridge` のとき両方必須。許可する組み合わせは `darwin/arm64`、`windows/amd64`、`windows/arm64`、`linux/amd64`、`linux/arm64`。両エンドポイントに同じ値を渡す。不足・未対応の組み合わせ、`direct` との併用は `422 validation_failed` |
 | `base_url` | **リクエストの `Host` から組み立てた暫定値**（5.7.1 と同じ規則。スキームは `PB_COOKIE_SECURE`） |
 | `export_line` | 環境変数へトークンを置く行。**`null` になることがある**（下記） |
 | `files[]` | **5.7.1 の `files[]` と同じ形**（`AgentSetupFile`）。**接続設定の1枚だけ**で、`.gitignore` も手順ファイルも入らない |
@@ -1256,8 +1256,9 @@ GET /api/v1/me/agents/:id/setup.zip
 **ローカル CA の証明書と `CODEX_CA_CERTIFICATE` での直接接続は実機未確認**で、ブリッジを正とする（pb-202）。PB は TLS 検証を無効にする設定を返さない。
 生成物は `pb-mcp-bridge --url <https MCP URL> --token-env <name>` を stdio 子プロセスとして起動する。
 Windows 向けだけコマンド名を `pb-mcp-bridge.exe` とする。OS と CPU は利用者が画面で指定し、
-PB サーバの実行環境から推測しない。配布物は `darwin` / `windows` / `linux` × `amd64` / `arm64` の
-6種類を `bridges/<os>-<arch>/pb-mcp-bridge[.exe]` に持ち、ZIP には指定された1種類だけを入れる。
+PB サーバの実行環境から推測しない。配布物は macOS の Apple Silicon（`darwin/arm64`）と
+Windows / Linux の x64・ARM64 の計5種類を `bridges/<os>-<arch>/pb-mcp-bridge[.exe]` に持ち、
+ZIP には指定された1種類だけを入れる。macOS Intel（`darwin/amd64`）は対象外とする。
 該当するバイナリが無ければ、別の種類へフォールバックせずエラーにする。
 Windows 向けの `export_line` と手引きは PowerShell の `$env:` 構文を使い、同じセッションから
 Codex を起動するよう案内する。

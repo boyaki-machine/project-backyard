@@ -390,6 +390,7 @@ func TestRenderConnectCodexWindowsBridge(t *testing.T) {
 	}
 	for _, p := range []ConnectParams{
 		{Transport: TransportBridge, BridgeOS: "windows", BridgeArch: "386"},
+		{Transport: TransportBridge, BridgeOS: "darwin", BridgeArch: "amd64"},
 		{Transport: TransportBridge, BridgeOS: "", BridgeArch: "arm64"},
 		{Transport: TransportDirect, BridgeOS: "windows", BridgeArch: "arm64"},
 	} {
