@@ -20,6 +20,10 @@ test('crop, register, display and remove a user icon', async ({ page }, testInfo
     ctx.fillRect(0, 0, 320, 480)
     ctx.fillStyle = '#2967be'
     ctx.fillRect(320, 0, 320, 480)
+    ctx.fillStyle = '#23a744'
+    ctx.fillRect(0, 240, 320, 240)
+    ctx.fillStyle = '#d9b23b'
+    ctx.fillRect(320, 240, 320, 240)
     return canvas.toDataURL('image/png').split(',')[1]!
   })
   const firstChooser = page.waitForEvent('filechooser')
@@ -32,21 +36,62 @@ test('crop, register, display and remove a user icon', async ({ page }, testInfo
   const modal = page.getByRole('dialog', { name: 'アイコンを切り抜く' })
   await expect(modal).toBeVisible()
   const preview = modal.locator('canvas')
-  const before = await preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())
-  for (const [index, value] of [[2, '2'], [0, '0']] as const) {
-    await modal.locator('input[type=range]').nth(index).evaluate((input: HTMLInputElement, next) => {
-      input.value = next
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    }, value)
-  }
-  await expect.poll(() => preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(before)
+  await expect(modal.getByRole('button', { name: '登録' })).toBeEnabled()
+  const pixelAt = () => preview.evaluate((canvas: HTMLCanvasElement) =>
+    [...canvas.getContext('2d')!.getImageData(100, 64, 1, 1).data])
+  const before = await pixelAt()
+  expect(before[0]).toBeGreaterThan(before[2]!)
+  const bounds = (await preview.boundingBox())!
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(bounds.x + bounds.width / 2 - 100, bounds.y + bounds.height / 2, { steps: 6 })
+  await page.mouse.up()
+  await expect.poll(async () => {
+    const pixel = await pixelAt()
+    return pixel[2]! > pixel[0]!
+  }).toBe(true)
+  const afterDrag = await preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())
+  await preview.press('ArrowRight')
+  await expect.poll(() => preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(afterDrag)
+  const afterArrow = await preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())
+  await modal.locator('input[type=range]').evaluate((input: HTMLInputElement) => {
+    input.value = '2'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await expect.poll(() => preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(afterArrow)
+  const afterZoom = await preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2 - 80, { steps: 6 })
+  await page.mouse.up()
+  await expect.poll(() => preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(afterZoom)
+  const afterMouse = await preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+  const touchX = bounds.x + bounds.width / 2
+  const touchY = bounds.y + bounds.height / 2
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: touchX, y: touchY }] })
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: touchX, y: touchY + 80 }] })
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await expect.poll(() => preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(afterMouse)
   await page.screenshot({ path: testInfo.outputPath('avatar-crop.png') })
   await page.setViewportSize({ width: 390, height: 900 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391)
   await page.screenshot({ path: testInfo.outputPath('avatar-crop-390.png') })
+  const croppedPixel = await preview.evaluate((canvas: HTMLCanvasElement) =>
+    [...canvas.getContext('2d')!.getImageData(128, 128, 1, 1).data])
   await modal.getByRole('button', { name: '登録' }).click()
   await expect(icon.getByRole('status')).toHaveText('アイコンを登録しました')
   await expect(icon.locator('img')).toBeVisible()
+  const savedPixel = await icon.locator('img').evaluate(async (img: HTMLImageElement) => {
+    if (!img.complete) await new Promise<void>((resolve) => img.addEventListener('load', () => resolve(), { once: true }))
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 256
+    const ctx = canvas.getContext('2d')!
+    ctx.drawImage(img, 0, 0, 256, 256)
+    return [...ctx.getImageData(128, 128, 1, 1).data]
+  })
+  expect(savedPixel).toEqual(croppedPixel)
 
   for (const width of [390, 900, 1440]) {
     await page.setViewportSize({ width, height: 900 })
