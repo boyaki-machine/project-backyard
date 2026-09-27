@@ -1,10 +1,8 @@
 /** English translations keyed by the Japanese source text used by the UI. */
 export const uiMessages: Record<string, string> = {
   "アイコンを切り抜く": "Crop Icon",
-  "表示する範囲を調整してください": "Adjust the visible area.",
+  "画像をドラッグして位置を調整してください。矢印キーでも移動できます。": "Drag the image to position it. You can also use the arrow keys.",
   "アイコンのプレビュー": "Icon preview",
-  "左右": "Horizontal position",
-  "上下": "Vertical position",
   "拡大": "Zoom",
   "画像を開けませんでした": "Could not open the image.",
   "画像を作成できませんでした": "Could not create the image.",
