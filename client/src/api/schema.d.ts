@@ -1337,6 +1337,187 @@ export interface paths {
         patch: operations["patchTag"];
         trace?: never;
     };
+    "/api/v1/projects/{key}/calendar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 暦の取得元と取得の状態
+         * @description プロジェクトの祝日の取得元と、取得の状態を返す（ApiDesign.md 5.8.1）。
+         *     **必要権限は `project.view`**。取得元が無ければ `source` は null。
+         */
+        get: operations["getProjectCalendar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/calendar/source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 暦の取得元を選ぶ・外す
+         * @description Google の祝日カレンダーを取得元に選ぶ、または外す（ApiDesign.md 5.8.2）。
+         *     **必要権限は `project.edit`**。**選ぶだけで取りに行かない**（取得は 5.8.3）。
+         *     同じ暦を他のプロジェクトが取得済みなら、その結果がすぐ使える。
+         *
+         *     **URL は受けない。** サーバが `google_id` から組み立てる（SSRF を作らないため）。
+         *     取り込みの暦を使っていたなら、その取り込み分は消える。
+         */
+        put: operations["putProjectCalendarSource"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/calendar/fetch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 祝日を取得する
+         * @description Google の祝日カレンダーを取りに行き、取り込む（ApiDesign.md 5.8.3）。
+         *     **必要権限は `project.edit`**。日次の自動取得は持たず、この口だけが契機である。
+         *
+         *     **同じ `google_id` への取得は、プロジェクトをまたいで1時間に1回まで**
+         *     （失敗した試行も数える）。超えたら 429 と `Retry-After`。
+         *     本文のハッシュ（`DTSTAMP` 行を除く）が前回と同じなら取り込み直さない。
+         *     失敗しても前回までの取り込み分は残る。
+         */
+        post: operations["fetchProjectCalendar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/calendar/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * .ics を取り込む
+         * @description iCal の本文を取り込む（ApiDesign.md 5.8.4）。**必要権限は `project.edit`**。
+         *     外へ出られない環境のための口である。**JSON で受ける**（iCal はテキスト）。
+         *
+         *     取り込むのは終日の予定だけで、複数日の予定は日ごとに展開する。時刻付きの
+         *     予定と繰り返し（`RRULE`）は取り込まず、数を `imported.skipped` に返す。
+         */
+        post: operations["importProjectCalendar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/calendar/days": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 期間内の休日・行事・上書き
+         * @description 期間 `[from, to)` の休日・行事・上書きを返す（ApiDesign.md 5.8.5）。
+         *     **必要権限は `project.view`**。**平日で何も無い日は返さない**——返らない日は平日である。
+         *     期間は 1098 日（366日×3）まで。
+         */
+        get: operations["listProjectCalendarDays"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/calendar/days/{day}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                day: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 日ごとの上書きを作る・置き換える
+         * @description その日を休日にする／平日にする（ApiDesign.md 5.8.6）。**必要権限は `project.edit`**。
+         *     手動の追加（祝日でない日を休日に）も削除（祝日を平日に）もこの口で行う。
+         */
+        put: operations["putProjectCalendarDay"];
+        post?: never;
+        /**
+         * 日ごとの上書きを外す
+         * @description 上書きを外す（ApiDesign.md 5.8.6）。**必要権限は `project.edit`**。
+         *     **上書きが無くても 204**（外した後の状態は同じ）。
+         */
+        delete: operations["deleteProjectCalendarDay"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{key}/sprints": {
         parameters: {
             query?: never;
@@ -4732,6 +4913,11 @@ export interface components {
             settings?: {
                 [key: string]: unknown;
             };
+            /**
+             * @description 基準タイムゾーン（IANA 名）。サーバと DB の両方が知っている名前だけを受ける。
+             *     **変えても既存の日時は動かさない**（ApiDesign.md 5.5）。
+             */
+            timezone?: string;
         };
         /**
          * @description `POST /projects`・`GET /projects/:key`・`PATCH /projects/:key`・
@@ -4745,6 +4931,8 @@ export interface components {
             description: string | null;
             /** @enum {string} */
             status: "active" | "archived";
+            /** @description プロジェクトの基準タイムゾーン（IANA 名。DbDesign.md 6.23）。 */
+            timezone: string;
             /** @description `project.workflow_id` が NULL のときは null。 */
             workflow: components["schemas"]["Workflow"] | null;
             members: components["schemas"]["ProjectMember"][];
@@ -4772,6 +4960,76 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description 暦の取得元と取得の状態（ApiDesign.md 5.8.1）。 */
+        ProjectCalendar: {
+            source: components["schemas"]["ProjectCalendarSource"] | null;
+            /** @description `POST /calendar/import` の応答にだけ付く。 */
+            imported?: {
+                days: number;
+                skipped: number;
+            };
+        };
+        ProjectCalendarSource: {
+            /** @enum {string} */
+            kind: "google" | "file";
+            /** @description Google の暦の識別子（`ja.japanese` など）。`file` では null。 */
+            google_id: string | null;
+            /** @description 暦の名前（iCal の `X-WR-CALNAME`、無ければ取り込んだファイル名）。 */
+            name: string | null;
+            holiday_count: number;
+            observance_count: number;
+            /**
+             * Format: date-time
+             * @description 最後に取り込めた時刻。一度も取れていなければ null。
+             */
+            fetched_at: string | null;
+            /** Format: date-time */
+            last_attempt_at: string | null;
+            /** @description 最後の取得の失敗。画面にそのまま出せる日本語。成功で null に戻る。 */
+            last_error: string | null;
+            /**
+             * Format: date-time
+             * @description 次に取得できる時刻。いま取得できるなら null。`file` では常に null。
+             */
+            next_fetch_at: string | null;
+        };
+        PutProjectCalendarSourceRequest: {
+            /** @description `^[a-z]{2}\.[a-z_]+$`。null で取得元を外す。 */
+            google_id: string | null;
+        };
+        ImportProjectCalendarRequest: {
+            /** @description 暦に名前が無いとき、これを名前にする。 */
+            filename?: string;
+            /** @description iCal の本文。1MiB まで。 */
+            ics: string;
+        };
+        ProjectCalendarDays: {
+            days: components["schemas"]["ProjectCalendarDay"][];
+        };
+        ProjectCalendarDay: {
+            /** Format: date */
+            day: string;
+            is_holiday: boolean;
+            /**
+             * @description 決め手になった段（DbDesign.md 6.23 の表）。`none` は行事だけの平日。
+             * @enum {string}
+             */
+            reason: "override" | "holiday" | "weekend" | "none";
+            /** @description 取得元にあるその日の祝日・行事（上書きされていても返す）。 */
+            events: {
+                /** @enum {string} */
+                kind: "holiday" | "observance";
+                name: string;
+            }[];
+            override: {
+                is_holiday: boolean;
+                name: string | null;
+            } | null;
+        };
+        PutProjectCalendarDayRequest: {
+            is_holiday: boolean;
+            name?: string;
         };
         Workflow: {
             id: string;
@@ -8956,6 +9214,268 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["TagNotFound"];
             409: components["responses"]["TagAlreadyExists"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getProjectCalendar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 暦の取得元と状態。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectCalendar"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    putProjectCalendarSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutProjectCalendarSourceRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後の暦。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectCalendar"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    fetchProjectCalendar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 取り込めた（変わっていなかったときも含む）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectCalendar"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            /** @description 取得元が Google の暦でない（`conflict`）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            /**
+             * @description 相手先が応答しない・200 以外・iCal として読めない（`upstream_failed`）。
+             *     `message` は `last_error` と同じ文。
+             */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    importProjectCalendar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportProjectCalendarRequest"];
+            };
+        };
+        responses: {
+            /** @description 取り込めた。`imported` が付く。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectCalendar"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listProjectCalendarDays: {
+        parameters: {
+            query: {
+                from: string;
+                /** @description 含まない。 */
+                to: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 日の一覧（日付の昇順）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectCalendarDays"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    putProjectCalendarDay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                day: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutProjectCalendarDayRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後のその日。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectCalendarDay"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteProjectCalendarDay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                day: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 外した。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];

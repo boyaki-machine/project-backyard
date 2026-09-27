@@ -206,7 +206,7 @@ func (q *Queries) FindWorkflowTemplate(ctx context.Context, templateKey pgtype.T
 const getProjectByKey = `-- name: GetProjectByKey :one
 
 SELECT
-  p.id, p.key, p.name, p.description, p.status, p.settings,
+  p.id, p.key, p.name, p.description, p.status, p.settings, p.timezone,
   p.version, p.created_at, p.updated_at,
   w.id   AS workflow_id,
   w.name AS workflow_name
@@ -222,6 +222,7 @@ type GetProjectByKeyRow struct {
 	Description  pgtype.Text
 	Status       string
 	Settings     []byte
+	Timezone     string
 	Version      int32
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
@@ -248,6 +249,7 @@ func (q *Queries) GetProjectByKey(ctx context.Context, key string) (GetProjectBy
 		&i.Description,
 		&i.Status,
 		&i.Settings,
+		&i.Timezone,
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -655,8 +657,9 @@ UPDATE project SET
   description = CASE WHEN $2::boolean THEN $3
                      ELSE description END,
   settings    = COALESCE($4, settings),
+  timezone    = COALESCE($5, timezone),
   version     = version + 1
-WHERE key = $5 AND version = $6
+WHERE key = $6 AND version = $7
 `
 
 type UpdateProjectParams struct {
@@ -664,6 +667,7 @@ type UpdateProjectParams struct {
 	DescriptionSet bool
 	Description    pgtype.Text
 	Settings       []byte
+	Timezone       pgtype.Text
 	Key            string
 	Version        int32
 }
@@ -688,6 +692,7 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (i
 		arg.DescriptionSet,
 		arg.Description,
 		arg.Settings,
+		arg.Timezone,
 		arg.Key,
 		arg.Version,
 	)

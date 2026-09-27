@@ -55,6 +55,8 @@ type projectDetailView struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
 	Status      string  `json:"status"`
+	// Timezone はプロジェクトの基準タイムゾーン（IANA 名。DbDesign.md 6.23）。
+	Timezone string `json:"timezone"`
 	// Workflow は project.workflow_id が NULL のとき null になる
 	// （DbDesign.md 6.4 の ON DELETE SET NULL）。
 	Workflow *workflowView       `json:"workflow"`
@@ -91,6 +93,7 @@ func buildProjectDetail(
 		Name:        row.Name,
 		Description: textPtr(row.Description),
 		Status:      row.Status,
+		Timezone:    row.Timezone,
 		Settings:    settingsJSON(row.Settings),
 		Version:     row.Version,
 		CreatedAt:   Time(row.CreatedAt.Time),

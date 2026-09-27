@@ -193,7 +193,7 @@ Header:  X-PB-CSRF: <同じ値>
 | 503 | `maintenance` | 保守モード中（11.13）。**`Retry-After` は伴わない** |
 
 **この表に加わる、領域ごとのコードがある。** チケットは 9.14、バックアップの取り込みは 11.12 の
-「失敗したとき」に書いてある。**実装だけに在るコードを作らない。**
+「失敗したとき」、暦の取得は 5.8.3 に書いてある。**実装だけに在るコードを作らない。**
 
 ## 2.6 一覧のページネーション
 
@@ -1852,7 +1852,7 @@ GET /api/v1/projects/check-key?key=my-app
 ```json
 {
   "id": "01K2...", "key": "my-app", "name": "社内タスク管理の刷新",
-  "description": "...", "status": "active",
+  "description": "...", "status": "active", "timezone": "Asia/Tokyo",
   "workflow": { "id": "01K2...", "name": "シンプル",
                 "statuses": [ { "key": "todo", "name": "未着手", "category": "todo",
                                 "sort_order": 1, "requires_human_approval": false,
@@ -1870,6 +1870,8 @@ GET /api/v1/projects/check-key?key=my-app
 
 `:key` はプロジェクトキー（ULIDではない）。URL・チケット番号と一致させ、開発時のデバッグを容易にする。
 
+`timezone` はプロジェクトの基準タイムゾーン（IANA 名。`DbDesign.md` 6.23）。祝日の取得元と日ごとの上書きは 5.8 で読む——**この応答に載せない**（一般タブとメンバータブは暦を使わない。`GuiDesign.md` 5.9）。
+
 `settings` は `project.settings`（jsonb）をそのまま返す。**定義するキーは `repositories` のみ**で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は未実装）。
 
 **`my_role` と `my_permissions` は、エージェントのトークンでは所有者のものが出る**（`Design.md` 6.5 の委譲）。エージェントは `project_member` の行を持たないため、自分自身で引くと `my_role` が常に `null` になり、**`my_permissions` からプロジェクトロールの層が丸ごと落ちる**——認可は所有者のロールで通る（6.4.1）ので、「できるのに、できないと応答している」状態になる。`GET /me`（4.1）も同じ規則である。
@@ -1880,8 +1882,9 @@ GET /api/v1/projects/check-key?key=my-app
 
 **必要権限**：`project.edit`
 
-変更可能：`name` `description` `settings`。**送られたフィールドだけを更新する**（部分更新）。
+変更可能：`name` `description` `settings` `timezone`。**送られたフィールドだけを更新する**（部分更新）。
 検証は 5.3 の表と同じ（`name` 1〜100文字、`description` 0〜1000文字）。
+`timezone` は IANA 名で、サーバと DB の両方が知っている名前だけを受ける（`DbDesign.md` 6.23）。知らない名前は `422`（`details[].field = "timezone"`、`code = "invalid"`。`PATCH /me` の `timezone` と同じ検証）。**変えても既存の日時は動かさない**（保存した瞬間を保つ。pb-217 の判断）。
 
 **`settings` は丸ごと置き換える**（部分更新ではない）。サーバは JSON オブジェクトであることだけを確かめ、中身は検証しない。**呼び出し側は取得した `settings` を保持し、変更するキーだけ差し替えて全体を送ること。** 知らないキーを落とすと、他の機能の設定が消える。
 
@@ -2027,6 +2030,147 @@ GET /api/v1/projects/:key/agent-setup.zip?client=claude_code&client=codex
   ドットで始まる名前は末尾に付く（`.gitignore` → `.gitignore.pb-block`）
 - **別パスにするのは、ブラウザの `<a download href>` で素直に落とすためである**
   （`Accept` ヘッダでの切り替えにしない）。認証は Cookie が載る
+
+## 5.8 暦（祝日と日ごとの上書き）
+
+プロジェクトの休日の暦を読み書きする。表の正本と「休日か」の決まり方は `DbDesign.md` 6.23、画面は
+`GuiDesign.md` 5.9.6。
+
+| メソッドとパス | 必要権限 | 用途 |
+|---|---|---|
+| `GET /api/v1/projects/:key/calendar` | `project.view` | 取得元と取得の状態（5.8.1） |
+| `PUT /api/v1/projects/:key/calendar/source` | `project.edit` | 取得元を選ぶ・外す（5.8.2） |
+| `POST /api/v1/projects/:key/calendar/fetch` | `project.edit` | 祝日を取得する（5.8.3） |
+| `POST /api/v1/projects/:key/calendar/import` | `project.edit` | `.ics` を取り込む（5.8.4） |
+| `GET /api/v1/projects/:key/calendar/days` | `project.view` | 期間内の休日・行事・上書き（5.8.5） |
+| `PUT` / `DELETE /api/v1/projects/:key/calendar/days/:day` | `project.edit` | 日ごとの上書き（5.8.6） |
+
+**権限を新設しない。** 暦はタグ・スプリントの定義と同じく「プロジェクト全体の語彙」であり、同じ
+`project.edit` で守る（`GuiDesign.md` 5.9）。**監査ログにも載せない**——2.10 が記録するのは影響が
+1プロジェクトに収まらない操作である。
+
+**日（`day`）は `YYYY-MM-DD` の文字列で受け渡す。** その日であって瞬間ではない（`GuiDesign.md` 7.5）。
+日時をエポックミリ秒に揃える変更（pb-224）の対象にもしない。
+
+### 5.8.1 `GET /api/v1/projects/:key/calendar`
+
+```json
+{
+  "source": {
+    "kind": "google", "google_id": "ja.japanese", "name": "日本の祝日",
+    "holiday_count": 198, "observance_count": 99,
+    "fetched_at": "...", "last_attempt_at": "...", "last_error": null,
+    "next_fetch_at": "..."
+  }
+}
+```
+
+| 項目 | 意味 |
+|---|---|
+| `source` | 取得元が無ければ `null` |
+| `kind` | `google` / `file` |
+| `google_id` | Google の暦の識別子（`ja.japanese` など）。`file` では `null` |
+| `name` | 暦の名前（iCal の `X-WR-CALNAME`）。ファイルに無ければ取り込んだファイル名 |
+| `fetched_at` | 最後に取り込めた時刻。一度も取れていなければ `null` |
+| `last_error` | 最後の取得の失敗。画面にそのまま出せる日本語。成功で `null` に戻る |
+| `next_fetch_at` | 次に取得できる時刻（5.8.3 の待ち時間）。いま取得できるなら `null`。`file` では常に `null` |
+
+### 5.8.2 `PUT /api/v1/projects/:key/calendar/source`
+
+```json
+{ "google_id": "ja.japanese" }      // 外すときは { "google_id": null }
+```
+
+**選ぶだけで取りに行かない。** 取得は 5.8.3 のボタンだけが契機である（2026-09-27 利用者の判断）。
+ただし**同じ暦を他のプロジェクトが既に取得していれば、その結果がすぐ使える**（取得元は `google_id` 単位で共有する）。
+
+- `google_id` は `^[a-z]{2}\.[a-z_]+$`。**URL は受けず、サーバが組み立てる**
+  （`https://calendar.google.com/calendar/ical/<google_id>%23holiday%40group.v.calendar.google.com/public/basic.ics`）。
+  利用者が入力した URL へサーバが取りに行く形にすると、内部ネットワークへ要求を飛ばす足場（SSRF）になる
+- ファイルを取り込んだ暦を使っていたなら、その取り込み分は消える（`DbDesign.md` 6.23）
+- 応答は `200` ＋ 5.8.1 形式。形式違いは `422`（`details[].field = "google_id"`）
+
+### 5.8.3 `POST /api/v1/projects/:key/calendar/fetch`
+
+本文なし。**Google の暦を取りに行き、取り込む。**
+
+**相手先に負荷を掛けない。** 日次の自動取得は持たない（利用者の判断）。
+
+- **同じ `google_id` への取得は、プロジェクトをまたいで1時間に1回まで。** 起点は `last_attempt_at`
+  で、失敗した試行も数える。超えたら `429 rate_limited` と `Retry-After`（秒）
+- **待ち時間の判定と `last_attempt_at` の更新を、取りに行く前に1つのトランザクションで行う。**
+  同時に2回押されても、相手先へ飛ぶのは1回である
+- 取りに行く要求は、**15秒で打ち切り、本文は 2MiB まで読み、転送（リダイレクト）には従わない**
+- **本文のハッシュ（`DTSTAMP` 行を除く）が前回と同じなら、取り込み直さない。** `fetched_at` だけ進める。
+  Google は `ETag` / `Last-Modified` を返さないので、条件付き取得の代わりである（`DbDesign.md` 6.23）
+- 失敗しても**前回までの取り込み分は残し**、`last_error` に理由を書く
+
+| 状況 | 応答 |
+|---|---|
+| 取り込めた（変わっていなかったときも含む） | `200` ＋ 5.8.1 形式 |
+| 取得元が Google の暦でない | `409 conflict` |
+| 1時間以内に取得している | `429 rate_limited` ＋ `Retry-After` |
+| 相手先が応答しない・200 以外・iCal として読めない | `502 upstream_failed`（`message` は `last_error` と同じ文） |
+
+**`upstream_failed` は本節だけのコードである**（2.5.1 の表に加わる領域ごとのコード）。
+
+### 5.8.4 `POST /api/v1/projects/:key/calendar/import`
+
+```json
+{ "filename": "company-holidays.ics", "ics": "BEGIN:VCALENDAR\r\n..." }
+```
+
+**外へ出られない環境のための口である。** `ics` は 1MiB まで。**`multipart/form-data` ではなく JSON で受ける**
+——iCal はテキストであり、2.2 の JSON 一本化から外れない（証明書の PEM と同じ扱い。11.5）。
+
+- 取り込むのは**終日の予定**（`DTSTART;VALUE=DATE`）。複数日にわたる予定は日ごとに展開する
+  （`DTEND` は含まない。iCal の約束事）
+- **時刻付きの予定と繰り返し（`RRULE`）は取り込まない。** 数だけ応答の `skipped` に返す
+- 祝日と行事の分け方は Google の暦と同じ（`DbDesign.md` 6.23）
+- 取得元はこのプロジェクトが所有する暦になり、取り込むたびに中身を入れ替える
+
+| 状況 | 応答 |
+|---|---|
+| 取り込めた | `200` ＋ 5.8.1 形式に `"imported": { "days": 12, "skipped": 3 }` を足したもの |
+| iCal として読めない | `422`（`details[].field = "ics"`、`code = "invalid_ics"`） |
+| 終日の予定が1件も無い | `422`（`details[].field = "ics"`、`code = "no_all_day_events"`） |
+| 1MiB を超える | `422`（`details[].field = "ics"`、`code = "too_large"`） |
+
+### 5.8.5 `GET /api/v1/projects/:key/calendar/days?from=2026-09-01&to=2026-10-01`
+
+**「ある日が休日か」を、1回の問い合わせで期間ぶん返す。** ガントなどの画面はこれだけを見る。
+
+- 期間は `[from, to)`（`to` を含まない）。**366日×3 = 1098日まで**。超えたら `422`
+- **平日で何も無い日は返さない。** 返らない日は平日である
+- 土日・祝日・行事のある日・上書きのある日を、日付の昇順で返す
+
+```json
+{
+  "days": [
+    { "day": "2026-09-21", "is_holiday": true, "reason": "holiday",
+      "events": [ { "kind": "holiday", "name": "敬老の日" } ], "override": null },
+    { "day": "2026-09-26", "is_holiday": false, "reason": "override",
+      "events": [], "override": { "is_holiday": false, "name": "出勤日" } }
+  ]
+}
+```
+
+| 項目 | 意味 |
+|---|---|
+| `is_holiday` | その日が休日か。`DbDesign.md` 6.23 の表の結果 |
+| `reason` | 決め手になった段。`override` / `holiday` / `weekend` / `none`（行事だけの平日） |
+| `events` | 取得元にあるその日の祝日・行事（上書きされていても返す） |
+| `override` | 日ごとの上書き。無ければ `null` |
+
+### 5.8.6 `PUT` / `DELETE /api/v1/projects/:key/calendar/days/:day`
+
+```json
+{ "is_holiday": true, "name": "創立記念日" }     // name は任意・200文字まで
+```
+
+- `PUT` は上書きを作るか置き換える。応答は `200` ＋ 5.8.5 の `days[]` の1要素
+- `DELETE` は上書きを外す。**上書きが無くても `204`**（外した後の状態は同じ）
+- **手動の追加も削除もこの口で行う。** 祝日でない日を休日にする＝追加、祝日を平日にする＝削除にあたる
 
 ---
 
@@ -2436,6 +2580,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | **エージェント** | `GET|POST /me/agents`<br>`PATCH /me/agents/:id`<br>`POST /me/agents/:id/tokens`<br>`DELETE /me/agents/:id/tokens/:token_id`<br>`GET /agent-client-kinds` |
 | プロジェクト設定（タグタブ） | `GET|POST /projects/:key/tags`<br>`PATCH|DELETE /projects/:key/tags/:id` |
 | プロジェクト設定（スプリントタブ） | `GET|POST /projects/:key/sprints`<br>`PATCH|DELETE /projects/:key/sprints/:id` |
+| プロジェクト設定（カレンダータブ） | `GET /projects/:key/calendar`<br>`PUT /projects/:key/calendar/source`<br>`POST /projects/:key/calendar/fetch` / `import`<br>`GET /projects/:key/calendar/days`<br>`PUT|DELETE /projects/:key/calendar/days/:day`<br>`PATCH /projects/:key`（基準タイムゾーン） |
 | **エージェント連携セットアップ** | `GET /agent-client-kinds`<br>`GET /projects/:key/agent-setup`<br>`GET /projects/:key/agent-setup.zip`（ダウンロード） |
 | **アプリケーション設定** | `GET /admin/settings`<br>`PUT /admin/settings`（保存） |
 | **TLS証明書** | `GET /admin/tls/certificates`<br>`POST /admin/tls/certificates`（登録）<br>`DELETE /admin/tls/certificates/:id` |

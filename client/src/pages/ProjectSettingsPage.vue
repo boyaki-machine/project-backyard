@@ -3,7 +3,7 @@ import { uiText } from '../locales/ui'
 /**
  * プロジェクト設定（`GuiDesign.md` 5.9）。必要権限は `project.edit`。
  *
- * タブは「一般」「メンバー」「タグ」「スプリント」の4つ。**タブはURLを持たない**
+ * タブは「一般」「メンバー」「タグ」「スプリント」「カレンダー」の5つ。**タブはURLを持たない**
  * （3.2 のルーティング表が持つのは `/p/:key/settings` の1行だけである）。
  *
  * 一般とメンバーは `GET /projects/:key` の1本で足りる（5.4）。ワークフローも
@@ -21,6 +21,7 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import Avatar from '../components/Avatar.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
+import ProjectCalendarTab from '../components/ProjectCalendarTab.vue'
 import RepositoryModal from '../components/RepositoryModal.vue'
 import SprintModal from '../components/SprintModal.vue'
 import { ApiError } from '../api/client'
@@ -50,7 +51,7 @@ const store = useProjectStore()
 const route = useRoute()
 const router = useRouter()
 
-type Tab = 'general' | 'members' | 'tags' | 'sprints'
+type Tab = 'general' | 'members' | 'tags' | 'sprints' | 'calendar'
 const tab = ref<Tab>('general')
 
 const projectKey = computed(() => {
@@ -626,6 +627,7 @@ const isArchived = computed(() => current.value?.status === 'archived')
  * 写しではなくサーバがいま返した値なので、ここが最も新しい。
  */
 const canArchive = computed(() => current.value?.my_permissions.includes('project.archive') ?? false)
+const canEditProject = computed(() => current.value?.my_permissions.includes('project.edit') ?? false)
 
 /**
  * `agent.register` を持つか（手順28a）。
@@ -759,6 +761,14 @@ function roleLabel(role: string): string {
             :aria-selected="tab === 'sprints'"
             @click="tab = 'sprints'"
           > {{ $ui('スプリント') }} </button>
+          <button
+            type="button"
+            role="tab"
+            class="tab"
+            :class="{ selected: tab === 'calendar' }"
+            :aria-selected="tab === 'calendar'"
+            @click="tab = 'calendar'"
+          > {{ $ui('カレンダー') }} </button>
         </div>
 
         <!-- ── 一般タブ（5.9.1）──────────────────────────────── -->
@@ -1089,6 +1099,17 @@ function roleLabel(role: string): string {
             <p class="hint"> {{ $ui('ⓘ タグはチケットを横断的に分類します。「どの大きな仕事の一部か」はチケットの親子関係で表します') }} </p>
           </section>
         </div>
+
+        <!-- ── カレンダータブ（5.9.6）。そのタブを開いたときに取りに行く ── -->
+        <ProjectCalendarTab
+          v-else-if="tab === 'calendar' && current"
+          :key="projectKey"
+          role="tabpanel"
+          :project-key="projectKey"
+          :project="current"
+          :can-edit="canEditProject"
+          @updated="store.setCurrent"
+        />
 
         <!-- ── スプリントタブ（5.9.5）───────────────────────── -->
         <div v-else class="blocks" role="tabpanel">

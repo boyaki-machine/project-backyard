@@ -82,6 +82,11 @@ type Querier interface {
 	// 意味も無い。ログインの失敗回数は ResetLoginFailure がログイン成功時に消す。
 	//
 	ChangeMyPassword(ctx context.Context, arg ChangeMyPasswordParams) error
+	// PATCH /projects/:key の timezone（5.5）。Go の time.LoadLocation に加えて
+	// DB も知っている名前かを見る——集計の SQL が AT TIME ZONE で使う（6.23）。
+	// **知らない名前ならエラー（22023）になる。** pg_timezone_names を引く形は
+	// sqlc がカタログを知らず生成できないため、実際に変換させて確かめる。
+	CheckTimezoneInDB(ctx context.Context, name string) (pgtype.Timestamp, error)
 	// CommentRepliableInTicket は in_reply_to の相手が「同じチケットの、削除されて
 	// いないコメント」であることを見る（9.8）。**存在しない ID と他チケットの ID と
 	// 削除済みを1つの結果に畳む**——呼び出し元にとってはどれも「指せない」であり、
@@ -274,6 +279,8 @@ type Querier interface {
 	// **POST は revision_no = 1 を作る**（10.4）。リビジョンは「その変更のあとの本文」を
 	// 持つので、作成時の1件が無いと最初の編集で「作ったときの本文」が残らない。
 	CreateDocumentRevision(ctx context.Context, arg CreateDocumentRevisionParams) error
+	// 取り込みの暦を作る（5.8.4）。取り込み直しは同じ行を使い回す。
+	CreateFileHolidaySource(ctx context.Context, arg CreateFileHolidaySourceParams) error
 	// must_change を明示で受ける（DbDesign.md 6.2 の既定は false）。
 	// POST /admin/users（ApiDesign.md 6.2）が must_change_password: true を
 	// 既定とするため、列の既定値任せにできない。**呼び出し側は Go の
@@ -368,6 +375,7 @@ type Querier interface {
 	//
 	// **挑戦を作るたびに呼ぶ。** 専用のバッチを持たない（DbDesign.md 6.19）。
 	DeleteExpiredWebauthnChallenges(ctx context.Context) error
+	DeleteHolidaySourceDays(ctx context.Context, sourceID string) error
 	// DeleteMfaCredential は本人の認証器を消す（ApiDesign.md 4.6.4）。
 	//
 	// **行を消す。** access_token のように revoked_at を立てる形にしないのは、
@@ -390,6 +398,9 @@ type Querier interface {
 	// （DeleteActorByID が kind='user' に限っているのと対である）。
 	//
 	DeleteMyAgentActor(ctx context.Context, arg DeleteMyAgentActorParams) (int64, error)
+	// プロジェクトが所有する取り込みの暦のうち、keep_id 以外を消す。
+	// Google の暦へ切り替えた・暦を外したときに、参照されない所有物を残さない（6.23）。
+	DeleteOwnedHolidaySources(ctx context.Context, arg DeleteOwnedHolidaySourcesParams) error
 	// DeletePasskey は本人のパスキーを1件消す（ApiDesign.md 4.7.4）。
 	//
 	// **user_id を条件に含めるのが要点である。** 他人の id では行が返らず 404 になる。
@@ -405,6 +416,7 @@ type Querier interface {
 	// project_counter / project_member / workflow（と配下の status・transition）は
 	// ON DELETE CASCADE で追従する（DbDesign.md 6.4 / 6.5）。
 	DeleteProjectByKey(ctx context.Context, key string) (int64, error)
+	DeleteProjectCalendarDay(ctx context.Context, arg DeleteProjectCalendarDayParams) error
 	// DeleteProjectMember は DELETE /admin/users/:id/memberships/:project_key。
 	//
 	// **0 行は「元から居ない」**。6.8 は PUT を冪等と定めるだけで DELETE には
@@ -442,6 +454,10 @@ type Querier interface {
 	// 消してから AttachTicketTag で付け直すほうが、付ける側と外す側の2本の集合演算を
 	// 持つより読み違えが少ない。件数はチケット1件ぶんで、多くても数件である。
 	DetachTicketTags(ctx context.Context, ticketID string) error
+	// google_id の行を作るか、既にあればその id を返す（5.8.2）。
+	// **DO UPDATE で同じ値を書くのは RETURNING に行を返させるため**である
+	// （DO NOTHING では衝突した行が返らない）。
+	EnsureGoogleHolidaySource(ctx context.Context, arg EnsureGoogleHolidaySourceParams) (string, error)
 	// 認証に関するクエリ（Design.md 6.2.2、DbDesign.md 6.2）。
 	// FindAccessTokenByHash は受け取った平文の SHA-256 で access_token を引く。
 	//
@@ -746,6 +762,16 @@ type Querier interface {
 	// （RequireProjectPermission）と呼び出し側の責務である。
 	//
 	GetProjectByKey(ctx context.Context, key string) (GetProjectByKeyRow, error)
+	// プロジェクトの暦に関するクエリ（DbDesign.md 6.23、ApiDesign.md 5.8）。
+	//
+	// pb-216 で追加。プロジェクト設定のカレンダータブ（GuiDesign.md 5.9.6）と、
+	// 休日を塗り分ける画面（ガント。GuiDesign.md 10章）が消費者である。
+	//
+	// **取得元（holiday_source）はプロジェクトの資源ではない。** Google の暦は
+	// google_id ごとに1行で複数プロジェクトが共有する。プロジェクトからは
+	// project.holiday_source_id を通してだけ辿る。
+	// 5.8.1 の source。取得元が無ければ行が返らない。
+	GetProjectCalendarSource(ctx context.Context, projectID string) (GetProjectCalendarSourceRow, error)
 	// GetProjectMembership は PUT の 200 応答（6.3 の要素と同形）を引く。
 	//
 	// 更新と同じトランザクションから読む。別トランザクションで読むと、
@@ -861,6 +887,9 @@ type Querier interface {
 	// 読み出し（GET /admin/audit、auditlog.view）は手順11以降で足す。
 	// 手順4b では書き込みの共通基盤のみを用意する。
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error
+	// 日の一括投入。3つの配列は同じ長さで、添字が1日に対応する。
+	// SELECT 句に unnest を並べると、同じ長さの配列は添字ごとに1行になる。
+	InsertHolidaySourceDays(ctx context.Context, arg InsertHolidaySourceDaysParams) error
 	// InvalidateActorPermissionCache は、あるアクターの**全トークン**の
 	// キャッシュを捨てる（Design.md 6.4.5「ロール変更時は当該ユーザーの
 	// キャッシュを無効化する」）。
@@ -1147,6 +1176,10 @@ type Querier interface {
 	// / …）。GuiDesign.md 5.6.3 がカテゴリで行を区切れるのはこのためである。
 	//
 	ListPermissions(ctx context.Context) ([]Permission, error)
+	// 5.8.5 の override。期間は [from, to)。
+	ListProjectCalendarDays(ctx context.Context, arg ListProjectCalendarDaysParams) ([]ListProjectCalendarDaysRow, error)
+	// 5.8.5 の events。期間は [from, to)。
+	ListProjectHolidayEvents(ctx context.Context, arg ListProjectHolidayEventsParams) ([]ListProjectHolidayEventsRow, error)
 	// ListProjectMembers は 5.4 の members[] を返す。
 	//
 	// actor を JOIN するのは kind と display_name のため。エージェントも
@@ -1505,6 +1538,12 @@ type Querier interface {
 	// 件数確認と INSERT を同じトランザクションで行うだけでは、並行する
 	// トランザクションが同じ件数を読み、上限を超えてしまう。
 	LockActorForTokenIssue(ctx context.Context, actorID string) (string, error)
+	// 取得の前に待ち時間を判定するため、行をロックして読む（5.8.3）。
+	LockHolidaySource(ctx context.Context, id string) (LockHolidaySourceRow, error)
+	MarkHolidaySourceAttempt(ctx context.Context, id string) error
+	MarkHolidaySourceFailed(ctx context.Context, arg MarkHolidaySourceFailedParams) error
+	// 取り込めたとき。中身が変わっていなくても fetched_at は進める。
+	MarkHolidaySourceFetched(ctx context.Context, arg MarkHolidaySourceFetchedParams) error
 	// そのスプリントの所属を閉じる（DbDesign.md 6.9.1）。
 	//
 	// **完了・未完了を問わず立てる。** この列が答えるのは「そのスプリントの対象
@@ -1738,6 +1777,7 @@ type Querier interface {
 	// 「NULL を先に落とす」はここでは要らない）。
 	SearchTicketIDsByTrigram(ctx context.Context, arg SearchTicketIDsByTrigramParams) ([]string, error)
 	SetActorAvatarURL(ctx context.Context, arg SetActorAvatarURLParams) error
+	SetProjectHolidaySource(ctx context.Context, arg SetProjectHolidaySourceParams) error
 	// SetProjectStatus は archive / unarchive を1文で行う（5.6）。
 	//
 	// archived_at は archive で now()、unarchive で NULL（5.6 の表）。
@@ -2068,6 +2108,7 @@ type Querier interface {
 	// **ただし INSERT では DEFAULT now() が入り、UPDATE ではトリガが入れる**ので、
 	// どちらの経路でも埋まる。
 	UpsertAppSetting(ctx context.Context, arg UpsertAppSettingParams) error
+	UpsertProjectCalendarDay(ctx context.Context, arg UpsertProjectCalendarDayParams) error
 	// ── プロジェクトメンバーシップ（ApiDesign.md 6.8）───────────────
 	// UpsertProjectMember は PUT /admin/users/:id/memberships/:project_key。
 	//

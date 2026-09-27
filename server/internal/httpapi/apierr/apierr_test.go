@@ -44,7 +44,7 @@ var table = []struct {
 
 // 領域ごとの追加コード。**2.5.1 の表に「加わるもの」**として、章ごとに定義される。
 //
-// いまは 9.14（チケット）の2件と、11.12（バックアップの取り込み）の1件である。
+// いまは 9.14（チケット）の2件と、11.12（バックアップの取り込み）の1件、5.8.3（暦の取得）の1件である。
 // ここへ足すときは、必ず設計文書側の表にも同じ行があること
 // ——**実装だけに在るコードは、消費者が知りようがない。**
 var domainTable = []struct {
@@ -55,6 +55,7 @@ var domainTable = []struct {
 	{InvalidTransition, 409, "ApiDesign.md 9.14"},
 	{ChildrenNotClosed, 409, "ApiDesign.md 9.14"},
 	{BackupTooNew, 409, "ApiDesign.md 11.12"},
+	{UpstreamFailed, 502, "ApiDesign.md 5.8.3"},
 }
 
 func TestStatusMatchesApiDesign(t *testing.T) {

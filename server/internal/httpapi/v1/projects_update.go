@@ -46,6 +46,7 @@ type updateProjectRequest struct {
 	Name        *string         `json:"name"`
 	Description json.RawMessage `json:"description"`
 	Settings    json.RawMessage `json:"settings"`
+	Timezone    *string         `json:"timezone"`
 }
 
 // patchProject は PATCH /api/v1/projects/{key} を処理する（ApiDesign.md 5.5）。
@@ -73,6 +74,19 @@ func (h *handler) patchProject(w http.ResponseWriter, r *http.Request) {
 	if e := mergeValidationErrors(versionErr, validationErr); e != nil {
 		apierr.Write(w, r, e)
 		return
+	}
+
+	// **DB が知らない名前を保存しない。** 集計の SQL が AT TIME ZONE で使うので、
+	// Go だけが知っている名前が入ると、そのプロジェクトの集計が落ちる。
+	// トランザクションの外で問い合わせる——失敗させると中のトランザクションが壊れる。
+	if params.Timezone.Valid {
+		if _, err := h.q.CheckTimezoneInDB(r.Context(), params.Timezone.String); err != nil {
+			apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+				Field: "timezone", Code: "invalid",
+				Message: "タイムゾーンは Asia/Tokyo のような IANA の名前で指定してください",
+			}).WithCause(err))
+			return
+		}
 	}
 
 	systemPerms, ctx, err := middleware.SystemPermissions(r.Context(), h.q, p)
@@ -271,6 +285,16 @@ func buildUpdateProjectParams(
 			})
 		} else {
 			params.Settings = req.Settings
+		}
+	}
+
+	// timezone は PATCH /me と同じ検証（time.LoadLocation で引けること）。DB でも
+	// 引けるかは、呼び出し側が DB に問い合わせて確かめる（DbDesign.md 6.23）。
+	if req.Timezone != nil {
+		if d := validateTimezone(*req.Timezone); d != nil {
+			details = append(details, *d)
+		} else {
+			params.Timezone = pgtype.Text{String: *req.Timezone, Valid: true}
 		}
 	}
 

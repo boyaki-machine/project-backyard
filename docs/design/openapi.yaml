@@ -2218,6 +2218,275 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/calendar:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    get:
+      tags: [projects]
+      summary: 暦の取得元と取得の状態
+      operationId: getProjectCalendar
+      description: |
+        プロジェクトの祝日の取得元と、取得の状態を返す（ApiDesign.md 5.8.1）。
+        **必要権限は `project.view`**。取得元が無ければ `source` は null。
+      responses:
+        '200':
+          description: 暦の取得元と状態。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectCalendar'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/calendar/source:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    put:
+      tags: [projects]
+      summary: 暦の取得元を選ぶ・外す
+      operationId: putProjectCalendarSource
+      description: |
+        Google の祝日カレンダーを取得元に選ぶ、または外す（ApiDesign.md 5.8.2）。
+        **必要権限は `project.edit`**。**選ぶだけで取りに行かない**（取得は 5.8.3）。
+        同じ暦を他のプロジェクトが取得済みなら、その結果がすぐ使える。
+
+        **URL は受けない。** サーバが `google_id` から組み立てる（SSRF を作らないため）。
+        取り込みの暦を使っていたなら、その取り込み分は消える。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutProjectCalendarSourceRequest'
+      responses:
+        '200':
+          description: 更新後の暦。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectCalendar'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/calendar/fetch:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    post:
+      tags: [projects]
+      summary: 祝日を取得する
+      operationId: fetchProjectCalendar
+      description: |
+        Google の祝日カレンダーを取りに行き、取り込む（ApiDesign.md 5.8.3）。
+        **必要権限は `project.edit`**。日次の自動取得は持たず、この口だけが契機である。
+
+        **同じ `google_id` への取得は、プロジェクトをまたいで1時間に1回まで**
+        （失敗した試行も数える）。超えたら 429 と `Retry-After`。
+        本文のハッシュ（`DTSTAMP` 行を除く）が前回と同じなら取り込み直さない。
+        失敗しても前回までの取り込み分は残る。
+      responses:
+        '200':
+          description: 取り込めた（変わっていなかったときも含む）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectCalendar'
+        '409':
+          description: 取得元が Google の暦でない（`conflict`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: |
+            相手先が応答しない・200 以外・iCal として読めない（`upstream_failed`）。
+            `message` は `last_error` と同じ文。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/calendar/import:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    post:
+      tags: [projects]
+      summary: .ics を取り込む
+      operationId: importProjectCalendar
+      description: |
+        iCal の本文を取り込む（ApiDesign.md 5.8.4）。**必要権限は `project.edit`**。
+        外へ出られない環境のための口である。**JSON で受ける**（iCal はテキスト）。
+
+        取り込むのは終日の予定だけで、複数日の予定は日ごとに展開する。時刻付きの
+        予定と繰り返し（`RRULE`）は取り込まず、数を `imported.skipped` に返す。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportProjectCalendarRequest'
+      responses:
+        '200':
+          description: 取り込めた。`imported` が付く。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectCalendar'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/calendar/days:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    get:
+      tags: [projects]
+      summary: 期間内の休日・行事・上書き
+      operationId: listProjectCalendarDays
+      description: |
+        期間 `[from, to)` の休日・行事・上書きを返す（ApiDesign.md 5.8.5）。
+        **必要権限は `project.view`**。**平日で何も無い日は返さない**——返らない日は平日である。
+        期間は 1098 日（366日×3）まで。
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          description: 含まない。
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: 日の一覧（日付の昇順）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectCalendarDays'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/calendar/days/{day}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - name: day
+        in: path
+        required: true
+        schema:
+          type: string
+          format: date
+    put:
+      tags: [projects]
+      summary: 日ごとの上書きを作る・置き換える
+      operationId: putProjectCalendarDay
+      description: |
+        その日を休日にする／平日にする（ApiDesign.md 5.8.6）。**必要権限は `project.edit`**。
+        手動の追加（祝日でない日を休日に）も削除（祝日を平日に）もこの口で行う。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutProjectCalendarDayRequest'
+      responses:
+        '200':
+          description: 更新後のその日。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectCalendarDay'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [projects]
+      summary: 日ごとの上書きを外す
+      operationId: deleteProjectCalendarDay
+      description: |
+        上書きを外す（ApiDesign.md 5.8.6）。**必要権限は `project.edit`**。
+        **上書きが無くても 204**（外した後の状態は同じ）。
+      responses:
+        '204':
+          description: 外した。
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/sprints:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -7633,6 +7902,12 @@ components:
             使うキーは `repositories` のみで、構造の正本は DbDesign.md 6.4 にある。
           type: object
           additionalProperties: true
+        timezone:
+          description: |
+            基準タイムゾーン（IANA 名）。サーバと DB の両方が知っている名前だけを受ける。
+            **変えても既存の日時は動かさない**（ApiDesign.md 5.5）。
+          type: string
+          maxLength: 64
 
     ProjectDetail:
       description: |
@@ -7641,7 +7916,7 @@ components:
         **どれか1つだけ形を変えない。**
       type: object
       required:
-        [id, key, name, description, status, workflow, members, my_role,
+        [id, key, name, description, status, timezone, workflow, members, my_role,
          my_permissions, settings, version, created_at, updated_at]
       properties:
         id:
@@ -7655,6 +7930,9 @@ components:
         status:
           type: string
           enum: [active, archived]
+        timezone:
+          description: プロジェクトの基準タイムゾーン（IANA 名。DbDesign.md 6.23）。
+          type: string
         workflow:
           description: '`project.workflow_id` が NULL のときは null。'
           oneOf:
@@ -7692,6 +7970,133 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    ProjectCalendar:
+      description: 暦の取得元と取得の状態（ApiDesign.md 5.8.1）。
+      type: object
+      required: [source]
+      properties:
+        source:
+          oneOf:
+            - $ref: '#/components/schemas/ProjectCalendarSource'
+            - type: 'null'
+        imported:
+          description: '`POST /calendar/import` の応答にだけ付く。'
+          type: object
+          required: [days, skipped]
+          properties:
+            days:
+              type: integer
+            skipped:
+              type: integer
+
+    ProjectCalendarSource:
+      type: object
+      required:
+        [kind, google_id, name, holiday_count, observance_count, fetched_at,
+         last_attempt_at, last_error, next_fetch_at]
+      properties:
+        kind:
+          type: string
+          enum: [google, file]
+        google_id:
+          description: Google の暦の識別子（`ja.japanese` など）。`file` では null。
+          type: [string, 'null']
+        name:
+          description: 暦の名前（iCal の `X-WR-CALNAME`、無ければ取り込んだファイル名）。
+          type: [string, 'null']
+        holiday_count:
+          type: integer
+        observance_count:
+          type: integer
+        fetched_at:
+          description: 最後に取り込めた時刻。一度も取れていなければ null。
+          type: [string, 'null']
+          format: date-time
+        last_attempt_at:
+          type: [string, 'null']
+          format: date-time
+        last_error:
+          description: 最後の取得の失敗。画面にそのまま出せる日本語。成功で null に戻る。
+          type: [string, 'null']
+        next_fetch_at:
+          description: 次に取得できる時刻。いま取得できるなら null。`file` では常に null。
+          type: [string, 'null']
+          format: date-time
+
+    PutProjectCalendarSourceRequest:
+      type: object
+      required: [google_id]
+      properties:
+        google_id:
+          description: '`^[a-z]{2}\.[a-z_]+$`。null で取得元を外す。'
+          type: [string, 'null']
+
+    ImportProjectCalendarRequest:
+      type: object
+      required: [ics]
+      properties:
+        filename:
+          description: 暦に名前が無いとき、これを名前にする。
+          type: string
+        ics:
+          description: iCal の本文。1MiB まで。
+          type: string
+
+    ProjectCalendarDays:
+      type: object
+      required: [days]
+      properties:
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectCalendarDay'
+
+    ProjectCalendarDay:
+      type: object
+      required: [day, is_holiday, reason, events, override]
+      properties:
+        day:
+          type: string
+          format: date
+        is_holiday:
+          type: boolean
+        reason:
+          description: 決め手になった段（DbDesign.md 6.23 の表）。`none` は行事だけの平日。
+          type: string
+          enum: [override, holiday, weekend, none]
+        events:
+          description: 取得元にあるその日の祝日・行事（上書きされていても返す）。
+          type: array
+          items:
+            type: object
+            required: [kind, name]
+            properties:
+              kind:
+                type: string
+                enum: [holiday, observance]
+              name:
+                type: string
+        override:
+          oneOf:
+            - type: object
+              required: [is_holiday, name]
+              properties:
+                is_holiday:
+                  type: boolean
+                name:
+                  type: [string, 'null']
+            - type: 'null'
+
+    PutProjectCalendarDayRequest:
+      type: object
+      required: [is_holiday]
+      properties:
+        is_holiday:
+          type: boolean
+        name:
+          type: string
+          maxLength: 200
 
     Workflow:
       type: object

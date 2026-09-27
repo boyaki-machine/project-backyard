@@ -12,6 +12,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/backup"
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/dbstat"
+	"github.com/boyaki-machine/project-backyard/server/internal/holiday"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	v1 "github.com/boyaki-machine/project-backyard/server/internal/httpapi/v1"
@@ -65,6 +66,10 @@ type Deps struct {
 	// Backups は PB 全体の書き出しと取り込みの口（ApiDesign.md 11.11〜11.12）。
 	// **nil なら Pool と DatabaseURL から作る。**
 	Backups v1.Backups
+
+	// Holidays は祝日カレンダーの取得口（ApiDesign.md 5.8.3）。**nil なら
+	// 実際に Google へ取りに行く口を組む。** テストは偽物を渡す。
+	Holidays holiday.Fetcher
 	// DatabaseURL は PB がいま繋いでいる接続文字列（pb_app）。**取り込みで
 	// 接続先だけを取り出すために要る**——ロールとパスワードは画面から受け取る。
 	DatabaseURL string
@@ -181,6 +186,12 @@ func NewRouter(deps Deps) http.Handler {
 		DBStats:           dbStats,
 		Backups:           backups,
 		Maintenance:       flag,
+		// 祝日カレンダーの取得口（ApiDesign.md 5.8.3）。相手先が送り主を
+		// 見分けられるよう、User-Agent に PB と版を入れる。
+		Holidays: deps.Holidays,
+	}
+	if v1Deps.Holidays == nil {
+		v1Deps.Holidays = holiday.NewHTTPFetcher("ProjectBackyard/" + deps.Version)
 	}
 
 	r.Route(BasePath, func(r chi.Router) {

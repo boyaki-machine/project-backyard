@@ -67,6 +67,11 @@ const (
 	//
 	// **Retry-After を伴わない。** かかる時間は書庫の大きさで決まり、PB は見積もれない。
 	Maintenance Code = "maintenance"
+
+	// UpstreamFailed は暦の取得で相手先（Google カレンダー）から取り込めなかった
+	// （ApiDesign.md 5.8.3）。**InternalError と分けてあるのは、PB の不具合ではない
+	// ため**である——相手先の都合で、時間を置けば通ることがある。
+	UpstreamFailed Code = "upstream_failed"
 )
 
 // statuses は ApiDesign.md 2.5.1 の Status 列。
@@ -90,6 +95,7 @@ var statuses = map[Code]int{
 	ChildrenNotClosed:         http.StatusConflict,
 	BackupTooNew:              http.StatusConflict,
 	Maintenance:               http.StatusServiceUnavailable,
+	UpstreamFailed:            http.StatusBadGateway,
 }
 
 // messages は各コードの既定文言。
@@ -122,6 +128,8 @@ var messages = map[Code]string{
 	// 書庫と PB の版を入れた文言で上書きする（11.12）。ここは呼び出し漏れの保険である。
 	BackupTooNew: "このバックアップは、いまの PB より新しいバージョンで作られています。取り込めません",
 	Maintenance:  "バックアップの取り込み中です。終わるまでお待ちください",
+	// 取得の失敗理由（holiday_source.last_error と同じ文）で上書きする。ここは保険である。
+	UpstreamFailed: "取得元から取り込めませんでした。時間を置いてやり直してください",
 }
 
 // Detail はフィールド単位のエラー。フォームの各入力欄に紐づける（ApiDesign.md 2.5）。
