@@ -11,9 +11,8 @@ import { uiText } from '../locales/ui'
  * **登録画像があれば画像、なければ表示名の先頭1文字を描く。**
  * 画像は `actor_avatar` に保存する（pb-19）。
  *
- * **`ticket.ts` の `actorMark`（🤖 / 👤）とは役割が違う。** あちらは1行の中で
- * 担当を示す記号で、こちらは**書き手を面として示す**もの。コメントは書き手が
- * 読みの単位なので、行頭に箱が要る。
+ * 担当や書き手など、名前と一緒に表示する場所で使う。実行者の 🤖 バッジは
+ * チケットの進行状態を示すため、このアバターとは別に扱う。
  */
 import { computed, ref, watch } from 'vue'
 
@@ -61,7 +60,7 @@ const title = computed(
     :style="{ width: `${px}px`, height: `${px}px`, fontSize: `${Math.round(px * 0.5)}px` }"
     :title="title"
   >
-    <img v-if="source && !failed" :src="source" alt="" aria-hidden="true" @load="ready = true" @error="failed = true" />
+    <img v-if="source && !failed" :src="source" :class="{ ready }" alt="" aria-hidden="true" @load="ready = true" @error="failed = true" />
     <span v-if="!ready || failed" aria-hidden="true">{{ initial }}</span>
     <span class="sr-only">{{ title }}</span>
   </span>
@@ -98,11 +97,16 @@ const title = computed(
 }
 
 .pb-avatar img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   border-radius: inherit;
   object-fit: cover;
+  visibility: hidden;
 }
+
+.pb-avatar img.ready { visibility: visible; }
 
 .sr-only {
   position: absolute;

@@ -9,8 +9,9 @@ import { uiText } from '../locales/ui'
 export interface MultiSelectOption {
   value: string
   label: string
-  /** 名前の前に出す記号（種別の `☑`、担当の `👤` など） */
+  /** 種別など、画像を持たない選択肢の記号 */
   icon?: string
+  actor?: { id: string; kind: string; display_name: string }
 }
 </script>
 
@@ -30,6 +31,7 @@ export interface MultiSelectOption {
  * 隣の条件の位置が動いて押し間違える。
  */
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from 'vue'
+import Avatar from './Avatar.vue'
 
 /** パネルの幅。位置決めにも使うので1か所に置く */
 const PANEL_W = 260
@@ -168,6 +170,7 @@ const panelStyle = computed(() => ({
           @change="choose(o.value)"
         />
         <span v-if="o.icon" class="multi-select-icon" aria-hidden="true">{{ o.icon }}</span>
+        <Avatar v-if="o.actor" :name="o.actor.display_name" :kind="o.actor.kind" :id="o.actor.id" :size="20" aria-hidden="true" />
         <span class="multi-select-label" :title="o.label">{{ o.label }}</span>
       </label>
     </div>

@@ -375,11 +375,6 @@ const rangeEnd = computed(() => Math.min(page.value * perPage.value, total.value
 
 const isEmpty = computed(() => loaded.value && items.value.length === 0)
 
-/** 人間とエージェントを同じ一覧に並べる（5.6、`DbDesign.md` 6.2） */
-function kindIcon(k: string): string {
-  return k === 'agent' ? '🤖' : '👤'
-}
-
 /** 状態を色だけで示さない（9.2）。文字で出す */
 function activeLabel(active: boolean): string {
   return active ? uiText("有効") : uiText("無効")
@@ -766,11 +761,7 @@ async function retry(): Promise<void> {
                 @click="openRow(u, $event)"
               >
                 <td class="kind">
-                  <!-- 種別は記号だけにしない。読み上げ用の文字を添える（9.2） -->
-                  <span aria-hidden="true">{{ kindIcon(u.kind) }}</span>
-                  <span class="visually-hidden">{{
-                    u.kind === 'agent' ? $ui("エージェント") : $ui("ユーザー")
-                  }}</span>
+                  <Avatar :name="u.display_name" :kind="u.kind" :id="u.id" :size="24" />
                 </td>
                 <td class="name-col">
                   <!-- 実体の <a> を自前で描くのは、j/k の移動で focus() を呼ぶため
@@ -778,7 +769,7 @@ async function retry(): Promise<void> {
                        クリックを素通しするので、Ctrl/⌘+クリックは新規タブになる -->
                   <RouterLink v-slot="{ href, navigate }" :to="`/admin/users/${u.id}`" custom>
                     <a ref="rowLink" class="name" :href="href" @click.stop="navigate">
-                      <Avatar :name="u.display_name" :kind="u.kind" :id="u.id" :size="20" /> {{ u.display_name }}
+                      {{ u.display_name }}
                     </a>
                   </RouterLink>
                 </td>

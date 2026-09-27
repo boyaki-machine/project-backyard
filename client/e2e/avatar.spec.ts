@@ -130,11 +130,97 @@ test('crop, register, display and remove a user icon', async ({ page }, testInfo
 
   await page.goto('/admin/users')
   const ownRow = page.getByRole('row').filter({ hasText: process.env.PB_E2E_EMAIL! })
-  await expect(ownRow.locator('img')).toBeVisible()
+  await expect(ownRow.locator('td.kind img')).toBeVisible()
+  await expect(ownRow.locator('td.name-col .pb-avatar')).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('avatar-users.png') })
+  await ownRow.locator('td.name-col a').click()
+  await expect(page.locator('.page-header .header-avatar img')).toBeVisible()
+  await expect(page.locator('.page-header h1')).not.toContainText('👤')
+  await page.screenshot({ path: testInfo.outputPath('avatar-user-detail.png') })
   await page.goto('/me')
 
   await icon.getByRole('button', { name: '削除' }).click()
   await expect(icon.getByRole('status')).toHaveText('アイコンを削除しました')
   await expect(icon.locator('img')).toHaveCount(0)
+})
+
+test('registered member icon appears in icon columns and actor choices', async ({ page }, testInfo) => {
+  const email = process.env.PB_E2E_MEMBER_EMAIL
+  test.skip(!email || !process.env.PB_E2E_PASSWORD, 'Development member account is required')
+  await page.goto('/login')
+  await page.locator('input[type=email]').fill(email!)
+  await page.locator('input[type=password]').fill(process.env.PB_E2E_PASSWORD!)
+  await page.getByRole('button', { name: 'ログイン', exact: true }).click()
+  await expect(page).not.toHaveURL(/\/login$/)
+
+  const png = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 256
+    const ctx = canvas.getContext('2d')!
+    ctx.fillStyle = '#3176c4'
+    ctx.fillRect(0, 0, 256, 256)
+    return canvas.toDataURL('image/png').split(',')[1]!
+  })
+  await page.goto('/me')
+  await page.locator('.avatar-file').setInputFiles({ name: 'member.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') })
+  await page.getByRole('dialog', { name: 'アイコンを切り抜く' }).getByRole('button', { name: '登録' }).click()
+  await expect(page.locator('.avatar-field img')).toBeVisible()
+
+  try {
+    await page.goto('/p/demo/settings')
+    await page.getByRole('tab', { name: 'メンバー' }).click()
+    const memberRow = page.getByRole('row').filter({ hasText: email! })
+    await expect(memberRow.locator('td.icon-col img')).toBeVisible()
+    await expect(memberRow.locator('td').nth(1).locator('.pb-avatar')).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath('avatar-project-members.png') })
+
+    await page.goto('/p/demo/backlog')
+    const filter = page.locator('.backlog-filter-assignee .actor-select-trigger')
+    await filter.click()
+    const choice = page.locator('.actor-select-panel [role=option]').filter({ hasText: '開発PM' })
+    await expect(choice.locator('img')).toBeVisible()
+    await expect(choice.locator('.pb-avatar > span:not(.sr-only)')).toHaveCount(0)
+    await choice.click()
+    await expect(filter.locator('img')).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('avatar-backlog-filter.png') })
+
+    await page.getByRole('button', { name: '+ 新規チケット' }).click()
+    const newTicket = page.getByRole('dialog', { name: '新規チケット' })
+    await newTicket.locator('.actor-select-trigger').click()
+    const newTicketChoice = page.locator('.actor-select-panel [role=option]').filter({ hasText: '開発PM' })
+    await expect(newTicketChoice.locator('img')).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('avatar-new-ticket.png') })
+    await newTicketChoice.click()
+    await expect(newTicket.locator('.actor-select-trigger img')).toBeVisible()
+    await newTicket.locator('.actor-select-trigger').click()
+    await page.keyboard.press('Escape')
+    await expect(newTicket).toBeVisible()
+    await newTicket.getByRole('button', { name: 'キャンセル' }).click()
+
+    const tickets = await page.request.get('/api/v1/projects/demo/tickets')
+    expect(tickets.ok()).toBe(true)
+    const ticketItems = (await tickets.json()).items as { seq: number }[]
+    expect(ticketItems.length).toBeGreaterThan(0)
+    await page.goto(`/p/demo/tickets/${ticketItems[0]!.seq}`)
+    const detailAssignee = page.locator('.meta-item').filter({ has: page.locator('dt', { hasText: '担当' }) }).first()
+    await detailAssignee.locator('.actor-select-trigger').click()
+    await expect(page.locator('.actor-select-panel [role=option]').filter({ hasText: '開発PM' }).locator('img')).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('avatar-ticket-assignee.png') })
+
+    await page.goto('/p/demo/search')
+    await page.locator('.search-filter').filter({ hasText: '担当' }).locator('.multi-select-trigger').click()
+    await expect(page.locator('.multi-select-choice').filter({ hasText: '開発PM' }).locator('img')).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('avatar-search-filter.png') })
+
+    for (const width of [390, 900, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto('/p/demo/backlog')
+      await page.locator('.backlog-filter-assignee .actor-select-trigger').click()
+      await expect(page.locator('.actor-select-panel [role=option]').filter({ hasText: '開発PM' }).locator('img')).toBeVisible()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)
+      await page.screenshot({ path: testInfo.outputPath(`avatar-choice-${width}.png`) })
+    }
+  } finally {
+    await page.request.delete('/api/v1/me/avatar')
+  }
 })

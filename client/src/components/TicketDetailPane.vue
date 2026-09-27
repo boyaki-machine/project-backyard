@@ -34,6 +34,8 @@ import { uiText } from '../locales/ui'
 import { computed, defineAsyncComponent, nextTick, ref, useTemplateRef, watch } from 'vue'
 
 import ConfirmDialog from './ConfirmDialog.vue'
+import ActorSelect from './ActorSelect.vue'
+import type { ActorSelectOption } from './ActorSelect.vue'
 import Avatar from './Avatar.vue'
 import EmptyState from './EmptyState.vue'
 /**
@@ -1172,9 +1174,13 @@ async function toggleTag(id: string, on: boolean): Promise<void> {
   await selectField({ tag_ids: [...next] }, 'tag_ids')
 }
 
-function actorMark(kind: string): string {
-  return kind === 'agent' ? '🤖' : '👤'
-}
+const assigneeOptions = computed<ActorSelectOption[]>(() => [
+  { value: '', label: uiText('未割当') },
+  ...props.members.map((m) => ({
+    value: m.actor_id, label: m.display_name,
+    actor: { id: m.actor_id, kind: m.kind, display_name: m.display_name },
+  })),
+])
 
 /** `—` は「未設定」の意。数値は 0 と未設定を取り違えないよう、単位を添える */
 function num(v: number | null | undefined, unit: string): string {
@@ -1311,23 +1317,13 @@ function errorFor(field: string): string {
             <dt>{{ $ui('担当') }}</dt>
             <dd>
               <!-- **`ticket.assign` が要る**（9.5.2）。持たないときは値だけ出す -->
-              <select
+              <ActorSelect
                 v-if="canEdit && canAssign"
-                :value="ticket.assignee?.id ?? ''"
+                :value="ticket.assignee?.id ?? ''" :options="assigneeOptions"
                 :disabled="busy"
-                :aria-label="$ui('担当')"
-                @change="
-                  selectField(
-                    { assignee_id: ($event.target as HTMLSelectElement).value || null },
-                    'assignee_id',
-                  )
-                "
-              >
-                <option value="">{{ $ui('未割当') }}</option>
-                <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
-                  {{ actorMark(m.kind) }} {{ m.display_name }}
-                </option>
-              </select>
+                :label="$ui('担当')" variant="compact"
+                @change="selectField({ assignee_id: $event || null }, 'assignee_id')"
+              />
               <span v-else-if="ticket.assignee">
                 <Avatar :name="ticket.assignee.display_name" :kind="ticket.assignee.kind" :id="ticket.assignee.id" :size="20" />
                 {{ ticket.assignee.display_name }}
@@ -1911,24 +1907,14 @@ function errorFor(field: string): string {
               </RouterLink>
               <span class="child-assignee">
                 <!-- 選択肢は親自身の担当欄と同じ語彙（プロジェクトのメンバー＋未割当） -->
-                <select
+                <ActorSelect
                   v-if="canEdit"
                   :value="c.assignee?.id ?? ''"
+                  :options="assigneeOptions"
                   :disabled="busy"
-                  :aria-label="$ui('{value0}-{value1} の担当', { value0: projectKey, value1: c.seq })"
-                  @change="
-                    setChildAssignee(
-                      c.seq,
-                      ($event.target as HTMLSelectElement).value || null,
-                    )
-                  "
-                >
-                  <option value="">{{ $ui('未割当') }}</option>
-                  <!-- **メンバーの識別子は `actor_id`**（`id` ではない） -->
-                  <option v-for="m in members" :key="m.actor_id" :value="m.actor_id">
-                    {{ actorMark(m.kind) }} {{ m.display_name }}
-                  </option>
-                </select>
+                  :label="$ui('{value0}-{value1} の担当', { value0: projectKey, value1: c.seq })"
+                  variant="compact" @change="setChildAssignee(c.seq, $event || null)"
+                />
                 <template v-else-if="c.assignee">
                   <Avatar :name="c.assignee.display_name" :kind="c.assignee.kind" :id="c.assignee.id" :size="20" />
                   {{ c.assignee.display_name }}
