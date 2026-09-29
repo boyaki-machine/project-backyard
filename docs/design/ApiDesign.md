@@ -3667,7 +3667,7 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 
 **逆向き（`target` → `source`）の同じ `link_type` は別の行として作れる。** 一意制約が
 向きを含むためである。`A blocks B` と `B blocks A` は業務上は矛盾するが、
-**それを禁じるのは DB でもこの API でもない**——依存の循環検出はガント（未実装）で扱う（10.2）。
+**それを禁じるのは DB でもこの API でもない**——依存の循環検出はガントの編集（未実装。pb-221）で扱う（10.2）。
 
 `GET` の応答は、**当該チケットが `source` である行と `target` である行の両方**を返し、`direction` を付けて区別する。
 
@@ -3705,7 +3705,7 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 
 **`PATCH` は持たない。** 一意制約が `(source, target, link_type)` である以上、
 `link_type` の変更は**別の行になるのと同じ**であり、消して作り直すのと変わらない。
-`lag_days` だけのために1本増やす利得も無い——**`lag_days` を読む画面が無い**（下記）。
+`lag_days` だけのために1本増やす利得も無い——**`lag_days` を変える画面が無い**（ガントは線の札に出すだけで、編集は pb-221。下記）。
 
 **ページネーション・`ETag`・`If-Match` はいずれも持たない**（9.10.2 と同じ）。
 **親チケットの `version` と `updated_at` も動かさず、相手側のチケットも動かさない**
@@ -3717,8 +3717,8 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 
 **画面が出す `link_type` は `relates` / `duplicates` / `blocks` の3つだけである**
 （`GuiDesign.md` 5.5）。`FS` / `SS` / `FF` / `SF` と `lag_days` は
-**ガントの依存線**のためのもので、ガントは未実装（`GuiDesign.md` 3.2）。
-**読む画面が無い値を人に選ばせても、入れた本人が結果を確かめられない。**
+**ガントの依存線**のためのもので、ガントは閲覧だけを実装した段階である（線を引く編集は pb-221。`GuiDesign.md` 5.14）。
+**線を見ながら作れない値を、ここで人に選ばせない。**
 **API は7種すべて受け続ける**——MCP とエージェントがガント用の依存を先に積むことは
 妨げない（`Requirements.md` 10.5）。
 
