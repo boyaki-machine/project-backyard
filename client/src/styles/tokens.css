@@ -109,3 +109,74 @@
   --pb-ai-bg:          oklch(0.255 0.035 300);
   --pb-ai-border:      oklch(0.380 0.060 300);
 }
+
+/*
+ * ── ガントだけが使う色（GuiDesign.md 5.14「ガントだけが使う色」の転記）──────
+ *
+ * 8.1 の「有彩色は3つだけ」と 8.6 の「装飾に色を使わない」の例外であり、**ガント以外から
+ * 参照しない**（8.5）。値の正本は 8.5 の css ブロックではなく 5.14 の表である。
+ *
+ * **他の変数を参照するトークンも `:root` に置いてよいのは、`data-theme` と `data-hue` が
+ * `<html>`（＝ `:root`）に付くからである**（stores/ui.ts）。属性を子の要素に付ける作りへ
+ * 変えたら、派生するトークンをその要素の上へ移す（5.14「実装の落とし穴（CSS）」）。
+ * 透明と混ぜるときは `in srgb` を使う——`in oklch` は透明の色相 0 が混ざって赤へ転ぶ。
+ */
+:root {
+  --g-neon:      oklch(0.60 0.135 205);
+  --g-neon-act:  oklch(0.66 0.17 55);
+  --g-glow:      drop-shadow(0 0 1.5px color-mix(in srgb, var(--g-neon) 45%, transparent));
+  --g-glow-act:  drop-shadow(0 0 1.5px color-mix(in srgb, var(--g-neon-act) 45%, transparent));
+  --g-sat:       oklch(0.60 0.11 250 / .07);
+  --g-sun:       oklch(0.60 0.13 20 / .065);
+  --g-hol-line:  oklch(0.58 0.13 20 / .15);
+  --g-wkend:     oklch(0.55 0.006 var(--pb-hue) / .075);
+
+  --g-bar:       var(--pb-9);
+  --g-bar-line:  var(--pb-9);
+  --g-bar-fill:  color-mix(in srgb, var(--g-bar) 26%, transparent);
+  --g-bar-glow:  none;
+  --g-hatch-op:  .38;
+  --g-done-fill: var(--pb-3);
+  --g-done-line: var(--pb-7);
+  --g-dep:       var(--pb-8);
+  --g-dep-hi:    var(--pb-10);
+  --g-min-op:    .45;
+  --g-sub-op:    .5;
+  --g-rule-op:   .3;
+
+  /* 浮かせた詳細ペイン（無彩色の半透明。彩度 0.004 は 8.1 の「純灰を使わない」に合わせる） */
+  --g-pane-bg:     oklch(0.975 0.004 var(--pb-hue) / .84);
+  --g-pane-line:   oklch(0.80 0.004 var(--pb-hue));
+  --g-pane-shadow: -10px 0 28px oklch(0.245 0.038 var(--pb-hue) / .14);
+}
+
+[data-theme="dark"] {
+  --g-neon:      oklch(0.86 0.15 205);
+  --g-neon-act:  oklch(0.80 0.17 60);
+  --g-glow:      drop-shadow(0 0 2px color-mix(in srgb, var(--g-neon) 75%, transparent))
+                 drop-shadow(0 0 7px color-mix(in srgb, var(--g-neon) 45%, transparent));
+  --g-glow-act:  drop-shadow(0 0 2px color-mix(in srgb, var(--g-neon-act) 75%, transparent))
+                 drop-shadow(0 0 7px color-mix(in srgb, var(--g-neon-act) 45%, transparent));
+  --g-sat:       oklch(0.62 0.12 250 / .085);
+  --g-sun:       oklch(0.62 0.13 20 / .08);
+  --g-hol-line:  oklch(0.66 0.12 20 / .13);
+  --g-wkend:     oklch(0.72 0.006 var(--pb-hue) / .07);
+
+  /* ダークでは帯を少し輝かせる（文字と依存線には付けない） */
+  --g-bar:       var(--pb-10);
+  --g-bar-line:  color-mix(in srgb, var(--pb-10) 70%, var(--pb-12));
+  --g-bar-fill:  color-mix(in srgb, var(--g-bar) 42%, transparent);
+  --g-bar-glow:  drop-shadow(0 0 2.5px color-mix(in srgb, var(--g-bar) 65%, transparent));
+  --g-hatch-op:  .62;
+  --g-done-fill: var(--pb-4);
+  --g-done-line: var(--pb-8);
+  --g-dep:       color-mix(in srgb, var(--pb-11) 62%, var(--pb-1));
+  --g-dep-hi:    var(--pb-12);
+  --g-min-op:    .55;
+  --g-sub-op:    .6;
+  --g-rule-op:   .4;
+
+  --g-pane-bg:     oklch(0.275 0.004 var(--pb-hue) / .90);
+  --g-pane-line:   oklch(0.40 0.004 var(--pb-hue) / .85);
+  --g-pane-shadow: -12px 0 32px oklch(0 0 0 / .5);
+}

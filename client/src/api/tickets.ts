@@ -4,7 +4,7 @@
  * 型は `docs/design/openapi.yaml` の生成物をそのまま使う（`tags.ts` と同じ方針）。
  *
  * **消費者はバックログ画面と、その右に開く詳細ペイン**
- * （`GuiDesign.md` 5.4 / 5.5）。カンバン・ガント（未実装）も 9.2 の同じ
+ * （`GuiDesign.md` 5.4 / 5.5）。カンバン（未実装）・ガント（5.14）も 9.2 の同じ
  * エンドポイントから描くので、フィルタの組み立てを画面に書かず、ここに集める。
  *
  * **記号と表示名（`ticketTypeIcons` / `priorityMarks` / `statusMarks` /
@@ -20,6 +20,8 @@ export type TicketList = components['schemas']['TicketList']
 export type TicketDetail = components['schemas']['TicketDetail']
 export type TicketStatus = components['schemas']['TicketStatus']
 export type TicketTagRef = components['schemas']['TicketTagRef']
+/** ガント向けの取得（`view=gantt`）に同梱される依存（9.2.6） */
+export type TicketGanttLink = components['schemas']['TicketGanttLink']
 export type ActorRef = components['schemas']['ActorRef']
 export type CreateTicketRequest = components['schemas']['CreateTicketRequest']
 export type MoveTicketRequest = components['schemas']['MoveTicketRequest']
@@ -301,6 +303,16 @@ export interface ListTicketsQuery {
   order?: SortOrder
   page?: number
   per_page?: number
+  /**
+   * `true` でオンステージの行とその全子孫に限る（9.2.1）。**ガントの絞り込みが使う**
+   * （`GuiDesign.md` 5.14）。バックログは二段を手元で分けるので送らない
+   */
+  staged?: 'true'
+  /**
+   * `gantt` で上限が 5,000件になり、依存（`links`）が同梱される（9.2.6）。
+   * **`page` / `per_page` と一緒に送らない**（422）
+   */
+  view?: 'gantt'
 }
 
 /**

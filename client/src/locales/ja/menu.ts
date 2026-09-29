@@ -5,6 +5,7 @@ export default {
     projects: 'プロジェクト一覧',
     dashboard: 'ダッシュボード',
     backlog: 'バックログ',
+    gantt: 'ガント',
     search: 'チケット検索',
     docs: 'Docs',
     projectSettings: 'プロジェクト設定',

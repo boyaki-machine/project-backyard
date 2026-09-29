@@ -2427,7 +2427,7 @@ export interface paths {
          *     **`link_type` は7種すべて受ける。** ただし**画面が出すのは
          *     `relates` / `duplicates` / `blocks` の3つだけ**である（GuiDesign.md 5.5）
          *     ——`FS` / `SS` / `FF` / `SF` と `lag_days` はガントの依存線のためのもので、
-         *     ガントは未実装。**API を絞らないのは、MCP とエージェントがガント用の
+         *     ガントは閲覧だけを実装した段階である（線を引く編集は pb-221）。**API を絞らないのは、MCP とエージェントがガント用の
          *     依存を先に積むことを妨げないためである。**
          *
          *     **親チケットの `version` と `updated_at` は動かない。相手側も動かない。**
@@ -6365,7 +6365,7 @@ export interface components {
              */
             direction: "outgoing" | "incoming";
             /**
-             * @description **`FS` / `SS` / `FF` / `SF` はガント用の依存**（ガントは未実装）。
+             * @description **`FS` / `SS` / `FF` / `SF` はガント用の依存**（ガントが線として描く。作る操作は未実装）。
              *     **画面が出すのは `relates` / `duplicates` / `blocks` の3つだけ**
              *     である（GuiDesign.md 5.5）が、**API は7種すべて受ける**。
              * @enum {string}
@@ -6374,7 +6374,7 @@ export interface components {
             ticket: components["schemas"]["TicketLinkTicketRef"];
             /**
              * Format: int32
-             * @description `FS`〜`SF` のときのみ意味を持つ。読む画面は無い。
+             * @description `FS`〜`SF` のときのみ意味を持つ。ガントが依存線の札に出す（GuiDesign.md 5.14）。
              */
             lag_days: number;
             /**
