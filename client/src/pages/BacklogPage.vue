@@ -47,6 +47,9 @@ import type {
 import { formatDateTime, formatPlan, isPastDue, planDate, planInstant } from '../lib/datetime'
 import { statusLabel } from '../lib/catalogLabels'
 import { zoneOf, type DropZone } from '../lib/dnd'
+import { groupAxisToRestore, saveGroupAxis } from '../lib/groupAxis'
+import { GROUP_AXES, bucketize, groupAxisLabel, groupsOf } from '../lib/ticketGroups'
+import type { GroupAxis, GroupVocabulary } from '../lib/ticketGroups'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
 
@@ -256,19 +259,10 @@ function onDetailDeleted(seq: number, title: string): void {
 
 // ── URL クエリ ───────────────────────────────────────────────
 
-/** グループ化の軸（5.4.1）。空文字が「なし」で、これが既定 */
-type GroupAxis = '' | 'parent' | 'tag' | 'sprint' | 'assignee' | 'status'
-
-const GROUP_AXES: GroupAxis[] = ['', 'parent', 'tag', 'sprint', 'assignee', 'status']
-
-const groupLabels: Record<GroupAxis, string> = {
-  '': uiText("なし"),
-  parent: uiText("親チケット"),
-  tag: uiText("タグ"),
-  sprint: uiText("スプリント"),
-  assignee: uiText("担当"),
-  status: uiText("状態"),
-}
+/** 軸の選択肢の表示名（5.4.1）。振り分けの規則は `lib/ticketGroups.ts` が持つ */
+const groupLabels = Object.fromEntries(
+  GROUP_AXES.map((axis) => [axis, groupAxisLabel(axis)]),
+) as Record<GroupAxis, string>
 
 const SORTS: TicketSort[] = [
   'sort_key',
@@ -532,7 +526,28 @@ function clearAll(): void {
   clearTimeout(keywordTimer)
   keywordPending = false
   keyword.value = ''
+  saveGroupAxis(projectKey.value, '')
   void router.replace({ path: route.path })
+}
+
+/**
+ * 軸を選ぶ。**選んだ軸をブラウザにも覚える**——ガントなど他の視点を URL の
+ * `group` 無しで開いたとき、同じ軸で出すため（4.1.1。pb-220）。
+ */
+function setGroup(axis: string): void {
+  saveGroupAxis(projectKey.value, axis)
+  setQuery({ group: axis })
+}
+
+/**
+ * URL に `group` が無ければ、覚えた軸で補う（4.1.1）。**補ったら `true`**——
+ * クエリが変わると一覧の取り直しが `watch` から走るので、呼び出し側は取らない。
+ */
+function restoreGroupAxis(): boolean {
+  const axis = groupAxisToRestore(projectKey.value, route.query, GROUP_AXES)
+  if (axis === null) return false
+  void router.replace({ path: route.path, query: { ...route.query, group: axis } })
+  return true
 }
 
 /**
@@ -929,74 +944,16 @@ function flatRows(items: Ticket[]): Row[] {
   return items.map((t) => ({ ticket: t, depth: 0, hasChildren: false, parentKey: null }))
 }
 
-/**
- * グループ化の軸ごとに、行がどのセクションへ入るかを返す。
- *
- * **タグだけは複数返る**——複数タグを持つチケットは各セクションに重複して
- * 現れる（5.4.1。「これを避けない」）。
- */
-function sectionsOf(t: Ticket): { key: string; label: string }[] {
-  switch (group.value) {
-    case 'parent':
-      return t.parent_seq === null
-        ? [{ key: 'top', label: uiText("トップレベル") }]
-        : [{ key: String(t.parent_seq), label: parentLabel(t.parent_seq) }]
-    case 'tag':
-      return t.tags.length === 0
-        ? [{ key: 'none', label: uiText("未分類") }]
-        : t.tags.map((tag) => ({ key: tag.id, label: tag.name }))
-    case 'sprint':
-      return [
-        t.sprint === null
-          ? { key: 'none', label: uiText("スプリント未設定") }
-          : { key: t.sprint.id, label: t.sprint.name },
-      ]
-    case 'assignee':
-      return [
-        t.assignee === null
-          ? { key: 'none', label: uiText("未割当") }
-          : { key: t.assignee.id, label: t.assignee.display_name },
-      ]
-    case 'status':
-      return [{ key: t.status.key, label: statusLabel(t.status.key, t.status.name) }]
-    default:
-      return []
-  }
-}
-
-/**
- * 親チケットの見出し。
- *
- * **エピックは一覧に出ないが、語彙として手元にある**ので名前を引ける。
- * どちらにも無い場合は完全形の ID で出す（5.4「ID列」）——「不明」と書くより、
- * 詳細を開ける番号のほうが役に立つ。
- */
-function parentLabel(seq: number): string {
-  const parent = tickets.value.find((t) => t.seq === seq) ?? epics.value.find((e) => e.seq === seq)
-  return parent ? parent.title : `${projectKey.value}-${seq}`
-}
-
-/**
- * セクションの並び順。**軸の語彙の順に出す**——タグは `sort_order`、
- * スプリントは一覧の順、状態はワークフローの `sort_order` である。
- * 「未分類」「未割当」「スプリント未設定」は末尾に置く。
- */
-function sectionOrder(): string[] {
-  switch (group.value) {
-    case 'parent':
-      return ['top', ...epics.value.map((e) => String(e.seq)), ...tickets.value.map((t) => String(t.seq))]
-    case 'tag':
-      return [...tags.value.map((t) => t.id), 'none']
-    case 'sprint':
-      return [...sprints.value.map((s) => s.id), 'none']
-    case 'assignee':
-      return [...members.value.map((m) => m.actor_id), 'none']
-    case 'status':
-      return statuses.value.map((s) => s.key)
-    default:
-      return []
-  }
-}
+/** 振り分けに要る語彙（`lib/ticketGroups.ts`。ガントの行グループと同じ規則） */
+const groupVocabulary = computed<GroupVocabulary>(() => ({
+  projectKey: projectKey.value,
+  tickets: tickets.value,
+  epics: epics.value,
+  tags: tags.value,
+  sprints: sprints.value,
+  members: members.value,
+  statuses: statuses.value,
+}))
 
 const sections = computed<Section[]>(() => {
   // 二段（5.4）。**両方の段が親子のインデントと折りたたみを持つ**。
@@ -1019,25 +976,9 @@ const sections = computed<Section[]>(() => {
     ]
   }
 
-  const buckets = new Map<string, Section>()
-  const seen: string[] = []
-  for (const row of flatRows(tickets.value)) {
-    for (const { key, label } of sectionsOf(row.ticket)) {
-      const bucket = buckets.get(key)
-      if (bucket) {
-        bucket.rows.push(row)
-      } else {
-        buckets.set(key, { key, label, rows: [row] })
-        seen.push(key)
-      }
-    }
-  }
-
   // 語彙の順に並べ、語彙に無いもの（削除されたメンバーの担当など）は
   // 出現順で後ろへ付ける。**空のセクションは出さない。**
-  const ordered = sectionOrder().filter((k) => buckets.has(k))
-  const rest = seen.filter((k) => !ordered.includes(k))
-  return [...ordered, ...rest].map((k) => buckets.get(k)!)
+  return bucketize(flatRows(tickets.value), (row) => row.ticket, group.value, groupVocabulary.value)
 })
 
 // ── セクションの開閉（5.4.1「ブラウザに保持する」）─────────────
@@ -1302,7 +1243,7 @@ function canDropOn(sourceSeq: number | null, row: Row, section: Section): boolea
     }
     return isStageable(source) && row.parentKey === null
   }
-  return sectionsOf(source).some((s) => s.key === section.key)
+  return groupsOf(source, group.value, groupVocabulary.value).some((s) => s.key === section.key)
 }
 
 /**
@@ -1943,7 +1884,7 @@ onMounted(() => {
   loadTreeCollapsed()
   void projectStore.fetchCurrent(projectKey.value)
   void loadVocabulary()
-  void loadTickets()
+  if (!restoreGroupAxis()) void loadTickets()
 })
 
 onUnmounted(() => {
@@ -1991,6 +1932,7 @@ watch(projectKey, (key) => {
   loadTreeCollapsed()
   void projectStore.fetchCurrent(key)
   void loadVocabulary()
+  restoreGroupAxis()
 })
 </script>
 
@@ -2174,7 +2116,7 @@ watch(projectKey, (key) => {
             <span class="filter-label">{{ $ui('グループ化') }}</span>
             <select
               :value="group"
-              @change="setQuery({ group: ($event.target as HTMLSelectElement).value })"
+              @change="setGroup(($event.target as HTMLSelectElement).value)"
             >
               <option v-for="axis in GROUP_AXES" :key="axis" :value="axis">
                 {{ groupLabels[axis] }}

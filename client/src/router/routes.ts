@@ -268,18 +268,14 @@ const routeSources: RouteRecordRaw[] = [
     },
   },
 
+  // 実画面（GuiDesign.md 5.14。pb-220 でプレースホルダから差し替えた）。
+  //
+  // **バックログ・詳細と同じ入れ物を指す**——詳細を `from=gantt` で開いても
+  // ガントが再マウントされず、スクロール位置と拡大の具合が残る。
   {
     path: '/p/:key/gantt',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'ticket.view',
-      placeholder: {
-        title: 'ガントチャート',
-        docRef: 'GuiDesign.md 10章',
-        status: '未定',
-        planned: ['集中モード（2.3.2）の主な用途', '仮想スクロールによる大量行への対応'],
-      },
-    },
+    component: TicketViewsPage,
+    meta: { permission: 'ticket.view' },
   },
 
   // 実画面（GuiDesign.md 5.13）。

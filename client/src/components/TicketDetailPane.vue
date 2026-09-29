@@ -137,7 +137,28 @@ const props = defineProps<{
    * `GET /tickets?type=epic` の語彙で、追加の往復を要しない。
    */
   epics?: Ticket[]
+  /**
+   * 詳細の中のリンク（親・エピック・子・関連チケット）に載せるクエリ。**ガントは
+   * `from=gantt` と自分の条件を渡す**（`GuiDesign.md` 3.2）——落とすと、押した先の
+   * 詳細の後ろがバックログに変わる。渡さなければ今までどおりクエリを付けない
+   */
+  linkQuery?: Record<string, string>
+  /**
+   * 自分の予定を持たない親の、配下の期間（ガント。5.14「配下の期間」）。開始・終了の
+   * `—` に `（配下 2026-09-24）` を添える。日付は基準タイムゾーンの `YYYY-MM-DD`
+   */
+  rollup?: { start: string; end: string } | null
+  /**
+   * 日付を持たない相手の番号（ガント。5.14「依存線」）。**その相手への依存は線に
+   * 描かれない**ので、関連チケットの行に「日付なし・線は描かない」を添える
+   */
+  undatedSeqs?: number[]
 }>()
+
+/** 詳細の中のリンクの行き先。`linkQuery` があれば載せる */
+function ticketTo(seq: number): { path: string; query: Record<string, string> } {
+  return { path: `/p/${props.projectKey}/tickets/${seq}`, query: props.linkQuery ?? {} }
+}
 
 const emit = defineEmits<{
   close: []
@@ -1534,7 +1555,7 @@ function errorFor(field: string): string {
               <RouterLink
                 v-if="parentTicket"
                 class="jump"
-                :to="`/p/${projectKey}/tickets/${parentTicket.seq}`"
+                :to="ticketTo(parentTicket.seq)"
                 :aria-label="$ui('親チケット {value0}-{value1} を開く', { value0: projectKey, value1: parentTicket.seq })"
                 >↗</RouterLink
               >
@@ -1582,7 +1603,7 @@ function errorFor(field: string): string {
               <RouterLink
                 v-if="ticket.epic"
                 class="jump"
-                :to="`/p/${projectKey}/tickets/${ticket.epic.seq}`"
+                :to="ticketTo(ticket.epic.seq)"
                 :aria-label="$ui('エピック {value0}-{value1} を開く', { value0: projectKey, value1: ticket.epic.seq })"
                 >↗</RouterLink
               >
@@ -1856,6 +1877,7 @@ function errorFor(field: string): string {
                 @click="startEdit('start_at')"
               >
                 {{ planLabel(ticket.start_at, false) }}
+                <span v-if="ticket.start_at === null && ticket.due_at === null && rollup" class="muted">{{ $ui('（配下 {value0}）', { value0: rollup.start }) }}</span>
               </button>
               <p v-if="errorFor('start_at')" class="field-error" role="alert">
                 {{ errorFor('start_at') }}
@@ -1884,6 +1906,7 @@ function errorFor(field: string): string {
                 @click="startEdit('due_at')"
               >
                 {{ planLabel(ticket.due_at, true) }}
+                <span v-if="ticket.start_at === null && ticket.due_at === null && rollup" class="muted">{{ $ui('（配下 {value0}）', { value0: rollup.end }) }}</span>
               </button>
               <p v-if="errorFor('due_at')" class="field-error" role="alert">
                 {{ errorFor('due_at') }}
@@ -1955,7 +1978,7 @@ function errorFor(field: string): string {
               <!-- **行クリックでその子の詳細を開く**（同じペインが差し替わる）。
                    **担当のセルはリンクの外に出す**——`<select>` をリンクの
                    中に置くと、開こうとしただけで子の詳細へ飛ぶ -->
-              <RouterLink class="child" :to="`/p/${projectKey}/tickets/${c.seq}`">
+              <RouterLink class="child" :to="ticketTo(c.seq)">
                 <span class="type-icon" :title="ticketTypeLabels[c.type]" aria-hidden="true">
                   {{ ticketTypeIcons[c.type] }}
                 </span>
@@ -2201,7 +2224,7 @@ function errorFor(field: string): string {
                 {{ linkLabel(l.link_type, l.direction) }}
               </span>
               <!-- 行クリックでその相手の詳細を開く（子チケットと同じ） -->
-              <RouterLink class="rel-main" :to="`/p/${projectKey}/tickets/${l.ticket.seq}`">
+              <RouterLink class="rel-main" :to="ticketTo(l.ticket.seq)">
                 <span
                   class="type-icon"
                   :title="ticketTypeLabels[l.ticket.type]"
@@ -2212,6 +2235,7 @@ function errorFor(field: string): string {
                 <code class="child-id">{{ projectKey }}-{{ l.ticket.seq }}</code>
                 <span class="child-title">{{ l.ticket.title }}</span>
                 <span class="child-status">{{ statusLabel(l.ticket.status.key, l.ticket.status.name) }}</span>
+                <span v-if="undatedSeqs?.includes(l.ticket.seq)" class="muted rel-undated">{{ $ui('日付なし・線は描かない') }}</span>
               </RouterLink>
               <button
                 v-if="canEdit"
@@ -2344,6 +2368,8 @@ function errorFor(field: string): string {
   flex-direction: column;
   min-width: 0;
   height: 100%;
+  /* メタ情報の列数をペインの幅で決める（下の `@container`） */
+  container-type: inline-size;
 }
 
 /* 2.5 のページヘッダと同じ 48px・sticky。**新しい帯を作らない** */
@@ -2445,12 +2471,26 @@ function errorFor(field: string): string {
 /* **2列である**（5.5「2列のラベル＋値のグリッド」）。
    `auto-fit` にすると 750px のペインで3列になり、**見積・実績と開始・期限の
    組が行をまたいで割れる**（実際に踏んだ。スクリーンショットで発覚）。
-   ペインが 510px を下回る幅は `SplitPane` が作らないので、2列で固定してよい */
+   バックログのペインは 510px を下回らない（`SplitPane`）。**ガントの浮かせたペインは
+   それより狭くなるので、480px 未満だけ1列にする**（下の `@container`。5.14） */
 .meta {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--pb-space-2) var(--pb-space-4);
   margin: 0 0 var(--pb-space-4);
+}
+
+/* **ガントの浮かせたペインは 320〜560px である**（5.14）。480px 未満では1列にする。
+   **窓の幅ではなくペインの幅で決める**——同じ窓でもペインの幅は利用者が変える */
+@container (max-width: 479px) {
+  .meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.rel-undated {
+  flex: none;
+  font-size: 12px;
 }
 
 .meta-item {

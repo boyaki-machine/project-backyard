@@ -18,10 +18,10 @@ import { useUiStore } from '../stores/ui'
  * 出し分けは 4.3 の表に従う。**オペレータには「管理」セクションの見出しごと
  * 表示しない**（押せないメニューによる混乱を避ける）。
  *
- * 未実装・構想の項目（カンバン・ガント・進捗分析・承認キュー・認証プロバイダ）は
+ * 未実装・構想の項目（カンバン・進捗分析・承認キュー・認証プロバイダ）は
  * まだ表示しない（4.1）。**アプリケーション設定は実装済みなので出す。**
- * **チケットを見る視点は5つあるが（4.1.1）、実装済みなのはバックログと
- * チケット検索（5.13）**である。
+ * **チケットを見る視点は5つあるが（4.1.1）、実装済みなのはバックログ・
+ * ガント（5.14）・チケット検索（5.13）**である。
  *
  * **Docs は手順22b で出した**（4.3 の表。必要権限は `doc.view`）。**`doc.view` は
  * `project_viewer` まで全ロールが持つ**ので、プロジェクトに到達できる人には
@@ -91,8 +91,18 @@ const showAdmin = computed(
           <span class="icon" aria-hidden="true">≡</span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.backlog') }}</span>
         </RouterLink>
-        <!-- チケット検索（4.1 / 5.13）。**バックログの次に置く**——4.1 の図は間に
-             カンバンとガントを挟むが、どちらもまだ出していない。必要権限は同じ `ticket.view`（4.3） -->
+        <!-- ガント（4.1 / 5.14）。**バックログの次に置く**——4.1 の図は間にカンバンを
+             挟むが、まだ出していない。必要権限は同じ `ticket.view`（4.3） -->
+        <RouterLink
+          v-if="auth.canInProject(projectKey, 'ticket.view')"
+          class="item"
+          :to="`/p/${projectKey}/gantt`"
+          :title="t('menu.main.gantt')"
+        >
+          <span class="icon" aria-hidden="true">▦</span>
+          <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.gantt') }}</span>
+        </RouterLink>
+        <!-- チケット検索（4.1 / 5.13）。必要権限は同じ `ticket.view`（4.3） -->
         <RouterLink
           v-if="auth.canInProject(projectKey, 'ticket.view')"
           class="item"

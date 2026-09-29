@@ -1137,7 +1137,7 @@ type ListTicketsRow struct {
 // チケットに関するクエリ（DbDesign.md 6.6、ApiDesign.md 9.2 / 9.3 / 9.4）。
 //
 // 手順16b で追加。消費者はバックログ画面（GuiDesign.md 5.4、手順16c）と、
-// 未実装のカンバン・ガントである。いずれも同じ ListTickets を読む。
+// 未実装のカンバンと、ガント（GuiDesign.md 5.14。view=gantt）である。いずれも同じ ListTickets を読む。
 //
 // **すべてのクエリが project_id で閉じている。** チケットはプロジェクトの資源で
 // あり、他プロジェクトの ID を渡されても行が返らないようにするためである。到達

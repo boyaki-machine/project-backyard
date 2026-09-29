@@ -41,7 +41,8 @@ export function linkLabel(type: LinkType, direction: LinkDirection): string {
   if (type === 'duplicates') return uiText('重複')
   if (type === 'relates') return uiText('関連')
   // `FS`〜`SF` は画面から作れないが、MCP が積んだ行は一覧に混ざりうる。
-  // **キーをそのまま出す**——訳を当てても読む画面（ガント）が無い。
+  // **キーをそのまま出す**——ガント（`GuiDesign.md` 5.14）の線の札も `SS` / `FF` の
+  // 表記であり、訳を当てると見比べられなくなる。
   return type
 }
 
@@ -62,8 +63,8 @@ export function linkLabelTitle(type: LinkType, direction: LinkDirection): string
  *
  * **画面が作れるのは `relates` / `duplicates` / `blocks` の3種だけである**。
  * `FS` / `SS` / `FF` / `SF` と `lag_days` は
- * ガントの依存線のためのもので、ガントは未実装——**読む画面が無い値を
- * 人に選ばせても、入れた本人が結果を確かめられない。** **API は7種すべて
+ * ガントの依存線のためのもので、ガントは閲覧だけを実装した段階である（線を
+ * 引く編集は pb-221）——**線を見ながら作れない値を、ここで人に選ばせない。** **API は7種すべて
  * 受け続ける**（MCP とエージェントが先に積むのは妨げない）。
  *
  * **`自後行` は API に無い。** `POST .../links` は**このチケットが常に
