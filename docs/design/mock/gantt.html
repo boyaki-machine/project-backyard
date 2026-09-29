@@ -1,0 +1,1273 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>ガント意匠案</title>
+<style>
+/* PB のベーストークン（GuiDesign 8.3 / 8.4 の hex） */
+:root {
+  color-scheme: light;
+  --pb-1:#fafcfe; --pb-2:#f3f7fb; --pb-3:#e9eff6; --pb-4:#dde7ef; --pb-5:#d2dde8; --pb-6:#c4d2df;
+  --pb-7:#b3c4d3; --pb-8:#95aec4; --pb-9:#2b77b0; --pb-10:#1368a1; --pb-11:#39688e; --pb-12:#102231;
+  --pb-danger:#bd4542; --pb-danger-text:#963633;
+  --pb-ai:#8259bf; --pb-ai-text:#674698; --pb-ai-bg:#f4efff; --pb-ai-border:#d8ceee;
+  --pb-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Noto Sans Mono', monospace;
+  --pb-font: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', Meiryo, sans-serif;
+
+  --pb-hue: 245;
+
+  /* ガントの入力値（リテラルだけ。他の変数を参照しない） */
+  --g-neon-l: .60; --g-neon-c: .135; --g-neon-h: 205;     /* シアン：進行中以外のスプリント */
+  --g-act-l: .66;  --g-act-c: .17;   --g-act-h: 55;       /* オレンジ：進行中のスプリント */
+  --g-glow-r1: 1.5px; --g-glow-a1: 45%; --g-glow-r2: 0px; --g-glow-a2: 0%;
+  --g-sat: oklch(0.60 0.11 250 / .07);  --g-sun: oklch(0.60 0.13 20 / .065);  --g-hol-line: oklch(0.58 0.13 20 / .15);
+  --g-min-op: .45; --g-sub-op: .5; --g-rule-op: .3;
+  --g-pane-tint: 5%; --g-pane-op: 82%;
+  --g-pane-shadow: -10px 0 28px oklch(0.245 0.038 245 / .14);
+}
+[data-hue="green"] {
+  --pb-hue: 135;
+  --pb-1:#fafcf9; --pb-2:#f4f8f3; --pb-3:#ebf0e8; --pb-4:#e0e8dd; --pb-5:#d6dfd1; --pb-6:#c9d4c4;
+  --pb-7:#b9c7b2; --pb-8:#9eb294; --pb-9:#4e822d; --pb-10:#3f7318; --pb-11:#4c6f38; --pb-12:#172510;
+}
+
+/* ガントの派生トークン。**他の変数を参照するものは、色相を切り替える要素の上で宣言する**
+   （:root で宣言すると :root の値で計算済みのまま継承され、切り替えが下へ届かない） */
+.page, .app {
+  --g-neon: oklch(var(--g-neon-l) var(--g-neon-c) var(--g-neon-h));
+  --g-neon-act: oklch(var(--g-act-l) var(--g-act-c) var(--g-act-h));
+  --g-glow: drop-shadow(0 0 var(--g-glow-r1) color-mix(in srgb, var(--g-neon) var(--g-glow-a1), transparent))
+            drop-shadow(0 0 var(--g-glow-r2) color-mix(in srgb, var(--g-neon) var(--g-glow-a2), transparent));
+  --g-glow-act: drop-shadow(0 0 var(--g-glow-r1) color-mix(in srgb, var(--g-neon-act) var(--g-glow-a1), transparent))
+            drop-shadow(0 0 var(--g-glow-r2) color-mix(in srgb, var(--g-neon-act) var(--g-glow-a2), transparent));
+  --g-bar: var(--pb-9);
+  --g-bar-line: var(--pb-9);
+  --g-bar-fill: color-mix(in srgb, var(--g-bar) 26%, transparent);
+  --g-bar-glow: none;
+  --g-hatch-op: .38;
+  --g-done-fill: var(--pb-3);
+  --g-done-line: var(--pb-7);
+  --g-dep: var(--pb-8);
+  --g-dep-hi: var(--pb-10);
+  --g-wkend: oklch(0.55 0.006 var(--pb-hue) / .075);
+  --g-hdr-bg: var(--pb-2);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --pb-1:#0b1014; --pb-2:#10171d; --pb-3:#162029; --pb-4:#1c2833; --pb-5:#21303c; --pb-6:#283a49;
+    --pb-7:#344a5d; --pb-8:#446179; --pb-9:#4993cd; --pb-10:#61a5dd; --pb-11:#86b0d5; --pb-12:#e5f0fa;
+    --pb-danger:#db6c66; --pb-danger-text:#ef958e;
+    --pb-ai:#a07cdb; --pb-ai-text:#bca1ed; --pb-ai-bg:#251f31; --pb-ai-border:#473b5e;
+    --g-neon-l: .86; --g-neon-c: .15;
+    --g-act-l: .80; --g-act-c: .17; --g-act-h: 60;
+    --g-glow-r1: 2px; --g-glow-a1: 75%; --g-glow-r2: 7px; --g-glow-a2: 45%;
+    --g-sat: oklch(0.62 0.12 250 / .085);  --g-sun: oklch(0.62 0.13 20 / .08);  --g-hol-line: oklch(0.66 0.12 20 / .13);
+    --g-min-op: .55; --g-sub-op: .6; --g-rule-op: .4;
+    --g-pane-tint: 14%; --g-pane-op: 80%;
+    --g-pane-shadow: -12px 0 32px oklch(0 0 0 / .5);
+  }
+  :root:not([data-theme="light"]) [data-hue="green"] {
+    --pb-1:#0d110b; --pb-2:#131810; --pb-3:#1a2216; --pb-4:#212a1b; --pb-5:#263220; --pb-6:#2f3d28;
+    --pb-7:#3d4e34; --pb-8:#4f6544; --pb-9:#699d49; --pb-10:#7daf60; --pb-11:#96b684; --pb-12:#e9f2e4;
+  }
+  :root:not([data-theme="light"]) :is(.page, .app) {
+    --g-bar: var(--pb-10);
+    --g-bar-line: color-mix(in srgb, var(--pb-10) 70%, var(--pb-12));
+    --g-bar-fill: color-mix(in srgb, var(--g-bar) 42%, transparent);
+    --g-bar-glow: drop-shadow(0 0 2.5px color-mix(in srgb, var(--g-bar) 65%, transparent));
+    --g-hatch-op: .62;
+    --g-done-fill: var(--pb-4);
+    --g-done-line: var(--pb-8);
+    --g-dep: color-mix(in srgb, var(--pb-11) 62%, var(--pb-1));
+    --g-dep-hi: var(--pb-12);
+    --g-wkend: oklch(0.72 0.006 var(--pb-hue) / .07);
+  }
+  :root:not([data-theme="light"]) .app[data-pane="float"] .detail { 
+    --g-pane-bg: oklch(0.275 0.004 var(--pb-hue) / .9);
+    --g-pane-line: oklch(0.40 0.004 var(--pb-hue) / .85);
+    --pb-4: oklch(0.34 0.004 var(--pb-hue)); --pb-6: oklch(0.37 0.004 var(--pb-hue));
+    --pb-7: oklch(0.44 0.005 var(--pb-hue)); --pb-8: oklch(0.52 0.006 var(--pb-hue));
+    --pb-11: oklch(0.68 0.006 var(--pb-hue)); --pb-12: oklch(0.93 0.004 var(--pb-hue));
+    color: var(--pb-12);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --pb-1:#0b1014; --pb-2:#10171d; --pb-3:#162029; --pb-4:#1c2833; --pb-5:#21303c; --pb-6:#283a49;
+  --pb-7:#344a5d; --pb-8:#446179; --pb-9:#4993cd; --pb-10:#61a5dd; --pb-11:#86b0d5; --pb-12:#e5f0fa;
+  --pb-danger:#db6c66; --pb-danger-text:#ef958e;
+  --pb-ai:#a07cdb; --pb-ai-text:#bca1ed; --pb-ai-bg:#251f31; --pb-ai-border:#473b5e;
+  --g-neon-l: .86; --g-neon-c: .15;
+  --g-act-l: .80; --g-act-c: .17; --g-act-h: 60;
+  --g-glow-r1: 2px; --g-glow-a1: 75%; --g-glow-r2: 7px; --g-glow-a2: 45%;
+  --g-sat: oklch(0.62 0.12 250 / .085);  --g-sun: oklch(0.62 0.13 20 / .08);  --g-hol-line: oklch(0.66 0.12 20 / .13);
+  --g-min-op: .55; --g-sub-op: .6; --g-rule-op: .4;
+  --g-pane-tint: 14%; --g-pane-op: 80%;
+  --g-pane-shadow: -12px 0 32px oklch(0 0 0 / .5);
+}
+:root[data-theme="dark"] [data-hue="green"] {
+  --pb-1:#0d110b; --pb-2:#131810; --pb-3:#1a2216; --pb-4:#212a1b; --pb-5:#263220; --pb-6:#2f3d28;
+  --pb-7:#3d4e34; --pb-8:#4f6544; --pb-9:#699d49; --pb-10:#7daf60; --pb-11:#96b684; --pb-12:#e9f2e4;
+}
+:root[data-theme="dark"] :is(.page, .app) {
+  --g-bar: var(--pb-10);
+  --g-bar-line: color-mix(in srgb, var(--pb-10) 70%, var(--pb-12));
+  --g-bar-fill: color-mix(in srgb, var(--g-bar) 42%, transparent);
+  --g-bar-glow: drop-shadow(0 0 2.5px color-mix(in srgb, var(--g-bar) 65%, transparent));
+  --g-hatch-op: .62;
+  --g-done-fill: var(--pb-4);
+  --g-done-line: var(--pb-8);
+  --g-dep: color-mix(in srgb, var(--pb-11) 62%, var(--pb-1));
+  --g-dep-hi: var(--pb-12);
+  --g-wkend: oklch(0.72 0.006 var(--pb-hue) / .07);
+}
+:root[data-theme="dark"] .app[data-pane="float"] .detail {
+  --g-pane-bg: oklch(0.275 0.004 var(--pb-hue) / .9);
+  --g-pane-line: oklch(0.40 0.004 var(--pb-hue) / .85);
+  --pb-4: oklch(0.34 0.004 var(--pb-hue)); --pb-6: oklch(0.37 0.004 var(--pb-hue));
+  --pb-7: oklch(0.44 0.005 var(--pb-hue)); --pb-8: oklch(0.52 0.006 var(--pb-hue));
+  --pb-11: oklch(0.68 0.006 var(--pb-hue)); --pb-12: oklch(0.93 0.004 var(--pb-hue));
+  color: var(--pb-12);
+}
+
+body { background: var(--pb-1); color: var(--pb-12); font-family: var(--pb-font); font-size: 14px; line-height: 1.7; }
+.page { padding-inline: 16px; padding-block: 24px 48px; max-width: 1280px; margin: 0 auto; display: grid; gap: 28px; background: var(--pb-1); color: var(--pb-12); }
+h1, h2, h3 { text-wrap: balance; line-height: 1.35; margin: 0; }
+h1 { font-size: 20px; font-weight: 600; }
+h2 { font-size: 15px; font-weight: 600; }
+.mono { font-family: var(--pb-font-mono); font-variant-numeric: tabular-nums; }
+.muted { color: var(--pb-11); }
+
+.intro { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: flex-end; justify-content: space-between; }
+.intro p { margin: 6px 0 0; max-width: 64ch; color: var(--pb-11); font-size: 13px; }
+.intro .eyebrow { font-family: var(--pb-font-mono); font-size: 11px; letter-spacing: .08em; color: var(--pb-11); }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.ctl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--pb-11); }
+.seg { display: inline-flex; border: 1px solid var(--pb-7); border-radius: 6px; overflow: hidden; background: var(--pb-1); }
+.seg button { font: inherit; font-size: 12px; color: var(--pb-12); background: none; border: 0; padding: 4px 10px; cursor: pointer; border-left: 1px solid var(--pb-6); }
+.seg button:first-child { border-left: 0; }
+.seg button:hover { background: var(--pb-4); }
+.seg button[aria-pressed="true"] { background: var(--pb-9); color: var(--pb-1); }
+.seg button:focus-visible, select:focus-visible, .btn:focus-visible { outline: 2px solid var(--pb-8); outline-offset: 1px; }
+select { font: inherit; font-size: 12px; color: var(--pb-12); background: var(--pb-1); border: 1px solid var(--pb-7); border-radius: 6px; padding: 3px 6px; }
+
+/* ── 画面のモック ── */
+.mock-scroll { overflow-x: auto; border-radius: 8px; }
+.app { display: grid; grid-template-columns: 56px 1fr; min-width: 1100px; height: 640px; border: 1px solid var(--pb-7);
+  border-radius: 8px; overflow: hidden; background: var(--pb-1); color: var(--pb-12); font-size: 13px; line-height: 1.4; }
+.rail { background: var(--pb-2); border-right: 1px solid var(--pb-6); display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 8px; }
+.rail span { width: 36px; height: 32px; display: grid; place-items: center; border-radius: 6px; color: var(--pb-11); font-size: 15px; }
+.rail span.on { background: var(--pb-5); color: var(--pb-12); }
+.rail hr { width: 28px; border: 0; border-top: 1px solid var(--pb-6); margin: 4px 0; }
+.content { display: grid; grid-template-rows: 48px 1fr 26px; min-width: 0; }
+.pagehdr { display: flex; align-items: center; gap: 12px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--pb-6); }
+.pagehdr h2 { font-size: 18px; font-weight: 600; margin-right: 8px; }
+.pagehdr .sp { flex: 1; display: flex; justify-content: center; min-width: 0; }
+.btn { font: inherit; font-size: 12px; color: var(--pb-12); background: var(--pb-1); border: 1px solid var(--pb-7); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+.btn:hover { background: var(--pb-4); }
+.chip { font-size: 12px; color: var(--pb-11); border: 1px solid var(--pb-6); border-radius: 6px; padding: 2px 8px; }
+.gbody { position: relative; display: grid; grid-template-columns: 300px minmax(0, 1fr) auto; min-height: 0; }
+.statusbar { border-top: 1px solid var(--pb-6); font-size: 11px; color: var(--pb-11); display: flex; align-items: center; gap: 18px; padding: 0 12px; background: var(--pb-2); }
+.statusbar kbd { font-family: var(--pb-font-mono); font-size: 10.5px; border: 1px solid var(--pb-7); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--pb-12); background: var(--pb-1); }
+
+.tree { border-right: 1px solid var(--pb-7); overflow: hidden; background: var(--pb-1); }
+.thdr { box-sizing: border-box; border-bottom: 1px solid var(--pb-7); background: var(--pb-2); font-size: 11px; color: var(--pb-11); }
+.thdr > div { box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--pb-6); }
+.thdr > div:last-child { border-bottom: 0; }
+.thdr b { font-weight: 600; color: var(--pb-12); font-size: 11px; }
+.thdr .mono { font-size: 10.5px; }
+.tr { position: relative; height: 28px; display: flex; align-items: center; gap: 6px; padding-right: 8px; cursor: pointer; white-space: nowrap; }
+.tr.hov { background: color-mix(in srgb, var(--pb-4) 70%, transparent); }
+.tr.hov::after, .tr.sel::after { content: ''; position: absolute; right: -1px; top: 5px; bottom: 5px; width: 3px; border-radius: 2px 0 0 2px; background: var(--g-bar); }
+.tr.sel { background: color-mix(in srgb, var(--pb-9) 14%, transparent); box-shadow: inset 2px 0 0 var(--pb-9); }
+.tr .caret { width: 16px; height: 16px; border: 0; background: none; color: var(--pb-11); cursor: pointer; padding: 0; font-size: 10px; flex: none; }
+.tr .caret-sp { width: 16px; flex: none; }
+.tr .st { width: 14px; text-align: center; flex: none; font-size: 11px; color: var(--pb-11); }
+.tr .st.in_progress { color: var(--pb-9); }
+.tr .id { font-family: var(--pb-font-mono); font-size: 11.5px; color: var(--pb-11); flex: none; font-variant-numeric: tabular-nums; }
+.tr .ttl { overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 4em; }
+.tr .od { color: var(--pb-danger-text); flex: none; font-size: 12px; }
+.tr.done .ttl, .tr.done .id { color: var(--pb-11); }
+.tr.done .ttl { opacity: .8; }
+
+.chart { position: relative; overflow-x: auto; overflow-y: hidden; min-width: 0; cursor: default; }
+.spacer { height: 1px; }
+.chart svg { position: absolute; top: 0; left: 0; display: block; }
+
+/* 詳細ペイン：既定は浮かせる。押し込むに切り替えて比べられる */
+.detail { width: var(--dw, 380px); background: var(--pb-1); border-left: 1px solid var(--pb-7); position: relative; container-type: inline-size; overflow: hidden; display: flex; flex-direction: column; }
+/* 浮かせたペインは無彩色の半透明（彩度は 8.1 の純灰禁止に合わせて 0.004 だけ基調色を含む） */
+.app[data-pane="float"] .detail {
+  --g-pane-bg: oklch(0.975 0.004 var(--pb-hue) / .84);
+  --g-pane-line: oklch(0.80 0.004 var(--pb-hue));
+  position: absolute; top: 6px; right: 6px; bottom: 6px; z-index: 5;
+  background: var(--g-pane-bg);
+  /* 裏の土日祝の色で赤みが差さないよう、ぼかしと一緒に彩度を落とす */
+  -webkit-backdrop-filter: blur(14px) saturate(.4); backdrop-filter: blur(14px) saturate(.4);
+  border: 1px solid var(--g-pane-line);
+  border-radius: 8px; box-shadow: var(--g-pane-shadow);
+}
+/* HUD：浮かせたペインの四隅に鉤括弧（バーと同じ製図の記号） */
+[data-pal="hud"] .app[data-pane="float"] .detail::before {
+  content: ''; position: absolute; inset: 3px; pointer-events: none; z-index: 3;
+  --k: 14px; --t: 1.5px;
+  background:
+    linear-gradient(var(--g-neon), var(--g-neon)) top left / var(--k) var(--t) no-repeat,
+    linear-gradient(var(--g-neon), var(--g-neon)) top left / var(--t) var(--k) no-repeat,
+    linear-gradient(var(--g-neon), var(--g-neon)) top right / var(--k) var(--t) no-repeat,
+    linear-gradient(var(--g-neon), var(--g-neon)) top right / var(--t) var(--k) no-repeat,
+    linear-gradient(var(--g-neon), var(--g-neon)) bottom left / var(--k) var(--t) no-repeat,
+    linear-gradient(var(--g-neon), var(--g-neon)) bottom left / var(--t) var(--k) no-repeat,
+    linear-gradient(var(--g-neon), var(--g-neon)) bottom right / var(--k) var(--t) no-repeat,
+    linear-gradient(var(--g-neon), var(--g-neon)) bottom right / var(--t) var(--k) no-repeat;
+  filter: var(--g-glow);
+}
+.detail[hidden] { display: none; }
+.dgrip { position: absolute; left: -1px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; }
+.dgrip:hover, .dgrip.drag { background: color-mix(in srgb, var(--pb-8) 60%, transparent); }
+.dinner { padding: 0 14px 16px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.dhdr { height: 44px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--pb-6); margin: 0 -14px 12px; padding: 0 8px 0 14px; }
+.dhdr .id { font-family: var(--pb-font-mono); font-size: 12px; color: var(--pb-11); }
+.dhdr .dt { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dhdr button { border: 0; background: none; color: var(--pb-11); cursor: pointer; font-size: 14px; width: 28px; height: 28px; border-radius: 6px; }
+.dhdr button:hover { background: var(--pb-4); }
+.dmeta { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px 16px; margin: 0 0 14px; }
+@container (min-width: 480px) { .dmeta { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.dmeta div { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.dmeta dt { width: 5.5em; flex: none; font-size: 12px; color: var(--pb-11); }
+.dmeta dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.dsec h3 { font-size: 12px; font-weight: 600; color: var(--pb-11); border-bottom: 1px solid var(--pb-6); padding-bottom: 2px; margin: 12px 0 6px; }
+.dsec ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.dsec li { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; }
+.tag { font-family: var(--pb-font-mono); font-size: 10.5px; border: 1px solid var(--pb-7); border-radius: 3px; padding: 0 4px; color: var(--pb-11); flex: none; }
+.tag.ai { border-color: var(--pb-ai-border); color: var(--pb-ai-text); border-style: dashed; }
+.dnote { font-size: 11.5px; color: var(--pb-11); margin: 14px 0 0; border-top: 1px dashed var(--pb-6); padding-top: 8px; }
+
+/* ── SVG ── */
+.c-sat { fill: var(--g-sat); }
+.c-sun { fill: var(--g-sun); }
+.c-hol { fill: url(#holHatch); }
+.c-holbg { fill: var(--g-sun); }
+[data-cal="other"] .c-sat, [data-cal="other"] .c-sun { fill: var(--g-wkend); }
+.hol-line { stroke: var(--g-hol-line); stroke-width: 1; }
+.spr { fill: none; stroke: var(--g-neon); stroke-width: 1.25; opacity: .45; filter: var(--g-glow); }
+.spr.plan { stroke-dasharray: 5 4; opacity: .85; }
+.spr.act { stroke: var(--g-neon-act); stroke-width: 1.5; opacity: 1; filter: var(--g-glow-act); }
+.sprl { fill: var(--pb-11); font: 10.5px var(--pb-font-mono); }
+.sprl.act { fill: var(--g-neon-act); font-weight: 600; }
+.rowhi { fill: color-mix(in srgb, var(--pb-4) 70%, transparent); }
+.rowsel { fill: color-mix(in srgb, var(--pb-9) 13%, transparent); }
+.g-min { stroke: var(--pb-6); stroke-width: 1; opacity: var(--g-min-op); }
+.g-sub { stroke: var(--pb-6); stroke-width: 1; stroke-dasharray: 1 3; opacity: var(--g-sub-op); }
+.g-maj { stroke: var(--pb-7); stroke-width: 1; }
+.g-row { stroke: var(--pb-6); stroke-width: 1; opacity: var(--g-rule-op); }
+.g-cross { stroke: var(--pb-8); stroke-width: 1; fill: none; opacity: .7; }
+.g-vmid { stroke: var(--pb-8); stroke-width: 1; stroke-dasharray: 1 3; }
+.g-now { stroke: var(--g-bar); stroke-width: 1.25; filter: var(--g-bar-glow); }
+.leader { stroke: var(--g-bar); stroke-width: 1; stroke-dasharray: 1 3; opacity: .9; }
+.h-bg { fill: var(--pb-2); }
+.h-line { stroke: var(--pb-7); stroke-width: 1; }
+.h-vbg { fill: var(--pb-1); }
+.h-maj { fill: var(--pb-12); font: 600 11px var(--pb-font-mono); }
+.h-min { fill: var(--pb-11); font: 10.5px var(--pb-font-mono); }
+.h-tick { stroke: var(--pb-7); stroke-width: 1; }
+.h-tmaj { stroke: var(--pb-8); stroke-width: 1; }
+.h-v { fill: var(--pb-11); font: 10px var(--pb-font-mono); }
+.h-vtick { stroke: var(--pb-8); stroke-width: 1; }
+.h-now { fill: var(--g-bar); }
+.h-nowt { fill: var(--g-bar); font: 600 10px var(--pb-font-mono); }
+
+.b { stroke: var(--g-bar-line); stroke-width: 1; }
+.b:not(.done) { filter: var(--g-bar-glow); }
+.b.todo { fill: url(#hatchA); }
+.b.in_progress { fill: var(--g-bar-fill); }
+.b.review { fill: var(--g-bar-fill); stroke-dasharray: 3 2; }
+.b.done { fill: var(--g-done-fill); stroke: var(--g-done-line); }
+.br { stroke: var(--pb-11); stroke-width: 1; fill: none; }
+.ms { stroke: var(--g-bar-line); stroke-width: 1.5; fill: none; filter: var(--g-bar-glow); }
+.ms.done { stroke: var(--g-done-line); }
+.ms-tail { stroke: var(--g-bar); stroke-width: 1; stroke-dasharray: 2 2; opacity: .75; }
+.ms-tail.done { stroke: var(--g-done-line); }
+.ms-dot { fill: var(--g-bar); }
+.ms-dot.done { fill: var(--g-done-line); }
+.hatch { stroke: var(--g-bar-line); stroke-width: 1; opacity: var(--g-hatch-op); }
+.lbl { fill: var(--pb-11); font: 10.5px var(--pb-font-mono); }
+.lbl .lid { fill: var(--pb-12); font-weight: 600; }
+.lbl.done, .lbl.done .lid { fill: var(--pb-11); font-weight: 400; opacity: .8; }
+.od { fill: var(--pb-danger-text); font: 12px var(--pb-font); }
+.edge { fill: color-mix(in srgb, var(--pb-1) 90%, transparent); stroke: var(--pb-7); stroke-width: 1; }
+.edge-t { fill: var(--pb-11); font: 10px var(--pb-font-mono); }
+.edge-g { cursor: pointer; }
+.edge-g:hover .edge { stroke: var(--g-bar); }
+.edge-g:hover .edge-t { fill: var(--pb-12); }
+
+.d { fill: none; stroke: var(--g-dep); stroke-width: 1; }
+.d-h { fill: var(--g-dep); }
+.d-s { fill: var(--pb-1); stroke: var(--g-dep); stroke-width: 1; }
+.dep.hi .d { stroke: var(--g-dep-hi); stroke-width: 1.5; }
+.dep.hi .d-h { fill: var(--g-dep-hi); }
+.dep.hi .d-s { stroke: var(--g-dep-hi); }
+.dep.ai .d { stroke: var(--pb-ai); stroke-dasharray: 4 3; }
+.dep.blk .d { stroke-width: 1.8; stroke-dasharray: 8 3 2 3; }
+.dep.blk.hi .d { stroke-width: 2.3; }
+.d-stop { stroke: var(--g-dep); stroke-width: 3; stroke-linecap: square; }
+.dep.hi .d-stop { stroke: var(--g-dep-hi); }
+.dep.ai .d-h { fill: var(--pb-ai); }
+.dep.ai .d-s { stroke: var(--pb-ai); }
+.d-tagr { fill: var(--pb-1); stroke: var(--pb-7); stroke-width: 1; }
+.d-tagt { fill: var(--pb-11); font: 9.5px var(--pb-font-mono); }
+.dep.ai .d-tagr { stroke: var(--pb-ai-border); stroke-dasharray: 2 1.5; }
+.dep.ai .d-tagt { fill: var(--pb-ai-text); }
+
+/* 配下の期間（寸法線） */
+.roll { stroke: var(--pb-11); stroke-width: 1; fill: none; }
+.roll-h { fill: var(--pb-11); }
+.roll.done { stroke: var(--g-done-line); }
+.roll-h.done { fill: var(--g-done-line); }
+.lbl .lsub { fill: var(--pb-11); font-weight: 400; }
+.roll-bg { fill: var(--pb-1); }
+/* カーソル */
+.cur-v { stroke: var(--g-bar); stroke-width: 1; stroke-dasharray: 2 3; opacity: .75; }
+.tip { fill: color-mix(in srgb, var(--pb-1) 92%, transparent); stroke: color-mix(in srgb, var(--g-bar) 55%, var(--pb-7)); stroke-width: 1; }
+.tip-id { fill: var(--g-bar); font: 600 11px var(--pb-font-mono); }
+.tip-t { fill: var(--pb-12); font: 11.5px var(--pb-font); }
+.tip-d { fill: var(--pb-11); font: 10.5px var(--pb-font-mono); }
+.curr { fill: var(--g-bar); }
+.curr-t { fill: var(--pb-1); font: 600 10px var(--pb-font-mono); }
+/* 「今」の札 */
+.now-box { fill: var(--g-hdr-bg); stroke: var(--g-bar); stroke-width: 1; }
+/* ── HUD 配色 ── */
+[data-pal="hud"] .c-sat { fill: url(#gSat); }
+[data-pal="hud"] .c-sun { fill: url(#gSun); }
+[data-pal="hud"] .hol-line { stroke: var(--g-hol-hud); }
+.mk-sat { fill: var(--g-sat-mark); }
+.mk-sun { fill: var(--g-sun-mark); }
+[data-pal="note"] .mk-sat, [data-pal="note"] .mk-sun { display: none; }
+[data-pal="hud"] .h-bg { fill: var(--g-hdr-bg); }
+[data-pal="hud"] .h-line.hb { stroke: color-mix(in srgb, var(--g-bar) 60%, var(--pb-7)); }
+[data-pal="hud"] .br { stroke: color-mix(in srgb, var(--g-bar) 75%, var(--pb-11)); }
+[data-pal="hud"] .b.in_progress, [data-pal="hud"] .b.review { filter: var(--g-bar-glow); }
+[data-pal="hud"] .g-now { filter: var(--g-bar-glow); stroke-width: 1.5; }
+[data-pal="hud"] .h-maj { letter-spacing: .06em; }
+.gst-sat1 { stop-color: var(--g-sat-top); }
+.gst-sat2 { stop-color: var(--g-sat-bot); }
+.gst-sun1 { stop-color: var(--g-sun-top); }
+.gst-sun2 { stop-color: var(--g-sun-bot); }
+
+/* ── 説明 ── */
+.legend { display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: flex-start; }
+.legend figure { margin: 0; display: grid; gap: 4px; }
+.legend figcaption { font-size: 11px; color: var(--pb-11); }
+.legend svg { display: block; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 28px 40px; align-items: start; }
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; vertical-align: top; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--pb-6); }
+th { font-weight: 600; font-size: 12px; color: var(--pb-11); white-space: nowrap; }
+td.k { color: var(--pb-11); white-space: nowrap; font-size: 12px; }
+ol.rules, ol.asks { margin: 0; padding-left: 1.4em; display: grid; gap: 8px; max-width: 76ch; }
+ol.rules li::marker, ol.asks li::marker { font-family: var(--pb-font-mono); color: var(--pb-11); font-size: 12px; }
+section > h2 { margin-bottom: 10px; }
+code { font-family: var(--pb-font-mono); font-size: 12px; background: var(--pb-3); border-radius: 3px; padding: 0 3px; }
+.note { font-size: 12px; color: var(--pb-11); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="page" id="page" data-pal="note">
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <pattern id="hatchA" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line class="hatch" x1="0" y1="0" x2="0" y2="5"></line>
+      </pattern>
+      <linearGradient id="gSat" x1="0" y1="0" x2="0" y2="1"><stop class="gst-sat1" offset="0"></stop><stop class="gst-sat2" offset="1"></stop></linearGradient>
+      <linearGradient id="gSun" x1="0" y1="0" x2="0" y2="1"><stop class="gst-sun1" offset="0"></stop><stop class="gst-sun2" offset="1"></stop></linearGradient>
+      <pattern id="holHatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+        <line class="hol-line" x1="0" y1="0" x2="0" y2="8"></line>
+      </pattern>
+    </defs>
+  </svg>
+
+  <header class="intro">
+    <div>
+      <div class="eyebrow">PB · pb-218 · ガント /p/:key/gantt · 第6版（A 製図・手帳の配色）</div>
+      <h1>ガント画面のデザイン案</h1>
+      <p>第5版への指摘を入れました。土日祝の色は見る人のタイムゾーンで決まります（右上で Asia/Tokyo か Asia/Seoul を選ぶと日本・韓国の配色になります）。「今」は 2026-09-29 22:10（Asia/Tokyo）に固定しています。</p>
+    </div>
+    <div class="controls">
+      <div class="ctl">テーマ
+        <div class="seg" id="segTheme">
+          <button type="button" id="th-sys" data-v="" aria-pressed="true">システム</button>
+          <button type="button" id="th-light" data-v="light" aria-pressed="false">ライト</button>
+          <button type="button" id="th-dark" data-v="dark" aria-pressed="false">ダーク</button>
+        </div>
+      </div>
+      <div class="ctl">色相
+        <div class="seg" id="segHue">
+          <button type="button" id="hu-blue" data-v="blue" aria-pressed="true">ブルー</button>
+          <button type="button" id="hu-green" data-v="green" aria-pressed="false">グリーン</button>
+        </div>
+      </div>
+      <div class="ctl">詳細ペイン
+        <div class="seg" id="segPane">
+          <button type="button" id="pa-float" data-v="float" aria-pressed="true">浮かせる</button>
+          <button type="button" id="pa-push" data-v="push" aria-pressed="false">押し込む</button>
+        </div>
+      </div>
+      <label class="ctl" for="vtz">見る人のタイムゾーン
+        <select id="vtz">
+          <option value="Asia/Tokyo">Asia/Tokyo（基準と同じ）</option>
+          <option value="America/Los_Angeles" selected>America/Los_Angeles</option>
+          <option value="Asia/Seoul">Asia/Seoul</option>
+          <option value="Europe/Berlin">Europe/Berlin</option>
+          <option value="Asia/Kolkata">Asia/Kolkata</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <div class="mock-scroll">
+    <div class="app" id="app" data-hue="blue" data-pane="float">
+      <nav class="rail" aria-label="メインメニュー（畳んだ状態）">
+        <span title="メニュー">☰</span><span title="プロジェクト一覧">⌂</span><hr>
+        <span title="ダッシュボード">▤</span><span title="バックログ">☑</span><span class="on" title="ガント">▥</span><span title="検索">⌕</span><span title="プロジェクト設定">⚙</span>
+      </nav>
+      <div class="content">
+        <div class="pagehdr">
+          <h2>ガント</h2>
+          <span class="chip">絞り込み ▾</span>
+          <span class="chip">グループ化：なし ▾</span>
+          <span class="sp"></span>
+          <div class="seg" id="segZoom" aria-label="拡大縮小の段階"></div>
+          <button type="button" class="btn" id="btnNow">今日</button>
+          <button type="button" class="btn" title="集中モード（pb-222）。メインメニューを 0px まで畳む">⛶ 集中</button>
+        </div>
+        <div class="gbody" id="gbody">
+          <div class="tree" id="tree"><div class="thdr" id="thdr"></div><div id="trows"></div></div>
+          <div class="chart" id="chart"><div class="spacer" id="spacer"></div><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+          <aside class="detail" id="detail" hidden>
+            <div class="dgrip" id="dgrip" title="ドラッグで幅を変える"></div>
+            <div class="dinner" id="dinner"></div>
+          </aside>
+        </div>
+        <div class="statusbar">
+          <span><kbd>⌘/Ctrl</kbd>＋ホイール 滑らかに拡大縮小</span>
+          <span><kbd>⌘/Ctrl</kbd>＋<kbd>⇧</kbd>＋ホイール 段階ごと</span>
+          <span><kbd>⇧</kbd>＋ホイール 横へ送る</span>
+          <span>端の札をクリック その帯へ送る</span>
+          <span class="mono" id="sbZoom"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section>
+    <h2>凡例</h2>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section>
+    <h2>第6版で変えたこと</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>いただいた点</th><th>どう描いたか</th></tr></thead>
+        <tbody>
+          <tr><td class="k">暦の地域は見る人のタイムゾーンで</td><td>見る人のタイムゾーンが Asia/Tokyo か Asia/Seoul なら「土＝青、日祝＝赤」、それ以外なら「土日＝灰、祝＝赤」にします。<b>何日が休日かはプロジェクトの暦で決まり、見る人で変わるのは塗り方の慣習だけ</b>です</td></tr>
+          <tr><td class="k">週末の曜日が違う地域</td><td>別のチケット（pb-227）として起票しました</td></tr>
+          <tr><td class="k"><code>blocks</code> を太く</td><td>線を 1px から 1.8px に（強調時 2.3px）、止め（⊣）を 3px・高さ 12px にしました</td></tr>
+          <tr><td class="k">ダークの詳細ペインが明るすぎる</td><td>中間の濃さのチャコールグレーにしました（明度 0.275・不透明度 90%。画面の地 0.17 より一段明るく浮く）。本文は明度 0.93、見出しと補助の文字は 0.68、区切り線は 0.37 です</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>第5版で変えたこと</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>いただいた点</th><th>どう描いたか</th></tr></thead>
+        <tbody>
+          <tr><td class="k">時計は採らない</td><td>外しました</td></tr>
+          <tr><td class="k">詳細ペインを無彩色に</td><td>基調色を混ぜるのをやめ、ほぼ無彩色（彩度 0.004。8.1 の「純灰を使わない」に合わせてわずかに基調色を含む）の半透明にしました。ライトは明度 0.975・不透明度 84%。<b>ダークでも明るいグレー（明度 0.84・不透明度 88%）の面に濃い文字</b>を載せます。ペインの中だけ文字と線の色を明るい面用に差し替え、本文は 12:1 前後、補助の文字は 6:1 前後のコントラストにしています</td></tr>
+          <tr><td class="k"><code>blocks</code> を別のものと分かるように</td><td>線を一点鎖線にし、受け側の端を矢印ではなく<b>止め（⊣）</b>にしました。「先行が終わるまで止める」を形で示します。経路は FS と同じ（終わり→始まり）です</td></tr>
+          <tr><td class="k">地域で土日祝の色を変える</td><td>「暦の地域」で切り替えて見比べられます。<b>日本・韓国</b>は 土＝青み、日祝＝赤み。<b>その他</b>は 土日＝淡い灰、祝日＝赤み＋斜線です。祝日を赤で刷る慣習（red letter day）は欧州・北欧・香港・インドネシア・中南米の一部にもありますが、土曜を青くするのは日本と韓国の慣習だからです</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>第4版で変えたこと（手帳の配色をもとに。時計は第5版で外した）</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>いただいた点</th><th>どう描いたか</th></tr></thead>
+        <tbody>
+          <tr><td class="k">スプリントのネオン</td><td>進行中はオレンジ、それ以外はシアンにしました。どちらも発光させ、計画中は破線、完了は薄くしています。進行中の名前もオレンジで出します</td></tr>
+          <tr><td class="k">祝日の斜線・土日の塗りを控えめに</td><td>塗りの濃さを約6割に落としました。斜線は間隔を 6px から 8px へ広げ、濃さをライトで約半分、ダークで約4割に落としています</td></tr>
+          <tr><td class="k">行と日の区切り線を控えめに</td><td>日の縦線を 0.8 から 0.45（ダーク 0.55）へ、行の横線を 0.45 から 0.3（ダーク 0.7 から 0.4）へ下げました。大目盛りの十字も少し薄くしています</td></tr>
+          <tr><td class="k">ネオンの重なり順</td><td>描く順を、土日祝 → 格子 → <b>スプリントの枠</b> → 「今」の線 → 依存線 → バーに変えました。枠が日の線で分断されなくなります</td></tr>
+          <tr><td class="k">ダークでバーを輝かせる</td><td>ダークでだけ、完了以外のバーとマイルストーンに弱い発光（ぼかし半径 2.5px）を付け、枠線を明るい段へ寄せ、塗りを 36% から 42% に上げました。文字と依存線には付けていません（読みやすさを優先）</td></tr>
+          <tr><td class="k">30分・15分の極薄の点線</td><td>1日の幅が 1200px 以上（分の段階の手前）で 30分ごと、3600px 以上で 15分ごとに点線を引きます。拡大の上限を 4000px から 5760px（1分 = 4px）へ上げ、15分の点線が見える余地を作りました</td></tr>
+          <tr><td class="k">ヘッダの時計（遊び）</td><td>ページヘッダの空きに置きました。プレートに年と日付、刻みのあるベゼルのアナログ時計です。<b>見る人のタイムゾーン</b>の時刻を出し、秒針はオレンジで1秒ごとに進みます（動きを減らす設定のときは秒針を出さない）。ダークではプレートを明るく反転させ、貼っていただいた画像の見え方に寄せています</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>第3版で変えたこと（HUD 配色は採らない）</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>いただいた点</th><th>どう描いたか</th></tr></thead>
+        <tbody>
+          <tr><td class="k">ネオンの色が切り替わらない</td><td>デモの不具合でした。色を組み立てる変数をページの根元で計算していたため、切り替えた値が下へ届いていませんでした。グリーンの色相でガントの線だけ青のまま残っていたのも同じ原因です。切り替える要素の上で計算するように直しました（実装でも同じ罠があるので、章に書きます）</td></tr>
+          <tr><td class="k">近未来感を色で出す</td><td>「HUD」配色を足しました。① 土日祝の塗りを、上端が濃く下へ消えていく光の柱にし、ヘッダの日付の下に 2px の標示線を引く。② 色相を暦の赤（h=20）から、ディスプレイ寄りの青緑（h=228）とマゼンタ（h=350）に寄せる。③ ダークでは進行中のバーと「今」の線を発光させる。④ ヘッダの地にわずかに基調色を混ぜ、下端の線を基調色にする。⑤ 浮かせたペインの四隅に、ネオンの鉤括弧を付ける</td></tr>
+          <tr><td class="k">浮かせたペインが赤みがかる</td><td>裏の日曜・祝日の赤がぼかしで広がっていました。ぼかしと一緒に裏の彩度を 40% まで落とし、面そのものに基調色を混ぜて寒色のガラスにしました（ライト 5%、ダーク 14%）。裏で何かが流れている見え方は残しています</td></tr>
+          <tr><td class="k">「今」の時刻が日付と重なる</td><td>時刻の札をヘッダの最上段（年月の行）へ上げ、枠で囲みました。三角は日付の行の上端に残し、線はそこから下へ引きます</td></tr>
+          <tr><td class="k">日付の無い親に期間を描く</td><td>配下のうち最も早い開始から最も遅い終了までを、<b>製図の寸法線</b>（両端の縦線と、外を向いた矢印）で描きます。バーと形を変えて、自分の予定ではなく配下から導いた範囲だと分かるようにしました。文字は <span class="mono">pb-88 配下 09/24–11/03</span> です。親を畳んでも出ます。依存線は寸法線に繋ぎません（自分の予定ではないため）</td></tr>
+          <tr><td class="k">カーソルの縦横の点線と札</td><td>帯の上でポインタを動かすと、縦の点線と、下端にその位置の日付（拡大すると時刻）を出します。横は第2版の対応線です。行の上ではチケットの ID・タイトル・期間の札がポインタの横に出ます</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>第2版で変えたこと</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>いただいた点</th><th>どう描いたか</th><th>設計文書との関係</th></tr></thead>
+        <tbody>
+          <tr><td class="k">色彩を増やす</td><td>スプリント枠をネオンにした（下記）。土・日・祝に淡い色を敷いた。ダークでは進行中のバーを明るい段（step 10）で描き、塗りを濃くした</td><td rowspan="3">8.1 の「有彩色は3つだけ」と 8.6 の「装飾に色を使わない」の<b>例外</b>になる。ガントの章に「ガントだけが使う色」として書き、8.6 の表にも1行足す</td></tr>
+          <tr><td class="k">背景だけで土・日・祝を見分ける</td><td>土＝青み、日＝赤み、祝＝赤み＋斜線。色が見分けにくい人でも、祝日は斜線で分かる（8.9）。日本の暦の慣習（土は青、日祝は赤）に揃えた</td></tr>
+          <tr><td class="k">スプリントをネオンの枠に</td><td>塗りをやめ、角丸の枠線だけにした。進行中は実線で発光させ、完了は薄く、計画中は破線にする。名前も進行中だけネオンの色で出す。色は切り替えて比べられる（シアン／ピンク）</td></tr>
+          <tr><td class="k">ダークで見づらい</td><td>完了のバー・依存線・斜線・行の罫の明るさを、ダークでだけ引き上げた。ガント専用のトークン（<code>--g-*</code>）に分け、ライトの見え方は変えていない</td><td>8.5 のトークン表に足す</td></tr>
+          <tr><td class="k">行と帯の対応付け</td><td>① 帯の横の文字に ID を入れた（<span class="mono">pb-220 10/08–10/20</span>）。② ポインタを載せた行は、左端から帯まで点線を引き、ツリー側の右端にも印を出す。③ 画面の外にある帯は、端に札を出す（<span class="mono">◂ pb-216 09/27</span>）。札をクリックすると、その帯まで送る</td><td>—</td></tr>
+          <tr><td class="k">詳細を浮かせる</td><td>不透明度 88% の面にぼかしを掛け、ガントの上に浮かせた。開いたときに選んだ帯がペインの下に隠れるなら、帯が見える位置まで時間軸を送る。右端の札もペインの左へ寄せる</td><td>2.2.1 は「重ねない」と決めている。<b>ガントでは例外にする</b>。バックログで重ねないのは、覆われた列が読めないのに在る状態になるためだが、ガントの時間軸は送れば見えるので、この理由が当たらない</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="cols">
+    <section>
+      <h2>全案に共通の規則（第1版から引き継ぐもの）</h2>
+      <ol class="rules">
+        <li><b>時間軸ヘッダは2段。</b>上の段は基準タイムゾーンで、大目盛りと小目盛りの2行を持つ。下の段は見る人のタイムゾーンで、基準と違うときだけ出す。見る人の0時には、本体まで点線を引く。</li>
+        <li><b>描く順番</b>は、土日祝の塗り → 格子（行の強調・対応線を含む）→ スプリントの枠 → 「今」の線 → 依存線 → バー → 端の札（第4版で変更）。</li>
+        <li><b>日付の有無による出し分け。</b>両方なしは行だけ、開始のみは <span class="mono">[┄</span>、終了のみは <span class="mono">┄]</span>、両方あればバーで描く。<b>両方なしでも配下に日付があれば、配下の期間を寸法線で描く</b>（第3版）。</li>
+        <li><b>完了は行ごと沈める。</b>期限超過は終わりの右に <span style="color:var(--pb-danger-text)">⚠</span>。</li>
+        <li><b>依存は色に頼らず、4つの手がかりで読み分ける。</b>出入りする端、○ と ▶、FS 以外の札、ずらしの日数。<code>blocks</code> は一点鎖線で、受け側の端を止め（⊣）にする（第5版）。未確認の AI 提案は紫の破線にする。</li>
+        <li><b>行の高さは 28px。</b>詳細ペインは既定 380px、320〜560px のあいだで変えられ、480px 未満ではメタ情報を1列にする。幅は <code>pb.gantt_detail_pane_w</code> に覚える。</li>
+      </ol>
+    </section>
+    <section>
+      <h2>判断してほしいこと</h2>
+      <ol class="asks">
+        <li><b>この版で <code>GuiDesign.md</code> の章を書き始めてよいか。</b>残る細部（色の値など）は、章を書いたあとでも直せます。</li>
+        <li><b>描画ライブラリを入れず自前で描く、という調達方針</b>を、PB の「判断の記録」に書いてよいか。</li>
+      </ol>
+    </section>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const DAY = 86400000, RH = 28, BASE = 'Asia/Tokyo';
+const WD = '日月火水木金土';
+const pad = n => String(n).padStart(2, '0');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ── タイムゾーン ── */
+const fmts = {};
+function parts(tz, ms) {
+  const f = fmts[tz] || (fmts[tz] = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23',
+    year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }));
+  const o = {};
+  for (const p of f.formatToParts(ms)) o[p.type] = p.value;
+  return { y: +o.year, m: +o.month, d: +o.day, h: (+o.hour) % 24, mi: +o.minute, s: +o.second };
+}
+function offset(tz, ms) {
+  const p = parts(tz, ms);
+  return Date.UTC(p.y, p.m - 1, p.d, p.h, p.mi, p.s) - Math.floor(ms / 1000) * 1000;
+}
+function wall(tz, y, m, d, h = 0, mi = 0) {
+  const g = Date.UTC(y, m - 1, d, h, mi);
+  let t = g - offset(tz, g);
+  t = g - offset(tz, t);
+  return t;
+}
+function days(tz, ta, tb) {
+  const p = parts(tz, ta), out = [];
+  for (let i = -1; out.length < 1200; i++) {
+    const t = wall(tz, p.y, p.m, p.d + i);
+    if (t > tb) break;
+    const dt = new Date(Date.UTC(p.y, p.m - 1, p.d + i));
+    out.push({ t, tn: wall(tz, p.y, p.m, p.d + i + 1), y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate(), wd: dt.getUTCDay() });
+  }
+  return out;
+}
+const tzf = {};
+function tzShort(tz, ms) {
+  const f = tzf[tz] || (tzf[tz] = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' }));
+  return (f.formatToParts(ms).find(p => p.type === 'timeZoneName') || {}).value || tz;
+}
+const D = (m, d, h = 0, mi = 0) => wall(BASE, 2026, m, d, h, mi);
+const md = t => { const p = parts(BASE, t); return `${pad(p.m)}/${pad(p.d)}`; };
+const ymd = t => { const p = parts(BASE, t); return `${p.y}-${pad(p.m)}-${pad(p.d)}`; };
+
+/* ── サンプルデータ ── */
+const T0 = D(9, 1), T1 = wall(BASE, 2027, 1, 1);
+const NOW = D(9, 29, 22, 10);
+const HOL = { '2026-09-21': '敬老の日', '2026-09-22': '国民の休日', '2026-09-23': '秋分の日', '2026-10-12': 'スポーツの日', '2026-11-03': '文化の日', '2026-11-23': '勤労感謝の日' };
+const dayKind = d => HOL[`${d.y}-${pad(d.m)}-${pad(d.d)}`] ? 'hol' : d.wd === 0 ? 'sun' : d.wd === 6 ? 'sat' : '';
+const SPRINTS = [
+  { name: 'Sprint 14', s: D(9, 14), e: D(9, 28), status: 'completed' },
+  { name: 'Sprint 15', s: D(9, 28), e: D(10, 12), status: 'active' },
+  { name: 'Sprint 16', s: D(10, 12), e: D(10, 26), status: 'planned' },
+  { name: 'Sprint 17', s: D(10, 26), e: D(11, 9), status: 'planned' },
+];
+const TK = [
+  { seq: 88, title: 'ガントチャート画面を提供する', st: 'in_progress', pr: '中' },
+  { seq: 216, parent: 88, title: 'プロジェクト設定で基準タイムゾーンと祝日カレンダーを持つ', st: 'done', s: D(9, 24), e: D(9, 28), ad: true },
+  { seq: 224, parent: 88, title: 'REST API の日時をエポックミリ秒に統一する', st: 'done', s: D(9, 27), e: D(9, 29), ad: true },
+  { seq: 217, parent: 88, title: 'チケットとスプリントの予定日時をタイムスタンプで持つ', st: 'done', s: D(9, 27), e: D(9, 30), ad: true },
+  { seq: 218, parent: 88, title: 'ガント画面のデザイン案を作り、利用者の承認を得る', st: 'in_progress', s: D(9, 29), e: D(10, 3), ad: true },
+  { seq: 219, parent: 88, title: 'ガント用に、チケットと依存を全件まとめて返す API', st: 'todo', s: D(10, 5), e: D(10, 9), ad: true },
+  { seq: 220, parent: 88, title: 'ガント画面（閲覧）を提供する', st: 'todo', s: D(10, 8), e: D(10, 21), ad: true, pr: '高' },
+  { seq: 221, parent: 88, title: 'ガント上のドラッグで予定日時と依存を編集する', st: 'todo', s: D(10, 21), e: D(10, 31), ad: true },
+  { seq: 222, parent: 88, title: 'メインメニューを 0px まで畳む集中モード', st: 'todo', e: D(10, 17), ad: true, pr: '低' },
+  { seq: 225, parent: 88, title: 'ガントの操作説明を書く', st: 'todo', s: D(10, 27), e: D(11, 4), ad: true },
+  { seq: 223, parent: 88, title: 'ガントを画面と同じデザインで Excel に出力する', st: 'todo', pr: '低' },
+  { seq: 240, title: 'stg を v3.1 へ上げる', st: 'in_progress' },
+  { seq: 241, parent: 240, title: '移行手順をリハーサルする', st: 'review', s: D(10, 6), e: D(10, 8), ad: true },
+  { seq: 242, parent: 240, title: 'stg の DB を移行する（21:00–23:30）', st: 'todo', s: D(10, 10, 21, 0), e: D(10, 10, 23, 30), ad: false },
+  { seq: 243, parent: 240, title: '受け入れを確認する', st: 'todo', s: D(10, 13), ad: true },
+  { seq: 215, title: '祝日の取得に失敗したときの表示を直す', st: 'in_progress', s: D(9, 25), e: D(9, 29), ad: true, pr: '高' },
+];
+const LINKS = [
+  { s: 216, t: 217, type: 'FS' },
+  { s: 224, t: 217, type: 'SS' },
+  { s: 218, t: 220, type: 'FS' },
+  { s: 219, t: 220, type: 'FS' },
+  { s: 220, t: 221, type: 'FS' },
+  { s: 220, t: 222, type: 'SF' },
+  { s: 221, t: 225, type: 'FF', lag: 2 },
+  { s: 220, t: 223, type: 'FS' },
+  { s: 241, t: 242, type: 'blocks' },
+  { s: 242, t: 243, type: 'FS', ai: true },
+];
+const BY = new Map(TK.map(t => [t.seq, t]));
+for (const t of TK) {
+  t.depth = t.parent ? BY.get(t.parent).depth + 1 : 0;
+  t.kids = TK.some(k => k.parent === t.seq);
+  t.overdue = t.e != null && t.e < NOW && t.st !== 'done';
+}
+/* 自分の予定を持たない親：配下の最も早い開始から最も遅い終了まで */
+for (const t of TK) {
+  if (!t.kids || t.s != null || t.e != null) continue;
+  let s = Infinity, e = -Infinity;
+  const walk = p => { for (const k of TK) if (k.parent === p) { const a = k.s ?? k.e, b = k.e ?? k.s; if (a != null) { s = Math.min(s, a); e = Math.max(e, b); } walk(k.seq); } };
+  walk(t.seq);
+  if (s < e) t.roll = { s, e };
+}
+const spanOf = t => t.s != null || t.e != null ? { s: t.s, e: t.e, roll: false } : t.roll ? { s: t.roll.s, e: t.roll.e, roll: true } : null;
+const STSYM = { todo: '○', in_progress: '●', review: '◐', done: '✓' };
+const STNAME = { todo: '未着手', in_progress: '進行中', review: 'レビュー中', done: '完了' };
+
+/* ── 状態 ── */
+const S = { ppd: 44, vtz: 'America/Los_Angeles', collapsed: new Set(), hover: null, sel: null };
+const LEVELS = [
+  { name: '分', ppd: 2880 }, { name: '時', ppd: 480 }, { name: '日', ppd: 44 },
+  { name: '週', ppd: 16 }, { name: '月', ppd: 5 }, { name: '四半期', ppd: 1.6 },
+];
+const PPD_MIN = 1.2, PPD_MAX = 5760;
+const $ = id => document.getElementById(id);
+const app = $('app'), chart = $('chart'), svg = $('svg'), spacer = $('spacer');
+let edges = [];
+
+function visibleRows() {
+  return TK.filter(t => { let p = t.parent; while (p) { if (S.collapsed.has(p)) return false; p = BY.get(p).parent; } return true; });
+}
+const floating = () => app.dataset.pane === 'float' && !$('detail').hidden;
+/* 帯を見せられる右端（浮かせたペインの左まで） */
+const freeRight = W => floating() ? W - $('detail').getBoundingClientRect().width - 12 : W;
+
+/* ── 目盛り ── */
+function scale(ppd) {
+  const pph = ppd / 24;
+  if (ppd >= 1200) return { maj: ['day'], min: ['min', 60], ml: 'hm', jl: 'date' };
+  if (ppd >= 150) { const st = [1, 2, 3, 6, 12].find(h => h * pph >= 36) || 12; return { maj: ['day'], min: ['min', st * 60], ml: 'hm', jl: 'date' }; }
+  if (ppd >= 20) return { maj: ['month', 1], min: ['day'], ml: ppd >= 38 ? 'dwd' : 'd', jl: 'ym' };
+  if (ppd >= 7) return { maj: ['month', 1], min: ['week'], ml: 'md', jl: 'ym' };
+  if (ppd >= 2.2) return { maj: ['year'], min: ['month', 1], ml: 'm', jl: 'y' };
+  return { maj: ['year'], min: ['month', 3], ml: 'q', jl: 'y' };
+}
+function ticks(u, tz, ta, tb) {
+  const [unit, step] = u;
+  if (unit === 'day') return days(tz, ta, tb);
+  if (unit === 'week') return days(tz, ta - 7 * DAY, tb).filter(d => d.wd === 1);
+  if (unit === 'min') {
+    const out = [];
+    for (const d of days(tz, ta, tb)) {
+      for (let m = 0; m < 1440; m += step) {
+        const t = wall(tz, d.y, d.m, d.d, 0, m);
+        if (t >= d.tn) break;
+        if (t < ta - step * 60000 || t > tb) continue;
+        out.push({ t, h: Math.floor(m / 60), mi: m % 60, y: d.y, m: d.m, d: d.d, wd: d.wd });
+      }
+    }
+    return out;
+  }
+  const p = parts(tz, ta), out = [];
+  if (unit === 'month') {
+    for (let i = -3; out.length < 200; i++) {
+      const dt = new Date(Date.UTC(p.y, p.m - 1 + i, 1));
+      const y = dt.getUTCFullYear(), m = dt.getUTCMonth() + 1, t = wall(tz, y, m, 1);
+      if (t > tb) break;
+      if ((m - 1) % step) continue;
+      out.push({ t, y, m });
+    }
+    return out;
+  }
+  for (let y = p.y; ; y++) { const t = wall(tz, y, 1, 1); if (t > tb) break; out.push({ t, y }); }
+  return out;
+}
+function tickLabel(k, x) {
+  switch (k) {
+    case 'hm': return `${pad(x.h)}:${pad(x.mi)}`;
+    case 'dwd': return `${x.d}(${WD[x.wd]})`;
+    case 'd': return `${x.d}`;
+    case 'md': return `${x.m}/${pad(x.d)}`;
+    case 'm': return `${x.m}月`;
+    case 'q': return `Q${(x.m - 1) / 3 + 1}`;
+    case 'date': return `${x.y}-${pad(x.m)}-${pad(x.d)}(${WD[x.wd]})`;
+    case 'ym': return `${x.y}-${pad(x.m)}`;
+    case 'y': return `${x.y}`;
+  }
+}
+const estW = (s, fs) => [...s].reduce((w, c) => w + (c.charCodeAt(0) > 255 ? fs : fs * 0.61), 0);
+
+/* ── 図形 ── */
+const f1 = v => (+v).toFixed(1);
+const L = (x1, y1, x2, y2, c) => `<line class="${c}" x1="${f1(x1)}" y1="${f1(y1)}" x2="${f1(x2)}" y2="${f1(y2)}"/>`;
+const R = (x, y, w, h, c, extra = '') => `<rect class="${c}" x="${f1(x)}" y="${f1(y)}" width="${f1(Math.max(0, w))}" height="${f1(h)}" ${extra}/>`;
+const TX = (x, y, s, c, anchor) => `<text class="${c}" x="${f1(x)}" y="${f1(y)}"${anchor ? ` text-anchor="${anchor}"` : ''}>${esc(s)}</text>`;
+
+function barSVG(x0, x1, y, st) {
+  let o = R(x0, y - 6, x1 - x0, 12, `b ${st}`);
+  if (st !== 'done') {
+    const a = 4, l = x0 - 2, r = x1 + 2, t = y - 8, b = y + 8;
+    o += `<path class="br" d="M${f1(l)},${t + a}V${t}H${f1(l + a)}M${f1(r - a)},${t}H${f1(r)}V${t + a}M${f1(l)},${b - a}V${b}H${f1(l + a)}M${f1(r - a)},${b}H${f1(r)}V${b - a}"/>`;
+  }
+  return o;
+}
+function msSVG(kind, x, y, st) {
+  const dn = st === 'done' ? ' done' : '', k = kind === 'start' ? 1 : -1;
+  return `<path class="ms-tail${dn}" d="M${f1(x)},${y}H${f1(x + k * 28)}"/><path class="ms${dn}" d="M${f1(x + k * 5)},${y - 7}H${f1(x)}V${y + 7}H${f1(x + k * 5)}"/><circle class="ms-dot${dn}" cx="${f1(x)}" cy="${y}" r="1.8"/>`;
+}
+/* 配下の期間：製図の寸法線（両端の縦線と、外を向いた矢印） */
+function rollSVG(x0, x1, y, st) {
+  const dn = st === 'done' ? ' done' : '';
+  let o = `<path class="roll${dn}" d="M${f1(x0)},${y - 8}V${y + 8}M${f1(x1)},${y - 8}V${y + 8}"/>`;
+  if (x1 - x0 >= 16) {
+    o += `<path class="roll${dn}" d="M${f1(x0 + 1)},${y}H${f1(x1 - 1)}"/>`;
+    o += `<path class="roll-h${dn}" d="M${f1(x0 + 0.5)},${y}L${f1(x0 + 7)},${y - 3}L${f1(x0 + 7)},${y + 3}ZM${f1(x1 - 0.5)},${y}L${f1(x1 - 7)},${y - 3}L${f1(x1 - 7)},${y + 3}Z"/>`;
+  }
+  return o;
+}
+function calSVG(kind, x, y, w, h) {
+  if (kind === 'sat') return R(x, y, w, h, 'c-sat');
+  if (kind === 'sun') return R(x, y, w, h, 'c-sun');
+  return R(x, y, w, h, 'c-holbg') + R(x, y, w, h, 'c-hol');
+}
+/* 依存線：a / b は {xs, xf, y, top} */
+function depSVG(type, a, b, opt, rh) {
+  const ty = type === 'blocks' ? 'FS' : type;
+  const se = ty[0], te = ty[1];
+  const x0 = se === 'F' ? a.xf : a.xs, y0 = a.y, dirS = se === 'F' ? 1 : -1, x1 = x0 + dirS * 9;
+  const xt = te === 'S' ? b.xs : b.xf, yt = b.y, ap = te === 'S' ? -1 : 1, xq = xt + ap * 9;
+  let d, tagX, tagY;
+  const simple = (ty === 'FF') || (ty === 'SS') || (ty === 'FS' && x1 <= xq) || (ty === 'SF' && x1 >= xq);
+  if (simple) {
+    const xm = ty === 'FF' ? Math.max(x1, xq) : ty === 'SS' ? Math.min(x1, xq) : x1;
+    d = `M${f1(x0)},${y0}H${f1(xm)}V${yt}H${f1(xt + ap * (type === 'blocks' ? 2 : 5))}`;
+    tagX = xm; tagY = (y0 + yt) / 2;
+  } else {
+    const ymid = yt > y0 ? b.top : b.top + rh;
+    d = `M${f1(x0)},${y0}H${f1(x1)}V${ymid}H${f1(xq)}V${yt}H${f1(xt + ap * (type === 'blocks' ? 2 : 5))}`;
+    tagX = x1; tagY = (y0 + ymid) / 2;
+  }
+  const blk = type === 'blocks';
+  const head = ap === -1 ? `M${f1(xt)},${yt}L${f1(xt - 6)},${yt - 3.5}L${f1(xt - 6)},${yt + 3.5}Z` : `M${f1(xt)},${yt}L${f1(xt + 6)},${yt - 3.5}L${f1(xt + 6)},${yt + 3.5}Z`;
+  let tag = '';
+  const words = [];
+  if (opt.ai) words.push('AI');
+  if (ty !== 'FS') words.push(ty);
+  if (opt.lag) words.push(`+${opt.lag}d`);
+  if (words.length) {
+    const s = words.join(' '), w = s.length * 5.9 + 6;
+    tag = R(tagX - w / 2, tagY - 6.5, w, 13, 'd-tagr', 'rx="2"') + TX(tagX, tagY + 3.4, s, 'd-tagt', 'middle');
+  }
+  const end = blk ? `<path class="d-stop" d="M${f1(xt - ap * 1.5)},${yt - 6}V${yt + 6}"/>` : `<path class="d-h" d="${head}"/>`;
+  return `<g class="dep${opt.ai ? ' ai' : ''}${blk ? ' blk' : ''}${opt.hi ? ' hi' : ''}"><path class="d" d="${d}"/><circle class="d-s" cx="${f1(x0)}" cy="${y0}" r="2.4"/>${end}${tag}</g>`;
+}
+function rangeLabel(t) {
+  if (!t.ad) {
+    const a = parts(S.vtz, t.s), b = parts(S.vtz, t.e);
+    return `${pad(a.m)}/${pad(a.d)} ${pad(a.h)}:${pad(a.mi)}–${pad(b.h)}:${pad(b.mi)} ${tzShort(S.vtz, t.s)}`;
+  }
+  if (t.s != null && t.e != null) return `${md(t.s)}–${md(t.e - 1)}`;
+  return t.s != null ? `${md(t.s)}–` : `–${md(t.e - 1)}`;
+}
+
+/* ── 描画 ── */
+let raf = 0;
+const req = () => { if (!raf) raf = requestAnimationFrame(render); };
+function geom() {
+  const showV = S.vtz !== BASE && S.ppd >= 20;
+  const hdrH = 34 + (showV ? 16 : 0), lane = 16;
+  return { showV, hdrH, lane, top: hdrH + lane };
+}
+function render() {
+  raf = 0;
+  const W = chart.clientWidth, H = chart.clientHeight;
+  spacer.style.width = ((T1 - T0) / DAY * S.ppd) + 'px';
+  const sl = chart.scrollLeft, ppd = S.ppd;
+  svg.style.left = sl + 'px';
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const ta = Math.max(T0 - DAY, T0 + sl / ppd * DAY), tb = Math.min(T1 + DAY, T0 + (sl + W) / ppd * DAY);
+  const X = t => (t - T0) / DAY * ppd - sl;
+  const { showV, hdrH, lane, top } = geom();
+  const rows = visibleRows();
+  const rowOf = new Map(rows.map((r, i) => [r.seq, i]));
+  const rowY = i => top + i * RH;
+  const sc = scale(ppd);
+  const fr = freeRight(W);
+  let o = '';
+
+  // 1. 土日祝（本体とヘッダの小目盛りの行）
+  const dayList = ppd >= 2.2 ? days(BASE, ta, tb) : [];
+  for (const d of dayList) {
+    const k = dayKind(d); if (!k) continue;
+    const x = X(d.t), w = X(d.tn) - x, hol = HOL[`${d.y}-${pad(d.m)}-${pad(d.d)}`];
+    o += `<g>${hol ? `<title>${hol}</title>` : ''}${calSVG(k, x, hdrH, w, H - hdrH)}</g>`;
+  }
+  // 2. 格子
+  rows.forEach((r, i) => {
+    if (r.seq === S.sel) o += R(0, rowY(i), W, RH, 'rowsel');
+    else if (r.seq === S.hover) o += R(0, rowY(i), W, RH, 'rowhi');
+  });
+  for (let i = 0; i <= rows.length; i++) o += L(0, rowY(i), W, rowY(i), 'g-row');
+  const minT = ticks(sc.min, BASE, ta, tb), majT = ticks(sc.maj, BASE, ta, tb);
+  const majSet = new Set(majT.map(m => m.t));
+  for (const m of minT) { if (majSet.has(m.t)) continue; const x = X(m.t); if (x >= -1 && x <= W + 1) o += L(x, top, x, H, 'g-min'); }
+  for (const m of majT) {
+    const x = X(m.t); if (x < -1 || x > W + 1) continue;
+    o += L(x, top, x, H, 'g-maj');
+    let p = ''; for (let i = 0; i <= rows.length; i += 4) { const y = rowY(i); p += `M${f1(x - 3.5)},${y}H${f1(x + 3.5)}M${f1(x)},${y - 3.5}V${y + 3.5}`; }
+    o += `<path class="g-cross" d="${p}"/>`;
+  }
+  if (showV) for (const d of days(S.vtz, ta, tb)) { const x = X(d.t); if (x >= 0 && x <= W) o += L(x, top, x, H, 'g-vmid'); }
+  // 30分・15分の極薄の点線（分の段階より拡大したとき）
+  if (ppd >= 1200) {
+    const step = ppd >= 3600 ? 15 : 30;
+    for (const m of ticks(['min', step], BASE, ta, tb)) { if (m.mi === 0) continue; const x = X(m.t); if (x >= 0 && x <= W) o += L(x, top, x, H, 'g-sub'); }
+  }
+  // 3. スプリント（ネオンの枠）：カレンダーと格子より前、依存線とバーより後ろ
+  for (const sp of SPRINTS) {
+    const x0 = X(sp.s) + 2, x1 = X(sp.e) - 2;
+    if (x1 < -10 || x0 > W + 10) continue;
+    const cls = sp.status === 'active' ? ' act' : sp.status === 'planned' ? ' plan' : '';
+    o += R(x0, hdrH + 3, x1 - x0, H - hdrH - 7, 'spr' + cls, 'rx="8"');
+    const lab = `${sp.name} · ${md(sp.s)}–${md(sp.e - 1)}`, avail = x1 - Math.max(x0, 0) - 16;
+    const s = estW(lab, 10.5) <= avail ? lab : estW(sp.name, 10.5) <= avail ? sp.name : '';
+    if (s) o += TX(Math.max(x0, 0) + 10, hdrH + 13, s, 'sprl' + (sp.status === 'active' ? ' act' : ''));
+  }
+  const xn = X(NOW);
+  if (xn >= -2 && xn <= W + 2) o += L(xn, hdrH, xn, H, 'g-now');
+  // 帯の位置
+  const pos = t => {
+    const i = rowOf.get(t.seq);
+    if (i == null || (t.s == null && t.e == null)) return null;
+    let xs = t.s != null ? X(t.s) : X(t.e), xf = t.e != null ? X(t.e) : X(t.s);
+    if (t.s != null && t.e != null && xf - xs < 3) xf = xs + 3;
+    return { xs, xf, y: rowY(i) + RH / 2, top: rowY(i) };
+  };
+  // 描く範囲（自分の予定。無ければ配下の期間）
+  const spanPos = t => {
+    const i = rowOf.get(t.seq); if (i == null) return null;
+    const sp = spanOf(t); if (!sp) return null;
+    let xs = sp.s != null ? X(sp.s) : X(sp.e), xf = sp.e != null ? X(sp.e) : X(sp.s);
+    if (xf - xs < 3 && sp.s != null && sp.e != null) xf = xs + 3;
+    return { xs, xf, y: rowY(i) + RH / 2, roll: sp.roll };
+  };
+  // 対応線（ポインタを載せた行と選んだ行）
+  const edgeOf = new Map();
+  for (const t of rows) {
+    const p = spanPos(t); if (!p) continue;
+    const lo = p.roll || t.s != null ? p.xs : p.xs - 28, hi = !p.roll && t.e == null ? p.xf + 28 : p.xf;
+    if (hi < 0) edgeOf.set(t.seq, 'L'); else if (lo > fr) edgeOf.set(t.seq, 'R');
+  }
+  for (const seq of [S.hover, S.sel]) {
+    if (seq == null) continue;
+    const t = BY.get(seq), p = spanPos(t); if (!p) continue;
+    const e = edgeOf.get(seq);
+    const xe = e === 'R' ? fr - 118 : e === 'L' ? null : p.xs - (!p.roll && t.s == null ? 30 : 4);
+    if (xe != null && xe > 6) o += L(0, p.y, xe, p.y, 'leader');
+  }
+  // 5. 依存線
+  const focus = S.hover ?? S.sel;
+  for (const l of LINKS) {
+    const a = pos(BY.get(l.s)), b = pos(BY.get(l.t));
+    if (!a || !b) continue;
+    if (Math.max(a.xs, a.xf, b.xs, b.xf) < -40 || Math.min(a.xs, a.xf, b.xs, b.xf) > W + 40) continue;
+    o += depSVG(l.type, a, b, { ai: l.ai, lag: l.lag, hi: focus === l.s || focus === l.t }, RH);
+  }
+  // 6. バー
+  rows.forEach((t, i) => {
+    if (edgeOf.has(t.seq)) return;
+    const y = rowY(i) + RH / 2;
+    let xEnd;
+    if (t.s != null && t.e != null) {
+      const x0 = X(t.s); let x1 = X(t.e); if (x1 - x0 < 3) x1 = x0 + 3;
+      if (x1 < -60 || x0 > W + 60) return;
+      o += barSVG(x0, x1, y, t.st); xEnd = x1 + 7;
+    } else if (t.s != null) {
+      const x = X(t.s); o += msSVG('start', x, y, t.st); xEnd = x + 33;
+    } else if (t.e != null) {
+      const x = X(t.e); o += msSVG('end', x, y, t.st); xEnd = x + 6;
+    } else if (t.roll) {
+      const x0 = X(t.roll.s), x1 = X(t.roll.e);
+      if (x1 < -60 || x0 > W + 60) return;
+      o += rollSVG(x0, x1, y, t.st);
+      // 文字は製図の寸法と同じく線の上に置き、見えている区間の中央に寄せる（線より長い範囲でも読める）
+      const s = `pb-${t.seq} 配下 ${md(t.roll.s)}–${md(t.roll.e - 1)}`, w = estW(s, 10.5) + 12;
+      const va = Math.max(x0, 0), vb = Math.min(x1, fr);
+      let lx = vb - va >= w + 24 ? (va + vb) / 2 - w / 2 : x1 + 6;
+      if (lx === x1 + 6 && lx + w > fr) lx = Math.max(va + 10, 4);
+      o += R(lx, y - 7, w, 14, 'roll-bg', 'rx="2"') + `<text class="lbl${t.st === 'done' ? ' done' : ''}" x="${f1(lx + 6)}" y="${y + 3.5}"><tspan class="lid">pb-${t.seq}</tspan><tspan class="lsub"> 配下 ${md(t.roll.s)}–${md(t.roll.e - 1)}</tspan></text>`;
+      return;
+    } else return;
+    if (t.overdue) { o += TX(xEnd, y + 4, '⚠', 'od'); xEnd += 15; }
+    o += `<text class="lbl${t.st === 'done' ? ' done' : ''}" x="${f1(xEnd)}" y="${y + 3.5}"><tspan class="lid">pb-${t.seq}</tspan> ${esc(rangeLabel(t))}</text>`;
+  });
+  // 7. 端の札（画面の外にある帯）
+  edges = [];
+  rows.forEach((t, i) => {
+    const e = edgeOf.get(t.seq); if (!e) return;
+    const y = rowY(i) + RH / 2;
+    const sp = spanOf(t);
+    const when = e === 'L' ? (sp.e != null ? md(sp.e - 1) : md(sp.s)) : (sp.s != null ? md(sp.s) : md(sp.e - 1));
+    const s = e === 'L' ? `◂ pb-${t.seq} ${when}` : `pb-${t.seq} ${when} ▸`;
+    const w = estW(s, 10) + 12, x = e === 'L' ? 4 : fr - 4 - w;
+    edges.push({ x, y: y - 8, w, h: 16, seq: t.seq });
+    o += `<g class="edge-g">${R(x, y - 8, w, 16, 'edge', 'rx="3"')}${TX(x + 6, y + 3.5, s, 'edge-t')}${t.overdue ? '' : ''}</g>`;
+  });
+
+  // ヘッダ
+  o += R(0, 0, W, hdrH, 'h-bg');
+  for (const d of dayList) {
+    const k = dayKind(d); if (!k) continue;
+    const x = X(d.t), w = X(d.tn) - x;
+    o += calSVG(k, x, 16, w, 18) + R(x + 1, 32, w - 2, 2, k === 'sat' ? 'mk-sat' : 'mk-sun');
+  }
+  majT.forEach((m, k) => {
+    const x = X(m.t), nx = k + 1 < majT.length ? X(majT[k + 1].t) : W + 400;
+    if (nx < 0 || x > W) return;
+    if (x >= -1) o += L(x, 0, x, 34, 'h-tmaj');
+    const s = tickLabel(sc.jl, m), w = estW(s, 11);
+    let lx = Math.max(x + 5, 5); if (lx + w > nx - 5) lx = nx - 5 - w;
+    o += TX(lx, 12, s, 'h-maj');
+    if (x >= -4) o += `<path class="g-cross" d="M${f1(x - 3.5)},34H${f1(x + 3.5)}M${f1(x)},30.5V37.5"/>`;
+  });
+  minT.forEach((m, k) => {
+    const x = X(m.t); if (x < -120 || x > W + 2) return;
+    const nx = k + 1 < minT.length ? X(minT[k + 1].t) : x + (minT.length > 1 ? X(minT[1].t) - X(minT[0].t) : 80);
+    if (!majSet.has(m.t)) o += L(x, 16, x, 34, 'h-tick');
+    const s = tickLabel(sc.ml, m), w = estW(s, 10.5);
+    if (nx - x >= w + 7) o += TX(x + 4, 29, s, 'h-min');
+  });
+  o += L(0, 34, W, 34, 'h-line');
+  if (showV) {
+    o += R(0, 34.5, W, 15.5, 'h-vbg');
+    for (const d of days(S.vtz, ta, tb)) {
+      const x = X(d.t), nx = X(d.tn); if (nx < 0 || x > W) continue;
+      o += L(x, 34, x, 50, 'h-vtick');
+      const s = ppd >= 64 ? `${pad(d.m)}/${pad(d.d)}(${WD[d.wd]})` : ppd >= 34 ? `${pad(d.m)}/${pad(d.d)}` : `${d.d}`;
+      const lx = Math.max(x + 3, 3);
+      if (nx - lx >= estW(s, 10) + 3) o += TX(lx, 46, s, 'h-v');
+    }
+    o += L(0, 50, W, 50, 'h-line');
+  }
+  o += L(0, hdrH + 0.5, W, hdrH + 0.5, 'h-line hb');
+  // 「今」：時刻の札は最上段（年月の行）に置き、日付の行と重ねない
+  if (xn >= -40 && xn <= W + 40) {
+    const p = parts(S.vtz, NOW), tm = `${pad(p.h)}:${pad(p.mi)}`, w = estW(tm, 10) + 10;
+    o += L(xn, 14.5, xn, hdrH, 'g-now') + R(xn - w / 2, 1.5, w, 13, 'now-box', 'rx="2"') + TX(xn, 11.5, tm, 'h-nowt', 'middle')
+      + `<path class="h-now" d="M${f1(xn - 4)},16H${f1(xn + 4)}L${f1(xn)},21Z"/>`;
+  }
+  // カーソル：縦の点線・位置の日付・チケットの札
+  if (S.cur && S.cur.y >= top && S.cur.x <= fr) {
+    const cx = S.cur.x, t = T0 + (sl + cx) / ppd * DAY, p = parts(BASE, t);
+    o += L(cx, top, cx, H, 'cur-v');
+    const rd = ppd >= 150 ? `${pad(p.m)}/${pad(p.d)} ${pad(p.h)}:${pad(p.mi - p.mi % (ppd >= 1200 ? 5 : 15))}` : `${pad(p.m)}/${pad(p.d)}(${WD[new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay()]})`;
+    const rw = estW(rd, 10) + 10;
+    o += R(Math.min(Math.max(cx - rw / 2, 2), fr - rw - 2), H - 17, rw, 14, 'curr', 'rx="2"') + TX(Math.min(Math.max(cx, rw / 2 + 2), fr - rw / 2 - 2), H - 7, rd, 'curr-t', 'middle');
+    const hv = S.hover != null ? BY.get(S.hover) : null;
+    if (hv) {
+      const ttl = hv.title.length > 26 ? hv.title.slice(0, 25) + '…' : hv.title;
+      const sp = spanOf(hv);
+      const sub = !sp ? '日付なし' : sp.roll ? `配下 ${md(sp.s)}–${md(sp.e - 1)}` : `${rangeLabel(hv)}${hv.ad && sp.s != null && sp.e != null ? ` · ${Math.round((sp.e - sp.s) / DAY)}日` : ''}`;
+      const w = Math.max(estW(`pb-${hv.seq}`, 11) + estW(ttl, 11.5) + 8, estW(sub, 10.5)) + 16;
+      let tx = cx + 14, ty = S.cur.y + 14;
+      if (tx + w > fr - 4) tx = cx - 14 - w;
+      tx = Math.max(4, Math.min(tx, fr - 4 - w));
+      if (ty + 38 > H - 20) ty = S.cur.y - 14 - 38;
+      const idw = estW(`pb-${hv.seq}`, 11);
+      o += R(tx, ty, w, 38, 'tip', 'rx="4"') + TX(tx + 8, ty + 15, `pb-${hv.seq}`, 'tip-id') + TX(tx + 16 + idw, ty + 15, ttl, 'tip-t') + TX(tx + 8, ty + 30, sub, 'tip-d');
+    }
+  }
+  svg.innerHTML = o;
+
+  renderTreeHeader(showV, hdrH, lane);
+  const lv = nearestLevel();
+  document.querySelectorAll('#segZoom button').forEach((b, i) => b.setAttribute('aria-pressed', String(i === lv)));
+  $('sbZoom').textContent = `1日 = ${ppd >= 100 ? Math.round(ppd) : ppd.toFixed(1)}px`;
+}
+
+/* ── ツリー ── */
+let thdrKey = '';
+function renderTreeHeader(showV, hdrH, lane) {
+  const key = `${showV}|${S.vtz}`;
+  if (key === thdrKey) return;
+  thdrKey = key;
+  $('thdr').innerHTML =
+    `<div style="height:34px"><b>基準</b><span class="mono">${BASE}</span><span class="mono">${tzShort(BASE, NOW)}</span></div>` +
+    (showV ? `<div style="height:16px"><b>あなた</b><span class="mono">${S.vtz}</span><span class="mono">${tzShort(S.vtz, NOW)}</span></div>` : '') +
+    `<div style="height:${lane}px">スプリント</div>`;
+  $('thdr').style.height = (hdrH + lane) + 'px';
+}
+function renderTree() {
+  $('trows').innerHTML = visibleRows().map(t => {
+    const caret = t.kids ? `<button type="button" class="caret" data-c="${t.seq}" aria-label="${S.collapsed.has(t.seq) ? '開く' : '畳む'}">${S.collapsed.has(t.seq) ? '▸' : '▾'}</button>` : '<span class="caret-sp"></span>';
+    return `<div class="tr ${t.st === 'done' ? 'done' : ''}" data-seq="${t.seq}" style="padding-left:${6 + t.depth * 16}px">${caret}<span class="st ${t.st}">${STSYM[t.st]}</span><span class="id">pb-${t.seq}</span><span class="ttl">${esc(t.title)}</span>${t.overdue ? '<span class="od" title="期限超過">⚠</span>' : ''}</div>`;
+  }).join('');
+  syncTreeClasses();
+}
+function syncTreeClasses() {
+  document.querySelectorAll('#trows .tr').forEach(el => {
+    const s = +el.dataset.seq;
+    el.classList.toggle('hov', s === S.hover && s !== S.sel);
+    el.classList.toggle('sel', s === S.sel);
+  });
+}
+function setHover(seq) { if (S.hover === seq) return; S.hover = seq; syncTreeClasses(); req(); }
+
+/* ── 詳細ペイン ── */
+function sprintOf(t) { const x = t.s ?? t.e; if (x == null) return null; return SPRINTS.find(s => x >= s.s && x < s.e); }
+function whenText(t, which) {
+  const v = which === 's' ? t.s : t.e;
+  if (v == null && t.roll && t.s == null && t.e == null) return `— <span class="muted">（配下 ${which === 's' ? ymd(t.roll.s) : ymd(t.roll.e - 1)}）</span>`;
+  if (v == null) return '—';
+  if (!t.ad) { const p = parts(S.vtz, v); return `${p.y}-${pad(p.m)}-${pad(p.d)} ${pad(p.h)}:${pad(p.mi)} <span class="muted mono">${tzShort(S.vtz, v)}</span>`; }
+  return which === 's' ? ymd(v) : ymd(v - 1);
+}
+function fillDetail(seq) {
+  const t = BY.get(seq);
+  const ins = LINKS.filter(l => l.t === seq), outs = LINKS.filter(l => l.s === seq);
+  const li = (l, other) => {
+    const o = BY.get(other);
+    const nodate = o.s == null && o.e == null ? ' <span class="muted">（日付なし・線は描かない）</span>' : '';
+    return `<li><span class="tag${l.ai ? ' ai' : ''}">${l.ai ? 'AI ' : ''}${l.type}${l.lag ? ' +' + l.lag + 'd' : ''}</span><span class="mono muted">pb-${o.seq}</span><span>${esc(o.title)}${nodate}</span></li>`;
+  };
+  const sp = sprintOf(t);
+  const none = '<p class="muted" style="margin:0;font-size:12px">ありません</p>';
+  $('dinner').innerHTML =
+    `<div class="dhdr"><span class="id">pb-${t.seq}</span><span class="dt" title="${esc(t.title)}">${esc(t.title)}</span><button type="button" id="dclose" aria-label="詳細を閉じる">✕</button></div>` +
+    `<dl class="dmeta">` +
+    `<div><dt>状態</dt><dd>${STSYM[t.st]} ${STNAME[t.st]}</dd></div>` +
+    `<div><dt>担当</dt><dd>boyaki-machine</dd></div>` +
+    `<div><dt>優先度</dt><dd>${t.pr || '中'}</dd></div>` +
+    `<div><dt>スプリント</dt><dd>${sp ? sp.name : '—'}</dd></div>` +
+    `<div><dt>開始</dt><dd class="mono">${whenText(t, 's')}</dd></div>` +
+    `<div><dt>終了</dt><dd class="mono">${whenText(t, 'e')}${t.overdue ? ' <span style="color:var(--pb-danger-text)">⚠ 期限超過</span>' : ''}</dd></div>` +
+    `<div><dt>終日</dt><dd>${t.s == null && t.e == null ? '—' : t.ad ? 'はい（基準タイムゾーンの日付）' : 'いいえ（あなたのタイムゾーン）'}</dd></div>` +
+    `<div><dt>親</dt><dd class="mono">${t.parent ? 'pb-' + t.parent : '—'}</dd></div>` +
+    `</dl>` +
+    `<div class="dsec"><h3>先行（このチケットが待つ相手）</h3>${ins.length ? `<ul>${ins.map(l => li(l, l.s)).join('')}</ul>` : none}</div>` +
+    `<div class="dsec"><h3>後行（このチケットを待つ相手）</h3>${outs.length ? `<ul>${outs.map(l => li(l, l.t)).join('')}</ul>` : none}</div>` +
+    `<div class="dsec"><h3>説明</h3><p style="margin:0;font-size:12.5px">バックログの詳細ペインと同じ内容を、同じ順で出します（5.5）。ここでは省略しています。</p></div>` +
+    `<p class="dnote">幅 <span class="mono" id="dwv">${Math.round(dw)}px</span>。左の境界をドラッグすると 320〜560px で変わり、480px 以上でメタ情報が2列になります。幅は <span class="mono">pb.gantt_detail_pane_w</span> に覚えます。</p>`;
+  $('dclose').onclick = closeDetail;
+}
+function openDetail(seq) {
+  S.sel = seq;
+  fillDetail(seq);
+  $('detail').hidden = false;
+  syncTreeClasses();
+  // 選んだ帯がペインの下に隠れるなら、見える位置まで送る
+  requestAnimationFrame(() => {
+    const sp = spanOf(BY.get(seq));
+    if (sp) {
+      const x = ((sp.s ?? sp.e) - T0) / DAY * S.ppd - chart.scrollLeft;
+      const xe = ((sp.e ?? sp.s) - T0) / DAY * S.ppd - chart.scrollLeft;
+      const fr = freeRight(chart.clientWidth);
+      if (x > fr - 60 || xe < 0) chart.scrollLeft += x - fr * 0.3;
+    }
+    render();
+  });
+}
+function closeDetail() { S.sel = null; $('detail').hidden = true; syncTreeClasses(); req(); }
+
+let dw = 380;
+try { const v = +localStorage.getItem('pb.gantt_detail_pane_w'); if (v >= 320 && v <= 560) dw = v; } catch (e) {}
+app.style.setProperty('--dw', dw + 'px');
+$('dgrip').addEventListener('pointerdown', e => {
+  const g = e.currentTarget, x0 = e.clientX, w0 = dw;
+  g.setPointerCapture(e.pointerId); g.classList.add('drag');
+  const mv = ev => { dw = Math.min(560, Math.max(320, w0 + (x0 - ev.clientX))); app.style.setProperty('--dw', dw + 'px'); const v = $('dwv'); if (v) v.textContent = Math.round(dw) + 'px'; req(); };
+  const up = () => { g.classList.remove('drag'); g.removeEventListener('pointermove', mv); g.removeEventListener('pointerup', up); try { localStorage.setItem('pb.gantt_detail_pane_w', String(Math.round(dw))); } catch (e) {} };
+  g.addEventListener('pointermove', mv); g.addEventListener('pointerup', up);
+});
+
+/* ── 拡大縮小 ── */
+function nearestLevel() {
+  let best = 0, bd = Infinity;
+  LEVELS.forEach((l, i) => { const d = Math.abs(Math.log(l.ppd / S.ppd)); if (d < bd) { bd = d; best = i; } });
+  return bd < 0.25 ? best : -1;
+}
+function setPpd(ppd, anchorPx) {
+  const t = T0 + (chart.scrollLeft + anchorPx) / S.ppd * DAY;
+  S.ppd = Math.min(PPD_MAX, Math.max(PPD_MIN, ppd));
+  spacer.style.width = ((T1 - T0) / DAY * S.ppd) + 'px';
+  chart.scrollLeft = (t - T0) / DAY * S.ppd - anchorPx;
+  render();
+}
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let anim = 0;
+function animateTo(ppd, anchorPx) {
+  cancelAnimationFrame(anim);
+  if (reduced) { setPpd(ppd, anchorPx); return; }
+  const from = Math.log(S.ppd), to = Math.log(ppd), t0 = performance.now();
+  const step = now => {
+    const k = Math.min(1, (now - t0) / 150), e = 1 - Math.pow(1 - k, 3);
+    setPpd(Math.exp(from + (to - from) * e), anchorPx);
+    if (k < 1) anim = requestAnimationFrame(step);
+  };
+  anim = requestAnimationFrame(step);
+}
+let lastStep = 0;
+chart.addEventListener('wheel', e => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault();
+  const px = e.clientX - chart.getBoundingClientRect().left;
+  if (e.shiftKey) {
+    const now = performance.now(); if (now - lastStep < 220) return; lastStep = now;
+    const dy = e.deltaY || e.deltaX; if (!dy) return;
+    const cur = S.ppd;
+    const target = dy > 0 ? LEVELS.find(l => l.ppd < cur * 0.97) : [...LEVELS].reverse().find(l => l.ppd > cur * 1.03);
+    if (target) animateTo(target.ppd, px);
+  } else {
+    setPpd(S.ppd * Math.exp(-e.deltaY * 0.0022), px);
+  }
+}, { passive: false });
+chart.addEventListener('scroll', req);
+new ResizeObserver(req).observe(chart);
+
+/* ── ポインタ ── */
+function local(e) { const r = svg.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+function rowAt(e) {
+  const { y } = local(e), { top } = geom();
+  const i = Math.floor((y - top) / RH), rows = visibleRows();
+  return i >= 0 && i < rows.length ? rows[i].seq : null;
+}
+function edgeAt(e) { const { x, y } = local(e); return edges.find(c => x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h); }
+chart.addEventListener('pointermove', e => { S.cur = local(e); setHover(rowAt(e)); req(); chart.style.cursor = edgeAt(e) ? 'pointer' : 'default'; });
+chart.addEventListener('pointerleave', () => { S.cur = null; setHover(null); req(); });
+chart.addEventListener('click', e => {
+  const c = edgeAt(e);
+  if (c) {
+    const sp = spanOf(BY.get(c.seq)), at = sp.s ?? sp.e;
+    const target = (at - T0) / DAY * S.ppd - freeRight(chart.clientWidth) * 0.3;
+    chart.scrollTo({ left: target, behavior: reduced ? 'auto' : 'smooth' });
+    return;
+  }
+  const s = rowAt(e); if (s != null) openDetail(s);
+});
+$('trows').addEventListener('pointerover', e => { const r = e.target.closest('.tr'); setHover(r ? +r.dataset.seq : null); });
+$('trows').addEventListener('pointerleave', () => setHover(null));
+$('trows').addEventListener('click', e => {
+  const c = e.target.closest('.caret');
+  if (c) { const s = +c.dataset.c; S.collapsed.has(s) ? S.collapsed.delete(s) : S.collapsed.add(s); renderTree(); req(); return; }
+  const r = e.target.closest('.tr'); if (r) openDetail(+r.dataset.seq);
+});
+
+/* ── 切り替え ── */
+function seg(id, fn) {
+  const el = $(id);
+  el.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    el.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    fn(b.dataset.v);
+  });
+}
+seg('segTheme', v => { if (v) document.documentElement.setAttribute('data-theme', v); else document.documentElement.removeAttribute('data-theme'); req(); });
+seg('segHue', v => { $('page').dataset.hue = v; app.dataset.hue = v; });
+seg('segPane', v => { app.dataset.pane = v; req(); });
+$('vtz').addEventListener('change', e => { S.vtz = e.target.value; applyCal(); thdrKey = ''; if (S.sel != null) fillDetail(S.sel); req(); });
+$('segZoom').innerHTML = LEVELS.map((l, i) => `<button type="button" id="zl-${i}" data-i="${i}" aria-pressed="false">${l.name}</button>`).join('');
+$('segZoom').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const xn = (NOW - T0) / DAY * S.ppd - chart.scrollLeft;
+  const anchor = xn >= 0 && xn <= chart.clientWidth ? xn : chart.clientWidth / 2;
+  animateTo(LEVELS[+b.dataset.i].ppd, anchor);
+});
+function toNow() { chart.scrollLeft = (NOW - T0) / DAY * S.ppd - freeRight(chart.clientWidth) * 0.3; req(); }
+$('btnNow').addEventListener('click', toNow);
+
+/* ── 凡例 ── */
+function renderLegend() {
+  const box = (w, h, inner, cap) => `<figure><svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${inner}</svg><figcaption>${cap}</figcaption></figure>`;
+  let h = '';
+  for (const s of ['todo', 'in_progress', 'review', 'done']) h += box(90, 24, barSVG(10, 78, 12, s), `${STSYM[s]} ${STNAME[s]}`);
+  h += box(64, 24, msSVG('start', 14, 12, 'todo'), '開始のみ');
+  h += box(64, 24, msSVG('end', 50, 12, 'todo'), '終了のみ');
+  h += box(100, 24, rollSVG(8, 92, 12, 'in_progress'), '配下の期間（日付の無い親）');
+  const cal = (k, cap) => box(44, 30, R(0.5, 0.5, 43, 29, 'g-row', 'fill="none"') + (k ? calSVG(k, 1, 1, 42, 28) + R(2, 26, 40, 2, k === 'sat' ? 'mk-sat' : 'mk-sun') : ''), cap);
+  h += cal('', '平日') + cal('sat', '土曜') + cal('sun', '日曜') + cal('hol', '祝日');
+  const spr = (cls, cap) => box(84, 30, R(4, 4, 76, 22, 'spr' + cls, 'rx="8"'), cap);
+  h += spr(' act', '進行中のスプリント') + spr(' plan', '計画中') + spr('', '完了');
+  const dep = (type, a, b, opt, cap) => {
+    const A = { xs: a[0], xf: a[1], y: 12, top: 2 }, B = { xs: b[0], xf: b[1], y: 36, top: 26 };
+    return box(130, 48, barSVG(a[0], a[1], 12, 'todo') + barSVG(b[0], b[1], 36, 'todo') + depSVG(type, A, B, opt || {}, 24), cap);
+  };
+  h += dep('FS', [12, 52], [72, 118], {}, 'FS 終了→開始');
+  h += dep('blocks', [12, 52], [72, 118], {}, '<code>blocks</code> 先行が終わるまで止める');
+  h += dep('SS', [30, 70], [46, 110], {}, 'SS 開始→開始');
+  h += dep('FF', [12, 70], [40, 100], { lag: 2 }, 'FF 終了→終了（ずらし2日）');
+  h += dep('SF', [70, 116], [12, 56], {}, 'SF 開始→終了');
+  h += dep('FS', [12, 52], [72, 118], { ai: true }, '未確認の AI 提案');
+  $('legend').innerHTML = h;
+}
+
+/* 土日祝の色の慣習は、見る人のタイムゾーンで決める（日本・韓国は 土＝青 / 日祝＝赤。他は 土日＝灰 / 祝＝赤） */
+const EAST = new Set(['Asia/Tokyo', 'Asia/Seoul']);
+function applyCal() { $('page').dataset.cal = EAST.has(S.vtz) ? 'east' : 'other'; }
+applyCal();
+
+/* ── 起動 ── */
+renderTree();
+renderLegend();
+requestAnimationFrame(() => { spacer.style.width = ((T1 - T0) / DAY * S.ppd) + 'px'; toNow(); render(); });
+})();
+</script>
+
+</body>
+</html>
