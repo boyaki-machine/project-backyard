@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -48,14 +49,16 @@ var sprintStatuses = []string{sprintStatusPlanned, sprintStatusActive, sprintSta
 
 // sprintView は 9.12 が返す1行。
 type sprintView struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Goal        *string `json:"goal"`
-	StartDate   *Date   `json:"start_date"`
-	EndDate     *Date   `json:"end_date"`
-	Status      string  `json:"status"`
-	TicketCount int64   `json:"ticket_count"`
-	ClosedCount int64   `json:"closed_count"`
+	ID   string  `json:"id"`
+	Name string  `json:"name"`
+	Goal *string `json:"goal"`
+	// 予定（ApiDesign.md 9.3.1 と同じ規則。pb-217）。半開区間 [start_at, end_at)。
+	StartAt     *Time  `json:"start_at"`
+	EndAt       *Time  `json:"end_at"`
+	AllDay      bool   `json:"all_day"`
+	Status      string `json:"status"`
+	TicketCount int64  `json:"ticket_count"`
+	ClosedCount int64  `json:"closed_count"`
 }
 
 // sprintListView は 9.12 の一覧応答。タグ（9.11）と同じくページャも ETag も持たない。
@@ -64,21 +67,24 @@ type sprintListView struct {
 }
 
 type createSprintRequest struct {
-	Name      string  `json:"name"`
-	Goal      *string `json:"goal"`
-	StartDate *string `json:"start_date"`
-	EndDate   *string `json:"end_date"`
-	Status    *string `json:"status"`
+	Name string  `json:"name"`
+	Goal *string `json:"goal"`
+	// RawMessage で受ける（tickets_create.go と同じ理由：欄ごとに 422 を返すため）。
+	StartAt json.RawMessage `json:"start_at"`
+	EndAt   json.RawMessage `json:"end_at"`
+	AllDay  *bool           `json:"all_day"`
+	Status  *string         `json:"status"`
 }
 
 // patchSprintRequest は「キーが無い／null／値」の3通りを見分ける必要がある
 // 項目を json.RawMessage で受ける（projects_update.go の description と同じ型）。
 type patchSprintRequest struct {
-	Name      *string         `json:"name"`
-	Goal      json.RawMessage `json:"goal"`
-	StartDate json.RawMessage `json:"start_date"`
-	EndDate   json.RawMessage `json:"end_date"`
-	Status    *string         `json:"status"`
+	Name    *string         `json:"name"`
+	Goal    json.RawMessage `json:"goal"`
+	StartAt json.RawMessage `json:"start_at"`
+	EndAt   json.RawMessage `json:"end_at"`
+	AllDay  *bool           `json:"all_day"`
+	Status  *string         `json:"status"`
 }
 
 // ── GET /api/v1/projects/{key}/sprints ──────────────────────
@@ -103,8 +109,9 @@ func (h *handler) listSprints(w http.ResponseWriter, r *http.Request) {
 			ID:          row.ID,
 			Name:        row.Name,
 			Goal:        textPtr(row.Goal),
-			StartDate:   apiDate(row.StartDate),
-			EndDate:     apiDate(row.EndDate),
+			StartAt:     apiTime(row.StartAt),
+			EndAt:       apiTime(row.EndAt),
+			AllDay:      row.AllDay,
 			Status:      row.Status,
 			TicketCount: row.TicketCount,
 			ClosedCount: row.ClosedCount,
@@ -130,15 +137,19 @@ func (h *handler) createSprint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	loc, err := projectLocation(r.Context(), h.q, projectID)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+		return
+	}
 	var details []apierr.Detail
 	name := validateSprintName(req.Name, &details)
-	start := parseSprintDateField("start_date", req.StartDate, &details)
-	end := parseSprintDateField("end_date", req.EndDate, &details)
+	start, end, allDay := parseCreateSchedule(req.StartAt, req.EndAt, req.AllDay, &details)
 	status := sprintStatusPlanned
 	if req.Status != nil {
 		status = validateSprintStatus(*req.Status, &details)
 	}
-	validateSprintDateOrder(start, end, &details)
+	details = validateSchedule(start, end, allDay, loc, "end_at", details)
 	if len(details) > 0 {
 		apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(details...))
 		return
@@ -156,8 +167,9 @@ func (h *handler) createSprint(w http.ResponseWriter, r *http.Request) {
 		ProjectID: projectID,
 		Name:      name,
 		Goal:      goal,
-		StartDate: start,
-		EndDate:   end,
+		StartAt:   start,
+		EndAt:     end,
+		AllDay:    allDay,
 		Status:    status,
 	}); err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).
@@ -228,23 +240,26 @@ func (h *handler) patchSprint(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 更新後に効く日付を組み立てる。送られていない側は現在値を使う。
-	effectiveStart, effectiveEnd := current.StartDate, current.EndDate
-	if req.StartDate != nil {
-		if d := parseSprintDateRawField("start_date", req.StartDate, &details); d != nil {
-			params.SetStartDate = true
-			params.StartDate = *d
-			effectiveStart = *d
-		}
+	// 更新後に効く予定を組み立てる。送られていない側は現在値を使う（9.3.1）。
+	var startOpt, endOpt optional[time.Time]
+	startOpt, details = parseOptionalInstant(req.StartAt, "start_at", details)
+	endOpt, details = parseOptionalInstant(req.EndAt, "end_at", details)
+	params.SetStartAt, params.StartAt = instantParam(startOpt)
+	params.SetEndAt, params.EndAt = instantParam(endOpt)
+	allDay := current.AllDay
+	if req.AllDay != nil {
+		allDay = *req.AllDay
+		params.AllDay = pgtype.Bool{Bool: allDay, Valid: true}
 	}
-	if req.EndDate != nil {
-		if d := parseSprintDateRawField("end_date", req.EndDate, &details); d != nil {
-			params.SetEndDate = true
-			params.EndDate = *d
-			effectiveEnd = *d
+	if startOpt.Set || endOpt.Set || req.AllDay != nil {
+		loc, err := projectLocation(ctx, h.q, projectID)
+		if err != nil {
+			apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+			return
 		}
+		details = validateSchedule(pick(startOpt, current.StartAt), pick(endOpt, current.EndAt),
+			allDay, loc, "end_at", details)
 	}
-	validateSprintDateOrder(effectiveStart, effectiveEnd, &details)
 
 	if len(details) > 0 {
 		apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(details...))
@@ -322,8 +337,9 @@ func sprintByIDWith(
 		ID:          row.ID,
 		Name:        row.Name,
 		Goal:        textPtr(row.Goal),
-		StartDate:   apiDate(row.StartDate),
-		EndDate:     apiDate(row.EndDate),
+		StartAt:     apiTime(row.StartAt),
+		EndAt:       apiTime(row.EndAt),
+		AllDay:      row.AllDay,
 		Status:      row.Status,
 		TicketCount: row.TicketCount,
 		ClosedCount: row.ClosedCount,
@@ -365,51 +381,6 @@ func validateSprintStatus(raw string, details *[]apierr.Detail) string {
 	return ""
 }
 
-// parseSprintDateField は POST の日付（*string）を date 列へ写す。
-func parseSprintDateField(field string, raw *string, details *[]apierr.Detail) pgtype.Date {
-	if raw == nil {
-		return pgtype.Date{}
-	}
-	d, ok := parseAPIDate(strings.TrimSpace(*raw))
-	if !ok {
-		*details = append(*details, apierr.Detail{
-			Field: field, Code: "invalid",
-			Message: "日付は YYYY-MM-DD の形式で指定してください",
-		})
-		return pgtype.Date{}
-	}
-	return d
-}
-
-// parseSprintDateRawField は PATCH の日付を読む。null は「消す」を意味する。
-//
-// 呼び出し側が req.X != nil を確かめてから呼ぶ（キーが無い場合は据え置きで、
-// ここへは来ない）。
-func parseSprintDateRawField(
-	field string, raw json.RawMessage, details *[]apierr.Detail,
-) *pgtype.Date {
-	if string(raw) == "null" {
-		return &pgtype.Date{}
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		*details = append(*details, apierr.Detail{
-			Field: field, Code: "invalid",
-			Message: "日付は文字列で指定してください",
-		})
-		return nil
-	}
-	d, ok := parseAPIDate(strings.TrimSpace(s))
-	if !ok {
-		*details = append(*details, apierr.Detail{
-			Field: field, Code: "invalid",
-			Message: "日付は YYYY-MM-DD の形式で指定してください",
-		})
-		return nil
-	}
-	return &d
-}
-
 // parseSprintGoalField は PATCH の goal を読む。null と空文字はどちらも NULL。
 func parseSprintGoalField(raw json.RawMessage, details *[]apierr.Detail) *pgtype.Text {
 	if string(raw) == "null" {
@@ -425,20 +396,6 @@ func parseSprintGoalField(raw json.RawMessage, details *[]apierr.Detail) *pgtype
 	}
 	t := optionalText(strings.TrimSpace(s))
 	return &t
-}
-
-// validateSprintDateOrder は ck_sprint_dates と同じ関係を見る
-// （両方あるとき start_date <= end_date。DbDesign.md 6.9）。
-func validateSprintDateOrder(start, end pgtype.Date, details *[]apierr.Detail) {
-	if !start.Valid || !end.Valid {
-		return
-	}
-	if start.Time.After(end.Time) {
-		*details = append(*details, apierr.Detail{
-			Field: "end_date", Code: "invalid",
-			Message: "終了日は開始日以降の日付を指定してください",
-		})
-	}
 }
 
 // writeSprintNotFound は「そのプロジェクトに無いスプリント」への応答。

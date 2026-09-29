@@ -394,11 +394,11 @@ func buildDoDView(row dodRow) dodView {
 		Type:        row.Type,
 		Body:        row.Body,
 		IsSatisfied: row.IsSatisfied,
-		SatisfiedAt: apiTimestamptz(row.SatisfiedAt),
+		SatisfiedAt: apiTime(row.SatisfiedAt),
 		SatisfiedBy: actorRefOf(row.SatisfiedBy, row.SatisfiedByKind, row.SatisfiedByName),
 		SortOrder:   row.SortOrder,
-		CreatedAt:   Time(row.CreatedAt.Time),
-		UpdatedAt:   Time(row.UpdatedAt.Time),
+		CreatedAt:   Time(row.CreatedAt),
+		UpdatedAt:   Time(row.UpdatedAt),
 	}
 }
 

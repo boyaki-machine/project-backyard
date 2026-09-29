@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -81,7 +82,7 @@ type FindMyAPITokenRow struct {
 	ID          string
 	Name        pgtype.Text
 	TokenPrefix pgtype.Text
-	RevokedAt   pgtype.Timestamptz
+	RevokedAt   *time.Time
 }
 
 // FindMyAPIToken は DELETE /me/tokens/:id の対象を引く（ApiDesign.md 4.4.3）。
@@ -160,9 +161,9 @@ type ListMyAPITokensRow struct {
 	Name        pgtype.Text
 	TokenPrefix pgtype.Text
 	Scopes      []byte
-	IssuedAt    pgtype.Timestamptz
-	LastUsedAt  pgtype.Timestamptz
-	ExpiresAt   pgtype.Timestamptz
+	IssuedAt    time.Time
+	LastUsedAt  *time.Time
+	ExpiresAt   *time.Time
 }
 
 // ── アクセストークン（ApiDesign.md 4.4）──────────────────────────────

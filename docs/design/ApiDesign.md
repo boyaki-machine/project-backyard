@@ -102,12 +102,14 @@ http://localhost:8080/api/v1
 |---|---|
 | Content-Type | `application/json; charset=utf-8` |
 | フィールド命名 | **snake_case**。DBスキーマ・MCPツールと表記を統一する。`jsonb` 列に対応するフィールドも `_json` 接尾辞を付けない（`DbDesign.md` 4.7） |
-| 日時 | ISO8601 UTC（`2026-08-11T09:03:12Z`）。`DbDesign.md` 4.1 の格納形式と一致 |
+| 日時 | **エポックミリ秒**（64bit 整数。`1786438992000`＝2026-08-11T09:03:12Z）。入力も同じ形で受ける。**MCP は ISO8601 UTC のまま**（`Design.md` 7章。エージェントはエポック値の換算を誤りやすい） |
 | 日付 | `2026-08-11` |
 | ID | ULID 26文字（`01K2F8...`） |
 | 真偽 | JSON boolean（DB も `boolean` 型のためそのまま対応） |
 | null | 「値がない」を表す。フィールド自体の省略と区別する（PATCH で意味が変わるため） |
 | 文字コード | UTF-8 のみ |
+
+**日時をエポックミリ秒にした**（pb-224、2026-09-27）。以前は ISO8601 UTC の文字列だった。サーバは `time.Time`、画面は数値で扱い、変換は JSON の境界1か所で行う（サーバは `apitime.go` の `Time`）。**監査ログの `detail` に保存済みの日時は記録であり、書いた時点の形（ISO8601）のまま返す。** 日付（その日）は瞬間ではないので `YYYY-MM-DD` のままである。
 
 **フロントエンドは snake_case のまま扱う。** 変換層を挟むとAPIドキュメントとコードの対応が読み取りにくくなるため、TypeScript の型もそのまま snake_case で生成する。
 
@@ -401,7 +403,7 @@ GET /healthcheck
     { "id": "01K2...", "key": "my-app", "name": "社内タスク管理の刷新",
       "role": "project_admin", "permissions": ["ticket.close", "..."] }
   ],
-  "expires_at": "2026-08-25T09:03:12Z"
+  "expires_at": 1787648592000
 }
 ```
 
@@ -437,7 +439,7 @@ CSRF トークンが無い状態になる。以後すべての状態変更系が
   "mfa_required": true,
   "mfa_token": "pb_mfa_...",
   "methods": ["totp", "recovery_code"],
-  "expires_at": "2026-09-13T02:16:40Z"
+  "expires_at": 1789265800000
 }
 ```
 
@@ -490,7 +492,7 @@ CSRF トークンが無い状態になる。以後すべての状態変更系が
 ```json
 // 200 OK — 本体は 3.1 の成功応答と同一構造
 { "actor": { "..." }, "permissions": ["..."], "projects": ["..."],
-  "expires_at": "2026-09-27T09:03:12Z" }
+  "expires_at": 1790499792000 }
 ```
 
 ```
@@ -545,7 +547,7 @@ Set-Cookie: pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
       "userVerification": "required"
     }
   },
-  "expires_at": "2026-09-13T02:16:40Z"
+  "expires_at": 1789265800000
 }
 ```
 
@@ -591,7 +593,7 @@ Set-Cookie: pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
 ```json
 // 200 OK — 本体は 3.1 の成功応答と同一構造
 { "actor": { "..." }, "permissions": ["..."], "projects": ["..."],
-  "expires_at": "2026-09-27T09:03:12Z" }
+  "expires_at": 1790499792000 }
 ```
 
 ```
@@ -728,8 +730,8 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 {
   "items": [
     { "id": "01K2...", "name": "CLI (MacBook)", "token_prefix": "pb_api_9",
-      "scopes": [], "issued_at": "2026-08-22T09:03:12Z",
-      "last_used_at": "2026-08-22T10:41:00Z", "expires_at": "2026-11-20T09:03:12Z",
+      "scopes": [], "issued_at": 1787389392000,
+      "last_used_at": 1787395260000, "expires_at": 1795165392000,
       "status": "active" }
   ]
 }
@@ -763,8 +765,8 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 ```json
 // 201 Created — token は「この応答でのみ」返る
 { "id": "01K2...", "name": "CLI (MacBook)", "token": "pb_api_9f3c...",
-  "token_prefix": "pb_api_9", "scopes": [], "issued_at": "2026-08-22T09:03:12Z",
-  "expires_at": "2026-11-20T09:03:12Z", "status": "active" }
+  "token_prefix": "pb_api_9", "scopes": [], "issued_at": 1787389392000,
+  "expires_at": 1795165392000, "status": "active" }
 ```
 
 **`token` を返すのはこの応答だけである。** 再表示するAPIは無く、DBにはSHA-256の
@@ -891,11 +893,11 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
       "project": { "key": "pb", "name": "Project Backyard" },
       "token_env_suffix": "MY_LAPTOP", "token_env_name": "PB_TOKEN_MY_LAPTOP",
       "trust_level": 1, "is_active": true,
-      "created_at": "2026-08-30T09:03:12Z",
+      "created_at": 1788080592000,
       "token": { "id": "01K3...", "token_prefix": "pb_agt_7",
-                 "issued_at": "2026-08-30T09:03:12Z",
-                 "last_used_at": "2026-08-30T10:41:00Z",
-                 "expires_at": "2026-11-28T09:03:12Z", "status": "active" } }
+                 "issued_at": 1788080592000,
+                 "last_used_at": 1788086460000,
+                 "expires_at": 1795856592000, "status": "active" } }
   ]
 }
 ```
@@ -939,7 +941,7 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
   "project": { "key": "pb", "name": "Project Backyard" },
   "token_env_suffix": "MY_LAPTOP", "token_env_name": "PB_TOKEN_MY_LAPTOP",
   "trust_level": 1, "is_active": true,
-  "created_at": "2026-08-30T09:03:12Z", "token": null }
+  "created_at": 1788080592000, "token": null }
 ```
 
 **トークンは同時に発行しない。** 登録と発行を分けるのは、**再発行が必要になったときに同じ
@@ -982,8 +984,8 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
   "scopes": ["agent.run","comment.create","doc.view","project.view",
              "ticket.assign","ticket.create","ticket.reference.edit",
              "ticket.self_edit","ticket.transition","ticket.view"],
-  "issued_at": "2026-08-30T09:03:12Z",
-  "expires_at": "2026-11-28T09:03:12Z", "status": "active" }
+  "issued_at": 1788080592000,
+  "expires_at": 1795856592000, "status": "active" }
 ```
 
 **`token` を返すのはこの応答だけである**（4.4.2 と同じ。DBには SHA-256 のハッシュしか残らない）。
@@ -1456,9 +1458,9 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
 {
   "totp": [
     { "id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S", "name": "iPhone",
-      "created_at": "2026-09-13T02:11:40Z", "last_used_at": "2026-09-13T08:20:02Z" }
+      "created_at": 1789265500000, "last_used_at": 1789287602000 }
   ],
-  "recovery_codes": { "remaining": 8, "generated_at": "2026-09-13T02:11:40Z" }
+  "recovery_codes": { "remaining": 8, "generated_at": 1789265500000 }
 }
 ```
 
@@ -1521,7 +1523,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
 // 200 OK — MFA を最初に有効にしたときだけ recovery_codes が入る
 {
   "credential": { "id": "01K2...", "name": "iPhone",
-                  "created_at": "2026-09-13T02:11:40Z", "last_used_at": null },
+                  "created_at": 1789265500000, "last_used_at": null },
   "recovery_codes": ["K7M2QX9B4T", "9FRD3HJ5PW", "..."]
 }
 ```
@@ -1612,7 +1614,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
   "items": [
     { "id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S", "name": "MacBook",
       "rp_id": "localhost", "backed_up": true,
-      "created_at": "2026-09-13T02:11:40Z", "last_used_at": "2026-09-13T08:20:02Z" }
+      "created_at": 1789265500000, "last_used_at": 1789287602000 }
   ]
 }
 ```
@@ -1650,7 +1652,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
       "attestation": "none"
     }
   },
-  "expires_at": "2026-09-13T02:16:40Z"
+  "expires_at": 1789265800000
 }
 ```
 
@@ -1692,7 +1694,7 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
 ```json
 // 201 Created
 { "id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S", "name": "MacBook", "rp_id": "localhost",
-  "backed_up": true, "created_at": "2026-09-13T02:11:40Z", "last_used_at": null }
+  "backed_up": true, "created_at": 1789265500000, "last_used_at": null }
 ```
 
 **名前は認証器の応答と一緒に送る。** 4.6.2 は名前を先に受けたが、こちらは登録の途中の行を持たないので、
@@ -1777,7 +1779,7 @@ GET /api/v1/projects?status=active&sort=updated_at&order=desc&page=1&per_page=25
       "closed_count": 36,
       "progress": 0.75,
       "my_role": "project_admin",
-      "updated_at": "2026-08-11T09:12:44Z"
+      "updated_at": 1786439564000
     }
   ],
   "page": 1, "per_page": 25, "total": 3, "total_pages": 1
@@ -2197,15 +2199,15 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
   "items": [
     { "id": "01K2...", "kind": "user", "display_name": "田中",
       "email": "tanaka@example.com", "system_role": "administrator",
-      "is_active": true, "last_login_at": "2026-08-11T09:03:12Z",
-      "project_count": 3, "created_at": "2026-07-01T00:00:00Z" },
+      "is_active": true, "last_login_at": 1786438992000,
+      "project_count": 3, "created_at": 1782864000000 },
     { "id": "01K2...", "kind": "agent", "display_name": "claude-code (my-app)",
       "email": null, "system_role": null,
       "agent": { "client_kind": "claude_code", "model_name": "claude-opus-5",
                  "project_key": "my-app", "trust_level": 1,
                  "owner": { "id": "01K2...", "display_name": "田中" } },
-      "is_active": true, "last_login_at": "2026-08-11T08:41:00Z",
-      "project_count": 1, "created_at": "2026-08-01T00:00:00Z" }
+      "is_active": true, "last_login_at": 1786437660000,
+      "project_count": 1, "created_at": 1785542400000 }
   ],
   "page": 1, "per_page": 25, "total": 4, "total_pages": 1
 }
@@ -2289,7 +2291,7 @@ GET /api/v1/admin/users?kind=all&is_active=all&sort=display_name&order=asc&page=
   "identities": [
     { "id": "01K2...", "provider_key": "local", "provider_type": "local",
       "subject": "yamada@example.com", "linked_at": "...", "last_used_at": "...",
-      "password_updated_at": "2026-07-01T00:00:00Z" }
+      "password_updated_at": 1782864000000 }
   ],
   "project_memberships": [
     { "project_id": "01K2...", "project_key": "my-app",
@@ -2656,17 +2658,17 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | `open` | — | `true` で `closed_at IS NULL` のもののみ。`false` で完了のみ |
 | `retired` | `false` | **`true` で「棚に戻ったもの」も返す**（下記「棚に戻ったものを既定で外す」）。既定では返さない |
 | `staged` | — | **`true` でオンステージの行とその全子孫に限る**（下記「オンステージで絞る」）。`true` 以外は `422` |
-| `due_within` | — | `7d` 形式。**今日から N 日以内に期限があるもの（期限超過を含む）**。`due_date IS NULL` は除外 |
-| `overdue` | — | `true` で**期限を過ぎた未完了のもの**（`due_date < 今日` かつ `closed_at IS NULL`）。9.13.1 の `overdue` と同じ条件 |
-| `planned_from` | — | 予定期間の下限（`YYYY-MM-DD`、含む）。チケットの予定期間と1日でも重なるもの。片方だけの日付を持つチケットはその日1日として扱い、両日未設定は除外 |
-| `planned_to` | — | 予定期間の上限（`YYYY-MM-DD`、含む）。`planned_from` と片方だけでもよい。両方あるとき `planned_from <= planned_to` |
+| `due_within` | — | `7d` 形式。**今日から N 日以内に期限があるもの（期限超過を含む）**。`due_at < (基準タイムゾーンの今日の0時 + (N+1)日)`。`due_at IS NULL` は除外（9.3.1） |
+| `overdue` | — | `true` で**期限を過ぎた未完了のもの**（`due_at <= now()` かつ `closed_at IS NULL`）。9.13.1 の `overdue` と同じ条件 |
+| `planned_from` | — | 予定期間の下限（エポックミリ秒、含む）。チケットの予定と少しでも重なるもの。両方未設定は除外 |
+| `planned_to` | — | 予定期間の上限（エポックミリ秒、**含まない**）。`planned_from` と片方だけでもよい。両方あるとき `planned_from < planned_to` |
 | `stale` | — | `14d` 形式。**その日数より前から更新されていない未完了のもの**（`updated_at < now() - N日` かつ `closed_at IS NULL`）。9.13.1 の `stale` と同じ条件 |
 | `parent` | — | `seq` を指定すると、そのチケットとその全子孫（部分木）に限る。**カンマ区切りで複数指定は OR**（いずれかの部分木に含まれるもの） |
 | `q` | — | **キーワード**。以下は `search_mode=fulltext` の仕様。空白で区切った語を**すべて含む**もの。各語はタイトル・本文・コメント（削除済みを除く）の**いずれかに部分一致**すればよい。大文字小文字を区別しない（**全角の英字なども畳むのは、DB の `LC_CTYPE` が `C.UTF-8` のとき**。`DbDesign.md` 4.5）。`%` と `_` は文字として扱う。200文字まで（下記「検索の条件」） |
 | `seq_from` / `seq_to` | — | **チケット番号の範囲**。**両端を含む**。片方だけでもよい |
-| `started_since` / `started_before` | — | **実際に着手した日時の範囲**。`since` 以上・`before` 未満。ISO8601。着手の定義は下記「着手日時を導く」。**着手していないものは外れる** |
-| `closed_since` / `closed_before` | — | **完了した日時（`closed_at`）の範囲**。`since` 以上・`before` 未満。ISO8601。**未完了は外れる** |
-| `sort` | `sort_key` | `sort_key` / `seq` / `title` / `status` / `priority` / `due_date` / `created_at` / `updated_at` / `closed_at` |
+| `started_since` / `started_before` | — | **実際に着手した日時の範囲**。`since` 以上・`before` 未満。エポックミリ秒。着手の定義は下記「着手日時を導く」。**着手していないものは外れる** |
+| `closed_since` / `closed_before` | — | **完了した日時（`closed_at`）の範囲**。`since` 以上・`before` 未満。エポックミリ秒。**未完了は外れる** |
+| `sort` | `sort_key` | `sort_key` / `seq` / `title` / `status` / `priority` / `due_at` / `created_at` / `updated_at` / `closed_at` |
 | `order` | `asc` | `asc` / `desc` |
 | `page` | `1` | 2.6 |
 | `per_page` | **`200`** | 2.6。上限は 2.6 と同じ 200 |
@@ -2675,12 +2677,13 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 **バックログのエピックフィルタは `parent` を使う**（`GuiDesign.md` 5.4）。エピックは行として出さず、複数選択できるフィルタになるが、**絞り込みの実体は部分木であって種別ではない**（`DbDesign.md` 6.10）。`?parent=12,30` は「12 の部分木または 30 の部分木」で、エピック自身も部分木に含まれる（画面が行として捨てる）。**`epic` という専用パラメータを作らない**——作ると API が種別に依存し、グルーピングの実体が `parent_id` であるという定義と食い違う。
 
-**`overdue` / `stale` はダッシュボード（`GuiDesign.md` 5.3）の「要対応」から来る導線のために足した。**どちらも 9.13.1 の同名の集計とまったく同じ条件で数えるものであり、**ダッシュボードが出した件数と、押した先の一覧の件数が一致することが要件**である。`due_within=0d` で代用しない——あちらは「今日以前」で**今日が期限のもの**を含み、`overdue`（`due_date < 今日`）と1日ぶんずれる。
+**`overdue` / `stale` はダッシュボード（`GuiDesign.md` 5.3）の「要対応」から来る導線のために足した。**どちらも 9.13.1 の同名の集計とまったく同じ条件で数えるものであり、**ダッシュボードが出した件数と、押した先の一覧の件数が一致することが要件**である。`due_within=0d` で代用しない——あちらは「今日の終わりまで」で**今日が期限でまだ過ぎていないもの**を含み、`overdue`（`due_at <= now()`）とずれる。
 
-**`planned_from` / `planned_to` は予定日の重なりを見る。** チケット側の有効な開始を
-`COALESCE(start_date, due_date)`、有効な終了を `COALESCE(due_date, start_date)` とし、
-`有効な開始 <= planned_to AND 有効な終了 >= planned_from` で判定する。これにより片方だけの
-日付はその日1日の点になり、両日未設定は除外される。`started_since` / `started_before` は
+**`planned_from` / `planned_to` は予定の重なりを見る**（半開区間どうし。9.3.1）。チケット側の有効な開始を
+`COALESCE(start_at, due_at - 1ms)`、有効な終了を `COALESCE(due_at, start_at + 1ms)` とし、
+`有効な開始 < planned_to AND 有効な終了 > planned_from` で判定する。片方だけのチケットは長さ 1ms の点になる——
+期限だけのチケットは**期限の直前の瞬間**に置くので、終日の「9/30締切」（`due_at` は 10/1 の0時）は 9/30 に当たり、10/1 には当たらない。
+両方未設定は除外される。**日の境界は画面がプロジェクトの基準タイムゾーンで作る**（`GuiDesign.md` 5.4）。`started_since` / `started_before` は
 状態遷移から導く**実際の着手日時**なので、予定日の検索に流用しない。
 
 **`stale` が日数を取るのは、閾値の正本がサーバにあるからである**（9.13.1 の `threshold_days`）。ダッシュボードは `stats` の応答に載る値をそのままリンクへ載せ、**画面側に 14 を書かない**。`due_within` と同じ `<N>d` 形式にしてあるので、上限も同じ 3650 日である。
@@ -2703,16 +2706,16 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 | `%` と `_` | **文字として扱う**（エスケープする）。打った記号がワイルドカードとして効くと、利用者の意図と違う行が出る |
 | 実装の置き場 | **`store/search/` に隔離する**（`Design.md` 4.6）。語の分解とエスケープ、一致するチケットの抽出はそこで行い、一覧のクエリには一致した ID を渡す。**日本語検索の方式を `pg_bigm` へ替えるとき、影響をこの層に閉じ込めるため**である |
 | 範囲の向き | **番号は両端を含み、日時は半開区間**（`since` 以上・`before` 未満）。日時を半開にすると、画面は「9/1〜9/15」を「9/1 の0時以上・9/16 の0時未満」として送れ、境界の瞬間を二重に数えない |
-| 日の境界 | **サーバは日付を解釈しない。** 画面が利用者のタイムゾーン（`app_user.timezone`）で日の境界を作り、ISO8601 の瞬間として送る。画面は `closed_at` を同じタイムゾーンで表示しているので（`GuiDesign.md` 7.5）、**見えている日付と絞り込みの日付が一致する** |
+| 日の境界 | **サーバは日付を解釈しない。** 画面が利用者のタイムゾーン（`app_user.timezone`）で日の境界を作り、エポックミリ秒の瞬間として送る。画面は `closed_at` を同じタイムゾーンで表示しているので（`GuiDesign.md` 7.5）、**見えている日付と絞り込みの日付が一致する** |
 | 範囲が逆 | `seq_from > seq_to`、`since >= before` は `422`（`invalid`）。**黙って空の結果を返さない**——入力の誤りが「該当なし」に見える |
 | 片側だけの指定 | 受け付ける（`seq_from=100` は100番以降） |
-| 並べ替えの `closed_at` | 未完了（`NULL`）は昇順・降順とも**末尾**（`due_date` と同じ扱い） |
+| 並べ替えの `closed_at` | 未完了（`NULL`）は昇順・降順とも**末尾**（`due_at` と同じ扱い） |
 
 ##### 着手日時を導く
 
 **「着手」は、状態が `todo` 区分から初めて出た遷移である**。`activity` の `action='transition'` の行（9.6）のうち、遷移前の状態の区分が `todo` で遷移後が `todo` 以外のものを探し、**最も早い `occurred_at`** を着手日時とする。
 
-- **列を足さない。** `start_date` は予定の開始日で、人やエージェントが手で入れる欄であり、埋まっていないことが多い。実際の着手は遷移の履歴が持っている
+- **列を足さない。** `start_at` は予定の開始で、人やエージェントが手で入れる欄であり、埋まっていないことが多い。実際の着手は遷移の履歴が持っている
 - **完了を取り消して着手し直しても、最初の着手を採る。** 「いつから手を付けたか」を探す用途では、最初の着手が答えになる
 - **状態の区分は、いまのワークフローで引く。** 過去のキーがいまのワークフローに無ければ、その遷移は着手として数えない
 - **作成時の状態は遷移ではないので数えない。** `pb dev seed` が `activity` を書くのは `history: true` を付けたチケットだけ（`DbDesign.md` 7.6.4）なので、**それ以外のデモデータの進行中チケットは着手日時を持たない**
@@ -2790,12 +2793,13 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
       "actual_hours": 3.5,
       "actual_point": 5,
       "actual_point_version": "actual-v0",
-      "start_date": "2026-08-09",
-      "due_date": "2026-08-14",
+      "start_at": 1786201200000,
+      "due_at": 1786719600000,
+      "all_day": true,
       "closed_at": null,
       "version": 3,
-      "created_at": "2026-08-09T01:00:00Z",
-      "updated_at": "2026-08-11T00:12:44Z"
+      "created_at": 1786237200000,
+      "updated_at": 1786407164000
     }
   ],
   "page": 1, "per_page": 200, "total": 48, "total_pages": 1
@@ -2860,8 +2864,9 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
   "parent_seq": 12,
   "tag_ids": ["01K2..."],
   "estimate_point": 5,
-  "start_date": "2026-08-09",
-  "due_date": "2026-08-14"
+  "start_at": 1786201200000,
+  "due_at": 1786719600000,
+  "all_day": true
 }
 ```
 
@@ -2875,7 +2880,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 | `parent_seq` | 任意。同一プロジェクトに存在すること |
 | `tag_ids` | 任意。すべて当該プロジェクトのタグであること |
 | `estimate_point` / `estimate_hours` | 任意。0以上 |
-| `start_date` / `due_date` | 任意。両方あるとき `start_date <= due_date`（`DbDesign.md` 6.6 の `ck_ticket_dates`） |
+| `start_at` / `due_at` / `all_day` | 任意。9.3.1 の規則に従う |
 
 **サーバが決めるもの（リクエストに含められない）**
 
@@ -2925,7 +2930,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 `position` と `after_seq` / `before_seq` の同時指定は `422`。いずれも無い場合も `422`。
 
 ```json
-{ "seq": 31, "sort_key": "0|hzzzr:", "staged_at": "2026-08-23T11:20:00Z",
+{ "seq": 31, "sort_key": "0|hzzzr:", "staged_at": 1787484000000,
   "version": 4, "rebalanced": false }
 ```
 
@@ -2966,6 +2971,26 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 **`parent_seq: null` と `staged` は同時に送ってよい。** 同じトランザクションで確定するので、片方だけ成功する状態は生まれない。**段に置けるかの判定（9.4.1 の `not_stageable`）は、親を外した後の状態で行う**——外せばトップレベルになるので、外す前の親を見て弾いてはならない。
 
 **`ticket.edit` で足りる。** 親の付け替えは 9.5.2 も `ticket.edit` なので、権限の要求は変わらない。
+
+### 9.3.1 予定日時（`start_at` / `due_at` / `all_day`）
+
+**予定はエポックミリ秒の半開区間 `[start_at, due_at)` で持つ**（pb-217。`DbDesign.md` 6.6）。以前は
+`start_date` / `due_date`（`YYYY-MM-DD`）だった。
+
+| 項目 | 規則 |
+|---|---|
+| `start_at` | 開始の瞬間。`null` は未設定 |
+| `due_at` | **終わりの瞬間（含まない）**。`null` は未設定。両方あるとき `start_at <= due_at` |
+| `all_day` | 終日か。省略時は `true`。**終日なら `start_at` / `due_at` はプロジェクトの基準タイムゾーン（`DbDesign.md` 6.23）の0時でなければならない**。違えば `422`（`details[].code = "not_midnight"`） |
+
+**終日の「9/30締切」は `due_at` が 10/1 の0時になる**（iCal の `DTEND` と同じ約束事）。画面は1日戻して 9/30 と出す
+（`GuiDesign.md` 7.5）。**開始だけ・期限だけも許す**（ガントのマイルストーン。`GuiDesign.md` 10章）。
+
+**`all_day` は行ごとに1つ**で、開始と期限の両方に掛かる。**MCP は日付でも受ける**（`Design.md` 8.5.1）——エージェントが
+「翌日の0時」を計算して送ると誤りやすいので、MCP 層が基準タイムゾーンで変換してから REST へ渡す。
+
+**基準タイムゾーンを変えても保存した瞬間は動かさない**（pb-217 の判断）。終日の予定は、新しいタイムゾーンで見ると
+0時でなくなり、日付が前後にずれて見えうる。
 
 ## 9.5 `GET | PATCH | DELETE /api/v1/projects/:key/tickets/:seq`
 
@@ -3022,7 +3047,7 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 | `ticket.self_edit` で変えられる | 変えられない |
 |---|---|
-| `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_date` `due_date` | **`type`** `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
+| `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_at` `due_at` `all_day` | **`type`** `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
 
 **`type` は `ticket.edit` を持つ人だけが変えられる**。**種別の切り替えは盤面の見え方を変える**——タスクをエピックへ変えると、その行はバックログから消えてフィルタの選択肢になる（`GuiDesign.md` 5.4）。
 
@@ -3034,7 +3059,7 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 **`actual_point` と `actual_point_version` は対で送り、追加の `ticket.actual_point.edit` 権限が要る。** どちらか一方だけ、または値と null の混在は 422 とする。
 
-変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `estimate_point` `estimate_hours` `actual_hours` `actual_point` `actual_point_version` `start_date` `due_date` `execution_mode` `readiness` `readiness_note` `scope`
+変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `estimate_point` `estimate_hours` `actual_hours` `actual_point` `actual_point_version` `start_at` `due_at` `all_day` `execution_mode` `readiness` `readiness_note` `scope`
 
 **含められないフィールド**
 
@@ -3368,14 +3393,14 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/comments/:id
     { "id": "01K2...", "body_md": "レビューをお願いします",
       "kind": "progress", "in_reply_to": null, "origin": "human",
       "author": { "id": "01K2...", "kind": "user", "display_name": "田中" },
-      "created_at": "2026-08-27T02:10:00Z",
-      "updated_at": "2026-08-27T02:10:00Z", "deleted_at": null },
+      "created_at": 1787796600000,
+      "updated_at": 1787796600000, "deleted_at": null },
     { "id": "01K2...", "body_md": null,
       "kind": "discussion", "in_reply_to": "01K2...", "origin": "human",
       "author": { "id": "01K2...", "kind": "user", "display_name": "佐藤" },
-      "created_at": "2026-08-27T03:00:00Z",
-      "updated_at": "2026-08-27T04:00:00Z",
-      "deleted_at": "2026-08-27T04:00:00Z" }
+      "created_at": 1787799600000,
+      "updated_at": 1787803200000,
+      "deleted_at": 1787803200000 }
   ],
   "page": 1, "per_page": 50, "total": 2, "total_pages": 1
 }
@@ -3476,14 +3501,14 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/dod/:id
 {
   "items": [
     { "id": "01K2...", "type": "manual", "body": "ユニットテストが通ること",
-      "is_satisfied": true, "satisfied_at": "2026-08-27T05:00:00Z",
+      "is_satisfied": true, "satisfied_at": 1787806800000,
       "satisfied_by": { "id": "01K2...", "kind": "user", "display_name": "田中" },
       "sort_order": 10,
-      "created_at": "2026-08-27T02:10:00Z", "updated_at": "2026-08-27T05:00:00Z" },
+      "created_at": 1787796600000, "updated_at": 1787806800000 },
     { "id": "01K2...", "type": "manual", "body": "設計文書を更新すること",
       "is_satisfied": false, "satisfied_at": null, "satisfied_by": null,
       "sort_order": 20,
-      "created_at": "2026-08-27T02:11:00Z", "updated_at": "2026-08-27T02:11:00Z" }
+      "created_at": 1787796660000, "updated_at": 1787796660000 }
   ]
 }
 ```
@@ -3598,12 +3623,12 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
       "ticket": { "seq": 45, "title": "ticketテーブル定義", "type": "task",
                   "status": { "key": "todo", "name": "未着手", "category": "todo" } },
       "lag_days": 0, "origin": "human",
-      "created_at": "2026-08-27T02:10:00Z" },
+      "created_at": 1787796600000 },
     { "id": "01K2...", "direction": "incoming", "link_type": "blocks",
       "ticket": { "seq": 12, "title": "DB設計", "type": "story",
                   "status": { "key": "done", "name": "完了", "category": "done" } },
       "lag_days": 0, "origin": "human",
-      "created_at": "2026-08-27T02:11:00Z" }
+      "created_at": 1787796660000 }
   ]
 }
 ```
@@ -3707,7 +3732,7 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/references/:id
       "commit_sha": "a1b2c3d4e5", "url": "https://github.com/…/commit/a1b2c3d4e5",
       "label": "認証ハンドラを追加", "note": null, "sort_order": 0,
       "created_by": { "id": "01K2...", "kind": "agent", "display_name": "claude-code" },
-      "created_at": "2026-08-27T02:10:00Z", "updated_at": "2026-08-27T02:10:00Z" }
+      "created_at": 1787796600000, "updated_at": 1787796600000 }
   ]
 }
 ```
@@ -3846,7 +3871,7 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 {
   "items": [
     { "id": "01K2...", "name": "Sprint 3", "goal": "認証を通す",
-      "start_date": "2026-08-05", "end_date": "2026-08-18",
+      "start_at": 1785855600000, "end_at": 1787065200000, "all_day": true,
       "status": "active", "ticket_count": 12, "closed_count": 5 }
   ]
 }
@@ -3856,12 +3881,12 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 |---|---|
 | `name` | 必須。1〜50文字。**一意制約は無い**（`DbDesign.md` 6.9 に `UNIQUE` が無く、同名を作れる） |
 | `goal` | 任意 |
-| `start_date` / `end_date` | 任意。両方あるとき `start_date <= end_date`（`DbDesign.md` 6.9 の `ck_sprint_dates`） |
+| `start_at` / `end_at` / `all_day` | 任意。**チケットの `start_at` / `due_at` / `all_day` と同じ規則**（9.3.1。`end_at` は含まない） |
 | `status` | `planned`（既定） / `active` / `completed` |
 
 `name` は 9.11 と同じく**前後の空白を取り除いてから**検証する。
 
-`items[]` は **`start_date` 降順（`NULL` は末尾）、同値は `created_at` 降順**。新しいものが上に来る並びで、`GuiDesign.md` 5.9.5 の図（`Sprint 3` が上、`Sprint 2` が下）と一致する。この画面で触るのは「これから始める／いま動いている」スプリントであり、完了済みは下へ流れてよい。
+`items[]` は **`start_at` 降順（`NULL` は末尾）、同値は `created_at` 降順**。新しいものが上に来る並びで、`GuiDesign.md` 5.9.5 の図（`Sprint 3` が上、`Sprint 2` が下）と一致する。この画面で触るのは「これから始める／いま動いている」スプリントであり、完了済みは下へ流れてよい。
 
 | 集計 | 定義 |
 |---|---|
@@ -3882,7 +3907,7 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 
 ```json
 { "name": "Sprint 4", "goal": "スプリント運用を通す",
-  "start_date": "2026-09-08", "end_date": "2026-09-21" }
+  "start_at": 1788793200000, "end_at": 1790002800000, "all_day": true }
 ```
 
 **スプリントを新しく作り、`active` にし、オンステージに載っているものを対象に入れる**——この3つを1つのトランザクションで行う。
@@ -3901,7 +3926,7 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 |---|---|
 | `name` | 必須。1〜50文字。前後の空白を取り除いてから検証する（9.12 と同じ） |
 | `goal` | 任意 |
-| `start_date` / `end_date` | 任意。両方あるとき `start_date <= end_date` |
+| `start_at` / `end_at` / `all_day` | 任意。9.3.1 の規則に従う |
 
 **進行中のスプリントが既にあれば `409 active_sprint_exists`**。**`active` は同時に1本だけである**——オンステージは1つしかなく、「いまどの期間で消化しようとしているか」の答えが2つあると、開始のたびにどちらへ入れるかを選ぶことになる。**複数チームが並行してスプリントを回す運用は、プロジェクトを分ける形で表す。**
 
@@ -3917,7 +3942,7 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 
 | 段階 | 動き |
 |---|---|
-| 1 | `sprint.status` を **`completed`** にする。`end_date` が空なら `CURRENT_DATE` を入れる |
+| 1 | `sprint.status` を **`completed`** にする。`end_at` が空なら、終日のスプリントは**基準タイムゾーンの翌日の0時**（今日を含める）、時刻付きは `now()` を入れる |
 | 2 | そのスプリントの `ticket_sprint` すべてに `removed_at = now()` を立てる |
 | 3 | **完了しているオンステージの根を `staged_at = NULL` にする**（オンステージから降ろす） |
 | 4 | **未完了のものは `staged_at` を触らない**（オンステージに残り、次の `start` でそちらへ入る） |
@@ -3978,13 +4003,13 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 
 **`by_category` は常に4つのキーを持つ。** そのカテゴリのステータスがワークフローに1つも無くても `0` を返す。`simple` テンプレート（`DbDesign.md` 7.4）は `review` を持たないが、**キーが消えると画面のカードが3枚になり、「4つのカードの意味が変わらない」という上の目的が崩れる。**
 
-`overdue` は `due_date < 今日` かつ `closed_at IS NULL`。`stale` は `updated_at` が `threshold_days` 日より前で `closed_at IS NULL`。**閾値はサーバが持ち、応答に含めて返す**（画面に「14日以上」と出すため。文言をフロントで組み立てない）。
+`overdue` は `due_at <= now()` かつ `closed_at IS NULL`。`stale` は `updated_at` が `threshold_days` 日より前で `closed_at IS NULL`。**閾値はサーバが持ち、応答に含めて返す**（画面に「14日以上」と出すため。文言をフロントで組み立てない）。
 
 **`threshold_days` は 14 で固定する**。5.3 のワイヤーフレームの文言と一致させたもので、プロジェクトごとの設定にはしない——**放置の基準を変えたくなるのは運用に載せてからであり、いま設定項目を作ると使われないまま形が固まる。**
 
 **`unassigned` にも `closed_at IS NULL` が掛かる。** `assignee_id IS NULL` かつ未完了の件数である。完了したチケットに担当者が無いのは要対応ではなく、`overdue` / `stale` と条件が揃う。
 
-**「今日」は DB の `CURRENT_DATE` で決める**（9.2.1 の `due_within` と同じ）。`app_user.timezone` は混ぜない——混ぜると同じプロジェクトの集計が読み手ごとに変わり、「要対応が3件」という会話が成り立たなくなる。
+**「今日」はプロジェクトの基準タイムゾーンで決める**（pb-217。9.2.1 の `due_within` と同じ。以前は DB の `CURRENT_DATE`＝UTC だった）。`overdue` は瞬間の比較なので「今日」に依らない。`app_user.timezone` は混ぜない——混ぜると同じプロジェクトの集計が読み手ごとに変わり、「要対応が3件」という会話が成り立たなくなる。
 
 **`ETag`（2.7）は返さない。** 2.7 が対象とするのは一覧系 GET であり、本エンドポイントはページャを持たない。加えて **ETag の材料（件数と `MAX(updated_at)`）を採る走査が本体の集計とほぼ同じ**なので、付けても DB の仕事は減らない。
 
@@ -4014,7 +4039,7 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
       "actor": { "id": "01K2...", "kind": "user", "display_name": "田中" },
       "action": "transition", "field": "status_key",
       "old_value": "todo", "new_value": "in_progress",
-      "occurred_at": "2026-08-11T00:12:44Z" }
+      "occurred_at": 1786407164000 }
   ],
   "page": 1, "per_page": 20, "total": 142, "total_pages": 8
 }
@@ -4036,13 +4061,15 @@ GET /api/v1/projects/:key/activity?entity=ticket:31&page=1&per_page=20
 ETag: W/"act-a3f19c2b-142-1723372992000000000"
 ```
 
-**`field` の値域は実装が定める。** 次の17種類が入る（`create` / `delete` は `field` が `null`）。
+**`field` の値域は実装が定める。** 次の18種類が入る（`create` / `delete` は `field` が `null`）。
 
 | 由来 | `field` |
 |---|---|
 | 遷移（9.6） | `status_key` |
-| 本体の更新（9.5.2） | `type` / `title` / `body_md` / `priority` / `assignee_id` / `parent_id` / `estimate_point` / `estimate_hours` / `actual_hours` / `start_date` / `due_date` |
+| 本体の更新（9.5.2） | `type` / `title` / `body_md` / `priority` / `assignee_id` / `parent_id` / `estimate_point` / `estimate_hours` / `actual_hours` / `start_at` / `due_at` / `all_day`（pb-217 より前の記録は `start_date` / `due_date`） |
 | 子資源の更新（9.8 / 9.9 / 9.10） | `comment` / `dod` / `link` / `reference.code` / `reference.doc` |
+
+**`start_at` / `due_at` の値は、終日なら `YYYY-MM-DD`（期限は締切日＝`due_at` の前日。基準タイムゾーン）、時刻付きならエポックミリ秒の文字列**である（pb-217）。履歴は読み返す記録なので、書いた時点の見え方で残す——後から基準タイムゾーンや `all_day` が変わっても、当時の「9/30締切」が読める。pb-217 より前の `start_date` / `due_date` は `YYYY-MM-DD` のままである。
 
 **`assignee_id` の値は ULID がそのまま入る。** 上の「表示名への変換は画面が行う」は `status_key` については成り立つ（ワークフローが 5.4 で手元にある）が、**これは解決先を持たない画面がありうる**——ダッシュボード（`GuiDesign.md` 5.3）はメンバー表を読まない。**画面がこの値をどう出すかは `GuiDesign.md` 5.3 / 5.5 の側で決める。**
 
@@ -4171,7 +4198,7 @@ DoD の型は `manual` ひとつで（9.9）、その定義は「**人間がチ�
 // 201 Created
 { "id": "01K5...", "agent_run_id": "01K5...", "seq": 31,
   "status": "completed", "knowledge_impact": "minor",
-  "submitted_at": "2026-09-05T12:00:00Z",
+  "submitted_at": 1788609600000,
   "submitted_by": { "id": "01K4...", "kind": "agent", "display_name": "claude-code" },
   "comment_id": "01K5...",
   "unsatisfied_dod": [
@@ -4332,14 +4359,14 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
   "items": [
     { "id": "01K2...", "path": "vision", "slug": "vision",
       "title": "価値観・世界観", "pack_mode": "full", "sort_order": 10, "version": 1,
-      "updated_at": "2026-08-29T04:12:00Z", "children": [] },
+      "updated_at": 1787976720000, "children": [] },
     { "id": "01K2...", "path": "rules", "slug": "rules",
       "title": "規約", "pack_mode": "full", "sort_order": 20, "version": 3,
-      "updated_at": "2026-08-29T05:00:00Z",
+      "updated_at": 1787979600000,
       "children": [
         { "id": "01K2...", "path": "rules/naming", "slug": "naming",
           "title": "命名", "pack_mode": "outline", "sort_order": 10, "version": 1,
-          "updated_at": "2026-08-29T05:00:00Z", "children": [] }
+          "updated_at": 1787979600000, "children": [] }
       ] }
   ]
 }
@@ -4369,7 +4396,7 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
 
 ```json
 { "id": "01K2...", "path": "rules", "title": "規約", "sort_order": 20, "version": 3,
-  "updated_at": "2026-08-29T05:00:00Z",
+  "updated_at": 1787979600000,
   "outline": [
     { "section": "命名", "level": 2 },
     { "section": "ブランチ", "level": 2 },
@@ -4401,8 +4428,8 @@ URL になり、画面の URL（`/p/:key/docs/rules/naming`）とそのまま一
   "version": 3,
   "created_by": { "id": "01K2...", "kind": "user", "display_name": "田中" },
   "updated_by": { "id": "01K2...", "kind": "agent", "display_name": "claude-code" },
-  "created_at": "2026-08-29T04:00:00Z",
-  "updated_at": "2026-08-29T05:00:00Z"
+  "created_at": 1787976000000,
+  "updated_at": 1787979600000
 }
 ```
 
@@ -4425,7 +4452,7 @@ GET /api/v1/projects/my-app/docs/rules?section=命名
 ```json
 { "id": "01K2...", "path": "rules", "title": "規約",
   "section": "命名", "body_md": "## 命名\n\n- テーブルは単数形…",
-  "version": 3, "updated_at": "2026-08-29T05:00:00Z" }
+  "version": 3, "updated_at": 1787979600000 }
 ```
 
 **見つからないときは `404 not_found` を返し、本体に `available_sections` を添える。**
@@ -4504,11 +4531,11 @@ GET /api/v1/projects/my-app/docs/rules?section=命名
     { "revision_no": 3, "title": "規約",
       "changed_by": { "id": "01K2...", "kind": "agent", "display_name": "claude-code" },
       "change_reason": "ブランチ命名にチケット番号を入れる",
-      "created_at": "2026-08-29T05:00:00Z" },
+      "created_at": 1787979600000 },
     { "revision_no": 2, "title": "規約",
       "changed_by": { "id": "01K2...", "kind": "user", "display_name": "田中" },
       "change_reason": null,
-      "created_at": "2026-08-29T04:30:00Z" }
+      "created_at": 1787977800000 }
   ],
   "page": 1, "per_page": 20, "total": 3, "total_pages": 1
 }
@@ -4529,7 +4556,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
   "body_md": "本書はこのプロジェクトの規約である。\n\n## 命名\n…",
   "changed_by": { "id": "01K2...", "kind": "user", "display_name": "田中" },
   "change_reason": null,
-  "created_at": "2026-08-29T04:30:00Z"
+  "created_at": 1787977800000
 }
 ```
 
@@ -4598,7 +4625,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
       "allowed": null, "default_value": "false",
       "source": "database", "editable": true, "restart_required": false,
       "secret": false, "env_key": "PB_COOKIE_SECURE",
-      "updated_at": "2026-09-11T04:10:00Z",
+      "updated_at": 1789099800000,
       "updated_by": { "id": "01K2...", "display_name": "田中" } },
 
     { "key": "database_url", "display_name": "DB接続文字列",
@@ -4698,7 +4725,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
   "config_file_path": null,
   "pending_confirmation": {
     "keys": ["tls_enabled"],
-    "expires_at": "2026-09-12T12:05:00Z",
+    "expires_at": 1789214700000,
     "changed_by": { "id": "01K2...", "kind": "user", "display_name": "田中" }
   }
 }
@@ -4734,7 +4761,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
       "not_before": "2026-09-01T00:00:00Z", "not_after": "2026-12-01T00:00:00Z",
       "serial_number": "0a1b2c3d", "fingerprint": "ab:cd:…",
       "is_self_signed": false, "status": "active", "decryptable": true,
-      "uploaded_at": "2026-09-11T04:10:00Z",
+      "uploaded_at": 1789099800000,
       "uploaded_by": { "id": "01K2...", "kind": "user", "display_name": "田中" } }
   ],
   "tls_enabled": true,
@@ -5027,10 +5054,10 @@ pb-cert-pb.example.com.zip
 
 ```json
 {
-  "fetched_at": "2026-09-17T05:03:12Z",
+  "fetched_at": 1789621392000,
   "connection": { "host": "127.0.0.1", "port": 5432, "database": "pb", "user": "pb_app", "tls": false },
   "server": { "version": "17.10 (Debian 17.10-1.pgdg12+1)",
-              "started_at": "2026-09-17T02:17:59Z", "max_connections": 50 },
+              "started_at": 1789611479000, "max_connections": 50 },
   "migration_version": 38,
   "sessions": { "database": 7, "pb": 5 },
   "pool": { "total": 5, "acquired": 1, "idle": 4, "max": 10 },
@@ -5196,11 +5223,11 @@ DB 側は `statement_timeout` を外した1つのトランザクションに閉�
 
 ```json
 {
-  "restored_at": "2026-09-18T15:04:05Z",
+  "restored_at": 1789743845000,
   "backup": {
     "format_version": 1,
     "migration_version": 36,
-    "created_at": "2026-09-15T02:00:00Z",
+    "created_at": 1789437600000,
     "pb_version": "2.43.140"
   },
   "migration_version": 38,

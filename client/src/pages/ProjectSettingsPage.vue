@@ -32,7 +32,7 @@ import type { Tag } from '../api/tags'
 import * as sprintsApi from '../api/sprints'
 import { sprintStatusLabels } from '../api/sprints'
 import type { CreateSprintRequest, Sprint } from '../api/sprints'
-import { formatDate, formatPlainDate } from '../lib/datetime'
+import { formatDate, formatPlan } from '../lib/datetime'
 import { statusLabel } from '../lib/catalogLabels'
 import { zoneOf, type DropZone } from '../lib/dnd'
 import { isWebUrl } from '../lib/url'
@@ -404,7 +404,7 @@ async function saveSprint(body: CreateSprintRequest): Promise<void> {
       sprintResult.value = uiText("✓ スプリント「{value0}」を更新しました", { value0: body.name })
     }
     editingSprint.value = null
-    // 並びが start_date に依るので、作成・更新のたびに取り直す。
+    // 並びが start_at に依るので、作成・更新のたびに取り直す。
     // 1件分の応答を差し込むだけでは、日付を変えたときに位置がずれる。
     await loadSprints()
   } catch (e) {
@@ -444,14 +444,15 @@ async function confirmDeleteSprint(): Promise<void> {
 /**
  * 期間の表示（5.9.5 の `8/05 — 8/18`）。片方だけでも読める形にする。
  *
- * **`formatDate` ではなく `formatPlainDate` を使う。** `start_date` /
- * `end_date` は `date` 列で時刻を持たず、タイムゾーンの変換を通すと
- * UTC より西の地域で前日へずれる（`lib/datetime.ts`）。
+ * **`formatPlan` を使う**（7.5「予定日時の出し方」。pb-217）。終日は基準タイムゾーンの
+ * 日付（終わりは1日戻す）で出す——見る人のタイムゾーンを通すと UTC より西の地域で
+ * 前日へずれる。
  */
 function sprintPeriod(s: Sprint): string {
-  if (!s.start_date && !s.end_date) return '—'
-  const from = s.start_date ? formatPlainDate(s.start_date) : uiText("未定")
-  const to = s.end_date ? formatPlainDate(s.end_date) : uiText("未定")
+  if (s.start_at === null && s.end_at === null) return '—'
+  const tz = store.planTimezone
+  const from = s.start_at !== null ? formatPlan(s.start_at, s.all_day, tz) : uiText("未定")
+  const to = s.end_at !== null ? formatPlan(s.end_at, s.all_day, tz, true) : uiText("未定")
   return `${from} — ${to}`
 }
 

@@ -411,8 +411,8 @@ func buildReferenceView(row referenceRow) referenceView {
 		Note:       textPtr(row.Note),
 		SortOrder:  row.SortOrder,
 		CreatedBy:  actorRefOf(row.CreatedBy, row.CreatedByKind, row.CreatedByName),
-		CreatedAt:  Time(row.CreatedAt.Time),
-		UpdatedAt:  Time(row.UpdatedAt.Time),
+		CreatedAt:  Time(row.CreatedAt),
+		UpdatedAt:  Time(row.UpdatedAt),
 	}
 }
 

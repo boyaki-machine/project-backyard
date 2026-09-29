@@ -19,6 +19,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -37,10 +38,11 @@ import (
 //
 // **status を受け取らない。** 開始は必ず active であり、選ばせる意味がない。
 type startSprintRequest struct {
-	Name      string  `json:"name"`
-	Goal      *string `json:"goal"`
-	StartDate *string `json:"start_date"`
-	EndDate   *string `json:"end_date"`
+	Name    string          `json:"name"`
+	Goal    *string         `json:"goal"`
+	StartAt json.RawMessage `json:"start_at"`
+	EndAt   json.RawMessage `json:"end_at"`
+	AllDay  *bool           `json:"all_day"`
 }
 
 // ── POST /api/v1/projects/{key}/sprints/start ───────────────
@@ -63,11 +65,15 @@ func (h *handler) startSprint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	loc, err := projectLocation(r.Context(), h.q, projectID)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+		return
+	}
 	var details []apierr.Detail
 	name := validateSprintName(req.Name, &details)
-	start := parseSprintDateField("start_date", req.StartDate, &details)
-	end := parseSprintDateField("end_date", req.EndDate, &details)
-	validateSprintDateOrder(start, end, &details)
+	start, end, allDay := parseCreateSchedule(req.StartAt, req.EndAt, req.AllDay, &details)
+	details = validateSchedule(start, end, allDay, loc, "end_at", details)
 	if len(details) > 0 {
 		apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(details...))
 		return
@@ -85,7 +91,7 @@ func (h *handler) startSprint(w http.ResponseWriter, r *http.Request) {
 		writeErr *apierr.Error
 	)
 
-	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+	err = h.tx.RunInTx(ctx, func(q gen.Querier) error {
 		// **進行中のスプリントは同時に1本だけである**（9.12.1）。
 		// オンステージは1つしかなく、「いまどの期間で消化しようと
 		// しているか」の答えが2つあると、開始のたびにどちらへ入れるかを選ぶ
@@ -109,8 +115,9 @@ func (h *handler) startSprint(w http.ResponseWriter, r *http.Request) {
 			ProjectID: projectID,
 			Name:      name,
 			Goal:      goal,
-			StartDate: start,
-			EndDate:   end,
+			StartAt:   start,
+			EndAt:     end,
+			AllDay:    allDay,
 			Status:    sprintStatusActive,
 		}); err != nil {
 			return fmt.Errorf("スプリントを作成できない: %w", err)

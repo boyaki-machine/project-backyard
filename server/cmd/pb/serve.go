@@ -372,7 +372,7 @@ func setupTLS(ctx context.Context, pool *pgxpool.Pool, set *config.Set) (*tlscer
 			continue // loadCertPair が警告を出している
 		}
 		entries = append(entries, tlscert.Entry{
-			ID: row.ID, NotBefore: row.NotBefore.Time, NotAfter: row.NotAfter.Time, Pair: pair,
+			ID: row.ID, NotBefore: row.NotBefore, NotAfter: row.NotAfter, Pair: pair,
 		})
 	}
 

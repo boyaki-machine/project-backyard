@@ -96,10 +96,10 @@ func (h *handler) login(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 
 	// 手順4。ロック中は照合すらしない。
-	if row.LockedUntil.Valid && row.LockedUntil.Time.After(now) {
+	if row.LockedUntil != nil && (*row.LockedUntil).After(now) {
 		h.recordLoginFailure(r.Context(), rec, email, "locked")
 		apierr.Write(w, r, apierr.New(apierr.AccountLocked).
-			WithRetryAfter(retryAfterSec(row.LockedUntil.Time, now)))
+			WithRetryAfter(retryAfterSec(*row.LockedUntil, now)))
 		return
 	}
 
@@ -165,14 +165,14 @@ func (h *handler) handleWrongPassword(
 	}
 
 	reason := "wrong_password"
-	if updated.LockedUntil.Valid {
+	if updated.LockedUntil != nil {
 		reason = "wrong_password_locked"
 	}
 	h.recordLoginFailure(r.Context(), rec, email, reason)
 
-	if updated.LockedUntil.Valid {
+	if updated.LockedUntil != nil {
 		apierr.Write(w, r, apierr.New(apierr.AccountLocked).
-			WithRetryAfter(retryAfterSec(updated.LockedUntil.Time, time.Now())))
+			WithRetryAfter(retryAfterSec(*updated.LockedUntil, time.Now())))
 		return
 	}
 	apierr.WriteCode(w, r, apierr.InvalidCredentials)

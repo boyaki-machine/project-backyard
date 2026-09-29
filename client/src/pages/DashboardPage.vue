@@ -43,7 +43,7 @@ import {
 import type { CreateTicketRequest, StatusCategory, Ticket } from '../api/tickets'
 import { activitySummary, actorLabel, ticketLabel } from '../lib/activity'
 import type { ActivityLabelContext } from '../lib/activity'
-import { formatDateTime, formatPlainDate, todayPlainDate } from '../lib/datetime'
+import { formatDateTime, formatPlan, isPastDue, isoOf } from '../lib/datetime'
 import { statusLabel } from '../lib/catalogLabels'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
@@ -185,7 +185,7 @@ async function loadDue(): Promise<void> {
       type: BLOCK_TYPES,
       // **期限の近い順に出す**（5.3 のワイヤーが「明日 → 3日後 → 5日後」の順）。
       // 既定の `sort_key` は人が手で並べた順で、期限とは関係しない。
-      sort: 'due_date',
+      sort: 'due_at',
       order: 'asc',
       per_page: LIST_PER_PAGE,
     })
@@ -317,9 +317,9 @@ const attention = computed(() => {
   return rows
 })
 
-/** 期限超過か（5.4 と同じ判定。`date` 列なので `todayPlainDate` と文字列で比べる） */
+/** 期限超過か（5.4 と同じ判定。`due_at <= いま`。pb-217） */
 function isOverdue(t: Ticket): boolean {
-  return t.due_date !== null && t.due_date < todayPlainDate() && t.closed_at === null
+  return isPastDue(t.due_at) && t.closed_at === null
 }
 
 function ticketTo(seq: number): string {
@@ -481,7 +481,7 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
                 <!-- 期限超過のみ danger（8.7 の例外）。**年を省かない**（5.4） -->
                 <span class="dash-due" :class="{ overdue: isOverdue(t) }">
                   <span v-if="isOverdue(t)" aria-hidden="true">⚠ </span>
-                  {{ t.due_date === null ? '—' : formatPlainDate(t.due_date) }}
+                  {{ t.due_at === null ? '—' : formatPlan(t.due_at, t.all_day, projectStore.planTimezone, true) }}
                 </span>
               </RouterLink>
             </li>
@@ -528,7 +528,7 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
                 <span v-else class="dash-act-target">{{ ticketLabel(projectKey, null) }}</span>
                 <span>{{ activitySummary(a, labelContext) }}</span>
               </p>
-              <time class="dash-act-time" :datetime="a.occurred_at">{{
+              <time class="dash-act-time" :datetime="isoOf(a.occurred_at)">{{
                 formatDateTime(a.occurred_at)
               }}</time>
             </li>

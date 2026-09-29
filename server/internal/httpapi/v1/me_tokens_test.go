@@ -34,9 +34,9 @@ type tokenJSON struct {
 	Token       string   `json:"token"`
 	TokenPrefix string   `json:"token_prefix"`
 	Scopes      []string `json:"scopes"`
-	IssuedAt    string   `json:"issued_at"`
-	LastUsedAt  *string  `json:"last_used_at"`
-	ExpiresAt   *string  `json:"expires_at"`
+	IssuedAt    int64    `json:"issued_at"`
+	LastUsedAt  *int64   `json:"last_used_at"`
+	ExpiresAt   *int64   `json:"expires_at"`
 	Status      string   `json:"status"`
 }
 
@@ -90,15 +90,15 @@ func TestListMyTokensReturnsItemsWithoutPlaintext(t *testing.T) {
 		{
 			ID: "01K2TOKEN0000000000000001", Name: txt("CLI (MacBook)"),
 			TokenPrefix: txt("pb_api_9"), Scopes: []byte(`[]`),
-			IssuedAt: ts(now.Add(-time.Hour)), LastUsedAt: ts(now.Add(-5 * time.Minute)),
-			ExpiresAt: ts(now.Add(90 * 24 * time.Hour)),
+			IssuedAt: ts(now.Add(-time.Hour)), LastUsedAt: tsp(now.Add(-5 * time.Minute)),
+			ExpiresAt: tsp(now.Add(90 * 24 * time.Hour)),
 		},
 		{
 			ID: "01K2TOKEN0000000000000002", Name: txt("CI"),
 			TokenPrefix: txt("pb_api_3"), Scopes: []byte(`["ticket.view"]`),
 			IssuedAt: ts(now.Add(-48 * time.Hour)),
 			// last_used_at は NULL（一度も使われていない）
-			ExpiresAt: ts(now.Add(-time.Hour)),
+			ExpiresAt: tsp(now.Add(-time.Hour)),
 		},
 	}
 
@@ -169,7 +169,7 @@ func TestListMyTokensToleratesBrokenScopes(t *testing.T) {
 	q.myTokenRows = []gen.ListMyAPITokensRow{{
 		ID: "01K2TOKEN0000000000000001", Name: txt("壊れたスコープ"),
 		TokenPrefix: txt("pb_api_9"), Scopes: []byte(`{"not":"an array"}`),
-		IssuedAt: ts(time.Now()), ExpiresAt: ts(time.Now().Add(time.Hour)),
+		IssuedAt: ts(time.Now()), ExpiresAt: tsp(time.Now().Add(time.Hour)),
 	}}
 
 	h, _ := newUserHandler(q)
@@ -237,14 +237,14 @@ func TestCreateMyTokenIssuesPlaintextOnce(t *testing.T) {
 	if string(arg.Scopes) != `[]` {
 		t.Errorf("scopes = %s, want []（絞り込みなし）", arg.Scopes)
 	}
-	if !arg.ExpiresAt.Valid {
+	if arg.ExpiresAt == nil {
 		t.Error("expires_at が NULL（無期限は許さない）")
 	}
 
 	// **有効期限は「発行から N 日後」である。**
 	wantExpiry := time.Now().AddDate(0, 0, 90)
-	if d := arg.ExpiresAt.Time.Sub(wantExpiry); d > time.Minute || d < -time.Minute {
-		t.Errorf("expires_at = %v, want %v 付近", arg.ExpiresAt.Time, wantExpiry)
+	if d := (*arg.ExpiresAt).Sub(wantExpiry); d > time.Minute || d < -time.Minute {
+		t.Errorf("expires_at = %v, want %v 付近", (*arg.ExpiresAt), wantExpiry)
 	}
 
 	if !tx.committed {
@@ -471,7 +471,7 @@ func TestDeleteMyTokenIsIdempotent(t *testing.T) {
 	q := tokenFake(t)
 	q.myTokenRow = gen.FindMyAPITokenRow{
 		ID: id, Name: txt("CLI"), TokenPrefix: txt("pb_api_9"),
-		RevokedAt: ts(time.Now().Add(-time.Hour)),
+		RevokedAt: tsp(time.Now().Add(-time.Hour)),
 	}
 
 	h, _ := newUserHandler(q)

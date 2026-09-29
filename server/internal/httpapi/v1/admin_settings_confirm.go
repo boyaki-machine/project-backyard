@@ -41,7 +41,7 @@ type pendingView struct {
 	// Keys は確認を待っているキー。**1回の保存を1件として扱う**（11.2）。
 	Keys []string `json:"keys"`
 	// ExpiresAt を過ぎると元へ戻る。画面は残り時間をここから出す。
-	ExpiresAt time.Time `json:"expires_at"`
+	ExpiresAt Time `json:"expires_at"`
 	// ChangedBy は変えた人（分からなければ null）。
 	//
 	// **画面が文言を分けるために要る**——「あなたが変えました」と
@@ -82,7 +82,7 @@ func pendingFromRow(row gen.GetPendingSettingChangeRow) (*pendingView, error) {
 	// **並びを固定する。** 応答が呼ぶたびに変わると、画面の差分が無駄に動く。
 	sortStrings(keys)
 
-	view := &pendingView{Keys: keys, ExpiresAt: row.ExpiresAt.Time.UTC()}
+	view := &pendingView{Keys: keys, ExpiresAt: Time(row.ExpiresAt)}
 	if row.CreatedBy.Valid {
 		view.ChangedBy = &actorRef{
 			ID:          row.CreatedBy.String,
@@ -379,7 +379,7 @@ func (g SettingsGuard) reload(ctx context.Context) error {
 func recordPending(
 	ctx context.Context, q gen.Querier, actorID string,
 	changes []settingChange, rows []gen.ListAppSettingsRow,
-) (*pgtype.Timestamptz, error) {
+) (*time.Time, error) {
 	risky := confirmKeys()
 	previous := make(map[string]*string)
 	for _, c := range changes {
@@ -413,7 +413,7 @@ func recordPending(
 	if err != nil {
 		return nil, fmt.Errorf("戻す値を書けない: %w", err)
 	}
-	expires := pgtype.Timestamptz{Time: time.Now().Add(ConfirmWindow), Valid: true}
+	expires := time.Now().Add(ConfirmWindow)
 	if _, err := q.CreatePendingSettingChange(ctx, gen.CreatePendingSettingChangeParams{
 		ID:        ulidgen.New(),
 		Previous:  blob,

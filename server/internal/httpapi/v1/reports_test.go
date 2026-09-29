@@ -74,7 +74,7 @@ type reportJSON struct {
 	Seq             int32   `json:"seq"`
 	Status          string  `json:"status"`
 	KnowledgeImpact *string `json:"knowledge_impact"`
-	SubmittedAt     string  `json:"submitted_at"`
+	SubmittedAt     int64   `json:"submitted_at"`
 	SubmittedBy     struct {
 		ID          string `json:"id"`
 		Kind        string `json:"kind"`
@@ -198,7 +198,7 @@ func TestSubmitReportWritesRunReportAndComment(t *testing.T) {
 		t.Errorf("コストが列に出ていない: %+v", run)
 	}
 	// **started_at は wall_clock_min から逆算する**（同上）。
-	if gap := run.EndedAt.Time.Sub(run.StartedAt.Time); gap != 42*time.Minute {
+	if gap := (*run.EndedAt).Sub(run.StartedAt); gap != 42*time.Minute {
 		t.Errorf("started_at の逆算 = %v, want 42m", gap)
 	}
 	// **workflow_version は埋めない**（workflow に版の列が無い）。

@@ -66,7 +66,7 @@ func (h *handler) issueSession(ctx context.Context, actorID, clientInfo string) 
 		// 一覧表示用（DbDesign.md 6.2）。接頭辞8文字なので pb_sess_ になる。
 		TokenPrefix: pgtype.Text{String: auth.TokenPrefix(plaintext), Valid: true},
 		Scopes:      scopes,
-		ExpiresAt:   pgtype.Timestamptz{Time: s.ExpiresAt, Valid: true},
+		ExpiresAt:   &s.ExpiresAt,
 		// GET /admin/users/:id の sessions[]（ApiDesign.md 6.3）が
 		// 「Chrome / macOS」を出すための素材。ここで残さないと後から取れない
 		// ため、User-Agent をそのまま入れる。

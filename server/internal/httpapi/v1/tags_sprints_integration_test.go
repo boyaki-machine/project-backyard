@@ -24,7 +24,7 @@ import (
 //   - 一意制約 uq_tag_project_name が本当に捕まり 409 に写ること
 //     （pgconn.PgError の TableName / ConstraintName が期待どおりに入るか）
 //   - ORDER BY が設計どおりであること（タグは sort_order,name／スプリントは
-//     start_date DESC NULLS LAST, created_at DESC）
+//     start_at DESC NULLS LAST, created_at DESC）
 //   - タグ削除で ticket_tag が CASCADE で消え、**チケットは残る**こと
 //   - スプリント削除で ticket.sprint_id が SET NULL になり、**チケットは残る**こと
 //
@@ -194,11 +194,11 @@ func TestTagsSprintsIntegration(t *testing.T) {
 
 	// ── ⑦ スプリントの作成と並び（9.12）──────────────────────
 	//
-	// 作る順と start_date の順を食い違わせ、ORDER BY を見る。
+	// 作る順と start_at の順を食い違わせ、ORDER BY を見る。
 	sprintIDs := map[string]string{}
 	for _, c := range []struct{ name, body string }{
-		{"Sprint 2", `{"name":"Sprint 2","start_date":"2026-07-22","end_date":"2026-08-04","status":"completed"}`},
-		{"Sprint 3", `{"name":"Sprint 3","goal":"認証を通す","start_date":"2026-08-05","end_date":"2026-08-18","status":"active"}`},
+		{"Sprint 2", `{"name":"Sprint 2","start_at":` + msOf(jstAt("2026-07-22")) + `,"end_at":` + msOf(jstEnd("2026-08-04")) + `,"status":"completed"}`},
+		{"Sprint 3", `{"name":"Sprint 3","goal":"認証を通す","start_at":` + msOf(jstAt("2026-08-05")) + `,"end_at":` + msOf(jstEnd("2026-08-18")) + `,"status":"active"}`},
 		{"日程未定", `{"name":"日程未定"}`},
 	} {
 		rec := postWithCookie(r, base+"/sprints", session, c.body)
@@ -208,7 +208,7 @@ func TestTagsSprintsIntegration(t *testing.T) {
 		sprintIDs[c.name] = viewOf(t, rec)["id"].(string)
 	}
 
-	// start_date 降順・NULL は末尾。
+	// start_at 降順・NULL は末尾。
 	if got := sprintNames(t, r, session, base); !equalStrings(got, []string{"Sprint 3", "Sprint 2", "日程未定"}) {
 		t.Errorf("スプリントの並び = %v, want [Sprint 3, Sprint 2, 日程未定]", got)
 	}
@@ -243,23 +243,23 @@ func TestTagsSprintsIntegration(t *testing.T) {
 	//
 	// 開始 8/05・終了 8/18 の行に、終了だけ 8/01 を送る。
 	rec = bodyWithCookie(r, http.MethodPatch, base+"/sprints/"+sprintIDs["Sprint 3"], session,
-		`{"end_date":"2026-08-01"}`, "")
+		`{"end_at":`+msOf(jstEnd("2026-08-01"))+`}`, "")
 	if rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("矛盾する end_date の status = %d, want 422（body=%s）", rec.Code, rec.Body.String())
+		t.Errorf("矛盾する end_at の status = %d, want 422（body=%s）", rec.Code, rec.Body.String())
 	}
 
 	// null で日付を消せる。
 	rec = bodyWithCookie(r, http.MethodPatch, base+"/sprints/"+sprintIDs["Sprint 3"], session,
-		`{"start_date":null}`, "")
+		`{"start_at":null}`, "")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("start_date を消す PATCH の status = %d（body=%s）", rec.Code, rec.Body.String())
+		t.Fatalf("start_at を消す PATCH の status = %d（body=%s）", rec.Code, rec.Body.String())
 	}
-	if got := viewOf(t, rec)["start_date"]; got != nil {
-		t.Errorf("start_date = %v, want null", got)
+	if got := viewOf(t, rec)["start_at"]; got != nil {
+		t.Errorf("start_at = %v, want null", got)
 	}
 	// 消したので NULL 扱いになり、末尾へ回る。
 	if got := sprintNames(t, r, session, base); got[0] != "Sprint 2" {
-		t.Errorf("start_date を消した後の先頭 = %q, want Sprint 2", got[0])
+		t.Errorf("start_at を消した後の先頭 = %q, want Sprint 2", got[0])
 	}
 
 	// ── ⑩ スプリント削除でチケットが残ること ────────────────

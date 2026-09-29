@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -55,8 +54,8 @@ type settingItem struct {
 	ConfigFileKey string `json:"config_file_key"`
 
 	// UpdatedAt / UpdatedBy は app_setting の行があるときだけ埋まる。
-	UpdatedAt *time.Time `json:"updated_at"`
-	UpdatedBy *actorRef  `json:"updated_by"`
+	UpdatedAt *Time     `json:"updated_at"`
+	UpdatedBy *actorRef `json:"updated_by"`
 }
 
 // settingsResponse は 11.1 と 11.2 の応答。
@@ -375,10 +374,7 @@ func buildSettingsResponse(set *config.Set, rows []gen.ListAppSettingsRow) setti
 		// ときは、行があっても効いていないので返さない。
 		if v.Source == config.SourceDatabase {
 			if row, ok := byKey[v.Def.Key]; ok {
-				if row.UpdatedAt.Valid {
-					at := row.UpdatedAt.Time.UTC()
-					item.UpdatedAt = &at
-				}
+				item.UpdatedAt = apiTime(&row.UpdatedAt)
 				if row.UpdatedBy.Valid {
 					item.UpdatedBy = &actorRef{
 						ID:          row.UpdatedBy.String,

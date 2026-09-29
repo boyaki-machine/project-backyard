@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
@@ -23,8 +21,8 @@ func pendingRow(t *testing.T, previous map[string]*string, expiresIn time.Durati
 	return gen.GetPendingSettingChangeRow{
 		ID:        "01K2F8QW3H7YRJ4M5N6P7Q8PND",
 		Previous:  blob,
-		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(expiresIn), Valid: true},
-		CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		ExpiresAt: ts(time.Now().Add(expiresIn)),
+		CreatedAt: ts(time.Now()),
 	}
 }
 
@@ -217,7 +215,7 @@ func TestSettingsGuardRevertsExpired(t *testing.T) {
 		blob, _ := json.Marshal(map[string]*string{config.KeyTLSEnabled: nil})
 		q.settings.expiredPending = []gen.ListExpiredPendingSettingChangesRow{{
 			ID: "01K2F8QW3H7YRJ4M5N6P7Q8PND", Previous: blob,
-			ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true},
+			ExpiresAt: ts(time.Now().Add(-time.Minute)),
 		}}
 		row := pendingRow(t, map[string]*string{config.KeyTLSEnabled: nil}, -time.Minute)
 		q.settings.pending = &row
@@ -253,7 +251,7 @@ func TestSettingsGuardRevertsExpired(t *testing.T) {
 		blob, _ := json.Marshal(map[string]*string{config.KeyCookieSecure: &prev})
 		q.settings.expiredPending = []gen.ListExpiredPendingSettingChangesRow{{
 			ID: "01K2F8QW3H7YRJ4M5N6P7Q8PND", Previous: blob,
-			ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true},
+			ExpiresAt: ts(time.Now().Add(-time.Minute)),
 		}}
 		row := pendingRow(t, map[string]*string{config.KeyCookieSecure: &prev}, -time.Minute)
 		q.settings.pending = &row
@@ -276,7 +274,7 @@ func TestSettingsGuardRevertsExpired(t *testing.T) {
 		q.settings.expiredPending = []gen.ListExpiredPendingSettingChangesRow{{
 			ID: "01K2F8QW3H7YRJ4M5N6P7Q8PND", Previous: blob,
 			// **期限はまだ先である。**
-			ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(5 * time.Minute), Valid: true},
+			ExpiresAt: ts(time.Now().Add(5 * time.Minute)),
 		}}
 		row := pendingRow(t, map[string]*string{config.KeyTLSEnabled: nil}, 5*time.Minute)
 		q.settings.pending = &row

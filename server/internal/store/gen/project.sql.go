@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -224,8 +225,8 @@ type GetProjectByKeyRow struct {
 	Settings     []byte
 	Timezone     string
 	Version      int32
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 	WorkflowID   pgtype.Text
 	WorkflowName pgtype.Text
 }
@@ -257,6 +258,20 @@ func (q *Queries) GetProjectByKey(ctx context.Context, key string) (GetProjectBy
 		&i.WorkflowName,
 	)
 	return i, err
+}
+
+const getProjectTimezone = `-- name: GetProjectTimezone :one
+SELECT timezone FROM project WHERE id = $1
+`
+
+// GetProjectTimezone はプロジェクトの基準タイムゾーン（DbDesign.md 6.23）を返す。
+// 予定日時の検証（終日は基準タイムゾーンの0時。ApiDesign.md 9.3.1）と、due_within の
+// 境界の計算（9.2.1）が使う。
+func (q *Queries) GetProjectTimezone(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, getProjectTimezone, id)
+	var timezone string
+	err := row.Scan(&timezone)
+	return timezone, err
 }
 
 const isProjectScopedRole = `-- name: IsProjectScopedRole :one
@@ -293,7 +308,7 @@ type ListProjectMembersRow struct {
 	DisplayName string
 	Email       pgtype.Text
 	RoleKey     string
-	JoinedAt    pgtype.Timestamptz
+	JoinedAt    time.Time
 }
 
 // ListProjectMembers は 5.4 の members[] を返す。
@@ -397,7 +412,7 @@ type ListProjectsRow struct {
 	Name        string
 	Description pgtype.Text
 	Status      string
-	UpdatedAt   pgtype.Timestamptz
+	UpdatedAt   time.Time
 	MyRole      pgtype.Text
 	TicketCount int64
 	ClosedCount int64
@@ -610,7 +625,7 @@ func (q *Queries) SetProjectWorkflow(ctx context.Context, arg SetProjectWorkflow
 const summarizeProjects = `-- name: SummarizeProjects :one
 SELECT
   count(*)::bigint            AS total,
-  max(p.updated_at)::timestamptz AS last_updated_at
+  COALESCE(max(p.updated_at), 'epoch'::timestamptz)::timestamptz AS last_updated_at
 FROM project p
 LEFT JOIN project_member pm
        ON pm.project_id = p.id AND pm.actor_id = $1
@@ -629,7 +644,7 @@ type SummarizeProjectsParams struct {
 
 type SummarizeProjectsRow struct {
 	Total         int64
-	LastUpdatedAt pgtype.Timestamptz
+	LastUpdatedAt time.Time
 }
 
 // SummarizeProjects は ListProjects と同じ可視範囲・同じ絞り込みに対する
@@ -637,7 +652,8 @@ type SummarizeProjectsRow struct {
 //
 // total は 2.6 の「総件数は常に返す」。last_updated_at は 2.7 の ETag の材料
 // （「プロジェクト集合の MAX(updated_at) と件数から生成する」）。**同じ WHERE を
-// 2回書かないよう1文にまとめてある。** 0件のとき last_updated_at は NULL。
+// 2回書かないよう1文にまとめてある。** 0件のとき last_updated_at は 1970-01-01（epoch）。
+// NULL を返すと Go の time.Time へ読めない（pb-224 で pgtype.Timestamptz をやめた）。
 func (q *Queries) SummarizeProjects(ctx context.Context, arg SummarizeProjectsParams) (SummarizeProjectsRow, error) {
 	row := q.db.QueryRow(ctx, summarizeProjects,
 		arg.ActorID,

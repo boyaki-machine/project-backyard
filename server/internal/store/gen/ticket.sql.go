@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -73,11 +74,11 @@ const createTicket = `-- name: CreateTicket :exec
 INSERT INTO ticket (
   id, project_id, seq, parent_id, type, title, body_md, status_key, priority,
   assignee_id, reporter_id, estimate_point, estimate_hours,
-  start_date, due_date, sort_key
+  start_at, due_at, all_day, sort_key
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7, $8, $9,
   $10, $11, $12, $13,
-  $14, $15, $16
+  $14, $15, $16, $17
 )
 `
 
@@ -95,8 +96,9 @@ type CreateTicketParams struct {
 	ReporterID    pgtype.Text
 	EstimatePoint pgtype.Float8
 	EstimateHours pgtype.Float8
-	StartDate     pgtype.Date
-	DueDate       pgtype.Date
+	StartAt       *time.Time
+	DueAt         *time.Time
+	AllDay        bool
 	SortKey       pgtype.Text
 }
 
@@ -117,8 +119,9 @@ func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) erro
 		arg.ReporterID,
 		arg.EstimatePoint,
 		arg.EstimateHours,
-		arg.StartDate,
-		arg.DueDate,
+		arg.StartAt,
+		arg.DueAt,
+		arg.AllDay,
 		arg.SortKey,
 	)
 	return err
@@ -341,8 +344,9 @@ SELECT
   t.actual_hours,
   t.actual_point,
   t.actual_point_version,
-  t.start_date,
-  t.due_date,
+  t.start_at,
+  t.due_at,
+  t.all_day,
   t.closed_at,
   t.version,
   t.created_at,
@@ -390,7 +394,7 @@ type GetTicketBySeqRow struct {
 	WorkingAgentName   pgtype.Text
 	ParentSeq          pgtype.Int4
 	HasChildren        bool
-	StagedAt           pgtype.Timestamptz
+	StagedAt           *time.Time
 	SortKey            pgtype.Text
 	SprintID           pgtype.Text
 	SprintName         pgtype.Text
@@ -399,12 +403,13 @@ type GetTicketBySeqRow struct {
 	ActualHours        pgtype.Float8
 	ActualPoint        pgtype.Float8
 	ActualPointVersion pgtype.Text
-	StartDate          pgtype.Date
-	DueDate            pgtype.Date
-	ClosedAt           pgtype.Timestamptz
+	StartAt            *time.Time
+	DueAt              *time.Time
+	AllDay             bool
+	ClosedAt           *time.Time
 	Version            int32
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 	ExecutionMode      string
 	Readiness          pgtype.Text
 	ReadinessNote      pgtype.Text
@@ -447,8 +452,9 @@ func (q *Queries) GetTicketBySeq(ctx context.Context, arg GetTicketBySeqParams) 
 		&i.ActualHours,
 		&i.ActualPoint,
 		&i.ActualPointVersion,
-		&i.StartDate,
-		&i.DueDate,
+		&i.StartAt,
+		&i.DueAt,
+		&i.AllDay,
 		&i.ClosedAt,
 		&i.Version,
 		&i.CreatedAt,
@@ -528,7 +534,7 @@ type GetTicketSortRowRow struct {
 	ID         string
 	Type       string
 	SortKey    pgtype.Text
-	StagedAt   pgtype.Timestamptz
+	StagedAt   *time.Time
 	Version    int32
 	ParentType pgtype.Text
 }
@@ -847,8 +853,9 @@ filtered AS (
     t.actual_hours,
     t.actual_point,
     t.actual_point_version,
-    t.start_date,
-    t.due_date,
+    t.start_at,
+    t.due_at,
+    t.all_day,
     t.closed_at,
     t.version,
     t.created_at,
@@ -892,28 +899,31 @@ filtered AS (
          OR ($17::text = 'open'   AND t.closed_at IS NULL)
          OR ($17::text = 'closed' AND t.closed_at IS NOT NULL))
     -- due_within（9.2.1）。**期限超過を含む**ので下限を置かない。
-    -- due_date が NULL のものは除外する。
-    AND ($18::int < 0
-         OR (t.due_date IS NOT NULL
-             AND t.due_date <= CURRENT_DATE + $18::int))
+    -- due_at が NULL のものは除外する。境界（基準タイムゾーンで N 日後の日の終わり
+    -- ＝翌日の0時）は**ハンドラが計算して瞬間で渡す**（pb-217）。SQL で
+    -- timezone() の入れ子に引数を置くと sqlc の書き換えが位置を誤り、文字が欠ける。
+    AND ($18::timestamptz IS NULL
+         OR (t.due_at IS NOT NULL
+             AND t.due_at < $18::timestamptz))
     -- overdue（9.2.1。手順19b）。**stats.sql の overdue と同じ条件**にしてある
     -- ——ダッシュボードが出した件数と、押した先の一覧の件数が一致する必要がある
-    -- （GuiDesign.md 5.3）。due_within=0d は「今日以前」で今日締切を含むため、
-    -- 代用すると1日ぶんずれる。
+    -- （GuiDesign.md 5.3）。due_within=0d は「今日の終わりまで」でまだ過ぎていない
+    -- 今日締切を含むため、代用するとずれる。**瞬間の比較なので「今日」に依らない**（pb-217）。
     AND (NOT $19::boolean
          OR (t.closed_at IS NULL
-             AND t.due_date IS NOT NULL
-             AND t.due_date < CURRENT_DATE))
-    -- planned_from / planned_to（9.2.1）。**予定期間が1日でも重なるもの**。
-    -- 片方だけの日付を持つチケットはその日1日の点として扱う。両方 NULL は
+             AND t.due_at IS NOT NULL
+             AND t.due_at <= now()))
+    -- planned_from / planned_to（9.2.1）。**予定が少しでも重なるもの**（半開区間どうし）。
+    -- 片方だけのチケットは長さ 1ms の点として扱う。期限だけのものは期限の直前の瞬間に
+    -- 置くので、終日の「9/30締切」（due_at は 10/1 の0時）は 9/30 に当たる。両方 NULL は
     -- COALESCE も NULL になるため、期間を指定したときに外れる。
-    AND (($20::date IS NULL
-          AND $21::date IS NULL)
-         OR (COALESCE(t.start_date, t.due_date) IS NOT NULL
-             AND ($21::date IS NULL
-                  OR COALESCE(t.start_date, t.due_date) <= $21::date)
-             AND ($20::date IS NULL
-                  OR COALESCE(t.due_date, t.start_date) >= $20::date)))
+    AND (($20::timestamptz IS NULL
+          AND $21::timestamptz IS NULL)
+         OR (COALESCE(t.start_at, t.due_at) IS NOT NULL
+             AND ($21::timestamptz IS NULL
+                  OR COALESCE(t.start_at, t.due_at - interval '1 millisecond') < $21::timestamptz)
+             AND ($20::timestamptz IS NULL
+                  OR COALESCE(t.due_at, t.start_at + interval '1 millisecond') > $20::timestamptz)))
     -- stale（9.2.1。手順19b）。**stats.sql の stale と同じ条件**。
     -- 日数を引数に取るのは、閾値の正本がサーバ側の定数だからである（9.13.1）。
     AND ($22::int < 0
@@ -995,11 +1005,11 @@ backlog_matches AS (
    WHERE p.project_id = $5::pg_catalog.bpchar
 ),
 search_filtered AS (
-  SELECT f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.actual_point, f.actual_point_version, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at FROM filtered f
+  SELECT f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.actual_point, f.actual_point_version, f.start_at, f.due_at, f.all_day, f.closed_at, f.version, f.created_at, f.updated_at FROM filtered f
    WHERE NOT $26::boolean OR f.id IN (SELECT id FROM backlog_matches)
 )
 SELECT
-  f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.actual_point, f.actual_point_version, f.start_date, f.due_date, f.closed_at, f.version, f.created_at, f.updated_at,
+  f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.actual_point, f.actual_point_version, f.start_at, f.due_at, f.all_day, f.closed_at, f.version, f.created_at, f.updated_at,
   count(*) OVER ()                        AS total,
   (max(f.updated_at) OVER ())::timestamptz AS last_updated_at
 FROM search_filtered f
@@ -1026,8 +1036,8 @@ ORDER BY
        THEN array_position(ARRAY['lowest','low','medium','high','highest'], f.priority) END ASC  NULLS LAST,
   CASE WHEN $1::text = 'priority' AND $2::text = 'desc'
        THEN array_position(ARRAY['lowest','low','medium','high','highest'], f.priority) END DESC NULLS LAST,
-  CASE WHEN $1::text = 'due_date'   AND $2::text = 'asc'  THEN f.due_date END ASC  NULLS LAST,
-  CASE WHEN $1::text = 'due_date'   AND $2::text = 'desc' THEN f.due_date END DESC NULLS LAST,
+  CASE WHEN $1::text = 'due_at'     AND $2::text = 'asc'  THEN f.due_at END ASC  NULLS LAST,
+  CASE WHEN $1::text = 'due_at'     AND $2::text = 'desc' THEN f.due_at END DESC NULLS LAST,
   CASE WHEN $1::text = 'created_at' AND $2::text = 'asc'  THEN f.created_at END ASC,
   CASE WHEN $1::text = 'created_at' AND $2::text = 'desc' THEN f.created_at END DESC,
   CASE WHEN $1::text = 'updated_at' AND $2::text = 'asc'  THEN f.updated_at END ASC,
@@ -1058,10 +1068,10 @@ type ListTicketsParams struct {
 	SprintIds        []string
 	SprintNone       bool
 	OpenFilter       string
-	DueWithinDays    int32
+	DueBefore        *time.Time
 	OverdueOnly      bool
-	PlannedFrom      pgtype.Date
-	PlannedTo        pgtype.Date
+	PlannedFrom      *time.Time
+	PlannedTo        *time.Time
 	StaleDays        int32
 	IncludeRetired   bool
 	StagedOnly       bool
@@ -1070,10 +1080,10 @@ type ListTicketsParams struct {
 	KeywordIds       []string
 	SeqFrom          int32
 	SeqTo            int32
-	ClosedSince      pgtype.Timestamptz
-	ClosedBefore     pgtype.Timestamptz
-	StartedSince     pgtype.Timestamptz
-	StartedBefore    pgtype.Timestamptz
+	ClosedSince      *time.Time
+	ClosedBefore     *time.Time
+	StartedSince     *time.Time
+	StartedBefore    *time.Time
 }
 
 type ListTicketsRow struct {
@@ -1098,7 +1108,7 @@ type ListTicketsRow struct {
 	ParentSeq          pgtype.Int4
 	HasChildren        bool
 	SortKey            pgtype.Text
-	StagedAt           pgtype.Timestamptz
+	StagedAt           *time.Time
 	SprintID           pgtype.Text
 	SprintName         pgtype.Text
 	EstimatePoint      pgtype.Float8
@@ -1106,14 +1116,15 @@ type ListTicketsRow struct {
 	ActualHours        pgtype.Float8
 	ActualPoint        pgtype.Float8
 	ActualPointVersion pgtype.Text
-	StartDate          pgtype.Date
-	DueDate            pgtype.Date
-	ClosedAt           pgtype.Timestamptz
+	StartAt            *time.Time
+	DueAt              *time.Time
+	AllDay             bool
+	ClosedAt           *time.Time
 	Version            int32
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 	Total              int64
-	LastUpdatedAt      pgtype.Timestamptz
+	LastUpdatedAt      time.Time
 }
 
 // チケットに関するクエリ（DbDesign.md 6.6、ApiDesign.md 9.2 / 9.3 / 9.4）。
@@ -1204,7 +1215,7 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 		arg.SprintIds,
 		arg.SprintNone,
 		arg.OpenFilter,
-		arg.DueWithinDays,
+		arg.DueBefore,
 		arg.OverdueOnly,
 		arg.PlannedFrom,
 		arg.PlannedTo,
@@ -1258,8 +1269,9 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 			&i.ActualHours,
 			&i.ActualPoint,
 			&i.ActualPointVersion,
-			&i.StartDate,
-			&i.DueDate,
+			&i.StartAt,
+			&i.DueAt,
+			&i.AllDay,
 			&i.ClosedAt,
 			&i.Version,
 			&i.CreatedAt,
@@ -1346,7 +1358,7 @@ RETURNING seq, sort_key, staged_at, version
 type MoveTicketParams struct {
 	SortKey     pgtype.Text
 	ChangeStage bool
-	StagedAt    pgtype.Timestamptz
+	StagedAt    *time.Time
 	Unparent    bool
 	ProjectID   string
 	ID          string
@@ -1355,7 +1367,7 @@ type MoveTicketParams struct {
 type MoveTicketRow struct {
 	Seq      int32
 	SortKey  pgtype.Text
-	StagedAt pgtype.Timestamptz
+	StagedAt *time.Time
 	Version  int32
 }
 
@@ -1440,7 +1452,7 @@ UPDATE ticket SET closed_at = $1 WHERE id = $2
 `
 
 type SetTicketClosedAtParams struct {
-	ClosedAt pgtype.Timestamptz
+	ClosedAt *time.Time
 	ID       string
 }
 
@@ -1481,7 +1493,7 @@ UPDATE ticket SET staged_at = $1 WHERE id = $2
 `
 
 type SetTicketStagedAtParams struct {
-	StagedAt pgtype.Timestamptz
+	StagedAt *time.Time
 	ID       string
 }
 
@@ -1615,17 +1627,18 @@ UPDATE ticket SET
   actual_hours   = CASE WHEN $17::boolean   THEN $18   ELSE actual_hours END,
   actual_point   = CASE WHEN $19::boolean   THEN $20   ELSE actual_point END,
   actual_point_version = CASE WHEN $21::boolean THEN $22 ELSE actual_point_version END,
-  start_date     = CASE WHEN $23::boolean     THEN $24     ELSE start_date END,
-  due_date       = CASE WHEN $25::boolean       THEN $26       ELSE due_date END,
+  start_at       = CASE WHEN $23::boolean       THEN $24       ELSE start_at END,
+  due_at         = CASE WHEN $25::boolean         THEN $26         ELSE due_at END,
+  all_day        = COALESCE($27, all_day),
   -- 9.5.2 で開けた4項目（手順27）。**execution_mode と scope は NOT NULL** なので
   -- COALESCE で足りる（null を送れば 422 で先に落ちる）。readiness と
   -- readiness_note は null が「未判定へ戻す」を表すので _set の形が要る。
-  execution_mode = COALESCE($27, execution_mode),
-  readiness      = CASE WHEN $28::boolean      THEN $29      ELSE readiness END,
-  readiness_note = CASE WHEN $30::boolean THEN $31 ELSE readiness_note END,
-  scope          = COALESCE($32, scope),
+  execution_mode = COALESCE($28, execution_mode),
+  readiness      = CASE WHEN $29::boolean      THEN $30      ELSE readiness END,
+  readiness_note = CASE WHEN $31::boolean THEN $32 ELSE readiness_note END,
+  scope          = COALESCE($33, scope),
   version        = version + 1
-WHERE project_id = $33 AND seq = $34 AND version = $35
+WHERE project_id = $34 AND seq = $35 AND version = $36
 `
 
 type UpdateTicketParams struct {
@@ -1651,10 +1664,11 @@ type UpdateTicketParams struct {
 	ActualPoint           pgtype.Float8
 	ActualPointVersionSet bool
 	ActualPointVersion    pgtype.Text
-	StartDateSet          bool
-	StartDate             pgtype.Date
-	DueDateSet            bool
-	DueDate               pgtype.Date
+	StartAtSet            bool
+	StartAt               *time.Time
+	DueAtSet              bool
+	DueAt                 *time.Time
+	AllDay                pgtype.Bool
 	ExecutionMode         pgtype.Text
 	ReadinessSet          bool
 	Readiness             pgtype.Text
@@ -1712,10 +1726,11 @@ func (q *Queries) UpdateTicket(ctx context.Context, arg UpdateTicketParams) (int
 		arg.ActualPoint,
 		arg.ActualPointVersionSet,
 		arg.ActualPointVersion,
-		arg.StartDateSet,
-		arg.StartDate,
-		arg.DueDateSet,
-		arg.DueDate,
+		arg.StartAtSet,
+		arg.StartAt,
+		arg.DueAtSet,
+		arg.DueAt,
+		arg.AllDay,
 		arg.ExecutionMode,
 		arg.ReadinessSet,
 		arg.Readiness,

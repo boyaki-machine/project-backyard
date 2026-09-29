@@ -78,7 +78,7 @@ LIMIT @page_limit OFFSET @page_offset;
 -- name: SummarizeActivity :one
 SELECT
   count(*)::bigint                 AS total,
-  max(occurred_at)::timestamptz    AS last_occurred_at
+  COALESCE(max(occurred_at), 'epoch'::timestamptz)::timestamptz AS last_occurred_at
 FROM activity
 WHERE project_id = @project_id::pg_catalog.bpchar
   AND (@entity_id::pg_catalog.bpchar = ''     OR (entity_type = 'ticket' AND entity_id = @entity_id::pg_catalog.bpchar))

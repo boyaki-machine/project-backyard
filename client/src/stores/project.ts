@@ -127,6 +127,13 @@ export const useProjectStore = defineStore('project', () => {
 
   /** 取得済みの `current` がどのキーのものか。ルートの `:key` と突き合わせる */
   const currentKey = computed(() => current.value?.key ?? null)
+  /**
+   * 予定日時の終日を区切る基準タイムゾーン（`DbDesign.md` 6.23。pb-217）。
+   * 読み込み前の一瞬だけは端末のタイムゾーンで代用する——空のまま日付を出せないため。
+   */
+  const planTimezone = computed(
+    () => current.value?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+  )
 
   /** 一覧と同じ追い越し対策。プロジェクトを続けて切り替えたときに古い応答で上書きしない */
   let currentSeq = 0
@@ -200,6 +207,7 @@ export const useProjectStore = defineStore('project', () => {
     goToPage,
     current,
     currentKey,
+    planTimezone,
     currentLoading,
     currentError,
     fetchCurrent,

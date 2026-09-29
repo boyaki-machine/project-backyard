@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -158,7 +159,7 @@ func (h *handler) listTicketComments(w http.ResponseWriter, r *http.Request) {
 	items := make([]commentView, 0, len(rows))
 	var (
 		total       int64
-		lastUpdated pgtype.Timestamptz
+		lastUpdated time.Time
 	)
 	for _, row := range rows {
 		items = append(items, buildCommentView(commentRowOfList(row)))
@@ -193,11 +194,8 @@ func (h *handler) listTicketComments(w http.ResponseWriter, r *http.Request) {
 // 1つも無く、変わりうるのは並び順とページだけである。その2つは値として直接
 // 入れてある——ETag は応答本文を指す検証子であり（RFC 9110 8.8.1）、
 // 2ページ目と1ページ目が同じ値になってはならない。
-func commentsETag(page Page, total int64, lastUpdated pgtype.Timestamptz) string {
-	var stamp int64
-	if lastUpdated.Valid {
-		stamp = lastUpdated.Time.UTC().UnixNano()
-	}
+func commentsETag(page Page, total int64, lastUpdated time.Time) string {
+	stamp := etagStamp(lastUpdated)
 	return fmt.Sprintf(`W/"cmt-%d-%d-%s-%d-%d"`,
 		page.Page, page.PerPage, page.Order, total, stamp)
 }
@@ -339,7 +337,7 @@ func (h *handler) patchTicketComment(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("コメント %q を読めない: %w", id, err)
 		}
 		// 削除済みは「もう無い」（9.8）。
-		if before.DeletedAt.Valid {
+		if before.DeletedAt != nil {
 			notFound = true
 			return errCommentHandled
 		}
@@ -438,7 +436,7 @@ func (h *handler) deleteTicketComment(w http.ResponseWriter, r *http.Request) {
 			}
 			return fmt.Errorf("コメント %q を読めない: %w", id, err)
 		}
-		if row.DeletedAt.Valid {
+		if row.DeletedAt != nil {
 			notFound = true
 			return errCommentHandled
 		}
@@ -517,12 +515,12 @@ func buildCommentView(row commentRow) commentView {
 		Author: actorRef{
 			ID: row.AuthorID, Kind: row.AuthorKind, DisplayName: row.AuthorName,
 		},
-		CreatedAt: Time(row.CreatedAt.Time),
-		UpdatedAt: Time(row.UpdatedAt.Time),
-		DeletedAt: apiTimestamptz(row.DeletedAt),
+		CreatedAt: Time(row.CreatedAt),
+		UpdatedAt: Time(row.UpdatedAt),
+		DeletedAt: apiTime(row.DeletedAt),
 	}
 	// **削除済みは本文を返さない**（9.8）。DB には残っている。
-	if !row.DeletedAt.Valid {
+	if row.DeletedAt == nil {
 		body := row.BodyMd
 		view.BodyMd = &body
 	}

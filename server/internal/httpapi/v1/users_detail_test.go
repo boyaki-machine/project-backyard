@@ -111,7 +111,7 @@ func TestGetUserReturnsDetail(t *testing.T) {
 		ID: testIdentity, ProviderKey: "local", ProviderType: "local",
 		Subject:           targetEmail,
 		LinkedAt:          ts(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)),
-		PasswordUpdatedAt: ts(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)),
+		PasswordUpdatedAt: tsp(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)),
 	}}
 	q.membershipRows = []gen.ListUserProjectMembershipsRow{{
 		ProjectID: testProjectID, ProjectKey: "my-app", ProjectName: "社内タスク管理の刷新",
@@ -120,7 +120,7 @@ func TestGetUserReturnsDetail(t *testing.T) {
 	q.sessionRows = []gen.ListUserSessionsRow{{
 		ID: "01K2F8QW3H7YRJ4M5N6P7Q8SES", ClientInfo: txt("Chrome / macOS"),
 		IssuedAt:  ts(time.Date(2026, 8, 11, 9, 0, 0, 0, time.UTC)),
-		ExpiresAt: ts(time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)),
+		ExpiresAt: tsp(time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)),
 	}}
 
 	h, _ := newUserHandler(q)

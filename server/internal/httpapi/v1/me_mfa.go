@@ -128,8 +128,8 @@ func (h *handler) getMyMfa(w http.ResponseWriter, r *http.Request) {
 		items = append(items, totpCredentialView{
 			ID:         row.ID,
 			Name:       row.Name,
-			CreatedAt:  Time(row.CreatedAt.Time),
-			LastUsedAt: apiTimestamptz(row.LastUsedAt),
+			CreatedAt:  Time(row.CreatedAt),
+			LastUsedAt: apiTime(row.LastUsedAt),
 		})
 	}
 
@@ -155,7 +155,7 @@ func (h *handler) recoveryCodeStatus(ctx context.Context, userID string) (*recov
 	}
 	return &recoveryCodeStatusView{
 		Remaining:   int(row.Remaining),
-		GeneratedAt: Time(row.GeneratedAt.Time),
+		GeneratedAt: Time(row.GeneratedAt),
 	}, nil
 }
 
@@ -404,8 +404,8 @@ func (h *handler) confirmMyTotp(w http.ResponseWriter, r *http.Request) {
 		Credential: totpCredentialView{
 			ID:         confirmed.ID,
 			Name:       confirmed.Name,
-			CreatedAt:  Time(confirmed.CreatedAt.Time),
-			LastUsedAt: apiTimestamptz(confirmed.LastUsedAt),
+			CreatedAt:  Time(confirmed.CreatedAt),
+			LastUsedAt: apiTime(confirmed.LastUsedAt),
 		},
 		RecoveryCodes: codes,
 	})

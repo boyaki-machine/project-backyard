@@ -13,7 +13,7 @@ const session = {
     id: '01K00000000000000000000001', key: 'demo', name: 'Demo Project', role: 'project_admin',
     permissions: ['project.view', 'project.edit', 'ticket.view', 'ticket.create', 'doc.view', 'agent.register'],
   }],
-  expires_at: '2099-01-01T00:00:00Z',
+  expires_at: 4070908800000,
 }
 
 const settingItems = [
@@ -28,7 +28,7 @@ const settingItems = [
   env_key: `PB_${key.toUpperCase()}`, config_file_key: key, default_value: value,
   editable: true, secret: false, restart_required: false, needs_confirmation: key === 'bind' || key === 'cookie_secure',
   allowed: value_type === 'enum' ? ['json', 'text', 'debug', 'info', 'warn', 'error'] : null,
-  updated_at: key === 'bind' ? '2026-09-26T03:04:05Z' : null, updated_by: null,
+  updated_at: key === 'bind' ? 1790391845000 : null, updated_by: null,
 }))
 
 async function reply(route: Route, body: unknown, status = 200) {
@@ -44,8 +44,8 @@ async function mockApi(page: Page) {
     if (path === '/api/v1/admin/settings/pending') return reply(route, { pending_confirmation: null })
     if (path === '/api/v1/admin/settings') return reply(route, { items: settingItems, config_file_path: null })
     if (path === '/api/v1/admin/database') return reply(route, {
-      fetched_at: '2026-09-26T03:04:05Z', connection: { host: 'localhost', port: 5432, database: 'pb', user: 'pb_app', tls: false },
-      server: { version: '17', started_at: '2026-09-25T03:04:05Z', max_connections: 100 },
+      fetched_at: 1790391845000, connection: { host: 'localhost', port: 5432, database: 'pb', user: 'pb_app', tls: false },
+      server: { version: '17', started_at: 1790305445000, max_connections: 100 },
       migration_version: 1, sessions: { database: 2, pb: 1 }, pool: { total: 1, acquired: 0, idle: 1, max: 10 }, size_bytes: 1024, tables: [],
     })
     return reply(route, { error: { code: 'not_found', message: '対象が見つかりません', details: [] } }, 404)
@@ -57,17 +57,17 @@ async function mockProjectCatalog(page: Page) {
     { key: 'project_admin', scope: 'project', display_name: 'プロジェクト管理者', description: '当該プロジェクトの全操作と承認ができます', is_builtin: true, sort_order: 30 },
   ] }))
   await page.route('**/api/v1/projects/demo/sprints', (route) => reply(route, { items: [
-    { id: '01K00000000000000000000003', name: 'Sprint One', goal: null, start_date: '2026-09-26', end_date: '2026-10-02', status: 'planned', ticket_count: 1, closed_count: 0 },
+    { id: '01K00000000000000000000003', name: 'Sprint One', goal: null, start_at: 1790348400000, end_at: 1790953200000, all_day: true, status: 'planned', ticket_count: 1, closed_count: 0 },
   ] }))
   await page.route('**/api/v1/projects/demo', (route) => reply(route, {
       id: session.projects[0].id, key: 'demo', name: 'Demo Project', description: null,
-      status: 'active', workflow: { id: '01K0000000000000000000000002', name: 'Simple', statuses: [
+      status: 'active', timezone: 'Asia/Tokyo', workflow: { id: '01K0000000000000000000000002', name: 'Simple', statuses: [
         { key: 'todo', name: '未着手', category: 'todo', sort_order: 1, requires_human_approval: false, is_agent_reachable: true },
         { key: 'done', name: '完了', category: 'done', sort_order: 2, requires_human_approval: true, is_agent_reachable: false },
       ] },
-      members: [{ actor_id: session.actor.id, kind: 'user', display_name: 'Test User', email: session.actor.email, role: 'project_admin', joined_at: '2026-09-26T03:04:05Z' }],
+      members: [{ actor_id: session.actor.id, kind: 'user', display_name: 'Test User', email: session.actor.email, role: 'project_admin', joined_at: 1790391845000 }],
       my_role: 'project_admin', my_permissions: ['project.view', 'project.edit', 'ticket.view'],
-      settings: {}, version: 1, created_at: '2026-09-26T03:04:05Z', updated_at: '2026-09-26T03:04:05Z',
+      settings: {}, version: 1, created_at: 1790391845000, updated_at: 1790391845000,
     }))
 }
 
@@ -156,7 +156,7 @@ test('English locale covers every implemented page and application-owned setting
   await page.route('**/api/v1/projects?**', (route) => reply(route, { items: [{
     id: session.projects[0].id, key: 'demo', name: 'Demo Project', description: null,
     status: 'active', ticket_count: 1, closed_count: 0, progress: 0, my_role: 'project_admin',
-    updated_at: '2026-09-26T03:04:05Z',
+    updated_at: 1790391845000,
   }], page: 1, per_page: 25, total: 1, total_pages: 1 }))
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto('/projects')

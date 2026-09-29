@@ -1,5 +1,5 @@
 /**
- * 日時の表示（`ApiDesign.md` 2.2 は ISO8601 UTC で返す）。
+ * 日時の表示（`ApiDesign.md` 2.2 はエポックミリ秒で返す。pb-224）。
  *
  * **`app_user.timezone` に従って出す**（`GuiDesign.md` 7.5。手順19b）。
  * 未設定なら端末のローカル時刻。auth ストアがセッション確定時に `setTimezone`
@@ -56,10 +56,13 @@ export function currentTimezone(): string | null {
  * **`Intl.DateTimeFormat` の `formatToParts` を使う。** `toLocaleString` の
  * 文字列を切り出すと、ロケールごとの区切りに依存して壊れる。
  */
-function parts(iso: string): { y: string; mo: string; d: string; h: string; mi: string; s: string } | null {
-  const t = new Date(iso)
+function parts(
+  ms: number,
+  tz: string | null = timezone,
+): { y: string; mo: string; d: string; h: string; mi: string; s: string } | null {
+  const t = new Date(ms)
   if (Number.isNaN(t.getTime())) return null
-  if (timezone === null) {
+  if (tz === null) {
     return {
       y: String(t.getFullYear()),
       mo: p2(t.getMonth() + 1),
@@ -70,7 +73,7 @@ function parts(iso: string): { y: string; mo: string; d: string; h: string; mi: 
     }
   }
   const f = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
+    timeZone: tz,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -98,9 +101,9 @@ function parts(iso: string): { y: string; mo: string; d: string; h: string; mi: 
 const p2 = (n: number) => String(n).padStart(2, '0')
 
 /** `2026-08-11 09:12` */
-export function formatDateTime(iso: string): string {
-  const t = parts(iso)
-  if (t === null) return iso
+export function formatDateTime(ms: number): string {
+  const t = parts(ms)
+  if (t === null) return String(ms)
   if (uiLocaleTag() === 'en-US') return `${t.mo}/${t.d}/${t.y} ${hour12(t.h)}:${t.mi}:${t.s} ${ampm(t.h)}`
   return `${t.y}-${t.mo}-${t.d} ${t.h}:${t.mi}`
 }
@@ -113,10 +116,19 @@ function ampm(hour: string): 'AM' | 'PM' {
   return Number(hour) < 12 ? 'AM' : 'PM'
 }
 
+/**
+ * `<time datetime>` に入れる ISO8601（UTC）。**画面に出す文字列ではない**——表示は
+ * `formatDateTime` / `formatDate` を使う。
+ */
+export function isoOf(ms: number): string {
+  const t = new Date(ms)
+  return Number.isNaN(t.getTime()) ? '' : t.toISOString()
+}
+
 /** `2026-08-11`。時刻に意味がない項目（参加日など）で使う */
-export function formatDate(iso: string): string {
-  const t = parts(iso)
-  if (t === null) return iso
+export function formatDate(ms: number): string {
+  const t = parts(ms)
+  if (t === null) return String(ms)
   if (uiLocaleTag() === 'en-US') return `${t.mo}/${t.d}/${t.y}`
   return `${t.y}-${t.mo}-${t.d}`
 }
@@ -173,7 +185,7 @@ export function addDaysPlainDate(date: string, days: number): string | null {
 }
 
 /**
- * その日の0時の瞬間を ISO8601 UTC で返す（`GuiDesign.md` 5.13）。形が違えば `null`。
+ * その日の0時の瞬間をエポックミリ秒で返す（`GuiDesign.md` 5.13）。形が違えば `null`。
  *
  * **日の境界は `app_user.timezone` で作る**（未設定なら端末のローカル）。チケット検索の期間は
  * `timestamptz`（完了日時・着手日時）を絞るもので、一覧は完了日を `formatDate`（同じ
@@ -183,26 +195,90 @@ export function addDaysPlainDate(date: string, days: number): string | null {
  * **時差を2回測る。** UTC の0時を仮に置いて時差を引くと、夏時間の切り替わりの前後では
  * 引いた先で時差が変わっていることがある。
  */
-export function startOfDayInstant(date: string): string | null {
+export function startOfDayInstant(date: string): number | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
   if (m === null) return null
   const y = Number(m[1])
   const mo = Number(m[2]) - 1
   const d = Number(m[3])
   if (timezone === null) {
-    const t = new Date(y, mo, d)
-    return Number.isNaN(t.getTime()) ? null : t.toISOString()
+    const t = new Date(y, mo, d).getTime()
+    return Number.isNaN(t) ? null : t
   }
   const guess = Date.UTC(y, mo, d)
   let t = guess - offsetMs(guess)
   t = guess - offsetMs(t)
-  return new Date(t).toISOString()
+  return t
 }
 
-/** その瞬間の、設定タイムゾーンでの時差（壁時計 − UTC。ミリ秒。分の単位まで） */
-function offsetMs(utcMs: number): number {
-  const p = parts(new Date(utcMs).toISOString())
+/** その瞬間の、tz（既定は設定タイムゾーン）での時差（壁時計 − UTC。ミリ秒。分の単位まで） */
+function offsetMs(utcMs: number, tz: string | null = timezone): number {
+  const p = parts(utcMs, tz)
   if (p === null) return 0
   const wall = Date.UTC(Number(p.y), Number(p.mo) - 1, Number(p.d), Number(p.h), Number(p.mi))
   return wall - Math.floor(utcMs / 60_000) * 60_000
+}
+
+// ── 予定日時（pb-217。`GuiDesign.md` 7.5「予定日時の出し方」）──────────────
+//
+// 予定は `start_at` / `due_at`（エポックミリ秒の半開区間）＋ `all_day` で届く
+// （`ApiDesign.md` 9.3.1）。**終日はプロジェクトの基準タイムゾーンの日付**で扱い、
+// 見る人のタイムゾーン（`setTimezone`）を通さない——「9/30締切」はプロジェクトの暦の上の
+// 日付であり、瞬間として変換すると UTC より西の地域で前日へずれる。
+
+/**
+ * 終日の値を基準タイムゾーン `tz` の日付（`YYYY-MM-DD`）にする。
+ * **終わり（`isEnd`）は1日戻す**——`due_at` は締切日の翌日の0時である。
+ */
+export function planDate(ms: number, tz: string, isEnd = false): string {
+  const p = parts(isEnd ? ms - 1 : ms, tz)
+  return p === null ? '' : `${p.y}-${p.mo}-${p.d}`
+}
+
+/**
+ * 基準タイムゾーン `tz` の日付を、その0時の瞬間（エポックミリ秒）にする。
+ * **終わり（`isEnd`）は翌日の0時**——締切日を含めるための半開区間の終わりである。
+ * 形が違えば `null`。
+ */
+export function planInstant(date: string, tz: string, isEnd = false): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  if (m === null) return null
+  const guess = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + (isEnd ? 1 : 0))
+  // 時差を2回測る（startOfDayInstant と同じ。夏時間の切り替わりの前後で時差が変わる）
+  let t = guess - offsetMs(guess, tz)
+  t = guess - offsetMs(t, tz)
+  return t
+}
+
+/**
+ * 予定の1端を出す。終日なら基準タイムゾーンの日付、時刻付きなら見る人のタイムゾーンの日時。
+ * 値が無ければ空文字。
+ */
+export function formatPlan(ms: number | null | undefined, allDay: boolean, tz: string, isEnd = false): string {
+  if (ms === null || ms === undefined) return ''
+  return allDay ? formatPlainDate(planDate(ms, tz, isEnd)) : formatDateTime(ms)
+}
+
+/** 期限を過ぎたか（`due_at <= いま`。終日も時刻付きも同じ式。`ApiDesign.md` 9.2.1 の `overdue`） */
+export function isPastDue(dueAt: number | null | undefined): boolean {
+  return dueAt !== null && dueAt !== undefined && dueAt <= Date.now()
+}
+
+/**
+ * `input[type=datetime-local]` の値（`YYYY-MM-DDTHH:mm`）を、**見る人のタイムゾーン**
+ * （`setTimezone`。未設定なら端末）で作る。時刻付きの予定の入力に使う（7.5）。
+ */
+export function localInputOf(ms: number): string {
+  const p = parts(ms)
+  return p === null ? '' : `${p.y}-${p.mo}-${p.d}T${p.h}:${p.mi}`
+}
+
+/** `localInputOf` の逆。見る人のタイムゾーンの壁時計を瞬間（エポックミリ秒）へ直す。形が違えば `null` */
+export function instantOfLocalInput(value: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value)
+  if (m === null) return null
+  const guess = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]))
+  let t = guess - offsetMs(guess)
+  t = guess - offsetMs(t)
+  return t
 }

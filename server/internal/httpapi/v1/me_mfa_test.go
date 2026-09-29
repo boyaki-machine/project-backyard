@@ -28,14 +28,14 @@ import (
 // （me_tokens_test.go と同じ理由）。
 type mfaOverviewJSON struct {
 	TOTP []struct {
-		ID         string  `json:"id"`
-		Name       string  `json:"name"`
-		CreatedAt  string  `json:"created_at"`
-		LastUsedAt *string `json:"last_used_at"`
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		CreatedAt  int64  `json:"created_at"`
+		LastUsedAt *int64 `json:"last_used_at"`
 	} `json:"totp"`
 	RecoveryCodes *struct {
-		Remaining   int    `json:"remaining"`
-		GeneratedAt string `json:"generated_at"`
+		Remaining   int   `json:"remaining"`
+		GeneratedAt int64 `json:"generated_at"`
 	} `json:"recovery_codes"`
 }
 
@@ -94,7 +94,7 @@ func TestGetMyMfaReturnsCredentialsWithoutSecret(t *testing.T) {
 	q := mfaFake(t)
 	q.mfa.confirmed = []gen.ListConfirmedMfaCredentialsRow{
 		{ID: "01K2MFA00000000000000001", Name: "iPhone", Kind: "totp",
-			CreatedAt: ts(now.Add(-time.Hour)), LastUsedAt: ts(now.Add(-time.Minute))},
+			CreatedAt: ts(now.Add(-time.Hour)), LastUsedAt: tsp(now.Add(-time.Minute))},
 	}
 	q.mfa.recovery = &gen.GetRecoveryCodeStatusRow{
 		Remaining: 8, GeneratedAt: ts(now.Add(-time.Hour)),

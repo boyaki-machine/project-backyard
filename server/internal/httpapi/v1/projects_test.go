@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
@@ -102,8 +100,8 @@ func TestListProjectsReturnsEnvelope(t *testing.T) {
 	if first["my_role"] != "project_admin" {
 		t.Errorf("items[0].my_role = %v, want project_admin", first["my_role"])
 	}
-	if first["updated_at"] != "2026-08-11T09:12:44Z" {
-		t.Errorf("items[0].updated_at = %v, want ISO8601 UTC", first["updated_at"])
+	if first["updated_at"] != float64(1786439564000) { // 2026-08-11T09:12:44Z
+		t.Errorf("items[0].updated_at = %v, want エポックミリ秒", first["updated_at"])
 	}
 
 	// 非メンバーのアドミニストレータには my_role が無い。**フィールドは省略しない。**
@@ -251,7 +249,7 @@ func TestListProjectsSetsETag(t *testing.T) {
 
 // 0件でも ETag を返す（MAX(updated_at) が NULL になる）。
 func TestProjectsETagWithNoRows(t *testing.T) {
-	if got := projectsETag(0, pgtype.Timestamptz{}); got != `W/"proj-0-0"` {
+	if got := projectsETag(0, time.Time{}); got != `W/"proj-0-0"` {
 		t.Errorf("ETag = %q, want W/\"proj-0-0\"", got)
 	}
 }

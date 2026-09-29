@@ -62,7 +62,7 @@ const migration = computed(() =>
 const uptime = computed(() => {
   const s = status.value
   if (!s) return ''
-  const ms = Date.parse(s.fetched_at) - Date.parse(s.server.started_at)
+  const ms = s.fetched_at - s.server.started_at
   if (!(ms >= 0)) return ''
   const min = Math.floor(ms / 60000)
   const days = Math.floor(min / 1440)

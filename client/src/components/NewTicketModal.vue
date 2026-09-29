@@ -49,6 +49,8 @@ import {
 } from '../api/tickets'
 import type { CreateTicketRequest, Ticket, TicketPriority, TicketType } from '../api/tickets'
 import type { ProjectMember } from '../api/projects'
+import { planInstant } from '../lib/datetime'
+import { useProjectStore } from '../stores/project'
 
 const props = defineProps<{
   /** ID を完全形で出すために要る（`GuiDesign.md` 5.4「ID列」） */
@@ -219,8 +221,12 @@ function submit(): void {
   }
   if (tagIds.value.length > 0) body.tag_ids = [...tagIds.value]
   if (estimatePoint.value !== '') body.estimate_point = Number(estimatePoint.value)
-  if (startDate.value !== '') body.start_date = startDate.value
-  if (dueDate.value !== '') body.due_date = dueDate.value
+  // 予定は終日で送る（基準タイムゾーンの0時。期限は締切日の翌日の0時。pb-217）。
+  // 時刻付きの入力はチケット詳細だけが持つ（`GuiDesign.md` 5.5）
+  const tz = useProjectStore().planTimezone
+  if (startDate.value !== '') body.start_at = planInstant(startDate.value, tz, false)
+  if (dueDate.value !== '') body.due_at = planInstant(dueDate.value, tz, true)
+  if (body.start_at != null || body.due_at != null) body.all_day = true
 
   emit('save', body)
 }
@@ -351,7 +357,7 @@ function submit(): void {
         </label>
       </div>
       <span v-if="dateError" class="detail">✕ {{ dateError }}</span>
-      <span v-else-if="fieldErrors?.due_date" class="detail">✕ {{ fieldErrors.due_date }}</span>
+      <span v-else-if="fieldErrors?.due_at" class="detail">✕ {{ fieldErrors.due_at }}</span>
     </form>
 
     <template #footer>

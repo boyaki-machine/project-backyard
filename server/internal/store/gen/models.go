@@ -6,6 +6,7 @@ package gen
 
 import (
 	"net/netip"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -19,13 +20,13 @@ type AccessToken struct {
 	Name                pgtype.Text
 	ProjectID           pgtype.Text
 	Scopes              []byte
-	IssuedAt            pgtype.Timestamptz
-	ExpiresAt           pgtype.Timestamptz
-	LastUsedAt          pgtype.Timestamptz
-	RevokedAt           pgtype.Timestamptz
+	IssuedAt            time.Time
+	ExpiresAt           *time.Time
+	LastUsedAt          *time.Time
+	RevokedAt           *time.Time
 	ClientInfo          pgtype.Text
 	CachedPermissions   []byte
-	PermissionsCachedAt pgtype.Timestamptz
+	PermissionsCachedAt *time.Time
 }
 
 type Activity struct {
@@ -39,7 +40,7 @@ type Activity struct {
 	OldValue   pgtype.Text
 	NewValue   pgtype.Text
 	RequestID  pgtype.Text
-	OccurredAt pgtype.Timestamptz
+	OccurredAt time.Time
 }
 
 type Actor struct {
@@ -48,15 +49,15 @@ type Actor struct {
 	DisplayName string
 	AvatarUrl   pgtype.Text
 	IsActive    bool
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type ActorAvatar struct {
 	ActorID     string
 	ContentType string
 	ImageData   []byte
-	UpdatedAt   pgtype.Timestamptz
+	UpdatedAt   time.Time
 }
 
 type Agent struct {
@@ -68,8 +69,8 @@ type Agent struct {
 	ModelVersion pgtype.Text
 	Capabilities []byte
 	TrustLevel   int32
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 	// トークンを載せる環境変数の接尾。PB_TOKEN_ を付けた名前を接続設定が読む。DbDesign.md 8.2.1
 	TokenEnvSuffix pgtype.Text
 }
@@ -90,7 +91,7 @@ type AgentReport struct {
 	Status          string
 	Report          []byte
 	KnowledgeImpact pgtype.Text
-	SubmittedAt     pgtype.Timestamptz
+	SubmittedAt     time.Time
 }
 
 // エージェントの実行記録。pb_submit_result が1提出につき1行作る。DbDesign.md 8.2.4
@@ -103,8 +104,8 @@ type AgentRun struct {
 	ModelName       pgtype.Text
 	ModelVersion    pgtype.Text
 	WorkflowVersion pgtype.Int4
-	StartedAt       pgtype.Timestamptz
-	EndedAt         pgtype.Timestamptz
+	StartedAt       time.Time
+	EndedAt         *time.Time
 	Status          string
 	TokensUsed      pgtype.Int8
 	Turns           pgtype.Int4
@@ -115,7 +116,7 @@ type AgentRun struct {
 type AppSecret struct {
 	KeyID     string
 	Secret    []byte
-	CreatedAt pgtype.Timestamptz
+	CreatedAt time.Time
 }
 
 // アプリケーション設定の第2層（Design.md 10.3）。平文なので秘密を入れない。既定値は行の不在で表す
@@ -123,8 +124,8 @@ type AppSetting struct {
 	Key       string
 	Value     string
 	UpdatedBy pgtype.Text
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type AppUser struct {
@@ -136,10 +137,10 @@ type AppUser struct {
 	Timezone        string
 	Theme           string
 	Hue             string
-	LastLoginAt     pgtype.Timestamptz
+	LastLoginAt     *time.Time
 	Version         int32
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type Attachment struct {
@@ -154,12 +155,12 @@ type Attachment struct {
 	SizeBytes   pgtype.Int8
 	Checksum    pgtype.Text
 	UploadedBy  pgtype.Text
-	CreatedAt   pgtype.Timestamptz
+	CreatedAt   time.Time
 }
 
 type AuditLog struct {
 	ID         string
-	OccurredAt pgtype.Timestamptz
+	OccurredAt time.Time
 	ActorID    pgtype.Text
 	ActorKind  pgtype.Text
 	ActorLabel pgtype.Text
@@ -186,8 +187,8 @@ type AuthProvider struct {
 	DefaultSystemRole string
 	RoleMapping       []byte
 	AllowedDomains    []byte
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type Comment struct {
@@ -199,9 +200,9 @@ type Comment struct {
 	InReplyTo  pgtype.Text
 	Origin     string
 	AgentRunID pgtype.Text
-	CreatedAt  pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
-	DeletedAt  pgtype.Timestamptz
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	DeletedAt  *time.Time
 }
 
 // コンテキストパックの生成記録。書き手はまだ無い（器のみ）。DbDesign.md 8.2.5
@@ -213,7 +214,7 @@ type ContextPackLog struct {
 	ActualTokens pgtype.Int4
 	Included     []byte
 	Truncated    []byte
-	GeneratedAt  pgtype.Timestamptz
+	GeneratedAt  time.Time
 }
 
 type Document struct {
@@ -229,8 +230,8 @@ type Document struct {
 	CreatedBy   pgtype.Text
 	UpdatedBy   pgtype.Text
 	Version     int32
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 	PackMode    string
 }
 
@@ -242,7 +243,7 @@ type DocumentRevision struct {
 	BodyMd       string
 	ChangedBy    pgtype.Text
 	ChangeReason pgtype.Text
-	CreatedAt    pgtype.Timestamptz
+	CreatedAt    time.Time
 }
 
 type DodItem struct {
@@ -253,12 +254,12 @@ type DodItem struct {
 	Body        string
 	Config      []byte
 	IsSatisfied bool
-	SatisfiedAt pgtype.Timestamptz
+	SatisfiedAt *time.Time
 	SatisfiedBy pgtype.Text
 	Evidence    pgtype.Text
 	Origin      string
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type HolidaySource struct {
@@ -268,11 +269,11 @@ type HolidaySource struct {
 	OwnerProjectID pgtype.Text
 	Name           pgtype.Text
 	ContentSha256  pgtype.Text
-	FetchedAt      pgtype.Timestamptz
-	LastAttemptAt  pgtype.Timestamptz
+	FetchedAt      *time.Time
+	LastAttemptAt  *time.Time
 	LastError      pgtype.Text
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type HolidaySourceDay struct {
@@ -285,12 +286,12 @@ type HolidaySourceDay struct {
 type LocalCredential struct {
 	IdentityID        string
 	PasswordHash      string
-	PasswordUpdatedAt pgtype.Timestamptz
+	PasswordUpdatedAt time.Time
 	MustChange        bool
 	FailedAttempts    int32
-	LockedUntil       pgtype.Timestamptz
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
+	LockedUntil       *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // パスワードは通ったが第2要素がまだ、という中途状態（Design.md 6.7.4）
@@ -299,9 +300,9 @@ type MfaLoginChallenge struct {
 	UserID     string
 	TokenHash  string
 	Attempts   int32
-	ExpiresAt  pgtype.Timestamptz
-	ConsumedAt pgtype.Timestamptz
-	CreatedAt  pgtype.Timestamptz
+	ExpiresAt  time.Time
+	ConsumedAt *time.Time
+	CreatedAt  time.Time
 }
 
 // 認証器を失ったときのリカバリコード（Design.md 6.7.5）
@@ -309,16 +310,16 @@ type MfaRecoveryCode struct {
 	ID        string
 	UserID    string
 	CodeHash  string
-	UsedAt    pgtype.Timestamptz
-	CreatedAt pgtype.Timestamptz
+	UsedAt    *time.Time
+	CreatedAt time.Time
 }
 
 // 未確認の設定変更。期限内に確認されなければ previous へ戻す
 type PendingSettingChange struct {
 	ID        string
 	Previous  []byte
-	ExpiresAt pgtype.Timestamptz
-	CreatedAt pgtype.Timestamptz
+	ExpiresAt time.Time
+	CreatedAt time.Time
 	CreatedBy pgtype.Text
 }
 
@@ -339,9 +340,9 @@ type Project struct {
 	Settings        []byte
 	CreatedBy       pgtype.Text
 	Version         int32
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-	ArchivedAt      pgtype.Timestamptz
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	ArchivedAt      *time.Time
 	Timezone        string
 	HolidaySourceID pgtype.Text
 }
@@ -352,7 +353,7 @@ type ProjectCalendarDay struct {
 	IsHoliday bool
 	Name      pgtype.Text
 	CreatedBy pgtype.Text
-	UpdatedAt pgtype.Timestamptz
+	UpdatedAt time.Time
 }
 
 type ProjectCounter struct {
@@ -364,7 +365,7 @@ type ProjectMember struct {
 	ProjectID string
 	ActorID   string
 	RoleKey   string
-	JoinedAt  pgtype.Timestamptz
+	JoinedAt  time.Time
 }
 
 type Role struct {
@@ -386,11 +387,12 @@ type Sprint struct {
 	ProjectID string
 	Name      string
 	Goal      pgtype.Text
-	StartDate pgtype.Date
-	EndDate   pgtype.Date
 	Status    string
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	StartAt   *time.Time
+	EndAt     *time.Time
+	AllDay    bool
 }
 
 type Tag struct {
@@ -398,8 +400,8 @@ type Tag struct {
 	ProjectID string
 	Name      string
 	SortOrder int32
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type TaskLease struct {
@@ -407,10 +409,10 @@ type TaskLease struct {
 	TicketID      string
 	ActorID       string
 	LeaseToken    string
-	AcquiredAt    pgtype.Timestamptz
-	ExpiresAt     pgtype.Timestamptz
-	HeartbeatAt   pgtype.Timestamptz
-	ReleasedAt    pgtype.Timestamptz
+	AcquiredAt    time.Time
+	ExpiresAt     time.Time
+	HeartbeatAt   time.Time
+	ReleasedAt    *time.Time
 	ReleaseReason pgtype.Text
 }
 
@@ -429,8 +431,6 @@ type Ticket struct {
 	EstimatePoint pgtype.Float8
 	EstimateHours pgtype.Float8
 	ActualHours   pgtype.Float8
-	StartDate     pgtype.Date
-	DueDate       pgtype.Date
 	SprintID      pgtype.Text
 	SortKey       pgtype.Text
 	// 実行モード。エージェントが着手してよいかを決める。既定は agent_draft（0025）。DbDesign.md 6.6
@@ -441,15 +441,18 @@ type Ticket struct {
 	Source          string
 	IsTrustedSource bool
 	CustomFields    []byte
-	ClosedAt        pgtype.Timestamptz
+	ClosedAt        *time.Time
 	Version         int32
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-	StagedAt        pgtype.Timestamptz
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	StagedAt        *time.Time
 	// 実行者（誰が実際に処理しているか）。エージェントが遷移時に自己申告する。DbDesign.md 6.6
 	WorkingAgentID     pgtype.Text
 	ActualPoint        pgtype.Float8
 	ActualPointVersion pgtype.Text
+	StartAt            *time.Time
+	DueAt              *time.Time
+	AllDay             bool
 }
 
 type TicketLink struct {
@@ -461,7 +464,7 @@ type TicketLink struct {
 	Origin         string
 	Confidence     pgtype.Float8
 	CreatedBy      pgtype.Text
-	CreatedAt      pgtype.Timestamptz
+	CreatedAt      time.Time
 }
 
 type TicketReference struct {
@@ -476,15 +479,15 @@ type TicketReference struct {
 	Note       pgtype.Text
 	CreatedBy  pgtype.Text
 	SortOrder  int32
-	CreatedAt  pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 type TicketSprint struct {
 	TicketID  string
 	SprintID  string
-	AddedAt   pgtype.Timestamptz
-	RemovedAt pgtype.Timestamptz
+	AddedAt   time.Time
+	RemovedAt *time.Time
 }
 
 type TicketTag struct {
@@ -497,8 +500,8 @@ type TlsCertificate struct {
 	ID           string
 	CommonName   string
 	DnsNames     []string
-	NotBefore    pgtype.Timestamptz
-	NotAfter     pgtype.Timestamptz
+	NotBefore    time.Time
+	NotAfter     time.Time
 	SerialNumber string
 	Fingerprint  string
 	IsSelfSigned bool
@@ -508,8 +511,8 @@ type TlsCertificate struct {
 	KeyNonce      []byte
 	KeyID         string
 	UploadedBy    pgtype.Text
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type UserIdentity struct {
@@ -518,8 +521,8 @@ type UserIdentity struct {
 	ProviderKey string
 	Subject     string
 	Attributes  []byte
-	LinkedAt    pgtype.Timestamptz
-	LastUsedAt  pgtype.Timestamptz
+	LinkedAt    time.Time
+	LastUsedAt  *time.Time
 }
 
 // 第2要素の認証器（DbDesign.md 6.18）。種別は TOTP のみ
@@ -530,12 +533,12 @@ type UserMfaCredential struct {
 	Name           string
 	Secret         []byte
 	SecretNonce    []byte
-	ConfirmedAt    pgtype.Timestamptz
+	ConfirmedAt    *time.Time
 	LastUsedStep   pgtype.Int8
-	LastUsedAt     pgtype.Timestamptz
+	LastUsedAt     *time.Time
 	FailedAttempts int32
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // パスワードの代わりにログインする鍵（DbDesign.md 6.19）
@@ -555,9 +558,9 @@ type UserPasskey struct {
 	UserVerified      bool
 	BackupEligible    bool
 	BackupState       bool
-	LastUsedAt        pgtype.Timestamptz
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
+	LastUsedAt        *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // WebAuthn の登録とログインの途中状態（DbDesign.md 6.19）
@@ -567,9 +570,9 @@ type WebauthnChallenge struct {
 	UserID     pgtype.Text
 	Challenge  string
 	Session    []byte
-	ExpiresAt  pgtype.Timestamptz
-	ConsumedAt pgtype.Timestamptz
-	CreatedAt  pgtype.Timestamptz
+	ExpiresAt  time.Time
+	ConsumedAt *time.Time
+	CreatedAt  time.Time
 }
 
 type Workflow struct {
@@ -579,8 +582,8 @@ type Workflow struct {
 	Definition  []byte
 	IsTemplate  bool
 	TemplateKey pgtype.Text
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type WorkflowStatus struct {

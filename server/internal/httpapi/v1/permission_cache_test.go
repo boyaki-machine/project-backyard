@@ -20,7 +20,7 @@ func cachedIn(q *fakeQuerier, age time.Duration, permissions ...string) {
 		panic(err)
 	}
 	q.tokenRow.CachedPermissions = raw
-	q.tokenRow.PermissionsCachedAt = ts(time.Now().Add(-age))
+	q.tokenRow.PermissionsCachedAt = tsp(time.Now().Add(-age))
 }
 
 // ── ログイン（6.4.5「ログインごとに実効権限を計算し、セッションにキャッシュする」） ──

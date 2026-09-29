@@ -37,7 +37,7 @@ func sampleDoD(id, body string, satisfied bool, sortOrder int32) gen.GetTicketDo
 		CreatedAt: ts(baseTime), UpdatedAt: ts(baseTime),
 	}
 	if satisfied {
-		row.SatisfiedAt = ts(baseTime)
+		row.SatisfiedAt = tsp(baseTime)
 		row.SatisfiedBy = txt(testActorID)
 		row.SatisfiedByKind = txt("user")
 		row.SatisfiedByName = txt("田中")
@@ -51,11 +51,11 @@ type dodJSON struct {
 	Type        string    `json:"type"`
 	Body        string    `json:"body"`
 	IsSatisfied bool      `json:"is_satisfied"`
-	SatisfiedAt *string   `json:"satisfied_at"`
+	SatisfiedAt *int64    `json:"satisfied_at"`
 	SatisfiedBy *actorRef `json:"satisfied_by"`
 	SortOrder   int32     `json:"sort_order"`
-	CreatedAt   string    `json:"created_at"`
-	UpdatedAt   string    `json:"updated_at"`
+	CreatedAt   int64     `json:"created_at"`
+	UpdatedAt   int64     `json:"updated_at"`
 }
 
 type dodListJSON struct {

@@ -54,7 +54,7 @@ type pkOptions struct {
 			Attestation string `json:"attestation"`
 		} `json:"publicKey"`
 	} `json:"options"`
-	ExpiresAt string `json:"expires_at"`
+	ExpiresAt int64 `json:"expires_at"`
 }
 
 func pkReadOptions(t *testing.T, rec *httptest.ResponseRecorder) pkOptions {
@@ -151,7 +151,7 @@ func TestPasskeyLoginOptionsDoNotRevealAccounts(t *testing.T) {
 	if len(pk.AllowCredentials) != 0 {
 		t.Errorf("allowCredentials = %v, want 空", pk.AllowCredentials)
 	}
-	if opts.ExpiresAt == "" {
+	if opts.ExpiresAt == 0 {
 		t.Error("expires_at が無い")
 	}
 

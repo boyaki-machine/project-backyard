@@ -131,8 +131,9 @@ filtered AS (
     t.actual_hours,
     t.actual_point,
     t.actual_point_version,
-    t.start_date,
-    t.due_date,
+    t.start_at,
+    t.due_at,
+    t.all_day,
     t.closed_at,
     t.version,
     t.created_at,
@@ -176,28 +177,31 @@ filtered AS (
          OR (@open_filter::text = 'open'   AND t.closed_at IS NULL)
          OR (@open_filter::text = 'closed' AND t.closed_at IS NOT NULL))
     -- due_within（9.2.1）。**期限超過を含む**ので下限を置かない。
-    -- due_date が NULL のものは除外する。
-    AND (@due_within_days::int < 0
-         OR (t.due_date IS NOT NULL
-             AND t.due_date <= CURRENT_DATE + @due_within_days::int))
+    -- due_at が NULL のものは除外する。境界（基準タイムゾーンで N 日後の日の終わり
+    -- ＝翌日の0時）は**ハンドラが計算して瞬間で渡す**（pb-217）。SQL で
+    -- timezone() の入れ子に引数を置くと sqlc の書き換えが位置を誤り、文字が欠ける。
+    AND (sqlc.narg('due_before')::timestamptz IS NULL
+         OR (t.due_at IS NOT NULL
+             AND t.due_at < sqlc.narg('due_before')::timestamptz))
     -- overdue（9.2.1。手順19b）。**stats.sql の overdue と同じ条件**にしてある
     -- ——ダッシュボードが出した件数と、押した先の一覧の件数が一致する必要がある
-    -- （GuiDesign.md 5.3）。due_within=0d は「今日以前」で今日締切を含むため、
-    -- 代用すると1日ぶんずれる。
+    -- （GuiDesign.md 5.3）。due_within=0d は「今日の終わりまで」でまだ過ぎていない
+    -- 今日締切を含むため、代用するとずれる。**瞬間の比較なので「今日」に依らない**（pb-217）。
     AND (NOT @overdue_only::boolean
          OR (t.closed_at IS NULL
-             AND t.due_date IS NOT NULL
-             AND t.due_date < CURRENT_DATE))
-    -- planned_from / planned_to（9.2.1）。**予定期間が1日でも重なるもの**。
-    -- 片方だけの日付を持つチケットはその日1日の点として扱う。両方 NULL は
+             AND t.due_at IS NOT NULL
+             AND t.due_at <= now()))
+    -- planned_from / planned_to（9.2.1）。**予定が少しでも重なるもの**（半開区間どうし）。
+    -- 片方だけのチケットは長さ 1ms の点として扱う。期限だけのものは期限の直前の瞬間に
+    -- 置くので、終日の「9/30締切」（due_at は 10/1 の0時）は 9/30 に当たる。両方 NULL は
     -- COALESCE も NULL になるため、期間を指定したときに外れる。
-    AND ((sqlc.narg('planned_from')::date IS NULL
-          AND sqlc.narg('planned_to')::date IS NULL)
-         OR (COALESCE(t.start_date, t.due_date) IS NOT NULL
-             AND (sqlc.narg('planned_to')::date IS NULL
-                  OR COALESCE(t.start_date, t.due_date) <= sqlc.narg('planned_to')::date)
-             AND (sqlc.narg('planned_from')::date IS NULL
-                  OR COALESCE(t.due_date, t.start_date) >= sqlc.narg('planned_from')::date)))
+    AND ((sqlc.narg('planned_from')::timestamptz IS NULL
+          AND sqlc.narg('planned_to')::timestamptz IS NULL)
+         OR (COALESCE(t.start_at, t.due_at) IS NOT NULL
+             AND (sqlc.narg('planned_to')::timestamptz IS NULL
+                  OR COALESCE(t.start_at, t.due_at - interval '1 millisecond') < sqlc.narg('planned_to')::timestamptz)
+             AND (sqlc.narg('planned_from')::timestamptz IS NULL
+                  OR COALESCE(t.due_at, t.start_at + interval '1 millisecond') > sqlc.narg('planned_from')::timestamptz)))
     -- stale（9.2.1。手順19b）。**stats.sql の stale と同じ条件**。
     -- 日数を引数に取るのは、閾値の正本がサーバ側の定数だからである（9.13.1）。
     AND (@stale_days::int < 0
@@ -312,8 +316,8 @@ ORDER BY
        THEN array_position(ARRAY['lowest','low','medium','high','highest'], f.priority) END ASC  NULLS LAST,
   CASE WHEN @sort::text = 'priority' AND @sort_order::text = 'desc'
        THEN array_position(ARRAY['lowest','low','medium','high','highest'], f.priority) END DESC NULLS LAST,
-  CASE WHEN @sort::text = 'due_date'   AND @sort_order::text = 'asc'  THEN f.due_date END ASC  NULLS LAST,
-  CASE WHEN @sort::text = 'due_date'   AND @sort_order::text = 'desc' THEN f.due_date END DESC NULLS LAST,
+  CASE WHEN @sort::text = 'due_at'     AND @sort_order::text = 'asc'  THEN f.due_at END ASC  NULLS LAST,
+  CASE WHEN @sort::text = 'due_at'     AND @sort_order::text = 'desc' THEN f.due_at END DESC NULLS LAST,
   CASE WHEN @sort::text = 'created_at' AND @sort_order::text = 'asc'  THEN f.created_at END ASC,
   CASE WHEN @sort::text = 'created_at' AND @sort_order::text = 'desc' THEN f.created_at END DESC,
   CASE WHEN @sort::text = 'updated_at' AND @sort_order::text = 'asc'  THEN f.updated_at END ASC,
@@ -372,8 +376,9 @@ SELECT
   t.actual_hours,
   t.actual_point,
   t.actual_point_version,
-  t.start_date,
-  t.due_date,
+  t.start_at,
+  t.due_at,
+  t.all_day,
   t.closed_at,
   t.version,
   t.created_at,
@@ -474,11 +479,11 @@ SELECT ws.key
 INSERT INTO ticket (
   id, project_id, seq, parent_id, type, title, body_md, status_key, priority,
   assignee_id, reporter_id, estimate_point, estimate_hours,
-  start_date, due_date, sort_key
+  start_at, due_at, all_day, sort_key
 ) VALUES (
   @id, @project_id, @seq, @parent_id, @type, @title, @body_md, @status_key, @priority,
   @assignee_id, @reporter_id, @estimate_point, @estimate_hours,
-  @start_date, @due_date, @sort_key
+  @start_at, @due_at, @all_day, @sort_key
 );
 
 -- name: AttachTicketTag :exec
@@ -659,8 +664,9 @@ UPDATE ticket SET
   actual_hours   = CASE WHEN @actual_hours_set::boolean   THEN sqlc.narg('actual_hours')   ELSE actual_hours END,
   actual_point   = CASE WHEN @actual_point_set::boolean   THEN sqlc.narg('actual_point')   ELSE actual_point END,
   actual_point_version = CASE WHEN @actual_point_version_set::boolean THEN sqlc.narg('actual_point_version') ELSE actual_point_version END,
-  start_date     = CASE WHEN @start_date_set::boolean     THEN sqlc.narg('start_date')     ELSE start_date END,
-  due_date       = CASE WHEN @due_date_set::boolean       THEN sqlc.narg('due_date')       ELSE due_date END,
+  start_at       = CASE WHEN @start_at_set::boolean       THEN sqlc.narg('start_at')       ELSE start_at END,
+  due_at         = CASE WHEN @due_at_set::boolean         THEN sqlc.narg('due_at')         ELSE due_at END,
+  all_day        = COALESCE(sqlc.narg('all_day'), all_day),
   -- 9.5.2 で開けた4項目（手順27）。**execution_mode と scope は NOT NULL** なので
   -- COALESCE で足りる（null を送れば 422 で先に落ちる）。readiness と
   -- readiness_note は null が「未判定へ戻す」を表すので _set の形が要る。

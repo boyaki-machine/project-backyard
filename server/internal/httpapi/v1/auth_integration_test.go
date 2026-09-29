@@ -73,7 +73,7 @@ func TestLoginFailureAtomicIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("期限後の加算: %v", err)
 	}
-	if next.FailedAttempts != 1 || next.LockedUntil.Valid {
+	if next.FailedAttempts != 1 || next.LockedUntil != nil {
 		t.Errorf("期限後 = %+v, want 1回・ロックなし", next)
 	}
 }

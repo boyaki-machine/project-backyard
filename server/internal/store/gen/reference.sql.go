@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -105,8 +106,8 @@ type GetTicketReferenceRow struct {
 	CommitSha     pgtype.Text
 	Note          pgtype.Text
 	SortOrder     int32
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 	CreatedBy     pgtype.Text
 	CreatedByKind pgtype.Text
 	CreatedByName pgtype.Text
@@ -168,8 +169,8 @@ type ListTicketReferencesRow struct {
 	CommitSha     pgtype.Text
 	Note          pgtype.Text
 	SortOrder     int32
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 	CreatedBy     pgtype.Text
 	CreatedByKind pgtype.Text
 	CreatedByName pgtype.Text

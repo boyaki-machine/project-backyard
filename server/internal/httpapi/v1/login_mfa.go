@@ -82,7 +82,7 @@ func (h *handler) startMFAChallenge(
 			ID:        ulidgen.New(),
 			UserID:    userID,
 			TokenHash: auth.HashToken(plaintext),
-			ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+			ExpiresAt: expiresAt,
 		})
 	}); err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).
@@ -215,10 +215,10 @@ var errMFAChallengeGone = apierr.New(apierr.InvalidCredentials).
 // challengeInvalidReason は挑戦が使えない理由を返す。使えるなら空文字。
 // **応答には出さない。** サーバログへ出す文言である。
 func challengeInvalidReason(row gen.FindMfaLoginChallengeRow, now time.Time) string {
-	if row.ConsumedAt.Valid {
+	if row.ConsumedAt != nil {
 		return "挑戦が既に消費されている（consumed_at）"
 	}
-	if !row.ExpiresAt.Time.After(now) {
+	if !row.ExpiresAt.After(now) {
 		return "挑戦の有効期限が切れている（expires_at）"
 	}
 	if int(row.Attempts) >= maxMFAChallengeAttempts {

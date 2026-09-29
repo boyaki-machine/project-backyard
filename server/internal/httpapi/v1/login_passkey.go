@@ -126,7 +126,7 @@ func (h *handler) saveWebauthnChallenge(
 			UserID:    owner,
 			Challenge: session.Challenge,
 			Session:   payload,
-			ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+			ExpiresAt: expiresAt,
 		})
 	})
 	if err != nil {
@@ -157,10 +157,10 @@ func (h *handler) consumeWebauthnChallenge(
 	if row.UserID.Valid != (userID != "") || row.UserID.String != userID {
 		return nil, "unknown_challenge", nil
 	}
-	if row.ConsumedAt.Valid {
+	if row.ConsumedAt != nil {
 		return nil, "consumed", nil
 	}
-	if !row.ExpiresAt.Time.After(time.Now()) {
+	if !row.ExpiresAt.After(time.Now()) {
 		return nil, "expired", nil
 	}
 

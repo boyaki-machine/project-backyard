@@ -6,7 +6,7 @@
 -- **スプリントの定義を扱う。** 開始・終了は下の 9.12.1 / 9.12.2 のクエリで、
 -- バーンダウン・ベロシティは進捗分析（構想。GuiDesign.md 10章）が持つ。
 
--- items[] は start_date 降順（NULL は末尾）、同値は created_at 降順
+-- items[] は start_at 降順（NULL は末尾）、同値は created_at 降順
 -- （ApiDesign.md 9.12）。新しいものが上に来る並びで、5.9.5 の図と一致する。
 --
 -- closed_count は closed_at IS NOT NULL で数える。status_category = 'done'
@@ -18,8 +18,9 @@ SELECT
   s.id,
   s.name,
   s.goal,
-  s.start_date,
-  s.end_date,
+  s.start_at,
+  s.end_at,
+  s.all_day,
   s.status,
   (SELECT count(*) FROM ticket t
     WHERE t.sprint_id = s.id)::bigint AS ticket_count,
@@ -27,7 +28,7 @@ SELECT
     WHERE t.sprint_id = s.id AND t.closed_at IS NOT NULL)::bigint AS closed_count
 FROM sprint s
 WHERE s.project_id = @project_id
-ORDER BY s.start_date DESC NULLS LAST, s.created_at DESC;
+ORDER BY s.start_at DESC NULLS LAST, s.created_at DESC;
 
 -- 1件だけ返す形。POST / PATCH の応答（B-2）で使う。
 -- name: GetSprintByID :one
@@ -35,8 +36,9 @@ SELECT
   s.id,
   s.name,
   s.goal,
-  s.start_date,
-  s.end_date,
+  s.start_at,
+  s.end_at,
+  s.all_day,
   s.status,
   (SELECT count(*) FROM ticket t
     WHERE t.sprint_id = s.id)::bigint AS ticket_count,
@@ -46,10 +48,10 @@ FROM sprint s
 WHERE s.project_id = @project_id AND s.id = @id;
 
 -- name: CreateSprint :exec
-INSERT INTO sprint (id, project_id, name, goal, start_date, end_date, status)
-VALUES (@id, @project_id, @name, @goal, @start_date, @end_date, @status);
+INSERT INTO sprint (id, project_id, name, goal, start_at, end_at, all_day, status)
+VALUES (@id, @project_id, @name, @goal, @start_at, @end_at, @all_day, @status);
 
--- COALESCE による部分更新。goal / start_date / end_date は NULL を
+-- COALESCE による部分更新。goal / start_at / end_at は NULL を
 -- 「値として設定する」ことがある（欄を空にする操作）ため、送られたかどうかを
 -- COALESCE では区別できない。**明示的なフラグ引数で分ける**
 -- （users_update.go の同種の扱いに揃える）。
@@ -57,8 +59,9 @@ VALUES (@id, @project_id, @name, @goal, @start_date, @end_date, @status);
 UPDATE sprint SET
   name       = COALESCE(sqlc.narg('name'), name),
   goal       = CASE WHEN @set_goal::boolean       THEN sqlc.narg('goal')       ELSE goal END,
-  start_date = CASE WHEN @set_start_date::boolean THEN sqlc.narg('start_date') ELSE start_date END,
-  end_date   = CASE WHEN @set_end_date::boolean   THEN sqlc.narg('end_date')   ELSE end_date END,
+  start_at   = CASE WHEN @set_start_at::boolean THEN sqlc.narg('start_at') ELSE start_at END,
+  end_at     = CASE WHEN @set_end_at::boolean   THEN sqlc.narg('end_at')   ELSE end_at END,
+  all_day    = COALESCE(sqlc.narg('all_day'), all_day),
   status     = COALESCE(sqlc.narg('status'), status)
 WHERE project_id = @project_id AND id = @id;
 
@@ -190,14 +193,20 @@ UPDATE ticket SET sprint_id = @sprint_id
 
 -- スプリントを終える（ApiDesign.md 9.12.2）。
 --
--- **end_date が空なら今日を入れる。** 期間を切らずに始めたスプリントでも、
--- 終わった日付は残る——9.2.1 の「棚に戻ったか」の判定は status を見るので
--- ここに依存しないが、あとから振り返る材料になる。
+-- **end_at が空なら終わった時点を入れる。** 期間を切らずに始めたスプリントでも、
+-- 終わった日時は残る——9.2.1 の「棚に戻ったか」の判定は status を見るので
+-- ここに依存しないが、あとから振り返る材料になる。**終日のスプリントは基準タイム
+-- ゾーンの翌日の0時**（今日を含める。半開区間の終わり）、時刻付きは now()（pb-217）。
 -- name: FinishSprint :execrows
-UPDATE sprint
+UPDATE sprint s
    SET status = 'completed',
-       end_date = COALESCE(end_date, CURRENT_DATE)
- WHERE project_id = @project_id AND id = @id AND status = 'active';
+       end_at = COALESCE(s.end_at,
+                  CASE WHEN s.all_day
+                       THEN (date_trunc('day', now() AT TIME ZONE p.timezone) + interval '1 day')
+                            AT TIME ZONE p.timezone
+                       ELSE now() END)
+  FROM project p
+ WHERE p.id = s.project_id AND s.project_id = @project_id AND s.id = @id AND s.status = 'active';
 
 -- そのスプリントの所属を閉じる（DbDesign.md 6.9.1）。
 --

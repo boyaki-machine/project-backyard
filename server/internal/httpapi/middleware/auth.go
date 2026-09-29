@@ -73,11 +73,7 @@ func Authenticate(q gen.Querier) func(http.Handler) http.Handler {
 
 			// expires_at は NULL 許容。NULL のまま nil を載せ、
 			// GET /me の expires_at も null になる（ApiDesign.md 4.5）。
-			var expiresAt *time.Time
-			if row.ExpiresAt.Valid {
-				t := row.ExpiresAt.Time
-				expiresAt = &t
-			}
+			expiresAt := row.ExpiresAt
 
 			cached, cachedAt := permissionCache(r.Context(), row)
 
@@ -141,7 +137,7 @@ func credential(r *http.Request) (string, auth.CredentialSource) {
 //
 // 応答には出さない。サーバログへ出す文言である。
 func invalidReason(row gen.FindAccessTokenByHashRow) string {
-	if row.RevokedAt.Valid {
+	if row.RevokedAt != nil {
 		return "トークンが失効している（revoked_at）"
 	}
 	// 旧 /me/tokens 経由でエージェントが API トークンを発行できた。
@@ -152,7 +148,7 @@ func invalidReason(row gen.FindAccessTokenByHashRow) string {
 	}
 	// expires_at は NULL 許容。NULL は無期限として扱う。
 	// セッションには手順5で必ず期限を設定する（ApiDesign.md 3.1 の Max-Age=1209600）。
-	if row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(time.Now()) {
+	if row.ExpiresAt != nil && !row.ExpiresAt.After(time.Now()) {
 		return "トークンの有効期限が切れている（expires_at）"
 	}
 	if !row.IsActive {
@@ -184,7 +180,7 @@ func invalidReason(row gen.FindAccessTokenByHashRow) string {
 // 計算し直すだけで、得られる権限は正本と同じものになる。壊れた scopes を
 // 500 にする（安全側に倒れないため）のとは事情が違う。
 func permissionCache(ctx context.Context, row gen.FindAccessTokenByHashRow) ([]string, *time.Time) {
-	if !row.PermissionsCachedAt.Valid || len(row.CachedPermissions) == 0 {
+	if row.PermissionsCachedAt == nil || len(row.CachedPermissions) == 0 {
 		return nil, nil
 	}
 	permissions, err := auth.DecodeCachedPermissions(row.CachedPermissions)
@@ -196,8 +192,7 @@ func permissionCache(ctx context.Context, row gen.FindAccessTokenByHashRow) ([]s
 		)
 		return nil, nil
 	}
-	cachedAt := row.PermissionsCachedAt.Time
-	return permissions, &cachedAt
+	return permissions, row.PermissionsCachedAt
 }
 
 // touchLastUsed は last_used_at を更新する。失敗しても認証は通す。

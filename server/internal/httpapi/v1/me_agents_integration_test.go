@@ -127,6 +127,24 @@ func TestMeAgentsIntegration(t *testing.T) {
 		return postWithCookie(r, "/api/v1/me/agents/"+agentID+"/tokens", session, body)
 	}
 
+	// ── ⓪トークンを持たないエージェントが一覧に出る ─────────────
+	//
+	// LEFT JOIN LATERAL の右辺が無い行では token_* が NULL になる。pb-224 で
+	// pgtype.Timestamptz をやめたとき、token_issued_at の NULL が time.Time へ
+	// 読めずに一覧が 500 になった（e2e で発見）。**登録直後の1件だけで再現する。**
+	t.Run("トークンを持たないエージェントも一覧に出る", func(t *testing.T) {
+		ag := register(t, ownerSession, "トークン無しの一覧", projectKey, "claude_code")
+		var found *agentJSON
+		for _, it := range listAgents(t, r, ownerSession) {
+			if it.ID == ag.ID {
+				found = &it
+			}
+		}
+		if found == nil || found.Token != nil {
+			t.Errorf("一覧の行 = %+v, want token が null の1件", found)
+		}
+	})
+
 	// ── ①委譲そのもの（Design.md 6.5）───────────────────────
 
 	t.Run("発行した平文で認証が通り、所有者のプロジェクトが実効権限になる", func(t *testing.T) {

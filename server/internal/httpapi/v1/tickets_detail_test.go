@@ -412,8 +412,9 @@ func TestPatchTicketValidation(t *testing.T) {
 		{"実績ポイントが負", `{"actual_point":-1,"actual_point_version":"actual-v0"}`, "actual_point", "out_of_range"},
 		{"算出式の版が無い", `{"actual_point":3}`, "actual_point_version", "required"},
 		{"算出式の版が不正", `{"actual_point":3,"actual_point_version":"old"}`, "actual_point_version", "invalid"},
-		{"日付の形式", `{"due_date":"2026/08/14"}`, "due_date", "invalid"},
-		{"日付に時刻", `{"due_date":"2026-08-14T00:00:00Z"}`, "due_date", "invalid"},
+		{"日時が文字列", `{"due_at":"2026-08-14"}`, "due_at", "invalid"},
+		{"終日なのに0時でない", `{"all_day":true,"due_at":` + msOf(plusMS(jstEnd("2026-08-14"), 1)) + `}`, "due_at", "not_midnight"},
+		{"終日が真偽でない", `{"all_day":"yes"}`, "all_day", "invalid"},
 		{"親の番号が0", `{"parent_seq":0}`, "parent_seq", "invalid"},
 	}
 	for _, c := range cases {
@@ -449,20 +450,39 @@ func TestPatchActualPointRequiresPMGrantAndStoresPair(t *testing.T) {
 	}
 }
 
-// 開始日と期限の前後（DbDesign.md 6.6 の ck_ticket_dates）。
+// 開始と期限の前後（DbDesign.md 6.6 の ck_ticket_schedule）。
 // **片方だけ送られたときは現在値と比べる。**
 func TestPatchTicketRejectsDueDateBeforeStartDate(t *testing.T) {
 	q := ticketDetailFake()
 	row := q.ticket.bySeq[31]
-	row.StartDate = pgtype.Date{Time: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC), Valid: true}
+	row.StartAt, row.AllDay = jstAt("2026-08-20"), true
 	q.ticket.bySeq[31] = row
 
-	rec := callPatch(q, `{"due_date":"2026-08-14"}`, `"3"`)
+	rec := callPatch(q, `{"due_at":`+msOf(jstEnd("2026-08-14"))+`}`, `"3"`)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422 (%s)", rec.Code, rec.Body.String())
 	}
-	if !hasDetail(errorOf(t, rec), "due_date", "invalid") {
-		t.Errorf("details = %v, want due_date/invalid", errorOf(t, rec).Details)
+	if !hasDetail(errorOf(t, rec), "due_at", "invalid") {
+		t.Errorf("details = %v, want due_at/invalid", errorOf(t, rec).Details)
+	}
+}
+
+// **all_day だけを true にしても、いまの値が0時でなければ通さない**（9.3.1）。
+// 時刻付きの予定を終日へ切り替えるときは、両端を0時で送り直す必要がある。
+func TestPatchTicketAllDayChecksCurrentValues(t *testing.T) {
+	q := ticketDetailFake()
+	row := q.ticket.bySeq[31]
+	nine := jstAt("2026-08-20").Add(9 * time.Hour)
+	row.StartAt, row.AllDay = &nine, false
+	q.ticket.bySeq[31] = row
+
+	rec := callPatch(q, `{"all_day":true}`, `"3"`)
+	if rec.Code != http.StatusUnprocessableEntity || !hasDetail(errorOf(t, rec), "start_at", "not_midnight") {
+		t.Fatalf("status = %d, want 422 start_at/not_midnight (%s)", rec.Code, rec.Body.String())
+	}
+	rec = callPatch(q, `{"all_day":true,"start_at":`+msOf(jstAt("2026-08-20"))+`}`, `"3"`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("0時で送り直したのに status = %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
@@ -472,7 +492,7 @@ func TestPatchTicketRejectsDueDateBeforeStartDate(t *testing.T) {
 // ポインタだけの実装ではここが通らない。
 func TestPatchTicketNullClearsField(t *testing.T) {
 	q := ticketDetailFake()
-	rec := callPatch(q, `{"assignee_id":null,"due_date":null,"estimate_point":null}`, `"3"`)
+	rec := callPatch(q, `{"assignee_id":null,"due_at":null,"estimate_point":null}`, `"3"`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
@@ -483,7 +503,7 @@ func TestPatchTicketNullClearsField(t *testing.T) {
 		valid bool
 	}{
 		{"assignee_id", arg.AssigneeIDSet, arg.AssigneeID.Valid},
-		{"due_date", arg.DueDateSet, arg.DueDate.Valid},
+		{"due_at", arg.DueAtSet, arg.DueAt != nil},
 		{"estimate_point", arg.EstimatePointSet, arg.EstimatePoint.Valid},
 	} {
 		if !c.set {
@@ -502,7 +522,7 @@ func TestPatchTicketLeavesUnsentFieldsAlone(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
 	arg := q.ticket.updated[0]
-	if arg.AssigneeIDSet || arg.DueDateSet || arg.BodyMdSet || arg.PrioritySet {
+	if arg.AssigneeIDSet || arg.DueAtSet || arg.BodyMdSet || arg.PrioritySet || arg.AllDay.Valid {
 		t.Errorf("送っていない項目の Set が立っている: %+v", arg)
 	}
 	if arg.Type.Valid {
@@ -622,7 +642,7 @@ func TestPatchTicketAllowsEpicWhenNotStaged(t *testing.T) {
 func TestPatchTicketRejectsEpicWhileStaged(t *testing.T) {
 	q := ticketDetailFake()
 	row := q.ticket.bySeq[31]
-	row.StagedAt = ts(time.Now())
+	row.StagedAt = tsp(time.Now())
 	q.ticket.bySeq[31] = row
 
 	rec := callPatch(q, `{"type":"epic"}`, `"3"`)
@@ -640,7 +660,7 @@ func TestPatchTicketRejectsEpicWhileStaged(t *testing.T) {
 func TestPatchTicketRejectsNonEpicParentWhileStaged(t *testing.T) {
 	q := ticketDetailFake()
 	row := q.ticket.bySeq[31]
-	row.StagedAt = ts(time.Now())
+	row.StagedAt = tsp(time.Now())
 	q.ticket.bySeq[31] = row
 	q.ticket.idBySeq[44] = testTicketID2
 	q.ticket.typeByID[testTicketID2] = "story" // エピックではない
@@ -658,7 +678,7 @@ func TestPatchTicketRejectsNonEpicParentWhileStaged(t *testing.T) {
 func TestPatchTicketAllowsEpicParentWhileStaged(t *testing.T) {
 	q := ticketDetailFake()
 	row := q.ticket.bySeq[31]
-	row.StagedAt = ts(time.Now())
+	row.StagedAt = tsp(time.Now())
 	q.ticket.bySeq[31] = row
 	q.ticket.idBySeq[12] = testTicketID4
 	q.ticket.typeByID[testTicketID4] = "epic"
@@ -1065,7 +1085,7 @@ func TestTransitionTicketClearsClosedAtLeavingDone(t *testing.T) {
 	withReviewWorkflow(q)
 	row := q.ticket.bySeq[31]
 	row.StatusKey = "review"
-	row.ClosedAt = ts(time.Now())
+	row.ClosedAt = tsp(time.Now())
 	q.ticket.bySeq[31] = row
 
 	rec := callTransition(q, `{"to":"in_progress"}`, "ticket.transition")
@@ -1721,7 +1741,7 @@ func TestTransitionFromTodoStagesDisplayRoot(t *testing.T) {
 	if got := q.ticket.stagedSet[0].ID; got != testTicketID2 {
 		t.Errorf("段へ上げた相手 = %q, want %q（表示上のトップレベルの祖先）", got, testTicketID2)
 	}
-	if !q.ticket.stagedSet[0].StagedAt.Valid {
+	if q.ticket.stagedSet[0].StagedAt == nil {
 		t.Error("staged_at に値が入っていない（NULL のままではバックログ段に残る）")
 	}
 	// **sort_key を動かさない**（9.4。二段は順序キーを1本共有する）。

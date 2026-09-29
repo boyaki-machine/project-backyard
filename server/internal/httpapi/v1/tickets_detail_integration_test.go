@@ -164,10 +164,10 @@ func TestTicketDetailIntegration(t *testing.T) {
 	// ── 9.5.2 PATCH：据え置きと NULL の撃ち分け ─────────────────
 	t.Run("PATCHは送った項目だけを更新する", func(t *testing.T) {
 		created := createTicketIT(t, r, session, base,
-			`{"type":"task","title":"部分更新","priority":"high","estimate_point":5,"due_date":"2026-09-30"}`)
+			`{"type":"task","title":"部分更新","priority":"high","estimate_point":5,"due_at":`+msOf(jstEnd("2026-09-30"))+`}`)
 		seq := int(created["seq"].(float64))
 
-		// ① title だけ送る → priority と due_date は据え置き。
+		// ① title だけ送る → priority と due_at は据え置き。
 		got := patchTicketIT(t, r, session, base, seq, `"1"`, `{"title":"部分更新（改）"}`)
 		if got["title"] != "部分更新（改）" {
 			t.Errorf("title = %v", got["title"])
@@ -175,8 +175,8 @@ func TestTicketDetailIntegration(t *testing.T) {
 		if got["priority"] != "high" {
 			t.Errorf("priority = %v, want high（送っていないので据え置き）", got["priority"])
 		}
-		if got["due_date"] != "2026-09-30" {
-			t.Errorf("due_date = %v, want 2026-09-30（据え置き）", got["due_date"])
+		if got["due_at"] != float64(jstEnd("2026-09-30").UnixMilli()) {
+			t.Errorf("due_at = %v, want 10/1 0:00 JST（据え置き）", got["due_at"])
 		}
 		if got["version"] != float64(2) {
 			t.Errorf("version = %v, want 2", got["version"])
@@ -184,8 +184,8 @@ func TestTicketDetailIntegration(t *testing.T) {
 
 		// ② null を送る → 空になる。**据え置きと撃ち分けられること。**
 		got = patchTicketIT(t, r, session, base, seq, `"2"`,
-			`{"priority":null,"due_date":null,"estimate_point":null}`)
-		for _, field := range []string{"priority", "due_date", "estimate_point"} {
+			`{"priority":null,"due_at":null,"estimate_point":null}`)
+		for _, field := range []string{"priority", "due_at", "estimate_point"} {
 			if got[field] != nil {
 				t.Errorf("%s = %v, want null（null は空にする）", field, got[field])
 			}

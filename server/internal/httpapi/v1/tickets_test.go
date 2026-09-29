@@ -114,8 +114,9 @@ type ticketItemJSON struct {
 	Tags        []ticketTagRef   `json:"tags"`
 	Sprint      *sprintRef       `json:"sprint"`
 	Version     int32            `json:"version"`
-	CreatedAt   string           `json:"created_at"`
-	DueDate     *string          `json:"due_date"`
+	CreatedAt   int64            `json:"created_at"`
+	DueAt       *int64           `json:"due_at"`
+	AllDay      bool             `json:"all_day"`
 }
 
 func decodeTicketList(t *testing.T, rec *httptest.ResponseRecorder) List[ticketItemJSON] {
@@ -222,10 +223,10 @@ func TestListTicketsDefaults(t *testing.T) {
 	if p.Sort != "sort_key" || p.SortOrder != "asc" {
 		t.Errorf("sort/order の既定 = %s/%s（9.2.1 は sort_key/asc）", p.Sort, p.SortOrder)
 	}
-	if p.OpenFilter != "all" || p.DueWithinDays != -1 || len(p.ParentSeqs) != 0 {
+	if p.OpenFilter != "all" || p.DueBefore != nil || len(p.ParentSeqs) != 0 {
 		t.Errorf("未指定のフィルタが効いている: %+v", p)
 	}
-	if p.PlannedFrom.Valid || p.PlannedTo.Valid {
+	if p.PlannedFrom != nil || p.PlannedTo != nil {
 		t.Errorf("未指定の予定期間が効いている: from=%+v to=%+v", p.PlannedFrom, p.PlannedTo)
 	}
 	// overdue / stale の「指定なし」（9.2.1。手順19b）。**stale は 0 ではなく負**
@@ -250,7 +251,7 @@ func TestListTicketsFilters(t *testing.T) {
 		"/projects/demo/tickets?type=story,task&priority=high,highest"+
 			"&assignee=me,none&tag=01K2TAG00000000000000001,none&sprint=none"+
 			"&open=true&due_within=7d&parent=12,30&status=todo,in_progress"+
-			"&status_category=todo&planned_from=2026-09-01&planned_to=2026-09-30", "", ""))
+			"&status_category=todo&planned_from="+msOf(jstAt("2026-09-01"))+"&planned_to="+msOf(jstEnd("2026-09-30")), "", ""))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -269,12 +270,13 @@ func TestListTicketsFilters(t *testing.T) {
 	if len(p.SprintIds) != 0 || !p.SprintNone {
 		t.Errorf("sprint=none の解釈が違う: ids=%v none=%v", p.SprintIds, p.SprintNone)
 	}
-	if p.OpenFilter != "open" || p.DueWithinDays != 7 {
-		t.Errorf("open/due_within の解釈が違う: %+v", p)
+	// due_within は基準タイムゾーン（偽物は Asia/Tokyo）で「7日後の日の終わり」の瞬間になる（pb-217）
+	if want := dayStartIn(time.Now(), tokyo, 8); p.OpenFilter != "open" || p.DueBefore == nil || !p.DueBefore.Equal(want) {
+		t.Errorf("open/due_within の解釈が違う: open=%s due_before=%v want %s", p.OpenFilter, p.DueBefore, want)
 	}
-	if !p.PlannedFrom.Valid || p.PlannedFrom.Time.Format(time.DateOnly) != "2026-09-01" ||
-		!p.PlannedTo.Valid || p.PlannedTo.Time.Format(time.DateOnly) != "2026-09-30" {
-		t.Errorf("予定期間の解釈が違う: from=%+v to=%+v", p.PlannedFrom, p.PlannedTo)
+	if p.PlannedFrom == nil || !p.PlannedFrom.Equal(*jstAt("2026-09-01")) ||
+		p.PlannedTo == nil || !p.PlannedTo.Equal(*jstEnd("2026-09-30")) {
+		t.Errorf("予定期間の解釈が違う: from=%v to=%v", p.PlannedFrom, p.PlannedTo)
 	}
 	// parent は**カンマ区切りで複数指定できる**（9.2.1）。エピックフィルタが使う。
 	if len(p.ParentSeqs) != 2 || p.ParentSeqs[0] != 12 || p.ParentSeqs[1] != 30 {
@@ -292,8 +294,8 @@ func TestListTicketsRejectsInvalidFilters(t *testing.T) {
 		{"open", "open=yes", "open"},
 		{"期限", "due_within=7days", "due_within"},
 		{"期限超過", "overdue=false", "overdue"},
-		{"予定開始日の書式", "planned_from=2026/09/01", "planned_from"},
-		{"予定期間の向き", "planned_from=2026-09-30&planned_to=2026-09-01", "planned_to"},
+		{"予定期間は日付では受けない", "planned_from=2026-09-01", "planned_from"},
+		{"予定期間の向き", "planned_from=" + msOf(jstAt("2026-09-30")) + "&planned_to=" + msOf(jstAt("2026-09-01")), "planned_to"},
 		{"放置の書式", "stale=14days", "stale"},
 		{"放置の上限", "stale=3651d", "stale"},
 		{"親", "parent=0", "parent"},
@@ -305,9 +307,9 @@ func TestListTicketsRejectsInvalidFilters(t *testing.T) {
 		{"番号の書式", "seq_to=abc", "seq_to"},
 		{"番号の向き", "seq_from=20&seq_to=10", "seq_to"},
 		{"着手日時は日付だけでは受けない", "started_since=2026-09-01", "started_since"},
-		{"完了日時の向き", "closed_since=2026-09-16T00:00:00Z&closed_before=2026-09-01T00:00:00Z", "closed_before"},
-		// 時差が違っても同じ瞬間なら空の範囲である
-		{"同じ瞬間は空の範囲", "started_since=2026-09-01T00:00:00Z&started_before=2026-09-01T09:00:00%2B09:00", "started_before"},
+		{"着手日時は ISO8601 では受けない", "started_since=2026-09-01T00:00:00Z", "started_since"},
+		{"完了日時の向き", "closed_since=1789516800000&closed_before=1788220800000", "closed_before"},
+		{"同じ瞬間は空の範囲", "started_since=1788220800000&started_before=1788220800000", "started_before"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -404,12 +406,11 @@ func TestTicketsETagVariesByFilterAndPage(t *testing.T) {
 	if a, b := etag("seq_from=10"), etag("seq_from=11"); a == b {
 		t.Errorf("番号の範囲が違うのに ETag が同じ: %q", a)
 	}
-	if a, b := etag("planned_from=2026-09-01"), etag("planned_from=2026-09-02"); a == b {
+	if a, b := etag("planned_from="+msOf(jstAt("2026-09-01"))), etag("planned_from="+msOf(jstAt("2026-09-02"))); a == b {
 		t.Errorf("予定期間が違うのに ETag が同じ: %q", a)
 	}
-	if a, b := etag("closed_since=2026-09-01T00:00:00Z"),
-		etag("closed_since="+url.QueryEscape("2026-09-01T09:00:00+09:00")); a != b {
-		t.Errorf("同じ瞬間の時差違いで ETag が変わった: %q vs %q", a, b)
+	if a, b := etag("closed_since=1788220800000"), etag("closed_since=1788220800001"); a == b {
+		t.Errorf("完了日時の範囲が違うのに ETag が同じ: %q", a)
 	}
 }
 
@@ -425,8 +426,8 @@ func TestListTicketsSearchConditions(t *testing.T) {
 	h.listTickets(rec, ticketReq(http.MethodGet,
 		"/projects/demo/tickets?q="+url.QueryEscape("認証　100% 認証")+
 			"&seq_from=10&seq_to=20"+
-			"&started_since="+url.QueryEscape("2026-09-01T00:00:00+09:00")+
-			"&closed_before=2026-09-16T00:00:00Z&sort=closed_at&order=desc", "", ""))
+			"&started_since=1788188400000"+ // 2026-09-01T00:00:00+09:00
+			"&closed_before=1789516800000&sort=closed_at&order=desc", "", "")) // 2026-09-16T00:00:00Z
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -448,10 +449,10 @@ func TestListTicketsSearchConditions(t *testing.T) {
 	}
 	// 時差付きの瞬間をそのまま受ける（日の境界はサーバが作らない）
 	want := time.Date(2026, 8, 31, 15, 0, 0, 0, time.UTC)
-	if !p.StartedSince.Valid || !p.StartedSince.Time.Equal(want) {
+	if p.StartedSince == nil || !(*p.StartedSince).Equal(want) {
 		t.Errorf("started_since = %+v, want %s", p.StartedSince, want)
 	}
-	if p.StartedBefore.Valid || p.ClosedSince.Valid || !p.ClosedBefore.Valid {
+	if p.StartedBefore != nil || p.ClosedSince != nil || p.ClosedBefore == nil {
 		t.Errorf("指定しなかった範囲が効いている、または指定した範囲が落ちた: %+v", p)
 	}
 	if p.Sort != "closed_at" || p.SortOrder != "desc" {
@@ -516,7 +517,7 @@ func TestListTicketsWithoutSearchConditions(t *testing.T) {
 	}
 	p := q.ticket.listParams[0]
 	if p.KeywordSet || p.KeywordIds == nil || p.SeqFrom != 0 || p.SeqTo != 0 ||
-		p.StartedSince.Valid || p.StartedBefore.Valid || p.ClosedSince.Valid || p.ClosedBefore.Valid {
+		p.StartedSince != nil || p.StartedBefore != nil || p.ClosedSince != nil || p.ClosedBefore != nil {
 		t.Errorf("未指定の検索の条件が効いている: %+v", p)
 	}
 }
@@ -677,9 +678,9 @@ func TestCreateTicketValidation(t *testing.T) {
 		{"タイトルが長い", `{"type":"task","title":"` + strings.Repeat("あ", 201) + `"}`, "title"},
 		{"優先度が値域外", `{"type":"task","title":"x","priority":"urgent"}`, "priority"},
 		{"見積が負", `{"type":"task","title":"x","estimate_point":-1}`, "estimate_point"},
-		{"日付の形式", `{"type":"task","title":"x","due_date":"2026/08/14"}`, "due_date"},
-		{"日付に時刻", `{"type":"task","title":"x","due_date":"2026-08-14T00:00:00Z"}`, "due_date"},
-		{"期限が開始より前", `{"type":"task","title":"x","start_date":"2026-08-14","due_date":"2026-08-09"}`, "due_date"},
+		{"日時が文字列", `{"type":"task","title":"x","due_at":"2026-08-14"}`, "due_at"},
+		{"終日なのに0時でない", `{"type":"task","title":"x","due_at":` + msOf(plusMS(jstEnd("2026-08-14"), 1)) + `}`, "due_at"},
+		{"期限が開始より前", `{"type":"task","title":"x","start_at":` + msOf(jstAt("2026-08-14")) + `,"due_at":` + msOf(jstEnd("2026-08-08")) + `}`, "due_at"},
 		{"親の番号が0", `{"type":"task","title":"x","parent_seq":0}`, "parent_seq"},
 	}
 	for _, tc := range cases {
@@ -804,11 +805,11 @@ func moveFake() *fakeQuerier {
 // 1つの表記に固定するための「書く側」の型であり UnmarshalJSON を持たない
 // （apitime.go）。ticketItemJSON と同じ理由・同じ扱いである。
 type moveRespJSON struct {
-	Seq        int32   `json:"seq"`
-	SortKey    string  `json:"sort_key"`
-	StagedAt   *string `json:"staged_at"`
-	Version    int32   `json:"version"`
-	Rebalanced bool    `json:"rebalanced"`
+	Seq        int32  `json:"seq"`
+	SortKey    string `json:"sort_key"`
+	StagedAt   *int64 `json:"staged_at"`
+	Version    int32  `json:"version"`
+	Rebalanced bool   `json:"rebalanced"`
 }
 
 func decodeMove(t *testing.T, rec *httptest.ResponseRecorder) moveRespJSON {
@@ -1111,7 +1112,7 @@ func TestMoveTicketDoesNotRecordActivity(t *testing.T) {
 //   - 12 … epic。親を持たないが**エピック自身なので置けない**
 func stageFake() *fakeQuerier {
 	q := ticketFake()
-	staged := ts(time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
+	staged := tsp(time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
 	q.ticket.sortRowBySeq = map[int32]gen.GetTicketSortRowRow{
 		31: {ID: testTicketID, Type: "task", SortKey: txt("0|n:"), Version: 3},
 		44: {ID: testTicketID2, Type: "task", SortKey: txt("0|u:"), Version: 1,
@@ -1168,7 +1169,7 @@ func TestMoveTicketStagesTicket(t *testing.T) {
 	if len(q.ticket.moved) != 1 || !q.ticket.moved[0].ChangeStage {
 		t.Errorf("change_stage が立っていない: %+v", q.ticket.moved)
 	}
-	if !q.ticket.moved[0].StagedAt.Valid {
+	if q.ticket.moved[0].StagedAt == nil {
 		t.Error("staged_at に値を書いていない")
 	}
 }
@@ -1191,7 +1192,7 @@ func TestMoveTicketUnstagesTicket(t *testing.T) {
 	if len(q.ticket.moved) != 1 || !q.ticket.moved[0].ChangeStage {
 		t.Fatalf("change_stage が立っていない: %+v", q.ticket.moved)
 	}
-	if q.ticket.moved[0].StagedAt.Valid {
+	if q.ticket.moved[0].StagedAt != nil {
 		t.Error("staged_at を NULL にしていない")
 	}
 }
@@ -1277,7 +1278,7 @@ func TestMoveTicketAllowsStagingChildOfEpic(t *testing.T) {
 	q := stageFake()
 	// 44 をいったんバックログへ落としてから、上げ直せることを見る
 	row := q.ticket.sortRowBySeq[44]
-	row.StagedAt = pgtype.Timestamptz{}
+	row.StagedAt = nil
 	q.ticket.sortRowBySeq[44] = row
 
 	h, _ := ticketHandler(q)
@@ -1299,7 +1300,7 @@ func TestMoveTicketUnstageIsAlwaysAllowed(t *testing.T) {
 	q := stageFake()
 	// 45（親がタスク）が何らかの理由でオンステージに居る状態を作る
 	row := q.ticket.sortRowBySeq[45]
-	row.StagedAt = ts(time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
+	row.StagedAt = tsp(time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
 	q.ticket.sortRowBySeq[45] = row
 
 	h, _ := ticketHandler(q)

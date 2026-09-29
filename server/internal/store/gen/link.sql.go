@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -89,7 +90,7 @@ type GetTicketLinkRow struct {
 	LinkType    string
 	LagDays     int32
 	Origin      string
-	CreatedAt   pgtype.Timestamptz
+	CreatedAt   time.Time
 	Direction   string
 	TicketSeq   int32
 	TicketTitle string
@@ -170,7 +171,7 @@ type ListTicketLinksRow struct {
 	LinkType             string
 	LagDays              int32
 	Origin               string
-	CreatedAt            pgtype.Timestamptz
+	CreatedAt            time.Time
 	TicketSeq            int32
 	TicketTitle          string
 	TicketType           string

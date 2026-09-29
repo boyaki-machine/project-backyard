@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -360,7 +361,7 @@ type FindMyAgentRow struct {
 	ModelVersion   pgtype.Text
 	TrustLevel     int32
 	TokenEnvSuffix pgtype.Text
-	CreatedAt      pgtype.Timestamptz
+	CreatedAt      time.Time
 	ProjectID      pgtype.Text
 	ProjectKey     pgtype.Text
 	ProjectName    pgtype.Text
@@ -531,7 +532,10 @@ SELECT
   -- '' が26個の空白に詰められ、「空かどうか」の判定が壊れる。
   (COALESCE(t.id::text, ''))::text AS token_id,
   t.token_prefix AS token_prefix,
-  t.issued_at    AS token_issued_at,
+  -- issued_at も同じ理由で NULL が来る（pb-224 で pgtype.Timestamptz をやめ、Go の
+  -- time.Time が NULL を受けられなくなった）。**token_id が '' のときは読まない**ので、
+  -- 番兵に 1970-01-01 を入れる。
+  COALESCE(t.issued_at, 'epoch'::timestamptz)::timestamptz AS token_issued_at,
   t.last_used_at AS token_last_used_at,
   t.expires_at   AS token_expires_at
 FROM agent ag
@@ -559,14 +563,14 @@ type ListMyAgentsRow struct {
 	ModelVersion    pgtype.Text
 	TrustLevel      int32
 	TokenEnvSuffix  pgtype.Text
-	CreatedAt       pgtype.Timestamptz
+	CreatedAt       time.Time
 	ProjectKey      pgtype.Text
 	ProjectName     pgtype.Text
 	TokenID         string
 	TokenPrefix     pgtype.Text
-	TokenIssuedAt   pgtype.Timestamptz
-	TokenLastUsedAt pgtype.Timestamptz
-	TokenExpiresAt  pgtype.Timestamptz
+	TokenIssuedAt   time.Time
+	TokenLastUsedAt *time.Time
+	TokenExpiresAt  *time.Time
 }
 
 // 自分のエージェントに関するクエリ（ApiDesign.md 4.5、DbDesign.md 8.2.1）。

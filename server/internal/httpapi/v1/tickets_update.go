@@ -86,8 +86,10 @@ type ticketPatch struct {
 	ActualPoint        optional[float64]
 	ActualPointVersion optional[string]
 
-	StartDate optional[pgtype.Date]
-	DueDate   optional[pgtype.Date]
+	// 予定（9.3.1。pb-217）。エポックミリ秒と終日の印。
+	StartAt optional[time.Time]
+	DueAt   optional[time.Time]
+	AllDay  optional[bool]
 
 	// 手順27 で開けた4つ（9.5.2）。**エージェントの逸脱防止を構造データで行う**
 	// （Requirements.md 10.5.3）以上、その構造データを書く経路が要る。列は 0006 から
@@ -285,8 +287,11 @@ func (h *handler) resolveTicketPatch(
 	params.ActualHoursSet, params.ActualHours = floatParam(patch.ActualHours)
 	params.ActualPointSet, params.ActualPoint = floatParam(patch.ActualPoint)
 	params.ActualPointVersionSet, params.ActualPointVersion = textParam(patch.ActualPointVersion)
-	params.StartDateSet, params.StartDate = dateParam(patch.StartDate)
-	params.DueDateSet, params.DueDate = dateParam(patch.DueDate)
+	params.StartAtSet, params.StartAt = instantParam(patch.StartAt)
+	params.DueAtSet, params.DueAt = instantParam(patch.DueAt)
+	if patch.AllDay.Set {
+		params.AllDay = pgtype.Bool{Bool: patch.AllDay.Value, Valid: true}
+	}
 
 	// 手順27 の4つ（9.5.2）。**execution_mode と scope は COALESCE で足りる**
 	// ——null は parseTicketPatch が先に 422 で落としているので、ここへ来る値は
@@ -300,23 +305,24 @@ func (h *handler) resolveTicketPatch(
 		params.Scope = []byte(patch.Scope.Value)
 	}
 
-	// ── 開始日と期限の前後関係（DbDesign.md 6.6 の ck_ticket_dates）─────
+	// ── 予定（9.3.1。DbDesign.md 6.6 の ck_ticket_schedule）──────────
 	//
-	// **片方だけ送られたときは、もう片方の現在値と比べる。** DB の CHECK に
-	// 当てると 500 になるので、同じ規則をここで先に見て 422 にする
-	// （tickets_create.go の validateCreateTicket と同じ扱い）。
-	start, due := before.StartDate, before.DueDate
-	if params.StartDateSet {
-		start = params.StartDate
-	}
-	if params.DueDateSet {
-		due = params.DueDate
-	}
-	if start.Valid && due.Valid && start.Time.After(due.Time) {
-		return params, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
-			Field: "due_date", Code: "invalid",
-			Message: "期限は開始日以降の日付で指定してください",
-		})
+	// **送られていない欄は現在値で補ってから検証する。** 前後関係は DB の CHECK に
+	// 当てると 500 になるので先に 422 にする。終日なら基準タイムゾーンの0時——
+	// all_day だけを true にしても、いまの値が0時でなければ通さない。
+	if patch.StartAt.Set || patch.DueAt.Set || patch.AllDay.Set {
+		loc, err := projectLocation(ctx, q, projectID)
+		if err != nil {
+			return params, apierr.New(apierr.InternalError).WithCause(err)
+		}
+		allDay := before.AllDay
+		if patch.AllDay.Set {
+			allDay = patch.AllDay.Value
+		}
+		if d := validateSchedule(pick(patch.StartAt, before.StartAt), pick(patch.DueAt, before.DueAt),
+			allDay, loc, "due_at", nil); len(d) > 0 {
+			return params, apierr.New(apierr.ValidationFailed).WithDetails(d...)
+		}
 	}
 
 	// ── 参照先の検証（9.3 と同じ規則を使い回す）───────────────────
@@ -396,7 +402,7 @@ func (h *handler) resolveTicketPatch(
 	// PATCH からも迂回できないようにする。**自動で段から降ろす方式は採らない**
 	// ——種別や親を変えただけのつもりの利用者が、オンステージから消えたことに
 	// 気づく手段がないため（9.5.2）。
-	if before.StagedAt.Valid && (patch.Type.Set || patch.ParentSeq.Set) {
+	if before.StagedAt != nil && (patch.Type.Set || patch.ParentSeq.Set) {
 		newType := before.Type
 		if patch.Type.Set {
 			newType = patch.Type.Value
@@ -512,11 +518,22 @@ func recordTicketFieldChanges(
 	if patch.ActualPointVersion.Set {
 		add("actual_point_version", textPtr(before.ActualPointVersion), optionalStrPtr(patch.ActualPointVersion))
 	}
-	if patch.StartDate.Set {
-		add("start_date", dateStrPtr(before.StartDate), optionalDateStrPtr(patch.StartDate))
-	}
-	if patch.DueDate.Set {
-		add("due_date", dateStrPtr(before.DueDate), optionalDateStrPtr(patch.DueDate))
+	// 予定は**書いた時点の見え方で残す**（9.13.2。終日は YYYY-MM-DD、時刻付きはエポック
+	// ミリ秒）。all_day だけを切り替えても見え方が変わるので、両端も記録の対象にする。
+	if patch.StartAt.Set || patch.DueAt.Set || patch.AllDay.Set {
+		loc, err := projectLocation(ctx, q, projectID)
+		if err != nil {
+			return err
+		}
+		allDay := before.AllDay
+		if patch.AllDay.Set {
+			allDay = patch.AllDay.Value
+		}
+		add("start_at", scheduleActivityValue(before.StartAt, before.AllDay, false, loc),
+			scheduleActivityValue(pick(patch.StartAt, before.StartAt), allDay, false, loc))
+		add("due_at", scheduleActivityValue(before.DueAt, before.AllDay, true, loc),
+			scheduleActivityValue(pick(patch.DueAt, before.DueAt), allDay, true, loc))
+		add("all_day", strPtr(strconv.FormatBool(before.AllDay)), strPtr(strconv.FormatBool(allDay)))
 	}
 
 	// 手順27 の4つ。**scope も old/new を残す**（body_md のように落とさない）
@@ -657,8 +674,9 @@ func parseTicketPatch(raw updateTicketRequest) (ticketPatch, *apierr.Error) {
 		details = append(details, apierr.Detail{Field: "actual_point_version", Code: "required", Message: "実績ポイントと算出式の版は一緒に指定してください"})
 	}
 
-	patch.StartDate, details = optionalDateField(raw, "start_date", details)
-	patch.DueDate, details = optionalDateField(raw, "due_date", details)
+	patch.StartAt, details = optionalInstantField(raw, "start_at", details)
+	patch.DueAt, details = optionalInstantField(raw, "due_at", details)
+	patch.AllDay, details = optionalBoolField(raw, "all_day", details)
 
 	// ── 手順27 で開けた4つ（9.5.2）─────────────────────────────
 	//
@@ -858,39 +876,6 @@ func optionalFloatField(
 	return optional[float64]{Set: true, Value: f}, details
 }
 
-// optionalDateField は date 列を解く（DbDesign.md 6.6）。**時刻つきは受けない**
-// ——"2026-08-05T00:00:00Z" を通すと、タイムゾーンによって前日へずれる
-// （apitime.go の parseAPIDate と同じ規則）。
-func optionalDateField(
-	raw updateTicketRequest, field string, details []apierr.Detail,
-) (optional[pgtype.Date], []apierr.Detail) {
-	v, ok := raw[field]
-	if !ok {
-		return optional[pgtype.Date]{}, details
-	}
-	if isJSONNull(v) {
-		return optional[pgtype.Date]{Set: true, Null: true}, details
-	}
-	var s string
-	if err := json.Unmarshal(v, &s); err != nil {
-		return optional[pgtype.Date]{}, append(details, apierr.Detail{
-			Field: field, Code: "invalid",
-			Message: "日付は YYYY-MM-DD の形式で指定してください",
-		})
-	}
-	if s == "" {
-		return optional[pgtype.Date]{Set: true, Null: true}, details
-	}
-	d, okDate := parseAPIDate(s)
-	if !okDate || !d.Valid {
-		return optional[pgtype.Date]{}, append(details, apierr.Detail{
-			Field: field, Code: "invalid",
-			Message: "日付は YYYY-MM-DD の形式で指定してください",
-		})
-	}
-	return optional[pgtype.Date]{Set: true, Value: d}, details
-}
-
 // ── UPDATE の引数へ写す小物 ───────────────────────────────────
 
 func textParam(o optional[string]) (bool, pgtype.Text) {
@@ -911,16 +896,6 @@ func floatParam(o optional[float64]) (bool, pgtype.Float8) {
 		return true, pgtype.Float8{}
 	}
 	return true, pgtype.Float8{Float64: o.Value, Valid: true}
-}
-
-func dateParam(o optional[pgtype.Date]) (bool, pgtype.Date) {
-	if !o.Set {
-		return false, pgtype.Date{}
-	}
-	if o.Null {
-		return true, pgtype.Date{}
-	}
-	return true, o.Value
 }
 
 // ── activity の old_value / new_value へ写す小物 ─────────────────
@@ -946,14 +921,6 @@ func float8StrPtr(v pgtype.Float8) *string {
 	return &s
 }
 
-func dateStrPtr(v pgtype.Date) *string {
-	if !v.Valid {
-		return nil
-	}
-	s := v.Time.Format(time.DateOnly)
-	return &s
-}
-
 func optionalStrPtr(o optional[string]) *string {
 	if o.Null {
 		return nil
@@ -975,14 +942,6 @@ func optionalFloatStrPtr(o optional[float64]) *string {
 		return nil
 	}
 	s := strconv.FormatFloat(o.Value, 'f', -1, 64)
-	return &s
-}
-
-func optionalDateStrPtr(o optional[pgtype.Date]) *string {
-	if o.Null || !o.Value.Valid {
-		return nil
-	}
-	s := o.Value.Time.Format(time.DateOnly)
 	return &s
 }
 

@@ -127,9 +127,9 @@ func TestCalendarIntegration(t *testing.T) {
 			Name            *string `json:"name"`
 			HolidayCount    int     `json:"holiday_count"`
 			ObservanceCount int     `json:"observance_count"`
-			FetchedAt       *string `json:"fetched_at"`
+			FetchedAt       *int64  `json:"fetched_at"`
 			LastError       *string `json:"last_error"`
-			NextFetchAt     *string `json:"next_fetch_at"`
+			NextFetchAt     *int64  `json:"next_fetch_at"`
 		} `json:"source"`
 		Imported *struct {
 			Days    int `json:"days"`

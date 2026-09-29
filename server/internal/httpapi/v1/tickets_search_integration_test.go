@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -109,14 +110,20 @@ func TestTicketSearchIntegration(t *testing.T) {
 		}
 		return viewOf(t, rec)["id"].(string)
 	}
-	// dbNow は DB の時計のいまを、クエリに載せられる形で返す。
+	// dbNow は DB の時計のいまを、クエリに載せられる形（エポックミリ秒）で返す。
+	//
+	// **ミリ秒へ切り上げ、そのあと 2ms 待つ。** 境界の前に起きたことは切り上げた値より
+	// 前にあり、後に起きることは待ったぶん必ず後になる。同じミリ秒の中で前後が
+	// 曖昧にならない（pb-224 で ISO8601 のナノ秒からミリ秒に変わった）。
 	dbNow := func(t *testing.T) string {
 		t.Helper()
 		var ts time.Time
 		if err := pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&ts); err != nil {
 			t.Fatalf("DB の時計を読めない: %v", err)
 		}
-		return url.QueryEscape(ts.UTC().Format(time.RFC3339Nano))
+		ms := (ts.UnixNano() + int64(time.Millisecond) - 1) / int64(time.Millisecond)
+		time.Sleep(2 * time.Millisecond)
+		return strconv.FormatInt(ms, 10)
 	}
 	kw := func(s string) string { return "q=" + url.QueryEscape(s) }
 
@@ -217,8 +224,8 @@ func TestTicketSearchIntegration(t *testing.T) {
 			}
 			var body struct {
 				Items []struct {
-					Seq      int     `json:"seq"`
-					ClosedAt *string `json:"closed_at"`
+					Seq      int    `json:"seq"`
+					ClosedAt *int64 `json:"closed_at"`
 				} `json:"items"`
 			}
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {

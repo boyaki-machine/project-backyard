@@ -100,8 +100,8 @@ type refJSON struct {
 	Note       *string   `json:"note"`
 	SortOrder  int32     `json:"sort_order"`
 	CreatedBy  *actorRef `json:"created_by"`
-	CreatedAt  string    `json:"created_at"`
-	UpdatedAt  string    `json:"updated_at"`
+	CreatedAt  int64     `json:"created_at"`
+	UpdatedAt  int64     `json:"updated_at"`
 }
 
 type refListJSON struct {

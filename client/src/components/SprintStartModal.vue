@@ -19,6 +19,8 @@ import { computed, ref } from 'vue'
 
 import Modal from './Modal.vue'
 import type { StartSprintRequest } from '../api/sprints'
+import { planInstant } from '../lib/datetime'
+import { useProjectStore } from '../stores/project'
 
 const props = defineProps<{
   /** オンステージ段に出ている行数（配下を含む。エピックを除く） */
@@ -42,6 +44,7 @@ const name = ref('')
 const goal = ref('')
 
 /** **開始日の既定は今日**（5.4）。いま始めるのだから、その日が入っていてよい */
+const tz = useProjectStore().planTimezone
 const startDate = ref(todayISO())
 const endDate = ref('')
 
@@ -86,8 +89,10 @@ function submit() {
   emit('start', {
     name: name.value.trim(),
     goal: goal.value.trim() === '' ? null : goal.value.trim(),
-    start_date: startDate.value === '' ? null : startDate.value,
-    end_date: endDate.value === '' ? null : endDate.value,
+    // 期間は終日（基準タイムゾーンの0時。終わりは翌日の0時。pb-217）
+    start_at: startDate.value === '' ? null : planInstant(startDate.value, tz, false),
+    end_at: endDate.value === '' ? null : planInstant(endDate.value, tz, true),
+    all_day: true,
   })
 }
 </script>
@@ -125,7 +130,7 @@ function submit() {
         </label>
       </div>
       <span v-if="dateError" class="detail">✕ {{ dateError }}</span>
-      <span v-else-if="fieldErrors?.end_date" class="detail">✕ {{ fieldErrors.end_date }}</span>
+      <span v-else-if="fieldErrors?.end_at" class="detail">✕ {{ fieldErrors.end_at }}</span>
 
       <!--
         件数は押す前に規模が分かるようにするためのもの。**0件でも開始できる**

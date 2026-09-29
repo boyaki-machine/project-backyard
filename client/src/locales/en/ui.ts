@@ -1340,4 +1340,8 @@ export const uiMessages: Record<string, string> = {
   "祝日": "Holiday",
   "行事": "Observance",
   "カレンダー": "Calendar",
+  "終日": "All day",
+  "日付または日時の形式で入力してください": "Enter a date or a date and time.",
+  "を終日に変更": "was set to all day",
+  "を時刻付きに変更": "was set to a specific time",
 }

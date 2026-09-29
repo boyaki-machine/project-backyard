@@ -31,7 +31,7 @@ export const sprintStatusLabels: Record<SprintStatus, string> = {
 /**
  * プロジェクトのスプリント一覧（9.12）。
  *
- * `start_date` 降順（`null` は末尾）、同値は `created_at` 降順で返る。
+ * `start_at` 降順（`null` は末尾）、同値は `created_at` 降順で返る。
  * タグと同じくページャを持たない。
  */
 export function listSprints(key: string): Promise<SprintList> {
@@ -46,7 +46,7 @@ export function createSprint(key: string, body: CreateSprintRequest): Promise<Sp
 /**
  * スプリントを更新する（9.12）。
  *
- * **`goal` / `start_date` / `end_date` は `null` を送ると値が消える。**
+ * **`goal` / `start_at` / `end_at` は `null` を送ると値が消える。**
  * キーを含めなければ据え置きで、両者は別の意味を持つ。
  */
 export function updateSprint(

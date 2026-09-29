@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -339,10 +340,10 @@ type GetAdminUserRow struct {
 	Kind               string
 	DisplayName        string
 	IsActive           bool
-	CreatedAt          pgtype.Timestamptz
+	CreatedAt          time.Time
 	Email              string
 	SystemRole         string
-	LastLoginAt        pgtype.Timestamptz
+	LastLoginAt        *time.Time
 	Version            int32
 	MfaCredentialCount int64
 	PasskeyCount       int64
@@ -400,7 +401,7 @@ type GetProjectMembershipRow struct {
 	ProjectKey  string
 	ProjectName string
 	RoleKey     string
-	JoinedAt    pgtype.Timestamptz
+	JoinedAt    time.Time
 }
 
 // GetProjectMembership は PUT の 200 応答（6.3 の要素と同形）を引く。
@@ -499,9 +500,9 @@ type ListAdminUsersRow struct {
 	Email            pgtype.Text
 	SystemRole       pgtype.Text
 	IsActive         bool
-	LastLoginAt      pgtype.Timestamptz
+	LastLoginAt      *time.Time
 	ProjectCount     int64
-	CreatedAt        pgtype.Timestamptz
+	CreatedAt        time.Time
 	ClientKind       pgtype.Text
 	AgentModelName   pgtype.Text
 	AgentTrustLevel  pgtype.Int4
@@ -612,9 +613,9 @@ type ListUserIdentitiesRow struct {
 	ProviderKey       string
 	ProviderType      string
 	Subject           string
-	LinkedAt          pgtype.Timestamptz
-	LastUsedAt        pgtype.Timestamptz
-	PasswordUpdatedAt pgtype.Timestamptz
+	LinkedAt          time.Time
+	LastUsedAt        *time.Time
+	PasswordUpdatedAt *time.Time
 }
 
 // ListUserIdentities は 6.3 の identities[] を引く。
@@ -674,7 +675,7 @@ type ListUserProjectMembershipsRow struct {
 	ProjectKey  string
 	ProjectName string
 	RoleKey     string
-	JoinedAt    pgtype.Timestamptz
+	JoinedAt    time.Time
 }
 
 // ListUserProjectMemberships は 6.3 の project_memberships[] を引く。
@@ -728,9 +729,9 @@ ORDER BY t.issued_at DESC
 type ListUserSessionsRow struct {
 	ID         string
 	ClientInfo pgtype.Text
-	IssuedAt   pgtype.Timestamptz
-	LastUsedAt pgtype.Timestamptz
-	ExpiresAt  pgtype.Timestamptz
+	IssuedAt   time.Time
+	LastUsedAt *time.Time
+	ExpiresAt  *time.Time
 }
 
 // ListUserSessions は 6.3 の sessions[]（**有効なセッション**）を引く。
@@ -839,7 +840,7 @@ func (q *Queries) RevokeActorSessions(ctx context.Context, actorID string) (int6
 const summarizeAdminUsers = `-- name: SummarizeAdminUsers :one
 SELECT
   count(*)                                                    AS total,
-  max(GREATEST(a.updated_at, COALESCE(u.updated_at, a.updated_at)))::timestamptz AS last_updated_at
+  COALESCE(max(GREATEST(a.updated_at, COALESCE(u.updated_at, a.updated_at))), 'epoch'::timestamptz)::timestamptz AS last_updated_at
 FROM actor a
 LEFT JOIN app_user u ON u.actor_id = a.id
 LEFT JOIN role r ON r.key = u.system_role AND r.scope = 'system'
@@ -862,7 +863,7 @@ type SummarizeAdminUsersParams struct {
 
 type SummarizeAdminUsersRow struct {
 	Total         int64
-	LastUpdatedAt pgtype.Timestamptz
+	LastUpdatedAt time.Time
 }
 
 // SummarizeAdminUsers は ListAdminUsers と同じ絞り込みに対する総件数と

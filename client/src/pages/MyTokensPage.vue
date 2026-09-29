@@ -81,7 +81,7 @@ const issued = ref<IssuedAccessToken | null>(null)
 const newExpiryDate = computed(() => {
   const d = new Date()
   d.setDate(d.getDate() + newExpiresInDays.value)
-  return formatDate(d.toISOString())
+  return formatDate(d.getTime())
 })
 
 function openIssueModal() {

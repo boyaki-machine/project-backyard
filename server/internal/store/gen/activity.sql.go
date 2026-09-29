@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -109,9 +110,9 @@ type ListActivityRow struct {
 	Field            pgtype.Text
 	OldValue         pgtype.Text
 	NewValue         pgtype.Text
-	OccurredAt       pgtype.Timestamptz
+	OccurredAt       time.Time
 	Total            int64
-	LastOccurredAt   pgtype.Timestamptz
+	LastOccurredAt   time.Time
 }
 
 // ── 読み出し（ApiDesign.md 9.13.2。手順19a）────────────────────
@@ -184,7 +185,7 @@ func (q *Queries) ListActivity(ctx context.Context, arg ListActivityParams) ([]L
 const summarizeActivity = `-- name: SummarizeActivity :one
 SELECT
   count(*)::bigint                 AS total,
-  max(occurred_at)::timestamptz    AS last_occurred_at
+  COALESCE(max(occurred_at), 'epoch'::timestamptz)::timestamptz AS last_occurred_at
 FROM activity
 WHERE project_id = $1::pg_catalog.bpchar
   AND ($2::pg_catalog.bpchar = ''     OR (entity_type = 'ticket' AND entity_id = $2::pg_catalog.bpchar))
@@ -199,7 +200,7 @@ type SummarizeActivityParams struct {
 
 type SummarizeActivityRow struct {
 	Total          int64
-	LastOccurredAt pgtype.Timestamptz
+	LastOccurredAt time.Time
 }
 
 // SummarizeActivity は ListActivity が1件も返さないときの total と

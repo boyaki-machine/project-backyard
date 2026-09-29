@@ -25,13 +25,7 @@ import type {
   TicketTransitionOption,
   TicketType,
 } from '../api/tickets'
-import {
-  addDaysPlainDate,
-  formatDate,
-  formatPlainDate,
-  startOfDayInstant,
-  todayPlainDate,
-} from '../lib/datetime'
+import { addDaysPlainDate, formatDate, formatPlan, isPastDue, startOfDayInstant } from '../lib/datetime'
 import { statusLabel } from '../lib/catalogLabels'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
@@ -140,7 +134,7 @@ const epicSeqs = computed(() =>
 
 // ── 並べ替え ─────────────────────────────────────────────────
 
-const SORTS: TicketSort[] = ['seq', 'title', 'status', 'priority', 'due_date', 'closed_at']
+const SORTS: TicketSort[] = ['seq', 'title', 'status', 'priority', 'due_at', 'closed_at']
 
 /** **既定は番号の降順**（5.13）。新しいチケットから並ぶ */
 const sort = computed<TicketSort>(() => {
@@ -165,7 +159,7 @@ function sortBy(next: TicketSort): void {
     setQuery({ sort: next, order: order.value === 'asc' ? 'desc' : 'asc' })
     return
   }
-  const desc = next === 'seq' || next === 'due_date' || next === 'closed_at'
+  const desc = next === 'seq' || next === 'due_at' || next === 'closed_at'
   setQuery({ sort: next, order: desc ? 'desc' : 'asc' })
 }
 
@@ -248,23 +242,23 @@ onBeforeUnmount(() => clearTimeout(keywordTimer))
  */
 function sinceDate(name: string): string {
   const v = queryValue(name)
-  return v === '' ? '' : formatDate(v)
+  return v === '' ? '' : formatDate(Number(v))
 }
 
 function beforeDate(name: string): string {
   const v = queryValue(name)
-  return v === '' ? '' : (addDaysPlainDate(formatDate(v), -1) ?? '')
+  return v === '' ? '' : (addDaysPlainDate(formatDate(Number(v)), -1) ?? '')
 }
 
 /** 期間の始まりの日付を「その日の0時以上」として載せる（`ApiDesign.md` 9.2.1 の半開区間） */
 function setSince(name: string, date: string): void {
-  setQuery({ [name]: date === '' ? '' : (startOfDayInstant(date) ?? '') })
+  setQuery({ [name]: date === '' ? '' : String(startOfDayInstant(date) ?? '') })
 }
 
 /** 期間の終わりの日付を「翌日の0時未満」として載せる。**その日を含める**ためである */
 function setBefore(name: string, date: string): void {
   const next = date === '' ? null : addDaysPlainDate(date, 1)
-  setQuery({ [name]: next === null ? '' : (startOfDayInstant(next) ?? '') })
+  setQuery({ [name]: next === null ? '' : String(startOfDayInstant(next) ?? '') })
 }
 
 // ── 詳細ペイン（2.2.1 / 5.5）─────────────────────────────────
@@ -473,11 +467,14 @@ const assigneeOptions = computed<MultiSelectOption[]>(() => [
 
 // ── 行の表示 ─────────────────────────────────────────────────
 
-const today = todayPlainDate()
-
-/** 期限超過（5.4 と同じ）。完了したものは含めない */
+/** 期限超過（5.4 と同じ。`due_at <= いま`。pb-217）。完了したものは含めない */
 function isOverdue(t: Ticket): boolean {
-  return t.due_date !== null && t.closed_at === null && t.due_date < today
+  return isPastDue(t.due_at) && t.closed_at === null
+}
+
+/** 期限の表示（終日は基準タイムゾーンの締切日、時刻付きは見る人の日時。7.5） */
+function dueLabel(t: Ticket): string {
+  return formatPlan(t.due_at, t.all_day, projectStore.planTimezone, true)
 }
 
 function withComma(n: number): string {
@@ -726,8 +723,8 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
                 </th>
                 <!-- 担当は並べ替えられない（`ApiDesign.md` 9.2.1 の `sort` に無い） -->
                 <th v-if="!shrunk" scope="col" class="search-assignee-col">{{ $ui('担当') }}</th>
-                <th v-if="!shrunk" scope="col" class="search-due-col" :aria-sort="ariaSort('due_date')">
-                  <button type="button" class="search-sort" @click="sortBy('due_date')"> {{ $ui('期限') }} <span class="caret" aria-hidden="true">{{ caret('due_date') }}</span>
+                <th v-if="!shrunk" scope="col" class="search-due-col" :aria-sort="ariaSort('due_at')">
+                  <button type="button" class="search-sort" @click="sortBy('due_at')"> {{ $ui('期限') }} <span class="caret" aria-hidden="true">{{ caret('due_at') }}</span>
                   </button>
                 </th>
                 <th v-if="!shrunk" scope="col" class="search-closed-col" :aria-sort="ariaSort('closed_at')">
@@ -760,7 +757,7 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
                     <span
                       v-if="shrunk && isOverdue(t)"
                       class="search-overdue"
-                      :title="$ui('期限超過（{value0}）', { value0: t.due_date })"
+                      :title="$ui('期限超過（{value0}）', { value0: dueLabel(t) })"
                       >⚠</span
                     >
                     <!-- タグは枠線＋文字（8.6）。**縮小中は出さない**（5.4 と同じ理由） -->
@@ -808,8 +805,8 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
                 </td>
 
                 <td v-if="!shrunk" class="search-due-col">
-                  <span v-if="t.due_date" :class="{ 'search-overdue': isOverdue(t) }">
-                    <span v-if="isOverdue(t)" aria-hidden="true">⚠ </span>{{ formatPlainDate(t.due_date) }}
+                  <span v-if="t.due_at !== null" :class="{ 'search-overdue': isOverdue(t) }">
+                    <span v-if="isOverdue(t)" aria-hidden="true">⚠ </span>{{ dueLabel(t) }}
                   </span>
                   <span v-else class="search-muted">—</span>
                 </td>

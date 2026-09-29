@@ -94,9 +94,11 @@ type ticketListItem struct {
 	ActualPoint        *float64 `json:"actual_point"`
 	ActualPointVersion *string  `json:"actual_point_version"`
 
-	StartDate *Date `json:"start_date"`
-	DueDate   *Date `json:"due_date"`
-	ClosedAt  *Time `json:"closed_at"`
+	// 予定（ApiDesign.md 9.3.1。pb-217）。半開区間 [start_at, due_at) と終日の印。
+	StartAt  *Time `json:"start_at"`
+	DueAt    *Time `json:"due_at"`
+	AllDay   bool  `json:"all_day"`
+	ClosedAt *Time `json:"closed_at"`
 
 	Version   int32 `json:"version"`
 	CreatedAt Time  `json:"created_at"`
@@ -197,7 +199,7 @@ func buildTicketListItem(row gen.ListTicketsRow, tags []ticketTagRef) ticketList
 		ParentSeq:          int4Ptr(row.ParentSeq),
 		HasChildren:        row.HasChildren,
 		SortKey:            textPtr(row.SortKey),
-		StagedAt:           apiTimestamptz(row.StagedAt),
+		StagedAt:           apiTime(row.StagedAt),
 		Tags:               tags,
 		Sprint:             sprintRefOf(row.SprintID, row.SprintName),
 		EstimatePoint:      float8Ptr(row.EstimatePoint),
@@ -205,12 +207,13 @@ func buildTicketListItem(row gen.ListTicketsRow, tags []ticketTagRef) ticketList
 		ActualHours:        float8Ptr(row.ActualHours),
 		ActualPoint:        float8Ptr(row.ActualPoint),
 		ActualPointVersion: textPtr(row.ActualPointVersion),
-		StartDate:          apiDate(row.StartDate),
-		DueDate:            apiDate(row.DueDate),
-		ClosedAt:           apiTimestamptz(row.ClosedAt),
+		StartAt:            apiTime(row.StartAt),
+		DueAt:              apiTime(row.DueAt),
+		AllDay:             row.AllDay,
+		ClosedAt:           apiTime(row.ClosedAt),
 		Version:            row.Version,
-		CreatedAt:          Time(row.CreatedAt.Time),
-		UpdatedAt:          Time(row.UpdatedAt.Time),
+		CreatedAt:          Time(row.CreatedAt),
+		UpdatedAt:          Time(row.UpdatedAt),
 	}
 }
 
@@ -274,7 +277,7 @@ func buildTicketDetail(
 			ParentSeq:          int4Ptr(row.ParentSeq),
 			HasChildren:        row.HasChildren,
 			SortKey:            textPtr(row.SortKey),
-			StagedAt:           apiTimestamptz(row.StagedAt),
+			StagedAt:           apiTime(row.StagedAt),
 			Tags:               tagsOrEmpty(tags[row.ID]),
 			Sprint:             sprintRefOf(row.SprintID, row.SprintName),
 			EstimatePoint:      float8Ptr(row.EstimatePoint),
@@ -282,12 +285,13 @@ func buildTicketDetail(
 			ActualHours:        float8Ptr(row.ActualHours),
 			ActualPoint:        float8Ptr(row.ActualPoint),
 			ActualPointVersion: textPtr(row.ActualPointVersion),
-			StartDate:          apiDate(row.StartDate),
-			DueDate:            apiDate(row.DueDate),
-			ClosedAt:           apiTimestamptz(row.ClosedAt),
+			StartAt:            apiTime(row.StartAt),
+			DueAt:              apiTime(row.DueAt),
+			AllDay:             row.AllDay,
+			ClosedAt:           apiTime(row.ClosedAt),
 			Version:            row.Version,
-			CreatedAt:          Time(row.CreatedAt.Time),
-			UpdatedAt:          Time(row.UpdatedAt.Time),
+			CreatedAt:          Time(row.CreatedAt),
+			UpdatedAt:          Time(row.UpdatedAt),
 		},
 		BodyMd:       textPtr(row.BodyMd),
 		Children:     []ticketChildBrief{},

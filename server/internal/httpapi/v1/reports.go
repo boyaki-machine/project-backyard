@@ -221,7 +221,7 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 			Seq:             scope.seq,
 			Status:          req.Status,
 			KnowledgeImpact: req.KnowledgeImpact,
-			SubmittedAt:     Time(run.EndedAt.Time),
+			SubmittedAt:     Time(*run.EndedAt),
 			SubmittedBy: actorRef{
 				ID: scope.actorID, Kind: scope.actorKind, DisplayName: p.DisplayName,
 			},
@@ -350,8 +350,8 @@ func buildAgentRun(
 		TicketID:   ticketID,
 		ActorID:    p.ActorID,
 		TokenID:    pgtype.Text{String: p.TokenID, Valid: p.TokenID != ""},
-		StartedAt:  pgtype.Timestamptz{Time: started, Valid: true},
-		EndedAt:    pgtype.Timestamptz{Time: now, Valid: true},
+		StartedAt:  started,
+		EndedAt:    &now,
 		Status:     runStatusCompleted,
 		RetryCount: int32(prior),
 	}

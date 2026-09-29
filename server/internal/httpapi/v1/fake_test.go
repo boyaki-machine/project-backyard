@@ -38,7 +38,10 @@ const (
 	testProjectID = "01K2F8QW3H7YRJ4M5N6P7Q8PRJ"
 )
 
-func ts(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }
+func ts(t time.Time) time.Time { return t }
+
+// tsp は NULL 可能な timestamptz 列（*time.Time）に入れる値。
+func tsp(t time.Time) *time.Time { return &t }
 
 func txt(s string) pgtype.Text { return pgtype.Text{String: s, Valid: true} }
 
@@ -127,6 +130,9 @@ type mfaFakeState struct {
 }
 
 type fakeQuerier struct {
+	// timezone は GetProjectTimezone が返す基準タイムゾーン（空なら Asia/Tokyo）。
+	timezone string
+
 	gen.Querier
 
 	// 第2要素（ApiDesign.md 4.6 / 3.4）
@@ -446,15 +452,15 @@ func (q *fakeQuerier) RecordLoginFailure(_ context.Context, identityID string) (
 	}
 	now := time.Now()
 	attempts := q.loginRow.FailedAttempts + 1
-	if q.loginRow.LockedUntil.Valid {
-		if q.loginRow.LockedUntil.Time.After(now) {
+	if q.loginRow.LockedUntil != nil {
+		if (*q.loginRow.LockedUntil).After(now) {
 			attempts = q.loginRow.FailedAttempts
 		} else {
 			attempts = 1
-			q.loginRow.LockedUntil = pgtype.Timestamptz{}
+			q.loginRow.LockedUntil = nil
 		}
 	} else if attempts >= maxFailedAttempts {
-		q.loginRow.LockedUntil = ts(now.Add(lockDuration))
+		q.loginRow.LockedUntil = tsp(now.Add(lockDuration))
 	}
 	q.loginRow.FailedAttempts = attempts
 	result := gen.RecordLoginFailureRow{
@@ -1349,7 +1355,7 @@ func (q *fakeQuerier) CreateSprint(_ context.Context, arg gen.CreateSprintParams
 	}
 	q.sprintByID[arg.ID] = gen.GetSprintByIDRow{
 		ID: arg.ID, Name: arg.Name, Goal: arg.Goal,
-		StartDate: arg.StartDate, EndDate: arg.EndDate, Status: arg.Status,
+		StartAt: arg.StartAt, EndAt: arg.EndAt, AllDay: arg.AllDay, Status: arg.Status,
 	}
 	return nil
 }
@@ -1373,11 +1379,14 @@ func (q *fakeQuerier) UpdateSprint(_ context.Context, arg gen.UpdateSprintParams
 	if arg.SetGoal {
 		row.Goal = arg.Goal
 	}
-	if arg.SetStartDate {
-		row.StartDate = arg.StartDate
+	if arg.SetStartAt {
+		row.StartAt = arg.StartAt
 	}
-	if arg.SetEndDate {
-		row.EndDate = arg.EndDate
+	if arg.SetEndAt {
+		row.EndAt = arg.EndAt
+	}
+	if arg.AllDay.Valid {
+		row.AllDay = arg.AllDay.Bool
 	}
 	q.sprintByID[arg.ID] = row
 	return 1, nil
@@ -1759,7 +1768,7 @@ func (q *fakeQuerier) CreateTicket(_ context.Context, arg gen.CreateTicketParams
 		BodyMd: arg.BodyMd, StatusKey: arg.StatusKey, Priority: arg.Priority,
 		AssigneeID: arg.AssigneeID, ReporterID: arg.ReporterID,
 		EstimatePoint: arg.EstimatePoint, EstimateHours: arg.EstimateHours,
-		StartDate: arg.StartDate, DueDate: arg.DueDate,
+		StartAt: arg.StartAt, DueAt: arg.DueAt, AllDay: arg.AllDay,
 		// **sprint_id は 9.3 が受けなくなった**。作りたての
 		// チケットは必ずスプリント未所属で始まる。
 		SortKey: arg.SortKey,
@@ -1933,7 +1942,7 @@ func (q *fakeQuerier) ticketSortKeys() []string {
 func (q *fakeQuerier) ticketSortKeysInStage(staged bool) []string {
 	keys := make([]string, 0, len(q.ticket.sortRowBySeq))
 	for _, row := range q.ticket.sortRowBySeq {
-		if row.StagedAt.Valid != staged {
+		if (row.StagedAt != nil) != staged {
 			continue
 		}
 		if row.SortKey.Valid && row.SortKey.String != "" {
@@ -2126,7 +2135,7 @@ func (q *fakeQuerier) ListTicketComments(
 
 	sorted := slices.Clone(q.ticket.commentRows)
 	slices.SortStableFunc(sorted, func(a, b gen.GetTicketCommentRow) int {
-		c := a.CreatedAt.Time.Compare(b.CreatedAt.Time)
+		c := a.CreatedAt.Compare(b.CreatedAt)
 		if c == 0 {
 			c = strings.Compare(a.ID, b.ID)
 		}
@@ -2137,9 +2146,9 @@ func (q *fakeQuerier) ListTicketComments(
 	})
 
 	total := int64(len(sorted))
-	var lastUpdated pgtype.Timestamptz
+	var lastUpdated time.Time
 	for _, row := range q.ticket.commentRows {
-		if !lastUpdated.Valid || row.UpdatedAt.Time.After(lastUpdated.Time) {
+		if row.UpdatedAt.After(lastUpdated) {
 			lastUpdated = row.UpdatedAt
 		}
 	}
@@ -2167,9 +2176,9 @@ func (q *fakeQuerier) SummarizeTicketComments(
 	if q.ticket.commentErr != nil {
 		return gen.SummarizeTicketCommentsRow{}, q.ticket.commentErr
 	}
-	var lastUpdated pgtype.Timestamptz
+	var lastUpdated time.Time
 	for _, row := range q.ticket.commentRows {
-		if !lastUpdated.Valid || row.UpdatedAt.Time.After(lastUpdated.Time) {
+		if row.UpdatedAt.After(lastUpdated) {
 			lastUpdated = row.UpdatedAt
 		}
 	}
@@ -2206,7 +2215,7 @@ func (q *fakeQuerier) UpdateComment(
 	q.opLog = append(q.opLog, "UpdateComment")
 	q.ticket.commentUpdate = append(q.ticket.commentUpdate, arg)
 	i := q.ticket.findComment(arg.ID)
-	if i < 0 || q.ticket.commentRows[i].DeletedAt.Valid {
+	if i < 0 || q.ticket.commentRows[i].DeletedAt != nil {
 		return 0, nil
 	}
 	row := &q.ticket.commentRows[i]
@@ -2225,10 +2234,10 @@ func (q *fakeQuerier) SoftDeleteComment(
 	q.opLog = append(q.opLog, "SoftDeleteComment")
 	q.ticket.commentDelete = append(q.ticket.commentDelete, arg)
 	i := q.ticket.findComment(arg.ID)
-	if i < 0 || q.ticket.commentRows[i].DeletedAt.Valid {
+	if i < 0 || q.ticket.commentRows[i].DeletedAt != nil {
 		return 0, nil
 	}
-	q.ticket.commentRows[i].DeletedAt = pgtype.Timestamptz{Time: fakeNow, Valid: true}
+	q.ticket.commentRows[i].DeletedAt = tsp(fakeNow)
 	return 1, nil
 }
 
@@ -2273,8 +2282,8 @@ func (q *fakeQuerier) CreateDoDItem(_ context.Context, arg gen.CreateDoDItemPara
 	q.ticket.dodRows = append(q.ticket.dodRows, gen.GetTicketDoDItemRow{
 		ID: arg.ID, Type: arg.Type, Body: arg.Body,
 		IsSatisfied: arg.IsSatisfied, SortOrder: arg.SortOrder,
-		CreatedAt: pgtype.Timestamptz{Time: fakeNow, Valid: true},
-		UpdatedAt: pgtype.Timestamptz{Time: fakeNow, Valid: true},
+		CreatedAt: ts(fakeNow),
+		UpdatedAt: ts(fakeNow),
 	})
 	return nil
 }
@@ -2302,10 +2311,10 @@ func (q *fakeQuerier) UpdateDoDItem(
 	if arg.SatisfiedSet {
 		row.IsSatisfied = arg.IsSatisfied
 		if arg.IsSatisfied {
-			row.SatisfiedAt = pgtype.Timestamptz{Time: fakeNow, Valid: true}
+			row.SatisfiedAt = tsp(fakeNow)
 			row.SatisfiedBy = arg.SatisfiedBy
 		} else {
-			row.SatisfiedAt = pgtype.Timestamptz{}
+			row.SatisfiedAt = nil
 			row.SatisfiedBy = pgtype.Text{}
 		}
 	}
@@ -2368,7 +2377,7 @@ func (q *fakeQuerier) CreateTicketLink(_ context.Context, arg gen.CreateTicketLi
 	q.ticket.linkRows = append(q.ticket.linkRows, gen.ListTicketLinksRow{
 		ID: arg.ID, DirectionRank: 0, Direction: "outgoing",
 		LinkType: arg.LinkType, LagDays: arg.LagDays, Origin: arg.Origin,
-		CreatedAt:       pgtype.Timestamptz{Time: fakeNow, Valid: true},
+		CreatedAt:       ts(fakeNow),
 		TicketSeq:       q.ticket.seqOf(arg.TargetTicketID),
 		TicketTitle:     q.ticket.briefByID[arg.TargetTicketID].Title,
 		TicketType:      q.ticket.briefByID[arg.TargetTicketID].Type,
@@ -2405,8 +2414,8 @@ func (q *fakeQuerier) CreateComment(_ context.Context, arg gen.CreateCommentPara
 	q.ticket.commentRows = append(q.ticket.commentRows, gen.GetTicketCommentRow{
 		ID: arg.ID, BodyMd: arg.BodyMd, Kind: arg.Kind,
 		InReplyTo: arg.InReplyTo, Origin: arg.Origin,
-		CreatedAt: pgtype.Timestamptz{Time: fakeNow, Valid: true},
-		UpdatedAt: pgtype.Timestamptz{Time: fakeNow, Valid: true},
+		CreatedAt: ts(fakeNow),
+		UpdatedAt: ts(fakeNow),
 		AuthorID:  arg.AuthorID, AuthorKind: "user", AuthorName: "田中",
 	})
 	return nil
@@ -2481,11 +2490,14 @@ func (q *fakeQuerier) UpdateTicket(_ context.Context, arg gen.UpdateTicketParams
 	if arg.ActualPointVersionSet {
 		row.ActualPointVersion = arg.ActualPointVersion
 	}
-	if arg.StartDateSet {
-		row.StartDate = arg.StartDate
+	if arg.StartAtSet {
+		row.StartAt = arg.StartAt
 	}
-	if arg.DueDateSet {
-		row.DueDate = arg.DueDate
+	if arg.DueAtSet {
+		row.DueAt = arg.DueAt
+	}
+	if arg.AllDay.Valid {
+		row.AllDay = arg.AllDay.Bool
 	}
 	row.Version++
 	q.ticket.bySeq[arg.Seq] = row
@@ -2508,9 +2520,9 @@ func (q *fakeQuerier) SetTicketStatus(_ context.Context, arg gen.SetTicketStatus
 	}
 	row.StatusKey = arg.StatusKey
 	if arg.Closing {
-		row.ClosedAt = ts(time.Now())
+		row.ClosedAt = tsp(time.Now())
 	} else {
-		row.ClosedAt = pgtype.Timestamptz{}
+		row.ClosedAt = nil
 	}
 	row.Version++
 	q.ticket.bySeq[arg.Seq] = row
@@ -2550,16 +2562,16 @@ func (q *fakeQuerier) ListActivity(
 
 	matched := q.filterActivity(arg.EntityID, arg.ActionFilter)
 	slices.SortStableFunc(matched, func(a, b gen.ListActivityRow) int {
-		if c := b.OccurredAt.Time.Compare(a.OccurredAt.Time); c != 0 {
+		if c := b.OccurredAt.Compare(a.OccurredAt); c != 0 {
 			return c
 		}
 		return strings.Compare(b.ID, a.ID)
 	})
 
 	total := int64(len(matched))
-	var last pgtype.Timestamptz
+	var last time.Time
 	for _, row := range matched {
-		if !last.Valid || row.OccurredAt.Time.After(last.Time) {
+		if row.OccurredAt.After(last) {
 			last = row.OccurredAt
 		}
 	}
@@ -2583,9 +2595,9 @@ func (q *fakeQuerier) SummarizeActivity(
 		return gen.SummarizeActivityRow{}, q.ticket.activityErr
 	}
 	matched := q.filterActivity(arg.EntityID, arg.ActionFilter)
-	var last pgtype.Timestamptz
+	var last time.Time
 	for _, row := range matched {
-		if !last.Valid || row.OccurredAt.Time.After(last.Time) {
+		if row.OccurredAt.After(last) {
 			last = row.OccurredAt
 		}
 	}
@@ -2936,4 +2948,14 @@ func (q *fakeQuerier) ListExpiredPendingSettingChanges(
 	context.Context,
 ) ([]gen.ListExpiredPendingSettingChangesRow, error) {
 	return q.settings.expiredPending, nil
+}
+
+// GetProjectTimezone はプロジェクトの基準タイムゾーン（pb-217 の予定日時の検証と
+// due_within の境界）。偽物では q.timezone（空なら Asia/Tokyo）を返す。
+func (q *fakeQuerier) GetProjectTimezone(_ context.Context, _ string) (string, error) {
+	q.opLog = append(q.opLog, "GetProjectTimezone")
+	if q.timezone != "" {
+		return q.timezone, nil
+	}
+	return "Asia/Tokyo", nil
 }

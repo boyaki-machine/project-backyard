@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -41,7 +42,7 @@ ORDER BY s.key
 type ListAppSettingsRow struct {
 	Key                  string
 	Value                string
-	UpdatedAt            pgtype.Timestamptz
+	UpdatedAt            time.Time
 	UpdatedBy            pgtype.Text
 	UpdatedByKind        pgtype.Text
 	UpdatedByDisplayName pgtype.Text

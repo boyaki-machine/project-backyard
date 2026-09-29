@@ -78,8 +78,8 @@ func (h *handler) listMyPasskeys(w http.ResponseWriter, r *http.Request) {
 			Name:       row.Name,
 			RPID:       row.RpID,
 			BackedUp:   row.BackupState,
-			CreatedAt:  Time(row.CreatedAt.Time),
-			LastUsedAt: apiTimestamptz(row.LastUsedAt),
+			CreatedAt:  Time(row.CreatedAt),
+			LastUsedAt: apiTime(row.LastUsedAt),
 		})
 	}
 	WriteJSON(w, http.StatusOK, passkeyListView{Items: items})
@@ -296,7 +296,7 @@ func (h *handler) registerMyPasskey(w http.ResponseWriter, r *http.Request) {
 		Name:      name,
 		RPID:      session.RelyingPartyID,
 		BackedUp:  credential.Flags.BackupState,
-		CreatedAt: Time(createdAt.Time),
+		CreatedAt: Time(createdAt),
 	})
 }
 

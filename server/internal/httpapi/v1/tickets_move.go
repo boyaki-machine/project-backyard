@@ -133,7 +133,7 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 
 		// **移動先の段を先に決める**（9.4.1）。staged を省略した場合は
 		// 現在の段のままで、position もその段の中で解釈される。
-		targetStaged := row.StagedAt.Valid
+		targetStaged := row.StagedAt != nil
 		if req.Staged != nil {
 			targetStaged = *req.Staged
 		}
@@ -150,7 +150,7 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 		if req.unparent() {
 			parentType = pgtype.Text{}
 		}
-		if targetStaged && !row.StagedAt.Valid && !stageable(row.Type, parentType) {
+		if targetStaged && row.StagedAt == nil && !stageable(row.Type, parentType) {
 			message := "配下のチケットはオンステージへ上げられません。親のチケットを上げてください"
 			if row.Type == ticketTypeEpic {
 				message = "エピックはオンステージへ上げられません。配下のチケットを上げてください"
@@ -198,12 +198,12 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 		// ものを並べ替えただけで時刻を打ち直さない**——上げた順で読みたいときに、
 		// 並べ替えのたびに新しくなると意味を失う。
 		stagedAt := row.StagedAt
-		changeStage := req.Staged != nil && targetStaged != row.StagedAt.Valid
+		changeStage := req.Staged != nil && targetStaged != (row.StagedAt != nil)
 		if changeStage {
 			if targetStaged {
 				stagedAt = nowTimestamptz()
 			} else {
-				stagedAt = pgtype.Timestamptz{}
+				stagedAt = nil
 			}
 		}
 
@@ -229,7 +229,7 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Seq = moved.Seq
 		resp.SortKey = moved.SortKey.String
-		resp.StagedAt = apiTimestamptz(moved.StagedAt)
+		resp.StagedAt = apiTime(moved.StagedAt)
 		resp.Version = moved.Version
 		return nil
 	})
@@ -266,8 +266,9 @@ func stageable(ownType string, parentType pgtype.Text) bool {
 }
 
 // nowTimestamptz は staged_at に入れる「いつ上げたか」。
-func nowTimestamptz() pgtype.Timestamptz {
-	return pgtype.Timestamptz{Time: time.Now(), Valid: true}
+func nowTimestamptz() *time.Time {
+	t := time.Now()
+	return &t
 }
 
 // validateMoveTarget は 9.4 の「position と after_seq / before_seq の同時指定は

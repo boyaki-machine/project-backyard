@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -136,9 +137,9 @@ type GetTicketCommentRow struct {
 	Kind       string
 	InReplyTo  pgtype.Text
 	Origin     string
-	CreatedAt  pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
-	DeletedAt  pgtype.Timestamptz
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	DeletedAt  *time.Time
 	AuthorID   string
 	AuthorKind string
 	AuthorName string
@@ -207,14 +208,14 @@ type ListTicketCommentsRow struct {
 	Kind          string
 	InReplyTo     pgtype.Text
 	Origin        string
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
-	DeletedAt     pgtype.Timestamptz
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeletedAt     *time.Time
 	AuthorID      string
 	AuthorKind    string
 	AuthorName    string
 	Total         int64
-	LastUpdatedAt pgtype.Timestamptz
+	LastUpdatedAt time.Time
 }
 
 // ── 手順18a：コメントAPI（ApiDesign.md 9.8）─────────────────────────
@@ -305,14 +306,14 @@ func (q *Queries) SoftDeleteComment(ctx context.Context, arg SoftDeleteCommentPa
 const summarizeTicketComments = `-- name: SummarizeTicketComments :one
 SELECT
   count(*)                        AS total,
-  max(updated_at)::timestamptz    AS last_updated_at
+  COALESCE(max(updated_at), 'epoch'::timestamptz)::timestamptz AS last_updated_at
 FROM comment
 WHERE ticket_id = $1
 `
 
 type SummarizeTicketCommentsRow struct {
 	Total         int64
-	LastUpdatedAt pgtype.Timestamptz
+	LastUpdatedAt time.Time
 }
 
 // SummarizeTicketComments は ListTicketComments が1件も返さないときの total と

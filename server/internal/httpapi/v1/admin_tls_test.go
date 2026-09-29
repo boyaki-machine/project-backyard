@@ -20,7 +20,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/tlscert"
@@ -53,9 +52,9 @@ func row(id, pemText string) gen.ListTLSCertificatesRow {
 	return gen.ListTLSCertificatesRow{
 		ID:        id,
 		CertPem:   pemText,
-		NotBefore: pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true},
-		NotAfter:  pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
-		CreatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		NotBefore: ts(now.Add(-time.Hour)),
+		NotAfter:  ts(now.Add(24 * time.Hour)),
+		CreatedAt: ts(now),
 	}
 }
 
