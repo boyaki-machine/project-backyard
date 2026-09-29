@@ -1711,7 +1711,9 @@ export interface paths {
          *     （メンバーでない場合はプロジェクトごと 404）。
          *
          *     バックログ画面（GuiDesign.md 5.4）とチケット検索（GuiDesign.md 5.13）のデータ源であり、
-         *     未実装のカンバン・ガントも同じエンドポイントから描く。
+         *     未実装のカンバンも同じエンドポイントから描く。**ガント（GuiDesign.md 5.14）は
+         *     `view=gantt` を付けて使う**（9.2.6）——上限が 5,000件になり、`page` / `per_page` を
+         *     受けず、棚に戻ったものを既定で含み、チケットどうしの依存を `links[]` に同梱する。
          *
          *     **既定が他の一覧と2か所ちがう**（9.2.1）。
          *
@@ -5924,6 +5926,12 @@ export interface components {
          */
         TicketList: {
             items: components["schemas"]["Ticket"][];
+            /**
+             * @description **`view=gantt` のときだけ載る**（ApiDesign.md 9.2.6）。`items` に含まれる
+             *     チケットどうしの依存（`FS` / `SS` / `FF` / `SF` / `blocks`）。片方が絞り込みや
+             *     打ち切りで落ちた依存は返さない。0件でも空の配列。
+             */
+            links?: components["schemas"]["TicketGanttLink"][];
             page: number;
             per_page: number;
             total: number;
@@ -6316,6 +6324,21 @@ export interface components {
              *     記録しないのと同じ理由）。
              */
             sort_order?: number;
+        };
+        /**
+         * @description ガントの依存線1本（ApiDesign.md 9.2.6）。`origin` は未確認の AI 提案を紫の破線で
+         *     描くために含める（GuiDesign.md 8.4.2）。並びは `source_seq` → `target_seq` →
+         *     `link_type` の昇順。
+         */
+        TicketGanttLink: {
+            id: string;
+            source_seq: number;
+            target_seq: number;
+            /** @enum {string} */
+            link_type: "FS" | "SS" | "FF" | "SF" | "blocks";
+            lag_days: number;
+            /** @enum {string} */
+            origin: "human" | "ai_suggested";
         };
         /**
          * @description リンクの相手のチケット（ApiDesign.md 9.10.1）。**9.5.1 の `parent` と同じ形**
@@ -9766,7 +9789,10 @@ export interface operations {
                 priority?: string;
                 /** @description タグの ULID（9.11）。`none` で未分類。カンマ区切りは OR。 */
                 tag?: string;
-                /** @description スプリントの ULID（9.12）。`none` で未割当。カンマ区切りは OR。 */
+                /**
+                 * @description スプリントの ULID（9.12）。`none` で未割当。**`active` で、いま進行中のスプリントに
+                 *     属するもの**（進行中が無ければ何にも当たらない）。カンマ区切りは OR。
+                 */
                 sprint?: string;
                 /** @description `true` で `closed_at IS NULL` のもののみ。`false` で完了のみ。 */
                 open?: "true" | "false";
@@ -9873,8 +9899,16 @@ export interface operations {
                  */
                 sort?: "sort_key" | "seq" | "title" | "status" | "priority" | "due_at" | "created_at" | "updated_at" | "closed_at";
                 order?: "asc" | "desc";
+                /** @description `view=gantt` のときは受けない（422。ApiDesign.md 9.2.6）。 */
                 page?: number;
+                /** @description `view=gantt` のときは受けない（422。ApiDesign.md 9.2.6）。 */
                 per_page?: number;
+                /**
+                 * @description **`gantt` だけを受ける**（ApiDesign.md 9.2.6）。件数の上限が 5,000件になり、
+                 *     棚に戻ったものを既定で含み（`retired=false` で外す）、`links[]` を同梱する。
+                 *     `page` / `per_page` と一緒には送れない。他の値は 422。
+                 */
+                view?: "gantt";
             };
             header?: never;
             path: {
@@ -9888,11 +9922,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description チケットの一覧。 */
+            /** @description チケットの一覧。`view=gantt` のときは `links` が載る。 */
             200: {
                 headers: {
                     /**
                      * @description 弱い検証子（`W/"tkt-<ハッシュ>-<件数>-<最終更新>"`。ApiDesign.md 9.2.5）。
+                     *     `view=gantt` のときは依存の件数と最新の作成日時を足す
+                     *     （`W/"tkt-…-lnk-<依存の件数>-<最新の作成>"`）。
                      * @example W/"tkt-a3f19c2b-48-1723372992000000000"
                      */
                     ETag?: string;

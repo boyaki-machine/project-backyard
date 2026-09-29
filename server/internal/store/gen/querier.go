@@ -1094,6 +1094,16 @@ type Querier interface {
 	ListDocumentTree(ctx context.Context, projectID pgtype.Text) ([]ListDocumentTreeRow, error)
 	// 期限が来たものを全部引く。**起動時の点検と、プロセス内のタイマが使う。**
 	ListExpiredPendingSettingChanges(ctx context.Context) ([]ListExpiredPendingSettingChangesRow, error)
+	// ListLinksAmongTickets はガント（9.2.6）の依存を1本で引く。
+	//
+	// **両端が渡したチケットの集合に含まれる行だけを返す。** ガントは絞り込み・打ち切りの
+	// 後に残ったチケットどうしの線しか描けない（相手の居ない線は描けない）。行ごとに
+	// ListTicketLinks を呼ぶと、チケットの数だけ往復になる（設計方針3）。
+	//
+	// **種別はガントが描く5つに限る**（GuiDesign.md 5.14）。relates / duplicates は描かない。
+	// 並びは source_seq → target_seq → link_type。実行ごとに揺れないようにする。
+	// created_at は応答に出さず、ETag の材料（9.2.5）にだけ使う。
+	ListLinksAmongTickets(ctx context.Context, ticketIds []string) ([]ListLinksAmongTicketsRow, error)
 	// ── アクセストークン（ApiDesign.md 4.4）──────────────────────────────
 	//
 	// **いずれも token_type = 'api' に限る。** ブラウザのセッション
