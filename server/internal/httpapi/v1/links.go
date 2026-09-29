@@ -16,10 +16,12 @@
 // **PATCH は持たない**（9.10.1）。一意制約が (source, target, link_type) である
 // 以上、link_type の変更は別の行になるのと同じである。
 //
-// **画面が出す link_type は relates / duplicates / blocks の3つだけ**。
-// FS〜SF と lag_days はガントの依存線のためのもので、
-// ガントは閲覧だけを実装した段階である（線を引く編集は pb-221）。**API は7種すべて受け続ける**——MCP とエージェントが
-// ガント用の依存を先に積むことは妨げない。
+// **詳細の追加のモーダルが出す link_type は relates / duplicates / blocks の3つだけ**。
+// FS〜SF はガントの上でバーの端から端へ引いて作る（GuiDesign.md 5.14「編集」。pb-221）。
+// **API は7種すべて受け続ける**——MCP とエージェントがガント用の依存を積むことは妨げない。
+//
+// **依存（FS / SS / FF / SF / blocks）は輪を作れない**（9.10.1 の link_cycle）。画面も
+// ドラッグ中に同じ判定をするが、MCP からも積めるので、止めるのはここである。
 package v1
 
 import (
@@ -44,6 +46,11 @@ import (
 // **API は7種すべて受ける。** 画面が3種に絞るのは GuiDesign.md 5.5 の判断で、
 // ここで狭めると MCP からガント用の依存を積めなくなる。
 var linkTypes = []string{"FS", "SS", "FF", "SF", "relates", "duplicates", "blocks"}
+
+// dependencyLinkTypes は輪の判定に掛かる種別（9.10.1）。**種別を問わず1つの
+// グラフとして辿る**——どの組なら許すかを種別と遅れで場合分けすると、利用者が
+// 理由を読めない。クエリ（DependencyPathExists）の IN 句と同じ5つである。
+var dependencyLinkTypes = []string{"FS", "SS", "FF", "SF", "blocks"}
 
 // linkOriginHuman は API が作る唯一の origin（9.10.1）。
 //
@@ -172,6 +179,27 @@ func (h *handler) createTicketLink(w http.ResponseWriter, r *http.Request) {
 		if exists {
 			duplicate = true
 			return errLinkHandled
+		}
+
+		// 依存の輪（9.10.1 の link_cycle）。**判定の前にプロジェクトを取る**——
+		// 並行する A→B と B→A が、どちらも「輪にならない」と読むのを防ぐ。
+		if slices.Contains(dependencyLinkTypes, linkType) {
+			if _, err := q.LockProjectForDependency(ctx, scope.projectID); err != nil {
+				return fmt.Errorf("依存の追加のためにプロジェクトを取れない: %w", err)
+			}
+			cycle, err := q.DependencyPathExists(ctx, gen.DependencyPathExistsParams{
+				FromTicketID: targetID, ToTicketID: ticketID,
+			})
+			if err != nil {
+				return fmt.Errorf("依存の輪を判定できない: %w", err)
+			}
+			if cycle {
+				invalid = apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+					Field: "target_seq", Code: "link_cycle",
+					Message: "依存が輪になるため追加できません",
+				})
+				return errLinkHandled
+			}
 		}
 
 		if err := q.CreateTicketLink(ctx, gen.CreateTicketLinkParams{

@@ -449,6 +449,15 @@ type Querier interface {
 	//
 	// 登録を始め直したとき（ApiDesign.md 4.7.2）と、管理者の全削除（6.10）で使う。
 	DeleteWebauthnChallengesForUser(ctx context.Context, userID pgtype.Text) (int64, error)
+	// DependencyPathExists は依存を辿って from から to へ行けるかを返す（9.10.1 の
+	// link_cycle）。source → target を1本足す前に、target から source へ辿れるなら輪になる。
+	//
+	// **5種（FS / SS / FF / SF / blocks）を種別を問わず1つのグラフとして辿る。**
+	// relates / duplicates は向きに意味が無いので数えない。**UNION（ALL ではない）で
+	// 訪ねた行を重ねない**——以前の API で作れた輪が既にあっても、辿りが止まる。
+	// **起点は ticket の行から取る。** ID の列は COLLATE "C" で、引数をそのまま起点に
+	// すると既定の照合順序で届き、再帰の2項の照合順序が食い違って PostgreSQL が拒む。
+	DependencyPathExists(ctx context.Context, arg DependencyPathExistsParams) (bool, error)
 	// DetachTicketTags は 9.5.2 の tag_ids の置き換えに使う（丸ごと消してから付け直す）。
 	//
 	// **差分を計算しない。** 9.5.2 は「tag_ids は丸ごと置き換える」と定めており、
@@ -1556,6 +1565,13 @@ type Querier interface {
 	LockActorForTokenIssue(ctx context.Context, actorID string) (string, error)
 	// 取得の前に待ち時間を判定するため、行をロックして読む（5.8.3）。
 	LockHolidaySource(ctx context.Context, id string) (LockHolidaySourceRow, error)
+	// LockProjectForDependency は依存の追加をプロジェクト単位で直列化する（9.10.1）。
+	//
+	// 輪の判定と INSERT を同じトランザクションで行うだけでは、並行する2本（A→B と
+	// B→A）がどちらも「輪にならない」と読み、両方入ってしまう。**FOR NO KEY UPDATE に
+	// するのは、チケットの作成（FK の確認が project に取る KEY SHARE）を待たせない
+	// ため**——FOR UPDATE だと KEY SHARE とぶつかる。
+	LockProjectForDependency(ctx context.Context, projectID string) (string, error)
 	MarkHolidaySourceAttempt(ctx context.Context, id string) error
 	MarkHolidaySourceFailed(ctx context.Context, arg MarkHolidaySourceFailedParams) error
 	// 取り込めたとき。中身が変わっていなくても fetched_at は進める。

@@ -1557,6 +1557,11 @@ type ticketFakeState struct {
 	linkCreated []gen.CreateTicketLinkParams
 	linkDeleted []gen.DeleteTicketLinkParams
 
+	// linkCycle は DependencyPathExists が返す値（9.10.1 の link_cycle）。
+	// linkPathAsked はその引数で、**向き（相手 → 自分）を辿っているか**を確かめる
+	linkCycle     bool
+	linkPathAsked []gen.DependencyPathExistsParams
+
 	// ── 手順19a（9.13 の stats / activity）─────────────────────
 	//
 	// **activityRows は「プロジェクト全体の履歴」を1つのスライスで持つ。**
@@ -2379,6 +2384,19 @@ func (q *fakeQuerier) TicketLinkExists(
 ) (bool, error) {
 	q.opLog = append(q.opLog, "TicketLinkExists")
 	return q.ticket.linkExists, nil
+}
+
+func (q *fakeQuerier) LockProjectForDependency(_ context.Context, projectID string) (string, error) {
+	q.opLog = append(q.opLog, "LockProjectForDependency")
+	return projectID, nil
+}
+
+func (q *fakeQuerier) DependencyPathExists(
+	_ context.Context, arg gen.DependencyPathExistsParams,
+) (bool, error) {
+	q.opLog = append(q.opLog, "DependencyPathExists")
+	q.ticket.linkPathAsked = append(q.ticket.linkPathAsked, arg)
+	return q.ticket.linkCycle, nil
 }
 
 func (q *fakeQuerier) CreateTicketLink(_ context.Context, arg gen.CreateTicketLinkParams) error {
