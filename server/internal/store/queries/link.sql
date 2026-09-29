@@ -116,3 +116,29 @@ SELECT EXISTS (
 DELETE FROM ticket_link
 WHERE id = @id
   AND (source_ticket_id = @ticket_id OR target_ticket_id = @ticket_id);
+
+-- ListLinksAmongTickets はガント（9.2.6）の依存を1本で引く。
+--
+-- **両端が渡したチケットの集合に含まれる行だけを返す。** ガントは絞り込み・打ち切りの
+-- 後に残ったチケットどうしの線しか描けない（相手の居ない線は描けない）。行ごとに
+-- ListTicketLinks を呼ぶと、チケットの数だけ往復になる（設計方針3）。
+--
+-- **種別はガントが描く5つに限る**（GuiDesign.md 5.14）。relates / duplicates は描かない。
+-- 並びは source_seq → target_seq → link_type。実行ごとに揺れないようにする。
+-- created_at は応答に出さず、ETag の材料（9.2.5）にだけ使う。
+-- name: ListLinksAmongTickets :many
+SELECT
+  l.id,
+  s.seq AS source_seq,
+  t.seq AS target_seq,
+  l.link_type,
+  l.lag_days,
+  l.origin,
+  l.created_at
+FROM ticket_link l
+JOIN ticket s ON s.id = l.source_ticket_id
+JOIN ticket t ON t.id = l.target_ticket_id
+WHERE l.source_ticket_id = ANY(@ticket_ids::pg_catalog.bpchar[])
+  AND l.target_ticket_id = ANY(@ticket_ids::pg_catalog.bpchar[])
+  AND l.link_type IN ('FS', 'SS', 'FF', 'SF', 'blocks')
+ORDER BY s.seq, t.seq, l.link_type;

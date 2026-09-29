@@ -1424,6 +1424,10 @@ type ticketFakeState struct {
 	tagRows  []gen.ListTagsForTicketsRow
 	tagIDsIn [][]string
 
+	// ganttLinks / ganttLinkIDsIn は view=gantt の依存（9.2.6）。返す行と、受けた ID の配列
+	ganttLinks     []gen.ListLinksAmongTicketsRow
+	ganttLinkIDsIn [][]string
+
 	bySeq     map[int32]gen.GetTicketBySeqRow
 	briefByID map[string]gen.GetTicketBriefRow
 	children  []gen.ListTicketChildrenBriefRow
@@ -2335,6 +2339,14 @@ func (q *fakeQuerier) DeleteDoDItem(
 }
 
 // ── チケット間リンク（手順18a。ApiDesign.md 9.10.1）─────────────
+
+func (q *fakeQuerier) ListLinksAmongTickets(
+	_ context.Context, ticketIDs []string,
+) ([]gen.ListLinksAmongTicketsRow, error) {
+	q.opLog = append(q.opLog, "ListLinksAmongTickets")
+	q.ticket.ganttLinkIDsIn = append(q.ticket.ganttLinkIDsIn, ticketIDs)
+	return q.ticket.ganttLinks, nil
+}
 
 func (q *fakeQuerier) ListTicketLinks(
 	_ context.Context, _ string,

@@ -890,26 +890,32 @@ filtered AS (
           AND NOT EXISTS (SELECT 1 FROM ticket_tag tt2 WHERE tt2.ticket_id = t.id))
     )
     AND (
-      (cardinality($15::pg_catalog.bpchar[]) = 0 AND NOT $16::boolean)
+      (cardinality($15::pg_catalog.bpchar[]) = 0 AND NOT $16::boolean
+       AND NOT $17::boolean)
       OR t.sprint_id = ANY($15::pg_catalog.bpchar[])
       OR ($16::boolean AND t.sprint_id IS NULL)
+      -- sprint=active（9.2.1）。**進行中のスプリントを問い合わせのたびに引く**——画面が
+      -- ULID を探して送ると、開始・終了の直後に手持ちの ULID が古くなる。無ければ何にも当たらない。
+      OR ($17::boolean AND t.sprint_id IN (
+            SELECT sp.id FROM sprint sp
+             WHERE sp.project_id = $5::pg_catalog.bpchar AND sp.status = 'active'))
     )
     -- open（9.2.1）。true で未完了のみ、false で完了のみ。
-    AND ($17::text = 'all'
-         OR ($17::text = 'open'   AND t.closed_at IS NULL)
-         OR ($17::text = 'closed' AND t.closed_at IS NOT NULL))
+    AND ($18::text = 'all'
+         OR ($18::text = 'open'   AND t.closed_at IS NULL)
+         OR ($18::text = 'closed' AND t.closed_at IS NOT NULL))
     -- due_within（9.2.1）。**期限超過を含む**ので下限を置かない。
     -- due_at が NULL のものは除外する。境界（基準タイムゾーンで N 日後の日の終わり
     -- ＝翌日の0時）は**ハンドラが計算して瞬間で渡す**（pb-217）。SQL で
     -- timezone() の入れ子に引数を置くと sqlc の書き換えが位置を誤り、文字が欠ける。
-    AND ($18::timestamptz IS NULL
+    AND ($19::timestamptz IS NULL
          OR (t.due_at IS NOT NULL
-             AND t.due_at < $18::timestamptz))
+             AND t.due_at < $19::timestamptz))
     -- overdue（9.2.1。手順19b）。**stats.sql の overdue と同じ条件**にしてある
     -- ——ダッシュボードが出した件数と、押した先の一覧の件数が一致する必要がある
     -- （GuiDesign.md 5.3）。due_within=0d は「今日の終わりまで」でまだ過ぎていない
     -- 今日締切を含むため、代用するとずれる。**瞬間の比較なので「今日」に依らない**（pb-217）。
-    AND (NOT $19::boolean
+    AND (NOT $20::boolean
          OR (t.closed_at IS NULL
              AND t.due_at IS NOT NULL
              AND t.due_at <= now()))
@@ -917,18 +923,18 @@ filtered AS (
     -- 片方だけのチケットは長さ 1ms の点として扱う。期限だけのものは期限の直前の瞬間に
     -- 置くので、終日の「9/30締切」（due_at は 10/1 の0時）は 9/30 に当たる。両方 NULL は
     -- COALESCE も NULL になるため、期間を指定したときに外れる。
-    AND (($20::timestamptz IS NULL
-          AND $21::timestamptz IS NULL)
+    AND (($21::timestamptz IS NULL
+          AND $22::timestamptz IS NULL)
          OR (COALESCE(t.start_at, t.due_at) IS NOT NULL
+             AND ($22::timestamptz IS NULL
+                  OR COALESCE(t.start_at, t.due_at - interval '1 millisecond') < $22::timestamptz)
              AND ($21::timestamptz IS NULL
-                  OR COALESCE(t.start_at, t.due_at - interval '1 millisecond') < $21::timestamptz)
-             AND ($20::timestamptz IS NULL
-                  OR COALESCE(t.due_at, t.start_at + interval '1 millisecond') > $20::timestamptz)))
+                  OR COALESCE(t.due_at, t.start_at + interval '1 millisecond') > $21::timestamptz)))
     -- stale（9.2.1。手順19b）。**stats.sql の stale と同じ条件**。
     -- 日数を引数に取るのは、閾値の正本がサーバ側の定数だからである（9.13.1）。
-    AND ($22::int < 0
+    AND ($23::int < 0
          OR (t.closed_at IS NULL
-             AND t.updated_at < now() - make_interval(days => $22::int)))
+             AND t.updated_at < now() - make_interval(days => $23::int)))
     -- retired（9.2.1）。**スプリントを終えて棚に戻ったものを
     -- 既定で外す。** 3つすべてを満たす行が対象である。
     --
@@ -947,7 +953,7 @@ filtered AS (
     -- **t.sprint_id を読む**（ticket_sprint を並べ直さない）。sprint_id は
     -- 「いま属しているスプリント」を指す非正規化された写しであり
     -- （DbDesign.md 6.9.1）、最後の1件を引く結合と同じ答えになる。
-    AND ($23::boolean
+    AND ($24::boolean
          OR NOT (
            t.closed_at IS NOT NULL
            AND EXISTS (SELECT 1 FROM sprint rs
@@ -955,27 +961,27 @@ filtered AS (
            AND NOT EXISTS (SELECT 1 FROM open_desc od WHERE od.id = t.id)
          ))
     AND (cardinality($6::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
-    AND (NOT $24::boolean OR t.id IN (SELECT id FROM staged_tree))
+    AND (NOT $25::boolean OR t.id IN (SELECT id FROM staged_tree))
     -- ── 検索の条件（ApiDesign.md 9.2.1「検索の条件」）──────────
     --
     -- キーワードの一致は store/search（queries/search.sql）が済ませ、**一致した ID
     -- だけを受け取る**（Design.md 4.6 の隔離）。keyword_set が偽なら絞らない——
     -- 「語が無い」と「語はあったが0件に一致」を区別するためのフラグである。
-    AND (NOT $25::boolean OR $26::boolean OR t.id = ANY($27::pg_catalog.bpchar[]))
+    AND (NOT $26::boolean OR $27::boolean OR t.id = ANY($28::pg_catalog.bpchar[]))
     -- 番号の範囲は両端を含む。0 は指定なし（seq は1から始まる）。
-    AND ($28::int <= 0 OR t.seq >= $28::int)
-    AND ($29::int <= 0 OR t.seq <= $29::int)
+    AND ($29::int <= 0 OR t.seq >= $29::int)
+    AND ($30::int <= 0 OR t.seq <= $30::int)
     -- 完了日時は since 以上・before 未満。**指定すると未完了は外れる**（NULL との比較は偽）。
-    AND ($30::timestamptz IS NULL
-         OR t.closed_at >= $30::timestamptz)
     AND ($31::timestamptz IS NULL
-         OR t.closed_at < $31::timestamptz)
+         OR t.closed_at >= $31::timestamptz)
+    AND ($32::timestamptz IS NULL
+         OR t.closed_at < $32::timestamptz)
     -- 着手日時（9.2.1「着手日時を導く」）。**状態が todo 区分から初めて出た遷移**の
     -- occurred_at で、列を持たず activity から導く。完了を取り消して着手し直しても
     -- min を採るので、最初の着手になる。区分はいまのワークフローで引くので、
     -- いまのワークフローに無いキーの遷移は結合で落ちる。
-    AND (($32::timestamptz IS NULL
-          AND $33::timestamptz IS NULL)
+    AND (($33::timestamptz IS NULL
+          AND $34::timestamptz IS NULL)
          OR EXISTS (
            SELECT 1
              FROM (SELECT min(a.occurred_at) AS started_at
@@ -991,22 +997,22 @@ filtered AS (
                       AND os.category = 'todo'
                       AND ns.category <> 'todo') st
             WHERE st.started_at IS NOT NULL
-              AND ($32::timestamptz IS NULL
-                   OR st.started_at >= $32::timestamptz)
               AND ($33::timestamptz IS NULL
-                   OR st.started_at < $33::timestamptz)
+                   OR st.started_at >= $33::timestamptz)
+              AND ($34::timestamptz IS NULL
+                   OR st.started_at < $34::timestamptz)
          ))
 ),
 backlog_matches AS (
   SELECT t.id, t.parent_id FROM ticket t JOIN filtered f ON f.id = t.id
-   WHERE $26::boolean AND t.id = ANY($27::pg_catalog.bpchar[])
+   WHERE $27::boolean AND t.id = ANY($28::pg_catalog.bpchar[])
   UNION
   SELECT p.id, p.parent_id FROM ticket p JOIN backlog_matches m ON p.id = m.parent_id
    WHERE p.project_id = $5::pg_catalog.bpchar
 ),
 search_filtered AS (
   SELECT f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.actual_point, f.actual_point_version, f.start_at, f.due_at, f.all_day, f.closed_at, f.version, f.created_at, f.updated_at FROM filtered f
-   WHERE NOT $26::boolean OR f.id IN (SELECT id FROM backlog_matches)
+   WHERE NOT $27::boolean OR f.id IN (SELECT id FROM backlog_matches)
 )
 SELECT
   f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.actual_point, f.actual_point_version, f.start_at, f.due_at, f.all_day, f.closed_at, f.version, f.created_at, f.updated_at,
@@ -1067,6 +1073,7 @@ type ListTicketsParams struct {
 	TagNone          bool
 	SprintIds        []string
 	SprintNone       bool
+	SprintActive     bool
 	OpenFilter       string
 	DueBefore        *time.Time
 	OverdueOnly      bool
@@ -1214,6 +1221,7 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 		arg.TagNone,
 		arg.SprintIds,
 		arg.SprintNone,
+		arg.SprintActive,
 		arg.OpenFilter,
 		arg.DueBefore,
 		arg.OverdueOnly,

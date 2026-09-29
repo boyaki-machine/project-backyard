@@ -168,9 +168,15 @@ filtered AS (
           AND NOT EXISTS (SELECT 1 FROM ticket_tag tt2 WHERE tt2.ticket_id = t.id))
     )
     AND (
-      (cardinality(@sprint_ids::pg_catalog.bpchar[]) = 0 AND NOT @sprint_none::boolean)
+      (cardinality(@sprint_ids::pg_catalog.bpchar[]) = 0 AND NOT @sprint_none::boolean
+       AND NOT @sprint_active::boolean)
       OR t.sprint_id = ANY(@sprint_ids::pg_catalog.bpchar[])
       OR (@sprint_none::boolean AND t.sprint_id IS NULL)
+      -- sprint=active（9.2.1）。**進行中のスプリントを問い合わせのたびに引く**——画面が
+      -- ULID を探して送ると、開始・終了の直後に手持ちの ULID が古くなる。無ければ何にも当たらない。
+      OR (@sprint_active::boolean AND t.sprint_id IN (
+            SELECT sp.id FROM sprint sp
+             WHERE sp.project_id = @project_id::pg_catalog.bpchar AND sp.status = 'active'))
     )
     -- open（9.2.1）。true で未完了のみ、false で完了のみ。
     AND (@open_filter::text = 'all'

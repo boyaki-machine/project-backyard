@@ -119,6 +119,29 @@ var ticketSortSpec = SortSpec{
 	DefaultPerPage: 200,
 }
 
+// ticketViewGantt は view=gantt（9.2.6）。ganttMaxTickets はそのときの件数の上限。
+//
+// **上限を外さない。** 外すと応答の大きさがデータ量で決まり、性能の予測が立たなくなる
+// （9.2.3）。ページで区切らないのは、取得の途中の並べ替え・追加で行が抜けたり重なったり
+// するためで、その代わりに上限を 200 から 5,000 へ上げる。
+const (
+	ticketViewGantt = "gantt"
+	ganttMaxTickets = 5000
+)
+
+// ganttLinkTypes はガントが描く依存の種別（GuiDesign.md 5.14）。ListLinksAmongTickets の
+// IN 句と同じ並びで、試験が突き合わせる。
+var ganttLinkTypes = []string{"FS", "SS", "FF", "SF", "blocks"}
+
+// ganttSortSpec は view=gantt のときの並べ替え。許可する項目は一覧と同じで、
+// 件数だけを変える（page / per_page は parseGanttPage が受けない）。
+var ganttSortSpec = SortSpec{
+	Allowed:        ticketSortSpec.Allowed,
+	DefaultSort:    ticketSortSpec.DefaultSort,
+	DefaultOrder:   ticketSortSpec.DefaultOrder,
+	DefaultPerPage: ganttMaxTickets,
+}
+
 // filterAll / filterOpen / filterClosed は open クエリの内部表現（9.2.1）。
 const (
 	filterAll    = "all"
@@ -126,13 +149,14 @@ const (
 	filterClosed = "closed"
 )
 
-// assigneeMe / filterNone はクエリに書ける特別な値（9.2.1）。
+// assigneeMe / filterNone / sprintActive はクエリに書ける特別な値（9.2.1）。
 //
 // **配列の値としてSQLへ渡さない。** ULID の値域と重ならない保証が無く、
 // 混ぜると「none という ID のアクター」と区別できなくなるためである。
 const (
-	assigneeMe = "me"
-	filterNone = "none"
+	assigneeMe   = "me"
+	filterNone   = "none"
+	sprintActive = "active"
 )
 
 // dueWithinPattern は due_within の書式（9.2.1 の「7d 形式」）。
@@ -157,6 +181,10 @@ type ticketFilters struct {
 	plannedTo        *time.Time
 	staleDays        int32
 	parentSeqs       []int32
+
+	// sprintActive は sprint=active（9.2.1）。進行中のスプリントに属するもの。
+	// ULID は SQL が問い合わせのたびに引く（画面の手持ちの ULID は古くなりうる）。
+	sprintActive bool
 
 	// 検索の条件（9.2.1「検索の条件」）。
 	//
@@ -186,6 +214,9 @@ type ticketFilters struct {
 	// ——MCP の pb_list_tasks が、オンステージの行とその配下だけを取るための条件である。
 	stagedOnly bool
 
+	// gantt は view=gantt（9.2.6）。件数の上限・棚に戻ったものの既定・依存の同梱が変わる。
+	gantt bool
+
 	// normalized は ETag の材料（9.2.5）。解析後の値から作るので、
 	// 同じ意味の違う書き方（?type=bug,task と ?type=task,bug）が同じ値になる。
 	normalized string
@@ -198,8 +229,16 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, pageErr := ParsePage(r, ticketSortSpec)
 	filters, filterErr := parseTicketFilters(r, p)
+	// **ページの読み方はクエリの view から直接決める。** 絞り込みに誤りがあると filters は
+	// ゼロ値で返るので、filters.gantt を見ると page / per_page の誤りを取りこぼす。
+	var page Page
+	var pageErr *apierr.Error
+	if r.URL.Query().Get("view") == ticketViewGantt {
+		page, pageErr = parseGanttPage(r)
+	} else {
+		page, pageErr = ParsePage(r, ticketSortSpec)
+	}
 	// 2.6 の details は「項目ごとの誤り」を並べるものなので、
 	// 先に見つかったほうだけを返さず、両方を1つの 422 にまとめる。
 	if e := mergeValidationErrors(pageErr, filterErr); e != nil {
@@ -252,6 +291,7 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		TagNone:          filters.tagNone,
 		SprintIds:        filters.sprintIDs,
 		SprintNone:       filters.sprintNone,
+		SprintActive:     filters.sprintActive,
 		OpenFilter:       filters.openFilter,
 		DueBefore:        dueBefore,
 		OverdueOnly:      filters.overdueOnly,
@@ -301,11 +341,80 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		total, lastUpdated = row.Total, row.LastUpdatedAt
 	}
 
-	// 差分取得（2.7 / 9.2.5）。If-None-Match は解釈せず
-	// ヘッダだけ出す（5.1 / 6.1 と同じ）。
-	w.Header().Set("ETag", ticketsETag(filters.normalized, page, total, lastUpdated))
+	etag := ticketsETag(filters.normalized, page, total, lastUpdated)
+	if !filters.gantt {
+		// 差分取得（2.7 / 9.2.5）。If-None-Match は解釈せず
+		// ヘッダだけ出す（5.1 / 6.1 と同じ）。
+		w.Header().Set("ETag", etag)
+		WriteJSON(w, http.StatusOK, NewList(items, page, int(total)))
+		return
+	}
 
-	WriteJSON(w, http.StatusOK, NewList(items, page, int(total)))
+	// view=gantt（9.2.6）。依存は返したチケットの ID で1回だけ引く（設計方針3）。
+	links := []ganttLinkItem{}
+	var lastLinked time.Time
+	if len(ticketIDs) > 0 {
+		linkRows, err := h.q.ListLinksAmongTickets(r.Context(), ticketIDs)
+		if err != nil {
+			apierr.Write(w, r, apierr.New(apierr.InternalError).
+				WithCause(fmt.Errorf("ガントの依存を読めない: %w", err)))
+			return
+		}
+		for _, l := range linkRows {
+			links = append(links, ganttLinkItem{
+				ID: l.ID, SourceSeq: l.SourceSeq, TargetSeq: l.TargetSeq,
+				LinkType: l.LinkType, LagDays: l.LagDays, Origin: l.Origin,
+			})
+			if l.CreatedAt.After(lastLinked) {
+				lastLinked = l.CreatedAt
+			}
+		}
+	}
+	w.Header().Set("ETag", ganttETag(etag, len(links), lastLinked))
+	WriteJSON(w, http.StatusOK, ganttList{List: NewList(items, page, int(total)), Links: links})
+}
+
+// ganttList は view=gantt の応答（9.2.6）。9.2.2 のエンベロープに links を足した形。
+type ganttList struct {
+	List[ticketListItem]
+	Links []ganttLinkItem `json:"links"`
+}
+
+// ganttLinkItem は view=gantt の links[] の1本（9.2.6）。
+//
+// **origin を含める**——未確認の AI 提案を紫の破線で描くため（GuiDesign.md 8.4.2）。
+// created_at は出さず、ETag の材料にだけ使う。
+type ganttLinkItem struct {
+	ID        string `json:"id"`
+	SourceSeq int32  `json:"source_seq"`
+	TargetSeq int32  `json:"target_seq"`
+	LinkType  string `json:"link_type"`
+	LagDays   int32  `json:"lag_days"`
+	Origin    string `json:"origin"`
+}
+
+// parseGanttPage は view=gantt の並べ替えを読む（9.2.6）。
+//
+// **page / per_page は受けない。** 受けると「2ページ目のガント」が作れ、依存の
+// 「両端が items に含まれる」がページごとに変わる。黙って無視せず 422 にする——
+// 送った側の誤りが、1ページ目を返されて気づかれないまま残るため。
+func parseGanttPage(r *http.Request) (Page, *apierr.Error) {
+	q := r.URL.Query()
+	var details []apierr.Detail
+	for _, field := range []string{"page", "per_page"} {
+		if q.Has(field) {
+			details = append(details, apierr.Detail{
+				Field: field, Code: "invalid",
+				Message: field + " は view=gantt と一緒に指定できません（上限 " +
+					strconv.Itoa(ganttMaxTickets) + " 件を1回で返します）",
+			})
+		}
+	}
+	page, err := ParsePage(r, ganttSortSpec)
+	if len(details) > 0 {
+		return Page{}, mergeValidationErrors(apierr.New(apierr.ValidationFailed).WithDetails(details...), err)
+	}
+	return page, err
 }
 
 // parseTicketFilters は 9.2.1 のクエリを解析する。
@@ -343,6 +452,19 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 			slices.Sort(sorted)
 			parts = append(parts, name+"="+strings.Join(sorted, ","))
 		}
+	}
+
+	// view（9.2.6）。**gantt だけを受ける。** 棚に戻ったものの既定がこれで変わるので、
+	// retired より先に読む。
+	switch v := q.Get("view"); v {
+	case "":
+	case ticketViewGantt:
+		f.gantt = true
+		parts = append(parts, "view="+ticketViewGantt)
+	default:
+		details = append(details, apierr.Detail{
+			Field: "view", Code: "invalid", Message: "view は gantt で指定してください",
+		})
 	}
 
 	f.statusKeys = splitFilter(q.Get("status"))
@@ -389,22 +511,39 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 	}
 
 	for _, v := range splitFilter(q.Get("sprint")) {
-		if v == filterNone {
+		switch v {
+		case filterNone:
 			f.sprintNone = true
-			continue
+		case sprintActive:
+			f.sprintActive = true
+		default:
+			f.sprintIDs = append(f.sprintIDs, v)
 		}
-		f.sprintIDs = append(f.sprintIDs, v)
 	}
 	add("sprint", f.sprintIDs)
 	if f.sprintNone {
 		parts = append(parts, "sprint_none=1")
 	}
+	if f.sprintActive {
+		parts = append(parts, "sprint_active=1")
+	}
 
 	// retired（9.2.1）。**棚に戻ったものを出すかどうか**で、
 	// 既定は出さない。バックログの状態フィルタで完了を明示的に選んだときに
 	// 画面が送る（GuiDesign.md 5.4「状態と期限のフィルタ」）。
+	//
+	// **view=gantt のときは既定で含める**（9.2.6）。ガントは過去も時間軸に並べる画面である。
+	// retired=false を明示すれば外れる。
 	switch v := q.Get("retired"); v {
-	case "", "false":
+	case "":
+		if f.gantt {
+			f.includeRetired = true
+			parts = append(parts, "retired=true")
+		}
+	case "false":
+		if f.gantt {
+			parts = append(parts, "retired=false")
+		}
 	case "true":
 		f.includeRetired = true
 		parts = append(parts, "retired=true")
@@ -715,6 +854,16 @@ func appendEnumErrors(
 // 指す検証子であり（RFC 9110 8.8.1）、並び順やページが違えば本文も違う。
 // 9.2.5 の「フィルタ条件」を条件節だけに読むと、2ページ目と1ページ目が
 // 同じ ETag になる。
+// ganttETag は view=gantt の ETag（9.2.5）。一覧の ETag に、同梱した依存の件数と
+// MAX(created_at) を足す。**依存の増減はどちらのチケットの updated_at も動かさない**
+// （9.10.1）ので、チケットの材料だけでは線を足しても ETag が変わらない。
+//
+// 一覧の ETag の閉じ引用符の内側に足す。弱い検証子（W/"…"）の形を崩さない。
+func ganttETag(ticketsETag string, linkCount int, lastLinked time.Time) string {
+	body := strings.TrimSuffix(ticketsETag, `"`)
+	return fmt.Sprintf(`%s-lnk-%d-%d"`, body, linkCount, etagStamp(lastLinked))
+}
+
 func ticketsETag(normalized string, page Page, total int64, lastUpdated time.Time) string {
 	h := fnv.New32a()
 	fmt.Fprintf(h, "%s|sort=%s|order=%s|page=%d|per_page=%d",
