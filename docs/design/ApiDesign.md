@@ -1874,7 +1874,7 @@ GET /api/v1/projects/check-key?key=my-app
 
 `timezone` はプロジェクトの基準タイムゾーン（IANA 名。`DbDesign.md` 6.23）。祝日の取得元と日ごとの上書きは 5.8 で読む——**この応答に載せない**（一般タブとメンバータブは暦を使わない。`GuiDesign.md` 5.9）。
 
-`settings` は `project.settings`（jsonb）をそのまま返す。**定義するキーは `repositories` のみ**で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は未実装）。
+`settings` は `project.settings`（jsonb）をそのまま返す。**定義するキーは `repositories` と `gantt_snap_minutes`（ガントの吸着の単位。pb-221）**で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は未実装）。
 
 **`my_role` と `my_permissions` は、エージェントのトークンでは所有者のものが出る**（`Design.md` 6.5 の委譲）。エージェントは `project_member` の行を持たないため、自分自身で引くと `my_role` が常に `null` になり、**`my_permissions` からプロジェクトロールの層が丸ごと落ちる**——認可は所有者のロールで通る（6.4.1）ので、「できるのに、できないと応答している」状態になる。`GET /me`（4.1）も同じ規則である。
 
@@ -3666,8 +3666,21 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 不一致のような**状態**の競合で、こちらは**値**が既存の行と衝突している。
 
 **逆向き（`target` → `source`）の同じ `link_type` は別の行として作れる。** 一意制約が
-向きを含むためである。`A blocks B` と `B blocks A` は業務上は矛盾するが、
-**それを禁じるのは DB でもこの API でもない**——依存の循環検出はガントの編集（未実装。pb-221）で扱う（10.2）。
+向きを含むためである。ただし依存の種別では、下の循環の検出に掛かる。
+
+**依存（`FS` / `SS` / `FF` / `SF` / `blocks`）は輪を作れない。** 5種を種別を問わず1つの有向グラフ
+（`source` → `target`）として扱い、**足すと相手から自分へ辿り着けるなら `422 validation_failed`、
+`details[].code = "link_cycle"`**（`field` は `target_seq`、`message` は「依存が輪になるため追加できません」）。
+`A blocks B` と `B FS A` も輪である——`blocks` は「先行が終わるまで止める」で、FS と同じ向きを持つ
+（`GuiDesign.md` 5.14「依存線」）。**`relates` / `duplicates` は数えない**（向きに意味を持たない）。
+
+| 論点 | 決めたこと |
+|---|---|
+| 判定する場所 | **サーバ**（pb-221）。画面（ガント）も同じ判定をドラッグ中に行うが、MCP とエージェントも依存を積むので、画面だけで止めると抜け道が残る |
+| 種別を問わない理由 | `A SS B` と `B SS A`（遅れ 0）は同時に始まるだけで矛盾しないが、**どの組なら許すかを種別と遅れで場合分けすると、利用者が理由を読めない**。スケジューラの慣習（MS Project 等）も種別を問わず輪を拒む |
+| 同時に足された2本 | 判定の前に**プロジェクトの行を `FOR NO KEY UPDATE` で取り**、依存の追加をプロジェクトごとに1本ずつ通す。チケットの作成（FK の確認が取る `KEY SHARE`）とはぶつからない |
+| すでにある輪 | 触らない（以前の API で作れた）。**消すことはできる**——`DELETE` は判定しない |
+| 作れる本数 | 1チケットあたり数本の前提で、再帰 CTE で1回引く。上限は置かない |
 
 `GET` の応答は、**当該チケットが `source` である行と `target` である行の両方**を返し、`direction` を付けて区別する。
 
@@ -3705,7 +3718,7 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 
 **`PATCH` は持たない。** 一意制約が `(source, target, link_type)` である以上、
 `link_type` の変更は**別の行になるのと同じ**であり、消して作り直すのと変わらない。
-`lag_days` だけのために1本増やす利得も無い——**`lag_days` を変える画面が無い**（ガントは線の札に出すだけで、編集は pb-221。下記）。
+`lag_days` だけのために1本増やす利得も無い——**`lag_days` を変える画面が無い**（ガントは線の札に出すだけで、ドラッグで作る依存は常に `0`。画面から変える口は pb-231 で決める）。
 
 **ページネーション・`ETag`・`If-Match` はいずれも持たない**（9.10.2 と同じ）。
 **親チケットの `version` と `updated_at` も動かさず、相手側のチケットも動かさない**
@@ -3715,10 +3728,9 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 
 `origin` は `human` / `ai_suggested`。**`human` のみ作られる**（AI提案の採用・却下は未実装。`GuiDesign.md` 5.5）。
 
-**画面が出す `link_type` は `relates` / `duplicates` / `blocks` の3つだけである**
-（`GuiDesign.md` 5.5）。`FS` / `SS` / `FF` / `SF` と `lag_days` は
-**ガントの依存線**のためのもので、ガントは閲覧だけを実装した段階である（線を引く編集は pb-221。`GuiDesign.md` 5.14）。
-**線を見ながら作れない値を、ここで人に選ばせない。**
+**チケット詳細の追加のモーダルが出す `link_type` は `relates` / `duplicates` / `blocks` の3つだけである**
+（`GuiDesign.md` 5.5）。`FS` / `SS` / `FF` / `SF` は**ガントの上で、バーの端から端へ線を引いて作る**
+（`GuiDesign.md` 5.14「編集」。pb-221）——**線を見ながら作れる場所があるので、線の無い場所で人に選ばせない。**
 **API は7種すべて受け続ける**——MCP とエージェントがガント用の依存を先に積むことは
 妨げない（`Requirements.md` 10.5）。
 
@@ -4152,6 +4164,7 @@ ETag: W/"act-a3f19c2b-142-1723372992000000000"
 | `not_a_member` | 担当者に指定したアクターがプロジェクトのメンバーでない（9.3） |
 | `not_found` | `parent_seq` / `tag_ids` の参照先がこのプロジェクトに無い（9.3）。`target_seq` の相手がこのプロジェクトに無い（9.10.1）。`in_reply_to` の相手がこのチケットに無い、または削除済み（9.8） |
 | `self_link` | 自分自身へのリンクを作ろうとした（9.10.1） |
+| `link_cycle` | 依存（`FS` / `SS` / `FF` / `SF` / `blocks`）を足すと輪ができる（9.10.1） |
 | `immutable_field` | サーバが決める項目、または作成後に変えられない項目を送った（9.5.2 / 9.8 / 9.9 / 9.10.2） |
 | `use_move_endpoint` | `sort_key` / `staged_at` を `PATCH` で変えようとした（9.5.2） |
 | `use_sprint_endpoint` | `sprint_id` を `PATCH` / `POST` で書こうとした（9.5.2 / 9.3） |
