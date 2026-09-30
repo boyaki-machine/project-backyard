@@ -2,6 +2,7 @@ import type { RouteRecordRaw } from 'vue-router'
 
 import AgentSetupPage from '../pages/AgentSetupPage.vue'
 import AppSettingsPage from '../pages/AppSettingsPage.vue'
+import AuditPage from '../pages/AuditPage.vue'
 import DashboardPage from '../pages/DashboardPage.vue'
 import DocsPage from '../pages/DocsPage.vue'
 import ForbiddenPage from '../pages/ForbiddenPage.vue'
@@ -196,21 +197,8 @@ const routeSources: RouteRecordRaw[] = [
 
   {
     path: '/admin/audit',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'auditlog.view',
-      placeholder: {
-        title: '監査ログ',
-        docRef: 'GuiDesign.md 5.7',
-        status: '未定',
-        planned: [
-          '期間・操作・実行者・結果によるフィルタ',
-          '日時・実行者・操作・対象・結果の一覧',
-          '行クリックで詳細（IP、User-Agent、detail）を展開',
-          'CSVエクスポート',
-        ],
-      },
-    },
+    component: AuditPage,
+    meta: { permission: 'auditlog.view' },
   },
 
   // 実画面（GuiDesign.md 5.8）。手順15 でプレースホルダから差し替えた。

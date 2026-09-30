@@ -468,6 +468,7 @@ type Querier interface {
 	// **DO UPDATE で同じ値を書くのは RETURNING に行を返させるため**である
 	// （DO NOTHING では衝突した行が返らない）。
 	EnsureGoogleHolidaySource(ctx context.Context, arg EnsureGoogleHolidaySourceParams) (string, error)
+	ExportAuditLogs(ctx context.Context, arg ExportAuditLogsParams) ([]AuditLog, error)
 	// 認証に関するクエリ（Design.md 6.2.2、DbDesign.md 6.2）。
 	// FindAccessTokenByHash は受け取った平文の SHA-256 で access_token を引く。
 	//
@@ -899,8 +900,7 @@ type Querier interface {
 	InsertActivity(ctx context.Context, arg InsertActivityParams) error
 	// 監査ログ（ApiDesign.md 2.10、DbDesign.md 6.8）。
 	//
-	// 読み出し（GET /admin/audit、auditlog.view）は手順11以降で足す。
-	// 手順4b では書き込みの共通基盤のみを用意する。
+	// 読み出しは auditlog.view で守る（ApiDesign.md 6.11）。
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error
 	// 日の一括投入。3つの配列は同じ長さで、添字が1日に対応する。
 	// SELECT 句に unnest を並べると、同じ長さの配列は添字ごとに1行になる。
@@ -1031,6 +1031,10 @@ type Querier interface {
 	// 知らないキーを読み飛ばすため（config.OverlayDatabase）。
 	// 起動時に1回、設定の保存ごとに1回しか呼ばれない。
 	ListAppSettings(ctx context.Context) ([]ListAppSettingsRow, error)
+	// 一覧とCSVは同じ5条件を使う。日時は [from_at, to_at) の半開区間。
+	// action / actor / q は呼び出し側で LIKE メタ文字をエスケープする。
+	// actor_id は削除後に NULL になるため、検索と表示には actor_label を使う。
+	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]AuditLog, error)
 	// 多要素認証のクエリ（DbDesign.md 6.18、Design.md 6.7）。
 	//
 	// **未確定の行（confirmed_at IS NULL）を、確定済みを引くクエリに混ぜない。**
@@ -1898,6 +1902,7 @@ type Querier interface {
 	// 動かない。actor だけを見ると、ロールを変えても ETag が変わらない。
 	//
 	SummarizeAdminUsers(ctx context.Context, arg SummarizeAdminUsersParams) (SummarizeAdminUsersRow, error)
+	SummarizeAuditLogs(ctx context.Context, arg SummarizeAuditLogsParams) (int64, error)
 	// SummarizeProjects は ListProjects と同じ可視範囲・同じ絞り込みに対する
 	// 総件数と最終更新日時を返す。
 	//

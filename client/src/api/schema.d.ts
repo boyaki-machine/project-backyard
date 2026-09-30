@@ -2908,6 +2908,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 監査ログ一覧
+         * @description ApiDesign.md 6.11。必要権限は auditlog.view。
+         */
+        get: operations["listAuditLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/audit.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 監査ログCSV
+         * @description ApiDesign.md 6.11。一覧と同じ条件の全件。必要権限は auditlog.view。
+         */
+        get: operations["exportAuditLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users": {
         parameters: {
             query?: never;
@@ -4549,6 +4589,33 @@ export interface components {
              */
             description: string;
             sort_order: number;
+        };
+        AuditLogList: {
+            items: components["schemas"]["AuditLogItem"][];
+            page: number;
+            per_page: number;
+            total: number;
+            total_pages: number;
+        };
+        AuditLogItem: {
+            id: string;
+            /** Format: int64 */
+            occurred_at: number;
+            actor_id: string | null;
+            actor_kind: string | null;
+            actor_label: string | null;
+            token_id: string | null;
+            ip: string | null;
+            user_agent: string | null;
+            action: string;
+            target_type: string | null;
+            target_id: string | null;
+            /** @enum {string} */
+            result: "success" | "failure";
+            detail: {
+                [key: string]: unknown;
+            };
+            request_id: string | null;
         };
         /** @description 一覧の共通エンベロープ（ApiDesign.md 2.6）。 */
         UserList: {
@@ -7270,6 +7337,17 @@ export interface components {
         };
     };
     parameters: {
+        /** @description 開始日時。エポックミリ秒。含む。 */
+        AuditFromAt: number;
+        /** @description 終了日時。エポックミリ秒。含まない。 */
+        AuditToAt: number;
+        /** @description 操作名の部分一致。% と _ は文字として扱う。 */
+        AuditAction: string;
+        /** @description 記録時の実行者名の部分一致。 */
+        AuditActor: string;
+        AuditResult: "success" | "failure";
+        /** @description 実行者名・操作名・対象種別・対象IDの部分一致。 */
+        AuditQuery: string;
         /**
          * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
          *     単に行が見つからず 404 になる。存在しないものと形式が違うものを別の応答に
@@ -11351,6 +11429,84 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["DocNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listAuditLogs: {
+        parameters: {
+            query?: {
+                /** @description 開始日時。エポックミリ秒。含む。 */
+                from_at?: components["parameters"]["AuditFromAt"];
+                /** @description 終了日時。エポックミリ秒。含まない。 */
+                to_at?: components["parameters"]["AuditToAt"];
+                /** @description 操作名の部分一致。% と _ は文字として扱う。 */
+                action?: components["parameters"]["AuditAction"];
+                /** @description 記録時の実行者名の部分一致。 */
+                actor?: components["parameters"]["AuditActor"];
+                result?: components["parameters"]["AuditResult"];
+                /** @description 実行者名・操作名・対象種別・対象IDの部分一致。 */
+                q?: components["parameters"]["AuditQuery"];
+                page?: number;
+                per_page?: number;
+                sort?: "occurred_at";
+                order?: "desc";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 日時降順の1ページ分。ETagは応答内容から作る弱い検証子。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditLogList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    exportAuditLogs: {
+        parameters: {
+            query?: {
+                /** @description 開始日時。エポックミリ秒。含む。 */
+                from_at?: components["parameters"]["AuditFromAt"];
+                /** @description 終了日時。エポックミリ秒。含まない。 */
+                to_at?: components["parameters"]["AuditToAt"];
+                /** @description 操作名の部分一致。% と _ は文字として扱う。 */
+                action?: components["parameters"]["AuditAction"];
+                /** @description 記録時の実行者名の部分一致。 */
+                actor?: components["parameters"]["AuditActor"];
+                result?: components["parameters"]["AuditResult"];
+                /** @description 実行者名・操作名・対象種別・対象IDの部分一致。 */
+                q?: components["parameters"]["AuditQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 絞り込み結果の全件。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

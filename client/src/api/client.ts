@@ -209,10 +209,11 @@ async function request<T>(
   path: string,
   body?: unknown,
   options: RequestOptions = {},
+  responseKind: 'json' | 'blob' = 'json',
 ): Promise<T> {
   const isForm = body instanceof FormData
   const isBlob = body instanceof Blob
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const headers: Record<string, string> = { Accept: responseKind === 'blob' ? 'text/csv' : 'application/json' }
   // **FormData には Content-Type を付けない。** 付けると boundary が欠けて
   // サーバがパートを切り出せない（fetch が付けるのに任せる）。
   if (isBlob) headers['Content-Type'] = body.type
@@ -269,11 +270,12 @@ async function request<T>(
   if (res.status === 204 || res.headers.get('Content-Length') === '0') {
     return undefined as T
   }
-  return (await res.json()) as T
+  return (responseKind === 'blob' ? await res.blob() : await res.json()) as T
 }
 
 export const api = {
   get: <T>(path: string, options?: RequestOptions) => request<T>('GET', path, undefined, options),
+  getBlob: (path: string) => request<Blob>('GET', path, undefined, {}, 'blob'),
   post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>('POST', path, body, options),
   patch: <T>(path: string, body?: unknown, options?: RequestOptions) =>
