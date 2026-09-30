@@ -623,6 +623,14 @@ window.set = window.set || function (el, v) {
   Input.dispatchDragEvent {type: 'dragEnter' / 'dragOver' / 'drop', data: <intercepted の data>}
   ```
 
+- **ポインタのイベントで組んだドラッグ（ガントの編集。`GuiDesign.md` 5.14）は
+  `setInterceptDrags` を使わない。** HTML の D&D ではないので `dragIntercepted` は来ない。
+  `Input.dispatchMouseEvent`（Playwright の `page.mouse.down` / `move` / `up`）だけで回る。
+  **描き直しは次のフレームなので、離した直後の位置を読まず `expect.poll` で待つ。**
+  修飾キー（`Alt`）は `page.keyboard.down('Alt')` を押したまま動かす。
+  本体の左右の端 32px は自動で横へ送るので、**掴む帯が端に寄らない窓の幅で試す**
+  （`client/e2e/gantt-edit.spec.ts` は 1800px）
+
 - **`dragOver` は同じ落とし先の中で位置を変えるとき、1回では届かないことがある。**
   **x を 1px ずらして2回送る**のを既定にする。届かないと、行を複数のゾーンに割る落とし先で
   **直前のゾーンの目印が残ったまま**になり、実装が正しくても失敗に見える。
