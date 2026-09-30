@@ -1375,4 +1375,7 @@ export const uiMessages: Record<string, string> = {
   "依存が輪になるため引けません": "Cannot link: the dependencies would form a cycle",
   "{id} は他の人が先に更新していました。最新の予定を表示しています": "{id} was updated by someone else first. Showing the latest schedule",
   "時刻付きになります": "becomes timed",
+  "集中": "Focus",
+  "集中モードを解除する（Esc / Shift + [）": "Exit focus mode (Esc / Shift + [)",
+  "メニューを畳んで時間軸を広げる（Shift + [）": "Hide the menu to widen the timeline (Shift + [)",
 }

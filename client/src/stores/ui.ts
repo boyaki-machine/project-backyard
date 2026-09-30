@@ -4,8 +4,8 @@ import { computed, ref } from 'vue'
 /**
  * 画面の見た目に関する設定（GuiDesign.md 7.1 の ui ストア）。
  *
- * テーマとベース色相（8.11）に加えて、メニューの折りたたみ状態（2.3.3）を持つ。
- * 集中モード（2.3.2）は未実装のため持たない。
+ * テーマとベース色相（8.11）に加えて、メニューの折りたたみ状態（2.3.3）と
+ * 集中モード（2.3.2）を持つ。**集中モードは保存しない**（リロードで解除する）。
  *
  * **保存先は localStorage と app_user の両方**（8.11）。localStorage だけでは
  * 端末をまたげず、サーバだけでは応答が届くまでの間に既定のテーマで一瞬描画される。
@@ -71,6 +71,31 @@ export const useUiStore = defineStore('ui', () => {
   const narrow = ref(false)
   /** 768px 未満でオーバーレイを開いているか。リロードで解除する（保存しない） */
   const overlayOpen = ref(false)
+
+  /**
+   * 集中モード（2.3.2）。メニューを 0px まで畳む一時的な表示状態で、**保存しない**。
+   * 768px 未満では入れない（譲る幅が無い）。
+   */
+  const focusMode = ref(false)
+  /** 集中モード中に、左端への接近でメニューを重ねて出しているか */
+  const focusPeek = ref(false)
+
+  function enterFocus() {
+    if (narrow.value) return
+    focusMode.value = true
+    focusPeek.value = false
+  }
+
+  function exitFocus() {
+    focusMode.value = false
+    focusPeek.value = false
+  }
+
+  /** `Shift + [` と `[⛶ 集中]` から呼ぶ */
+  function toggleFocus() {
+    if (focusMode.value) exitFocus()
+    else enterFocus()
+  }
 
   /** メニューを折りたたんで表示するか（アイコンレールのみ 56px） */
   const menuCollapsed = computed(() => menuChoice.value ?? !wide.value)
@@ -169,6 +194,8 @@ export const useUiStore = defineStore('ui', () => {
     narrowMq.addEventListener('change', (e) => {
       narrow.value = e.matches
       if (!e.matches) overlayOpen.value = false
+      // 集中モードのまま 768px 未満へ狭めたら解除する（2.3.2）
+      if (e.matches) exitFocus()
     })
   }
 
@@ -184,6 +211,11 @@ export const useUiStore = defineStore('ui', () => {
     overlayOpen,
     toggleMenu,
     closeOverlay,
+    focusMode,
+    focusPeek,
+    enterFocus,
+    exitFocus,
+    toggleFocus,
     init,
   }
 })

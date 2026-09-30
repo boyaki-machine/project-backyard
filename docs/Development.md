@@ -630,6 +630,13 @@ window.set = window.set || function (el, v) {
   修飾キー（`Alt`）は `page.keyboard.down('Alt')` を押したまま動かす。
   本体の左右の端 32px は自動で横へ送るので、**掴む帯が端に寄らない窓の幅で試す**
   （`client/e2e/gantt-edit.spec.ts` は 1800px）
+- **「とどまったら出る」のような時間で決まる判定を `waitForTimeout` で測らない。**
+  並列で走ると待ちが伸び、200ms の境目を試験の側が越えて偽の FAIL になる
+  （集中モードの左端で踏んだ）。**ページの中で入った時刻・出た時刻・結果が出た時刻を
+  `performance.now()` で残し、差で判定する**（`client/e2e/focus-mode.spec.ts` の `recordEdge`）。
+- **毎フレーム描き直す SVG の要素を `locator(...).boundingBox()` で掴まない。** 掴んだ直後に
+  DOM から外れて位置が取れないことがある。`page.evaluate` で `getBoundingClientRect()` を
+  数値で読む
 
 - **`dragOver` は同じ落とし先の中で位置を変えるとき、1回では届かないことがある。**
   **x を 1px ずらして2回送る**のを既定にする。届かないと、行を複数のゾーンに割る落とし先で

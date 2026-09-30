@@ -47,6 +47,7 @@ import type { DayTick } from '../lib/gantt/time'
 import { uiNumber, uiText } from '../locales/ui'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
+import { useUiStore } from '../stores/ui'
 
 /**
  * ガント（`GuiDesign.md` 5.14）。
@@ -68,6 +69,7 @@ const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
 const auth = useAuthStore()
+const ui = useUiStore()
 
 const projectKey = computed(() => {
   const key = route.params.key
@@ -1416,6 +1418,17 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
             </button>
           </div>
           <button type="button" class="secondary" @click="toNow">{{ $ui('今日') }}</button>
+          <!-- 集中モード（2.3.2）。メニューを 0px まで畳む。768px 未満では出さない -->
+          <button
+            v-if="!ui.narrow"
+            type="button"
+            class="secondary gantt-focus"
+            :aria-pressed="ui.focusMode"
+            :title="ui.focusMode ? $ui('集中モードを解除する（Esc / Shift + [）') : $ui('メニューを畳んで時間軸を広げる（Shift + [）')"
+            @click="ui.toggleFocus()"
+          >
+            ⛶ {{ $ui('集中') }}
+          </button>
         </div>
       </template>
     </PageHeader>
@@ -1561,6 +1574,18 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
 
 .gantt-filter {
   position: relative;
+}
+
+/* 押している間は段階のボタンと同じ見え方にする */
+.gantt-focus[aria-pressed='true'] {
+  background: var(--pb-accent);
+  border-color: var(--pb-accent);
+  color: var(--pb-on-accent);
+}
+
+/* 共通の `.secondary:hover` が背景を薄くし、白い文字が読めなくなるのを防ぐ */
+.gantt-focus[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--pb-accent-hover);
 }
 
 .gantt-filter-panel {

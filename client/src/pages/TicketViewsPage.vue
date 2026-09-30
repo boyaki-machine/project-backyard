@@ -20,17 +20,14 @@ import { useRoute } from 'vue-router'
 import BacklogPage from './BacklogPage.vue'
 import GanttPage from './GanttPage.vue'
 import SearchPage from './SearchPage.vue'
+import { ticketViewOf } from '../lib/ticketViews'
 
 const route = useRoute()
 
-const showSearch = computed(
-  () => route.path.endsWith('/search') || route.query.from === 'search',
-)
-
-/** ガント（5.14）。**詳細は `from=gantt` で本体の上に浮かせて開く**（3.2） */
-const showGantt = computed(
-  () => route.path.endsWith('/gantt') || route.query.from === 'gantt',
-)
+/** どの一覧を出すか（判定の正本は `lib/ticketViews.ts`）。ガントの詳細は `from=gantt` で本体の上に浮かせて開く */
+const view = computed(() => ticketViewOf(route.path, route.query.from))
+const showSearch = computed(() => view.value === 'search')
+const showGantt = computed(() => view.value === 'gantt')
 </script>
 
 <template>
