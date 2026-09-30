@@ -9,8 +9,8 @@
  * 時間に、縦は行を見えている行に絞る。依存線は、両端の行が見えている範囲を上下
  * どちらか一方へ外れているものを描かない。
  *
- * 描く順は **土日祝 → 格子 → スプリントの枠 → 「今」の線 → 依存線 → バー → 端の札
- * → ヘッダ → カーソル**（5.14「描く順」）。行に属するもの（格子の行・依存線・帯・札）は
+ * 描く順は **土日祝 → 格子 → スプリントの枠 → 「今」の線 → 依存線 → バー → ドラッグの影と
+ * 取っ手 → 端の札 → ヘッダ → カーソル**（5.14「描く順」）。行に属するもの（格子の行・依存線・帯・札）は
  * ヘッダの下へ潜るよう、ヘッダより下に切り抜く。
  *
  * 見本（`docs/design/mock/gantt.html`）の `render` を移したもの。純粋な関数にして
@@ -20,13 +20,15 @@ import { DAY, days, hm, md, scaleOf, tickLabel, ticks, tzShort, wallParts, weekd
 import type { DayTick } from './time'
 import { spanOf } from './model'
 import type { GItem, GRow, GanttLink } from './model'
+import { HANDLE_R, handlesOf, isViolated } from './edit'
+import type { End, Plan } from './edit'
 
 /** 行の高さ（5.14。バックログの 40px より詰める） */
 export const RH = 28
 /** スプリント帯の高さ */
 export const LANE = 16
 /** 左右へ 28px の破線（マイルストーン） */
-const MS_TAIL = 28
+export const MS_TAIL = 28
 
 export type DayKind = '' | 'sat' | 'sun' | 'hol'
 
@@ -72,6 +74,29 @@ export interface RenderInput {
   freeRight: number
   idOf: (seq: number) => string
   text: RenderText
+  /** 編集（5.14「編集」）。無ければ閲覧だけの描画になる */
+  edit?: EditView
+}
+
+/**
+ * 編集中の見え方（5.14「送り方と見え方」「依存を引く」）。
+ *
+ * **`override` の予定で帯と依存線を描き直す**——ドラッグ中も、応答を待つ間も、
+ * 行と依存は新しい位置で描く（違反の印もそこで判定する）。元の位置は `ghost` の
+ * チケットだけ薄く残す。
+ */
+export interface EditView {
+  override: Map<number, Plan>
+  /** 掴んでいるチケット（元の位置を薄い影で残す） */
+  ghost: number | null
+  /** 応答を待っているチケット（新しい位置を破線で描く） */
+  pending: Set<number>
+  /** ドラッグの札（新しい期間と「時刻付きになります」） */
+  tag: { seq: number; text: string } | null
+  /** 依存の取っ手を出すチケット。`hot` はポインタが載っている取っ手 */
+  handles: { seq: number; hot: End | null } | null
+  /** 依存を引いている線。`ok` が偽なら落とせない相手の上 */
+  link: { x0: number; y0: number; x1: number; y1: number; ok: boolean; text: string; ring: { x: number; y: number } | null } | null
 }
 
 export interface EdgeHit {
@@ -166,7 +191,7 @@ interface Pos {
 }
 
 /** 依存線（5.14「依存線」）。a が先行、b が後行 */
-function depSVG(link: GanttLink, a: Pos, b: Pos, hi: boolean): string {
+function depSVG(link: GanttLink, a: Pos, b: Pos, hi: boolean, bad: boolean): string {
   const type = link.link_type
   const blk = type === 'blocks'
   const ty = blk ? 'FS' : type
@@ -202,19 +227,81 @@ function depSVG(link: GanttLink, a: Pos, b: Pos, hi: boolean): string {
       : `M${f1(xt)},${yt}L${f1(xt + 6)},${yt - 3.5}L${f1(xt + 6)},${yt + 3.5}Z`
   const ai = link.origin === 'ai_suggested'
   const words: string[] = []
+  // 依存に反する配置は札に ⚠ を足す（FS も札を出す）。色だけに頼らない（8.9）
+  if (bad) words.push('⚠')
   if (ai) words.push('AI')
   if (ty !== 'FS') words.push(ty)
   if (link.lag_days) words.push(`${link.lag_days > 0 ? '+' : ''}${link.lag_days}d`)
   let tag = ''
   if (words.length) {
     const s = words.join(' ')
-    const w = s.length * 5.9 + 6
+    const w = estW(s, 9.5) + 6
     tag = R(tagX - w / 2, tagY - 6.5, w, 13, 'd-tagr', 'rx="2"') + TX(tagX, tagY + 3.4, s, 'd-tagt', 'middle')
   }
   const end = blk
     ? `<path class="d-stop" d="M${f1(xt - ap * 1.5)},${yt - 6}V${yt + 6}"/>`
     : `<path class="d-h" d="${head}"/>`
-  return `<g class="dep${ai ? ' ai' : ''}${blk ? ' blk' : ''}${hi ? ' hi' : ''}"><path class="d" d="${d}"/><circle class="d-s" cx="${f1(x0)}" cy="${y0}" r="2.4"/>${end}${tag}</g>`
+  return `<g class="dep${ai ? ' ai' : ''}${blk ? ' blk' : ''}${hi ? ' hi' : ''}${bad ? ' bad' : ''}"><path class="d" d="${d}"/><circle class="d-s" cx="${f1(x0)}" cy="${y0}" r="2.4"/>${end}${tag}</g>`
+}
+
+/** 帯の形だけ（影に使う）。日付が無ければ何も描かない */
+function itemShape(it: GItem, y: number, X: (t: number) => number, cat: string): string {
+  if (it.s !== null && it.e !== null) {
+    const x0 = X(it.s)
+    const x1 = Math.max(X(it.e), x0 + 3)
+    return barSVG(x0, x1, y, cat)
+  }
+  if (it.s !== null) return msSVG('start', X(it.s), y, cat)
+  if (it.e !== null) return msSVG('end', X(it.e), y, cat)
+  return ''
+}
+
+/** 取っ手・ドラッグの札・引いている線（5.14「編集」） */
+function editOverlay(
+  ed: EditView,
+  items: Map<number, GItem>,
+  rowOf: Map<number, number>,
+  rowY: (i: number) => number,
+  X: (t: number) => number,
+  fr: number,
+): string {
+  let o = ''
+  if (ed.handles) {
+    const it = items.get(ed.handles.seq)
+    const i = rowOf.get(ed.handles.seq)
+    if (it && i !== undefined && (it.s !== null || it.e !== null)) {
+      const xs = X((it.s ?? it.e)!)
+      const xf = Math.max(X((it.e ?? it.s)!), it.s !== null && it.e !== null ? xs + 3 : xs)
+      const y = rowY(i) + RH / 2
+      for (const h of handlesOf(xs, xf, { s: it.s !== null, e: it.e !== null })) {
+        o += `<circle class="hdl${ed.handles.hot === h.end ? ' hot' : ''}" cx="${f1(h.x)}" cy="${f1(y)}" r="${HANDLE_R}"/>`
+      }
+    }
+  }
+  if (ed.tag) {
+    const it = items.get(ed.tag.seq)
+    const i = rowOf.get(ed.tag.seq)
+    if (it && i !== undefined && (it.s !== null || it.e !== null)) {
+      const w = estW(ed.tag.text, 10.5) + 12
+      const x = Math.max(4, Math.min(X((it.s ?? it.e)!), fr - w - 4))
+      const y = rowY(i) - 12
+      o += R(x, y, w, 15, 'dtag', 'rx="3"') + TX(x + 6, y + 11, ed.tag.text, 'dtag-t')
+    }
+  }
+  if (ed.link) {
+    const l = ed.link
+    const cls = l.ok ? 'ldrag' : 'ldrag no'
+    o += L(l.x0, l.y0, l.x1, l.y1, cls)
+    if (l.ring) o += `<circle class="lring${l.ok ? '' : ' no'}" cx="${f1(l.ring.x)}" cy="${f1(l.ring.y)}" r="5.5"/>`
+    if (l.text) {
+      const w = estW(l.text, 10.5) + 12
+      let x = l.x1 + 12
+      if (x + w > fr - 4) x = l.x1 - 12 - w
+      const y = l.y1 + 10
+      o += R(x, y, w, 16, l.ok ? 'dtag' : 'dtag no', 'rx="3"') + TX(x + 6, y + 11.5, l.text, l.ok ? 'dtag-t' : 'dtag-t no')
+    }
+  }
+  return o
 }
 
 /** 帯の右に出す期間（5.14「帯」）。終日は基準の日付、時刻付きは見る人の時刻 */
@@ -233,7 +320,18 @@ export function rangeLabel(it: GItem, baseTz: string, viewTz: string): string {
 }
 
 export function render(inp: RenderInput): { svg: string; edges: EdgeHit[] } {
-  const { W, H, sl, st, ppd, T0, T1, rows, rowOf, items, baseTz, viewTz, now, freeRight: fr } = inp
+  const { W, H, sl, st, ppd, T0, T1, rows, rowOf, baseTz, viewTz, now, freeRight: fr } = inp
+  const ed = inp.edit
+  // 編集中の予定で描き直す（行の item は元の値のままなので、ここで差し替える）
+  let items = inp.items
+  if (ed && ed.override.size > 0) {
+    items = new Map(inp.items)
+    for (const [seq, p] of ed.override) {
+      const it = inp.items.get(seq)
+      if (it) items.set(seq, { ...it, s: p.s, e: p.e, allDay: p.allDay, roll: p.s === null && p.e === null ? it.roll : null })
+    }
+  }
+  const live = (it: GItem): GItem => items.get(it.seq) ?? it
   const ta = Math.max(T0 - DAY, T0 + (sl / ppd) * DAY)
   const tb = Math.min(T1 + DAY, T0 + ((sl + W) / ppd) * DAY)
   const X = (t: number) => ((t - T0) / DAY) * ppd - sl
@@ -350,10 +448,11 @@ export function render(inp: RenderInput): { svg: string; edges: EdgeHit[] } {
   for (let i = i0; i <= i1; i++) {
     const r = rows[i]!
     if (r.kind !== 'ticket') continue
-    const p = spanPos(r.item, i)
+    const ri = live(r.item)
+    const p = spanPos(ri, i)
     if (!p) continue
-    const lo = p.roll || r.item.s !== null ? p.xs : p.xs - MS_TAIL
-    const hi = !p.roll && r.item.e === null ? p.xf + MS_TAIL : p.xf
+    const lo = p.roll || ri.s !== null ? p.xs : p.xs - MS_TAIL
+    const hi = !p.roll && ri.e === null ? p.xf + MS_TAIL : p.xf
     if (hi < 0) edgeOf.set(i, 'L')
     else if (lo > fr) edgeOf.set(i, 'R')
   }
@@ -389,31 +488,38 @@ export function render(inp: RenderInput): { svg: string; edges: EdgeHit[] } {
     if (!a || !b) continue
     if (Math.max(a.y, b.y) < yTop || Math.min(a.y, b.y) > H + RH) continue
     if (Math.max(a.xs, a.xf, b.xs, b.xf) < -40 || Math.min(a.xs, a.xf, b.xs, b.xf) > W + 40) continue
-    rowsSvg += depSVG(l, a, b, focus === l.source_seq || focus === l.target_seq)
+    rowsSvg += depSVG(l, a, b, focus === l.source_seq || focus === l.target_seq, isViolated(l, sa, tb2))
   }
 
   // 6. バー・マイルストーン・寸法線と、その右の文字
   for (let i = i0; i <= i1; i++) {
     const r = rows[i]!
-    if (r.kind !== 'ticket' || edgeOf.has(i)) continue
-    const it = r.item
+    if (r.kind !== 'ticket') continue
+    const it = live(r.item)
     const cat = it.done ? 'done' : it.cat
     const y = rowY(i) + RH / 2
+    // 掴んでいるチケットは、元の位置に薄い影を残す（5.14「送り方と見え方」）
+    if (ed && ed.ghost === it.seq) {
+      const g = inp.items.get(it.seq)
+      if (g) rowsSvg += `<g class="ghost">${itemShape(g, y, X, cat)}</g>`
+    }
+    if (edgeOf.has(i)) continue
+    const pend = ed?.pending.has(it.seq) ? ' pend' : ''
     let xEnd: number
     if (it.s !== null && it.e !== null) {
       const x0 = X(it.s)
       let x1 = X(it.e)
       if (x1 - x0 < 3) x1 = x0 + 3
       if (x1 < -60 || x0 > W + 60) continue
-      rowsSvg += barSVG(x0, x1, y, cat)
+      rowsSvg += `<g class="bar${pend}">${barSVG(x0, x1, y, cat)}</g>`
       xEnd = x1 + 7
     } else if (it.s !== null) {
       const x = X(it.s)
-      rowsSvg += msSVG('start', x, y, cat)
+      rowsSvg += `<g class="bar${pend}">${msSVG('start', x, y, cat)}</g>`
       xEnd = x + MS_TAIL + 5
     } else if (it.e !== null) {
       const x = X(it.e)
-      rowsSvg += msSVG('end', x, y, cat)
+      rowsSvg += `<g class="bar${pend}">${msSVG('end', x, y, cat)}</g>`
       xEnd = x + 6
     } else if (it.roll) {
       const x0 = X(it.roll.s)
@@ -445,7 +551,7 @@ export function render(inp: RenderInput): { svg: string; edges: EdgeHit[] } {
   for (const [i, e] of edgeOf) {
     const r = rows[i]!
     if (r.kind !== 'ticket') continue
-    const sp = spanOf(r.item)!
+    const sp = spanOf(live(r.item))!
     const y = rowY(i) + RH / 2
     const when = e === 'L'
       ? sp.e !== null ? md(baseTz, sp.e - 1) : md(baseTz, sp.s!)
@@ -458,6 +564,8 @@ export function render(inp: RenderInput): { svg: string; edges: EdgeHit[] } {
     edges.push({ x, y: y - 8, w, h: 16, seq: r.item.seq })
     rowsSvg += `<g class="edge-g">${R(x, y - 8, w, 16, 'edge', 'rx="3"')}${TX(x + 6, y + 3.5, s, 'edge-t')}</g>`
   }
+  // 取っ手・ドラッグの札・引いている線（5.14「編集」）
+  if (ed) rowsSvg += editOverlay(ed, items, rowOf, rowY, X, fr)
   o += `<g clip-path="url(#g-body)">${rowsSvg}</g>`
 
   // ── ヘッダ ──

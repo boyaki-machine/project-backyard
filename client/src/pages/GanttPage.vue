@@ -9,6 +9,8 @@ import PlannedPeriodFilter from '../components/PlannedPeriodFilter.vue'
 import TicketDetailPane from '../components/TicketDetailPane.vue'
 import { ApiError } from '../api/client'
 import * as calendarApi from '../api/calendar'
+import * as linksApi from '../api/links'
+import { readGanttSnap } from '../api/projects'
 import type { ProjectCalendarDay } from '../api/calendar'
 import * as sprintsApi from '../api/sprints'
 import type { Sprint } from '../api/sprints'
@@ -23,9 +25,11 @@ import { groupAxisToRestore, saveGroupAxis } from '../lib/groupAxis'
 import { GROUP_AXES, groupAxisLabel } from '../lib/ticketGroups'
 import type { GroupAxis, GroupVocabulary } from '../lib/ticketGroups'
 import { buildRows, rowIndexOf, spanOf, timeRange, toItems } from '../lib/gantt/model'
-import type { GRow } from '../lib/gantt/model'
-import { RH, geometry, render } from '../lib/gantt/render'
-import type { DayKind, EdgeHit, GSprint } from '../lib/gantt/render'
+import type { GItem, GRow } from '../lib/gantt/model'
+import { HANDLE_R, depTypeOf, endAt, grabAt, handlesOf, planAt, wouldCycle } from '../lib/gantt/edit'
+import type { EditOp, End, Plan } from '../lib/gantt/edit'
+import { MS_TAIL, RH, geometry, rangeLabel, render } from '../lib/gantt/render'
+import type { DayKind, EdgeHit, EditView, GSprint } from '../lib/gantt/render'
 import {
   DAY,
   PPD_DAY,
@@ -41,6 +45,7 @@ import {
 } from '../lib/gantt/time'
 import type { DayTick } from '../lib/gantt/time'
 import { uiNumber, uiText } from '../locales/ui'
+import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
 
 /**
@@ -62,6 +67,7 @@ import { useProjectStore } from '../stores/project'
 const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
+const auth = useAuthStore()
 
 const projectKey = computed(() => {
   const key = route.params.key
@@ -491,6 +497,20 @@ function startPaneResize(e: PointerEvent): void {
   grip.addEventListener('pointercancel', up)
 }
 
+// ── 編集の状態（5.14「編集」）────────────────────────────────
+
+/** ドラッグの操作を出すか。**`ticket.edit` を持つ人だけ**（持たない人にはカーソルも変えない） */
+const canEdit = computed(() => auth.canInProject(projectKey.value, 'ticket.edit'))
+/** 吸着の単位（分）。プロジェクトの設定（5.9.6「ガントの吸着」） */
+const snapUnit = computed(() => readGanttSnap(projectStore.current?.settings))
+
+/** ドラッグ中・応答待ちの予定。描画はこの値で帯と依存線を描き直す */
+const override = shallowRef<Map<number, Plan>>(new Map())
+/** 応答を待っているチケット（破線で描き、掴めなくする） */
+const pending = shallowRef<Set<number>>(new Set())
+/** 編集の結果を出す通知の行（本体の上。トーストにしない。6.4） */
+const editNotice = ref('')
+
 // ── 描画 ─────────────────────────────────────────────────────
 
 const chart = useTemplateRef<HTMLDivElement>('chart')
@@ -596,6 +616,7 @@ function draw(): void {
     freeRight: freeRight(W),
     idOf: fullId,
     text: renderText,
+    edit: editView(),
   })
   s.innerHTML = out.svg
   edges = out.edges
@@ -603,7 +624,7 @@ function draw(): void {
 
 // 材料が変わったら描き直す（描画は rAF で1回にまとめる）
 watch(
-  [rows, links, gSprints, calendarDays, calendarLoaded, ppd, hover, detailSeq, paneWidth, now, baseTz, range],
+  [rows, links, gSprints, calendarDays, calendarLoaded, ppd, hover, detailSeq, paneWidth, now, baseTz, range, override, pending],
   () => requestDraw(),
 )
 
@@ -747,20 +768,45 @@ function edgeAt(p: { x: number; y: number }): EdgeHit | undefined {
 function onChartMove(e: PointerEvent): void {
   const p = localPoint(e)
   cursor = p
+  if (drag) {
+    dragMove(p, e.altKey)
+    requestDraw()
+    return
+  }
   const i = rowAtY(p.y)
   const r = i === null ? undefined : rows.value[i]
   hover.value = r?.kind === 'ticket' ? r.item.seq : null
-  chart.value!.style.cursor = edgeAt(p) ? 'pointer' : ''
+  const h = edgeAt(p) ? null : hitAt(p)
+  hotHandle = h?.type === 'handle' ? { seq: h.seq, end: h.end } : null
+  chart.value!.style.cursor = edgeAt(p)
+    ? 'pointer'
+    : h?.type === 'handle' || h?.type === 'create'
+      ? 'crosshair'
+      : h?.type === 'grab'
+        ? h.kind === 'move' ? 'grab' : 'ew-resize'
+        : ''
   requestDraw()
 }
 
 function onChartLeave(): void {
+  if (drag) return
   cursor = null
   hover.value = null
+  hotHandle = null
   requestDraw()
 }
 
 function onChartClick(e: MouseEvent): void {
+  // ドラッグした後の click と、pointerup で処理済みの click は捨てる
+  if (suppressClick) {
+    suppressClick = false
+    return
+  }
+  clickAt(e)
+}
+
+/** 押した場所を開く（端の札なら送り、行なら詳細） */
+function clickAt(e: MouseEvent): void {
   const p = localPoint(e)
   const edge = edgeAt(p)
   if (edge) {
@@ -770,6 +816,360 @@ function onChartClick(e: MouseEvent): void {
   const i = rowAtY(p.y)
   const r = i === null ? undefined : rows.value[i]
   if (r?.kind === 'ticket') openDetail(r.item.seq, e)
+}
+
+// ── 編集（5.14「編集」）──────────────────────────────────────
+
+/** 掴む前に動かしてよい距離。**3px 未満の動きはクリック**として詳細を開く */
+const CLICK_SLOP = 3
+/** 本体の左右の端に寄せると横へ送る幅 */
+const AUTO_SCROLL_EDGE = 32
+
+type Hit =
+  | { type: 'handle'; seq: number; end: End }
+  | { type: 'grab'; seq: number; kind: 'move' | 'start' | 'end' }
+  | { type: 'create'; seq: number }
+
+type Drag =
+  | { mode: 'plan'; seq: number; op: EditOp; x0: number; y0: number; started: boolean; plan: Plan | null; alt: boolean }
+  | {
+      mode: 'link'
+      seq: number
+      from: End
+      x0: number
+      y0: number
+      started: boolean
+      target: { seq: number; end: End; ok: boolean; text: string } | null
+      at: { x: number; y: number }
+    }
+
+let drag: Drag | null = null
+let dragPointer = -1
+let suppressClick = false
+/** ポインタが載っている取っ手（濃く描く） */
+let hotHandle: { seq: number; end: End } | null = null
+
+/** 画面上の x の時刻 */
+function timeAtX(x: number): number {
+  return range.value.t0 + (((chart.value?.scrollLeft ?? 0) + x) / ppd.value) * DAY
+}
+
+/** 時刻の画面上の x */
+function xAt(t: number): number {
+  return ((t - range.value.t0) / DAY) * ppd.value - (chart.value?.scrollLeft ?? 0)
+}
+
+/** 編集中の予定を当てた item（描画と同じ値で当たりを取る） */
+function liveItem(seq: number): GItem | undefined {
+  const it = items.value.get(seq)
+  const p = override.value.get(seq)
+  return it && p ? { ...it, s: p.s, e: p.e, allDay: p.allDay } : it
+}
+
+/** 帯の両端の画面上の位置。自分の予定が無ければ null（寸法線は掴めない） */
+function spanX(it: GItem): { xs: number; xf: number; has: { s: boolean; e: boolean } } | null {
+  if (it.s === null && it.e === null) return null
+  const xs = xAt((it.s ?? it.e)!)
+  let xf = xAt((it.e ?? it.s)!)
+  if (it.s !== null && it.e !== null && xf - xs < 3) xf = xs + 3
+  return { xs, xf, has: { s: it.s !== null, e: it.e !== null } }
+}
+
+function rowCenterY(i: number): number {
+  return geom.value.top + i * RH - (chart.value?.scrollTop ?? 0) + RH / 2
+}
+
+/** ポインタの下で何ができるか（5.14「編集」の表）。編集できなければ常に null */
+function hitAt(p: { x: number; y: number }): Hit | null {
+  if (!canEdit.value || p.x > freeRight(chart.value?.clientWidth ?? 0)) return null
+  const i = rowAtY(p.y)
+  const r = i === null ? undefined : rows.value[i]
+  if (r?.kind !== 'ticket' || pending.value.has(r.item.seq)) return null
+  const it = liveItem(r.item.seq)!
+  const sx = spanX(it)
+  if (!sx) return { type: 'create', seq: it.seq }
+  const y = rowCenterY(i!)
+  for (const h of handlesOf(sx.xs, sx.xf, sx.has)) {
+    if (Math.hypot(p.x - h.x, p.y - y) <= HANDLE_R + 3) return { type: 'handle', seq: it.seq, end: h.end }
+  }
+  if (Math.abs(p.y - y) > 9) return null
+  const kind = grabAt(p.x, sx.xs, sx.xf, sx.has, MS_TAIL)
+  return kind === null || kind === 'create' ? null : { type: 'grab', seq: it.seq, kind }
+}
+
+function onChartPointerDown(e: PointerEvent): void {
+  // 前の操作の click が来なかったとき（Esc で取り消した等）に、抑止を持ち越さない
+  suppressClick = false
+  if (e.button !== 0 || drag) return
+  const p = localPoint(e)
+  if (edgeAt(p)) return
+  const h = hitAt(p)
+  if (!h) return
+  const t = timeAtX(p.x)
+  if (h.type === 'handle') {
+    drag = { mode: 'link', seq: h.seq, from: h.end, x0: p.x, y0: p.y, started: false, target: null, at: p }
+  } else {
+    const it = liveItem(h.seq)!
+    const kind = h.type === 'create' ? 'create' : h.kind
+    drag = {
+      mode: 'plan',
+      seq: h.seq,
+      op: { kind, s0: it.s, e0: it.e, allDay0: it.allDay, t0: t },
+      x0: p.x,
+      y0: p.y,
+      started: false,
+      plan: null,
+      alt: e.altKey,
+    }
+  }
+  dragPointer = e.pointerId
+  chart.value!.setPointerCapture(e.pointerId)
+}
+
+/** ドラッグを進める。3px を超えるまでは始めない（クリックのまま） */
+function dragMove(p: { x: number; y: number }, alt: boolean): void {
+  const d = drag
+  if (!d) return
+  if (!d.started) {
+    if (Math.hypot(p.x - d.x0, p.y - d.y0) < CLICK_SLOP) return
+    d.started = true
+    suppressClick = true
+    editNotice.value = ''
+  }
+  if (d.mode === 'plan') {
+    d.alt = alt
+    const plan = planAt(d.op, timeAtX(p.x), baseTz.value, alt ? null : snapUnit.value)
+    d.plan = plan
+    const next = new Map(override.value)
+    next.set(d.seq, plan)
+    override.value = next
+    chart.value!.style.cursor = d.op.kind === 'move' ? 'grabbing' : d.op.kind === 'create' ? 'crosshair' : 'ew-resize'
+  } else {
+    d.at = p
+    d.target = linkTargetAt(d, p)
+    chart.value!.style.cursor = d.target && !d.target.ok ? 'not-allowed' : 'crosshair'
+  }
+  autoScroll(p.x)
+}
+
+/** 依存の相手（5.14「依存を引く」）。ポインタが載っている行の帯で、落とせるかと理由も返す */
+function linkTargetAt(d: Extract<Drag, { mode: 'link' }>, p: { x: number; y: number }): Extract<Drag, { mode: 'link' }>['target'] {
+  const i = rowAtY(p.y)
+  const r = i === null ? undefined : rows.value[i]
+  if (r?.kind !== 'ticket') return null
+  const it = liveItem(r.item.seq)!
+  const sx = spanX(it)
+  if (!sx) {
+    // 日付の無い行（寸法線だけの親を含む）は、依存線を繋がない
+    return { seq: it.seq, end: 'S', ok: false, text: uiText('日付の無いチケットには引けません') }
+  }
+  const lo = sx.has.s ? sx.xs - 8 : sx.xf - MS_TAIL
+  const hi = sx.has.e ? sx.xf + 8 : sx.xs + MS_TAIL
+  if (p.x < lo || p.x > hi) return null
+  const end = endAt(p.x, sx.xs, sx.xf, sx.has)
+  const type = depTypeOf(d.from, end)
+  if (it.seq === d.seq) return { seq: it.seq, end, ok: false, text: uiText('同じチケットには引けません') }
+  if (links.value.some((l) => l.source_seq === d.seq && l.target_seq === it.seq && l.link_type === type)) {
+    return { seq: it.seq, end, ok: false, text: uiText('{type} の依存はすでにあります', { type }) }
+  }
+  if (wouldCycle(links.value, d.seq, it.seq)) {
+    return { seq: it.seq, end, ok: false, text: uiText('依存が輪になるため引けません') }
+  }
+  return { seq: it.seq, end, ok: true, text: `${type} ${fullId(d.seq)} → ${fullId(it.seq)}` }
+}
+
+let scrollRaf = 0
+let scrollSpeed = 0
+
+/** 本体の左右の端 32px に寄せると横へ送る（離れた日付へ運ぶため） */
+function autoScroll(x: number): void {
+  const el = chart.value
+  if (!el) return
+  const right = freeRight(el.clientWidth)
+  scrollSpeed = x < AUTO_SCROLL_EDGE ? -Math.ceil((AUTO_SCROLL_EDGE - x) / 3) : x > right - AUTO_SCROLL_EDGE ? Math.ceil((x - right + AUTO_SCROLL_EDGE) / 3) : 0
+  if (scrollSpeed === 0 || scrollRaf !== 0) return
+  const step = () => {
+    scrollRaf = 0
+    if (!drag?.started || scrollSpeed === 0 || !cursor) return
+    el.scrollLeft += scrollSpeed
+    dragMove(cursor, drag.mode === 'plan' ? drag.alt : false)
+    requestDraw()
+    scrollRaf = requestAnimationFrame(step)
+  }
+  scrollRaf = requestAnimationFrame(step)
+}
+
+function endDrag(): Drag | null {
+  const d = drag
+  drag = null
+  scrollSpeed = 0
+  cancelAnimationFrame(scrollRaf)
+  scrollRaf = 0
+  if (dragPointer >= 0 && chart.value?.hasPointerCapture(dragPointer)) chart.value.releasePointerCapture(dragPointer)
+  dragPointer = -1
+  if (chart.value) chart.value.style.cursor = ''
+  return d
+}
+
+function onChartPointerUp(e: PointerEvent): void {
+  if (!drag || e.pointerId !== dragPointer) return
+  const d = endDrag()
+  if (!d?.started) {
+    // **動かさずに離したら、ここでクリックとして扱う。** 押した SVG の要素は描き直しで
+    // DOM から消えており、ポインタを捕捉していると Chrome が click を出さないことがある
+    // （押した要素と離した要素の共通の祖先が取れない）。出たときの click は捨てる
+    suppressClick = true
+    clickAt(e)
+    return
+  }
+  if (d.mode === 'plan') {
+    if (d.plan) void commitPlan(d.seq, d.plan)
+  } else if (d.target?.ok) {
+    void commitLink(d.seq, d.target.seq, depTypeOf(d.from, d.target.end))
+  }
+  requestDraw()
+}
+
+/** `Esc` で取り消す（掴む前の位置に戻り、何も送らない） */
+function cancelDrag(): void {
+  const d = endDrag()
+  if (d?.mode === 'plan') dropOverride(d.seq)
+  requestDraw()
+}
+
+function onPointerCancel(): void {
+  if (drag) cancelDrag()
+}
+
+function dropOverride(seq: number): void {
+  if (!override.value.has(seq)) return
+  const next = new Map(override.value)
+  next.delete(seq)
+  override.value = next
+}
+
+/** `Alt`（Mac では `Option`）の押し離しは、ドラッグの途中でも吸着に効かせる */
+function onEditKey(e: KeyboardEvent): void {
+  if (!drag) return
+  if (e.type === 'keydown' && e.key === 'Escape') {
+    e.preventDefault()
+    cancelDrag()
+    return
+  }
+  if (e.key === 'Alt' && drag.mode === 'plan' && drag.started && cursor) {
+    dragMove(cursor, e.type === 'keydown')
+    requestDraw()
+  }
+}
+
+/** 一覧の行を、サーバの応答で差し替える（「変更の反映」と同じ） */
+function replaceTicket(next: TicketDetail): void {
+  tickets.value = tickets.value.map((t) => (t.seq === next.seq ? { ...t, ...next } : t))
+}
+
+const detailPane = useTemplateRef<InstanceType<typeof TicketDetailPane>>('detailPane')
+
+/**
+ * 予定を送る（5.14「送り方と見え方」）。**応答までは新しい位置を破線で描き**、
+ * 成功したら行を差し替える。409 は上書きせず、取り直して最新の位置に戻す。
+ */
+async function commitPlan(seq: number, plan: Plan): Promise<void> {
+  const t = tickets.value.find((x) => x.seq === seq)
+  if (!t) {
+    dropOverride(seq)
+    return
+  }
+  if (t.start_at === plan.s && t.due_at === plan.e && t.all_day === plan.allDay) {
+    dropOverride(seq)
+    return
+  }
+  pending.value = new Set(pending.value).add(seq)
+  try {
+    const next = await ticketsApi.updateTicket(projectKey.value, seq, t.version, {
+      start_at: plan.s,
+      due_at: plan.e,
+      all_day: plan.allDay,
+    })
+    replaceTicket(next)
+    // 詳細で同じチケットを開いていれば、応答を渡す（渡さないと次の編集が 409 になる）
+    if (detailSeq.value === seq) detailPane.value?.replace(next)
+  } catch (e) {
+    const err = toApiError(e)
+    if (err.status === 409) {
+      try {
+        const fresh = await ticketsApi.getTicket(projectKey.value, seq)
+        replaceTicket(fresh)
+        if (detailSeq.value === seq) detailPane.value?.replace(fresh)
+      } catch {
+        // 取り直せなくても、上書きしていないことは変わらない
+      }
+      editNotice.value = uiText('{id} は他の人が先に更新していました。最新の予定を表示しています', { id: fullId(seq) })
+    } else {
+      editNotice.value = err.details[0]?.message ?? err.message
+    }
+  } finally {
+    const next = new Set(pending.value)
+    next.delete(seq)
+    pending.value = next
+    dropOverride(seq)
+  }
+}
+
+/** 依存を作る（5.14「依存を引く」）。成功したら一覧を取り直す（「変更の反映」） */
+async function commitLink(source: number, target: number, type: string): Promise<void> {
+  try {
+    await linksApi.createLink(projectKey.value, source, {
+      target_seq: target,
+      link_type: type as linksApi.LinkType,
+      lag_days: 0,
+    })
+    await loadTickets()
+    if (detailSeq.value === source || detailSeq.value === target) detailPane.value?.reload()
+  } catch (e) {
+    const err = toApiError(e)
+    editNotice.value = err.details[0]?.message ?? err.message
+  }
+}
+
+/** 描画に渡す編集の見え方 */
+function editView(): EditView | undefined {
+  if (!canEdit.value && override.value.size === 0) return undefined
+  const d = drag?.started ? drag : null
+  let tag: EditView['tag'] = null
+  let link: EditView['link'] = null
+  if (d?.mode === 'plan' && d.plan) {
+    const it = liveItem(d.seq)
+    if (it) {
+      const label = rangeLabel(it, baseTz.value, viewTz.value)
+      const toTimed = (d.op.kind === 'create' || d.op.allDay0) && !d.plan.allDay
+      tag = { seq: d.seq, text: toTimed ? `${label} · ${uiText('時刻付きになります')}` : label }
+    }
+  } else if (d?.mode === 'link') {
+    const it = liveItem(d.seq)
+    const i = rowOf.value.get(d.seq)
+    const sx = it ? spanX(it) : null
+    if (sx && i !== undefined) {
+      const x0 = d.from === 'S' ? sx.xs - 9 : sx.xf + 9
+      let ring: { x: number; y: number } | null = null
+      if (d.target && d.target.ok) {
+        const ti = rowOf.value.get(d.target.seq)
+        const tsx = spanX(liveItem(d.target.seq)!)
+        if (ti !== undefined && tsx) ring = { x: d.target.end === 'S' ? tsx.xs : tsx.xf, y: rowCenterY(ti) }
+      }
+      link = { x0, y0: rowCenterY(i), x1: d.at.x, y1: d.at.y, ok: d.target?.ok ?? true, text: d.target?.text ?? '', ring }
+    }
+  }
+  const handleSeq = d?.mode === 'link' ? d.seq : drag ? null : hover.value
+  return {
+    override: override.value,
+    ghost: d?.mode === 'plan' && d.op.kind !== 'create' ? d.seq : null,
+    pending: pending.value,
+    tag,
+    handles: canEdit.value && handleSeq !== null && !pending.value.has(handleSeq)
+      ? { seq: handleSeq, hot: hotHandle?.seq === handleSeq ? hotHandle.end : d?.mode === 'link' ? d.from : null }
+      : null,
+    link,
+  }
 }
 
 function onChartScroll(): void {
@@ -817,6 +1217,8 @@ onMounted(() => {
   loadPaneWidth()
   loadCollapsed()
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('keydown', onEditKey)
+  window.addEventListener('keyup', onEditKey)
   document.addEventListener('pointerdown', onDocumentPointerDown)
   void projectStore.fetchCurrent(projectKey.value)
   void loadVocabulary()
@@ -831,7 +1233,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('keydown', onEditKey)
+  window.removeEventListener('keyup', onEditKey)
   document.removeEventListener('pointerdown', onDocumentPointerDown)
+  cancelAnimationFrame(scrollRaf)
   clearInterval(nowTimer)
   cancelAnimationFrame(raf)
   cancelAnimationFrame(anim)
@@ -1012,6 +1417,10 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
       </template>
     </PageHeader>
 
+    <p v-if="editNotice" class="gantt-notice gantt-edit-notice" role="alert">
+      <span>{{ editNotice }}</span>
+      <button type="button" class="notice-close" :aria-label="$ui('閉じる')" @click="editNotice = ''">✕</button>
+    </p>
     <p v-if="truncated" class="gantt-notice" role="status">
       {{ $ui('{value0}件を超えています。絞り込むと残りを表示できます（全{value1}件）', { value0: uiNumber(GANTT_LIMIT), value1: uiNumber(total) }) }}
     </p>
@@ -1095,7 +1504,10 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
         class="gantt-chart"
         @scroll="onChartScroll"
         @wheel="onChartWheel"
+        @pointerdown="onChartPointerDown"
         @pointermove="onChartMove"
+        @pointerup="onChartPointerUp"
+        @pointercancel="onPointerCancel"
         @pointerleave="onChartLeave"
         @click="onChartClick"
       >
@@ -1107,6 +1519,7 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
       <aside v-if="detailSeq !== null" class="gantt-detail" :style="{ width: `${paneWidth}px` }">
         <div class="gantt-grip" :title="$ui('ドラッグで幅を変える')" @pointerdown="startPaneResize"></div>
         <TicketDetailPane
+          ref="detailPane"
           :project-key="projectKey"
           :seq="detailSeq"
           :members="members"
@@ -1223,6 +1636,23 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
   font-size: 12px;
   color: var(--pb-text-muted);
   border-bottom: 1px solid var(--pb-line);
+}
+
+.gantt-edit-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-2);
+  color: var(--pb-danger-text);
+  background: var(--pb-danger-bg);
+}
+
+.gantt-edit-notice .notice-close {
+  margin-left: auto;
+  padding: 0 var(--pb-space-1);
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
 }
 
 .gantt-body {
@@ -1584,6 +2014,27 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
 .gantt-svg :deep(.d-tagt) { fill: var(--pb-11); font: 9.5px var(--pb-font-mono); }
 .gantt-svg :deep(.dep.ai .d-tagr) { stroke: var(--pb-ai-border); stroke-dasharray: 2 1.5; }
 .gantt-svg :deep(.dep.ai .d-tagt) { fill: var(--pb-ai-text); }
+
+/* 編集（5.14「編集」）。影・応答待ち・取っ手・ドラッグの札・引いている線・違反 */
+.gantt-svg :deep(.ghost) { opacity: 0.3; }
+.gantt-svg :deep(.bar.pend .b),
+.gantt-svg :deep(.bar.pend .ms) { stroke-dasharray: 3 2; stroke-width: 1.5; }
+.gantt-svg :deep(.hdl) { fill: var(--pb-1); stroke: var(--g-dep-hi); stroke-width: 1.2; cursor: crosshair; }
+.gantt-svg :deep(.hdl.hot) { fill: var(--g-bar); stroke: var(--g-bar); }
+.gantt-svg :deep(.dtag) { fill: color-mix(in srgb, var(--pb-1) 94%, transparent); stroke: var(--g-bar); stroke-width: 1; }
+.gantt-svg :deep(.dtag-t) { fill: var(--pb-12); font: 10.5px var(--pb-font-mono); }
+.gantt-svg :deep(.dtag.no) { stroke: var(--pb-danger); }
+.gantt-svg :deep(.dtag-t.no) { fill: var(--pb-danger-text); }
+.gantt-svg :deep(.ldrag) { stroke: var(--g-bar); stroke-width: 1.25; stroke-dasharray: 4 3; }
+.gantt-svg :deep(.ldrag.no) { stroke: var(--pb-danger); }
+.gantt-svg :deep(.lring) { fill: none; stroke: var(--g-bar); stroke-width: 1.5; }
+.gantt-svg :deep(.lring.no) { stroke: var(--pb-danger); }
+.gantt-svg :deep(.dep.bad .d) { stroke: var(--pb-danger); }
+.gantt-svg :deep(.dep.bad .d-h) { fill: var(--pb-danger); }
+.gantt-svg :deep(.dep.bad .d-s) { stroke: var(--pb-danger); }
+.gantt-svg :deep(.dep.bad .d-stop) { stroke: var(--pb-danger); }
+.gantt-svg :deep(.dep.bad .d-tagr) { stroke: var(--pb-danger-border); }
+.gantt-svg :deep(.dep.bad .d-tagt) { fill: var(--pb-danger-text); }
 
 .gantt-svg :deep(.roll) { stroke: var(--pb-11); stroke-width: 1; fill: none; }
 .gantt-svg :deep(.roll-h) { fill: var(--pb-11); }

@@ -2,9 +2,9 @@
 /**
  * プロジェクト設定のカレンダータブ（`GuiDesign.md` 5.9.6）。
  *
- * 基準タイムゾーン・祝日の取得元・休日の一覧の3ブロック。API は `ApiDesign.md` 5.8、
- * 基準タイムゾーンの保存だけは `PATCH /projects/:key`（5.5）で、**このブロック
- * だけの `[保存]`** を持つ——一般タブの `[保存]` に混ぜると、タイムゾーンを変えた人が
+ * 基準タイムゾーン・ガントの吸着・祝日の取得元・休日の一覧の4ブロック。API は `ApiDesign.md` 5.8、
+ * 基準タイムゾーンとガントの吸着の保存は `PATCH /projects/:key`（5.5）で、**それぞれ
+ * のブロックだけの `[保存]`** を持つ——一般タブの `[保存]` に混ぜると、タイムゾーンを変えた人が
  * 休日の一覧を見ないまま保存する。
  *
  * **取得はボタンだけが契機である**（2026-09-27 利用者の判断）。国を選んでも、
@@ -18,7 +18,8 @@ import * as calendarApi from '../api/calendar'
 import { googleCalendarSources } from '../api/calendar'
 import type { ProjectCalendar, ProjectCalendarDay } from '../api/calendar'
 import * as projectsApi from '../api/projects'
-import type { ProjectDetail } from '../api/projects'
+import { GANTT_SNAP_CHOICES, mergeGanttSnap, readGanttSnap } from '../api/projects'
+import type { GanttSnapMinutes, ProjectDetail } from '../api/projects'
 import { formatDateTime } from '../lib/datetime'
 import { uiLocaleTag, uiText } from '../locales/ui'
 
@@ -69,6 +70,46 @@ async function saveTimezone(): Promise<void> {
     tzError.value = toApiError(e)
   } finally {
     tzSaving.value = false
+  }
+}
+
+// ── ガントの吸着（5.9.6。`project.settings.gantt_snap_minutes`）──────────
+const snap = ref<GanttSnapMinutes>(readGanttSnap(props.project.settings))
+const snapSaving = ref(false)
+const snapResult = ref('')
+const snapError = ref<ApiError | null>(null)
+const savedSnap = computed(() => readGanttSnap(props.project.settings))
+
+const snapLabels: Record<GanttSnapMinutes, () => string> = {
+  1440: () => uiText('日'),
+  60: () => uiText('1時間'),
+  30: () => uiText('30分'),
+  15: () => uiText('15分'),
+}
+
+watch(savedSnap, (v) => {
+  snap.value = v
+})
+
+/**
+ * **取得した `settings` の吸着の単位だけを差し替えて全体を送る**（5.5 の丸ごと置き換え）。
+ * `If-Match` は取得時の `version`——基準タイムゾーンを保存した後でも、`updated` で
+ * 親が持つ `project` が差し替わっているので、その値を使う。
+ */
+async function saveSnap(): Promise<void> {
+  snapSaving.value = true
+  snapResult.value = ''
+  snapError.value = null
+  try {
+    const res = await projectsApi.updateProject(props.projectKey, props.project.version, {
+      settings: mergeGanttSnap(props.project.settings, snap.value),
+    })
+    emit('updated', res)
+    snapResult.value = uiText('保存しました')
+  } catch (e) {
+    snapError.value = toApiError(e)
+  } finally {
+    snapSaving.value = false
   }
 }
 
@@ -301,6 +342,28 @@ onMounted(() => {
     </section>
 
     <section class="block">
+      <h2 class="block-title">{{ $ui('ガントの吸着') }}</h2>
+      <div class="row">
+        <select v-model.number="snap" class="snap" :disabled="!canEdit || snapSaving" :aria-label="$ui('ガントの吸着')">
+          <option v-for="m in GANTT_SNAP_CHOICES" :key="m" :value="m">{{ snapLabels[m]() }}</option>
+        </select>
+        <span class="spacer"></span>
+        <button
+          v-if="canEdit"
+          type="button"
+          class="primary"
+          :disabled="snapSaving || snap === savedSnap"
+          @click="saveSnap"
+        >{{ $ui('保存') }}</button>
+      </div>
+      <p class="hint">
+        ⓘ {{ $ui('ガントでバーを動かすときに揃える単位です。区切りは基準タイムゾーンの時刻で、Alt（Mac では Option）を押している間は外れます') }}
+      </p>
+      <p v-if="snapResult" class="ok" role="status">✓ {{ snapResult }}</p>
+      <p v-if="snapError" class="alert" role="alert">✕ {{ snapError.message }}</p>
+    </section>
+
+    <section class="block">
       <h2 class="block-title">{{ $ui('祝日の取得元') }}</h2>
       <fieldset class="choices" :disabled="!canEdit || sourceBusy">
         <legend class="sr-only">{{ $ui('祝日の取得元') }}</legend>
@@ -494,7 +557,8 @@ input[type='date'] {
   flex: 1;
 }
 
-.tz {
+.tz,
+.snap {
   min-width: 0;
   max-width: 100%;
 }

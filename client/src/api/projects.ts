@@ -123,7 +123,7 @@ export function unarchiveProject(key: string): Promise<ProjectDetail> {
 /**
  * `project.settings` の `repositories`（`DbDesign.md` 6.4）。
  *
- * **`settings` に定義する唯一のキー**である。PBがこのURLを使って
+ * **`settings` に定義する2つのキーの1つ**である（もう1つは `gantt_snap_minutes`）。PBがこのURLを使って
  * 自動で何かを行うことはない。用途は画面のリンクと、MCP経由でエージェントが
  * プロジェクト情報として受け取ることの2つ（`GuiDesign.md` 5.9.1）。
  */
@@ -185,4 +185,28 @@ export function mergeRepositories(
       return out
     })
   return { ...settings, repositories: cleaned }
+}
+
+/**
+ * ガントの吸着の単位（分）。`project.settings.gantt_snap_minutes`（`DbDesign.md` 6.4、
+ * `GuiDesign.md` 5.14「編集」）。日・1時間・30分・15分の4つで、既定は日。
+ */
+export const GANTT_SNAP_CHOICES = [1440, 60, 30, 15] as const
+export type GanttSnapMinutes = (typeof GANTT_SNAP_CHOICES)[number]
+
+/**
+ * `settings` から吸着の単位を読む。**無い・知らない値は日（1440）として扱う**
+ * ——サーバは中身を検証しないので（5.5）、何が入っていても画面は動く。
+ */
+export function readGanttSnap(settings: ProjectDetail['settings'] | undefined): GanttSnapMinutes {
+  const v = settings?.['gantt_snap_minutes']
+  return GANTT_SNAP_CHOICES.find((c) => c === v) ?? 1440
+}
+
+/** 吸着の単位だけを差し替えた `settings`（丸ごと置き換えなので、他のキーを落とさない） */
+export function mergeGanttSnap(
+  settings: ProjectDetail['settings'],
+  minutes: GanttSnapMinutes,
+): ProjectDetail['settings'] {
+  return { ...settings, gantt_snap_minutes: minutes }
 }
