@@ -2125,6 +2125,11 @@ type Querier interface {
 	// タグだけを付け外しした場合もこの文を通るので、9.2.5 の ETag が必ず変わる。
 	//
 	UpdateTicket(ctx context.Context, arg UpdateTicketParams) (int64, error)
+	// UpdateTicketLinkLag は依存のずらし（lag_days）だけを変える（9.10.1 の PATCH。pb-231）。
+	//
+	// **このチケットに紐づく行か**を id と合わせて確かめる（source / target のどちらでもよい。
+	// DELETE と同じく direction を問わない）。種別の検査はハンドラが GetTicketLink で行う。
+	UpdateTicketLinkLag(ctx context.Context, arg UpdateTicketLinkLagParams) (int64, error)
 	// 部分更新（ApiDesign.md 9.10.2 の PATCH）。
 	//
 	// **NULL 可の項目は `<列>_set` で「送られたか」を分ける。** COALESCE だけでは

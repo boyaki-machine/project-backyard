@@ -380,3 +380,28 @@ func (q *Queries) TicketLinkExists(ctx context.Context, arg TicketLinkExistsPara
 	err := row.Scan(&column_1)
 	return column_1, err
 }
+
+const updateTicketLinkLag = `-- name: UpdateTicketLinkLag :execrows
+UPDATE ticket_link
+   SET lag_days = $1
+ WHERE id = $2
+   AND (source_ticket_id = $3 OR target_ticket_id = $3)
+`
+
+type UpdateTicketLinkLagParams struct {
+	LagDays  int32
+	ID       string
+	TicketID string
+}
+
+// UpdateTicketLinkLag は依存のずらし（lag_days）だけを変える（9.10.1 の PATCH。pb-231）。
+//
+// **このチケットに紐づく行か**を id と合わせて確かめる（source / target のどちらでもよい。
+// DELETE と同じく direction を問わない）。種別の検査はハンドラが GetTicketLink で行う。
+func (q *Queries) UpdateTicketLinkLag(ctx context.Context, arg UpdateTicketLinkLagParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateTicketLinkLag, arg.LagDays, arg.ID, arg.TicketID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

@@ -1393,4 +1393,7 @@ export const uiMessages: Record<string, string> = {
   "後行のタイトル": "Successor title",
   "判定": "Check",
   "⚠ 反している": "⚠ Violated",
+  "ずらし": "Lag",
+  "押すとずらしを変えられます": "Click to change the lag",
+  "ずらしは -{value0}〜{value0} の整数で入れてください": "Enter the lag as a whole number from -{value0} to {value0}",
 }

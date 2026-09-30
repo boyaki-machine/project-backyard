@@ -57,7 +57,7 @@ import { statusLabel } from '../lib/catalogLabels'
 import * as dodApi from '../api/dod'
 import type { TicketDoDItem } from '../api/dod'
 import * as linksApi from '../api/links'
-import { linkLabel, linkLabelTitle } from '../api/links'
+import { LAG_LINK_TYPES, MAX_LAG_DAYS, linkLabel, linkLabelTitle } from '../api/links'
 import type { LinkChoice, TicketLink } from '../api/links'
 import type { ProjectMember, Workflow } from '../api/projects'
 import * as referencesApi from '../api/references'
@@ -943,6 +943,60 @@ function compareLinks(a: TicketLink, b: TicketLink): number {
   if (a.direction !== b.direction) return a.direction === 'outgoing' ? -1 : 1
   if (a.link_type !== b.link_type) return a.link_type < b.link_type ? -1 : 1
   return a.ticket.seq - b.ticket.seq
+}
+
+// ── ずらし（5.5「行と操作」。`ApiDesign.md` 9.10.1 の PATCH。pb-231）──────
+
+/** ずらしを直している行（リンクの id）。同時に1つだけ */
+const lagEditing = ref<string | null>(null)
+const lagDraft = ref('')
+
+function canEditLag(l: TicketLink): boolean {
+  return canEdit.value && LAG_LINK_TYPES.includes(l.link_type)
+}
+
+function startLag(l: TicketLink): void {
+  lagEditing.value = l.id
+  lagDraft.value = String(l.lag_days)
+  linkError.value = ''
+}
+
+function cancelLag(): void {
+  lagEditing.value = null
+}
+
+/**
+ * ずらしを送る。**-365〜365 の整数だけを送る**（サーバも 422 で弾く）。成功したら行を
+ * 差し替えて `updated` を出す——ガントの上で開いていれば、線の札と違反の印が描き直される。
+ * 失敗したら編集を開いたまま、一覧の下に `message` を出す（6.4）。
+ */
+async function saveLag(l: TicketLink): Promise<void> {
+  const t = ticket.value
+  if (t === null) return
+  // **`type="number"` の値は数になって届く**（7.4）。文字列として扱う前に String() を通す
+  const raw = String(lagDraft.value).trim()
+  const lag = Number(raw)
+  if (raw === '' || !Number.isInteger(lag) || Math.abs(lag) > MAX_LAG_DAYS) {
+    linkError.value = uiText('ずらしは -{value0}〜{value0} の整数で入れてください', { value0: MAX_LAG_DAYS })
+    return
+  }
+  if (lag === l.lag_days) {
+    lagEditing.value = null
+    return
+  }
+  busy.value = true
+  linkError.value = ''
+  try {
+    const next = await linksApi.updateLink(props.projectKey, t.seq, l.id, { lag_days: lag })
+    t.links = t.links.map((x) => (x.id === next.id ? next : x))
+    lagEditing.value = null
+    emit('updated', t)
+  } catch (e) {
+    const err = toApiError(e)
+    linkError.value = err.details[0]?.message ?? err.message
+  } finally {
+    busy.value = false
+  }
 }
 
 async function runDeleteLink(): Promise<void> {
@@ -2233,7 +2287,38 @@ defineExpose({
             <li v-for="l in links" :key="l.id" class="rel-row">
               <!-- **`blocks` と依存の4種は主語を書く**（5.5）。行に出ているのは常に相手なので、
                    「先行」だけだとその行のチケットが先行だと読める -->
+              <!-- **FS〜SF はチップを押すとずらしを直せる**（5.5「行と操作」。pb-231） -->
+              <span v-if="lagEditing === l.id" class="rel-lag">
+                <label class="rel-lag-label">
+                  {{ $ui('ずらし') }}
+                  <input
+                    v-model="lagDraft"
+                    type="number"
+                    class="rel-lag-input"
+                    :min="-MAX_LAG_DAYS"
+                    :max="MAX_LAG_DAYS"
+                    step="1"
+                    :disabled="busy"
+                    :aria-label="$ui('ずらし（日）')"
+                    @keydown.enter.prevent="saveLag(l)"
+                    @keydown.esc.prevent="cancelLag"
+                  />
+                  {{ $ui('日') }}
+                </label>
+                <button type="button" class="ref-action" :disabled="busy" @click="saveLag(l)">{{ $ui('保存') }}</button>
+                <button type="button" class="ref-action" :disabled="busy" @click="cancelLag">{{ $ui('取消') }}</button>
+              </span>
+              <button
+                v-else-if="canEditLag(l)"
+                type="button"
+                class="rel-kind rel-kind-edit"
+                :title="`${linkLabelTitle(l.link_type, l.direction)}\n${$ui('押すとずらしを変えられます')}`"
+                @click="startLag(l)"
+              >
+                {{ linkLabel(l.link_type, l.direction, l.lag_days) }}
+              </button>
               <span
+                v-else
                 class="rel-kind"
                 :title="linkLabelTitle(l.link_type, l.direction)"
               >
@@ -3215,6 +3300,38 @@ defineExpose({
   text-align: center;
   white-space: nowrap;
   cursor: help;
+}
+
+/* 押せるチップ（FS〜SF のずらし。pb-231）。形は .rel-kind のまま、押せることだけ足す */
+.rel-kind-edit {
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.rel-kind-edit:hover {
+  border-color: var(--pb-accent);
+  color: var(--pb-text);
+}
+
+.rel-lag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--pb-space-1);
+  font-size: 12px;
+}
+
+.rel-lag-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pb-space-1);
+  color: var(--pb-text-muted);
+}
+
+.rel-lag-input {
+  width: 5em;
 }
 
 /* 行の本体。**`.child-*` の見た目をそのまま使う**（子チケットと同じ並びなので、

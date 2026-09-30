@@ -418,3 +418,115 @@ func TestDeleteLinkNotFound(t *testing.T) {
 		t.Errorf("activity = %d行, want 0", len(q.ticket.activities))
 	}
 }
+
+// ── PATCH（9.10.1。pb-231）──────────────────────────────────
+
+func lagFake(linkType string, lag int32) *fakeQuerier {
+	q := linkFake()
+	row := sampleLink(testLinkID, "outgoing", linkType, 0, 45, "ticketテーブル定義", "task")
+	row.LagDays = lag
+	q.ticket.linkRows = []gen.ListTicketLinksRow{row}
+	return q
+}
+
+func patchLink(q *fakeQuerier, body string) *httptest.ResponseRecorder {
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.updateTicketLink(rec, cmtReq(http.MethodPatch, "/links/"+testLinkID, body, "31", testLinkID))
+	return rec
+}
+
+// **FS〜SF のずらしを変え、200 と変えた1件を返し、activity に1行書く。**
+func TestUpdateLinkLag(t *testing.T) {
+	for _, lt := range lagLinkTypes {
+		q := lagFake(lt, 0)
+		rec := patchLink(q, `{"lag_days":2}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200 (%s)", lt, rec.Code, rec.Body.String())
+		}
+		if got := decodeLink(t, rec); got.LagDays != 2 || got.ID != testLinkID {
+			t.Errorf("%s: 応答 = %+v, want lag_days=2", lt, got)
+		}
+		if len(q.ticket.activities) != 1 {
+			t.Fatalf("%s: activity = %d行, want 1", lt, len(q.ticket.activities))
+		}
+		a := q.ticket.activities[0]
+		if a.OldValue.String != lt+" demo-45" || a.NewValue.String != lt+" demo-45 +2d" {
+			t.Errorf("%s: old/new = %q/%q", lt, a.OldValue.String, a.NewValue.String)
+		}
+	}
+}
+
+// 負のずらし（前倒し）は ` -1d` と書く。**値が変わらなければ activity を書かない。**
+func TestUpdateLinkLagNegativeAndNoop(t *testing.T) {
+	q := lagFake("FS", 3)
+	if rec := patchLink(q, `{"lag_days":-1}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if a := q.ticket.activities[0]; a.OldValue.String != "FS demo-45 +3d" || a.NewValue.String != "FS demo-45 -1d" {
+		t.Errorf("old/new = %q/%q", a.OldValue.String, a.NewValue.String)
+	}
+	q2 := lagFake("FS", 2)
+	if rec := patchLink(q2, `{"lag_days":2}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q2.ticket.activities) != 0 || slices.Contains(q2.opLog, "UpdateTicketLinkLag") {
+		t.Errorf("変わらないのに書いた: activities=%d ops=%v", len(q2.ticket.activities), q2.opLog)
+	}
+}
+
+// **ずらしを持たない種別（relates / duplicates / blocks）は 422 invalid。**
+func TestUpdateLinkLagRejectsNonDependency(t *testing.T) {
+	for _, lt := range []string{"relates", "duplicates", "blocks"} {
+		q := lagFake(lt, 0)
+		rec := patchLink(q, `{"lag_days":1}`)
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"invalid"`) {
+			t.Fatalf("%s: status = %d, want 422 invalid (%s)", lt, rec.Code, rec.Body.String())
+		}
+		if slices.Contains(q.opLog, "UpdateTicketLinkLag") {
+			t.Errorf("%s: 書いてしまった", lt)
+		}
+	}
+}
+
+// 範囲外・整数でない・無い・ほかの項目は 422。**link_type は immutable_field**。
+func TestUpdateLinkLagValidation(t *testing.T) {
+	cases := []struct{ body, code string }{
+		{`{"lag_days":366}`, "invalid"},
+		{`{"lag_days":-366}`, "invalid"},
+		{`{"lag_days":1.5}`, "invalid"},
+		{`{}`, "required"},
+		{`{"lag_days":1,"link_type":"SS"}`, "immutable_field"},
+	}
+	for _, c := range cases {
+		q := lagFake("FS", 0)
+		rec := patchLink(q, c.body)
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"`+c.code+`"`) {
+			t.Errorf("%s: status = %d, want 422 %s (%s)", c.body, rec.Code, c.code, rec.Body.String())
+		}
+	}
+	// 境界の ±365 は通る
+	for _, b := range []string{`{"lag_days":365}`, `{"lag_days":-365}`} {
+		if rec := patchLink(lagFake("FS", 0), b); rec.Code != http.StatusOK {
+			t.Errorf("%s: status = %d, want 200 (%s)", b, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestUpdateLinkLagNotFound(t *testing.T) {
+	q := linkFake()
+	if rec := patchLink(q, `{"lag_days":1}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// **POST も同じ範囲で弾く**（pb-231）。
+func TestCreateLinkRejectsLagOutOfRange(t *testing.T) {
+	q := linkFake()
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.createTicketLink(rec, cmtReq(http.MethodPost, "/links", `{"target_seq":12,"link_type":"FS","lag_days":400}`, "31", ""))
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"lag_days"`) {
+		t.Fatalf("status = %d, want 422 lag_days (%s)", rec.Code, rec.Body.String())
+	}
+}

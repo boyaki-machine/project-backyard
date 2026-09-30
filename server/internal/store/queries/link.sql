@@ -170,3 +170,13 @@ WITH RECURSIVE reach(id) AS (
    WHERE l.link_type IN ('FS', 'SS', 'FF', 'SF', 'blocks')
 )
 SELECT EXISTS (SELECT 1 FROM reach WHERE id = @to_ticket_id::pg_catalog.bpchar)::boolean;
+
+-- UpdateTicketLinkLag は依存のずらし（lag_days）だけを変える（9.10.1 の PATCH。pb-231）。
+--
+-- **このチケットに紐づく行か**を id と合わせて確かめる（source / target のどちらでもよい。
+-- DELETE と同じく direction を問わない）。種別の検査はハンドラが GetTicketLink で行う。
+-- name: UpdateTicketLinkLag :execrows
+UPDATE ticket_link
+   SET lag_days = @lag_days
+ WHERE id = @id
+   AND (source_ticket_id = @ticket_id OR target_ticket_id = @ticket_id);
