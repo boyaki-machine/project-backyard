@@ -98,6 +98,8 @@ export type XShape =
       dash: 'solid' | 'dash' | 'sysDot' | 'dashDot' | 'lgDashDot'
       /** 終わりの側（後行）の端。`triangle` は矢印、`oval` は丸 */
       end?: 'triangle' | 'oval'
+      /** `bent` は直角に1回折れる線（既定）、`straight` はまっすぐな線 */
+      geom?: 'bent' | 'straight'
     }
   | { kind: 'roundRect'; from: XAnchor; to: XAnchor; color: Color; width: number; dash: 'solid' | 'dash' }
 
@@ -393,11 +395,11 @@ function drawingXml(shapes: XShape[]): string {
     const br: XAnchor = { c: flipH ? sh.from.c : sh.to.c, dc: flipH ? sh.from.dc : sh.to.dc, r: flipV ? sh.from.r : sh.to.r, dr: flipV ? sh.from.dr : sh.to.dr }
     const line = `<a:ln w="${sh.width}"><a:solidFill><a:srgbClr val="${rgb(sh.color)}"/></a:solidFill><a:prstDash val="${sh.dash}"/>${sh.kind === 'connector' && sh.end ? `<a:tailEnd type="${sh.end}" w="sm" len="sm"/>` : ''}</a:ln>`
     const xfrm = `<a:xfrm${flipH ? ' flipH="1"' : ''}${flipV ? ' flipV="1"' : ''}><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm>`
-    out.push(`<xdr:twoCellAnchor >${marker('from', tl)}${marker('to', br)}`)
+    out.push(`<xdr:twoCellAnchor>${marker('from', tl)}${marker('to', br)}`)
     if (sh.kind === 'connector') {
       out.push(
         `<xdr:cxnSp macro=""><xdr:nvCxnSpPr><xdr:cNvPr id="${id}" name="dep ${id}"/><xdr:cNvCxnSpPr/></xdr:nvCxnSpPr>` +
-          `<xdr:spPr>${xfrm}<a:prstGeom prst="bentConnector3"><a:avLst/></a:prstGeom><a:noFill/>${line}</xdr:spPr></xdr:cxnSp>`,
+          `<xdr:spPr>${xfrm}<a:prstGeom prst="${sh.geom === 'straight' ? 'line' : 'bentConnector3'}"><a:avLst/></a:prstGeom><a:noFill/>${line}</xdr:spPr></xdr:cxnSp>`,
       )
     } else {
       out.push(

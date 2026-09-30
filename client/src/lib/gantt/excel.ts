@@ -149,7 +149,7 @@ export function buildGanttBook(inp: GanttExcelInput): XBook {
       `${mainName}　${uiText('出力')} ${ymd(inp.viewTz, inp.now)} ${hm(inp.viewTz, inp.now)} ${tzShort(inp.viewTz, inp.now)}` +
       `　${uiText('基準')} ${inp.baseTz}` +
       (notes.length ? `　${notes.join('　')}` : '') +
-      `　｜　${uiText('線：FS 実線／SS 破線／FF 点線／SF 一点鎖線（矢印が後行）・blocks は後行を角丸で囲む・赤は依存に反する配置・線と囲みは出力した時点の位置')}`,
+      `　｜　${uiText('線：FS 実線／SS 破線／FF 点線／SF 一点鎖線（矢印が後行）・blocks は後行と配下をシアンの枠で囲む・赤は依存に反する配置・線・枠・今日の線は出力した時点の位置')}`,
     s: { font: { bold: true, color: P.text } },
   })
   row(0).height = 20
@@ -284,27 +284,41 @@ export function buildGanttBook(inp: GanttExcelInput): XBook {
   const G = at(COL.cat)
   const H = at(COL.allDay)
   const bar = `${D}<>"",${E}<>"",${day}+1>${D},${day}<${E}+${H}`
-  const edge = (style: 'thin' | 'dashed', color: string) => ({ top: { style, color }, bottom: { style, color } })
+  const first = `INT(${D})=${day}`
+  const last = `INT(${E}+${H}-1/86400)=${day}`
+  /**
+   * バーの規則を「1日だけ・始まり・終わり・途中」に分け、**それぞれが罫を全部持つ**
+   * （5.14「バー」）。複数の規則の罫を Excel が辺ごとに重ねるかに頼らない。先に並べたものが勝つ。
+   */
+  const barRules = (cat: string, fill: XStyle['fill'], style: 'thin' | 'dashed', color: string): XCondRule[] => {
+    const side = { style, color }
+    const end = { style: 'thin' as const, color }
+    const base = `${G}="${cat}",${bar}`
+    return [
+      { formula: `AND(${base},${first},${last})`, style: { fill, border: { top: side, bottom: side, left: end, right: end } } },
+      { formula: `AND(${base},${first})`, style: { fill, border: { top: side, bottom: side, left: end } } },
+      { formula: `AND(${base},${last})`, style: { fill, border: { top: side, bottom: side, right: end } } },
+      { formula: `AND(${base})`, style: { fill, border: { top: side, bottom: side } } },
+    ]
+  }
   const calendarRules: XCondRule[] = [
-    { formula: `${day}=TODAY()`, style: { border: { left: { style: 'medium', color: P.bar } } } },
     { formula: `COUNTIF(${HOLIDAY_NAME},${day})>0`, style: { fill: { pattern: 'lightUp', fg: P.holLine, bg: P.sun } } },
     { formula: `WEEKDAY(${day},2)=6`, style: { fill: { pattern: 'solid', fg: inp.calStyle === 'east' ? P.sat : P.wkend } } },
     { formula: `WEEKDAY(${day},2)=7`, style: { fill: { pattern: 'solid', fg: inp.calStyle === 'east' ? P.sun : P.wkend } } },
   ]
   const bodyRules: XCondRule[] = [
-    calendarRules[0]!,
     // マイルストーン：開始だけは左、終了だけは右の太い縦罫
     { formula: `AND(${G}="done",${D}<>"",${E}="",INT(${D})=${day})`, style: { border: { left: { style: 'thick', color: P.doneLine } } } },
     { formula: `AND(${D}<>"",${E}="",INT(${D})=${day})`, style: { border: { left: { style: 'thick', color: P.bar } } } },
     { formula: `AND(${G}="done",${D}="",${E}<>"",${day}=INT(${E}-(1-${H})/86400))`, style: { border: { right: { style: 'thick', color: P.doneLine } } } },
     { formula: `AND(${D}="",${E}<>"",${day}=INT(${E}-(1-${H})/86400))`, style: { border: { right: { style: 'thick', color: P.bar } } } },
     // バー（区分ごと）。**土日祝より先に置く**——バーに掛かる日はバーの塗りが勝つ
-    { formula: `AND(${G}="done",${bar})`, style: { fill: { pattern: 'solid', fg: P.doneFill }, border: edge('thin', P.doneLine) } },
-    { formula: `AND(${G}="review",${bar})`, style: { fill: { pattern: 'solid', fg: P.barFill }, border: edge('dashed', P.bar) } },
-    { formula: `AND(${G}="in_progress",${bar})`, style: { fill: { pattern: 'solid', fg: P.barFill }, border: edge('thin', P.bar) } },
-    { formula: `AND(${G}="todo",${bar})`, style: { fill: { pattern: 'lightUp', fg: overWhite(P.bar, 0.38), bg: WHITE }, border: edge('thin', P.bar) } },
+    ...barRules('done', { pattern: 'solid', fg: P.doneFill }, 'thin', P.doneLine),
+    ...barRules('review', { pattern: 'solid', fg: P.barFill }, 'dashed', P.bar),
+    ...barRules('in_progress', { pattern: 'solid', fg: P.barFill }, 'thin', P.bar),
+    ...barRules('todo', { pattern: 'lightUp', fg: overWhite(P.bar, 0.38), bg: WHITE }, 'thin', P.bar),
     { formula: `AND(${G}="roll",${bar})`, style: { border: { bottom: { style: 'thin', color: P.roll } } } },
-    ...calendarRules.slice(1),
+    ...calendarRules,
   ]
   const cond: NonNullable<XSheet['cond']> = []
   if (nDays > 0) {
@@ -326,6 +340,21 @@ export function buildGanttBook(inp: GanttExcelInput): XBook {
     if (i < 0) return null
     return { r, c: LEFT + i + (end === 'F' ? 1 : 0), dr: mid }
   }
+  /** 帯の日の列（自分の予定、無ければ配下の期間）。期間の外や日付なしは null */
+  const spanCols = (it: GItem): { c0: number; c1: number } | null => {
+    const s = it.s ?? it.e ?? it.roll?.s ?? null
+    const e = it.e ?? it.s ?? it.roll?.e ?? null
+    if (s === null || e === null) return null
+    const i0 = dayIndex(s)
+    const i1 = dayIndex(Math.max(s, e - 1))
+    if (i0 < 0 || i1 < 0) return null
+    return { c0: LEFT + i0, c1: LEFT + i1 + 1 }
+  }
+  /** 行の番号（inp.rows の添字）。配下の範囲を求めるのに使う */
+  const indexOfSeq = new Map<number, number>()
+  inp.rows.forEach((r, n) => {
+    if (r.kind === 'ticket' && !indexOfSeq.has(r.item.seq)) indexOfSeq.set(r.item.seq, n)
+  })
   const dashOf: Record<string, 'solid' | 'dash' | 'sysDot' | 'dashDot'> = { FS: 'solid', SS: 'dash', FF: 'sysDot', SF: 'dashDot' }
   for (const l of inp.links) {
     const ra = rowOfSeq.get(l.source_seq)
@@ -333,21 +362,45 @@ export function buildGanttBook(inp: GanttExcelInput): XBook {
     const a = itemOfSeq.get(l.source_seq)
     const b = itemOfSeq.get(l.target_seq)
     if (ra === undefined || rb === undefined || !a || !b) continue
-    const color = violated(l, a, b) ? P.danger : P.muted
+    const bad = violated(l, a, b)
     if (l.link_type === 'blocks') {
-      // 止められている後行を角丸で囲み、先行の終わりから囲みへ細い線（端は丸）
-      const s = anchorOf(b, rb, 'S')
-      const f = anchorOf(b, rb, 'F')
-      if (!s || !f) continue
-      shapes.push({ kind: 'roundRect', from: { r: rb, c: s.c, dr: 1.5 * EMU_PT }, to: { r: rb, c: f.c, dr: (ROW_PT - 1.5) * EMU_PT }, color, width: 1.25 * EMU_PT, dash: 'dash' })
+      // 止められている後行と、その配下の行をまとめて角丸の四角枠で囲む（5.14「図形」）
+      const n = indexOfSeq.get(b.seq)!
+      const top = inp.rows[n]!
+      let lastN = n
+      if (!grouped && top.kind === 'ticket') {
+        while (lastN + 1 < inp.rows.length) {
+          const nx = inp.rows[lastN + 1]!
+          if (nx.kind !== 'ticket' || nx.depth <= top.depth) break
+          lastN++
+        }
+      }
+      let c0 = Infinity
+      let c1 = -Infinity
+      for (let k = n; k <= lastN; k++) {
+        const r = inp.rows[k]!
+        if (r.kind !== 'ticket') continue
+        const sc = spanCols(r.item)
+        if (!sc) continue
+        c0 = Math.min(c0, sc.c0)
+        c1 = Math.max(c1, sc.c1)
+      }
+      if (!Number.isFinite(c0)) continue
+      const color = bad ? P.danger : P.neon
+      shapes.push({ kind: 'roundRect', from: { r: rb, c: c0, dr: EMU_PT }, to: { r: HEAD + lastN, c: c1, dr: (ROW_PT - 1) * EMU_PT }, color, width: 2.25 * EMU_PT, dash: 'solid' })
       const from = anchorOf(a, ra, 'F')
-      if (from) shapes.push({ kind: 'connector', from, to: s, color, width: 0.75 * EMU_PT, dash: 'solid', end: 'oval' })
+      if (from) shapes.push({ kind: 'connector', from, to: { r: rb, c: c0, dr: mid }, color, width: 1.5 * EMU_PT, dash: 'solid', end: 'oval' })
       continue
     }
     const from = anchorOf(a, ra, l.link_type[0] as 'S' | 'F')
     const to = anchorOf(b, rb, l.link_type[1] as 'S' | 'F')
     if (!from || !to) continue
-    shapes.push({ kind: 'connector', from, to, color, width: EMU_PT, dash: dashOf[l.link_type] ?? 'solid', end: 'triangle' })
+    shapes.push({ kind: 'connector', from, to, color: bad ? P.danger : P.bar, width: 1.25 * EMU_PT, dash: dashOf[l.link_type] ?? 'solid', end: 'triangle' })
+  }
+  // 今日の線（図形の縦線。出力した日の列の左端。開いた日には追随しない）
+  const todayIdx = dayIndex(inp.now)
+  if (todayIdx >= 0) {
+    shapes.push({ kind: 'connector', geom: 'straight', from: { r: 2, c: LEFT + todayIdx }, to: { r: lastRow + 1, c: LEFT + todayIdx }, color: P.bar, width: 1.5 * EMU_PT, dash: 'solid' })
   }
 
   const main: XSheet = { name: mainName, cols, rows, merges, freeze: { cols: LEFT, rows: HEAD }, cond, shapes }

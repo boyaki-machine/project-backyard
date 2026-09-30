@@ -51,6 +51,8 @@ const links = [
   { id: '01K00000000000000000LNK001', source_seq: 501, target_seq: 502, link_type: 'FS', lag_days: 0, origin: 'human' },
   { id: '01K00000000000000000LNK002', source_seq: 503, target_seq: 502, link_type: 'SS', lag_days: 2, origin: 'human' },
   { id: '01K00000000000000000LNK003', source_seq: 503, target_seq: 505, link_type: 'blocks', lag_days: 0, origin: 'human' },
+  // 配下を持つ親を止める blocks（枠は親から最後の子の行まで）
+  { id: '01K00000000000000000LNK004', source_seq: 505, target_seq: 500, link_type: 'blocks', lag_days: 0, origin: 'human' },
 ]
 const sprints = [
   { id: '01K000000000000000000SPR15', name: 'スプリント 15', goal: null, start_at: D(9, 28), end_at: D(10, 12), all_day: true, status: 'active', ticket_count: 0, closed_count: 0 },
@@ -284,7 +286,19 @@ test('押したときだけ Excel のコードを読み込み、関数で動く�
   expect(b.dxfs[body[idx(inProgress)]!.dxf]).toContain(`<bgColor rgb="FF${hex(P.barFill)}"/>`)
   expect(b.dxfs[body[idx('AND($G6="todo"')]!.dxf]).toContain('patternType="lightUp"')
   expect(b.dxfs[body[idx('WEEKDAY(I$3,2)=6')]!.dxf]).toContain(`<bgColor rgb="FF${hex(P.sat)}"/>`)
-  expect(main.rules.some((r) => r.formula === 'I$3=TODAY()')).toBe(true)
+  // バーの左右の罫：始まりの日は左、終わりの日は右、1日だけは両方。途中の規則より先
+  const firstDay = `${inProgress.slice(0, -1)},INT($D6)=I$3)`
+  const lastDay = `${inProgress.slice(0, -1)},INT($E6+$H6-1/86400)=I$3)`
+  const single = `${inProgress.slice(0, -1)},INT($D6)=I$3,INT($E6+$H6-1/86400)=I$3)`
+  const ruleOf = (f: string) => body.find((r) => r.formula === f)!
+  expect(b.dxfs[ruleOf(firstDay).dxf]).toMatch(/<left style="thin">/)
+  expect(b.dxfs[ruleOf(firstDay).dxf]).not.toMatch(/<right /)
+  expect(b.dxfs[ruleOf(lastDay).dxf]).toMatch(/<right style="thin">/)
+  expect(b.dxfs[ruleOf(single).dxf]).toMatch(/<left style="thin">[\s\S]*<right style="thin">/)
+  expect(body.indexOf(ruleOf(single))).toBeLessThan(body.indexOf(ruleOf(firstDay)))
+  expect(body.indexOf(ruleOf(firstDay))).toBeLessThan(idx(inProgress))
+  // 今日は罫ではなく図形の線（下で確かめる）
+  expect(main.rules.some((r) => r.formula.includes('TODAY()'))).toBe(false)
 
   // 休日タブ
   expect(Number(hol.cells.get('A2')!.v)).toBe(serialOf(2026, 10, 12))
@@ -307,11 +321,22 @@ test('押したときだけ Excel のコードを読み込み、関数で動く�
   expect(b.files.get('xl/worksheets/_rels/sheet1.xml.rels')).toContain('../drawings/drawing1.xml')
   expect(b.files.get('[Content_Types].xml')).toContain('/xl/drawings/drawing1.xml')
   const cxn = [...drawing.matchAll(/<xdr:cxnSp[\s\S]*?<\/xdr:cxnSp>/g)].map((m) => m[0])
-  expect(cxn).toHaveLength(3) // FS・SS・blocks の細い線
-  expect(cxn.some((x) => x.includes('<a:prstDash val="solid"/><a:tailEnd type="triangle"') && x.includes(hex(P.danger)))).toBe(true)
-  expect(cxn.some((x) => x.includes('<a:prstDash val="dash"/>'))).toBe(true)
-  expect(cxn.some((x) => x.includes('<a:tailEnd type="oval"'))).toBe(true)
-  expect(drawing).toContain('<a:prstGeom prst="roundRect">')
+  expect(cxn).toHaveLength(5) // FS・SS・blocks の線 2本・今日の線
+  // FS は反している（赤）、SS は基調色の破線。どちらも 1.25pt
+  expect(cxn.some((x) => x.includes('<a:ln w="15875"><a:solidFill><a:srgbClr val="' + hex(P.danger) + '"/></a:solidFill><a:prstDash val="solid"/><a:tailEnd type="triangle"'))).toBe(true)
+  expect(cxn.some((x) => x.includes('<a:srgbClr val="' + hex(P.bar) + '"/></a:solidFill><a:prstDash val="dash"/>'))).toBe(true)
+  // blocks：シアンの太い枠（2.25pt）と、同じ色の丸止めの線
+  const rect = drawing.match(/<xdr:twoCellAnchor>(?:(?!<\/xdr:twoCellAnchor>)[\s\S])*?prst="roundRect"[\s\S]*?<\/xdr:twoCellAnchor>/)![0]
+  expect(rect).toContain('<a:ln w="28575"><a:solidFill><a:srgbClr val="' + hex(P.neon) + '"/>')
+  expect(rect).toContain(`<xdr:row>${r505 - 1}</xdr:row>`)
+  expect(cxn.some((x) => x.includes('<a:tailEnd type="oval"') && x.includes(hex(P.neon)))).toBe(true)
+  // 親（demo-500）を止める blocks の枠は、親の行から最後の子（demo-504）の行までを囲む
+  const frames = [...drawing.matchAll(/<xdr:twoCellAnchor><xdr:from>[\s\S]*?<\/xdr:twoCellAnchor>/g)].map((m) => m[0]).filter((x) => x.includes('prst="roundRect"'))
+  expect(frames).toHaveLength(2)
+  const r504 = rowOf(main, 'demo-504')
+  expect(frames.some((x) => x.includes(`<xdr:from><xdr:col>`) && new RegExp(`<xdr:from>.*?<xdr:row>${r500 - 1}</xdr:row>.*?</xdr:from><xdr:to>.*?<xdr:row>${r504 - 1}</xdr:row>`).test(x))).toBe(true)
+  // 今日の線：まっすぐな図形の線（今日の列の左端）
+  expect(cxn.some((x) => x.includes('prst="line"') && x.includes('<a:ln w="19050">'))).toBe(true)
 })
 
 test('色の表（excelPalette.ts）が、ライトの画面の色と一致する', async ({ page }) => {
