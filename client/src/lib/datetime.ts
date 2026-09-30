@@ -108,6 +108,15 @@ export function formatDateTime(ms: number): string {
   return `${t.y}-${t.mo}-${t.d} ${t.h}:${t.mi}`
 }
 
+/** 監査ログの時刻。保存されたミリ秒を表示し、設定タイムゾーンも反映する。 */
+export function formatAuditDateTime(ms: number): string {
+  const t = parts(ms)
+  if (t === null) return String(ms)
+  const milli = String(new Date(ms).getUTCMilliseconds()).padStart(3, '0')
+  if (uiLocaleTag() === 'en-US') return `${t.mo}/${t.d}/${t.y} ${hour12(t.h)}:${t.mi}:${t.s}.${milli} ${ampm(t.h)}`
+  return `${t.y}-${t.mo}-${t.d} ${t.h}:${t.mi}:${t.s}.${milli}`
+}
+
 function hour12(hour: string): number {
   return Number(hour) % 12 || 12
 }

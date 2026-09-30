@@ -4666,7 +4666,7 @@ paths:
           schema: { type: integer, minimum: 1, default: 1 }
         - name: per_page
           in: query
-          schema: { type: integer, minimum: 1, maximum: 200, default: 25 }
+          schema: { type: integer, minimum: 1, maximum: 400, default: 50 }
         - name: sort
           in: query
           schema: { type: string, enum: [occurred_at], default: occurred_at }
@@ -7551,13 +7551,13 @@ components:
 
     AuditLogItem:
       type: object
-      required: [id, occurred_at, actor_id, actor_kind, actor_label, token_id, ip, user_agent, action, target_type, target_id, result, detail, request_id]
+      required: [id, occurred_at, actor_id, actor_kind, actor_name, token_id, ip, user_agent, action, target_type, target_id, result, detail, request_id]
       properties:
         id: { type: string }
         occurred_at: { type: integer, format: int64 }
         actor_id: { type: string, nullable: true }
         actor_kind: { type: string, nullable: true }
-        actor_label: { type: string, nullable: true }
+        actor_name: { type: string, nullable: true, description: 記録時の実行者名。メールアドレスは含めない。 }
         token_id: { type: string, nullable: true }
         ip: { type: string, nullable: true }
         user_agent: { type: string, nullable: true }

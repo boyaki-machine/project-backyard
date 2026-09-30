@@ -62,7 +62,7 @@ type auditLogItem struct {
 	OccurredAt Time            `json:"occurred_at"`
 	ActorID    *string         `json:"actor_id"`
 	ActorKind  *string         `json:"actor_kind"`
-	ActorLabel *string         `json:"actor_label"`
+	ActorName  *string         `json:"actor_name"`
 	TokenID    *string         `json:"token_id"`
 	IP         *string         `json:"ip"`
 	UserAgent  *string         `json:"user_agent"`
@@ -80,11 +80,24 @@ func auditItem(id string, occurredAt time.Time, actorID, actorKind, actorLabel, 
 		value := ip.String()
 		ipPtr = &value
 	}
-	return auditLogItem{id, Time(occurredAt), textPtr(actorID), textPtr(actorKind), textPtr(actorLabel), textPtr(tokenID), ipPtr, textPtr(userAgent), action, textPtr(targetType), textPtr(targetID), result, json.RawMessage(detail), textPtr(requestID)}
+	return auditLogItem{id, Time(occurredAt), textPtr(actorID), textPtr(actorKind), auditActorName(actorLabel), textPtr(tokenID), ipPtr, textPtr(userAgent), action, textPtr(targetType), textPtr(targetID), result, json.RawMessage(detail), textPtr(requestID)}
+}
+
+// 人間の actor_label は「表示名 <メールアドレス>」で保存される。記録は保持し、
+// 閲覧用の応答からだけメールアドレスを除く。
+func auditActorName(label pgtype.Text) *string {
+	if !label.Valid {
+		return nil
+	}
+	name := label.String
+	if start := strings.LastIndex(name, " <"); start >= 0 && strings.HasSuffix(name, ">") && strings.Contains(name[start+2:len(name)-1], "@") {
+		name = name[:start]
+	}
+	return &name
 }
 
 func (h *handler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
-	page, pageErr := ParsePage(r, SortSpec{Allowed: []string{"occurred_at"}, DefaultSort: "occurred_at", DefaultOrder: OrderDesc})
+	page, pageErr := ParsePage(r, SortSpec{Allowed: []string{"occurred_at"}, DefaultSort: "occurred_at", DefaultOrder: OrderDesc, DefaultPerPage: 50, MaxPerPage: 400})
 	f, filterErr := parseAuditFilters(r)
 	if err := mergeValidationErrors(pageErr, filterErr); err != nil {
 		apierr.Write(w, r, err)
@@ -133,10 +146,10 @@ func (h *handler) exportAuditLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	var buf bytes.Buffer
 	cw := csv.NewWriter(&buf)
-	_ = cw.Write([]string{"id", "occurred_at", "actor_id", "actor_kind", "actor_label", "token_id", "ip", "user_agent", "action", "target_type", "target_id", "result", "detail", "request_id"})
+	_ = cw.Write([]string{"id", "occurred_at", "actor_id", "actor_kind", "actor_name", "token_id", "ip", "user_agent", "action", "target_type", "target_id", "result", "detail", "request_id"})
 	for _, row := range rows {
 		item := auditItem(row.ID, row.OccurredAt, row.ActorID, row.ActorKind, row.ActorLabel, row.TokenID, row.Ip, row.UserAgent, row.Action, row.TargetType, row.TargetID, row.Result, row.Detail, row.RequestID)
-		_ = cw.Write([]string{item.ID, time.Time(item.OccurredAt).Format(time.RFC3339Nano), csvValue(item.ActorID), csvValue(item.ActorKind), csvValue(item.ActorLabel), csvValue(item.TokenID), csvValue(item.IP), csvValue(item.UserAgent), csvSafe(item.Action), csvValue(item.TargetType), csvValue(item.TargetID), csvSafe(item.Result), csvSafe(string(item.Detail)), csvValue(item.RequestID)})
+		_ = cw.Write([]string{item.ID, time.Time(item.OccurredAt).Format(time.RFC3339Nano), csvValue(item.ActorID), csvValue(item.ActorKind), csvValue(item.ActorName), csvValue(item.TokenID), csvValue(item.IP), csvValue(item.UserAgent), csvSafe(item.Action), csvValue(item.TargetType), csvValue(item.TargetID), csvSafe(item.Result), csvSafe(string(item.Detail)), csvValue(item.RequestID)})
 	}
 	cw.Flush()
 	if err := cw.Error(); err != nil {

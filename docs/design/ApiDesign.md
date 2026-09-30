@@ -2483,7 +2483,7 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 両方の口は同じ絞り込みを受ける。`from_at` 以上、`to_at` 未満の半開区間（エポックミリ秒）、`action`（操作名の部分一致）、`actor`（記録時の実行者名の部分一致）、`result`（`success` / `failure`）、`q`（実行者名・操作名・対象種別・対象IDの部分一致）。文字列の `%` と `_` は文字として扱う。存在しない「ログレベル」は設けず、「ログ種別」は `action` に統合する。`actor_label` を使うのは実行者を削除しても記録を検索できるようにするため。
 
-`from_at` / `to_at` の不正値、`from_at >= to_at`、未知の `result` は `422 validation_failed`。一覧は2.6のページネーション（既定25件、上限200件）で、日時の降順・同時刻はIDの降順に固定する。`sort` は `occurred_at`、`order` は `desc` のみ許可する。応答は `items`・`page`・`per_page`・`total`・`total_pages`。各行は `id`・`occurred_at`・`actor_id`・`actor_kind`・`actor_label`・`token_id`・`ip`・`user_agent`・`action`・`target_type`・`target_id`・`result`・`detail`・`request_id` を返し、記録がない値は `null`。`detail` は保存済みのJSONをそのまま返す。弱い `ETag` はページの応答内容から生成し、`If-None-Match` は解釈しない。
+`from_at` / `to_at` の不正値、`from_at >= to_at`、未知の `result` は `422 validation_failed`。一覧は2.6のページネーションを使い、この口だけ既定50件・上限400件とする。日時の降順・同時刻はIDの降順に固定する。`sort` は `occurred_at`、`order` は `desc` のみ許可する。応答は `items`・`page`・`per_page`・`total`・`total_pages`。各行は `id`・`occurred_at`・`actor_id`・`actor_kind`・`actor_name`・`token_id`・`ip`・`user_agent`・`action`・`target_type`・`target_id`・`result`・`detail`・`request_id` を返し、記録がない値は `null`。`actor_name` は記録時の `actor_label` からメールアドレスの後置部分を除いた表示名とし、API・CSVにメールアドレス付きの `actor_label` を返さない。`target_type` は記録対象の種別、`target_id` は対象の内部IDであり、`access_token` の `target_id` はトークンの実値ではない。`detail` は保存済みのJSONをそのまま返す。弱い `ETag` はページの応答内容から生成し、`If-None-Match` は解釈しない。
 
 CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`page` / `per_page` は受け付けない。列はJSON行の順序と同じで、時刻はISO8601 UTC、`detail` はJSON文字列、欠けた値は空欄とする。文字列が表計算ソフトの数式として解釈されないように保護する。`Content-Type: text/csv; charset=utf-8`、`Content-Disposition: attachment; filename="pb-audit.csv"`。
 
