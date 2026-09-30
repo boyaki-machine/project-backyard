@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, useTemplateRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import PendingConfirmBar from './PendingConfirmBar.vue'
@@ -92,13 +92,24 @@ function clearDwell() {
   dwellTimer = undefined
 }
 
+function clearLeave() {
+  clearTimeout(leaveTimer)
+  leaveTimer = undefined
+}
+
+const peek = useTemplateRef<HTMLElement>('peek')
+
 /**
  * 左端 8px に 200ms とどまったら重ねて出す。**ボタンを押している間は出さない**
  * （ガントのドラッグで左端へ寄せたとき）。要素を置かず `document` で測るので、
  * 左端のツリーの行や開閉ボタンの当たりを奪わない。
  */
 function onDocumentPointerMove(e: PointerEvent) {
-  if (!ui.focusMode || ui.focusPeek) return
+  if (!ui.focusMode) return
+  if (ui.focusPeek) {
+    trackPeekLeave(e)
+    return
+  }
   lastEdge = { x: e.clientX, buttons: e.buttons }
   if (e.clientX > EDGE_PX || e.buttons !== 0) {
     clearDwell()
@@ -117,13 +128,20 @@ function onDocumentLeave() {
   lastEdge = { x: Infinity, buttons: 0 }
 }
 
-function onPeekEnter() {
-  clearTimeout(leaveTimer)
-}
-
-function onPeekLeave() {
-  clearTimeout(leaveTimer)
+/**
+ * 重ねたメニューの外へ出たら 300ms 後に隠し、内へ戻れば待ちをやめる。
+ * **`pointerenter` / `pointerleave` に頼らない**——メニューは静止したポインタの下へ
+ * スライドして現れるので、ブラウザは「入った」を記録せず、離れても `pointerleave` が
+ * 起きない（pb-233）。外で動き続けても待ちは延ばさない。
+ */
+function trackPeekLeave(e: PointerEvent) {
+  if (e.target instanceof Node && peek.value?.contains(e.target)) {
+    clearLeave()
+    return
+  }
+  if (leaveTimer !== undefined) return
   leaveTimer = setTimeout(() => {
+    leaveTimer = undefined
     ui.focusPeek = false
   }, LEAVE_MS)
 }
@@ -149,7 +167,7 @@ watch(
   (on) => {
     if (on) return
     clearDwell()
-    clearTimeout(leaveTimer)
+    clearLeave()
   },
 )
 
@@ -164,7 +182,7 @@ onUnmounted(() => {
   document.removeEventListener('pointermove', onDocumentPointerMove)
   document.documentElement.removeEventListener('mouseleave', onDocumentLeave)
   clearDwell()
-  clearTimeout(leaveTimer)
+  clearLeave()
   pendingStore.stop()
 })
 </script>
@@ -182,9 +200,8 @@ onUnmounted(() => {
     <Transition name="peek">
       <div
         v-if="ui.focusMode && ui.focusPeek"
+        ref="peek"
         class="peek"
-        @pointerenter="onPeekEnter"
-        @pointerleave="onPeekLeave"
       >
         <SideMenu />
       </div>
