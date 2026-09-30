@@ -50,6 +50,7 @@ const tickets = [
 const links = [
   { id: '01K00000000000000000LNK001', source_seq: 501, target_seq: 502, link_type: 'FS', lag_days: 0, origin: 'human' },
   { id: '01K00000000000000000LNK002', source_seq: 503, target_seq: 502, link_type: 'SS', lag_days: 2, origin: 'human' },
+  { id: '01K00000000000000000LNK003', source_seq: 503, target_seq: 505, link_type: 'blocks', lag_days: 0, origin: 'human' },
 ]
 const sprints = [
   { id: '01K000000000000000000SPR15', name: 'スプリント 15', goal: null, start_at: D(9, 28), end_at: D(10, 12), all_day: true, status: 'active', ticket_count: 0, closed_count: 0 },
@@ -122,33 +123,71 @@ function unzip(buf: Buffer): Map<string, string> {
   return out
 }
 
-interface Book {
-  cells: Map<string, { v: string | null; s: number }>
-  /** 列の既定の書式（列の番号 1始まり → s） */
-  colStyle: Map<number, number>
-  xf: { fillId: number; fontId: number; borderId: number }[]
-  fills: { pattern: string; fg: string | null }[]
-  fonts: { bold: boolean; color: string | null }[]
-  borders: string[]
+const unxml = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+
+interface Cell { v: string | null; f: string | null; s: number }
+
+interface Sheet {
+  xml: string
+  cells: Map<string, Cell>
+  hiddenCols: Set<number>
   merges: string[]
   outline: Map<number, number>
-  sheet: string
+  links: Map<string, string>
+  /** 条件付き書式の規則（優先順）。formula と dxf の番号 */
+  rules: { formula: string; dxf: number; priority: number; sqref: string }[]
+}
+
+interface Book {
   files: Map<string, string>
+  sheets: Sheet[]
+  names: Map<string, string>
+  sheetNames: string[]
+  xf: { numFmtId: number; fillId: number; fontId: number; borderId: number }[]
+  numFmts: Map<number, string>
+  fills: { pattern: string; fg: string | null }[]
+  fonts: { bold: boolean; color: string | null }[]
+  dxfs: string[]
+}
+
+function readSheet(xml: string): Sheet {
+  const cells = new Map<string, Cell>()
+  for (const m of xml.matchAll(/<c r="([A-Z]+\d+)"(?: s="(\d+)")?(?: t="(?:inlineStr|str)")?(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+    const body = m[3] ?? ''
+    const f = body.match(/<f>([\s\S]*?)<\/f>/)?.[1] ?? null
+    const v = body.match(/<t[^>]*>([\s\S]*?)<\/t>/)?.[1] ?? body.match(/<v>([^<]*)<\/v>/)?.[1] ?? null
+    cells.set(m[1]!, { v: v === null ? null : unxml(v), f: f === null ? null : unxml(f), s: Number(m[2] ?? 0) })
+  }
+  const hiddenCols = new Set<number>()
+  for (const m of xml.matchAll(/<col min="(\d+)"[^>]*? hidden="1"\/>/g)) hiddenCols.add(Number(m[1]))
+  const merges = [...xml.matchAll(/<mergeCell ref="([^"]+)"/g)].map((m) => m[1]!)
+  const outline = new Map<number, number>()
+  for (const m of xml.matchAll(/<row r="(\d+)"[^>]*? outlineLevel="(\d+)"/g)) outline.set(Number(m[1]), Number(m[2]))
+  const links = new Map<string, string>()
+  for (const m of xml.matchAll(/<hyperlink ref="([A-Z]+\d+)" location="([^"]+)"/g)) links.set(m[1]!, unxml(m[2]!))
+  const rules: Sheet['rules'] = []
+  for (const block of xml.matchAll(/<conditionalFormatting sqref="([^"]+)">([\s\S]*?)<\/conditionalFormatting>/g)) {
+    for (const m of block[2]!.matchAll(/<cfRule type="expression" dxfId="(\d+)" priority="(\d+)"><formula>([\s\S]*?)<\/formula>/g)) {
+      rules.push({ dxf: Number(m[1]), priority: Number(m[2]), formula: unxml(m[3]!), sqref: block[1]! })
+    }
+  }
+  return { xml, cells, hiddenCols, merges, outline, links, rules }
 }
 
 function readBook(path: string): Book {
   const files = unzip(readFileSync(path))
-  const sheet = files.get('xl/worksheets/sheet1.xml')!
+  const wb = files.get('xl/workbook.xml')!
+  const sheetNames = [...wb.matchAll(/<sheet name="([^"]+)"/g)].map((m) => unxml(m[1]!))
+  const names = new Map<string, string>()
+  for (const m of wb.matchAll(/<definedName name="([^"]+)">([^<]+)<\/definedName>/g)) names.set(m[1]!, unxml(m[2]!))
+  const sheets = sheetNames.map((_, i) => readSheet(files.get(`xl/worksheets/sheet${i + 1}.xml`)!))
   const styles = files.get('xl/styles.xml')!
-  const cells = new Map<string, { v: string | null; s: number }>()
-  for (const m of sheet.matchAll(/<c r="([A-Z]+\d+)"(?: s="(\d+)")?(?: t="inlineStr")?(?:\/>|>(?:<is><t[^>]*>([\s\S]*?)<\/t><\/is>|<v>([^<]*)<\/v>)<\/c>)/g)) {
-    const raw = m[3] ?? m[4] ?? null
-    cells.set(m[1]!, { v: raw === null ? null : raw.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&'), s: Number(m[2] ?? 0) })
-  }
-  const colStyle = new Map<number, number>()
-  for (const m of sheet.matchAll(/<col min="(\d+)" max="\d+"[^>]*?(?: style="(\d+)")?\/>/g)) if (m[2]) colStyle.set(Number(m[1]), Number(m[2]))
-  const section = (tag: string) => styles.match(new RegExp(`<${tag} count="\\d+">([\\s\\S]*?)</${tag}>`))![1]!
-  const xf = [...section('cellXfs').matchAll(/<xf [^>]*?fontId="(\d+)" fillId="(\d+)" borderId="(\d+)"/g)].map((m) => ({ fontId: Number(m[1]), fillId: Number(m[2]), borderId: Number(m[3]) }))
+  const section = (tag: string) => styles.match(new RegExp(`<${tag} count="\\d+">([\\s\\S]*?)</${tag}>`))?.[1] ?? ''
+  const xf = [...section('cellXfs').matchAll(/<xf numFmtId="(\d+)" fontId="(\d+)" fillId="(\d+)" borderId="(\d+)"/g)].map((m) => ({
+    numFmtId: Number(m[1]), fontId: Number(m[2]), fillId: Number(m[3]), borderId: Number(m[4]),
+  }))
+  const numFmts = new Map<number, string>()
+  for (const m of section('numFmts').matchAll(/<numFmt numFmtId="(\d+)" formatCode="([^"]+)"/g)) numFmts.set(Number(m[1]), unxml(m[2]!))
   const fills = [...section('fills').matchAll(/<fill>([\s\S]*?)<\/fill>/g)].map((m) => ({
     pattern: m[1]!.match(/patternType="(\w+)"/)![1]!,
     fg: m[1]!.match(/<fgColor rgb="FF([0-9A-F]{6})"/)?.[1]?.toLowerCase() ?? null,
@@ -157,37 +196,18 @@ function readBook(path: string): Book {
     bold: m[1]!.includes('<b/>'),
     color: m[1]!.match(/<color rgb="FF([0-9A-F]{6})"/)?.[1]?.toLowerCase() ?? null,
   }))
-  const borders = [...section('borders').matchAll(/<border>([\s\S]*?)<\/border>/g)].map((m) => m[1]!)
-  const merges = [...sheet.matchAll(/<mergeCell ref="([^"]+)"/g)].map((m) => m[1]!)
-  const outline = new Map<number, number>()
-  for (const m of sheet.matchAll(/<row r="(\d+)"[^>]*? outlineLevel="(\d+)"/g)) outline.set(Number(m[1]), Number(m[2]))
-  return { cells, colStyle, xf, fills, fonts, borders, merges, outline, sheet, files }
+  const dxfs = [...section('dxfs').matchAll(/<dxf>([\s\S]*?)<\/dxf>/g)].map((m) => m[1]!)
+  return { files, sheets, names, sheetNames, xf, numFmts, fills, fonts, dxfs }
 }
 
-const hex = (c: string) => c.replace('#', '').toLowerCase()
-
-/** セルに効いている書式（セルに無ければ列の既定） */
-function styleOf(b: Book, ref: string) {
-  const col = ref.replace(/\d+/g, '')
-  const colNo = [...col].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0)
-  const s = b.cells.get(ref)?.s ?? b.colStyle.get(colNo) ?? 0
-  const x = b.xf[s]!
-  return { fill: b.fills[x.fillId]!, font: b.fonts[x.fontId]!, border: b.borders[x.borderId]! }
-}
+const hex = (c: string) => c.replace('#', '').toUpperCase()
+/** 壁時計の年月日時分を Excel のシリアル値に */
+const serialOf = (y: number, m: number, d: number, h = 0, mi = 0) => Date.UTC(y, m - 1, d, h, mi) / 86_400_000 + 25569
 
 /** ID の列（A）でチケットの行を探す */
-function rowOf(b: Book, id: string): number {
-  for (const [ref, c] of b.cells) if (ref.startsWith('A') && /^A\d+$/.test(ref) && c.v === id) return Number(ref.slice(1))
+function rowOf(sh: Sheet, id: string): number {
+  for (const [ref, c] of sh.cells) if (/^A\d+$/.test(ref) && c.v === id) return Number(ref.slice(1))
   throw new Error(`${id} の行が無い`)
-}
-
-/** 日（3行目）の数字と月（2行目の結合）から、その日の列の名前を探す */
-function colOfDay(b: Book, m: number, d: number): string {
-  const monthStart = [...b.cells].find(([ref, c]) => /^[A-Z]+2$/.test(ref) && c.v === `2026-${String(m).padStart(2, '0')}`)![0].replace('2', '')
-  const toNo = (col: string) => [...col].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0)
-  const toName = (n: number) => { let s = ''; while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26) } return s }
-  for (let n = toNo(monthStart); n < toNo(monthStart) + 31; n++) if (b.cells.get(`${toName(n)}3`)?.v === String(d)) return toName(n)
-  throw new Error(`${m}/${d} の列が無い`)
 }
 
 async function download(page: Page, dir: string): Promise<Book> {
@@ -204,7 +224,7 @@ async function openGantt(page: Page) {
   await expect(page.locator('.gantt-svg rect.b').first()).toBeAttached()
 }
 
-test('押したときだけ Excel のコードを読み込み、画面と対応する中身の xlsx を落とす', async ({ page }, testInfo) => {
+test('押したときだけ Excel のコードを読み込み、関数で動くガントの xlsx を落とす', async ({ page }, testInfo) => {
   const scripts: string[] = []
   page.on('request', (r) => {
     if (r.resourceType() === 'script') scripts.push(new URL(r.url()).pathname)
@@ -217,55 +237,81 @@ test('押したときだけ Excel のコードを読み込み、画面と対応�
   expect(scripts.some((s) => /\/excel-[\w-]+\.js$/.test(s))).toBe(true)
   const P = paletteOf('blue')
 
-  // 表題と見出し。日本語が崩れない
-  expect(b.cells.get('A1')!.v).toContain('demo ガント')
-  expect(b.files.get('xl/workbook.xml')).toContain('name="demo ガント"')
-  expect(['A5', 'B5', 'C5', 'D5', 'E5', 'F5'].map((r) => b.cells.get(r)!.v)).toEqual(['ID', 'タイトル', '状態', '開始', '終了', '先行'])
-  // 固定と行の階層（親の下の子は 1）
-  expect(b.sheet).toContain('<pane xSplit="6" ySplit="5" topLeftCell="G6" activePane="bottomRight" state="frozen"/>')
-  expect(b.outline.get(rowOf(b, 'demo-501'))).toBe(1)
-  expect(b.outline.has(rowOf(b, 'demo-500'))).toBe(false)
+  // タブは3つ。休日の一覧は名前付き範囲
+  expect(b.sheetNames).toEqual(['demo ガント', '休日', '関係'])
+  expect(b.names.get('HolidayList')).toBe("'休日'!$A$2:$A$1000")
+  const [main, hol, rel] = b.sheets as [Sheet, Sheet, Sheet]
 
-  // 行の中身
-  const r501 = rowOf(b, 'demo-501')
-  expect(b.cells.get(`B${r501}`)!.v).toBe('書き出しを作る')
-  expect(b.cells.get(`C${r501}`)!.v).toBe('進行中')
-  expect(b.cells.get(`D${r501}`)!.v).toBe('2026-09-28')
-  expect(b.cells.get(`E${r501}`)!.v).toBe('2026-10-01') // 終わりは1日戻す
-  const r502 = rowOf(b, 'demo-502')
-  expect(b.cells.get(`F${r502}`)!.v).toBe('FS demo-501, SS demo-503 +2d')
-  const r505 = rowOf(b, 'demo-505')
-  expect(b.cells.get(`D${r505}`)!.v).toBe('2026-10-05 21:00 GMT+9')
-  // 親は配下の期間
-  expect(b.cells.get(`D${rowOf(b, 'demo-500')}`)!.v).toBe('—（配下 2026-09-24）')
+  // 見出し・固定・隠し列（区分・終日）
+  expect(main.cells.get('A1')!.v).toContain('demo ガント')
+  expect(['A5', 'B5', 'C5', 'D5', 'E5', 'F5', 'G5', 'H5'].map((r) => main.cells.get(r)!.v)).toEqual(['ID', 'タイトル', '状態', '開始', '終了', '先行', '区分', '終日'])
+  expect(main.xml).toContain('<pane xSplit="8" ySplit="5" topLeftCell="I6" activePane="bottomRight" state="frozen"/>')
+  expect([...main.hiddenCols].sort()).toEqual([7, 8])
 
-  // バー：進行中は基調色 26%、未着手は斜線、完了は --pb-3、レビュー中は破線の罫
-  expect(styleOf(b, `${colOfDay(b, 9, 30)}${r501}`).fill).toEqual({ pattern: 'solid', fg: hex(P.barFill) })
-  expect(styleOf(b, `${colOfDay(b, 10, 2)}${r502}`).fill.pattern).toBe('lightUp')
-  const r503 = rowOf(b, 'demo-503')
-  expect(styleOf(b, `${colOfDay(b, 9, 25)}${r503}`).fill).toEqual({ pattern: 'solid', fg: hex(P.doneFill) })
-  expect(styleOf(b, `${colOfDay(b, 10, 5)}${r505}`).border).toContain('style="dashed"')
-  // バーの外は塗らない
-  expect(styleOf(b, `${colOfDay(b, 10, 2)}${r501}`).fill.pattern).toBe('none')
-  // 完了の行は文字を沈める
-  expect(styleOf(b, `B${r503}`).font.color).toBe(hex(P.muted))
-  // マイルストーン（終了だけ）は ]
-  expect(b.cells.get(`${colOfDay(b, 10, 8)}${rowOf(b, 'demo-504')}`)!.v).toBe(']')
+  // 日付は日時の値（終日は最後の日を含む。時刻付きは基準タイムゾーンの壁時計）
+  const r501 = rowOf(main, 'demo-501')
+  expect(Number(main.cells.get(`D${r501}`)!.v)).toBe(serialOf(2026, 9, 28))
+  expect(Number(main.cells.get(`E${r501}`)!.v)).toBe(serialOf(2026, 10, 1))
+  const fmt = (ref: string) => b.numFmts.get(b.xf[main.cells.get(ref)!.s]!.numFmtId)
+  expect(fmt(`D${r501}`)).toBe('yyyy-mm-dd')
+  expect(main.cells.get(`G${r501}`)!.v).toBe('in_progress')
+  expect(main.cells.get(`H${r501}`)!.v).toBe('1')
+  const r505 = rowOf(main, 'demo-505')
+  expect(Number(main.cells.get(`D${r505}`)!.v)).toBeCloseTo(serialOf(2026, 10, 5, 21), 6)
+  expect(fmt(`D${r505}`)).toBe('yyyy-mm-dd hh:mm')
+  expect(main.cells.get(`H${r505}`)!.v).toBe('0')
 
-  // 土日祝：土曜は青み・日曜は赤み・祝日は斜線（列の既定の書式）
-  expect(styleOf(b, `${colOfDay(b, 10, 3)}${r501}`).fill).toEqual({ pattern: 'solid', fg: hex(P.sat) })
-  expect(styleOf(b, `${colOfDay(b, 10, 4)}${r501}`).fill).toEqual({ pattern: 'solid', fg: hex(P.sun) })
-  expect(styleOf(b, `${colOfDay(b, 10, 12)}${r501}`).fill.pattern).toBe('lightUp')
-  expect(b.cells.get(`${colOfDay(b, 10, 12)}4`)!.v).toBe('祝')
-  // 土曜に掛かるバーは、バーの塗りが勝つ
-  expect(styleOf(b, `${colOfDay(b, 10, 3)}${r502}`).fill.pattern).toBe('lightUp')
+  // 親の期間は配下の MIN / MAX の式
+  const r500 = rowOf(main, 'demo-500')
+  const range = `D${r500 + 1}:E${r500 + 4}`
+  expect(main.cells.get(`D${r500}`)!.f).toBe(`IF(COUNT(${range})>0,MIN(${range}),"")`)
+  expect(main.cells.get(`E${r500}`)!.f).toBe(`IF(COUNT(${range})>0,MAX(${range}),"")`)
+  expect(main.cells.get(`G${r500}`)!.v).toBe('roll')
+  expect(main.outline.get(r501)).toBe(1)
 
-  // 今日の列の左に基調色の太い罫、スプリントの帯（進行中はオレンジの太線）
-  expect(styleOf(b, `${colOfDay(b, 9, 29)}${r501}`).border).toContain(`<left style="medium"><color rgb="FF${hex(P.bar).toUpperCase()}"/>`)
-  const spr = colOfDay(b, 9, 28)
-  expect(b.cells.get(`${spr}5`)!.v).toBe('スプリント 15')
-  expect(styleOf(b, `${spr}5`).border).toContain(`<top style="medium"><color rgb="FF${hex(P.neonAct).toUpperCase()}"/>`)
-  expect(b.merges.some((m) => m.startsWith(`${spr}5:`))).toBe(true)
+  // 見出しの日は日付の値、曜日は休日タブを見る式
+  expect(main.cells.get('I3')!.v).toBe(String(serialOf(2026, 9, 17)))
+  expect(main.cells.get('I4')!.f).toBe('IF(COUNTIF(HolidayList,I3)>0,"祝",CHOOSE(WEEKDAY(I3),"日","月","火","水","木","金","土"))')
+
+  // 条件付き書式：バー（区分ごと）が土日祝より先
+  // 本表の範囲（I6 から）の規則だけを見る（見出しの行にも土日祝の規則がある）
+  const body = main.rules.filter((r) => r.sqref.startsWith('I6:'))
+  const idx = (needle: string) => body.findIndex((r) => r.formula.includes(needle))
+  const inProgress = 'AND($G6="in_progress",$D6<>"",$E6<>"",I$3+1>$D6,I$3<$E6+$H6)'
+  expect(idx(inProgress)).toBeGreaterThanOrEqual(0)
+  expect(idx(inProgress)).toBeLessThan(idx('COUNTIF(HolidayList,I$3)>0'))
+  expect(idx(inProgress)).toBeLessThan(idx('WEEKDAY(I$3,2)=6'))
+  expect(b.dxfs[body[idx(inProgress)]!.dxf]).toContain(`<bgColor rgb="FF${hex(P.barFill)}"/>`)
+  expect(b.dxfs[body[idx('AND($G6="todo"')]!.dxf]).toContain('patternType="lightUp"')
+  expect(b.dxfs[body[idx('WEEKDAY(I$3,2)=6')]!.dxf]).toContain(`<bgColor rgb="FF${hex(P.sat)}"/>`)
+  expect(main.rules.some((r) => r.formula === 'I$3=TODAY()')).toBe(true)
+
+  // 休日タブ
+  expect(Number(hol.cells.get('A2')!.v)).toBe(serialOf(2026, 10, 12))
+  expect(hol.cells.get('B2')!.v).toBe('スポーツの日')
+
+  // 関係タブ：ID から本表の行へ飛べ、判定は式（FS 501→502 は反している）
+  expect(rel.cells.get('A2')!.v).toBe('demo-501')
+  expect(rel.cells.get('C2')!.v).toBe('FS')
+  expect(rel.cells.get('E2')!.v).toBe('demo-502')
+  expect(rel.links.get('A2')).toBe(`'demo ガント'!A${r501}`)
+  expect(rel.cells.get('G2')!.f).toContain('IF(AND(COUNT(')
+  expect(rel.cells.get('G2')!.v).toBe('⚠ 反している')
+  expect(rel.cells.get('C3')!.v).toBe('SS')
+  expect(rel.cells.get('G3')!.v).toBe('')
+  expect(b.files.get('xl/workbook.xml')).toContain('fullCalcOnLoad="1"')
+
+  // 図形：依存線（FS は実線と矢印、反する配置は赤）・blocks は角丸の囲みと丸止めの線
+  const drawing = b.files.get('xl/drawings/drawing1.xml')!
+  expect(main.xml).toContain('<drawing r:id="rId1"/>')
+  expect(b.files.get('xl/worksheets/_rels/sheet1.xml.rels')).toContain('../drawings/drawing1.xml')
+  expect(b.files.get('[Content_Types].xml')).toContain('/xl/drawings/drawing1.xml')
+  const cxn = [...drawing.matchAll(/<xdr:cxnSp[\s\S]*?<\/xdr:cxnSp>/g)].map((m) => m[0])
+  expect(cxn).toHaveLength(3) // FS・SS・blocks の細い線
+  expect(cxn.some((x) => x.includes('<a:prstDash val="solid"/><a:tailEnd type="triangle"') && x.includes(hex(P.danger)))).toBe(true)
+  expect(cxn.some((x) => x.includes('<a:prstDash val="dash"/>'))).toBe(true)
+  expect(cxn.some((x) => x.includes('<a:tailEnd type="oval"'))).toBe(true)
+  expect(drawing).toContain('<a:prstGeom prst="roundRect">')
 })
 
 test('色の表（excelPalette.ts）が、ライトの画面の色と一致する', async ({ page }) => {

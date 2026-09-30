@@ -1385,4 +1385,12 @@ export const uiMessages: Record<string, string> = {
   "先行": "Predecessors",
   "いま見えているガントを Excel で保存する": "Save the Gantt chart as shown to Excel",
   "Excel を作れませんでした：{value0}": "Could not create the Excel file: {value0}",
+  "休日": "Holidays",
+  "線：FS 実線／SS 破線／FF 点線／SF 一点鎖線（矢印が後行）・blocks は後行を角丸で囲む・赤は依存に反する配置・線と囲みは出力した時点の位置": "Lines: FS solid / SS dashed / FF dotted / SF dash-dot (arrow points to the successor) · blocks draws a rounded box around the successor · red means the dependency is violated · lines and boxes stay where they were at export",
+  "先行のタイトル": "Predecessor title",
+  "ずらし（日）": "Lag (days)",
+  "後行": "Successor",
+  "後行のタイトル": "Successor title",
+  "判定": "Check",
+  "⚠ 反している": "⚠ Violated",
 }

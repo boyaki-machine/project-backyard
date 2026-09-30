@@ -1159,6 +1159,11 @@ async function exportExcel(): Promise<void> {
       rows: rows.value,
       links: links.value,
       sprints: gSprints.value,
+      // 休日タブに並べる日（祝日と手動の休日。週末だけの日は WEEKDAY で塗るので入れない）
+      holidays: [...calendarDays.value.values()]
+        .filter((d) => d.is_holiday && d.reason !== 'weekend')
+        .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0))
+        .map((d) => ({ day: d.day, name: d.override?.name ?? d.events.find((ev) => ev.kind === 'holiday')?.name ?? '' })),
       dayKind,
       calStyle: calStyle.value,
       baseTz: baseTz.value,
