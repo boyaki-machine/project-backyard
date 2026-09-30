@@ -4060,6 +4060,41 @@ paths:
       - $ref: '#/components/parameters/ProjectKey'
       - $ref: '#/components/parameters/TicketSeq'
       - $ref: '#/components/parameters/TicketLinkID'
+    patch:
+      tags: [tickets]
+      summary: 依存のずらし（lag_days）の変更
+      operationId: updateTicketLink
+      description: |
+        ずらし（`lag_days`）だけを変える（ApiDesign.md 9.10.1。pb-231）。**必要権限は `ticket.edit`**。
+
+        **`FS` / `SS` / `FF` / `SF` のときだけ受ける**（ほかの種別は 422 `invalid`）。範囲は -365〜365。
+        **`lag_days` 以外を送ると 422 `immutable_field`**——`link_type` と相手は変えられない。
+        `direction` を問わない（`incoming` の行も直せる）。変更は `activity` に1行書く。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTicketLinkRequest'
+      responses:
+        '200':
+          description: 変えた。`GET` の1行と同じ形。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketLink'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketLinkNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
     delete:
       tags: [tickets]
       summary: 関連チケットの削除
@@ -4075,8 +4110,8 @@ paths:
         `new_value` は `null`）。**相手のチケットの履歴には書かない**——1回の操作で
         2行増えると、同じ出来事が二重に見える。
 
-        **`PATCH` は無い。** 一意制約が `(source, target, link_type)` である以上、
-        `link_type` の変更は別の行になるのと同じである。
+        ずらし（`lag_days`）を変えるのは `PATCH`。`link_type` の変更は別の行になるのと同じなので、
+        消して作り直す。
       responses:
         '204':
           description: 削除した（本文なし）。
@@ -9947,6 +9982,22 @@ components:
           type: integer
           format: int32
           default: 0
+          minimum: -365
+          maximum: 365
+
+    UpdateTicketLinkRequest:
+      description: |
+        依存のずらしの変更（ApiDesign.md 9.10.1）。**`lag_days` だけを受ける。**
+      type: object
+      required: [lag_days]
+      additionalProperties: false
+      properties:
+        lag_days:
+          type: integer
+          format: int32
+          minimum: -365
+          maximum: 365
+          description: 暦日（24時間 × 日数）。`FS`〜`SF` のときだけ受ける
 
     TicketReference:
       description: |

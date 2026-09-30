@@ -3643,8 +3643,8 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/dod/:id
 ### 9.10.1 チケット間リンク
 
 ```
-GET|POST /api/v1/projects/:key/tickets/:seq/links
-DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
+GET|POST     /api/v1/projects/:key/tickets/:seq/links
+PATCH|DELETE /api/v1/projects/:key/tickets/:seq/links/:id
 ```
 
 **必要権限**：`GET` は `ticket.view`、更新系は `ticket.edit`
@@ -3657,7 +3657,7 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 |---|---|
 | `target_seq` | 必須。**同一プロジェクト内**に存在すること（無ければ `422`、`details[].code = "not_found"`）。自分自身は `422`、`details[].code = "self_link"` |
 | `link_type` | `FS` / `SS` / `FF` / `SF`（ガント用の依存）、`relates` / `duplicates` / `blocks` |
-| `lag_days` | 整数。既定 `0`。`FS`〜`SF` のときのみ意味を持つ |
+| `lag_days` | 整数。既定 `0`。**-365〜365**（外れたら `422`、`details[].code = "invalid"`。pb-231）。`FS`〜`SF` のときのみ意味を持つ。**暦日で数える**（24時間 × 日数。`GuiDesign.md` 5.14「依存に反する配置」） |
 
 **同じ `(source, target, link_type)` の組が既にあるときは `409 already_exists`。**
 `uq_ticket_link`（`DbDesign.md` 6.6）が一意なキーであり、2.5.1 の `already_exists` は
@@ -3716,9 +3716,16 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 ある行——も、このエンドポイントから消せる。`GuiDesign.md` 5.5 が両方を同じリストに
 並べる以上、**片方だけ消せないと画面に「消せない行」が混ざる。** `204 No Content`。
 
-**`PATCH` は持たない。** 一意制約が `(source, target, link_type)` である以上、
-`link_type` の変更は**別の行になるのと同じ**であり、消して作り直すのと変わらない。
-`lag_days` だけのために1本増やす利得も無い——**`lag_days` を変える画面が無い**（ガントは線の札に出すだけで、ドラッグで作る依存は常に `0`。画面から変える口は pb-231 で決める）。
+**`PATCH` は `lag_days` だけを変える**（pb-231）。本文は `{ "lag_days": 2 }` で、応答は `200` と `GET` の1行と同じ形。
+
+| 検証 | 失敗時 |
+|---|---|
+| `lag_days` が整数で -365〜365 | `422`、`details[].code = "invalid"` |
+| リンクの種別が `FS` / `SS` / `FF` / `SF` | `422`、`details[].field = "lag_days"`、`code = "invalid"`（`message` は「この関連にはずらしを設定できません」）。`relates` / `duplicates` / `blocks` にずらしは意味を持たない |
+| `lag_days` 以外の項目 | `422`、`details[].code = "immutable_field"`——**`link_type` と `target_seq` は変えられない**。一意制約が `(source, target, link_type)` である以上、変えるのは別の行を作るのと同じで、消して作り直す |
+| このチケットに紐づかないリンク | `404`（`DELETE` と同じ。`direction` は問わない） |
+
+**消して作り直す方式を採らない**——2本の要求で原子的でなく、作り直しに失敗すると依存が消える（pb-231 の判断）。**画面が直すのはチケット詳細の関連チケットの行である**（`GuiDesign.md` 5.5）。
 
 **ページネーション・`ETag`・`If-Match` はいずれも持たない**（9.10.2 と同じ）。
 **親チケットの `version` と `updated_at` も動かさず、相手側のチケットも動かさない**
@@ -3743,8 +3750,9 @@ DELETE   /api/v1/projects/:key/tickets/:seq/links/:id
 |---|---|---|
 | 追加 | `NULL` | `blocks my-app-12` |
 | 削除 | `blocks my-app-12` | `NULL` |
+| ずらしの変更 | `FS my-app-12` | `FS my-app-12 +2d` |
 
-**要約は `<link_type> <相手の完全形ID>`**（9.1 の `<key>-<seq>`）。
+**要約は `<link_type> <相手の完全形ID>`**（9.1 の `<key>-<seq>`）。**ずらしが 0 でなければ ` +2d` / ` -1d` を添える**（pb-231。ガントの線の札と同じ書式）。
 **操作したチケット側に1行だけ書き、相手のチケットの履歴には書かない**——1回の操作で
 2行増えると、ダッシュボードの「最近の動き」で同じ出来事が二重に見える。
 `direction` を要約に含めないのも同じ理由で、**読み手はそのチケットの履歴を見ている。**
