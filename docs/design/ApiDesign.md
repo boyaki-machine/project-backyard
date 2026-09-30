@@ -284,7 +284,7 @@ If-Match: "3"
 
 `login.success` / `login.failure` / `logout` / `password.change` / `password.reset` /
 `token.issue` / `token.revoke` / `session.revoke` / `user.create` / `user.update` /
-`user.delete` / `role.change` / `project.create` / `project.archive` / `permission.denied` /
+`user.delete` / `role.change` / `project.create` / `project.update` / `project.archive` / `permission.denied` /
 `agent.register` / `agent.update` / `agent.delete` / `setting.update` /
 `tls.certificate.upload` / `tls.certificate.delete` / `mfa.register` / `mfa.unregister` /
 `mfa.recovery_codes.regenerate` / `mfa.reset` / `login.mfa_failure` /
@@ -298,6 +298,8 @@ If-Match: "3"
 **`setting.update`**（11.2）。**1回の保存が1行**で、`detail.changes[]` に変更した
 キーと新旧の実効値を並べる。**サーバ全体の設定を変える操作**であり、影響範囲が1プロジェクトに
 収まらないため記録する。
+
+**`project.update`**（5.5）。プロジェクト本体の名前・説明・タイムゾーン・設定JSONが実際に変わったときに1行記録する。`detail.key` にプロジェクトキー、`detail.changed_fields` に変更した項目名を入れる。設定JSONと説明の値は長期保存される監査記録に複製しない。作成とアーカイブは従来どおり `project.create` / `project.archive` とする。
 
 **`tls.certificate.*`**（11.5 / 11.6）。**`detail` には指紋・`common_name`・
 有効期間を入れ、PEM と秘密鍵は入れない**——`audit_log` は長期保存される記録である。
@@ -1898,6 +1900,9 @@ GET /api/v1/projects/check-key?key=my-app
 `If-Match: "3"` による楽観ロック（2.8）。**成功すると `version` が +1 される。**
 応答は 5.4 と同形式で、更新後の値を返す。
 
+名前・説明・タイムゾーン・設定JSONに実際の変更があれば、同じトランザクションで
+`project.update` を監査記録に残す（2.10）。変更が無い場合は記録しない。
+
 ### 5.5.1 応答
 
 | 状況 | 応答 |
@@ -2481,9 +2486,9 @@ DELETE /api/v1/admin/users/:id/memberships/:project_key
 
 `GET /api/v1/admin/audit` と `GET /api/v1/admin/audit.csv`。**必要権限は両方とも `auditlog.view`**。管理画面（`GuiDesign.md` 5.7）から使う。
 
-両方の口は同じ絞り込みを受ける。`from_at` 以上、`to_at` 未満の半開区間（エポックミリ秒）、`action`（操作名の部分一致）、`actor`（記録時の実行者名の部分一致）、`result`（`success` / `failure`）、`q`（実行者名・操作名・対象種別・対象IDの部分一致）。文字列の `%` と `_` は文字として扱う。存在しない「ログレベル」は設けず、「ログ種別」は `action` に統合する。`actor_label` を使うのは実行者を削除しても記録を検索できるようにするため。
+両方の口は同じ絞り込みを受ける。`from_at` 以上、`to_at` 未満の半開区間（エポックミリ秒）、`category`（`ticket` / `project` / `application` / `security`）、`action`（操作名の部分一致）、`actor`（記録時の実行者名の部分一致）、`result`（`success` / `failure`）、`q`（実行者名・操作名・対象種別・対象ID・対象名の部分一致）。文字列の `%` と `_` は文字として扱う。存在しない「ログレベル」は設けず、「ログ種別」は `action` に統合する。カテゴリ未指定は全件。既存の認証・アカウント操作は `security`、`setting.update`・TLS・DB操作は `application` とする。
 
-`from_at` / `to_at` の不正値、`from_at >= to_at`、未知の `result` は `422 validation_failed`。一覧は2.6のページネーションを使い、この口だけ既定50件・上限400件とする。日時の降順・同時刻はIDの降順に固定する。`sort` は `occurred_at`、`order` は `desc` のみ許可する。応答は `items`・`page`・`per_page`・`total`・`total_pages`。各行は `id`・`occurred_at`・`actor_id`・`actor_kind`・`actor_name`・`token_id`・`ip`・`user_agent`・`action`・`target_type`・`target_id`・`result`・`detail`・`request_id` を返し、記録がない値は `null`。`actor_name` は記録時の `actor_label` からメールアドレスの後置部分を除いた表示名とし、API・CSVにメールアドレス付きの `actor_label` を返さない。`target_type` は記録対象の種別、`target_id` は対象の内部IDであり、`access_token` の `target_id` はトークンの実値ではない。`detail` は保存済みのJSONをそのまま返す。弱い `ETag` はページの応答内容から生成し、`If-None-Match` は解釈しない。
+`from_at` / `to_at` の不正値、`from_at >= to_at`、未知の `category` / `result` は `422 validation_failed`。一覧は2.6のページネーションを使い、この口だけ既定50件・上限400件とする。`audit_log` と `activity` を日時降順・同時刻はID降順で統合し、`sort` は `occurred_at`、`order` は `desc` のみ許可する。応答は `items`・`page`・`per_page`・`total`・`total_pages`。各行は `id`・`occurred_at`・`category`・`actor_id`・`actor_kind`・`actor_name`・`token_id`・`ip`・`user_agent`・`action`・`target_type`・`target_id`・`target_label`・`result`・`detail`・`request_id` を返し、記録がない値は `null`。`actor_name` はメールアドレスを含めない。`target_type` は記録対象の種別、`target_id` は対象の内部ID、`target_label` は読みやすい対象名であり、`access_token` の `target_id` はトークンの実値ではない。`audit_log.detail` は保存済みのJSONをそのまま返す。`activity` の行は `ticket.<action>` として、`field`・`old_value`・`new_value`・`project_key` を `detail` に入れ、成功結果とする。値のない IP・User-Agent・token ID は `null`。弱い `ETag` はページの応答内容から生成し、`If-None-Match` は解釈しない。
 
 CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`page` / `per_page` は受け付けない。列はJSON行の順序と同じで、時刻はISO8601 UTC、`detail` はJSON文字列、欠けた値は空欄とする。文字列が表計算ソフトの数式として解釈されないように保護する。`Content-Type: text/csv; charset=utf-8`、`Content-Disposition: attachment; filename="pb-audit.csv"`。
 
@@ -2639,11 +2644,11 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
 
 **チケット以外の子資源（コメント・DoD項目・リンク・タグ・スプリント）は ULID で指す。** これらは `seq` に相当する連番を持たない。パスは `/tickets/:seq/comments/:id` のように、チケットまでを `seq`、その先を ULID とする。
 
-### 9.1.1 監査ログではなく `activity` に記録する
+### 9.1.1 チケットの変更は `activity` に記録する
 
-チケットの作成・更新・遷移・削除、およびコメント・DoD・リンク・**外部参照**の変更は **`activity`（`DbDesign.md` 6.8）に記録し、`audit_log` には書かない。**
+チケットの作成・更新・遷移・削除、およびコメント・DoD・リンク・**外部参照**の変更は **`activity`（`DbDesign.md` 6.8）に記録し、`audit_log` には重複して書かない。** 管理者の監査一覧（6.11）は両テーブルを時系列に統合して読む。
 
-2.10 が `audit_log` の対象としているのは認証・権限・トークン・ユーザー管理であり、いずれも**インスタンス管理者が追うべき事象**である。チケットの変更は業務履歴であり、読み手はプロジェクトのメンバー（`GuiDesign.md` 5.5 の「変更履歴」）である。両者を混ぜると、監査ログがチケット更新で埋まって本来の用途に使えなくなる。
+チケット詳細の変更履歴は引き続きプロジェクトメンバーが読む。管理者の監査一覧ではチケット変更も横断して読めるようにする。1回の更新で複数項目が変われば `activity` は項目ごとに1行であり、監査一覧でもその粒度を維持する。記録時の実行者種別・表示名と `project-key-seq` を保存し、後から実行者やチケットが削除されても識別できるようにする。既存行は現在存在する実行者・チケットから補完し、既に削除されたものは復元できない。
 
 **タグとスプリントの定義変更（9.11 / 9.12）は、どちらにも記録しない。** `audit_log` の対象ではなく（上記のカタログに入らない）、`activity` の読み手はチケットの変更履歴であって、9.13.2 の `entity` も `ticket:31` の形しか受け付けない。**記録しても読む画面が無い。**
 

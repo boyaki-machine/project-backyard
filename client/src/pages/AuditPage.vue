@@ -8,6 +8,7 @@ import { formatAuditDateTime, instantOfLocalInput, isoOf } from '../lib/datetime
 import { uiText } from '../locales/ui'
 
 const fromInput = ref('')
+const categoryInput = ref<AuditFilters['category']>()
 const toInput = ref('')
 const actionInput = ref('')
 const actorInput = ref('')
@@ -92,6 +93,7 @@ function applyFilters() {
   applied.value = {
     from_at: from ?? undefined,
     to_at: to ?? undefined,
+    category: categoryInput.value,
     action: actionInput.value.trim() || undefined,
     actor: actorInput.value.trim() || undefined,
     result: resultInput.value === 'success' || resultInput.value === 'failure' ? resultInput.value : undefined,
@@ -103,12 +105,20 @@ function applyFilters() {
 
 function resetFilters() {
   fromInput.value = ''
+  categoryInput.value = undefined
   toInput.value = ''
   actionInput.value = ''
   actorInput.value = ''
   resultInput.value = ''
   searchInput.value = ''
   applyFilters()
+}
+
+function selectCategory(category: AuditFilters['category']) {
+  categoryInput.value = category
+  applied.value = { ...applied.value, category }
+  page.value = 1
+  void load()
 }
 
 function movePage(to: number) {
@@ -142,7 +152,13 @@ function detailText(item: AuditLogItem): string {
 }
 
 function targetText(item: AuditLogItem): string {
-  return [item.target_type, item.target_id].filter(Boolean).join(' / ') || '—'
+  return item.target_label || [item.target_type, item.target_id].filter(Boolean).join(' / ') || '—'
+}
+
+function changedField(item: AuditLogItem): string | null {
+  if (item.category !== 'ticket') return null
+  const field = (item.detail as Record<string, unknown>).field
+  return typeof field === 'string' ? field : null
 }
 
 function toggleDetail(id: string) {
@@ -192,6 +208,15 @@ onBeforeUnmount(stopResize)
           <button type="button" :disabled="loading" @click="resetFilters">{{ $ui('クリア') }}</button>
         </div>
       </form>
+      <div class="categories" role="group" :aria-label="$ui('履歴の種別')">
+        <button v-for="option in [
+          { value: undefined, label: $ui('すべて') },
+          { value: 'ticket', label: $ui('チケット') },
+          { value: 'project', label: $ui('プロジェクト') },
+          { value: 'application', label: $ui('アプリケーション') },
+          { value: 'security', label: $ui('認証・アカウント') },
+        ] as const" :key="option.label" type="button" :class="{ active: categoryInput === option.value }" :aria-pressed="categoryInput === option.value" @click="selectCategory(option.value)">{{ option.label }}</button>
+      </div>
       <p v-if="filterError" class="error" role="alert">{{ filterError }}</p>
       <p v-if="error" class="error" role="alert">{{ error }} <button type="button" @click="load">{{ $ui('再試行') }}</button></p>
       <p v-if="loading" class="status">{{ $ui('読み込んでいます…') }}</p>
@@ -211,7 +236,7 @@ onBeforeUnmount(stopResize)
               <tr class="record" :class="{ selected: expanded === item.id }" tabindex="0" :aria-expanded="expanded === item.id" @click="toggleDetail(item.id)" @keydown.enter.self="toggleDetail(item.id)" @keydown.space.self.prevent="toggleDetail(item.id)">
                 <td><time :datetime="isoOf(item.occurred_at)">{{ formatAuditDateTime(item.occurred_at) }}</time></td>
                 <td><RouterLink v-if="item.actor_kind === 'user' && item.actor_id" :to="`/admin/users/${item.actor_id}`" @click.stop>{{ item.actor_name || '—' }}</RouterLink><template v-else>{{ item.actor_name || '—' }}</template></td>
-                <td><code>{{ item.action }}</code></td>
+                <td><code>{{ item.action }}</code><small v-if="changedField(item)" class="field-name">{{ changedField(item) }}</small></td>
                 <td class="target"><span :title="targetText(item)">{{ targetText(item) }}</span></td>
                 <td>{{ item.result === 'success' ? $ui('成功') : $ui('失敗') }}</td>
               </tr>
@@ -223,6 +248,7 @@ onBeforeUnmount(stopResize)
                   <dt>Token ID</dt><dd>{{ item.token_id || '—' }}</dd>
                   <dt>{{ $ui('対象種別') }}</dt><dd>{{ item.target_type || '—' }}</dd>
                   <dt>{{ $ui('対象ID') }}</dt><dd>{{ item.target_id || '—' }}</dd>
+                  <dt>{{ $ui('対象名') }}</dt><dd>{{ item.target_label || '—' }}</dd>
                   <dt>detail</dt><dd><pre>{{ detailText(item) }}</pre></dd>
                 </dl>
               </td></tr>
@@ -249,6 +275,9 @@ onBeforeUnmount(stopResize)
 .filters input:focus-visible, .filters select:focus-visible { outline: 2px solid var(--pb-accent); outline-offset: 1px; }
 .search-label { grid-column: span 2; }
 .filter-actions { display: flex; justify-content: flex-end; align-items: center; gap: var(--pb-space-2); }
+.categories { display: flex; flex-wrap: wrap; gap: var(--pb-space-1); margin-top: var(--pb-space-3); }
+.categories button { font-size: 12px; padding: var(--pb-space-1) var(--pb-space-3); }
+.categories button.active { border-color: var(--pb-accent); color: var(--pb-accent); background: var(--pb-surface); }
 button { cursor: pointer; padding: var(--pb-space-2) var(--pb-space-3); border: 1px solid var(--pb-line); border-radius: var(--pb-radius); background: var(--pb-surface); color: var(--pb-text); white-space: nowrap; }
 button:disabled { cursor: default; opacity: .5; }
 .export-button { font-size: 13px; }
@@ -264,6 +293,7 @@ th { position: relative; color: var(--pb-text-muted); font-weight: 600; }
 .record:hover, .record:focus-visible, .selected { background: var(--pb-bg); }
 .record time { text-decoration: underline; }
 .target span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.field-name { display: block; margin-top: var(--pb-space-1); color: var(--pb-text-muted); }
 .details { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: var(--pb-space-2); margin: 0; overflow-wrap: anywhere; }
 .details dt { color: var(--pb-text-muted); }
 .details dd { margin: 0; min-width: 0; }

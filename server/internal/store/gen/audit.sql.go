@@ -15,36 +15,59 @@ import (
 
 const exportAuditLogs = `-- name: ExportAuditLogs :many
 SELECT id, occurred_at, actor_id, actor_kind, actor_label, token_id,
-       ip, user_agent, action, target_type, target_id,
-       result, detail, request_id
-FROM audit_log
+       ip, user_agent, action, target_type, target_id, coalesce(target_label::text, '') AS target_label,
+       result, detail, request_id, category
+FROM audit_event
 WHERE ($1::timestamptz IS NULL OR occurred_at >= $1::timestamptz)
   AND ($2::timestamptz IS NULL OR occurred_at < $2::timestamptz)
-  AND ($3::text = '' OR action ILIKE $3::text ESCAPE '\')
-  AND ($4::text = '' OR coalesce(actor_label, '') ILIKE $4::text ESCAPE '\')
-  AND ($5::text = '' OR result = $5::text)
-  AND ($6::text = '' OR (
-    coalesce(actor_label, '') ILIKE $6::text ESCAPE '\'
-    OR action ILIKE $6::text ESCAPE '\'
-    OR coalesce(target_type, '') ILIKE $6::text ESCAPE '\'
-    OR coalesce(target_id, '') ILIKE $6::text ESCAPE '\'
+  AND ($3::text = '' OR category = $3::text)
+  AND ($4::text = '' OR action ILIKE $4::text ESCAPE '\')
+  AND ($5::text = '' OR coalesce(actor_label, '') ILIKE $5::text ESCAPE '\')
+  AND ($6::text = '' OR result = $6::text)
+  AND ($7::text = '' OR (
+    coalesce(actor_label, '') ILIKE $7::text ESCAPE '\'
+    OR action ILIKE $7::text ESCAPE '\'
+    OR coalesce(target_type, '') ILIKE $7::text ESCAPE '\'
+    OR coalesce(target_id, '') ILIKE $7::text ESCAPE '\'
+    OR coalesce(target_label, '') ILIKE $7::text ESCAPE '\'
   ))
 ORDER BY occurred_at DESC, id DESC
 `
 
 type ExportAuditLogsParams struct {
-	FromAt        *time.Time
-	ToAt          *time.Time
-	ActionPattern string
-	ActorPattern  string
-	ResultFilter  string
-	QPattern      string
+	FromAt         *time.Time
+	ToAt           *time.Time
+	CategoryFilter string
+	ActionPattern  string
+	ActorPattern   string
+	ResultFilter   string
+	QPattern       string
 }
 
-func (q *Queries) ExportAuditLogs(ctx context.Context, arg ExportAuditLogsParams) ([]AuditLog, error) {
+type ExportAuditLogsRow struct {
+	ID          string
+	OccurredAt  time.Time
+	ActorID     pgtype.Text
+	ActorKind   pgtype.Text
+	ActorLabel  pgtype.Text
+	TokenID     pgtype.Text
+	Ip          *netip.Addr
+	UserAgent   pgtype.Text
+	Action      string
+	TargetType  pgtype.Text
+	TargetID    pgtype.Text
+	TargetLabel interface{}
+	Result      string
+	Detail      []byte
+	RequestID   pgtype.Text
+	Category    string
+}
+
+func (q *Queries) ExportAuditLogs(ctx context.Context, arg ExportAuditLogsParams) ([]ExportAuditLogsRow, error) {
 	rows, err := q.db.Query(ctx, exportAuditLogs,
 		arg.FromAt,
 		arg.ToAt,
+		arg.CategoryFilter,
 		arg.ActionPattern,
 		arg.ActorPattern,
 		arg.ResultFilter,
@@ -54,9 +77,9 @@ func (q *Queries) ExportAuditLogs(ctx context.Context, arg ExportAuditLogsParams
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AuditLog{}
+	items := []ExportAuditLogsRow{}
 	for rows.Next() {
-		var i AuditLog
+		var i ExportAuditLogsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OccurredAt,
@@ -69,9 +92,11 @@ func (q *Queries) ExportAuditLogs(ctx context.Context, arg ExportAuditLogsParams
 			&i.Action,
 			&i.TargetType,
 			&i.TargetID,
+			&i.TargetLabel,
 			&i.Result,
 			&i.Detail,
 			&i.RequestID,
+			&i.Category,
 		); err != nil {
 			return nil, err
 		}
@@ -134,42 +159,65 @@ func (q *Queries) InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) 
 
 const listAuditLogs = `-- name: ListAuditLogs :many
 SELECT id, occurred_at, actor_id, actor_kind, actor_label, token_id,
-       ip, user_agent, action, target_type, target_id,
-       result, detail, request_id
-FROM audit_log
+       ip, user_agent, action, target_type, target_id, coalesce(target_label::text, '') AS target_label,
+       result, detail, request_id, category
+FROM audit_event
 WHERE ($1::timestamptz IS NULL OR occurred_at >= $1::timestamptz)
   AND ($2::timestamptz IS NULL OR occurred_at < $2::timestamptz)
-  AND ($3::text = '' OR action ILIKE $3::text ESCAPE '\')
-  AND ($4::text = '' OR coalesce(actor_label, '') ILIKE $4::text ESCAPE '\')
-  AND ($5::text = '' OR result = $5::text)
-  AND ($6::text = '' OR (
-    coalesce(actor_label, '') ILIKE $6::text ESCAPE '\'
-    OR action ILIKE $6::text ESCAPE '\'
-    OR coalesce(target_type, '') ILIKE $6::text ESCAPE '\'
-    OR coalesce(target_id, '') ILIKE $6::text ESCAPE '\'
+  AND ($3::text = '' OR category = $3::text)
+  AND ($4::text = '' OR action ILIKE $4::text ESCAPE '\')
+  AND ($5::text = '' OR coalesce(actor_label, '') ILIKE $5::text ESCAPE '\')
+  AND ($6::text = '' OR result = $6::text)
+  AND ($7::text = '' OR (
+    coalesce(actor_label, '') ILIKE $7::text ESCAPE '\'
+    OR action ILIKE $7::text ESCAPE '\'
+    OR coalesce(target_type, '') ILIKE $7::text ESCAPE '\'
+    OR coalesce(target_id, '') ILIKE $7::text ESCAPE '\'
+    OR coalesce(target_label, '') ILIKE $7::text ESCAPE '\'
   ))
 ORDER BY occurred_at DESC, id DESC
-LIMIT $8::int OFFSET $7::int
+LIMIT $9::int OFFSET $8::int
 `
 
 type ListAuditLogsParams struct {
-	FromAt        *time.Time
-	ToAt          *time.Time
-	ActionPattern string
-	ActorPattern  string
-	ResultFilter  string
-	QPattern      string
-	PageOffset    int32
-	PageLimit     int32
+	FromAt         *time.Time
+	ToAt           *time.Time
+	CategoryFilter string
+	ActionPattern  string
+	ActorPattern   string
+	ResultFilter   string
+	QPattern       string
+	PageOffset     int32
+	PageLimit      int32
 }
 
-// 一覧とCSVは同じ5条件を使う。日時は [from_at, to_at) の半開区間。
+type ListAuditLogsRow struct {
+	ID          string
+	OccurredAt  time.Time
+	ActorID     pgtype.Text
+	ActorKind   pgtype.Text
+	ActorLabel  pgtype.Text
+	TokenID     pgtype.Text
+	Ip          *netip.Addr
+	UserAgent   pgtype.Text
+	Action      string
+	TargetType  pgtype.Text
+	TargetID    pgtype.Text
+	TargetLabel interface{}
+	Result      string
+	Detail      []byte
+	RequestID   pgtype.Text
+	Category    string
+}
+
+// 一覧とCSVは同じ条件を使う。日時は [from_at, to_at) の半開区間。
 // action / actor / q は呼び出し側で LIKE メタ文字をエスケープする。
 // actor_id は削除後に NULL になるため、検索と表示には actor_label を使う。
-func (q *Queries) ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]AuditLog, error) {
+func (q *Queries) ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]ListAuditLogsRow, error) {
 	rows, err := q.db.Query(ctx, listAuditLogs,
 		arg.FromAt,
 		arg.ToAt,
+		arg.CategoryFilter,
 		arg.ActionPattern,
 		arg.ActorPattern,
 		arg.ResultFilter,
@@ -181,9 +229,9 @@ func (q *Queries) ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AuditLog{}
+	items := []ListAuditLogsRow{}
 	for rows.Next() {
-		var i AuditLog
+		var i ListAuditLogsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OccurredAt,
@@ -196,9 +244,11 @@ func (q *Queries) ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([
 			&i.Action,
 			&i.TargetType,
 			&i.TargetID,
+			&i.TargetLabel,
 			&i.Result,
 			&i.Detail,
 			&i.RequestID,
+			&i.Category,
 		); err != nil {
 			return nil, err
 		}
@@ -212,33 +262,37 @@ func (q *Queries) ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([
 
 const summarizeAuditLogs = `-- name: SummarizeAuditLogs :one
 SELECT count(*) AS total
-FROM audit_log
+FROM audit_event
 WHERE ($1::timestamptz IS NULL OR occurred_at >= $1::timestamptz)
   AND ($2::timestamptz IS NULL OR occurred_at < $2::timestamptz)
-  AND ($3::text = '' OR action ILIKE $3::text ESCAPE '\')
-  AND ($4::text = '' OR coalesce(actor_label, '') ILIKE $4::text ESCAPE '\')
-  AND ($5::text = '' OR result = $5::text)
-  AND ($6::text = '' OR (
-    coalesce(actor_label, '') ILIKE $6::text ESCAPE '\'
-    OR action ILIKE $6::text ESCAPE '\'
-    OR coalesce(target_type, '') ILIKE $6::text ESCAPE '\'
-    OR coalesce(target_id, '') ILIKE $6::text ESCAPE '\'
+  AND ($3::text = '' OR category = $3::text)
+  AND ($4::text = '' OR action ILIKE $4::text ESCAPE '\')
+  AND ($5::text = '' OR coalesce(actor_label, '') ILIKE $5::text ESCAPE '\')
+  AND ($6::text = '' OR result = $6::text)
+  AND ($7::text = '' OR (
+    coalesce(actor_label, '') ILIKE $7::text ESCAPE '\'
+    OR action ILIKE $7::text ESCAPE '\'
+    OR coalesce(target_type, '') ILIKE $7::text ESCAPE '\'
+    OR coalesce(target_id, '') ILIKE $7::text ESCAPE '\'
+    OR coalesce(target_label, '') ILIKE $7::text ESCAPE '\'
   ))
 `
 
 type SummarizeAuditLogsParams struct {
-	FromAt        *time.Time
-	ToAt          *time.Time
-	ActionPattern string
-	ActorPattern  string
-	ResultFilter  string
-	QPattern      string
+	FromAt         *time.Time
+	ToAt           *time.Time
+	CategoryFilter string
+	ActionPattern  string
+	ActorPattern   string
+	ResultFilter   string
+	QPattern       string
 }
 
 func (q *Queries) SummarizeAuditLogs(ctx context.Context, arg SummarizeAuditLogsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, summarizeAuditLogs,
 		arg.FromAt,
 		arg.ToAt,
+		arg.CategoryFilter,
 		arg.ActionPattern,
 		arg.ActorPattern,
 		arg.ResultFilter,

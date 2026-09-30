@@ -10,8 +10,11 @@ const session = {
 }
 
 const rows = [
-  { id: '01K00000000000000000000001', occurred_at: Date.UTC(2026, 8, 30, 3, 0, 0, 123), actor_id: session.actor.id, actor_kind: 'user', actor_name: '監査担当', token_id: null, ip: '127.0.0.1', user_agent: 'Test Browser', action: 'login.success', target_type: 'access_token', target_id: '01K000000000000000000000000000000000000000000001', result: 'success', detail: { method: 'password' }, request_id: '01K00000000000000000000002' },
-  { id: '01K00000000000000000000003', occurred_at: Date.UTC(2026, 8, 29, 3), actor_id: session.actor.id, actor_kind: 'user', actor_name: '監査担当', token_id: null, ip: null, user_agent: null, action: 'login.failure', target_type: null, target_id: null, result: 'failure', detail: { reason: 'invalid' }, request_id: null },
+  { id: '01K00000000000000000000001', occurred_at: Date.UTC(2026, 8, 30, 3, 0, 0, 123), category: 'security', actor_id: session.actor.id, actor_kind: 'user', actor_name: '監査担当', token_id: null, ip: '127.0.0.1', user_agent: 'Test Browser', action: 'login.success', target_type: 'access_token', target_id: '01K000000000000000000000000000000000000000000001', target_label: null, result: 'success', detail: { method: 'password' }, request_id: '01K00000000000000000000002' },
+  { id: '01K00000000000000000000003', occurred_at: Date.UTC(2026, 8, 29, 3), category: 'security', actor_id: session.actor.id, actor_kind: 'user', actor_name: '監査担当', token_id: null, ip: null, user_agent: null, action: 'login.failure', target_type: null, target_id: null, target_label: null, result: 'failure', detail: { reason: 'invalid' }, request_id: null },
+  { id: '01K00000000000000000000004', occurred_at: Date.UTC(2026, 8, 28, 3), category: 'ticket', actor_id: '01K00000000000000000000005', actor_kind: 'agent', actor_name: 'Codex', token_id: null, ip: null, user_agent: null, action: 'ticket.update', target_type: 'ticket', target_id: '01K00000000000000000000006', target_label: 'demo-31', result: 'success', detail: { field: 'title', old_value: '旧', new_value: '新', project_key: 'demo' }, request_id: null },
+  { id: '01K00000000000000000000007', occurred_at: Date.UTC(2026, 8, 27, 3), category: 'project', actor_id: session.actor.id, actor_kind: 'user', actor_name: '監査担当', token_id: null, ip: null, user_agent: null, action: 'project.update', target_type: 'project', target_id: '01K00000000000000000000008', target_label: 'demo', result: 'success', detail: { key: 'demo', changed_fields: ['name'] }, request_id: null },
+  { id: '01K00000000000000000000009', occurred_at: Date.UTC(2026, 8, 26, 3), category: 'application', actor_id: session.actor.id, actor_kind: 'user', actor_name: '監査担当', token_id: null, ip: null, user_agent: null, action: 'setting.update', target_type: 'app_setting', target_id: null, target_label: null, result: 'success', detail: { changes: [{ key: 'theme' }] }, request_id: null },
 ]
 
 async function mockAudit(page: Page) {
@@ -24,6 +27,7 @@ async function mockAudit(page: Page) {
     })
     if (url.pathname === '/api/v1/admin/audit') {
       const filtered = rows.filter((row) =>
+        (!url.searchParams.get('category') || row.category === url.searchParams.get('category')) &&
         (!url.searchParams.get('action') || row.action.includes(url.searchParams.get('action')!)) &&
         (!url.searchParams.get('result') || row.result === url.searchParams.get('result')),
       )
@@ -39,7 +43,7 @@ test('監査ログの絞り込み・詳細・CSVと複数画面幅', async ({ pa
     await page.setViewportSize({ width, height: 900 })
     await page.goto('/admin/audit')
     await expect(page.getByRole('heading', { name: '監査ログ' })).toBeVisible()
-    await expect(page.locator('tbody tr.record')).toHaveCount(2)
+    await expect(page.locator('tbody tr.record')).toHaveCount(5)
     const filters = page.locator('form.filters')
     const box = await filters.boundingBox()
     expect(box).not.toBeNull()
@@ -52,6 +56,14 @@ test('監査ログの絞り込み・詳細・CSVと複数画面幅', async ({ pa
     await page.screenshot({ path: testInfo.outputPath(`audit-${width}.png`), fullPage: true })
   }
   await page.setViewportSize({ width: 1440, height: 900 })
+  const categoryRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/v1/admin/audit' && new URL(request.url()).searchParams.get('category') === 'ticket')
+  await page.getByRole('button', { name: 'チケット', exact: true }).click()
+  await categoryRequest
+  await expect(page.locator('tbody tr.record')).toHaveCount(1)
+  await expect(page.locator('tbody tr.record')).toContainText('demo-31')
+  await expect(page.locator('tbody tr.record')).toContainText('title')
+  await page.getByRole('button', { name: 'すべて', exact: true }).click()
+  await expect(page.locator('tbody tr.record')).toHaveCount(5)
   await expect(page.locator('tbody tr.record').first().locator('time')).toContainText('12:00:00.123')
   await expect(page.locator('tbody tr.record').first().getByRole('link', { name: '監査担当' })).toHaveAttribute('href', `/admin/users/${session.actor.id}`)
   await expect(page.locator('tbody tr.record').first()).not.toContainText('audit@example.com')

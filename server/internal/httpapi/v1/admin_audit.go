@@ -19,13 +19,13 @@ import (
 )
 
 type auditFilters struct {
-	fromAt, toAt             *time.Time
-	action, actor, result, q string
+	fromAt, toAt                       *time.Time
+	category, action, actor, result, q string
 }
 
 func parseAuditFilters(r *http.Request) (auditFilters, *apierr.Error) {
 	q := r.URL.Query()
-	f := auditFilters{action: likePattern(q.Get("action")), actor: likePattern(q.Get("actor")), q: likePattern(q.Get("q")), result: q.Get("result")}
+	f := auditFilters{category: q.Get("category"), action: likePattern(q.Get("action")), actor: likePattern(q.Get("actor")), q: likePattern(q.Get("q")), result: q.Get("result")}
 	var details []apierr.Detail
 	parseTime := func(key string) *time.Time {
 		v := q.Get(key)
@@ -51,6 +51,9 @@ func parseAuditFilters(r *http.Request) (auditFilters, *apierr.Error) {
 	if f.result != "" && f.result != "success" && f.result != "failure" {
 		details = append(details, apierr.Detail{Field: "result", Code: "invalid", Message: "result は success / failure で指定してください"})
 	}
+	if f.category != "" && f.category != "ticket" && f.category != "project" && f.category != "application" && f.category != "security" {
+		details = append(details, apierr.Detail{Field: "category", Code: "invalid", Message: "category が不正です"})
+	}
 	if len(details) > 0 {
 		return f, apierr.New(apierr.ValidationFailed).WithDetails(details...)
 	}
@@ -58,29 +61,38 @@ func parseAuditFilters(r *http.Request) (auditFilters, *apierr.Error) {
 }
 
 type auditLogItem struct {
-	ID         string          `json:"id"`
-	OccurredAt Time            `json:"occurred_at"`
-	ActorID    *string         `json:"actor_id"`
-	ActorKind  *string         `json:"actor_kind"`
-	ActorName  *string         `json:"actor_name"`
-	TokenID    *string         `json:"token_id"`
-	IP         *string         `json:"ip"`
-	UserAgent  *string         `json:"user_agent"`
-	Action     string          `json:"action"`
-	TargetType *string         `json:"target_type"`
-	TargetID   *string         `json:"target_id"`
-	Result     string          `json:"result"`
-	Detail     json.RawMessage `json:"detail"`
-	RequestID  *string         `json:"request_id"`
+	ID          string          `json:"id"`
+	OccurredAt  Time            `json:"occurred_at"`
+	Category    string          `json:"category"`
+	ActorID     *string         `json:"actor_id"`
+	ActorKind   *string         `json:"actor_kind"`
+	ActorName   *string         `json:"actor_name"`
+	TokenID     *string         `json:"token_id"`
+	IP          *string         `json:"ip"`
+	UserAgent   *string         `json:"user_agent"`
+	Action      string          `json:"action"`
+	TargetType  *string         `json:"target_type"`
+	TargetID    *string         `json:"target_id"`
+	TargetLabel *string         `json:"target_label"`
+	Result      string          `json:"result"`
+	Detail      json.RawMessage `json:"detail"`
+	RequestID   *string         `json:"request_id"`
 }
 
-func auditItem(id string, occurredAt time.Time, actorID, actorKind, actorLabel, tokenID pgtype.Text, ip *netip.Addr, userAgent pgtype.Text, action string, targetType, targetID pgtype.Text, result string, detail []byte, requestID pgtype.Text) auditLogItem {
+func auditItem(id string, occurredAt time.Time, category string, actorID, actorKind, actorLabel, tokenID pgtype.Text, ip *netip.Addr, userAgent pgtype.Text, action string, targetType, targetID pgtype.Text, targetLabel string, result string, detail []byte, requestID pgtype.Text) auditLogItem {
 	var ipPtr *string
 	if ip != nil {
 		value := ip.String()
 		ipPtr = &value
 	}
-	return auditLogItem{id, Time(occurredAt), textPtr(actorID), textPtr(actorKind), auditActorName(actorLabel), textPtr(tokenID), ipPtr, textPtr(userAgent), action, textPtr(targetType), textPtr(targetID), result, json.RawMessage(detail), textPtr(requestID)}
+	return auditLogItem{ID: id, OccurredAt: Time(occurredAt), Category: category, ActorID: textPtr(actorID), ActorKind: textPtr(actorKind), ActorName: auditActorName(actorLabel), TokenID: textPtr(tokenID), IP: ipPtr, UserAgent: textPtr(userAgent), Action: action, TargetType: textPtr(targetType), TargetID: textPtr(targetID), TargetLabel: nonemptyPtr(targetLabel), Result: result, Detail: json.RawMessage(detail), RequestID: textPtr(requestID)}
+}
+
+func nonemptyPtr(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // 人間の actor_label は「表示名 <メールアドレス>」で保存される。記録は保持し、
@@ -107,19 +119,19 @@ func (h *handler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{Field: "order", Code: "invalid", Message: "order は desc のみ指定できます"}))
 		return
 	}
-	rows, err := h.q.ListAuditLogs(r.Context(), gen.ListAuditLogsParams{FromAt: f.fromAt, ToAt: f.toAt, ActionPattern: f.action, ActorPattern: f.actor, ResultFilter: f.result, QPattern: f.q, PageLimit: int32(page.Limit()), PageOffset: int32(page.Offset())})
+	rows, err := h.q.ListAuditLogs(r.Context(), gen.ListAuditLogsParams{FromAt: f.fromAt, ToAt: f.toAt, CategoryFilter: f.category, ActionPattern: f.action, ActorPattern: f.actor, ResultFilter: f.result, QPattern: f.q, PageLimit: int32(page.Limit()), PageOffset: int32(page.Offset())})
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(fmt.Errorf("監査ログ一覧を取得できない: %w", err)))
 		return
 	}
-	total, err := h.q.SummarizeAuditLogs(r.Context(), gen.SummarizeAuditLogsParams{FromAt: f.fromAt, ToAt: f.toAt, ActionPattern: f.action, ActorPattern: f.actor, ResultFilter: f.result, QPattern: f.q})
+	total, err := h.q.SummarizeAuditLogs(r.Context(), gen.SummarizeAuditLogsParams{FromAt: f.fromAt, ToAt: f.toAt, CategoryFilter: f.category, ActionPattern: f.action, ActorPattern: f.actor, ResultFilter: f.result, QPattern: f.q})
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(fmt.Errorf("監査ログ件数を取得できない: %w", err)))
 		return
 	}
 	items := make([]auditLogItem, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, auditItem(row.ID, row.OccurredAt, row.ActorID, row.ActorKind, row.ActorLabel, row.TokenID, row.Ip, row.UserAgent, row.Action, row.TargetType, row.TargetID, row.Result, row.Detail, row.RequestID))
+		items = append(items, auditItem(row.ID, row.OccurredAt, row.Category, row.ActorID, row.ActorKind, row.ActorLabel, row.TokenID, row.Ip, row.UserAgent, row.Action, row.TargetType, row.TargetID, auditTargetLabel(row.TargetLabel), row.Result, row.Detail, row.RequestID))
 	}
 	list := NewList(items, page, int(total))
 	// 監査ログには updated_at がない。現在ページの内容から検証子を作る。
@@ -139,17 +151,17 @@ func (h *handler) exportAuditLogs(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, err)
 		return
 	}
-	rows, queryErr := h.q.ExportAuditLogs(r.Context(), gen.ExportAuditLogsParams{FromAt: f.fromAt, ToAt: f.toAt, ActionPattern: f.action, ActorPattern: f.actor, ResultFilter: f.result, QPattern: f.q})
+	rows, queryErr := h.q.ExportAuditLogs(r.Context(), gen.ExportAuditLogsParams{FromAt: f.fromAt, ToAt: f.toAt, CategoryFilter: f.category, ActionPattern: f.action, ActorPattern: f.actor, ResultFilter: f.result, QPattern: f.q})
 	if queryErr != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(fmt.Errorf("監査ログCSVを取得できない: %w", queryErr)))
 		return
 	}
 	var buf bytes.Buffer
 	cw := csv.NewWriter(&buf)
-	_ = cw.Write([]string{"id", "occurred_at", "actor_id", "actor_kind", "actor_name", "token_id", "ip", "user_agent", "action", "target_type", "target_id", "result", "detail", "request_id"})
+	_ = cw.Write([]string{"id", "occurred_at", "category", "actor_id", "actor_kind", "actor_name", "token_id", "ip", "user_agent", "action", "target_type", "target_id", "target_label", "result", "detail", "request_id"})
 	for _, row := range rows {
-		item := auditItem(row.ID, row.OccurredAt, row.ActorID, row.ActorKind, row.ActorLabel, row.TokenID, row.Ip, row.UserAgent, row.Action, row.TargetType, row.TargetID, row.Result, row.Detail, row.RequestID)
-		_ = cw.Write([]string{item.ID, time.Time(item.OccurredAt).Format(time.RFC3339Nano), csvValue(item.ActorID), csvValue(item.ActorKind), csvValue(item.ActorName), csvValue(item.TokenID), csvValue(item.IP), csvValue(item.UserAgent), csvSafe(item.Action), csvValue(item.TargetType), csvValue(item.TargetID), csvSafe(item.Result), csvSafe(string(item.Detail)), csvValue(item.RequestID)})
+		item := auditItem(row.ID, row.OccurredAt, row.Category, row.ActorID, row.ActorKind, row.ActorLabel, row.TokenID, row.Ip, row.UserAgent, row.Action, row.TargetType, row.TargetID, auditTargetLabel(row.TargetLabel), row.Result, row.Detail, row.RequestID)
+		_ = cw.Write([]string{item.ID, time.Time(item.OccurredAt).Format(time.RFC3339Nano), csvSafe(item.Category), csvValue(item.ActorID), csvValue(item.ActorKind), csvValue(item.ActorName), csvValue(item.TokenID), csvValue(item.IP), csvValue(item.UserAgent), csvSafe(item.Action), csvValue(item.TargetType), csvValue(item.TargetID), csvValue(item.TargetLabel), csvSafe(item.Result), csvSafe(string(item.Detail)), csvValue(item.RequestID)})
 	}
 	cw.Flush()
 	if err := cw.Error(); err != nil {
@@ -160,6 +172,11 @@ func (h *handler) exportAuditLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="pb-audit.csv"`)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buf.Bytes())
+}
+
+func auditTargetLabel(value any) string {
+	label, _ := value.(string)
+	return label
 }
 
 func csvValue(s *string) string {

@@ -1,10 +1,6 @@
 // Package activity は activity への記録を担う（ApiDesign.md 9.1.1、DbDesign.md 6.8）。
 //
-// **audit（audit_log）と役割が違う。** ApiDesign.md 2.10 が audit_log の対象と
-// するのは認証・権限・トークン・ユーザー管理で、いずれもインスタンス管理者が
-// 追うべき事象である。チケットの変更は業務履歴であり、読み手はプロジェクトの
-// メンバー（GuiDesign.md 5.5 の「変更履歴」）である。両者を混ぜると、監査ログが
-// チケット更新で埋まって本来の用途に使えなくなる。
+// チケット詳細の業務履歴として書き、管理者の横断監査一覧からも読む。
 //
 // 構造は audit.Recorder に合わせてある——1リクエストに紐づく値（アクター・
 // request_id）を Recorder に固定し、呼び出しのたびに引き回さない。
@@ -70,8 +66,7 @@ type Entry struct {
 
 // Recorder は1リクエストに紐づく記録者。
 type Recorder struct {
-	actorID   string
-	requestID string
+	actorID, actorKind, actorName, requestID string
 }
 
 // FromRequest は HTTP リクエストから Recorder を作る。
@@ -83,6 +78,8 @@ func FromRequest(r *http.Request) *Recorder {
 	rec := &Recorder{requestID: apierr.RequestIDFromContext(r.Context())}
 	if p := auth.PrincipalFromContext(r.Context()); p != nil {
 		rec.actorID = p.ActorID
+		rec.actorKind = p.ActorKind
+		rec.actorName = p.DisplayName
 	}
 	return rec
 }
@@ -106,6 +103,8 @@ func (rec *Recorder) Record(ctx context.Context, q gen.Querier, e Entry) error {
 		EntityType: e.EntityType,
 		EntityID:   e.EntityID,
 		ActorID:    text(rec.actorID),
+		ActorKind:  text(rec.actorKind),
+		ActorName:  text(rec.actorName),
 		Action:     string(e.Action),
 		Field:      textPtr(e.Field),
 		OldValue:   textPtr(e.OldValue),

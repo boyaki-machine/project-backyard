@@ -7,6 +7,7 @@ export type AuditLogItem = components['schemas']['AuditLogItem']
 export interface AuditFilters {
   from_at?: number
   to_at?: number
+  category?: 'ticket' | 'project' | 'application' | 'security'
   action?: string
   actor?: string
   result?: 'success' | 'failure'

@@ -3,7 +3,7 @@
 // 監査ログは**DBに残す正式な記録**であり、揮発してよいアプリケーションログとは
 // 役割が違う（Design.md 10.1）。両者は request_id で突き合わせる。
 //
-// 記録すべき操作は ApiDesign.md 2.10 が15件を列挙している。本パッケージは
+// 記録すべき操作は ApiDesign.md 2.10 に列挙する。本パッケージは
 // それを Action 定数として持ち、未知の action を弾く。audit_log.action には
 // DB 側の CHECK 制約が無いため、綴り誤りが黙って入ると後から集計できなくなる。
 package audit
@@ -43,6 +43,7 @@ const (
 	UserDelete       Action = "user.delete"
 	RoleChange       Action = "role.change"
 	ProjectCreate    Action = "project.create"
+	ProjectUpdate    Action = "project.update"
 	ProjectArchive   Action = "project.archive"
 	PermissionDenied Action = "permission.denied"
 	// 以下はエージェントの操作（ApiDesign.md 4.5.6）。
@@ -95,13 +96,13 @@ const (
 	LoginPasskeyFailure Action = "login.passkey_failure"
 )
 
-// actions は ApiDesign.md 2.10 が列挙する32件。
+// actions は ApiDesign.md 2.10 の操作一覧。
 var actions = map[Action]bool{
 	LoginSuccess: true, LoginFailure: true, Logout: true,
 	PasswordChange: true, PasswordReset: true,
 	TokenIssue: true, TokenRevoke: true, SessionRevoke: true,
 	UserCreate: true, UserUpdate: true, UserDelete: true, RoleChange: true,
-	ProjectCreate: true, ProjectArchive: true, PermissionDenied: true,
+	ProjectCreate: true, ProjectUpdate: true, ProjectArchive: true, PermissionDenied: true,
 	AgentRegister: true, AgentUpdate: true, AgentDelete: true,
 	SettingUpdate:        true,
 	TLSCertificateUpload: true, TLSCertificateDelete: true,
