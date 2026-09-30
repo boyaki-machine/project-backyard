@@ -145,7 +145,7 @@ export function grabAt(
   return null
 }
 
-/** 依存の取っ手の位置（帯の両端の外側 9px。依存線の出る点と同じ） */
+/** 依存の取っ手の位置（帯の両端の外側 9px。依存線が端から外へ出て曲がる位置） */
 export const HANDLE_OFFSET = 9
 export const HANDLE_R = 3.5
 

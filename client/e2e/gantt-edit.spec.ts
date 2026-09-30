@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test'
 
 /**
  * ガントの編集（GuiDesign.md 5.14「編集」。pb-221）。
@@ -81,7 +81,7 @@ function detailOf(t: T) {
   return { ...t, body_md: '', parent: null, epic: null, children: [], dod: [], links: [], references: [], comment_count: 0, execution_mode: 'agent_draft', readiness: null, readiness_note: null, scope: {} }
 }
 
-async function mockApi(page: Page, o: { edit?: boolean; snap?: number } = {}): Promise<World> {
+async function mockApi(page: Page, o: { edit?: boolean; snap?: number; theme?: 'light' | 'dark' } = {}): Promise<World> {
   const s = sample()
   const w: World = { tickets: s.tickets, links: s.links, patches: [], posts: [], gets: [] }
   await page.clock.install({ time: NOW })
@@ -94,7 +94,7 @@ async function mockApi(page: Page, o: { edit?: boolean; snap?: number } = {}): P
       return reply(route, {
         actor: {
           id: '01K00000000000000000000000', kind: 'user', display_name: '検証 太郎', email: 'e2e@example.com',
-          system_role: 'administrator', locale: 'ja', timezone: 'Asia/Tokyo', theme: 'light', hue: 'blue', must_change_password: false,
+          system_role: 'administrator', locale: 'ja', timezone: 'Asia/Tokyo', theme: o.theme ?? 'light', hue: 'blue', must_change_password: false,
         },
         permissions: [],
         projects: [{ key: 'demo', name: 'Demo', role: 'project_admin', permissions: ['project.view', 'ticket.view', ...(o.edit === false ? [] : ['ticket.edit'])] }],
@@ -151,9 +151,9 @@ async function mockApi(page: Page, o: { edit?: boolean; snap?: number } = {}): P
   return w
 }
 
-async function openGantt(page: Page) {
+async function openGantt(page: Page, size = { width: 1800, height: 900 }) {
   // 本体の幅を取り、帯が左右の端の自動送り（32px）に掛からないようにする
-  await page.setViewportSize({ width: 1800, height: 900 })
+  await page.setViewportSize(size)
   await page.goto('/p/demo/gantt')
   await expect(page.getByRole('heading', { level: 1, name: 'ガント' })).toBeVisible()
   await expect(page.locator('.gantt-svg rect.b').first()).toBeAttached()
@@ -420,4 +420,57 @@ test('ticket.edit が無ければ取っ手も出さず、動かせない', async
   expect(await page.locator('.gantt-chart').evaluate((el) => el.style.cursor)).toBe('')
   await drag(page, { x: (b.x0 + b.x1) / 2, y: b.y }, { x: (b.x0 + b.x1) / 2 + 2 * PPD, y: b.y })
   expect(w.patches).toHaveLength(0)
+})
+
+async function shot(page: Page, testInfo: TestInfo, name: string) {
+  const path = testInfo.outputPath(`${name}.png`)
+  await page.screenshot({ path })
+  await testInfo.attach(name, { path, contentType: 'image/png' })
+}
+
+test('編集中の見え方（影・札・取っ手・引いている線・通知）をライト／ダークと画面幅で撮る', async ({ page }, testInfo) => {
+  for (const theme of ['light', 'dark'] as const) {
+    for (const size of [{ width: 1440, height: 800 }, { width: 1024, height: 700 }]) {
+      const w = await mockApi(page, { theme, snap: 60 })
+      w.conflict = { seq: 304, fresh: {} }
+      await openGantt(page, size)
+      const tag = `${theme}-${size.width}`
+      // 取っ手（ポインタを載せた帯）
+      const b = await barOf(page, 303)
+      await page.mouse.move((b.x0 + b.x1) / 2, b.y)
+      await expect(page.locator('.gantt-svg circle.hdl')).toHaveCount(2)
+      await shot(page, testInfo, `edit-handles-${tag}`)
+      // 移動の途中（影と札、時刻付きの予告、違反の描き直し）
+      await page.mouse.down()
+      await page.mouse.move((b.x0 + b.x1) / 2 + PPD * 1.3, b.y + 2, { steps: 6 })
+      await expect(page.locator('.gantt-svg .dtag-t')).toBeAttached()
+      await shot(page, testInfo, `edit-move-${tag}`)
+      await page.keyboard.press('Escape')
+      await page.mouse.up()
+      // 依存を引いている途中（落とせる相手と、輪になる相手）
+      const h = await handle(page, 302, 'F')
+      const t = await barOf(page, 304)
+      await page.mouse.move(h.x, h.y)
+      await page.mouse.down()
+      await page.mouse.move(t.x0 + 4, t.y, { steps: 6 })
+      await expect(page.locator('.gantt-svg circle.lring')).toHaveCount(1)
+      await shot(page, testInfo, `edit-link-${tag}`)
+      // 302 → 303 の FS は既にある（落とせない相手）
+      const c = await barOf(page, 303)
+      await page.mouse.move(c.x0 + 6, c.y, { steps: 6 })
+      await expect(page.locator('.gantt-svg .dtag-t.no')).toBeAttached()
+      await shot(page, testInfo, `edit-link-no-${tag}`)
+      await page.keyboard.press('Escape')
+      await page.mouse.up()
+      // 競合の通知
+      const a = await barOf(page, 304)
+      await drag(page, { x: (a.x0 + a.x1) / 2, y: a.y }, { x: (a.x0 + a.x1) / 2 - PPD, y: a.y })
+      // ドラッグでツリーの文字を選択しない
+      expect(await page.evaluate(() => String(window.getSelection()))).toBe('')
+      await expect(page.locator('.gantt-edit-notice')).toBeVisible()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+      await shot(page, testInfo, `edit-notice-${tag}`)
+      await page.unrouteAll({ behavior: 'ignoreErrors' })
+    }
+  }
 })

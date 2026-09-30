@@ -890,7 +890,8 @@ function hitAt(p: { x: number; y: number }): Hit | null {
   if (!sx) return { type: 'create', seq: it.seq }
   const y = rowCenterY(i!)
   for (const h of handlesOf(sx.xs, sx.xf, sx.has)) {
-    if (Math.hypot(p.x - h.x, p.y - y) <= HANDLE_R + 3) return { type: 'handle', seq: it.seq, end: h.end }
+    // 当たりは半径＋2px（端の変更の当たり＝外側 3px と重ならない）
+    if (Math.hypot(p.x - h.x, p.y - y) <= HANDLE_R + 2) return { type: 'handle', seq: it.seq, end: h.end }
   }
   if (Math.abs(p.y - y) > 9) return null
   const kind = grabAt(p.x, sx.xs, sx.xf, sx.has, MS_TAIL)
@@ -923,6 +924,8 @@ function onChartPointerDown(e: PointerEvent): void {
     }
   }
   dragPointer = e.pointerId
+  // 既定の動作（文字の選択）を止める。止めないと、なぞった先のツリーの文字が選択される
+  e.preventDefault()
   chart.value!.setPointerCapture(e.pointerId)
 }
 

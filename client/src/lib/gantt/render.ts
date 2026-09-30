@@ -636,7 +636,8 @@ export function render(inp: RenderInput): { svg: string; edges: EdgeHit[] } {
     const rw = estW(rd, 10) + 10
     o += R(Math.min(Math.max(cx - rw / 2, 2), fr - rw - 2), H - 17, rw, 14, 'curr', 'rx="2"')
     o += TX(Math.min(Math.max(cx, rw / 2 + 2), fr - rw / 2 - 2), H - 7, rd, 'curr-t', 'middle')
-    const hv = inp.hover !== null ? items.get(inp.hover) : undefined
+    // ドラッグ中はチケットの札を出さない（ドラッグの札と重なって読めなくなる）
+    const hv = inp.hover !== null && !ed?.tag && !ed?.link ? items.get(inp.hover) : undefined
     if (hv) {
       const ttl = hv.title.length > 26 ? hv.title.slice(0, 25) + '…' : hv.title
       const sp = spanOf(hv)
