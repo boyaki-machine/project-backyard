@@ -2,6 +2,7 @@
 //
 //	GET    /api/v1/projects/{key}/tickets/{seq}/links        ticket.view
 //	POST   /api/v1/projects/{key}/tickets/{seq}/links        ticket.edit
+//	PATCH  /api/v1/projects/{key}/tickets/{seq}/links/{id}   ticket.edit（lag_days だけ。pb-231）
 //	DELETE /api/v1/projects/{key}/tickets/{seq}/links/{id}   ticket.edit
 //
 // **チケットから「同じプロジェクトの別のチケット」を指す**（9.10）。外部参照
@@ -13,8 +14,9 @@
 // N+1 になる（設計方針3）。DELETE も direction を問わない——片方だけ消せないと
 // 画面に「消せない行」が混ざる。
 //
-// **PATCH は持たない**（9.10.1）。一意制約が (source, target, link_type) である
-// 以上、link_type の変更は別の行になるのと同じである。
+// **PATCH は lag_days だけを変える**（9.10.1。pb-231）。一意制約が
+// (source, target, link_type) である以上、link_type や相手の変更は別の行になるのと
+// 同じで、消して作り直す。
 //
 // **詳細の追加のモーダルが出す link_type は relates / duplicates / blocks の3つだけ**。
 // FS〜SF はガントの上でバーの端から端へ引いて作る（GuiDesign.md 5.14「編集」。pb-221）。
@@ -26,6 +28,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -51,6 +54,12 @@ var linkTypes = []string{"FS", "SS", "FF", "SF", "relates", "duplicates", "block
 // グラフとして辿る**——どの組なら許すかを種別と遅れで場合分けすると、利用者が
 // 理由を読めない。クエリ（DependencyPathExists）の IN 句と同じ5つである。
 var dependencyLinkTypes = []string{"FS", "SS", "FF", "SF", "blocks"}
+
+// lagLinkTypes はずらし（lag_days）が意味を持つ種別（9.10.1）。blocks は持たない。
+var lagLinkTypes = []string{"FS", "SS", "FF", "SF"}
+
+// maxLagDays はずらしの範囲（-365〜365 日。9.10.1。pb-231）。
+const maxLagDays = 365
 
 // linkOriginHuman は API が作る唯一の origin（9.10.1）。
 //
@@ -290,7 +299,7 @@ func (h *handler) deleteTicketLink(w http.ResponseWriter, r *http.Request) {
 
 		// 要約は「<link_type> <相手の完全形ID>」（9.10.1）。GetTicketLink は
 		// 相手の seq を返すので、一覧を引き直さずに組み立てられる。
-		summary := row.LinkType + " " + fullTicketID(scope.key, row.TicketSeq)
+		summary := linkSummary(scope.key, row.LinkType, row.TicketSeq, row.LagDays)
 		return recordLinkChange(ctx, q, rec, scope.projectID, ticketID, &summary, "")
 	})
 	switch {
@@ -390,6 +399,9 @@ func validateNewLink(req createLinkRequest, selfSeq int32) (
 	}
 
 	if req.LagDays != nil {
+		if *req.LagDays < -maxLagDays || *req.LagDays > maxLagDays {
+			details = append(details, lagRangeDetail())
+		}
 		lagDays = *req.LagDays
 	}
 
@@ -432,5 +444,140 @@ func recordLinkChange(
 // **direction は含めない。** 読み手はそのチケットの履歴を見ており、
 // 相手が誰かだけが要る。
 func linkSummaryOf(key string, v linkView) string {
-	return v.LinkType + " " + fullTicketID(key, v.Ticket.Seq)
+	return linkSummary(key, v.LinkType, v.Ticket.Seq, v.LagDays)
+}
+
+// linkSummary は要約の本体。**ずらしが 0 でなければ ` +2d` / ` -1d` を添える**
+// （9.10.1。ガントの線の札と同じ書式。pb-231）。
+func linkSummary(key, linkType string, seq, lag int32) string {
+	s := linkType + " " + fullTicketID(key, seq)
+	if lag > 0 {
+		s += fmt.Sprintf(" +%dd", lag)
+	} else if lag < 0 {
+		s += fmt.Sprintf(" %dd", lag)
+	}
+	return s
+}
+
+func lagRangeDetail() apierr.Detail {
+	return apierr.Detail{
+		Field: "lag_days", Code: "invalid",
+		Message: fmt.Sprintf("ずらしは -%d〜%d 日の整数で指定してください", maxLagDays, maxLagDays),
+	}
+}
+
+// ── PATCH /api/v1/projects/{key}/tickets/{seq}/links/{id} ────
+
+// updateTicketLink は依存のずらし（lag_days）だけを変える。200 + 変えた1件（9.10.1。pb-231）。
+//
+// **消して作り直す方式を採らない**——2本の要求で原子的でなく、作り直しに失敗すると
+// 依存が消える。**direction を問わない**（DELETE と同じ）。値が変わらなければ
+// activity を書かない（9.5.2 と同じ「変更が生じた項目だけ記録する」）。
+func (h *handler) updateTicketLink(w http.ResponseWriter, r *http.Request) {
+	ctx, scope, ticketID, ok := h.ticketScope(w, r,
+		"PATCH /projects/{key}/tickets/{seq}/links/{id}")
+	if !ok {
+		return
+	}
+	id := chi.URLParam(r, "id")
+
+	var raw map[string]json.RawMessage
+	if e := decodeJSON(r, &raw); e != nil {
+		apierr.Write(w, r, e)
+		return
+	}
+	lag, e := parseLinkPatch(raw)
+	if e != nil {
+		apierr.Write(w, r, e)
+		return
+	}
+
+	rec := activity.FromRequest(r)
+	var (
+		view     linkView
+		notFound bool
+		invalid  *apierr.Error
+	)
+	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		row, err := q.GetTicketLink(ctx, gen.GetTicketLinkParams{TicketID: ticketID, ID: id})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				notFound = true
+				return errLinkHandled
+			}
+			return fmt.Errorf("リンク %q を読めない: %w", id, err)
+		}
+		if !slices.Contains(lagLinkTypes, row.LinkType) {
+			invalid = apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+				Field: "lag_days", Code: "invalid", Message: "この関連にはずらしを設定できません",
+			})
+			return errLinkHandled
+		}
+		if row.LagDays != lag {
+			if _, err := q.UpdateTicketLinkLag(ctx, gen.UpdateTicketLinkLagParams{
+				LagDays: lag, ID: id, TicketID: ticketID,
+			}); err != nil {
+				return fmt.Errorf("リンク %q のずらしを変えられない: %w", id, err)
+			}
+			old := linkSummary(scope.key, row.LinkType, row.TicketSeq, row.LagDays)
+			next := linkSummary(scope.key, row.LinkType, row.TicketSeq, lag)
+			if err := recordLinkChange(ctx, q, rec, scope.projectID, ticketID, &old, next); err != nil {
+				return err
+			}
+		}
+		items, err := ticketLinksFor(ctx, q, ticketID)
+		if err != nil {
+			return err
+		}
+		idx := slices.IndexFunc(items, func(v linkView) bool { return v.ID == id })
+		if idx < 0 {
+			return fmt.Errorf("変えたリンク %q を読めない", id)
+		}
+		view = items[idx]
+		return nil
+	})
+	switch {
+	case notFound:
+		apierr.Write(w, r, linkNotFound(id))
+		return
+	case invalid != nil:
+		apierr.Write(w, r, invalid)
+		return
+	case err != nil:
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+		return
+	}
+	WriteJSON(w, http.StatusOK, view)
+}
+
+// parseLinkPatch は PATCH の本文を解く（9.10.1）。**lag_days だけを受け、ほかの項目は
+// immutable_field**——link_type と相手を変えるのは別の行を作るのと同じである。
+func parseLinkPatch(raw map[string]json.RawMessage) (int32, *apierr.Error) {
+	var details []apierr.Detail
+	keys := make([]string, 0, len(raw))
+	for k := range raw {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		if k != "lag_days" {
+			details = append(details, apierr.Detail{
+				Field: k, Code: "immutable_field", Message: "変えられるのはずらし（lag_days）だけです",
+			})
+		}
+	}
+	var lag int32
+	v, ok := raw["lag_days"]
+	switch {
+	case !ok:
+		details = append(details, apierr.Detail{Field: "lag_days", Code: "required", Message: "ずらしを指定してください"})
+	case json.Unmarshal(v, &lag) != nil:
+		details = append(details, apierr.Detail{Field: "lag_days", Code: "invalid", Message: "ずらしは整数で指定してください"})
+	case lag < -maxLagDays || lag > maxLagDays:
+		details = append(details, lagRangeDetail())
+	}
+	if len(details) > 0 {
+		return 0, apierr.New(apierr.ValidationFailed).WithDetails(details...)
+	}
+	return lag, nil
 }

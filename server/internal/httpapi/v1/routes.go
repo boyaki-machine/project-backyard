@@ -484,12 +484,14 @@ func Mount(r chi.Router, deps Deps) {
 
 		// ── チケット間リンク（ApiDesign.md 9.10.1）── 手順18a ─────
 		//
-		// **PATCH を持たない**（9.10.1）。一意制約が (source, target, link_type)
-		// である以上、link_type の変更は別の行になるのと同じである。
+		// **PATCH は lag_days だけ**（9.10.1。pb-231）。一意制約が (source, target, link_type)
+		// である以上、link_type の変更は別の行になるのと同じで、消して作り直す。
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}/links", h.listTicketLinks)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
 			Post("/projects/{key}/tickets/{seq}/links", h.createTicketLink)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+			Patch("/projects/{key}/tickets/{seq}/links/{id}", h.updateTicketLink)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
 			Delete("/projects/{key}/tickets/{seq}/links/{id}", h.deleteTicketLink)
 

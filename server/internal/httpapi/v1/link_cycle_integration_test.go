@@ -148,3 +148,92 @@ func TestLinkCycleIntegration(t *testing.T) {
 		}
 	})
 }
+
+// ずらしの PATCH（9.10.1。pb-231）を**実際のDBに対して**通す。単体テストはフェイクが
+// 行を持つので、UPDATE の WHERE（このチケットに紐づくか）と、相手側（incoming）からも
+// 直せることは、ここでしか確かめられない。
+func TestLinkLagIntegration(t *testing.T) {
+	url := os.Getenv("PB_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("PB_TEST_DATABASE_URL が未設定のためスキップする")
+	}
+	ctx := context.Background()
+	pool, err := store.NewPool(ctx, url)
+	if err != nil {
+		t.Fatalf("DBに接続できない: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	q := gen.New(pool)
+	r := routerWithDeps(Deps{Queries: q, Tx: store.NewTxRunner(pool)})
+
+	adminID := ulidgen.New()
+	adminEmail := "lag-admin-" + adminID + "@example.com"
+	seedUserWithRole(t, ctx, pool, q, adminID, adminEmail, auth.SystemRoleAdministrator)
+	session := loginAs(t, r, adminEmail)
+	key := "lag-" + strings.ToLower(adminID[len(adminID)-8:])
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM project WHERE key = $1`, key); err != nil {
+			t.Errorf("プロジェクトの後始末に失敗した: %v", err)
+		}
+	})
+	if rec := postWithCookie(r, "/api/v1/projects", session,
+		fmt.Sprintf(`{"key":%q,"name":"ずらしの結合テスト","workflow_template":"simple"}`, key)); rec.Code != http.StatusCreated {
+		t.Fatalf("プロジェクト作成の status = %d（body=%s）", rec.Code, rec.Body.String())
+	}
+	base := "/api/v1/projects/" + key
+	a, aID := createIntegrationTicket(t, r, session, base, "設計を書く")
+	b, bID := createIntegrationTicket(t, r, session, base, "実装する")
+
+	create := func(typ string) string {
+		rec := postWithCookie(r, fmt.Sprintf("%s/tickets/%d/links", base, a), session,
+			fmt.Sprintf(`{"target_seq":%d,"link_type":%q}`, b, typ))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("%s の作成 status = %d（%s）", typ, rec.Code, rec.Body.String())
+		}
+		return viewOf(t, rec)["id"].(string)
+	}
+	fs := create("FS")
+	blk := create("blocks")
+
+	t.Run("先行の側から FS のずらしを変える", func(t *testing.T) {
+		rec := bodyWithCookie(r, http.MethodPatch, fmt.Sprintf("%s/tickets/%d/links/%s", base, a, fs), session, `{"lag_days":2}`, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200（%s）", rec.Code, rec.Body.String())
+		}
+		var got int32
+		if err := pool.QueryRow(ctx, `SELECT lag_days FROM ticket_link WHERE id = $1`, fs).Scan(&got); err != nil || got != 2 {
+			t.Fatalf("lag_days = %d（err=%v）, want 2", got, err)
+		}
+		rows := activityRows(t, pool, aID, "update")
+		last := rows[len(rows)-1]
+		if last.field != "link" || last.oldValue != "FS "+key+"-"+fmt.Sprint(b) || last.newValue != "FS "+key+"-"+fmt.Sprint(b)+" +2d" {
+			t.Errorf("activity = %+v", last)
+		}
+	})
+
+	t.Run("後行（incoming）の側からも直せる", func(t *testing.T) {
+		rec := bodyWithCookie(r, http.MethodPatch, fmt.Sprintf("%s/tickets/%d/links/%s", base, b, fs), session, `{"lag_days":-1}`, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200（%s）", rec.Code, rec.Body.String())
+		}
+		if v := viewOf(t, rec); v["direction"] != "incoming" || v["lag_days"].(float64) != -1 {
+			t.Errorf("応答 = %v", v)
+		}
+		rows := activityRows(t, pool, bID, "update")
+		if last := rows[len(rows)-1]; last.newValue != "FS "+key+"-"+fmt.Sprint(a)+" -1d" {
+			t.Errorf("activity = %+v", last)
+		}
+	})
+
+	t.Run("blocks は 422、別のチケットからは 404", func(t *testing.T) {
+		rec := bodyWithCookie(r, http.MethodPatch, fmt.Sprintf("%s/tickets/%d/links/%s", base, a, blk), session, `{"lag_days":1}`, "")
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422（%s）", rec.Code, rec.Body.String())
+		}
+		c, _ := createIntegrationTicket(t, r, session, base, "無関係なチケット")
+		rec = bodyWithCookie(r, http.MethodPatch, fmt.Sprintf("%s/tickets/%d/links/%s", base, c, fs), session, `{"lag_days":1}`, "")
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404（%s）", rec.Code, rec.Body.String())
+		}
+	})
+}

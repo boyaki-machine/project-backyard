@@ -2416,6 +2416,18 @@ func (q *fakeQuerier) CreateTicketLink(_ context.Context, arg gen.CreateTicketLi
 	return nil
 }
 
+func (q *fakeQuerier) UpdateTicketLinkLag(
+	_ context.Context, arg gen.UpdateTicketLinkLagParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateTicketLinkLag")
+	i := q.ticket.findLink(arg.ID)
+	if i < 0 {
+		return 0, nil
+	}
+	q.ticket.linkRows[i].LagDays = arg.LagDays
+	return 1, nil
+}
+
 func (q *fakeQuerier) DeleteTicketLink(
 	_ context.Context, arg gen.DeleteTicketLinkParams,
 ) (int64, error) {
