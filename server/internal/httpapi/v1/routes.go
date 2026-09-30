@@ -563,6 +563,11 @@ func Mount(r chi.Router, deps Deps) {
 			Get("/admin/users", h.listUsers)
 		r.With(middleware.RequirePermission(deps.Queries, "user.manage")).
 			Post("/admin/users", h.createUser)
+		// 監査ログは user.manage と独立した auditlog.view で守る（ApiDesign.md 6.11）。
+		r.With(middleware.RequirePermission(deps.Queries, "auditlog.view")).
+			Get("/admin/audit", h.listAuditLogs)
+		r.With(middleware.RequirePermission(deps.Queries, "auditlog.view")).
+			Get("/admin/audit.csv", h.exportAuditLogs)
 
 		// ── ユーザー個別（6.3〜6.8）────────────────────────────
 		//

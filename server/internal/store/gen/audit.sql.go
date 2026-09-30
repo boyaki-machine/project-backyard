@@ -8,9 +8,80 @@ package gen
 import (
 	"context"
 	"net/netip"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const exportAuditLogs = `-- name: ExportAuditLogs :many
+SELECT id, occurred_at, actor_id, actor_kind, actor_label, token_id,
+       ip, user_agent, action, target_type, target_id,
+       result, detail, request_id
+FROM audit_log
+WHERE ($1::timestamptz IS NULL OR occurred_at >= $1::timestamptz)
+  AND ($2::timestamptz IS NULL OR occurred_at < $2::timestamptz)
+  AND ($3::text = '' OR action ILIKE $3::text ESCAPE '\')
+  AND ($4::text = '' OR coalesce(actor_label, '') ILIKE $4::text ESCAPE '\')
+  AND ($5::text = '' OR result = $5::text)
+  AND ($6::text = '' OR (
+    coalesce(actor_label, '') ILIKE $6::text ESCAPE '\'
+    OR action ILIKE $6::text ESCAPE '\'
+    OR coalesce(target_type, '') ILIKE $6::text ESCAPE '\'
+    OR coalesce(target_id, '') ILIKE $6::text ESCAPE '\'
+  ))
+ORDER BY occurred_at DESC, id DESC
+`
+
+type ExportAuditLogsParams struct {
+	FromAt        *time.Time
+	ToAt          *time.Time
+	ActionPattern string
+	ActorPattern  string
+	ResultFilter  string
+	QPattern      string
+}
+
+func (q *Queries) ExportAuditLogs(ctx context.Context, arg ExportAuditLogsParams) ([]AuditLog, error) {
+	rows, err := q.db.Query(ctx, exportAuditLogs,
+		arg.FromAt,
+		arg.ToAt,
+		arg.ActionPattern,
+		arg.ActorPattern,
+		arg.ResultFilter,
+		arg.QPattern,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AuditLog{}
+	for rows.Next() {
+		var i AuditLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.OccurredAt,
+			&i.ActorID,
+			&i.ActorKind,
+			&i.ActorLabel,
+			&i.TokenID,
+			&i.Ip,
+			&i.UserAgent,
+			&i.Action,
+			&i.TargetType,
+			&i.TargetID,
+			&i.Result,
+			&i.Detail,
+			&i.RequestID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
 
 const insertAuditLog = `-- name: InsertAuditLog :exec
 
@@ -41,8 +112,7 @@ type InsertAuditLogParams struct {
 
 // 監査ログ（ApiDesign.md 2.10、DbDesign.md 6.8）。
 //
-// 読み出し（GET /admin/audit、auditlog.view）は手順11以降で足す。
-// 手順4b では書き込みの共通基盤のみを用意する。
+// 読み出しは auditlog.view で守る（ApiDesign.md 6.11）。
 func (q *Queries) InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error {
 	_, err := q.db.Exec(ctx, insertAuditLog,
 		arg.ID,
@@ -60,4 +130,121 @@ func (q *Queries) InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) 
 		arg.RequestID,
 	)
 	return err
+}
+
+const listAuditLogs = `-- name: ListAuditLogs :many
+SELECT id, occurred_at, actor_id, actor_kind, actor_label, token_id,
+       ip, user_agent, action, target_type, target_id,
+       result, detail, request_id
+FROM audit_log
+WHERE ($1::timestamptz IS NULL OR occurred_at >= $1::timestamptz)
+  AND ($2::timestamptz IS NULL OR occurred_at < $2::timestamptz)
+  AND ($3::text = '' OR action ILIKE $3::text ESCAPE '\')
+  AND ($4::text = '' OR coalesce(actor_label, '') ILIKE $4::text ESCAPE '\')
+  AND ($5::text = '' OR result = $5::text)
+  AND ($6::text = '' OR (
+    coalesce(actor_label, '') ILIKE $6::text ESCAPE '\'
+    OR action ILIKE $6::text ESCAPE '\'
+    OR coalesce(target_type, '') ILIKE $6::text ESCAPE '\'
+    OR coalesce(target_id, '') ILIKE $6::text ESCAPE '\'
+  ))
+ORDER BY occurred_at DESC, id DESC
+LIMIT $8::int OFFSET $7::int
+`
+
+type ListAuditLogsParams struct {
+	FromAt        *time.Time
+	ToAt          *time.Time
+	ActionPattern string
+	ActorPattern  string
+	ResultFilter  string
+	QPattern      string
+	PageOffset    int32
+	PageLimit     int32
+}
+
+// 一覧とCSVは同じ5条件を使う。日時は [from_at, to_at) の半開区間。
+// action / actor / q は呼び出し側で LIKE メタ文字をエスケープする。
+// actor_id は削除後に NULL になるため、検索と表示には actor_label を使う。
+func (q *Queries) ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]AuditLog, error) {
+	rows, err := q.db.Query(ctx, listAuditLogs,
+		arg.FromAt,
+		arg.ToAt,
+		arg.ActionPattern,
+		arg.ActorPattern,
+		arg.ResultFilter,
+		arg.QPattern,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AuditLog{}
+	for rows.Next() {
+		var i AuditLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.OccurredAt,
+			&i.ActorID,
+			&i.ActorKind,
+			&i.ActorLabel,
+			&i.TokenID,
+			&i.Ip,
+			&i.UserAgent,
+			&i.Action,
+			&i.TargetType,
+			&i.TargetID,
+			&i.Result,
+			&i.Detail,
+			&i.RequestID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const summarizeAuditLogs = `-- name: SummarizeAuditLogs :one
+SELECT count(*) AS total
+FROM audit_log
+WHERE ($1::timestamptz IS NULL OR occurred_at >= $1::timestamptz)
+  AND ($2::timestamptz IS NULL OR occurred_at < $2::timestamptz)
+  AND ($3::text = '' OR action ILIKE $3::text ESCAPE '\')
+  AND ($4::text = '' OR coalesce(actor_label, '') ILIKE $4::text ESCAPE '\')
+  AND ($5::text = '' OR result = $5::text)
+  AND ($6::text = '' OR (
+    coalesce(actor_label, '') ILIKE $6::text ESCAPE '\'
+    OR action ILIKE $6::text ESCAPE '\'
+    OR coalesce(target_type, '') ILIKE $6::text ESCAPE '\'
+    OR coalesce(target_id, '') ILIKE $6::text ESCAPE '\'
+  ))
+`
+
+type SummarizeAuditLogsParams struct {
+	FromAt        *time.Time
+	ToAt          *time.Time
+	ActionPattern string
+	ActorPattern  string
+	ResultFilter  string
+	QPattern      string
+}
+
+func (q *Queries) SummarizeAuditLogs(ctx context.Context, arg SummarizeAuditLogsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, summarizeAuditLogs,
+		arg.FromAt,
+		arg.ToAt,
+		arg.ActionPattern,
+		arg.ActorPattern,
+		arg.ResultFilter,
+		arg.QPattern,
+	)
+	var total int64
+	err := row.Scan(&total)
+	return total, err
 }

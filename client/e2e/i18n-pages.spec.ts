@@ -42,6 +42,7 @@ async function mockApi(page: Page) {
     if (path === '/api/v1/me/mfa') return reply(route, { totp: [], recovery_codes: null })
     if (path === '/api/v1/me/passkeys' || path === '/api/v1/me/tokens' || path === '/api/v1/me/agents') return reply(route, { items: [] })
     if (path === '/api/v1/admin/settings/pending') return reply(route, { pending_confirmation: null })
+    if (path === '/api/v1/admin/audit') return reply(route, { items: [], page: 1, per_page: 25, total: 0, total_pages: 0 })
     if (path === '/api/v1/admin/settings') return reply(route, { items: settingItems, config_file_path: null })
     if (path === '/api/v1/admin/database') return reply(route, {
       fetched_at: 1790391845000, connection: { host: 'localhost', port: 5432, database: 'pb', user: 'pb_app', tls: false },
