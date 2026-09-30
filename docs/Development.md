@@ -634,6 +634,11 @@ window.set = window.set || function (el, v) {
   並列で走ると待ちが伸び、200ms の境目を試験の側が越えて偽の FAIL になる
   （集中モードの左端で踏んだ）。**ページの中で入った時刻・出た時刻・結果が出た時刻を
   `performance.now()` で残し、差で判定する**（`client/e2e/focus-mode.spec.ts` の `recordEdge`）。
+- **動的 `import()` で分けたモジュールの効き目は、`vite build` の出力の一覧で測る。** 分けた側が
+  画面と共有するモジュール（`vue-i18n` を引く `locales/ui` など）を静的に import すると、ビルドが
+  共有物（Vue の本体）を別のファイルへ切り出し、**最初の読み込みのファイルがかえって増える**。
+  変える前の一覧を控えておき、`index-*.js` 以外のファイルが最初の読み込みに増えていないかを比べる
+  （pb-223。分けた側へは関数を引数で渡した）
 - **毎フレーム描き直す SVG の要素を `locator(...).boundingBox()` で掴まない。** 掴んだ直後に
   DOM から外れて位置が取れないことがある。`page.evaluate` で `getBoundingClientRect()` を
   数値で読む
