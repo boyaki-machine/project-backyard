@@ -971,7 +971,7 @@ async function runDeleteLink(): Promise<void> {
 const deleteLinkMessage = computed(() => {
   const l = linkToDelete.value
   if (l === null) return ''
-  const label = linkLabel(l.link_type, l.direction)
+  const label = linkLabel(l.link_type, l.direction, l.lag_days)
   const head = uiText("「{value0}」の関連（{value1}-{value2}「{value3}」）を解除します。", { value0: label, value1: props.projectKey, value2: l.ticket.seq, value3: l.ticket.title })
   return l.direction === 'incoming'
     ? uiText("{value0}\n相手のチケットが起点の関連なので、戻すには {value1}-{value2} を開く必要があります。", { value0: head, value1: props.projectKey, value2: l.ticket.seq })
@@ -1283,6 +1283,22 @@ function errorFor(field: string): string {
     ? fieldError.value.message
     : ''
 }
+
+/**
+ * 外から変わったことを知らせる口（ガントのドラッグ。`GuiDesign.md` 5.14「送り方と見え方」）。
+ *
+ * - `replace`：ガントが送った `PATCH` の応答（9.5.1 と同形式）をそのまま受ける。
+ *   **受けないと `version` が古いまま残り、ペインの次の編集が 409 になる**
+ * - `reload`：依存を足したとき。関連チケットの一覧を取り直す
+ */
+defineExpose({
+  replace(next: TicketDetail): void {
+    if (next.seq === props.seq) ticket.value = next
+  },
+  reload(): void {
+    void load()
+  },
+})
 </script>
 
 <template>
@@ -2215,13 +2231,13 @@ function errorFor(field: string): string {
           </div>
           <ul v-if="links.length > 0" class="rel-list">
             <li v-for="l in links" :key="l.id" class="rel-row">
-              <!-- **`blocks` だけ主語を書く**（5.5）。行に出ているのは常に相手なので、
+              <!-- **`blocks` と依存の4種は主語を書く**（5.5）。行に出ているのは常に相手なので、
                    「先行」だけだとその行のチケットが先行だと読める -->
               <span
                 class="rel-kind"
                 :title="linkLabelTitle(l.link_type, l.direction)"
               >
-                {{ linkLabel(l.link_type, l.direction) }}
+                {{ linkLabel(l.link_type, l.direction, l.lag_days) }}
               </span>
               <!-- 行クリックでその相手の詳細を開く（子チケットと同じ） -->
               <RouterLink class="rel-main" :to="ticketTo(l.ticket.seq)">

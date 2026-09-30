@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -274,6 +275,61 @@ func TestCreateLinkDuplicateIsConflict(t *testing.T) {
 	}
 	if len(q.ticket.linkCreated) != 0 {
 		t.Errorf("作られてしまった")
+	}
+}
+
+// **依存の種別で輪ができるなら link_cycle で 422**（9.10.1 / 9.14）。
+// 判定は「相手から自分へ辿れるか」で、**判定の前にプロジェクトを取る**。
+func TestCreateLinkRejectsCycle(t *testing.T) {
+	for _, lt := range dependencyLinkTypes {
+		q := linkFake()
+		q.ticket.linkCycle = true
+		h, _ := ticketHandler(q)
+
+		rec := httptest.NewRecorder()
+		h.createTicketLink(rec, cmtReq(http.MethodPost, "/links",
+			`{"target_seq":12,"link_type":"`+lt+`"}`, "31", ""))
+
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("link_type=%s: status = %d, want 422 (%s)", lt, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "link_cycle") {
+			t.Errorf("link_type=%s: details[].code に link_cycle が無い: %s", lt, rec.Body.String())
+		}
+		if len(q.ticket.linkCreated) != 0 {
+			t.Errorf("link_type=%s: 作られてしまった", lt)
+		}
+		if len(q.ticket.linkPathAsked) != 1 {
+			t.Fatalf("link_type=%s: DependencyPathExists = %d回, want 1", lt, len(q.ticket.linkPathAsked))
+		}
+		if a := q.ticket.linkPathAsked[0]; a.FromTicketID != testTicketID4 || a.ToTicketID != testTicketID {
+			t.Errorf("link_type=%s: 辿る向き = %q → %q, want 相手 → 自分", lt, a.FromTicketID, a.ToTicketID)
+		}
+		lock := slices.Index(q.opLog, "LockProjectForDependency")
+		path := slices.Index(q.opLog, "DependencyPathExists")
+		if lock < 0 || lock > path {
+			t.Errorf("link_type=%s: プロジェクトを取る前に判定している: %v", lt, q.opLog)
+		}
+	}
+}
+
+// **relates / duplicates は輪を判定しない**（向きに意味が無い。9.10.1）。
+func TestCreateLinkSkipsCycleForUndirected(t *testing.T) {
+	for _, lt := range []string{"relates", "duplicates"} {
+		q := linkFake()
+		q.ticket.linkCycle = true
+		h, _ := ticketHandler(q)
+
+		rec := httptest.NewRecorder()
+		h.createTicketLink(rec, cmtReq(http.MethodPost, "/links",
+			`{"target_seq":12,"link_type":"`+lt+`"}`, "31", ""))
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("link_type=%s: status = %d, want 201 (%s)", lt, rec.Code, rec.Body.String())
+		}
+		if len(q.ticket.linkPathAsked) != 0 {
+			t.Errorf("link_type=%s: 判定してしまった", lt)
+		}
 	}
 }
 

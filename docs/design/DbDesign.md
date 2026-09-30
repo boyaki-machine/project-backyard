@@ -755,14 +755,15 @@ ALTER TABLE access_token
 
 **`key` の形式検証をDBの `CHECK` にも置く。** アプリ側（`ApiDesign.md` 5.3）と二重になるが、URLとMCPエンドポイントに直結する値であり、不正値が入ると経路そのものが壊れるため。
 
-**`settings` で定義するキーは `repositories` のみ**である。
+**`settings` で定義するキーは `repositories` と `gantt_snap_minutes` の2つ**である。
 
 ```jsonc
 {
   "repositories": [
     { "name": "本体", "url": "https://github.com/org/project-backyard",
       "description": "サーバとフロントの実装。コミットに PB-123 を書く" }
-  ]
+  ],
+  "gantt_snap_minutes": 1440
 }
 ```
 
@@ -774,6 +775,8 @@ ALTER TABLE access_token
 | 並び順 | 配列の順 |
 
 **列にせず `settings` に置くのは、用途がまだ「画面にリンクを出す」「MCP がプロジェクト情報として返す」に限られるためである。** どちらも値を読んで返すだけで、一意制約・並び替え・結合を必要としない。リポジトリ単位のトークン発行や横断検索（`Requirements.md` 10.9）が要件になった時点で、`project_repository` テーブルへ移す。**逆にテーブルを先に作ると、要らなかったときに戻せない。**
+
+**`gantt_snap_minutes` はガント（`GuiDesign.md` 5.14「編集」）のドラッグが吸着する単位（分）である。** 値は `1440`（日）・`60`・`30`・`15` のいずれかで、**無い・知らない値のときは `1440` として扱う**（pb-221）。設定はカレンダータブ（`GuiDesign.md` 5.9.6）から行う。**読むのはガントの画面だけで、SQL からは使わない**——`timezone`（集計の SQL が使うので列にした。6.23）とはここが違い、`repositories` と同じ理由で `settings` に置く。
 
 **検証はフロントのみで、サーバは JSON オブジェクトであることしか見ない**（`ApiDesign.md` 5.5）。`settings` は自由形式だからである。
 

@@ -4009,6 +4009,9 @@ paths:
         **`target_seq` は同一プロジェクト内に存在すること**（無ければ 422、
         `details[].code` は `not_found`）。**自分自身は 422 `self_link`**。
 
+        **依存（`FS` / `SS` / `FF` / `SF` / `blocks`）は輪を作れない。** 5種を1つの有向グラフ
+        として扱い、足すと相手から自分へ辿り着けるなら 422 `link_cycle`（pb-221）。
+
         **同じ `(source, target, link_type)` が既にあれば 409 `already_exists`**
         （`uq_ticket_link`）。`conflict` は使わない——あちらは `If-Match` 不一致の
         ような**状態**の競合で、こちらは**値**が既存の行と衝突している。
@@ -7916,7 +7919,7 @@ components:
             取得した値を保持し、変更するキーだけ差し替えて全体を送ること。
 
             サーバは JSON オブジェクトであることしか検証しない。画面が
-            使うキーは `repositories` のみで、構造の正本は DbDesign.md 6.4 にある。
+            使うキーは `repositories` と `gantt_snap_minutes` で、構造の正本は DbDesign.md 6.4 にある。
           type: object
           additionalProperties: true
         timezone:
@@ -7975,7 +7978,7 @@ components:
         settings:
           description: |
             `project.settings`（jsonb）をそのまま返す。画面が使うキーは
-            `repositories` のみで、構造の正本は DbDesign.md 6.4 にある。
+            `repositories` と `gantt_snap_minutes` で、構造の正本は DbDesign.md 6.4 にある。
           type: object
           additionalProperties: true
         version:
@@ -9935,7 +9938,8 @@ components:
           minimum: 1
           description: |
             相手のチケットの `seq`。**同一プロジェクト内に存在すること**（無ければ
-            422 `not_found`）。**自分自身は 422 `self_link`。**
+            422 `not_found`）。**自分自身は 422 `self_link`。** 依存の種別で輪ができるなら
+            422 `link_cycle`。
         link_type:
           type: string
           enum: [FS, SS, FF, SF, relates, duplicates, blocks]
