@@ -1378,4 +1378,11 @@ export const uiMessages: Record<string, string> = {
   "集中": "Focus",
   "集中モードを解除する（Esc / Shift + [）": "Exit focus mode (Esc / Shift + [)",
   "メニューを畳んで時間軸を広げる（Shift + [）": "Hide the menu to widen the timeline (Shift + [)",
+  "先頭の {value0}件だけを出力しています（全{value1}件）": "Only the first {value0} tickets are exported ({value1} in total)",
+  "期間が {value0}日を超えるため、先頭の {value0}日だけを出力しています": "The period exceeds {value0} days, so only the first {value0} days are exported",
+  "出力": "Exported",
+  "祝": "Hol",
+  "先行": "Predecessors",
+  "いま見えているガントを Excel で保存する": "Save the Gantt chart as shown to Excel",
+  "Excel を作れませんでした：{value0}": "Could not create the Excel file: {value0}",
 }
