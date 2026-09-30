@@ -443,6 +443,11 @@ const GANTT_LINK_TYPES = new Set(['FS', 'SS', 'FF', 'SF', 'blocks'])
  */
 function onDetailUpdated(next: TicketDetail): void {
   tickets.value = tickets.value.map((t) => (t.seq === next.seq ? { ...t, ...next } : t))
+  // ずらし（lag_days）は依存の行を差し替えて描き直す（pb-231。本数は変わらないので取り直さない）
+  const lagOf = new Map(next.links.map((l) => [l.id, l.lag_days]))
+  if (links.value.some((l) => lagOf.has(l.id) && lagOf.get(l.id) !== l.lag_days)) {
+    links.value = links.value.map((l) => (lagOf.has(l.id) ? { ...l, lag_days: lagOf.get(l.id)! } : l))
+  }
   const mine = (l: { source_seq: number; target_seq: number }) => l.source_seq === next.seq || l.target_seq === next.seq
   const had = links.value.filter(mine).length
   const present = new Set(tickets.value.map((t) => t.seq))

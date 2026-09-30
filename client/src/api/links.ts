@@ -22,6 +22,7 @@ export type TicketLink = components['schemas']['TicketLink']
 export type TicketLinkList = components['schemas']['TicketLinkList']
 export type TicketLinkTicketRef = components['schemas']['TicketLinkTicketRef']
 export type CreateTicketLinkRequest = components['schemas']['CreateTicketLinkRequest']
+export type UpdateTicketLinkRequest = components['schemas']['UpdateTicketLinkRequest']
 
 export type LinkType = TicketLink['link_type']
 export type LinkDirection = TicketLink['direction']
@@ -126,8 +127,8 @@ export function listLinks(key: string, seq: number): Promise<TicketLinkList> {
  * **自分自身は 422 `self_link`**、相手が居なければ 422 `not_found`。
  *
  * **`lag_days` は既定の `0` を明示して送る。** 生成された型が必須にしている
- * ためで、**`FS`〜`SF` のときしか意味を持たない**——ガントのドラッグも常に `0` で作る
- * （画面から変える口は pb-231）。
+ * ためで、**`FS`〜`SF` のときしか意味を持たない**——ガントのドラッグも常に `0` で作り、
+ * 作ったあと詳細の関連チケットの行で変える（`updateLink`。pb-231）。
  */
 export function createLink(
   key: string,
@@ -135,6 +136,19 @@ export function createLink(
   body: CreateTicketLinkRequest,
 ): Promise<TicketLink> {
   return api.post<TicketLink>(base(key, seq), body)
+}
+
+/** ずらし（`lag_days`）が意味を持つ種別（9.10.1）。`blocks` は持たない */
+export const LAG_LINK_TYPES: readonly LinkType[] = ['FS', 'SS', 'FF', 'SF']
+/** ずらしの範囲（-365〜365 日。9.10.1） */
+export const MAX_LAG_DAYS = 365
+
+/**
+ * 依存のずらしを変える（9.10.1 の `PATCH`。pb-231）。**`lag_days` だけを送る。**
+ * `direction` を問わない（`incoming` の行も、このチケットの口から直せる）。
+ */
+export function updateLink(key: string, seq: number, id: string, body: UpdateTicketLinkRequest): Promise<TicketLink> {
+  return api.patch<TicketLink>(`${base(key, seq)}/${encodeURIComponent(id)}`, body)
 }
 
 /**

@@ -2420,6 +2420,9 @@ export interface paths {
          *     **`target_seq` は同一プロジェクト内に存在すること**（無ければ 422、
          *     `details[].code` は `not_found`）。**自分自身は 422 `self_link`**。
          *
+         *     **依存（`FS` / `SS` / `FF` / `SF` / `blocks`）は輪を作れない。** 5種を1つの有向グラフ
+         *     として扱い、足すと相手から自分へ辿り着けるなら 422 `link_cycle`（pb-221）。
+         *
          *     **同じ `(source, target, link_type)` が既にあれば 409 `already_exists`**
          *     （`uq_ticket_link`）。`conflict` は使わない——あちらは `If-Match` 不一致の
          *     ような**状態**の競合で、こちらは**値**が既存の行と衝突している。
@@ -2479,13 +2482,21 @@ export interface paths {
          *     `new_value` は `null`）。**相手のチケットの履歴には書かない**——1回の操作で
          *     2行増えると、同じ出来事が二重に見える。
          *
-         *     **`PATCH` は無い。** 一意制約が `(source, target, link_type)` である以上、
-         *     `link_type` の変更は別の行になるのと同じである。
+         *     ずらし（`lag_days`）を変えるのは `PATCH`。`link_type` の変更は別の行になるのと同じなので、
+         *     消して作り直す。
          */
         delete: operations["deleteTicketLink"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * 依存のずらし（lag_days）の変更
+         * @description ずらし（`lag_days`）だけを変える（ApiDesign.md 9.10.1。pb-231）。**必要権限は `ticket.edit`**。
+         *
+         *     **`FS` / `SS` / `FF` / `SF` のときだけ受ける**（ほかの種別は 422 `invalid`）。範囲は -365〜365。
+         *     **`lag_days` 以外を送ると 422 `immutable_field`**——`link_type` と相手は変えられない。
+         *     `direction` を問わない（`incoming` の行も直せる）。変更は `activity` に1行書く。
+         */
+        patch: operations["updateTicketLink"];
         trace?: never;
     };
     "/api/v1/projects/{key}/tickets/{seq}/reports": {
@@ -4910,7 +4921,7 @@ export interface components {
              *     取得した値を保持し、変更するキーだけ差し替えて全体を送ること。
              *
              *     サーバは JSON オブジェクトであることしか検証しない。画面が
-             *     使うキーは `repositories` のみで、構造の正本は DbDesign.md 6.4 にある。
+             *     使うキーは `repositories` と `gantt_snap_minutes` で、構造の正本は DbDesign.md 6.4 にある。
              */
             settings?: {
                 [key: string]: unknown;
@@ -4951,7 +4962,7 @@ export interface components {
             my_permissions: string[];
             /**
              * @description `project.settings`（jsonb）をそのまま返す。画面が使うキーは
-             *     `repositories` のみで、構造の正本は DbDesign.md 6.4 にある。
+             *     `repositories` と `gantt_snap_minutes` で、構造の正本は DbDesign.md 6.4 にある。
              */
             settings: {
                 [key: string]: unknown;
@@ -6400,7 +6411,8 @@ export interface components {
             /**
              * Format: int32
              * @description 相手のチケットの `seq`。**同一プロジェクト内に存在すること**（無ければ
-             *     422 `not_found`）。**自分自身は 422 `self_link`。**
+             *     422 `not_found`）。**自分自身は 422 `self_link`。** 依存の種別で輪ができるなら
+             *     422 `link_cycle`。
              */
             target_seq: number;
             /** @enum {string} */
@@ -6408,6 +6420,14 @@ export interface components {
             /**
              * Format: int32
              * @default 0
+             */
+            lag_days: number;
+        };
+        /** @description 依存のずらしの変更（ApiDesign.md 9.10.1）。**`lag_days` だけを受ける。** */
+        UpdateTicketLinkRequest: {
+            /**
+             * Format: int32
+             * @description 暦日（24時間 × 日数）。`FS`〜`SF` のときだけ受ける
              */
             lag_days: number;
         };
@@ -10842,6 +10862,54 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["TicketLinkNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateTicketLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /**
+                 * @description チケット間リンクの ULID（ApiDesign.md 9.1）。**`direction` を問わない**
+                 *     ——`incoming` の行の id もここへ渡せる（9.10.1）。
+                 */
+                id: components["parameters"]["TicketLinkID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTicketLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description 変えた。`GET` の1行と同じ形。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketLink"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketLinkNotFound"];
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };
