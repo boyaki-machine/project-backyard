@@ -1,5 +1,15 @@
 import { expect, test, type Page } from '@playwright/test'
 
+/**
+ * `/me/agents` の接続パネルで、Codex に接続方式を案内する（pb-160・pb-202）。
+ *
+ * **実サーバに向け、demo プロジェクトの参加者で走らせる**——準備でエージェントを
+ * demo に登録するので、参加していないアカウントは 422 になる。**dev なら
+ * `PB_E2E_EMAIL=pm@example.com`**（`admin@example.com` は demo の参加者でない）。
+ * パスワードは `make dev-info` で見る。続けて流すとログインの回数制限
+ * （IP あたり10回／分）に掛かるので、落ちたら1分待つ。
+ */
+
 async function login(page: Page) {
   const email = process.env.PB_E2E_EMAIL
   const password = process.env.PB_E2E_PASSWORD
@@ -67,7 +77,7 @@ test('Codexの自己署名証明書にはstdioブリッジを案内する', asyn
     await expect(card.getByText(/OS の信頼ストアへ登録しても/)).toBeVisible()
 
     await card.getByLabel('ローカル stdio ブリッジを使う（自己署名・社内 CA）').check()
-    await expect(card.getByText(/Codex 標準の HTTP MCP クライアント/)).toBeVisible()
+    await expect(card.getByText(/ブリッジも TLS 検証を行う/)).toBeVisible()
     await expect(card.getByText(/PB_MCP_CA_FILE/)).toBeVisible()
     await expect(card.getByText(/PB-README\.md/)).toBeVisible()
 
