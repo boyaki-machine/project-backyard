@@ -44,6 +44,7 @@ import {
   ymd,
 } from '../lib/gantt/time'
 import type { DayTick } from '../lib/gantt/time'
+import * as ganttTime from '../lib/gantt/time'
 import { uiNumber, uiText } from '../locales/ui'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
@@ -1136,6 +1137,58 @@ async function commitLink(source: number, target: number, type: string): Promise
   }
 }
 
+// ── Excel 出力（5.14「Excel 出力」）───────────────────────────
+
+const exporting = ref(false)
+
+/**
+ * いま見えているガントを `.xlsx` で落とす。**作るコードは押したときだけ読み込む**
+ * （動的 `import()`。Vite が別のファイルに分ける）——ガントを開いたときの読み込みを増やさない。
+ * 失敗したら、編集と同じ通知の行に出す（6.4）。
+ */
+async function exportExcel(): Promise<void> {
+  if (exporting.value) return
+  exporting.value = true
+  editNotice.value = ''
+  try {
+    const { buildGanttXlsx } = await import('../lib/gantt/excel')
+    const { blob, name } = await buildGanttXlsx({
+      // 日付と文言の関数は渡す（excel.ts の冒頭。静的に引くと Vue の本体が別ファイルに割れる）
+      env: { time: ganttTime, text: uiText },
+      projectKey: projectKey.value,
+      rows: rows.value,
+      links: links.value,
+      sprints: gSprints.value,
+      // 休日タブに並べる日（祝日と手動の休日。週末だけの日は WEEKDAY で塗るので入れない）
+      holidays: [...calendarDays.value.values()]
+        .filter((d) => d.is_holiday && d.reason !== 'weekend')
+        .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0))
+        .map((d) => ({ day: d.day, name: d.override?.name ?? d.events.find((ev) => ev.kind === 'holiday')?.name ?? '' })),
+      dayKind,
+      calStyle: calStyle.value,
+      baseTz: baseTz.value,
+      viewTz: viewTz.value,
+      now: now.value,
+      hue: ui.hue,
+      idOf: fullId,
+      statusText: (it) => statusLabel(it.ticket.status.key, it.ticket.status.name),
+      truncated: truncated.value ? { shown: tickets.value.length, total: total.value } : null,
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  } catch (e) {
+    editNotice.value = uiText('Excel を作れませんでした：{value0}', { value0: e instanceof Error ? e.message : String(e) })
+  } finally {
+    exporting.value = false
+  }
+}
+
 /** 描画に渡す編集の見え方 */
 function editView(): EditView | undefined {
   if (!canEdit.value && override.value.size === 0) return undefined
@@ -1418,6 +1471,15 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
             </button>
           </div>
           <button type="button" class="secondary" @click="toNow">{{ $ui('今日') }}</button>
+          <button
+            type="button"
+            class="secondary gantt-excel"
+            :disabled="exporting || !loaded"
+            :title="$ui('いま見えているガントを Excel で保存する')"
+            @click="exportExcel"
+          >
+            ⤓ Excel
+          </button>
           <!-- 集中モード（2.3.2）。メニューを 0px まで畳む。768px 未満では出さない -->
           <button
             v-if="!ui.narrow"
