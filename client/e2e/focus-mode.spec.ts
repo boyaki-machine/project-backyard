@@ -194,6 +194,36 @@ test('左端 8px に 200ms とどまると重ねて出し、離れると隠す�
   await expect(focusButton(page)).toHaveAttribute('aria-pressed', 'true')
 })
 
+/**
+ * **メニューは静止したポインタの下へスライドして現れる**ので、ブラウザは「入った」を
+ * 記録しない。上を通らずに離れても隠れること（pb-233）。
+ */
+test('出たメニューの上で動かさずに離れても隠す。外から 300ms 以内に戻れば出たまま', async ({ page }) => {
+  await mockApi(page)
+  await openGantt(page)
+  await focusButton(page).click()
+  await page.mouse.move(600, 500)
+
+  await page.mouse.move(3, 500)
+  await expect(peekMenu(page)).toBeVisible()
+  await page.waitForTimeout(400)
+  await page.mouse.move(900, 500)
+  await expect(peekMenu(page)).toHaveCount(0, { timeout: 1000 })
+  await expect(focusButton(page)).toHaveAttribute('aria-pressed', 'true')
+
+  // 外へ出てすぐ戻る：隠す待ちが止まる（スライドが終わってから x=100 に載せる）
+  await page.mouse.move(3, 500)
+  await expect(peekMenu(page)).toBeVisible()
+  await page.waitForTimeout(250)
+  await page.mouse.move(100, 500)
+  await page.mouse.move(900, 500)
+  await page.mouse.move(100, 500)
+  await page.waitForTimeout(600)
+  await expect(peekMenu(page)).toBeVisible()
+  await page.mouse.move(900, 500)
+  await expect(peekMenu(page)).toHaveCount(0, { timeout: 1000 })
+})
+
 test('Esc はドラッグの取り消しに先に使われ、集中モードは続く', async ({ page }) => {
   await mockApi(page)
   await openGantt(page)
