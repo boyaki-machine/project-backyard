@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import PageHeader from '../components/PageHeader.vue'
 import * as auditApi from '../api/audit'
 import type { AuditFilters, AuditLogItem } from '../api/audit'
-import { formatDateTime, instantOfLocalInput, isoOf } from '../lib/datetime'
+import { formatAuditDateTime, instantOfLocalInput, isoOf } from '../lib/datetime'
 import { uiText } from '../locales/ui'
 
 const fromInput = ref('')
@@ -16,6 +16,7 @@ const searchInput = ref('')
 const applied = ref<AuditFilters>({})
 const items = ref<AuditLogItem[]>([])
 const page = ref(1)
+const perPage = ref(50)
 const total = ref(0)
 const totalPages = ref(0)
 const loading = ref(false)
@@ -24,12 +25,45 @@ const exporting = ref(false)
 const error = ref('')
 const filterError = ref('')
 const expanded = ref<string | null>(null)
+const columnWidths = ref([225, 155, 195, 300, 100])
+const tableWidth = computed(() => columnWidths.value.reduce((sum, width) => sum + width, 0))
+let resizing: { index: number; startX: number; width: number } | null = null
+
+function startResize(index: number, event: PointerEvent) {
+  resizing = { index, startX: event.clientX, width: columnWidths.value[index]! }
+  window.addEventListener('pointermove', moveResize)
+  window.addEventListener('pointerup', stopResize, { once: true })
+  event.preventDefault()
+}
+
+function moveResize(event: PointerEvent) {
+  if (!resizing) return
+  const next = [...columnWidths.value]
+  next[resizing.index] = Math.max(85, resizing.width + event.clientX - resizing.startX)
+  columnWidths.value = next
+}
+
+function stopResize() {
+  resizing = null
+  window.removeEventListener('pointermove', moveResize)
+}
+
+function nudgeWidth(index: number, delta: number) {
+  const next = [...columnWidths.value]
+  next[index] = Math.max(85, next[index]! + delta)
+  columnWidths.value = next
+}
+
+function changePerPage() {
+  page.value = 1
+  void load()
+}
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    const data = await auditApi.listAuditLogs(applied.value, page.value)
+    const data = await auditApi.listAuditLogs(applied.value, page.value, perPage.value)
     items.value = data.items
     total.value = data.total
     totalPages.value = data.total_pages
@@ -116,6 +150,7 @@ function toggleDetail(id: string) {
 }
 
 onMounted(load)
+onBeforeUnmount(stopResize)
 </script>
 
 <template>
@@ -130,26 +165,26 @@ onMounted(load)
 
     <div class="body">
       <form class="filters" @submit.prevent="applyFilters">
-        <label>{{ $ui('開始日時') }}
+        <label class="filter-field">{{ $ui('開始日時') }}
           <input v-model="fromInput" type="datetime-local" />
         </label>
-        <label>{{ $ui('終了日時') }}
+        <label class="filter-field">{{ $ui('終了日時') }}
           <input v-model="toInput" type="datetime-local" />
         </label>
-        <label>{{ $ui('操作') }}
+        <label class="filter-field">{{ $ui('操作') }}
           <input v-model="actionInput" type="search" :placeholder="$ui('例: login')" />
         </label>
-        <label>{{ $ui('実行者') }}
+        <label class="filter-field">{{ $ui('実行者') }}
           <input v-model="actorInput" type="search" :placeholder="$ui('名前で検索')" />
         </label>
-        <label>{{ $ui('結果') }}
+        <label class="filter-field">{{ $ui('結果') }}
           <select v-model="resultInput">
             <option value="">{{ $ui('すべて') }}</option>
             <option value="success">{{ $ui('成功') }}</option>
             <option value="failure">{{ $ui('失敗') }}</option>
           </select>
         </label>
-        <label class="search-label">{{ $ui('検索ワード') }}
+        <label class="filter-field search-label">{{ $ui('検索ワード') }}
           <input v-model="searchInput" type="search" :placeholder="$ui('実行者・操作・対象を検索')" />
         </label>
         <div class="filter-actions">
@@ -163,19 +198,21 @@ onMounted(load)
       <p v-else-if="loaded && total === 0" class="status">{{ $ui('該当する監査ログはありません') }}</p>
 
       <div v-if="items.length" class="table-wrap">
-        <table>
+        <table :style="{ width: `${tableWidth}px` }">
+          <colgroup><col v-for="(width, index) in columnWidths" :key="index" :style="{ width: `${width}px` }" /></colgroup>
           <thead><tr>
-            <th scope="col">{{ $ui('日時') }}</th><th scope="col">{{ $ui('実行者') }}</th>
-            <th scope="col">{{ $ui('操作') }}</th><th scope="col">{{ $ui('対象') }}</th>
-            <th scope="col">{{ $ui('結果') }}</th>
+            <th v-for="(heading, index) in [$ui('日時'), $ui('実行者'), $ui('操作'), $ui('対象'), $ui('結果')]" :key="index" scope="col">
+              {{ heading }}
+              <span class="resize-handle" role="separator" tabindex="0" :aria-label="`${heading} ${$ui('列の幅を調整')}`" aria-orientation="vertical" @pointerdown="startResize(index, $event)" @keydown.left.prevent="nudgeWidth(index, -10)" @keydown.right.prevent="nudgeWidth(index, 10)" />
+            </th>
           </tr></thead>
           <tbody>
             <template v-for="item in items" :key="item.id">
-              <tr class="record" :class="{ selected: expanded === item.id }" tabindex="0" :aria-expanded="expanded === item.id" @click="toggleDetail(item.id)" @keydown.enter="toggleDetail(item.id)" @keydown.space.prevent="toggleDetail(item.id)">
-                <td><time :datetime="isoOf(item.occurred_at)">{{ formatDateTime(item.occurred_at) }}</time></td>
-                <td>{{ item.actor_label || '—' }}</td>
+              <tr class="record" :class="{ selected: expanded === item.id }" tabindex="0" :aria-expanded="expanded === item.id" @click="toggleDetail(item.id)" @keydown.enter.self="toggleDetail(item.id)" @keydown.space.self.prevent="toggleDetail(item.id)">
+                <td><time :datetime="isoOf(item.occurred_at)">{{ formatAuditDateTime(item.occurred_at) }}</time></td>
+                <td><RouterLink v-if="item.actor_kind === 'user' && item.actor_id" :to="`/admin/users/${item.actor_id}`" @click.stop>{{ item.actor_name || '—' }}</RouterLink><template v-else>{{ item.actor_name || '—' }}</template></td>
                 <td><code>{{ item.action }}</code></td>
-                <td class="target">{{ targetText(item) }}</td>
+                <td class="target"><span :title="targetText(item)">{{ targetText(item) }}</span></td>
                 <td>{{ item.result === 'success' ? $ui('成功') : $ui('失敗') }}</td>
               </tr>
               <tr v-if="expanded === item.id" class="detail-row"><td colspan="5">
@@ -184,6 +221,8 @@ onMounted(load)
                   <dt>User-Agent</dt><dd>{{ item.user_agent || '—' }}</dd>
                   <dt>Request ID</dt><dd>{{ item.request_id || '—' }}</dd>
                   <dt>Token ID</dt><dd>{{ item.token_id || '—' }}</dd>
+                  <dt>{{ $ui('対象種別') }}</dt><dd>{{ item.target_type || '—' }}</dd>
+                  <dt>{{ $ui('対象ID') }}</dt><dd>{{ item.target_id || '—' }}</dd>
                   <dt>detail</dt><dd><pre>{{ detailText(item) }}</pre></dd>
                 </dl>
               </td></tr>
@@ -193,6 +232,7 @@ onMounted(load)
       </div>
       <div v-if="loaded && total > 0" class="pager">
         <span>{{ total }}{{ $ui('件') }} · {{ page }} / {{ totalPages }}</span>
+        <label class="page-size">{{ $ui('表示件数') }} <select v-model.number="perPage" @change="changePerPage"><option v-for="size in [50, 100, 200, 400]" :key="size" :value="size">{{ size }}</option></select></label>
         <button type="button" :disabled="page <= 1 || loading" @click="movePage(page - 1)">{{ $ui('前へ') }}</button>
         <button type="button" :disabled="page >= totalPages || loading" @click="movePage(page + 1)">{{ $ui('次へ') }}</button>
       </div>
@@ -203,29 +243,35 @@ onMounted(load)
 <style scoped>
 .page { display: flex; flex-direction: column; height: 100%; min-width: 0; }
 .body { flex: 1; overflow: auto; padding: var(--pb-space-6); }
-.filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--pb-space-3); padding: var(--pb-space-4); border: 1px solid var(--pb-line); border-radius: var(--pb-radius); background: var(--pb-surface); }
-.filters label { display: flex; flex-direction: column; gap: var(--pb-space-1); min-width: 0; font-size: 13px; color: var(--pb-text-muted); }
-.filters input, .filters select { width: 100%; min-width: 0; padding: var(--pb-space-2); border: 1px solid var(--pb-line); border-radius: var(--pb-radius); background: var(--pb-bg); color: var(--pb-text); font: inherit; }
+.filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--pb-space-2) var(--pb-space-3); padding: var(--pb-space-3); border: 1px solid var(--pb-line); border-radius: var(--pb-radius); background: linear-gradient(135deg, var(--pb-surface), var(--pb-bg)); }
+.filter-field { display: flex; align-items: center; gap: var(--pb-space-2); min-width: 0; white-space: nowrap; font-size: 12px; color: var(--pb-text-muted); }
+.filters input, .filters select { flex: 1; min-width: 0; height: 32px; padding: 0 var(--pb-space-2); border: 1px solid var(--pb-line); border-radius: var(--pb-radius); background: var(--pb-surface); color: var(--pb-text); font: inherit; }
+.filters input:focus-visible, .filters select:focus-visible { outline: 2px solid var(--pb-accent); outline-offset: 1px; }
 .search-label { grid-column: span 2; }
-.filter-actions { display: flex; align-items: end; gap: var(--pb-space-2); }
+.filter-actions { display: flex; justify-content: flex-end; align-items: center; gap: var(--pb-space-2); }
 button { cursor: pointer; padding: var(--pb-space-2) var(--pb-space-3); border: 1px solid var(--pb-line); border-radius: var(--pb-radius); background: var(--pb-surface); color: var(--pb-text); white-space: nowrap; }
 button:disabled { cursor: default; opacity: .5; }
 .export-button { font-size: 13px; }
 .error { color: var(--pb-danger); margin-top: var(--pb-space-3); }
 .status { padding: var(--pb-space-6); color: var(--pb-text-muted); }
 .table-wrap { overflow-x: auto; margin-top: var(--pb-space-4); border: 1px solid var(--pb-line); border-radius: var(--pb-radius); }
-table { width: 100%; min-width: 690px; border-collapse: collapse; background: var(--pb-surface); font-size: 13px; }
-th, td { padding: var(--pb-space-3); border-bottom: 1px solid var(--pb-line); text-align: left; vertical-align: top; }
-th { color: var(--pb-text-muted); font-weight: 600; }
+table { min-width: 100%; table-layout: fixed; border-collapse: collapse; background: var(--pb-surface); font-size: 13px; }
+th, td { padding: var(--pb-space-3); border-bottom: 1px solid var(--pb-line); text-align: left; vertical-align: top; overflow: hidden; }
+th { position: relative; color: var(--pb-text-muted); font-weight: 600; }
+.resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 9px; cursor: col-resize; touch-action: none; }
+.resize-handle:hover, .resize-handle:focus-visible { background: var(--pb-line); outline: none; }
 .record { cursor: pointer; }
 .record:hover, .record:focus-visible, .selected { background: var(--pb-bg); }
 .record time { text-decoration: underline; }
-.target { max-width: 240px; overflow-wrap: anywhere; }
+.target span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .details { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: var(--pb-space-2); margin: 0; overflow-wrap: anywhere; }
 .details dt { color: var(--pb-text-muted); }
 .details dd { margin: 0; min-width: 0; }
 pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .pager { display: flex; justify-content: flex-end; align-items: center; gap: var(--pb-space-2); padding: var(--pb-space-4) 0; }
-@media (max-width: 760px) { .body { padding: var(--pb-space-3); } .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .search-label { grid-column: span 2; } .filter-actions { grid-column: span 2; } }
-@media (max-width: 480px) { .filters { grid-template-columns: minmax(0, 1fr); } .search-label, .filter-actions { grid-column: auto; } }
+.page-size { display: inline-flex; align-items: center; gap: var(--pb-space-1); margin: 0 var(--pb-space-2); }
+.page-size select { padding: var(--pb-space-1); border: 1px solid var(--pb-line); border-radius: var(--pb-radius); background: var(--pb-surface); color: var(--pb-text); }
+@media (max-width: 1100px) { .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .search-label { grid-column: auto; } }
+@media (max-width: 760px) { .body { padding: var(--pb-space-3); } .pager { flex-wrap: wrap; } }
+@media (max-width: 560px) { .filters { grid-template-columns: minmax(0, 1fr); } .filter-actions { justify-content: flex-start; } }
 </style>

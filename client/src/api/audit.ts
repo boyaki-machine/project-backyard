@@ -21,9 +21,9 @@ export function queryString(filters: AuditFilters): string {
   return params.toString()
 }
 
-export function listAuditLogs(filters: AuditFilters, page: number): Promise<AuditLogList> {
+export function listAuditLogs(filters: AuditFilters, page: number, perPage: number): Promise<AuditLogList> {
   const params = queryString(filters)
-  return api.get<AuditLogList>(`/admin/audit?${params ? `${params}&` : ''}page=${page}`)
+  return api.get<AuditLogList>(`/admin/audit?${params ? `${params}&` : ''}page=${page}&per_page=${perPage}`)
 }
 
 /** 一覧と同じ絞り込みの全件。CSV は JSON ではないため共通の api.get を通さない。 */

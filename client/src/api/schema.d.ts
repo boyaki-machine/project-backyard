@@ -4603,7 +4603,8 @@ export interface components {
             occurred_at: number;
             actor_id: string | null;
             actor_kind: string | null;
-            actor_label: string | null;
+            /** @description 記録時の実行者名。メールアドレスは含めない。 */
+            actor_name: string | null;
             token_id: string | null;
             ip: string | null;
             user_agent: string | null;

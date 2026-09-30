@@ -42,7 +42,7 @@ func TestAuditIntegration(t *testing.T) {
 		if i == 1 {
 			result = "failure"
 		}
-		_, err := pool.Exec(ctx, `INSERT INTO audit_log (id,occurred_at,actor_id,actor_kind,actor_label,action,target_type,target_id,result,detail) VALUES ($1,$2,$3,'user','監査結合テスト',$4,'agent',$5,$6,'{"source":"integration"}'::jsonb)`, ulidgen.New(), base.Add(time.Duration(i)*time.Second), adminID, action, marker, result)
+		_, err := pool.Exec(ctx, `INSERT INTO audit_log (id,occurred_at,actor_id,actor_kind,actor_label,action,target_type,target_id,result,detail) VALUES ($1,$2,$3,'user','監査結合テスト <audit@example.com>',$4,'agent',$5,$6,'{"source":"integration"}'::jsonb)`, ulidgen.New(), base.Add(time.Duration(i)*time.Second), adminID, action, marker, result)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,15 +59,15 @@ func TestAuditIntegration(t *testing.T) {
 	var body struct {
 		Total int `json:"total"`
 		Items []struct {
-			Action     string         `json:"action"`
-			ActorLabel string         `json:"actor_label"`
-			Detail     map[string]any `json:"detail"`
+			Action    string         `json:"action"`
+			ActorName string         `json:"actor_name"`
+			Detail    map[string]any `json:"detail"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(list.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Total != 1 || len(body.Items) != 1 || body.Items[0].Action != "agent.delete" || body.Items[0].ActorLabel != "監査結合テスト" {
+	if body.Total != 1 || len(body.Items) != 1 || body.Items[0].Action != "agent.delete" || body.Items[0].ActorName != "監査結合テスト" || strings.Contains(list.Body.String(), "audit@example.com") {
 		t.Errorf("body=%s", list.Body.String())
 	}
 	csvRes := getWithCookie(r, "/api/v1/admin/audit.csv"+query, adminSession)
@@ -78,7 +78,7 @@ func TestAuditIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(csvRows) != 2 || csvRows[1][8] != "agent.delete" {
+	if len(csvRows) != 2 || csvRows[1][4] != "監査結合テスト" || csvRows[1][8] != "agent.delete" || strings.Contains(csvRes.Body.String(), "audit@example.com") {
 		t.Errorf("csv rows=%v", csvRows)
 	}
 }

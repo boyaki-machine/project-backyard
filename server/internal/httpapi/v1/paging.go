@@ -43,6 +43,8 @@ type SortSpec struct {
 	// GET /projects/:key/tickets だけ既定が 200 だからである（ApiDesign.md 9.2.1）。
 	// あの画面はページャを持たず、フィルタ後の全件を1回で取り切る（9.2.3）。
 	DefaultPerPage int
+	// MaxPerPage はこの口だけの上限。0 なら共通の上限（200）。
+	MaxPerPage int
 }
 
 // Page は解析済みのページネーション指定。
@@ -123,6 +125,10 @@ func ParsePage(r *http.Request, spec SortSpec) (Page, *apierr.Error) {
 	if perPage == 0 {
 		perPage = DefaultPerPage
 	}
+	maxPerPage := spec.MaxPerPage
+	if maxPerPage == 0 {
+		maxPerPage = MaxPerPage
+	}
 	if v := q.Get("per_page"); v != "" {
 		n, err := strconv.Atoi(v)
 		switch {
@@ -134,10 +140,10 @@ func ParsePage(r *http.Request, spec SortSpec) (Page, *apierr.Error) {
 			details = append(details, apierr.Detail{
 				Field: "per_page", Code: "out_of_range", Message: "per_page は1以上で指定してください",
 			})
-		case n > MaxPerPage:
+		case n > maxPerPage:
 			details = append(details, apierr.Detail{
 				Field: "per_page", Code: "out_of_range",
-				Message: "per_page は" + strconv.Itoa(MaxPerPage) + "以下で指定してください",
+				Message: "per_page は" + strconv.Itoa(maxPerPage) + "以下で指定してください",
 			})
 		default:
 			perPage = n
