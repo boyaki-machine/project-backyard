@@ -829,7 +829,9 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
       </div>
     </template>
 
-    <!-- チケット詳細（5.5）。**`seq` が変わっても再マウントしない**（2.2.1） -->
+    <!-- チケット詳細（5.5）。**`seq` が変わっても再マウントしない**（2.2.1）。
+         **中のリンクにも `from=search` と検索の条件を持たせる**（3.2）——落とすと、押した先の
+         詳細の後ろがバックログに変わる -->
     <template #secondary>
       <TicketDetailPane
         v-if="detailSeq !== null"
@@ -840,6 +842,7 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
         :workflow="projectStore.current?.workflow ?? null"
         :candidates="tickets"
         :epics="epics"
+        :link-query="{ ...searchQuery, from: 'search' }"
         @close="closeDetail"
         @updated="onDetailUpdated"
         @created="onDetailCreated"
