@@ -2431,7 +2431,7 @@ PUT    /api/v1/admin/users/:id/memberships/:project_key   { "role": "project_adm
 DELETE /api/v1/admin/users/:id/memberships/:project_key
 ```
 
-`PUT` は追加と変更を兼ねる（冪等）。`GuiDesign.md` 5.6.2 の「プロジェクトごとの権限」ブロックに対応する。
+`PUT` は追加と変更を兼ねる（冪等）。`GuiDesign.md` 5.6.2 の「プロジェクトごとの権限」ブロックと、5.9.2 のメンバータブから使用する。後者も必要権限は `user.manage` であり、プロジェクト管理者への権限拡張はしない。
 
 プロジェクト側からも同じ操作ができるよう、`POST /api/v1/projects/:key/members` を追加する（未実装）。**同一の状態を2経路で変更することになるため、内部実装は共通の1関数に集約する。**
 

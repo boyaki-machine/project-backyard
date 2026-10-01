@@ -18,6 +18,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import Modal from '../components/Modal.vue'
+import * as usersApi from '../api/users'
 import Avatar from '../components/Avatar.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -117,6 +119,7 @@ onMounted(() => {
 // `:key` だけが変わる。コンポーネントは再生成されないので自分で取り直す。
 watch(projectKey, () => {
   tab.value = 'general'
+  resetMembers()
   saveError.value = null
   saved.value = false
   archiveError.value = null
@@ -127,6 +130,85 @@ watch(projectKey, () => {
 })
 
 onUnmounted(() => store.clearCurrent())
+
+// ── メンバー（既存の user.manage API を使う）────────────────────
+const canManageMembers = computed(() => auth.can('user.manage'))
+const memberBusy = ref(false)
+const memberError = ref('')
+const memberResult = ref('')
+const addingMember = ref(false)
+const memberQuery = ref('')
+const memberCandidates = ref<usersApi.UserListItem[]>([])
+const candidatesLoading = ref(false)
+const selectedMember = ref('')
+const selectedRole = ref('project_member')
+const deletingMember = ref<{ actor_id: string; display_name: string } | null>(null)
+let candidateFetch = 0
+function resetMembers(): void {
+  candidateFetch++
+  addingMember.value = false
+  deletingMember.value = null
+  memberCandidates.value = []
+  memberError.value = ''
+  memberResult.value = ''
+  candidatesLoading.value = false
+}
+async function searchMembers(): Promise<void> {
+  const mine = ++candidateFetch
+  if (!canManageMembers.value) return
+  candidatesLoading.value = true
+  memberError.value = ''
+  selectedMember.value = ''
+  try {
+    const res = await usersApi.listUsers({ kind: 'user', is_active: 'true', q: memberQuery.value, per_page: 200, sort: 'display_name', order: 'asc' })
+    if (mine !== candidateFetch) return
+    const existing = new Set(store.current?.members.map(m => m.actor_id))
+    memberCandidates.value = res.items.filter(u => !existing.has(u.id))
+  } catch (e) {
+    if (mine === candidateFetch) { memberCandidates.value = []; memberError.value = toApiError(e).message }
+  } finally {
+    if (mine === candidateFetch) candidatesLoading.value = false
+  }
+}
+function openAddMember(): void {
+  if (memberBusy.value) return
+  memberQuery.value = ''
+  selectedRole.value = 'project_member'
+  addingMember.value = true
+  void searchMembers()
+}
+async function saveMember(id: string, role: string | null): Promise<void> {
+  if (!canManageMembers.value || memberBusy.value || !id) return
+  const key = projectKey.value
+  memberBusy.value = true
+  memberError.value = ''
+  memberResult.value = ''
+  try {
+    if (role === null) await usersApi.deleteMembership(id, key)
+    else await usersApi.putMembership(id, key, role)
+    if (key !== projectKey.value) return
+    addingMember.value = false
+    deletingMember.value = null
+    await store.fetchCurrent(key)
+    if (key !== projectKey.value) return
+    if (store.currentError) throw store.currentError
+    memberResult.value = uiText('メンバー情報を更新しました')
+  } catch (e) {
+    if (key === projectKey.value) {
+      deletingMember.value = null
+      memberError.value = toApiError(e).message
+    }
+  } finally {
+    memberBusy.value = false
+  }
+}
+function changeMemberRole(event: Event, id: string): void {
+  const select = event.target as HTMLSelectElement
+  const role = select.value
+  const previous = store.current?.members.find(m => m.actor_id === id)?.role
+  if (previous) select.value = previous
+  void saveMember(id, role)
+}
 
 // ── タグ（5.9.4。`ApiDesign.md` 9.11）────────────────────────────
 
@@ -930,6 +1012,9 @@ function roleLabel(role: string): string {
         <!-- ── メンバータブ（5.9.2）─────────────────────────── -->
         <div v-else-if="tab === 'members'" class="blocks" role="tabpanel">
           <section class="block">
+            <button v-if="canManageMembers" class="primary" type="button" :disabled="memberBusy" @click="openAddMember">{{ $ui('メンバーを追加') }}</button>
+            <p v-if="memberResult" class="ok" role="status">{{ memberResult }}</p>
+            <p v-if="memberError" class="alert" role="alert">{{ memberError }}</p>
             <div class="members-table-scroll">
             <table class="table">
               <thead>
@@ -939,6 +1024,7 @@ function roleLabel(role: string): string {
                   <th scope="col">{{ $ui('メール') }}</th>
                   <th scope="col">{{ $ui('ロール') }}</th>
                   <th scope="col">{{ $ui('参加日') }}</th>
+                  <th v-if="canManageMembers" scope="col">{{ $ui('操作') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -950,15 +1036,26 @@ function roleLabel(role: string): string {
                   <td>{{ m.display_name }}</td>
                   <!-- エージェントとシステムは app_user を持たないため null（5.9.2） -->
                   <td class="muted">{{ m.email ?? '—' }}</td>
-                  <td>{{ roleLabel(m.role) }}</td>
+                  <td>
+                    <select v-if="canManageMembers && m.kind === 'user'" :value="m.role" :disabled="memberBusy"
+                      :aria-label="$ui('{value0} のロール', { value0: m.display_name })"
+                      @change="changeMemberRole($event, m.actor_id)">
+                      <option v-for="r in rolesStore.projectRoles" :key="r.key" :value="r.key">{{ roleLabel(r.key) }}</option>
+                    </select>
+                    <span v-else>{{ roleLabel(m.role) }}</span>
+                  </td>
                   <td class="date">{{ formatDate(m.joined_at) }}</td>
+                  <td v-if="canManageMembers">
+                    <button v-if="m.kind === 'user'" type="button" class="secondary" :disabled="memberBusy"
+                      :aria-label="$ui('{value0} をメンバーから削除', { value0: m.display_name })" @click="deletingMember = m">{{ $ui('削除') }}</button>
+                  </td>
                 </tr>
               </tbody>
             </table>
             </div>
 
             <p class="count">{{ store.current.members.length }}{{ $ui('件') }}</p>
-            <p class="hint">{{ $ui('ⓘ メンバーの追加・変更は「アカウント / 権限」から行います。') }}</p>
+            <p v-if="!canManageMembers" class="hint">{{ $ui('メンバーの管理はアドミニストレータに依頼してください。') }}</p>
           </section>
         </div>
 
@@ -1190,6 +1287,30 @@ function roleLabel(role: string): string {
       @save="applyRepository"
       @close="editingIndex = null"
     />
+
+    <Modal v-if="addingMember" :title="$ui('メンバーを追加')" @close="!memberBusy && (addingMember = false)">
+      <form class="member-form" @submit.prevent="searchMembers">
+        <label>{{ $ui('名前・メールで検索') }}<input v-model="memberQuery" :disabled="memberBusy || candidatesLoading" /></label>
+        <button type="submit" class="secondary" :disabled="memberBusy || candidatesLoading">{{ $ui('検索') }}</button>
+        <label>{{ $ui('ユーザー') }}<select v-model="selectedMember" :aria-label="$ui('ユーザー')" :disabled="memberBusy || candidatesLoading">
+          <option value="">{{ $ui('ユーザーを選択') }}</option>
+          <option v-for="u in memberCandidates" :key="u.id" :value="u.id">{{ u.display_name }} — {{ u.email }}</option>
+        </select></label>
+        <p class="hint">{{ $ui('候補は200件まで表示します。見つからない場合は検索で絞ってください。') }}</p>
+        <label>{{ $ui('ロール') }}<select v-model="selectedRole" :aria-label="$ui('ロール')" :disabled="memberBusy">
+          <option v-for="r in rolesStore.projectRoles" :key="r.key" :value="r.key">{{ roleLabel(r.key) }}</option>
+        </select></label>
+        <p v-if="memberError" class="alert" role="alert">{{ memberError }}</p>
+      </form>
+      <template #footer>
+        <button type="button" class="secondary" :disabled="memberBusy" @click="addingMember = false">{{ $ui('キャンセル') }}</button>
+        <button type="button" class="primary" :disabled="memberBusy || candidatesLoading || !selectedMember || !selectedRole" @click="saveMember(selectedMember, selectedRole)">{{ $ui('追加') }}</button>
+      </template>
+    </Modal>
+    <ConfirmDialog v-if="deletingMember" :title="$ui('メンバーを削除')"
+      :message="$ui('「{value0}」をこのプロジェクトのメンバーから削除します。ユーザーアカウントは残ります。', { value0: deletingMember.display_name })"
+      :confirm-label="$ui('削除する')" :busy="memberBusy" danger
+      @confirm="saveMember(deletingMember.actor_id, null)" @cancel="!memberBusy && (deletingMember = null)" />
 
     <ConfirmDialog
       v-if="confirmOpen"
@@ -1530,9 +1651,15 @@ button:disabled {
   width: 100%;
   border-collapse: collapse;
 }
+.member-form { display: flex; flex-direction: column; gap: var(--pb-space-3); }
+.member-form label { display: flex; flex-direction: column; gap: var(--pb-space-1); }
+.member-form input, .member-form select { width: 100%; min-width: 0; }
+
 .members-table-scroll {
   overflow-x: auto;
 }
+.members-table-scroll table { min-width: 720px; }
+.members-table-scroll td:nth-child(2) { min-width: 8em; white-space: nowrap; }
 
 th {
   padding: var(--pb-space-2) var(--pb-space-3);
