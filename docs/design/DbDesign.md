@@ -1082,6 +1082,9 @@ CREATE TABLE activity (
   entity_type text NOT NULL,
   entity_id   char(26) COLLATE "C" NOT NULL,
   actor_id    char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  actor_kind  text,          -- 0048 で追加。削除後も実行者種別を残す
+  actor_name  text,          -- 0048 で追加。メールを含まない記録時の表示名
+  target_label text,         -- 0048 で追加。記録時の project-key-seq
   action      text NOT NULL CHECK (action IN ('create','update','delete','transition')),
   field       text,
   old_value   text,
@@ -1091,6 +1094,7 @@ CREATE TABLE activity (
 );
 CREATE INDEX idx_activity_entity  ON activity (entity_type, entity_id, occurred_at DESC);
 CREATE INDEX idx_activity_project ON activity (project_id, occurred_at DESC);
+-- 0049 で管理者の横断一覧用に (occurred_at DESC, id DESC) を追加する。
 
 -- 監査ログ：認証・権限・トークン・エージェント操作。管理者のみ閲覧可
 CREATE TABLE audit_log (
@@ -1117,6 +1121,8 @@ CREATE INDEX idx_audit_actor  ON audit_log (actor_id, occurred_at DESC);
 **`ip` に `inet` 型を使う。** IPアドレスの正規化とサブネット検索がDB側でできる。
 
 `actor_label` を持たせるのは、**ユーザー削除後に「誰を消したか」を追えなくなることを防ぐ**ため（`ApiDesign.md` 6.5）。
+
+`activity` の実行者種別・表示名と対象名も記録時のスナップショットとして持つ。管理者の横断監査一覧は `audit_log` と `activity` を読むが、チケット詳細の履歴の書き込み先は変えない。0048 は既存行を現在の actor と ticket から補完する。既に削除された参照先の名前は復元できない。
 
 **`request_id` は `activity` と同じ意味・同じ型で持つ。** `ApiDesign.md` 2.5 のエラー応答と `Design.md` 10.1 のアプリケーションログを、同一リクエストの監査記録と突き合わせるための列である。
 

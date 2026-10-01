@@ -15,11 +15,13 @@ import (
 const insertActivity = `-- name: InsertActivity :exec
 
 INSERT INTO activity (
-  id, project_id, entity_type, entity_id, actor_id,
+  id, project_id, entity_type, entity_id, actor_id, actor_kind, actor_name, target_label,
   action, field, old_value, new_value, request_id
 ) VALUES (
-  $1, $2, $3, $4, $5,
-  $6, $7, $8, $9, $10
+  $1, $2, $3, $4, $5, $6, $7,
+  (SELECT p.key || '-' || t.seq::text FROM ticket t JOIN project p ON p.id = t.project_id
+   WHERE t.id = $4::pg_catalog.bpchar AND t.project_id = $2::pg_catalog.bpchar),
+  $8, $9, $10, $11, $12
 )
 `
 
@@ -29,6 +31,8 @@ type InsertActivityParams struct {
 	EntityType string
 	EntityID   string
 	ActorID    pgtype.Text
+	ActorKind  pgtype.Text
+	ActorName  pgtype.Text
 	Action     string
 	Field      pgtype.Text
 	OldValue   pgtype.Text
@@ -52,6 +56,8 @@ func (q *Queries) InsertActivity(ctx context.Context, arg InsertActivityParams) 
 		arg.EntityType,
 		arg.EntityID,
 		arg.ActorID,
+		arg.ActorKind,
+		arg.ActorName,
 		arg.Action,
 		arg.Field,
 		arg.OldValue,

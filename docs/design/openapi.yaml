@@ -4657,6 +4657,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/AuditFromAt'
         - $ref: '#/components/parameters/AuditToAt'
+        - $ref: '#/components/parameters/AuditCategory'
         - $ref: '#/components/parameters/AuditAction'
         - $ref: '#/components/parameters/AuditActor'
         - $ref: '#/components/parameters/AuditResult'
@@ -4694,6 +4695,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/AuditFromAt'
         - $ref: '#/components/parameters/AuditToAt'
+        - $ref: '#/components/parameters/AuditCategory'
         - $ref: '#/components/parameters/AuditAction'
         - $ref: '#/components/parameters/AuditActor'
         - $ref: '#/components/parameters/AuditResult'
@@ -5947,6 +5949,11 @@ components:
       in: query
       description: 終了日時。エポックミリ秒。含まない。
       schema: { type: integer, format: int64 }
+    AuditCategory:
+      name: category
+      in: query
+      description: 横断履歴の種別。未指定は全件。
+      schema: { type: string, enum: [ticket, project, application, security] }
     AuditAction:
       name: action
       in: query
@@ -5964,7 +5971,7 @@ components:
     AuditQuery:
       name: q
       in: query
-      description: 実行者名・操作名・対象種別・対象IDの部分一致。
+      description: 実行者名・操作名・対象種別・対象ID・対象名の部分一致。
       schema: { type: string }
     UserID:
       name: id
@@ -7551,10 +7558,11 @@ components:
 
     AuditLogItem:
       type: object
-      required: [id, occurred_at, actor_id, actor_kind, actor_name, token_id, ip, user_agent, action, target_type, target_id, result, detail, request_id]
+      required: [id, occurred_at, category, actor_id, actor_kind, actor_name, token_id, ip, user_agent, action, target_type, target_id, target_label, result, detail, request_id]
       properties:
         id: { type: string }
         occurred_at: { type: integer, format: int64 }
+        category: { type: string, enum: [ticket, project, application, security] }
         actor_id: { type: string, nullable: true }
         actor_kind: { type: string, nullable: true }
         actor_name: { type: string, nullable: true, description: 記録時の実行者名。メールアドレスは含めない。 }
@@ -7564,6 +7572,7 @@ components:
         action: { type: string }
         target_type: { type: string, nullable: true }
         target_id: { type: string, nullable: true }
+        target_label: { type: string, nullable: true, description: 記録時の読みやすい対象名。 }
         result: { type: string, enum: [success, failure] }
         detail: { type: object, additionalProperties: true }
         request_id: { type: string, nullable: true }

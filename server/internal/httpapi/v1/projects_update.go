@@ -10,6 +10,7 @@
 package v1
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -96,7 +97,12 @@ func (h *handler) patchProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var view projectDetailView
+	rec := audit.FromRequest(r)
 	err = h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		before, err := q.GetProjectByKey(ctx, key)
+		if err != nil {
+			return err
+		}
 		rows, err := q.UpdateProject(ctx, params)
 		if err != nil {
 			return fmt.Errorf("プロジェクト %q を更新できない: %w", key, err)
@@ -109,7 +115,18 @@ func (h *handler) patchProject(w http.ResponseWriter, r *http.Request) {
 			return classifyUpdateMiss(ctx, q, key)
 		}
 		view, err = buildProjectDetail(ctx, q, p, systemPerms, key)
-		return err
+		if err != nil {
+			return err
+		}
+		changed := projectChangedFields(before, view)
+		if len(changed) == 0 {
+			return nil
+		}
+		return rec.Record(ctx, q, audit.Entry{
+			Action: audit.ProjectUpdate, Result: audit.Success,
+			TargetType: "project", TargetID: view.ID,
+			Detail: map[string]any{"key": key, "changed_fields": changed},
+		})
 	})
 	if err != nil {
 		writeProjectUpdateError(w, r, key, err)
@@ -117,6 +134,24 @@ func (h *handler) patchProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, view)
+}
+
+func projectChangedFields(before gen.GetProjectByKeyRow, after projectDetailView) []string {
+	changed := []string{}
+	if before.Name != after.Name {
+		changed = append(changed, "name")
+	}
+	if before.Description.Valid != (after.Description != nil) ||
+		(before.Description.Valid && after.Description != nil && before.Description.String != *after.Description) {
+		changed = append(changed, "description")
+	}
+	if before.Timezone != after.Timezone {
+		changed = append(changed, "timezone")
+	}
+	if !bytes.Equal(settingsJSON(before.Settings), after.Settings) {
+		changed = append(changed, "settings")
+	}
+	return changed
 }
 
 // archiveProject / unarchiveProject は 5.6 の2本。**中身は setProjectStatus

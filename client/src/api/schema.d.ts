@@ -4601,6 +4601,8 @@ export interface components {
             id: string;
             /** Format: int64 */
             occurred_at: number;
+            /** @enum {string} */
+            category: "ticket" | "project" | "application" | "security";
             actor_id: string | null;
             actor_kind: string | null;
             /** @description 記録時の実行者名。メールアドレスは含めない。 */
@@ -4611,6 +4613,8 @@ export interface components {
             action: string;
             target_type: string | null;
             target_id: string | null;
+            /** @description 記録時の読みやすい対象名。 */
+            target_label: string | null;
             /** @enum {string} */
             result: "success" | "failure";
             detail: {
@@ -7342,12 +7346,14 @@ export interface components {
         AuditFromAt: number;
         /** @description 終了日時。エポックミリ秒。含まない。 */
         AuditToAt: number;
+        /** @description 横断履歴の種別。未指定は全件。 */
+        AuditCategory: "ticket" | "project" | "application" | "security";
         /** @description 操作名の部分一致。% と _ は文字として扱う。 */
         AuditAction: string;
         /** @description 記録時の実行者名の部分一致。 */
         AuditActor: string;
         AuditResult: "success" | "failure";
-        /** @description 実行者名・操作名・対象種別・対象IDの部分一致。 */
+        /** @description 実行者名・操作名・対象種別・対象ID・対象名の部分一致。 */
         AuditQuery: string;
         /**
          * @description ULID（`actor.id`。ApiDesign.md 6.3）。**形式は検証しない**——不正な ID は
@@ -11441,12 +11447,14 @@ export interface operations {
                 from_at?: components["parameters"]["AuditFromAt"];
                 /** @description 終了日時。エポックミリ秒。含まない。 */
                 to_at?: components["parameters"]["AuditToAt"];
+                /** @description 横断履歴の種別。未指定は全件。 */
+                category?: components["parameters"]["AuditCategory"];
                 /** @description 操作名の部分一致。% と _ は文字として扱う。 */
                 action?: components["parameters"]["AuditAction"];
                 /** @description 記録時の実行者名の部分一致。 */
                 actor?: components["parameters"]["AuditActor"];
                 result?: components["parameters"]["AuditResult"];
-                /** @description 実行者名・操作名・対象種別・対象IDの部分一致。 */
+                /** @description 実行者名・操作名・対象種別・対象ID・対象名の部分一致。 */
                 q?: components["parameters"]["AuditQuery"];
                 page?: number;
                 per_page?: number;
@@ -11482,12 +11490,14 @@ export interface operations {
                 from_at?: components["parameters"]["AuditFromAt"];
                 /** @description 終了日時。エポックミリ秒。含まない。 */
                 to_at?: components["parameters"]["AuditToAt"];
+                /** @description 横断履歴の種別。未指定は全件。 */
+                category?: components["parameters"]["AuditCategory"];
                 /** @description 操作名の部分一致。% と _ は文字として扱う。 */
                 action?: components["parameters"]["AuditAction"];
                 /** @description 記録時の実行者名の部分一致。 */
                 actor?: components["parameters"]["AuditActor"];
                 result?: components["parameters"]["AuditResult"];
-                /** @description 実行者名・操作名・対象種別・対象IDの部分一致。 */
+                /** @description 実行者名・操作名・対象種別・対象ID・対象名の部分一致。 */
                 q?: components["parameters"]["AuditQuery"];
             };
             header?: never;

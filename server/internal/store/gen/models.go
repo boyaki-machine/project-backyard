@@ -30,17 +30,20 @@ type AccessToken struct {
 }
 
 type Activity struct {
-	ID         string
-	ProjectID  string
-	EntityType string
-	EntityID   string
-	ActorID    pgtype.Text
-	Action     string
-	Field      pgtype.Text
-	OldValue   pgtype.Text
-	NewValue   pgtype.Text
-	RequestID  pgtype.Text
-	OccurredAt time.Time
+	ID          string
+	ProjectID   string
+	EntityType  string
+	EntityID    string
+	ActorID     pgtype.Text
+	Action      string
+	Field       pgtype.Text
+	OldValue    pgtype.Text
+	NewValue    pgtype.Text
+	RequestID   pgtype.Text
+	OccurredAt  time.Time
+	ActorKind   pgtype.Text
+	ActorName   pgtype.Text
+	TargetLabel pgtype.Text
 }
 
 type Actor struct {
@@ -156,6 +159,25 @@ type Attachment struct {
 	Checksum    pgtype.Text
 	UploadedBy  pgtype.Text
 	CreatedAt   time.Time
+}
+
+type AuditEvent struct {
+	ID          string
+	OccurredAt  time.Time
+	ActorID     pgtype.Text
+	ActorKind   pgtype.Text
+	ActorLabel  pgtype.Text
+	TokenID     pgtype.Text
+	Ip          *netip.Addr
+	UserAgent   pgtype.Text
+	Action      string
+	TargetType  pgtype.Text
+	TargetID    pgtype.Text
+	TargetLabel interface{}
+	Result      string
+	Detail      []byte
+	RequestID   pgtype.Text
+	Category    string
 }
 
 type AuditLog struct {

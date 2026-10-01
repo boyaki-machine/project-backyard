@@ -468,7 +468,7 @@ type Querier interface {
 	// **DO UPDATE で同じ値を書くのは RETURNING に行を返させるため**である
 	// （DO NOTHING では衝突した行が返らない）。
 	EnsureGoogleHolidaySource(ctx context.Context, arg EnsureGoogleHolidaySourceParams) (string, error)
-	ExportAuditLogs(ctx context.Context, arg ExportAuditLogsParams) ([]AuditLog, error)
+	ExportAuditLogs(ctx context.Context, arg ExportAuditLogsParams) ([]ExportAuditLogsRow, error)
 	// 認証に関するクエリ（Design.md 6.2.2、DbDesign.md 6.2）。
 	// FindAccessTokenByHash は受け取った平文の SHA-256 で access_token を引く。
 	//
@@ -1031,10 +1031,10 @@ type Querier interface {
 	// 知らないキーを読み飛ばすため（config.OverlayDatabase）。
 	// 起動時に1回、設定の保存ごとに1回しか呼ばれない。
 	ListAppSettings(ctx context.Context) ([]ListAppSettingsRow, error)
-	// 一覧とCSVは同じ5条件を使う。日時は [from_at, to_at) の半開区間。
+	// 一覧とCSVは同じ条件を使う。日時は [from_at, to_at) の半開区間。
 	// action / actor / q は呼び出し側で LIKE メタ文字をエスケープする。
 	// actor_id は削除後に NULL になるため、検索と表示には actor_label を使う。
-	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]AuditLog, error)
+	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]ListAuditLogsRow, error)
 	// 多要素認証のクエリ（DbDesign.md 6.18、Design.md 6.7）。
 	//
 	// **未確定の行（confirmed_at IS NULL）を、確定済みを引くクエリに混ぜない。**

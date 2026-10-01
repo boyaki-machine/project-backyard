@@ -19,27 +19,27 @@ type auditQueryFake struct {
 	gen.Querier
 	listParams   gen.ListAuditLogsParams
 	exportParams gen.ExportAuditLogsParams
-	listRows     []gen.AuditLog
-	exportRows   []gen.AuditLog
+	listRows     []gen.ListAuditLogsRow
+	exportRows   []gen.ExportAuditLogsRow
 }
 
-func (q *auditQueryFake) ListAuditLogs(_ context.Context, p gen.ListAuditLogsParams) ([]gen.AuditLog, error) {
+func (q *auditQueryFake) ListAuditLogs(_ context.Context, p gen.ListAuditLogsParams) ([]gen.ListAuditLogsRow, error) {
 	q.listParams = p
 	return q.listRows, nil
 }
 func (q *auditQueryFake) SummarizeAuditLogs(_ context.Context, _ gen.SummarizeAuditLogsParams) (int64, error) {
 	return int64(len(q.listRows)), nil
 }
-func (q *auditQueryFake) ExportAuditLogs(_ context.Context, p gen.ExportAuditLogsParams) ([]gen.AuditLog, error) {
+func (q *auditQueryFake) ExportAuditLogs(_ context.Context, p gen.ExportAuditLogsParams) ([]gen.ExportAuditLogsRow, error) {
 	q.exportParams = p
 	return q.exportRows, nil
 }
 
 func TestAuditFiltersAndList(t *testing.T) {
-	q := &auditQueryFake{listRows: []gen.AuditLog{{
+	q := &auditQueryFake{listRows: []gen.ListAuditLogsRow{{
 		ID: "01K2F8QW3H7YRJ4M5N6P7Q8R9S", OccurredAt: time.UnixMilli(1786438992000),
 		Action: "login.failure", Result: "failure", Detail: []byte(`{"reason":"bad"}`),
-		ActorLabel: pgtype.Text{String: "監査担当 <audit@example.com>", Valid: true},
+		ActorLabel: pgtype.Text{String: "監査担当 <audit@example.com>", Valid: true}, Category: "security",
 	}}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit?from_at=1786438991000&to_at=1786438993000&action=login_&actor=%E7%9B%A3%E6%9F%BB&result=failure&q=bad%25&page=2", nil)
@@ -77,7 +77,7 @@ func TestAuditFiltersAndList(t *testing.T) {
 }
 
 func TestAuditRejectsInvalidFilters(t *testing.T) {
-	for _, qs := range []string{"?result=denied", "?from_at=abc", "?from_at=2000&to_at=1000", "?order=asc", "?per_page=401"} {
+	for _, qs := range []string{"?result=denied", "?category=unknown", "?from_at=abc", "?from_at=2000&to_at=1000", "?order=asc", "?per_page=401"} {
 		rec := httptest.NewRecorder()
 		(&handler{q: &auditQueryFake{}}).listAuditLogs(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit"+qs, nil))
 		if rec.Code != http.StatusUnprocessableEntity {
@@ -96,9 +96,9 @@ func TestAuditAllows400PerPage(t *testing.T) {
 }
 
 func TestAuditCSVUsesFiltersAndProtectsFormula(t *testing.T) {
-	q := &auditQueryFake{exportRows: []gen.AuditLog{
-		{ID: "01K2F8QW3H7YRJ4M5N6P7Q8R9S", OccurredAt: time.UnixMilli(1000), ActorLabel: pgtype.Text{String: "=SUM(1)", Valid: true}, Action: "login.failure", Result: "failure", Detail: []byte(`{"note":"a,b"}`)},
-		{ID: "01K2F8QW3H7YRJ4M5N6P7Q8R9T", OccurredAt: time.UnixMilli(900), ActorLabel: pgtype.Text{String: "監査担当 <audit@example.com>", Valid: true}, Action: "login.failure", Result: "failure", Detail: []byte(`{}`)},
+	q := &auditQueryFake{exportRows: []gen.ExportAuditLogsRow{
+		{ID: "01K2F8QW3H7YRJ4M5N6P7Q8R9S", OccurredAt: time.UnixMilli(1000), ActorLabel: pgtype.Text{String: "=SUM(1)", Valid: true}, Action: "login.failure", Category: "security", Result: "failure", Detail: []byte(`{"note":"a,b"}`)},
+		{ID: "01K2F8QW3H7YRJ4M5N6P7Q8R9T", OccurredAt: time.UnixMilli(900), ActorLabel: pgtype.Text{String: "監査担当 <audit@example.com>", Valid: true}, Action: "login.failure", Category: "security", Result: "failure", Detail: []byte(`{}`)},
 	}}
 	rec := httptest.NewRecorder()
 	(&handler{q: q}).exportAuditLogs(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit.csv?result=failure", nil))
@@ -112,7 +112,7 @@ func TestAuditCSVUsesFiltersAndProtectsFormula(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 3 || rows[0][4] != "actor_name" || rows[1][4] != "'=SUM(1)" || rows[1][12] != `{"note":"a,b"}` || rows[2][4] != "監査担当" || strings.Contains(rec.Body.String(), "audit@example.com") {
+	if len(rows) != 3 || rows[0][5] != "actor_name" || rows[1][5] != "'=SUM(1)" || rows[1][14] != `{"note":"a,b"}` || rows[2][5] != "監査担当" || strings.Contains(rec.Body.String(), "audit@example.com") {
 		t.Errorf("csv=%v", rows)
 	}
 }
