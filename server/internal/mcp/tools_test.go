@@ -1113,3 +1113,62 @@ func TestCreateTicketRejectsMixedSchedule(t *testing.T) {
 		t.Fatalf("error = %+v, want -32602", resp.Error)
 	}
 }
+
+func TestListTasksPassesKeywordQuery(t *testing.T) {
+	for _, tool := range readTools() {
+		if tool.Name == "pb_list_tasks" && tool.InputSchema.Properties["q"].Type != "string" {
+			t.Fatal("q must be advertised as a string")
+		}
+	}
+	for _, query := range []string{"認証 日本語", "API & 100%_", ""} {
+		t.Run(query, func(t *testing.T) {
+			rest := &fakeREST{body: listBody}
+			h := New(rest, "v0")
+			args, err := json.Marshal(map[string]any{"q": query, "staged": true, "status_category": "todo"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := callTool1(t, h, toolCallBody("pb_list_tasks", string(args)))
+			if out.IsError {
+				t.Fatal(out.Content[0].Text)
+			}
+			if rest.gotQuery.Get("q") != query {
+				t.Errorf("q = %q, want %q", rest.gotQuery.Get("q"), query)
+			}
+			if query == "" && rest.gotQuery.Has("q") {
+				t.Error("empty q must be omitted")
+			}
+			if rest.gotQuery.Get("staged") != "true" || rest.gotQuery.Get("status_category") != "todo" {
+				t.Errorf("other filters lost: %v", rest.gotQuery)
+			}
+		})
+	}
+}
+
+func TestGetProjectWorkflowVersion(t *testing.T) {
+	for _, tc := range []struct{ args, want string }{{`{}`, ""}, {`{"workflow_version":1}`, "1"}, {`{"workflow_version":"6"}`, "6"}} {
+		rest := &fakeREST{body: `{"workflow_version":6,"warning":"再取得してください"}`}
+		out := callTool1(t, New(rest, "v0"), toolCallBody("pb_get_project", tc.args))
+		if out.IsError || out.Content[0].Text != rest.body {
+			t.Fatalf("response lost: %+v", out)
+		}
+		if rest.gotQuery.Get("workflow_version") != tc.want {
+			t.Errorf("query=%v, want %q", rest.gotQuery, tc.want)
+		}
+	}
+	for _, raw := range []string{"0", "-1", "2147483648", "1.5", `"abc"`, "null"} {
+		rest := &fakeREST{}
+		res := decodeRPC(t, callMCP(t, New(rest, "v0"), agentPrincipal(), toolCallBody("pb_get_project", `{"workflow_version":`+raw+`}`)))
+		if res.Error == nil || res.Error.Code != codeInvalidParams {
+			t.Errorf("%s: error=%+v, want invalid params", raw, res.Error)
+		}
+		if rest.gotPath != "" {
+			t.Errorf("%s reached REST", raw)
+		}
+	}
+	for _, tool := range readTools() {
+		if tool.Name == "pb_get_project" && tool.InputSchema.Properties["workflow_version"].Type != "integer" {
+			t.Fatal("workflow_version must be advertised")
+		}
+	}
+}

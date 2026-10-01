@@ -2,7 +2,7 @@
 //
 // 応答の組み立ては project_view.go の buildProjectDetail が持つ。POST /projects
 // （5.3）の応答も 5.4 と同形式であると定められているため、両者で同じ関数を通す。
-// **本ファイルにあるのは、認可の結果を 404 / 500 に写す部分だけ**である。
+// 配置手順の版が指定されたときだけ、現在の配布版と古い場合の警告を追加する。
 //
 // 到達可否（メンバーでなければ 404）の判定は RequireProjectPermission が済ませて
 // いる（Design.md 6.4.5）。ここまで来たということは、少なくとも project.view を
@@ -14,10 +14,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/agentsetup"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
@@ -29,6 +31,20 @@ func (h *handler) getProject(w http.ResponseWriter, r *http.Request) {
 	p, key, ok := projectRequestContext(w, r, "GET /projects/{key}")
 	if !ok {
 		return
+	}
+
+	var clientVersion int64
+	if values, present := r.URL.Query()["workflow_version"]; present {
+		var err error
+		if len(values) == 1 {
+			clientVersion, err = strconv.ParseInt(values[0], 10, 32)
+		}
+		if len(values) != 1 || err != nil || clientVersion < 1 {
+			apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+				Field: "workflow_version", Code: "invalid", Message: "配置手順の版番号は1以上の32bit整数で指定してください",
+			}))
+			return
+		}
 	}
 
 	// my_permissions を認可ミドルウェアと同じ値から作る（Design.md 6.4.1）。
@@ -45,6 +61,10 @@ func (h *handler) getProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if clientVersion > 0 {
+		view.WorkflowVersion = agentsetup.WorkflowVersion
+		view.Warning = agentsetup.WorkflowWarning(clientVersion)
+	}
 	WriteJSON(w, http.StatusOK, view)
 }
 

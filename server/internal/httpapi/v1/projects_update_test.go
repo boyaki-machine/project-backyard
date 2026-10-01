@@ -2,12 +2,14 @@ package v1
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/agentsetup"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
@@ -451,4 +453,45 @@ func containsString(xs []any, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestGetProjectWorkflowVersion(t *testing.T) {
+	for _, tc := range []struct {
+		query            string
+		present, warning bool
+	}{
+		{"", false, false}, {"?workflow_version=1", true, true},
+		{fmt.Sprintf("?workflow_version=%d", agentsetup.WorkflowVersion), true, false},
+		{fmt.Sprintf("?workflow_version=%d", agentsetup.WorkflowVersion+1), true, false},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			q, tx := detailFake(t)
+			rec := callProject(q, tx, http.MethodGet, "/api/v1/projects/my-app"+tc.query, tokenAs(q, auth.SystemRoleAdministrator), "", "")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
+			}
+			view := viewOf(t, rec)
+			latest, present := view["workflow_version"]
+			if present != tc.present || (present && latest != float64(agentsetup.WorkflowVersion)) {
+				t.Errorf("latest=%v, present=%v", latest, present)
+			}
+			_, warning := view["warning"]
+			if warning != tc.warning {
+				t.Errorf("warning=%v", view["warning"])
+			}
+			if warning && !strings.Contains(view["warning"].(string), "再取得") {
+				t.Error("missing recovery advice")
+			}
+			if view["version"] != float64(3) {
+				t.Error("project version changed")
+			}
+		})
+	}
+	for _, value := range []string{"", "0", "-1", "1.5", "abc", "2147483648", "1&workflow_version=2"} {
+		q, tx := detailFake(t)
+		rec := callProject(q, tx, http.MethodGet, "/api/v1/projects/my-app?workflow_version="+value, tokenAs(q, auth.SystemRoleAdministrator), "", "")
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"field":"workflow_version"`) {
+			t.Errorf("%q: status=%d, body=%s", value, rec.Code, rec.Body.String())
+		}
+	}
 }

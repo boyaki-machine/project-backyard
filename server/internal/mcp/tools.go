@@ -117,8 +117,10 @@ func readTools() []tool {
 			Name: "pb_get_project",
 			Description: "このプロジェクトの名前・説明・ワークフロー・メンバー・自分の役割を返す。" +
 				"参画したときに最初に呼ぶ。リポジトリの所在は settings.repositories にある。",
-			InputSchema: schema{Type: "object", Properties: map[string]property{}},
-			call:        callGetProject,
+			InputSchema: schema{Type: "object", Properties: map[string]property{
+				"workflow_version": {Type: "integer", Description: "配置手順の先頭にある pb-workflow-version の版番号。1以上の32bit整数。指定すると現在の配布版と、古ければ再取得を促す警告を返す", Minimum: intPtr(1), Maximum: intPtr(2147483647)},
+			}},
+			call: callGetProject,
 		},
 		{
 			Name: "pb_list_docs",
@@ -166,6 +168,7 @@ func readTools() []tool {
 					"parent": {Type: "string", Description: "チケット番号（seq）。そのチケットと全子孫に絞る。カンマ区切りで複数指定すると OR"},
 					"staged": {Type: "boolean", Description: "true でオンステージのチケット（段に出ている行とその配下。エピックを除く）だけに絞る。" +
 						"「オンステージのチケットに着手して」と頼まれたら、未完了の全件を取らずにこれを使う。false は指定なしと同じ"},
+					"q":        {Type: "string", Description: "タイトル・本文・コメントのキーワード検索。空白で区切った語をすべて含む（部分一致・大文字小文字を区別しない）。200文字まで。省略・空文字は通常の一覧"},
 					"per_page": {Type: "integer", Description: "返す件数。既定 200、上限 200", Minimum: intPtr(1), Maximum: intPtr(perPageMax)},
 				},
 			},
@@ -238,10 +241,21 @@ func (h *Handler) callTool(r *http.Request, req rpcRequest) rpcResponse {
 // ── ツール本体 ──────────────────────────────────────────────
 
 func callGetProject(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
-	if rpcErr := requireObjectArgs(args); rpcErr != nil {
+	var in struct {
+		WorkflowVersion json.RawMessage `json:"workflow_version"`
+	}
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
-	res, err := h.getREST(r, projectPath(key), nil)
+	q := url.Values{}
+	if len(in.WorkflowVersion) > 0 {
+		var version flexInt
+		if err := json.Unmarshal(in.WorkflowVersion, &version); err != nil || !version.set || version.value < 1 || version.value > 2147483647 {
+			return toolResult{}, newError(codeInvalidParams, "workflow_version は1以上の32bit整数で指定してください")
+		}
+		q.Set("workflow_version", strconv.FormatInt(version.value, 10))
+	}
+	res, err := h.getREST(r, projectPath(key), q)
 	return passThrough(r, res, err)
 }
 
@@ -330,6 +344,7 @@ func callGetTask(h *Handler, r *http.Request, key string, args json.RawMessage) 
 // **9.2.1 のパラメータをすべては開けていない。** ボードの状況把握と自分の担当を
 // 知るのに要るものだけを出している。増やすなら 8.5 の表を先に直すこと。
 type listArgs struct {
+	Query          string     `json:"q"`
 	Status         string     `json:"status"`
 	StatusCategory string     `json:"status_category"`
 	Assignee       string     `json:"assignee"`
@@ -348,6 +363,7 @@ func callListTasks(h *Handler, r *http.Request, key string, args json.RawMessage
 	}
 
 	q := url.Values{}
+	setIfNotEmpty(q, "q", in.Query)
 	setIfNotEmpty(q, "status", in.Status)
 	setIfNotEmpty(q, "status_category", in.StatusCategory)
 	setIfNotEmpty(q, "assignee", resolveAssignee(in.Assignee, auth.PrincipalFromContext(r.Context())))

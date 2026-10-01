@@ -50,11 +50,13 @@ type projectMemberView struct {
 
 // projectDetailView は 5.4 の応答本体。
 type projectDetailView struct {
-	ID          string  `json:"id"`
-	Key         string  `json:"key"`
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
-	Status      string  `json:"status"`
+	WorkflowVersion int     `json:"workflow_version,omitempty"`
+	Warning         string  `json:"warning,omitempty"`
+	ID              string  `json:"id"`
+	Key             string  `json:"key"`
+	Name            string  `json:"name"`
+	Description     *string `json:"description"`
+	Status          string  `json:"status"`
 	// Timezone はプロジェクトの基準タイムゾーン（IANA 名。DbDesign.md 6.23）。
 	Timezone string `json:"timezone"`
 	// Workflow は project.workflow_id が NULL のとき null になる

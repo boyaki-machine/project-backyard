@@ -334,26 +334,56 @@ func dropLinesContaining(s, needle string) string {
 	return strings.Join(out, "\n")
 }
 
-// TestRepositoryCommandsMatchTemplates は、このリポジトリの .claude/commands/ にある
-// 配布物の写しが、テンプレートから生成したものと一字一句同じであることを見る。
-//
-// **写しだけを直すと、配布先には届かない。** 片方だけが直っても、人が比べるまで
-// 気づけない。**直す場所はテンプレートで、写しは生成して置く。** pb-step / pb-review はリポジトリ専用で、配布しないので対象外。
-func TestRepositoryCommandsMatchTemplates(t *testing.T) {
+// 配布物はローカル設定なので同期を強制しない。古い写しにも版が残り、
+// 警告で再取得へ導けることを確かめる。現在版の写しは厳密に比較する。
+func TestRepositoryCommandsHaveRecognizableVersions(t *testing.T) {
 	files, err := Render([]string{"claude_code"}, testParams())
 	if err != nil {
-		t.Fatalf("Render が失敗した: %v", err)
+		t.Fatal(err)
 	}
+	marker := regexp.MustCompile(`<!-- pb-workflow-version: ([0-9]+) -->`)
 	for _, name := range specs["claude_code"].commands {
 		p := ".claude/commands/" + name + ".md"
-		want := findFile(t, files, p).Content
 		got, err := os.ReadFile(filepath.Join("..", "..", "..", p))
 		if err != nil {
-			t.Fatalf("リポジトリの %s を読めない: %v", p, err)
+			t.Fatal(err)
 		}
-		if string(got) != want {
-			t.Errorf("%s がテンプレートから生成したものと違う。"+
-				"テンプレート（templates/body/）を直し、生成したものを写しに置くこと", p)
+		m := marker.FindSubmatch(got)
+		if len(m) != 2 {
+			t.Fatalf("%s has no workflow version", p)
 		}
+		version, err := strconv.Atoi(string(m[1]))
+		if err != nil || version < 1 || version > WorkflowVersion {
+			t.Fatalf("%s has invalid version %s", p, m[1])
+		}
+		if version < WorkflowVersion {
+			if !strings.Contains(WorkflowWarning(int64(version)), "再取得") {
+				t.Errorf("%s: outdated copy not detected", p)
+			}
+		} else if string(got) != findFile(t, files, p).Content {
+			t.Errorf("%s: current copy differs from template", p)
+		}
+	}
+}
+
+func TestRenderedOnboardingSendsItsWorkflowVersion(t *testing.T) {
+	for kind, spec := range specs {
+		files, err := Render([]string{kind}, testParams())
+		if err != nil {
+			t.Fatal(err)
+		}
+		onboard := findFile(t, files, spec.commandPath("pb-onboard"))
+		want := "pb_get_project(workflow_version=" + strconv.Itoa(WorkflowVersion) + ")"
+		if !strings.Contains(onboard.Content, want) {
+			t.Errorf("%s: missing %s", kind, want)
+		}
+	}
+	for _, version := range []int64{0, WorkflowVersion, WorkflowVersion + 1} {
+		if WorkflowWarning(version) != "" {
+			t.Errorf("version %d must not warn", version)
+		}
+	}
+	if !strings.Contains(WorkflowWarning(WorkflowVersion-1), "再取得") {
+		t.Error("old version must warn")
 	}
 }

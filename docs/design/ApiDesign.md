@@ -1853,6 +1853,8 @@ GET /api/v1/projects/check-key?key=my-app
 
 **必要権限**：`project.view`（メンバーでない場合は `404`）
 
+**任意のクエリ**：`workflow_version` は配置手順に埋めた版番号（1以上の32bit整数）。指定した場合だけ、応答に現在の配布版 `workflow_version` を追加し、古い版なら `warning`（再取得を促す日本語）を追加する。同じ版・将来の版では `warning` を省略する。省略した呼び出し、および作成・更新・archiveの応答には両項目を追加しない。不正値・空文字・重複指定は `422 validation_failed`（field=`workflow_version`、code=`invalid`）。比較は `agentsetup.WorkflowVersion` を正本とする。クライアントの版をDBへ保存せず、接続したクライアントの版をWeb UIへ表示する機能はこの変更に含めない（Requirements.md 10.9.3）。
+
 ```json
 {
   "id": "01K2...", "key": "my-app", "name": "社内タスク管理の刷新",

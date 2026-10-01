@@ -5007,7 +5007,7 @@ export interface components {
         /**
          * @description `POST /projects`・`GET /projects/:key`・`PATCH /projects/:key`・
          *     archive / unarchive が返す共通の本体（ApiDesign.md 5.4）。
-         *     **どれか1つだけ形を変えない。**
+         *     GETで配置手順の版を確認したときだけworkflow_versionとwarningを追加する。
          */
         ProjectDetail: {
             id: string;
@@ -5041,6 +5041,10 @@ export interface components {
             };
             /** @description 楽観ロック用（ApiDesign.md 2.8）。作成直後は 1。 */
             version: number;
+            /** @description GETでworkflow_versionを指定した場合だけ返す現在の配置手順の版。 */
+            workflow_version?: number;
+            /** @description GETで指定した配置手順の版が古いときだけ返す再取得の案内。 */
+            warning?: string;
             /** Format: int64 */
             created_at: number;
             /** Format: int64 */
@@ -8824,7 +8828,10 @@ export interface operations {
     };
     getProject: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 配置手順の版番号。指定時だけ現在の配布版と、古ければ再取得を促すwarningを返す。 */
+                workflow_version?: number;
+            };
             header?: never;
             path: {
                 /**
@@ -8860,6 +8867,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

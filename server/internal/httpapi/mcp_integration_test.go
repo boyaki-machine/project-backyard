@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/agentsetup"
 	"github.com/boyaki-machine/project-backyard/server/internal/audit"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/project"
@@ -341,6 +343,34 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("配置手順の版をMCPから渡して古い場合だけ警告する", func(t *testing.T) {
+		for _, version := range []int{0, 1, agentsetup.WorkflowVersion, agentsetup.WorkflowVersion + 1} {
+			args := `{}`
+			if version != 0 {
+				args = fmt.Sprintf(`{"workflow_version":%d}`, version)
+			}
+			text, isErr := tool(t, fullToken, "pb_get_project", args)
+			if isErr {
+				t.Fatal(text)
+			}
+			var got map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(text), &got); err != nil {
+				t.Fatal(err)
+			}
+			latest, present := got["workflow_version"]
+			if present != (version != 0) || (present && string(latest) != strconv.Itoa(agentsetup.WorkflowVersion)) {
+				t.Errorf("version=%d, latest=%s", version, latest)
+			}
+			_, warning := got["warning"]
+			if warning != (version > 0 && version < agentsetup.WorkflowVersion) {
+				t.Errorf("version=%d, warning=%s", version, got["warning"])
+			}
+			if warning && !strings.Contains(string(got["warning"]), "再取得") {
+				t.Error("missing recovery advice")
+			}
+		}
+	})
+
 	t.Run("委譲によりプロジェクトを読める", func(t *testing.T) {
 		// **エージェント自身は app_user も project_member も持たない**
 		// （Design.md 6.5）。所有者のロールで通ることがここで確かめられる。
@@ -512,6 +542,37 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		if string(got.Items[0]["seq"]) != "1" {
 			t.Errorf("seq = %s, want 1", got.Items[0]["seq"])
+		}
+	})
+
+	t.Run("pb_list_tasks の日本語キーワード検索がRESTへ届く", func(t *testing.T) {
+		for _, tc := range []struct {
+			query string
+			total int
+		}{
+			{"読むチケット", 1}, {"MCP 読む", 1}, {"存在しない日本語", 0}, {"MCP 存在しない", 0}, {"%_", 0},
+		} {
+			args, err := json.Marshal(map[string]any{"q": tc.query, "open": true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			text, isErr := tool(t, fullToken, "pb_list_tasks", string(args))
+			if isErr {
+				t.Fatal(text)
+			}
+			var got struct {
+				Items []map[string]json.RawMessage `json:"items"`
+				Total int                          `json:"total"`
+			}
+			if err := json.Unmarshal([]byte(text), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Total != tc.total || len(got.Items) != tc.total {
+				t.Errorf("q=%q: total=%d/items=%d, want %d", tc.query, got.Total, len(got.Items), tc.total)
+			}
+			if len(got.Items) > 0 && len(got.Items[0]) != 11 {
+				t.Errorf("light fields = %d, want 11", len(got.Items[0]))
+			}
 		}
 	})
 
