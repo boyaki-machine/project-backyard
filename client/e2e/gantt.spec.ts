@@ -434,3 +434,36 @@ test('月境界の時刻札は大目盛りを隠さない', async ({ page }, tes
     }
   }
 })
+
+
+// pb-236：透明な斜線だけに戻ると落ちる。背景は暦・格子を抑えつつ透過を残す。
+test('未着手バーは半透明の背景と斜線を重ねる', async ({ page }, testInfo) => {
+  for (const theme of ['light', 'dark'] as const) {
+    for (const width of [1440, 1024]) {
+      await page.setViewportSize({ width, height: 900 })
+      await mockApi(page, { theme })
+      await openGantt(page)
+      await expect(page.locator('.gantt-svg rect.b.todo').first()).toBeAttached()
+      const paint = await page.locator('.gantt-svg #g-hatch').evaluate((pattern) => {
+        const bg = pattern.querySelector('.hatch-bg')!
+        const line = pattern.querySelector('.hatch')!
+        const canvas = document.createElement('canvas')
+        canvas.width = canvas.height = 1
+        const ctx = canvas.getContext('2d')!
+        ctx.fillStyle = getComputedStyle(bg).fill
+        ctx.fillRect(0, 0, 1, 1)
+        return {
+          alpha: ctx.getImageData(0, 0, 1, 1).data[3]! / 255,
+          backgroundFirst: bg.nextElementSibling === line,
+          hatch: Number(getComputedStyle(line).opacity) > 0,
+        }
+      })
+      expect(paint.alpha).toBeGreaterThan(0.5)
+      expect(paint.alpha).toBeLessThan(1)
+      expect(paint.backgroundFirst).toBe(true)
+      expect(paint.hatch).toBe(true)
+      await shot(page, testInfo, `todo-${theme}-${width}`)
+      await page.unrouteAll({ behavior: 'ignoreErrors' })
+    }
+  }
+})

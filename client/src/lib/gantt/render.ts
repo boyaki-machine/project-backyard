@@ -343,7 +343,7 @@ export function render(inp: RenderInput): { svg: string; edges: EdgeHit[] } {
   const sc = scaleOf(ppd)
   let o = ''
 
-  o += `<defs><pattern id="g-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="hatch" x1="0" y1="0" x2="0" y2="5"/></pattern>`
+  o += `<defs><pattern id="g-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="hatch-bg" width="5" height="5"/><line class="hatch" x1="0" y1="0" x2="0" y2="5"/></pattern>`
   o += `<pattern id="g-hol" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><line class="hol-line" x1="0" y1="0" x2="0" y2="8"/></pattern>`
   o += `<clipPath id="g-body"><rect x="0" y="${top}" width="${W}" height="${Math.max(0, H - top)}"/></clipPath></defs>`
 

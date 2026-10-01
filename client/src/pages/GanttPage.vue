@@ -2080,6 +2080,7 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
 .gantt-svg :deep(.ms-tail.done) { stroke: var(--g-done-line); }
 .gantt-svg :deep(.ms-dot) { fill: var(--g-bar); }
 .gantt-svg :deep(.ms-dot.done) { fill: var(--g-done-line); }
+.gantt-svg :deep(.hatch-bg) { fill: var(--g-todo-fill); }
 .gantt-svg :deep(.hatch) { stroke: var(--g-bar-line); stroke-width: 1; opacity: var(--g-hatch-op); }
 .gantt-svg :deep(.lbl) { fill: var(--pb-11); font: 10.5px var(--pb-font-mono); }
 .gantt-svg :deep(.lbl .lid) { fill: var(--pb-12); font-weight: 600; }
