@@ -135,6 +135,7 @@
   --g-bar-line:  var(--pb-9);
   --g-bar-fill:  color-mix(in srgb, var(--g-bar) 26%, transparent);
   --g-bar-glow:  none;
+  --g-todo-fill: color-mix(in srgb, var(--pb-3) 85%, transparent);
   --g-hatch-op:  .38;
   --g-done-fill: var(--pb-3);
   --g-done-line: var(--pb-7);
@@ -167,6 +168,7 @@
   --g-bar-line:  color-mix(in srgb, var(--pb-10) 70%, var(--pb-12));
   --g-bar-fill:  color-mix(in srgb, var(--g-bar) 42%, transparent);
   --g-bar-glow:  drop-shadow(0 0 2.5px color-mix(in srgb, var(--g-bar) 65%, transparent));
+  --g-todo-fill: color-mix(in srgb, var(--pb-4) 85%, transparent);
   --g-hatch-op:  .62;
   --g-done-fill: var(--pb-4);
   --g-done-line: var(--pb-8);

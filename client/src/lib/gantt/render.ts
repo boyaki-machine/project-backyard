@@ -343,7 +343,7 @@ export function render(inp: RenderInput): { svg: string; edges: EdgeHit[] } {
   const sc = scaleOf(ppd)
   let o = ''
 
-  o += `<defs><pattern id="g-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="hatch" x1="0" y1="0" x2="0" y2="5"/></pattern>`
+  o += `<defs><pattern id="g-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="hatch-bg" width="5" height="5"/><line class="hatch" x1="0" y1="0" x2="0" y2="5"/></pattern>`
   o += `<pattern id="g-hol" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><line class="hol-line" x1="0" y1="0" x2="0" y2="8"/></pattern>`
   o += `<clipPath id="g-body"><rect x="0" y="${top}" width="${W}" height="${Math.max(0, H - top)}"/></clipPath></defs>`
 
@@ -568,6 +568,13 @@ export function render(inp: RenderInput): { svg: string; edges: EdgeHit[] } {
   if (ed) rowsSvg += editOverlay(ed, items, rowOf, rowY, X, fr)
   o += `<g clip-path="url(#g-body)">${rowsSvg}</g>`
 
+  // 札と大目盛りは同じ段にある。先に札の占有範囲を求め、文字を避ける。
+  const nowText = hm(viewTz, now)
+  const nowWidth = estW(nowText, 10) + 10
+  const nowBox = xn >= -40 && xn <= W + 40
+    ? { x: Math.max(1, Math.min(W - nowWidth - 1, xn - nowWidth / 2)), w: nowWidth }
+    : null
+
   // ── ヘッダ ──
   o += R(0, 0, W, hdrH, 'h-bg')
   for (const d of dayList) {
@@ -586,6 +593,10 @@ export function render(inp: RenderInput): { svg: string; edges: EdgeHit[] } {
     const w = estW(s, 11)
     let lx = Math.max(x + 5, 5)
     if (lx + w > nx - 5) lx = nx - 5 - w
+    if (nowBox && lx < nowBox.x + nowBox.w + 5 && lx + w > nowBox.x - 5) {
+      const right = nowBox.x + nowBox.w + 5
+      lx = right + w <= Math.min(nx - 5, W - 5) ? right : nowBox.x - 5 - w
+    }
     o += TX(lx, 12, s, 'h-maj')
     if (x >= -4) o += `<path class="g-cross" d="M${f1(x - 3.5)},34H${f1(x + 3.5)}M${f1(x)},30.5V37.5"/>`
   })
@@ -614,10 +625,8 @@ export function render(inp: RenderInput): { svg: string; edges: EdgeHit[] } {
   o += L(0, hdrH + 0.5, W, hdrH + 0.5, 'h-line')
   o += L(0, top - 0.5, W, top - 0.5, 'h-lane')
   // 「今」：時刻の札は最上段（年月の行）に置き、日付の行と重ねない
-  if (xn >= -40 && xn <= W + 40) {
-    const tm = hm(viewTz, now)
-    const w = estW(tm, 10) + 10
-    o += L(xn, 14.5, xn, hdrH, 'g-now') + R(xn - w / 2, 1.5, w, 13, 'now-box', 'rx="2"') + TX(xn, 11.5, tm, 'h-nowt', 'middle')
+  if (nowBox) {
+    o += L(xn, 14.5, xn, hdrH, 'g-now') + R(nowBox.x, 1.5, nowBox.w, 13, 'now-box', 'rx="2"') + TX(nowBox.x + nowBox.w / 2, 11.5, nowText, 'h-nowt', 'middle')
     o += `<path class="h-now" d="M${f1(xn - 4)},16H${f1(xn + 4)}L${f1(xn)},21Z"/>`
   }
 
