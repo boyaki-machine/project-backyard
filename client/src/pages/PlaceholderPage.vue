@@ -32,8 +32,6 @@ const heading = computed(() => {
   return `${auth.projectByKey(key)?.name ?? key} ${uiText(p.projectHeading)}`
 })
 
-/** 定義側のパス（/p/:key）を出す。実際のURLではなくルートの形を示すため */
-const routePath = computed(() => route.matched[route.matched.length - 1]?.path ?? route.path)
 </script>
 
 <template>
@@ -43,7 +41,7 @@ const routePath = computed(() => route.matched[route.matched.length - 1]?.path ?
     <div class="page-body">
       <div class="card">
         <p class="lead"><span class="icon" aria-hidden="true">▤</span> {{ $ui('このページは未実装です') }}</p>
-        <p class="plan-title">{{ $ui(placeholder.title) }}{{ $ui('のページ予定') }}</p>
+        <p class="plan-title">{{ $ui('{value0}のページ予定', { value0: $ui(placeholder.title) }) }}</p>
 
         <section v-if="placeholder.planned.length > 0" class="planned">
           <h2 class="planned-title">{{ $ui('予定している内容') }}</h2>
@@ -53,10 +51,6 @@ const routePath = computed(() => route.matched[route.matched.length - 1]?.path ?
         </section>
 
         <dl class="meta">
-          <dt>{{ $ui('設計文書') }}</dt>
-          <dd>{{ $ui(placeholder.docRef) }}</dd>
-          <dt>{{ $ui('ルート') }}</dt>
-          <dd><code>{{ routePath }}</code></dd>
           <dt>{{ $ui('状態') }}</dt>
           <dd>{{ $ui(placeholder.status) }}</dd>
         </dl>

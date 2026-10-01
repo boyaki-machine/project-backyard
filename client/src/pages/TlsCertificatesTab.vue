@@ -413,7 +413,7 @@ function asApiError(e: unknown): ApiError {
                 <li>
                   <strong>{{ $ui('クライアントを再起動します。') }}</strong>{{ $ui('環境変数は起動時にしか 読まれません') }} </li>
               </ol>
-              <p class="muted"> {{ $ui('切り分けの手順は') }} <code>docs/Development.md</code> {{ $ui('14.5 にあります。') }} </p>
+              <p class="muted">{{ $ui('接続できない場合は、保存した証明書の場所と環境変数の設定を確認し、クライアントを再起動してください。') }}</p>
             </details>
           </template>
 
@@ -657,7 +657,7 @@ function asApiError(e: unknown): ApiError {
             <strong>{{ $ui('古いものを消さずに、新しいものを登録します。') }}</strong> {{ $ui('新しい証明書が有効になった時点で自動的に切り替わり、再起動は要りません。') }} </p>
         </details>
 
-        <p class="muted docref"> {{ $ui('発行元ごとの申込手順、連鎖の確かめ方、つまずいたときの対処は') }} <code>docs/Development.md</code> {{ $ui('14章にあります。') }} </p>
+        <p class="muted">{{ $ui('証明書の申込方法は発行元の案内を確認してください。登録できない場合は、証明書と秘密鍵が対応していること、有効期間、証明書の貼り付け順を確認してください。') }}</p>
       </section>
     </template>
 
