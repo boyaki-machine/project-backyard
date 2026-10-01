@@ -99,11 +99,13 @@ test('ボタンで入り、メニューを 0px まで畳む。Esc で戻る', as
   expect(await contentLeft(page)).toBeGreaterThan(0)
   await focusButton(page).click()
   await expect(focusButton(page)).toHaveAttribute('aria-pressed', 'true')
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement === document.documentElement)).toBe(true)
   await expect(menu(page)).toHaveCount(0)
   expect(await contentLeft(page)).toBe(0)
   await page.keyboard.press('Escape')
   await expect(menu(page)).toBeVisible()
   await expect(focusButton(page)).toHaveAttribute('aria-pressed', 'false')
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull()
 })
 
 test('Shift + [ で入り、もう一度で戻る', async ({ page }) => {
@@ -112,6 +114,7 @@ test('Shift + [ で入り、もう一度で戻る', async ({ page }) => {
   await page.locator('.gantt-chart').click({ position: { x: 5, y: 700 } })
   await page.keyboard.press('Shift+BracketLeft')
   await expect(menu(page)).toHaveCount(0)
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement === document.documentElement)).toBe(true)
   await page.keyboard.press('Shift+BracketLeft')
   await expect(menu(page)).toBeVisible()
   // [ だけなら折りたたみ（集中モードには入らない）
@@ -185,6 +188,8 @@ test('左端 8px に 200ms とどまると重ねて出し、離れると隠す�
   // 出ても集中モードは続く（コンテンツは 0px から）
   expect(await contentLeft(page)).toBe(0)
   await expect(focusButton(page)).toHaveAttribute('aria-pressed', 'true')
+  // スライドで実際にポインタの位置まで到達してから載せる。
+  await expect.poll(async () => (await peekMenu(page).boundingBox())?.x).toBe(0)
   // メニューの上に居る間は出たまま、離れると隠れる
   await page.mouse.move(100, 500)
   await page.waitForTimeout(500)
@@ -270,6 +275,7 @@ test('ガントで詳細を開いても続き、別の画面へ移ると解除�
   await expect(peekMenu(page)).toBeVisible()
   await peekMenu(page).getByRole('link', { name: 'バックログ' }).click()
   await expect(page).toHaveURL(/\/p\/demo\/backlog/)
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull()
   await expect(page.locator('.peek')).toHaveCount(0)
   await expect(menu(page)).toBeVisible()
   expect(await contentLeft(page)).toBeGreaterThan(0)
@@ -317,6 +323,13 @@ test('集中モードの見え方をライト／ダークと画面幅で撮る',
       await openGantt(page, w, h)
       await focusButton(page).click()
       await expect(menu(page)).toHaveCount(0)
+      await expect.poll(() => page.evaluate(() => document.fullscreenElement === document.documentElement)).toBe(true)
+      const bounds = await page.locator('.gantt-chart').evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return { right: r.right, bottom: r.bottom, width: innerWidth, height: innerHeight }
+      })
+      expect(Math.abs(bounds.right - bounds.width)).toBeLessThanOrEqual(1)
+      expect(Math.abs(bounds.bottom - bounds.height)).toBeLessThanOrEqual(1)
       // 押したボタンにポインタが載ったままでも、文字が地と見分けられる
       const [fg, bg] = await focusButton(page).evaluate((el) => [getComputedStyle(el).color, getComputedStyle(el).backgroundColor])
       expect(fg).not.toBe(bg)
@@ -333,4 +346,74 @@ test('集中モードの見え方をライト／ダークと画面幅で撮る',
     }
     await page.unrouteAll({ behavior: 'ignoreErrors' })
   }
+})
+
+
+// pb-237：ブラウザ側の解除を API の実イベントで確認する。
+test('ブラウザ側で全画面を解除すると集中モードも解除する', async ({ page }) => {
+  await mockApi(page)
+  await openGantt(page)
+  await focusButton(page).click()
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement === document.documentElement)).toBe(true)
+  await page.evaluate(() => document.exitFullscreen())
+  await expect(focusButton(page)).toHaveAttribute('aria-pressed', 'false')
+  await expect(menu(page)).toBeVisible()
+})
+
+test('全画面が未対応・拒否されてもメニューを畳む集中モードは使える', async ({ page }) => {
+  for (const support of ['missing', 'denied']) {
+    await mockApi(page)
+    await openGantt(page)
+    await page.evaluate((support) => {
+      if (support === 'missing') Object.defineProperty(document.documentElement, 'requestFullscreen', { value: undefined, writable: true, configurable: true })
+      else document.documentElement.requestFullscreen = () => Promise.reject(new TypeError('fullscreen denied'))
+    }, support)
+    await focusButton(page).click()
+    await expect(focusButton(page)).toHaveAttribute('aria-pressed', 'true')
+    await expect(menu(page)).toHaveCount(0)
+    expect(await page.evaluate(() => document.fullscreenElement)).toBeNull()
+    await focusButton(page).click()
+    await expect(menu(page)).toBeVisible()
+    await page.unrouteAll({ behavior: 'ignoreErrors' })
+  }
+})
+
+test('要求中に集中モードを解除したら、遅れて開始した全画面も終了する', async ({ page }) => {
+  await mockApi(page)
+  await openGantt(page)
+  await page.evaluate(() => {
+    let element: Element | null = null
+    Object.defineProperty(document, 'fullscreenEnabled', { get: () => true })
+    Object.defineProperty(document, 'fullscreenElement', { get: () => element })
+    document.documentElement.requestFullscreen = () => new Promise<void>((resolve) => {
+      Object.assign(window, { finishFullscreen: () => {
+        element = document.documentElement
+        document.dispatchEvent(new Event('fullscreenchange'))
+        resolve()
+      } })
+    })
+    document.exitFullscreen = async () => {
+      element = null
+      document.dispatchEvent(new Event('fullscreenchange'))
+    }
+  })
+  await focusButton(page).click()
+  await expect(focusButton(page)).toHaveAttribute('aria-pressed', 'true')
+  await focusButton(page).click()
+  await expect(menu(page)).toBeVisible()
+  await page.evaluate(() => (window as unknown as { finishFullscreen: () => void }).finishFullscreen())
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull()
+  await expect(focusButton(page)).toHaveAttribute('aria-pressed', 'false')
+})
+
+test('集中モードに入る前からある全画面表示は勝手に解除しない', async ({ page }) => {
+  await mockApi(page)
+  await openGantt(page)
+  await page.evaluate(() => document.documentElement.requestFullscreen())
+  await focusButton(page).click()
+  await expect(menu(page)).toHaveCount(0)
+  await focusButton(page).click()
+  await expect(menu(page)).toBeVisible()
+  expect(await page.evaluate(() => document.fullscreenElement === document.documentElement)).toBe(true)
+  await page.evaluate(() => document.exitFullscreen())
 })

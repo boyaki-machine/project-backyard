@@ -1491,8 +1491,8 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
             type="button"
             class="secondary gantt-focus"
             :aria-pressed="ui.focusMode"
-            :title="ui.focusMode ? $ui('集中モードを解除する（Esc / Shift + [）') : $ui('メニューを畳んで時間軸を広げる（Shift + [）')"
-            @click="ui.toggleFocus()"
+            :title="ui.focusMode ? $ui('集中モードを解除する（Esc / Shift + [）') : $ui('全画面表示にして時間軸を広げる（Shift + [）')"
+            @click="ui.toggleFocus(true)"
           >
             ⛶ {{ $ui('集中') }}
           </button>

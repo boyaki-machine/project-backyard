@@ -80,21 +80,49 @@ export const useUiStore = defineStore('ui', () => {
   /** 集中モード中に、左端への接近でメニューを重ねて出しているか */
   const focusPeek = ref(false)
 
-  function enterFocus() {
+  let focusGeneration = 0
+  // このモードが開始した全画面だけを解除する（要求中も所有を記録する）。
+  let fullscreenOwner: number | null = null
+
+  function releaseFullscreen() {
+    if (fullscreenOwner === null || document.fullscreenElement !== document.documentElement) return
+    fullscreenOwner = null
+    void document.exitFullscreen().catch(() => { /* ブラウザが先に解除した場合もある */ })
+  }
+
+  function enterFocus(fullscreen = false) {
     if (narrow.value) return
     focusMode.value = true
     focusPeek.value = false
+    const generation = ++focusGeneration
+    const root = document.documentElement
+    if (!fullscreen || !document.fullscreenEnabled || !root.requestFullscreen || document.fullscreenElement) return
+    fullscreenOwner = generation
+    // ユーザー操作の有効期間内に直接要求する。非対応・拒否時はメニューだけ畳む。
+    void root.requestFullscreen({ navigationUI: 'hide' }).then(() => {
+      if (fullscreenOwner === generation && focusGeneration !== generation) releaseFullscreen()
+    }).catch(() => {
+      if (fullscreenOwner === generation) fullscreenOwner = null
+    })
   }
 
   function exitFocus() {
+    ++focusGeneration
     focusMode.value = false
     focusPeek.value = false
+    releaseFullscreen()
   }
 
-  /** `Shift + [` と `[⛶ 集中]` から呼ぶ */
-  function toggleFocus() {
+  function onFullscreenChange() {
+    if (fullscreenOwner === null || document.fullscreenElement === document.documentElement) return
+    fullscreenOwner = null
+    exitFocus()
+  }
+
+  /** ガントのボタンとショートカットだけ fullscreen を指定する */
+  function toggleFocus(fullscreen = false) {
     if (focusMode.value) exitFocus()
-    else enterFocus()
+    else enterFocus(fullscreen)
   }
 
   /** メニューを折りたたんで表示するか（アイコンレールのみ 56px） */
@@ -173,6 +201,7 @@ export const useUiStore = defineStore('ui', () => {
 
   /** 起動時に一度だけ呼ぶ（main.ts） */
   function init() {
+    document.addEventListener('fullscreenchange', onFullscreenChange)
     theme.value = readTheme()
     hue.value = readHue()
     apply()
