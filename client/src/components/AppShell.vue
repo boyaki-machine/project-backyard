@@ -51,7 +51,7 @@ function onKeydown(e: KeyboardEvent) {
     // 768px 未満では集中モードに入らない（2.3.2）
     if (ui.narrow) return
     e.preventDefault()
-    ui.toggleFocus()
+    ui.toggleFocus(screen.value.endsWith(':gantt'))
     return
   }
   if (e.shiftKey) return
