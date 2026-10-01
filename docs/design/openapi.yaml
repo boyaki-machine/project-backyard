@@ -1625,6 +1625,15 @@ paths:
 
         `my_permissions` は認可ミドルウェアと同じ集合から作る
         （( システムロール ∪ プロジェクトロール ) ∩ スコープ。Design.md 6.4.1）。
+      parameters:
+        - name: workflow_version
+          in: query
+          required: false
+          description: 配置手順の版番号。指定時だけ現在の配布版と、古ければ再取得を促すwarningを返す。
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
       responses:
         '200':
           description: プロジェクトの詳細。
@@ -1644,6 +1653,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
         '429':
           $ref: '#/components/responses/RateLimited'
         '500':
@@ -8099,7 +8110,7 @@ components:
       description: |
         `POST /projects`・`GET /projects/:key`・`PATCH /projects/:key`・
         archive / unarchive が返す共通の本体（ApiDesign.md 5.4）。
-        **どれか1つだけ形を変えない。**
+        GETで配置手順の版を確認したときだけworkflow_versionとwarningを追加する。
       type: object
       required:
         [id, key, name, description, status, timezone, workflow, members, my_role,
@@ -8150,6 +8161,13 @@ components:
         version:
           description: 楽観ロック用（ApiDesign.md 2.8）。作成直後は 1。
           type: integer
+        workflow_version:
+          description: GETでworkflow_versionを指定した場合だけ返す現在の配置手順の版。
+          type: integer
+          minimum: 1
+        warning:
+          description: GETで指定した配置手順の版が古いときだけ返す再取得の案内。
+          type: string
         created_at:
           type: integer
           format: int64

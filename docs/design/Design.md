@@ -1634,11 +1634,13 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 
 | ツール | 引数 | 叩く REST | 応答 |
 |---|---|---|---|
-| `pb_get_project` | — | `GET /projects/:key` | 5.4 の応答をそのまま |
+| `pb_get_project` | `workflow_version?` | `GET /projects/:key` | 5.4 の応答をそのまま |
 | `pb_list_docs` | — | `GET /projects/:key/docs?outline=1` | 10.2 の応答をそのまま（**目次と見出しだけ。本文は含まない**） |
 | `pb_get_doc` | `path`, `section?` | `GET /projects/:key/docs/*path` | **本文の Markdown**。`section` を指定すればその章だけ |
 | `pb_get_task` | `seq` | `GET /projects/:key/tickets/:seq` | 9.5.1 の応答をそのまま |
 | `pb_list_tasks` | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `staged?`, `q?`, `per_page?` | `GET /projects/:key/tickets` | **軽量な部分集合**（下記） |
+
+**`pb_get_project(workflow_version=N)` は配置手順の版を5.4へ渡す**（pb-166）。1以上の32bit整数。応答の `workflow_version` は現在の配布版で、クライアントの版が小さいときだけ `warning` が付く。省略時は追加項目を返さず従来の形を保つ。新しい版を送っても古い扱いにはしない。警告は処理を止めず、配置ファイルの再取得を人へ促す。**版を送らない旧手順は未判定であり、参画手順を一度再取得するまで自動検出できない。** 送られなかった版を推測して古い扱いにはしない。
 
 **予定は日付でも受ける**（pb-217）。REST は `start_at` / `due_at`（エポックミリ秒・半開区間）＋ `all_day` だけを受ける（`ApiDesign.md` 9.3.1）が、
 エージェントに「締切日の翌日の0時」を計算させると誤る。**MCP 層がプロジェクトの基準タイムゾーンを引いて変換する**——`due_date`

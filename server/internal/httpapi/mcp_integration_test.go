@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/agentsetup"
 	"github.com/boyaki-machine/project-backyard/server/internal/audit"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/project"
@@ -338,6 +340,34 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		if res.Result.ServerInfo.Version != "mcp-test" {
 			t.Errorf("serverInfo.version = %q, want mcp-test", res.Result.ServerInfo.Version)
+		}
+	})
+
+	t.Run("配置手順の版をMCPから渡して古い場合だけ警告する", func(t *testing.T) {
+		for _, version := range []int{0, 1, agentsetup.WorkflowVersion, agentsetup.WorkflowVersion + 1} {
+			args := `{}`
+			if version != 0 {
+				args = fmt.Sprintf(`{"workflow_version":%d}`, version)
+			}
+			text, isErr := tool(t, fullToken, "pb_get_project", args)
+			if isErr {
+				t.Fatal(text)
+			}
+			var got map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(text), &got); err != nil {
+				t.Fatal(err)
+			}
+			latest, present := got["workflow_version"]
+			if present != (version != 0) || (present && string(latest) != strconv.Itoa(agentsetup.WorkflowVersion)) {
+				t.Errorf("version=%d, latest=%s", version, latest)
+			}
+			_, warning := got["warning"]
+			if warning != (version > 0 && version < agentsetup.WorkflowVersion) {
+				t.Errorf("version=%d, warning=%s", version, got["warning"])
+			}
+			if warning && !strings.Contains(string(got["warning"]), "再取得") {
+				t.Error("missing recovery advice")
+			}
 		}
 	})
 

@@ -24,15 +24,17 @@ import (
 	"text/template"
 )
 
-// WorkflowVersion は生成する手順ファイルに埋める版番号（Requirements.md 10.9.3）。
-//
-// 埋めるところまでが手順28a の範囲で、「PB 側が古いと判断して警告を返す」経路は
-// まだ無い（10.8.8）。**種を蒔いておかないと、後から突き合わせる材料が作れない**ため、
-// 値だけ先に置く。
-//
-// **手順ファイルの本文を変えたら、ここを上げる。** 28b・28c では本文を変えても
-// 上げていなかったので、1 の中身は一定ではない。
-const WorkflowVersion = 5
+// WorkflowVersion は配布する手順の版番号（Requirements.md 10.9.3）。
+// 手順の本文を変更したら上げる。pb_get_projectへ渡して古い配置を検出する。
+const WorkflowVersion = 6
+
+// WorkflowWarning は古い配置手順の再取得を促す。省略・同版・将来版には警告しない。
+func WorkflowWarning(clientVersion int64) string {
+	if clientVersion <= 0 || clientVersion >= WorkflowVersion {
+		return ""
+	}
+	return fmt.Sprintf("ワークフロー定義が古い（v%d、最新v%d）。プロジェクト設定の「エージェント連携セットアップ」から配置ファイルを再取得してください。", clientVersion, WorkflowVersion)
+}
 
 //go:embed templates/body/*.md
 var bodyFS embed.FS
