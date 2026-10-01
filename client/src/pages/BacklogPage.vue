@@ -589,6 +589,45 @@ const sprints = ref<Sprint[]>([])
 /** エピックの選択肢（5.4「フィルタ」）。タグ・スプリントと同じ「語彙の取得」である */
 const epics = ref<Ticket[]>([])
 
+// 絞り込みで一覧から外れた親だけ、既存の詳細APIで所属を補う。
+type EpicBadge = Pick<Ticket, 'seq' | 'title'>
+const parentEpics = ref(new Map<number, EpicBadge | null>())
+let epicFetch = 0
+watch([tickets, epics], async () => {
+  const mine = ++epicFetch
+  parentEpics.value = new Map()
+  const key = projectKey.value
+  const present = new Set([...tickets.value, ...epics.value].map(t => t.seq))
+  const missing = [...new Set(tickets.value.map(t => t.parent_seq))]
+    .filter((seq): seq is number => seq !== null && !present.has(seq))
+  const resolved = await Promise.all(missing.map(async seq => {
+    try {
+      const parent = await ticketsApi.getTicket(key, seq)
+      return [seq, parent.type === 'epic' ? parent : parent.epic] as const
+    } catch {
+      return [seq, null] as const
+    }
+  }))
+  if (mine === epicFetch && key === projectKey.value) parentEpics.value = new Map(resolved)
+})
+const epicByTicket = computed(() => {
+  const present = new Map([...tickets.value, ...epics.value].map(t => [t.seq, t]))
+  const result = new Map<number, EpicBadge>()
+  for (const ticket of tickets.value) {
+    let parent = ticket.parent_seq
+    const seen = new Set<number>([ticket.seq])
+    for (let depth = 0; parent !== null && depth < 32 && !seen.has(parent); depth++) {
+      seen.add(parent)
+      const ancestor = present.get(parent)
+      const epic = ancestor?.type === 'epic' ? ancestor : parentEpics.value.get(parent)
+      if (epic) { result.set(ticket.seq, epic); break }
+      if (!ancestor) break
+      parent = ancestor.parent_seq
+    }
+  }
+  return result
+})
+
 /** スプリントの開始ダイアログ（5.4「開始のダイアログ」） */
 const showSprintStart = ref(false)
 /** スプリントの終了確認（5.4「終了の確認」） */
@@ -2249,7 +2288,7 @@ watch(projectKey, (key) => {
 
           <template v-if="(searching || !collapsed.has(section.key))">
             <div v-if="section.rows.length > 0" class="table-scroll">
-            <table class="table" :style="!shrunk && resizedTableWidth !== null ? { width: `${resizedTableWidth}px` } : undefined">
+            <table class="table" :class="{ 'full-table': !shrunk }" :style="!shrunk && resizedTableWidth !== null ? { width: `${resizedTableWidth}px` } : undefined">
               <colgroup v-if="!shrunk && columnWidths">
                 <col v-for="key in columnKeys" :key="key" :style="{ width: `${columnWidths[key]}px` }" />
               </colgroup>
@@ -2445,18 +2484,17 @@ watch(projectKey, (key) => {
                         :title="$ui('期限超過（{value0}）', { value0: dueLabel(row.ticket) })"
                         >⚠</span
                       >
-                      <!-- タグは枠線＋文字（8.6）。色は使わない。
-                           **縮小中は出さない**（5.4「詳細を開いているときの一覧」）
-                           ——450px ではタイトルが省略記号で切れたうえにタグが
-                           枠の途中で切れ、**読めないのに在る**状態になる（2.2.1 が
-                           「重ねる」案を却下したのと同じ理由）。タグは詳細側に出ている -->
-                      <span
-                        v-for="tag in shrunk ? [] : row.ticket.tags"
-                        :key="tag.id"
-                        class="tag"
-                        >{{ tag.name }}</span
-                      >
                     </span>
+                    <div v-if="!shrunk && (epicByTicket.has(row.ticket.seq) || row.ticket.tags.length)"
+                      class="ticket-badges" :style="{ paddingLeft: `${row.depth * 20}px` }">
+                      <span v-if="epicByTicket.has(row.ticket.seq)" class="epic-badge"
+                        :title="`${$ui('エピック')}: ${epicByTicket.get(row.ticket.seq)!.title}`">
+                        <span aria-hidden="true">◆</span> {{ epicByTicket.get(row.ticket.seq)!.title }}
+                      </span>
+                      <span v-for="tag in row.ticket.tags" :key="tag.id" class="tag" :title="tag.name">
+                        <span aria-hidden="true">#</span> {{ tag.name }}
+                      </span>
+                    </div>
                   </td>
 
                   <!-- **一覧から状態を変えられる**（5.4「一覧で状態を変える」）。
@@ -2799,6 +2837,10 @@ watch(projectKey, (key) => {
   table-layout: fixed;
 }
 
+.full-table {
+  min-width: 900px;
+}
+
 .table-scroll {
   overflow-x: auto;
 }
@@ -3113,6 +3155,30 @@ watch(projectKey, (key) => {
 .seq {
   color: var(--pb-text-muted);
   font-size: 13px;
+}
+
+.ticket-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  min-width: 0;
+}
+.epic-badge, .ticket-badges .tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+.epic-badge {
+  padding: 0 var(--pb-space-2);
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+  color: var(--pb-text);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .title-line {
