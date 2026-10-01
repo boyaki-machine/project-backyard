@@ -1,5 +1,14 @@
 /** English translations keyed by the Japanese source text used by the UI. */
 export const uiMessages: Record<string, string> = {
+  "メンバーを追加": "Add member",
+  "メンバーを削除": "Remove member",
+  "メンバー情報を更新しました": "Member information updated",
+  "{value0} をメンバーから削除": "Remove {value0} from members",
+  "メンバーの管理はアドミニストレータに依頼してください。": "Ask an administrator to manage members.",
+  "ユーザーを選択": "Select a user",
+  "候補は200件まで表示します。見つからない場合は検索で絞ってください。": "Up to 200 candidates are shown. Narrow your search if the user is not listed.",
+  "「{value0}」をこのプロジェクトのメンバーから削除します。ユーザーアカウントは残ります。": "Remove “{value0}” from this project. Their user account will remain.",
+
   "日時": "Date and time",
   "対象": "Target",
   "結果": "Result",
