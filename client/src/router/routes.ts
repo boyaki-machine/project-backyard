@@ -36,8 +36,6 @@ export interface PlaceholderMeta {
    * 再び要る（他の画面は画面名のみを出す）ので、仕組みは残してある。
    */
   projectHeading?: string
-  /** 対応する設計文書の章番号。未定義なら「設計未確定」と明記する */
-  docRef: string
   /** 予定している内容（設計文書からの転記） */
   planned: string[]
   /** 状態（「未定」「構想」など） */
@@ -245,12 +243,11 @@ const routeSources: RouteRecordRaw[] = [
       permission: 'ticket.view',
       placeholder: {
         title: 'カンバンボード',
-        docRef: 'GuiDesign.md 10章',
         status: '未定',
         planned: [
           '列＝ワークフローのステータス',
           'ドラッグ&ドロップによる遷移',
-          'is_agent_reachable の列にはエージェントのカードのみ移動可',
+          'エージェントが移動できる列へのカード移動',
         ],
       },
     },
@@ -304,11 +301,10 @@ const routeSources: RouteRecordRaw[] = [
       permission: 'proposal.review',
       placeholder: {
         title: '承認キュー',
-        docRef: 'GuiDesign.md 10章',
         status: '構想',
         planned: [
           'AIの提案（知識更新・サブタスク・ドキュメント差分）を差分ビューで一括レビュー',
-          'proposal テーブル1つを源とする単一画面',
+          '提案をまとめて確認できる画面',
           'メインメニューへの未処理件数バッジ',
         ],
       },
@@ -322,9 +318,8 @@ const routeSources: RouteRecordRaw[] = [
       permission: 'knowledge.view',
       placeholder: {
         title: 'プロジェクトメモリ',
-        docRef: 'GuiDesign.md 10章',
         status: '構想',
-        planned: ['知識の一覧・編集・履歴', 'kind（規約／決定／注意／失敗）によるフィルタ'],
+        planned: ['知識の一覧・編集・履歴', '規約／決定／注意／失敗による絞り込み'],
       },
     },
   },
@@ -336,12 +331,11 @@ const routeSources: RouteRecordRaw[] = [
       permission: 'project.view',
       placeholder: {
         title: '進捗分析',
-        docRef: 'GuiDesign.md 10章',
         status: '構想',
         planned: [
           'チケットの消化状況・残存チケットの傾向',
           'バックログ・カンバン・ガントが「いま何があるか」を見せるのに対し、この画面だけが「どう進んでいるか」を集計で答える',
-          'Requirements.md 3章のベロシティ・見積り精度トラッキング',
+          'チケットの消化ペースと見積り精度の確認',
         ],
       },
     },
@@ -354,11 +348,10 @@ const routeSources: RouteRecordRaw[] = [
       permission: 'project.view',
       placeholder: {
         title: 'プロジェクトヒストリー・要約',
-        docRef: 'GuiDesign.md 10章',
         status: '構想',
         planned: [
           '年表形式の履歴',
-          'AIによるプロジェクト要約の集約（日次バッチで事前生成）',
+          'AIによるプロジェクト要約の集約',
           '期間を絞った PDF／Markdown エクスポート',
         ],
       },
@@ -372,7 +365,6 @@ const routeSources: RouteRecordRaw[] = [
       permission: 'authprovider.manage',
       placeholder: {
         title: '認証プロバイダ（OIDC/SAML）',
-        docRef: 'GuiDesign.md 10章',
         status: '構想',
         planned: ['OIDC/SAML の設定', 'auth_provider テーブルの編集UI'],
       },

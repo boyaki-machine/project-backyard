@@ -842,7 +842,6 @@ async function retry(): Promise<void> {
       <!-- 人間と持つ情報が違うのでタブを分けてある -->
       <div v-else-if="tab === 'agents'" class="placeholder" role="tabpanel">
         <p class="placeholder-title">{{ $ui('エージェントのページ予定') }}</p>
-        <p class="placeholder-doc">GuiDesign.md 5.6 / ApiDesign.md 6.1</p>
         <ul class="placeholder-list">
           <li>{{ $ui('登録済みエージェントの一覧（名前・クライアント種別・モデル・プロジェクト・信頼度）') }}</li>
           <li>{{ $ui('人間とは持つ情報が違うため、ユーザータブとは別の列構成にする') }}</li>
