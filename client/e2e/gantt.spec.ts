@@ -18,6 +18,7 @@ const NOW = D(9, 29, 22, 10)
 interface Opts {
   timezone?: string
   theme?: 'light' | 'dark'
+  now?: number
   tickets?: Record<string, unknown>[]
   links?: Record<string, unknown>[]
   onTickets?: (url: URL) => void
@@ -106,7 +107,7 @@ function calendarDays(from: string, to: string) {
 async function mockApi(page: Page, o: Opts = {}) {
   const tickets = o.tickets ?? sampleTickets
   const links = o.links ?? sampleLinks
-  await page.clock.install({ time: NOW })
+  await page.clock.install({ time: o.now ?? NOW })
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname
@@ -388,4 +389,48 @@ test('2,000行・4,000本の依存でスクロールが滑らか', async ({ page
   expect(frames.vertical.median).toBeLessThan(34)
   expect(frames.horizontal.median).toBeLessThan(34)
   await shot(page, testInfo, 'gantt-2000')
+})
+
+
+// pb-235：月末の夜と月初、右端でも札と月名を両方読める。
+test('月境界の時刻札は大目盛りを隠さない', async ({ page }, testInfo) => {
+  for (const theme of ['light', 'dark'] as const) {
+    for (const width of [1440, 1024]) {
+      for (const now of [D(9, 30, 20, 54), D(10, 1, 0, 5)]) {
+        await page.setViewportSize({ width, height: 900 })
+        await mockApi(page, { theme, now })
+        await openGantt(page)
+        const labels = page.locator('.gantt-svg .h-maj')
+        await expect(labels.filter({ hasText: '2026-10' })).toBeAttached()
+        const check = async () => {
+          const bounds = await page.locator('.gantt-svg').evaluate((svg) => {
+            const box = svg.querySelector('.now-box')!.getBoundingClientRect()
+            const rect = svg.getBoundingClientRect()
+            return {
+              inside: box.left >= rect.left && box.right <= rect.right,
+              clear: [...svg.querySelectorAll('.h-maj')].every((el) => {
+                const b = el.getBoundingClientRect()
+                return b.right <= box.left || b.left >= box.right
+              }),
+            }
+          })
+          expect(bounds).toEqual({ inside: true, clear: true })
+        }
+        await check()
+        await shot(page, testInfo, `boundary-${theme}-${width}-${now}`)
+        // 時刻札が右端へ寄ったときは、見出しを左へ逃がす。
+        await page.locator('.gantt-chart').evaluate((el) => {
+          const line = document.querySelector('.gantt-svg line.g-now') as SVGLineElement
+          const svg = document.querySelector('.gantt-svg')!.getBoundingClientRect()
+          el.scrollLeft += Number(line.getAttribute('x1')) - svg.width + 20
+        })
+        await expect.poll(() => page.locator('.gantt-svg').evaluate((svg) => {
+          const box = svg.querySelector('.now-box')!.getBoundingClientRect()
+          return svg.getBoundingClientRect().right - box.right
+        })).toBeLessThan(5)
+        await check()
+        await page.unrouteAll({ behavior: 'ignoreErrors' })
+      }
+    }
+  }
 })
