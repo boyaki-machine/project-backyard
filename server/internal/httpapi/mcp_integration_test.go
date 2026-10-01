@@ -515,6 +515,37 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("pb_list_tasks の日本語キーワード検索がRESTへ届く", func(t *testing.T) {
+		for _, tc := range []struct {
+			query string
+			total int
+		}{
+			{"読むチケット", 1}, {"MCP 読む", 1}, {"存在しない日本語", 0}, {"MCP 存在しない", 0}, {"%_", 0},
+		} {
+			args, err := json.Marshal(map[string]any{"q": tc.query, "open": true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			text, isErr := tool(t, fullToken, "pb_list_tasks", string(args))
+			if isErr {
+				t.Fatal(text)
+			}
+			var got struct {
+				Items []map[string]json.RawMessage `json:"items"`
+				Total int                          `json:"total"`
+			}
+			if err := json.Unmarshal([]byte(text), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Total != tc.total || len(got.Items) != tc.total {
+				t.Errorf("q=%q: total=%d/items=%d, want %d", tc.query, got.Total, len(got.Items), tc.total)
+			}
+			if len(got.Items) > 0 && len(got.Items[0]) != 11 {
+				t.Errorf("light fields = %d, want 11", len(got.Items[0]))
+			}
+		}
+	})
+
 	t.Run("assignee=me は所有者の担当を返す", func(t *testing.T) {
 		// **チケットの担当は所有者（人）である。** エージェント自身を指すと
 		// 0件になる（Design.md 8.5）。

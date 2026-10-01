@@ -1638,7 +1638,7 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 | `pb_list_docs` | — | `GET /projects/:key/docs?outline=1` | 10.2 の応答をそのまま（**目次と見出しだけ。本文は含まない**） |
 | `pb_get_doc` | `path`, `section?` | `GET /projects/:key/docs/*path` | **本文の Markdown**。`section` を指定すればその章だけ |
 | `pb_get_task` | `seq` | `GET /projects/:key/tickets/:seq` | 9.5.1 の応答をそのまま |
-| `pb_list_tasks` | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `staged?`, `per_page?` | `GET /projects/:key/tickets` | **軽量な部分集合**（下記） |
+| `pb_list_tasks` | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `staged?`, `q?`, `per_page?` | `GET /projects/:key/tickets` | **軽量な部分集合**（下記） |
 
 **予定は日付でも受ける**（pb-217）。REST は `start_at` / `due_at`（エポックミリ秒・半開区間）＋ `all_day` だけを受ける（`ApiDesign.md` 9.3.1）が、
 エージェントに「締切日の翌日の0時」を計算させると誤る。**MCP 層がプロジェクトの基準タイムゾーンを引いて変換する**——`due_date`
@@ -1647,6 +1647,8 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 終日のチケットに `start_date` / `due_date`（締切日を含む日付）を添える**——`due_at` だけを見ると締切が1日後に読める。
 
 **`pb_get_task` の引数は `seq` である**（`Requirements.md` 10.3.2 は `id` と書いていた）。9.1 が「URL とチケット番号を一致させる」と定めており、人が画面で見る番号も `/pb-implement <id>` に渡す値も `seq` である。`id`（ULID）を名乗ると、ULID を渡す呼び出しが必ず出る。
+
+**`q` は9.2.1の既存のキーワード検索へそのまま渡す**（pb-169）。日本語を含むタイトル・本文・コメントから探せる。検索の規則・200文字上限はRESTに委ね、MCPでは語の分割や照合を重複実装しない。省略・空文字なら従来の一覧である。番号が分からないチケットを探す口として採用する。専用の検索ツールは、一覧と異なる成果（検索根拠や要約など）が必要になったときに再検討する。
 
 **`pb_list_tasks` は軽量にする**（`Requirements.md` 10.3.2 の「チケット一覧（軽量）」）。9.2.2 の応答から次の11項目だけを残す。
 
