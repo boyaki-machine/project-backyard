@@ -45,6 +45,7 @@ import type {
   SortOrder,
 } from '../api/tickets'
 import { formatDateTime, formatPlan, isPastDue, planDate, planInstant } from '../lib/datetime'
+import { listAllEpics, sleeveBackground, sleeveMap, useEpicOfTicket } from '../lib/epicSleeve'
 import { statusLabel } from '../lib/catalogLabels'
 import { zoneOf, type DropZone } from '../lib/dnd'
 import { groupAxisToRestore, saveGroupAxis } from '../lib/groupAxis'
@@ -589,44 +590,28 @@ const sprints = ref<Sprint[]>([])
 /** エピックの選択肢（5.4「フィルタ」）。タグ・スプリントと同じ「語彙の取得」である */
 const epics = ref<Ticket[]>([])
 
-// 絞り込みで一覧から外れた親だけ、既存の詳細APIで所属を補う。
-type EpicBadge = Pick<Ticket, 'seq' | 'title'>
-const parentEpics = ref(new Map<number, EpicBadge | null>())
-let epicFetch = 0
-watch([tickets, epics], async () => {
-  const mine = ++epicFetch
-  parentEpics.value = new Map()
-  const key = projectKey.value
-  const present = new Set([...tickets.value, ...epics.value].map(t => t.seq))
-  const missing = [...new Set(tickets.value.map(t => t.parent_seq))]
-    .filter((seq): seq is number => seq !== null && !present.has(seq))
-  const resolved = await Promise.all(missing.map(async seq => {
-    try {
-      const parent = await ticketsApi.getTicket(key, seq)
-      return [seq, parent.type === 'epic' ? parent : parent.epic] as const
-    } catch {
-      return [seq, null] as const
-    }
-  }))
-  if (mine === epicFetch && key === projectKey.value) parentEpics.value = new Map(resolved)
-})
-const epicByTicket = computed(() => {
-  const present = new Map([...tickets.value, ...epics.value].map(t => [t.seq, t]))
-  const result = new Map<number, EpicBadge>()
-  for (const ticket of tickets.value) {
-    let parent = ticket.parent_seq
-    const seen = new Set<number>([ticket.seq])
-    for (let depth = 0; parent !== null && depth < 32 && !seen.has(parent); depth++) {
-      seen.add(parent)
-      const ancestor = present.get(parent)
-      const epic = ancestor?.type === 'epic' ? ancestor : parentEpics.value.get(parent)
-      if (epic) { result.set(ticket.seq, epic); break }
-      if (!ancestor) break
-      parent = ancestor.parent_seq
-    }
-  }
-  return result
-})
+/**
+ * 袖章の割り当てに使う全エピック（5.4.4）。**完了・棚に戻ったものも含む**——
+ * 番号順の順位で袖章を決めるので、閉じたエピックが抜けると後ろの袖章が入れ替わる
+ */
+const allEpics = ref<Ticket[]>([])
+/** チケットごとの所属エピック。親が一覧から外れても詳細 API で補う（5.4） */
+const epicByTicket = useEpicOfTicket(tickets, allEpics, projectKey)
+const sleeveOf = computed(() => sleeveMap(allEpics.value))
+
+/** 行の最初のセルに描く袖章（5.4.4）。所属が無ければ何も描かない */
+function sleeveStyle(seq: number): { backgroundImage: string } | undefined {
+  const epic = epicByTicket.value.get(seq)
+  return epic ? { backgroundImage: sleeveBackground(sleeveOf.value(epic.seq)) } : undefined
+}
+
+function sleeveTitle(seq: number): string | undefined {
+  const epic = epicByTicket.value.get(seq)
+  return epic ? `${uiText('エピック')}: ${epic.title}` : undefined
+}
+
+/** タグは2つまで出し、3つ目からは `+N` にまとめる（5.4「タグ」） */
+const TAGS_SHOWN = 2
 
 /** スプリントの開始ダイアログ（5.4「開始のダイアログ」） */
 const showSprintStart = ref(false)
@@ -772,14 +757,16 @@ async function loadTickets(): Promise<void> {
  */
 async function loadVocabulary(): Promise<void> {
   const key = projectKey.value
-  const [t, s, e] = await Promise.allSettled([
+  const [t, s, e, a] = await Promise.allSettled([
     tagsApi.listTags(key),
     sprintsApi.listSprints(key),
     ticketsApi.listTickets(key, { type: 'epic' }),
+    listAllEpics(key),
   ])
   if (t.status === 'fulfilled') tags.value = t.value.items
   if (s.status === 'fulfilled') sprints.value = s.value.items
   if (e.status === 'fulfilled') epics.value = e.value.items
+  if (a.status === 'fulfilled') allEpics.value = a.value
 }
 
 /**
@@ -788,8 +775,11 @@ async function loadVocabulary(): Promise<void> {
  * **失敗しても一覧は止めない**（`loadVocabulary` と同じ扱い）。
  */
 async function reloadEpics(): Promise<void> {
+  const key = projectKey.value
+  // 作ったエピックにも袖章を割り当てる（5.4.4）。失敗しても空が返るだけ
+  void listAllEpics(key).then((all) => { if (key === projectKey.value && all.length > 0) allEpics.value = all })
   try {
-    epics.value = (await ticketsApi.listTickets(projectKey.value, { type: 'epic' })).items
+    epics.value = (await ticketsApi.listTickets(key, { type: 'epic' })).items
   } catch {
     // 選択肢が古いままになるだけで、作成そのものは成功している
   }
@@ -1968,6 +1958,7 @@ watch(projectKey, (key) => {
   tags.value = []
   sprints.value = []
   epics.value = []
+  allEpics.value = []
   loadTreeCollapsed()
   void projectStore.fetchCurrent(key)
   void loadVocabulary()
@@ -2018,6 +2009,7 @@ watch(projectKey, (key) => {
               :selected="epicSeqs"
               :project-key="projectKey"
               :can-create="canCreate"
+              :sleeve="sleeveOf"
               @update="setQuery({ parent: $event.join(',') })"
               @create="openNewEpicModal"
             />
@@ -2394,7 +2386,9 @@ watch(projectKey, (key) => {
                   @dragover="onDragOverRow($event, row, section)"
                   @drop.prevent="dropOnRow($event, row, section)"
                 >
-                  <td v-if="!shrunk" class="grip-col">
+                  <!-- 所属エピックの袖章は、行の最初のセルの左 8px に描く（5.4.4） -->
+                  <td v-if="!shrunk" class="grip-col" :class="{ sleeved: epicByTicket.has(row.ticket.seq) }"
+                    :style="sleeveStyle(row.ticket.seq)" :title="sleeveTitle(row.ticket.seq)">
                     <span class="grip-line">
                       <span
                         v-if="canReorder"
@@ -2431,7 +2425,8 @@ watch(projectKey, (key) => {
                        **縮小中は折りたたみと種別アイコンをこのセルへ寄せる**
                        ——落ちるのは `⠿`（並べ替え）の列であって、ツリーの開閉と
                        種別の区別まで失うと 5.4 の「階層表示」が効かなくなる -->
-                  <td class="id-col" :class="{ 'with-gutter': shrunk }">
+                  <td class="id-col" :class="{ 'with-gutter': shrunk, sleeved: shrunk && epicByTicket.has(row.ticket.seq) }"
+                    :style="shrunk ? sleeveStyle(row.ticket.seq) : undefined" :title="shrunk ? sleeveTitle(row.ticket.seq) : undefined">
                     <span v-if="shrunk" class="grip-line">
                       <button
                         v-if="row.hasChildren"
@@ -2484,17 +2479,14 @@ watch(projectKey, (key) => {
                         :title="$ui('期限超過（{value0}）', { value0: dueLabel(row.ticket) })"
                         >⚠</span
                       >
+                      <!-- タグはタイトルの末尾に、2つまで（5.4「タグ」）。行を2段にしない。
+                           **縮小中は出さない**——450px では読めないのに在る状態になる -->
+                      <span v-if="!shrunk && row.ticket.tags.length" class="tag-trail"
+                        :title="row.ticket.tags.map((t) => `#${t.name}`).join(' ')">
+                        <span v-for="tag in row.ticket.tags.slice(0, TAGS_SHOWN)" :key="tag.id" class="tag">#{{ tag.name }}</span>
+                        <span v-if="row.ticket.tags.length > TAGS_SHOWN" class="tag-more">+{{ row.ticket.tags.length - TAGS_SHOWN }}</span>
+                      </span>
                     </span>
-                    <div v-if="!shrunk && (epicByTicket.has(row.ticket.seq) || row.ticket.tags.length)"
-                      class="ticket-badges" :style="{ paddingLeft: `${row.depth * 20}px` }">
-                      <span v-if="epicByTicket.has(row.ticket.seq)" class="epic-badge"
-                        :title="`${$ui('エピック')}: ${epicByTicket.get(row.ticket.seq)!.title}`">
-                        <span aria-hidden="true">◆</span> {{ epicByTicket.get(row.ticket.seq)!.title }}
-                      </span>
-                      <span v-for="tag in row.ticket.tags" :key="tag.id" class="tag" :title="tag.name">
-                        <span aria-hidden="true">#</span> {{ tag.name }}
-                      </span>
-                    </div>
                   </td>
 
                   <!-- **一覧から状態を変えられる**（5.4「一覧で状態を変える」）。
@@ -3157,32 +3149,15 @@ watch(projectKey, (key) => {
   font-size: 13px;
 }
 
-.ticket-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
-  min-width: 0;
-}
-.epic-badge, .ticket-badges .tag {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  box-sizing: border-box;
-}
-.epic-badge {
-  padding: 0 var(--pb-space-2);
-  border: 1px solid var(--pb-border);
-  border-radius: var(--pb-radius);
-  background: var(--pb-surface);
-  color: var(--pb-text);
-  font-size: 12px;
-  line-height: 18px;
+/* 所属エピックの袖章（5.4.4）。最初のセルの左 8px に背景で描き、中身を 4px 離す */
+.sleeved {
+  background-repeat: no-repeat;
+  background-size: 8px 100%;
+  padding-left: 12px;
 }
 
 .title-line {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: var(--pb-space-2);
   max-width: 100%;
@@ -3199,7 +3174,7 @@ watch(projectKey, (key) => {
    実測。タグは出ているのに何のチケットか読めなくなる）。下限を置いて、
    あふれるのはタグの側にする——td が `overflow: hidden` なので外へは出ない */
 .title {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 6em;
   overflow: hidden;
   white-space: nowrap;
@@ -3210,15 +3185,39 @@ watch(projectKey, (key) => {
   text-decoration: underline;
 }
 
-/* タグは枠線＋文字。**ユーザーによる任意色の指定も許さない**（8.6） */
+/* タグは `#`＋文字を枠なしで、タイトルの末尾に右へ寄せる（5.4「タグ」）。
+   **ユーザーによる任意色の指定も許さない**（8.6）。あふれるのはタグの側 */
+.tag-trail {
+  /* 狭いときはタイトルより先にタグが縮む */
+  flex: 0 8 auto;
+  min-width: 0;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+
 .tag {
-  flex: none;
-  padding: 0 var(--pb-space-2);
-  border: 1px solid var(--pb-border);
-  border-radius: var(--pb-radius);
+  flex: 0 1 auto;
+  /* 縮んでも `#` だけにならないよう、短いタグ1つ分は残す */
+  min-width: 3.5em;
+  max-width: 12em;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--pb-text-muted);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 11.5px;
+}
+
+.tag-more {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--pb-line);
+  border-radius: 4px;
+  color: var(--pb-text-muted);
+  font: 11px var(--pb-font-mono);
+  line-height: 16px;
 }
 
 /* ステータスのバッジは `StatusDropdown` が持つ（5.4「一覧で状態を変える」）。

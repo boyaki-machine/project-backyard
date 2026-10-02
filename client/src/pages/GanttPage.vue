@@ -21,6 +21,7 @@ import { backlogTicketTypes, statusCategoryLabels, statusCategoryOrder, statusMa
 import type { Ticket, TicketDetail, TicketGanttLink } from '../api/tickets'
 import { statusLabel } from '../lib/catalogLabels'
 import { currentTimezone, planInstant } from '../lib/datetime'
+import { listAllEpics, sleeveBackground, sleeveMap, useEpicOfTicket } from '../lib/epicSleeve'
 import { groupAxisToRestore, saveGroupAxis } from '../lib/groupAxis'
 import { GROUP_AXES, groupAxisLabel } from '../lib/ticketGroups'
 import type { GroupAxis, GroupVocabulary } from '../lib/ticketGroups'
@@ -195,6 +196,24 @@ const error = ref<ApiError | null>(null)
 const tags = ref<Tag[]>([])
 const sprints = ref<Sprint[]>([])
 const epics = ref<Ticket[]>([])
+/** 袖章の割り当てに使う全エピック（5.4.4。完了・棚に戻ったものも含む） */
+const allEpics = ref<Ticket[]>([])
+/** チケットごとの所属エピック。親が一覧から外れても詳細 API で補う（5.4 と同じ） */
+const epicByTicket = useEpicOfTicket(tickets, allEpics, projectKey)
+const sleeveOf = computed(() => sleeveMap(allEpics.value))
+
+/** ツリーの行の左 8px に描く袖章（5.4.4）。所属が無ければ何も描かない */
+function sleeveStyle(seq: number): Record<string, string> {
+  const epic = epicByTicket.value.get(seq)
+  return epic
+    ? { backgroundImage: sleeveBackground(sleeveOf.value(epic.seq)), backgroundSize: '8px 100%', backgroundRepeat: 'no-repeat' }
+    : {}
+}
+
+function sleeveTitle(seq: number): string | undefined {
+  const epic = epicByTicket.value.get(seq)
+  return epic ? `${uiText('エピック')}: ${epic.title}` : undefined
+}
 
 /** 休日（基準タイムゾーンの `YYYY-MM-DD` → その日）。取れていなければ土日だけで塗る */
 const calendarDays = shallowRef<Map<string, ProjectCalendarDay>>(new Map())
@@ -266,14 +285,16 @@ async function loadTickets(): Promise<void> {
 /** 語彙。**一覧の取得と直列にしない**（5.4 と同じ）。失敗しても画面は止めない */
 async function loadVocabulary(): Promise<void> {
   const key = projectKey.value
-  const [t, s, e] = await Promise.allSettled([
+  const [t, s, e, a] = await Promise.allSettled([
     tagsApi.listTags(key),
     sprintsApi.listSprints(key),
     ticketsApi.listTickets(key, { type: 'epic' }),
+    listAllEpics(key),
   ])
   if (t.status === 'fulfilled') tags.value = t.value.items
   if (s.status === 'fulfilled') sprints.value = s.value.items
   if (e.status === 'fulfilled') epics.value = e.value.items
+  if (a.status === 'fulfilled') allEpics.value = a.value
 }
 
 /** 取った範囲（取り直しを避ける） */
@@ -625,6 +646,10 @@ function draw(): void {
     idOf: fullId,
     text: renderText,
     edit: editView(),
+    sleeve: (seq) => {
+      const epic = epicByTicket.value.get(seq)
+      return epic ? sleeveOf.value(epic.seq) : undefined
+    },
   })
   s.innerHTML = out.svg
   edges = out.edges
@@ -632,7 +657,7 @@ function draw(): void {
 
 // 材料が変わったら描き直す（描画は rAF で1回にまとめる）
 watch(
-  [rows, links, gSprints, calendarDays, calendarLoaded, ppd, hover, detailSeq, paneWidth, now, baseTz, range, override, pending],
+  [rows, links, gSprints, calendarDays, calendarLoaded, ppd, hover, detailSeq, paneWidth, now, baseTz, range, override, pending, epicByTicket, sleeveOf],
   () => requestDraw(),
 )
 
@@ -1351,6 +1376,7 @@ watch(projectKey, (key) => {
   tags.value = []
   sprints.value = []
   epics.value = []
+  allEpics.value = []
   calendarRange = ''
   calendarLoaded.value = false
   firstPlaced = false
@@ -1396,6 +1422,7 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
                   :selected="epicSeqs"
                   :project-key="projectKey"
                   :link-query="epicLinkQuery"
+                  :sleeve="sleeveOf"
                   @update="setQuery({ parent: $event.join(',') })"
                 />
               </div>
@@ -1552,8 +1579,10 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
                 done: v.row.item.done,
                 hov: hover === v.row.item.seq && detailSeq !== v.row.item.seq,
                 sel: detailSeq === v.row.item.seq,
+                sleeved: epicByTicket.has(v.row.item.seq),
               }"
-              :style="{ transform: `translateY(${v.y}px)`, paddingLeft: `${6 + v.row.depth * 16}px` }"
+              :style="{ transform: `translateY(${v.y}px)`, paddingLeft: `${14 + v.row.depth * 16}px`, ...sleeveStyle(v.row.item.seq) }"
+              :title="sleeveTitle(v.row.item.seq)"
               :data-seq="v.row.item.seq"
               @pointerenter="hover = v.row.item.seq"
               @pointerleave="hover = null"
@@ -1846,7 +1875,7 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
 }
 
 .gantt-tr.hov {
-  background: color-mix(in srgb, var(--pb-hover) 70%, transparent);
+  background-color: color-mix(in srgb, var(--pb-hover) 70%, transparent);
 }
 
 .gantt-tr.hov::after,
@@ -1862,7 +1891,11 @@ const epicLinkQuery = computed(() => ({ from: 'gantt' }))
 }
 
 .gantt-tr.sel {
-  background: color-mix(in srgb, var(--pb-accent) 14%, transparent);
+  background-color: color-mix(in srgb, var(--pb-accent) 14%, transparent);
+}
+
+/* 選択の縦線は、袖章（5.4.4）の無い行にだけ引く——左端は袖章の場所である */
+.gantt-tr.sel:not(.sleeved) {
   box-shadow: inset 2px 0 0 var(--pb-accent);
 }
 
