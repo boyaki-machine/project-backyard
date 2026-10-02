@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,6 +26,10 @@ type tool struct {
 
 	// call は REST を1回叩いて結果を組み立てる。JSON には出さない。
 	call func(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) `json:"-"`
+
+	// long は長く走るツール（pb_wait）の処理。call の代わりに持つ。JSON には出さない。
+	// **クライアントが切ったことを ctx で知り、progress で進捗の通知を送る**（wait.go）。
+	long func(ctx context.Context, h *Handler, r *http.Request, key string, args json.RawMessage, progress progressFunc) (toolResult, *rpcError) `json:"-"`
 }
 
 // schema は入力の JSON Schema。**object に限る**（MCP の要求）。

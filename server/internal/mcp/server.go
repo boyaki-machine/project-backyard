@@ -39,5 +39,7 @@ func New(rest http.Handler, version string) *Handler {
 	tools = append(tools, writeTools()...)
 	tools = append(tools, transitionTools()...)
 	tools = append(tools, reportTools()...)
+	// 待ち受け（pb-158）。評価や返事を待つときに呼ぶ。
+	tools = append(tools, waitTools()...)
 	return &Handler{rest: rest, version: version, tools: tools}
 }

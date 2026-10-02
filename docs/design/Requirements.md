@@ -444,6 +444,7 @@ REST API を基層とし、MCP はその薄いラッパとして実装する。�
 | `pb_create_doc` | write | 実装済み | `slug`, `title`, `parent_path?`, `body_md?`, `sort_order?` | **要点だけ**（`path` / `version` / `updated_at`） | **文書の新規作成。** `doc.edit` が必要。`slug` は `^[a-z0-9][a-z0-9-]{0,63}$`。同じ親の下の重複は `409 already_exists`（`Design.md` 8.5.1） |
 | `pb_add_reference` | write | 実装済み | **`seq`**, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | 9.10.2 の1件をそのまま | **作業の跡（ブランチ・コミット）をチケットに積む。** `ticket_reference` の `kind='code'`（`DbDesign.md` 6.12）。**追記専用**で、直す・消すは人が画面から行う。**必要権限は `ticket.reference.edit`**（0027） |
 | `pb_submit_result` | write | 実装済み | **`seq`**, `status`, `artifacts?`, `dod_results?`, `findings?`, `failures?`, `proposed_subtasks?`, `knowledge_impact?`, `cost?` | 9.15 の応答をそのまま（`unsatisfied_dod` を含む） | 完了レポートの返却。**引数は 10.6.1 のレポートを平らにしたもの**で、名前は REST の本体フィールドに揃う（`Design.md` 8.5.4）。**状態は進めずクローズもしない** |
+| `pb_wait` | read | 実装済み | **`seq`**, `since?` | 変化の有無・変化の一覧・新しいコメントの本文・次に渡す `cursor`・次にすること（`next`） | **チケットの変化を待つ**（コメント・遷移・本文の更新）。変化があるか、PB が決めた時間（進捗の通知を流せれば4分、流せなければ50秒）が過ぎたら返る。**通知ではモデルが起きないため、エージェントが状態の変化を知る口はこれである**（`Delegation.md` 10章、`Design.md` 8.5.6） |
 | `pb_claim_task` | write | 構想 | `seq` | `lease_id`, `expires_at` | 着手時のリース取得（10.3.3） |
 | `pb_release_task` | write | 構想 | `seq`, `reason` | — | 中断時のリース解放（同上） |
 | `pb_search` | read | 構想 | `query`, `scope?`, `top_k?` | 該当コメント/決定/文書 | 履歴横断のRAG検索 |

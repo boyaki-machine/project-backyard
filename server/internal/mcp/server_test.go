@@ -296,6 +296,7 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 		"pb_post_note", "pb_add_reference", "pb_create_doc", "pb_put_doc",
 		"pb_list_transitions", "pb_transition_task",
 		"pb_submit_result",
+		"pb_wait",
 	}
 	// **並び順は見ない。** 公式 SDK は名前の順に並べ替えて返す（仕様 2026-07-28 が
 	// キャッシュのために決まった順を求める。pb-258）。呼ぶ順は /pb-implement の手順が教える。

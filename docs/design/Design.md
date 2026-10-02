@@ -1383,6 +1383,7 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 | `pb_transition_task` | `POST /projects/:key/tickets/:seq/transition` | `ticket.transition` |
 | `pb_list_transitions` | `GET /projects/:key/tickets/:seq/transitions` | `ticket.view` |
 | `pb_submit_result` | `POST /projects/:key/tickets/:seq/reports`（`ApiDesign.md` 9.15） | `ticket.transition` |
+| `pb_wait` | **合成**（`GET /tickets/:seq` ＋ `GET /activity?entity=ticket:<seq>` を間隔を置いて ＋ 変化にコメントがあれば `GET /tickets/:seq/comments`。8.5.6） | `ticket.view` |
 | `pb_claim_task` / `pb_release_task`（**構想**） | リース（`DbDesign.md` 8.2.2） | `ticket.transition` |
 
 ### リースを持たず、状態遷移を開ける
@@ -1860,6 +1861,31 @@ PB が持てる。**
 応答に明記する」と定めており、**閲覧用に絞ったトークン**（`Requirements.md` 10.9.1 の系統B）
 でも、スコープ境界と依存関係は受け取れたほうがよい。**403 で全体を落とすと、読めるはずの
 ものまで届かない。**
+
+### 8.5.6 待ち受け
+
+| ツール | 引数 | 叩く REST | 応答 |
+|---|---|---|---|
+| `pb_wait` | `seq`, `since?` | `GET /projects/:key/tickets/:seq`（在ることを確かめる）→ `GET /projects/:key/activity?entity=ticket:<seq>&per_page=20` を**3秒ごと** → 変化にコメントがあれば `GET /projects/:key/tickets/:seq/comments?order=desc&per_page=20` | `changed` / `cursor` / `changes[]` / `comments[]` / `waited_seconds` / `next`（変化が無ければ `changed:false` と `cursor` と `next`） |
+
+**状態の変化をエージェントに知らせる口である**（`Delegation.md` 10章）。MCP の通知は、確かめた4つのクライアントのどれでもモデルを起こさなかった（同 10.2）。
+**評価エージェントが評価をコメントで書けば、待っている main の呼び出しが返る。** エージェント同士の会話も、同じチケットへのコメントと待ち受けで成り立つ。
+
+- **変化は `activity`（`ApiDesign.md` 9.13.2）で見る。** コメント・遷移・本文の更新が1つの時系列に並び、`id`（ULID）の大小で新旧が決まる。
+  **`cursor` は最後に見た行の `id`** で、`since` を省くと「いまから後」を待つ
+- **MCP 層で既存の REST を間隔を置いて問い合わせる。** REST に新しい口を足さず、スキーマも変えない（8.1）。権限とプロジェクトのスコープは REST が判定するので、
+  **プロジェクトの外を待つ経路は無い。** 3秒ごとの問い合わせは、REST のレート制限（1分600回）に対して1人1分20回である
+- **1回の長さは PB が決める。** 呼び出しに `progressToken` があれば20秒ごとに進捗の通知を流して**4分**（Copilot が約5分で打ち切るため）、無ければ**50秒**（Claude Desktop が60秒で打ち切り、
+  打ち切りのエラーが続くとモデルが待ち受けをやめるため）。**時間切れはエラーにしない**——`changed:false` と、次も同じ `cursor` で呼べという `next` を返す
+- **コメントの本文を添える。** `activity` のコメントの行は本文の先頭40字の要約しか持たない（`ApiDesign.md` 9.8）ので、評価の全文を渡すために 9.8 の一覧を引く。
+  1件4000字・5件まで（超えたら `truncated: true`）
+- **無いチケットはすぐ失敗にする。** `activity` は存在しない `seq` に空の一覧を返すので、確かめずに待つと時間いっぱい待ってしまう
+- **クライアントが切ったら、そこで止める**（新方式では HTTP の要求の文脈が取り消される）
+- **/mcp の要求では、書き込みの期限を延ばす。** サーバ全体の `WriteTimeout` は60秒で、4分の待ち受けが途中で切られる。外さずに「待ち受けの最長＋1分」へ延ばす（止まったストリームをいつまでも抱えない）
+- **途中の段（ミドルウェア）が応答の書き手を包むなら、`Unwrap` と `Flush` を持たせる。** 無いと SSE の進捗が応答の最後まで保留され、期限の変更も中まで届かない——
+  実機で、進捗を流しているのに Claude Code が60秒で打ち切り、3回続けて評価を受け取れなかった（pb-158）。アクセスログの包みがこれだった
+
+**委任の木全体を待つ形と「次の一手」は、委任の器（pb-246・pb-250）の後に足す。** いまは1件のチケットだけを待つ。
 
 ## 8.6 まだ決めていないこと
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	sdkjsonrpc "github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -46,6 +47,13 @@ func (h *Handler) HTTP() http.Handler {
 				errors.New("MCP は Bearer トークンだけを受ける（Design.md 8.3）")))
 			return
 		}
+		// **書き込みの期限を、待ち受けの最長に余裕を足した長さへ延ばす。** サーバ全体の
+		// WriteTimeout は60秒で、pb_wait（最長4分。wait.go）がその途中で切られる——実機で
+		// 3回続けて60秒で切れた（pb-158）。外さずに延ばすのは、止まったストリームを
+		// いつまでも抱えないためである。
+		if rc := http.NewResponseController(w); rc != nil {
+			_ = rc.SetWriteDeadline(time.Now().Add(waitWithProgress + time.Minute))
+		}
 		inner.ServeHTTP(w, r)
 	})
 }
@@ -65,12 +73,18 @@ func (h *Handler) serverFor(r *http.Request) *sdk.Server {
 	for i := range h.tools {
 		t := &h.tools[i]
 		s.AddTool(&sdk.Tool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema},
-			func(_ context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			func(ctx context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
 				if key == "" {
 					return nil, &sdkjsonrpc.Error{Code: codeInternalError,
 						Message: "ルートに {" + middleware.ProjectKeyURLParam + "} が無い"}
 				}
-				res, rpcErr := t.call(h, r, key, req.Params.Arguments)
+				var res toolResult
+				var rpcErr *rpcError
+				if t.long != nil {
+					res, rpcErr = t.long(ctx, h, r, key, req.Params.Arguments, progressOf(ctx, req))
+				} else {
+					res, rpcErr = t.call(h, r, key, req.Params.Arguments)
+				}
 				if rpcErr != nil {
 					// 引数の誤りなどは今までどおり JSON-RPC のエラーで返す（8.4 の表）。
 					return nil, &sdkjsonrpc.Error{Code: int64(rpcErr.Code), Message: rpcErr.Message}
@@ -88,4 +102,22 @@ func toSDKResult(res toolResult) *sdk.CallToolResult {
 		out.Content = append(out.Content, &sdk.TextContent{Text: c.Text})
 	}
 	return out
+}
+
+// progressOf は、呼び出しに progressToken があれば進捗の通知を送る関数を返す。無ければ nil。
+//
+// **progressToken の有無で、待ち受けの長さが変わる**（wait.go）。付けてくるのは Claude Code・
+// Codex・Copilot で、Claude Desktop（mcp-remote 経由）は付けない（Delegation.md 10.2）。
+func progressOf(ctx context.Context, req *sdk.CallToolRequest) progressFunc {
+	token := req.Params.GetProgressToken()
+	if token == nil || req.Session == nil {
+		return nil
+	}
+	return func(elapsed time.Duration) {
+		_ = req.Session.NotifyProgress(ctx, &sdk.ProgressNotificationParams{
+			ProgressToken: token,
+			Progress:      elapsed.Seconds(),
+			Message:       "PB の変化を待っている",
+		})
+	}
 }
