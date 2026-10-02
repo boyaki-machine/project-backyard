@@ -77,6 +77,21 @@ func (rec *recorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Unwrap は包んだ ResponseWriter を返す。
+//
+// **http.ResponseController はこれを辿って Flush や SetWriteDeadline を探す。** 無いと、
+// 中の処理が応答の期限を外しても（ApiDesign.md 11.11 の書き出し）、SSE を送り出しても
+// （MCP の待ち受けの進捗。pb-158）、黙って効かない。
+func (rec *recorder) Unwrap() http.ResponseWriter { return rec.ResponseWriter }
+
+// Flush は溜まった応答を送り出す。http.Flusher を型で確かめる処理（SDK など）のために持つ。
+func (rec *recorder) Flush() {
+	if f, ok := rec.ResponseWriter.(http.Flusher); ok {
+		rec.written = true
+		f.Flush()
+	}
+}
+
 // clientIP は接続元アドレスを文字列で返す。
 //
 // **audit_log.ip と同一の値にする**という規約（Design.md 10.1）のため、

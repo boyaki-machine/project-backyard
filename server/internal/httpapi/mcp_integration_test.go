@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -849,6 +850,35 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		if n != 1 {
 			t.Errorf("activity = %d行, want 1", n)
+		}
+	})
+
+	// **待ち受けの途中に書かれたコメントで返る**（Delegation.md 10章。pb-158）。評価エージェントが
+	// 評価をコメントで書き、待っている main の pb_wait が本文つきで返る——自律実行の内のループの要である。
+	// 本物の間隔（3秒ごとの問い合わせ）で走るので数秒かかる。
+	t.Run("pb_wait が待っている途中に書かれたコメントで返り、本文を添える", func(t *testing.T) {
+		done := make(chan string, 1)
+		go func() {
+			w := call(fullToken, projectKey,
+				`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"pb_wait","arguments":{"seq":1}}}`)
+			done <- w.Body.String()
+		}()
+		// pb_wait が「いま」の履歴を読み終えるのを待ってから書く。先に書くと、それが「いま」に含まれる。
+		time.Sleep(1500 * time.Millisecond)
+		if text, isErr := tool(t, fullToken, "pb_post_note",
+			`{"seq":1,"body_md":"## 評価 成果 第1回：不合格\n指摘1：完了条件2が満たされていない","kind":"discussion"}`); isErr {
+			t.Fatalf("コメントを書けない: %s", text)
+		}
+		select {
+		case body := <-done:
+			if !strings.Contains(body, `\"changed\":true`) {
+				t.Fatalf("変化を返していない: %s", body)
+			}
+			if !strings.Contains(body, "指摘1：完了条件2が満たされていない") {
+				t.Errorf("コメントの本文を添えていない: %s", body)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatal("コメントを書いてから20秒経っても pb_wait が返らない")
 		}
 	})
 
