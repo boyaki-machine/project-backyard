@@ -44,6 +44,16 @@
   --pb-ai-bg:          oklch(0.960 0.022 300);
   --pb-ai-border:      oklch(0.870 0.045 300);
 
+  /* ── エピックの袖章の8色（GuiDesign 5.4.4。8.6 の例外。線にだけ使う）── */
+  --pb-epic-0: #b66c02;  /* 黄土     */
+  --pb-epic-1: #3b4fa5;  /* 藍       */
+  --pb-epic-2: #07bde5;  /* 水色     */
+  --pb-epic-3: #97ba4f;  /* 若葉     */
+  --pb-epic-4: #902e5c;  /* 臙脂     */
+  --pb-epic-5: #ee83af;  /* 桜       */
+  --pb-epic-6: #575e01;  /* オリーブ */
+  --pb-epic-7: #01976d;  /* 青緑     */
+
   /* ── セマンティック別名（コンポーネントはこちらを参照する）── */
   --pb-bg:          var(--pb-1);
   --pb-surface:     var(--pb-2);
@@ -108,6 +118,15 @@
   --pb-ai-text:        oklch(0.760 0.110 300);
   --pb-ai-bg:          oklch(0.255 0.035 300);
   --pb-ai-border:      oklch(0.380 0.060 300);
+
+  --pb-epic-0: #d68729;
+  --pb-epic-1: #526ac3;
+  --pb-epic-2: #57daff;
+  --pb-epic-3: #b3d76d;
+  --pb-epic-4: #ae4976;
+  --pb-epic-5: #ffaacb;
+  --pb-epic-6: #707902;
+  --pb-epic-7: #1bb685;
 }
 
 /*

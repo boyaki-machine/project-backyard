@@ -22,6 +22,7 @@ import { spanOf } from './model'
 import type { GItem, GRow, GanttLink } from './model'
 import { HANDLE_R, handlesOf, isViolated } from './edit'
 import type { End, Plan } from './edit'
+import type { Sleeve } from '../epicSleeve'
 
 /** 行の高さ（5.14。バックログの 40px より詰める） */
 export const RH = 28
@@ -76,6 +77,8 @@ export interface RenderInput {
   text: RenderText
   /** 編集（5.14「編集」）。無ければ閲覧だけの描画になる */
   edit?: EditView
+  /** 所属エピックの袖章（`GuiDesign.md` 5.4.4）。所属が無ければ `undefined` */
+  sleeve?: (seq: number) => Sleeve | undefined
 }
 
 /**
@@ -142,8 +145,9 @@ const TX = (x: number, y: number, s: string, c: string, anchor?: string) =>
 export const estW = (s: string, fs: number) =>
   [...s].reduce((w, c) => w + (c.charCodeAt(0) > 255 ? fs : fs * 0.61), 0)
 
-function barSVG(x0: number, x1: number, y: number, cat: string): string {
+function barSVG(x0: number, x1: number, y: number, cat: string, sleeve?: Sleeve): string {
   let o = R(x0, y - 6, x1 - x0, 12, `b ${cat}`)
+  if (sleeve) o += sleeveSVG(x0, x1, y, sleeve)
   if (cat !== 'done') {
     // 四隅の外側 2px に 4px の鉤括弧
     const a = 4
@@ -152,6 +156,23 @@ function barSVG(x0: number, x1: number, y: number, cat: string): string {
     const t = y - 8
     const b = y + 8
     o += `<path class="br" d="M${f1(l)},${t + a}V${t}H${f1(l + a)}M${f1(r - a)},${t}H${f1(r)}V${t + a}M${f1(l)},${b - a}V${b}H${f1(l + a)}M${f1(r - a)},${b}H${f1(r)}V${b - a}"/>`
+  }
+  return o
+}
+
+/**
+ * 帯の頭の袖章（5.4.4）。**区切りの線を引かず、帯の枠（1px）の上まで描く**——
+ * 区切りがあると帯がそこから始まるように見え、枠が残ると袖章の左に細い線が出る。
+ * 帯が 8px より短ければ、帯の右端で切る
+ */
+function sleeveSVG(x0: number, x1: number, y: number, s: Sleeve): string {
+  const left = x0 - 0.5
+  const right = x1 + 0.5
+  let o = ''
+  for (const [at, w] of s.segments) {
+    const a = left + at
+    const b = Math.min(a + w, right)
+    if (b > a) o += R(a, y - 6.5, b - a, 13, 'sleeve', `style="fill:${s.color}"`)
   }
   return o
 }
@@ -511,7 +532,7 @@ export function render(inp: RenderInput): { svg: string; edges: EdgeHit[] } {
       let x1 = X(it.e)
       if (x1 - x0 < 3) x1 = x0 + 3
       if (x1 < -60 || x0 > W + 60) continue
-      rowsSvg += `<g class="bar${pend}">${barSVG(x0, x1, y, cat)}</g>`
+      rowsSvg += `<g class="bar${pend}">${barSVG(x0, x1, y, cat, inp.sleeve?.(it.seq))}</g>`
       xEnd = x1 + 7
     } else if (it.s !== null) {
       const x = X(it.s)

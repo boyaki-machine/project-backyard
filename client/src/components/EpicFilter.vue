@@ -28,6 +28,7 @@ import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from 'vue'
 
 import { ticketTypeIcons } from '../api/tickets'
 import type { Ticket } from '../api/tickets'
+import { sleeveBackground, type Sleeve } from '../lib/epicSleeve'
 
 /** パネルの幅。位置決めにも使うので1か所に置く */
 const PANEL_W = 340
@@ -45,6 +46,8 @@ const props = defineProps<{
    * ——**落とすと、押した先の詳細の後ろがバックログに変わる**（`GuiDesign.md` 3.2）
    */
   linkQuery?: Record<string, string>
+  /** 候補の名前の左に添える袖章（`GuiDesign.md` 5.4.4）。渡さなければ出さない */
+  sleeve?: (seq: number) => Sleeve
 }>()
 
 const emit = defineEmits<{ update: [seqs: number[]]; create: [] }>()
@@ -189,6 +192,7 @@ const panelStyle = computed(() => ({
             :aria-label="e.title"
             @change="choose(e.seq)"
           />
+          <span v-if="sleeve" class="epic-sleeve" aria-hidden="true" :style="{ backgroundImage: sleeveBackground(sleeve(e.seq)) }"></span>
           <span class="epic-icon" aria-hidden="true">{{ ticketTypeIcons.epic }}</span>
           <span class="epic-title" :title="e.title">{{ e.title }}</span>
         </label>
@@ -281,6 +285,15 @@ const panelStyle = computed(() => ({
 
 .epic-choice:hover {
   background: var(--pb-hover);
+}
+
+/* 一覧の行の左端と同じ袖章を、候補の名前の左に添える（5.4.4。凡例の代わり） */
+.epic-sleeve {
+  flex: none;
+  width: 8px;
+  height: 18px;
+  background-repeat: no-repeat;
+  background-size: 8px 100%;
 }
 
 .epic-icon {
