@@ -113,6 +113,7 @@ make stg-migrate # stg：マイグレーション適用（migrate と同時に�
 | `/pb-review <手順番号\|領域>` | 実装と設計文書の差異を点検する（修正はせず報告のみ） |
 | `/pb-refine <番号>` | チケットの記述を、エージェントが自律実行できる水準まで引き上げる |
 | `/pb-onboard` | PB のプロジェクトに参画する（規約と担当を読む） |
+| `/pb-delegate-main <根>` / `/pb-delegate-eval <根>` | 自律実行（`docs/design/Delegation.md`）を運用で回す。main と評価エージェントの手順（PB の強制が実装されるまで） |
 
 **これらは Claude Code 向けの入口である。** 他の種別の入口は PB の「エージェントの参画情報」にある。
 **手順の中身はこのリポジトリの成果物**であり、規約は PB にある——`.claude/commands/` を直すときは、
