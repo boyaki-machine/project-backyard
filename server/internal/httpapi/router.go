@@ -247,7 +247,7 @@ func mountMCP(r chi.Router, q gen.Querier, v1Deps v1.Deps, version string) {
 		v1.Mount(r, v1Deps)
 	})
 
-	h := mcp.New(internal, version)
+	h := mcp.NewSDK(internal, version)
 
 	// **ミドルウェアはこの1本にだけ掛ける**（r.Route で /mcp の木ごと包まない）。
 	// 包むと、/mcp 配下の**未知のパスまで認証を要求して 401 になる**——

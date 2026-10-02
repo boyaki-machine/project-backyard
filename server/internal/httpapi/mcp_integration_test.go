@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -227,16 +229,56 @@ func TestMCPIntegration(t *testing.T) {
 
 	r := NewRouter(Deps{Pool: pool, Version: "mcp-test"})
 
-	// call は /mcp/<key> を1回叩く。
-	call := func(token, key, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, MCPPath+"/"+key, strings.NewReader(body))
+	// send は /mcp への要求を1件送る。
+	//
+	// **実際のクライアントは4つとも Accept に両方を入れて送る**（pb-158 のプローブ）。
+	// 仕様上もクライアントの MUST で、SDK は欠けた要求を 400 で拒む（Design.md 8.4）。
+	// **SDK は応答を SSE で返すことがある**ので、応答（id を持つ data 行）だけを
+	// 取り出し、JSON の本文として読めるようにする。
+	send := func(token string, req *http.Request) *httptest.ResponseRecorder {
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
+		if strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream") {
+			var last string
+			for _, line := range strings.Split(w.Body.String(), "\n") {
+				if data, ok := strings.CutPrefix(line, "data: "); ok && strings.Contains(data, `"id"`) {
+					last = data
+				}
+			}
+			w.Body = bytes.NewBufferString(last)
+		}
 		return w
+	}
+
+	// call は /mcp/<key> を旧方式（initialize の版）で1回叩く。
+	call := func(token, key, body string) *httptest.ResponseRecorder {
+		return send(token, httptest.NewRequest(http.MethodPost, MCPPath+"/"+key, strings.NewReader(body)))
+	}
+
+	// modern は 2026-07-28 の形で1回叩く。本文の _meta に版を入れ、同じ値を
+	// MCP-Protocol-Version に、method と name を Mcp-Method / Mcp-Name に写す。
+	// **headerName を本文と違う値にすると、ヘッダの食い違いを作れる。**
+	modern := func(token, method, name, headerName, params string) *httptest.ResponseRecorder {
+		meta := `"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28",` +
+			`"io.modelcontextprotocol/clientInfo":{"name":"pb-test","version":"0"},` +
+			`"io.modelcontextprotocol/clientCapabilities":{}}`
+		if params != "" {
+			meta += "," + params
+		}
+		req := httptest.NewRequest(http.MethodPost, MCPPath+"/"+projectKey,
+			strings.NewReader(`{"jsonrpc":"2.0","id":7,"method":"`+method+`","params":{`+meta+`}}`))
+		req.Header.Set("MCP-Protocol-Version", "2026-07-28")
+		req.Header.Set("Mcp-Method", method)
+		if headerName != "" {
+			req.Header.Set("Mcp-Name", headerName)
+		}
+		_ = name
+		return send(token, req)
 	}
 
 	// tool はツールを1回呼び、テキストと isError を返す。
@@ -340,6 +382,60 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		if res.Result.ServerInfo.Version != "mcp-test" {
 			t.Errorf("serverInfo.version = %q, want mcp-test", res.Result.ServerInfo.Version)
+		}
+	})
+
+	// **Claude Code は新方式で話しかけてくる**（pb-158。最初に server/discover）。
+	// 旧方式の試験だけでは、SDK が新方式を正しく扱うかが分からない。
+	t.Run("新方式で server/discover と tools/call が通り、ヘッダの食い違いを拒む", func(t *testing.T) {
+		w := modern(fullToken, "server/discover", "", "", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("server/discover の status = %d, want 200（body=%s）", w.Code, w.Body.String())
+		}
+		var disc struct {
+			Result struct {
+				SupportedVersions []string `json:"supportedVersions"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &disc); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, w.Body.String())
+		}
+		if !slices.Contains(disc.Result.SupportedVersions, "2026-07-28") ||
+			!slices.Contains(disc.Result.SupportedVersions, "2025-06-18") {
+			t.Errorf("supportedVersions = %v, want 2026-07-28 と 2025-06-18 を含む", disc.Result.SupportedVersions)
+		}
+
+		w = modern(fullToken, "tools/call", "pb_get_project", "pb_get_project",
+			`"name":"pb_get_project","arguments":{}`)
+		if w.Code != http.StatusOK {
+			t.Fatalf("tools/call の status = %d, want 200（body=%s）", w.Code, w.Body.String())
+		}
+		var call struct {
+			Result struct {
+				ResultType string `json:"resultType"`
+				Content    []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+				IsError bool `json:"isError"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &call); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, w.Body.String())
+		}
+		if call.Result.IsError || len(call.Result.Content) == 0 ||
+			!strings.Contains(call.Result.Content[0].Text, projectKey) {
+			t.Errorf("pb_get_project の結果がプロジェクトを含まない: %+v", call.Result)
+		}
+		if call.Result.ResultType != "complete" {
+			t.Errorf("resultType = %q, want complete（2026-07-28 は必須）", call.Result.ResultType)
+		}
+
+		// **ヘッダと本文の食い違いは 400**（仕様の HeaderMismatch）。経路の途中の
+		// 仕組みがヘッダで判断し、PB が本文で動く、という食い違いを作らない。
+		w = modern(fullToken, "tools/call", "pb_get_project", "pb_list_docs",
+			`"name":"pb_get_project","arguments":{}`)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Mcp-Name が食い違う要求の status = %d, want 400（body=%s）", w.Code, w.Body.String())
 		}
 	})
 
