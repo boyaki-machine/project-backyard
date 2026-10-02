@@ -230,6 +230,7 @@ ProjectBackyard/
 │   │   ├── DbDesign.md            ← データベース設計
 │   │   ├── ApiDesign.md           ← REST API 設計
 │   │   ├── GuiDesign.md           ← GUI 設計
+│   │   ├── Delegation.md          ← 自律実行の設計（DB・API・画面にまたがる）
 │   │   └── openapi.yaml           ← 実装済みAPIの現状（ApiDesign.md 1.3）
 │   ├── Development.md             ← 開発環境の立ち上げ・デバッグ手順
 │   ├── Testing.md                 ← 試験の設計と完了の基準
@@ -271,6 +272,9 @@ ProjectBackyard/
 │   │   ├── pages/ components/ stores/
 │   │   └── api/                   ← openapi.yaml から生成する型付きクライアント
 │   └── dist/                      ← .gitignore
+│
+├── tools/                         ← 開発用の道具。製品のバイナリに入らない
+│   └── mcp-probe/                 ← MCP クライアントの挙動を確かめる検証用サーバ（独立した go.mod。標準ライブラリのみ）
 │
 └── deploy/                        ← 環境別の実行設定
     ├── Dockerfile                 ← 配布用イメージ。client → pb と goose → 実行（distroless nonroot）の3段（4.5）
@@ -1428,6 +1432,11 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 | 実装しないもの | SSE ストリーム（`GET` は `405`）、セッション（`Mcp-Session-Id` を発行しない）、`resources` / `prompts` / サーバ発の通知 |
 | プロトコル版 | クライアントが `initialize` で送った版が PB の知る値なら**それをそのまま返す**。知らない値なら PB の最新版を返す（クライアントが切断を選べる） |
 | `MCP-Protocol-Version` ヘッダ | **検証しない**（無くても通す）。版の合意は `initialize` の応答で済んでおり、ヘッダで二重に判定すると、版を送らないクライアントが繋がらなくなる |
+
+**この表は MCP 仕様の旧方式（`initialize` のハンドシェイクを行う版。2025-11-25 以前）に沿っている。** 現行の 2026-07-28 版では、
+ハンドシェイク・セッション・`ping`・GET のストリームが無くなり、版はリクエストごとに `_meta` で送り、`server/discover` が必須になった。
+**Claude Code 2.1.286 は新方式で話しかけてくる**（pb-158 のプローブで、最初に `server/discover` を呼ぶのを確かめた）。それでも PB に繋がっているのは、仕様の互換の手順（新方式の要求が通らなければ `initialize` へ落とす）によると見られる。**PB に対する落とし方そのものは確かめていない。**
+いまは互換の手順で繋がっているだけなので、新方式への追随は pb-258 で行う。
 
 **サーバ→クライアントの通知を持たないので、SSE が要らない。** MCP の仕様は `POST` の応答を `application/json` で返してよいと定めており、read 系ツールはすべて1往復で完結する。**進捗通知や購読が要る面が現れたら、そこが 8.6 の再検討点になる。**
 
