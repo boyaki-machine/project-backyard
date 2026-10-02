@@ -34,6 +34,7 @@
 | REST API | `docs/design/ApiDesign.md` |
 | 画面・遷移・配色 | `docs/design/GuiDesign.md` |
 | 要件・背景・AI駆動開発の構想 | `docs/design/Requirements.md` |
+| 自律実行（委任・評価エージェント・確認待ち） | `docs/design/Delegation.md` |
 | 文書の索引と主要な設計判断 | `docs/README.md` |
 | 開発環境の立ち上げ・検証手順（**設計ではなく手順**） | `docs/Development.md` |
 | 試験の設計と完了の基準（**何をどこまで検証したら終わりか**） | `docs/Testing.md` |
