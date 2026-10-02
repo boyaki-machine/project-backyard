@@ -14,7 +14,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 )
 
-// NewSDK はプロトコルの層を公式 SDK に任せたハンドラを返す（Design.md 8.4 / 8.6。pb-258）。
+// HTTP は /mcp/{key} の口を返す。プロトコルの層は公式 SDK に任せる（Design.md 8.4 / 8.6。pb-258）。
 //
 // **SDK が引き受けるのはプロトコルだけである。** 版の交渉（旧方式の initialize と、
 // 2026-07-28 の server/discover の両方）、ヘッダの検証、進捗の通知の運び方。
@@ -23,8 +23,7 @@ import (
 // **状態を持たない（Stateless）で動かす。** 2026-07-28 はセッションを持たず、
 // 旧方式のクライアントにもリクエストごとの一時的なセッションで応じる。GET と DELETE は
 // 405 になる——サーバ発の通知を持たないのは今までと同じである（10章：通知はモデルを起こさない）。
-func NewSDK(rest http.Handler, version string) http.Handler {
-	h := New(rest, version)
+func (h *Handler) HTTP() http.Handler {
 	inner := sdk.NewStreamableHTTPHandler(h.serverFor, &sdk.StreamableHTTPOptions{
 		Stateless: true,
 		// **DNS rebinding の対策を切る。** SDK の判定は Host が `localhost` そのものか
@@ -56,6 +55,10 @@ func NewSDK(rest http.Handler, version string) http.Handler {
 // **ツールの処理は元の HTTP リクエストを要る**——REST の内部呼び出しに
 // Authorization を引き継ぎ、URL からプロジェクトキーを取るためである（8.3 / 8.4）。
 // SDK はリクエストを受けるたびにこの関数を呼ぶので、そのリクエストを包んだ処理を登録する。
+//
+// **知らないツール名と壊れた引数は JSON-RPC のエラー**（呼び出し側の不具合。知らない名前は
+// SDK が -32602 で返す）、**REST が返した 4xx / 5xx は isError のツール結果**（呼び出しの
+// 結果。モデルが読んで利用者へ伝える）である（Design.md 8.4）。
 func (h *Handler) serverFor(r *http.Request) *sdk.Server {
 	s := sdk.NewServer(&sdk.Implementation{Name: ServerName, Version: h.version}, nil)
 	key := chi.URLParam(r, middleware.ProjectKeyURLParam)
