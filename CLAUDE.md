@@ -49,6 +49,7 @@
 |---|---|---|
 | 言語 | Go 1.26+ | |
 | ルータ | chi v5 | 権限はミドルウェアとしてルート定義に宣言する（`docs/design/Design.md` 6.4.4） |
+| MCP | 公式 Go SDK（modelcontextprotocol/go-sdk） | プロトコルだけを任せる。ツールの中身は REST を内部で叩く（`docs/design/Design.md` 8.4） |
 | DB | pgx v5（`database/sql` 非経由） | **非経由なのはデータの読み書き。** マイグレーションの実行だけ goose のため `database/sql` を通す |
 | クエリ | sqlc（pgx/v5 モード） | `migrations/` をスキーマ源として読む |
 | マイグレーション | goose v3 | 前進のみ。`down` を書かない（`docs/design/DbDesign.md` 5.3） |

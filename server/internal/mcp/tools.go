@@ -10,10 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
-	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 )
 
 // tool は1件のツール定義（Design.md 8.2 / 8.5）。
@@ -70,12 +67,6 @@ func objectItems(desc string, props map[string]property, required ...string) pro
 			Required:   required,
 		},
 	}
-}
-
-// callParams は tools/call の params。
-type callParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
 }
 
 // toolResult は tools/call の result。
@@ -191,52 +182,6 @@ func readTools() []tool {
 }
 
 func intPtr(v int) *int { return &v }
-
-// lookup は名前でツールを引く。
-func (h *Handler) lookup(name string) *tool {
-	for i := range h.tools {
-		if h.tools[i].Name == name {
-			return &h.tools[i]
-		}
-	}
-	return nil
-}
-
-// callTool は tools/call を処理する。
-//
-// **知らないツール名と壊れた引数は JSON-RPC エラー**（呼び出し側の不具合）、
-// **REST が返した 4xx / 5xx は isError のツール結果**（呼び出しの結果）である
-// （Design.md 8.4）。
-func (h *Handler) callTool(r *http.Request, req rpcRequest) rpcResponse {
-	var params callParams
-	if len(req.Params) > 0 {
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return errorOf(req.ID, newError(codeInvalidParams, "params を解釈できない"))
-		}
-	}
-	if params.Name == "" {
-		return errorOf(req.ID, newError(codeInvalidParams, "name が無い"))
-	}
-
-	t := h.lookup(params.Name)
-	if t == nil {
-		return errorOf(req.ID, newError(codeInvalidParams, "知らないツール: "+params.Name))
-	}
-
-	// プロジェクトキーは URL から取る（Design.md 8.3）。トークンのスコープとの
-	// 整合は RequireProjectPermission が検証済みである。
-	key := chi.URLParam(r, middleware.ProjectKeyURLParam)
-	if key == "" {
-		return errorOf(req.ID, newError(codeInternalError,
-			"ルートに {"+middleware.ProjectKeyURLParam+"} が無い"))
-	}
-
-	res, rpcErr := t.call(h, r, key, params.Arguments)
-	if rpcErr != nil {
-		return errorOf(req.ID, rpcErr)
-	}
-	return resultOf(req.ID, res)
-}
 
 // ── ツール本体 ──────────────────────────────────────────────
 
