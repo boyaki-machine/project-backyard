@@ -1397,7 +1397,7 @@ claim / リースという考え方は馴染まない。**設計上のリース�
 **代わりに、状態遷移を MCP に開ける。** 設計原則7 は「エージェントから見える面は MCP のみ」と定めるので、
 REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task` / `pb_list_transitions`）を置く。
 
-**`pb_claim_task` / `pb_release_task` は構想である**（`Requirements.md` 10.3.2）。**再検討の条件は自律取得（`pb_next_task`）の実装である**——そのときは `working_agent_id` を「宣言」から「条件」へ格上げすれば足り、テーブルを足さずに済む。TTL による失効（`stale` の検知）が要ると分かった時点で `task_lease` の器を起こす。
+**`pb_claim_task` / `pb_release_task` は構想である**（`Requirements.md` 10.3.2）。**再検討の条件は自律取得（`pb_next_task`）の実装である**——そのときは `working_agent_id` を「宣言」から「条件」へ格上げすれば足り、テーブルを足さずに済む。TTL による失効（`stale` の検知）が要ると分かった時点で `task_lease` の器を起こす。**自律実行（`Delegation.md`）はこの条件に当たったが、委任の中ではまだリースは要らないと判定した**——1つの委任に main は1つで、sub は main の principal で動くため、排他は main の内部の問題になる（同 12.3）。**再検討の条件は、委任の消化を複数ベンダーのエージェントに配る段階へ移した。**
 
 **`pb_put_doc` は `doc.edit` を要求する。** エージェントのトークンにこの権限を載せるかは、**そのエージェントが誰に付いているか**で決まる（`Requirements.md` 10.10.3）。PM のエージェントは持ち、実装だけを行うエージェントは持たない。**発行時に許可リストから選ぶ**（`ApiDesign.md` 4.5.3）。
 
