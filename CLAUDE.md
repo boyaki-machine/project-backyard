@@ -62,6 +62,7 @@
 ```
 docs/     設計・運用文書        server/   Go（API + MCP + 静的配信）
 client/   Vue 3                deploy/   環境別の実行設定（base/dev/stg/prod）
+tools/    開発用の道具（製品に入らない。例：mcp-probe）
 ```
 
 詳細は `docs/design/Design.md` 4章。**client のビルド成果物は Go バイナリに embed する**（別のWebサーバを立てない）。
