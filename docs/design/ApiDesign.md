@@ -4197,43 +4197,35 @@ ETag: W/"act-a3f19c2b-142-1723372992000000000"
 
 **`body_md` の行は値を載せない**（9.5.2）。`old_value` / `new_value` はどちらも `null` で、「説明が変わった」ことだけが残る。
 
-### 9.13.3 `GET /api/v1/projects/:key/ticket-trends` — 実装済み（pb-264）
+### 9.13.3 `GET /api/v1/projects/:key/ticket-trends` — 状態別推移（pb-12）
 
-**必要権限は `project.view`。** 現在存在する `story` / `task` に結び付く、記録された操作の回数を日別に返す。親子はそれぞれ1件のチケットであり、オンステージ・担当・スプリントでは絞らない。ポイント・工数は集計しない。
+**必要権限は `project.view`。** 現在存在する `story` / `task` の各日終了時点の状態別件数を返す。親子は各1件。エピック・削除済みを除き、オンステージ・担当・スプリントでは絞らない。ポイント・工数は集計しない。
 
 | クエリ | 規則 |
 |---|---|
-| `days` | 省略時 `7`。文字列 `7` / `28` のみ。空・重複・その他は `422 validation_failed`（`details[].field=days`、`code=invalid`） |
-| その他 | 未知のパラメータは `422 validation_failed`（`code=invalid`） |
+| `period` | `7d`（既定）/ `4w` / `3m` / `6m`。空・重複・その他は422 |
+| `days` | 旧期間指定の7 / 28を残し、7d / 4wとして扱う。応答は新しい状態別件数形式。periodとの同時指定は422 |
+| その他 | 未知のパラメータは422 validation_failed（code=invalid） |
 
-| 指標 | 定義 |
+プロジェクトtimezoneの今日を含む7日、28日、直近3／6暦月。月の期間は今日から暦月を引き（月末はその月の末日へ丸め）、翌日を開始日とする。2026-10-03なら3mは07-04〜10-03、6mは04-04〜10-03。日付を固定秒数で作らずDSTにも対応する。
+
+サーバが集計時点Tを決める。過去日は翌日0時未満、当日はT未満を集計する。ticket.created_atがその上端未満の行を対象にする。過去の状態は、上端以降T未満の最初の状態遷移のold_value、なければ上端未満の最後の状態遷移のnew_valueで復元する（同時刻はactivity.idで順序を決める）。両方なければ作成履歴が上端未満に存在する場合だけ現在のstatus_keyを用いる。当日は現在のstatus_keyを用いる。履歴が足りない、値が空、現在のワークフローでキーを解決できない場合はunknown。作成履歴はfield IS NULLのcreateのみを使い、レポート作成等を混ぜない。
+
+| 件数フィールド | 定義 |
 |---|---|
-| `created` | `activity.action=create` の回数 |
-| `completed` | `action=transition`、`field=status_key` で、遷移前の区分が `done` 以外、遷移後が `done` の回数 |
-| `reopened` | 同じ遷移のうち、遷移前が `done`、遷移後が `done` 以外の回数 |
-| `unclassified_transitions` | 前後いずれかのキーが現在のワークフローで解決できない状態遷移の回数。完了・再開には数えない |
+| `done` | 復元した状態のcategoryがdone。完了→再開で減るため、累積完了操作数ではない |
+| `in_progress` | categoryがin_progressまたはreview |
+| `todo` | categoryがtodo |
+| `new_todo` | todoの内数で、ticket.created_atが選択期間の開始0時以上 |
+| `unknown` | 存在するが状態を復元・分類できない |
 
-**履歴の区分は現在のワークフローで解く**（9.2.1 の着手日時と同じ）。`done` → `done` は完了にも再開にも数えない。作成→完了→再開→再完了では、新規1・完了2・再開1となる。
+**過去の確定値ではない。** 現在のチケット・作成日時・履歴・ワークフローに基づく復元値。削除・種別・ワークフロー変更で過去の値も変わる。未記録の遷移による不足を完全には検出できず、作成履歴以降に状態変更が記録されなければ現在の状態を据え置く。created_atから存在と新規追加を判定するがclosed_atから状態を推測しない。
 
-**過去の確定値ではない。** 削除済みチケット・未記録の操作は含まない。種別・ワークフロー・対象の変更によって過去の日別値も変わりうる。履歴不足を完全に検出できるとは扱わず、`created_at` / `closed_at` から記録を補わない。新規と完了の差を未完了残数の純増とは呼ばない。
+応答はperiod、days（実際の暦日数）、timezone、start_date / end_date（YYYY-MM-DD、両端含む）、as_of（エポックミリ秒）、basis=`reconstructed_status_for_existing_tickets`、latest（最終日の5件数）、daily（日付昇順のdate・5件数・is_partial）。最終日だけis_partial=true。latestは日別件数の和ではない。各日のdone+in_progress+todo+unknownは対象件数と一致し、new_todo<=todo。対象がない日は0。1つのSQLスナップショットで集計し、全履歴を画面へ送らない。
 
-サーバが1つの集計時点 `T` を決め、`project.timezone` の今日を含む7／28暦日を返す。対象の履歴は開始日の0時以上・`T` 未満。日付は24時間の固定秒数で作らず、DSTも含め暦日で区切る。利用者・端末のタイムゾーンを混ぜない。
+ETagなし、Cache-Control: no-store。共通エラー形式と401／403／404／500に従う。DDL・依存は追加しない。OpenAPIと生成型は実装と同時に更新する。
 
-| 応答フィールド | 型・意味 |
-|---|---|
-| `days` | `7` / `28` |
-| `timezone` | プロジェクトのIANA名 |
-| `start_date` / `end_date` | `YYYY-MM-DD`。表示用の期間で両端の日を含む |
-| `as_of` | 集計時点のエポックミリ秒。履歴の完全性を保証するウォーターマークではない |
-| `basis` | 固定値 `recorded_activity_for_existing_tickets` |
-| `totals` | `created` / `completed` / `reopened` / `unclassified_transitions` の非負整数 |
-| `daily` | `date`、上記4指標、`is_partial` を持つ配列。日付昇順で必ず `days` 件 |
-
-記録がない日は4指標とも0。0は「該当する記録なし」であり「操作が一切なかった」という保証ではない。最終日だけ `is_partial=true`。合計は日別値の和。対象・履歴・分類・日列は1つのSQLスナップショットで集計し、画面へ全履歴を送らない。
-
-ページングとETagは付けず、`Cache-Control: no-store`。認証・到達・権限とエラー形式は共通仕様（401／403／404／500、2.5）に従う。DDL・依存を増やさず既存索引をまず使う。OpenAPIと生成型はAPI実装と同時に更新する（1.3、pb-264）。
-
-検証例：東京の2026-10-03正午なら7日は09-27〜10-03、28日は09-06〜10-03。開始0時を含み `T` を含まない。親story・子taskの作成は新規2、epic・別プロジェクト・削除済みは除外。履歴なし・未知キー・複数done状態・再完了・DSTの23／25時間の日を回帰検証する。
+検証：期間前のチケット、境界時刻の作成と遷移、レビュー・複数doneキー・再開と再完了、履歴不足・未知キー、親子・epic・別PJ・削除除外、月末・閏年・23／25時間のDST日を検証する。
 
 ## 9.14 チケット固有のエラーコード
 

@@ -11,65 +11,80 @@ import (
 )
 
 const getProjectTicketTrends = `-- name: GetProjectTicketTrends :many
-WITH dates AS (
-  SELECT p.timezone, $1::timestamptz AS as_of,
-         to_char(($1::timestamptz AT TIME ZONE p.timezone)::date
-                   - ($2::int - 1) + series.n, 'YYYY-MM-DD')::text AS date,
-         (series.n = $2::int - 1)::boolean AS is_partial
-  FROM project p CROSS JOIN generate_series(0, $2::int - 1) AS series(n)
-  WHERE p.id = $3::char(26)
-), recorded AS (
-  SELECT to_char(a.occurred_at AT TIME ZONE p.timezone, 'YYYY-MM-DD')::text AS date,
-         a.action, old_status.category AS old_category, new_status.category AS new_category
-  FROM project p
-  JOIN activity a ON a.project_id = p.id AND a.entity_type = 'ticket'
-  JOIN ticket t ON t.id = a.entity_id AND t.project_id = p.id
-               AND t.type IN ('story', 'task')
-  LEFT JOIN workflow_status old_status
-    ON old_status.workflow_id = p.workflow_id AND old_status.key = a.old_value
-  LEFT JOIN workflow_status new_status
-    ON new_status.workflow_id = p.workflow_id AND new_status.key = a.new_value
-  WHERE p.id = $3::char(26)
-    AND a.occurred_at >= ((($1::timestamptz AT TIME ZONE p.timezone)::date
-                           - ($2::int - 1))::timestamp AT TIME ZONE p.timezone)
-    AND a.occurred_at < $1::timestamptz
-    AND (a.action = 'create' OR (a.action = 'transition' AND a.field = 'status_key'))
+WITH bounds AS (
+  SELECT p.id, p.workflow_id, p.timezone, $1::timestamptz AS as_of,
+         ($1::timestamptz AT TIME ZONE p.timezone)::date AS today,
+         CASE $2::text
+           WHEN '4w' THEN ($1::timestamptz AT TIME ZONE p.timezone)::date - 27
+           WHEN '3m' THEN (($1::timestamptz AT TIME ZONE p.timezone)::date - interval '3 months')::date + 1
+           WHEN '6m' THEN (($1::timestamptz AT TIME ZONE p.timezone)::date - interval '6 months')::date + 1
+           ELSE ($1::timestamptz AT TIME ZONE p.timezone)::date - 6
+         END AS start_date
+  FROM project p WHERE p.id = $3::char(26)
+), dates AS (
+  SELECT b.id, b.workflow_id, b.timezone, b.as_of, b.today, b.start_date, b.start_date + n AS day,
+         LEAST(((b.start_date + n + 1)::timestamp AT TIME ZONE b.timezone), b.as_of) AS cutoff
+  FROM bounds b CROSS JOIN LATERAL generate_series(0, b.today - b.start_date) n
+), states AS (
+  SELECT d.day, d.timezone, d.as_of, d.today, d.start_date,
+         t.id, t.created_at,
+         CASE WHEN d.day = d.today THEN t.status_key
+              WHEN following.id IS NOT NULL THEN following.old_value
+              WHEN preceding.id IS NOT NULL THEN preceding.new_value
+              WHEN EXISTS (SELECT 1 FROM activity a WHERE a.project_id = d.id
+                   AND a.entity_type = 'ticket' AND a.entity_id = t.id
+                   AND a.action = 'create' AND a.field IS NULL AND a.occurred_at < d.cutoff)
+                THEN t.status_key
+         END AS status_key, d.workflow_id
+  FROM dates d
+  LEFT JOIN ticket t ON t.project_id = d.id AND t.type IN ('story', 'task') AND t.created_at < d.cutoff
+  LEFT JOIN LATERAL (
+    SELECT a.id, a.old_value FROM activity a
+    WHERE a.project_id = d.id AND a.entity_type = 'ticket' AND a.entity_id = t.id
+      AND a.action = 'transition' AND a.field = 'status_key'
+      AND a.occurred_at >= d.cutoff AND a.occurred_at < d.as_of
+    ORDER BY a.occurred_at, a.id LIMIT 1
+  ) following ON true
+  LEFT JOIN LATERAL (
+    SELECT a.id, a.new_value FROM activity a
+    WHERE a.project_id = d.id AND a.entity_type = 'ticket' AND a.entity_id = t.id
+      AND a.action = 'transition' AND a.field = 'status_key' AND a.occurred_at < d.cutoff
+    ORDER BY a.occurred_at DESC, a.id DESC LIMIT 1
+  ) preceding ON true
 )
-SELECT d.date::text AS date, d.timezone::text AS timezone,
-       d.as_of::timestamptz AS as_of, d.is_partial::boolean AS is_partial,
-       count(*) FILTER (WHERE r.action = 'create')::bigint AS created,
-       count(*) FILTER (WHERE r.action = 'transition'
-           AND r.old_category <> 'done' AND r.new_category = 'done')::bigint AS completed,
-       count(*) FILTER (WHERE r.action = 'transition'
-           AND r.old_category = 'done' AND r.new_category <> 'done')::bigint AS reopened,
-       count(*) FILTER (WHERE r.action = 'transition'
-           AND (r.old_category IS NULL OR r.new_category IS NULL))::bigint AS unclassified_transitions
-FROM dates d LEFT JOIN recorded r ON r.date = d.date
-GROUP BY d.date, d.timezone, d.as_of, d.is_partial
-ORDER BY d.date
+SELECT to_char(s.day, 'YYYY-MM-DD')::text AS date, s.timezone::text AS timezone,
+       s.as_of::timestamptz AS as_of, (s.day = s.today)::boolean AS is_partial,
+       count(s.id) FILTER (WHERE w.category = 'done')::bigint AS done,
+       count(s.id) FILTER (WHERE w.category IN ('in_progress', 'review'))::bigint AS in_progress,
+       count(s.id) FILTER (WHERE w.category = 'todo')::bigint AS todo,
+       count(s.id) FILTER (WHERE w.category = 'todo' AND s.created_at >= (s.start_date::timestamp AT TIME ZONE s.timezone))::bigint AS new_todo,
+       count(s.id) FILTER (WHERE w.category IS NULL)::bigint AS unknown
+FROM states s LEFT JOIN workflow_status w ON w.workflow_id = s.workflow_id AND w.key = s.status_key
+GROUP BY s.day, s.timezone, s.as_of, s.today
+ORDER BY s.day
 `
 
 type GetProjectTicketTrendsParams struct {
 	AsOf      time.Time
-	Days      int32
+	Period    string
 	ProjectID string
 }
 
 type GetProjectTicketTrendsRow struct {
-	Date                    string
-	Timezone                string
-	AsOf                    time.Time
-	IsPartial               bool
-	Created                 int64
-	Completed               int64
-	Reopened                int64
-	UnclassifiedTransitions int64
+	Date       string
+	Timezone   string
+	AsOf       time.Time
+	IsPartial  bool
+	Done       int64
+	InProgress int64
+	Todo       int64
+	NewTodo    int64
+	Unknown    int64
 }
 
-// Recorded operations for currently existing story/task tickets (ApiDesign.md 9.13.3).
-// Generate calendar dates before converting to instants, including DST boundaries.
+// Reconstructed daily status for currently existing tickets (ApiDesign.md 9.13.3).
 func (q *Queries) GetProjectTicketTrends(ctx context.Context, arg GetProjectTicketTrendsParams) ([]GetProjectTicketTrendsRow, error) {
-	rows, err := q.db.Query(ctx, getProjectTicketTrends, arg.AsOf, arg.Days, arg.ProjectID)
+	rows, err := q.db.Query(ctx, getProjectTicketTrends, arg.AsOf, arg.Period, arg.ProjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -82,10 +97,11 @@ func (q *Queries) GetProjectTicketTrends(ctx context.Context, arg GetProjectTick
 			&i.Timezone,
 			&i.AsOf,
 			&i.IsPartial,
-			&i.Created,
-			&i.Completed,
-			&i.Reopened,
-			&i.UnclassifiedTransitions,
+			&i.Done,
+			&i.InProgress,
+			&i.Todo,
+			&i.NewTodo,
+			&i.Unknown,
 		); err != nil {
 			return nil, err
 		}
