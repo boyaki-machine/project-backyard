@@ -114,6 +114,35 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 			refErr = e
 			return errTicketReference
 		}
+		// **委任の main は、委任の木の中にしか起票できない**（Delegation.md 12.2）。
+		// 承認済でなければ起票そのものを拒み（5章）、承認済でも parent_seq を
+		// 省いた・木の外を指したら 403 で拒む。main でない呼び出し元には効かない
+		// （通常の ticket.create の判定だけが効く）。
+		if main, isMain, derr := findActiveDelegationByMain(ctx, q, projectID, p.ActorID); derr != nil {
+			return fmt.Errorf("委任を確認できない: %w", derr)
+		} else if isMain {
+			outOfTree := apierr.New(apierr.Forbidden).
+				WithMessage(fmt.Sprintf("自律実行の main は、根（#%d）の子孫としてしか起票できません", main.RootSeq)).
+				WithDetails(apierr.Detail{Field: "parent_seq", Code: "delegation_stage"})
+			if !delegationGate(main.Status) {
+				refErr = delegationForbidden(main.RootSeq, "計画が承認されるまで、このチケットを起票できません")
+				return errTicketReference
+			}
+			if !parentID.Valid {
+				refErr = outOfTree
+				return errTicketReference
+			}
+			inTree, derr := q.IsTicketDescendant(ctx, gen.IsTicketDescendantParams{
+				AncestorID: main.RootTicketID, CandidateID: parentID.String,
+			})
+			if derr != nil {
+				return fmt.Errorf("委任の木を確認できない: %w", derr)
+			}
+			if !inTree {
+				refErr = outOfTree
+				return errTicketReference
+			}
+		}
 		if e := validateTicketAssignee(ctx, q, projectID, req.AssigneeID); e != nil {
 			refErr = e
 			return errTicketReference

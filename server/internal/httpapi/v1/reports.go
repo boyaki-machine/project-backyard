@@ -156,9 +156,25 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 	p := auth.PrincipalFromContext(ctx)
 	rec := activity.FromRequest(r)
 	runID, reportID, commentID := ulidgen.New(), ulidgen.New(), ulidgen.New()
-	var view reportView
+	var (
+		view      reportView
+		forbidden *apierr.Error
+	)
 
 	err = h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		// **委任の木の中のチケットは、承認済のあいだしか完了レポートを
+		// 受け付けない**（Delegation.md 5章「main：完了レポート（子）」
+		// 「main：成果の提出（根の完了レポート）」）。評価待ち・差し戻しの
+		// 細分（評価が要る）は pb-247・pb-248 まで持たない。
+		if d, in, derr := findDelegationContainingTicket(ctx, q, scope.projectID, ticketID); derr != nil {
+			return fmt.Errorf("委任を確認できない: %w", derr)
+		} else if in && !delegationGate(d.Status) {
+			forbidden = apierr.New(apierr.Forbidden).
+				WithMessage("計画が承認されるまで、完了レポートは受け付けません").
+				WithDetails(apierr.Detail{Field: "status", Code: "delegation_stage"})
+			return errTicketReference
+		}
+
 		run, err := buildAgentRun(ctx, q, runID, ticketID, p, req)
 		if err != nil {
 			return err
@@ -230,7 +246,11 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	if err != nil {
+	switch {
+	case forbidden != nil:
+		apierr.Write(w, r, forbidden)
+		return
+	case err != nil:
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return
 	}

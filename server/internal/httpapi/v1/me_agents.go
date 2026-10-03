@@ -150,13 +150,19 @@ var agentDefaultScopes = []string{
 
 // agentGrantableScopes は既定に足せる権限（ApiDesign.md 4.5.3。手順26a）。
 //
-// **`doc.edit` の1件だけである。** Design.md 6.5 の禁止のうち、これだけが
+// **`doc.edit` は Design.md 6.5 の禁止のうち唯一**
 // 「載せるかは**そのエージェントが誰に付いているか**で決まる」と書かれている
 // ——PM のエージェントは持ち、実装だけを行うエージェントは持たない。
 // **pb_put_doc がこの権限を要求する**（8.2）ので、発行の口が固定のままでは
 // 6.5 を実行できなかった（手順26a まで、pb_put_doc は必ず 403 になっていた）。
 //
-// **ticket.close は入れない。** 6.5 はこちらを「エージェントに開けない」と
+// **`delegation.evaluate` も同じ形である**（pb-246。Delegation.md 15章 D5）。
+// 評価エージェントに指定するエージェントだけが選び、main や実装だけを行う
+// エージェントは持たない。`delegation.manage` を既定にも許可リストにも
+// 入れないのは、委任の作成・範囲の承認は人（PM）だけが行う操作だからである
+// （`delegation.go` の createDelegation は MCP ツールを持たない）。
+//
+// **`ticket.close` は入れない。** 6.5 はこちらを「エージェントに開けない」と
 // 定めており、ワークフローの is_agent_reachable=false と allowed_actor_kinds で
 // DB レベルでも担保されている（DbDesign.md 7.4）。
 //
@@ -164,7 +170,7 @@ var agentDefaultScopes = []string{
 // /me/agents を叩ける本人が user.manage を載せたトークンを自分のエージェントへ
 // 渡せる——所有者との積で消えるとはいえ、アドミニストレータが所有者のときは
 // 消えない。
-var agentGrantableScopes = []string{"doc.edit", "ticket.actual_point.edit"}
+var agentGrantableScopes = []string{"doc.edit", "ticket.actual_point.edit", "delegation.evaluate"}
 
 // agentAllowedScopes は発行時に受け付ける権限の全体（既定 ∪ 足せるもの）。
 func agentAllowedScopes() map[string]bool {

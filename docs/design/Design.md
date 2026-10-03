@@ -759,7 +759,7 @@ type VerifiedIdentity struct {
 
 ### 6.4.2 権限カタログ
 
-権限をコードのif文ではなく**データとして定義**する（原則5）。カタログは33件（0010 の28件に、0017 の `doc.view` / `doc.edit`、0027 の `ticket.reference.edit`、0029 の `ticket.self_edit`、0044 の `ticket.actual_point.edit` を足したもの）。`DbDesign.md` 7.2（0010）・8.1.4（0017）・6.12.1（0027）・6.13（0029）のシードが正本。
+権限をコードのif文ではなく**データとして定義**する（原則5）。カタログは35件（0010 の28件に、0017 の `doc.view` / `doc.edit`、0027 の `ticket.reference.edit`、0029 の `ticket.self_edit`、0044 の `ticket.actual_point.edit`、0050 の `delegation.manage` / `delegation.evaluate` を足したもの）。`DbDesign.md` 7.2（0010）・8.1.4（0017）・6.12.1（0027）・6.13（0029）・6.24（0050）のシードが正本。
 
 | カテゴリ | 権限キー |
 |---|---|

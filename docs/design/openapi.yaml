@@ -4205,6 +4205,65 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/tickets/{seq}/delegation:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+    post:
+      tags: [tickets]
+      summary: 委任を始める
+      operationId: createDelegation
+      description: |
+        自律実行（Delegated）の委任を1件始める（Delegation.md 4章・12.2、
+        pb-246）。**必要権限は `delegation.manage`**（`project_admin` が持つ）。
+
+        **`{seq}` は委任の根となるチケットを指す**（`root_ticket_id` が
+        UNIQUE なので1チケットにつき委任は1件）。親を持たないチケットだけが
+        根になれる。作った直後の状態は常に `planning` である——承認
+        （計画の合格・評価。pb-247・pb-248）が無いと進められない。
+
+        **MCP ツールにしない。** Delegation.md 15章（D7）が新設する5つの
+        MCP ツールに委任の作成は含まれない。これは人（PM）が画面・APIから
+        直接行う操作である（`Design.md` 8.1 の「エージェントから見える面は
+        MCP のみ」の例外）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDelegationRequest'
+      responses:
+        '201':
+          description: '始めた委任（`status: planning`）。'
+          headers:
+            Location:
+              description: 作った委任の URL（`GET` は実装していない）。
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delegation'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '409':
+          description: |
+            このチケットには既に委任がある（`already_exists`。`root_ticket_id`
+            の一意制約）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/tickets/{seq}/transitions:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -8744,6 +8803,67 @@ components:
             properties:
               title: { type: string }
               rationale: { type: string }
+
+    CreateDelegationRequest:
+      description: |
+        委任の開始（Delegation.md 4章・12.2、pb-246）。
+      type: object
+      required: [main_actor_id, evaluator_actor_id, scope]
+      properties:
+        main_actor_id:
+          type: string
+          description: main に指定するエージェントの actor_id。
+          example: 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+        evaluator_actor_id:
+          type: string
+          description: 評価エージェントの actor_id。**main とは別の principal であること**（`ck_delegation_independent`）。
+          example: 01K2F8QW3H7YRJ4M5N6P7Q8EVL
+        scope:
+          type: object
+          description: |
+            委任範囲（Delegation.md 4.2）。目的・指標・自律してよい範囲・予算・
+            止まる条件・報告の周期を自由形式の JSON で持つ。本エンドポイントは
+            オブジェクトであること以外を検証しない——内容の検証・承認は
+            pb-247・pb-248 で足す。
+          additionalProperties: true
+
+    Delegation:
+      description: |
+        委任1件（Delegation.md 4.4）。
+      type: object
+      required: [id, root_seq, main, evaluator, status, scope, scope_version,
+                 created_by, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          example: 01K2F8QW3H7YRJ4M5N6P7Q8DLG
+        root_seq:
+          type: integer
+          description: 委任の根となるチケット番号。
+        main:
+          $ref: '#/components/schemas/ActorRef'
+        evaluator:
+          $ref: '#/components/schemas/ActorRef'
+        status:
+          type: string
+          enum: [planning, approved, paused, ended]
+          description: |
+            作った直後は常に `planning`。`approved` への遷移は
+            評価の合格と PM の承認を要る（pb-247・pb-248）。
+        scope:
+          type: object
+          additionalProperties: true
+        scope_version:
+          type: integer
+          description: 承認された委任範囲の版。`0` は未承認。
+        created_by:
+          $ref: '#/components/schemas/ActorRef'
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
 
     TicketReport:
       description: |

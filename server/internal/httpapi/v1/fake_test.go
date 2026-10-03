@@ -385,6 +385,26 @@ type fakeQuerier struct {
 	// TLS 証明書の取り出し（ApiDesign.md 11.7）
 	certPEMRow gen.GetTLSCertificatePEMRow
 	certPEMErr error
+
+	// 委任（Delegation.md 4章・12.2。pb-246）。
+	//
+	// **既定は「委任が1件も無い」**——delegationList が空なら
+	// findDelegationContainingTicket は何も照合せず「属さない」を返し、
+	// mainDelegation に無い actor_id は pgx.ErrNoRows（main でない）になる。
+	// 既存のチケット系テストは、委任を一切セットしなければ影響を受けない。
+	delegationList      []gen.ListActiveDelegationsForProjectRow
+	delegationListErr   error
+	mainDelegation      map[string]gen.GetActiveDelegationByMainActorRow
+	agentUnusable       map[string]bool // true を入れた actor_id だけ使えない扱いにする
+	ticketForDelegation map[string]gen.GetTicketForDelegationRow
+	// **ID をキーにしない。** createDelegation は ulidgen.New() で id を作るので、
+	// テスト側が事前に知ることができない。応答の組み立てを確かめたいだけなので、
+	// 渡された id を無視して1件を返す単純な形にする。
+	delegationByIDRow   gen.GetDelegationByIDRow
+	delegationByIDErr   error
+	createdDelegations  []gen.CreateDelegationParams
+	createDelegationErr error
+	setExecutionModeTo  map[string]string // ticket id -> 設定された execution_mode
 }
 
 // GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
@@ -1485,11 +1505,17 @@ type ticketFakeState struct {
 	deleteRows int64
 	detached   []string
 	descendant bool
-	typeByID   map[string]string
-	statusSet  []gen.SetTicketStatusParams
-	comments   []gen.CreateCommentParams
-	commentNum int64
-	updateErr  error
+	// descendantPairs は (ancestor, candidate) ごとに答えを変えたいときだけ使う
+	// ——pb-246 の委任の木の判定は、同じ呼び出しの中で「親子の循環か」
+	// （ancestor=自分）と「委任の木に属するか」（ancestor=委任の根）を
+	// 別の組で問い合わせるため、1つの bool では両方を正しく表せない。
+	// 無ければ descendant（既定 false）を使う。
+	descendantPairs map[[2]string]bool
+	typeByID        map[string]string
+	statusSet       []gen.SetTicketStatusParams
+	comments        []gen.CreateCommentParams
+	commentNum      int64
+	updateErr       error
 
 	// ── 9.6 の検証7 と、子が動いたら親を進行中にする ──────────
 	//
@@ -2491,9 +2517,75 @@ func (q *fakeQuerier) GetTicketTypeByID(_ context.Context, id string) (string, e
 	return t, nil
 }
 
-func (q *fakeQuerier) IsTicketDescendant(context.Context, gen.IsTicketDescendantParams) (bool, error) {
+func (q *fakeQuerier) IsTicketDescendant(_ context.Context, arg gen.IsTicketDescendantParams) (bool, error) {
 	q.opLog = append(q.opLog, "IsTicketDescendant")
+	if q.ticket.descendantPairs != nil {
+		if v, ok := q.ticket.descendantPairs[[2]string{arg.AncestorID, arg.CandidateID}]; ok {
+			return v, nil
+		}
+	}
 	return q.ticket.descendant, nil
+}
+
+// ── 委任（Delegation.md 4章・12.2。pb-246）────────────────────────
+
+func (q *fakeQuerier) ListActiveDelegationsForProject(context.Context, string) ([]gen.ListActiveDelegationsForProjectRow, error) {
+	q.opLog = append(q.opLog, "ListActiveDelegationsForProject")
+	if q.delegationListErr != nil {
+		return nil, q.delegationListErr
+	}
+	return q.delegationList, nil
+}
+
+func (q *fakeQuerier) GetActiveDelegationByMainActor(
+	_ context.Context, arg gen.GetActiveDelegationByMainActorParams,
+) (gen.GetActiveDelegationByMainActorRow, error) {
+	q.opLog = append(q.opLog, "GetActiveDelegationByMainActor")
+	if row, ok := q.mainDelegation[arg.MainActorID]; ok {
+		return row, nil
+	}
+	return gen.GetActiveDelegationByMainActorRow{}, pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) GetTicketForDelegation(_ context.Context, id string) (gen.GetTicketForDelegationRow, error) {
+	q.opLog = append(q.opLog, "GetTicketForDelegation")
+	if row, ok := q.ticketForDelegation[id]; ok {
+		return row, nil
+	}
+	return gen.GetTicketForDelegationRow{}, nil
+}
+
+func (q *fakeQuerier) AgentUsableInProject(_ context.Context, arg gen.AgentUsableInProjectParams) (bool, error) {
+	q.opLog = append(q.opLog, "AgentUsableInProject")
+	return !q.agentUnusable[arg.ActorID], nil
+}
+
+func (q *fakeQuerier) CreateDelegation(_ context.Context, arg gen.CreateDelegationParams) error {
+	q.opLog = append(q.opLog, "CreateDelegation")
+	if q.createDelegationErr != nil {
+		return q.createDelegationErr
+	}
+	q.createdDelegations = append(q.createdDelegations, arg)
+	return nil
+}
+
+func (q *fakeQuerier) SetTicketExecutionMode(
+	_ context.Context, arg gen.SetTicketExecutionModeParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "SetTicketExecutionMode")
+	if q.setExecutionModeTo == nil {
+		q.setExecutionModeTo = map[string]string{}
+	}
+	q.setExecutionModeTo[arg.ID] = arg.ExecutionMode
+	return 1, nil
+}
+
+func (q *fakeQuerier) GetDelegationByID(context.Context, string) (gen.GetDelegationByIDRow, error) {
+	q.opLog = append(q.opLog, "GetDelegationByID")
+	if q.delegationByIDErr != nil {
+		return gen.GetDelegationByIDRow{}, q.delegationByIDErr
+	}
+	return q.delegationByIDRow, nil
 }
 
 func (q *fakeQuerier) DetachTicketTags(_ context.Context, ticketID string) error {

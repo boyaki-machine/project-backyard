@@ -1930,6 +1930,68 @@ CREATE TABLE project_calendar_day (
 **ファイルの取り込みはプロジェクト所有の行を作る。** 取り込み直すたびに同じ行の中身を入れ替え、
 Google の暦へ切り替えたり暦を外したりしたら所有の行は消す（参照されない所有物を残さない）。
 
+## 6.24 自律実行の委任（0050）
+
+**正本は `Delegation.md` 4章・12.2。** pb-246。`delegation_plan` / `evaluation` /
+`confirmation` / `delegation_handoff`（同 4.4 の残り4表）は別チケット（pb-247〜250）
+で足す——本節が作るのは `delegation` の1表と、それを使うための前提だけである。
+
+```sql
+-- execution_mode に 'delegated' を足す（D1）。根だけがこの値を持てる。
+ALTER TABLE ticket DROP CONSTRAINT ticket_execution_mode_check;
+ALTER TABLE ticket ADD CONSTRAINT ticket_execution_mode_check
+  CHECK (execution_mode IN ('human_only','agent_only','agent_draft','delegated'));
+ALTER TABLE ticket ADD CONSTRAINT ck_ticket_delegated_no_parent
+  CHECK (execution_mode <> 'delegated' OR parent_id IS NULL);
+
+CREATE TABLE delegation (
+  id                 char(26) COLLATE "C" PRIMARY KEY,
+  project_id         char(26) COLLATE "C" NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  root_ticket_id     char(26) COLLATE "C" NOT NULL UNIQUE REFERENCES ticket(id) ON DELETE CASCADE,
+  main_actor_id      char(26) COLLATE "C" NOT NULL REFERENCES agent(actor_id) ON DELETE RESTRICT,
+  evaluator_actor_id char(26) COLLATE "C" NOT NULL REFERENCES agent(actor_id) ON DELETE RESTRICT,
+  status             text NOT NULL DEFAULT 'planning'
+                     CHECK (status IN ('planning','approved','paused','ended')),
+  scope              jsonb NOT NULL,
+  scope_version      integer NOT NULL DEFAULT 0,
+  created_by         char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT ck_delegation_independent CHECK (main_actor_id <> evaluator_actor_id)
+);
+
+INSERT INTO permission (key, category, description, sort_order) VALUES
+  ('delegation.manage',   'delegation', '委任範囲の承認・確認待ちへの回答・停止と再開', 90),
+  ('delegation.evaluate', 'delegation', '評価エージェントとして計画・成果を評価する',     91)
+ON CONFLICT (key) DO UPDATE
+  SET category = EXCLUDED.category, description = EXCLUDED.description, sort_order = EXCLUDED.sort_order;
+```
+
+**D1（実行モードの持ち方）は案Aを採った。** `execution_mode` に足す1値で表し、
+子孫かどうかは祖先を辿って決める——別欄（`delegation_id`）を全子孫に持つ案は、
+木の外へ動かした・木の中へ入れたときの同期漏れが権限の穴になる（`Delegation.md` 4.1）。
+
+**`ck_ticket_delegated_no_parent` は同一行だけで閉じる制約である。** 「根だけが
+`delegated` を持てる」を「`delegated` なら親を持たない」に言い換えて表す——
+祖先を辿らないと判定できない制約は CHECK に書けない。
+
+**`delegation.scope` は委任範囲（`Delegation.md` 4.2）を持つ。** PM が承認するのは
+この内容であって計画の中身ではない。**本チケットでは内容を検証しない**——
+オブジェクトであることだけを REST 層が見る（`ApiDesign.md` の委任のエンドポイント）。
+承認・版管理は `delegation_plan`（pb-247）が持つ。
+
+**権限は2つとも `project_admin` に配る**（0017 の `doc.edit` と同じ形。本節の末尾）。
+`delegation.evaluate` は**エージェントの発行時に選ぶ**——評価エージェントに指定する
+トークンだけが持つ（`server/internal/httpapi/v1/me_agents.go` の `agentGrantableScopes`）。
+`delegation.manage` は発行時にも選べない——委任の作成・範囲の承認は人（PM）だけが行う
+操作であり、対応する REST エンドポイントは MCP ツールを持たない（`Delegation.md` 15章 D7
+が列挙する新設5ツールに委任の作成は無い）。
+
+**5章の強制のうち、`delegation.status` だけで判定できる範囲を本チケットで実装した。**
+「評価待ち」「差し戻し」（`evaluation` が要る。pb-248）、確認待ち（`confirmation` が
+要る。pb-249）の細分はまだ無い——`planning` / `paused` / `ended` はひとまとめに
+「main は書けない」として扱い、`approved` だけを許す。
+
 # 7. 初期データ（0010）
 
 ## 7.1 認証プロバイダ

@@ -482,6 +482,14 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).
 			Post("/projects/{key}/tickets/{seq}/reports", h.submitTicketReport)
 
+		// ── 委任（Delegation.md 4章・12.2）── pb-246 ───────────────
+		//
+		// **{seq} は委任の根**（ticket と1:1。root_ticket_id が UNIQUE）。
+		// PM のみが呼ぶ人間向けの口で、D7（Delegation.md 15章）の新設 MCP
+		// ツール5つにこれは含まれない——エージェントから見える面にしない。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/delegation", h.createDelegation)
+
 		// ── チケット間リンク（ApiDesign.md 9.10.1）── 手順18a ─────
 		//
 		// **PATCH は lag_days だけ**（9.10.1。pb-231）。一意制約が (source, target, link_type)

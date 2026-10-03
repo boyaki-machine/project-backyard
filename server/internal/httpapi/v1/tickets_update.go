@@ -114,7 +114,7 @@ type optional[T any] struct {
 
 // updateTicket はチケット1件を部分更新する（9.5.2）。
 func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
-	_, key, projectID, ok := projectScopeContext(w, r, h.q,
+	p, key, projectID, ok := projectScopeContext(w, r, h.q,
 		"PATCH /projects/{key}/tickets/{seq}")
 	if !ok {
 		return
@@ -207,7 +207,7 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("チケット %d を読めない: %w", seq, err)
 		}
 
-		params, e := h.resolveTicketPatch(ctx, q, projectID, seq, before, patch, version)
+		params, e := h.resolveTicketPatch(ctx, q, projectID, seq, before, patch, version, p)
 		if e != nil {
 			writeErr = e
 			return errTicketReference
@@ -270,7 +270,7 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 // ことがある（tickets_create.go の resolveTicketParent と同じ理由）。
 func (h *handler) resolveTicketPatch(
 	ctx context.Context, q gen.Querier, projectID string, seq int32,
-	before gen.GetTicketBySeqRow, patch ticketPatch, version int32,
+	before gen.GetTicketBySeqRow, patch ticketPatch, version int32, p *auth.Principal,
 ) (gen.UpdateTicketParams, *apierr.Error) {
 	params := gen.UpdateTicketParams{ProjectID: projectID, Seq: seq, Version: version}
 
@@ -349,6 +349,40 @@ func (h *handler) resolveTicketPatch(
 	// ── 親（9.5.2 の parent_cycle）──────────────────────────────
 	newParentType := pgtype.Text{}
 	if patch.ParentSeq.Set {
+		// **委任の木の境界をまたぐ移動は、エージェントには許さない**
+		// （Delegation.md 5章「main：チケットを木の外へ出す・木の外から
+		// 入れる」「他のエージェント：木への書き込み」、いずれも不可）。
+		// 同じ木の中での並べ替えは妨げない——比較するのは「属する委任」が
+		// 変わるかどうかである。人（PM・担当）には効かない。
+		if p.IsAgent() {
+			curDeleg, curIn, derr := findDelegationContainingTicket(ctx, q, projectID, before.ID)
+			if derr != nil {
+				return params, apierr.New(apierr.InternalError).
+					WithCause(fmt.Errorf("委任を確認できない: %w", derr))
+			}
+			var (
+				newIn    bool
+				newDeleg gen.ListActiveDelegationsForProjectRow
+			)
+			if !patch.ParentSeq.Null {
+				newParentID, e := resolveTicketParent(ctx, q, projectID, &patch.ParentSeq.Value)
+				if e != nil {
+					return params, e
+				}
+				newDeleg, newIn, derr = findDelegationContainingTicket(ctx, q, projectID, newParentID.String)
+				if derr != nil {
+					return params, apierr.New(apierr.InternalError).
+						WithCause(fmt.Errorf("委任を確認できない: %w", derr))
+				}
+			}
+			crosses := curIn != newIn || (curIn && newIn && curDeleg.ID != newDeleg.ID)
+			if crosses {
+				return params, apierr.New(apierr.Forbidden).
+					WithMessage("委任の木をまたいでチケットを移動することはできません").
+					WithDetails(apierr.Detail{Field: "parent_seq", Code: "delegation_stage"})
+			}
+		}
+
 		params.ParentIDSet = true
 		if !patch.ParentSeq.Null {
 			parentID, e := resolveTicketParent(ctx, q, projectID, &patch.ParentSeq.Value)
