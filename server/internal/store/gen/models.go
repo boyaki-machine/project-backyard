@@ -316,6 +316,28 @@ type DodItem struct {
 	UpdatedAt   time.Time
 }
 
+type Evaluation struct {
+	ID                    string
+	DelegationID          string
+	TargetKind            string
+	PlanID                pgtype.Text
+	AgentReportID         pgtype.Text
+	Round                 int32
+	Verdict               string
+	Findings              []byte
+	ClassCheck            pgtype.Text
+	EvaluatorActorID      string
+	EvaluatorClientKind   pgtype.Text
+	EvaluatorModelName    pgtype.Text
+	EvaluatorModelVersion pgtype.Text
+	MainClientKind        pgtype.Text
+	MainModelName         pgtype.Text
+	MainModelVersion      pgtype.Text
+	TokensUsed            pgtype.Int8
+	ObjectedAt            *time.Time
+	CreatedAt             time.Time
+}
+
 type HolidaySource struct {
 	ID             string
 	Kind           string

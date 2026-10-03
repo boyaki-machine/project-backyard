@@ -1,0 +1,269 @@
+package v1
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/boyaki-machine/project-backyard/server/internal/auth"
+	"github.com/boyaki-machine/project-backyard/server/internal/store"
+	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
+	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
+)
+
+// 評価（Delegation.md 7章・12.2）を**実際のDBに対して**通す。pb-248。
+//
+// 単体テストはフェイクを差し替えるので queries/evaluation.sql は一度も実行
+// されない。**ここでしか確かめられないものが3つある。**
+//
+//   - **ck_evaluation_target が実在すること**（plan/deliverable の排他が
+//     アプリ側の分岐だけでなく DB 制約としても効く）
+//   - **CountEvaluationsSinceLastPass が実際の行を数えること**（合格を
+//     挟むと round が1へ戻る）
+//   - **ticket.transition の検証8が、実DBの evaluation 行を読んで判定すること**
+//
+// PB_TEST_DATABASE_URL が無ければスキップする。実行は `make test-db`。
+func TestEvaluationIntegration(t *testing.T) {
+	url := os.Getenv("PB_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("PB_TEST_DATABASE_URL が未設定のためスキップする")
+	}
+
+	ctx := context.Background()
+	pool, err := store.NewPool(ctx, url)
+	if err != nil {
+		t.Fatalf("DBに接続できない: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	q := gen.New(pool)
+	r := routerWithDeps(Deps{Queries: q, Tx: store.NewTxRunner(pool)})
+
+	adminID := ulidgen.New()
+	adminEmail := "deleg-eval-admin-" + adminID + "@example.com"
+	seedUserWithRole(t, ctx, pool, q, adminID, adminEmail, auth.SystemRoleAdministrator)
+	session := loginAs(t, r, adminEmail)
+
+	key := "deleg-eval-" + strings.ToLower(adminID[len(adminID)-8:])
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM project WHERE key = $1`, key)
+	})
+	rec := postWithCookie(r, "/api/v1/projects", session,
+		fmt.Sprintf(`{"key":%q,"name":"評価の結合テスト","workflow_template":"with_review"}`, key))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("プロジェクト作成の status = %d（body=%s）", rec.Code, rec.Body.String())
+	}
+	base := "/api/v1/projects/" + key
+
+	var createdAgents []string
+	t.Cleanup(func() {
+		bg := context.Background()
+		for _, id := range createdAgents {
+			pool.Exec(bg, `DELETE FROM audit_log WHERE actor_id = $1`, id)
+			pool.Exec(bg, `DELETE FROM actor WHERE id = $1`, id)
+		}
+	})
+	register := func(name string) agentJSON {
+		t.Helper()
+		rec := postWithCookie(r, "/api/v1/me/agents", session,
+			fmt.Sprintf(`{"display_name":%q,"project_key":%q,"client_kind":"claude_code"}`, name, key))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("エージェント登録の status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		var got agentJSON
+		decodeJSONBody(t, rec, &got)
+		createdAgents = append(createdAgents, got.ID)
+		return got
+	}
+	main := register("main")
+	evaluator := register("evaluator")
+	var mainToken, evaluatorToken issuedAgentTokenJSON
+	decodeJSONBody(t, postWithCookie(r, "/api/v1/me/agents/"+main.ID+"/tokens", session,
+		`{"expires_in_days":30}`), &mainToken)
+	// **delegation.evaluate は既定に無い**（0050。エージェントの発行時に選ぶ）。
+	evaluatorScopes, err := json.Marshal(append(append([]string{}, agentDefaultScopes...), "delegation.evaluate"))
+	if err != nil {
+		t.Fatalf("scopes を組み立てられない: %v", err)
+	}
+	decodeJSONBody(t, postWithCookie(r, "/api/v1/me/agents/"+evaluator.ID+"/tokens", session,
+		`{"expires_in_days":30,"scopes":`+string(evaluatorScopes)+`}`), &evaluatorToken)
+
+	// **main（エージェント）が遷移するには、担当が自分の所有者（admin）であることが要る**
+	// （検証6。9.6）。起票時に assignee_id を指定する。
+	trec := postWithCookie(r, base+"/tickets", session,
+		fmt.Sprintf(`{"type":"task","title":"大学受験に合格する","assignee_id":%q}`, adminID))
+	if trec.Code != http.StatusCreated {
+		t.Fatalf("根チケットの作成 status = %d（body=%s）", trec.Code, trec.Body.String())
+	}
+	rootSeq := int(viewOf(t, trec)["seq"].(float64))
+
+	drec := postWithCookie(r, fmt.Sprintf("%s/tickets/%d/delegation", base, rootSeq), session,
+		fmt.Sprintf(`{"main_actor_id":%q,"evaluator_actor_id":%q,"scope":{"goal":"合格する"}}`, main.ID, evaluator.ID))
+	if drec.Code != http.StatusCreated {
+		t.Fatalf("委任の作成 status = %d（body=%s）", drec.Code, drec.Body.String())
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE delegation SET status = 'approved' WHERE root_ticket_id =
+		   (SELECT id FROM ticket WHERE project_id = (SELECT id FROM project WHERE key = $1) AND seq = $2)`,
+		key, rootSeq); err != nil {
+		t.Fatalf("委任を承認済みにできない: %v", err)
+	}
+
+	evalPath := fmt.Sprintf("%s/tickets/%d/evaluation", base, rootSeq)
+	planPath := fmt.Sprintf("%s/tickets/%d/plan", base, rootSeq)
+	reportsPath := fmt.Sprintf("%s/tickets/%d/reports", base, rootSeq)
+	transitionPath := fmt.Sprintf("%s/tickets/%d/transition", base, rootSeq)
+
+	passFindings := `[{"aspect":"purpose_and_dod","verdict":"pass","note_md":""},` +
+		`{"aspect":"values","verdict":"pass","note_md":""}]`
+	failFindings := `[{"aspect":"purpose_and_dod","verdict":"fail","note_md":"演習量が不足"},` +
+		`{"aspect":"values","verdict":"pass","note_md":""}]`
+
+	t.Run("plan対象version1は評価してもacceptされない", func(t *testing.T) {
+		rec := bearerPost(r, planPath, mainToken.Token,
+			`{"skeleton":{"branches":[{"name":"演習","budget_share":1.0}]},"body_md":"初版","reason_md":"開始"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("計画の提出 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+
+		rec = bearerPost(r, evalPath, evaluatorToken.Token,
+			fmt.Sprintf(`{"target_kind":"plan","plan_version":1,"verdict":"pass","findings":%s}`, passFindings))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("評価の提出 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		v := viewOf(t, rec)
+		if v["round"] != float64(1) {
+			t.Errorf("round = %v, want 1", v["round"])
+		}
+
+		var status string
+		if err := pool.QueryRow(ctx,
+			`SELECT status FROM delegation_plan WHERE delegation_id =
+			   (SELECT id FROM delegation WHERE root_ticket_id =
+			     (SELECT id FROM ticket WHERE project_id = (SELECT id FROM project WHERE key = $1) AND seq = $2))
+			   AND version = 1`, key, rootSeq).Scan(&status); err != nil {
+			t.Fatalf("計画の状態を読めない: %v", err)
+		}
+		if status != "proposed" {
+			t.Errorf("status = %q, want proposed（初版はPMの承認待ちになるだけ。6.1）", status)
+		}
+	})
+
+	// pb-248の外（PM承認エンドポイント未実装）のため、版1を直接acceptedにする。
+	if _, err := pool.Exec(ctx,
+		`UPDATE delegation_plan SET status = 'accepted' WHERE delegation_id =
+		   (SELECT id FROM delegation WHERE root_ticket_id =
+		     (SELECT id FROM ticket WHERE project_id = (SELECT id FROM project WHERE key = $1) AND seq = $2))
+		   AND version = 1`, key, rootSeq); err != nil {
+		t.Fatalf("初版を承認済みにできない: %v", err)
+	}
+
+	t.Run("plan対象version2は不合格でrejectedになり出し直せる", func(t *testing.T) {
+		rec := bearerPost(r, planPath, mainToken.Token,
+			`{"skeleton":{"branches":[{"name":"演習","budget_share":0.5},{"name":"模試","budget_share":0.5}]},"body_md":"枝を増やす","reason_md":"方針変更"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("計画の提出 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		v := viewOf(t, rec)
+		if v["measured_class"] != "structural" {
+			t.Fatalf("measured_class = %v, want structural（前提）", v["measured_class"])
+		}
+
+		rec = bearerPost(r, evalPath, evaluatorToken.Token,
+			fmt.Sprintf(`{"target_kind":"plan","plan_version":2,"verdict":"fail","findings":%s}`, failFindings))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("評価の提出 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+
+		var status string
+		if err := pool.QueryRow(ctx,
+			`SELECT status FROM delegation_plan WHERE delegation_id =
+			   (SELECT id FROM delegation WHERE root_ticket_id =
+			     (SELECT id FROM ticket WHERE project_id = (SELECT id FROM project WHERE key = $1) AND seq = $2))
+			   AND version = 2`, key, rootSeq).Scan(&status); err != nil {
+			t.Fatalf("計画の状態を読めない: %v", err)
+		}
+		if status != "rejected" {
+			t.Errorf("status = %q, want rejected", status)
+		}
+
+		// 出し直し（version 3）。同じ骨格で合格させる。
+		rec = bearerPost(r, planPath, mainToken.Token,
+			`{"skeleton":{"branches":[{"name":"演習","budget_share":0.5},{"name":"模試","budget_share":0.5}]},"body_md":"同じ案で再提出","reason_md":"指摘を踏まえた再提出"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("計画の再提出 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		rec = bearerPost(r, evalPath, evaluatorToken.Token,
+			fmt.Sprintf(`{"target_kind":"plan","plan_version":3,"verdict":"pass","findings":%s}`, passFindings))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("評価の再提出 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		v = viewOf(t, rec)
+		// 直前の合格（無し）からの件数+1 ではなく、version2のfail＋version3のpassで
+		// 同一対象2回目＝round 2 になる（合格のたびに0から数え直す。7.3）。
+		if v["round"] != float64(2) {
+			t.Errorf("round = %v, want 2（plan対象への2回目）", v["round"])
+		}
+
+		if err := pool.QueryRow(ctx,
+			`SELECT status FROM delegation_plan WHERE delegation_id =
+			   (SELECT id FROM delegation WHERE root_ticket_id =
+			     (SELECT id FROM ticket WHERE project_id = (SELECT id FROM project WHERE key = $1) AND seq = $2))
+			   AND version = 3`, key, rootSeq).Scan(&status); err != nil {
+			t.Fatalf("計画の状態を読めない: %v", err)
+		}
+		if status != "accepted" {
+			t.Errorf("status = %q, want accepted", status)
+		}
+	})
+
+	t.Run("根の完了は評価の合格に掛かる", func(t *testing.T) {
+		rec := bearerPost(r, transitionPath, mainToken.Token, `{"to":"in_progress"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("in_progress への遷移 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		rec = bearerPost(r, transitionPath, mainToken.Token, `{"to":"review"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("review への遷移 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+
+		// まだ完了レポートが無いので、合格していない。
+		rec = postWithCookie(r, transitionPath, session, `{"to":"done"}`)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("done への遷移（成果の評価前） status = %d, want 403（body=%s）", rec.Code, rec.Body.String())
+		}
+
+		rec = bearerPost(r, reportsPath, mainToken.Token, `{"status":"completed"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("完了レポートの提出 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+
+		// 完了レポートはあるが、まだ評価されていない（評価待ち）。
+		rec = postWithCookie(r, transitionPath, session, `{"to":"done"}`)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("done への遷移（評価待ち中） status = %d, want 403（body=%s）", rec.Code, rec.Body.String())
+		}
+
+		// main の出し直しは評価待ちのあいだ拒まれる。
+		rec = bearerPost(r, reportsPath, mainToken.Token, `{"status":"completed"}`)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("完了レポートの出し直し（評価待ち中） status = %d, want 403（body=%s）", rec.Code, rec.Body.String())
+		}
+
+		rec = bearerPost(r, evalPath, evaluatorToken.Token,
+			fmt.Sprintf(`{"target_kind":"deliverable","verdict":"pass","findings":%s}`, passFindings))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("成果の評価 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+
+		// 合格したので、PM は根を完了にできる。
+		rec = postWithCookie(r, transitionPath, session, `{"to":"done"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("done への遷移（合格後） status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+		}
+	})
+}

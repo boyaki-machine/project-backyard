@@ -164,15 +164,30 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 	err = h.tx.RunInTx(ctx, func(q gen.Querier) error {
 		// **委任の木の中のチケットは、承認済のあいだしか完了レポートを
 		// 受け付けない**（Delegation.md 5章「main：完了レポート（子）」
-		// 「main：成果の提出（根の完了レポート）」）。評価待ち・差し戻しの
-		// 細分（評価が要る）は pb-247・pb-248 まで持たない。
+		// 「main：成果の提出（根の完了レポート）」）。
 		if d, in, derr := findDelegationContainingTicket(ctx, q, scope.projectID, ticketID); derr != nil {
 			return fmt.Errorf("委任を確認できない: %w", derr)
-		} else if in && !delegationGate(d.Status) {
-			forbidden = apierr.New(apierr.Forbidden).
-				WithMessage("計画が承認されるまで、完了レポートは受け付けません").
-				WithDetails(apierr.Detail{Field: "status", Code: "delegation_stage"})
-			return errTicketReference
+		} else if in {
+			if !delegationGate(d.Status) {
+				forbidden = apierr.New(apierr.Forbidden).
+					WithMessage("計画が承認されるまで、完了レポートは受け付けません").
+					WithDetails(apierr.Detail{Field: "status", Code: "delegation_stage"})
+				return errTicketReference
+			}
+			// **根だけ、さらに「評価待ち」を見る**（5章「main：成果の提出
+			// （根の完了レポート）」。差し戻し＝fail なら出し直せる。子の
+			// 完了レポート（D2 の案a）は評価を挟まないので、ここは根に限る
+			// （pb-248）。
+			if d.RootTicketID == ticketID {
+				if pending, perr := rootReportEvaluationPending(ctx, q, ticketID); perr != nil {
+					return fmt.Errorf("評価待ちかを確認できない: %w", perr)
+				} else if pending {
+					forbidden = apierr.New(apierr.Forbidden).
+						WithMessage("評価の結果を待っているため、完了レポートは受け付けません").
+						WithDetails(apierr.Detail{Field: "status", Code: "delegation_stage"})
+					return errTicketReference
+				}
+			}
 		}
 
 		run, err := buildAgentRun(ctx, q, runID, ticketID, p, req)

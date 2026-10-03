@@ -7,6 +7,10 @@
 -- **読み取りのクエリを置かない。** 人が読むのは完了レポートのコメント
 -- であり（GuiDesign.md 5.5）、agent_report の行そのものを読む面が無い（9.15 が
 -- GET .../reports を置かないと決めた）。**要るようになってから足す。**
+--
+-- **例外は GetLatestAgentReportForTicket（pb-248）。** 評価エージェントが
+-- 「根の最新の完了レポート」を評価対象にするための内部参照で、人が読む面では
+-- ない（Delegation.md 7.2）。
 
 -- CreateAgentRun は1回の実行記録を作る。
 --
@@ -81,3 +85,16 @@ SELECT count(*) FROM agent_run WHERE actor_id = @actor_id;
 --
 -- name: ReassignAgentRuns :execrows
 UPDATE agent_run SET actor_id = @new_actor_id WHERE actor_id = @old_actor_id;
+
+-- GetLatestAgentReportForTicket は、そのチケットへの直近の完了レポートを返す
+-- （Delegation.md 7.2「成果（根の完了レポート）」の評価対象。pb-248）。
+--
+-- **再提出は別の run・別の report になる**（buildAgentRun のコメントと同じ
+-- 理由）ので、「最新」は submitted_at（agent_run.ended_at）の降順1件でよい。
+-- name: GetLatestAgentReportForTicket :one
+SELECT ar.id, ar.agent_run_id, run.ended_at AS submitted_at
+FROM agent_report ar
+JOIN agent_run run ON run.id = ar.agent_run_id
+WHERE ar.ticket_id = @ticket_id
+ORDER BY run.ended_at DESC
+LIMIT 1;

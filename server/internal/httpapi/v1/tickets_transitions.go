@@ -88,6 +88,15 @@ func (h *handler) listTicketTransitions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// 検証8 の材料（Delegation.md 5章・7.2。pb-248）。理由は同じく
+	// 9.6 の message と一致させる（evaluationNotPassedReason）。
+	rootEvaluationPending, err := rootHasUnpassedEvaluation(ctx, h.q, row.ID)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("チケット %d の評価状況を確認できない: %w", seq, err)))
+		return
+	}
+
 	if a := auth.ProjectAuthzFromContext(ctx, key); a != nil {
 		actor.permissions = a.Permissions
 	}
@@ -110,7 +119,7 @@ func (h *handler) listTicketTransitions(w http.ResponseWriter, r *http.Request) 
 		option := transitionOptionView{
 			Key: s.Key, Name: s.Name, Category: s.Category, Allowed: true,
 		}
-		if reason := wf.denyTransition(row.StatusKey, s, actor, openChildren > 0); reason != "" {
+		if reason := wf.denyTransition(row.StatusKey, s, actor, openChildren > 0, rootEvaluationPending); reason != "" {
 			option.Allowed = false
 			option.Reason = &reason
 		}

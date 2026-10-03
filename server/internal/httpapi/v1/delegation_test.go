@@ -309,6 +309,46 @@ func TestSubmitReportAllowedWhenApproved(t *testing.T) {
 	}
 }
 
+// TestSubmitReportBlockedWhileEvaluationPending は5章「main：成果の提出
+// （根の完了レポート）」の「承認済＋評価待ち」=不可を確かめる（pb-248）。
+func TestSubmitReportBlockedWhileEvaluationPending(t *testing.T) {
+	q := reportFake()
+	q.delegationList = []gen.ListActiveDelegationsForProjectRow{
+		{ID: "01K2DELEGATION00000000001", RootTicketID: testTicketID, Status: "approved"},
+	}
+	q.ticket.descendant = true
+	q.latestAgentReport = gen.GetLatestAgentReportForTicketRow{ID: "01K2REPORT0000000000001"}
+	// evaluationVerdictByReport は未設定＝まだ評価されていない＝評価待ち。
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.submitTicketReport(rec, agentReportReq(`{"status":"completed"}`))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSubmitReportAllowedAfterRejection は「承認済＋差し戻し」=可（出し直し）
+// を確かめる（pb-248）。
+func TestSubmitReportAllowedAfterRejection(t *testing.T) {
+	q := reportFake()
+	q.delegationList = []gen.ListActiveDelegationsForProjectRow{
+		{ID: "01K2DELEGATION00000000001", RootTicketID: testTicketID, Status: "approved"},
+	}
+	q.ticket.descendant = true
+	q.latestAgentReport = gen.GetLatestAgentReportForTicketRow{ID: "01K2REPORT0000000000001"}
+	q.evaluationVerdictByReport = map[string]string{"01K2REPORT0000000000001": "fail"}
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.submitTicketReport(rec, agentReportReq(`{"status":"completed"}`))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSubmitReportUnaffectedWithoutDelegation(t *testing.T) {
 	q := reportFake()
 	h, _ := ticketHandler(q)

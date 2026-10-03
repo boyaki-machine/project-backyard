@@ -49,6 +49,13 @@ WHERE delegation_id = @delegation_id AND version = @version;
 UPDATE delegation_plan SET status = 'accepted', decided_at = now()
 WHERE id = @id AND status = 'proposed';
 
+-- RejectDelegationPlan は評価が不合格だった構造の変更を確定する（7.2・6.3。
+-- pb-248）。**decided_by は呼び出し元ではなく PB 自身**——AcceptDelegationPlan
+-- と同じ理由で、不合格にしたのは main でも PM でもなく評価の結果である。
+-- name: RejectDelegationPlan :execrows
+UPDATE delegation_plan SET status = 'rejected', decided_at = now()
+WHERE id = @id AND status = 'proposed';
+
 -- CountTicketsInDelegationTreeSince は 6.3 の「1つの版で増える子孫が5件を超える」
 -- の判定に使う。根自身は数えない。
 --

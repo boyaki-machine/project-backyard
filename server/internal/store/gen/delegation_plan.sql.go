@@ -234,3 +234,19 @@ func (q *Queries) NextDelegationPlanVersion(ctx context.Context, delegationID st
 	err := row.Scan(&column_1)
 	return column_1, err
 }
+
+const rejectDelegationPlan = `-- name: RejectDelegationPlan :execrows
+UPDATE delegation_plan SET status = 'rejected', decided_at = now()
+WHERE id = $1 AND status = 'proposed'
+`
+
+// RejectDelegationPlan は評価が不合格だった構造の変更を確定する（7.2・6.3。
+// pb-248）。**decided_by は呼び出し元ではなく PB 自身**——AcceptDelegationPlan
+// と同じ理由で、不合格にしたのは main でも PM でもなく評価の結果である。
+func (q *Queries) RejectDelegationPlan(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, rejectDelegationPlan, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

@@ -969,6 +969,34 @@ func writeTools() []tool {
 			call: callSubmitPlan,
 		},
 		{
+			Name: "pb_submit_evaluation",
+			Description: "自律実行（Delegated）の評価エージェントが、計画の版または根の完了レポートを評価する" +
+				"（Delegation.md 7章）。**呼び出し元がその委任の評価エージェントでなければ拒まれる。** " +
+				"target_kind=plan のときは plan_version も指定する。findings には少なくとも " +
+				"purpose_and_dod（目的・完了条件）と values（価値観・世界観）の2観点を、それぞれ " +
+				"{aspect, verdict, note_md} で入れる。verdict=fail のときは、不合格にした観点の " +
+				"note_md に指摘を必ず書く。unable、または同じ対象への不合格が往復の上限に達すると、" +
+				"PB が委任を一時停止する（確認待ちの器は未実装。pb-249で代える）。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq": {Type: "integer", Description: "委任の根となるチケットの番号（seq）", Minimum: intPtr(1)},
+					"target_kind": {Type: "string", Description: "評価の対象。plan=計画の版、deliverable=根の最新の完了レポート（暗黙に最新を指す）",
+						Enum: []string{"plan", "deliverable"}},
+					"plan_version": {Type: "integer", Description: "target_kind=plan のとき必須。評価する計画の版番号", Minimum: intPtr(1)},
+					"verdict":      {Type: "string", Description: "合否", Enum: []string{"pass", "fail", "unable"}},
+					"findings": {Type: "array", Description: "観点ごとの判定の配列。各要素は {aspect, verdict, note_md} で、" +
+						"aspect は少なくとも purpose_and_dod と values を含む"},
+					"class_check": {Type: "string", Description: "target_kind=plan で構造の変更を評価したときの、分類の妥当性の判定。" +
+						"agree=main の申告どおり、stricter=もっと厳しい段階、looser=もっと緩い段階",
+						Enum: []string{"agree", "stricter", "looser"}},
+					"tokens_used": {Type: "integer", Description: "この評価に使ったトークン数"},
+				},
+				Required: []string{"seq", "target_kind", "verdict", "findings"},
+			},
+			call: callSubmitEvaluation,
+		},
+		{
 			Name: "pb_create_doc",
 			Description: "プロジェクト文書を新しく作る。doc.edit が必要。slug は ^[a-z0-9][a-z0-9-]{0,63}$（小文字・数字・ハイフン）で、.md は付けない。" +
 				"同じ親の下に同じ slug があれば 409 already_exists。応答は要点（path / version / updated_at）だけ。",
@@ -1482,6 +1510,61 @@ func callSubmitPlan(h *Handler, r *http.Request, key string, args json.RawMessag
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
 	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/plan", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// submitEvaluationArgs は pb_submit_evaluation の引数（Delegation.md 7章。pb-248）。
+//
+// **findings は json.RawMessage で受ける。** 検証（観点の値域・不合格の指摘）は
+// REST 層が行う——MCP 層に同じ規則を重ねない（Design.md 8.1）。
+type submitEvaluationArgs struct {
+	Seq         flexInt         `json:"seq"`
+	TargetKind  string          `json:"target_kind"`
+	PlanVersion *int            `json:"plan_version"`
+	Verdict     string          `json:"verdict"`
+	Findings    json.RawMessage `json:"findings"`
+	ClassCheck  string          `json:"class_check"`
+	TokensUsed  *int64          `json:"tokens_used"`
+}
+
+func callSubmitEvaluation(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in submitEvaluationArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if strings.TrimSpace(in.TargetKind) == "" {
+		return toolResult{}, newError(codeInvalidParams, "target_kind は必須である")
+	}
+	if strings.TrimSpace(in.Verdict) == "" {
+		return toolResult{}, newError(codeInvalidParams, "verdict は必須である")
+	}
+	if len(in.Findings) == 0 {
+		return toolResult{}, newError(codeInvalidParams, "findings は必須である")
+	}
+
+	body := map[string]any{
+		"target_kind": in.TargetKind,
+		"verdict":     in.Verdict,
+		"findings":    json.RawMessage(in.Findings),
+	}
+	if in.PlanVersion != nil {
+		body["plan_version"] = *in.PlanVersion
+	}
+	if in.ClassCheck != "" {
+		body["class_check"] = in.ClassCheck
+	}
+	if in.TokensUsed != nil {
+		body["tokens_used"] = *in.TokensUsed
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/evaluation", nil, raw, nil)
 	return passThrough(r, res, err)
 }
 

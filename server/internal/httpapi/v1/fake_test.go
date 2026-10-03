@@ -418,7 +418,17 @@ type fakeQuerier struct {
 	delegationPlanByIDRow gen.GetDelegationPlanByIDRow
 	planByVersion         map[int32]gen.GetDelegationPlanByVersionRow // key: version
 	acceptedPlanIDs       []string
+	rejectedPlanIDs       []string
 	ticketsCreatedSince   int64
+
+	// 評価（Delegation.md 7章。pb-248）。
+	latestAgentReport         gen.GetLatestAgentReportForTicketRow
+	latestAgentReportErr      error             // pgx.ErrNoRows で「まだ完了レポートが無い」
+	evaluationVerdictByReport map[string]string // key: agent_report_id
+	evaluationsSinceLastPass  int64
+	createdEvaluations        []gen.CreateEvaluationParams
+	createEvaluationErr       error
+	evaluationByIDRow         gen.GetEvaluationByIDRow
 }
 
 // GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
@@ -2665,6 +2675,61 @@ func (q *fakeQuerier) AcceptDelegationPlan(_ context.Context, id string) (int64,
 	q.opLog = append(q.opLog, "AcceptDelegationPlan")
 	q.acceptedPlanIDs = append(q.acceptedPlanIDs, id)
 	return 1, nil
+}
+
+func (q *fakeQuerier) RejectDelegationPlan(_ context.Context, id string) (int64, error) {
+	q.opLog = append(q.opLog, "RejectDelegationPlan")
+	q.rejectedPlanIDs = append(q.rejectedPlanIDs, id)
+	return 1, nil
+}
+
+// ── 評価（Delegation.md 7章。pb-248）────────────────────────────
+
+func (q *fakeQuerier) GetLatestAgentReportForTicket(
+	context.Context, string,
+) (gen.GetLatestAgentReportForTicketRow, error) {
+	q.opLog = append(q.opLog, "GetLatestAgentReportForTicket")
+	if q.latestAgentReportErr != nil {
+		return gen.GetLatestAgentReportForTicketRow{}, q.latestAgentReportErr
+	}
+	// **既定は「まだ完了レポートが無い」。** ゼロ値（未設定）のまま返すと、
+	// 空の ID で評価の有無を調べることになり、既存の（evaluation を知らない）
+	// テストが黙って「評価待ち」側へ落ちる。
+	if q.latestAgentReport.ID == "" {
+		return gen.GetLatestAgentReportForTicketRow{}, pgx.ErrNoRows
+	}
+	return q.latestAgentReport, nil
+}
+
+func (q *fakeQuerier) GetEvaluationVerdictForReport(
+	_ context.Context, agentReportID pgtype.Text,
+) (string, error) {
+	q.opLog = append(q.opLog, "GetEvaluationVerdictForReport")
+	if v, ok := q.evaluationVerdictByReport[agentReportID.String]; ok {
+		return v, nil
+	}
+	return "", pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) CountEvaluationsSinceLastPass(
+	context.Context, gen.CountEvaluationsSinceLastPassParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "CountEvaluationsSinceLastPass")
+	return q.evaluationsSinceLastPass, nil
+}
+
+func (q *fakeQuerier) CreateEvaluation(_ context.Context, arg gen.CreateEvaluationParams) error {
+	q.opLog = append(q.opLog, "CreateEvaluation")
+	if q.createEvaluationErr != nil {
+		return q.createEvaluationErr
+	}
+	q.createdEvaluations = append(q.createdEvaluations, arg)
+	return nil
+}
+
+func (q *fakeQuerier) GetEvaluationByID(context.Context, string) (gen.GetEvaluationByIDRow, error) {
+	q.opLog = append(q.opLog, "GetEvaluationByID")
+	return q.evaluationByIDRow, nil
 }
 
 func (q *fakeQuerier) CountTicketsInDelegationTreeSince(

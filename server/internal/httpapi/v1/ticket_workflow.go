@@ -13,6 +13,7 @@
 //	5  required_permission を持つか                 403 forbidden
 //	6  エージェントなら、担当が自分の所有者か         403 forbidden
 //	7  完了へ進むとき、未完了の子が残っていないか     409 children_not_closed
+//	8  完了へ進むとき、委任の根なら評価が合格しているか 403 forbidden（pb-248）
 //
 // **3〜6 が Requirements.md 10.10.4「承認ゲートをAPIレベルで強制する」の実体**
 // であり、画面側の制御に依存しない。
@@ -172,7 +173,7 @@ func agentMayWorkOn(p *auth.Principal, assigneeID pgtype.Text) bool {
 // あそこに居るのは、あれが「その人にとってのチケット」を表すためである）。
 func (wf ticketWorkflow) denyTransition(
 	from string, to gen.ListWorkflowStatusesRow, actor transitionActor,
-	hasOpenChildren bool,
+	hasOpenChildren bool, rootEvaluationPending bool,
 ) string {
 	tr := wf.findTransition(from, to.Key)
 
@@ -228,6 +229,20 @@ func (wf ticketWorkflow) denyTransition(
 		return childrenNotClosedReason
 	}
 
+	// 検証8：委任の根は、成果の評価が合格するまで完了にできない
+	// （Delegation.md 5章「PM：根を受け入れる（完了）」・7.2）。
+	//
+	// **検証7 の後に置く。** 子の整合（7）を先に見るほうが、利用者が
+	// 取り除く順序と一致する——評価を待つだけのチケットに子の未完了が
+	// 重なっていたら、先に子を片付けさせたい。
+	//
+	// **人にもエージェントにも等しく掛ける。** ticket.close は元々
+	// エージェントに開けていないが（検証4）、評価の合格は「誰が完了に
+	// するか」ではなく「完了にしてよい状態か」の条件である。
+	if to.Category == statusCategoryDone && rootEvaluationPending {
+		return evaluationNotPassedReason
+	}
+
 	return ""
 }
 
@@ -237,6 +252,9 @@ func (wf ticketWorkflow) denyTransition(
 // そのまま出し（GuiDesign.md 5.5）、押したときは 9.6 の message が出る——
 // 別々の文言を持つと、同じ理由が2通りの日本語で見える。
 const childrenNotClosedReason = "未完了の子チケットが残っているため完了にできません"
+
+// evaluationNotPassedReason は検証8 の文言（Delegation.md 5章・7.2。pb-248）。
+const evaluationNotPassedReason = "成果の評価が合格するまで、この根を完了にはできません"
 
 // decodeActorKinds は allowed_actor_kinds（jsonb の配列）を解く。
 //
