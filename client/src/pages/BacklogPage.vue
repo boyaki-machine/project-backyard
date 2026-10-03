@@ -302,7 +302,8 @@ const DUE_KEYS = ['overdue', 'due_within'] as const
 /**
  * 状態フィルタが「完了」を指しているか（5.4「状態と期限のフィルタ」）。
  *
- * **これが `retired=true` を送る唯一の条件である。** スプリントを終えて棚に
+ * **全体対象では、完了を選んだときに `retired=true` を送る。**
+ * オンステージ対象では完了でも棚を戻さない（pb-178）。 スプリントを終えて棚に
  * 戻ったチケットは既定で一覧から外れるので（`ApiDesign.md` 9.2.1）、
  * **完了を明示的に選んだときだけ戻す。** 当初は検索画面ができるまでの逃げ道だったが、
  * **チケット検索（5.13）ができた後も残す**。
@@ -315,7 +316,11 @@ const DUE_KEYS = ['overdue', 'due_within'] as const
  * ワークフローを読む**——`done` という名前のキーを決め打ちにすると、
  * ワークフローを差し替えたプロジェクトで効かなくなる。
  */
+const onstageOnly = computed(() => queryValue('staged') === 'true')
+
 const wantsRetired = computed(() => {
+  // オンステージ内の完了カードは棚を戻さない（pb-178）。
+  if (onstageOnly.value) return false
   if (queryValue('open') === 'false') return true
   if (splitQuery('status_category').includes('done')) return true
   const keys = splitQuery('status')
@@ -433,6 +438,7 @@ const staleDays = computed(() => {
 /** 素の状態か。`[解除]` を出すかどうかの判定に使う */
 const isPristine = computed(
   () =>
+    !onstageOnly.value &&
     keyword.value.trim() === '' &&
     FILTER_KEYS.every((k) => filters.value[k] === '') &&
     stateValue.value === '' &&
@@ -715,8 +721,9 @@ async function loadTickets(): Promise<void> {
       status_category: queryValue('status_category'),
       open: queryValue('open') === 'true' ? 'true' : queryValue('open') === 'false' ? 'false' : undefined,
       stale: queryValue('stale'),
-      // **完了を明示的に選んだときだけ棚に戻ったものを出す**（5.4）
+      // 全体の完了選択は棚を戻す。オンステージ選択は棚を戻さない（pb-178）。
       retired: wantsRetired.value ? 'true' : undefined,
+      staged: onstageOnly.value ? 'true' : undefined,
       // 「期限」の箱が出す2系列（同上）
       overdue: queryValue('overdue') === 'true' ? 'true' : undefined,
       due_within: queryValue('due_within'),
@@ -863,6 +870,8 @@ const treeMode = computed(
  * 振り分けてはいけない**。
  */
 function splitByStage(items: Ticket[]): { staged: Ticket[]; backlog: Ticket[] } {
+  // サーバが部分木を確定した結果。親が状態・上限で欠けても段は変わらない。
+  if (onstageOnly.value) return { staged: items, backlog: [] }
   const childrenOf = new Map<number, Ticket[]>()
   for (const t of items) {
     if (t.parent_seq === null) continue
@@ -2056,6 +2065,14 @@ watch(projectKey, (key) => {
           </button>
         </div>
         <div id="backlog-filter-options" class="backlog-filter-options">
+          <label class="filter backlog-filter-scope">
+            <span class="filter-label">{{ $ui('対象') }}</span>
+            <select :value="onstageOnly ? 'true' : ''"
+              @change="setQuery({ staged: ($event.target as HTMLSelectElement).value })">
+              <option value="">{{ $ui('全体') }}</option>
+              <option value="true">{{ $ui('オンステージ') }}</option>
+            </select>
+          </label>
           <!-- 状態（5.4「状態と予定日のフィルタ」。手順19b）。
                **1つの箱で3系列を出し入れする**——進み具合（`open` / `stale`）・
                区分（`status_category`）・ステータス（`status`）。同じ軸の値なので
@@ -2164,6 +2181,8 @@ watch(projectKey, (key) => {
           > {{ $ui('解除') }} </button>
         </div>
       </div>
+
+      <p v-if="onstageOnly" class="backlog-scope-note">{{ $ui('対象：オンステージ。棚に戻ったものは含みません。') }}</p>
 
       <!-- 操作の結果は操作した場所に出す（6.4）。作成・並べ替え・段の行き来で使い回す -->
       <p v-if="result" class="ok" role="status">{{ result }}</p>
@@ -2690,6 +2709,8 @@ watch(projectKey, (key) => {
 .backlog-filter-epic { grid-column: 1 / span 2; grid-row: 1; }
 .backlog-filter-tag { grid-column: 3 / span 2; grid-row: 1; }
 .backlog-filter-assignee { grid-column: 5 / span 2; grid-row: 1; }
+.backlog-filter-scope { grid-column: 1 / span 4; grid-row: 3; }
+.backlog-scope-note { color: var(--pb-text-muted); font-size: 0.875rem; }
 .backlog-filter-state { grid-column: 7 / span 2; grid-row: 1; }
 .backlog-filter-type { grid-column: 9 / span 2; grid-row: 1; }
 .backlog-filter-priority { grid-column: 11 / span 2; grid-row: 1; }
@@ -2748,8 +2769,8 @@ watch(projectKey, (key) => {
     gap: 2px;
   }
   .backlog-filter-options select { width: 100%; }
-  .backlog-filter-planned { grid-column: span 2; }
-  .backlog-filter-clear { min-height: 32px; }
+  .backlog-filter-options > .backlog-filter-planned { grid-column: span 2; }
+  .backlog-filter-clear { grid-column: auto; grid-row: auto; min-height: 32px; }
 }
 
 .ok {

@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -165,4 +166,80 @@ func TestTicketStagedFilterIntegration(t *testing.T) {
 			}
 		}
 	})
+	t.Run("段内集計と一覧が棚・親不在・未知状態・200件超でも一致する", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `UPDATE ticket SET status_key = 'in_progress' WHERE id = $1`, child["id"]); err != nil {
+			t.Fatal(err)
+		}
+		// 完了孫は未完了祖先とともに残る（最後のスプリントはcompleted）。
+		if _, err := pool.Exec(ctx, `UPDATE ticket SET status_key = 'done', closed_at = now() WHERE id = $1`, grand["id"]); err != nil {
+			t.Fatal(err)
+		}
+		standalone := createTicketIT(t, r, session, base, `{"type":"task","title":"未所属の段内完了"}`)
+		stage(t, seqOf(standalone))
+		if _, err := pool.Exec(ctx, `UPDATE ticket SET status_key = 'done', closed_at = now() WHERE id = $1`, standalone["id"]); err != nil {
+			t.Fatal(err)
+		}
+		unknown := createTicketIT(t, r, session, base, `{"type":"task","title":"分類不能の段内チケット"}`)
+		stage(t, seqOf(unknown))
+		if _, err := pool.Exec(ctx, `UPDATE ticket SET status_key = 'unknown' WHERE id = $1`, unknown["id"]); err != nil {
+			t.Fatal(err)
+		}
+		readStats := func() projectStatsView {
+			t.Helper()
+			rec := getWithCookie(r, base+"/stats", session)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("stats=%d (%s)", rec.Code, rec.Body.String())
+			}
+			return decodeStats(t, rec)
+		}
+		assertLists := func(stats projectStatsView) {
+			t.Helper()
+			for _, c := range []struct {
+				key   string
+				count int64
+			}{
+				{"todo", stats.Onstage.ByCategory.Todo}, {"in_progress", stats.Onstage.ByCategory.InProgress},
+				{"review", stats.Onstage.ByCategory.Review}, {"done", stats.Onstage.ByCategory.Done},
+			} {
+				rec := getWithCookie(r, base+"/tickets?type=story,task&staged=true&status_category="+c.key+"&per_page=1", session)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("list %s=%d (%s)", c.key, rec.Code, rec.Body.String())
+				}
+				var list struct {
+					Total int64 `json:"total"`
+				}
+				if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+					t.Fatal(err)
+				}
+				if list.Total != c.count {
+					t.Errorf("%s: list=%d, card=%d", c.key, list.Total, c.count)
+				}
+			}
+			c := stats.Onstage.ByCategory
+			if stats.Onstage.Total != c.Todo+c.InProgress+c.Review+c.Done+stats.Onstage.Unknown {
+				t.Error("分割和が合わない")
+			}
+		}
+		stats := readStats()
+		want := statsOnstageView{ByCategory: statsByCategoryView{Todo: 2, InProgress: 1, Done: 2}, Total: 6, Unknown: 1}
+		if stats.Onstage != want {
+			t.Fatalf("onstage=%+v want=%+v", stats.Onstage, want)
+		}
+		if stats.Total != 9 || stats.ByCategory.Done != 3 {
+			t.Errorf("全体statsが変わった: %+v", stats)
+		}
+		assertLists(stats)
+		if got := ticketSeqs(t, r, session, base, "?staged=true&status_category=in_progress"); !equalInts(got, []int{seqOf(child)}) {
+			t.Errorf("進行中の顔ぶれ=%v", got)
+		}
+		for i := 0; i < 201; i++ {
+			createTicketIT(t, r, session, base, fmt.Sprintf(`{"type":"task","title":"表示上限回帰%d","parent_seq":%d}`, i, seqOf(root)))
+		}
+		large := readStats()
+		if large.Onstage.Total != stats.Onstage.Total+201 || large.Onstage.ByCategory.Todo != stats.Onstage.ByCategory.Todo+201 {
+			t.Fatalf("200件で切れた: %+v", large.Onstage)
+		}
+		assertLists(large)
+	})
+
 }

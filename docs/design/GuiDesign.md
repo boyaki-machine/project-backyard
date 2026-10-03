@@ -835,7 +835,7 @@ URL を持たせると、開き直せるように見えて実際には最初か�
 | ブロック | データ源 | 状態 |
 |---|---|---|
 | チケットの状態別推移 | `GET /api/v1/projects/:key/ticket-trends?period=7d`（`ApiDesign.md` 9.13.3） | 実装済み（pb-12） |
-| ステータス集計 | `GET /api/v1/projects/:key/stats`（`ApiDesign.md` 9.13.1） | 実装済み |
+| オンステージの状態別件数 | `GET /api/v1/projects/:key/stats` の `onstage`（`ApiDesign.md` 9.13.1） | 実装済み |
 | 自分の担当 | `GET /api/v1/projects/:key/tickets?assignee=me&open=true&type=story,task&per_page=5` | 実装済み |
 | 期限が近い | `GET /api/v1/projects/:key/tickets?due_within=7d&open=true&type=story,task&sort=due_at&per_page=5` | 実装済み |
 | 最近の動き | `GET /api/v1/projects/:key/activity?per_page=10`（同 9.13.2） | 実装済み |
@@ -849,13 +849,21 @@ URL を持たせると、開き直せるように見えて実際には最初か�
 
 **5本目（`GET /projects/:key`）は表示名の解決に要る。**`activity` が返すのは `status_key`（`in_progress`）と `assignee_id`（ULID）であり（`ApiDesign.md` 9.13.2）、「`my-app-31` を『進行中』に変更」と書くにはワークフローとメンバー表が要る。**同じ応答をバックログ・プロジェクト設定も毎回呼んでいる。**
 
+### オンステージの状態別件数（pb-178）
+
+**4枚はオンステージのstory/taskと全子孫を数え、棚に戻ったものを除く。** 見出しと対象説明を出す。親子は各1件、見積の合算ではない。完了は段に残る件数であり累積実績やスプリント完了数ではない。未知状態がある場合は「状態を分類できないN件」を併記する。
+
+**カードの導線は `staged=true&status_category=<category>`。** バックログへ対象フィルタ（全体／オンステージ）を追加してURLを復元する。全体を選ぶとstagedだけを外す。オンステージでは完了選択でも棚を戻さず、明示的なretired=trueのURLも採用しない。REST/MCPでのstagedとretiredの独立性は変えない。
+
+**オンステージ選択で取得した行は、親がフィルタ・上限で欠けてもオンステージに置く。** グループ化でも対象条件を保持する。カードと一致するのは一覧totalであり、200件の表示上限や別要求間の変更を隠さない。要対応等の全体集計と状態別推移の対象は維持する。
+
 ### ブロックの導線
 
 **すべての導線はバックログ（5.4）へ飛び、同じ条件で絞った一覧を出す**。**ダッシュボードが出した件数と、押した先の件数が一致することが要件である**——一致しない導線は、押した瞬間に数の信用を失う。
 
 | 押すもの | 行き先 | 一致の担保 |
 |---|---|---|
-| 集計カード（4枚） | `?status_category=<todo\|in_progress\|review\|done>` | `stats` はエピックを数えず（`ApiDesign.md` 9.13.1）、バックログもエピックを行として出さない |
+| 集計カード（4枚） | `?staged=true&status_category=<todo\|in_progress\|review\|done>` | `stats.onstage` と一覧が同じ段の部分木・棚除外・カテゴリで数える |
 | 自分の担当「すべて見る →」 | `?assignee=me&open=true` | 同じクエリを `per_page` だけ変えて呼んでいる |
 | 期限が近い「すべて見る →」 | `?due_within=7d&open=true` | 同上 |
 | 要対応「14日以上更新なし」 | `?stale=<threshold_days>d` | `ApiDesign.md` 9.2.1 の `stale` が 9.13.1 と同じ条件 |

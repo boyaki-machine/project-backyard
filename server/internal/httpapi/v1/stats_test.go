@@ -39,6 +39,7 @@ func sampleStatsRow() gen.GetProjectTicketStatsRow {
 	return gen.GetProjectTicketStatsRow{
 		Todo: 18, InProgress: 8, Review: 4, Done: 36,
 		Total: 66, OpenCount: 30, Overdue: 2, Stale: 3, Unassigned: 5,
+		OnstageTodo: 2, OnstageInProgress: 1, OnstageReview: 1, OnstageDone: 2, OnstageTotal: 7, OnstageUnknown: 1,
 	}
 }
 
@@ -57,6 +58,7 @@ func TestGetProjectStatsReturnsAllFields(t *testing.T) {
 
 	// 9.13.1 の応答例をそのまま突き合わせる。
 	want := projectStatsView{
+		Onstage:    statsOnstageView{ByCategory: statsByCategoryView{Todo: 2, InProgress: 1, Review: 1, Done: 2}, Total: 7, Unknown: 1},
 		ByCategory: statsByCategoryView{Todo: 18, InProgress: 8, Review: 4, Done: 36},
 		Total:      66,
 		Open:       30,

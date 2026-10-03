@@ -11,11 +11,37 @@ import (
 
 const getProjectTicketStats = `-- name: GetProjectTicketStats :one
 
+WITH RECURSIVE open_desc AS (
+  SELECT id FROM ticket
+   WHERE project_id = $2::pg_catalog.bpchar
+     AND closed_at IS NULL AND type <> 'epic'
+  UNION
+  SELECT c.id FROM ticket c JOIN open_desc o ON c.parent_id = o.id
+   WHERE c.project_id = $2::pg_catalog.bpchar AND c.type <> 'epic'
+), staged_tree AS (
+  SELECT id FROM ticket
+   WHERE project_id = $2::pg_catalog.bpchar
+     AND staged_at IS NOT NULL AND type <> 'epic'
+  UNION
+  SELECT c.id FROM ticket c JOIN staged_tree s ON c.parent_id = s.id
+   WHERE c.project_id = $2::pg_catalog.bpchar AND c.type <> 'epic'
+), eligible AS (
+  -- ListTickets と同じ部分木・棚除外。状態で絞る前に全親子関係をたどる。
+  SELECT t.id, t.project_id, t.seq, t.parent_id, t.type, t.title, t.body_md, t.status_key, t.priority, t.assignee_id, t.reporter_id, t.estimate_point, t.estimate_hours, t.actual_hours, t.sprint_id, t.sort_key, t.execution_mode, t.readiness, t.readiness_note, t.scope, t.source, t.is_trusted_source, t.custom_fields, t.closed_at, t.version, t.created_at, t.updated_at, t.staged_at, t.working_agent_id, t.actual_point, t.actual_point_version, t.start_at, t.due_at, t.all_day, ws.category,
+    (t.id IN (SELECT id FROM staged_tree)
+     AND NOT (t.closed_at IS NOT NULL
+       AND EXISTS (SELECT 1 FROM sprint rs WHERE rs.id = t.sprint_id AND rs.status = 'completed')
+       AND t.id NOT IN (SELECT id FROM open_desc))) AS is_onstage
+  FROM ticket t
+  JOIN project p ON p.id = t.project_id
+  LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
+  WHERE t.project_id = $2::pg_catalog.bpchar AND t.type <> 'epic'
+)
 SELECT
-  count(*) FILTER (WHERE ws.category = 'todo')::bigint        AS todo,
-  count(*) FILTER (WHERE ws.category = 'in_progress')::bigint AS in_progress,
-  count(*) FILTER (WHERE ws.category = 'review')::bigint      AS review,
-  count(*) FILTER (WHERE ws.category = 'done')::bigint        AS done,
+  count(*) FILTER (WHERE t.category = 'todo')::bigint        AS todo,
+  count(*) FILTER (WHERE t.category = 'in_progress')::bigint AS in_progress,
+  count(*) FILTER (WHERE t.category = 'review')::bigint      AS review,
+  count(*) FILTER (WHERE t.category = 'done')::bigint        AS done,
   count(*)::bigint                                            AS total,
   count(*) FILTER (WHERE t.closed_at IS NULL)::bigint         AS open_count,
   count(*) FILTER (WHERE t.closed_at IS NULL
@@ -25,13 +51,14 @@ SELECT
                      AND t.updated_at
                          < now() - make_interval(days => $1::int))::bigint AS stale,
   count(*) FILTER (WHERE t.closed_at IS NULL
-                     AND t.assignee_id IS NULL)::bigint       AS unassigned
-FROM ticket t
-JOIN project p ON p.id = t.project_id
-LEFT JOIN workflow_status ws
-       ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
-WHERE t.project_id = $2::pg_catalog.bpchar
-  AND t.type <> 'epic'
+                     AND t.assignee_id IS NULL)::bigint       AS unassigned,
+  count(*) FILTER (WHERE t.is_onstage AND t.category = 'todo')::bigint AS onstage_todo,
+  count(*) FILTER (WHERE t.is_onstage AND t.category = 'in_progress')::bigint AS onstage_in_progress,
+  count(*) FILTER (WHERE t.is_onstage AND t.category = 'review')::bigint AS onstage_review,
+  count(*) FILTER (WHERE t.is_onstage AND t.category = 'done')::bigint AS onstage_done,
+  count(*) FILTER (WHERE t.is_onstage)::bigint AS onstage_total,
+  count(*) FILTER (WHERE t.is_onstage AND t.category IS NULL)::bigint AS onstage_unknown
+FROM eligible t
 `
 
 type GetProjectTicketStatsParams struct {
@@ -40,15 +67,21 @@ type GetProjectTicketStatsParams struct {
 }
 
 type GetProjectTicketStatsRow struct {
-	Todo       int64
-	InProgress int64
-	Review     int64
-	Done       int64
-	Total      int64
-	OpenCount  int64
-	Overdue    int64
-	Stale      int64
-	Unassigned int64
+	Todo              int64
+	InProgress        int64
+	Review            int64
+	Done              int64
+	Total             int64
+	OpenCount         int64
+	Overdue           int64
+	Stale             int64
+	Unassigned        int64
+	OnstageTodo       int64
+	OnstageInProgress int64
+	OnstageReview     int64
+	OnstageDone       int64
+	OnstageTotal      int64
+	OnstageUnknown    int64
 }
 
 // プロジェクトの集計（ApiDesign.md 9.13.1、GuiDesign.md 5.3 のダッシュボード）。
@@ -56,10 +89,10 @@ type GetProjectTicketStatsRow struct {
 // **status ではなく status_category で数える**（9.13.1）。ワークフローが
 // プロジェクトごとに違っても、画面の4枚のカードの意味が変わらないようにするため
 // である。カテゴリは workflow_status 側にあり、ticket.status_key から引く。
-// GetProjectTicketStats は 9.13.1 の応答をまるごと1行で返す。
+// GetProjectTicketStats は全体値とオンステージ内の状態件数を1SQL・1行で返す（pb-178）。
 //
-// **1文にまとめてあるのは、同じ WHERE を9回書かないため**である。走査は
-// 1プロジェクト分のチケット1回で済み、FILTER 句が数え分ける。
+// **1文にまとめ、全体と段内を同じスナップショットで数える。**
+// 親子・棚の判定を先に計算し、FILTER 句が数え分ける。
 //
 // **workflow_status は LEFT JOIN である。** project.workflow_id は NULL 可能で
 // （DbDesign.md 6.4）、ステータスキーがワークフローに無いこともありうる。その行は
@@ -91,6 +124,12 @@ func (q *Queries) GetProjectTicketStats(ctx context.Context, arg GetProjectTicke
 		&i.Overdue,
 		&i.Stale,
 		&i.Unassigned,
+		&i.OnstageTodo,
+		&i.OnstageInProgress,
+		&i.OnstageReview,
+		&i.OnstageDone,
+		&i.OnstageTotal,
+		&i.OnstageUnknown,
 	)
 	return i, err
 }

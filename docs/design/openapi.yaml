@@ -10651,15 +10651,30 @@ components:
     ProjectStats:
       description: |
         プロジェクトの集計（ApiDesign.md 9.13.1）。ダッシュボード（GuiDesign.md 5.3）の
-        4枚のカードと「要対応」ブロックが読む。
+        4枚はonstageを、「要対応」は従来のプロジェクト全体の値を読む。
 
         **エピック（`type='epic'`）はどの項目にも数えない。**
         エピックはグルーピング専用であり（DbDesign.md 6.10）、バックログも行として
         出さない。**4枚のカードは押すとバックログをそのカテゴリで絞って開く**ので、
         除かないとカードの数と押した先の件数が一致しない。
       type: object
-      required: [by_category, total, open, overdue, stale, unassigned]
+      required: [by_category, total, open, overdue, stale, unassigned, onstage]
       properties:
+        onstage:
+          description: オンステージの非epicと全子孫から棚に戻ったものを除く。4枚のカードの対象。
+          type: object
+          required: [by_category, total, unknown]
+          properties:
+            by_category:
+              type: object
+              required: [todo, in_progress, review, done]
+              properties:
+                todo: { type: integer }
+                in_progress: { type: integer }
+                review: { type: integer }
+                done: { type: integer }
+            total: { type: integer, description: 4カテゴリの和とunknownの和。 }
+            unknown: { type: integer, description: 状態キーを分類できない対象件数。 }
         by_category:
           description: |
             `status_category` ごとの件数。**常に4つのキーを持つ**——そのカテゴリの
