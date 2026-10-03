@@ -281,11 +281,12 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 	// read 7件（/pb-onboard が呼ぶ順。pb_list_tags はタグの語彙で pb_get_doc の隣。
 	// pb_list_comments は既存コメントを読む口で、pb_get_task の隣＝9.8 の子資源）
 	// ＋ コンテキストパック1件（手順27。/pb-implement が「契約を読む → 前提を読む」の
-	// 順で呼ぶので pb_get_task の直後）＋ write 6件（10.7.1 の開発フローの順。
+	// 順で呼ぶので pb_get_task の直後）＋ write 7件（10.7.1 の開発フローの順。
 	// pb_update_ticket と pb_put_dod は起票したあと直すので pb_create_ticket の隣、
-	// pb_add_reference は「実装中に分かったことを書く」の隣＝作業の跡を積む位置）
-	// ＋ 遷移2件（見てから動かす順。手順26b）＋ 完了レポート1件（手順26c。
-	// /pb-implement の流れの終端）。
+	// pb_add_reference は「実装中に分かったことを書く」の隣＝作業の跡を積む位置。
+	// pb_submit_plan は自律実行の main が計画の版を出す口。Delegation.md 15章 D7
+	// の新設5ツールのうちMCPに開けるのはこれだけ）＋ 遷移2件（見てから動かす順。
+	// 手順26b）＋ 完了レポート1件（手順26c。/pb-implement の流れの終端）。
 	//
 	// **pb_claim_task / pb_release_task は持たない（構想）**
 	// （Requirements.md 10.3.3——排他が実際に要るのは自律取得 pb_next_task から
@@ -294,7 +295,7 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tags",
 		"pb_list_tasks", "pb_get_task", "pb_list_comments", "pb_get_context",
 		"pb_create_ticket", "pb_update_ticket", "pb_put_dod",
-		"pb_post_note", "pb_add_reference", "pb_create_doc", "pb_put_doc",
+		"pb_post_note", "pb_add_reference", "pb_submit_plan", "pb_create_doc", "pb_put_doc",
 		"pb_list_transitions", "pb_transition_task",
 		"pb_submit_result",
 		"pb_wait",

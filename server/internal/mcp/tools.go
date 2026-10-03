@@ -944,6 +944,31 @@ func writeTools() []tool {
 			call: callAddReference,
 		},
 		{
+			Name: "pb_submit_plan",
+			Description: "自律実行（Delegated）の main が、委任の根に対して計画の版を提出する" +
+				"（Delegation.md 6章）。**呼び出し元がその委任の main でなければ拒まれる。** " +
+				"PB が前の承認済み版と比べて変更の段階（minor/structural/scope）を測り、" +
+				"自己申告（declared_class）と比べて厳しい方を採る。軽微ならその場で反映される。" +
+				"構造の変更は評価エージェントの合格を待ち、範囲の変更は委任を計画中へ戻して" +
+				"PM の事前承認を待つ。応答で measured_class と status を確認すること。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq":      {Type: "integer", Description: "委任の根となるチケットの番号（seq）", Minimum: intPtr(1)},
+					"skeleton": {Type: "object", Description: "骨格：根の直下の枝・予算配分・チェックポイント（Delegation.md 6.2）。形は固定されていない"},
+					"scope": {Type: "object", Description: "この版が前提とする委任範囲。省略すると委任のいまの範囲をそのまま使う。" +
+						"範囲を変えるときだけ指定する"},
+					"body_md":   {Type: "string", Description: "計画の説明"},
+					"reason_md": {Type: "string", Description: "前の版から変えた理由"},
+					"declared_class": {Type: "string", Description: "この変更が軽微／構造／範囲のどれに当たるかの自己申告。" +
+						"省略すると minor 扱いになる（PB の判定のほうが厳しければそちらが採られる）",
+						Enum: []string{"minor", "structural", "scope"}},
+				},
+				Required: []string{"seq", "skeleton", "body_md", "reason_md"},
+			},
+			call: callSubmitPlan,
+		},
+		{
 			Name: "pb_create_doc",
 			Description: "プロジェクト文書を新しく作る。doc.edit が必要。slug は ^[a-z0-9][a-z0-9-]{0,63}$（小文字・数字・ハイフン）で、.md は付けない。" +
 				"同じ親の下に同じ slug があれば 409 already_exists。応答は要点（path / version / updated_at）だけ。",
@@ -1407,6 +1432,56 @@ func callAddReference(h *Handler, r *http.Request, key string, args json.RawMess
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
 	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/references", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// submitPlanArgs は pb_submit_plan の引数（Delegation.md 6章。pb-247）。
+//
+// **skeleton / scope は json.RawMessage で受ける。** 形を固定していない
+// jsonb であり、MCP 層が型を解釈する必要が無い——REST へそのまま渡す。
+type submitPlanArgs struct {
+	Seq           flexInt         `json:"seq"`
+	Skeleton      json.RawMessage `json:"skeleton"`
+	Scope         json.RawMessage `json:"scope"`
+	BodyMd        string          `json:"body_md"`
+	ReasonMd      string          `json:"reason_md"`
+	DeclaredClass string          `json:"declared_class"`
+}
+
+func callSubmitPlan(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in submitPlanArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if len(in.Skeleton) == 0 {
+		return toolResult{}, newError(codeInvalidParams, "skeleton は必須である")
+	}
+	if strings.TrimSpace(in.BodyMd) == "" {
+		return toolResult{}, newError(codeInvalidParams, "body_md は必須である")
+	}
+	if strings.TrimSpace(in.ReasonMd) == "" {
+		return toolResult{}, newError(codeInvalidParams, "reason_md は必須である")
+	}
+
+	body := map[string]any{
+		"skeleton": json.RawMessage(in.Skeleton),
+		"body_md":  in.BodyMd, "reason_md": in.ReasonMd,
+	}
+	if len(in.Scope) > 0 {
+		body["scope"] = json.RawMessage(in.Scope)
+	}
+	if in.DeclaredClass != "" {
+		body["declared_class"] = in.DeclaredClass
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/plan", nil, raw, nil)
 	return passThrough(r, res, err)
 }
 

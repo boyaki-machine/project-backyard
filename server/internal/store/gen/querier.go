@@ -12,6 +12,10 @@ import (
 )
 
 type Querier interface {
+	// AcceptDelegationPlan は軽微な変更を即座に反映する（6.3）。
+	// **decided_by は呼び出し元ではなく PB 自身**——軽微は「main の判断で反映する」
+	// のであって人・評価エージェントの決定ではないため、decided_by は NULL のままにする。
+	AcceptDelegationPlan(ctx context.Context, id string) (int64, error)
 	AddProjectMember(ctx context.Context, arg AddProjectMemberParams) error
 	// 所属を1回で書く（DbDesign.md 6.9.1）。
 	//
@@ -201,6 +205,11 @@ type Querier interface {
 	// 「コメント本体は含めない」と定めており、件数だけで 5.5 の見出し
 	// 「コメント (4)」が作れる。
 	CountTicketComments(ctx context.Context, ticketID string) (int64, error)
+	// CountTicketsInDelegationTreeSince は 6.3 の「1つの版で増える子孫が5件を超える」
+	// の判定に使う。根自身は数えない。
+	//
+	// **ticket.sql の subtree と同じ再帰パターンを使い回す。**
+	CountTicketsInDelegationTreeSince(ctx context.Context, arg CountTicketsInDelegationTreeSinceParams) (int64, error)
 	// ── リカバリコード ──────────────────────────────────────
 	// CountUnusedRecoveryCodes は残数（ApiDesign.md 4.6.1）。
 	CountUnusedRecoveryCodes(ctx context.Context, userID string) (int64, error)
@@ -274,8 +283,8 @@ type Querier interface {
 	// pb_post_note も、その時点で run が存在しないので NULL を渡す。
 	CreateComment(ctx context.Context, arg CreateCommentParams) error
 	// 委任（delegation）に関するクエリ（DbDesign.md 6.24、Delegation.md 4章・12.2）。
-	// pb-246。delegation_plan / evaluation / confirmation / delegation_handoff は
-	// 別チケット（pb-247〜250）で足す。
+	// pb-246。計画の版（delegation_plan）は delegation_plan.sql（pb-247）。
+	// evaluation / confirmation / delegation_handoff は別チケット（pb-248〜250）で足す。
 	//
 	// **木への所属の判定は、既存の IsTicketDescendant（ticket.sql）を使い回す。**
 	// 「候補チケットが、ある根の木に属するか」は ticket.sql が既に持っている
@@ -283,6 +292,8 @@ type Querier interface {
 	// CreateDelegation は委任を1件作る（Delegation.md 4.4）。
 	// **root_ticket_id は UNIQUE。** 同じ根に2件目の委任は作れない。
 	CreateDelegation(ctx context.Context, arg CreateDelegationParams) error
+	// CreateDelegationPlan は計画の版を1件作る（Delegation.md 6.2）。
+	CreateDelegationPlan(ctx context.Context, arg CreateDelegationPlanParams) error
 	// CreateDeletedAgentActor は付け替え先を1件作る。
 	//
 	// **シードで先に置かず、最初に必要になった削除で作る**（CreateSystemActor と
@@ -753,6 +764,13 @@ type Querier interface {
 	GetAppSecret(ctx context.Context, keyID string) (GetAppSecretRow, error)
 	// GetDelegationByID は作成直後の応答の組み立てに使う。
 	GetDelegationByID(ctx context.Context, id string) (GetDelegationByIDRow, error)
+	// GetDelegationByRootTicket は根のチケットから委任を引く（pb-247）。
+	// 1チケットにつき委任は1件（root_ticket_id が UNIQUE。4.4）。
+	GetDelegationByRootTicket(ctx context.Context, rootTicketID string) (GetDelegationByRootTicketRow, error)
+	// GetDelegationPlanByID は提出直後の応答の組み立てに使う。
+	GetDelegationPlanByID(ctx context.Context, id string) (GetDelegationPlanByIDRow, error)
+	// GetDelegationPlanByVersion は差し戻し元の版を読むのに使う（6.2）。
+	GetDelegationPlanByVersion(ctx context.Context, arg GetDelegationPlanByVersionParams) (GetDelegationPlanByVersionRow, error)
 	// 表示上のトップレベルの祖先（自分を含む）を返す（ApiDesign.md 9.6
 	// 「着手したら、オンステージへ上げる」）。
 	//
@@ -774,6 +792,10 @@ type Querier interface {
 	GetDocument(ctx context.Context, id string) (GetDocumentRow, error)
 	// GetDocumentRevision は1件ぶんの本文（10.5）。
 	GetDocumentRevision(ctx context.Context, arg GetDocumentRevisionParams) (GetDocumentRevisionRow, error)
+	// GetLatestAcceptedDelegationPlan は判定の基準にする直前の承認済み版を返す
+	// （6.3「前の承認済みの版と比べて段階を決める」）。1件も無ければ初版の提出
+	// （6.1「計画の初版は、評価が先」——判定規則を適用しない）。
+	GetLatestAcceptedDelegationPlan(ctx context.Context, delegationID string) (GetLatestAcceptedDelegationPlanRow, error)
 	// GetParentForCascade は「子が動いたら親を進行中にする」で祖先をたどる1段ぶん
 	// （9.6）。子の id を渡すと、その親の seq とステータスのカテゴリが返る。
 	//
@@ -1652,6 +1674,9 @@ type Querier interface {
 	// null に限られる（9.4.2）ので、親を付け替える経路はここに無い——それは
 	// PATCH（9.5.2）の仕事である。
 	MoveTicket(ctx context.Context, arg MoveTicketParams) (MoveTicketRow, error)
+	// 計画の版に関するクエリ（DbDesign.md 6.25、Delegation.md 6章）。pb-247。
+	// NextDelegationPlanVersion は次に振る版番号を返す（1始まり）。
+	NextDelegationPlanVersion(ctx context.Context, delegationID string) (int32, error)
 	// sort_order 省略時の既定（現在の最大値 + 10）。行が無ければ 10 から始める。
 	// **10 刻みにするのは間に挿し込む余地を残すため**で、NextTicketReferenceSortOrder
 	// と同じ採番である。
@@ -1853,6 +1878,9 @@ type Querier interface {
 	// 「NULL を先に落とす」はここでは要らない）。
 	SearchTicketIDsByTrigram(ctx context.Context, arg SearchTicketIDsByTrigramParams) ([]string, error)
 	SetActorAvatarURL(ctx context.Context, arg SetActorAvatarURLParams) error
+	// SetDelegationStatus は委任の主状態を変える（4.3）。pb-247 では、範囲の変更が
+	// 提出されたときに承認済から計画中へ戻すのに使う。
+	SetDelegationStatus(ctx context.Context, arg SetDelegationStatusParams) (int64, error)
 	SetProjectHolidaySource(ctx context.Context, arg SetProjectHolidaySourceParams) error
 	// SetProjectStatus は archive / unarchive を1文で行う（5.6）。
 	//

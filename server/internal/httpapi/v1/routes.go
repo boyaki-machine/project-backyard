@@ -490,6 +490,16 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/delegation", h.createDelegation)
 
+		// ── 計画の版（Delegation.md 6章・12.2）── pb-247 ───────────
+		//
+		// **submit は main が呼ぶ**（ticket.create。木の中に起票するのと同じ
+		// 権限の束——身元の確認はハンドラ内で行う。12.2 と同じ形）。
+		// **revert は PM が呼ぶ**（delegation.manage。createDelegation と同じ）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+			Post("/projects/{key}/tickets/{seq}/plan", h.submitDelegationPlan)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/plan/{version}/revert", h.revertDelegationPlan)
+
 		// ── チケット間リンク（ApiDesign.md 9.10.1）── 手順18a ─────
 		//
 		// **PATCH は lag_days だけ**（9.10.1。pb-231）。一意制約が (source, target, link_type)

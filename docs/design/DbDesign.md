@@ -1992,6 +1992,62 @@ ON CONFLICT (key) DO UPDATE
 要る。pb-249）の細分はまだ無い——`planning` / `paused` / `ended` はひとまとめに
 「main は書けない」として扱い、`approved` だけを許す。
 
+## 6.25 計画の版（0051）
+
+**正本は `Delegation.md` 6章・12.2。** pb-247。D3：骨格（根の直下の枝・予算配分・
+チェックポイント）だけを版で持つ。骨格より下の木は main の裁量で、版を出さずに
+直してよい。
+
+```sql
+CREATE TABLE delegation_plan (
+  id             char(26) COLLATE "C" PRIMARY KEY,
+  delegation_id  char(26) COLLATE "C" NOT NULL REFERENCES delegation(id) ON DELETE CASCADE,
+  version        integer NOT NULL,
+  scope          jsonb NOT NULL,         -- この版が前提とする委任範囲
+  skeleton       jsonb NOT NULL,         -- 骨格：根の直下の枝・予算配分・チェックポイント
+  body_md        text NOT NULL,
+  reason_md      text NOT NULL,
+  declared_class text CHECK (declared_class IN ('minor','structural','scope')),
+  measured_class text CHECK (measured_class IN ('minor','structural','scope')),
+  status         text NOT NULL DEFAULT 'proposed'
+                 CHECK (status IN ('proposed','accepted','rejected','superseded','reverted')),
+  reverts_to     integer,
+  submitted_by   char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  submitted_at   timestamptz NOT NULL DEFAULT now(),
+  decided_by     char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  decided_at     timestamptz,
+  CONSTRAINT uq_delegation_plan_version UNIQUE (delegation_id, version)
+);
+```
+
+**6.3 の判定規則のうち、PB が測れる範囲だけを実装した。**
+
+| 規則 | 実装したか | 備考 |
+|---|---|---|
+| 委任範囲（scope）が違う → 範囲 | **した** | 新しい版の `scope`（省略時は委任のいまの `scope`）と、直前の承認済み版の `scope` の構造的な等価性で見る |
+| 骨格の枝が増えた・減った → 構造 | **した（skeleton に `branches[]` がある場合だけ）** | `skeleton` の形を固定していないため、`branches` を持たない計画ではこの観点を測れない |
+| 枝の予算配分が20%を超えて動いた → 構造 | **した（同上）** | 閾値は固定値（`planBudgetShiftThreshold`）。プロジェクト設定化（`Design.md` 10.3）は別チケット |
+| 機微な領域に触れる枝が増えた → 構造 | **していない** | 「機微な領域」自体の器がまだ無い（8.1 の4。pb-249） |
+| 1つの版で増える子孫が5件を超える → 構造 | **した** | 直前の承認済み版の `submitted_at` 以降に作られた木の中のチケット数を数える（`CountTicketsInDelegationTreeSince`） |
+| 木の深さが増えた → 構造 | **していない** | 版ごとの深さの基準値を持たない |
+
+**main の申告（`declared_class`）と PB の判定（`measured_class`）の厳しい方を採る**
+（severity: minor < structural < scope）。**初版（直前の承認済み版が無い）は判定
+規則を適用しない**——6.1 が「計画の初版は、評価が先」と定めるため、軽微かどうかに
+関わらず `proposed` のまま評価を待つ。
+
+**反映の条件（pb-247 の範囲）**
+
+| 段階 | すること |
+|---|---|
+| 軽微 | その場で `status = 'accepted'` にする（`decided_by` は NULL のまま——人・評価の決定ではない） |
+| 構造 | `proposed` のまま。評価の合格で反映するのは pb-248 |
+| 範囲 | `proposed` のまま、**委任を `planning` へ戻す**（`delegation.status` を更新） |
+
+**差し戻し（revert）は PM が直接行う。** 指定した版の `scope` / `skeleton` /
+`body_md` を写した新しい版を作り、`reverts_to` に元の版番号を残す。**評価を挟まず
+即座に `accepted` にする**——2層の承認をすでに経た人の判断だからである。
+
 # 7. 初期データ（0010）
 
 ## 7.1 認証プロバイダ

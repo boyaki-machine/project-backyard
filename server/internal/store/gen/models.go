@@ -253,6 +253,24 @@ type Delegation struct {
 	UpdatedAt        time.Time
 }
 
+type DelegationPlan struct {
+	ID            string
+	DelegationID  string
+	Version       int32
+	Scope         []byte
+	Skeleton      []byte
+	BodyMd        string
+	ReasonMd      string
+	DeclaredClass pgtype.Text
+	MeasuredClass pgtype.Text
+	Status        string
+	RevertsTo     pgtype.Int4
+	SubmittedBy   string
+	SubmittedAt   time.Time
+	DecidedBy     pgtype.Text
+	DecidedAt     *time.Time
+}
+
 type Document struct {
 	ID          string
 	ProjectID   pgtype.Text
