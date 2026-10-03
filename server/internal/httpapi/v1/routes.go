@@ -522,6 +522,8 @@ func Mount(r chi.Router, deps Deps) {
 		// **main だけが更新する**（ticket.create。身元の確認はハンドラ内）。
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
 			Post("/projects/{key}/tickets/{seq}/handoff", h.updateHandoff)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/delegation-status", h.getDelegationStatus)
 
 		// ── チケット間リンク（ApiDesign.md 9.10.1）── 手順18a ─────
 		//

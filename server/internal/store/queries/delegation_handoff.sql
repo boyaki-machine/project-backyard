@@ -26,7 +26,7 @@ LIMIT 1;
 -- 最新の計画を読む。既存の GetLatestAcceptedDelegationPlan は status='accepted'
 -- だけを見るので、proposed・rejected を含む最新を見るにはこちらを使う。
 -- name: GetLatestDelegationPlan :one
-SELECT version, status, reverts_to
+SELECT version, status, reverts_to, declared_class, measured_class
 FROM delegation_plan
 WHERE delegation_id = @delegation_id
 ORDER BY version DESC

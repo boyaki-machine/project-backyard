@@ -4610,6 +4610,48 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/tickets/{seq}/delegation-status:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+    get:
+      tags: [tickets]
+      summary: 委任の状態を集約して読む
+      operationId: getDelegationStatus
+      description: |
+        委任・計画・評価・確認待ち・引き継ぎノートの状態を1回でまとめて
+        読む（Delegation.md 9.1、pb-251）。**必要権限は `ticket.view`**。
+
+        委任（`delegation`）・計画の版（`delegation_plan`）・評価
+        （`evaluation`）・確認待ち（`confirmation`）・引き継ぎノート
+        （`delegation_handoff`）はいずれも `GET` を持たない（書き込みの口
+        しか無い）。コンテキストパックの「6. 自律実行」節（`pb_get_context`）
+        がこの口を1回叩いて節を描く——内部で5本の表を読みに行かせない
+        ための集約専用のエンドポイントである。
+
+        **`{seq}` はどのチケットでもよい。** 委任の木の外なら
+        `in_delegation: false` だけを返す。`role` は9.1の表のとおり、
+        呼び出し元（main・評価・その他）と対象（根・根以外の子孫）の
+        組み合わせで決まる。`next_move` は `role` から計算した推奨
+        （9.3。`POST .../handoff` の応答と同じ関数）。
+      responses:
+        '200':
+          description: 委任の状態の集約。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationStatus'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/tickets/{seq}/transitions:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -9469,6 +9511,59 @@ components:
         next_move:
           type: string
           description: PB が役割と段階から判定した推奨（9.3）。main の判断を縛らない。
+
+    DelegationStatus:
+      description: |
+        委任・計画・評価・確認待ち・引き継ぎノートの状態の集約（Delegation.md
+        9.1）。`in_delegation: false` のときは他のフィールドを省く。
+      type: object
+      required: [in_delegation]
+      properties:
+        in_delegation:
+          type: boolean
+        role:
+          type: string
+          enum: [main, sub, evaluator, readonly]
+        root_seq:
+          type: integer
+        status:
+          type: string
+          enum: [planning, approved, paused, ended]
+        scope:
+          type: object
+          additionalProperties: true
+        main:
+          $ref: '#/components/schemas/ActorRef'
+        evaluator:
+          $ref: '#/components/schemas/ActorRef'
+        latest_plan:
+          type: object
+          nullable: true
+          properties:
+            version: { type: integer }
+            status: { type: string, enum: [proposed, accepted, rejected, superseded, reverted] }
+            declared_class: { type: string, enum: [minor, structural, scope], nullable: true }
+            measured_class: { type: string, enum: [minor, structural, scope], nullable: true }
+        latest_evaluation:
+          type: object
+          nullable: true
+          properties:
+            target_kind: { type: string, enum: [plan, deliverable] }
+            round: { type: integer }
+            verdict: { type: string, enum: [pass, fail, unable] }
+            findings:
+              type: array
+              items: { type: object, additionalProperties: true }
+        open_confirmations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Confirmation'
+        latest_handoff:
+          allOf:
+            - $ref: '#/components/schemas/DelegationHandoff'
+          nullable: true
+        next_move:
+          type: string
 
     TicketReport:
       description: |

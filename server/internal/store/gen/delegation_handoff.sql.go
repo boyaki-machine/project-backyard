@@ -80,7 +80,7 @@ func (q *Queries) GetLatestDelegationHandoff(ctx context.Context, delegationID s
 }
 
 const getLatestDelegationPlan = `-- name: GetLatestDelegationPlan :one
-SELECT version, status, reverts_to
+SELECT version, status, reverts_to, declared_class, measured_class
 FROM delegation_plan
 WHERE delegation_id = $1
 ORDER BY version DESC
@@ -88,9 +88,11 @@ LIMIT 1
 `
 
 type GetLatestDelegationPlanRow struct {
-	Version   int32
-	Status    string
-	RevertsTo pgtype.Int4
+	Version       int32
+	Status        string
+	RevertsTo     pgtype.Int4
+	DeclaredClass pgtype.Text
+	MeasuredClass pgtype.Text
 }
 
 // GetLatestDelegationPlan は「次の一手」（9.3）の判定に使う、版にかかわらず
@@ -99,7 +101,13 @@ type GetLatestDelegationPlanRow struct {
 func (q *Queries) GetLatestDelegationPlan(ctx context.Context, delegationID string) (GetLatestDelegationPlanRow, error) {
 	row := q.db.QueryRow(ctx, getLatestDelegationPlan, delegationID)
 	var i GetLatestDelegationPlanRow
-	err := row.Scan(&i.Version, &i.Status, &i.RevertsTo)
+	err := row.Scan(
+		&i.Version,
+		&i.Status,
+		&i.RevertsTo,
+		&i.DeclaredClass,
+		&i.MeasuredClass,
+	)
 	return i, err
 }
 

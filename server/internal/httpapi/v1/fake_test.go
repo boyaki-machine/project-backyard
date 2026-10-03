@@ -446,6 +446,10 @@ type fakeQuerier struct {
 	latestHandoffRow        gen.GetLatestDelegationHandoffRow
 	latestDelegationPlan    gen.GetLatestDelegationPlanRow
 	latestDelegationPlanErr error // pgx.ErrNoRows で「計画が1件も無い」
+
+	// 委任の状態の集約読み取り（Delegation.md 9.1。pb-251）。
+	latestEvaluationForDelegation    gen.GetLatestEvaluationForDelegationRow
+	latestEvaluationForDelegationErr error // pgx.ErrNoRows で「評価が1件も無い」
 }
 
 // GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
@@ -2726,6 +2730,19 @@ func (q *fakeQuerier) GetEvaluationVerdictForReport(
 		return v, nil
 	}
 	return "", pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) GetLatestEvaluationForDelegation(
+	context.Context, string,
+) (gen.GetLatestEvaluationForDelegationRow, error) {
+	q.opLog = append(q.opLog, "GetLatestEvaluationForDelegation")
+	if q.latestEvaluationForDelegationErr != nil {
+		return gen.GetLatestEvaluationForDelegationRow{}, q.latestEvaluationForDelegationErr
+	}
+	if q.latestEvaluationForDelegation.TargetKind == "" {
+		return gen.GetLatestEvaluationForDelegationRow{}, pgx.ErrNoRows
+	}
+	return q.latestEvaluationForDelegation, nil
 }
 
 func (q *fakeQuerier) CountEvaluationsSinceLastPass(
