@@ -887,10 +887,10 @@ type Querier interface {
 	// **status ではなく status_category で数える**（9.13.1）。ワークフローが
 	// プロジェクトごとに違っても、画面の4枚のカードの意味が変わらないようにするため
 	// である。カテゴリは workflow_status 側にあり、ticket.status_key から引く。
-	// GetProjectTicketStats は 9.13.1 の応答をまるごと1行で返す。
+	// GetProjectTicketStats は全体値とオンステージ内の状態件数を1SQL・1行で返す（pb-178）。
 	//
-	// **1文にまとめてあるのは、同じ WHERE を9回書かないため**である。走査は
-	// 1プロジェクト分のチケット1回で済み、FILTER 句が数え分ける。
+	// **1文にまとめ、全体と段内を同じスナップショットで数える。**
+	// 親子・棚の判定を先に計算し、FILTER 句が数え分ける。
 	//
 	// **workflow_status は LEFT JOIN である。** project.workflow_id は NULL 可能で
 	// （DbDesign.md 6.4）、ステータスキーがワークフローに無いこともありうる。その行は

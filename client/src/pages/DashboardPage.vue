@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { uiText } from '../locales/ui'
+import { uiNumber, uiText } from '../locales/ui'
 /**
  * プロジェクトダッシュボード（`GuiDesign.md` 5.3）。必要権限は `project.view`。手順19b。
  *
@@ -279,7 +279,7 @@ const cards = computed(() =>
   statusCategoryOrder.map((c: StatusCategory) => ({
     category: c,
     label: statusCategoryLabels[c],
-    value: stats.value?.by_category[c] ?? 0,
+    value: stats.value?.onstage.by_category[c] ?? 0,
   })),
 )
 
@@ -411,11 +411,17 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
       <p v-if="createError" class="dash-error" role="alert">{{ createError }}</p>
 
       <!-- 集計カード（5.3）。**押すとバックログをその区分で絞って開く** -->
-      <section class="dash-cards" :aria-label="$ui('ステータス集計')">
+      <section class="dash-cards" :aria-label="$ui('オンステージの状態別件数')">
+        <h2 class="dash-onstage-title">{{ $ui('オンステージの状態別件数') }}</h2>
+        <p class="dash-onstage-note">{{ $ui('段に載っているストーリー・タスクとその配下。完了は段に残っている件数です。') }}</p>
+        <p v-if="stats !== null && stats.onstage.unknown > 0" class="dash-onstage-note" role="status">
+          {{ $ui('状態を分類できない{value0}件', { value0: uiNumber(stats.onstage.unknown) }) }}
+        </p>
         <p v-if="statsError" class="dash-error" role="alert">
           {{ statsError }}
           <button type="button" class="dash-retry" @click="loadStats">{{ $ui('再試行') }}</button>
         </p>
+        <p v-else-if="statsLoading" class="dash-onstage-note" aria-live="polite">{{ $ui('読み込み中…') }}</p>
         <template v-else>
           <StatCard
             v-for="c in cards"
@@ -423,7 +429,7 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
             class="dash-card"
             :label="c.label"
             :value="c.value"
-            :to="canViewTickets ? backlogTo({ status_category: c.category }) : undefined"
+            :to="canViewTickets ? backlogTo({ staged: 'true', status_category: c.category }) : undefined"
             :link-label="$ui('{value0}のチケットをバックログで見る', { value0: c.label })"
           />
         </template>
@@ -603,6 +609,10 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
 
 /* 集計カード。**4枚で固定する**（5.3 は「常に4つのキーを持つ」）。
    `auto-fit` にしない——狭い窓で枚数が変わると、意味の並びが崩れる */
+.dash-onstage-title, .dash-onstage-note { grid-column: 1 / -1; margin: 0; }
+.dash-onstage-title { font-size: 1rem; }
+.dash-onstage-note { color: var(--pb-text-muted); font-size: 0.875rem; }
+
 .dash-cards {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

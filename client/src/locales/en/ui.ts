@@ -1,5 +1,10 @@
 /** English translations keyed by the Japanese source text used by the UI. */
 export const uiMessages: Record<string, string> = {
+  "全体": "All tickets",
+  "オンステージの状態別件数": "Onstage ticket counts by status",
+  "段に載っているストーリー・タスクとその配下。完了は段に残っている件数です。": "Stories and tasks onstage, including descendants. Completed counts tickets still onstage.",
+  "状態を分類できない{value0}件": "{value0} tickets have unclassified statuses",
+  "対象：オンステージ。棚に戻ったものは含みません。": "Scope: onstage. Retired tickets are excluded.",
   "チケットの状態別推移": "Ticket status trends",
   "チケットの状態別推移を取得できませんでした": "Could not load ticket status trends.",
   "消化済み": "Completed",
