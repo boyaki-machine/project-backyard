@@ -1146,6 +1146,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/ticket-trends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 期間内の記録されたチケット増加・消化
+         * @description 必要権限は project.view（非メンバーには404）。現在存在するstory/taskの
+         *     記録された操作回数。親子は個別に数え、オンステージでは絞らない。
+         *     現行ワークフローで分類するため、削除・種別・ワークフローの変更で過去値も変わりうる。
+         *     未記録の操作を補完しない。プロジェクトtimezoneの暦日で集計し、当日は途中。
+         *     ETagなし、Cache-Control: no-store。ApiDesign.md 9.13.3。
+         */
+        get: operations["getTicketTrends"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{key}/stats": {
         parameters: {
             query?: never;
@@ -6166,6 +6196,50 @@ export interface components {
          *     出さない。**4枚のカードは押すとバックログをそのカテゴリで絞って開く**ので、
          *     除かないとカードの数と押した先の件数が一致しない。
          */
+        TicketTrendCounts: {
+            /** Format: int64 */
+            created: number;
+            /** Format: int64 */
+            completed: number;
+            /** Format: int64 */
+            reopened: number;
+            /** Format: int64 */
+            unclassified_transitions: number;
+        };
+        TicketTrendDay: components["schemas"]["TicketTrendCounts"] & {
+            /** Format: date */
+            date: string;
+            /** @description 当日だけtrue（途中集計）。 */
+            is_partial: boolean;
+        };
+        TicketTrends: {
+            /** @enum {integer} */
+            days: 7 | 28;
+            timezone: string;
+            /** Format: date */
+            start_date: string;
+            /** Format: date */
+            end_date: string;
+            /**
+             * Format: int64
+             * @description 集計上端のエポックミリ秒（この瞬間は含まない）。
+             */
+            as_of: number;
+            /** @constant */
+            basis: "recorded_activity_for_existing_tickets";
+            totals: components["schemas"]["TicketTrendCounts"];
+            /** @description days件を日付昇順で返す。記録なしの日は0。 */
+            daily: components["schemas"]["TicketTrendDay"][];
+        };
+        /**
+         * @description プロジェクトの集計（ApiDesign.md 9.13.1）。ダッシュボード（GuiDesign.md 5.3）の
+         *     4枚のカードと「要対応」ブロックが読む。
+         *
+         *     **エピック（`type='epic'`）はどの項目にも数えない。**
+         *     エピックはグルーピング専用であり（DbDesign.md 6.10）、バックログも行として
+         *     出さない。**4枚のカードは押すとバックログをそのカテゴリで絞って開く**ので、
+         *     除かないとカードの数と押した先の件数が一致しない。
+         */
         ProjectStats: {
             /**
              * @description `status_category` ごとの件数。**常に4つのキーを持つ**——そのカテゴリの
@@ -9134,6 +9208,50 @@ export interface operations {
                 };
             };
             /** @description `client` の指定が不正（`validation_failed`）。 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getTicketTrends: {
+        parameters: {
+            query?: {
+                /** @description 今日を含む暦日数。空・重複・未知のパラメータも422。 */
+                days?: 7 | 28;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 日別回数とその合計。 */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketTrends"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            /** @description 集計期間またはクエリが不正（validation_failed）。 */
             422: {
                 headers: {
                     [name: string]: unknown;

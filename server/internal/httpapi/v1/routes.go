@@ -281,6 +281,8 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).
 			Get("/projects/{key}/stats", h.getProjectStats)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).
+			Get("/projects/{key}/ticket-trends", h.getTicketTrends)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).
 			Get("/projects/{key}/activity", h.listProjectActivity)
 
 		// ── タグ・スプリント（ApiDesign.md 9.11 / 9.12）──────────

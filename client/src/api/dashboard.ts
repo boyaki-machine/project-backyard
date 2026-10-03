@@ -13,6 +13,12 @@ import type { components } from './schema'
 export type ProjectStats = components['schemas']['ProjectStats']
 export type Activity = components['schemas']['Activity']
 export type ActivityList = components['schemas']['ActivityList']
+export type TicketTrends = components['schemas']['TicketTrends']
+
+/** Recorded operations for currently existing story/task tickets (9.13.3). */
+export function getTicketTrends(key: string, days: 7 | 28): Promise<TicketTrends> {
+  return api.get<TicketTrends>(`/projects/${encodeURIComponent(key)}/ticket-trends?days=${days}`)
+}
 
 /** `activity.action` の4値（9.13.2、`DbDesign.md` 6.8 の CHECK） */
 export type ActivityAction = Activity['action']

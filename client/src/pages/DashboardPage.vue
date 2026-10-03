@@ -6,7 +6,7 @@ import { uiText } from '../locales/ui'
  * プロジェクト選択直後の着地点。**統計と当面の作業に割り切る**——AI要約は
  * 置かない（5.3.1）。
  *
- * **この画面だけが起動時に5本のAPIを呼ぶ**（`ApiDesign.md` 8章の例外）。
+ * **この画面だけが起動時に6本のAPIを呼ぶ**（`ApiDesign.md` 8章の例外）。
  * 互いに独立で並列に投げ、**1本落ちてもそのブロックだけをエラーにする**
  * （6.2 の4状態をブロック単位で持つ）。5本目の `GET /projects/:key` は
  * **表示名の解決**に要る——`activity` は `status_key` と ULID しか返さない
@@ -24,6 +24,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import Avatar from '../components/Avatar.vue'
+import DashboardTicketTrends from '../components/DashboardTicketTrends.vue'
 import EmptyState from '../components/EmptyState.vue'
 import NewTicketModal from '../components/NewTicketModal.vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -138,7 +139,7 @@ const labelContext = computed<ActivityLabelContext>(() => ({
   ),
 }))
 
-// ── 取得（5本。並列で投げる）───────────────────────────────
+// ── 取得（既存5本。期間集計は専用部品から独立して取得する）───────────────────────────────
 
 async function loadStats(): Promise<void> {
   statsLoading.value = true
@@ -246,7 +247,7 @@ async function loadMoreActivity(): Promise<void> {
 }
 
 /**
- * 5本を並列に投げる。**`allSettled` を使う**——1本の失敗で他を捨てない。
+ * 既存5本を並列に投げる。期間集計は専用部品が取得する。**`allSettled` を使う**——1本の失敗で他を捨てない。
  * 各 `load*` が自分のエラーを抱えるので、ここでは待つだけでよい。
  */
 function loadAll(): void {
@@ -329,7 +330,7 @@ function ticketTo(seq: number): string {
 // ── 新規チケット（5.3 のヘッダ。5.4.3 のモーダルを使う）────────
 //
 // **語彙（タグ・エピック）は押したときに取りに行く。** 起動時の
-// 5本に足さない——作らない利用者に2本を払わせないためで、プロジェクト設定が
+// 6本に足さない——作らない利用者に2本を払わせないためで、プロジェクト設定が
 // タブを開いたときにタグを取るのと同じ判断（5.9）。
 
 const showNewModal = ref(false)
@@ -427,6 +428,8 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
           />
         </template>
       </section>
+
+      <DashboardTicketTrends :key="projectKey" :project-key="projectKey" />
 
       <div class="dash-columns">
         <!-- 自分の担当（5.3）─────────────────────────────── -->
