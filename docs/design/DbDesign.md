@@ -2088,15 +2088,69 @@ target_kind`）への直前の `pass` 以降の件数+1（`CountEvaluationsSince
 | plan・version 2以上 | `delegation_plan.status` を `accepted` にする | `rejected` にする（main は新しい版を出し直す） |
 | deliverable（根の完了レポート） | 記録のみ。根の受け入れ可否は `ticket.transition` の検証8（9.6/9.7）が「最新の `agent_report` への評価が `pass` か」で見る | 記録のみ。main は新しい完了レポートを出し直せる |
 
-**`unable`、または往復の上限（初期値3。固定値）に達した不合格は `delegation`
-を `paused` にし、根へ通知コメントを1件書く。** `confirmation` 表（pb-249）が
-まだ無いための代替——既存の委任ゲート（`status == 'approved'` だけが main の
-書き込みを通す）が、`paused` を立てた時点で木への書き込みを自動的に止めるため、
-Delegation.md 8.2「確認待ちの間 main の書き込みを止める」と同じ効果になる。
-確認待ちそのもの（理由・選択肢・回答の記録）は pb-249 で足す。
+**`unable` は確認待ち（`evaluation_unable`）を立てる。主状態は動かさない**
+（8.2「評価が立てる確認待ちは、関門（開いているか）だけで main・評価の
+書き込みを止める」。6.26 参照）。**往復の上限（初期値3。固定値）に達した
+不合格は確認待ち（`budget_exceeded`）を立て、`delegation` を `paused` にする**
+（8.1 の5。PB 自身が立てるものは主状態も止める）。
 
 **評価エージェントのトークンに要る権限は `delegation.evaluate` だけ**
 （0050 で既に登録済み。起票・編集・遷移は要らない。7.1）。
+
+## 6.27 確認待ち（0053）
+
+**正本は `Delegation.md` 8章・12.2。** pb-249。D4 で確定した5表のうち、残る
+`delegation_handoff` は別チケット（pb-250）で足す。
+
+```sql
+CREATE TABLE confirmation (
+  id            char(26) COLLATE "C" PRIMARY KEY,
+  delegation_id char(26) COLLATE "C" NOT NULL REFERENCES delegation(id) ON DELETE CASCADE,
+  ticket_id     char(26) COLLATE "C" NOT NULL REFERENCES ticket(id) ON DELETE CASCADE,
+  reason        text NOT NULL CHECK (reason IN (
+                  'scope_change', 'irreversible_external', 'charter_change',
+                  'sensitive_area', 'budget_exceeded', 'evaluation_unable',
+                  'checkpoint', 'hearing')),
+  question_md   text NOT NULL,
+  options       jsonb NOT NULL DEFAULT '[]'::jsonb,
+  raised_by     char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  status        text NOT NULL DEFAULT 'open' CHECK (status IN ('open','answered','withdrawn')),
+  answer_md     text,
+  answered_by   char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  answered_at   timestamptz
+);
+```
+
+**`reason` は8.1の条件キー（1〜8）を文字列化したもの。** `checkpoint`
+（周期の要約。7）はまだ立てる主体が無い（予算の計測が pb-253、周期の要約が
+pb-254）。
+
+**関門は列に持たず、開いている確認待ちから導く**（4.3・8.2）。
+`HasOpenConfirmation`（`delegation_id` に `status='open' AND reason<>'hearing'`
+があるか）を、既存のゲート（`tickets_create.go` の12.2・`delegation_plan.go`・
+`evaluation.go`・`reports.go`）がそれぞれ呼ぶ。**hearing は関門に数えない**
+（8.2「ヒアリングは止めない」）。
+
+**誰が立てられるか（REST の `POST .../confirmation`）**
+
+| reason | 立てる主体 | 経路 |
+|---|---|---|
+| scope_change・irreversible_external・charter_change・sensitive_area・hearing | main | `POST .../confirmation`（身元確認。`ticket.create`） |
+| evaluation_unable | 評価 | `pb_submit_evaluation` の verdict=unable から内部で（`raiseSystemConfirmation`） |
+| budget_exceeded | PB（評価の往復の上限超過を検出した時点） | 同上 |
+| checkpoint | PB（未実装。予算計測・周期の要約が無い） | — |
+
+**`raised_by` は、`evaluation_unable`・`budget_exceeded` でも実際の呼び出し元
+（評価エージェントの actor_id）を使う。** Delegation.md 4.4 の D4 の注記は
+「PB 自身なら system」としているが、`kind='system'` の actor 行はまだ存在しない
+（`actor.kind` の CHECK には `'system'` があるが、シードされた行が無い）。
+専用の system actor を作るかは別途判断する（finding）。
+
+**答えても主状態は戻さない**（8.2「予算の超過は、答えるだけで続けてよいもの
+ではない」）。`budget_exceeded` で `paused` にした委任を `approved` へ戻す
+操作（停止・再開）は、まだ実装が無い（5章「PM：停止・再開」の「再開」列。
+finding——別チケットで扱う）。
 
 # 7. 初期データ（0010）
 

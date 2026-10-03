@@ -129,6 +129,13 @@ func (h *handler) submitDelegationPlan(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("委任が%sのあいだは計画を提出できません", delegationStatusLabel(deleg.Status)))
 			return errTicketReference
 		}
+		// **確認待ちが開いているあいだは計画を提出できない**（8.2・5章。pb-249）。
+		if open, oerr := q.HasOpenConfirmation(ctx, deleg.ID); oerr != nil {
+			return fmt.Errorf("確認待ちを確認できない: %w", oerr)
+		} else if open {
+			rejected = delegationForbidden(scope.seq, "確認待ちに答えられるまで、計画を提出できません")
+			return errTicketReference
+		}
 
 		effectiveScope := req.Scope
 		if len(effectiveScope) == 0 {

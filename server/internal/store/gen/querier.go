@@ -75,6 +75,8 @@ type Querier interface {
 	// （複数プロジェクト兼用のエージェント。DbDesign.md 8.2.1 の agent テーブル）。
 	// NOT NULL なら、このプロジェクトと一致することを要る。
 	AgentUsableInProject(ctx context.Context, arg AgentUsableInProjectParams) (bool, error)
+	// AnswerConfirmation はPMの回答を記録する（8.2「答えると、関門が外れて元の主状態に戻る」）。
+	AnswerConfirmation(ctx context.Context, arg AnswerConfirmationParams) (int64, error)
 	// AppUserExists は UpdateAdminUserProfile が 0 行だった理由を切り分ける。
 	//
 	// 行が在れば version 不一致（409 conflict）、無ければ削除済み（404）。
@@ -295,6 +297,9 @@ type Querier interface {
 	// **埋まるのは pb_submit_result が作る完了レポートのコメントだけ**——遷移コメントも
 	// pb_post_note も、その時点で run が存在しないので NULL を渡す。
 	CreateComment(ctx context.Context, arg CreateCommentParams) error
+	// 確認待ち（confirmation）に関するクエリ（DbDesign.md 6.27、Delegation.md 8章）。pb-249。
+	// CreateConfirmation は確認待ちを1件立てる（8.1）。
+	CreateConfirmation(ctx context.Context, arg CreateConfirmationParams) error
 	// 委任（delegation）に関するクエリ（DbDesign.md 6.24、Delegation.md 4章・12.2）。
 	// pb-246。計画の版（delegation_plan）は delegation_plan.sql（pb-247）。
 	// evaluation / confirmation / delegation_handoff は別チケット（pb-248〜250）で足す。
@@ -777,6 +782,8 @@ type Querier interface {
 	// この表を読まない（環境変数が勝つ）。
 	// 鍵を引く。無ければ行が返らない（初回）。
 	GetAppSecret(ctx context.Context, keyID string) (GetAppSecretRow, error)
+	// GetConfirmationByID は応答の組み立てと、回答の対象確認に使う。
+	GetConfirmationByID(ctx context.Context, id string) (GetConfirmationByIDRow, error)
 	// GetDelegationByID は作成直後の応答の組み立てに使う。
 	GetDelegationByID(ctx context.Context, id string) (GetDelegationByIDRow, error)
 	// GetDelegationByRootTicket は根のチケットから委任を引く（pb-247）。
@@ -964,6 +971,11 @@ type Querier interface {
 	// **新しい親の種別が要る。** 「段に置けるのは親を持たないもの、または親が
 	// エピックのもの」（9.4.1）を、変更後の値で判定するためである。
 	GetTicketTypeByID(ctx context.Context, id string) (string, error)
+	// HasOpenConfirmation は5章「確認待ち（どの主状態でも）」の関門を判定する
+	// （4.3「関門は列に持たず、開いている確認待ちから導く」）。
+	//
+	// **hearing（8.1 の8）は関門に数えない**（8.2「ヒアリングは止めない」）。
+	HasOpenConfirmation(ctx context.Context, delegationID string) (bool, error)
 	// 業務履歴（ApiDesign.md 9.1.1、DbDesign.md 6.8 の activity）。
 	//
 	// activity はチケット詳細の変更履歴を支える。管理者の横断監査一覧は
@@ -1249,6 +1261,8 @@ type Querier interface {
 	// 判定は 9.2.1 の条件1・2 と同じで、根は表示上のトップレベルなので条件3 は
 	// 自動的に満たされる。
 	ListOnstageTicketIDs(ctx context.Context, projectID string) ([]string, error)
+	// ListOpenConfirmations はパック（9.1）と画面に出す一覧。
+	ListOpenConfirmations(ctx context.Context, delegationID string) ([]ListOpenConfirmationsRow, error)
 	// ListOwnedAgentActorIDs は、その人が所有するエージェントを列挙する。
 	//
 	// **人の削除（ApiDesign.md 6.5）で使う。** agent.owner_actor_id の

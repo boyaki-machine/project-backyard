@@ -227,6 +227,21 @@ type Comment struct {
 	DeletedAt  *time.Time
 }
 
+type Confirmation struct {
+	ID           string
+	DelegationID string
+	TicketID     string
+	Reason       string
+	QuestionMd   string
+	Options      []byte
+	RaisedBy     string
+	Status       string
+	AnswerMd     pgtype.Text
+	AnsweredBy   pgtype.Text
+	CreatedAt    time.Time
+	AnsweredAt   *time.Time
+}
+
 // コンテキストパックの生成記録。書き手はまだ無い（器のみ）。DbDesign.md 8.2.5
 type ContextPackLog struct {
 	ID           string

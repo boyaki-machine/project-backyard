@@ -975,8 +975,8 @@ func writeTools() []tool {
 				"target_kind=plan のときは plan_version も指定する。findings には少なくとも " +
 				"purpose_and_dod（目的・完了条件）と values（価値観・世界観）の2観点を、それぞれ " +
 				"{aspect, verdict, note_md} で入れる。verdict=fail のときは、不合格にした観点の " +
-				"note_md に指摘を必ず書く。unable、または同じ対象への不合格が往復の上限に達すると、" +
-				"PB が委任を一時停止する（確認待ちの器は未実装。pb-249で代える）。",
+				"note_md に指摘を必ず書く。unable のときは、PB が確認待ち（evaluation_unable）を自動で立てる。" +
+				"同じ対象への不合格が往復の上限に達すると、PB が委任を一時停止し確認待ち（budget_exceeded）を立てる。",
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
@@ -995,6 +995,28 @@ func writeTools() []tool {
 				Required: []string{"seq", "target_kind", "verdict", "findings"},
 			},
 			call: callSubmitEvaluation,
+		},
+		{
+			Name: "pb_raise_confirmation",
+			Description: "自律実行（Delegated）の main が、人への確認待ちを立てる" +
+				"（Delegation.md 8章）。**呼び出し元がその委任の main でなければ拒まれる。** " +
+				"立てられる理由は scope_change（範囲の外への変更）・irreversible_external（マージ・push・" +
+				"デプロイ・外部送信・削除）・charter_change（憲章の変更）・sensitive_area（機微な領域への接触）・" +
+				"hearing（計画中の目的・ゴール・制約の掘り下げ）の5つ。" +
+				"evaluation_unable・budget_exceeded・checkpoint は PB 自身が別の経路で立てるため、ここでは指定できない。" +
+				"hearing 以外が開いているあいだ、委任の木への main・評価の書き込みは止まる（答えるのは PM）。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq": {Type: "integer", Description: "委任の根となるチケットの番号（seq）", Minimum: intPtr(1)},
+					"reason": {Type: "string", Description: "確認待ちを立てる理由（8.1の条件キー）",
+						Enum: []string{"scope_change", "irreversible_external", "charter_change", "sensitive_area", "hearing"}},
+					"question_md": {Type: "string", Description: "PM への問い（Markdown）"},
+					"options":     {Type: "array", Description: "選択肢と推奨（任意）。規約の「止まるときは選択肢と推奨を出す」と同じ形"},
+				},
+				Required: []string{"seq", "reason", "question_md"},
+			},
+			call: callRaiseConfirmation,
 		},
 		{
 			Name: "pb_create_doc",
@@ -1565,6 +1587,44 @@ func callSubmitEvaluation(h *Handler, r *http.Request, key string, args json.Raw
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
 	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/evaluation", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// raiseConfirmationArgs は pb_raise_confirmation の引数（Delegation.md 8章。pb-249）。
+type raiseConfirmationArgs struct {
+	Seq        flexInt         `json:"seq"`
+	Reason     string          `json:"reason"`
+	QuestionMd string          `json:"question_md"`
+	Options    json.RawMessage `json:"options"`
+}
+
+func callRaiseConfirmation(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in raiseConfirmationArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if strings.TrimSpace(in.Reason) == "" {
+		return toolResult{}, newError(codeInvalidParams, "reason は必須である")
+	}
+	if strings.TrimSpace(in.QuestionMd) == "" {
+		return toolResult{}, newError(codeInvalidParams, "question_md は必須である")
+	}
+
+	body := map[string]any{
+		"reason": in.Reason, "question_md": in.QuestionMd,
+	}
+	if len(in.Options) > 0 {
+		body["options"] = json.RawMessage(in.Options)
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/confirmation", nil, raw, nil)
 	return passThrough(r, res, err)
 }
 

@@ -285,8 +285,9 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 	// pb_update_ticket と pb_put_dod は起票したあと直すので pb_create_ticket の隣、
 	// pb_add_reference は「実装中に分かったことを書く」の隣＝作業の跡を積む位置。
 	// pb_submit_plan は自律実行の main が計画の版を出す口、pb_submit_evaluation は
-	// 評価エージェントが計画・成果を評価する口（Delegation.md 15章 D7 の新設5ツール
-	// のうちMCPに開けるのはこの2つ。pb-247・pb-248）＋ 遷移2件（見てから動かす順。
+	// 評価エージェントが計画・成果を評価する口、pb_raise_confirmation は main が
+	// 人への確認待ちを立てる口（Delegation.md 15章 D7 の新設5ツールのうちMCPに
+	// 開けるのはこの3つ。pb-247・pb-248・pb-249）＋ 遷移2件（見てから動かす順。
 	// 手順26b）＋ 完了レポート1件（手順26c。/pb-implement の流れの終端）。
 	//
 	// **pb_claim_task / pb_release_task は持たない（構想）**
@@ -297,6 +298,7 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 		"pb_list_tasks", "pb_get_task", "pb_list_comments", "pb_get_context",
 		"pb_create_ticket", "pb_update_ticket", "pb_put_dod",
 		"pb_post_note", "pb_add_reference", "pb_submit_plan", "pb_submit_evaluation",
+		"pb_raise_confirmation",
 		"pb_create_doc", "pb_put_doc",
 		"pb_list_transitions", "pb_transition_task",
 		"pb_submit_result",

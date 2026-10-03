@@ -429,6 +429,15 @@ type fakeQuerier struct {
 	createdEvaluations        []gen.CreateEvaluationParams
 	createEvaluationErr       error
 	evaluationByIDRow         gen.GetEvaluationByIDRow
+
+	// 確認待ち（Delegation.md 8章。pb-249）。
+	openConfirmation        bool // true のとき HasOpenConfirmation が開いているものありと返す
+	createdConfirmations    []gen.CreateConfirmationParams
+	confirmationByIDRow     gen.GetConfirmationByIDRow
+	confirmationByIDErr     error
+	answeredConfirmationIDs []string
+	answerConfirmationRows  int64 // 0 なら「対象なし」（既に答えられた等）。未設定時は1件として扱う
+	answerConfirmationSet   bool
 }
 
 // GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
@@ -2730,6 +2739,43 @@ func (q *fakeQuerier) CreateEvaluation(_ context.Context, arg gen.CreateEvaluati
 func (q *fakeQuerier) GetEvaluationByID(context.Context, string) (gen.GetEvaluationByIDRow, error) {
 	q.opLog = append(q.opLog, "GetEvaluationByID")
 	return q.evaluationByIDRow, nil
+}
+
+// ── 確認待ち（Delegation.md 8章。pb-249）────────────────────────
+
+func (q *fakeQuerier) HasOpenConfirmation(context.Context, string) (bool, error) {
+	q.opLog = append(q.opLog, "HasOpenConfirmation")
+	return q.openConfirmation, nil
+}
+
+func (q *fakeQuerier) CreateConfirmation(_ context.Context, arg gen.CreateConfirmationParams) error {
+	q.opLog = append(q.opLog, "CreateConfirmation")
+	q.createdConfirmations = append(q.createdConfirmations, arg)
+	return nil
+}
+
+func (q *fakeQuerier) GetConfirmationByID(context.Context, string) (gen.GetConfirmationByIDRow, error) {
+	q.opLog = append(q.opLog, "GetConfirmationByID")
+	if q.confirmationByIDErr != nil {
+		return gen.GetConfirmationByIDRow{}, q.confirmationByIDErr
+	}
+	return q.confirmationByIDRow, nil
+}
+
+func (q *fakeQuerier) ListOpenConfirmations(context.Context, string) ([]gen.ListOpenConfirmationsRow, error) {
+	q.opLog = append(q.opLog, "ListOpenConfirmations")
+	return nil, nil
+}
+
+func (q *fakeQuerier) AnswerConfirmation(
+	_ context.Context, arg gen.AnswerConfirmationParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "AnswerConfirmation")
+	q.answeredConfirmationIDs = append(q.answeredConfirmationIDs, arg.ID)
+	if q.answerConfirmationSet {
+		return q.answerConfirmationRows, nil
+	}
+	return 1, nil
 }
 
 func (q *fakeQuerier) CountTicketsInDelegationTreeSince(

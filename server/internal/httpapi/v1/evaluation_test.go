@@ -170,7 +170,11 @@ func TestSubmitEvaluationPlanVersionTwoFailRejects(t *testing.T) {
 	}
 }
 
-func TestSubmitEvaluationUnablePausesDelegation(t *testing.T) {
+// TestSubmitEvaluationUnableRaisesConfirmation は pb-249 で置き換わった挙動。
+// unable は確認待ち（evaluation_unable）を立てるだけで、主状態は動かさない
+// （8.2「評価が立てる確認待ちは、関門（開いているか）だけで main・評価の
+// 書き込みを止める」）。
+func TestSubmitEvaluationUnableRaisesConfirmation(t *testing.T) {
 	q := ticketFake()
 	q.ticket.idBySeq[31] = testTicketID
 	withMainDelegation(q, "approved")
@@ -186,16 +190,21 @@ func TestSubmitEvaluationUnablePausesDelegation(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
 	}
-	if q.delegationStatusSetTo[testDelegationID] != "paused" {
-		t.Errorf("委任の状態 = %q, want paused（confirmation 表が無いあいだの代替）",
-			q.delegationStatusSetTo[testDelegationID])
+	if len(q.createdConfirmations) != 1 {
+		t.Fatalf("CreateConfirmation の回数 = %d", len(q.createdConfirmations))
 	}
-	if len(q.ticket.comments) == 0 {
-		t.Error("停止の通知コメントが作られていない")
+	if q.createdConfirmations[0].Reason != confirmationReasonEvaluationUnable {
+		t.Errorf("reason = %q, want %q", q.createdConfirmations[0].Reason, confirmationReasonEvaluationUnable)
+	}
+	if _, ok := q.delegationStatusSetTo[testDelegationID]; ok {
+		t.Error("unable で主状態が動いている")
 	}
 }
 
-func TestSubmitEvaluationRoundLimitPausesDelegation(t *testing.T) {
+// TestSubmitEvaluationRoundLimitRaisesConfirmationAndPauses は pb-249 で
+// 置き換わった挙動。往復の上限超過は確認待ち（budget_exceeded）を立て、
+// かつ主状態を paused にする（8.2「PB が立てた確認待ちは、主状態を停止にする」）。
+func TestSubmitEvaluationRoundLimitRaisesConfirmationAndPauses(t *testing.T) {
 	q := ticketFake()
 	q.ticket.idBySeq[31] = testTicketID
 	withMainDelegation(q, "approved")
@@ -217,6 +226,9 @@ func TestSubmitEvaluationRoundLimitPausesDelegation(t *testing.T) {
 	}
 	if q.delegationStatusSetTo[testDelegationID] != "paused" {
 		t.Errorf("委任の状態 = %q, want paused（往復の上限超過）", q.delegationStatusSetTo[testDelegationID])
+	}
+	if len(q.createdConfirmations) != 1 || q.createdConfirmations[0].Reason != confirmationReasonBudgetExceeded {
+		t.Fatalf("createdConfirmations = %v", q.createdConfirmations)
 	}
 }
 

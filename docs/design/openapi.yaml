@@ -4442,6 +4442,110 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/tickets/{seq}/confirmation:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+    post:
+      tags: [tickets]
+      summary: 確認待ちを立てる
+      operationId: raiseConfirmation
+      description: |
+        自律実行（Delegated）の main が、人への確認待ちを立てる
+        （Delegation.md 8章、pb-249）。**必要権限は `ticket.create`**
+        （呼び出し元がその委任の main であることはハンドラが別に確かめ、
+        違えば `403`）。MCP では `pb_raise_confirmation`。
+
+        `reason` は `scope_change`・`irreversible_external`・`charter_change`・
+        `sensitive_area`・`hearing` のいずれか。`evaluation_unable`・
+        `budget_exceeded`・`checkpoint` はここでは指定できない
+        （評価エージェントの `pb_submit_evaluation`、または PB 自身が別の
+        経路で立てる）。
+
+        **`hearing` 以外が開いているあいだ、委任の木への main・評価の書き込み
+        は止まる**（5章・8.2）。答えるのは PM（`POST .../confirmation/{id}/answer`）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RaiseConfirmationRequest'
+      responses:
+        '201':
+          description: 立てた確認待ち。
+          headers:
+            Location:
+              description: 作った確認待ちの URL（`GET` は実装していない）。
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Confirmation'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/tickets/{seq}/confirmation/{id}/answer:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+      - name: id
+        in: path
+        required: true
+        description: 確認待ちのID。
+        schema: { type: string }
+    post:
+      tags: [tickets]
+      summary: 確認待ちに答える
+      operationId: answerConfirmation
+      description: |
+        PM が確認待ちに答える（Delegation.md 8.2、pb-249）。
+        **必要権限は `delegation.manage`**。答えると関門が外れ、main・評価は
+        委任の木へ再び書き込める——**ただし主状態は動かさない。** PB 自身が
+        立てた `budget_exceeded`（往復の上限超過。評価の提出時に `paused` に
+        している）は、答えるだけでは再開しない。委任の再開（`paused` →
+        `approved`）の経路はまだ無い（finding。別チケットで扱う）。
+        MCP ツールは持たない（PM が画面・APIから直接行う操作）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answer_md]
+              properties:
+                answer_md:
+                  type: string
+                  description: PM の回答（Markdown）。
+      responses:
+        '200':
+          description: 答えた確認待ち。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Confirmation'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/tickets/{seq}/transitions:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -9212,6 +9316,68 @@ components:
         created_at:
           type: integer
           format: int64
+
+    RaiseConfirmationRequest:
+      description: |
+        確認待ちの提出（Delegation.md 8章、pb-249）。
+      type: object
+      required: [reason, question_md]
+      properties:
+        reason:
+          type: string
+          enum: [scope_change, irreversible_external, charter_change, sensitive_area, hearing]
+        question_md:
+          type: string
+          description: PM への問い（Markdown）。
+        options:
+          type: array
+          description: 選択肢と推奨（任意）。
+          items:
+            type: object
+            additionalProperties: true
+
+    Confirmation:
+      description: |
+        確認待ち1件（Delegation.md 8.1・8.2）。
+      type: object
+      required: [id, ticket_seq, reason, question_md, status, raised_by, created_at]
+      properties:
+        id:
+          type: string
+          example: 01K2F8QW3H7YRJ4M5N6P7Q8CNF
+        ticket_seq:
+          type: integer
+          description: 確認待ちが立った対象チケットの番号。
+        reason:
+          type: string
+          enum: [scope_change, irreversible_external, charter_change, sensitive_area,
+                 budget_exceeded, evaluation_unable, checkpoint, hearing]
+        question_md:
+          type: string
+        options:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        status:
+          type: string
+          enum: [open, answered, withdrawn]
+        answer_md:
+          type: string
+          nullable: true
+        raised_by:
+          $ref: '#/components/schemas/ActorRef'
+        answered_by:
+          allOf:
+            - $ref: '#/components/schemas/ActorRef'
+          nullable: true
+        created_at:
+          type: integer
+          format: int64
+        answered_at:
+          type: integer
+          format: int64
+          nullable: true
 
     TicketReport:
       description: |
