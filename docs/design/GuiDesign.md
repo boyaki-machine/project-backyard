@@ -834,7 +834,7 @@ URL を持たせると、開き直せるように見えて実際には最初か�
 
 | ブロック | データ源 | 状態 |
 |---|---|---|
-| 期間内の増加・消化 | `GET /api/v1/projects/:key/ticket-trends?days=7`（`ApiDesign.md` 9.13.3） | 構想／未実装（pb-264 / pb-265） |
+| 期間内の増加・消化 | `GET /api/v1/projects/:key/ticket-trends?days=7`（`ApiDesign.md` 9.13.3） | 実装済み（pb-264 / pb-265） |
 | ステータス集計 | `GET /api/v1/projects/:key/stats`（`ApiDesign.md` 9.13.1） | 実装済み |
 | 自分の担当 | `GET /api/v1/projects/:key/tickets?assignee=me&open=true&type=story,task&per_page=5` | 実装済み |
 | 期限が近い | `GET /api/v1/projects/:key/tickets?due_within=7d&open=true&type=story,task&sort=due_at&per_page=5` | 実装済み |
@@ -881,7 +881,7 @@ URL を持たせると、開き直せるように見えて実際には最初か�
 
 **表示形式（相対／絶対、桁数）を設定で切り替えられるようにするかは決めていない。** 置き場（サーバ単位・プロジェクト単位・利用者単位）の判断を伴う。
 
-### 期間内の増加・消化（構想／未実装、pb-263）
+### 期間内の増加・消化（pb-263 / pb-265）
 
 **状態カードの下、自分の担当・期限が近いの上に、全幅のブロックを置く。** 初期は直近7日、選択欄で28日へ切り替える。6本目の `ticket-trends` はこのブロックだけの独立した読込・エラー・再試行を持ち、切替時はこの要求だけを投げ直す。プロジェクト・期間の切替後に古い応答を混ぜない。
 
