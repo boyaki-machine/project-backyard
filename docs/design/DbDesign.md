@@ -2048,6 +2048,56 @@ CREATE TABLE delegation_plan (
 `body_md` を写した新しい版を作り、`reverts_to` に元の版番号を残す。**評価を挟まず
 即座に `accepted` にする**——2層の承認をすでに経た人の判断だからである。
 
+## 6.26 評価記録（0052）
+
+**正本は `Delegation.md` 7章・12.2。** pb-248。D4 で確定した5表のうち、残る
+`confirmation` / `delegation_handoff` は別チケット（pb-249・pb-250）で足す。
+
+```sql
+CREATE TABLE evaluation (
+  id                     char(26) COLLATE "C" PRIMARY KEY,
+  delegation_id          char(26) COLLATE "C" NOT NULL REFERENCES delegation(id) ON DELETE CASCADE,
+  target_kind            text NOT NULL CHECK (target_kind IN ('plan','deliverable')),
+  plan_id                char(26) COLLATE "C" REFERENCES delegation_plan(id) ON DELETE CASCADE,
+  agent_report_id        char(26) COLLATE "C" REFERENCES agent_report(id) ON DELETE CASCADE,
+  round                  integer NOT NULL,
+  verdict                text NOT NULL CHECK (verdict IN ('pass','fail','unable')),
+  findings               jsonb NOT NULL,
+  class_check            text CHECK (class_check IN ('agree','stricter','looser')),
+  evaluator_actor_id     char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  evaluator_client_kind  text, evaluator_model_name text, evaluator_model_version text,
+  main_client_kind       text, main_model_name text, main_model_version text,
+  tokens_used            bigint,
+  objected_at            timestamptz,
+  created_at             timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT ck_evaluation_target CHECK (
+    (target_kind = 'plan' AND plan_id IS NOT NULL AND agent_report_id IS NULL)
+    OR (target_kind = 'deliverable' AND agent_report_id IS NOT NULL AND plan_id IS NULL))
+);
+```
+
+**`round` は PB が測る。** 自己申告ではない——同じ対象（`delegation_id ×
+target_kind`）への直前の `pass` 以降の件数+1（`CountEvaluationsSinceLastPass`）。
+合格のたびに0から数え直す。
+
+**評価の対象ごとの副作用（7.2）**
+
+| 対象 | 合格 | 不合格 |
+|---|---|---|
+| plan・初版（version=1） | 何もしない（6.1「PM の承認待ちになる」——計画の `accepted` 化は委任範囲の承認操作に属し、未実装） | 同上 |
+| plan・version 2以上 | `delegation_plan.status` を `accepted` にする | `rejected` にする（main は新しい版を出し直す） |
+| deliverable（根の完了レポート） | 記録のみ。根の受け入れ可否は `ticket.transition` の検証8（9.6/9.7）が「最新の `agent_report` への評価が `pass` か」で見る | 記録のみ。main は新しい完了レポートを出し直せる |
+
+**`unable`、または往復の上限（初期値3。固定値）に達した不合格は `delegation`
+を `paused` にし、根へ通知コメントを1件書く。** `confirmation` 表（pb-249）が
+まだ無いための代替——既存の委任ゲート（`status == 'approved'` だけが main の
+書き込みを通す）が、`paused` を立てた時点で木への書き込みを自動的に止めるため、
+Delegation.md 8.2「確認待ちの間 main の書き込みを止める」と同じ効果になる。
+確認待ちそのもの（理由・選択肢・回答の記録）は pb-249 で足す。
+
+**評価エージェントのトークンに要る権限は `delegation.evaluate` だけ**
+（0050 で既に登録済み。起票・編集・遷移は要らない。7.1）。
+
 # 7. 初期データ（0010）
 
 ## 7.1 認証プロバイダ

@@ -169,6 +169,15 @@ type Querier interface {
 	// **ログインのたびに通る。** 行そのものは要らず、1件でもあるかを見る
 	// （Design.md 6.7.4 の手順2）。
 	CountConfirmedMfaCredentials(ctx context.Context, userID string) (int64, error)
+	// 評価記録（evaluation）に関するクエリ（DbDesign.md 6.26、Delegation.md 7章）。
+	// pb-248。confirmation / delegation_handoff は別チケット（pb-249・pb-250）で足す。
+	// CountEvaluationsSinceLastPass は round を決めるのに使う（7.3「同じ対象への
+	// 何回目か」）。
+	//
+	// **「同じ対象」は delegation_id × target_kind である。** 直前の合格以降の件数
+	// +1 が今回の round になる——合格のたびに往復は0から数え直す（一度正したものを
+	// 再び咎めない）。合格が1件も無ければ、委任のこの対象への最初からの件数+1。
+	CountEvaluationsSinceLastPass(ctx context.Context, arg CountEvaluationsSinceLastPassParams) (int64, error)
 	// CountMyAPITokens は発行本数の上限（1人5本。ApiDesign.md 4.4.2）を判定する。
 	//
 	// **数え方は ListMyAPITokens と同一にする**（失効していないもの。期限切れを含む）。
@@ -241,6 +250,10 @@ type Querier interface {
 	// **読み取りのクエリを置かない。** 人が読むのは完了レポートのコメント
 	// であり（GuiDesign.md 5.5）、agent_report の行そのものを読む面が無い（9.15 が
 	// GET .../reports を置かないと決めた）。**要るようになってから足す。**
+	//
+	// **例外は GetLatestAgentReportForTicket（pb-248）。** 評価エージェントが
+	// 「根の最新の完了レポート」を評価対象にするための内部参照で、人が読む面では
+	// ない（Delegation.md 7.2）。
 	// CreateAgentRun は1回の実行記録を作る。
 	//
 	// **status に入るのは completed だけである**（DbDesign.md 8.2.4）。
@@ -307,6 +320,8 @@ type Querier interface {
 	// **POST は revision_no = 1 を作る**（10.4）。リビジョンは「その変更のあとの本文」を
 	// 持つので、作成時の1件が無いと最初の編集で「作ったときの本文」が残らない。
 	CreateDocumentRevision(ctx context.Context, arg CreateDocumentRevisionParams) error
+	// CreateEvaluation は評価を1件作る（Delegation.md 7.3）。
+	CreateEvaluation(ctx context.Context, arg CreateEvaluationParams) error
 	// 取り込みの暦を作る（5.8.4）。取り込み直しは同じ行を使い回す。
 	CreateFileHolidaySource(ctx context.Context, arg CreateFileHolidaySourceParams) error
 	// must_change を明示で受ける（DbDesign.md 6.2 の既定は false）。
@@ -792,10 +807,21 @@ type Querier interface {
 	GetDocument(ctx context.Context, id string) (GetDocumentRow, error)
 	// GetDocumentRevision は1件ぶんの本文（10.5）。
 	GetDocumentRevision(ctx context.Context, arg GetDocumentRevisionParams) (GetDocumentRevisionRow, error)
+	// GetEvaluationByID は提出直後の応答の組み立てに使う。
+	GetEvaluationByID(ctx context.Context, id string) (GetEvaluationByIDRow, error)
+	// GetEvaluationVerdictForReport は、根の受け入れ（ticket.transition の検証8）
+	// が「最新の完了レポートは評価に合格しているか」を見るのに使う（7.2）。
+	GetEvaluationVerdictForReport(ctx context.Context, agentReportID pgtype.Text) (string, error)
 	// GetLatestAcceptedDelegationPlan は判定の基準にする直前の承認済み版を返す
 	// （6.3「前の承認済みの版と比べて段階を決める」）。1件も無ければ初版の提出
 	// （6.1「計画の初版は、評価が先」——判定規則を適用しない）。
 	GetLatestAcceptedDelegationPlan(ctx context.Context, delegationID string) (GetLatestAcceptedDelegationPlanRow, error)
+	// GetLatestAgentReportForTicket は、そのチケットへの直近の完了レポートを返す
+	// （Delegation.md 7.2「成果（根の完了レポート）」の評価対象。pb-248）。
+	//
+	// **再提出は別の run・別の report になる**（buildAgentRun のコメントと同じ
+	// 理由）ので、「最新」は submitted_at（agent_run.ended_at）の降順1件でよい。
+	GetLatestAgentReportForTicket(ctx context.Context, ticketID string) (GetLatestAgentReportForTicketRow, error)
 	// GetParentForCascade は「子が動いたら親を進行中にする」で祖先をたどる1段ぶん
 	// （9.6）。子の id を渡すと、その親の seq とステータスのカテゴリが返る。
 	//
@@ -940,10 +966,8 @@ type Querier interface {
 	GetTicketTypeByID(ctx context.Context, id string) (string, error)
 	// 業務履歴（ApiDesign.md 9.1.1、DbDesign.md 6.8 の activity）。
 	//
-	// **audit_log とは読み手が違う。** audit_log は認証・権限・トークン・ユーザー管理を
-	// インスタンス管理者が追うためのもので、activity はチケットの変更をプロジェクトの
-	// メンバーが読むためのものである（GuiDesign.md 5.5 の「変更履歴」）。混ぜると
-	// 監査ログがチケット更新で埋まって本来の用途に使えなくなる。
+	// activity はチケット詳細の変更履歴を支える。管理者の横断監査一覧は
+	// audit_event ビューを通じて audit_log と activity を一緒に読む。
 	//
 	// 書き込みは手順16b（チケット作成）から始まり、17a・17c・18a で対象が広がった。
 	// 読み出し（GET /projects/:key/activity）は手順19a で足した。
@@ -1743,6 +1767,10 @@ type Querier interface {
 	// 「いつ利用者がパスワードを変えたか」の意味を壊さないため。
 	//
 	RehashPassword(ctx context.Context, arg RehashPasswordParams) error
+	// RejectDelegationPlan は評価が不合格だった構造の変更を確定する（7.2・6.3。
+	// pb-248）。**decided_by は呼び出し元ではなく PB 自身**——AcceptDelegationPlan
+	// と同じ理由で、不合格にしたのは main でも PM でもなく評価の結果である。
+	RejectDelegationPlan(ctx context.Context, id string) (int64, error)
 	// ResetLocalCredential は 6.6 の更新を1文で行う。
 	//
 	// **failed_attempts と locked_until も戻す**（6.6）。ロックされた利用者を

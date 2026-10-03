@@ -1354,6 +1354,67 @@ func TestTransitionTicketRejectsDoneWithOpenChildren(t *testing.T) {
 	}
 }
 
+// 検証8：委任の根は、成果の評価が合格するまで完了にできない
+// （Delegation.md 5章・7.2。pb-248）。
+
+func TestTransitionTicketRejectsDoneWithoutPassingEvaluation(t *testing.T) {
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	row := q.ticket.bySeq[31]
+	row.StatusKey = "review"
+	q.ticket.bySeq[31] = row
+	q.ticket.openChildren = 0
+	withMainDelegation(q, "approved")
+	// latestAgentReport が未設定（ゼロ値）＝まだ完了レポートが無い＝未合格。
+
+	rec := callTransition(q, `{"to":"done"}`, "ticket.transition", "ticket.close")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
+	}
+	e := errorOf(t, rec)
+	if e.Code != "forbidden" {
+		t.Errorf("code = %q, want forbidden", e.Code)
+	}
+	if e.Message != evaluationNotPassedReason {
+		t.Errorf("message = %q, want %q", e.Message, evaluationNotPassedReason)
+	}
+	if len(q.ticket.statusSet) != 0 {
+		t.Errorf("拒んだのにステータスを書いている: %v", q.ticket.statusSet)
+	}
+}
+
+func TestTransitionTicketAllowsDoneWhenEvaluationPassed(t *testing.T) {
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	row := q.ticket.bySeq[31]
+	row.StatusKey = "review"
+	q.ticket.bySeq[31] = row
+	q.ticket.openChildren = 0
+	withMainDelegation(q, "approved")
+	q.latestAgentReport = gen.GetLatestAgentReportForTicketRow{ID: "01K2REPORT0000000000001"}
+	q.evaluationVerdictByReport = map[string]string{"01K2REPORT0000000000001": "pass"}
+
+	rec := callTransition(q, `{"to":"done"}`, "ticket.transition", "ticket.close")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTransitionTicketWithoutDelegationIgnoresEvaluationGate(t *testing.T) {
+	q := ticketDetailFake()
+	withReviewWorkflow(q)
+	row := q.ticket.bySeq[31]
+	row.StatusKey = "review"
+	q.ticket.bySeq[31] = row
+	q.ticket.openChildren = 0
+	// 委任に属さないチケット（delegationByRootTicket 未設定）。
+
+	rec := callTransition(q, `{"to":"done"}`, "ticket.transition", "ticket.close")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
 // **完了へ進むときだけ数える**（9.6）。他の遷移で結果に効かないクエリを毎回
 // 増やさない。
 func TestTransitionTicketCountsChildrenOnlyForDone(t *testing.T) {

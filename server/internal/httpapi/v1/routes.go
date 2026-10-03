@@ -500,6 +500,13 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/plan/{version}/revert", h.revertDelegationPlan)
 
+		// ── 評価（Delegation.md 7章・12.2）── pb-248 ───────────────
+		//
+		// **呼ぶのは評価エージェントだけ**（delegation.evaluate。身元の確認は
+		// ハンドラ内で行う。plan・delegation と同じ形）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.evaluate")).
+			Post("/projects/{key}/tickets/{seq}/evaluation", h.submitEvaluation)
+
 		// ── チケット間リンク（ApiDesign.md 9.10.1）── 手順18a ─────
 		//
 		// **PATCH は lag_days だけ**（9.10.1。pb-231）。一意制約が (source, target, link_type)

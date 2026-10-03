@@ -284,8 +284,9 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 	// 順で呼ぶので pb_get_task の直後）＋ write 7件（10.7.1 の開発フローの順。
 	// pb_update_ticket と pb_put_dod は起票したあと直すので pb_create_ticket の隣、
 	// pb_add_reference は「実装中に分かったことを書く」の隣＝作業の跡を積む位置。
-	// pb_submit_plan は自律実行の main が計画の版を出す口。Delegation.md 15章 D7
-	// の新設5ツールのうちMCPに開けるのはこれだけ）＋ 遷移2件（見てから動かす順。
+	// pb_submit_plan は自律実行の main が計画の版を出す口、pb_submit_evaluation は
+	// 評価エージェントが計画・成果を評価する口（Delegation.md 15章 D7 の新設5ツール
+	// のうちMCPに開けるのはこの2つ。pb-247・pb-248）＋ 遷移2件（見てから動かす順。
 	// 手順26b）＋ 完了レポート1件（手順26c。/pb-implement の流れの終端）。
 	//
 	// **pb_claim_task / pb_release_task は持たない（構想）**
@@ -295,7 +296,8 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tags",
 		"pb_list_tasks", "pb_get_task", "pb_list_comments", "pb_get_context",
 		"pb_create_ticket", "pb_update_ticket", "pb_put_dod",
-		"pb_post_note", "pb_add_reference", "pb_submit_plan", "pb_create_doc", "pb_put_doc",
+		"pb_post_note", "pb_add_reference", "pb_submit_plan", "pb_submit_evaluation",
+		"pb_create_doc", "pb_put_doc",
 		"pb_list_transitions", "pb_transition_task",
 		"pb_submit_result",
 		"pb_wait",

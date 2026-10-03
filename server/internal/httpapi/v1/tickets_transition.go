@@ -156,8 +156,20 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 			hasOpenChildren = n > 0
 		}
 
-		// 検証2：定義が無ければ 409、検証3〜6 は 403、検証7 は 409。
-		if reason := wf.denyTransition(before.StatusKey, *target, actor, hasOpenChildren); reason != "" {
+		// 検証8 の材料（Delegation.md 5章・7.2。pb-248）。**完了へ進むときだけ
+		// 見る。** このチケットが委任の根でなければ常に false——子（D2 の
+		// 案a）や委任に属さないチケットは、従来どおり検証1〜7 だけに従う。
+		var rootEvaluationPending bool
+		if target.Category == statusCategoryDone {
+			pending, err := rootHasUnpassedEvaluation(ctx, q, before.ID)
+			if err != nil {
+				return fmt.Errorf("チケット %d の評価状況を確認できない: %w", seq, err)
+			}
+			rootEvaluationPending = pending
+		}
+
+		// 検証2：定義が無ければ 409、検証3〜6 は 403、検証7・8 は 409 / 403。
+		if reason := wf.denyTransition(before.StatusKey, *target, actor, hasOpenChildren, rootEvaluationPending); reason != "" {
 			writeErr = transitionDenied(wf, before.StatusKey, req.To, reason)
 			return errTicketReference
 		}
@@ -440,6 +452,11 @@ func stageDisplayRootOnStart(
 func transitionDenied(wf ticketWorkflow, from, to, reason string) *apierr.Error {
 	if reason == childrenNotClosedReason {
 		return apierr.New(apierr.ChildrenNotClosed).WithMessage(reason)
+	}
+	if reason == evaluationNotPassedReason {
+		return apierr.New(apierr.Forbidden).WithMessage(reason).WithDetails(apierr.Detail{
+			Field: "to", Code: "delegation_stage",
+		})
 	}
 	if wf.findTransition(from, to) == nil {
 		return apierr.New(apierr.InvalidTransition).WithMessage(reason)

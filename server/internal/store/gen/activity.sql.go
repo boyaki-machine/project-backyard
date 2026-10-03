@@ -42,10 +42,8 @@ type InsertActivityParams struct {
 
 // 業務履歴（ApiDesign.md 9.1.1、DbDesign.md 6.8 の activity）。
 //
-// **audit_log とは読み手が違う。** audit_log は認証・権限・トークン・ユーザー管理を
-// インスタンス管理者が追うためのもので、activity はチケットの変更をプロジェクトの
-// メンバーが読むためのものである（GuiDesign.md 5.5 の「変更履歴」）。混ぜると
-// 監査ログがチケット更新で埋まって本来の用途に使えなくなる。
+// activity はチケット詳細の変更履歴を支える。管理者の横断監査一覧は
+// audit_event ビューを通じて audit_log と activity を一緒に読む。
 //
 // 書き込みは手順16b（チケット作成）から始まり、17a・17c・18a で対象が広がった。
 // 読み出し（GET /projects/:key/activity）は手順19a で足した。
