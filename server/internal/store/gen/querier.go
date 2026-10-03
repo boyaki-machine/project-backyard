@@ -65,6 +65,12 @@ type Querier interface {
 	// ぶつかりうる。**自分自身を除く**のが AgentExistsWithName との違いである。
 	//
 	AgentExistsWithNameExcept(ctx context.Context, arg AgentExistsWithNameExceptParams) (bool, error)
+	// AgentUsableInProject は main_actor_id / evaluator_actor_id の検証に使う。
+	//
+	// **agent.project_id が NULL なら、どのプロジェクトでも使える**
+	// （複数プロジェクト兼用のエージェント。DbDesign.md 8.2.1 の agent テーブル）。
+	// NOT NULL なら、このプロジェクトと一致することを要る。
+	AgentUsableInProject(ctx context.Context, arg AgentUsableInProjectParams) (bool, error)
 	// AppUserExists は UpdateAdminUserProfile が 0 行だった理由を切り分ける。
 	//
 	// 行が在れば version 不一致（409 conflict）、無ければ削除済み（404）。
@@ -267,6 +273,16 @@ type Querier interface {
 	// **埋まるのは pb_submit_result が作る完了レポートのコメントだけ**——遷移コメントも
 	// pb_post_note も、その時点で run が存在しないので NULL を渡す。
 	CreateComment(ctx context.Context, arg CreateCommentParams) error
+	// 委任（delegation）に関するクエリ（DbDesign.md 6.24、Delegation.md 4章・12.2）。
+	// pb-246。delegation_plan / evaluation / confirmation / delegation_handoff は
+	// 別チケット（pb-247〜250）で足す。
+	//
+	// **木への所属の判定は、既存の IsTicketDescendant（ticket.sql）を使い回す。**
+	// 「候補チケットが、ある根の木に属するか」は ticket.sql が既に持っている
+	// （9.5.2 の parent_cycle 検出と同じ再帰）。ここで重ねて同じ CTE を書かない。
+	// CreateDelegation は委任を1件作る（Delegation.md 4.4）。
+	// **root_ticket_id は UNIQUE。** 同じ根に2件目の委任は作れない。
+	CreateDelegation(ctx context.Context, arg CreateDelegationParams) error
 	// CreateDeletedAgentActor は付け替え先を1件作る。
 	//
 	// **シードで先に置かず、最初に必要になった削除で作る**（CreateSystemActor と
@@ -664,6 +680,13 @@ type Querier interface {
 	// ここに依存しないが、あとから振り返る材料になる。**終日のスプリントは基準タイム
 	// ゾーンの翌日の0時**（今日を含める。半開区間の終わり）、時刻付きは now()（pb-217）。
 	FinishSprint(ctx context.Context, arg FinishSprintParams) (int64, error)
+	// GetActiveDelegationByMainActor は 12.2 の判定に使う。
+	// **呼び出し元がどこかの委任の main かどうかを、このプロジェクトに限って見る。**
+	// status <> 'ended' を「現役」とする——計画中・承認済・停止のいずれでも、
+	// その委任の main は「委任の木の外に起票できない」制約を受ける（5章）。
+	// 行が無ければ、呼び出し元はどの委任の main でもない（通常の ticket.create の
+	// 判定だけが効く）。
+	GetActiveDelegationByMainActor(ctx context.Context, arg GetActiveDelegationByMainActorParams) (GetActiveDelegationByMainActorRow, error)
 	// ─────────────────────────────────────────────────────────────
 	// スプリントの運用（開始・終了）。ApiDesign.md 9.12.1 / 9.12.2。
 	//
@@ -728,6 +751,8 @@ type Querier interface {
 	// この表を読まない（環境変数が勝つ）。
 	// 鍵を引く。無ければ行が返らない（初回）。
 	GetAppSecret(ctx context.Context, keyID string) (GetAppSecretRow, error)
+	// GetDelegationByID は作成直後の応答の組み立てに使う。
+	GetDelegationByID(ctx context.Context, id string) (GetDelegationByIDRow, error)
 	// 表示上のトップレベルの祖先（自分を含む）を返す（ApiDesign.md 9.6
 	// 「着手したら、オンステージへ上げる」）。
 	//
@@ -860,6 +885,9 @@ type Querier interface {
 	// up の1行は「深さ depth の行の親」を持つ。**深さに上限を置く**のは
 	// GetDisplayRootForStaging と同じ理由（万一の循環で要求が返らなくなるのを避ける）。
 	GetTicketEpicAncestor(ctx context.Context, ticketID string) (GetTicketEpicAncestorRow, error)
+	// GetTicketForDelegation は委任を作る前に、対象が根（親を持たない）かを
+	// 確かめるのに使う。
+	GetTicketForDelegation(ctx context.Context, id string) (GetTicketForDelegationRow, error)
 	// GetTicketLink は1件を、**このチケットに紐づいているかを含めて**引く。
 	//
 	// **source と target のどちらでもよい。** DELETE は direction を問わないため
@@ -945,6 +973,13 @@ type Querier interface {
 	// FindActiveAgentToken は再発行のときに失効させる相手を引く。
 	//
 	ListActiveAgentTokens(ctx context.Context, arg ListActiveAgentTokensParams) ([]ListActiveAgentTokensRow, error)
+	// ListActiveDelegationsForProject は「このチケットはどこかの委任の木に
+	// 属するか」を調べるのに使う（報告の提出・移動の強制）。
+	//
+	// **プロジェクト内の委任は少数である**（1委任=1根）。候補チケットごとに
+	// IsTicketDescendant（ticket.sql）へ1回ずつ照合するほうが、新しい再帰 CTE を
+	// もう1本持つより単純である。
+	ListActiveDelegationsForProject(ctx context.Context, projectID string) ([]ListActiveDelegationsForProjectRow, error)
 	// ── 読み出し（ApiDesign.md 9.13.2。手順19a）────────────────────
 	// ListActivity はプロジェクトの業務履歴を新しい順に返す。
 	//
@@ -1839,6 +1874,15 @@ type Querier interface {
 	// 一覧の open フィルタ（9.2.1）とスプリントの進捗（9.12 の closed_count）が
 	// closed_at を基準にしており、NULL のままでは目で確かめられない。
 	SetTicketClosedAt(ctx context.Context, arg SetTicketClosedAtParams) error
+	// SetTicketExecutionMode は委任の作成時に execution_mode を 'delegated' に
+	// する専用の更新である（D1）。
+	//
+	// **9.5.2 の一般的な PATCH（UpdateTicket）を使わない。** あちらは execution_mode
+	// を開けていない——「スコープ境界は縛る側が書くものである」（同節）ため、
+	// エージェントが自分で緩められる経路を作らない。ここは delegation.manage を
+	// 持つ人間だけが通る別経路（本ファイルの createDelegation）であり、
+	// 1列だけを狙って書く。
+	SetTicketExecutionMode(ctx context.Context, arg SetTicketExecutionModeParams) (int64, error)
 	// SetTicketSortKey は振り直しの1行ぶん。
 	//
 	// **version を上げない。** 振り直しはプロジェクトの全行に触るので、上げると

@@ -239,6 +239,20 @@ type ContextPackLog struct {
 	GeneratedAt  time.Time
 }
 
+type Delegation struct {
+	ID               string
+	ProjectID        string
+	RootTicketID     string
+	MainActorID      string
+	EvaluatorActorID string
+	Status           string
+	Scope            []byte
+	ScopeVersion     int32
+	CreatedBy        string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
 type Document struct {
 	ID          string
 	ProjectID   pgtype.Text
