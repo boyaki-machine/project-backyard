@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"os"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
@@ -184,30 +187,42 @@ func TestRecordRejectsBadResult(t *testing.T) {
 }
 
 func TestAllDocumentedActionsAreAccepted(t *testing.T) {
-	// ApiDesign.md 2.10 が列挙する30件。定数の取りこぼしを検出する。
-	// agent. の3件は ApiDesign.md 4.5.6。
-	// setting.update は ApiDesign.md 11.2。tls.certificate.* は 11.5 / 11.6。
-	// mfa.* と login.mfa_failure は 4.6.6。passkey.* と login.passkey_failure は 4.7.5。
-	documented := []Action{
-		"login.success", "login.failure", "logout",
-		"password.change", "password.reset",
-		"token.issue", "token.revoke", "session.revoke",
-		"user.create", "user.update", "user.delete", "role.change",
-		"project.create", "project.archive", "permission.denied",
-		"agent.register", "agent.update", "agent.delete",
-		"setting.update",
-		"tls.certificate.upload", "tls.certificate.delete",
-		"mfa.register", "mfa.unregister", "mfa.recovery_codes.regenerate",
-		"mfa.reset", "login.mfa_failure",
-		"passkey.register", "passkey.unregister", "passkey.reset", "login.passkey_failure",
-		"database.backup", "database.restore",
+	// 正本のカタログを読む。追加済みの操作を試験の写しへ転記し忘れないようにする。
+	design, err := os.ReadFile("../../../docs/design/ApiDesign.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, section, found := strings.Cut(string(design), "## 2.10 監査ログ\n")
+	if !found {
+		t.Fatal("ApiDesign.md 2.10 が無い")
+	}
+	_, catalog, found := strings.Cut(section, "\n\n")
+	if !found {
+		t.Fatal("監査ログの説明が無い")
+	}
+	catalog, _, _ = strings.Cut(catalog, "\n\n")
+	documented := map[Action]bool{}
+	for _, match := range regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(catalog, -1) {
+		action := Action(match[1])
+		if documented[action] {
+			t.Fatalf("%q が文書で重複している", action)
+		}
+		documented[action] = true
+	}
+	if len(documented) == 0 {
+		t.Fatal("監査アクションの一覧が空")
 	}
 	if len(actions) != len(documented) {
 		t.Errorf("アクション数 = %d, want %d（ApiDesign.md 2.10）", len(actions), len(documented))
 	}
-	for _, a := range documented {
+	for a := range documented {
 		if !actions[a] {
 			t.Errorf("%q が定数に無い", a)
+		}
+	}
+	for a := range actions {
+		if !documented[a] {
+			t.Errorf("%q が文書に無い", a)
 		}
 	}
 }
