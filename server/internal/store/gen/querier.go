@@ -75,6 +75,8 @@ type Querier interface {
 	// （複数プロジェクト兼用のエージェント。DbDesign.md 8.2.1 の agent テーブル）。
 	// NOT NULL なら、このプロジェクトと一致することを要る。
 	AgentUsableInProject(ctx context.Context, arg AgentUsableInProjectParams) (bool, error)
+	// AnswerConfirmation はPMの回答を記録する（8.2「答えると、関門が外れて元の主状態に戻る」）。
+	AnswerConfirmation(ctx context.Context, arg AnswerConfirmationParams) (int64, error)
 	// AppUserExists は UpdateAdminUserProfile が 0 行だった理由を切り分ける。
 	//
 	// 行が在れば version 不一致（409 conflict）、無ければ削除済み（404）。
@@ -295,6 +297,9 @@ type Querier interface {
 	// **埋まるのは pb_submit_result が作る完了レポートのコメントだけ**——遷移コメントも
 	// pb_post_note も、その時点で run が存在しないので NULL を渡す。
 	CreateComment(ctx context.Context, arg CreateCommentParams) error
+	// 確認待ち（confirmation）に関するクエリ（DbDesign.md 6.27、Delegation.md 8章）。pb-249。
+	// CreateConfirmation は確認待ちを1件立てる（8.1）。
+	CreateConfirmation(ctx context.Context, arg CreateConfirmationParams) error
 	// 委任（delegation）に関するクエリ（DbDesign.md 6.24、Delegation.md 4章・12.2）。
 	// pb-246。計画の版（delegation_plan）は delegation_plan.sql（pb-247）。
 	// evaluation / confirmation / delegation_handoff は別チケット（pb-248〜250）で足す。
@@ -305,6 +310,8 @@ type Querier interface {
 	// CreateDelegation は委任を1件作る（Delegation.md 4.4）。
 	// **root_ticket_id は UNIQUE。** 同じ根に2件目の委任は作れない。
 	CreateDelegation(ctx context.Context, arg CreateDelegationParams) error
+	// CreateDelegationHandoff は引き継ぎノートを1件作る（11.1）。
+	CreateDelegationHandoff(ctx context.Context, arg CreateDelegationHandoffParams) error
 	// CreateDelegationPlan は計画の版を1件作る（Delegation.md 6.2）。
 	CreateDelegationPlan(ctx context.Context, arg CreateDelegationPlanParams) error
 	// CreateDeletedAgentActor は付け替え先を1件作る。
@@ -777,6 +784,8 @@ type Querier interface {
 	// この表を読まない（環境変数が勝つ）。
 	// 鍵を引く。無ければ行が返らない（初回）。
 	GetAppSecret(ctx context.Context, keyID string) (GetAppSecretRow, error)
+	// GetConfirmationByID は応答の組み立てと、回答の対象確認に使う。
+	GetConfirmationByID(ctx context.Context, id string) (GetConfirmationByIDRow, error)
 	// GetDelegationByID は作成直後の応答の組み立てに使う。
 	GetDelegationByID(ctx context.Context, id string) (GetDelegationByIDRow, error)
 	// GetDelegationByRootTicket は根のチケットから委任を引く（pb-247）。
@@ -822,6 +831,16 @@ type Querier interface {
 	// **再提出は別の run・別の report になる**（buildAgentRun のコメントと同じ
 	// 理由）ので、「最新」は submitted_at（agent_run.ended_at）の降順1件でよい。
 	GetLatestAgentReportForTicket(ctx context.Context, ticketID string) (GetLatestAgentReportForTicketRow, error)
+	// GetLatestDelegationHandoff は「最新の行が現在のノート」を読む
+	// （4.4 の delegation_handoff のコメント）。
+	GetLatestDelegationHandoff(ctx context.Context, delegationID string) (GetLatestDelegationHandoffRow, error)
+	// GetLatestDelegationPlan は「次の一手」（9.3）の判定に使う、版にかかわらず
+	// 最新の計画を読む。既存の GetLatestAcceptedDelegationPlan は status='accepted'
+	// だけを見るので、proposed・rejected を含む最新を見るにはこちらを使う。
+	GetLatestDelegationPlan(ctx context.Context, delegationID string) (GetLatestDelegationPlanRow, error)
+	// GetLatestEvaluationForDelegation は、パック（9.1「開いている評価の指摘」）
+	// が表示する直近の評価を読む。target_kind を問わない（pb-251）。
+	GetLatestEvaluationForDelegation(ctx context.Context, delegationID string) (GetLatestEvaluationForDelegationRow, error)
 	// GetParentForCascade は「子が動いたら親を進行中にする」で祖先をたどる1段ぶん
 	// （9.6）。子の id を渡すと、その親の seq とステータスのカテゴリが返る。
 	//
@@ -964,6 +983,14 @@ type Querier interface {
 	// **新しい親の種別が要る。** 「段に置けるのは親を持たないもの、または親が
 	// エピックのもの」（9.4.1）を、変更後の値で判定するためである。
 	GetTicketTypeByID(ctx context.Context, id string) (string, error)
+	// HasAnsweredConfirmation は「次の一手」の判定に使う（9.3「ヒアリングに
+	// 答えが付いた」「確認待ちに答えが付いた」）。
+	HasAnsweredConfirmation(ctx context.Context, arg HasAnsweredConfirmationParams) (bool, error)
+	// HasOpenConfirmation は5章「確認待ち（どの主状態でも）」の関門を判定する
+	// （4.3「関門は列に持たず、開いている確認待ちから導く」）。
+	//
+	// **hearing（8.1 の8）は関門に数えない**（8.2「ヒアリングは止めない」）。
+	HasOpenConfirmation(ctx context.Context, delegationID string) (bool, error)
 	// 業務履歴（ApiDesign.md 9.1.1、DbDesign.md 6.8 の activity）。
 	//
 	// activity はチケット詳細の変更履歴を支える。管理者の横断監査一覧は
@@ -1249,6 +1276,8 @@ type Querier interface {
 	// 判定は 9.2.1 の条件1・2 と同じで、根は表示上のトップレベルなので条件3 は
 	// 自動的に満たされる。
 	ListOnstageTicketIDs(ctx context.Context, projectID string) ([]string, error)
+	// ListOpenConfirmations はパック（9.1）と画面に出す一覧。
+	ListOpenConfirmations(ctx context.Context, delegationID string) ([]ListOpenConfirmationsRow, error)
 	// ListOwnedAgentActorIDs は、その人が所有するエージェントを列挙する。
 	//
 	// **人の削除（ApiDesign.md 6.5）で使う。** agent.owner_actor_id の
@@ -1698,6 +1727,10 @@ type Querier interface {
 	// null に限られる（9.4.2）ので、親を付け替える経路はここに無い——それは
 	// PATCH（9.5.2）の仕事である。
 	MoveTicket(ctx context.Context, arg MoveTicketParams) (MoveTicketRow, error)
+	// 引き継ぎノート（delegation_handoff）に関するクエリ（DbDesign.md 6.28、
+	// Delegation.md 9.3・11章）。pb-250。
+	// NextDelegationHandoffVersion は次に振る版番号を返す（1始まり。追記のみ）。
+	NextDelegationHandoffVersion(ctx context.Context, delegationID string) (int32, error)
 	// 計画の版に関するクエリ（DbDesign.md 6.25、Delegation.md 6章）。pb-247。
 	// NextDelegationPlanVersion は次に振る版番号を返す（1始まり）。
 	NextDelegationPlanVersion(ctx context.Context, delegationID string) (int32, error)

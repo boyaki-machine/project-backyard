@@ -166,3 +166,34 @@ func (q *Queries) GetEvaluationVerdictForReport(ctx context.Context, agentReport
 	err := row.Scan(&verdict)
 	return verdict, err
 }
+
+const getLatestEvaluationForDelegation = `-- name: GetLatestEvaluationForDelegation :one
+SELECT target_kind, round, verdict, findings, created_at
+FROM evaluation
+WHERE delegation_id = $1
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetLatestEvaluationForDelegationRow struct {
+	TargetKind string
+	Round      int32
+	Verdict    string
+	Findings   []byte
+	CreatedAt  time.Time
+}
+
+// GetLatestEvaluationForDelegation は、パック（9.1「開いている評価の指摘」）
+// が表示する直近の評価を読む。target_kind を問わない（pb-251）。
+func (q *Queries) GetLatestEvaluationForDelegation(ctx context.Context, delegationID string) (GetLatestEvaluationForDelegationRow, error) {
+	row := q.db.QueryRow(ctx, getLatestEvaluationForDelegation, delegationID)
+	var i GetLatestEvaluationForDelegationRow
+	err := row.Scan(
+		&i.TargetKind,
+		&i.Round,
+		&i.Verdict,
+		&i.Findings,
+		&i.CreatedAt,
+	)
+	return i, err
+}

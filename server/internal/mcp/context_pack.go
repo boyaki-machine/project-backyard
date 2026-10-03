@@ -180,6 +180,15 @@ func callGetContext(h *Handler, r *http.Request, key string, args json.RawMessag
 		return toolResult{}, newError(codeInternalError, "チケットの応答を解釈できない: "+err.Error())
 	}
 
+	// ── 委任の状態（9.1。pb-251）─────────────────────────────
+	//
+	// **チケットの直後、憲章より先に読む。** vision を全文で載せる例外
+	// （9.1）の判定に、委任の木に属するかどうかが要る。
+	delegStatus, rpcErr := h.fetchDelegationStatus(r, ticketPath(key, seq))
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+
 	// ── 憲章（10.2 の目次 → 10.3 の本文）──────────────────────
 	known := map[string]int64{}
 	for path, v := range in.CharterVersions {
@@ -191,8 +200,237 @@ func callGetContext(h *Handler, r *http.Request, key string, args json.RawMessag
 	if rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
+	if delegStatus.InDelegation {
+		// **自律実行の節を持つパックには、vision を掲載の設定によらず
+		// 全文で載せる**（9.1）。main がタスクとゴールを定義し、評価が
+		// 成果を判断する基準そのものだからである。
+		if rpcErr := h.ensureFullVision(r, base, &ch); rpcErr != nil {
+			return toolResult{}, rpcErr
+		}
+	}
 
-	return textResult(renderContextPack(key, ticket, ch)), nil
+	var delegSection string
+	if delegStatus.InDelegation {
+		delegSection, rpcErr = h.renderDelegationSection(r, base, delegStatus)
+		if rpcErr != nil {
+			return toolResult{}, rpcErr
+		}
+	}
+
+	return textResult(renderContextPack(key, ticket, ch, delegSection)), nil
+}
+
+// packDelegationStatus は GET .../delegation-status（9.1）の応答のうち
+// パックが使う部分。
+type packDelegationStatus struct {
+	InDelegation bool       `json:"in_delegation"`
+	Role         string     `json:"role"`
+	RootSeq      int32      `json:"root_seq"`
+	Status       string     `json:"status"`
+	Main         *packActor `json:"main"`
+	Evaluator    *packActor `json:"evaluator"`
+	LatestPlan   *struct {
+		Version       int32   `json:"version"`
+		Status        string  `json:"status"`
+		DeclaredClass *string `json:"declared_class"`
+		MeasuredClass *string `json:"measured_class"`
+	} `json:"latest_plan"`
+	LatestEvaluation *struct {
+		TargetKind string          `json:"target_kind"`
+		Round      int32           `json:"round"`
+		Verdict    string          `json:"verdict"`
+		Findings   json.RawMessage `json:"findings"`
+	} `json:"latest_evaluation"`
+	OpenConfirmations []struct {
+		Reason     string `json:"reason"`
+		QuestionMd string `json:"question_md"`
+	} `json:"open_confirmations"`
+	LatestHandoff *struct {
+		Version   int32           `json:"version"`
+		Body      json.RawMessage `json:"body"`
+		Trigger   string          `json:"trigger"`
+		WrittenAt int64           `json:"written_at"`
+	} `json:"latest_handoff"`
+	NextMove string `json:"next_move"`
+}
+
+// fetchDelegationStatus は9.1の節の材料を1回で読む。
+func (h *Handler) fetchDelegationStatus(r *http.Request, ticketPath string) (packDelegationStatus, *rpcError) {
+	res, err := h.getREST(r, ticketPath+"/delegation-status", nil)
+	if err != nil {
+		return packDelegationStatus{}, newError(codeInternalError, err.Error())
+	}
+	if !res.ok() {
+		return packDelegationStatus{}, newError(codeInternalError,
+			fmt.Sprintf("委任の状態を読めない（HTTP %d）: %s", res.status, string(res.body)))
+	}
+	var ds packDelegationStatus
+	if err := json.Unmarshal(res.body, &ds); err != nil {
+		return packDelegationStatus{}, newError(codeInternalError, "委任の状態の応答を解釈できない: "+err.Error())
+	}
+	return ds, nil
+}
+
+// ensureFullVision は vision を掲載の設定・版一致の省略によらず全文へ戻す
+// （9.1）。**節3（憲章）そのものを直す**——節6に二重掲載しない。
+func (h *Handler) ensureFullVision(r *http.Request, base string, ch *charter) *rpcError {
+	for i, d := range ch.docs {
+		if d.Path != "vision" {
+			continue
+		}
+		if !d.Unchanged && !d.OutlineOnly {
+			return nil // すでに全文
+		}
+		body, version, rpcErr := h.fetchDocBody(r, base, "vision")
+		if rpcErr != nil {
+			return rpcErr
+		}
+		ch.docs[i] = packDoc{Path: "vision", Title: d.Title, Version: version, BodyMD: body}
+		// **「目次だけ」「掲載しない」の断りからも外す。** 全文へ戻した以上、
+		// 節3のどちらの注記も当てはまらない。
+		ch.outlined = removeString(ch.outlined, "vision")
+		ch.omitted = removeString(ch.omitted, "vision")
+		return nil
+	}
+	return nil
+}
+
+// removeString は slice から1件だけ除く（最初の一致）。
+func removeString(ss []string, target string) []string {
+	for i, s := range ss {
+		if s == target {
+			return append(ss[:i:i], ss[i+1:]...)
+		}
+	}
+	return ss
+}
+
+// delegationRoleLabels は9.1の役割の日本語。
+var delegationRoleLabels = map[string]string{
+	"main": "main", "sub": "sub（木の中の1件を担当）",
+	"evaluator": "評価（独立した評価者）", "readonly": "読むだけ",
+}
+
+// delegationStatusLabels は4.3の主状態の日本語（httpapi/v1 の
+// delegationStatusLabel と同じ対応。パッケージをまたぐので複製する）。
+var delegationStatusLabels = map[string]string{
+	"planning": "計画中", "approved": "承認済", "paused": "停止", "ended": "終了",
+}
+
+// renderDelegationSection は「6. 自律実行」節を組み立てる（9.1）。
+func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packDelegationStatus) (string, *rpcError) {
+	var b strings.Builder
+	b.WriteString("## 6. 自律実行\n\n")
+
+	roleLabel := delegationRoleLabels[ds.Role]
+	if roleLabel == "" {
+		roleLabel = ds.Role
+	}
+	statusLabel := delegationStatusLabels[ds.Status]
+	if statusLabel == "" {
+		statusLabel = ds.Status
+	}
+	fmt.Fprintf(&b, "- **役割**：%s（委任の根：#%d／主状態：%s）\n", roleLabel, ds.RootSeq, statusLabel)
+	if ds.Main != nil {
+		fmt.Fprintf(&b, "- **main**：%s\n", ds.Main.DisplayName)
+	}
+	if ds.Evaluator != nil {
+		fmt.Fprintf(&b, "- **評価**：%s\n", ds.Evaluator.DisplayName)
+	}
+	if ds.NextMove != "" {
+		fmt.Fprintf(&b, "- **次の一手**：%s\n", ds.NextMove)
+	}
+	b.WriteString("\n")
+
+	if ds.Role == "readonly" {
+		b.WriteString("**この木は自律実行中であり、書き込めない。**\n\n")
+		return b.String(), nil
+	}
+
+	section := delegationInstructionSection(ds)
+	if section != "" {
+		body, rpcErr := h.fetchDelegationInstruction(r, base, section)
+		if rpcErr != nil {
+			return "", rpcErr
+		}
+		if body != "" {
+			b.WriteString(strings.TrimSpace(body) + "\n\n")
+		}
+	}
+
+	if len(ds.OpenConfirmations) > 0 {
+		b.WriteString("**開いている確認待ち**\n\n")
+		for _, c := range ds.OpenConfirmations {
+			fmt.Fprintf(&b, "- `%s`：%s\n", c.Reason, c.QuestionMd)
+		}
+		b.WriteString("\n")
+	}
+
+	if ds.LatestEvaluation != nil && ds.LatestEvaluation.Verdict != "pass" {
+		fmt.Fprintf(&b, "**直近の評価**：%s 対象 round %d、判定 `%s`\n\n",
+			ds.LatestEvaluation.TargetKind, ds.LatestEvaluation.Round, ds.LatestEvaluation.Verdict)
+	}
+
+	return b.String(), nil
+}
+
+// delegationInstructionSection は9.1の「見出しは役割と段階の組」を判定する。
+//
+// **近似である（finding）。** 「評価待ち」「差し戻し」は計画と完了レポートの
+// 両方の状態を合成して決めており、どちらも pending している場合は計画側を
+// 優先する。paused・ended は9.2に専用の文面を持たないため、見出しを返さない
+// （主状態の表示だけで足りると判断した）。
+func delegationInstructionSection(ds packDelegationStatus) string {
+	if len(ds.OpenConfirmations) > 0 && ds.Role == "main" {
+		for _, c := range ds.OpenConfirmations {
+			if c.Reason != "hearing" {
+				return "main・確認待ち"
+			}
+		}
+	}
+	switch ds.Role {
+	case "evaluator":
+		return "評価"
+	case "sub":
+		return "sub"
+	}
+	// role == main。
+	switch ds.Status {
+	case "planning":
+		return "main・計画中"
+	case "approved":
+		if ds.LatestPlan != nil && ds.LatestPlan.Status == "rejected" {
+			return "main・差し戻し"
+		}
+		if ds.LatestPlan != nil && ds.LatestPlan.Status == "proposed" {
+			return "main・評価待ち"
+		}
+		return "main・承認済"
+	default:
+		return ""
+	}
+}
+
+// fetchDelegationInstruction は `delegation-instructions`（9.1）の1節を読む。
+func (h *Handler) fetchDelegationInstruction(r *http.Request, base, section string) (string, *rpcError) {
+	q := url.Values{}
+	q.Set("section", section)
+	res, err := h.getREST(r, base+"/docs/delegation-instructions", q)
+	if err != nil {
+		return "", newError(codeInternalError, err.Error())
+	}
+	if !res.ok() {
+		// **見つからなくても節6は壊さない。** プロジェクトが delegation-instructions
+		// を消した・見出しを変えた場合でも、役割・次の一手までは描く。
+		return "", nil
+	}
+	var doc struct {
+		BodyMD string `json:"body_md"`
+	}
+	if err := json.Unmarshal(res.body, &doc); err != nil {
+		return "", nil
+	}
+	return doc.BodyMD, nil
 }
 
 // charter は憲章の取り込み結果（Design.md 8.5.5）。
@@ -370,8 +608,8 @@ var scopeKeyLabels = []struct{ key, label string }{
 	{"external_apis", "外部API"},
 }
 
-// renderContextPack は 8.5.5 の5節を組み立てる。
-func renderContextPack(projectKey string, t packTicket, ch charter) string {
+// renderContextPack は 8.5.5 の5節（＋委任の木なら9.1の節6）を組み立てる。
+func renderContextPack(projectKey string, t packTicket, ch charter, delegSection string) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "# コンテキストパック — %s-%d「%s」\n\n", projectKey, t.Seq, t.Title)
@@ -396,6 +634,9 @@ func renderContextPack(projectKey string, t packTicket, ch charter) string {
 	writeCharterSection(&b, ch)
 	writeRelatedSection(&b, projectKey, t)
 	writeNextStepsSection(&b, t.Seq, folded)
+	if delegSection != "" {
+		b.WriteString(delegSection)
+	}
 	writeCharterVersions(&b, ch, folded)
 
 	return b.String()

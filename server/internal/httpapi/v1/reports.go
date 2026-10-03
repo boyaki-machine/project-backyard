@@ -174,6 +174,16 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 					WithDetails(apierr.Detail{Field: "status", Code: "delegation_stage"})
 				return errTicketReference
 			}
+			// **確認待ちが開いているあいだは完了レポートを受け付けない**
+			// （8.2・5章。pb-249）。
+			if open, oerr := q.HasOpenConfirmation(ctx, d.ID); oerr != nil {
+				return fmt.Errorf("確認待ちを確認できない: %w", oerr)
+			} else if open {
+				forbidden = apierr.New(apierr.Forbidden).
+					WithMessage("確認待ちに答えられるまで、完了レポートは受け付けません").
+					WithDetails(apierr.Detail{Field: "status", Code: "delegation_stage"})
+				return errTicketReference
+			}
 			// **根だけ、さらに「評価待ち」を見る**（5章「main：成果の提出
 			// （根の完了レポート）」。差し戻し＝fail なら出し直せる。子の
 			// 完了レポート（D2 の案a）は評価を挟まないので、ここは根に限る

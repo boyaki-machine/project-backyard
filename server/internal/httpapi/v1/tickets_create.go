@@ -128,6 +128,13 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 				refErr = delegationForbidden(main.RootSeq, "計画が承認されるまで、このチケットを起票できません")
 				return errTicketReference
 			}
+			// **確認待ちが開いているあいだは起票できない**（8.2・5章。pb-249）。
+			if open, derr := q.HasOpenConfirmation(ctx, main.ID); derr != nil {
+				return fmt.Errorf("確認待ちを確認できない: %w", derr)
+			} else if open {
+				refErr = delegationForbidden(main.RootSeq, "確認待ちに答えられるまで、このチケットを起票できません")
+				return errTicketReference
+			}
 			if !parentID.Valid {
 				refErr = outOfTree
 				return errTicketReference

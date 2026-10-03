@@ -45,3 +45,12 @@ WHERE e.id = @id;
 -- が「最新の完了レポートは評価に合格しているか」を見るのに使う（7.2）。
 -- name: GetEvaluationVerdictForReport :one
 SELECT verdict FROM evaluation WHERE agent_report_id = @agent_report_id;
+
+-- GetLatestEvaluationForDelegation は、パック（9.1「開いている評価の指摘」）
+-- が表示する直近の評価を読む。target_kind を問わない（pb-251）。
+-- name: GetLatestEvaluationForDelegation :one
+SELECT target_kind, round, verdict, findings, created_at
+FROM evaluation
+WHERE delegation_id = @delegation_id
+ORDER BY created_at DESC
+LIMIT 1;

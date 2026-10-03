@@ -1383,6 +1383,8 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 | `pb_add_reference` | `POST /projects/:key/tickets/:seq/references` | **`ticket.reference.edit`** |
 | `pb_submit_plan` | `POST /projects/:key/tickets/:seq/plan`（`Delegation.md` 6章。pb-247） | `ticket.create`（+ main の身元確認） |
 | `pb_submit_evaluation` | `POST /projects/:key/tickets/:seq/evaluation`（`Delegation.md` 7章。pb-248） | **`delegation.evaluate`**（+ 評価エージェントの身元確認） |
+| `pb_raise_confirmation` | `POST /projects/:key/tickets/:seq/confirmation`（`Delegation.md` 8章。pb-249） | `ticket.create`（+ main の身元確認） |
+| `pb_update_handoff` | `POST /projects/:key/tickets/:seq/handoff`（`Delegation.md` 9.3・11章。pb-250） | `ticket.create`（+ main の身元確認） |
 | `pb_transition_task` | `POST /projects/:key/tickets/:seq/transition` | `ticket.transition` |
 | `pb_list_transitions` | `GET /projects/:key/tickets/:seq/transitions` | `ticket.view` |
 | `pb_submit_result` | `POST /projects/:key/tickets/:seq/reports`（`ApiDesign.md` 9.15） | `ticket.transition` |
@@ -1477,8 +1479,10 @@ SDK はリクエストごとにサーバを組み立てる関数を呼ぶので�
 | `pb_add_reference` | `seq`, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | `POST /projects/:key/tickets/:seq/references` | 9.10.2 の1件をそのまま |
 | `pb_submit_plan` | `seq`, `skeleton`, `body_md`, `reason_md`, `scope?`, `declared_class?` | `POST /projects/:key/tickets/:seq/plan`（`Delegation.md` 6章） | 提出した計画の版をそのまま（`measured_class` / `status` を含む） |
 | `pb_submit_evaluation` | `seq`, `target_kind`, `verdict`, `findings`, `plan_version?`, `class_check?`, `tokens_used?` | `POST /projects/:key/tickets/:seq/evaluation`（`Delegation.md` 7章） | 作成した評価をそのまま（`round` を含む） |
+| `pb_raise_confirmation` | `seq`, `reason`, `question_md`, `options?` | `POST /projects/:key/tickets/:seq/confirmation`（`Delegation.md` 8章） | 立てた確認待ちをそのまま |
+| `pb_update_handoff` | `seq`, `body`, `trigger` | `POST /projects/:key/tickets/:seq/handoff`（`Delegation.md` 9.3・11章） | 更新した引き継ぎノートをそのまま（`next_move` を含む） |
 
-**`pb_submit_plan` は呼び出し元がその委任の main であることをハンドラが確かめる。** ルートの宣言は `ticket.create`（12.2 と同じ束）だが、**main でなければ 403**——権限とは別に、身元そのものが条件になる唯一のツールである。`scope` を省略すると委任のいまの範囲を使う。**`pb_submit_evaluation` も同じ形で、呼び出し元がその委任の評価エージェントであることを確かめる**（違えば 403）。`target_kind=plan` のときは `plan_version` が要る。
+**`pb_submit_plan` は呼び出し元がその委任の main であることをハンドラが確かめる。** ルートの宣言は `ticket.create`（12.2 と同じ束）だが、**main でなければ 403**——権限とは別に、身元そのものが条件になる唯一のツールである。`scope` を省略すると委任のいまの範囲を使う。**`pb_submit_evaluation` も同じ形で、呼び出し元がその委任の評価エージェントであることを確かめる**（違えば 403）。`target_kind=plan` のときは `plan_version` が要る。**`pb_raise_confirmation` も main の身元を確かめる。** `reason` は main が立てられる5つ（`scope_change`・`irreversible_external`・`charter_change`・`sensitive_area`・`hearing`）に限る——`evaluation_unable`・`budget_exceeded` は評価の提出や PB 自身が内部から立てるため、このツールでは指定できない（`422`）。**`pb_update_handoff` も main の身元を確かめる。** ノートは追記のみで、応答の `next_move` は main の自己申告とは別に PB が計算する推奨である。
 
 **引数の名前は `ApiDesign.md` の本体フィールドに揃える**（`body` ではなく `body_md`、`parent` ではなく `parent_seq`）。8.5 の冒頭が述べるとおり、名前が一致していればエージェントは迷ったときに設計文書を引ける。
 

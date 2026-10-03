@@ -429,6 +429,27 @@ type fakeQuerier struct {
 	createdEvaluations        []gen.CreateEvaluationParams
 	createEvaluationErr       error
 	evaluationByIDRow         gen.GetEvaluationByIDRow
+
+	// 確認待ち（Delegation.md 8章。pb-249）。
+	openConfirmation            bool // true のとき HasOpenConfirmation が開いているものありと返す
+	createdConfirmations        []gen.CreateConfirmationParams
+	confirmationByIDRow         gen.GetConfirmationByIDRow
+	confirmationByIDErr         error
+	answeredConfirmationIDs     []string
+	answerConfirmationRows      int64 // 0 なら「対象なし」（既に答えられた等）。未設定時は1件として扱う
+	answerConfirmationSet       bool
+	answeredConfirmationReasons map[string]bool // key: reason。HasAnsweredConfirmation が見る
+
+	// 引き継ぎノート（Delegation.md 9.3・11章。pb-250）。
+	nextHandoffVersion      int32 // 0 なら 1 を返す
+	createdHandoffs         []gen.CreateDelegationHandoffParams
+	latestHandoffRow        gen.GetLatestDelegationHandoffRow
+	latestDelegationPlan    gen.GetLatestDelegationPlanRow
+	latestDelegationPlanErr error // pgx.ErrNoRows で「計画が1件も無い」
+
+	// 委任の状態の集約読み取り（Delegation.md 9.1。pb-251）。
+	latestEvaluationForDelegation    gen.GetLatestEvaluationForDelegationRow
+	latestEvaluationForDelegationErr error // pgx.ErrNoRows で「評価が1件も無い」
 }
 
 // GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
@@ -2711,6 +2732,19 @@ func (q *fakeQuerier) GetEvaluationVerdictForReport(
 	return "", pgx.ErrNoRows
 }
 
+func (q *fakeQuerier) GetLatestEvaluationForDelegation(
+	context.Context, string,
+) (gen.GetLatestEvaluationForDelegationRow, error) {
+	q.opLog = append(q.opLog, "GetLatestEvaluationForDelegation")
+	if q.latestEvaluationForDelegationErr != nil {
+		return gen.GetLatestEvaluationForDelegationRow{}, q.latestEvaluationForDelegationErr
+	}
+	if q.latestEvaluationForDelegation.TargetKind == "" {
+		return gen.GetLatestEvaluationForDelegationRow{}, pgx.ErrNoRows
+	}
+	return q.latestEvaluationForDelegation, nil
+}
+
 func (q *fakeQuerier) CountEvaluationsSinceLastPass(
 	context.Context, gen.CountEvaluationsSinceLastPassParams,
 ) (int64, error) {
@@ -2730,6 +2764,79 @@ func (q *fakeQuerier) CreateEvaluation(_ context.Context, arg gen.CreateEvaluati
 func (q *fakeQuerier) GetEvaluationByID(context.Context, string) (gen.GetEvaluationByIDRow, error) {
 	q.opLog = append(q.opLog, "GetEvaluationByID")
 	return q.evaluationByIDRow, nil
+}
+
+// ── 確認待ち（Delegation.md 8章。pb-249）────────────────────────
+
+func (q *fakeQuerier) HasOpenConfirmation(context.Context, string) (bool, error) {
+	q.opLog = append(q.opLog, "HasOpenConfirmation")
+	return q.openConfirmation, nil
+}
+
+func (q *fakeQuerier) CreateConfirmation(_ context.Context, arg gen.CreateConfirmationParams) error {
+	q.opLog = append(q.opLog, "CreateConfirmation")
+	q.createdConfirmations = append(q.createdConfirmations, arg)
+	return nil
+}
+
+func (q *fakeQuerier) GetConfirmationByID(context.Context, string) (gen.GetConfirmationByIDRow, error) {
+	q.opLog = append(q.opLog, "GetConfirmationByID")
+	if q.confirmationByIDErr != nil {
+		return gen.GetConfirmationByIDRow{}, q.confirmationByIDErr
+	}
+	return q.confirmationByIDRow, nil
+}
+
+func (q *fakeQuerier) ListOpenConfirmations(context.Context, string) ([]gen.ListOpenConfirmationsRow, error) {
+	q.opLog = append(q.opLog, "ListOpenConfirmations")
+	return nil, nil
+}
+
+func (q *fakeQuerier) AnswerConfirmation(
+	_ context.Context, arg gen.AnswerConfirmationParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "AnswerConfirmation")
+	q.answeredConfirmationIDs = append(q.answeredConfirmationIDs, arg.ID)
+	if q.answerConfirmationSet {
+		return q.answerConfirmationRows, nil
+	}
+	return 1, nil
+}
+
+func (q *fakeQuerier) HasAnsweredConfirmation(
+	_ context.Context, arg gen.HasAnsweredConfirmationParams,
+) (bool, error) {
+	q.opLog = append(q.opLog, "HasAnsweredConfirmation")
+	return q.answeredConfirmationReasons[arg.Reason], nil
+}
+
+// ── 引き継ぎノート（Delegation.md 9.3・11章。pb-250）────────────────
+
+func (q *fakeQuerier) NextDelegationHandoffVersion(context.Context, string) (int32, error) {
+	q.opLog = append(q.opLog, "NextDelegationHandoffVersion")
+	if q.nextHandoffVersion == 0 {
+		return 1, nil
+	}
+	return q.nextHandoffVersion, nil
+}
+
+func (q *fakeQuerier) CreateDelegationHandoff(_ context.Context, arg gen.CreateDelegationHandoffParams) error {
+	q.opLog = append(q.opLog, "CreateDelegationHandoff")
+	q.createdHandoffs = append(q.createdHandoffs, arg)
+	return nil
+}
+
+func (q *fakeQuerier) GetLatestDelegationHandoff(context.Context, string) (gen.GetLatestDelegationHandoffRow, error) {
+	q.opLog = append(q.opLog, "GetLatestDelegationHandoff")
+	return q.latestHandoffRow, nil
+}
+
+func (q *fakeQuerier) GetLatestDelegationPlan(context.Context, string) (gen.GetLatestDelegationPlanRow, error) {
+	q.opLog = append(q.opLog, "GetLatestDelegationPlan")
+	if q.latestDelegationPlanErr != nil {
+		return gen.GetLatestDelegationPlanRow{}, q.latestDelegationPlanErr
+	}
+	return q.latestDelegationPlan, nil
 }
 
 func (q *fakeQuerier) CountTicketsInDelegationTreeSince(

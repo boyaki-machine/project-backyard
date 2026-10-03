@@ -6,12 +6,12 @@
 // UNIQUE）。評価対象は本文の target_kind で選ぶ——plan なら plan_version も渡し、
 // deliverable なら根の最新の完了レポート（agent_report）が暗黙の対象になる。
 //
-// **confirmation 表（pb-249）はまだ無い。** 7.2 の「unable は確認待ちを立てる」
-// 「往復の上限に達したら確認待ちを立てる」は、確認待ちの器が無いあいだ**委任を
-// paused にする**ことで代える——既存の delegationGate（status=='approved' だけが
-// main の書き込みを通す）が、paused を立てた時点で木への書き込みを自動的に
-// 止めるため、8.2「確認待ちの間 main の書き込みを止める」と同じ効果になる。
-// 確認待ちそのもの（理由・選択肢・回答の記録）は pb-249 で足す。
+// **unable は確認待ち（evaluation_unable）を立てる**（7.2・8.1 の6）。
+// **往復の上限超過は確認待ち（budget_exceeded）を立て、委任を paused にする**
+// （7.2・8.1 の5・8.2「PB が立てた確認待ちは、主状態を停止にする」）。
+// どちらも `confirmation.go` の `raiseSystemConfirmation` を直接呼ぶ——
+// evaluation_unable は評価エージェントが立てる理由なので、人の経路を締める
+// `raiseConfirmation`（REST）は通らない（身元確認がここで既に済んでいる）。
 package v1
 
 import (
@@ -131,8 +131,16 @@ func (h *handler) submitEvaluation(w http.ResponseWriter, r *http.Request) {
 				WithMessage("この委任の評価エージェントだけが評価を書けます")
 			return errTicketReference
 		}
-		if deleg.Status == "ended" {
-			rejected = delegationForbidden(scope.seq, "委任が終了しているため評価できません")
+		if deleg.Status == "paused" || deleg.Status == "ended" {
+			rejected = delegationForbidden(scope.seq,
+				fmt.Sprintf("委任が%sのあいだは評価できません", delegationStatusLabel(deleg.Status)))
+			return errTicketReference
+		}
+		// **確認待ちが開いているあいだは評価を書けない**（8.2・5章。pb-249）。
+		if open, oerr := q.HasOpenConfirmation(ctx, deleg.ID); oerr != nil {
+			return fmt.Errorf("確認待ちを確認できない: %w", oerr)
+		} else if open {
+			rejected = delegationForbidden(scope.seq, "確認待ちに答えられるまで、評価を書けません")
 			return errTicketReference
 		}
 
@@ -233,23 +241,32 @@ func (h *handler) submitEvaluation(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// **unable、または往復の上限超過は委任を paused にする**（7.2・8.1 の
-		// 条件5・6。confirmation 表が無いあいだの代替。ファイルコメント参照）。
-		if req.Verdict == evaluationVerdictUnable || (req.Verdict == evaluationVerdictFail && round >= evaluationRoundLimit) {
+		// **unable は確認待ち（evaluation_unable）を立てる**（7.2・8.1 の6）。
+		// 主状態は動かさない——評価が立てる確認待ちは、関門（開いているか）
+		// だけで main・評価の書き込みを止める（4.3・8.2）。
+		if req.Verdict == evaluationVerdictUnable {
+			if err := raiseSystemConfirmation(ctx, q, deleg.ID, ticketID,
+				confirmationReasonEvaluationUnable,
+				unableConfirmationQuestion(req.TargetKind), scope.actorID,
+			); err != nil {
+				return err
+			}
+		}
+		// **往復の上限超過は確認待ち（budget_exceeded）を立て、委任を paused
+		// にする**（7.2・8.1 の5。8.2「PB が立てた確認待ちは、主状態を停止に
+		// する」）。raised_by は、この条件を実際に検出した評価の提出者
+		// （scope.actorID）に当てる——専用の system actor はまだ無い（finding）。
+		if req.Verdict == evaluationVerdictFail && round >= evaluationRoundLimit {
 			if _, err := q.SetDelegationStatus(ctx, gen.SetDelegationStatusParams{
 				ID: deleg.ID, Status: "paused",
 			}); err != nil {
 				return fmt.Errorf("委任を停止できない: %w", err)
 			}
-			if err := q.CreateComment(ctx, gen.CreateCommentParams{
-				ID: ulidgen.New(), TicketID: ticketID, AuthorID: scope.actorID,
-				BodyMd:     pauseNoticeBody(req.TargetKind, req.Verdict, round),
-				Kind:       commentKindProgress,
-				Origin:     scope.origin(),
-				InReplyTo:  pgtype.Text{},
-				AgentRunID: pgtype.Text{},
-			}); err != nil {
-				return fmt.Errorf("停止の通知コメントを作成できない: %w", err)
+			if err := raiseSystemConfirmation(ctx, q, deleg.ID, ticketID,
+				confirmationReasonBudgetExceeded,
+				roundLimitConfirmationQuestion(req.TargetKind, round), scope.actorID,
+			); err != nil {
+				return err
 			}
 		}
 
@@ -378,19 +395,16 @@ func validateSubmitEvaluation(req submitEvaluationRequest) ([]byte, *apierr.Erro
 	return []byte(req.Findings), nil
 }
 
-// pauseNoticeBody は confirmation 表の代わりに根へ残す通知文
-// （ファイル冒頭コメント参照。pb-249 で confirmation に置き換わる）。
-func pauseNoticeBody(targetKind, verdict string, round int32) string {
-	switch verdict {
-	case evaluationVerdictUnable:
-		return fmt.Sprintf(
-			"評価エージェントが判断できないため、委任を一時停止しました（対象: %s）。確認してください。",
-			targetKind)
-	default:
-		return fmt.Sprintf(
-			"同じ対象（%s）への不合格が%d回目に達したため、委任を一時停止しました。確認してください。",
-			targetKind, round)
-	}
+// unableConfirmationQuestion / roundLimitConfirmationQuestion は、評価が
+// evaluation_unable・budget_exceeded の確認待ちを立てるときの問い（8.1）。
+func unableConfirmationQuestion(targetKind string) string {
+	return fmt.Sprintf("評価エージェントが判断できませんでした（対象: %s）。どう進めるか指示してください。", targetKind)
+}
+
+func roundLimitConfirmationQuestion(targetKind string, round int32) string {
+	return fmt.Sprintf(
+		"同じ対象（%s）への不合格が%d回目に達しました。委任を一時停止しています。どう進めるか指示してください。",
+		targetKind, round)
 }
 
 // rootHasUnpassedEvaluation は ticket_workflow.go の検証8 が使う

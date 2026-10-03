@@ -2088,15 +2088,114 @@ target_kind`）への直前の `pass` 以降の件数+1（`CountEvaluationsSince
 | plan・version 2以上 | `delegation_plan.status` を `accepted` にする | `rejected` にする（main は新しい版を出し直す） |
 | deliverable（根の完了レポート） | 記録のみ。根の受け入れ可否は `ticket.transition` の検証8（9.6/9.7）が「最新の `agent_report` への評価が `pass` か」で見る | 記録のみ。main は新しい完了レポートを出し直せる |
 
-**`unable`、または往復の上限（初期値3。固定値）に達した不合格は `delegation`
-を `paused` にし、根へ通知コメントを1件書く。** `confirmation` 表（pb-249）が
-まだ無いための代替——既存の委任ゲート（`status == 'approved'` だけが main の
-書き込みを通す）が、`paused` を立てた時点で木への書き込みを自動的に止めるため、
-Delegation.md 8.2「確認待ちの間 main の書き込みを止める」と同じ効果になる。
-確認待ちそのもの（理由・選択肢・回答の記録）は pb-249 で足す。
+**`unable` は確認待ち（`evaluation_unable`）を立てる。主状態は動かさない**
+（8.2「評価が立てる確認待ちは、関門（開いているか）だけで main・評価の
+書き込みを止める」。6.26 参照）。**往復の上限（初期値3。固定値）に達した
+不合格は確認待ち（`budget_exceeded`）を立て、`delegation` を `paused` にする**
+（8.1 の5。PB 自身が立てるものは主状態も止める）。
 
 **評価エージェントのトークンに要る権限は `delegation.evaluate` だけ**
 （0050 で既に登録済み。起票・編集・遷移は要らない。7.1）。
+
+## 6.27 確認待ち（0053）
+
+**正本は `Delegation.md` 8章・12.2。** pb-249。D4 で確定した5表のうち、残る
+`delegation_handoff` は別チケット（pb-250）で足す。
+
+```sql
+CREATE TABLE confirmation (
+  id            char(26) COLLATE "C" PRIMARY KEY,
+  delegation_id char(26) COLLATE "C" NOT NULL REFERENCES delegation(id) ON DELETE CASCADE,
+  ticket_id     char(26) COLLATE "C" NOT NULL REFERENCES ticket(id) ON DELETE CASCADE,
+  reason        text NOT NULL CHECK (reason IN (
+                  'scope_change', 'irreversible_external', 'charter_change',
+                  'sensitive_area', 'budget_exceeded', 'evaluation_unable',
+                  'checkpoint', 'hearing')),
+  question_md   text NOT NULL,
+  options       jsonb NOT NULL DEFAULT '[]'::jsonb,
+  raised_by     char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  status        text NOT NULL DEFAULT 'open' CHECK (status IN ('open','answered','withdrawn')),
+  answer_md     text,
+  answered_by   char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  answered_at   timestamptz
+);
+```
+
+**`reason` は8.1の条件キー（1〜8）を文字列化したもの。** `checkpoint`
+（周期の要約。7）はまだ立てる主体が無い（予算の計測が pb-253、周期の要約が
+pb-254）。
+
+**関門は列に持たず、開いている確認待ちから導く**（4.3・8.2）。
+`HasOpenConfirmation`（`delegation_id` に `status='open' AND reason<>'hearing'`
+があるか）を、既存のゲート（`tickets_create.go` の12.2・`delegation_plan.go`・
+`evaluation.go`・`reports.go`）がそれぞれ呼ぶ。**hearing は関門に数えない**
+（8.2「ヒアリングは止めない」）。
+
+**誰が立てられるか（REST の `POST .../confirmation`）**
+
+| reason | 立てる主体 | 経路 |
+|---|---|---|
+| scope_change・irreversible_external・charter_change・sensitive_area・hearing | main | `POST .../confirmation`（身元確認。`ticket.create`） |
+| evaluation_unable | 評価 | `pb_submit_evaluation` の verdict=unable から内部で（`raiseSystemConfirmation`） |
+| budget_exceeded | PB（評価の往復の上限超過を検出した時点） | 同上 |
+| checkpoint | PB（未実装。予算計測・周期の要約が無い） | — |
+
+**`raised_by` は、`evaluation_unable`・`budget_exceeded` でも実際の呼び出し元
+（評価エージェントの actor_id）を使う。** Delegation.md 4.4 の D4 の注記は
+「PB 自身なら system」としているが、`kind='system'` の actor 行はまだ存在しない
+（`actor.kind` の CHECK には `'system'` があるが、シードされた行が無い）。
+専用の system actor を作るかは別途判断する（finding）。
+
+**答えても主状態は戻さない**（8.2「予算の超過は、答えるだけで続けてよいもの
+ではない」）。`budget_exceeded` で `paused` にした委任を `approved` へ戻す
+操作（停止・再開）は、まだ実装が無い（5章「PM：停止・再開」の「再開」列。
+finding——別チケットで扱う）。
+
+## 6.28 引き継ぎノート（0054）
+
+**正本は `Delegation.md` 9.3・11章。** pb-250。D4 で確定した5表が
+これで揃う（pb-246〜250：`delegation` / `delegation_plan` / `evaluation` /
+`confirmation` / `delegation_handoff`）。
+
+```sql
+CREATE TABLE delegation_handoff (
+  id            char(26) COLLATE "C" PRIMARY KEY,
+  delegation_id char(26) COLLATE "C" NOT NULL REFERENCES delegation(id) ON DELETE CASCADE,
+  version       integer NOT NULL,
+  body          jsonb NOT NULL,
+  trigger       text NOT NULL CHECK (trigger IN (
+                  'plan_version', 'evaluation', 'report',
+                  'before_confirmation', 'session_end')),
+  written_by    char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  written_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT uq_delegation_handoff_version UNIQUE (delegation_id, version)
+);
+```
+
+**追記のみ。** `delegation_plan` と同じ番号付け（`NextDelegationHandoffVersion`
+が `COALESCE(MAX(version),0)+1`）だが、こちらは `status` を持たない——
+最新の版が常に現在のノートであり、古い版を `superseded` にする必要が無い。
+
+**`body` は11.1の7項目を自由な形で持つ。** `skeleton`・`scope` と同じ理由で
+形を固定しない——main が書く内容は委任ごとに違う。
+
+**次の一手（9.3）は、`delegation_handoff` に列として持たない。** 呼び出しの
+たびに `computeNextMove`（`delegation_handoff.go`）が、委任の現在の状態
+（`delegation.status`・開いている確認待ち・最新の計画・直近のヒアリングの
+回答）から計算する。**保存された値ではなく、常に最新の状態から導く値**
+だからである（4.3 の関門の扱いと同じ考え方）。
+
+**近似であることを明記する（finding）。** 9.3 の判定の一部（「ヒアリングに
+答えが付いた」「前の版へ差し戻された」「確認待ちに答えが付いた」）は、
+本来「main がまだそれを見ていない」ことを条件に含むが、PB は main の
+既読を記録していない。`computeNextMove` は「答えが存在する」「直前の版が
+差し戻しである」という弱い条件で近似しており、本来より広く次の一手を
+示すことがある。次の一手は PB の推奨であり main の判断を縛らないため
+（9.1「指示は強制の代わりではない」）、実害は小さいと判断した。
+
+**パック（pb-251）・待ち受け・通知（D6 未決）への配線はまだ無い。**
+`POST .../handoff` の応答に `next_move` を載せるところまでが pb-250 の範囲。
 
 # 7. 初期データ（0010）
 
@@ -2613,9 +2712,9 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 
 **`body_md` に GIN トライグラムインデックスを張る**のは、`knowledge`（8.3.1）と同じ理由による。日本語の部分一致検索を `pg_trgm` で賄う（4.5）。
 
-### 8.1.2 文書テンプレート（0017 の初期データ、本文は 0018、5件目は 0024、規約の本文は 0037 と 0043、判断の記録の本文は 0038、6件目は 0043）
+### 8.1.2 文書テンプレート（0017 の初期データ、本文は 0018、5件目は 0024、規約の本文は 0037 と 0043、判断の記録の本文は 0038、6件目は 0043、7件目は 0055）
 
-`template_key = 'default'` の6件を置く。`Requirements.md` 10.6.2 の表に対応する。
+`template_key = 'default'` の7件を置く。`Requirements.md` 10.6.2 の表に対応する。
 
 | `slug` | `title` | `sort_order` | 役割 |
 |---|---|---|---|
@@ -2625,6 +2724,7 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 | `learnings` | 学びと知見 | 40 | やってみて分かったこと。**うまくいったことと駄目だったことの両方** |
 | `agent-onboarding` | エージェントの参画情報 | 50 | **新しい参加者とそのエージェントが作業を始められるようになるまでに要ること。** 作業材料の取り方、参画の合図、資格情報の要否（**秘密そのものは書かない**） |
 | `project-management-note` | プロジェクトマネジメントノート | 60 | 見積・実績の算出と検証をプロジェクトごとに記録する。`pack_mode = none` |
+| `delegation-instructions` | 自律実行の指示文 | 70 | **自律実行（Delegated）の役割と段階ごとの指示文**（Delegation.md 9.1・9.2）。見出しが役割と段階の組（`main・計画中` 等）で、`pb_get_context` の「6. 自律実行」節が見出し指定で読む。`pack_mode = none`（通常の憲章には載せない） |
 
 **0043 は新規プロジェクト向けの規約案内に、完了レポートの `cost`（トークン数・やり取りの回数・掛かった分、束ねたセッションの按分）と `findings`（モデルの名前と版）を例として加える。** 具体的な単位や按分方法は各プロジェクトで決める。運営ノートには「見積・実績」章の下に「実績」と「見積」を置き、材料、算出式、記録の置き場、確かめ方を記入する骨組みにする。既存プロジェクトの文書は書き換えない。
 

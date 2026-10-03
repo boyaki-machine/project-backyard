@@ -507,6 +507,24 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.evaluate")).
 			Post("/projects/{key}/tickets/{seq}/evaluation", h.submitEvaluation)
 
+		// ── 確認待ち（Delegation.md 8章・12.2）── pb-249 ───────────
+		//
+		// **立てるのは main だけ**（ticket.create。身元の確認はハンドラ内。
+		// evaluation_unable は評価エージェントが pb_submit_evaluation 経由で
+		// 内部から立てる——ここは通らない）。**答えるのは PM**（delegation.manage）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+			Post("/projects/{key}/tickets/{seq}/confirmation", h.raiseConfirmation)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/confirmation/{id}/answer", h.answerConfirmation)
+
+		// ── 引き継ぎノート（Delegation.md 9.3・11章・12.2）── pb-250 ─
+		//
+		// **main だけが更新する**（ticket.create。身元の確認はハンドラ内）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+			Post("/projects/{key}/tickets/{seq}/handoff", h.updateHandoff)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/delegation-status", h.getDelegationStatus)
+
 		// ── チケット間リンク（ApiDesign.md 9.10.1）── 手順18a ─────
 		//
 		// **PATCH は lag_days だけ**（9.10.1。pb-231）。一意制約が (source, target, link_type)
