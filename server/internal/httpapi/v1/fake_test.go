@@ -1644,6 +1644,9 @@ type ticketFakeState struct {
 	statsRow     gen.GetProjectTicketStatsRow
 	statsErr     error
 	statsStaleIn int32
+	trendRows    []gen.GetProjectTicketTrendsRow
+	trendErr     error
+	trendIn      gen.GetProjectTicketTrendsParams
 }
 
 // findComment は id で1件引く。見つからなければ -1。
@@ -3364,4 +3367,23 @@ func (q *fakeQuerier) GetProjectTimezone(_ context.Context, _ string) (string, e
 		return q.timezone, nil
 	}
 	return "Asia/Tokyo", nil
+}
+
+func (q *fakeQuerier) GetProjectTicketTrends(_ context.Context, arg gen.GetProjectTicketTrendsParams) ([]gen.GetProjectTicketTrendsRow, error) {
+	q.opLog = append(q.opLog, "GetProjectTicketTrends")
+	q.ticket.trendIn = arg
+	if q.ticket.trendErr != nil {
+		return nil, q.ticket.trendErr
+	}
+	if q.ticket.trendRows != nil {
+		return q.ticket.trendRows, nil
+	}
+	loc, _ := time.LoadLocation("Asia/Tokyo")
+	today := arg.AsOf.In(loc)
+	start := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -int(arg.Days)+1)
+	rows := make([]gen.GetProjectTicketTrendsRow, arg.Days)
+	for i := range rows {
+		rows[i] = gen.GetProjectTicketTrendsRow{Date: start.AddDate(0, 0, i).Format("2006-01-02"), Timezone: "Asia/Tokyo", AsOf: arg.AsOf, IsPartial: i == len(rows)-1}
+	}
+	return rows, nil
 }

@@ -720,6 +720,7 @@ func TestDashboardRoutesRequireProjectView(t *testing.T) {
 	paths := []string{
 		"/api/v1/projects/demo/stats",
 		"/api/v1/projects/demo/activity",
+		"/api/v1/projects/demo/ticket-trends",
 	}
 	for _, path := range paths {
 		t.Run(path+"/member", func(t *testing.T) {
@@ -744,6 +745,7 @@ func TestDashboardRoutesHideProjectFromNonMember(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/projects/demo/stats",
 		"/api/v1/projects/demo/activity",
+		"/api/v1/projects/demo/ticket-trends",
 	} {
 		rec := callAsMember(dashRouteFake(t, ""), http.MethodGet, path, "")
 		if rec.Code != http.StatusNotFound {

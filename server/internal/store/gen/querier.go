@@ -911,6 +911,9 @@ type Querier interface {
 	// のも実害がある——エピックに担当者を置く運用が無いので、常に「要対応」に見える。
 	//
 	GetProjectTicketStats(ctx context.Context, arg GetProjectTicketStatsParams) (GetProjectTicketStatsRow, error)
+	// Recorded operations for currently existing story/task tickets (ApiDesign.md 9.13.3).
+	// Generate calendar dates before converting to instants, including DST boundaries.
+	GetProjectTicketTrends(ctx context.Context, arg GetProjectTicketTrendsParams) ([]GetProjectTicketTrendsRow, error)
 	// GetProjectTimezone はプロジェクトの基準タイムゾーン（DbDesign.md 6.23）を返す。
 	// 予定日時の検証（終日は基準タイムゾーンの0時。ApiDesign.md 9.3.1）と、due_within の
 	// 境界の計算（9.2.1）が使う。

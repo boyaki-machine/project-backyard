@@ -1943,6 +1943,56 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/ticket-trends:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    get:
+      tags: [projects]
+      summary: 期間内の記録されたチケット増加・消化
+      operationId: getTicketTrends
+      description: |
+        必要権限は project.view（非メンバーには404）。現在存在するstory/taskの
+        記録された操作回数。親子は個別に数え、オンステージでは絞らない。
+        現行ワークフローで分類するため、削除・種別・ワークフローの変更で過去値も変わりうる。
+        未記録の操作を補完しない。プロジェクトtimezoneの暦日で集計し、当日は途中。
+        ETagなし、Cache-Control: no-store。ApiDesign.md 9.13.3。
+      parameters:
+        - name: days
+          in: query
+          description: 今日を含む暦日数。空・重複・未知のパラメータも422。
+          schema:
+            type: integer
+            enum: [7, 28]
+            default: 7
+      responses:
+        '200':
+          description: 日別回数とその合計。
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketTrends'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '422':
+          description: 集計期間またはクエリが不正（validation_failed）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/stats:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -10518,6 +10568,70 @@ components:
           format: int64
           nullable: true
           description: 論理削除の時刻（DbDesign.md 4.6 / 6.7）。未削除なら `null`。
+
+    TicketTrendCounts:
+      type: object
+      required: [created, completed, reopened, unclassified_transitions]
+      properties:
+        created:
+          type: integer
+          format: int64
+          minimum: 0
+        completed:
+          type: integer
+          format: int64
+          minimum: 0
+        reopened:
+          type: integer
+          format: int64
+          minimum: 0
+        unclassified_transitions:
+          type: integer
+          format: int64
+          minimum: 0
+    TicketTrendDay:
+      allOf:
+        - $ref: '#/components/schemas/TicketTrendCounts'
+        - type: object
+          required: [date, is_partial]
+          properties:
+            date:
+              type: string
+              format: date
+            is_partial:
+              type: boolean
+              description: 当日だけtrue（途中集計）。
+    TicketTrends:
+      type: object
+      required: [days, timezone, start_date, end_date, as_of, basis, totals, daily]
+      properties:
+        days:
+          type: integer
+          enum: [7, 28]
+        timezone:
+          type: string
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        as_of:
+          type: integer
+          format: int64
+          description: 集計上端のエポックミリ秒（この瞬間は含まない）。
+        basis:
+          type: string
+          const: recorded_activity_for_existing_tickets
+        totals:
+          $ref: '#/components/schemas/TicketTrendCounts'
+        daily:
+          type: array
+          minItems: 7
+          maxItems: 28
+          description: days件を日付昇順で返す。記録なしの日は0。
+          items:
+            $ref: '#/components/schemas/TicketTrendDay'
 
     ProjectStats:
       description: |
