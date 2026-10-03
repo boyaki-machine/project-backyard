@@ -1891,7 +1891,7 @@ GET /api/v1/projects/check-key?key=my-app
 
 `timezone` はプロジェクトの基準タイムゾーン（IANA 名。`DbDesign.md` 6.23）。祝日の取得元と日ごとの上書きは 5.8 で読む——**この応答に載せない**（一般タブとメンバータブは暦を使わない。`GuiDesign.md` 5.9）。
 
-`settings` は `project.settings`（jsonb）をそのまま返す。**定義するキーは `repositories` と `gantt_snap_minutes`（ガントの吸着の単位。pb-221）**で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は未実装）。
+`settings` は `project.settings`（jsonb）をそのまま返す。**定義するキーは `repositories` と `gantt_snap_minutes`**（ガントの吸着の単位。pb-221）で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は未実装）。
 
 **`my_role` と `my_permissions` は、エージェントのトークンでは所有者のものが出る**（`Design.md` 6.5 の委譲）。エージェントは `project_member` の行を持たないため、自分自身で引くと `my_role` が常に `null` になり、**`my_permissions` からプロジェクトロールの層が丸ごと落ちる**——認可は所有者のロールで通る（6.4.1）ので、「できるのに、できないと応答している」状態になる。`GET /me`（4.1）も同じ規則である。
 
