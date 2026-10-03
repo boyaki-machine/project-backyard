@@ -57,6 +57,11 @@ SELECT count(*)::bigint FROM comment
 -- 並びは created_at の昇順が既定（9.8）。**許可する sort は created_at だけ**なので
 -- CASE 式は order の2通りだけで足りる（ListAdminUsers は5項目ぶん並ぶ）。
 -- **同値の tie-break は id** ——ULID は時刻順なので created_at と向きが揃う。
+--
+-- **kind は ticket.sql の status 等と同じ cardinality パターンで絞る**（pb-259。
+-- pb_list_comments の土台）。空配列で「指定なし」を表す——pgx は nil スライスを
+-- NULL として送るため、cardinality(NULL) が NULL になり絞り込みが成立しなくなる
+-- （ticket.sql と同じ理由）。
 -- name: ListTicketComments :many
 SELECT
   c.id,
@@ -75,6 +80,7 @@ SELECT
 FROM comment c
 JOIN actor a ON a.id = c.author_id
 WHERE c.ticket_id = @ticket_id
+  AND (cardinality(@kinds::text[]) = 0 OR c.kind = ANY(@kinds::text[]))
 ORDER BY
   CASE WHEN @sort_order::text = 'asc'  THEN c.created_at END ASC,
   CASE WHEN @sort_order::text = 'desc' THEN c.created_at END DESC,
@@ -85,12 +91,16 @@ LIMIT @page_limit OFFSET @page_offset;
 -- SummarizeTicketComments は ListTicketComments が1件も返さないときの total と
 -- last_updated_at。**ウィンドウ関数は行が無いと1行も返らない**ので、ETag と
 -- ページャの total をここから採る（0件のページを開いたときも ETag が要る）。
+--
+-- **kind フィルタも同じ条件で絞る**（pb-259）。フィルタ付きで0件のときに
+-- フィルタ無しの総数を返すと、ETag と total が実際の一覧と食い違う。
 -- name: SummarizeTicketComments :one
 SELECT
   count(*)                        AS total,
   COALESCE(max(updated_at), 'epoch'::timestamptz)::timestamptz AS last_updated_at
 FROM comment
-WHERE ticket_id = @ticket_id;
+WHERE ticket_id = @ticket_id
+  AND (cardinality(@kinds::text[]) = 0 OR kind = ANY(@kinds::text[]));
 
 -- GetTicketComment は1件。POST / PATCH の応答と、更新・削除の前の読み取りに使う。
 --

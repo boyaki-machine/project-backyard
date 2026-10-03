@@ -183,6 +183,94 @@ func TestGetTaskRejectsMissingSeq(t *testing.T) {
 	}
 }
 
+// commentsListBody は 9.8 の一覧応答（1件）。pb_list_comments のテストが使う。
+const commentsListBody = `{"items":[{"id":"01C","body_md":"引き継ぎノート","kind":"caveat",` +
+	`"in_reply_to":null,"origin":"agent",` +
+	`"author":{"id":"01AGENT000000000000000000","kind":"agent","display_name":"claude-code"},` +
+	`"created_at":1786237200000,"updated_at":1786237200000,"deleted_at":null}],` +
+	`"page":1,"per_page":50,"total":1,"total_pages":1}`
+
+func TestListCommentsHitsCommentsPath(t *testing.T) {
+	rest := &fakeREST{body: commentsListBody}
+	h := New(rest, "v0")
+
+	out := callTool1(t, h, toolCallBody("pb_list_comments", `{"seq":31}`))
+
+	if rest.gotPath != "/api/v1/projects/demo/tickets/31/comments" {
+		t.Errorf("叩いた REST = %q, want /api/v1/projects/demo/tickets/31/comments", rest.gotPath)
+	}
+	// **本文（body_md）を含めて返す。** pb_list_tasks の軽量化とは逆で、
+	// 引き継ぎノートを読むのが目的だから本文を落とさない。
+	if !strings.Contains(out.Content[0].Text, "引き継ぎノート") {
+		t.Errorf("応答に本文が無い: %+v", out)
+	}
+}
+
+func TestListCommentsPassesKindAndOrder(t *testing.T) {
+	rest := &fakeREST{body: commentsListBody}
+	h := New(rest, "v0")
+
+	callTool1(t, h, toolCallBody("pb_list_comments", `{"seq":31,"kind":"decision,caveat","order":"desc"}`))
+
+	if got := rest.gotQuery.Get("kind"); got != "decision,caveat" {
+		t.Errorf("kind = %q, want decision,caveat", got)
+	}
+	if got := rest.gotQuery.Get("order"); got != "desc" {
+		t.Errorf("order = %q, want desc", got)
+	}
+}
+
+func TestListCommentsPassesPaging(t *testing.T) {
+	rest := &fakeREST{body: commentsListBody}
+	h := New(rest, "v0")
+
+	callTool1(t, h, toolCallBody("pb_list_comments", `{"seq":31,"page":2,"per_page":20}`))
+
+	if got := rest.gotQuery.Get("page"); got != "2" {
+		t.Errorf("page = %q, want 2", got)
+	}
+	if got := rest.gotQuery.Get("per_page"); got != "20" {
+		t.Errorf("per_page = %q, want 20", got)
+	}
+}
+
+func TestListCommentsOmitsEmptyFilters(t *testing.T) {
+	rest := &fakeREST{body: commentsListBody}
+	h := New(rest, "v0")
+
+	callTool1(t, h, toolCallBody("pb_list_comments", `{"seq":31}`))
+
+	if len(rest.gotQuery) != 0 {
+		t.Errorf("引数なしの呼び出しでクエリが付いている: %v", rest.gotQuery)
+	}
+}
+
+func TestListCommentsRejectsMissingSeq(t *testing.T) {
+	rest := &fakeREST{}
+	h := New(rest, "v0")
+
+	res := decodeRPC(t, callMCP(t, h, agentPrincipal(), toolCallBody("pb_list_comments", `{}`)))
+	if res.Error == nil || res.Error.Code != codeInvalidParams {
+		t.Errorf("エラーコード = %+v, want %d", res.Error, codeInvalidParams)
+	}
+	if rest.calls != 0 {
+		t.Errorf("seq が無いのに REST を叩いている（%d 回）", rest.calls)
+	}
+}
+
+func TestListCommentsRejectsPerPageOutOfRange(t *testing.T) {
+	rest := &fakeREST{body: commentsListBody}
+	h := New(rest, "v0")
+
+	res := decodeRPC(t, callMCP(t, h, agentPrincipal(), toolCallBody("pb_list_comments", `{"seq":31,"per_page":500}`)))
+	if res.Error == nil || res.Error.Code != codeInvalidParams {
+		t.Errorf("エラーコード = %+v, want %d", res.Error, codeInvalidParams)
+	}
+	if rest.calls != 0 {
+		t.Errorf("範囲外なのに REST を叩いている（%d 回）", rest.calls)
+	}
+}
+
 // listBody は 9.2.2 の応答（1件）。落とす項目も入れてある。
 const listBody = `{"items":[{"id":"01TICKET00000000000000000","seq":31,"type":"task",` +
 	`"title":"認証APIの実装","status":{"key":"in_progress","name":"進行中","category":"in_progress"},` +

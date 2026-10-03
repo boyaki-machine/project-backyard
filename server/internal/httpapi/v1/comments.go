@@ -14,6 +14,11 @@
 // 増える。ETag はエージェントが「新しいコメントが付いたか」を安く
 // 見る口になる。
 //
+// **GET は kind によるフィルタを持つ**（カンマ区切りの OR。pb-259）。
+// MCP の pb_list_comments（Design.md 8.5.2）が、引き継ぎノート（caveat /
+// decision）だけを拾う用途で使う。ticket.sql の status 等と同じ
+// cardinality パターンで、新しい REST パスは増やさない。
+//
 // **削除は論理削除である**（DbDesign.md 4.6 / 6.7）。items に残し body_md を
 // null にして返す——画面は「削除されました」と出す（GuiDesign.md 5.5）。
 // **9.5.1 の comment_count だけは deleted_at IS NULL で数える**（読めるコメントの
@@ -25,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"slices"
 	"strings"
@@ -144,8 +150,15 @@ func (h *handler) listTicketComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	kinds := splitFilter(r.URL.Query().Get("kind"))
+	if details := appendEnumErrors(nil, "kind", kinds, commentKinds); len(details) > 0 {
+		apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(details...))
+		return
+	}
+
 	rows, err := h.q.ListTicketComments(ctx, gen.ListTicketCommentsParams{
 		TicketID:   ticketID,
+		Kinds:      kinds,
 		SortOrder:  page.Order,
 		PageLimit:  int32(page.Limit()),
 		PageOffset: int32(page.Offset()),
@@ -169,9 +182,11 @@ func (h *handler) listTicketComments(w http.ResponseWriter, r *http.Request) {
 
 	// **1件も返らなかったときは別クエリで数える。** ウィンドウ関数は行が無いと
 	// 1行も返らないので、total と ETag の材料がここからは採れない（0件のチケット、
-	// および範囲外のページを開いたとき）。
+	// フィルタに合う行が無いとき、および範囲外のページを開いたとき）。
 	if len(rows) == 0 {
-		sum, err := h.q.SummarizeTicketComments(ctx, ticketID)
+		sum, err := h.q.SummarizeTicketComments(ctx, gen.SummarizeTicketCommentsParams{
+			TicketID: ticketID, Kinds: kinds,
+		})
 		if err != nil {
 			apierr.Write(w, r, apierr.New(apierr.InternalError).
 				WithCause(fmt.Errorf("コメント件数を読めない: %w", err)))
@@ -183,21 +198,28 @@ func (h *handler) listTicketComments(w http.ResponseWriter, r *http.Request) {
 	// 差分取得（2.7 / 9.8）。If-None-Match は解釈せずヘッダだけ出す
 	// （9.2.5 と同じ）。**論理削除も updated_at を動かす**ので、削除が 304 に
 	// 埋もれることはない（DbDesign.md 6.7 の trg_comment_updated）。
-	w.Header().Set("ETag", commentsETag(page, total, lastUpdated))
+	w.Header().Set("ETag", commentsETag(page, kinds, total, lastUpdated))
 
 	WriteJSON(w, http.StatusOK, NewList(items, page, int(total)))
 }
 
 // commentsETag は一覧の ETag（9.8）。
 //
-// **フィルタ条件をハッシュに混ぜない。** 9.2.5 のチケット一覧と違い、絞り込みが
-// 1つも無く、変わりうるのは並び順とページだけである。その2つは値として直接
-// 入れてある——ETag は応答本文を指す検証子であり（RFC 9110 8.8.1）、
-// 2ページ目と1ページ目が同じ値になってはならない。
-func commentsETag(page Page, total int64, lastUpdated time.Time) string {
+// **kind フィルタをハッシュに混ぜる**（pb-259）。導入前は絞り込みが1つも無く、
+// 並び順とページだけを値として直接入れていた。フィルタが増えた以上、
+// `?kind=decision` と `?kind=caveat` が偶然同じ件数・同じ MAX(updated_at) に
+// なったときに同じ ETag を返してはならない——9.2.5 の ticketsETag と同じ理由
+// （フィルタを正規化してハッシュへ混ぜる）で、ここも同じ形に揃える。
+func commentsETag(page Page, kinds []string, total int64, lastUpdated time.Time) string {
+	sorted := slices.Clone(kinds)
+	slices.Sort(sorted)
+
+	h := fnv.New32a()
+	fmt.Fprintf(h, "kind=%s|page=%d|per_page=%d|order=%s",
+		strings.Join(sorted, ","), page.Page, page.PerPage, page.Order)
+
 	stamp := etagStamp(lastUpdated)
-	return fmt.Sprintf(`W/"cmt-%d-%d-%s-%d-%d"`,
-		page.Page, page.PerPage, page.Order, total, stamp)
+	return fmt.Sprintf(`W/"cmt-%08x-%d-%d"`, h.Sum32(), total, stamp)
 }
 
 // ── POST /api/v1/projects/{key}/tickets/{seq}/comments ───────

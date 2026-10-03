@@ -3436,10 +3436,18 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/comments/:id
 
 | メソッド | 必要権限 | 備考 |
 |---|---|---|
-| `GET` | `ticket.view` | 既定 `sort=created_at`・`order=asc`・`per_page=50` |
+| `GET` | `ticket.view` | 既定 `sort=created_at`・`order=asc`・`per_page=50`。`kind` フィルタを持つ（下記） |
 | `POST` | `comment.create` | |
 | `PATCH` | `comment.edit_own`（自分のもののみ） | 他人のものは `403` |
 | `DELETE` | `comment.delete_any`、または `comment.edit_own` かつ自分のもの | |
+
+**`GET` は `kind` でフィルタできる**（pb-259）。カンマ区切りで複数指定すると OR
+——9.2.1 の `status` / `type` と同じ形（`cardinality(...) = 0 OR col = ANY(...)`）。
+値は `POST` / `PATCH` と同じ6値（`discussion` / `decision` / `artifact` / `caveat` /
+`reference` / `progress`）で、含まれない値は `422 validation_failed`、
+`details[].field = "kind"`、`code = "invalid"`。**MCP の `pb_list_comments`
+（`Design.md` 8.5.2）が、引き継ぎノートなど `decision` / `caveat` だけを拾う
+用途でこれを使う。**
 
 **`DELETE` の必要権限は OR である。** ルート定義には両方を並べ、**どちらか一方でも
 持っていればミドルウェアを通す**（`Design.md` 6.4.4 の「`routes.go` を眺めるだけで
@@ -3512,9 +3520,15 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/comments/:id
 コメントだけである**——DoD（9.9）・リンク（9.10.1）・外部参照（9.10.2）はいずれも
 1チケットあたり数件に収まるが、**コメントは議論の量だけ増える。**
 
-**一覧は `ETag` を返す**（2.7）。値は `W/"cmt-<件数>-<MAX(updated_at) のナノ秒>"`。
+**一覧は `ETag` を返す**（2.7）。値は `W/"cmt-<フィルタ・並び・ページのハッシュ>-<件数>-<MAX(updated_at) のナノ秒>"`。
 **論理削除も `updated_at` を動かす**ので（`DbDesign.md` 6.7 の `trg_comment_updated`）、
 削除が `304` に埋もれない。
+
+**`kind` フィルタをハッシュへ混ぜる**（pb-259）。フィルタ導入前は並び順とページ
+だけが変わりうる値で、それらを直接埋め込んでいた。フィルタが増えた以上、
+`?kind=decision` と `?kind=caveat` が偶然同じ件数・同じ `MAX(updated_at)` に
+なる場合があり、フィルタを無視すると異なる内容に同じ `ETag` を返してしまう
+——9.2.5 の `ticketsETag` と同じ理由で、正規化した文字列をハッシュへ混ぜる。
 
 **`ETag` を持つ子資源はコメントだけである。** 2.7 が「ポーリングは実装していないが
 応答ヘッダだけ先に用意する」と定めており、**エージェントが「新しいコメントが
