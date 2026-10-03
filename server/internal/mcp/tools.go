@@ -183,6 +183,29 @@ func readTools() []tool {
 			},
 			call: callGetTask,
 		},
+		{
+			Name: "pb_list_comments",
+			Description: "チケットの既存コメント（引き継ぎノート・決定事項・注意点を含む）を一覧で返す。" +
+				"pb_post_note が書く口、pb_wait が「これから先」の変化を待つ口なのに対し、" +
+				"こちらは**過去に書かれたコメントを読む口**である。" +
+				"kind で絞ると、decision（決めたこと）や caveat（注意点）だけを拾える。" +
+				"本文を含めて返す——pb_list_tasks の軽量化とは目的が異なる。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq": {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
+					"kind": {Type: "string", Description: "種類で絞る。カンマ区切りで複数指定するとOR。" +
+						"discussion / decision / artifact / caveat / reference / progress。省略すると全種類"},
+					"page":     {Type: "integer", Description: "ページ番号。既定1", Minimum: intPtr(1)},
+					"per_page": {Type: "integer", Description: "返す件数。既定50、上限200", Minimum: intPtr(1), Maximum: intPtr(perPageMax)},
+					"order": {Type: "string", Description: "並び順。既定は古い順（asc）。" +
+						"新しいものから読みたいときは desc",
+						Enum: []string{"asc", "desc"}},
+				},
+				Required: []string{"seq"},
+			},
+			call: callListComments,
+		},
 	}
 }
 
@@ -287,6 +310,51 @@ func callGetTask(h *Handler, r *http.Request, key string, args json.RawMessage) 
 		res.body = withScheduleDates(res.body, loc)
 	}
 	return passThrough(r, res, nil)
+}
+
+// commentsArgs は pb_list_comments の引数（Design.md 8.5.2。pb-259）。
+type commentsArgs struct {
+	Seq     flexInt `json:"seq"`
+	Kind    string  `json:"kind"`
+	Page    flexInt `json:"page"`
+	PerPage flexInt `json:"per_page"`
+	Order   string  `json:"order"`
+}
+
+// callListComments はチケットの既存コメントを読む（ApiDesign.md 9.8。pb-259）。
+//
+// **passThrough で本文ごと返す。** pb_list_tasks の軽量化（lighten）とは逆の
+// 目的である——引き継ぎノートを読むのがこのツールの動機であり、本文を
+// 落とすと用を成さない。
+func callListComments(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in commentsArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+
+	q := url.Values{}
+	setIfNotEmpty(q, "kind", in.Kind)
+	setIfNotEmpty(q, "order", in.Order)
+	if in.Page.set {
+		if in.Page.value < 1 {
+			return toolResult{}, newError(codeInvalidParams, "page は 1 以上の整数である")
+		}
+		q.Set("page", strconv.FormatInt(in.Page.value, 10))
+	}
+	if in.PerPage.set {
+		if in.PerPage.value < 1 || in.PerPage.value > perPageMax {
+			return toolResult{}, newError(codeInvalidParams,
+				fmt.Sprintf("per_page は 1 以上 %d 以下である", perPageMax))
+		}
+		q.Set("per_page", strconv.FormatInt(in.PerPage.value, 10))
+	}
+
+	res, err := h.getREST(r, ticketPath(key, seq)+"/comments", q)
+	return passThrough(r, res, err)
 }
 
 // listArgs は pb_list_tasks の引数（Design.md 8.5）。

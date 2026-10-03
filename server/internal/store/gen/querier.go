@@ -1384,6 +1384,11 @@ type Querier interface {
 	// 並びは created_at の昇順が既定（9.8）。**許可する sort は created_at だけ**なので
 	// CASE 式は order の2通りだけで足りる（ListAdminUsers は5項目ぶん並ぶ）。
 	// **同値の tie-break は id** ——ULID は時刻順なので created_at と向きが揃う。
+	//
+	// **kind は ticket.sql の status 等と同じ cardinality パターンで絞る**（pb-259。
+	// pb_list_comments の土台）。空配列で「指定なし」を表す——pgx は nil スライスを
+	// NULL として送るため、cardinality(NULL) が NULL になり絞り込みが成立しなくなる
+	// （ticket.sql と同じ理由）。
 	ListTicketComments(ctx context.Context, arg ListTicketCommentsParams) ([]ListTicketCommentsRow, error)
 	// チケットの完了条件（DoD）（DbDesign.md 6.11、ApiDesign.md 9.9）。
 	//
@@ -1915,7 +1920,10 @@ type Querier interface {
 	// SummarizeTicketComments は ListTicketComments が1件も返さないときの total と
 	// last_updated_at。**ウィンドウ関数は行が無いと1行も返らない**ので、ETag と
 	// ページャの total をここから採る（0件のページを開いたときも ETag が要る）。
-	SummarizeTicketComments(ctx context.Context, ticketID string) (SummarizeTicketCommentsRow, error)
+	//
+	// **kind フィルタも同じ条件で絞る**（pb-259）。フィルタ付きで0件のときに
+	// フィルタ無しの総数を返すと、ETag と total が実際の一覧と食い違う。
+	SummarizeTicketComments(ctx context.Context, arg SummarizeTicketCommentsParams) (SummarizeTicketCommentsRow, error)
 	// TicketLinkExists は uq_ticket_link（source, target, link_type）の重複を、
 	// INSERT の前に見る（9.10.1 の 409 already_exists）。
 	//

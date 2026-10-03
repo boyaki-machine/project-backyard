@@ -2142,7 +2142,14 @@ func (q *fakeQuerier) ListTicketComments(
 		return nil, q.ticket.commentErr
 	}
 
-	sorted := slices.Clone(q.ticket.commentRows)
+	filtered := make([]gen.GetTicketCommentRow, 0, len(q.ticket.commentRows))
+	for _, row := range q.ticket.commentRows {
+		if len(arg.Kinds) == 0 || slices.Contains(arg.Kinds, row.Kind) {
+			filtered = append(filtered, row)
+		}
+	}
+
+	sorted := slices.Clone(filtered)
 	slices.SortStableFunc(sorted, func(a, b gen.GetTicketCommentRow) int {
 		c := a.CreatedAt.Compare(b.CreatedAt)
 		if c == 0 {
@@ -2156,7 +2163,7 @@ func (q *fakeQuerier) ListTicketComments(
 
 	total := int64(len(sorted))
 	var lastUpdated time.Time
-	for _, row := range q.ticket.commentRows {
+	for _, row := range filtered {
 		if row.UpdatedAt.After(lastUpdated) {
 			lastUpdated = row.UpdatedAt
 		}
@@ -2179,20 +2186,27 @@ func (q *fakeQuerier) ListTicketComments(
 }
 
 func (q *fakeQuerier) SummarizeTicketComments(
-	_ context.Context, _ string,
+	_ context.Context, arg gen.SummarizeTicketCommentsParams,
 ) (gen.SummarizeTicketCommentsRow, error) {
 	q.opLog = append(q.opLog, "SummarizeTicketComments")
 	if q.ticket.commentErr != nil {
 		return gen.SummarizeTicketCommentsRow{}, q.ticket.commentErr
 	}
-	var lastUpdated time.Time
+	var (
+		lastUpdated time.Time
+		total       int64
+	)
 	for _, row := range q.ticket.commentRows {
+		if len(arg.Kinds) > 0 && !slices.Contains(arg.Kinds, row.Kind) {
+			continue
+		}
+		total++
 		if row.UpdatedAt.After(lastUpdated) {
 			lastUpdated = row.UpdatedAt
 		}
 	}
 	return gen.SummarizeTicketCommentsRow{
-		Total: int64(len(q.ticket.commentRows)), LastUpdatedAt: lastUpdated,
+		Total: total, LastUpdatedAt: lastUpdated,
 	}, nil
 }
 

@@ -278,7 +278,8 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 		}
 	}
 
-	// read 6件（/pb-onboard が呼ぶ順。pb_list_tags はタグの語彙で pb_get_doc の隣）
+	// read 7件（/pb-onboard が呼ぶ順。pb_list_tags はタグの語彙で pb_get_doc の隣。
+	// pb_list_comments は既存コメントを読む口で、pb_get_task の隣＝9.8 の子資源）
 	// ＋ コンテキストパック1件（手順27。/pb-implement が「契約を読む → 前提を読む」の
 	// 順で呼ぶので pb_get_task の直後）＋ write 6件（10.7.1 の開発フローの順。
 	// pb_update_ticket と pb_put_dod は起票したあと直すので pb_create_ticket の隣、
@@ -291,7 +292,7 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 	// である）。
 	want := []string{
 		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tags",
-		"pb_list_tasks", "pb_get_task", "pb_get_context",
+		"pb_list_tasks", "pb_get_task", "pb_list_comments", "pb_get_context",
 		"pb_create_ticket", "pb_update_ticket", "pb_put_dod",
 		"pb_post_note", "pb_add_reference", "pb_create_doc", "pb_put_doc",
 		"pb_list_transitions", "pb_transition_task",
