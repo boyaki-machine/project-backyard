@@ -517,6 +517,12 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/confirmation/{id}/answer", h.answerConfirmation)
 
+		// ── 引き継ぎノート（Delegation.md 9.3・11章・12.2）── pb-250 ─
+		//
+		// **main だけが更新する**（ticket.create。身元の確認はハンドラ内）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+			Post("/projects/{key}/tickets/{seq}/handoff", h.updateHandoff)
+
 		// ── チケット間リンク（ApiDesign.md 9.10.1）── 手順18a ─────
 		//
 		// **PATCH は lag_days だけ**（9.10.1。pb-231）。一意制約が (source, target, link_type)

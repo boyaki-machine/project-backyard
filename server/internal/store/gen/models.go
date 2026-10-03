@@ -268,6 +268,16 @@ type Delegation struct {
 	UpdatedAt        time.Time
 }
 
+type DelegationHandoff struct {
+	ID           string
+	DelegationID string
+	Version      int32
+	Body         []byte
+	Trigger      string
+	WrittenBy    string
+	WrittenAt    time.Time
+}
+
 type DelegationPlan struct {
 	ID            string
 	DelegationID  string

@@ -2152,6 +2152,51 @@ pb-254）。
 操作（停止・再開）は、まだ実装が無い（5章「PM：停止・再開」の「再開」列。
 finding——別チケットで扱う）。
 
+## 6.28 引き継ぎノート（0054）
+
+**正本は `Delegation.md` 9.3・11章。** pb-250。D4 で確定した5表が
+これで揃う（pb-246〜250：`delegation` / `delegation_plan` / `evaluation` /
+`confirmation` / `delegation_handoff`）。
+
+```sql
+CREATE TABLE delegation_handoff (
+  id            char(26) COLLATE "C" PRIMARY KEY,
+  delegation_id char(26) COLLATE "C" NOT NULL REFERENCES delegation(id) ON DELETE CASCADE,
+  version       integer NOT NULL,
+  body          jsonb NOT NULL,
+  trigger       text NOT NULL CHECK (trigger IN (
+                  'plan_version', 'evaluation', 'report',
+                  'before_confirmation', 'session_end')),
+  written_by    char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  written_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT uq_delegation_handoff_version UNIQUE (delegation_id, version)
+);
+```
+
+**追記のみ。** `delegation_plan` と同じ番号付け（`NextDelegationHandoffVersion`
+が `COALESCE(MAX(version),0)+1`）だが、こちらは `status` を持たない——
+最新の版が常に現在のノートであり、古い版を `superseded` にする必要が無い。
+
+**`body` は11.1の7項目を自由な形で持つ。** `skeleton`・`scope` と同じ理由で
+形を固定しない——main が書く内容は委任ごとに違う。
+
+**次の一手（9.3）は、`delegation_handoff` に列として持たない。** 呼び出しの
+たびに `computeNextMove`（`delegation_handoff.go`）が、委任の現在の状態
+（`delegation.status`・開いている確認待ち・最新の計画・直近のヒアリングの
+回答）から計算する。**保存された値ではなく、常に最新の状態から導く値**
+だからである（4.3 の関門の扱いと同じ考え方）。
+
+**近似であることを明記する（finding）。** 9.3 の判定の一部（「ヒアリングに
+答えが付いた」「前の版へ差し戻された」「確認待ちに答えが付いた」）は、
+本来「main がまだそれを見ていない」ことを条件に含むが、PB は main の
+既読を記録していない。`computeNextMove` は「答えが存在する」「直前の版が
+差し戻しである」という弱い条件で近似しており、本来より広く次の一手を
+示すことがある。次の一手は PB の推奨であり main の判断を縛らないため
+（9.1「指示は強制の代わりではない」）、実害は小さいと判断した。
+
+**パック（pb-251）・待ち受け・通知（D6 未決）への配線はまだ無い。**
+`POST .../handoff` の応答に `next_move` を載せるところまでが pb-250 の範囲。
+
 # 7. 初期データ（0010）
 
 ## 7.1 認証プロバイダ

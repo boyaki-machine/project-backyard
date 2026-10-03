@@ -4546,6 +4546,70 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/tickets/{seq}/handoff:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+    post:
+      tags: [tickets]
+      summary: 引き継ぎノートを更新する
+      operationId: updateHandoff
+      description: |
+        自律実行（Delegated）の main が、引き継ぎノートを更新する
+        （Delegation.md 9.3・11章、pb-250）。**必要権限は `ticket.create`**
+        （呼び出し元がその委任の main であることはハンドラが別に確かめ、
+        違えば `403`）。MCP では `pb_update_handoff`。
+
+        **追記のみ**（前進のみ。4.4）。版を1つ増やして新しい行を作り、
+        最新の行が現在のノートになる。`body` は11.1の7項目（目的と現在の
+        計画の版、決めたこと、未決事項、進行中の作業、次の一手、予算の消費、
+        直近の評価）を自由な形で入れる。`trigger` は11.2の更新の区切り。
+
+        **ノートの更新は、確認待ちが開いていても止めない**（5章「main：
+        ノートを書く・引き継ぎノートを更新する」は確認待ちの列でも可）。
+
+        応答の `next_move` は、PB が役割（main）と段階から判定した推奨
+        （9.3）。`body.next_move`（main 自身の自己申告）とは別物で、
+        main の判断を縛らない。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body, trigger]
+              properties:
+                body:
+                  type: object
+                  additionalProperties: true
+                  description: 引き継ぎノートの中身（11.1）。形は固定されていない。
+                trigger:
+                  type: string
+                  enum: [plan_version, evaluation, report, before_confirmation, session_end]
+      responses:
+        '201':
+          description: 更新した引き継ぎノート。
+          headers:
+            Location:
+              description: 根の引き継ぎノートの URL（`GET` は実装していない）。
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationHandoff'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/tickets/{seq}/transitions:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -9378,6 +9442,33 @@ components:
           type: integer
           format: int64
           nullable: true
+
+    DelegationHandoff:
+      description: |
+        引き継ぎノート1件（Delegation.md 9.3・11章）。追記のみで、最新の
+        版が現在のノート。
+      type: object
+      required: [id, version, body, trigger, written_by, written_at, next_move]
+      properties:
+        id:
+          type: string
+          example: 01K2F8QW3H7YRJ4M5N6P7Q8HND
+        version:
+          type: integer
+        body:
+          type: object
+          additionalProperties: true
+        trigger:
+          type: string
+          enum: [plan_version, evaluation, report, before_confirmation, session_end]
+        written_by:
+          $ref: '#/components/schemas/ActorRef'
+        written_at:
+          type: integer
+          format: int64
+        next_move:
+          type: string
+          description: PB が役割と段階から判定した推奨（9.3）。main の判断を縛らない。
 
     TicketReport:
       description: |

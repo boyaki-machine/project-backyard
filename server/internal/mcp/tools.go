@@ -1019,6 +1019,27 @@ func writeTools() []tool {
 			call: callRaiseConfirmation,
 		},
 		{
+			Name: "pb_update_handoff",
+			Description: "自律実行（Delegated）の main が、引き継ぎノートを更新する" +
+				"（Delegation.md 9.3・11章）。**呼び出し元がその委任の main でなければ拒まれる。** " +
+				"ノートは追記のみで、最新の1件が現在の内容になる。11.1 の7項目" +
+				"（目的と現在の計画の版、決めたこと、未決事項、進行中の作業、次の一手、予算の消費、直近の評価）を " +
+				"body に自由な形で入れる。trigger は11.2の更新の区切り（計画の版・評価・完了レポート・" +
+				"確認待ちを立てる前・セッションを終える前）のいずれか。" +
+				"応答の next_move は、PB が役割と段階から判定した推奨であり、main 自身の判断を縛らない。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq":  {Type: "integer", Description: "委任の根となるチケットの番号（seq）", Minimum: intPtr(1)},
+					"body": {Type: "object", Description: "引き継ぎノートの中身（11.1の7項目）。形は固定されていない"},
+					"trigger": {Type: "string", Description: "更新の区切り（11.2）",
+						Enum: []string{"plan_version", "evaluation", "report", "before_confirmation", "session_end"}},
+				},
+				Required: []string{"seq", "body", "trigger"},
+			},
+			call: callUpdateHandoff,
+		},
+		{
 			Name: "pb_create_doc",
 			Description: "プロジェクト文書を新しく作る。doc.edit が必要。slug は ^[a-z0-9][a-z0-9-]{0,63}$（小文字・数字・ハイフン）で、.md は付けない。" +
 				"同じ親の下に同じ slug があれば 409 already_exists。応答は要点（path / version / updated_at）だけ。",
@@ -1625,6 +1646,39 @@ func callRaiseConfirmation(h *Handler, r *http.Request, key string, args json.Ra
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
 	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/confirmation", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// updateHandoffArgs は pb_update_handoff の引数（Delegation.md 9.3・11章。pb-250）。
+type updateHandoffArgs struct {
+	Seq     flexInt         `json:"seq"`
+	Body    json.RawMessage `json:"body"`
+	Trigger string          `json:"trigger"`
+}
+
+func callUpdateHandoff(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in updateHandoffArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if len(in.Body) == 0 {
+		return toolResult{}, newError(codeInvalidParams, "body は必須である")
+	}
+	if strings.TrimSpace(in.Trigger) == "" {
+		return toolResult{}, newError(codeInvalidParams, "trigger は必須である")
+	}
+
+	raw, err := json.Marshal(map[string]any{
+		"body": json.RawMessage(in.Body), "trigger": in.Trigger,
+	})
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/handoff", nil, raw, nil)
 	return passThrough(r, res, err)
 }
 
