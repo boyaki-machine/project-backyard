@@ -49,12 +49,18 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, cfg Config) error {
 		if len(line) == 0 {
 			continue
 		}
-		response, err := forward(ctx, client, endpoint.String(), token, line)
+		contentType, body, err := forward(ctx, client, endpoint.String(), token, line)
 		if err != nil {
 			return err
 		}
-		if _, err := out.Write(append(response, '\n')); err != nil {
-			return fmt.Errorf("Codexへ応答を書けない: %w", err)
+		messages, err := decodeMessages(contentType, body)
+		if err != nil {
+			return fmt.Errorf("PB MCPの応答を解釈できない: %w", err)
+		}
+		for _, m := range messages {
+			if _, err := out.Write(append(m, '\n')); err != nil {
+				return fmt.Errorf("Codexへ応答を書けない: %w", err)
+			}
 		}
 	}
 	if err := s.Err(); err != nil {
@@ -96,27 +102,69 @@ func newClient(caFile string) (*http.Client, error) {
 	return &http.Client{Transport: transport, Timeout: 60 * time.Second}, nil
 }
 
-func forward(ctx context.Context, client *http.Client, endpoint, token string, body []byte) ([]byte, error) {
+func forward(ctx context.Context, client *http.Client, endpoint, token string, body []byte) (contentType string, _ []byte, _ error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(body)))
 	if err != nil {
-		return nil, fmt.Errorf("PB要求を作れない: %w", err)
+		return "", nil, fmt.Errorf("PB要求を作れない: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("PB MCPへ接続できない: %w", err)
+		return "", nil, fmt.Errorf("PB MCPへ接続できない: %w", err)
 	}
 	defer res.Body.Close()
 	body, err = io.ReadAll(io.LimitReader(res.Body, 10<<20))
 	if err != nil {
-		return nil, fmt.Errorf("PB MCPの応答を読めない: %w", err)
+		return "", nil, fmt.Errorf("PB MCPの応答を読めない: %w", err)
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, fmt.Errorf("PB MCPがHTTP %dを返しました", res.StatusCode)
+		return "", nil, fmt.Errorf("PB MCPがHTTP %dを返しました", res.StatusCode)
 	}
-	return body, nil
+	return res.Header.Get("Content-Type"), body, nil
 }
 
 func bytesTrim(b []byte) []byte { return []byte(strings.TrimSpace(string(b))) }
+
+// decodeMessages は PB MCP の応答本文から、Codex へそのまま1行ずつ渡す
+// JSON-RPCメッセージを取り出す。
+//
+// **公式 SDK は既定で text/event-stream を返す**（通知を運べるようにするため。
+// pb-262）。bridge は1行＝1メッセージの単純な中継なので、SSE であれば
+// 各イベントの data を1メッセージとして取り出し、素の JSON であればそのまま
+// 1件として扱う。
+func decodeMessages(contentType string, body []byte) ([][]byte, error) {
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	if strings.TrimSpace(mediaType) == "text/event-stream" {
+		return decodeSSEMessages(body), nil
+	}
+	trimmed := bytesTrim(body)
+	if len(trimmed) == 0 {
+		return nil, nil
+	}
+	return [][]byte{trimmed}, nil
+}
+
+// decodeSSEMessages は SSE 本文からイベントごとの data フィールドを取り出す。
+// `:` で始まる行（コメント）と、data を持たないイベントは読み飛ばす。
+func decodeSSEMessages(body []byte) [][]byte {
+	var messages [][]byte
+	for _, rawEvent := range strings.Split(string(body), "\n\n") {
+		var dataLines []string
+		for _, line := range strings.Split(rawEvent, "\n") {
+			line = strings.TrimRight(line, "\r")
+			if line == "" || strings.HasPrefix(line, ":") {
+				continue
+			}
+			if data, ok := strings.CutPrefix(line, "data:"); ok {
+				dataLines = append(dataLines, strings.TrimSpace(data))
+			}
+		}
+		if len(dataLines) == 0 {
+			continue
+		}
+		messages = append(messages, []byte(strings.Join(dataLines, "\n")))
+	}
+	return messages
+}
