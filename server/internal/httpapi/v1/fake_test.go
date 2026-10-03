@@ -405,6 +405,20 @@ type fakeQuerier struct {
 	createdDelegations  []gen.CreateDelegationParams
 	createDelegationErr error
 	setExecutionModeTo  map[string]string // ticket id -> 設定された execution_mode
+
+	// 計画の版（Delegation.md 6章。pb-247）。
+	delegationByRootTicket map[string]gen.GetDelegationByRootTicketRow // key: root ticket id
+	delegationStatusSetTo  map[string]string                           // key: delegation id
+	nextPlanVersion        int32                                       // 0 なら 1 を返す
+	createdPlans           []gen.CreateDelegationPlanParams
+	createPlanErr          error
+	latestAcceptedPlan     gen.GetLatestAcceptedDelegationPlanRow
+	latestAcceptedPlanErr  error // pgx.ErrNoRows で「前の承認済み版が無い」
+	// **ID をキーにしない**（createDelegation と同じ理由）。
+	delegationPlanByIDRow gen.GetDelegationPlanByIDRow
+	planByVersion         map[int32]gen.GetDelegationPlanByVersionRow // key: version
+	acceptedPlanIDs       []string
+	ticketsCreatedSince   int64
 }
 
 // GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
@@ -2586,6 +2600,78 @@ func (q *fakeQuerier) GetDelegationByID(context.Context, string) (gen.GetDelegat
 		return gen.GetDelegationByIDRow{}, q.delegationByIDErr
 	}
 	return q.delegationByIDRow, nil
+}
+
+// ── 計画の版（Delegation.md 6章。pb-247）────────────────────────
+
+func (q *fakeQuerier) GetDelegationByRootTicket(_ context.Context, rootTicketID string) (gen.GetDelegationByRootTicketRow, error) {
+	q.opLog = append(q.opLog, "GetDelegationByRootTicket")
+	if row, ok := q.delegationByRootTicket[rootTicketID]; ok {
+		return row, nil
+	}
+	return gen.GetDelegationByRootTicketRow{}, pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) SetDelegationStatus(_ context.Context, arg gen.SetDelegationStatusParams) (int64, error) {
+	q.opLog = append(q.opLog, "SetDelegationStatus")
+	if q.delegationStatusSetTo == nil {
+		q.delegationStatusSetTo = map[string]string{}
+	}
+	q.delegationStatusSetTo[arg.ID] = arg.Status
+	return 1, nil
+}
+
+func (q *fakeQuerier) NextDelegationPlanVersion(context.Context, string) (int32, error) {
+	q.opLog = append(q.opLog, "NextDelegationPlanVersion")
+	if q.nextPlanVersion == 0 {
+		return 1, nil
+	}
+	return q.nextPlanVersion, nil
+}
+
+func (q *fakeQuerier) CreateDelegationPlan(_ context.Context, arg gen.CreateDelegationPlanParams) error {
+	q.opLog = append(q.opLog, "CreateDelegationPlan")
+	if q.createPlanErr != nil {
+		return q.createPlanErr
+	}
+	q.createdPlans = append(q.createdPlans, arg)
+	return nil
+}
+
+func (q *fakeQuerier) GetLatestAcceptedDelegationPlan(context.Context, string) (gen.GetLatestAcceptedDelegationPlanRow, error) {
+	q.opLog = append(q.opLog, "GetLatestAcceptedDelegationPlan")
+	if q.latestAcceptedPlanErr != nil {
+		return gen.GetLatestAcceptedDelegationPlanRow{}, q.latestAcceptedPlanErr
+	}
+	return q.latestAcceptedPlan, nil
+}
+
+func (q *fakeQuerier) GetDelegationPlanByID(context.Context, string) (gen.GetDelegationPlanByIDRow, error) {
+	q.opLog = append(q.opLog, "GetDelegationPlanByID")
+	return q.delegationPlanByIDRow, nil
+}
+
+func (q *fakeQuerier) GetDelegationPlanByVersion(
+	_ context.Context, arg gen.GetDelegationPlanByVersionParams,
+) (gen.GetDelegationPlanByVersionRow, error) {
+	q.opLog = append(q.opLog, "GetDelegationPlanByVersion")
+	if row, ok := q.planByVersion[arg.Version]; ok {
+		return row, nil
+	}
+	return gen.GetDelegationPlanByVersionRow{}, pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) AcceptDelegationPlan(_ context.Context, id string) (int64, error) {
+	q.opLog = append(q.opLog, "AcceptDelegationPlan")
+	q.acceptedPlanIDs = append(q.acceptedPlanIDs, id)
+	return 1, nil
+}
+
+func (q *fakeQuerier) CountTicketsInDelegationTreeSince(
+	context.Context, gen.CountTicketsInDelegationTreeSinceParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "CountTicketsInDelegationTreeSince")
+	return q.ticketsCreatedSince, nil
 }
 
 func (q *fakeQuerier) DetachTicketTags(_ context.Context, ticketID string) error {

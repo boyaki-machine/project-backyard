@@ -4264,6 +4264,114 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/tickets/{seq}/plan:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+    post:
+      tags: [tickets]
+      summary: 計画の版を提出する
+      operationId: submitDelegationPlan
+      description: |
+        自律実行（Delegated）の main が、委任の根に対して計画の版を提出する
+        （Delegation.md 6章、pb-247）。**必要権限は `ticket.create`**（木の中に
+        起票するのと同じ束。呼び出し元がその委任の main であることはハンドラが
+        別に確かめ、main でなければ `403`）。MCP では `pb_submit_plan`。
+
+        **PB が前の承認済み版と比べて変更の段階を測る**（`measured_class`。
+        6.3）。自己申告（`declared_class`）と比べて厳しい方を `status` に反映する。
+
+        - **軽微**：その場で `accepted` になる
+        - **構造**：`proposed` のまま評価エージェントの合格を待つ（評価の実装は
+          pb-248）
+        - **範囲**：`proposed` のまま、委任を `planning` へ戻す（PM の事前承認
+          を待つ）
+        - **初版**（前の承認済み版が無い）：判定規則を適用せず `proposed` の
+          まま評価を待つ（6.1「計画の初版は、評価が先」）
+
+        **木の深さの増加と、機微な領域に触れる枝の増加は測らない。** 器がまだ
+        無い（別チケット）。**閾値（予算配分20%・新規5件）は固定値である**
+        ——プロジェクト設定化（`Design.md` 10.3）は別チケットで行う。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitDelegationPlanRequest'
+      responses:
+        '201':
+          description: 受理した計画の版。
+          headers:
+            Location:
+              description: 作った版の URL（`GET` は実装していない）。
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationPlan'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/tickets/{seq}/plan/{version}/revert:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+      - name: version
+        in: path
+        required: true
+        description: 差し戻す先の版番号。
+        schema: { type: integer, minimum: 1 }
+    post:
+      tags: [tickets]
+      summary: 前の版へ差し戻す
+      operationId: revertDelegationPlan
+      description: |
+        PM が計画を前の版へ差し戻す（Delegation.md 6.2、pb-247）。
+        **必要権限は `delegation.manage`**。**前進のみ**——指定した版の
+        `scope` / `skeleton` / `body_md` を写した**新しい版**を作り、
+        `reverts_to` に元の版番号を残す。評価は挟まず、作った版は即座に
+        `accepted` になる。MCP ツールは持たない（`createDelegation` と同じ
+        理由。PM が直接行う操作）。
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason_md:
+                  type: string
+                  description: 差し戻しの理由。省略すると定型文になる。
+      responses:
+        '201':
+          description: 差し戻しで作った新しい版。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationPlan'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/tickets/{seq}/transitions:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -8864,6 +8972,87 @@ components:
         updated_at:
           type: integer
           format: int64
+
+    SubmitDelegationPlanRequest:
+      description: |
+        計画の版の提出（Delegation.md 6章、pb-247）。
+      type: object
+      required: [skeleton, body_md, reason_md]
+      properties:
+        skeleton:
+          type: object
+          description: |
+            骨格：根の直下の枝・予算配分・チェックポイント（6.2）。形は
+            固定されていない。「枝が増えた・減った」「予算配分の20%超の
+            変動」を測るには `branches: [{name, budget_share}]` の形を使う
+            ——無ければその観点の判定は行われない。
+          additionalProperties: true
+        scope:
+          type: object
+          description: この版が前提とする委任範囲。省略すると委任のいまの範囲を使う。範囲を変えるときだけ指定する。
+          additionalProperties: true
+        body_md:
+          type: string
+          description: 計画の説明。
+        reason_md:
+          type: string
+          description: 前の版から変えた理由。
+        declared_class:
+          type: string
+          enum: [minor, structural, scope]
+          description: main の自己申告。省略すると minor 扱い（PB の判定のほうが厳しければそちらが採られる）。
+
+    DelegationPlan:
+      description: |
+        計画1件（Delegation.md 6.2・6.3）。
+      type: object
+      required: [id, version, scope, skeleton, body_md, reason_md, status,
+                 submitted_by, submitted_at]
+      properties:
+        id:
+          type: string
+          example: 01K2F8QW3H7YRJ4M5N6P7Q8PLN
+        version:
+          type: integer
+        scope:
+          type: object
+          additionalProperties: true
+        skeleton:
+          type: object
+          additionalProperties: true
+        body_md:
+          type: string
+        reason_md:
+          type: string
+        declared_class:
+          type: string
+          enum: [minor, structural, scope]
+          nullable: true
+        measured_class:
+          type: string
+          enum: [minor, structural, scope]
+          nullable: true
+          description: PB が測った段階。前の承認済み版が無い初版では null。
+        status:
+          type: string
+          enum: [proposed, accepted, rejected, superseded, reverted]
+        reverts_to:
+          type: integer
+          nullable: true
+          description: 差し戻しで作った版なら、写した元の版番号。
+        submitted_by:
+          $ref: '#/components/schemas/ActorRef'
+        submitted_at:
+          type: integer
+          format: int64
+        decided_by:
+          allOf:
+            - $ref: '#/components/schemas/ActorRef'
+          nullable: true
+        decided_at:
+          type: integer
+          format: int64
+          nullable: true
 
     TicketReport:
       description: |

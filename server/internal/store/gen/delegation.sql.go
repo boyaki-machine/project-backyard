@@ -58,8 +58,8 @@ type CreateDelegationParams struct {
 }
 
 // 委任（delegation）に関するクエリ（DbDesign.md 6.24、Delegation.md 4章・12.2）。
-// pb-246。delegation_plan / evaluation / confirmation / delegation_handoff は
-// 別チケット（pb-247〜250）で足す。
+// pb-246。計画の版（delegation_plan）は delegation_plan.sql（pb-247）。
+// evaluation / confirmation / delegation_handoff は別チケット（pb-248〜250）で足す。
 //
 // **木への所属の判定は、既存の IsTicketDescendant（ticket.sql）を使い回す。**
 // 「候補チケットが、ある根の木に属するか」は ticket.sql が既に持っている
@@ -182,6 +182,35 @@ func (q *Queries) GetDelegationByID(ctx context.Context, id string) (GetDelegati
 	return i, err
 }
 
+const getDelegationByRootTicket = `-- name: GetDelegationByRootTicket :one
+SELECT id, status, scope, main_actor_id, evaluator_actor_id
+FROM delegation
+WHERE root_ticket_id = $1
+`
+
+type GetDelegationByRootTicketRow struct {
+	ID               string
+	Status           string
+	Scope            []byte
+	MainActorID      string
+	EvaluatorActorID string
+}
+
+// GetDelegationByRootTicket は根のチケットから委任を引く（pb-247）。
+// 1チケットにつき委任は1件（root_ticket_id が UNIQUE。4.4）。
+func (q *Queries) GetDelegationByRootTicket(ctx context.Context, rootTicketID string) (GetDelegationByRootTicketRow, error) {
+	row := q.db.QueryRow(ctx, getDelegationByRootTicket, rootTicketID)
+	var i GetDelegationByRootTicketRow
+	err := row.Scan(
+		&i.ID,
+		&i.Status,
+		&i.Scope,
+		&i.MainActorID,
+		&i.EvaluatorActorID,
+	)
+	return i, err
+}
+
 const getTicketForDelegation = `-- name: GetTicketForDelegation :one
 SELECT parent_id, execution_mode FROM ticket WHERE id = $1
 `
@@ -236,6 +265,25 @@ func (q *Queries) ListActiveDelegationsForProject(ctx context.Context, projectID
 		return nil, err
 	}
 	return items, nil
+}
+
+const setDelegationStatus = `-- name: SetDelegationStatus :execrows
+UPDATE delegation SET status = $1 WHERE id = $2
+`
+
+type SetDelegationStatusParams struct {
+	Status string
+	ID     string
+}
+
+// SetDelegationStatus は委任の主状態を変える（4.3）。pb-247 では、範囲の変更が
+// 提出されたときに承認済から計画中へ戻すのに使う。
+func (q *Queries) SetDelegationStatus(ctx context.Context, arg SetDelegationStatusParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setDelegationStatus, arg.Status, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setTicketExecutionMode = `-- name: SetTicketExecutionMode :execrows

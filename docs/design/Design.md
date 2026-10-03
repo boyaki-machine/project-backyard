@@ -1381,6 +1381,7 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 | `pb_put_doc` | `PATCH /projects/:key/docs/*path` | **`doc.edit`** |
 | `pb_post_note` | `POST /projects/:key/tickets/:seq/comments` | `comment.create` |
 | `pb_add_reference` | `POST /projects/:key/tickets/:seq/references` | **`ticket.reference.edit`** |
+| `pb_submit_plan` | `POST /projects/:key/tickets/:seq/plan`（`Delegation.md` 6章。pb-247） | `ticket.create`（+ main の身元確認） |
 | `pb_transition_task` | `POST /projects/:key/tickets/:seq/transition` | `ticket.transition` |
 | `pb_list_transitions` | `GET /projects/:key/tickets/:seq/transitions` | `ticket.view` |
 | `pb_submit_result` | `POST /projects/:key/tickets/:seq/reports`（`ApiDesign.md` 9.15） | `ticket.transition` |
@@ -1473,6 +1474,9 @@ SDK はリクエストごとにサーバを組み立てる関数を呼ぶので�
 | `pb_put_doc` | `path`, `body_md`, `change_reason?` | `GET` してから `PATCH /projects/:key/docs/*path` | **要点だけ**（`path` / `version` / `updated_at`） |
 | `pb_post_note` | `seq`, `body_md`, `kind?` | `POST /projects/:key/tickets/:seq/comments` | **要点だけ**（`id` / `kind` / `created_at`） |
 | `pb_add_reference` | `seq`, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | `POST /projects/:key/tickets/:seq/references` | 9.10.2 の1件をそのまま |
+| `pb_submit_plan` | `seq`, `skeleton`, `body_md`, `reason_md`, `scope?`, `declared_class?` | `POST /projects/:key/tickets/:seq/plan`（`Delegation.md` 6章） | 提出した計画の版をそのまま（`measured_class` / `status` を含む） |
+
+**`pb_submit_plan` は呼び出し元がその委任の main であることをハンドラが確かめる。** ルートの宣言は `ticket.create`（12.2 と同じ束）だが、**main でなければ 403**——権限とは別に、身元そのものが条件になる唯一のツールである。`scope` を省略すると委任のいまの範囲を使う。
 
 **引数の名前は `ApiDesign.md` の本体フィールドに揃える**（`body` ではなく `body_md`、`parent` ではなく `parent_seq`）。8.5 の冒頭が述べるとおり、名前が一致していればエージェントは迷ったときに設計文書を引ける。
 
