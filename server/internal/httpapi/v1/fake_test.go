@@ -3380,8 +3380,17 @@ func (q *fakeQuerier) GetProjectTicketTrends(_ context.Context, arg gen.GetProje
 	}
 	loc, _ := time.LoadLocation("Asia/Tokyo")
 	today := arg.AsOf.In(loc)
-	start := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -int(arg.Days)+1)
-	rows := make([]gen.GetProjectTicketTrendsRow, arg.Days)
+	days := 7
+	switch arg.Period {
+	case "4w":
+		days = 28
+	case "3m":
+		days = 92
+	case "6m":
+		days = 183
+	}
+	start := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -days+1)
+	rows := make([]gen.GetProjectTicketTrendsRow, days)
 	for i := range rows {
 		rows[i] = gen.GetProjectTicketTrendsRow{Date: start.AddDate(0, 0, i).Format("2006-01-02"), Timezone: "Asia/Tokyo", AsOf: arg.AsOf, IsPartial: i == len(rows)-1}
 	}

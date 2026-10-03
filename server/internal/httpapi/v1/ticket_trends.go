@@ -11,10 +11,11 @@ import (
 )
 
 type ticketTrendCounts struct {
-	Created                 int64 `json:"created"`
-	Completed               int64 `json:"completed"`
-	Reopened                int64 `json:"reopened"`
-	UnclassifiedTransitions int64 `json:"unclassified_transitions"`
+	Done       int64 `json:"done"`
+	InProgress int64 `json:"in_progress"`
+	Todo       int64 `json:"todo"`
+	NewTodo    int64 `json:"new_todo"`
+	Unknown    int64 `json:"unknown"`
 }
 
 type ticketTrendDay struct {
@@ -24,32 +25,50 @@ type ticketTrendDay struct {
 }
 
 type ticketTrendsView struct {
-	Days      int32             `json:"days"`
+	Period    string            `json:"period"`
+	Days      int               `json:"days"`
 	Timezone  string            `json:"timezone"`
 	StartDate string            `json:"start_date"`
 	EndDate   string            `json:"end_date"`
 	AsOf      Time              `json:"as_of"`
 	Basis     string            `json:"basis"`
-	Totals    ticketTrendCounts `json:"totals"`
+	Latest    ticketTrendCounts `json:"latest"`
 	Daily     []ticketTrendDay  `json:"daily"`
 }
 
-func parseTrendDays(query url.Values) (int32, *apierr.Error) {
+func parseTrendPeriod(query url.Values) (string, *apierr.Error) {
+	period := "7d"
 	for name, values := range query {
-		if name != "days" || len(values) != 1 || (values[0] != "7" && values[0] != "28") {
-			return 0, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
-				Field: name, Code: "invalid", Message: "集計期間は7日または28日で指定してください",
+		valid := len(values) == 1
+		if valid {
+			switch name {
+			case "period":
+				valid = values[0] == "7d" || values[0] == "4w" || values[0] == "3m" || values[0] == "6m"
+				period = values[0]
+			case "days":
+				valid = values[0] == "7" || values[0] == "28"
+				if values[0] == "28" {
+					period = "4w"
+				}
+			default:
+				valid = false
+			}
+		}
+		if !valid {
+			return "", apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+				Field: name, Code: "invalid", Message: "集計期間は7日・4週間・3ヶ月・半年から指定してください",
 			})
 		}
 	}
-	if query.Get("days") == "28" {
-		return 28, nil
+	if query.Has("period") && query.Has("days") {
+		return "", apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+			Field: "period", Code: "invalid", Message: "periodとdaysは同時に指定できません",
+		})
 	}
-	return 7, nil
+	return period, nil
 }
 
-// getTicketTrends counts recorded operations, never inferred operations from closed_at.
-// Calendar boundaries, classification and existing-ticket scope share one SQL snapshot.
+// Status counts and calendar boundaries share a single SQL snapshot.
 func (h *handler) getTicketTrends(w http.ResponseWriter, r *http.Request) {
 	_, _, projectID, ok := projectScopeContext(w, r, h.q, "GET /projects/{key}/ticket-trends")
 	if !ok {
@@ -62,31 +81,28 @@ func (h *handler) getTicketTrends(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
-	days, apiErr := parseTrendDays(query)
+	period, apiErr := parseTrendPeriod(query)
 	if apiErr != nil {
 		apierr.Write(w, r, apiErr)
 		return
 	}
 	rows, err := h.q.GetProjectTicketTrends(r.Context(), gen.GetProjectTicketTrendsParams{
-		ProjectID: projectID, Days: days, AsOf: time.Now().UTC().Truncate(time.Millisecond),
+		ProjectID: projectID, Period: period, AsOf: time.Now().UTC().Truncate(time.Millisecond),
 	})
-	if err != nil || len(rows) != int(days) {
+	if err != nil || len(rows) < 7 || len(rows) > 184 {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(
-			fmt.Errorf("期間内の増加・消化を読めない: rows=%d: %v", len(rows), err)))
+			fmt.Errorf("チケットの状態別推移を読めない: rows=%d: %v", len(rows), err)))
 		return
 	}
 	v := ticketTrendsView{
-		Days: days, Timezone: rows[0].Timezone, StartDate: rows[0].Date,
+		Period: period, Days: len(rows), Timezone: rows[0].Timezone, StartDate: rows[0].Date,
 		EndDate: rows[len(rows)-1].Date, AsOf: Time(rows[0].AsOf),
-		Basis: "recorded_activity_for_existing_tickets", Daily: make([]ticketTrendDay, 0, days),
+		Basis: "reconstructed_status_for_existing_tickets", Daily: make([]ticketTrendDay, 0, len(rows)),
 	}
 	for _, row := range rows {
-		counts := ticketTrendCounts{row.Created, row.Completed, row.Reopened, row.UnclassifiedTransitions}
+		counts := ticketTrendCounts{row.Done, row.InProgress, row.Todo, row.NewTodo, row.Unknown}
 		v.Daily = append(v.Daily, ticketTrendDay{row.Date, counts, row.IsPartial})
-		v.Totals.Created += row.Created
-		v.Totals.Completed += row.Completed
-		v.Totals.Reopened += row.Reopened
-		v.Totals.UnclassifiedTransitions += row.UnclassifiedTransitions
+		v.Latest = counts
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	WriteJSON(w, http.StatusOK, v)

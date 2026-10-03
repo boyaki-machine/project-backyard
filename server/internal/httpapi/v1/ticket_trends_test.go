@@ -14,10 +14,11 @@ import (
 func TestTicketTrendsQuery(t *testing.T) {
 	for _, tc := range []struct {
 		query  string
-		days   int32
+		days   int
 		status int
 	}{
-		{"", 7, 200}, {"?days=7", 7, 200}, {"?days=28", 28, 200},
+		{"", 7, 200}, {"?days=7", 7, 200}, {"?days=28", 28, 200}, {"?period=7d", 7, 200}, {"?period=4w", 28, 200}, {"?period=3m", 92, 200}, {"?period=6m", 183, 200},
+		{"?period=", 0, 422}, {"?period=90d", 0, 422}, {"?period=7d&period=4w", 0, 422}, {"?period=4w&days=28", 0, 422},
 		{"?days=", 0, 422}, {"?days=0", 0, 422}, {"?days=07", 0, 422},
 		{"?days=8", 0, 422}, {"?days=7&days=28", 0, 422}, {"?timezone=UTC", 0, 422},
 		{"?days=7;unknown=x", 0, 422}, {"?days=%ZZ", 0, 422},
@@ -36,7 +37,7 @@ func TestTicketTrendsQuery(t *testing.T) {
 				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 			}
 			if tc.status != 200 {
-				if q.ticket.trendIn.Days != 0 {
+				if q.ticket.trendIn.Period != "" {
 					t.Fatal("invalid query reached SQL")
 				}
 				return
@@ -58,23 +59,25 @@ func TestTicketTrendsQuery(t *testing.T) {
 	}
 }
 
-func TestTicketTrendsTotalsAndFailure(t *testing.T) {
+func TestTicketTrendsLatestAndFailure(t *testing.T) {
 	q := dashFake()
 	q.ticket.trendRows = make([]gen.GetProjectTicketTrendsRow, 7)
 	for i := range q.ticket.trendRows {
 		q.ticket.trendRows[i] = gen.GetProjectTicketTrendsRow{Date: time.Date(2026, 10, i+1, 0, 0, 0, 0, time.UTC).Format("2006-01-02"), AsOf: time.Now(), Timezone: "Asia/Tokyo", IsPartial: i == 6}
 	}
-	q.ticket.trendRows[0].Created = 1
-	q.ticket.trendRows[1].Completed = 2
-	q.ticket.trendRows[1].Reopened = 1
-	q.ticket.trendRows[2].UnclassifiedTransitions = 3
+	q.ticket.trendRows[0].Todo = 1
+	q.ticket.trendRows[1].Done = 2
+	q.ticket.trendRows[1].InProgress = 1
+	q.ticket.trendRows[2].Unknown = 3
+	q.ticket.trendRows[6].Todo = 5
+	q.ticket.trendRows[6].NewTodo = 2
 	rec := httptest.NewRecorder()
 	(&handler{q: q}).getTicketTrends(rec, dashReq("GET", "/api/v1/projects/demo/ticket-trends"))
 	var v ticketTrendsView
 	if err := decodeTrendJSON(rec.Body.Bytes(), &v); err != nil {
 		t.Fatal(err)
 	}
-	if v.Totals != (ticketTrendCounts{1, 2, 1, 3}) || v.Basis != "recorded_activity_for_existing_tickets" {
+	if v.Latest != (ticketTrendCounts{0, 0, 5, 2, 0}) || v.Basis != "reconstructed_status_for_existing_tickets" {
 		t.Fatalf("totals=%+v", v)
 	}
 	q.ticket.trendErr = errors.New("boom")
