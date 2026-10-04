@@ -1,7 +1,15 @@
 import { expect, test, type Page } from '@playwright/test'
 import { mockEditingTicket, editingTicket } from './fixtures/ticket-editing'
 
-async function setup(page: Page, options: { failSeq?: number; readOnly?: boolean;  } = {}) {
+function rows(page: Page, seq: number) {
+  return page.locator('.row').filter({ has: page.locator('code.seq').filter({ hasText: new RegExp(`^demo-${seq}$`) }) })
+}
+
+async function select(page: Page, seq: number) {
+  await rows(page, seq).first().locator('.title').click({ modifiers: ['Control'] })
+}
+
+async function setup(page: Page, options: { failSeq?: number; readOnly?: boolean } = {}) {
   const state = await mockEditingTicket(page, 'ja')
   // Parent, ordinary descendant, and a parent hidden by a filter.
   state.items.push({ ...editingTicket, seq: 3, title: '親と一緒の子', parent_seq: 1 })
@@ -39,20 +47,24 @@ for (const width of [600, 900, 1440]) {
   test(`single and multiple staging at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     const { state, moves } = await setup(page)
-    const child = page.getByRole('checkbox', { name: 'demo-3を選択', exact: true })
-    await expect(child).toBeDisabled()
-    await expect(page.getByRole('checkbox', { name: 'demo-4を選択', exact: true })).toBeDisabled()
+    await expect(page.getByRole('checkbox', { name: /demo-.*を選択/ })).toHaveCount(0)
+    for (const seq of [3, 4]) {
+      await select(page, seq)
+      await expect(rows(page, seq)).not.toHaveClass(/stage-selected/)
+    }
+    await expect(page).toHaveURL(/backlog$/)
     await page.getByRole('button', { name: 'demo-1のオンステージ操作', exact: true }).click()
     await expect(page.getByRole('menuitem', { name: 'オンステージへ', exact: true })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath(`stage-menu-${width}.png`), fullPage: true })
     await page.getByRole('menuitem', { name: 'オンステージへ', exact: true }).click()
     await expect.poll(() => state.items[0].staged_at).not.toBeNull()
-    await expect(page.getByRole('checkbox', { name: 'demo-1を選択', exact: true })).toBeDisabled()
+    await select(page, 1)
+    await expect(rows(page, 1)).not.toHaveClass(/stage-selected/)
     // Both the parent and its child move; the child is never sent to move.
     const staged = page.locator('.group-section').filter({ has: page.getByText('オンステージ', { exact: true }) })
     await expect(staged.getByRole('link', { name: '親と一緒の子', exact: true })).toBeVisible()
-    await page.getByRole('checkbox', { name: 'demo-2を選択', exact: true }).check()
-    await page.getByRole('checkbox', { name: 'demo-5を選択', exact: true }).check()
+    await select(page, 2)
+    await select(page, 5)
     await expect(page).toHaveURL(/backlog$/)
     const bar = page.getByRole('group', { name: '選択したチケットの操作' })
     await expect(bar).toBeVisible()
@@ -69,15 +81,15 @@ for (const width of [600, 900, 1440]) {
 
 test('partial failure retains remaining selection and reports both counts', async ({ page }) => {
   const { moves } = await setup(page, { failSeq: 5 })
-  await page.getByRole('checkbox', { name: 'demo-2を選択', exact: true }).check()
-  await page.getByRole('checkbox', { name: 'demo-5を選択', exact: true }).check()
-  await page.getByRole('checkbox', { name: 'demo-6を選択', exact: true }).check()
+  await select(page, 2)
+  await select(page, 5)
+  await select(page, 6)
   await page.getByRole('button', { name: '選択したチケットをオンステージへ', exact: true }).click()
   await expect(page.getByText(/1件をオンステージへ移動しました。残り2件は未処理です/)).toBeVisible()
   expect(moves.map(m => m.seq)).toEqual([2, 5])
-  await expect(page.getByRole('checkbox', { name: 'demo-5を選択', exact: true })).toBeChecked()
-  await expect(page.getByRole('checkbox', { name: 'demo-6を選択', exact: true })).toBeChecked()
-  await expect(page.getByRole('checkbox', { name: 'demo-2を選択', exact: true })).not.toBeChecked()
+  await expect(rows(page, 5)).toHaveClass(/stage-selected/)
+  await expect(rows(page, 6)).toHaveClass(/stage-selected/)
+  await expect(rows(page, 2)).not.toHaveClass(/stage-selected/)
 })
 
 test('readonly users have no stage controls', async ({ page }) => {
@@ -88,7 +100,7 @@ test('readonly users have no stage controls', async ({ page }) => {
 
 test('filter changes clear selections, and keyboard menu works with alternate sorting', async ({ page }) => {
   const { moves } = await setup(page)
-  await page.getByRole('checkbox', { name: 'demo-1を選択', exact: true }).check()
+  await select(page, 1)
   await page.getByRole('button', { name: /タイトル/ }).first().click()
   await expect(page.getByRole('group', { name: '選択したチケットの操作' })).toHaveCount(0)
   const menu = page.getByRole('button', { name: 'demo-1のオンステージ操作', exact: true })
@@ -104,11 +116,38 @@ test('tag groups share selection by ticket ID and send only one move', async ({ 
   const { state, moves } = await setup(page)
   state.items[0].tags = [{ id: 'tag-a', name: 'タグA' }, { id: 'tag-b', name: 'タグB' }]
   await page.goto('/p/demo/backlog?group=tag')
-  const checks = page.getByRole('checkbox', { name: 'demo-1を選択', exact: true })
-  await expect(checks).toHaveCount(2)
-  await checks.first().check()
-  await expect(checks.nth(1)).toBeChecked()
+  const duplicates = rows(page, 1)
+  await expect(duplicates).toHaveCount(2)
+  await select(page, 1)
+  await expect(duplicates.nth(1)).toHaveClass(/stage-selected/)
   await page.getByRole('button', { name: '選択したチケットをオンステージへ', exact: true }).click()
   await expect.poll(() => moves.length).toBe(1)
   expect(moves[0].seq).toBe(1)
+})
+
+
+test('modifier selection toggles without navigation; ordinary clicks open detail', async ({ page, context }) => {
+  await setup(page)
+  const count = context.pages().length
+  // Ctrl uses contextmenu on macOS; click with ctrlKey covers the other event path.
+  await rows(page, 1).locator('.title').dispatchEvent('click', { ctrlKey: true, button: 0 })
+  await expect(rows(page, 1)).toHaveClass(/stage-selected/)
+  await expect(rows(page, 1)).toHaveAttribute('aria-selected', 'true')
+  await select(page, 1)
+  await expect(rows(page, 1)).not.toHaveClass(/stage-selected/)
+  await rows(page, 2).locator('code.seq').click({ modifiers: ['Meta'] })
+  await expect(rows(page, 2)).toHaveClass(/stage-selected/)
+  await page.getByRole('button', { name: 'demo-2のオンステージ操作', exact: true }).click({ modifiers: ['Meta'] })
+  await expect(page.getByRole('menuitem', { name: 'オンステージへ', exact: true })).toBeVisible()
+  await expect(rows(page, 2)).toHaveClass(/stage-selected/)
+  await page.keyboard.press('Escape')
+  await rows(page, 1).focus()
+  await page.keyboard.press('Control+Space')
+  await expect(rows(page, 1)).toHaveClass(/stage-selected/)
+  await page.getByRole('button', { name: '選択を解除', exact: true }).click()
+  await expect(page.locator('.row.stage-selected')).toHaveCount(0)
+  await expect(page).toHaveURL(/backlog$/)
+  expect(context.pages()).toHaveLength(count)
+  await rows(page, 1).locator('.title').click()
+  await expect(page).toHaveURL(/tickets\/1$/)
 })
