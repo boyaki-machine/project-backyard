@@ -273,7 +273,12 @@ function currentText(field: EditField): string {
 }
 
 async function startEdit(field: EditField): Promise<void> {
-  if (!canEdit.value || busy.value) return
+  if (!canEdit.value) return
+  if (busy.value) {
+    if (editCommit === null) return
+    await editCommit
+    if (fieldError.value !== null) return
+  }
   if (field === 'actual_point' && !canEditActualPoint.value) return
   // 別の欄を開いていたら、そちらは保存してから移る（5.5「別の領域をクリック」）
   if (editing.value !== null && editing.value !== field) {
@@ -510,6 +515,10 @@ async function save(patch: UpdateTicketRequest, field: string): Promise<void> {
 
 // ── 説明の自動保存（pb-271）─────────────────────────────────
 const descriptionRegion = useTemplateRef<HTMLElement>('descriptionRegion')
+let descriptionPointerTarget: Node | null = null
+function onDescriptionPointerDown(event: PointerEvent): void {
+  descriptionPointerTarget = event.target instanceof Node ? event.target : null
+}
 
 function cancelDescription(): void {
   if (!busy.value && editCommit === null) cancelEdit()
@@ -531,19 +540,28 @@ async function closeDetail(): Promise<void> {
 async function onDescriptionFocusOut(event: FocusEvent): Promise<void> {
   // The read button disappears when editing starts; its blur is not leaving the editor.
   if (event.target instanceof HTMLElement && event.target.closest('.body-view')) return
+  // Clicking non-focusable preview text leaves activeElement on body, but stays in the region.
+  if (event.relatedTarget === null && descriptionPointerTarget && descriptionRegion.value?.contains(descriptionPointerTarget)) return
   await nextTick()
   if (descriptionRegion.value?.contains(document.activeElement)) return
   if (editing.value === 'body_md') await finishDescription()
 }
 
 function onOutsideDescription(event: MouseEvent): void {
+  descriptionPointerTarget = null
   if (editing.value !== 'body_md') return
   if (descriptionRegion.value && event.composedPath().includes(descriptionRegion.value)) return
   void finishDescription()
 }
 
-onMounted(() => document.addEventListener('click', onOutsideDescription))
-onBeforeUnmount(() => document.removeEventListener('click', onOutsideDescription))
+onMounted(() => {
+  document.addEventListener('pointerdown', onDescriptionPointerDown, true)
+  document.addEventListener('click', onOutsideDescription)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDescriptionPointerDown, true)
+  document.removeEventListener('click', onOutsideDescription)
+})
 onBeforeRouteLeave(() => finishDescription())
 onBeforeRouteUpdate((to, from) => {
   if (to.params.key === from.params.key && to.params.seq === from.params.seq) return true
