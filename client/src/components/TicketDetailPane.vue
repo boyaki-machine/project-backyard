@@ -31,7 +31,8 @@ import { uiText } from '../locales/ui'
  * 空の枠は何もできない箱になる）、**参考リンクは常に出す**（`[+ 追加]` が
  * このセクションへの唯一の入口で、隠すと機能へ到達できない）。
  */
-import { computed, defineAsyncComponent, nextTick, ref, useTemplateRef, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 
 import ConfirmDialog from './ConfirmDialog.vue'
 import ActorSelect from './ActorSelect.vue'
@@ -272,7 +273,12 @@ function currentText(field: EditField): string {
 }
 
 async function startEdit(field: EditField): Promise<void> {
-  if (!canEdit.value || busy.value) return
+  if (!canEdit.value) return
+  if (busy.value) {
+    if (editCommit === null) return
+    await editCommit
+    if (fieldError.value !== null) return
+  }
   if (field === 'actual_point' && !canEditActualPoint.value) return
   // 別の欄を開いていたら、そちらは保存してから移る（5.5「別の領域をクリック」）
   if (editing.value !== null && editing.value !== field) {
@@ -382,7 +388,15 @@ async function toggleAllDay(next: boolean): Promise<void> {
   await selectField(patch, 'all_day')
 }
 
-async function commitEdit(): Promise<void> {
+// Blur, a close button and a route guard can all request the same save.
+let editCommit: Promise<void> | null = null
+function commitEdit(): Promise<void> {
+  if (editCommit !== null) return editCommit
+  editCommit = commitEditValue().finally(() => { editCommit = null })
+  return editCommit
+}
+
+async function commitEditValue(): Promise<void> {
   const field = editing.value
   if (field === null || ticket.value === null) return
   const raw = draftText()
@@ -479,6 +493,7 @@ async function selectField(patch: UpdateTicketRequest, field: string): Promise<v
 async function save(patch: UpdateTicketRequest, field: string): Promise<void> {
   const current = ticket.value
   if (current === null) return
+  const submittedDraft = draftText()
   busy.value = true
   fieldError.value = null
   try {
@@ -487,7 +502,7 @@ async function save(patch: UpdateTicketRequest, field: string): Promise<void> {
     // **閉じるのは、いま編集している欄を保存したときだけ**。
     // 以前は成功のたびに閉じていたので、**関係のない欄の `PATCH` が成功しただけで
     // 編集中の下書きが（保存もされずに）消えていた**。
-    if (editing.value === field) cancelEdit()
+    if (editing.value === field && (field !== 'body_md' || draftText() === submittedDraft)) cancelEdit()
     emit('updated', next)
   } catch (e) {
     const err = toApiError(e)
@@ -497,6 +512,61 @@ async function save(patch: UpdateTicketRequest, field: string): Promise<void> {
     busy.value = false
   }
 }
+
+// ── 説明の自動保存（pb-271）─────────────────────────────────
+const descriptionRegion = useTemplateRef<HTMLElement>('descriptionRegion')
+let descriptionPointerTarget: Node | null = null
+function onDescriptionPointerDown(event: PointerEvent): void {
+  descriptionPointerTarget = event.target instanceof Node ? event.target : null
+}
+
+function cancelDescription(): void {
+  if (!busy.value && editCommit === null) cancelEdit()
+}
+
+async function finishDescription(): Promise<boolean> {
+  while (editing.value === 'body_md') {
+    await commitEdit()
+    if (fieldError.value !== null) return false
+    // If the user typed during the request, save that newer draft with the new version.
+  }
+  return true
+}
+
+async function closeDetail(): Promise<void> {
+  if (await finishDescription()) emit('close')
+}
+
+async function onDescriptionFocusOut(event: FocusEvent): Promise<void> {
+  // The read button disappears when editing starts; its blur is not leaving the editor.
+  if (event.target instanceof HTMLElement && event.target.closest('.body-view')) return
+  // Clicking non-focusable preview text leaves activeElement on body, but stays in the region.
+  if (event.relatedTarget === null && descriptionPointerTarget && descriptionRegion.value?.contains(descriptionPointerTarget)) return
+  await nextTick()
+  if (descriptionRegion.value?.contains(document.activeElement)) return
+  if (editing.value === 'body_md') await finishDescription()
+}
+
+function onOutsideDescription(event: MouseEvent): void {
+  descriptionPointerTarget = null
+  if (editing.value !== 'body_md') return
+  if (descriptionRegion.value && event.composedPath().includes(descriptionRegion.value)) return
+  void finishDescription()
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDescriptionPointerDown, true)
+  document.addEventListener('click', onOutsideDescription)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDescriptionPointerDown, true)
+  document.removeEventListener('click', onOutsideDescription)
+})
+onBeforeRouteLeave(() => finishDescription())
+onBeforeRouteUpdate((to, from) => {
+  if (to.params.key === from.params.key && to.params.seq === from.params.seq) return true
+  return finishDescription()
+})
 
 // ── 状態の遷移（9.6 / 9.7）───────────────────────────────────
 
@@ -1403,7 +1473,7 @@ defineExpose({
           compact
           @select="onAction"
         />
-        <button type="button" class="icon-button" :aria-label="$ui('詳細を閉じる')" @click="emit('close')">
+        <button type="button" class="icon-button" :aria-label="$ui('詳細を閉じる')" @click="closeDetail">
           ✕
         </button>
       </div>
@@ -2001,13 +2071,15 @@ defineExpose({
 
         <!-- 説明（5.5「説明欄」）。読み取り時はレンダリング結果、クリックで
              ソース＋プレビューへ入る -->
-        <section class="block">
+        <section ref="descriptionRegion" class="block" @focusout="onDescriptionFocusOut">
           <h3 class="block-title">{{ $ui('説明') }}</h3>
           <template v-if="editing === 'body_md'">
-            <MarkdownEditor ref="editorRef" v-model="draft" @cancel="cancelEdit" />
+            <MarkdownEditor ref="editorRef" v-model="draft" @cancel="cancelDescription" />
             <div class="block-actions">
               <button type="button" class="secondary" :disabled="busy" @click="cancelEdit"> {{ $ui('取消') }} </button>
-              <button type="button" class="primary" :disabled="busy" @click="commitEdit"> {{ $ui('保存') }} </button>
+              <span v-if="busy" role="status">{{ $ui('保存中…') }}</span>
+              <button v-else-if="errorFor('body_md')" type="button" class="primary" @click="finishDescription">{{ $ui('再試行') }}</button>
+              <span v-else class="muted">{{ $ui('編集を終えると自動保存されます') }}</span>
             </div>
           </template>
           <template v-else>
