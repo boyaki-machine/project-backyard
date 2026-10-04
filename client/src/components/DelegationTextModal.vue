@@ -6,14 +6,20 @@
  * 書いた文は委任を回しているチケットのコメントに残り、エージェントが読む
  * （却下の理由は、main が計画を出し直す材料になる）。
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
+import { renderMarkdown } from '../lib/markdown'
 import Modal from './Modal.vue'
 
 const props = defineProps<{
   title: string
-  /** 何をするのかの説明（1〜2文） */
+  /** 何をするのかの説明（1〜2文。画面の固定文） */
   lead?: string
+  /**
+   * エージェントが書いた問い（Markdown。pb-280）。**整形して出す**——番号付きの問いや
+   * 強調を1段落に潰すと読めない。lead と両方あれば、lead の下に置く
+   */
+  questionMd?: string
   label: string
   placeholder?: string
   required?: boolean
@@ -25,6 +31,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: []; submit: [text: string] }>()
 
 const text = ref('')
+const question = computed(() => renderMarkdown(props.questionMd ?? ''))
 
 function submit(): void {
   const t = text.value.trim()
@@ -37,6 +44,8 @@ function submit(): void {
   <Modal :title="title" @close="emit('close')">
     <form id="delegation-text-form" class="form" @submit.prevent="submit">
       <p v-if="lead" class="lead">{{ lead }}</p>
+      <!-- eslint-disable-next-line vue/no-v-html -- lib/markdown.ts の dompurify を通っている -->
+      <div v-if="question" class="markdown-body question" v-html="question"></div>
       <label class="field">
         <span class="label">{{ label }}</span>
         <textarea v-model="text" rows="4" :placeholder="placeholder" :required="required"></textarea>
@@ -67,6 +76,23 @@ function submit(): void {
 .lead {
   margin: 0;
   font-size: 13px;
+}
+
+.question {
+  max-height: 40vh;
+  padding: var(--pb-space-2) var(--pb-space-3);
+  overflow: auto;
+  border: 1px solid var(--pb-line);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.question :deep(p),
+.question :deep(ol),
+.question :deep(ul) {
+  margin: 0 0 var(--pb-space-2);
 }
 
 .field {
