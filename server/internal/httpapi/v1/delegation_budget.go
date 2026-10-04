@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -57,6 +58,59 @@ func budgetOfScope(scope []byte) delegationBudget {
 	}
 	_ = json.Unmarshal(scope, &s)
 	return s.Budget
+}
+
+// stopConditionsMax / stopConditionMaxLen は scope.stop_conditions の上限（pb-252）。
+const (
+	stopConditionsMax   = 20
+	stopConditionMaxLen = 500
+)
+
+// validateScopeConstraints は scope の制約（budget と stop_conditions）の形を確かめる
+// （4.2。pb-253・pb-252）。field は detail の名前の接頭辞（"scope"）。
+func validateScopeConstraints(scope []byte, field string) []apierr.Detail {
+	details := validateScopeBudget(scope, field)
+	var s map[string]json.RawMessage
+	if err := json.Unmarshal(scope, &s); err != nil {
+		return details
+	}
+	if raw, ok := s["stop_conditions"]; ok {
+		details = append(details, validateStopConditionsJSON(raw, field+".stop_conditions")...)
+	}
+	return details
+}
+
+// validateStopConditionsJSON は止まる条件の配列を確かめる。**PB は条件を判定しない**
+// ——エージェントが読んで守る文である（4.2）。空の項目は意味を持たないので拒む。
+func validateStopConditionsJSON(raw json.RawMessage, field string) []apierr.Detail {
+	invalid := func(msg string) []apierr.Detail {
+		return []apierr.Detail{{Field: field, Code: "invalid", Message: msg}}
+	}
+	var list []string
+	if err := json.Unmarshal(raw, &list); err != nil || list == nil {
+		return invalid("止まる条件は文字列の配列で指定してください")
+	}
+	if len(list) > stopConditionsMax {
+		return invalid(fmt.Sprintf("止まる条件は%d件までです", stopConditionsMax))
+	}
+	for _, c := range list {
+		if strings.TrimSpace(c) == "" {
+			return invalid("空の止まる条件は書けません")
+		}
+		if utf8.RuneCountInString(c) > stopConditionMaxLen {
+			return invalid(fmt.Sprintf("止まる条件は1件%d文字までです", stopConditionMaxLen))
+		}
+	}
+	return nil
+}
+
+// stopConditionsOf は scope から止まる条件を読む（読めなければ空）。
+func stopConditionsOf(scope []byte) []string {
+	var s struct {
+		StopConditions []string `json:"stop_conditions"`
+	}
+	_ = json.Unmarshal(scope, &s)
+	return s.StopConditions
 }
 
 // validateScopeBudget は scope.budget の形を確かめる。field は detail の名前の
@@ -140,18 +194,18 @@ func (b delegationBudget) exceeded(u gen.GetDelegationBudgetUsageRow, c budgetCh
 	}
 	if c.newTickets > 0 {
 		if b.Tickets != nil && u.Tickets+c.newTickets > *b.Tickets {
-			out = append(out, fmt.Sprintf("起票数の上限（%d件）を超えます", *b.Tickets))
+			out = append(out, fmt.Sprintf("子チケットの数の上限（%d件）を超えます", *b.Tickets))
 		}
 		if b.Depth != nil && c.parentDepth+1 > *b.Depth {
-			out = append(out, fmt.Sprintf("木の深さの上限（%d段）を超えます", *b.Depth))
+			out = append(out, fmt.Sprintf("子チケットの階層の上限（%d段）を超えます", *b.Depth))
 		}
 	}
 	if c.checkTokens {
 		if b.Tokens != nil && u.TokensTotal > *b.Tokens {
-			out = append(out, fmt.Sprintf("トークンの総予算（%d）を超えました（消費 %d）", *b.Tokens, u.TokensTotal))
+			out = append(out, fmt.Sprintf("トークンの上限（%d）を超えました（申告された消費 %d）", *b.Tokens, u.TokensTotal))
 		}
 		if b.TokensPerMonth != nil && u.TokensThisMonth > *b.TokensPerMonth {
-			out = append(out, fmt.Sprintf("今月のトークンの上限（%d）を超えました（消費 %d）", *b.TokensPerMonth, u.TokensThisMonth))
+			out = append(out, fmt.Sprintf("今月のトークンの上限（%d）を超えました（申告された消費 %d）", *b.TokensPerMonth, u.TokensThisMonth))
 		}
 	}
 	return out
@@ -193,9 +247,11 @@ func tripDelegationBudget(
 }
 
 func budgetExceededQuestion(reasons []string) string {
-	return "委任の予算を超えたため、PB が委任を一時停止しました。\n\n- " +
+	// **PM が画面で読む文である**（ユーザ確認待ち。GuiDesign.md 5.5「自律実行」）。
+	// 設計の語（委任・予算）を出さず、画面の語（自律実行・制約）で書く（pb-252）。
+	return "制約を超えたため、PB が自律実行を一時停止しました。\n\n- " +
 		strings.Join(reasons, "\n- ") +
-		"\n\n予算を見直して再開するか、委任を終えるかを指示してください。再開は PM が行います（予算は再開のときに直せます）。"
+		"\n\n制約を見直して再開するか、このまま止めておくかを決めてください。回答した後、「再開…」から再開できます（制約は再開のときに直せます）。"
 }
 
 // budgetForbidden は予算の超過で拒んだ書き込みの 403。

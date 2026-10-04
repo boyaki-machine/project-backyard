@@ -280,6 +280,54 @@ func (q *Queries) GetLatestDelegationPlanWithVerdict(ctx context.Context, delega
 	return i, err
 }
 
+const getLatestPlanForStatus = `-- name: GetLatestPlanForStatus :one
+SELECT p.version, p.status, p.scope, p.body_md, p.reason_md,
+       COALESCE(e.verdict, '')::text AS eval_verdict,
+       COALESCE(e.round, 0)::integer AS eval_round,
+       e.findings AS eval_findings
+FROM delegation_plan p
+LEFT JOIN LATERAL (
+  SELECT ev.verdict, ev.round, ev.findings
+  FROM evaluation ev
+  WHERE ev.plan_id = p.id
+  ORDER BY ev.created_at DESC
+  LIMIT 1
+) e ON true
+WHERE p.delegation_id = $1
+ORDER BY p.version DESC
+LIMIT 1
+`
+
+type GetLatestPlanForStatusRow struct {
+	Version      int32
+	Status       string
+	Scope        []byte
+	BodyMd       string
+	ReasonMd     string
+	EvalVerdict  string
+	EvalRound    int32
+	EvalFindings []byte
+}
+
+// GetLatestPlanForStatus は画面の「計画の承認」のカードに要る、最新の版の中身と、
+// その版への直近の評価を読む（delegation-status。pb-252）。評価が無ければ
+// eval_verdict は空文字、eval_findings は NULL。
+func (q *Queries) GetLatestPlanForStatus(ctx context.Context, delegationID string) (GetLatestPlanForStatusRow, error) {
+	row := q.db.QueryRow(ctx, getLatestPlanForStatus, delegationID)
+	var i GetLatestPlanForStatusRow
+	err := row.Scan(
+		&i.Version,
+		&i.Status,
+		&i.Scope,
+		&i.BodyMd,
+		&i.ReasonMd,
+		&i.EvalVerdict,
+		&i.EvalRound,
+		&i.EvalFindings,
+	)
+	return i, err
+}
+
 const nextDelegationPlanVersion = `-- name: NextDelegationPlanVersion :one
 
 SELECT COALESCE(MAX(version), 0) + 1 FROM delegation_plan WHERE delegation_id = $1

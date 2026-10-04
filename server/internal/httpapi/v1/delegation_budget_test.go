@@ -78,8 +78,8 @@ func TestBudgetExceeded(t *testing.T) {
 		{"起票数", func(u gen.GetDelegationBudgetUsageRow) gen.GetDelegationBudgetUsageRow {
 			u.Tickets = 10
 			return u
-		}, budgetCheck{newTickets: 1}, []string{"起票数"}},
-		{"深さ", nil, budgetCheck{newTickets: 1, parentDepth: 3}, []string{"深さ"}},
+		}, budgetCheck{newTickets: 1}, []string{"子チケットの数"}},
+		{"深さ", nil, budgetCheck{newTickets: 1, parentDepth: 3}, []string{"階層"}},
 		{"起票しないなら起票数を見ない", func(u gen.GetDelegationBudgetUsageRow) gen.GetDelegationBudgetUsageRow {
 			u.Tickets = 99
 			return u
@@ -87,7 +87,7 @@ func TestBudgetExceeded(t *testing.T) {
 		{"トークンの総予算と今月", func(u gen.GetDelegationBudgetUsageRow) gen.GetDelegationBudgetUsageRow {
 			u.TokensTotal, u.TokensThisMonth = 1001, 301
 			return u
-		}, budgetCheck{checkTokens: true}, []string{"総予算", "今月"}},
+		}, budgetCheck{checkTokens: true}, []string{"トークンの上限", "今月"}},
 		{"トークンは checkTokens のときだけ見る", func(u gen.GetDelegationBudgetUsageRow) gen.GetDelegationBudgetUsageRow {
 			u.TokensTotal = 5000
 			return u
@@ -157,7 +157,7 @@ func TestCreateTicketOverBudgetIsRefusedAndPauses(t *testing.T) {
 		t.Errorf("委任の状態 = %v, want paused", q.delegationStatusSetTo)
 	}
 	if len(q.createdConfirmations) != 1 || q.createdConfirmations[0].Reason != "budget_exceeded" ||
-		!strings.Contains(q.createdConfirmations[0].QuestionMd, "起票数") {
+		!strings.Contains(q.createdConfirmations[0].QuestionMd, "子チケットの数") {
 		t.Errorf("確認待ち = %+v, want budget_exceeded（起票数）を1件", q.createdConfirmations)
 	}
 	if len(q.budgetUsageProbes) != 1 || q.budgetUsageProbes[0] != testDelegationRootID {
@@ -182,8 +182,8 @@ func TestCreateTicketDepthLimit(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(errorOf(t, rec).Message, "深さ") {
-		t.Errorf("message = %q, want 深さ を含む", errorOf(t, rec).Message)
+	if !strings.Contains(errorOf(t, rec).Message, "階層") {
+		t.Errorf("message = %q, want 階層 を含む", errorOf(t, rec).Message)
 	}
 }
 
@@ -252,7 +252,7 @@ func TestSubmitReportOverTokensIsAcceptedThenPauses(t *testing.T) {
 	if q.delegationStatusSetTo["01K2DELEGATION00000000001"] != "paused" {
 		t.Errorf("状態 = %v, want paused", q.delegationStatusSetTo)
 	}
-	if len(q.createdConfirmations) != 1 || !strings.Contains(q.createdConfirmations[0].QuestionMd, "総予算") {
+	if len(q.createdConfirmations) != 1 || !strings.Contains(q.createdConfirmations[0].QuestionMd, "トークンの上限") {
 		t.Errorf("確認待ち = %+v", q.createdConfirmations)
 	}
 }

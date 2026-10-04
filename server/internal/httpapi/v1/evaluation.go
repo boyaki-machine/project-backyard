@@ -420,7 +420,7 @@ func unableConfirmationQuestion(targetKind string) string {
 
 func roundLimitConfirmationQuestion(targetKind string, round int32) string {
 	return fmt.Sprintf(
-		"同じ対象（%s）への不合格が%d回目に達しました。委任を一時停止しています。どう進めるか指示してください。",
+		"同じ対象（%s）への評価の不合格が%d回目に達したため、自律実行を一時停止しました。どう進めるか決めてください。回答した後、「再開…」から再開できます。",
 		targetKind, round)
 }
 

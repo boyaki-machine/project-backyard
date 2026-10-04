@@ -95,6 +95,9 @@ import { useProjectStore } from '../stores/project'
 import { renderMarkdown } from '../lib/markdown'
 import { isWebUrl } from '../lib/url'
 import { useAuthStore } from '../stores/auth'
+import { useDelegationStatus } from '../composables/useDelegationStatus'
+import DelegationConfirmations from './DelegationConfirmations.vue'
+import DelegationPanel from './DelegationPanel.vue'
 
 /**
  * **編集器は使うときに読み込む**（`GuiDesign.md` 5.10、`fix/split-markdown-chunk`）。
@@ -184,6 +187,8 @@ const canTransition = computed(() => auth.canInProject(props.projectKey, 'ticket
 const canDelete = computed(() => auth.canInProject(props.projectKey, 'ticket.delete'))
 /** 子チケットの追加（5.5）。作成そのものは 9.3 なので `ticket.create` を見る */
 const canCreate = computed(() => auth.canInProject(props.projectKey, 'ticket.create'))
+/** 自律実行を始める・一時停止・再開・承認（5.5「自律実行」。pb-252） */
+const canManageDelegation = computed(() => auth.canInProject(props.projectKey, 'delegation.manage'))
 
 // ── 取得 ─────────────────────────────────────────────────────
 
@@ -220,6 +225,49 @@ async function load(): Promise<void> {
   } finally {
     if (mine === fetchSeq) loading.value = false
   }
+}
+
+// ── 自律実行（5.5「自律実行」。pb-252）────────────────────────────
+
+/** 実行モードが自律実行（始めた後）か */
+const delegated = computed(() => ticket.value?.execution_mode === 'delegated')
+/**
+ * 始める前の入力欄を開いているか。実行モードの選択肢で「自律実行」を選ぶと開く。
+ * **選んだだけでは保存しない**——main と評価と制約が揃って初めて始められる
+ */
+const delegationSetupOpen = ref(false)
+/** 自律実行を選べるのは親を持たないチケットだけ（Delegation.md 4.1） */
+const canChooseDelegation = computed(
+  () => canManageDelegation.value && ticket.value !== null && !ticket.value.parent,
+)
+const delegation = useDelegationStatus(
+  computed(() => props.projectKey),
+  computed(() => props.seq),
+  delegated,
+)
+
+watch(
+  () => props.seq,
+  () => {
+    delegationSetupOpen.value = false
+  },
+)
+
+function onExecutionModeChange(target: HTMLSelectElement): void {
+  if (target.value === 'delegated') {
+    // 保存せずに入力欄を開く。選択肢は元に戻す（始めるまでは今のモードのまま）
+    target.value = ticket.value?.execution_mode ?? ''
+    delegationSetupOpen.value = true
+    return
+  }
+  selectField({ execution_mode: target.value as never }, 'execution_mode')
+}
+
+async function onDelegationChanged(): Promise<void> {
+  delegationSetupOpen.value = false
+  await load()
+  await delegation.reload()
+  if (ticket.value) emit('updated', ticket.value)
 }
 
 // ── 保存（`ApiDesign.md` 9.5.2）───────────────────────────────
@@ -1759,26 +1807,50 @@ defineExpose({
           <div class="meta-item wide">
             <dt>{{ $ui('実行モード') }}</dt>
             <dd>
+              <!-- **自律実行は始めた後は変えられない**（変える API が無い。止めるのは一時停止）。
+                   選択肢の「自律実行」は保存せず、下の入力欄を開く（5.5「自律実行」） -->
               <select
-                v-if="canEdit"
+                v-if="canEdit && !delegated"
                 :value="ticket.execution_mode"
-                :disabled="busy"
+                :disabled="busy || delegationSetupOpen"
                 :aria-label="$ui('実行モード')"
-                @change="
-                  selectField(
-                    { execution_mode: ($event.target as HTMLSelectElement).value as never },
-                    'execution_mode',
-                  )
-                "
+                @change="onExecutionModeChange($event.target as HTMLSelectElement)"
               >
                 <option v-for="m in executionModeOptions" :key="m" :value="m">
                   {{ executionModeLabels[m] }}
+                </option>
+                <option value="delegated" :disabled="!canChooseDelegation">
+                  {{ executionModeLabels.delegated }}{{
+                    canChooseDelegation
+                      ? ''
+                      : ticket.parent
+                        ? $ui('（親を持たないチケットだけ）')
+                        : $ui('（権限がありません）')
+                  }}
                 </option>
               </select>
               <span v-else>{{ executionModeLabels[ticket.execution_mode] }}</span>
               <p v-if="errorFor('execution_mode')" class="field-error" role="alert">
                 {{ errorFor('execution_mode') }}
               </p>
+            </dd>
+          </div>
+
+          <!-- 自律実行の項目（5.5「自律実行」）。実行モードの下に開く -->
+          <div v-if="delegated || delegationSetupOpen" class="meta-item wide delegation-item">
+            <dt class="visually-hidden">{{ $ui('自律実行') }}</dt>
+            <dd>
+              <DelegationPanel
+                :project-key="projectKey"
+                :seq="seq"
+                :delegated="delegated"
+                :setup-open="delegationSetupOpen"
+                :can-manage="canManageDelegation"
+                :status="delegation.status.value"
+                :status-error="delegation.error.value"
+                @cancel-setup="delegationSetupOpen = false"
+                @changed="onDelegationChanged"
+              />
             </dd>
           </div>
 
@@ -2068,6 +2140,16 @@ defineExpose({
         <p v-if="errorFor('all_day')" class="field-error" role="alert">
           {{ errorFor('all_day') }}
         </p>
+
+        <!-- ユーザ確認待ち（5.5「自律実行」）。人の対応が要るものだけ。無ければ出さない -->
+        <DelegationConfirmations
+          v-if="delegated"
+          :project-key="projectKey"
+          :seq="seq"
+          :status="delegation.status.value"
+          :can-manage="canManageDelegation"
+          @changed="onDelegationChanged"
+        />
 
         <!-- 説明（5.5「説明欄」）。読み取り時はレンダリング結果、クリックで
              ソース＋プレビューへ入る -->
@@ -2684,6 +2766,21 @@ defineExpose({
 /* タグは行いっぱいを使う。数が読めないので1列に押し込むと折り返しが荒れる */
 .meta-item.wide {
   grid-column: 1 / -1;
+}
+
+/* 自律実行の項目は実行モードの下に開く。見出しの列を取らず、行の幅いっぱいに使う */
+.meta-item.delegation-item dd {
+  flex: 1;
+  min-width: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .meta dt {

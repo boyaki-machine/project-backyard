@@ -85,7 +85,7 @@ func (h *handler) decideDelegation(w http.ResponseWriter, r *http.Request, appro
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				rejected = apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
-					Field: "seq", Code: "invalid", Message: "このチケットは委任の根ではありません",
+					Field: "seq", Code: "invalid", Message: "このチケットは自律実行ではありません",
 				})
 				return errTicketReference
 			}
@@ -95,8 +95,8 @@ func (h *handler) decideDelegation(w http.ResponseWriter, r *http.Request, appro
 		// 承認済で範囲を変えるときは、main が範囲の変更を出して計画中へ戻る（6.3）。
 		if deleg.Status != "planning" {
 			rejected = apierr.New(apierr.Conflict).WithMessage(fmt.Sprintf(
-				"委任が%sのため、委任範囲を承認・却下できません。計画中のときだけ行えます",
-				delegationStatusLabel(deleg.Status)))
+				"自律実行が%sのため、計画を承認・却下できません。計画中のときだけ行えます",
+				delegationScreenLabel(deleg.Status)))
 			return errTicketReference
 		}
 
@@ -222,9 +222,10 @@ func validateDecideDelegation(req decideDelegationRequest, approve bool) *apierr
 
 // delegationDecisionComment は根に残すコメントの本文を作る。
 func delegationDecisionComment(approve bool, version int32, reason string) string {
-	head := fmt.Sprintf("**委任範囲を承認した**（計画 v%d）。委任は承認済になった。", version)
+	// PM とエージェントの両方が読む。画面の語で書く（pb-252）
+	head := fmt.Sprintf("**計画を承認した**（計画 第%d版）。自律実行は実行中になった。", version)
 	if !approve {
-		head = fmt.Sprintf("**委任範囲を却下した**（計画 v%d）。委任は計画中のまま。理由を読んで計画を出し直すこと。", version)
+		head = fmt.Sprintf("**計画を却下した**（計画 第%d版）。自律実行は計画中のまま。理由を読んで計画を出し直すこと。", version)
 	}
 	if reason == "" {
 		return head

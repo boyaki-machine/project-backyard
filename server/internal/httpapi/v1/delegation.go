@@ -208,8 +208,8 @@ func validateCreateDelegation(req createDelegationRequest) *apierr.Error {
 				Field: "scope", Code: "invalid", Message: "scope はオブジェクトで指定してください",
 			})
 		} else {
-			// 予算の形（4.2。pb-253）。
-			details = append(details, validateScopeBudget(req.Scope, "scope")...)
+			// 制約の形（予算と止まる条件。4.2。pb-253・pb-252）。
+			details = append(details, validateScopeConstraints(req.Scope, "scope")...)
 		}
 	}
 	if len(details) > 0 {

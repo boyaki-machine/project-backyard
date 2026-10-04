@@ -122,11 +122,14 @@ export const executionModeLabels: Record<TicketExecutionMode, string> = {
   get human_only() { return uiText('人が行う') },
   get agent_draft() { return uiText('エージェントが下書きし、人が仕上げる') },
   get agent_only() { return uiText('エージェントに任せてよい') },
+  /** 自律実行（pb-252）。**PATCH では設定できない**——委任を始めた時に付く */
+  get delegated() { return uiText('自律実行') },
 }
 
 /**
  * 選択肢の並び。**弱いほうから強いほうへ**（人だけ → 下書き → 任せる）並べる。
- * `DbDesign.md` 6.6 の `CHECK` が持つ3値がすべてである。
+ * `PATCH` で選べる3値である。4つ目の `delegated`（自律実行）は委任を始めたときに
+ * 付き、選択肢には詳細ペインが別に足す（`GuiDesign.md` 5.5「自律実行」。pb-252）。
  */
 export const executionModeOptions: TicketExecutionMode[] = [
   'human_only',

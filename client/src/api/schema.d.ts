@@ -2793,8 +2793,8 @@ export interface paths {
          *     `planning`、最新の計画の版が範囲の変更として承認を待っていれば
          *     `planning`、それ以外は `approved`。
          *
-         *     **`budget` を渡すと予算を置き換える**（承認済へ戻すときだけ。計画中へ
-         *     戻すときは `422`）。`scope_version` を進め、直前の承認済みの計画の版を
+         *     **`budget` / `stop_conditions` を渡すと、その制約を置き換える**（渡さな
+         *     かった方はそのまま。承認済へ戻すときだけ。計画中へ戻すときは `422`）。`scope_version` を進め、直前の承認済みの計画の版を
          *     写して範囲だけ差し替えた版を、PM の承認済みとして作る。
          */
         post: operations["resumeDelegation"];
@@ -6034,9 +6034,9 @@ export interface components {
             /**
              * @description 委任範囲（Delegation.md 4.2）。目的・指標・自律してよい範囲・予算・
              *     止まる条件・報告の周期を JSON で持つ。**検証するのはオブジェクト
-             *     であることと、`budget` の形だけ**（`DelegationBudget`。pb-253）。
-             *     `budget` に知らないキーや1未満の値があれば `422`
-             *     （`scope.budget.<キー>`）。
+             *     であることと、制約の形だけ**——`budget`（`DelegationBudget`。pb-253）と
+             *     `stop_conditions`（`DelegationStopConditions`。pb-252）。形が違えば
+             *     `422`（`scope.budget.<キー>` / `scope.stop_conditions`）。
              */
             scope: {
                 [key: string]: unknown;
@@ -6257,6 +6257,8 @@ export interface components {
             scope?: {
                 [key: string]: unknown;
             };
+            /** @description 承認された範囲の版。0 は一度も承認されていない（画面の再開で制約を直せるかに使う。pb-252）。 */
+            scope_version?: number;
             main?: components["schemas"]["ActorRef"];
             evaluator?: components["schemas"]["ActorRef"];
             latest_plan?: {
@@ -6267,6 +6269,26 @@ export interface components {
                 declared_class?: "minor" | "structural" | "scope" | null;
                 /** @enum {string|null} */
                 measured_class?: "minor" | "structural" | "scope" | null;
+                /** @description この版が前提とする範囲（画面の「計画の承認」のカード。pb-252）。 */
+                scope?: {
+                    [key: string]: unknown;
+                };
+                /** @description 計画の説明。 */
+                body_md?: string;
+                /** @description 前の版から変えた理由。 */
+                reason_md?: string;
+                /**
+                 * @description **この版への**直近の評価（pb-252）。`latest_evaluation` は対象を
+                 *     問わない直近の評価で、版と結び付かない。未評価なら省く。
+                 */
+                evaluation?: {
+                    round?: number;
+                    /** @enum {string} */
+                    verdict?: "pass" | "fail" | "unable";
+                    findings?: {
+                        [key: string]: unknown;
+                    }[];
+                } | null;
             } | null;
             latest_evaluation?: {
                 /** @enum {string} */
@@ -6281,6 +6303,12 @@ export interface components {
             open_confirmations?: components["schemas"]["Confirmation"][];
             latest_handoff?: components["schemas"]["DelegationHandoff"] | null;
             next_move?: string;
+            /**
+             * @description 呼び出し元の役割によらない、main の次の一手（pb-252）。画面の
+             *     「エージェントステイタス」に出す。PM が読むと役割は `readonly` になり、
+             *     `next_move` は「次の一手が無い」になるため。
+             */
+            main_next_move?: string;
             budget?: components["schemas"]["DelegationBudgetStatus"];
         };
         /**
@@ -6305,6 +6333,12 @@ export interface components {
             /** @description 同じ対象への不合格の往復の上限。省略時は3。 */
             rounds?: number;
         };
+        /**
+         * @description 止まる条件（Delegation.md 4.2、pb-252）。`scope.stop_conditions` に書く。
+         *     **PB は判定しない**——エージェントが読んで守り、当たったら確認待ちを
+         *     立てて止まる。パックの自律実行の節に載る。
+         */
+        DelegationStopConditions: string[];
         /**
          * @description 予算と消費（Delegation.md 12.1・9.1、pb-253）。`tokens_missing` は
          *     トークンを申告しなかった完了レポート・評価の件数で、`tokens_total` から
@@ -6973,10 +7007,12 @@ export interface components {
             /**
              * @description 実行主体属性（Requirements.md 10.5.4、DbDesign.md 6.6）。
              *     `/pb-implement` は `human_only` のとき実装せず利用者へ返す
-             *     （Requirements.md 10.8.6）。
+             *     （Requirements.md 10.8.6）。**`delegated`（自律実行）は委任を
+             *     始めた根だけが持つ**（`createDelegation`。Delegation.md 4.1）。
+             *     `PATCH` では設定できない。
              * @enum {string}
              */
-            execution_mode: "human_only" | "agent_only" | "agent_draft";
+            execution_mode: "human_only" | "agent_only" | "agent_draft" | "delegated";
             /**
              * @description 実行可能性の信号（Requirements.md 10.5.1）。未判定は null。
              * @enum {string|null}
@@ -12283,6 +12319,7 @@ export interface operations {
             content: {
                 "application/json": {
                     budget?: components["schemas"]["DelegationBudget"];
+                    stop_conditions?: components["schemas"]["DelegationStopConditions"];
                     /** @description 再開に添える一言（任意）。根のコメントに載る。 */
                     reason_md?: string;
                 };
