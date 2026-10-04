@@ -1,5 +1,10 @@
 /** English translations keyed by the Japanese source text used by the UI. */
 export const uiMessages: Record<string, string> = {
+  "配下のチケットは親と一緒にバックログへ移動します": "Child tickets return to the backlog with their parent.",
+  "バックログへ": "Move to backlog",
+  "未着手のオンステージチケットだけをバックログへ戻せます": "Only onstage tickets in a todo status can return to the backlog.",
+  "{count}件をバックログへ移動しました": "Moved {count} tickets to the backlog.",
+  "{done}件をバックログへ移動しました。残り{remaining}件は未処理です。{message}": "Moved {done} tickets to the backlog. {remaining} tickets remain unprocessed. {message}",
   "Ctrl／⌘＋クリックで行を選択・解除できます": "Ctrl / ⌘ + click to select or deselect rows",
   "配下のチケットは親と一緒にオンステージへ移動します": "Child tickets move onstage with their parent.",
   "すでにオンステージにあります": "Already onstage.",
@@ -11,7 +16,7 @@ export const uiMessages: Record<string, string> = {
   "選択したチケットをオンステージへ": "Move selected tickets onstage",
   "選択を解除": "Clear selection",
   "{ticket}を選択": "Select {ticket}",
-  "{ticket}のオンステージ操作": "Onstage actions for {ticket}",
+  "{ticket}の移動操作": "Move actions for {ticket}",
 
   "編集を終えると自動保存されます": "Changes are saved automatically when you finish editing.",
   "全体": "All tickets",

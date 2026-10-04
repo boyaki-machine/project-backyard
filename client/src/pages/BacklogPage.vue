@@ -1024,17 +1024,24 @@ const sections = computed<Section[]>(() => {
 // ── メニューと複数選択によるオンステージ移動（pb-272）─────────
 const selectedStageSeqs = ref(new Set<number>())
 
-function stageReason(t: Ticket): string {
+function stageReason(t: Ticket, staged = true): string {
   if (t.type === 'epic' || (t.parent_seq !== null && !allEpics.value.some(epic => epic.seq === t.parent_seq))) {
-    return uiText('配下のチケットは親と一緒にオンステージへ移動します')
+    return staged
+      ? uiText('配下のチケットは親と一緒にオンステージへ移動します')
+      : uiText('配下のチケットは親と一緒にバックログへ移動します')
   }
-  if (shownInStage(t)) return uiText('すでにオンステージにあります')
+  if (staged && shownInStage(t)) return uiText('すでにオンステージにあります')
+  if (!staged && (!shownInStage(t) || t.status.category !== 'todo')) {
+    return uiText('未着手のオンステージチケットだけをバックログへ戻せます')
+  }
   return ''
 }
 
 function stageActions(t: Ticket): ActionItem[] {
-  const reason = stageReason(t)
-  return [{ key: 'stage', label: uiText('オンステージへ'), disabled: busy.value || reason !== '', reason }]
+  const staged = !shownInStage(t)
+  if (!staged && t.status.category !== 'todo') return []
+  const reason = stageReason(t, staged)
+  return [{ key: staged ? 'stage' : 'backlog', label: staged ? uiText('オンステージへ') : uiText('バックログへ'), disabled: busy.value || reason !== '', reason }]
 }
 
 function selectStageTicket(t: Ticket, checked: boolean): void {
@@ -1063,10 +1070,19 @@ const selectedStageTickets = computed(() => tickets.value
     return left < right ? -1 : left > right ? 1 : a.seq - b.seq
   }))
 
-async function stageTickets(items: Ticket[]): Promise<void> {
+function moveFromRow(t: Ticket, action: string): void {
+  if (action === 'stage') {
+    const targets = selectedStageSeqs.value.has(t.seq) ? selectedStageTickets.value : [t]
+    void stageTickets(targets)
+  } else if (action === 'backlog') {
+    void stageTickets([t], false)
+  }
+}
+
+async function stageTickets(items: Ticket[], staged = true): Promise<void> {
   if (!canEdit.value || busy.value) return
   const key = projectKey.value
-  const targets = items.filter(t => stageReason(t) === '')
+  const targets = items.filter(t => stageReason(t, staged) === '')
   if (targets.length === 0) return
   busy.value = true
   result.value = ''
@@ -1075,7 +1091,7 @@ async function stageTickets(items: Ticket[]): Promise<void> {
   try {
     for (const t of targets) {
       try {
-        const moved = await ticketsApi.moveTicket(key, t.seq, { staged: true, position: 'last' })
+        const moved = await ticketsApi.moveTicket(key, t.seq, { staged, position: 'last' })
         succeeded++
         if (projectKey.value !== key) break
         selectedStageSeqs.value.delete(t.seq)
@@ -1089,9 +1105,15 @@ async function stageTickets(items: Ticket[]): Promise<void> {
     // position:last and possible rank rebalancing are resolved by the server.
     if (projectKey.value === key) {
       await loadTickets()
-      result.value = failure
-        ? uiText('{done}件をオンステージへ移動しました。残り{remaining}件は未処理です。{message}', { done: succeeded, remaining: targets.length - succeeded, message: failure })
-        : uiText('{count}件をオンステージへ移動しました', { count: succeeded })
+      if (failure) {
+        result.value = staged
+          ? uiText('{done}件をオンステージへ移動しました。残り{remaining}件は未処理です。{message}', { done: succeeded, remaining: targets.length - succeeded, message: failure })
+          : uiText('{done}件をバックログへ移動しました。残り{remaining}件は未処理です。{message}', { done: succeeded, remaining: targets.length - succeeded, message: failure })
+      } else {
+        result.value = staged
+          ? uiText('{count}件をオンステージへ移動しました', { count: succeeded })
+          : uiText('{count}件をバックログへ移動しました', { count: succeeded })
+      }
     }
   } finally {
     busy.value = false
@@ -2598,10 +2620,10 @@ watch(projectKey, (key) => {
                         <span v-for="tag in row.ticket.tags.slice(0, TAGS_SHOWN)" :key="tag.id" class="tag">#{{ tag.name }}</span>
                         <span v-if="row.ticket.tags.length > TAGS_SHOWN" class="tag-more">+{{ row.ticket.tags.length - TAGS_SHOWN }}</span>
                       </span>
-                      <span v-if="canEdit" class="stage-controls" @click.stop @pointerdown.stop @dragstart.stop.prevent
+                      <span v-if="canEdit && stageActions(row.ticket).length > 0" class="stage-controls" @click.stop @pointerdown.stop @dragstart.stop.prevent
                         @mouseenter="overActionCell = true" @mouseleave="overActionCell = false">
-                        <UserActionsMenu compact :label="$ui('{ticket}のオンステージ操作', { ticket: fullId(row.ticket) })"
-                          :items="stageActions(row.ticket)" @select="stageTickets([row.ticket])" />
+                        <UserActionsMenu compact :label="$ui('{ticket}の移動操作', { ticket: fullId(row.ticket) })"
+                          :items="stageActions(row.ticket)" @select="moveFromRow(row.ticket, $event)" />
                       </span>
                     </span>
                   </td>
@@ -2776,7 +2798,7 @@ watch(projectKey, (key) => {
 </template>
 
 <style scoped>
-.stage-controls { display: inline-flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
+.stage-controls { display: inline-flex; align-items: center; gap: 4px; flex: none; }
 .stage-bulk { display: flex; align-items: center; flex-wrap: wrap; gap: var(--pb-space-2); margin-bottom: var(--pb-space-3); }
 
 .page {
@@ -3183,9 +3205,8 @@ watch(projectKey, (key) => {
   width: 56px;
 }
 
-/* アバターと担当者名が 1440px で切れない幅。**狭い窓ではタイトルを優先する**が、
-   それは `.title` の下限（`min-width`）が担うので、ここは固定値のままにする
-   ——メディアクエリを1つ足すより、下限を1か所に置くほうが読める。
+/* アバターと担当者名が 1440px で切れない幅。固定幅とし、
+   タイトル列は残りの幅を使う。タグとメニューの幅はタイトルより先に確保する。
 
    **実行者（🤖）も同じセルに入る**（5.4。手順26b）。列を足さないのは、8列が既に
    横幅の上限であることと、実行者を読みたい場面が「担当は誰か」を読む場面と
@@ -3293,13 +3314,10 @@ watch(projectKey, (key) => {
   color: var(--pb-text-muted);
 }
 
-/* **タイトルはタグより先に縮まない。** `flex` を指定しないと `0 1 auto` に
-   なり、`flex: none` のタグが残ったままタイトルだけが0幅まで潰れる（900px で
-   実測。タグは出ているのに何のチケットか読めなくなる）。下限を置いて、
-   あふれるのはタグの側にする——td が `overflow: hidden` なので外へは出ない */
+/* タイトルは残りの幅を使い、タグとメニューの領域を確保してから省略する。 */
 .title {
-  flex: 0 1 auto;
-  min-width: 6em;
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -3310,10 +3328,9 @@ watch(projectKey, (key) => {
 }
 
 /* タグは `#`＋文字を枠なしで、タイトルの末尾に右へ寄せる（5.4「タグ」）。
-   **ユーザーによる任意色の指定も許さない**（8.6）。あふれるのはタグの側 */
+   **ユーザーによる任意色の指定も許さない**（8.6）。タイトルより先に縮めない */
 .tag-trail {
-  /* 狭いときはタイトルより先にタグが縮む */
-  flex: 0 8 auto;
+  flex: none;
   min-width: 0;
   margin-left: auto;
   display: inline-flex;
