@@ -47,3 +47,14 @@ WHERE c.id = @id;
 UPDATE confirmation SET status = 'answered', answer_md = @answer_md,
   answered_by = @answered_by, answered_at = now()
 WHERE id = @id AND status = 'open';
+
+-- ListRecentAnsweredConfirmations は、PM が答えた確認待ちを新しい順に返す（Delegation.md
+-- 9.3「答えの本文は main のパックに載る」。pb-278）。**止められていた main が、その間に
+-- 届いた答えを読む口である**——pb_wait の変化の要約は冒頭しか持たず、呼び直した後の
+-- 待ち受けは止めていた間の変化を取りこぼしうる。
+-- name: ListRecentAnsweredConfirmations :many
+SELECT c.reason, c.question_md, c.answer_md, c.answered_at
+FROM confirmation c
+WHERE c.delegation_id = @delegation_id AND c.status = 'answered'
+ORDER BY c.answered_at DESC
+LIMIT @max_rows;

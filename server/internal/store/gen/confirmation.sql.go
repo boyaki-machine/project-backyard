@@ -199,3 +199,52 @@ func (q *Queries) ListOpenConfirmations(ctx context.Context, delegationID string
 	}
 	return items, nil
 }
+
+const listRecentAnsweredConfirmations = `-- name: ListRecentAnsweredConfirmations :many
+SELECT c.reason, c.question_md, c.answer_md, c.answered_at
+FROM confirmation c
+WHERE c.delegation_id = $1 AND c.status = 'answered'
+ORDER BY c.answered_at DESC
+LIMIT $2
+`
+
+type ListRecentAnsweredConfirmationsParams struct {
+	DelegationID string
+	MaxRows      int32
+}
+
+type ListRecentAnsweredConfirmationsRow struct {
+	Reason     string
+	QuestionMd string
+	AnswerMd   pgtype.Text
+	AnsweredAt *time.Time
+}
+
+// ListRecentAnsweredConfirmations は、PM が答えた確認待ちを新しい順に返す（Delegation.md
+// 9.3「答えの本文は main のパックに載る」。pb-278）。**止められていた main が、その間に
+// 届いた答えを読む口である**——pb_wait の変化の要約は冒頭しか持たず、呼び直した後の
+// 待ち受けは止めていた間の変化を取りこぼしうる。
+func (q *Queries) ListRecentAnsweredConfirmations(ctx context.Context, arg ListRecentAnsweredConfirmationsParams) ([]ListRecentAnsweredConfirmationsRow, error) {
+	rows, err := q.db.Query(ctx, listRecentAnsweredConfirmations, arg.DelegationID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRecentAnsweredConfirmationsRow{}
+	for rows.Next() {
+		var i ListRecentAnsweredConfirmationsRow
+		if err := rows.Scan(
+			&i.Reason,
+			&i.QuestionMd,
+			&i.AnswerMd,
+			&i.AnsweredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

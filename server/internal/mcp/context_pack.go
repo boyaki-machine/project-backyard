@@ -246,16 +246,51 @@ type packDelegationStatus struct {
 		QuestionMd string `json:"question_md"`
 	} `json:"open_confirmations"`
 	LatestHandoff *struct {
-		Version   int32           `json:"version"`
-		Body      json.RawMessage `json:"body"`
-		Trigger   string          `json:"trigger"`
-		WrittenAt int64           `json:"written_at"`
+		Version int32           `json:"version"`
+		Body    json.RawMessage `json:"body"`
+		Trigger string          `json:"trigger"`
+		// **文字列で受ける。** getREST は REST の日時（*_at）を ISO8601 に直して返す
+		// （isoTimes。8.4）。int64 で受けていたため、引き継ぎノートが1件でもある委任では
+		// パックが丸ごと失敗していた（pb-251 の不具合。pb-278 で発覚）。
+		WrittenAt string `json:"written_at"`
 	} `json:"latest_handoff"`
 	NextMove string                `json:"next_move"`
 	Budget   *packDelegationBudget `json:"budget"`
 	Scope    struct {
 		StopConditions []string `json:"stop_conditions"`
 	} `json:"scope"`
+	RecentAnswers []struct {
+		Reason     string `json:"reason"`
+		QuestionMd string `json:"question_md"`
+		AnswerMd   string `json:"answer_md"`
+		AnsweredAt string `json:"answered_at"`
+	} `json:"recent_answers"`
+}
+
+// renderRecentAnswers は「最近の回答」（9.3。pb-278）を出す。**main だけに載せる。**
+// 問いは先頭だけ、答えは全文——答えが判断の材料で、問いは自分が書いたものだから。
+// 止められていた main が、その間に届いた答えをここで読む（pb_wait の変化の要約は
+// 冒頭しか持たず、呼び直した後の待ち受けは止めていた間の変化を取りこぼしうる）。
+func renderRecentAnswers(ds packDelegationStatus) string {
+	if ds.Role != "main" || len(ds.RecentAnswers) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("**最近の回答**（PM がユーザ確認待ちに答えたもの。新しい順。止められていた間に届いた答えも、ここで読める）\n\n")
+	for _, a := range ds.RecentAnswers {
+		// 先頭で切ると強調（**）や `…` が閉じずに残るので、記号を落としてから切る。
+		plain := strings.NewReplacer("**", "", "`", "").Replace(a.QuestionMd)
+		q := []rune(strings.Join(strings.Fields(plain), " "))
+		if len(q) > 80 {
+			q = append(q[:80], '…')
+		}
+		fmt.Fprintf(&b, "- `%s`（%s）問い：%s\n", a.Reason, a.AnsweredAt, string(q))
+		for _, line := range strings.Split(strings.TrimSpace(a.AnswerMd), "\n") {
+			fmt.Fprintf(&b, "  > %s\n", line)
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // renderStopConditions は止まる条件（4.2。pb-252）を出す。**PB は判定しない**——
@@ -429,6 +464,19 @@ func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packD
 			b.WriteString(strings.TrimSpace(body) + "\n\n")
 		}
 	}
+	// **main と評価には「共通」の見出しも載せる**（9.1。pb-278）。ローカルの引き継ぎ
+	// ファイル・強制停止からの再開・止まる条件は、役割の段階によらず効かせる決まり
+	// である。見出しごとに書き写すと、直すときにずれる。sub は main の内側で動くので
+	// 載せない（main が手元の状態を持つ）。文書に見出しが無ければ黙って省く。
+	if ds.Role == "main" || ds.Role == "evaluator" {
+		body, rpcErr := h.fetchDelegationInstruction(r, base, delegationCommonSection)
+		if rpcErr != nil {
+			return "", rpcErr
+		}
+		if body != "" {
+			b.WriteString(strings.TrimSpace(body) + "\n\n")
+		}
+	}
 
 	if len(ds.OpenConfirmations) > 0 {
 		b.WriteString("**開いている確認待ち**\n\n")
@@ -438,6 +486,7 @@ func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packD
 		b.WriteString("\n")
 	}
 
+	b.WriteString(renderRecentAnswers(ds))
 	b.WriteString(renderBudgetLines(ds.Budget))
 	b.WriteString(renderStopConditions(ds.Scope.StopConditions))
 
@@ -448,6 +497,9 @@ func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packD
 
 	return b.String(), nil
 }
+
+// delegationCommonSection は役割によらず main と評価に載せる見出し（pb-278）。
+const delegationCommonSection = "共通"
 
 // delegationInstructionSection は9.1の「見出しは役割と段階の組」を判定する。
 //

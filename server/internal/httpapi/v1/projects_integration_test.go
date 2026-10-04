@@ -129,6 +129,7 @@ func TestProjectsIntegration(t *testing.T) {
 	// document_template の行（0017）が決めるので、テンプレート側を読んで
 	// 突き合わせる——テンプレートを1件足したときに、この検査も一緒に動く。
 	assertDocTemplatesCopied(t, pool, projectID, adminID)
+	assertCodeReadsDocsExist(t, pool, projectID)
 
 	// ③ キー重複は 409 already_exists。**DBの UNIQUE 制約で捕まること。**
 	dup := postWithCookie(r, "/api/v1/projects", adminSession,
@@ -489,5 +490,44 @@ func assertDocTemplatesCopied(t *testing.T, pool *pgxpool.Pool, projectID, creat
 	if n := scalarInt(t, pool, `
 		SELECT count(*) FROM document WHERE project_id = $1 AND is_template`, projectID); n != 0 {
 		t.Errorf("プロジェクトに is_template の行が %d件ある, want 0件", n)
+	}
+}
+
+// assertCodeReadsDocsExist は、コードが名指しで読む文書が新しいプロジェクトに実際に
+// 在り、読む見出しを持つことを確かめる（pb-278）。
+//
+// **assertDocTemplatesCopied は「テンプレートと同じものが写ったか」しか見ない。**
+// テンプレートそのものが欠けていると、件数が揃って通ってしまう。0055 の
+// delegation-instructions は id の衝突で一度も入っておらず、この形で見逃していた。
+// **ここは期待値を決め打ちする**——パック（context_pack.go）が見出し指定で読む鍵だから。
+func assertCodeReadsDocsExist(t *testing.T, pool *pgxpool.Pool, projectID string) {
+	t.Helper()
+	for _, want := range []struct {
+		slug     string
+		headings []string
+	}{
+		// pb_get_context の「6. 自律実行」節（Delegation.md 9.1）
+		{"delegation-instructions", []string{"## 共通", "## main・計画中", "## main・承認済", "## 評価", "## sub"}},
+	} {
+		var body string
+		if err := pool.QueryRow(context.Background(),
+			`SELECT body_md FROM document WHERE project_id = $1 AND slug = $2`,
+			projectID, want.slug).Scan(&body); err != nil {
+			t.Errorf("文書 %s が新しいプロジェクトに無い: %v", want.slug, err)
+			continue
+		}
+		for _, h := range want.headings {
+			if !strings.Contains(body, h+"\n") {
+				t.Errorf("文書 %s に見出し %q が無い", want.slug, h)
+			}
+		}
+	}
+	// **テンプレートの id が衝突していないこと**（0043 と 0055 が同じ id を使った）。
+	// 別の文書の本文が自律実行の指示文で上書きされていないかを見る。
+	if n := scalarInt(t, pool, `
+		SELECT count(*) FROM document
+		 WHERE project_id = $1 AND slug <> 'delegation-instructions' AND body_md LIKE '%## 共通%'`,
+		projectID); n != 0 {
+		t.Errorf("自律実行の指示文の見出しを持つ別の文書が %d 件ある", n)
 	}
 }
