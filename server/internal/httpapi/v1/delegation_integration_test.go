@@ -136,8 +136,8 @@ func TestDelegationIntegration(t *testing.T) {
 		}
 	})
 
-	// pb-247・pb-248（計画の承認・評価）がまだ無いので、承認済への遷移は
-	// テストから直接 UPDATE する（将来はその2チケットの API が置き換える）。
+	// 承認済への遷移はテストから直接 UPDATE する。このテストの対象は5章の強制で、
+	// 承認の手順（評価の合格 → PM の承認）は delegation_approval_integration_test.go が通す。
 	if _, err := pool.Exec(ctx, `UPDATE delegation SET status = 'approved' WHERE id = $1`, delegationID); err != nil {
 		t.Fatalf("委任を承認済にできない: %v", err)
 	}

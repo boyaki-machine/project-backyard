@@ -39,6 +39,28 @@ func (q *Queries) AgentUsableInProject(ctx context.Context, arg AgentUsableInPro
 	return column_1, err
 }
 
+const approveDelegationScope = `-- name: ApproveDelegationScope :execrows
+UPDATE delegation
+SET status = 'approved', scope = $1, scope_version = scope_version + 1
+WHERE id = $2 AND status = 'planning'
+`
+
+type ApproveDelegationScopeParams struct {
+	Scope []byte
+	ID    string
+}
+
+// ApproveDelegationScope は PM が委任範囲を承認する（4.3「計画中 → 承認済」。
+// pb-260）。**scope は承認した計画の版の写し**であり、scope_version を1つ進める
+// （0 は未承認。4.4）。計画中でなければ 0 行を返す。
+func (q *Queries) ApproveDelegationScope(ctx context.Context, arg ApproveDelegationScopeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, approveDelegationScope, arg.Scope, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createDelegation = `-- name: CreateDelegation :exec
 
 INSERT INTO delegation

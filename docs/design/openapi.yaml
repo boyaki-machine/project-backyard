@@ -4321,6 +4321,118 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/tickets/{seq}/delegation/approve:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+    post:
+      tags: [tickets]
+      summary: 委任範囲を承認する
+      operationId: approveDelegation
+      description: |
+        PM が委任範囲を承認する（Delegation.md 4.3・6.1、pb-260）。
+        **必要権限は `delegation.manage`**。MCP ツールは持たない
+        （`createDelegation` と同じ理由。PM が直接行う操作）。
+
+        **委任が `planning` のときだけ、最新の計画の版に対して行う。**
+        その版への直近の評価が `pass` でなければ `409`（6.1「評価が先、
+        PM が後」）。初版・範囲の変更の版・却下後の出し直しのいずれも
+        この口で承認する。
+
+        側作用（1つのトランザクション）：
+
+        - その版を `accepted` にする（`decided_by` は PM）
+        - それより前に `proposed` のまま残った版を `superseded` にする
+        - 委任を `approved` にし、`scope` を版の範囲で上書きし、
+          `scope_version` を1つ進める
+        - 根に `kind=decision` のコメントを1件書く（`reason_md` を添える）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecideDelegationRequest'
+      responses:
+        '200':
+          description: '承認した委任（`status: approved`）。'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delegation'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '409':
+          description: |
+            委任が計画中でない／計画がまだ無い／`plan_version` が最新の版と
+            食い違う（`details` に `plan_version` / `stale`）／最新の版が
+            すでに判定されている／最新の版が評価に合格していない。`message` は画面にそのまま出せる。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/tickets/{seq}/delegation/reject:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+    post:
+      tags: [tickets]
+      summary: 委任範囲を却下する
+      operationId: rejectDelegation
+      description: |
+        PM が委任範囲（最新の計画の版）を却下する（Delegation.md 6.1、
+        pb-260）。**必要権限は `delegation.manage`**。MCP ツールは持たない。
+
+        **委任が `planning` のときだけ行え、評価を待たない。** 最新の版を
+        `rejected` にし（`decided_by` は PM）、委任は `planning` のまま
+        残す——main は根のコメントに残った理由を読んで出し直す。
+        **`reason_md` は必須**（`422`）。委任の取り下げ（`ended`）はこの口では
+        行わない。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecideDelegationRequest'
+      responses:
+        '200':
+          description: '却下した後の委任（`status: planning` のまま）。'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delegation'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '409':
+          description: |
+            委任が計画中でない／計画がまだ無い／`plan_version` が最新の版と
+            食い違う（`details` に `plan_version` / `stale`）／最新の版が
+            すでに判定されている。`message` は画面にそのまま出せる。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/tickets/{seq}/plan:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -4455,12 +4567,13 @@ paths:
 
         側作用：
 
-        - plan 対象・version 2以上・合格：計画の版を `accepted` にする
-        - plan 対象・version 2以上・不合格：計画の版を `rejected` にする
+        - plan 対象・委任が承認済（構造の変更の版）・合格：計画の版を
+          `accepted` にする
+        - plan 対象・委任が承認済・不合格：計画の版を `rejected` にする
           （main は新しい版を出し直す）
-        - plan 対象の初版（version 1）：反映しない。初版の合否は「PM の
-          承認待ちになる」だけで、計画の `accepted` 化は委任範囲を承認する
-          操作（未実装）に属する
+        - plan 対象・委任が計画中（初版、範囲の変更の版、却下後の出し直し）：
+          反映しない。合否は「PM の承認待ちになる」だけで、計画の確定は
+          `approveDelegation` / `rejectDelegation`（pb-260）が行う
         - `verdict=unable`、または同じ対象への不合格が往復の上限
           （初期値3回。固定値）に達した：委任を `paused` にし、根へ通知の
           コメントを1件書く。**`confirmation` 表（pb-249）がまだ無いための
@@ -9272,6 +9385,23 @@ components:
             pb-247・pb-248 で足す。
           additionalProperties: true
 
+    DecideDelegationRequest:
+      description: |
+        委任範囲の承認・却下（Delegation.md 6.1、pb-260）。
+      type: object
+      required: [plan_version]
+      properties:
+        plan_version:
+          type: integer
+          minimum: 1
+          description: |
+            PM が確かめた計画の版。**最新の版と食い違えば `409`**——その間に
+            main が出し直した版を、見ないまま承認させない。
+        reason_md:
+          type: string
+          description: |
+            承認では任意（承認に添える一言）、**却下では必須**。根の
+            `kind=decision` のコメントに載る。
     Delegation:
       description: |
         委任1件（Delegation.md 4.4）。

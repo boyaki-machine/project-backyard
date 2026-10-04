@@ -97,6 +97,29 @@ func (q *Queries) CreateDelegationPlan(ctx context.Context, arg CreateDelegation
 	return err
 }
 
+const decideDelegationPlan = `-- name: DecideDelegationPlan :execrows
+UPDATE delegation_plan
+SET status = $1, decided_by = $2, decided_at = now()
+WHERE id = $3 AND status = 'proposed'
+`
+
+type DecideDelegationPlanParams struct {
+	Status    string
+	DecidedBy pgtype.Text
+	ID        string
+}
+
+// DecideDelegationPlan は PM が計画の版を確定する（承認なら accepted、却下なら
+// rejected。6.1。pb-260）。**decided_by は PM**——AcceptDelegationPlan /
+// RejectDelegationPlan（PB 自身の判定）と違い、人の決定である。
+func (q *Queries) DecideDelegationPlan(ctx context.Context, arg DecideDelegationPlanParams) (int64, error) {
+	result, err := q.db.Exec(ctx, decideDelegationPlan, arg.Status, arg.DecidedBy, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getDelegationPlanByID = `-- name: GetDelegationPlanByID :one
 SELECT
   p.id, p.version, p.scope, p.skeleton, p.body_md, p.reason_md,
@@ -221,6 +244,42 @@ func (q *Queries) GetLatestAcceptedDelegationPlan(ctx context.Context, delegatio
 	return i, err
 }
 
+const getLatestDelegationPlanWithVerdict = `-- name: GetLatestDelegationPlanWithVerdict :one
+SELECT p.id, p.version, p.scope, p.status,
+  COALESCE((SELECT e.verdict FROM evaluation e
+            WHERE e.plan_id = p.id
+            ORDER BY e.created_at DESC LIMIT 1), '')::text AS latest_verdict
+FROM delegation_plan p
+WHERE p.delegation_id = $1
+ORDER BY p.version DESC
+LIMIT 1
+`
+
+type GetLatestDelegationPlanWithVerdictRow struct {
+	ID            string
+	Version       int32
+	Scope         []byte
+	Status        string
+	LatestVerdict string
+}
+
+// GetLatestDelegationPlanWithVerdict は PM の承認・却下の対象を読む（6.1。pb-260）。
+// **対象は最新の版（version が最大）だけである。** 古い版を承認できると、main が
+// 出し直した後の版を飛ばして古い計画が通る。latest_verdict はその版への直近の
+// 評価の合否で、評価が無ければ空文字。
+func (q *Queries) GetLatestDelegationPlanWithVerdict(ctx context.Context, delegationID string) (GetLatestDelegationPlanWithVerdictRow, error) {
+	row := q.db.QueryRow(ctx, getLatestDelegationPlanWithVerdict, delegationID)
+	var i GetLatestDelegationPlanWithVerdictRow
+	err := row.Scan(
+		&i.ID,
+		&i.Version,
+		&i.Scope,
+		&i.Status,
+		&i.LatestVerdict,
+	)
+	return i, err
+}
+
 const nextDelegationPlanVersion = `-- name: NextDelegationPlanVersion :one
 
 SELECT COALESCE(MAX(version), 0) + 1 FROM delegation_plan WHERE delegation_id = $1
@@ -245,6 +304,28 @@ WHERE id = $1 AND status = 'proposed'
 // と同じ理由で、不合格にしたのは main でも PM でもなく評価の結果である。
 func (q *Queries) RejectDelegationPlan(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.Exec(ctx, rejectDelegationPlan, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const supersedeProposedDelegationPlans = `-- name: SupersedeProposedDelegationPlans :execrows
+UPDATE delegation_plan
+SET status = 'superseded', decided_at = now()
+WHERE delegation_id = $1 AND status = 'proposed' AND id <> $2
+`
+
+type SupersedeProposedDelegationPlansParams struct {
+	DelegationID string
+	KeepID       string
+}
+
+// SupersedeProposedDelegationPlans は、PM が承認した版より前に出されて
+// proposed のまま残った版を superseded にする（pb-260）。計画中に main が
+// 出し直すと前の版は判定されずに残るため、承認の時点で畳む。
+func (q *Queries) SupersedeProposedDelegationPlans(ctx context.Context, arg SupersedeProposedDelegationPlansParams) (int64, error) {
+	result, err := q.db.Exec(ctx, supersedeProposedDelegationPlans, arg.DelegationID, arg.KeepID)
 	if err != nil {
 		return 0, err
 	}

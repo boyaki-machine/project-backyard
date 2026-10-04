@@ -450,6 +450,14 @@ type fakeQuerier struct {
 	// 委任の状態の集約読み取り（Delegation.md 9.1。pb-251）。
 	latestEvaluationForDelegation    gen.GetLatestEvaluationForDelegationRow
 	latestEvaluationForDelegationErr error // pgx.ErrNoRows で「評価が1件も無い」
+
+	// 委任範囲の承認・却下（Delegation.md 6.1。pb-260）。
+	latestPlanWithVerdict    gen.GetLatestDelegationPlanWithVerdictRow
+	latestPlanWithVerdictErr error // pgx.ErrNoRows で「計画が1件も無い」
+	decidedPlans             []gen.DecideDelegationPlanParams
+	decidePlanRows           int64 // 0 なら1件として扱う。-1 で「対象なし」（同時の操作）
+	supersededKeepIDs        []string
+	approvedDelegationScopes []gen.ApproveDelegationScopeParams
 }
 
 // GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
@@ -3395,4 +3403,39 @@ func (q *fakeQuerier) GetProjectTicketTrends(_ context.Context, arg gen.GetProje
 		rows[i] = gen.GetProjectTicketTrendsRow{Date: start.AddDate(0, 0, i).Format("2006-01-02"), Timezone: "Asia/Tokyo", AsOf: arg.AsOf, IsPartial: i == len(rows)-1}
 	}
 	return rows, nil
+}
+
+// ── 委任範囲の承認・却下（Delegation.md 6.1。pb-260）──────────────
+
+func (q *fakeQuerier) GetLatestDelegationPlanWithVerdict(
+	context.Context, string,
+) (gen.GetLatestDelegationPlanWithVerdictRow, error) {
+	q.opLog = append(q.opLog, "GetLatestDelegationPlanWithVerdict")
+	if q.latestPlanWithVerdictErr != nil {
+		return gen.GetLatestDelegationPlanWithVerdictRow{}, q.latestPlanWithVerdictErr
+	}
+	return q.latestPlanWithVerdict, nil
+}
+
+func (q *fakeQuerier) DecideDelegationPlan(_ context.Context, arg gen.DecideDelegationPlanParams) (int64, error) {
+	q.opLog = append(q.opLog, "DecideDelegationPlan")
+	if q.decidePlanRows < 0 {
+		return 0, nil
+	}
+	q.decidedPlans = append(q.decidedPlans, arg)
+	return 1, nil
+}
+
+func (q *fakeQuerier) SupersedeProposedDelegationPlans(
+	_ context.Context, arg gen.SupersedeProposedDelegationPlansParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "SupersedeProposedDelegationPlans")
+	q.supersededKeepIDs = append(q.supersededKeepIDs, arg.KeepID)
+	return 0, nil
+}
+
+func (q *fakeQuerier) ApproveDelegationScope(_ context.Context, arg gen.ApproveDelegationScopeParams) (int64, error) {
+	q.opLog = append(q.opLog, "ApproveDelegationScope")
+	q.approvedDelegationScopes = append(q.approvedDelegationScopes, arg)
+	return 1, nil
 }

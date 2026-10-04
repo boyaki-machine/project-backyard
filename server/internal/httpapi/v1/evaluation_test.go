@@ -127,7 +127,7 @@ func TestSubmitEvaluationFailRequiresNote(t *testing.T) {
 func TestSubmitEvaluationPlanVersionOneDoesNotAccept(t *testing.T) {
 	q := ticketFake()
 	q.ticket.idBySeq[31] = testTicketID
-	withMainDelegation(q, "approved")
+	withMainDelegation(q, "planning")
 	withEvaluatorAgentInfo(q)
 	q.planByVersion = map[int32]gen.GetDelegationPlanByVersionRow{
 		1: {ID: "01K2PLAN00000000000000001", Status: "proposed"},
@@ -144,6 +144,32 @@ func TestSubmitEvaluationPlanVersionOneDoesNotAccept(t *testing.T) {
 	}
 	if len(q.acceptedPlanIDs) != 0 {
 		t.Error("初版（version=1）が accept されている。6.1 により PM の承認待ちになるだけのはず")
+	}
+}
+
+// TestSubmitEvaluationScopeChangePassWaitsForPM は pb-260 で直した不具合の回帰。
+// 範囲の変更（6.3）は提出の時点で委任を計画中へ戻す。その版が評価に合格しても
+// accepted にせず、PM の承認（delegation/approve）を待たせる。
+func TestSubmitEvaluationScopeChangePassWaitsForPM(t *testing.T) {
+	q := ticketFake()
+	q.ticket.idBySeq[31] = testTicketID
+	withMainDelegation(q, "planning")
+	withEvaluatorAgentInfo(q)
+	q.planByVersion = map[int32]gen.GetDelegationPlanByVersionRow{
+		3: {ID: "01K2PLAN00000000000000003", Status: "proposed"},
+	}
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.submitEvaluation(rec, ticketReqAsAgent(http.MethodPost, "/evaluation",
+		`{"target_kind":"plan","plan_version":3,"verdict":"pass","findings":`+passFindings()+`}`,
+		"31", testEvaluatorActorID))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(q.acceptedPlanIDs) != 0 {
+		t.Errorf("acceptedPlanIDs = %v。計画中の版は PM の承認を待つはず（6.1）", q.acceptedPlanIDs)
 	}
 }
 

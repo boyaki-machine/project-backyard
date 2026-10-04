@@ -225,10 +225,12 @@ func (h *handler) submitEvaluation(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("評価を保存できない: %w", err)
 		}
 
-		// **plan 対象の初版（version=1）は反映しない**（6.1）。初版の合否は
-		// 「PM の承認待ちになる」だけで、計画そのものの accepted/rejected は
-		// PM が委任範囲を承認する操作（未実装。findings に記録）に属する。
-		if req.TargetKind == evaluationTargetPlan && *req.PlanVersion > 1 {
+		// **委任が計画中なら、計画の版を反映しない**（6.1・4.3）。初版と、範囲の
+		// 変更（6.3。提出の時点で委任を計画中へ戻している）は、どちらも
+		// 「評価が先、PM が後」——計画の accepted/rejected は PM の承認・却下
+		// （delegation_approval.go。pb-260）が決める。版番号で分けると、範囲の
+		// 変更の版が評価の合格だけで accepted になり、PM を通らずに範囲が変わる。
+		if req.TargetKind == evaluationTargetPlan && deleg.Status != "planning" {
 			switch req.Verdict {
 			case evaluationVerdictPass:
 				if _, err := q.AcceptDelegationPlan(ctx, planID.String); err != nil {
