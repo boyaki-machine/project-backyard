@@ -1045,6 +1045,16 @@ function selectStageTicket(t: Ticket, checked: boolean): void {
   selectedStageSeqs.value = next
 }
 
+function selectStageRow(t: Ticket, e: MouseEvent | KeyboardEvent): void {
+  if (!canEdit.value || !(e.ctrlKey || e.metaKey)) return
+  // Inline controls retain their own actions; title links participate in selection.
+  const target = e.target as HTMLElement
+  if (target.closest('button, input, select, textarea, [role="button"], .stage-controls')) return
+  e.preventDefault()
+  e.stopPropagation()
+  selectStageTicket(t, !selectedStageSeqs.value.has(t.seq))
+}
+
 const selectedStageTickets = computed(() => tickets.value
   .filter(t => selectedStageSeqs.value.has(t.seq) && stageReason(t) === '')
   .sort((a, b) => {
@@ -2258,6 +2268,7 @@ watch(projectKey, (key) => {
       <!-- 操作の結果は操作した場所に出す（6.4）。作成・並べ替え・段の行き来で使い回す -->
       <p v-if="result" class="ok" role="status">{{ result }}</p>
 
+      <p v-if="canEdit" class="stage-selection-hint">{{ $ui('Ctrl／⌘＋クリックで行を選択・解除できます') }}</p>
       <div v-if="canEdit && selectedStageTickets.length > 0" class="stage-bulk" role="group" :aria-label="$ui('選択したチケットの操作')">
         <span>{{ $ui('{count}件選択中', { count: selectedStageTickets.length }) }}</span>
         <button type="button" class="secondary small" :disabled="busy" @click="stageTickets(selectedStageTickets)">{{ $ui('選択したチケットをオンステージへ') }}</button>
@@ -2476,8 +2487,13 @@ watch(projectKey, (key) => {
                     'drop-after': hintsRow(row, section, 'after'),
                     'drop-inside': hintsRow(row, section, 'inside'),
                     selected: detailSeq === row.ticket.seq,
+                    'stage-selected': selectedStageSeqs.has(row.ticket.seq),
                   }"
-                  :aria-selected="detailSeq === row.ticket.seq"
+                  :aria-selected="selectedStageSeqs.has(row.ticket.seq) || detailSeq === row.ticket.seq"
+                  :tabindex="canEdit && stageReason(row.ticket) === '' ? 0 : undefined"
+                  @click.capture="selectStageRow(row.ticket, $event)"
+                  @contextmenu.capture="$event.ctrlKey && selectStageRow(row.ticket, $event)"
+                  @keydown.space.self="selectStageRow(row.ticket, $event)"
                   @click="openRow(row.ticket, $event)"
                   @dragover="onDragOverRow($event, row, section)"
                   @drop.prevent="dropOnRow($event, row, section)"
@@ -2584,9 +2600,6 @@ watch(projectKey, (key) => {
                       </span>
                       <span v-if="canEdit" class="stage-controls" @click.stop @pointerdown.stop @dragstart.stop.prevent
                         @mouseenter="overActionCell = true" @mouseleave="overActionCell = false">
-                        <input type="checkbox" :checked="selectedStageSeqs.has(row.ticket.seq)" :disabled="busy || stageReason(row.ticket) !== ''"
-                          :aria-label="$ui('{ticket}を選択', { ticket: fullId(row.ticket) })" :title="stageReason(row.ticket)"
-                          @change="selectStageTicket(row.ticket, ($event.target as HTMLInputElement).checked)" />
                         <UserActionsMenu compact :label="$ui('{ticket}のオンステージ操作', { ticket: fullId(row.ticket) })"
                           :items="stageActions(row.ticket)" @select="stageTickets([row.ticket])" />
                       </span>
@@ -2764,7 +2777,6 @@ watch(projectKey, (key) => {
 
 <style scoped>
 .stage-controls { display: inline-flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
-.stage-controls input { margin: 0; }
 .stage-bulk { display: flex; align-items: center; flex-wrap: wrap; gap: var(--pb-space-2); margin-bottom: var(--pb-space-3); }
 
 .page {
@@ -3039,6 +3051,8 @@ watch(projectKey, (key) => {
 /* **開いている行は選択状態として背景を変える**（5.4「行クリック」）。
    色ではなく面の輝度で示す（8.2 / 8.6）。hover より一段強くして、
    マウスが別の行に載っていても「いま開いているのはこれ」が読めるようにする */
+.row.stage-selected,
+.row.stage-selected:hover,
 .row.selected,
 .row.selected:hover {
   background: var(--pb-active);

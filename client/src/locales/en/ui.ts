@@ -1,5 +1,6 @@
 /** English translations keyed by the Japanese source text used by the UI. */
 export const uiMessages: Record<string, string> = {
+  "Ctrl／⌘＋クリックで行を選択・解除できます": "Ctrl / ⌘ + click to select or deselect rows",
   "配下のチケットは親と一緒にオンステージへ移動します": "Child tickets move onstage with their parent.",
   "すでにオンステージにあります": "Already onstage.",
   "オンステージへ": "Move onstage",
