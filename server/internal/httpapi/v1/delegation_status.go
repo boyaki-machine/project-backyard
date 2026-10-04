@@ -52,6 +52,7 @@ type delegationStatusView struct {
 	LatestEvaluation  *delegationStatusEvaluationView `json:"latest_evaluation,omitempty"`
 	OpenConfirmations []confirmationView              `json:"open_confirmations,omitempty"`
 	LatestHandoff     *handoffView                    `json:"latest_handoff,omitempty"`
+	Budget            *budgetStatusView               `json:"budget,omitempty"`
 	NextMove          string                          `json:"next_move,omitempty"`
 }
 
@@ -130,6 +131,18 @@ func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
 	} else if herr != pgx.ErrNoRows {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(herr))
 		return
+	}
+
+	// 予算と消費（12.1・9.1「残り予算」。pb-253）。トークンを申告しなかった
+	// 件数も載せる——自己申告の合計が漏れていることを読み手に知らせる。
+	if usage, uerr := h.q.GetDelegationBudgetUsage(ctx, gen.GetDelegationBudgetUsageParams{
+		DelegationID: deleg.ID, ProbeTicketID: "",
+	}); uerr != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(uerr))
+		return
+	} else {
+		bv := budgetStatusOf(deleg.Scope, usage)
+		view.Budget = &bv
 	}
 
 	move, merr := computeNextMove(ctx, h.q, deleg.ID, role)

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -126,5 +127,34 @@ func TestGetContextWithoutDelegationOmitsSection(t *testing.T) {
 
 	if strings.Contains(text, "## 6. 自律実行") {
 		t.Errorf("委任の木に属さないのに節6が出ている:\n%s", text)
+	}
+}
+
+// TestRenderBudgetLines は「予算の消費」の行（12.1・9.1。pb-253）。上限のある
+// 項目だけを出し、トークンを申告しなかった件数は上限の有無によらず出す。
+func TestRenderBudgetLines(t *testing.T) {
+	if got := renderBudgetLines(nil); got != "" {
+		t.Errorf("nil = %q, want 空", got)
+	}
+	var none packDelegationBudget
+	if got := renderBudgetLines(&none); got != "" {
+		t.Errorf("上限なし・漏れなし = %q, want 空", got)
+	}
+
+	var b packDelegationBudget
+	if err := json.Unmarshal([]byte(`{"limits":{"tokens":1000,"tickets":300,"due_on":"2027-02-28"},
+		"tickets":12,"max_depth":2,"tokens_total":420,"tokens_this_month":100,"tokens_missing":2,"today":"2026-10-04"}`), &b); err != nil {
+		t.Fatal(err)
+	}
+	got := renderBudgetLines(&b)
+	for _, want := range []string{"トークン 420 / 1000", "起票数 12 / 300", "期日 2027-02-28（今日 2026-10-04）", "申告しなかった報告・評価 2 件"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("got = %q, want %q を含む", got, want)
+		}
+	}
+	for _, unwanted := range []string{"今月", "深さ", "往復"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("got = %q, 上限の無い %q を出している", got, unwanted)
+		}
 	}
 }

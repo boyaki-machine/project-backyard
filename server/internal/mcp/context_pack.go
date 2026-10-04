@@ -251,7 +251,61 @@ type packDelegationStatus struct {
 		Trigger   string          `json:"trigger"`
 		WrittenAt int64           `json:"written_at"`
 	} `json:"latest_handoff"`
-	NextMove string `json:"next_move"`
+	NextMove string                `json:"next_move"`
+	Budget   *packDelegationBudget `json:"budget"`
+}
+
+// packDelegationBudget は delegation-status の budget（12.1。pb-253）。
+type packDelegationBudget struct {
+	Limits struct {
+		Tokens         *int64  `json:"tokens"`
+		TokensPerMonth *int64  `json:"tokens_per_month"`
+		DueOn          *string `json:"due_on"`
+		Tickets        *int64  `json:"tickets"`
+		Depth          *int32  `json:"depth"`
+		Rounds         *int32  `json:"rounds"`
+	} `json:"limits"`
+	Tickets         int64  `json:"tickets"`
+	MaxDepth        int32  `json:"max_depth"`
+	TokensTotal     int64  `json:"tokens_total"`
+	TokensThisMonth int64  `json:"tokens_this_month"`
+	TokensMissing   int64  `json:"tokens_missing"`
+	Today           string `json:"today"`
+}
+
+// renderBudgetLines は「残り予算」（9.1）を、上限のある項目だけ1行ずつ出す。
+// トークンを申告しなかった件数は、上限の有無によらず出す（12.1）。
+func renderBudgetLines(bud *packDelegationBudget) string {
+	if bud == nil {
+		return ""
+	}
+	l := bud.Limits
+	var lines []string
+	if l.Tokens != nil {
+		lines = append(lines, fmt.Sprintf("トークン %d / %d", bud.TokensTotal, *l.Tokens))
+	}
+	if l.TokensPerMonth != nil {
+		lines = append(lines, fmt.Sprintf("今月のトークン %d / %d", bud.TokensThisMonth, *l.TokensPerMonth))
+	}
+	if l.DueOn != nil {
+		lines = append(lines, fmt.Sprintf("期日 %s（今日 %s）", *l.DueOn, bud.Today))
+	}
+	if l.Tickets != nil {
+		lines = append(lines, fmt.Sprintf("起票数 %d / %d", bud.Tickets, *l.Tickets))
+	}
+	if l.Depth != nil {
+		lines = append(lines, fmt.Sprintf("木の深さ %d / %d", bud.MaxDepth, *l.Depth))
+	}
+	if l.Rounds != nil {
+		lines = append(lines, fmt.Sprintf("往復の上限 %d", *l.Rounds))
+	}
+	if bud.TokensMissing > 0 {
+		lines = append(lines, fmt.Sprintf("トークンを申告しなかった報告・評価 %d 件（合計から漏れている）", bud.TokensMissing))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "**予算の消費**：" + strings.Join(lines, "／") + "\n\n"
 }
 
 // fetchDelegationStatus は9.1の節の材料を1回で読む。
@@ -365,6 +419,8 @@ func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packD
 		}
 		b.WriteString("\n")
 	}
+
+	b.WriteString(renderBudgetLines(ds.Budget))
 
 	if ds.LatestEvaluation != nil && ds.LatestEvaluation.Verdict != "pass" {
 		fmt.Fprintf(&b, "**直近の評価**：%s 対象 round %d、判定 `%s`\n\n",

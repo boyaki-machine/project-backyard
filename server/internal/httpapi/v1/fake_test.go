@@ -458,6 +458,13 @@ type fakeQuerier struct {
 	decidePlanRows           int64 // 0 なら1件として扱う。-1 で「対象なし」（同時の操作）
 	supersededKeepIDs        []string
 	approvedDelegationScopes []gen.ApproveDelegationScopeParams
+
+	// 予算（Delegation.md 12.1。pb-253）。既定は消費ゼロ・今日 2026-10-04。
+	budgetUsage          gen.GetDelegationBudgetUsageRow
+	budgetUsageSet       bool
+	budgetUsageProbes    []string
+	delegationForControl map[string]gen.GetDelegationForControlRow // key: root ticket id
+	updatedScopes        []gen.UpdateDelegationScopeParams
 }
 
 // GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
@@ -3438,4 +3445,31 @@ func (q *fakeQuerier) ApproveDelegationScope(_ context.Context, arg gen.ApproveD
 	q.opLog = append(q.opLog, "ApproveDelegationScope")
 	q.approvedDelegationScopes = append(q.approvedDelegationScopes, arg)
 	return 1, nil
+}
+
+// ── 予算（Delegation.md 12.1。pb-253）──────────────────────────
+
+func (q *fakeQuerier) GetDelegationBudgetUsage(
+	_ context.Context, arg gen.GetDelegationBudgetUsageParams,
+) (gen.GetDelegationBudgetUsageRow, error) {
+	q.opLog = append(q.opLog, "GetDelegationBudgetUsage")
+	q.budgetUsageProbes = append(q.budgetUsageProbes, arg.ProbeTicketID)
+	if !q.budgetUsageSet {
+		return gen.GetDelegationBudgetUsageRow{ProbeDepth: 0, Today: "2026-10-04"}, nil
+	}
+	return q.budgetUsage, nil
+}
+
+func (q *fakeQuerier) UpdateDelegationScope(_ context.Context, arg gen.UpdateDelegationScopeParams) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateDelegationScope")
+	q.updatedScopes = append(q.updatedScopes, arg)
+	return 1, nil
+}
+
+func (q *fakeQuerier) GetDelegationForControl(_ context.Context, rootTicketID string) (gen.GetDelegationForControlRow, error) {
+	q.opLog = append(q.opLog, "GetDelegationForControl")
+	if row, ok := q.delegationForControl[rootTicketID]; ok {
+		return row, nil
+	}
+	return gen.GetDelegationForControlRow{}, pgx.ErrNoRows
 }

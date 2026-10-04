@@ -258,7 +258,8 @@ func (h *handler) submitEvaluation(w http.ResponseWriter, r *http.Request) {
 		// にする**（7.2・8.1 の5。8.2「PB が立てた確認待ちは、主状態を停止に
 		// する」）。raised_by は、この条件を実際に検出した評価の提出者
 		// （scope.actorID）に当てる——専用の system actor はまだ無い（finding）。
-		if req.Verdict == evaluationVerdictFail && round >= evaluationRoundLimit {
+		// 上限は budget.rounds があればそれ、無ければ固定値（12.1。pb-253）。
+		if req.Verdict == evaluationVerdictFail && round >= roundLimitOf(deleg.Scope) {
 			if _, err := q.SetDelegationStatus(ctx, gen.SetDelegationStatusParams{
 				ID: deleg.ID, Status: "paused",
 			}); err != nil {
@@ -269,6 +270,20 @@ func (h *handler) submitEvaluation(w http.ResponseWriter, r *http.Request) {
 				roundLimitConfirmationQuestion(req.TargetKind, round), scope.actorID,
 			); err != nil {
 				return err
+			}
+		}
+
+		// **評価のトークンも予算に数える**（12.1。pb-253）。往復の上限で既に
+		// 停止したなら重ねて立てない。
+		if !(req.Verdict == evaluationVerdictFail && round >= roundLimitOf(deleg.Scope)) {
+			reasons, berr := checkDelegationBudget(ctx, q, deleg.ID, deleg.Scope, "", budgetCheck{checkTokens: true})
+			if berr != nil {
+				return berr
+			}
+			if len(reasons) > 0 {
+				if berr := tripDelegationBudget(ctx, q, deleg.ID, ticketID, scope.actorID, reasons); berr != nil {
+					return berr
+				}
 			}
 		}
 

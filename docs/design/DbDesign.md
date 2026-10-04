@@ -2160,9 +2160,8 @@ pb-254）。
 専用の system actor を作るかは別途判断する（finding）。
 
 **答えても主状態は戻さない**（8.2「予算の超過は、答えるだけで続けてよいもの
-ではない」）。`budget_exceeded` で `paused` にした委任を `approved` へ戻す
-操作（停止・再開）は、まだ実装が無い（5章「PM：停止・再開」の「再開」列。
-finding——別チケットで扱う）。
+ではない」）。`budget_exceeded` で `paused` にした委任は、
+答えた後に PM が再開する（`POST .../delegation/resume`。6.29、pb-253）。
 
 ## 6.28 引き継ぎノート（0054）
 
@@ -2208,6 +2207,29 @@ CREATE TABLE delegation_handoff (
 
 **パック（pb-251）・待ち受け・通知（D6 未決）への配線はまだ無い。**
 `POST .../handoff` の応答に `next_move` を載せるところまでが pb-250 の範囲。
+
+## 6.29 委任の予算（テーブルなし）
+
+**正本は `Delegation.md` 12.1。** pb-253。**表を足していない。** 予算の値は
+`delegation.scope` の `budget`（PM が承認する委任範囲の一部）に持ち、消費は既存の
+行から測る——消費を別の表に積むと、測る元（`ticket` / `agent_run` / `evaluation`）と
+食い違ったときにどちらが正か決められない。
+
+**消費は `GetDelegationBudgetUsage`（`delegation_budget.sql`）の1回で測る。**
+
+| 値 | 測り方 |
+|---|---|
+| 起票数・深さ | 根からの再帰 CTE。根は数えず、深さ0 |
+| トークン | 木の中の `agent_run.tokens_used`（委任の `created_at` 以降）と、その委任の `evaluation.tokens_used` の和。`NULL` の件数を別に数える |
+| 今月のトークン | 同じ和を、`project.timezone` での暦月の初めから |
+| 今日 | `project.timezone` での日付（`due_on` と比べる） |
+
+**停止と再開**（`POST .../delegation/pause`・`.../resume`。`delegation.manage`）。
+再開の戻り先は止める前の主状態を列に持たないので、計画の状態から導く——
+`scope_version = 0` なら `planning`、最新の版が範囲の変更として `proposed` なら
+`planning`、それ以外は `approved`。再開で予算を直すときは `scope_version` を進め、
+直前の承認済みの版を写した版を PM の承認済み（`decided_by` は PM、`measured_class =
+'scope'`）として作る。
 
 # 7. 初期データ（0010）
 

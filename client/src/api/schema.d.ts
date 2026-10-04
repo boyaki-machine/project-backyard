@@ -2723,6 +2723,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/tickets/{seq}/delegation/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 委任を停止する
+         * @description PM が委任を停止する（Delegation.md 4.3・5章、pb-253）。**必要権限は
+         *     `delegation.manage`**。MCP ツールは持たない。計画中・承認済から止められ、
+         *     止めている間は main の書き込みを受け付けない。PB が予算の超過で止める
+         *     経路（確認待ち `budget_exceeded` を立てる）とは別の口で、こちらは確認待ちを
+         *     立てない。根に `kind=decision` のコメントを残す。
+         */
+        post: operations["pauseDelegation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/delegation/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 委任を再開する
+         * @description PM が停止した委任を再開する（Delegation.md 8.2・12.1、pb-253）。
+         *     **必要権限は `delegation.manage`**。MCP ツールは持たない。
+         *     **開いている確認待ちがあれば `409`**——答えてから再開する（予算の超過は、
+         *     答えるだけで続けてよいものではない）。
+         *
+         *     戻す先は計画の状態から導く：委任範囲が一度も承認されていなければ
+         *     `planning`、最新の計画の版が範囲の変更として承認を待っていれば
+         *     `planning`、それ以外は `approved`。
+         *
+         *     **`budget` を渡すと予算を置き換える**（承認済へ戻すときだけ。計画中へ
+         *     戻すときは `422`）。`scope_version` を進め、直前の承認済みの計画の版を
+         *     写して範囲だけ差し替えた版を、PM の承認済みとして作る。
+         */
+        post: operations["resumeDelegation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{key}/tickets/{seq}/plan": {
         parameters: {
             query?: never;
@@ -2952,9 +3033,9 @@ export interface paths {
          * @description PM が確認待ちに答える（Delegation.md 8.2、pb-249）。
          *     **必要権限は `delegation.manage`**。答えると関門が外れ、main・評価は
          *     委任の木へ再び書き込める——**ただし主状態は動かさない。** PB 自身が
-         *     立てた `budget_exceeded`（往復の上限超過。評価の提出時に `paused` に
-         *     している）は、答えるだけでは再開しない。委任の再開（`paused` →
-         *     `approved`）の経路はまだ無い（finding。別チケットで扱う）。
+         *     立てた `budget_exceeded`（予算・往復の上限の超過。`paused` にしている）は、
+         *     答えるだけでは再開しない。答えた後に PM が `resumeDelegation`（pb-253）で
+         *     再開する。
          *     MCP ツールは持たない（PM が画面・APIから直接行う操作）。
          */
         post: operations["answerConfirmation"];
@@ -5952,9 +6033,10 @@ export interface components {
             evaluator_actor_id: string;
             /**
              * @description 委任範囲（Delegation.md 4.2）。目的・指標・自律してよい範囲・予算・
-             *     止まる条件・報告の周期を自由形式の JSON で持つ。本エンドポイントは
-             *     オブジェクトであること以外を検証しない——内容の検証・承認は
-             *     pb-247・pb-248 で足す。
+             *     止まる条件・報告の周期を JSON で持つ。**検証するのはオブジェクト
+             *     であることと、`budget` の形だけ**（`DelegationBudget`。pb-253）。
+             *     `budget` に知らないキーや1未満の値があれば `422`
+             *     （`scope.budget.<キー>`）。
              */
             scope: {
                 [key: string]: unknown;
@@ -6199,6 +6281,49 @@ export interface components {
             open_confirmations?: components["schemas"]["Confirmation"][];
             latest_handoff?: components["schemas"]["DelegationHandoff"] | null;
             next_move?: string;
+            budget?: components["schemas"]["DelegationBudgetStatus"];
+        };
+        /**
+         * @description 委任の予算（Delegation.md 4.2・12.1、pb-253）。`scope.budget` に書く。
+         *     **どの項目も省略でき、省略した項目は上限を持たない。知らないキーは
+         *     `422`**（綴りを誤った上限が黙って「上限なし」になるのを防ぐ）。
+         */
+        DelegationBudget: {
+            /** @description トークンの総予算。完了レポートと評価の自己申告の和で測る。 */
+            tokens?: number;
+            /** @description 暦月（プロジェクトのタイムゾーン）あたりのトークン。 */
+            tokens_per_month?: number;
+            /**
+             * Format: date
+             * @description 期日。この日を過ぎたら、main の起票・完了レポートを拒んで停止する。
+             */
+            due_on?: string;
+            /** @description 木の子孫の数（根を含まない）。超える起票を拒んで停止する。 */
+            tickets?: number;
+            /** @description 根からの段数（根は0、根の子は1）。超える起票を拒んで停止する。 */
+            depth?: number;
+            /** @description 同じ対象への不合格の往復の上限。省略時は3。 */
+            rounds?: number;
+        };
+        /**
+         * @description 予算と消費（Delegation.md 12.1・9.1、pb-253）。`tokens_missing` は
+         *     トークンを申告しなかった完了レポート・評価の件数で、`tokens_total` から
+         *     漏れている。
+         */
+        DelegationBudgetStatus: {
+            limits: components["schemas"]["DelegationBudget"];
+            tickets: number;
+            max_depth: number;
+            /** Format: int64 */
+            tokens_total: number;
+            /** Format: int64 */
+            tokens_this_month: number;
+            tokens_missing: number;
+            /**
+             * Format: date
+             * @description プロジェクトのタイムゾーンでの今日。
+             */
+            today: string;
         };
         /** @description 受理した完了レポート（ApiDesign.md 9.15）。 */
         TicketReport: {
@@ -12066,6 +12191,117 @@ export interface operations {
              *     食い違う（`details` に `plan_version` / `stale`）／最新の版が
              *     すでに判定されている。`message` は画面にそのまま出せる。
              */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    pauseDelegation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description 止める理由（任意）。根のコメントに載る。 */
+                    reason_md?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 停止した委任（`status: paused`）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Delegation"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            /** @description 委任が計画中・承認済でない（すでに停止・終了している）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resumeDelegation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    budget?: components["schemas"]["DelegationBudget"];
+                    /** @description 再開に添える一言（任意）。根のコメントに載る。 */
+                    reason_md?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 再開した委任（`status` は `planning` か `approved`）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Delegation"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            /** @description 委任が停止していない／開いている確認待ちがある。 */
             409: {
                 headers: {
                     [name: string]: unknown;

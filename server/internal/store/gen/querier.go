@@ -794,11 +794,31 @@ type Querier interface {
 	GetAppSecret(ctx context.Context, keyID string) (GetAppSecretRow, error)
 	// GetConfirmationByID は応答の組み立てと、回答の対象確認に使う。
 	GetConfirmationByID(ctx context.Context, id string) (GetConfirmationByIDRow, error)
+	// 委任の予算（Delegation.md 4.2・12.1）。pb-253。
+	//
+	// **予算の値は delegation.scope の budget に持ち、消費は既存の行から測る。**
+	// 消費を別の表に積まない——積むと、測る元（起票・実行記録・評価）と
+	// 食い違ったときにどちらが正か決められない。
+	// GetDelegationBudgetUsage は委任1件の消費を1回で測る（12.1）。
+	//
+	//   tickets          木の子孫の数（根を含まない）
+	//   max_depth        根からの最大の段数（根は0）
+	//   probe_depth      probe_ticket_id の段数。木に無ければ -1（起票の前に、親の深さを見る）
+	//   tokens_total     木の中の実行記録と、この委任の評価のトークンの和
+	//   tokens_missing   トークンを申告しなかった件数（12.1「漏れた件数を要約に出す」）
+	//   tokens_this_month  今月（プロジェクトのタイムゾーンの暦月）の分
+	//   today            プロジェクトのタイムゾーンでの今日（YYYY-MM-DD）
+	//
+	// **実行記録は委任を作った後のものだけを数える。** 根に委任より前の作業が
+	// あっても、委任の予算から引かない。
+	GetDelegationBudgetUsage(ctx context.Context, arg GetDelegationBudgetUsageParams) (GetDelegationBudgetUsageRow, error)
 	// GetDelegationByID は作成直後の応答の組み立てに使う。
 	GetDelegationByID(ctx context.Context, id string) (GetDelegationByIDRow, error)
 	// GetDelegationByRootTicket は根のチケットから委任を引く（pb-247）。
 	// 1チケットにつき委任は1件（root_ticket_id が UNIQUE。4.4）。
 	GetDelegationByRootTicket(ctx context.Context, rootTicketID string) (GetDelegationByRootTicketRow, error)
+	// GetDelegationForControl は停止・再開の判定に要る列を読む（pb-253）。
+	GetDelegationForControl(ctx context.Context, rootTicketID string) (GetDelegationForControlRow, error)
 	// GetDelegationPlanByID は提出直後の応答の組み立てに使う。
 	GetDelegationPlanByID(ctx context.Context, id string) (GetDelegationPlanByIDRow, error)
 	// GetDelegationPlanByVersion は差し戻し元の版を読むのに使う（6.2）。
@@ -2166,6 +2186,9 @@ type Querier interface {
 	// ハンドラの読み取りと UPDATE の間に別のリクエストが消す余地がある——
 	// 行数0 で返れば、ハンドラは同じ 404 の経路に合流できる。
 	UpdateComment(ctx context.Context, arg UpdateCommentParams) (int64, error)
+	// UpdateDelegationScope は PM が再開のときに予算を直す（pb-253）。範囲を
+	// 変えるので scope_version を1つ進める（4.4）。
+	UpdateDelegationScope(ctx context.Context, arg UpdateDelegationScopeParams) (int64, error)
 	// 部分更新（9.9 の PATCH）。
 	//
 	// **is_satisfied と satisfied_at / satisfied_by は同時に動く。** 9.9 が
