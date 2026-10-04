@@ -56,6 +56,24 @@ onMounted(() => {
     parent: host.value,
     doc: props.modelValue,
     extensions: [
+      // Home/End は折り返し位置・インデントではなく、論理行の端へ移動する。
+      // レイアウト計測に依存しないので、画面外の行でも一押しで移動できる。
+      EditorView.domEventHandlers({
+        keydown(event, editor) {
+          if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return false
+          if (event.key !== 'Home' && event.key !== 'End') return false
+          const range = editor.state.selection.main
+          const line = editor.state.doc.lineAt(range.head)
+          const head = event.key === 'Home' ? line.from : line.to
+          event.preventDefault()
+          editor.dispatch({
+            selection: { anchor: event.shiftKey ? range.anchor : head, head },
+            scrollIntoView: true,
+            userEvent: 'select',
+          })
+          return true
+        },
+      }),
       minimalSetup,
       markdown(),
       // **折り返す。** 散文の欄で横スクロールが出ると、書いている行が
