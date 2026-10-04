@@ -68,3 +68,33 @@ WITH RECURSIVE subtree AS (
 )
 SELECT count(*)::bigint FROM ticket t
  WHERE t.id IN (SELECT id FROM subtree) AND t.id <> @root_id AND t.created_at > @since;
+
+-- GetLatestDelegationPlanWithVerdict は PM の承認・却下の対象を読む（6.1。pb-260）。
+-- **対象は最新の版（version が最大）だけである。** 古い版を承認できると、main が
+-- 出し直した後の版を飛ばして古い計画が通る。latest_verdict はその版への直近の
+-- 評価の合否で、評価が無ければ空文字。
+-- name: GetLatestDelegationPlanWithVerdict :one
+SELECT p.id, p.version, p.scope, p.status,
+  COALESCE((SELECT e.verdict FROM evaluation e
+            WHERE e.plan_id = p.id
+            ORDER BY e.created_at DESC LIMIT 1), '')::text AS latest_verdict
+FROM delegation_plan p
+WHERE p.delegation_id = @delegation_id
+ORDER BY p.version DESC
+LIMIT 1;
+
+-- DecideDelegationPlan は PM が計画の版を確定する（承認なら accepted、却下なら
+-- rejected。6.1。pb-260）。**decided_by は PM**——AcceptDelegationPlan /
+-- RejectDelegationPlan（PB 自身の判定）と違い、人の決定である。
+-- name: DecideDelegationPlan :execrows
+UPDATE delegation_plan
+SET status = @status, decided_by = @decided_by, decided_at = now()
+WHERE id = @id AND status = 'proposed';
+
+-- SupersedeProposedDelegationPlans は、PM が承認した版より前に出されて
+-- proposed のまま残った版を superseded にする（pb-260）。計画中に main が
+-- 出し直すと前の版は判定されずに残るため、承認の時点で畳む。
+-- name: SupersedeProposedDelegationPlans :execrows
+UPDATE delegation_plan
+SET status = 'superseded', decided_at = now()
+WHERE delegation_id = @delegation_id AND status = 'proposed' AND id <> @keep_id;

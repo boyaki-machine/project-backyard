@@ -91,8 +91,8 @@ func TestDelegationPlanIntegration(t *testing.T) {
 		t.Fatalf("委任の作成 status = %d（body=%s）", drec.Code, drec.Body.String())
 	}
 
-	// pb-247・pb-248（計画の承認・評価）がまだ無いので、承認済みへの遷移は
-	// テストから直接 UPDATE する。
+	// 承認済みへの遷移はテストから直接 UPDATE する。このテストの対象は 6.3 の判定で、
+	// 承認の手順（評価の合格 → PM の承認）は delegation_approval_integration_test.go が通す。
 	if _, err := pool.Exec(ctx,
 		`UPDATE delegation SET status = 'approved' WHERE root_ticket_id =
 		   (SELECT id FROM ticket WHERE project_id = (SELECT id FROM project WHERE key = $1) AND seq = $2)`,
@@ -117,7 +117,7 @@ func TestDelegationPlanIntegration(t *testing.T) {
 		}
 	})
 
-	// pb-248（評価）がまだ無いので、承認済みへの遷移はテストから直接 UPDATE する。
+	// 初版の確定も同じ理由で直接 UPDATE する（経路は delegation_approval_integration_test.go）。
 	if _, err := pool.Exec(ctx,
 		`UPDATE delegation_plan SET status = 'accepted' WHERE delegation_id =
 		   (SELECT id FROM delegation WHERE root_ticket_id =

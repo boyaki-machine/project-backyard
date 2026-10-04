@@ -83,6 +83,10 @@ type Querier interface {
 	// 一律に 409 と返すと、消えたユーザーに「競合している」という誤った説明を返す。
 	//
 	AppUserExists(ctx context.Context, actorID string) (bool, error)
+	// ApproveDelegationScope は PM が委任範囲を承認する（4.3「計画中 → 承認済」。
+	// pb-260）。**scope は承認した計画の版の写し**であり、scope_version を1つ進める
+	// （0 は未承認。4.4）。計画中でなければ 0 行を返す。
+	ApproveDelegationScope(ctx context.Context, arg ApproveDelegationScopeParams) (int64, error)
 	AttachTicketTag(ctx context.Context, arg AttachTicketTagParams) error
 	// ChangeMyPassword は POST /me/password の書き込み（ApiDesign.md 4.3）。
 	//
@@ -394,6 +398,10 @@ type Querier interface {
 	// **pg_catalog. と修飾して書く。** 修飾しないと sqlc がマイグレーションに無い表として拒む。
 	// current_setting('lc_ctype') は使えない——PostgreSQL 16 で設定から外れた。
 	CurrentDatabaseCtype(ctx context.Context) (string, error)
+	// DecideDelegationPlan は PM が計画の版を確定する（承認なら accepted、却下なら
+	// rejected。6.1。pb-260）。**decided_by は PM**——AcceptDelegationPlan /
+	// RejectDelegationPlan（PB 自身の判定）と違い、人の決定である。
+	DecideDelegationPlan(ctx context.Context, arg DecideDelegationPlanParams) (int64, error)
 	DeleteActorAvatar(ctx context.Context, actorID string) error
 	// actor を消せば app_user / user_identity / local_credential /
 	// project_member / access_token は ON DELETE CASCADE で追従する（DbDesign.md 6.2 / 6.3）。
@@ -838,6 +846,11 @@ type Querier interface {
 	// 最新の計画を読む。既存の GetLatestAcceptedDelegationPlan は status='accepted'
 	// だけを見るので、proposed・rejected を含む最新を見るにはこちらを使う。
 	GetLatestDelegationPlan(ctx context.Context, delegationID string) (GetLatestDelegationPlanRow, error)
+	// GetLatestDelegationPlanWithVerdict は PM の承認・却下の対象を読む（6.1。pb-260）。
+	// **対象は最新の版（version が最大）だけである。** 古い版を承認できると、main が
+	// 出し直した後の版を飛ばして古い計画が通る。latest_verdict はその版への直近の
+	// 評価の合否で、評価が無ければ空文字。
+	GetLatestDelegationPlanWithVerdict(ctx context.Context, delegationID string) (GetLatestDelegationPlanWithVerdictRow, error)
 	// GetLatestEvaluationForDelegation は、パック（9.1「開いている評価の指摘」）
 	// が表示する直近の評価を読む。target_kind を問わない（pb-251）。
 	GetLatestEvaluationForDelegation(ctx context.Context, delegationID string) (GetLatestEvaluationForDelegationRow, error)
@@ -2059,6 +2072,10 @@ type Querier interface {
 	// **kind フィルタも同じ条件で絞る**（pb-259）。フィルタ付きで0件のときに
 	// フィルタ無しの総数を返すと、ETag と total が実際の一覧と食い違う。
 	SummarizeTicketComments(ctx context.Context, arg SummarizeTicketCommentsParams) (SummarizeTicketCommentsRow, error)
+	// SupersedeProposedDelegationPlans は、PM が承認した版より前に出されて
+	// proposed のまま残った版を superseded にする（pb-260）。計画中に main が
+	// 出し直すと前の版は判定されずに残るため、承認の時点で畳む。
+	SupersedeProposedDelegationPlans(ctx context.Context, arg SupersedeProposedDelegationPlansParams) (int64, error)
 	// TicketLinkExists は uq_ticket_link（source, target, link_type）の重複を、
 	// INSERT の前に見る（9.10.1 の 409 already_exists）。
 	//

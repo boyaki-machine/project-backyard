@@ -106,13 +106,6 @@ func TestEvaluationIntegration(t *testing.T) {
 	if drec.Code != http.StatusCreated {
 		t.Fatalf("委任の作成 status = %d（body=%s）", drec.Code, drec.Body.String())
 	}
-	if _, err := pool.Exec(ctx,
-		`UPDATE delegation SET status = 'approved' WHERE root_ticket_id =
-		   (SELECT id FROM ticket WHERE project_id = (SELECT id FROM project WHERE key = $1) AND seq = $2)`,
-		key, rootSeq); err != nil {
-		t.Fatalf("委任を承認済みにできない: %v", err)
-	}
-
 	evalPath := fmt.Sprintf("%s/tickets/%d/evaluation", base, rootSeq)
 	planPath := fmt.Sprintf("%s/tickets/%d/plan", base, rootSeq)
 	reportsPath := fmt.Sprintf("%s/tickets/%d/reports", base, rootSeq)
@@ -153,13 +146,10 @@ func TestEvaluationIntegration(t *testing.T) {
 		}
 	})
 
-	// pb-248の外（PM承認エンドポイント未実装）のため、版1を直接acceptedにする。
-	if _, err := pool.Exec(ctx,
-		`UPDATE delegation_plan SET status = 'accepted' WHERE delegation_id =
-		   (SELECT id FROM delegation WHERE root_ticket_id =
-		     (SELECT id FROM ticket WHERE project_id = (SELECT id FROM project WHERE key = $1) AND seq = $2))
-		   AND version = 1`, key, rootSeq); err != nil {
-		t.Fatalf("初版を承認済みにできない: %v", err)
+	// **PM が委任範囲を承認する**（6.1。pb-260）。初版の評価が合格した後なので通る。
+	if rec := postWithCookie(r, fmt.Sprintf("%s/tickets/%d/delegation/approve", base, rootSeq), session,
+		`{"plan_version":1}`); rec.Code != http.StatusOK {
+		t.Fatalf("委任範囲の承認 status = %d（body=%s）", rec.Code, rec.Body.String())
 	}
 
 	t.Run("plan対象version2は不合格でrejectedになり出し直せる", func(t *testing.T) {

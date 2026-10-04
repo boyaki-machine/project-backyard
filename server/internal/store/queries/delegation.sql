@@ -98,3 +98,11 @@ SELECT EXISTS (
     AND a.is_active
     AND (ag.project_id IS NULL OR ag.project_id = @project_id)
 )::boolean;
+
+-- ApproveDelegationScope は PM が委任範囲を承認する（4.3「計画中 → 承認済」。
+-- pb-260）。**scope は承認した計画の版の写し**であり、scope_version を1つ進める
+-- （0 は未承認。4.4）。計画中でなければ 0 行を返す。
+-- name: ApproveDelegationScope :execrows
+UPDATE delegation
+SET status = 'approved', scope = @scope, scope_version = scope_version + 1
+WHERE id = @id AND status = 'planning';

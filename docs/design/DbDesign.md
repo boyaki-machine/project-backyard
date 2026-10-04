@@ -2048,6 +2048,18 @@ CREATE TABLE delegation_plan (
 `body_md` を写した新しい版を作り、`reverts_to` に元の版番号を残す。**評価を挟まず
 即座に `accepted` にする**——2層の承認をすでに経た人の判断だからである。
 
+**委任範囲の承認・却下（pb-260）は PM が行う**（`delegation.manage`、`Delegation.md` 6.1）。
+委任が `planning` のときだけ受け付け、**対象は最新の版だけ**である（PM が見た版と
+食い違えば 409）。テーブルは足していない。
+
+| 操作 | 条件 | すること |
+|---|---|---|
+| 承認 | 最新の版が `proposed` で、その版への直近の評価が `pass` | その版を `accepted`（`decided_by` は PM）／それより前に残った `proposed` を `superseded`／`delegation` を `approved` にし、`scope` を版の範囲で上書き、`scope_version` を +1 |
+| 却下 | 最新の版が `proposed`（評価を待たない） | その版を `rejected`（`decided_by` は PM）。委任は `planning` のまま |
+
+**判断は根のチケットに `kind=decision` のコメントとして残す**——main が却下の理由を
+読む口は `pb_list_comments` であり、`activity` だけでは届かない。
+
 ## 6.26 評価記録（0052）
 
 **正本は `Delegation.md` 7章・12.2。** pb-248。D4 で確定した5表のうち、残る
@@ -2084,8 +2096,8 @@ target_kind`）への直前の `pass` 以降の件数+1（`CountEvaluationsSince
 
 | 対象 | 合格 | 不合格 |
 |---|---|---|
-| plan・初版（version=1） | 何もしない（6.1「PM の承認待ちになる」——計画の `accepted` 化は委任範囲の承認操作に属し、未実装） | 同上 |
-| plan・version 2以上 | `delegation_plan.status` を `accepted` にする | `rejected` にする（main は新しい版を出し直す） |
+| plan・委任が計画中（初版、範囲の変更の版、却下後の出し直し） | 何もしない（6.1「評価が先、PM が後」——計画の確定は PM の承認・却下が行う。6.25） | 同上 |
+| plan・委任が承認済（構造の変更の版） | `delegation_plan.status` を `accepted` にする | `rejected` にする（main は新しい版を出し直す） |
 | deliverable（根の完了レポート） | 記録のみ。根の受け入れ可否は `ticket.transition` の検証8（9.6/9.7）が「最新の `agent_report` への評価が `pass` か」で見る | 記録のみ。main は新しい完了レポートを出し直せる |
 
 **`unable` は確認待ち（`evaluation_unable`）を立てる。主状態は動かさない**

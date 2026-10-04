@@ -491,6 +491,11 @@ func Mount(r chi.Router, deps Deps) {
 		// ツール5つにこれは含まれない——エージェントから見える面にしない。
 		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/delegation", h.createDelegation)
+		// 委任範囲の承認・却下（4.3・6.1）。pb-260。作成と同じく PM だけが呼ぶ。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/delegation/approve", h.approveDelegation)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/delegation/reject", h.rejectDelegation)
 
 		// ── 計画の版（Delegation.md 6章・12.2）── pb-247 ───────────
 		//
