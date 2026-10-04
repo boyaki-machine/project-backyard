@@ -52,6 +52,18 @@ type delegationStatusEvaluationView struct {
 	Findings   any    `json:"findings"`
 }
 
+// answeredConfirmationView は PM が答えた確認待ち1件（9.3。pb-278）。
+type answeredConfirmationView struct {
+	Reason     string `json:"reason"`
+	QuestionMd string `json:"question_md"`
+	AnswerMd   string `json:"answer_md"`
+	AnsweredAt *Time  `json:"answered_at"`
+}
+
+// recentAnswersMax はパックに載せる「最近の回答」の件数（pb-278）。ヒアリングは
+// 何回かに分けて重ねる（9.2）ので、直近の数回ぶんが読めれば足りる。
+const recentAnswersMax = 5
+
 // delegationStatusView は GET の応答全体。
 type delegationStatusView struct {
 	InDelegation      bool                            `json:"in_delegation"`
@@ -67,6 +79,7 @@ type delegationStatusView struct {
 	OpenConfirmations []confirmationView              `json:"open_confirmations,omitempty"`
 	LatestHandoff     *handoffView                    `json:"latest_handoff,omitempty"`
 	Budget            *budgetStatusView               `json:"budget,omitempty"`
+	RecentAnswers     []answeredConfirmationView      `json:"recent_answers,omitempty"`
 	NextMove          string                          `json:"next_move,omitempty"`
 	// MainNextMove は呼び出し元の役割によらず、main の次の一手（pb-252）。
 	// 画面の「エージェントステイタス」に出す——PM が開くと役割は読むだけになり、
@@ -154,6 +167,24 @@ func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
 			views = append(views, openConfirmationViewOf(row))
 		}
 		view.OpenConfirmations = views
+	}
+
+	// 最近の回答（9.3「答えの本文は main のパックに載る」。pb-278）。止められていた
+	// main が、その間に届いた答えを読む口になる。
+	if rows, aerr := h.q.ListRecentAnsweredConfirmations(ctx, gen.ListRecentAnsweredConfirmationsParams{
+		DelegationID: deleg.ID, MaxRows: recentAnswersMax,
+	}); aerr != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(aerr))
+		return
+	} else {
+		for _, row := range rows {
+			v := answeredConfirmationView{Reason: row.Reason, QuestionMd: row.QuestionMd, AnswerMd: row.AnswerMd.String}
+			if row.AnsweredAt != nil {
+				at := Time(*row.AnsweredAt)
+				v.AnsweredAt = &at
+			}
+			view.RecentAnswers = append(view.RecentAnswers, v)
+		}
 	}
 
 	if handoff, herr := h.q.GetLatestDelegationHandoff(ctx, deleg.ID); herr == nil {

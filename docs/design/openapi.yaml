@@ -9892,6 +9892,18 @@ components:
             呼び出し元の役割によらない、main の次の一手（pb-252）。画面の
             「エージェントステイタス」に出す。PM が読むと役割は `readonly` になり、
             `next_move` は「次の一手が無い」になるため。
+        recent_answers:
+          type: array
+          description: |
+            PM が答えた確認待ちの、新しい順の5件まで（Delegation.md 9.3、pb-278）。
+            止められていた main が、その間に届いた答えを読む口。パックは main だけに載せる。
+          items:
+            type: object
+            properties:
+              reason: { type: string }
+              question_md: { type: string }
+              answer_md: { type: string }
+              answered_at: { type: integer, format: int64, nullable: true }
         budget:
           $ref: '#/components/schemas/DelegationBudgetStatus'
 

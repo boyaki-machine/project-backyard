@@ -468,6 +468,9 @@ type fakeQuerier struct {
 
 	// 計画の承認のカード（pb-252）。
 	latestPlanForStatus gen.GetLatestPlanForStatusRow
+
+	// 最近の回答（pb-278）。
+	recentAnswered []gen.ListRecentAnsweredConfirmationsRow
 }
 
 // GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
@@ -3480,4 +3483,11 @@ func (q *fakeQuerier) GetDelegationForControl(_ context.Context, rootTicketID st
 func (q *fakeQuerier) GetLatestPlanForStatus(context.Context, string) (gen.GetLatestPlanForStatusRow, error) {
 	q.opLog = append(q.opLog, "GetLatestPlanForStatus")
 	return q.latestPlanForStatus, nil
+}
+
+func (q *fakeQuerier) ListRecentAnsweredConfirmations(
+	context.Context, gen.ListRecentAnsweredConfirmationsParams,
+) ([]gen.ListRecentAnsweredConfirmationsRow, error) {
+	q.opLog = append(q.opLog, "ListRecentAnsweredConfirmations")
+	return q.recentAnswered, nil
 }

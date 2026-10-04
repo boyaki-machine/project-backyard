@@ -1408,6 +1408,11 @@ type Querier interface {
 	// name の比較に ICU collation を指定するのは DbDesign.md 4.4 の規約。
 	//
 	ListProjects(ctx context.Context, arg ListProjectsParams) ([]ListProjectsRow, error)
+	// ListRecentAnsweredConfirmations は、PM が答えた確認待ちを新しい順に返す（Delegation.md
+	// 9.3「答えの本文は main のパックに載る」。pb-278）。**止められていた main が、その間に
+	// 届いた答えを読む口である**——pb_wait の変化の要約は冒頭しか持たず、呼び直した後の
+	// 待ち受けは止めていた間の変化を取りこぼしうる。
+	ListRecentAnsweredConfirmations(ctx context.Context, arg ListRecentAnsweredConfirmationsParams) ([]ListRecentAnsweredConfirmationsRow, error)
 	// ListRolePermissionAssignments は、ListRoles と同じ絞り込みに対する
 	// ロールと権限の割り当てを (role_key, permission_key) の対で返す
 	// （ApiDesign.md 7.1 の permissions[]）。

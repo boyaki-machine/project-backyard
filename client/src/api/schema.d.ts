@@ -6309,6 +6309,17 @@ export interface components {
              *     `next_move` は「次の一手が無い」になるため。
              */
             main_next_move?: string;
+            /**
+             * @description PM が答えた確認待ちの、新しい順の5件まで（Delegation.md 9.3、pb-278）。
+             *     止められていた main が、その間に届いた答えを読む口。パックは main だけに載せる。
+             */
+            recent_answers?: {
+                reason?: string;
+                question_md?: string;
+                answer_md?: string;
+                /** Format: int64 */
+                answered_at?: number | null;
+            }[];
             budget?: components["schemas"]["DelegationBudgetStatus"];
         };
         /**
