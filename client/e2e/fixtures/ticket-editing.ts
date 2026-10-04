@@ -22,7 +22,13 @@ async function reply(route: Route, body: unknown) {
   await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
 }
 
-export async function mockEditingTicket(page: Page, locale: 'ja' | 'en') {
+export async function mockEditingTicket(page: Page, locale: 'ja' | 'en', options: {
+  beforePatch?: () => Promise<void>
+  failures?: number
+} = {}) {
+  const items = [1, 2].map(seq => ({ ...editingTicket, seq, title: seq === 1 ? '配置確認' : '別のチケット', id: '01K0000000000000000000000' + seq }))
+  const state = { patches: [] as { seq: number; body: Record<string, unknown>; match: string | undefined }[], failures: options.failures ?? 0, items }
+
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname
@@ -34,13 +40,29 @@ export async function mockEditingTicket(page: Page, locale: 'ja' | 'en') {
     if (path === '/api/v1/projects/demo') return reply(route, {
       key: 'demo', name: 'Demo', members: [], workflow: { statuses: [status] },
     })
-    if (path === '/api/v1/projects/demo/tickets/1') return reply(route, editingTicket)
+    const detail = path.match(/^\/api\/v1\/projects\/demo\/tickets\/(\d+)$/)
+    if (detail) {
+      const seq = Number(detail[1])
+      const item = state.items.find(t => t.seq === seq)!
+      if (route.request().method() === 'PATCH') {
+        const body = route.request().postDataJSON()
+        state.patches.push({ seq, body, match: route.request().headers()['if-match'] })
+        await options.beforePatch?.()
+        if (state.failures > 0) {
+          state.failures--
+          return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { code: 'conflict', message: '保存を確認してください', details: [] } }) })
+        }
+        Object.assign(item, body, { version: item.version + 1 })
+      }
+      return reply(route, item)
+    }
     if (path === '/api/v1/projects/demo/tickets') return reply(route, {
-      items: url.searchParams.get('type') === 'epic' ? [] : [editingTicket],
-      total: 1, page: 1, per_page: 200, total_pages: 1,
+      items: url.searchParams.get('type') === 'epic' ? [] : state.items,
+      total: state.items.length, page: 1, per_page: 200, total_pages: 1,
     })
     if (path.endsWith('/tags') || path.endsWith('/sprints') || path.endsWith('/comments')) return reply(route, { items: [] })
     await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
   })
+  return state
 }
 

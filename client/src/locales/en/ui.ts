@@ -1,5 +1,6 @@
 /** English translations keyed by the Japanese source text used by the UI. */
 export const uiMessages: Record<string, string> = {
+  "編集を終えると自動保存されます": "Changes are saved automatically when you finish editing.",
   "全体": "All tickets",
   "オンステージの状態別件数": "Onstage ticket counts by status",
   "段に載っているストーリー・タスクとその配下。完了は段に残っている件数です。": "Stories and tasks onstage, including descendants. Completed counts tickets still onstage.",
