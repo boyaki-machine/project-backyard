@@ -181,42 +181,37 @@ test('unselected row menu moves only that row and retains the selection', async 
   await expect(rows(page, 2)).toHaveClass(/stage-selected/)
 })
 
-test('onstage todo menu returns to backlog; other categories never offer return', async ({ page }) => {
-  const { moves, state } = await setup(page, { prepare(items) {
-    items[0].staged_at = Date.now()
-    // A custom status key still counts as todo by category.
-    items[0].status = { ...editingTicket.status, key: 'ready', name: '準備済み' }
-    for (const [seq, category] of [[7, 'in_progress'], [8, 'review'], [10, 'done']] as const) {
-      items.push({ ...editingTicket, seq, title: category, staged_at: Date.now(), status: { ...editingTicket.status, key: category, category, name: category } })
+for (const width of [600, 900, 1440]) {
+  test(`all onstage rows omit menus and align tags at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 })
+    const { moves } = await setup(page, { prepare(items) {
+      const tags = [{ id: 'a', name: 'タグA' }, { id: 'b', name: 'タグB' }]
+      items[0].staged_at = Date.now()
+      items[0].status = { ...editingTicket.status, key: 'ready', name: '準備済み' }
+      items[0].tags = tags
+      items.find(t => t.seq === 3)!.tags = tags
+      for (const [seq, category] of [[7, 'in_progress'], [8, 'review'], [10, 'done']] as const) {
+        items.push({ ...editingTicket, seq, title: category, tags, staged_at: Date.now(), status: { ...editingTicket.status, key: category, category, name: category } })
+      }
+    } })
+    const rights: number[] = []
+    for (const seq of [1, 3, 7, 8, 10]) {
+      await expect(rows(page, seq)).toBeVisible()
+      await expect(rows(page, seq).locator('.stage-controls')).toHaveCount(0)
+      await expect(rows(page, seq).getByRole('button', { name: `demo-${seq}の移動操作`, exact: true })).toHaveCount(0)
+      const geometry = await rows(page, seq).locator('.title-line').evaluate(el => ({
+        tagRight: el.querySelector('.tag-trail')!.getBoundingClientRect().right,
+        lineRight: el.getBoundingClientRect().right,
+      }))
+      expect(geometry.tagRight).toBeCloseTo(geometry.lineRight, 0)
+      rights.push(geometry.tagRight)
     }
-  } })
-  for (const seq of [7, 8, 10]) {
-    await expect(rows(page, seq)).toBeVisible()
-    const button = rows(page, seq).getByRole('button', { name: `demo-${seq}の移動操作`, exact: true })
-    if (await button.count()) {
-      await button.click()
-      await expect(page.getByRole('menuitem', { name: 'バックログへ', exact: true })).toHaveCount(0)
-      await expect(page.getByRole('menuitem', { name: 'オンステージへ', exact: true })).toHaveCount(0)
-      await page.keyboard.press('Escape')
-    }
-  }
-  await page.getByRole('button', { name: 'demo-3の移動操作', exact: true }).click()
-  await expect(page.getByRole('menuitem', { name: 'バックログへ', exact: true })).toBeDisabled()
-  await expect(page.getByText('配下のチケットは親と一緒にバックログへ移動します', { exact: true })).toBeVisible()
-  await page.keyboard.press('Escape')
-  await page.getByRole('button', { name: 'demo-1の移動操作', exact: true }).click()
-  await expect(page.getByRole('menuitem', { name: 'オンステージへ', exact: true })).toHaveCount(0)
-  await page.getByRole('menuitem', { name: 'バックログへ', exact: true }).click()
-  await expect.poll(() => moves.map(m => m.seq)).toEqual([1])
-  expect(moves[0].body).toEqual({ staged: false, position: 'last' })
-  await expect.poll(() => state.items[0].staged_at).toBeNull()
-  const backlog = page.locator('.group-section').filter({ has: page.getByText('バックログ', { exact: true }) })
-  await expect(backlog.getByRole('link', { name: '配置確認', exact: true })).toBeVisible()
-  await expect(backlog.getByRole('link', { name: '親と一緒の子', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'demo-1の移動操作', exact: true }).click()
-  await expect(page.getByRole('menuitem', { name: 'オンステージへ', exact: true })).toBeVisible()
-  await expect(page.getByRole('menuitem', { name: 'バックログへ', exact: true })).toHaveCount(0)
-})
+    expect(Math.max(...rights) - Math.min(...rights)).toBeLessThan(1)
+    await expect(page.getByRole('button', { name: 'demo-2の移動操作', exact: true })).toBeVisible()
+    expect(moves).toEqual([])
+    await page.screenshot({ path: testInfo.outputPath(`onstage-tags-${width}.png`), fullPage: true })
+  })
+}
 
 for (const width of [600, 900, 1440]) {
   test(`long titles shrink before right aligned tags and menu at ${width}px`, async ({ page }, testInfo) => {
@@ -242,8 +237,8 @@ for (const width of [600, 900, 1440]) {
       expect(geometry.titleRight).toBeLessThanOrEqual(geometry.tagLeft)
       expect(geometry.tagRight).toBeLessThanOrEqual(geometry.menuLeft)
       expect(geometry.menuRight).toBeCloseTo(geometry.lineRight, 0)
-      // The right hand group has only its normal inter-item gap, never an auto margin.
-      expect(geometry.gap).toBeCloseTo(geometry.expectedGap, 1)
+      // Tags and menu use 70% of the original title-line gap, without an auto margin between them.
+      expect(geometry.gap).toBeCloseTo(geometry.expectedGap * 0.7, 1)
       expect(geometry.tagsFullyVisible).toBe(true)
       expect(geometry.tagWidth).toBeGreaterThan(0)
       expect(geometry.ellipsis).toBe('ellipsis')
@@ -253,17 +248,3 @@ for (const width of [600, 900, 1440]) {
     await page.screenshot({ path: testInfo.outputPath(`title-tags-menu-${width}.png`), fullPage: true })
   })
 }
-
-
-test('failed backlog return keeps the ticket onstage and offers retry', async ({ page }) => {
-  const { moves, state } = await setup(page, { failSeq: 1, prepare(items) { items[0].staged_at = Date.now() } })
-  await page.getByRole('button', { name: 'demo-1の移動操作', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'バックログへ', exact: true }).click()
-  await expect(page.getByText(/0件をバックログへ移動しました。残り1件は未処理です/)).toBeVisible()
-  expect(moves).toEqual([{ seq: 1, body: { staged: false, position: 'last' } }])
-  expect(state.items[0].staged_at).not.toBeNull()
-  const onstage = page.locator('.group-section').filter({ has: page.getByText('オンステージ', { exact: true }) })
-  await expect(onstage.getByRole('link', { name: '配置確認', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'demo-1の移動操作', exact: true }).click()
-  await expect(page.getByRole('menuitem', { name: 'バックログへ', exact: true })).toBeEnabled()
-})
