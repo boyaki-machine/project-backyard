@@ -1,5 +1,17 @@
 /** English translations keyed by the Japanese source text used by the UI. */
 export const uiMessages: Record<string, string> = {
+  "配下のチケットは親と一緒にオンステージへ移動します": "Child tickets move onstage with their parent.",
+  "すでにオンステージにあります": "Already onstage.",
+  "オンステージへ": "Move onstage",
+  "{done}件をオンステージへ移動しました。残り{remaining}件は未処理です。{message}": "Moved {done} tickets onstage. {remaining} tickets remain unprocessed. {message}",
+  "{count}件をオンステージへ移動しました": "Moved {count} tickets onstage.",
+  "選択したチケットの操作": "Selected ticket actions",
+  "{count}件選択中": "{count} tickets selected",
+  "選択したチケットをオンステージへ": "Move selected tickets onstage",
+  "選択を解除": "Clear selection",
+  "{ticket}を選択": "Select {ticket}",
+  "{ticket}のオンステージ操作": "Onstage actions for {ticket}",
+
   "編集を終えると自動保存されます": "Changes are saved automatically when you finish editing.",
   "全体": "All tickets",
   "オンステージの状態別件数": "Onstage ticket counts by status",

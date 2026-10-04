@@ -18,6 +18,8 @@ import SplitPane from '../components/SplitPane.vue'
 import StatusDropdown from '../components/StatusDropdown.vue'
 import SprintStartModal from '../components/SprintStartModal.vue'
 import TicketDetailPane from '../components/TicketDetailPane.vue'
+import UserActionsMenu from '../components/UserActionsMenu.vue'
+import type { ActionItem } from '../components/UserActionsMenu.vue'
 import { ApiError } from '../api/client'
 import * as sprintsApi from '../api/sprints'
 import type { Sprint, StartSprintRequest } from '../api/sprints'
@@ -1019,6 +1021,73 @@ const sections = computed<Section[]>(() => {
   return bucketize(flatRows(tickets.value), (row) => row.ticket, group.value, groupVocabulary.value)
 })
 
+// ── メニューと複数選択によるオンステージ移動（pb-272）─────────
+const selectedStageSeqs = ref(new Set<number>())
+
+function stageReason(t: Ticket): string {
+  if (t.type === 'epic' || (t.parent_seq !== null && !allEpics.value.some(epic => epic.seq === t.parent_seq))) {
+    return uiText('配下のチケットは親と一緒にオンステージへ移動します')
+  }
+  if (shownInStage(t)) return uiText('すでにオンステージにあります')
+  return ''
+}
+
+function stageActions(t: Ticket): ActionItem[] {
+  const reason = stageReason(t)
+  return [{ key: 'stage', label: uiText('オンステージへ'), disabled: busy.value || reason !== '', reason }]
+}
+
+function selectStageTicket(t: Ticket, checked: boolean): void {
+  if (busy.value || stageReason(t) !== '') return
+  const next = new Set(selectedStageSeqs.value)
+  if (checked) next.add(t.seq)
+  else next.delete(t.seq)
+  selectedStageSeqs.value = next
+}
+
+const selectedStageTickets = computed(() => tickets.value
+  .filter(t => selectedStageSeqs.value.has(t.seq) && stageReason(t) === '')
+  .sort((a, b) => {
+    const left = a.sort_key ?? ''
+    const right = b.sort_key ?? ''
+    return left < right ? -1 : left > right ? 1 : a.seq - b.seq
+  }))
+
+async function stageTickets(items: Ticket[]): Promise<void> {
+  if (!canEdit.value || busy.value) return
+  const key = projectKey.value
+  const targets = items.filter(t => stageReason(t) === '')
+  if (targets.length === 0) return
+  busy.value = true
+  result.value = ''
+  let succeeded = 0
+  let failure = ''
+  try {
+    for (const t of targets) {
+      try {
+        const moved = await ticketsApi.moveTicket(key, t.seq, { staged: true, position: 'last' })
+        succeeded++
+        if (projectKey.value !== key) break
+        selectedStageSeqs.value.delete(t.seq)
+        tickets.value = tickets.value.map(row => row.seq === moved.seq
+          ? { ...row, staged_at: moved.staged_at, sort_key: moved.sort_key, version: moved.version } : row)
+      } catch (e) {
+        failure = toApiError(e).message
+        break
+      }
+    }
+    // position:last and possible rank rebalancing are resolved by the server.
+    if (projectKey.value === key) {
+      await loadTickets()
+      result.value = failure
+        ? uiText('{done}件をオンステージへ移動しました。残り{remaining}件は未処理です。{message}', { done: succeeded, remaining: targets.length - succeeded, message: failure })
+        : uiText('{count}件をオンステージへ移動しました', { count: succeeded })
+    }
+  } finally {
+    busy.value = false
+  }
+}
+
 // ── セクションの開閉（5.4.1「ブラウザに保持する」）─────────────
 
 const COLLAPSE_KEY = 'pb.backlog_collapsed'
@@ -1951,6 +2020,7 @@ const queryKey = computed(() =>
 )
 
 watch(queryKey, () => {
+  selectedStageSeqs.value.clear()
   if (route.params.key === undefined) return
   loadCollapsed()
   void loadTickets()
@@ -1958,6 +2028,7 @@ watch(queryKey, () => {
 
 // プロジェクトを切り替えたら語彙とプロジェクト詳細も取り直す（4.4）
 watch(projectKey, (key) => {
+  selectedStageSeqs.value.clear()
   clearTimeout(keywordTimer)
   keywordPending = false
   composing = false
@@ -2186,6 +2257,12 @@ watch(projectKey, (key) => {
 
       <!-- 操作の結果は操作した場所に出す（6.4）。作成・並べ替え・段の行き来で使い回す -->
       <p v-if="result" class="ok" role="status">{{ result }}</p>
+
+      <div v-if="canEdit && selectedStageTickets.length > 0" class="stage-bulk" role="group" :aria-label="$ui('選択したチケットの操作')">
+        <span>{{ $ui('{count}件選択中', { count: selectedStageTickets.length }) }}</span>
+        <button type="button" class="secondary small" :disabled="busy" @click="stageTickets(selectedStageTickets)">{{ $ui('選択したチケットをオンステージへ') }}</button>
+        <button type="button" class="secondary small" :disabled="busy" @click="selectedStageSeqs.clear()">{{ $ui('選択を解除') }}</button>
+      </div>
 
       <!-- エラー（6.2）。原因はサーバが返した message をそのまま出す -->
       <EmptyState
@@ -2505,6 +2582,14 @@ watch(projectKey, (key) => {
                         <span v-for="tag in row.ticket.tags.slice(0, TAGS_SHOWN)" :key="tag.id" class="tag">#{{ tag.name }}</span>
                         <span v-if="row.ticket.tags.length > TAGS_SHOWN" class="tag-more">+{{ row.ticket.tags.length - TAGS_SHOWN }}</span>
                       </span>
+                      <span v-if="canEdit" class="stage-controls" @click.stop @pointerdown.stop @dragstart.stop.prevent
+                        @mouseenter="overActionCell = true" @mouseleave="overActionCell = false">
+                        <input type="checkbox" :checked="selectedStageSeqs.has(row.ticket.seq)" :disabled="busy || stageReason(row.ticket) !== ''"
+                          :aria-label="$ui('{ticket}を選択', { ticket: fullId(row.ticket) })" :title="stageReason(row.ticket)"
+                          @change="selectStageTicket(row.ticket, ($event.target as HTMLInputElement).checked)" />
+                        <UserActionsMenu compact :label="$ui('{ticket}のオンステージ操作', { ticket: fullId(row.ticket) })"
+                          :items="stageActions(row.ticket)" @select="stageTickets([row.ticket])" />
+                      </span>
                     </span>
                   </td>
 
@@ -2678,6 +2763,10 @@ watch(projectKey, (key) => {
 </template>
 
 <style scoped>
+.stage-controls { display: inline-flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
+.stage-controls input { margin: 0; }
+.stage-bulk { display: flex; align-items: center; flex-wrap: wrap; gap: var(--pb-space-2); margin-bottom: var(--pb-space-3); }
+
 .page {
   height: 100%;
 }

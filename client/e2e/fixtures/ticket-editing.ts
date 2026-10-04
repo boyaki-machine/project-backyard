@@ -9,8 +9,8 @@ const status = { key: 'todo', name: '未着手', category: 'todo', sort_order: 1
 export const editingTicket = {
   id: '01K00000000000000000000001', seq: 1, type: 'task', title: '配置確認',
   status, priority: null, assignee: null, reporter: actor, working_agent: null,
-  parent_seq: null, has_children: false, sort_key: '0|1:', staged_at: null,
-  tags: [], sprint: null, estimate_point: 5, actual_point: 5,
+  parent_seq: null as number | null, has_children: false, sort_key: '0|1:', staged_at: null as number | null,
+  tags: [] as { id: string; name: string }[], sprint: null, estimate_point: 5, actual_point: 5,
   actual_point_version: 'actual-v0', estimate_hours: 8, actual_hours: 3.5,
   start_at: 1786201200000, due_at: 1786719600000, all_day: true, closed_at: null,
   version: 1, created_at: 1788220800000, updated_at: 1788220800000,
