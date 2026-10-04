@@ -1024,24 +1024,18 @@ const sections = computed<Section[]>(() => {
 // ── メニューと複数選択によるオンステージ移動（pb-272）─────────
 const selectedStageSeqs = ref(new Set<number>())
 
-function stageReason(t: Ticket, staged = true): string {
+function stageReason(t: Ticket): string {
   if (t.type === 'epic' || (t.parent_seq !== null && !allEpics.value.some(epic => epic.seq === t.parent_seq))) {
-    return staged
-      ? uiText('配下のチケットは親と一緒にオンステージへ移動します')
-      : uiText('配下のチケットは親と一緒にバックログへ移動します')
+    return uiText('配下のチケットは親と一緒にオンステージへ移動します')
   }
-  if (staged && shownInStage(t)) return uiText('すでにオンステージにあります')
-  if (!staged && (!shownInStage(t) || t.status.category !== 'todo')) {
-    return uiText('未着手のオンステージチケットだけをバックログへ戻せます')
-  }
+  if (shownInStage(t)) return uiText('すでにオンステージにあります')
   return ''
 }
 
 function stageActions(t: Ticket): ActionItem[] {
-  const staged = !shownInStage(t)
-  if (!staged && t.status.category !== 'todo') return []
-  const reason = stageReason(t, staged)
-  return [{ key: staged ? 'stage' : 'backlog', label: staged ? uiText('オンステージへ') : uiText('バックログへ'), disabled: busy.value || reason !== '', reason }]
+  if (shownInStage(t)) return []
+  const reason = stageReason(t)
+  return [{ key: 'stage', label: uiText('オンステージへ'), disabled: busy.value || reason !== '', reason }]
 }
 
 function selectStageTicket(t: Ticket, checked: boolean): void {
@@ -1074,15 +1068,13 @@ function moveFromRow(t: Ticket, action: string): void {
   if (action === 'stage') {
     const targets = selectedStageSeqs.value.has(t.seq) ? selectedStageTickets.value : [t]
     void stageTickets(targets)
-  } else if (action === 'backlog') {
-    void stageTickets([t], false)
   }
 }
 
-async function stageTickets(items: Ticket[], staged = true): Promise<void> {
+async function stageTickets(items: Ticket[]): Promise<void> {
   if (!canEdit.value || busy.value) return
   const key = projectKey.value
-  const targets = items.filter(t => stageReason(t, staged) === '')
+  const targets = items.filter(t => stageReason(t) === '')
   if (targets.length === 0) return
   busy.value = true
   result.value = ''
@@ -1091,7 +1083,7 @@ async function stageTickets(items: Ticket[], staged = true): Promise<void> {
   try {
     for (const t of targets) {
       try {
-        const moved = await ticketsApi.moveTicket(key, t.seq, { staged, position: 'last' })
+        const moved = await ticketsApi.moveTicket(key, t.seq, { staged: true, position: 'last' })
         succeeded++
         if (projectKey.value !== key) break
         selectedStageSeqs.value.delete(t.seq)
@@ -1105,15 +1097,9 @@ async function stageTickets(items: Ticket[], staged = true): Promise<void> {
     // position:last and possible rank rebalancing are resolved by the server.
     if (projectKey.value === key) {
       await loadTickets()
-      if (failure) {
-        result.value = staged
-          ? uiText('{done}件をオンステージへ移動しました。残り{remaining}件は未処理です。{message}', { done: succeeded, remaining: targets.length - succeeded, message: failure })
-          : uiText('{done}件をバックログへ移動しました。残り{remaining}件は未処理です。{message}', { done: succeeded, remaining: targets.length - succeeded, message: failure })
-      } else {
-        result.value = staged
-          ? uiText('{count}件をオンステージへ移動しました', { count: succeeded })
-          : uiText('{count}件をバックログへ移動しました', { count: succeeded })
-      }
+      result.value = failure
+        ? uiText('{done}件をオンステージへ移動しました。残り{remaining}件は未処理です。{message}', { done: succeeded, remaining: targets.length - succeeded, message: failure })
+        : uiText('{count}件をオンステージへ移動しました', { count: succeeded })
     }
   } finally {
     busy.value = false
@@ -2613,17 +2599,19 @@ watch(projectKey, (key) => {
                         :title="$ui('期限超過（{value0}）', { value0: dueLabel(row.ticket) })"
                         >⚠</span
                       >
-                      <!-- タグはタイトルの末尾に、2つまで（5.4「タグ」）。行を2段にしない。
-                           **縮小中は出さない**——450px では読めないのに在る状態になる -->
-                      <span v-if="!shrunk && row.ticket.tags.length" class="tag-trail"
-                        :title="row.ticket.tags.map((t) => `#${t.name}`).join(' ')">
-                        <span v-for="tag in row.ticket.tags.slice(0, TAGS_SHOWN)" :key="tag.id" class="tag">#{{ tag.name }}</span>
-                        <span v-if="row.ticket.tags.length > TAGS_SHOWN" class="tag-more">+{{ row.ticket.tags.length - TAGS_SHOWN }}</span>
-                      </span>
-                      <span v-if="canEdit && stageActions(row.ticket).length > 0" class="stage-controls" @click.stop @pointerdown.stop @dragstart.stop.prevent
-                        @mouseenter="overActionCell = true" @mouseleave="overActionCell = false">
-                        <UserActionsMenu compact :label="$ui('{ticket}の移動操作', { ticket: fullId(row.ticket) })"
-                          :items="stageActions(row.ticket)" @select="moveFromRow(row.ticket, $event)" />
+                      <span v-if="(!shrunk && row.ticket.tags.length > 0) || (canEdit && !shownInStage(row.ticket))" class="title-actions">
+                        <!-- タグはタイトルの末尾に、2つまで（5.4「タグ」）。行を2段にしない。
+                             **縮小中は出さない**——450px では読めないのに在る状態になる -->
+                        <span v-if="!shrunk && row.ticket.tags.length" class="tag-trail"
+                          :title="row.ticket.tags.map((t) => `#${t.name}`).join(' ')">
+                          <span v-for="tag in row.ticket.tags.slice(0, TAGS_SHOWN)" :key="tag.id" class="tag">#{{ tag.name }}</span>
+                          <span v-if="row.ticket.tags.length > TAGS_SHOWN" class="tag-more">+{{ row.ticket.tags.length - TAGS_SHOWN }}</span>
+                        </span>
+                        <span v-if="canEdit && !shownInStage(row.ticket)" class="stage-controls" @click.stop @pointerdown.stop @dragstart.stop.prevent
+                          @mouseenter="overActionCell = true" @mouseleave="overActionCell = false">
+                          <UserActionsMenu compact :label="$ui('{ticket}の移動操作', { ticket: fullId(row.ticket) })"
+                            :items="stageActions(row.ticket)" @select="moveFromRow(row.ticket, $event)" />
+                        </span>
                       </span>
                     </span>
                   </td>
@@ -2798,6 +2786,7 @@ watch(projectKey, (key) => {
 </template>
 
 <style scoped>
+.title-actions { display: inline-flex; align-items: center; flex: none; margin-left: auto; gap: calc(var(--pb-space-2) * 0.7); }
 .stage-controls { display: inline-flex; align-items: center; gap: 4px; flex: none; }
 .stage-bulk { display: flex; align-items: center; flex-wrap: wrap; gap: var(--pb-space-2); margin-bottom: var(--pb-space-3); }
 
@@ -3332,7 +3321,6 @@ watch(projectKey, (key) => {
 .tag-trail {
   flex: none;
   min-width: 0;
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 10px;
