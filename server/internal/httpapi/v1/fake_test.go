@@ -465,6 +465,9 @@ type fakeQuerier struct {
 	budgetUsageProbes    []string
 	delegationForControl map[string]gen.GetDelegationForControlRow // key: root ticket id
 	updatedScopes        []gen.UpdateDelegationScopeParams
+
+	// 計画の承認のカード（pb-252）。
+	latestPlanForStatus gen.GetLatestPlanForStatusRow
 }
 
 // GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
@@ -3472,4 +3475,9 @@ func (q *fakeQuerier) GetDelegationForControl(_ context.Context, rootTicketID st
 		return row, nil
 	}
 	return gen.GetDelegationForControlRow{}, pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) GetLatestPlanForStatus(context.Context, string) (gen.GetLatestPlanForStatusRow, error) {
+	q.opLog = append(q.opLog, "GetLatestPlanForStatus")
+	return q.latestPlanForStatus, nil
 }

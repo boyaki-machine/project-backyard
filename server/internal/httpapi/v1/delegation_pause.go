@@ -43,10 +43,12 @@ type pauseDelegationRequest struct {
 	ReasonMd string `json:"reason_md"`
 }
 
-// resumeDelegationRequest は resume の本体。budget を渡すと予算を置き換える。
+// resumeDelegationRequest は resume の本体。budget / stop_conditions を渡すと
+// その制約を置き換える（渡さなかった方はそのまま）。
 type resumeDelegationRequest struct {
-	ReasonMd string          `json:"reason_md"`
-	Budget   json.RawMessage `json:"budget"`
+	ReasonMd       string          `json:"reason_md"`
+	Budget         json.RawMessage `json:"budget"`
+	StopConditions json.RawMessage `json:"stop_conditions"`
 }
 
 func (h *handler) pauseDelegation(w http.ResponseWriter, r *http.Request) {
@@ -74,8 +76,8 @@ func (h *handler) pauseDelegation(w http.ResponseWriter, r *http.Request) {
 		}
 		if deleg.Status != "planning" && deleg.Status != "approved" {
 			rejected = apierr.New(apierr.Conflict).WithMessage(fmt.Sprintf(
-				"委任が%sのため停止できません。計画中・承認済のときだけ止められます",
-				delegationStatusLabel(deleg.Status)))
+				"自律実行が%sのため一時停止できません。計画中・実行中のときだけ止められます",
+				delegationScreenLabel(deleg.Status)))
 			return errTicketReference
 		}
 		if _, err := q.SetDelegationStatus(ctx, gen.SetDelegationStatusParams{
@@ -83,7 +85,7 @@ func (h *handler) pauseDelegation(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			return fmt.Errorf("委任を停止できない: %w", err)
 		}
-		body := "**委任を停止した**（PM）。再開は PM が行う。"
+		body := "**自律実行を一時停止した**（PM）。再開は PM が行う。"
 		if req.ReasonMd != "" {
 			body += "\n\n" + req.ReasonMd
 		}
@@ -104,11 +106,24 @@ func (h *handler) resumeDelegation(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ReasonMd = strings.TrimSpace(req.ReasonMd)
 	hasBudget := len(req.Budget) > 0 && string(req.Budget) != "null"
+	hasStop := len(req.StopConditions) > 0 && string(req.StopConditions) != "null"
+	var details []apierr.Detail
 	if hasBudget {
-		if details := validateBudgetJSON(req.Budget, "budget"); len(details) > 0 {
-			apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(details...))
-			return
-		}
+		details = append(details, validateBudgetJSON(req.Budget, "budget")...)
+	}
+	if hasStop {
+		details = append(details, validateStopConditionsJSON(req.StopConditions, "stop_conditions")...)
+	}
+	if len(details) > 0 {
+		apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithDetails(details...))
+		return
+	}
+	changes := map[string]json.RawMessage{}
+	if hasBudget {
+		changes["budget"] = req.Budget
+	}
+	if hasStop {
+		changes["stop_conditions"] = req.StopConditions
 	}
 
 	rec := activity.FromRequest(r)
@@ -124,8 +139,8 @@ func (h *handler) resumeDelegation(w http.ResponseWriter, r *http.Request) {
 		}
 		if deleg.Status != "paused" {
 			rejected = apierr.New(apierr.Conflict).WithMessage(fmt.Sprintf(
-				"委任が%sのため再開できません。停止しているときだけ再開できます",
-				delegationStatusLabel(deleg.Status)))
+				"自律実行が%sのため再開できません。一時停止しているときだけ再開できます",
+				delegationScreenLabel(deleg.Status)))
 			return errTicketReference
 		}
 		if open, err := q.HasOpenConfirmation(ctx, deleg.ID); err != nil {
@@ -140,20 +155,28 @@ func (h *handler) resumeDelegation(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		if hasBudget && target != "approved" {
+		if len(changes) > 0 && target != "approved" {
+			field := "budget"
+			if !hasBudget {
+				field = "stop_conditions"
+			}
 			rejected = apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
-				Field: "budget", Code: "invalid",
-				Message: "計画中の委任の予算は、ここでは直せません。計画を却下し、予算を直した範囲の案を出し直させてください",
+				Field: field, Code: "invalid",
+				Message: "計画中の自律実行の制約は、ここでは直せません。計画を却下し、制約を直した案を出し直させてください",
 			})
 			return errTicketReference
 		}
 
-		body := fmt.Sprintf("**委任を再開した**（PM）。主状態は%sに戻った。", delegationStatusLabel(target))
-		if hasBudget {
-			if err := replaceDelegationBudget(ctx, q, deleg, req.Budget, scope.actorID); err != nil {
+		body := fmt.Sprintf("**自律実行を再開した**（PM）。状態は%sに戻った。", delegationScreenLabel(target))
+		if len(changes) > 0 {
+			if err := replaceDelegationConstraints(ctx, q, deleg, changes, scope.actorID); err != nil {
 				return err
 			}
-			body += "\n\n予算を直した：`" + string(compactJSON(req.Budget)) + "`"
+			for _, k := range []string{"budget", "stop_conditions"} {
+				if v, ok := changes[k]; ok {
+					body += fmt.Sprintf("\n\n%sを直した：`%s`", constraintLabels[k], compactJSON(v))
+				}
+			}
 		}
 		if _, err := q.SetDelegationStatus(ctx, gen.SetDelegationStatusParams{
 			ID: deleg.ID, Status: target,
@@ -176,7 +199,7 @@ func readDelegationForControl(
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return deleg, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
-				Field: "seq", Code: "invalid", Message: "このチケットは委任の根ではありません",
+				Field: "seq", Code: "invalid", Message: "このチケットは自律実行ではありません",
 			})
 		}
 		return deleg, apierr.New(apierr.InternalError).WithCause(fmt.Errorf("委任を読めない: %w", err))
@@ -204,16 +227,22 @@ func resumeTargetStatus(ctx context.Context, q gen.Querier, deleg gen.GetDelegat
 	return "approved", nil
 }
 
-// replaceDelegationBudget は scope.budget を置き換え、その範囲を前提とする計画の
-// 版を PM の承認済みとして作る（冒頭のコメント）。
-func replaceDelegationBudget(
-	ctx context.Context, q gen.Querier, deleg gen.GetDelegationForControlRow, budget json.RawMessage, pmID string,
+// constraintLabels は根のコメントに書く制約の名前。
+var constraintLabels = map[string]string{"budget": "制約の上限", "stop_conditions": "止まる条件"}
+
+// replaceDelegationConstraints は scope の制約（budget / stop_conditions）を置き換え、
+// その範囲を前提とする計画の版を PM の承認済みとして作る（冒頭のコメント）。
+func replaceDelegationConstraints(
+	ctx context.Context, q gen.Querier, deleg gen.GetDelegationForControlRow,
+	changes map[string]json.RawMessage, pmID string,
 ) error {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(deleg.Scope, &m); err != nil || m == nil {
 		m = map[string]json.RawMessage{}
 	}
-	m["budget"] = compactJSON(budget)
+	for k, v := range changes {
+		m[k] = compactJSON(v)
+	}
 	newScope, err := json.Marshal(m)
 	if err != nil {
 		return fmt.Errorf("範囲を組み立てられない: %w", err)
@@ -245,16 +274,16 @@ func replaceDelegationBudget(
 	if err := q.CreateDelegationPlan(ctx, gen.CreateDelegationPlanParams{
 		ID: id, DelegationID: deleg.ID, Version: version,
 		Scope: newScope, Skeleton: old.Skeleton, BodyMd: old.BodyMd,
-		ReasonMd:      fmt.Sprintf("PM が再開のときに予算を直した（v%d を写した）", base.Version),
+		ReasonMd:      fmt.Sprintf("PM が再開のときに制約を直した（v%d を写した）", base.Version),
 		DeclaredClass: pgtype.Text{}, MeasuredClass: pgtype.Text{String: planClassScope, Valid: true},
 		Status: "proposed", RevertsTo: pgtype.Int4{}, SubmittedBy: pmID,
 	}); err != nil {
-		return fmt.Errorf("予算を直した版を作成できない: %w", err)
+		return fmt.Errorf("制約を直した版を作成できない: %w", err)
 	}
 	if _, err := q.DecideDelegationPlan(ctx, gen.DecideDelegationPlanParams{
 		ID: id, Status: "accepted", DecidedBy: pgtype.Text{String: pmID, Valid: true},
 	}); err != nil {
-		return fmt.Errorf("予算を直した版を確定できない: %w", err)
+		return fmt.Errorf("制約を直した版を確定できない: %w", err)
 	}
 	// main が出したまま判定を待っていた版は、前提の範囲が変わったので畳む。
 	if _, err := q.SupersedeProposedDelegationPlans(ctx, gen.SupersedeProposedDelegationPlansParams{
@@ -312,4 +341,21 @@ func compactJSON(raw json.RawMessage) json.RawMessage {
 		return raw
 	}
 	return b
+}
+
+// delegationScreenLabel は画面の語での状態（GuiDesign.md 5.5「自律実行」。pb-252）。
+// PM が読む応答とコメントに使う。エージェント向けの文は delegationStatusLabel のまま。
+func delegationScreenLabel(status string) string {
+	switch status {
+	case "planning":
+		return "計画中"
+	case "approved":
+		return "実行中"
+	case "paused":
+		return "一時停止"
+	case "ended":
+		return "終了"
+	default:
+		return status
+	}
 }

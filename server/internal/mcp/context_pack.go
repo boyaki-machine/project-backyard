@@ -253,6 +253,24 @@ type packDelegationStatus struct {
 	} `json:"latest_handoff"`
 	NextMove string                `json:"next_move"`
 	Budget   *packDelegationBudget `json:"budget"`
+	Scope    struct {
+		StopConditions []string `json:"stop_conditions"`
+	} `json:"scope"`
+}
+
+// renderStopConditions は止まる条件（4.2。pb-252）を出す。**PB は判定しない**——
+// エージェントが読んで守る。当たったら確認待ちを立てて止まる（8.1 の 5）。
+func renderStopConditions(conds []string) string {
+	if len(conds) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("**止まる条件**（PM が定めた。当たったら `pb_raise_confirmation` で確認待ちを立てて止まる）\n\n")
+	for _, c := range conds {
+		fmt.Fprintf(&b, "- %s\n", c)
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // packDelegationBudget は delegation-status の budget（12.1。pb-253）。
@@ -421,6 +439,7 @@ func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packD
 	}
 
 	b.WriteString(renderBudgetLines(ds.Budget))
+	b.WriteString(renderStopConditions(ds.Scope.StopConditions))
 
 	if ds.LatestEvaluation != nil && ds.LatestEvaluation.Verdict != "pass" {
 		fmt.Fprintf(&b, "**直近の評価**：%s 対象 round %d、判定 `%s`\n\n",

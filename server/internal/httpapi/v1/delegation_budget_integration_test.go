@@ -182,8 +182,8 @@ func TestDelegationBudgetIntegration(t *testing.T) {
 			t.Fatalf("ひ孫 status = %d, want 403（body=%s）", rec.Code, rec.Body.String())
 		}
 		msg := errorOf(t, rec).Message
-		if !strings.Contains(msg, "深さ") || !strings.Contains(msg, "起票数") {
-			t.Errorf("message = %q, want 深さ と 起票数 の両方", msg)
+		if !strings.Contains(msg, "階層") || !strings.Contains(msg, "子チケットの数") {
+			t.Errorf("message = %q, want 階層 と 子チケットの数 の両方", msg)
 		}
 		if s := delegStatus(t); s != "paused" {
 			t.Fatalf("委任 = %s, want paused（拒否と同じトランザクションで確定する）", s)
@@ -280,7 +280,7 @@ func TestDelegationBudgetIntegration(t *testing.T) {
 		if err := pool.QueryRow(ctx, `SELECT question_md FROM confirmation WHERE id = $1`, cid).Scan(&question); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(question, "総予算（1000）") || !strings.Contains(question, "消費 1200") {
+		if !strings.Contains(question, "トークンの上限（1000）") || !strings.Contains(question, "消費 1200") {
 			t.Errorf("question = %q", question)
 		}
 	})

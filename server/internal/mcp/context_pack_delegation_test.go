@@ -158,3 +158,16 @@ func TestRenderBudgetLines(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderStopConditions は止まる条件（4.2。pb-252）を箇条書きで出す。
+func TestRenderStopConditions(t *testing.T) {
+	if got := renderStopConditions(nil); got != "" {
+		t.Errorf("空 = %q, want 空", got)
+	}
+	got := renderStopConditions([]string{"模試の判定が2回続けて下がったとき", "計画より2週間遅れたとき"})
+	for _, want := range []string{"**止まる条件**", "- 模試の判定が2回続けて下がったとき\n", "- 計画より2週間遅れたとき\n", "pb_raise_confirmation"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("got = %q, want %q を含む", got, want)
+		}
+	}
+}

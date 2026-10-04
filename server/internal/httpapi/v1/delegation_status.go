@@ -29,6 +29,19 @@ type delegationStatusPlanView struct {
 	Status        string  `json:"status"`
 	DeclaredClass *string `json:"declared_class"`
 	MeasuredClass *string `json:"measured_class"`
+	// 画面の「計画の承認」のカードに出す中身（pb-252）。パックは使わない。
+	Scope      any                       `json:"scope,omitempty"`
+	BodyMd     string                    `json:"body_md,omitempty"`
+	ReasonMd   string                    `json:"reason_md,omitempty"`
+	Evaluation *delegationStatusPlanEval `json:"evaluation,omitempty"`
+}
+
+// delegationStatusPlanEval は最新の計画の版への直近の評価（pb-252）。
+// latest_evaluation は対象を問わない直近の評価で、版と結び付かない。
+type delegationStatusPlanEval struct {
+	Round    int32  `json:"round"`
+	Verdict  string `json:"verdict"`
+	Findings any    `json:"findings"`
 }
 
 // delegationStatusEvaluationView はパック向けの評価の要約。
@@ -46,6 +59,7 @@ type delegationStatusView struct {
 	RootSeq           int32                           `json:"root_seq,omitempty"`
 	Status            string                          `json:"status,omitempty"`
 	Scope             any                             `json:"scope,omitempty"`
+	ScopeVersion      int32                           `json:"scope_version,omitempty"`
 	Main              *actorRef                       `json:"main,omitempty"`
 	Evaluator         *actorRef                       `json:"evaluator,omitempty"`
 	LatestPlan        *delegationStatusPlanView       `json:"latest_plan,omitempty"`
@@ -54,6 +68,10 @@ type delegationStatusView struct {
 	LatestHandoff     *handoffView                    `json:"latest_handoff,omitempty"`
 	Budget            *budgetStatusView               `json:"budget,omitempty"`
 	NextMove          string                          `json:"next_move,omitempty"`
+	// MainNextMove は呼び出し元の役割によらず、main の次の一手（pb-252）。
+	// 画面の「エージェントステイタス」に出す——PM が開くと役割は読むだけになり、
+	// next_move は「次の一手が無い」になるため。
+	MainNextMove string `json:"main_next_move,omitempty"`
 }
 
 func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +106,7 @@ func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
 	var scopeAny any
 	_ = json.Unmarshal(deleg.Scope, &scopeAny)
 	view.Scope = scopeAny
+	view.ScopeVersion = deleg.ScopeVersion
 
 	if plan, perr := h.q.GetLatestDelegationPlan(ctx, deleg.ID); perr == nil {
 		pv := delegationStatusPlanView{Version: plan.Version, Status: plan.Status}
@@ -96,6 +115,18 @@ func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		if plan.MeasuredClass.Valid {
 			pv.MeasuredClass = &plan.MeasuredClass.String
+		}
+		detail, derr := h.q.GetLatestPlanForStatus(ctx, deleg.ID)
+		if derr != nil {
+			apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(derr))
+			return
+		}
+		_ = json.Unmarshal(detail.Scope, &pv.Scope)
+		pv.BodyMd, pv.ReasonMd = detail.BodyMd, detail.ReasonMd
+		if detail.EvalVerdict != "" {
+			ev := delegationStatusPlanEval{Round: detail.EvalRound, Verdict: detail.EvalVerdict}
+			_ = json.Unmarshal(detail.EvalFindings, &ev.Findings)
+			pv.Evaluation = &ev
 		}
 		view.LatestPlan = &pv
 	} else if perr != pgx.ErrNoRows {
@@ -151,6 +182,14 @@ func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view.NextMove = move
+	if role == roleMain {
+		view.MainNextMove = move
+	} else if mm, merr := computeNextMove(ctx, h.q, deleg.ID, roleMain); merr != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(merr))
+		return
+	} else {
+		view.MainNextMove = mm
+	}
 
 	WriteJSON(w, http.StatusOK, view)
 }

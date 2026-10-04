@@ -246,8 +246,8 @@ func validateSubmitPlan(req submitPlanRequest) *apierr.Error {
 	if len(req.Scope) > 0 && !isJSONObject(req.Scope) {
 		details = append(details, apierr.Detail{Field: "scope", Code: "invalid", Message: "scope はオブジェクトで指定してください"})
 	} else if len(req.Scope) > 0 {
-		// 予算の形（4.2。pb-253）。範囲の案に書かれた予算は、承認されると強制に使われる。
-		details = append(details, validateScopeBudget(req.Scope, "scope")...)
+		// 制約の形（予算と止まる条件。4.2。pb-253・pb-252）。範囲の案に書かれた予算は、承認されると強制に使われる。
+		details = append(details, validateScopeConstraints(req.Scope, "scope")...)
 	}
 	if req.BodyMd == "" {
 		details = append(details, apierr.Detail{Field: "body_md", Code: "required"})

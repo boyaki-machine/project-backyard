@@ -4502,8 +4502,8 @@ paths:
         `planning`、最新の計画の版が範囲の変更として承認を待っていれば
         `planning`、それ以外は `approved`。
 
-        **`budget` を渡すと予算を置き換える**（承認済へ戻すときだけ。計画中へ
-        戻すときは `422`）。`scope_version` を進め、直前の承認済みの計画の版を
+        **`budget` / `stop_conditions` を渡すと、その制約を置き換える**（渡さな
+        かった方はそのまま。承認済へ戻すときだけ。計画中へ戻すときは `422`）。`scope_version` を進め、直前の承認済みの計画の版を
         写して範囲だけ差し替えた版を、PM の承認済みとして作る。
       requestBody:
         required: false
@@ -4514,6 +4514,8 @@ paths:
               properties:
                 budget:
                   $ref: '#/components/schemas/DelegationBudget'
+                stop_conditions:
+                  $ref: '#/components/schemas/DelegationStopConditions'
                 reason_md:
                   type: string
                   description: 再開に添える一言（任意）。根のコメントに載る。
@@ -9492,9 +9494,9 @@ components:
           description: |
             委任範囲（Delegation.md 4.2）。目的・指標・自律してよい範囲・予算・
             止まる条件・報告の周期を JSON で持つ。**検証するのはオブジェクト
-            であることと、`budget` の形だけ**（`DelegationBudget`。pb-253）。
-            `budget` に知らないキーや1未満の値があれば `422`
-            （`scope.budget.<キー>`）。
+            であることと、制約の形だけ**——`budget`（`DelegationBudget`。pb-253）と
+            `stop_conditions`（`DelegationStopConditions`。pb-252）。形が違えば
+            `422`（`scope.budget.<キー>` / `scope.stop_conditions`）。
           additionalProperties: true
 
     DecideDelegationRequest:
@@ -9831,6 +9833,9 @@ components:
         scope:
           type: object
           additionalProperties: true
+        scope_version:
+          type: integer
+          description: 承認された範囲の版。0 は一度も承認されていない（画面の再開で制約を直せるかに使う。pb-252）。
         main:
           $ref: '#/components/schemas/ActorRef'
         evaluator:
@@ -9843,6 +9848,24 @@ components:
             status: { type: string, enum: [proposed, accepted, rejected, superseded, reverted] }
             declared_class: { type: string, enum: [minor, structural, scope], nullable: true }
             measured_class: { type: string, enum: [minor, structural, scope], nullable: true }
+            scope:
+              type: object
+              additionalProperties: true
+              description: この版が前提とする範囲（画面の「計画の承認」のカード。pb-252）。
+            body_md: { type: string, description: 計画の説明。 }
+            reason_md: { type: string, description: 前の版から変えた理由。 }
+            evaluation:
+              type: object
+              nullable: true
+              description: |
+                **この版への**直近の評価（pb-252）。`latest_evaluation` は対象を
+                問わない直近の評価で、版と結び付かない。未評価なら省く。
+              properties:
+                round: { type: integer }
+                verdict: { type: string, enum: [pass, fail, unable] }
+                findings:
+                  type: array
+                  items: { type: object, additionalProperties: true }
         latest_evaluation:
           type: object
           nullable: true
@@ -9863,6 +9886,12 @@ components:
           nullable: true
         next_move:
           type: string
+        main_next_move:
+          type: string
+          description: |
+            呼び出し元の役割によらない、main の次の一手（pb-252）。画面の
+            「エージェントステイタス」に出す。PM が読むと役割は `readonly` になり、
+            `next_move` は「次の一手が無い」になるため。
         budget:
           $ref: '#/components/schemas/DelegationBudgetStatus'
 
@@ -9898,6 +9927,18 @@ components:
           type: integer
           minimum: 1
           description: 同じ対象への不合格の往復の上限。省略時は3。
+
+    DelegationStopConditions:
+      description: |
+        止まる条件（Delegation.md 4.2、pb-252）。`scope.stop_conditions` に書く。
+        **PB は判定しない**——エージェントが読んで守り、当たったら確認待ちを
+        立てて止まる。パックの自律実行の節に載る。
+      type: array
+      maxItems: 20
+      items:
+        type: string
+        minLength: 1
+        maxLength: 500
 
     DelegationBudgetStatus:
       description: |
@@ -10801,11 +10842,13 @@ components:
               description: コメント件数（本文は含めない。ApiDesign.md 9.8）。
             execution_mode:
               type: string
-              enum: [human_only, agent_only, agent_draft]
+              enum: [human_only, agent_only, agent_draft, delegated]
               description: |
                 実行主体属性（Requirements.md 10.5.4、DbDesign.md 6.6）。
                 `/pb-implement` は `human_only` のとき実装せず利用者へ返す
-                （Requirements.md 10.8.6）。
+                （Requirements.md 10.8.6）。**`delegated`（自律実行）は委任を
+                始めた根だけが持つ**（`createDelegation`。Delegation.md 4.1）。
+                `PATCH` では設定できない。
             readiness:
               type: string
               enum: [red, yellow, green]

@@ -874,6 +874,10 @@ type Querier interface {
 	// GetLatestEvaluationForDelegation は、パック（9.1「開いている評価の指摘」）
 	// が表示する直近の評価を読む。target_kind を問わない（pb-251）。
 	GetLatestEvaluationForDelegation(ctx context.Context, delegationID string) (GetLatestEvaluationForDelegationRow, error)
+	// GetLatestPlanForStatus は画面の「計画の承認」のカードに要る、最新の版の中身と、
+	// その版への直近の評価を読む（delegation-status。pb-252）。評価が無ければ
+	// eval_verdict は空文字、eval_findings は NULL。
+	GetLatestPlanForStatus(ctx context.Context, delegationID string) (GetLatestPlanForStatusRow, error)
 	// GetParentForCascade は「子が動いたら親を進行中にする」で祖先をたどる1段ぶん
 	// （9.6）。子の id を渡すと、その親の seq とステータスのカテゴリが返る。
 	//

@@ -98,3 +98,23 @@ WHERE id = @id AND status = 'proposed';
 UPDATE delegation_plan
 SET status = 'superseded', decided_at = now()
 WHERE delegation_id = @delegation_id AND status = 'proposed' AND id <> @keep_id;
+
+-- GetLatestPlanForStatus は画面の「計画の承認」のカードに要る、最新の版の中身と、
+-- その版への直近の評価を読む（delegation-status。pb-252）。評価が無ければ
+-- eval_verdict は空文字、eval_findings は NULL。
+-- name: GetLatestPlanForStatus :one
+SELECT p.version, p.status, p.scope, p.body_md, p.reason_md,
+       COALESCE(e.verdict, '')::text AS eval_verdict,
+       COALESCE(e.round, 0)::integer AS eval_round,
+       e.findings AS eval_findings
+FROM delegation_plan p
+LEFT JOIN LATERAL (
+  SELECT ev.verdict, ev.round, ev.findings
+  FROM evaluation ev
+  WHERE ev.plan_id = p.id
+  ORDER BY ev.created_at DESC
+  LIMIT 1
+) e ON true
+WHERE p.delegation_id = @delegation_id
+ORDER BY p.version DESC
+LIMIT 1;
