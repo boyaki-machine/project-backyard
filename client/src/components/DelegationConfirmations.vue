@@ -159,7 +159,7 @@ function reasonLabel(reason: string | undefined): string {
   <DelegationTextModal
     v-if="answering"
     :title="reasonLabel(answering.reason)"
-    :lead="answering.question_md"
+    :question-md="answering.question_md"
     :label="$ui('回答')"
     required
     :submit-label="$ui('回答する')"
