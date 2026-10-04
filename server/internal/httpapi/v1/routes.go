@@ -496,6 +496,11 @@ func Mount(r chi.Router, deps Deps) {
 			Post("/projects/{key}/tickets/{seq}/delegation/approve", h.approveDelegation)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/delegation/reject", h.rejectDelegation)
+		// 停止・再開（4.3・8.2）。pb-253。PM だけが呼ぶ。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/delegation/pause", h.pauseDelegation)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/delegation/resume", h.resumeDelegation)
 
 		// ── 計画の版（Delegation.md 6章・12.2）── pb-247 ───────────
 		//

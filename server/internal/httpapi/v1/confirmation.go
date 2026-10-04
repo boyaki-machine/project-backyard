@@ -230,7 +230,7 @@ type answerConfirmationRequest struct {
 //
 // **主状態は動かさない。** `budget_exceeded`（PBが立てて paused にしたもの）は、
 // 答えるだけで再開してよいものではない（8.2 の最後の箇条書き）——
-// 再開（paused → approved）は別の操作であり、pb-249 の範囲にはまだ無い（findings）。
+// 再開は別の操作である（delegation_pause.go の resumeDelegation。pb-253）。
 func (h *handler) answerConfirmation(w http.ResponseWriter, r *http.Request) {
 	ctx, scope, ticketID, ok := h.ticketScope(w, r,
 		"POST /projects/{key}/tickets/{seq}/confirmation/{id}/answer")

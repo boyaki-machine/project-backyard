@@ -165,9 +165,12 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 		// **委任の木の中のチケットは、承認済のあいだしか完了レポートを
 		// 受け付けない**（Delegation.md 5章「main：完了レポート（子）」
 		// 「main：成果の提出（根の完了レポート）」）。
-		if d, in, derr := findDelegationContainingTicket(ctx, q, scope.projectID, ticketID); derr != nil {
+		d, inDelegation, derr := findDelegationContainingTicket(ctx, q, scope.projectID, ticketID)
+		if derr != nil {
 			return fmt.Errorf("委任を確認できない: %w", derr)
-		} else if in {
+		}
+		var delegScope []byte
+		if in := inDelegation; in {
 			if !delegationGate(d.Status) {
 				forbidden = apierr.New(apierr.Forbidden).
 					WithMessage("計画が承認されるまで、完了レポートは受け付けません").
@@ -197,6 +200,24 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 						WithDetails(apierr.Detail{Field: "status", Code: "delegation_stage"})
 					return errTicketReference
 				}
+			}
+			// **期日を過ぎていたら受け付けず、委任を停止する**（12.1・8.2。pb-253）。
+			// 停止をコミットするため nil を返す（tickets_create.go と同じ）。
+			root, rerr := q.GetDelegationByRootTicket(ctx, d.RootTicketID)
+			if rerr != nil {
+				return fmt.Errorf("委任を読めない: %w", rerr)
+			}
+			delegScope = root.Scope
+			reasons, berr := checkDelegationBudget(ctx, q, d.ID, delegScope, "", budgetCheck{})
+			if berr != nil {
+				return berr
+			}
+			if len(reasons) > 0 {
+				if berr := tripDelegationBudget(ctx, q, d.ID, d.RootTicketID, scope.actorID, reasons); berr != nil {
+					return berr
+				}
+				forbidden = budgetForbidden(scope.seq, "status", reasons)
+				return nil
 			}
 		}
 
@@ -239,6 +260,20 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 			AgentRunID: pgtype.Text{String: runID, Valid: true},
 		}); err != nil {
 			return fmt.Errorf("完了レポートのコメントを作成できない: %w", err)
+		}
+
+		// **トークンの超過は、報告を受け付けてから見る**（12.1。報告の後にしか
+		// 分からない）。超えていたら、報告は残したまま委任を停止する（pb-253）。
+		if inDelegation {
+			reasons, berr := checkDelegationBudget(ctx, q, d.ID, delegScope, "", budgetCheck{checkTokens: true})
+			if berr != nil {
+				return berr
+			}
+			if len(reasons) > 0 {
+				if berr := tripDelegationBudget(ctx, q, d.ID, d.RootTicketID, scope.actorID, reasons); berr != nil {
+					return berr
+				}
+			}
 		}
 
 		// **activity は field='report'、action='create'**（9.15）。コメントの

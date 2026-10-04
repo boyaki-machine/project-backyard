@@ -247,6 +247,7 @@ func TestCreateTicketAllowsMainInsideApprovedTree(t *testing.T) {
 		testMainActorID: {ID: "01K2DELEGATION00000000001", RootTicketID: testDelegationRootID, RootSeq: 31, Status: "approved"},
 	}
 	q.ticket.descendant = true // 31（根）自身は木の中
+	withRootDelegation(q, testDelegationRootID, `{}`)
 	h, _ := ticketHandler(q)
 
 	rec := httptest.NewRecorder()
@@ -299,6 +300,7 @@ func TestSubmitReportAllowedWhenApproved(t *testing.T) {
 		{ID: "01K2DELEGATION00000000001", RootTicketID: testTicketID, Status: "approved"},
 	}
 	q.ticket.descendant = true
+	withRootDelegation(q, testTicketID, `{}`)
 	h, _ := ticketHandler(q)
 
 	rec := httptest.NewRecorder()
@@ -339,6 +341,7 @@ func TestSubmitReportAllowedAfterRejection(t *testing.T) {
 	q.ticket.descendant = true
 	q.latestAgentReport = gen.GetLatestAgentReportForTicketRow{ID: "01K2REPORT0000000000001"}
 	q.evaluationVerdictByReport = map[string]string{"01K2REPORT0000000000001": "fail"}
+	withRootDelegation(q, testTicketID, `{}`)
 	h, _ := ticketHandler(q)
 
 	rec := httptest.NewRecorder()
@@ -448,5 +451,18 @@ func TestUpdateTicketAllowsAgentReparentWithinSameTree(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200（同じ木の中の並べ替え） (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// withRootDelegation は根のチケットから引く委任の行（GetDelegationByRootTicket）を
+// 置く。予算の判定（pb-253）が scope を読むため、木の中への書き込みを通す
+// テストには要る。
+func withRootDelegation(q *fakeQuerier, rootTicketID, scope string) {
+	if q.delegationByRootTicket == nil {
+		q.delegationByRootTicket = map[string]gen.GetDelegationByRootTicketRow{}
+	}
+	q.delegationByRootTicket[rootTicketID] = gen.GetDelegationByRootTicketRow{
+		ID: "01K2DELEGATION00000000001", Status: "approved", Scope: []byte(scope),
+		MainActorID: testMainActorID, EvaluatorActorID: testEvaluatorActorID,
 	}
 }

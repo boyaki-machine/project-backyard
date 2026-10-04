@@ -149,6 +149,25 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 				refErr = outOfTree
 				return errTicketReference
 			}
+			// **予算（起票数・深さ・期日）を超える起票は拒み、委任を停止する**
+			// （12.1・8.2。pb-253）。停止は拒否と同じトランザクションで確定させる
+			// ため、errTicketReference ではなく nil を返してコミットする。
+			deleg, derr := q.GetDelegationByRootTicket(ctx, main.RootTicketID)
+			if derr != nil {
+				return fmt.Errorf("委任を読めない: %w", derr)
+			}
+			reasons, derr := checkDelegationBudget(ctx, q, main.ID, deleg.Scope, parentID.String,
+				budgetCheck{newTickets: 1})
+			if derr != nil {
+				return derr
+			}
+			if len(reasons) > 0 {
+				if derr := tripDelegationBudget(ctx, q, main.ID, main.RootTicketID, p.ActorID, reasons); derr != nil {
+					return derr
+				}
+				refErr = budgetForbidden(main.RootSeq, "parent_seq", reasons)
+				return nil
+			}
 		}
 		if e := validateTicketAssignee(ctx, q, projectID, req.AssigneeID); e != nil {
 			refErr = e
