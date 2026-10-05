@@ -39,7 +39,7 @@ main の説明を鵜呑みにせず、計画・ファイル・チケット・実
 - `seq`：根の番号
 - `target_kind`：`plan`（`plan_version` も必須）または `deliverable`（暗黙に最新の根の報告）
 - `verdict`：`pass` / `fail` / `unable`
-- `findings`：少なくとも `purpose_and_dod` と `values`。各要素は `{aspect, verdict, note_md}` のオブジェクト。ツールの型がこの契約と食い違う場合は、文字列に変換して通そうとせず、実際の MCP の定義とサーバの契約を確認する。解消できなければ提出せず利用者へ伝える
+- `findings`：少なくとも `purpose_and_dod` と `values`。各要素は `{aspect, verdict, note_md}` のオブジェクトで、観点の `verdict` は `pass` / `fail`。判断不能は全体の `verdict="unable"` とし、判断できない観点を `fail` にして不足する材料を `note_md` に書く。ツールの型がこの契約と食い違う場合は、文字列に変換して通そうとせず、実際の MCP の定義とサーバの契約を確認する。解消できなければ提出せず利用者へ伝える
 - `class_check`：計画の変更を評価したときの分類の妥当性（`agree` / `stricter` / `looser`）
 - `tokens_used`：実測できる場合だけ。推定で埋めない
 

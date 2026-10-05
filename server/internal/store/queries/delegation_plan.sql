@@ -103,7 +103,7 @@ WHERE delegation_id = @delegation_id AND status = 'proposed' AND id <> @keep_id;
 -- その版への直近の評価を読む（delegation-status。pb-252）。評価が無ければ
 -- eval_verdict は空文字、eval_findings は NULL。
 -- name: GetLatestPlanForStatus :one
-SELECT p.version, p.status, p.scope, p.body_md, p.reason_md,
+SELECT p.version, p.status, p.scope, p.skeleton, p.body_md, p.reason_md,
        COALESCE(e.verdict, '')::text AS eval_verdict,
        COALESCE(e.round, 0)::integer AS eval_round,
        e.findings AS eval_findings

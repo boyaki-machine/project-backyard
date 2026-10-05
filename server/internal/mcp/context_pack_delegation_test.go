@@ -84,6 +84,42 @@ func TestGetContextAddsDelegationSectionForEvaluator(t *testing.T) {
 	}
 }
 
+// 計画はコメントに複製されないので、評価者はこのパックから対象を取得する。
+// 版に結び付いた評価も載せ、再開時に同じ版を二重評価しない。
+func TestGetContextIncludesPlanForEvaluation(t *testing.T) {
+	for _, role := range []string{"main", "evaluator"} {
+		t.Run(role, func(t *testing.T) {
+			rest := &fakeREST{steps: []fakeStep{
+				{status: http.StatusOK, body: ticketJSON(`{}`, "delegated", `null`)},
+				{status: http.StatusOK, body: `{"in_delegation":true,"role":"` + role + `","root_seq":31,"status":"planning",
+					"latest_plan":{"version":3,"status":"proposed","declared_class":"structural","measured_class":"scope",
+					"scope":{"budget":{"tickets":2}},"skeleton":{"branches":[{"name":"確認","budget_share":1}]},"body_md":"## 計画の枝\n\nテキストを読んで結果を共有する。",
+					"reason_md":"再開時にも判断材料を読めるようにする。",
+					"evaluation":{"round":1,"verdict":"pass","findings":[{"aspect":"values","verdict":"pass","note_md":"共有できる記録を残す。"}]}},
+					"next_move":"計画を確認する"}`},
+				{status: http.StatusOK, body: `{"items":[]}`},
+				{status: http.StatusOK, body: `{"body_md":"役割の指示。"}`},
+				{status: http.StatusOK, body: `{"body_md":"共通の指示。"}`},
+			}}
+			out := callTool1(t, New(rest, "v0"), toolCallBody("pb_get_context", `{"seq":31}`))
+			if out.IsError {
+				t.Fatalf("計画を含むパックを取得できない: %s", out.Content[0].Text)
+			}
+			text := out.Content[0].Text
+			for _, want := range []string{
+				"第3版", "`proposed`", "`structural`", "`scope`",
+				"##### 計画の枝", "テキストを読んで結果を共有する。", `"branches":`, `"budget_share": 1`,
+				"再開時にも判断材料を読めるようにする。", `"tickets": 2`,
+				"round 1", "`pass`", `"aspect": "values"`, "共有できる記録を残す。",
+			} {
+				if !strings.Contains(text, want) {
+					t.Errorf("評価に必要な %q がパックに無い", want)
+				}
+			}
+		})
+	}
+}
+
 func TestGetContextDelegationSectionShowsOpenConfirmation(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "delegated", `null`)},

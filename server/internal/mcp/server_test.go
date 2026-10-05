@@ -393,3 +393,42 @@ func TestToolsListDeclaresNestedSchema(t *testing.T) {
 	}
 	t.Fatal("pb_submit_result が tools/list に無い")
 }
+
+// findings の要素型を省くと、Codex は文字列配列として公開し、
+// REST が受けるオブジェクト配列を提出できなくなる。
+func TestToolsListDeclaresEvaluationFindings(t *testing.T) {
+	h := New(&fakeREST{}, "v0")
+	res := decodeRPC(t, callMCP(t, h, agentPrincipal(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	b, err := json.Marshal(res.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema schema `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range out.Tools {
+		if tool.Name != "pb_submit_evaluation" {
+			continue
+		}
+		findings := tool.InputSchema.Properties["findings"]
+		if findings.Type != "array" || findings.Items == nil || findings.Items.Type != "object" {
+			t.Fatalf("findings はオブジェクト配列でなければならない: %+v", findings)
+		}
+		for _, key := range []string{"aspect", "verdict", "note_md"} {
+			if findings.Items.Properties[key].Type != "string" || !slices.Contains(findings.Items.Required, key) {
+				t.Errorf("findings.items の %s は必須の文字列でなければならない: %+v", key, findings.Items)
+			}
+		}
+		if got := findings.Items.Properties["verdict"].Enum; !slices.Equal(got, []string{"pass", "fail"}) {
+			t.Errorf("観点ごとの判定 = %v, want pass / fail", got)
+		}
+		return
+	}
+	t.Fatal("pb_submit_evaluation が tools/list に無い")
+}

@@ -281,7 +281,7 @@ func (q *Queries) GetLatestDelegationPlanWithVerdict(ctx context.Context, delega
 }
 
 const getLatestPlanForStatus = `-- name: GetLatestPlanForStatus :one
-SELECT p.version, p.status, p.scope, p.body_md, p.reason_md,
+SELECT p.version, p.status, p.scope, p.skeleton, p.body_md, p.reason_md,
        COALESCE(e.verdict, '')::text AS eval_verdict,
        COALESCE(e.round, 0)::integer AS eval_round,
        e.findings AS eval_findings
@@ -302,6 +302,7 @@ type GetLatestPlanForStatusRow struct {
 	Version      int32
 	Status       string
 	Scope        []byte
+	Skeleton     []byte
 	BodyMd       string
 	ReasonMd     string
 	EvalVerdict  string
@@ -319,6 +320,7 @@ func (q *Queries) GetLatestPlanForStatus(ctx context.Context, delegationID strin
 		&i.Version,
 		&i.Status,
 		&i.Scope,
+		&i.Skeleton,
 		&i.BodyMd,
 		&i.ReasonMd,
 		&i.EvalVerdict,
