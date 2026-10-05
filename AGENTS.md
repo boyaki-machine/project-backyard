@@ -4,7 +4,9 @@
 
 - 作業を始める前に `LEARNINGS_CODEX.md` を読む。ファイルが無ければ作成せず、そのまま進める。
 - PB の MCP に接続できる場合は、参画情報と規約を確認する。チケット作業では、着手前にチケット本文とコンテキストを取得する。
-- PB のチケット番号を指定されたら、`.agents/skills/pb-implement/SKILL.md` の手順に従う。
+- 通常の PB チケット作業は、`.agents/skills/pb-implement/SKILL.md` の手順に従う。
+- 「PB のチケット <番号> を自律実行の main として進めて」と言われたら、`.agents/skills/pb-delegate-main/SKILL.md` に従う。呼び直しも同じ一言で再開する。
+- 「PB のチケット <番号> を評価エージェントとして見て」と言われたら、`.agents/skills/pb-delegate-eval/SKILL.md` に従う。呼び直しも同じ一言で再開する。
 - リポジトリの設計文書と PB の規約が食い違うときは、コードを先に変更せず、利用者へ確認する。
 
 ## 他のエージェントとの共存
