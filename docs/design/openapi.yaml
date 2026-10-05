@@ -9853,6 +9853,10 @@ components:
               additionalProperties: true
               description: この版が前提とする範囲（画面の「計画の承認」のカード。pb-252）。
             body_md: { type: string, description: 計画の説明。 }
+            skeleton:
+              type: object
+              additionalProperties: true
+              description: この版の骨格。評価に用いる枝・予算配分・チェックポイント。
             reason_md: { type: string, description: 前の版から変えた理由。 }
             evaluation:
               type: object

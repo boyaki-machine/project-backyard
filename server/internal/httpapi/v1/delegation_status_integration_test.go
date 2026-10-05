@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -125,10 +126,11 @@ func TestDelegationStatusIntegration(t *testing.T) {
 
 	t.Run("計画の提出後は最新の計画が載る", func(t *testing.T) {
 		rec := bearerPost(r, fmt.Sprintf("%s/tickets/%d/plan", base, rootSeq), mainToken.Token,
-			`{"skeleton":{"branches":[]},"body_md":"初版","reason_md":"開始"}`)
+			`{"skeleton":{"branches":[{"name":"確認","budget_share":1}],"checkpoints":["共有"]},"body_md":"初版","reason_md":"開始"}`)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("計画の提出 status = %d（body=%s）", rec.Code, rec.Body.String())
 		}
+		submitted := viewOf(t, rec)
 
 		rec = bearerGet(r, fmt.Sprintf("%s/tickets/%d/delegation-status", base, rootSeq), mainToken.Token)
 		if rec.Code != http.StatusOK {
@@ -138,6 +140,11 @@ func TestDelegationStatusIntegration(t *testing.T) {
 		plan := v["latest_plan"].(map[string]any)
 		if plan["version"] != float64(1) || plan["status"] != "proposed" {
 			t.Errorf("latest_plan = %v", plan)
+		}
+		for _, field := range []string{"skeleton", "body_md", "reason_md"} {
+			if !reflect.DeepEqual(plan[field], submitted[field]) {
+				t.Errorf("latest_plan[%s] = %v, want submitted %v", field, plan[field], submitted[field])
+			}
 		}
 	})
 }

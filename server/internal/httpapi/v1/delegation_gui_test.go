@@ -115,7 +115,8 @@ func TestGetDelegationStatusIncludesLatestPlanForApproval(t *testing.T) {
 	q.latestDelegationPlan = gen.GetLatestDelegationPlanRow{Version: 3, Status: "proposed"}
 	q.latestPlanForStatus = gen.GetLatestPlanForStatusRow{
 		Version: 3, Status: "proposed", Scope: []byte(`{"budget":{"tickets":300}}`),
-		BodyMd: "計画の説明", ReasonMd: "出し直し", EvalVerdict: "pass", EvalRound: 1,
+		Skeleton: []byte(`{"branches":[{"name":"確認","budget_share":1}]}`),
+		BodyMd:   "計画の説明", ReasonMd: "出し直し", EvalVerdict: "pass", EvalRound: 1,
 		EvalFindings: []byte(`[{"aspect":"values","verdict":"pass","note_md":""}]`),
 	}
 	h, _ := ticketHandler(q)
@@ -129,6 +130,11 @@ func TestGetDelegationStatusIncludesLatestPlanForApproval(t *testing.T) {
 	plan, _ := viewOf(t, rec)["latest_plan"].(map[string]any)
 	if plan["body_md"] != "計画の説明" || plan["reason_md"] != "出し直し" {
 		t.Errorf("latest_plan = %v", plan)
+	}
+	skeleton, _ := plan["skeleton"].(map[string]any)
+	branches, _ := skeleton["branches"].([]any)
+	if len(branches) != 1 {
+		t.Errorf("skeleton = %v, want 計画の骨格の枝1件", plan["skeleton"])
 	}
 	ev, _ := plan["evaluation"].(map[string]any)
 	if ev["verdict"] != "pass" || ev["round"] != float64(1) {

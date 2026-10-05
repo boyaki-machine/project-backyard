@@ -29,8 +29,9 @@ type delegationStatusPlanView struct {
 	Status        string  `json:"status"`
 	DeclaredClass *string `json:"declared_class"`
 	MeasuredClass *string `json:"measured_class"`
-	// 画面の「計画の承認」のカードに出す中身（pb-252）。パックは使わない。
+	// 画面の「計画の承認」とエージェントの評価に要る、この版の中身。
 	Scope      any                       `json:"scope,omitempty"`
+	Skeleton   any                       `json:"skeleton,omitempty"`
 	BodyMd     string                    `json:"body_md,omitempty"`
 	ReasonMd   string                    `json:"reason_md,omitempty"`
 	Evaluation *delegationStatusPlanEval `json:"evaluation,omitempty"`
@@ -135,6 +136,7 @@ func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = json.Unmarshal(detail.Scope, &pv.Scope)
+		_ = json.Unmarshal(detail.Skeleton, &pv.Skeleton)
 		pv.BodyMd, pv.ReasonMd = detail.BodyMd, detail.ReasonMd
 		if detail.EvalVerdict != "" {
 			ev := delegationStatusPlanEval{Round: detail.EvalRound, Verdict: detail.EvalVerdict}

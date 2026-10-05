@@ -6275,6 +6275,10 @@ export interface components {
                 };
                 /** @description 計画の説明。 */
                 body_md?: string;
+                /** @description この版の骨格。評価に用いる枝・予算配分・チェックポイント。 */
+                skeleton?: {
+                    [key: string]: unknown;
+                };
                 /** @description 前の版から変えた理由。 */
                 reason_md?: string;
                 /**

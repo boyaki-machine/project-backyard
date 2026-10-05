@@ -230,10 +230,19 @@ type packDelegationStatus struct {
 	Main         *packActor `json:"main"`
 	Evaluator    *packActor `json:"evaluator"`
 	LatestPlan   *struct {
-		Version       int32   `json:"version"`
-		Status        string  `json:"status"`
-		DeclaredClass *string `json:"declared_class"`
-		MeasuredClass *string `json:"measured_class"`
+		Version       int32           `json:"version"`
+		Status        string          `json:"status"`
+		DeclaredClass *string         `json:"declared_class"`
+		MeasuredClass *string         `json:"measured_class"`
+		Scope         json.RawMessage `json:"scope"`
+		Skeleton      json.RawMessage `json:"skeleton"`
+		BodyMd        string          `json:"body_md"`
+		ReasonMd      string          `json:"reason_md"`
+		Evaluation    *struct {
+			Round    int32           `json:"round"`
+			Verdict  string          `json:"verdict"`
+			Findings json.RawMessage `json:"findings"`
+		} `json:"evaluation"`
 	} `json:"latest_plan"`
 	LatestEvaluation *struct {
 		TargetKind string          `json:"target_kind"`
@@ -453,6 +462,29 @@ func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packD
 		b.WriteString("**この木は自律実行中であり、書き込めない。**\n\n")
 		return b.String(), nil
 	}
+	if (ds.Role == "main" || ds.Role == "evaluator") && ds.LatestPlan != nil {
+		plan := ds.LatestPlan
+		fmt.Fprintf(&b, "### 最新の計画：第%d版（状態 `%s`）\n\n", plan.Version, plan.Status)
+		if plan.DeclaredClass != nil {
+			fmt.Fprintf(&b, "- **申告した分類**：`%s`\n", *plan.DeclaredClass)
+		}
+		if plan.MeasuredClass != nil {
+			fmt.Fprintf(&b, "- **PB が測った分類**：`%s`\n", *plan.MeasuredClass)
+		}
+		b.WriteString("\n")
+		if plan.BodyMd != "" {
+			b.WriteString("**計画の説明**\n\n" + shiftHeadings(strings.TrimSpace(plan.BodyMd), 3) + "\n\n")
+		}
+		if plan.ReasonMd != "" {
+			b.WriteString("**変更の理由**\n\n" + shiftHeadings(strings.TrimSpace(plan.ReasonMd), 3) + "\n\n")
+		}
+		writeDelegationJSON(&b, "この版の委任範囲", plan.Scope)
+		writeDelegationJSON(&b, "計画の骨格", plan.Skeleton)
+		if plan.Evaluation != nil {
+			fmt.Fprintf(&b, "**この版への評価**：round %d、判定 `%s`\n\n", plan.Evaluation.Round, plan.Evaluation.Verdict)
+			writeDelegationJSON(&b, "観点ごとの判定", plan.Evaluation.Findings)
+		}
+	}
 
 	section := delegationInstructionSection(ds)
 	if section != "" {
@@ -496,6 +528,18 @@ func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packD
 	}
 
 	return b.String(), nil
+}
+
+// writeDelegationJSON は REST が返した範囲・評価の内容を欠落させずに載せる。
+func writeDelegationJSON(b *strings.Builder, title string, raw json.RawMessage) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return
+	}
+	pretty, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(b, "**%s**\n\n```json\n%s\n```\n\n", title, pretty)
 }
 
 // delegationCommonSection は役割によらず main と評価に載せる見出し（pb-278）。

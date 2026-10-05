@@ -985,8 +985,12 @@ func writeTools() []tool {
 						Enum: []string{"plan", "deliverable"}},
 					"plan_version": {Type: "integer", Description: "target_kind=plan のとき必須。評価する計画の版番号", Minimum: intPtr(1)},
 					"verdict":      {Type: "string", Description: "合否", Enum: []string{"pass", "fail", "unable"}},
-					"findings": {Type: "array", Description: "観点ごとの判定の配列。各要素は {aspect, verdict, note_md} で、" +
-						"aspect は少なくとも purpose_and_dod と values を含む"},
+					"findings": objectItems("観点ごとの判定の配列。aspect は少なくとも purpose_and_dod と values を含む",
+						map[string]property{
+							"aspect":  {Type: "string", Description: "評価の観点。少なくとも purpose_and_dod と values を含む"},
+							"verdict": {Type: "string", Description: "この観点の判定。判断不能は全体の verdict=unable とし、理由を note_md に書く", Enum: []string{"pass", "fail"}},
+							"note_md": {Type: "string", Description: "判定の根拠。不合格の場合は何が足りないかと、どうなれば合格かを書く"},
+						}, "aspect", "verdict", "note_md"),
 					"class_check": {Type: "string", Description: "target_kind=plan で構造の変更を評価したときの、分類の妥当性の判定。" +
 						"agree=main の申告どおり、stricter=もっと厳しい段階、looser=もっと緩い段階",
 						Enum: []string{"agree", "stricter", "looser"}},
