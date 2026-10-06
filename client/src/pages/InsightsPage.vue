@@ -19,6 +19,7 @@ const loading = ref(false)
 const error = ref('')
 let request = 0
 const maxTokens = computed(() => Math.max(1, ...summary.value?.daily.map(day => Math.max(day.run_tokens, day.evaluation_tokens)) ?? []))
+function measured(sum: number, count: number, missing: number): string { return count > 0 && count === missing ? uiText('未計測') : uiNumber(sum) }
 function value(n: number | null): string { return n === null ? uiText('未計測') : uiNumber(n) }
 const resultSources: Record<string, string> = { completed: '完了の報告', partial: '一部完了の報告', blocked: '進められない報告' }
 function resultLabel(status: string): string { return uiText(resultSources[status] ?? status) }
@@ -61,22 +62,22 @@ watch([key, canRead], () => { from.value = ''; to.value = ''; void fetch(1, true
           <dl class="totals">
             <div><dt>{{ $ui('実行件数') }}</dt><dd>{{ uiNumber(summary.totals.runs_count) }}</dd></div>
             <div><dt>{{ $ui('対象チケット数') }}</dt><dd>{{ uiNumber(summary.totals.tickets_count) }}</dd></div>
-            <div><dt>{{ $ui('実行トークン') }}</dt><dd>{{ uiNumber(summary.totals.run_tokens) }}</dd><small>{{ $ui('未計測 {count}件', { count: summary.totals.run_tokens_missing }) }}</small></div>
-            <div><dt>{{ $ui('評価トークン') }}</dt><dd>{{ uiNumber(summary.totals.evaluation_tokens) }}</dd><small>{{ $ui('未計測 {count}件', { count: summary.totals.evaluation_tokens_missing }) }}</small></div>
-            <div><dt>{{ $ui('自己申告時間（分）') }}</dt><dd>{{ uiNumber(summary.totals.wall_clock_min) }}</dd><small>{{ $ui('未計測 {count}件', { count: summary.totals.wall_clock_min_missing }) }}</small></div>
-            <div><dt>{{ $ui('ターン数') }}</dt><dd>{{ uiNumber(summary.totals.turns) }}</dd><small>{{ $ui('未計測 {count}件', { count: summary.totals.turns_missing }) }}</small></div>
+            <div><dt>{{ $ui('実行トークン') }}</dt><dd>{{ measured(summary.totals.run_tokens, summary.totals.runs_count, summary.totals.run_tokens_missing) }}</dd><small>{{ $ui('未計測 {count}件', { count: summary.totals.run_tokens_missing }) }}</small></div>
+            <div><dt>{{ $ui('評価トークン') }}</dt><dd>{{ measured(summary.totals.evaluation_tokens, summary.totals.evaluation_count, summary.totals.evaluation_tokens_missing) }}</dd><small>{{ $ui('未計測 {count}件', { count: summary.totals.evaluation_tokens_missing }) }}</small></div>
+            <div><dt>{{ $ui('自己申告時間（分）') }}</dt><dd>{{ measured(summary.totals.wall_clock_min, summary.totals.runs_count, summary.totals.wall_clock_min_missing) }}</dd><small>{{ $ui('未計測 {count}件', { count: summary.totals.wall_clock_min_missing }) }}</small></div>
+            <div><dt>{{ $ui('ターン数') }}</dt><dd>{{ measured(summary.totals.turns, summary.totals.runs_count, summary.totals.turns_missing) }}</dd><small>{{ $ui('未計測 {count}件', { count: summary.totals.turns_missing }) }}</small></div>
           </dl>
           <p v-if="!summary.totals.runs_count && !summary.totals.evaluation_count">{{ $ui('この期間の記録はありません') }}</p>
           <h3>{{ $ui('日別トークン') }}</h3>
           <div class="table-scroll" tabindex="0" :aria-label="$ui('日別トークン')">
             <table class="daily"><thead><tr><th>{{ $ui('日付') }}</th><th>{{ $ui('実行トークン') }}</th><th>{{ $ui('評価トークン') }}</th><th>{{ $ui('未計測') }}</th></tr></thead>
-              <tbody><tr v-for="day in summary.daily" :key="day.date"><th>{{ day.date }}</th><td><span class="bar" :style="{ width: `${day.run_tokens / maxTokens * 100}%` }" />{{ uiNumber(day.run_tokens) }}</td><td><span class="bar evaluation" :style="{ width: `${day.evaluation_tokens / maxTokens * 100}%` }" />{{ uiNumber(day.evaluation_tokens) }}</td><td>{{ uiNumber(day.run_tokens_missing + day.evaluation_tokens_missing) }}</td></tr></tbody>
+              <tbody><tr v-for="day in summary.daily" :key="day.date"><th>{{ day.date }}</th><td><span class="bar" :style="{ width: `${day.run_tokens / maxTokens * 100}%` }" />{{ measured(day.run_tokens, day.runs_count, day.run_tokens_missing) }}</td><td><span class="bar evaluation" :style="{ width: `${day.evaluation_tokens / maxTokens * 100}%` }" />{{ measured(day.evaluation_tokens, day.evaluation_count, day.evaluation_tokens_missing) }}</td><td>{{ uiNumber(day.run_tokens_missing + day.evaluation_tokens_missing) }}</td></tr></tbody>
             </table>
           </div>
           <h3>{{ $ui('モデル別') }}</h3>
           <div class="table-scroll" tabindex="0" :aria-label="$ui('モデル別')">
             <table><thead><tr><th>{{ $ui('種別') }}</th><th>{{ $ui('モデル') }}</th><th>{{ $ui('版') }}</th><th>{{ $ui('実行件数') }}</th><th>{{ $ui('実行トークン') }}</th><th>{{ $ui('評価トークン') }}</th><th>{{ $ui('未計測') }}</th></tr></thead>
-              <tbody><tr v-for="(model, index) in summary.models" :key="index"><td>{{ model.client_kind ?? $ui('不明') }}</td><td>{{ model.model_name ?? $ui('不明') }}</td><td>{{ model.model_version ?? $ui('不明') }}</td><td>{{ uiNumber(model.runs_count) }}</td><td>{{ uiNumber(model.run_tokens) }}</td><td>{{ uiNumber(model.evaluation_tokens) }}</td><td>{{ uiNumber(model.run_tokens_missing + model.evaluation_tokens_missing) }}</td></tr></tbody>
+              <tbody><tr v-for="(model, index) in summary.models" :key="index"><td>{{ model.client_kind ?? $ui('不明') }}</td><td>{{ model.model_name ?? $ui('不明') }}</td><td>{{ model.model_version ?? $ui('不明') }}</td><td>{{ uiNumber(model.runs_count) }}</td><td>{{ measured(model.run_tokens, model.runs_count, model.run_tokens_missing) }}</td><td>{{ measured(model.evaluation_tokens, model.evaluation_count, model.evaluation_tokens_missing) }}</td><td>{{ uiNumber(model.run_tokens_missing + model.evaluation_tokens_missing) }}</td></tr></tbody>
             </table>
           </div>
           <h3>{{ $ui('実行明細') }}</h3>

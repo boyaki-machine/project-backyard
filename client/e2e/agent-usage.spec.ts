@@ -50,6 +50,18 @@ test('usage keeps missing values, resubmissions and pages visible at desktop and
       await page.screenshot({ path: info.outputPath(`usage-details-${width}.png`), fullPage: true })
       await page.locator('h2').scrollIntoViewIfNeeded()
     }
+    // All records can be missing while their known sum is zero.
+    const missingRoute = `**${base}/agent-usage?*`
+    await page.route(missingRoute, async route => {
+      const real = await route.fetch()
+      const data = await real.json()
+      data.totals.run_tokens_missing = data.totals.runs_count
+      data.daily.forEach((d: { run_tokens_missing: number; runs_count: number }) => { d.run_tokens_missing = d.runs_count })
+      await route.fulfill({ json: data })
+    })
+    await page.getByRole('button', { name: '更新', exact: true }).click()
+    await expect(page.locator('.totals div').filter({ has: page.locator('dt').filter({ hasText: /^実行トークン$/ }) }).locator('dd')).toHaveText('未計測')
+    await page.unroute(missingRoute)
     const date = page.locator('input[type="date"]').first()
     await date.fill('2000-01-01')
     await page.locator('input[type="date"]').nth(1).fill('2000-01-02')
