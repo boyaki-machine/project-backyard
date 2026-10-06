@@ -58,3 +58,9 @@ FROM confirmation c
 WHERE c.delegation_id = @delegation_id AND c.status = 'answered'
 ORDER BY c.answered_at DESC
 LIMIT @max_rows;
+
+-- WithdrawOpenConfirmations は委任の取り下げで、開いている確認待ちを畳む
+-- （Delegation.md 4.3「取り下げ」。pb-281）。答える人がいない問いを画面に残さない。
+-- name: WithdrawOpenConfirmations :execrows
+UPDATE confirmation SET status = 'withdrawn'
+WHERE delegation_id = @delegation_id AND status = 'open';

@@ -1947,7 +1947,7 @@ ALTER TABLE ticket ADD CONSTRAINT ck_ticket_delegated_no_parent
 CREATE TABLE delegation (
   id                 char(26) COLLATE "C" PRIMARY KEY,
   project_id         char(26) COLLATE "C" NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-  root_ticket_id     char(26) COLLATE "C" NOT NULL UNIQUE REFERENCES ticket(id) ON DELETE CASCADE,
+  root_ticket_id     char(26) COLLATE "C" NOT NULL UNIQUE REFERENCES ticket(id) ON DELETE CASCADE,  -- 0058 で部分一意索引へ（6.30）
   main_actor_id      char(26) COLLATE "C" NOT NULL REFERENCES agent(actor_id) ON DELETE RESTRICT,
   evaluator_actor_id char(26) COLLATE "C" NOT NULL REFERENCES agent(actor_id) ON DELETE RESTRICT,
   status             text NOT NULL DEFAULT 'planning'
@@ -2230,6 +2230,26 @@ CREATE TABLE delegation_handoff (
 `planning`、それ以外は `approved`。再開で予算を直すときは `scope_version` を進め、
 直前の承認済みの版を写した版を PM の承認済み（`decided_by` は PM、`measured_class =
 'scope'`）として作る。
+
+## 6.30 自律実行の取り下げと、始め直し（0058）
+
+**正本は `Delegation.md` 4.3「取り下げ」。** pb-281。PM が委任を取り下げ、根を従来の実行モードへ戻す
+（`POST .../delegation/withdraw`。`delegation.manage`）。取り下げた根で、もう一度自律実行を始められるように、
+`root_ticket_id` の一意を「終了していない委任」に限る。
+
+```sql
+ALTER TABLE delegation DROP CONSTRAINT delegation_root_ticket_id_key;
+CREATE UNIQUE INDEX uq_delegation_root_active
+  ON delegation (root_ticket_id) WHERE status <> 'ended';
+-- 終了した委任も根から引く（最新の1件）。ticket の削除の CASCADE にも要る
+CREATE INDEX ix_delegation_root_ticket ON delegation (root_ticket_id, created_at DESC);
+```
+
+- **根から委任を引く問い合わせ**（`GetDelegationByRootTicket` / `GetDelegationForControl`）は、**最新の1件**を返す。
+  呼び出し側は今までどおり状態を見る（終了なら書き込みを拒む）
+- **取り下げは1つのトランザクションで行う**：委任を `ended`、根の `execution_mode` を選ばれた従来のモード、
+  開いている `confirmation` を `withdrawn` にし、根へ `kind=decision` のコメントと活動（`field='delegation'`）を残す
+- **受け入れと取り下げを分ける列は持たない。** 根の `execution_mode` が `delegated` のままなら受け入れ、従来のモードなら取り下げ
 
 # 7. 初期データ（0010）
 

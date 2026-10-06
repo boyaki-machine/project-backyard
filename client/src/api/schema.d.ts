@@ -2618,8 +2618,8 @@ export interface paths {
          * @description 自律実行（Delegated）の委任を1件始める（Delegation.md 4章・12.2、
          *     pb-246）。**必要権限は `delegation.manage`**（`project_admin` が持つ）。
          *
-         *     **`{seq}` は委任の根となるチケットを指す**（`root_ticket_id` が
-         *     UNIQUE なので1チケットにつき委任は1件）。**根になれるのは、親を持たないか、
+         *     **`{seq}` は委任の根となるチケットを指す**（終了していない委任は
+         *     1チケットにつき1件。取り下げた根では作り直せる。pb-281）。**根になれるのは、親を持たないか、
          *     親がエピックのチケット**（Delegation.md 4.1。pb-282）。親のエピックが別の
          *     自律実行の中にあるときは不可（`422`）。作った直後の状態は常に `planning` である——承認
          *     （計画の合格・評価。pb-247・pb-248）が無いと進められない。
@@ -2799,6 +2799,44 @@ export interface paths {
          *     写して範囲だけ差し替えた版を、PM の承認済みとして作る。
          */
         post: operations["resumeDelegation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/delegation/withdraw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 委任を取り下げ、従来の実行モードへ戻す
+         * @description PM が委任を取り下げる（Delegation.md 4.3「取り下げ」、pb-281）。**必要権限は
+         *     `delegation.manage`**。MCP ツールは持たない。計画中・承認済・停止のどれからでも
+         *     行える。1つのトランザクションで、委任を `ended` に、根の `execution_mode` を
+         *     `execution_mode` で選んだ従来のモードに戻し、開いている確認待ちを `withdrawn` に
+         *     する。木の中の子チケットは残し、その `execution_mode` も変えない。根に
+         *     `kind=decision` のコメントを残す。取り下げた根では、もう一度委任を作れる。
+         */
+        post: operations["withdrawDelegation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3127,7 +3165,10 @@ export interface paths {
          *     ための集約専用のエンドポイントである。
          *
          *     **`{seq}` はどのチケットでもよい。** 委任の木の外なら
-         *     `in_delegation: false` だけを返す。`role` は9.1の表のとおり、
+         *     `in_delegation: false` だけを返す。**ただし、最新の委任が終了した根
+         *     （受け入れた・取り下げた）なら、`in_delegation: false` に
+         *     `status: ended` と `root_seq` を添える**——エージェントが「終了した」と
+         *     読んで止まれるように（Delegation.md 4.3「取り下げ」。pb-281）。`role` は9.1の表のとおり、
          *     呼び出し元（main・評価・その他）と対象（根・根以外の子孫）の
          *     組み合わせで決まる。`next_move` は `role` から計算した推奨
          *     （9.3。`POST .../handoff` の応答と同じ関数）。
@@ -12128,8 +12169,8 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["TicketNotFound"];
             /**
-             * @description このチケットには既に委任がある（`already_exists`。`root_ticket_id`
-             *     の一意制約）。
+             * @description このチケットには終了していない委任が既にある（`already_exists`。
+             *     `uq_delegation_root_active`）。
              */
             409: {
                 headers: {
@@ -12355,6 +12396,66 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["TicketNotFound"];
             /** @description 委任が停止していない／開いている確認待ちがある。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    withdrawDelegation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description 根を戻す先の実行モード。
+                     * @enum {string}
+                     */
+                    execution_mode: "human_only" | "agent_draft" | "agent_only";
+                    /** @description 取り下げる理由（任意）。根のコメントに載る。 */
+                    reason_md?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 取り下げた委任（`status: ended`）。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Delegation"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            /** @description 委任がすでに終了している。 */
             409: {
                 headers: {
                     [name: string]: unknown;

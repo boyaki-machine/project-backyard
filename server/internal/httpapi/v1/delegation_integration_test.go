@@ -19,7 +19,7 @@ import (
 // 単体テストはフェイクを差し替えるので queries/delegation.sql は一度も
 // 実行されない。**ここでしか確かめられないものが3つある。**
 //
-//   - **delegation_root_ticket_id_key が実在し、名前が一致すること**
+//   - **uq_delegation_root_active（0058）が実在し、名前が一致すること**
 //     （isUniqueViolation がこの名前で判定している。綴りがずれると 409 ではなく
 //     500 になる）
 //   - **GetActiveDelegationByMainActor / ListActiveDelegationsForProject の
@@ -116,7 +116,7 @@ func TestDelegationIntegration(t *testing.T) {
 		}
 	})
 
-	// **同じ根に2件目は 409。** delegation_root_ticket_id_key が実在し、
+	// **同じ根に終了していない2件目は 409。** uq_delegation_root_active が実在し、
 	// isUniqueViolation がその名前で判定していることをここで確かめる。
 	t.Run("同じ根への2件目は409", func(t *testing.T) {
 		rec := postWithCookie(r, delegationPath, session,

@@ -23,6 +23,7 @@ import {
   delegationStatusLabels,
   pauseDelegation,
   resumeDelegation,
+  withdrawDelegation,
   type DelegationConstraints,
   type DelegationStatus,
 } from '../api/delegation'
@@ -32,6 +33,7 @@ import { uiNumber, uiText } from '../locales/ui'
 import DelegationConstraintsEditor from './DelegationConstraintsEditor.vue'
 import DelegationResumeModal from './DelegationResumeModal.vue'
 import DelegationTextModal from './DelegationTextModal.vue'
+import DelegationWithdrawModal from './DelegationWithdrawModal.vue'
 
 const props = defineProps<{
   projectKey: string
@@ -188,6 +190,7 @@ async function copy(text: string): Promise<void> {
 
 const pauseOpen = ref(false)
 const resumeOpen = ref(false)
+const withdrawOpen = ref(false)
 
 const canEditConstraintsOnResume = computed(() => {
   const s = props.status
@@ -203,6 +206,20 @@ async function pause(reason: string): Promise<void> {
   try {
     await pauseDelegation(props.projectKey, props.seq, reason)
     pauseOpen.value = false
+    emit('changed')
+  } catch (e) {
+    actionError.value = delegationErrorText(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function withdraw(body: Parameters<typeof withdrawDelegation>[2]): Promise<void> {
+  busy.value = true
+  actionError.value = null
+  try {
+    await withdrawDelegation(props.projectKey, props.seq, body)
+    withdrawOpen.value = false
     emit('changed')
   } catch (e) {
     actionError.value = delegationErrorText(e)
@@ -330,6 +347,9 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
       </dl>
       <p v-if="actionError" class="field-error" role="alert">{{ actionError }}</p>
       <div v-if="canManage && state !== 'ended'" class="actions">
+        <button type="button" class="secondary" :disabled="busy" @click="withdrawOpen = true">
+          {{ $ui('自律実行をやめる…') }}
+        </button>
         <button
           v-if="state === 'paused'"
           type="button"
@@ -356,6 +376,13 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
     :error="actionError"
     @close="pauseOpen = false"
     @submit="pause"
+  />
+  <DelegationWithdrawModal
+    v-if="withdrawOpen"
+    :busy="busy"
+    :error="actionError"
+    @close="withdrawOpen = false"
+    @submit="withdraw"
   />
   <DelegationResumeModal
     v-if="resumeOpen && status"

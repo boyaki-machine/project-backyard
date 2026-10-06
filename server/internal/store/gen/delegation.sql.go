@@ -87,7 +87,7 @@ type CreateDelegationParams struct {
 // 「候補チケットが、ある根の木に属するか」は ticket.sql が既に持っている
 // （9.5.2 の parent_cycle 検出と同じ再帰）。ここで重ねて同じ CTE を書かない。
 // CreateDelegation は委任を1件作る（Delegation.md 4.4）。
-// **root_ticket_id は UNIQUE。** 同じ根に2件目の委任は作れない。
+// **終了していない委任は根ごとに1件**（uq_delegation_root_active。0058）。
 func (q *Queries) CreateDelegation(ctx context.Context, arg CreateDelegationParams) error {
 	_, err := q.db.Exec(ctx, createDelegation,
 		arg.ID,
@@ -208,6 +208,8 @@ const getDelegationByRootTicket = `-- name: GetDelegationByRootTicket :one
 SELECT id, status, scope, main_actor_id, evaluator_actor_id
 FROM delegation
 WHERE root_ticket_id = $1
+ORDER BY created_at DESC, id DESC
+LIMIT 1
 `
 
 type GetDelegationByRootTicketRow struct {
@@ -219,7 +221,8 @@ type GetDelegationByRootTicketRow struct {
 }
 
 // GetDelegationByRootTicket は根のチケットから委任を引く（pb-247）。
-// 1チケットにつき委任は1件（root_ticket_id が UNIQUE。4.4）。
+// **最新の1件を返す。** 取り下げた根では委任を作り直せる（0058。pb-281）ので、
+// 終了した委任が並ぶことがある。終了していない委任は根ごとに1件まで。
 func (q *Queries) GetDelegationByRootTicket(ctx context.Context, rootTicketID string) (GetDelegationByRootTicketRow, error) {
 	row := q.db.QueryRow(ctx, getDelegationByRootTicket, rootTicketID)
 	var i GetDelegationByRootTicketRow

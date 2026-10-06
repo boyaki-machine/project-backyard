@@ -114,6 +114,8 @@ const getDelegationForControl = `-- name: GetDelegationForControl :one
 SELECT id, status, scope, scope_version
 FROM delegation
 WHERE root_ticket_id = $1
+ORDER BY created_at DESC, id DESC
+LIMIT 1
 `
 
 type GetDelegationForControlRow struct {

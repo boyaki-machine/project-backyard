@@ -248,3 +248,18 @@ func (q *Queries) ListRecentAnsweredConfirmations(ctx context.Context, arg ListR
 	}
 	return items, nil
 }
+
+const withdrawOpenConfirmations = `-- name: WithdrawOpenConfirmations :execrows
+UPDATE confirmation SET status = 'withdrawn'
+WHERE delegation_id = $1 AND status = 'open'
+`
+
+// WithdrawOpenConfirmations は委任の取り下げで、開いている確認待ちを畳む
+// （Delegation.md 4.3「取り下げ」。pb-281）。答える人がいない問いを画面に残さない。
+func (q *Queries) WithdrawOpenConfirmations(ctx context.Context, delegationID string) (int64, error) {
+	result, err := q.db.Exec(ctx, withdrawOpenConfirmations, delegationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

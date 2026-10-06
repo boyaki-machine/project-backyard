@@ -124,6 +124,15 @@ export function resumeDelegation(
   return api.post<Delegation>(`${base(key, seq)}/delegation/resume`, body)
 }
 
+/** 自律実行をやめて、従来の実行モードへ戻す（Delegation.md 4.3「取り下げ」。pb-281） */
+export function withdrawDelegation(
+  key: string,
+  seq: number,
+  body: { execution_mode: 'human_only' | 'agent_draft' | 'agent_only'; reason_md?: string },
+): Promise<Delegation> {
+  return api.post<Delegation>(`${base(key, seq)}/delegation/withdraw`, body)
+}
+
 export function answerConfirmation(
   key: string,
   seq: number,

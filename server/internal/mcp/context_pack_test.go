@@ -851,3 +851,37 @@ func TestGetContextFoldsOnlyTheClausesThatApply(t *testing.T) {
 		t.Errorf("起きていない除外を書いている:\n%s", text)
 	}
 }
+
+// 最新の委任が終了した根では、パックに「終了」の節を出す（Delegation.md 4.3
+// 「取り下げ」。pb-281）。委任の外と取り違えると、main だったエージェントが
+// 通常のチケットとして作業を続けてしまう。
+func TestGetContextShowsEndedDelegation(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false,"status":"ended","root_seq":31}`},
+		{status: http.StatusOK, body: `{"items":[]}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+	for _, s := range []string{"## 6. 自律実行", "終了（委任の根：#31）", "ローカルの引き継ぎファイルを消して止まる"} {
+		if !strings.Contains(text, s) {
+			t.Errorf("パックに %q が無い:\n%s", s, text)
+		}
+	}
+}
+
+// 委任の外（終了の添え書きが無い）なら、自律実行の節を出さない。
+func TestGetContextOmitsDelegationOutsideTree(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
+		{status: http.StatusOK, body: `{"items":[]}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+	if strings.Contains(text, "自律実行\n") {
+		t.Errorf("委任の外なのに自律実行の節がある:\n%s", text)
+	}
+}

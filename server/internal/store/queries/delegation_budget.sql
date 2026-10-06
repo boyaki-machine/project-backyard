@@ -79,4 +79,6 @@ WHERE id = @id;
 -- name: GetDelegationForControl :one
 SELECT id, status, scope, scope_version
 FROM delegation
-WHERE root_ticket_id = @root_ticket_id;
+WHERE root_ticket_id = @root_ticket_id
+ORDER BY created_at DESC, id DESC
+LIMIT 1;

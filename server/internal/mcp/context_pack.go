@@ -215,6 +215,8 @@ func callGetContext(h *Handler, r *http.Request, key string, args json.RawMessag
 		if rpcErr != nil {
 			return toolResult{}, rpcErr
 		}
+	} else if delegStatus.Status == "ended" {
+		delegSection = renderEndedDelegationSection(delegStatus.RootSeq)
 	}
 
 	return textResult(renderContextPack(key, ticket, ch, delegSection)), nil
@@ -434,6 +436,16 @@ var delegationStatusLabels = map[string]string{
 }
 
 // renderDelegationSection は「6. 自律実行」節を組み立てる（9.1）。
+// renderEndedDelegationSection は、最新の委任が終了した根の節（Delegation.md 4.3
+// 「取り下げ」・11.4。pb-281）。main・評価だったエージェントが、委任の外と取り違えずに
+// 止まれるように、終了したことと、すること（書き込まない・ローカルのファイルを消す）を書く。
+func renderEndedDelegationSection(rootSeq int32) string {
+	return fmt.Sprintf("## 6. 自律実行\n\n"+
+		"- **主状態**：終了（委任の根：#%d）。PM が根を受け入れたか、自律実行を取り下げた\n\n"+
+		"**main・評価として呼ばれたなら、PB に書き込まず、ローカルの引き継ぎファイルを消して止まること。**"+
+		"実行モードが従来のものに戻っていれば取り下げであり、以後は通常のチケットとして扱われる。\n", rootSeq)
+}
+
 func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packDelegationStatus) (string, *rpcError) {
 	var b strings.Builder
 	b.WriteString("## 6. 自律実行\n\n")
