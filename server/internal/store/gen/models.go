@@ -566,6 +566,12 @@ type Ticket struct {
 	AllDay             bool
 }
 
+type TicketEffort struct {
+	TicketID    string
+	ManualHours bool
+	ManualPoint bool
+}
+
 type TicketLink struct {
 	ID             string
 	SourceTicketID string
@@ -684,6 +690,43 @@ type WebauthnChallenge struct {
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
 	CreatedAt  time.Time
+}
+
+type WorkAllocation struct {
+	SessionID string
+	TicketID  string
+	Share     float64
+}
+
+type WorkEvent struct {
+	ProjectID string
+	ActorID   string
+	RequestID string
+	SessionID string
+	Digest    string
+	Response  []byte
+	CreatedAt time.Time
+}
+
+type WorkSession struct {
+	ID               string
+	ProjectID        string
+	TicketID         string
+	ActorID          string
+	ClientKind       pgtype.Text
+	ModelName        pgtype.Text
+	ModelVersion     pgtype.Text
+	State            string
+	StartedAt        time.Time
+	ChangedAt        time.Time
+	EndedAt          *time.Time
+	ActiveMs         int64
+	WaitingMs        int64
+	ReportedActiveMs pgtype.Int8
+	Result           pgtype.Text
+	Tokens           pgtype.Int8
+	Note             string
+	Incomplete       bool
 }
 
 type Workflow struct {

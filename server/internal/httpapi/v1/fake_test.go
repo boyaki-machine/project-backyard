@@ -3507,3 +3507,16 @@ func (q *fakeQuerier) ListDelegationMarks(
 ) ([]gen.ListDelegationMarksRow, error) {
 	return nil, nil
 }
+
+func (q *fakeQuerier) MarkTicketEffortManual(context.Context, gen.MarkTicketEffortManualParams) error {
+	return nil
+}
+func (q *fakeQuerier) CountActorWorkRecords(context.Context, string) (int64, error) { return 0, nil }
+
+func (q *fakeQuerier) LockWorkProject(context.Context, string) error { return nil }
+
+func (q *fakeQuerier) ListWorkDeletionAffectedTickets(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
+func (q *fakeQuerier) EnsureTicketEffort(context.Context, string) error { return nil }

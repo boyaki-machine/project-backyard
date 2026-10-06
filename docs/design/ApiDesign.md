@@ -5682,3 +5682,15 @@ SHA-256 であり `app_secret` に依存しない（`DbDesign.md` 6.2）ので�
 - **`project_memberships[]` にプロジェクトの `status` を入れていない**（6.3）。アーカイブ済みのプロジェクトも含まれるが、画面がそれを区別できない。必要になったら 6.3 の改訂を先に出す
 - **2.5.1 の11コードの既定文言が実装側（`apierr.messages`）にしかない。** 文書に持たせるなら 2.5.1 に message 列を足す
 - 削除操作の監査における個人情報の保持期間（`audit_log.detail` と `actor_label` に残した表示名・メールをいつ消すか）
+
+## 共通作業タイマー
+
+GET `/api/v1/projects/:key/tickets/:seq/work-sessions`はticket.viewでページ付き記録と全件集計を返す。POST同パスはagent.runとticket.transitionで開始する。POST同パス`/:work_id/events`はpause/resume/finish/correct/restore_autoを処理する。時刻はRESTのエポックミリ秒で返す。要求のrequest_idは1〜128文字、noteは2000文字以内。再送は同内容なら同じ応答、別内容なら409。開始も200を返す。
+
+開始は所有者担当・未完了・委任の範囲/段階を確認する。allocationsは[{seq,share}]、正数合計1、最大50件、重複なし、開始元必須。複数配分には理由が必要。pauseはrunning、resumeはwaiting、finishは未終了だけから行う。pauseには理由、finishにはcompleted/partial/blockedの結果を指定する。tokensとreported_active_msは任意で非負、後者は経過時間以下とし取得元をnoteへ書く。incompleteは計測漏れの申告である。終了時は配分先の合計から実績時間とactual-v1のPointを自動保存する。これは任意の実績値を書き換えるPATCH権限の委譲ではなく、認可済み作業のサーバ算出結果である。
+
+訂正correctと手入力からの復帰restore_autoはticket.edit・ticket.actual_point.editを持つ人だけに許す。correctは終了済みに限定し、理由、任意の計測時間・tokens・配分を指定する。手入力値は維持され、restore_autoを明示した時だけ両欄を再計算に戻す。権限を持つ人は他者の開いた作業を理由付き・incomplete=trueで終了できる。通常操作は自分の作業のみ。終端処理でもAgentの所有者担当と委任の書込境界を検査する。
+
+summaryは終了済みの選択時間・経過・待機・token既知合計/欠測、未終了/不完全件数、自動候補と実績値・手入力状態を返す。GETのitemsは全件ではない。開いた記録は時間候補に加算しない。共通時間・Pointの定義はDesign.md 8.5.7に従う。既存レポートにwork_session_idを付けた場合は、当該チケットに配分された終了済み記録だけ（Agentは自身の記録に限定）を受け付け、実績集計で同じ消費を重ねて数えない。未紐付けレポートの自己申告時間は作業タイマーの代わりにはしない。
+
+過去のレポートは開始・待機の申告がないため自動で作業記録へ変換しない。根拠を確認した人が既存の実績欄に補記し、取得元をコメントに記録する。Agent種別の実績ページは従来の提出・評価コストを集計し、共通作業タイマーの集計とは別に表示する。

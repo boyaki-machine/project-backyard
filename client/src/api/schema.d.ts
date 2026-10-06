@@ -44,6 +44,154 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/tickets/{seq}/work-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                seq: number;
+            };
+            cookie?: never;
+        };
+        /**
+         * 共通作業記録と実績集計
+         * @description ticket.view が必要。終了済みの配分だけを集計する。
+         */
+        get: {
+            parameters: {
+                query?: {
+                    page?: number;
+                    per_page?: number;
+                };
+                header?: never;
+                path: {
+                    key: string;
+                    seq: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 作業記録と算出候補・手入力状態 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkSessionList"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        put?: never;
+        /**
+         * 共通作業タイマーを開始
+         * @description agent.run と ticket.transition が必要。Agentは所有者担当・委任境界を守る。同じPJ/Actorの開いた作業は1つ。
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    key: string;
+                    seq: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkStart"];
+                };
+            };
+            responses: {
+                /** @description 作業記録。同じrequest_id・内容の再送は同じ応答。 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkSession"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                /** @description 状態またはrequest_idが競合している */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                422: components["responses"]["ValidationFailed"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/work-sessions/{work_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                seq: number;
+                work_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 待機・再開・終了・訂正・自動算出への復帰
+         * @description agent.run と ticket.transition が必要。訂正・復帰は人のticket.editとticket.actual_point.editも必要。finishで実績欄を更新し、手入力を保持する。
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    key: string;
+                    seq: number;
+                    work_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkEvent"];
+                };
+            };
+            responses: {
+                /** @description 更新した作業記録 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkSession"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                /** @description 状態またはrequest_idが競合している */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                422: components["responses"]["ValidationFailed"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -3510,6 +3658,9 @@ export interface paths {
          * @description バックログのドラッグ&ドロップによる並べ替え（ApiDesign.md 9.4、GuiDesign.md 5.4）。
          *     **必要権限は `ticket.edit`**。
          *
+         *     エージェントと計画専用権限だけの呼び出し元は、同じ親・段の中で順序だけを変える。
+         *     staged・parent_seq の指定は422。スプリントへの所属を変えない。
+         *
          *     **`PATCH` で `sort_key` を直接書かせない。** LexoRank の桁生成規則をクライアントに
          *     持たせると、Web・MCP・将来の CLI がそれぞれ同じ規則を実装することになり、1つでも
          *     ずれると順序が壊れる。**順序キーの生成はサーバに1つだけ置く。**
@@ -6300,6 +6451,88 @@ export interface components {
             all_day?: boolean;
             status?: components["schemas"]["SprintStatus"];
         };
+        WorkAllocation: {
+            seq: number;
+            share: number;
+        };
+        WorkStart: {
+            request_id: string;
+            note?: string;
+            /** @description 合計1・重複なし。開始チケットを含む。共有時は配分理由必須。 */
+            allocations?: components["schemas"]["WorkAllocation"][];
+        };
+        WorkEvent: components["schemas"]["WorkStart"] & {
+            /** @enum {string} */
+            action: "pause" | "resume" | "finish" | "correct" | "restore_auto";
+            /** @enum {string} */
+            result?: "completed" | "partial" | "blocked";
+            /**
+             * Format: int64
+             * @description 取得元の稼働時間。省略またはnullならPB計時。訂正では省略・nullは変更しない。
+             */
+            reported_active_ms?: number | null;
+            /**
+             * Format: int64
+             * @description 取得できたトークン。0と不明を区別。訂正では省略・nullは変更しない。
+             */
+            tokens?: number | null;
+            incomplete?: boolean;
+        };
+        WorkSession: {
+            id: string;
+            /** @description 作業を開始したチケット番号 */
+            ticket_seq: number;
+            actor_id: string;
+            client_kind: string | null;
+            model_name: string | null;
+            model_version: string | null;
+            /** @enum {string} */
+            state: "running" | "waiting" | "finished";
+            /** Format: int64 */
+            started_at: number;
+            /** Format: int64 */
+            changed_at: number;
+            /** Format: int64 */
+            ended_at: number | null;
+            /** Format: int64 */
+            active_ms: number;
+            /** Format: int64 */
+            waiting_ms: number;
+            /** Format: int64 */
+            reported_active_ms: number | null;
+            result: string | null;
+            /** Format: int64 */
+            tokens: number | null;
+            note: string;
+            incomplete: boolean;
+            allocations: components["schemas"]["WorkAllocation"][];
+        };
+        WorkSummary: {
+            sessions_count: number;
+            open_count: number;
+            incomplete_count: number;
+            tokens_missing: number;
+            active_ms: number;
+            elapsed_ms: number;
+            waiting_ms: number;
+            tokens: number;
+            suggested_hours: number | null;
+            suggested_point: number | null;
+            /** @constant */
+            point_version: "actual-v1";
+            actual_hours: number | null;
+            actual_point: number | null;
+            actual_point_version: string | null;
+            manual_hours: boolean;
+            manual_point: boolean;
+        };
+        WorkSessionList: {
+            items: components["schemas"]["WorkSession"][];
+            total: number;
+            page: number;
+            per_page: number;
+            summary: components["schemas"]["WorkSummary"];
+        };
         /**
          * @description 完了レポートの本文（ApiDesign.md 9.15、Requirements.md 10.6.1）。
          *     **`task_id` を持たない**——チケットは URL が指す（9.1）。
@@ -6310,6 +6543,8 @@ export interface components {
          *     （`details[].field = "report"`、`code = "too_long"`）で、何も作らない。
          */
         SubmitTicketReportRequest: {
+            /** @description 終了済み・配分済みの共通作業記録への参照。実績の再加算は行わない。 */
+            work_session_id?: string;
             /**
              * @description 作業の結果。
              * @enum {string}

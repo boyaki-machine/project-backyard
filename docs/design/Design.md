@@ -1375,6 +1375,9 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 | `pb_get_task` / `pb_list_tasks` | `GET /projects/:key/tickets(/:seq)` | `ticket.view` |
 | `pb_list_comments` | `GET /projects/:key/tickets/:seq/comments` | `ticket.view` |
 | `pb_get_context` | **合成**（`GET /tickets/:seq` ＋ `GET /docs` ＋ `GET /docs/*path`。8.5.5） | `ticket.view` `doc.view` |
+| `pb_start_work` | `seq`, `request_id`, `note?`, `allocations?` | `POST /projects/:key/tickets/:seq/work-sessions` | 開始した作業記録（8.5.7） |
+| `pb_record_work` | `seq`, `work_id`, `request_id`, `action`, `result?`, `tokens?`, `reported_active_ms?`, `incomplete?`, `allocations?`, `note?` | `POST /projects/:key/tickets/:seq/work-sessions/:id/events` | 更新した作業記録（8.5.7） |
+| `pb_list_work` | `seq`, `page?`, `per_page?` | `GET /projects/:key/tickets/:seq/work-sessions` | 作業明細のページと実績集計（8.5.7） |
 | `pb_create_ticket` | `POST /projects/:key/tickets` | `ticket.create` |
 | `pb_update_ticket` | `PATCH /projects/:key/tickets/:seq` | **`ticket.self_edit`** |
 | `pb_put_dod` | `GET|POST|PATCH|DELETE /projects/:key/tickets/:seq/dod` | **`ticket.self_edit`** |
@@ -1910,6 +1913,25 @@ PB が持てる。**
 **委任の木全体を待つ形と「次の一手」は、委任の器（pb-246・pb-250）の後に足す。** いまは1件のチケットだけを待つ。
 
 ### 8.5.7 実績と計画
+
+**Agent共通の作業実績は、PBの作業タイマーで記録する。** 開始・待機・再開・終了を
+MCPまたはRESTから宣言し、PBの時刻を使って経過時間と明示された待機を除く作業時間を保存する。
+作業時間には調査・編集・検証・ツール待ちを含み、純粋なモデル推論時間とは異なる。
+実行基盤が計測した稼働時間があれば、取得元を添えて報告できる。計測漏れは不完全と表示する。
+チケットの状態遷移とは独立し、作業開始で盤面の状態を変更しない。
+
+同じAgentはPJ内で1件だけタイマーを開ける。共通作業は開始時に複数チケットへの配分を指定し、
+正の比率の合計を1とする。開始・各操作のrequest_idで再送を重複保存しない。
+終了済み作業の訂正は人が理由を添えて行う。追加作業・再オープン後の作業は新しいタイマーを作る。
+切断だけで終了時刻を推定しない。開いたタイマーは欠測として残り、人が終了・不完全を記録できる。
+
+終了時に配分後の作業時間を合計しactual_hoursへ、暫定Pointをactual_pointへ保存する。
+**actual-v1は時間ベースの暫定的な労力指標**である。基準30分に対し、0分は0、30分以下は1、
+60分以下は2、120分以下は3、240分以下は5、480分以下は8、960分以下は13、それを超えると21。
+境界は版に固定し、変更量ベースのactual-v0や将来のトークンベースの式とは混ぜない。
+トークンは任意の補助情報で、欠測は0にしない。手入力した時間・Pointは自動計算で上書きせず、
+権限を持つ人が明示的に自動計算へ戻せる。原データ・配分・モデル・訂正・不完全を保存し、
+見積もりで比較する時は同じ計測方式・モデル・算出式版を使う。並列作業の合計はPJの経過時間ではない。
 
 **エージェントの実績は、提出された記録から集計する。** 時間・トークン・ターン数は自己申告であり、未提出の作業は集計に含まれない。欠測は0と区別する。再提出はすべてコストに含め、チケット数は重複を除く。モデルは提出・評価時点の値を使う。
 

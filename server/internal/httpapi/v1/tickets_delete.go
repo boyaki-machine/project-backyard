@@ -47,6 +47,9 @@ func (h *handler) deleteTicket(w http.ResponseWriter, r *http.Request) {
 	var notFound *apierr.Error
 
 	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		if err := q.LockWorkProject(ctx, projectID); err != nil {
+			return err
+		}
 		// **削除の前に id を引く。** activity.entity_id はチケットの ULID で
 		// あり（seq ではない）、行が消えた後では引けない。
 		ticketID, err := q.FindTicketIDBySeq(ctx, gen.FindTicketIDBySeqParams{
@@ -72,6 +75,10 @@ func (h *handler) deleteTicket(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
+		affected, err := q.ListWorkDeletionAffectedTickets(ctx, ticketID)
+		if err != nil {
+			return err
+		}
 		rows, err := q.DeleteTicket(ctx, gen.DeleteTicketParams{
 			ProjectID: projectID, Seq: seq,
 		})
@@ -82,6 +89,11 @@ func (h *handler) deleteTicket(w http.ResponseWriter, r *http.Request) {
 			// 直前に id を引けているので、ここへ来るのは同時削除だけである。
 			notFound = ticketNotFound(seq)
 			return errTicketReference
+		}
+		for _, id := range affected {
+			if err := recalculateEffort(ctx, q, id); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

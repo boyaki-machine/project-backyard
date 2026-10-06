@@ -1986,7 +1986,8 @@ func reportTools() []tool {
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
-					"seq": {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
+					"work_session_id": {Type: "string", Description: "終了済み共通作業記録ID。紐付けだけを行い、再提出でも実績を加算しない"},
+					"seq":             {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
 					"status": {Type: "string", Enum: []string{"completed", "blocked", "partial"},
 						Description: "作業の結果。completed=やり切った / blocked=進められない / partial=一部だけ終わった"},
 					"artifacts": objectItems(

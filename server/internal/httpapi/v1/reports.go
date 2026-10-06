@@ -58,6 +58,7 @@ const runStatusCompleted = "completed"
 // **列に出す値だけを型で受ける。** 残りは json.RawMessage のまま report jsonb へ
 // 入れる——知らないキーも拒まず保存する（9.15）。
 type reportRequest struct {
+	WorkSessionID    string          `json:"work_session_id"`
 	Status           string          `json:"status"`
 	KnowledgeImpact  *string         `json:"knowledge_impact"`
 	Cost             *reportCost     `json:"cost"`
@@ -221,6 +222,30 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if req.WorkSessionID != "" {
+			work, err := q.GetWorkSession(ctx, gen.GetWorkSessionParams{ID: req.WorkSessionID, ProjectID: scope.projectID})
+			if errors.Is(err, pgx.ErrNoRows) {
+				forbidden = apierr.New(apierr.NotFound).WithMessage("作業記録が見つかりません")
+				return errTicketReference
+			}
+			if err != nil {
+				return err
+			}
+			allocations, err := q.ListWorkAllocations(ctx, work.ID)
+			if err != nil {
+				return err
+			}
+			allocated := false
+			for _, a := range allocations {
+				if a.TicketID == ticketID {
+					allocated = true
+				}
+			}
+			if !allocated || work.State != "finished" || (p.IsAgent() && work.ActorID != p.ActorID) {
+				forbidden = apierr.New(apierr.Forbidden).WithMessage("自身の終了した配分済み作業だけレポートへ紐付けできます")
+				return errTicketReference
+			}
+		}
 		run, err := buildAgentRun(ctx, q, runID, ticketID, p, req)
 		if err != nil {
 			return err
