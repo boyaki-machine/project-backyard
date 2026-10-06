@@ -1414,6 +1414,8 @@ ON CONFLICT DO NOTHING;
 
 **DoD は `body` の追加・編集・削除までで、`is_satisfied` は開けない**（`ApiDesign.md` 9.9）。**`pb_submit_result` が「盤面を動かさない」と決めた判断と正面からぶつかる**ためで、完了の判定は人が行う。
 
+`ticket.plan.edit` は依存・順序・開始と終了予定を変更する権限である。`administrator` と `project_admin` に配り、エージェントには発行時に追加できる。通常の編集や委任管理には使えない（`Design.md` 8.5.7）。
+
 **0044 の `ticket.actual_point.edit` は実績ポイントと算出式の版だけを更新する追加権限である。** `project_admin` と `administrator` に配り、PM のエージェントは発行時にこの scope を選べる。通常の `ticket.self_edit` や `ticket.edit` だけでは書けない。2項目は対で更新し、DB の CHECK で非負値と `actual-v<番号>` の版を保証する。
 
 **0044 は既存の reference コメント「実績 v0（たたき台）」の JSON から移す。** `method = actual-v0` と数値の `point` を採り、`point = null` は空欄のまま残す。stg で移行前に123件を確認し、114件が数値、9件が null だった。コメントは根拠として保持する。

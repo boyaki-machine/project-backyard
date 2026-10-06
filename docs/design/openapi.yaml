@@ -3325,7 +3325,8 @@ paths:
       operationId: updateTicket
       description: |
         部分更新（ApiDesign.md 9.5.2）。**必要権限は `ticket.edit` または
-        `ticket.self_edit`。ただし `assignee_id` / `working_agent_id` を変える場合は
+        `ticket.self_edit`。`ticket.plan.edit` だけを持つ場合は start_at・due_at・all_day のみ変更できる。
+        ただし `assignee_id` / `working_agent_id` を変える場合は
         `ticket.assign` も必要**——この追加分だけはリクエスト本文の内容で決まるため、
         ルート定義の宣言ではなくハンドラ内で見ている。
 
@@ -4145,7 +4146,7 @@ paths:
       summary: 関連チケットの追加
       operationId: createTicketLink
       description: |
-        リンクを1件足す（ApiDesign.md 9.10.1）。**必要権限は `ticket.edit`**。
+        リンクを1件足す（ApiDesign.md 9.10.1）。**必要権限は `ticket.edit` または `ticket.plan.edit`**。
 
         **当該チケットが常に `source` になる。** `incoming` の行を直接作る手段は
         置かない——相手側のチケットから `outgoing` として作れば同じ行になる。
@@ -4209,7 +4210,7 @@ paths:
       summary: 依存のずらし（lag_days）の変更
       operationId: updateTicketLink
       description: |
-        ずらし（`lag_days`）だけを変える（ApiDesign.md 9.10.1。pb-231）。**必要権限は `ticket.edit`**。
+        ずらし（`lag_days`）だけを変える（ApiDesign.md 9.10.1。pb-231）。**必要権限は `ticket.edit` または `ticket.plan.edit`**。
 
         **`FS` / `SS` / `FF` / `SF` のときだけ受ける**（ほかの種別は 422 `invalid`）。範囲は -365〜365。
         **`lag_days` 以外を送ると 422 `immutable_field`**——`link_type` と相手は変えられない。
@@ -4244,7 +4245,7 @@ paths:
       summary: 関連チケットの削除
       operationId: deleteTicketLink
       description: |
-        リンクを1件消す（ApiDesign.md 9.10.1）。**必要権限は `ticket.edit`**。
+        リンクを1件消す（ApiDesign.md 9.10.1）。**必要権限は `ticket.edit` または `ticket.plan.edit`**。
 
         **`direction` を問わない。** `incoming` の行——相手のチケットが `source` で
         ある行——もここから消せる。GuiDesign.md 5.5 が両方を同じリストに並べる
@@ -5411,7 +5412,10 @@ paths:
       operationId: moveTicket
       description: |
         バックログのドラッグ&ドロップによる並べ替え（ApiDesign.md 9.4、GuiDesign.md 5.4）。
-        **必要権限は `ticket.edit`**。
+        **必要権限は `ticket.edit` または `ticket.plan.edit`**。
+
+        エージェントと計画専用権限だけの呼び出し元は、同じ親・段の中で順序だけを変える。
+        staged・parent_seq の指定は422。スプリントへの所属を変えない。
 
         **`PATCH` で `sort_key` を直接書かせない。** LexoRank の桁生成規則をクライアントに
         持たせると、Web・MCP・将来の CLI がそれぞれ同じ規則を実装することになり、1つでも

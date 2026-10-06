@@ -999,13 +999,13 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 
 **画面は既定と許可リストを 4.5.9 から引く**。`scopes` が絶対指定なので、「既定に `doc.edit` を足す」を送るには既定の中身が要るが、**画面に写しを持たせない。**
 
-**許可リストは「6.5 の既定10件 ∪ `doc.edit` ∪ `ticket.actual_point.edit`」の12件である。**
+**許可リストは、既定10件と任意の追加4件である。** 追加できるのは `doc.edit`・`ticket.actual_point.edit`・`delegation.evaluate`・`ticket.plan.edit`。所有者自身の権限も必要である。
 
 ```
 agent.run  comment.create  doc.view  project.view
 ticket.assign  ticket.create  ticket.transition  ticket.view
 ticket.reference.edit  ticket.self_edit                         ← 既定の10件
-doc.edit  ticket.actual_point.edit                              ← 発行時に足せる
+doc.edit  ticket.actual_point.edit  delegation.evaluate  ticket.plan.edit ← 任意の追加
 ```
 
 **`ticket.self_edit` も既定に入れる**。`ticket.reference.edit` と同じ理由である——**起票したチケットを直すのは実装エージェントの通常の仕事**であり、付く相手で変わらない。**`ticket.edit` は許可リストに入れない**。あれは 9.5.2 の全項目を開けるので、**エージェントが `execution_mode` や `scope` を自分で緩められる**（`DbDesign.md` 6.13）。
@@ -3004,7 +3004,9 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 
 ## 9.4 `POST /api/v1/projects/:key/tickets/:seq/move`
 
-**必要権限**：`ticket.edit`
+**必要権限**：`ticket.edit` または `ticket.plan.edit`
+
+`ticket.plan.edit` のみの呼び出し元とエージェントは、同じ親・段の中で順序だけを変更できる。`staged`・`parent_seq` の指定は422。`first`・`last` は同じ親・段の先頭・末尾を指す。スプリントへの所属を変えない。委任の制約は `Design.md` 8.5.7 に従う。
 
 バックログのドラッグ&ドロップによる並べ替えと、メニュー・複数選択によるオンステージ移動（`GuiDesign.md` 5.4、pb-272）。
 
@@ -3137,7 +3139,7 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 ### 9.5.2 `PATCH`
 
-**必要権限**：`ticket.edit`。ただし `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要
+**必要権限**：`ticket.edit` または `ticket.self_edit`。`ticket.plan.edit` だけを持つ場合は `start_at`・`due_at`・`all_day` のみ変更できる。ただし `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要
 
 **`ticket.self_edit` でも通る**（0029）。ただし**開けるのは下の絞り込んだ集合だけ**で、それ以外の項目を送ると `403` になる。**エージェントに渡す権限であり、自分の縛りを緩められては意味がない**（`DbDesign.md` 6.13）。
 
@@ -3702,7 +3704,7 @@ GET|POST     /api/v1/projects/:key/tickets/:seq/links
 PATCH|DELETE /api/v1/projects/:key/tickets/:seq/links/:id
 ```
 
-**必要権限**：`GET` は `ticket.view`、更新系は `ticket.edit`
+**必要権限**：`GET` は `ticket.view`、更新系は `ticket.edit` または `ticket.plan.edit`
 
 ```json
 { "target_seq": 12, "link_type": "blocks", "lag_days": 0 }
@@ -3811,6 +3813,8 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/links/:id
 **操作したチケット側に1行だけ書き、相手のチケットの履歴には書かない**——1回の操作で
 2行増えると、ダッシュボードの「最近の動き」で同じ出来事が二重に見える。
 `direction` を要約に含めないのも同じ理由で、**読み手はそのチケットの履歴を見ている。**
+
+エージェントが委任の中で依存を変更する場合は、両端が承認されたmainの範囲に含まれる必要がある。停止中・終了済み・確認待ちでは変更できない（`Design.md` 8.5.7）。
 
 ### 9.10.2 外部参照
 

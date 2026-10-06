@@ -516,6 +516,8 @@ export const uiMessages: Record<string, string> = {
   "実績(point)": "Actual (points)",
   "終了": "End",
   "算出式の版": "Calculation version",
+  "依存・順序・日程の変更を許す": "Allow changing dependencies, order and dates",
+  "承認した計画を反映するエージェントに追加します。": "Add this for an agent that applies an approved plan.",
   "実績ポイントの記録を許す": "Allow recording actual points",
   "日本語": "Japanese",
   "タイムゾーン": "Timezone",

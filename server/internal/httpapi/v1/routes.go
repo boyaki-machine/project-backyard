@@ -368,7 +368,7 @@ func Mount(r chi.Router, deps Deps) {
 			Get("/projects/{key}/tickets", h.listTickets)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
 			Post("/projects/{key}/tickets", h.createTicket)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries, "ticket.edit", "ticket.plan.edit")).
 			Post("/projects/{key}/tickets/{seq}/move", h.moveTicket)
 
 		// ── チケット1件（ApiDesign.md 9.5 / 9.6 / 9.7。手順17a）─────
@@ -395,7 +395,7 @@ func Mount(r chi.Router, deps Deps) {
 		// ——どの項目を送ったかで可否が決まるので、6.4.4 の宣言では表せない
 		// （9.8 のコメント削除に続く2例目の OR）。
 		r.With(middleware.RequireAnyProjectPermission(deps.Queries,
-			"ticket.edit", "ticket.self_edit")).
+			"ticket.edit", "ticket.self_edit", "ticket.plan.edit")).
 			Patch("/projects/{key}/tickets/{seq}", h.updateTicket)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.delete")).
 			Delete("/projects/{key}/tickets/{seq}", h.deleteTicket)
@@ -563,11 +563,11 @@ func Mount(r chi.Router, deps Deps) {
 		// である以上、link_type の変更は別の行になるのと同じで、消して作り直す。
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}/links", h.listTicketLinks)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries, "ticket.edit", "ticket.plan.edit")).
 			Post("/projects/{key}/tickets/{seq}/links", h.createTicketLink)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries, "ticket.edit", "ticket.plan.edit")).
 			Patch("/projects/{key}/tickets/{seq}/links/{id}", h.updateTicketLink)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries, "ticket.edit", "ticket.plan.edit")).
 			Delete("/projects/{key}/tickets/{seq}/links/{id}", h.deleteTicketLink)
 
 		// ── プロジェクト文書（ApiDesign.md 10章）── 手順22a ───────

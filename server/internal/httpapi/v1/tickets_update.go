@@ -207,6 +207,11 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("チケット %d を読めない: %w", seq, err)
 		}
 
+		if patch.StartAt.Set || patch.DueAt.Set || patch.AllDay.Set {
+			if writeErr = planningWriteProblem(ctx, q, r, projectID, before.ID); writeErr != nil {
+				return errTicketReference
+			}
+		}
 		params, e := h.resolveTicketPatch(ctx, q, projectID, seq, before, patch, version, p)
 		if e != nil {
 			writeErr = e
@@ -1036,6 +1041,17 @@ func denySelfEditFields(r *http.Request, key string, raw updateTicketRequest) *a
 		return nil
 	}
 
+	if !auth.HasPermission(a.Permissions, permTicketSelfEdit) {
+		if !auth.HasPermission(a.Permissions, "ticket.plan.edit") {
+			return apierr.New(apierr.Forbidden)
+		}
+		for field := range raw {
+			if field != "start_at" && field != "due_at" && field != "all_day" {
+				return apierr.New(apierr.Forbidden).WithMessage("計画専用権限では開始・終了予定だけを変更できます")
+			}
+		}
+		return nil
+	}
 	var denied []string
 	for _, field := range selfEditDeniedFields {
 		if _, ok := raw[field]; ok {

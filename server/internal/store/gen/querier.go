@@ -905,6 +905,9 @@ type Querier interface {
 	// **decided_by が NULL なのは PB が反映した版**（評価の合格・軽微）。PM が承認した
 	// 版（初版・範囲の変更）は PM 自身の判断なので、異議の対象にしない。
 	GetPlanForObjection(ctx context.Context, arg GetPlanForObjectionParams) (GetPlanForObjectionRow, error)
+	// 計画の変更対象と委任の境界。Delegation.md 5章。
+	GetPlanningDelegation(ctx context.Context, arg GetPlanningDelegationParams) (GetPlanningDelegationRow, error)
+	GetPlanningPosition(ctx context.Context, arg GetPlanningPositionParams) (GetPlanningPositionRow, error)
 	// GetPreviousAcceptedDelegationPlan は、ある版より前で最後に反映された版を読む
 	// （6.4「その版の前の版」。間に却下・置き換えの版があっても飛ばす）。
 	GetPreviousAcceptedDelegationPlan(ctx context.Context, arg GetPreviousAcceptedDelegationPlanParams) (int32, error)
@@ -1391,6 +1394,7 @@ type Querier interface {
 	// / …）。GuiDesign.md 5.6.3 がカテゴリで行を区切れるのはこのためである。
 	//
 	ListPermissions(ctx context.Context) ([]Permission, error)
+	ListPlanningSiblings(ctx context.Context, arg ListPlanningSiblingsParams) ([]ListPlanningSiblingsRow, error)
 	// 5.8.5 の override。期間は [from, to)。
 	ListProjectCalendarDays(ctx context.Context, arg ListProjectCalendarDaysParams) ([]ListProjectCalendarDaysRow, error)
 	// 5.8.5 の events。期間は [from, to)。
