@@ -1025,6 +1025,9 @@ type Querier interface {
 	// HasAnsweredConfirmation は「次の一手」の判定に使う（9.3「ヒアリングに
 	// 答えが付いた」「確認待ちに答えが付いた」）。
 	HasAnsweredConfirmation(ctx context.Context, arg HasAnsweredConfirmationParams) (bool, error)
+	// HasDelegatedChild は、エピックの種別を変えるときに、直下に自律実行の根が無いかを
+	// 見る（pb-282）。根の親はエピックに限るので、エピックでなくなると根の条件が崩れる。
+	HasDelegatedChild(ctx context.Context, parentID pgtype.Text) (bool, error)
 	// HasOpenConfirmation は5章「確認待ち（どの主状態でも）」の関門を判定する
 	// （4.3「関門は列に持たず、開いている確認待ちから導く」）。
 	//

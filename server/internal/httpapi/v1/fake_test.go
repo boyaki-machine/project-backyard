@@ -471,6 +471,9 @@ type fakeQuerier struct {
 
 	// 最近の回答（pb-278）。
 	recentAnswered []gen.ListRecentAnsweredConfirmationsRow
+
+	// エピックの直下の根（pb-282）。key: 親のチケット id
+	delegatedChildOf map[string]bool
 }
 
 // GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
@@ -3490,4 +3493,9 @@ func (q *fakeQuerier) ListRecentAnsweredConfirmations(
 ) ([]gen.ListRecentAnsweredConfirmationsRow, error) {
 	q.opLog = append(q.opLog, "ListRecentAnsweredConfirmations")
 	return q.recentAnswered, nil
+}
+
+func (q *fakeQuerier) HasDelegatedChild(_ context.Context, parentID pgtype.Text) (bool, error) {
+	q.opLog = append(q.opLog, "HasDelegatedChild")
+	return q.delegatedChildOf[parentID.String], nil
 }

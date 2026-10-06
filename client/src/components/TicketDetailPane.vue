@@ -236,10 +236,16 @@ const delegated = computed(() => ticket.value?.execution_mode === 'delegated')
  * **選んだだけでは保存しない**——main と評価と制約が揃って初めて始められる
  */
 const delegationSetupOpen = ref(false)
-/** 自律実行を選べるのは親を持たないチケットだけ（Delegation.md 4.1） */
-const canChooseDelegation = computed(
-  () => canManageDelegation.value && ticket.value !== null && !ticket.value.parent,
+/**
+ * 自律実行の根にできる親か（Delegation.md 4.1。pb-282）。**親が無いか、親がエピック。**
+ * エピックへの所属は親として持つ（5.5「エピック欄」）ので、エピックの直下を除くと
+ * エピックに属するチケットを自律実行にできない。親のエピックが別の自律実行の中に
+ * あるとき（入れ子）はサーバが 422 で拒み、入力欄の下に理由が出る
+ */
+const delegationParentOK = computed(
+  () => ticket.value !== null && (!ticket.value.parent || ticket.value.parent.type === 'epic'),
 )
+const canChooseDelegation = computed(() => canManageDelegation.value && delegationParentOK.value)
 const delegation = useDelegationStatus(
   computed(() => props.projectKey),
   computed(() => props.seq),
@@ -1823,8 +1829,8 @@ defineExpose({
                   {{ executionModeLabels.delegated }}{{
                     canChooseDelegation
                       ? ''
-                      : ticket.parent
-                        ? $ui('（親を持たないチケットだけ）')
+                      : !delegationParentOK
+                        ? $ui('（親を持たないか、エピックの直下のチケットだけ）')
                         : $ui('（権限がありません）')
                   }}
                 </option>
