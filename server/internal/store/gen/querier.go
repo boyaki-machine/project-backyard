@@ -1208,6 +1208,12 @@ type Querier interface {
 	// （Design.md 6.7.3）。**どの認証器で通るかは分からない**ので、
 	// 確定済みを全部返して順に試す（1人5件までなので許容できる）。
 	ListConfirmedMfaSecrets(ctx context.Context, userID string) ([]ListConfirmedMfaSecretsRow, error)
+	// ListDelegationEvaluations は評価記録の一覧（新しい順。Delegation.md 7.3。pb-274）。
+	// 評価者と main の種類・モデルは評価の時点の写し（4.4）。
+	ListDelegationEvaluations(ctx context.Context, delegationID string) ([]ListDelegationEvaluationsRow, error)
+	// ListDelegationPlans は計画の版の一覧（新しい順。Delegation.md 6.2。pb-274）。
+	// 各版に、直近の評価の合否と、異議の判定に要る合格の評価（6.4）を添える。
+	ListDelegationPlans(ctx context.Context, delegationID string) ([]ListDelegationPlansRow, error)
 	// ListDocumentBodies は ?outline=1（10.2）のためだけに本文を読む。
 	//
 	// **応答には本文を載せない。** 見出し一覧は本文から作るので読む必要があるが、

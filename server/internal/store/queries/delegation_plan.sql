@@ -142,3 +142,29 @@ SELECT version FROM delegation_plan
 WHERE delegation_id = @delegation_id AND status = 'accepted' AND version < @version
 ORDER BY version DESC
 LIMIT 1;
+
+-- ListDelegationPlans は計画の版の一覧（新しい順。Delegation.md 6.2。pb-274）。
+-- 各版に、直近の評価の合否と、異議の判定に要る合格の評価（6.4）を添える。
+-- name: ListDelegationPlans :many
+SELECT
+  p.id, p.version, p.scope, p.skeleton, p.body_md, p.reason_md,
+  p.declared_class, p.measured_class, p.status, p.reverts_to,
+  p.submitted_at, p.decided_at,
+  sa.id AS submitted_by_id, sa.kind AS submitted_by_kind, sa.display_name AS submitted_by_name,
+  da.id AS decided_by_id, da.kind AS decided_by_kind, da.display_name AS decided_by_name,
+  COALESCE(le.verdict, '')::text AS latest_verdict,
+  COALESCE(pe.id, '')::text AS pass_evaluation_id, pe.objected_at AS pass_objected_at
+FROM delegation_plan p
+JOIN actor sa ON sa.id = p.submitted_by
+LEFT JOIN actor da ON da.id = p.decided_by
+LEFT JOIN LATERAL (
+  SELECT ev.verdict FROM evaluation ev WHERE ev.plan_id = p.id
+  ORDER BY ev.created_at DESC LIMIT 1
+) le ON true
+LEFT JOIN LATERAL (
+  SELECT ev.id, ev.objected_at FROM evaluation ev
+  WHERE ev.plan_id = p.id AND ev.verdict = 'pass'
+  ORDER BY ev.created_at DESC LIMIT 1
+) pe ON true
+WHERE p.delegation_id = @delegation_id
+ORDER BY p.version DESC;

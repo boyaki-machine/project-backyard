@@ -215,4 +215,83 @@ func TestDelegationObjectionIntegration(t *testing.T) {
 			t.Fatalf("status = %d, want 409（body=%s）", rec.Code, rec.Body.String())
 		}
 	})
+
+	// ── 一覧（pb-274）：版と評価を新しい順に返し、異議の判定を添える ──
+	t.Run("版の一覧は新しい順で、異議を出した版は objectable でない", func(t *testing.T) {
+		v1x := submit(t, `{"branches":[{"name":"演習","budget_share":0.2},{"name":"模試","budget_share":0.2},{"name":"面接","budget_share":0.2},{"name":"小論文","budget_share":0.4}]}`, "小論文を足す")
+		pass(t, v1x)
+		rec := getWithCookie(r, ticketPath+"/plans", session)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		var got struct {
+			Items []struct {
+				Version        int     `json:"version"`
+				Status         string  `json:"status"`
+				RevertsTo      *int    `json:"reverts_to"`
+				LatestVerdict  *string `json:"latest_verdict"`
+				PassObjectedAt *int64  `json:"pass_objected_at"`
+				Objectable     bool    `json:"objectable"`
+			} `json:"items"`
+		}
+		decodeJSONBody(t, rec, &got)
+		if len(got.Items) != v1x || got.Items[0].Version != v1x {
+			t.Fatalf("件数 = %d・先頭 = v%d, want %d・v%d", len(got.Items), got.Items[0].Version, v1x, v1x)
+		}
+		want := map[int]bool{v1x: true, 4: false, 2: false, 1: false, 5: false}
+		for _, it := range got.Items {
+			if w, ok := want[it.Version]; ok && it.Objectable != w {
+				t.Errorf("v%d objectable = %v, want %v", it.Version, it.Objectable, w)
+			}
+			if it.Version == 2 && it.PassObjectedAt == nil {
+				t.Errorf("v2 の pass_objected_at が無い")
+			}
+			if it.Version == 3 && (it.RevertsTo == nil || *it.RevertsTo != 1) {
+				t.Errorf("v3 reverts_to = %v, want 1", it.RevertsTo)
+			}
+		}
+	})
+
+	t.Run("評価の一覧は新しい順で、異議と評価者を返す", func(t *testing.T) {
+		rec := getWithCookie(r, ticketPath+"/evaluations", session)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		var got struct {
+			Items []struct {
+				PlanVersion *int   `json:"plan_version"`
+				Verdict     string `json:"verdict"`
+				ObjectedAt  *int64 `json:"objected_at"`
+				Evaluator   struct {
+					DisplayName string `json:"display_name"`
+				} `json:"evaluator"`
+				EvaluatorModel struct {
+					ClientKind *string `json:"client_kind"`
+				} `json:"evaluator_model"`
+			} `json:"items"`
+		}
+		decodeJSONBody(t, rec, &got)
+		if len(got.Items) != 4 || got.Items[0].PlanVersion == nil || *got.Items[0].PlanVersion != 6 {
+			t.Fatalf("items = %+v, want 4件で先頭は第6版の評価", got.Items)
+		}
+		objected := 0
+		for _, it := range got.Items {
+			if it.ObjectedAt != nil {
+				objected++
+			}
+			if it.Evaluator.DisplayName != "evaluator" || it.EvaluatorModel.ClientKind == nil {
+				t.Errorf("評価者 = %q / client_kind = %v", it.Evaluator.DisplayName, it.EvaluatorModel.ClientKind)
+			}
+		}
+		if objected != 2 {
+			t.Errorf("異議の立った評価 = %d 件, want 2", objected)
+		}
+	})
+
+	t.Run("根でないチケットは422", func(t *testing.T) {
+		other, _ := createIntegrationTicket(t, r, session, base, "根ではない")
+		if rec := getWithCookie(r, fmt.Sprintf("%s/tickets/%d/plans", base, other), session); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422（body=%s）", rec.Code, rec.Body.String())
+		}
+	})
 }

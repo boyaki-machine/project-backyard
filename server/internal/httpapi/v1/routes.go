@@ -542,6 +542,11 @@ func Mount(r chi.Router, deps Deps) {
 			Post("/projects/{key}/tickets/{seq}/handoff", h.updateHandoff)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}/delegation-status", h.getDelegationStatus)
+		// 計画の版と評価記録の一覧（Delegation.md 6.2・7.3）。pb-274。読むのは全員（5章）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/plans", h.listDelegationPlans)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/evaluations", h.listDelegationEvaluations)
 
 		// ── チケット間リンク（ApiDesign.md 9.10.1）── 手順18a ─────
 		//

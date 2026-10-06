@@ -5027,6 +5027,91 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/tickets/{seq}/plans:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+    get:
+      tags: [tickets]
+      summary: 計画の版の一覧
+      operationId: listDelegationPlans
+      description: |
+        委任の根の、最新の委任の計画の版を新しい順に返す（Delegation.md 6.2、
+        pb-274）。**必要権限は `ticket.view`**（5章「読む：全員」）。終了した
+        委任も読める。各版に直近の評価の合否と、PM が異議を出せるか
+        （`objectable`。6.4、pb-275）を添える。
+      responses:
+        '200':
+          description: 新しい順の一覧。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DelegationPlanHistoryItem'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '422':
+          description: このチケットは自律実行の根ではない。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/tickets/{seq}/evaluations:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+    get:
+      tags: [tickets]
+      summary: 評価記録の一覧
+      operationId: listDelegationEvaluations
+      description: |
+        委任の根の、最新の委任の評価記録を新しい順に返す（Delegation.md 7.3、
+        pb-274）。**必要権限は `ticket.view`**。評価者と main の種類・モデルは
+        評価の時点の写し。
+      responses:
+        '200':
+          description: 新しい順の一覧。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DelegationEvaluationHistoryItem'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '422':
+          description: このチケットは自律実行の根ではない。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/tickets/{seq}/delegation-status:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -9922,6 +10007,90 @@ components:
           type: integer
           format: int64
           nullable: true
+
+    DelegationPlanHistoryItem:
+      description: |
+        計画の版の一覧の1件（pb-274）。`DelegationPlan` に評価と異議の判定を添える。
+      allOf:
+        - $ref: '#/components/schemas/DelegationPlan'
+        - type: object
+          required: [latest_verdict, pass_objected_at, objectable]
+          properties:
+            latest_verdict:
+              description: この版への直近の評価の合否。評価が無ければ null。
+              oneOf:
+                - type: string
+                  enum: [pass, fail, unable]
+                - type: 'null'
+            pass_objected_at:
+              description: 合格の評価に PM が異議を出した時刻（エポックミリ秒）。無ければ null。
+              oneOf:
+                - type: integer
+                  format: int64
+                - type: 'null'
+            objectable:
+              type: boolean
+              description: PM が異議を出せるか（評価が合格させて PB が反映した構造の変更で、まだ異議が無い）。
+
+    DelegationEvaluationHistoryItem:
+      description: |
+        評価記録の一覧の1件（Delegation.md 7.3、pb-274）。
+      type: object
+      required: [id, target_kind, plan_version, round, verdict, findings, class_check,
+                 tokens_used, objected_at, created_at, evaluator, evaluator_model, main_model]
+      properties:
+        id:
+          type: string
+        target_kind:
+          type: string
+          enum: [plan, deliverable]
+        plan_version:
+          oneOf:
+            - type: integer
+            - type: 'null'
+        round:
+          type: integer
+        verdict:
+          type: string
+          enum: [pass, fail, unable]
+        findings:
+          description: 観点ごとの判定と指摘の配列（7.3）。
+        class_check:
+          oneOf:
+            - type: string
+              enum: [agree, stricter, looser]
+            - type: 'null'
+        tokens_used:
+          oneOf:
+            - type: integer
+              format: int64
+            - type: 'null'
+        objected_at:
+          oneOf:
+            - type: integer
+              format: int64
+            - type: 'null'
+        created_at:
+          type: integer
+          format: int64
+        evaluator:
+          $ref: '#/components/schemas/ActorRef'
+        evaluator_model:
+          $ref: '#/components/schemas/ModelSnapshot'
+        main_model:
+          $ref: '#/components/schemas/ModelSnapshot'
+
+    ModelSnapshot:
+      description: 評価の時点のエージェントの種類とモデル（Delegation.md 4.4 の写し）。
+      type: object
+      required: [client_kind, model_name, model_version]
+      properties:
+        client_kind:
+          oneOf: [{type: string}, {type: 'null'}]
+        model_name:
+          oneOf: [{type: string}, {type: 'null'}]
+        model_version:
+          oneOf: [{type: string}, {type: 'null'}]
 
     DelegationHandoff:
       description: |
