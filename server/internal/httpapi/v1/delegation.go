@@ -30,9 +30,9 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
 )
 
-// uqDelegationRootTicket は delegation.root_ticket_id の一意制約名
-// （Postgres の既定の命名: `<table>_<column>_key`）。
-const uqDelegationRootTicket = "delegation_root_ticket_id_key"
+// uqDelegationRootTicket は「終了していない委任は根ごとに1件」の部分一意索引の名前
+// （0058。pb-281。取り下げた根では委任を作り直せる）。
+const uqDelegationRootTicket = "uq_delegation_root_active"
 
 // delegationView は委任1件の応答（Delegation.md 4.4）。
 type delegationView struct {
@@ -159,7 +159,7 @@ func (h *handler) createDelegation(w http.ResponseWriter, r *http.Request) {
 		return
 	case conflict:
 		apierr.Write(w, r, apierr.New(apierr.AlreadyExists).
-			WithMessage("このチケットには既に委任があります").
+			WithMessage("このチケットは既に自律実行の途中です").
 			WithDetails(apierr.Detail{Field: "seq", Code: "already_exists"}))
 		return
 	case err != nil:

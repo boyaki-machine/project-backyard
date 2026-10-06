@@ -312,7 +312,7 @@ type Querier interface {
 	// 「候補チケットが、ある根の木に属するか」は ticket.sql が既に持っている
 	// （9.5.2 の parent_cycle 検出と同じ再帰）。ここで重ねて同じ CTE を書かない。
 	// CreateDelegation は委任を1件作る（Delegation.md 4.4）。
-	// **root_ticket_id は UNIQUE。** 同じ根に2件目の委任は作れない。
+	// **終了していない委任は根ごとに1件**（uq_delegation_root_active。0058）。
 	CreateDelegation(ctx context.Context, arg CreateDelegationParams) error
 	// CreateDelegationHandoff は引き継ぎノートを1件作る（11.1）。
 	CreateDelegationHandoff(ctx context.Context, arg CreateDelegationHandoffParams) error
@@ -815,7 +815,8 @@ type Querier interface {
 	// GetDelegationByID は作成直後の応答の組み立てに使う。
 	GetDelegationByID(ctx context.Context, id string) (GetDelegationByIDRow, error)
 	// GetDelegationByRootTicket は根のチケットから委任を引く（pb-247）。
-	// 1チケットにつき委任は1件（root_ticket_id が UNIQUE。4.4）。
+	// **最新の1件を返す。** 取り下げた根では委任を作り直せる（0058。pb-281）ので、
+	// 終了した委任が並ぶことがある。終了していない委任は根ごとに1件まで。
 	GetDelegationByRootTicket(ctx context.Context, rootTicketID string) (GetDelegationByRootTicketRow, error)
 	// GetDelegationForControl は停止・再開の判定に要る列を読む（pb-253）。
 	GetDelegationForControl(ctx context.Context, rootTicketID string) (GetDelegationForControlRow, error)
@@ -2359,6 +2360,9 @@ type Querier interface {
 	// 6.3 の project_memberships[].joined_at が意味を失う。
 	//
 	UpsertProjectMember(ctx context.Context, arg UpsertProjectMemberParams) error
+	// WithdrawOpenConfirmations は委任の取り下げで、開いている確認待ちを畳む
+	// （Delegation.md 4.3「取り下げ」。pb-281）。答える人がいない問いを画面に残さない。
+	WithdrawOpenConfirmations(ctx context.Context, delegationID string) (int64, error)
 }
 
 var _ Querier = (*Queries)(nil)

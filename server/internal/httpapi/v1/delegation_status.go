@@ -100,7 +100,16 @@ func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !in {
-		WriteJSON(w, http.StatusOK, delegationStatusView{InDelegation: false})
+		// **最新の委任が終了した根なら、終了を添える**（4.3「取り下げ」。pb-281）。
+		// エージェントが「委任の外」ではなく「終了した」と読んで止まれるように。
+		view := delegationStatusView{InDelegation: false}
+		if ended, err := h.q.GetDelegationByRootTicket(ctx, ticketID); err == nil && ended.Status == "ended" {
+			view.Status, view.RootSeq = ended.Status, scope.seq
+		} else if err != nil && err != pgx.ErrNoRows {
+			apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+			return
+		}
+		WriteJSON(w, http.StatusOK, view)
 		return
 	}
 

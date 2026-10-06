@@ -501,6 +501,9 @@ func Mount(r chi.Router, deps Deps) {
 			Post("/projects/{key}/tickets/{seq}/delegation/pause", h.pauseDelegation)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/delegation/resume", h.resumeDelegation)
+		// 取り下げ（4.3「取り下げ」）。pb-281。従来の実行モードへ戻す。PM だけが呼ぶ。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/delegation/withdraw", h.withdrawDelegation)
 
 		// ── 計画の版（Delegation.md 6章・12.2）── pb-247 ───────────
 		//
