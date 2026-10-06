@@ -3499,3 +3499,11 @@ func (q *fakeQuerier) HasDelegatedChild(_ context.Context, parentID pgtype.Text)
 	q.opLog = append(q.opLog, "HasDelegatedChild")
 	return q.delegatedChildOf[parentID.String], nil
 }
+
+// ListDelegationMarks は一覧の自律実行の印（pb-276）。フェイクの一覧には委任が無い。
+// 印そのものの判定は実 DB の結合テスト（delegation_marks_integration_test.go）で見る。
+func (q *fakeQuerier) ListDelegationMarks(
+	_ context.Context, _ gen.ListDelegationMarksParams,
+) ([]gen.ListDelegationMarksRow, error) {
+	return nil, nil
+}

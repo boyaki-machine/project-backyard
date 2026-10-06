@@ -96,6 +96,7 @@ import { renderMarkdown } from '../lib/markdown'
 import { isWebUrl } from '../lib/url'
 import { useAuthStore } from '../stores/auth'
 import { useDelegationStatus } from '../composables/useDelegationStatus'
+import { delegationStatusLabels } from '../api/delegation'
 import DelegationConfirmations from './DelegationConfirmations.vue'
 import DelegationPanel from './DelegationPanel.vue'
 
@@ -251,6 +252,23 @@ const delegation = useDelegationStatus(
   computed(() => props.seq),
   delegated,
 )
+/**
+ * 親を持つチケットが、どこかの自律実行の木の中にあるか（5.5「自律実行の中」。pb-276）。
+ * **親を持つチケットだけ読む**——親の無いチケットは木の中にあり得ない（根は自分で読む）。
+ */
+const inTree = useDelegationStatus(
+  computed(() => props.projectKey),
+  computed(() => props.seq),
+  computed(() => !!ticket.value?.parent && !delegated.value),
+)
+const treeInfo = computed(() => {
+  const s = inTree.status.value
+  if (!s?.in_delegation || !s.root_seq || s.root_seq === props.seq || !s.status) return null
+  const parts = [delegationStatusLabels[s.status]]
+  const open = s.open_confirmations?.length ?? 0
+  if (open > 0) parts.push(uiText('確認待ち {value0}', { value0: open }))
+  return { rootSeq: s.root_seq, text: parts.join(' · '), attention: s.status === 'paused' || open > 0 }
+})
 
 watch(
   () => props.seq,
@@ -1813,8 +1831,9 @@ defineExpose({
           <div class="meta-item wide">
             <dt>{{ $ui('実行モード') }}</dt>
             <dd>
-              <!-- **自律実行は始めた後は変えられない**（変える API が無い。止めるのは一時停止）。
-                   選択肢の「自律実行」は保存せず、下の入力欄を開く（5.5「自律実行」） -->
+              <!-- **自律実行は始めた後は選択肢で変えない**（止めるのは一時停止、やめるのは
+                   「自律実行をやめる…」。pb-281）。選択肢の「自律実行」は保存せず、下の入力欄を
+                   開く（5.5「自律実行」） -->
               <select
                 v-if="canEdit && !delegated"
                 :value="ticket.execution_mode"
@@ -1839,6 +1858,16 @@ defineExpose({
               <p v-if="errorFor('execution_mode')" class="field-error" role="alert">
                 {{ errorFor('execution_mode') }}
               </p>
+            </dd>
+          </div>
+
+          <!-- 自律実行の木の中の子（5.5「自律実行の中」。pb-276）。回しているチケットへ辿る -->
+          <div v-if="treeInfo" class="meta-item wide">
+            <dt>{{ $ui('自律実行') }}</dt>
+            <dd>
+              <RouterLink :to="`/p/${projectKey}/tickets/${treeInfo.rootSeq}`">{{ projectKey }}-{{ treeInfo.rootSeq }}</RouterLink>
+              {{ $ui('の木の中') }}
+              <span class="tree-state" :class="{ attention: treeInfo.attention }">（{{ treeInfo.text }}）</span>
             </dd>
           </div>
 
@@ -2772,6 +2801,11 @@ defineExpose({
 /* タグは行いっぱいを使う。数が読めないので1列に押し込むと折り返しが荒れる */
 .meta-item.wide {
   grid-column: 1 / -1;
+}
+
+/* 自律実行の中の子：人の対応が要るときだけ黄の文字にする（pb-276） */
+.tree-state.attention {
+  color: var(--pb-warning-text);
 }
 
 /* 自律実行の項目は実行モードの下に開く。見出しの列を取らず、行の幅いっぱいに使う */

@@ -17,6 +17,7 @@
 package v1
 
 import (
+	"context"
 	"fmt"
 	"hash/fnv"
 	"net/http"
@@ -332,16 +333,24 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	marks, err := delegationMarksFor(r.Context(), h.q, projectID, ticketIDs)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+		return
+	}
+
 	items := make([]ticketListItem, 0, len(rows))
 	var total int64
 	var lastUpdated time.Time
 	for _, row := range rows {
-		items = append(items, buildTicketListItem(row, tagsByTicket[row.ID]))
+		item := buildTicketListItem(row, tagsByTicket[row.ID])
+		item.Delegation = marks[row.ID]
+		items = append(items, item)
 		// 窓関数の値はどの行も同じ。0件のときは 0 のままでよい。
 		total, lastUpdated = row.Total, row.LastUpdatedAt
 	}
 
-	etag := ticketsETag(filters.normalized, page, total, lastUpdated)
+	etag := withDelegationMarks(ticketsETag(filters.normalized, page, total, lastUpdated), items)
 	if !filters.gantt {
 		// 差分取得（2.7 / 9.2.5）。If-None-Match は解釈せず
 		// ヘッダだけ出す（5.1 / 6.1 と同じ）。
@@ -871,4 +880,40 @@ func ticketsETag(normalized string, page Page, total int64, lastUpdated time.Tim
 
 	stamp := etagStamp(lastUpdated)
 	return fmt.Sprintf(`W/"tkt-%08x-%d-%d"`, h.Sum32(), total, stamp)
+}
+
+// delegationMarksFor は一覧の行に出す自律実行の印を、チケット ID ごとに引く（pb-276）。
+func delegationMarksFor(ctx context.Context, q gen.Querier, projectID string, ticketIDs []string) (map[string]*delegationMark, error) {
+	out := map[string]*delegationMark{}
+	if len(ticketIDs) == 0 {
+		return out, nil
+	}
+	rows, err := q.ListDelegationMarks(ctx, gen.ListDelegationMarksParams{ProjectID: projectID, TicketIds: ticketIDs})
+	if err != nil {
+		return nil, fmt.Errorf("自律実行の印を読めない: %w", err)
+	}
+	for _, m := range rows {
+		out[m.TicketID] = &delegationMark{
+			RootSeq: m.RootSeq, IsRoot: m.IsRoot, Status: m.Status, OpenConfirmations: m.OpenConfirmations,
+		}
+	}
+	return out, nil
+}
+
+// withDelegationMarks は ETag に印を混ぜる（pb-276）。確認待ちが立った・委任が止まった
+// だけではチケットの updated_at が動かないので、混ぜないと画面が差分なしと読んで
+// 印を出し直さない。印が1つも無ければ元の ETag のまま。
+func withDelegationMarks(etag string, items []ticketListItem) string {
+	h := fnv.New32a()
+	n := 0
+	for _, it := range items {
+		if m := it.Delegation; m != nil {
+			fmt.Fprintf(h, "%d:%d:%s:%d|", it.Seq, m.RootSeq, m.Status, m.OpenConfirmations)
+			n++
+		}
+	}
+	if n == 0 {
+		return etag
+	}
+	return strings.TrimSuffix(etag, `"`) + fmt.Sprintf(`-d%08x"`, h.Sum32())
 }
