@@ -547,6 +547,12 @@ func Mount(r chi.Router, deps Deps) {
 			Get("/projects/{key}/tickets/{seq}/plans", h.listDelegationPlans)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}/evaluations", h.listDelegationEvaluations)
+		// 指標の値と周期の要約（Delegation.md 4.2・8.3）。pb-277。値を入れるのは人と main
+		// （ticket.create。身元の確認はハンドラ内——計画の提出と同じ形）。要約は全員が読む。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+			Post("/projects/{key}/tickets/{seq}/metrics/{metric}/values", h.recordDelegationMetric)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/summary", h.getDelegationSummary)
 
 		// ── チケット間リンク（ApiDesign.md 9.10.1）── 手順18a ─────
 		//

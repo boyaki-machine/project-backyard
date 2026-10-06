@@ -2255,6 +2255,34 @@ CREATE INDEX ix_delegation_root_ticket ON delegation (root_ticket_id, created_at
   開いている `confirmation` を `withdrawn` にし、根へ `kind=decision` のコメントと活動（`field='delegation'`）を残す
 - **受け入れと取り下げを分ける列は持たない。** 根の `execution_mode` が `delegated` のままなら受け入れ、従来のモードなら取り下げ
 
+## 6.31 指標の値と周期の確認待ち（0059）
+
+**正本は `Delegation.md` 4.2・8.3。** pb-277。指標の定義は `delegation.scope.metrics`（PM が承認する制約）に置き、
+値はこの表に追記のみで積む。
+
+```sql
+CREATE TABLE delegation_metric_value (
+  id            char(26) COLLATE "C" PRIMARY KEY,
+  delegation_id char(26) COLLATE "C" NOT NULL REFERENCES delegation(id) ON DELETE CASCADE,
+  metric_key    text NOT NULL,          -- scope.metrics[].key
+  value         numeric NOT NULL,
+  note_md       text NOT NULL DEFAULT '',
+  recorded_by   char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  recorded_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_delegation_metric_value ON delegation_metric_value (delegation_id, metric_key, recorded_at);
+
+CREATE UNIQUE INDEX uq_confirmation_open_checkpoint
+  ON confirmation (delegation_id) WHERE reason = 'checkpoint' AND status = 'open';
+```
+
+- **`metric_key` は定義へ外部キーを張らない**（定義は jsonb の中にある）。入れる口（`POST .../metrics/:metric/values`）が、
+  委任のいまの `scope.metrics` に key があることを確かめる。定義から消えた key の値は残り、要約に出なくなる
+- **`recorded_by` で、人が入れた値と main の自己申告を見分ける**（要約に「エージェントが入れた値を含む」と出す）
+- **開いている checkpoint は委任ごとに1件**（`uq_confirmation_open_checkpoint`）。PB は状態が読まれたときに周期を判定して立てるので、
+  同時に読まれても二重に立たないよう DB で守る。起点は直近の checkpoint を立てた時刻、無ければ最初に計画が反映された時刻
+  （`GetCheckpointBase`）
+
 # 7. 初期データ（0010）
 
 ## 7.1 認証プロバイダ

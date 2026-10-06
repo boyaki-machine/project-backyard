@@ -3245,6 +3245,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/tickets/{seq}/metrics/{metric}/values": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /** @description 指標の key（`scope.metrics[].key`）。 */
+                metric: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 指標の値を入れる
+         * @description 自律実行の指標の値を1件積む（Delegation.md 4.2・8.3、pb-277）。追記のみ。
+         *     **必要権限は `ticket.create`**。入れられるのは**人と、その委任の main**
+         *     だけで、評価・他のエージェントは `403`。入れた人を記録し、周期の要約で
+         *     見分けられるようにする（main の値は自己申告）。main は停止中には入れられ
+         *     ない（`403 delegation_stage`）。MCP は `pb_record_metric`。
+         */
+        post: operations["recordDelegationMetric"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/summary": {
+        parameters: {
+            query?: {
+                /** @description 期間の始まり（エポックミリ秒）。省略すると直近の周期の起点。 */
+                from?: number;
+                /** @description 期間の終わり（エポックミリ秒。含まない）。省略するといま。 */
+                to?: number;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 周期の要約を読む
+         * @description 委任の根の、期間の要約（Delegation.md 8.3、pb-277）。**必要権限は
+         *     `ticket.view`**。PB が記録から組み立てる（main に書かせない）：期間に出た
+         *     計画の版と段階・評価・理由、指標の値の推移と目標、制約の消費。`summary_md`
+         *     は画面にそのまま出せる Markdown で、checkpoint の確認待ちの問いにも使う。
+         *     省略時の起点は、直近の checkpoint の確認待ち、無ければ最初に計画が反映された
+         *     時刻、それも無ければ委任を作った時刻。
+         */
+        get: operations["getDelegationSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{key}/tickets/{seq}/delegation-status": {
         parameters: {
             query?: never;
@@ -6544,6 +6626,57 @@ export interface components {
          *     立てて止まる。パックの自律実行の節に載る。
          */
         DelegationStopConditions: string[];
+        /**
+         * @description 指標の定義1件（Delegation.md 4.2、pb-277）。`scope.metrics` に書く（10件まで）。
+         *     PM が承認する制約の一部で、変えると範囲の変更になる。
+         */
+        DelegationMetric: {
+            key: string;
+            name: string;
+            unit?: string;
+            target?: number;
+            /**
+             * @description 良い向き。
+             * @enum {string}
+             */
+            direction: "higher" | "lower";
+        };
+        /** @description 指標の値1件（pb-277）。 */
+        DelegationMetricValue: {
+            id: string;
+            metric_key: string;
+            value: number;
+            note_md: string;
+            recorded_by: components["schemas"]["ActorRef"];
+            /** Format: int64 */
+            recorded_at: number;
+        };
+        /** @description 周期の要約（Delegation.md 8.3、pb-277）。 */
+        DelegationSummary: {
+            /** Format: int64 */
+            from: number;
+            /** Format: int64 */
+            to: number;
+            /** @description 要約の周期（日）。持たなければ 0。 */
+            report_every_days: number;
+            plans: {
+                version: number;
+                status: string;
+                class: ("minor" | "structural" | "scope") | null;
+                latest_verdict: ("pass" | "fail" | "unable") | null;
+                reason_md: string;
+                reverts_to: number | null;
+            }[];
+            metrics: (components["schemas"]["DelegationMetric"] & {
+                /** @description 期間内の値（古い順）。 */
+                values: components["schemas"]["DelegationMetricValue"][];
+                /** @description 期間の終わりまでの最新の値。 */
+                latest: components["schemas"]["DelegationMetricValue"] | null;
+            })[];
+            budget: components["schemas"]["DelegationBudgetStatus"];
+            /** @description 画面にそのまま出せる要約（Markdown）。 */
+            summary_md: string;
+        };
         /**
          * @description 予算と消費（Delegation.md 12.1・9.1、pb-253）。`tokens_missing` は
          *     トークンを申告しなかった完了レポート・評価の件数で、`tokens_total` から
@@ -13071,6 +13204,108 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    recordDelegationMetric: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                /** @description 指標の key（`scope.metrics[].key`）。 */
+                metric: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    value: number;
+                    /** @description どう測ったか（任意）。 */
+                    note_md?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 積んだ値。 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DelegationMetricValue"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            /** @description 委任が終了している。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDelegationSummary: {
+        parameters: {
+            query?: {
+                /** @description 期間の始まり（エポックミリ秒）。省略すると直近の周期の起点。 */
+                from?: number;
+                /** @description 期間の終わり（エポックミリ秒。含まない）。省略するといま。 */
+                to?: number;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 要約。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DelegationSummary"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

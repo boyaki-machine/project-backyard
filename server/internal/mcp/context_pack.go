@@ -269,6 +269,15 @@ type packDelegationStatus struct {
 	Budget   *packDelegationBudget `json:"budget"`
 	Scope    struct {
 		StopConditions []string `json:"stop_conditions"`
+		// 指標の定義（4.2。pb-277）。値は main が pb_record_metric で入れる。
+		Metrics []struct {
+			Key       string   `json:"key"`
+			Name      string   `json:"name"`
+			Unit      string   `json:"unit"`
+			Target    *float64 `json:"target"`
+			Direction string   `json:"direction"`
+		} `json:"metrics"`
+		ReportEveryDays int `json:"report_every_days"`
 	} `json:"scope"`
 	RecentAnswers []struct {
 		Reason     string `json:"reason"`
@@ -316,6 +325,36 @@ func renderStopConditions(conds []string) string {
 		fmt.Fprintf(&b, "- %s\n", c)
 	}
 	b.WriteString("\n")
+	return b.String()
+}
+
+// renderMetrics は指標の定義と要約の周期（4.2・8.3。pb-277）を出す。値は PB が測れない
+// ので、main が測れるものは pb_record_metric で入れる。周期が過ぎると PB が checkpoint の
+// 確認待ちを立て、PM が答えるまで止まる。
+func renderMetrics(ds packDelegationStatus) string {
+	if len(ds.Scope.Metrics) == 0 && ds.Scope.ReportEveryDays == 0 {
+		return ""
+	}
+	var b strings.Builder
+	if len(ds.Scope.Metrics) > 0 {
+		b.WriteString("**指標**（PM が定めた、目的に近づいたかの測り方。測れたら `pb_record_metric` で値を入れる。都合のよい値を入れない）\n\n")
+		for _, m := range ds.Scope.Metrics {
+			goal := ""
+			if m.Target != nil {
+				dir := "高いほど良い"
+				if m.Direction == "lower" {
+					dir = "低いほど良い"
+				}
+				goal = fmt.Sprintf("：目標 %g%s（%s）", *m.Target, m.Unit, dir)
+			}
+			fmt.Fprintf(&b, "- `%s` %s%s\n", m.Key, m.Name, goal)
+		}
+		b.WriteString("\n")
+	}
+	if ds.Scope.ReportEveryDays > 0 {
+		fmt.Fprintf(&b, "**要約の周期**：%d日ごとに PB が要約を作り、PM に確認を求める。PM が答えるまで木への書き込みは止まる\n\n",
+			ds.Scope.ReportEveryDays)
+	}
 	return b.String()
 }
 
@@ -533,6 +572,7 @@ func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packD
 	b.WriteString(renderRecentAnswers(ds))
 	b.WriteString(renderBudgetLines(ds.Budget))
 	b.WriteString(renderStopConditions(ds.Scope.StopConditions))
+	b.WriteString(renderMetrics(ds))
 
 	if ds.LatestEvaluation != nil && ds.LatestEvaluation.Verdict != "pass" {
 		fmt.Fprintf(&b, "**直近の評価**：%s 対象 round %d、判定 `%s`\n\n",

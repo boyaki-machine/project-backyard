@@ -5112,6 +5112,113 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/tickets/{seq}/metrics/{metric}/values:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+      - name: metric
+        in: path
+        required: true
+        description: 指標の key（`scope.metrics[].key`）。
+        schema:
+          type: string
+    post:
+      tags: [tickets]
+      summary: 指標の値を入れる
+      operationId: recordDelegationMetric
+      description: |
+        自律実行の指標の値を1件積む（Delegation.md 4.2・8.3、pb-277）。追記のみ。
+        **必要権限は `ticket.create`**。入れられるのは**人と、その委任の main**
+        だけで、評価・他のエージェントは `403`。入れた人を記録し、周期の要約で
+        見分けられるようにする（main の値は自己申告）。main は停止中には入れられ
+        ない（`403 delegation_stage`）。MCP は `pb_record_metric`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: number
+                note_md:
+                  type: string
+                  maxLength: 2000
+                  description: どう測ったか（任意）。
+      responses:
+        '201':
+          description: 積んだ値。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationMetricValue'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '409':
+          description: 委任が終了している。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/tickets/{seq}/summary:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+      - name: from
+        in: query
+        description: 期間の始まり（エポックミリ秒）。省略すると直近の周期の起点。
+        schema:
+          type: integer
+          format: int64
+      - name: to
+        in: query
+        description: 期間の終わり（エポックミリ秒。含まない）。省略するといま。
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [tickets]
+      summary: 周期の要約を読む
+      operationId: getDelegationSummary
+      description: |
+        委任の根の、期間の要約（Delegation.md 8.3、pb-277）。**必要権限は
+        `ticket.view`**。PB が記録から組み立てる（main に書かせない）：期間に出た
+        計画の版と段階・評価・理由、指標の値の推移と目標、制約の消費。`summary_md`
+        は画面にそのまま出せる Markdown で、checkpoint の確認待ちの問いにも使う。
+        省略時の起点は、直近の checkpoint の確認待ち、無ければ最初に計画が反映された
+        時刻、それも無ければ委任を作った時刻。
+      responses:
+        '200':
+          description: 要約。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/tickets/{seq}/delegation-status:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -10261,6 +10368,104 @@ components:
         type: string
         minLength: 1
         maxLength: 500
+
+    DelegationMetric:
+      description: |
+        指標の定義1件（Delegation.md 4.2、pb-277）。`scope.metrics` に書く（10件まで）。
+        PM が承認する制約の一部で、変えると範囲の変更になる。
+      type: object
+      required: [key, name, direction]
+      properties:
+        key:
+          type: string
+          pattern: '^[a-z0-9_]{1,32}$'
+        name:
+          type: string
+          maxLength: 100
+        unit:
+          type: string
+          maxLength: 20
+        target:
+          type: number
+        direction:
+          type: string
+          enum: [higher, lower]
+          description: 良い向き。
+
+    DelegationMetricValue:
+      description: 指標の値1件（pb-277）。
+      type: object
+      required: [id, metric_key, value, note_md, recorded_by, recorded_at]
+      properties:
+        id:
+          type: string
+        metric_key:
+          type: string
+        value:
+          type: number
+        note_md:
+          type: string
+        recorded_by:
+          $ref: '#/components/schemas/ActorRef'
+        recorded_at:
+          type: integer
+          format: int64
+
+    DelegationSummary:
+      description: 周期の要約（Delegation.md 8.3、pb-277）。
+      type: object
+      required: [from, to, report_every_days, plans, metrics, budget, summary_md]
+      properties:
+        from:
+          type: integer
+          format: int64
+        to:
+          type: integer
+          format: int64
+        report_every_days:
+          type: integer
+          description: 要約の周期（日）。持たなければ 0。
+        plans:
+          type: array
+          items:
+            type: object
+            required: [version, status, class, latest_verdict, reason_md, reverts_to]
+            properties:
+              version:
+                type: integer
+              status:
+                type: string
+              class:
+                oneOf: [{type: string, enum: [minor, structural, scope]}, {type: 'null'}]
+              latest_verdict:
+                oneOf: [{type: string, enum: [pass, fail, unable]}, {type: 'null'}]
+              reason_md:
+                type: string
+              reverts_to:
+                oneOf: [{type: integer}, {type: 'null'}]
+        metrics:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/DelegationMetric'
+              - type: object
+                required: [values, latest]
+                properties:
+                  values:
+                    type: array
+                    description: 期間内の値（古い順）。
+                    items:
+                      $ref: '#/components/schemas/DelegationMetricValue'
+                  latest:
+                    description: 期間の終わりまでの最新の値。
+                    oneOf:
+                      - $ref: '#/components/schemas/DelegationMetricValue'
+                      - type: 'null'
+        budget:
+          $ref: '#/components/schemas/DelegationBudgetStatus'
+        summary_md:
+          type: string
+          description: 画面にそのまま出せる要約（Markdown）。
 
     DelegationBudgetStatus:
       description: |

@@ -292,3 +292,22 @@ func TestGetContextDelegationWithHandoffAndAnswers(t *testing.T) {
 		}
 	}
 }
+
+// 指標の定義と要約の周期をパックに出す（4.2・8.3。pb-277）。
+func TestRenderMetrics(t *testing.T) {
+	var ds packDelegationStatus
+	if err := json.Unmarshal([]byte(`{"scope":{"metrics":[
+		{"key":"mock","name":"模試の偏差値","unit":"","target":65,"direction":"higher"},
+		{"key":"miss","name":"ケアレスミス","unit":"件","direction":"lower"}],"report_every_days":7}}`), &ds); err != nil {
+		t.Fatal(err)
+	}
+	got := renderMetrics(ds)
+	for _, want := range []string{"`mock` 模試の偏差値：目標 65（高いほど良い）", "`miss` ケアレスミス\n", "7日ごと", "pb_record_metric"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q が無い:\n%s", want, got)
+		}
+	}
+	if renderMetrics(packDelegationStatus{}) != "" {
+		t.Errorf("指標も周期も無ければ何も出さない")
+	}
+}

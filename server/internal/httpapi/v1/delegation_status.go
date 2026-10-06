@@ -14,6 +14,7 @@
 package v1
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -110,6 +111,14 @@ func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		WriteJSON(w, http.StatusOK, view)
+		return
+	}
+
+	// **周期が過ぎていれば、checkpoint の確認待ちを立ててから読む**（8.1 の 7・8.3。pb-277）。
+	// PB は定期実行を持たないので、状態が読まれたときに区切りを判定する。
+	if cerr := h.ensureCheckpoint(ctx, scope.projectID, d.ID, d.Status, d.RootTicketID,
+		h.scopeOfDelegation(ctx, d.ID), scope.actorID); cerr != nil && cerr != errCheckpointExists {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(cerr))
 		return
 	}
 
@@ -259,4 +268,13 @@ func openConfirmationViewOf(row gen.ListOpenConfirmationsRow) confirmationView {
 		RaisedBy:  actorRef{ID: row.RaisedByID, Kind: row.RaisedByKind, DisplayName: row.RaisedByName},
 		CreatedAt: Time(row.CreatedAt),
 	}
+}
+
+// scopeOfDelegation は委任の scope を読む（読めなければ nil。周期を持たない扱いになる）。
+func (h *handler) scopeOfDelegation(ctx context.Context, delegationID string) []byte {
+	row, err := h.q.GetDelegationByID(ctx, delegationID)
+	if err != nil {
+		return nil
+	}
+	return row.Scope
 }

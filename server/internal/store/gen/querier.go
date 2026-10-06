@@ -316,6 +316,9 @@ type Querier interface {
 	CreateDelegation(ctx context.Context, arg CreateDelegationParams) error
 	// CreateDelegationHandoff は引き継ぎノートを1件作る（11.1）。
 	CreateDelegationHandoff(ctx context.Context, arg CreateDelegationHandoffParams) error
+	// 指標の値と周期の要約（Delegation.md 4.2・8.3。DbDesign.md 6.31）。pb-277。
+	// CreateDelegationMetricValue は指標の値を1件積む（追記のみ）。
+	CreateDelegationMetricValue(ctx context.Context, arg CreateDelegationMetricValueParams) error
 	// CreateDelegationPlan は計画の版を1件作る（Delegation.md 6.2）。
 	CreateDelegationPlan(ctx context.Context, arg CreateDelegationPlanParams) error
 	// CreateDeletedAgentActor は付け替え先を1件作る。
@@ -792,6 +795,9 @@ type Querier interface {
 	// この表を読まない（環境変数が勝つ）。
 	// 鍵を引く。無ければ行が返らない（初回）。
 	GetAppSecret(ctx context.Context, keyID string) (GetAppSecretRow, error)
+	// GetCheckpointBase は周期の起点を返す（8.3）。直近の checkpoint の確認待ちを立てた時刻、
+	// 無ければ最初に計画が反映された時刻、それも無ければ委任を作った時刻。
+	GetCheckpointBase(ctx context.Context, delegationID string) (time.Time, error)
 	// GetConfirmationByID は応答の組み立てと、回答の対象確認に使う。
 	GetConfirmationByID(ctx context.Context, id string) (GetConfirmationByIDRow, error)
 	// 委任の予算（Delegation.md 4.2・12.1）。pb-253。
@@ -1216,9 +1222,13 @@ type Querier interface {
 	// **委任が無いプロジェクトでは再帰の起点が0行**なので、一覧の重さはほぼ変わらない。
 	// open_confirmations はヒアリングも数える（どれも PM の回答を待っている）。
 	ListDelegationMarks(ctx context.Context, arg ListDelegationMarksParams) ([]ListDelegationMarksRow, error)
+	// ListDelegationMetricValues は指標の値を古い順に返す（要約・画面）。
+	ListDelegationMetricValues(ctx context.Context, delegationID string) ([]ListDelegationMetricValuesRow, error)
 	// ListDelegationPlans は計画の版の一覧（新しい順。Delegation.md 6.2。pb-274）。
 	// 各版に、直近の評価の合否と、異議の判定に要る合格の評価（6.4）を添える。
 	ListDelegationPlans(ctx context.Context, delegationID string) ([]ListDelegationPlansRow, error)
+	// ListDelegationPlansBetween は期間に出された計画の版（要約の「計画をどう変えたか」）。
+	ListDelegationPlansBetween(ctx context.Context, arg ListDelegationPlansBetweenParams) ([]ListDelegationPlansBetweenRow, error)
 	// ListDocumentBodies は ?outline=1（10.2）のためだけに本文を読む。
 	//
 	// **応答には本文を載せない。** 見出し一覧は本文から作るので読む必要があるが、
