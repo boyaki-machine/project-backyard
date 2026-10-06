@@ -161,6 +161,7 @@ type Querier interface {
 	// 再提出が別の run になるので、これが「何回目のやり直しか」と一致する。
 	//
 	CountAgentRunsForTicket(ctx context.Context, arg CountAgentRunsForTicketParams) (int64, error)
+	CountAgentUsageRuns(ctx context.Context, arg CountAgentUsageRunsParams) (int64, error)
 	// 以下は pb dev seed（DbDesign.md 7.6）が使う。
 	CountAppUsers(ctx context.Context) (int64, error)
 	// ── 削除（ApiDesign.md 6.5）─────────────────────────────────
@@ -1182,6 +1183,9 @@ type Querier interface {
 	// 今後も増える（DbDesign.md 8.2.1.1）ので、写しを置くと必ず腐る。
 	//
 	ListAgentClientKinds(ctx context.Context) ([]ListAgentClientKindsRow, error)
+	// 提出済みの実行と評価の実績。ApiDesign.md 9.16。
+	ListAgentUsageEvents(ctx context.Context, arg ListAgentUsageEventsParams) ([]ListAgentUsageEventsRow, error)
+	ListAgentUsageRuns(ctx context.Context, arg ListAgentUsageRunsParams) ([]ListAgentUsageRunsRow, error)
 	// アプリケーション設定に関するクエリ（DbDesign.md 6.14、ApiDesign.md 11章）。
 	//
 	// **Design.md 10.3 の第2層の置き場である。** 第1層（接続文字列・待受）は

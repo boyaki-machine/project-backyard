@@ -7,6 +7,7 @@ export default {
     backlog: 'Backlog',
     gantt: 'Gantt',
     search: 'Ticket search',
+    insights: 'Progress analysis',
     docs: 'Docs',
     projectSettings: 'Project settings',
     administration: 'Administration',

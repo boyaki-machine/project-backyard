@@ -47,6 +47,82 @@ tags:
     description: 監視（ApiDesign.md 2.11）
 
 paths:
+  /api/v1/projects/{key}/agent-usage:
+    get:
+      tags: [tickets]
+      summary: エージェント実績の取得
+      operationId: getAgentUsage
+      description: ticket.view が必要。期間とモデルの指定は ApiDesign.md 9.16。
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: {type: string}
+        - name: from_date
+          in: query
+          schema: {type: string}
+        - name: to_date
+          in: query
+          schema: {type: string}
+        - name: client_kind
+          in: query
+          schema: {type: string}
+        - name: model_name
+          in: query
+          schema: {type: string}
+        - name: model_version
+          in: query
+          schema: {type: string}
+      responses:
+        '200':
+          description: 実績
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentUsage'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+  /api/v1/projects/{key}/agent-usage/runs:
+    get:
+      tags: [tickets]
+      summary: エージェント実績の取得
+      operationId: listAgentUsageRuns
+      description: ticket.view が必要。期間とモデルの指定は ApiDesign.md 9.16。
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: {type: string}
+        - name: from_date
+          in: query
+          schema: {type: string}
+        - name: to_date
+          in: query
+          schema: {type: string}
+        - name: client_kind
+          in: query
+          schema: {type: string}
+        - name: model_name
+          in: query
+          schema: {type: string}
+        - name: model_version
+          in: query
+          schema: {type: string}
+        - name: page
+          in: query
+          schema: {type: integer}
+        - name: per_page
+          in: query
+          schema: {type: integer}
+      responses:
+        '200':
+          description: 実績
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentUsageRunList'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
   /api/v1/auth/login:
     post:
       tags: [auth]
@@ -7460,6 +7536,78 @@ components:
             $ref: '#/components/schemas/Error'
 
   schemas:
+    AgentUsageCounts:
+      type: object
+      required: [runs_count, tickets_count, completed_count, partial_count, blocked_count, run_tokens, run_tokens_missing, evaluation_count, evaluation_tokens, evaluation_tokens_missing, turns, turns_missing, wall_clock_min, wall_clock_min_missing]
+      properties:
+        runs_count: {type: integer, format: int64}
+        tickets_count: {type: integer, format: int64}
+        completed_count: {type: integer, format: int64}
+        partial_count: {type: integer, format: int64}
+        blocked_count: {type: integer, format: int64}
+        run_tokens: {type: integer, format: int64}
+        run_tokens_missing: {type: integer, format: int64}
+        evaluation_count: {type: integer, format: int64}
+        evaluation_tokens: {type: integer, format: int64}
+        evaluation_tokens_missing: {type: integer, format: int64}
+        turns: {type: integer, format: int64}
+        turns_missing: {type: integer, format: int64}
+        wall_clock_min: {type: integer, format: int64}
+        wall_clock_min_missing: {type: integer, format: int64}
+    AgentUsage:
+      type: object
+      required: [from_date, to_date, timezone, totals, daily, models]
+      properties:
+        from_date: {type: string, format: date}
+        to_date: {type: string, format: date}
+        timezone: {type: string}
+        totals: {$ref: '#/components/schemas/AgentUsageCounts'}
+        daily:
+          type: array
+          items:
+            allOf:
+              - {$ref: '#/components/schemas/AgentUsageCounts'}
+              - type: object
+                required: [date]
+                properties:
+                  date: {type: string, format: date}
+        models:
+          type: array
+          items:
+            allOf:
+              - {$ref: '#/components/schemas/AgentUsageCounts'}
+              - type: object
+                required: [client_kind, model_name, model_version]
+                properties:
+                  client_kind: {type: string, nullable: true}
+                  model_name: {type: string, nullable: true}
+                  model_version: {type: string, nullable: true}
+    AgentUsageRun:
+      type: object
+      required: [run_id, seq, submitted_at, status, ticket_status_category, client_kind, model_name, model_version, tokens, turns, wall_clock_min]
+      properties:
+        run_id: {type: string}
+        seq: {type: integer}
+        submitted_at: {type: integer, format: int64}
+        status: {type: string, enum: [completed, partial, blocked]}
+        ticket_status_category: {type: string}
+        client_kind: {type: string, nullable: true}
+        model_name: {type: string, nullable: true}
+        model_version: {type: string, nullable: true}
+        tokens: {type: integer, format: int64, nullable: true}
+        turns: {type: integer, format: int64, nullable: true}
+        wall_clock_min: {type: integer, format: int64, nullable: true}
+    AgentUsageRunList:
+      type: object
+      required: [items, page, per_page, total, total_pages]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/AgentUsageRun'}
+        page: {type: integer}
+        per_page: {type: integer}
+        total: {type: integer}
+        total_pages: {type: integer}
     LoginRequest:
       type: object
       required: [email, password]

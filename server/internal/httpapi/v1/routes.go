@@ -273,6 +273,9 @@ func Mount(r chi.Router, deps Deps) {
 		// **agent-setup と agent-setup.zip は静的なセグメントなので、{key} 配下の
 		// 他のルートと衝突しない**（stats / activity と同じ）。**zip を別パスに
 		// してあるのは、ブラウザの <a download href> で落とすためである。**
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).Get("/projects/{key}/agent-usage", h.getAgentUsage)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).Get("/projects/{key}/agent-usage/runs", h.listAgentRuns)
+
 		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.register")).
 			Get("/projects/{key}/agent-setup", h.getAgentSetup)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.register")).
