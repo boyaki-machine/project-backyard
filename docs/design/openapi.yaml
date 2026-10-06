@@ -4951,6 +4951,82 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/tickets/{seq}/plan/{version}/object:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+      - name: version
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    post:
+      tags: [tickets]
+      summary: 評価が合格させた構造の変更に異議を出す
+      operationId: objectDelegationPlan
+      description: |
+        PM の事後の異議（Delegation.md 6.4、pb-275）。**必要権限は `delegation.manage`**。
+        MCP ツールは持たない。対象は、評価が合格させて PB が反映した構造の変更の版に
+        限る（PM が承認した版・軽微な変更は `409`）。その版への合格の評価に
+        `objected_at` を立てる（1つの版に1回。2回目は `409`）。
+
+        **対象が最新の反映済みの版なら、その前の反映済みの版を写した新しい版を
+        作る**（差し戻し。`reverted: true`）。後に別の版が反映されていれば差し戻さず、
+        `later_version` を返す——戻す版は PM が `.../revert` で選ぶ。根に
+        `kind=decision` のコメントを残す。終了した委任では `409`。
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason_md:
+                  type: string
+                  description: 異議の理由（任意）。根のコメントと差し戻しの版の理由に載る。
+      responses:
+        '200':
+          description: 異議を記録した。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [objected_version, evaluation_id, reverted, reverted_plan]
+                properties:
+                  objected_version:
+                    type: integer
+                  evaluation_id:
+                    type: string
+                  reverted:
+                    type: boolean
+                  reverted_plan:
+                    oneOf:
+                      - $ref: '#/components/schemas/DelegationPlan'
+                      - type: 'null'
+                  later_version:
+                    type: integer
+                    description: 差し戻さなかったときの、後に反映された最新の版。
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '409':
+          description: |
+            異議の対象ではない版／既に異議を出した／委任が終了している。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/tickets/{seq}/delegation-status:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'

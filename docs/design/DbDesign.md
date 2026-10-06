@@ -2109,6 +2109,10 @@ target_kind`）への直前の `pass` 以降の件数+1（`CountEvaluationsSince
 **評価エージェントのトークンに要る権限は `delegation.evaluate` だけ**
 （0050 で既に登録済み。起票・編集・遷移は要らない。7.1）。
 
+**事後の異議**（`POST .../plan/{version}/object`。pb-275。`Delegation.md` 6.4）は、対象の版への最新の合格の評価に
+`objected_at` を立てる（一度だけ。`MarkEvaluationObjected`）。対象は `status='accepted'`・`decided_by IS NULL`（PB が反映した）・
+段階が `structural` の版に限る。対象が最新の反映済みの版なら、その前の反映済みの版を写した版を作る（6.2 の差し戻しと同じ形）。
+
 ## 6.27 確認待ち（0053）
 
 **正本は `Delegation.md` 8章・12.2。** pb-249。D4 で確定した5表のうち、残る

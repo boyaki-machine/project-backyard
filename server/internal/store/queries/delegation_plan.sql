@@ -118,3 +118,27 @@ LEFT JOIN LATERAL (
 WHERE p.delegation_id = @delegation_id
 ORDER BY p.version DESC
 LIMIT 1;
+
+-- GetPlanForObjection は異議の対象の版を読む（Delegation.md 6.4。pb-275）。
+-- 評価が合格させた構造の変更かを、状態・段階・決めた人・合格の評価から判定する。
+-- **decided_by が NULL なのは PB が反映した版**（評価の合格・軽微）。PM が承認した
+-- 版（初版・範囲の変更）は PM 自身の判断なので、異議の対象にしない。
+-- name: GetPlanForObjection :one
+SELECT
+  p.id, p.version, p.status, p.declared_class, p.measured_class, p.decided_by,
+  COALESCE(e.id, '')::text AS evaluation_id, e.objected_at
+FROM delegation_plan p
+LEFT JOIN LATERAL (
+  SELECT ev.id, ev.objected_at FROM evaluation ev
+  WHERE ev.plan_id = p.id AND ev.verdict = 'pass'
+  ORDER BY ev.created_at DESC LIMIT 1
+) e ON true
+WHERE p.delegation_id = @delegation_id AND p.version = @version;
+
+-- GetPreviousAcceptedDelegationPlan は、ある版より前で最後に反映された版を読む
+-- （6.4「その版の前の版」。間に却下・置き換えの版があっても飛ばす）。
+-- name: GetPreviousAcceptedDelegationPlan :one
+SELECT version FROM delegation_plan
+WHERE delegation_id = @delegation_id AND status = 'accepted' AND version < @version
+ORDER BY version DESC
+LIMIT 1;

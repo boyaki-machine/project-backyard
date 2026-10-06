@@ -330,6 +330,76 @@ func (q *Queries) GetLatestPlanForStatus(ctx context.Context, delegationID strin
 	return i, err
 }
 
+const getPlanForObjection = `-- name: GetPlanForObjection :one
+SELECT
+  p.id, p.version, p.status, p.declared_class, p.measured_class, p.decided_by,
+  COALESCE(e.id, '')::text AS evaluation_id, e.objected_at
+FROM delegation_plan p
+LEFT JOIN LATERAL (
+  SELECT ev.id, ev.objected_at FROM evaluation ev
+  WHERE ev.plan_id = p.id AND ev.verdict = 'pass'
+  ORDER BY ev.created_at DESC LIMIT 1
+) e ON true
+WHERE p.delegation_id = $1 AND p.version = $2
+`
+
+type GetPlanForObjectionParams struct {
+	DelegationID string
+	Version      int32
+}
+
+type GetPlanForObjectionRow struct {
+	ID            string
+	Version       int32
+	Status        string
+	DeclaredClass pgtype.Text
+	MeasuredClass pgtype.Text
+	DecidedBy     pgtype.Text
+	EvaluationID  string
+	ObjectedAt    *time.Time
+}
+
+// GetPlanForObjection は異議の対象の版を読む（Delegation.md 6.4。pb-275）。
+// 評価が合格させた構造の変更かを、状態・段階・決めた人・合格の評価から判定する。
+// **decided_by が NULL なのは PB が反映した版**（評価の合格・軽微）。PM が承認した
+// 版（初版・範囲の変更）は PM 自身の判断なので、異議の対象にしない。
+func (q *Queries) GetPlanForObjection(ctx context.Context, arg GetPlanForObjectionParams) (GetPlanForObjectionRow, error) {
+	row := q.db.QueryRow(ctx, getPlanForObjection, arg.DelegationID, arg.Version)
+	var i GetPlanForObjectionRow
+	err := row.Scan(
+		&i.ID,
+		&i.Version,
+		&i.Status,
+		&i.DeclaredClass,
+		&i.MeasuredClass,
+		&i.DecidedBy,
+		&i.EvaluationID,
+		&i.ObjectedAt,
+	)
+	return i, err
+}
+
+const getPreviousAcceptedDelegationPlan = `-- name: GetPreviousAcceptedDelegationPlan :one
+SELECT version FROM delegation_plan
+WHERE delegation_id = $1 AND status = 'accepted' AND version < $2
+ORDER BY version DESC
+LIMIT 1
+`
+
+type GetPreviousAcceptedDelegationPlanParams struct {
+	DelegationID string
+	Version      int32
+}
+
+// GetPreviousAcceptedDelegationPlan は、ある版より前で最後に反映された版を読む
+// （6.4「その版の前の版」。間に却下・置き換えの版があっても飛ばす）。
+func (q *Queries) GetPreviousAcceptedDelegationPlan(ctx context.Context, arg GetPreviousAcceptedDelegationPlanParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getPreviousAcceptedDelegationPlan, arg.DelegationID, arg.Version)
+	var version int32
+	err := row.Scan(&version)
+	return version, err
+}
+
 const nextDelegationPlanVersion = `-- name: NextDelegationPlanVersion :one
 
 SELECT COALESCE(MAX(version), 0) + 1 FROM delegation_plan WHERE delegation_id = $1
