@@ -62,9 +62,18 @@ func TestDelegationApprovalIntegration(t *testing.T) {
 	var createdAgents []string
 	t.Cleanup(func() {
 		bg := context.Background()
+		// **プロジェクトを先に消す**（pb-287）。t.Cleanup は後に登録したものから走るので、
+		// 上のプロジェクトの後始末より先にここが走る。委任・評価がエージェントを
+		// ON DELETE RESTRICT で参照しているため、先に actor を消すと黙って失敗し、
+		// エージェントが DB に残り続けていた。
+		if _, err := pool.Exec(bg, `DELETE FROM project WHERE key = $1`, key); err != nil {
+			t.Errorf("プロジェクトの後始末に失敗した: %v", err)
+		}
 		for _, id := range createdAgents {
 			pool.Exec(bg, `DELETE FROM audit_log WHERE actor_id = $1`, id)
-			pool.Exec(bg, `DELETE FROM actor WHERE id = $1`, id)
+			if _, err := pool.Exec(bg, `DELETE FROM actor WHERE id = $1`, id); err != nil {
+				t.Errorf("エージェントの後始末に失敗した: %v", err)
+			}
 		}
 	})
 	register := func(name string) agentJSON {
