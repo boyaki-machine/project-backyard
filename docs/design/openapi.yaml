@@ -10965,6 +10965,27 @@ components:
             LexoRank 方式の並び順（9.4）。**クライアントはこの値を作らない。**
             並べ替えは `POST /tickets/:seq/move` で行う。
           example: '0|hzzzzz:'
+        delegation:
+          description: |
+            自律実行の印（Delegation.md 8.2、pb-276）。終わっていない委任の木
+            （根と子孫）の中なら値が入り、外なら `null`。**一覧（9.2）だけが
+            埋める**——検索・ビューなど他の経路は `null` を返す。
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [root_seq, is_root, status, open_confirmations]
+              properties:
+                root_seq:
+                  type: integer
+                  description: 自律実行を回しているチケット（委任の根）の番号。
+                is_root:
+                  type: boolean
+                status:
+                  type: string
+                  enum: [planning, approved, paused]
+                open_confirmations:
+                  type: integer
+                  description: 回答していないユーザ確認待ちの数（ヒアリングを含む）。
         staged_at:
           type: integer
           format: int64

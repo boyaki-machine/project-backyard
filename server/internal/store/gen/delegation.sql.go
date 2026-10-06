@@ -307,6 +307,71 @@ func (q *Queries) ListActiveDelegationsForProject(ctx context.Context, projectID
 	return items, nil
 }
 
+const listDelegationMarks = `-- name: ListDelegationMarks :many
+WITH RECURSIVE tree AS (
+  SELECT d.id AS delegation_id, d.root_ticket_id AS ticket_id
+  FROM delegation d
+  WHERE d.project_id = $2 AND d.status <> 'ended'
+  UNION ALL
+  SELECT tree.delegation_id, t.id
+  FROM ticket t JOIN tree ON t.parent_id = tree.ticket_id
+)
+SELECT
+  tree.ticket_id,
+  rt.seq AS root_seq,
+  (tree.ticket_id = d.root_ticket_id)::boolean AS is_root,
+  d.status,
+  (SELECT count(*) FROM confirmation c
+   WHERE c.delegation_id = d.id AND c.status = 'open')::bigint AS open_confirmations
+FROM tree
+JOIN delegation d ON d.id = tree.delegation_id
+JOIN ticket rt ON rt.id = d.root_ticket_id
+WHERE tree.ticket_id = ANY($1::text[])
+`
+
+type ListDelegationMarksParams struct {
+	TicketIds []string
+	ProjectID string
+}
+
+type ListDelegationMarksRow struct {
+	TicketID          string
+	RootSeq           int32
+	IsRoot            bool
+	Status            string
+	OpenConfirmations int64
+}
+
+// ListDelegationMarks は一覧の行に出す委任の印を引く（Delegation.md 8.2。pb-276）。
+// 終了していない委任の木（根と子孫）を根から辿り、渡したチケットのぶんだけ返す。
+// **委任が無いプロジェクトでは再帰の起点が0行**なので、一覧の重さはほぼ変わらない。
+// open_confirmations はヒアリングも数える（どれも PM の回答を待っている）。
+func (q *Queries) ListDelegationMarks(ctx context.Context, arg ListDelegationMarksParams) ([]ListDelegationMarksRow, error) {
+	rows, err := q.db.Query(ctx, listDelegationMarks, arg.TicketIds, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDelegationMarksRow{}
+	for rows.Next() {
+		var i ListDelegationMarksRow
+		if err := rows.Scan(
+			&i.TicketID,
+			&i.RootSeq,
+			&i.IsRoot,
+			&i.Status,
+			&i.OpenConfirmations,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setDelegationStatus = `-- name: SetDelegationStatus :execrows
 UPDATE delegation SET status = $1 WHERE id = $2
 `

@@ -1211,6 +1211,11 @@ type Querier interface {
 	// ListDelegationEvaluations は評価記録の一覧（新しい順。Delegation.md 7.3。pb-274）。
 	// 評価者と main の種類・モデルは評価の時点の写し（4.4）。
 	ListDelegationEvaluations(ctx context.Context, delegationID string) ([]ListDelegationEvaluationsRow, error)
+	// ListDelegationMarks は一覧の行に出す委任の印を引く（Delegation.md 8.2。pb-276）。
+	// 終了していない委任の木（根と子孫）を根から辿り、渡したチケットのぶんだけ返す。
+	// **委任が無いプロジェクトでは再帰の起点が0行**なので、一覧の重さはほぼ変わらない。
+	// open_confirmations はヒアリングも数える（どれも PM の回答を待っている）。
+	ListDelegationMarks(ctx context.Context, arg ListDelegationMarksParams) ([]ListDelegationMarksRow, error)
 	// ListDelegationPlans は計画の版の一覧（新しい順。Delegation.md 6.2。pb-274）。
 	// 各版に、直近の評価の合否と、異議の判定に要る合格の評価（6.4）を添える。
 	ListDelegationPlans(ctx context.Context, delegationID string) ([]ListDelegationPlansRow, error)

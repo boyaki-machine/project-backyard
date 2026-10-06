@@ -7076,6 +7076,20 @@ export interface components {
              */
             sort_key: string | null;
             /**
+             * @description 自律実行の印（Delegation.md 8.2、pb-276）。終わっていない委任の木
+             *     （根と子孫）の中なら値が入り、外なら `null`。**一覧（9.2）だけが
+             *     埋める**——検索・ビューなど他の経路は `null` を返す。
+             */
+            delegation?: null | {
+                /** @description 自律実行を回しているチケット（委任の根）の番号。 */
+                root_seq: number;
+                is_root: boolean;
+                /** @enum {string} */
+                status: "planning" | "approved" | "paused";
+                /** @description 回答していないユーザ確認待ちの数（ヒアリングを含む）。 */
+                open_confirmations: number;
+            };
+            /**
              * Format: int64
              * @description 「オンステージ」（9.2.2、DbDesign.md 6.6）。`null` がバックログ、
              *     値が入っているものがオンステージで、値は**いつ上げたか**である。

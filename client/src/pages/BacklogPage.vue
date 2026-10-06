@@ -19,6 +19,7 @@ import StatusDropdown from '../components/StatusDropdown.vue'
 import SprintStartModal from '../components/SprintStartModal.vue'
 import TicketDetailPane from '../components/TicketDetailPane.vue'
 import UserActionsMenu from '../components/UserActionsMenu.vue'
+import DelegationMark from '../components/DelegationMark.vue'
 import type { ActionItem } from '../components/UserActionsMenu.vue'
 import { ApiError } from '../api/client'
 import * as sprintsApi from '../api/sprints'
@@ -2591,6 +2592,13 @@ watch(projectKey, (key) => {
                           {{ row.ticket.title }}
                         </a>
                       </RouterLink>
+                      <!-- 自律実行の印（5.4「自律実行の印」。pb-276）。タグの前に置く -->
+                      <DelegationMark
+                        v-if="row.ticket.delegation"
+                        :mark="row.ticket.delegation"
+                        :project-key="projectKey"
+                        :shrunk="shrunk"
+                      />
                       <!-- **縮小中の期限超過は `⚠` だけをタイトルの後ろに出す**
                            （5.4「詳細を開いているときの一覧」）。日付は詳細側に出ている -->
                       <span

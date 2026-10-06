@@ -116,3 +116,28 @@ WHERE id = @id AND status = 'planning';
 SELECT EXISTS (
   SELECT 1 FROM ticket WHERE parent_id = @parent_id AND execution_mode = 'delegated'
 )::boolean;
+
+-- ListDelegationMarks は一覧の行に出す委任の印を引く（Delegation.md 8.2。pb-276）。
+-- 終了していない委任の木（根と子孫）を根から辿り、渡したチケットのぶんだけ返す。
+-- **委任が無いプロジェクトでは再帰の起点が0行**なので、一覧の重さはほぼ変わらない。
+-- open_confirmations はヒアリングも数える（どれも PM の回答を待っている）。
+-- name: ListDelegationMarks :many
+WITH RECURSIVE tree AS (
+  SELECT d.id AS delegation_id, d.root_ticket_id AS ticket_id
+  FROM delegation d
+  WHERE d.project_id = @project_id AND d.status <> 'ended'
+  UNION ALL
+  SELECT tree.delegation_id, t.id
+  FROM ticket t JOIN tree ON t.parent_id = tree.ticket_id
+)
+SELECT
+  tree.ticket_id,
+  rt.seq AS root_seq,
+  (tree.ticket_id = d.root_ticket_id)::boolean AS is_root,
+  d.status,
+  (SELECT count(*) FROM confirmation c
+   WHERE c.delegation_id = d.id AND c.status = 'open')::bigint AS open_confirmations
+FROM tree
+JOIN delegation d ON d.id = tree.delegation_id
+JOIN ticket rt ON rt.id = d.root_ticket_id
+WHERE tree.ticket_id = ANY(@ticket_ids::text[]);
