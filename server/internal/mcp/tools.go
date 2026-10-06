@@ -1044,6 +1044,25 @@ func writeTools() []tool {
 			call: callUpdateHandoff,
 		},
 		{
+			Name: "pb_record_metric",
+			Description: "自律実行（Delegated）の main が、指標の値を1件入れる（Delegation.md 4.2・8.3）。" +
+				"**呼び出し元がその委任の main でなければ拒まれる**（人は画面から入れる）。" +
+				"指標の定義（key・名前・目標）はパックの「6. 自律実行」の制約にある。値は追記のみで、" +
+				"入れた人として記録され、周期の要約に「エージェントが入れた値」と出る。" +
+				"自分に都合のよい値を入れないこと——評価エージェントと PM が見る。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq":     {Type: "integer", Description: "委任の根となるチケットの番号（seq）", Minimum: intPtr(1)},
+					"metric":  {Type: "string", Description: "指標の key（制約の metrics[].key）"},
+					"value":   {Type: "number", Description: "測った値"},
+					"note_md": {Type: "string", Description: "どう測ったか（任意。出典や測った日など）"},
+				},
+				Required: []string{"seq", "metric", "value"},
+			},
+			call: callRecordMetric,
+		},
+		{
 			Name: "pb_create_doc",
 			Description: "プロジェクト文書を新しく作る。doc.edit が必要。slug は ^[a-z0-9][a-z0-9-]{0,63}$（小文字・数字・ハイフン）で、.md は付けない。" +
 				"同じ親の下に同じ slug があれば 409 already_exists。応答は要点（path / version / updated_at）だけ。",
@@ -1683,6 +1702,38 @@ func callUpdateHandoff(h *Handler, r *http.Request, key string, args json.RawMes
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
 	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/handoff", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// recordMetricArgs は pb_record_metric の引数（Delegation.md 4.2・8.3。pb-277）。
+type recordMetricArgs struct {
+	Seq    flexInt  `json:"seq"`
+	Metric string   `json:"metric"`
+	Value  *float64 `json:"value"`
+	NoteMD string   `json:"note_md"`
+}
+
+func callRecordMetric(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in recordMetricArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if strings.TrimSpace(in.Metric) == "" {
+		return toolResult{}, newError(codeInvalidParams, "metric は必須である")
+	}
+	if in.Value == nil {
+		return toolResult{}, newError(codeInvalidParams, "value は必須である")
+	}
+	raw, err := json.Marshal(map[string]any{"value": *in.Value, "note_md": in.NoteMD})
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost,
+		ticketPath(key, seq)+"/metrics/"+url.PathEscape(in.Metric)+"/values", nil, raw, nil)
 	return passThrough(r, res, err)
 }
 

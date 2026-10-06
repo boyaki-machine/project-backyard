@@ -278,6 +278,16 @@ type DelegationHandoff struct {
 	WrittenAt    time.Time
 }
 
+type DelegationMetricValue struct {
+	ID           string
+	DelegationID string
+	MetricKey    string
+	Value        pgtype.Numeric
+	NoteMd       string
+	RecordedBy   string
+	RecordedAt   time.Time
+}
+
 type DelegationPlan struct {
 	ID            string
 	DelegationID  string

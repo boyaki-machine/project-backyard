@@ -77,6 +77,13 @@ func validateScopeConstraints(scope []byte, field string) []apierr.Detail {
 	if raw, ok := s["stop_conditions"]; ok {
 		details = append(details, validateStopConditionsJSON(raw, field+".stop_conditions")...)
 	}
+	// 指標の定義と要約の周期（4.2・8.3。pb-277）。
+	if raw, ok := s["metrics"]; ok {
+		details = append(details, validateMetricsJSON(raw, field+".metrics")...)
+	}
+	if raw, ok := s["report_every_days"]; ok {
+		details = append(details, validateReportEveryDaysJSON(raw, field+".report_every_days")...)
+	}
 	return details
 }
 

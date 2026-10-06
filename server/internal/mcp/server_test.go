@@ -288,7 +288,7 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 	// 評価エージェントが計画・成果を評価する口、pb_raise_confirmation は main が
 	// 人への確認待ちを立てる口、pb_update_handoff は main が引き継ぎノートを更新する口
 	// （Delegation.md 15章 D7 の新設5ツールのうちMCPに開けるのはこの4つ。
-	// pb-247・pb-248・pb-249・pb-250）＋ 遷移2件（見てから動かす順。
+	// pb-247・pb-248・pb-249・pb-250）。pb_record_metric は main が指標の値を入れる口（pb-277）＋ 遷移2件（見てから動かす順。
 	// 手順26b）＋ 完了レポート1件（手順26c。/pb-implement の流れの終端）。
 	//
 	// **pb_claim_task / pb_release_task は持たない（構想）**
@@ -299,7 +299,7 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 		"pb_list_tasks", "pb_get_task", "pb_list_comments", "pb_get_context",
 		"pb_create_ticket", "pb_update_ticket", "pb_put_dod",
 		"pb_post_note", "pb_add_reference", "pb_submit_plan", "pb_submit_evaluation",
-		"pb_raise_confirmation", "pb_update_handoff",
+		"pb_raise_confirmation", "pb_update_handoff", "pb_record_metric",
 		"pb_create_doc", "pb_put_doc",
 		"pb_list_transitions", "pb_transition_task",
 		"pb_submit_result",

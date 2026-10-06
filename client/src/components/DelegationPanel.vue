@@ -19,6 +19,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   agentCallPhrase,
   constraintsOf,
+  metricsOf,
   createDelegation,
   delegationStatusLabels,
   pauseDelegation,
@@ -35,6 +36,8 @@ import DelegationResumeModal from './DelegationResumeModal.vue'
 import DelegationTextModal from './DelegationTextModal.vue'
 import DelegationWithdrawModal from './DelegationWithdrawModal.vue'
 import DelegationHistoryModal from './DelegationHistoryModal.vue'
+import DelegationMetricsEditor, { type MetricsDraft } from './DelegationMetricsEditor.vue'
+import DelegationSummaryModal from './DelegationSummaryModal.vue'
 
 const props = defineProps<{
   projectKey: string
@@ -79,6 +82,7 @@ function clientKindOf(actorID: string | undefined): string {
 const mainID = ref('')
 const evaluatorID = ref('')
 const constraints = ref<DelegationConstraints>({ budget: {}, stop_conditions: [''] })
+const metricsDraft = ref<MetricsDraft>({ metrics: [], report_every_days: '' })
 const busy = ref(false)
 const actionError = ref<string | null>(null)
 
@@ -96,6 +100,20 @@ async function start(): Promise<void> {
     const stops = constraints.value.stop_conditions.map((c) => c.trim()).filter((c) => c !== '')
     const scope: Record<string, unknown> = { budget: constraints.value.budget }
     if (stops.length > 0) scope.stop_conditions = stops
+    // 指標と要約の周期（4.2・8.3。pb-277）。名前が空の行は落とし、空の単位・目標は送らない
+    const metrics = metricsDraft.value.metrics
+      .filter((m) => m.name.trim() !== '')
+      .map((m) => ({
+        key: m.key,
+        name: m.name.trim(),
+        direction: m.direction,
+        ...(m.unit?.trim() ? { unit: m.unit.trim() } : {}),
+        ...(m.target !== undefined && m.target !== null ? { target: m.target } : {}),
+      }))
+    if (metrics.length > 0) scope.metrics = metrics
+    if (String(metricsDraft.value.report_every_days).trim() !== '') {
+      scope.report_every_days = Number(metricsDraft.value.report_every_days)
+    }
     await createDelegation(props.projectKey, props.seq, {
       main_actor_id: mainID.value,
       evaluator_actor_id: evaluatorID.value,
@@ -193,6 +211,10 @@ const pauseOpen = ref(false)
 const resumeOpen = ref(false)
 const withdrawOpen = ref(false)
 const historyOpen = ref(false)
+const summaryOpen = ref(false)
+/** 指標の名前と要約の周期（4.2・8.3。pb-277） */
+const metricNames = computed(() => metricsOf(props.status?.scope).map((m) => m.name))
+const reportEveryDays = computed(() => Number((props.status?.scope as { report_every_days?: number } | null)?.report_every_days ?? 0))
 
 const canEditConstraintsOnResume = computed(() => {
   const s = props.status
@@ -272,6 +294,7 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
     </p>
     <p v-if="agentsError" class="field-error" role="alert">{{ agentsError }}</p>
     <DelegationConstraintsEditor v-model="constraints" :disabled="busy" />
+    <DelegationMetricsEditor v-model="metricsDraft" :disabled="busy" />
     <p v-if="actionError" class="field-error" role="alert">{{ actionError }}</p>
     <div class="actions">
       <button type="button" class="secondary" :disabled="busy" @click="emit('cancelSetup')">{{ $ui('取りやめる') }}</button>
@@ -323,6 +346,16 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
         <div v-if="usageLine" class="item">
           <dt>{{ $ui('参考') }}</dt>
           <dd class="muted">{{ usageLine }}</dd>
+        </div>
+        <div v-if="metricNames.length > 0 || reportEveryDays > 0" class="item">
+          <dt>{{ $ui('指標と要約') }}</dt>
+          <dd>
+            <span class="muted">
+              {{ metricNames.join(' ・ ') }}<template v-if="metricNames.length > 0 && reportEveryDays > 0"> ／ </template>
+              <template v-if="reportEveryDays > 0">{{ $ui('{value0}日ごとに要約', { value0: reportEveryDays }) }}</template>
+            </span>
+            <button type="button" class="link" @click="summaryOpen = true">{{ $ui('周期の要約を見る') }}</button>
+          </dd>
         </div>
         <div v-if="status?.latest_plan" class="item">
           <dt>{{ $ui('履歴') }}</dt>
@@ -385,6 +418,14 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
     :error="actionError"
     @close="pauseOpen = false"
     @submit="pause"
+  />
+  <DelegationSummaryModal
+    v-if="summaryOpen"
+    :project-key="projectKey"
+    :seq="seq"
+    :can-record="canManage && state !== 'ended'"
+    @close="summaryOpen = false"
+    @changed="emit('changed')"
   />
   <DelegationHistoryModal
     v-if="historyOpen"

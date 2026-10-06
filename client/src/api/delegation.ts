@@ -19,6 +19,9 @@ export type DelegationState = NonNullable<DelegationStatus['status']>
 export type OpenConfirmation = NonNullable<DelegationStatus['open_confirmations']>[number]
 export type PlanHistoryItem = components['schemas']['DelegationPlanHistoryItem']
 export type EvaluationHistoryItem = components['schemas']['DelegationEvaluationHistoryItem']
+export type DelegationMetric = components['schemas']['DelegationMetric']
+export type DelegationMetricValue = components['schemas']['DelegationMetricValue']
+export type DelegationSummary = components['schemas']['DelegationSummary']
 
 /** 状態の語（pb-252 の合意）。 */
 export const delegationStatusLabels: Record<DelegationState, string> = {
@@ -174,6 +177,31 @@ export function objectDelegationPlan(
   reasonMd: string,
 ): Promise<{ reverted: boolean; later_version?: number }> {
   return api.post(`${base(key, seq)}/plan/${version}/object`, { reason_md: reasonMd })
+}
+
+/** scope から指標の定義を読む（`Delegation.md` 4.2。pb-277）。読めなければ空 */
+export function metricsOf(scope: unknown): DelegationMetric[] {
+  const m = (scope as { metrics?: unknown } | null)?.metrics
+  return Array.isArray(m) ? (m as DelegationMetric[]) : []
+}
+
+/** 指標の値を入れる（pb-277） */
+export function recordDelegationMetric(
+  key: string,
+  seq: number,
+  metric: string,
+  value: number,
+  noteMd: string,
+): Promise<DelegationMetricValue> {
+  return api.post<DelegationMetricValue>(`${base(key, seq)}/metrics/${encodeURIComponent(metric)}/values`, {
+    value,
+    note_md: noteMd,
+  })
+}
+
+/** 周期の要約（期間を省くと直近の周期。pb-277） */
+export function getDelegationSummary(key: string, seq: number): Promise<DelegationSummary> {
+  return api.get<DelegationSummary>(`${base(key, seq)}/summary`)
 }
 
 export function answerConfirmation(
