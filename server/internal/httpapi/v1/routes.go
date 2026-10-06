@@ -514,6 +514,9 @@ func Mount(r chi.Router, deps Deps) {
 			Post("/projects/{key}/tickets/{seq}/plan", h.submitDelegationPlan)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/plan/{version}/revert", h.revertDelegationPlan)
+		// 事後の異議（6.4）。pb-275。差し戻しと同じく PM だけが呼ぶ。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/plan/{version}/object", h.objectDelegationPlan)
 
 		// ── 評価（Delegation.md 7章・12.2）── pb-248 ───────────────
 		//

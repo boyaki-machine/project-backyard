@@ -3132,6 +3132,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/tickets/{seq}/plan/{version}/object": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                version: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 評価が合格させた構造の変更に異議を出す
+         * @description PM の事後の異議（Delegation.md 6.4、pb-275）。**必要権限は `delegation.manage`**。
+         *     MCP ツールは持たない。対象は、評価が合格させて PB が反映した構造の変更の版に
+         *     限る（PM が承認した版・軽微な変更は `409`）。その版への合格の評価に
+         *     `objected_at` を立てる（1つの版に1回。2回目は `409`）。
+         *
+         *     **対象が最新の反映済みの版なら、その前の反映済みの版を写した新しい版を
+         *     作る**（差し戻し。`reverted: true`）。後に別の版が反映されていれば差し戻さず、
+         *     `later_version` を返す——戻す版は PM が `.../revert` で選ぶ。根に
+         *     `kind=decision` のコメントを残す。終了した委任では `409`。
+         */
+        post: operations["objectDelegationPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{key}/tickets/{seq}/delegation-status": {
         parameters: {
             query?: never;
@@ -12747,6 +12789,69 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["TicketNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    objectDelegationPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description 異議の理由（任意）。根のコメントと差し戻しの版の理由に載る。 */
+                    reason_md?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 異議を記録した。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        objected_version: number;
+                        evaluation_id: string;
+                        reverted: boolean;
+                        reverted_plan: components["schemas"]["DelegationPlan"] | null;
+                        /** @description 差し戻さなかったときの、後に反映された最新の版。 */
+                        later_version?: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            /** @description 異議の対象ではない版／既に異議を出した／委任が終了している。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];

@@ -54,3 +54,9 @@ FROM evaluation
 WHERE delegation_id = @delegation_id
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- MarkEvaluationObjected は PM の事後の異議を記録する（Delegation.md 6.4・6.5。pb-275）。
+-- 一度だけ立てる（2回目は 0 行。呼び出し側が 409 にする）。#254 の集計の材料になる。
+-- name: MarkEvaluationObjected :execrows
+UPDATE evaluation SET objected_at = now()
+WHERE id = @id AND objected_at IS NULL;

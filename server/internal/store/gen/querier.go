@@ -893,6 +893,14 @@ type Querier interface {
 	// **変えた人の表示名も返す**。画面は「あなたが変えました」と
 	// 「〇〇 が変えました」で文言を分ける——押す前に確かめることが違う。
 	GetPendingSettingChange(ctx context.Context) (GetPendingSettingChangeRow, error)
+	// GetPlanForObjection は異議の対象の版を読む（Delegation.md 6.4。pb-275）。
+	// 評価が合格させた構造の変更かを、状態・段階・決めた人・合格の評価から判定する。
+	// **decided_by が NULL なのは PB が反映した版**（評価の合格・軽微）。PM が承認した
+	// 版（初版・範囲の変更）は PM 自身の判断なので、異議の対象にしない。
+	GetPlanForObjection(ctx context.Context, arg GetPlanForObjectionParams) (GetPlanForObjectionRow, error)
+	// GetPreviousAcceptedDelegationPlan は、ある版より前で最後に反映された版を読む
+	// （6.4「その版の前の版」。間に却下・置き換えの版があっても飛ばす）。
+	GetPreviousAcceptedDelegationPlan(ctx context.Context, arg GetPreviousAcceptedDelegationPlanParams) (int32, error)
 	// ── 詳細（ApiDesign.md 5.4。POST /projects の応答も同じ形）───────
 	// GetProjectByKey は1プロジェクトの本体とワークフローの見出しを返す。
 	//
@@ -1739,6 +1747,9 @@ type Querier interface {
 	// するのは、チケットの作成（FK の確認が project に取る KEY SHARE）を待たせない
 	// ため**——FOR UPDATE だと KEY SHARE とぶつかる。
 	LockProjectForDependency(ctx context.Context, projectID string) (string, error)
+	// MarkEvaluationObjected は PM の事後の異議を記録する（Delegation.md 6.4・6.5。pb-275）。
+	// 一度だけ立てる（2回目は 0 行。呼び出し側が 409 にする）。#254 の集計の材料になる。
+	MarkEvaluationObjected(ctx context.Context, id string) (int64, error)
 	MarkHolidaySourceAttempt(ctx context.Context, id string) error
 	MarkHolidaySourceFailed(ctx context.Context, arg MarkHolidaySourceFailedParams) error
 	// 取り込めたとき。中身が変わっていなくても fetched_at は進める。

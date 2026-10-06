@@ -197,3 +197,18 @@ func (q *Queries) GetLatestEvaluationForDelegation(ctx context.Context, delegati
 	)
 	return i, err
 }
+
+const markEvaluationObjected = `-- name: MarkEvaluationObjected :execrows
+UPDATE evaluation SET objected_at = now()
+WHERE id = $1 AND objected_at IS NULL
+`
+
+// MarkEvaluationObjected は PM の事後の異議を記録する（Delegation.md 6.4・6.5。pb-275）。
+// 一度だけ立てる（2回目は 0 行。呼び出し側が 409 にする）。#254 の集計の材料になる。
+func (q *Queries) MarkEvaluationObjected(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, markEvaluationObjected, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

@@ -12,6 +12,7 @@
 package v1
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -493,39 +494,12 @@ func (h *handler) revertDelegationPlan(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("差し戻し元の版を読めない: %w", err)
 		}
 
-		newVersion, err := q.NextDelegationPlanVersion(ctx, deleg.ID)
+		v, err := createRevertPlan(ctx, q, rec, scope, ticketID, deleg.ID, id, targetVersion, old, req.ReasonMd)
 		if err != nil {
-			return fmt.Errorf("計画の版を採番できない: %w", err)
+			return err
 		}
-
-		if err := q.CreateDelegationPlan(ctx, gen.CreateDelegationPlanParams{
-			ID: id, DelegationID: deleg.ID, Version: newVersion,
-			Scope: old.Scope, Skeleton: old.Skeleton,
-			BodyMd: old.BodyMd, ReasonMd: req.ReasonMd,
-			DeclaredClass: pgtype.Text{}, MeasuredClass: pgtype.Text{},
-			Status:      "accepted",
-			RevertsTo:   pgtype.Int4{Int32: targetVersion, Valid: true},
-			SubmittedBy: scope.actorID,
-		}); err != nil {
-			return fmt.Errorf("差し戻しの版を作成できない: %w", err)
-		}
-		if _, err := q.AcceptDelegationPlan(ctx, id); err != nil {
-			return fmt.Errorf("差し戻しの版を確定できない: %w", err)
-		}
-
-		row, err := q.GetDelegationPlanByID(ctx, id)
-		if err != nil {
-			return fmt.Errorf("作成した計画を読めない: %w", err)
-		}
-		view = delegationPlanViewOf(row)
-
-		field := "delegation_plan"
-		newVal := fmt.Sprintf("v%d（v%d への差し戻し）", newVersion, targetVersion)
-		return rec.Record(ctx, q, activity.Entry{
-			ProjectID: scope.projectID, EntityType: activity.EntityTicket,
-			EntityID: ticketID, Action: activity.Create,
-			Field: &field, NewValue: &newVal,
-		})
+		view = v
+		return nil
 	})
 	switch {
 	case rejected != nil:
@@ -536,6 +510,49 @@ func (h *handler) revertDelegationPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, http.StatusCreated, view)
+}
+
+// createRevertPlan は、old（targetVersion の版）を写した新しい版を反映済みとして作る
+// （6.2 の差し戻し）。PM の差し戻しと、事後の異議（6.4。pb-275）が使う。
+func createRevertPlan(
+	ctx context.Context, q gen.Querier, rec *activity.Recorder, scope ticketScopeInfo,
+	ticketID, delegationID, id string, targetVersion int32,
+	old gen.GetDelegationPlanByVersionRow, reasonMd string,
+) (delegationPlanView, error) {
+	newVersion, err := q.NextDelegationPlanVersion(ctx, delegationID)
+	if err != nil {
+		return delegationPlanView{}, fmt.Errorf("計画の版を採番できない: %w", err)
+	}
+	if err := q.CreateDelegationPlan(ctx, gen.CreateDelegationPlanParams{
+		ID: id, DelegationID: delegationID, Version: newVersion,
+		Scope: old.Scope, Skeleton: old.Skeleton,
+		BodyMd: old.BodyMd, ReasonMd: reasonMd,
+		DeclaredClass: pgtype.Text{}, MeasuredClass: pgtype.Text{},
+		Status:      "accepted",
+		RevertsTo:   pgtype.Int4{Int32: targetVersion, Valid: true},
+		SubmittedBy: scope.actorID,
+	}); err != nil {
+		return delegationPlanView{}, fmt.Errorf("差し戻しの版を作成できない: %w", err)
+	}
+	if _, err := q.AcceptDelegationPlan(ctx, id); err != nil {
+		return delegationPlanView{}, fmt.Errorf("差し戻しの版を確定できない: %w", err)
+	}
+
+	row, err := q.GetDelegationPlanByID(ctx, id)
+	if err != nil {
+		return delegationPlanView{}, fmt.Errorf("作成した計画を読めない: %w", err)
+	}
+
+	field := "delegation_plan"
+	newVal := fmt.Sprintf("v%d（v%d への差し戻し）", newVersion, targetVersion)
+	if err := rec.Record(ctx, q, activity.Entry{
+		ProjectID: scope.projectID, EntityType: activity.EntityTicket,
+		EntityID: ticketID, Action: activity.Create,
+		Field: &field, NewValue: &newVal,
+	}); err != nil {
+		return delegationPlanView{}, err
+	}
+	return delegationPlanViewOf(row), nil
 }
 
 func planVersionParam(r *http.Request) (int32, *apierr.Error) {
