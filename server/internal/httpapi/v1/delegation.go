@@ -82,17 +82,16 @@ func (h *handler) createDelegation(w http.ResponseWriter, r *http.Request) {
 	)
 
 	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
-		// **根であること**（execution_mode='delegated' かつ parent_id は
-		// NULL のみ許す DB 制約 ck_ticket_delegated_no_parent と対になる）。
+		// **根にできるのは、親を持たないか、親がエピックのチケット**（4.1。pb-282）。
+		// 0050 の DB 制約は 0057 で外した——「親がエピック」は CHECK で表せない。
 		ticket, err := q.GetTicketForDelegation(ctx, ticketID)
 		if err != nil {
 			return fmt.Errorf("チケットを読めない: %w", err)
 		}
-		if ticket.ParentID.Valid {
-			invalid = apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
-				Field: "seq", Code: "invalid",
-				Message: "委任の根にできるのは、親を持たないチケットだけです",
-			})
+		if d, err := delegationRootParentProblem(ctx, q, scope.projectID, ticket.ParentID, "seq"); err != nil {
+			return err
+		} else if d != nil {
+			invalid = apierr.New(apierr.ValidationFailed).WithDetails(*d)
 			return errTicketReference
 		}
 
@@ -239,6 +238,40 @@ func delegationViewOf(row gen.GetDelegationByIDRow) delegationView {
 		CreatedAt: Time(row.CreatedAt),
 		UpdatedAt: Time(row.UpdatedAt),
 	}
+}
+
+// delegationRootParentProblem は、自律実行の根が parentID を親に持てるかを見る
+// （Delegation.md 4.1。pb-282）。持てなければ理由を返す。
+//
+//   - 親が無い → 持てる
+//   - 親がエピック → 持てる。ただし、そのエピックが別の自律実行の木の中にあれば不可
+//     （エピック自身が根の自律実行の中に、もう1つ根を作ると、木が入れ子になる）
+//   - 親がエピック以外 → 不可（子チケットは根にしない）
+func delegationRootParentProblem(
+	ctx context.Context, q gen.Querier, projectID string, parentID pgtype.Text, field string,
+) (*apierr.Detail, error) {
+	if !parentID.Valid {
+		return nil, nil
+	}
+	typ, err := q.GetTicketTypeByID(ctx, parentID.String)
+	if err != nil {
+		return nil, fmt.Errorf("親の種別を読めない: %w", err)
+	}
+	if typ != "epic" {
+		return &apierr.Detail{
+			Field: field, Code: "invalid",
+			Message: "自律実行にできるのは、親を持たないか、エピックの直下のチケットだけです",
+		}, nil
+	}
+	if _, in, err := findDelegationContainingTicket(ctx, q, projectID, parentID.String); err != nil {
+		return nil, fmt.Errorf("委任を確認できない: %w", err)
+	} else if in {
+		return &apierr.Detail{
+			Field: field, Code: "invalid",
+			Message: "このエピックは自律実行の中にあるため、その下のチケットを自律実行にはできません",
+		}, nil
+	}
+	return nil, nil
 }
 
 // ── 委任の木への強制（Delegation.md 5章・12.2）───────────────────

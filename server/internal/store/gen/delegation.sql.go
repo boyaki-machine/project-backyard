@@ -251,6 +251,21 @@ func (q *Queries) GetTicketForDelegation(ctx context.Context, id string) (GetTic
 	return i, err
 }
 
+const hasDelegatedChild = `-- name: HasDelegatedChild :one
+SELECT EXISTS (
+  SELECT 1 FROM ticket WHERE parent_id = $1 AND execution_mode = 'delegated'
+)::boolean
+`
+
+// HasDelegatedChild は、エピックの種別を変えるときに、直下に自律実行の根が無いかを
+// 見る（pb-282）。根の親はエピックに限るので、エピックでなくなると根の条件が崩れる。
+func (q *Queries) HasDelegatedChild(ctx context.Context, parentID pgtype.Text) (bool, error) {
+	row := q.db.QueryRow(ctx, hasDelegatedChild, parentID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listActiveDelegationsForProject = `-- name: ListActiveDelegationsForProject :many
 SELECT d.id, d.root_ticket_id, d.status
 FROM delegation d

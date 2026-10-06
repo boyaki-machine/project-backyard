@@ -106,3 +106,10 @@ SELECT EXISTS (
 UPDATE delegation
 SET status = 'approved', scope = @scope, scope_version = scope_version + 1
 WHERE id = @id AND status = 'planning';
+
+-- HasDelegatedChild は、エピックの種別を変えるときに、直下に自律実行の根が無いかを
+-- 見る（pb-282）。根の親はエピックに限るので、エピックでなくなると根の条件が崩れる。
+-- name: HasDelegatedChild :one
+SELECT EXISTS (
+  SELECT 1 FROM ticket WHERE parent_id = @parent_id AND execution_mode = 'delegated'
+)::boolean;

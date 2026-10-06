@@ -104,6 +104,8 @@ func TestCreateDelegationRejectsNonRootTicket(t *testing.T) {
 	q.ticketForDelegation = map[string]gen.GetTicketForDelegationRow{
 		testTicketID: {ParentID: txt("01K2TKT00000000000PARENT1"), ExecutionMode: "agent_draft"},
 	}
+	// 親がエピック以外（子チケット）は根にできない（4.1。pb-282 でエピックは可にした）。
+	q.ticket.typeByID = map[string]string{"01K2TKT00000000000PARENT1": "story"}
 	h, _ := ticketHandler(q)
 
 	rec := httptest.NewRecorder()
@@ -116,6 +118,46 @@ func TestCreateDelegationRejectsNonRootTicket(t *testing.T) {
 	}
 	if !hasDetail(errorOf(t, rec), "seq", "invalid") {
 		t.Errorf("details = %v, want seq/invalid", errorOf(t, rec).Details)
+	}
+}
+
+// TestCreateDelegationUnderEpic は、エピックの直下のチケットを根にできること
+// （4.1。pb-282）と、そのエピックが別の自律実行の木の中なら拒むことを確かめる。
+func TestCreateDelegationUnderEpic(t *testing.T) {
+	const epicID = "01K2TKT00000000000EPIC0001"
+	for _, tc := range []struct {
+		name   string
+		inTree bool
+		want   int
+	}{
+		{"エピックの直下は根にできる", false, http.StatusCreated},
+		{"自律実行の中のエピックの下は入れ子になるので不可", true, http.StatusUnprocessableEntity},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := ticketFake()
+			q.ticket.idBySeq[31] = testTicketID
+			q.ticketForDelegation = map[string]gen.GetTicketForDelegationRow{
+				testTicketID: {ParentID: txt(epicID), ExecutionMode: "agent_draft"},
+			}
+			q.ticket.typeByID = map[string]string{epicID: "epic"}
+			if tc.inTree {
+				q.delegationList = []gen.ListActiveDelegationsForProjectRow{
+					{ID: "01K2DELEGATION00000000009", RootTicketID: epicID, Status: "approved"},
+				}
+				q.ticket.descendant = true
+			}
+			q.delegationByIDRow = gen.GetDelegationByIDRow{ID: "01K2DELEGATION00000000001", Status: "planning", RootSeq: 31}
+			h, _ := ticketHandler(q)
+
+			rec := httptest.NewRecorder()
+			h.createDelegation(rec, delegationReq(http.MethodPost, "/delegation",
+				`{"main_actor_id":"`+testMainActorID+`","evaluator_actor_id":"`+testEvaluatorActorID+`","scope":{}}`,
+				"31"))
+
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, tc.want, rec.Body.String())
+			}
+		})
 	}
 }
 

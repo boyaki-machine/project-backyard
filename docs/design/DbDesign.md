@@ -1971,9 +1971,9 @@ ON CONFLICT (key) DO UPDATE
 子孫かどうかは祖先を辿って決める——別欄（`delegation_id`）を全子孫に持つ案は、
 木の外へ動かした・木の中へ入れたときの同期漏れが権限の穴になる（`Delegation.md` 4.1）。
 
-**`ck_ticket_delegated_no_parent` は同一行だけで閉じる制約である。** 「根だけが
-`delegated` を持てる」を「`delegated` なら親を持たない」に言い換えて表す——
-祖先を辿らないと判定できない制約は CHECK に書けない。
+**`ck_ticket_delegated_no_parent` は 0057 で外した**（pb-282）。根の条件を「親を持たないか、
+親がエピック」に広げたため——親の種別は他の行にあり、CHECK では表せない。判定はサーバが行う
+（委任の作成、根の親の変更、直下に根を持つエピックの種別の変更。`Delegation.md` 4.1）。
 
 **`delegation.scope` は委任範囲（`Delegation.md` 4.2）を持つ。** PM が承認するのは
 この内容であって計画の中身ではない。**本チケットでは内容を検証しない**——

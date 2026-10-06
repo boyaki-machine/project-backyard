@@ -276,6 +276,21 @@ func (h *handler) resolveTicketPatch(
 
 	if patch.Type.Set {
 		params.Type = pgtype.Text{String: patch.Type.Value, Valid: true}
+		// **直下に自律実行の根を持つエピックは、エピックのままにする**（pb-282）。
+		// 根の親はエピックに限るので、種別を変えると根の条件が崩れる。
+		if before.Type == "epic" && patch.Type.Value != "epic" {
+			has, err := q.HasDelegatedChild(ctx, pgtype.Text{String: before.ID, Valid: true})
+			if err != nil {
+				return params, apierr.New(apierr.InternalError).
+					WithCause(fmt.Errorf("自律実行の根を確認できない: %w", err))
+			}
+			if has {
+				return params, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+					Field: "type", Code: "invalid",
+					Message: "直下に自律実行のチケットがあるため、エピックから種別を変えられません",
+				})
+			}
+		}
 	}
 	if patch.Title.Set {
 		params.Title = pgtype.Text{String: patch.Title.Value, Valid: true}
@@ -412,6 +427,16 @@ func (h *handler) resolveTicketPatch(
 					WithCause(fmt.Errorf("親の種別を読めない: %w", err))
 			}
 			newParentType = pgtype.Text{String: t, Valid: true}
+
+			// **自律実行の根の親は、エピックに限る**（Delegation.md 4.1。pb-282）。
+			// 0050 の DB 制約が担っていた分を、0057 で外したのでここで見る。
+			if before.ExecutionMode == "delegated" {
+				if d, err := delegationRootParentProblem(ctx, q, projectID, parentID, "parent_seq"); err != nil {
+					return params, apierr.New(apierr.InternalError).WithCause(err)
+				} else if d != nil {
+					return params, apierr.New(apierr.ValidationFailed).WithDetails(*d)
+				}
+			}
 		}
 	} else if before.ParentSeq.Valid {
 		// 親を触らない場合は現在の親の種別を使う（下のオンステージ判定に要る）。

@@ -1576,7 +1576,7 @@ export const uiMessages: Record<string, string> = {
   "一言（任意）": "Note (optional)",
   "エージェントへの申し送りがあれば": "Anything to pass on to the agents",
   "再開する": "Resume",
-  "（親を持たないチケットだけ）": "(top-level tickets only)",
+  "（親を持たないか、エピックの直下のチケットだけ）": "(top-level tickets or tickets directly under an epic only)",
   "（権限がありません）": "(no permission)",
   "通信に失敗しました。もう一度試してください": "Request failed. Please try again",
   "評価エージェントが計画を評価するのを待っています": "Waiting for the evaluator agent to review the plan",
