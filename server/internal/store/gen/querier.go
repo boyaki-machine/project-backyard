@@ -161,6 +161,7 @@ type Querier interface {
 	// 再提出が別の run になるので、これが「何回目のやり直しか」と一致する。
 	//
 	CountAgentRunsForTicket(ctx context.Context, arg CountAgentRunsForTicketParams) (int64, error)
+	CountAgentUsageRuns(ctx context.Context, arg CountAgentUsageRunsParams) (int64, error)
 	// 以下は pb dev seed（DbDesign.md 7.6）が使う。
 	CountAppUsers(ctx context.Context) (int64, error)
 	// ── 削除（ApiDesign.md 6.5）─────────────────────────────────
@@ -904,6 +905,9 @@ type Querier interface {
 	// **decided_by が NULL なのは PB が反映した版**（評価の合格・軽微）。PM が承認した
 	// 版（初版・範囲の変更）は PM 自身の判断なので、異議の対象にしない。
 	GetPlanForObjection(ctx context.Context, arg GetPlanForObjectionParams) (GetPlanForObjectionRow, error)
+	// 計画の変更対象と委任の境界。Delegation.md 5章。
+	GetPlanningDelegation(ctx context.Context, arg GetPlanningDelegationParams) (GetPlanningDelegationRow, error)
+	GetPlanningPosition(ctx context.Context, arg GetPlanningPositionParams) (GetPlanningPositionRow, error)
 	// GetPreviousAcceptedDelegationPlan は、ある版より前で最後に反映された版を読む
 	// （6.4「その版の前の版」。間に却下・置き換えの版があっても飛ばす）。
 	GetPreviousAcceptedDelegationPlan(ctx context.Context, arg GetPreviousAcceptedDelegationPlanParams) (int32, error)
@@ -1182,6 +1186,9 @@ type Querier interface {
 	// 今後も増える（DbDesign.md 8.2.1.1）ので、写しを置くと必ず腐る。
 	//
 	ListAgentClientKinds(ctx context.Context) ([]ListAgentClientKindsRow, error)
+	// 提出済みの実行と評価の実績。ApiDesign.md 9.16。
+	ListAgentUsageEvents(ctx context.Context, arg ListAgentUsageEventsParams) ([]ListAgentUsageEventsRow, error)
+	ListAgentUsageRuns(ctx context.Context, arg ListAgentUsageRunsParams) ([]ListAgentUsageRunsRow, error)
 	// アプリケーション設定に関するクエリ（DbDesign.md 6.14、ApiDesign.md 11章）。
 	//
 	// **Design.md 10.3 の第2層の置き場である。** 第1層（接続文字列・待受）は
@@ -1387,6 +1394,7 @@ type Querier interface {
 	// / …）。GuiDesign.md 5.6.3 がカテゴリで行を区切れるのはこのためである。
 	//
 	ListPermissions(ctx context.Context) ([]Permission, error)
+	ListPlanningSiblings(ctx context.Context, arg ListPlanningSiblingsParams) ([]ListPlanningSiblingsRow, error)
 	// 5.8.5 の override。期間は [from, to)。
 	ListProjectCalendarDays(ctx context.Context, arg ListProjectCalendarDaysParams) ([]ListProjectCalendarDaysRow, error)
 	// 5.8.5 の events。期間は [from, to)。

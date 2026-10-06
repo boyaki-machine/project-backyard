@@ -112,6 +112,10 @@ const showAdmin = computed(
           <span class="icon" aria-hidden="true">⌕</span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.search') }}</span>
         </RouterLink>
+        <RouterLink class="item" :to="`/p/${projectKey}/insights`" :title="t('menu.main.insights')">
+          <span class="icon" aria-hidden="true">◷</span>
+          <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.insights') }}</span>
+        </RouterLink>
         <!-- Docs（4.3 の表。手順22b）。**プロジェクト設定より上に置く**——
              4.1 の並びが「視点 → Docs → 設定」で、設定は最後に来る -->
         <RouterLink

@@ -999,13 +999,13 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 
 **画面は既定と許可リストを 4.5.9 から引く**。`scopes` が絶対指定なので、「既定に `doc.edit` を足す」を送るには既定の中身が要るが、**画面に写しを持たせない。**
 
-**許可リストは「6.5 の既定10件 ∪ `doc.edit` ∪ `ticket.actual_point.edit`」の12件である。**
+**許可リストは、既定10件と任意の追加4件である。** 追加できるのは `doc.edit`・`ticket.actual_point.edit`・`delegation.evaluate`・`ticket.plan.edit`。所有者自身の権限も必要である。
 
 ```
 agent.run  comment.create  doc.view  project.view
 ticket.assign  ticket.create  ticket.transition  ticket.view
 ticket.reference.edit  ticket.self_edit                         ← 既定の10件
-doc.edit  ticket.actual_point.edit                              ← 発行時に足せる
+doc.edit  ticket.actual_point.edit  delegation.evaluate  ticket.plan.edit ← 任意の追加
 ```
 
 **`ticket.self_edit` も既定に入れる**。`ticket.reference.edit` と同じ理由である——**起票したチケットを直すのは実装エージェントの通常の仕事**であり、付く相手で変わらない。**`ticket.edit` は許可リストに入れない**。あれは 9.5.2 の全項目を開けるので、**エージェントが `execution_mode` や `scope` を自分で緩められる**（`DbDesign.md` 6.13）。
@@ -3004,7 +3004,9 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 
 ## 9.4 `POST /api/v1/projects/:key/tickets/:seq/move`
 
-**必要権限**：`ticket.edit`
+**必要権限**：`ticket.edit` または `ticket.plan.edit`
+
+`ticket.plan.edit` のみの呼び出し元とエージェントは、同じ親・段の中で順序だけを変更できる。`staged`・`parent_seq` の指定は422。`first`・`last` は同じ親・段の先頭・末尾を指す。スプリントへの所属を変えない。委任の制約は `Design.md` 8.5.7 に従う。
 
 バックログのドラッグ&ドロップによる並べ替えと、メニュー・複数選択によるオンステージ移動（`GuiDesign.md` 5.4、pb-272）。
 
@@ -3137,7 +3139,7 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 ### 9.5.2 `PATCH`
 
-**必要権限**：`ticket.edit`。ただし `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要
+**必要権限**：`ticket.edit` または `ticket.self_edit`。`ticket.plan.edit` だけを持つ場合は `start_at`・`due_at`・`all_day` のみ変更できる。ただし `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要
 
 **`ticket.self_edit` でも通る**（0029）。ただし**開けるのは下の絞り込んだ集合だけ**で、それ以外の項目を送ると `403` になる。**エージェントに渡す権限であり、自分の縛りを緩められては意味がない**（`DbDesign.md` 6.13）。
 
@@ -3702,7 +3704,7 @@ GET|POST     /api/v1/projects/:key/tickets/:seq/links
 PATCH|DELETE /api/v1/projects/:key/tickets/:seq/links/:id
 ```
 
-**必要権限**：`GET` は `ticket.view`、更新系は `ticket.edit`
+**必要権限**：`GET` は `ticket.view`、更新系は `ticket.edit` または `ticket.plan.edit`
 
 ```json
 { "target_seq": 12, "link_type": "blocks", "lag_days": 0 }
@@ -3811,6 +3813,8 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/links/:id
 **操作したチケット側に1行だけ書き、相手のチケットの履歴には書かない**——1回の操作で
 2行増えると、ダッシュボードの「最近の動き」で同じ出来事が二重に見える。
 `direction` を要約に含めないのも同じ理由で、**読み手はそのチケットの履歴を見ている。**
+
+エージェントが委任の中で依存を変更する場合は、両端が承認されたmainの範囲に含まれる必要がある。停止中・終了済み・確認待ちでは変更できない（`Design.md` 8.5.7）。
 
 ### 9.10.2 外部参照
 
@@ -4585,6 +4589,39 @@ GET /api/v1/projects/:key/tickets/:seq/reports/:id
 - GUI は 5.5 の複数画面幅・読み込み状態・再提出・安全な本文表示を含めて検証する。
 
 ---
+
+## 9.16 エージェント実績
+
+```
+GET /api/v1/projects/:key/agent-usage
+GET /api/v1/projects/:key/agent-usage/runs
+```
+
+**どちらも `ticket.view` が必要である。** プロジェクト所属とトークンのプロジェクト制限を適用する。本文・コメント・認証情報は返さない。
+
+共通クエリは `from_date` / `to_date`（プロジェクト基準の日付、終端日を含む）と `client_kind` / `model_name` / `model_version`。日付省略時は今日を含む直近30暦日。片側だけの指定、存在しない日付、逆転した期間、3660日を超える期間は422 `validation_failed` / `invalid`。日付は基準タイムゾーンの0時から終端翌日の0時までに変換し、実行は提出日時、評価は評価日時で所属させる。モデル条件は提出・評価時点の値に対する完全一致である。
+
+### 集計
+
+応答は `from_date`・`to_date`・`timezone`・`totals`・`daily[]`・`models[]`。日別は期間内の日を昇順、モデル別は種別・モデル名・版の順とする。モデルのNULLは不明の群として残す。
+
+| フィールド | 意味 |
+|---|---|
+| `runs_count` / `tickets_count` | 提出された実行の件数 / 重複を除いたチケット数 |
+| `completed_count` / `partial_count` / `blocked_count` | レポートの結果別件数。チケットの完了状態とは別 |
+| `run_tokens` / `evaluation_tokens` | 実行 / 評価の既知トークン数の合計 |
+| `run_tokens_missing` / `evaluation_tokens_missing` | それぞれトークン数が欠測の件数 |
+| `evaluation_count` | 評価記録の件数 |
+| `turns` / `turns_missing` | 実行の既知ターン数の合計 / 欠測件数 |
+| `wall_clock_min` / `wall_clock_min_missing` | 実行の自己申告分の合計 / 欠測件数 |
+
+合計・日別・モデル別は同じフィールドを持つ。日別には `date`、モデル別にはNULL可能な `client_kind`・`model_name`・`model_version`を添える。件数0の日の合計は0。欠測だけの記録がある日は欠測件数で区別する。再提出はすべて含める。実行と評価を別々に読み、JOINで件数を掛け合わせない。評価のモデルは評価者のモデルである。
+
+時間はレポートの `cost.wall_clock_min` から取得し、開始と終了の差で補わない。各実行の分の合計は、並列作業を含むためプロジェクトの経過時間ではない。トークン内訳が無いため料金への換算は行わない。
+
+### 実行明細
+
+2.6の一覧形式。既定 `page=1`・`per_page=50`、上限200。並びは `submitted_at DESC, run_id DESC` 固定で、sort/orderの指定は422。各行は `run_id`・`seq`・`submitted_at`・`status`（レポートの結果）・`ticket_status_category`（現在のチケット状態）、NULL可能な `client_kind`・`model_name`・`model_version`・`tokens`・`turns`・`wall_clock_min` を持つ。日時はエポックミリ秒。件数とページ情報を保ち、取得したページだけを全件と扱わない。
 
 # 10. プロジェクト文書API
 

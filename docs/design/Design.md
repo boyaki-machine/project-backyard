@@ -759,13 +759,15 @@ type VerifiedIdentity struct {
 
 ### 6.4.2 権限カタログ
 
-権限をコードのif文ではなく**データとして定義**する（原則5）。カタログは35件（0010 の28件に、0017 の `doc.view` / `doc.edit`、0027 の `ticket.reference.edit`、0029 の `ticket.self_edit`、0044 の `ticket.actual_point.edit`、0050 の `delegation.manage` / `delegation.evaluate` を足したもの）。`DbDesign.md` 7.2（0010）・8.1.4（0017）・6.12.1（0027）・6.13（0029）・6.24（0050）のシードが正本。
+権限は36件のカタログとしてデータで定義する（原則5）。用途別の権限キーを以下に示す。登録内容とロールへの割り当ては `DbDesign.md` 7章・8.1.4・6.12.1・6.13・6.24 に従う。
 
 | カテゴリ | 権限キー |
 |---|---|
 | project | `project.view` `project.create` `project.edit` `project.archive` |
-| ticket | `ticket.view` `ticket.create` `ticket.edit` `ticket.transition` `ticket.close` `ticket.assign` `ticket.delete` |
+| ticket | `ticket.view` `ticket.create` `ticket.edit` `ticket.transition` `ticket.close` `ticket.assign` `ticket.delete` `ticket.reference.edit` `ticket.self_edit` `ticket.actual_point.edit` `ticket.plan.edit` |
 | comment | `comment.create` `comment.edit_own` `comment.delete_any` |
+| doc | `doc.view` `doc.edit` |
+| delegation | `delegation.manage` `delegation.evaluate` |
 | knowledge | `knowledge.view` `knowledge.propose` `knowledge.approve` |
 | proposal | `proposal.review` |
 | agent | `agent.register` `agent.token.issue` `agent.run` |
@@ -845,7 +847,7 @@ GET /api/v1/me
 | **権限** | **所有者から導く（委譲）。** 下の式を参照 |
 | トークン | `access_token(token_type='agent')`。プロジェクトスコープ必須、有効期限必須。接頭辞は `pb_agt_` |
 | 発行 | **本人が自分の設定から**（`/me/agents`。`ApiDesign.md` 4.5、`Requirements.md` 10.9.1 系統B）。**発行時に一度だけ全文表示** |
-| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run` `ticket.reference.edit` `ticket.self_edit`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit` と `ticket.actual_point.edit` を足せる**（`ApiDesign.md` 4.5.3 の許可リスト） |
+| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run` `ticket.reference.edit` `ticket.self_edit`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit`・`ticket.actual_point.edit`・`delegation.evaluate`・`ticket.plan.edit` を追加できる**（`ApiDesign.md` 4.5.3 の許可リスト） |
 | 禁止 | `ticket.close`、`knowledge` の直接更新、他プロジェクトへのアクセス。`doc.edit` は既定では与えず、発行時に追加できる |
 | 信頼度 | `agent.trust_level` に応じて既定スコープを段階的に拡大（`Requirements.md` 10.10.3）。**実績の供給源が構想のため、既定値のまま使わない** |
 | 失効 | 本人と管理画面から即時失効。サーキットブレーカー作動時は自動失効も選択可 |
@@ -1906,6 +1908,26 @@ PB が持てる。**
   実機で、進捗を流しているのに Claude Code が60秒で打ち切り、3回続けて評価を受け取れなかった（pb-158）。アクセスログの包みがこれだった
 
 **委任の木全体を待つ形と「次の一手」は、委任の器（pb-246・pb-250）の後に足す。** いまは1件のチケットだけを待つ。
+
+### 8.5.7 実績と計画
+
+**エージェントの実績は、提出された記録から集計する。** 時間・トークン・ターン数は自己申告であり、未提出の作業は集計に含まれない。欠測は0と区別する。再提出はすべてコストに含め、チケット数は重複を除く。モデルは提出・評価時点の値を使う。
+
+集計と明細の取得は `pb_get_agent_usage` / `pb_list_agent_runs` が行う。明細には本文やコメントを載せず、期間・モデル・件数の情報を保つ。APIは `ApiDesign.md` 9.16、画面は `GuiDesign.md` の「エージェント実績」を参照する。
+
+**見積りは、類似する完了チケットの実績を根拠にする。** 実装・文書について、変更する領域と広がりが近い事例を2〜3件選び、中ほどのポイントを基準に差を調整する。段は1・2・3・5・8・13・21。根拠の版、調整理由、確度を記録し、`pb_update_ticket` で `estimate_point` を保存する。根拠不足または13以上なら、分割や先行調査を提案する。判断や実機確認が主な仕事には、この方式のポイントを付けない。
+
+事後試算は予測精度の証拠と区別する。着手前の見積りと同じ版の実績を段数で比較し、10〜15件で±1段に収まる割合を確かめる。時間・トークンへの換算は同じモデルと版の実測が揃った標本で行う。欠測、複数モデル、按分根拠の無い共同作業を混ぜない。
+
+**依存・優先順・日程は別の情報として扱う。** 計画の材料は `pb_get_planning_data`、依存の操作は `pb_add_link` / `pb_update_link` / `pb_delete_link`、順序の操作は `pb_move_task`、日程の更新は `pb_update_ticket` が担う。読み取りは `ticket.view`、依存・順序の更新は `ticket.plan.edit` または `ticket.edit` が必要である。判定はREST側で行う。計画の材料は既存のガント一覧から読み、本文を除く。絞り込みは親・タグ・状態・優先度・担当・段・完了区分・スプリント・予定の重なり・キーワードに対応する。上限5,000件と総件数を保持し、`truncated` で打切りを示す。終日予定には基準タイムゾーンの日付も添える。
+
+**計画専用権限 `ticket.plan.edit` は、依存・順序・開始と終了予定の変更だけを許す。** `administrator` と `project_admin` に配り、エージェントには発行時に明示的に追加する。既定には含めない。実行モードや委任範囲の変更、チケットの作成・完了には使えない。既存の予定更新は `ticket.self_edit` でも行える。
+
+`pb_move_task` は同じ段・同じ親の中で順序だけを変える。段、親、担当、状態、スプリントは変更しない。依存の種類とずらしは `ApiDesign.md` 9.10.1、予定の半開区間は同9.3.1に従う。SS・FF・SFは、チケットを1件ずつ実行する順序ではない。
+
+計画には対象、依存の理由、優先順、予定、稼働条件、見積り根拠を添える。稼働条件や実績が不足する場合は仮定と未推定を示し、確定予定へ反映しない。通常の計画は人が承認した差分を適用し、自律実行では承認済みの委任の範囲でmainが適用する（`Delegation.md` 5〜6章）。対象、依存の両端、順序の基準がすべて同じ範囲に含まれる必要がある。承認前・停止中・終了後・確認待ちには適用できない。ヒアリングは適用を止めない。
+
+複数チケットの更新は単件操作の列であり、全体の原子性を保証しない。途中で拒否・競合が起きたら停止し、適用済みと未適用を記録して読み直す。他者の変更を巻き戻さない。人数を増やす試算では、同じ作業と依存を保ち、稼働条件と並列数の違いを示す。人数だけで所要時間を割らない。
 
 ## 8.6 まだ決めていないこと
 

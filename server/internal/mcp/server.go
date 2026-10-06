@@ -35,6 +35,8 @@ func New(rest http.Handler, version string) *Handler {
 	// /pb-implement の手順が教える。ここでは読みやすさのために流れの順に置いておく：
 	// read → コンテキストパック → write → 遷移 → 完了レポート（Requirements.md 10.8.5 / 10.8.6）。
 	tools := readTools()
+	tools = append(tools, usageTools()...)
+	tools = append(tools, planningTools()...)
 	tools = append(tools, contextTools()...)
 	tools = append(tools, writeTools()...)
 	tools = append(tools, transitionTools()...)
