@@ -34,6 +34,7 @@ import DelegationConstraintsEditor from './DelegationConstraintsEditor.vue'
 import DelegationResumeModal from './DelegationResumeModal.vue'
 import DelegationTextModal from './DelegationTextModal.vue'
 import DelegationWithdrawModal from './DelegationWithdrawModal.vue'
+import DelegationHistoryModal from './DelegationHistoryModal.vue'
 
 const props = defineProps<{
   projectKey: string
@@ -191,6 +192,7 @@ async function copy(text: string): Promise<void> {
 const pauseOpen = ref(false)
 const resumeOpen = ref(false)
 const withdrawOpen = ref(false)
+const historyOpen = ref(false)
 
 const canEditConstraintsOnResume = computed(() => {
   const s = props.status
@@ -322,6 +324,13 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
           <dt>{{ $ui('参考') }}</dt>
           <dd class="muted">{{ usageLine }}</dd>
         </div>
+        <div v-if="status?.latest_plan" class="item">
+          <dt>{{ $ui('履歴') }}</dt>
+          <dd>
+            <span class="muted">{{ $ui('計画 第{value0}版まで', { value0: status.latest_plan.version }) }}</span>
+            <button type="button" class="link" @click="historyOpen = true">{{ $ui('計画と評価の履歴を見る') }}</button>
+          </dd>
+        </div>
         <div class="item">
           <dt>{{ $ui('エージェントの呼び方') }}</dt>
           <dd class="stack">
@@ -376,6 +385,15 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
     :error="actionError"
     @close="pauseOpen = false"
     @submit="pause"
+  />
+  <DelegationHistoryModal
+    v-if="historyOpen"
+    :project-key="projectKey"
+    :seq="seq"
+    :can-manage="canManage"
+    :ended="state === 'ended'"
+    @close="historyOpen = false"
+    @changed="emit('changed')"
   />
   <DelegationWithdrawModal
     v-if="withdrawOpen"

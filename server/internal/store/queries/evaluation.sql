@@ -60,3 +60,19 @@ LIMIT 1;
 -- name: MarkEvaluationObjected :execrows
 UPDATE evaluation SET objected_at = now()
 WHERE id = @id AND objected_at IS NULL;
+
+-- ListDelegationEvaluations は評価記録の一覧（新しい順。Delegation.md 7.3。pb-274）。
+-- 評価者と main の種類・モデルは評価の時点の写し（4.4）。
+-- name: ListDelegationEvaluations :many
+SELECT
+  e.id, e.target_kind, e.round, e.verdict, e.findings, e.class_check, e.tokens_used,
+  e.objected_at, e.created_at,
+  e.evaluator_client_kind, e.evaluator_model_name, e.evaluator_model_version,
+  e.main_client_kind, e.main_model_name, e.main_model_version,
+  ea.id AS evaluator_actor_id, ea.kind AS evaluator_actor_kind, ea.display_name AS evaluator_actor_name,
+  p.version AS plan_version
+FROM evaluation e
+JOIN actor ea ON ea.id = e.evaluator_actor_id
+LEFT JOIN delegation_plan p ON p.id = e.plan_id
+WHERE e.delegation_id = @delegation_id
+ORDER BY e.created_at DESC, e.id DESC;

@@ -17,6 +17,8 @@ export type Delegation = components['schemas']['Delegation']
 export type DelegationBudget = components['schemas']['DelegationBudget']
 export type DelegationState = NonNullable<DelegationStatus['status']>
 export type OpenConfirmation = NonNullable<DelegationStatus['open_confirmations']>[number]
+export type PlanHistoryItem = components['schemas']['DelegationPlanHistoryItem']
+export type EvaluationHistoryItem = components['schemas']['DelegationEvaluationHistoryItem']
 
 /** 状態の語（pb-252 の合意）。 */
 export const delegationStatusLabels: Record<DelegationState, string> = {
@@ -49,6 +51,22 @@ export const evaluationVerdictLabels: Record<string, string> = {
   get pass() { return uiText('合格') },
   get fail() { return uiText('不合格') },
   get unable() { return uiText('判断できない') },
+}
+
+/** 計画の版の状態の語（`Delegation.md` 4.4・6.2。pb-274）。 */
+export const planStatusLabels: Record<string, string> = {
+  get proposed() { return uiText('判定待ち') },
+  get accepted() { return uiText('反映済み') },
+  get rejected() { return uiText('却下') },
+  get superseded() { return uiText('置き換え済み') },
+  get reverted() { return uiText('差し戻し済み') },
+}
+
+/** 計画の変更の段階の語（`Delegation.md` 6.3）。 */
+export const planClassLabels: Record<string, string> = {
+  get minor() { return uiText('軽微') },
+  get structural() { return uiText('構造') },
+  get scope() { return uiText('範囲') },
 }
 
 /** 範囲（scope）のうち、画面が読み書きする制約（`Delegation.md` 4.2・12.1）。 */
@@ -131,6 +149,31 @@ export function withdrawDelegation(
   body: { execution_mode: 'human_only' | 'agent_draft' | 'agent_only'; reason_md?: string },
 ): Promise<Delegation> {
   return api.post<Delegation>(`${base(key, seq)}/delegation/withdraw`, body)
+}
+
+/** 計画の版の一覧（新しい順。pb-274） */
+export async function listDelegationPlans(key: string, seq: number): Promise<PlanHistoryItem[]> {
+  return (await api.get<{ items: PlanHistoryItem[] }>(`${base(key, seq)}/plans`)).items
+}
+
+/** 評価記録の一覧（新しい順。pb-274） */
+export async function listDelegationEvaluations(key: string, seq: number): Promise<EvaluationHistoryItem[]> {
+  return (await api.get<{ items: EvaluationHistoryItem[] }>(`${base(key, seq)}/evaluations`)).items
+}
+
+/** 前の版へ差し戻す（`Delegation.md` 6.2。pb-247） */
+export function revertDelegationPlan(key: string, seq: number, version: number, reasonMd: string): Promise<unknown> {
+  return api.post(`${base(key, seq)}/plan/${version}/revert`, { reason_md: reasonMd })
+}
+
+/** 評価が合格させた構造の変更に異議を出す（`Delegation.md` 6.4。pb-275） */
+export function objectDelegationPlan(
+  key: string,
+  seq: number,
+  version: number,
+  reasonMd: string,
+): Promise<{ reverted: boolean; later_version?: number }> {
+  return api.post(`${base(key, seq)}/plan/${version}/object`, { reason_md: reasonMd })
 }
 
 export function answerConfirmation(

@@ -198,6 +198,85 @@ func (q *Queries) GetLatestEvaluationForDelegation(ctx context.Context, delegati
 	return i, err
 }
 
+const listDelegationEvaluations = `-- name: ListDelegationEvaluations :many
+SELECT
+  e.id, e.target_kind, e.round, e.verdict, e.findings, e.class_check, e.tokens_used,
+  e.objected_at, e.created_at,
+  e.evaluator_client_kind, e.evaluator_model_name, e.evaluator_model_version,
+  e.main_client_kind, e.main_model_name, e.main_model_version,
+  ea.id AS evaluator_actor_id, ea.kind AS evaluator_actor_kind, ea.display_name AS evaluator_actor_name,
+  p.version AS plan_version
+FROM evaluation e
+JOIN actor ea ON ea.id = e.evaluator_actor_id
+LEFT JOIN delegation_plan p ON p.id = e.plan_id
+WHERE e.delegation_id = $1
+ORDER BY e.created_at DESC, e.id DESC
+`
+
+type ListDelegationEvaluationsRow struct {
+	ID                    string
+	TargetKind            string
+	Round                 int32
+	Verdict               string
+	Findings              []byte
+	ClassCheck            pgtype.Text
+	TokensUsed            pgtype.Int8
+	ObjectedAt            *time.Time
+	CreatedAt             time.Time
+	EvaluatorClientKind   pgtype.Text
+	EvaluatorModelName    pgtype.Text
+	EvaluatorModelVersion pgtype.Text
+	MainClientKind        pgtype.Text
+	MainModelName         pgtype.Text
+	MainModelVersion      pgtype.Text
+	EvaluatorActorID      string
+	EvaluatorActorKind    string
+	EvaluatorActorName    string
+	PlanVersion           pgtype.Int4
+}
+
+// ListDelegationEvaluations は評価記録の一覧（新しい順。Delegation.md 7.3。pb-274）。
+// 評価者と main の種類・モデルは評価の時点の写し（4.4）。
+func (q *Queries) ListDelegationEvaluations(ctx context.Context, delegationID string) ([]ListDelegationEvaluationsRow, error) {
+	rows, err := q.db.Query(ctx, listDelegationEvaluations, delegationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDelegationEvaluationsRow{}
+	for rows.Next() {
+		var i ListDelegationEvaluationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TargetKind,
+			&i.Round,
+			&i.Verdict,
+			&i.Findings,
+			&i.ClassCheck,
+			&i.TokensUsed,
+			&i.ObjectedAt,
+			&i.CreatedAt,
+			&i.EvaluatorClientKind,
+			&i.EvaluatorModelName,
+			&i.EvaluatorModelVersion,
+			&i.MainClientKind,
+			&i.MainModelName,
+			&i.MainModelVersion,
+			&i.EvaluatorActorID,
+			&i.EvaluatorActorKind,
+			&i.EvaluatorActorName,
+			&i.PlanVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markEvaluationObjected = `-- name: MarkEvaluationObjected :execrows
 UPDATE evaluation SET objected_at = now()
 WHERE id = $1 AND objected_at IS NULL

@@ -3174,6 +3174,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/tickets/{seq}/plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 計画の版の一覧
+         * @description 委任の根の、最新の委任の計画の版を新しい順に返す（Delegation.md 6.2、
+         *     pb-274）。**必要権限は `ticket.view`**（5章「読む：全員」）。終了した
+         *     委任も読める。各版に直近の評価の合否と、PM が異議を出せるか
+         *     （`objectable`。6.4、pb-275）を添える。
+         */
+        get: operations["listDelegationPlans"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/evaluations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 評価記録の一覧
+         * @description 委任の根の、最新の委任の評価記録を新しい順に返す（Delegation.md 7.3、
+         *     pb-274）。**必要権限は `ticket.view`**。評価者と main の種類・モデルは
+         *     評価の時点の写し。
+         */
+        get: operations["listDelegationEvaluations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{key}/tickets/{seq}/delegation-status": {
         parameters: {
             query?: never;
@@ -6307,6 +6378,41 @@ export interface components {
             created_at: number;
             /** Format: int64 */
             answered_at?: number | null;
+        };
+        /** @description 計画の版の一覧の1件（pb-274）。`DelegationPlan` に評価と異議の判定を添える。 */
+        DelegationPlanHistoryItem: components["schemas"]["DelegationPlan"] & {
+            /** @description この版への直近の評価の合否。評価が無ければ null。 */
+            latest_verdict: ("pass" | "fail" | "unable") | null;
+            /** @description 合格の評価に PM が異議を出した時刻（エポックミリ秒）。無ければ null。 */
+            pass_objected_at: number | null;
+            /** @description PM が異議を出せるか（評価が合格させて PB が反映した構造の変更で、まだ異議が無い）。 */
+            objectable: boolean;
+        };
+        /** @description 評価記録の一覧の1件（Delegation.md 7.3、pb-274）。 */
+        DelegationEvaluationHistoryItem: {
+            id: string;
+            /** @enum {string} */
+            target_kind: "plan" | "deliverable";
+            plan_version: number | null;
+            round: number;
+            /** @enum {string} */
+            verdict: "pass" | "fail" | "unable";
+            /** @description 観点ごとの判定と指摘の配列（7.3）。 */
+            findings: unknown;
+            class_check: ("agree" | "stricter" | "looser") | null;
+            tokens_used: number | null;
+            objected_at: number | null;
+            /** Format: int64 */
+            created_at: number;
+            evaluator: components["schemas"]["ActorRef"];
+            evaluator_model: components["schemas"]["ModelSnapshot"];
+            main_model: components["schemas"]["ModelSnapshot"];
+        };
+        /** @description 評価の時点のエージェントの種類とモデル（Delegation.md 4.4 の写し）。 */
+        ModelSnapshot: {
+            client_kind: string | null;
+            model_name: string | null;
+            model_version: string | null;
         };
         /**
          * @description 引き継ぎノート1件（Delegation.md 9.3・11章）。追記のみで、最新の
@@ -12853,6 +12959,104 @@ export interface operations {
                 };
             };
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDelegationPlans: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 新しい順の一覧。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["DelegationPlanHistoryItem"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            /** @description このチケットは自律実行の根ではない。 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDelegationEvaluations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 新しい順の一覧。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["DelegationEvaluationHistoryItem"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            /** @description このチケットは自律実行の根ではない。 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };
