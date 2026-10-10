@@ -12,10 +12,6 @@ import (
 )
 
 type Querier interface {
-	CountProjectAgents(ctx context.Context, projectID pgtype.Text) (int64, error)
-	DisableProjectAgent(ctx context.Context, actorID string) error
-	ListProjectAgents(ctx context.Context, arg ListProjectAgentsParams) ([]ListProjectAgentsRow, error)
-	LockProjectAgent(ctx context.Context, arg LockProjectAgentParams) (LockProjectAgentRow, error)
 	// AcceptDelegationPlan は軽微な変更を即座に反映する（6.3）。
 	// **decided_by は呼び出し元ではなく PB 自身**——軽微は「main の判断で反映する」
 	// のであって人・評価エージェントの決定ではないため、decided_by は NULL のままにする。
@@ -156,6 +152,7 @@ type Querier interface {
 	//
 	// 手順3で pb admin create が直接書いていたSQLを sqlc へ移したもの。
 	CountAdministrators(ctx context.Context) (int64, error)
+	CountAgentAttempts(ctx context.Context, actorID string) (int64, error)
 	// CountAgentComments はそのエージェントが書いたコメント数を数える。
 	//
 	// **0 件なら付け替え先を作らない**（reassignCommentsToSystemActor と同じ）。
@@ -166,7 +163,8 @@ type Querier interface {
 	// **0 件なら付け替え先を作らない**（CountAgentComments と同じ）。
 	//
 	CountAgentRuns(ctx context.Context, actorID string) (int64, error)
-	// CountAgentRunsForTicket は同じ（チケット × アクター）の既存の run 数を数える。
+	// CountAgentRunsForTicket は同じ（チケット × アクター）の提出由来のrun数を数える。
+	// 明示した終了だけでレポートの無い失敗・放棄は再提出数へ含めない。
 	//
 	// **agent_run.retry_count に入れる値である**（DbDesign.md 8.2.4）。初回は 0。
 	// 再提出が別の run になるので、これが「何回目のやり直しか」と一致する。
@@ -222,6 +220,7 @@ type Querier interface {
 	CountPasskeys(ctx context.Context, userID string) (int64, error)
 	// 未確認が何件あるか。**次の危険な変更を断るために使う。**
 	CountPendingSettingChanges(ctx context.Context) (int64, error)
+	CountProjectAgents(ctx context.Context, projectID pgtype.Text) (int64, error)
 	// CountProjectTagsByIDs は tag_ids がすべて当該プロジェクトのものかを数える（9.3）。
 	// 渡した件数と一致しなければ、他プロジェクトのタグか存在しない ID が混ざっている。
 	CountProjectTagsByIDs(ctx context.Context, arg CountProjectTagsByIDsParams) (int64, error)
@@ -254,6 +253,7 @@ type Querier interface {
 	// 固定で書いており、種別を引数にすると呼び出し側の誤りが型で止まらなくなる。
 	//
 	CreateAgentActor(ctx context.Context, arg CreateAgentActorParams) error
+	CreateAgentAttempt(ctx context.Context, arg CreateAgentAttemptParams) error
 	// CreateAgentReport は提出されたレポートを1件保存する。
 	//
 	// **report に Requirements.md 10.6.1 の全体が入る。** 集計対象になる status と
@@ -275,9 +275,7 @@ type Querier interface {
 	// ない（Delegation.md 7.2）。
 	// CreateAgentRun は1回の実行記録を作る。
 	//
-	// **status に入るのは completed だけである**（DbDesign.md 8.2.4）。
-	// 開始を告げる口が無いので running は作られず、failed / abandoned は「レポートを
-	// 出さずに終わった run」で観測する口が無い。
+	// レポートだけの経路はcompleted。共通作業で明示された失敗・放棄はfailed/abandoned。
 	//
 	// **workflow_version は渡さない**（NULL のまま）。workflow に版の列が無く
 	// （DbDesign.md 6.5）、陳腐化検出は構想である。
@@ -434,6 +432,7 @@ type Querier interface {
 	// 万一システムアクターの ID を渡されても消さない。
 	//
 	DeleteActorByID(ctx context.Context, actorID string) (int64, error)
+	DeleteAgentMonitorResets(ctx context.Context, actorID string) error
 	// DeleteAllMfaCredentials は管理者の解除と CLI が使う（ApiDesign.md 6.9）。
 	DeleteAllMfaCredentials(ctx context.Context, userID string) (int64, error)
 	// DeleteAllPasskeys は管理者による全削除（ApiDesign.md 6.10）。
@@ -541,6 +540,7 @@ type Querier interface {
 	// 消してから AttachTicketTag で付け直すほうが、付ける側と外す側の2本の集合演算を
 	// 持つより読み違えが少ない。件数はチケット1件ぶんで、多くても数件である。
 	DetachTicketTags(ctx context.Context, ticketID string) error
+	DisableProjectAgent(ctx context.Context, actorID string) error
 	// google_id の行を作るか、既にあればその id を返す（5.8.2）。
 	// **DO UPDATE で同じ値を書くのは RETURNING に行を返させるため**である
 	// （DO NOTHING では衝突した行が返らない）。
@@ -594,6 +594,7 @@ type Querier interface {
 	// （DbDesign.md 10章「未解決の検討事項」）。
 	//
 	FindDeletedUserActor(ctx context.Context, displayName string) (string, error)
+	FindFailedAgentRun(ctx context.Context, arg FindFailedAgentRunParams) (string, error)
 	// ── パスワードリセットとセッション失効（ApiDesign.md 6.6 / 6.7）──
 	// FindLocalCredentialByActor はリセット対象の資格情報を引く。
 	//
@@ -735,6 +736,7 @@ type Querier interface {
 	FindWebauthnChallenge(ctx context.Context, arg FindWebauthnChallengeParams) (FindWebauthnChallengeRow, error)
 	// ── テンプレートの複製（ApiDesign.md 5.3）─────────────────────
 	FindWorkflowTemplate(ctx context.Context, templateKey pgtype.Text) (FindWorkflowTemplateRow, error)
+	FinishAgentAttempt(ctx context.Context, arg FinishAgentAttemptParams) error
 	// スプリントを終える（ApiDesign.md 9.12.2）。
 	//
 	// **end_at が空なら終わった時点を入れる。** 期間を切らずに始めたスプリントでも、
@@ -792,6 +794,7 @@ type Querier interface {
 	// **行が返らない＝404** となる（ApiDesign.md 1.2-5）。
 	//
 	GetAdminUser(ctx context.Context, actorID string) (GetAdminUserRow, error)
+	GetAgentMonitorSettings(ctx context.Context, projectID string) ([]byte, error)
 	// GetAgentOwner は working_agent_id の検証（9.5.2）と、9.6 の検証6 に使う。
 	//
 	// **agent テーブルを引く。** actor.kind='agent' であることと所有者が誰かを一度に
@@ -883,7 +886,7 @@ type Querier interface {
 	// （Delegation.md 7.2「成果（根の完了レポート）」の評価対象。pb-248）。
 	//
 	// **再提出は別の run・別の report になる**（buildAgentRun のコメントと同じ
-	// 理由）ので、「最新」は submitted_at（agent_run.ended_at）の降順1件でよい。
+	// 理由）ので、「最新」は agent_report.submitted_at の降順1件で読む。実行の終了日時とは分ける。
 	GetLatestAgentReportForTicket(ctx context.Context, ticketID string) (GetLatestAgentReportForTicketRow, error)
 	// GetLatestDelegationHandoff は「最新の行が現在のノート」を読む
 	// （4.4 の delegation_handoff のコメント）。
@@ -1079,6 +1082,7 @@ type Querier interface {
 	//
 	// **hearing（8.1 の8）は関門に数えない**（8.2「ヒアリングは止めない」）。
 	HasOpenConfirmation(ctx context.Context, delegationID string) (bool, error)
+	HasReportForRun(ctx context.Context, agentRunID string) (bool, error)
 	HasTicketOpenWork(ctx context.Context, arg HasTicketOpenWorkParams) (bool, error)
 	// 業務履歴（ApiDesign.md 9.1.1、DbDesign.md 6.8 の activity）。
 	//
@@ -1131,6 +1135,7 @@ type Querier interface {
 	// UNION ALL ではなく UNION を使うのは ListTickets の subtree と同じ理由で、
 	// 重複を運ぶ意味がないためである。
 	IsTicketDescendant(ctx context.Context, arg IsTicketDescendantParams) (bool, error)
+	LinkFailedAgentRun(ctx context.Context, arg LinkFailedAgentRunParams) error
 	// ── エージェント用トークン（ApiDesign.md 4.5.3 / 4.5.5） ──────────────
 	// FindActiveAgentToken は再発行のときに失効させる相手を引く。
 	//
@@ -1208,6 +1213,7 @@ type Querier interface {
 	// 目的なので、画面に出ないキー（administrator）は対象にしない。
 	//
 	ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) ([]ListAdminUsersRow, error)
+	ListAgentAttempts(ctx context.Context, arg ListAgentAttemptsParams) ([]AgentAttempt, error)
 	// ListAgentClientKinds はクライアント種別のカタログを返す（ApiDesign.md 4.5.7）。
 	//
 	// **画面はこれを引いて表示名を出す。** 対応表を画面へ焼き込まない——値域は
@@ -1423,6 +1429,7 @@ type Querier interface {
 	//
 	ListPermissions(ctx context.Context) ([]Permission, error)
 	ListPlanningSiblings(ctx context.Context, arg ListPlanningSiblingsParams) ([]ListPlanningSiblingsRow, error)
+	ListProjectAgents(ctx context.Context, arg ListProjectAgentsParams) ([]ListProjectAgentsRow, error)
 	// 5.8.5 の override。期間は [from, to)。
 	ListProjectCalendarDays(ctx context.Context, arg ListProjectCalendarDaysParams) ([]ListProjectCalendarDaysRow, error)
 	// 5.8.5 の events。期間は [from, to)。
@@ -1801,6 +1808,7 @@ type Querier interface {
 	LockActorForTokenIssue(ctx context.Context, actorID string) (string, error)
 	// 取得の前に待ち時間を判定するため、行をロックして読む（5.8.3）。
 	LockHolidaySource(ctx context.Context, id string) (LockHolidaySourceRow, error)
+	LockProjectAgent(ctx context.Context, arg LockProjectAgentParams) (LockProjectAgentRow, error)
 	// LockProjectForDependency は依存の追加をプロジェクト単位で直列化する（9.10.1）。
 	//
 	// 輪の判定と INSERT を同じトランザクションで行うだけでは、並行する2本（A→B と
@@ -1897,6 +1905,7 @@ type Querier interface {
 	//
 	ProjectKeyExists(ctx context.Context, key string) (bool, error)
 	PutActorAvatar(ctx context.Context, arg PutActorAvatarParams) error
+	ReassignAgentAttempts(ctx context.Context, arg ReassignAgentAttemptsParams) error
 	// ReassignAgentRuns は実行記録のアクターを付け替える（ApiDesign.md 4.5.4）。
 	//
 	// **agent_run.actor_id は NOT NULL かつ ON DELETE RESTRICT である**
@@ -1929,6 +1938,7 @@ type Querier interface {
 	// pb-248）。**decided_by は呼び出し元ではなく PB 自身**——AcceptDelegationPlan
 	// と同じ理由で、不合格にしたのは main でも PM でもなく評価の結果である。
 	RejectDelegationPlan(ctx context.Context, id string) (int64, error)
+	ResetAgentMonitor(ctx context.Context, arg ResetAgentMonitorParams) error
 	// ResetLocalCredential は 6.6 の更新を1文で行う。
 	//
 	// **failed_attempts と locked_until も戻す**（6.6）。ロックされた利用者を
@@ -2065,6 +2075,7 @@ type Querier interface {
 	// 「NULL を先に落とす」はここでは要らない）。
 	SearchTicketIDsByTrigram(ctx context.Context, arg SearchTicketIDsByTrigramParams) ([]string, error)
 	SetActorAvatarURL(ctx context.Context, arg SetActorAvatarURLParams) error
+	SetAgentMonitorSettings(ctx context.Context, arg SetAgentMonitorSettingsParams) error
 	// SetDelegationStatus は委任の主状態を変える（4.3）。pb-247 では、範囲の変更が
 	// 提出されたときに承認済から計画中へ戻すのに使う。
 	SetDelegationStatus(ctx context.Context, arg SetDelegationStatusParams) (int64, error)
@@ -2262,6 +2273,7 @@ type Querier interface {
 	// 更新すると他人のエージェントを触れてしまう。
 	//
 	UpdateAgentActor(ctx context.Context, arg UpdateAgentActorParams) (int64, error)
+	UpdateAgentAttributes(ctx context.Context, arg UpdateAgentAttributesParams) error
 	// UpdateAgentModel はモデルとクライアント種別を更新する（ApiDesign.md 4.5.4）。
 	//
 	// **client_kind は 0020 から変更できる。** 値域が今後も増えるため、`other` で

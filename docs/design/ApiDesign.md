@@ -5710,3 +5710,13 @@ POST /projects/{key}/tickets/{seq}/work-cleanup はproject.editで、dry_run（�
 ### プロジェクトのエージェント管理
 
 GET /api/v1/projects/:key/agentsはagent.manageを持つ人へページ付き一覧を返す。名前・モデル・所有者・状態・作成日時を返し、秘密は含めない。POST /api/v1/projects/:key/agents/:id/disableは同じ権限を持つ人が対象を無効化し、全トークンを同一トランザクションで失効させ、204を返す。不存在・他PJは404、権限不足とエージェント操作は403とする。変更時だけagent.update監査を記録し、再実行は204とする。所有者脱退後も停止できる。処理済みの要求や外部プロセスの強制終了は保証しない。再開は本人の有効化・トークン再発行を使う。
+
+### 実行結果と停止条件
+
+work-sessionsのfinishは任意のoutcome=completed/failedを受ける。completedはresult=completedの場合に限り、省略時もこの場合だけ成功と判定する。failedは理由を要し、partial/blocked自体を失敗とみなさない。abandonはabandonedを記録する。既存request_idの再送契約と、実績算出・欠測・手入力保護を維持する。失敗・放棄の実績日時は終了時刻を使う。後から紐付けたレポートの既知コストは欠測だけを補い、作業記録の既知トークンを上書きしない。
+
+GET/PUT /projects/:key/agent-monitorは試行上限max_attempts・連続失敗上限max_consecutive_failuresを返す・設定する。読みはproject.view、変更はproject.editを持つ人。各値はNULL（無効）または1〜2147483647の整数。停止中の新規開始・業務変更を403で拒否し、終了・放棄・レポート保存は許す。連続失敗はfailed/abandonedで増え、completedでリセットし、不明な結果はどちらにも数えない。試行上限は同じチケット・エージェントの開始数に効く。上限内で既に開いた作業の続行は許す。
+
+GET /projects/:key/agents/:id/monitorは監視値・停止理由を返す。POST /projects/:key/agents/:id/monitor/resetは2000文字以内の理由を受け、監視区間を更新する。必要権限はagent.manage、操作主体は人。所有者はGET/POST /me/agents/:id/monitor（POSTは解除）も使える。停止条件への到達時は理由・対象チケット・作業記録をagent.update監査へ記録する。解除理由と操作者も監査に残す。停止解除はトークン無効化を解除しない。
+
+PATCH /projects/:key/agents/:id/attributesはagent.manageを持つ人がtrust_levelとcapabilitiesを変更する。所有者は既存PATCH /me/agents/:idでも変更できる。trust_levelは0〜3、capabilitiesは最大32個・各1〜64文字のラベルで、空白を除き重複を除く。自動権限拡大やエージェントによる自己評価変更は行わない。

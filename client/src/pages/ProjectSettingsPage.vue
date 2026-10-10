@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AgentMonitorSettings from "../components/AgentMonitorSettings.vue"
 import ManagedAgents from "../components/ManagedAgents.vue"
 import { uiText } from '../locales/ui'
 /**
@@ -1201,7 +1202,7 @@ function roleLabel(role: string): string {
         </div>
 
         <!-- ── カレンダータブ（5.9.6）。そのタブを開いたときに取りに行く ── -->
-        <div v-else-if="tab === 'agents' && current?.my_permissions.includes('agent.manage')" role="tabpanel"><ManagedAgents :project-key="projectKey" /></div>
+        <div v-else-if="tab === 'agents' && current?.my_permissions.includes('agent.manage')" role="tabpanel"><AgentMonitorSettings v-if="canEditProject" :project-key="projectKey" @updated="store.fetchCurrent(projectKey)" /><ManagedAgents :project-key="projectKey" /></div>
         <ProjectCalendarTab
           v-else-if="tab === 'calendar' && current"
           :key="projectKey"

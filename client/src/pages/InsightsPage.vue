@@ -21,7 +21,7 @@ let request = 0
 const maxTokens = computed(() => Math.max(1, ...summary.value?.daily.map(day => Math.max(day.run_tokens, day.evaluation_tokens)) ?? []))
 function measured(sum: number, count: number, missing: number): string { return count > 0 && count === missing ? uiText('未計測') : uiNumber(sum) }
 function value(n: number | null): string { return n === null ? uiText('未計測') : uiNumber(n) }
-const resultSources: Record<string, string> = { completed: '完了の報告', partial: '一部完了の報告', blocked: '進められない報告' }
+const resultSources: Record<string, string> = { completed: '完了の報告', partial: '一部完了の報告', blocked: '進められない報告', failed: '失敗', abandoned: '放棄' }
 function resultLabel(status: string): string { return uiText(resultSources[status] ?? status) }
 async function fetch(page = 1, initial = false): Promise<void> {
   const mine = ++request
@@ -61,6 +61,7 @@ watch([key, canRead], () => { from.value = ''; to.value = ''; void fetch(1, true
         <template v-else-if="summary && runs">
           <dl class="totals">
             <div><dt>{{ $ui('実行件数') }}</dt><dd>{{ uiNumber(summary.totals.runs_count) }}</dd></div>
+            <div><dt>{{ $ui('失敗') }}</dt><dd>{{ uiNumber(summary.totals.failed_count) }}</dd></div><div><dt>{{ $ui('放棄') }}</dt><dd>{{ uiNumber(summary.totals.abandoned_count) }}</dd></div>
             <div><dt>{{ $ui('対象チケット数') }}</dt><dd>{{ uiNumber(summary.totals.tickets_count) }}</dd></div>
             <div><dt>{{ $ui('実行トークン') }}</dt><dd>{{ measured(summary.totals.run_tokens, summary.totals.runs_count, summary.totals.run_tokens_missing) }}</dd><small>{{ $ui('未計測 {count}件', { count: summary.totals.run_tokens_missing }) }}</small></div>
             <div><dt>{{ $ui('評価トークン') }}</dt><dd>{{ measured(summary.totals.evaluation_tokens, summary.totals.evaluation_count, summary.totals.evaluation_tokens_missing) }}</dd><small>{{ $ui('未計測 {count}件', { count: summary.totals.evaluation_tokens_missing }) }}</small></div>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AgentControls from "../components/AgentControls.vue"
 import { uiText } from '../locales/ui'
 /**
  * エージェントタブ `/me/agents`（`GuiDesign.md` 5.8.2）。
@@ -533,6 +534,7 @@ function subtitle(agent: MyAgent): string {
 
               <p class="agent-meta">{{ subtitle(a) }}</p>
               <p class="agent-meta">{{ $ui('登録') }} {{ formatDateTime(a.created_at) }}</p>
+              <details><summary>{{$ui('評価と実行監視')}}</summary><AgentControls :id="a.id" :trust-level="a.trust_level" :capabilities="a.capabilities" @updated="load" /></details>
               <!-- **環境変数名を出す**（手順28a）。ここに出さないと、登録のときに
                    決めた名前を後から確かめる場所が無い。**`export` 行そのものと
                    接続設定は手順28b** -->

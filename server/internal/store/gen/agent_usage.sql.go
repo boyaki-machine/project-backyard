@@ -15,18 +15,18 @@ import (
 const countAgentUsageRuns = `-- name: CountAgentUsageRuns :one
 WITH events (event_kind, event_id, ticket_id, seq, occurred_at, result_status, ticket_status_category, client_kind, model_name, model_version, tokens, turns, wall_clock_min, turns_known, time_known) AS (
  SELECT 'run'::text AS event_kind, r.id AS event_id, t.id AS ticket_id, t.seq,
-        ar.submitted_at AS occurred_at, ar.status AS result_status,
+        CASE WHEN r.status IN ('failed','abandoned') THEN r.ended_at ELSE COALESCE(ar.submitted_at,r.ended_at) END::timestamptz AS occurred_at, CASE WHEN r.status IN ('failed','abandoned') THEN r.status ELSE COALESCE(ar.status,r.status) END::text AS result_status,
         COALESCE(ws.category,'unknown')::text AS ticket_status_category,
         r.client_kind, r.model_name, r.model_version,
-        r.tokens_used AS tokens, COALESCE(r.turns,0)::bigint AS turns,
+        COALESCE(r.tokens_used,(ar.report->'cost'->>'tokens')::bigint) AS tokens, COALESCE(r.turns,(ar.report->'cost'->>'turns')::bigint,0)::bigint AS turns,
         COALESCE((ar.report->'cost'->>'wall_clock_min')::bigint,0)::bigint AS wall_clock_min,
-        (r.turns IS NOT NULL)::boolean AS turns_known, ((ar.report->'cost'->>'wall_clock_min') IS NOT NULL)::boolean AS time_known
+        (r.turns IS NOT NULL OR (ar.report->'cost'->>'turns') IS NOT NULL)::boolean AS turns_known, ((ar.report->'cost'->>'wall_clock_min') IS NOT NULL)::boolean AS time_known
  FROM agent_run r
- JOIN agent_report ar ON ar.agent_run_id = r.id
+ LEFT JOIN agent_report ar ON ar.agent_run_id = r.id
  JOIN ticket t ON t.id = r.ticket_id
  JOIN project p ON p.id = t.project_id
  LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
- WHERE t.project_id = $1
+ WHERE t.project_id = $1 AND r.ended_at IS NOT NULL
  UNION ALL
  SELECT 'evaluation'::text AS event_kind, e.id AS event_id, t.id AS ticket_id, t.seq, e.created_at AS occurred_at, e.verdict AS result_status,
         COALESCE(ws.category,'unknown')::text AS ticket_status_category, e.evaluator_client_kind AS client_kind, e.evaluator_model_name AS model_name, e.evaluator_model_version AS model_version,
@@ -74,18 +74,18 @@ const listAgentUsageEvents = `-- name: ListAgentUsageEvents :many
 
 WITH events (event_kind, event_id, ticket_id, seq, occurred_at, result_status, ticket_status_category, client_kind, model_name, model_version, tokens, turns, wall_clock_min, turns_known, time_known) AS (
  SELECT 'run'::text AS event_kind, r.id AS event_id, t.id AS ticket_id, t.seq,
-        ar.submitted_at AS occurred_at, ar.status AS result_status,
+        CASE WHEN r.status IN ('failed','abandoned') THEN r.ended_at ELSE COALESCE(ar.submitted_at,r.ended_at) END::timestamptz AS occurred_at, CASE WHEN r.status IN ('failed','abandoned') THEN r.status ELSE COALESCE(ar.status,r.status) END::text AS result_status,
         COALESCE(ws.category,'unknown')::text AS ticket_status_category,
         r.client_kind, r.model_name, r.model_version,
-        r.tokens_used AS tokens, COALESCE(r.turns,0)::bigint AS turns,
+        COALESCE(r.tokens_used,(ar.report->'cost'->>'tokens')::bigint) AS tokens, COALESCE(r.turns,(ar.report->'cost'->>'turns')::bigint,0)::bigint AS turns,
         COALESCE((ar.report->'cost'->>'wall_clock_min')::bigint,0)::bigint AS wall_clock_min,
-        (r.turns IS NOT NULL)::boolean AS turns_known, ((ar.report->'cost'->>'wall_clock_min') IS NOT NULL)::boolean AS time_known
+        (r.turns IS NOT NULL OR (ar.report->'cost'->>'turns') IS NOT NULL)::boolean AS turns_known, ((ar.report->'cost'->>'wall_clock_min') IS NOT NULL)::boolean AS time_known
  FROM agent_run r
- JOIN agent_report ar ON ar.agent_run_id = r.id
+ LEFT JOIN agent_report ar ON ar.agent_run_id = r.id
  JOIN ticket t ON t.id = r.ticket_id
  JOIN project p ON p.id = t.project_id
  LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
- WHERE t.project_id = $1
+ WHERE t.project_id = $1 AND r.ended_at IS NOT NULL
  UNION ALL
  SELECT 'evaluation'::text AS event_kind, e.id AS event_id, t.id AS ticket_id, t.seq, e.created_at AS occurred_at, e.verdict AS result_status,
         COALESCE(ws.category,'unknown')::text AS ticket_status_category, e.evaluator_client_kind AS client_kind, e.evaluator_model_name AS model_name, e.evaluator_model_version AS model_version,
@@ -180,18 +180,18 @@ func (q *Queries) ListAgentUsageEvents(ctx context.Context, arg ListAgentUsageEv
 const listAgentUsageRuns = `-- name: ListAgentUsageRuns :many
 WITH events (event_kind, event_id, ticket_id, seq, occurred_at, result_status, ticket_status_category, client_kind, model_name, model_version, tokens, turns, wall_clock_min, turns_known, time_known) AS (
  SELECT 'run'::text AS event_kind, r.id AS event_id, t.id AS ticket_id, t.seq,
-        ar.submitted_at AS occurred_at, ar.status AS result_status,
+        CASE WHEN r.status IN ('failed','abandoned') THEN r.ended_at ELSE COALESCE(ar.submitted_at,r.ended_at) END::timestamptz AS occurred_at, CASE WHEN r.status IN ('failed','abandoned') THEN r.status ELSE COALESCE(ar.status,r.status) END::text AS result_status,
         COALESCE(ws.category,'unknown')::text AS ticket_status_category,
         r.client_kind, r.model_name, r.model_version,
-        r.tokens_used AS tokens, COALESCE(r.turns,0)::bigint AS turns,
+        COALESCE(r.tokens_used,(ar.report->'cost'->>'tokens')::bigint) AS tokens, COALESCE(r.turns,(ar.report->'cost'->>'turns')::bigint,0)::bigint AS turns,
         COALESCE((ar.report->'cost'->>'wall_clock_min')::bigint,0)::bigint AS wall_clock_min,
-        (r.turns IS NOT NULL)::boolean AS turns_known, ((ar.report->'cost'->>'wall_clock_min') IS NOT NULL)::boolean AS time_known
+        (r.turns IS NOT NULL OR (ar.report->'cost'->>'turns') IS NOT NULL)::boolean AS turns_known, ((ar.report->'cost'->>'wall_clock_min') IS NOT NULL)::boolean AS time_known
  FROM agent_run r
- JOIN agent_report ar ON ar.agent_run_id = r.id
+ LEFT JOIN agent_report ar ON ar.agent_run_id = r.id
  JOIN ticket t ON t.id = r.ticket_id
  JOIN project p ON p.id = t.project_id
  LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
- WHERE t.project_id = $3
+ WHERE t.project_id = $3 AND r.ended_at IS NOT NULL
  UNION ALL
  SELECT 'evaluation'::text AS event_kind, e.id AS event_id, t.id AS ticket_id, t.seq, e.created_at AS occurred_at, e.verdict AS result_status,
         COALESCE(ws.category,'unknown')::text AS ticket_status_category, e.evaluator_client_kind AS client_kind, e.evaluator_model_name AS model_name, e.evaluator_model_version AS model_version,

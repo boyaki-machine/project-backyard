@@ -442,7 +442,7 @@ func (q *Queries) GetWorkReplay(ctx context.Context, arg GetWorkReplayParams) (G
 }
 
 const getWorkSession = `-- name: GetWorkSession :one
-SELECT id, project_id, ticket_id, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, policy, time_missing FROM work_session WHERE id= $1 AND project_id= $2
+SELECT id, project_id, ticket_id, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, policy, time_missing, outcome FROM work_session WHERE id= $1 AND project_id= $2
 `
 
 type GetWorkSessionParams struct {
@@ -474,6 +474,7 @@ func (q *Queries) GetWorkSession(ctx context.Context, arg GetWorkSessionParams) 
 		&i.Incomplete,
 		&i.Policy,
 		&i.TimeMissing,
+		&i.Outcome,
 	)
 	return i, err
 }
@@ -538,7 +539,7 @@ func (q *Queries) HasTicketOpenWork(ctx context.Context, arg HasTicketOpenWorkPa
 }
 
 const listTicketCleanupWork = `-- name: ListTicketCleanupWork :many
-SELECT s.id, s.project_id, s.ticket_id, s.actor_id, s.client_kind, s.model_name, s.model_version, s.state, s.started_at, s.changed_at, s.ended_at, s.active_ms, s.waiting_ms, s.reported_active_ms, s.result, s.tokens, s.note, s.incomplete, s.policy, s.time_missing FROM work_session s JOIN work_allocation a ON a.session_id=s.id WHERE a.ticket_id= $1 ORDER BY s.id
+SELECT s.id, s.project_id, s.ticket_id, s.actor_id, s.client_kind, s.model_name, s.model_version, s.state, s.started_at, s.changed_at, s.ended_at, s.active_ms, s.waiting_ms, s.reported_active_ms, s.result, s.tokens, s.note, s.incomplete, s.policy, s.time_missing, s.outcome FROM work_session s JOIN work_allocation a ON a.session_id=s.id WHERE a.ticket_id= $1 ORDER BY s.id
 `
 
 func (q *Queries) ListTicketCleanupWork(ctx context.Context, ticketID string) ([]WorkSession, error) {
@@ -571,6 +572,7 @@ func (q *Queries) ListTicketCleanupWork(ctx context.Context, ticketID string) ([
 			&i.Incomplete,
 			&i.Policy,
 			&i.TimeMissing,
+			&i.Outcome,
 		); err != nil {
 			return nil, err
 		}
@@ -644,7 +646,7 @@ func (q *Queries) ListWorkDeletionAffectedTickets(ctx context.Context, ticketID 
 }
 
 const listWorkSessions = `-- name: ListWorkSessions :many
-SELECT s.id, s.project_id, s.ticket_id, s.actor_id, s.client_kind, s.model_name, s.model_version, s.state, s.started_at, s.changed_at, s.ended_at, s.active_ms, s.waiting_ms, s.reported_active_ms, s.result, s.tokens, s.note, s.incomplete, s.policy, s.time_missing,a.share FROM work_allocation a JOIN work_session s ON s.id=a.session_id
+SELECT s.id, s.project_id, s.ticket_id, s.actor_id, s.client_kind, s.model_name, s.model_version, s.state, s.started_at, s.changed_at, s.ended_at, s.active_ms, s.waiting_ms, s.reported_active_ms, s.result, s.tokens, s.note, s.incomplete, s.policy, s.time_missing, s.outcome,a.share FROM work_allocation a JOIN work_session s ON s.id=a.session_id
 WHERE a.ticket_id= $1 ORDER BY s.started_at DESC,s.id DESC LIMIT $3 OFFSET $2
 `
 
@@ -675,6 +677,7 @@ type ListWorkSessionsRow struct {
 	Incomplete       bool
 	Policy           []byte
 	TimeMissing      bool
+	Outcome          pgtype.Text
 	Share            float64
 }
 
@@ -708,6 +711,7 @@ func (q *Queries) ListWorkSessions(ctx context.Context, arg ListWorkSessionsPara
 			&i.Incomplete,
 			&i.Policy,
 			&i.TimeMissing,
+			&i.Outcome,
 			&i.Share,
 		); err != nil {
 			return nil, err
@@ -864,8 +868,8 @@ func (q *Queries) SetWorkPolicy(ctx context.Context, arg SetWorkPolicyParams) er
 const updateWorkSession = `-- name: UpdateWorkSession :exec
 UPDATE work_session SET state= $1,changed_at= $2,ended_at=$3,
 active_ms= $4,waiting_ms= $5,reported_active_ms=$6,
-result=$7,tokens=$8,note= $9,incomplete= $10
-WHERE id= $11
+outcome=$7,result=$8,tokens=$9,note= $10,incomplete= $11
+WHERE id= $12
 `
 
 type UpdateWorkSessionParams struct {
@@ -875,6 +879,7 @@ type UpdateWorkSessionParams struct {
 	ActiveMs         int64
 	WaitingMs        int64
 	ReportedActiveMs pgtype.Int8
+	Outcome          pgtype.Text
 	Result           pgtype.Text
 	Tokens           pgtype.Int8
 	Note             string
@@ -890,6 +895,7 @@ func (q *Queries) UpdateWorkSession(ctx context.Context, arg UpdateWorkSessionPa
 		arg.ActiveMs,
 		arg.WaitingMs,
 		arg.ReportedActiveMs,
+		arg.Outcome,
 		arg.Result,
 		arg.Tokens,
 		arg.Note,

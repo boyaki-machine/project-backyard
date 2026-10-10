@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -102,6 +103,14 @@ func (h *handler) patchProject(w http.ResponseWriter, r *http.Request) {
 		before, err := q.GetProjectByKey(ctx, key)
 		if err != nil {
 			return err
+		}
+		if p.IsAgent() && len(req.Settings) > 0 {
+			var previous, next map[string]any
+			_ = json.Unmarshal(before.Settings, &previous)
+			_ = json.Unmarshal(req.Settings, &next)
+			if !reflect.DeepEqual(previous["agent_monitor"], next["agent_monitor"]) {
+				return apierr.New(apierr.Forbidden).WithMessage("実行の停止条件は人だけが変更できます")
+			}
 		}
 		rows, err := q.UpdateProject(ctx, params)
 		if err != nil {
@@ -319,6 +328,13 @@ func buildUpdateProjectParams(
 				Message: "settings は JSON オブジェクトで指定してください",
 			})
 		} else {
+			if raw, exists := probe["agent_monitor"]; exists {
+				b, _ := json.Marshal(raw)
+				var limits monitorLimits
+				if e := json.Unmarshal(b, &limits); e != nil || (limits.MaxAttempts != nil && *limits.MaxAttempts < 1) || (limits.MaxConsecutiveFailures != nil && *limits.MaxConsecutiveFailures < 1) {
+					details = append(details, apierr.Detail{Field: "settings.agent_monitor", Code: "invalid", Message: "停止条件は正の整数、または未設定を指定してください"})
+				}
+			}
 			params.Settings = req.Settings
 		}
 	}
@@ -393,6 +409,12 @@ func classifyUpdateMiss(ctx context.Context, q gen.Querier, key string) error {
 
 // writeProjectUpdateError は更新の失敗を応答に写す（5.5.1）。
 func writeProjectUpdateError(w http.ResponseWriter, r *http.Request, key string, err error) {
+	var problem *apierr.Error
+	if errors.As(err, &problem) {
+		apierr.Write(w, r, problem)
+		return
+	}
+
 	if errors.Is(err, errVersionConflict) {
 		apierr.Write(w, r, apierr.New(apierr.Conflict).
 			WithMessage("他の利用者がこのプロジェクトを更新しました。内容を読み直してからやり直してください").

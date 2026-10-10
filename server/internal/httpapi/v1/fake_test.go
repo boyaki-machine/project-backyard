@@ -3534,3 +3534,15 @@ func (q *fakeQuerier) GetOpenWorkSession(context.Context, gen.GetOpenWorkSession
 func (q *fakeQuerier) WorkRequiresRegistration(context.Context, gen.WorkRequiresRegistrationParams) (bool, error) {
 	return false, nil
 }
+
+func (q *fakeQuerier) GetAgentMonitorSettings(context.Context, string) ([]byte, error) {
+	return []byte(`{}`), nil
+}
+func (q *fakeQuerier) CountAgentAttempts(context.Context, string) (int64, error) { return 0, nil }
+func (q *fakeQuerier) DeleteAgentMonitorResets(context.Context, string) error    { return nil }
+func (q *fakeQuerier) UpdateAgentAttributes(context.Context, gen.UpdateAgentAttributesParams) error {
+	return nil
+}
+func (q *fakeQuerier) FindFailedAgentRun(context.Context, gen.FindFailedAgentRunParams) (string, error) {
+	return "", pgx.ErrNoRows
+}

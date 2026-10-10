@@ -4857,10 +4857,129 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/agent-monitor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        /** エージェントの実行監視と評価 */
+        get: operations["getAgentMonitorPolicy"];
+        /** エージェントの実行監視と評価 */
+        put: operations["putAgentMonitorPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/agents/{id}/monitor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** エージェントの実行監視と評価 */
+        get: operations["getAgentMonitor"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/agents/{id}/monitor/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** エージェントの実行監視と評価 */
+        post: operations["resetAgentMonitor"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/agents/{id}/attributes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** エージェントの実行監視と評価 */
+        patch: operations["patchAgentAttributes"];
+        trace?: never;
+    };
+    "/api/v1/me/agents/{id}/monitor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** エージェントの実行監視と評価 */
+        get: operations["getMyAgentMonitor"];
+        put?: never;
+        /** エージェントの実行監視と評価 */
+        post: operations["resetMyAgentMonitor"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        MonitorLimits: {
+            max_attempts: number | null;
+            max_consecutive_failures: number | null;
+        };
+        MonitorState: components["schemas"]["MonitorLimits"] & {
+            attempts: number;
+            consecutive_failures: number;
+            stopped: boolean;
+            reasons: string[];
+            /** @description 過去の未観測の失敗は不明 */
+            legacy_unknown: boolean;
+        };
+        MonitorReset: {
+            reason: string;
+        };
+        AgentAttributes: {
+            trust_level?: number;
+            capabilities?: string[];
+        };
         ManagedAgent: {
             capabilities?: string[];
             id: string;
@@ -4893,6 +5012,10 @@ export interface components {
             completed_count: number;
             /** Format: int64 */
             partial_count: number;
+            /** Format: int64 */
+            failed_count: number;
+            /** Format: int64 */
+            abandoned_count: number;
             /** Format: int64 */
             blocked_count: number;
             /** Format: int64 */
@@ -5258,6 +5381,7 @@ export interface components {
          *     管理者の一覧が返す形で、所有者を持つ代わりに名前と状態を親が持つ。
          */
         MyAgent: {
+            capabilities?: string[];
             /** @description エージェントの ULID（`agent.actor_id`）。 */
             id: string;
             /**
@@ -5288,10 +5412,7 @@ export interface components {
              * @example PB_TOKEN_MY_LAPTOP
              */
             token_env_name: string;
-            /**
-             * @description 0〜3（既定 1）。**使わない**——段階的な権限昇格の材料
-             *     （`agent_run` の実績）が構想のため、既定値のまま置く。
-             */
+            /** @description 0〜3（既定1）。人による評価値。属性から権限を自動拡大しない。 */
             trust_level: number;
             /** @description `false` は無効化されたエージェント。行は残る。 */
             is_active: boolean;
@@ -5383,6 +5504,8 @@ export interface components {
          *     対応した日に移れる必要がある。
          */
         UpdateAgentRequest: {
+            trust_level?: number;
+            capabilities?: string[];
             display_name?: string;
             /**
              * @description `agent_client_kind` の `key`（4.5.7 が正本）。変更すると
@@ -5938,6 +6061,7 @@ export interface components {
         };
         /** @description エージェントの付帯情報（ApiDesign.md 6.1）。`kind='agent'` の行にだけ返る。 */
         AgentInfo: {
+            capabilities?: string[];
             client_kind: string;
             model_name: string;
             project_key: string;
@@ -6681,6 +6805,11 @@ export interface components {
         WorkEvent: components["schemas"]["WorkStart"] & {
             /** @enum {string} */
             action: "pause" | "resume" | "finish" | "abandon" | "correct" | "restore_auto";
+            /**
+             * @description 実行結果。failedには理由が必須。
+             * @enum {string}
+             */
+            outcome?: "completed" | "failed";
             /** @enum {string} */
             result?: "completed" | "partial" | "blocked";
             /**
@@ -6697,6 +6826,8 @@ export interface components {
             change_metrics?: components["schemas"]["ChangeMetrics"][];
         };
         WorkSession: {
+            /** @enum {string|null} */
+            outcome?: "completed" | "failed" | "abandoned" | null;
             id: string;
             policy: components["schemas"]["WorkPolicy"];
             time_missing: boolean;
@@ -15571,6 +15702,191 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+        };
+    };
+    getAgentMonitorPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 保存済みの監視値 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitorLimits"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+        };
+    };
+    putAgentMonitorPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MonitorLimits"];
+            };
+        };
+        responses: {
+            /** @description 保存済みの監視値 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitorLimits"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+        };
+    };
+    getAgentMonitor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 保存済みの監視値 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitorState"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+        };
+    };
+    resetAgentMonitor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MonitorReset"];
+            };
+        };
+        responses: {
+            /** @description 保存済みの監視値 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitorState"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+        };
+    };
+    patchAgentAttributes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentAttributes"];
+            };
+        };
+        responses: {
+            /** @description 更新済み */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+        };
+    };
+    getMyAgentMonitor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 保存済みの監視値 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitorState"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+        };
+    };
+    resetMyAgentMonitor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MonitorReset"];
+            };
+        };
+        responses: {
+            /** @description 保存済みの監視値 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitorState"];
+                };
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["ProjectNotFound"];

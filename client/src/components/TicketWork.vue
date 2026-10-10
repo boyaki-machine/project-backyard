@@ -80,6 +80,7 @@ async function finish(row: WorkSession) {
      <p>{{ $ui('稼働時間') }}: {{ row.time_missing ? `${hours(row.active_ms)} h · ${$ui('不完全')}` : `${hours(row.policy.time_source === 'pb' ? row.active_ms : (row.reported_active_ms ?? row.active_ms))} h` }} ({{ row.reported_active_ms === null ? $ui('PB計時') : $ui('取得元の申告') }}) · {{ $ui('待機時間') }}: {{ hours(row.waiting_ms) }} h · {{ $ui('トークン') }}: {{ row.tokens ?? $ui('未計測') }}</p>
      <p>{{ $ui('配分') }}: {{ row.allocations.map(a => `#${a.seq} ${Math.round(a.share * 100)}%`).join(', ') }}</p>
      <p v-if="row.time_missing" class="muted">{{ $ui('時間に欠測があります。確認済みの区間だけを集計しています。') }}</p>
+     <p v-if="row.outcome">{{ $ui('実行結果') }}: {{ row.outcome==='failed'?$ui('失敗'):row.outcome==='abandoned'?$ui('放棄'):$ui('成功') }}</p>
      <p class="note">{{ row.note }}</p>
      <div class="actions">
       <button v-if="canCorrect && row.state === 'finished'" type="button" :disabled="busy" @click="begin(row)">{{ $ui('記録を訂正') }}</button>

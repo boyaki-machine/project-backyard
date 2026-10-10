@@ -258,6 +258,7 @@ type myAgentView struct {
 	// 常に空でない（4.5.1）。画面と生成器はこちらをそのまま使う。
 	TokenEnvName string          `json:"token_env_name"`
 	TrustLevel   int32           `json:"trust_level"`
+	Capabilities []string        `json:"capabilities"`
 	IsActive     bool            `json:"is_active"`
 	CreatedAt    Time            `json:"created_at"`
 	Token        *agentTokenView `json:"token"`
@@ -312,9 +313,9 @@ func (h *handler) listMyAgents(w http.ResponseWriter, r *http.Request) {
 			TokenEnvSuffix: textPtr(row.TokenEnvSuffix),
 			TokenEnvName:   agentTokenEnvName(row.TokenEnvSuffix, row.ActorID),
 
-			TrustLevel: row.TrustLevel,
-			IsActive:   row.IsActive,
-			CreatedAt:  Time(row.CreatedAt),
+			TrustLevel: row.TrustLevel, Capabilities: decodeCapabilities(row.Capabilities),
+			IsActive:  row.IsActive,
+			CreatedAt: Time(row.CreatedAt),
 		}
 		if row.ProjectKey.Valid {
 			v.Project = &projectRef{Key: row.ProjectKey.String, Name: row.ProjectName.String}
@@ -564,9 +565,10 @@ func (h *handler) createMyAgent(w http.ResponseWriter, r *http.Request) {
 		TokenEnvSuffix: nullable(f.tokenEnvSuffix),
 		TokenEnvName:   agentTokenEnvName(text(f.tokenEnvSuffix), agentID),
 
-		TrustLevel: 1,
-		IsActive:   true,
-		CreatedAt:  Time(createdAt),
+		TrustLevel:   1,
+		Capabilities: []string{},
+		IsActive:     true,
+		CreatedAt:    Time(createdAt),
 		// **登録と発行を分ける**（4.5.2）。再発行が必要になったときに
 		// 同じ経路（4.5.3）を通すため、ここでは token を作らない。
 		Token: nil,
@@ -666,7 +668,9 @@ func validateCreateAgent(req createAgentRequest) (createAgentFields, *apierr.Err
 // updateAgentRequest はポインタで受ける。**送られた項目だけを更新する**ため、
 // 「空文字を送った」と「送らなかった」を区別する必要がある。
 type updateAgentRequest struct {
-	DisplayName *string `json:"display_name"`
+	TrustLevel   *int32    `json:"trust_level"`
+	Capabilities *[]string `json:"capabilities"`
+	DisplayName  *string   `json:"display_name"`
 	// ClientKind は 0020 から変更できる（ApiDesign.md 4.5.4）。**値域が今後も
 	// 増える**ので、other で登録した人が、PB がその種別に対応した日に移れる
 	// 必要がある。**project_key は変えられないまま**——仕事はプロジェクトに属する。
@@ -693,6 +697,18 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 	if e := decodeJSON(r, &req); e != nil {
 		apierr.Write(w, r, e)
 		return
+	}
+
+	attributes := attributeRequest{req.TrustLevel, req.Capabilities}
+	if req.TrustLevel != nil || req.Capabilities != nil {
+		if p.IsAgent() {
+			apierr.Write(w, r, apierr.New(apierr.Forbidden))
+			return
+		}
+		if e := validateAttributes(&attributes); e != nil {
+			apierr.Write(w, r, e)
+			return
+		}
 	}
 
 	var details []apierr.Detail
@@ -858,7 +874,16 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if req.TrustLevel != nil || req.Capabilities != nil {
+			if e := saveAttributes(ctx, q, agentID, attributes); e != nil {
+				return e
+			}
+		}
+
 		detail := map[string]any{}
+		if req.TrustLevel != nil || req.Capabilities != nil {
+			detail["attributes"] = attributes
+		}
 		if req.DisplayName != nil {
 			detail["display_name"] = *req.DisplayName
 		}
@@ -913,9 +938,9 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 		TokenEnvSuffix: textPtr(updated.TokenEnvSuffix),
 		TokenEnvName:   agentTokenEnvName(updated.TokenEnvSuffix, updated.ActorID),
 
-		TrustLevel: updated.TrustLevel,
-		IsActive:   updated.IsActive,
-		CreatedAt:  Time(updated.CreatedAt),
+		TrustLevel: updated.TrustLevel, Capabilities: decodeCapabilities(updated.Capabilities),
+		IsActive:  updated.IsActive,
+		CreatedAt: Time(updated.CreatedAt),
 	}
 	if updated.ProjectKey.Valid {
 		v.Project = &projectRef{Key: updated.ProjectKey.String, Name: updated.ProjectName.String}
@@ -1287,7 +1312,15 @@ func reassignAgentRecords(
 	if err != nil {
 		return 0, 0, fmt.Errorf("作業記録数を数えられない: %w", err)
 	}
-	if nComments == 0 && nRuns == 0 && nWork == 0 {
+	nAttempts, err := q.CountAgentAttempts(ctx, agentActorID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if err = q.DeleteAgentMonitorResets(ctx, agentActorID); err != nil {
+		return 0, 0, err
+	}
+
+	if nComments == 0 && nRuns == 0 && nWork == 0 && nAttempts == 0 {
 		return 0, 0, nil
 	}
 
@@ -1332,6 +1365,12 @@ func reassignAgentRecords(
 			return 0, 0, err
 		}
 	}
+	if nAttempts > 0 {
+		if err = q.ReassignAgentAttempts(ctx, gen.ReassignAgentAttemptsParams{NewActorID: destID, OldActorID: agentActorID}); err != nil {
+			return 0, 0, err
+		}
+	}
+
 	return comments, runs, nil
 }
 

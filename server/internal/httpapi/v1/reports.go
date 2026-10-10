@@ -45,9 +45,7 @@ var reportStatuses = []string{"completed", "blocked", "partial"}
 // knowledge_impact の値域（同上）。
 var knowledgeImpacts = []string{"none", "minor", "major"}
 
-// runStatusCompleted は agent_run.status に立つ唯一の値
-// （DbDesign.md 8.2.4）。failed / abandoned は「レポートを出さずに終わった run」で、
-// それを観測する口が無い。running は開始を告げる口が無いので作られない。
+// Legacy report-only submissions create completed runs; explicit work failures retain their outcome.
 const runStatusCompleted = "completed"
 
 // reportRequest は 9.15 の要求。
@@ -276,12 +274,31 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		run, err := buildAgentRun(ctx, q, runID, ticketID, p, req)
-		if err != nil {
-			return err
+		existingRun := ""
+		if req.WorkSessionID != "" {
+			existingRun, err = q.FindFailedAgentRun(ctx, gen.FindFailedAgentRunParams{WorkSessionID: usageText(req.WorkSessionID), TicketID: ticketID})
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
 		}
-		if err := q.CreateAgentRun(ctx, run); err != nil {
-			return fmt.Errorf("実行記録を作成できない: %w", err)
+		if existingRun != "" {
+			has, e := q.HasReportForRun(ctx, existingRun)
+			if e != nil {
+				return e
+			}
+			if has {
+				forbidden = workError(apierr.Conflict, "この終了済み実行には既にレポートがあります。新しい作業を開始してください")
+				return errTicketReference
+			}
+			runID = existingRun
+		} else {
+			run, e := buildAgentRun(ctx, q, runID, ticketID, p, req)
+			if e != nil {
+				return e
+			}
+			if e = q.CreateAgentRun(ctx, run); e != nil {
+				return e
+			}
 		}
 
 		// **要求の本文をそのまま保存する**（9.15）。組み直すと、拒まないと決めた
@@ -352,7 +369,7 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 			Seq:             scope.seq,
 			Status:          req.Status,
 			KnowledgeImpact: req.KnowledgeImpact,
-			SubmittedAt:     Time(*run.EndedAt),
+			SubmittedAt:     Time(time.Now().UTC()),
 			SubmittedBy: actorRef{
 				ID: scope.actorID, Kind: scope.actorKind, DisplayName: p.DisplayName,
 			},
@@ -455,10 +472,8 @@ func negativeCost(field string) apierr.Detail {
 
 // buildAgentRun は 1回の実行記録を組み立てる（DbDesign.md 8.2.4）。
 //
-// **1提出 = 1 run である。** 開始を告げる口を持たず、「走っている run」を
-// 読む者も居ない（ticket.working_agent_id が「いま誰が処理しているか」を担う）。
-// **再提出は別の run になる**——その修正は、エージェントが実際に作業をやり直した
-// ことを意味する。
+// レポートのみの提出はrunを新規作成する。失敗・放棄は共通作業の終了時に
+// 観測した時刻と開始時のモデルで作成し、後のレポートから同じrunを参照する。
 func buildAgentRun(
 	ctx context.Context, q gen.Querier, runID, ticketID string,
 	p *auth.Principal, req reportRequest,
@@ -473,7 +488,7 @@ func buildAgentRun(
 		started = time.Unix(now.Unix()-int64(*c.WallClockMin)*60, int64(now.Nanosecond())).UTC()
 	}
 
-	// retry_count は同じ（チケット × アクター）の既存の run 数（8.2.4）。
+	// retry_count は同じ（チケット × アクター）の提出由来のrun数（8.2.4）。
 	prior, err := q.CountAgentRunsForTicket(ctx, gen.CountAgentRunsForTicketParams{
 		TicketID: ticketID, ActorID: p.ActorID,
 	})

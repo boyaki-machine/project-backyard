@@ -335,6 +335,7 @@ SELECT
   ag.model_name,
   ag.model_version,
   ag.trust_level,
+  ag.capabilities,
   ag.token_env_suffix,
   ag.created_at,
   ag.project_id,
@@ -360,6 +361,7 @@ type FindMyAgentRow struct {
 	ModelName      pgtype.Text
 	ModelVersion   pgtype.Text
 	TrustLevel     int32
+	Capabilities   []byte
 	TokenEnvSuffix pgtype.Text
 	CreatedAt      time.Time
 	ProjectID      pgtype.Text
@@ -382,6 +384,7 @@ func (q *Queries) FindMyAgent(ctx context.Context, arg FindMyAgentParams) (FindM
 		&i.ModelName,
 		&i.ModelVersion,
 		&i.TrustLevel,
+		&i.Capabilities,
 		&i.TokenEnvSuffix,
 		&i.CreatedAt,
 		&i.ProjectID,
@@ -513,6 +516,7 @@ SELECT
   ag.model_name,
   ag.model_version,
   ag.trust_level,
+  ag.capabilities,
   ag.token_env_suffix,
   ag.created_at,
   p.key  AS project_key,
@@ -562,6 +566,7 @@ type ListMyAgentsRow struct {
 	ModelName       pgtype.Text
 	ModelVersion    pgtype.Text
 	TrustLevel      int32
+	Capabilities    []byte
 	TokenEnvSuffix  pgtype.Text
 	CreatedAt       time.Time
 	ProjectKey      pgtype.Text
@@ -602,6 +607,7 @@ func (q *Queries) ListMyAgents(ctx context.Context, ownerActorID string) ([]List
 			&i.ModelName,
 			&i.ModelVersion,
 			&i.TrustLevel,
+			&i.Capabilities,
 			&i.TokenEnvSuffix,
 			&i.CreatedAt,
 			&i.ProjectKey,

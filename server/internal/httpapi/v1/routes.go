@@ -137,6 +137,7 @@ func Mount(r chi.Router, deps Deps) {
 		r.Use(middleware.Authenticate(deps.Queries))
 		r.Use(middleware.RateLimit(actorRateLimit, actorRateWindow, middleware.ActorKey))
 		r.Use(middleware.RequireCSRF)
+		r.Use(h.agentMonitorMiddleware)
 
 		r.Post("/auth/logout", h.logout)
 
@@ -378,6 +379,14 @@ func Mount(r chi.Router, deps Deps) {
 
 		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.manage")).Get("/projects/{key}/agents", h.listProjectAgents)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.manage")).Post("/projects/{key}/agents/{id}/disable", h.disableProjectAgent)
+
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).Get("/projects/{key}/agent-monitor", h.getAgentMonitorPolicy)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).Put("/projects/{key}/agent-monitor", h.putAgentMonitorPolicy)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.manage")).Get("/projects/{key}/agents/{id}/monitor", h.agentMonitor)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.manage")).Post("/projects/{key}/agents/{id}/monitor/reset", h.agentMonitor)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.manage")).Patch("/projects/{key}/agents/{id}/attributes", h.patchAgentAttributes)
+		r.Get("/me/agents/{id}/monitor", h.agentMonitor)
+		r.Post("/me/agents/{id}/monitor", h.agentMonitor)
 
 		// ── チケット1件（ApiDesign.md 9.5 / 9.6 / 9.7。手順17a）─────
 		//
