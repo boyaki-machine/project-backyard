@@ -50,6 +50,7 @@ import ReferenceModal from './ReferenceModal.vue'
 import StatusDropdown from './StatusDropdown.vue'
 import TicketActivity from './TicketActivity.vue'
 import TicketComments from './TicketComments.vue'
+import TicketWork from './TicketWork.vue'
 import TicketLinkModal from './TicketLinkModal.vue'
 import UserActionsMenu from './UserActionsMenu.vue'
 import type { ActionItem } from './UserActionsMenu.vue'
@@ -2161,6 +2162,7 @@ defineExpose({
             </dd>
           </div>
         </dl>
+        <TicketWork :project-key="projectKey" :seq="ticket.seq" :version="ticket.version" :can-correct="canEdit && canEditActualPoint" :can-finish="canEdit && canTransition && auth.canInProject(projectKey, 'agent.run')" @updated="load" />
         <!-- 「終日」の切り替え（5.5。時刻付きの入力はこの画面だけが持つ。pb-217）。
              **格子の外に置く**——「終了」の欄だけ高さが変わると、3行目の見出しが揃わない -->
         <label class="all-day">

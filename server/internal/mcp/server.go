@@ -36,6 +36,7 @@ func New(rest http.Handler, version string) *Handler {
 	// read → コンテキストパック → write → 遷移 → 完了レポート（Requirements.md 10.8.5 / 10.8.6）。
 	tools := readTools()
 	tools = append(tools, usageTools()...)
+	tools = append(tools, workTools()...)
 	tools = append(tools, planningTools()...)
 	tools = append(tools, contextTools()...)
 	tools = append(tools, writeTools()...)

@@ -58,14 +58,21 @@ const runStatusCompleted = "completed"
 // **列に出す値だけを型で受ける。** 残りは json.RawMessage のまま report jsonb へ
 // 入れる——知らないキーも拒まず保存する（9.15）。
 type reportRequest struct {
-	Status           string          `json:"status"`
-	KnowledgeImpact  *string         `json:"knowledge_impact"`
-	Cost             *reportCost     `json:"cost"`
-	DoDResults       []reportDoD     `json:"dod_results"`
-	Artifacts        json.RawMessage `json:"artifacts"`
-	Findings         json.RawMessage `json:"findings"`
-	Failures         json.RawMessage `json:"failures"`
-	ProposedSubtasks json.RawMessage `json:"proposed_subtasks"`
+	WorkSessionID     string             `json:"work_session_id"`
+	EffortUnavailable *effortUnavailable `json:"effort_unavailable"`
+	Status            string             `json:"status"`
+	KnowledgeImpact   *string            `json:"knowledge_impact"`
+	Cost              *reportCost        `json:"cost"`
+	DoDResults        []reportDoD        `json:"dod_results"`
+	Artifacts         json.RawMessage    `json:"artifacts"`
+	Findings          json.RawMessage    `json:"findings"`
+	Failures          json.RawMessage    `json:"failures"`
+	ProposedSubtasks  json.RawMessage    `json:"proposed_subtasks"`
+}
+
+type effortUnavailable struct {
+	Target string `json:"target"`
+	Reason string `json:"reason"`
 }
 
 // reportCost は 10.6.1 の cost。agent_run の tokens_used / turns へ展開する。
@@ -221,6 +228,54 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if e := q.LockWorkProject(ctx, scope.projectID); e != nil {
+			return e
+		}
+		if req.EffortUnavailable != nil {
+			x := req.EffortUnavailable
+			if !contains([]string{"time", "point", "both"}, x.Target) || strings.TrimSpace(x.Reason) == "" || len([]rune(x.Reason)) > 2000 {
+				forbidden = usageInvalid("effort_unavailable", "対象time/point/bothと計測不能の理由を2000文字以内で指定してください")
+				return errTicketReference
+			}
+		}
+		if forbidden = requireWorkReport(ctx, q, scope.projectID, ticketID, p, req); forbidden != nil {
+			return errTicketReference
+		}
+		if req.WorkSessionID != "" {
+			work, e := q.GetWorkSession(ctx, gen.GetWorkSessionParams{ID: req.WorkSessionID, ProjectID: scope.projectID})
+			if errors.Is(e, pgx.ErrNoRows) {
+				archived, e := q.GetArchivedWork(ctx, gen.GetArchivedWorkParams{ID: req.WorkSessionID, ProjectID: scope.projectID})
+				if errors.Is(e, pgx.ErrNoRows) {
+					forbidden = workError(apierr.NotFound, "作業記録が見つかりません")
+					return errTicketReference
+				}
+				if e != nil {
+					return e
+				}
+				if !archivedReportAllowed(archived, ticketID, p.ActorID, p.IsAgent()) {
+					forbidden = workError(apierr.Forbidden, "自身の終了した配分済み作業だけレポートへ紐付けできます")
+					return errTicketReference
+				}
+			} else {
+				if e != nil {
+					return e
+				}
+				allocations, e := q.ListWorkAllocations(ctx, work.ID)
+				if e != nil {
+					return e
+				}
+				allocated := false
+				for _, a := range allocations {
+					if a.TicketID == ticketID {
+						allocated = true
+					}
+				}
+				if !allocated || work.State != "finished" || work.TimeMissing || p.IsAgent() && work.ActorID != p.ActorID {
+					forbidden = workError(apierr.Forbidden, "自身の終了した配分済み作業だけレポートへ紐付けできます。時間欠測ならeffort_unavailableで説明してください")
+					return errTicketReference
+				}
+			}
+		}
 		run, err := buildAgentRun(ctx, q, runID, ticketID, p, req)
 		if err != nil {
 			return err

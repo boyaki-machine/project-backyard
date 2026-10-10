@@ -3507,3 +3507,30 @@ func (q *fakeQuerier) ListDelegationMarks(
 ) ([]gen.ListDelegationMarksRow, error) {
 	return nil, nil
 }
+
+func (q *fakeQuerier) MarkTicketEffortManual(context.Context, gen.MarkTicketEffortManualParams) error {
+	return nil
+}
+func (q *fakeQuerier) CountActorWorkRecords(context.Context, string) (int64, error) { return 0, nil }
+
+func (q *fakeQuerier) LockWorkProject(context.Context, string) error { return nil }
+
+func (q *fakeQuerier) ListWorkDeletionAffectedTickets(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
+func (q *fakeQuerier) EnsureTicketEffort(context.Context, string) error { return nil }
+
+func (q *fakeQuerier) GetWorkPolicyDocument(context.Context, pgtype.Text) (gen.GetWorkPolicyDocumentRow, error) {
+	return gen.GetWorkPolicyDocumentRow{}, pgx.ErrNoRows
+}
+func (q *fakeQuerier) HasTicketOpenWork(context.Context, gen.HasTicketOpenWorkParams) (bool, error) {
+	return false, nil
+}
+func (q *fakeQuerier) GetOpenWorkSession(context.Context, gen.GetOpenWorkSessionParams) (string, error) {
+	return "", pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) WorkRequiresRegistration(context.Context, gen.WorkRequiresRegistrationParams) (bool, error) {
+	return false, nil
+}

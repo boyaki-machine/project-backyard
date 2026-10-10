@@ -566,6 +566,12 @@ type Ticket struct {
 	AllDay             bool
 }
 
+type TicketEffort struct {
+	TicketID    string
+	ManualHours bool
+	ManualPoint bool
+}
+
 type TicketLink struct {
 	ID             string
 	SourceTicketID string
@@ -604,6 +610,19 @@ type TicketSprint struct {
 type TicketTag struct {
 	TicketID string
 	TagID    string
+}
+
+type TicketWorkBase struct {
+	TicketID        string
+	SessionsCount   int64
+	IncompleteCount int64
+	TokensMissing   int64
+	TimeMissing     int64
+	ActiveMs        float64
+	ElapsedMs       float64
+	WaitingMs       float64
+	Tokens          float64
+	PointInputs     []byte
 }
 
 // TLS 証明書（Design.md 10.3 の第3層）。秘密鍵は secret_key で暗号化して持つ
@@ -684,6 +703,63 @@ type WebauthnChallenge struct {
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
 	CreatedAt  time.Time
+}
+
+type WorkAllocation struct {
+	SessionID     string
+	TicketID      string
+	Share         float64
+	ChangeMetrics []byte
+}
+
+type WorkArchive struct {
+	ID          string
+	ProjectID   string
+	ActorID     pgtype.Text
+	TicketIds   []byte
+	TimeMissing bool
+	CleanedAt   time.Time
+}
+
+type WorkEvent struct {
+	ProjectID string
+	ActorID   string
+	RequestID string
+	SessionID string
+	Digest    string
+	Response  []byte
+	CreatedAt time.Time
+}
+
+type WorkReplay struct {
+	ProjectID string
+	ActorID   string
+	RequestID string
+	SessionID string
+	Digest    string
+}
+
+type WorkSession struct {
+	ID               string
+	ProjectID        string
+	TicketID         string
+	ActorID          string
+	ClientKind       pgtype.Text
+	ModelName        pgtype.Text
+	ModelVersion     pgtype.Text
+	State            string
+	StartedAt        time.Time
+	ChangedAt        time.Time
+	EndedAt          *time.Time
+	ActiveMs         int64
+	WaitingMs        int64
+	ReportedActiveMs pgtype.Int8
+	Result           pgtype.Text
+	Tokens           pgtype.Int8
+	Note             string
+	Incomplete       bool
+	Policy           []byte
+	TimeMissing      bool
 }
 
 type Workflow struct {

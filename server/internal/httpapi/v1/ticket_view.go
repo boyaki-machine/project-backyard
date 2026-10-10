@@ -152,6 +152,7 @@ type ticketChildBrief struct {
 // とおり pb_get_task は本応答をそのまま返すので、**ここが返さない限りどちらの分岐も
 // 起こりえなかった。**
 type ticketDetailView struct {
+	WorkContext *workContextView `json:"work_context,omitempty"`
 	ticketListItem
 	BodyMd       *string            `json:"body_md"`
 	Parent       *ticketBrief       `json:"parent"`

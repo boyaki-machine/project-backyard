@@ -196,6 +196,11 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 	)
 
 	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		if patch.ActualHours.Set || patch.ActualPoint.Set {
+			if err := q.LockWorkProject(ctx, projectID); err != nil {
+				return err
+			}
+		}
 		before, err := q.GetTicketBySeq(ctx, gen.GetTicketBySeqParams{
 			ProjectID: projectID, Seq: seq,
 		})
@@ -231,6 +236,15 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 
 		if patch.TagIDs.Set {
 			if err := replaceTicketTags(ctx, q, before.ID, patch.TagIDs); err != nil {
+				return err
+			}
+		}
+
+		if patch.ActualHours.Set || patch.ActualPoint.Set {
+			if err := q.EnsureTicketEffort(ctx, before.ID); err != nil {
+				return err
+			}
+			if err := q.MarkTicketEffortManual(ctx, gen.MarkTicketEffortManualParams{TicketID: before.ID, Hours: patch.ActualHours.Set, Point: patch.ActualPoint.Set}); err != nil {
 				return err
 			}
 		}

@@ -1283,7 +1283,11 @@ func reassignAgentRecords(
 	if err != nil {
 		return 0, 0, fmt.Errorf("実行記録の数を数えられない: %w", err)
 	}
-	if nComments == 0 && nRuns == 0 {
+	nWork, err := q.CountActorWorkRecords(ctx, agentActorID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("作業記録数を数えられない: %w", err)
+	}
+	if nComments == 0 && nRuns == 0 && nWork == 0 {
 		return 0, 0, nil
 	}
 
@@ -1318,6 +1322,14 @@ func reassignAgentRecords(
 		})
 		if err != nil {
 			return 0, 0, fmt.Errorf("実行記録のアクターを付け替えられない: %w", err)
+		}
+	}
+	if nWork > 0 {
+		if err := q.ReassignWorkSessions(ctx, gen.ReassignWorkSessionsParams{NewActorID: destID, OldActorID: agentActorID}); err != nil {
+			return 0, 0, err
+		}
+		if err := q.ReassignWorkEvents(ctx, gen.ReassignWorkEventsParams{NewActorID: destID, OldActorID: agentActorID}); err != nil {
+			return 0, 0, err
 		}
 	}
 	return comments, runs, nil

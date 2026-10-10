@@ -955,7 +955,7 @@ func TestTransitionTaskReturnsOnlyStatusSummary(t *testing.T) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	want := append([]string(nil), transitionResultFields...)
+	want := append(append([]string(nil), transitionResultFields...), "work_instructions")
 	sort.Strings(want)
 	if strings.Join(keys, ",") != strings.Join(want, ",") {
 		t.Errorf("応答の項目 = %v, want %v", keys, want)

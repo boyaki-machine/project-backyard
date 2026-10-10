@@ -102,6 +102,17 @@ type packLink struct {
 // 足したものである。** それまでどの API も返しておらず、パックの優先度1 の
 // 項目（10.4.2）を埋める材料が無かった。
 type packTicket struct {
+	WorkContext *struct {
+		Policy struct {
+			Version             string `json:"version"`
+			Status              string `json:"status"`
+			DocumentVersion     int32  `json:"document_version"`
+			TimeSource          string `json:"time_source"`
+			RequireRegistration bool   `json:"require_registration"`
+		} `json:"policy"`
+		OpenWorkID *string `json:"open_work_id"`
+	} `json:"work_context"`
+
 	Seq          int32      `json:"seq"`
 	Type         string     `json:"type"`
 	Title        string     `json:"title"`
@@ -857,6 +868,7 @@ func renderContextPack(projectKey string, t packTicket, ch charter, delegSection
 	writeCharterSection(&b, ch)
 	writeRelatedSection(&b, projectKey, t)
 	writeNextStepsSection(&b, t.Seq, folded)
+	writeWorkInstructions(&b, t)
 	if delegSection != "" {
 		b.WriteString(delegSection)
 	}
@@ -1210,4 +1222,19 @@ func actorLabel(a *packActor) string {
 // briefLabel は相手チケットの1行。**9.1 の完全形 ID を使う**（<key>-<seq>）。
 func briefLabel(projectKey string, b packBrief) string {
 	return fmt.Sprintf("%s-%d「%s」 %s", projectKey, b.Seq, b.Title, b.Status.Name)
+}
+
+// Always emitted, including when charter bodies have already been read.
+func writeWorkInstructions(b *strings.Builder, t packTicket) {
+	b.WriteString("## 作業実績の記録\n\n")
+	b.WriteString("規約の作業実績方針と `pb_get_doc(path=\"project-management-note\", section=\"実績\")` を取得する。承認後の実作業開始に `pb_start_work(seq, request_id)`。人への返答待ちの前に `pb_record_work(seq, work_id, request_id, action=\"pause\", note)`、再開時に `action=\"resume\"` を呼ぶ。終了時は `action=\"finish\", result=\"completed/partial/blocked\"` と取得できた材料を報告する。PBが共通契約でactual_hours・actual_point・actual_point_versionを算出し保存する。保存応答のsavedを確認し、work_session_idを完了レポートに指定する。取得不能な時間・Pointはeffort_unavailableに対象(time/point/both)と理由を記し、不明を0で補わない。履歴は `pb_list_work(seq)`。再送には同じrequest_idを使う。\n\n")
+	if t.WorkContext == nil {
+		b.WriteString("契約情報を確認できない場合は運営ノートを確認する。未設定のPoint式を推測しない。\n\n")
+		return
+	}
+	p := t.WorkContext.Policy
+	fmt.Fprintf(b, "算出契約：%s、版 `%s`、運営ノート版 %d、時間の選択 `%s`、登録必須 %t。開始時に契約を固定する。設定不足・変更量欠測はPoint未算出となる。変更量はチケット全体の累積値をchange_metricsで報告し、取得元を添える。\n\n", p.Status, p.Version, p.DocumentVersion, p.TimeSource, p.RequireRegistration)
+	if t.WorkContext.OpenWorkID != nil {
+		fmt.Fprintf(b, "自身の未終了作業：`%s`。pb_list_workで開始元を確認して継続するか、理由付きaction=abandonで未確認時間を加算せず終了する。新しいタイマーを重複開始しない。\n\n", *t.WorkContext.OpenWorkID)
+	}
 }

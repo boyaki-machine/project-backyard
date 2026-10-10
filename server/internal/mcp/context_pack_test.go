@@ -885,3 +885,16 @@ func TestGetContextOmitsDelegationOutsideTree(t *testing.T) {
 		t.Errorf("委任の外なのに自律実行の節がある:\n%s", text)
 	}
 }
+
+func TestWorkInstructionsRemainWhenCharterIsFolded(t *testing.T) {
+	var ticket packTicket
+	if err := json.Unmarshal([]byte(`{"seq":31,"title":"fixture","status":{"name":"進行中","category":"in_progress"},"work_context":{"policy":{"version":"actual-v0","status":"ready","document_version":7,"time_source":"reported_or_pb","require_registration":true},"open_work_id":"fixture-work-id"}}`), &ticket); err != nil {
+		t.Fatal(err)
+	}
+	text := renderContextPack("demo", ticket, charter{omittedUnchanged: true}, "")
+	for _, want := range []string{"作業実績の記録", "pb_start_work", "pb_record_work", "pb_list_work", `section="実績"`, "actual-v0", "fixture-work-id", "effort_unavailable"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+}

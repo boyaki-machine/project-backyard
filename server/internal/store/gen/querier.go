@@ -23,6 +23,8 @@ type Querier interface {
 	// ON CONFLICT DO NOTHING は、同じスプリントを二重に開始できない以上ほぼ起きないが、
 	// 同じチケットが部分木の重なりで2度現れた場合の保険である。
 	AddTicketsToSprint(ctx context.Context, arg AddTicketsToSprintParams) error
+	AddWorkAllocation(ctx context.Context, arg AddWorkAllocationParams) error
+	AddWorkBase(ctx context.Context, arg AddWorkBaseParams) error
 	// AgentClientKindExists は入力の検証に使う（ApiDesign.md 4.5.2 / 4.5.4）。
 	//
 	// **値域を Go の定数で持たない。** 正本は agent_client_kind の行であり、
@@ -83,10 +85,13 @@ type Querier interface {
 	// 一律に 409 と返すと、消えたユーザーに「競合している」という誤った説明を返す。
 	//
 	AppUserExists(ctx context.Context, actorID string) (bool, error)
+	ApplyTicketEffort(ctx context.Context, arg ApplyTicketEffortParams) error
 	// ApproveDelegationScope は PM が委任範囲を承認する（4.3「計画中 → 承認済」。
 	// pb-260）。**scope は承認した計画の版の写し**であり、scope_version を1つ進める
 	// （0 は未承認。4.4）。計画中でなければ 0 行を返す。
 	ApproveDelegationScope(ctx context.Context, arg ApproveDelegationScopeParams) (int64, error)
+	ArchiveWork(ctx context.Context, arg ArchiveWorkParams) error
+	ArchiveWorkEvents(ctx context.Context, workID string) error
 	AttachTicketTag(ctx context.Context, arg AttachTicketTagParams) error
 	// ChangeMyPassword は POST /me/password の書き込み（ApiDesign.md 4.3）。
 	//
@@ -104,6 +109,7 @@ type Querier interface {
 	// **知らない名前ならエラー（22023）になる。** pg_timezone_names を引く形は
 	// sqlc がカタログを知らず生成できないため、実際に変換させて確かめる。
 	CheckTimezoneInDB(ctx context.Context, name string) (pgtype.Timestamp, error)
+	ClearTicketEffortAuto(ctx context.Context, ticketID string) error
 	// CommentRepliableInTicket は in_reply_to の相手が「同じチケットの、削除されて
 	// いないコメント」であることを見る（9.8）。**存在しない ID と他チケットの ID と
 	// 削除済みを1つの結果に畳む**——呼び出し元にとってはどれも「指せない」であり、
@@ -141,6 +147,7 @@ type Querier interface {
 	// 無効な管理者も「居る」に数えるべきであり、条件が違う。
 	//
 	CountActiveAdministrators(ctx context.Context) (int64, error)
+	CountActorWorkRecords(ctx context.Context, actorID string) (int64, error)
 	// アクターとユーザーに関するクエリ（DbDesign.md 6.2）。
 	//
 	// 手順3で pb admin create が直接書いていたSQLを sqlc へ移したもの。
@@ -229,6 +236,7 @@ type Querier interface {
 	// ── リカバリコード ──────────────────────────────────────
 	// CountUnusedRecoveryCodes は残数（ApiDesign.md 4.6.1）。
 	CountUnusedRecoveryCodes(ctx context.Context, userID string) (int64, error)
+	CountWorkSessions(ctx context.Context, ticketID string) (int64, error)
 	// CreateAccessToken はセッション・APIトークン・エージェントトークンを発行する
 	// （DbDesign.md 6.2）。**平文は渡さない。** token_hash は SHA-256、
 	// token_prefix は一覧表示用の先頭8文字である。
@@ -393,6 +401,8 @@ type Querier interface {
 	// **user_id はログインでは NULL、登録では本人である。** 取り違えは CHECK が弾く
 	// （DbDesign.md 6.19）。
 	CreateWebauthnChallenge(ctx context.Context, arg CreateWebauthnChallengeParams) error
+	CreateWorkEvent(ctx context.Context, arg CreateWorkEventParams) error
+	CreateWorkSession(ctx context.Context, arg CreateWorkSessionParams) error
 	CreateWorkflowStatus(ctx context.Context, arg CreateWorkflowStatusParams) error
 	CreateWorkflowTransition(ctx context.Context, arg CreateWorkflowTransitionParams) error
 	// CurrentDatabaseCtype は接続先 DB の LC_CTYPE を返す（DbDesign.md 3.1 / 4.5）。
@@ -510,6 +520,8 @@ type Querier interface {
 	//
 	// 登録を始め直したとき（ApiDesign.md 4.7.2）と、管理者の全削除（6.10）で使う。
 	DeleteWebauthnChallengesForUser(ctx context.Context, userID pgtype.Text) (int64, error)
+	DeleteWorkAllocations(ctx context.Context, sessionID string) error
+	DeleteWorkSession(ctx context.Context, id string) error
 	// DependencyPathExists は依存を辿って from から to へ行けるかを返す（9.10.1 の
 	// link_cycle）。source → target を1本足す前に、target から source へ辿れるなら輪になる。
 	//
@@ -529,6 +541,7 @@ type Querier interface {
 	// **DO UPDATE で同じ値を書くのは RETURNING に行を返させるため**である
 	// （DO NOTHING では衝突した行が返らない）。
 	EnsureGoogleHolidaySource(ctx context.Context, arg EnsureGoogleHolidaySourceParams) (string, error)
+	EnsureTicketEffort(ctx context.Context, ticketID string) error
 	ExportAuditLogs(ctx context.Context, arg ExportAuditLogsParams) ([]ExportAuditLogsRow, error)
 	// 認証に関するクエリ（Design.md 6.2.2、DbDesign.md 6.2）。
 	// FindAccessTokenByHash は受け取った平文の SHA-256 で access_token を引く。
@@ -796,6 +809,7 @@ type Querier interface {
 	// この表を読まない（環境変数が勝つ）。
 	// 鍵を引く。無ければ行が返らない（初回）。
 	GetAppSecret(ctx context.Context, keyID string) (GetAppSecretRow, error)
+	GetArchivedWork(ctx context.Context, arg GetArchivedWorkParams) (WorkArchive, error)
 	// GetCheckpointBase は周期の起点を返す（8.3）。直近の checkpoint の確認待ちを立てた時刻、
 	// 無ければ最初に計画が反映された時刻、それも無ければ委任を作った時刻。
 	GetCheckpointBase(ctx context.Context, delegationID string) (time.Time, error)
@@ -886,6 +900,8 @@ type Querier interface {
 	// その版への直近の評価を読む（delegation-status。pb-252）。評価が無ければ
 	// eval_verdict は空文字、eval_findings は NULL。
 	GetLatestPlanForStatus(ctx context.Context, delegationID string) (GetLatestPlanForStatusRow, error)
+	GetLiveWorkPointInputs(ctx context.Context, ticketID string) ([]GetLiveWorkPointInputsRow, error)
+	GetOpenWorkSession(ctx context.Context, arg GetOpenWorkSessionParams) (string, error)
 	// GetParentForCascade は「子が動いたら親を進行中にする」で祖先をたどる1段ぶん
 	// （9.6）。子の id を渡すと、その親の seq とステータスのカテゴリが返る。
 	//
@@ -1003,6 +1019,7 @@ type Querier interface {
 	GetTicketComment(ctx context.Context, arg GetTicketCommentParams) (GetTicketCommentRow, error)
 	// 1件だけ返す形。POST / PATCH の応答（9.9）と、更新前の読み取りに使う。
 	GetTicketDoDItem(ctx context.Context, arg GetTicketDoDItemParams) (GetTicketDoDItemRow, error)
+	GetTicketEffort(ctx context.Context, ticketID string) (GetTicketEffortRow, error)
 	// GetTicketEpicAncestor は 9.5.1 の epic を引く——祖先をたどって最初に
 	// 見つかるエピック。**自分自身は数えない**（エピックの詳細では、その上のエピック）。
 	// 無ければ 0行で、呼び出し側が null にする。
@@ -1041,6 +1058,12 @@ type Querier interface {
 	// **新しい親の種別が要る。** 「段に置けるのは親を持たないもの、または親が
 	// エピックのもの」（9.4.1）を、変更後の値で判定するためである。
 	GetTicketTypeByID(ctx context.Context, id string) (string, error)
+	GetWorkBase(ctx context.Context, ticketID string) (TicketWorkBase, error)
+	GetWorkEvent(ctx context.Context, arg GetWorkEventParams) (GetWorkEventRow, error)
+	GetWorkPolicyDocument(ctx context.Context, projectID pgtype.Text) (GetWorkPolicyDocumentRow, error)
+	GetWorkReplay(ctx context.Context, arg GetWorkReplayParams) (GetWorkReplayRow, error)
+	GetWorkSession(ctx context.Context, arg GetWorkSessionParams) (WorkSession, error)
+	GetWorkTotals(ctx context.Context, ticketID string) (GetWorkTotalsRow, error)
 	// HasAnsweredConfirmation は「次の一手」の判定に使う（9.3「ヒアリングに
 	// 答えが付いた」「確認待ちに答えが付いた」）。
 	HasAnsweredConfirmation(ctx context.Context, arg HasAnsweredConfirmationParams) (bool, error)
@@ -1052,6 +1075,7 @@ type Querier interface {
 	//
 	// **hearing（8.1 の8）は関門に数えない**（8.2「ヒアリングは止めない」）。
 	HasOpenConfirmation(ctx context.Context, delegationID string) (bool, error)
+	HasTicketOpenWork(ctx context.Context, arg HasTicketOpenWorkParams) (bool, error)
 	// 業務履歴（ApiDesign.md 9.1.1、DbDesign.md 6.8 の activity）。
 	//
 	// activity はチケット詳細の変更履歴を支える。管理者の横断監査一覧は
@@ -1558,6 +1582,7 @@ type Querier interface {
 	ListTagsForTickets(ctx context.Context, ticketIds []string) ([]ListTagsForTicketsRow, error)
 	// ListTicketChildrenBrief は 9.5.1 の children（直下の子だけ。孫は含めない）。
 	ListTicketChildrenBrief(ctx context.Context, parentID pgtype.Text) ([]ListTicketChildrenBriefRow, error)
+	ListTicketCleanupWork(ctx context.Context, ticketID string) ([]WorkSession, error)
 	// ── 手順18a：コメントAPI（ApiDesign.md 9.8）─────────────────────────
 	//
 	// **すべてのクエリが ticket_id で閉じている。** コメントはチケットの子資源であり、
@@ -1761,6 +1786,9 @@ type Querier interface {
 	// 条件から落ちないよう明示的に許す。
 	//
 	ListUserSessions(ctx context.Context, actorID string) ([]ListUserSessionsRow, error)
+	ListWorkAllocations(ctx context.Context, sessionID string) ([]ListWorkAllocationsRow, error)
+	ListWorkDeletionAffectedTickets(ctx context.Context, ticketID string) ([]string, error)
+	ListWorkSessions(ctx context.Context, arg ListWorkSessionsParams) ([]ListWorkSessionsRow, error)
 	ListWorkflowStatuses(ctx context.Context, workflowID string) ([]ListWorkflowStatusesRow, error)
 	ListWorkflowTransitions(ctx context.Context, workflowID string) ([]ListWorkflowTransitionsRow, error)
 	// LockActorForTokenIssue は資格情報の発行をアクター単位で直列化する。
@@ -1776,6 +1804,8 @@ type Querier interface {
 	// するのは、チケットの作成（FK の確認が project に取る KEY SHARE）を待たせない
 	// ため**——FOR UPDATE だと KEY SHARE とぶつかる。
 	LockProjectForDependency(ctx context.Context, projectID string) (string, error)
+	LockWorkProject(ctx context.Context, projectID string) error
+	LockWorkTickets(ctx context.Context, arg LockWorkTicketsParams) ([]LockWorkTicketsRow, error)
 	// MarkEvaluationObjected は PM の事後の異議を記録する（Delegation.md 6.4・6.5。pb-275）。
 	// 一度だけ立てる（2回目は 0 行。呼び出し側が 409 にする）。#254 の集計の材料になる。
 	MarkEvaluationObjected(ctx context.Context, id string) (int64, error)
@@ -1788,6 +1818,7 @@ type Querier interface {
 	// **完了・未完了を問わず立てる。** この列が答えるのは「そのスプリントの対象
 	// だった期間」であって「消化できたか」ではない。
 	MarkSprintMembershipRemoved(ctx context.Context, sprintID string) error
+	MarkTicketEffortManual(ctx context.Context, arg MarkTicketEffortManualParams) error
 	// MaxTicketSortKey はプロジェクト全体の末尾。**作成時の採番だけが使う**
 	// （9.3。新規チケットは必ずバックログへ入るので、段で絞る意味がない）。
 	MaxTicketSortKey(ctx context.Context, projectID string) (string, error)
@@ -1872,6 +1903,8 @@ type Querier interface {
 	// ReassignComments は投稿者を付け替える（DbDesign.md 6.7、ApiDesign.md 6.5）。
 	//
 	ReassignComments(ctx context.Context, arg ReassignCommentsParams) (int64, error)
+	ReassignWorkEvents(ctx context.Context, arg ReassignWorkEventsParams) error
+	ReassignWorkSessions(ctx context.Context, arg ReassignWorkSessionsParams) error
 	// RecordLoginFailure は1回の失敗を原子的に加算する（Design.md 6.3）。
 	// 読み取った回数をアプリ側で上書きすると、並行する失敗が失われる。
 	// ロック期限が切れていれば1回目から数え直す。ロック中なら値を保つ。
@@ -1911,6 +1944,7 @@ type Querier interface {
 	// workflow_transition に定義されておらず、任意のステータスで作成できると
 	// 9.6 の遷移検証を素通りできてしまうためである（9.3）。
 	ResolveInitialStatusKey(ctx context.Context, projectID string) (string, error)
+	RestoreTicketEffortAuto(ctx context.Context, ticketID string) error
 	// RevokeAccessToken は失効させる（ApiDesign.md 3.2 のログアウト）。
 	// 既に失効済みなら no-op で返り、revoked_at を上書きしない。
 	//
@@ -2103,6 +2137,9 @@ type Querier interface {
 	// 逆に上げると、スプリントを開始するたびに開いている全ペインが 409 になる。
 	// updated_at は trg_ticket_updated が動かすので、一覧の再取得は効く。
 	SetTicketsSprintID(ctx context.Context, arg SetTicketsSprintIDParams) error
+	SetWorkChanges(ctx context.Context, arg SetWorkChangesParams) error
+	SetWorkMissingTime(ctx context.Context, arg SetWorkMissingTimeParams) error
+	SetWorkPolicy(ctx context.Context, arg SetWorkPolicyParams) error
 	// SoftDeleteComment は論理削除（DbDesign.md 4.6 / 6.7）。
 	//
 	// **body_md は消さない。** 列が NOT NULL であり、応答で null にするのは view の
@@ -2380,6 +2417,7 @@ type Querier interface {
 	// **kind は含めない。** 作成後は変えられない（9.10.2 が immutable_field と定める）。
 	// sort_order は NOT NULL なので COALESCE で足りる。
 	UpdateTicketReference(ctx context.Context, arg UpdateTicketReferenceParams) (int64, error)
+	UpdateWorkSession(ctx context.Context, arg UpdateWorkSessionParams) error
 	// 1件を書く。**PUT は追加と変更を兼ねる（冪等）**ので upsert にする
 	// （ApiDesign.md 11.2）。同じ本文を2回送っても結果は変わらない。
 	//
@@ -2403,6 +2441,7 @@ type Querier interface {
 	// WithdrawOpenConfirmations は委任の取り下げで、開いている確認待ちを畳む
 	// （Delegation.md 4.3「取り下げ」。pb-281）。答える人がいない問いを画面に残さない。
 	WithdrawOpenConfirmations(ctx context.Context, delegationID string) (int64, error)
+	WorkRequiresRegistration(ctx context.Context, arg WorkRequiresRegistrationParams) (bool, error)
 }
 
 var _ Querier = (*Queries)(nil)

@@ -125,6 +125,21 @@ func TestEvaluationIntegration(t *testing.T) {
 	failFindings := `[{"aspect":"purpose_and_dod","verdict":"fail","note_md":"演習量が不足"},` +
 		`{"aspect":"values","verdict":"pass","note_md":""}]`
 
+	t.Run("計画中のmainと評価Agentも認可された計測を記録できる", func(t *testing.T) {
+		path := fmt.Sprintf("%s/tickets/%d/work-sessions", base, rootSeq)
+		for i, token := range []string{mainToken.Token, evaluatorToken.Token} {
+			rec := bearerPost(r, path, token, fmt.Sprintf(`{"request_id":"role-%d-start"}`, i))
+			if rec.Code != 200 {
+				t.Fatal(rec.Body.String())
+			}
+			var row testWorkView
+			decodeJSONBody(t, rec, &row)
+			rec = bearerPost(r, path+"/"+row.ID+"/events", token, fmt.Sprintf(`{"request_id":"role-%d-finish","action":"finish","result":"completed","reported_active_ms":0,"note":"fixture measured zero runtime"}`, i))
+			if rec.Code != 200 {
+				t.Fatal(rec.Body.String())
+			}
+		}
+	})
 	t.Run("plan対象version1は評価してもacceptされない", func(t *testing.T) {
 		rec := bearerPost(r, planPath, mainToken.Token,
 			`{"skeleton":{"branches":[{"name":"演習","budget_share":1.0}]},"body_md":"初版","reason_md":"開始"}`)
@@ -236,7 +251,7 @@ func TestEvaluationIntegration(t *testing.T) {
 			t.Fatalf("done への遷移（成果の評価前） status = %d, want 403（body=%s）", rec.Code, rec.Body.String())
 		}
 
-		rec = bearerPost(r, reportsPath, mainToken.Token, `{"status":"completed"}`)
+		rec = bearerPost(r, reportsPath, mainToken.Token, `{"effort_unavailable":{"target":"both","reason":"fixture work has no measured timing"},"status":"completed"}`)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("完了レポートの提出 status = %d（body=%s）", rec.Code, rec.Body.String())
 		}
@@ -248,7 +263,7 @@ func TestEvaluationIntegration(t *testing.T) {
 		}
 
 		// main の出し直しは評価待ちのあいだ拒まれる。
-		rec = bearerPost(r, reportsPath, mainToken.Token, `{"status":"completed"}`)
+		rec = bearerPost(r, reportsPath, mainToken.Token, `{"effort_unavailable":{"target":"both","reason":"fixture work has no measured timing"},"status":"completed"}`)
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("完了レポートの出し直し（評価待ち中） status = %d, want 403（body=%s）", rec.Code, rec.Body.String())
 		}

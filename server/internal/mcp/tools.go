@@ -1958,7 +1958,16 @@ func callTransitionTask(h *Handler, r *http.Request, key string, args json.RawMe
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
 	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/transition", nil, raw, nil)
-	return passThroughFields(r, res, err, transitionResultFields...)
+	result, rpc := passThroughFields(r, res, err, transitionResultFields...)
+	if rpc == nil && res.ok() {
+		var fields map[string]any
+		if len(result.Content) > 0 && json.Unmarshal([]byte(result.Content[0].Text), &fields) == nil {
+			fields["work_instructions"] = "進行中への着手時はpb_get_contextで作業実績の案内を確認し、pb_get_doc(path=\"project-management-note\", section=\"実績\")で算出契約を読む。実作業開始にpb_start_workを呼び、終了時にpb_record_work(action=finish)の保存結果を確認してレポートへwork_session_idを指定する。"
+			encoded, _ := json.Marshal(fields)
+			result = textResult(string(encoded))
+		}
+	}
+	return result, rpc
 }
 
 // transitionResultFields は pb_transition_task の応答に残す項目（Design.md 8.5.3）。
@@ -1986,7 +1995,9 @@ func reportTools() []tool {
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
-					"seq": {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
+					"work_session_id":    {Type: "string", Description: "終了済み共通作業記録ID。保存結果を確認して指定。再提出でも実績を加算しない"},
+					"effort_unavailable": {Type: "object", Description: "計測不能の場合の対象と理由。推測値や0で補わない", Properties: map[string]property{"target": {Type: "string", Enum: []string{"time", "point", "both"}}, "reason": {Type: "string"}}, Required: []string{"target", "reason"}},
+					"seq":                {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
 					"status": {Type: "string", Enum: []string{"completed", "blocked", "partial"},
 						Description: "作業の結果。completed=やり切った / blocked=進められない / partial=一部だけ終わった"},
 					"artifacts": objectItems(
