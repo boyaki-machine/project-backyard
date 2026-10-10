@@ -3331,6 +3331,7 @@ paths:
       operationId: createTicket
       description: |
         チケットを1件作る（ApiDesign.md 9.3）。**必要権限は `ticket.create`**。
+        担当指定にはticket.assignも必要。エージェントの担当指定は承認済みmainの木内に限る。
 
         **サーバが決めるものはリクエストに含められない。**
 
@@ -3439,6 +3440,7 @@ paths:
       summary: チケットの更新
       operationId: updateTicket
       description: |
+        担当・実行者の実際の変更は、人または承認済みで確認待ちのない委任mainが木内で行う。
         部分更新（ApiDesign.md 9.5.2）。**必要権限は `ticket.edit` または
         `ticket.self_edit`。`ticket.plan.edit` だけを持つ場合は start_at・due_at・all_day のみ変更できる。
         ただし `assignee_id` / `working_agent_id` を変える場合は

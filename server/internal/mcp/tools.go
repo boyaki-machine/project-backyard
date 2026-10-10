@@ -158,7 +158,7 @@ func readTools() []tool {
 				Properties: map[string]property{
 					"status":          {Type: "string", Description: "ワークフローのステータスキー。カンマ区切りで複数指定すると OR"},
 					"status_category": {Type: "string", Description: "todo / in_progress / review / done のいずれか。ワークフローに依存しない4値で、カンマ区切りで複数指定すると OR"},
-					"assignee": {Type: "string", Description: "担当者。me で自分（エージェントのトークンでは所有者）、" +
+					"assignee": {Type: "string", Description: "担当者。指定は承認済みmainの木内のみ。me で自分（エージェントのトークンでは所有者）、" +
 						"none で未割当、アクターの ULID も渡せる。カンマ区切りで複数指定すると OR"},
 					"open":   {Type: "boolean", Description: "true で未完了のものだけ、false で完了したものだけ"},
 					"parent": {Type: "string", Description: "チケット番号（seq）。そのチケットと全子孫に絞る。カンマ区切りで複数指定すると OR"},
@@ -821,7 +821,7 @@ func writeTools() []tool {
 					"priority": {Type: "string", Description: "優先度。省略すると未設定",
 						Enum: []string{"lowest", "low", "medium", "high", "highest"}},
 					"parent_seq": {Type: "integer", Description: "親チケットの番号（seq）。省略するとトップレベル", Minimum: intPtr(1)},
-					"assignee_id": {Type: "string", Description: "担当者。me で自分（エージェントのトークンでは所有者）、" +
+					"assignee_id": {Type: "string", Description: "担当者。指定は承認済みmainの木内のみ。me で自分（エージェントのトークンでは所有者）、" +
 						"アクターの ULID も渡せる。省略すると未割当。**当該プロジェクトのメンバーであること**"},
 					"tag_ids": {Type: "array", Description: "タグの ULID の配列。**pb_list_tags で列挙できる。** " +
 						"すべて当該プロジェクトのタグであること",
@@ -855,7 +855,7 @@ func writeTools() []tool {
 					"priority": {Type: "string", Description: "優先度",
 						Enum: []string{"lowest", "low", "medium", "high", "highest"}},
 					"parent_seq":  {Type: "integer", Description: "親チケットの番号（seq）", Minimum: intPtr(1)},
-					"assignee_id": {Type: "string", Description: "担当者。me で自分（所有者）、アクターの ULID も渡せる"},
+					"assignee_id": {Type: "string", Description: "担当者。変更は承認済みmainの木内のみ。me は所有者、アクターの ULID も渡せる"},
 					"tag_ids": {Type: "array", Description: "タグの ULID の配列。**丸ごと置き換える**（空配列で全部外す）。" +
 						"pb_list_tags で列挙できる",
 						Items: &property{Type: "string"}},

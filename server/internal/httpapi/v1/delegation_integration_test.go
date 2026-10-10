@@ -100,6 +100,16 @@ func TestDelegationIntegration(t *testing.T) {
 	decodeJSONBody(t, postWithCookie(r, "/api/v1/me/agents/"+main.ID+"/tokens", session,
 		`{"expires_in_days":30}`), &mainToken)
 
+	outsider := register("ordinary")
+	var outsiderToken issuedAgentTokenJSON
+	decodeJSONBody(t, postWithCookie(r, "/api/v1/me/agents/"+outsider.ID+"/tokens", session, `{"expires_in_days":30}`), &outsiderToken)
+	t.Run("ordinary agent cannot assign on creation", func(t *testing.T) {
+		rec := bearerPost(r, base+"/tickets", outsiderToken.Token, fmt.Sprintf(`{"type":"task","title":"bypass","assignee_id":%q}`, adminID))
+		if rec.Code != 403 {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
 	rootSeq, _ := createIntegrationTicket(t, r, session, base, "大学受験に合格する")
 	outsideSeq, _ := createIntegrationTicket(t, r, session, base, "普段の仕事")
 	delegationPath := fmt.Sprintf("%s/tickets/%d/delegation", base, rootSeq)
@@ -156,6 +166,13 @@ func TestDelegationIntegration(t *testing.T) {
 			fmt.Sprintf(`{"type":"task","title":"演習1","parent_seq":%d}`, rootSeq))
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status = %d, want 201（body=%s）", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("approved main may assign a child", func(t *testing.T) {
+		rec := bearerPost(r, base+"/tickets", mainToken.Token, fmt.Sprintf(`{"type":"task","title":"assigned child","parent_seq":%d,"assignee_id":%q}`, rootSeq, adminID))
+		if rec.Code != 201 {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 		}
 	})
 

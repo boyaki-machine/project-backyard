@@ -51,6 +51,7 @@ func ticketReq(method, target, body, seq string) *http.Request {
 	}
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rc)
 	ctx = auth.NewPrincipalContext(ctx, &auth.Principal{ActorID: testActorID})
+	ctx = auth.NewProjectAuthzContext(ctx, &auth.ProjectAuthz{Key: "demo", Permissions: []string{"ticket.create", "ticket.assign", "ticket.edit", "ticket.transition"}})
 	return req.WithContext(ctx)
 }
 
