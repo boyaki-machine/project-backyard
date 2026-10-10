@@ -444,7 +444,7 @@ test('未着手バーは半透明の背景と斜線を重ねる', async ({ page 
       await mockApi(page, { theme })
       await openGantt(page)
       await expect(page.locator('.gantt-svg rect.b.todo').first()).toBeAttached()
-      const paint = await page.locator('.gantt-svg #g-hatch').evaluate((pattern) => {
+      const readPaint = () => page.locator('.gantt-svg #g-hatch').evaluate((pattern) => {
         const bg = pattern.querySelector('.hatch-bg')!
         const line = pattern.querySelector('.hatch')!
         const canvas = document.createElement('canvas')
@@ -458,6 +458,9 @@ test('未着手バーは半透明の背景と斜線を重ねる', async ({ page 
           hatch: Number(getComputedStyle(line).opacity) > 0,
         }
       })
+      // The authenticated theme is applied after the SVG first appears.
+      await expect.poll(async () => (await readPaint()).alpha).toBeLessThan(1)
+      const paint = await readPaint()
       expect(paint.alpha).toBeGreaterThan(0.5)
       expect(paint.alpha).toBeLessThan(1)
       expect(paint.backgroundFirst).toBe(true)

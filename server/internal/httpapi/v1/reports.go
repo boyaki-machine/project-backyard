@@ -469,7 +469,8 @@ func buildAgentRun(
 	// **エージェントの自己申告である**——無ければ ended_at と同じ値を入れる。
 	started := now
 	if c := req.Cost; c != nil && c.WallClockMin != nil && *c.WallClockMin > 0 {
-		started = now.Add(-time.Duration(*c.WallClockMin) * time.Minute)
+		// Minute counts fit int32, but converting them to nanoseconds can overflow.
+		started = time.Unix(now.Unix()-int64(*c.WallClockMin)*60, int64(now.Nanosecond())).UTC()
 	}
 
 	// retry_count は同じ（チケット × アクター）の既存の run 数（8.2.4）。

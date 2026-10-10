@@ -71,6 +71,8 @@ test('agent applies an approved plan through MCP and sees dates and dependencies
     expect(plan.items.find((t: { seq: number }) => t.seq === a.seq).due_date).toBe('2026-10-07')
     expect(plan.links).toHaveLength(4)
     expect(plan.items.every((t: object) => !('body_md' in t))).toBe(true)
+    // The chart renders only the visible time range; inspect both bars at desktop width.
+    await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto(`/p/${key}/gantt`)
     await expect(page.locator('.gantt-svg rect.b')).toHaveCount(2)
     await expect(page.locator('.gantt-svg g.dep')).toHaveCount(4)

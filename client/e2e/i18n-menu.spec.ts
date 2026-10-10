@@ -80,6 +80,11 @@ test('言語設定を英語で保存すると各メニューが即時に切り�
   const localeField = page.locator('select[name="locale"]')
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 })
+    // The shell finishes its menu transition after the viewport resize.
+    await expect.poll(async () => {
+      const box = await localeField.boundingBox()
+      return box === null ? Infinity : box.x + box.width
+    }).toBeLessThanOrEqual(width)
     const box = await localeField.boundingBox()
     expect(box).not.toBeNull()
     expect(box!.x).toBeGreaterThanOrEqual(0)
