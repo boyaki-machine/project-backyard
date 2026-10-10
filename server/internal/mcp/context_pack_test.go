@@ -41,6 +41,7 @@ func ticketJSON(scope, executionMode, readiness string) string {
 func charterSteps(ticket string) []fakeStep {
 	return []fakeStep{
 		{status: http.StatusOK, body: ticket},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: `{"items":[
 			{"path":"vision","pack_mode":"full","title":"価値観・世界観","children":[]},
 			{"path":"rules","pack_mode":"full","title":"規約","children":[
@@ -63,6 +64,7 @@ func TestGetContextComposesTicketAndCharter(t *testing.T) {
 
 	want := []string{
 		"/api/v1/projects/demo/tickets/31",
+		"/api/v1/projects/demo/tickets/31/delegation-status",
 		"/api/v1/projects/demo/docs",
 		"/api/v1/projects/demo/docs/vision",
 		"/api/v1/projects/demo/docs/rules",
@@ -164,6 +166,7 @@ func TestGetContextOmitsCharterWithoutDocView(t *testing.T) {
 	// 閲覧用に絞ったトークン（Requirements.md 10.9.1 系統B）でもパックは役に立つ。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{"allow":["src/**"]}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusForbidden, body: `{"error":{"code":"forbidden","message":"権限がありません"}}`},
 	}}
 	h := New(rest, "v0")
@@ -180,8 +183,8 @@ func TestGetContextOmitsCharterWithoutDocView(t *testing.T) {
 		t.Errorf("読めるはずのスコープ境界まで落ちている:\n%s", text)
 	}
 	// **本文を取りに行かない**（目次が取れていないので行き先が無い）。
-	if len(rest.gotPaths) != 2 {
-		t.Errorf("呼び出し = %v, want チケットと目次の2本", rest.gotPaths)
+	if len(rest.gotPaths) != 3 {
+		t.Errorf("呼び出し = %v, want チケット・委任の状態・目次の3本", rest.gotPaths)
 	}
 }
 
@@ -301,6 +304,7 @@ func TestGetContextSaysWhenCharterIsEmpty(t *testing.T) {
 	// DbDesign.md 8.1.2：テンプレート導入前に作られたプロジェクトは文書0件。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: `{"items":[]}`},
 	}}
 	h := New(rest, "v0")
@@ -322,6 +326,7 @@ func TestGetContextExcludesOnboardingDoc(t *testing.T) {
 	// **節点ごと落ちる**ので、その下にぶら下げた文書も憲章に来ない。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: `{"items":[
 			{"path":"vision","pack_mode":"full","title":"価値観・世界観","children":[]},
 			{"path":"agent-onboarding","pack_mode":"none","title":"エージェントの参画情報","children":[
@@ -335,6 +340,7 @@ func TestGetContextExcludesOnboardingDoc(t *testing.T) {
 	// **本文を引く前に落とす**——捨てる文書のために 10.3 を叩かない。
 	want := []string{
 		"/api/v1/projects/demo/tickets/31",
+		"/api/v1/projects/demo/tickets/31/delegation-status",
 		"/api/v1/projects/demo/docs",
 		"/api/v1/projects/demo/docs/vision",
 	}
@@ -361,6 +367,7 @@ func TestGetContextKeepsOnboardingDocWhenMoved(t *testing.T) {
 	// 規則にすると、同じ slug を付けた別の文書まで黙って落ちる。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: `{"items":[
 			{"path":"rules","pack_mode":"full","title":"規約","children":[
 				{"path":"rules/agent-onboarding","pack_mode":"full","title":"参画","children":[]}]}]}`},
@@ -384,6 +391,7 @@ func TestGetContextSaysCharterIsEmptyWhenOnlyOnboardingExists(t *testing.T) {
 	// 嘘になるので、「判断の拠りどころになる文書が」と限定して述べる。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: `{"items":[
 			{"path":"agent-onboarding","pack_mode":"none","title":"エージェントの参画情報","children":[]}]}`},
 	}}
@@ -411,6 +419,7 @@ func TestGetContextListsDecisionsAsOutline(t *testing.T) {
 	// **節点ごと目次だけになる**ので、その下に置いた文書も本文を引かない。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: `{"items":[
 			{"path":"rules","pack_mode":"full","title":"規約","outline":[{"section":"実装の前に","level":2}],"children":[]},
 			{"path":"decisions","pack_mode":"outline","title":"判断の記録","outline":[
@@ -428,6 +437,7 @@ func TestGetContextListsDecisionsAsOutline(t *testing.T) {
 
 	want := []string{
 		"/api/v1/projects/demo/tickets/31",
+		"/api/v1/projects/demo/tickets/31/delegation-status",
 		"/api/v1/projects/demo/docs",
 		"/api/v1/projects/demo/docs/rules",
 		"/api/v1/projects/demo/docs/learnings",
@@ -458,6 +468,7 @@ func TestGetContextKeepsDecisionsDocWhenMoved(t *testing.T) {
 	// 目次だけにした旨の1行も出ない。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: `{"items":[
 			{"path":"rules","pack_mode":"full","title":"規約","outline":[],"children":[
 				{"path":"rules/decisions","pack_mode":"full","title":"判断","outline":[
@@ -480,6 +491,7 @@ func TestGetContextKeepsDecisionsDocWhenMoved(t *testing.T) {
 func TestGetContextParentModeCapsChildren(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: `{"items":[
 			{"path":"guide","pack_mode":"outline","title":"手引き","outline":[{"section":"入口","level":2}],"children":[
 				{"path":"guide/details","pack_mode":"full","title":"詳細","outline":[{"section":"詳細","level":2}],"children":[]}]},
@@ -488,7 +500,7 @@ func TestGetContextParentModeCapsChildren(t *testing.T) {
 	}}
 	h := New(rest, "v0")
 	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
-	if len(rest.gotPaths) != 2 {
+	if len(rest.gotPaths) != 3 {
 		t.Errorf("目次掲載・非掲載の本文を引いている: %v", rest.gotPaths)
 	}
 	for _, want := range []string{"### 詳細（`guide/details`）", "**目次だけ載せる文書**： `guide` `guide/details`", "**掲載しない文書**（必要なら `pb_get_doc` で読む）： `private` `private/child`"} {
@@ -506,6 +518,7 @@ func TestGetContextSaysDecisionsHasNoHeadings(t *testing.T) {
 	// 新規プロジェクトのテンプレート本文には見出しが無い（PB #121）。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: `{"items":[
 			{"path":"decisions","pack_mode":"outline","title":"判断の記録","outline":[],"children":[]}]}`},
 	}}
@@ -513,8 +526,8 @@ func TestGetContextSaysDecisionsHasNoHeadings(t *testing.T) {
 
 	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
 
-	if len(rest.gotPaths) != 2 {
-		t.Errorf("呼び出し = %v, want チケットと目次の2本（本文を引かない）", rest.gotPaths)
+	if len(rest.gotPaths) != 3 {
+		t.Errorf("呼び出し = %v, want チケット・委任の状態・目次の3本（本文を引かない）", rest.gotPaths)
 	}
 	for _, s := range []string{
 		"見出しが1つも無い",
@@ -550,6 +563,7 @@ func TestGetContextWithoutVersionsPrintsThemAtTheEnd(t *testing.T) {
 	// **渡さなければ今までと同じ応答**で、末尾に版の1行が増えるだけ。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: versionedOutline()},
 		{status: http.StatusOK, body: visionBody},
 		// 目次を読んでから本文を読むまでに更新された——**出す版は本文と同じ応答から取る**。
@@ -582,6 +596,7 @@ func TestGetContextWithoutVersionsPrintsThemAtTheEnd(t *testing.T) {
 func TestGetContextOmitsDocsWhoseVersionMatches(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{"allow":["src/**"]}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: versionedOutline()},
 	}}
 	h := New(rest, "v0")
@@ -594,7 +609,7 @@ func TestGetContextOmitsDocsWhoseVersionMatches(t *testing.T) {
 	text := out.Content[0].Text
 
 	// **一致した文書の本文は引かない**（10.3 を叩かない）。
-	want := []string{"/api/v1/projects/demo/tickets/31", "/api/v1/projects/demo/docs"}
+	want := []string{"/api/v1/projects/demo/tickets/31", "/api/v1/projects/demo/tickets/31/delegation-status", "/api/v1/projects/demo/docs"}
 	if strings.Join(rest.gotPaths, ",") != strings.Join(want, ",") {
 		t.Errorf("叩いた REST = %v, want %v", rest.gotPaths, want)
 	}
@@ -625,6 +640,7 @@ func TestGetContextSendsOnlyTheChangedDoc(t *testing.T) {
 	// **途中で誰かが規約を直しても、その文書だけは届く。** 渡されていない文書（decisions）も載る。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: versionedOutline()},
 		{status: http.StatusOK, body: rulesBody},
 	}}
@@ -635,6 +651,7 @@ func TestGetContextSendsOnlyTheChangedDoc(t *testing.T) {
 
 	want := []string{
 		"/api/v1/projects/demo/tickets/31",
+		"/api/v1/projects/demo/tickets/31/delegation-status",
 		"/api/v1/projects/demo/docs",
 		"/api/v1/projects/demo/docs/rules",
 	}
@@ -660,6 +677,7 @@ func TestGetContextIgnoresUnknownPathsInVersions(t *testing.T) {
 	// 参画情報（パックに載せない）と、もう無い文書の版は無視する。0 は版として扱わない。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: `{"items":[
 			{"path":"agent-onboarding","pack_mode":"none","title":"エージェントの参画情報","version":3,"outline":[],"children":[]},
 			{"path":"vision","pack_mode":"full","title":"価値観・世界観","version":0,"outline":[],"children":[]}]}`},
@@ -700,6 +718,7 @@ func TestGetContextOmitsVersionsWithoutDocView(t *testing.T) {
 	// **doc.view が無いときは今までどおり憲章を丸ごと省き、版の行も出さない**（渡すものが無い）。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusForbidden, body: `{"error":{"code":"forbidden","message":"権限がありません"}}`},
 	}}
 	h := New(rest, "v0")
@@ -745,6 +764,7 @@ var unfoldedBoilerplate = []string{
 func TestGetContextFoldsBoilerplateWhenDocsAreOmitted(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"red"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: versionedOutline()},
 		{status: http.StatusOK, body: rulesBody},
 	}}
@@ -791,6 +811,7 @@ func TestGetContextKeepsBoilerplateWhenNothingIsOmitted(t *testing.T) {
 	// **「渡しただけ」では畳まない。** 全文書が更新されて全文が届いた回は、読み方の説明も出す。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: versionedOutline()},
 		{status: http.StatusOK, body: visionBody},
 		{status: http.StatusOK, body: rulesBody},
@@ -814,6 +835,7 @@ func TestGetContextFoldsOnlyTheClausesThatApply(t *testing.T) {
 	// 参画情報も判断の記録も無いプロジェクトでは、その句を足さない。
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
 		{status: http.StatusOK, body: `{"items":[
 			{"path":"vision","pack_mode":"full","title":"価値観・世界観","version":2,"outline":[],"children":[]}]}`},
 	}}
@@ -827,5 +849,52 @@ func TestGetContextFoldsOnlyTheClausesThatApply(t *testing.T) {
 	}
 	if strings.Contains(text, "前回と同じく、") {
 		t.Errorf("起きていない除外を書いている:\n%s", text)
+	}
+}
+
+// 最新の委任が終了した根では、パックに「終了」の節を出す（Delegation.md 4.3
+// 「取り下げ」。pb-281）。委任の外と取り違えると、main だったエージェントが
+// 通常のチケットとして作業を続けてしまう。
+func TestGetContextShowsEndedDelegation(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false,"status":"ended","root_seq":31}`},
+		{status: http.StatusOK, body: `{"items":[]}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+	for _, s := range []string{"## 6. 自律実行", "終了（委任の根：#31）", "ローカルの引き継ぎファイルを消して止まる"} {
+		if !strings.Contains(text, s) {
+			t.Errorf("パックに %q が無い:\n%s", s, text)
+		}
+	}
+}
+
+// 委任の外（終了の添え書きが無い）なら、自律実行の節を出さない。
+func TestGetContextOmitsDelegationOutsideTree(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "agent_draft", `"green"`)},
+		{status: http.StatusOK, body: `{"in_delegation":false}`},
+		{status: http.StatusOK, body: `{"items":[]}`},
+	}}
+	h := New(rest, "v0")
+
+	text := callTool1(t, h, toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+	if strings.Contains(text, "自律実行\n") {
+		t.Errorf("委任の外なのに自律実行の節がある:\n%s", text)
+	}
+}
+
+func TestWorkInstructionsRemainWhenCharterIsFolded(t *testing.T) {
+	var ticket packTicket
+	if err := json.Unmarshal([]byte(`{"seq":31,"title":"fixture","status":{"name":"進行中","category":"in_progress"},"work_context":{"policy":{"version":"actual-v0","status":"ready","document_version":7,"time_source":"reported_or_pb","require_registration":true},"open_work_id":"fixture-work-id"}}`), &ticket); err != nil {
+		t.Fatal(err)
+	}
+	text := renderContextPack("demo", ticket, charter{omittedUnchanged: true}, "")
+	for _, want := range []string{"作業実績の記録", "pb_start_work", "pb_record_work", "pb_list_work", `section="実績"`, "actual-v0", "fixture-work-id", "effort_unavailable"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q", want)
+		}
 	}
 }

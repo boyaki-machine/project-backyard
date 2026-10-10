@@ -13,6 +13,14 @@ import type { components } from './schema'
 export type ProjectStats = components['schemas']['ProjectStats']
 export type Activity = components['schemas']['Activity']
 export type ActivityList = components['schemas']['ActivityList']
+export type TicketTrends = components['schemas']['TicketTrends']
+
+export type TrendPeriod = TicketTrends['period']
+
+/** Daily reconstructed status counts (9.13.3). */
+export function getTicketTrends(key: string, period: TrendPeriod): Promise<TicketTrends> {
+  return api.get<TicketTrends>(`/projects/${encodeURIComponent(key)}/ticket-trends?period=${period}`)
+}
 
 /** `activity.action` の4値（9.13.2、`DbDesign.md` 6.8 の CHECK） */
 export type ActivityAction = Activity['action']

@@ -13,7 +13,8 @@ design/            設計文書
         │
         ├── DbDesign.md    データベース設計   ← スキーマ・マイグレーション・DB実行環境
         ├── ApiDesign.md   REST API 設計     ← エンドポイント仕様（実装の現状は openapi.yaml）
-        └── GuiDesign.md   GUI 設計          ← 画面・遷移・配色
+        ├── GuiDesign.md   GUI 設計          ← 画面・遷移・配色
+        └── Delegation.md  自律実行の設計    ← 委任・評価・確認待ち・引き継ぎ（各設計書にまたがる）
 
 Development.md     開発環境ガイド ── 上記を実際に動かす手順（設計ではない）
 Testing.md         試験の設計と完了の基準（何をどこまで検証したら終わりか）
@@ -30,6 +31,7 @@ images/            README などに載せる画像
 | [ApiDesign.md](design/ApiDesign.md) | REST API（認証・プロジェクト・ユーザー管理・チケット・プロジェクト文書・設定） |
 | [openapi.yaml](design/openapi.yaml) | 実装済みの API の現状 |
 | [GuiDesign.md](design/GuiDesign.md) | 画面遷移・ワイヤーフレーム・モノクロマティック配色体系 |
+| [Delegation.md](design/Delegation.md) | **自律実行（Delegated）。** 委任範囲・計画の版・評価エージェント・確認待ち・引き継ぎ。DB・API・画面にまたがる設計を1か所にまとめる |
 | [Development.md](Development.md) | **開発環境の立ち上げ・デバッグ手順。** 設計ではなく、実装済みの範囲を動かす手順 |
 | [Testing.md](Testing.md) | **試験の設計と完了の基準。** 層の使い分け・期待値の作り方・切り分け・あとしまつ |
 | [history/chronicle.md](history/chronicle.md) | 開発の記録。いつ何を確定したか、何が問題だったか |
@@ -48,6 +50,7 @@ images/            README などに載せる画像
 | 認証・認可 | `Design.md` 6章 |
 | REST API | `ApiDesign.md` |
 | MCPサーバ | `Design.md` 8章 |
+| **自律実行（委任・評価・確認待ち）** | **`Delegation.md`**。実装した部分は各設計書へ移し、本書から参照する |
 | プロジェクト文書（Docs） | `DbDesign.md` 8.1、`ApiDesign.md` 10章、`GuiDesign.md` 5.10 |
 | **アプリケーション設定（設定の3層）** | **`Design.md` 10.3**、`DbDesign.md` 6.14、`ApiDesign.md` 11.1〜11.3、`GuiDesign.md` 5.12 |
 | **TLS 終端と証明書** | **`Design.md` 6.6.1**、`DbDesign.md` 6.15、`ApiDesign.md` 11.4〜11.6、`GuiDesign.md` 5.12.1 |
@@ -63,6 +66,7 @@ images/            README などに載せる画像
 | 判断 | 記録場所 |
 |---|---|
 | PBはエージェントを起動せず、エージェントがPBに接続しに来る（pull型） | `Requirements.md` 10.2.2 |
+| **人の同席をチケット単位から委任単位へ移す。** 品質は作った者とは別の評価エージェントが支える（自律実行） | `Requirements.md` 10.11、`Delegation.md` 1章 |
 | 静的ファイルには手順のみ、内容は実行時にMCPで取得 | `Requirements.md` 10.1.2、10.8 |
 | DB は PostgreSQL を使う | `DbDesign.md` 2章 |
 | サーバは Go（chi + pgx + sqlc + goose）。マイグレーションが唯一のスキーマ定義になる | `Design.md` 3.1〜3.2 |

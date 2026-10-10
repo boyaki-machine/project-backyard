@@ -78,12 +78,29 @@ type Agent struct {
 	TokenEnvSuffix pgtype.Text
 }
 
+type AgentAttempt struct {
+	ID        string
+	ProjectID string
+	TicketID  string
+	ActorID   string
+	StartedAt time.Time
+	EndedAt   *time.Time
+	Outcome   pgtype.Text
+}
+
 type AgentClientKind struct {
 	Key         string
 	DisplayName string
 	SortOrder   int32
 	// PB がこの種別の配置ファイルを出せるか。DbDesign.md 8.2.1.1
 	HasSetupTemplate bool
+}
+
+type AgentMonitorReset struct {
+	ProjectID string
+	ActorID   string
+	ResetAt   time.Time
+	Reason    string
 }
 
 // エージェントの完了レポート。report に Requirements.md 10.6.1 の全体が入る。DbDesign.md 8.2.4
@@ -113,6 +130,7 @@ type AgentRun struct {
 	TokensUsed      pgtype.Int8
 	Turns           pgtype.Int4
 	RetryCount      int32
+	WorkSessionID   pgtype.Text
 }
 
 // PB が生成した暗号鍵（Design.md 6.6.1）。PB_SECRET_KEY を与えたときは読まない
@@ -227,6 +245,21 @@ type Comment struct {
 	DeletedAt  *time.Time
 }
 
+type Confirmation struct {
+	ID           string
+	DelegationID string
+	TicketID     string
+	Reason       string
+	QuestionMd   string
+	Options      []byte
+	RaisedBy     string
+	Status       string
+	AnswerMd     pgtype.Text
+	AnsweredBy   pgtype.Text
+	CreatedAt    time.Time
+	AnsweredAt   *time.Time
+}
+
 // コンテキストパックの生成記録。書き手はまだ無い（器のみ）。DbDesign.md 8.2.5
 type ContextPackLog struct {
 	ID           string
@@ -237,6 +270,58 @@ type ContextPackLog struct {
 	Included     []byte
 	Truncated    []byte
 	GeneratedAt  time.Time
+}
+
+type Delegation struct {
+	ID               string
+	ProjectID        string
+	RootTicketID     string
+	MainActorID      string
+	EvaluatorActorID string
+	Status           string
+	Scope            []byte
+	ScopeVersion     int32
+	CreatedBy        string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type DelegationHandoff struct {
+	ID           string
+	DelegationID string
+	Version      int32
+	Body         []byte
+	Trigger      string
+	WrittenBy    string
+	WrittenAt    time.Time
+}
+
+type DelegationMetricValue struct {
+	ID           string
+	DelegationID string
+	MetricKey    string
+	Value        pgtype.Numeric
+	NoteMd       string
+	RecordedBy   string
+	RecordedAt   time.Time
+}
+
+type DelegationPlan struct {
+	ID            string
+	DelegationID  string
+	Version       int32
+	Scope         []byte
+	Skeleton      []byte
+	BodyMd        string
+	ReasonMd      string
+	DeclaredClass pgtype.Text
+	MeasuredClass pgtype.Text
+	Status        string
+	RevertsTo     pgtype.Int4
+	SubmittedBy   string
+	SubmittedAt   time.Time
+	DecidedBy     pgtype.Text
+	DecidedAt     *time.Time
 }
 
 type Document struct {
@@ -282,6 +367,28 @@ type DodItem struct {
 	Origin      string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+type Evaluation struct {
+	ID                    string
+	DelegationID          string
+	TargetKind            string
+	PlanID                pgtype.Text
+	AgentReportID         pgtype.Text
+	Round                 int32
+	Verdict               string
+	Findings              []byte
+	ClassCheck            pgtype.Text
+	EvaluatorActorID      string
+	EvaluatorClientKind   pgtype.Text
+	EvaluatorModelName    pgtype.Text
+	EvaluatorModelVersion pgtype.Text
+	MainClientKind        pgtype.Text
+	MainModelName         pgtype.Text
+	MainModelVersion      pgtype.Text
+	TokensUsed            pgtype.Int8
+	ObjectedAt            *time.Time
+	CreatedAt             time.Time
 }
 
 type HolidaySource struct {
@@ -477,6 +584,12 @@ type Ticket struct {
 	AllDay             bool
 }
 
+type TicketEffort struct {
+	TicketID    string
+	ManualHours bool
+	ManualPoint bool
+}
+
 type TicketLink struct {
 	ID             string
 	SourceTicketID string
@@ -515,6 +628,19 @@ type TicketSprint struct {
 type TicketTag struct {
 	TicketID string
 	TagID    string
+}
+
+type TicketWorkBase struct {
+	TicketID        string
+	SessionsCount   int64
+	IncompleteCount int64
+	TokensMissing   int64
+	TimeMissing     int64
+	ActiveMs        float64
+	ElapsedMs       float64
+	WaitingMs       float64
+	Tokens          float64
+	PointInputs     []byte
 }
 
 // TLS 証明書（Design.md 10.3 の第3層）。秘密鍵は secret_key で暗号化して持つ
@@ -595,6 +721,64 @@ type WebauthnChallenge struct {
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
 	CreatedAt  time.Time
+}
+
+type WorkAllocation struct {
+	SessionID     string
+	TicketID      string
+	Share         float64
+	ChangeMetrics []byte
+}
+
+type WorkArchive struct {
+	ID          string
+	ProjectID   string
+	ActorID     pgtype.Text
+	TicketIds   []byte
+	TimeMissing bool
+	CleanedAt   time.Time
+}
+
+type WorkEvent struct {
+	ProjectID string
+	ActorID   string
+	RequestID string
+	SessionID string
+	Digest    string
+	Response  []byte
+	CreatedAt time.Time
+}
+
+type WorkReplay struct {
+	ProjectID string
+	ActorID   string
+	RequestID string
+	SessionID string
+	Digest    string
+}
+
+type WorkSession struct {
+	ID               string
+	ProjectID        string
+	TicketID         string
+	ActorID          string
+	ClientKind       pgtype.Text
+	ModelName        pgtype.Text
+	ModelVersion     pgtype.Text
+	State            string
+	StartedAt        time.Time
+	ChangedAt        time.Time
+	EndedAt          *time.Time
+	ActiveMs         int64
+	WaitingMs        int64
+	ReportedActiveMs pgtype.Int8
+	Result           pgtype.Text
+	Tokens           pgtype.Int8
+	Note             string
+	Incomplete       bool
+	Policy           []byte
+	TimeMissing      bool
+	Outcome          pgtype.Text
 }
 
 type Workflow struct {

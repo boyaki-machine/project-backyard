@@ -30,7 +30,7 @@ RUN npm run build
 RUN node scripts/npm-licenses.mjs /src/npm-licenses.json
 
 # ── 2. pb と goose ────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM golang:1.26.6-bookworm AS server
+FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm AS server
 ARG TARGETOS
 ARG TARGETARCH
 # goose のドライバを postgres だけに絞るタグ。**正本は deploy/prod/build-release.sh** で、

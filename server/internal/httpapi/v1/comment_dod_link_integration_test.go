@@ -183,6 +183,51 @@ func TestCommentDoDLinkIntegration(t *testing.T) {
 		}
 	})
 
+	// **kind フィルタが実際の SQL（cardinality(@kinds) = 0 OR kind = ANY(@kinds)）
+	// で効くこと。** 単体テストはフェイクで判定を写しているだけなので、ここでしか
+	// 配列パラメータが Postgres 側で正しく評価されることを確かめられない（pb-259）。
+	t.Run("GET は kind でカンマ区切りの OR フィルタができる", func(t *testing.T) {
+		rec := getWithCookie(r, comments+"?kind=discussion", session)
+		v := viewOf(t, rec)
+		items, _ := v["items"].([]any)
+		if len(items) != 1 || items[0].(map[string]any)["id"] != secondCommentID {
+			t.Fatalf("items = %v, want discussion の1件（%s）のみ", items, secondCommentID)
+		}
+		if v["total"].(float64) != 1 {
+			t.Errorf("total = %v, want 1（フィルタ後の件数）", v["total"])
+		}
+
+		rec = getWithCookie(r, comments+"?kind=progress,discussion", session)
+		items, _ = viewOf(t, rec)["items"].([]any)
+		if len(items) != 2 {
+			t.Fatalf("items = %d件, want 2（OR）", len(items))
+		}
+	})
+
+	// **フィルタに1件も合わないとき、SummarizeTicketComments の経路でも
+	// kind フィルタが効くこと**（ListTicketComments が0件を返すときの別クエリ）。
+	t.Run("GET は kind が1件も合わないとき0件とETagを返す", func(t *testing.T) {
+		rec := getWithCookie(r, comments+"?kind=caveat", session)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+		}
+		v := viewOf(t, rec)
+		items, _ := v["items"].([]any)
+		if len(items) != 0 || v["total"].(float64) != 0 {
+			t.Fatalf("items/total = %v/%v, want 空", items, v["total"])
+		}
+		if rec.Header().Get("ETag") == "" {
+			t.Error("ETag が空（0件でも要る）")
+		}
+	})
+
+	t.Run("GET は知らない kind を 422 で拒む", func(t *testing.T) {
+		rec := getWithCookie(r, comments+"?kind=bogus", session)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422（body=%s）", rec.Code, rec.Body.String())
+		}
+	})
+
 	t.Run("PATCH は本文と kind を変える", func(t *testing.T) {
 		rec := patchProjectWithCookie(r, comments+"/"+secondCommentID, session, "",
 			`{"body_md":"確認しました（修正）","kind":"decision"}`)

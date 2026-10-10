@@ -18,6 +18,7 @@ import (
 
 	"github.com/boyaki-machine/project-backyard/server/internal/agentsetup"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
+	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
@@ -373,13 +374,18 @@ func TestGetMyAgentSetupNotFound(t *testing.T) {
 func TestGetMyAgentSetupZip(t *testing.T) {
 	h := &handler{q: connectFake("claude_code", "MY_LAPTOP")}
 	rec := httptest.NewRecorder()
-	h.getMyAgentSetupZip(rec, connectReq())
+	// The response recorder forwards ZIP bytes and its download headers unchanged.
+	wrapped := middleware.SecurityHeaders(middleware.AccessLog()(http.HandlerFunc(h.getMyAgentSetupZip)))
+	wrapped.ServeHTTP(rec, connectReq())
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200", rec.Code)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "application/zip" {
 		t.Errorf("Content-Type: got %q", got)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options: got %q", got)
 	}
 	// **種別を名前に入れる。** 同じプロジェクトに2件持つと見分けられなくなる。
 	want := `attachment; filename="pb-connect-demo-claude_code.zip"`

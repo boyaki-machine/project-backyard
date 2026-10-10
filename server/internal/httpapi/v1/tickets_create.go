@@ -33,6 +33,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/activity"
+	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/lexorank"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -113,6 +114,71 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			refErr = e
 			return errTicketReference
+		}
+		// **委任の main は、委任の木の中にしか起票できない**（Delegation.md 12.2）。
+		// 承認済でなければ起票そのものを拒み（5章）、承認済でも parent_seq を
+		// 省いた・木の外を指したら 403 で拒む。main でない呼び出し元には効かない
+		// （通常の ticket.create の判定だけが効く）。
+		if main, isMain, derr := findActiveDelegationByMain(ctx, q, projectID, p.ActorID); derr != nil {
+			return fmt.Errorf("委任を確認できない: %w", derr)
+		} else if isMain {
+			outOfTree := apierr.New(apierr.Forbidden).
+				WithMessage(fmt.Sprintf("自律実行の main は、根（#%d）の子孫としてしか起票できません", main.RootSeq)).
+				WithDetails(apierr.Detail{Field: "parent_seq", Code: "delegation_stage"})
+			if !delegationGate(main.Status) {
+				refErr = delegationForbidden(main.RootSeq, "計画が承認されるまで、このチケットを起票できません")
+				return errTicketReference
+			}
+			// **確認待ちが開いているあいだは起票できない**（8.2・5章。pb-249）。
+			if open, derr := q.HasOpenConfirmation(ctx, main.ID); derr != nil {
+				return fmt.Errorf("確認待ちを確認できない: %w", derr)
+			} else if open {
+				refErr = delegationForbidden(main.RootSeq, "確認待ちに答えられるまで、このチケットを起票できません")
+				return errTicketReference
+			}
+			if !parentID.Valid {
+				refErr = outOfTree
+				return errTicketReference
+			}
+			inTree, derr := q.IsTicketDescendant(ctx, gen.IsTicketDescendantParams{
+				AncestorID: main.RootTicketID, CandidateID: parentID.String,
+			})
+			if derr != nil {
+				return fmt.Errorf("委任の木を確認できない: %w", derr)
+			}
+			if !inTree {
+				refErr = outOfTree
+				return errTicketReference
+			}
+			// **予算（起票数・深さ・期日）を超える起票は拒み、委任を停止する**
+			// （12.1・8.2。pb-253）。停止は拒否と同じトランザクションで確定させる
+			// ため、errTicketReference ではなく nil を返してコミットする。
+			deleg, derr := q.GetDelegationByRootTicket(ctx, main.RootTicketID)
+			if derr != nil {
+				return fmt.Errorf("委任を読めない: %w", derr)
+			}
+			reasons, derr := checkDelegationBudget(ctx, q, main.ID, deleg.Scope, parentID.String,
+				budgetCheck{newTickets: 1})
+			if derr != nil {
+				return derr
+			}
+			if len(reasons) > 0 {
+				if derr := tripDelegationBudget(ctx, q, main.ID, main.RootTicketID, p.ActorID, reasons); derr != nil {
+					return derr
+				}
+				refErr = budgetForbidden(main.RootSeq, "parent_seq", reasons)
+				return nil
+			}
+		}
+		if req.AssigneeID != "" {
+			a := auth.ProjectAuthzFromContext(ctx, key)
+			if a == nil || !auth.HasPermission(a.Permissions, permTicketAssign) {
+				refErr = apierr.New(apierr.Forbidden).WithMessage("担当者を設定する権限がありません")
+				return errTicketReference
+			}
+			if refErr = assignmentWriteProblem(ctx, q, p, projectID, parentID.String); refErr != nil {
+				return errTicketReference
+			}
 		}
 		if e := validateTicketAssignee(ctx, q, projectID, req.AssigneeID); e != nil {
 			refErr = e

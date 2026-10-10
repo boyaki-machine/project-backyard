@@ -1049,8 +1049,8 @@ function renderTreeHeader(showV, hdrH, lane) {
   if (key === thdrKey) return;
   thdrKey = key;
   $('thdr').innerHTML =
-    `<div style="height:34px"><b>基準</b><span class="mono">${BASE}</span><span class="mono">${tzShort(BASE, NOW)}</span></div>` +
-    (showV ? `<div style="height:16px"><b>あなた</b><span class="mono">${S.vtz}</span><span class="mono">${tzShort(S.vtz, NOW)}</span></div>` : '') +
+    `<div style="height:34px"><b>基準</b><span class="mono">${esc(BASE)}</span><span class="mono">${esc(tzShort(BASE, NOW))}</span></div>` +
+    (showV ? `<div style="height:16px"><b>あなた</b><span class="mono">${esc(S.vtz)}</span><span class="mono">${esc(tzShort(S.vtz, NOW))}</span></div>` : '') +
     `<div style="height:${lane}px">スプリント</div>`;
   $('thdr').style.height = (hdrH + lane) + 'px';
 }
@@ -1076,7 +1076,7 @@ function whenText(t, which) {
   const v = which === 's' ? t.s : t.e;
   if (v == null && t.roll && t.s == null && t.e == null) return `— <span class="muted">（配下 ${which === 's' ? ymd(t.roll.s) : ymd(t.roll.e - 1)}）</span>`;
   if (v == null) return '—';
-  if (!t.ad) { const p = parts(S.vtz, v); return `${p.y}-${pad(p.m)}-${pad(p.d)} ${pad(p.h)}:${pad(p.mi)} <span class="muted mono">${tzShort(S.vtz, v)}</span>`; }
+  if (!t.ad) { const p = parts(S.vtz, v); return `${p.y}-${pad(p.m)}-${pad(p.d)} ${pad(p.h)}:${pad(p.mi)} <span class="muted mono">${esc(tzShort(S.vtz, v))}</span>`; }
   return which === 's' ? ymd(v) : ymd(v - 1);
 }
 function fillDetail(seq) {
@@ -1094,8 +1094,8 @@ function fillDetail(seq) {
     `<dl class="dmeta">` +
     `<div><dt>状態</dt><dd>${STSYM[t.st]} ${STNAME[t.st]}</dd></div>` +
     `<div><dt>担当</dt><dd>boyaki-machine</dd></div>` +
-    `<div><dt>優先度</dt><dd>${t.pr || '中'}</dd></div>` +
-    `<div><dt>スプリント</dt><dd>${sp ? sp.name : '—'}</dd></div>` +
+    `<div><dt>優先度</dt><dd>${esc(t.pr || '中')}</dd></div>` +
+    `<div><dt>スプリント</dt><dd>${esc(sp ? sp.name : '—')}</dd></div>` +
     `<div><dt>開始</dt><dd class="mono">${whenText(t, 's')}</dd></div>` +
     `<div><dt>終了</dt><dd class="mono">${whenText(t, 'e')}${t.overdue ? ' <span style="color:var(--pb-danger-text)">⚠ 期限超過</span>' : ''}</dd></div>` +
     `<div><dt>終日</dt><dd>${t.s == null && t.e == null ? '—' : t.ad ? 'はい（基準タイムゾーンの日付）' : 'いいえ（あなたのタイムゾーン）'}</dd></div>` +

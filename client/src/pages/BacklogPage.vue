@@ -18,6 +18,9 @@ import SplitPane from '../components/SplitPane.vue'
 import StatusDropdown from '../components/StatusDropdown.vue'
 import SprintStartModal from '../components/SprintStartModal.vue'
 import TicketDetailPane from '../components/TicketDetailPane.vue'
+import UserActionsMenu from '../components/UserActionsMenu.vue'
+import DelegationMark from '../components/DelegationMark.vue'
+import type { ActionItem } from '../components/UserActionsMenu.vue'
 import { ApiError } from '../api/client'
 import * as sprintsApi from '../api/sprints'
 import type { Sprint, StartSprintRequest } from '../api/sprints'
@@ -302,7 +305,8 @@ const DUE_KEYS = ['overdue', 'due_within'] as const
 /**
  * 状態フィルタが「完了」を指しているか（5.4「状態と期限のフィルタ」）。
  *
- * **これが `retired=true` を送る唯一の条件である。** スプリントを終えて棚に
+ * **全体対象では、完了を選んだときに `retired=true` を送る。**
+ * オンステージ対象では完了でも棚を戻さない（pb-178）。 スプリントを終えて棚に
  * 戻ったチケットは既定で一覧から外れるので（`ApiDesign.md` 9.2.1）、
  * **完了を明示的に選んだときだけ戻す。** 当初は検索画面ができるまでの逃げ道だったが、
  * **チケット検索（5.13）ができた後も残す**。
@@ -315,7 +319,11 @@ const DUE_KEYS = ['overdue', 'due_within'] as const
  * ワークフローを読む**——`done` という名前のキーを決め打ちにすると、
  * ワークフローを差し替えたプロジェクトで効かなくなる。
  */
+const onstageOnly = computed(() => queryValue('staged') === 'true')
+
 const wantsRetired = computed(() => {
+  // オンステージ内の完了カードは棚を戻さない（pb-178）。
+  if (onstageOnly.value) return false
   if (queryValue('open') === 'false') return true
   if (splitQuery('status_category').includes('done')) return true
   const keys = splitQuery('status')
@@ -433,6 +441,7 @@ const staleDays = computed(() => {
 /** 素の状態か。`[解除]` を出すかどうかの判定に使う */
 const isPristine = computed(
   () =>
+    !onstageOnly.value &&
     keyword.value.trim() === '' &&
     FILTER_KEYS.every((k) => filters.value[k] === '') &&
     stateValue.value === '' &&
@@ -715,8 +724,9 @@ async function loadTickets(): Promise<void> {
       status_category: queryValue('status_category'),
       open: queryValue('open') === 'true' ? 'true' : queryValue('open') === 'false' ? 'false' : undefined,
       stale: queryValue('stale'),
-      // **完了を明示的に選んだときだけ棚に戻ったものを出す**（5.4）
+      // 全体の完了選択は棚を戻す。オンステージ選択は棚を戻さない（pb-178）。
       retired: wantsRetired.value ? 'true' : undefined,
+      staged: onstageOnly.value ? 'true' : undefined,
       // 「期限」の箱が出す2系列（同上）
       overdue: queryValue('overdue') === 'true' ? 'true' : undefined,
       due_within: queryValue('due_within'),
@@ -863,6 +873,8 @@ const treeMode = computed(
  * 振り分けてはいけない**。
  */
 function splitByStage(items: Ticket[]): { staged: Ticket[]; backlog: Ticket[] } {
+  // サーバが部分木を確定した結果。親が状態・上限で欠けても段は変わらない。
+  if (onstageOnly.value) return { staged: items, backlog: [] }
   const childrenOf = new Map<number, Ticket[]>()
   for (const t of items) {
     if (t.parent_seq === null) continue
@@ -1009,6 +1021,91 @@ const sections = computed<Section[]>(() => {
   // 出現順で後ろへ付ける。**空のセクションは出さない。**
   return bucketize(flatRows(tickets.value), (row) => row.ticket, group.value, groupVocabulary.value)
 })
+
+// ── メニューと複数選択によるオンステージ移動（pb-272）─────────
+const selectedStageSeqs = ref(new Set<number>())
+
+function stageReason(t: Ticket): string {
+  if (t.type === 'epic' || (t.parent_seq !== null && !allEpics.value.some(epic => epic.seq === t.parent_seq))) {
+    return uiText('配下のチケットは親と一緒にオンステージへ移動します')
+  }
+  if (shownInStage(t)) return uiText('すでにオンステージにあります')
+  return ''
+}
+
+function stageActions(t: Ticket): ActionItem[] {
+  if (shownInStage(t)) return []
+  const reason = stageReason(t)
+  return [{ key: 'stage', label: uiText('オンステージへ'), disabled: busy.value || reason !== '', reason }]
+}
+
+function selectStageTicket(t: Ticket, checked: boolean): void {
+  if (busy.value || stageReason(t) !== '') return
+  const next = new Set(selectedStageSeqs.value)
+  if (checked) next.add(t.seq)
+  else next.delete(t.seq)
+  selectedStageSeqs.value = next
+}
+
+function selectStageRow(t: Ticket, e: MouseEvent | KeyboardEvent): void {
+  if (!canEdit.value || !(e.ctrlKey || e.metaKey)) return
+  // Inline controls retain their own actions; title links participate in selection.
+  const target = e.target as HTMLElement
+  if (target.closest('button, input, select, textarea, [role="button"], .stage-controls')) return
+  e.preventDefault()
+  e.stopPropagation()
+  selectStageTicket(t, !selectedStageSeqs.value.has(t.seq))
+}
+
+const selectedStageTickets = computed(() => tickets.value
+  .filter(t => selectedStageSeqs.value.has(t.seq) && stageReason(t) === '')
+  .sort((a, b) => {
+    const left = a.sort_key ?? ''
+    const right = b.sort_key ?? ''
+    return left < right ? -1 : left > right ? 1 : a.seq - b.seq
+  }))
+
+function moveFromRow(t: Ticket, action: string): void {
+  if (action === 'stage') {
+    const targets = selectedStageSeqs.value.has(t.seq) ? selectedStageTickets.value : [t]
+    void stageTickets(targets)
+  }
+}
+
+async function stageTickets(items: Ticket[]): Promise<void> {
+  if (!canEdit.value || busy.value) return
+  const key = projectKey.value
+  const targets = items.filter(t => stageReason(t) === '')
+  if (targets.length === 0) return
+  busy.value = true
+  result.value = ''
+  let succeeded = 0
+  let failure = ''
+  try {
+    for (const t of targets) {
+      try {
+        const moved = await ticketsApi.moveTicket(key, t.seq, { staged: true, position: 'last' })
+        succeeded++
+        if (projectKey.value !== key) break
+        selectedStageSeqs.value.delete(t.seq)
+        tickets.value = tickets.value.map(row => row.seq === moved.seq
+          ? { ...row, staged_at: moved.staged_at, sort_key: moved.sort_key, version: moved.version } : row)
+      } catch (e) {
+        failure = toApiError(e).message
+        break
+      }
+    }
+    // position:last and possible rank rebalancing are resolved by the server.
+    if (projectKey.value === key) {
+      await loadTickets()
+      result.value = failure
+        ? uiText('{done}件をオンステージへ移動しました。残り{remaining}件は未処理です。{message}', { done: succeeded, remaining: targets.length - succeeded, message: failure })
+        : uiText('{count}件をオンステージへ移動しました', { count: succeeded })
+    }
+  } finally {
+    busy.value = false
+  }
+}
 
 // ── セクションの開閉（5.4.1「ブラウザに保持する」）─────────────
 
@@ -1942,6 +2039,7 @@ const queryKey = computed(() =>
 )
 
 watch(queryKey, () => {
+  selectedStageSeqs.value.clear()
   if (route.params.key === undefined) return
   loadCollapsed()
   void loadTickets()
@@ -1949,6 +2047,7 @@ watch(queryKey, () => {
 
 // プロジェクトを切り替えたら語彙とプロジェクト詳細も取り直す（4.4）
 watch(projectKey, (key) => {
+  selectedStageSeqs.value.clear()
   clearTimeout(keywordTimer)
   keywordPending = false
   composing = false
@@ -2056,6 +2155,14 @@ watch(projectKey, (key) => {
           </button>
         </div>
         <div id="backlog-filter-options" class="backlog-filter-options">
+          <label class="filter backlog-filter-scope">
+            <span class="filter-label">{{ $ui('対象') }}</span>
+            <select :value="onstageOnly ? 'true' : ''"
+              @change="setQuery({ staged: ($event.target as HTMLSelectElement).value })">
+              <option value="">{{ $ui('全体') }}</option>
+              <option value="true">{{ $ui('オンステージ') }}</option>
+            </select>
+          </label>
           <!-- 状態（5.4「状態と予定日のフィルタ」。手順19b）。
                **1つの箱で3系列を出し入れする**——進み具合（`open` / `stale`）・
                区分（`status_category`）・ステータス（`status`）。同じ軸の値なので
@@ -2165,8 +2272,17 @@ watch(projectKey, (key) => {
         </div>
       </div>
 
+      <p v-if="onstageOnly" class="backlog-scope-note">{{ $ui('対象：オンステージ。棚に戻ったものは含みません。') }}</p>
+
       <!-- 操作の結果は操作した場所に出す（6.4）。作成・並べ替え・段の行き来で使い回す -->
       <p v-if="result" class="ok" role="status">{{ result }}</p>
+
+      <p v-if="canEdit" class="stage-selection-hint">{{ $ui('Ctrl／⌘＋クリックで行を選択・解除できます') }}</p>
+      <div v-if="canEdit && selectedStageTickets.length > 0" class="stage-bulk" role="group" :aria-label="$ui('選択したチケットの操作')">
+        <span>{{ $ui('{count}件選択中', { count: selectedStageTickets.length }) }}</span>
+        <button type="button" class="secondary small" :disabled="busy" @click="stageTickets(selectedStageTickets)">{{ $ui('選択したチケットをオンステージへ') }}</button>
+        <button type="button" class="secondary small" :disabled="busy" @click="selectedStageSeqs.clear()">{{ $ui('選択を解除') }}</button>
+      </div>
 
       <!-- エラー（6.2）。原因はサーバが返した message をそのまま出す -->
       <EmptyState
@@ -2380,8 +2496,13 @@ watch(projectKey, (key) => {
                     'drop-after': hintsRow(row, section, 'after'),
                     'drop-inside': hintsRow(row, section, 'inside'),
                     selected: detailSeq === row.ticket.seq,
+                    'stage-selected': selectedStageSeqs.has(row.ticket.seq),
                   }"
-                  :aria-selected="detailSeq === row.ticket.seq"
+                  :aria-selected="selectedStageSeqs.has(row.ticket.seq) || detailSeq === row.ticket.seq"
+                  :tabindex="canEdit && stageReason(row.ticket) === '' ? 0 : undefined"
+                  @click.capture="selectStageRow(row.ticket, $event)"
+                  @contextmenu.capture="$event.ctrlKey && selectStageRow(row.ticket, $event)"
+                  @keydown.space.self="selectStageRow(row.ticket, $event)"
                   @click="openRow(row.ticket, $event)"
                   @dragover="onDragOverRow($event, row, section)"
                   @drop.prevent="dropOnRow($event, row, section)"
@@ -2464,13 +2585,21 @@ watch(projectKey, (key) => {
                         <a
                           ref="rowLink"
                           class="title"
+                          :data-title="row.ticket.title"
                           :href="href"
                           draggable="false"
                           @click.stop="navigate"
                         >
-                          {{ row.ticket.title }}
+                          <span class="title-text">{{ row.ticket.title }}</span>
                         </a>
                       </RouterLink>
+                      <!-- 自律実行の印（5.4「自律実行の印」。pb-276）。タグの前に置く -->
+                      <DelegationMark
+                        v-if="row.ticket.delegation"
+                        :mark="row.ticket.delegation"
+                        :project-key="projectKey"
+                        :shrunk="shrunk"
+                      />
                       <!-- **縮小中の期限超過は `⚠` だけをタイトルの後ろに出す**
                            （5.4「詳細を開いているときの一覧」）。日付は詳細側に出ている -->
                       <span
@@ -2479,12 +2608,19 @@ watch(projectKey, (key) => {
                         :title="$ui('期限超過（{value0}）', { value0: dueLabel(row.ticket) })"
                         >⚠</span
                       >
-                      <!-- タグはタイトルの末尾に、2つまで（5.4「タグ」）。行を2段にしない。
-                           **縮小中は出さない**——450px では読めないのに在る状態になる -->
-                      <span v-if="!shrunk && row.ticket.tags.length" class="tag-trail"
-                        :title="row.ticket.tags.map((t) => `#${t.name}`).join(' ')">
-                        <span v-for="tag in row.ticket.tags.slice(0, TAGS_SHOWN)" :key="tag.id" class="tag">#{{ tag.name }}</span>
-                        <span v-if="row.ticket.tags.length > TAGS_SHOWN" class="tag-more">+{{ row.ticket.tags.length - TAGS_SHOWN }}</span>
+                      <span v-if="(!shrunk && row.ticket.tags.length > 0) || (canEdit && !shownInStage(row.ticket))" class="title-actions">
+                        <!-- タグはタイトルの末尾に、2つまで（5.4「タグ」）。行を2段にしない。
+                             **縮小中は出さない**——450px では読めないのに在る状態になる -->
+                        <span v-if="!shrunk && row.ticket.tags.length" class="tag-trail"
+                          :title="row.ticket.tags.map((t) => `#${t.name}`).join(' ')">
+                          <span v-for="tag in row.ticket.tags.slice(0, TAGS_SHOWN)" :key="tag.id" class="tag">#{{ tag.name }}</span>
+                          <span v-if="row.ticket.tags.length > TAGS_SHOWN" class="tag-more">+{{ row.ticket.tags.length - TAGS_SHOWN }}</span>
+                        </span>
+                        <span v-if="canEdit && !shownInStage(row.ticket)" class="stage-controls" @click.stop @pointerdown.stop @dragstart.stop.prevent
+                          @mouseenter="overActionCell = true" @mouseleave="overActionCell = false">
+                          <UserActionsMenu compact :label="$ui('{ticket}の移動操作', { ticket: fullId(row.ticket) })"
+                            :items="stageActions(row.ticket)" @select="moveFromRow(row.ticket, $event)" />
+                        </span>
                       </span>
                     </span>
                   </td>
@@ -2659,6 +2795,10 @@ watch(projectKey, (key) => {
 </template>
 
 <style scoped>
+.title-actions { display: inline-flex; align-items: center; flex: none; margin-left: auto; gap: calc(var(--pb-space-2) * 0.7); }
+.stage-controls { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.stage-bulk { display: flex; align-items: center; flex-wrap: wrap; gap: var(--pb-space-2); margin-bottom: var(--pb-space-3); }
+
 .page {
   height: 100%;
 }
@@ -2690,6 +2830,8 @@ watch(projectKey, (key) => {
 .backlog-filter-epic { grid-column: 1 / span 2; grid-row: 1; }
 .backlog-filter-tag { grid-column: 3 / span 2; grid-row: 1; }
 .backlog-filter-assignee { grid-column: 5 / span 2; grid-row: 1; }
+.backlog-filter-scope { grid-column: 1 / span 4; grid-row: 3; }
+.backlog-scope-note { color: var(--pb-text-muted); font-size: 0.875rem; }
 .backlog-filter-state { grid-column: 7 / span 2; grid-row: 1; }
 .backlog-filter-type { grid-column: 9 / span 2; grid-row: 1; }
 .backlog-filter-priority { grid-column: 11 / span 2; grid-row: 1; }
@@ -2748,8 +2890,8 @@ watch(projectKey, (key) => {
     gap: 2px;
   }
   .backlog-filter-options select { width: 100%; }
-  .backlog-filter-planned { grid-column: span 2; }
-  .backlog-filter-clear { min-height: 32px; }
+  .backlog-filter-options > .backlog-filter-planned { grid-column: span 2; }
+  .backlog-filter-clear { grid-column: auto; grid-row: auto; min-height: 32px; }
 }
 
 .ok {
@@ -2929,6 +3071,8 @@ watch(projectKey, (key) => {
 /* **開いている行は選択状態として背景を変える**（5.4「行クリック」）。
    色ではなく面の輝度で示す（8.2 / 8.6）。hover より一段強くして、
    マウスが別の行に載っていても「いま開いているのはこれ」が読めるようにする */
+.row.stage-selected,
+.row.stage-selected:hover,
 .row.selected,
 .row.selected:hover {
   background: var(--pb-active);
@@ -3059,9 +3203,8 @@ watch(projectKey, (key) => {
   width: 56px;
 }
 
-/* アバターと担当者名が 1440px で切れない幅。**狭い窓ではタイトルを優先する**が、
-   それは `.title` の下限（`min-width`）が担うので、ここは固定値のままにする
-   ——メディアクエリを1つ足すより、下限を1か所に置くほうが読める。
+/* アバターと担当者名が 1440px で切れない幅。固定幅とし、
+   タイトル列は残りの幅を使う。タグとメニューの幅はタイトルより先に確保する。
 
    **実行者（🤖）も同じセルに入る**（5.4。手順26b）。列を足さないのは、8列が既に
    横幅の上限であることと、実行者を読みたい場面が「担当は誰か」を読む場面と
@@ -3169,13 +3312,10 @@ watch(projectKey, (key) => {
   color: var(--pb-text-muted);
 }
 
-/* **タイトルはタグより先に縮まない。** `flex` を指定しないと `0 1 auto` に
-   なり、`flex: none` のタグが残ったままタイトルだけが0幅まで潰れる（900px で
-   実測。タグは出ているのに何のチケットか読めなくなる）。下限を置いて、
-   あふれるのはタグの側にする——td が `overflow: hidden` なので外へは出ない */
+/* タイトルは残りの幅を使う。縮小表示では最低幅を設けない。 */
 .title {
-  flex: 0 1 auto;
-  min-width: 6em;
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -3185,13 +3325,46 @@ watch(projectKey, (key) => {
   text-decoration: underline;
 }
 
-/* タグは `#`＋文字を枠なしで、タイトルの末尾に右へ寄せる（5.4「タグ」）。
-   **ユーザーによる任意色の指定も許さない**（8.6）。あふれるのはタグの側 */
-.tag-trail {
-  /* 狭いときはタイトルより先にタグが縮む */
-  flex: 0 8 auto;
+.title-text {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 非表示の文字で、短いタイトルの実幅と6文字分の小さい方を最低幅にする。
+   CSSの内在サイズを使うため、タイトルやフォント、画面幅の変更にも追従する。 */
+.full-table .title {
+  position: relative;
+  min-width: min-content;
+}
+.full-table .title::before {
+  content: attr(data-title);
+  display: block;
+  width: max-content;
+  max-width: 6em;
+  visibility: hidden;
+}
+.full-table .title-text {
+  position: absolute;
+  inset: 0;
+}
+.full-table .title-actions {
+  flex: 0 1 auto;
   min-width: 0;
-  margin-left: auto;
+}
+.full-table .tag-trail {
+  flex: 0 1 auto;
+}
+.full-table .tag-trail .tag:nth-child(2) {
+  min-width: 0;
+}
+
+/* タグは `#`＋文字を枠なしで、タイトルの末尾に右へ寄せる（5.4「タグ」）。
+   **ユーザーによる任意色の指定も許さない**（8.6）。 */
+.tag-trail {
+  flex: none;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 10px;

@@ -26,7 +26,7 @@ import (
 
 // WorkflowVersion は配布する手順の版番号（Requirements.md 10.9.3）。
 // 手順の本文を変更したら上げる。pb_get_projectへ渡して古い配置を検出する。
-const WorkflowVersion = 6
+const WorkflowVersion = 8
 
 // WorkflowWarning は古い配置手順の再取得を促す。省略・同版・将来版には警告しない。
 func WorkflowWarning(clientVersion int64) string {

@@ -137,6 +137,7 @@ func Mount(r chi.Router, deps Deps) {
 		r.Use(middleware.Authenticate(deps.Queries))
 		r.Use(middleware.RateLimit(actorRateLimit, actorRateWindow, middleware.ActorKey))
 		r.Use(middleware.RequireCSRF)
+		r.Use(h.agentMonitorMiddleware)
 
 		r.Post("/auth/logout", h.logout)
 
@@ -273,6 +274,14 @@ func Mount(r chi.Router, deps Deps) {
 		// **agent-setup と agent-setup.zip は静的なセグメントなので、{key} 配下の
 		// 他のルートと衝突しない**（stats / activity と同じ）。**zip を別パスに
 		// してあるのは、ブラウザの <a download href> で落とすためである。**
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).Get("/projects/{key}/agent-usage", h.getAgentUsage)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).Get("/projects/{key}/tickets/{seq}/work-sessions", h.listWorkSessions)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).Get("/projects/{key}/tickets/{seq}/work-policy", h.getWorkPolicy)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).Post("/projects/{key}/tickets/{seq}/work-cleanup", h.cleanupWork)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.run"), middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).Post("/projects/{key}/tickets/{seq}/work-sessions", h.changeWorkSession)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.run"), middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).Post("/projects/{key}/tickets/{seq}/work-sessions/{work_id}/events", h.changeWorkSession)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).Get("/projects/{key}/agent-usage/runs", h.listAgentRuns)
+
 		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.register")).
 			Get("/projects/{key}/agent-setup", h.getAgentSetup)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.register")).
@@ -280,6 +289,8 @@ func Mount(r chi.Router, deps Deps) {
 
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).
 			Get("/projects/{key}/stats", h.getProjectStats)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).
+			Get("/projects/{key}/ticket-trends", h.getTicketTrends)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).
 			Get("/projects/{key}/activity", h.listProjectActivity)
 
@@ -363,8 +374,19 @@ func Mount(r chi.Router, deps Deps) {
 			Get("/projects/{key}/tickets", h.listTickets)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
 			Post("/projects/{key}/tickets", h.createTicket)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries, "ticket.edit", "ticket.plan.edit")).
 			Post("/projects/{key}/tickets/{seq}/move", h.moveTicket)
+
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.manage")).Get("/projects/{key}/agents", h.listProjectAgents)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.manage")).Post("/projects/{key}/agents/{id}/disable", h.disableProjectAgent)
+
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.view")).Get("/projects/{key}/agent-monitor", h.getAgentMonitorPolicy)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).Put("/projects/{key}/agent-monitor", h.putAgentMonitorPolicy)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.manage")).Get("/projects/{key}/agents/{id}/monitor", h.agentMonitor)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.manage")).Post("/projects/{key}/agents/{id}/monitor/reset", h.agentMonitor)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.manage")).Patch("/projects/{key}/agents/{id}/attributes", h.patchAgentAttributes)
+		r.Get("/me/agents/{id}/monitor", h.agentMonitor)
+		r.Post("/me/agents/{id}/monitor", h.agentMonitor)
 
 		// ── チケット1件（ApiDesign.md 9.5 / 9.6 / 9.7。手順17a）─────
 		//
@@ -390,7 +412,7 @@ func Mount(r chi.Router, deps Deps) {
 		// ——どの項目を送ったかで可否が決まるので、6.4.4 の宣言では表せない
 		// （9.8 のコメント削除に続く2例目の OR）。
 		r.With(middleware.RequireAnyProjectPermission(deps.Queries,
-			"ticket.edit", "ticket.self_edit")).
+			"ticket.edit", "ticket.self_edit", "ticket.plan.edit")).
 			Patch("/projects/{key}/tickets/{seq}", h.updateTicket)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.delete")).
 			Delete("/projects/{key}/tickets/{seq}", h.deleteTicket)
@@ -482,17 +504,87 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).
 			Post("/projects/{key}/tickets/{seq}/reports", h.submitTicketReport)
 
+		// ── 委任（Delegation.md 4章・12.2）── pb-246 ───────────────
+		//
+		// **{seq} は委任の根**（ticket と1:1。root_ticket_id が UNIQUE）。
+		// PM のみが呼ぶ人間向けの口で、D7（Delegation.md 15章）の新設 MCP
+		// ツール5つにこれは含まれない——エージェントから見える面にしない。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/delegation", h.createDelegation)
+		// 委任範囲の承認・却下（4.3・6.1）。pb-260。作成と同じく PM だけが呼ぶ。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/delegation/approve", h.approveDelegation)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/delegation/reject", h.rejectDelegation)
+		// 停止・再開（4.3・8.2）。pb-253。PM だけが呼ぶ。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/delegation/pause", h.pauseDelegation)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/delegation/resume", h.resumeDelegation)
+		// 取り下げ（4.3「取り下げ」）。pb-281。従来の実行モードへ戻す。PM だけが呼ぶ。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/delegation/withdraw", h.withdrawDelegation)
+
+		// ── 計画の版（Delegation.md 6章・12.2）── pb-247 ───────────
+		//
+		// **submit は main が呼ぶ**（ticket.create。木の中に起票するのと同じ
+		// 権限の束——身元の確認はハンドラ内で行う。12.2 と同じ形）。
+		// **revert は PM が呼ぶ**（delegation.manage。createDelegation と同じ）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+			Post("/projects/{key}/tickets/{seq}/plan", h.submitDelegationPlan)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/plan/{version}/revert", h.revertDelegationPlan)
+		// 事後の異議（6.4）。pb-275。差し戻しと同じく PM だけが呼ぶ。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/plan/{version}/object", h.objectDelegationPlan)
+
+		// ── 評価（Delegation.md 7章・12.2）── pb-248 ───────────────
+		//
+		// **呼ぶのは評価エージェントだけ**（delegation.evaluate。身元の確認は
+		// ハンドラ内で行う。plan・delegation と同じ形）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.evaluate")).
+			Post("/projects/{key}/tickets/{seq}/evaluation", h.submitEvaluation)
+
+		// ── 確認待ち（Delegation.md 8章・12.2）── pb-249 ───────────
+		//
+		// **立てるのは main だけ**（ticket.create。身元の確認はハンドラ内。
+		// evaluation_unable は評価エージェントが pb_submit_evaluation 経由で
+		// 内部から立てる——ここは通らない）。**答えるのは PM**（delegation.manage）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+			Post("/projects/{key}/tickets/{seq}/confirmation", h.raiseConfirmation)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+			Post("/projects/{key}/tickets/{seq}/confirmation/{id}/answer", h.answerConfirmation)
+
+		// ── 引き継ぎノート（Delegation.md 9.3・11章・12.2）── pb-250 ─
+		//
+		// **main だけが更新する**（ticket.create。身元の確認はハンドラ内）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+			Post("/projects/{key}/tickets/{seq}/handoff", h.updateHandoff)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/delegation-status", h.getDelegationStatus)
+		// 計画の版と評価記録の一覧（Delegation.md 6.2・7.3）。pb-274。読むのは全員（5章）。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/plans", h.listDelegationPlans)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/evaluations", h.listDelegationEvaluations)
+		// 指標の値と周期の要約（Delegation.md 4.2・8.3）。pb-277。値を入れるのは人と main
+		// （ticket.create。身元の確認はハンドラ内——計画の提出と同じ形）。要約は全員が読む。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+			Post("/projects/{key}/tickets/{seq}/metrics/{metric}/values", h.recordDelegationMetric)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/tickets/{seq}/summary", h.getDelegationSummary)
+
 		// ── チケット間リンク（ApiDesign.md 9.10.1）── 手順18a ─────
 		//
 		// **PATCH は lag_days だけ**（9.10.1。pb-231）。一意制約が (source, target, link_type)
 		// である以上、link_type の変更は別の行になるのと同じで、消して作り直す。
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}/links", h.listTicketLinks)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries, "ticket.edit", "ticket.plan.edit")).
 			Post("/projects/{key}/tickets/{seq}/links", h.createTicketLink)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries, "ticket.edit", "ticket.plan.edit")).
 			Patch("/projects/{key}/tickets/{seq}/links/{id}", h.updateTicketLink)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.edit")).
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries, "ticket.edit", "ticket.plan.edit")).
 			Delete("/projects/{key}/tickets/{seq}/links/{id}", h.deleteTicketLink)
 
 		// ── プロジェクト文書（ApiDesign.md 10章）── 手順22a ───────

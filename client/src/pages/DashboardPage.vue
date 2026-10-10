@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { uiText } from '../locales/ui'
+import { uiNumber, uiText } from '../locales/ui'
 /**
  * プロジェクトダッシュボード（`GuiDesign.md` 5.3）。必要権限は `project.view`。手順19b。
  *
  * プロジェクト選択直後の着地点。**統計と当面の作業に割り切る**——AI要約は
  * 置かない（5.3.1）。
  *
- * **この画面だけが起動時に5本のAPIを呼ぶ**（`ApiDesign.md` 8章の例外）。
+ * **この画面だけが起動時に6本のAPIを呼ぶ**（`ApiDesign.md` 8章の例外）。
  * 互いに独立で並列に投げ、**1本落ちてもそのブロックだけをエラーにする**
  * （6.2 の4状態をブロック単位で持つ）。5本目の `GET /projects/:key` は
  * **表示名の解決**に要る——`activity` は `status_key` と ULID しか返さない
@@ -24,6 +24,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import Avatar from '../components/Avatar.vue'
+import DashboardTicketTrends from '../components/DashboardTicketTrends.vue'
 import EmptyState from '../components/EmptyState.vue'
 import NewTicketModal from '../components/NewTicketModal.vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -138,7 +139,7 @@ const labelContext = computed<ActivityLabelContext>(() => ({
   ),
 }))
 
-// ── 取得（5本。並列で投げる）───────────────────────────────
+// ── 取得（既存5本。期間集計は専用部品から独立して取得する）───────────────────────────────
 
 async function loadStats(): Promise<void> {
   statsLoading.value = true
@@ -246,7 +247,7 @@ async function loadMoreActivity(): Promise<void> {
 }
 
 /**
- * 5本を並列に投げる。**`allSettled` を使う**——1本の失敗で他を捨てない。
+ * 既存5本を並列に投げる。期間集計は専用部品が取得する。**`allSettled` を使う**——1本の失敗で他を捨てない。
  * 各 `load*` が自分のエラーを抱えるので、ここでは待つだけでよい。
  */
 function loadAll(): void {
@@ -278,7 +279,7 @@ const cards = computed(() =>
   statusCategoryOrder.map((c: StatusCategory) => ({
     category: c,
     label: statusCategoryLabels[c],
-    value: stats.value?.by_category[c] ?? 0,
+    value: stats.value?.onstage.by_category[c] ?? 0,
   })),
 )
 
@@ -329,7 +330,7 @@ function ticketTo(seq: number): string {
 // ── 新規チケット（5.3 のヘッダ。5.4.3 のモーダルを使う）────────
 //
 // **語彙（タグ・エピック）は押したときに取りに行く。** 起動時の
-// 5本に足さない——作らない利用者に2本を払わせないためで、プロジェクト設定が
+// 6本に足さない——作らない利用者に2本を払わせないためで、プロジェクト設定が
 // タブを開いたときにタグを取るのと同じ判断（5.9）。
 
 const showNewModal = ref(false)
@@ -410,11 +411,17 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
       <p v-if="createError" class="dash-error" role="alert">{{ createError }}</p>
 
       <!-- 集計カード（5.3）。**押すとバックログをその区分で絞って開く** -->
-      <section class="dash-cards" :aria-label="$ui('ステータス集計')">
+      <section class="dash-cards" :aria-label="$ui('オンステージの状態別件数')">
+        <h2 class="dash-onstage-title">{{ $ui('オンステージの状態別件数') }}</h2>
+        <p class="dash-onstage-note">{{ $ui('段に載っているストーリー・タスクとその配下。完了は段に残っている件数です。') }}</p>
+        <p v-if="stats !== null && stats.onstage.unknown > 0" class="dash-onstage-note" role="status">
+          {{ $ui('状態を分類できない{value0}件', { value0: uiNumber(stats.onstage.unknown) }) }}
+        </p>
         <p v-if="statsError" class="dash-error" role="alert">
           {{ statsError }}
           <button type="button" class="dash-retry" @click="loadStats">{{ $ui('再試行') }}</button>
         </p>
+        <p v-else-if="statsLoading" class="dash-onstage-note" aria-live="polite">{{ $ui('読み込み中…') }}</p>
         <template v-else>
           <StatCard
             v-for="c in cards"
@@ -422,11 +429,13 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
             class="dash-card"
             :label="c.label"
             :value="c.value"
-            :to="canViewTickets ? backlogTo({ status_category: c.category }) : undefined"
+            :to="canViewTickets ? backlogTo({ staged: 'true', status_category: c.category }) : undefined"
             :link-label="$ui('{value0}のチケットをバックログで見る', { value0: c.label })"
           />
         </template>
       </section>
+
+      <DashboardTicketTrends :key="projectKey" :project-key="projectKey" />
 
       <div class="dash-columns">
         <!-- 自分の担当（5.3）─────────────────────────────── -->
@@ -600,6 +609,10 @@ async function createTicket(body: CreateTicketRequest): Promise<void> {
 
 /* 集計カード。**4枚で固定する**（5.3 は「常に4つのキーを持つ」）。
    `auto-fit` にしない——狭い窓で枚数が変わると、意味の並びが崩れる */
+.dash-onstage-title, .dash-onstage-note { grid-column: 1 / -1; margin: 0; }
+.dash-onstage-title { font-size: 1rem; }
+.dash-onstage-note { color: var(--pb-text-muted); font-size: 0.875rem; }
+
 .dash-cards {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

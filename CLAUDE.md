@@ -34,6 +34,7 @@
 | REST API | `docs/design/ApiDesign.md` |
 | 画面・遷移・配色 | `docs/design/GuiDesign.md` |
 | 要件・背景・AI駆動開発の構想 | `docs/design/Requirements.md` |
+| 自律実行（委任・評価エージェント・確認待ち） | `docs/design/Delegation.md` |
 | 文書の索引と主要な設計判断 | `docs/README.md` |
 | 開発環境の立ち上げ・検証手順（**設計ではなく手順**） | `docs/Development.md` |
 | 試験の設計と完了の基準（**何をどこまで検証したら終わりか**） | `docs/Testing.md` |
@@ -48,6 +49,7 @@
 |---|---|---|
 | 言語 | Go 1.26+ | |
 | ルータ | chi v5 | 権限はミドルウェアとしてルート定義に宣言する（`docs/design/Design.md` 6.4.4） |
+| MCP | 公式 Go SDK（modelcontextprotocol/go-sdk） | プロトコルだけを任せる。ツールの中身は REST を内部で叩く（`docs/design/Design.md` 8.4） |
 | DB | pgx v5（`database/sql` 非経由） | **非経由なのはデータの読み書き。** マイグレーションの実行だけ goose のため `database/sql` を通す |
 | クエリ | sqlc（pgx/v5 モード） | `migrations/` をスキーマ源として読む |
 | マイグレーション | goose v3 | 前進のみ。`down` を書かない（`docs/design/DbDesign.md` 5.3） |
@@ -61,6 +63,7 @@
 ```
 docs/     設計・運用文書        server/   Go（API + MCP + 静的配信）
 client/   Vue 3                deploy/   環境別の実行設定（base/dev/stg/prod）
+tools/    開発用の道具（製品に入らない。例：mcp-probe）
 ```
 
 詳細は `docs/design/Design.md` 4章。**client のビルド成果物は Go バイナリに embed する**（別のWebサーバを立てない）。
@@ -112,6 +115,7 @@ make stg-migrate # stg：マイグレーション適用（migrate と同時に�
 | `/pb-review <手順番号\|領域>` | 実装と設計文書の差異を点検する（修正はせず報告のみ） |
 | `/pb-refine <番号>` | チケットの記述を、エージェントが自律実行できる水準まで引き上げる |
 | `/pb-onboard` | PB のプロジェクトに参画する（規約と担当を読む） |
+| `/pb-delegate-main <根>` / `/pb-delegate-eval <根>` | 自律実行（`docs/design/Delegation.md`）を運用で回す。main と評価エージェントの手順（PB の強制が実装されるまで） |
 
 **これらは Claude Code 向けの入口である。** 他の種別の入口は PB の「エージェントの参画情報」にある。
 **手順の中身はこのリポジトリの成果物**であり、規約は PB にある——`.claude/commands/` を直すときは、

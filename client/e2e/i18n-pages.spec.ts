@@ -35,10 +35,10 @@ async function reply(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
 }
 
-async function mockApi(page: Page) {
+async function mockApi(page: Page, manageMembers = true) {
   await page.route('**/api/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname
-    if (path === '/api/v1/me') return reply(route, session)
+    if (path === '/api/v1/me') return reply(route, { ...session, permissions: session.permissions.filter((permission) => manageMembers || permission !== 'user.manage') })
     if (path === '/api/v1/me/mfa') return reply(route, { totp: [], recovery_codes: null })
     if (path === '/api/v1/me/passkeys' || path === '/api/v1/me/tokens' || path === '/api/v1/me/agents') return reply(route, { items: [] })
     if (path === '/api/v1/admin/settings/pending') return reply(route, { pending_confirmation: null })
@@ -114,7 +114,10 @@ test('English locale covers every implemented page and application-owned setting
   await expect(page.getByText('Unstarted', { exact: true })).toBeVisible()
   await expect(page.locator('.statuses')).toContainText('Completed')
   await page.getByRole('tab', { name: 'Members' }).click()
-  await expect(page.getByText('Project Administrator', { exact: true })).toBeVisible()
+  const memberRole = page.getByRole('combobox', { name: 'Role of Test User', exact: true })
+  await expect(memberRole).toBeVisible()
+  await expect(memberRole).toHaveValue('project_admin')
+  await expect(memberRole.locator('option:checked')).toHaveText('Project Administrator')
   await expect(page.getByText('09/26/2026', { exact: true })).toBeVisible()
   const membersScroll = page.locator('.members-table-scroll')
   const membersBox = await membersScroll.boundingBox()
@@ -165,3 +168,33 @@ test('English locale covers every implemented page and application-owned setting
   expect(await page.locator('td.updated').evaluate((cell) => cell.scrollWidth <= cell.clientWidth)).toBe(true)
 
 })
+
+for (const manageMembers of [false, true]) {
+  for (const width of [390, 1440]) {
+    test(`English member roles remain translated with management=${manageMembers} at ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 1000 })
+      await mockApi(page, manageMembers)
+      await mockProjectCatalog(page)
+      await page.goto('/p/demo/settings')
+      await page.getByRole('tab', { name: 'Members', exact: true }).click()
+      if (manageMembers) {
+        const role = page.getByRole('combobox', { name: 'Role of Test User', exact: true })
+        await expect(role).toBeVisible()
+        await expect(role).toHaveValue('project_admin')
+        await expect(role.locator('option:checked')).toHaveText('Project Administrator')
+        await expect(page.getByRole('button', { name: 'Add member', exact: true })).toBeVisible()
+      } else {
+        await expect(page.getByText('Project Administrator', { exact: true })).toBeVisible()
+        await expect(page.getByRole('combobox')).toHaveCount(0)
+        await expect(page.getByRole('button', { name: 'Add member', exact: true })).toHaveCount(0)
+      }
+      expect(await page.locator('body').innerText()).not.toMatch(japanese)
+      const table = page.locator('.members-table-scroll')
+      const box = await table.boundingBox()
+      expect(box).not.toBeNull()
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width)
+      if (width === 390) await table.evaluate((element) => { element.scrollLeft = element.scrollWidth })
+      await page.screenshot({ path: testInfo.outputPath(`members-manage-${manageMembers}-${width}.png`), fullPage: true })
+    })
+  }
+}

@@ -38,6 +38,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/lexorank"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -113,6 +114,13 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	p := auth.PrincipalFromContext(r.Context())
+	a := auth.ProjectAuthzFromContext(r.Context(), chi.URLParam(r, "key"))
+	agentOrder := (p != nil && p.IsAgent()) || (a != nil && !auth.HasPermission(a.Permissions, "ticket.edit"))
+	if agentOrder && (req.Staged != nil || len(req.ParentSeq) != 0) {
+		apierr.Write(w, r, apierr.New(apierr.ValidationFailed).WithMessage("エージェントの並べ替えでは段と親を変更できません"))
+		return
+	}
 	ctx := r.Context()
 	var (
 		resp    moveTicketResponse
@@ -120,6 +128,11 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 	)
 
 	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		if agentOrder {
+			if _, err := q.LockProjectForDependency(ctx, projectID); err != nil {
+				return err
+			}
+		}
 		row, err := q.GetTicketSortRow(ctx, gen.GetTicketSortRowParams{
 			ProjectID: projectID, Seq: seq,
 		})
@@ -131,6 +144,15 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("チケット %d を読めない: %w", seq, err)
 		}
 
+		if agentOrder {
+			if moveErr = preparePlanningMove(ctx, q, r, projectID, seq, &req); moveErr != nil {
+				return errTicketReference
+			}
+			if req.Position != "" { // 同じ親・段に他のチケットが無ければ位置を変える必要がない。
+				resp = moveTicketResponse{Seq: seq, SortKey: row.SortKey.String, StagedAt: apiTime(row.StagedAt), Version: row.Version}
+				return nil
+			}
+		}
 		// **移動先の段を先に決める**（9.4.1）。staged を省略した場合は
 		// 現在の段のままで、position もその段の中で解釈される。
 		targetStaged := row.StagedAt != nil
@@ -222,7 +244,7 @@ func (h *handler) moveTicket(w http.ResponseWriter, r *http.Request) {
 		}
 		// **オンステージに置いたら、配下ごと進行中のスプリントへ入れる**（9.12.3）。
 		// 段の中の並べ替えでも呼ぶが、既に所属していれば何も起きない
-		if targetStaged {
+		if targetStaged && !agentOrder {
 			if err := joinActiveSprint(ctx, q, projectID, row.ID); err != nil {
 				return err
 			}
@@ -440,7 +462,7 @@ func rebalanceTicketSortKeys(
 // ticketSeqParam は URL の {seq} を読む（9.1）。
 func ticketSeqParam(r *http.Request) (int32, *apierr.Error) {
 	raw := chi.URLParam(r, "seq")
-	n, err := strconv.Atoi(raw)
+	n, err := strconv.ParseInt(raw, 10, 32)
 	if err != nil || n < 1 {
 		return 0, apierr.New(apierr.NotFound).
 			WithMessage("チケットが見つかりません").

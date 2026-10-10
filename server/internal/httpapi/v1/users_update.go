@@ -256,7 +256,11 @@ func reassignCommentsToSystemActor(ctx context.Context, q gen.Querier, actorID s
 	if err != nil {
 		return fmt.Errorf("コメント数を数えられない: %w", err)
 	}
-	if n == 0 {
+	nWork, err := q.CountActorWorkRecords(ctx, actorID)
+	if err != nil {
+		return fmt.Errorf("作業記録数を数えられない: %w", err)
+	}
+	if n == 0 && nWork == 0 {
 		return nil
 	}
 
@@ -278,6 +282,14 @@ func reassignCommentsToSystemActor(ctx context.Context, q gen.Querier, actorID s
 		OldAuthorID: actorID,
 	}); err != nil {
 		return fmt.Errorf("コメントの投稿者を付け替えられない: %w", err)
+	}
+	if nWork > 0 {
+		if err := q.ReassignWorkSessions(ctx, gen.ReassignWorkSessionsParams{NewActorID: systemID, OldActorID: actorID}); err != nil {
+			return err
+		}
+		if err := q.ReassignWorkEvents(ctx, gen.ReassignWorkEventsParams{NewActorID: systemID, OldActorID: actorID}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

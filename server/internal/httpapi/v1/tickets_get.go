@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
@@ -38,6 +39,11 @@ func (h *handler) getTicket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view, err := buildTicketDetail(r.Context(), h.q, projectID, seq)
+	if err != nil {
+		writeTicketReadError(w, r, seq, err)
+		return
+	}
+	view.WorkContext, err = getWorkContext(r.Context(), h.q, projectID, auth.PrincipalFromContext(r.Context()).ActorID)
 	if err != nil {
 		writeTicketReadError(w, r, seq, err)
 		return

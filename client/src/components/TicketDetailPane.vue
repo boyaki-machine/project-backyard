@@ -31,7 +31,8 @@ import { uiText } from '../locales/ui'
  * 空の枠は何もできない箱になる）、**参考リンクは常に出す**（`[+ 追加]` が
  * このセクションへの唯一の入口で、隠すと機能へ到達できない）。
  */
-import { computed, defineAsyncComponent, nextTick, ref, useTemplateRef, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 
 import ConfirmDialog from './ConfirmDialog.vue'
 import ActorSelect from './ActorSelect.vue'
@@ -49,6 +50,7 @@ import ReferenceModal from './ReferenceModal.vue'
 import StatusDropdown from './StatusDropdown.vue'
 import TicketActivity from './TicketActivity.vue'
 import TicketComments from './TicketComments.vue'
+import TicketWork from './TicketWork.vue'
 import TicketLinkModal from './TicketLinkModal.vue'
 import UserActionsMenu from './UserActionsMenu.vue'
 import type { ActionItem } from './UserActionsMenu.vue'
@@ -94,6 +96,10 @@ import { useProjectStore } from '../stores/project'
 import { renderMarkdown } from '../lib/markdown'
 import { isWebUrl } from '../lib/url'
 import { useAuthStore } from '../stores/auth'
+import { useDelegationStatus } from '../composables/useDelegationStatus'
+import { delegationStatusLabels } from '../api/delegation'
+import DelegationConfirmations from './DelegationConfirmations.vue'
+import DelegationPanel from './DelegationPanel.vue'
 
 /**
  * **編集器は使うときに読み込む**（`GuiDesign.md` 5.10、`fix/split-markdown-chunk`）。
@@ -183,6 +189,8 @@ const canTransition = computed(() => auth.canInProject(props.projectKey, 'ticket
 const canDelete = computed(() => auth.canInProject(props.projectKey, 'ticket.delete'))
 /** 子チケットの追加（5.5）。作成そのものは 9.3 なので `ticket.create` を見る */
 const canCreate = computed(() => auth.canInProject(props.projectKey, 'ticket.create'))
+/** 自律実行を始める・一時停止・再開・承認（5.5「自律実行」。pb-252） */
+const canManageDelegation = computed(() => auth.canInProject(props.projectKey, 'delegation.manage'))
 
 // ── 取得 ─────────────────────────────────────────────────────
 
@@ -219,6 +227,72 @@ async function load(): Promise<void> {
   } finally {
     if (mine === fetchSeq) loading.value = false
   }
+}
+
+// ── 自律実行（5.5「自律実行」。pb-252）────────────────────────────
+
+/** 実行モードが自律実行（始めた後）か */
+const delegated = computed(() => ticket.value?.execution_mode === 'delegated')
+/**
+ * 始める前の入力欄を開いているか。実行モードの選択肢で「自律実行」を選ぶと開く。
+ * **選んだだけでは保存しない**——main と評価と制約が揃って初めて始められる
+ */
+const delegationSetupOpen = ref(false)
+/**
+ * 自律実行の根にできる親か（Delegation.md 4.1。pb-282）。**親が無いか、親がエピック。**
+ * エピックへの所属は親として持つ（5.5「エピック欄」）ので、エピックの直下を除くと
+ * エピックに属するチケットを自律実行にできない。親のエピックが別の自律実行の中に
+ * あるとき（入れ子）はサーバが 422 で拒み、入力欄の下に理由が出る
+ */
+const delegationParentOK = computed(
+  () => ticket.value !== null && (!ticket.value.parent || ticket.value.parent.type === 'epic'),
+)
+const canChooseDelegation = computed(() => canManageDelegation.value && delegationParentOK.value)
+const delegation = useDelegationStatus(
+  computed(() => props.projectKey),
+  computed(() => props.seq),
+  delegated,
+)
+/**
+ * 親を持つチケットが、どこかの自律実行の木の中にあるか（5.5「自律実行の中」。pb-276）。
+ * **親を持つチケットだけ読む**——親の無いチケットは木の中にあり得ない（根は自分で読む）。
+ */
+const inTree = useDelegationStatus(
+  computed(() => props.projectKey),
+  computed(() => props.seq),
+  computed(() => !!ticket.value?.parent && !delegated.value),
+)
+const treeInfo = computed(() => {
+  const s = inTree.status.value
+  if (!s?.in_delegation || !s.root_seq || s.root_seq === props.seq || !s.status) return null
+  const parts = [delegationStatusLabels[s.status]]
+  const open = s.open_confirmations?.length ?? 0
+  if (open > 0) parts.push(uiText('確認待ち {value0}', { value0: open }))
+  return { rootSeq: s.root_seq, text: parts.join(' · '), attention: s.status === 'paused' || open > 0 }
+})
+
+watch(
+  () => props.seq,
+  () => {
+    delegationSetupOpen.value = false
+  },
+)
+
+function onExecutionModeChange(target: HTMLSelectElement): void {
+  if (target.value === 'delegated') {
+    // 保存せずに入力欄を開く。選択肢は元に戻す（始めるまでは今のモードのまま）
+    target.value = ticket.value?.execution_mode ?? ''
+    delegationSetupOpen.value = true
+    return
+  }
+  selectField({ execution_mode: target.value as never }, 'execution_mode')
+}
+
+async function onDelegationChanged(): Promise<void> {
+  delegationSetupOpen.value = false
+  await load()
+  await delegation.reload()
+  if (ticket.value) emit('updated', ticket.value)
 }
 
 // ── 保存（`ApiDesign.md` 9.5.2）───────────────────────────────
@@ -272,7 +346,12 @@ function currentText(field: EditField): string {
 }
 
 async function startEdit(field: EditField): Promise<void> {
-  if (!canEdit.value || busy.value) return
+  if (!canEdit.value) return
+  if (busy.value) {
+    if (editCommit === null) return
+    await editCommit
+    if (fieldError.value !== null) return
+  }
   if (field === 'actual_point' && !canEditActualPoint.value) return
   // 別の欄を開いていたら、そちらは保存してから移る（5.5「別の領域をクリック」）
   if (editing.value !== null && editing.value !== field) {
@@ -382,7 +461,15 @@ async function toggleAllDay(next: boolean): Promise<void> {
   await selectField(patch, 'all_day')
 }
 
-async function commitEdit(): Promise<void> {
+// Blur, a close button and a route guard can all request the same save.
+let editCommit: Promise<void> | null = null
+function commitEdit(): Promise<void> {
+  if (editCommit !== null) return editCommit
+  editCommit = commitEditValue().finally(() => { editCommit = null })
+  return editCommit
+}
+
+async function commitEditValue(): Promise<void> {
   const field = editing.value
   if (field === null || ticket.value === null) return
   const raw = draftText()
@@ -479,6 +566,7 @@ async function selectField(patch: UpdateTicketRequest, field: string): Promise<v
 async function save(patch: UpdateTicketRequest, field: string): Promise<void> {
   const current = ticket.value
   if (current === null) return
+  const submittedDraft = draftText()
   busy.value = true
   fieldError.value = null
   try {
@@ -487,7 +575,7 @@ async function save(patch: UpdateTicketRequest, field: string): Promise<void> {
     // **閉じるのは、いま編集している欄を保存したときだけ**。
     // 以前は成功のたびに閉じていたので、**関係のない欄の `PATCH` が成功しただけで
     // 編集中の下書きが（保存もされずに）消えていた**。
-    if (editing.value === field) cancelEdit()
+    if (editing.value === field && (field !== 'body_md' || draftText() === submittedDraft)) cancelEdit()
     emit('updated', next)
   } catch (e) {
     const err = toApiError(e)
@@ -497,6 +585,61 @@ async function save(patch: UpdateTicketRequest, field: string): Promise<void> {
     busy.value = false
   }
 }
+
+// ── 説明の自動保存（pb-271）─────────────────────────────────
+const descriptionRegion = useTemplateRef<HTMLElement>('descriptionRegion')
+let descriptionPointerTarget: Node | null = null
+function onDescriptionPointerDown(event: PointerEvent): void {
+  descriptionPointerTarget = event.target instanceof Node ? event.target : null
+}
+
+function cancelDescription(): void {
+  if (!busy.value && editCommit === null) cancelEdit()
+}
+
+async function finishDescription(): Promise<boolean> {
+  while (editing.value === 'body_md') {
+    await commitEdit()
+    if (fieldError.value !== null) return false
+    // If the user typed during the request, save that newer draft with the new version.
+  }
+  return true
+}
+
+async function closeDetail(): Promise<void> {
+  if (await finishDescription()) emit('close')
+}
+
+async function onDescriptionFocusOut(event: FocusEvent): Promise<void> {
+  // The read button disappears when editing starts; its blur is not leaving the editor.
+  if (event.target instanceof HTMLElement && event.target.closest('.body-view')) return
+  // Clicking non-focusable preview text leaves activeElement on body, but stays in the region.
+  if (event.relatedTarget === null && descriptionPointerTarget && descriptionRegion.value?.contains(descriptionPointerTarget)) return
+  await nextTick()
+  if (descriptionRegion.value?.contains(document.activeElement)) return
+  if (editing.value === 'body_md') await finishDescription()
+}
+
+function onOutsideDescription(event: MouseEvent): void {
+  descriptionPointerTarget = null
+  if (editing.value !== 'body_md') return
+  if (descriptionRegion.value && event.composedPath().includes(descriptionRegion.value)) return
+  void finishDescription()
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDescriptionPointerDown, true)
+  document.addEventListener('click', onOutsideDescription)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDescriptionPointerDown, true)
+  document.removeEventListener('click', onOutsideDescription)
+})
+onBeforeRouteLeave(() => finishDescription())
+onBeforeRouteUpdate((to, from) => {
+  if (to.params.key === from.params.key && to.params.seq === from.params.seq) return true
+  return finishDescription()
+})
 
 // ── 状態の遷移（9.6 / 9.7）───────────────────────────────────
 
@@ -1403,7 +1546,7 @@ defineExpose({
           compact
           @select="onAction"
         />
-        <button type="button" class="icon-button" :aria-label="$ui('詳細を閉じる')" @click="emit('close')">
+        <button type="button" class="icon-button" :aria-label="$ui('詳細を閉じる')" @click="closeDetail">
           ✕
         </button>
       </div>
@@ -1689,26 +1832,61 @@ defineExpose({
           <div class="meta-item wide">
             <dt>{{ $ui('実行モード') }}</dt>
             <dd>
+              <!-- **自律実行は始めた後は選択肢で変えない**（止めるのは一時停止、やめるのは
+                   「自律実行をやめる…」。pb-281）。選択肢の「自律実行」は保存せず、下の入力欄を
+                   開く（5.5「自律実行」） -->
               <select
-                v-if="canEdit"
+                v-if="canEdit && !delegated"
                 :value="ticket.execution_mode"
-                :disabled="busy"
+                :disabled="busy || delegationSetupOpen"
                 :aria-label="$ui('実行モード')"
-                @change="
-                  selectField(
-                    { execution_mode: ($event.target as HTMLSelectElement).value as never },
-                    'execution_mode',
-                  )
-                "
+                @change="onExecutionModeChange($event.target as HTMLSelectElement)"
               >
                 <option v-for="m in executionModeOptions" :key="m" :value="m">
                   {{ executionModeLabels[m] }}
+                </option>
+                <option value="delegated" :disabled="!canChooseDelegation">
+                  {{ executionModeLabels.delegated }}{{
+                    canChooseDelegation
+                      ? ''
+                      : !delegationParentOK
+                        ? $ui('（親を持たないか、エピックの直下のチケットだけ）')
+                        : $ui('（権限がありません）')
+                  }}
                 </option>
               </select>
               <span v-else>{{ executionModeLabels[ticket.execution_mode] }}</span>
               <p v-if="errorFor('execution_mode')" class="field-error" role="alert">
                 {{ errorFor('execution_mode') }}
               </p>
+            </dd>
+          </div>
+
+          <!-- 自律実行の木の中の子（5.5「自律実行の中」。pb-276）。回しているチケットへ辿る -->
+          <div v-if="treeInfo" class="meta-item wide">
+            <dt>{{ $ui('自律実行') }}</dt>
+            <dd>
+              <RouterLink :to="`/p/${projectKey}/tickets/${treeInfo.rootSeq}`">{{ projectKey }}-{{ treeInfo.rootSeq }}</RouterLink>
+              {{ $ui('の木の中') }}
+              <span class="tree-state" :class="{ attention: treeInfo.attention }">（{{ treeInfo.text }}）</span>
+            </dd>
+          </div>
+
+          <!-- 自律実行の項目（5.5「自律実行」）。実行モードの下に開く -->
+          <div v-if="delegated || delegationSetupOpen" class="meta-item wide delegation-item">
+            <dt class="visually-hidden">{{ $ui('自律実行') }}</dt>
+            <dd>
+              <DelegationPanel
+                :project-key="projectKey"
+                :seq="seq"
+                :delegated="delegated"
+                :setup-open="delegationSetupOpen"
+                :can-manage="canManageDelegation"
+                :status="delegation.status.value"
+                :status-error="delegation.error.value"
+                @cancel-setup="delegationSetupOpen = false"
+                @changed="onDelegationChanged"
+              />
             </dd>
           </div>
 
@@ -1984,6 +2162,7 @@ defineExpose({
             </dd>
           </div>
         </dl>
+        <TicketWork :project-key="projectKey" :seq="ticket.seq" :version="ticket.version" :can-correct="canEdit && canEditActualPoint" :can-finish="canEdit && canTransition && auth.canInProject(projectKey, 'agent.run')" @updated="load" />
         <!-- 「終日」の切り替え（5.5。時刻付きの入力はこの画面だけが持つ。pb-217）。
              **格子の外に置く**——「終了」の欄だけ高さが変わると、3行目の見出しが揃わない -->
         <label class="all-day">
@@ -1999,15 +2178,27 @@ defineExpose({
           {{ errorFor('all_day') }}
         </p>
 
+        <!-- ユーザ確認待ち（5.5「自律実行」）。人の対応が要るものだけ。無ければ出さない -->
+        <DelegationConfirmations
+          v-if="delegated"
+          :project-key="projectKey"
+          :seq="seq"
+          :status="delegation.status.value"
+          :can-manage="canManageDelegation"
+          @changed="onDelegationChanged"
+        />
+
         <!-- 説明（5.5「説明欄」）。読み取り時はレンダリング結果、クリックで
              ソース＋プレビューへ入る -->
-        <section class="block">
+        <section ref="descriptionRegion" class="block" @focusout="onDescriptionFocusOut">
           <h3 class="block-title">{{ $ui('説明') }}</h3>
           <template v-if="editing === 'body_md'">
-            <MarkdownEditor ref="editorRef" v-model="draft" @cancel="cancelEdit" />
+            <MarkdownEditor ref="editorRef" v-model="draft" @cancel="cancelDescription" />
             <div class="block-actions">
               <button type="button" class="secondary" :disabled="busy" @click="cancelEdit"> {{ $ui('取消') }} </button>
-              <button type="button" class="primary" :disabled="busy" @click="commitEdit"> {{ $ui('保存') }} </button>
+              <span v-if="busy" role="status">{{ $ui('保存中…') }}</span>
+              <button v-else-if="errorFor('body_md')" type="button" class="primary" @click="finishDescription">{{ $ui('再試行') }}</button>
+              <span v-else class="muted">{{ $ui('編集を終えると自動保存されます') }}</span>
             </div>
           </template>
           <template v-else>
@@ -2612,6 +2803,26 @@ defineExpose({
 /* タグは行いっぱいを使う。数が読めないので1列に押し込むと折り返しが荒れる */
 .meta-item.wide {
   grid-column: 1 / -1;
+}
+
+/* 自律実行の中の子：人の対応が要るときだけ黄の文字にする（pb-276） */
+.tree-state.attention {
+  color: var(--pb-warning-text);
+}
+
+/* 自律実行の項目は実行モードの下に開く。見出しの列を取らず、行の幅いっぱいに使う */
+.meta-item.delegation-item dd {
+  flex: 1;
+  min-width: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .meta dt {

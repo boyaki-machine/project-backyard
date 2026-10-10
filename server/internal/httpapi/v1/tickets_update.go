@@ -114,7 +114,7 @@ type optional[T any] struct {
 
 // updateTicket はチケット1件を部分更新する（9.5.2）。
 func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
-	_, key, projectID, ok := projectScopeContext(w, r, h.q,
+	p, key, projectID, ok := projectScopeContext(w, r, h.q,
 		"PATCH /projects/{key}/tickets/{seq}")
 	if !ok {
 		return
@@ -196,6 +196,11 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 	)
 
 	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		if patch.ActualHours.Set || patch.ActualPoint.Set {
+			if err := q.LockWorkProject(ctx, projectID); err != nil {
+				return err
+			}
+		}
 		before, err := q.GetTicketBySeq(ctx, gen.GetTicketBySeqParams{
 			ProjectID: projectID, Seq: seq,
 		})
@@ -207,7 +212,20 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("チケット %d を読めない: %w", seq, err)
 		}
 
-		params, e := h.resolveTicketPatch(ctx, q, projectID, seq, before, patch, version)
+		assigneeChanged := patch.AssigneeID.Set && (patch.AssigneeID.Null != !before.AssigneeID.Valid || (!patch.AssigneeID.Null && patch.AssigneeID.Value != before.AssigneeID.String))
+		workerChanged := patch.WorkingAgentID.Set && (patch.WorkingAgentID.Null != !before.WorkingAgentID.Valid || (!patch.WorkingAgentID.Null && patch.WorkingAgentID.Value != before.WorkingAgentID.String))
+		if assigneeChanged || workerChanged {
+			if writeErr = assignmentWriteProblem(ctx, q, p, projectID, before.ID); writeErr != nil {
+				return errTicketReference
+			}
+		}
+
+		if patch.StartAt.Set || patch.DueAt.Set || patch.AllDay.Set {
+			if writeErr = planningWriteProblem(ctx, q, r, projectID, before.ID); writeErr != nil {
+				return errTicketReference
+			}
+		}
+		params, e := h.resolveTicketPatch(ctx, q, projectID, seq, before, patch, version, p)
 		if e != nil {
 			writeErr = e
 			return errTicketReference
@@ -226,6 +244,15 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 
 		if patch.TagIDs.Set {
 			if err := replaceTicketTags(ctx, q, before.ID, patch.TagIDs); err != nil {
+				return err
+			}
+		}
+
+		if patch.ActualHours.Set || patch.ActualPoint.Set {
+			if err := q.EnsureTicketEffort(ctx, before.ID); err != nil {
+				return err
+			}
+			if err := q.MarkTicketEffortManual(ctx, gen.MarkTicketEffortManualParams{TicketID: before.ID, Hours: patch.ActualHours.Set, Point: patch.ActualPoint.Set}); err != nil {
 				return err
 			}
 		}
@@ -270,12 +297,27 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 // ことがある（tickets_create.go の resolveTicketParent と同じ理由）。
 func (h *handler) resolveTicketPatch(
 	ctx context.Context, q gen.Querier, projectID string, seq int32,
-	before gen.GetTicketBySeqRow, patch ticketPatch, version int32,
+	before gen.GetTicketBySeqRow, patch ticketPatch, version int32, p *auth.Principal,
 ) (gen.UpdateTicketParams, *apierr.Error) {
 	params := gen.UpdateTicketParams{ProjectID: projectID, Seq: seq, Version: version}
 
 	if patch.Type.Set {
 		params.Type = pgtype.Text{String: patch.Type.Value, Valid: true}
+		// **直下に自律実行の根を持つエピックは、エピックのままにする**（pb-282）。
+		// 根の親はエピックに限るので、種別を変えると根の条件が崩れる。
+		if before.Type == "epic" && patch.Type.Value != "epic" {
+			has, err := q.HasDelegatedChild(ctx, pgtype.Text{String: before.ID, Valid: true})
+			if err != nil {
+				return params, apierr.New(apierr.InternalError).
+					WithCause(fmt.Errorf("自律実行の根を確認できない: %w", err))
+			}
+			if has {
+				return params, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
+					Field: "type", Code: "invalid",
+					Message: "直下に自律実行のチケットがあるため、エピックから種別を変えられません",
+				})
+			}
+		}
 	}
 	if patch.Title.Set {
 		params.Title = pgtype.Text{String: patch.Title.Value, Valid: true}
@@ -349,6 +391,40 @@ func (h *handler) resolveTicketPatch(
 	// ── 親（9.5.2 の parent_cycle）──────────────────────────────
 	newParentType := pgtype.Text{}
 	if patch.ParentSeq.Set {
+		// **委任の木の境界をまたぐ移動は、エージェントには許さない**
+		// （Delegation.md 5章「main：チケットを木の外へ出す・木の外から
+		// 入れる」「他のエージェント：木への書き込み」、いずれも不可）。
+		// 同じ木の中での並べ替えは妨げない——比較するのは「属する委任」が
+		// 変わるかどうかである。人（PM・担当）には効かない。
+		if p.IsAgent() {
+			curDeleg, curIn, derr := findDelegationContainingTicket(ctx, q, projectID, before.ID)
+			if derr != nil {
+				return params, apierr.New(apierr.InternalError).
+					WithCause(fmt.Errorf("委任を確認できない: %w", derr))
+			}
+			var (
+				newIn    bool
+				newDeleg gen.ListActiveDelegationsForProjectRow
+			)
+			if !patch.ParentSeq.Null {
+				newParentID, e := resolveTicketParent(ctx, q, projectID, &patch.ParentSeq.Value)
+				if e != nil {
+					return params, e
+				}
+				newDeleg, newIn, derr = findDelegationContainingTicket(ctx, q, projectID, newParentID.String)
+				if derr != nil {
+					return params, apierr.New(apierr.InternalError).
+						WithCause(fmt.Errorf("委任を確認できない: %w", derr))
+				}
+			}
+			crosses := curIn != newIn || (curIn && newIn && curDeleg.ID != newDeleg.ID)
+			if crosses {
+				return params, apierr.New(apierr.Forbidden).
+					WithMessage("委任の木をまたいでチケットを移動することはできません").
+					WithDetails(apierr.Detail{Field: "parent_seq", Code: "delegation_stage"})
+			}
+		}
+
 		params.ParentIDSet = true
 		if !patch.ParentSeq.Null {
 			parentID, e := resolveTicketParent(ctx, q, projectID, &patch.ParentSeq.Value)
@@ -378,6 +454,16 @@ func (h *handler) resolveTicketPatch(
 					WithCause(fmt.Errorf("親の種別を読めない: %w", err))
 			}
 			newParentType = pgtype.Text{String: t, Valid: true}
+
+			// **自律実行の根の親は、エピックに限る**（Delegation.md 4.1。pb-282）。
+			// 0050 の DB 制約が担っていた分を、0057 で外したのでここで見る。
+			if before.ExecutionMode == "delegated" {
+				if d, err := delegationRootParentProblem(ctx, q, projectID, parentID, "parent_seq"); err != nil {
+					return params, apierr.New(apierr.InternalError).WithCause(err)
+				} else if d != nil {
+					return params, apierr.New(apierr.ValidationFailed).WithDetails(*d)
+				}
+			}
 		}
 	} else if before.ParentSeq.Valid {
 		// 親を触らない場合は現在の親の種別を使う（下のオンステージ判定に要る）。
@@ -977,6 +1063,17 @@ func denySelfEditFields(r *http.Request, key string, raw updateTicketRequest) *a
 		return nil
 	}
 
+	if !auth.HasPermission(a.Permissions, permTicketSelfEdit) {
+		if !auth.HasPermission(a.Permissions, "ticket.plan.edit") {
+			return apierr.New(apierr.Forbidden)
+		}
+		for field := range raw {
+			if field != "start_at" && field != "due_at" && field != "all_day" {
+				return apierr.New(apierr.Forbidden).WithMessage("計画専用権限では開始・終了予定だけを変更できます")
+			}
+		}
+		return nil
+	}
 	var denied []string
 	for _, field := range selfEditDeniedFields {
 		if _, ok := raw[field]; ok {

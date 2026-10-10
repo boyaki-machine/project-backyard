@@ -178,6 +178,15 @@ func (h *handler) createTicketLink(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("相手のチケット %d を読めない: %w", targetSeq, err)
 		}
 
+		if slices.Contains(dependencyLinkTypes, linkType) {
+			if _, err := q.LockProjectForDependency(ctx, scope.projectID); err != nil {
+				return err
+			}
+		}
+		if invalid = planningWriteProblem(ctx, q, r, scope.projectID, ticketID, targetID); invalid != nil {
+			return errLinkHandled
+		}
+
 		// uq_ticket_link の重複を INSERT の前に見る（9.10.1 の 409）。
 		exists, err := q.TicketLinkExists(ctx, gen.TicketLinkExistsParams{
 			SourceTicketID: ticketID, TargetTicketID: targetID, LinkType: linkType,
@@ -193,9 +202,6 @@ func (h *handler) createTicketLink(w http.ResponseWriter, r *http.Request) {
 		// 依存の輪（9.10.1 の link_cycle）。**判定の前にプロジェクトを取る**——
 		// 並行する A→B と B→A が、どちらも「輪にならない」と読むのを防ぐ。
 		if slices.Contains(dependencyLinkTypes, linkType) {
-			if _, err := q.LockProjectForDependency(ctx, scope.projectID); err != nil {
-				return fmt.Errorf("依存の追加のためにプロジェクトを取れない: %w", err)
-			}
 			cycle, err := q.DependencyPathExists(ctx, gen.DependencyPathExistsParams{
 				FromTicketID: targetID, ToTicketID: ticketID,
 			})
@@ -273,6 +279,7 @@ func (h *handler) deleteTicketLink(w http.ResponseWriter, r *http.Request) {
 
 	rec := activity.FromRequest(r)
 	var notFound bool
+	var invalid *apierr.Error
 
 	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
 		row, err := q.GetTicketLink(ctx, gen.GetTicketLinkParams{
@@ -286,6 +293,9 @@ func (h *handler) deleteTicketLink(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("リンク %q を読めない: %w", id, err)
 		}
 
+		if invalid = planningLinkProblem(ctx, q, r, scope.projectID, ticketID, row.TicketSeq); invalid != nil {
+			return errLinkHandled
+		}
 		rows, err := q.DeleteTicketLink(ctx, gen.DeleteTicketLinkParams{
 			TicketID: ticketID, ID: id,
 		})
@@ -303,6 +313,9 @@ func (h *handler) deleteTicketLink(w http.ResponseWriter, r *http.Request) {
 		return recordLinkChange(ctx, q, rec, scope.projectID, ticketID, &summary, "")
 	})
 	switch {
+	case invalid != nil:
+		apierr.Write(w, r, invalid)
+		return
 	case notFound:
 		apierr.Write(w, r, linkNotFound(id))
 		return
@@ -506,6 +519,9 @@ func (h *handler) updateTicketLink(w http.ResponseWriter, r *http.Request) {
 				return errLinkHandled
 			}
 			return fmt.Errorf("リンク %q を読めない: %w", id, err)
+		}
+		if invalid = planningLinkProblem(ctx, q, r, scope.projectID, ticketID, row.TicketSeq); invalid != nil {
+			return errLinkHandled
 		}
 		if !slices.Contains(lagLinkTypes, row.LinkType) {
 			invalid = apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{

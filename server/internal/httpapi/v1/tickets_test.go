@@ -51,6 +51,7 @@ func ticketReq(method, target, body, seq string) *http.Request {
 	}
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rc)
 	ctx = auth.NewPrincipalContext(ctx, &auth.Principal{ActorID: testActorID})
+	ctx = auth.NewProjectAuthzContext(ctx, &auth.ProjectAuthz{Key: "demo", Permissions: []string{"ticket.create", "ticket.assign", "ticket.edit", "ticket.transition"}})
 	return req.WithContext(ctx)
 }
 
@@ -299,6 +300,8 @@ func TestListTicketsRejectsInvalidFilters(t *testing.T) {
 		{"放置の書式", "stale=14days", "stale"},
 		{"放置の上限", "stale=3651d", "stale"},
 		{"親", "parent=0", "parent"},
+		{"親の上限超過", "parent=2147483648", "parent"},
+		{"親の番号が循環", "parent=4294967327", "parent"},
 		{"ソート", "sort=body_md", "sort"},
 		{"件数", "per_page=201", "per_page"},
 		// 検索の条件（9.2.1「検索の条件」）。**範囲が逆なら空の結果にせず 422**

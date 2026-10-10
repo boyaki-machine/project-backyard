@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,9 +9,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -227,16 +230,56 @@ func TestMCPIntegration(t *testing.T) {
 
 	r := NewRouter(Deps{Pool: pool, Version: "mcp-test"})
 
-	// call は /mcp/<key> を1回叩く。
-	call := func(token, key, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, MCPPath+"/"+key, strings.NewReader(body))
+	// send は /mcp への要求を1件送る。
+	//
+	// **実際のクライアントは4つとも Accept に両方を入れて送る**（pb-158 のプローブ）。
+	// 仕様上もクライアントの MUST で、SDK は欠けた要求を 400 で拒む（Design.md 8.4）。
+	// **SDK は応答を SSE で返すことがある**ので、応答（id を持つ data 行）だけを
+	// 取り出し、JSON の本文として読めるようにする。
+	send := func(token string, req *http.Request) *httptest.ResponseRecorder {
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
+		if strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream") {
+			var last string
+			for _, line := range strings.Split(w.Body.String(), "\n") {
+				if data, ok := strings.CutPrefix(line, "data: "); ok && strings.Contains(data, `"id"`) {
+					last = data
+				}
+			}
+			w.Body = bytes.NewBufferString(last)
+		}
 		return w
+	}
+
+	// call は /mcp/<key> を旧方式（initialize の版）で1回叩く。
+	call := func(token, key, body string) *httptest.ResponseRecorder {
+		return send(token, httptest.NewRequest(http.MethodPost, MCPPath+"/"+key, strings.NewReader(body)))
+	}
+
+	// modern は 2026-07-28 の形で1回叩く。本文の _meta に版を入れ、同じ値を
+	// MCP-Protocol-Version に、method と name を Mcp-Method / Mcp-Name に写す。
+	// **headerName を本文と違う値にすると、ヘッダの食い違いを作れる。**
+	modern := func(token, method, name, headerName, params string) *httptest.ResponseRecorder {
+		meta := `"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28",` +
+			`"io.modelcontextprotocol/clientInfo":{"name":"pb-test","version":"0"},` +
+			`"io.modelcontextprotocol/clientCapabilities":{}}`
+		if params != "" {
+			meta += "," + params
+		}
+		req := httptest.NewRequest(http.MethodPost, MCPPath+"/"+projectKey,
+			strings.NewReader(`{"jsonrpc":"2.0","id":7,"method":"`+method+`","params":{`+meta+`}}`))
+		req.Header.Set("MCP-Protocol-Version", "2026-07-28")
+		req.Header.Set("Mcp-Method", method)
+		if headerName != "" {
+			req.Header.Set("Mcp-Name", headerName)
+		}
+		_ = name
+		return send(token, req)
 	}
 
 	// tool はツールを1回呼び、テキストと isError を返す。
@@ -340,6 +383,60 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		if res.Result.ServerInfo.Version != "mcp-test" {
 			t.Errorf("serverInfo.version = %q, want mcp-test", res.Result.ServerInfo.Version)
+		}
+	})
+
+	// **Claude Code は新方式で話しかけてくる**（pb-158。最初に server/discover）。
+	// 旧方式の試験だけでは、SDK が新方式を正しく扱うかが分からない。
+	t.Run("新方式で server/discover と tools/call が通り、ヘッダの食い違いを拒む", func(t *testing.T) {
+		w := modern(fullToken, "server/discover", "", "", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("server/discover の status = %d, want 200（body=%s）", w.Code, w.Body.String())
+		}
+		var disc struct {
+			Result struct {
+				SupportedVersions []string `json:"supportedVersions"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &disc); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, w.Body.String())
+		}
+		if !slices.Contains(disc.Result.SupportedVersions, "2026-07-28") ||
+			!slices.Contains(disc.Result.SupportedVersions, "2025-06-18") {
+			t.Errorf("supportedVersions = %v, want 2026-07-28 と 2025-06-18 を含む", disc.Result.SupportedVersions)
+		}
+
+		w = modern(fullToken, "tools/call", "pb_get_project", "pb_get_project",
+			`"name":"pb_get_project","arguments":{}`)
+		if w.Code != http.StatusOK {
+			t.Fatalf("tools/call の status = %d, want 200（body=%s）", w.Code, w.Body.String())
+		}
+		var call struct {
+			Result struct {
+				ResultType string `json:"resultType"`
+				Content    []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+				IsError bool `json:"isError"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &call); err != nil {
+			t.Fatalf("応答を読めない: %v（%s）", err, w.Body.String())
+		}
+		if call.Result.IsError || len(call.Result.Content) == 0 ||
+			!strings.Contains(call.Result.Content[0].Text, projectKey) {
+			t.Errorf("pb_get_project の結果がプロジェクトを含まない: %+v", call.Result)
+		}
+		if call.Result.ResultType != "complete" {
+			t.Errorf("resultType = %q, want complete（2026-07-28 は必須）", call.Result.ResultType)
+		}
+
+		// **ヘッダと本文の食い違いは 400**（仕様の HeaderMismatch）。経路の途中の
+		// 仕組みがヘッダで判断し、PB が本文で動く、という食い違いを作らない。
+		w = modern(fullToken, "tools/call", "pb_get_project", "pb_list_docs",
+			`"name":"pb_get_project","arguments":{}`)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Mcp-Name が食い違う要求の status = %d, want 400（body=%s）", w.Code, w.Body.String())
 		}
 	})
 
@@ -644,7 +741,7 @@ func TestMCPIntegration(t *testing.T) {
 		}
 
 		text, isErr := tool(t, fullToken, "pb_create_ticket",
-			`{"type":"task","title":"MCP から起票したチケット","body_md":"本文","priority":"high","assignee_id":"me"}`)
+			`{"type":"task","title":"MCP から起票したチケット","body_md":"本文","priority":"high"}`)
 		if isErr {
 			t.Fatalf("起票できない: %s", text)
 		}
@@ -666,9 +763,8 @@ func TestMCPIntegration(t *testing.T) {
 		if got.Seq < 2 {
 			t.Errorf("seq = %d, want 2 以上（既存の1件の次）", got.Seq)
 		}
-		// **assignee_id=me は所有者を指す**（Design.md 8.5）。担当を持つのは人である。
-		if got.Assignee == nil || got.Assignee.ID != ownerID {
-			t.Errorf("assignee = %+v, want 所有者（%s）", got.Assignee, ownerID)
+		if got.Assignee != nil {
+			t.Errorf("担当なし起票の assignee = %+v, want nil", got.Assignee)
 		}
 		// **作ったチケットは必ずバックログに入る**（9.3）。
 		if got.StagedAt != nil {
@@ -685,6 +781,46 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		if reporter != agentID {
 			t.Errorf("reporter_id = %q, want エージェント（%s）", reporter, agentID)
+		}
+	})
+
+	t.Run("既発行トークンのticket.assignでも通常エージェントは担当指定で迂回できない", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `UPDATE project_member SET role_key='project_admin' WHERE project_id=$1 AND actor_id=$2`, projectID, ownerID); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if _, err := pool.Exec(ctx, `UPDATE project_member SET role_key='project_member' WHERE project_id=$1 AND actor_id=$2`, projectID, ownerID); err != nil {
+				t.Error(err)
+			}
+		}()
+		text, isErr := tool(t, agentToken, "pb_create_ticket", `{"type":"task","title":"Rejected assigned creation","assignee_id":"me"}`)
+		if !isErr || !strings.Contains(text, "403") || !strings.Contains(text, "担当・実行者") {
+			t.Fatalf("担当指定を拒否しない: %s", text)
+		}
+		text, isErr = tool(t, agentToken, "pb_create_ticket", `{"type":"task","title":"Unassigned approval boundary"}`)
+		if isErr {
+			t.Fatal(text)
+		}
+		var created struct {
+			Seq int `json:"seq"`
+		}
+		if err := json.Unmarshal([]byte(text), &created); err != nil {
+			t.Fatal(err)
+		}
+		text, isErr = tool(t, agentToken, "pb_update_ticket", fmt.Sprintf(`{"seq":%d,"assignee_id":"me"}`, created.Seq))
+		if !isErr || !strings.Contains(text, "403") || !strings.Contains(text, "担当・実行者") {
+			t.Fatalf("担当更新を拒否しない: %s", text)
+		}
+		text, isErr = tool(t, agentToken, "pb_transition_task", fmt.Sprintf(`{"seq":%d,"to":"in_progress"}`, created.Seq))
+		if !isErr || !strings.Contains(text, "403") {
+			t.Fatalf("未割当の遷移を拒否しない: %s", text)
+		}
+		var assigned bool
+		if err := pool.QueryRow(ctx, `SELECT assignee_id IS NOT NULL FROM ticket WHERE project_id=$1 AND seq=$2`, projectID, created.Seq).Scan(&assigned); err != nil {
+			t.Fatal(err)
+		}
+		if assigned {
+			t.Fatal("拒否した担当変更が保存された")
 		}
 	})
 
@@ -753,6 +889,35 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		if n != 1 {
 			t.Errorf("activity = %d行, want 1", n)
+		}
+	})
+
+	// **待ち受けの途中に書かれたコメントで返る**（Delegation.md 10章。pb-158）。評価エージェントが
+	// 評価をコメントで書き、待っている main の pb_wait が本文つきで返る——自律実行の内のループの要である。
+	// 本物の間隔（3秒ごとの問い合わせ）で走るので数秒かかる。
+	t.Run("pb_wait が待っている途中に書かれたコメントで返り、本文を添える", func(t *testing.T) {
+		done := make(chan string, 1)
+		go func() {
+			w := call(fullToken, projectKey,
+				`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"pb_wait","arguments":{"seq":1}}}`)
+			done <- w.Body.String()
+		}()
+		// pb_wait が「いま」の履歴を読み終えるのを待ってから書く。先に書くと、それが「いま」に含まれる。
+		time.Sleep(1500 * time.Millisecond)
+		if text, isErr := tool(t, fullToken, "pb_post_note",
+			`{"seq":1,"body_md":"## 評価 成果 第1回：不合格\n指摘1：完了条件2が満たされていない","kind":"discussion"}`); isErr {
+			t.Fatalf("コメントを書けない: %s", text)
+		}
+		select {
+		case body := <-done:
+			if !strings.Contains(body, `\"changed\":true`) {
+				t.Fatalf("変化を返していない: %s", body)
+			}
+			if !strings.Contains(body, "指摘1：完了条件2が満たされていない") {
+				t.Errorf("コメントの本文を添えていない: %s", body)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatal("コメントを書いてから20秒経っても pb_wait が返らない")
 		}
 	})
 
@@ -1225,6 +1390,7 @@ func TestMCPIntegration(t *testing.T) {
 			"## 3. 憲章",
 			"## 4. 依存・関連するチケット",
 			"## 5. 足りないときの調べ方",
+			"## 作業実績の記録", "pb_start_work", "pb_record_work", "actual-v0",
 			"`src/auth/**`",   // チケット（9.5.1 の scope）
 			"認証方式が未決",         // 同上（readiness_note）
 			"価値観・世界観",         // 憲章の目次（10.2）
@@ -1270,9 +1436,52 @@ func TestMCPIntegration(t *testing.T) {
 		t.Fatalf("完了条件を作れない: %v", err)
 	}
 
+	t.Run("共通計測MCPが契約と未終了案内と保存結果を返す", func(t *testing.T) {
+		text, bad := tool(t, fullToken, "pb_start_work", `{"seq":1,"request_id":"mcp-work-start"}`)
+		if bad {
+			t.Fatal(text)
+		}
+		var row struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(text), &row); err != nil || row.ID == "" {
+			t.Fatal(text, err)
+		}
+		text, bad = tool(t, fullToken, "pb_get_context", `{"seq":1}`)
+		if bad || !strings.Contains(text, row.ID) || !strings.Contains(text, "actual-v0") || !strings.Contains(text, "pb_start_work") || !strings.Contains(text, `section="実績"`) {
+			t.Fatal(text)
+		}
+		for _, action := range []string{"pause", "resume", "finish"} {
+			body := fmt.Sprintf(`{"seq":1,"work_id":%q,"request_id":%q,"action":%q,"note":"fixture measured runtime"}`, row.ID, "mcp-work-"+action, action)
+			if action == "finish" {
+				body = fmt.Sprintf(`{"seq":1,"work_id":%q,"request_id":"mcp-work-finish","action":"finish","result":"completed","reported_active_ms":0,"tokens":0,"note":"fixture measured zero runtime","change_metrics":[{"seq":1,"code_lines":100,"test_lines":0,"doc_lines":0,"other_lines":0,"files":1,"branches":1,"learning_events":0,"source":"fixture cumulative commit metrics"}]}`, row.ID)
+			}
+			text, bad = tool(t, fullToken, "pb_record_work", body)
+			if bad {
+				t.Fatal(text)
+			}
+		}
+		var saved struct {
+			Saved []struct {
+				Summary struct {
+					ActualHours        *float64 `json:"actual_hours"`
+					ActualPoint        *float64 `json:"actual_point"`
+					ActualPointVersion *string  `json:"actual_point_version"`
+				}
+			}
+		}
+		if err := json.Unmarshal([]byte(text), &saved); err != nil || len(saved.Saved) != 1 {
+			t.Fatal(text, err)
+		}
+		value := saved.Saved[0].Summary
+		if value.ActualHours == nil || *value.ActualHours != 0 || value.ActualPoint == nil || *value.ActualPoint != 3 || value.ActualPointVersion == nil || *value.ActualPointVersion != "actual-v0" {
+			t.Fatal(text)
+		}
+	})
 	t.Run("pb_submit_result が実行記録・レポート・コメントを作る", func(t *testing.T) {
 		text, isErr := tool(t, fullToken, "pb_submit_result", `{
 			"seq":1,"status":"partial",
+ "effort_unavailable":{"target":"both","reason":"fixture exercises legacy report submission without recorded timing"},
 			"artifacts":[{"type":"pull_request","url":"https://example.com/pr/1"}],
 			"dod_results":[{"id":`+quote(dodA)+`,"passed":true,"evidence":"go test → ok"}],
 			"failures":[{"approach":"ライブラリZ","reason":"版が競合"}],
@@ -1398,6 +1607,7 @@ func TestMCPIntegration(t *testing.T) {
 	t.Run("再提出は別の run になり retry_count が増える", func(t *testing.T) {
 		text, isErr := tool(t, fullToken, "pb_submit_result", `{
 			"seq":1,"status":"completed",
+ "effort_unavailable":{"target":"both","reason":"fixture re-submits work performed before timing"},
 			"dod_results":[{"id":`+quote(dodA)+`,"passed":true},
 			               {"id":`+quote(dodB)+`,"passed":true}]}`)
 		if isErr {

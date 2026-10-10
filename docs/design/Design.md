@@ -132,6 +132,7 @@ Design.md         全体設計（本書）── システム構成・技術選�
 |---|---|---|
 | **サーバ言語** | **Go 1.26 以上** | `Requirements.md` 1章の候補（Rust / Go）から確定。ビルドの速さ、単一バイナリ配布、学習コストの低さを優先。**1.26 はパスキーの検証に使う go-webauthn の要求である**（6.8.5） |
 | HTTPルータ | **chi v5** | `net/http` 互換。ミドルウェア連鎖とルートグループのみを足す薄い層 |
+| MCP | **公式 Go SDK v1.8.0**（`modelcontextprotocol/go-sdk`） | プロトコル（版の交渉・ヘッダ・応答の形）だけを任せる。ツールの中身は REST を内部で叩く（8.1 / 8.4。pb-258） |
 | DBドライバ | **pgx v5**（`database/sql` を経由しない） | `timestamptz` `jsonb` `inet` をネイティブに扱えるため。**非経由なのはアプリのデータ経路である**——マイグレーションの実行だけは例外（下の goose） |
 | クエリ | **sqlc**（pgx/v5 モード） | SQLを書くとGoの型付き関数が生成される。設計原則2と一致 |
 | マイグレーション | **goose v3** | SQLファイルベース。アドバイザリロック対応（`DbDesign.md` 5.3）。**サーバ本体の依存でもある**（書庫の取り込みが版を動かすため。`DbDesign.md` 9.1.1）。**goose の API は `*sql.DB` しか取らない**ので、`database/sql` と `pgx/v5/stdlib` が**マイグレーションを走らせる箇所だけ**に入る |
@@ -230,6 +231,7 @@ ProjectBackyard/
 │   │   ├── DbDesign.md            ← データベース設計
 │   │   ├── ApiDesign.md           ← REST API 設計
 │   │   ├── GuiDesign.md           ← GUI 設計
+│   │   ├── Delegation.md          ← 自律実行の設計（DB・API・画面にまたがる）
 │   │   └── openapi.yaml           ← 実装済みAPIの現状（ApiDesign.md 1.3）
 │   ├── Development.md             ← 開発環境の立ち上げ・デバッグ手順
 │   ├── Testing.md                 ← 試験の設計と完了の基準
@@ -271,6 +273,9 @@ ProjectBackyard/
 │   │   ├── pages/ components/ stores/
 │   │   └── api/                   ← openapi.yaml から生成する型付きクライアント
 │   └── dist/                      ← .gitignore
+│
+├── tools/                         ← 開発用の道具。製品のバイナリに入らない
+│   └── mcp-probe/                 ← MCP クライアントの挙動を確かめる検証用サーバ（独立した go.mod。標準ライブラリのみ）
 │
 └── deploy/                        ← 環境別の実行設定
     ├── Dockerfile                 ← 配布用イメージ。client → pb と goose → 実行（distroless nonroot）の3段（4.5）
@@ -754,13 +759,15 @@ type VerifiedIdentity struct {
 
 ### 6.4.2 権限カタログ
 
-権限をコードのif文ではなく**データとして定義**する（原則5）。カタログは33件（0010 の28件に、0017 の `doc.view` / `doc.edit`、0027 の `ticket.reference.edit`、0029 の `ticket.self_edit`、0044 の `ticket.actual_point.edit` を足したもの）。`DbDesign.md` 7.2（0010）・8.1.4（0017）・6.12.1（0027）・6.13（0029）のシードが正本。
+権限は36件のカタログとしてデータで定義する（原則5）。用途別の権限キーを以下に示す。登録内容とロールへの割り当ては `DbDesign.md` 7章・8.1.4・6.12.1・6.13・6.24 に従う。
 
 | カテゴリ | 権限キー |
 |---|---|
 | project | `project.view` `project.create` `project.edit` `project.archive` |
-| ticket | `ticket.view` `ticket.create` `ticket.edit` `ticket.transition` `ticket.close` `ticket.assign` `ticket.delete` |
+| ticket | `ticket.view` `ticket.create` `ticket.edit` `ticket.transition` `ticket.close` `ticket.assign` `ticket.delete` `ticket.reference.edit` `ticket.self_edit` `ticket.actual_point.edit` `ticket.plan.edit` |
 | comment | `comment.create` `comment.edit_own` `comment.delete_any` |
+| doc | `doc.view` `doc.edit` |
+| delegation | `delegation.manage` `delegation.evaluate` |
 | knowledge | `knowledge.view` `knowledge.propose` `knowledge.approve` |
 | proposal | `proposal.review` |
 | agent | `agent.register` `agent.token.issue` `agent.run` |
@@ -840,7 +847,7 @@ GET /api/v1/me
 | **権限** | **所有者から導く（委譲）。** 下の式を参照 |
 | トークン | `access_token(token_type='agent')`。プロジェクトスコープ必須、有効期限必須。接頭辞は `pb_agt_` |
 | 発行 | **本人が自分の設定から**（`/me/agents`。`ApiDesign.md` 4.5、`Requirements.md` 10.9.1 系統B）。**発行時に一度だけ全文表示** |
-| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run` `ticket.reference.edit` `ticket.self_edit`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit` と `ticket.actual_point.edit` を足せる**（`ApiDesign.md` 4.5.3 の許可リスト） |
+| スコープ既定 | `project.view` `ticket.view` `ticket.create` `ticket.transition` `ticket.assign` `comment.create` `doc.view` `agent.run` `ticket.reference.edit` `ticket.self_edit`。**語彙は権限カタログのキーそのものである**（6.4.1）。**発行時に `doc.edit`・`ticket.actual_point.edit`・`delegation.evaluate`・`ticket.plan.edit` を追加できる**（`ApiDesign.md` 4.5.3 の許可リスト） |
 | 禁止 | `ticket.close`、`knowledge` の直接更新、他プロジェクトへのアクセス。`doc.edit` は既定では与えず、発行時に追加できる |
 | 信頼度 | `agent.trust_level` に応じて既定スコープを段階的に拡大（`Requirements.md` 10.10.3）。**実績の供給源が構想のため、既定値のまま使わない** |
 | 失効 | 本人と管理画面から即時失効。サーキットブレーカー作動時は自動失効も選択可 |
@@ -1366,7 +1373,11 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 | `pb_list_docs` | `GET /projects/:key/docs?outline=1` | `doc.view` |
 | `pb_get_doc` | `GET /projects/:key/docs/*path?section=` | `doc.view` |
 | `pb_get_task` / `pb_list_tasks` | `GET /projects/:key/tickets(/:seq)` | `ticket.view` |
+| `pb_list_comments` | `GET /projects/:key/tickets/:seq/comments` | `ticket.view` |
 | `pb_get_context` | **合成**（`GET /tickets/:seq` ＋ `GET /docs` ＋ `GET /docs/*path`。8.5.5） | `ticket.view` `doc.view` |
+| `pb_start_work` | `seq`, `request_id`, `note?`, `allocations?` | `POST /projects/:key/tickets/:seq/work-sessions` | 開始した作業記録（8.5.7） |
+| `pb_record_work` | `seq`, `work_id`, `request_id`, `action`, `result?`, `tokens?`, `reported_active_ms?`, `incomplete?`, `allocations?`, `note?` | `POST /projects/:key/tickets/:seq/work-sessions/:id/events` | 更新した作業記録（8.5.7） |
+| `pb_list_work` | `seq`, `page?`, `per_page?` | `GET /projects/:key/tickets/:seq/work-sessions` | 作業明細のページと実績集計（8.5.7） |
 | `pb_create_ticket` | `POST /projects/:key/tickets` | `ticket.create` |
 | `pb_update_ticket` | `PATCH /projects/:key/tickets/:seq` | **`ticket.self_edit`** |
 | `pb_put_dod` | `GET|POST|PATCH|DELETE /projects/:key/tickets/:seq/dod` | **`ticket.self_edit`** |
@@ -1375,9 +1386,15 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 | `pb_put_doc` | `PATCH /projects/:key/docs/*path` | **`doc.edit`** |
 | `pb_post_note` | `POST /projects/:key/tickets/:seq/comments` | `comment.create` |
 | `pb_add_reference` | `POST /projects/:key/tickets/:seq/references` | **`ticket.reference.edit`** |
+| `pb_submit_plan` | `POST /projects/:key/tickets/:seq/plan`（`Delegation.md` 6章。pb-247） | `ticket.create`（+ main の身元確認） |
+| `pb_submit_evaluation` | `POST /projects/:key/tickets/:seq/evaluation`（`Delegation.md` 7章。pb-248） | **`delegation.evaluate`**（+ 評価エージェントの身元確認） |
+| `pb_raise_confirmation` | `POST /projects/:key/tickets/:seq/confirmation`（`Delegation.md` 8章。pb-249） | `ticket.create`（+ main の身元確認） |
+| `pb_update_handoff` | `POST /projects/:key/tickets/:seq/handoff`（`Delegation.md` 9.3・11章。pb-250） | `ticket.create`（+ main の身元確認） |
+| `pb_record_metric` | `POST /projects/:key/tickets/:seq/metrics/:metric/values`（`Delegation.md` 4.2・8.3。pb-277） | `ticket.create`（+ main の身元確認。人は画面から） |
 | `pb_transition_task` | `POST /projects/:key/tickets/:seq/transition` | `ticket.transition` |
 | `pb_list_transitions` | `GET /projects/:key/tickets/:seq/transitions` | `ticket.view` |
 | `pb_submit_result` | `POST /projects/:key/tickets/:seq/reports`（`ApiDesign.md` 9.15） | `ticket.transition` |
+| `pb_wait` | **合成**（`GET /tickets/:seq` ＋ `GET /activity?entity=ticket:<seq>` を間隔を置いて ＋ 変化にコメントがあれば `GET /tickets/:seq/comments`。8.5.6） | `ticket.view` |
 | `pb_claim_task` / `pb_release_task`（**構想**） | リース（`DbDesign.md` 8.2.2） | `ticket.transition` |
 
 ### リースを持たず、状態遷移を開ける
@@ -1397,7 +1414,7 @@ claim / リースという考え方は馴染まない。**設計上のリース�
 **代わりに、状態遷移を MCP に開ける。** 設計原則7 は「エージェントから見える面は MCP のみ」と定めるので、
 REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task` / `pb_list_transitions`）を置く。
 
-**`pb_claim_task` / `pb_release_task` は構想である**（`Requirements.md` 10.3.2）。**再検討の条件は自律取得（`pb_next_task`）の実装である**——そのときは `working_agent_id` を「宣言」から「条件」へ格上げすれば足り、テーブルを足さずに済む。TTL による失効（`stale` の検知）が要ると分かった時点で `task_lease` の器を起こす。
+**`pb_claim_task` / `pb_release_task` は構想である**（`Requirements.md` 10.3.2）。**再検討の条件は自律取得（`pb_next_task`）の実装である**——そのときは `working_agent_id` を「宣言」から「条件」へ格上げすれば足り、テーブルを足さずに済む。TTL による失効（`stale` の検知）が要ると分かった時点で `task_lease` の器を起こす。**自律実行（`Delegation.md`）はこの条件に当たったが、委任の中ではまだリースは要らないと判定した**——1つの委任に main は1つで、sub は main の principal で動くため、排他は main の内部の問題になる（同 12.3）。**再検討の条件は、委任の消化を複数ベンダーのエージェントに配る段階へ移した。**
 
 **`pb_put_doc` は `doc.edit` を要求する。** エージェントのトークンにこの権限を載せるかは、**そのエージェントが誰に付いているか**で決まる（`Requirements.md` 10.10.3）。PM のエージェントは持ち、実装だけを行うエージェントは持たない。**発行時に許可リストから選ぶ**（`ApiDesign.md` 4.5.3）。
 
@@ -1419,17 +1436,21 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 
 ## 8.4 プロトコル
 
-**自前で実装する**（公式 SDK を使わない。乗り換えを検討する条件は 8.6）。実装するのは**JSON-RPC 2.0 の4メソッドを話す HTTP ハンドラ**であって、MCP の全機能ではない。
+**プロトコルは公式 Go SDK（`github.com/modelcontextprotocol/go-sdk` v1.8.0）に任せる**（pb-258。乗り換えの判断は 8.6）。
+PB が持つのは**ツールの定義と中身**（REST を内部で叩く。8.1）だけで、版の交渉・ヘッダの検証・応答の形は SDK が持つ。
 
 | 項目 | 採るもの |
 |---|---|
-| トランスポート | Streamable HTTP。**`POST /mcp/<project_key>` の1経路だけ**を実装し、応答は常に `application/json` |
-| 受けるメソッド | `initialize` / `notifications/initialized` / `tools/list` / `tools/call` / `ping` |
-| 実装しないもの | SSE ストリーム（`GET` は `405`）、セッション（`Mcp-Session-Id` を発行しない）、`resources` / `prompts` / サーバ発の通知 |
-| プロトコル版 | クライアントが `initialize` で送った版が PB の知る値なら**それをそのまま返す**。知らない値なら PB の最新版を返す（クライアントが切断を選べる） |
-| `MCP-Protocol-Version` ヘッダ | **検証しない**（無くても通す）。版の合意は `initialize` の応答で済んでおり、ヘッダで二重に判定すると、版を送らないクライアントが繋がらなくなる |
+| トランスポート | Streamable HTTP。**`POST /mcp/<project_key>` の1経路**。SDK の `StreamableHTTPHandler` を **Stateless** で使う。応答は SDK が `application/json` か SSE かを選ぶ |
+| プロトコル版 | **新旧の両方を話す。** 新方式（2026-07-28。リクエストごとの `_meta` と `server/discover`）と、旧方式（`initialize` のハンドシェイク。2025-11-25 以前）。**Claude Code は新方式、Claude Desktop（`mcp-remote`）・Codex・Copilot は旧方式で話してくる**（pb-158 のプローブ。`Delegation.md` 10.2） |
+| セッション | 持たない（Stateless）。旧方式のクライアントにも、リクエストごとの一時的なセッションで応じる |
+| `GET` / `DELETE` | `405`。**サーバ発の通知を持たない**——通知はどのクライアントでもモデルを起こさない（`Delegation.md` 10.2）。状態の変化は待ち受けツールで知らせる（同 10章） |
+| ヘッダ | **SDK が検証する。** `Accept` に `application/json` と `text/event-stream` の両方が無ければ `400`、新方式で `Mcp-Method` / `Mcp-Name` が本文と食い違えば `400`（`HeaderMismatch`）。実クライアントは4つとも両方を送っている |
+| `tools/list` の並び | **名前の順**（SDK が並べ替える。仕様が決まった順を求める）。呼ぶ順は `/pb-implement` の手順が教える |
+| DNS rebinding の対策 | **SDK の対策を切る。** SDK は Host が `localhost` そのものかループバックの IP かしか見ないので、stg の `pb.localhost` が `403` になる。**/mcp は Bearer しか受けない**（8.3）ので、再束縛で届く要求には資格情報が載らない |
 
-**サーバ→クライアントの通知を持たないので、SSE が要らない。** MCP の仕様は `POST` の応答を `application/json` で返してよいと定めており、read 系ツールはすべて1往復で完結する。**進捗通知や購読が要る面が現れたら、そこが 8.6 の再検討点になる。**
+**ツールの中身には元の HTTP リクエストが要る**——REST の内部呼び出しに `Authorization` を引き継ぎ、URL からプロジェクトキーを取るためである。
+SDK はリクエストごとにサーバを組み立てる関数を呼ぶので、そこで元のリクエストを包んだ処理を登録する（`mcp/sdk.go`）。
 
 **エラーは2系統に分ける。**
 
@@ -1438,10 +1459,8 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 | 認証できない（トークンが無い・失効・所有者が無効） | **HTTP `401`**（`ApiDesign.md` 2.5 の本文）。JSON-RPC へ入る前に落とす |
 | URL のプロジェクトへ到達できない／トークンのスコープ外 | **HTTP `404`**（同上。8.3） |
 | `agent.run` を持たない | **HTTP `403`**（同上） |
-| 本文が JSON として壊れている | JSON-RPC エラー `-32700` |
-| `jsonrpc` / `method` が無い | `-32600` |
-| 知らないメソッド | `-32601` |
-| 引数の型・必須が違う／知らないツール名 | `-32602` |
+| 本文が JSON として壊れている・`Accept` やヘッダが足りない／食い違う・知らないメソッド | **SDK が返す**（JSON-RPC のエラー、または HTTP `400`。仕様のとおり） |
+| 引数の型・必須が違う／知らないツール名 | `-32602`（知らない名前は SDK、引数はツールの処理が返す） |
 | **ツールが呼んだ REST が 4xx / 5xx を返した** | **`tools/call` の結果に `isError: true`** を立て、本文に 2.5 の `code` と `message` を載せる |
 
 **最後の1行が要点である。** 権限不足（`403`）や見つからない（`404`）は**プロトコルの誤りではなく、そのツール呼び出しの結果**であり、モデルが読んで利用者へ伝えるべきものである。JSON-RPC エラーで返すとクライアントが「サーバの不具合」として扱い、文面がモデルに届かない。逆に、知らないメソッドや壊れた引数は**クライアント側の不具合**なので JSON-RPC エラーで返す。
@@ -1464,6 +1483,13 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 | `pb_put_doc` | `path`, `body_md`, `change_reason?` | `GET` してから `PATCH /projects/:key/docs/*path` | **要点だけ**（`path` / `version` / `updated_at`） |
 | `pb_post_note` | `seq`, `body_md`, `kind?` | `POST /projects/:key/tickets/:seq/comments` | **要点だけ**（`id` / `kind` / `created_at`） |
 | `pb_add_reference` | `seq`, `repository`, `branch?`, `commit_sha?`, `url?`, `label?`, `note?`, `kind?` | `POST /projects/:key/tickets/:seq/references` | 9.10.2 の1件をそのまま |
+| `pb_submit_plan` | `seq`, `skeleton`, `body_md`, `reason_md`, `scope?`, `declared_class?` | `POST /projects/:key/tickets/:seq/plan`（`Delegation.md` 6章） | 提出した計画の版をそのまま（`measured_class` / `status` を含む） |
+| `pb_submit_evaluation` | `seq`, `target_kind`, `verdict`, `findings`, `plan_version?`, `class_check?`, `tokens_used?` | `POST /projects/:key/tickets/:seq/evaluation`（`Delegation.md` 7章） | 作成した評価をそのまま（`round` を含む） |
+| `pb_raise_confirmation` | `seq`, `reason`, `question_md`, `options?` | `POST /projects/:key/tickets/:seq/confirmation`（`Delegation.md` 8章） | 立てた確認待ちをそのまま |
+| `pb_update_handoff` | `seq`, `body`, `trigger` | `POST /projects/:key/tickets/:seq/handoff`（`Delegation.md` 9.3・11章） | 更新した引き継ぎノートをそのまま（`next_move` を含む） |
+| `pb_record_metric` | `seq`, `metric`, `value`, `note_md?` | `POST /projects/:key/tickets/:seq/metrics/:metric/values`（`Delegation.md` 4.2・8.3） | 積んだ値をそのまま（入れた人を含む） |
+
+**`pb_submit_plan` は呼び出し元がその委任の main であることをハンドラが確かめる。** ルートの宣言は `ticket.create`（12.2 と同じ束）だが、**main でなければ 403**——権限とは別に、身元そのものが条件になる唯一のツールである。`scope` を省略すると委任のいまの範囲を使う。**`pb_submit_evaluation` も同じ形で、呼び出し元がその委任の評価エージェントであることを確かめる**（違えば 403）。`target_kind=plan` のときは `plan_version` が要る。**`pb_raise_confirmation` も main の身元を確かめる。** `reason` は main が立てられる5つ（`scope_change`・`irreversible_external`・`charter_change`・`sensitive_area`・`hearing`）に限る——`evaluation_unable`・`budget_exceeded` は評価の提出や PB 自身が内部から立てるため、このツールでは指定できない（`422`）。**`pb_update_handoff` も main の身元を確かめる。** ノートは追記のみで、応答の `next_move` は main の自己申告とは別に PB が計算する推奨である。**`pb_record_metric` も main の身元を確かめる**（人は画面から入れる。評価・他のエージェントは 403）。値は自己申告なので、入れた人を残し、周期の要約に「エージェントが入れた値」と出す（pb-277）。
 
 **引数の名前は `ApiDesign.md` の本体フィールドに揃える**（`body` ではなく `body_md`、`parent` ではなく `parent_seq`）。8.5 の冒頭が述べるとおり、名前が一致していればエージェントは迷ったときに設計文書を引ける。
 
@@ -1641,6 +1667,7 @@ REST にある状態遷移（9.6 / 9.7）にも MCP の口（`pb_transition_task
 | `pb_get_doc` | `path`, `section?` | `GET /projects/:key/docs/*path` | **本文の Markdown**。`section` を指定すればその章だけ |
 | `pb_get_task` | `seq` | `GET /projects/:key/tickets/:seq` | 9.5.1 の応答をそのまま |
 | `pb_list_tasks` | `status?`, `status_category?`, `assignee?`, `open?`, `parent?`, `staged?`, `q?`, `per_page?` | `GET /projects/:key/tickets` | **軽量な部分集合**（下記） |
+| `pb_list_comments` | `seq`, `kind?`, `page?`, `per_page?`, `order?` | `GET /projects/:key/tickets/:seq/comments` | 9.8 の応答をそのまま（**本文を含む**） |
 
 **`pb_get_project(workflow_version=N)` は配置手順の版を5.4へ渡す**（pb-166）。1以上の32bit整数。応答の `workflow_version` は現在の配布版で、クライアントの版が小さいときだけ `warning` が付く。省略時は追加項目を返さず従来の形を保つ。新しい版を送っても古い扱いにはしない。警告は処理を止めず、配置ファイルの再取得を人へ促す。**版を送らない旧手順は未判定であり、参画手順を一度再取得するまで自動検出できない。** 送られなかった版を推測して古い扱いにはしない。
 
@@ -1666,6 +1693,12 @@ seq / type / title / status / priority / assignee / working_agent
 落とすのは `id`（`seq` で足りる）、`sort_key`（画面の並べ替え用）、`tags` `sprint` `has_children` `reporter`、見積3種、`start_at` `closed_at` `version` `created_at` である。**ボードの状況把握に要らない項目を、一覧の件数ぶん掛け算しない。** 1件の詳細が要るときは `pb_get_task` が全項目を返す。
 
 **`staged` は `true` のときだけ `staged=true` を送る**（`ApiDesign.md` 9.2.1「オンステージで絞る」）。オンステージの行とその配下が返る。**`false` は指定なしと同じに扱う**——REST は `true` しか受けない（`overdue` と同じ）ので、そのまま送ると `422` になる。「オンステージのチケットに着手して」と頼まれたときに、未完了の全件を取らずに済ませるための条件である。
+
+**`pb_list_comments` は本文を含めて返す**（pb-259）。`pb_list_tasks` と逆向きの判断に見えるが、動機が違う——
+こちらは**過去に書かれたコメント（引き継ぎノート・決定事項・注意点）を読む口**であり、本文を落とすと
+用を成さない。`pb_post_note`（書く口）・`pb_wait`（これから先の変化を待つ口）と並ぶ3つ目の口で、
+「過去を読む」が抜けていたための追加である。`kind` フィルタ（`ApiDesign.md` 9.8）で
+`decision` / `caveat` だけを拾える。`page` / `per_page` / `order` は 9.8 のページングをそのまま開ける。
 
 **`assignee` に `me` を渡したときは、エージェントの所有者を指す。** エージェントのアクターに担当は付かない（担当は人が持つ）ため、`me` を文字どおり解釈すると `/pb-onboard` の「自分の担当を知る」が必ず0件になる。**6.5 の委譲が「権限の根拠は所有者」と定めているのと同じ理由で、担当の視点も所有者に置く**。引数の値を書き換えるだけなので、MCP 層が独自のルールを持つことにはならない（8.1）。人のトークン（`token_type='api'`）で叩いたときは、従来どおりその人自身を指す。
 
@@ -1854,16 +1887,88 @@ PB が持てる。**
 でも、スコープ境界と依存関係は受け取れたほうがよい。**403 で全体を落とすと、読めるはずの
 ものまで届かない。**
 
+### 8.5.6 待ち受け
+
+| ツール | 引数 | 叩く REST | 応答 |
+|---|---|---|---|
+| `pb_wait` | `seq`, `since?` | `GET /projects/:key/tickets/:seq`（在ることを確かめる）→ `GET /projects/:key/activity?entity=ticket:<seq>&per_page=20` を**3秒ごと** → 変化にコメントがあれば `GET /projects/:key/tickets/:seq/comments?order=desc&per_page=20` | `changed` / `cursor` / `changes[]` / `comments[]` / `waited_seconds` / `next`（変化が無ければ `changed:false` と `cursor` と `next`） |
+
+**状態の変化をエージェントに知らせる口である**（`Delegation.md` 10章）。MCP の通知は、確かめた4つのクライアントのどれでもモデルを起こさなかった（同 10.2）。
+**評価エージェントが評価をコメントで書けば、待っている main の呼び出しが返る。** エージェント同士の会話も、同じチケットへのコメントと待ち受けで成り立つ。
+
+- **変化は `activity`（`ApiDesign.md` 9.13.2）で見る。** コメント・遷移・本文の更新が1つの時系列に並び、`id`（ULID）の大小で新旧が決まる。
+  **`cursor` は最後に見た行の `id`** で、`since` を省くと「いまから後」を待つ
+- **MCP 層で既存の REST を間隔を置いて問い合わせる。** REST に新しい口を足さず、スキーマも変えない（8.1）。権限とプロジェクトのスコープは REST が判定するので、
+  **プロジェクトの外を待つ経路は無い。** 3秒ごとの問い合わせは、REST のレート制限（1分600回）に対して1人1分20回である
+- **1回の長さは PB が決める。** 呼び出しに `progressToken` があれば20秒ごとに進捗の通知を流して**4分**（Copilot が約5分で打ち切るため）、無ければ**50秒**（Claude Desktop が60秒で打ち切り、
+  打ち切りのエラーが続くとモデルが待ち受けをやめるため）。**時間切れはエラーにしない**——`changed:false` と、次も同じ `cursor` で呼べという `next` を返す
+- **コメントの本文を添える。** `activity` のコメントの行は本文の先頭40字の要約しか持たない（`ApiDesign.md` 9.8）ので、評価の全文を渡すために 9.8 の一覧を引く。
+  1件4000字・5件まで（超えたら `truncated: true`）
+- **無いチケットはすぐ失敗にする。** `activity` は存在しない `seq` に空の一覧を返すので、確かめずに待つと時間いっぱい待ってしまう
+- **クライアントが切ったら、そこで止める**（新方式では HTTP の要求の文脈が取り消される）
+- **/mcp の要求では、書き込みの期限を延ばす。** サーバ全体の `WriteTimeout` は60秒で、4分の待ち受けが途中で切られる。外さずに「待ち受けの最長＋1分」へ延ばす（止まったストリームをいつまでも抱えない）
+- **途中の段（ミドルウェア）が応答の書き手を包むなら、`Unwrap` と `Flush` を持たせる。** 無いと SSE の進捗が応答の最後まで保留され、期限の変更も中まで届かない——
+  実機で、進捗を流しているのに Claude Code が60秒で打ち切り、3回続けて評価を受け取れなかった（pb-158）。アクセスログの包みがこれだった
+
+**委任の木全体を待つ形と「次の一手」は、委任の器（pb-246・pb-250）の後に足す。** いまは1件のチケットだけを待つ。
+
+### 8.5.7 実績と計画
+
+**Agent共通の作業実績は、PBの作業タイマーで記録する。** 開始・待機・再開・終了を
+MCPまたはRESTから宣言し、PBの時刻を使って経過時間と明示された待機を除く作業時間を保存する。
+作業時間には調査・編集・検証・ツール待ちを含み、純粋なモデル推論時間とは異なる。
+実行基盤が計測した稼働時間があれば、取得元を添えて報告できる。計測漏れは不完全と表示する。
+チケットの状態遷移とは独立し、作業開始で盤面の状態を変更しない。
+
+同じAgentはPJ内で1件だけタイマーを開ける。共通作業は開始時に複数チケットへの配分を指定し、
+正の比率の合計を1とする。開始・各操作のrequest_idで再送を重複保存しない。
+終了済み作業の訂正は人が理由を添えて行う。追加作業・再オープン後の作業は新しいタイマーを作る。
+切断だけで終了時刻を推定しない。開いたタイマーは欠測として残り、人が終了・不完全を記録できる。
+
+終了時に配分後の作業時間を合計しactual_hoursへ保存する。Pointは運営ノートの
+「実績」節に置く `pb-effort-policy` のJSONブロックを正本とし、開始時に文書版とともに固定する。
+対応式は変更量ベースのactual-v0である。コード・試験・文書・その他の変更行数、ファイル数、
+ブランチ数、教訓数をチケット全体の累積入力として報告する。入力には取得元を付ける。
+規模はコード＋試験×0.5＋文書×0.7＋その他×0.3、指標はlog2(1＋規模)＋
+0.5log2(1＋ファイル数)＋0.5(ブランチ数−1)＋0.5教訓数。境界4.3/7/9.05/10.85/12.9/15.9未満で
+1/2/3/5/8/13、それ以上で21。変更量0、設定不備、入力欠測、異なる契約の混在ではPointを未算出にする。
+累積入力の最新の報告を使い、複数セッションの累積変更量やPointを足さない。
+
+コンテキストは既読文書の省略時も計測手順・契約・未終了記録を案内する。規約に登録義務を置き、
+状態遷移の応答も計測と運営ノートの章取得へ誘導する。必須契約を適用するAgentのレポートには、
+自身の終了した配分済み記録、または時間/Point/両方の計測不能理由が必要である。
+手入力・意図的な空欄は保護する。原データ不足を0で補わない。
+
+終了済みチケットの計測明細は管理APIから確認・整理できる。実績属性は変更せず、集計済み累積入力と
+参照・再送判定用の最小情報を保持する。共有記録は全配分先が終了済みの場合だけ整理する。
+未終了記録は未知の最後の区間を加算せず、欠測として扱う。整理と再オープン・終了を排他し、
+整理後の再計算は累積入力と新しい作業を一度ずつ集計する。明細を失った期間の訂正には制約がある。
+保持期間と定期実行は設定が定まるまで有効にしない。並列作業の合計はPJの経過時間ではない。
+
+**エージェントの実績は、提出された記録から集計する。** 時間・トークン・ターン数は自己申告であり、未提出の作業は集計に含まれない。欠測は0と区別する。再提出はすべてコストに含め、チケット数は重複を除く。モデルは提出・評価時点の値を使う。
+
+集計と明細の取得は `pb_get_agent_usage` / `pb_list_agent_runs` が行う。明細には本文やコメントを載せず、期間・モデル・件数の情報を保つ。APIは `ApiDesign.md` 9.16、画面は `GuiDesign.md` の「エージェント実績」を参照する。
+
+**見積りは、類似する完了チケットの実績を根拠にする。** 実装・文書について、変更する領域と広がりが近い事例を2〜3件選び、中ほどのポイントを基準に差を調整する。段は1・2・3・5・8・13・21。根拠の版、調整理由、確度を記録し、`pb_update_ticket` で `estimate_point` を保存する。根拠不足または13以上なら、分割や先行調査を提案する。判断や実機確認が主な仕事には、この方式のポイントを付けない。
+
+事後試算は予測精度の証拠と区別する。着手前の見積りと同じ版の実績を段数で比較し、10〜15件で±1段に収まる割合を確かめる。時間・トークンへの換算は同じモデルと版の実測が揃った標本で行う。欠測、複数モデル、按分根拠の無い共同作業を混ぜない。
+
+**依存・優先順・日程は別の情報として扱う。** 計画の材料は `pb_get_planning_data`、依存の操作は `pb_add_link` / `pb_update_link` / `pb_delete_link`、順序の操作は `pb_move_task`、日程の更新は `pb_update_ticket` が担う。読み取りは `ticket.view`、依存・順序の更新は `ticket.plan.edit` または `ticket.edit` が必要である。判定はREST側で行う。計画の材料は既存のガント一覧から読み、本文を除く。絞り込みは親・タグ・状態・優先度・担当・段・完了区分・スプリント・予定の重なり・キーワードに対応する。上限5,000件と総件数を保持し、`truncated` で打切りを示す。終日予定には基準タイムゾーンの日付も添える。
+
+**計画専用権限 `ticket.plan.edit` は、依存・順序・開始と終了予定の変更だけを許す。** `administrator` と `project_admin` に配り、エージェントには発行時に明示的に追加する。既定には含めない。実行モードや委任範囲の変更、チケットの作成・完了には使えない。既存の予定更新は `ticket.self_edit` でも行える。
+
+`pb_move_task` は同じ段・同じ親の中で順序だけを変える。段、親、担当、状態、スプリントは変更しない。依存の種類とずらしは `ApiDesign.md` 9.10.1、予定の半開区間は同9.3.1に従う。SS・FF・SFは、チケットを1件ずつ実行する順序ではない。
+
+計画には対象、依存の理由、優先順、予定、稼働条件、見積り根拠を添える。稼働条件や実績が不足する場合は仮定と未推定を示し、確定予定へ反映しない。通常の計画は人が承認した差分を適用し、自律実行では承認済みの委任の範囲でmainが適用する（`Delegation.md` 5〜6章）。対象、依存の両端、順序の基準がすべて同じ範囲に含まれる必要がある。承認前・停止中・終了後・確認待ちには適用できない。ヒアリングは適用を止めない。
+
+複数チケットの更新は単件操作の列であり、全体の原子性を保証しない。途中で拒否・競合が起きたら停止し、適用済みと未適用を記録して読み直す。他者の変更を巻き戻さない。人数を増やす試算では、同じ作業と依存を保ち、稼働条件と並列数の違いを示す。人数だけで所要時間を割らない。
+
 ## 8.6 まだ決めていないこと
 
-- **公式 Go SDK（`github.com/modelcontextprotocol/go-sdk`）へ乗り換えるか。** いまは自前で実装している——話す必要があるのが4メソッドだけで、8.1 が MCP 層を薄く保つと定めているためである（`Design.md` 3.1 がログと設定で下している判断と同じ形）。**次のいずれかが起きたら再検討する**
-  - **PB が話す面が増えたとき。** `resources` / `prompts` / サーバ発の通知 / SSE ストリーム——とくに**長く走るツールの進捗をクライアントへ返したくなったとき**。8.4 が「SSE が要らない」と言えているのは各ツールが1往復で終わるからで、その前提が消えたら判断ごと変わる
-  - **認可が MCP の Authorization 仕様（OAuth 2.1）へ寄ったとき。** いまは静的な Bearer トークン1本（6.5）だが、メタデータの配布・動的クライアント登録・トークン検証まで自前で持つのは割に合わない
-  - **SDK が v1 に達し、破壊的変更が収まったとき。** v0.x のあいだ依存に入れると、追随の手間がかかる
-  - **判断の材料は `server/internal/mcp` の行数である。** 4メソッドで数百行なら自前が安い。**仕様への追随のために膨らみ始めたら、それは SDK が引き受けている仕事を書き写している**という合図であり、そこが乗り換え時である
+- ~~**公式 Go SDK へ乗り換えるか**~~ **乗り換えた**（pb-258、2026-10-03）。挙げていた再検討の条件のうち2つが同時に起きた——**PB が話す面が増えた**（2026-07-28 の新方式と旧方式の両方、待ち受けツールの進捗の通知）と、**SDK が v1 に達した**（v1.8.0）。判断の材料とした行数も、自前で両方式を話すには +300〜400 行の見積りで、**仕様への追随のために膨らむ**ところだった。代償は依存（SDK と間接の6つ。ライセンスは Apache-2.0 / MIT / BSD）と、`tools/list` の並びを SDK に委ねたこと（8.4）。**再検討の条件は、SDK が PB の必要とする版の仕様に追随しなくなったとき**（例：次の版の仕様が出て半年経っても SDK が対応しない）
 - **write 系の冪等キー（`idempotency_key`）を受けるか。** いまは受けない。**本当の冪等性には「キー → 結果」を持つ器が要り**、8.1 が「MCP に独自のビジネスルールを置かない」と定める以上、置き場は REST 層＝全クライアントに効く変更になる。write 系ツールは**再送が安全側に倒れる**——`pb_put_doc` は `If-Match` があるので古い版での再送が `409`、`pb_create_ticket` と `pb_post_note` の重複は画面で見えて人が消せる。**`pb_transition_task` の再送も安全側に倒れる**——2度目は「進行中 → 進行中」を要求することになり、`ck_workflow_transition_diff` により定義が存在しないため `409 invalid_transition` で弾かれる（`ApiDesign.md` 9.6 の検証2）。**次のいずれかが起きたら再検討する**
   - **リース（構想）を起こしたとき**（8.2）
-  - **無人実行に踏み込んだとき**（`Requirements.md` 10.11 の将来対応）。人が同席していれば重複は目で拾えるが、同席しないなら拾えない
+  - **無人実行に踏み込んだとき**（自律実行。`Delegation.md`。**この条件は pb-132 で発火した**——扱いは同 14章の差分一覧）。人が同席していれば重複は目で拾えるが、同席しないなら拾えない
   - **判断の材料は「再送で何が二重になるか」を1つ言えるかである。** 言えないうちは器を作らない
 
 - **ツール description の文面設計**（`Requirements.md` 10.13）。**実質的にこれがエージェントの行動を規定する**ため、プロンプトエンジニアリングの対象になる。**いまは日本語で書いている**——憲章・チケット・文書がすべて日本語であり、description が指示する語彙と、エージェントが読む対象の語彙を揃えるためである（英語より毎セッション数百トークン多く消費する）

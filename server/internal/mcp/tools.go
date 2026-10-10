@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,10 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
-	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/middleware"
 )
 
 // tool は1件のツール定義（Design.md 8.2 / 8.5）。
@@ -28,6 +26,10 @@ type tool struct {
 
 	// call は REST を1回叩いて結果を組み立てる。JSON には出さない。
 	call func(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) `json:"-"`
+
+	// long は長く走るツール（pb_wait）の処理。call の代わりに持つ。JSON には出さない。
+	// **クライアントが切ったことを ctx で知り、progress で進捗の通知を送る**（wait.go）。
+	long func(ctx context.Context, h *Handler, r *http.Request, key string, args json.RawMessage, progress progressFunc) (toolResult, *rpcError) `json:"-"`
 }
 
 // schema は入力の JSON Schema。**object に限る**（MCP の要求）。
@@ -70,12 +72,6 @@ func objectItems(desc string, props map[string]property, required ...string) pro
 			Required:   required,
 		},
 	}
-}
-
-// callParams は tools/call の params。
-type callParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
 }
 
 // toolResult は tools/call の result。
@@ -162,7 +158,7 @@ func readTools() []tool {
 				Properties: map[string]property{
 					"status":          {Type: "string", Description: "ワークフローのステータスキー。カンマ区切りで複数指定すると OR"},
 					"status_category": {Type: "string", Description: "todo / in_progress / review / done のいずれか。ワークフローに依存しない4値で、カンマ区切りで複数指定すると OR"},
-					"assignee": {Type: "string", Description: "担当者。me で自分（エージェントのトークンでは所有者）、" +
+					"assignee": {Type: "string", Description: "担当者。指定は承認済みmainの木内のみ。me で自分（エージェントのトークンでは所有者）、" +
 						"none で未割当、アクターの ULID も渡せる。カンマ区切りで複数指定すると OR"},
 					"open":   {Type: "boolean", Description: "true で未完了のものだけ、false で完了したものだけ"},
 					"parent": {Type: "string", Description: "チケット番号（seq）。そのチケットと全子孫に絞る。カンマ区切りで複数指定すると OR"},
@@ -187,56 +183,33 @@ func readTools() []tool {
 			},
 			call: callGetTask,
 		},
+		{
+			Name: "pb_list_comments",
+			Description: "チケットの既存コメント（引き継ぎノート・決定事項・注意点を含む）を一覧で返す。" +
+				"pb_post_note が書く口、pb_wait が「これから先」の変化を待つ口なのに対し、" +
+				"こちらは**過去に書かれたコメントを読む口**である。" +
+				"kind で絞ると、decision（決めたこと）や caveat（注意点）だけを拾える。" +
+				"本文を含めて返す——pb_list_tasks の軽量化とは目的が異なる。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq": {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
+					"kind": {Type: "string", Description: "種類で絞る。カンマ区切りで複数指定するとOR。" +
+						"discussion / decision / artifact / caveat / reference / progress。省略すると全種類"},
+					"page":     {Type: "integer", Description: "ページ番号。既定1", Minimum: intPtr(1)},
+					"per_page": {Type: "integer", Description: "返す件数。既定50、上限200", Minimum: intPtr(1), Maximum: intPtr(perPageMax)},
+					"order": {Type: "string", Description: "並び順。既定は古い順（asc）。" +
+						"新しいものから読みたいときは desc",
+						Enum: []string{"asc", "desc"}},
+				},
+				Required: []string{"seq"},
+			},
+			call: callListComments,
+		},
 	}
 }
 
 func intPtr(v int) *int { return &v }
-
-// lookup は名前でツールを引く。
-func (h *Handler) lookup(name string) *tool {
-	for i := range h.tools {
-		if h.tools[i].Name == name {
-			return &h.tools[i]
-		}
-	}
-	return nil
-}
-
-// callTool は tools/call を処理する。
-//
-// **知らないツール名と壊れた引数は JSON-RPC エラー**（呼び出し側の不具合）、
-// **REST が返した 4xx / 5xx は isError のツール結果**（呼び出しの結果）である
-// （Design.md 8.4）。
-func (h *Handler) callTool(r *http.Request, req rpcRequest) rpcResponse {
-	var params callParams
-	if len(req.Params) > 0 {
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return errorOf(req.ID, newError(codeInvalidParams, "params を解釈できない"))
-		}
-	}
-	if params.Name == "" {
-		return errorOf(req.ID, newError(codeInvalidParams, "name が無い"))
-	}
-
-	t := h.lookup(params.Name)
-	if t == nil {
-		return errorOf(req.ID, newError(codeInvalidParams, "知らないツール: "+params.Name))
-	}
-
-	// プロジェクトキーは URL から取る（Design.md 8.3）。トークンのスコープとの
-	// 整合は RequireProjectPermission が検証済みである。
-	key := chi.URLParam(r, middleware.ProjectKeyURLParam)
-	if key == "" {
-		return errorOf(req.ID, newError(codeInternalError,
-			"ルートに {"+middleware.ProjectKeyURLParam+"} が無い"))
-	}
-
-	res, rpcErr := t.call(h, r, key, params.Arguments)
-	if rpcErr != nil {
-		return errorOf(req.ID, rpcErr)
-	}
-	return resultOf(req.ID, res)
-}
 
 // ── ツール本体 ──────────────────────────────────────────────
 
@@ -337,6 +310,51 @@ func callGetTask(h *Handler, r *http.Request, key string, args json.RawMessage) 
 		res.body = withScheduleDates(res.body, loc)
 	}
 	return passThrough(r, res, nil)
+}
+
+// commentsArgs は pb_list_comments の引数（Design.md 8.5.2。pb-259）。
+type commentsArgs struct {
+	Seq     flexInt `json:"seq"`
+	Kind    string  `json:"kind"`
+	Page    flexInt `json:"page"`
+	PerPage flexInt `json:"per_page"`
+	Order   string  `json:"order"`
+}
+
+// callListComments はチケットの既存コメントを読む（ApiDesign.md 9.8。pb-259）。
+//
+// **passThrough で本文ごと返す。** pb_list_tasks の軽量化（lighten）とは逆の
+// 目的である——引き継ぎノートを読むのがこのツールの動機であり、本文を
+// 落とすと用を成さない。
+func callListComments(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in commentsArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+
+	q := url.Values{}
+	setIfNotEmpty(q, "kind", in.Kind)
+	setIfNotEmpty(q, "order", in.Order)
+	if in.Page.set {
+		if in.Page.value < 1 {
+			return toolResult{}, newError(codeInvalidParams, "page は 1 以上の整数である")
+		}
+		q.Set("page", strconv.FormatInt(in.Page.value, 10))
+	}
+	if in.PerPage.set {
+		if in.PerPage.value < 1 || in.PerPage.value > perPageMax {
+			return toolResult{}, newError(codeInvalidParams,
+				fmt.Sprintf("per_page は 1 以上 %d 以下である", perPageMax))
+		}
+		q.Set("per_page", strconv.FormatInt(in.PerPage.value, 10))
+	}
+
+	res, err := h.getREST(r, ticketPath(key, seq)+"/comments", q)
+	return passThrough(r, res, err)
 }
 
 // listArgs は pb_list_tasks の引数（Design.md 8.5）。
@@ -803,7 +821,7 @@ func writeTools() []tool {
 					"priority": {Type: "string", Description: "優先度。省略すると未設定",
 						Enum: []string{"lowest", "low", "medium", "high", "highest"}},
 					"parent_seq": {Type: "integer", Description: "親チケットの番号（seq）。省略するとトップレベル", Minimum: intPtr(1)},
-					"assignee_id": {Type: "string", Description: "担当者。me で自分（エージェントのトークンでは所有者）、" +
+					"assignee_id": {Type: "string", Description: "担当者。指定は承認済みmainの木内のみ。me で自分（エージェントのトークンでは所有者）、" +
 						"アクターの ULID も渡せる。省略すると未割当。**当該プロジェクトのメンバーであること**"},
 					"tag_ids": {Type: "array", Description: "タグの ULID の配列。**pb_list_tags で列挙できる。** " +
 						"すべて当該プロジェクトのタグであること",
@@ -837,7 +855,7 @@ func writeTools() []tool {
 					"priority": {Type: "string", Description: "優先度",
 						Enum: []string{"lowest", "low", "medium", "high", "highest"}},
 					"parent_seq":  {Type: "integer", Description: "親チケットの番号（seq）", Minimum: intPtr(1)},
-					"assignee_id": {Type: "string", Description: "担当者。me で自分（所有者）、アクターの ULID も渡せる"},
+					"assignee_id": {Type: "string", Description: "担当者。変更は承認済みmainの木内のみ。me は所有者、アクターの ULID も渡せる"},
 					"tag_ids": {Type: "array", Description: "タグの ULID の配列。**丸ごと置き換える**（空配列で全部外す）。" +
 						"pb_list_tags で列挙できる",
 						Items: &property{Type: "string"}},
@@ -924,6 +942,125 @@ func writeTools() []tool {
 				Required: []string{"seq"},
 			},
 			call: callAddReference,
+		},
+		{
+			Name: "pb_submit_plan",
+			Description: "自律実行（Delegated）の main が、委任の根に対して計画の版を提出する" +
+				"（Delegation.md 6章）。**呼び出し元がその委任の main でなければ拒まれる。** " +
+				"PB が前の承認済み版と比べて変更の段階（minor/structural/scope）を測り、" +
+				"自己申告（declared_class）と比べて厳しい方を採る。軽微ならその場で反映される。" +
+				"構造の変更は評価エージェントの合格を待ち、範囲の変更は委任を計画中へ戻して" +
+				"PM の事前承認を待つ。応答で measured_class と status を確認すること。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq":      {Type: "integer", Description: "委任の根となるチケットの番号（seq）", Minimum: intPtr(1)},
+					"skeleton": {Type: "object", Description: "骨格：根の直下の枝・予算配分・チェックポイント（Delegation.md 6.2）。形は固定されていない"},
+					"scope": {Type: "object", Description: "この版が前提とする委任範囲。省略すると委任のいまの範囲をそのまま使う。" +
+						"範囲を変えるときだけ指定する"},
+					"body_md":   {Type: "string", Description: "計画の説明"},
+					"reason_md": {Type: "string", Description: "前の版から変えた理由"},
+					"declared_class": {Type: "string", Description: "この変更が軽微／構造／範囲のどれに当たるかの自己申告。" +
+						"省略すると minor 扱いになる（PB の判定のほうが厳しければそちらが採られる）",
+						Enum: []string{"minor", "structural", "scope"}},
+				},
+				Required: []string{"seq", "skeleton", "body_md", "reason_md"},
+			},
+			call: callSubmitPlan,
+		},
+		{
+			Name: "pb_submit_evaluation",
+			Description: "自律実行（Delegated）の評価エージェントが、計画の版または根の完了レポートを評価する" +
+				"（Delegation.md 7章）。**呼び出し元がその委任の評価エージェントでなければ拒まれる。** " +
+				"target_kind=plan のときは plan_version も指定する。findings には少なくとも " +
+				"purpose_and_dod（目的・完了条件）と values（価値観・世界観）の2観点を、それぞれ " +
+				"{aspect, verdict, note_md} で入れる。verdict=fail のときは、不合格にした観点の " +
+				"note_md に指摘を必ず書く。unable のときは、PB が確認待ち（evaluation_unable）を自動で立てる。" +
+				"同じ対象への不合格が往復の上限に達すると、PB が委任を一時停止し確認待ち（budget_exceeded）を立てる。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq": {Type: "integer", Description: "委任の根となるチケットの番号（seq）", Minimum: intPtr(1)},
+					"target_kind": {Type: "string", Description: "評価の対象。plan=計画の版、deliverable=根の最新の完了レポート（暗黙に最新を指す）",
+						Enum: []string{"plan", "deliverable"}},
+					"plan_version": {Type: "integer", Description: "target_kind=plan のとき必須。評価する計画の版番号", Minimum: intPtr(1)},
+					"verdict":      {Type: "string", Description: "合否", Enum: []string{"pass", "fail", "unable"}},
+					"findings": objectItems("観点ごとの判定の配列。aspect は少なくとも purpose_and_dod と values を含む",
+						map[string]property{
+							"aspect":  {Type: "string", Description: "評価の観点。少なくとも purpose_and_dod と values を含む"},
+							"verdict": {Type: "string", Description: "この観点の判定。判断不能は全体の verdict=unable とし、理由を note_md に書く", Enum: []string{"pass", "fail"}},
+							"note_md": {Type: "string", Description: "判定の根拠。不合格の場合は何が足りないかと、どうなれば合格かを書く"},
+						}, "aspect", "verdict", "note_md"),
+					"class_check": {Type: "string", Description: "target_kind=plan で構造の変更を評価したときの、分類の妥当性の判定。" +
+						"agree=main の申告どおり、stricter=もっと厳しい段階、looser=もっと緩い段階",
+						Enum: []string{"agree", "stricter", "looser"}},
+					"tokens_used": {Type: "integer", Description: "この評価に使ったトークン数"},
+				},
+				Required: []string{"seq", "target_kind", "verdict", "findings"},
+			},
+			call: callSubmitEvaluation,
+		},
+		{
+			Name: "pb_raise_confirmation",
+			Description: "自律実行（Delegated）の main が、人への確認待ちを立てる" +
+				"（Delegation.md 8章）。**呼び出し元がその委任の main でなければ拒まれる。** " +
+				"立てられる理由は scope_change（範囲の外への変更）・irreversible_external（マージ・push・" +
+				"デプロイ・外部送信・削除）・charter_change（憲章の変更）・sensitive_area（機微な領域への接触）・" +
+				"hearing（計画中の目的・ゴール・制約の掘り下げ）の5つ。" +
+				"evaluation_unable・budget_exceeded・checkpoint は PB 自身が別の経路で立てるため、ここでは指定できない。" +
+				"hearing 以外が開いているあいだ、委任の木への main・評価の書き込みは止まる（答えるのは PM）。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq": {Type: "integer", Description: "委任の根となるチケットの番号（seq）", Minimum: intPtr(1)},
+					"reason": {Type: "string", Description: "確認待ちを立てる理由（8.1の条件キー）",
+						Enum: []string{"scope_change", "irreversible_external", "charter_change", "sensitive_area", "hearing"}},
+					"question_md": {Type: "string", Description: "PM への問い（Markdown）"},
+					"options":     {Type: "array", Description: "選択肢と推奨（任意）。規約の「止まるときは選択肢と推奨を出す」と同じ形"},
+				},
+				Required: []string{"seq", "reason", "question_md"},
+			},
+			call: callRaiseConfirmation,
+		},
+		{
+			Name: "pb_update_handoff",
+			Description: "自律実行（Delegated）の main が、引き継ぎノートを更新する" +
+				"（Delegation.md 9.3・11章）。**呼び出し元がその委任の main でなければ拒まれる。** " +
+				"ノートは追記のみで、最新の1件が現在の内容になる。11.1 の7項目" +
+				"（目的と現在の計画の版、決めたこと、未決事項、進行中の作業、次の一手、予算の消費、直近の評価）を " +
+				"body に自由な形で入れる。trigger は11.2の更新の区切り（計画の版・評価・完了レポート・" +
+				"確認待ちを立てる前・セッションを終える前）のいずれか。" +
+				"応答の next_move は、PB が役割と段階から判定した推奨であり、main 自身の判断を縛らない。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq":  {Type: "integer", Description: "委任の根となるチケットの番号（seq）", Minimum: intPtr(1)},
+					"body": {Type: "object", Description: "引き継ぎノートの中身（11.1の7項目）。形は固定されていない"},
+					"trigger": {Type: "string", Description: "更新の区切り（11.2）",
+						Enum: []string{"plan_version", "evaluation", "report", "before_confirmation", "session_end"}},
+				},
+				Required: []string{"seq", "body", "trigger"},
+			},
+			call: callUpdateHandoff,
+		},
+		{
+			Name: "pb_record_metric",
+			Description: "自律実行（Delegated）の main が、指標の値を1件入れる（Delegation.md 4.2・8.3）。" +
+				"**呼び出し元がその委任の main でなければ拒まれる**（人は画面から入れる）。" +
+				"指標の定義（key・名前・目標）はパックの「6. 自律実行」の制約にある。値は追記のみで、" +
+				"入れた人として記録され、周期の要約に「エージェントが入れた値」と出る。" +
+				"自分に都合のよい値を入れないこと——評価エージェントと PM が見る。",
+			InputSchema: schema{
+				Type: "object",
+				Properties: map[string]property{
+					"seq":     {Type: "integer", Description: "委任の根となるチケットの番号（seq）", Minimum: intPtr(1)},
+					"metric":  {Type: "string", Description: "指標の key（制約の metrics[].key）"},
+					"value":   {Type: "number", Description: "測った値"},
+					"note_md": {Type: "string", Description: "どう測ったか（任意。出典や測った日など）"},
+				},
+				Required: []string{"seq", "metric", "value"},
+			},
+			call: callRecordMetric,
 		},
 		{
 			Name: "pb_create_doc",
@@ -1392,6 +1529,214 @@ func callAddReference(h *Handler, r *http.Request, key string, args json.RawMess
 	return passThrough(r, res, err)
 }
 
+// submitPlanArgs は pb_submit_plan の引数（Delegation.md 6章。pb-247）。
+//
+// **skeleton / scope は json.RawMessage で受ける。** 形を固定していない
+// jsonb であり、MCP 層が型を解釈する必要が無い——REST へそのまま渡す。
+type submitPlanArgs struct {
+	Seq           flexInt         `json:"seq"`
+	Skeleton      json.RawMessage `json:"skeleton"`
+	Scope         json.RawMessage `json:"scope"`
+	BodyMd        string          `json:"body_md"`
+	ReasonMd      string          `json:"reason_md"`
+	DeclaredClass string          `json:"declared_class"`
+}
+
+func callSubmitPlan(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in submitPlanArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if len(in.Skeleton) == 0 {
+		return toolResult{}, newError(codeInvalidParams, "skeleton は必須である")
+	}
+	if strings.TrimSpace(in.BodyMd) == "" {
+		return toolResult{}, newError(codeInvalidParams, "body_md は必須である")
+	}
+	if strings.TrimSpace(in.ReasonMd) == "" {
+		return toolResult{}, newError(codeInvalidParams, "reason_md は必須である")
+	}
+
+	body := map[string]any{
+		"skeleton": json.RawMessage(in.Skeleton),
+		"body_md":  in.BodyMd, "reason_md": in.ReasonMd,
+	}
+	if len(in.Scope) > 0 {
+		body["scope"] = json.RawMessage(in.Scope)
+	}
+	if in.DeclaredClass != "" {
+		body["declared_class"] = in.DeclaredClass
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/plan", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// submitEvaluationArgs は pb_submit_evaluation の引数（Delegation.md 7章。pb-248）。
+//
+// **findings は json.RawMessage で受ける。** 検証（観点の値域・不合格の指摘）は
+// REST 層が行う——MCP 層に同じ規則を重ねない（Design.md 8.1）。
+type submitEvaluationArgs struct {
+	Seq         flexInt         `json:"seq"`
+	TargetKind  string          `json:"target_kind"`
+	PlanVersion *int            `json:"plan_version"`
+	Verdict     string          `json:"verdict"`
+	Findings    json.RawMessage `json:"findings"`
+	ClassCheck  string          `json:"class_check"`
+	TokensUsed  *int64          `json:"tokens_used"`
+}
+
+func callSubmitEvaluation(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in submitEvaluationArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if strings.TrimSpace(in.TargetKind) == "" {
+		return toolResult{}, newError(codeInvalidParams, "target_kind は必須である")
+	}
+	if strings.TrimSpace(in.Verdict) == "" {
+		return toolResult{}, newError(codeInvalidParams, "verdict は必須である")
+	}
+	if len(in.Findings) == 0 {
+		return toolResult{}, newError(codeInvalidParams, "findings は必須である")
+	}
+
+	body := map[string]any{
+		"target_kind": in.TargetKind,
+		"verdict":     in.Verdict,
+		"findings":    json.RawMessage(in.Findings),
+	}
+	if in.PlanVersion != nil {
+		body["plan_version"] = *in.PlanVersion
+	}
+	if in.ClassCheck != "" {
+		body["class_check"] = in.ClassCheck
+	}
+	if in.TokensUsed != nil {
+		body["tokens_used"] = *in.TokensUsed
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/evaluation", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// raiseConfirmationArgs は pb_raise_confirmation の引数（Delegation.md 8章。pb-249）。
+type raiseConfirmationArgs struct {
+	Seq        flexInt         `json:"seq"`
+	Reason     string          `json:"reason"`
+	QuestionMd string          `json:"question_md"`
+	Options    json.RawMessage `json:"options"`
+}
+
+func callRaiseConfirmation(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in raiseConfirmationArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if strings.TrimSpace(in.Reason) == "" {
+		return toolResult{}, newError(codeInvalidParams, "reason は必須である")
+	}
+	if strings.TrimSpace(in.QuestionMd) == "" {
+		return toolResult{}, newError(codeInvalidParams, "question_md は必須である")
+	}
+
+	body := map[string]any{
+		"reason": in.Reason, "question_md": in.QuestionMd,
+	}
+	if len(in.Options) > 0 {
+		body["options"] = json.RawMessage(in.Options)
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/confirmation", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// updateHandoffArgs は pb_update_handoff の引数（Delegation.md 9.3・11章。pb-250）。
+type updateHandoffArgs struct {
+	Seq     flexInt         `json:"seq"`
+	Body    json.RawMessage `json:"body"`
+	Trigger string          `json:"trigger"`
+}
+
+func callUpdateHandoff(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in updateHandoffArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if len(in.Body) == 0 {
+		return toolResult{}, newError(codeInvalidParams, "body は必須である")
+	}
+	if strings.TrimSpace(in.Trigger) == "" {
+		return toolResult{}, newError(codeInvalidParams, "trigger は必須である")
+	}
+
+	raw, err := json.Marshal(map[string]any{
+		"body": json.RawMessage(in.Body), "trigger": in.Trigger,
+	})
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/handoff", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
+// recordMetricArgs は pb_record_metric の引数（Delegation.md 4.2・8.3。pb-277）。
+type recordMetricArgs struct {
+	Seq    flexInt  `json:"seq"`
+	Metric string   `json:"metric"`
+	Value  *float64 `json:"value"`
+	NoteMD string   `json:"note_md"`
+}
+
+func callRecordMetric(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
+	var in recordMetricArgs
+	if rpcErr := decodeArgs(args, &in); rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	seq, rpcErr := requireSeq(in.Seq)
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+	if strings.TrimSpace(in.Metric) == "" {
+		return toolResult{}, newError(codeInvalidParams, "metric は必須である")
+	}
+	if in.Value == nil {
+		return toolResult{}, newError(codeInvalidParams, "value は必須である")
+	}
+	raw, err := json.Marshal(map[string]any{"value": *in.Value, "note_md": in.NoteMD})
+	if err != nil {
+		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
+	}
+	res, err := h.callREST(r, http.MethodPost,
+		ticketPath(key, seq)+"/metrics/"+url.PathEscape(in.Metric)+"/values", nil, raw, nil)
+	return passThrough(r, res, err)
+}
+
 type createDocArgs struct {
 	Slug       string  `json:"slug"`
 	Title      string  `json:"title"`
@@ -1613,7 +1958,16 @@ func callTransitionTask(h *Handler, r *http.Request, key string, args json.RawMe
 		return toolResult{}, newError(codeInternalError, "本文の組み立てに失敗した: "+err.Error())
 	}
 	res, err := h.callREST(r, http.MethodPost, ticketPath(key, seq)+"/transition", nil, raw, nil)
-	return passThroughFields(r, res, err, transitionResultFields...)
+	result, rpc := passThroughFields(r, res, err, transitionResultFields...)
+	if rpc == nil && res.ok() {
+		var fields map[string]any
+		if len(result.Content) > 0 && json.Unmarshal([]byte(result.Content[0].Text), &fields) == nil {
+			fields["work_instructions"] = "進行中への着手時はpb_get_contextで作業実績の案内を確認し、pb_get_doc(path=\"project-management-note\", section=\"実績\")で算出契約を読む。実作業開始にpb_start_workを呼び、終了時にpb_record_work(action=finish)の保存結果を確認してレポートへwork_session_idを指定する。"
+			encoded, _ := json.Marshal(fields)
+			result = textResult(string(encoded))
+		}
+	}
+	return result, rpc
 }
 
 // transitionResultFields は pb_transition_task の応答に残す項目（Design.md 8.5.3）。
@@ -1641,7 +1995,9 @@ func reportTools() []tool {
 			InputSchema: schema{
 				Type: "object",
 				Properties: map[string]property{
-					"seq": {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
+					"work_session_id":    {Type: "string", Description: "終了済み共通作業記録ID。保存結果を確認して指定。再提出でも実績を加算しない"},
+					"effort_unavailable": {Type: "object", Description: "計測不能の場合の対象と理由。推測値や0で補わない", Properties: map[string]property{"target": {Type: "string", Enum: []string{"time", "point", "both"}}, "reason": {Type: "string"}}, Required: []string{"target", "reason"}},
+					"seq":                {Type: "integer", Description: "チケット番号（seq）", Minimum: intPtr(1)},
 					"status": {Type: "string", Enum: []string{"completed", "blocked", "partial"},
 						Description: "作業の結果。completed=やり切った / blocked=進められない / partial=一部だけ終わった"},
 					"artifacts": objectItems(

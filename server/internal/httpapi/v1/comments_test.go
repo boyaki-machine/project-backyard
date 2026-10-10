@@ -186,6 +186,70 @@ func TestListCommentsHonorsDescOrder(t *testing.T) {
 	}
 }
 
+// **kind でカンマ区切りの OR フィルタができる**（9.8。pb-259）。
+func TestListCommentsFiltersByKind(t *testing.T) {
+	q := commentFake()
+	q.ticket.commentRows = []gen.GetTicketCommentRow{
+		sampleComment(testCommentID, "決めたこと", "decision", testActorID, baseTime),
+		sampleComment(testCommentID2, "雑談", "discussion", testActorID, baseTime.Add(time.Hour)),
+	}
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.listTicketComments(rec, cmtReq(http.MethodGet, "/comments?kind=decision,caveat", "", "31", ""))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	got := decodeCommentList(t, rec)
+	if len(got.Items) != 1 || got.Items[0].ID != testCommentID {
+		t.Fatalf("items = %+v, want decision の1件（%s）のみ", got.Items, testCommentID)
+	}
+	if got.Total != 1 {
+		t.Errorf("total = %d, want 1（フィルタ後の件数）", got.Total)
+	}
+}
+
+// **kind が1件もフィルタに合わないとき、0件と ETag が正しく返る**
+// （SummarizeTicketComments の経路。9.8。pb-259）。
+func TestListCommentsFilteredToZeroStillReturnsETag(t *testing.T) {
+	q := commentFake()
+	q.ticket.commentRows = []gen.GetTicketCommentRow{
+		sampleComment(testCommentID, "雑談", "discussion", testActorID, baseTime),
+	}
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.listTicketComments(rec, cmtReq(http.MethodGet, "/comments?kind=decision", "", "31", ""))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	got := decodeCommentList(t, rec)
+	if len(got.Items) != 0 || got.Total != 0 {
+		t.Fatalf("items/total = %+v/%d, want 空", got.Items, got.Total)
+	}
+	if rec.Header().Get("ETag") == "" {
+		t.Error("ETag が空（0件でも要る）")
+	}
+	if !containsOp(q.opLog, "SummarizeTicketComments") {
+		t.Errorf("opLog = %v, want SummarizeTicketComments を含む", q.opLog)
+	}
+}
+
+// **知らない kind は 422**（9.8。他のフィルタ系 enum と同じ扱い）。
+func TestListCommentsRejectsUnknownKind(t *testing.T) {
+	q := commentFake()
+	h, _ := ticketHandler(q)
+
+	rec := httptest.NewRecorder()
+	h.listTicketComments(rec, cmtReq(http.MethodGet, "/comments?kind=bogus", "", "31", ""))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
 // **削除済みは items に残り、body_md が null になる**（9.8）。
 func TestListCommentsKeepsDeletedWithNullBody(t *testing.T) {
 	q := commentFake()
@@ -244,11 +308,29 @@ func TestCommentsETagVariesByPage(t *testing.T) {
 	p2 := Page{Page: 2, PerPage: 50, Sort: "created_at", Order: OrderAsc}
 	desc := Page{Page: 1, PerPage: 50, Sort: "created_at", Order: OrderDesc}
 
-	if commentsETag(p1, 3, last) == commentsETag(p2, 3, last) {
+	if commentsETag(p1, nil, 3, last) == commentsETag(p2, nil, 3, last) {
 		t.Error("1ページ目と2ページ目の ETag が同じ")
 	}
-	if commentsETag(p1, 3, last) == commentsETag(desc, 3, last) {
+	if commentsETag(p1, nil, 3, last) == commentsETag(desc, nil, 3, last) {
 		t.Error("asc と desc の ETag が同じ")
+	}
+}
+
+// **kind フィルタが違えば ETag も違う**（pb-259）。件数と最終更新が偶然同じ
+// フィルタどうしで、同じ ETag を返してはならない。
+func TestCommentsETagVariesByKind(t *testing.T) {
+	last := ts(baseTime)
+	p := Page{Page: 1, PerPage: 50, Sort: "created_at", Order: OrderAsc}
+
+	if commentsETag(p, []string{"decision"}, 3, last) == commentsETag(p, []string{"caveat"}, 3, last) {
+		t.Error("kind が違うのに ETag が同じ")
+	}
+	if commentsETag(p, nil, 3, last) == commentsETag(p, []string{"decision"}, 3, last) {
+		t.Error("フィルタ無しと kind 指定で ETag が同じ")
+	}
+	// 順序を変えても正規化されて同じ ETag になる。
+	if commentsETag(p, []string{"decision", "caveat"}, 3, last) != commentsETag(p, []string{"caveat", "decision"}, 3, last) {
+		t.Error("kind の指定順序だけが違うのに ETag が異なる")
 	}
 }
 

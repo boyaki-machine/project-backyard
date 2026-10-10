@@ -87,6 +87,10 @@ type ticketListItem struct {
 	StagedAt *Time          `json:"staged_at"`
 	Tags     []ticketTagRef `json:"tags"`
 	Sprint   *sprintRef     `json:"sprint"`
+	// Delegation は自律実行の印（Delegation.md 8.2。pb-276）。終わっていない委任の木の
+	// 中なら値が入り、外なら null。**一覧（9.2）だけが埋める**——印は人が一覧で気づく
+	// ための口であり、検索・ビューなど他の経路は今は null を返す。
+	Delegation *delegationMark `json:"delegation"`
 
 	EstimatePoint      *float64 `json:"estimate_point"`
 	EstimateHours      *float64 `json:"estimate_hours"`
@@ -148,6 +152,7 @@ type ticketChildBrief struct {
 // とおり pb_get_task は本応答をそのまま返すので、**ここが返さない限りどちらの分岐も
 // 起こりえなかった。**
 type ticketDetailView struct {
+	WorkContext *workContextView `json:"work_context,omitempty"`
 	ticketListItem
 	BodyMd       *string            `json:"body_md"`
 	Parent       *ticketBrief       `json:"parent"`
@@ -433,4 +438,12 @@ func float8Ptr(v pgtype.Float8) *float64 {
 	}
 	f := v.Float64
 	return &f
+}
+
+// delegationMark は一覧の行に出す自律実行の印（pb-276）。
+type delegationMark struct {
+	RootSeq           int32  `json:"root_seq"`
+	IsRoot            bool   `json:"is_root"`
+	Status            string `json:"status"`
+	OpenConfirmations int64  `json:"open_confirmations"`
 }

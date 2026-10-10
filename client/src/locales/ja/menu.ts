@@ -7,6 +7,7 @@ export default {
     backlog: 'バックログ',
     gantt: 'ガント',
     search: 'チケット検索',
+    insights: '進捗分析',
     docs: 'Docs',
     projectSettings: 'プロジェクト設定',
     administration: '管理',

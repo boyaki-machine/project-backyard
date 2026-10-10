@@ -999,13 +999,13 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 
 **画面は既定と許可リストを 4.5.9 から引く**。`scopes` が絶対指定なので、「既定に `doc.edit` を足す」を送るには既定の中身が要るが、**画面に写しを持たせない。**
 
-**許可リストは「6.5 の既定10件 ∪ `doc.edit` ∪ `ticket.actual_point.edit`」の12件である。**
+**許可リストは、既定10件と任意の追加4件である。** 追加できるのは `doc.edit`・`ticket.actual_point.edit`・`delegation.evaluate`・`ticket.plan.edit`。所有者自身の権限も必要である。
 
 ```
 agent.run  comment.create  doc.view  project.view
 ticket.assign  ticket.create  ticket.transition  ticket.view
 ticket.reference.edit  ticket.self_edit                         ← 既定の10件
-doc.edit  ticket.actual_point.edit                              ← 発行時に足せる
+doc.edit  ticket.actual_point.edit  delegation.evaluate  ticket.plan.edit ← 任意の追加
 ```
 
 **`ticket.self_edit` も既定に入れる**。`ticket.reference.edit` と同じ理由である——**起票したチケットを直すのは実装エージェントの通常の仕事**であり、付く相手で変わらない。**`ticket.edit` は許可リストに入れない**。あれは 9.5.2 の全項目を開けるので、**エージェントが `execution_mode` や `scope` を自分で緩められる**（`DbDesign.md` 6.13）。
@@ -1891,7 +1891,7 @@ GET /api/v1/projects/check-key?key=my-app
 
 `timezone` はプロジェクトの基準タイムゾーン（IANA 名。`DbDesign.md` 6.23）。祝日の取得元と日ごとの上書きは 5.8 で読む——**この応答に載せない**（一般タブとメンバータブは暦を使わない。`GuiDesign.md` 5.9）。
 
-`settings` は `project.settings`（jsonb）をそのまま返す。**定義するキーは `repositories` と `gantt_snap_minutes`（ガントの吸着の単位。pb-221）**で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は未実装）。
+`settings` は `project.settings`（jsonb）をそのまま返す。**定義するキーは `repositories` と `gantt_snap_minutes`**（ガントの吸着の単位。pb-221）で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は未実装）。
 
 **`my_role` と `my_permissions` は、エージェントのトークンでは所有者のものが出る**（`Design.md` 6.5 の委譲）。エージェントは `project_member` の行を持たないため、自分自身で引くと `my_role` が常に `null` になり、**`my_permissions` からプロジェクトロールの層が丸ごと落ちる**——認可は所有者のロールで通る（6.4.1）ので、「できるのに、できないと応答している」状態になる。`GET /me`（4.1）も同じ規則である。
 
@@ -2602,7 +2602,8 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
 | プロジェクトダッシュボード | `GET /projects/:key/stats`<br>`GET /projects/:key/activity`<br>`GET /projects/:key/tickets?assignee=me&open=true` |
 | バックログ | `GET /projects/:key/tickets`（＋ `GET /projects/:key/tags`）<br>`POST /projects/:key/tickets/:seq/move`（並べ替え） |
 | 新規チケットモーダル | `POST /projects/:key/tickets` |
-| チケット詳細 | `GET /projects/:key/tickets/:seq`<br>`GET /projects/:key/tickets/:seq/comments`<br>（遷移先はドロップダウンを開いたときに `GET .../transitions`） |
+| チケット詳細 | `GET /projects/:key/tickets/:seq`<br>`GET /projects/:key/tickets/:seq/comments`<br>（遷移先はドロップダウンを開いたときに `GET .../transitions`。完了レポートの取得は下記） |
+| チケット詳細の完了レポート（設計済み・未実装） | `GET /projects/:key/tickets/:seq/reports`（初期表示）<br>`GET .../reports/:id`（単件取得） |
 | アカウント / 権限（ユーザータブ） | `GET /admin/users` |
 | 監査ログ | `GET /admin/audit`<br>`GET /admin/audit.csv`（書き出し） |
 | ユーザー追加モーダル | `POST /admin/users` |
@@ -2622,7 +2623,10 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
 
 **各画面が起動時に呼ぶAPIは1〜2本に収まっている。** 設計方針3が満たされていることの確認になる。
 
-**唯一の例外がプロジェクトダッシュボードで、4本を呼ぶ。** 4本は互いに独立で並列に投げられ、いずれも小さい。「自分の担当」「期限が近い」を `stats` に畳み込まないのは、それがチケットの応答形をもう1つ作ることになるためである（`GuiDesign.md` 5.3）。設計方針3が避けたいのは N+1 の往復であって、独立した4本ではない。
+**現行実装の例外がプロジェクトダッシュボードで、4本を呼ぶ。** 4本は互いに独立で並列に投げられ、いずれも小さい。「自分の担当」「期限が近い」を `stats` に畳み込まないのは、それがチケットの応答形をもう1つ作ることになるためである（`GuiDesign.md` 5.3）。設計方針3が避けたいのは N+1 の往復であって、独立した4本ではない。
+
+**完了レポートの専用セクションを実装したチケット詳細は、初期表示で3本を呼ぶ**
+（本体・コメント・レポート一覧。9.15.1、設計済み・未実装）。同様に独立して並列取得する。
 
 ---
 
@@ -2782,7 +2786,7 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
 
 **`retired=true` は、検索画面ができた後も残す**。棚に戻ったチケットを探す本来の面はチケット検索（`GuiDesign.md` 5.13）で、あちらは常にこれを送る。**バックログの状態フィルタで完了を明示的に選んだときも、今までどおり送る**（`GuiDesign.md` 5.4）——外すとバックログの挙動が変わり、検索画面の追加がバックログに及ぶ。**見直すのは、バックログで完了を選んだときに出る過去の行が邪魔だと言われたとき**である。
 
-**バックログ画面は `staged` を使わない。** 画面は**フィルタ後の全件を1回で取り切り、二段を手元で分ける**（9.2.3、`GuiDesign.md` 5.4）。2本に分けると、件数表示・`ETag`・並べ替え後の再取得がすべて2本になる。段は応答の `staged_at` で判別できる。`staged=true` は MCP のための条件である（下記「オンステージで絞る」）。
+**バックログ画面は対象がオンステージのとき `staged=true` を使う**（pb-178）。対象が全体のときは、画面は**フィルタ後の全件を1回で取り切り、二段を手元で分ける**（9.2.3、`GuiDesign.md` 5.4）。2本に分けると、件数表示・`ETag`・並べ替え後の再取得がすべて2本になる。段は応答の `staged_at` で判別できる。`staged=true` は MCP と、ダッシュボードからのオンステージ一覧で使う。
 
 **`per_page` の既定が他の一覧（25）と違う。** バックログはページャを持たず、フィルタ後の全件を1回で取り切る画面だからである（9.2.3）。**`sort` の既定が `sort_key` であることも本エンドポイント固有**で、これは人が手で並べた順序（9.4）を既定の見え方にするためである。
 
@@ -2790,7 +2794,7 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
 
 #### オンステージで絞る
 
-**`staged=true` は MCP の `pb_list_tasks` のためにある。** 「オンステージのチケットに着手して」と頼まれたエージェントが、未完了の全件を取ってから `staged_at` で拾わずに済む。
+**`staged=true` は MCP の `pb_list_tasks` と、バックログのオンステージ対象選択に使う**（pb-178）。 「オンステージのチケットに着手して」と頼まれたエージェントが、未完了の全件を取ってから `staged_at` で拾わずに済む。
 
 | 論点 | 決めたこと |
 |---|---|
@@ -2799,7 +2803,7 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
 | 棚に戻ったものを含めるか | **`retired` の既定どおり外す。** `retired=true` を一緒に送れば含まれる。条件は種類ごとに独立に効く（AND） |
 | `false` を受けるか | **受けない**（`overdue` と同じ）。バックログ段だけを取る用途が無い |
 
-**バックログ画面は使わない**（上記）。任意の条件を足しても、画面の取り方は変わらない。
+**バックログのオンステージ選択では、完了を選んでも `retired=true` を送らない。** 状態で親が除かれても返った行はオンステージへ置く。全体選択は従来の完了選択で棚を含む。
 
 ### 9.2.2 応答
 
@@ -2855,6 +2859,12 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
 **担当と実行者を別の欄にするのは、1欄では「田中の担当だが claude が処理している」を表せないためである。** `assignee` にエージェントを入れる形は採らない——`Design.md` 8.5 が「担当は人が持つ」と定め、MCP の `assignee=me` を所有者へ写している。**両者の食い違いは欄が1本しかなかったことに由来していた**（`DbDesign.md` 6.6）。
 
 **`working_agent` はチケットを消化しても消えない。** 「このチケットは誰が処理したか」は完了後にこそ読みたい情報である。人が `PATCH`（9.5.2）で消すか差し替える。
+
+**`delegation` は自律実行の印である**（`Delegation.md` 8.2。pb-276）。終わっていない委任の木（根と子孫）の中なら
+`{ "root_seq", "is_root", "status", "open_confirmations" }` が入り、外なら `null`。**PM が開いていないチケットでも、
+人の確認が要ることに一覧で気づけるようにする**ための項目で、**一覧（9.2）だけが埋める**。木は委任の根から1回の再帰で引くので、
+委任の無いプロジェクトでは重さが変わらない。**確認待ちが立った・委任が止まっただけでは `updated_at` が動かない**ので、
+印は ETag（9.2.5）にも混ぜる
 
 ### 9.2.3 ページャを画面に出さない
 
@@ -2984,7 +2994,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 
 **採番・ワークフロー解決・タグ付与・`activity` 記録は単一トランザクションで行う。** 5.3 の `POST /projects` と同じ方針である。
 
-**作成したチケットは必ずバックログに入る。** オンステージは「いま仕掛り中で、直近のスプリントで消化すべきもの」（`DbDesign.md` 6.6）であり、**上げる操作は人が段へドラッグしたときだけ**にする。作成時に指定できると、新規チケットが黙って仕掛りに混ざる。
+**作成したチケットは必ずバックログに入る。** オンステージは「いま仕掛り中で、直近のスプリントで消化すべきもの」（`DbDesign.md` 6.6）であり、**上げる操作は人がドラッグ、またはメニュー・複数選択で指定したとき**にする（`GuiDesign.md` 5.4、pb-272）。作成時に指定できると、新規チケットが黙って仕掛りに混ざる。
 
 **`execution_mode` の既定を `agent_draft` にしている**（`DbDesign.md` 6.6）。**エージェントは `human_only` のチケットに着手しない**ので、既定が `human_only` だと**人が明示的に変えるまでエージェントが一切動けない**——PB は「人とエージェントが同じプロジェクトを進める」ための道具であり、**協業できないほうを既定にしない**。`agent_draft`（エージェントが下書きし、人が仕上げる）は協業を許容しつつ、**仕上げを人に残す**。
 
@@ -2994,9 +3004,11 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 
 ## 9.4 `POST /api/v1/projects/:key/tickets/:seq/move`
 
-**必要権限**：`ticket.edit`
+**必要権限**：`ticket.edit` または `ticket.plan.edit`
 
-バックログのドラッグ&ドロップによる並べ替え（`GuiDesign.md` 5.4）。
+`ticket.plan.edit` のみの呼び出し元とエージェントは、同じ親・段の中で順序だけを変更できる。`staged`・`parent_seq` の指定は422。`first`・`last` は同じ親・段の先頭・末尾を指す。スプリントへの所属を変えない。委任の制約は `Design.md` 8.5.7 に従う。
+
+バックログのドラッグ&ドロップによる並べ替えと、メニュー・複数選択によるオンステージ移動（`GuiDesign.md` 5.4、pb-272）。
 
 ```json
 { "after_seq": 44 }
@@ -3127,7 +3139,7 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 ### 9.5.2 `PATCH`
 
-**必要権限**：`ticket.edit`。ただし `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要
+**必要権限**：`ticket.edit` または `ticket.self_edit`。`ticket.plan.edit` だけを持つ場合は `start_at`・`due_at`・`all_day` のみ変更できる。ただし `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要
 
 **`ticket.self_edit` でも通る**（0029）。ただし**開けるのは下の絞り込んだ集合だけ**で、それ以外の項目を送ると `403` になる。**エージェントに渡す権限であり、自分の縛りを緩められては意味がない**（`DbDesign.md` 6.13）。
 
@@ -3436,10 +3448,18 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/comments/:id
 
 | メソッド | 必要権限 | 備考 |
 |---|---|---|
-| `GET` | `ticket.view` | 既定 `sort=created_at`・`order=asc`・`per_page=50` |
+| `GET` | `ticket.view` | 既定 `sort=created_at`・`order=asc`・`per_page=50`。`kind` フィルタを持つ（下記） |
 | `POST` | `comment.create` | |
 | `PATCH` | `comment.edit_own`（自分のもののみ） | 他人のものは `403` |
 | `DELETE` | `comment.delete_any`、または `comment.edit_own` かつ自分のもの | |
+
+**`GET` は `kind` でフィルタできる**（pb-259）。カンマ区切りで複数指定すると OR
+——9.2.1 の `status` / `type` と同じ形（`cardinality(...) = 0 OR col = ANY(...)`）。
+値は `POST` / `PATCH` と同じ6値（`discussion` / `decision` / `artifact` / `caveat` /
+`reference` / `progress`）で、含まれない値は `422 validation_failed`、
+`details[].field = "kind"`、`code = "invalid"`。**MCP の `pb_list_comments`
+（`Design.md` 8.5.2）が、引き継ぎノートなど `decision` / `caveat` だけを拾う
+用途でこれを使う。**
 
 **`DELETE` の必要権限は OR である。** ルート定義には両方を並べ、**どちらか一方でも
 持っていればミドルウェアを通す**（`Design.md` 6.4.4 の「`routes.go` を眺めるだけで
@@ -3508,13 +3528,19 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/comments/:id
 ### コメントのページネーションと `ETag`
 
 **2.6 のページネーションを持つ**（既定 `per_page=50`、上限 200）。許可する `sort` は
-`created_at` のみ、`order` は `asc` / `desc`。**チケットの子資源で 2.6 を持つのは
-コメントだけである**——DoD（9.9）・リンク（9.10.1）・外部参照（9.10.2）はいずれも
+`created_at` のみ、`order` は `asc` / `desc`。**実装済みのチケットの子資源で 2.6 を持つのは
+コメントだけである**（完了レポートの取得も同じ方式を採る。9.15.1、未実装）——DoD（9.9）・リンク（9.10.1）・外部参照（9.10.2）はいずれも
 1チケットあたり数件に収まるが、**コメントは議論の量だけ増える。**
 
-**一覧は `ETag` を返す**（2.7）。値は `W/"cmt-<件数>-<MAX(updated_at) のナノ秒>"`。
+**一覧は `ETag` を返す**（2.7）。値は `W/"cmt-<フィルタ・並び・ページのハッシュ>-<件数>-<MAX(updated_at) のナノ秒>"`。
 **論理削除も `updated_at` を動かす**ので（`DbDesign.md` 6.7 の `trg_comment_updated`）、
 削除が `304` に埋もれない。
+
+**`kind` フィルタをハッシュへ混ぜる**（pb-259）。フィルタ導入前は並び順とページ
+だけが変わりうる値で、それらを直接埋め込んでいた。フィルタが増えた以上、
+`?kind=decision` と `?kind=caveat` が偶然同じ件数・同じ `MAX(updated_at)` に
+なる場合があり、フィルタを無視すると異なる内容に同じ `ETag` を返してしまう
+——9.2.5 の `ticketsETag` と同じ理由で、正規化した文字列をハッシュへ混ぜる。
 
 **`ETag` を持つ子資源はコメントだけである。** 2.7 が「ポーリングは実装していないが
 応答ヘッダだけ先に用意する」と定めており、**エージェントが「新しいコメントが
@@ -3678,7 +3704,7 @@ GET|POST     /api/v1/projects/:key/tickets/:seq/links
 PATCH|DELETE /api/v1/projects/:key/tickets/:seq/links/:id
 ```
 
-**必要権限**：`GET` は `ticket.view`、更新系は `ticket.edit`
+**必要権限**：`GET` は `ticket.view`、更新系は `ticket.edit` または `ticket.plan.edit`
 
 ```json
 { "target_seq": 12, "link_type": "blocks", "lag_days": 0 }
@@ -3787,6 +3813,8 @@ PATCH|DELETE /api/v1/projects/:key/tickets/:seq/links/:id
 **操作したチケット側に1行だけ書き、相手のチケットの履歴には書かない**——1回の操作で
 2行増えると、ダッシュボードの「最近の動き」で同じ出来事が二重に見える。
 `direction` を要約に含めないのも同じ理由で、**読み手はそのチケットの履歴を見ている。**
+
+エージェントが委任の中で依存を変更する場合は、両端が承認されたmainの範囲に含まれる必要がある。停止中・終了済み・確認待ちでは変更できない（`Design.md` 8.5.7）。
 
 ### 9.10.2 外部参照
 
@@ -4094,7 +4122,8 @@ POST         /api/v1/projects/:key/sprints/:id/finish
   "open": 30,
   "overdue": 2,
   "stale": { "count": 3, "threshold_days": 14 },
-  "unassigned": 5
+  "unassigned": 5,
+  "onstage": { "by_category": { "todo": 2, "in_progress": 1, "review": 1, "done": 2 }, "total": 7, "unknown": 1 }
 }
 ```
 
@@ -4105,7 +4134,7 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 1. **`GuiDesign.md` 5.4 が「エピックは行として並ぶと『やるべき仕事』の数に混ざる」と定めており、同じ理由が集計にも効く。** エピックはグルーピング専用であり（`DbDesign.md` 6.10）、`unassigned` に混ざると「担当者が居ない5件」に見えるが、エピックに担当者を置く運用は無い
 2. **4枚のカードは押すとバックログをそのカテゴリで絞って開く**（`GuiDesign.md` 5.3）。バックログはエピックを行として出さないので、除かないと**カードの数と押した先の件数が一致しない**（demo の seed で 15 対 12）
 
-**カードに導線を付けるので、数の一致が要件になる。**
+**4枚は下記の `onstage.by_category` を使い、同じオンステージ条件の一覧へ移る。** 数の一致はその集合に対する要件である。
 
 **`by_category` は常に4つのキーを持つ。** そのカテゴリのステータスがワークフローに1つも無くても `0` を返す。`simple` テンプレート（`DbDesign.md` 7.4）は `review` を持たないが、**キーが消えると画面のカードが3枚になり、「4つのカードの意味が変わらない」という上の目的が崩れる。**
 
@@ -4114,6 +4143,18 @@ POST         /api/v1/projects/:key/sprints/:id/finish
 **`threshold_days` は 14 で固定する**。5.3 のワイヤーフレームの文言と一致させたもので、プロジェクトごとの設定にはしない——**放置の基準を変えたくなるのは運用に載せてからであり、いま設定項目を作ると使われないまま形が固まる。**
 
 **`unassigned` にも `closed_at IS NULL` が掛かる。** `assignee_id IS NULL` かつ未完了の件数である。完了したチケットに担当者が無いのは要対応ではなく、`overdue` / `stale` と条件が揃う。
+
+### オンステージ内の状態件数（pb-178）
+
+**応答に `onstage: {by_category, total, unknown}` を加える。** 既存フィールドはプロジェクト全体のまま、4枚のカードだけが `onstage.by_category` を読む。必要権限・経路は変えない。
+
+**対象は非epicの `staged_at` を持つ行と全子孫から、9.2.1の棚に戻ったものを除いた集合。** 状態・担当・取得上限より先にPJ全体の親子で判定する。親子は別チケットとして各1件、工数・ポイントは足さない。スプリント未所属の完了は段にいる限り含み、未完了祖先を持つ完了した子も残る。
+
+`by_category` は常にtodo／in_progress／review／doneの4つを返す。分類できない対象は `unknown`、対象全件は `total`。`total = 4カテゴリの和 + unknown`。0件はすべて0。全体と段内を1SQLのスナップショットで集計し、200件で切らない。
+
+**完了は累積実績でもスプリント完了数でもなく、段に残る完了カテゴリの件数。** 段の出し入れ・親子変更・スプリント終了で変わる。カードの行き先は `tickets?type=story,task&staged=true&status_category=<category>`、retiredは省略する。同じDB状態・条件で一覧totalと一致する。未知状態は4枚へ混ぜない。
+
+例：段の親todo、その子in_progress、その孫doneなら3件。進行中の一覧で親が結果に無くても子は段にいる。棚へ戻ったdoneは除き、未所属の段のdoneは含む。全体stats・要対応・状態別推移の定義は変えない。
 
 **「今日」はプロジェクトの基準タイムゾーンで決める**（pb-217。9.2.1 の `due_within` と同じ。以前は DB の `CURRENT_DATE`＝UTC だった）。`overdue` は瞬間の比較なので「今日」に依らない。`app_user.timezone` は混ぜない——混ぜると同じプロジェクトの集計が読み手ごとに変わり、「要対応が3件」という会話が成り立たなくなる。
 
@@ -4182,6 +4223,36 @@ ETag: W/"act-a3f19c2b-142-1723372992000000000"
 **`sprint_id` は本表から外した**。9.5.2 で書けなくなり、動くのはスプリントの開始・終了のときだけになったためである。**その2つは `activity` に書かない**——1回の操作でオンステージの全チケットが動くので、**行ごとに1件記録すると、実際には1つの出来事である履歴が数十行に膨らむ**。スプリント自体を主体とする記録（`entity_type='sprint'`）は、9.1.1 が既に予告しているとおり 11.2 のままである。
 
 **`body_md` の行は値を載せない**（9.5.2）。`old_value` / `new_value` はどちらも `null` で、「説明が変わった」ことだけが残る。
+
+### 9.13.3 `GET /api/v1/projects/:key/ticket-trends` — 状態別推移（pb-12）
+
+**必要権限は `project.view`。** 現在存在する `story` / `task` の各日終了時点の状態別件数を返す。親子は各1件。エピック・削除済みを除き、オンステージ・担当・スプリントでは絞らない。ポイント・工数は集計しない。
+
+| クエリ | 規則 |
+|---|---|
+| `period` | `7d`（既定）/ `4w` / `3m` / `6m`。空・重複・その他は422 |
+| `days` | 旧期間指定の7 / 28を残し、7d / 4wとして扱う。応答は新しい状態別件数形式。periodとの同時指定は422 |
+| その他 | 未知のパラメータは422 validation_failed（code=invalid） |
+
+プロジェクトtimezoneの今日を含む7日、28日、直近3／6暦月。月の期間は今日から暦月を引き（月末はその月の末日へ丸め）、翌日を開始日とする。2026-10-03なら3mは07-04〜10-03、6mは04-04〜10-03。日付を固定秒数で作らずDSTにも対応する。
+
+サーバが集計時点Tを決める。過去日は翌日0時未満、当日はT未満を集計する。ticket.created_atがその上端未満の行を対象にする。過去の状態は、上端以降T未満の最初の状態遷移のold_value、なければ上端未満の最後の状態遷移のnew_valueで復元する（同時刻はactivity.idで順序を決める）。両方なければ作成履歴が上端未満に存在する場合だけ現在のstatus_keyを用いる。当日は現在のstatus_keyを用いる。履歴が足りない、値が空、現在のワークフローでキーを解決できない場合はunknown。作成履歴はfield IS NULLのcreateのみを使い、レポート作成等を混ぜない。
+
+| 件数フィールド | 定義 |
+|---|---|
+| `done` | 復元した状態のcategoryがdone。完了→再開で減るため、累積完了操作数ではない |
+| `in_progress` | categoryがin_progressまたはreview |
+| `todo` | categoryがtodo |
+| `new_todo` | todoの内数で、ticket.created_atが選択期間の開始0時以上 |
+| `unknown` | 存在するが状態を復元・分類できない |
+
+**過去の確定値ではない。** 現在のチケット・作成日時・履歴・ワークフローに基づく復元値。削除・種別・ワークフロー変更で過去の値も変わる。未記録の遷移による不足を完全には検出できず、作成履歴以降に状態変更が記録されなければ現在の状態を据え置く。created_atから存在と新規追加を判定するがclosed_atから状態を推測しない。
+
+応答はperiod、days（実際の暦日数）、timezone、start_date / end_date（YYYY-MM-DD、両端含む）、as_of（エポックミリ秒）、basis=`reconstructed_status_for_existing_tickets`、latest（最終日の5件数）、daily（日付昇順のdate・5件数・is_partial）。最終日だけis_partial=true。latestは日別件数の和ではない。各日のdone+in_progress+todo+unknownは対象件数と一致し、new_todo<=todo。対象がない日は0。1つのSQLスナップショットで集計し、全履歴を画面へ送らない。
+
+ETagなし、Cache-Control: no-store。共通エラー形式と401／403／404／500に従う。DDL・依存は追加しない。OpenAPIと生成型は実装と同時に更新する。
+
+検証：期間前のチケット、境界時刻の作成と遷移、レビュー・複数doneキー・再開と再完了、履歴不足・未知キー、親子・epic・別PJ・削除除外、月末・閏年・23／25時間のDST日を検証する。
 
 ## 9.14 チケット固有のエラーコード
 
@@ -4277,12 +4348,12 @@ jsonb にそのまま入るだけなので、**知らないキーも拒まず保
 
 **コミット・ブランチの識別子は、9.10.2 の外部参照（`kind='code'`）に積む**。MCP では `pb_add_reference` で、`repository` / `branch` / `commit_sha` を**それぞれの列**に持つ。`artifacts` はプルリクエストの URL や変更したファイルのパスを並べる欄のままにし、**識別子の欄（`ref` など）を足さない**。
 
-- **置き場を2つにしない。** 外部参照は「作業の跡」を積む口であり、チケット詳細の「コード」に出る（`GuiDesign.md` 5.5）。`artifacts` にも欄を足すと、同じコミットが2か所に書かれ、どちらを読めばよいかが決まらない。`artifacts` は `agent_report.report` の jsonb の中にあり、**画面から読む面も無い**
+- **置き場を2つにしない。** 外部参照は「作業の跡」を積む口であり、チケット詳細の「コード」に出る（`GuiDesign.md` 5.5）。`artifacts` にも欄を足すと、同じコミットが2か所に書かれ、どちらを読めばよいかが決まらない。`artifacts` は `agent_report.report` の jsonb の中にあり、**現行画面から読む面も無い**（専用セクションの設計は 9.15.1、未実装）
 - **`path` や `url` にコミット ID を押し込まない。** 欄の意味が崩れ、後から機械で読めなくなる
 - **`type` の語彙は固定しない**（自由文字列のまま。例は `pull_request` / `file`）。列挙にすると、知らないキーを拒まず保存する本節の方針とぶつかる
 - **`custom_fields`（11.2）とは切り離す。** あちらは「プロジェクトがどんな欄を持つか」の設計であり、作業の跡の置き場とは別の問いである
 
-**再検討のきっかけは、完了レポートを画面に出すか集計に使い始めたとき**である（`[画面に完了レポートのセクションを作る手順]` と同じ事象）。そのとき `artifacts` から外部参照を引けるようにするか、`artifacts` に識別子を持たせるかを、レポートの面と一緒に決める。
+**専用セクションでも、コードの識別子は外部参照から読む**（9.15.1、pb-170）。既存の「コード」セクションと並んで読めるため、`artifacts` への識別子追加や個別の外部参照との紐づけは行わない。レポート別にコミットを絞る必要が現れたときに、関連の持ち方を再検討する。
 
 ### 完了条件は書き換えない
 
@@ -4336,10 +4407,10 @@ DoD の型は `manual` ひとつで（9.9）、その定義は「**人間がチ�
 | `ticket.transition` を持たない | `403 forbidden` |
 | チケットが無い・他プロジェクト | `404 not_found` |
 
-**`GET .../reports` を置かない。** 人が読むのは**完了レポートのコメント**であり
-（下記）、`agent_report` の行そのものを読む面が無い。**置くのは、チケット詳細に完了レポートの
-セクションを作るときである**（`GuiDesign.md` 5.5。レポートが時系列に埋もれたとき、または
-`agent_report` を集計に使い始めたときが、その再検討の条件）。
+**現行実装では、人が読むのは完了レポートのコメントである。** 専用セクションと
+`GET .../reports` の設計は 9.15.1 に定める（pb-170、設計済み・未実装）。
+コメントに埋もれるかの先行確認を待たず設計へ進むことを、利用者が承認した。
+**本節の提出 API とコメント生成は変更しない。**
 
 ### 完了レポートのコメントを同じトランザクションで作る
 
@@ -4405,7 +4476,8 @@ DoD の型は `manual` ひとつで（9.9）、その定義は「**人間がチ�
 
 **コメントの削除はレポートを消さない。** 人がこのコメントを消しても `agent_report` の行は
 残る（`comment.agent_run_id` は `ON DELETE SET NULL` の向きが逆で、コメント側が参照している）。
-**読む面が消えるだけで、集計の材料は残る。**
+**現行画面では読む面が消えるが、集計の材料は残る。** 専用セクションの実装後は
+コメント削除後も提出記録を読める（9.15.1）。
 
 ### `activity` への記録
 
@@ -4418,7 +4490,138 @@ DoD の型は `manual` ひとつで（9.9）、その定義は「**人間がチ�
 **親チケットの `version` と `updated_at` は動かさない**（9.9 / 9.10.2 と同じ）。
 レポートはチケットの列を1つも変えない。
 
+### 9.15.1 完了レポートの取得（pb-170、設計済み・未実装）
+
+**提出時点のレポートを、コメントの時系列から独立して読む口を作る。**
+`GuiDesign.md` 5.5 の専用セクションと同時に実装する。既存の `agent_report`・
+`agent_run`・`comment.agent_run_id` を使い、DDL・権限カタログは変更しない。
+**OpenAPI は実装時に更新する**（1.3）。本項は集計 API を追加するものではない。
+
+```
+GET /api/v1/projects/:key/tickets/:seq/reports
+GET /api/v1/projects/:key/tickets/:seq/reports/:id
+```
+
+**必要権限は、両方とも `ticket.view` とする。** チケット詳細と同じプロジェクト境界・
+トークンのプロジェクト制限を適用する。`ticket.transition` は提出の権限であり、閲覧には課さない。
+`:id` は `agent_report.id`（ULID）。別チケットの ID で取得できないよう、
+プロジェクト・チケット・レポートの所属を同じ問い合わせで確かめる。
+
+#### 一覧と単件の応答
+
+一覧は 2.6 の形を使う。**既定は `page=1`・`per_page=10`・`sort=submitted_at`・
+`order=desc`、上限は200件とする。** 許可する `sort` は `submitted_at`、`order` は
+`asc` / `desc` のみ。同時刻は `id` を同じ方向で並べる。再提出を含む全行を数え、
+空なら `items=[]`・`total=0`・`total_pages=0` を返す。単件は `items[]` と同じ1件を返す。
+一覧にも全文を含め、画面が各レポートの本文を取得するための N+1 を作らない。
+単件は既存 POST の `Location` が指す資源を読めるようにする口であり、
+通常の一覧表示・開閉では呼ばない。
+
+```json
+{
+  "items": [
+    {
+      "id": "01K5...", "agent_run_id": "01K5...", "seq": 31,
+      "status": "completed", "knowledge_impact": "minor",
+      "submitted_at": 1788609600000,
+      "submitted_by": { "id": "01K4...", "kind": "agent", "display_name": "作業エージェント" },
+      "comment_id": "01K5...",
+      "report": {
+        "status": "completed",
+        "artifacts": [{ "type": "file", "path": "docs/design/ApiDesign.md" }],
+        "dod_results": [{ "id": "01K2...", "passed": true, "evidence": "文書検査が成功" }],
+        "findings": [{ "kind": "discussion", "body": "検証結果を確認した" }],
+        "cost": { "wall_clock_min": 12 }, "knowledge_impact": "minor"
+      }
+    }
+  ],
+  "page": 1, "per_page": 10, "total": 1, "total_pages": 1
+}
+```
+
+| フィールド | 取得元と意味 |
+|---|---|
+| `id` / `agent_run_id` / `status` / `knowledge_impact` | `agent_report` の列。状態は提出者の自己申告であり、チケットの完了状態ではない |
+| `seq` | URL が指すチケットの番号 |
+| `submitted_at` | 既存 POST 応答と合わせ、対応する `agent_run.ended_at` をエポックミリ秒で返す。既存提出データも同じ基準で並べる |
+| `submitted_by` | `agent_run.actor_id` の現在の表示名と種別。エージェント削除後は、既存の付け替え先（4.5.4）を返す |
+| `comment_id` | 同じチケットで `comment.agent_run_id` が一致し、未削除のコメントの ID。存在しなければ `null`。複数一致なら `created_at`・`id` の昇順先頭1件。コメント本文は返さない |
+| `report` | 保存された `agent_report.report` を、そのまま JSON オブジェクトとして返す。省略されたキーを補わず、未知のキーや値の型も失わない |
+
+**GET はレポート・コメント・DoD・チケット状態を一切更新しない。**
+コメントの編集・削除は専用セクションの `report` に影響しない。過去の提出にも
+同じ結合を使い、本文の見出しや `kind='progress'` からレポートを推測しない。
+`progress` は遷移コメントにも使われるため、分類の根拠にできない。
+
+**GET に `unsatisfied_dod` は含めない。** POST 時の突き合わせ結果は保存しておらず、
+現在の DoD で再計算すると「提出時の不足」に見えてしまう。`dod_results` は保存された
+自己申告のまま返し、現在の条件との差は GUI 側で区別する。
+
+#### 再提出、キャッシュと失敗時
+
+**再提出は別の run・別の report としてすべて返す。** 最新とは一覧の降順先頭であり、
+`completed` だけに絞らない。直近が `partial` / `blocked` なら、それを最初に読める。
+以前の提出を上書きせず、評価との対応も既存のレポート ID のまま保つ
+（`Delegation.md` 7.2）。レポートの編集・削除 API は追加しない。
+
+一覧・単件とも 2.7 に従い `ETag` と `If-None-Match` を扱う。
+**認可と所属確認の後に、返す JSON 全体の SHA-256 から `W/"report-<ハッシュ>"` を生成する。**
+オブジェクトのキー順を固定した JSON を使い、同じ内容の取得で値を変えない。一覧では総件数・
+ページ情報も含める。投稿者の改名・削除時の付け替え、コメント削除による
+`comment_id` の変化も値に含まれ、レポート件数だけで `304` にしない。
+
+| 状況 | 応答 |
+|---|---|
+| 閲覧成功 | `200`。一覧または単件の本体 |
+| 認可後、ETag が一致 | `304`。本体なし |
+| 未認証 | `401 unauthenticated` |
+| `ticket.view` がない | `403 forbidden`（チケット詳細と同じ権限ゲート） |
+| プロジェクト境界・トークン制限の外／チケットがない／単件が別チケットまたは存在しない | `404 not_found` |
+| ページ・並びの入力不正／`:id` の形式不正 | `422 validation_failed`（2.6・9.14 の既存コードを使う） |
+
+#### 実装時の受け入れ検証
+
+- 同一チケットへ `completed`・`partial`・`blocked` を再提出し、全件の降順・同時刻の順序・総件数・ページ境界・単件取得を確かめる。
+- 通常の `progress` コメントは一覧へ入らず、既存提出のレポートは現れる。コメントの編集・削除後も提出時の JSON が読める。
+- `ticket.view` だけで閲覧でき、未認証・権限不足・別プロジェクト・制限付きトークン・別チケットのレポート ID は所定の応答で拒まれる。
+- 0件、未知のキー、既知のキーの想定外の型、条件の追加・改名・削除を含むレポートを失わず返す。GET 前後で DoD と盤面が変わらない。
+- 不正なページ・並び・ID を拒む。新規提出・改名・投稿者の付け替え・コメント削除で ETag が変わり、内容不変なら `304` になる。
+- GUI は 5.5 の複数画面幅・読み込み状態・再提出・安全な本文表示を含めて検証する。
+
 ---
+
+## 9.16 エージェント実績
+
+```
+GET /api/v1/projects/:key/agent-usage
+GET /api/v1/projects/:key/agent-usage/runs
+```
+
+**どちらも `ticket.view` が必要である。** プロジェクト所属とトークンのプロジェクト制限を適用する。本文・コメント・認証情報は返さない。
+
+共通クエリは `from_date` / `to_date`（プロジェクト基準の日付、終端日を含む）と `client_kind` / `model_name` / `model_version`。日付省略時は今日を含む直近30暦日。片側だけの指定、存在しない日付、逆転した期間、3660日を超える期間は422 `validation_failed` / `invalid`。日付は基準タイムゾーンの0時から終端翌日の0時までに変換し、実行は提出日時、評価は評価日時で所属させる。モデル条件は提出・評価時点の値に対する完全一致である。
+
+### 集計
+
+応答は `from_date`・`to_date`・`timezone`・`totals`・`daily[]`・`models[]`。日別は期間内の日を昇順、モデル別は種別・モデル名・版の順とする。モデルのNULLは不明の群として残す。
+
+| フィールド | 意味 |
+|---|---|
+| `runs_count` / `tickets_count` | 提出された実行の件数 / 重複を除いたチケット数 |
+| `completed_count` / `partial_count` / `blocked_count` | レポートの結果別件数。チケットの完了状態とは別 |
+| `run_tokens` / `evaluation_tokens` | 実行 / 評価の既知トークン数の合計 |
+| `run_tokens_missing` / `evaluation_tokens_missing` | それぞれトークン数が欠測の件数 |
+| `evaluation_count` | 評価記録の件数 |
+| `turns` / `turns_missing` | 実行の既知ターン数の合計 / 欠測件数 |
+| `wall_clock_min` / `wall_clock_min_missing` | 実行の自己申告分の合計 / 欠測件数 |
+
+合計・日別・モデル別は同じフィールドを持つ。日別には `date`、モデル別にはNULL可能な `client_kind`・`model_name`・`model_version`を添える。件数0の日の合計は0。欠測だけの記録がある日は欠測件数で区別する。再提出はすべて含める。実行と評価を別々に読み、JOINで件数を掛け合わせない。評価のモデルは評価者のモデルである。
+
+時間はレポートの `cost.wall_clock_min` から取得し、開始と終了の差で補わない。各実行の分の合計は、並列作業を含むためプロジェクトの経過時間ではない。トークン内訳が無いため料金への換算は行わない。
+
+### 実行明細
+
+2.6の一覧形式。既定 `page=1`・`per_page=50`、上限200。並びは `submitted_at DESC, run_id DESC` 固定で、sort/orderの指定は422。各行は `run_id`・`seq`・`submitted_at`・`status`（レポートの結果）・`ticket_status_category`（現在のチケット状態）、NULL可能な `client_kind`・`model_name`・`model_version`・`tokens`・`turns`・`wall_clock_min` を持つ。日時はエポックミリ秒。件数とページ情報を保ち、取得したページだけを全件と扱わない。
 
 # 10. プロジェクト文書API
 
@@ -5479,3 +5682,41 @@ SHA-256 であり `app_secret` に依存しない（`DbDesign.md` 6.2）ので�
 - **`project_memberships[]` にプロジェクトの `status` を入れていない**（6.3）。アーカイブ済みのプロジェクトも含まれるが、画面がそれを区別できない。必要になったら 6.3 の改訂を先に出す
 - **2.5.1 の11コードの既定文言が実装側（`apierr.messages`）にしかない。** 文書に持たせるなら 2.5.1 に message 列を足す
 - 削除操作の監査における個人情報の保持期間（`audit_log.detail` と `actor_label` に残した表示名・メールをいつ消すか）
+
+## 共通作業タイマー
+
+GET `/api/v1/projects/:key/tickets/:seq/work-sessions`はticket.viewでページ付き記録と全件集計を返す。POST同パスはagent.runとticket.transitionで開始する。POST同パス`/:work_id/events`はpause/resume/finish/correct/restore_autoを処理する。時刻はRESTのエポックミリ秒で返す。要求のrequest_idは1〜128文字、noteは2000文字以内。再送は同内容なら同じ応答、別内容なら409。開始も200を返す。
+
+開始は所有者担当・未完了・委任の範囲/段階を確認する。allocationsは[{seq,share}]、正数合計1、最大50件、重複なし、開始元必須。複数配分には理由が必要。pauseはrunning、resumeはwaiting、finishは未終了だけから行う。pauseには理由、finishにはcompleted/partial/blockedの結果を指定する。tokensとreported_active_msは任意で非負、後者は経過時間以下とし取得元をnoteへ書く。incompleteは計測漏れの申告である。終了時は配分先の合計から実績時間を保存し、開始時の運営ノート契約と累積変更量によりactual-v0のPointを保存する。これは任意の実績値を書き換えるPATCH権限の委譲ではなく、認可済み作業のサーバ算出結果である。
+
+訂正correctと手入力からの復帰restore_autoはticket.edit・ticket.actual_point.editを持つ人だけに許す。correctは終了済みに限定し、理由、任意の計測時間・tokens・配分を指定する。手入力値は維持され、restore_autoを明示した時だけ両欄を再計算に戻す。権限を持つ人は他者の開いた作業を理由付き・incomplete=trueで終了できる。通常操作は自分の作業のみ。終端処理でもAgentの所有者担当と委任の書込境界を検査する。
+
+summaryは終了済みの選択時間・経過・待機・token既知合計/欠測、未終了/不完全件数、自動候補と実績値・手入力状態を返す。GETのitemsは全件ではない。開いた記録は時間候補に加算しない。共通時間・Pointの定義はDesign.md 8.5.7に従う。既存レポートにwork_session_idを付けた場合は、当該チケットに配分された終了済み記録だけ（Agentは自身の記録に限定）を受け付け、実績集計で同じ消費を重ねて数えない。未紐付けレポートの自己申告時間は作業タイマーの代わりにはしない。
+
+過去のレポートは開始・待機の申告がないため自動で作業記録へ変換しない。根拠を確認した人が既存の実績欄に補記し、取得元をコメントに記録する。Agent種別の実績ページは従来の提出・評価コストを集計し、共通作業タイマーの集計とは別に表示する。
+
+### 実績契約・欠測と作業記録の整理
+
+GETのチケット詳細にはwork_contextを追加し、コンテキストパックで別の文書全文を運ばず契約と自身の未終了IDを案内する。GET /projects/{key}/tickets/{seq}/work-policy はticket.viewで、運営ノート「実績」の構造化契約・文書版・設定状態・自身の未終了IDを返す。文書がない/不正ならPointは未算出となる。finish/correctのchange_metricsは配分先ごとの累積変更量（seq,code_lines,test_lines,doc_lines,other_lines,files,branches,learning_events,source）。abandonは理由必須で未終了を欠測として終了し、最後の未確認区間を計時しない。確認済みの区間は不完全な参考値として集計し、確認済み区間もない記録を実測0へ変換しない。finishの応答は配分先の保存状態と理由を含む。
+
+POST /projects/{key}/tickets/{seq}/work-cleanup はproject.editで、dry_run（必須）がtrueなら対象だけを確認し、falseなら明細を整理する。closed_atのあるチケットを対象に、共有先がすべて終了している作業だけを処理する。応答は対象ID・件数・見送り件数・明細を復元できない旨を返す。再実行は追加変更しない。整理済み要求の再送には409と整理済みIDを返し、レポートの参照は最小記録から検証する。既存のチケット操作履歴に整理を記録する。
+
+契約のrequire_registrationを適用するAgentのレポートはwork_session_id、またはeffort_unavailable（target: time/point/both, reason）を必要とする。自身の対象チケットの未終了記録があれば、理由付き例外も含め提出を拒否する。既存保存済みレポートや人の提出は変更しない。
+
+### 担当・実行者の変更における承認境界
+
+担当指定には作成時もticket.assignを要する。エージェントは委任外で担当・実行者を変更できない。承認済みで確認待ちのない委任のmainだけが、自分の管理する木の中で変更できる。作成時の担当指定も親の所属する木を同じ方法で検証する。同じ値の再送は変更として扱わない。人の割当と所有者担当の通常遷移は維持し、拒否は403とする。
+
+### プロジェクトのエージェント管理
+
+GET /api/v1/projects/:key/agentsはagent.manageを持つ人へページ付き一覧を返す。名前・モデル・所有者・状態・作成日時を返し、秘密は含めない。POST /api/v1/projects/:key/agents/:id/disableは同じ権限を持つ人が対象を無効化し、全トークンを同一トランザクションで失効させ、204を返す。不存在・他PJは404、権限不足とエージェント操作は403とする。変更時だけagent.update監査を記録し、再実行は204とする。所有者脱退後も停止できる。処理済みの要求や外部プロセスの強制終了は保証しない。再開は本人の有効化・トークン再発行を使う。
+
+### 実行結果と停止条件
+
+work-sessionsのfinishは任意のoutcome=completed/failedを受ける。completedはresult=completedの場合に限り、省略時もこの場合だけ成功と判定する。failedは理由を要し、partial/blocked自体を失敗とみなさない。abandonはabandonedを記録する。既存request_idの再送契約と、実績算出・欠測・手入力保護を維持する。失敗・放棄の実績日時は終了時刻を使う。後から紐付けたレポートの既知コストは欠測だけを補い、作業記録の既知トークンを上書きしない。
+
+GET/PUT /projects/:key/agent-monitorは試行上限max_attempts・連続失敗上限max_consecutive_failuresを返す・設定する。読みはproject.view、変更はproject.editを持つ人。各値はNULL（無効）または1〜2147483647の整数。停止中の新規開始・業務変更を403で拒否し、終了・放棄・レポート保存は許す。連続失敗はfailed/abandonedで増え、completedでリセットし、不明な結果はどちらにも数えない。試行上限は同じチケット・エージェントの開始数に効く。上限内で既に開いた作業の続行は許す。
+
+GET /projects/:key/agents/:id/monitorは監視値・停止理由を返す。POST /projects/:key/agents/:id/monitor/resetは2000文字以内の理由を受け、監視区間を更新する。必要権限はagent.manage、操作主体は人。所有者はGET/POST /me/agents/:id/monitor（POSTは解除）も使える。停止条件への到達時は理由・対象チケット・作業記録をagent.update監査へ記録する。解除理由と操作者も監査に残す。停止解除はトークン無効化を解除しない。
+
+PATCH /projects/:key/agents/:id/attributesはagent.manageを持つ人がtrust_levelとcapabilitiesを変更する。所有者は既存PATCH /me/agents/:idでも変更できる。trust_levelは0〜3、capabilitiesは最大32個・各1〜64文字のラベルで、空白を除き重複を除く。自動権限拡大やエージェントによる自己評価変更は行わない。

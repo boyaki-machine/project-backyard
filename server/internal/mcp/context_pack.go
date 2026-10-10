@@ -102,6 +102,17 @@ type packLink struct {
 // 足したものである。** それまでどの API も返しておらず、パックの優先度1 の
 // 項目（10.4.2）を埋める材料が無かった。
 type packTicket struct {
+	WorkContext *struct {
+		Policy struct {
+			Version             string `json:"version"`
+			Status              string `json:"status"`
+			DocumentVersion     int32  `json:"document_version"`
+			TimeSource          string `json:"time_source"`
+			RequireRegistration bool   `json:"require_registration"`
+		} `json:"policy"`
+		OpenWorkID *string `json:"open_work_id"`
+	} `json:"work_context"`
+
 	Seq          int32      `json:"seq"`
 	Type         string     `json:"type"`
 	Title        string     `json:"title"`
@@ -180,6 +191,15 @@ func callGetContext(h *Handler, r *http.Request, key string, args json.RawMessag
 		return toolResult{}, newError(codeInternalError, "チケットの応答を解釈できない: "+err.Error())
 	}
 
+	// ── 委任の状態（9.1。pb-251）─────────────────────────────
+	//
+	// **チケットの直後、憲章より先に読む。** vision を全文で載せる例外
+	// （9.1）の判定に、委任の木に属するかどうかが要る。
+	delegStatus, rpcErr := h.fetchDelegationStatus(r, ticketPath(key, seq))
+	if rpcErr != nil {
+		return toolResult{}, rpcErr
+	}
+
 	// ── 憲章（10.2 の目次 → 10.3 の本文）──────────────────────
 	known := map[string]int64{}
 	for path, v := range in.CharterVersions {
@@ -191,8 +211,460 @@ func callGetContext(h *Handler, r *http.Request, key string, args json.RawMessag
 	if rpcErr != nil {
 		return toolResult{}, rpcErr
 	}
+	if delegStatus.InDelegation {
+		// **自律実行の節を持つパックには、vision を掲載の設定によらず
+		// 全文で載せる**（9.1）。main がタスクとゴールを定義し、評価が
+		// 成果を判断する基準そのものだからである。
+		if rpcErr := h.ensureFullVision(r, base, &ch); rpcErr != nil {
+			return toolResult{}, rpcErr
+		}
+	}
 
-	return textResult(renderContextPack(key, ticket, ch)), nil
+	var delegSection string
+	if delegStatus.InDelegation {
+		delegSection, rpcErr = h.renderDelegationSection(r, base, delegStatus)
+		if rpcErr != nil {
+			return toolResult{}, rpcErr
+		}
+	} else if delegStatus.Status == "ended" {
+		delegSection = renderEndedDelegationSection(delegStatus.RootSeq)
+	}
+
+	return textResult(renderContextPack(key, ticket, ch, delegSection)), nil
+}
+
+// packDelegationStatus は GET .../delegation-status（9.1）の応答のうち
+// パックが使う部分。
+type packDelegationStatus struct {
+	InDelegation bool       `json:"in_delegation"`
+	Role         string     `json:"role"`
+	RootSeq      int32      `json:"root_seq"`
+	Status       string     `json:"status"`
+	Main         *packActor `json:"main"`
+	Evaluator    *packActor `json:"evaluator"`
+	LatestPlan   *struct {
+		Version       int32           `json:"version"`
+		Status        string          `json:"status"`
+		DeclaredClass *string         `json:"declared_class"`
+		MeasuredClass *string         `json:"measured_class"`
+		Scope         json.RawMessage `json:"scope"`
+		Skeleton      json.RawMessage `json:"skeleton"`
+		BodyMd        string          `json:"body_md"`
+		ReasonMd      string          `json:"reason_md"`
+		Evaluation    *struct {
+			Round    int32           `json:"round"`
+			Verdict  string          `json:"verdict"`
+			Findings json.RawMessage `json:"findings"`
+		} `json:"evaluation"`
+	} `json:"latest_plan"`
+	LatestEvaluation *struct {
+		TargetKind string          `json:"target_kind"`
+		Round      int32           `json:"round"`
+		Verdict    string          `json:"verdict"`
+		Findings   json.RawMessage `json:"findings"`
+	} `json:"latest_evaluation"`
+	OpenConfirmations []struct {
+		Reason     string `json:"reason"`
+		QuestionMd string `json:"question_md"`
+	} `json:"open_confirmations"`
+	LatestHandoff *struct {
+		Version int32           `json:"version"`
+		Body    json.RawMessage `json:"body"`
+		Trigger string          `json:"trigger"`
+		// **文字列で受ける。** getREST は REST の日時（*_at）を ISO8601 に直して返す
+		// （isoTimes。8.4）。int64 で受けていたため、引き継ぎノートが1件でもある委任では
+		// パックが丸ごと失敗していた（pb-251 の不具合。pb-278 で発覚）。
+		WrittenAt string `json:"written_at"`
+	} `json:"latest_handoff"`
+	NextMove string                `json:"next_move"`
+	Budget   *packDelegationBudget `json:"budget"`
+	Scope    struct {
+		StopConditions []string `json:"stop_conditions"`
+		// 指標の定義（4.2。pb-277）。値は main が pb_record_metric で入れる。
+		Metrics []struct {
+			Key       string   `json:"key"`
+			Name      string   `json:"name"`
+			Unit      string   `json:"unit"`
+			Target    *float64 `json:"target"`
+			Direction string   `json:"direction"`
+		} `json:"metrics"`
+		ReportEveryDays int `json:"report_every_days"`
+	} `json:"scope"`
+	RecentAnswers []struct {
+		Reason     string `json:"reason"`
+		QuestionMd string `json:"question_md"`
+		AnswerMd   string `json:"answer_md"`
+		AnsweredAt string `json:"answered_at"`
+	} `json:"recent_answers"`
+}
+
+// renderRecentAnswers は「最近の回答」（9.3。pb-278）を出す。**main だけに載せる。**
+// 問いは先頭だけ、答えは全文——答えが判断の材料で、問いは自分が書いたものだから。
+// 止められていた main が、その間に届いた答えをここで読む（pb_wait の変化の要約は
+// 冒頭しか持たず、呼び直した後の待ち受けは止めていた間の変化を取りこぼしうる）。
+func renderRecentAnswers(ds packDelegationStatus) string {
+	if ds.Role != "main" || len(ds.RecentAnswers) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("**最近の回答**（PM がユーザ確認待ちに答えたもの。新しい順。止められていた間に届いた答えも、ここで読める）\n\n")
+	for _, a := range ds.RecentAnswers {
+		// 先頭で切ると強調（**）や `…` が閉じずに残るので、記号を落としてから切る。
+		plain := strings.NewReplacer("**", "", "`", "").Replace(a.QuestionMd)
+		q := []rune(strings.Join(strings.Fields(plain), " "))
+		if len(q) > 80 {
+			q = append(q[:80], '…')
+		}
+		fmt.Fprintf(&b, "- `%s`（%s）問い：%s\n", a.Reason, a.AnsweredAt, string(q))
+		for _, line := range strings.Split(strings.TrimSpace(a.AnswerMd), "\n") {
+			fmt.Fprintf(&b, "  > %s\n", line)
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// renderStopConditions は止まる条件（4.2。pb-252）を出す。**PB は判定しない**——
+// エージェントが読んで守る。当たったら確認待ちを立てて止まる（8.1 の 5）。
+func renderStopConditions(conds []string) string {
+	if len(conds) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("**止まる条件**（PM が定めた。当たったら `pb_raise_confirmation` で確認待ちを立てて止まる）\n\n")
+	for _, c := range conds {
+		fmt.Fprintf(&b, "- %s\n", c)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// renderMetrics は指標の定義と要約の周期（4.2・8.3。pb-277）を出す。値は PB が測れない
+// ので、main が測れるものは pb_record_metric で入れる。周期が過ぎると PB が checkpoint の
+// 確認待ちを立て、PM が答えるまで止まる。
+func renderMetrics(ds packDelegationStatus) string {
+	if len(ds.Scope.Metrics) == 0 && ds.Scope.ReportEveryDays == 0 {
+		return ""
+	}
+	var b strings.Builder
+	if len(ds.Scope.Metrics) > 0 {
+		b.WriteString("**指標**（PM が定めた、目的に近づいたかの測り方。測れたら `pb_record_metric` で値を入れる。都合のよい値を入れない）\n\n")
+		for _, m := range ds.Scope.Metrics {
+			goal := ""
+			if m.Target != nil {
+				dir := "高いほど良い"
+				if m.Direction == "lower" {
+					dir = "低いほど良い"
+				}
+				goal = fmt.Sprintf("：目標 %g%s（%s）", *m.Target, m.Unit, dir)
+			}
+			fmt.Fprintf(&b, "- `%s` %s%s\n", m.Key, m.Name, goal)
+		}
+		b.WriteString("\n")
+	}
+	if ds.Scope.ReportEveryDays > 0 {
+		fmt.Fprintf(&b, "**要約の周期**：%d日ごとに PB が要約を作り、PM に確認を求める。PM が答えるまで木への書き込みは止まる\n\n",
+			ds.Scope.ReportEveryDays)
+	}
+	return b.String()
+}
+
+// packDelegationBudget は delegation-status の budget（12.1。pb-253）。
+type packDelegationBudget struct {
+	Limits struct {
+		Tokens         *int64  `json:"tokens"`
+		TokensPerMonth *int64  `json:"tokens_per_month"`
+		DueOn          *string `json:"due_on"`
+		Tickets        *int64  `json:"tickets"`
+		Depth          *int32  `json:"depth"`
+		Rounds         *int32  `json:"rounds"`
+	} `json:"limits"`
+	Tickets         int64  `json:"tickets"`
+	MaxDepth        int32  `json:"max_depth"`
+	TokensTotal     int64  `json:"tokens_total"`
+	TokensThisMonth int64  `json:"tokens_this_month"`
+	TokensMissing   int64  `json:"tokens_missing"`
+	Today           string `json:"today"`
+}
+
+// renderBudgetLines は「残り予算」（9.1）を、上限のある項目だけ1行ずつ出す。
+// トークンを申告しなかった件数は、上限の有無によらず出す（12.1）。
+func renderBudgetLines(bud *packDelegationBudget) string {
+	if bud == nil {
+		return ""
+	}
+	l := bud.Limits
+	var lines []string
+	if l.Tokens != nil {
+		lines = append(lines, fmt.Sprintf("トークン %d / %d", bud.TokensTotal, *l.Tokens))
+	}
+	if l.TokensPerMonth != nil {
+		lines = append(lines, fmt.Sprintf("今月のトークン %d / %d", bud.TokensThisMonth, *l.TokensPerMonth))
+	}
+	if l.DueOn != nil {
+		lines = append(lines, fmt.Sprintf("期日 %s（今日 %s）", *l.DueOn, bud.Today))
+	}
+	if l.Tickets != nil {
+		lines = append(lines, fmt.Sprintf("起票数 %d / %d", bud.Tickets, *l.Tickets))
+	}
+	if l.Depth != nil {
+		lines = append(lines, fmt.Sprintf("木の深さ %d / %d", bud.MaxDepth, *l.Depth))
+	}
+	if l.Rounds != nil {
+		lines = append(lines, fmt.Sprintf("往復の上限 %d", *l.Rounds))
+	}
+	if bud.TokensMissing > 0 {
+		lines = append(lines, fmt.Sprintf("トークンを申告しなかった報告・評価 %d 件（合計から漏れている）", bud.TokensMissing))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "**予算の消費**：" + strings.Join(lines, "／") + "\n\n"
+}
+
+// fetchDelegationStatus は9.1の節の材料を1回で読む。
+func (h *Handler) fetchDelegationStatus(r *http.Request, ticketPath string) (packDelegationStatus, *rpcError) {
+	res, err := h.getREST(r, ticketPath+"/delegation-status", nil)
+	if err != nil {
+		return packDelegationStatus{}, newError(codeInternalError, err.Error())
+	}
+	if !res.ok() {
+		return packDelegationStatus{}, newError(codeInternalError,
+			fmt.Sprintf("委任の状態を読めない（HTTP %d）: %s", res.status, string(res.body)))
+	}
+	var ds packDelegationStatus
+	if err := json.Unmarshal(res.body, &ds); err != nil {
+		return packDelegationStatus{}, newError(codeInternalError, "委任の状態の応答を解釈できない: "+err.Error())
+	}
+	return ds, nil
+}
+
+// ensureFullVision は vision を掲載の設定・版一致の省略によらず全文へ戻す
+// （9.1）。**節3（憲章）そのものを直す**——節6に二重掲載しない。
+func (h *Handler) ensureFullVision(r *http.Request, base string, ch *charter) *rpcError {
+	for i, d := range ch.docs {
+		if d.Path != "vision" {
+			continue
+		}
+		if !d.Unchanged && !d.OutlineOnly {
+			return nil // すでに全文
+		}
+		body, version, rpcErr := h.fetchDocBody(r, base, "vision")
+		if rpcErr != nil {
+			return rpcErr
+		}
+		ch.docs[i] = packDoc{Path: "vision", Title: d.Title, Version: version, BodyMD: body}
+		// **「目次だけ」「掲載しない」の断りからも外す。** 全文へ戻した以上、
+		// 節3のどちらの注記も当てはまらない。
+		ch.outlined = removeString(ch.outlined, "vision")
+		ch.omitted = removeString(ch.omitted, "vision")
+		return nil
+	}
+	return nil
+}
+
+// removeString は slice から1件だけ除く（最初の一致）。
+func removeString(ss []string, target string) []string {
+	for i, s := range ss {
+		if s == target {
+			return append(ss[:i:i], ss[i+1:]...)
+		}
+	}
+	return ss
+}
+
+// delegationRoleLabels は9.1の役割の日本語。
+var delegationRoleLabels = map[string]string{
+	"main": "main", "sub": "sub（木の中の1件を担当）",
+	"evaluator": "評価（独立した評価者）", "readonly": "読むだけ",
+}
+
+// delegationStatusLabels は4.3の主状態の日本語（httpapi/v1 の
+// delegationStatusLabel と同じ対応。パッケージをまたぐので複製する）。
+var delegationStatusLabels = map[string]string{
+	"planning": "計画中", "approved": "承認済", "paused": "停止", "ended": "終了",
+}
+
+// renderDelegationSection は「6. 自律実行」節を組み立てる（9.1）。
+// renderEndedDelegationSection は、最新の委任が終了した根の節（Delegation.md 4.3
+// 「取り下げ」・11.4。pb-281）。main・評価だったエージェントが、委任の外と取り違えずに
+// 止まれるように、終了したことと、すること（書き込まない・ローカルのファイルを消す）を書く。
+func renderEndedDelegationSection(rootSeq int32) string {
+	return fmt.Sprintf("## 6. 自律実行\n\n"+
+		"- **主状態**：終了（委任の根：#%d）。PM が根を受け入れたか、自律実行を取り下げた\n\n"+
+		"**main・評価として呼ばれたなら、PB に書き込まず、ローカルの引き継ぎファイルを消して止まること。**"+
+		"実行モードが従来のものに戻っていれば取り下げであり、以後は通常のチケットとして扱われる。\n", rootSeq)
+}
+
+func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packDelegationStatus) (string, *rpcError) {
+	var b strings.Builder
+	b.WriteString("## 6. 自律実行\n\n")
+
+	roleLabel := delegationRoleLabels[ds.Role]
+	if roleLabel == "" {
+		roleLabel = ds.Role
+	}
+	statusLabel := delegationStatusLabels[ds.Status]
+	if statusLabel == "" {
+		statusLabel = ds.Status
+	}
+	fmt.Fprintf(&b, "- **役割**：%s（委任の根：#%d／主状態：%s）\n", roleLabel, ds.RootSeq, statusLabel)
+	if ds.Main != nil {
+		fmt.Fprintf(&b, "- **main**：%s\n", ds.Main.DisplayName)
+	}
+	if ds.Evaluator != nil {
+		fmt.Fprintf(&b, "- **評価**：%s\n", ds.Evaluator.DisplayName)
+	}
+	if ds.NextMove != "" {
+		fmt.Fprintf(&b, "- **次の一手**：%s\n", ds.NextMove)
+	}
+	b.WriteString("\n")
+
+	if ds.Role == "readonly" {
+		b.WriteString("**この木は自律実行中であり、書き込めない。**\n\n")
+		return b.String(), nil
+	}
+	if (ds.Role == "main" || ds.Role == "evaluator") && ds.LatestPlan != nil {
+		plan := ds.LatestPlan
+		fmt.Fprintf(&b, "### 最新の計画：第%d版（状態 `%s`）\n\n", plan.Version, plan.Status)
+		if plan.DeclaredClass != nil {
+			fmt.Fprintf(&b, "- **申告した分類**：`%s`\n", *plan.DeclaredClass)
+		}
+		if plan.MeasuredClass != nil {
+			fmt.Fprintf(&b, "- **PB が測った分類**：`%s`\n", *plan.MeasuredClass)
+		}
+		b.WriteString("\n")
+		if plan.BodyMd != "" {
+			b.WriteString("**計画の説明**\n\n" + shiftHeadings(strings.TrimSpace(plan.BodyMd), 3) + "\n\n")
+		}
+		if plan.ReasonMd != "" {
+			b.WriteString("**変更の理由**\n\n" + shiftHeadings(strings.TrimSpace(plan.ReasonMd), 3) + "\n\n")
+		}
+		writeDelegationJSON(&b, "この版の委任範囲", plan.Scope)
+		writeDelegationJSON(&b, "計画の骨格", plan.Skeleton)
+		if plan.Evaluation != nil {
+			fmt.Fprintf(&b, "**この版への評価**：round %d、判定 `%s`\n\n", plan.Evaluation.Round, plan.Evaluation.Verdict)
+			writeDelegationJSON(&b, "観点ごとの判定", plan.Evaluation.Findings)
+		}
+	}
+
+	section := delegationInstructionSection(ds)
+	if section != "" {
+		body, rpcErr := h.fetchDelegationInstruction(r, base, section)
+		if rpcErr != nil {
+			return "", rpcErr
+		}
+		if body != "" {
+			b.WriteString(strings.TrimSpace(body) + "\n\n")
+		}
+	}
+	// **main と評価には「共通」の見出しも載せる**（9.1。pb-278）。ローカルの引き継ぎ
+	// ファイル・強制停止からの再開・止まる条件は、役割の段階によらず効かせる決まり
+	// である。見出しごとに書き写すと、直すときにずれる。sub は main の内側で動くので
+	// 載せない（main が手元の状態を持つ）。文書に見出しが無ければ黙って省く。
+	if ds.Role == "main" || ds.Role == "evaluator" {
+		body, rpcErr := h.fetchDelegationInstruction(r, base, delegationCommonSection)
+		if rpcErr != nil {
+			return "", rpcErr
+		}
+		if body != "" {
+			b.WriteString(strings.TrimSpace(body) + "\n\n")
+		}
+	}
+
+	if len(ds.OpenConfirmations) > 0 {
+		b.WriteString("**開いている確認待ち**\n\n")
+		for _, c := range ds.OpenConfirmations {
+			fmt.Fprintf(&b, "- `%s`：%s\n", c.Reason, c.QuestionMd)
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString(renderRecentAnswers(ds))
+	b.WriteString(renderBudgetLines(ds.Budget))
+	b.WriteString(renderStopConditions(ds.Scope.StopConditions))
+	b.WriteString(renderMetrics(ds))
+
+	if ds.LatestEvaluation != nil && ds.LatestEvaluation.Verdict != "pass" {
+		fmt.Fprintf(&b, "**直近の評価**：%s 対象 round %d、判定 `%s`\n\n",
+			ds.LatestEvaluation.TargetKind, ds.LatestEvaluation.Round, ds.LatestEvaluation.Verdict)
+	}
+
+	return b.String(), nil
+}
+
+// writeDelegationJSON は REST が返した範囲・評価の内容を欠落させずに載せる。
+func writeDelegationJSON(b *strings.Builder, title string, raw json.RawMessage) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return
+	}
+	pretty, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(b, "**%s**\n\n```json\n%s\n```\n\n", title, pretty)
+}
+
+// delegationCommonSection は役割によらず main と評価に載せる見出し（pb-278）。
+const delegationCommonSection = "共通"
+
+// delegationInstructionSection は9.1の「見出しは役割と段階の組」を判定する。
+//
+// **近似である（finding）。** 「評価待ち」「差し戻し」は計画と完了レポートの
+// 両方の状態を合成して決めており、どちらも pending している場合は計画側を
+// 優先する。paused・ended は9.2に専用の文面を持たないため、見出しを返さない
+// （主状態の表示だけで足りると判断した）。
+func delegationInstructionSection(ds packDelegationStatus) string {
+	if len(ds.OpenConfirmations) > 0 && ds.Role == "main" {
+		for _, c := range ds.OpenConfirmations {
+			if c.Reason != "hearing" {
+				return "main・確認待ち"
+			}
+		}
+	}
+	switch ds.Role {
+	case "evaluator":
+		return "評価"
+	case "sub":
+		return "sub"
+	}
+	// role == main。
+	switch ds.Status {
+	case "planning":
+		return "main・計画中"
+	case "approved":
+		if ds.LatestPlan != nil && ds.LatestPlan.Status == "rejected" {
+			return "main・差し戻し"
+		}
+		if ds.LatestPlan != nil && ds.LatestPlan.Status == "proposed" {
+			return "main・評価待ち"
+		}
+		return "main・承認済"
+	default:
+		return ""
+	}
+}
+
+// fetchDelegationInstruction は `delegation-instructions`（9.1）の1節を読む。
+func (h *Handler) fetchDelegationInstruction(r *http.Request, base, section string) (string, *rpcError) {
+	q := url.Values{}
+	q.Set("section", section)
+	res, err := h.getREST(r, base+"/docs/delegation-instructions", q)
+	if err != nil {
+		return "", newError(codeInternalError, err.Error())
+	}
+	if !res.ok() {
+		// **見つからなくても節6は壊さない。** プロジェクトが delegation-instructions
+		// を消した・見出しを変えた場合でも、役割・次の一手までは描く。
+		return "", nil
+	}
+	var doc struct {
+		BodyMD string `json:"body_md"`
+	}
+	if err := json.Unmarshal(res.body, &doc); err != nil {
+		return "", nil
+	}
+	return doc.BodyMD, nil
 }
 
 // charter は憲章の取り込み結果（Design.md 8.5.5）。
@@ -370,8 +842,8 @@ var scopeKeyLabels = []struct{ key, label string }{
 	{"external_apis", "外部API"},
 }
 
-// renderContextPack は 8.5.5 の5節を組み立てる。
-func renderContextPack(projectKey string, t packTicket, ch charter) string {
+// renderContextPack は 8.5.5 の5節（＋委任の木なら9.1の節6）を組み立てる。
+func renderContextPack(projectKey string, t packTicket, ch charter, delegSection string) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "# コンテキストパック — %s-%d「%s」\n\n", projectKey, t.Seq, t.Title)
@@ -396,6 +868,10 @@ func renderContextPack(projectKey string, t packTicket, ch charter) string {
 	writeCharterSection(&b, ch)
 	writeRelatedSection(&b, projectKey, t)
 	writeNextStepsSection(&b, t.Seq, folded)
+	writeWorkInstructions(&b, t)
+	if delegSection != "" {
+		b.WriteString(delegSection)
+	}
 	writeCharterVersions(&b, ch, folded)
 
 	return b.String()
@@ -746,4 +1222,19 @@ func actorLabel(a *packActor) string {
 // briefLabel は相手チケットの1行。**9.1 の完全形 ID を使う**（<key>-<seq>）。
 func briefLabel(projectKey string, b packBrief) string {
 	return fmt.Sprintf("%s-%d「%s」 %s", projectKey, b.Seq, b.Title, b.Status.Name)
+}
+
+// Always emitted, including when charter bodies have already been read.
+func writeWorkInstructions(b *strings.Builder, t packTicket) {
+	b.WriteString("## 作業実績の記録\n\n")
+	b.WriteString("規約の作業実績方針と `pb_get_doc(path=\"project-management-note\", section=\"実績\")` を取得する。承認後の実作業開始に `pb_start_work(seq, request_id)`。人への返答待ちの前に `pb_record_work(seq, work_id, request_id, action=\"pause\", note)`、再開時に `action=\"resume\"` を呼ぶ。終了時は `action=\"finish\", result=\"completed/partial/blocked\"` と取得できた材料を報告する。PBが共通契約でactual_hours・actual_point・actual_point_versionを算出し保存する。保存応答のsavedを確認し、work_session_idを完了レポートに指定する。取得不能な時間・Pointはeffort_unavailableに対象(time/point/both)と理由を記し、不明を0で補わない。履歴は `pb_list_work(seq)`。再送には同じrequest_idを使う。\n\n")
+	if t.WorkContext == nil {
+		b.WriteString("契約情報を確認できない場合は運営ノートを確認する。未設定のPoint式を推測しない。\n\n")
+		return
+	}
+	p := t.WorkContext.Policy
+	fmt.Fprintf(b, "算出契約：%s、版 `%s`、運営ノート版 %d、時間の選択 `%s`、登録必須 %t。開始時に契約を固定する。設定不足・変更量欠測はPoint未算出となる。変更量はチケット全体の累積値をchange_metricsで報告し、取得元を添える。\n\n", p.Status, p.Version, p.DocumentVersion, p.TimeSource, p.RequireRegistration)
+	if t.WorkContext.OpenWorkID != nil {
+		fmt.Fprintf(b, "自身の未終了作業：`%s`。pb_list_workで開始元を確認して継続するか、理由付きaction=abandonで未確認時間を加算せず終了する。新しいタイマーを重複開始しない。\n\n", *t.WorkContext.OpenWorkID)
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // capture は AccessLog が出した行を JSON として読み取る。
@@ -169,5 +170,35 @@ func TestAccessLogImplicit200(t *testing.T) {
 	}
 	if lines[0]["bytes"] != float64(2) {
 		t.Errorf("bytes = %v, want 2", lines[0]["bytes"])
+	}
+}
+
+// TestAccessLogPassesFlushAndDeadline は、包んだ後ろでも Flush と書き込みの期限の変更が効くことを見る。
+//
+// **SSE を送り出せないと、MCP の待ち受けの進捗が応答の最後まで保留され、クライアントが
+// 打ち切る**（pb-158 の実機で踏んだ）。期限の変更が届かないと、書き出し（ApiDesign.md 11.11）が
+// サーバ全体の WriteTimeout で切れる。
+func TestAccessLogPassesFlushAndDeadline(t *testing.T) {
+	var flushErr, deadlineErr error
+	h := AccessLog()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rc := http.NewResponseController(w)
+		_, _ = w.Write([]byte("data: 1\n\n"))
+		flushErr = rc.Flush()
+		deadlineErr = rc.SetWriteDeadline(time.Now().Add(time.Minute))
+	}))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	res, err := http.Get(srv.URL + "/sse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	if flushErr != nil {
+		t.Errorf("Flush が包みを通らない: %v", flushErr)
+	}
+	if deadlineErr != nil {
+		t.Errorf("SetWriteDeadline が包みを通らない: %v", deadlineErr)
 	}
 }

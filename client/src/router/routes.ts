@@ -1,3 +1,4 @@
+import InsightsPage from '../pages/InsightsPage.vue'
 import type { RouteRecordRaw } from 'vue-router'
 
 import AgentSetupPage from '../pages/AgentSetupPage.vue'
@@ -326,19 +327,8 @@ const routeSources: RouteRecordRaw[] = [
 
   {
     path: '/p/:key/insights',
-    component: PlaceholderPage,
-    meta: {
-      permission: 'project.view',
-      placeholder: {
-        title: '進捗分析',
-        status: '構想',
-        planned: [
-          'チケットの消化状況・残存チケットの傾向',
-          'バックログ・カンバン・ガントが「いま何があるか」を見せるのに対し、この画面だけが「どう進んでいるか」を集計で答える',
-          'チケットの消化ペースと見積り精度の確認',
-        ],
-      },
-    },
+    component: InsightsPage,
+    meta: { permission: 'project.view' },
   },
 
   {

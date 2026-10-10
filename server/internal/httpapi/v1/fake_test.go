@@ -385,6 +385,95 @@ type fakeQuerier struct {
 	// TLS 証明書の取り出し（ApiDesign.md 11.7）
 	certPEMRow gen.GetTLSCertificatePEMRow
 	certPEMErr error
+
+	// 委任（Delegation.md 4章・12.2。pb-246）。
+	//
+	// **既定は「委任が1件も無い」**——delegationList が空なら
+	// findDelegationContainingTicket は何も照合せず「属さない」を返し、
+	// mainDelegation に無い actor_id は pgx.ErrNoRows（main でない）になる。
+	// 既存のチケット系テストは、委任を一切セットしなければ影響を受けない。
+	delegationList      []gen.ListActiveDelegationsForProjectRow
+	delegationListErr   error
+	mainDelegation      map[string]gen.GetActiveDelegationByMainActorRow
+	agentUnusable       map[string]bool // true を入れた actor_id だけ使えない扱いにする
+	ticketForDelegation map[string]gen.GetTicketForDelegationRow
+	// **ID をキーにしない。** createDelegation は ulidgen.New() で id を作るので、
+	// テスト側が事前に知ることができない。応答の組み立てを確かめたいだけなので、
+	// 渡された id を無視して1件を返す単純な形にする。
+	delegationByIDRow   gen.GetDelegationByIDRow
+	delegationByIDErr   error
+	createdDelegations  []gen.CreateDelegationParams
+	createDelegationErr error
+	setExecutionModeTo  map[string]string // ticket id -> 設定された execution_mode
+
+	// 計画の版（Delegation.md 6章。pb-247）。
+	delegationByRootTicket map[string]gen.GetDelegationByRootTicketRow // key: root ticket id
+	delegationStatusSetTo  map[string]string                           // key: delegation id
+	nextPlanVersion        int32                                       // 0 なら 1 を返す
+	createdPlans           []gen.CreateDelegationPlanParams
+	createPlanErr          error
+	latestAcceptedPlan     gen.GetLatestAcceptedDelegationPlanRow
+	latestAcceptedPlanErr  error // pgx.ErrNoRows で「前の承認済み版が無い」
+	// **ID をキーにしない**（createDelegation と同じ理由）。
+	delegationPlanByIDRow gen.GetDelegationPlanByIDRow
+	planByVersion         map[int32]gen.GetDelegationPlanByVersionRow // key: version
+	acceptedPlanIDs       []string
+	rejectedPlanIDs       []string
+	ticketsCreatedSince   int64
+
+	// 評価（Delegation.md 7章。pb-248）。
+	latestAgentReport         gen.GetLatestAgentReportForTicketRow
+	latestAgentReportErr      error             // pgx.ErrNoRows で「まだ完了レポートが無い」
+	evaluationVerdictByReport map[string]string // key: agent_report_id
+	evaluationsSinceLastPass  int64
+	createdEvaluations        []gen.CreateEvaluationParams
+	createEvaluationErr       error
+	evaluationByIDRow         gen.GetEvaluationByIDRow
+
+	// 確認待ち（Delegation.md 8章。pb-249）。
+	openConfirmation            bool // true のとき HasOpenConfirmation が開いているものありと返す
+	createdConfirmations        []gen.CreateConfirmationParams
+	confirmationByIDRow         gen.GetConfirmationByIDRow
+	confirmationByIDErr         error
+	answeredConfirmationIDs     []string
+	answerConfirmationRows      int64 // 0 なら「対象なし」（既に答えられた等）。未設定時は1件として扱う
+	answerConfirmationSet       bool
+	answeredConfirmationReasons map[string]bool // key: reason。HasAnsweredConfirmation が見る
+
+	// 引き継ぎノート（Delegation.md 9.3・11章。pb-250）。
+	nextHandoffVersion      int32 // 0 なら 1 を返す
+	createdHandoffs         []gen.CreateDelegationHandoffParams
+	latestHandoffRow        gen.GetLatestDelegationHandoffRow
+	latestDelegationPlan    gen.GetLatestDelegationPlanRow
+	latestDelegationPlanErr error // pgx.ErrNoRows で「計画が1件も無い」
+
+	// 委任の状態の集約読み取り（Delegation.md 9.1。pb-251）。
+	latestEvaluationForDelegation    gen.GetLatestEvaluationForDelegationRow
+	latestEvaluationForDelegationErr error // pgx.ErrNoRows で「評価が1件も無い」
+
+	// 委任範囲の承認・却下（Delegation.md 6.1。pb-260）。
+	latestPlanWithVerdict    gen.GetLatestDelegationPlanWithVerdictRow
+	latestPlanWithVerdictErr error // pgx.ErrNoRows で「計画が1件も無い」
+	decidedPlans             []gen.DecideDelegationPlanParams
+	decidePlanRows           int64 // 0 なら1件として扱う。-1 で「対象なし」（同時の操作）
+	supersededKeepIDs        []string
+	approvedDelegationScopes []gen.ApproveDelegationScopeParams
+
+	// 予算（Delegation.md 12.1。pb-253）。既定は消費ゼロ・今日 2026-10-04。
+	budgetUsage          gen.GetDelegationBudgetUsageRow
+	budgetUsageSet       bool
+	budgetUsageProbes    []string
+	delegationForControl map[string]gen.GetDelegationForControlRow // key: root ticket id
+	updatedScopes        []gen.UpdateDelegationScopeParams
+
+	// 計画の承認のカード（pb-252）。
+	latestPlanForStatus gen.GetLatestPlanForStatusRow
+
+	// 最近の回答（pb-278）。
+	recentAnswered []gen.ListRecentAnsweredConfirmationsRow
+
+	// エピックの直下の根（pb-282）。key: 親のチケット id
+	delegatedChildOf map[string]bool
 }
 
 // GetTLSCertificatePEM は 11.7 の取り出し口が引く1行を返す。
@@ -1485,11 +1574,17 @@ type ticketFakeState struct {
 	deleteRows int64
 	detached   []string
 	descendant bool
-	typeByID   map[string]string
-	statusSet  []gen.SetTicketStatusParams
-	comments   []gen.CreateCommentParams
-	commentNum int64
-	updateErr  error
+	// descendantPairs は (ancestor, candidate) ごとに答えを変えたいときだけ使う
+	// ——pb-246 の委任の木の判定は、同じ呼び出しの中で「親子の循環か」
+	// （ancestor=自分）と「委任の木に属するか」（ancestor=委任の根）を
+	// 別の組で問い合わせるため、1つの bool では両方を正しく表せない。
+	// 無ければ descendant（既定 false）を使う。
+	descendantPairs map[[2]string]bool
+	typeByID        map[string]string
+	statusSet       []gen.SetTicketStatusParams
+	comments        []gen.CreateCommentParams
+	commentNum      int64
+	updateErr       error
 
 	// ── 9.6 の検証7 と、子が動いたら親を進行中にする ──────────
 	//
@@ -1573,6 +1668,9 @@ type ticketFakeState struct {
 	statsRow     gen.GetProjectTicketStatsRow
 	statsErr     error
 	statsStaleIn int32
+	trendRows    []gen.GetProjectTicketTrendsRow
+	trendErr     error
+	trendIn      gen.GetProjectTicketTrendsParams
 }
 
 // findComment は id で1件引く。見つからなければ -1。
@@ -2142,7 +2240,14 @@ func (q *fakeQuerier) ListTicketComments(
 		return nil, q.ticket.commentErr
 	}
 
-	sorted := slices.Clone(q.ticket.commentRows)
+	filtered := make([]gen.GetTicketCommentRow, 0, len(q.ticket.commentRows))
+	for _, row := range q.ticket.commentRows {
+		if len(arg.Kinds) == 0 || slices.Contains(arg.Kinds, row.Kind) {
+			filtered = append(filtered, row)
+		}
+	}
+
+	sorted := slices.Clone(filtered)
 	slices.SortStableFunc(sorted, func(a, b gen.GetTicketCommentRow) int {
 		c := a.CreatedAt.Compare(b.CreatedAt)
 		if c == 0 {
@@ -2156,7 +2261,7 @@ func (q *fakeQuerier) ListTicketComments(
 
 	total := int64(len(sorted))
 	var lastUpdated time.Time
-	for _, row := range q.ticket.commentRows {
+	for _, row := range filtered {
 		if row.UpdatedAt.After(lastUpdated) {
 			lastUpdated = row.UpdatedAt
 		}
@@ -2179,20 +2284,27 @@ func (q *fakeQuerier) ListTicketComments(
 }
 
 func (q *fakeQuerier) SummarizeTicketComments(
-	_ context.Context, _ string,
+	_ context.Context, arg gen.SummarizeTicketCommentsParams,
 ) (gen.SummarizeTicketCommentsRow, error) {
 	q.opLog = append(q.opLog, "SummarizeTicketComments")
 	if q.ticket.commentErr != nil {
 		return gen.SummarizeTicketCommentsRow{}, q.ticket.commentErr
 	}
-	var lastUpdated time.Time
+	var (
+		lastUpdated time.Time
+		total       int64
+	)
 	for _, row := range q.ticket.commentRows {
+		if len(arg.Kinds) > 0 && !slices.Contains(arg.Kinds, row.Kind) {
+			continue
+		}
+		total++
 		if row.UpdatedAt.After(lastUpdated) {
 			lastUpdated = row.UpdatedAt
 		}
 	}
 	return gen.SummarizeTicketCommentsRow{
-		Total: int64(len(q.ticket.commentRows)), LastUpdatedAt: lastUpdated,
+		Total: total, LastUpdatedAt: lastUpdated,
 	}, nil
 }
 
@@ -2477,9 +2589,288 @@ func (q *fakeQuerier) GetTicketTypeByID(_ context.Context, id string) (string, e
 	return t, nil
 }
 
-func (q *fakeQuerier) IsTicketDescendant(context.Context, gen.IsTicketDescendantParams) (bool, error) {
+func (q *fakeQuerier) IsTicketDescendant(_ context.Context, arg gen.IsTicketDescendantParams) (bool, error) {
 	q.opLog = append(q.opLog, "IsTicketDescendant")
+	if q.ticket.descendantPairs != nil {
+		if v, ok := q.ticket.descendantPairs[[2]string{arg.AncestorID, arg.CandidateID}]; ok {
+			return v, nil
+		}
+	}
 	return q.ticket.descendant, nil
+}
+
+// ── 委任（Delegation.md 4章・12.2。pb-246）────────────────────────
+
+func (q *fakeQuerier) ListActiveDelegationsForProject(context.Context, string) ([]gen.ListActiveDelegationsForProjectRow, error) {
+	q.opLog = append(q.opLog, "ListActiveDelegationsForProject")
+	if q.delegationListErr != nil {
+		return nil, q.delegationListErr
+	}
+	return q.delegationList, nil
+}
+
+func (q *fakeQuerier) GetActiveDelegationByMainActor(
+	_ context.Context, arg gen.GetActiveDelegationByMainActorParams,
+) (gen.GetActiveDelegationByMainActorRow, error) {
+	q.opLog = append(q.opLog, "GetActiveDelegationByMainActor")
+	if row, ok := q.mainDelegation[arg.MainActorID]; ok {
+		return row, nil
+	}
+	return gen.GetActiveDelegationByMainActorRow{}, pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) GetTicketForDelegation(_ context.Context, id string) (gen.GetTicketForDelegationRow, error) {
+	q.opLog = append(q.opLog, "GetTicketForDelegation")
+	if row, ok := q.ticketForDelegation[id]; ok {
+		return row, nil
+	}
+	return gen.GetTicketForDelegationRow{}, nil
+}
+
+func (q *fakeQuerier) AgentUsableInProject(_ context.Context, arg gen.AgentUsableInProjectParams) (bool, error) {
+	q.opLog = append(q.opLog, "AgentUsableInProject")
+	return !q.agentUnusable[arg.ActorID], nil
+}
+
+func (q *fakeQuerier) CreateDelegation(_ context.Context, arg gen.CreateDelegationParams) error {
+	q.opLog = append(q.opLog, "CreateDelegation")
+	if q.createDelegationErr != nil {
+		return q.createDelegationErr
+	}
+	q.createdDelegations = append(q.createdDelegations, arg)
+	return nil
+}
+
+func (q *fakeQuerier) SetTicketExecutionMode(
+	_ context.Context, arg gen.SetTicketExecutionModeParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "SetTicketExecutionMode")
+	if q.setExecutionModeTo == nil {
+		q.setExecutionModeTo = map[string]string{}
+	}
+	q.setExecutionModeTo[arg.ID] = arg.ExecutionMode
+	return 1, nil
+}
+
+func (q *fakeQuerier) GetDelegationByID(context.Context, string) (gen.GetDelegationByIDRow, error) {
+	q.opLog = append(q.opLog, "GetDelegationByID")
+	if q.delegationByIDErr != nil {
+		return gen.GetDelegationByIDRow{}, q.delegationByIDErr
+	}
+	return q.delegationByIDRow, nil
+}
+
+// ── 計画の版（Delegation.md 6章。pb-247）────────────────────────
+
+func (q *fakeQuerier) GetDelegationByRootTicket(_ context.Context, rootTicketID string) (gen.GetDelegationByRootTicketRow, error) {
+	q.opLog = append(q.opLog, "GetDelegationByRootTicket")
+	if row, ok := q.delegationByRootTicket[rootTicketID]; ok {
+		return row, nil
+	}
+	return gen.GetDelegationByRootTicketRow{}, pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) SetDelegationStatus(_ context.Context, arg gen.SetDelegationStatusParams) (int64, error) {
+	q.opLog = append(q.opLog, "SetDelegationStatus")
+	if q.delegationStatusSetTo == nil {
+		q.delegationStatusSetTo = map[string]string{}
+	}
+	q.delegationStatusSetTo[arg.ID] = arg.Status
+	return 1, nil
+}
+
+func (q *fakeQuerier) NextDelegationPlanVersion(context.Context, string) (int32, error) {
+	q.opLog = append(q.opLog, "NextDelegationPlanVersion")
+	if q.nextPlanVersion == 0 {
+		return 1, nil
+	}
+	return q.nextPlanVersion, nil
+}
+
+func (q *fakeQuerier) CreateDelegationPlan(_ context.Context, arg gen.CreateDelegationPlanParams) error {
+	q.opLog = append(q.opLog, "CreateDelegationPlan")
+	if q.createPlanErr != nil {
+		return q.createPlanErr
+	}
+	q.createdPlans = append(q.createdPlans, arg)
+	return nil
+}
+
+func (q *fakeQuerier) GetLatestAcceptedDelegationPlan(context.Context, string) (gen.GetLatestAcceptedDelegationPlanRow, error) {
+	q.opLog = append(q.opLog, "GetLatestAcceptedDelegationPlan")
+	if q.latestAcceptedPlanErr != nil {
+		return gen.GetLatestAcceptedDelegationPlanRow{}, q.latestAcceptedPlanErr
+	}
+	return q.latestAcceptedPlan, nil
+}
+
+func (q *fakeQuerier) GetDelegationPlanByID(context.Context, string) (gen.GetDelegationPlanByIDRow, error) {
+	q.opLog = append(q.opLog, "GetDelegationPlanByID")
+	return q.delegationPlanByIDRow, nil
+}
+
+func (q *fakeQuerier) GetDelegationPlanByVersion(
+	_ context.Context, arg gen.GetDelegationPlanByVersionParams,
+) (gen.GetDelegationPlanByVersionRow, error) {
+	q.opLog = append(q.opLog, "GetDelegationPlanByVersion")
+	if row, ok := q.planByVersion[arg.Version]; ok {
+		return row, nil
+	}
+	return gen.GetDelegationPlanByVersionRow{}, pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) AcceptDelegationPlan(_ context.Context, id string) (int64, error) {
+	q.opLog = append(q.opLog, "AcceptDelegationPlan")
+	q.acceptedPlanIDs = append(q.acceptedPlanIDs, id)
+	return 1, nil
+}
+
+func (q *fakeQuerier) RejectDelegationPlan(_ context.Context, id string) (int64, error) {
+	q.opLog = append(q.opLog, "RejectDelegationPlan")
+	q.rejectedPlanIDs = append(q.rejectedPlanIDs, id)
+	return 1, nil
+}
+
+// ── 評価（Delegation.md 7章。pb-248）────────────────────────────
+
+func (q *fakeQuerier) GetLatestAgentReportForTicket(
+	context.Context, string,
+) (gen.GetLatestAgentReportForTicketRow, error) {
+	q.opLog = append(q.opLog, "GetLatestAgentReportForTicket")
+	if q.latestAgentReportErr != nil {
+		return gen.GetLatestAgentReportForTicketRow{}, q.latestAgentReportErr
+	}
+	// **既定は「まだ完了レポートが無い」。** ゼロ値（未設定）のまま返すと、
+	// 空の ID で評価の有無を調べることになり、既存の（evaluation を知らない）
+	// テストが黙って「評価待ち」側へ落ちる。
+	if q.latestAgentReport.ID == "" {
+		return gen.GetLatestAgentReportForTicketRow{}, pgx.ErrNoRows
+	}
+	return q.latestAgentReport, nil
+}
+
+func (q *fakeQuerier) GetEvaluationVerdictForReport(
+	_ context.Context, agentReportID pgtype.Text,
+) (string, error) {
+	q.opLog = append(q.opLog, "GetEvaluationVerdictForReport")
+	if v, ok := q.evaluationVerdictByReport[agentReportID.String]; ok {
+		return v, nil
+	}
+	return "", pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) GetLatestEvaluationForDelegation(
+	context.Context, string,
+) (gen.GetLatestEvaluationForDelegationRow, error) {
+	q.opLog = append(q.opLog, "GetLatestEvaluationForDelegation")
+	if q.latestEvaluationForDelegationErr != nil {
+		return gen.GetLatestEvaluationForDelegationRow{}, q.latestEvaluationForDelegationErr
+	}
+	if q.latestEvaluationForDelegation.TargetKind == "" {
+		return gen.GetLatestEvaluationForDelegationRow{}, pgx.ErrNoRows
+	}
+	return q.latestEvaluationForDelegation, nil
+}
+
+func (q *fakeQuerier) CountEvaluationsSinceLastPass(
+	context.Context, gen.CountEvaluationsSinceLastPassParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "CountEvaluationsSinceLastPass")
+	return q.evaluationsSinceLastPass, nil
+}
+
+func (q *fakeQuerier) CreateEvaluation(_ context.Context, arg gen.CreateEvaluationParams) error {
+	q.opLog = append(q.opLog, "CreateEvaluation")
+	if q.createEvaluationErr != nil {
+		return q.createEvaluationErr
+	}
+	q.createdEvaluations = append(q.createdEvaluations, arg)
+	return nil
+}
+
+func (q *fakeQuerier) GetEvaluationByID(context.Context, string) (gen.GetEvaluationByIDRow, error) {
+	q.opLog = append(q.opLog, "GetEvaluationByID")
+	return q.evaluationByIDRow, nil
+}
+
+// ── 確認待ち（Delegation.md 8章。pb-249）────────────────────────
+
+func (q *fakeQuerier) HasOpenConfirmation(context.Context, string) (bool, error) {
+	q.opLog = append(q.opLog, "HasOpenConfirmation")
+	return q.openConfirmation, nil
+}
+
+func (q *fakeQuerier) CreateConfirmation(_ context.Context, arg gen.CreateConfirmationParams) error {
+	q.opLog = append(q.opLog, "CreateConfirmation")
+	q.createdConfirmations = append(q.createdConfirmations, arg)
+	return nil
+}
+
+func (q *fakeQuerier) GetConfirmationByID(context.Context, string) (gen.GetConfirmationByIDRow, error) {
+	q.opLog = append(q.opLog, "GetConfirmationByID")
+	if q.confirmationByIDErr != nil {
+		return gen.GetConfirmationByIDRow{}, q.confirmationByIDErr
+	}
+	return q.confirmationByIDRow, nil
+}
+
+func (q *fakeQuerier) ListOpenConfirmations(context.Context, string) ([]gen.ListOpenConfirmationsRow, error) {
+	q.opLog = append(q.opLog, "ListOpenConfirmations")
+	return nil, nil
+}
+
+func (q *fakeQuerier) AnswerConfirmation(
+	_ context.Context, arg gen.AnswerConfirmationParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "AnswerConfirmation")
+	q.answeredConfirmationIDs = append(q.answeredConfirmationIDs, arg.ID)
+	if q.answerConfirmationSet {
+		return q.answerConfirmationRows, nil
+	}
+	return 1, nil
+}
+
+func (q *fakeQuerier) HasAnsweredConfirmation(
+	_ context.Context, arg gen.HasAnsweredConfirmationParams,
+) (bool, error) {
+	q.opLog = append(q.opLog, "HasAnsweredConfirmation")
+	return q.answeredConfirmationReasons[arg.Reason], nil
+}
+
+// ── 引き継ぎノート（Delegation.md 9.3・11章。pb-250）────────────────
+
+func (q *fakeQuerier) NextDelegationHandoffVersion(context.Context, string) (int32, error) {
+	q.opLog = append(q.opLog, "NextDelegationHandoffVersion")
+	if q.nextHandoffVersion == 0 {
+		return 1, nil
+	}
+	return q.nextHandoffVersion, nil
+}
+
+func (q *fakeQuerier) CreateDelegationHandoff(_ context.Context, arg gen.CreateDelegationHandoffParams) error {
+	q.opLog = append(q.opLog, "CreateDelegationHandoff")
+	q.createdHandoffs = append(q.createdHandoffs, arg)
+	return nil
+}
+
+func (q *fakeQuerier) GetLatestDelegationHandoff(context.Context, string) (gen.GetLatestDelegationHandoffRow, error) {
+	q.opLog = append(q.opLog, "GetLatestDelegationHandoff")
+	return q.latestHandoffRow, nil
+}
+
+func (q *fakeQuerier) GetLatestDelegationPlan(context.Context, string) (gen.GetLatestDelegationPlanRow, error) {
+	q.opLog = append(q.opLog, "GetLatestDelegationPlan")
+	if q.latestDelegationPlanErr != nil {
+		return gen.GetLatestDelegationPlanRow{}, q.latestDelegationPlanErr
+	}
+	return q.latestDelegationPlan, nil
+}
+
+func (q *fakeQuerier) CountTicketsInDelegationTreeSince(
+	context.Context, gen.CountTicketsInDelegationTreeSinceParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "CountTicketsInDelegationTreeSince")
+	return q.ticketsCreatedSince, nil
 }
 
 func (q *fakeQuerier) DetachTicketTags(_ context.Context, ticketID string) error {
@@ -3000,4 +3391,158 @@ func (q *fakeQuerier) GetProjectTimezone(_ context.Context, _ string) (string, e
 		return q.timezone, nil
 	}
 	return "Asia/Tokyo", nil
+}
+
+func (q *fakeQuerier) GetProjectTicketTrends(_ context.Context, arg gen.GetProjectTicketTrendsParams) ([]gen.GetProjectTicketTrendsRow, error) {
+	q.opLog = append(q.opLog, "GetProjectTicketTrends")
+	q.ticket.trendIn = arg
+	if q.ticket.trendErr != nil {
+		return nil, q.ticket.trendErr
+	}
+	if q.ticket.trendRows != nil {
+		return q.ticket.trendRows, nil
+	}
+	loc, _ := time.LoadLocation("Asia/Tokyo")
+	today := arg.AsOf.In(loc)
+	days := 7
+	switch arg.Period {
+	case "4w":
+		days = 28
+	case "3m":
+		days = 92
+	case "6m":
+		days = 183
+	}
+	start := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -days+1)
+	rows := make([]gen.GetProjectTicketTrendsRow, days)
+	for i := range rows {
+		rows[i] = gen.GetProjectTicketTrendsRow{Date: start.AddDate(0, 0, i).Format("2006-01-02"), Timezone: "Asia/Tokyo", AsOf: arg.AsOf, IsPartial: i == len(rows)-1}
+	}
+	return rows, nil
+}
+
+// ── 委任範囲の承認・却下（Delegation.md 6.1。pb-260）──────────────
+
+func (q *fakeQuerier) GetLatestDelegationPlanWithVerdict(
+	context.Context, string,
+) (gen.GetLatestDelegationPlanWithVerdictRow, error) {
+	q.opLog = append(q.opLog, "GetLatestDelegationPlanWithVerdict")
+	if q.latestPlanWithVerdictErr != nil {
+		return gen.GetLatestDelegationPlanWithVerdictRow{}, q.latestPlanWithVerdictErr
+	}
+	return q.latestPlanWithVerdict, nil
+}
+
+func (q *fakeQuerier) DecideDelegationPlan(_ context.Context, arg gen.DecideDelegationPlanParams) (int64, error) {
+	q.opLog = append(q.opLog, "DecideDelegationPlan")
+	if q.decidePlanRows < 0 {
+		return 0, nil
+	}
+	q.decidedPlans = append(q.decidedPlans, arg)
+	return 1, nil
+}
+
+func (q *fakeQuerier) SupersedeProposedDelegationPlans(
+	_ context.Context, arg gen.SupersedeProposedDelegationPlansParams,
+) (int64, error) {
+	q.opLog = append(q.opLog, "SupersedeProposedDelegationPlans")
+	q.supersededKeepIDs = append(q.supersededKeepIDs, arg.KeepID)
+	return 0, nil
+}
+
+func (q *fakeQuerier) ApproveDelegationScope(_ context.Context, arg gen.ApproveDelegationScopeParams) (int64, error) {
+	q.opLog = append(q.opLog, "ApproveDelegationScope")
+	q.approvedDelegationScopes = append(q.approvedDelegationScopes, arg)
+	return 1, nil
+}
+
+// ── 予算（Delegation.md 12.1。pb-253）──────────────────────────
+
+func (q *fakeQuerier) GetDelegationBudgetUsage(
+	_ context.Context, arg gen.GetDelegationBudgetUsageParams,
+) (gen.GetDelegationBudgetUsageRow, error) {
+	q.opLog = append(q.opLog, "GetDelegationBudgetUsage")
+	q.budgetUsageProbes = append(q.budgetUsageProbes, arg.ProbeTicketID)
+	if !q.budgetUsageSet {
+		return gen.GetDelegationBudgetUsageRow{ProbeDepth: 0, Today: "2026-10-04"}, nil
+	}
+	return q.budgetUsage, nil
+}
+
+func (q *fakeQuerier) UpdateDelegationScope(_ context.Context, arg gen.UpdateDelegationScopeParams) (int64, error) {
+	q.opLog = append(q.opLog, "UpdateDelegationScope")
+	q.updatedScopes = append(q.updatedScopes, arg)
+	return 1, nil
+}
+
+func (q *fakeQuerier) GetDelegationForControl(_ context.Context, rootTicketID string) (gen.GetDelegationForControlRow, error) {
+	q.opLog = append(q.opLog, "GetDelegationForControl")
+	if row, ok := q.delegationForControl[rootTicketID]; ok {
+		return row, nil
+	}
+	return gen.GetDelegationForControlRow{}, pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) GetLatestPlanForStatus(context.Context, string) (gen.GetLatestPlanForStatusRow, error) {
+	q.opLog = append(q.opLog, "GetLatestPlanForStatus")
+	return q.latestPlanForStatus, nil
+}
+
+func (q *fakeQuerier) ListRecentAnsweredConfirmations(
+	context.Context, gen.ListRecentAnsweredConfirmationsParams,
+) ([]gen.ListRecentAnsweredConfirmationsRow, error) {
+	q.opLog = append(q.opLog, "ListRecentAnsweredConfirmations")
+	return q.recentAnswered, nil
+}
+
+func (q *fakeQuerier) HasDelegatedChild(_ context.Context, parentID pgtype.Text) (bool, error) {
+	q.opLog = append(q.opLog, "HasDelegatedChild")
+	return q.delegatedChildOf[parentID.String], nil
+}
+
+// ListDelegationMarks は一覧の自律実行の印（pb-276）。フェイクの一覧には委任が無い。
+// 印そのものの判定は実 DB の結合テスト（delegation_marks_integration_test.go）で見る。
+func (q *fakeQuerier) ListDelegationMarks(
+	_ context.Context, _ gen.ListDelegationMarksParams,
+) ([]gen.ListDelegationMarksRow, error) {
+	return nil, nil
+}
+
+func (q *fakeQuerier) MarkTicketEffortManual(context.Context, gen.MarkTicketEffortManualParams) error {
+	return nil
+}
+func (q *fakeQuerier) CountActorWorkRecords(context.Context, string) (int64, error) { return 0, nil }
+
+func (q *fakeQuerier) LockWorkProject(context.Context, string) error { return nil }
+
+func (q *fakeQuerier) ListWorkDeletionAffectedTickets(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
+func (q *fakeQuerier) EnsureTicketEffort(context.Context, string) error { return nil }
+
+func (q *fakeQuerier) GetWorkPolicyDocument(context.Context, pgtype.Text) (gen.GetWorkPolicyDocumentRow, error) {
+	return gen.GetWorkPolicyDocumentRow{}, pgx.ErrNoRows
+}
+func (q *fakeQuerier) HasTicketOpenWork(context.Context, gen.HasTicketOpenWorkParams) (bool, error) {
+	return false, nil
+}
+func (q *fakeQuerier) GetOpenWorkSession(context.Context, gen.GetOpenWorkSessionParams) (string, error) {
+	return "", pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) WorkRequiresRegistration(context.Context, gen.WorkRequiresRegistrationParams) (bool, error) {
+	return false, nil
+}
+
+func (q *fakeQuerier) GetAgentMonitorSettings(context.Context, string) ([]byte, error) {
+	return []byte(`{}`), nil
+}
+func (q *fakeQuerier) CountAgentAttempts(context.Context, string) (int64, error) { return 0, nil }
+func (q *fakeQuerier) DeleteAgentMonitorResets(context.Context, string) error    { return nil }
+func (q *fakeQuerier) UpdateAgentAttributes(context.Context, gen.UpdateAgentAttributesParams) error {
+	return nil
+}
+func (q *fakeQuerier) FindFailedAgentRun(context.Context, gen.FindFailedAgentRunParams) (string, error) {
+	return "", pgx.ErrNoRows
 }

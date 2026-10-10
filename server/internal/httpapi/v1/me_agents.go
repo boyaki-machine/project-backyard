@@ -150,13 +150,19 @@ var agentDefaultScopes = []string{
 
 // agentGrantableScopes は既定に足せる権限（ApiDesign.md 4.5.3。手順26a）。
 //
-// **`doc.edit` の1件だけである。** Design.md 6.5 の禁止のうち、これだけが
+// **`doc.edit` は Design.md 6.5 の禁止のうち唯一**
 // 「載せるかは**そのエージェントが誰に付いているか**で決まる」と書かれている
 // ——PM のエージェントは持ち、実装だけを行うエージェントは持たない。
 // **pb_put_doc がこの権限を要求する**（8.2）ので、発行の口が固定のままでは
 // 6.5 を実行できなかった（手順26a まで、pb_put_doc は必ず 403 になっていた）。
 //
-// **ticket.close は入れない。** 6.5 はこちらを「エージェントに開けない」と
+// **`delegation.evaluate` も同じ形である**（pb-246。Delegation.md 15章 D5）。
+// 評価エージェントに指定するエージェントだけが選び、main や実装だけを行う
+// エージェントは持たない。`delegation.manage` を既定にも許可リストにも
+// 入れないのは、委任の作成・範囲の承認は人（PM）だけが行う操作だからである
+// （`delegation.go` の createDelegation は MCP ツールを持たない）。
+//
+// **`ticket.close` は入れない。** 6.5 はこちらを「エージェントに開けない」と
 // 定めており、ワークフローの is_agent_reachable=false と allowed_actor_kinds で
 // DB レベルでも担保されている（DbDesign.md 7.4）。
 //
@@ -164,7 +170,8 @@ var agentDefaultScopes = []string{
 // /me/agents を叩ける本人が user.manage を載せたトークンを自分のエージェントへ
 // 渡せる——所有者との積で消えるとはいえ、アドミニストレータが所有者のときは
 // 消えない。
-var agentGrantableScopes = []string{"doc.edit", "ticket.actual_point.edit"}
+// 計画権限は任意の追加。一般編集と委任の管理は付与しない。
+var agentGrantableScopes = []string{"doc.edit", "ticket.actual_point.edit", "delegation.evaluate", "ticket.plan.edit"}
 
 // agentAllowedScopes は発行時に受け付ける権限の全体（既定 ∪ 足せるもの）。
 func agentAllowedScopes() map[string]bool {
@@ -251,6 +258,7 @@ type myAgentView struct {
 	// 常に空でない（4.5.1）。画面と生成器はこちらをそのまま使う。
 	TokenEnvName string          `json:"token_env_name"`
 	TrustLevel   int32           `json:"trust_level"`
+	Capabilities []string        `json:"capabilities"`
 	IsActive     bool            `json:"is_active"`
 	CreatedAt    Time            `json:"created_at"`
 	Token        *agentTokenView `json:"token"`
@@ -305,9 +313,9 @@ func (h *handler) listMyAgents(w http.ResponseWriter, r *http.Request) {
 			TokenEnvSuffix: textPtr(row.TokenEnvSuffix),
 			TokenEnvName:   agentTokenEnvName(row.TokenEnvSuffix, row.ActorID),
 
-			TrustLevel: row.TrustLevel,
-			IsActive:   row.IsActive,
-			CreatedAt:  Time(row.CreatedAt),
+			TrustLevel: row.TrustLevel, Capabilities: decodeCapabilities(row.Capabilities),
+			IsActive:  row.IsActive,
+			CreatedAt: Time(row.CreatedAt),
 		}
 		if row.ProjectKey.Valid {
 			v.Project = &projectRef{Key: row.ProjectKey.String, Name: row.ProjectName.String}
@@ -557,9 +565,10 @@ func (h *handler) createMyAgent(w http.ResponseWriter, r *http.Request) {
 		TokenEnvSuffix: nullable(f.tokenEnvSuffix),
 		TokenEnvName:   agentTokenEnvName(text(f.tokenEnvSuffix), agentID),
 
-		TrustLevel: 1,
-		IsActive:   true,
-		CreatedAt:  Time(createdAt),
+		TrustLevel:   1,
+		Capabilities: []string{},
+		IsActive:     true,
+		CreatedAt:    Time(createdAt),
 		// **登録と発行を分ける**（4.5.2）。再発行が必要になったときに
 		// 同じ経路（4.5.3）を通すため、ここでは token を作らない。
 		Token: nil,
@@ -659,7 +668,9 @@ func validateCreateAgent(req createAgentRequest) (createAgentFields, *apierr.Err
 // updateAgentRequest はポインタで受ける。**送られた項目だけを更新する**ため、
 // 「空文字を送った」と「送らなかった」を区別する必要がある。
 type updateAgentRequest struct {
-	DisplayName *string `json:"display_name"`
+	TrustLevel   *int32    `json:"trust_level"`
+	Capabilities *[]string `json:"capabilities"`
+	DisplayName  *string   `json:"display_name"`
 	// ClientKind は 0020 から変更できる（ApiDesign.md 4.5.4）。**値域が今後も
 	// 増える**ので、other で登録した人が、PB がその種別に対応した日に移れる
 	// 必要がある。**project_key は変えられないまま**——仕事はプロジェクトに属する。
@@ -686,6 +697,18 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 	if e := decodeJSON(r, &req); e != nil {
 		apierr.Write(w, r, e)
 		return
+	}
+
+	attributes := attributeRequest{req.TrustLevel, req.Capabilities}
+	if req.TrustLevel != nil || req.Capabilities != nil {
+		if p.IsAgent() {
+			apierr.Write(w, r, apierr.New(apierr.Forbidden))
+			return
+		}
+		if e := validateAttributes(&attributes); e != nil {
+			apierr.Write(w, r, e)
+			return
+		}
 	}
 
 	var details []apierr.Detail
@@ -851,7 +874,16 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if req.TrustLevel != nil || req.Capabilities != nil {
+			if e := saveAttributes(ctx, q, agentID, attributes); e != nil {
+				return e
+			}
+		}
+
 		detail := map[string]any{}
+		if req.TrustLevel != nil || req.Capabilities != nil {
+			detail["attributes"] = attributes
+		}
 		if req.DisplayName != nil {
 			detail["display_name"] = *req.DisplayName
 		}
@@ -906,9 +938,9 @@ func (h *handler) updateMyAgent(w http.ResponseWriter, r *http.Request) {
 		TokenEnvSuffix: textPtr(updated.TokenEnvSuffix),
 		TokenEnvName:   agentTokenEnvName(updated.TokenEnvSuffix, updated.ActorID),
 
-		TrustLevel: updated.TrustLevel,
-		IsActive:   updated.IsActive,
-		CreatedAt:  Time(updated.CreatedAt),
+		TrustLevel: updated.TrustLevel, Capabilities: decodeCapabilities(updated.Capabilities),
+		IsActive:  updated.IsActive,
+		CreatedAt: Time(updated.CreatedAt),
 	}
 	if updated.ProjectKey.Valid {
 		v.Project = &projectRef{Key: updated.ProjectKey.String, Name: updated.ProjectName.String}
@@ -1276,7 +1308,19 @@ func reassignAgentRecords(
 	if err != nil {
 		return 0, 0, fmt.Errorf("実行記録の数を数えられない: %w", err)
 	}
-	if nComments == 0 && nRuns == 0 {
+	nWork, err := q.CountActorWorkRecords(ctx, agentActorID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("作業記録数を数えられない: %w", err)
+	}
+	nAttempts, err := q.CountAgentAttempts(ctx, agentActorID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if err = q.DeleteAgentMonitorResets(ctx, agentActorID); err != nil {
+		return 0, 0, err
+	}
+
+	if nComments == 0 && nRuns == 0 && nWork == 0 && nAttempts == 0 {
 		return 0, 0, nil
 	}
 
@@ -1313,6 +1357,20 @@ func reassignAgentRecords(
 			return 0, 0, fmt.Errorf("実行記録のアクターを付け替えられない: %w", err)
 		}
 	}
+	if nWork > 0 {
+		if err := q.ReassignWorkSessions(ctx, gen.ReassignWorkSessionsParams{NewActorID: destID, OldActorID: agentActorID}); err != nil {
+			return 0, 0, err
+		}
+		if err := q.ReassignWorkEvents(ctx, gen.ReassignWorkEventsParams{NewActorID: destID, OldActorID: agentActorID}); err != nil {
+			return 0, 0, err
+		}
+	}
+	if nAttempts > 0 {
+		if err = q.ReassignAgentAttempts(ctx, gen.ReassignAgentAttemptsParams{NewActorID: destID, OldActorID: agentActorID}); err != nil {
+			return 0, 0, err
+		}
+	}
+
 	return comments, runs, nil
 }
 

@@ -40,12 +40,20 @@ type statsStaleView struct {
 	ThresholdDays int32 `json:"threshold_days"`
 }
 
+// statsOnstageView は画面に見えるオンステージの部分木・棚除外後の件数。
+type statsOnstageView struct {
+	ByCategory statsByCategoryView `json:"by_category"`
+	Total      int64               `json:"total"`
+	Unknown    int64               `json:"unknown"`
+}
+
 // projectStatsView は 9.13.1 の応答。
 //
 // **by_category の合計は total と一致しないことがある。** ステータスキーが
 // ワークフローに解決できないチケットはどのカテゴリにも数えられないためで、
 // クエリ側（stats.sql）に理由がある。
 type projectStatsView struct {
+	Onstage    statsOnstageView    `json:"onstage"`
 	ByCategory statsByCategoryView `json:"by_category"`
 	Total      int64               `json:"total"`
 	Open       int64               `json:"open"`
@@ -78,6 +86,10 @@ func (h *handler) getProjectStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, projectStatsView{
+		Onstage: statsOnstageView{
+			ByCategory: statsByCategoryView{Todo: row.OnstageTodo, InProgress: row.OnstageInProgress, Review: row.OnstageReview, Done: row.OnstageDone},
+			Total:      row.OnstageTotal, Unknown: row.OnstageUnknown,
+		},
 		ByCategory: statsByCategoryView{
 			Todo:       row.Todo,
 			InProgress: row.InProgress,

@@ -261,7 +261,7 @@ func parseEntityTicketSeq(v string) (int32, error) {
 	if !ok {
 		return 0, fmt.Errorf("entity %q は ticket: で始まらない", v)
 	}
-	n, err := strconv.Atoi(rest)
+	n, err := strconv.ParseInt(rest, 10, 32)
 	if err != nil || n < 1 {
 		return 0, fmt.Errorf("entity %q の seq が正の整数でない", v)
 	}

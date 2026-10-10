@@ -41,6 +41,7 @@ var autoApprovedTools = []string{
 	"pb_get_doc",
 	"pb_list_tasks",
 	"pb_get_task",
+	"pb_list_comments",
 	"pb_get_context",
 	"pb_list_transitions",
 }

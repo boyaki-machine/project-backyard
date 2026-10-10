@@ -165,6 +165,7 @@ test('registered member icon appears in icon columns and actor choices', async (
   await page.locator('.avatar-file').setInputFiles({ name: 'member.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') })
   await page.getByRole('dialog', { name: 'アイコンを切り抜く' }).getByRole('button', { name: '登録' }).click()
   await expect(page.locator('.avatar-field img')).toBeVisible()
+  const csrf = (await page.context().cookies()).find(cookie => cookie.name === 'pb_csrf')!.value
 
   try {
     await page.goto('/p/demo/settings')
@@ -221,6 +222,8 @@ test('registered member icon appears in icon columns and actor choices', async (
       await page.screenshot({ path: testInfo.outputPath(`avatar-choice-${width}.png`) })
     }
   } finally {
-    await page.request.delete('/api/v1/me/avatar')
+    const removed = await page.request.delete('/api/v1/me/avatar', { headers: { 'X-PB-CSRF': csrf } })
+    expect(removed.status()).toBe(200)
+    expect((await removed.json()).actor.avatar_url).toBeNull()
   }
 })

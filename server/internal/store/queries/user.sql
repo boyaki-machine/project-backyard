@@ -100,6 +100,7 @@ WITH filtered AS (
     ag.client_kind,
     ag.model_name    AS agent_model_name,
     ag.trust_level   AS agent_trust_level,
+    ag.capabilities AS agent_capabilities,
     agp.key          AS agent_project_key,
     ag.owner_actor_id,
     owner.display_name AS owner_display_name
@@ -123,7 +124,7 @@ SELECT
   f.id, f.kind, f.display_name, f.email, f.system_role,
   f.is_active, f.last_login_at, f.project_count, f.created_at,
   f.client_kind, f.agent_model_name, f.agent_trust_level,
-  f.agent_project_key, f.owner_actor_id, f.owner_display_name
+  f.agent_capabilities,f.agent_project_key, f.owner_actor_id, f.owner_display_name
 FROM filtered f
 ORDER BY
   CASE WHEN @sort::text = 'display_name'  AND @sort_order::text = 'asc'  THEN f.display_name COLLATE "ja-JP-x-icu" END ASC,

@@ -45,9 +45,7 @@ var reportStatuses = []string{"completed", "blocked", "partial"}
 // knowledge_impact の値域（同上）。
 var knowledgeImpacts = []string{"none", "minor", "major"}
 
-// runStatusCompleted は agent_run.status に立つ唯一の値
-// （DbDesign.md 8.2.4）。failed / abandoned は「レポートを出さずに終わった run」で、
-// それを観測する口が無い。running は開始を告げる口が無いので作られない。
+// Legacy report-only submissions create completed runs; explicit work failures retain their outcome.
 const runStatusCompleted = "completed"
 
 // reportRequest は 9.15 の要求。
@@ -58,14 +56,21 @@ const runStatusCompleted = "completed"
 // **列に出す値だけを型で受ける。** 残りは json.RawMessage のまま report jsonb へ
 // 入れる——知らないキーも拒まず保存する（9.15）。
 type reportRequest struct {
-	Status           string          `json:"status"`
-	KnowledgeImpact  *string         `json:"knowledge_impact"`
-	Cost             *reportCost     `json:"cost"`
-	DoDResults       []reportDoD     `json:"dod_results"`
-	Artifacts        json.RawMessage `json:"artifacts"`
-	Findings         json.RawMessage `json:"findings"`
-	Failures         json.RawMessage `json:"failures"`
-	ProposedSubtasks json.RawMessage `json:"proposed_subtasks"`
+	WorkSessionID     string             `json:"work_session_id"`
+	EffortUnavailable *effortUnavailable `json:"effort_unavailable"`
+	Status            string             `json:"status"`
+	KnowledgeImpact   *string            `json:"knowledge_impact"`
+	Cost              *reportCost        `json:"cost"`
+	DoDResults        []reportDoD        `json:"dod_results"`
+	Artifacts         json.RawMessage    `json:"artifacts"`
+	Findings          json.RawMessage    `json:"findings"`
+	Failures          json.RawMessage    `json:"failures"`
+	ProposedSubtasks  json.RawMessage    `json:"proposed_subtasks"`
+}
+
+type effortUnavailable struct {
+	Target string `json:"target"`
+	Reason string `json:"reason"`
 }
 
 // reportCost は 10.6.1 の cost。agent_run の tokens_used / turns へ展開する。
@@ -156,15 +161,144 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 	p := auth.PrincipalFromContext(ctx)
 	rec := activity.FromRequest(r)
 	runID, reportID, commentID := ulidgen.New(), ulidgen.New(), ulidgen.New()
-	var view reportView
+	var (
+		view      reportView
+		forbidden *apierr.Error
+	)
 
 	err = h.tx.RunInTx(ctx, func(q gen.Querier) error {
-		run, err := buildAgentRun(ctx, q, runID, ticketID, p, req)
-		if err != nil {
-			return err
+		// **委任の木の中のチケットは、承認済のあいだしか完了レポートを
+		// 受け付けない**（Delegation.md 5章「main：完了レポート（子）」
+		// 「main：成果の提出（根の完了レポート）」）。
+		d, inDelegation, derr := findDelegationContainingTicket(ctx, q, scope.projectID, ticketID)
+		if derr != nil {
+			return fmt.Errorf("委任を確認できない: %w", derr)
 		}
-		if err := q.CreateAgentRun(ctx, run); err != nil {
-			return fmt.Errorf("実行記録を作成できない: %w", err)
+		var delegScope []byte
+		if in := inDelegation; in {
+			if !delegationGate(d.Status) {
+				forbidden = apierr.New(apierr.Forbidden).
+					WithMessage("計画が承認されるまで、完了レポートは受け付けません").
+					WithDetails(apierr.Detail{Field: "status", Code: "delegation_stage"})
+				return errTicketReference
+			}
+			// **確認待ちが開いているあいだは完了レポートを受け付けない**
+			// （8.2・5章。pb-249）。
+			if open, oerr := q.HasOpenConfirmation(ctx, d.ID); oerr != nil {
+				return fmt.Errorf("確認待ちを確認できない: %w", oerr)
+			} else if open {
+				forbidden = apierr.New(apierr.Forbidden).
+					WithMessage("確認待ちに答えられるまで、完了レポートは受け付けません").
+					WithDetails(apierr.Detail{Field: "status", Code: "delegation_stage"})
+				return errTicketReference
+			}
+			// **根だけ、さらに「評価待ち」を見る**（5章「main：成果の提出
+			// （根の完了レポート）」。差し戻し＝fail なら出し直せる。子の
+			// 完了レポート（D2 の案a）は評価を挟まないので、ここは根に限る
+			// （pb-248）。
+			if d.RootTicketID == ticketID {
+				if pending, perr := rootReportEvaluationPending(ctx, q, ticketID); perr != nil {
+					return fmt.Errorf("評価待ちかを確認できない: %w", perr)
+				} else if pending {
+					forbidden = apierr.New(apierr.Forbidden).
+						WithMessage("評価の結果を待っているため、完了レポートは受け付けません").
+						WithDetails(apierr.Detail{Field: "status", Code: "delegation_stage"})
+					return errTicketReference
+				}
+			}
+			// **期日を過ぎていたら受け付けず、委任を停止する**（12.1・8.2。pb-253）。
+			// 停止をコミットするため nil を返す（tickets_create.go と同じ）。
+			root, rerr := q.GetDelegationByRootTicket(ctx, d.RootTicketID)
+			if rerr != nil {
+				return fmt.Errorf("委任を読めない: %w", rerr)
+			}
+			delegScope = root.Scope
+			reasons, berr := checkDelegationBudget(ctx, q, d.ID, delegScope, "", budgetCheck{})
+			if berr != nil {
+				return berr
+			}
+			if len(reasons) > 0 {
+				if berr := tripDelegationBudget(ctx, q, d.ID, d.RootTicketID, scope.actorID, reasons); berr != nil {
+					return berr
+				}
+				forbidden = budgetForbidden(scope.seq, "status", reasons)
+				return nil
+			}
+		}
+
+		if e := q.LockWorkProject(ctx, scope.projectID); e != nil {
+			return e
+		}
+		if req.EffortUnavailable != nil {
+			x := req.EffortUnavailable
+			if !contains([]string{"time", "point", "both"}, x.Target) || strings.TrimSpace(x.Reason) == "" || len([]rune(x.Reason)) > 2000 {
+				forbidden = usageInvalid("effort_unavailable", "対象time/point/bothと計測不能の理由を2000文字以内で指定してください")
+				return errTicketReference
+			}
+		}
+		if forbidden = requireWorkReport(ctx, q, scope.projectID, ticketID, p, req); forbidden != nil {
+			return errTicketReference
+		}
+		if req.WorkSessionID != "" {
+			work, e := q.GetWorkSession(ctx, gen.GetWorkSessionParams{ID: req.WorkSessionID, ProjectID: scope.projectID})
+			if errors.Is(e, pgx.ErrNoRows) {
+				archived, e := q.GetArchivedWork(ctx, gen.GetArchivedWorkParams{ID: req.WorkSessionID, ProjectID: scope.projectID})
+				if errors.Is(e, pgx.ErrNoRows) {
+					forbidden = workError(apierr.NotFound, "作業記録が見つかりません")
+					return errTicketReference
+				}
+				if e != nil {
+					return e
+				}
+				if !archivedReportAllowed(archived, ticketID, p.ActorID, p.IsAgent()) {
+					forbidden = workError(apierr.Forbidden, "自身の終了した配分済み作業だけレポートへ紐付けできます")
+					return errTicketReference
+				}
+			} else {
+				if e != nil {
+					return e
+				}
+				allocations, e := q.ListWorkAllocations(ctx, work.ID)
+				if e != nil {
+					return e
+				}
+				allocated := false
+				for _, a := range allocations {
+					if a.TicketID == ticketID {
+						allocated = true
+					}
+				}
+				if !allocated || work.State != "finished" || work.TimeMissing || p.IsAgent() && work.ActorID != p.ActorID {
+					forbidden = workError(apierr.Forbidden, "自身の終了した配分済み作業だけレポートへ紐付けできます。時間欠測ならeffort_unavailableで説明してください")
+					return errTicketReference
+				}
+			}
+		}
+		existingRun := ""
+		if req.WorkSessionID != "" {
+			existingRun, err = q.FindFailedAgentRun(ctx, gen.FindFailedAgentRunParams{WorkSessionID: usageText(req.WorkSessionID), TicketID: ticketID})
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+		}
+		if existingRun != "" {
+			has, e := q.HasReportForRun(ctx, existingRun)
+			if e != nil {
+				return e
+			}
+			if has {
+				forbidden = workError(apierr.Conflict, "この終了済み実行には既にレポートがあります。新しい作業を開始してください")
+				return errTicketReference
+			}
+			runID = existingRun
+		} else {
+			run, e := buildAgentRun(ctx, q, runID, ticketID, p, req)
+			if e != nil {
+				return e
+			}
+			if e = q.CreateAgentRun(ctx, run); e != nil {
+				return e
+			}
 		}
 
 		// **要求の本文をそのまま保存する**（9.15）。組み直すと、拒まないと決めた
@@ -200,6 +334,20 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("完了レポートのコメントを作成できない: %w", err)
 		}
 
+		// **トークンの超過は、報告を受け付けてから見る**（12.1。報告の後にしか
+		// 分からない）。超えていたら、報告は残したまま委任を停止する（pb-253）。
+		if inDelegation {
+			reasons, berr := checkDelegationBudget(ctx, q, d.ID, delegScope, "", budgetCheck{checkTokens: true})
+			if berr != nil {
+				return berr
+			}
+			if len(reasons) > 0 {
+				if berr := tripDelegationBudget(ctx, q, d.ID, d.RootTicketID, scope.actorID, reasons); berr != nil {
+					return berr
+				}
+			}
+		}
+
 		// **activity は field='report'、action='create'**（9.15）。コメントの
 		// 作成は別に記録しない——同じトランザクションで作られた1件が2行になると、
 		// 履歴が同じ事実を二度言う（9.6 が遷移コメントについて同じ扱いをしている）。
@@ -221,7 +369,7 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 			Seq:             scope.seq,
 			Status:          req.Status,
 			KnowledgeImpact: req.KnowledgeImpact,
-			SubmittedAt:     Time(*run.EndedAt),
+			SubmittedAt:     Time(time.Now().UTC()),
 			SubmittedBy: actorRef{
 				ID: scope.actorID, Kind: scope.actorKind, DisplayName: p.DisplayName,
 			},
@@ -230,7 +378,11 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	if err != nil {
+	switch {
+	case forbidden != nil:
+		apierr.Write(w, r, forbidden)
+		return
+	case err != nil:
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return
 	}
@@ -320,10 +472,8 @@ func negativeCost(field string) apierr.Detail {
 
 // buildAgentRun は 1回の実行記録を組み立てる（DbDesign.md 8.2.4）。
 //
-// **1提出 = 1 run である。** 開始を告げる口を持たず、「走っている run」を
-// 読む者も居ない（ticket.working_agent_id が「いま誰が処理しているか」を担う）。
-// **再提出は別の run になる**——その修正は、エージェントが実際に作業をやり直した
-// ことを意味する。
+// レポートのみの提出はrunを新規作成する。失敗・放棄は共通作業の終了時に
+// 観測した時刻と開始時のモデルで作成し、後のレポートから同じrunを参照する。
 func buildAgentRun(
 	ctx context.Context, q gen.Querier, runID, ticketID string,
 	p *auth.Principal, req reportRequest,
@@ -334,10 +484,11 @@ func buildAgentRun(
 	// **エージェントの自己申告である**——無ければ ended_at と同じ値を入れる。
 	started := now
 	if c := req.Cost; c != nil && c.WallClockMin != nil && *c.WallClockMin > 0 {
-		started = now.Add(-time.Duration(*c.WallClockMin) * time.Minute)
+		// Minute counts fit int32, but converting them to nanoseconds can overflow.
+		started = time.Unix(now.Unix()-int64(*c.WallClockMin)*60, int64(now.Nanosecond())).UTC()
 	}
 
-	// retry_count は同じ（チケット × アクター）の既存の run 数（8.2.4）。
+	// retry_count は同じ（チケット × アクター）の提出由来のrun数（8.2.4）。
 	prior, err := q.CountAgentRunsForTicket(ctx, gen.CountAgentRunsForTicketParams{
 		TicketID: ticketID, ActorID: p.ActorID,
 	})

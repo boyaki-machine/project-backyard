@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AgentControls from "../components/AgentControls.vue"
 import { uiText } from '../locales/ui'
 /**
  * エージェントタブ `/me/agents`（`GuiDesign.md` 5.8.2）。
@@ -199,6 +200,8 @@ const newExpiresInDays = ref<number>(90)
  */
 const allowDocEdit = ref(false)
 const allowActualPointEdit = ref(false)
+const allowPlanEdit = ref(false)
+const canAllowPlanEdit = computed(() => agentScopes.value?.grantable.includes('ticket.plan.edit') ?? false)
 
 /** 「追加の権限」を押せるか。既定が引けていて、足せるものに `doc.edit` があるとき */
 const canAllowDocEdit = computed(
@@ -232,6 +235,7 @@ function openIssue(agent: MyAgent) {
   // トークンが気づかないうちに配られる。
   allowDocEdit.value = false
   allowActualPointEdit.value = false
+  allowPlanEdit.value = false
   issueError.value = null
 }
 
@@ -247,11 +251,12 @@ async function issueToken() {
     const scopes = agentScopes.value
     const token = await meApi.issueAgentToken(target.id, {
       expires_in_days: newExpiresInDays.value,
-      ...((allowDocEdit.value || allowActualPointEdit.value) && scopes ? {
+      ...((allowDocEdit.value || allowActualPointEdit.value || allowPlanEdit.value) && scopes ? {
         scopes: [
           ...scopes.default,
           ...(allowDocEdit.value ? ['doc.edit'] : []),
           ...(allowActualPointEdit.value ? ['ticket.actual_point.edit'] : []),
+          ...(allowPlanEdit.value ? ['ticket.plan.edit'] : []),
         ],
       } : {}),
     })
@@ -529,6 +534,7 @@ function subtitle(agent: MyAgent): string {
 
               <p class="agent-meta">{{ subtitle(a) }}</p>
               <p class="agent-meta">{{ $ui('登録') }} {{ formatDateTime(a.created_at) }}</p>
+              <details><summary>{{$ui('評価と実行監視')}}</summary><AgentControls :id="a.id" :trust-level="a.trust_level" :capabilities="a.capabilities" @updated="load" /></details>
               <!-- **環境変数名を出す**（手順28a）。ここに出さないと、登録のときに
                    決めた名前を後から確かめる場所が無い。**`export` 行そのものと
                    接続設定は手順28b** -->
@@ -650,8 +656,13 @@ function subtitle(agent: MyAgent): string {
             <input v-model="allowActualPointEdit" type="checkbox" :disabled="issuing || !canAllowActualPointEdit" />
             <span>{{ $ui('実績ポイントの記録を許す') }}</span>
           </label>
+          <label class="check">
+            <input v-model="allowPlanEdit" type="checkbox" :disabled="issuing || !canAllowPlanEdit" />
+            <span>{{ $ui('依存・順序・日程の変更を許す') }}</span>
+          </label>
+          <span v-if="allowPlanEdit" class="hint">{{ $ui('承認した計画を反映するエージェントに追加します。') }}</span>
           <span v-if="!canAllowDocEdit" class="detail">{{ $ui('既定の権限を読み込めなかったため、いまは選べません。画面を開き直してください。') }}</span>
-          <span v-else class="hint">{{ $ui('憲章を書き換えられるようになります。') }}</span>
+          <span v-else-if="allowDocEdit" class="hint">{{ $ui('憲章を書き換えられるようになります。') }}</span>
         </fieldset>
 
         <!-- **再発行が既存を暗黙に失効させることを、押す前に出す**（4.5.3）。

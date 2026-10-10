@@ -997,7 +997,7 @@ CREATE INDEX idx_ticket_link_target ON ticket_link (target_ticket_id);
 | **排他**（同じチケットを2つのエージェントが同時に処理しない） | **発生しない。** `/pb-implement <seq>` は人がチケット番号を指定し、方針の承認を経てから走る。エージェントが自律的に拾うのは `pb_next_task`（構想） |
 | **詰まり防止**（放置された占有を解く） | 占有しないので詰まらない |
 
-**再検討の条件は「自律取得（`pb_next_task`）を実装するとき」である。** そのときは `working_agent_id` を「宣言」から「条件」へ格上げすればよく（自分でなければ拒む）、**テーブルを足さずに済む。** TTL による失効（`stale` の検知）が要ると分かった時点で、8.2.2 の器を起こす。
+**再検討の条件は「自律取得（`pb_next_task`）を実装するとき」である。** そのときは `working_agent_id` を「宣言」から「条件」へ格上げすればよく（自分でなければ拒む）、**テーブルを足さずに済む。** TTL による失効（`stale` の検知）が要ると分かった時点で、8.2.2 の器を起こす。**自律実行（`Delegation.md`）はこの条件に当たったが、委任の中ではまだリースは要らないと判定した**——1つの委任に main は1つで、sub は main の principal で動くため、排他は main の内部の問題になる（同 12.3）。**再検討の条件は、委任の消化を複数ベンダーのエージェントに配る段階へ移した。**
 
 ### 6.6.1 予定日時（0047）
 
@@ -1413,6 +1413,8 @@ ON CONFLICT DO NOTHING;
 **`working_agent_id` を開けないのは、あれが自己申告の欄だからである**（6.6）。遷移の副作用として自動で立つので（`ApiDesign.md` 9.6）、書く経路をもう1つ作る理由が無い。**`actual_hours` は `pb_submit_result` の `cost` と二重になる**ため開けない。**`sprint_id` は 0028 以降どの経路からも書けない**（9.5.2 の `use_sprint_endpoint`）。
 
 **DoD は `body` の追加・編集・削除までで、`is_satisfied` は開けない**（`ApiDesign.md` 9.9）。**`pb_submit_result` が「盤面を動かさない」と決めた判断と正面からぶつかる**ためで、完了の判定は人が行う。
+
+`ticket.plan.edit` は依存・順序・開始と終了予定を変更する権限である。`administrator` と `project_admin` に配り、エージェントには発行時に追加できる。通常の編集や委任管理には使えない（`Design.md` 8.5.7）。
 
 **0044 の `ticket.actual_point.edit` は実績ポイントと算出式の版だけを更新する追加権限である。** `project_admin` と `administrator` に配り、PM のエージェントは発行時にこの scope を選べる。通常の `ticket.self_edit` や `ticket.edit` だけでは書けない。2項目は対で更新し、DB の CHECK で非負値と `actual-v<番号>` の版を保証する。
 
@@ -1930,6 +1932,359 @@ CREATE TABLE project_calendar_day (
 **ファイルの取り込みはプロジェクト所有の行を作る。** 取り込み直すたびに同じ行の中身を入れ替え、
 Google の暦へ切り替えたり暦を外したりしたら所有の行は消す（参照されない所有物を残さない）。
 
+## 6.24 自律実行の委任（0050）
+
+**正本は `Delegation.md` 4章・12.2。** pb-246。`delegation_plan` / `evaluation` /
+`confirmation` / `delegation_handoff`（同 4.4 の残り4表）は別チケット（pb-247〜250）
+で足す——本節が作るのは `delegation` の1表と、それを使うための前提だけである。
+
+```sql
+-- execution_mode に 'delegated' を足す（D1）。根だけがこの値を持てる。
+ALTER TABLE ticket DROP CONSTRAINT ticket_execution_mode_check;
+ALTER TABLE ticket ADD CONSTRAINT ticket_execution_mode_check
+  CHECK (execution_mode IN ('human_only','agent_only','agent_draft','delegated'));
+ALTER TABLE ticket ADD CONSTRAINT ck_ticket_delegated_no_parent
+  CHECK (execution_mode <> 'delegated' OR parent_id IS NULL);
+
+CREATE TABLE delegation (
+  id                 char(26) COLLATE "C" PRIMARY KEY,
+  project_id         char(26) COLLATE "C" NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  root_ticket_id     char(26) COLLATE "C" NOT NULL UNIQUE REFERENCES ticket(id) ON DELETE CASCADE,  -- 0058 で部分一意索引へ（6.30）
+  main_actor_id      char(26) COLLATE "C" NOT NULL REFERENCES agent(actor_id) ON DELETE RESTRICT,
+  evaluator_actor_id char(26) COLLATE "C" NOT NULL REFERENCES agent(actor_id) ON DELETE RESTRICT,
+  status             text NOT NULL DEFAULT 'planning'
+                     CHECK (status IN ('planning','approved','paused','ended')),
+  scope              jsonb NOT NULL,
+  scope_version      integer NOT NULL DEFAULT 0,
+  created_by         char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT ck_delegation_independent CHECK (main_actor_id <> evaluator_actor_id)
+);
+
+INSERT INTO permission (key, category, description, sort_order) VALUES
+  ('delegation.manage',   'delegation', '委任範囲の承認・確認待ちへの回答・停止と再開', 90),
+  ('delegation.evaluate', 'delegation', '評価エージェントとして計画・成果を評価する',     91)
+ON CONFLICT (key) DO UPDATE
+  SET category = EXCLUDED.category, description = EXCLUDED.description, sort_order = EXCLUDED.sort_order;
+```
+
+**D1（実行モードの持ち方）は案Aを採った。** `execution_mode` に足す1値で表し、
+子孫かどうかは祖先を辿って決める——別欄（`delegation_id`）を全子孫に持つ案は、
+木の外へ動かした・木の中へ入れたときの同期漏れが権限の穴になる（`Delegation.md` 4.1）。
+
+**`ck_ticket_delegated_no_parent` は 0057 で外した**（pb-282）。根の条件を「親を持たないか、
+親がエピック」に広げたため——親の種別は他の行にあり、CHECK では表せない。判定はサーバが行う
+（委任の作成、根の親の変更、直下に根を持つエピックの種別の変更。`Delegation.md` 4.1）。
+
+**`delegation.scope` は委任範囲（`Delegation.md` 4.2）を持つ。** PM が承認するのは
+この内容であって計画の中身ではない。**本チケットでは内容を検証しない**——
+オブジェクトであることだけを REST 層が見る（`ApiDesign.md` の委任のエンドポイント）。
+承認・版管理は `delegation_plan`（pb-247）が持つ。
+
+**権限は2つとも `project_admin` に配る**（0017 の `doc.edit` と同じ形。本節の末尾）。
+`delegation.evaluate` は**エージェントの発行時に選ぶ**——評価エージェントに指定する
+トークンだけが持つ（`server/internal/httpapi/v1/me_agents.go` の `agentGrantableScopes`）。
+`delegation.manage` は発行時にも選べない——委任の作成・範囲の承認は人（PM）だけが行う
+操作であり、対応する REST エンドポイントは MCP ツールを持たない（`Delegation.md` 15章 D7
+が列挙する新設5ツールに委任の作成は無い）。
+
+**5章の強制のうち、`delegation.status` だけで判定できる範囲を本チケットで実装した。**
+「評価待ち」「差し戻し」（`evaluation` が要る。pb-248）、確認待ち（`confirmation` が
+要る。pb-249）の細分はまだ無い——`planning` / `paused` / `ended` はひとまとめに
+「main は書けない」として扱い、`approved` だけを許す。
+
+## 6.25 計画の版（0051）
+
+**正本は `Delegation.md` 6章・12.2。** pb-247。D3：骨格（根の直下の枝・予算配分・
+チェックポイント）だけを版で持つ。骨格より下の木は main の裁量で、版を出さずに
+直してよい。
+
+```sql
+CREATE TABLE delegation_plan (
+  id             char(26) COLLATE "C" PRIMARY KEY,
+  delegation_id  char(26) COLLATE "C" NOT NULL REFERENCES delegation(id) ON DELETE CASCADE,
+  version        integer NOT NULL,
+  scope          jsonb NOT NULL,         -- この版が前提とする委任範囲
+  skeleton       jsonb NOT NULL,         -- 骨格：根の直下の枝・予算配分・チェックポイント
+  body_md        text NOT NULL,
+  reason_md      text NOT NULL,
+  declared_class text CHECK (declared_class IN ('minor','structural','scope')),
+  measured_class text CHECK (measured_class IN ('minor','structural','scope')),
+  status         text NOT NULL DEFAULT 'proposed'
+                 CHECK (status IN ('proposed','accepted','rejected','superseded','reverted')),
+  reverts_to     integer,
+  submitted_by   char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  submitted_at   timestamptz NOT NULL DEFAULT now(),
+  decided_by     char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  decided_at     timestamptz,
+  CONSTRAINT uq_delegation_plan_version UNIQUE (delegation_id, version)
+);
+```
+
+**6.3 の判定規則のうち、PB が測れる範囲だけを実装した。**
+
+| 規則 | 実装したか | 備考 |
+|---|---|---|
+| 委任範囲（scope）が違う → 範囲 | **した** | 新しい版の `scope`（省略時は委任のいまの `scope`）と、直前の承認済み版の `scope` の構造的な等価性で見る |
+| 骨格の枝が増えた・減った → 構造 | **した（skeleton に `branches[]` がある場合だけ）** | `skeleton` の形を固定していないため、`branches` を持たない計画ではこの観点を測れない |
+| 枝の予算配分が20%を超えて動いた → 構造 | **した（同上）** | 閾値は固定値（`planBudgetShiftThreshold`）。プロジェクト設定化（`Design.md` 10.3）は別チケット |
+| 機微な領域に触れる枝が増えた → 構造 | **していない** | 「機微な領域」自体の器がまだ無い（8.1 の4。pb-249） |
+| 1つの版で増える子孫が5件を超える → 構造 | **した** | 直前の承認済み版の `submitted_at` 以降に作られた木の中のチケット数を数える（`CountTicketsInDelegationTreeSince`） |
+| 木の深さが増えた → 構造 | **していない** | 版ごとの深さの基準値を持たない |
+
+**main の申告（`declared_class`）と PB の判定（`measured_class`）の厳しい方を採る**
+（severity: minor < structural < scope）。**初版（直前の承認済み版が無い）は判定
+規則を適用しない**——6.1 が「計画の初版は、評価が先」と定めるため、軽微かどうかに
+関わらず `proposed` のまま評価を待つ。
+
+**反映の条件（pb-247 の範囲）**
+
+| 段階 | すること |
+|---|---|
+| 軽微 | その場で `status = 'accepted'` にする（`decided_by` は NULL のまま——人・評価の決定ではない） |
+| 構造 | `proposed` のまま。評価の合格で反映するのは pb-248 |
+| 範囲 | `proposed` のまま、**委任を `planning` へ戻す**（`delegation.status` を更新） |
+
+**差し戻し（revert）は PM が直接行う。** 指定した版の `scope` / `skeleton` /
+`body_md` を写した新しい版を作り、`reverts_to` に元の版番号を残す。**評価を挟まず
+即座に `accepted` にする**——2層の承認をすでに経た人の判断だからである。
+
+**委任範囲の承認・却下（pb-260）は PM が行う**（`delegation.manage`、`Delegation.md` 6.1）。
+委任が `planning` のときだけ受け付け、**対象は最新の版だけ**である（PM が見た版と
+食い違えば 409）。テーブルは足していない。
+
+| 操作 | 条件 | すること |
+|---|---|---|
+| 承認 | 最新の版が `proposed` で、その版への直近の評価が `pass` | その版を `accepted`（`decided_by` は PM）／それより前に残った `proposed` を `superseded`／`delegation` を `approved` にし、`scope` を版の範囲で上書き、`scope_version` を +1 |
+| 却下 | 最新の版が `proposed`（評価を待たない） | その版を `rejected`（`decided_by` は PM）。委任は `planning` のまま |
+
+**判断は根のチケットに `kind=decision` のコメントとして残す**——main が却下の理由を
+読む口は `pb_list_comments` であり、`activity` だけでは届かない。
+
+## 6.26 評価記録（0052）
+
+**正本は `Delegation.md` 7章・12.2。** pb-248。D4 で確定した5表のうち、残る
+`confirmation` / `delegation_handoff` は別チケット（pb-249・pb-250）で足す。
+
+```sql
+CREATE TABLE evaluation (
+  id                     char(26) COLLATE "C" PRIMARY KEY,
+  delegation_id          char(26) COLLATE "C" NOT NULL REFERENCES delegation(id) ON DELETE CASCADE,
+  target_kind            text NOT NULL CHECK (target_kind IN ('plan','deliverable')),
+  plan_id                char(26) COLLATE "C" REFERENCES delegation_plan(id) ON DELETE CASCADE,
+  agent_report_id        char(26) COLLATE "C" REFERENCES agent_report(id) ON DELETE CASCADE,
+  round                  integer NOT NULL,
+  verdict                text NOT NULL CHECK (verdict IN ('pass','fail','unable')),
+  findings               jsonb NOT NULL,
+  class_check            text CHECK (class_check IN ('agree','stricter','looser')),
+  evaluator_actor_id     char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  evaluator_client_kind  text, evaluator_model_name text, evaluator_model_version text,
+  main_client_kind       text, main_model_name text, main_model_version text,
+  tokens_used            bigint,
+  objected_at            timestamptz,
+  created_at             timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT ck_evaluation_target CHECK (
+    (target_kind = 'plan' AND plan_id IS NOT NULL AND agent_report_id IS NULL)
+    OR (target_kind = 'deliverable' AND agent_report_id IS NOT NULL AND plan_id IS NULL))
+);
+```
+
+**`round` は PB が測る。** 自己申告ではない——同じ対象（`delegation_id ×
+target_kind`）への直前の `pass` 以降の件数+1（`CountEvaluationsSinceLastPass`）。
+合格のたびに0から数え直す。
+
+**評価の対象ごとの副作用（7.2）**
+
+| 対象 | 合格 | 不合格 |
+|---|---|---|
+| plan・委任が計画中（初版、範囲の変更の版、却下後の出し直し） | 何もしない（6.1「評価が先、PM が後」——計画の確定は PM の承認・却下が行う。6.25） | 同上 |
+| plan・委任が承認済（構造の変更の版） | `delegation_plan.status` を `accepted` にする | `rejected` にする（main は新しい版を出し直す） |
+| deliverable（根の完了レポート） | 記録のみ。根の受け入れ可否は `ticket.transition` の検証8（9.6/9.7）が「最新の `agent_report` への評価が `pass` か」で見る | 記録のみ。main は新しい完了レポートを出し直せる |
+
+**`unable` は確認待ち（`evaluation_unable`）を立てる。主状態は動かさない**
+（8.2「評価が立てる確認待ちは、関門（開いているか）だけで main・評価の
+書き込みを止める」。6.26 参照）。**往復の上限（初期値3。固定値）に達した
+不合格は確認待ち（`budget_exceeded`）を立て、`delegation` を `paused` にする**
+（8.1 の5。PB 自身が立てるものは主状態も止める）。
+
+**評価エージェントのトークンに要る権限は `delegation.evaluate` だけ**
+（0050 で既に登録済み。起票・編集・遷移は要らない。7.1）。
+
+**事後の異議**（`POST .../plan/{version}/object`。pb-275。`Delegation.md` 6.4）は、対象の版への最新の合格の評価に
+`objected_at` を立てる（一度だけ。`MarkEvaluationObjected`）。対象は `status='accepted'`・`decided_by IS NULL`（PB が反映した）・
+段階が `structural` の版に限る。対象が最新の反映済みの版なら、その前の反映済みの版を写した版を作る（6.2 の差し戻しと同じ形）。
+
+## 6.27 確認待ち（0053）
+
+**正本は `Delegation.md` 8章・12.2。** pb-249。D4 で確定した5表のうち、残る
+`delegation_handoff` は別チケット（pb-250）で足す。
+
+```sql
+CREATE TABLE confirmation (
+  id            char(26) COLLATE "C" PRIMARY KEY,
+  delegation_id char(26) COLLATE "C" NOT NULL REFERENCES delegation(id) ON DELETE CASCADE,
+  ticket_id     char(26) COLLATE "C" NOT NULL REFERENCES ticket(id) ON DELETE CASCADE,
+  reason        text NOT NULL CHECK (reason IN (
+                  'scope_change', 'irreversible_external', 'charter_change',
+                  'sensitive_area', 'budget_exceeded', 'evaluation_unable',
+                  'checkpoint', 'hearing')),
+  question_md   text NOT NULL,
+  options       jsonb NOT NULL DEFAULT '[]'::jsonb,
+  raised_by     char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  status        text NOT NULL DEFAULT 'open' CHECK (status IN ('open','answered','withdrawn')),
+  answer_md     text,
+  answered_by   char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  answered_at   timestamptz
+);
+```
+
+**`reason` は8.1の条件キー（1〜8）を文字列化したもの。** `checkpoint`
+（周期の要約。7）はまだ立てる主体が無い（予算の計測が pb-253、周期の要約が
+pb-254）。
+
+**関門は列に持たず、開いている確認待ちから導く**（4.3・8.2）。
+`HasOpenConfirmation`（`delegation_id` に `status='open' AND reason<>'hearing'`
+があるか）を、既存のゲート（`tickets_create.go` の12.2・`delegation_plan.go`・
+`evaluation.go`・`reports.go`）がそれぞれ呼ぶ。**hearing は関門に数えない**
+（8.2「ヒアリングは止めない」）。
+
+**誰が立てられるか（REST の `POST .../confirmation`）**
+
+| reason | 立てる主体 | 経路 |
+|---|---|---|
+| scope_change・irreversible_external・charter_change・sensitive_area・hearing | main | `POST .../confirmation`（身元確認。`ticket.create`） |
+| evaluation_unable | 評価 | `pb_submit_evaluation` の verdict=unable から内部で（`raiseSystemConfirmation`） |
+| budget_exceeded | PB（評価の往復の上限超過を検出した時点） | 同上 |
+| checkpoint | PB（未実装。予算計測・周期の要約が無い） | — |
+
+**`raised_by` は、`evaluation_unable`・`budget_exceeded` でも実際の呼び出し元
+（評価エージェントの actor_id）を使う。** Delegation.md 4.4 の D4 の注記は
+「PB 自身なら system」としているが、`kind='system'` の actor 行はまだ存在しない
+（`actor.kind` の CHECK には `'system'` があるが、シードされた行が無い）。
+専用の system actor を作るかは別途判断する（finding）。
+
+**答えても主状態は戻さない**（8.2「予算の超過は、答えるだけで続けてよいもの
+ではない」）。`budget_exceeded` で `paused` にした委任は、
+答えた後に PM が再開する（`POST .../delegation/resume`。6.29、pb-253）。
+
+## 6.28 引き継ぎノート（0054）
+
+**正本は `Delegation.md` 9.3・11章。** pb-250。D4 で確定した5表が
+これで揃う（pb-246〜250：`delegation` / `delegation_plan` / `evaluation` /
+`confirmation` / `delegation_handoff`）。
+
+```sql
+CREATE TABLE delegation_handoff (
+  id            char(26) COLLATE "C" PRIMARY KEY,
+  delegation_id char(26) COLLATE "C" NOT NULL REFERENCES delegation(id) ON DELETE CASCADE,
+  version       integer NOT NULL,
+  body          jsonb NOT NULL,
+  trigger       text NOT NULL CHECK (trigger IN (
+                  'plan_version', 'evaluation', 'report',
+                  'before_confirmation', 'session_end')),
+  written_by    char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  written_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT uq_delegation_handoff_version UNIQUE (delegation_id, version)
+);
+```
+
+**追記のみ。** `delegation_plan` と同じ番号付け（`NextDelegationHandoffVersion`
+が `COALESCE(MAX(version),0)+1`）だが、こちらは `status` を持たない——
+最新の版が常に現在のノートであり、古い版を `superseded` にする必要が無い。
+
+**`body` は11.1の7項目を自由な形で持つ。** `skeleton`・`scope` と同じ理由で
+形を固定しない——main が書く内容は委任ごとに違う。
+
+**次の一手（9.3）は、`delegation_handoff` に列として持たない。** 呼び出しの
+たびに `computeNextMove`（`delegation_handoff.go`）が、委任の現在の状態
+（`delegation.status`・開いている確認待ち・最新の計画・直近のヒアリングの
+回答）から計算する。**保存された値ではなく、常に最新の状態から導く値**
+だからである（4.3 の関門の扱いと同じ考え方）。
+
+**近似であることを明記する（finding）。** 9.3 の判定の一部（「ヒアリングに
+答えが付いた」「前の版へ差し戻された」「確認待ちに答えが付いた」）は、
+本来「main がまだそれを見ていない」ことを条件に含むが、PB は main の
+既読を記録していない。`computeNextMove` は「答えが存在する」「直前の版が
+差し戻しである」という弱い条件で近似しており、本来より広く次の一手を
+示すことがある。次の一手は PB の推奨であり main の判断を縛らないため
+（9.1「指示は強制の代わりではない」）、実害は小さいと判断した。
+
+**パック（pb-251）・待ち受け・通知（D6 未決）への配線はまだ無い。**
+`POST .../handoff` の応答に `next_move` を載せるところまでが pb-250 の範囲。
+
+## 6.29 委任の予算（テーブルなし）
+
+**正本は `Delegation.md` 12.1。** pb-253。**表を足していない。** 予算の値は
+`delegation.scope` の `budget`（PM が承認する委任範囲の一部）に持ち、消費は既存の
+行から測る——消費を別の表に積むと、測る元（`ticket` / `agent_run` / `evaluation`）と
+食い違ったときにどちらが正か決められない。
+
+**消費は `GetDelegationBudgetUsage`（`delegation_budget.sql`）の1回で測る。**
+
+| 値 | 測り方 |
+|---|---|
+| 起票数・深さ | 根からの再帰 CTE。根は数えず、深さ0 |
+| トークン | 木の中の `agent_run.tokens_used`（委任の `created_at` 以降）と、その委任の `evaluation.tokens_used` の和。`NULL` の件数を別に数える |
+| 今月のトークン | 同じ和を、`project.timezone` での暦月の初めから |
+| 今日 | `project.timezone` での日付（`due_on` と比べる） |
+
+**停止と再開**（`POST .../delegation/pause`・`.../resume`。`delegation.manage`）。
+再開の戻り先は止める前の主状態を列に持たないので、計画の状態から導く——
+`scope_version = 0` なら `planning`、最新の版が範囲の変更として `proposed` なら
+`planning`、それ以外は `approved`。再開で予算を直すときは `scope_version` を進め、
+直前の承認済みの版を写した版を PM の承認済み（`decided_by` は PM、`measured_class =
+'scope'`）として作る。
+
+## 6.30 自律実行の取り下げと、始め直し（0058）
+
+**正本は `Delegation.md` 4.3「取り下げ」。** pb-281。PM が委任を取り下げ、根を従来の実行モードへ戻す
+（`POST .../delegation/withdraw`。`delegation.manage`）。取り下げた根で、もう一度自律実行を始められるように、
+`root_ticket_id` の一意を「終了していない委任」に限る。
+
+```sql
+ALTER TABLE delegation DROP CONSTRAINT delegation_root_ticket_id_key;
+CREATE UNIQUE INDEX uq_delegation_root_active
+  ON delegation (root_ticket_id) WHERE status <> 'ended';
+-- 終了した委任も根から引く（最新の1件）。ticket の削除の CASCADE にも要る
+CREATE INDEX ix_delegation_root_ticket ON delegation (root_ticket_id, created_at DESC);
+```
+
+- **根から委任を引く問い合わせ**（`GetDelegationByRootTicket` / `GetDelegationForControl`）は、**最新の1件**を返す。
+  呼び出し側は今までどおり状態を見る（終了なら書き込みを拒む）
+- **取り下げは1つのトランザクションで行う**：委任を `ended`、根の `execution_mode` を選ばれた従来のモード、
+  開いている `confirmation` を `withdrawn` にし、根へ `kind=decision` のコメントと活動（`field='delegation'`）を残す
+- **受け入れと取り下げを分ける列は持たない。** 根の `execution_mode` が `delegated` のままなら受け入れ、従来のモードなら取り下げ
+
+## 6.31 指標の値と周期の確認待ち（0059）
+
+**正本は `Delegation.md` 4.2・8.3。** pb-277。指標の定義は `delegation.scope.metrics`（PM が承認する制約）に置き、
+値はこの表に追記のみで積む。
+
+```sql
+CREATE TABLE delegation_metric_value (
+  id            char(26) COLLATE "C" PRIMARY KEY,
+  delegation_id char(26) COLLATE "C" NOT NULL REFERENCES delegation(id) ON DELETE CASCADE,
+  metric_key    text NOT NULL,          -- scope.metrics[].key
+  value         numeric NOT NULL,
+  note_md       text NOT NULL DEFAULT '',
+  recorded_by   char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE RESTRICT,
+  recorded_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_delegation_metric_value ON delegation_metric_value (delegation_id, metric_key, recorded_at);
+
+CREATE UNIQUE INDEX uq_confirmation_open_checkpoint
+  ON confirmation (delegation_id) WHERE reason = 'checkpoint' AND status = 'open';
+```
+
+- **`metric_key` は定義へ外部キーを張らない**（定義は jsonb の中にある）。入れる口（`POST .../metrics/:metric/values`）が、
+  委任のいまの `scope.metrics` に key があることを確かめる。定義から消えた key の値は残り、要約に出なくなる
+- **`recorded_by` で、人が入れた値と main の自己申告を見分ける**（要約に「エージェントが入れた値を含む」と出す）
+- **開いている checkpoint は委任ごとに1件**（`uq_confirmation_open_checkpoint`）。PB は状態が読まれたときに周期を判定して立てるので、
+  同時に読まれても二重に立たないよう DB で守る。起点は直近の checkpoint を立てた時刻、無ければ最初に計画が反映された時刻
+  （`GetCheckpointBase`）
+
 # 7. 初期データ（0010）
 
 ## 7.1 認証プロバイダ
@@ -2445,9 +2800,9 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 
 **`body_md` に GIN トライグラムインデックスを張る**のは、`knowledge`（8.3.1）と同じ理由による。日本語の部分一致検索を `pg_trgm` で賄う（4.5）。
 
-### 8.1.2 文書テンプレート（0017 の初期データ、本文は 0018、5件目は 0024、規約の本文は 0037 と 0043、判断の記録の本文は 0038、6件目は 0043）
+### 8.1.2 文書テンプレート（0017 の初期データ、本文は 0018、5件目は 0024、規約の本文は 0037 と 0043、判断の記録の本文は 0038、6件目は 0043、7件目は 0055）
 
-`template_key = 'default'` の6件を置く。`Requirements.md` 10.6.2 の表に対応する。
+`template_key = 'default'` の7件を置く。`Requirements.md` 10.6.2 の表に対応する。
 
 | `slug` | `title` | `sort_order` | 役割 |
 |---|---|---|---|
@@ -2457,6 +2812,7 @@ CREATE INDEX idx_document_revision_doc ON document_revision (document_id, revisi
 | `learnings` | 学びと知見 | 40 | やってみて分かったこと。**うまくいったことと駄目だったことの両方** |
 | `agent-onboarding` | エージェントの参画情報 | 50 | **新しい参加者とそのエージェントが作業を始められるようになるまでに要ること。** 作業材料の取り方、参画の合図、資格情報の要否（**秘密そのものは書かない**） |
 | `project-management-note` | プロジェクトマネジメントノート | 60 | 見積・実績の算出と検証をプロジェクトごとに記録する。`pack_mode = none` |
+| `delegation-instructions` | 自律実行の指示文 | 70 | **自律実行（Delegated）の役割と段階ごとの指示文**（Delegation.md 9.1・9.2）。見出しが役割と段階の組（`main・計画中` 等）で、`pb_get_context` の「6. 自律実行」節が見出し指定で読む。`pack_mode = none`（通常の憲章には載せない）。**本文は 0056 で差し替えた**（見出し「共通」を足した。pb-278） |
 
 **0043 は新規プロジェクト向けの規約案内に、完了レポートの `cost`（トークン数・やり取りの回数・掛かった分、束ねたセッションの按分）と `findings`（モデルの名前と版）を例として加える。** 具体的な単位や按分方法は各プロジェクトで決める。運営ノートには「見積・実績」章の下に「実績」と「見積」を置き、材料、算出式、記録の置き場、確かめ方を記入する骨組みにする。既存プロジェクトの文書は書き換えない。
 
@@ -2645,7 +3001,7 @@ token_env_suffix = 'MY_LAPTOP'   →   PB_TOKEN_MY_LAPTOP
 
 `model_name` / `model_version` を保持するのは、`Requirements.md` 10.10.3 の「モデル更新後に品質が変化した際の切り分け」のため。`agent_run` にも実行時点の値をコピーする（後からモデルを変えても過去の実行記録が壊れないよう非正規化する）。
 
-`trust_level` は`Requirements.md` 10.10.3 の段階的権限昇格に対応する。**0019 の時点では既定値のまま置き、APIも画面も受け取らない**——昇格の材料になる実績（`agent_run` の集計。構想）がまだ無く、使うものが無いうちに入口を作ると意味が固まるためである。
+`trust_level`は0〜3の人による評価、`capabilities`は能力ラベルである。所有者またはPJ管理者の人が編集し、エージェントの自己昇格や属性からの自動権限拡大は行わない。
 
 #### 8.2.1.1 `agent_client_kind` — クライアント種別のカタログ（0020 で追加）
 
@@ -2811,10 +3167,12 @@ CREATE TABLE agent_run (
                    CHECK (status IN ('running','completed','failed','abandoned')),
   tokens_used      bigint,
   turns            integer,
-  retry_count      integer NOT NULL DEFAULT 0
+  retry_count      integer NOT NULL DEFAULT 0,
+  work_session_id  char(26) COLLATE "C"
 );
 CREATE INDEX idx_agent_run_ticket ON agent_run (ticket_id, started_at DESC);
 CREATE INDEX idx_agent_run_actor  ON agent_run (actor_id, started_at DESC);
+CREATE UNIQUE INDEX idx_agent_run_failed_work ON agent_run(work_session_id) WHERE work_session_id IS NOT NULL;
 
 CREATE TABLE agent_report (
   id               char(26) COLLATE "C" PRIMARY KEY,
@@ -2834,34 +3192,15 @@ ALTER TABLE comment
 
 `report` に`Requirements.md` 10.6.1 のレポート全体を保存しつつ、頻繁に検索・集計する `status` と `knowledge_impact` のみ列に展開する。PostgreSQL では `jsonb` の内部検索も可能だが、**集計対象になる値は列に出す**方が実行計画が安定する。
 
-`workflow_version` は`Requirements.md` 10.9.3 の陳腐化検出、`retry_count` は 10.10.5 のサーキットブレーカー判定に用いる。
+`workflow_version`は陳腐化検出のための予約列である。`retry_count`は提出由来の実行行数であり、未提出の失敗・放棄とサーキットブレーカーの失敗数とは分ける。
 
-#### 書き手は `pb_submit_result` ひとつである
+#### レポート提出と明示した実行の終了
 
-**1回の提出が `agent_run` 1行と `agent_report` 1行を同時に作る**（`ApiDesign.md` 9.15）。**開始を告げる口を持たない**——`pb_claim_task` は構想で
-（8.2.2）、`pb_transition_task` の副作用は `ticket.working_agent_id` だけと決めた（6.6）。
+レポートだけを提出する既存経路は、提出ごとにcompletedのagent_runとagent_reportを作る。開始時刻はcost.wall_clock_minからの逆算であり、明示した開始とは区別する。共通作業記録では開始・待機・終了を観測し、失敗・放棄の終了時にfailed/abandonedのagent_runも保存する。実行中の作業はwork_sessionで読み、終了済みの履歴だけを実績集計へ含める。
 
-**「走っている run」を読む者が居ないので、開始の口を作らない。** 「いま誰が
-処理しているか」は `ticket.working_agent_id` が既に担っており（6.6）、`status='running'` の行を
-足すと**同じ事実が2か所になる**。**再提出は別の run になる**——`/pb-implement` の手順7
-（`Requirements.md` 10.8.6）は「未充足の完了条件が返ったら修正して再提出する」と定めており、
-その修正はエージェントが実際に作業をやり直したことを意味する。
+失敗実行へのレポートはwork_session_idで対応付け、実行行を再作成しない。同じ失敗実行に別レポートを重ねる操作は409とし、新しい作業は別の記録として開始する。レポート結果partial/blockedと実行結果failed/abandonedは別の意味を持つ。
 
-この帰結を4つ書き下す。**列の意味が後から変わらないよう、埋めない列は
-埋めないままにする。**
-
-| 列 | 扱い |
-|---|---|
-| `status` | **`completed` しか立たない。** `failed` / `abandoned` は「レポートを出さずに終わった run」で、それを観測する口が無い。`running` は上記のとおり作らない |
-| `started_at` | `report.cost.wall_clock_min` があればそこから逆算し、無ければ `now()`。**エージェントの自己申告である** |
-| `ended_at` | 提出時刻。`agent_report.submitted_at` と同じ値になる |
-| `workflow_version` | **NULL のまま。** `workflow` に版の列が無く（6.5）、`Requirements.md` 10.9.3 の陳腐化検出は構想である |
-| `retry_count` | **同じ（チケット × アクター）の既存の run 数**を入れる。初回は 0 |
-
-`token_id` / `client_kind` / `model_name` / `model_version` は**提出時点の値を写す**
-（`access_token` と `agent` の行から）。非正規化するのは `Requirements.md` 10.10.3 の
-「モデル更新後に品質が変化した際の切り分け」のためで、**後から `agent.model_name` を
-書き換えても過去の実行記録が動かない**ことがこの列の値である。
+retry_countは同じチケット・アクターの提出由来の実行行数に基づく値であり、未提出の失敗・放棄は数えない。停止判定は明示した開始・終了をagent_attemptから読み、未知の過去の失敗を0と置かない。モデルは開始時の値を写し、属性編集で過去の実行モデルを変更しない。workflow_versionは引き続きNULLのままとする。
 
 #### `comment.agent_run_id` の FK は本節で使い手を得る
 
@@ -3386,3 +3725,27 @@ PB は `pb_app` で繋いでいる。**手順は `deploy/prod/MANUAL.md` にあ�
 - **リポジトリを `project.settings`（jsonb）に置いた**（6.4）。リポジトリ単位のトークン発行や横断検索（`Requirements.md` 10.9）が要件になったら `project_repository` テーブルへ移す
 - **`kind='system'` の actor に一意なキー列が無い**（6.2）。ユーザー削除時のコメント付け替え先「削除されたユーザー」を `display_name` で引いている。**システムアクターが2種類目になった時点で壊れる。** `agent` テーブル（8.2）を設計するときに、システムアクターの識別子も決める
 - マルチテナント（スキーマ分離）を導入する場合の移行手順。いまは単一テナント前提のためテナントID列を持たない
+
+## 共通作業記録
+
+`work_session`はPJ・開始元チケット・実行者・実行時モデルと、running/waiting/finished、PB時刻、稼働/待機ミリ秒を保持する。reported_active_msは取得元付きの任意申告値、tokensは欠測を許す補助値である。1アクターはPJ内で同時に1件だけ開ける。`work_allocation`は同PJのチケットへの正のshareを保持し、APIで合計1と開始元を含むことを検証する。
+
+`work_event`はPJ・操作者・request_idを一意にし、正規化した要求のdigestと応答を保存する。同じ内容の再送は保存済み応答を返し、異なる内容は拒否する。訂正もイベントとして残る。`ticket_effort`は時間・Pointの手入力フラグを別々に持ち、自動更新を止める。既存の非NULL値は手入力として扱う。明示的な手入力は同値やNULLへの更新でも自動管理を解除する。
+
+実績更新は作業状態・配分・イベントと同じトランザクションで行う。PJ単位のトランザクションadvisory lockで同時終了の合計喪失を防ぎ、チケットのversionを値が変わった時だけ上げる。actor削除時は本人削除の既存記録付替えと同じく作業記録・イベントも削除されたユーザーへ付替える。
+
+開始チケットの物理削除で共有記録が削除された場合、残る配分先の自動実績を再集計する。削除された人・Agentの開いた記録は削除済みActorへ付け替えて保持し、人が不完全として終了できる。
+
+### 作業実績の契約と整理用データ
+
+work_session.policyは開始時の運営ノート内の構造化契約と文書版を保持する。time_missingは未確認の終了区間を含む欠測を表す。work_allocation.change_metricsはチケット全体の累積変更量と取得元である。
+
+ticket_work_baseは整理済み記録のチケット別累積集計と最新変更量を保持する。work_archiveは整理済みID・実行者・配分先の参照用情報、work_replayはrequest_id・digest・整理済みIDを保持し、応答全文を保存しない。整理はPJ作業ロックと対象チケットの行ロックの下で、集計の移送と明細削除を同時にコミットする。チケットの実績属性と手入力保護は維持する。新しいマイグレーションで追加し、適用済みDDLを編集しない。
+
+### エージェント管理の権限
+
+agent.manageはプロジェクト所属エージェントの一覧・停止を許す。project_adminとadministratorへ配布し、エージェントの発行可能スコープには含めない。停止はactorの行をロックして無効化し、access_tokenの未失効行を全て失効する。agent・コメント・作業・評価・実行履歴は保持する。
+
+### 実行の明示状態と失敗監視
+
+共通作業記録work_sessionのoutcomeはcompleted・failed・abandonedまたはNULLを持つ。NULLは未判定であり、partial/blockedや過去の記録を失敗と推測しない。開始ごとにagent_attemptへ監視用の記録を作り、終了結果を保存する。作業明細の整理後も試行履歴は保持する。解除区間はagent_monitor_resetでPJ・エージェントごとに保持し、理由と操作者を監査する。failed/abandonedの終了はagent_runにも明示状態を保存し、時刻・モデル・既知のコストだけを写す。retry_countは提出由来の従来の意味を変えない。

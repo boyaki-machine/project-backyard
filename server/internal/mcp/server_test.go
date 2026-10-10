@@ -1,12 +1,14 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -106,11 +108,18 @@ func callMCP(t *testing.T, h *Handler, p *auth.Principal, body string) *httptest
 	return callMCPMethod(t, h, p, http.MethodPost, body)
 }
 
+// callMCPMethod は HTTP() の口（公式 SDK。Design.md 8.4）を1回叩く。
+//
+// **Accept に両方を入れる。** 実際のクライアントは4つとも送り（pb-158 のプローブ）、
+// SDK は欠けた要求を 400 で拒む。**SDK は応答を SSE で返すことがある**ので、
+// 応答（id を持つ data 行）だけを取り出して JSON の本文として読めるようにする。
 func callMCPMethod(t *testing.T, h *Handler, p *auth.Principal, method, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	r := httptest.NewRequest(method, "/mcp/demo", strings.NewReader(body))
 	r.Header.Set("Authorization", "Bearer pb_agt_dummy")
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "application/json, text/event-stream")
 
 	// ルータを通さないので、chi の URL パラメータは自分で載せる
 	// （v1 のハンドラ単体テストと同じ作り）。
@@ -122,8 +131,27 @@ func callMCPMethod(t *testing.T, h *Handler, p *auth.Principal, method, body str
 	}
 
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r.WithContext(ctx))
+	h.HTTP().ServeHTTP(w, r.WithContext(ctx))
+	if strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream") {
+		var last string
+		for _, line := range strings.Split(w.Body.String(), "\n") {
+			if data, ok := strings.CutPrefix(line, "data: "); ok && strings.Contains(data, `"id"`) {
+				last = data
+			}
+		}
+		w.Body = bytes.NewBufferString(last)
+	}
 	return w
+}
+
+// rpcResponse は試験で読む JSON-RPC の応答。
+type rpcResponse struct {
+	ID     json.RawMessage `json:"id"`
+	Result any             `json:"result"`
+	Error  *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
 }
 
 // decodeRPC は応答を JSON-RPC として読む。
@@ -156,16 +184,17 @@ func resultAsTool(t *testing.T, res rpcResponse) toolResult {
 	return out
 }
 
+// **プロトコルそのもの（壊れた JSON・バッチ・通知の 202・ping・版の交渉）は
+// 公式 SDK の持ち物である**（Design.md 8.4。pb-258）。ここでは PB が決めた約束だけを見る。
+// 新方式（2026-07-28）の確かめは結合試験（httpapi の TestMCPIntegration）にある。
+
 func TestGETIsMethodNotAllowed(t *testing.T) {
-	// Design.md 8.4：SSE ストリームを持たないので GET は 405。
+	// Design.md 8.4：サーバ発の通知を持たないので GET は 405（Stateless）。
 	h := New(&fakeREST{}, "v0")
 	w := callMCPMethod(t, h, agentPrincipal(), http.MethodGet, "")
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET のステータス = %d, want 405", w.Code)
-	}
-	if !strings.Contains(w.Body.String(), "method_not_allowed") {
-		t.Errorf("2.5 の形式で返っていない: %s", w.Body.String())
 	}
 }
 
@@ -175,142 +204,40 @@ func TestCookieIsRejected(t *testing.T) {
 	p := userPrincipal()
 	p.Source = auth.SourceCookie
 
-	w := callMCP(t, h, p, `{"jsonrpc":"2.0","id":1,"method":"ping"}`)
+	w := callMCP(t, h, p, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("Cookie 認証のステータス = %d, want 401", w.Code)
 	}
 }
 
-func TestBrokenJSONIsParseError(t *testing.T) {
-	h := New(&fakeREST{}, "v0")
-	w := callMCP(t, h, agentPrincipal(), `{"jsonrpc":`)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("JSON-RPC のエラーは HTTP 200 で返す。got %d", w.Code)
-	}
-	res := decodeRPC(t, w)
-	if res.Error == nil || res.Error.Code != codeParseError {
-		t.Errorf("エラーコード = %+v, want %d", res.Error, codeParseError)
-	}
-	if string(res.ID) != "null" {
-		t.Errorf("解釈できない要求の id = %s, want null", res.ID)
-	}
-}
-
-func TestBatchIsInvalidRequest(t *testing.T) {
-	// MCP は 2025-06-18 で JSON-RPC のバッチを外した（Design.md 8.4）。
-	h := New(&fakeREST{}, "v0")
-	res := decodeRPC(t, callMCP(t, h, agentPrincipal(),
-		`[{"jsonrpc":"2.0","id":1,"method":"ping"}]`))
-
-	if res.Error == nil || res.Error.Code != codeInvalidRequest {
-		t.Errorf("エラーコード = %+v, want %d", res.Error, codeInvalidRequest)
-	}
-}
-
-func TestWrongJSONRPCVersionIsInvalidRequest(t *testing.T) {
-	h := New(&fakeREST{}, "v0")
-	res := decodeRPC(t, callMCP(t, h, agentPrincipal(),
-		`{"jsonrpc":"1.0","id":1,"method":"ping"}`))
-
-	if res.Error == nil || res.Error.Code != codeInvalidRequest {
-		t.Errorf("エラーコード = %+v, want %d", res.Error, codeInvalidRequest)
-	}
-}
-
-func TestNotificationGets202WithoutBody(t *testing.T) {
-	// Design.md 8.4：通知には応答を返さない。
-	h := New(&fakeREST{}, "v0")
-	w := callMCP(t, h, agentPrincipal(), `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-
-	if w.Code != http.StatusAccepted {
-		t.Errorf("通知のステータス = %d, want 202", w.Code)
-	}
-	if w.Body.Len() != 0 {
-		t.Errorf("通知に本文を返している: %s", w.Body.String())
-	}
-}
-
-func TestUnknownNotificationIsIgnored(t *testing.T) {
-	// 知らない通知は黙って捨てる（method not found を返さない）。
-	h := New(&fakeREST{}, "v0")
-	w := callMCP(t, h, agentPrincipal(), `{"jsonrpc":"2.0","method":"notifications/cancelled"}`)
-
-	if w.Code != http.StatusAccepted || w.Body.Len() != 0 {
-		t.Errorf("知らない通知の応答 = %d %q, want 202 かつ本文なし", w.Code, w.Body.String())
-	}
-}
-
-func TestUnknownMethodIsMethodNotFound(t *testing.T) {
-	h := New(&fakeREST{}, "v0")
-	res := decodeRPC(t, callMCP(t, h, agentPrincipal(),
-		`{"jsonrpc":"2.0","id":9,"method":"resources/list"}`))
-
-	if res.Error == nil || res.Error.Code != codeMethodNotFound {
-		t.Errorf("エラーコード = %+v, want %d", res.Error, codeMethodNotFound)
-	}
-	if string(res.ID) != "9" {
-		t.Errorf("id を返していない: %s", res.ID)
-	}
-}
-
-func TestPingReturnsEmptyResult(t *testing.T) {
-	h := New(&fakeREST{}, "v0")
-	res := decodeRPC(t, callMCP(t, h, agentPrincipal(), `{"jsonrpc":"2.0","id":"a","method":"ping"}`))
-
-	if res.Error != nil {
-		t.Fatalf("ping が失敗した: %+v", res.Error)
-	}
-	if string(res.ID) != `"a"` {
-		t.Errorf("文字列の id を返せていない: %s", res.ID)
-	}
-}
-
-func TestInitializeEchoesKnownProtocolVersion(t *testing.T) {
-	// Design.md 8.4：知っている版はそのまま返す。
+func TestInitializeNamesPB(t *testing.T) {
+	// 旧方式（initialize）のクライアント（Desktop・Codex・Copilot。pb-158）にも応じる。
 	h := New(&fakeREST{}, "v1.2.3")
 	res := decodeRPC(t, callMCP(t, h, agentPrincipal(),
 		`{"jsonrpc":"2.0","id":1,"method":"initialize",`+
-			`"params":{"protocolVersion":"2024-11-05","capabilities":{},`+
+			`"params":{"protocolVersion":"2025-06-18","capabilities":{},`+
 			`"clientInfo":{"name":"test","version":"0"}}}`))
-
-	got := initializeOf(t, res)
-	if got.ProtocolVersion != "2024-11-05" {
-		t.Errorf("protocolVersion = %q, want 2024-11-05（クライアントの版をそのまま）", got.ProtocolVersion)
+	if res.Error != nil {
+		t.Fatalf("initialize が失敗した: %+v", res.Error)
+	}
+	b, _ := json.Marshal(res.Result)
+	var got struct {
+		ProtocolVersion string `json:"protocolVersion"`
+		ServerInfo      struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"serverInfo"`
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("result が initialize の応答ではない: %v", err)
+	}
+	if got.ProtocolVersion != "2025-06-18" {
+		t.Errorf("protocolVersion = %q, want 2025-06-18（クライアントの版をそのまま）", got.ProtocolVersion)
 	}
 	if got.ServerInfo.Name != ServerName || got.ServerInfo.Version != "v1.2.3" {
 		t.Errorf("serverInfo = %+v, want %s / v1.2.3", got.ServerInfo, ServerName)
 	}
-	if got.Capabilities.Tools.ListChanged {
-		t.Error("listChanged は false であること（サーバ発の通知を持たない）")
-	}
-}
-
-func TestInitializeFallsBackToLatestVersion(t *testing.T) {
-	h := New(&fakeREST{}, "v0")
-	res := decodeRPC(t, callMCP(t, h, agentPrincipal(),
-		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}`))
-
-	if got := initializeOf(t, res); got.ProtocolVersion != protocolVersions[0] {
-		t.Errorf("protocolVersion = %q, want %q（PB の最新）", got.ProtocolVersion, protocolVersions[0])
-	}
-}
-
-func initializeOf(t *testing.T, res rpcResponse) initializeResult {
-	t.Helper()
-	if res.Error != nil {
-		t.Fatalf("initialize が失敗した: %+v", res.Error)
-	}
-	b, err := json.Marshal(res.Result)
-	if err != nil {
-		t.Fatalf("result を組み直せない: %v", err)
-	}
-	var out initializeResult
-	if err := json.Unmarshal(b, &out); err != nil {
-		t.Fatalf("result が initialize の応答ではない: %v", err)
-	}
-	return out
 }
 
 func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
@@ -351,27 +278,40 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 		}
 	}
 
-	// read 6件（/pb-onboard が呼ぶ順。pb_list_tags はタグの語彙で pb_get_doc の隣）
+	// read 7件（/pb-onboard が呼ぶ順。pb_list_tags はタグの語彙で pb_get_doc の隣。
+	// pb_list_comments は既存コメントを読む口で、pb_get_task の隣＝9.8 の子資源）
 	// ＋ コンテキストパック1件（手順27。/pb-implement が「契約を読む → 前提を読む」の
-	// 順で呼ぶので pb_get_task の直後）＋ write 6件（10.7.1 の開発フローの順。
+	// 順で呼ぶので pb_get_task の直後）＋ write 7件（10.7.1 の開発フローの順。
 	// pb_update_ticket と pb_put_dod は起票したあと直すので pb_create_ticket の隣、
-	// pb_add_reference は「実装中に分かったことを書く」の隣＝作業の跡を積む位置）
-	// ＋ 遷移2件（見てから動かす順。手順26b）＋ 完了レポート1件（手順26c。
-	// /pb-implement の流れの終端）。
+	// pb_add_reference は「実装中に分かったことを書く」の隣＝作業の跡を積む位置。
+	// pb_submit_plan は自律実行の main が計画の版を出す口、pb_submit_evaluation は
+	// 評価エージェントが計画・成果を評価する口、pb_raise_confirmation は main が
+	// 人への確認待ちを立てる口、pb_update_handoff は main が引き継ぎノートを更新する口
+	// （Delegation.md 15章 D7 の新設5ツールのうちMCPに開けるのはこの4つ。
+	// pb-247・pb-248・pb-249・pb-250）。pb_record_metric は main が指標の値を入れる口（pb-277）＋ 遷移2件（見てから動かす順。
+	// 手順26b）＋ 完了レポート1件（手順26c。/pb-implement の流れの終端）。
 	//
 	// **pb_claim_task / pb_release_task は持たない（構想）**
 	// （Requirements.md 10.3.3——排他が実際に要るのは自律取得 pb_next_task から
 	// である）。
 	want := []string{
+		"pb_get_agent_usage", "pb_list_agent_runs", "pb_start_work", "pb_record_work", "pb_list_work",
+		"pb_get_planning_data", "pb_add_link", "pb_update_link", "pb_delete_link", "pb_move_task",
 		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tags",
-		"pb_list_tasks", "pb_get_task", "pb_get_context",
+		"pb_list_tasks", "pb_get_task", "pb_list_comments", "pb_get_context",
 		"pb_create_ticket", "pb_update_ticket", "pb_put_dod",
-		"pb_post_note", "pb_add_reference", "pb_create_doc", "pb_put_doc",
+		"pb_post_note", "pb_add_reference", "pb_submit_plan", "pb_submit_evaluation",
+		"pb_raise_confirmation", "pb_update_handoff", "pb_record_metric",
+		"pb_create_doc", "pb_put_doc",
 		"pb_list_transitions", "pb_transition_task",
 		"pb_submit_result",
+		"pb_wait",
 	}
+	// **並び順は見ない。** 公式 SDK は名前の順に並べ替えて返す（仕様 2026-07-28 が
+	// キャッシュのために決まった順を求める。pb-258）。呼ぶ順は /pb-implement の手順が教える。
+	slices.Sort(want)
 	if strings.Join(names, ",") != strings.Join(want, ",") {
-		t.Errorf("ツール = %v, want %v（read → write → 遷移 → 報告 の順）", names, want)
+		t.Errorf("ツール = %v, want %v（名前の順）", names, want)
 	}
 
 	// 必須の引数が宣言されていること。
@@ -454,4 +394,43 @@ func TestToolsListDeclaresNestedSchema(t *testing.T) {
 		return
 	}
 	t.Fatal("pb_submit_result が tools/list に無い")
+}
+
+// findings の要素型を省くと、Codex は文字列配列として公開し、
+// REST が受けるオブジェクト配列を提出できなくなる。
+func TestToolsListDeclaresEvaluationFindings(t *testing.T) {
+	h := New(&fakeREST{}, "v0")
+	res := decodeRPC(t, callMCP(t, h, agentPrincipal(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	b, err := json.Marshal(res.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema schema `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range out.Tools {
+		if tool.Name != "pb_submit_evaluation" {
+			continue
+		}
+		findings := tool.InputSchema.Properties["findings"]
+		if findings.Type != "array" || findings.Items == nil || findings.Items.Type != "object" {
+			t.Fatalf("findings はオブジェクト配列でなければならない: %+v", findings)
+		}
+		for _, key := range []string{"aspect", "verdict", "note_md"} {
+			if findings.Items.Properties[key].Type != "string" || !slices.Contains(findings.Items.Required, key) {
+				t.Errorf("findings.items の %s は必須の文字列でなければならない: %+v", key, findings.Items)
+			}
+		}
+		if got := findings.Items.Properties["verdict"].Enum; !slices.Equal(got, []string{"pass", "fail"}) {
+			t.Errorf("観点ごとの判定 = %v, want pass / fail", got)
+		}
+		return
+	}
+	t.Fatal("pb_submit_evaluation が tools/list に無い")
 }

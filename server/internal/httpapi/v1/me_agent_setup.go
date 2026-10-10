@@ -139,7 +139,18 @@ func bridgeAssetFromDir(baseDir, osName, arch string) (agentsetup.Asset, error) 
 	if err != nil {
 		return agentsetup.Asset{}, err
 	}
-	binary, err := os.ReadFile(filepath.Join(baseDir, "bridges", osName+"-"+arch, name))
+	// Read a fixed shipped path; query values only select a validated platform.
+	relative := map[string]string{
+		"darwin-arm64":  "bridges/darwin-arm64/pb-mcp-bridge",
+		"windows-amd64": "bridges/windows-amd64/pb-mcp-bridge.exe",
+		"windows-arm64": "bridges/windows-arm64/pb-mcp-bridge.exe",
+		"linux-amd64":   "bridges/linux-amd64/pb-mcp-bridge",
+		"linux-arm64":   "bridges/linux-arm64/pb-mcp-bridge",
+	}[osName+"-"+arch]
+	if relative == "" {
+		return agentsetup.Asset{}, fmt.Errorf("同梱ブリッジのプラットフォームが見つかりません")
+	}
+	binary, err := os.ReadFile(filepath.Join(baseDir, relative))
 	if err != nil {
 		return agentsetup.Asset{}, fmt.Errorf("同梱の %s を読めない: %w", name, err)
 	}
