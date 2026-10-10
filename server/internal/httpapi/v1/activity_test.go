@@ -268,7 +268,7 @@ func TestListActivityUnknownEntitySeqReturnsEmptyList(t *testing.T) {
 }
 
 func TestListActivityRejectsMalformedEntity(t *testing.T) {
-	for _, v := range []string{"ticket:abc", "foo:1", "ticket:", "31", "ticket:0", "ticket:-1"} {
+	for _, v := range []string{"ticket:abc", "foo:1", "ticket:", "31", "ticket:0", "ticket:-1", "ticket:2147483648", "ticket:4294967327"} {
 		t.Run(v, func(t *testing.T) {
 			q := activityFake()
 			h := &handler{q: q}

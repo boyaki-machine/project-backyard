@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { parse } from '@vue/compiler-sfc'
+import { templateWithoutComments } from '../scripts/vue-source.mjs'
 import { uiMessages } from '../src/locales/en/ui'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -23,8 +24,8 @@ test('利用者向けテンプレートとプレースホルダーに開発文�
       const path = join(dir, entry.name)
       if (entry.isDirectory()) scan(path)
       else if (path.endsWith('.vue')) {
-        const content = parse(readFileSync(path, 'utf8')).descriptor.template?.content ?? ''
-        if (developmentText.test(content.replace(/<!--[\s\S]*?-->/g, ''))) problems.push(path)
+        const template = parse(readFileSync(path, 'utf8')).descriptor.template
+        if (developmentText.test(templateWithoutComments(template))) problems.push(path)
       }
     }
   }
