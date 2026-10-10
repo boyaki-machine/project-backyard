@@ -275,6 +275,8 @@ func Mount(r chi.Router, deps Deps) {
 		// してあるのは、ブラウザの <a download href> で落とすためである。**
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).Get("/projects/{key}/agent-usage", h.getAgentUsage)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).Get("/projects/{key}/tickets/{seq}/work-sessions", h.listWorkSessions)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).Get("/projects/{key}/tickets/{seq}/work-policy", h.getWorkPolicy)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).Post("/projects/{key}/tickets/{seq}/work-cleanup", h.cleanupWork)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.run"), middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).Post("/projects/{key}/tickets/{seq}/work-sessions", h.changeWorkSession)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.run"), middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).Post("/projects/{key}/tickets/{seq}/work-sessions/{work_id}/events", h.changeWorkSession)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).Get("/projects/{key}/agent-usage/runs", h.listAgentRuns)

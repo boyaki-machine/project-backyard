@@ -16,9 +16,9 @@ test('common work saves actuals and shows records and correction at multiple wid
   for(let i=0;i<11;i++) {
    const started=await page.request.post(`${path}/work-sessions`,{headers,data:{request_id:`start-${i}`}});expect(started.status(),await started.text()).toBe(200)
    const row=await started.json()
-   const finished=await page.request.post(`${path}/work-sessions/${row.id}/events`,{headers,data:{request_id:`finish-${i}`,action:'finish',result:'completed',...(i===0?{tokens:0}:{})}});expect(finished.status(),await finished.text()).toBe(200)
+   const finished=await page.request.post(`${path}/work-sessions/${row.id}/events`,{headers,data:{request_id:`finish-${i}`,action:'finish',result:'completed',change_metrics:[{seq:ticket.seq,code_lines:100,test_lines:0,doc_lines:0,other_lines:0,files:1,branches:1,learning_events:0,source:'fixture cumulative change metrics'}],...(i===0?{tokens:0}:{})}});expect(finished.status(),await finished.text()).toBe(200)
   }
-  const actual=await(await page.request.get(path)).json(); expect(actual.actual_hours).toBeGreaterThanOrEqual(0);expect(actual.actual_point).toBe(1);expect(actual.actual_point_version).toBe('actual-v1')
+  const actual=await(await page.request.get(path)).json(); expect(actual.actual_hours).toBeGreaterThanOrEqual(0);expect(actual.actual_point).toBe(3);expect(actual.actual_point_version).toBe('actual-v0')
   await page.goto(`/p/${key}/tickets/${ticket.seq}`)
   const work=page.getByRole('region',{name:'作業実績',exact:true})
   await expect(work).toBeVisible();await expect(work).toContainText('未計測 10件');await expect(work.locator('article')).toHaveCount(10)
@@ -36,6 +36,19 @@ test('common work saves actuals and shows records and correction at multiple wid
    expect(await work.locator('form').evaluate(e=>e.getBoundingClientRect().right)).toBeLessThanOrEqual(width+1)
    await page.screenshot({path:info.outputPath(`work-form-${width}.png`),fullPage:true})
    await work.getByRole('button',{name:'キャンセル',exact:true}).click()
+  }
+  const beforeCleanup=await(await page.request.get(path)).json()
+  const progress=await page.request.post(`${path}/transition`,{headers,data:{to:'in_progress'}});expect(progress.status(),await progress.text()).toBe(200)
+  const close=await page.request.post(`${path}/transition`,{headers,data:{to:'done'}});expect(close.status(),await close.text()).toBe(200)
+  const preview=await page.request.post(`${path}/work-cleanup`,{headers,data:{dry_run:true}});expect(preview.status(),await preview.text()).toBe(200);expect((await preview.json()).work_ids).toHaveLength(11)
+  const cleaned=await page.request.post(`${path}/work-cleanup`,{headers,data:{dry_run:false}});expect(cleaned.status(),await cleaned.text()).toBe(200)
+  const afterCleanup=await(await page.request.get(path)).json();expect(afterCleanup.actual_hours).toBe(beforeCleanup.actual_hours);expect(afterCleanup.actual_point).toBe(beforeCleanup.actual_point);expect(afterCleanup.actual_point_version).toBe(beforeCleanup.actual_point_version)
+  await page.reload();await expect(work).toContainText('明細整理済み 11件');await expect(work.locator('article')).toHaveCount(0)
+  for(const width of [1440,768,360]) {
+   await page.setViewportSize({width,height:1000});await work.scrollIntoViewIfNeeded()
+   expect(await work.evaluate(e=>e.getBoundingClientRect().right)).toBeLessThanOrEqual(width+1)
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width+1)
+   await page.screenshot({path:info.outputPath(`work-cleaned-${width}.png`),fullPage:true})
   }
  } finally {
   execFileSync('make',['psql'],{cwd:process.env.PB_DEV_ROOT??'..',input:`DELETE FROM project WHERE key='${key}' AND name='Work timer regression';\n`,stdio:['pipe','pipe','pipe']})

@@ -123,6 +123,62 @@ paths:
         '401': {$ref: '#/components/responses/Unauthenticated'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+  /api/v1/projects/{key}/tickets/{seq}/work-policy:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+      - {name: seq, in: path, required: true, schema: {type: integer, minimum: 1}}
+    get:
+      tags: [tickets]
+      summary: 作業実績の共通契約と自身の未終了ID
+      description: ticket.view が必要。正本は運営ノート「実績」のpb-effort-policyブロック。
+      responses:
+        '200':
+          description: 設定状態・文書版・未終了ID
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [policy, open_work_id, document_path, section]
+                properties:
+                  policy: {$ref: '#/components/schemas/WorkPolicy'}
+                  open_work_id: {type: [string, 'null']}
+                  document_path: {type: string}
+                  section: {type: string}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/projects/{key}/tickets/{seq}/work-cleanup:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+      - {name: seq, in: path, required: true, schema: {type: integer, minimum: 1}}
+    post:
+      tags: [tickets]
+      summary: 終了チケットの作業明細を整理し実績属性を保持
+      description: project.edit が必要。共有記録はすべての関連チケットが終了済みの場合だけ整理する。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dry_run]
+              properties:
+                dry_run: {type: boolean, description: trueは対象確認のみ、falseは整理を実行}
+      responses:
+        '200':
+          description: 整理対象・見送り・欠測件数と保持内容
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [work_ids, skipped_count, missing_count, dry_run, detail]
+                properties:
+                  work_ids: {type: array, items: {type: string}}
+                  skipped_count: {type: integer}
+                  missing_count: {type: integer}
+                  dry_run: {type: boolean}
+                  detail: {type: string}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {description: チケットが終了済みではない}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
   /api/v1/projects/{key}/tickets/{seq}/work-sessions:
     parameters:
       - {name: key, in: path, required: true, schema: {type: string}}
@@ -9932,6 +9988,30 @@ components:
         status:
           $ref: '#/components/schemas/SprintStatus'
 
+    WorkPolicy:
+      type: object
+      required: [version, point_formula, time_source, require_registration, document_version, status]
+      properties:
+        version: {type: string}
+        point_formula: {type: string}
+        time_source: {type: string}
+        require_registration: {type: boolean}
+        document_version: {type: integer}
+        status: {type: string, enum: [ready, unset, invalid]}
+    ChangeMetrics:
+      type: object
+      required: [seq, code_lines, test_lines, doc_lines, other_lines, files, branches, learning_events, source]
+      description: 生成物・記録を除外したチケット全体の累積変更量。複数セッションで累積値を単純加算しない。
+      properties:
+        seq: {type: integer, minimum: 1}
+        code_lines: {type: integer, minimum: 0, format: int64}
+        test_lines: {type: integer, minimum: 0, format: int64}
+        doc_lines: {type: integer, minimum: 0, format: int64}
+        other_lines: {type: integer, minimum: 0, format: int64}
+        files: {type: integer, minimum: 0, format: int64}
+        branches: {type: integer, minimum: 1, format: int64}
+        learning_events: {type: integer, minimum: 0, format: int64}
+        source: {type: string, minLength: 1, maxLength: 2000}
     WorkAllocation:
       type: object
       required: [seq, share]
@@ -9955,16 +10035,30 @@ components:
         - type: object
           required: [action]
           properties:
-            action: {type: string, enum: [pause, resume, finish, correct, restore_auto]}
+            action: {type: string, enum: [pause, resume, finish, abandon, correct, restore_auto]}
             result: {type: string, enum: [completed, partial, blocked]}
             reported_active_ms: {type: [integer, 'null'], minimum: 0, format: int64, description: 取得元の稼働時間。省略またはnullならPB計時。訂正では省略・nullは変更しない。}
             tokens: {type: [integer, 'null'], minimum: 0, format: int64, description: 取得できたトークン。0と不明を区別。訂正では省略・nullは変更しない。}
             incomplete: {type: boolean}
+            change_metrics:
+              type: array
+              maxItems: 50
+              items: {$ref: '#/components/schemas/ChangeMetrics'}
     WorkSession:
       type: object
-      required: [id, ticket_seq, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, allocations]
+      required: [id, ticket_seq, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, allocations, policy, time_missing]
       properties:
         id: {type: string}
+        policy: {$ref: '#/components/schemas/WorkPolicy'}
+        time_missing: {type: boolean}
+        saved:
+          type: array
+          items:
+            type: object
+            required: [seq, summary]
+            properties:
+              seq: {type: integer}
+              summary: {$ref: '#/components/schemas/WorkSummary'}
         ticket_seq: {type: integer, description: 作業を開始したチケット番号}
         actor_id: {type: string}
         client_kind: {type: [string, 'null']}
@@ -9986,7 +10080,7 @@ components:
           items: {$ref: '#/components/schemas/WorkAllocation'}
     WorkSummary:
       type: object
-      required: [sessions_count, open_count, incomplete_count, tokens_missing, active_ms, elapsed_ms, waiting_ms, tokens, suggested_hours, suggested_point, point_version, actual_hours, actual_point, actual_point_version, manual_hours, manual_point]
+      required: [sessions_count, open_count, incomplete_count, tokens_missing, active_ms, elapsed_ms, waiting_ms, tokens, suggested_hours, suggested_point, point_version, actual_hours, actual_point, actual_point_version, manual_hours, manual_point, archived_count, time_missing, point_reason, hours_status, point_status]
       properties:
         sessions_count: {type: integer}
         open_count: {type: integer}
@@ -9998,7 +10092,12 @@ components:
         tokens: {type: number}
         suggested_hours: {type: [number, 'null']}
         suggested_point: {type: [number, 'null']}
-        point_version: {type: string, const: actual-v1}
+        archived_count: {type: integer, description: 明細整理済みの記録件数。集計は保持}
+        time_missing: {type: integer}
+        point_reason: {type: string}
+        hours_status: {type: string, enum: [updated, manual_preserved, unmeasured]}
+        point_status: {type: string, enum: [updated, manual_preserved, unmeasured]}
+        point_version: {type: string}
         actual_hours: {type: [number, 'null']}
         actual_point: {type: [number, 'null']}
         actual_point_version: {type: [string, 'null']}
@@ -10029,6 +10128,12 @@ components:
       additionalProperties: true
       properties:
         work_session_id: {type: string, description: 終了済み・配分済みの共通作業記録への参照。実績の再加算は行わない。}
+        effort_unavailable:
+          type: object
+          required: [target, reason]
+          properties:
+            target: {type: string, enum: [time, point, both]}
+            reason: {type: string, minLength: 1, maxLength: 2000}
         status:
           type: string
           enum: [completed, blocked, partial]
@@ -11637,6 +11742,13 @@ components:
           required: [body_md, parent, epic, children, dod, links, references, comment_count,
                      execution_mode, readiness, readiness_note, scope]
           properties:
+            work_context:
+              type: object
+              description: GET詳細の共通計測案内。状態遷移では計測を開始しない。
+              required: [policy, open_work_id]
+              properties:
+                policy: {$ref: '#/components/schemas/WorkPolicy'}
+                open_work_id: {type: [string, 'null']}
             body_md:
               type: string
               nullable: true

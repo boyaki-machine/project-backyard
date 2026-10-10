@@ -1351,6 +1351,7 @@ func TestMCPIntegration(t *testing.T) {
 			"## 3. 憲章",
 			"## 4. 依存・関連するチケット",
 			"## 5. 足りないときの調べ方",
+			"## 作業実績の記録", "pb_start_work", "pb_record_work", "actual-v0",
 			"`src/auth/**`",   // チケット（9.5.1 の scope）
 			"認証方式が未決",         // 同上（readiness_note）
 			"価値観・世界観",         // 憲章の目次（10.2）
@@ -1396,9 +1397,52 @@ func TestMCPIntegration(t *testing.T) {
 		t.Fatalf("完了条件を作れない: %v", err)
 	}
 
+	t.Run("共通計測MCPが契約と未終了案内と保存結果を返す", func(t *testing.T) {
+		text, bad := tool(t, fullToken, "pb_start_work", `{"seq":1,"request_id":"mcp-work-start"}`)
+		if bad {
+			t.Fatal(text)
+		}
+		var row struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(text), &row); err != nil || row.ID == "" {
+			t.Fatal(text, err)
+		}
+		text, bad = tool(t, fullToken, "pb_get_context", `{"seq":1}`)
+		if bad || !strings.Contains(text, row.ID) || !strings.Contains(text, "actual-v0") || !strings.Contains(text, "pb_start_work") || !strings.Contains(text, `section="実績"`) {
+			t.Fatal(text)
+		}
+		for _, action := range []string{"pause", "resume", "finish"} {
+			body := fmt.Sprintf(`{"seq":1,"work_id":%q,"request_id":%q,"action":%q,"note":"fixture measured runtime"}`, row.ID, "mcp-work-"+action, action)
+			if action == "finish" {
+				body = fmt.Sprintf(`{"seq":1,"work_id":%q,"request_id":"mcp-work-finish","action":"finish","result":"completed","reported_active_ms":0,"tokens":0,"note":"fixture measured zero runtime","change_metrics":[{"seq":1,"code_lines":100,"test_lines":0,"doc_lines":0,"other_lines":0,"files":1,"branches":1,"learning_events":0,"source":"fixture cumulative commit metrics"}]}`, row.ID)
+			}
+			text, bad = tool(t, fullToken, "pb_record_work", body)
+			if bad {
+				t.Fatal(text)
+			}
+		}
+		var saved struct {
+			Saved []struct {
+				Summary struct {
+					ActualHours        *float64 `json:"actual_hours"`
+					ActualPoint        *float64 `json:"actual_point"`
+					ActualPointVersion *string  `json:"actual_point_version"`
+				}
+			}
+		}
+		if err := json.Unmarshal([]byte(text), &saved); err != nil || len(saved.Saved) != 1 {
+			t.Fatal(text, err)
+		}
+		value := saved.Saved[0].Summary
+		if value.ActualHours == nil || *value.ActualHours != 0 || value.ActualPoint == nil || *value.ActualPoint != 3 || value.ActualPointVersion == nil || *value.ActualPointVersion != "actual-v0" {
+			t.Fatal(text)
+		}
+	})
 	t.Run("pb_submit_result が実行記録・レポート・コメントを作る", func(t *testing.T) {
 		text, isErr := tool(t, fullToken, "pb_submit_result", `{
 			"seq":1,"status":"partial",
+ "effort_unavailable":{"target":"both","reason":"fixture exercises legacy report submission without recorded timing"},
 			"artifacts":[{"type":"pull_request","url":"https://example.com/pr/1"}],
 			"dod_results":[{"id":`+quote(dodA)+`,"passed":true,"evidence":"go test → ok"}],
 			"failures":[{"approach":"ライブラリZ","reason":"版が競合"}],
@@ -1524,6 +1568,7 @@ func TestMCPIntegration(t *testing.T) {
 	t.Run("再提出は別の run になり retry_count が増える", func(t *testing.T) {
 		text, isErr := tool(t, fullToken, "pb_submit_result", `{
 			"seq":1,"status":"completed",
+ "effort_unavailable":{"target":"both","reason":"fixture re-submits work performed before timing"},
 			"dod_results":[{"id":`+quote(dodA)+`,"passed":true},
 			               {"id":`+quote(dodB)+`,"passed":true}]}`)
 		if isErr {

@@ -114,18 +114,18 @@ func TestWorkSessionIntegration(t *testing.T) {
 	if done.ActiveMS < 2400000 || done.ActiveMS > 2405000 || done.WaitingMS < 1200000 || done.Tokens == nil || *done.Tokens != 0 {
 		t.Fatalf("intervals %+v", done)
 	}
-	check := func(index int, hours, point float64) {
+	check := func(index int, hours float64) {
 		t.Helper()
 		v, e := q.GetTicketBySeq(ctx, gen.GetTicketBySeqParams{ProjectID: workProject(t, ctx, q, key), Seq: tickets[index].Seq})
 		if e != nil {
 			t.Fatal(e)
 		}
-		if !v.ActualHours.Valid || v.ActualHours.Float64 < hours-.001 || v.ActualHours.Float64 > hours+.001 || v.ActualPoint.Float64 != point || v.ActualPointVersion.String != "actual-v1" {
+		if !v.ActualHours.Valid || v.ActualHours.Float64 < hours-.001 || v.ActualHours.Float64 > hours+.001 || v.ActualPoint.Valid || v.ActualPointVersion.Valid {
 			t.Fatalf("actuals %v %v %v", v.ActualHours, v.ActualPoint, v.ActualPointVersion)
 		}
 	}
-	check(0, .5, effortPoint(float64(done.ActiveMS)*.75))
-	check(1, 1.0/6, 1) // First allocation lies just above 30 minutes with API processing time.
+	check(0, .5)
+	check(1, 1.0/6)
 	// Repeated reports reference the same measured work; they never change actuals.
 	for i := 0; i < 2; i++ {
 		rec = postWithCookie(r, path+"/reports", session, fmt.Sprintf(`{"status":"completed","work_session_id":%q}`, work.ID))
@@ -133,7 +133,7 @@ func TestWorkSessionIntegration(t *testing.T) {
 			t.Fatal(rec.Body.String())
 		}
 	}
-	check(0, .5, effortPoint(float64(done.ActiveMS)*.75))
+	check(0, .5)
 	rec = postWithCookie(r, path+"/reports", session, `{"status":"completed","work_session_id":"missing"}`)
 	if rec.Code != 404 {
 		t.Fatal(rec.Body.String())
@@ -157,7 +157,7 @@ func TestWorkSessionIntegration(t *testing.T) {
 		t.Fatalf("removed allocation stale %+v %v", old, e)
 	}
 	post(events, `{"request_id":"restore","action":"restore_auto"}`, 200)
-	check(0, 1.0/3, 1)
+	check(0, 1.0/3)
 
 	// Explicit clearing is a manual decision; restoring re-enables aggregation.
 	ticket, e = q.GetTicketBySeq(ctx, gen.GetTicketBySeqParams{ProjectID: workProject(t, ctx, q, key), Seq: tickets[0].Seq})
@@ -302,7 +302,7 @@ func TestWorkSessionIntegration(t *testing.T) {
 	}
 	post(historyEvents, `{"request_id":"historical-restore","action":"restore_auto"}`, 200)
 	historicalEffort, e = q.GetTicketEffort(ctx, historical.ID)
-	if e != nil || !historicalEffort.ActualHours.Valid || historicalEffort.ActualHours.Float64 != 0 || historicalEffort.ActualPoint.Float64 != 0 || historicalEffort.ActualPointVersion.String != "actual-v1" {
+	if e != nil || !historicalEffort.ActualHours.Valid || historicalEffort.ActualHours.Float64 != 0 || historicalEffort.ActualPoint.Valid || historicalEffort.ActualPointVersion.Valid {
 		t.Fatalf("historical restored %+v %v", historicalEffort, e)
 	}
 	// Deleting the primary ticket clears derived actuals in surviving shared targets.

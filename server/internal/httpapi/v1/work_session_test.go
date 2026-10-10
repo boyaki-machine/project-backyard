@@ -17,11 +17,7 @@ func TestWorkTimingAndPoint(t *testing.T) {
 	if s.ActiveMs != 3600000 || s.WaitingMs != 3600000 {
 		t.Fatalf("%+v", s)
 	}
-	for _, tc := range []struct{ minutes, point float64 }{{0, 0}, {.001, 1}, {30, 1}, {30.001, 2}, {60, 2}, {60.001, 3}, {120, 3}, {240, 5}, {480, 8}, {960, 13}, {961, 21}} {
-		if got := effortPoint(tc.minutes * 60000); got != tc.point {
-			t.Errorf("%v -> %v", tc.minutes, got)
-		}
-	}
+
 }
 func TestWorkValidation(t *testing.T) {
 	for _, r := range []workRequest{

@@ -6,6 +6,7 @@
 - `readiness` が `red` の場合、不足点を提示し、実装に進んでよいかユーザーに確認する
 
 ## 2. 前提情報の取得
+- `pb_get_doc(path="project-management-note", section="実績")` で算出契約を読む。設定不足を推測で補わない
 - `pb_get_context` で境界・実行の前提・憲章・依存するチケットを取得する
 - **このセッションで憲章を読んでいるなら、その版を `charter_versions` に渡す**（直前のパックの末尾にある
   「憲章の版」、または `/pb-onboard` で控えた版）。変わっていない文書の本文が省かれる
@@ -44,6 +45,8 @@
 
 ## 7. 報告
 - レポートの前に `pb_record_work(action=finish)` で結果を記録する。PBが実績(時間)と実績Pointを算出する。取得できたトークンのみ `tokens`、ランタイムが取得した稼働時間のみ `reported_active_ms` と取得元を渡す。分からない値を推測や0で代用しない
+- `finish` の `saved` から配分先ごとの保存値・手入力保持・未算出理由を確認する。Point用の `change_metrics` は生成物を除いたチケット全体の累積変更量と取得元を報告し、複数セッションで足さない。取得できなければPointは未算出とする
+- 未確認区間のある中断は理由付き `action=abandon` で終了し、放置時間を加算しない。計測不能ならレポートの `effort_unavailable` に対象(time/point/both)と理由を記す
 - `pb_submit_result` で `work_session_id` に終了した作業IDを指定して構造化レポートを返す。再提出は同じ記録へ紐付け、追加作業が発生した場合は新しい記録を作る
   - 成果物、DoD 各項目の判定と証跡、判明した事実、**試して駄目だったこと**、コスト
   - `knowledge_impact` を自己申告する

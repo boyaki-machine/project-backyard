@@ -27,25 +27,108 @@ func (q *Queries) AddWorkAllocation(ctx context.Context, arg AddWorkAllocationPa
 	return err
 }
 
+const addWorkBase = `-- name: AddWorkBase :exec
+INSERT INTO ticket_work_base(ticket_id,sessions_count,incomplete_count,tokens_missing,time_missing,active_ms,elapsed_ms,waiting_ms,tokens,point_inputs)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT(ticket_id) DO UPDATE SET
+sessions_count=ticket_work_base.sessions_count+excluded.sessions_count,
+incomplete_count=ticket_work_base.incomplete_count+excluded.incomplete_count,
+tokens_missing=ticket_work_base.tokens_missing+excluded.tokens_missing,
+time_missing=ticket_work_base.time_missing+excluded.time_missing,
+active_ms=ticket_work_base.active_ms+excluded.active_ms,
+elapsed_ms=ticket_work_base.elapsed_ms+excluded.elapsed_ms,
+waiting_ms=ticket_work_base.waiting_ms+excluded.waiting_ms,
+tokens=ticket_work_base.tokens+excluded.tokens,
+point_inputs=excluded.point_inputs
+`
+
+type AddWorkBaseParams struct {
+	TicketID        string
+	SessionsCount   int64
+	IncompleteCount int64
+	TokensMissing   int64
+	TimeMissing     int64
+	ActiveMs        float64
+	ElapsedMs       float64
+	WaitingMs       float64
+	Tokens          float64
+	PointInputs     []byte
+}
+
+func (q *Queries) AddWorkBase(ctx context.Context, arg AddWorkBaseParams) error {
+	_, err := q.db.Exec(ctx, addWorkBase,
+		arg.TicketID,
+		arg.SessionsCount,
+		arg.IncompleteCount,
+		arg.TokensMissing,
+		arg.TimeMissing,
+		arg.ActiveMs,
+		arg.ElapsedMs,
+		arg.WaitingMs,
+		arg.Tokens,
+		arg.PointInputs,
+	)
+	return err
+}
+
 const applyTicketEffort = `-- name: ApplyTicketEffort :exec
 UPDATE ticket t SET
 actual_hours=CASE WHEN e.manual_hours THEN t.actual_hours ELSE $1::double precision END,
 actual_point=CASE WHEN e.manual_point THEN t.actual_point ELSE $2::double precision END,
-actual_point_version=CASE WHEN e.manual_point THEN t.actual_point_version ELSE 'actual-v1' END,
+actual_point_version=CASE WHEN e.manual_point THEN t.actual_point_version ELSE $3::text END,
 version=t.version+1,updated_at=now()
-FROM ticket_effort e WHERE e.ticket_id=t.id AND t.id= $3
+FROM ticket_effort e WHERE e.ticket_id=t.id AND t.id= $4
 AND ((NOT e.manual_hours AND t.actual_hours IS DISTINCT FROM $1::double precision)
-OR (NOT e.manual_point AND (t.actual_point IS DISTINCT FROM $2::double precision OR t.actual_point_version IS DISTINCT FROM 'actual-v1')))
+OR (NOT e.manual_point AND (t.actual_point IS DISTINCT FROM $2::double precision OR t.actual_point_version IS DISTINCT FROM $3::text)))
 `
 
 type ApplyTicketEffortParams struct {
-	Hours    float64
-	Point    float64
-	TicketID string
+	Hours        float64
+	Point        pgtype.Float8
+	PointVersion pgtype.Text
+	TicketID     string
 }
 
 func (q *Queries) ApplyTicketEffort(ctx context.Context, arg ApplyTicketEffortParams) error {
-	_, err := q.db.Exec(ctx, applyTicketEffort, arg.Hours, arg.Point, arg.TicketID)
+	_, err := q.db.Exec(ctx, applyTicketEffort,
+		arg.Hours,
+		arg.Point,
+		arg.PointVersion,
+		arg.TicketID,
+	)
+	return err
+}
+
+const archiveWork = `-- name: ArchiveWork :exec
+INSERT INTO work_archive(id,project_id,actor_id,ticket_ids,time_missing) VALUES($1,$2,$3,$4,$5)
+`
+
+type ArchiveWorkParams struct {
+	ID          string
+	ProjectID   string
+	ActorID     pgtype.Text
+	TicketIds   []byte
+	TimeMissing bool
+}
+
+func (q *Queries) ArchiveWork(ctx context.Context, arg ArchiveWorkParams) error {
+	_, err := q.db.Exec(ctx, archiveWork,
+		arg.ID,
+		arg.ProjectID,
+		arg.ActorID,
+		arg.TicketIds,
+		arg.TimeMissing,
+	)
+	return err
+}
+
+const archiveWorkEvents = `-- name: ArchiveWorkEvents :exec
+INSERT INTO work_replay(project_id,actor_id,request_id,session_id,digest)
+SELECT project_id,actor_id,request_id,session_id,digest FROM work_event e WHERE e.session_id= $1
+`
+
+func (q *Queries) ArchiveWorkEvents(ctx context.Context, workID string) error {
+	_, err := q.db.Exec(ctx, archiveWorkEvents, workID)
 	return err
 }
 
@@ -152,6 +235,15 @@ func (q *Queries) DeleteWorkAllocations(ctx context.Context, sessionID string) e
 	return err
 }
 
+const deleteWorkSession = `-- name: DeleteWorkSession :exec
+DELETE FROM work_session WHERE id= $1
+`
+
+func (q *Queries) DeleteWorkSession(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, deleteWorkSession, id)
+	return err
+}
+
 const ensureTicketEffort = `-- name: EnsureTicketEffort :exec
 INSERT INTO ticket_effort(ticket_id,manual_hours,manual_point)
 SELECT id,(actual_hours IS NOT NULL),(actual_point IS NOT NULL) FROM ticket WHERE id= $1
@@ -161,6 +253,66 @@ ON CONFLICT DO NOTHING
 func (q *Queries) EnsureTicketEffort(ctx context.Context, ticketID string) error {
 	_, err := q.db.Exec(ctx, ensureTicketEffort, ticketID)
 	return err
+}
+
+const getArchivedWork = `-- name: GetArchivedWork :one
+SELECT id, project_id, actor_id, ticket_ids, time_missing, cleaned_at FROM work_archive WHERE id= $1 AND project_id= $2
+`
+
+type GetArchivedWorkParams struct {
+	ID        string
+	ProjectID string
+}
+
+func (q *Queries) GetArchivedWork(ctx context.Context, arg GetArchivedWorkParams) (WorkArchive, error) {
+	row := q.db.QueryRow(ctx, getArchivedWork, arg.ID, arg.ProjectID)
+	var i WorkArchive
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ActorID,
+		&i.TicketIds,
+		&i.TimeMissing,
+		&i.CleanedAt,
+	)
+	return i, err
+}
+
+const getLiveWorkPointInputs = `-- name: GetLiveWorkPointInputs :many
+SELECT s.id AS session_id,s.policy,a.change_metrics,s.ended_at FROM work_allocation a JOIN work_session s ON s.id=a.session_id
+WHERE a.ticket_id= $1 AND s.state='finished' ORDER BY s.ended_at,s.id
+`
+
+type GetLiveWorkPointInputsRow struct {
+	SessionID     string
+	Policy        []byte
+	ChangeMetrics []byte
+	EndedAt       *time.Time
+}
+
+func (q *Queries) GetLiveWorkPointInputs(ctx context.Context, ticketID string) ([]GetLiveWorkPointInputsRow, error) {
+	rows, err := q.db.Query(ctx, getLiveWorkPointInputs, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetLiveWorkPointInputsRow{}
+	for rows.Next() {
+		var i GetLiveWorkPointInputsRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.Policy,
+			&i.ChangeMetrics,
+			&i.EndedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getOpenWorkSession = `-- name: GetOpenWorkSession :one
@@ -207,6 +359,28 @@ func (q *Queries) GetTicketEffort(ctx context.Context, ticketID string) (GetTick
 	return i, err
 }
 
+const getWorkBase = `-- name: GetWorkBase :one
+SELECT ticket_id, sessions_count, incomplete_count, tokens_missing, time_missing, active_ms, elapsed_ms, waiting_ms, tokens, point_inputs FROM ticket_work_base WHERE ticket_id= $1
+`
+
+func (q *Queries) GetWorkBase(ctx context.Context, ticketID string) (TicketWorkBase, error) {
+	row := q.db.QueryRow(ctx, getWorkBase, ticketID)
+	var i TicketWorkBase
+	err := row.Scan(
+		&i.TicketID,
+		&i.SessionsCount,
+		&i.IncompleteCount,
+		&i.TokensMissing,
+		&i.TimeMissing,
+		&i.ActiveMs,
+		&i.ElapsedMs,
+		&i.WaitingMs,
+		&i.Tokens,
+		&i.PointInputs,
+	)
+	return i, err
+}
+
 const getWorkEvent = `-- name: GetWorkEvent :one
 SELECT digest,response FROM work_event WHERE project_id= $1 AND actor_id= $2 AND request_id= $3
 `
@@ -229,8 +403,46 @@ func (q *Queries) GetWorkEvent(ctx context.Context, arg GetWorkEventParams) (Get
 	return i, err
 }
 
+const getWorkPolicyDocument = `-- name: GetWorkPolicyDocument :one
+SELECT body_md,version FROM document WHERE project_id= $1 AND parent_id IS NULL AND slug='project-management-note' AND NOT is_template
+`
+
+type GetWorkPolicyDocumentRow struct {
+	BodyMd  string
+	Version int32
+}
+
+func (q *Queries) GetWorkPolicyDocument(ctx context.Context, projectID pgtype.Text) (GetWorkPolicyDocumentRow, error) {
+	row := q.db.QueryRow(ctx, getWorkPolicyDocument, projectID)
+	var i GetWorkPolicyDocumentRow
+	err := row.Scan(&i.BodyMd, &i.Version)
+	return i, err
+}
+
+const getWorkReplay = `-- name: GetWorkReplay :one
+SELECT session_id,digest FROM work_replay WHERE project_id= $1 AND actor_id= $2 AND request_id= $3
+`
+
+type GetWorkReplayParams struct {
+	ProjectID string
+	ActorID   string
+	RequestID string
+}
+
+type GetWorkReplayRow struct {
+	SessionID string
+	Digest    string
+}
+
+func (q *Queries) GetWorkReplay(ctx context.Context, arg GetWorkReplayParams) (GetWorkReplayRow, error) {
+	row := q.db.QueryRow(ctx, getWorkReplay, arg.ProjectID, arg.ActorID, arg.RequestID)
+	var i GetWorkReplayRow
+	err := row.Scan(&i.SessionID, &i.Digest)
+	return i, err
+}
+
 const getWorkSession = `-- name: GetWorkSession :one
-SELECT id, project_id, ticket_id, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete FROM work_session WHERE id= $1 AND project_id= $2
+SELECT id, project_id, ticket_id, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, policy, time_missing FROM work_session WHERE id= $1 AND project_id= $2
 `
 
 type GetWorkSessionParams struct {
@@ -260,6 +472,8 @@ func (q *Queries) GetWorkSession(ctx context.Context, arg GetWorkSessionParams) 
 		&i.Tokens,
 		&i.Note,
 		&i.Incomplete,
+		&i.Policy,
+		&i.TimeMissing,
 	)
 	return i, err
 }
@@ -268,8 +482,9 @@ const getWorkTotals = `-- name: GetWorkTotals :one
 SELECT count(*)::bigint AS sessions_count,
  count(*) FILTER (WHERE s.state <> 'finished')::bigint AS open_count,
  count(*) FILTER (WHERE s.incomplete)::bigint AS incomplete_count,
+ count(*) FILTER (WHERE s.time_missing)::bigint AS time_missing,
  count(*) FILTER (WHERE s.state='finished' AND s.tokens IS NULL)::bigint AS tokens_missing,
- COALESCE(sum((COALESCE(s.reported_active_ms,s.active_ms)::double precision)*a.share) FILTER (WHERE s.state='finished'),0)::double precision AS active_ms,
+ COALESCE(sum((CASE WHEN s.time_missing OR s.policy->>'time_source'='pb' THEN s.active_ms ELSE COALESCE(s.reported_active_ms,s.active_ms) END::double precision)*a.share) FILTER (WHERE s.state='finished'),0)::double precision AS active_ms,
  COALESCE(sum((s.active_ms+s.waiting_ms)::double precision*a.share) FILTER (WHERE s.state='finished'),0)::double precision AS elapsed_ms,
  COALESCE(sum(s.waiting_ms::double precision*a.share) FILTER (WHERE s.state='finished'),0)::double precision AS waiting_ms,
  COALESCE(sum(s.tokens::double precision*a.share) FILTER (WHERE s.state='finished'),0)::double precision AS tokens
@@ -280,6 +495,7 @@ type GetWorkTotalsRow struct {
 	SessionsCount   int64
 	OpenCount       int64
 	IncompleteCount int64
+	TimeMissing     int64
 	TokensMissing   int64
 	ActiveMs        float64
 	ElapsedMs       float64
@@ -294,6 +510,7 @@ func (q *Queries) GetWorkTotals(ctx context.Context, ticketID string) (GetWorkTo
 		&i.SessionsCount,
 		&i.OpenCount,
 		&i.IncompleteCount,
+		&i.TimeMissing,
 		&i.TokensMissing,
 		&i.ActiveMs,
 		&i.ElapsedMs,
@@ -303,14 +520,77 @@ func (q *Queries) GetWorkTotals(ctx context.Context, ticketID string) (GetWorkTo
 	return i, err
 }
 
+const hasTicketOpenWork = `-- name: HasTicketOpenWork :one
+SELECT EXISTS(SELECT 1 FROM work_session s JOIN work_allocation a ON a.session_id=s.id
+WHERE a.ticket_id= $1 AND s.actor_id= $2 AND s.state<>'finished')
+`
+
+type HasTicketOpenWorkParams struct {
+	TicketID string
+	ActorID  string
+}
+
+func (q *Queries) HasTicketOpenWork(ctx context.Context, arg HasTicketOpenWorkParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasTicketOpenWork, arg.TicketID, arg.ActorID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const listTicketCleanupWork = `-- name: ListTicketCleanupWork :many
+SELECT s.id, s.project_id, s.ticket_id, s.actor_id, s.client_kind, s.model_name, s.model_version, s.state, s.started_at, s.changed_at, s.ended_at, s.active_ms, s.waiting_ms, s.reported_active_ms, s.result, s.tokens, s.note, s.incomplete, s.policy, s.time_missing FROM work_session s JOIN work_allocation a ON a.session_id=s.id WHERE a.ticket_id= $1 ORDER BY s.id
+`
+
+func (q *Queries) ListTicketCleanupWork(ctx context.Context, ticketID string) ([]WorkSession, error) {
+	rows, err := q.db.Query(ctx, listTicketCleanupWork, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkSession{}
+	for rows.Next() {
+		var i WorkSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.TicketID,
+			&i.ActorID,
+			&i.ClientKind,
+			&i.ModelName,
+			&i.ModelVersion,
+			&i.State,
+			&i.StartedAt,
+			&i.ChangedAt,
+			&i.EndedAt,
+			&i.ActiveMs,
+			&i.WaitingMs,
+			&i.ReportedActiveMs,
+			&i.Result,
+			&i.Tokens,
+			&i.Note,
+			&i.Incomplete,
+			&i.Policy,
+			&i.TimeMissing,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkAllocations = `-- name: ListWorkAllocations :many
-SELECT a.ticket_id,a.share,t.seq FROM work_allocation a JOIN ticket t ON t.id=a.ticket_id WHERE a.session_id= $1 ORDER BY t.seq
+SELECT a.ticket_id,a.share,t.seq,a.change_metrics FROM work_allocation a JOIN ticket t ON t.id=a.ticket_id WHERE a.session_id= $1 ORDER BY t.seq
 `
 
 type ListWorkAllocationsRow struct {
-	TicketID string
-	Share    float64
-	Seq      int32
+	TicketID      string
+	Share         float64
+	Seq           int32
+	ChangeMetrics []byte
 }
 
 func (q *Queries) ListWorkAllocations(ctx context.Context, sessionID string) ([]ListWorkAllocationsRow, error) {
@@ -322,7 +602,12 @@ func (q *Queries) ListWorkAllocations(ctx context.Context, sessionID string) ([]
 	items := []ListWorkAllocationsRow{}
 	for rows.Next() {
 		var i ListWorkAllocationsRow
-		if err := rows.Scan(&i.TicketID, &i.Share, &i.Seq); err != nil {
+		if err := rows.Scan(
+			&i.TicketID,
+			&i.Share,
+			&i.Seq,
+			&i.ChangeMetrics,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -359,7 +644,7 @@ func (q *Queries) ListWorkDeletionAffectedTickets(ctx context.Context, ticketID 
 }
 
 const listWorkSessions = `-- name: ListWorkSessions :many
-SELECT s.id, s.project_id, s.ticket_id, s.actor_id, s.client_kind, s.model_name, s.model_version, s.state, s.started_at, s.changed_at, s.ended_at, s.active_ms, s.waiting_ms, s.reported_active_ms, s.result, s.tokens, s.note, s.incomplete,a.share FROM work_allocation a JOIN work_session s ON s.id=a.session_id
+SELECT s.id, s.project_id, s.ticket_id, s.actor_id, s.client_kind, s.model_name, s.model_version, s.state, s.started_at, s.changed_at, s.ended_at, s.active_ms, s.waiting_ms, s.reported_active_ms, s.result, s.tokens, s.note, s.incomplete, s.policy, s.time_missing,a.share FROM work_allocation a JOIN work_session s ON s.id=a.session_id
 WHERE a.ticket_id= $1 ORDER BY s.started_at DESC,s.id DESC LIMIT $3 OFFSET $2
 `
 
@@ -388,6 +673,8 @@ type ListWorkSessionsRow struct {
 	Tokens           pgtype.Int8
 	Note             string
 	Incomplete       bool
+	Policy           []byte
+	TimeMissing      bool
 	Share            float64
 }
 
@@ -419,6 +706,8 @@ func (q *Queries) ListWorkSessions(ctx context.Context, arg ListWorkSessionsPara
 			&i.Tokens,
 			&i.Note,
 			&i.Incomplete,
+			&i.Policy,
+			&i.TimeMissing,
 			&i.Share,
 		); err != nil {
 			return nil, err
@@ -438,6 +727,43 @@ SELECT pg_advisory_xact_lock(hashtextextended($1::text, 61))
 func (q *Queries) LockWorkProject(ctx context.Context, projectID string) error {
 	_, err := q.db.Exec(ctx, lockWorkProject, projectID)
 	return err
+}
+
+const lockWorkTickets = `-- name: LockWorkTickets :many
+SELECT t.id,t.closed_at,t.seq FROM ticket t WHERE t.project_id= $1 AND (t.id= $2 OR t.id IN
+(SELECT a.ticket_id FROM work_allocation a WHERE a.session_id IN (SELECT a2.session_id FROM work_allocation a2 WHERE a2.ticket_id= $2)))
+ORDER BY t.id FOR UPDATE
+`
+
+type LockWorkTicketsParams struct {
+	ProjectID      string
+	TargetTicketID string
+}
+
+type LockWorkTicketsRow struct {
+	ID       string
+	ClosedAt *time.Time
+	Seq      int32
+}
+
+func (q *Queries) LockWorkTickets(ctx context.Context, arg LockWorkTicketsParams) ([]LockWorkTicketsRow, error) {
+	rows, err := q.db.Query(ctx, lockWorkTickets, arg.ProjectID, arg.TargetTicketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockWorkTicketsRow{}
+	for rows.Next() {
+		var i LockWorkTicketsRow
+		if err := rows.Scan(&i.ID, &i.ClosedAt, &i.Seq); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markTicketEffortManual = `-- name: MarkTicketEffortManual :exec
@@ -492,6 +818,49 @@ func (q *Queries) RestoreTicketEffortAuto(ctx context.Context, ticketID string) 
 	return err
 }
 
+const setWorkChanges = `-- name: SetWorkChanges :exec
+UPDATE work_allocation SET change_metrics= $1 WHERE session_id= $2 AND ticket_id= $3
+`
+
+type SetWorkChangesParams struct {
+	ChangeMetrics []byte
+	SessionID     string
+	TicketID      string
+}
+
+func (q *Queries) SetWorkChanges(ctx context.Context, arg SetWorkChangesParams) error {
+	_, err := q.db.Exec(ctx, setWorkChanges, arg.ChangeMetrics, arg.SessionID, arg.TicketID)
+	return err
+}
+
+const setWorkMissingTime = `-- name: SetWorkMissingTime :exec
+UPDATE work_session SET time_missing= $1 WHERE id= $2
+`
+
+type SetWorkMissingTimeParams struct {
+	TimeMissing bool
+	ID          string
+}
+
+func (q *Queries) SetWorkMissingTime(ctx context.Context, arg SetWorkMissingTimeParams) error {
+	_, err := q.db.Exec(ctx, setWorkMissingTime, arg.TimeMissing, arg.ID)
+	return err
+}
+
+const setWorkPolicy = `-- name: SetWorkPolicy :exec
+UPDATE work_session SET policy= $1 WHERE id= $2
+`
+
+type SetWorkPolicyParams struct {
+	Policy []byte
+	ID     string
+}
+
+func (q *Queries) SetWorkPolicy(ctx context.Context, arg SetWorkPolicyParams) error {
+	_, err := q.db.Exec(ctx, setWorkPolicy, arg.Policy, arg.ID)
+	return err
+}
+
 const updateWorkSession = `-- name: UpdateWorkSession :exec
 UPDATE work_session SET state= $1,changed_at= $2,ended_at=$3,
 active_ms= $4,waiting_ms= $5,reported_active_ms=$6,
@@ -528,4 +897,21 @@ func (q *Queries) UpdateWorkSession(ctx context.Context, arg UpdateWorkSessionPa
 		arg.ID,
 	)
 	return err
+}
+
+const workRequiresRegistration = `-- name: WorkRequiresRegistration :one
+SELECT EXISTS(SELECT 1 FROM work_session s JOIN work_allocation a ON a.session_id=s.id
+WHERE a.ticket_id= $1 AND s.actor_id= $2 AND s.policy->>'require_registration'='true')
+`
+
+type WorkRequiresRegistrationParams struct {
+	TicketID string
+	ActorID  string
+}
+
+func (q *Queries) WorkRequiresRegistration(ctx context.Context, arg WorkRequiresRegistrationParams) (bool, error) {
+	row := q.db.QueryRow(ctx, workRequiresRegistration, arg.TicketID, arg.ActorID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

@@ -1,5 +1,8 @@
 /** English translations keyed by the Japanese source text used by the UI. */
 export const uiMessages: Record<string, string> = {
+ "明細整理済み {count}件。実績値と累積集計は保持しています。": "Details cleaned for {count} sessions. Actual values and cumulative totals are retained.",
+ "Pointは未算出です。運営ノートの設定と累積変更量を確認してください。": "Points are uncalculated. Check the management note policy and cumulative change metrics.",
+ "時間に欠測があります。確認済みの区間だけを集計しています。": "This session has missing time. Only confirmed intervals are included in totals.",
   "配分（番号:比率、カンマ区切り）": "Allocations (ticket:share, comma separated)",
   "配分": "Allocation",
   "記録を訂正": "Correct record",
@@ -12,7 +15,7 @@ export const uiMessages: Record<string, string> = {
   "算出Point": "Calculated points",
   "稼働時間（分）": "Active time (minutes)",
   "稼働時間": "Active time",
-  "申告した待機を除くPB計時です。思考時間の実測ではありません。Pointは時間からの暫定算出です。": "PB measures elapsed work excluding declared waits. This is not measured thinking time. Points are provisionally derived from time.",
+  "申告した待機を除くPB計時です。思考時間の実測ではありません。Pointは変更量から算出し、材料不足なら未算出です。": "PB measures elapsed work excluding declared waits. This is not measured thinking time. Points use change volume and remain uncalculated when inputs are missing.",
   "未終了の時間は集計されていません。不完全な記録を含む実績は参考値です。": "Unfinished time is excluded. Actuals containing incomplete records are approximate.",
   "未終了 {open}件・不完全 {incomplete}件": "{open} unfinished, {incomplete} incomplete records",
   "時間・トークン・配分を確認してください": "Check time, tokens and allocations.",

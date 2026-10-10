@@ -612,6 +612,19 @@ type TicketTag struct {
 	TagID    string
 }
 
+type TicketWorkBase struct {
+	TicketID        string
+	SessionsCount   int64
+	IncompleteCount int64
+	TokensMissing   int64
+	TimeMissing     int64
+	ActiveMs        float64
+	ElapsedMs       float64
+	WaitingMs       float64
+	Tokens          float64
+	PointInputs     []byte
+}
+
 // TLS 証明書（Design.md 10.3 の第3層）。秘密鍵は secret_key で暗号化して持つ
 type TlsCertificate struct {
 	ID           string
@@ -693,9 +706,19 @@ type WebauthnChallenge struct {
 }
 
 type WorkAllocation struct {
-	SessionID string
-	TicketID  string
-	Share     float64
+	SessionID     string
+	TicketID      string
+	Share         float64
+	ChangeMetrics []byte
+}
+
+type WorkArchive struct {
+	ID          string
+	ProjectID   string
+	ActorID     pgtype.Text
+	TicketIds   []byte
+	TimeMissing bool
+	CleanedAt   time.Time
 }
 
 type WorkEvent struct {
@@ -706,6 +729,14 @@ type WorkEvent struct {
 	Digest    string
 	Response  []byte
 	CreatedAt time.Time
+}
+
+type WorkReplay struct {
+	ProjectID string
+	ActorID   string
+	RequestID string
+	SessionID string
+	Digest    string
 }
 
 type WorkSession struct {
@@ -727,6 +758,8 @@ type WorkSession struct {
 	Tokens           pgtype.Int8
 	Note             string
 	Incomplete       bool
+	Policy           []byte
+	TimeMissing      bool
 }
 
 type Workflow struct {

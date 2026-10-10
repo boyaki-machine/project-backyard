@@ -19,14 +19,15 @@ func workTools() []tool {
 		events[k] = v
 	}
 	events["work_id"] = property{Type: "string", Description: "pb_start_workが返した作業記録ID"}
-	events["action"] = property{Type: "string", Enum: []string{"pause", "resume", "finish", "correct", "restore_auto"}, Description: "pause=人の返答待ち、resume=作業再開、finish=実績保存。correct/restore_autoは人の訂正権限が必要"}
+	events["action"] = property{Type: "string", Enum: []string{"pause", "resume", "finish", "abandon", "correct", "restore_auto"}, Description: "pause=人の返答待ち、resume=作業再開、finish=実績保存、abandon=未確認の最後の区間を計時せず欠測として終了（note必須）。correct/restore_autoは人の訂正権限が必要"}
 	events["result"] = property{Type: "string", Enum: []string{"completed", "partial", "blocked"}, Description: "finishでは必須。チケットの状態は変更しない"}
 	events["tokens"] = property{Type: "integer", Minimum: intPtr(0), Description: "取得できた実測トークン数。取得不可なら省略（0で代用しない）"}
 	events["reported_active_ms"] = property{Type: "integer", Minimum: intPtr(0), Description: "ランタイムが取得した稼働時間。ミリ秒。取得元をnoteに記す。省略時はPB計時を採用"}
+	events["change_metrics"] = objectItems("配分先ごとのチケット全体の累積変更量。生成物・記録を除外し、重複加算しない。取得できなければ省略しPoint未算出とする", map[string]property{"seq": {Type: "integer", Minimum: intPtr(1)}, "code_lines": {Type: "integer", Minimum: intPtr(0)}, "test_lines": {Type: "integer", Minimum: intPtr(0)}, "doc_lines": {Type: "integer", Minimum: intPtr(0)}, "other_lines": {Type: "integer", Minimum: intPtr(0)}, "files": {Type: "integer", Minimum: intPtr(0)}, "branches": {Type: "integer", Minimum: intPtr(1)}, "learning_events": {Type: "integer", Minimum: intPtr(0)}, "source": {Type: "string", Description: "集計したリポジトリ・コミット範囲・除外条件などの取得元"}}, "seq", "code_lines", "test_lines", "doc_lines", "other_lines", "files", "branches", "learning_events", "source")
 	events["incomplete"] = property{Type: "boolean", Description: "中断や待機申告漏れなどで不完全な計測ならtrue"}
 	return []tool{
 		{Name: "pb_start_work", Description: "PBサーバの時計で作業を開始する。同じAgentの同じPJで開ける作業は1つ。着手承認後に呼ぶ。複数チケットの共同作業は1記録を配分し二重計上を避ける。", InputSchema: schema{Type: "object", Properties: common, Required: []string{"seq", "request_id"}}, call: callStartWork},
-		{Name: "pb_record_work", Description: "共通作業タイマーの待機・再開・終了を記録する。人に質問する直前にpause、返答後にresumeを呼ぶ。finishで実績(時間)/実績Point(actual-v1)をPBが計算し保存する。手入力値は保護する。", InputSchema: schema{Type: "object", Properties: events, Required: []string{"seq", "work_id", "request_id", "action"}}, call: callRecordWork},
+		{Name: "pb_record_work", Description: "共通作業タイマーの待機・再開・終了を記録する。人に質問する直前にpause、返答後にresumeを呼ぶ。finishで開始時の運営ノート契約を用いて実績(時間)/実績Point(actual-v0)をPBが計算し保存する。変更量欠測はPoint未算出。savedで保存状態を確認する。手入力値は保護する。", InputSchema: schema{Type: "object", Properties: events, Required: []string{"seq", "work_id", "request_id", "action"}}, call: callRecordWork},
 		{Name: "pb_list_work", Description: "チケットの共通作業記録、欠測・不完全件数、集計値・手入力/自動算出の状態を読む。PBの計測は申告した待機を除く経過時間でありAgent内部の思考時間ではない。", InputSchema: schema{Type: "object", Properties: map[string]property{"seq": common["seq"], "page": {Type: "integer", Minimum: intPtr(1)}, "per_page": {Type: "integer", Minimum: intPtr(1)}}, Required: []string{"seq"}}, call: callListWork},
 	}
 }

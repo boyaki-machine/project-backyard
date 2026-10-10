@@ -268,7 +268,7 @@ func TestDelegationBudgetIntegration(t *testing.T) {
 
 	t.Run("トークンの超過は報告を受け付けてから停止する", func(t *testing.T) {
 		rec := bearerPost(r, fmt.Sprintf("%s/tickets/%d/reports", base, child1), mainToken.Token,
-			`{"status":"completed","cost":{"tokens":1200}}`)
+			`{"effort_unavailable":{"target":"both","reason":"fixture work has no measured timing"},"status":"completed","cost":{"tokens":1200}}`)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status = %d, want 201（body=%s）", rec.Code, rec.Body.String())
 		}

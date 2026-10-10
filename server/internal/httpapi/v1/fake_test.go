@@ -3520,3 +3520,17 @@ func (q *fakeQuerier) ListWorkDeletionAffectedTickets(context.Context, string) (
 }
 
 func (q *fakeQuerier) EnsureTicketEffort(context.Context, string) error { return nil }
+
+func (q *fakeQuerier) GetWorkPolicyDocument(context.Context, pgtype.Text) (gen.GetWorkPolicyDocumentRow, error) {
+	return gen.GetWorkPolicyDocumentRow{}, pgx.ErrNoRows
+}
+func (q *fakeQuerier) HasTicketOpenWork(context.Context, gen.HasTicketOpenWorkParams) (bool, error) {
+	return false, nil
+}
+func (q *fakeQuerier) GetOpenWorkSession(context.Context, gen.GetOpenWorkSessionParams) (string, error) {
+	return "", pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) WorkRequiresRegistration(context.Context, gen.WorkRequiresRegistrationParams) (bool, error) {
+	return false, nil
+}

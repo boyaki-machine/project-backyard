@@ -5,7 +5,7 @@ export type WorkSession = components['schemas']['WorkSession']
 export type WorkSummary = components['schemas']['WorkSummary']
 export type WorkList = components['schemas']['WorkSessionList']
 export interface WorkEvent {
- request_id: string; action: 'correct' | 'restore_auto' | 'finish'; note: string; incomplete?: boolean
+ request_id: string; action: 'correct' | 'restore_auto' | 'finish' | 'abandon'; note: string; incomplete?: boolean
  reported_active_ms?: number; tokens?: number; result?: string; allocations?: WorkAllocation[]
 }
 const path = (key: string, seq: number) => `/projects/${encodeURIComponent(key)}/tickets/${seq}/work-sessions`

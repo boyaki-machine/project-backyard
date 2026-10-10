@@ -43,7 +43,7 @@ function correct() {
  const ms = Math.round(Number(minutes.value) * 60000)
  const tokenValue = String(tokens.value).trim() === '' ? undefined : Number(tokens.value)
  const shares = allocations.value.split(',').map(part => { const [seq, share] = part.trim().split(':'); return { seq: Number(seq), share: Number(share) } })
- if (String(minutes.value).trim() === '' || !Number.isSafeInteger(ms) || ms < 0 || ms > row.active_ms + row.waiting_ms || (tokenValue !== undefined && (!Number.isSafeInteger(tokenValue) || tokenValue < 0)) || shares.some(a => !Number.isInteger(a.seq) || a.seq < 1 || !Number.isFinite(a.share) || a.share <= 0)) {
+ if (String(minutes.value).trim() === '' || !Number.isSafeInteger(ms) || ms < 0 || ms > Math.max(row.active_ms + row.waiting_ms, (row.ended_at ?? row.changed_at) - row.started_at) || (tokenValue !== undefined && (!Number.isSafeInteger(tokenValue) || tokenValue < 0)) || shares.some(a => !Number.isInteger(a.seq) || a.seq < 1 || !Number.isFinite(a.share) || a.share <= 0)) {
   error.value = uiText('時間・トークン・配分を確認してください'); return
  }
  void send(row, { action: 'correct', note: note.value, reported_active_ms: ms, ...(tokenValue === undefined ? {} : { tokens: tokenValue }), allocations: shares, incomplete: incomplete.value })
@@ -53,17 +53,19 @@ async function restore(row: WorkSession) {
 }
 async function finish(row: WorkSession) {
  const reason = window.prompt(uiText('中断した作業を終了する理由を入力してください'))
- if (reason?.trim()) await send(row, { action: 'finish', result: 'partial', incomplete: true, note: reason })
+ if (reason?.trim()) await send(row, { action: 'abandon', incomplete: true, note: reason })
 }
 </script>
 <template>
  <section class="work" :aria-label="$ui('作業実績')">
   <h3>{{ $ui('作業実績') }}</h3>
-  <p class="muted">{{ $ui('申告した待機を除くPB計時です。思考時間の実測ではありません。Pointは時間からの暫定算出です。') }}</p>
+  <p class="muted">{{ $ui('申告した待機を除くPB計時です。思考時間の実測ではありません。Pointは変更量から算出し、材料不足なら未算出です。') }}</p>
   <p v-if="error" role="alert">{{ error }}</p>
   <template v-if="data">
-   <p v-if="!data.total" class="muted">{{ $ui('作業記録はありません。過去の実績は根拠を確認して実績欄へ入力してください。') }}</p>
+   <p v-if="!data.summary.sessions_count" class="muted">{{ $ui('作業記録はありません。過去の実績は根拠を確認して実績欄へ入力してください。') }}</p>
    <template v-else>
+    <p v-if="data.summary.archived_count" class="muted">{{ $ui('明細整理済み {count}件。実績値と累積集計は保持しています。', { count: data.summary.archived_count }) }}</p>
+    <p v-if="data.summary.point_reason" class="muted">{{ $ui('Pointは未算出です。運営ノートの設定と累積変更量を確認してください。') }}</p>
     <dl class="summary">
      <div><dt>{{ $ui('算出時間') }}</dt><dd>{{ data.summary.suggested_hours === null ? $ui('未計測') : `${data.summary.suggested_hours.toFixed(3)} h` }} · {{ data.summary.manual_hours ? $ui('手入力を保持') : $ui('自動算出') }}</dd></div>
      <div><dt>{{ $ui('算出Point') }}</dt><dd>{{ data.summary.suggested_point ?? $ui('未計測') }} · {{ data.summary.point_version }} · {{ data.summary.manual_point ? $ui('手入力を保持') : $ui('自動算出') }}</dd></div>
@@ -75,8 +77,9 @@ async function finish(row: WorkSession) {
     <article v-for="row in data.items" :key="row.id" class="record">
      <p><strong>{{ row.state === 'finished' ? $ui('終了済み') : row.state === 'waiting' ? $ui('待機中') : $ui('計測中') }}</strong> · {{ row.client_kind ?? $ui('人・種別未登録') }} / {{ row.model_name ?? '—' }} / {{ row.model_version ?? '—' }} <span v-if="row.incomplete"> · {{ $ui('不完全') }}</span></p>
      <p class="muted">{{ new Date(row.started_at).toLocaleString() }} → {{ row.ended_at === null ? '—' : new Date(row.ended_at).toLocaleString() }}</p>
-     <p>{{ $ui('稼働時間') }}: {{ hours(row.reported_active_ms ?? row.active_ms) }} h ({{ row.reported_active_ms === null ? $ui('PB計時') : $ui('取得元の申告') }}) · {{ $ui('待機時間') }}: {{ hours(row.waiting_ms) }} h · {{ $ui('トークン') }}: {{ row.tokens ?? $ui('未計測') }}</p>
+     <p>{{ $ui('稼働時間') }}: {{ row.time_missing ? `${hours(row.active_ms)} h · ${$ui('不完全')}` : `${hours(row.policy.time_source === 'pb' ? row.active_ms : (row.reported_active_ms ?? row.active_ms))} h` }} ({{ row.reported_active_ms === null ? $ui('PB計時') : $ui('取得元の申告') }}) · {{ $ui('待機時間') }}: {{ hours(row.waiting_ms) }} h · {{ $ui('トークン') }}: {{ row.tokens ?? $ui('未計測') }}</p>
      <p>{{ $ui('配分') }}: {{ row.allocations.map(a => `#${a.seq} ${Math.round(a.share * 100)}%`).join(', ') }}</p>
+     <p v-if="row.time_missing" class="muted">{{ $ui('時間に欠測があります。確認済みの区間だけを集計しています。') }}</p>
      <p class="note">{{ row.note }}</p>
      <div class="actions">
       <button v-if="canCorrect && row.state === 'finished'" type="button" :disabled="busy" @click="begin(row)">{{ $ui('記録を訂正') }}</button>
