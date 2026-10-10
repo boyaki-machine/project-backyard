@@ -7191,6 +7191,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/Health'
 
+  /api/v1/projects/{key}/agents:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: listProjectAgents
+      tags: [agents]
+      summary: プロジェクトのエージェント一覧
+      description: agent.manageを持つ人のみ。名前順のページ付き一覧。秘密は返さない。
+      parameters:
+        - {name: page, in: query, schema: {type: integer, minimum: 1}}
+        - {name: per_page, in: query, schema: {type: integer, minimum: 1, maximum: 200}}
+      responses:
+        '200':
+          description: エージェント一覧
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedAgentList'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/ProjectNotFound'}
+  /api/v1/projects/{key}/agents/{id}/disable:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: disableProjectAgent
+      tags: [agents]
+      summary: エージェントを停止
+      description: agent.manageを持つ人が、無効化と全トークンの失効を原子的に実行する。履歴保持、再実行は204。
+      responses:
+        '204': {description: 停止済み}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/ProjectNotFound'}
+
+
 components:
   securitySchemes:
     cookieAuth:
@@ -7657,6 +7691,35 @@ components:
             $ref: '#/components/schemas/Error'
 
   schemas:
+    ManagedAgent:
+      type: object
+      required: [id, display_name, is_active, client_kind, model_name, model_version, trust_level, owner, created_at]
+      properties:
+        capabilities: {type: array, maxItems: 32, items: {type: string, maxLength: 64}}
+        id: {type: string}
+        display_name: {type: string}
+        is_active: {type: boolean}
+        client_kind: {type: string}
+        model_name: {type: string, nullable: true}
+        model_version: {type: string, nullable: true}
+        trust_level: {type: integer, minimum: 0, maximum: 3}
+        owner:
+          type: object
+          required: [id, display_name]
+          properties:
+            id: {type: string}
+            display_name: {type: string}
+        created_at: {type: integer, format: int64}
+    ManagedAgentList:
+      type: object
+      required: [items, page, per_page, total, total_pages]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ManagedAgent'}}
+        page: {type: integer}
+        per_page: {type: integer}
+        total: {type: integer}
+        total_pages: {type: integer}
+
     AgentUsageCounts:
       type: object
       required: [runs_count, tickets_count, completed_count, partial_count, blocked_count, run_tokens, run_tokens_missing, evaluation_count, evaluation_tokens, evaluation_tokens_missing, turns, turns_missing, wall_clock_min, wall_clock_min_missing]

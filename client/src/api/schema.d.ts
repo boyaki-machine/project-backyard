@@ -2087,6 +2087,7 @@ export interface paths {
         /**
          * チケットの作成
          * @description チケットを1件作る（ApiDesign.md 9.3）。**必要権限は `ticket.create`**。
+         *     担当指定にはticket.assignも必要。エージェントの担当指定は承認済みmainの木内に限る。
          *
          *     **サーバが決めるものはリクエストに含められない。**
          *
@@ -2193,7 +2194,8 @@ export interface paths {
         head?: never;
         /**
          * チケットの更新
-         * @description 部分更新（ApiDesign.md 9.5.2）。**必要権限は `ticket.edit` または
+         * @description 担当・実行者の実際の変更は、人または承認済みで確認待ちのない委任mainが木内で行う。
+         *     部分更新（ApiDesign.md 9.5.2）。**必要権限は `ticket.edit` または
          *     `ticket.self_edit`。`ticket.plan.edit` だけを持つ場合は start_at・due_at・all_day のみ変更できる。
          *     ただし `assignee_id` / `working_agent_id` を変える場合は
          *     `ticket.assign` も必要**——この追加分だけはリクエスト本文の内容で決まるため、
@@ -4810,10 +4812,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * プロジェクトのエージェント一覧
+         * @description agent.manageを持つ人のみ。名前順のページ付き一覧。秘密は返さない。
+         */
+        get: operations["listProjectAgents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/agents/{id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * エージェントを停止
+         * @description agent.manageを持つ人が、無効化と全トークンの失効を原子的に実行する。履歴保持、再実行は204。
+         */
+        post: operations["disableProjectAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ManagedAgent: {
+            capabilities?: string[];
+            id: string;
+            display_name: string;
+            is_active: boolean;
+            client_kind: string;
+            model_name: string | null;
+            model_version: string | null;
+            trust_level: number;
+            owner: {
+                id: string;
+                display_name: string;
+            };
+            /** Format: int64 */
+            created_at: number;
+        };
+        ManagedAgentList: {
+            items: components["schemas"]["ManagedAgent"][];
+            page: number;
+            per_page: number;
+            total: number;
+            total_pages: number;
+        };
         AgentUsageCounts: {
             /** Format: int64 */
             runs_count: number;
@@ -15454,6 +15524,56 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
+        };
+    };
+    listProjectAgents: {
+        parameters: {
+            query?: {
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description エージェント一覧 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedAgentList"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+        };
+    };
+    disableProjectAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 停止済み */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
         };
     };
 }

@@ -1,5 +1,11 @@
 /** English translations keyed by the Japanese source text used by the UI. */
 export const uiMessages: Record<string, string> = {
+ "所有者":"Owner",
+ "停止":"Stop",
+ "エージェントを停止しました": "Agent stopped",
+ "エージェントを停止": "Stop agent",
+ "エージェントがありません": "No agents",
+ "「{name}」（所有者：{owner}、PJ：{project}）を停止します。全トークンを失効し、履歴は保持します。": "Stop {name} (owner: {owner}, project: {project}). All tokens will be revoked; history is retained.",
  "明細整理済み {count}件。実績値と累積集計は保持しています。": "Details cleaned for {count} sessions. Actual values and cumulative totals are retained.",
  "Pointは未算出です。運営ノートの設定と累積変更量を確認してください。": "Points are uncalculated. Check the management note policy and cumulative change metrics.",
  "時間に欠測があります。確認済みの区間だけを集計しています。": "This session has missing time. Only confirmed intervals are included in totals.",

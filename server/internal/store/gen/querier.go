@@ -12,6 +12,10 @@ import (
 )
 
 type Querier interface {
+	CountProjectAgents(ctx context.Context, projectID pgtype.Text) (int64, error)
+	DisableProjectAgent(ctx context.Context, actorID string) error
+	ListProjectAgents(ctx context.Context, arg ListProjectAgentsParams) ([]ListProjectAgentsRow, error)
+	LockProjectAgent(ctx context.Context, arg LockProjectAgentParams) (LockProjectAgentRow, error)
 	// AcceptDelegationPlan は軽微な変更を即座に反映する（6.3）。
 	// **decided_by は呼び出し元ではなく PB 自身**——軽微は「main の判断で反映する」
 	// のであって人・評価エージェントの決定ではないため、decided_by は NULL のままにする。

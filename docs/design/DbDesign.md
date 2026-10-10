@@ -3758,3 +3758,7 @@ PB は `pb_app` で繋いでいる。**手順は `deploy/prod/MANUAL.md` にあ�
 work_session.policyは開始時の運営ノート内の構造化契約と文書版を保持する。time_missingは未確認の終了区間を含む欠測を表す。work_allocation.change_metricsはチケット全体の累積変更量と取得元である。
 
 ticket_work_baseは整理済み記録のチケット別累積集計と最新変更量を保持する。work_archiveは整理済みID・実行者・配分先の参照用情報、work_replayはrequest_id・digest・整理済みIDを保持し、応答全文を保存しない。整理はPJ作業ロックと対象チケットの行ロックの下で、集計の移送と明細削除を同時にコミットする。チケットの実績属性と手入力保護は維持する。新しいマイグレーションで追加し、適用済みDDLを編集しない。
+
+### エージェント管理の権限
+
+agent.manageはプロジェクト所属エージェントの一覧・停止を許す。project_adminとadministratorへ配布し、エージェントの発行可能スコープには含めない。停止はactorの行をロックして無効化し、access_tokenの未失効行を全て失効する。agent・コメント・作業・評価・実行履歴は保持する。

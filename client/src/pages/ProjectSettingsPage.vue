@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ManagedAgents from "../components/ManagedAgents.vue"
 import { uiText } from '../locales/ui'
 /**
  * プロジェクト設定（`GuiDesign.md` 5.9）。必要権限は `project.edit`。
@@ -53,7 +54,7 @@ const store = useProjectStore()
 const route = useRoute()
 const router = useRouter()
 
-type Tab = 'general' | 'members' | 'tags' | 'sprints' | 'calendar'
+type Tab = 'general' | 'members' | 'tags' | 'sprints' | 'calendar' | 'agents'
 const tab = ref<Tab>('general')
 
 const projectKey = computed(() => {
@@ -852,7 +853,8 @@ function roleLabel(role: string): string {
             :aria-selected="tab === 'calendar'"
             @click="tab = 'calendar'"
           > {{ $ui('カレンダー') }} </button>
-        </div>
+        <button v-if="current?.my_permissions.includes('agent.manage')" type="button" role="tab" class="tab" :class="{selected:tab==='agents'}" :aria-selected="tab==='agents'" @click="tab='agents'">{{$ui('エージェント')}}</button>
+      </div>
 
         <!-- ── 一般タブ（5.9.1）──────────────────────────────── -->
         <div v-if="tab === 'general'" class="blocks" role="tabpanel">
@@ -1199,6 +1201,7 @@ function roleLabel(role: string): string {
         </div>
 
         <!-- ── カレンダータブ（5.9.6）。そのタブを開いたときに取りに行く ── -->
+        <div v-else-if="tab === 'agents' && current?.my_permissions.includes('agent.manage')" role="tabpanel"><ManagedAgents :project-key="projectKey" /></div>
         <ProjectCalendarTab
           v-else-if="tab === 'calendar' && current"
           :key="projectKey"
@@ -1388,6 +1391,7 @@ function roleLabel(role: string): string {
 
 /* ── タブ（5.9）────────────────────────────────────────── */
 .tabs {
+  overflow-x: auto;
   display: flex;
   gap: var(--pb-space-1);
   margin-bottom: var(--pb-space-4);
@@ -1395,6 +1399,8 @@ function roleLabel(role: string): string {
 }
 
 .tab {
+  flex-shrink: 0;
+  white-space: nowrap;
   padding: var(--pb-space-2) var(--pb-space-4);
   border: 0;
   border-bottom: 2px solid transparent;

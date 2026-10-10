@@ -376,6 +376,9 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireAnyProjectPermission(deps.Queries, "ticket.edit", "ticket.plan.edit")).
 			Post("/projects/{key}/tickets/{seq}/move", h.moveTicket)
 
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.manage")).Get("/projects/{key}/agents", h.listProjectAgents)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.manage")).Post("/projects/{key}/agents/{id}/disable", h.disableProjectAgent)
+
 		// ── チケット1件（ApiDesign.md 9.5 / 9.6 / 9.7。手順17a）─────
 		//
 		// **4つとも必要権限が違う。** 読みは ticket.view、編集は ticket.edit、
