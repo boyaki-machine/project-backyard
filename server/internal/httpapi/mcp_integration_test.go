@@ -741,7 +741,7 @@ func TestMCPIntegration(t *testing.T) {
 		}
 
 		text, isErr := tool(t, fullToken, "pb_create_ticket",
-			`{"type":"task","title":"MCP から起票したチケット","body_md":"本文","priority":"high","assignee_id":"me"}`)
+			`{"type":"task","title":"MCP から起票したチケット","body_md":"本文","priority":"high"}`)
 		if isErr {
 			t.Fatalf("起票できない: %s", text)
 		}
@@ -763,9 +763,8 @@ func TestMCPIntegration(t *testing.T) {
 		if got.Seq < 2 {
 			t.Errorf("seq = %d, want 2 以上（既存の1件の次）", got.Seq)
 		}
-		// **assignee_id=me は所有者を指す**（Design.md 8.5）。担当を持つのは人である。
-		if got.Assignee == nil || got.Assignee.ID != ownerID {
-			t.Errorf("assignee = %+v, want 所有者（%s）", got.Assignee, ownerID)
+		if got.Assignee != nil {
+			t.Errorf("担当なし起票の assignee = %+v, want nil", got.Assignee)
 		}
 		// **作ったチケットは必ずバックログに入る**（9.3）。
 		if got.StagedAt != nil {
@@ -782,6 +781,46 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		if reporter != agentID {
 			t.Errorf("reporter_id = %q, want エージェント（%s）", reporter, agentID)
+		}
+	})
+
+	t.Run("既発行トークンのticket.assignでも通常エージェントは担当指定で迂回できない", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `UPDATE project_member SET role_key='project_admin' WHERE project_id=$1 AND actor_id=$2`, projectID, ownerID); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if _, err := pool.Exec(ctx, `UPDATE project_member SET role_key='project_member' WHERE project_id=$1 AND actor_id=$2`, projectID, ownerID); err != nil {
+				t.Error(err)
+			}
+		}()
+		text, isErr := tool(t, agentToken, "pb_create_ticket", `{"type":"task","title":"Rejected assigned creation","assignee_id":"me"}`)
+		if !isErr || !strings.Contains(text, "403") || !strings.Contains(text, "担当・実行者") {
+			t.Fatalf("担当指定を拒否しない: %s", text)
+		}
+		text, isErr = tool(t, agentToken, "pb_create_ticket", `{"type":"task","title":"Unassigned approval boundary"}`)
+		if isErr {
+			t.Fatal(text)
+		}
+		var created struct {
+			Seq int `json:"seq"`
+		}
+		if err := json.Unmarshal([]byte(text), &created); err != nil {
+			t.Fatal(err)
+		}
+		text, isErr = tool(t, agentToken, "pb_update_ticket", fmt.Sprintf(`{"seq":%d,"assignee_id":"me"}`, created.Seq))
+		if !isErr || !strings.Contains(text, "403") || !strings.Contains(text, "担当・実行者") {
+			t.Fatalf("担当更新を拒否しない: %s", text)
+		}
+		text, isErr = tool(t, agentToken, "pb_transition_task", fmt.Sprintf(`{"seq":%d,"to":"in_progress"}`, created.Seq))
+		if !isErr || !strings.Contains(text, "403") {
+			t.Fatalf("未割当の遷移を拒否しない: %s", text)
+		}
+		var assigned bool
+		if err := pool.QueryRow(ctx, `SELECT assignee_id IS NOT NULL FROM ticket WHERE project_id=$1 AND seq=$2`, projectID, created.Seq).Scan(&assigned); err != nil {
+			t.Fatal(err)
+		}
+		if assigned {
+			t.Fatal("拒否した担当変更が保存された")
 		}
 	})
 
