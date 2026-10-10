@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/activity"
+	"github.com/boyaki-machine/project-backyard/server/internal/audit"
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -27,6 +28,7 @@ type workAllocation struct {
 	Share float64 `json:"share"`
 }
 type workRequest struct {
+	Outcome          string           `json:"outcome"`
 	RequestID        string           `json:"request_id"`
 	Action           string           `json:"action"`
 	Result           string           `json:"result"`
@@ -38,6 +40,7 @@ type workRequest struct {
 	ChangeMetrics    []changeMetrics  `json:"change_metrics"`
 }
 type workView struct {
+	Outcome          *string          `json:"outcome"`
 	TicketSeq        int32            `json:"ticket_seq"`
 	ID               string           `json:"id"`
 	ActorID          string           `json:"actor_id"`
@@ -113,6 +116,15 @@ func validateWork(req workRequest) *apierr.Error {
 			return usageInvalid("note", "待機または訂正の理由を指定してください")
 		}
 	}
+	if req.Outcome != "" && (req.Action != "finish" || !contains([]string{"completed", "failed"}, req.Outcome)) {
+		return usageInvalid("outcome", "実行結果は終了時にcompleted/failedを指定してください")
+	}
+	if req.Outcome == "completed" && req.Result != "completed" {
+		return usageInvalid("outcome", "成功はcompletedの作業結果と組み合わせてください")
+	}
+	if req.Outcome == "failed" && (strings.TrimSpace(req.Note) == "" || req.Result == "completed") {
+		return usageInvalid("outcome", "失敗には理由とpartial/blockedの作業結果が必要です")
+	}
 	if req.Action == "finish" && !contains(reportStatuses, req.Result) {
 		return usageInvalid("result", "完了・一部完了・進行不可の結果を指定してください")
 	}
@@ -175,7 +187,7 @@ func advanceWork(s *gen.WorkSession, now time.Time) {
 }
 
 func workViewOf(s gen.WorkSession, allocations []gen.ListWorkAllocationsRow) workView {
-	v := workView{ID: s.ID, ActorID: s.ActorID, ClientKind: usageString(s.ClientKind), ModelName: usageString(s.ModelName), ModelVersion: usageString(s.ModelVersion), State: s.State, StartedAt: Time(s.StartedAt), ChangedAt: Time(s.ChangedAt), ActiveMS: s.ActiveMs, WaitingMS: s.WaitingMs, ReportedActiveMS: usageInt(s.ReportedActiveMs), Result: usageString(s.Result), Tokens: usageInt(s.Tokens), Note: s.Note, Incomplete: s.Incomplete, Allocations: []workAllocation{}}
+	v := workView{ID: s.ID, ActorID: s.ActorID, ClientKind: usageString(s.ClientKind), ModelName: usageString(s.ModelName), ModelVersion: usageString(s.ModelVersion), State: s.State, Outcome: usageString(s.Outcome), StartedAt: Time(s.StartedAt), ChangedAt: Time(s.ChangedAt), ActiveMS: s.ActiveMs, WaitingMS: s.WaitingMs, ReportedActiveMS: usageInt(s.ReportedActiveMs), Result: usageString(s.Result), Tokens: usageInt(s.Tokens), Note: s.Note, Incomplete: s.Incomplete, Allocations: []workAllocation{}}
 	_ = json.Unmarshal(s.Policy, &v.Policy)
 	v.TimeMissing = s.TimeMissing
 	if s.EndedAt != nil {
@@ -380,6 +392,11 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 		var s gen.WorkSession
 		affected := map[string]bool{ticketID: true}
 		previousChanges := map[string][]byte{}
+		if req.Action == "start" || req.Action == "resume" {
+			if problem = monitorWriteProblem(ctx, q, p, scope.projectID, ticketID, req.Action == "start"); problem != nil {
+				return errTicketReference
+			}
+		}
 		if req.Action == "start" {
 			if _, problem = workPermission(ctx, q, r, scope.projectID, scope.seq, false); problem != nil {
 				return errTicketReference
@@ -402,6 +419,12 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 			if err = q.CreateWorkSession(ctx, gen.CreateWorkSessionParams{ID: s.ID, ProjectID: s.ProjectID, TicketID: s.TicketID, ActorID: s.ActorID, ClientKind: s.ClientKind, ModelName: s.ModelName, ModelVersion: s.ModelVersion, StartedAt: now, Note: s.Note}); err != nil {
 				return err
 			}
+			if p.IsAgent() {
+				if err = q.CreateAgentAttempt(ctx, gen.CreateAgentAttemptParams{ID: s.ID, ProjectID: s.ProjectID, TicketID: s.TicketID, ActorID: s.ActorID, StartedAt: s.StartedAt}); err != nil {
+					return err
+				}
+			}
+
 			policy, e := getWorkPolicy(ctx, q, scope.projectID)
 			if e != nil {
 				return e
@@ -502,6 +525,11 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 				s.State = "finished"
 				s.EndedAt = &now
 				s.Result = usageText(req.Result)
+				outcome := req.Outcome
+				if outcome == "" && req.Result == "completed" {
+					outcome = "completed"
+				}
+				s.Outcome = usageText(outcome)
 				s.Tokens = int8OrNull(req.Tokens)
 				s.ReportedActiveMs = int8OrNull(req.ReportedActiveMS)
 				s.Incomplete = req.Incomplete
@@ -517,6 +545,7 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 				s.ChangedAt = now
 				s.EndedAt = &now
 				s.Result = usageText("blocked")
+				s.Outcome = usageText("abandoned")
 				s.Incomplete = true
 				s.TimeMissing = true
 				s.Note = req.Note
@@ -549,7 +578,7 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 				problem = usageInvalid("reported_active_ms", "稼働時間はセッションの経過時間以下にしてください")
 				return errTicketReference
 			}
-			if err = q.UpdateWorkSession(ctx, gen.UpdateWorkSessionParams{ID: s.ID, State: s.State, ChangedAt: s.ChangedAt, EndedAt: s.EndedAt, ActiveMs: s.ActiveMs, WaitingMs: s.WaitingMs, ReportedActiveMs: s.ReportedActiveMs, Result: s.Result, Tokens: s.Tokens, Note: s.Note, Incomplete: s.Incomplete}); err != nil {
+			if err = q.UpdateWorkSession(ctx, gen.UpdateWorkSessionParams{Outcome: s.Outcome, ID: s.ID, State: s.State, ChangedAt: s.ChangedAt, EndedAt: s.EndedAt, ActiveMs: s.ActiveMs, WaitingMs: s.WaitingMs, ReportedActiveMs: s.ReportedActiveMs, Result: s.Result, Tokens: s.Tokens, Note: s.Note, Incomplete: s.Incomplete}); err != nil {
 				return err
 			}
 			if err = q.SetWorkMissingTime(ctx, gen.SetWorkMissingTimeParams{ID: s.ID, TimeMissing: s.TimeMissing}); err != nil {
@@ -605,6 +634,45 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 					return errTicketReference
 				}
 				if e = q.SetWorkChanges(ctx, gen.SetWorkChangesParams{SessionID: s.ID, TicketID: allocated, ChangeMetrics: workJSON(m)}); e != nil {
+					return e
+				}
+			}
+		}
+		if s.ClientKind.Valid && (req.Action == "finish" || req.Action == "abandon") {
+			before, e := agentMonitorState(ctx, q, s.ProjectID, s.ActorID, s.TicketID, false)
+			if e != nil {
+				return e
+			}
+			if err = q.FinishAgentAttempt(ctx, gen.FinishAgentAttemptParams{ID: s.ID, EndedAt: s.EndedAt, Outcome: s.Outcome}); err != nil {
+				return err
+			}
+			after, e := agentMonitorState(ctx, q, s.ProjectID, s.ActorID, s.TicketID, false)
+			if e != nil {
+				return e
+			}
+			if after.Stopped && !before.Stopped {
+				if e = audit.FromRequest(r).Record(ctx, q, audit.Entry{Action: audit.AgentUpdate, Result: audit.Success, TargetType: "agent", TargetID: s.ActorID, Detail: map[string]any{"monitor_stop_reasons": after.Reasons, "project_id": s.ProjectID, "ticket_id": s.TicketID, "work_session_id": s.ID}}); e != nil {
+					return e
+				}
+			}
+			if s.Outcome.String == "failed" || s.Outcome.String == "abandoned" {
+				principal := &auth.Principal{ActorID: s.ActorID, ActorKind: auth.ActorKindAgent}
+				runID := ulidgen.New()
+				run, e := buildAgentRun(ctx, q, runID, s.TicketID, principal, reportRequest{})
+				if e != nil {
+					return e
+				}
+				run.StartedAt = s.StartedAt
+				run.EndedAt = s.EndedAt
+				run.Status = s.Outcome.String
+				run.ClientKind = s.ClientKind
+				run.ModelName = s.ModelName
+				run.ModelVersion = s.ModelVersion
+				run.TokensUsed = s.Tokens
+				if e = q.CreateAgentRun(ctx, run); e != nil {
+					return e
+				}
+				if e = q.LinkFailedAgentRun(ctx, gen.LinkFailedAgentRunParams{ID: runID, WorkSessionID: usageText(s.ID)}); e != nil {
 					return e
 				}
 			}

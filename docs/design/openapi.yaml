@@ -3331,6 +3331,7 @@ paths:
       operationId: createTicket
       description: |
         チケットを1件作る（ApiDesign.md 9.3）。**必要権限は `ticket.create`**。
+        担当指定にはticket.assignも必要。エージェントの担当指定は承認済みmainの木内に限る。
 
         **サーバが決めるものはリクエストに含められない。**
 
@@ -3439,6 +3440,7 @@ paths:
       summary: チケットの更新
       operationId: updateTicket
       description: |
+        担当・実行者の実際の変更は、人または承認済みで確認待ちのない委任mainが木内で行う。
         部分更新（ApiDesign.md 9.5.2）。**必要権限は `ticket.edit` または
         `ticket.self_edit`。`ticket.plan.edit` だけを持つ場合は start_at・due_at・all_day のみ変更できる。
         ただし `assignee_id` / `working_agent_id` を変える場合は
@@ -7189,6 +7191,162 @@ paths:
               schema:
                 $ref: '#/components/schemas/Health'
 
+  /api/v1/projects/{key}/agents:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: listProjectAgents
+      tags: [agents]
+      summary: プロジェクトのエージェント一覧
+      description: agent.manageを持つ人のみ。名前順のページ付き一覧。秘密は返さない。
+      parameters:
+        - {name: page, in: query, schema: {type: integer, minimum: 1}}
+        - {name: per_page, in: query, schema: {type: integer, minimum: 1, maximum: 200}}
+      responses:
+        '200':
+          description: エージェント一覧
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedAgentList'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/ProjectNotFound'}
+  /api/v1/projects/{key}/agents/{id}/disable:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: disableProjectAgent
+      tags: [agents]
+      summary: エージェントを停止
+      description: agent.manageを持つ人が、無効化と全トークンの失効を原子的に実行する。履歴保持、再実行は204。
+      responses:
+        '204': {description: 停止済み}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/ProjectNotFound'}
+
+  /api/v1/projects/{key}/agent-monitor:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: getAgentMonitorPolicy
+      tags: [agents]
+      summary: エージェントの実行監視と評価
+      responses:
+        '200':
+          description: 保存済みの監視値
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MonitorLimits'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/ProjectNotFound'}
+    put:
+      operationId: putAgentMonitorPolicy
+      tags: [agents]
+      summary: エージェントの実行監視と評価
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MonitorLimits'}
+      responses:
+        '200':
+          description: 保存済みの監視値
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MonitorLimits'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/ProjectNotFound'}
+
+  /api/v1/projects/{key}/agents/{id}/monitor:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: getAgentMonitor
+      tags: [agents]
+      summary: エージェントの実行監視と評価
+      responses:
+        '200':
+          description: 保存済みの監視値
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MonitorState'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/ProjectNotFound'}
+
+  /api/v1/projects/{key}/agents/{id}/monitor/reset:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: resetAgentMonitor
+      tags: [agents]
+      summary: エージェントの実行監視と評価
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MonitorReset'}
+      responses:
+        '200':
+          description: 保存済みの監視値
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MonitorState'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/ProjectNotFound'}
+
+  /api/v1/projects/{key}/agents/{id}/attributes:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+      - {name: id, in: path, required: true, schema: {type: string}}
+    patch:
+      operationId: patchAgentAttributes
+      tags: [agents]
+      summary: エージェントの実行監視と評価
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentAttributes'}
+      responses:
+        '204': {description: 更新済み}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/ProjectNotFound'}
+
+  /api/v1/me/agents/{id}/monitor:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: getMyAgentMonitor
+      tags: [agents]
+      summary: エージェントの実行監視と評価
+      responses:
+        '200':
+          description: 保存済みの監視値
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MonitorState'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/ProjectNotFound'}
+    post:
+      operationId: resetMyAgentMonitor
+      tags: [agents]
+      summary: エージェントの実行監視と評価
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MonitorReset'}
+      responses:
+        '200':
+          description: 保存済みの監視値
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MonitorState'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/ProjectNotFound'}
+
 components:
   securitySchemes:
     cookieAuth:
@@ -7655,14 +7813,73 @@ components:
             $ref: '#/components/schemas/Error'
 
   schemas:
+    MonitorLimits:
+      type: object
+      required: [max_attempts, max_consecutive_failures]
+      properties:
+        max_attempts: {type: [integer, 'null'], minimum: 1, maximum: 2147483647}
+        max_consecutive_failures: {type: [integer, 'null'], minimum: 1, maximum: 2147483647}
+    MonitorState:
+      allOf:
+        - {$ref: '#/components/schemas/MonitorLimits'}
+        - type: object
+          required: [attempts, consecutive_failures, stopped, reasons, legacy_unknown]
+          properties:
+            attempts: {type: integer}
+            consecutive_failures: {type: integer}
+            stopped: {type: boolean}
+            reasons: {type: array, items: {type: string}}
+            legacy_unknown: {type: boolean, description: 過去の未観測の失敗は不明}
+    MonitorReset:
+      type: object
+      required: [reason]
+      properties:
+        reason: {type: string, minLength: 1, maxLength: 2000}
+    AgentAttributes:
+      type: object
+      properties:
+        trust_level: {type: integer, minimum: 0, maximum: 3}
+        capabilities: {type: array, maxItems: 32, items: {type: string, minLength: 1, maxLength: 64}}
+
+    ManagedAgent:
+      type: object
+      required: [id, display_name, is_active, client_kind, model_name, model_version, trust_level, owner, created_at]
+      properties:
+        capabilities: {type: array, maxItems: 32, items: {type: string, maxLength: 64}}
+        id: {type: string}
+        display_name: {type: string}
+        is_active: {type: boolean}
+        client_kind: {type: string}
+        model_name: {type: string, nullable: true}
+        model_version: {type: string, nullable: true}
+        trust_level: {type: integer, minimum: 0, maximum: 3}
+        owner:
+          type: object
+          required: [id, display_name]
+          properties:
+            id: {type: string}
+            display_name: {type: string}
+        created_at: {type: integer, format: int64}
+    ManagedAgentList:
+      type: object
+      required: [items, page, per_page, total, total_pages]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ManagedAgent'}}
+        page: {type: integer}
+        per_page: {type: integer}
+        total: {type: integer}
+        total_pages: {type: integer}
+
     AgentUsageCounts:
       type: object
-      required: [runs_count, tickets_count, completed_count, partial_count, blocked_count, run_tokens, run_tokens_missing, evaluation_count, evaluation_tokens, evaluation_tokens_missing, turns, turns_missing, wall_clock_min, wall_clock_min_missing]
+      required: [runs_count, tickets_count, completed_count, partial_count, failed_count, abandoned_count, blocked_count, run_tokens, run_tokens_missing, evaluation_count, evaluation_tokens, evaluation_tokens_missing, turns, turns_missing, wall_clock_min, wall_clock_min_missing]
       properties:
         runs_count: {type: integer, format: int64}
         tickets_count: {type: integer, format: int64}
         completed_count: {type: integer, format: int64}
         partial_count: {type: integer, format: int64}
+        failed_count: {type: integer, format: int64}
+        abandoned_count: {type: integer, format: int64}
         blocked_count: {type: integer, format: int64}
         run_tokens: {type: integer, format: int64}
         run_tokens_missing: {type: integer, format: int64}
@@ -8101,6 +8318,7 @@ components:
          project, token_env_suffix, token_env_name,
          trust_level, is_active, created_at, token]
       properties:
+        capabilities: {type: array, maxItems: 32, items: {type: string, maxLength: 64}}
         id:
           type: string
           description: エージェントの ULID（`agent.actor_id`）。
@@ -8142,8 +8360,7 @@ components:
         trust_level:
           type: integer
           description: |
-            0〜3（既定 1）。**使わない**——段階的な権限昇格の材料
-            （`agent_run` の実績）が構想のため、既定値のまま置く。
+            0〜3（既定1）。人による評価値。属性から権限を自動拡大しない。
         is_active:
           type: boolean
           description: '`false` は無効化されたエージェント。行は残る。'
@@ -8277,6 +8494,8 @@ components:
         対応した日に移れる必要がある。
       type: object
       properties:
+        trust_level: {type: integer, minimum: 0, maximum: 3}
+        capabilities: {type: array, maxItems: 32, items: {type: string, maxLength: 64}}
         display_name:
           type: string
           minLength: 1
@@ -8989,6 +9208,7 @@ components:
       type: object
       required: [client_kind, model_name, project_key, trust_level, owner]
       properties:
+        capabilities: {type: array, maxItems: 32, items: {type: string, maxLength: 64}}
         client_kind:
           type: string
         model_name:
@@ -10036,6 +10256,7 @@ components:
           required: [action]
           properties:
             action: {type: string, enum: [pause, resume, finish, abandon, correct, restore_auto]}
+            outcome: {type: string, enum: [completed, failed], description: 実行結果。failedには理由が必須。}
             result: {type: string, enum: [completed, partial, blocked]}
             reported_active_ms: {type: [integer, 'null'], minimum: 0, format: int64, description: 取得元の稼働時間。省略またはnullならPB計時。訂正では省略・nullは変更しない。}
             tokens: {type: [integer, 'null'], minimum: 0, format: int64, description: 取得できたトークン。0と不明を区別。訂正では省略・nullは変更しない。}
@@ -10048,6 +10269,7 @@ components:
       type: object
       required: [id, ticket_seq, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, allocations, policy, time_missing]
       properties:
+        outcome: {type: [string, 'null'], enum: [completed, failed, abandoned, null]}
         id: {type: string}
         policy: {$ref: '#/components/schemas/WorkPolicy'}
         time_missing: {type: boolean}

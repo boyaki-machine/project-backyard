@@ -441,6 +441,7 @@ WITH filtered AS (
     ag.client_kind,
     ag.model_name    AS agent_model_name,
     ag.trust_level   AS agent_trust_level,
+    ag.capabilities AS agent_capabilities,
     agp.key          AS agent_project_key,
     ag.owner_actor_id,
     owner.display_name AS owner_display_name
@@ -464,7 +465,7 @@ SELECT
   f.id, f.kind, f.display_name, f.email, f.system_role,
   f.is_active, f.last_login_at, f.project_count, f.created_at,
   f.client_kind, f.agent_model_name, f.agent_trust_level,
-  f.agent_project_key, f.owner_actor_id, f.owner_display_name
+  f.agent_capabilities,f.agent_project_key, f.owner_actor_id, f.owner_display_name
 FROM filtered f
 ORDER BY
   CASE WHEN $1::text = 'display_name'  AND $2::text = 'asc'  THEN f.display_name COLLATE "ja-JP-x-icu" END ASC,
@@ -494,21 +495,22 @@ type ListAdminUsersParams struct {
 }
 
 type ListAdminUsersRow struct {
-	ID               string
-	Kind             string
-	DisplayName      string
-	Email            pgtype.Text
-	SystemRole       pgtype.Text
-	IsActive         bool
-	LastLoginAt      *time.Time
-	ProjectCount     int64
-	CreatedAt        time.Time
-	ClientKind       pgtype.Text
-	AgentModelName   pgtype.Text
-	AgentTrustLevel  pgtype.Int4
-	AgentProjectKey  pgtype.Text
-	OwnerActorID     pgtype.Text
-	OwnerDisplayName pgtype.Text
+	ID                string
+	Kind              string
+	DisplayName       string
+	Email             pgtype.Text
+	SystemRole        pgtype.Text
+	IsActive          bool
+	LastLoginAt       *time.Time
+	ProjectCount      int64
+	CreatedAt         time.Time
+	ClientKind        pgtype.Text
+	AgentModelName    pgtype.Text
+	AgentTrustLevel   pgtype.Int4
+	AgentCapabilities []byte
+	AgentProjectKey   pgtype.Text
+	OwnerActorID      pgtype.Text
+	OwnerDisplayName  pgtype.Text
 }
 
 // ── ユーザー管理（ApiDesign.md 6章、手順12a）─────────────────────
@@ -578,6 +580,7 @@ func (q *Queries) ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) 
 			&i.ClientKind,
 			&i.AgentModelName,
 			&i.AgentTrustLevel,
+			&i.AgentCapabilities,
 			&i.AgentProjectKey,
 			&i.OwnerActorID,
 			&i.OwnerDisplayName,

@@ -14,6 +14,8 @@ import (
 )
 
 type usageCounts struct {
+	FailedCount             int64 `json:"failed_count"`
+	AbandonedCount          int64 `json:"abandoned_count"`
 	RunsCount               int64 `json:"runs_count"`
 	TicketsCount            int64 `json:"tickets_count"`
 	CompletedCount          int64 `json:"completed_count"`
@@ -183,6 +185,10 @@ func aggregateAgentUsage(rows []gen.ListAgentUsageEventsRow, p usagePeriod) agen
 			g.tickets[row.TicketID] = true
 			c.TicketsCount = int64(len(g.tickets))
 			switch row.ResultStatus {
+			case "failed":
+				c.FailedCount++
+			case "abandoned":
+				c.AbandonedCount++
 			case "completed":
 				c.CompletedCount++
 			case "partial":

@@ -21,7 +21,7 @@ SELECT * FROM work_session WHERE id= @id AND project_id= @project_id;
 -- name: UpdateWorkSession :exec
 UPDATE work_session SET state= @state,changed_at= @changed_at,ended_at=sqlc.narg(ended_at),
 active_ms= @active_ms,waiting_ms= @waiting_ms,reported_active_ms=sqlc.narg(reported_active_ms),
-result=sqlc.narg(result),tokens=sqlc.narg(tokens),note= @note,incomplete= @incomplete
+outcome=sqlc.narg(outcome),result=sqlc.narg(result),tokens=sqlc.narg(tokens),note= @note,incomplete= @incomplete
 WHERE id= @id;
 
 -- name: AddWorkAllocation :exec

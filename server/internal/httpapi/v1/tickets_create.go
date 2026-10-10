@@ -33,6 +33,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/activity"
+	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/lexorank"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -167,6 +168,16 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 				}
 				refErr = budgetForbidden(main.RootSeq, "parent_seq", reasons)
 				return nil
+			}
+		}
+		if req.AssigneeID != "" {
+			a := auth.ProjectAuthzFromContext(ctx, key)
+			if a == nil || !auth.HasPermission(a.Permissions, permTicketAssign) {
+				refErr = apierr.New(apierr.Forbidden).WithMessage("担当者を設定する権限がありません")
+				return errTicketReference
+			}
+			if refErr = assignmentWriteProblem(ctx, q, p, projectID, parentID.String); refErr != nil {
+				return errTicketReference
 			}
 		}
 		if e := validateTicketAssignee(ctx, q, projectID, req.AssigneeID); e != nil {

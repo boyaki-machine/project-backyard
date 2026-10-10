@@ -83,11 +83,12 @@ type userListItem struct {
 // エージェント1件を単独で表す（名前・状態・トークンを持つ）。こちらは
 // userListItem の一部として、人間の行と同じ表に並ぶ前提の形である。
 type agentView struct {
-	ClientKind string    `json:"client_kind"`
-	ModelName  string    `json:"model_name"`
-	ProjectKey string    `json:"project_key"`
-	TrustLevel int32     `json:"trust_level"`
-	Owner      *ownerRef `json:"owner"`
+	Capabilities []string  `json:"capabilities"`
+	ClientKind   string    `json:"client_kind"`
+	ModelName    string    `json:"model_name"`
+	ProjectKey   string    `json:"project_key"`
+	TrustLevel   int32     `json:"trust_level"`
+	Owner        *ownerRef `json:"owner"`
 }
 
 // ownerRef はエージェントの所有者（6.1 の agent.owner）。
@@ -248,7 +249,7 @@ func adminAgentView(row gen.ListAdminUsersRow) *agentView {
 		ClientKind: row.ClientKind.String,
 		ModelName:  row.AgentModelName.String,
 		ProjectKey: row.AgentProjectKey.String,
-		TrustLevel: row.AgentTrustLevel.Int32,
+		TrustLevel: row.AgentTrustLevel.Int32, Capabilities: decodeCapabilities(row.AgentCapabilities),
 	}
 	if row.OwnerActorID.Valid {
 		v.Owner = &ownerRef{

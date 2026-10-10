@@ -212,6 +212,14 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("チケット %d を読めない: %w", seq, err)
 		}
 
+		assigneeChanged := patch.AssigneeID.Set && (patch.AssigneeID.Null != !before.AssigneeID.Valid || (!patch.AssigneeID.Null && patch.AssigneeID.Value != before.AssigneeID.String))
+		workerChanged := patch.WorkingAgentID.Set && (patch.WorkingAgentID.Null != !before.WorkingAgentID.Valid || (!patch.WorkingAgentID.Null && patch.WorkingAgentID.Value != before.WorkingAgentID.String))
+		if assigneeChanged || workerChanged {
+			if writeErr = assignmentWriteProblem(ctx, q, p, projectID, before.ID); writeErr != nil {
+				return errTicketReference
+			}
+		}
+
 		if patch.StartAt.Set || patch.DueAt.Set || patch.AllDay.Set {
 			if writeErr = planningWriteProblem(ctx, q, r, projectID, before.ID); writeErr != nil {
 				return errTicketReference

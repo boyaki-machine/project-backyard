@@ -3001,7 +3001,7 @@ token_env_suffix = 'MY_LAPTOP'   →   PB_TOKEN_MY_LAPTOP
 
 `model_name` / `model_version` を保持するのは、`Requirements.md` 10.10.3 の「モデル更新後に品質が変化した際の切り分け」のため。`agent_run` にも実行時点の値をコピーする（後からモデルを変えても過去の実行記録が壊れないよう非正規化する）。
 
-`trust_level` は`Requirements.md` 10.10.3 の段階的権限昇格に対応する。**0019 の時点では既定値のまま置き、APIも画面も受け取らない**——昇格の材料になる実績（`agent_run` の集計。構想）がまだ無く、使うものが無いうちに入口を作ると意味が固まるためである。
+`trust_level`は0〜3の人による評価、`capabilities`は能力ラベルである。所有者またはPJ管理者の人が編集し、エージェントの自己昇格や属性からの自動権限拡大は行わない。
 
 #### 8.2.1.1 `agent_client_kind` — クライアント種別のカタログ（0020 で追加）
 
@@ -3167,10 +3167,12 @@ CREATE TABLE agent_run (
                    CHECK (status IN ('running','completed','failed','abandoned')),
   tokens_used      bigint,
   turns            integer,
-  retry_count      integer NOT NULL DEFAULT 0
+  retry_count      integer NOT NULL DEFAULT 0,
+  work_session_id  char(26) COLLATE "C"
 );
 CREATE INDEX idx_agent_run_ticket ON agent_run (ticket_id, started_at DESC);
 CREATE INDEX idx_agent_run_actor  ON agent_run (actor_id, started_at DESC);
+CREATE UNIQUE INDEX idx_agent_run_failed_work ON agent_run(work_session_id) WHERE work_session_id IS NOT NULL;
 
 CREATE TABLE agent_report (
   id               char(26) COLLATE "C" PRIMARY KEY,
@@ -3190,34 +3192,15 @@ ALTER TABLE comment
 
 `report` に`Requirements.md` 10.6.1 のレポート全体を保存しつつ、頻繁に検索・集計する `status` と `knowledge_impact` のみ列に展開する。PostgreSQL では `jsonb` の内部検索も可能だが、**集計対象になる値は列に出す**方が実行計画が安定する。
 
-`workflow_version` は`Requirements.md` 10.9.3 の陳腐化検出、`retry_count` は 10.10.5 のサーキットブレーカー判定に用いる。
+`workflow_version`は陳腐化検出のための予約列である。`retry_count`は提出由来の実行行数であり、未提出の失敗・放棄とサーキットブレーカーの失敗数とは分ける。
 
-#### 書き手は `pb_submit_result` ひとつである
+#### レポート提出と明示した実行の終了
 
-**1回の提出が `agent_run` 1行と `agent_report` 1行を同時に作る**（`ApiDesign.md` 9.15）。**開始を告げる口を持たない**——`pb_claim_task` は構想で
-（8.2.2）、`pb_transition_task` の副作用は `ticket.working_agent_id` だけと決めた（6.6）。
+レポートだけを提出する既存経路は、提出ごとにcompletedのagent_runとagent_reportを作る。開始時刻はcost.wall_clock_minからの逆算であり、明示した開始とは区別する。共通作業記録では開始・待機・終了を観測し、失敗・放棄の終了時にfailed/abandonedのagent_runも保存する。実行中の作業はwork_sessionで読み、終了済みの履歴だけを実績集計へ含める。
 
-**「走っている run」を読む者が居ないので、開始の口を作らない。** 「いま誰が
-処理しているか」は `ticket.working_agent_id` が既に担っており（6.6）、`status='running'` の行を
-足すと**同じ事実が2か所になる**。**再提出は別の run になる**——`/pb-implement` の手順7
-（`Requirements.md` 10.8.6）は「未充足の完了条件が返ったら修正して再提出する」と定めており、
-その修正はエージェントが実際に作業をやり直したことを意味する。
+失敗実行へのレポートはwork_session_idで対応付け、実行行を再作成しない。同じ失敗実行に別レポートを重ねる操作は409とし、新しい作業は別の記録として開始する。レポート結果partial/blockedと実行結果failed/abandonedは別の意味を持つ。
 
-この帰結を4つ書き下す。**列の意味が後から変わらないよう、埋めない列は
-埋めないままにする。**
-
-| 列 | 扱い |
-|---|---|
-| `status` | **`completed` しか立たない。** `failed` / `abandoned` は「レポートを出さずに終わった run」で、それを観測する口が無い。`running` は上記のとおり作らない |
-| `started_at` | `report.cost.wall_clock_min` があればそこから逆算し、無ければ `now()`。**エージェントの自己申告である** |
-| `ended_at` | 提出時刻。`agent_report.submitted_at` と同じ値になる |
-| `workflow_version` | **NULL のまま。** `workflow` に版の列が無く（6.5）、`Requirements.md` 10.9.3 の陳腐化検出は構想である |
-| `retry_count` | **同じ（チケット × アクター）の既存の run 数**を入れる。初回は 0 |
-
-`token_id` / `client_kind` / `model_name` / `model_version` は**提出時点の値を写す**
-（`access_token` と `agent` の行から）。非正規化するのは `Requirements.md` 10.10.3 の
-「モデル更新後に品質が変化した際の切り分け」のためで、**後から `agent.model_name` を
-書き換えても過去の実行記録が動かない**ことがこの列の値である。
+retry_countは同じチケット・アクターの提出由来の実行行数に基づく値であり、未提出の失敗・放棄は数えない。停止判定は明示した開始・終了をagent_attemptから読み、未知の過去の失敗を0と置かない。モデルは開始時の値を写し、属性編集で過去の実行モデルを変更しない。workflow_versionは引き続きNULLのままとする。
 
 #### `comment.agent_run_id` の FK は本節で使い手を得る
 
@@ -3758,3 +3741,11 @@ PB は `pb_app` で繋いでいる。**手順は `deploy/prod/MANUAL.md` にあ�
 work_session.policyは開始時の運営ノート内の構造化契約と文書版を保持する。time_missingは未確認の終了区間を含む欠測を表す。work_allocation.change_metricsはチケット全体の累積変更量と取得元である。
 
 ticket_work_baseは整理済み記録のチケット別累積集計と最新変更量を保持する。work_archiveは整理済みID・実行者・配分先の参照用情報、work_replayはrequest_id・digest・整理済みIDを保持し、応答全文を保存しない。整理はPJ作業ロックと対象チケットの行ロックの下で、集計の移送と明細削除を同時にコミットする。チケットの実績属性と手入力保護は維持する。新しいマイグレーションで追加し、適用済みDDLを編集しない。
+
+### エージェント管理の権限
+
+agent.manageはプロジェクト所属エージェントの一覧・停止を許す。project_adminとadministratorへ配布し、エージェントの発行可能スコープには含めない。停止はactorの行をロックして無効化し、access_tokenの未失効行を全て失効する。agent・コメント・作業・評価・実行履歴は保持する。
+
+### 実行の明示状態と失敗監視
+
+共通作業記録work_sessionのoutcomeはcompleted・failed・abandonedまたはNULLを持つ。NULLは未判定であり、partial/blockedや過去の記録を失敗と推測しない。開始ごとにagent_attemptへ監視用の記録を作り、終了結果を保存する。作業明細の整理後も試行履歴は保持する。解除区間はagent_monitor_resetでPJ・エージェントごとに保持し、理由と操作者を監査する。failed/abandonedの終了はagent_runにも明示状態を保存し、時刻・モデル・既知のコストだけを写す。retry_countは提出由来の従来の意味を変えない。

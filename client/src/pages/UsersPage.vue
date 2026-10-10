@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ManagedAgents from "../components/ManagedAgents.vue"
 import { uiText } from '../locales/ui'
 /**
  * アカウント / 権限管理（`GuiDesign.md` 5.6）。必要権限は `user.manage`。
@@ -838,17 +839,9 @@ async function retry(): Promise<void> {
         </div>
       </div>
 
-      <!-- ── エージェントタブ（5.6。未実装）──────────────────── -->
+      <!-- ── エージェントタブ（5.6）──────────────────── -->
       <!-- 人間と持つ情報が違うのでタブを分けてある -->
-      <div v-else-if="tab === 'agents'" class="placeholder" role="tabpanel">
-        <p class="placeholder-title">{{ $ui('エージェントのページ予定') }}</p>
-        <ul class="placeholder-list">
-          <li>{{ $ui('登録済みエージェントの一覧（名前・クライアント種別・モデル・プロジェクト・信頼度）') }}</li>
-          <li>{{ $ui('人間とは持つ情報が違うため、ユーザータブとは別の列構成にする') }}</li>
-          <li>{{ $ui('行の操作メニューも異なる（パスワードのリセットは無い）') }}</li>
-        </ul>
-        <p class="placeholder-status">{{ $ui('未定') }}</p>
-      </div>
+      <ManagedAgents v-else-if="tab === 'agents'" role="tabpanel" />
 
       <!-- ── ロールと権限タブ（5.6.3）──────────────────────── -->
       <!-- 材料は `GET /roles` と `GET /permissions`（`ApiDesign.md` 7.1 / 7.2）。

@@ -78,12 +78,29 @@ type Agent struct {
 	TokenEnvSuffix pgtype.Text
 }
 
+type AgentAttempt struct {
+	ID        string
+	ProjectID string
+	TicketID  string
+	ActorID   string
+	StartedAt time.Time
+	EndedAt   *time.Time
+	Outcome   pgtype.Text
+}
+
 type AgentClientKind struct {
 	Key         string
 	DisplayName string
 	SortOrder   int32
 	// PB がこの種別の配置ファイルを出せるか。DbDesign.md 8.2.1.1
 	HasSetupTemplate bool
+}
+
+type AgentMonitorReset struct {
+	ProjectID string
+	ActorID   string
+	ResetAt   time.Time
+	Reason    string
 }
 
 // エージェントの完了レポート。report に Requirements.md 10.6.1 の全体が入る。DbDesign.md 8.2.4
@@ -113,6 +130,7 @@ type AgentRun struct {
 	TokensUsed      pgtype.Int8
 	Turns           pgtype.Int4
 	RetryCount      int32
+	WorkSessionID   pgtype.Text
 }
 
 // PB が生成した暗号鍵（Design.md 6.6.1）。PB_SECRET_KEY を与えたときは読まない
@@ -760,6 +778,7 @@ type WorkSession struct {
 	Incomplete       bool
 	Policy           []byte
 	TimeMissing      bool
+	Outcome          pgtype.Text
 }
 
 type Workflow struct {

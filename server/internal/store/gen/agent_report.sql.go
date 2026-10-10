@@ -27,8 +27,9 @@ func (q *Queries) CountAgentRuns(ctx context.Context, actorID string) (int64, er
 }
 
 const countAgentRunsForTicket = `-- name: CountAgentRunsForTicket :one
-SELECT count(*) FROM agent_run
-WHERE ticket_id = $1 AND actor_id = $2
+SELECT count(*) FROM agent_run r
+WHERE r.ticket_id = $1 AND r.actor_id = $2
+AND (r.work_session_id IS NULL OR EXISTS (SELECT 1 FROM agent_report ar WHERE ar.agent_run_id=r.id))
 `
 
 type CountAgentRunsForTicketParams struct {
@@ -36,7 +37,8 @@ type CountAgentRunsForTicketParams struct {
 	ActorID  string
 }
 
-// CountAgentRunsForTicket は同じ（チケット × アクター）の既存の run 数を数える。
+// CountAgentRunsForTicket は同じ（チケット × アクター）の提出由来のrun数を数える。
+// 明示した終了だけでレポートの無い失敗・放棄は再提出数へ含めない。
 //
 // **agent_run.retry_count に入れる値である**（DbDesign.md 8.2.4）。初回は 0。
 // 再提出が別の run になるので、これが「何回目のやり直しか」と一致する。
@@ -125,9 +127,7 @@ type CreateAgentRunParams struct {
 // ない（Delegation.md 7.2）。
 // CreateAgentRun は1回の実行記録を作る。
 //
-// **status に入るのは completed だけである**（DbDesign.md 8.2.4）。
-// 開始を告げる口が無いので running は作られず、failed / abandoned は「レポートを
-// 出さずに終わった run」で観測する口が無い。
+// レポートだけの経路はcompleted。共通作業で明示された失敗・放棄はfailed/abandoned。
 //
 // **workflow_version は渡さない**（NULL のまま）。workflow に版の列が無く
 // （DbDesign.md 6.5）、陳腐化検出は構想である。
@@ -180,25 +180,25 @@ func (q *Queries) GetAgentRuntimeInfo(ctx context.Context, actorID string) (GetA
 }
 
 const getLatestAgentReportForTicket = `-- name: GetLatestAgentReportForTicket :one
-SELECT ar.id, ar.agent_run_id, run.ended_at AS submitted_at
+SELECT ar.id, ar.agent_run_id, ar.submitted_at
 FROM agent_report ar
 JOIN agent_run run ON run.id = ar.agent_run_id
 WHERE ar.ticket_id = $1
-ORDER BY run.ended_at DESC
+ORDER BY ar.submitted_at DESC, ar.id DESC
 LIMIT 1
 `
 
 type GetLatestAgentReportForTicketRow struct {
 	ID          string
 	AgentRunID  string
-	SubmittedAt *time.Time
+	SubmittedAt time.Time
 }
 
 // GetLatestAgentReportForTicket は、そのチケットへの直近の完了レポートを返す
 // （Delegation.md 7.2「成果（根の完了レポート）」の評価対象。pb-248）。
 //
 // **再提出は別の run・別の report になる**（buildAgentRun のコメントと同じ
-// 理由）ので、「最新」は submitted_at（agent_run.ended_at）の降順1件でよい。
+// 理由）ので、「最新」は agent_report.submitted_at の降順1件で読む。実行の終了日時とは分ける。
 func (q *Queries) GetLatestAgentReportForTicket(ctx context.Context, ticketID string) (GetLatestAgentReportForTicketRow, error) {
 	row := q.db.QueryRow(ctx, getLatestAgentReportForTicket, ticketID)
 	var i GetLatestAgentReportForTicketRow
