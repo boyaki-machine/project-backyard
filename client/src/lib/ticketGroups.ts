@@ -54,9 +54,11 @@ export interface GroupVocabulary {
  * どちらにも無い場合は完全形の ID で出す（5.4「ID列」）——「不明」と書くより、
  * 詳細を開ける番号のほうが役に立つ。
  */
-function parentLabel(seq: number, v: GroupVocabulary): string {
-  const parent = v.tickets.find((t) => t.seq === seq) ?? v.epics.find((e) => e.seq === seq)
-  return parent ? parent.title : `${v.projectKey}-${seq}`
+function parentLabel(seq: number, v: GroupVocabulary, titles?: ReadonlyMap<number, string>): string {
+  const title = titles
+    ? titles.get(seq)
+    : (v.tickets.find((t) => t.seq === seq) ?? v.epics.find((e) => e.seq === seq))?.title
+  return title ?? `${v.projectKey}-${seq}`
 }
 
 /**
@@ -69,12 +71,13 @@ export function groupsOf(
   t: Ticket,
   axis: GroupAxis,
   v: GroupVocabulary,
+  parentTitles?: ReadonlyMap<number, string>,
 ): { key: string; label: string }[] {
   switch (axis) {
     case 'parent':
       return t.parent_seq === null
         ? [{ key: 'top', label: uiText('トップレベル') }]
-        : [{ key: String(t.parent_seq), label: parentLabel(t.parent_seq, v) }]
+        : [{ key: String(t.parent_seq), label: parentLabel(t.parent_seq, v, parentTitles) }]
     case 'tag':
       return t.tags.length === 0
         ? [{ key: 'none', label: uiText('未分類') }]
@@ -134,8 +137,13 @@ export function bucketize<R>(
 ): { key: string; label: string; rows: R[] }[] {
   const buckets = new Map<string, { key: string; label: string; rows: R[] }>()
   const seen: string[] = []
+  // 親名は各行で一覧を走査せず、今回の語彙から一度だけ索引を作る。
+  // 両方の一覧にある番号は、単独の groupsOf と同じく tickets を優先する。
+  const parentTitles = axis === 'parent'
+    ? new Map([...v.epics, ...v.tickets].map((t) => [t.seq, t.title]))
+    : undefined
   for (const row of rows) {
-    for (const { key, label } of groupsOf(ticketOf(row), axis, v)) {
+    for (const { key, label } of groupsOf(ticketOf(row), axis, v, parentTitles)) {
       const bucket = buckets.get(key)
       if (bucket) {
         bucket.rows.push(row)
