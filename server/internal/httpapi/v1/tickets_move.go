@@ -462,7 +462,7 @@ func rebalanceTicketSortKeys(
 // ticketSeqParam は URL の {seq} を読む（9.1）。
 func ticketSeqParam(r *http.Request) (int32, *apierr.Error) {
 	raw := chi.URLParam(r, "seq")
-	n, err := strconv.Atoi(raw)
+	n, err := strconv.ParseInt(raw, 10, 32)
 	if err != nil || n < 1 {
 		return 0, apierr.New(apierr.NotFound).
 			WithMessage("チケットが見つかりません").

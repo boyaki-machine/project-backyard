@@ -676,7 +676,7 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 	if raw := q.Get("parent"); raw != "" {
 		seqs := make([]int32, 0, 4)
 		for _, v := range splitFilter(raw) {
-			n, err := strconv.Atoi(v)
+			n, err := strconv.ParseInt(v, 10, 32)
 			if err != nil || n < 1 {
 				details = append(details, apierr.Detail{
 					Field: "parent", Code: "invalid",

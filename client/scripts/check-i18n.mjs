@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 import { parse as parseSfc } from '@vue/compiler-sfc'
+import { templateWithoutComments } from './vue-source.mjs'
 
 const sourceRoot = path.resolve('src')
 const japanese = /[ぁ-んァ-ヶ一-龠]/u
@@ -94,10 +95,10 @@ for (const file of filesBelow(sourceRoot)) {
     continue
   }
 
-  const template = parseSfc(source, { filename: file }).descriptor.template
+  const { descriptor } = parseSfc(source, { filename: file })
+  const template = descriptor.template
   if (template) {
-    const withoutComments = template.content
-      .replace(/<!--[\s\S]*?-->/gu, '')
+    const withoutComments = templateWithoutComments(template)
       .replace(/\$ui\(\s*(?:'((?:\\.|[^'\\])*)'|"((?:\\.|[^"\\])*)")/gu, (_match, single, double) => {
         const key = (single ?? double).replace(/\\(['"\\])/gu, '$1')
         usedKeys.add(key)
@@ -110,9 +111,8 @@ for (const file of filesBelow(sourceRoot)) {
     })
   }
 
-  for (const script of source.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gu)) {
-    const start = script.index + script[0].indexOf(script[1])
-    checkScript(file, script[1], lineAt(source, start) - 1)
+  for (const script of [descriptor.script, descriptor.scriptSetup]) {
+    if (script) checkScript(file, script.content, lineAt(source, script.loc.start.offset) - 1)
   }
 }
 

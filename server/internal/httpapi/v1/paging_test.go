@@ -181,3 +181,22 @@ func TestParsePageOverflowDependsOnPerPage(t *testing.T) {
 		t.Errorf("per_page=1 で収まるはずの組が弾かれた: %+v", e)
 	}
 }
+
+func TestParsePageRejectsOverflowInBoundCheck(t *testing.T) {
+	for _, query := range []string{
+		"?page=9223372036854775807&per_page=200",
+		"?page=4611686018427387905&per_page=4",
+	} {
+		t.Run(query, func(t *testing.T) {
+			_, e := parse(t, query)
+			if e == nil || e.Status() != http.StatusUnprocessableEntity {
+				t.Fatalf("overflowing OFFSET accepted: %+v", e)
+			}
+		})
+	}
+	// The page itself may exceed int32 while its zero-based OFFSET still fits.
+	p, e := parse(t, "?page=2147483648&per_page=1")
+	if e != nil || p.Offset() != 2147483647 {
+		t.Fatalf("last representable OFFSET rejected: %+v, %+v", p, e)
+	}
+}

@@ -15,11 +15,11 @@
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.2",
     "codemirror": "^6.0.2",
-    "dompurify": "^3.4.14",
-    "markdown-it": "^14.3.0",
+    "dompurify": "^3.4.16",
+    "markdown-it": "^14.3.1",
     "pinia": "^4.0.3",
     "qrcode": "^1.5.4",
-    "vue": "^3.5.41",
+    "vue": "^3.5.42",
     "vue-i18n": "^11.4.12",
     "vue-router": "^5.2.0"
   },

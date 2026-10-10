@@ -130,7 +130,7 @@ func ParsePage(r *http.Request, spec SortSpec) (Page, *apierr.Error) {
 		maxPerPage = MaxPerPage
 	}
 	if v := q.Get("per_page"); v != "" {
-		n, err := strconv.Atoi(v)
+		n, err := strconv.ParseInt(v, 10, 32)
 		switch {
 		case err != nil:
 			details = append(details, apierr.Detail{
@@ -140,13 +140,13 @@ func ParsePage(r *http.Request, spec SortSpec) (Page, *apierr.Error) {
 			details = append(details, apierr.Detail{
 				Field: "per_page", Code: "out_of_range", Message: "per_page は1以上で指定してください",
 			})
-		case n > maxPerPage:
+		case n > int64(maxPerPage):
 			details = append(details, apierr.Detail{
 				Field: "per_page", Code: "out_of_range",
 				Message: "per_page は" + strconv.Itoa(maxPerPage) + "以下で指定してください",
 			})
 		default:
-			perPage = n
+			perPage = int(n)
 		}
 	}
 
@@ -185,7 +185,8 @@ func ParsePage(r *http.Request, spec SortSpec) (Page, *apierr.Error) {
 	// 定めており、500 はその規定に反する。**
 	//
 	// 既に他の誤りがあるときは足さない。**先に直すべきものが霞む。**
-	if len(details) == 0 && int64(page-1)*int64(perPage) > math.MaxInt32 {
+	// Divide before comparing so even a maximal int cannot overflow the check.
+	if len(details) == 0 && int64(page-1) > math.MaxInt32/int64(perPage) {
 		details = append(details, apierr.Detail{
 			Field: "page", Code: "out_of_range",
 			Message: "page が大きすぎます。per_page を小さくするか、page を減らしてください",

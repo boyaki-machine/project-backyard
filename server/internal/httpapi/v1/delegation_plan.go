@@ -557,7 +557,7 @@ func createRevertPlan(
 
 func planVersionParam(r *http.Request) (int32, *apierr.Error) {
 	raw := chi.URLParam(r, "version")
-	n, err := strconv.Atoi(raw)
+	n, err := strconv.ParseInt(raw, 10, 32)
 	if err != nil || n < 1 {
 		return 0, apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
 			Field: "version", Code: "invalid", Message: "version は1以上の整数で指定してください",
