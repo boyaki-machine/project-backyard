@@ -225,7 +225,7 @@ for (const width of [600, 900, 1440]) {
     const long = rows(page, 2).locator('.title-line')
     for (const line of [short, long]) {
       const geometry = await line.evaluate(el => {
-        const title = el.querySelector<HTMLElement>('.title')!
+        const title = el.querySelector<HTMLElement>('.title-text')!
         const tags = el.querySelector<HTMLElement>('.tag-trail')!
         const menu = el.querySelector<HTMLElement>('.stage-controls')!
         const t = title.getBoundingClientRect(), g = tags.getBoundingClientRect(), m = menu.getBoundingClientRect()

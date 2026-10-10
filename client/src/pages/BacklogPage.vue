@@ -2585,11 +2585,12 @@ watch(projectKey, (key) => {
                         <a
                           ref="rowLink"
                           class="title"
+                          :data-title="row.ticket.title"
                           :href="href"
                           draggable="false"
                           @click.stop="navigate"
                         >
-                          {{ row.ticket.title }}
+                          <span class="title-text">{{ row.ticket.title }}</span>
                         </a>
                       </RouterLink>
                       <!-- 自律実行の印（5.4「自律実行の印」。pb-276）。タグの前に置く -->
@@ -3311,7 +3312,7 @@ watch(projectKey, (key) => {
   color: var(--pb-text-muted);
 }
 
-/* タイトルは残りの幅を使い、タグとメニューの領域を確保してから省略する。 */
+/* タイトルは残りの幅を使う。縮小表示では最低幅を設けない。 */
 .title {
   flex: 1 1 0;
   min-width: 0;
@@ -3324,8 +3325,43 @@ watch(projectKey, (key) => {
   text-decoration: underline;
 }
 
+.title-text {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 非表示の文字で、短いタイトルの実幅と6文字分の小さい方を最低幅にする。
+   CSSの内在サイズを使うため、タイトルやフォント、画面幅の変更にも追従する。 */
+.full-table .title {
+  position: relative;
+  min-width: min-content;
+}
+.full-table .title::before {
+  content: attr(data-title);
+  display: block;
+  width: max-content;
+  max-width: 6em;
+  visibility: hidden;
+}
+.full-table .title-text {
+  position: absolute;
+  inset: 0;
+}
+.full-table .title-actions {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.full-table .tag-trail {
+  flex: 0 1 auto;
+}
+.full-table .tag-trail .tag:nth-child(2) {
+  min-width: 0;
+}
+
 /* タグは `#`＋文字を枠なしで、タイトルの末尾に右へ寄せる（5.4「タグ」）。
-   **ユーザーによる任意色の指定も許さない**（8.6）。タイトルより先に縮めない */
+   **ユーザーによる任意色の指定も許さない**（8.6）。 */
 .tag-trail {
   flex: none;
   min-width: 0;
