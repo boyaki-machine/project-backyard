@@ -740,7 +740,6 @@ CREATE TABLE project_counter (
   project_id      char(26) COLLATE "C" PRIMARY KEY
                   REFERENCES project(id) ON DELETE CASCADE,
   last_ticket_seq integer NOT NULL DEFAULT 0
-  -- last_baseline_revision は 0067 で足す（6.32。当初計画の版の番号）
 );
 
 ALTER TABLE project_member
@@ -2355,15 +2354,14 @@ API は `ApiDesign.md` 9.17.3。
 CREATE TABLE schedule_baseline (
   id              char(26) COLLATE "C" PRIMARY KEY,
   project_id      char(26) COLLATE "C" NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-  revision        integer NOT NULL CHECK (revision >= 1),   -- プロジェクトごとの通し番号
   label           text CHECK (label IS NULL OR length(label) BETWEEN 1 AND 100),
                                                             -- 「リハーサル後」など。任意
   item_count      integer NOT NULL CHECK (item_count >= 0),
   created_by      char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
   created_by_name text NOT NULL,                            -- 記録時の表示名（activity.actor_name と同じ）
-  created_at      timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT uq_schedule_baseline_rev UNIQUE (project_id, revision)
+  created_at      timestamptz NOT NULL DEFAULT now()   -- 版の名前になる（下の「名前」）
 );
+CREATE INDEX idx_schedule_baseline_project ON schedule_baseline (project_id, created_at DESC);
 
 CREATE TABLE schedule_baseline_item (
   baseline_id  char(26) COLLATE "C" NOT NULL
@@ -2381,10 +2379,6 @@ CREATE TABLE schedule_baseline_item (
   PRIMARY KEY (baseline_id, ticket_seq),
   CONSTRAINT ck_schedule_baseline_item_when CHECK (start_at IS NOT NULL OR due_at IS NOT NULL)
 );
-
--- 版の番号は消しても使い回さない（下の「番号」）。チケットの採番（6.4.1）と同じ器に置く
-ALTER TABLE project_counter
-  ADD COLUMN last_baseline_revision integer NOT NULL DEFAULT 0;
 ```
 
 | 論点 | 決めたこと |
@@ -2392,13 +2386,14 @@ ALTER TABLE project_counter
 | 版の単位 | **プロジェクトのタイムライン全体を1版**とする。画面で行を絞っていても（URL の `parent`）全体を写す。エピック単位にしない（`Timeline.md` 7.1。方式案 5.2 の `epic_id` 単位の形は採らなかった） |
 | 写すチケット | **`timeline_epics`（6.4）で選んだエピックの配下**（所属は祖先をたどって最初に見つかるエピック。`ApiDesign.md` 9.5.1 の `epic`）**で、時刻付き（`all_day = false`）で、開始か終了の少なくとも一方を持つもの。** `view=timeline`（`ApiDesign.md` 9.2.7）が返す集合と同じにする——画面に載っていないものを版に写すと、重ねたときに「消えた」と誤って出る。エピック自身は写さない。時間重複チェックの有無・状態・棚に戻ったかは問わない |
 | 写す値 | **バーを描くのに要る値だけ**——題名・所属エピック・開始・終了・終日か・時間重複チェック・アンカー（`Timeline.md` 7.1）。状態・担当・本文は写さない（実績は版ではなく、いまのチケットと遷移の履歴が持つ） |
-| 番号 | `revision` はプロジェクトごとに 1 から。**`project_counter.last_baseline_revision` の1文 `UPDATE … RETURNING` で採る**（チケットの採番 6.4.1 と同じ。行ロックで直列になる）。**版を消しても番号を使い回さない**——`MAX(revision) + 1` にすると最新の版を消した直後に同じ番号が別の版を指し、共有された URL（`?baseline=4`）や「v4 と比べた」という記録が別物を指す |
+| 指し方 | **`id`（ULID）で指す。番号を持たない**（pb-296。PM の回答）。API のパスも URL のクエリ（`?baseline=`）も `id` である。消した版の `id` は二度と現れないので、使い回しの問題が起きない |
+| **名前** | **保存した日時（`created_at`）をプロジェクトの基準タイムゾーン（6.23）で分まで**（例「10/24 08:30 保存」）。`label` があれば併記する。**比べるときに重視されるのは「どの時点の計画か」だから**で、通し番号は意味を運ばない。同じ分に2つあれば秒まで出す（表示の規則。`GuiDesign.md` 5.15「当初計画の版」） |
 | 上限 | **1版 5,000件**（`ApiDesign.md` 9.2.6 と同じ）。超えるプロジェクトは保存を拒む（`ApiDesign.md` 9.17.3）。黙って切ると「全体の版」の約束が崩れる |
 | 書き換え | **しない。** 行の追加と、版ごとの削除だけで、`updated_at` も `version` も持たない |
-| 削除 | **版ごとに物理削除する**（`DELETE …/schedule-baselines/:revision`。`project.edit`。`ApiDesign.md` 9.17.3）。行は `ON DELETE CASCADE` で消える。誤って保存した版を消すための口で、番号は欠番として残る |
+| 削除 | **版ごとに物理削除する**（`DELETE …/schedule-baselines/:id`。`project.edit`。`ApiDesign.md` 9.17.3）。行は `ON DELETE CASCADE` で消える。誤って保存した版を消すための口である |
 | 消えたチケット | **`ticket_id` を持たず、`ticket_seq` で指す。** チケットは物理削除（4.6）だが番号は使い回さないので、いまの `ticket` に同じ `seq` が無ければ「版にあったが、いまは無い」と分かる。外部キーを張らないので、チケットを消しても版の行は書き換わらない |
 | 保存した人 | `created_by` は `ON DELETE SET NULL`、表示は `created_by_name`（記録時の表示名）で出す。人を消しても「誰が保存した版か」が読める |
-| 索引 | `uq_schedule_baseline_rev` が `(project_id, revision)` の一覧と1件の取得を兼ねる。行は主キーで版ごとに引く |
+| 索引 | 一覧（新しい順）と最新の1件は `idx_schedule_baseline_project`、1件の取得は主キー。行は主キーで版ごとに引く |
 
 **`activity` には記録しない。** `activity` はチケットの履歴で、版はチケットではなくプロジェクトの記録である。**版の表そのものが「いつ・誰が・何を」を持つ**ので、別に写さない。
 

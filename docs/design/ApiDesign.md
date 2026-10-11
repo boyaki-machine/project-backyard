@@ -2603,7 +2603,7 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
 | 新規プロジェクトモーダル | `GET /projects/check-key`（入力時）<br>`POST /projects`（作成） |
 | プロジェクトダッシュボード | `GET /projects/:key/stats`<br>`GET /projects/:key/activity`<br>`GET /projects/:key/tickets?assignee=me&open=true` |
 | バックログ | `GET /projects/:key/tickets`（＋ `GET /projects/:key/tags`）<br>`POST /projects/:key/tickets/:seq/move`（並べ替え） |
-| **タイムライン**（`GuiDesign.md` 5.15） | `GET /projects/:key/tickets?view=timeline`（起動時と5秒ごと。9.2.7）<br>`GET /projects/:key/schedule-baselines`（版の一覧）・`GET .../schedule-baselines/:revision`（重ねる版。9.17.3）<br>`POST /projects/:key/tickets/:seq/reschedule`（試算と確定。9.17.2）<br>`POST /projects/:key/schedule-baselines`（`[計画を保存]`）・`DELETE …/schedule-baselines/:revision`（版を消す） |
+| **タイムライン**（`GuiDesign.md` 5.15） | `GET /projects/:key/tickets?view=timeline`（起動時と5秒ごと。9.2.7）<br>`GET /projects/:key/schedule-baselines`（版の一覧）・`GET .../schedule-baselines/:id`（重ねる版。9.17.3）<br>`POST /projects/:key/tickets/:seq/reschedule`（試算と確定。9.17.2）<br>`POST /projects/:key/schedule-baselines`（`[計画を保存]`）・`DELETE …/schedule-baselines/:id`（版を消す） |
 | 新規チケットモーダル | `POST /projects/:key/tickets` |
 | チケット詳細 | `GET /projects/:key/tickets/:seq`<br>`GET /projects/:key/tickets/:seq/comments`<br>（遷移先はドロップダウンを開いたときに `GET .../transitions`。完了レポートの取得は下記） |
 | チケット詳細の完了レポート（設計済み・未実装） | `GET /projects/:key/tickets/:seq/reports`（初期表示）<br>`GET .../reports/:id`（単件取得） |
@@ -2908,7 +2908,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 ```
 
-**`view=timeline` のときは、さらに ⑥行になるエピック（`epics[]`）の件数と `MAX(updated_at)` ⑦当初計画の版の件数と最新の `revision` ⑧プロジェクトの `version` も混ぜる**（9.2.7）。エピックは `items` に入らないので、題名を変えても④⑤までの材料では ETag が動かない。版はチケットの `updated_at` を動かさない（消したときも件数で変わる）。**載せるエピック（`settings.timeline_epics`）を変えるとプロジェクトの `version` が進む**ので、⑧で拾う。
+**`view=timeline` のときは、さらに ⑥行になるエピック（`epics[]`）の件数と `MAX(updated_at)` ⑦当初計画の版の件数と最新の版の `id` ⑧プロジェクトの `version` も混ぜる**（9.2.7）。エピックは `items` に入らないので、題名を変えても④⑤までの材料では ETag が動かない。版はチケットの `updated_at` を動かさない（消したときも件数で変わる）。**載せるエピック（`settings.timeline_epics`）を変えるとプロジェクトの `version` が進む**ので、⑧で拾う。
 
 **`If-None-Match` が今の ETag と一致すれば、本体を作らずに `304 Not Modified` を返す**（pb-296。弱い比較。2.7）。タイムラインの定期取得（`GuiDesign.md` 5.15「定期取得と他の人の変更」）が、変わっていないときに数百件を送り直さないためである。**`view` を問わず同じに扱う**——ETag の材料は `view` ごとに違うので、別の `view` の ETag が一致することは無い。**一致を見るのは問い合わせを走らせて材料を集めた後である**（SQL は減らず、減るのは転送と JSON の組み立て。`Timeline.md` 5.7）。
 
@@ -2991,7 +2991,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
   "links": [
     { "id": "01K2...", "source_seq": 413, "target_seq": 414, "link_type": "FS", "lag_days": 0, "origin": "human" }
   ],
-  "baselines": { "count": 3, "latest_revision": 3 },
+  "baselines": { "count": 3, "latest_id": "01K9AB...", "latest_created_at": 1792788300000 },
   "page": 1, "per_page": 5000, "total": 52, "total_pages": 1
 }
 ```
@@ -3000,7 +3000,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 |---|---|
 | `epics[]` | **行になるエピック。** `timeline_epics` で選んだエピック（`parent` があればその内側だけ）。**バーが1本も無くても行を出す**——選んだ行が空であることも情報である。並びは `sort_key` の昇順（バックログで人が並べた順）。形は `seq`・`title`・`status`・`sort_key`・`closed_at` |
 | `links[]` | **`FS` だけ、両端が `items` に含まれ、同じエピックに属するもの。** 形は 9.2.6 と同じ。連鎖のずらし（9.17.1）が寄せるのは同じエピックの中の FS だけなので、それ以外は描かない |
-| `baselines` | **当初計画の版の件数と最新の番号だけ。** 版の中身は 9.17.3 で別に取る——版は書き換わらないので一度取れば足り、5秒ごとの応答に数百件の計画を載せ直さない。誰かが `[計画を保存]` を押すと `latest_revision` が変わり、画面は新しい版を取りに行く |
+| `baselines` | **当初計画の版の件数と、最後に保存した版の `id` と保存日時だけ**（無ければ `latest_id` も `latest_created_at` も `null`）。 版の中身は 9.17.3 で別に取る——版は書き換わらないので一度取れば足り、5秒ごとの応答に数百件の計画を載せ直さない。誰かが `[計画を保存]` を押すと `latest_id` が変わり、画面は一覧を取り直す |
 | `last_changed_by` | **そのチケットの `activity` の最新の行の実行者**（`actor_id` と記録時の表示名。無ければ `null`）。定期取得で変わったバーに「誰が変えたか」を添えるため（`GuiDesign.md` 5.15「定期取得と他の人の変更」）。`activity` の索引 `idx_activity_entity` で1件ずつ引ける |
 | 問い合わせの数 | プロジェクト1本（`timeline_epics`）・チケット1本・タグ1本・依存1本・エピック1本・版の集計1本・着手と最終変更者は `activity` から1本。**行ごとに引かない**（設計方針3） |
 | 時刻付きに限る理由 | 当日の進行を秒〜時の単位で描く画面で、終日の予定は幅が1日になり行を塞ぐ（`Timeline.md` 7章の T14）。**逆に、選んだエピックの配下に入れたままタイムラインから外したいチケットは終日にする**（pb-296 の CP3）。期間の設定は持たない |
@@ -4715,9 +4715,9 @@ GET /api/v1/projects/:key/agent-usage/runs
 |---|---|---|
 | `POST /api/v1/projects/:key/tickets/:seq/reschedule` | `ticket.edit` / `ticket.self_edit` / `ticket.plan.edit` の**いずれか**（`PATCH` 9.5.2 と同じ OR） | 9.17.2 |
 | `GET /api/v1/projects/:key/schedule-baselines` | `ticket.view` | 9.17.3 |
-| `GET /api/v1/projects/:key/schedule-baselines/:revision` | `ticket.view` | 9.17.3 |
+| `GET /api/v1/projects/:key/schedule-baselines/:id` | `ticket.view` | 9.17.3 |
 | `POST /api/v1/projects/:key/schedule-baselines` | **`project.edit`**（プロジェクト管理者以上） | 9.17.3 |
-| `DELETE /api/v1/projects/:key/schedule-baselines/:revision` | **`project.edit`** | 9.17.3 |
+| `DELETE /api/v1/projects/:key/schedule-baselines/:id` | **`project.edit`** | 9.17.3 |
 
 ### 9.17.1 連鎖のずらしの規則
 
@@ -4856,7 +4856,7 @@ If-Match: "4"
 
 **`[計画を保存]` を押すたびに、プロジェクトのタイムライン全体を1つの版として積む。** 表は `DbDesign.md` 6.32。版は書き換えない。消すことはできる（下記 `DELETE`）。
 
-**番号は消しても使い回さない。** `project_counter.last_baseline_revision` で採るので、v4 を消した後に保存した版は v5 になる（`DbDesign.md` 6.32「番号」）。
+**版は `id`（ULID）で指す。番号を持たない。** 画面は保存した日時（基準タイムゾーンで分まで）と `label` で名付ける（`DbDesign.md` 6.32「名前」）。消した版の `id` は二度と現れない。
 
 #### `POST /api/v1/projects/:key/schedule-baselines`
 
@@ -4873,7 +4873,7 @@ If-Match: "4"
 - **写すチケットは `view=timeline`（9.2.7）が絞り込みなしで返す集合と同じ**——`timeline_epics` で選んだエピックの配下の、時刻付きのもの（`DbDesign.md` 6.32「写すチケット」）。見る人の絞り込み（`parent` など）は受けない
 - **`If-Match` を要求しない。** 追加するだけで、上書きして失われるものが無い（2.8 の archive と同じ考え）
 - 写すチケットが 5,000件を超えれば `422`（`details[].code = "too_many"`）。版を切り詰めて保存しない
-- `201 Created`（`Location: /api/v1/projects/fes/schedule-baselines/4`）。応答は下の一覧の1行の形
+- `201 Created`（`Location: /api/v1/projects/fes/schedule-baselines/01K9AB...`）。応答は下の一覧の1行の形
 
 #### `GET /api/v1/projects/:key/schedule-baselines`
 
@@ -4882,22 +4882,22 @@ If-Match: "4"
 ```json
 {
   "items": [
-    { "revision": 3, "label": "当日朝", "item_count": 52,
+    { "id": "01K9AB...", "label": "当日朝", "item_count": 52,
       "created_by": { "id": "01K2...", "display_name": "鈴木" }, "created_at": 1792788300000 }
   ]
 }
 ```
 
-- **新しい順。ページネーションも `ETag` も持たない**（9.11 のタグと同じ扱い）。版を選ぶメニューは全件を並べ、1つのプロジェクトの版は数十に収まる
+- **`created_at` の新しい順**（同じ時刻なら `id` の降順）。**ページネーションも `ETag` も持たない**（9.11 のタグと同じ扱い）。版を選ぶメニューは全件を並べ、1つのプロジェクトの版は数十に収まる
 - `created_by.id` は保存した人が消えていれば `null`。`display_name` は記録時の名前（`DbDesign.md` 6.32）
 
-#### `GET /api/v1/projects/:key/schedule-baselines/:revision`
+#### `GET /api/v1/projects/:key/schedule-baselines/:id`
 
 **必要権限**：`ticket.view`
 
 ```json
 {
-  "revision": 3, "label": "当日朝", "item_count": 52,
+  "id": "01K9AB...", "label": "当日朝", "item_count": 52,
   "created_by": { "id": "01K2...", "display_name": "鈴木" }, "created_at": 1792788300000,
   "items": [
     { "ticket_seq": 413, "exists": true, "title": "ダンス部「Re:Start」",
@@ -4909,16 +4909,16 @@ If-Match: "4"
 ```
 
 - `exists` は**いまのプロジェクトに同じ番号のチケットが在るか**。`false` なら「版にあったが、いまは無い」（画面は影だけを描く）
-- **`ETag` を返し、`If-None-Match` で `304`**（版は書き換わらないので、ETag は `revision` と `id` から作る）
+- **`ETag` を返し、`If-None-Match` で `304`**（版は書き換わらないので、ETag は `id` だけから作る）
 - 版が無ければ `404 not_found`
 
-#### `DELETE /api/v1/projects/:key/schedule-baselines/:revision`
+#### `DELETE /api/v1/projects/:key/schedule-baselines/:id`
 
 **必要権限**：`project.edit`
 
 - **版とその行を物理削除する。** 戻せない。画面は破壊的操作の確認（`GuiDesign.md` 6.3）をはさむ
 - **`If-Match` を要求しない。** 版は書き換わらないので、見ていた版と消す版が食い違うことが無い
-- **番号は欠番として残る**（上記）。消した番号を指す URL（`?baseline=4`）は `404` になり、画面は最新の版で開き直す
+- 消した版を指す URL（`?baseline=<id>`）は `404` になり、画面は最後に保存した版で開き直す
 - `204 No Content`。版が無ければ `404 not_found`
 - `activity` にも監査ログにも記録しない（`DbDesign.md` 6.32。版はチケットの履歴ではない）
 
