@@ -755,7 +755,7 @@ ALTER TABLE access_token
 
 **`key` の形式検証をDBの `CHECK` にも置く。** アプリ側（`ApiDesign.md` 5.3）と二重になるが、URLとMCPエンドポイントに直結する値であり、不正値が入ると経路そのものが壊れるため。
 
-**`settings` で定義するキーは `repositories` と `gantt_snap_minutes` の2つ**である。
+**`settings` で定義するキーは `repositories`・`gantt_snap_minutes`・`views`・`timeline_snap_seconds` の4つ**である（後の2つは pb-296）。
 
 ```jsonc
 {
@@ -763,7 +763,9 @@ ALTER TABLE access_token
     { "name": "本体", "url": "https://github.com/org/project-backyard",
       "description": "サーバとフロントの実装。コミットに PB-123 を書く" }
   ],
-  "gantt_snap_minutes": 1440
+  "gantt_snap_minutes": 1440,
+  "views": { "gantt": true, "timeline": true },
+  "timeline_snap_seconds": 60
 }
 ```
 
@@ -777,6 +779,21 @@ ALTER TABLE access_token
 **列にせず `settings` に置くのは、用途がまだ「画面にリンクを出す」「MCP がプロジェクト情報として返す」に限られるためである。** どちらも値を読んで返すだけで、一意制約・並び替え・結合を必要としない。リポジトリ単位のトークン発行や横断検索（`Requirements.md` 10.9）が要件になった時点で、`project_repository` テーブルへ移す。**逆にテーブルを先に作ると、要らなかったときに戻せない。**
 
 **`gantt_snap_minutes` はガント（`GuiDesign.md` 5.14「編集」）のドラッグが吸着する単位（分）である。** 値は `1440`（日）・`60`・`30`・`15` のいずれかで、**無い・知らない値のときは `1440` として扱う**（pb-221）。設定はカレンダータブ（`GuiDesign.md` 5.9.6）から行う。**読むのはガントの画面だけで、SQL からは使わない**——`timezone`（集計の SQL が使うので列にした。6.23）とはここが違い、`repositories` と同じ理由で `settings` に置く。
+
+**`views` はメインメニューに出すビューの表示・非表示である**（pb-296。`GuiDesign.md` 4.3・5.9.1）。
+
+| キー | 値 | 無い・真偽でないとき |
+|---|---|---|
+| `views.gantt` | ガント（`GuiDesign.md` 5.14）をメニューに出すか | **`true`**（キーが無いプロジェクトは今と同じ見え方） |
+| `views.timeline` | タイムライン（`GuiDesign.md` 5.15）をメニューに出すか | **`false`**（イベント型のプロジェクトだけが使う） |
+
+- **バックログ・チケット検索は対象にしない。** チケットを扱う最小の入口なので消せないようにする
+- **知らないビューのキーは読み飛ばし、書いていないキーは上の既定で補う。** 値を真偽からオブジェクト（`{ "enabled": true, "variant": … }`）へ広げたくなっても、読む関数が両方を受ければ移行の DDL は要らない
+- **権限の境界ではない。** 隠したビューの URL を直接開けば開ける（`ticket.view` で守られている。`Timeline.md` 5.3 の T5）
+
+**`timeline_snap_seconds` はタイムライン（`GuiDesign.md` 5.15）のドラッグが吸着する単位（秒）である。** 値は `1`・`10`・`30`・`60`・`300`・`900` のいずれかで、**無い・知らない値のときは `60` として扱う**。`gantt_snap_minutes` と分ける——ガントは日が主で、タイムラインは秒から分が主である。
+
+**`timeline_snap_seconds` はサーバも読む。** 連鎖のずらし（`ApiDesign.md` 9.17）の**最小の長さ**と、`[ここで詰める]` の丸めに使う——画面とサーバが別の値を使うと、画面の試算とサーバの判定が食い違う。それでも列にしないのは、読むのが**要求1回に1度、プロジェクトの行から**で、SQL の条件や結合に使わないためである（`gantt_snap_minutes` と同じ判断基準）。**サーバも知らない値は `60` に倒し、保存は拒まない。**
 
 **検証はフロントのみで、サーバは JSON オブジェクトであることしか見ない**（`ApiDesign.md` 5.5）。`settings` は自由形式だからである。
 
@@ -879,6 +896,9 @@ CREATE TABLE ticket (
   start_at       timestamptz,               -- 0047。予定の開始（6.6.1）
   due_at         timestamptz,               -- 0047。予定の終わり（含まない）
   all_day        boolean NOT NULL DEFAULT true, -- 0047。終日か
+  no_overlap     boolean NOT NULL DEFAULT false, -- 0066。時間重複チェック（6.6.2）
+  start_pinned   boolean NOT NULL DEFAULT false, -- 0066。開始のアンカー
+  due_pinned     boolean NOT NULL DEFAULT false, -- 0066。終了のアンカー
   sprint_id      char(26) COLLATE "C",
   sort_key       text,                      -- LexoRank 方式の並び順
   staged_at      timestamptz,               -- 0015 で追加。NULL＝バックログ
@@ -903,7 +923,10 @@ CREATE TABLE ticket (
   CONSTRAINT uq_ticket_project_seq UNIQUE (project_id, seq),
   CONSTRAINT ck_ticket_not_self_parent CHECK (parent_id IS NULL OR parent_id <> id),
   CONSTRAINT ck_ticket_schedule CHECK (start_at IS NULL OR due_at IS NULL
-                                       OR start_at <= due_at)   -- 0047
+                                       OR start_at <= due_at),  -- 0047
+  CONSTRAINT ck_ticket_pins CHECK (
+        (NOT start_pinned OR start_at IS NOT NULL)
+    AND (NOT due_pinned   OR due_at   IS NOT NULL))             -- 0066
 );
 CREATE INDEX idx_ticket_project_status ON ticket (project_id, status_key);
 CREATE INDEX idx_ticket_assignee_open  ON ticket (assignee_id) WHERE closed_at IS NULL;
@@ -1021,6 +1044,36 @@ UPDATE ticket t SET
   due_at   = ((t.due_date + 1)::timestamp AT TIME ZONE p.timezone)
 FROM project p WHERE p.id = t.project_id;
 ```
+
+### 6.6.2 時間重複チェックとアンカー（0066）
+
+**タイムライン（`GuiDesign.md` 5.15）の連鎖のずらし（`ApiDesign.md` 9.17）が読む3つの印である。** pb-296。方式の比較は `Timeline.md` 5.1（T1 で「`ticket` の列」に確定）。
+
+```sql
+-- 0066_ticket_timeline_flags.sql
+-- +goose Up
+ALTER TABLE ticket
+  ADD COLUMN no_overlap   boolean NOT NULL DEFAULT false,
+  ADD COLUMN start_pinned boolean NOT NULL DEFAULT false,
+  ADD COLUMN due_pinned   boolean NOT NULL DEFAULT false,
+  ADD CONSTRAINT ck_ticket_pins CHECK (
+        (NOT start_pinned OR start_at IS NOT NULL)
+    AND (NOT due_pinned   OR due_at   IS NOT NULL));
+```
+
+| 列 | 画面の名前 | 意味 |
+|---|---|---|
+| `no_overlap` | 時間重複チェック | **同じエピックの中で、チェック付きどうしは時間が重ならない。** 連鎖のずらしの対象（「列」）になる。チェックの無いもの（準備・片付けなど裏の作業）は重なってよく、**連鎖で一切動かない** |
+| `start_pinned` | 開始のアンカー | 開始の時刻を動かさない。連鎖はここで止まるか、手前で吸収する |
+| `due_pinned` | 終了のアンカー | 終了の時刻を動かさない。連鎖で押されたら開始だけが動き、そのチケットが縮む |
+
+- **列にするのは、行ごとに必ず1つの値で、`PATCH`・変更履歴・`version` の道にそのまま乗るためである**（`Timeline.md` 5.1）。イベント型でないプロジェクトでも列を持つが、既定は `false` で何も変わらない
+- **アンカーは「その端の値がある」ことを CHECK で縛る**（`ck_ticket_pins`）。値の無い端を固定しても意味を持たない。アプリはこの CHECK より先に `422` を返す（`ApiDesign.md` 9.5.2）
+- **時間重複チェックには CHECK を掛けない。** 予定がそろっていないチケットや終日のチケットに付けてもよく、連鎖の対象から外れるだけである（作りかけを許す。6.6 の「子を持たない `story` を許す」と同じ考え）。**重なりそのものも DB では拒まない**——`PATCH` やエピックの付け替えで重なりうり、画面が衝突として描く（`GuiDesign.md` 5.15「アンカー・FS・衝突」）
+- **着手済み・完了は列にしない。** 「着手済みの開始は動かさない」「完了は両端とも動かさない」（`Timeline.md` 7.1 の T9）は**状態から導く暗黙のアンカー**で、アプリが連鎖のたびに判定する。列に写すと、状態を戻したときに外し忘れる
+- **索引を足さない。** 連鎖が読むのは1つのエピックの部分木（`idx_ticket_parent` で辿る）で、3列を条件に表全体を引く問い合わせは無い
+- **`DEFAULT false` の列追加は既存行を書き換えない**（PostgreSQL 11 以降）。前進のみ（5.3）
+- **変更は `activity` に記録する**（`field` は列名、値は `true` / `false`）。連鎖のずらしで動いた予定も記録する（`ApiDesign.md` 9.17.2「変更履歴」）
 
 ## 6.7 コメントと添付（0007）
 
@@ -2284,6 +2337,62 @@ CREATE UNIQUE INDEX uq_confirmation_open_checkpoint
 - **開いている checkpoint は委任ごとに1件**（`uq_confirmation_open_checkpoint`）。PB は状態が読まれたときに周期を判定して立てるので、
   同時に読まれても二重に立たないよう DB で守る。起点は直近の checkpoint を立てた時刻、無ければ最初に計画が反映された時刻
   （`GetCheckpointBase`）
+
+## 6.32 当初計画の版（0067）
+
+**タイムライン（`GuiDesign.md` 5.15）の `[計画を保存]` を押すたびに、プロジェクトのタイムライン全体を1つの版として積む。**
+pb-296。目的は、イベントの後に「**計画と実績の差**」と「**計画がどう遷移したか**」をビューの上で見ることである（`Timeline.md` 7.1 の T2〜T4）。
+API は `ApiDesign.md` 9.17.3。
+
+```sql
+-- 0067_schedule_baseline.sql
+-- +goose Up
+CREATE TABLE schedule_baseline (
+  id              char(26) COLLATE "C" PRIMARY KEY,
+  project_id      char(26) COLLATE "C" NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  revision        integer NOT NULL CHECK (revision >= 1),   -- プロジェクトごとの通し番号
+  label           text CHECK (label IS NULL OR length(label) BETWEEN 1 AND 100),
+                                                            -- 「リハーサル後」など。任意
+  item_count      integer NOT NULL CHECK (item_count >= 0),
+  created_by      char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  created_by_name text NOT NULL,                            -- 記録時の表示名（activity.actor_name と同じ）
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT uq_schedule_baseline_rev UNIQUE (project_id, revision)
+);
+
+CREATE TABLE schedule_baseline_item (
+  baseline_id  char(26) COLLATE "C" NOT NULL
+               REFERENCES schedule_baseline(id) ON DELETE CASCADE,
+  ticket_seq   integer NOT NULL,     -- 番号は使い回さない（6.4.1）ので、消えた後も指せる
+  title        text    NOT NULL,
+  epic_seq     integer NOT NULL,     -- 保存した時点の所属エピック（行）
+  epic_title   text    NOT NULL,     -- エピックが消えても行の見出しを出せる
+  start_at     timestamptz,
+  due_at       timestamptz,
+  all_day      boolean NOT NULL,
+  no_overlap   boolean NOT NULL,
+  start_pinned boolean NOT NULL,
+  due_pinned   boolean NOT NULL,
+  PRIMARY KEY (baseline_id, ticket_seq),
+  CONSTRAINT ck_schedule_baseline_item_when CHECK (start_at IS NOT NULL OR due_at IS NOT NULL)
+);
+```
+
+| 論点 | 決めたこと |
+|---|---|
+| 版の単位 | **プロジェクトのタイムライン全体を1版**とする。画面で行を絞っていても全体を写す。エピック単位にしない（`Timeline.md` 7.1。方式案 5.2 の `epic_id` 単位の形は採らなかった） |
+| 写すチケット | **所属エピック**（祖先をたどって最初に見つかるエピック。`ApiDesign.md` 9.5.1 の `epic`）**を持ち、開始か終了の少なくとも一方を持つもの。** エピック自身は写さない。終日・時間重複チェックの有無・状態・棚に戻ったかを問わない——**どれを描くかは画面が決める**ので、描き方の規則が後で変わっても版が読める |
+| 写す値 | **バーを描くのに要る値だけ**——題名・所属エピック・開始・終了・終日か・時間重複チェック・アンカー（`Timeline.md` 7.1）。状態・担当・本文は写さない（実績は版ではなく、いまのチケットと遷移の履歴が持つ） |
+| 番号 | `revision` はプロジェクトごとに 1 から。採番は `MAX(revision) + 1` を同じトランザクションで挿入し、**同時に押されて `uq_schedule_baseline_rev` に当たったら、サーバが1回だけ採番し直す** |
+| 上限 | **1版 5,000件**（`ApiDesign.md` 9.2.6 と同じ）。超えるプロジェクトは保存を拒む（`ApiDesign.md` 9.17.3）。黙って切ると「全体の版」の約束が崩れる |
+| 書き換え | **しない。** 行の追加だけで、`updated_at` も `version` も持たない。**版を消す口も作らない**（`Timeline.md` 7.1 に無い。誤って保存した版は、次の版を保存すれば既定の比較相手から外れる） |
+| 消えたチケット | **`ticket_id` を持たず、`ticket_seq` で指す。** チケットは物理削除（4.6）だが番号は使い回さないので、いまの `ticket` に同じ `seq` が無ければ「版にあったが、いまは無い」と分かる。外部キーを張らないので、チケットを消しても版の行は書き換わらない |
+| 保存した人 | `created_by` は `ON DELETE SET NULL`、表示は `created_by_name`（記録時の表示名）で出す。人を消しても「誰が保存した版か」が読める |
+| 索引 | `uq_schedule_baseline_rev` が `(project_id, revision)` の一覧と1件の取得を兼ねる。行は主キーで版ごとに引く |
+
+**`activity` には記録しない。** `activity` はチケットの履歴で、版はチケットではなくプロジェクトの記録である。**版の表そのものが「いつ・誰が・何を」を持つ**ので、別に写さない。
+
+**バックアップの往復のテスト（9.1.1）に2表を含める。** 表の一覧はカタログから引くので書き出しには自動で載るが、**往復で版の行が欠けないことはテストで確かめる**（9.1.1「代償を隠さない」）。
 
 # 7. 初期データ（0010）
 
