@@ -308,3 +308,44 @@ test('対象から外したエピック・消したエピックも、版を重�
   await expect(page.locator('.tl-row')).toHaveCount(1)
   await expect(page.locator('.bar[data-seq="420"]')).toHaveCount(0)
 })
+
+test('載せるエピックが空でも、保存した版と比較の影は読める。版も行も無ければ空状態', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 800 })
+  await mockApi(page, { theme: 'light', epics: [], outside: true })
+  // 重ねるとき（既定は最後に保存した版）
+  await page.goto('/p/fes/timeline?zoom=hour')
+  await expect(page.locator('.tl-row')).toHaveCount(3)
+  await expect(page.locator('.tl-row .gonelbl', { hasText: '旧ステージの前説' })).toBeVisible()
+  // 何も選んでいないことは、行の上の帯で伝え続ける（全体を隠さない）
+  await expect(page.locator('.tl-select-band')).toContainText('タイムラインに載せるエピックを選んでください')
+  // 版を送るとき
+  await page.getByRole('button', { name: '版を送る', exact: true }).click()
+  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
+  await expect(page.locator('.bar[data-seq="431"]')).toBeVisible()
+  await expect(page.locator('.bar[data-seq="420"]')).toBeVisible()
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-mock-empty-target-step.png` })
+  // 最後の「いま」でも、前の版との比較の影は読める
+  await page.locator('.tl-notice button[aria-label="次の版"]').click()
+  await expect(page.locator('.tl-notice')).toContainText('いま（当日の予定）')
+  await expect(page.locator('.tl-row .gonelbl', { hasText: '旧ステージの前説' })).toBeVisible()
+  await page.locator('.tl-notice button', { hasText: '終える' }).click()
+  // 重ねない（版も行も無い）ときは、これまでどおりの空状態
+  await page.goto('/p/fes/timeline?zoom=hour&baseline=none')
+  await expect(page.getByText('タイムラインに載せるエピックを選んでください')).toBeVisible()
+  await expect(page.locator('.tl-body')).toBeHidden()
+})
+
+test('設定に残った不在のエピック番号も、版の行の情報で読める。parent で外せば出さない', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 800 })
+  await mockApi(page, { theme: 'light', epics: [301, 303, 309], outside: true })
+  await page.goto('/p/fes/timeline?zoom=hour')
+  await page.getByRole('button', { name: '版を送る', exact: true }).click()
+  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
+  await expect(page.locator('.bar[data-seq="431"]')).toHaveCount(1)
+  await expect(page.locator('.tl-row', { hasText: '旧ステージ' }).locator('.tl-outside')).toHaveCount(1)
+  await page.goto('/p/fes/timeline?zoom=hour&parent=301')
+  await page.getByRole('button', { name: '版を送る', exact: true }).click()
+  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
+  await expect(page.locator('.bar[data-seq="431"]')).toHaveCount(0)
+  await expect(page.locator('.tl-row')).toHaveCount(1)
+})

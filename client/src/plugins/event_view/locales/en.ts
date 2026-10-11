@@ -123,4 +123,7 @@ export const messages: Record<string, string> = {
   "{value0} 保存": "Saved {value0}",
   "対象外": "Not on timeline",
   "載せるエピックに入っていない行です。保存した版の計画だけを出しています": "This epic is not on the timeline. Only the plan saved in the version is shown",
+  "保存した版の計画だけを出しています": "Only plans saved in versions are shown",
+  "このエピックはもうありません。保存した版の計画だけを出しています": "This epic no longer exists. Only the plan saved in the version is shown",
+  "無いエピック": "Missing epic",
 }

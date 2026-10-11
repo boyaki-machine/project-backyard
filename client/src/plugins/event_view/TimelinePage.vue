@@ -43,6 +43,8 @@ import {
   ROW_PAD,
   barOf,
   baselineRows,
+  emptyStateOf,
+  rowSourceItems,
   baselineStamps,
   canCompact,
   canExtendToNow,
@@ -591,15 +593,26 @@ const liveBars = computed<Bar[]>(() => tickets.value.map((t) => barOf(t, now.val
  * 版の表示で読む行（`model.ts` の `baselineRows`）。重ねる版、版を送るときはその版と前の版。
  * **対象から外したエピック・消したエピックも、版に保存した行の情報で出す。**
  */
-const rowSourceItems = computed<BaselineItem[]>(() => {
-  if (step.value !== null) {
-    const vs = versionsAsc.value
-    const k = step.value
-    return [...(itemsOf(vs[k]?.id ?? null)?.values() ?? []), ...(k > 0 ? (itemsOf(vs[Math.min(k, vs.length) - 1]?.id ?? null)?.values() ?? []) : [])]
-  }
-  return [...(itemsOf(selectedBaselineId.value)?.values() ?? [])]
-})
-const rowSet = computed(() => baselineRows(epics.value, rowSourceItems.value, timelineEpics.value, rowFilter.value, epicChoices.all.value))
+const rowItems = computed<BaselineItem[]>(() =>
+  rowSourceItems<BaselineItem>(
+    step.value,
+    versionsAsc.value.map((v) => v.id),
+    step.value === null ? selectedBaselineId.value : null,
+    (id) => baselineCache.value.get(id)?.items,
+  ),
+)
+/**
+ * 行を決める材料がそろったか。いまの行・エピックの候補・重ねる版の中身のどれかが未着のあいだは、
+ * 版の行を「無いエピック」と取り違えたり、空状態を一瞬出したりしないよう、版の行を足さない
+ */
+const rowsReady = computed(
+  () =>
+    loaded.value &&
+    epicChoices.loaded.value &&
+    baselineListLoaded.value &&
+    (step.value !== null || selectedBaselineId.value === null || baselineCache.value.has(selectedBaselineId.value)),
+)
+const rowSet = computed(() => baselineRows(epics.value, rowsReady.value ? rowItems.value : [], timelineEpics.value, rowFilter.value, epicChoices.all.value))
 
 /** 表示する中身。当日（いまの予定）か、版を送っているあいだはその版 */
 const display = computed<{ mode: 'day' | 'step'; bars: Bar[]; base: Map<number, BaselineItem> | null; gone: Bar[] }>(() => {
@@ -908,7 +921,7 @@ interface RowView {
   row: RowLayout
   bars: BarView[]
   frames: { key: string; x: number; w: number; y: number; title: string }[]
-  gone: { key: string; x: number; w: number; y: number; title: string }[]
+  gone: { key: string; x: number; w: number; y: number; title: string; lx: number; lw: number }[]
   coll: { x: number; w: number }[]
   fs: { key: string; joined: boolean; x: number; w: number; y: number; title: string }[]
   lateExt: { key: string; x: number; w: number; y: number; title: string }[]
@@ -948,7 +961,9 @@ const rowViews = computed<RowView[]>(() =>
     }
     const gone = r.gone.map((g) => {
       const { x, w } = spanX(g.s, g.e)
-      return { key: keyOf(g), x, w, y: laneTop(r.lane.get(keyOf(g)) ?? 0), title: g.title }
+      // 文字は影の幅に収め、見えている範囲の左端より前から始まる影は文字を左端へ寄せる（バーと同じ）
+      const inset = Math.max(0, Math.min(scrollLeft.value - x, w - 60))
+      return { key: keyOf(g), x, w, y: laneTop(r.lane.get(keyOf(g)) ?? 0), title: g.title, lx: x + 4 + inset, lw: Math.max(0, w - 8 - inset) }
     })
     const mode = display.value.mode
     const coll = mode === 'day' ? collisions(r.bars).map((c) => ({ x: X(c.s), w: Math.max(2, X(c.e) - X(c.s)) })) : []
@@ -1409,7 +1424,9 @@ const pollWarn = computed(() => failCount.value >= 3)
 const truncated = computed(() => total.value > tickets.value.length)
 const otherVisible = computed(() => (other.value && tickNow.value - other.value.at < OTHER_MS ? other.value : null))
 
-const noEpics = computed(() => projectStore.current !== null && timelineEpics.value.length === 0)
+/** 空状態（5.15「何も選んでいないとき」）。版の行があれば行は出し、上に促す帯を置く */
+const emptyState = computed(() => emptyStateOf(projectStore.current !== null && rowsReady.value, timelineEpics.value.length, rowSet.value.epics.length))
+const noEpics = computed(() => emptyState.value === 'select')
 
 const stepName = computed(() => {
   if (step.value === null) return ''
@@ -1716,6 +1733,13 @@ watch(projectKey, (key, prev) => {
       </template>
     </EmptyState>
 
+    <p v-if="!error && emptyState === 'band'" class="tl-select-band" role="status">
+      <span>{{ $ui('タイムラインに載せるエピックを選んでください') }}</span>
+      <span class="muted">{{ $ui('保存した版の計画だけを出しています') }}</span>
+      <button v-if="canProjectEdit" type="button" class="secondary small" @click="openEpicPicker">{{ $ui('載せるエピックを選ぶ') }}</button>
+      <span v-else class="muted">{{ $ui('プロジェクト管理者に依頼してください') }}</span>
+    </p>
+
     <div v-show="!error && !noEpics" class="tl-body" :class="{ loading: loading && !loaded }">
       <div ref="scroller" class="tl-scroller" @scroll="onScroll" @wheel="onWheel">
         <div class="tl-canvas" :style="{ width: `${LW + trackW}px` }">
@@ -1745,7 +1769,7 @@ watch(projectKey, (key, prev) => {
             <div class="tl-rlabel" :style="{ width: `${LW}px`, height: `${rv.row.height}px` }">
               <span class="sleeve" :style="sleeveStyle(rv.row.epic.seq)" aria-hidden="true"></span>
               <div class="rn" :title="rv.row.epic.title">{{ rv.row.epic.title }}</div>
-              <div class="rm"><span v-if="rowSet.outside.has(rv.row.epic.seq)" class="tl-outside" :title="$ui('載せるエピックに入っていない行です。保存した版の計画だけを出しています')">{{ $ui('対象外') }}</span>pb-{{ rv.row.epic.seq }} · {{ $ui('本番 {value0}', { value0: rv.nChk }) }}<template v-if="rv.nFree"> · {{ $ui('裏 {value0}', { value0: rv.nFree }) }}</template></div>
+              <div class="rm"><span v-if="rowSet.kinds.get(rv.row.epic.seq) === 'outside'" class="tl-outside" :title="$ui('載せるエピックに入っていない行です。保存した版の計画だけを出しています')">{{ $ui('対象外') }}</span><span v-else-if="rowSet.kinds.get(rv.row.epic.seq) === 'missing'" class="tl-outside" :title="$ui('このエピックはもうありません。保存した版の計画だけを出しています')">{{ $ui('無いエピック') }}</span>pb-{{ rv.row.epic.seq }} · {{ $ui('本番 {value0}', { value0: rv.nChk }) }}<template v-if="rv.nFree"> · {{ $ui('裏 {value0}', { value0: rv.nFree }) }}</template></div>
               <template v-if="rv.row.lanes > 1">
                 <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H / 2 - 5}px` }">{{ $ui('本番') }}</span>
                 <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H * 1.5 - 5}px` }">{{ $ui('裏') }}{{ rv.row.lanes > 2 ? `×${rv.row.lanes - 1}` : '' }}</span>
@@ -1762,7 +1786,7 @@ watch(projectKey, (key, prev) => {
               ></div>
               <template v-for="g in rv.gone" :key="`x${g.key}`">
                 <div class="base gone" :style="{ left: `${g.x}px`, width: `${g.w}px`, top: `${g.y}px`, height: `${BAR_H}px` }" :title="$ui('版にあったが、いまは無い：{value0}', { value0: g.title })"></div>
-                <div class="gonelbl" :style="{ left: `${g.x + 4}px`, top: `${g.y + BAR_H / 2 - 8}px` }">{{ $ui('消えた：{value0}', { value0: g.title }) }}</div>
+                <div class="gonelbl" :style="{ left: `${g.lx}px`, maxWidth: `${g.lw}px`, top: `${g.y + BAR_H / 2 - 8}px` }" :title="$ui('消えた：{value0}', { value0: g.title })">{{ $ui('消えた：{value0}', { value0: g.title }) }}</div>
               </template>
               <div
                 v-for="(c, i) in rv.coll"
@@ -2408,6 +2432,18 @@ watch(projectKey, (key, prev) => {
   text-overflow: ellipsis;
 }
 
+.tl-select-band {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--pb-space-3);
+  margin: 0;
+  padding: 4px 16px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--pb-line);
+  background: var(--pb-surface);
+}
+
 .tl-outside {
   margin-right: 4px;
   padding: 0 3px;
@@ -2846,6 +2882,8 @@ watch(projectKey, (key, prev) => {
 }
 
 .gonelbl {
+  overflow: hidden;
+  text-overflow: ellipsis;
   position: absolute;
   font-size: 10.5px;
   font-style: italic;

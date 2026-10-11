@@ -15,6 +15,8 @@ import {
   fsMarks,
   layoutRows,
   baselineRows,
+  emptyStateOf,
+  rowSourceItems,
   mergeNewer,
   mergeTimelineEpics,
   readSnapSeconds,
@@ -258,11 +260,10 @@ test.describe('保留した一覧と、版の行', () => {
       { epic_seq: 301, epic_title: '体育館', all_day: false },
       { epic_seq: 309, epic_title: '旧ステージ', all_day: false },
       { epic_seq: 302, epic_title: '中庭（版）', all_day: false },
-      { epic_seq: 303, epic_title: '本部', all_day: false },
       { epic_seq: 310, epic_title: '終日だけ', all_day: true },
     ]
     const known = [{ seq: 302, title: '中庭ステージ', sort_key: '0|b' }]
-    // 対象は 301・303。303 は parent で外れて current に無い
+    // 対象は 301・303（303 の行は版に無い）
     const r = baselineRows([ep(301, '体育館')], items, [301, 303], [], known)
     expect(r.epics.map((e) => [e.seq, e.title])).toEqual([
       [301, '体育館'],
@@ -273,5 +274,81 @@ test.describe('保留した一覧と、版の行', () => {
     // 絞り込み中は、parent に書かれた対象外の行だけ
     expect(baselineRows([ep(301, '体育館')], items, [301, 303], [301], known).epics.map((e) => e.seq)).toEqual([301])
     expect(baselineRows([ep(301, '体育館')], items, [301, 303], [301, 309], known).epics.map((e) => e.seq)).toEqual([301, 309])
+  })
+})
+
+test.describe('表示する行の規則（版・載せるエピック・parent の組み合わせ）', () => {
+  // 実在するエピック 301・302・303（並びもこの順）。309 は消した。310 は終日の行しか無い
+  const known = [
+    { seq: 301, title: '体育館', sort_key: '0|a' },
+    { seq: 302, title: '中庭', sort_key: '0|b' },
+    { seq: 303, title: '本部', sort_key: '0|c' },
+  ]
+  const item = (epic: number, title: string, all_day = false) => ({ epic_seq: epic, epic_title: title, all_day })
+  const versions: Record<string, ReturnType<typeof item>[]> = {
+    V1: [item(301, '体育館'), item(302, '中庭'), item(309, '旧ステージ'), item(310, '終日だけ', true)],
+    V2: [item(301, '体育館'), item(303, '本部')],
+    VE: [],
+  }
+  /** サーバの `epics[]`：載せるエピック ∩ parent ∩ 実在（ApiDesign 9.2.7） */
+  const server = (target: number[], parent: number[]): TlEpic[] =>
+    known
+      .filter((k) => target.includes(k.seq) && (parent.length === 0 || parent.includes(k.seq)))
+      .map((k) => ({ seq: k.seq, title: k.title, status: st('todo'), sort_key: k.sort_key, closed_at: null }))
+
+  type Case = {
+    name: string
+    target: number[]
+    parent?: number[]
+    saved: string[] // 保存した版（古い順）
+    view: { mode: 'none' } | { mode: 'overlay'; id?: string } | { mode: 'step'; k: number }
+    rows: number[]
+    kinds?: Record<number, 'outside' | 'missing'>
+    empty: 'select' | 'band' | null
+  }
+  const cases: Case[] = [
+    { name: '対象全部・版0件', target: [301, 302, 303], saved: [], view: { mode: 'overlay' }, rows: [301, 302, 303], empty: null },
+    { name: '対象空・版0件', target: [], saved: [], view: { mode: 'overlay' }, rows: [], empty: 'select' },
+    { name: '対象空・版を重ねない', target: [], saved: ['V1', 'V2'], view: { mode: 'none' }, rows: [], empty: 'select' },
+    { name: '対象空・最後の版を重ねる', target: [], saved: ['V1', 'V2'], view: { mode: 'overlay' }, rows: [301, 303], kinds: { 301: 'outside', 303: 'outside' }, empty: 'band' },
+    { name: '対象空・行が0件の版を重ねる', target: [], saved: ['VE'], view: { mode: 'overlay' }, rows: [], empty: 'select' },
+    { name: '対象空・送る：最初の版（前の版なし）', target: [], saved: ['V1', 'V2'], view: { mode: 'step', k: 0 }, rows: [301, 302, 309], kinds: { 301: 'outside', 302: 'outside', 309: 'missing' }, empty: 'band' },
+    { name: '対象空・送る：2番目（前の版あり）', target: [], saved: ['V1', 'V2'], view: { mode: 'step', k: 1 }, rows: [301, 302, 303, 309], empty: 'band' },
+    { name: '対象空・送る：最後の「いま」は前の版で比べる', target: [], saved: ['V1', 'V2'], view: { mode: 'step', k: 2 }, rows: [301, 303], empty: 'band' },
+    { name: '対象一部・消したエピックと対象外の版の行', target: [301], saved: ['V1'], view: { mode: 'overlay' }, rows: [301, 302, 309], kinds: { 302: 'outside', 309: 'missing' }, empty: null },
+    { name: '対象一部・行が0件の版', target: [301], saved: ['VE'], view: { mode: 'overlay' }, rows: [301], empty: null },
+    { name: '設定に不在の番号が残る', target: [301, 303, 309], saved: ['V1'], view: { mode: 'overlay' }, rows: [301, 303, 302, 309], kinds: { 302: 'outside', 309: 'missing' }, empty: null },
+    { name: '設定に不在の番号・送る', target: [301, 303, 309], saved: ['V1', 'V2'], view: { mode: 'step', k: 0 }, rows: [301, 303, 302, 309], kinds: { 309: 'missing' }, empty: null },
+    { name: 'parent で外した行は版にあっても出さない', target: [301, 303, 309], parent: [301], saved: ['V1'], view: { mode: 'overlay' }, rows: [301], empty: null },
+    { name: 'parent で外した行は送るときも出さない', target: [], parent: [301], saved: ['V1', 'V2'], view: { mode: 'step', k: 1 }, rows: [301], empty: 'band' },
+    { name: 'parent が不在の番号を指す・版にその行あり', target: [301, 303, 309], parent: [309], saved: ['V1'], view: { mode: 'overlay' }, rows: [309], kinds: { 309: 'missing' }, empty: null },
+    { name: 'parent が不在の番号を指す・版を重ねない', target: [301, 303, 309], parent: [309], saved: ['V1'], view: { mode: 'none' }, rows: [], empty: null },
+    { name: 'parent が対象外の実在エピックを指す', target: [301], parent: [302], saved: ['V1'], view: { mode: 'overlay' }, rows: [302], kinds: { 302: 'outside' }, empty: null },
+    { name: '対象全部・送る：最初の版で消したエピックも読める', target: [301, 302, 303], saved: ['V1', 'V2'], view: { mode: 'step', k: 0 }, rows: [301, 302, 303, 309], kinds: { 309: 'missing' }, empty: null },
+    { name: '対象全部・版なし（重ねない）', target: [301, 302, 303], saved: ['V1'], view: { mode: 'none' }, rows: [301, 302, 303], empty: null },
+    { name: '重ねる版を明示（古い版）', target: [301], saved: ['V1', 'V2'], view: { mode: 'overlay', id: 'V1' }, rows: [301, 302, 309], empty: null },
+  ]
+
+  for (const c of cases) {
+    test(c.name, () => {
+      const parent = c.parent ?? []
+      const latest = c.saved[c.saved.length - 1] ?? null
+      const step = c.view.mode === 'step' ? c.view.k : null
+      const selected = c.view.mode === 'overlay' ? (c.view.id ?? latest) : null
+      const items = rowSourceItems(step, c.saved, selected, (id) => versions[id])
+      const r = baselineRows(server(c.target, parent), items, c.target, parent, known)
+      expect(r.epics.map((e) => e.seq)).toEqual(c.rows)
+      for (const [seq, kind] of Object.entries(c.kinds ?? {})) expect(r.kinds.get(Number(seq))).toBe(kind)
+      // いまの行には印を付けない
+      for (const e of server(c.target, parent)) expect(r.kinds.has(e.seq)).toBe(false)
+      // 消したエピックの見出しは版に保存した題名
+      if (c.rows.includes(309)) expect(r.epics.find((e) => e.seq === 309)!.title).toBe('旧ステージ')
+      expect(r.epics.some((e) => e.seq === 310)).toBe(false)
+      expect(emptyStateOf(true, c.target.length, r.epics.length)).toBe(c.empty)
+    })
+  }
+
+  test('設定を読む前は空状態を出さない', () => {
+    expect(emptyStateOf(false, 0, 0)).toBeNull()
   })
 })
