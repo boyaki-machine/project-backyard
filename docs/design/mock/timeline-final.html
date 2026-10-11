@@ -1,0 +1,1259 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>タイムライン 最終案</title>
+<style>
+/* ── PB のベーストークン（GuiDesign 8.3 / 8.4 の hex。gantt.html から写した） ── */
+:root {
+  color-scheme: light;
+  --pb-1:#fafcfe; --pb-2:#f3f7fb; --pb-3:#e9eff6; --pb-4:#dde7ef; --pb-5:#d2dde8; --pb-6:#c4d2df;
+  --pb-7:#b3c4d3; --pb-8:#95aec4; --pb-9:#2b77b0; --pb-10:#1368a1; --pb-11:#39688e; --pb-12:#102231;
+  --pb-danger:#bd4542; --pb-danger-text:#963633;
+  --pb-warning:#f9ce32; --pb-warning-bg:#fdf4d8; --pb-warning-border:#ebd696;
+  --pb-ai:#8259bf;
+  --pb-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Noto Sans Mono', monospace;
+  --pb-font: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', Meiryo, sans-serif;
+  --pb-hue: 245;
+  /* エピックの袖章（GuiDesign 5.4.4） */
+  --pb-epic-0:#b66c02; --pb-epic-1:#3b4fa5; --pb-epic-2:#07bde5; --pb-epic-3:#97ba4f;
+  --pb-epic-4:#902e5c; --pb-epic-5:#ee83af; --pb-epic-6:#575e01; --pb-epic-7:#01976d;
+  --g-min-op: .45; --g-sub-op: .5; --g-rule-op: .3;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --pb-1:#0b1014; --pb-2:#10171d; --pb-3:#162029; --pb-4:#1c2833; --pb-5:#21303c; --pb-6:#283a49;
+    --pb-7:#344a5d; --pb-8:#446179; --pb-9:#4993cd; --pb-10:#61a5dd; --pb-11:#86b0d5; --pb-12:#e5f0fa;
+    --pb-danger:#db6c66; --pb-danger-text:#ef958e;
+    --pb-warning:#e9c025; --pb-warning-bg:#2d240b; --pb-warning-border:#554614;
+    --pb-ai:#a07cdb;
+    --pb-epic-0:#d68729; --pb-epic-1:#526ac3; --pb-epic-2:#57daff; --pb-epic-3:#b3d76d;
+    --pb-epic-4:#ae4976; --pb-epic-5:#ffaacb; --pb-epic-6:#707902; --pb-epic-7:#1bb685;
+    --g-min-op: .55; --g-sub-op: .6; --g-rule-op: .4;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --pb-1:#0b1014; --pb-2:#10171d; --pb-3:#162029; --pb-4:#1c2833; --pb-5:#21303c; --pb-6:#283a49;
+  --pb-7:#344a5d; --pb-8:#446179; --pb-9:#4993cd; --pb-10:#61a5dd; --pb-11:#86b0d5; --pb-12:#e5f0fa;
+  --pb-danger:#db6c66; --pb-danger-text:#ef958e;
+  --pb-warning:#e9c025; --pb-warning-bg:#2d240b; --pb-warning-border:#554614;
+  --pb-ai:#a07cdb;
+  --pb-epic-0:#d68729; --pb-epic-1:#526ac3; --pb-epic-2:#57daff; --pb-epic-3:#b3d76d;
+  --pb-epic-4:#ae4976; --pb-epic-5:#ffaacb; --pb-epic-6:#707902; --pb-epic-7:#1bb685;
+  --g-min-op: .55; --g-sub-op: .6; --g-rule-op: .4;
+}
+
+/* 派生トークン（他の変数を参照するものは :root で宣言しない。GuiDesign 5.14「実装の落とし穴」） */
+.page {
+  --g-bar: var(--pb-9);
+  --g-bar-line: var(--pb-9);
+  --g-bar-fill: color-mix(in srgb, var(--g-bar) 26%, transparent);
+  --g-bar-glow: none;
+  --g-done-fill: var(--pb-3);
+  --g-done-line: var(--pb-7);
+  --g-hdr-bg: var(--pb-2);
+  --g-dep: var(--pb-8);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .page {
+    --g-bar: var(--pb-10);
+    --g-bar-line: color-mix(in srgb, var(--pb-10) 70%, var(--pb-12));
+    --g-bar-fill: color-mix(in srgb, var(--g-bar) 42%, transparent);
+    --g-bar-glow: drop-shadow(0 0 2.5px color-mix(in srgb, var(--g-bar) 65%, transparent));
+    --g-done-fill: var(--pb-4);
+    --g-done-line: var(--pb-8);
+    --g-dep: color-mix(in srgb, var(--pb-11) 62%, var(--pb-1));
+  }
+}
+:root[data-theme="dark"] .page {
+  --g-bar: var(--pb-10);
+  --g-bar-line: color-mix(in srgb, var(--pb-10) 70%, var(--pb-12));
+  --g-bar-fill: color-mix(in srgb, var(--g-bar) 42%, transparent);
+  --g-bar-glow: drop-shadow(0 0 2.5px color-mix(in srgb, var(--g-bar) 65%, transparent));
+  --g-done-fill: var(--pb-4);
+  --g-done-line: var(--pb-8);
+  --g-dep: color-mix(in srgb, var(--pb-11) 62%, var(--pb-1));
+}
+
+/* ── ページの枠 ── */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--pb-1); color: var(--pb-12); font-family: var(--pb-font); font-size: 14px; line-height: 1.6; }
+.page { height: 100vh; min-width: 1180px; display: flex; flex-direction: column; gap: 10px; padding: 12px 16px; background: var(--pb-1); color: var(--pb-12); }
+.mono { font-family: var(--pb-font-mono); font-variant-numeric: tabular-nums; }
+.muted { color: var(--pb-11); }
+.intro { display: flex; flex-direction: column; gap: 8px; flex: none; }
+.intro .eyebrow { font: 11px var(--pb-font-mono); letter-spacing: .04em; color: var(--pb-11); }
+.intro h1 { font-size: 17px; font-weight: 600; margin: 0 0 2px; line-height: 1.35; text-wrap: balance; }
+.intro ol { margin: 0; padding-left: 1.5em; font-size: 12.5px; color: var(--pb-11); line-height: 1.6; max-width: 120ch; }
+.intro ol li::marker { font: 11px var(--pb-font-mono); }
+.intro ol b { color: var(--pb-12); font-weight: 600; }
+.controls { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; }
+.ctl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--pb-11); }
+.seg { display: inline-flex; border: 1px solid var(--pb-7); border-radius: 6px; overflow: hidden; background: var(--pb-1); flex: none; }
+.seg button { font: inherit; font-size: 12px; color: var(--pb-12); background: none; border: 0; padding: 3px 10px; cursor: pointer; border-left: 1px solid var(--pb-6); white-space: nowrap; }
+.seg button:first-child { border-left: 0; }
+.seg button:hover { background: var(--pb-4); }
+.seg button[aria-pressed="true"] { background: var(--pb-9); color: var(--pb-1); }
+.btn { font: inherit; font-size: 12px; color: var(--pb-12); background: var(--pb-1); border: 1px solid var(--pb-7); border-radius: 6px; padding: 3px 10px; cursor: pointer; white-space: nowrap; flex: none; }
+.btn:hover { background: var(--pb-4); }
+.btn.pri { background: var(--pb-9); border-color: var(--pb-9); color: var(--pb-1); }
+.btn.pri:hover { background: var(--pb-10); }
+.btn.sq { width: 28px; padding: 3px 0; text-align: center; }
+.btn[disabled] { opacity: .45; cursor: default; }
+:is(.seg button, .btn, select, .chip):focus-visible { outline: 2px solid var(--pb-8); outline-offset: 1px; }
+select { font: inherit; font-size: 12px; color: var(--pb-12); background: var(--pb-1); border: 1px solid var(--pb-7); border-radius: 6px; padding: 2px 4px; }
+.clock { font-size: 13px; color: var(--pb-12); min-width: 5.2em; }
+
+/* ── 画面のモック ── */
+.app { flex: 1 1 auto; min-height: 440px; display: grid; grid-template-columns: 56px minmax(0, 1fr); border: 1px solid var(--pb-7);
+  border-radius: 8px; overflow: hidden; background: var(--pb-1); color: var(--pb-12); font-size: 13px; line-height: 1.4; position: relative; }
+.rail { background: var(--pb-2); border-right: 1px solid var(--pb-6); display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 8px; }
+.rail span { width: 36px; height: 32px; display: grid; place-items: center; border-radius: 6px; color: var(--pb-11); font-size: 15px; }
+.rail span.on { background: var(--pb-5); color: var(--pb-12); }
+.rail hr { width: 28px; border: 0; border-top: 1px solid var(--pb-6); margin: 4px 0; }
+.content { display: grid; grid-template-rows: 48px 38px minmax(0, 1fr) 26px; min-width: 0; min-height: 0; }
+.pagehdr { display: flex; align-items: center; gap: 8px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--pb-6); min-width: 0; }
+.pagehdr h2 { font-size: 18px; font-weight: 600; margin: 0 6px 0 0; white-space: nowrap; }
+.sp { flex: 1 1 auto; min-width: 8px; }
+.vsep { width: 1px; height: 20px; background: var(--pb-6); flex: none; margin: 0 2px; }
+.chip { font: inherit; font-size: 12px; color: var(--pb-12); background: var(--pb-1); border: 1px solid var(--pb-7); border-radius: 6px; padding: 3px 8px; cursor: pointer; white-space: nowrap; }
+.chip:hover { background: var(--pb-4); }
+.chip.on { border-color: var(--pb-9); box-shadow: inset 0 0 0 1px var(--pb-9); }
+.chip .k { color: var(--pb-11); }
+.rowsum { font-size: 12px; color: var(--pb-11); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 260px; }
+.rowsum b { color: var(--pb-12); font-weight: 600; }
+.poll { font-size: 11px; color: var(--pb-11); white-space: nowrap; min-width: 6.5em; text-align: right; }
+.poll.warn { color: var(--pb-danger-text); }
+.dd { position: relative; flex: none; }
+.panel { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 260px; background: var(--pb-1); border: 1px solid var(--pb-7); border-radius: 8px;
+  box-shadow: 0 8px 24px oklch(0.2 0.03 245 / .18); padding: 8px; font-size: 12.5px; }
+.panel.right { left: auto; right: 0; }
+.panel .ph { font-size: 11px; color: var(--pb-11); padding: 2px 4px 6px; border-bottom: 1px solid var(--pb-6); margin-bottom: 4px; }
+.panel label { display: flex; align-items: center; gap: 8px; padding: 4px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.panel label:hover { background: var(--pb-3); }
+.panel .pf { display: flex; gap: 6px; padding-top: 6px; margin-top: 4px; border-top: 1px solid var(--pb-6); }
+.panel .vrow { display: grid; grid-template-columns: auto auto 1fr; gap: 2px 8px; align-items: baseline; white-space: normal; }
+.panel .vrow small { grid-column: 2 / 4; color: var(--pb-11); font-size: 11px; }
+.panel .sw { display: inline-block; width: 8px; height: 14px; border-radius: 1px; flex: none; }
+
+.notice { display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--pb-6); font-size: 12.5px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.notice .msg { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.notice .msg b { font-weight: 600; }
+.notice .lbl { font: 600 11px var(--pb-font-mono); letter-spacing: .04em; color: var(--pb-11); flex: none; }
+.notice.trial { background: color-mix(in srgb, var(--pb-9) 9%, var(--pb-1)); }
+.notice.fail { background: color-mix(in srgb, var(--pb-danger) 9%, var(--pb-1)); }
+.notice.fail .lbl, .notice .dz { color: var(--pb-danger-text); }
+.notice.step { background: var(--pb-2); }
+.notice .ex { display: flex; gap: 6px; align-items: center; flex: none; }
+.notice .ex .btn { font-size: 11.5px; padding: 2px 8px; }
+.notice .other { margin-left: auto; color: var(--pb-11); font-size: 12px; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.notice .other mark { background: var(--pb-warning); color: var(--pb-12); border-radius: 3px; padding: 0 4px; }
+.statusbar { border-top: 1px solid var(--pb-6); font-size: 11px; color: var(--pb-11); display: flex; align-items: center; gap: 16px; padding: 0 12px; background: var(--pb-2); white-space: nowrap; overflow: hidden; }
+.statusbar kbd { font-family: var(--pb-font-mono); font-size: 10.5px; border: 1px solid var(--pb-7); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--pb-12); background: var(--pb-1); }
+.statusbar select { font-size: 11px; padding: 0 2px; }
+.statusbar .r { margin-left: auto; }
+
+/* ── 本体 ── */
+.scroller { overflow: auto; position: relative; min-height: 0; overscroll-behavior: contain; }
+.canvas { position: relative; }
+.axis { position: sticky; top: 0; z-index: 6; display: flex; background: var(--g-hdr-bg); border-bottom: 1px solid var(--pb-7); }
+.corner { position: sticky; left: 0; z-index: 7; flex: none; background: var(--g-hdr-bg); border-right: 1px solid var(--pb-7); font-size: 11px; color: var(--pb-11); padding: 4px 10px 4px 16px; line-height: 1.35; overflow: hidden; }
+.corner b { color: var(--pb-12); font-weight: 600; }
+.axtrack { position: relative; flex: none; overflow: hidden; }
+.ax-maj { position: absolute; top: 3px; font: 600 11px var(--pb-font-mono); color: var(--pb-12); white-space: nowrap; padding-left: 4px; }
+.ax-maj.lft { transform: translateX(-100%); padding: 0 4px 0 0; }
+.ax-min { position: absolute; bottom: 3px; font: 10.5px var(--pb-font-mono); color: var(--pb-11); white-space: nowrap; padding-left: 3px; }
+.ax-tk { position: absolute; bottom: 0; height: 6px; width: 1px; background: var(--pb-7); }
+.ax-tk.M { height: 100%; background: var(--pb-8); }
+.nowtag { position: absolute; bottom: 2px; transform: translateX(-50%); font: 600 10.5px var(--pb-font-mono); color: var(--pb-1); background: var(--g-bar); border-radius: 3px; padding: 0 5px; white-space: nowrap; z-index: 2; }
+.grid { position: absolute; pointer-events: none; overflow: visible; }
+.grid .f { stroke: var(--pb-6); stroke-width: 1; stroke-dasharray: 1 3; opacity: var(--g-sub-op); }
+.grid .m { stroke: var(--pb-6); stroke-width: 1; opacity: var(--g-min-op); }
+.grid .M { stroke: var(--pb-7); stroke-width: 1; }
+.past { position: absolute; pointer-events: none; display: none; }
+.nowline { position: absolute; z-index: 2; width: 0; border-left: 1.5px solid var(--g-bar); pointer-events: none; filter: var(--g-bar-glow); }
+#ghosts { position: absolute; z-index: 3; pointer-events: none; }
+
+.row { display: flex; position: relative; border-bottom: 1px solid color-mix(in srgb, var(--pb-6) 70%, transparent); }
+.rlabel { position: sticky; left: 0; z-index: 4; flex: none; background: var(--pb-1); border-right: 1px solid var(--pb-7); padding: 7px 10px 6px 18px; overflow: hidden; }
+.rlabel .sleeve { position: absolute; left: 0; top: 0; bottom: 0; width: 8px; }
+.rlabel .rn { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rlabel .rm { font: 10.5px var(--pb-font-mono); color: var(--pb-11); white-space: nowrap; }
+.rlabel .lanetag { position: absolute; right: 8px; font: 10px var(--pb-font-mono); color: var(--pb-11); line-height: 1; white-space: nowrap; }
+.track { position: relative; flex: none; }
+.subzone { position: absolute; left: 0; right: 0; pointer-events: none; border-top: 1px dotted color-mix(in srgb, var(--pb-7) 80%, transparent); }
+
+/* バー（共通の骨組み。見た目は各案で上書きする） */
+.bar { position: absolute; height: var(--bh); border-radius: 3px; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.bar .in { position: relative; display: block; width: fit-content; max-width: 100%; height: 100%; overflow: hidden; padding: 3px 7px; }
+.bar .l1, .bar .l2 { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 15px; }
+.bar .l1 { font-size: 12.5px; font-weight: 600; }
+.bar .l2 { font-size: 11px; }
+.bar.w-s .in { padding: 3px 4px; }
+.bar.w-xs .in { padding: 3px 0; width: 100%; text-align: center; }
+.bar.w-xs .l2, .bar.w-xs .tt { display: none; }
+.bar.w-0 .in { display: none; }
+.bar .hE, .bar .hS { position: absolute; top: -2px; bottom: -2px; width: 9px; cursor: ew-resize; z-index: 2; }
+.bar .hE { right: -5px; }
+.bar .hS { left: -5px; }
+.bar .hE::after, .bar .hS::after { content: ''; position: absolute; top: 8px; bottom: 8px; left: 3px; width: 3px; border-left: 1px solid var(--pb-11); border-right: 1px solid var(--pb-11); opacity: 0; }
+.bar:hover .hE::after, .bar:hover .hS::after { opacity: .9; }
+.bar.sel { outline: 2px solid var(--pb-9); outline-offset: 2px; }
+.bar.flash { animation: flash 2.4s ease-out both; }
+@keyframes flash { 0%, 35% { box-shadow: 0 0 0 3px var(--pb-warning), 0 0 14px var(--pb-warning); } 100% { box-shadow: 0 0 0 3px transparent; } }
+.who { position: absolute; transform: translateY(-100%); font-size: 10.5px; background: var(--pb-warning); color: #1d1a10; border-radius: 3px; padding: 0 5px; white-space: nowrap; z-index: 5; pointer-events: none; animation: whofade 2.4s ease-out both; }
+@keyframes whofade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+/* アンカー（杭）：端から上下にはみ出す縦線と、上下の短い横棒 */
+.pin { position: absolute; top: -6px; bottom: -6px; width: 3px; background: var(--pin, var(--pb-12)); z-index: 3; pointer-events: none; }
+.pin::before, .pin::after { content: ''; position: absolute; left: -3px; width: 9px; height: 2px; background: inherit; }
+.pin::before { top: 0; } .pin::after { bottom: 0; }
+.pin.s { left: -1px; } .pin.e { right: -1px; }
+/* FS の印 */
+.fs { position: absolute; pointer-events: none; z-index: 3; }
+.fs.j { width: 9px; height: 9px; transform: translate(-50%, -50%) rotate(45deg); background: var(--pb-1); border: 1.5px solid var(--g-dep); }
+.fs.ln { height: 0; border-top: 1.5px solid var(--g-dep); transform: translateY(-50%); }
+.fs.ln::after { content: ''; position: absolute; right: -1px; top: -5px; border: 4px solid transparent; border-left: 6px solid var(--g-dep); border-right: 0; }
+/* 押している：終了からいままでの延長 */
+.lateext { position: absolute; height: 0; border-top: 2px dashed var(--pb-danger); pointer-events: none; z-index: 2; }
+.lateext::after { content: ''; position: absolute; right: -1px; top: -7px; height: 9px; border-right: 2px solid var(--pb-danger); }
+/* 衝突 */
+.coll { position: absolute; pointer-events: none; z-index: 2; background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--pb-danger) 45%, transparent) 0 2px, transparent 2px 6px); border: 1px solid var(--pb-danger); }
+/* 実績の細線（着手→完了） */
+.act { position: absolute; height: 2px; pointer-events: none; background: var(--pb-11); border-radius: 1px; }
+.act::before, .act::after { content: ''; position: absolute; top: -2px; width: 1px; height: 6px; background: inherit; }
+.act::before { left: 0; } .act::after { right: 0; }
+/* 当初計画の影（形は各案で上書きする） */
+.base { position: absolute; pointer-events: none; }
+.gonelbl { position: absolute; font-size: 10.5px; color: var(--pb-11); white-space: nowrap; pointer-events: none; font-style: italic; }
+.newtag { font: 600 9.5px var(--pb-font-mono); border: 1px dashed currentColor; border-radius: 3px; padding: 0 3px; margin-right: 4px; color: var(--pb-11); vertical-align: 1px; }
+
+/* 試算の影 */
+.ghost { position: absolute; border: 2px dashed var(--pb-10); background: color-mix(in srgb, var(--pb-9) 20%, transparent); border-radius: 3px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--pb-1) 70%, transparent); }
+.bar.tr-from { opacity: .35; }
+.ghost.src { border-style: solid; }
+.ghost.block { border-color: var(--pb-danger); background: color-mix(in srgb, var(--pb-danger) 14%, transparent); }
+.ghost.sug { border-color: var(--pb-11); border-style: dotted; background: color-mix(in srgb, var(--pb-11) 10%, transparent); }
+.gl { position: absolute; font: 600 10.5px/14px var(--pb-font-mono); color: var(--pb-1); background: var(--pb-10); border-radius: 3px; padding: 0 4px; white-space: nowrap; transform: translate(4px, -50%); }
+.gl.block { background: var(--pb-danger); }
+.gl.sug { background: var(--pb-11); }
+
+/* 吹き出し（詳細ペインの代わり。題名と操作だけ） */
+.pop { position: absolute; z-index: 40; width: 340px; background: var(--pb-1); border: 1px solid var(--pb-7); border-radius: 8px; box-shadow: 0 10px 28px oklch(0.2 0.03 245 / .22); padding: 10px 12px; font-size: 12.5px; }
+.pop .pt { font-weight: 600; font-size: 13.5px; line-height: 1.45; margin: 2px 0 6px; }
+.pop .pid { font: 11px var(--pb-font-mono); color: var(--pb-11); }
+.pop dl { display: grid; grid-template-columns: 6.5em 1fr; gap: 2px 8px; margin: 0 0 8px; }
+.pop dt { color: var(--pb-11); font-size: 11.5px; }
+.pop dd { margin: 0; }
+.pop .acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.pop .note { margin-top: 8px; font-size: 11px; color: var(--pb-11); border-top: 1px dashed var(--pb-6); padding-top: 6px; }
+.pop .x { position: absolute; right: 6px; top: 4px; border: 0; background: none; color: var(--pb-11); cursor: pointer; font-size: 14px; }
+.dz { color: var(--pb-danger-text); }
+@media (prefers-reduced-motion: reduce) { .bar.flash, .who { animation-duration: .01s; } }
+
+</style>
+<style>
+/* ── 案B：状態を有彩色で塗り分ける。当初計画は下にずらした影の塊 ── */
+.page {
+  --b-todo-bg: var(--pb-1);        --b-todo-line: var(--pb-8);
+  --b-prog-bg: oklch(0.87 0.065 235); --b-prog-line: oklch(0.55 0.14 240);
+  --b-late-bg: oklch(0.89 0.085 70);  --b-late-line: oklch(0.68 0.17 52);
+  --b-wait-line: var(--pb-danger);
+  --b-done-bg: oklch(0.93 0.03 165);  --b-done-line: oklch(0.70 0.06 165);
+  --b-sub-bg: color-mix(in srgb, var(--pb-11) 7%, transparent);
+  --b-shadow: oklch(0.50 0.03 245 / .26);
+  --b-shadow-dev: oklch(0.50 0.03 245 / .42);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .page {
+    --b-todo-bg: var(--pb-2);
+    --b-prog-bg: oklch(0.37 0.08 238);  --b-prog-line: oklch(0.72 0.13 235);
+    --b-late-bg: oklch(0.40 0.09 58);   --b-late-line: oklch(0.79 0.15 62);
+    --b-done-bg: oklch(0.29 0.03 165);  --b-done-line: oklch(0.50 0.06 165);
+    --b-sub-bg: color-mix(in srgb, var(--pb-11) 9%, transparent);
+    --b-shadow: oklch(0.80 0.02 245 / .16);
+    --b-shadow-dev: oklch(0.80 0.02 245 / .30);
+  }
+}
+:root[data-theme="dark"] .page {
+  --b-todo-bg: var(--pb-2);
+  --b-prog-bg: oklch(0.37 0.08 238);  --b-prog-line: oklch(0.72 0.13 235);
+  --b-late-bg: oklch(0.40 0.09 58);   --b-late-line: oklch(0.79 0.15 62);
+  --b-done-bg: oklch(0.29 0.03 165);  --b-done-line: oklch(0.50 0.06 165);
+  --b-sub-bg: color-mix(in srgb, var(--pb-11) 9%, transparent);
+  --b-shadow: oklch(0.80 0.02 245 / .16);
+  --b-shadow-dev: oklch(0.80 0.02 245 / .30);
+}
+.bar { --line: var(--b-todo-line); background: var(--b-todo-bg); border: 1px solid color-mix(in srgb, var(--line) 55%, transparent); border-left: 4px solid var(--line); border-radius: 4px; color: var(--pb-12); }
+.bar.st-prog { --line: var(--b-prog-line); background: var(--b-prog-bg); }
+.bar.late { --line: var(--b-late-line); background: var(--b-late-bg); }
+.bar.wait { --line: var(--b-wait-line); }
+.bar.st-done { --line: var(--b-done-line); background: var(--b-done-bg); color: var(--pb-11); }
+.bar.st-plan { --line: var(--pb-8); background: var(--pb-2); border-style: dashed; border-left-style: solid; }
+/* 重複チェック無し：細い左罫と、斜めの地で「裏の作業」に沈める */
+.bar.free { border-left-width: 2px; border-style: solid; background-image: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--line) 16%, transparent) 0 1px, transparent 1px 6px); }
+.bar.free .l1 { font-weight: 500; }
+.bar.free.st-prog { background-color: color-mix(in srgb, var(--b-prog-bg) 45%, var(--pb-1)); }
+.bar.free.st-done { background-color: color-mix(in srgb, var(--b-done-bg) 55%, var(--pb-1)); }
+.bar.w-xs { border-left-width: 3px; }
+.bar .sl { display: inline-block; font-size: 10.5px; font-weight: 600; line-height: 13px; padding: 0 5px; border-radius: 7px; background: var(--line); color: var(--pb-1); margin-right: 6px; vertical-align: 0; }
+.bar.st-todo:not(.wait) .sl { background: none; color: var(--pb-11); border: 1px solid var(--pb-7); padding: 0 4px; }
+.bar .rest { color: var(--pb-11); }
+.bar.late .rest, .bar.wait .rest { color: var(--pb-danger-text); font-weight: 600; }
+.bar .dv { font: 600 10.5px var(--pb-font-mono); margin-left: 6px; padding: 0 4px; border-radius: 3px; background: color-mix(in srgb, var(--pb-12) 10%, transparent); }
+.bar .dv.up { background: color-mix(in srgb, var(--b-late-line) 28%, transparent); }
+.bar.w-s .rest { display: none; }
+.pin { --pin: var(--pb-12); }
+/* 当初計画（CP2 c）：案A の方式。ずれたバーにだけ、計画の位置に細い破線の枠（外側に 4px 張り出す） */
+.base { border: 1px dashed var(--pb-11); border-radius: 5px; margin: -4px 0 0 -4px; padding: 4px; box-sizing: content-box; opacity: .9; }
+.base.same { display: none; }
+.base.gone { border-color: var(--pb-8); background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--pb-8) 25%, transparent) 0 1px, transparent 1px 6px); }
+/* 版を送るとき（CP2 e）：前の版の位置は点線の枠だけ */
+.page[data-mode="step"] .base { border-style: dotted; border-width: 1.5px; }
+.subzone { background: var(--b-sub-bg); border-top: 0; }
+.lateext { border-top-color: var(--b-late-line); }
+.lateext::after { border-right-color: var(--b-late-line); }
+.rlabel .sleeve { width: 8px; }
+.legend { display: flex; gap: 10px; align-items: center; }
+.legend i { display: inline-block; width: 18px; height: 10px; vertical-align: -1px; margin-right: 3px; border-radius: 2px; border-left: 3px solid; }
+.legend i.t { background: var(--b-todo-bg); border-color: var(--b-todo-line); outline: 1px solid var(--pb-7); outline-offset: -1px; }
+.legend i.p { background: var(--b-prog-bg); border-color: var(--b-prog-line); }
+.legend i.l { background: var(--b-late-bg); border-color: var(--b-late-line); }
+.legend i.d { background: var(--b-done-bg); border-color: var(--b-done-line); }
+.legend i.s { background: none; border: 1px dashed var(--pb-11); }
+</style>
+</head>
+<body>
+<script>
+window.VARIANT = {
+  key: '最終', name: 'CP2 で合意', LW: 210, AH: 44, BAR_H: 36, LANE: 46, majPx: 120, minPx: 48, noDiffCounts: true, eyebrow: '最終案（CP2）', baseWord: '破線の枠（ずれたものだけ）',
+  title: '最終案：状態の色（案B）＋ずれたものだけ破線の枠（案A）',
+  points: [
+    '<b>位置づけ：</b>CP2 で合意した最終案のモック。<b>正本は設計書</b>（GuiDesign の新しい節、pb-296）。案A〜C は入口に「検討した案」として残す。',
+    '<b>見た目：</b>状態は案B の有彩色（プラグインなので本体の色設計の外）。当初計画は案A の方式で、ずれたバーにだけ破線の枠。',
+    '<b>振る舞い：</b>［ここで詰める］は早く終わった分だけ前へ。裏の重なりは行を高くして全部入れる。画面は流さない。版を送ると前の版の点線の枠だけ。',
+  ],
+  laneMain: '本番', laneSub: '裏',
+  legend: '<span class="legend"><span><i class="t"></i>未着手</span><span><i class="p"></i>進行中</span><span><i class="l"></i>押している</span><span><i class="d"></i>完了</span><span><i class="s"></i>当初計画</span></span>',
+  bar(it, c) {
+    const nw = c.isNew ? '<span class="newtag">計画外</span>' : '';
+    let sl = { todo: '未着手', prog: '進行中', done: '完了', plan: '計画' }[it.st], rest = '';
+    if (c.late) { sl = '押している'; rest = `+${c.dur(c.late)}`; }
+    else if (c.wait) { sl = '開始待ち'; rest = `+${c.dur(c.wait)}`; }
+    else if (it.st === 'prog') rest = `残り ${c.dur(it.e - c.now)}`;
+    else if (it.st === 'todo') rest = `${c.fmtT(it.s, c.sec)}–${c.fmtT(it.e, c.sec)}`;
+    else if (it.st === 'done') rest = c.mode === 'retro' ? `${c.fmtT(it.s)}–${c.fmtT(it.e)}` : `${c.fmtT(it.ca ?? it.e)} 終了`;
+    else rest = `${c.fmtT(it.s)}–${c.fmtT(it.e)}`;
+    let dv = '';
+    if (c.dev) { const d = Math.abs(c.dev.de) >= 60 ? c.dev.de : c.dev.ds; dv = `<span class="dv${d > 0 ? ' up' : ''}" title="当初計画から 始${c.sdur(c.dev.ds)} 終${c.sdur(c.dev.de)}">${Math.abs(c.dev.de) >= 60 ? '終' : '始'}${c.sshort(d)}分</span>`; }
+    return `<span class="l1"><span class="tt">${nw}${esc(it.title)}</span></span><span class="l2"><span class="sl">${sl}</span><span class="rest">${rest}</span>${dv}</span>`;
+  },
+};
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+</script>
+<script>
+/* タイムラインのモック：共通の中身（データ・連鎖のずらしの計算・描画・操作）。
+   3案とも同じものを埋め込み、見た目の違いは window.VARIANT（文言・寸法・バーの中身）と CSS で出す。 */
+(function () {
+'use strict';
+const V = window.VARIANT;
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const H = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const hm = (h, m = 0, s = 0) => h * 3600 + m * 60 + s;
+const T0 = hm(9, 0), T1 = hm(17, 20);
+const DAY = '2026-10-24(土)';
+const ROWPAD = 5;
+const ZOOMS = { sec: 4, min: 8 / 60, hour: 220 / 3600 };   // px / 秒（秒：1秒＝4px、分：1分＝8px、時：1時間＝220px）
+
+/* ── 時刻と長さの書き方 ── */
+const p2 = n => String(n).padStart(2, '0');
+function fmtT(t, sec) { t = Math.round(t); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60; return sec ? `${h}:${p2(m)}:${p2(s)}` : `${h}:${p2(m)}`; }
+function dur(d) { d = Math.round(Math.abs(d)); if (d < 60) return `${d}秒`; const h = Math.floor(d / 3600), m = Math.floor(d % 3600 / 60), s = d % 60; let r = h ? `${h}時間` : ''; if (m) r += `${m}分`; if (s && !h) r += `${s}秒`; return r || '0分'; }
+function sdur(d) { return (d > 0 ? '+' : d < 0 ? '−' : '±') + dur(d); }
+function sshort(d) { const m = Math.round(d / 60); return (m > 0 ? '+' : m < 0 ? '−' : '±') + Math.abs(m); }
+
+/* ── デモデータ：文化祭の当日 ── */
+const EPICS = [
+  { id: 'gym', seq: 301, name: '体育館ステージ' },
+  { id: 'yard', seq: 302, name: '中庭ステージ' },
+  { id: 'c2a', seq: 303, name: '2-A お化け屋敷' },
+  { id: 'shop', seq: 304, name: '模擬店 3-B 焼きそば' },
+  { id: 'cafe', seq: 305, name: '1-C 喫茶「ひだまり」' },
+  { id: 'hq', seq: 306, name: '本部' },
+  { id: 'bc', seq: 307, name: '放送' },
+];
+EPICS.forEach((e, i) => { e.n = i; });
+const TK = []; let SEQ = 410;
+function tk(epic, id, title, s, e, st, o = {}) {
+  TK.push({ id, seq: SEQ++, epic, title, s, e, st, chk: o.chk !== false, ps: !!o.ps, pe: !!o.pe,
+    sa: o.sa ?? (st !== 'todo' ? s : null), ca: o.ca ?? (st === 'done' ? e : null) });
+}
+tk('gym', 'g0', '椅子並べ・客席の養生', hm(9), hm(9, 40), 'done', { chk: false, ca: hm(9, 45) });
+tk('gym', 'g1', '開会式', hm(9, 30), hm(9, 50), 'done', { sa: hm(9, 31), ca: hm(9, 52) });
+tk('gym', 'g2', '吹奏楽部 演奏', hm(10), hm(10, 40), 'done', { sa: hm(10, 1), ca: hm(10, 41) });
+tk('gym', 'g3', 'ダンス部「Re:Start」', hm(10, 50), hm(11, 30), 'prog', { sa: hm(10, 52) });
+tk('gym', 'g4', '演劇部「銀河鉄道の夜 ―― 二枚の切符とひとつの約束」', hm(11, 30), hm(12, 20), 'todo');
+tk('gym', 'g5', '照明・音響チェック（軽音楽部への入れ替え）', hm(12, 15), hm(12, 45), 'todo', { chk: false });
+tk('gym', 'g6', '軽音楽部 ライブ', hm(12, 30), hm(13, 20), 'todo');
+tk('gym', 'g7', '有志バンド「放課後クレッシェンド」', hm(13, 30), hm(14, 10), 'todo');
+tk('gym', 'g8', '書道部 大筆パフォーマンス', hm(14, 20), hm(15, 10), 'todo');
+tk('gym', 'g9', '閉会式・表彰', hm(15, 30), hm(16), 'todo', { ps: true });
+tk('gym', 'g10', '片付け・床の清掃', hm(15, 50), hm(16, 40), 'todo', { chk: false });
+
+tk('yard', 'y0', 'テント設営', hm(9), hm(9, 50), 'done', { chk: false, ca: hm(9, 55) });
+tk('yard', 'y1', '音響セッティング', hm(9, 40), hm(10, 20), 'done', { chk: false, ca: hm(10, 15) });
+tk('yard', 'y2', '書道部 屋外揮毫', hm(10, 30), hm(11), 'done', { ca: hm(10, 58) });
+tk('yard', 'y3', 'もちつき大会', hm(11), hm(11, 45), 'done', { sa: hm(11, 2), ca: hm(11, 35) });
+tk('yard', 'y4', 'クイズ大会「中庭ミリオネア」', hm(12), hm(12, 40), 'todo');
+tk('yard', 'y5', '吹奏楽部 屋外ミニコンサート', hm(12, 40), hm(13, 10), 'todo');
+tk('yard', 'y6', '合唱部', hm(13, 30), hm(14), 'todo');
+tk('yard', 'y7', 'ビンゴ大会', hm(14, 30), hm(15, 30), 'todo', { pe: true });
+tk('yard', 'y8', '机・テントの撤収', hm(15, 20), hm(16, 10), 'todo', { chk: false });
+
+tk('c2a', 'a0', '衣装・メイク', hm(9, 15), hm(10), 'done', { chk: false });
+tk('c2a', 'a1', 'お化け屋敷 第1部', hm(10), hm(12), 'prog');
+tk('c2a', 'a2', '休憩・小道具の修繕', hm(12), hm(12, 30), 'todo');
+tk('c2a', 'a3', 'お化け屋敷 第2部', hm(12, 30), hm(14, 30), 'todo');
+tk('c2a', 'a4', 'お化け屋敷 第3部（最終回）', hm(14, 30), hm(15, 50), 'todo', { pe: true });
+tk('c2a', 'a5', '交代要員のメイク直し', hm(11, 50), hm(12, 40), 'todo', { chk: false });
+tk('c2a', 'a6', '暗幕の撤去と教室の原状回復', hm(15, 50), hm(16, 40), 'todo', { chk: false });
+
+tk('shop', 's0', '仕込み（キャベツ 20玉）', hm(9), hm(10), 'done', { chk: false });
+tk('shop', 's1', '販売（午前）', hm(10), hm(12, 30), 'prog', { sa: hm(10, 5) });
+tk('shop', 's2', '鉄板の清掃・補充', hm(12, 30), hm(13), 'todo');
+tk('shop', 's3', '販売（午後）', hm(13), hm(15, 30), 'todo');
+tk('shop', 's4', '売上集計と火の始末', hm(15, 30), hm(16), 'todo', { pe: true });
+tk('shop', 's5', '食材の追加購入（近所のスーパーまで買い出し、領収書を本部へ提出）', hm(11), hm(11, 50), 'prog', { chk: false, sa: hm(11, 3) });
+tk('shop', 's6', 'ガスボンベ交換', hm(12, 30), hm(12, 45), 'todo', { chk: false });
+
+tk('cafe', 'k0', '開店準備', hm(9, 30), hm(10), 'done');
+tk('cafe', 'k1', '営業（午前）', hm(10), hm(12), 'prog');
+tk('cafe', 'k2', '休憩', hm(12), hm(12, 30), 'todo');
+tk('cafe', 'k3', '営業（午後）', hm(12, 30), hm(15), 'todo');
+tk('cafe', 'k4', '閉店・片付け', hm(15), hm(15, 40), 'todo');
+tk('cafe', 'k5', 'ケーキの受け取り（家庭科室から）', hm(11, 30), hm(11, 45), 'done', { chk: false, ca: hm(11, 40) });
+
+tk('hq', 'h0', '開場前ミーティング', hm(9), hm(9, 20), 'done');
+tk('hq', 'h1', '開場', hm(10), hm(10, 5), 'done');
+tk('hq', 'h2', '来場者数の中間集計', hm(12), hm(12, 15), 'todo');
+tk('hq', 'h3', '落とし物の整理と掲示', hm(14), hm(14, 30), 'todo');
+tk('hq', 'h4', '閉場の確認', hm(15, 55), hm(16), 'todo', { ps: true });
+tk('hq', 'h5', '振り返り会', hm(16, 30), hm(17), 'todo');
+tk('hq', 'h6', '校内巡回', hm(10), hm(16), 'prog', { chk: false });
+tk('hq', 'h7', '救護当番（午前）', hm(10), hm(13), 'prog', { chk: false });
+tk('hq', 'h8', '救護当番（午後）', hm(13), hm(16), 'todo', { chk: false });
+
+tk('bc', 'b0', '開場アナウンス', hm(10), hm(10, 2), 'done');
+tk('bc', 'b1', '迷子・呼び出しの放送', hm(10), hm(16), 'prog', { chk: false });
+tk('bc', 'b2', 'お昼の放送「DJ タイム」', hm(12), hm(12, 40), 'todo');
+tk('bc', 'b3', '体育館ステージの中継', hm(13), hm(14, 40), 'todo');
+tk('bc', 'b4', '閉場アナウンス', hm(15, 55), hm(16), 'todo', { ps: true, pe: true });
+
+const LINKS = [['g3', 'g4'], ['y4', 'y5'], ['a1', 'a2'], ['a2', 'a3']];   // FS（同じ行の中だけ）
+
+/* 当初計画の版（スナップショット）。残すのはバーを描くのに要る値だけ（Timeline.md 7.1 の T2〜T4） */
+function snap(list) { const m = {}; for (const t of list) m[t.id] = { id: t.id, epic: t.epic, title: t.title, s: t.s, e: t.e, chk: t.chk, ps: t.ps, pe: t.pe }; return m; }
+function edit(m, id, s, e) { m[id] = { ...m[id], s, e }; }
+function add(m, id, epic, title, s, e, o = {}) { m[id] = { id, epic, title, s, e, chk: o.chk !== false, ps: !!o.ps, pe: !!o.pe }; }
+const v3 = snap(TK);
+edit(v3, 'g2', hm(10), hm(10, 30)); edit(v3, 'g3', hm(10, 40), hm(11, 20)); edit(v3, 'g4', hm(11, 20), hm(12, 10));
+edit(v3, 'y3', hm(11), hm(11, 45)); delete v3.s5;
+const v2 = JSON.parse(JSON.stringify(v3));
+edit(v2, 'g7', hm(13, 40), hm(14, 20)); edit(v2, 'y4', hm(12), hm(12, 30)); edit(v2, 'y5', hm(12, 30), hm(13));
+add(v2, 'gx', 'gym', '校長先生の挨拶', hm(15, 15), hm(15, 25)); delete v2.k2;
+edit(v2, 'k1', hm(10), hm(12, 30)); edit(v2, 'k3', hm(12, 30), hm(15));
+const v1 = JSON.parse(JSON.stringify(v2));
+edit(v1, 'g4', hm(13, 30), hm(14, 20)); edit(v1, 'g6', hm(11, 30), hm(12, 20)); delete v1.g7;
+add(v1, 'gy', 'gym', 'ミス・ミスターコンテスト', hm(12, 30), hm(13, 20));
+edit(v1, 'a1', hm(10), hm(11, 30)); edit(v1, 'a2', hm(11, 30), hm(12)); edit(v1, 'a3', hm(12), hm(14)); edit(v1, 'a4', hm(14), hm(15, 50));
+delete v1.y2; edit(v1, 'y6', hm(13, 10), hm(13, 40));
+
+/* ── 状態 ── */
+const qs = new URLSearchParams(location.search);
+const S = {
+  tk: TK, links: LINKS,
+  versions: [
+    { n: 1, at: '10/01 18:12', who: '佐藤（実行委員長）', label: '全体計画', snap: v1 },
+    { n: 2, at: '10/20 19:40', who: '佐藤（実行委員長）', label: 'リハーサル後', snap: v2 },
+    { n: 3, at: '10/24 08:45', who: '鈴木（本部）', label: '当日朝', snap: v3 },
+  ],
+  now: hm(11, 42), playing: true, speed: 1, snap: 60,
+  pps: ZOOMS.min, role: 'admin', rows: new Set(EPICS.map(e => e.id)),
+  base: 2, step: null, retro: false, trial: null, drag: null, pop: null, showSug: false,
+  flash: new Map(), pollOn: true, sincePoll: 0, pollCount: 0, pollIdx: 0, lastOther: null, savedMsg: null,
+  follow: !!V.follow, lastMin: -1,
+};
+if (qs.get('rows')) S.rows = new Set(qs.get('rows').split(',').filter(id => EPICS.some(e => e.id === id)));
+if (qs.get('zoom') && ZOOMS[qs.get('zoom')]) S.pps = ZOOMS[qs.get('zoom')];
+const byId = id => S.tk.find(t => t.id === id);
+const epicOf = id => EPICS.find(e => e.id === id);
+const X = t => (t - T0) * S.pps;
+const TW = () => (T1 - T0) * S.pps;
+const nowS = () => Math.floor(S.now);
+const ceilSnap = t => Math.ceil(t / S.snap) * S.snap;
+
+/* ── 連鎖のずらし（Timeline.md 5.4 と 7.1。サーバが行う計算を簡易に写したもの） ──
+   列＝同じ行の、時間重複チェック付きのチケット（開始の昇順）。チェック無しは動かさない。
+   ・延びたら隙間を吸収し、足りない分だけ後ろを押す（隙間は保たない。7.1 T7）
+   ・縮んだら後ろは動かさない。ただし同じ行の FS の後続は、先行の終了まで寄せる（7.1 T7 FS）
+   ・開始のアンカー／着手済みの開始／完了は動かさない（T9）。終了のアンカーは開始だけ動いて縮む
+   ・まだ始まっていないものを「いま」より前に置かない（T9）
+   o.shift：[ここで詰める] のとき、後ろを同じだけ前へ寄せる量（負）。o.lens：U2 で縮めた長さ */
+const startFixed = t => t.ps || t.st !== 'todo';
+const endFixed = t => t.pe || t.st === 'done';
+const seqOf = epic => S.tk.filter(t => t.epic === epic && t.chk).sort((a, b) => a.s - b.s || a.e - b.e);
+const predsOf = id => S.links.filter(l => l[1] === id).map(l => l[0]);
+function plan(id, ns, ne, o = {}) {
+  const T = byId(id), min = S.snap, now = nowS();
+  const R = { id, ok: true, pos: new Map(), reason: null, blocker: null, short: 0, att: null, from: { s: T.s, e: T.e }, to: { s: ns, e: ne } };
+  if (ne - ns < min) { R.ok = false; R.reason = 'short'; R.short = min - (ne - ns); return R; }
+  R.pos.set(id, { s: ns, e: ne });
+  if (!T.chk) return R;
+  const L = seqOf(T.epic), i = L.indexOf(T);
+  if (i > 0 && ns < T.s && ns < L[i - 1].e) { R.ok = false; R.reason = 'prev'; R.blocker = L[i - 1].id; R.short = L[i - 1].e - ns; return R; }
+  let prevE = ne, carry = o.shift || 0;
+  const lens = o.lens || {};
+  for (let j = i + 1; j < L.length; j++) {
+    const Xt = L[j], len = lens[Xt.id] ?? (Xt.e - Xt.s);
+    let want = Xt.s + carry;
+    const pe = predsOf(Xt.id).map(p => (R.pos.get(p) || byId(p)).e);
+    if (pe.length) want = Math.max(...pe);
+    let s = Math.max(want, prevE), e;
+    if (Xt.st === 'todo' && s < Xt.s) s = Math.min(Xt.s, Math.max(s, now));
+    if (startFixed(Xt)) {
+      if (s > Xt.s) { R.ok = false; R.reason = 'anchor'; R.blocker = Xt.id; R.short = s - Xt.s; R.att = { s, e: s + (Xt.e - Xt.s) }; return R; }
+      s = Xt.s; e = endFixed(Xt) ? Xt.e : Xt.s + len; carry = 0;
+    } else if (endFixed(Xt)) {
+      e = Xt.e;
+      if (s < Xt.s && !pe.length) { s = Xt.s; carry = 0; }   // 前へ寄せるときは止まる（FS の後続だけは期間を伸ばす。7.1）
+      if (e - s < min) { R.ok = false; R.reason = 'endpin'; R.blocker = Xt.id; R.short = min - (e - s); R.att = { s, e }; return R; }
+    } else e = s + len;
+    if (s !== Xt.s || e !== Xt.e) R.pos.set(Xt.id, { s, e });
+    prevE = e;
+  }
+  return R;
+}
+/* U2：アンカーの直前から順に、最小の長さまで縮めれば収まるかを試す */
+function suggest(R, o) {
+  if (R.ok || !(R.reason === 'anchor' || R.reason === 'endpin')) return null;
+  const T = byId(R.id), L = seqOf(T.epic), i = L.indexOf(T), bi = L.findIndex(x => x.id === R.blocker);
+  const lens = {}; let need = R.short;
+  for (let tries = 0; tries < 4 && need > 0; tries++) {
+    for (let j = bi - 1; j > i && need > 0; j--) {
+      const Xt = L[j]; if (startFixed(Xt) || endFixed(Xt)) continue;
+      const len = lens[Xt.id] ?? (Xt.e - Xt.s), can = len - S.snap; if (can <= 0) continue;
+      const take = Math.min(can, need); lens[Xt.id] = len - take; need -= take;
+    }
+    if (need > 0) return null;
+    const R2 = plan(R.id, R.to.s, R.to.e, { ...o, lens });
+    if (R2.ok) { R2.lens = lens; return R2; }
+    if (R2.blocker !== R.blocker) return null;
+    need = R2.short;
+  }
+  return null;
+}
+function makeTrial(a) {
+  const t = byId(a.id); let R, o = {};
+  if (a.op === 'end') R = plan(a.id, t.s, a.ne);
+  else if (a.op === 'start') R = plan(a.id, a.ns, t.e);
+  else if (a.op === 'now') R = plan(a.id, t.s, Math.max(ceilSnap(S.now), t.e + S.snap));
+  else if (a.op === 'compact') { o.shift = Math.round((t.ca - t.e) / S.snap) * S.snap; R = plan(a.id, t.s, t.e + o.shift, o); }
+  return { a, R, sug: R.ok ? null : suggest(R, o), stale: false };
+}
+function applyPos(pos, who) {
+  for (const [id, p] of pos) { const t = byId(id); t.s = p.s; t.e = p.e; flash(id, who); }
+}
+function flash(id, who) { S.flash.set(id, { at: Date.now(), who }); }
+
+/* ── 表示する中身（当日／版の遷移／振り返り） ── */
+function model() {
+  const vs = S.versions;
+  if (S.step != null) {
+    const cur = S.step >= vs.length;
+    const items = cur ? S.tk.map(t => ({ ...t })) : Object.values(vs[S.step].snap).map(r => ({ ...r, st: 'plan' }));
+    const base = S.step > 0 ? vs[Math.min(S.step, vs.length) - 1].snap : null;
+    return { items, base, mode: 'step' };
+  }
+  const base = S.base != null ? vs[S.base].snap : null;
+  if (S.retro) return { items: S.tk.map(t => ({ ...t, s: t.ras, e: t.rae, st: 'done', sched: { s: t.s, e: t.e } })), base, mode: 'retro' };
+  return { items: S.tk, base, mode: 'day' };
+}
+function hash(str) { let h = 2166136261; for (const c of str) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967295; }
+function makeActuals() {
+  const end = hm(17), now = nowS();
+  for (const t of S.tk) {
+    if (t.st === 'done') { t.ras = t.sa ?? t.s; t.rae = t.ca ?? t.e; continue; }
+    const j1 = Math.round((hash(t.id + 'a') * 14 - 3)) * 60, j2 = Math.round((hash(t.id + 'b') * 24 - 7)) * 60;
+    t.ras = t.st === 'prog' ? (t.sa ?? t.s) : Math.max(t.s + j1, Math.min(S.now, t.s));
+    t.rae = Math.min(end, Math.max(t.ras + 5 * 60, t.e + j2, t.st === 'prog' ? now : 0));
+  }
+  for (const ep of EPICS) {
+    let prev = 0;
+    for (const t of seqOf(ep.id)) {
+      if (t.st === 'todo' && t.ras < prev) { const len = t.rae - t.ras; t.ras = prev; t.rae = Math.min(end, Math.max(t.ras + 5 * 60, t.ras + len)); }
+      prev = Math.max(prev, t.rae);
+    }
+  }
+}
+
+/* ── 骨組み ── */
+function skeleton() {
+  document.body.innerHTML = `
+<div class="page" id="page" data-variant="${V.key}">
+  <header class="intro">
+    <div>
+      <div class="eyebrow">PB · pb-295 · タイムライン /p/:key/timeline · ${V.eyebrow || `案${V.key}「${H(V.name)}」`} · デモ：${DAY} 文化祭の当日</div>
+      <h1>${V.title}</h1>
+      <ol>${V.points.map(p => `<li>${p}</li>`).join('')}</ol>
+    </div>
+    <div class="controls">
+      <div class="ctl">テーマ <div class="seg" id="segTheme"><button type="button" data-v="">システム</button><button type="button" data-v="light">ライト</button><button type="button" data-v="dark">ダーク</button></div></div>
+      <div class="ctl">見る人 <div class="seg" id="segRole"><button type="button" data-v="admin" title="project_admin。全行と［計画を保存］">本部</button><button type="button" data-v="gym" title="自分の会場の行だけ">体育館の担当</button></div></div>
+      <div class="ctl">場面 <div class="seg" id="segScene"><button type="button" data-v="day">当日</button><button type="button" data-v="retro">イベント後の振り返り</button></div></div>
+      <div class="ctl">時計 <span class="clock mono" id="clock"></span><button type="button" class="btn sq" id="btnPlay" title="時計を進める／止める"></button>
+        <select id="selSpeed" title="時計の速さ"><option value="1">×1</option><option value="10">×10</option><option value="60">×60</option></select>
+        <button type="button" class="btn" id="btnAdd5">+5分</button></div>
+      <div class="ctl">他の人の変更 <div class="seg" id="segPoll"><button type="button" data-v="on">流す</button><button type="button" data-v="off">止める</button></div><button type="button" class="btn" id="btnPollNow">今すぐ1件</button></div>
+    </div>
+  </header>
+  <div class="app" id="app">
+    <nav class="rail" aria-label="メインメニュー（畳んだ状態）">
+      <span title="メニュー">☰</span><span title="プロジェクト一覧">⌂</span><hr>
+      <span title="ダッシュボード">▤</span><span title="バックログ">☑</span><span title="ガント">▥</span><span class="on" title="タイムライン">≡</span><span title="検索">⌕</span><span title="プロジェクト設定">⚙</span>
+    </nav>
+    <div class="content">
+      <div class="pagehdr">
+        <h2>タイムライン</h2>
+        <div class="dd"><button type="button" class="chip" id="btnRows"></button><div class="panel" id="pnlRows" hidden></div></div>
+        <span class="rowsum" id="rowsum"></span>
+        <span class="sp"></span>
+        <div class="seg" id="segZoom" aria-label="時間軸の段階"><button type="button" data-v="sec">秒</button><button type="button" data-v="min">分</button><button type="button" data-v="hour">時</button></div>
+        <button type="button" class="btn" id="btnNow">いま</button>
+        <span class="vsep"></span>
+        <div class="dd"><button type="button" class="chip" id="btnVer"></button><div class="panel right" id="pnlVer" hidden></div></div>
+        <button type="button" class="btn" id="btnStep">版を送る</button>
+        <button type="button" class="btn" id="btnSave" title="project_admin だけに見える">計画を保存</button>
+        <span class="poll mono" id="pollAge"></span>
+      </div>
+      <div class="notice" id="notice"></div>
+      <div class="scroller" id="sc"><div class="canvas" id="cv" style="--lw:${V.LW}px;--bh:${V.BAR_H}px">
+        <div class="axis" id="axis" style="height:${V.AH}px"><div class="corner" id="corner" style="width:${V.LW}px"></div><div class="axtrack" id="axt"></div></div>
+        <div class="past" id="past"></div>
+        <svg class="grid" id="grid" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div id="rows"></div>
+        <div class="nowline" id="nowline"></div>
+        <div id="ghosts"></div>
+      </div></div>
+      <div class="statusbar">
+        ${V.legend || ''}
+        <span>右端をドラッグ：終了を動かす（試算→確定）</span>
+        <span><kbd>Enter</kbd> 確定 <kbd>Esc</kbd> 取り消す</span>
+        <span><kbd>⌘/Ctrl</kbd>＋ホイール 拡大縮小</span>
+        <span>吸着 <select id="selSnap"><option value="1">1秒</option><option value="10">10秒</option><option value="60" selected>1分</option><option value="300">5分</option></select></span>
+        <span class="r mono" id="sbZoom"></span>
+      </div>
+    </div>
+    <div class="pop" id="pop" hidden></div>
+  </div>
+</div>`;
+}
+
+/* ── 描画 ── */
+let LAY = null;
+function layout(M) {
+  const rows = [];
+  let top = 0;
+  for (const ep of EPICS) {
+    if (!S.rows.has(ep.id)) continue;
+    const items = M.items.filter(t => t.epic === ep.id && t.s != null && t.e != null);
+    const gone = M.base ? Object.values(M.base).filter(b => b.epic === ep.id && !M.items.some(t => t.id === b.id)) : [];
+    const lane = new Map(), ends = [];
+    const free = [...items.filter(t => !t.chk), ...gone.filter(b => !b.chk).map(b => ({ ...b, gone: true }))].sort((a, b) => a.s - b.s);
+    for (const t of free) { let k = ends.findIndex(e => e <= t.s); if (k < 0) { k = ends.length; ends.push(0); } ends[k] = t.e; lane.set(t.id, k + 1); }
+    for (const t of items) if (t.chk) lane.set(t.id, 0);
+    for (const b of gone) if (b.chk) lane.set(b.id, 0);
+    const lanes = 1 + ends.length, h = lanes * V.LANE + ROWPAD * 2;
+    rows.push({ ep, items, gone, lane, lanes, top, h });
+    top += h;
+  }
+  return { rows, H: top };
+}
+const laneTop = l => ROWPAD + l * V.LANE + (V.LANE - V.BAR_H) / 2;
+
+function ctxFor(it, M, w) {
+  const now = nowS();
+  const c = { w, now, mode: M.mode, fmtT, dur, sdur, sshort, sec: S.pps >= 1, dev: null, isNew: false, late: 0, wait: 0 };
+  if (M.base) { const b = M.base[it.id]; if (!b) c.isNew = true; else { const ds = it.s - b.s, de = it.e - b.e; if (Math.abs(ds) >= 60 || Math.abs(de) >= 60) c.dev = { ds, de, b }; c.b = b; } }
+  if (M.mode === 'day') {
+    if (it.st === 'prog' && it.e < now) c.late = now - it.e;
+    if (it.st === 'todo' && it.s < now) c.wait = now - it.s;
+  }
+  return c;
+}
+const GLYPH = { todo: '○', prog: '●', done: '✓', plan: '◇' };
+const STN = { todo: '未着手', prog: '進行中', done: '完了', plan: '計画' };
+
+function renderRows() {
+  const M = model();
+  LAY = layout(M);
+  $('#page').dataset.mode = M.mode;
+  const tw = TW(), now = nowS();
+  let html = '';
+  for (const r of LAY.rows) {
+    const ep = r.ep;
+    let tr = '';
+    if (r.lanes > 1) tr += `<div class="subzone" style="top:${ROWPAD + V.LANE - 0.5}px;height:${(r.lanes - 1) * V.LANE}px"></div>`;
+    // 当初計画の影（いまのバーの後ろ）
+    if (M.base) {
+      for (const it of r.items) {
+        const b = M.base[it.id]; if (!b) continue;
+        const same = Math.abs(it.s - b.s) < 60 && Math.abs(it.e - b.e) < 60;
+        tr += `<div class="base${same ? ' same' : ''}" style="left:${X(b.s)}px;width:${Math.max(2, X(b.e) - X(b.s))}px;top:${laneTop(r.lane.get(it.id))}px;height:${V.BAR_H}px" title="${H(`版の位置 ${fmtT(b.s)}–${fmtT(b.e)}`)}"></div>`;
+      }
+      for (const b of r.gone) {
+        const y = laneTop(r.lane.get(b.id));
+        tr += `<div class="base gone" style="left:${X(b.s)}px;width:${Math.max(2, X(b.e) - X(b.s))}px;top:${y}px;height:${V.BAR_H}px" title="${H(`版にあったが、いまは無い：${b.title}`)}"></div>`;
+        tr += `<div class="gonelbl" style="left:${X(b.s) + 4}px;top:${y + V.BAR_H / 2 - 8}px">消えた：${H(b.title)}</div>`;
+      }
+    }
+    // 衝突（チェック付きどうしの重なり）
+    const chk = r.items.filter(t => t.chk).sort((a, b) => a.s - b.s);
+    for (let i = 1; i < chk.length; i++) for (let j = 0; j < i; j++) {
+      const a = chk[j], b = chk[i], s = Math.max(a.s, b.s), e = Math.min(a.e, b.e);
+      if (e > s && M.mode === 'day') tr += `<div class="coll" style="left:${X(s)}px;width:${X(e) - X(s)}px;top:${laneTop(0) - 3}px;height:${V.BAR_H + 6}px" title="時間重複チェック付きどうしが重なっています"></div>`;
+    }
+    // バー
+    for (const it of r.items) {
+      const l = r.lane.get(it.id), x = X(it.s), w = Math.max(3, X(it.e) - x), y = laneTop(l);
+      const c = ctxFor(it, M, w);
+      const cls = ['bar', `st-${it.st}`, it.chk ? 'chk' : 'free', w < 12 ? 'w-0' : w < 34 ? 'w-xs' : w < 96 ? 'w-s' : '',
+        c.late ? 'late' : '', c.wait ? 'wait' : '', c.isNew ? 'new' : '', c.dev ? 'dev' : '', S.pop === it.id ? 'sel' : ''];
+      const f = M.mode === 'day' ? S.flash.get(it.id) : null; let fl = '';
+      if (f && Date.now() - f.at < 2400) { cls.push('flash'); fl = `animation-delay:-${Date.now() - f.at}ms;`; }
+      const tip = `${it.title}\n${fmtT(it.s, c.sec)}–${fmtT(it.e, c.sec)}（${dur(it.e - it.s)}） ${STN[it.st]}${it.chk ? '' : ' · 時間重複チェック無し'}${it.ps ? ' · 開始のアンカー' : ''}${it.pe ? ' · 終了のアンカー' : ''}`;
+      const editable = M.mode === 'day';
+      tr += `<div class="${cls.join(' ')}" data-id="${it.id}" style="left:${x}px;width:${w}px;top:${y}px;${fl}" title="${H(tip)}">`
+        + `<span class="in">${V.bar(it, c)}</span>` + (V.barExtra ? V.barExtra(it, c) : '')
+        + (it.ps ? '<i class="pin s"></i>' : '') + (it.pe ? '<i class="pin e"></i>' : '')
+        + (editable && it.st !== 'done' && !it.pe ? '<i class="hE"></i>' : '')
+        + (editable && it.st === 'todo' && !it.ps ? '<i class="hS"></i>' : '')
+        + `</div>`;
+      if (f && Date.now() - f.at < 2400 && f.who) tr += `<span class="who" style="left:${x}px;top:${y - 2}px;animation-delay:-${Date.now() - f.at}ms">${H(f.who)}</span>`;
+      if (c.late) tr += `<div class="lateext" style="left:${X(it.e)}px;width:${X(now) - X(it.e)}px;top:${y + V.BAR_H + 3}px" title="押している：${dur(c.late)}"></div>`;
+      if (V.actual && (it.st === 'done' || it.st === 'prog') && M.mode === 'day' && it.sa != null) {
+        const ae = it.st === 'done' ? (it.ca ?? it.e) : now;
+        tr += `<div class="act" style="left:${X(it.sa)}px;width:${Math.max(1, X(ae) - X(it.sa))}px;top:${y + V.actual.dy}px" title="実績 ${fmtT(it.sa)}–${it.st === 'done' ? fmtT(ae) : '（進行中）'}"></div>`;
+      }
+    }
+    // FS の印
+    for (const [p, q] of S.links) {
+      const a = r.items.find(t => t.id === p), b = r.items.find(t => t.id === q);
+      if (!a || !b) continue;
+      const y = laneTop(0) + V.BAR_H / 2;
+      if (b.s - a.e <= 0) tr += `<i class="fs j" style="left:${X(b.s)}px;top:${y}px" title="FS：${H(a.title)} → ${H(b.title)}（隙間を空けない）"></i>`;
+      else tr += `<i class="fs ln" style="left:${X(a.e) + 2}px;width:${X(b.s) - X(a.e) - 4}px;top:${y}px" title="FS：${H(a.title)} → ${H(b.title)}"></i>`;
+    }
+    // 行の見出し
+    let tags = '';
+    if (r.lanes > 1) { tags += `<span class="lanetag" style="top:${ROWPAD + V.LANE / 2 - 5}px">${V.laneMain || '本番'}</span>`; tags += `<span class="lanetag sub" style="top:${ROWPAD + V.LANE * 1.5 - 5}px">${V.laneSub || '裏'}${r.lanes > 2 ? '×' + (r.lanes - 1) : ''}</span>`; }
+    const nC = r.items.filter(t => t.chk).length, nF = r.items.length - nC;
+    html += `<div class="row" data-epic="${ep.id}" style="height:${r.h}px">`
+      + `<div class="rlabel" style="width:${V.LW}px;height:${r.h}px">${sleeve(ep)}<div class="rn" title="${H(ep.name)}">${H(ep.name)}</div>`
+      + `<div class="rm">pb-${ep.seq} · 本番 ${nC}${nF ? ` · 裏 ${nF}` : ''}</div>`
+      + (V.rowInfo ? V.rowInfo(r, M, { now, fmtT, dur, sdur }) : '') + tags + `</div>`
+      + `<div class="track" style="width:${tw}px;height:${r.h}px">${tr}</div></div>`;
+  }
+  if (!LAY.rows.length) html = `<div class="row" style="height:80px"><div class="rlabel" style="width:${V.LW}px;height:80px"><div class="rm">表示する行がありません</div></div></div>`;
+  $('#rows').innerHTML = html;
+  $('#cv').style.width = `${V.LW + tw}px`;
+  $('#axt').style.width = `${tw}px`;
+  const rh = Math.max(LAY.H, 80);
+  for (const el of [$('#nowline'), $('#past'), $('#ghosts')]) el.style.top = `${V.AH}px`;
+  $('#nowline').style.height = `${rh}px`;
+  $('#past').style.height = `${rh}px`;
+  $('#ghosts').style.left = `${V.LW}px`;
+  renderGhosts();
+  renderGrid();
+  placeNow();
+}
+function sleeve(ep) {
+  const n = ep.n, col = `var(--pb-epic-${n % 8})`;
+  return `<span class="sleeve" style="background:${col}" title="エピック: ${H(ep.name)}"></span>`;
+}
+
+const STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200];
+const pickMul = (px, of) => STEPS.find(s => s * S.pps >= px && s % of === 0) || 7200;
+const pickDiv = (px, of) => STEPS.find(s => s * S.pps >= px && of % s === 0) || of;
+/* 見えている範囲の左端より前から始まるバーは、文字を見えている左端へ寄せる（sticky では長い題名が動けない） */
+function stickText() {
+  const sl = $('#sc').scrollLeft;
+  for (const b of $$('#rows .bar')) {
+    const x = parseFloat(b.style.left), w = parseFloat(b.style.width), inn = b.firstElementChild;
+    const off = Math.max(0, Math.min(sl - x, w - 60));
+    if (off > 0) { inn.style.marginLeft = `${off}px`; inn.style.maxWidth = `${w - off}px`; }
+    else if (inn.style.marginLeft) { inn.style.marginLeft = ''; inn.style.maxWidth = ''; }
+  }
+}
+function visRange() {
+  const sc = $('#sc');
+  const x1 = Math.min(TW(), sc.scrollLeft + sc.clientWidth - V.LW + 80), x0 = Math.min(x1, Math.max(0, sc.scrollLeft - 80));
+  return [x0, x1];
+}
+function renderGrid() {
+  const [x0, x1] = visRange();
+  const t0 = T0 + x0 / S.pps, t1 = T0 + x1 / S.pps;
+  const min = pickDiv(V.minPx || 48, 86400), maj = pickMul(V.majPx || 120, min), fine = pickDiv(12, min);
+  const sec = maj < 60 || min < 60;
+  let ax = '', g = '';
+  const rh = LAY ? Math.max(LAY.H, 80) : 80;
+  for (let t = Math.ceil(t0 / fine) * fine; t <= t1; t += fine) {
+    const x = X(t) - x0, cls = t % maj === 0 ? 'M' : t % min === 0 ? 'm' : 'f';
+    g += `<line class="${cls}" x1="${x + .5}" x2="${x + .5}" y1="0" y2="${rh}"></line>`;
+  }
+  for (let t = Math.ceil(t0 / min) * min; t <= t1; t += min) {
+    const x = X(t), M = t % maj === 0;
+    ax += `<i class="ax-tk${M ? ' M' : ''}" style="left:${x}px"></i>`;
+    if (!M && (S.step != null || x + 40 < X(S.now) - (V.tagW || 44) / 2 || x > X(S.now) + (V.tagW || 44) / 2 + 2)) ax += `<span class="ax-min" style="left:${x}px">${V.axMin ? V.axMin(t, sec, fmtT) : fmtT(t, min < 60)}</span>`;
+  }
+  const nx = X(S.now), tagW = V.tagW || 44;
+  for (let t = Math.ceil(t0 / maj) * maj; t <= t1; t += maj) {
+    const x = X(t);   // 「いま」の札と重なる大目盛りの文字は、線の左へ逃がす。それも重なれば出さない
+    let cls = 'ax-maj';
+    const mw = V.majW || 40, hit = (a, b) => S.step == null && b > nx - tagW / 2 - 4 && a < nx + tagW / 2 + 4;
+    if (hit(x, x + mw)) { if (!hit(x - mw - 8, x)) cls += ' lft'; else continue; }
+    ax += `<span class="${cls}" style="left:${x}px">${fmtT(t, maj < 60)}</span>`;
+  }
+  if (S.step == null) ax += `<span class="nowtag" id="nowtag" style="left:${X(S.now)}px">${fmtT(S.now, S.pps >= 1)}</span>`;
+  $('#axt').innerHTML = ax;
+  const gs = $('#grid');
+  gs.setAttribute('width', x1 - x0); gs.setAttribute('height', rh);
+  gs.style.left = `${V.LW + x0}px`; gs.style.top = `${V.AH}px`;
+  gs.innerHTML = g;
+  stickText();
+  $('#corner').innerHTML = V.corner ? V.corner({ DAY, now: S.now, fmtT }) : `<b>${DAY}</b><br>基準 Asia/Tokyo（見る人も同じ）`;
+  $('#sbZoom').textContent = S.pps >= 1 ? `1秒＝${+S.pps.toFixed(2)}px` : S.pps * 60 >= 6 ? `1分＝${+(S.pps * 60).toFixed(1)}px` : `1時間＝${Math.round(S.pps * 3600)}px`;
+  $$('#segZoom button').forEach(b => b.setAttribute('aria-pressed', String(Math.abs(ZOOMS[b.dataset.v] - S.pps) < 1e-9)));
+}
+function placeNow() {
+  const x = X(S.now);
+  $('#nowline').style.left = `${V.LW + x}px`;
+  const tag = $('#nowtag'); if (tag) { tag.style.left = `${x}px`; tag.textContent = fmtT(S.now, S.pps >= 1); }
+  const past = $('#past'); past.style.left = `${V.LW}px`; past.style.width = `${Math.max(0, x)}px`;
+  $('#nowline').style.display = S.step != null ? 'none' : '';
+  $('#clock').textContent = fmtT(S.now, true);
+  if (V.corner) $('#corner').innerHTML = V.corner({ DAY, now: S.now, fmtT });
+  if (S.follow && S.step == null) followNow();
+}
+function followNow() {
+  const sc = $('#sc'), target = X(S.now) - (sc.clientWidth - V.LW) * (V.followAt || 0.3);
+  if (Math.abs(sc.scrollLeft - target) > 0.5) { S.progScroll = true; sc.scrollLeft = target; }
+}
+
+function renderGhosts() {
+  const g = $('#ghosts'); let h = '';
+  const tr = S.trial;
+  if (tr && LAY) {
+    const rowOf = id => { const t = byId(id); return LAY.rows.find(r => r.ep.id === t.epic); };
+    const box = (id, s, e, cls, label) => {
+      const r = rowOf(id); if (!r) return;
+      const y = r.top + laneTop(r.lane.get(id) ?? 0);
+      h += `<div class="ghost ${cls}" style="left:${X(s)}px;width:${Math.max(3, X(e) - X(s))}px;top:${y}px;height:${V.BAR_H}px"></div>`;
+      if (label) h += `<span class="gl ${cls}" style="left:${X(s)}px;top:${y - 2}px">${label}</span>`;
+    };
+    const R = (S.showSug && tr.sug) ? tr.sug : tr.R, cls0 = (S.showSug && tr.sug) ? 'sug' : '';
+    for (const [id, p] of R.pos) {
+      const t = byId(id), ds = p.s - t.s, de = p.e - t.e;
+      const lab = id === R.id ? `${tr.a.op === 'start' ? '開始' : '終了'} ${fmtT(id === R.id && tr.a.op === 'start' ? p.s : p.e, S.pps >= 1)}` : (ds === de ? sdur(ds) : [ds && '始' + sdur(ds), de && '終' + sdur(de)].filter(Boolean).join(' '));
+      box(id, p.s, p.e, `${id === R.id ? 'src' : ''} ${cls0}`, lab);
+    }
+    if (!R.ok && R.blocker) {
+      const b = byId(R.blocker);
+      if (R.att) box(R.blocker, R.att.s, R.att.e, 'block', R.reason === 'endpin' ? `${dur(R.short)} 足りない（最小 ${dur(S.snap)}）` : `アンカーに ${dur(R.short)} 食い込む`);
+      else box(R.blocker, b.s, b.e, 'block', '前は動かさない');
+    }
+  }
+  g.innerHTML = h;
+  const moving = tr ? ((S.showSug && tr.sug) ? tr.sug : tr.R).pos : null;
+  for (const b of $$('#rows .bar')) b.classList.toggle('tr-from', !!moving && moving.has(b.dataset.id));
+}
+function trialFar() {
+  const tr = S.trial; if (!tr || !LAY) return null;
+  const R = tr.R; let t = R.blocker && R.att ? R.att.s : null;
+  if (t == null) for (const [, p] of R.pos) t = Math.max(t ?? 0, p.s);
+  const sc = $('#sc'), x = X(t);
+  return (x < sc.scrollLeft || x > sc.scrollLeft + sc.clientWidth - V.LW - 40) ? t : null;
+}
+
+/* ── 上部と通知の行 ── */
+function vdiff(a, b) { // a → b
+  let mv = 0, ad = 0, rm = 0;
+  for (const id in b) { if (!a[id]) ad++; else if (a[id].s !== b[id].s || a[id].e !== b[id].e) mv++; }
+  for (const id in a) if (!b[id]) rm++;
+  return { mv, ad, rm };
+}
+function renderHeader() {
+  const n = S.rows.size, all = EPICS.length;
+  const b = $('#btnRows');
+  b.innerHTML = `<span class="k">行</span> ${n}/${all} ▾`;
+  b.classList.toggle('on', n < all);
+  const names = EPICS.filter(e => S.rows.has(e.id)).map(e => e.name);
+  $('#rowsum').innerHTML = n === all ? '全行（本部の見え方）' : n === 0 ? '行なし' : `<b>${H(names[0])}</b>${n > 1 ? ` ほか${n - 1}` : ''} に絞り込み中`;
+  $('#rowsum').title = names.join('、');
+  $('#pnlRows').innerHTML = `<div class="ph">行（エピック）で絞り込む。URL の ?rows= に残る</div>`
+    + EPICS.map(e => `<label><input type="checkbox" data-epic="${e.id}"${S.rows.has(e.id) ? ' checked' : ''}><span class="sw" style="background:var(--pb-epic-${e.n % 8})"></span>${H(e.name)}</label>`).join('')
+    + `<div class="pf"><button type="button" class="btn" data-preset="all">全行</button><button type="button" class="btn" data-preset="gym">体育館だけ</button><button type="button" class="btn" data-preset="stage">ステージ2つ</button></div>`;
+  const vs = S.versions;
+  const bv = $('#btnVer');
+  bv.innerHTML = S.base == null ? '<span class="k">当初計画</span> 重ねない ▾' : `<span class="k">当初計画</span> v${vs[S.base].n} ${H(vs[S.base].label)} を重ねる ▾`;
+  bv.classList.toggle('on', S.base != null);
+  $('#pnlVer').innerHTML = `<div class="ph">当初計画の版（プロジェクト全体を1つにまとめて保存）</div>`
+    + `<label><input type="radio" name="base" value="-1"${S.base == null ? ' checked' : ''}>重ねない</label>`
+    + vs.map((v, i) => { const d = i ? vdiff(vs[i - 1].snap, v.snap) : null; return `<label class="vrow"><input type="radio" name="base" value="${i}"${S.base === i ? ' checked' : ''}><b>v${v.n}</b><span>${H(v.label)} <span class="muted mono">${v.at}</span></span><small>${H(v.who)}${V.noDiffCounts ? '' : d ? ` · 前の版から 移動 ${d.mv}・追加 ${d.ad}・消えた ${d.rm}` : ` · ${Object.keys(v.snap).length}件`}</small></label>`; }).reverse().join('')
+    + `<div class="pf"><button type="button" class="btn" data-act="step">版を順に送る（v1 → いま）</button></div>`;
+  $('#btnSave').hidden = S.role !== 'admin';
+  $('#btnStep').setAttribute('aria-pressed', String(S.step != null));
+  $('#btnStep').classList.toggle('pri', S.step != null);
+  setPressed('#segRole', S.role === 'admin' ? 'admin' : 'gym');
+  setPressed('#segScene', S.retro ? 'retro' : 'day');
+  setPressed('#segPoll', S.pollOn ? 'on' : 'off');
+  setPressed('#segTheme', document.documentElement.getAttribute('data-theme') || '');
+  $('#btnPlay').textContent = S.playing ? '❚❚' : '▶';
+  $('#selSpeed').value = String(S.speed);
+  for (const id of ['#btnPlay', '#btnAdd5', '#selSpeed']) $(id).disabled = S.retro;
+}
+function setPressed(sel, v) { $$(sel + ' button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v))); }
+function renderPoll() {
+  const el = $('#pollAge');
+  el.textContent = S.pollOn ? `⟳ ${S.sincePoll}秒前` : '⟳ 停止中';
+  el.title = '5秒ごとに取り直す（If-None-Match）。モックでは2回に1回、他の人の変更を1件流す';
+}
+function renderNotice() {
+  const n = $('#notice'); n.className = 'notice';
+  const other = S.lastOther && Date.now() - S.lastOther.at < 20000 ? `<span class="other" title="${H(S.lastOther.text)}">⟳ 他の人の変更 <mark>${H(S.lastOther.who)}</mark> ${H(S.lastOther.text)}</span>` : '';
+  const tr = S.trial;
+  if (tr) {
+    const R = tr.R, t = byId(R.id), what = tr.a.op === 'start' ? '開始' : '終了';
+    const from = tr.a.op === 'start' ? R.from.s : R.from.e, to = tr.a.op === 'start' ? R.to.s : R.to.e;
+    const head = `<b>${H(short(t.title))}</b> の${what} ${fmtT(from, S.pps >= 1)} → ${fmtT(to, S.pps >= 1)}（${sdur(to - from)}）`;
+    const opn = { end: '', start: '', now: '［いままで延ばす］', compact: '［ここで詰める］' }[tr.a.op];
+    const stale = tr.stale ? '<span class="dz">他の人の変更を受けて試算し直しました。</span> ' : '';
+    if (R.ok) {
+      const moved = [...R.pos.keys()].filter(id => id !== R.id);
+      n.classList.add('trial');
+      const tail = !t.chk ? '時間重複チェック無しなので、ほかは動きません' : moved.length ? `後ろの ${moved.length}件が動きます（${moved.map(id => H(short(byId(id).title, 8))).join('・')}）` : (to < from ? '後ろは動きません（隙間が空きます）' : '隙間で吸収し、後ろは動きません');
+      n.innerHTML = `<span class="lbl">試算${opn}</span><span class="msg" title="${H(`${t.title}：${tail}`)}">${stale}${head}。${tail}</span>${seekBtn()}<button type="button" class="btn pri" data-act="commit">確定</button><button type="button" class="btn" data-act="cancel">取り消す</button>${other}`;
+    } else {
+      n.classList.add('fail');
+      let why = '';
+      const b = R.blocker && byId(R.blocker);
+      if (R.reason === 'short') why = `最小の長さ（吸着の単位 ${dur(S.snap)}）を割ります`;
+      else if (R.reason === 'prev') why = `前の「${H(short(b.title))}」に ${dur(R.short)} 重なります（前は動かしません）`;
+      else if (R.reason === 'anchor') why = `「${H(short(b.title))}」の${b.ps ? '開始のアンカー' : b.st === 'done' ? '完了' : '着手済みの開始'}（${fmtT(b.s)}）に ${dur(R.short)} 足りません`;
+      else if (R.reason === 'endpin') why = `「${H(short(b.title))}」は終了のアンカー（${fmtT(b.e)}）があり、最小の長さを ${dur(R.short)} 割ります`;
+      let sug = '';
+      if (tr.sug) { const ls = Object.entries(tr.sug.lens).map(([id, l]) => `${H(short(byId(id).title, 8))} を ${dur(l)}`).join('、'); sug = `<button type="button" class="btn" data-act="u2" title="試算の影を、縮めた場合に切り替えて見せる">${ls} に縮めて確定</button>`; }
+      n.innerHTML = `<span class="lbl">解けません</span><span class="msg" title="${H(why.replace(/<[^>]+>/g, ''))}">${stale}${head}：${why}。既定では書きません${tr.sug ? '——縮めれば収まります' : ''}。</span>${seekBtn()}${sug}<button type="button" class="btn" data-act="cancel">取り消す</button>${other}`;
+    }
+    return;
+  }
+  if (S.step != null) {
+    const vs = S.versions, k = S.step, cur = k >= vs.length;
+    const name = cur ? 'いま（当日の予定）' : `v${vs[k].n} ${H(vs[k].label)} <span class="muted mono">${vs[k].at} ${H(vs[k].who)}</span>`;
+    const d = k > 0 ? vdiff(vs[Math.min(k, vs.length) - 1].snap, cur ? snap(S.tk) : vs[k].snap) : null;
+    n.classList.add('step');
+    n.innerHTML = `<span class="lbl">版を送る ${k + 1}/${vs.length + 1}</span><button type="button" class="btn sq" data-act="prev"${k <= 0 ? ' disabled' : ''}>◀</button><button type="button" class="btn sq" data-act="next"${cur ? ' disabled' : ''}>▶</button>`
+      + `<span class="msg">${name}${V.noDiffCounts ? (k > 0 ? '　<span class="muted">点線の枠＝前の版の位置（ずれたものだけ）</span>' : '　<span class="muted">最初の版</span>') : d ? `　<span class="muted">前の版から</span> 移動 <b>${d.mv}</b>・追加 <b>${d.ad}</b>・消えた <b>${d.rm}</b>　<span class="muted">影＝前の版</span>` : '　<span class="muted">最初の版</span>'}</span><button type="button" class="btn" data-act="endstep">終える</button>`;
+    return;
+  }
+  if (S.retro) {
+    const M = model(); let late = 0, early = 0, maxL = 0, nw = 0;
+    for (const it of M.items) { const b = M.base && M.base[it.id]; if (!b) { if (M.base) nw++; continue; } const d = it.s - b.s; if (d >= 60) { late++; maxL = Math.max(maxL, d); } else if (d <= -60) early++; }
+    const gone = M.base ? Object.keys(M.base).filter(id => !byId(id)).length : 0;
+    n.innerHTML = `<span class="lbl">振り返り</span><span class="msg">${M.base ? `<b>v${S.versions[S.base].n} ${H(S.versions[S.base].label)}</b> と実績を比べています。開始が遅れた <b>${late}</b>件（最大 ${sdur(maxL)}）・早まった <b>${early}</b>件・計画外 <b>${nw}</b>件・消えた <b>${gone}</b>件` : '当初計画を重ねると、計画と実績の差を出します'}。バーは実績（着手→完了）、${V.baseWord || '影'}は版の計画。</span>`;
+    return;
+  }
+  if (S.savedMsg && Date.now() - S.savedMsg.at < 8000) {
+    n.innerHTML = `<span class="lbl">保存</span><span class="msg">${S.savedMsg.text}</span>${other}`;
+    return;
+  }
+  n.innerHTML = `<span class="lbl">試す</span><span class="ex">`
+    + `<button type="button" class="btn" data-ex="dance30">ダンス部を +30分</button>`
+    + `<button type="button" class="btn" data-ex="dance70">ダンス部を +70分（閉会式のアンカー）</button>`
+    + `<button type="button" class="btn" data-ex="obake">お化け 第1部を +60分（終了のアンカー）</button>`
+    + `<button type="button" class="btn" data-ex="mochi">もちつきを詰める</button>`
+    + `<button type="button" class="btn" data-ex="dancenow">ダンス部をいままで延ばす</button>`
+    + `</span>${other}`;
+}
+function seekBtn() { const t = trialFar(); return t == null ? '' : `<button type="button" class="btn" data-act="seek" data-t="${t}" title="試算の影が見える所まで横へ送る">${fmtT(t)} の影へ →</button>`; }
+const short = (s, n = 14) => s.length > n ? s.slice(0, n) + '…' : s;
+
+/* ── 吹き出し（詳細ペインの代わり） ── */
+function openPop(id, cx, cy) {
+  S.pop = id; renderPop(cx, cy); renderRows();
+}
+function renderPop(cx, cy) {
+  const p = $('#pop'); const t = byId(S.pop);
+  if (!t) { p.hidden = true; return; }
+  const M = model(); const it = M.items.find(x => x.id === t.id) || t; const now = nowS();
+  const c = ctxFor(it, M, 999);
+  const ep = epicOf(t.epic);
+  let acts = '';
+  if (M.mode === 'day') {
+    if (t.st === 'todo') acts += `<button type="button" class="btn" data-pa="start">開始にする</button>`;
+    if (t.st === 'prog') acts += `<button type="button" class="btn" data-pa="done">完了にする</button>`;
+    if (c.late) acts += `<button type="button" class="btn pri" data-pa="now">いままで延ばす（${sdur(ceilSnap(now) - t.e)}）</button>`;
+    if (t.st === 'done' && t.ca != null && t.e - t.ca >= S.snap && t.chk) acts += `<button type="button" class="btn pri" data-pa="compact">ここで詰める（${dur(t.e - t.ca)} 前へ）</button>`;
+    acts += `<button type="button" class="btn" data-pa="ps">開始のアンカー ${t.ps ? 'を外す' : 'を付ける'}</button><button type="button" class="btn" data-pa="pe">終了のアンカー ${t.pe ? 'を外す' : 'を付ける'}</button>`;
+    acts += `<button type="button" class="btn" data-pa="chk">時間重複チェック ${t.chk ? 'を外す' : 'を付ける'}</button>`;
+  }
+  const b = c.b;
+  p.innerHTML = `<button type="button" class="x" data-pa="close" title="閉じる">✕</button><div class="pid">pb-${t.seq} · ${H(ep.name)}</div><div class="pt">${H(t.title)}</div>
+    <dl><dt>状態</dt><dd>${GLYPH[it.st]} ${STN[it.st]}${t.sa != null && t.st !== 'todo' ? `（${fmtT(t.sa)} 開始${t.ca != null && t.st === 'done' ? `・${fmtT(t.ca)} 完了` : ''}）` : ''}${c.late ? ` <span class="dz">⚠ 押している ${dur(c.late)}</span>` : ''}${c.wait ? ` <span class="dz">開始待ち ${dur(c.wait)}</span>` : ''}</dd>
+    <dt>予定</dt><dd class="mono">${fmtT(t.s)}–${fmtT(t.e)}（${dur(t.e - t.s)}）</dd>
+    ${b ? `<dt>版の計画</dt><dd class="mono">${fmtT(b.s)}–${fmtT(b.e)}${c.dev ? ` <span class="${c.dev.de > 0 ? 'dz' : ''}">始${sdur(c.dev.ds)} 終${sdur(c.dev.de)}</span>` : ' ずれなし'}</dd>` : M.base ? '<dt>版の計画</dt><dd>計画外（版を保存した後に足した）</dd>' : ''}
+    <dt>重複チェック</dt><dd>${t.chk ? '有り（本番。同じ行で重ならない）' : '無し（準備・裏。重なってよい）'}</dd>
+    <dt>アンカー</dt><dd>${[t.ps && '開始', t.pe && '終了'].filter(Boolean).join('・') || 'なし'}${t.st !== 'todo' ? '（着手済みの開始は暗黙に固定）' : ''}</dd></dl>
+    <div class="acts">${acts}</div>
+    <div class="note">本番では既存の詳細ペインを開く。モックでは題名と操作だけ。</div>`;
+  p.hidden = false;
+  if (cx != null) {
+    const ar = $('#app').getBoundingClientRect();
+    let x = cx - ar.left + 12, y = cy - ar.top + 12;
+    p.style.left = '0px'; p.style.top = '0px';
+    const pw = p.offsetWidth, ph = p.offsetHeight;
+    if (x + pw > ar.width - 8) x = Math.max(8, cx - ar.left - pw - 12);
+    if (y + ph > ar.height - 8) y = Math.max(8, ar.height - ph - 8);
+    p.style.left = `${x}px`; p.style.top = `${y}px`;
+  }
+}
+function closePop() { if (S.pop) { S.pop = null; $('#pop').hidden = true; renderRows(); } }
+
+/* ── 操作 ── */
+function setTrial(a) { S.trial = a ? makeTrial(a) : null; S.showSug = false; renderGhosts(); renderNotice(); }
+function commit(useSug) {
+  const tr = S.trial; if (!tr) return;
+  const R = useSug ? tr.sug : tr.R; if (!R || !R.ok) return;
+  applyPos(R.pos, 'あなた');
+  S.trial = null; S.showSug = false;
+  renderAll();
+}
+function renderAll() { renderHeader(); renderRows(); renderNotice(); renderPoll(); if (S.pop) renderPop(); }
+function setZoom(pps, anchorClientX) {
+  const sc = $('#sc');
+  pps = Math.min(8, Math.max(0.03, pps));
+  const ax = anchorClientX != null ? anchorClientX - sc.getBoundingClientRect().left - V.LW
+    : (S.now >= T0 + sc.scrollLeft / S.pps && S.now <= T0 + (sc.scrollLeft + sc.clientWidth - V.LW) / S.pps ? X(S.now) - sc.scrollLeft : (sc.clientWidth - V.LW) / 2);
+  const t = T0 + (sc.scrollLeft + ax) / S.pps;
+  S.pps = pps;
+  renderRows();
+  S.progScroll = true;
+  sc.scrollLeft = X(t) - ax;
+  renderGrid();
+}
+function gotoNow() {
+  const sc = $('#sc');
+  S.progScroll = true;
+  sc.scrollLeft = Math.max(0, X(S.now) - (sc.clientWidth - V.LW) * (V.followAt || 0.3));
+  if (V.follow) S.follow = true;
+  renderGrid();
+}
+function setTheme(v) {
+  if (v) document.documentElement.setAttribute('data-theme', v); else document.documentElement.removeAttribute('data-theme');
+  setPressed('#segTheme', v || '');
+}
+function syncURL() {
+  const q = new URLSearchParams(location.search);
+  if (S.rows.size === EPICS.length) q.delete('rows'); else q.set('rows', [...S.rows].join(','));
+  try { history.replaceState(null, '', `${location.pathname}?${q}`.replace(/\?$/, '')); } catch (e) { /* file: では失敗してよい */ }
+}
+
+/* 他の人の変更（定期取得で入ってくるもの）を1件流す */
+const POLLS = [
+  { who: '田中（模擬店）', run() { const t = byId('s5'); const d = t.e > hm(11, 55) ? -600 : 600; t.e += d; flash(t.id, this.who); return `「${short(t.title, 10)}」の終了を ${sdur(d)}（重複チェック無し：ほかは動かない）`; } },
+  { who: '鈴木（本部）', run() { const t = byId('k3'); const d = t.e > hm(15) ? -900 : 900; const R = plan(t.id, t.s, t.e + d); if (!R.ok) return null; applyPos(R.pos, this.who); const n = R.pos.size - 1; return `「1-C ${t.title}」の終了を ${sdur(d)}${d > 0 ? (n ? `（後ろの ${n}件を押した）` : '（隙間で吸収）') : '（後ろは動かない）'}`; } },
+  { who: '山本（放送）', run() { const t = byId('b2'); t.title = t.title.includes('迷子') ? 'お昼の放送「DJ タイム」' : 'お昼の放送「DJ タイム」と迷子のお知らせ'; flash(t.id, this.who); return `「${short(t.title, 12)}」の題名を変更`; } },
+  { who: '伊藤（2-A）', run() { const t = byId('a5'); if (t.st === 'todo') { t.st = 'prog'; t.sa = nowS(); } else { t.st = 'todo'; t.sa = null; } flash(t.id, this.who); return `「${t.title}」を${STN[t.st]}に`; } },
+];
+function pollOnce(force) {
+  S.sincePoll = 0; S.pollCount++;
+  if (!force && S.pollCount % 2) { renderPoll(); return; }
+  if (S.retro || S.step != null) { renderPoll(); return; }
+  const P = POLLS[S.pollIdx++ % POLLS.length];
+  const text = P.run(); if (!text) return;
+  S.lastOther = { who: P.who, text, at: Date.now() };
+  if (S.trial) { S.trial = makeTrial(S.trial.a); S.trial.stale = true; }
+  renderRows(); renderNotice(); renderPoll(); if (S.pop) renderPop();
+}
+
+function examples(k) {
+  const g3 = byId('g3');
+  if (k === 'dance30') setTrial({ op: 'end', id: 'g3', ne: g3.e + 1800 });
+  if (k === 'dance70') setTrial({ op: 'end', id: 'g3', ne: g3.e + 4200 });
+  if (k === 'obake') setTrial({ op: 'end', id: 'a1', ne: byId('a1').e + 3600 });
+  if (k === 'mochi') setTrial({ op: 'compact', id: 'y3' });
+  if (k === 'dancenow') setTrial({ op: 'now', id: 'g3' });
+}
+
+function bind() {
+  const sc = $('#sc');
+  $('#segTheme').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setTheme(b.dataset.v); });
+  $('#segRole').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    S.role = b.dataset.v; S.rows = new Set(S.role === 'admin' ? EPICS.map(x => x.id) : ['gym']);
+    syncURL(); renderAll();
+  });
+  $('#segScene').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const r = b.dataset.v === 'retro'; if (r === S.retro) return;
+    S.trial = null; S.step = null; closePop();
+    if (r) { S.savedNow = S.now; S.savedPlay = S.playing; makeActuals(); S.now = hm(17); S.playing = false; S.retro = true; if (S.base == null) S.base = S.versions.length - 1; }
+    else { S.retro = false; S.now = S.savedNow; S.playing = S.savedPlay; }
+    renderAll(); gotoNow();
+  });
+  $('#segPoll').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { S.pollOn = b.dataset.v === 'on'; renderHeader(); renderPoll(); } });
+  $('#btnPollNow').addEventListener('click', () => pollOnce(true));
+  $('#btnPlay').addEventListener('click', () => { S.playing = !S.playing; renderHeader(); });
+  $('#selSpeed').addEventListener('change', e => { S.speed = +e.target.value; });
+  $('#btnAdd5').addEventListener('click', () => { S.now += 300; tickRender(true); });
+  $('#selSnap').addEventListener('change', e => { S.snap = +e.target.value; if (S.trial) setTrial(S.trial.a); });
+  $('#segZoom').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setZoom(ZOOMS[b.dataset.v]); });
+  $('#btnNow').addEventListener('click', gotoNow);
+  $('#btnSave').addEventListener('click', () => {
+    const vs = S.versions; const n = vs[vs.length - 1].n + 1;
+    vs.push({ n, at: `10/24 ${fmtT(S.now)}`, who: '鈴木（本部）', label: `当日 ${fmtT(S.now)}`, snap: snap(S.tk) });
+    S.base = vs.length - 1;
+    S.savedMsg = { at: Date.now(), text: `v${n} として保存しました（${S.tk.length}件。行を絞っていても全体を保存）。この版を重ねています。` };
+    renderAll();
+  });
+  $('#btnStep').addEventListener('click', () => { if (S.step != null) S.step = null; else { S.step = 0; S.trial = null; closePop(); } renderAll(); });
+  $('#btnRows').addEventListener('click', e => { e.stopPropagation(); $('#pnlVer').hidden = true; $('#pnlRows').hidden = !$('#pnlRows').hidden; });
+  $('#btnVer').addEventListener('click', e => { e.stopPropagation(); $('#pnlRows').hidden = true; $('#pnlVer').hidden = !$('#pnlVer').hidden; });
+  $('#pnlRows').addEventListener('click', e => e.stopPropagation());
+  $('#pnlVer').addEventListener('click', e => e.stopPropagation());
+  $('#pnlRows').addEventListener('change', e => {
+    const id = e.target.dataset.epic; if (!id) return;
+    if (e.target.checked) S.rows.add(id); else S.rows.delete(id);
+    syncURL(); renderHeader(); renderRows(); $('#pnlRows').hidden = false;
+  });
+  $('#pnlRows').addEventListener('click', e => {
+    const p = e.target.closest('[data-preset]'); if (!p) return;
+    S.rows = new Set(p.dataset.preset === 'all' ? EPICS.map(x => x.id) : p.dataset.preset === 'gym' ? ['gym'] : ['gym', 'yard']);
+    syncURL(); renderHeader(); renderRows(); $('#pnlRows').hidden = false;
+  });
+  $('#pnlVer').addEventListener('change', e => { if (e.target.name === 'base') { S.base = +e.target.value < 0 ? null : +e.target.value; renderAll(); $('#pnlVer').hidden = false; } });
+  $('#pnlVer').addEventListener('click', e => { if (e.target.closest('[data-act="step"]')) { S.step = 0; S.trial = null; $('#pnlVer').hidden = true; renderAll(); } });
+  document.addEventListener('click', e => {
+    $('#pnlRows').hidden = true; $('#pnlVer').hidden = true;
+    if (S.pop && !e.target.closest('#pop') && !e.target.closest('.bar')) closePop();
+  });
+  $('#notice').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.ex) return examples(b.dataset.ex);
+    const a = b.dataset.act;
+    if (a === 'commit') commit(false);
+    if (a === 'u2') commit(true);
+    if (a === 'cancel') setTrial(null);
+    if (a === 'seek') { const sc = $('#sc'); S.follow = false; S.progScroll = true; sc.scrollLeft = Math.max(0, X(+b.dataset.t) - (sc.clientWidth - V.LW) * 0.6); renderGrid(); renderNotice(); }
+    if (a === 'prev') { S.step = Math.max(0, S.step - 1); renderAll(); }
+    if (a === 'next') { S.step = Math.min(S.versions.length, S.step + 1); renderAll(); }
+    if (a === 'endstep') { S.step = null; renderAll(); }
+  });
+  $('#notice').addEventListener('mouseover', e => { const on = !!e.target.closest('[data-act="u2"]'); if (on !== S.showSug) { S.showSug = on; renderGhosts(); } });
+  $('#pop').addEventListener('click', e => {
+    const b = e.target.closest('[data-pa]'); if (!b) return;
+    const t = byId(S.pop), a = b.dataset.pa;
+    if (a === 'close') return closePop();
+    if (a === 'start') { t.st = 'prog'; t.sa = nowS(); flash(t.id, 'あなた'); }
+    if (a === 'done') { t.st = 'done'; t.ca = nowS(); flash(t.id, 'あなた'); }
+    if (a === 'ps') t.ps = !t.ps;
+    if (a === 'pe') t.pe = !t.pe;
+    if (a === 'chk') t.chk = !t.chk;
+    if (a === 'now' || a === 'compact') { setTrial({ op: a, id: t.id }); closePop(); return; }
+    renderRows(); renderPop(); renderNotice();
+  });
+  // バー：クリックで吹き出し、端のドラッグで試算
+  $('#rows').addEventListener('pointerdown', e => {
+    const h = e.target.closest('.hE, .hS'); if (!h || S.step != null || S.retro) return;
+    const id = h.closest('.bar').dataset.id, t = byId(id), edge = h.classList.contains('hE') ? 'e' : 's';
+    e.preventDefault();
+    S.drag = { id, edge, x0: e.clientX, v0: edge === 'e' ? t.e : t.s, moved: false, cur: null };
+  });
+  window.addEventListener('pointermove', e => {
+    const d = S.drag; if (!d) return;
+    if (Math.abs(e.clientX - d.x0) > 2) d.moved = true;
+    if (!d.moved) return;
+    const v = Math.round((d.v0 + (e.clientX - d.x0) / S.pps) / S.snap) * S.snap;
+    if (v === d.cur) return; d.cur = v;
+    setTrial(d.edge === 'e' ? { op: 'end', id: d.id, ne: v } : { op: 'start', id: d.id, ns: v });
+  });
+  window.addEventListener('pointerup', () => {
+    const d = S.drag; if (!d) return; S.drag = null;
+    if (d.moved) { S.eatClick = true; if (d.cur === d.v0) setTrial(null); }
+  });
+  $('#rows').addEventListener('click', e => {
+    if (S.eatClick) { S.eatClick = false; return; }
+    const bar = e.target.closest('.bar'); if (!bar || e.target.closest('.hE, .hS')) return;
+    e.stopPropagation();
+    if (S.step != null && !byId(bar.dataset.id)) return;
+    openPop(bar.dataset.id, e.clientX, e.clientY);
+  });
+  document.addEventListener('keydown', e => {
+    if (e.target.closest('input, select, textarea')) return;
+    if (e.key === 'Escape') { if (S.trial) setTrial(null); else closePop(); }
+    if (e.key === 'Enter' && S.trial && S.trial.R.ok) commit(false);
+    if (S.step != null && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { S.step = Math.max(0, Math.min(S.versions.length, S.step + (e.key === 'ArrowRight' ? 1 : -1))); renderAll(); }
+    if (!e.metaKey && !e.ctrlKey && !e.altKey && (e.key === '+' || e.key === '-')) setZoom(S.pps * (e.key === '+' ? 1.6 : 1 / 1.6));
+  });
+  sc.addEventListener('wheel', e => {
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(S.pps * Math.exp(-e.deltaY * 0.0025), e.clientX); }
+    else if (e.shiftKey && !e.deltaX) { e.preventDefault(); sc.scrollLeft += e.deltaY; }
+    if (e.deltaX || e.shiftKey || e.ctrlKey || e.metaKey) S.follow = false;
+  }, { passive: false });
+  let raf = 0;
+  sc.addEventListener('scroll', () => {
+    if (S.progScroll) S.progScroll = false; else if (V.follow && S.follow && !S.drag) S.follow = false;
+    if (!raf) raf = requestAnimationFrame(() => { raf = 0; renderGrid(); });
+  });
+  window.addEventListener('resize', () => { renderGrid(); });
+  window.addEventListener('message', e => { const d = e.data || {}; if (d.type === 'theme') setTheme(d.theme); });
+}
+
+/* 時計と定期取得 */
+let lastWall = performance.now(), acc = 0;
+function tickRender(force) {
+  const m = Math.floor(S.now / 60);
+  if (force || m !== S.lastMin) { S.lastMin = m; renderRows(); if (V.rowInfo || S.pop) { if (S.pop) renderPop(); } if (S.trial && !S.drag) { S.trial = makeTrial(S.trial.a); renderGhosts(); renderNotice(); } }
+  placeNow();
+}
+function loop() {
+  const t = performance.now(), dt = (t - lastWall) / 1000; lastWall = t;
+  if (S.playing && !S.retro) { S.now = Math.min(hm(17, 10), S.now + dt * S.speed); tickRender(false); }
+  acc += dt;
+  if (acc >= 1) {
+    acc = 0;
+    if (S.pollOn) { S.sincePoll++; if (S.sincePoll >= 5) pollOnce(false); else renderPoll(); }
+    if (S.lastOther && Date.now() - S.lastOther.at > 20000 && !S.trial) { S.lastOther = null; renderNotice(); }
+    if (S.savedMsg && Date.now() - S.savedMsg.at > 8000 && !S.trial) { S.savedMsg = null; renderNotice(); }
+  }
+  setTimeout(loop, 250);
+}
+
+/* 起動 */
+skeleton();
+const th = qs.get('theme'); if (th === 'light' || th === 'dark') setTheme(th);
+if (qs.get('play') === '0') S.playing = false;
+if (qs.get('poll') === '0') S.pollOn = false;
+bind();
+renderAll();
+requestAnimationFrame(() => { gotoNow(); renderGrid(); });
+loop();
+window.__tl = { S, plan, makeTrial, setTrial, commit, examples, setZoom, gotoNow, renderAll, pollOnce, byId, hm };
+})();
+
+</script>
+</body>
+</html>

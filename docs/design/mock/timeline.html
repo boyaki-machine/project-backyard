@@ -31,6 +31,7 @@ header .eyebrow { font: 11px var(--pb-font-mono); color: var(--pb-11); }
 .seg button[aria-pressed="true"] { background: var(--pb-9); color: var(--pb-1); }
 .ctl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--pb-11); }
 .sp { flex: 1; }
+.tsep { font-size: 11px; color: var(--pb-11); align-self: center; margin: 0 2px 0 10px; padding-left: 10px; border-left: 1px solid var(--pb-7); }
 details { font-size: 12.5px; }
 details summary { cursor: pointer; color: var(--pb-11); }
 details[open] { position: absolute; top: 46px; right: 16px; z-index: 5; background: var(--pb-1); border: 1px solid var(--pb-7); border-radius: 8px; padding: 10px 14px; box-shadow: 0 10px 30px oklch(0.2 0.03 245 / .2); max-width: 900px; }
@@ -45,9 +46,11 @@ iframe { flex: 1 1 auto; width: 100%; border: 0; display: block; background: var
 <header>
   <div>
     <div class="eyebrow">PB · pb-295 · タイムライン デザイン案（CP2）</div>
-    <h1>タイムライン：3案を同じデモデータで比べる</h1>
+    <h1>タイムライン：最終案と、検討した3案</h1>
   </div>
   <div class="tabs" role="tablist">
+    <button type="button" role="tab" data-k="final">最終案（CP2 で合意）</button>
+    <span class="tsep">検討した案</span>
     <button type="button" role="tab" data-k="a">案A 製図（単色・記号）</button>
     <button type="button" role="tab" data-k="b">案B 状態の色</button>
     <button type="button" role="tab" data-k="c">案C 進行表（いまが主役）</button>
@@ -55,7 +58,7 @@ iframe { flex: 1 1 auto; width: 100%; border: 0; display: block; background: var
   <span class="sp"></span>
   <div class="ctl">テーマ <div class="seg" id="segTheme"><button type="button" data-v="">システム</button><button type="button" data-v="light">ライト</button><button type="button" data-v="dark">ダーク</button></div></div>
   <details>
-    <summary>3案の違い</summary>
+    <summary>検討した3案の違いと最終案</summary>
     <table>
       <tr><th></th><th>案A 製図</th><th>案B 状態の色</th><th>案C 進行表</th></tr>
       <tr><th>状態</th><td>記号＋濃淡（斜線・塗り・沈んだ塗り）</td><td>有彩色の塗り＋状態の札</td><td>単色。2行目の文言（残り・押し・あと）</td></tr>
@@ -63,6 +66,7 @@ iframe { flex: 1 1 auto; width: 100%; border: 0; display: block; background: var
       <tr><th>ズレの読み方</th><td>「始+10 終+10」</td><td>「終+10分」の札</td><td>数値の札「+10」</td></tr>
       <tr><th>「いま」</th><td>細い線</td><td>細い線</td><td>太い時計と線、過去を沈める、追従して流れる</td></tr>
       <tr><th>副レーン（裏）</th><td>破線の枠のバー</td><td>帯の地を変え、斜めの地のバー</td><td>点線の枠のバー</td></tr>
+      <tr><th>最終案（CP2）</th><td colspan="3">状態の色は案B、当初計画は案A の破線の枠（ずれたものだけ）。画面は流さない（案C の追従は採らない）。版を送るときは前の版の点線の枠だけ。正本は設計書（GuiDesign の新しい節、pb-296）</td></tr>
       <tr><th>向く人</th><td>ガントに慣れた本部</td><td>全会場を一望する本部</td><td>自分の会場を回す進行担当</td></tr>
     </table>
   </details>
@@ -72,7 +76,7 @@ iframe { flex: 1 1 auto; width: 100%; border: 0; display: block; background: var
 (function () {
   const frame = document.getElementById('frame');
   let theme = new URLSearchParams(location.search).get('theme') || '';
-  let k = (location.hash.match(/^#([abc])$/) || [])[1] || 'a';
+  let k = (location.hash.match(/^#(final|[abc])$/) || [])[1] || 'final';
   function setTheme(v) {
     theme = v;
     if (v) document.documentElement.setAttribute('data-theme', v); else document.documentElement.removeAttribute('data-theme');

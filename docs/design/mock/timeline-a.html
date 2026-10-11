@@ -579,7 +579,7 @@ function skeleton() {
 <div class="page" id="page" data-variant="${V.key}">
   <header class="intro">
     <div>
-      <div class="eyebrow">PB · pb-295 · タイムライン /p/:key/timeline · 案${V.key}「${H(V.name)}」 · デモ：${DAY} 文化祭の当日</div>
+      <div class="eyebrow">PB · pb-295 · タイムライン /p/:key/timeline · ${V.eyebrow || `案${V.key}「${H(V.name)}」`} · デモ：${DAY} 文化祭の当日</div>
       <h1>${V.title}</h1>
       <ol>${V.points.map(p => `<li>${p}</li>`).join('')}</ol>
     </div>
@@ -673,6 +673,7 @@ const STN = { todo: '未着手', prog: '進行中', done: '完了', plan: '計�
 function renderRows() {
   const M = model();
   LAY = layout(M);
+  $('#page').dataset.mode = M.mode;
   const tw = TW(), now = nowS();
   let html = '';
   for (const r of LAY.rows) {
@@ -884,7 +885,7 @@ function renderHeader() {
   bv.classList.toggle('on', S.base != null);
   $('#pnlVer').innerHTML = `<div class="ph">当初計画の版（プロジェクト全体を1つにまとめて保存）</div>`
     + `<label><input type="radio" name="base" value="-1"${S.base == null ? ' checked' : ''}>重ねない</label>`
-    + vs.map((v, i) => { const d = i ? vdiff(vs[i - 1].snap, v.snap) : null; return `<label class="vrow"><input type="radio" name="base" value="${i}"${S.base === i ? ' checked' : ''}><b>v${v.n}</b><span>${H(v.label)} <span class="muted mono">${v.at}</span></span><small>${H(v.who)}${d ? ` · 前の版から 移動 ${d.mv}・追加 ${d.ad}・消えた ${d.rm}` : ` · ${Object.keys(v.snap).length}件`}</small></label>`; }).reverse().join('')
+    + vs.map((v, i) => { const d = i ? vdiff(vs[i - 1].snap, v.snap) : null; return `<label class="vrow"><input type="radio" name="base" value="${i}"${S.base === i ? ' checked' : ''}><b>v${v.n}</b><span>${H(v.label)} <span class="muted mono">${v.at}</span></span><small>${H(v.who)}${V.noDiffCounts ? '' : d ? ` · 前の版から 移動 ${d.mv}・追加 ${d.ad}・消えた ${d.rm}` : ` · ${Object.keys(v.snap).length}件`}</small></label>`; }).reverse().join('')
     + `<div class="pf"><button type="button" class="btn" data-act="step">版を順に送る（v1 → いま）</button></div>`;
   $('#btnSave').hidden = S.role !== 'admin';
   $('#btnStep').setAttribute('aria-pressed', String(S.step != null));
@@ -938,14 +939,14 @@ function renderNotice() {
     const d = k > 0 ? vdiff(vs[Math.min(k, vs.length) - 1].snap, cur ? snap(S.tk) : vs[k].snap) : null;
     n.classList.add('step');
     n.innerHTML = `<span class="lbl">版を送る ${k + 1}/${vs.length + 1}</span><button type="button" class="btn sq" data-act="prev"${k <= 0 ? ' disabled' : ''}>◀</button><button type="button" class="btn sq" data-act="next"${cur ? ' disabled' : ''}>▶</button>`
-      + `<span class="msg">${name}${d ? `　<span class="muted">前の版から</span> 移動 <b>${d.mv}</b>・追加 <b>${d.ad}</b>・消えた <b>${d.rm}</b>　<span class="muted">影＝前の版</span>` : '　<span class="muted">最初の版</span>'}</span><button type="button" class="btn" data-act="endstep">終える</button>`;
+      + `<span class="msg">${name}${V.noDiffCounts ? (k > 0 ? '　<span class="muted">点線の枠＝前の版の位置（ずれたものだけ）</span>' : '　<span class="muted">最初の版</span>') : d ? `　<span class="muted">前の版から</span> 移動 <b>${d.mv}</b>・追加 <b>${d.ad}</b>・消えた <b>${d.rm}</b>　<span class="muted">影＝前の版</span>` : '　<span class="muted">最初の版</span>'}</span><button type="button" class="btn" data-act="endstep">終える</button>`;
     return;
   }
   if (S.retro) {
     const M = model(); let late = 0, early = 0, maxL = 0, nw = 0;
     for (const it of M.items) { const b = M.base && M.base[it.id]; if (!b) { if (M.base) nw++; continue; } const d = it.s - b.s; if (d >= 60) { late++; maxL = Math.max(maxL, d); } else if (d <= -60) early++; }
     const gone = M.base ? Object.keys(M.base).filter(id => !byId(id)).length : 0;
-    n.innerHTML = `<span class="lbl">振り返り</span><span class="msg">${M.base ? `<b>v${S.versions[S.base].n} ${H(S.versions[S.base].label)}</b> と実績を比べています。開始が遅れた <b>${late}</b>件（最大 ${sdur(maxL)}）・早まった <b>${early}</b>件・計画外 <b>${nw}</b>件・消えた <b>${gone}</b>件` : '当初計画を重ねると、計画と実績の差を出します'}。バーは実績（着手→完了）、影は版の計画。</span>`;
+    n.innerHTML = `<span class="lbl">振り返り</span><span class="msg">${M.base ? `<b>v${S.versions[S.base].n} ${H(S.versions[S.base].label)}</b> と実績を比べています。開始が遅れた <b>${late}</b>件（最大 ${sdur(maxL)}）・早まった <b>${early}</b>件・計画外 <b>${nw}</b>件・消えた <b>${gone}</b>件` : '当初計画を重ねると、計画と実績の差を出します'}。バーは実績（着手→完了）、${V.baseWord || '影'}は版の計画。</span>`;
     return;
   }
   if (S.savedMsg && Date.now() - S.savedMsg.at < 8000) {
