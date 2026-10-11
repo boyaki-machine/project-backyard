@@ -85,6 +85,9 @@ var selfEditDeniedFields = []string{
 	"type",
 	"execution_mode", "readiness", "readiness_note", "scope",
 	"working_agent_id", "actual_hours",
+	// 時間重複チェックとアンカー（9.5.2。pb-296）。人が置く連鎖のずらしの縛りで、
+	// エージェントが書き換えると人の連鎖の結果が変わる——scope を開けないのと同じ理由。
+	"no_overlap", "start_pinned", "due_pinned",
 }
 
 // チケットの値域（ApiDesign.md 9.2.1 / 9.3、DbDesign.md 6.6 の CHECK と同じ）。
@@ -217,6 +220,9 @@ type ticketFilters struct {
 
 	// gantt は view=gantt（9.2.6）。件数の上限・棚に戻ったものの既定・依存の同梱が変わる。
 	gantt bool
+	// timeline は view=timeline（9.2.7。pb-296）。上限と棚に戻ったものの既定はガントと同じで、
+	// 対象を settings.timeline_epics の配下の時刻付きに絞り、epics[]・baselines を足す。
+	timeline bool
 
 	// normalized は ETag の材料（9.2.5）。解析後の値から作るので、
 	// 同じ意味の違う書き方（?type=bug,task と ?type=task,bug）が同じ値になる。
@@ -235,8 +241,8 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 	// ゼロ値で返るので、filters.gantt を見ると page / per_page の誤りを取りこぼす。
 	var page Page
 	var pageErr *apierr.Error
-	if r.URL.Query().Get("view") == ticketViewGantt {
-		page, pageErr = parseGanttPage(r)
+	if v := r.URL.Query().Get("view"); v == ticketViewGantt || v == ticketViewTimeline {
+		page, pageErr = parseGanttPage(r, v)
 	} else {
 		page, pageErr = ParsePage(r, ticketSortSpec)
 	}
@@ -280,6 +286,23 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		dueBefore = &t
 	}
 
+	// view=timeline（9.2.7）。プロジェクトの行を1回読み、載せるエピックを決める（DbDesign.md 6.4）。
+	// **選んだエピックが無ければ items も epics も空**——SQL の起点が無くなるだけで、分岐を持たない。
+	timelineEpics := []int32{}
+	var tlProject gen.GetProjectTimelineSettingsRow
+	var tlSettings timelineSettings
+	if filters.timeline {
+		row, err := h.q.GetProjectTimelineSettings(r.Context(), projectID)
+		if err != nil {
+			apierr.Write(w, r, apierr.New(apierr.InternalError).
+				WithCause(fmt.Errorf("タイムラインの設定を読めない: %w", err)))
+			return
+		}
+		tlProject = row
+		tlSettings = readTimelineSettings(row.Settings)
+		timelineEpics = tlSettings.Epics
+	}
+
 	rows, err := h.q.ListTickets(r.Context(), gen.ListTicketsParams{
 		ProjectID:        projectID,
 		StatusKeys:       filters.statusKeys,
@@ -311,6 +334,8 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		ClosedBefore:     filters.closedBefore,
 		IncludeRetired:   filters.includeRetired,
 		StagedOnly:       filters.stagedOnly,
+		TimelineOnly:     filters.timeline,
+		TimelineEpicSeqs: timelineEpics,
 		Sort:             page.Sort,
 		SortOrder:        page.Order,
 		PageLimit:        int32(page.Limit()),
@@ -351,15 +376,18 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	etag := withDelegationMarks(ticketsETag(filters.normalized, page, total, lastUpdated), items)
-	if !filters.gantt {
-		// 差分取得（2.7 / 9.2.5）。If-None-Match は解釈せず
-		// ヘッダだけ出す（5.1 / 6.1 と同じ）。
+	if !filters.gantt && !filters.timeline {
+		// 差分取得（2.7 / 9.2.5）。**If-None-Match が一致すれば 304**（pb-296）。一致を見るのは
+		// 材料を集めた後なので、減るのは転送と JSON の組み立てである（Timeline.md 5.7）。
+		if writeNotModified(w, r, etag) {
+			return
+		}
 		w.Header().Set("ETag", etag)
 		WriteJSON(w, http.StatusOK, NewList(items, page, int(total)))
 		return
 	}
 
-	// view=gantt（9.2.6）。依存は返したチケットの ID で1回だけ引く（設計方針3）。
+	// view=gantt（9.2.6）と view=timeline（9.2.7）。依存は返したチケットの ID で1回だけ引く（設計方針3）。
 	links := []ganttLinkItem{}
 	var lastLinked time.Time
 	if len(ticketIDs) > 0 {
@@ -379,7 +407,17 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	w.Header().Set("ETag", ganttETag(etag, len(links), lastLinked))
+	etag = ganttETag(etag, len(links), lastLinked)
+	if filters.timeline {
+		// タイムラインの links[] は FS・同じエピックだけに絞る（9.2.7）。ETag の④⑤は絞る前の依存で
+		// 作る——材料が多いぶん変わりやすいだけで、変わったのに一致することは無い
+		h.writeTimelineList(w, r, projectID, filters, page, rows, items, total, etag, links, tlProject, tlSettings)
+		return
+	}
+	if writeNotModified(w, r, etag) {
+		return
+	}
+	w.Header().Set("ETag", etag)
 	WriteJSON(w, http.StatusOK, ganttList{List: NewList(items, page, int(total)), Links: links})
 }
 
@@ -407,14 +445,14 @@ type ganttLinkItem struct {
 // **page / per_page は受けない。** 受けると「2ページ目のガント」が作れ、依存の
 // 「両端が items に含まれる」がページごとに変わる。黙って無視せず 422 にする——
 // 送った側の誤りが、1ページ目を返されて気づかれないまま残るため。
-func parseGanttPage(r *http.Request) (Page, *apierr.Error) {
+func parseGanttPage(r *http.Request, view string) (Page, *apierr.Error) {
 	q := r.URL.Query()
 	var details []apierr.Detail
 	for _, field := range []string{"page", "per_page"} {
 		if q.Has(field) {
 			details = append(details, apierr.Detail{
 				Field: field, Code: "invalid",
-				Message: field + " は view=gantt と一緒に指定できません（上限 " +
+				Message: field + " は view=" + view + " と一緒に指定できません（上限 " +
 					strconv.Itoa(ganttMaxTickets) + " 件を1回で返します）",
 			})
 		}
@@ -470,9 +508,12 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 	case ticketViewGantt:
 		f.gantt = true
 		parts = append(parts, "view="+ticketViewGantt)
+	case ticketViewTimeline:
+		f.timeline = true
+		parts = append(parts, "view="+ticketViewTimeline)
 	default:
 		details = append(details, apierr.Detail{
-			Field: "view", Code: "invalid", Message: "view は gantt で指定してください",
+			Field: "view", Code: "invalid", Message: "view は gantt または timeline で指定してください",
 		})
 	}
 
@@ -545,12 +586,12 @@ func parseTicketFilters(r *http.Request, p *auth.Principal) (ticketFilters, *api
 	// retired=false を明示すれば外れる。
 	switch v := q.Get("retired"); v {
 	case "":
-		if f.gantt {
+		if f.gantt || f.timeline {
 			f.includeRetired = true
 			parts = append(parts, "retired=true")
 		}
 	case "false":
-		if f.gantt {
+		if f.gantt || f.timeline {
 			parts = append(parts, "retired=false")
 		}
 	case "true":

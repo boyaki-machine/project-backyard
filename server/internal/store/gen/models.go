@@ -511,6 +511,30 @@ type RolePermission struct {
 	PermissionKey string
 }
 
+type ScheduleBaseline struct {
+	ID            string
+	ProjectID     string
+	Label         pgtype.Text
+	ItemCount     int32
+	CreatedBy     pgtype.Text
+	CreatedByName string
+	CreatedAt     time.Time
+}
+
+type ScheduleBaselineItem struct {
+	BaselineID  string
+	TicketSeq   int32
+	Title       string
+	EpicSeq     int32
+	EpicTitle   string
+	StartAt     *time.Time
+	DueAt       *time.Time
+	AllDay      bool
+	NoOverlap   bool
+	StartPinned bool
+	DuePinned   bool
+}
+
 type Sprint struct {
 	ID        string
 	ProjectID string
@@ -582,6 +606,9 @@ type Ticket struct {
 	StartAt            *time.Time
 	DueAt              *time.Time
 	AllDay             bool
+	NoOverlap          bool
+	StartPinned        bool
+	DuePinned          bool
 }
 
 type TicketEffort struct {

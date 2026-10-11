@@ -163,6 +163,10 @@ type Error struct {
 	// 取りに行かずに次の一手を選べる**ようにするためである。
 	AvailableSections []string `json:"available_sections,omitempty"`
 
+	// Retrial は連鎖のずらしの 409 stale_plan に載せる計算し直した試算（ApiDesign.md 9.17.2）。
+	// 画面が確認をもう一度出すだけで済むようにする。retry_after_sec と同じく本体の任意フィールド。
+	Retrial any `json:"retrial,omitempty"`
+
 	RequestID string `json:"request_id,omitempty"`
 
 	// cause は応答には出さず、サーバログにのみ残す内部原因。
@@ -221,6 +225,12 @@ func (e *Error) WithAvailableSections(sections []string) *Error {
 	if len(sections) > 0 {
 		e.AvailableSections = sections
 	}
+	return e
+}
+
+// WithRetrial は 409 stale_plan に計算し直した試算を添える（ApiDesign.md 9.17.2）。
+func (e *Error) WithRetrial(v any) *Error {
+	e.Retrial = v
 	return e
 }
 

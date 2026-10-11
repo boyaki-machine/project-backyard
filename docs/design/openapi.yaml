@@ -2316,6 +2316,137 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/projects/{key}/schedule-baselines:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+    get:
+      tags: [tickets]
+      summary: 当初計画の版の一覧
+      operationId: listScheduleBaselines
+      description: '`created_at` の新しい順（ApiDesign.md 9.17.3）。**必要権限は `ticket.view`**。ページネーションも ETag も持たない。'
+      responses:
+        '200':
+          description: 版の一覧。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleBaselineList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [tickets]
+      summary: 当初計画を保存する
+      operationId: createScheduleBaseline
+      description: |
+        プロジェクトのタイムライン全体（`timeline_epics` で選んだエピックの配下）を1つの版として積む（ApiDesign.md 9.17.3）。**必要権限は `project.edit`**。
+        `If-Match` は要求しない。写すチケットが 5,000件を超えれば 422 `too_many`。
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateScheduleBaselineRequest'
+      responses:
+        '201':
+          description: 保存した版。`Location` に版の URL。
+          headers:
+            Location:
+              schema:
+                type: string
+              example: /api/v1/projects/fes/schedule-baselines/01K9ABCDEFGHJKMNPQRSTVWXYZ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleBaselineSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProjectNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/schedule-baselines/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - name: id
+        in: path
+        required: true
+        description: 版の ULID。
+        schema:
+          type: string
+    get:
+      tags: [tickets]
+      summary: 当初計画の1版
+      operationId: getScheduleBaseline
+      description: 版の中身（ApiDesign.md 9.17.3）。**必要権限は `ticket.view`**。書き換わらないので `If-None-Match` で 304。
+      responses:
+        '200':
+          description: 版と、写したチケット。
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduleBaseline'
+        '304':
+          description: '`If-None-Match` が一致した（本体なし）'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: プロジェクトか版が無い。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [tickets]
+      summary: 当初計画の版を消す
+      operationId: deleteScheduleBaseline
+      description: |
+        版とその行を物理削除する（ApiDesign.md 9.17.3）。**必要権限は `project.edit`**。
+        `If-Match` は要求しない。
+      responses:
+        '204':
+          description: 消した。
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: プロジェクトか版が無い。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/projects/{key}/tags:
     parameters:
       - $ref: '#/components/parameters/ProjectKey'
@@ -3053,7 +3184,8 @@ paths:
         `ETag` は「フィルタ条件を正規化した文字列のハッシュ・件数・`MAX(updated_at)`」から
         作る（9.2.5）。**`sort` / `order` / `page` / `per_page` も混ぜる**——ETag は応答本文を
         指す検証子であり、並び順やページが違えば本文も違う。
-        **`If-None-Match` は解釈しない**（304 を返さない）。
+        **`If-None-Match` が今の ETag と一致すれば 304 を返す**（9.2.5。pb-296）。
+        `view=timeline` は ETag にエピックと当初計画の版の材料も混ぜる。
       parameters:
         - name: status
           in: query
@@ -3291,15 +3423,16 @@ paths:
         - name: view
           in: query
           description: |
-            **`gantt` だけを受ける**（ApiDesign.md 9.2.6）。件数の上限が 5,000件になり、
-            棚に戻ったものを既定で含み（`retired=false` で外す）、`links[]` を同梱する。
+            **`gantt` と `timeline` を受ける**（ApiDesign.md 9.2.6・9.2.7）。件数の上限が
+            5,000件になり、棚に戻ったものを既定で含み（`retired=false` で外す）、`links[]` を同梱する。
+            `timeline` は `settings.timeline_epics` で選んだエピックの配下の時刻付きのチケットだけを返し、`epics[]`・`baselines` を足す。
             `page` / `per_page` と一緒には送れない。他の値は 422。
           schema:
             type: string
-            enum: [gantt]
+            enum: [gantt, timeline]
       responses:
         '200':
-          description: チケットの一覧。`view=gantt` のときは `links` が載る。
+          description: チケットの一覧。`view=gantt` のときは `links` が、`view=timeline` のときは `links`・`epics`・`baselines` が載る。
           headers:
             ETag:
               description: |
@@ -3313,6 +3446,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TicketList'
+        '304':
+          description: '`If-None-Match` が今の ETag と一致した（本体なし。ApiDesign.md 9.2.5）'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -5514,6 +5649,61 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/TicketNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{key}/tickets/{seq}/reschedule:
+    parameters:
+      - $ref: '#/components/parameters/ProjectKey'
+      - $ref: '#/components/parameters/TicketSeq'
+    post:
+      tags: [tickets]
+      summary: 連鎖のずらし（試算と確定）
+      operationId: rescheduleTicket
+      description: |
+        きっかけのチケット1件の新しい予定を受け、同じエピックの時間重複チェック付きの列を
+        連鎖でずらす（ApiDesign.md 9.17）。**必要権限は `ticket.edit` / `ticket.self_edit` /
+        `ticket.plan.edit` のいずれか**。`If-Match` はきっかけの `version`（省略は 422）。
+        `dry_run: true` は試算で、解けなくても 200（`result=blocked`）。確定で解けなければ 422
+        （`cannot_fit` / `overlaps_previous`）。試算の後に動かす行が変わっていれば 409（`stale_plan`）。
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: '"4"'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RescheduleRequest'
+      responses:
+        '200':
+          description: 試算または確定の結果。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RescheduleResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TicketNotFound'
+        '409':
+          description: きっかけの版が違う、または `stale_plan`（本体に `retrial` を載せる）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
         '429':
           $ref: '#/components/responses/RateLimited'
         '500':
@@ -9642,7 +9832,8 @@ components:
             取得した値を保持し、変更するキーだけ差し替えて全体を送ること。
 
             サーバは JSON オブジェクトであることしか検証しない。画面が
-            使うキーは `repositories` と `gantt_snap_minutes` で、構造の正本は DbDesign.md 6.4 にある。
+            使うキーは `repositories`・`gantt_snap_minutes`・`views`・`timeline_snap_seconds`・`timeline_epics` で、
+            構造の正本は DbDesign.md 6.4 にある。
           type: object
           additionalProperties: true
         timezone:
@@ -9701,7 +9892,8 @@ components:
         settings:
           description: |
             `project.settings`（jsonb）をそのまま返す。画面が使うキーは
-            `repositories` と `gantt_snap_minutes` で、構造の正本は DbDesign.md 6.4 にある。
+            `repositories`・`gantt_snap_minutes`・`views`・`timeline_snap_seconds`・`timeline_epics` で、
+            構造の正本は DbDesign.md 6.4 にある。
           type: object
           additionalProperties: true
         version:
@@ -9971,6 +10163,11 @@ components:
               items:
                 type: string
               examples: [['命名', 'ブランチ', '接頭辞']]
+            retrial:
+              description: |
+                連鎖のずらしの `409`（`details[].code = "stale_plan"`）にだけ載る、同じ要求を
+                `dry_run` で計算し直した応答（ApiDesign.md 9.17.2）。`retry_after_sec` と同じく本体の任意フィールド。
+              allOf: [$ref: '#/components/schemas/RescheduleResult']
             request_id:
               description: |
                 `audit_log.request_id`（DbDesign.md 6.8）および構造化ログ
@@ -11729,7 +11926,8 @@ components:
       required:
         [id, seq, type, title, status, priority, assignee, reporter, working_agent,
          parent_seq, has_children, sort_key, staged_at, tags, sprint, estimate_point,
-         estimate_hours, actual_hours, actual_point, actual_point_version, start_at, due_at, all_day, closed_at, version,
+         estimate_hours, actual_hours, actual_point, actual_point_version, start_at, due_at, all_day,
+         no_overlap, start_pinned, due_pinned, closed_at, version,
          created_at, updated_at]
       properties:
         id:
@@ -11865,6 +12063,28 @@ components:
           example: 1786719600000
         all_day:
           type: boolean
+        no_overlap:
+          type: boolean
+          description: 時間重複チェック（DbDesign.md 6.6.2）。同じエピックの中で、チェック付きどうしは重ならない。
+        start_pinned:
+          type: boolean
+          description: 開始のアンカー。効くのは連鎖のずらし（reschedule）の中だけで、`PATCH` は見ない（ApiDesign.md 9.5.2）。
+        due_pinned:
+          type: boolean
+          description: 終了のアンカー。効くのは連鎖のずらしの中だけ。
+        epic_seq:
+          type: integer
+          format: int32
+          description: '**`view=timeline` のときだけ載る**（9.2.7）。所属エピックの番号（9.5.1 の `epic` と同じ求め方）。'
+        started_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: '**`view=timeline` のときだけ載る**。実際の着手（9.2.1「着手日時を導く」）。'
+        last_changed_by:
+          allOf: [$ref: '#/components/schemas/ActorRef']
+          nullable: true
+          description: '**`view=timeline` のときだけ載る**。そのチケットの `activity` の最新の行の実行者。'
         closed_at:
           type: integer
           format: int64
@@ -11906,6 +12126,26 @@ components:
             打ち切りで落ちた依存は返さない。0件でも空の配列。
           items:
             $ref: '#/components/schemas/TicketGanttLink'
+        epics:
+          type: array
+          description: '**`view=timeline` のときだけ載る**（ApiDesign.md 9.2.7）。行になるエピック。`sort_key` の昇順。'
+          items:
+            $ref: '#/components/schemas/TimelineEpic'
+        baselines:
+          description: '**`view=timeline` のときだけ載る**。当初計画の版の件数と、最後に保存した版の id と保存日時（中身は schedule-baselines で取る）。'
+          type: object
+          required: [count, latest_id, latest_created_at]
+          properties:
+            count:
+              type: integer
+            latest_id:
+              type: string
+              nullable: true
+              description: ULID。版が無ければ null。
+            latest_created_at:
+              type: integer
+              format: int64
+              nullable: true
         page:
           type: integer
         per_page:
@@ -11914,6 +12154,229 @@ components:
           type: integer
         total_pages:
           type: integer
+
+    TimelineEpic:
+      description: タイムラインの行になるエピック（ApiDesign.md 9.2.7 の `epics[]`）。
+      type: object
+      required: [seq, title, status, sort_key, closed_at]
+      properties:
+        seq:
+          type: integer
+          format: int32
+        title:
+          type: string
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        sort_key:
+          type: string
+          nullable: true
+        closed_at:
+          type: integer
+          format: int64
+          nullable: true
+
+    RescheduleRequest:
+      description: |
+        連鎖のずらしの要求（ApiDesign.md 9.17.2）。`op=move` は `start_at` / `due_at` の少なくとも一方を送る。
+        `op=compact` は `[ここで詰める]` で、時刻を送らない。
+      type: object
+      properties:
+        op:
+          type: string
+          enum: [move, compact]
+          default: move
+        start_at:
+          type: integer
+          format: int64
+        due_at:
+          type: integer
+          format: int64
+        on_block:
+          type: string
+          enum: [reject, shrink]
+          default: reject
+        dry_run:
+          type: boolean
+          default: false
+        expect:
+          type: array
+          description: 試算で動くと示された行（きっかけを除く）の番号と版。食い違えば 409 `stale_plan`。
+          items:
+            type: object
+            required: [seq, version]
+            properties:
+              seq:
+                type: integer
+                format: int32
+              version:
+                type: integer
+                format: int32
+
+    RescheduleChange:
+      type: object
+      required: [seq, reason, before, after, version]
+      properties:
+        seq:
+          type: integer
+          format: int32
+        reason:
+          type: string
+          enum: [target, ripple, shrink]
+        before:
+          $ref: '#/components/schemas/ScheduleSpan'
+        after:
+          $ref: '#/components/schemas/ScheduleSpan'
+        version:
+          type: integer
+          format: int32
+          description: 試算ならいまの版、確定なら書いた後の版。
+
+    ScheduleSpan:
+      type: object
+      required: [start_at, due_at]
+      properties:
+        start_at:
+          type: integer
+          format: int64
+        due_at:
+          type: integer
+          format: int64
+
+    RescheduleResult:
+      description: 連鎖のずらしの結果（ApiDesign.md 9.17.2）。試算では解けなくても 200 で `result=blocked`。
+      type: object
+      required: [applied, result, changes, block, alternative]
+      properties:
+        applied:
+          type: boolean
+        result:
+          type: string
+          enum: [ok, blocked]
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/RescheduleChange'
+        block:
+          type: object
+          nullable: true
+          required: [code, seq, short_ms, message]
+          properties:
+            code:
+              type: string
+              enum: [cannot_fit, overlaps_previous]
+            seq:
+              type: integer
+              format: int32
+            short_ms:
+              type: integer
+              format: int64
+            message:
+              type: string
+        alternative:
+          type: object
+          nullable: true
+          description: '`on_block=shrink` なら解ける場合の変更。'
+          required: [changes]
+          properties:
+            changes:
+              type: array
+              items:
+                $ref: '#/components/schemas/RescheduleChange'
+        items:
+          type: array
+          description: 確定のとき、動いた行（`view=timeline` の `items` と同じ形）。
+          items:
+            $ref: '#/components/schemas/Ticket'
+
+    ScheduleBaselineSummary:
+      description: 当初計画の版（ApiDesign.md 9.17.3）。
+      type: object
+      required: [id, label, item_count, created_by, created_at]
+      properties:
+        id:
+          type: string
+          description: ULID。版はこれで指す（番号を持たない）。画面は `created_at` を基準タイムゾーンで分まで出して名付ける。
+          example: 01K9ABCDEFGHJKMNPQRSTVWXYZ
+        label:
+          type: string
+          nullable: true
+        item_count:
+          type: integer
+        created_by:
+          type: object
+          required: [id, display_name]
+          properties:
+            id:
+              type: string
+              nullable: true
+            display_name:
+              type: string
+        created_at:
+          type: integer
+          format: int64
+
+    ScheduleBaselineList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScheduleBaselineSummary'
+
+    ScheduleBaseline:
+      allOf:
+        - $ref: '#/components/schemas/ScheduleBaselineSummary'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ScheduleBaselineItem'
+
+    ScheduleBaselineItem:
+      type: object
+      required: [ticket_seq, exists, title, epic_seq, epic_title, start_at, due_at, all_day,
+                 no_overlap, start_pinned, due_pinned]
+      properties:
+        ticket_seq:
+          type: integer
+          format: int32
+        exists:
+          type: boolean
+          description: いまのプロジェクトに同じ番号のチケットが在るか。
+        title:
+          type: string
+        epic_seq:
+          type: integer
+          format: int32
+        epic_title:
+          type: string
+        start_at:
+          type: integer
+          format: int64
+          nullable: true
+        due_at:
+          type: integer
+          format: int64
+          nullable: true
+        all_day:
+          type: boolean
+        no_overlap:
+          type: boolean
+        start_pinned:
+          type: boolean
+        due_pinned:
+          type: boolean
+
+    CreateScheduleBaselineRequest:
+      type: object
+      properties:
+        label:
+          type: string
+          maxLength: 100
+          nullable: true
 
     TicketBrief:
       description: チケットの要約（ApiDesign.md 9.5.1 の `parent` と `epic`）。
@@ -12907,6 +13370,15 @@ components:
           description: 予定の終わり（**含まない**。終日なら締切日の翌日の0時）。開始より前だと 422。終日なら両端は基準タイムゾーンの0時（違えば 422 `not_midnight`）。
         all_day:
           type: boolean
+        no_overlap:
+          type: boolean
+          description: 時間重複チェック。`ticket.self_edit` では変えられない（403）。
+        start_pinned:
+          type: boolean
+          description: 開始のアンカー。連鎖のずらしでだけ効く。値の無い端に立てても拒まない（連鎖が無視する）。
+        due_pinned:
+          type: boolean
+          description: 終了のアンカー。
         execution_mode:
           type: string
           enum: [human_only, agent_only, agent_draft]
@@ -13064,6 +13536,15 @@ components:
         all_day:
           type: boolean
           description: 省略時は true（終日）。
+        no_overlap:
+          type: boolean
+          description: 時間重複チェック。省略時は false。
+        start_pinned:
+          type: boolean
+          description: 開始のアンカー。省略時は false。
+        due_pinned:
+          type: boolean
+          description: 終了のアンカー。省略時は false。
 
     MoveTicketRequest:
       description: |

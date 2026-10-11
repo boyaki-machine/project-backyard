@@ -117,6 +117,20 @@ func TestRestoreRoundTripIntegration(t *testing.T) {
 	}
 	t.Logf("表 %d 件・行 %d 件が一致した（版 %d）", len(res.Tables), total, res.MigrationVersion)
 
+	// **当初計画の版の2表が往復に載ること**（DbDesign.md 6.32「バックアップの往復のテストに2表を含める」）。
+	// 表の一覧はカタログから引くので自動で載るはずだが、載らなければ版が黙って欠ける。
+	for _, want := range []string{"schedule_baseline", "schedule_baseline_item"} {
+		found := false
+		for _, tr := range res.Tables {
+			if tr.Name == want || strings.HasSuffix(tr.Name, "."+want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("往復の表に %s が無い", want)
+		}
+	}
+
 	// **外部キーが元の形へ戻っていること。** 遅延できる形のまま残すと、
 	// 本来と違うスキーマになる（DbDesign.md 9.1.1 の⑥）。
 	conn, err := pgx.Connect(ctx, owner)
