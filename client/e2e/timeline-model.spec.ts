@@ -14,6 +14,8 @@ import {
   extendToNowDue,
   fsMarks,
   layoutRows,
+  baselineRows,
+  mergeNewer,
   mergeTimelineEpics,
   readSnapSeconds,
   readTimelineEpics,
@@ -240,5 +242,36 @@ test.describe('時間軸', () => {
     expect(axisRange([T(10), T(12)], T(11))).toEqual({ t0: T(9, 30), t1: T(12, 30) })
     expect(axisRange([T(10), T(12)], T(15))).toEqual({ t0: T(9, 30), t1: T(15, 30) })
     expect(axisRange([], T(11))).toEqual({ t0: T(10), t1: T(12) })
+  })
+})
+
+test.describe('保留した一覧と、版の行', () => {
+  test('版の新しいほうを採る。一覧に無い行は落とす', () => {
+    const cur = [{ seq: 1, version: 5, v: 'mine' }, { seq: 2, version: 1, v: 'old' }, { seq: 9, version: 1, v: 'gone' }]
+    const inc = [{ seq: 1, version: 4, v: 'stale' }, { seq: 2, version: 2, v: 'other' }, { seq: 3, version: 1, v: 'new' }]
+    expect(mergeNewer(cur, inc).map((t) => t.v)).toEqual(['mine', 'other', 'new'])
+  })
+
+  test('対象から外した・消したエピックは足す。絞り込みで外したものは足さない', () => {
+    const ep = (seq: number, title: string): TlEpic => ({ seq, title, status: st('todo'), sort_key: null, closed_at: null })
+    const items = [
+      { epic_seq: 301, epic_title: '体育館', all_day: false },
+      { epic_seq: 309, epic_title: '旧ステージ', all_day: false },
+      { epic_seq: 302, epic_title: '中庭（版）', all_day: false },
+      { epic_seq: 303, epic_title: '本部', all_day: false },
+      { epic_seq: 310, epic_title: '終日だけ', all_day: true },
+    ]
+    const known = [{ seq: 302, title: '中庭ステージ', sort_key: '0|b' }]
+    // 対象は 301・303。303 は parent で外れて current に無い
+    const r = baselineRows([ep(301, '体育館')], items, [301, 303], [], known)
+    expect(r.epics.map((e) => [e.seq, e.title])).toEqual([
+      [301, '体育館'],
+      [302, '中庭ステージ'],
+      [309, '旧ステージ'],
+    ])
+    expect([...r.outside]).toEqual([302, 309])
+    // 絞り込み中は、parent に書かれた対象外の行だけ
+    expect(baselineRows([ep(301, '体育館')], items, [301, 303], [301], known).epics.map((e) => e.seq)).toEqual([301])
+    expect(baselineRows([ep(301, '体育館')], items, [301, 303], [301, 309], known).epics.map((e) => e.seq)).toEqual([301, 309])
   })
 })

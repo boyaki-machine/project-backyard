@@ -42,6 +42,7 @@ import {
   LANE_H,
   ROW_PAD,
   barOf,
+  baselineRows,
   baselineStamps,
   canCompact,
   canExtendToNow,
@@ -56,6 +57,7 @@ import {
   keyOf,
   laneTop,
   layoutRows,
+  mergeNewer,
   mergeTimelineEpics,
   planBarOf,
   readSnapSeconds,
@@ -268,12 +270,14 @@ async function load(initial: boolean): Promise<void> {
 }
 
 function apply(data: TlList, detect: boolean): void {
+  // 保留していた古い一覧が、その後に確定した行（新しい版）を上書きしないよう、版の新しいほうを採る
+  const items = mergeNewer(tickets.value, data.items)
   if (detect && loaded.value) {
     const before = new Map(tickets.value.map((t) => [t.seq, t]))
-    const changed = changedSeqs(new Map(tickets.value.map((t) => [t.seq, t.version])), data.items, myVersions)
-    if (changed.length > 0) noteOthers(changed, before, data.items)
+    const changed = changedSeqs(new Map(tickets.value.map((t) => [t.seq, t.version])), items, myVersions)
+    if (changed.length > 0) noteOthers(changed, before, items)
   }
-  tickets.value = data.items
+  tickets.value = items
   epics.value = data.epics ?? []
   links.value = data.links ?? []
   total.value = data.total
@@ -583,6 +587,20 @@ const bodyW = ref(800)
 
 const liveBars = computed<Bar[]>(() => tickets.value.map((t) => barOf(t, now.value)).filter((b): b is Bar => b !== null))
 
+/**
+ * 版の表示で読む行（`model.ts` の `baselineRows`）。重ねる版、版を送るときはその版と前の版。
+ * **対象から外したエピック・消したエピックも、版に保存した行の情報で出す。**
+ */
+const rowSourceItems = computed<BaselineItem[]>(() => {
+  if (step.value !== null) {
+    const vs = versionsAsc.value
+    const k = step.value
+    return [...(itemsOf(vs[k]?.id ?? null)?.values() ?? []), ...(k > 0 ? (itemsOf(vs[Math.min(k, vs.length) - 1]?.id ?? null)?.values() ?? []) : [])]
+  }
+  return [...(itemsOf(selectedBaselineId.value)?.values() ?? [])]
+})
+const rowSet = computed(() => baselineRows(epics.value, rowSourceItems.value, timelineEpics.value, rowFilter.value, epicChoices.all.value))
+
 /** 表示する中身。当日（いまの予定）か、版を送っているあいだはその版 */
 const display = computed<{ mode: 'day' | 'step'; bars: Bar[]; base: Map<number, BaselineItem> | null; gone: Bar[] }>(() => {
   if (step.value !== null) {
@@ -597,7 +615,14 @@ const display = computed<{ mode: 'day' | 'step'; bars: Bar[]; base: Map<number, 
     return { mode: 'step', bars, base, gone }
   }
   const base = itemsOf(selectedBaselineId.value)
-  const gone = base ? [...base.values()].filter((i) => !i.exists && !i.all_day).map((i) => planBarOf(i, true)) : []
+  // 消えたもの：版にあっていまは無いチケットと、対象から外した行の計画（5.15「当初計画の版」）
+  const present = new Set(liveBars.value.map((b) => b.seq))
+  const outside = rowSet.value.outside
+  const gone = base
+    ? [...base.values()]
+        .filter((i) => !i.all_day && (!i.exists || (outside.has(i.epic_seq) && !present.has(i.ticket_seq))))
+        .map((i) => planBarOf(i, true))
+    : []
   return { mode: 'day', bars: liveBars.value, base, gone }
 })
 
@@ -734,7 +759,7 @@ const cornerZone = computed(() =>
 
 // ── 行とバー ─────────────────────────────────────────────────
 
-const rows = computed<RowLayout[]>(() => layoutRows(epics.value, display.value.bars, display.value.gone))
+const rows = computed<RowLayout[]>(() => layoutRows(rowSet.value.epics, display.value.bars, display.value.gone))
 const rowsH = computed(() => rows.value.reduce((h, r) => h + r.height, 0))
 
 /** ドラッグ中の予定（掴んでいる間はバーだけが動く） */
@@ -1716,11 +1741,11 @@ watch(projectKey, (key, prev) => {
             <line v-for="(g, i) in gridLines" :key="i" :class="g.cls" :x1="g.x + 0.5" :x2="g.x + 0.5" y1="0" :y2="Math.max(rowsH, 80)" />
           </svg>
 
-          <div v-for="rv in rowViews" :key="rv.row.epic.seq" class="tl-row" :style="{ height: `${rv.row.height}px` }">
+          <div v-for="rv in rowViews" :key="rv.row.epic.seq" class="tl-row" :class="{ outside: rowSet.outside.has(rv.row.epic.seq) }" :style="{ height: `${rv.row.height}px` }">
             <div class="tl-rlabel" :style="{ width: `${LW}px`, height: `${rv.row.height}px` }">
               <span class="sleeve" :style="sleeveStyle(rv.row.epic.seq)" aria-hidden="true"></span>
               <div class="rn" :title="rv.row.epic.title">{{ rv.row.epic.title }}</div>
-              <div class="rm">pb-{{ rv.row.epic.seq }} · {{ $ui('本番 {value0}', { value0: rv.nChk }) }}<template v-if="rv.nFree"> · {{ $ui('裏 {value0}', { value0: rv.nFree }) }}</template></div>
+              <div class="rm"><span v-if="rowSet.outside.has(rv.row.epic.seq)" class="tl-outside" :title="$ui('載せるエピックに入っていない行です。保存した版の計画だけを出しています')">{{ $ui('対象外') }}</span>pb-{{ rv.row.epic.seq }} · {{ $ui('本番 {value0}', { value0: rv.nChk }) }}<template v-if="rv.nFree"> · {{ $ui('裏 {value0}', { value0: rv.nFree }) }}</template></div>
               <template v-if="rv.row.lanes > 1">
                 <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H / 2 - 5}px` }">{{ $ui('本番') }}</span>
                 <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H * 1.5 - 5}px` }">{{ $ui('裏') }}{{ rv.row.lanes > 2 ? `×${rv.row.lanes - 1}` : '' }}</span>
@@ -2381,6 +2406,19 @@ watch(projectKey, (key, prev) => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tl-outside {
+  margin-right: 4px;
+  padding: 0 3px;
+  border: 1px dashed var(--pb-text-muted);
+  border-radius: 3px;
+  font-size: 9.5px;
+}
+
+.tl-row.outside .rn {
+  color: var(--pb-text-muted);
+  font-style: italic;
 }
 
 .tl-rlabel .lanetag {

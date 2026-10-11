@@ -367,3 +367,61 @@ export function changeOf(before: TlTicket | undefined, after: TlTicket): ChangeK
   if (before.title !== after.title) return { kind: 'title' }
   return { kind: 'other' }
 }
+
+/**
+ * 取り直した一覧を、手元の一覧に重ねる。**チケットごとに `version` の新しいほうを採る**。
+ *
+ * 試算の確認中に届いた定期取得の結果は保留し、操作の後で当てる（`GuiDesign.md` 5.15
+ * 「定期取得と他の人の変更」）。その間に自分が確定した行は、確定の応答で新しい版に
+ * なっている——保留した古い一覧でそのまま置き換えると、確定した予定が戻ってしまう。
+ * 一覧に無い行は消えたものとして落とす（取り直した側が正）。
+ */
+export function mergeNewer<T extends { seq: number; version: number }>(current: readonly T[], incoming: readonly T[]): T[] {
+  const mine = new Map(current.map((t) => [t.seq, t]))
+  return incoming.map((t) => {
+    const c = mine.get(t.seq)
+    return c !== undefined && c.version > t.version ? c : t
+  })
+}
+
+/**
+ * 版の表示のために足す行（`GuiDesign.md` 5.15「載せるエピック」の「当初計画の版」）。
+ *
+ * 版は保存した時点の行（`epic_seq` / `epic_title`）を持つ。**いまの対象（`timeline_epics`）から
+ * 外したエピックや、消したエピックの計画も、版を重ねる・送るときは読めるようにする。**
+ *
+ * - **プロジェクトの対象から外れただけの行は足す**（いまの対象に無い `epic_seq`）
+ * - **見る人の絞り込み（URL の `parent`）で外した行は足さない**——対象の内側は `parent` が決め、
+ *   対象の外の行は `parent` に書かれているときだけ出す
+ * - 見出しはいまのエピックの題名、無ければ版に保存した題名。並びはエピックの並び（無ければ番号）の後ろ
+ */
+export function baselineRows(
+  current: readonly TlEpic[],
+  items: readonly Pick<BaselineItem, 'epic_seq' | 'epic_title' | 'all_day'>[],
+  target: readonly number[],
+  parent: readonly number[],
+  known: readonly Pick<TlEpic, 'seq' | 'title' | 'sort_key'>[],
+): { epics: TlEpic[]; outside: Set<number> } {
+  const have = new Set(current.map((e) => e.seq))
+  const inTarget = new Set(target)
+  const order = new Map(known.map((e, i) => [e.seq, i]))
+  const titles = new Map(known.map((e) => [e.seq, e]))
+  const extra = new Map<number, TlEpic>()
+  for (const it of items) {
+    const seq = it.epic_seq
+    if (it.all_day || have.has(seq) || inTarget.has(seq) || extra.has(seq)) continue
+    if (parent.length > 0 && !parent.includes(seq)) continue
+    const k = titles.get(seq)
+    extra.set(seq, {
+      seq,
+      title: k?.title ?? it.epic_title,
+      status: { key: '', name: '', category: 'todo' },
+      sort_key: k?.sort_key ?? null,
+      closed_at: null,
+    })
+  }
+  const added = [...extra.values()].sort(
+    (a, b) => (order.get(a.seq) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.seq) ?? Number.MAX_SAFE_INTEGER) || a.seq - b.seq,
+  )
+  return { epics: [...current, ...added], outside: new Set(added.map((e) => e.seq)) }
+}

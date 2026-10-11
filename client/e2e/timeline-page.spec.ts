@@ -53,7 +53,7 @@ function baseItems() {
   ]
 }
 
-async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Record<string, boolean>; epics?: number[]; role?: 'admin' | 'viewer' }) {
+async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Record<string, boolean>; epics?: number[]; role?: 'admin' | 'viewer'; outside?: boolean }) {
   let items = baseItems()
   let etagN = 1
   const settings = { views: opts.views ?? { timeline: true }, timeline_snap_seconds: 60, timeline_epics: opts.epics ?? [301, 302, 303] }
@@ -93,13 +93,15 @@ async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Reco
         const tag = `W/"tl-${etagN}"`
         if (req.headers()['if-none-match'] === tag) return route.fulfill({ status: 304, headers: { ETag: tag } })
         const parent = url.searchParams.get('parent')
-        const rowSeqs = parent ? parent.split(',').map(Number) : settings.timeline_epics
+        // 見る人の絞り込み（parent）は、プロジェクトの対象（timeline_epics）の内側だけを絞る
+        const rowSeqs = parent ? parent.split(',').map(Number).filter((n) => settings.timeline_epics.includes(n)) : settings.timeline_epics
+        const shown = items.filter((t) => rowSeqs.includes(t.epic_seq))
         return reply({
-          items: items.filter((t) => rowSeqs.includes(t.epic_seq)),
+          items: shown,
           epics: epics.filter((e) => rowSeqs.includes(e.seq)),
           links: [{ id: 'l1', source_seq: 411, target_seq: 412, link_type: 'FS', lag_days: 0, origin: 'human' }],
           baselines: { count: 1, latest_id: 'B1', latest_created_at: T(8, 30) },
-          page: 1, per_page: 5000, total: items.length, total_pages: 1,
+          page: 1, per_page: 5000, total: shown.length, total_pages: 1,
         }, 200, { ETag: tag })
       }
     }
@@ -111,6 +113,13 @@ async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Reco
         { ticket_seq: 411, exists: true, title: 'ダンス部', epic_seq: 301, epic_title: '体育館ステージ', start_at: T(10, 40), due_at: T(11, 20), all_day: false, no_overlap: true, start_pinned: false, due_pinned: false },
         { ticket_seq: 410, exists: true, title: '吹奏楽部', epic_seq: 301, epic_title: '体育館ステージ', start_at: T(10), due_at: T(10, 40), all_day: false, no_overlap: true, start_pinned: false, due_pinned: false },
         { ticket_seq: 499, exists: false, title: '校長先生の挨拶', epic_seq: 302, epic_title: '中庭ステージ', start_at: T(13), due_at: T(13, 15), all_day: false, no_overlap: true, start_pinned: false, due_pinned: false },
+        ...(opts.outside
+          ? [
+              // 対象から外した中庭ステージ（302）の、いまも在るチケットと、消したエピック（309）の行
+              { ticket_seq: 420, exists: true, title: 'もちつき大会', epic_seq: 302, epic_title: '中庭ステージ', start_at: T(11), due_at: T(11, 45), all_day: false, no_overlap: true, start_pinned: false, due_pinned: false },
+              { ticket_seq: 431, exists: false, title: '旧ステージの前説', epic_seq: 309, epic_title: '旧ステージ', start_at: T(12), due_at: T(12, 30), all_day: false, no_overlap: true, start_pinned: false, due_pinned: false },
+            ]
+          : []),
       ] })
     }
     if (path === '/api/v1/projects/fes/tickets/412/reschedule') {
@@ -230,4 +239,72 @@ test('載せるエピックが無ければ選ぶ導線。見るだけの人は�
   await expect(page.getByText('プロジェクト管理者に依頼してください')).toBeVisible()
   await expect(page.getByRole('button', { name: '計画を保存' })).toHaveCount(0)
   await expect(page.locator('.hE')).toHaveCount(0)
+})
+
+test('試算中に定期取得の結果を保留しても、確定した予定が古い一覧で戻らない', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 800 })
+  const state = await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline?zoom=hour')
+  const bar = page.locator('.bar[data-seq="412"]')
+  await expect(bar).toBeVisible()
+  const h = (await bar.locator('.hE').boundingBox())!
+  await page.mouse.move(h.x + 4, h.y + 10)
+  await page.mouse.down()
+  await page.mouse.move(h.x + 40, h.y + 10, { steps: 5 })
+  await page.mouse.up()
+  await expect(page.locator('.tl-notice')).toContainText('後ろの1件が動きます')
+  // 試算の確認中に、他の人の変更（クイズ大会）を含む 200 が届く（画面に当てずに保留する）
+  state.changeNext = true
+  await page.clock.runFor(5100)
+  await expect.poll(() => state.changeNext).toBe(false)
+  await expect(page.locator('.bar[data-seq="421"]')).not.toHaveClass(/flash/)
+  await page.locator('.tl-notice button', { hasText: '確定' }).click()
+  await expect(page.locator('.tl-notice')).toContainText('確定しました（2件を動かしました）')
+  expect(state.rescheduled).toBe(1)
+  // 確定した予定のまま（12:20 に戻らない）。自分の確定は光らせない
+  await expect(page.locator('.bar[data-seq="412"]')).toHaveAttribute('title', /11:30–12:30/)
+  await expect(page.locator('.bar[data-seq="414"]')).toHaveAttribute('title', /12:30–13:20/)
+  await expect(page.locator('.bar[data-seq="412"]')).not.toHaveClass(/flash/)
+  await expect(page.locator('.bar[data-seq="414"]')).not.toHaveClass(/flash/)
+  // 保留中に来た他の人の変更は保つ
+  await expect(page.locator('.bar[data-seq="421"]')).toHaveAttribute('title', /12:00–12:50/)
+  await expect(page.locator('.bar[data-seq="421"]')).toHaveClass(/flash/)
+  await expect(page.locator('.tl-notice .other')).toContainText('鈴木')
+  await expect(page.locator('.tl-notice .other')).not.toContainText('演劇部')
+  // 保留した一覧を当てた後も、確定した予定のまま
+  await expect(page.locator('.bar[data-seq="412"]')).toHaveAttribute('title', /11:30–12:30/)
+})
+
+test('対象から外したエピック・消したエピックも、版を重ねる・送るときは版の行で読める', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 800 })
+  await mockApi(page, { theme: 'light', epics: [301, 303], outside: true })
+  await page.goto('/p/fes/timeline?zoom=hour')
+  await expect(page.locator('.tl-row')).toHaveCount(4)
+  // 重ねるとき：版に保存した行の見出しで出し、いまのチケットは「消えた」の影
+  const yard = page.locator('.tl-row', { hasText: '中庭ステージ' })
+  await expect(yard.locator('.tl-outside')).toHaveCount(1)
+  await expect(yard.locator('.gonelbl')).toHaveText(['消えた：校長先生の挨拶', '消えた：もちつき大会'])
+  const old = page.locator('.tl-row', { hasText: '旧ステージ' })
+  await expect(old.locator('.gonelbl')).toHaveText('消えた：旧ステージの前説')
+  // 対象の行には印を付けない
+  await expect(page.locator('.tl-row', { hasText: '体育館ステージ' }).locator('.tl-outside')).toHaveCount(0)
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-mock-outside-overlay.png` })
+
+  // 版を送るとき：版のバーとして描く
+  await page.getByRole('button', { name: '版を送る', exact: true }).click()
+  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
+  await expect(page.locator('.bar[data-seq="420"]')).toHaveCount(1)
+  await expect(page.locator('.bar[data-seq="420"]')).toHaveClass(/st-plan/)
+  await expect(page.locator('.bar[data-seq="431"]')).toHaveCount(1)
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-mock-outside-step.png` })
+  await page.locator('.tl-notice button', { hasText: '終える' }).click()
+
+  // 見る人の絞り込み（parent）で外した行は、版の表示でも出さない
+  await page.goto('/p/fes/timeline?zoom=hour&parent=301')
+  await expect(page.locator('.tl-row')).toHaveCount(1)
+  await expect(page.locator('.tl-row', { hasText: '中庭ステージ' })).toHaveCount(0)
+  await page.getByRole('button', { name: '版を送る', exact: true }).click()
+  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
+  await expect(page.locator('.tl-row')).toHaveCount(1)
+  await expect(page.locator('.bar[data-seq="420"]')).toHaveCount(0)
 })

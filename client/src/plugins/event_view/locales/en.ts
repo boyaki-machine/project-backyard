@@ -121,4 +121,6 @@ export const messages: Record<string, string> = {
   "開始待ち": "Waiting to start",
   "計画": "Plan",
   "{value0} 保存": "Saved {value0}",
+  "対象外": "Not on timeline",
+  "載せるエピックに入っていない行です。保存した版の計画だけを出しています": "This epic is not on the timeline. Only the plan saved in the version is shown",
 }
