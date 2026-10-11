@@ -273,8 +273,41 @@ async function request<T>(
   return (responseKind === 'blob' ? await res.blob() : await res.json()) as T
 }
 
+/** 条件付き GET の結果。`304` なら本文を持たない（`ApiDesign.md` 2.7 / 9.2.5） */
+export type ConditionalResult<T> = { status: 304 } | { status: 200; data: T; etag: string | null }
+
+/**
+ * `If-None-Match` を付けて GET する（`ApiDesign.md` 2.7）。
+ *
+ * **定期取得のための口である**（`GuiDesign.md` 5.15「定期取得と他の人の変更」）。
+ * 変わっていなければ `304` で本文を持たず、呼び出し側は何もしない。`ETag` は
+ * 応答のヘッダから返し、次の呼び出しに渡す。`304` 以外の失敗は `get` と同じく `ApiError`。
+ */
+async function getConditional<T>(path: string, etag: string | null): Promise<ConditionalResult<T>> {
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (etag) headers['If-None-Match'] = etag
+  let res: Response
+  try {
+    res = await fetch(BASE_PATH + path, { method: 'GET', headers, credentials: 'same-origin', cache: 'no-store' })
+  } catch {
+    throw new ApiError({
+      status: 0,
+      code: 'network_error',
+      message: uiText('サーバに接続できませんでした。ネットワークの状態を確認してください'),
+    })
+  }
+  if (res.status === 304) return { status: 304 }
+  if (!res.ok) {
+    const error = await toApiError(res)
+    if (res.status === 401 && error.code === 'unauthenticated') onUnauthorized()
+    throw error
+  }
+  return { status: 200, data: (await res.json()) as T, etag: res.headers.get('ETag') }
+}
+
 export const api = {
   get: <T>(path: string, options?: RequestOptions) => request<T>('GET', path, undefined, options),
+  getConditional,
   getBlob: (path: string) => request<Blob>('GET', path, undefined, {}, 'blob'),
   post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>('POST', path, body, options),

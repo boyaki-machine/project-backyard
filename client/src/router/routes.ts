@@ -18,6 +18,7 @@ import ProjectsPage from '../pages/ProjectsPage.vue'
 import TicketViewsPage from '../pages/TicketViewsPage.vue'
 import UserDetailPage from '../pages/UserDetailPage.vue'
 import UsersPage from '../pages/UsersPage.vue'
+import { viewPlugins } from '../plugins/registry'
 
 /**
  * プレースホルダページに渡す内容（GuiDesign.md 6.5）。
@@ -263,6 +264,15 @@ const routeSources: RouteRecordRaw[] = [
     component: TicketViewsPage,
     meta: { permission: 'ticket.view' },
   },
+
+  // プラグインのビュー（`plugins/registry.ts`。`GuiDesign.md` 5.15「プラグインの境界」）。
+  // **登録表から作る**——プラグインの名前をここに書かない。ガントと同じ入れ物に載せる。
+  // メニューに出すかは `settings.views` で決まり、**URL は塞がない**（4.3）。
+  ...viewPlugins.map((p) => ({
+    path: `/p/:key/${p.route.segment}`,
+    component: TicketViewsPage,
+    meta: { permission: p.route.permission },
+  })),
 
   // 実画面（GuiDesign.md 5.13）。
   //

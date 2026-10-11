@@ -210,3 +210,35 @@ export function mergeGanttSnap(
 ): ProjectDetail['settings'] {
   return { ...settings, gantt_snap_minutes: minutes }
 }
+
+/**
+ * メニューに出すビューの表示・非表示（`project.settings.views`。`DbDesign.md` 6.4、
+ * `GuiDesign.md` 4.3・5.9.1）。
+ *
+ * **知らないビューのキーは読み飛ばし、書いていないキー・真偽でない値は既定で補う。**
+ * 既定はビューごとに違う（ガントは出す、プラグインのビューは登録表が決める）ので、
+ * 呼び出し側が渡す。**権限の境界ではない**——隠したビューも URL で開ける。
+ */
+export function readViewEnabled(
+  settings: ProjectDetail['settings'] | undefined,
+  key: string,
+  fallback: boolean,
+): boolean {
+  const views = settings?.['views']
+  if (typeof views !== 'object' || views === null || Array.isArray(views)) return fallback
+  const v = (views as Record<string, unknown>)[key]
+  return typeof v === 'boolean' ? v : fallback
+}
+
+/**
+ * `views` の一部を差し替えた `settings`。**丸ごと置き換えなので、知らないキーを落とさない**
+ * （`views` の中の知らないビューも残す）。
+ */
+export function mergeViews(
+  settings: ProjectDetail['settings'],
+  patch: Record<string, boolean>,
+): ProjectDetail['settings'] {
+  const raw = settings['views']
+  const base = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+  return { ...settings, views: { ...base, ...patch } }
+}

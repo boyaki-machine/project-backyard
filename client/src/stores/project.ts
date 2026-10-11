@@ -138,6 +138,43 @@ export const useProjectStore = defineStore('project', () => {
   /** 一覧と同じ追い越し対策。プロジェクトを続けて切り替えたときに古い応答で上書きしない */
   let currentSeq = 0
 
+  // ── メニューが読むビューの表示設定（`GuiDesign.md` 7.1。pb-296）──────────
+  //
+  // **選択中（`current`）とは別の欄に、プロジェクトキーごとに `settings` を保つ。**
+  // メインメニューは全画面で `views` を要るが、`current` は各画面が離れるときに捨てる。
+  // 画面の `clearCurrent` で消えないよう、ここは捨てない。
+
+  const viewSettings = ref<Record<string, ProjectDetail['settings']>>({})
+
+  /** 取得中の `GET /projects/:key`。**同じキーの取得が重なれば待ち合わせる**（7.1） */
+  const inflight = new Map<string, Promise<ProjectDetail>>()
+
+  function getShared(key: string): Promise<ProjectDetail> {
+    const hit = inflight.get(key)
+    if (hit) return hit
+    const p = projectsApi.getProject(key).finally(() => inflight.delete(key))
+    inflight.set(key, p)
+    return p
+  }
+
+  function rememberViews(p: ProjectDetail): void {
+    viewSettings.value = { ...viewSettings.value, [p.key]: p.settings }
+  }
+
+  /** メニューが `:key` の変化で呼ぶ。失敗しても既定の見え方のまま（メニューは止めない） */
+  async function loadViewSettings(key: string): Promise<void> {
+    try {
+      rememberViews(await getShared(key))
+    } catch {
+      // 既定（ガントは出す・プラグインのビューは出さない）で描く
+    }
+  }
+
+  /** そのプロジェクトの `settings`（ビューの表示を読むため）。まだ取れていなければ `undefined` */
+  function viewSettingsOf(key: string): ProjectDetail['settings'] | undefined {
+    return viewSettings.value[key]
+  }
+
   /**
    * 選択中プロジェクトを取得する。
    *
@@ -149,7 +186,8 @@ export const useProjectStore = defineStore('project', () => {
     currentLoading.value = true
     currentError.value = null
     try {
-      const res = await projectsApi.getProject(key)
+      const res = await getShared(key)
+      rememberViews(res)
       if (mine !== currentSeq) return
       current.value = res
     } catch (e: unknown) {
@@ -178,6 +216,7 @@ export const useProjectStore = defineStore('project', () => {
     currentSeq++
     current.value = next
     currentError.value = null
+    rememberViews(next)
   }
 
   /** 画面を離れるときに捨てる。次に開いたとき前のプロジェクトが一瞬見えないように */
@@ -213,5 +252,7 @@ export const useProjectStore = defineStore('project', () => {
     fetchCurrent,
     setCurrent,
     clearCurrent,
+    loadViewSettings,
+    viewSettingsOf,
   }
 })
