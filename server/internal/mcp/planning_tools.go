@@ -11,6 +11,7 @@ import (
 func planningTools() []tool {
 	seq := property{Type: "integer", Description: "プロジェクト内のチケット番号", Minimum: intPtr(1)}
 	lag := property{Type: "integer", Description: "依存の日数のずらし。負数も可", Minimum: intPtr(-365), Maximum: intPtr(365)}
+	lagSeconds := property{Type: "integer", Description: "1日未満の秒のずらし（例: 転換10分は600）。負数も可。実効のずらしは lag_days の暦日を足してから lag_seconds を足したもの", Minimum: intPtr(-86399), Maximum: intPtr(86399)}
 	readProps := map[string]property{}
 	for _, k := range []string{"parent", "tag", "status", "status_category", "priority", "assignee", "staged", "open", "sprint", "planned_from", "planned_to", "q"} {
 		readProps[k] = property{Type: "string", Description: "ガント一覧と同じ絞り込み。parentは親番号。staged/openは真偽値"}
@@ -23,8 +24,8 @@ func planningTools() []tool {
 		props                     map[string]property
 		required                  []string
 	}{
-		{"pb_add_link", http.MethodPost, "依存・関連を1件追加する。向きはseqからtarget_seq。FS/SS/FF/SFは時間の制約であり実行順とは限らない。ticket.plan.editが必要。", map[string]property{"seq": seq, "target_seq": seq, "link_type": {Type: "string", Description: "関連の種類", Enum: []string{"FS", "SS", "FF", "SF", "blocks", "relates", "duplicates"}}, "lag_days": lag}, []string{"seq", "target_seq", "link_type"}},
-		{"pb_update_link", http.MethodPatch, "既存の依存のずらしだけを変更する。ticket.plan.editが必要。", map[string]property{"seq": seq, "id": {Type: "string", Description: "リンクのID"}, "lag_days": lag}, []string{"seq", "id", "lag_days"}},
+		{"pb_add_link", http.MethodPost, "依存・関連を1件追加する。向きはseqからtarget_seq。FS/SS/FF/SFは時間の制約であり実行順とは限らない。ticket.plan.editが必要。", map[string]property{"seq": seq, "target_seq": seq, "link_type": {Type: "string", Description: "関連の種類", Enum: []string{"FS", "SS", "FF", "SF", "blocks", "relates", "duplicates"}}, "lag_days": lag, "lag_seconds": lagSeconds}, []string{"seq", "target_seq", "link_type"}},
+		{"pb_update_link", http.MethodPatch, "既存の依存のずらし（lag_days・lag_seconds）だけを変更する。渡したものだけを変え、渡さなかった方は今のまま。ticket.plan.editが必要。", map[string]property{"seq": seq, "id": {Type: "string", Description: "リンクのID"}, "lag_days": lag, "lag_seconds": lagSeconds}, []string{"seq", "id"}},
 		{"pb_delete_link", http.MethodDelete, "既存の依存・関連を1件削除する。ticket.plan.editが必要。", map[string]property{"seq": seq, "id": {Type: "string", Description: "リンクのID"}}, []string{"seq", "id"}},
 		{"pb_move_task", http.MethodPost, "同じ親・段の中で順序だけを変える。after_seq/before_seqかposition(first/last)を指定する。担当・状態・日程は変わらない。ticket.plan.editが必要。", map[string]property{"seq": seq, "after_seq": seq, "before_seq": seq, "position": {Type: "string", Description: "同じ親・段での位置", Enum: []string{"first", "last"}}}, []string{"seq"}},
 	} {
@@ -185,7 +186,7 @@ func callPlanningWrite(h *Handler, r *http.Request, key string, args json.RawMes
 	}
 	path := ticketPath(key, n)
 	body := map[string]json.RawMessage{}
-	allowed := []string{"target_seq", "link_type", "lag_days"}
+	allowed := []string{"target_seq", "link_type", "lag_days", "lag_seconds"}
 	if name == "pb_move_task" {
 		path += "/move"
 		allowed = []string{"after_seq", "before_seq", "position"}
@@ -197,7 +198,11 @@ func callPlanningWrite(h *Handler, r *http.Request, key string, args json.RawMes
 				return toolResult{}, newError(codeInvalidParams, "idを指定してください")
 			}
 			path += "/" + url.PathEscape(id)
-			allowed = []string{"lag_days"}
+			allowed = []string{"lag_days", "lag_seconds"}
+			// 空の PATCH は何も変えないので、呼んだ側が「直した」と誤解する（pb_update_ticket と同じ）。
+			if method == http.MethodPatch && in["lag_days"] == nil && in["lag_seconds"] == nil {
+				return toolResult{}, newError(codeInvalidParams, "lag_days か lag_seconds を1つ以上渡すこと")
+			}
 		}
 	}
 	// 制限された引数を黙って捨てると、呼び手が変更済みと誤認する。

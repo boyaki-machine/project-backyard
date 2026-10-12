@@ -2126,6 +2126,53 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
+	// 秒のずらし（DbDesign.md 6.6.3。pb-336）。MCP だけで「転換10分」の FS を作り、秒だけを直す。
+	t.Run("pb_add_link / pb_update_link が秒のずらしを作って直す", func(t *testing.T) {
+		seqOf := func(text string) int {
+			t.Helper()
+			var v struct {
+				Seq int `json:"seq"`
+			}
+			if err := json.Unmarshal([]byte(text), &v); err != nil || v.Seq == 0 {
+				t.Fatalf("起票の応答を読めない: %v（%s）", err, text)
+			}
+			return v.Seq
+		}
+		text, _ := tool(t, fullToken, "pb_create_ticket", `{"type":"task","title":"転換の前"}`)
+		a := seqOf(text)
+		text, _ = tool(t, fullToken, "pb_create_ticket", `{"type":"task","title":"転換の後"}`)
+		b := seqOf(text)
+
+		text, isErr := tool(t, fullToken, "pb_add_link", fmt.Sprintf(`{"seq":%d,"target_seq":%d,"link_type":"FS","lag_seconds":600}`, a, b))
+		if isErr {
+			t.Fatalf("依存を作れない: %s", text)
+		}
+		var link struct {
+			ID         string `json:"id"`
+			LagDays    int    `json:"lag_days"`
+			LagSeconds int    `json:"lag_seconds"`
+		}
+		if err := json.Unmarshal([]byte(text), &link); err != nil || link.ID == "" || link.LagSeconds != 600 {
+			t.Fatalf("作った依存 = %s", text)
+		}
+		// 秒だけを送り、日は今のまま（REST の PATCH と同じ）
+		text, isErr = tool(t, fullToken, "pb_update_link", fmt.Sprintf(`{"seq":%d,"id":%q,"lag_seconds":900}`, a, link.ID))
+		if isErr {
+			t.Fatalf("ずらしを直せない: %s", text)
+		}
+		var days, secs int
+		if err := pool.QueryRow(ctx, `SELECT lag_days, lag_seconds FROM ticket_link WHERE id = $1`, link.ID).Scan(&days, &secs); err != nil {
+			t.Fatal(err)
+		}
+		if days != 0 || secs != 900 {
+			t.Fatalf("lag_days = %d, lag_seconds = %d, want 0 / 900", days, secs)
+		}
+		// 1日以上は lag_days で表す（範囲の外は REST が 422 で拒む）
+		if text, isErr = tool(t, fullToken, "pb_update_link", fmt.Sprintf(`{"seq":%d,"id":%q,"lag_seconds":86400}`, a, link.ID)); !isErr {
+			t.Fatalf("範囲の外が通った: %s", text)
+		}
+	})
+
 }
 
 // readBackTicket は、書き込み系ツールの応答（要点だけ。Design.md 8.5.1）から seq を取り、
