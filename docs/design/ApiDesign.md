@@ -4860,7 +4860,7 @@ If-Match: "4"
 
 **変更履歴。** 動いた行ごとに `start_at` / `due_at` を `activity` に記録し（9.5.2 と同じ1項目1行）、**同じ `request_id` を付ける**。詳細の履歴は同じ `request_id` の行から「pb-413 の変更に伴う」を出せる。
 
-**MCP には出さない**（`Timeline.md` 8章で起票を提案）。
+**MCP では `pb_reschedule_task` が叩く**（`Design.md` 8.5.7。pb-314）。きっかけの版（`If-Match`）と残りの版（`expect`）を、MCP は**1本の `expect` として試算の応答に添え**、確定でこの口の形に振り分け直す——動かないきっかけは `changes` に載らないので、エージェントに振り分けさせると誤る。**MCP の確定は `expect` を必須にする**（試算を挟まない確定を、エージェントには開けない）。
 
 ### 9.17.3 当初計画の版 `/schedule-baselines`
 

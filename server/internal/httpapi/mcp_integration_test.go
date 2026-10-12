@@ -2010,6 +2010,122 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
+	// 連鎖のずらし（ApiDesign.md 9.17.2。pb-314）。A を延ばすと B が押され、終了のアンカーを持つ C は
+	// 開始だけが動いて縮む。試算 → 確定と、試算の後に人が動かしたときの 409 を MCP だけで通す。
+	t.Run("pb_reschedule_task がアンカーを守って試算し、expect で確定する", func(t *testing.T) {
+		create := func(args string) int {
+			t.Helper()
+			text, isErr := tool(t, fullToken, "pb_create_ticket", args)
+			if isErr {
+				t.Fatalf("起票できない: %s", text)
+			}
+			var v struct {
+				Seq int `json:"seq"`
+			}
+			if err := json.Unmarshal([]byte(text), &v); err != nil || v.Seq == 0 {
+				t.Fatalf("起票の応答を読めない: %v（%s）", err, text)
+			}
+			return v.Seq
+		}
+		epic := create(`{"type":"epic","title":"体育館ステージ"}`)
+		slot := func(title, start, due string) int {
+			return create(fmt.Sprintf(`{"type":"task","title":%q,"parent_seq":%d,`+
+				`"start_at":"2030-10-24T%s:00+09:00","due_at":"2030-10-24T%s:00+09:00"}`, title, epic, start, due))
+		}
+		a, b, c := slot("開会", "10:00", "10:30"), slot("吹奏楽", "10:30", "11:00"), slot("閉会", "11:00", "11:30")
+		// 印はエージェントには書けない（9.5.2）ので、人が置いた状態を DB で作る
+		if _, err := pool.Exec(ctx, `UPDATE ticket SET no_overlap = true, due_pinned = (seq = $3)
+			WHERE project_id = $1 AND seq = ANY($2)`, projectID, []int{a, b, c}, c); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE project SET settings = settings || $2::jsonb WHERE id = $1`,
+			projectID, fmt.Sprintf(`{"timeline_epics":[%d]}`, epic)); err != nil {
+			t.Fatal(err)
+		}
+
+		text, isErr := tool(t, fullToken, "pb_get_planning_data", fmt.Sprintf(`{"parent":"%d"}`, epic))
+		var plan struct {
+			Items []struct {
+				Seq       int  `json:"seq"`
+				NoOverlap bool `json:"no_overlap"`
+				DuePinned bool `json:"due_pinned"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(text), &plan); isErr || err != nil {
+			t.Fatalf("計画データを読めない: %v（%s）", err, text)
+		}
+		pinned := map[int]bool{}
+		for _, it := range plan.Items {
+			if it.Seq != epic && !it.NoOverlap {
+				t.Errorf("%d の no_overlap が落ちた: %s", it.Seq, text)
+			}
+			pinned[it.Seq] = it.DuePinned
+		}
+		if !pinned[c] || pinned[a] || pinned[b] {
+			t.Fatalf("計画データのアンカー = %v（%d だけのはず）", pinned, c)
+		}
+
+		move := fmt.Sprintf(`"seq":%d,"due_at":"2030-10-24T10:40:00+09:00"`, a)
+		text, isErr = tool(t, fullToken, "pb_reschedule_task", `{`+move+`,"dry_run":true}`)
+		if isErr {
+			t.Fatalf("試算できない: %s", text)
+		}
+		type change struct {
+			Seq    int    `json:"seq"`
+			Reason string `json:"reason"`
+			After  struct {
+				StartAt string `json:"start_at"`
+				DueAt   string `json:"due_at"`
+			} `json:"after"`
+		}
+		var preview struct {
+			Applied bool            `json:"applied"`
+			Result  string          `json:"result"`
+			Changes []change        `json:"changes"`
+			Expect  json.RawMessage `json:"expect"`
+		}
+		if err := json.Unmarshal([]byte(text), &preview); err != nil {
+			t.Fatalf("試算の応答を読めない: %v（%s）", err, text)
+		}
+		got := map[int]change{}
+		for _, ch := range preview.Changes {
+			got[ch.Seq] = ch
+		}
+		// C は終了のアンカー（11:30）を守り、開始だけが B の新しい終了（11:10）へ寄る
+		if preview.Applied || preview.Result != "ok" || len(preview.Changes) != 3 ||
+			got[b].After.StartAt != "2030-10-24T01:40:00Z" ||
+			got[c].Reason != "shrink" || got[c].After.StartAt != "2030-10-24T02:10:00Z" || got[c].After.DueAt != "2030-10-24T02:30:00Z" {
+			t.Fatalf("試算 = %s", text)
+		}
+
+		text, isErr = tool(t, fullToken, "pb_reschedule_task", `{`+move+`,"dry_run":false,"expect":`+string(preview.Expect)+`}`)
+		if isErr || !strings.Contains(text, `"applied":true`) {
+			t.Fatalf("確定できない: %s", text)
+		}
+		text, _ = tool(t, fullToken, "pb_get_task", fmt.Sprintf(`{"seq":%d}`, c))
+		if !strings.Contains(text, `"start_at":"2030-10-24T02:10:00Z"`) || !strings.Contains(text, `"due_at":"2030-10-24T02:30:00Z"`) {
+			t.Fatalf("確定が書かれていない: %s", text)
+		}
+
+		// 試算の後に人が B を直すと、確定は 409（stale_plan）で、試算からやり直すよう返る
+		move = fmt.Sprintf(`"seq":%d,"due_at":"2030-10-24T10:45:00+09:00"`, a)
+		text, isErr = tool(t, fullToken, "pb_reschedule_task", `{`+move+`,"dry_run":true}`)
+		if isErr {
+			t.Fatalf("2回目の試算ができない: %s", text)
+		}
+		if err := json.Unmarshal([]byte(text), &preview); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE ticket SET title = title || '（改）', version = version + 1
+			WHERE project_id = $1 AND seq = $2`, projectID, b); err != nil {
+			t.Fatal(err)
+		}
+		text, isErr = tool(t, fullToken, "pb_reschedule_task", `{`+move+`,"dry_run":false,"expect":`+string(preview.Expect)+`}`)
+		if !isErr || !strings.Contains(text, "stale_plan") || !strings.Contains(text, "試算し直し") {
+			t.Fatalf("試算後の変更が 409 にならない: %s", text)
+		}
+	})
+
 }
 
 // readBackTicket は、書き込み系ツールの応答（要点だけ。Design.md 8.5.1）から seq を取り、
