@@ -4,7 +4,7 @@
  * - 行はエピック1つ、バーはその配下のチケット（9.2.7 の `epic_seq`）
  * - **本番（主レーン）**：時間重複チェック付きは1本目のレーン。**裏（副レーン）**：チェックの無いものは
  *   2本目以降に、重なる分だけレーンを足して全部入れる（先に始まるものから空いているレーンへ）
- * - 状態：未着手・開始待ち・進行中・押している・完了（版を送るときは「計画」）
+ * - 状態：未着手・開始待ち・進行中・押している・完了（タイムライン変更推移を見るときは「計画」）
  * - 当初計画：ずれ（1分以上）・計画外・消えたもの
  *
  * 文言は持たない（画面が `uiText` で組み立てる）。
@@ -23,7 +23,7 @@ export type RescheduleRequest = components['schemas']['RescheduleRequest']
 export type RescheduleResult = components['schemas']['RescheduleResult']
 export type RescheduleChange = components['schemas']['RescheduleChange']
 
-/** バーの見え方。`plan` は版を送るときの「計画」の見え方 */
+/** バーの見え方。`plan` はタイムライン変更推移を見るときの「計画」の見え方 */
 export type BarState = 'todo' | 'wait' | 'prog' | 'late' | 'done' | 'plan'
 
 export interface Bar {
@@ -80,7 +80,7 @@ export function barOf(t: TlTicket, now: number): Bar | null {
   }
 }
 
-/** 版の行をバーにする（版を送るときの「計画」、消えたものの影） */
+/** 版の行をバーにする（タイムライン変更推移を見るときの「計画」、消えたものの影） */
 export function planBarOf(b: BaselineItem, gone = false): Bar {
   return {
     seq: b.ticket_seq,
@@ -278,7 +278,7 @@ export function readSnapSeconds(settings: Record<string, unknown> | undefined): 
   return SNAP_CHOICES.find((c) => c === v) ?? 60
 }
 
-/** 載せるエピック。**無い・配列でないときは空**、数でないものは読み飛ばす（`DbDesign.md` 6.4） */
+/** タイムライン対象エピック。**無い・配列でないときは空**、数でないものは読み飛ばす（`DbDesign.md` 6.4） */
 export function readTimelineEpics(settings: Record<string, unknown> | undefined): number[] {
   const v = settings?.['timeline_epics']
   if (!Array.isArray(v)) return []
@@ -286,7 +286,7 @@ export function readTimelineEpics(settings: Record<string, unknown> | undefined)
 }
 
 /**
- * 載せるエピックを差し替えた `settings`。**保存するとき、いま在るエピックだけに詰め直す**
+ * タイムライン対象エピックを差し替えた `settings`。**保存するとき、いま在るエピックだけに詰め直す**
  * （`DbDesign.md` 6.4）。知らないキーは落とさない（丸ごと置き換えなので）。
  */
 export function mergeTimelineEpics(
@@ -384,16 +384,16 @@ export function mergeNewer<T extends { seq: number; version: number }>(current: 
   })
 }
 
-/** 足した行の種類。`outside`：エピックは在るが載せるエピックに入っていない。`missing`：エピックがもう無い */
+/** 足した行の種類。`outside`：エピックは在るがタイムライン対象エピックに入っていない。`missing`：エピックがもう無い */
 export type ExtraRowKind = 'outside' | 'missing'
 
 /**
- * 表示する行（`GuiDesign.md` 5.15「載せるエピック」「当初計画の版」）。**規則はここ1か所に置く。**
+ * 表示する行（`GuiDesign.md` 5.15「タイムライン対象エピック」「当初計画の版」）。**規則はここ1か所に置く。**
  *
- * **表示する行 ＝（いまの行）∪（重ねる・送る版にある行）－（見る人が `parent` で外した行）**
+ * **表示する行 ＝（いまの行）∪（重ねる版・変更推移で見る版にある行）－（見る人が `parent` で外した行）**
  *
- * - いまの行（`current`）は `view=timeline` の `epics[]`——サーバが載せるエピック ∩ `parent` ∩ 実在で作る
- * - 版にある行は、版に保存した行の情報（`epic_seq` / `epic_title`）で足す。**載せるエピックから外した
+ * - いまの行（`current`）は `view=timeline` の `epics[]`——サーバがタイムライン対象エピック ∩ `parent` ∩ 実在で作る
+ * - 版にある行は、版に保存した行の情報（`epic_seq` / `epic_title`）で足す。**タイムライン対象エピックから外した
  *   エピック、消したエピック、設定に番号だけ残っている不在のエピックも読める**
  * - `parent` があれば、その番号の行だけ（不在の番号を指していても、版にその行があれば出す）
  * - 見出しはいまのエピックの題名、無ければ版に保存した題名。並びはいまの行の後ろに、エピックの並び
@@ -424,7 +424,7 @@ export function baselineRows(
       sort_key: k?.sort_key ?? null,
       closed_at: null,
     })
-    // 載せるエピックに入っているのに、いまの行に無い（parent で外していない）＝エピックが無い
+    // タイムライン対象エピックに入っているのに、いまの行に無い（parent で外していない）＝エピックが無い
     kinds.set(seq, k === undefined || inTarget.has(seq) ? 'missing' : 'outside')
   }
   const added = [...extra.values()].sort(
@@ -434,7 +434,7 @@ export function baselineRows(
 }
 
 /**
- * 行を決めるために読む版の行。版なし（`null`）・重ねる版・版を送るとき（その版と前の版。
+ * 行を決めるために読む版の行。版なし（`null`）・重ねる版・タイムライン変更推移を見るとき（その版と前の版。
  * 最後の「いま」は前の版だけ）。取れていない版は空として扱う。
  */
 export function rowSourceItems<T>(
@@ -450,7 +450,7 @@ export function rowSourceItems<T>(
 }
 
 /**
- * 空状態（5.15「何も選んでいないとき」）。**載せるエピックが空でも、描く行（版の行）があれば行を出し、
+ * 空状態（5.15「何も選んでいないとき」）。**タイムライン対象エピックが空でも、描く行（版の行）があれば行を出し、
  * 選ぶよう促す帯を上に置く。** 描く行も無ければ、これまでどおり本体を空状態にする。
  */
 export function emptyStateOf(settingsLoaded: boolean, targetCount: number, rowCount: number): 'select' | 'band' | null {

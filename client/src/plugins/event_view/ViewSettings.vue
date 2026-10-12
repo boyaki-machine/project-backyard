@@ -2,7 +2,7 @@
 /**
  * プロジェクト設定「表示するビュー」のタイムラインの欄（`GuiDesign.md` 5.9.1）。
  *
- * 吸着の単位（`timeline_snap_seconds`）と載せるエピック（`timeline_epics`）。
+ * 吸着の単位（`timeline_snap_seconds`）とタイムライン対象エピック（`timeline_epics`）。
  * **チェックを入れているあいだだけ**本体の設定画面が出す（登録表の `settings.panel`）。
  * 保存は一般タブの `[保存]` 1つ——ここは差し替えた `settings` を `update` で返すだけ。
  */
@@ -53,7 +53,7 @@ function setEpics(seqs: number[]): void {
       </select>
     </label>
     <div class="tl-vs-row top">
-      <span class="tl-vs-label">{{ $ui('載せるエピック') }}</span>
+      <span class="tl-vs-label">{{ $ui('タイムライン対象エピック') }}</span>
       <EpicChecklist :choices="epics.choices.value" :selected="selected" :sleeve="epics.sleeve.value" :disabled="disabled" @update="setEpics" />
     </div>
   </div>

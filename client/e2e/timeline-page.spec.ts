@@ -248,17 +248,17 @@ test('タイムラインを出さない設定ではメニューに無い。URL �
   await expect(page.locator('nav .item', { hasText: 'バックログ' })).toHaveCount(1)
 })
 
-test('載せるエピックが無ければ選ぶ導線。見るだけの人は依頼の文', async ({ page }) => {
+test('タイムライン対象エピックが無ければ選ぶ導線。見るだけの人は依頼の文', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 700 })
   await mockApi(page, { theme: 'light', epics: [], role: 'viewer' })
   await page.goto('/p/fes/timeline')
-  await expect(page.getByText('タイムラインに載せるエピックを選んでください')).toBeVisible()
+  await expect(page.getByText('タイムライン対象エピックを選んでください')).toBeVisible()
   await expect(page.getByText('プロジェクト管理者に依頼してください')).toBeVisible()
-  // 見るだけの人のメニューには、作成・記録・載せるエピックが無い。空いた所から作れない（5.15「ヘッダとメニュー」）
+  // 見るだけの人のメニューには、作成・記録・タイムライン対象エピックが無い。空いた所から作れない（5.15「ヘッダとメニュー」）
   await page.getByRole('button', { name: 'タイムラインのメニュー' }).click()
-  await expect(page.getByRole('menuitem', { name: '重ねる計画を選ぶ…' })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: 'タイムラインを比較する…' })).toBeVisible()
   await expect(page.getByRole('menuitem', { name: '現在のタイムラインを記録' })).toHaveCount(0)
-  await expect(page.getByRole('menuitem', { name: '載せるエピック…' })).toHaveCount(0)
+  await expect(page.getByRole('menuitem', { name: 'タイムライン対象エピック…' })).toHaveCount(0)
   await expect(page.getByRole('menuitem', { name: '新しいチケット' })).toHaveCount(0)
   await page.keyboard.press('Escape')
   await expect(page.locator('.tl-track.can-create')).toHaveCount(0)
@@ -299,7 +299,7 @@ test('試算中に定期取得の結果を保留しても、確定した予定�
   await expect(page.locator('.bar[data-seq="412"]')).toHaveAttribute('title', /11:30–12:30/)
 })
 
-test('対象から外したエピック・消したエピックも、版を重ねる・送るときは版の行で読める', async ({ page }) => {
+test('対象から外したエピック・消したエピックも、版を重ねる・変更推移で見るときは版の行で読める', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 800 })
   await mockApi(page, { theme: 'light', epics: [301, 303], outside: true })
   await page.goto('/p/fes/timeline?zoom=hour')
@@ -314,9 +314,9 @@ test('対象から外したエピック・消したエピックも、版を重�
   await expect(page.locator('.tl-row', { hasText: '体育館ステージ' }).locator('.tl-outside')).toHaveCount(0)
   if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-mock-outside-overlay.png` })
 
-  // 版を送るとき：版のバーとして描く
-  await more(page, '版を送る')
-  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
+  // タイムライン変更推移を見るとき：版のバーとして描く
+  await more(page, 'タイムライン変更推移')
+  await expect(page.locator('.tl-notice')).toContainText('タイムライン変更推移 1/2')
   await expect(page.locator('.bar[data-seq="420"]')).toHaveCount(1)
   await expect(page.locator('.bar[data-seq="420"]')).toHaveClass(/st-plan/)
   await expect(page.locator('.bar[data-seq="431"]')).toHaveCount(1)
@@ -327,13 +327,13 @@ test('対象から外したエピック・消したエピックも、版を重�
   await page.goto('/p/fes/timeline?zoom=hour&parent=301')
   await expect(page.locator('.tl-row')).toHaveCount(1)
   await expect(page.locator('.tl-row', { hasText: '中庭ステージ' })).toHaveCount(0)
-  await more(page, '版を送る')
-  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
+  await more(page, 'タイムライン変更推移')
+  await expect(page.locator('.tl-notice')).toContainText('タイムライン変更推移 1/2')
   await expect(page.locator('.tl-row')).toHaveCount(1)
   await expect(page.locator('.bar[data-seq="420"]')).toHaveCount(0)
 })
 
-test('載せるエピックが空でも、保存した版と比較の影は読める。版も行も無ければ空状態', async ({ page }) => {
+test('タイムライン対象エピックが空でも、保存した版と比較の影は読める。版も行も無ければ空状態', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 800 })
   await mockApi(page, { theme: 'light', epics: [], outside: true })
   // 重ねるとき（既定は最後に保存した版）
@@ -341,10 +341,10 @@ test('載せるエピックが空でも、保存した版と比較の影は読�
   await expect(page.locator('.tl-row')).toHaveCount(3)
   await expect(page.locator('.tl-row .gonelbl', { hasText: '旧ステージの前説' })).toBeVisible()
   // 何も選んでいないことは、行の上の帯で伝え続ける（全体を隠さない）
-  await expect(page.locator('.tl-select-band')).toContainText('タイムラインに載せるエピックを選んでください')
-  // 版を送るとき
-  await more(page, '版を送る')
-  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
+  await expect(page.locator('.tl-select-band')).toContainText('タイムライン対象エピックを選んでください')
+  // タイムライン変更推移を見るとき
+  await more(page, 'タイムライン変更推移')
+  await expect(page.locator('.tl-notice')).toContainText('タイムライン変更推移 1/2')
   await expect(page.locator('.bar[data-seq="431"]')).toBeVisible()
   await expect(page.locator('.bar[data-seq="420"]')).toBeVisible()
   if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-mock-empty-target-step.png` })
@@ -355,7 +355,7 @@ test('載せるエピックが空でも、保存した版と比較の影は読�
   await page.locator('.tl-notice button', { hasText: '終える' }).click()
   // 重ねない（版も行も無い）ときは、これまでどおりの空状態
   await page.goto('/p/fes/timeline?zoom=hour&baseline=none')
-  await expect(page.getByText('タイムラインに載せるエピックを選んでください')).toBeVisible()
+  await expect(page.getByText('タイムライン対象エピックを選んでください')).toBeVisible()
   await expect(page.locator('.tl-body')).toBeHidden()
 })
 
@@ -363,18 +363,18 @@ test('設定に残った不在のエピック番号も、版の行の情報で�
   await page.setViewportSize({ width: 1600, height: 800 })
   await mockApi(page, { theme: 'light', epics: [301, 303, 309], outside: true })
   await page.goto('/p/fes/timeline?zoom=hour')
-  await more(page, '版を送る')
-  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
+  await more(page, 'タイムライン変更推移')
+  await expect(page.locator('.tl-notice')).toContainText('タイムライン変更推移 1/2')
   await expect(page.locator('.bar[data-seq="431"]')).toHaveCount(1)
   await expect(page.locator('.tl-row', { hasText: '旧ステージ' }).locator('.tl-outside')).toHaveCount(1)
   await page.goto('/p/fes/timeline?zoom=hour&parent=301')
-  await more(page, '版を送る')
-  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
+  await more(page, 'タイムライン変更推移')
+  await expect(page.locator('.tl-notice')).toContainText('タイムライン変更推移 1/2')
   await expect(page.locator('.bar[data-seq="431"]')).toHaveCount(0)
   await expect(page.locator('.tl-row')).toHaveCount(1)
 })
 
-test('ヘッダ：見る範囲の操作と版の札だけを置き、比較・記録・載せるエピックはメニューにまとめる', async ({ page }) => {
+test('ヘッダ：見る範囲の操作と版の札だけを置き、比較・記録・タイムライン対象エピックはメニューにまとめる', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   await mockApi(page, { theme: 'light' })
   await page.goto('/p/fes/timeline')
@@ -384,7 +384,7 @@ test('ヘッダ：見る範囲の操作と版の札だけを置き、比較・�
   await expect(tools.locator('.tl-chip', { hasText: '表示するエピック' })).toContainText('3/3')
   await expect(tools.getByText('行', { exact: true })).toHaveCount(0)
   // pb-322・pb-324：ヘッダからボタンが消える。重ねている版は押せない札で残す
-  for (const name of ['版を送る', '計画を保存', '現在のタイムラインを記録', '載せるエピック']) {
+  for (const name of ['タイムライン変更推移', '計画を保存', '現在のタイムラインを記録', 'タイムライン対象エピック']) {
     await expect(tools.getByRole('button', { name, exact: false })).toHaveCount(0)
   }
   const chip = tools.locator('.tl-chip-static')
@@ -395,13 +395,13 @@ test('ヘッダ：見る範囲の操作と版の札だけを置き、比較・�
   const box = (await page.locator('.tl-page > .page-header').boundingBox())!
   expect(box.height).toBeLessThanOrEqual(56)
 
-  // メニューの並び（区切りは載せるエピックの上）
+  // メニューの並び（区切りはタイムライン対象エピックの上）
   await page.getByRole('button', { name: 'タイムラインのメニュー' }).click()
-  await expect(page.getByRole('menuitem')).toHaveText(['新しいチケット', '重ねる計画を選ぶ…', '版を送る', '現在のタイムラインを記録', '載せるエピック…'])
+  await expect(page.getByRole('menuitem')).toHaveText(['新しいチケット', 'タイムラインを比較する…', 'タイムライン変更推移', '現在のタイムラインを記録', 'タイムライン対象エピック…'])
   if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-menu-1280.png` })
 
-  // 重ねる計画を選ぶ → 版の一覧 →「重ねない」で札が消える
-  await page.getByRole('menuitem', { name: '重ねる計画を選ぶ…' }).click()
+  // タイムラインを比較する → 版の一覧 →「重ねない」で札が消える
+  await page.getByRole('menuitem', { name: 'タイムラインを比較する…' }).click()
   const versions = page.locator('.tl-versions')
   await expect(versions).toBeVisible()
   await expect(versions.locator('.tl-vrow')).toHaveCount(1)
@@ -410,11 +410,11 @@ test('ヘッダ：見る範囲の操作と版の札だけを置き、比較・�
   await expect(tools.locator('.tl-chip-static')).toHaveCount(0)
   await expect(page.locator('.base')).toHaveCount(0)
 
-  // 版を送る ⇄ 終える（メニューの項目が切り替わる）
-  await more(page, '版を送る')
-  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
-  await more(page, '版を送るのを終える')
-  await expect(page.locator('.tl-notice')).not.toContainText('版を送る 1/2')
+  // タイムライン変更推移 ⇄ 終える（メニューの項目が切り替わる）
+  await more(page, 'タイムライン変更推移')
+  await expect(page.locator('.tl-notice')).toContainText('タイムライン変更推移 1/2')
+  await more(page, 'タイムライン変更推移を終える')
+  await expect(page.locator('.tl-notice')).not.toContainText('タイムライン変更推移 1/2')
 })
 
 test('メニュー：現在のタイムラインを記録（pb-323）', async ({ page }) => {
@@ -440,7 +440,7 @@ test('メニュー：現在のタイムラインを記録（pb-323）', async ({
   await expect(page.locator('.tl-notice')).toContainText('の版を保存しました（11件）')
 })
 
-test('メニュー：載せるエピックをダイアログで選んで保存する（pb-324）', async ({ page }) => {
+test('メニュー：タイムライン対象エピックをダイアログで選んで保存する（pb-324）', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   let patched: { settings?: Record<string, unknown> } | null = null
   await mockApi(page, { theme: 'light', epics: [301] })
@@ -454,8 +454,8 @@ test('メニュー：載せるエピックをダイアログで選んで保存�
   // 版を重ねると版の行（中庭ステージ）も出るので、重ねずに開く
   await page.goto('/p/fes/timeline?baseline=none')
   await expect(page.locator('.tl-row')).toHaveCount(1)
-  await more(page, '載せるエピック…')
-  const dlg = page.getByRole('dialog', { name: '載せるエピック' })
+  await more(page, 'タイムライン対象エピック…')
+  const dlg = page.getByRole('dialog', { name: 'タイムライン対象エピック' })
   await expect(dlg).toBeVisible()
   if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-epic-dialog.png` })
   await dlg.getByText('中庭ステージ').click()
@@ -539,7 +539,7 @@ test('行の空いた所を横にドラッグして、その時間帯で作る�
   expect(state.created).toHaveLength(1)
 })
 
-test('作ったものが描かれないときは理由を出す。版を送っているあいだは空いた所から作れない（pb-321）', async ({ page }) => {
+test('作ったものが描かれないときは理由を出す。タイムライン変更推移を見ているあいだは空いた所から作れない（pb-321）', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   const state = await mockApi(page, { theme: 'light' })
   await page.goto('/p/fes/timeline')
@@ -553,7 +553,7 @@ test('作ったものが描かれないときは理由を出す。版を送っ�
   expect(state.created[0]).toMatchObject({ all_day: true })
   await expect(page.locator('.tl-notice')).toContainText('fes-601 を作りました。終日の予定はタイムラインに描きません')
 
-  await more(page, '版を送る')
-  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
+  await more(page, 'タイムライン変更推移')
+  await expect(page.locator('.tl-notice')).toContainText('タイムライン変更推移 1/2')
   await expect(page.locator('.tl-track.can-create')).toHaveCount(0)
 })

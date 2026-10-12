@@ -286,7 +286,7 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		dueBefore = &t
 	}
 
-	// view=timeline（9.2.7）。プロジェクトの行を1回読み、載せるエピックを決める（DbDesign.md 6.4）。
+	// view=timeline（9.2.7）。プロジェクトの行を1回読み、タイムライン対象エピックを決める（DbDesign.md 6.4）。
 	// **選んだエピックが無ければ items も epics も空**——SQL の起点が無くなるだけで、分岐を持たない。
 	timelineEpics := []int32{}
 	var tlProject gen.GetProjectTimelineSettingsRow
