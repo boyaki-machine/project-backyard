@@ -151,3 +151,28 @@ func TestRescheduleConflictTellsToRetry(t *testing.T) {
 		t.Fatalf("output %+v", out)
 	}
 }
+
+// 秒のずらし（pb-336）。作成と変更の両方で REST へ届き、変更は渡したものだけを送る。
+func TestLinkToolsPassLagSeconds(t *testing.T) {
+	for _, tt := range []struct{ name, args, want string }{
+		{"pb_add_link", `{"seq":12,"target_seq":13,"link_type":"FS","lag_seconds":600}`, `{"lag_seconds":600,"link_type":"FS","target_seq":13}`},
+		{"pb_update_link", `{"seq":12,"id":"link","lag_seconds":-300}`, `{"lag_seconds":-300}`},
+		{"pb_update_link", `{"seq":12,"id":"link","lag_days":1,"lag_seconds":600}`, `{"lag_days":1,"lag_seconds":600}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rest := &fakeREST{body: `{"id":"link"}`}
+			out := callTool1(t, New(rest, "v0"), toolCallBody(tt.name, tt.args))
+			if out.IsError || rest.gotBody != tt.want {
+				t.Fatalf("body = %s, want %s（%+v）", rest.gotBody, tt.want, out)
+			}
+		})
+	}
+}
+
+func TestUpdateLinkRejectsEmptyChange(t *testing.T) {
+	rest := &fakeREST{}
+	res := decodeRPC(t, callMCP(t, New(rest, "v0"), agentPrincipal(), toolCallBody("pb_update_link", `{"seq":12,"id":"link"}`)))
+	if res.Error == nil || res.Error.Code != codeInvalidParams || rest.calls != 0 {
+		t.Fatalf("error %+v calls %d", res.Error, rest.calls)
+	}
+}
