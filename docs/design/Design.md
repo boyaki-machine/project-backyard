@@ -1974,7 +1974,7 @@ MCPまたはRESTから宣言し、PBの時刻を使って経過時間と明示�
 
 **計画専用権限 `ticket.plan.edit` は、依存・順序・開始と終了予定の変更だけを許す。** `administrator` と `project_admin` に配り、エージェントには発行時に明示的に追加する。既定には含めない。実行モードや委任範囲の変更、チケットの作成・完了には使えない。既存の予定更新は `ticket.self_edit` でも行える。
 
-`pb_move_task` は同じ段・同じ親の中で順序だけを変える。段、親、担当、状態、スプリントは変更しない。依存の種類とずらしは `ApiDesign.md` 9.10.1、予定の半開区間は同9.3.1に従う。SS・FF・SFは、チケットを1件ずつ実行する順序ではない。
+`pb_move_task` は同じ段・同じ親の中で順序だけを変える。段、親、担当、状態、スプリントは変更しない。依存の種類とずらしは `ApiDesign.md` 9.10.1、予定の半開区間は同9.3.1に従う。ずらしは `lag_days`（暦日）と `lag_seconds`（1日未満の秒。pb-336）の2つで、実効のずらしは暦日を足してから秒を足したものである。`pb_update_link` は渡したものだけを変える。SS・FF・SFは、チケットを1件ずつ実行する順序ではない。
 
 **`pb_reschedule_task` は、タイムラインの連鎖のずらし（`ApiDesign.md` 9.17.2）を試算と確定に分けて開ける**（pb-314）。`dry_run` を必須とし、まず `true` で試算する。試算の応答には、確定でそのまま渡す `expect`（きっかけを含む各行の `seq` と `version`）を MCP が添える。確定（`false`）は `expect` を必須とし、MCP がきっかけの版を `If-Match` に、残りを REST の `expect` に振り分ける。試算の後に誰かが動かしていれば `409` を isError で返し、試算からやり直させる。解けない試算（`result: blocked`）には `expect` を添えない。アンカーなどの3つの印（`no_overlap` / `start_pinned` / `due_pinned`）は `pb_get_planning_data` が返す。エージェントは印を書けない（`ApiDesign.md` 9.5.2）。
 
