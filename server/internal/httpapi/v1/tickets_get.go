@@ -43,7 +43,7 @@ func (h *handler) getTicket(w http.ResponseWriter, r *http.Request) {
 		writeTicketReadError(w, r, seq, err)
 		return
 	}
-	view.WorkContext, err = getWorkContext(r.Context(), h.q, projectID, auth.PrincipalFromContext(r.Context()).ActorID)
+	view.WorkContext, err = getWorkContext(r.Context(), h.q, projectID, auth.PrincipalFromContext(r.Context()).ActorID, seq)
 	if err != nil {
 		writeTicketReadError(w, r, seq, err)
 		return

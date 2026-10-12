@@ -81,6 +81,12 @@ export interface paths {
                             open_work_id: string | null;
                             /** @description 開いている記録の開始元のチケット番号。 */
                             open_work_seq: number | null;
+                            /** @description 自分の開いている記録すべて（開始の古い順）。委任のmainは木の中で複数開ける。 */
+                            open_works: {
+                                id: string;
+                                /** @description 開始元のチケット番号 */
+                                seq: number;
+                            }[];
                             document_path: string;
                             section: string;
                         };
@@ -8312,6 +8318,12 @@ export interface components {
                 open_work_id: string | null;
                 /** @description 開いている記録の開始元のチケット番号。 */
                 open_work_seq: number | null;
+                /** @description 自分の開いている記録すべて（開始の古い順）。委任のmainは木の中で複数開ける。 */
+                open_works: {
+                    id: string;
+                    /** @description 開始元のチケット番号 */
+                    seq: number;
+                }[];
             };
             /** @description 本文（Markdown ソース）。 */
             body_md: string | null;

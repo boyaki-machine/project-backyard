@@ -6001,9 +6001,9 @@ SHA-256 であり `app_secret` に依存しない（`DbDesign.md` 6.2）ので�
 
 GET `/api/v1/projects/:key/tickets/:seq/work-sessions`はticket.viewでページ付き記録と全件集計を返す。POST同パスはagent.runとticket.transitionで開始する。POST同パス`/:work_id/events`はpause/resume/finish/correct/restore_autoを処理する。時刻はRESTのエポックミリ秒で返す。要求のrequest_idは1〜128文字、noteは2000文字以内。再送は同内容なら同じ応答、別内容なら409。開始も200を返す。
 
-開始は所有者担当・未完了・委任の範囲/段階を確認する。allocationsは[{seq,share}]、正数合計1、最大50件、重複なし、開始元必須。複数配分には理由が必要。pauseはrunning、resumeはwaiting、finishは未終了だけから行う。pauseには理由、finishにはcompleted/partial/blockedの結果を指定する。tokensとreported_active_msは任意で非負、後者は経過時間以下とし取得元をnoteへ書く。incompleteは計測漏れの申告である。終了時は配分先の合計から実績時間を保存し、開始時の運営ノート契約と累積変更量によりactual-v0のPointを保存する。これは任意の実績値を書き換えるPATCH権限の委譲ではなく、認可済み作業のサーバ算出結果である。
+開始は所有者担当・未完了・委任の範囲/段階を確認する。開いている記録は同じAgentでPJ内1件までだが、**承認済みの委任のmainが委任の木の中で開くときは、開始元のチケットに自分の開いた記録が無ければ開ける**（Design.md 8.5.7。サブエージェントの並行）。allocationsは[{seq,share}]、正数合計1、最大50件、重複なし、開始元必須。複数配分には理由が必要。pauseはrunning、resumeはwaiting、finishは未終了だけから行う。pauseには理由、finishにはcompleted/partial/blockedの結果を指定する。tokensとreported_active_msは任意で非負、後者は経過時間以下とし取得元をnoteへ書く。incompleteは計測漏れの申告である。終了時は配分先の合計から実績時間を保存し、開始時の運営ノート契約と累積変更量によりactual-v0のPointを保存する。これは任意の実績値を書き換えるPATCH権限の委譲ではなく、認可済み作業のサーバ算出結果である。
 
-訂正correctと手入力からの復帰restore_autoはticket.edit・ticket.actual_point.editを持つ人だけに許す。correctは終了済みに限定し、理由、任意の計測時間・tokens・配分を指定する。手入力値は維持され、restore_autoを明示した時だけ両欄を再計算に戻す。権限を持つ人は他者の開いた作業を理由付き・incomplete=trueで終了できる。通常操作は自分の作業のみ。一時停止・再開・配分の変更でもAgentの所有者担当と委任の書込境界を検査する。**自分の記録のfinish/abandonは検査しない**——閉じる操作は範囲を広げず、委任の外で開いた記録を委任のmainになった後でも閉じられるようにする。work_contextのopen_work_seqは、開いている記録の開始元のチケット番号である（どのチケットの記録かを取り違えない）。
+訂正correctと手入力からの復帰restore_autoはticket.edit・ticket.actual_point.editを持つ人だけに許す。correctは終了済みに限定し、理由、任意の計測時間・tokens・配分を指定する。手入力値は維持され、restore_autoを明示した時だけ両欄を再計算に戻す。権限を持つ人は他者の開いた作業を理由付き・incomplete=trueで終了できる。通常操作は自分の作業のみ。一時停止・再開・配分の変更でもAgentの所有者担当と委任の書込境界を検査する。**自分の記録のfinish/abandonは検査しない**——閉じる操作は範囲を広げず、委任の外で開いた記録を委任のmainになった後でも閉じられるようにする。work_contextのopen_worksは、自分の開いている記録すべての{id, seq}（seqは開始元のチケット番号、開始の古い順）である。open_work_id/open_work_seqはそのうち、このチケットが開始元の記録、無ければ最も古い記録を指す（どのチケットの記録かを取り違えない）。
 
 summaryは終了済みの選択時間・経過・待機・token既知合計/欠測、未終了/不完全件数、自動候補と実績値・手入力状態を返す。GETのitemsは全件ではない。開いた記録は時間候補に加算しない。共通時間・Pointの定義はDesign.md 8.5.7に従う。既存レポートにwork_session_idを付けた場合は、当該チケットに配分された終了済み記録だけ（Agentは自身の記録に限定）を受け付け、実績集計で同じ消費を重ねて数えない。未紐付けレポートの自己申告時間は作業タイマーの代わりにはしない。
 

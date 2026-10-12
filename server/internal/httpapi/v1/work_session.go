@@ -401,7 +401,25 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 			if _, problem = workPermission(ctx, q, r, scope.projectID, scope.seq, false); problem != nil {
 				return errTicketReference
 			}
-			if _, err := q.GetOpenWorkSession(ctx, gen.GetOpenWorkSessionParams{ProjectID: scope.projectID, ActorID: p.ActorID}); err == nil {
+			// **委任の main は、木の中ならチケットごとに1件ずつ同時に開ける**（Design.md 8.5.7。pb-344）。
+			// サブエージェントは main のトークンで動くので、並行して子を消化すると記録が重なる。
+			// 同じチケットに2件は開かせない（二重計上を防ぐ）。それ以外は PJ 内1件のまま。
+			parallel := false
+			if p.IsAgent() {
+				if parallel, err = parallelWorkAllowed(ctx, q, scope.projectID, p.ActorID, ticketID); err != nil {
+					return err
+				}
+			}
+			if parallel {
+				open, err := q.HasTicketOpenWork(ctx, gen.HasTicketOpenWorkParams{TicketID: ticketID, ActorID: p.ActorID})
+				if err != nil {
+					return err
+				}
+				if open {
+					problem = workError(apierr.Conflict, "このチケットで開いている作業を終了してから開始してください")
+					return errTicketReference
+				}
+			} else if _, err := q.GetOpenWorkSession(ctx, gen.GetOpenWorkSessionParams{ProjectID: scope.projectID, ActorID: p.ActorID}); err == nil {
 				problem = workError(apierr.Conflict, "このPJで開いている作業を終了してから開始してください")
 				return errTicketReference
 			} else if !errors.Is(err, pgx.ErrNoRows) {
