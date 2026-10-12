@@ -44,6 +44,9 @@ var autoApprovedTools = []string{
 	"pb_list_comments",
 	"pb_get_context",
 	"pb_list_transitions",
+	// **待ち受けは読み取りで、自律実行では何十回も呼ぶ**（Delegation.md 10章）。
+	// 呼ぶたびに承認を求めると、人が端末に張り付くことになる（pb-313）。
+	"pb_wait",
 }
 
 // mcpServerName は接続設定に書くサーバ名。
