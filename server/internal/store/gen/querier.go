@@ -925,9 +925,6 @@ type Querier interface {
 	GetLatestScheduleBaseline(ctx context.Context, projectID string) (GetLatestScheduleBaselineRow, error)
 	GetLiveWorkPointInputs(ctx context.Context, ticketID string) ([]GetLiveWorkPointInputsRow, error)
 	GetOpenWorkSession(ctx context.Context, arg GetOpenWorkSessionParams) (string, error)
-	// GetOpenWorkSessionTicket は開いている記録と、その開始元のチケット番号を返す。
-	// 案内に ID だけを出すと、別のチケットで開いた記録を今のチケットの計時と取り違える（pb-306）。
-	GetOpenWorkSessionTicket(ctx context.Context, arg GetOpenWorkSessionTicketParams) (GetOpenWorkSessionTicketRow, error)
 	// GetParentForCascade は「子が動いたら親を進行中にする」で祖先をたどる1段ぶん
 	// （9.6）。子の id を渡すと、その親の seq とステータスのカテゴリが返る。
 	//
@@ -1433,6 +1430,10 @@ type Querier interface {
 	ListOnstageTicketIDs(ctx context.Context, projectID string) ([]string, error)
 	// ListOpenConfirmations はパック（9.1）と画面に出す一覧。
 	ListOpenConfirmations(ctx context.Context, delegationID string) ([]ListOpenConfirmationsRow, error)
+	// ListOpenWorkSessionTickets は自分の開いている記録と、その開始元のチケット番号を返す。
+	// 案内に ID だけを出すと、別のチケットで開いた記録を今のチケットの計時と取り違える（pb-306）。
+	// 委任の main は木の中で複数開ける（Design.md 8.5.7。pb-344）ので、すべてを開始の古い順に返す。
+	ListOpenWorkSessionTickets(ctx context.Context, arg ListOpenWorkSessionTicketsParams) ([]ListOpenWorkSessionTicketsRow, error)
 	// ListOwnedAgentActorIDs は、その人が所有するエージェントを列挙する。
 	//
 	// **人の削除（ApiDesign.md 6.5）で使う。** agent.owner_actor_id の

@@ -138,13 +138,22 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [policy, open_work_id, open_work_seq, document_path, section]
+                required: [policy, open_work_id, open_work_seq, open_works, document_path, section]
                 properties:
                   policy: {$ref: '#/components/schemas/WorkPolicy'}
                   open_work_id: {type: [string, 'null']}
                   open_work_seq:
                     type: [integer, 'null']
                     description: 開いている記録の開始元のチケット番号。
+                  open_works:
+                    type: array
+                    description: 自分の開いている記録すべて（開始の古い順）。委任のmainは木の中で複数開ける。
+                    items:
+                      type: object
+                      required: [id, seq]
+                      properties:
+                        id: {type: string}
+                        seq: {type: integer, description: 開始元のチケット番号}
                   document_path: {type: string}
                   section: {type: string}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -12440,13 +12449,22 @@ components:
             work_context:
               type: object
               description: GET詳細の共通計測案内。状態遷移では計測を開始しない。
-              required: [policy, open_work_id, open_work_seq]
+              required: [policy, open_work_id, open_work_seq, open_works]
               properties:
                 policy: {$ref: '#/components/schemas/WorkPolicy'}
                 open_work_id: {type: [string, 'null']}
                 open_work_seq:
                   type: [integer, 'null']
                   description: 開いている記録の開始元のチケット番号。
+                open_works:
+                  type: array
+                  description: 自分の開いている記録すべて（開始の古い順）。委任のmainは木の中で複数開ける。
+                  items:
+                    type: object
+                    required: [id, seq]
+                    properties:
+                      id: {type: string}
+                      seq: {type: integer, description: 開始元のチケット番号}
             body_md:
               type: string
               nullable: true

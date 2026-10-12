@@ -911,6 +911,19 @@ func TestWorkInstructionsNameTheOpenWorkTicket(t *testing.T) {
 	}
 }
 
+// 委任の main が木の中で複数開いた記録を、すべて並べる（pb-344）。
+func TestWorkInstructionsListAllOpenWorks(t *testing.T) {
+	var ticket packTicket
+	if err := json.Unmarshal([]byte(`{"seq":31,"title":"fixture","status":{"name":"進行中","category":"in_progress"},"work_context":{"policy":{"status":"unset"},"open_work_id":"w-31","open_work_seq":31,"open_works":[{"id":"w-30","seq":30},{"id":"w-31","seq":31},{"id":"w-32","seq":32}]}}`), &ticket); err != nil {
+		t.Fatal(err)
+	}
+	text := renderContextPack("demo", ticket, charter{}, "")
+	want := "自身の未終了作業：#30 の記録（このチケットのものではない）`w-30`、#31 の記録`w-31`、#32 の記録（このチケットのものではない）`w-32`。"
+	if !strings.Contains(text, want) {
+		t.Errorf("パックに %q が無い:\n%s", want, text)
+	}
+}
+
 func TestWorkInstructionsRemainWhenCharterIsFolded(t *testing.T) {
 	var ticket packTicket
 	if err := json.Unmarshal([]byte(`{"seq":31,"title":"fixture","status":{"name":"進行中","category":"in_progress"},"work_context":{"policy":{"version":"actual-v0","status":"ready","document_version":7,"time_source":"reported_or_pb","require_registration":true},"open_work_id":"fixture-work-id"}}`), &ticket); err != nil {
