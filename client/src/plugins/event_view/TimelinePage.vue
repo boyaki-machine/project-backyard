@@ -196,7 +196,7 @@ const fetchKey = computed(() => JSON.stringify(fetchQuery.value))
 const canPlan = computed(
   () => auth.canInProject(projectKey.value, 'ticket.edit') || auth.canInProject(projectKey.value, 'ticket.plan.edit'),
 )
-/** `[計画を保存]`・`[載せるエピック ▾]`・版を消す */
+/** `[現在のタイムラインを記録]`・`[載せるエピック ▾]`・版を消す */
 const canProjectEdit = computed(() => auth.canInProject(projectKey.value, 'project.edit'))
 
 const settings = computed(() => projectStore.current?.settings)
@@ -1650,7 +1650,7 @@ watch(projectKey, (key, prev) => {
           >
             {{ $ui('版を送る') }}
           </button>
-          <button v-if="canProjectEdit" type="button" class="secondary small" @click="openSave">{{ $ui('計画を保存') }}</button>
+          <button v-if="canProjectEdit" type="button" class="secondary small" @click="openSave">{{ $ui('現在のタイムラインを記録') }}</button>
           <div v-if="canProjectEdit" class="tl-dd">
             <button type="button" class="tl-chip" :aria-expanded="openMenu === 'epics'" @click="toggleMenu('epics')">{{ $ui('載せるエピック') }} ▾</button>
             <div v-if="openMenu === 'epics'" class="tl-panel right tl-epic-panel">
@@ -1879,7 +1879,7 @@ watch(projectKey, (key, prev) => {
       <span class="r mono">{{ zoomText }}</span>
     </div>
 
-    <Modal v-if="saveOpen" :title="$ui('計画を保存')" @close="saveOpen = false">
+    <Modal v-if="saveOpen" :title="$ui('現在のタイムラインを記録')" @close="saveOpen = false">
       <form class="tl-save" @submit.prevent="saveBaseline">
         <p class="tl-hint">{{ $ui('行を絞っていても、載せるエピックの全体を保存します。版の名前は保存した日時で決まります。') }}</p>
         <label class="field">
@@ -1890,7 +1890,7 @@ watch(projectKey, (key, prev) => {
       </form>
       <template #footer>
         <button type="button" class="secondary" :disabled="saving" @click="saveOpen = false">{{ $ui('キャンセル') }}</button>
-        <button type="button" class="primary" :disabled="saving" @click="saveBaseline">{{ saving ? $ui('保存中…') : $ui('保存') }}</button>
+        <button type="button" class="primary" :disabled="saving" @click="saveBaseline">{{ saving ? $ui('記録中…') : $ui('記録') }}</button>
       </template>
     </Modal>
 
