@@ -97,6 +97,7 @@ func TestDelegationMarksIntegration(t *testing.T) {
 		IsRoot            bool   `json:"is_root"`
 		Status            string `json:"status"`
 		OpenConfirmations int    `json:"open_confirmations"`
+		Reported          bool   `json:"reported"`
 	}
 	list := func(t *testing.T) (map[int]*mark, string) {
 		t.Helper()
@@ -166,6 +167,46 @@ func TestDelegationMarksIntegration(t *testing.T) {
 		if m[outsideSeq] != nil {
 			t.Errorf("木の外の印 = %+v, want null", m[outsideSeq])
 		}
+	})
+
+	// **完了レポートを出したのに完了していない子に「報告済み」が付く**（Delegation.md 5章 D2。pb-307）。
+	// レビュー相当の状態が無いワークフローでも、PM がまとめて完了にする子を見分けられるように。
+	t.Run("完了レポートを出した子に reported が付き、完了すると外れる", func(t *testing.T) {
+		report := func(seq int, status string) {
+			t.Helper()
+			rec := bearerPost(r, fmt.Sprintf("%s/tickets/%d/reports", base, seq), mainToken.Token,
+				`{"effort_unavailable":{"target":"both","reason":"fixture"},"status":"`+status+`"}`)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("#%d の完了レポート status = %d（body=%s）", seq, rec.Code, rec.Body.String())
+			}
+		}
+		report(grand, "completed")
+		report(child, "partial")
+		m, etag := list(t)
+		if !m[grand].Reported {
+			t.Errorf("completed を出した #%d の reported = false, want true", grand)
+		}
+		if m[child].Reported {
+			t.Errorf("partial を出した #%d の reported = true, want false", child)
+		}
+		if m[rootSeq].Reported {
+			t.Errorf("根の reported = true, want false（根は評価と受け入れで扱う）")
+		}
+		if etag == etagBefore {
+			t.Errorf("報告を出しても ETag が変わらない（%s）", etag)
+		}
+
+		for _, to := range []string{"in_progress", "review", "done"} {
+			if rec := postWithCookie(r, fmt.Sprintf("%s/tickets/%d/transition", base, grand), session,
+				`{"to":"`+to+`"}`); rec.Code != http.StatusOK {
+				t.Fatalf("#%d を %s へ status = %d（body=%s）", grand, to, rec.Code, rec.Body.String())
+			}
+		}
+		if m, _ := list(t); m[grand].Reported {
+			t.Errorf("完了した #%d の reported = true, want false", grand)
+		}
+		// 後の場面のため、ETag の基準を取り直す。
+		_, etagBefore = list(t)
 	})
 
 	t.Run("確認待ちが立つと数が載り、ETag が変わる", func(t *testing.T) {

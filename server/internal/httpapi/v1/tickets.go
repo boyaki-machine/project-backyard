@@ -945,20 +945,21 @@ func delegationMarksFor(ctx context.Context, q gen.Querier, projectID string, ti
 	for _, m := range rows {
 		out[m.TicketID] = &delegationMark{
 			RootSeq: m.RootSeq, IsRoot: m.IsRoot, Status: m.Status, OpenConfirmations: m.OpenConfirmations,
+			Reported: m.Reported,
 		}
 	}
 	return out, nil
 }
 
-// withDelegationMarks は ETag に印を混ぜる（pb-276）。確認待ちが立った・委任が止まった
-// だけではチケットの updated_at が動かないので、混ぜないと画面が差分なしと読んで
-// 印を出し直さない。印が1つも無ければ元の ETag のまま。
+// withDelegationMarks は ETag に印を混ぜる（pb-276）。確認待ちが立った・委任が止まった・
+// 完了レポートを出した（pb-307）だけではチケットの updated_at が動かないので、混ぜないと
+// 画面が差分なしと読んで印を出し直さない。印が1つも無ければ元の ETag のまま。
 func withDelegationMarks(etag string, items []ticketListItem) string {
 	h := fnv.New32a()
 	n := 0
 	for _, it := range items {
 		if m := it.Delegation; m != nil {
-			fmt.Fprintf(h, "%d:%d:%s:%d|", it.Seq, m.RootSeq, m.Status, m.OpenConfirmations)
+			fmt.Fprintf(h, "%d:%d:%s:%d:%t|", it.Seq, m.RootSeq, m.Status, m.OpenConfirmations, m.Reported)
 			n++
 		}
 	}

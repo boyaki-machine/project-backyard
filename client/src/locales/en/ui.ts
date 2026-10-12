@@ -1685,6 +1685,7 @@ export const uiMessages: Record<string, string> = {
   "どう測ったか（任意）": "How it was measured (optional)",
   "入れる": "Enter",
   "自律実行の中": "Inside autonomous run",
+  "報告済み": "Reported",
   "の木の中": "tree (inside)",
   "確認待ち {value0}": "{value0} awaiting answer",
   "{value0} が自律実行を回しています": "{value0} is running this autonomously",

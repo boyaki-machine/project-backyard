@@ -6,13 +6,15 @@
  * 人の対応が要るとき（回答していないユーザ確認待ちがある・一時停止している）だけ黄の面にし、
  * それ以外は目立たせない。子孫の行は小さな灰の文字で「自律実行の中」とだけ出す。
  * 縮小中（詳細を開いている）は、対応が要るときの記号だけを出す。
+ * 完了レポートを出したのに完了していない子は「報告済み」を足す（pb-307）。PM がチェックポイントで
+ * まとめて完了にする対象で、急ぎではないので灰のまま。急ぎの対応が重なるときと縮小中は出さない。
  */
 import { computed } from 'vue'
 
 import { uiText } from '../locales/ui'
 
 const props = defineProps<{
-  mark: { root_seq: number; is_root: boolean; status: string; open_confirmations: number }
+  mark: { root_seq: number; is_root: boolean; status: string; open_confirmations: number; reported: boolean }
   projectKey: string
   /** 詳細を開いて一覧が縮んでいるか */
   shrunk: boolean
@@ -27,6 +29,8 @@ const text = computed(() => {
   if (props.mark.open_confirmations > 0) {
     parts.push(uiText('確認待ち {value0}', { value0: props.mark.open_confirmations }))
   }
+  // 急ぎの対応が重なるときは出さない。そちらを先に片付けてもらい、狭い幅で印を切らせない
+  if (props.mark.reported && !attention.value) parts.push(uiText('報告済み'))
   return parts.join(' · ')
 })
 
@@ -34,7 +38,7 @@ const title = computed(() =>
   props.mark.is_root
     ? text.value
     : uiText('{value0} が自律実行を回しています', { value0: `${props.projectKey}-${props.mark.root_seq}` }) +
-      (attention.value ? `（${text.value}）` : ''),
+      (attention.value || props.mark.reported ? `（${text.value}）` : ''),
 )
 </script>
 

@@ -11999,7 +11999,7 @@ components:
           oneOf:
             - type: 'null'
             - type: object
-              required: [root_seq, is_root, status, open_confirmations]
+              required: [root_seq, is_root, status, open_confirmations, reported]
               properties:
                 root_seq:
                   type: integer
@@ -12012,6 +12012,11 @@ components:
                 open_confirmations:
                   type: integer
                   description: 回答していないユーザ確認待ちの数（ヒアリングを含む）。
+                reported:
+                  type: boolean
+                  description: |
+                    根ではない子で、最新の完了レポートが `completed` なのに
+                    完了していないとき `true`（Delegation.md 5章 D2）。
         staged_at:
           type: integer
           format: int64
