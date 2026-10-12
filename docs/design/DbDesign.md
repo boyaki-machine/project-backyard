@@ -3552,7 +3552,7 @@ CREATE TABLE project_event (
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_project_event_timeline ON project_event (project_id, occurred_on DESC)
+CREATE INDEX idx_project_event_occurred ON project_event (project_id, occurred_on DESC)
   WHERE status = 'approved';
 CREATE TRIGGER trg_project_event_updated BEFORE UPDATE ON project_event
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
