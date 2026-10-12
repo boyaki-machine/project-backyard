@@ -53,12 +53,20 @@ function baseItems() {
   ]
 }
 
-async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Record<string, boolean>; epics?: number[]; role?: 'admin' | 'viewer'; outside?: boolean }) {
+async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Record<string, boolean>; epics?: number[]; role?: 'admin' | 'viewer'; outside?: boolean; deps?: boolean }) {
   let items = baseItems()
   let etagN = 1
   const settings = { views: opts.views ?? { timeline: true }, timeline_snap_seconds: 60, timeline_epics: opts.epics ?? [301, 302, 303] }
   const perms = opts.role === 'viewer' ? ['project.view', 'ticket.view'] : ['project.view', 'ticket.view', 'ticket.create', 'ticket.edit', 'project.edit']
-  const state = { rescheduled: 0, changeNext: false, created: [] as Record<string, unknown>[] }
+  const state = { rescheduled: 0, changeNext: false, created: [] as Record<string, unknown>[], linked: [] as { seq: number; body: Record<string, unknown> }[], aligned: [] as Record<string, unknown>[] }
+  // 依存（5.15「依存線」。pb-332）。行またぎの SS と、反している FF
+  const extraLinks = opts.deps
+    ? [
+        { id: 'l2', source_seq: 412, target_seq: 421, link_type: 'SS', lag_days: 0, lag_seconds: 1800, origin: 'human' },
+        { id: 'l3', source_seq: 414, target_seq: 421, link_type: 'FF', lag_days: 0, lag_seconds: 0, origin: 'human' },
+      ]
+    : []
+  let links = [{ id: 'l1', source_seq: 411, target_seq: 412, link_type: 'FS', lag_days: 0, lag_seconds: 0, origin: 'human' }, ...extraLinks]
   await page.clock.install({ time: NOW })
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request()
@@ -110,7 +118,7 @@ async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Reco
         return reply({
           items: shown,
           epics: epics.filter((e) => rowSeqs.includes(e.seq)),
-          links: [{ id: 'l1', source_seq: 411, target_seq: 412, link_type: 'FS', lag_days: 0, origin: 'human' }],
+          links,
           baselines: { count: 1, latest_id: 'B1', latest_created_at: T(8, 30) },
           page: 1, per_page: 5000, total: shown.length, total_pages: 1,
         }, 200, { ETag: tag })
@@ -133,6 +141,26 @@ async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Reco
           : []),
       ] })
     }
+    const linkPost = /^\/api\/v1\/projects\/fes\/tickets\/(\d+)\/links$/.exec(path)
+    if (linkPost && req.method() === 'POST') {
+      const body = req.postDataJSON() as { target_seq: number; link_type: string }
+      state.linked.push({ seq: Number(linkPost[1]), body })
+      links = [...links, { id: `n${state.linked.length}`, source_seq: Number(linkPost[1]), target_seq: body.target_seq, link_type: body.link_type, lag_days: 0, lag_seconds: 0, origin: 'human' }]
+      etagN++
+      return reply({ id: `n${state.linked.length}`, direction: 'outgoing', link_type: body.link_type, lag_days: 0, lag_seconds: 0, origin: 'human', created_at: T(8),
+        ticket: { seq: body.target_seq, title: 'x', type: 'task', status: todo } }, 201)
+    }
+    if (path === '/api/v1/projects/fes/tickets/414/reschedule') {
+      // 依存を作った直後のそろえ（きっかけを動かさない。9.17.2）。FS の後続 421 が 414 の終了に寄る
+      const body = req.postDataJSON() as Record<string, unknown>
+      state.aligned.push(body)
+      const changes = [{ seq: 421, reason: 'ripple', before: { start_at: T(12), due_at: T(12, 40) }, after: { start_at: T(13, 20), due_at: T(14) }, version: 9 }]
+      return reply({ applied: false, result: 'ok', changes, block: null, alternative: null })
+    }
+    const taskDetail = /^\/api\/v1\/projects\/fes\/tickets\/(\d+)$/.exec(path)
+    const task = taskDetail && req.method() === 'GET' ? items.find((t) => t.seq === Number(taskDetail[1])) : undefined
+    if (task) return reply({ ...task, body_md: '', links: [], references: [], children: [], dod: [], scope: {}, execution_mode: 'agent_draft', readiness: null, readiness_note: null,
+      epic: null, parent: null, comment_count: 0, delegation: null })
     if (path === '/api/v1/projects/fes/tickets/412/reschedule') {
       const body = req.postDataJSON() as { dry_run: boolean; due_at: number }
       const changes = [
@@ -584,4 +612,100 @@ test('作ったものが描かれないときは理由を出す。タイムラ�
   await more(page, 'タイムライン変更推移')
   await expect(page.locator('.tl-notice')).toContainText('タイムライン変更推移 1/2')
   await expect(page.locator('.tl-track.can-create')).toHaveCount(0)
+})
+
+for (const [theme, width] of [['light', 1920], ['dark', 1280]] as const) {
+test(`依存線：行をまたぐ線と種別・ずらしの札、反した配置は ⚠。接している FS は継ぎ目の ◆（${theme} ${width}px。pb-332）`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 })
+  await mockApi(page, { theme, deps: true })
+  await page.goto('/p/fes/timeline')
+  await expect(page.locator('.tl-row')).toHaveCount(3)
+  await expect(page.locator('.fs.j')).toHaveCount(1)
+  const lines = page.locator('.tl-deps g.dep')
+  await expect(lines).toHaveCount(2)
+  await expect(page.locator('.tl-deps g.dep[data-link="l2"] .dtt')).toHaveText('SS +30m')
+  // 414 の終了 13:20 に 421 の終了 12:40 がそろっていない → 反している
+  await expect(page.locator('.tl-deps g.dep[data-link="l3"]')).toHaveClass(/bad/)
+  await expect(page.locator('.tl-deps g.dep[data-link="l3"] .dtt')).toHaveText('⚠ FF')
+  await expect(page.locator('.tl-deps g.dep[data-link="l2"]')).not.toHaveClass(/bad/)
+  // 線は行をまたぐ（出る側と入る側の高さが違う）
+  const d = await page.locator('.tl-deps g.dep[data-link="l2"] .dl').getAttribute('d')
+  expect(d).toMatch(/V/)
+  // バーに載せると、そのバーの線を濃くする
+  await page.locator('.bar[data-seq="412"]').hover()
+  await expect(page.locator('.tl-deps g.dep[data-link="l2"]')).toHaveClass(/hot/)
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-deps-${theme}-${width}.png` })
+})
+}
+
+test('バーの後半から別のバーの前半へ引くと FS を作り、そろえる試算を出す。Esc は依存を残す（pb-332）', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 })
+  const state = await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline')
+  const src = page.locator('.bar[data-seq="414"]')
+  const dst = page.locator('.bar[data-seq="421"]')
+  await expect(src).toBeVisible()
+  const a = (await src.boundingBox())!
+  const b = (await dst.boundingBox())!
+  // 後半を掴む（終了 F が出る側）→ 相手の前半へ（開始 S が入る側）＝ FS
+  await page.mouse.move(a.x + a.width * 0.8, a.y + a.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(a.x + a.width * 0.8 + 20, a.y + a.height / 2 + 20, { steps: 3 })
+  await page.mouse.move(b.x + b.width * 0.2, b.y + b.height / 2, { steps: 5 })
+  await expect(page.locator('.tl-deptag')).toHaveText('FS pb-414 → pb-421')
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-link-drag.png` })
+  await page.mouse.up()
+  await expect.poll(() => state.linked.length).toBe(1)
+  expect(state.linked[0]).toEqual({ seq: 414, body: { target_seq: 421, link_type: 'FS', lag_days: 0, lag_seconds: 0 } })
+  // きっかけを動かさない試算（start_at / due_at を送らない）
+  await expect.poll(() => state.aligned.length).toBe(1)
+  expect(state.aligned[0]).toEqual({ op: 'move', on_block: 'reject', dry_run: true })
+  const notice = page.locator('.tl-notice')
+  await expect(notice).toContainText('依存を作りました（FS pb-414 → pb-421）')
+  await expect(notice).toContainText('依存に合わせて1件が動きます')
+  await expect(page.locator('.ghost')).toHaveCount(1)
+  // 詳細は開かない（引いた後の click は詳細を開く操作にしない）
+  await expect(page.locator('.tl-detail')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.ghost')).toHaveCount(0)
+  await expect(notice).toContainText('予定は動かしていません')
+  expect(state.rescheduled).toBe(0)
+})
+
+test('自分自身には落とせない。3px 未満の動きはクリックとして詳細を開く（pb-332）', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 })
+  const state = await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline')
+  const bar = page.locator('.bar[data-seq="414"]')
+  const a = (await bar.boundingBox())!
+  await page.mouse.move(a.x + a.width * 0.8, a.y + a.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(a.x + a.width * 0.3, a.y + a.height / 2, { steps: 4 })
+  await expect(page.locator('.tl-deptag')).toHaveText('自分自身には引けません')
+  await expect(page.locator('.tl-deptag')).toHaveClass(/ng/)
+  await page.mouse.up()
+  expect(state.linked).toHaveLength(0)
+  await expect(page.locator('.tl-detail')).toHaveCount(0)
+
+  await page.mouse.move(a.x + a.width * 0.5, a.y + a.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(a.x + a.width * 0.5 + 1, a.y + a.height / 2)
+  await page.mouse.up()
+  await expect(page.locator('.tl-detail')).toHaveCount(1)
+  expect(state.linked).toHaveLength(0)
+})
+
+test('タイムラインから開いた詳細の「関連チケットを追加」には依存の4種も出る（pb-332）', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 })
+  await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline')
+  await page.locator('.bar[data-seq="414"]').click()
+  const pane = page.locator('.tl-detail')
+  await expect(pane).toBeVisible()
+  await pane.getByRole('button', { name: '+ 追加' }).last().click()
+  const dialog = page.getByRole('dialog', { name: '関連チケットを追加' })
+  await expect(dialog.locator('.choice-label')).toHaveText([
+    '関連', '重複', '自先行', '自後行',
+    'FS 自先行', 'FS 自後行', 'SS 自先行', 'SS 自後行', 'FF 自先行', 'FF 自後行', 'SF 自先行', 'SF 自後行',
+  ])
 })

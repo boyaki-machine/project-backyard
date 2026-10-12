@@ -7,6 +7,7 @@
  */
 import { DAY, wall, wallParts } from './time'
 import type { GItem, GanttLink } from './model'
+import { lagMs } from '../lagText'
 
 const MIN = 60_000
 
@@ -202,7 +203,8 @@ export function wouldCycle(links: GanttLink[], source: number, target: number): 
 }
 
 /**
- * 依存に反した配置か。条件は種別の2文字で決まり、`lag_days` は暦日（24時間 × 日数）。
+ * 依存に反した配置か。条件は種別の2文字で決まり、`lag_days` は暦日（24時間 × 日数）、続けて
+ * `lag_seconds` を足す（`DbDesign.md` 6.6.3。pb-332）。
  * **片方の端しか無ければ、線を描くときと同じく在る方の端で比べる。** どちらかに
  * 日付が無ければ判定しない（線も描かない）。`blocks` は FS と同じ。
  */
@@ -214,5 +216,5 @@ export function isViolated(link: GanttLink, a: GItem | undefined, b: GItem | und
   const from = endOf(a, ty[0]!)
   const to = endOf(b, ty[1]!)
   if (from === null || to === null) return false
-  return to < from + link.lag_days * DAY
+  return to < from + lagMs(link.lag_days, link.lag_seconds)
 }

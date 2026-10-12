@@ -205,7 +205,7 @@ export function collisions(bars: readonly Bar[]): { s: number; e: number }[] {
   return out
 }
 
-/** FS の印（5.15「FS」）。**同じ行の、両端が描かれているものだけ** */
+/** FS の継ぎ目の印 ◆（5.15「FS（同じ行で接している）」）。**同じ行の、両端が描かれているものだけ** */
 export interface FsMark {
   from: Bar
   to: Bar
@@ -224,6 +224,125 @@ export function fsMarks(links: readonly TlLink[], bars: readonly Bar[]): FsMark[
     out.push({ from: a, to: b, joined: b.s - a.e <= 0 })
   }
   return out
+}
+
+// ── 依存（5.15「依存線」「依存を引く」。pb-332）──────────────────
+
+/** 依存の4種。連鎖のずらしが従い、タイムラインが線で描く */
+export type DepType = 'FS' | 'SS' | 'FF' | 'SF'
+/** バーの端。S＝開始、F＝終了 */
+export type DepEnd = 'S' | 'F'
+
+export function isDepType(t: string): t is DepType {
+  return t === 'FS' || t === 'SS' || t === 'FF' || t === 'SF'
+}
+
+/** 出る側＋入る側で種別が決まる（5.15「依存を引く」） */
+export function depTypeOf(from: DepEnd, to: DepEnd): DepType {
+  return `${from}${to}` as DepType
+}
+
+/**
+ * 掴んだ・指した位置の端。**バーの左半分なら開始、右半分なら終了。** 片方の端しか無いバーは
+ * 持っている端に決まる（5.15「依存を引く」）
+ */
+export function depEndAt(x: number, left: number, right: number, has: { s: boolean; e: boolean }): DepEnd {
+  if (!has.s) return 'F'
+  if (!has.e) return 'S'
+  return x < (left + right) / 2 ? 'S' : 'F'
+}
+
+/**
+ * 依存に反した配置か（5.14「依存に反する配置」と同じ条件。ずらしは暦日 ＋ 秒）。
+ * 片方の端しか無ければ在る方の端で比べ、比べられなければ反していないとする
+ */
+export function depViolated(l: Pick<TlLink, 'link_type' | 'lag_days' | 'lag_seconds'>, a: Bar, b: Bar): boolean {
+  if (!isDepType(l.link_type)) return false
+  const endOf = (x: Bar, c: string) => (c === 'S' ? (x.s ?? x.e) : (x.e ?? x.s))
+  const from = endOf(a, l.link_type[0]!)
+  const to = endOf(b, l.link_type[1]!)
+  if (from === null || to === null) return false
+  return to < from + l.lag_days * 86_400_000 + l.lag_seconds * SEC
+}
+
+/**
+ * `source → target` を足すと輪になるか（相手から自分へ辿れるか。`ApiDesign.md` 9.10.1 と同じ判定）。
+ * 取得済みの依存の上だけで見る——画面に出ていないチケットを経由する輪はサーバが `link_cycle` で弾く
+ */
+export function depWouldCycle(links: readonly Pick<TlLink, 'source_seq' | 'target_seq' | 'link_type'>[], source: number, target: number): boolean {
+  if (source === target) return true
+  const next = new Map<number, number[]>()
+  for (const l of links) {
+    if (!isDepType(l.link_type) && l.link_type !== 'blocks') continue
+    next.set(l.source_seq, [...(next.get(l.source_seq) ?? []), l.target_seq])
+  }
+  const seen = new Set([target])
+  const stack = [target]
+  while (stack.length > 0) {
+    for (const n of next.get(stack.pop()!) ?? []) {
+      if (n === source) return true
+      if (!seen.has(n)) {
+        seen.add(n)
+        stack.push(n)
+      }
+    }
+  }
+  return false
+}
+
+/** 線を引くためのバーの位置（本体の座標。y はバーの中ほど） */
+export interface DepBox {
+  xs: number
+  xf: number
+  y: number
+}
+
+/** 依存線の形（5.15「依存線」。ガント 5.14 の経路に揃える） */
+export interface DepPath {
+  d: string
+  /** 出る側の端（○） */
+  from: { x: number; y: number }
+  /** 入る側の矢印（▶）の三角 */
+  head: string
+  /** 札を置く位置 */
+  tag: { x: number; y: number }
+}
+
+/** 端から外へ出る長さ（5.14「依存線」の 9px） */
+export const DEP_OUT = 9
+
+/**
+ * 依存線の経路。**直角に折る**——出る側で 9px 外へ出てから縦へ、入る側の 9px 手前から横へ入る。
+ * 入る側へまっすぐ進めない（逆向き）ときは、相手のバーのすぐ外（上か下）で折り返す。
+ * 同じ高さで、まっすぐ進めるときは1本の横線にする
+ */
+export function depPath(type: DepType, a: DepBox, b: DepBox): DepPath {
+  const outF = type[0] === 'F'
+  const inS = type[1] === 'S'
+  const fx = outF ? a.xf : a.xs
+  const tx = inS ? b.xs : b.xf
+  const outDir = outF ? 1 : -1
+  const inDir = inS ? 1 : -1 // 矢印の向き（右向きが 1）
+  const ox = fx + outDir * DEP_OUT
+  const ix = tx - inDir * DEP_OUT
+  const forward = inDir === 1 ? ix >= ox : ix <= ox
+  const r = (n: number) => Math.round(n * 10) / 10
+  let d: string
+  let tag: { x: number; y: number }
+  if (a.y === b.y && forward && outDir === inDir) {
+    d = `M${r(fx)},${r(a.y)}H${r(tx)}`
+    tag = { x: (fx + tx) / 2, y: a.y - 8 }
+  } else if (forward) {
+    d = `M${r(fx)},${r(a.y)}H${r(ox)}V${r(b.y)}H${r(tx)}`
+    tag = { x: ox, y: (a.y + b.y) / 2 }
+  } else {
+    // 相手のバーの外（出る側の高さに近い方）で折り返す
+    const fold = b.y + (a.y <= b.y ? -1 : 1) * (BAR_H / 2 + 5)
+    d = `M${r(fx)},${r(a.y)}H${r(ox)}V${r(fold)}H${r(ix)}V${r(b.y)}H${r(tx)}`
+    tag = { x: (ox + ix) / 2, y: fold }
+  }
+  const head = `M${r(tx)},${r(b.y)}L${r(tx - inDir * 6)},${r(b.y - 3.5)}L${r(tx - inDir * 6)},${r(b.y + 3.5)}Z`
+  return { d, from: { x: fx, y: a.y }, head, tag }
 }
 
 /** バーの幅による縮め方（5.15「バー（2行固定）」） */

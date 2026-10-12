@@ -35,6 +35,7 @@ const brief = (seq: number) => {
 
 interface World {
   lag: number
+  sec: number
   patches: { path: string; body: Record<string, unknown> }[]
 }
 
@@ -43,19 +44,19 @@ async function reply(route: Route, body: unknown, status = 200) {
 }
 
 async function mockApi(page: Page): Promise<World> {
-  const w: World = { lag: 0, patches: [] }
+  const w: World = { lag: 0, sec: 0, patches: [] }
   const ganttLinks = () => [
-    { id: '01K00000000000000000LNKFS1', source_seq: 601, target_seq: 602, link_type: 'FS', lag_days: w.lag, origin: 'human' },
-    { id: '01K00000000000000000LNKBK1', source_seq: 602, target_seq: 603, link_type: 'blocks', lag_days: 0, origin: 'human' },
+    { id: '01K00000000000000000LNKFS1', source_seq: 601, target_seq: 602, link_type: 'FS', lag_days: w.lag, lag_seconds: w.sec, origin: 'human' },
+    { id: '01K00000000000000000LNKBK1', source_seq: 602, target_seq: 603, link_type: 'blocks', lag_days: 0, lag_seconds: 0, origin: 'human' },
   ]
   /** 詳細の関連チケット。**そのチケットから見た向き**で返す（ticket は常に相手） */
   const detailLinks = (seq: number) =>
     seq === 601
-      ? [{ id: '01K00000000000000000LNKFS1', direction: 'outgoing', link_type: 'FS', ticket: brief(602), lag_days: w.lag, origin: 'human', created_at: D(9, 1) }]
+      ? [{ id: '01K00000000000000000LNKFS1', direction: 'outgoing', link_type: 'FS', ticket: brief(602), lag_days: w.lag, lag_seconds: w.sec, origin: 'human', created_at: D(9, 1) }]
       : seq === 602
         ? [
-            { id: '01K00000000000000000LNKBK1', direction: 'outgoing', link_type: 'blocks', ticket: brief(603), lag_days: 0, origin: 'human', created_at: D(9, 1) },
-            { id: '01K00000000000000000LNKFS1', direction: 'incoming', link_type: 'FS', ticket: brief(601), lag_days: w.lag, origin: 'human', created_at: D(9, 1) },
+            { id: '01K00000000000000000LNKBK1', direction: 'outgoing', link_type: 'blocks', ticket: brief(603), lag_days: 0, lag_seconds: 0, origin: 'human', created_at: D(9, 1) },
+            { id: '01K00000000000000000LNKFS1', direction: 'incoming', link_type: 'FS', ticket: brief(601), lag_days: w.lag, lag_seconds: w.sec, origin: 'human', created_at: D(9, 1) },
           ]
         : []
   await page.clock.install({ time: NOW })
@@ -85,7 +86,8 @@ async function mockApi(page: Page): Promise<World> {
     if (lk && req.method() === 'PATCH') {
       const body = req.postDataJSON() as Record<string, unknown>
       w.patches.push({ path, body })
-      w.lag = body['lag_days'] as number
+      if ('lag_days' in body) w.lag = body['lag_days'] as number
+      if ('lag_seconds' in body) w.sec = body['lag_seconds'] as number
       return reply(route, detailLinks(Number(lk[1])).find((l) => l.id === lk[2]))
     }
     if (path.endsWith('/calendar/days')) return reply(route, { days: [] })
@@ -153,4 +155,31 @@ test('範囲外は送らずに理由を出し、Esc で取り消すと何も送�
   expect(w.patches).toHaveLength(0)
   // 詳細は開いたまま（Esc は入力欄が先に使う）
   await expect(page.locator('.gantt-detail')).toBeVisible()
+})
+
+test('時刻のずらし（時:分:秒）は変えた欄だけを送り、札は日の後ろに続ける（pb-332）', async ({ page }) => {
+  const w = await mockApi(page)
+  await openDetail(page, 601)
+  await page.locator('.gantt-detail .rel-kind-edit').click()
+  const clockInput = page.locator('.gantt-detail .rel-lag-clock')
+  await expect(clockInput).toHaveValue('0:00:00')
+  await clockInput.fill('0:10:00')
+  await clockInput.press('Enter')
+  await expect.poll(() => w.patches.length).toBe(1)
+  expect(w.patches[0]!.body).toEqual({ lag_seconds: 600 })
+  await expect(page.locator('.gantt-detail .rel-kind-edit')).toHaveText('FS 自先行 +10m')
+  await expect.poll(async () => page.locator('.gantt-svg .d-tagt').allTextContents()).toContain('+10m')
+
+  // 日と時刻の両方。読めない時刻は送らずに理由を出す
+  await page.locator('.gantt-detail .rel-kind-edit').click()
+  await page.locator('.gantt-detail .rel-lag-input').fill('1')
+  await clockInput.fill('25:00:00')
+  await clockInput.press('Enter')
+  await expect(page.locator('.gantt-detail .field-error')).toContainText('1日未満')
+  expect(w.patches).toHaveLength(1)
+  await clockInput.fill('-0:05:00')
+  await clockInput.press('Enter')
+  await expect.poll(() => w.patches.length).toBe(2)
+  expect(w.patches[1]!.body).toEqual({ lag_days: 1, lag_seconds: -300 })
+  await expect(page.locator('.gantt-detail .rel-kind-edit')).toHaveText('FS 自先行 +1d-5m')
 })

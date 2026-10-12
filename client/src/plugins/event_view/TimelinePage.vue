@@ -34,6 +34,7 @@ import type { CreateTicketRequest, TicketDetail } from '../../api/tickets'
 import { statusLabel } from '../../lib/catalogLabels'
 import { currentTimezone } from '../../lib/datetime'
 import { sleeveBackground } from '../../lib/epicSleeve'
+import { lagText } from '../../lib/lagText'
 import { uiNumber, uiText } from '../../locales/ui'
 import { useAuthStore } from '../../stores/auth'
 import { useProjectStore } from '../../stores/project'
@@ -55,11 +56,17 @@ import {
   changeOf,
   changedSeqs,
   collisions,
+  depEndAt,
+  depPath,
+  depTypeOf,
+  depViolated,
+  depWouldCycle,
   deviationOf,
   deviationTag,
   expectOf,
   extendToNowDue,
   fsMarks,
+  isDepType,
   keyOf,
   laneTop,
   layoutRows,
@@ -72,6 +79,10 @@ import {
 } from './model'
 import type {
   Bar,
+  DepBox,
+  DepEnd,
+  DepPath,
+  DepType,
   Baseline,
   BaselineItem,
   BaselineSummary,
@@ -298,7 +309,7 @@ function apply(data: TlList, detect: boolean): void {
 
 /** 操作中か（ドラッグ中・試算の確認中・確定の応答待ち） */
 function isBusy(): boolean {
-  return drag.value !== null || newDrag.value !== null || trial.value !== null || committing.value
+  return drag.value !== null || newDrag.value !== null || linkDrag.value !== null || trial.value !== null || committing.value
 }
 
 function flushDeferred(): void {
@@ -1105,14 +1116,16 @@ const rowViews = computed<RowView[]>(() =>
     })
     const mode = display.value.mode
     const coll = mode === 'day' ? collisions(r.bars).map((c) => ({ x: X(c.s), w: Math.max(2, X(c.e) - X(c.s)) })) : []
+    // 接している同じ行の FS は継ぎ目の ◆。離れているもの・ほかの種別・行またぎは依存線（depLines）で描く
     const fs =
       mode === 'day'
-        ? fsMarks(links.value, r.bars).map((m) => {
-            const y = laneTop(r.lane.get(keyOf(m.to)) ?? 0) + BAR_H / 2
-            const title = uiText('FS：{value0} → {value1}（隙間を空けない）', { value0: m.from.title, value1: m.to.title })
-            if (m.joined) return { key: `${m.from.seq}-${m.to.seq}`, joined: true, x: X(m.to.s!), w: 0, y, title }
-            return { key: `${m.from.seq}-${m.to.seq}`, joined: false, x: X(m.from.e!) + 2, w: Math.max(0, X(m.to.s!) - X(m.from.e!) - 4), y, title }
-          })
+        ? fsMarks(links.value, r.bars)
+            .filter((m) => m.joined)
+            .map((m) => {
+              const y = laneTop(r.lane.get(keyOf(m.to)) ?? 0) + BAR_H / 2
+              const title = uiText('FS：{value0} → {value1}（隙間を空けない）', { value0: m.from.title, value1: m.to.title })
+              return { key: `${m.from.seq}-${m.to.seq}`, joined: true, x: X(m.to.s!), w: 0, y, title }
+            })
         : []
     const lateExt = bars
       .filter((v) => v.bar.state === 'late' && v.bar.e !== null)
@@ -1136,12 +1149,224 @@ const rowViews = computed<RowView[]>(() =>
   }),
 )
 
+// ── 依存線（5.15「依存線」。pb-332）──────────────────────────────
+
+/** ポインタを載せたバー（その依存線を濃く太くする） */
+const hoverSeq = ref<number | null>(null)
+
+/** 各バーの位置（本体の座標。y は行の上端からのバーの中ほど） */
+const barBoxes = computed(() => {
+  const out = new Map<number, DepBox & { bar: Bar }>()
+  let top = 0
+  for (const rv of rowViews.value) {
+    for (const v of rv.bars) {
+      if (!v.bar.gone) out.set(v.bar.seq, { xs: v.x, xf: v.x + v.w, y: top + v.y + BAR_H / 2, bar: v.bar })
+    }
+    top += rv.row.height
+  }
+  return out
+})
+
+function depWhat(type: DepType): string {
+  switch (type) {
+    case 'FS':
+      return uiText('隙間を空けない')
+    case 'SS':
+      return uiText('開始をそろえる')
+    case 'FF':
+      return uiText('終了をそろえる')
+    case 'SF':
+      return uiText('開始に終了をそろえる')
+  }
+}
+
+interface DepLine {
+  key: string
+  path: DepPath
+  bad: boolean
+  hot: boolean
+  tag: string
+  tagW: number
+  title: string
+}
+
+const depLines = computed<DepLine[]>(() => {
+  if (display.value.mode !== 'day') return []
+  const boxes = barBoxes.value
+  const out: DepLine[] = []
+  for (const l of links.value) {
+    if (!isDepType(l.link_type)) continue
+    const a = boxes.get(l.source_seq)
+    const b = boxes.get(l.target_seq)
+    if (!a || !b) continue
+    // 同じ行で接している FS は継ぎ目の ◆ で示す（rowViews の fs）
+    if (l.link_type === 'FS' && a.bar.epic === b.bar.epic && a.bar.e !== null && b.bar.s !== null && b.bar.s - a.bar.e <= 0) continue
+    const bad = depViolated(l, a.bar, b.bar)
+    const lag = lagText(l.lag_days, l.lag_seconds)
+    const tag = [bad ? '⚠' : '', l.link_type !== 'FS' ? l.link_type : '', lag].filter((w) => w !== '').join(' ')
+    out.push({
+      key: l.id,
+      path: depPath(l.link_type, a, b),
+      bad,
+      hot: hoverSeq.value === l.source_seq || hoverSeq.value === l.target_seq,
+      tag,
+      tagW: tag.length * 6.2 + 6,
+      title: uiText('{type}：{a} → {b}（{what}{lag}）', {
+        type: l.link_type,
+        a: a.bar.title,
+        b: b.bar.title,
+        what: depWhat(l.link_type),
+        lag: lag ? ` ${lag}` : '',
+      }),
+    })
+  }
+  return out
+})
+
+// ── 依存を引く（5.15「依存を引く」。pb-332）────────────────────────
+
+interface LinkDrag {
+  src: number
+  srcEnd: DepEnd
+  /** ポインタ（本体の座標） */
+  x: number
+  y: number
+  target: number | null
+  targetEnd: DepEnd
+  type: DepType
+  /** 落とせない理由。落とせるなら空 */
+  reason: string
+}
+
+const linkDrag = shallowRef<LinkDrag | null>(null)
+/** 依存を引いた後の click を、詳細を開く操作として扱わない */
+let suppressClick = false
+
+function canLinkFrom(v: BarView): boolean {
+  return display.value.mode === 'day' && canPlan.value && !v.bar.gone && trial.value === null && !committing.value
+}
+
+/** 画面の座標を本体の座標（`X()` と同じ原点、y は行の上端から）にする */
+function toBody(clientX: number, clientY: number): { x: number; y: number } {
+  const canvas = scroller.value?.querySelector('.tl-canvas')
+  const r = canvas?.getBoundingClientRect()
+  return r ? { x: clientX - r.left - LW, y: clientY - r.top - AH } : { x: 0, y: 0 }
+}
+
+/** 掴んだ端・指した端の座標 */
+function endPoint(seq: number, end: DepEnd): { x: number; y: number } | null {
+  const b = barBoxes.value.get(seq)
+  return b ? { x: end === 'S' ? b.xs : b.xf, y: b.y } : null
+}
+
+const linkDragView = computed(() => {
+  const d = linkDrag.value
+  if (!d) return null
+  const from = endPoint(d.src, d.srcEnd)
+  if (!from) return null
+  const to = d.target !== null && d.reason === '' ? endPoint(d.target, d.targetEnd) : null
+  const label = d.target === null ? '' : d.reason !== '' ? d.reason : `${d.type} pb-${d.src} → pb-${d.target}`
+  return { from, to, x: d.x, y: d.y, label, ng: d.target !== null && d.reason !== '' }
+})
+
+function onBarDown(ev: PointerEvent, v: BarView): void {
+  if (ev.button !== 0 || !canLinkFrom(v)) return
+  const el = ev.currentTarget as HTMLElement
+  const rect = el.getBoundingClientRect()
+  const srcEnd = depEndAt(ev.clientX, rect.left, rect.right, { s: v.bar.s !== null, e: v.bar.e !== null })
+  const x0 = ev.clientX
+  const y0 = ev.clientY
+  let started = false
+  ev.preventDefault()
+  el.setPointerCapture(ev.pointerId)
+  const move = (m: PointerEvent) => {
+    if (!started) {
+      // 3px 未満はクリック（選んで詳細を開く）
+      if (Math.hypot(m.clientX - x0, m.clientY - y0) < 3) return
+      started = true
+      result.value = null
+    }
+    edgeScroll(m.clientX)
+    const p = toBody(m.clientX, m.clientY)
+    const hit = (document.elementFromPoint(m.clientX, m.clientY) as HTMLElement | null)?.closest<HTMLElement>('.bar[data-seq]')
+    const tseq = hit ? Number(hit.dataset.seq) : Number.NaN
+    const tbox = Number.isInteger(tseq) ? barBoxes.value.get(tseq) : undefined
+    if (!hit || !tbox) {
+      linkDrag.value = { src: v.bar.seq, srcEnd, x: p.x, y: p.y, target: null, targetEnd: 'S', type: depTypeOf(srcEnd, 'S'), reason: '' }
+      return
+    }
+    const hr = hit.getBoundingClientRect()
+    const targetEnd = depEndAt(m.clientX, hr.left, hr.right, { s: tbox.bar.s !== null, e: tbox.bar.e !== null })
+    const type = depTypeOf(srcEnd, targetEnd)
+    let reason = ''
+    if (tseq === v.bar.seq) reason = uiText('自分自身には引けません')
+    else if (links.value.some((l) => l.source_seq === v.bar.seq && l.target_seq === tseq && l.link_type === type)) reason = uiText('同じ依存がすでにあります')
+    else if (depWouldCycle(links.value, v.bar.seq, tseq)) reason = uiText('依存が輪になるため引けません')
+    linkDrag.value = { src: v.bar.seq, srcEnd, x: p.x, y: p.y, target: tseq, targetEnd, type, reason }
+  }
+  const end = (commit: boolean) => {
+    el.removeEventListener('pointermove', move)
+    el.removeEventListener('pointerup', up)
+    el.removeEventListener('pointercancel', cancel)
+    const d = linkDrag.value
+    linkDrag.value = null
+    if (started) suppressClick = true
+    flushDeferred()
+    if (commit && d && d.target !== null && d.reason === '') void createDependency(d)
+  }
+  const up = () => end(true)
+  const cancel = () => end(false)
+  el.addEventListener('pointermove', move)
+  el.addEventListener('pointerup', up)
+  el.addEventListener('pointercancel', cancel)
+}
+
+/** 本体の左右の端 32px に寄せると横へ送る（5.15「依存を引く」） */
+function edgeScroll(clientX: number): void {
+  const el = scroller.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  if (clientX < r.left + LW + 32) el.scrollLeft -= 16
+  else if (clientX > r.right - 32) el.scrollLeft += 16
+  onScroll()
+}
+
+function onBarClick(v: BarView, e: MouseEvent): void {
+  if (suppressClick) {
+    suppressClick = false
+    return
+  }
+  if (v.bar.gone || display.value.mode === 'step') return
+  openDetail(v.bar.seq, e)
+}
+
+/** 作れたら、先行を動かさずに連鎖の試算を出す（そろえる。9.17.2） */
+async function createDependency(d: LinkDrag): Promise<void> {
+  const label = `${d.type} pb-${d.src} → pb-${d.target}`
+  try {
+    await tlApi.createDependency(projectKey.value, d.src, d.target!, d.type)
+  } catch (e) {
+    setResult('error', toApiError(e).message)
+    return
+  }
+  await reloadNow()
+  const t = ticketOf(d.src)
+  if (!t || t.start_at === null || t.due_at === null || trial.value !== null) {
+    setResult('ok', uiText('依存を作りました（{value0}）', { value0: label }))
+    return
+  }
+  await startTrial(d.src, 'align', undefined, label)
+}
+
 // ── 連鎖のずらし（試算の影 → 確定）──────────────────────────
 
 interface Trial {
   seq: number
   title: string
-  op: 'end' | 'start' | 'now' | 'compact'
+  /** `align` は依存を作った直後に、きっかけを動かさずに後ろをそろえる（5.15「依存を引く」） */
+  op: 'end' | 'start' | 'now' | 'compact' | 'align'
+  /** `align` のとき、作った依存（`FS pb-218 → pb-220`） */
+  note: string
   version: number
   body: RescheduleRequest
   from: number | null
@@ -1174,7 +1399,7 @@ function ticketOf(seq: number): TlTicket | undefined {
   return tickets.value.find((t) => t.seq === seq)
 }
 
-async function startTrial(seq: number, op: Trial['op'], edge?: { start_at?: number; due_at?: number }): Promise<void> {
+async function startTrial(seq: number, op: Trial['op'], edge?: { start_at?: number; due_at?: number }, note = ''): Promise<void> {
   const t = ticketOf(seq)
   if (!t) return
   const body: RescheduleRequest =
@@ -1186,10 +1411,11 @@ async function startTrial(seq: number, op: Trial['op'], edge?: { start_at?: numb
     seq,
     title: t.title,
     op,
+    note,
     version: t.version,
     body,
-    from: isStart ? t.start_at : t.due_at,
-    to: isStart ? (edge?.start_at ?? null) : (edge?.due_at ?? null),
+    from: op === 'align' ? null : isStart ? t.start_at : t.due_at,
+    to: op === 'align' ? null : isStart ? (edge?.start_at ?? null) : (edge?.due_at ?? null),
     result: null,
     stale: false,
     showAlt: false,
@@ -1209,6 +1435,13 @@ async function runTrial(tr: Trial): Promise<void> {
       tr.from = tr.op === 'start' ? target.before.start_at : target.before.due_at
       tr.to = tr.op === 'start' ? target.after.start_at : target.after.due_at
     }
+    // 依存を作った直後で、そろえるものが無ければ試算を出さない
+    if (tr.op === 'align' && res.result === 'ok' && res.changes.length === 0) {
+      trial.value = null
+      setResult('ok', uiText('依存を作りました（{value0}）', { value0: tr.note }))
+      flushDeferred()
+      return
+    }
     trial.value = { ...tr, result: res }
   } catch (e) {
     if (trial.value !== tr) return
@@ -1223,6 +1456,8 @@ async function runTrial(tr: Trial): Promise<void> {
 
 function cancelTrial(): void {
   if (trial.value === null || committing.value) return
+  // 依存を作った直後なら、依存は残して予定だけ動かさない
+  if (trial.value.op === 'align') setResult('ok', uiText('依存を作りました（{value0}）。予定は動かしていません', { value0: trial.value.note }))
   trial.value = null
   pending.value = new Set()
   override.value = new Map()
@@ -1350,9 +1585,12 @@ const trialNotice = computed(() => {
   const t = trial.value
   if (!t) return null
   const what = t.op === 'start' ? uiText('開始') : uiText('終了')
-  const opName = t.op === 'now' ? uiText('［いままで延ばす］') : t.op === 'compact' ? uiText('［ここで詰める］') : ''
+  const opName =
+    t.op === 'now' ? uiText('［いままで延ばす］') : t.op === 'compact' ? uiText('［ここで詰める］') : t.op === 'align' ? uiText('［依存に合わせる］') : ''
   const head =
-    t.from !== null && t.to !== null
+    t.op === 'align'
+      ? uiText('依存を作りました（{value0}）', { value0: t.note })
+      : t.from !== null && t.to !== null
       ? uiText('{value0} の{value1} {value2} → {value3}（{value4}）', {
           value0: shortTitle(t.title),
           value1: what,
@@ -1366,11 +1604,14 @@ const trialNotice = computed(() => {
     const moved = t.result.changes.filter((c) => c.seq !== t.seq)
     const names = moved.map((c) => shortTitle(ticketOf(c.seq)?.title ?? `pb-${c.seq}`, 8)).join('・')
     const tk = ticketOf(t.seq)
-    const tail = !tk?.no_overlap
-      ? uiText('時間重複チェック無しなので、ほかは動きません')
-      : moved.length > 0
-        ? uiText('後ろの{value0}件が動きます（{value1}）', { value0: moved.length, value1: names })
-        : t.to !== null && t.from !== null && t.to < t.from
+    const tail =
+      moved.length > 0
+        ? t.op === 'align'
+          ? uiText('依存に合わせて{value0}件が動きます（{value1}）', { value0: moved.length, value1: names })
+          : uiText('後ろの{value0}件が動きます（{value1}）', { value0: moved.length, value1: names })
+        : !tk?.no_overlap
+          ? uiText('時間重複チェック無しなので、ほかは動きません')
+          : t.to !== null && t.from !== null && t.to < t.from
           ? uiText('後ろは動きません（隙間が空きます）')
           : uiText('隙間で吸収し、後ろは動きません')
     return { kind: 'ok' as const, opName, head, tail, alt: '' }
@@ -1508,6 +1749,17 @@ function closeDetail(): void {
 function onDetailUpdated(next: TicketDetail): void {
   myVersions.set(next.seq, next.version)
   tickets.value = tickets.value.map((t) => (t.seq === next.seq ? { ...t, ...next } : t))
+  // 依存の増減とずらしの変更は線に効く（5.15「依存線」。pb-332）。ずらしは依存の ETag に入らないので、
+  // 定期取得を待たずに差し替える。本数が変わったら取り直す（ガントと同じ。5.14）
+  const lagOf = new Map(next.links.map((l) => [l.id, l]))
+  links.value = links.value.map((l) => {
+    const n = lagOf.get(l.id)
+    return n && (n.lag_days !== l.lag_days || n.lag_seconds !== l.lag_seconds) ? { ...l, lag_days: n.lag_days, lag_seconds: n.lag_seconds } : l
+  })
+  const mine = (l: { source_seq: number; target_seq: number }) => l.source_seq === next.seq || l.target_seq === next.seq
+  const present = new Set(tickets.value.map((t) => t.seq))
+  const has = next.links.filter((l) => isDepType(l.link_type) && present.has(l.ticket.seq)).length
+  if (links.value.filter(mine).length !== has) void reloadNow()
 }
 
 function onDetailDeleted(): void {
@@ -1930,7 +2182,10 @@ watch(projectKey, (key, prev) => {
                 :style="{ left: `${v.x}px`, width: `${v.w}px`, top: `${v.y}px`, height: `${BAR_H}px`, animationDelay: v.flashDelay !== null ? `-${v.flashDelay}ms` : undefined }"
                 :title="v.tip"
                 :data-seq="v.bar.seq"
-                @click="v.bar.gone || display.mode === 'step' ? undefined : openDetail(v.bar.seq, $event)"
+                @pointerdown="onBarDown($event, v)"
+                @pointerenter="hoverSeq = v.bar.seq"
+                @pointerleave="hoverSeq = hoverSeq === v.bar.seq ? null : hoverSeq"
+                @click="onBarClick(v, $event)"
               >
                 <span class="in" :style="v.inset > 0 ? { marginLeft: `${v.inset}px`, maxWidth: `${v.w - v.inset}px` } : undefined">
                   <span class="l1"><span v-if="v.isNew" class="newtag">{{ $ui('計画外') }}</span>{{ v.bar.title }}</span>
@@ -1951,10 +2206,7 @@ watch(projectKey, (key, prev) => {
                 :style="{ left: `${l.x}px`, width: `${l.w}px`, top: `${l.y}px` }"
                 :title="l.title"
               ></div>
-              <template v-for="m in rv.fs" :key="`fs${m.key}`">
-                <i v-if="m.joined" class="fs j" :style="{ left: `${m.x}px`, top: `${m.y}px` }" :title="m.title"></i>
-                <i v-else class="fs ln" :style="{ left: `${m.x}px`, width: `${m.w}px`, top: `${m.y}px` }" :title="m.title"></i>
-              </template>
+              <i v-for="m in rv.fs" :key="`fs${m.key}`" class="fs j" :style="{ left: `${m.x}px`, top: `${m.y}px` }" :title="m.title"></i>
               <template v-for="g in rv.ghosts" :key="g.key">
                 <div class="ghost" :class="g.cls" :style="{ left: `${g.x}px`, width: `${g.w}px`, top: `${g.y}px`, height: `${BAR_H}px` }"></div>
                 <span class="gl" :class="g.cls" :style="{ left: `${g.x}px`, top: `${g.y - 2}px` }">{{ g.label }}</span>
@@ -1962,6 +2214,41 @@ watch(projectKey, (key, prev) => {
             </div>
           </div>
           <p v-if="loaded && rowViews.length === 0" class="tl-empty">{{ $ui('表示する行がありません') }}</p>
+
+          <!-- 依存線（5.15「依存線」。行をまたぐので行の外に重ねる。pb-332） -->
+          <svg
+            v-if="depLines.length > 0 || linkDragView"
+            class="tl-deps"
+            :class="{ dragging: linkDragView !== null }"
+            :width="Math.max(0, visible.x1 - visible.x0)"
+            :height="Math.max(rowsH, 80)"
+            :style="{ left: `${LW + visible.x0}px`, top: `${AH}px` }"
+          >
+            <g :transform="`translate(${-visible.x0},0)`">
+              <g v-for="l in depLines" :key="l.key" class="dep" :class="{ bad: l.bad, hot: l.hot }" :data-link="l.key">
+                <title>{{ l.title }}</title>
+                <path class="dl" :d="l.path.d" />
+                <circle class="do" :cx="l.path.from.x" :cy="l.path.from.y" r="2.4" />
+                <path class="dh" :d="l.path.head" />
+                <template v-if="l.tag">
+                  <rect class="dtr" :x="l.path.tag.x - l.tagW / 2" :y="l.path.tag.y - 6.5" :width="l.tagW" height="13" rx="2" />
+                  <text class="dtt" :x="l.path.tag.x" :y="l.path.tag.y + 3.4" text-anchor="middle">{{ l.tag }}</text>
+                </template>
+              </g>
+              <g v-if="linkDragView" class="dep-drag" :class="{ ng: linkDragView.ng }">
+                <line :x1="linkDragView.from.x" :y1="linkDragView.from.y" :x2="linkDragView.x" :y2="linkDragView.y" />
+                <circle class="do" :cx="linkDragView.from.x" :cy="linkDragView.from.y" r="3.5" />
+                <circle v-if="linkDragView.to" class="di" :cx="linkDragView.to.x" :cy="linkDragView.to.y" r="5" />
+              </g>
+            </g>
+          </svg>
+          <span
+            v-if="linkDragView && linkDragView.label"
+            class="tl-deptag"
+            :class="{ ng: linkDragView.ng }"
+            :style="{ left: `${LW + linkDragView.x + 14}px`, top: `${AH + linkDragView.y + 14}px` }"
+            >{{ linkDragView.label }}</span
+          >
 
           <div
             v-if="step === null"
@@ -2002,6 +2289,7 @@ watch(projectKey, (key, prev) => {
         <span><i class="s"></i>{{ $ui('当初計画') }}</span>
       </span>
       <span v-if="canPlan">{{ $ui('右端をドラッグ：終了を動かす（試算→確定）') }}</span>
+      <span v-if="canPlan">{{ $ui('バーからバーへドラッグ：依存を引く') }}</span>
       <span v-if="canPlan"><kbd>Enter</kbd> {{ $ui('確定') }} <kbd>Esc</kbd> {{ $ui('取り消す') }}</span>
       <span><kbd>⌘/Ctrl</kbd>{{ $ui('＋ホイール 拡大縮小') }}</span>
       <span class="r mono">{{ zoomText }}</span>
@@ -3014,20 +3302,98 @@ watch(projectKey, (key, prev) => {
   border: 1.5px solid var(--g-dep);
 }
 
-.fs.ln {
-  height: 0;
-  border-top: 1.5px solid var(--g-dep);
-  transform: translateY(-50%);
+/* 依存線（5.15「依存線」。ガント 5.14 の描き方に揃える。pb-332） */
+.tl-deps {
+  position: absolute;
+  z-index: 3;
+  overflow: visible;
+  pointer-events: none;
 }
 
-.fs.ln::after {
-  content: '';
+.tl-deps .dl {
+  fill: none;
+  stroke: var(--g-dep);
+  stroke-width: 1;
+  pointer-events: stroke;
+}
+
+.tl-deps .do {
+  fill: var(--pb-1);
+  stroke: var(--g-dep);
+  stroke-width: 1;
+}
+
+.tl-deps .dh {
+  fill: var(--g-dep);
+}
+
+.tl-deps .dtr {
+  fill: var(--pb-1);
+  stroke: var(--g-dep);
+  stroke-width: 0.75;
+}
+
+.tl-deps .dtt {
+  fill: var(--pb-text);
+  font-size: 9.5px;
+}
+
+.tl-deps .dep.hot .dl {
+  stroke-width: 1.5;
+}
+
+.tl-deps .dep.bad .dl,
+.tl-deps .dep.bad .do,
+.tl-deps .dep.bad .dtr {
+  stroke: var(--pb-danger);
+}
+
+.tl-deps .dep.bad .dh {
+  fill: var(--pb-danger);
+}
+
+.tl-deps .dep.bad .dtt {
+  fill: var(--pb-danger-text);
+}
+
+.tl-deps .dep-drag line {
+  stroke: var(--pb-10);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+.tl-deps .dep-drag .do,
+.tl-deps .dep-drag .di {
+  fill: none;
+  stroke: var(--pb-10);
+  stroke-width: 1.5;
+}
+
+.tl-deps .dep-drag.ng line {
+  stroke: var(--pb-danger);
+}
+
+.tl-deptag {
   position: absolute;
-  right: -1px;
-  top: -5px;
-  border: 4px solid transparent;
-  border-left: 6px solid var(--g-dep);
-  border-right: 0;
+  z-index: 6;
+  padding: 1px 6px;
+  border: 1px solid var(--pb-10);
+  border-radius: 3px;
+  background: var(--pb-1);
+  color: var(--pb-text);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.tl-deptag.ng {
+  border-color: var(--pb-danger);
+  color: var(--pb-danger-text);
+}
+
+.tl-deps.dragging ~ * .bar,
+.tl-body:has(.tl-deps.dragging) .bar {
+  cursor: crosshair;
 }
 
 /* 押している：終了から「いま」まで、橙の破線 */

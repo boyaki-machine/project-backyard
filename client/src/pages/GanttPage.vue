@@ -464,10 +464,17 @@ const GANTT_LINK_TYPES = new Set(['FS', 'SS', 'FF', 'SF', 'blocks'])
  */
 function onDetailUpdated(next: TicketDetail): void {
   tickets.value = tickets.value.map((t) => (t.seq === next.seq ? { ...t, ...next } : t))
-  // ずらし（lag_days）は依存の行を差し替えて描き直す（pb-231。本数は変わらないので取り直さない）
-  const lagOf = new Map(next.links.map((l) => [l.id, l.lag_days]))
-  if (links.value.some((l) => lagOf.has(l.id) && lagOf.get(l.id) !== l.lag_days)) {
-    links.value = links.value.map((l) => (lagOf.has(l.id) ? { ...l, lag_days: lagOf.get(l.id)! } : l))
+  // ずらし（lag_days・lag_seconds）は依存の行を差し替えて描き直す（pb-231・pb-332。本数は変わらないので取り直さない）
+  const lagOf = new Map(next.links.map((l) => [l.id, l]))
+  const changed = (l: { id: string; lag_days: number; lag_seconds: number }) => {
+    const n = lagOf.get(l.id)
+    return n !== undefined && (n.lag_days !== l.lag_days || n.lag_seconds !== l.lag_seconds)
+  }
+  if (links.value.some(changed)) {
+    links.value = links.value.map((l) => {
+      const n = lagOf.get(l.id)
+      return n ? { ...l, lag_days: n.lag_days, lag_seconds: n.lag_seconds } : l
+    })
   }
   const mine = (l: { source_seq: number; target_seq: number }) => l.source_seq === next.seq || l.target_seq === next.seq
   const had = links.value.filter(mine).length
@@ -1158,6 +1165,7 @@ async function commitLink(source: number, target: number, type: string): Promise
       target_seq: target,
       link_type: type as linksApi.LinkType,
       lag_days: 0,
+      lag_seconds: 0,
     })
     await loadTickets()
     if (detailSeq.value === source || detailSeq.value === target) detailPane.value?.reload()

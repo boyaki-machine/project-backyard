@@ -59,7 +59,7 @@ import { statusLabel } from '../lib/catalogLabels'
 import * as dodApi from '../api/dod'
 import type { TicketDoDItem } from '../api/dod'
 import * as linksApi from '../api/links'
-import { LAG_LINK_TYPES, MAX_LAG_DAYS, linkLabel, linkLabelTitle } from '../api/links'
+import { LAG_LINK_TYPES, MAX_LAG_DAYS, choiceToLink, formatLagClock, linkLabel, linkLabelTitle, parseLagClock } from '../api/links'
 import type { LinkChoice, TicketLink } from '../api/links'
 import type { ProjectMember, Workflow } from '../api/projects'
 import * as referencesApi from '../api/references'
@@ -1058,19 +1058,23 @@ async function saveLink(body: { targetSeq: number; choice: LinkChoice['value'] }
   linkFieldErrors.value = {}
   linkFormError.value = ''
   try {
-    if (body.choice === 'blocks_in') {
+    const { linkType, reverse } = choiceToLink(body.choice)
+    if (reverse) {
       await linksApi.createLink(props.projectKey, body.targetSeq, {
         target_seq: t.seq,
-        link_type: 'blocks',
+        link_type: linkType,
         // 既定と同じ値。**`FS`〜`SF` のときしか意味を持たない**（9.10.1）
         lag_days: 0,
+        lag_seconds: 0,
       })
       await load()
+      emit('updated', ticket.value ?? t)
     } else {
       const created = await linksApi.createLink(props.projectKey, t.seq, {
         target_seq: body.targetSeq,
-        link_type: body.choice === 'blocks_out' ? 'blocks' : body.choice,
+        link_type: linkType,
         lag_days: 0,
+        lag_seconds: 0,
       })
       t.links = [...t.links, created].sort(compareLinks)
       emit('updated', t)
@@ -1103,6 +1107,8 @@ function compareLinks(a: TicketLink, b: TicketLink): number {
 /** ずらしを直している行（リンクの id）。同時に1つだけ */
 const lagEditing = ref<string | null>(null)
 const lagDraft = ref('')
+/** 秒のずらし（`時:分:秒`。`DbDesign.md` 6.6.3。pb-332） */
+const lagClockDraft = ref('')
 
 function canEditLag(l: TicketLink): boolean {
   return canEdit.value && LAG_LINK_TYPES.includes(l.link_type)
@@ -1111,6 +1117,7 @@ function canEditLag(l: TicketLink): boolean {
 function startLag(l: TicketLink): void {
   lagEditing.value = l.id
   lagDraft.value = String(l.lag_days)
+  lagClockDraft.value = formatLagClock(l.lag_seconds)
   linkError.value = ''
 }
 
@@ -1133,14 +1140,23 @@ async function saveLag(l: TicketLink): Promise<void> {
     linkError.value = uiText('ずらしは -{value0}〜{value0} の整数で入れてください', { value0: MAX_LAG_DAYS })
     return
   }
-  if (lag === l.lag_days) {
+  const sec = parseLagClock(lagClockDraft.value)
+  if (sec === null) {
+    linkError.value = uiText('時刻のずらしは 1日未満の 時:分:秒 で入れてください（例：0:10:00、-0:05:00）')
+    return
+  }
+  // **変えた欄だけを送る**（9.10.1。pb-332）
+  const body: { lag_days?: number; lag_seconds?: number } = {}
+  if (lag !== l.lag_days) body.lag_days = lag
+  if (sec !== l.lag_seconds) body.lag_seconds = sec
+  if (Object.keys(body).length === 0) {
     lagEditing.value = null
     return
   }
   busy.value = true
   linkError.value = ''
   try {
-    const next = await linksApi.updateLink(props.projectKey, t.seq, l.id, { lag_days: lag })
+    const next = await linksApi.updateLink(props.projectKey, t.seq, l.id, body)
     t.links = t.links.map((x) => (x.id === next.id ? next : x))
     lagEditing.value = null
     emit('updated', t)
@@ -1178,7 +1194,7 @@ async function runDeleteLink(): Promise<void> {
 const deleteLinkMessage = computed(() => {
   const l = linkToDelete.value
   if (l === null) return ''
-  const label = linkLabel(l.link_type, l.direction, l.lag_days)
+  const label = linkLabel(l.link_type, l.direction, l.lag_days, l.lag_seconds)
   const head = uiText("「{value0}」の関連（{value1}-{value2}「{value3}」）を解除します。", { value0: label, value1: props.projectKey, value2: l.ticket.seq, value3: l.ticket.title })
   return l.direction === 'incoming'
     ? uiText("{value0}\n相手のチケットが起点の関連なので、戻すには {value1}-{value2} を開く必要があります。", { value0: head, value1: props.projectKey, value2: l.ticket.seq })
@@ -2545,6 +2561,17 @@ defineExpose({
                   />
                   {{ $ui('日') }}
                 </label>
+                <input
+                  v-model="lagClockDraft"
+                  type="text"
+                  class="rel-lag-clock"
+                  inputmode="numeric"
+                  placeholder="0:00:00"
+                  :disabled="busy"
+                  :aria-label="$ui('ずらし（時:分:秒）')"
+                  @keydown.enter.prevent="saveLag(l)"
+                  @keydown.esc.prevent="cancelLag"
+                />
                 <button type="button" class="ref-action" :disabled="busy" @click="saveLag(l)">{{ $ui('保存') }}</button>
                 <button type="button" class="ref-action" :disabled="busy" @click="cancelLag">{{ $ui('取消') }}</button>
               </span>
@@ -2555,14 +2582,14 @@ defineExpose({
                 :title="`${linkLabelTitle(l.link_type, l.direction)}\n${$ui('押すとずらしを変えられます')}`"
                 @click="startLag(l)"
               >
-                {{ linkLabel(l.link_type, l.direction, l.lag_days) }}
+                {{ linkLabel(l.link_type, l.direction, l.lag_days, l.lag_seconds) }}
               </button>
               <span
                 v-else
                 class="rel-kind"
                 :title="linkLabelTitle(l.link_type, l.direction)"
               >
-                {{ linkLabel(l.link_type, l.direction, l.lag_days) }}
+                {{ linkLabel(l.link_type, l.direction, l.lag_days, l.lag_seconds) }}
               </span>
               <!-- 行クリックでその相手の詳細を開く（子チケットと同じ） -->
               <RouterLink class="rel-main" :to="ticketTo(l.ticket.seq)">
@@ -2675,6 +2702,7 @@ defineExpose({
       :busy="busy"
       :field-errors="linkFieldErrors"
       :form-error="linkFormError"
+      :with-dependencies="timelineFields"
       @close="showLinkModal = false"
       @save="saveLink"
     />
@@ -3610,6 +3638,10 @@ defineExpose({
 
 .rel-lag-input {
   width: 5em;
+}
+
+.rel-lag-clock {
+  width: 6.5em;
 }
 
 /* 行の本体。**`.child-*` の見た目をそのまま使う**（子チケットと同じ並びなので、

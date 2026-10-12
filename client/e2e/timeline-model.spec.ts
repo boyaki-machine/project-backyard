@@ -8,6 +8,10 @@ import {
   canExtendToNow,
   changedSeqs,
   collisions,
+  depEndAt,
+  depPath,
+  depViolated,
+  depWouldCycle,
   deviationOf,
   deviationTag,
   expectOf,
@@ -26,6 +30,8 @@ import {
 import type { Bar, TlEpic, TlLink } from '../src/plugins/event_view/model'
 import { axisRange, clock, isWallMultiple, tickScale, wallTicks, zoomAt, ZOOMS } from '../src/plugins/event_view/time'
 import { readViewEnabled, mergeViews } from '../src/api/projects'
+import { choiceToLink, formatLagClock, parseLagClock } from '../src/api/links'
+import { lagText } from '../src/lib/lagText'
 
 /**
  * タイムラインの純粋な関数（`GuiDesign.md` 5.15。pb-298）。ブラウザを使わない。
@@ -133,9 +139,9 @@ test.describe('衝突・FS・幅', () => {
 
   test('FS は同じ行だけ。接していれば継ぎ目', () => {
     const links: TlLink[] = [
-      { id: 'x', source_seq: 1, target_seq: 2, link_type: 'FS', lag_days: 0, origin: 'human' },
-      { id: 'y', source_seq: 2, target_seq: 3, link_type: 'FS', lag_days: 0, origin: 'human' },
-      { id: 'z', source_seq: 1, target_seq: 4, link_type: 'FS', lag_days: 0, origin: 'human' },
+      { id: 'x', source_seq: 1, target_seq: 2, link_type: 'FS', lag_days: 0, lag_seconds: 0, origin: 'human' },
+      { id: 'y', source_seq: 2, target_seq: 3, link_type: 'FS', lag_days: 0, lag_seconds: 0, origin: 'human' },
+      { id: 'z', source_seq: 1, target_seq: 4, link_type: 'FS', lag_days: 0, lag_seconds: 0, origin: 'human' },
     ]
     const marks = fsMarks(links, [bar(1, T(10), T(11), true), bar(2, T(11), T(12), true), bar(3, T(12, 30), T(13), true), bar(4, T(13), T(14), true, 9)])
     expect(marks.map((m) => [m.from.seq, m.to.seq, m.joined])).toEqual([
@@ -351,4 +357,58 @@ test.describe('表示する行の規則（版・タイムライン対象エピ�
   test('設定を読む前は空状態を出さない', () => {
     expect(emptyStateOf(false, 0, 0)).toBeNull()
   })
+})
+
+test('依存：端の決め方・違反（ずらしは暦日＋秒）・輪（pb-332）', () => {
+  expect(depEndAt(10, 0, 100, { s: true, e: true })).toBe('S')
+  expect(depEndAt(60, 0, 100, { s: true, e: true })).toBe('F')
+  expect(depEndAt(10, 0, 100, { s: false, e: true })).toBe('F')
+  const a = bar(1, T(10), T(10, 30), true)
+  const b = bar(2, T(10, 40), T(11), true)
+  const l = (link_type: string, lag_seconds = 0) => ({ link_type, lag_days: 0, lag_seconds })
+  expect(depViolated(l('FS'), a, b)).toBe(false)
+  expect(depViolated(l('FS', 11 * 60), a, b)).toBe(true) // 10:30 + 11分 > 10:40
+  expect(depViolated(l('FF'), a, b)).toBe(false)
+  expect(depViolated(l('SF'), b, a)).toBe(true) // 後続 a の終了 10:30 < 先行 b の開始 10:40
+  expect(depViolated(l('relates'), a, b)).toBe(false)
+  const links = [
+    { source_seq: 1, target_seq: 2, link_type: 'FS' },
+    { source_seq: 2, target_seq: 3, link_type: 'SS' },
+    { source_seq: 3, target_seq: 4, link_type: 'relates' },
+  ]
+  expect(depWouldCycle(links, 3, 1)).toBe(true)
+  expect(depWouldCycle(links, 4, 1)).toBe(false) // relates はたどらない
+  expect(depWouldCycle(links, 5, 5)).toBe(true)
+})
+
+test('依存線の経路：同じ高さで進めるなら1本、行をまたげば縦、逆向きは相手の外で折り返す（pb-332）', () => {
+  const A = { xs: 0, xf: 100, y: 20 }
+  expect(depPath('FS', A, { xs: 150, xf: 200, y: 20 }).d).toBe('M100,20H150')
+  expect(depPath('FS', A, { xs: 150, xf: 200, y: 80 }).d).toBe('M100,20H109V80H150')
+  // SS：出る側は開始の左へ 9px
+  expect(depPath('SS', A, { xs: 30, xf: 90, y: 80 }).d).toBe('M0,20H-9V80H30')
+  // 逆向き（後続が先行の終了より左）：相手のバーの上で折り返す
+  expect(depPath('FS', A, { xs: 50, xf: 90, y: 80 }).d).toBe('M100,20H109V57H41V80H50')
+  // 入る側の矢印の向き：S は右向き、F は左向き
+  expect(depPath('FF', A, { xs: 150, xf: 200, y: 80 }).head).toBe('M200,80L206,76.5L206,83.5Z')
+})
+
+test('ずらしの札と 時:分:秒 の読み書き（pb-332）', () => {
+  expect(lagText(0, 0)).toBe('')
+  expect(lagText(2)).toBe('+2d')
+  expect(lagText(0, 600)).toBe('+10m')
+  expect(lagText(1, 5400)).toBe('+1d+1h30m')
+  expect(lagText(-1, -45)).toBe('-1d-45s')
+  expect(formatLagClock(600)).toBe('0:10:00')
+  expect(formatLagClock(-300)).toBe('-0:05:00')
+  expect(parseLagClock('0:10:00')).toBe(600)
+  expect(parseLagClock('-5:00')).toBe(-300)
+  expect(parseLagClock('90')).toBe(90)
+  expect(parseLagClock('')).toBe(0)
+  expect(parseLagClock('24:00:00')).toBeNull()
+  expect(parseLagClock('1:60')).toBeNull()
+  expect(parseLagClock('abc')).toBeNull()
+  expect(choiceToLink('FS_in')).toEqual({ linkType: 'FS', reverse: true })
+  expect(choiceToLink('blocks_out')).toEqual({ linkType: 'blocks', reverse: false })
+  expect(choiceToLink('relates')).toEqual({ linkType: 'relates', reverse: false })
 })
