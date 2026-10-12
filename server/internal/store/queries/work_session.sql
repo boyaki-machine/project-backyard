@@ -11,6 +11,12 @@ VALUES(@project_id,@actor_id,@request_id,@session_id,@digest,@response);
 -- name: GetOpenWorkSession :one
 SELECT id FROM work_session WHERE project_id= @project_id AND actor_id= @actor_id AND state <> 'finished';
 
+-- GetOpenWorkSessionTicket は開いている記録と、その開始元のチケット番号を返す。
+-- 案内に ID だけを出すと、別のチケットで開いた記録を今のチケットの計時と取り違える（pb-306）。
+-- name: GetOpenWorkSessionTicket :one
+SELECT ws.id, t.seq FROM work_session ws JOIN ticket t ON t.id = ws.ticket_id
+WHERE ws.project_id= @project_id AND ws.actor_id= @actor_id AND ws.state <> 'finished';
+
 -- name: CreateWorkSession :exec
 INSERT INTO work_session(id,project_id,ticket_id,actor_id,client_kind,model_name,model_version,state,started_at,changed_at,note)
 VALUES(@id,@project_id,@ticket_id,@actor_id,sqlc.narg(client_kind),sqlc.narg(model_name),sqlc.narg(model_version),'running',@started_at,@started_at,@note);

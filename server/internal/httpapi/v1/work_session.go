@@ -486,10 +486,15 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 					return errTicketReference
 				}
 			}
+			// **自分の記録を閉じるときは、配分先の範囲を検査しない**（ApiDesign.md「共通作業タイマー」。pb-306）。
+			// 閉じる操作は範囲を広げない。委任の外で開いた記録を、委任の main になった後でも閉じられる
+			// ようにする——検査すると 403 で閉じられず、パックの「終了せよ」と食い違う。
+			// 配分を変える要求（req.Allocations）は、下でこれまでどおり検査する。
+			closingOwn := (req.Action == "finish" || req.Action == "abandon") && s.ActorID == p.ActorID
 			for _, a := range old {
 				previousChanges[a.TicketID] = a.ChangeMetrics
 				affected[a.TicketID] = true
-				if req.Action != "restore_auto" && req.Action != "correct" {
+				if req.Action != "restore_auto" && req.Action != "correct" && !closingOwn {
 					if _, problem = workPermission(ctx, q, r, scope.projectID, a.Seq, true); problem != nil {
 						return errTicketReference
 					}
