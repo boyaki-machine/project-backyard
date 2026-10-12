@@ -2172,6 +2172,24 @@ defineExpose({
             </dd>
           </div>
 
+          <!-- 「終日」の切り替え（5.5。pb-217）。**開始・終了のすぐ下に、2列をまたぐ1行で置く**
+               （pb-327。格子の外の下端では見つけられなかった）。「終了」の欄の中に入れると
+               その欄だけ高さが変わり、3行目の見出しが揃わない -->
+          <div class="meta-item wide all-day-row">
+            <label class="all-day">
+              <input
+                type="checkbox"
+                :checked="ticket.all_day"
+                :disabled="!canEdit || busy"
+                @change="toggleAllDay(($event.target as HTMLInputElement).checked)"
+              />
+              {{ $ui('終日') }}
+            </label>
+            <p v-if="errorFor('all_day')" class="field-error" role="alert">
+              {{ errorFor('all_day') }}
+            </p>
+          </div>
+
           <!-- タイムラインの欄（5.5）。タイムラインから開いたときだけ。チェックで即時保存 -->
           <div v-if="timelineFields" class="meta-item wide timeline-fields">
             <label class="tl-flag">
@@ -2208,20 +2226,6 @@ defineExpose({
           </div>
         </dl>
         <TicketWork :project-key="projectKey" :seq="ticket.seq" :version="ticket.version" :can-correct="canEdit && canEditActualPoint" :can-finish="canEdit && canTransition && auth.canInProject(projectKey, 'agent.run')" @updated="load" />
-        <!-- 「終日」の切り替え（5.5。時刻付きの入力はこの画面だけが持つ。pb-217）。
-             **格子の外に置く**——「終了」の欄だけ高さが変わると、3行目の見出しが揃わない -->
-        <label class="all-day">
-          <input
-            type="checkbox"
-            :checked="ticket.all_day"
-            :disabled="!canEdit || busy"
-            @change="toggleAllDay(($event.target as HTMLInputElement).checked)"
-          />
-          {{ $ui('終日') }}
-        </label>
-        <p v-if="errorFor('all_day')" class="field-error" role="alert">
-          {{ errorFor('all_day') }}
-        </p>
 
         <!-- ユーザ確認待ち（5.5「自律実行」）。人の対応が要るものだけ。無ければ出さない -->
         <DelegationConfirmations
@@ -3660,11 +3664,16 @@ defineExpose({
 .skeleton:nth-child(odd) {
   width: 70%;
 }
+/* 「終日」は開始・終了の行のすぐ下（pb-327） */
+.all-day-row {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 .all-day {
   display: inline-flex;
   align-items: center;
   gap: var(--pb-space-1);
-  margin-top: var(--pb-space-1);
   color: var(--pb-text-muted);
   font-size: 13px;
 }

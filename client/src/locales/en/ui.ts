@@ -185,6 +185,7 @@ export const uiMessages: Record<string, string> = {
   "絞り込む": "Apply filters",
   "クリア": "Clear",
   "終了日時は開始日時より後にしてください": "The end time must be after the start time.",
+  "終了は開始より後の日時を指定してください": "Specify an end time after the start time.",
   "監査ログを取得できませんでした": "Could not load audit logs.",
   "該当する監査ログはありません": "No matching audit logs.",
   "CSVを出力できませんでした": "Could not export the CSV.",
