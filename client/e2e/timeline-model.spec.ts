@@ -54,10 +54,10 @@ test.describe('状態の見え方', () => {
 })
 
 test.describe('レーンの割り当て', () => {
-  test('本番は 0、裏は重なる分だけ 1 から足す', () => {
+  test('メインは 0、サブは重なる分だけ 1 から足す', () => {
     const { lane, lanes } = assignLanes([
       bar(1, T(10), T(11), true),
-      bar(2, T(10, 30), T(11, 30), true), // 本番どうしは重なっても 0（衝突として描く）
+      bar(2, T(10, 30), T(11, 30), true), // メインどうしは重なっても 0（衝突として描く）
       bar(3, T(9), T(10), false),
       bar(4, T(9, 30), T(10, 30), false),
       bar(5, T(10), T(11), false), // 3 が空いたレーン 1 に入る
@@ -72,7 +72,7 @@ test.describe('レーンの割り当て', () => {
     expect(lanes).toBe(4)
   })
 
-  test('裏が無ければ1レーン。消えたものは別のキーで同じ番号と並ぶ', () => {
+  test('サブが無ければ1レーン。消えたものは別のキーで同じ番号と並ぶ', () => {
     expect(assignLanes([bar(1, T(10), T(11), true)]).lanes).toBe(1)
     const g = { ...bar(1, T(10), T(11), false), gone: true }
     const { lane, lanes } = assignLanes([bar(1, T(10), T(11), true), g])

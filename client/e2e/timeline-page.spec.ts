@@ -177,9 +177,9 @@ for (const theme of ['light', 'dark'] as const) {
       await page.goto('/p/fes/timeline')
       await expect(page.locator('.tl-row')).toHaveCount(3)
 
-      // 体育館：本番 + 裏2本（椅子並べと養生が重なる）
+      // 体育館：メイン + サブ2本（椅子並べと養生が重なる）
       const gym = page.locator('.tl-row').first()
-      await expect(gym.locator('.lanetag')).toHaveText(['本番', '裏×2'])
+      await expect(gym.locator('.lanetag')).toHaveText(['メイン', 'サブ×2'])
       // 2行固定：長い題名でもバーの高さは 36px、1行目は1行で省略
       const long = page.locator('.bar[data-seq="412"]')
       const box = await long.boundingBox()
@@ -311,8 +311,8 @@ test('行の見出しは番号だけ。番号を押すとエピックの詳細�
   const gym = page.locator('.tl-row').first()
   // 件数（重複チェック付き・なし）は出さない。レーンの札は残す
   await expect(gym.locator('.tl-rlabel .rm')).toHaveText('pb-301')
-  await expect(gym.locator('.lanetag')).toHaveText(['本番', '裏×2'])
-  for (const rm of await page.locator('.tl-rlabel .rm').allTextContents()) expect(rm).not.toMatch(/本番|裏/)
+  await expect(gym.locator('.lanetag')).toHaveText(['メイン', 'サブ×2'])
+  for (const rm of await page.locator('.tl-rlabel .rm').allTextContents()) expect(rm).not.toMatch(/メイン|サブ|本番|裏/)
 
   await gym.getByRole('button', { name: 'pb-301' }).click()
   await expect(page).toHaveURL(/\/p\/fes\/tickets\/301\?.*from=timeline/)

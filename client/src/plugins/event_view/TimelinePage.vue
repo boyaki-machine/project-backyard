@@ -1888,8 +1888,8 @@ watch(projectKey, (key, prev) => {
               <div class="rn" :title="rv.row.epic.title">{{ rv.row.epic.title }}</div>
               <div class="rm"><span v-if="rowSet.kinds.get(rv.row.epic.seq) === 'outside'" class="tl-outside" :title="$ui('タイムライン対象エピックに入っていない行です。保存した版の計画だけを出しています')">{{ $ui('対象外') }}</span><span v-else-if="rowSet.kinds.get(rv.row.epic.seq) === 'missing'" class="tl-outside" :title="$ui('このエピックはもうありません。保存した版の計画だけを出しています')">{{ $ui('無いエピック') }}</span><span v-if="rowSet.kinds.get(rv.row.epic.seq) === 'missing'">pb-{{ rv.row.epic.seq }}</span><button v-else type="button" class="tl-seq" :class="{ sel: detailSeq === rv.row.epic.seq }" :title="$ui('エピックの詳細を開く')" @click="openDetail(rv.row.epic.seq, $event)">pb-{{ rv.row.epic.seq }}</button></div>
               <template v-if="rv.row.lanes > 1">
-                <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H / 2 - 5}px` }">{{ $ui('本番') }}</span>
-                <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H * 1.5 - 5}px` }">{{ $ui('裏') }}{{ rv.row.lanes > 2 ? `×${rv.row.lanes - 1}` : '' }}</span>
+                <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H / 2 - 5}px` }">{{ $ui('メイン') }}</span>
+                <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H * 1.5 - 5}px` }">{{ $ui('サブ') }}{{ rv.row.lanes > 2 ? `×${rv.row.lanes - 1}` : '' }}</span>
               </template>
             </div>
             <div
