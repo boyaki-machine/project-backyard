@@ -1066,8 +1066,6 @@ interface RowView {
   fs: { key: string; joined: boolean; x: number; w: number; y: number; title: string }[]
   lateExt: { key: string; x: number; w: number; y: number; title: string }[]
   ghosts: GhostView[]
-  nChk: number
-  nFree: number
 }
 
 interface GhostView {
@@ -1134,8 +1132,6 @@ const rowViews = computed<RowView[]>(() =>
       fs,
       lateExt,
       ghosts: ghostsFor(r),
-      nChk: r.bars.filter((b) => b.chk).length,
-      nFree: r.bars.filter((b) => !b.chk).length,
     }
   }),
 )
@@ -1890,7 +1886,7 @@ watch(projectKey, (key, prev) => {
             <div class="tl-rlabel" :style="{ width: `${LW}px`, height: `${rv.row.height}px` }">
               <span class="sleeve" :style="sleeveStyle(rv.row.epic.seq)" aria-hidden="true"></span>
               <div class="rn" :title="rv.row.epic.title">{{ rv.row.epic.title }}</div>
-              <div class="rm"><span v-if="rowSet.kinds.get(rv.row.epic.seq) === 'outside'" class="tl-outside" :title="$ui('タイムライン対象エピックに入っていない行です。保存した版の計画だけを出しています')">{{ $ui('対象外') }}</span><span v-else-if="rowSet.kinds.get(rv.row.epic.seq) === 'missing'" class="tl-outside" :title="$ui('このエピックはもうありません。保存した版の計画だけを出しています')">{{ $ui('無いエピック') }}</span>pb-{{ rv.row.epic.seq }} · {{ $ui('本番 {value0}', { value0: rv.nChk }) }}<template v-if="rv.nFree"> · {{ $ui('裏 {value0}', { value0: rv.nFree }) }}</template></div>
+              <div class="rm"><span v-if="rowSet.kinds.get(rv.row.epic.seq) === 'outside'" class="tl-outside" :title="$ui('タイムライン対象エピックに入っていない行です。保存した版の計画だけを出しています')">{{ $ui('対象外') }}</span><span v-else-if="rowSet.kinds.get(rv.row.epic.seq) === 'missing'" class="tl-outside" :title="$ui('このエピックはもうありません。保存した版の計画だけを出しています')">{{ $ui('無いエピック') }}</span><span v-if="rowSet.kinds.get(rv.row.epic.seq) === 'missing'">pb-{{ rv.row.epic.seq }}</span><button v-else type="button" class="tl-seq" :class="{ sel: detailSeq === rv.row.epic.seq }" :title="$ui('エピックの詳細を開く')" @click="openDetail(rv.row.epic.seq, $event)">pb-{{ rv.row.epic.seq }}</button></div>
               <template v-if="rv.row.lanes > 1">
                 <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H / 2 - 5}px` }">{{ $ui('本番') }}</span>
                 <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H * 1.5 - 5}px` }">{{ $ui('裏') }}{{ rv.row.lanes > 2 ? `×${rv.row.lanes - 1}` : '' }}</span>
@@ -2598,6 +2594,23 @@ watch(projectKey, (key, prev) => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 見出しの番号からエピックの詳細を開く（pb-326）。地の文に溶かし、触れたときだけリンクに見せる */
+.tl-rlabel .tl-seq {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tl-rlabel .tl-seq:hover,
+.tl-rlabel .tl-seq:focus-visible,
+.tl-rlabel .tl-seq.sel {
+  color: var(--pb-text);
+  text-decoration: underline;
 }
 
 .tl-select-band {

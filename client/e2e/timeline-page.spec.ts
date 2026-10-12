@@ -148,6 +148,11 @@ async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Reco
       etagN++
       return reply({ applied: true, result: 'ok', changes, block: null, alternative: null, items: items.filter((t) => t.seq === 412 || t.seq === 414) })
     }
+    const epicDetail = /^\/api\/v1\/projects\/fes\/tickets\/(\d+)$/.exec(path)
+    const epic = epicDetail && req.method() === 'GET' ? epics.find((e) => e.seq === Number(epicDetail[1])) : undefined
+    if (epic) return reply({ ...tk(epic.seq, 0, epic.title, null, null, epic.status), type: 'epic', parent_seq: null,
+      body_md: '', links: [], references: [], children: [], dod: [], scope: {}, execution_mode: 'agent_draft', readiness: null, readiness_note: null,
+      epic: null, parent: null, comment_count: 0, delegation: null, tags: [], sprint: null })
     if (path.startsWith('/api/v1/projects/fes/tags')) return reply({ items: [] })
     return reply({ items: [], total: 0, page: 1, per_page: 50, total_pages: 0, next_cursor: null })
   })
@@ -299,6 +304,25 @@ test('試算中に定期取得の結果を保留しても、確定した予定�
   await expect(page.locator('.bar[data-seq="412"]')).toHaveAttribute('title', /11:30–12:30/)
 })
 
+test('行の見出しは番号だけ。番号を押すとエピックの詳細をタイムラインの中で開く（pb-326）', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 800 })
+  await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline?zoom=hour')
+  const gym = page.locator('.tl-row').first()
+  // 件数（重複チェック付き・なし）は出さない。レーンの札は残す
+  await expect(gym.locator('.tl-rlabel .rm')).toHaveText('pb-301')
+  await expect(gym.locator('.lanetag')).toHaveText(['本番', '裏×2'])
+  for (const rm of await page.locator('.tl-rlabel .rm').allTextContents()) expect(rm).not.toMatch(/本番|裏/)
+
+  await gym.getByRole('button', { name: 'pb-301' }).click()
+  await expect(page).toHaveURL(/\/p\/fes\/tickets\/301\?.*from=timeline/)
+  await expect(page.locator('.tl-detail')).toBeVisible()
+  await expect(page.locator('.tl-detail')).toContainText('体育館ステージ')
+  await expect(gym.locator('button.tl-seq')).toHaveClass(/sel/)
+  // タイムラインは開いたまま（詳細はペインで重ねる）
+  await expect(page.locator('.tl-row')).toHaveCount(3)
+})
+
 test('対象から外したエピック・消したエピックも、版を重ねる・変更推移で見るときは版の行で読める', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 800 })
   await mockApi(page, { theme: 'light', epics: [301, 303], outside: true })
@@ -312,6 +336,10 @@ test('対象から外したエピック・消したエピックも、版を重�
   await expect(old.locator('.gonelbl')).toHaveText('消えた：旧ステージの前説')
   // 対象の行には印を付けない
   await expect(page.locator('.tl-row', { hasText: '体育館ステージ' }).locator('.tl-outside')).toHaveCount(0)
+  // 見出しの番号：在るエピックは詳細を開ける。もう無いエピックは開く先が無いので文字だけ（pb-326）
+  await expect(yard.locator('.tl-rlabel button.tl-seq')).toHaveText('pb-302')
+  await expect(old.locator('.tl-rlabel .rm')).toContainText('pb-309')
+  await expect(old.locator('.tl-rlabel button.tl-seq')).toHaveCount(0)
   if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-mock-outside-overlay.png` })
 
   // タイムライン変更推移を見るとき：版のバーとして描く
