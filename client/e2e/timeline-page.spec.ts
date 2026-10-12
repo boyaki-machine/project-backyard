@@ -145,6 +145,12 @@ async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Reco
 
 const shotDir = process.env.PB_SHOT_DIR
 
+/** ヘッダ右端のメニュー `[⋯]` から項目を選ぶ（5.15「ヘッダとメニュー」） */
+async function more(page: Page, item: string) {
+  await page.getByRole('button', { name: 'タイムラインのメニュー' }).click()
+  await page.getByRole('menuitem', { name: item, exact: true }).click()
+}
+
 for (const theme of ['light', 'dark'] as const) {
   for (const width of [1280, 1920]) {
     test(`行・レーン・バー・当初計画を描く（${theme} ${width}px）`, async ({ page }) => {
@@ -237,7 +243,11 @@ test('載せるエピックが無ければ選ぶ導線。見るだけの人は�
   await page.goto('/p/fes/timeline')
   await expect(page.getByText('タイムラインに載せるエピックを選んでください')).toBeVisible()
   await expect(page.getByText('プロジェクト管理者に依頼してください')).toBeVisible()
-  await expect(page.getByRole('button', { name: '計画を保存' })).toHaveCount(0)
+  // 見るだけの人のメニューには、記録が無い（5.15「ヘッダとメニュー」）
+  await page.getByRole('button', { name: 'タイムラインのメニュー' }).click()
+  await expect(page.getByRole('menuitem', { name: '重ねる計画を選ぶ…' })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: '現在のタイムラインを記録' })).toHaveCount(0)
+  await page.keyboard.press('Escape')
   await expect(page.locator('.hE')).toHaveCount(0)
 })
 
@@ -291,7 +301,7 @@ test('対象から外したエピック・消したエピックも、版を重�
   if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-mock-outside-overlay.png` })
 
   // 版を送るとき：版のバーとして描く
-  await page.getByRole('button', { name: '版を送る', exact: true }).click()
+  await more(page, '版を送る')
   await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
   await expect(page.locator('.bar[data-seq="420"]')).toHaveCount(1)
   await expect(page.locator('.bar[data-seq="420"]')).toHaveClass(/st-plan/)
@@ -303,7 +313,7 @@ test('対象から外したエピック・消したエピックも、版を重�
   await page.goto('/p/fes/timeline?zoom=hour&parent=301')
   await expect(page.locator('.tl-row')).toHaveCount(1)
   await expect(page.locator('.tl-row', { hasText: '中庭ステージ' })).toHaveCount(0)
-  await page.getByRole('button', { name: '版を送る', exact: true }).click()
+  await more(page, '版を送る')
   await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
   await expect(page.locator('.tl-row')).toHaveCount(1)
   await expect(page.locator('.bar[data-seq="420"]')).toHaveCount(0)
@@ -319,7 +329,7 @@ test('載せるエピックが空でも、保存した版と比較の影は読�
   // 何も選んでいないことは、行の上の帯で伝え続ける（全体を隠さない）
   await expect(page.locator('.tl-select-band')).toContainText('タイムラインに載せるエピックを選んでください')
   // 版を送るとき
-  await page.getByRole('button', { name: '版を送る', exact: true }).click()
+  await more(page, '版を送る')
   await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
   await expect(page.locator('.bar[data-seq="431"]')).toBeVisible()
   await expect(page.locator('.bar[data-seq="420"]')).toBeVisible()
@@ -339,13 +349,80 @@ test('設定に残った不在のエピック番号も、版の行の情報で�
   await page.setViewportSize({ width: 1600, height: 800 })
   await mockApi(page, { theme: 'light', epics: [301, 303, 309], outside: true })
   await page.goto('/p/fes/timeline?zoom=hour')
-  await page.getByRole('button', { name: '版を送る', exact: true }).click()
+  await more(page, '版を送る')
   await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
   await expect(page.locator('.bar[data-seq="431"]')).toHaveCount(1)
   await expect(page.locator('.tl-row', { hasText: '旧ステージ' }).locator('.tl-outside')).toHaveCount(1)
   await page.goto('/p/fes/timeline?zoom=hour&parent=301')
-  await page.getByRole('button', { name: '版を送る', exact: true }).click()
+  await more(page, '版を送る')
   await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
   await expect(page.locator('.bar[data-seq="431"]')).toHaveCount(0)
   await expect(page.locator('.tl-row')).toHaveCount(1)
 })
+
+test('ヘッダ：見る範囲の操作と版の札だけを置き、比較・記録・載せるエピックはメニューにまとめる', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline')
+  await expect(page.locator('.tl-row')).toHaveCount(3)
+  const tools = page.locator('.tl-tools')
+  // pb-325：「行」→「表示するエピック」
+  await expect(tools.locator('.tl-chip', { hasText: '表示するエピック' })).toContainText('3/3')
+  await expect(tools.getByText('行', { exact: true })).toHaveCount(0)
+  // pb-322：ヘッダからボタンが消える。重ねている版は押せない札で残す
+  for (const name of ['版を送る', '計画を保存', '現在のタイムラインを記録']) {
+    await expect(tools.getByRole('button', { name, exact: false })).toHaveCount(0)
+  }
+  const chip = tools.locator('.tl-chip-static')
+  await expect(chip).toContainText('当初計画')
+  await expect(chip).toContainText('10/24 08:30')
+  expect(await chip.evaluate((el) => el.tagName)).toBe('SPAN')
+  // ヘッダが1段に収まる（折り返さない）
+  const box = (await page.locator('.tl-page > .page-header').boundingBox())!
+  expect(box.height).toBeLessThanOrEqual(56)
+
+  // メニューの並び
+  await page.getByRole('button', { name: 'タイムラインのメニュー' }).click()
+  await expect(page.getByRole('menuitem')).toHaveText(['重ねる計画を選ぶ…', '版を送る', '現在のタイムラインを記録'])
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-menu-1280.png` })
+
+  // 重ねる計画を選ぶ → 版の一覧 →「重ねない」で札が消える
+  await page.getByRole('menuitem', { name: '重ねる計画を選ぶ…' }).click()
+  const versions = page.locator('.tl-versions')
+  await expect(versions).toBeVisible()
+  await expect(versions.locator('.tl-vrow')).toHaveCount(1)
+  await versions.getByText('重ねない').click()
+  await expect(page).toHaveURL(/baseline=none/)
+  await expect(tools.locator('.tl-chip-static')).toHaveCount(0)
+  await expect(page.locator('.base')).toHaveCount(0)
+
+  // 版を送る ⇄ 終える（メニューの項目が切り替わる）
+  await more(page, '版を送る')
+  await expect(page.locator('.tl-notice')).toContainText('版を送る 1/2')
+  await more(page, '版を送るのを終える')
+  await expect(page.locator('.tl-notice')).not.toContainText('版を送る 1/2')
+})
+
+test('メニュー：現在のタイムラインを記録（pb-323）', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  let posted: unknown = null
+  await mockApi(page, { theme: 'light' })
+  await page.route('**/api/v1/projects/fes/schedule-baselines', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    posted = route.request().postDataJSON()
+    return route.fulfill({ status: 201, contentType: 'application/json',
+      body: JSON.stringify({ id: 'B2', label: 'リハ後', item_count: 11, created_by: { id: 'x', display_name: '検証 太郎' }, created_at: T(11, 40) }) })
+  })
+  await page.goto('/p/fes/timeline')
+  await expect(page.locator('.tl-row')).toHaveCount(3)
+  await more(page, '現在のタイムラインを記録')
+  const dlg = page.getByRole('dialog', { name: '現在のタイムラインを記録' })
+  await expect(dlg).toBeVisible()
+  await expect(page.getByText('計画を保存')).toHaveCount(0)
+  await dlg.locator('input[type="text"]').fill('リハ後')
+  await dlg.getByRole('button', { name: '記録', exact: true }).click()
+  await expect(dlg).toHaveCount(0)
+  expect(posted).toEqual({ label: 'リハ後' })
+  await expect(page.locator('.tl-notice')).toContainText('の版を保存しました（11件）')
+})
+

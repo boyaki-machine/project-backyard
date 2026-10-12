@@ -21,6 +21,7 @@ import Modal from '../../components/Modal.vue'
 import PageHeader from '../../components/PageHeader.vue'
 import TicketDetailPane from '../../components/TicketDetailPane.vue'
 import UserActionsMenu from '../../components/UserActionsMenu.vue'
+import type { ActionItem } from '../../components/UserActionsMenu.vue'
 import { ApiError } from '../../api/client'
 import * as projectsApi from '../../api/projects'
 import * as tagsApi from '../../api/tags'
@@ -196,7 +197,7 @@ const fetchKey = computed(() => JSON.stringify(fetchQuery.value))
 const canPlan = computed(
   () => auth.canInProject(projectKey.value, 'ticket.edit') || auth.canInProject(projectKey.value, 'ticket.plan.edit'),
 )
-/** `[現在のタイムラインを記録]`・`[載せるエピック ▾]`・版を消す */
+/** `現在のタイムラインを記録`・`[載せるエピック ▾]`・版を消す */
 const canProjectEdit = computed(() => auth.canInProject(projectKey.value, 'project.edit'))
 
 const settings = computed(() => projectStore.current?.settings)
@@ -548,6 +549,29 @@ function toggleMenu(m: 'rows' | 'filter' | 'baseline' | 'epics'): void {
     return
   }
   openMenu.value = openMenu.value === m ? null : m
+}
+
+// ── メニュー `[⋯]`（5.15「ヘッダとメニュー」。pb-322）──────────────
+//
+// 見る範囲を変えない操作（版の比較・記録）はヘッダに並べず、ここにまとめる。
+
+const moreItems = computed<ActionItem[]>(() => {
+  const items: ActionItem[] = [
+    { key: 'baseline', label: uiText('重ねる計画を選ぶ…') },
+    step.value === null
+      ? { key: 'step', label: uiText('版を送る'), disabled: baselineList.value.length === 0, reason: uiText('保存した版がありません') }
+      : { key: 'step', label: uiText('版を送るのを終える') },
+  ]
+  if (canProjectEdit.value) {
+    items.push({ key: 'save', label: uiText('現在のタイムラインを記録') })
+  }
+  return items
+})
+
+function onMore(key: string): void {
+  if (key === 'baseline') openMenu.value = 'baseline'
+  else if (key === 'step') (step.value === null ? startStep() : endStep())
+  else if (key === 'save') openSave()
 }
 
 function onDocumentPointerDown(e: PointerEvent): void {
@@ -1604,10 +1628,26 @@ watch(projectKey, (key, prev) => {
           <button type="button" class="secondary small" @click="toNow">{{ $ui('いま') }}</button>
           <span class="tl-vsep" aria-hidden="true"></span>
 
-          <div class="tl-dd">
-            <button type="button" class="tl-chip" :class="{ on: selectedBaseline !== null }" :title="baselineChip" :aria-expanded="openMenu === 'baseline'" @click="toggleMenu('baseline')">
-              <span class="k">{{ $ui('当初計画') }}</span> {{ baselineChip }} ▾
-            </button>
+          <!-- 重ねている版の札（押せない表示。pb-322）。重ねていなければ出さない -->
+          <span v-if="selectedBaseline !== null" class="tl-chip tl-chip-static on" :title="baselineChip">
+            <span class="k">{{ $ui('当初計画') }}</span> {{ baselineChip }}
+          </span>
+          <div v-if="canProjectEdit" class="tl-dd">
+            <button type="button" class="tl-chip" :aria-expanded="openMenu === 'epics'" @click="toggleMenu('epics')">{{ $ui('載せるエピック') }} ▾</button>
+            <div v-if="openMenu === 'epics'" class="tl-panel right tl-epic-panel">
+              <p class="ph">{{ $ui('タイムラインの行にするエピック（プロジェクトの設定）') }}</p>
+              <EpicChecklist :choices="epicChoices.choices.value" :selected="epicDraft" :sleeve="sleeveOf" :disabled="epicSaving" @update="epicDraft = $event" />
+              <p v-if="epicError" class="tl-err" role="alert">{{ epicError }}</p>
+              <div class="pf">
+                <button type="button" class="primary small" :disabled="epicSaving" @click="saveEpics">{{ epicSaving ? $ui('保存中…') : $ui('保存') }}</button>
+                <button type="button" class="secondary small" :disabled="epicSaving" @click="openMenu = null">{{ $ui('キャンセル') }}</button>
+              </div>
+            </div>
+          </div>
+          <span class="tl-poll mono" :class="{ warn: pollWarn }" :title="$ui('5秒ごとに取り直します')">{{ pollAge }}</span>
+          <!-- メニュー（5.15「ヘッダとメニュー」）。版の一覧はこの下に開く -->
+          <div class="tl-dd tl-more">
+            <UserActionsMenu :items="moreItems" :label="$ui('タイムラインのメニュー')" @select="onMore" />
             <div v-if="openMenu === 'baseline'" class="tl-panel right tl-versions">
               <p class="ph">{{ $ui('重ねる版（保存した日時の新しい順）') }}</p>
               <label class="tl-check">
@@ -1641,29 +1681,6 @@ watch(projectKey, (key, prev) => {
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            class="secondary small"
-            :aria-pressed="step !== null"
-            :disabled="baselineList.length === 0"
-            @click="step === null ? startStep() : endStep()"
-          >
-            {{ $ui('版を送る') }}
-          </button>
-          <button v-if="canProjectEdit" type="button" class="secondary small" @click="openSave">{{ $ui('現在のタイムラインを記録') }}</button>
-          <div v-if="canProjectEdit" class="tl-dd">
-            <button type="button" class="tl-chip" :aria-expanded="openMenu === 'epics'" @click="toggleMenu('epics')">{{ $ui('載せるエピック') }} ▾</button>
-            <div v-if="openMenu === 'epics'" class="tl-panel right tl-epic-panel">
-              <p class="ph">{{ $ui('タイムラインの行にするエピック（プロジェクトの設定）') }}</p>
-              <EpicChecklist :choices="epicChoices.choices.value" :selected="epicDraft" :sleeve="sleeveOf" :disabled="epicSaving" @update="epicDraft = $event" />
-              <p v-if="epicError" class="tl-err" role="alert">{{ epicError }}</p>
-              <div class="pf">
-                <button type="button" class="primary small" :disabled="epicSaving" @click="saveEpics">{{ epicSaving ? $ui('保存中…') : $ui('保存') }}</button>
-                <button type="button" class="secondary small" :disabled="epicSaving" @click="openMenu = null">{{ $ui('キャンセル') }}</button>
-              </div>
-            </div>
-          </div>
-          <span class="tl-poll mono" :class="{ warn: pollWarn }" :title="$ui('5秒ごとに取り直します')">{{ pollAge }}</span>
         </div>
       </template>
     </PageHeader>
@@ -1974,6 +1991,16 @@ watch(projectKey, (key, prev) => {
 
 .tl-chip .k {
   color: var(--pb-text-muted);
+}
+
+/* 重ねている版の札（押せない表示。pb-322）。ボタンに見せないよう地と枠を消し、破線で「計画」を示す */
+.tl-chip-static,
+.tl-chip-static:hover {
+  display: inline-block;
+  cursor: default;
+  background: none;
+  border-style: dashed;
+  box-shadow: none;
 }
 
 .tl-tools :deep(button.small),
