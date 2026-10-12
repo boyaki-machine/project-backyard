@@ -197,7 +197,7 @@ const fetchKey = computed(() => JSON.stringify(fetchQuery.value))
 const canPlan = computed(
   () => auth.canInProject(projectKey.value, 'ticket.edit') || auth.canInProject(projectKey.value, 'ticket.plan.edit'),
 )
-/** `現在のタイムラインを記録`・`[載せるエピック ▾]`・版を消す */
+/** `現在のタイムラインを記録`・`載せるエピック…`・版を消す */
 const canProjectEdit = computed(() => auth.canInProject(projectKey.value, 'project.edit'))
 
 const settings = computed(() => projectStore.current?.settings)
@@ -514,10 +514,14 @@ const epicDraft = ref<number[]>([])
 const epicSaving = ref(false)
 const epicError = ref('')
 
+/** 載せるエピックはダイアログで選ぶ（5.15「ヘッダとメニュー」。pb-324） */
+const epicOpen = ref(false)
+
 function openEpicPicker(): void {
   epicDraft.value = [...timelineEpics.value]
   epicError.value = ''
-  openMenu.value = 'epics'
+  openMenu.value = null
+  epicOpen.value = true
 }
 
 async function saveEpics(): Promise<void> {
@@ -529,7 +533,7 @@ async function saveEpics(): Promise<void> {
     const next = mergeTimelineEpics(p.settings, epicDraft.value, epicChoices.all.value.map((t) => t.seq))
     const res = await projectsApi.updateProject(p.key, p.version, { settings: next })
     projectStore.setCurrent(res)
-    openMenu.value = null
+    epicOpen.value = false
     await load(true)
   } catch (e) {
     epicError.value = toApiError(e).message
@@ -540,20 +544,16 @@ async function saveEpics(): Promise<void> {
 
 // ── 見出しの道具（開いているパネルは1つだけ）──────────────────
 
-const openMenu = ref<'rows' | 'filter' | 'baseline' | 'epics' | null>(null)
+const openMenu = ref<'rows' | 'filter' | 'baseline' | null>(null)
 const toolsEl = useTemplateRef<HTMLElement>('toolsEl')
 
-function toggleMenu(m: 'rows' | 'filter' | 'baseline' | 'epics'): void {
-  if (m === 'epics' && openMenu.value !== 'epics') {
-    openEpicPicker()
-    return
-  }
+function toggleMenu(m: 'rows' | 'filter' | 'baseline'): void {
   openMenu.value = openMenu.value === m ? null : m
 }
 
-// ── メニュー `[⋯]`（5.15「ヘッダとメニュー」。pb-322）──────────────
+// ── メニュー `[⋯]`（5.15「ヘッダとメニュー」。pb-322・pb-324）──────────────
 //
-// 見る範囲を変えない操作（版の比較・記録）はヘッダに並べず、ここにまとめる。
+// 見る範囲を変えない操作（版の比較・記録・載せるエピック）はヘッダに並べず、ここにまとめる。
 
 const moreItems = computed<ActionItem[]>(() => {
   const items: ActionItem[] = [
@@ -564,6 +564,7 @@ const moreItems = computed<ActionItem[]>(() => {
   ]
   if (canProjectEdit.value) {
     items.push({ key: 'save', label: uiText('現在のタイムラインを記録') })
+    items.push({ key: 'epics', label: uiText('載せるエピック…'), separated: true })
   }
   return items
 })
@@ -572,6 +573,7 @@ function onMore(key: string): void {
   if (key === 'baseline') openMenu.value = 'baseline'
   else if (key === 'step') (step.value === null ? startStep() : endStep())
   else if (key === 'save') openSave()
+  else if (key === 'epics') openEpicPicker()
 }
 
 function onDocumentPointerDown(e: PointerEvent): void {
@@ -1632,18 +1634,6 @@ watch(projectKey, (key, prev) => {
           <span v-if="selectedBaseline !== null" class="tl-chip tl-chip-static on" :title="baselineChip">
             <span class="k">{{ $ui('当初計画') }}</span> {{ baselineChip }}
           </span>
-          <div v-if="canProjectEdit" class="tl-dd">
-            <button type="button" class="tl-chip" :aria-expanded="openMenu === 'epics'" @click="toggleMenu('epics')">{{ $ui('載せるエピック') }} ▾</button>
-            <div v-if="openMenu === 'epics'" class="tl-panel right tl-epic-panel">
-              <p class="ph">{{ $ui('タイムラインの行にするエピック（プロジェクトの設定）') }}</p>
-              <EpicChecklist :choices="epicChoices.choices.value" :selected="epicDraft" :sleeve="sleeveOf" :disabled="epicSaving" @update="epicDraft = $event" />
-              <p v-if="epicError" class="tl-err" role="alert">{{ epicError }}</p>
-              <div class="pf">
-                <button type="button" class="primary small" :disabled="epicSaving" @click="saveEpics">{{ epicSaving ? $ui('保存中…') : $ui('保存') }}</button>
-                <button type="button" class="secondary small" :disabled="epicSaving" @click="openMenu = null">{{ $ui('キャンセル') }}</button>
-              </div>
-            </div>
-          </div>
           <span class="tl-poll mono" :class="{ warn: pollWarn }" :title="$ui('5秒ごとに取り直します')">{{ pollAge }}</span>
           <!-- メニュー（5.15「ヘッダとメニュー」）。版の一覧はこの下に開く -->
           <div class="tl-dd tl-more">
@@ -1895,6 +1885,17 @@ watch(projectKey, (key, prev) => {
       <span><kbd>⌘/Ctrl</kbd>{{ $ui('＋ホイール 拡大縮小') }}</span>
       <span class="r mono">{{ zoomText }}</span>
     </div>
+
+    <!-- 載せるエピック（5.15「載せるエピック」。pb-324 でメニューからダイアログに） -->
+    <Modal v-if="epicOpen" :title="$ui('載せるエピック')" @close="epicOpen = false">
+      <p class="tl-hint">{{ $ui('タイムラインの行にするエピック（プロジェクトの設定）') }}</p>
+      <EpicChecklist :choices="epicChoices.choices.value" :selected="epicDraft" :sleeve="sleeveOf" :disabled="epicSaving" @update="epicDraft = $event" />
+      <p v-if="epicError" class="tl-err" role="alert">{{ epicError }}</p>
+      <template #footer>
+        <button type="button" class="secondary" :disabled="epicSaving" @click="epicOpen = false">{{ $ui('キャンセル') }}</button>
+        <button type="button" class="primary" :disabled="epicSaving" @click="saveEpics">{{ epicSaving ? $ui('保存中…') : $ui('保存') }}</button>
+      </template>
+    </Modal>
 
     <Modal v-if="saveOpen" :title="$ui('現在のタイムラインを記録')" @close="saveOpen = false">
       <form class="tl-save" @submit.prevent="saveBaseline">

@@ -243,10 +243,11 @@ test('載せるエピックが無ければ選ぶ導線。見るだけの人は�
   await page.goto('/p/fes/timeline')
   await expect(page.getByText('タイムラインに載せるエピックを選んでください')).toBeVisible()
   await expect(page.getByText('プロジェクト管理者に依頼してください')).toBeVisible()
-  // 見るだけの人のメニューには、記録が無い（5.15「ヘッダとメニュー」）
+  // 見るだけの人のメニューには、記録と載せるエピックが無い（5.15「ヘッダとメニュー」）
   await page.getByRole('button', { name: 'タイムラインのメニュー' }).click()
   await expect(page.getByRole('menuitem', { name: '重ねる計画を選ぶ…' })).toBeVisible()
   await expect(page.getByRole('menuitem', { name: '現在のタイムラインを記録' })).toHaveCount(0)
+  await expect(page.getByRole('menuitem', { name: '載せるエピック…' })).toHaveCount(0)
   await page.keyboard.press('Escape')
   await expect(page.locator('.hE')).toHaveCount(0)
 })
@@ -369,8 +370,8 @@ test('ヘッダ：見る範囲の操作と版の札だけを置き、比較・�
   // pb-325：「行」→「表示するエピック」
   await expect(tools.locator('.tl-chip', { hasText: '表示するエピック' })).toContainText('3/3')
   await expect(tools.getByText('行', { exact: true })).toHaveCount(0)
-  // pb-322：ヘッダからボタンが消える。重ねている版は押せない札で残す
-  for (const name of ['版を送る', '計画を保存', '現在のタイムラインを記録']) {
+  // pb-322・pb-324：ヘッダからボタンが消える。重ねている版は押せない札で残す
+  for (const name of ['版を送る', '計画を保存', '現在のタイムラインを記録', '載せるエピック']) {
     await expect(tools.getByRole('button', { name, exact: false })).toHaveCount(0)
   }
   const chip = tools.locator('.tl-chip-static')
@@ -381,9 +382,9 @@ test('ヘッダ：見る範囲の操作と版の札だけを置き、比較・�
   const box = (await page.locator('.tl-page > .page-header').boundingBox())!
   expect(box.height).toBeLessThanOrEqual(56)
 
-  // メニューの並び
+  // メニューの並び（区切りは載せるエピックの上）
   await page.getByRole('button', { name: 'タイムラインのメニュー' }).click()
-  await expect(page.getByRole('menuitem')).toHaveText(['重ねる計画を選ぶ…', '版を送る', '現在のタイムラインを記録'])
+  await expect(page.getByRole('menuitem')).toHaveText(['重ねる計画を選ぶ…', '版を送る', '現在のタイムラインを記録', '載せるエピック…'])
   if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-menu-1280.png` })
 
   // 重ねる計画を選ぶ → 版の一覧 →「重ねない」で札が消える
@@ -426,3 +427,26 @@ test('メニュー：現在のタイムラインを記録（pb-323）', async ({
   await expect(page.locator('.tl-notice')).toContainText('の版を保存しました（11件）')
 })
 
+test('メニュー：載せるエピックをダイアログで選んで保存する（pb-324）', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  let patched: { settings?: Record<string, unknown> } | null = null
+  await mockApi(page, { theme: 'light', epics: [301] })
+  await page.route('**/api/v1/projects/fes', async (route) => {
+    if (route.request().method() !== 'PATCH') return route.fallback()
+    patched = route.request().postDataJSON()
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      key: 'fes', name: '文化祭', description: null, status: 'active', timezone: 'Asia/Tokyo', version: 4, settings: patched!.settings, members: [],
+      my_permissions: ['project.view', 'ticket.view', 'ticket.edit', 'project.edit'], workflow: { key: 'simple', name: 'シンプル', statuses: [] } }) })
+  })
+  // 版を重ねると版の行（中庭ステージ）も出るので、重ねずに開く
+  await page.goto('/p/fes/timeline?baseline=none')
+  await expect(page.locator('.tl-row')).toHaveCount(1)
+  await more(page, '載せるエピック…')
+  const dlg = page.getByRole('dialog', { name: '載せるエピック' })
+  await expect(dlg).toBeVisible()
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-epic-dialog.png` })
+  await dlg.getByText('中庭ステージ').click()
+  await dlg.getByRole('button', { name: '保存', exact: true }).click()
+  await expect(dlg).toHaveCount(0)
+  expect(patched!.settings).toMatchObject({ timeline_epics: [301, 302], views: { timeline: true }, timeline_snap_seconds: 60 })
+})
