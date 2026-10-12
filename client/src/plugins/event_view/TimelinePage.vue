@@ -19,6 +19,8 @@ import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import Modal from '../../components/Modal.vue'
 import PageHeader from '../../components/PageHeader.vue'
+import NewTicketModal from '../../components/NewTicketModal.vue'
+import type { NewTicketDefaults } from '../../components/NewTicketModal.vue'
 import TicketDetailPane from '../../components/TicketDetailPane.vue'
 import UserActionsMenu from '../../components/UserActionsMenu.vue'
 import type { ActionItem } from '../../components/UserActionsMenu.vue'
@@ -27,7 +29,8 @@ import * as projectsApi from '../../api/projects'
 import * as tagsApi from '../../api/tags'
 import type { Tag } from '../../api/tags'
 import { statusCategoryLabels, statusCategoryOrder } from '../../api/tickets'
-import type { TicketDetail } from '../../api/tickets'
+import * as ticketsApi from '../../api/tickets'
+import type { CreateTicketRequest, TicketDetail } from '../../api/tickets'
 import { statusLabel } from '../../lib/catalogLabels'
 import { currentTimezone } from '../../lib/datetime'
 import { sleeveBackground } from '../../lib/epicSleeve'
@@ -197,6 +200,8 @@ const fetchKey = computed(() => JSON.stringify(fetchQuery.value))
 const canPlan = computed(
   () => auth.canInProject(projectKey.value, 'ticket.edit') || auth.canInProject(projectKey.value, 'ticket.plan.edit'),
 )
+/** `新しいチケット` と、行の空いた所のドラッグで作る（5.15「チケットを作る」） */
+const canCreate = computed(() => auth.canInProject(projectKey.value, 'ticket.create'))
 /** `現在のタイムラインを記録`・`載せるエピック…`・版を消す */
 const canProjectEdit = computed(() => auth.canInProject(projectKey.value, 'project.edit'))
 
@@ -293,7 +298,7 @@ function apply(data: TlList, detect: boolean): void {
 
 /** 操作中か（ドラッグ中・試算の確認中・確定の応答待ち） */
 function isBusy(): boolean {
-  return drag.value !== null || trial.value !== null || committing.value
+  return drag.value !== null || newDrag.value !== null || trial.value !== null || committing.value
 }
 
 function flushDeferred(): void {
@@ -542,6 +547,112 @@ async function saveEpics(): Promise<void> {
   }
 }
 
+// ── チケットを作る（5.15「チケットを作る」。pb-321）──────────────────
+//
+// **時刻付きで、見ている行のエピックの配下に作る。** 作成のダイアログは新規チケット（5.4.3）を使い、
+// 終日を外した状態で開く。時間重複チェックは付けない（利用者の判断。付けるのは詳細ペインで）。
+
+/** メニューから作るときの長さ */
+const NEW_LEN = 30 * 60 * SEC
+
+const creating = ref<NewTicketDefaults | null>(null)
+const createBusy = ref(false)
+const createErrors = ref<Record<string, string>>({})
+
+function openCreate(d: NewTicketDefaults): void {
+  createErrors.value = {}
+  openMenu.value = null
+  creating.value = { all_day: false, ...d }
+}
+
+/** メニューの `新しいチケット`。「いま」を吸着の単位に切り上げた時刻から30分。行を1つに絞っていればそのエピック */
+function createFromMenu(): void {
+  const unit = snapSec.value * SEC
+  const s = Math.ceil(Date.now() / unit) * unit
+  const only = rowFilter.value.length === 1 ? { epic_seq: rowFilter.value[0] } : {}
+  openCreate({ start_at: s, due_at: s + NEW_LEN, ...only })
+}
+
+/** 作ったチケットがバーとして出ないときの理由（通知の行に添える） */
+function hiddenReason(t: TicketDetail): string {
+  if (t.all_day) return uiText('終日の予定はタイムラインに描きません')
+  if (t.start_at === null && t.due_at === null) return uiText('予定の無いチケットはタイムラインに描きません')
+  if (t.parent_seq === null || !timelineEpics.value.includes(t.parent_seq)) return uiText('タイムラインに載せていないエピックの配下です')
+  return uiText('いまの絞り込みでは表示されません')
+}
+
+async function saveCreate(body: CreateTicketRequest): Promise<void> {
+  createBusy.value = true
+  createErrors.value = {}
+  try {
+    const t = await ticketsApi.createTicket(projectKey.value, body)
+    creating.value = null
+    // 自分で作ったものは「他の人の変更」として光らせない
+    myVersions.set(t.seq, t.version)
+    await load(false)
+    const id = `${projectKey.value}-${t.seq}`
+    const shown = tickets.value.some((x) => x.seq === t.seq)
+    setResult('ok', shown
+      ? uiText('{value0} を作りました', { value0: id })
+      : uiText('{value0} を作りました。{value1}', { value0: id, value1: hiddenReason(t) }))
+  } catch (e) {
+    const err = toApiError(e)
+    if (err.status === 422) {
+      const fields: Record<string, string> = {}
+      for (const d of err.details) fields[d.field] = d.message
+      createErrors.value = fields
+    } else {
+      creating.value = null
+      setResult('error', err.message)
+    }
+  } finally {
+    createBusy.value = false
+  }
+}
+
+/** 行の空いた所のドラッグ（範囲は吸着した瞬間で持つ） */
+const newDrag = shallowRef<{ row: number; a: number; b: number } | null>(null)
+
+/** 空いた所から作れるか。版を送っているあいだ・試算の確認中・版にだけある行では作らない */
+function canCreateIn(rowSeq: number): boolean {
+  return canCreate.value && display.value.mode !== 'step' && trial.value === null && !rowSet.value.kinds.has(rowSeq)
+}
+
+function onTrackDown(ev: PointerEvent, rowSeq: number): void {
+  if (ev.button !== 0 || !canCreateIn(rowSeq)) return
+  // バー・取っ手・札の上は、それぞれの操作に任せる
+  if ((ev.target as HTMLElement).closest('.bar, .who, .gonelbl')) return
+  const el = ev.currentTarget as HTMLElement
+  const left = el.getBoundingClientRect().left
+  const tAt = (clientX: number, alt: boolean) => snapTo(range.value.t0 + ((clientX - left) / pps.value) * SEC, alt ? 1 : snapSec.value)
+  ev.preventDefault()
+  el.setPointerCapture(ev.pointerId)
+  const a = tAt(ev.clientX, ev.altKey)
+  newDrag.value = { row: rowSeq, a, b: a }
+  const move = (m: PointerEvent) => {
+    const d = newDrag.value
+    if (!d) return
+    const b = tAt(m.clientX, m.altKey)
+    if (b !== d.b) newDrag.value = { ...d, b }
+  }
+  const end = (commit: boolean) => {
+    el.removeEventListener('pointermove', move)
+    el.removeEventListener('pointerup', up)
+    el.removeEventListener('pointercancel', cancel)
+    const d = newDrag.value
+    newDrag.value = null
+    flushDeferred()
+    // 吸着の単位より短いものは、押しただけとみなして作らない（2端が同じ瞬間に寄る）
+    if (!commit || !d || d.a === d.b) return
+    openCreate({ start_at: Math.min(d.a, d.b), due_at: Math.max(d.a, d.b), epic_seq: d.row })
+  }
+  const up = () => end(true)
+  const cancel = () => end(false)
+  el.addEventListener('pointermove', move)
+  el.addEventListener('pointerup', up)
+  el.addEventListener('pointercancel', cancel)
+}
+
 // ── 見出しの道具（開いているパネルは1つだけ）──────────────────
 
 const openMenu = ref<'rows' | 'filter' | 'baseline' | null>(null)
@@ -556,12 +667,14 @@ function toggleMenu(m: 'rows' | 'filter' | 'baseline'): void {
 // 見る範囲を変えない操作（版の比較・記録・載せるエピック）はヘッダに並べず、ここにまとめる。
 
 const moreItems = computed<ActionItem[]>(() => {
-  const items: ActionItem[] = [
-    { key: 'baseline', label: uiText('重ねる計画を選ぶ…') },
+  const items: ActionItem[] = []
+  if (canCreate.value) items.push({ key: 'create', label: uiText('新しいチケット') })
+  items.push(
+    { key: 'baseline', label: uiText('重ねる計画を選ぶ…'), separated: items.length > 0 },
     step.value === null
       ? { key: 'step', label: uiText('版を送る'), disabled: baselineList.value.length === 0, reason: uiText('保存した版がありません') }
       : { key: 'step', label: uiText('版を送るのを終える') },
-  ]
+  )
   if (canProjectEdit.value) {
     items.push({ key: 'save', label: uiText('現在のタイムラインを記録') })
     items.push({ key: 'epics', label: uiText('載せるエピック…'), separated: true })
@@ -570,7 +683,8 @@ const moreItems = computed<ActionItem[]>(() => {
 })
 
 function onMore(key: string): void {
-  if (key === 'baseline') openMenu.value = 'baseline'
+  if (key === 'create') createFromMenu()
+  else if (key === 'baseline') openMenu.value = 'baseline'
   else if (key === 'step') (step.value === null ? startStep() : endStep())
   else if (key === 'save') openSave()
   else if (key === 'epics') openEpicPicker()
@@ -1782,7 +1896,18 @@ watch(projectKey, (key, prev) => {
                 <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H * 1.5 - 5}px` }">{{ $ui('裏') }}{{ rv.row.lanes > 2 ? `×${rv.row.lanes - 1}` : '' }}</span>
               </template>
             </div>
-            <div class="tl-track" :style="{ width: `${trackW}px`, height: `${rv.row.height}px` }">
+            <div
+              class="tl-track"
+              :class="{ 'can-create': canCreateIn(rv.row.epic.seq) }"
+              :style="{ width: `${trackW}px`, height: `${rv.row.height}px` }"
+              @pointerdown="onTrackDown($event, rv.row.epic.seq)"
+            >
+              <!-- 作る範囲（ドラッグの間だけ。5.15「チケットを作る」） -->
+              <div
+                v-if="newDrag && newDrag.row === rv.row.epic.seq"
+                class="tl-newrange"
+                :style="{ left: `${X(Math.min(newDrag.a, newDrag.b))}px`, width: `${Math.abs(X(newDrag.b) - X(newDrag.a))}px`, top: `${ROW_PAD}px`, height: `${rv.row.height - ROW_PAD * 2}px` }"
+              ></div>
               <div v-if="rv.row.lanes > 1" class="subzone" :style="{ top: `${ROW_PAD + LANE_H}px`, height: `${(rv.row.lanes - 1) * LANE_H}px` }"></div>
               <div
                 v-for="f in rv.frames"
@@ -1885,6 +2010,21 @@ watch(projectKey, (key, prev) => {
       <span><kbd>⌘/Ctrl</kbd>{{ $ui('＋ホイール 拡大縮小') }}</span>
       <span class="r mono">{{ zoomText }}</span>
     </div>
+
+    <!-- チケットを作る（5.15「チケットを作る」）。親チケットの候補は持たない（エピック欄だけ） -->
+    <NewTicketModal
+      v-if="creating"
+      :project-key="projectKey"
+      :members="members"
+      :tags="tags"
+      :candidates="[]"
+      :epics="epicChoices.all.value"
+      :defaults="creating"
+      :busy="createBusy"
+      :field-errors="createErrors"
+      @close="creating = null"
+      @save="saveCreate"
+    />
 
     <!-- 載せるエピック（5.15「載せるエピック」。pb-324 でメニューからダイアログに） -->
     <Modal v-if="epicOpen" :title="$ui('載せるエピック')" @close="epicOpen = false">
@@ -2497,6 +2637,23 @@ watch(projectKey, (key, prev) => {
 .tl-track {
   position: relative;
   flex: none;
+}
+
+/* 空いた所のドラッグで作れる（5.15「チケットを作る」）。作れない人にはカーソルも変えない */
+.tl-track.can-create {
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* 作る範囲：試算の影と同じ青の破線（ドラッグの間だけ） */
+.tl-newrange {
+  position: absolute;
+  z-index: 4;
+  box-sizing: border-box;
+  border: 2px dashed var(--pb-10);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--pb-9) 20%, transparent);
+  pointer-events: none;
 }
 
 .subzone {
