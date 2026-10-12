@@ -400,7 +400,7 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 		for _, l := range linkRows {
 			links = append(links, ganttLinkItem{
 				ID: l.ID, SourceSeq: l.SourceSeq, TargetSeq: l.TargetSeq,
-				LinkType: l.LinkType, LagDays: l.LagDays, Origin: l.Origin,
+				LinkType: l.LinkType, LagDays: l.LagDays, LagSeconds: l.LagSeconds, Origin: l.Origin,
 			})
 			if l.CreatedAt.After(lastLinked) {
 				lastLinked = l.CreatedAt
@@ -409,7 +409,7 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 	}
 	etag = ganttETag(etag, len(links), lastLinked)
 	if filters.timeline {
-		// タイムラインの links[] は FS・同じエピックだけに絞る（9.2.7）。ETag の④⑤は絞る前の依存で
+		// タイムラインの links[] は依存の4種だけに絞る（9.2.7）。ETag の④⑤は絞る前の依存で
 		// 作る——材料が多いぶん変わりやすいだけで、変わったのに一致することは無い
 		h.writeTimelineList(w, r, projectID, filters, page, rows, items, total, etag, links, tlProject, tlSettings)
 		return
@@ -437,7 +437,9 @@ type ganttLinkItem struct {
 	TargetSeq int32  `json:"target_seq"`
 	LinkType  string `json:"link_type"`
 	LagDays   int32  `json:"lag_days"`
-	Origin    string `json:"origin"`
+	// LagSeconds は秒のずらし（DbDesign.md 6.6.3。pb-332）
+	LagSeconds int32  `json:"lag_seconds"`
+	Origin     string `json:"origin"`
 }
 
 // parseGanttPage は view=gantt の並べ替えを読む（9.2.6）。

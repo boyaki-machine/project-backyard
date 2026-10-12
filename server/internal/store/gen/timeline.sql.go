@@ -195,6 +195,7 @@ func (q *Queries) GetProjectTimelineSettings(ctx context.Context, id string) (Ge
 }
 
 const getRescheduleTicket = `-- name: GetRescheduleTicket :one
+
 SELECT
   t.id,
   t.seq,
@@ -237,6 +238,7 @@ type GetRescheduleTicketRow struct {
 	StatusCategory pgtype.Text
 }
 
+// ── 連鎖のずらし（ApiDesign.md 9.17.1・9.17.2）────────────────────
 // GetRescheduleTicket はきっかけを行のロックを取って読む。状態の区分は暗黙のアンカー
 // （着手済み・完了）の判定に使う（9.17.1）。
 func (q *Queries) GetRescheduleTicket(ctx context.Context, arg GetRescheduleTicketParams) (GetRescheduleTicketRow, error) {
@@ -296,14 +298,7 @@ func (q *Queries) GetScheduleBaseline(ctx context.Context, arg GetScheduleBaseli
 	return i, err
 }
 
-const listEpicMembersForUpdate = `-- name: ListEpicMembersForUpdate :many
-WITH RECURSIVE members AS (
-  SELECT c.id FROM ticket c
-   WHERE c.parent_id = $2::pg_catalog.bpchar AND c.type <> 'epic'
-  UNION
-  SELECT c.id FROM ticket c JOIN members m ON c.parent_id = m.id
-   WHERE c.type <> 'epic'
-)
+const listChainTicketsForUpdate = `-- name: ListChainTicketsForUpdate :many
 SELECT
   t.id,
   t.seq,
@@ -311,54 +306,47 @@ SELECT
   t.start_at,
   t.due_at,
   t.all_day,
-  t.no_overlap,
   t.start_pinned,
   t.due_pinned,
-  t.closed_at,
   t.version,
   ws.category AS status_category
 FROM ticket t
 JOIN project p ON p.id = t.project_id
 LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
-WHERE t.id IN (SELECT id FROM members)
-  AND t.project_id = $1::pg_catalog.bpchar
+WHERE t.project_id = $1::pg_catalog.bpchar
+  AND t.id = ANY($2::pg_catalog.bpchar[])
 ORDER BY t.seq
 FOR UPDATE OF t
 `
 
-type ListEpicMembersForUpdateParams struct {
+type ListChainTicketsForUpdateParams struct {
 	ProjectID string
-	EpicID    string
+	Ids       []string
 }
 
-type ListEpicMembersForUpdateRow struct {
+type ListChainTicketsForUpdateRow struct {
 	ID             string
 	Seq            int32
 	Title          string
 	StartAt        *time.Time
 	DueAt          *time.Time
 	AllDay         bool
-	NoOverlap      bool
 	StartPinned    bool
 	DuePinned      bool
-	ClosedAt       *time.Time
 	Version        int32
 	StatusCategory pgtype.Text
 }
 
-// ListEpicMembersForUpdate は1つのエピック（行）に属するチケットを、行のロックを取って読む
-// （9.17.2）。所属は 9.5.1 の epic と同じ求め方（入れ子のエピックの手前で降りるのを止める）。
-// **列（no_overlap・時刻付き・両端あり）に絞らずに返す**——FS の先行は列の外でもよく、
-// その終了を読むため。列の判定はアプリが行う（純粋な関数に渡す）。
-func (q *Queries) ListEpicMembersForUpdate(ctx context.Context, arg ListEpicMembersForUpdateParams) ([]ListEpicMembersForUpdateRow, error) {
-	rows, err := q.db.Query(ctx, listEpicMembersForUpdate, arg.ProjectID, arg.EpicID)
+// ListChainTicketsForUpdate は依存で結ばれた、行の外のチケットを、行のロックを取って読む（9.17.2）。
+func (q *Queries) ListChainTicketsForUpdate(ctx context.Context, arg ListChainTicketsForUpdateParams) ([]ListChainTicketsForUpdateRow, error) {
+	rows, err := q.db.Query(ctx, listChainTicketsForUpdate, arg.ProjectID, arg.Ids)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListEpicMembersForUpdateRow{}
+	items := []ListChainTicketsForUpdateRow{}
 	for rows.Next() {
-		var i ListEpicMembersForUpdateRow
+		var i ListChainTicketsForUpdateRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Seq,
@@ -366,52 +354,11 @@ func (q *Queries) ListEpicMembersForUpdate(ctx context.Context, arg ListEpicMemb
 			&i.StartAt,
 			&i.DueAt,
 			&i.AllDay,
-			&i.NoOverlap,
 			&i.StartPinned,
 			&i.DuePinned,
-			&i.ClosedAt,
 			&i.Version,
 			&i.StatusCategory,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listFSLinksAmongTickets = `-- name: ListFSLinksAmongTickets :many
-SELECT s.seq AS source_seq, t.seq AS target_seq, l.lag_days
-  FROM ticket_link l
-  JOIN ticket s ON s.id = l.source_ticket_id
-  JOIN ticket t ON t.id = l.target_ticket_id
- WHERE l.source_ticket_id = ANY($1::pg_catalog.bpchar[])
-   AND l.target_ticket_id = ANY($1::pg_catalog.bpchar[])
-   AND l.link_type = 'FS'
- ORDER BY s.seq, t.seq
-`
-
-type ListFSLinksAmongTicketsRow struct {
-	SourceSeq int32
-	TargetSeq int32
-	LagDays   int32
-}
-
-// ListFSLinksAmongTickets は連鎖が寄せる FS の依存（9.17.1 の手順1）。両端が渡した ID に含まれる
-// ものだけ。lag_days は暦日。
-func (q *Queries) ListFSLinksAmongTickets(ctx context.Context, ticketIds []string) ([]ListFSLinksAmongTicketsRow, error) {
-	rows, err := q.db.Query(ctx, listFSLinksAmongTickets, ticketIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListFSLinksAmongTicketsRow{}
-	for rows.Next() {
-		var i ListFSLinksAmongTicketsRow
-		if err := rows.Scan(&i.SourceSeq, &i.TargetSeq, &i.LagDays); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -526,6 +473,58 @@ func (q *Queries) ListScheduleBaselines(ctx context.Context, projectID string) (
 			&i.CreatedBy,
 			&i.CreatedByName,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listScheduleLinks = `-- name: ListScheduleLinks :many
+SELECT s.id AS source_id, s.seq AS source_seq, t.id AS target_id, t.seq AS target_seq,
+       l.link_type, l.lag_days, l.lag_seconds
+  FROM ticket_link l
+  JOIN ticket s ON s.id = l.source_ticket_id
+  JOIN ticket t ON t.id = l.target_ticket_id
+ WHERE s.project_id = $1
+   AND t.project_id = $1
+   AND l.link_type IN ('FS', 'SS', 'FF', 'SF')
+ ORDER BY s.seq, t.seq, l.link_type
+`
+
+type ListScheduleLinksRow struct {
+	SourceID   string
+	SourceSeq  int32
+	TargetID   string
+	TargetSeq  int32
+	LinkType   string
+	LagDays    int32
+	LagSeconds int32
+}
+
+// ListScheduleLinks は連鎖が従う依存（FS / SS / FF / SF。9.17.1）。**プロジェクトの全部**——
+// エピックも行も問わない（pb-332）。1チケットあたり数本の前提で、プロジェクトで1本引く。
+func (q *Queries) ListScheduleLinks(ctx context.Context, projectID string) ([]ListScheduleLinksRow, error) {
+	rows, err := q.db.Query(ctx, listScheduleLinks, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListScheduleLinksRow{}
+	for rows.Next() {
+		var i ListScheduleLinksRow
+		if err := rows.Scan(
+			&i.SourceID,
+			&i.SourceSeq,
+			&i.TargetID,
+			&i.TargetSeq,
+			&i.LinkType,
+			&i.LagDays,
+			&i.LagSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -684,18 +683,96 @@ func (q *Queries) ListTimelineEpics(ctx context.Context, arg ListTimelineEpicsPa
 	return items, nil
 }
 
-const lockTicketRow = `-- name: LockTicketRow :one
-
-SELECT id FROM ticket WHERE id = $1 FOR UPDATE
+const listTimelineMembersForUpdate = `-- name: ListTimelineMembersForUpdate :many
+WITH RECURSIVE members AS (
+  SELECT e.id, e.seq AS epic_seq FROM ticket e
+   WHERE e.project_id = $1::pg_catalog.bpchar
+     AND e.type = 'epic'
+     AND e.seq = ANY($2::int[])
+  UNION
+  SELECT c.id, m.epic_seq FROM ticket c JOIN members m ON c.parent_id = m.id
+   WHERE c.type <> 'epic'
+)
+SELECT
+  m.epic_seq::int AS epic_seq,
+  t.id,
+  t.seq,
+  t.title,
+  t.start_at,
+  t.due_at,
+  t.all_day,
+  t.no_overlap,
+  t.start_pinned,
+  t.due_pinned,
+  t.closed_at,
+  t.version,
+  ws.category AS status_category
+FROM members m
+JOIN ticket t ON t.id = m.id
+JOIN project p ON p.id = t.project_id
+LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
+WHERE t.type <> 'epic'
+ORDER BY t.seq
+FOR UPDATE OF t
 `
 
-// ── 連鎖のずらし（ApiDesign.md 9.17.1・9.17.2）────────────────────
-// LockTicketRow は行（エピック）の ticket 行を FOR UPDATE で掴み、同じ行への連鎖を直列にする
-// （9.17.2「同時更新の扱い」）。エピックに属さなければきっかけ自身を掴む。
-func (q *Queries) LockTicketRow(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRow(ctx, lockTicketRow, id)
-	err := row.Scan(&id)
-	return id, err
+type ListTimelineMembersForUpdateParams struct {
+	ProjectID string
+	EpicSeqs  []int32
+}
+
+type ListTimelineMembersForUpdateRow struct {
+	EpicSeq        int32
+	ID             string
+	Seq            int32
+	Title          string
+	StartAt        *time.Time
+	DueAt          *time.Time
+	AllDay         bool
+	NoOverlap      bool
+	StartPinned    bool
+	DuePinned      bool
+	ClosedAt       *time.Time
+	Version        int32
+	StatusCategory pgtype.Text
+}
+
+// ListTimelineMembersForUpdate はタイムライン対象エピック（行）に属するチケットを、行のロックを
+// 取って読む（9.17.2）。所属は 9.5.1 の epic と同じ求め方（入れ子のエピックの手前で降りるのを止める）。
+// **列（no_overlap・時刻付き・両端あり）に絞らずに返す**——依存の先行は列の外でもよく、その端を
+// 読むため。列の判定はアプリが行う（純粋な関数に渡す）。
+func (q *Queries) ListTimelineMembersForUpdate(ctx context.Context, arg ListTimelineMembersForUpdateParams) ([]ListTimelineMembersForUpdateRow, error) {
+	rows, err := q.db.Query(ctx, listTimelineMembersForUpdate, arg.ProjectID, arg.EpicSeqs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTimelineMembersForUpdateRow{}
+	for rows.Next() {
+		var i ListTimelineMembersForUpdateRow
+		if err := rows.Scan(
+			&i.EpicSeq,
+			&i.ID,
+			&i.Seq,
+			&i.Title,
+			&i.StartAt,
+			&i.DueAt,
+			&i.AllDay,
+			&i.NoOverlap,
+			&i.StartPinned,
+			&i.DuePinned,
+			&i.ClosedAt,
+			&i.Version,
+			&i.StatusCategory,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setScheduleBaselineItemCount = `-- name: SetScheduleBaselineItemCount :exec

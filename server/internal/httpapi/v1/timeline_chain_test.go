@@ -37,9 +37,9 @@ func basePlan(column []chainItem, targetSeq int32, newStart, newDue int64) chain
 		}
 	}
 	return chainPlan{
-		Column: column, Target: target, InColumn: true,
-		NewSpan:  chainSpan{Start: newStart, Due: newDue},
-		OtherDue: map[int32]int64{}, MinLen: minute, Now: hm(8, 0), Loc: chainTestLoc,
+		Columns: [][]chainItem{column}, Target: target,
+		NewSpan: chainSpan{Start: newStart, Due: newDue},
+		Ends:    map[int32]chainEnds{}, MinLen: minute, Now: hm(8, 0), Loc: chainTestLoc,
 	}
 }
 
@@ -120,7 +120,7 @@ func TestPlanChainShrinkLeavesGap(t *testing.T) {
 func TestPlanChainFSSuccessorFollows(t *testing.T) {
 	col := []chainItem{item(1, "A", 10, 0, 10, 30), item(2, "B", 10, 30, 11, 0), item(3, "C", 11, 0, 11, 30)}
 	p := basePlan(col, 1, hm(10, 0), hm(10, 20))
-	p.Links = []chainFS{{Pred: 1, Succ: 2}}
+	p.Links = []chainLink{{Type: "FS", Pred: 1, Succ: 2}}
 	changes, block := planChain(p)
 	if block != nil {
 		t.Fatal(block)
@@ -130,7 +130,7 @@ func TestPlanChainFSSuccessorFollows(t *testing.T) {
 	wantUnmoved(t, changes, 3)
 
 	p = basePlan(col, 1, hm(10, 0), hm(10, 40))
-	p.Links = []chainFS{{Pred: 1, Succ: 2}}
+	p.Links = []chainLink{{Type: "FS", Pred: 1, Succ: 2}}
 	changes, _ = planChain(p)
 	wantSpan(t, changes, 2, hm(10, 40), hm(11, 10), chainReasonRipple)
 	wantSpan(t, changes, 3, hm(11, 10), hm(11, 40), chainReasonRipple)
@@ -142,7 +142,7 @@ func TestPlanChainFSSuccessorWithDuePinStretches(t *testing.T) {
 	b.DuePinned = true
 	col := []chainItem{item(1, "A", 10, 0, 10, 30), b}
 	p := basePlan(col, 1, hm(10, 0), hm(10, 15))
-	p.Links = []chainFS{{Pred: 1, Succ: 2}}
+	p.Links = []chainLink{{Type: "FS", Pred: 1, Succ: 2}}
 	changes, block := planChain(p)
 	if block != nil {
 		t.Fatal(block)
@@ -156,7 +156,7 @@ func TestPlanChainFSLagDays(t *testing.T) {
 	p := basePlan(col, 1, hm(10, 0), hm(10, 30))
 	p.NewSpan = chainSpan{Start: hm(9, 50), Due: hm(10, 30)}
 	p.Target.StartPinned = false
-	p.Links = []chainFS{{Pred: 1, Succ: 2, LagDays: 1}}
+	p.Links = []chainLink{{Type: "FS", Pred: 1, Succ: 2, LagDays: 1}}
 	changes, _ := planChain(p)
 	next := time.Date(2026, 10, 25, 10, 30, 0, 0, chainTestLoc).UnixMilli()
 	wantSpan(t, changes, 2, next, next+30*minute, chainReasonRipple)
@@ -277,7 +277,7 @@ func TestPlanChainDoneNeverMoves(t *testing.T) {
 	b.Started, b.Done = true, true
 	col := []chainItem{item(1, "A", 10, 0, 10, 30), b}
 	p := basePlan(col, 1, hm(10, 0), hm(10, 10))
-	p.Links = []chainFS{{Pred: 1, Succ: 2}}
+	p.Links = []chainLink{{Type: "FS", Pred: 1, Succ: 2}}
 	changes, block := planChain(p)
 	if block != nil {
 		t.Fatal(block)
@@ -293,7 +293,7 @@ func TestPlanChainDoneNeverMoves(t *testing.T) {
 func TestPlanChainOutsideColumnMovesOnlyTarget(t *testing.T) {
 	col := []chainItem{item(1, "A", 10, 0, 10, 30), item(2, "B", 10, 30, 11, 0)}
 	p := basePlan(col, 1, hm(10, 0), hm(10, 50))
-	p.InColumn = false
+	p.Others, p.Columns = p.Columns[0], nil
 	changes, block := planChain(p)
 	if block != nil || len(changes) != 1 || changes[0].Seq != 1 {
 		t.Fatalf("自分だけ: %+v %+v", changes, block)
@@ -304,7 +304,7 @@ func TestPlanChainOutsideColumnMovesOnlyTarget(t *testing.T) {
 func TestPlanChainNotBeforeNow(t *testing.T) {
 	col := []chainItem{item(1, "A", 10, 0, 10, 30), item(2, "B", 10, 40, 11, 10), item(3, "C", 11, 10, 11, 40)}
 	p := basePlan(col, 1, hm(10, 0), hm(10, 20))
-	p.Links = []chainFS{{Pred: 1, Succ: 2}}
+	p.Links = []chainLink{{Type: "FS", Pred: 1, Succ: 2}}
 	p.Now = hm(10, 35)
 	changes, _ := planChain(p)
 	wantSpan(t, changes, 2, hm(10, 35), hm(11, 5), chainReasonRipple)
@@ -357,6 +357,195 @@ func TestPlanChainPreviousUntouched(t *testing.T) {
 	changes, _ := planChain(basePlan(col, 2, hm(10, 0), hm(10, 45)))
 	wantUnmoved(t, changes, 1)
 	wantSpan(t, changes, 3, hm(10, 45), hm(11, 15), chainReasonRipple)
+}
+
+// ── 依存の4種・行またぎ（pb-332）────────────────────────────
+
+// twoRows は行1（A→B）と行2（X→Y）の2列。きっかけは A。
+func twoRows() ([]chainItem, []chainItem) {
+	return []chainItem{item(1, "A", 10, 0, 10, 30), item(2, "B", 10, 30, 11, 0)},
+		[]chainItem{item(11, "X", 9, 0, 10, 0), item(12, "Y", 11, 0, 11, 30)}
+}
+
+// 4種それぞれが求める端に、隙間なくそろう。
+func TestPlanChainLinkTypes(t *testing.T) {
+	cases := []struct {
+		typ        string
+		start, due int64
+	}{
+		{"FS", hm(10, 45), hm(11, 15)}, // 先行の終了（10:45）→ 後続の開始
+		{"SS", hm(10, 15), hm(10, 45)}, // 開始どうし
+		{"FF", hm(10, 15), hm(10, 45)}, // 終了どうし（長さ 30分を保つ）
+		{"SF", hm(9, 45), hm(10, 15)},  // 先行の開始 → 後続の終了
+	}
+	for _, c := range cases {
+		t.Run(c.typ, func(t *testing.T) {
+			// 列の外（行2の X とは別の、時間重複チェックの無い Z）を後続にして、列の押しを混ぜない
+			p := basePlan([]chainItem{item(1, "A", 10, 0, 10, 30)}, 1, hm(10, 15), hm(10, 45))
+			p.Others = []chainItem{item(21, "Z", 12, 0, 12, 30)}
+			p.Links = []chainLink{{Type: c.typ, Pred: 1, Succ: 21}}
+			p.Now = hm(8, 0)
+			changes, block := planChain(p)
+			if block != nil {
+				t.Fatal(block)
+			}
+			wantSpan(t, changes, 21, c.start, c.due, chainReasonRipple)
+		})
+	}
+}
+
+// 行をまたぐ依存の後続は寄り、寄った後続は自分の列の後ろを押す。
+func TestPlanChainCrossRowPushesOtherColumn(t *testing.T) {
+	// B を 11:20 まで延ばす（A は動かさない）→ X は B の終了に寄り、Y を押す
+	r1, r2 := twoRows()
+	p := basePlan(r1, 2, hm(10, 30), hm(11, 20))
+	p.Columns = append(p.Columns, r2)
+	p.Links = []chainLink{{Type: "FS", Pred: 2, Succ: 11}}
+	changes, block := planChain(p)
+	if block != nil {
+		t.Fatal(block)
+	}
+	wantSpan(t, changes, 11, hm(11, 20), hm(12, 20), chainReasonRipple)
+	wantSpan(t, changes, 12, hm(12, 20), hm(12, 50), chainReasonRipple)
+	if changes[0].Seq != 2 || changes[1].Seq != 11 || changes[2].Seq != 12 {
+		t.Fatalf("並びは決めた順: %+v", changes)
+	}
+}
+
+// 時間重複チェックの無いチケットも、依存の後続なら動く。依存の無いものは動かない。
+func TestPlanChainOthersMoveOnlyAsSuccessors(t *testing.T) {
+	p := basePlan([]chainItem{item(1, "A", 10, 0, 10, 30)}, 1, hm(10, 0), hm(10, 50))
+	p.Others = []chainItem{item(31, "準備", 10, 30, 10, 40), item(32, "片付け", 10, 30, 10, 40)}
+	p.Links = []chainLink{{Type: "FS", Pred: 1, Succ: 31}}
+	changes, block := planChain(p)
+	if block != nil {
+		t.Fatal(block)
+	}
+	wantSpan(t, changes, 31, hm(10, 50), hm(11, 0), chainReasonRipple)
+	wantUnmoved(t, changes, 32)
+}
+
+// 秒のずらしは暦日の後に足す。
+func TestPlanChainLagSeconds(t *testing.T) {
+	p := basePlan([]chainItem{item(1, "A", 10, 0, 10, 30)}, 1, hm(10, 0), hm(10, 40))
+	p.Others = []chainItem{item(21, "Z", 12, 0, 12, 30)}
+	p.Links = []chainLink{{Type: "FS", Pred: 1, Succ: 21, LagDays: 1, LagSeconds: 600}}
+	changes, _ := planChain(p)
+	next := time.Date(2026, 10, 25, 10, 50, 0, 0, chainTestLoc).UnixMilli()
+	wantSpan(t, changes, 21, next, next+30*minute, chainReasonRipple)
+}
+
+// 先行が2つなら、最も遅い条件にそろう。届かなかった先行はいまの値で数える。
+func TestPlanChainMultiplePredecessors(t *testing.T) {
+	p := basePlan([]chainItem{item(1, "A", 10, 0, 10, 30)}, 1, hm(10, 0), hm(10, 20))
+	p.Others = []chainItem{item(21, "Z", 10, 45, 11, 15), item(22, "W", 9, 0, 10, 45)}
+	p.Links = []chainLink{{Type: "FS", Pred: 1, Succ: 21}, {Type: "FS", Pred: 22, Succ: 21}}
+	changes, block := planChain(p)
+	if block != nil {
+		t.Fatal(block)
+	}
+	// A は 10:20 に縮んだが、W の終了（10:45）が遅いので Z は動かない
+	wantUnmoved(t, changes, 21)
+}
+
+// 動かせない先行（片端だけ）は、持っている端だけを数える。
+func TestPlanChainEndsPredecessor(t *testing.T) {
+	p := basePlan([]chainItem{item(1, "A", 10, 0, 10, 30)}, 1, hm(10, 0), hm(10, 30))
+	due := hm(11, 0)
+	p.Ends = map[int32]chainEnds{40: {Due: &due}}
+	p.Others = []chainItem{item(21, "Z", 10, 30, 11, 0)}
+	p.Links = []chainLink{{Type: "FS", Pred: 1, Succ: 21}, {Type: "FS", Pred: 40, Succ: 21}, {Type: "SS", Pred: 40, Succ: 21}}
+	p.NewSpan = chainSpan{Start: hm(10, 0), Due: hm(10, 40)}
+	changes, _ := planChain(p)
+	// A の終了 10:40 と、40 の終了 11:00 の遅い方。40 は開始を持たないので SS は数えない
+	wantSpan(t, changes, 21, hm(11, 0), hm(11, 30), chainReasonRipple)
+}
+
+// 開始が固定（着手済み）の FF の後続は、終了だけが寄る。最小の長さを割れば解けない。
+func TestPlanChainStartFixedFFMovesDue(t *testing.T) {
+	z := item(21, "照明", 10, 0, 10, 30)
+	z.Started = true
+	p := basePlan([]chainItem{item(1, "A", 10, 0, 10, 30)}, 1, hm(10, 0), hm(10, 50))
+	p.Others = []chainItem{z}
+	p.Links = []chainLink{{Type: "FF", Pred: 1, Succ: 21}}
+	changes, block := planChain(p)
+	if block != nil {
+		t.Fatal(block)
+	}
+	wantSpan(t, changes, 21, hm(10, 0), hm(10, 50), chainReasonRipple)
+
+	p.NewSpan = chainSpan{Start: hm(9, 0), Due: hm(10, 0)}
+	p.Target.Span = chainSpan{Start: hm(9, 0), Due: hm(10, 30)}
+	p.MinLen = 10 * minute
+	_, block = planChain(p)
+	if block == nil || block.Code != chainCannotFit || block.Seq != 21 || block.ShortMs != 10*minute {
+		t.Fatalf("block = %+v", block)
+	}
+}
+
+// 終了が固定の FF の後続より後ろの終了を求めれば解けない。
+func TestPlanChainDueFixedFFCannotFit(t *testing.T) {
+	z := item(21, "閉会", 10, 0, 10, 30)
+	z.DuePinned = true
+	p := basePlan([]chainItem{item(1, "A", 10, 0, 10, 30)}, 1, hm(10, 0), hm(10, 45))
+	p.Others = []chainItem{z}
+	p.Links = []chainLink{{Type: "FF", Pred: 1, Succ: 21}}
+	_, block := planChain(p)
+	if block == nil || block.Seq != 21 || block.ShortMs != 15*minute || !strings.Contains(block.Message, "動かせず") {
+		t.Fatalf("block = %+v", block)
+	}
+}
+
+// 並びと依存が輪になれば order_cycle。同じ列で後ろの B から前の A への依存を、A を動かして辿る。
+func TestPlanChainOrderCycle(t *testing.T) {
+	col := []chainItem{item(1, "A", 10, 0, 10, 30), item(2, "B", 10, 30, 11, 0), item(3, "C", 11, 0, 11, 30)}
+	p := basePlan(col, 2, hm(10, 30), hm(11, 10))
+	p.Links = []chainLink{{Type: "FS", Pred: 3, Succ: 1}}
+	// B → C（列）→ A（依存）→ B（列）で輪になる
+	_, block := planChain(p)
+	if block == nil || block.Code != chainOrderCycle {
+		t.Fatalf("block = %+v", block)
+	}
+	if !strings.Contains(block.Message, "輪になる") {
+		t.Fatalf("message = %q", block.Message)
+	}
+}
+
+// きっかけを動かさずに計算し直すと、依存に合っていない後続がそろう（依存を作った直後。9.17.2）。
+func TestPlanChainRecomputeWithoutMove(t *testing.T) {
+	p := basePlan([]chainItem{item(1, "A", 10, 0, 10, 30)}, 1, hm(10, 0), hm(10, 30))
+	p.Others = []chainItem{item(21, "Z", 11, 0, 11, 30)}
+	p.Links = []chainLink{{Type: "FS", Pred: 1, Succ: 21}}
+	changes, block := planChain(p)
+	if block != nil {
+		t.Fatal(block)
+	}
+	wantUnmoved(t, changes, 1)
+	wantSpan(t, changes, 21, hm(10, 30), hm(11, 0), chainReasonRipple)
+}
+
+// 行をまたいだ先で詰まっても、縮めるのは詰まった相手へ届く道の上だけ。
+func TestPlanChainShrinkAlongPath(t *testing.T) {
+	y := item(12, "Y", 11, 30, 12, 0)
+	y.StartPinned = true
+	r1 := []chainItem{item(1, "A", 10, 0, 10, 30), item(2, "B", 10, 30, 11, 0)}
+	r2 := []chainItem{item(11, "X", 10, 30, 11, 0), y}
+	p := basePlan(r1, 1, hm(10, 0), hm(11, 10))
+	p.Columns = append(p.Columns, r2)
+	p.Links = []chainLink{{Type: "FS", Pred: 1, Succ: 11}}
+	p.MinLen = 10 * minute
+	_, block := planChain(p)
+	if block == nil || block.Seq != 12 || block.ShortMs != 10*minute {
+		t.Fatalf("X が 11:10–11:40 に寄り、Y の開始のアンカー（11:30）に 10分 足りない: %+v", block)
+	}
+	p.Shrink = true
+	changes, block := planChain(p)
+	if block != nil {
+		t.Fatalf("X を縮めれば収まる: %+v", block)
+	}
+	wantSpan(t, changes, 11, hm(11, 10), hm(11, 30), chainReasonShrink)
+	// B は Y へ届く道の上に無いので縮めない（押されるだけ）
+	wantSpan(t, changes, 2, hm(11, 10), hm(11, 40), chainReasonRipple)
 }
 
 // ── きっかけの検証 ─────────────────────────────────────────

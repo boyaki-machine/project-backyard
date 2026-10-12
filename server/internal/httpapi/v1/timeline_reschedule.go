@@ -1,7 +1,7 @@
 // POST /api/v1/projects/{key}/tickets/{seq}/reschedule（ApiDesign.md 9.17.2。pb-296）。
 //
-// **サーバが1回の要求・1トランザクションで計算して書く**（9.17.1）。行（エピック）の ticket 行を
-// FOR UPDATE で掴んで同じ行への連鎖を直列にし、列の全行を FOR UPDATE で読み、純粋な関数
+// **サーバが1回の要求・1トランザクションで計算して書く**（9.17.1）。プロジェクトの行を
+// FOR NO KEY UPDATE で掴んで連鎖を直列にし、全行の列と依存で結ばれたチケットを FOR UPDATE で読み、純粋な関数
 // （timeline_chain.go の planChain）で計算して、動く行だけ version を進めて書く。途中で失敗すれば
 // トランザクションごと巻き戻るので、一部だけ動いた状態は残らない。
 package v1
@@ -12,10 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/activity"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
@@ -92,9 +92,8 @@ func parseRescheduleRequest(req rescheduleRequest) (start, due *int64, details [
 	if req.Op == rescheduleOpCompact && (start != nil || due != nil) {
 		details = append(details, apierr.Detail{Field: "op", Code: "invalid", Message: "ここで詰める（compact）では開始・終了を送りません"})
 	}
-	if req.Op != rescheduleOpCompact && req.StartAt == nil && req.DueAt == nil {
-		details = append(details, apierr.Detail{Field: "due_at", Code: "required", Message: "新しい開始か終了の少なくとも一方を指定してください"})
-	}
+	// move で開始も終了も送らなければ、きっかけは動かさずに後ろを計算し直す（依存を作った直後にそろえる。
+	// 9.17.2。pb-332）。端の欠けたきっかけは checkRescheduleTarget が not_timed で弾く
 	return start, due, details
 }
 
@@ -136,6 +135,11 @@ func (h *handler) rescheduleTicket(w http.ResponseWriter, r *http.Request) {
 		writeErr *apierr.Error
 	)
 	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		// プロジェクトの行を掴み、連鎖のずらしと依存の追加を直列にする（9.17.2「同時更新の扱い」）。
+		// 依存は行をまたぐので、行（エピック）ごとに掴むと2つの連鎖が互いの行を待ち合う。
+		if _, err := q.LockProjectForDependency(ctx, projectID); err != nil {
+			return fmt.Errorf("プロジェクトを掴めない: %w", err)
+		}
 		project, err := q.GetProjectTimelineSettings(ctx, projectID)
 		if err != nil {
 			return fmt.Errorf("プロジェクトの設定を読めない: %w", err)
@@ -146,38 +150,6 @@ func (h *handler) rescheduleTicket(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("基準タイムゾーン %q を解決できない: %w", project.Timezone, err)
 		}
 		minLen := settings.SnapSeconds * 1000
-
-		ticketID, err := q.FindTicketIDBySeq(ctx, gen.FindTicketIDBySeqParams{ProjectID: projectID, Seq: seq})
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeErr = ticketNotFound(seq)
-			return errTicketReference
-		} else if err != nil {
-			return fmt.Errorf("チケット %d を読めない: %w", seq, err)
-		}
-
-		// 行（エピック）を掴む。エピックに属さなければきっかけ自身を掴む（9.17.2「同時更新の扱い」）。
-		// 掴む前に読んだ所属は、掴んだ後に読み直す（その間に親を付け替えられたら掴み直す）。
-		epic, hasEpic, err := ticketEpicOf(ctx, q, ticketID)
-		if err != nil {
-			return err
-		}
-		for range 3 {
-			lockID := ticketID
-			if hasEpic {
-				lockID = epic.ID
-			}
-			if _, err := q.LockTicketRow(ctx, lockID); err != nil {
-				return fmt.Errorf("行を掴めない: %w", err)
-			}
-			again, againHas, err := ticketEpicOf(ctx, q, ticketID)
-			if err != nil {
-				return err
-			}
-			if againHas == hasEpic && (!hasEpic || again.ID == epic.ID) {
-				break
-			}
-			epic, hasEpic = again, againHas
-		}
 
 		tgt, err := q.GetRescheduleTicket(ctx, gen.GetRescheduleTicketParams{ProjectID: projectID, Seq: seq})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -218,49 +190,85 @@ func (h *handler) rescheduleTicket(w http.ResponseWriter, r *http.Request) {
 				Started: target.Started, Done: target.Done, Version: tgt.Version,
 			},
 			NewSpan: newSpan, Compact: op == rescheduleOpCompact,
-			OtherDue: map[int32]int64{}, MinLen: minLen, Now: time.Now().UnixMilli(),
+			Ends: map[int32]chainEnds{}, MinLen: minLen, Now: time.Now().UnixMilli(),
 			Shrink: req.OnBlock == onBlockShrink, Loc: loc,
 		}
 		idBySeq := map[int32]string{tgt.Seq: tgt.ID}
 		spanBySeq := map[int32]chainSpan{tgt.Seq: curSpan}
+		known := map[int32]bool{tgt.Seq: true}
+		// add は読んだチケットを、動かせるなら列か列の外へ、動かせなければ端だけを計画に入れる（9.17.1「動かせる」）
+		columns := map[int32][]chainItem{}
+		add := func(epicSeq int32, inRow, noOverlap bool, c chainCandidate) {
+			idBySeq[c.Seq] = c.ID
+			known[c.Seq] = true
+			it, movable := c.item()
+			switch {
+			case !movable:
+				plan.Ends[c.Seq] = chainEnds{Start: msPtr(c.StartAt), Due: msPtr(c.DueAt)}
+			case inRow && noOverlap:
+				spanBySeq[c.Seq] = it.Span
+				columns[epicSeq] = append(columns[epicSeq], it)
+			default:
+				spanBySeq[c.Seq] = it.Span
+				plan.Others = append(plan.Others, it)
+			}
+		}
 
-		// 列（9.17.1）。行が timeline_epics で選ばれ、きっかけに時間重複チェックがあるときだけ読む
-		if hasEpic && tgt.NoOverlap && slices.Contains(settings.Epics, epic.Seq) {
-			members, err := q.ListEpicMembersForUpdate(ctx, gen.ListEpicMembersForUpdateParams{EpicID: epic.ID, ProjectID: projectID})
-			if err != nil {
-				return fmt.Errorf("行のチケットを読めない: %w", err)
-			}
-			ids := make([]string, 0, len(members))
-			for _, m := range members {
-				ids = append(ids, m.ID)
+		// 列（9.17.1）。タイムライン対象エピックの全行を読む——依存で別の行の列へ届きうる
+		members, err := q.ListTimelineMembersForUpdate(ctx, gen.ListTimelineMembersForUpdateParams{ProjectID: projectID, EpicSeqs: settings.Epics})
+		if err != nil {
+			return fmt.Errorf("行のチケットを読めない: %w", err)
+		}
+		for _, m := range members {
+			if m.Seq == tgt.Seq {
 				idBySeq[m.Seq] = m.ID
-				if m.Seq == tgt.Seq {
-					plan.InColumn = true
-					plan.Column = append(plan.Column, plan.Target)
-					continue
+				if tgt.NoOverlap {
+					columns[m.EpicSeq] = append(columns[m.EpicSeq], plan.Target)
 				}
-				if m.NoOverlap && !m.AllDay && m.StartAt != nil && m.DueAt != nil {
-					cat := fallbackStatusCategory
-					if m.StatusCategory.Valid {
-						cat = m.StatusCategory.String
-					}
-					span := chainSpan{Start: m.StartAt.UnixMilli(), Due: m.DueAt.UnixMilli()}
-					spanBySeq[m.Seq] = span
-					plan.Column = append(plan.Column, chainItem{
-						Seq: m.Seq, Title: m.Title, Span: span,
-						StartPinned: m.StartPinned, DuePinned: m.DuePinned,
-						Started: cat != "todo", Done: cat == "done", Version: m.Version,
-					})
-				} else if m.DueAt != nil {
-					plan.OtherDue[m.Seq] = m.DueAt.UnixMilli()
+				continue
+			}
+			add(m.EpicSeq, true, m.NoOverlap, chainCandidate{
+				ID: m.ID, Seq: m.Seq, Title: m.Title, StartAt: m.StartAt, DueAt: m.DueAt, AllDay: m.AllDay,
+				StartPinned: m.StartPinned, DuePinned: m.DuePinned, Version: m.Version, StatusCategory: m.StatusCategory,
+			})
+		}
+
+		// 依存（FS / SS / FF / SF）。プロジェクトの全部で、行の外の端も読む（pb-332）
+		links, err := q.ListScheduleLinks(ctx, projectID)
+		if err != nil {
+			return fmt.Errorf("依存を読めない: %w", err)
+		}
+		var outside []string
+		seen := map[string]bool{}
+		for _, l := range links {
+			plan.Links = append(plan.Links, chainLink{
+				Pred: l.SourceSeq, Succ: l.TargetSeq, Type: l.LinkType, LagDays: l.LagDays, LagSeconds: l.LagSeconds,
+			})
+			for _, e := range []struct {
+				seq int32
+				id  string
+			}{{l.SourceSeq, l.SourceID}, {l.TargetSeq, l.TargetID}} {
+				if !known[e.seq] && !seen[e.id] {
+					seen[e.id] = true
+					outside = append(outside, e.id)
 				}
 			}
-			links, err := q.ListFSLinksAmongTickets(ctx, ids)
+		}
+		if len(outside) > 0 {
+			rows, err := q.ListChainTicketsForUpdate(ctx, gen.ListChainTicketsForUpdateParams{ProjectID: projectID, Ids: outside})
 			if err != nil {
-				return fmt.Errorf("行の FS の依存を読めない: %w", err)
+				return fmt.Errorf("依存で結ばれたチケットを読めない: %w", err)
 			}
-			for _, l := range links {
-				plan.Links = append(plan.Links, chainFS{Pred: l.SourceSeq, Succ: l.TargetSeq, LagDays: l.LagDays})
+			for _, m := range rows {
+				add(0, false, false, chainCandidate{
+					ID: m.ID, Seq: m.Seq, Title: m.Title, StartAt: m.StartAt, DueAt: m.DueAt, AllDay: m.AllDay,
+					StartPinned: m.StartPinned, DuePinned: m.DuePinned, Version: m.Version, StatusCategory: m.StatusCategory,
+				})
+			}
+		}
+		for _, e := range settings.Epics {
+			if col := columns[e]; len(col) > 0 {
+				plan.Columns = append(plan.Columns, col)
 			}
 		}
 
@@ -383,16 +391,30 @@ func (h *handler) rescheduleTicket(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, result)
 }
 
-// ticketEpicOf はきっかけの所属エピック（9.5.1 の epic と同じ求め方）。無ければ hasEpic が偽。
-func ticketEpicOf(ctx context.Context, q gen.Querier, ticketID string) (gen.GetTicketEpicAncestorRow, bool, error) {
-	row, err := q.GetTicketEpicAncestor(ctx, ticketID)
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		return gen.GetTicketEpicAncestorRow{}, false, nil
-	case err != nil:
-		return gen.GetTicketEpicAncestorRow{}, false, fmt.Errorf("所属するエピックを読めない: %w", err)
+// chainCandidate は計画へ入れる前のチケット1件（行のチケットと、依存で結ばれた行の外のチケット）。
+type chainCandidate struct {
+	ID, Title              string
+	Seq, Version           int32
+	StartAt, DueAt         *time.Time
+	AllDay                 bool
+	StartPinned, DuePinned bool
+	StatusCategory         pgtype.Text
+}
+
+// item は計算に渡す形にする。時刻付きで両端そろわなければ動かせない（9.17.1「動かせる」）。
+func (c chainCandidate) item() (chainItem, bool) {
+	if c.AllDay || c.StartAt == nil || c.DueAt == nil {
+		return chainItem{}, false
 	}
-	return row, true, nil
+	cat := fallbackStatusCategory
+	if c.StatusCategory.Valid {
+		cat = c.StatusCategory.String
+	}
+	return chainItem{
+		Seq: c.Seq, Title: c.Title, Span: chainSpan{Start: c.StartAt.UnixMilli(), Due: c.DueAt.UnixMilli()},
+		StartPinned: c.StartPinned, DuePinned: c.DuePinned,
+		Started: cat != "todo", Done: cat == "done", Version: c.Version,
+	}, true
 }
 
 // expectMatches は試算で示した行（きっかけを除く）と、計算し直した結果が同じかを見る（9.17.2）。
