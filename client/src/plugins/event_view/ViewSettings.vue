@@ -68,7 +68,8 @@ function setEpics(seqs: number[]): void {
 
 .tl-vs-row {
   display: grid;
-  grid-template-columns: 8em minmax(0, 1fr);
+  /* 見出しの最長「タイムライン対象エピック」（12字。pb-328）を1行に収める */
+  grid-template-columns: 12.5em minmax(0, 1fr);
   align-items: center;
   gap: var(--pb-space-2);
   font-size: 13px;
@@ -84,5 +85,13 @@ function setEpics(seqs: number[]): void {
 
 .tl-vs-label {
   color: var(--pb-text-muted);
+}
+
+/* 狭い画面では見出しを上に積み、候補の幅を空ける */
+@media (max-width: 640px) {
+  .tl-vs-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
 }
 </style>
