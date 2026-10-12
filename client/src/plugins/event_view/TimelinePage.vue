@@ -1534,7 +1534,7 @@ watch(projectKey, (key, prev) => {
           <!-- 行（見る人ごとの絞り込み。URL の parent） -->
           <div class="tl-dd">
             <button type="button" class="tl-chip" :class="{ on: rowFiltered }" :aria-expanded="openMenu === 'rows'" @click="toggleMenu('rows')">
-              <span class="k">{{ $ui('行') }}</span> {{ rowSelected.length }}/{{ rowChoices.length }} ▾
+              <span class="k">{{ $ui('表示するエピック') }}</span> {{ rowSelected.length }}/{{ rowChoices.length }} ▾
             </button>
             <div v-if="openMenu === 'rows'" class="tl-panel">
               <p class="ph">{{ $ui('見る行（エピック）を選ぶ。URL に残ります') }}</p>

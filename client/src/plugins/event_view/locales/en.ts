@@ -8,7 +8,7 @@ export const messages: Record<string, string> = {
   "イベント当日の進行を、エピックを行にして見る": "Follow an event day with one row per epic",
   "エピックがありません": "No epics",
   "棚に戻ったもの（{value0}）": "Back on the shelf ({value0})",
-  "行": "Rows",
+  "表示するエピック": "Epics shown",
   "見る行（エピック）を選ぶ。URL に残ります": "Choose the rows (epics) to view. Kept in the URL",
   "全行": "All rows",
   "いま": "Now",
