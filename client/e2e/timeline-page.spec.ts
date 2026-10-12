@@ -53,12 +53,20 @@ function baseItems() {
   ]
 }
 
-async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Record<string, boolean>; epics?: number[]; role?: 'admin' | 'viewer'; outside?: boolean }) {
+async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Record<string, boolean>; epics?: number[]; role?: 'admin' | 'viewer'; outside?: boolean; deps?: boolean }) {
   let items = baseItems()
   let etagN = 1
   const settings = { views: opts.views ?? { timeline: true }, timeline_snap_seconds: 60, timeline_epics: opts.epics ?? [301, 302, 303] }
   const perms = opts.role === 'viewer' ? ['project.view', 'ticket.view'] : ['project.view', 'ticket.view', 'ticket.create', 'ticket.edit', 'project.edit']
-  const state = { rescheduled: 0, changeNext: false, created: [] as Record<string, unknown>[] }
+  const state = { rescheduled: 0, changeNext: false, created: [] as Record<string, unknown>[], linked: [] as { seq: number; body: Record<string, unknown> }[], aligned: [] as Record<string, unknown>[] }
+  // 依存（5.15「依存線」。pb-332）。行またぎの SS と、反している FF
+  const extraLinks = opts.deps
+    ? [
+        { id: 'l2', source_seq: 412, target_seq: 421, link_type: 'SS', lag_days: 0, lag_seconds: 1800, origin: 'human' },
+        { id: 'l3', source_seq: 414, target_seq: 421, link_type: 'FF', lag_days: 0, lag_seconds: 0, origin: 'human' },
+      ]
+    : []
+  let links = [{ id: 'l1', source_seq: 411, target_seq: 412, link_type: 'FS', lag_days: 0, lag_seconds: 0, origin: 'human' }, ...extraLinks]
   await page.clock.install({ time: NOW })
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request()
@@ -110,7 +118,7 @@ async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Reco
         return reply({
           items: shown,
           epics: epics.filter((e) => rowSeqs.includes(e.seq)),
-          links: [{ id: 'l1', source_seq: 411, target_seq: 412, link_type: 'FS', lag_days: 0, origin: 'human' }],
+          links,
           baselines: { count: 1, latest_id: 'B1', latest_created_at: T(8, 30) },
           page: 1, per_page: 5000, total: shown.length, total_pages: 1,
         }, 200, { ETag: tag })
@@ -133,6 +141,26 @@ async function mockApi(page: Page, opts: { theme: 'light' | 'dark'; views?: Reco
           : []),
       ] })
     }
+    const linkPost = /^\/api\/v1\/projects\/fes\/tickets\/(\d+)\/links$/.exec(path)
+    if (linkPost && req.method() === 'POST') {
+      const body = req.postDataJSON() as { target_seq: number; link_type: string }
+      state.linked.push({ seq: Number(linkPost[1]), body })
+      links = [...links, { id: `n${state.linked.length}`, source_seq: Number(linkPost[1]), target_seq: body.target_seq, link_type: body.link_type, lag_days: 0, lag_seconds: 0, origin: 'human' }]
+      etagN++
+      return reply({ id: `n${state.linked.length}`, direction: 'outgoing', link_type: body.link_type, lag_days: 0, lag_seconds: 0, origin: 'human', created_at: T(8),
+        ticket: { seq: body.target_seq, title: 'x', type: 'task', status: todo } }, 201)
+    }
+    if (path === '/api/v1/projects/fes/tickets/414/reschedule') {
+      // 依存を作った直後のそろえ（きっかけを動かさない。9.17.2）。FS の後続 421 が 414 の終了に寄る
+      const body = req.postDataJSON() as Record<string, unknown>
+      state.aligned.push(body)
+      const changes = [{ seq: 421, reason: 'ripple', before: { start_at: T(12), due_at: T(12, 40) }, after: { start_at: T(13, 20), due_at: T(14) }, version: 9 }]
+      return reply({ applied: false, result: 'ok', changes, block: null, alternative: null })
+    }
+    const taskDetail = /^\/api\/v1\/projects\/fes\/tickets\/(\d+)$/.exec(path)
+    const task = taskDetail && req.method() === 'GET' ? items.find((t) => t.seq === Number(taskDetail[1])) : undefined
+    if (task) return reply({ ...task, body_md: '', links: [], references: [], children: [], dod: [], scope: {}, execution_mode: 'agent_draft', readiness: null, readiness_note: null,
+      epic: null, parent: null, comment_count: 0, delegation: null })
     if (path === '/api/v1/projects/fes/tickets/412/reschedule') {
       const body = req.postDataJSON() as { dry_run: boolean; due_at: number }
       const changes = [
@@ -525,7 +553,10 @@ test('行の空いた所を横にドラッグして、その時間帯で作る�
   await page.goto('/p/fes/timeline?zoom=hour')
   const hq = page.locator('.tl-row', { hasText: '本部' }).locator('.tl-track')
   await expect(hq).toHaveClass(/can-create/)
-  const box = (await hq.boundingBox())!
+  const tb = (await hq.boundingBox())!
+  // トラックは描く範囲（前後3画面。pb-320）の幅で左へはみ出すので、見えている左端（行の見出しの右端）から測る
+  const lb = (await page.locator('.tl-row', { hasText: '本部' }).locator('.tl-rlabel').boundingBox())!
+  const box = { x: lb.x + lb.width, y: tb.y, height: tb.height }
   const y = box.y + box.height / 2
 
   // 押しただけ（動かさない）では開かない
@@ -584,4 +615,201 @@ test('作ったものが描かれないときは理由を出す。タイムラ�
   await more(page, 'タイムライン変更推移')
   await expect(page.locator('.tl-notice')).toContainText('タイムライン変更推移 1/2')
   await expect(page.locator('.tl-track.can-create')).toHaveCount(0)
+})
+
+for (const [theme, width] of [['light', 1920], ['dark', 1280]] as const) {
+test(`依存線：行をまたぐ線と種別・ずらしの札、反した配置は ⚠。接している FS は継ぎ目の ◆（${theme} ${width}px。pb-332）`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 })
+  await mockApi(page, { theme, deps: true })
+  await page.goto('/p/fes/timeline')
+  await expect(page.locator('.tl-row')).toHaveCount(3)
+  await expect(page.locator('.fs.j')).toHaveCount(1)
+  const lines = page.locator('.tl-deps g.dep')
+  await expect(lines).toHaveCount(2)
+  await expect(page.locator('.tl-deps g.dep[data-link="l2"] .dtt')).toHaveText('SS +30m')
+  // 414 の終了 13:20 に 421 の終了 12:40 がそろっていない → 反している
+  await expect(page.locator('.tl-deps g.dep[data-link="l3"]')).toHaveClass(/bad/)
+  await expect(page.locator('.tl-deps g.dep[data-link="l3"] .dtt')).toHaveText('⚠ FF')
+  await expect(page.locator('.tl-deps g.dep[data-link="l2"]')).not.toHaveClass(/bad/)
+  // 線は行をまたぐ（出る側と入る側の高さが違う）
+  const d = await page.locator('.tl-deps g.dep[data-link="l2"] .dl').getAttribute('d')
+  expect(d).toMatch(/V/)
+  // バーに載せると、そのバーの線を濃くする
+  await page.locator('.bar[data-seq="412"]').hover()
+  await expect(page.locator('.tl-deps g.dep[data-link="l2"]')).toHaveClass(/hot/)
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-deps-${theme}-${width}.png` })
+})
+}
+
+test('バーの後半から別のバーの前半へ引くと FS を作り、そろえる試算を出す。Esc は依存を残す（pb-332）', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 })
+  const state = await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline')
+  const src = page.locator('.bar[data-seq="414"]')
+  const dst = page.locator('.bar[data-seq="421"]')
+  await expect(src).toBeVisible()
+  const a = (await src.boundingBox())!
+  const b = (await dst.boundingBox())!
+  // 後半を掴む（終了 F が出る側）→ 相手の前半へ（開始 S が入る側）＝ FS
+  await page.mouse.move(a.x + a.width * 0.8, a.y + a.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(a.x + a.width * 0.8 + 20, a.y + a.height / 2 + 20, { steps: 3 })
+  await page.mouse.move(b.x + b.width * 0.2, b.y + b.height / 2, { steps: 5 })
+  await expect(page.locator('.tl-deptag')).toHaveText('FS pb-414 → pb-421')
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-link-drag.png` })
+  await page.mouse.up()
+  await expect.poll(() => state.linked.length).toBe(1)
+  expect(state.linked[0]).toEqual({ seq: 414, body: { target_seq: 421, link_type: 'FS', lag_days: 0, lag_seconds: 0 } })
+  // きっかけを動かさない試算（start_at / due_at を送らない）
+  await expect.poll(() => state.aligned.length).toBe(1)
+  expect(state.aligned[0]).toEqual({ op: 'move', on_block: 'reject', dry_run: true })
+  const notice = page.locator('.tl-notice')
+  await expect(notice).toContainText('依存を作りました（FS pb-414 → pb-421）')
+  await expect(notice).toContainText('依存に合わせて1件が動きます')
+  await expect(page.locator('.ghost')).toHaveCount(1)
+  // 詳細は開かない（引いた後の click は詳細を開く操作にしない）
+  await expect(page.locator('.tl-detail')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.ghost')).toHaveCount(0)
+  await expect(notice).toContainText('予定は動かしていません')
+  expect(state.rescheduled).toBe(0)
+})
+
+test('自分自身には落とせない。3px 未満の動きはクリックとして詳細を開く（pb-332）', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 })
+  const state = await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline')
+  const bar = page.locator('.bar[data-seq="414"]')
+  const a = (await bar.boundingBox())!
+  await page.mouse.move(a.x + a.width * 0.8, a.y + a.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(a.x + a.width * 0.3, a.y + a.height / 2, { steps: 4 })
+  await expect(page.locator('.tl-deptag')).toHaveText('自分自身には引けません')
+  await expect(page.locator('.tl-deptag')).toHaveClass(/ng/)
+  await page.mouse.up()
+  expect(state.linked).toHaveLength(0)
+  await expect(page.locator('.tl-detail')).toHaveCount(0)
+
+  await page.mouse.move(a.x + a.width * 0.5, a.y + a.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(a.x + a.width * 0.5 + 1, a.y + a.height / 2)
+  await page.mouse.up()
+  await expect(page.locator('.tl-detail')).toHaveCount(1)
+  expect(state.linked).toHaveLength(0)
+})
+
+test('タイムラインから開いた詳細の「関連チケットを追加」には依存の4種も出る（pb-332）', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 })
+  await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline')
+  await page.locator('.bar[data-seq="414"]').click()
+  const pane = page.locator('.tl-detail')
+  await expect(pane).toBeVisible()
+  await pane.getByRole('button', { name: '+ 追加' }).last().click()
+  const dialog = page.getByRole('dialog', { name: '関連チケットを追加' })
+  await expect(dialog.locator('.choice-label')).toHaveText([
+    '関連', '重複', '自先行', '自後行',
+    'FS 自先行', 'FS 自後行', 'SS 自先行', 'SS 自後行', 'FF 自先行', 'FF 自後行', 'SF 自先行', 'SF 自後行',
+  ])
+})
+
+// ── 表示範囲（5.15「時間軸の範囲」「表示期間」。pb-320）────────────────
+
+/** 本体（行の見出しを除いた）の幅と、スクロールの量 */
+async function scrollState(page: Page) {
+  return page.locator('.tl-scroller').evaluate((el) => ({ left: el.scrollLeft, width: el.scrollWidth, client: el.clientWidth, body: el.clientWidth - 210 }))
+}
+
+/** 本体の見えている所に入っているバーの数（範囲の外のバーも DOM には残り、トラックで切られている） */
+async function barsInView(page: Page): Promise<number> {
+  return page.locator('.tl-scroller').evaluate((sc) => {
+    const r = sc.getBoundingClientRect()
+    const left = r.left + 210
+    return [...sc.querySelectorAll('.bar')].filter((b) => {
+      const x = b.getBoundingClientRect()
+      return x.right > left && x.left < r.right
+    }).length
+  })
+}
+
+/** スクロールを端まで送る（描き直しが起きるまで待つ） */
+async function scrollToEdge(page: Page, edge: 'start' | 'end') {
+  const before = await scrollState(page)
+  await page.locator('.tl-scroller').evaluate((el, e) => {
+    el.scrollLeft = e === 'end' ? el.scrollWidth : 0
+  }, edge)
+  // 描き直すと、見えている左端は描いた範囲の真ん中（3画面目）へ戻る
+  await expect.poll(async () => Math.abs((await scrollState(page)).left - before.body * 3)).toBeLessThan(2)
+}
+
+for (const width of [1280, 1920]) {
+  test(`初めて開いたときから、本体の幅の前後3画面ぶんを描く。空白を作らない（${width}px。pb-320）`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    await mockApi(page, { theme: 'light' })
+    await page.goto('/p/fes/timeline?zoom=hour')
+    await expect(page.locator('.bar[data-seq="412"]')).toBeVisible()
+    const st = await scrollState(page)
+    // 描く範囲は7画面ぶん。左に3画面、右に3画面スクロールできる
+    expect(Math.abs(st.width - (210 + 7 * st.body))).toBeLessThan(2)
+    expect(Math.abs(st.left - 3 * st.body)).toBeLessThan(2)
+    // 目盛りは見えている幅の右端まで並ぶ
+    const ticks = await page.locator('.ax-tk').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().left))
+    expect(Math.max(...ticks)).toBeGreaterThan(width - 260)
+    if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-range-${width}.png` })
+  })
+}
+
+test('チケットの無い未来・過去へスクロールだけで動ける。日の変わり目は日付で出す（pb-320）', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline?zoom=hour')
+  await expect(page.locator('.tl-corner b')).toHaveText('10/24')
+  await scrollToEdge(page, 'end')
+  await scrollToEdge(page, 'end')
+  await expect(page.locator('.tl-corner b')).toHaveText('10/25')
+  expect(await barsInView(page)).toBe(0)
+  // 0時の目盛りは日付
+  await scrollToEdge(page, 'start')
+  await expect(page.locator('.ax-maj, .ax-min').filter({ hasText: '10/25' })).not.toHaveCount(0)
+  for (let i = 0; i < 4; i++) await scrollToEdge(page, 'start')
+  await expect(page.locator('.tl-corner b')).toHaveText('10/23')
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-past.png` })
+  // [いま] で戻る
+  await page.getByRole('button', { name: 'いま', exact: true }).click()
+  await expect(page.locator('.tl-corner b')).toHaveText('10/24')
+  await expect(page.locator('.bar[data-seq="412"]')).toBeVisible()
+})
+
+test('表示期間：開始日時と期間で本体の幅にちょうど収める。URL に残し、倍率を変えたら外す（pb-320）', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline')
+  await expect(page.locator('.bar[data-seq="412"]')).toBeVisible()
+  const chip = page.getByRole('button', { name: /表示期間/ })
+  await chip.click()
+  const panel = page.getByRole('group', { name: '表示期間' })
+  await panel.getByRole('combobox', { name: '期間' }).selectOption('1d')
+  await expect(page).toHaveURL(/span=1d/)
+  const st = await scrollState(page)
+  // 1日 ＝ 本体の幅
+  await expect(page.locator('.tl-legend .r, .r.mono').first()).toHaveText(`1時間＝${Math.round((st.body / 24) * 1) }px`)
+  // 開始日時を入れると、その時刻が本体の左端に来る
+  await panel.getByLabel('開始日時').fill('2026-10-25T06:00')
+  await panel.getByLabel('開始日時').dispatchEvent('change')
+  await expect(page).toHaveURL(new RegExp(`at=${Date.UTC(2026, 9, 24, 21)}`))
+  await expect(page.locator('.tl-corner b')).toHaveText('10/25')
+  expect(await barsInView(page)).toBe(0)
+  await expect(page.locator('.tl-dd .tl-chip.on').filter({ hasText: '1日・10/25 06:00' })).toHaveCount(1)
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-span-1d.png` })
+  // 同じ URL を開けば同じ期間
+  await page.reload()
+  await expect(page.locator('.tl-corner b')).toHaveText('10/25')
+  await page.getByRole('button', { name: /1日・10\/25 06:00/ }).click()
+  await expect(panel.getByRole('combobox', { name: '期間' })).toHaveValue('1d')
+  await expect(panel.getByLabel('開始日時')).toHaveValue('2026-10-25T06:00')
+  // 段階のボタンで倍率を変えたら表示期間は外れる
+  await page.getByRole('group', { name: '拡大縮小の段階' }).getByRole('button', { name: '時' }).click()
+  await expect(page).not.toHaveURL(/span=/)
+  await expect(page).not.toHaveURL(/at=/)
+  await expect(page.getByRole('button', { name: /表示期間/ })).toHaveCount(1)
 })

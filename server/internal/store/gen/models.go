@@ -627,6 +627,7 @@ type TicketLink struct {
 	Confidence     pgtype.Float8
 	CreatedBy      pgtype.Text
 	CreatedAt      time.Time
+	LagSeconds     int32
 }
 
 type TicketReference struct {

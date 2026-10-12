@@ -180,11 +180,6 @@ DELETE FROM schedule_baseline WHERE project_id = @project_id AND id = @id;
 
 -- ── 連鎖のずらし（ApiDesign.md 9.17.1・9.17.2）────────────────────
 
--- LockTicketRow は行（エピック）の ticket 行を FOR UPDATE で掴み、同じ行への連鎖を直列にする
--- （9.17.2「同時更新の扱い」）。エピックに属さなければきっかけ自身を掴む。
--- name: LockTicketRow :one
-SELECT id FROM ticket WHERE id = @id FOR UPDATE;
-
 -- GetRescheduleTicket はきっかけを行のロックを取って読む。状態の区分は暗黙のアンカー
 -- （着手済み・完了）の判定に使う（9.17.1）。
 -- name: GetRescheduleTicket :one
@@ -208,19 +203,22 @@ LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.st
 WHERE t.project_id = @project_id AND t.seq = @seq
 FOR UPDATE OF t;
 
--- ListEpicMembersForUpdate は1つのエピック（行）に属するチケットを、行のロックを取って読む
--- （9.17.2）。所属は 9.5.1 の epic と同じ求め方（入れ子のエピックの手前で降りるのを止める）。
--- **列（no_overlap・時刻付き・両端あり）に絞らずに返す**——FS の先行は列の外でもよく、
--- その終了を読むため。列の判定はアプリが行う（純粋な関数に渡す）。
--- name: ListEpicMembersForUpdate :many
+-- ListTimelineMembersForUpdate はタイムライン対象エピック（行）に属するチケットを、行のロックを
+-- 取って読む（9.17.2）。所属は 9.5.1 の epic と同じ求め方（入れ子のエピックの手前で降りるのを止める）。
+-- **列（no_overlap・時刻付き・両端あり）に絞らずに返す**——依存の先行は列の外でもよく、その端を
+-- 読むため。列の判定はアプリが行う（純粋な関数に渡す）。
+-- name: ListTimelineMembersForUpdate :many
 WITH RECURSIVE members AS (
-  SELECT c.id FROM ticket c
-   WHERE c.parent_id = @epic_id::pg_catalog.bpchar AND c.type <> 'epic'
+  SELECT e.id, e.seq AS epic_seq FROM ticket e
+   WHERE e.project_id = @project_id::pg_catalog.bpchar
+     AND e.type = 'epic'
+     AND e.seq = ANY(@epic_seqs::int[])
   UNION
-  SELECT c.id FROM ticket c JOIN members m ON c.parent_id = m.id
+  SELECT c.id, m.epic_seq FROM ticket c JOIN members m ON c.parent_id = m.id
    WHERE c.type <> 'epic'
 )
 SELECT
+  m.epic_seq::int AS epic_seq,
   t.id,
   t.seq,
   t.title,
@@ -233,25 +231,47 @@ SELECT
   t.closed_at,
   t.version,
   ws.category AS status_category
-FROM ticket t
+FROM members m
+JOIN ticket t ON t.id = m.id
 JOIN project p ON p.id = t.project_id
 LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
-WHERE t.id IN (SELECT id FROM members)
-  AND t.project_id = @project_id::pg_catalog.bpchar
+WHERE t.type <> 'epic'
 ORDER BY t.seq
 FOR UPDATE OF t;
 
--- ListFSLinksAmongTickets は連鎖が寄せる FS の依存（9.17.1 の手順1）。両端が渡した ID に含まれる
--- ものだけ。lag_days は暦日。
--- name: ListFSLinksAmongTickets :many
-SELECT s.seq AS source_seq, t.seq AS target_seq, l.lag_days
+-- ListScheduleLinks は連鎖が従う依存（FS / SS / FF / SF。9.17.1）。**プロジェクトの全部**——
+-- エピックも行も問わない（pb-332）。1チケットあたり数本の前提で、プロジェクトで1本引く。
+-- name: ListScheduleLinks :many
+SELECT s.id AS source_id, s.seq AS source_seq, t.id AS target_id, t.seq AS target_seq,
+       l.link_type, l.lag_days, l.lag_seconds
   FROM ticket_link l
   JOIN ticket s ON s.id = l.source_ticket_id
   JOIN ticket t ON t.id = l.target_ticket_id
- WHERE l.source_ticket_id = ANY(@ticket_ids::pg_catalog.bpchar[])
-   AND l.target_ticket_id = ANY(@ticket_ids::pg_catalog.bpchar[])
-   AND l.link_type = 'FS'
- ORDER BY s.seq, t.seq;
+ WHERE s.project_id = @project_id
+   AND t.project_id = @project_id
+   AND l.link_type IN ('FS', 'SS', 'FF', 'SF')
+ ORDER BY s.seq, t.seq, l.link_type;
+
+-- ListChainTicketsForUpdate は依存で結ばれた、行の外のチケットを、行のロックを取って読む（9.17.2）。
+-- name: ListChainTicketsForUpdate :many
+SELECT
+  t.id,
+  t.seq,
+  t.title,
+  t.start_at,
+  t.due_at,
+  t.all_day,
+  t.start_pinned,
+  t.due_pinned,
+  t.version,
+  ws.category AS status_category
+FROM ticket t
+JOIN project p ON p.id = t.project_id
+LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
+WHERE t.project_id = @project_id::pg_catalog.bpchar
+  AND t.id = ANY(@ids::pg_catalog.bpchar[])
+ORDER BY t.seq
+FOR UPDATE OF t;
 
 -- SetTicketSchedule は連鎖のずらしが動かした行を書く（9.17.2）。**version を進める**——動いた行は
 -- 人が見ていた前提が変わったので、他の画面の If-Match を外す。行は FOR UPDATE で掴んであるので

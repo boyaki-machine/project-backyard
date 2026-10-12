@@ -1030,6 +1030,7 @@ type Querier interface {
 	// **min() に型を明示する。** 付けないと sqlc が interface{} で生成し、
 	// 呼び出し側が時刻として扱えない。
 	GetRecoveryCodeStatus(ctx context.Context, userID string) (GetRecoveryCodeStatusRow, error)
+	// ── 連鎖のずらし（ApiDesign.md 9.17.1・9.17.2）────────────────────
 	// GetRescheduleTicket はきっかけを行のロックを取って読む。状態の区分は暗黙のアンカー
 	// （着手済み・完了）の判定に使う（9.17.1）。
 	GetRescheduleTicket(ctx context.Context, arg GetRescheduleTicketParams) (GetRescheduleTicketRow, error)
@@ -1274,6 +1275,8 @@ type Querier interface {
 	// action / actor / q は呼び出し側で LIKE メタ文字をエスケープする。
 	// actor_id は削除後に NULL になるため、検索と表示には actor_label を使う。
 	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]ListAuditLogsRow, error)
+	// ListChainTicketsForUpdate は依存で結ばれた、行の外のチケットを、行のロックを取って読む（9.17.2）。
+	ListChainTicketsForUpdate(ctx context.Context, arg ListChainTicketsForUpdateParams) ([]ListChainTicketsForUpdateRow, error)
 	// 多要素認証のクエリ（DbDesign.md 6.18、Design.md 6.7）。
 	//
 	// **未確定の行（confirmed_at IS NULL）を、確定済みを引くクエリに混ぜない。**
@@ -1359,16 +1362,8 @@ type Querier interface {
 	// 置いて同じ親の行を隣り合わせているので、呼び出し側は届いた順に子を積むだけで
 	// 各階層の順序が揃う。NULLS FIRST でトップレベルが先に来る。
 	ListDocumentTree(ctx context.Context, projectID pgtype.Text) ([]ListDocumentTreeRow, error)
-	// ListEpicMembersForUpdate は1つのエピック（行）に属するチケットを、行のロックを取って読む
-	// （9.17.2）。所属は 9.5.1 の epic と同じ求め方（入れ子のエピックの手前で降りるのを止める）。
-	// **列（no_overlap・時刻付き・両端あり）に絞らずに返す**——FS の先行は列の外でもよく、
-	// その終了を読むため。列の判定はアプリが行う（純粋な関数に渡す）。
-	ListEpicMembersForUpdate(ctx context.Context, arg ListEpicMembersForUpdateParams) ([]ListEpicMembersForUpdateRow, error)
 	// 期限が来たものを全部引く。**起動時の点検と、プロセス内のタイマが使う。**
 	ListExpiredPendingSettingChanges(ctx context.Context) ([]ListExpiredPendingSettingChangesRow, error)
-	// ListFSLinksAmongTickets は連鎖が寄せる FS の依存（9.17.1 の手順1）。両端が渡した ID に含まれる
-	// ものだけ。lag_days は暦日。
-	ListFSLinksAmongTickets(ctx context.Context, ticketIds []string) ([]ListFSLinksAmongTicketsRow, error)
 	// ListLinksAmongTickets はガント（9.2.6）の依存を1本で引く。
 	//
 	// **両端が渡したチケットの集合に含まれる行だけを返す。** ガントは絞り込み・打ち切りの
@@ -1578,6 +1573,9 @@ type Querier interface {
 	ListScheduleBaselineItems(ctx context.Context, arg ListScheduleBaselineItemsParams) ([]ListScheduleBaselineItemsRow, error)
 	// ListScheduleBaselines は版の一覧（9.17.3）。created_at の新しい順、同じ時刻なら id の降順。
 	ListScheduleBaselines(ctx context.Context, projectID string) ([]ListScheduleBaselinesRow, error)
+	// ListScheduleLinks は連鎖が従う依存（FS / SS / FF / SF。9.17.1）。**プロジェクトの全部**——
+	// エピックも行も問わない（pb-332）。1チケットあたり数本の前提で、プロジェクトで1本引く。
+	ListScheduleLinks(ctx context.Context, projectID string) ([]ListScheduleLinksRow, error)
 	// スプリントに関するクエリ（DbDesign.md 6.9、ApiDesign.md 9.12）。
 	//
 	// 手順16a で追加。プロジェクト設定のスプリントタブ（GuiDesign.md 5.9.5）が
@@ -1824,6 +1822,11 @@ type Querier interface {
 	// エピックでない番号・無い番号はここで落ちる（DbDesign.md 6.4「読み飛ばす」）。parent が
 	// あれば、その部分木の内側だけ（見る人ごとの絞り込み）。並びは sort_key の昇順。
 	ListTimelineEpics(ctx context.Context, arg ListTimelineEpicsParams) ([]ListTimelineEpicsRow, error)
+	// ListTimelineMembersForUpdate はタイムライン対象エピック（行）に属するチケットを、行のロックを
+	// 取って読む（9.17.2）。所属は 9.5.1 の epic と同じ求め方（入れ子のエピックの手前で降りるのを止める）。
+	// **列（no_overlap・時刻付き・両端あり）に絞らずに返す**——依存の先行は列の外でもよく、その端を
+	// 読むため。列の判定はアプリが行う（純粋な関数に渡す）。
+	ListTimelineMembersForUpdate(ctx context.Context, arg ListTimelineMembersForUpdateParams) ([]ListTimelineMembersForUpdateRow, error)
 	// ListUserIdentities は 6.3 の identities[] を引く。
 	//
 	// **配列であることが IdP 連携（構想）をそのまま受け入れる**（ApiDesign.md 6.3、
@@ -1877,10 +1880,6 @@ type Querier interface {
 	// するのは、チケットの作成（FK の確認が project に取る KEY SHARE）を待たせない
 	// ため**——FOR UPDATE だと KEY SHARE とぶつかる。
 	LockProjectForDependency(ctx context.Context, projectID string) (string, error)
-	// ── 連鎖のずらし（ApiDesign.md 9.17.1・9.17.2）────────────────────
-	// LockTicketRow は行（エピック）の ticket 行を FOR UPDATE で掴み、同じ行への連鎖を直列にする
-	// （9.17.2「同時更新の扱い」）。エピックに属さなければきっかけ自身を掴む。
-	LockTicketRow(ctx context.Context, id string) (string, error)
 	LockWorkProject(ctx context.Context, projectID string) error
 	LockWorkTickets(ctx context.Context, arg LockWorkTicketsParams) ([]LockWorkTicketsRow, error)
 	// MarkEvaluationObjected は PM の事後の異議を記録する（Delegation.md 6.4・6.5。pb-275）。
@@ -2491,7 +2490,8 @@ type Querier interface {
 	// タグだけを付け外しした場合もこの文を通るので、9.2.5 の ETag が必ず変わる。
 	//
 	UpdateTicket(ctx context.Context, arg UpdateTicketParams) (int64, error)
-	// UpdateTicketLinkLag は依存のずらし（lag_days）だけを変える（9.10.1 の PATCH。pb-231）。
+	// UpdateTicketLinkLag は依存のずらし（lag_days・lag_seconds）だけを変える（9.10.1 の PATCH。pb-231・pb-332）。
+	// 送らなかった方は今の値をハンドラが渡す。
 	//
 	// **このチケットに紐づく行か**を id と合わせて確かめる（source / target のどちらでもよい。
 	// DELETE と同じく direction を問わない）。種別の検査はハンドラが GetTicketLink で行う。

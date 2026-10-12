@@ -171,19 +171,12 @@ func (h *handler) writeTimelineList(
 ) {
 	ctx := r.Context()
 
-	// links[] は FS だけ、両端が items に含まれ、同じエピックに属するもの（9.2.7）
-	epicOf := map[int32]int32{}
-	for _, row := range rows {
-		if row.TimelineEpicSeq.Valid {
-			epicOf[row.Seq] = row.TimelineEpicSeq.Int32
-		}
-	}
-	fsLinks := []ganttLinkItem{}
+	// links[] は FS / SS / FF / SF で、両端が items に含まれるもの。エピックをまたいでよい（9.2.7。pb-332）。
+	// 両端が items に含まれることは ListLinksAmongTickets が保証している
+	depLinks := []ganttLinkItem{}
 	for _, l := range links {
-		se, ok1 := epicOf[l.SourceSeq]
-		te, ok2 := epicOf[l.TargetSeq]
-		if l.LinkType == "FS" && ok1 && ok2 && se == te {
-			fsLinks = append(fsLinks, l)
+		if slices.Contains(lagLinkTypes, l.LinkType) {
+			depLinks = append(depLinks, l)
 		}
 	}
 
@@ -226,7 +219,7 @@ func (h *handler) writeTimelineList(
 	}
 	w.Header().Set("ETag", etag)
 	WriteJSON(w, http.StatusOK, timelineList{
-		List: NewList(tlItems, page, int(total)), Epics: epics, Links: fsLinks, Baselines: baselines,
+		List: NewList(tlItems, page, int(total)), Epics: epics, Links: depLinks, Baselines: baselines,
 	})
 }
 

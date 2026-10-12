@@ -53,3 +53,11 @@ export function createBaseline(key: string, label: string | null): Promise<Basel
 export function deleteBaseline(key: string, id: string): Promise<void> {
   return api.del<void>(`${base(key)}/schedule-baselines/${encodeURIComponent(id)}`)
 }
+
+/**
+ * 依存を1本作る（`ApiDesign.md` 9.10.1。5.15「依存を引く」。pb-332）。`seq` が先行（`source`）。
+ * ずらしはドラッグでは入れない（0。詳細の関連チケットの行で変える）
+ */
+export function createDependency(key: string, seq: number, targetSeq: number, linkType: 'FS' | 'SS' | 'FF' | 'SF'): Promise<components['schemas']['TicketLink']> {
+  return api.post(`${base(key)}/tickets/${seq}/links`, { target_seq: targetSeq, link_type: linkType, lag_days: 0, lag_seconds: 0 })
+}

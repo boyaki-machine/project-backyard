@@ -575,3 +575,120 @@ func TestTimelineIntegration(t *testing.T) {
 		t.Fatalf("版の行が残った: %d %v", items, err)
 	}
 }
+
+// 依存の4種・行またぎ・秒のずらし（ApiDesign.md 9.17.1・9.10.1。pb-332）を実 DB に通す。
+// 単体テストでは確かめられない、プロジェクト全体の依存の読み込み・行の外のチケットのロックと書き込み・
+// links[] の行またぎ・lag_seconds の保存を見る。
+func TestTimelineDependencyIntegration(t *testing.T) {
+	f := newTimelineFixture(t)
+	ctx := context.Background()
+
+	gym := f.createTicket(t, `{"type":"epic","title":"体育館ステージ"}`)
+	light := f.createTicket(t, `{"type":"epic","title":"照明・音響"}`)
+	back := f.createTicket(t, `{"type":"epic","title":"裏方（載せない）"}`)
+	a := f.timed(t, "吹奏楽部「秋の調べ」", gym, 10, 0, 10, 30, true)
+	x := f.timed(t, "照明の転換", light, 10, 30, 11, 0, true)
+	y := f.timed(t, "音響チェック", light, 11, 0, 11, 30, true)
+	z := f.timed(t, "楽器の搬出", back, 10, 0, 10, 30, false)
+	q := f.timed(t, "控室の案内", back, 12, 0, 12, 30, false)
+	if _, err := f.pool.Exec(ctx, `UPDATE project SET settings = $2::jsonb, version = version + 1 WHERE id = $1`,
+		f.projectID, fmt.Sprintf(`{"timeline_epics":[%d,%d],"timeline_snap_seconds":60}`, gym, light)); err != nil {
+		t.Fatal(err)
+	}
+
+	link := func(src, dst int32, typ, extra string) string {
+		t.Helper()
+		rec := f.do(http.MethodPost, fmt.Sprintf("%s/tickets/%d/links", f.base, src), f.session,
+			fmt.Sprintf(`{"target_seq":%d,"link_type":%q%s}`, dst, typ, extra))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("依存 %d %s %d の status = %d（%s）", src, typ, dst, rec.Code, rec.Body.String())
+		}
+		var v struct {
+			ID         string `json:"id"`
+			LagSeconds int32  `json:"lag_seconds"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(extra, "lag_seconds") && v.LagSeconds != 600 {
+			t.Fatalf("lag_seconds = %d", v.LagSeconds)
+		}
+		return v.ID
+	}
+	link(a, x, "FS", `,"lag_seconds":600`) // 行またぎ・転換10分
+	link(a, z, "FF", "")                   // 行の外（タイムラインに載らない）へ
+
+	// links[] は行をまたいでも載る。片端が items に無い依存（a→z）は載せない
+	tl, _ := f.timeline(t)
+	if len(tl.Links) != 1 || tl.Links[0].SourceSeq != a || tl.Links[0].TargetSeq != x || tl.Links[0].LagSeconds != 600 {
+		t.Fatalf("links = %+v", tl.Links)
+	}
+
+	// 試算 → 確定。a を 10:45 まで延ばすと、x は 10:55 に寄って y を押し、z は終了が 10:45 にそろう
+	av := f.ticket(t, a).Version
+	rec := f.reschedule(t, a, av, fmt.Sprintf(`{"due_at":%d,"dry_run":true}`, jst2030(10, 45)))
+	trial := decodeReschedule(t, rec)
+	if rec.Code != http.StatusOK || trial.Result != "ok" {
+		t.Fatalf("試算 = %d %+v", rec.Code, trial)
+	}
+	want := map[int32]chainSpan{
+		x: {Start: jst2030(10, 55), Due: jst2030(11, 25)},
+		y: {Start: jst2030(11, 25), Due: jst2030(11, 55)},
+		z: {Start: jst2030(10, 15), Due: jst2030(10, 45)},
+	}
+	for seq, span := range want {
+		got, _, ok := spanOf(trial.Changes, seq)
+		if !ok || got != span {
+			t.Errorf("%d の試算 = %+v, want %+v（%+v）", seq, got, span, trial.Changes)
+		}
+	}
+	rec = f.reschedule(t, a, av, fmt.Sprintf(`{"due_at":%d,"expect":%s}`, jst2030(10, 45), expectOf(trial, a)))
+	if done := decodeReschedule(t, rec); rec.Code != http.StatusOK || !done.Applied {
+		t.Fatalf("確定 = %d %s", rec.Code, rec.Body.String())
+	}
+	for seq, span := range want {
+		got := f.ticket(t, seq)
+		if got.StartAt == nil || got.DueAt == nil || *got.StartAt != span.Start || *got.DueAt != span.Due {
+			t.Errorf("%d = %v–%v, want %+v", seq, got.StartAt, got.DueAt, span)
+		}
+	}
+
+	// 秒のずらしを PATCH で変える（日はそのまま）
+	links := f.do(http.MethodGet, fmt.Sprintf("%s/tickets/%d/links", f.base, x), f.session, "")
+	var lv struct {
+		Items []linkJSON `json:"items"`
+	}
+	if err := json.Unmarshal(links.Body.Bytes(), &lv); err != nil || len(lv.Items) != 1 {
+		t.Fatalf("x の依存 = %s", links.Body.String())
+	}
+	rec = f.do(http.MethodPatch, fmt.Sprintf("%s/tickets/%d/links/%s", f.base, x, lv.Items[0].ID), f.session, `{"lag_seconds":-300}`)
+	if got := decodeLink(t, rec); rec.Code != http.StatusOK || got.LagSeconds != -300 || got.LagDays != 0 {
+		t.Fatalf("PATCH = %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 動かさずに計算し直す（依存を作った直後にそろえる。9.17.2）。x の SS の後続 q が x の開始にそろう
+	link(x, q, "SS", "")
+	xv := f.ticket(t, x).Version
+	rec = f.reschedule(t, x, xv, `{"dry_run":true}`)
+	re := decodeReschedule(t, rec)
+	if rec.Code != http.StatusOK || re.Result != "ok" {
+		t.Fatalf("計算し直し = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, _, moved := spanOf(re.Changes, x); moved {
+		t.Fatalf("きっかけは動かさない: %+v", re.Changes)
+	}
+	if got, _, _ := spanOf(re.Changes, q); got != (chainSpan{Start: jst2030(10, 55), Due: jst2030(11, 25)}) {
+		t.Fatalf("q = %+v（%+v）", got, re.Changes)
+	}
+
+	// 並びと依存の輪（order_cycle）。列で x の後ろにある y から x への依存は、依存だけなら輪でないので作れる
+	link(y, x, "FS", "")
+	rec = f.reschedule(t, x, xv, fmt.Sprintf(`{"due_at":%d,"dry_run":true}`, jst2030(11, 30)))
+	if cyc := decodeReschedule(t, rec); rec.Code != http.StatusOK || cyc.Block == nil || cyc.Block.Code != chainOrderCycle {
+		t.Fatalf("輪の試算 = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = f.reschedule(t, x, xv, fmt.Sprintf(`{"due_at":%d}`, jst2030(11, 30)))
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"order_cycle"`) {
+		t.Fatalf("輪の確定 = %d %s", rec.Code, rec.Body.String())
+	}
+}

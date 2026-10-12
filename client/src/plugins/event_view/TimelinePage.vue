@@ -34,6 +34,7 @@ import type { CreateTicketRequest, TicketDetail } from '../../api/tickets'
 import { statusLabel } from '../../lib/catalogLabels'
 import { currentTimezone } from '../../lib/datetime'
 import { sleeveBackground } from '../../lib/epicSleeve'
+import { lagText } from '../../lib/lagText'
 import { uiNumber, uiText } from '../../locales/ui'
 import { useAuthStore } from '../../stores/auth'
 import { useProjectStore } from '../../stores/project'
@@ -55,11 +56,17 @@ import {
   changeOf,
   changedSeqs,
   collisions,
+  depEndAt,
+  depPath,
+  depTypeOf,
+  depViolated,
+  depWouldCycle,
   deviationOf,
   deviationTag,
   expectOf,
   extendToNowDue,
   fsMarks,
+  isDepType,
   keyOf,
   laneTop,
   layoutRows,
@@ -72,6 +79,10 @@ import {
 } from './model'
 import type {
   Bar,
+  DepBox,
+  DepEnd,
+  DepPath,
+  DepType,
   Baseline,
   BaselineItem,
   BaselineSummary,
@@ -89,19 +100,26 @@ import {
   PPS_MAX,
   PPS_MIN,
   SEC,
+  SPAN_ORDER,
   ZOOMS,
   ZOOM_ORDER,
-  axisRange,
+  atOf,
   clock,
+  fromLocalInput,
   isWallMultiple,
   monthDay,
+  needsRewindow,
+  ppsForSpan,
   snapTo,
+  spanOf,
   tickScale,
+  toLocalInput,
   wallTicks,
+  windowRange,
   zoomAt,
   zoomOf,
 } from './time'
-import type { ZoomKey } from './time'
+import type { SpanKey, ZoomKey } from './time'
 
 const route = useRoute()
 const router = useRouter()
@@ -298,7 +316,7 @@ function apply(data: TlList, detect: boolean): void {
 
 /** 操作中か（ドラッグ中・試算の確認中・確定の応答待ち） */
 function isBusy(): boolean {
-  return drag.value !== null || newDrag.value !== null || trial.value !== null || committing.value
+  return drag.value !== null || newDrag.value !== null || linkDrag.value !== null || trial.value !== null || committing.value
 }
 
 function flushDeferred(): void {
@@ -655,10 +673,10 @@ function onTrackDown(ev: PointerEvent, rowSeq: number): void {
 
 // ── 見出しの道具（開いているパネルは1つだけ）──────────────────
 
-const openMenu = ref<'rows' | 'filter' | 'baseline' | null>(null)
+const openMenu = ref<'rows' | 'filter' | 'baseline' | 'span' | null>(null)
 const toolsEl = useTemplateRef<HTMLElement>('toolsEl')
 
-function toggleMenu(m: 'rows' | 'filter' | 'baseline'): void {
+function toggleMenu(m: 'rows' | 'filter' | 'baseline' | 'span'): void {
   openMenu.value = openMenu.value === m ? null : m
 }
 
@@ -779,22 +797,49 @@ const display = computed<{ mode: 'day' | 'step'; bars: Bar[]; base: Map<number, 
   return { mode: 'day', bars: liveBars.value, base, gone }
 })
 
-const range = computed(() => {
-  const times: number[] = []
-  for (const b of [...display.value.bars, ...display.value.gone]) {
-    if (b.s !== null) times.push(b.s)
-    if (b.e !== null) times.push(b.e)
-  }
-  return axisRange(times, now.value)
-})
+/**
+ * 描く範囲（5.15「時間軸の範囲」。pb-320）。**見えている左端 `winLeft` から1画面を真ん中に、前後3画面ずつ。**
+ * チケットの有無で切れない。端へ近づいたら `placeLeft` で描き直す
+ */
+const winLeft = ref(Date.now())
+/** 1画面ぶんの時間（ms） */
+const viewMs = computed(() => (bodyW.value / pps.value) * SEC)
+const range = computed(() => windowRange(winLeft.value, viewMs.value))
+
+/** スクロールの位置の時刻 */
+function timeAtScroll(px = 0): number {
+  return range.value.t0 + ((scrollLeft.value + px) / pps.value) * SEC
+}
+
+/** 見えている左端の時刻。スクロールと描き直しのたびに覚える（幅が変わったときに保つため） */
+let lastLeft = winLeft.value
+
+/** 見えている左端を `left` にして描き直す（見ている時刻を動かさない） */
+async function placeLeft(left: number): Promise<void> {
+  lastLeft = left
+  winLeft.value = left
+  await nextTick()
+  const el = scroller.value
+  if (!el) return
+  el.scrollLeft = X(left)
+  scrollLeft.value = el.scrollLeft
+}
 
 function X(t: number): number {
   return (t - range.value.t0) * (pps.value / SEC)
 }
 const trackW = computed(() => Math.max(0, X(range.value.t1)))
 
+let rewindowing = false
 function onScroll(): void {
   scrollLeft.value = scroller.value?.scrollLeft ?? 0
+  // 端へ近づいたら描き直す（チケットの無い過去・未来へも行ける）
+  if (rewindowing || !placed) return
+  const left = timeAtScroll()
+  lastLeft = left
+  if (!needsRewindow(range.value, left, viewMs.value)) return
+  rewindowing = true
+  void placeLeft(left).finally(() => (rewindowing = false))
 }
 
 /** 1秒の幅を変える。**`anchorPx`（本体の左端からの位置）の下の時刻を動かさない** */
@@ -807,9 +852,7 @@ async function setPps(next: number, anchorPx: number): Promise<void> {
   }
   const t = range.value.t0 + ((el.scrollLeft + anchorPx) / pps.value) * SEC
   pps.value = clamped
-  await nextTick()
-  el.scrollLeft = X(t) - anchorPx
-  onScroll()
+  await placeLeft(t - (anchorPx / clamped) * SEC)
 }
 
 /** 段階のボタンの中心：「いま」が見えていれば「いま」、そうでなければ本体の中央 */
@@ -819,13 +862,56 @@ function levelAnchor(): number {
 }
 
 function pickZoom(k: ZoomKey): void {
-  setQuery({ zoom: k === 'min' ? '' : k })
+  // 倍率を変えたら表示期間は外す（5.15「表示期間」）
+  setQuery({ zoom: k === 'min' ? '' : k, span: '', at: '' })
 }
 
 watch(
   () => route.query.zoom,
-  (z) => void setPps(ZOOMS[zoomOf(z)], levelAnchor()),
+  (z) => {
+    if (spanOf(route.query.span) === null) void setPps(ZOOMS[zoomOf(z)], levelAnchor())
+  },
 )
+
+// ── 表示期間（5.15「表示期間」。pb-320）──────────────────────────
+
+const spanKey = computed<SpanKey | null>(() => spanOf(route.query.span))
+const atMs = computed<number | null>(() => atOf(route.query.at))
+const spanLabelSources: Record<SpanKey, string> = { '1h': '1時間', '3h': '3時間', '6h': '6時間', '12h': '12時間', '1d': '1日' }
+/** ヘッダの札：選んだ期間と開始（`1日・10/25 06:00`）。どちらも無ければ「表示期間」 */
+const spanChip = computed(() => {
+  const parts: string[] = []
+  if (spanKey.value !== null) parts.push(uiText(spanLabelSources[spanKey.value]))
+  if (atMs.value !== null) parts.push(`${monthDay(viewTz.value, atMs.value)} ${clock(viewTz.value, atMs.value)}`)
+  return parts.length > 0 ? parts.join('・') : uiText('表示期間')
+})
+/** 開始日時の入力（見る人のタイムゾーンの壁時計） */
+const atInput = computed(() => (atMs.value === null ? '' : toLocalInput(viewTz.value, atMs.value)))
+
+/** URL の表示期間を当てる。期間があればその幅に収め、開始日時（無ければ「いま」を 30%）を左に置く */
+async function applySpan(): Promise<void> {
+  const k = spanKey.value
+  const at = atMs.value
+  if (k === null) {
+    if (at !== null) await placeLeft(at)
+    return
+  }
+  pps.value = ppsForSpan(k, bodyW.value, PPS_MIN, PPS_MAX)
+  await placeLeft(at ?? now.value - viewMs.value * 0.3)
+}
+
+function pickSpan(raw: string): void {
+  setQuery({ span: spanOf(raw) ?? '' })
+}
+
+function pickAt(raw: string): void {
+  const t = raw === '' ? null : fromLocalInput(viewTz.value, raw)
+  setQuery({ at: t === null ? '' : String(t) })
+}
+
+watch([() => route.query.span, () => route.query.at], () => {
+  if (placed) void applySpan()
+})
 
 const currentZoom = computed(() => zoomAt(pps.value))
 
@@ -835,6 +921,7 @@ function onWheel(e: WheelEvent): void {
   const el = scroller.value
   if (!el) return
   const px = e.clientX - el.getBoundingClientRect().left - LW
+  if (spanKey.value !== null || atMs.value !== null) setQuery({ span: '', at: '' })
   void setPps(pps.value * Math.exp(-e.deltaY * 0.002), Math.max(0, px))
 }
 
@@ -844,10 +931,7 @@ function toNow(): void {
 }
 
 function scrollToTime(t: number): void {
-  const el = scroller.value
-  if (!el) return
-  el.scrollLeft = Math.max(0, X(t) - bodyW.value * 0.3)
-  onScroll()
+  void placeLeft(t - viewMs.value * 0.3)
 }
 
 const zoomText = computed(() => {
@@ -881,13 +965,15 @@ const axisTicks = computed(() => {
     const x = X(t)
     const major = isWallMultiple(viewTz.value, t, sc.major)
     ticks.push({ x, major })
+    // 日の変わり目（0時）は時刻の代わりに日付（5.15「拡大縮小」。pb-320）
+    const midnight = isWallMultiple(viewTz.value, t, 86400)
     if (major) {
-      const text = clock(viewTz.value, t, sc.major < 60)
+      const text = midnight ? monthDay(viewTz.value, t) : clock(viewTz.value, t, sc.major < 60)
       const w = text.length * 7 + 8
       if (!near(x, w)) majors.push({ x, text, left: false })
       else if (!near(x - w - 8, w)) majors.push({ x, text, left: true })
     } else {
-      const text = clock(viewTz.value, t, sc.minor < 60)
+      const text = midnight ? monthDay(viewTz.value, t) : clock(viewTz.value, t, sc.minor < 60)
       if (!near(x, text.length * 6.5 + 6)) minors.push({ x, text })
     }
   }
@@ -903,7 +989,11 @@ const gridLines = computed(() => {
   }))
 })
 
-const cornerDate = computed(() => monthDay(viewTz.value, now.value))
+/** 角の日付は、見えている左端の日（日をまたいで送ったとき、どの日を見ているかが分かる） */
+/** 「いま」が描く範囲にあるか（外なら線と札を描かない。スクロールの幅を広げない） */
+const nowInRange = computed(() => now.value >= range.value.t0 && now.value <= range.value.t1)
+
+const cornerDate = computed(() => monthDay(viewTz.value, timeAtScroll()))
 const cornerZone = computed(() =>
   baseTz.value === viewTz.value
     ? uiText('基準 {value0}', { value0: baseTz.value })
@@ -1021,6 +1111,7 @@ function barView(b: Bar, r: RowLayout): BarView {
     b.ps ? uiText('開始のアンカー') : '',
     b.pe ? uiText('終了のアンカー') : '',
     dev?.title ?? '',
+    editable ? uiText('バーからバーへドラッグ：依存を引く') : '',
   ].filter((p) => p !== '')
   const cls = [
     'bar',
@@ -1105,14 +1196,16 @@ const rowViews = computed<RowView[]>(() =>
     })
     const mode = display.value.mode
     const coll = mode === 'day' ? collisions(r.bars).map((c) => ({ x: X(c.s), w: Math.max(2, X(c.e) - X(c.s)) })) : []
+    // 接している同じ行の FS は継ぎ目の ◆。離れているもの・ほかの種別・行またぎは依存線（depLines）で描く
     const fs =
       mode === 'day'
-        ? fsMarks(links.value, r.bars).map((m) => {
-            const y = laneTop(r.lane.get(keyOf(m.to)) ?? 0) + BAR_H / 2
-            const title = uiText('FS：{value0} → {value1}（隙間を空けない）', { value0: m.from.title, value1: m.to.title })
-            if (m.joined) return { key: `${m.from.seq}-${m.to.seq}`, joined: true, x: X(m.to.s!), w: 0, y, title }
-            return { key: `${m.from.seq}-${m.to.seq}`, joined: false, x: X(m.from.e!) + 2, w: Math.max(0, X(m.to.s!) - X(m.from.e!) - 4), y, title }
-          })
+        ? fsMarks(links.value, r.bars)
+            .filter((m) => m.joined)
+            .map((m) => {
+              const y = laneTop(r.lane.get(keyOf(m.to)) ?? 0) + BAR_H / 2
+              const title = uiText('FS：{value0} → {value1}（隙間を空けない）', { value0: m.from.title, value1: m.to.title })
+              return { key: `${m.from.seq}-${m.to.seq}`, joined: true, x: X(m.to.s!), w: 0, y, title }
+            })
         : []
     const lateExt = bars
       .filter((v) => v.bar.state === 'late' && v.bar.e !== null)
@@ -1136,12 +1229,224 @@ const rowViews = computed<RowView[]>(() =>
   }),
 )
 
+// ── 依存線（5.15「依存線」。pb-332）──────────────────────────────
+
+/** ポインタを載せたバー（その依存線を濃く太くする） */
+const hoverSeq = ref<number | null>(null)
+
+/** 各バーの位置（本体の座標。y は行の上端からのバーの中ほど） */
+const barBoxes = computed(() => {
+  const out = new Map<number, DepBox & { bar: Bar }>()
+  let top = 0
+  for (const rv of rowViews.value) {
+    for (const v of rv.bars) {
+      if (!v.bar.gone) out.set(v.bar.seq, { xs: v.x, xf: v.x + v.w, y: top + v.y + BAR_H / 2, bar: v.bar })
+    }
+    top += rv.row.height
+  }
+  return out
+})
+
+function depWhat(type: DepType): string {
+  switch (type) {
+    case 'FS':
+      return uiText('隙間を空けない')
+    case 'SS':
+      return uiText('開始をそろえる')
+    case 'FF':
+      return uiText('終了をそろえる')
+    case 'SF':
+      return uiText('開始に終了をそろえる')
+  }
+}
+
+interface DepLine {
+  key: string
+  path: DepPath
+  bad: boolean
+  hot: boolean
+  tag: string
+  tagW: number
+  title: string
+}
+
+const depLines = computed<DepLine[]>(() => {
+  if (display.value.mode !== 'day') return []
+  const boxes = barBoxes.value
+  const out: DepLine[] = []
+  for (const l of links.value) {
+    if (!isDepType(l.link_type)) continue
+    const a = boxes.get(l.source_seq)
+    const b = boxes.get(l.target_seq)
+    if (!a || !b) continue
+    // 同じ行で接している FS は継ぎ目の ◆ で示す（rowViews の fs）
+    if (l.link_type === 'FS' && a.bar.epic === b.bar.epic && a.bar.e !== null && b.bar.s !== null && b.bar.s - a.bar.e <= 0) continue
+    const bad = depViolated(l, a.bar, b.bar)
+    const lag = lagText(l.lag_days, l.lag_seconds)
+    const tag = [bad ? '⚠' : '', l.link_type !== 'FS' ? l.link_type : '', lag].filter((w) => w !== '').join(' ')
+    out.push({
+      key: l.id,
+      path: depPath(l.link_type, a, b),
+      bad,
+      hot: hoverSeq.value === l.source_seq || hoverSeq.value === l.target_seq,
+      tag,
+      tagW: tag.length * 6.2 + 6,
+      title: uiText('{type}：{a} → {b}（{what}{lag}）', {
+        type: l.link_type,
+        a: a.bar.title,
+        b: b.bar.title,
+        what: depWhat(l.link_type),
+        lag: lag ? ` ${lag}` : '',
+      }),
+    })
+  }
+  return out
+})
+
+// ── 依存を引く（5.15「依存を引く」。pb-332）────────────────────────
+
+interface LinkDrag {
+  src: number
+  srcEnd: DepEnd
+  /** ポインタ（本体の座標） */
+  x: number
+  y: number
+  target: number | null
+  targetEnd: DepEnd
+  type: DepType
+  /** 落とせない理由。落とせるなら空 */
+  reason: string
+}
+
+const linkDrag = shallowRef<LinkDrag | null>(null)
+/** 依存を引いた後の click を、詳細を開く操作として扱わない */
+let suppressClick = false
+
+function canLinkFrom(v: BarView): boolean {
+  return display.value.mode === 'day' && canPlan.value && !v.bar.gone && trial.value === null && !committing.value
+}
+
+/** 画面の座標を本体の座標（`X()` と同じ原点、y は行の上端から）にする */
+function toBody(clientX: number, clientY: number): { x: number; y: number } {
+  const canvas = scroller.value?.querySelector('.tl-canvas')
+  const r = canvas?.getBoundingClientRect()
+  return r ? { x: clientX - r.left - LW, y: clientY - r.top - AH } : { x: 0, y: 0 }
+}
+
+/** 掴んだ端・指した端の座標 */
+function endPoint(seq: number, end: DepEnd): { x: number; y: number } | null {
+  const b = barBoxes.value.get(seq)
+  return b ? { x: end === 'S' ? b.xs : b.xf, y: b.y } : null
+}
+
+const linkDragView = computed(() => {
+  const d = linkDrag.value
+  if (!d) return null
+  const from = endPoint(d.src, d.srcEnd)
+  if (!from) return null
+  const to = d.target !== null && d.reason === '' ? endPoint(d.target, d.targetEnd) : null
+  const label = d.target === null ? '' : d.reason !== '' ? d.reason : `${d.type} pb-${d.src} → pb-${d.target}`
+  return { from, to, x: d.x, y: d.y, label, ng: d.target !== null && d.reason !== '' }
+})
+
+function onBarDown(ev: PointerEvent, v: BarView): void {
+  if (ev.button !== 0 || !canLinkFrom(v)) return
+  const el = ev.currentTarget as HTMLElement
+  const rect = el.getBoundingClientRect()
+  const srcEnd = depEndAt(ev.clientX, rect.left, rect.right, { s: v.bar.s !== null, e: v.bar.e !== null })
+  const x0 = ev.clientX
+  const y0 = ev.clientY
+  let started = false
+  ev.preventDefault()
+  el.setPointerCapture(ev.pointerId)
+  const move = (m: PointerEvent) => {
+    if (!started) {
+      // 3px 未満はクリック（選んで詳細を開く）
+      if (Math.hypot(m.clientX - x0, m.clientY - y0) < 3) return
+      started = true
+      result.value = null
+    }
+    edgeScroll(m.clientX)
+    const p = toBody(m.clientX, m.clientY)
+    const hit = (document.elementFromPoint(m.clientX, m.clientY) as HTMLElement | null)?.closest<HTMLElement>('.bar[data-seq]')
+    const tseq = hit ? Number(hit.dataset.seq) : Number.NaN
+    const tbox = Number.isInteger(tseq) ? barBoxes.value.get(tseq) : undefined
+    if (!hit || !tbox) {
+      linkDrag.value = { src: v.bar.seq, srcEnd, x: p.x, y: p.y, target: null, targetEnd: 'S', type: depTypeOf(srcEnd, 'S'), reason: '' }
+      return
+    }
+    const hr = hit.getBoundingClientRect()
+    const targetEnd = depEndAt(m.clientX, hr.left, hr.right, { s: tbox.bar.s !== null, e: tbox.bar.e !== null })
+    const type = depTypeOf(srcEnd, targetEnd)
+    let reason = ''
+    if (tseq === v.bar.seq) reason = uiText('自分自身には引けません')
+    else if (links.value.some((l) => l.source_seq === v.bar.seq && l.target_seq === tseq && l.link_type === type)) reason = uiText('同じ依存がすでにあります')
+    else if (depWouldCycle(links.value, v.bar.seq, tseq)) reason = uiText('依存が輪になるため引けません')
+    linkDrag.value = { src: v.bar.seq, srcEnd, x: p.x, y: p.y, target: tseq, targetEnd, type, reason }
+  }
+  const end = (commit: boolean) => {
+    el.removeEventListener('pointermove', move)
+    el.removeEventListener('pointerup', up)
+    el.removeEventListener('pointercancel', cancel)
+    const d = linkDrag.value
+    linkDrag.value = null
+    if (started) suppressClick = true
+    flushDeferred()
+    if (commit && d && d.target !== null && d.reason === '') void createDependency(d)
+  }
+  const up = () => end(true)
+  const cancel = () => end(false)
+  el.addEventListener('pointermove', move)
+  el.addEventListener('pointerup', up)
+  el.addEventListener('pointercancel', cancel)
+}
+
+/** 本体の左右の端 32px に寄せると横へ送る（5.15「依存を引く」） */
+function edgeScroll(clientX: number): void {
+  const el = scroller.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  if (clientX < r.left + LW + 32) el.scrollLeft -= 16
+  else if (clientX > r.right - 32) el.scrollLeft += 16
+  onScroll()
+}
+
+function onBarClick(v: BarView, e: MouseEvent): void {
+  if (suppressClick) {
+    suppressClick = false
+    return
+  }
+  if (v.bar.gone || display.value.mode === 'step') return
+  openDetail(v.bar.seq, e)
+}
+
+/** 作れたら、先行を動かさずに連鎖の試算を出す（そろえる。9.17.2） */
+async function createDependency(d: LinkDrag): Promise<void> {
+  const label = `${d.type} pb-${d.src} → pb-${d.target}`
+  try {
+    await tlApi.createDependency(projectKey.value, d.src, d.target!, d.type)
+  } catch (e) {
+    setResult('error', toApiError(e).message)
+    return
+  }
+  await reloadNow()
+  const t = ticketOf(d.src)
+  if (!t || t.start_at === null || t.due_at === null || trial.value !== null) {
+    setResult('ok', uiText('依存を作りました（{value0}）', { value0: label }))
+    return
+  }
+  await startTrial(d.src, 'align', undefined, label)
+}
+
 // ── 連鎖のずらし（試算の影 → 確定）──────────────────────────
 
 interface Trial {
   seq: number
   title: string
-  op: 'end' | 'start' | 'now' | 'compact'
+  /** `align` は依存を作った直後に、きっかけを動かさずに後ろをそろえる（5.15「依存を引く」） */
+  op: 'end' | 'start' | 'now' | 'compact' | 'align'
+  /** `align` のとき、作った依存（`FS pb-218 → pb-220`） */
+  note: string
   version: number
   body: RescheduleRequest
   from: number | null
@@ -1174,7 +1479,7 @@ function ticketOf(seq: number): TlTicket | undefined {
   return tickets.value.find((t) => t.seq === seq)
 }
 
-async function startTrial(seq: number, op: Trial['op'], edge?: { start_at?: number; due_at?: number }): Promise<void> {
+async function startTrial(seq: number, op: Trial['op'], edge?: { start_at?: number; due_at?: number }, note = ''): Promise<void> {
   const t = ticketOf(seq)
   if (!t) return
   const body: RescheduleRequest =
@@ -1186,10 +1491,11 @@ async function startTrial(seq: number, op: Trial['op'], edge?: { start_at?: numb
     seq,
     title: t.title,
     op,
+    note,
     version: t.version,
     body,
-    from: isStart ? t.start_at : t.due_at,
-    to: isStart ? (edge?.start_at ?? null) : (edge?.due_at ?? null),
+    from: op === 'align' ? null : isStart ? t.start_at : t.due_at,
+    to: op === 'align' ? null : isStart ? (edge?.start_at ?? null) : (edge?.due_at ?? null),
     result: null,
     stale: false,
     showAlt: false,
@@ -1209,6 +1515,13 @@ async function runTrial(tr: Trial): Promise<void> {
       tr.from = tr.op === 'start' ? target.before.start_at : target.before.due_at
       tr.to = tr.op === 'start' ? target.after.start_at : target.after.due_at
     }
+    // 依存を作った直後で、そろえるものが無ければ試算を出さない
+    if (tr.op === 'align' && res.result === 'ok' && res.changes.length === 0) {
+      trial.value = null
+      setResult('ok', uiText('依存を作りました（{value0}）', { value0: tr.note }))
+      flushDeferred()
+      return
+    }
     trial.value = { ...tr, result: res }
   } catch (e) {
     if (trial.value !== tr) return
@@ -1223,6 +1536,8 @@ async function runTrial(tr: Trial): Promise<void> {
 
 function cancelTrial(): void {
   if (trial.value === null || committing.value) return
+  // 依存を作った直後なら、依存は残して予定だけ動かさない
+  if (trial.value.op === 'align') setResult('ok', uiText('依存を作りました（{value0}）。予定は動かしていません', { value0: trial.value.note }))
   trial.value = null
   pending.value = new Set()
   override.value = new Map()
@@ -1350,9 +1665,12 @@ const trialNotice = computed(() => {
   const t = trial.value
   if (!t) return null
   const what = t.op === 'start' ? uiText('開始') : uiText('終了')
-  const opName = t.op === 'now' ? uiText('［いままで延ばす］') : t.op === 'compact' ? uiText('［ここで詰める］') : ''
+  const opName =
+    t.op === 'now' ? uiText('［いままで延ばす］') : t.op === 'compact' ? uiText('［ここで詰める］') : t.op === 'align' ? uiText('［依存に合わせる］') : ''
   const head =
-    t.from !== null && t.to !== null
+    t.op === 'align'
+      ? uiText('依存を作りました（{value0}）', { value0: t.note })
+      : t.from !== null && t.to !== null
       ? uiText('{value0} の{value1} {value2} → {value3}（{value4}）', {
           value0: shortTitle(t.title),
           value1: what,
@@ -1366,11 +1684,14 @@ const trialNotice = computed(() => {
     const moved = t.result.changes.filter((c) => c.seq !== t.seq)
     const names = moved.map((c) => shortTitle(ticketOf(c.seq)?.title ?? `pb-${c.seq}`, 8)).join('・')
     const tk = ticketOf(t.seq)
-    const tail = !tk?.no_overlap
-      ? uiText('時間重複チェック無しなので、ほかは動きません')
-      : moved.length > 0
-        ? uiText('後ろの{value0}件が動きます（{value1}）', { value0: moved.length, value1: names })
-        : t.to !== null && t.from !== null && t.to < t.from
+    const tail =
+      moved.length > 0
+        ? t.op === 'align'
+          ? uiText('依存に合わせて{value0}件が動きます（{value1}）', { value0: moved.length, value1: names })
+          : uiText('後ろの{value0}件が動きます（{value1}）', { value0: moved.length, value1: names })
+        : !tk?.no_overlap
+          ? uiText('時間重複チェック無しなので、ほかは動きません')
+          : t.to !== null && t.from !== null && t.to < t.from
           ? uiText('後ろは動きません（隙間が空きます）')
           : uiText('隙間で吸収し、後ろは動きません')
     return { kind: 'ok' as const, opName, head, tail, alt: '' }
@@ -1508,6 +1829,17 @@ function closeDetail(): void {
 function onDetailUpdated(next: TicketDetail): void {
   myVersions.set(next.seq, next.version)
   tickets.value = tickets.value.map((t) => (t.seq === next.seq ? { ...t, ...next } : t))
+  // 依存の増減とずらしの変更は線に効く（5.15「依存線」。pb-332）。ずらしは依存の ETag に入らないので、
+  // 定期取得を待たずに差し替える。本数が変わったら取り直す（ガントと同じ。5.14）
+  const lagOf = new Map(next.links.map((l) => [l.id, l]))
+  links.value = links.value.map((l) => {
+    const n = lagOf.get(l.id)
+    return n && (n.lag_days !== l.lag_days || n.lag_seconds !== l.lag_seconds) ? { ...l, lag_days: n.lag_days, lag_seconds: n.lag_seconds } : l
+  })
+  const mine = (l: { source_seq: number; target_seq: number }) => l.source_seq === next.seq || l.target_seq === next.seq
+  const present = new Set(tickets.value.map((t) => t.seq))
+  const has = next.links.filter((l) => isDepType(l.link_type) && present.has(l.ticket.seq)).length
+  if (links.value.filter(mine).length !== has) void reloadNow()
 }
 
 function onDetailDeleted(): void {
@@ -1644,10 +1976,18 @@ onUnmounted(() => {
 // 最初に取れたら「いま」を `[いま]` と同じ位置に置く
 watch(loaded, async (v) => {
   if (!v || placed) return
-  placed = true
   await nextTick()
   bodyW.value = Math.max(100, (scroller.value?.clientWidth ?? 900) - LW)
-  toNow()
+  if (spanKey.value !== null || atMs.value !== null) await applySpan()
+  else await placeLeft(now.value - viewMs.value * 0.3)
+  placed = true
+})
+
+// 幅が変わったら、見ている左端を保って描き直す。表示期間が付いていれば同じ期間が収まるように合わせ直す
+watch(bodyW, (w, old) => {
+  if (!placed || w === old) return
+  if (spanKey.value !== null) pps.value = ppsForSpan(spanKey.value, w, PPS_MIN, PPS_MAX)
+  void placeLeft(lastLeft)
 })
 
 watch(fetchKey, () => {
@@ -1738,6 +2078,27 @@ watch(projectKey, (key, prev) => {
             </button>
           </div>
           <button type="button" class="secondary small" @click="toNow">{{ $ui('いま') }}</button>
+          <!-- 表示期間（5.15「表示期間」。pb-320）。開始日時と期間で、本体の幅にちょうど収める。
+               ヘッダが詰まるので、選んだ期間の札だけを出し、入力はパネルに畳む -->
+          <div class="tl-dd">
+            <button type="button" class="tl-chip" :class="{ on: spanKey !== null || atMs !== null }" :aria-expanded="openMenu === 'span'" @click="toggleMenu('span')">
+              {{ spanChip }} ▾
+            </button>
+            <div v-if="openMenu === 'span'" class="tl-panel tl-span" role="group" :aria-label="$ui('表示期間')">
+              <label class="filter">
+                <span class="filter-label">{{ $ui('開始日時') }}</span>
+                <input type="datetime-local" class="tl-at" :value="atInput" :title="$ui('開始日時（空なら「いま」）')" @change="pickAt(($event.target as HTMLInputElement).value)" />
+              </label>
+              <label class="filter">
+                <span class="filter-label">{{ $ui('期間') }}</span>
+                <select class="tl-spansel" :value="spanKey ?? ''" @change="pickSpan(($event.target as HTMLSelectElement).value)">
+                  <option value="">{{ $ui('指定しない') }}</option>
+                  <option v-for="k in SPAN_ORDER" :key="k" :value="k">{{ $ui(spanLabelSources[k]) }}</option>
+                </select>
+              </label>
+              <button type="button" class="secondary small" :disabled="spanKey === null && atMs === null" @click="setQuery({ span: '', at: '' })">{{ $ui('解除') }}</button>
+            </div>
+          </div>
           <span class="tl-vsep" aria-hidden="true"></span>
 
           <!-- 重ねている版の札（押せない表示。pb-322）。重ねていなければ出さない -->
@@ -1868,7 +2229,7 @@ watch(projectKey, (key, prev) => {
               <i v-for="(t, i) in axisTicks.ticks" :key="`t${i}`" class="ax-tk" :class="{ M: t.major }" :style="{ left: `${t.x}px` }"></i>
               <span v-for="(t, i) in axisTicks.minors" :key="`n${i}`" class="ax-min" :style="{ left: `${t.x}px` }">{{ t.text }}</span>
               <span v-for="(t, i) in axisTicks.majors" :key="`j${i}`" class="ax-maj" :class="{ lft: t.left }" :style="{ left: `${t.x}px` }">{{ t.text }}</span>
-              <span v-if="step === null" class="nowtag" :style="{ left: `${X(now)}px` }">{{ clock(viewTz, now, withSec) }}</span>
+              <span v-if="step === null && nowInRange" class="nowtag" :style="{ left: `${X(now)}px` }">{{ clock(viewTz, now, withSec) }}</span>
             </div>
           </div>
 
@@ -1930,7 +2291,10 @@ watch(projectKey, (key, prev) => {
                 :style="{ left: `${v.x}px`, width: `${v.w}px`, top: `${v.y}px`, height: `${BAR_H}px`, animationDelay: v.flashDelay !== null ? `-${v.flashDelay}ms` : undefined }"
                 :title="v.tip"
                 :data-seq="v.bar.seq"
-                @click="v.bar.gone || display.mode === 'step' ? undefined : openDetail(v.bar.seq, $event)"
+                @pointerdown="onBarDown($event, v)"
+                @pointerenter="hoverSeq = v.bar.seq"
+                @pointerleave="hoverSeq = hoverSeq === v.bar.seq ? null : hoverSeq"
+                @click="onBarClick(v, $event)"
               >
                 <span class="in" :style="v.inset > 0 ? { marginLeft: `${v.inset}px`, maxWidth: `${v.w - v.inset}px` } : undefined">
                   <span class="l1"><span v-if="v.isNew" class="newtag">{{ $ui('計画外') }}</span>{{ v.bar.title }}</span>
@@ -1951,10 +2315,7 @@ watch(projectKey, (key, prev) => {
                 :style="{ left: `${l.x}px`, width: `${l.w}px`, top: `${l.y}px` }"
                 :title="l.title"
               ></div>
-              <template v-for="m in rv.fs" :key="`fs${m.key}`">
-                <i v-if="m.joined" class="fs j" :style="{ left: `${m.x}px`, top: `${m.y}px` }" :title="m.title"></i>
-                <i v-else class="fs ln" :style="{ left: `${m.x}px`, width: `${m.w}px`, top: `${m.y}px` }" :title="m.title"></i>
-              </template>
+              <i v-for="m in rv.fs" :key="`fs${m.key}`" class="fs j" :style="{ left: `${m.x}px`, top: `${m.y}px` }" :title="m.title"></i>
               <template v-for="g in rv.ghosts" :key="g.key">
                 <div class="ghost" :class="g.cls" :style="{ left: `${g.x}px`, width: `${g.w}px`, top: `${g.y}px`, height: `${BAR_H}px` }"></div>
                 <span class="gl" :class="g.cls" :style="{ left: `${g.x}px`, top: `${g.y - 2}px` }">{{ g.label }}</span>
@@ -1963,8 +2324,43 @@ watch(projectKey, (key, prev) => {
           </div>
           <p v-if="loaded && rowViews.length === 0" class="tl-empty">{{ $ui('表示する行がありません') }}</p>
 
+          <!-- 依存線（5.15「依存線」。行をまたぐので行の外に重ねる。pb-332） -->
+          <svg
+            v-if="depLines.length > 0 || linkDragView"
+            class="tl-deps"
+            :class="{ dragging: linkDragView !== null }"
+            :width="Math.max(0, visible.x1 - visible.x0)"
+            :height="Math.max(rowsH, 80)"
+            :style="{ left: `${LW + visible.x0}px`, top: `${AH}px` }"
+          >
+            <g :transform="`translate(${-visible.x0},0)`">
+              <g v-for="l in depLines" :key="l.key" class="dep" :class="{ bad: l.bad, hot: l.hot }" :data-link="l.key">
+                <title>{{ l.title }}</title>
+                <path class="dl" :d="l.path.d" />
+                <circle class="do" :cx="l.path.from.x" :cy="l.path.from.y" r="2.4" />
+                <path class="dh" :d="l.path.head" />
+                <template v-if="l.tag">
+                  <rect class="dtr" :x="l.path.tag.x - l.tagW / 2" :y="l.path.tag.y - 6.5" :width="l.tagW" height="13" rx="2" />
+                  <text class="dtt" :x="l.path.tag.x" :y="l.path.tag.y + 3.4" text-anchor="middle">{{ l.tag }}</text>
+                </template>
+              </g>
+              <g v-if="linkDragView" class="dep-drag" :class="{ ng: linkDragView.ng }">
+                <line :x1="linkDragView.from.x" :y1="linkDragView.from.y" :x2="linkDragView.x" :y2="linkDragView.y" />
+                <circle class="do" :cx="linkDragView.from.x" :cy="linkDragView.from.y" r="3.5" />
+                <circle v-if="linkDragView.to" class="di" :cx="linkDragView.to.x" :cy="linkDragView.to.y" r="5" />
+              </g>
+            </g>
+          </svg>
+          <span
+            v-if="linkDragView && linkDragView.label"
+            class="tl-deptag"
+            :class="{ ng: linkDragView.ng }"
+            :style="{ left: `${LW + linkDragView.x + 14}px`, top: `${AH + linkDragView.y + 14}px` }"
+            >{{ linkDragView.label }}</span
+          >
+
           <div
-            v-if="step === null"
+            v-if="step === null && nowInRange"
             class="nowline"
             :style="{ left: `${LW + X(now)}px`, top: `${AH}px`, height: `${Math.max(rowsH, 80)}px` }"
             aria-hidden="true"
@@ -2650,6 +3046,20 @@ watch(projectKey, (key, prev) => {
 .tl-track {
   position: relative;
   flex: none;
+  /* 描く範囲の外のバー・影・線はスクロールの幅を広げない（5.15「時間軸の範囲」。pb-320）。
+     縦は札（.gl・.who）がはみ出すので切らない */
+  overflow-x: clip;
+}
+
+.tl-span {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.tl-at {
+  width: 13em;
 }
 
 /* 空いた所のドラッグで作れる（5.15「チケットを作る」）。作れない人にはカーソルも変えない */
@@ -3014,20 +3424,98 @@ watch(projectKey, (key, prev) => {
   border: 1.5px solid var(--g-dep);
 }
 
-.fs.ln {
-  height: 0;
-  border-top: 1.5px solid var(--g-dep);
-  transform: translateY(-50%);
+/* 依存線（5.15「依存線」。ガント 5.14 の描き方に揃える。pb-332） */
+.tl-deps {
+  position: absolute;
+  z-index: 3;
+  overflow: hidden;
+  pointer-events: none;
 }
 
-.fs.ln::after {
-  content: '';
+.tl-deps .dl {
+  fill: none;
+  stroke: var(--g-dep);
+  stroke-width: 1;
+  pointer-events: stroke;
+}
+
+.tl-deps .do {
+  fill: var(--pb-1);
+  stroke: var(--g-dep);
+  stroke-width: 1;
+}
+
+.tl-deps .dh {
+  fill: var(--g-dep);
+}
+
+.tl-deps .dtr {
+  fill: var(--pb-1);
+  stroke: var(--g-dep);
+  stroke-width: 0.75;
+}
+
+.tl-deps .dtt {
+  fill: var(--pb-text);
+  font-size: 9.5px;
+}
+
+.tl-deps .dep.hot .dl {
+  stroke-width: 1.5;
+}
+
+.tl-deps .dep.bad .dl,
+.tl-deps .dep.bad .do,
+.tl-deps .dep.bad .dtr {
+  stroke: var(--pb-danger);
+}
+
+.tl-deps .dep.bad .dh {
+  fill: var(--pb-danger);
+}
+
+.tl-deps .dep.bad .dtt {
+  fill: var(--pb-danger-text);
+}
+
+.tl-deps .dep-drag line {
+  stroke: var(--pb-10);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+.tl-deps .dep-drag .do,
+.tl-deps .dep-drag .di {
+  fill: none;
+  stroke: var(--pb-10);
+  stroke-width: 1.5;
+}
+
+.tl-deps .dep-drag.ng line {
+  stroke: var(--pb-danger);
+}
+
+.tl-deptag {
   position: absolute;
-  right: -1px;
-  top: -5px;
-  border: 4px solid transparent;
-  border-left: 6px solid var(--g-dep);
-  border-right: 0;
+  z-index: 6;
+  padding: 1px 6px;
+  border: 1px solid var(--pb-10);
+  border-radius: 3px;
+  background: var(--pb-1);
+  color: var(--pb-text);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.tl-deptag.ng {
+  border-color: var(--pb-danger);
+  color: var(--pb-danger-text);
+}
+
+.tl-deps.dragging ~ * .bar,
+.tl-body:has(.tl-deps.dragging) .bar {
+  cursor: crosshair;
 }
 
 /* 押している：終了から「いま」まで、橙の破線 */

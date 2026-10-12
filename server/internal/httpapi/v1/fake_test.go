@@ -2485,7 +2485,7 @@ func (q *fakeQuerier) GetTicketLink(
 	}
 	row := q.ticket.linkRows[i]
 	return gen.GetTicketLinkRow{
-		ID: row.ID, LinkType: row.LinkType, LagDays: row.LagDays,
+		ID: row.ID, LinkType: row.LinkType, LagDays: row.LagDays, LagSeconds: row.LagSeconds,
 		Origin: row.Origin, CreatedAt: row.CreatedAt,
 		Direction: row.Direction, TicketSeq: row.TicketSeq, TicketTitle: row.TicketTitle,
 	}, nil
@@ -2518,7 +2518,7 @@ func (q *fakeQuerier) CreateTicketLink(_ context.Context, arg gen.CreateTicketLi
 	// 「作成したリンクを読めない」で落ちる。相手の要約は seq から作る。
 	q.ticket.linkRows = append(q.ticket.linkRows, gen.ListTicketLinksRow{
 		ID: arg.ID, DirectionRank: 0, Direction: "outgoing",
-		LinkType: arg.LinkType, LagDays: arg.LagDays, Origin: arg.Origin,
+		LinkType: arg.LinkType, LagDays: arg.LagDays, LagSeconds: arg.LagSeconds, Origin: arg.Origin,
 		CreatedAt:       ts(fakeNow),
 		TicketSeq:       q.ticket.seqOf(arg.TargetTicketID),
 		TicketTitle:     q.ticket.briefByID[arg.TargetTicketID].Title,
@@ -2537,6 +2537,7 @@ func (q *fakeQuerier) UpdateTicketLinkLag(
 		return 0, nil
 	}
 	q.ticket.linkRows[i].LagDays = arg.LagDays
+	q.ticket.linkRows[i].LagSeconds = arg.LagSeconds
 	return 1, nil
 }
 

@@ -2144,7 +2144,7 @@ export interface paths {
          *     `ETag` は「フィルタ条件を正規化した文字列のハッシュ・件数・`MAX(updated_at)`」から
          *     作る（9.2.5）。**`sort` / `order` / `page` / `per_page` も混ぜる**——ETag は応答本文を
          *     指す検証子であり、並び順やページが違えば本文も違う。
-         *     **`If-None-Match` が今の ETag と一致すれば 304 を返す**（9.2.5。pb-296）。
+         *     **`If-None-Match` が今の ETag と一致すれば 304 を返す**（9.2.5）。
          *     `view=timeline` は ETag にエピックと当初計画の版の材料も混ぜる。
          */
         get: operations["listTickets"];
@@ -2893,11 +2893,12 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * 依存のずらし（lag_days）の変更
-         * @description ずらし（`lag_days`）だけを変える（ApiDesign.md 9.10.1。pb-231）。**必要権限は `ticket.edit` または `ticket.plan.edit`**。
+         * 依存のずらし（lag_days・lag_seconds）の変更
+         * @description ずらし（`lag_days`・`lag_seconds`）だけを変える（ApiDesign.md 9.10.1。pb-231・pb-332）。**必要権限は `ticket.edit` または `ticket.plan.edit`**。
          *
-         *     **`FS` / `SS` / `FF` / `SF` のときだけ受ける**（ほかの種別は 422 `invalid`）。範囲は -365〜365。
-         *     **`lag_days` 以外を送ると 422 `immutable_field`**——`link_type` と相手は変えられない。
+         *     **`FS` / `SS` / `FF` / `SF` のときだけ受ける**（ほかの種別は 422 `invalid`）。範囲は日が -365〜365、秒が -86399〜86399。
+         *     **変えるものだけを送る**（送らなかった方は今のまま。どちらも無ければ 422 `required`）。
+         *     **ずらし以外を送ると 422 `immutable_field`**——`link_type` と相手は変えられない。
          *     `direction` を問わない（`incoming` の行も直せる）。変更は `activity` に1行書く。
          */
         patch: operations["updateTicketLink"];
@@ -3841,11 +3842,11 @@ export interface paths {
         put?: never;
         /**
          * 連鎖のずらし（試算と確定）
-         * @description きっかけのチケット1件の新しい予定を受け、同じエピックの時間重複チェック付きの列を
-         *     連鎖でずらす（ApiDesign.md 9.17）。**必要権限は `ticket.edit` / `ticket.self_edit` /
+         * @description きっかけのチケット1件の新しい予定を受け、時間重複チェック付きの列と依存（FS / SS / FF / SF。
+         *     行をまたいでよい）をたどって連鎖でずらす（ApiDesign.md 9.17。pb-332）。**必要権限は `ticket.edit` / `ticket.self_edit` /
          *     `ticket.plan.edit` のいずれか**。`If-Match` はきっかけの `version`（省略は 422）。
          *     `dry_run: true` は試算で、解けなくても 200（`result=blocked`）。確定で解けなければ 422
-         *     （`cannot_fit` / `overlaps_previous`）。試算の後に動かす行が変わっていれば 409（`stale_plan`）。
+         *     （`cannot_fit` / `overlaps_previous` / `order_cycle`）。試算の後に動かす行が変わっていれば 409（`stale_plan`）。
          */
         post: operations["rescheduleTicket"];
         delete?: never;
@@ -8157,7 +8158,8 @@ export interface components {
             closed_at: number | null;
         };
         /**
-         * @description 連鎖のずらしの要求（ApiDesign.md 9.17.2）。`op=move` は `start_at` / `due_at` の少なくとも一方を送る。
+         * @description 連鎖のずらしの要求（ApiDesign.md 9.17.2）。`op=move` で `start_at` / `due_at` を両方とも送らなければ、
+         *     きっかけは動かさずに、いまの予定のまま後ろを計算し直す（依存を作った直後にそろえる。pb-332）。
          *     `op=compact` は `[ここで詰める]` で、時刻を送らない。
          */
         RescheduleRequest: {
@@ -8212,7 +8214,7 @@ export interface components {
             changes: components["schemas"]["RescheduleChange"][];
             block: {
                 /** @enum {string} */
-                code: "cannot_fit" | "overlaps_previous";
+                code: "cannot_fit" | "overlaps_previous" | "order_cycle";
                 /** Format: int32 */
                 seq: number;
                 /** Format: int64 */
@@ -8725,6 +8727,8 @@ export interface components {
             /** @enum {string} */
             link_type: "FS" | "SS" | "FF" | "SF" | "blocks";
             lag_days: number;
+            /** @description 秒のずらし（1日未満。DbDesign.md 6.6.3。pb-332）。実効のずらしは lag_days（暦日）の後に足す */
+            lag_seconds: number;
             /** @enum {string} */
             origin: "human" | "ai_suggested";
         };
@@ -8753,9 +8757,9 @@ export interface components {
              */
             direction: "outgoing" | "incoming";
             /**
-             * @description **`FS` / `SS` / `FF` / `SF` はガント用の依存**（ガントが線として描く。作る操作は未実装）。
-             *     **画面が出すのは `relates` / `duplicates` / `blocks` の3つだけ**
-             *     である（GuiDesign.md 5.5）が、**API は7種すべて受ける**。
+             * @description **`FS` / `SS` / `FF` / `SF` はガントとタイムライン用の依存**（線として描き、タイムラインの連鎖のずらしが従う）。
+             *     **詳細の追加で出すのは `relates` / `duplicates` / `blocks` の3つだけ**（タイムラインから開いたときは4種も。
+             *     GuiDesign.md 5.5。pb-332）だが、**API は7種すべて受ける**。
              * @enum {string}
              */
             link_type: "FS" | "SS" | "FF" | "SF" | "relates" | "duplicates" | "blocks";
@@ -8765,6 +8769,11 @@ export interface components {
              * @description `FS`〜`SF` のときのみ意味を持つ。ガントが依存線の札に出す（GuiDesign.md 5.14）。
              */
             lag_days: number;
+            /**
+             * Format: int32
+             * @description 秒のずらし（1日未満。DbDesign.md 6.6.3。pb-332）。`FS`〜`SF` のときのみ意味を持つ
+             */
+            lag_seconds: number;
             /**
              * @description **`human` のみ作られる**（AI提案の採用・却下は未実装）。
              *     **`comment.origin` とは値域が違う**——あちらは書き手の種別
@@ -8799,14 +8808,24 @@ export interface components {
              * @default 0
              */
             lag_days: number;
+            /**
+             * Format: int32
+             * @default 0
+             */
+            lag_seconds: number;
         };
-        /** @description 依存のずらしの変更（ApiDesign.md 9.10.1）。**`lag_days` だけを受ける。** */
+        /** @description 依存のずらしの変更（ApiDesign.md 9.10.1）。**`lag_days` と `lag_seconds` だけを受け、変えるものだけを送る。** */
         UpdateTicketLinkRequest: {
             /**
              * Format: int32
              * @description 暦日（24時間 × 日数）。`FS`〜`SF` のときだけ受ける
              */
-            lag_days: number;
+            lag_days?: number;
+            /**
+             * Format: int32
+             * @description 秒（1日未満）。日の後に足す（DbDesign.md 6.6.3。pb-332）
+             */
+            lag_seconds?: number;
         };
         /**
          * @description チケットから PB の外を指す参照（ApiDesign.md 9.10.2、DbDesign.md 6.12）。

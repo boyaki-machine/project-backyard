@@ -51,13 +51,14 @@ func sampleLink(id, direction, linkType string, rank int32, seq int32, title, tp
 
 // linkJSON は応答を読むための型（v1.Time は読み戻せないので時刻は string）。
 type linkJSON struct {
-	ID        string          `json:"id"`
-	Direction string          `json:"direction"`
-	LinkType  string          `json:"link_type"`
-	Ticket    linkTicketBrief `json:"ticket"`
-	LagDays   int32           `json:"lag_days"`
-	Origin    string          `json:"origin"`
-	CreatedAt int64           `json:"created_at"`
+	ID         string          `json:"id"`
+	Direction  string          `json:"direction"`
+	LinkType   string          `json:"link_type"`
+	Ticket     linkTicketBrief `json:"ticket"`
+	LagDays    int32           `json:"lag_days"`
+	LagSeconds int32           `json:"lag_seconds"`
+	Origin     string          `json:"origin"`
+	CreatedAt  int64           `json:"created_at"`
 }
 
 type linkListJSON struct {
@@ -528,5 +529,74 @@ func TestCreateLinkRejectsLagOutOfRange(t *testing.T) {
 	h.createTicketLink(rec, cmtReq(http.MethodPost, "/links", `{"target_seq":12,"link_type":"FS","lag_days":400}`, "31", ""))
 	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"lag_days"`) {
 		t.Fatalf("status = %d, want 422 lag_days (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// ── 秒のずらし（DbDesign.md 6.6.3。pb-332）──────────────────────
+
+// **秒だけを送れば日は今のまま。** 要約は日の後ろに h / m / s をそれぞれの符号で続ける。
+func TestUpdateLinkLagSeconds(t *testing.T) {
+	q := lagFake("FS", 1)
+	rec := patchLink(q, `{"lag_seconds":5400}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	got := decodeLink(t, rec)
+	if got.LagDays != 1 || got.LagSeconds != 5400 {
+		t.Errorf("応答 = %+v, want lag_days=1 lag_seconds=5400", got)
+	}
+	if a := q.ticket.activities[0]; a.OldValue.String != "FS demo-45 +1d" || a.NewValue.String != "FS demo-45 +1d+1h30m" {
+		t.Errorf("old/new = %q/%q", a.OldValue.String, a.NewValue.String)
+	}
+
+	q = lagFake("SS", 0)
+	if rec := patchLink(q, `{"lag_days":-1,"lag_seconds":-45}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if a := q.ticket.activities[0]; a.NewValue.String != "SS demo-45 -1d-45s" {
+		t.Errorf("new = %q", a.NewValue.String)
+	}
+}
+
+func TestUpdateLinkLagSecondsValidation(t *testing.T) {
+	for _, body := range []string{`{"lag_seconds":86400}`, `{"lag_seconds":-86400}`, `{"lag_seconds":"10"}`} {
+		rec := patchLink(lagFake("FS", 0), body)
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"lag_seconds"`) {
+			t.Errorf("%s: status = %d, want 422 lag_seconds (%s)", body, rec.Code, rec.Body.String())
+		}
+	}
+	for _, body := range []string{`{"lag_seconds":86399}`, `{"lag_seconds":-86399}`} {
+		if rec := patchLink(lagFake("FS", 0), body); rec.Code != http.StatusOK {
+			t.Errorf("%s: status = %d, want 200 (%s)", body, rec.Code, rec.Body.String())
+		}
+	}
+	rec := patchLink(lagFake("blocks", 0), `{"lag_seconds":60}`)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"lag_seconds"`) {
+		t.Errorf("blocks: status = %d, want 422 lag_seconds (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// POST は lag_seconds を受けて保存し、範囲の外を弾く。
+func TestCreateLinkLagSeconds(t *testing.T) {
+	q := linkFake()
+	h, _ := ticketHandler(q)
+	rec := httptest.NewRecorder()
+	h.createTicketLink(rec, cmtReq(http.MethodPost, "/links", `{"target_seq":12,"link_type":"FS","lag_seconds":600}`, "31", ""))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := q.ticket.linkCreated[0].LagSeconds; got != 600 {
+		t.Errorf("lag_seconds = %d, want 600", got)
+	}
+	if got := decodeLink(t, rec); got.LagSeconds != 600 {
+		t.Errorf("応答 = %+v", got)
+	}
+
+	q = linkFake()
+	h, _ = ticketHandler(q)
+	rec = httptest.NewRecorder()
+	h.createTicketLink(rec, cmtReq(http.MethodPost, "/links", `{"target_seq":12,"link_type":"FS","lag_seconds":90000}`, "31", ""))
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"lag_seconds"`) {
+		t.Fatalf("status = %d, want 422 lag_seconds (%s)", rec.Code, rec.Body.String())
 	}
 }

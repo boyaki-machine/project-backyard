@@ -42,7 +42,7 @@ function tk(seq: number, title: string, o: { s?: number; e?: number; allDay?: bo
 let linkId = 0
 const ln = (s: number, t: number, type: string) => ({
   id: `01K00000000000000000LNK${String(++linkId).padStart(3, '0')}`, source_seq: s, target_seq: t,
-  link_type: type, lag_days: 0, origin: 'human',
+  link_type: type, lag_days: 0, lag_seconds: 0, origin: 'human',
 })
 
 function sample() {
@@ -339,7 +339,7 @@ test('端から端へ引くと、どの端からどの端かで4種の依存を�
       },
     })
     await expect.poll(() => w.posts.length).toBe(cases.findIndex((c) => c[4] === type) + 1)
-    expect(w.posts.at(-1)).toEqual({ seq: src, body: { target_seq: dst, link_type: type, lag_days: 0 } })
+    expect(w.posts.at(-1)).toEqual({ seq: src, body: { target_seq: dst, link_type: type, lag_days: 0, lag_seconds: 0 } })
     // 一覧を取り直して線が増える
     await expect.poll(() => page.locator('.gantt-svg g.dep').count()).toBe(3 + w.posts.length)
   }

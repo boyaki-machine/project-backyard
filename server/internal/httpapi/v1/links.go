@@ -2,7 +2,7 @@
 //
 //	GET    /api/v1/projects/{key}/tickets/{seq}/links        ticket.view
 //	POST   /api/v1/projects/{key}/tickets/{seq}/links        ticket.edit
-//	PATCH  /api/v1/projects/{key}/tickets/{seq}/links/{id}   ticket.edit（lag_days だけ。pb-231）
+//	PATCH  /api/v1/projects/{key}/tickets/{seq}/links/{id}   ticket.edit（ずらしだけ。pb-231・pb-332）
 //	DELETE /api/v1/projects/{key}/tickets/{seq}/links/{id}   ticket.edit
 //
 // **チケットから「同じプロジェクトの別のチケット」を指す**（9.10）。外部参照
@@ -61,6 +61,9 @@ var lagLinkTypes = []string{"FS", "SS", "FF", "SF"}
 // maxLagDays はずらしの範囲（-365〜365 日。9.10.1。pb-231）。
 const maxLagDays = 365
 
+// maxLagSeconds は秒のずらしの範囲（1日未満。DbDesign.md 6.6.3 の CHECK と同じ。pb-332）。
+const maxLagSeconds = 86399
+
 // linkOriginHuman は API が作る唯一の origin（9.10.1）。
 //
 // **ticket_link.origin の値域は human / ai_suggested で、comment.origin とは違う**
@@ -90,8 +93,10 @@ type linkView struct {
 	LinkType  string          `json:"link_type"`
 	Ticket    linkTicketBrief `json:"ticket"`
 	LagDays   int32           `json:"lag_days"`
-	Origin    string          `json:"origin"`
-	CreatedAt Time            `json:"created_at"`
+	// LagSeconds は秒のずらし（DbDesign.md 6.6.3。pb-332）
+	LagSeconds int32  `json:"lag_seconds"`
+	Origin     string `json:"origin"`
+	CreatedAt  Time   `json:"created_at"`
 }
 
 // linkListView は 9.10.1 の一覧応答。
@@ -104,9 +109,10 @@ type linkListView struct {
 
 // createLinkRequest は POST の本文（9.10.1）。
 type createLinkRequest struct {
-	TargetSeq *int32  `json:"target_seq"`
-	LinkType  *string `json:"link_type"`
-	LagDays   *int32  `json:"lag_days"`
+	TargetSeq  *int32  `json:"target_seq"`
+	LinkType   *string `json:"link_type"`
+	LagDays    *int32  `json:"lag_days"`
+	LagSeconds *int32  `json:"lag_seconds"`
 }
 
 // ── GET /api/v1/projects/{key}/tickets/{seq}/links ───────────
@@ -146,7 +152,7 @@ func (h *handler) createTicketLink(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, e)
 		return
 	}
-	targetSeq, linkType, lagDays, e := validateNewLink(req, scope.seq)
+	targetSeq, linkType, lag, e := validateNewLink(req, scope.seq)
 	if e != nil {
 		apierr.Write(w, r, e)
 		return
@@ -222,7 +228,8 @@ func (h *handler) createTicketLink(w http.ResponseWriter, r *http.Request) {
 			SourceTicketID: ticketID,
 			TargetTicketID: targetID,
 			LinkType:       linkType,
-			LagDays:        lagDays,
+			LagDays:        lag.days,
+			LagSeconds:     lag.seconds,
 			Origin:         linkOriginHuman,
 			CreatedBy:      pgtype.Text{String: scope.actorID, Valid: scope.actorID != ""},
 		}); err != nil {
@@ -309,7 +316,7 @@ func (h *handler) deleteTicketLink(w http.ResponseWriter, r *http.Request) {
 
 		// 要約は「<link_type> <相手の完全形ID>」（9.10.1）。GetTicketLink は
 		// 相手の seq を返すので、一覧を引き直さずに組み立てられる。
-		summary := linkSummary(scope.key, row.LinkType, row.TicketSeq, row.LagDays)
+		summary := linkSummary(scope.key, row.LinkType, row.TicketSeq, linkLag{row.LagDays, row.LagSeconds})
 		return recordLinkChange(ctx, q, rec, scope.projectID, ticketID, &summary, "")
 	})
 	switch {
@@ -352,9 +359,10 @@ func ticketLinksFor(
 				Status: statusView(
 					row.TicketStatusKey, row.TicketStatusName, row.TicketStatusCategory),
 			},
-			LagDays:   row.LagDays,
-			Origin:    row.Origin,
-			CreatedAt: Time(row.CreatedAt),
+			LagDays:    row.LagDays,
+			LagSeconds: row.LagSeconds,
+			Origin:     row.Origin,
+			CreatedAt:  Time(row.CreatedAt),
 		})
 	}
 	return items, nil
@@ -376,7 +384,7 @@ func linkNotFound(id string) *apierr.Error {
 // **自分自身へのリンクは self_link で弾く**（9.14）。DB の ck_ticket_link_diff が
 // 最後の砦だが、そこで落ちると 2.5 の形式ではなく 500 になる。
 func validateNewLink(req createLinkRequest, selfSeq int32) (
-	targetSeq int32, linkType string, lagDays int32, apiErr *apierr.Error,
+	targetSeq int32, linkType string, lag linkLag, apiErr *apierr.Error,
 ) {
 	var details []apierr.Detail
 
@@ -415,13 +423,19 @@ func validateNewLink(req createLinkRequest, selfSeq int32) (
 		if *req.LagDays < -maxLagDays || *req.LagDays > maxLagDays {
 			details = append(details, lagRangeDetail())
 		}
-		lagDays = *req.LagDays
+		lag.days = *req.LagDays
+	}
+	if req.LagSeconds != nil {
+		if *req.LagSeconds < -maxLagSeconds || *req.LagSeconds > maxLagSeconds {
+			details = append(details, lagSecondsRangeDetail())
+		}
+		lag.seconds = *req.LagSeconds
 	}
 
 	if len(details) > 0 {
-		return 0, "", 0, apierr.New(apierr.ValidationFailed).WithDetails(details...)
+		return 0, "", linkLag{}, apierr.New(apierr.ValidationFailed).WithDetails(details...)
 	}
-	return targetSeq, linkType, lagDays, nil
+	return targetSeq, linkType, lag, nil
 }
 
 // ── activity（9.10.1）──────────────────────────────────────
@@ -457,19 +471,56 @@ func recordLinkChange(
 // **direction は含めない。** 読み手はそのチケットの履歴を見ており、
 // 相手が誰かだけが要る。
 func linkSummaryOf(key string, v linkView) string {
-	return linkSummary(key, v.LinkType, v.Ticket.Seq, v.LagDays)
+	return linkSummary(key, v.LinkType, v.Ticket.Seq, linkLag{v.LagDays, v.LagSeconds})
 }
 
-// linkSummary は要約の本体。**ずらしが 0 でなければ ` +2d` / ` -1d` を添える**
-// （9.10.1。ガントの線の札と同じ書式。pb-231）。
-func linkSummary(key, linkType string, seq, lag int32) string {
+// linkLag は依存のずらし（暦日と、1日未満の秒。DbDesign.md 6.6.3）。
+type linkLag struct {
+	days, seconds int32
+}
+
+// linkSummary は要約の本体。**ずらしが 0 でなければ ` +2d` / ` -1d` を添え**（9.10.1。ガントの
+// 線の札と同じ書式。pb-231）、**秒は h / m / s で、日の後ろにそれぞれの符号で続ける**（` +1d+1h30m`・
+// ` -45s`。pb-332）。
+func linkSummary(key, linkType string, seq int32, lag linkLag) string {
 	s := linkType + " " + fullTicketID(key, seq)
-	if lag > 0 {
-		s += fmt.Sprintf(" +%dd", lag)
-	} else if lag < 0 {
-		s += fmt.Sprintf(" %dd", lag)
+	if lag.days == 0 && lag.seconds == 0 {
+		return s
+	}
+	s += " "
+	if lag.days != 0 {
+		s += fmt.Sprintf("%+dd", lag.days)
+	}
+	if lag.seconds != 0 {
+		s += lagSecondsText(lag.seconds)
 	}
 	return s
+}
+
+// lagSecondsText は秒のずらしを「+1h30m」「-45s」の形にする（符号を必ず付ける）。
+func lagSecondsText(sec int32) string {
+	sign := "+"
+	if sec < 0 {
+		sign, sec = "-", -sec
+	}
+	out := sign
+	if h := sec / 3600; h > 0 {
+		out += fmt.Sprintf("%dh", h)
+	}
+	if m := sec % 3600 / 60; m > 0 {
+		out += fmt.Sprintf("%dm", m)
+	}
+	if x := sec % 60; x > 0 {
+		out += fmt.Sprintf("%ds", x)
+	}
+	return out
+}
+
+func lagSecondsRangeDetail() apierr.Detail {
+	return apierr.Detail{
+		Field: "lag_seconds", Code: "invalid",
+		Message: fmt.Sprintf("秒のずらしは -%d〜%d 秒（1日未満）の整数で指定してください", maxLagSeconds, maxLagSeconds),
+	}
 }
 
 func lagRangeDetail() apierr.Detail {
@@ -499,7 +550,7 @@ func (h *handler) updateTicketLink(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, e)
 		return
 	}
-	lag, e := parseLinkPatch(raw)
+	patch, e := parseLinkPatch(raw)
 	if e != nil {
 		apierr.Write(w, r, e)
 		return
@@ -524,18 +575,31 @@ func (h *handler) updateTicketLink(w http.ResponseWriter, r *http.Request) {
 			return errLinkHandled
 		}
 		if !slices.Contains(lagLinkTypes, row.LinkType) {
+			field := "lag_days"
+			if patch.days == nil {
+				field = "lag_seconds"
+			}
 			invalid = apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
-				Field: "lag_days", Code: "invalid", Message: "この関連にはずらしを設定できません",
+				Field: field, Code: "invalid", Message: "この関連にはずらしを設定できません",
 			})
 			return errLinkHandled
 		}
-		if row.LagDays != lag {
+		// 送らなかった方は今のまま（9.10.1）
+		cur := linkLag{row.LagDays, row.LagSeconds}
+		lag := cur
+		if patch.days != nil {
+			lag.days = *patch.days
+		}
+		if patch.seconds != nil {
+			lag.seconds = *patch.seconds
+		}
+		if lag != cur {
 			if _, err := q.UpdateTicketLinkLag(ctx, gen.UpdateTicketLinkLagParams{
-				LagDays: lag, ID: id, TicketID: ticketID,
+				LagDays: lag.days, LagSeconds: lag.seconds, ID: id, TicketID: ticketID,
 			}); err != nil {
 				return fmt.Errorf("リンク %q のずらしを変えられない: %w", id, err)
 			}
-			old := linkSummary(scope.key, row.LinkType, row.TicketSeq, row.LagDays)
+			old := linkSummary(scope.key, row.LinkType, row.TicketSeq, cur)
 			next := linkSummary(scope.key, row.LinkType, row.TicketSeq, lag)
 			if err := recordLinkChange(ctx, q, rec, scope.projectID, ticketID, &old, next); err != nil {
 				return err
@@ -566,9 +630,15 @@ func (h *handler) updateTicketLink(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, view)
 }
 
-// parseLinkPatch は PATCH の本文を解く（9.10.1）。**lag_days だけを受け、ほかの項目は
-// immutable_field**——link_type と相手を変えるのは別の行を作るのと同じである。
-func parseLinkPatch(raw map[string]json.RawMessage) (int32, *apierr.Error) {
+// linkPatch は PATCH の本文。送らなかった項目は nil（今のまま）。
+type linkPatch struct {
+	days, seconds *int32
+}
+
+// parseLinkPatch は PATCH の本文を解く（9.10.1）。**ずらし（lag_days・lag_seconds）だけを受け、
+// ほかの項目は immutable_field**——link_type と相手を変えるのは別の行を作るのと同じである。
+// どちらも送らなければ required。
+func parseLinkPatch(raw map[string]json.RawMessage) (linkPatch, *apierr.Error) {
 	var details []apierr.Detail
 	keys := make([]string, 0, len(raw))
 	for k := range raw {
@@ -576,24 +646,42 @@ func parseLinkPatch(raw map[string]json.RawMessage) (int32, *apierr.Error) {
 	}
 	slices.Sort(keys)
 	for _, k := range keys {
-		if k != "lag_days" {
+		if k != "lag_days" && k != "lag_seconds" {
 			details = append(details, apierr.Detail{
-				Field: k, Code: "immutable_field", Message: "変えられるのはずらし（lag_days）だけです",
+				Field: k, Code: "immutable_field", Message: "変えられるのはずらし（lag_days・lag_seconds）だけです",
 			})
 		}
 	}
-	var lag int32
-	v, ok := raw["lag_days"]
-	switch {
-	case !ok:
+	var patch linkPatch
+	if v, ok := raw["lag_days"]; ok {
+		var lag int32
+		switch {
+		case json.Unmarshal(v, &lag) != nil:
+			details = append(details, apierr.Detail{Field: "lag_days", Code: "invalid", Message: "ずらしは整数で指定してください"})
+		case lag < -maxLagDays || lag > maxLagDays:
+			details = append(details, lagRangeDetail())
+		default:
+			patch.days = &lag
+		}
+	}
+	if v, ok := raw["lag_seconds"]; ok {
+		var lag int32
+		switch {
+		case json.Unmarshal(v, &lag) != nil:
+			details = append(details, apierr.Detail{Field: "lag_seconds", Code: "invalid", Message: "秒のずらしは整数で指定してください"})
+		case lag < -maxLagSeconds || lag > maxLagSeconds:
+			details = append(details, lagSecondsRangeDetail())
+		default:
+			patch.seconds = &lag
+		}
+	}
+	_, hasDays := raw["lag_days"]
+	_, hasSeconds := raw["lag_seconds"]
+	if !hasDays && !hasSeconds {
 		details = append(details, apierr.Detail{Field: "lag_days", Code: "required", Message: "ずらしを指定してください"})
-	case json.Unmarshal(v, &lag) != nil:
-		details = append(details, apierr.Detail{Field: "lag_days", Code: "invalid", Message: "ずらしは整数で指定してください"})
-	case lag < -maxLagDays || lag > maxLagDays:
-		details = append(details, lagRangeDetail())
 	}
 	if len(details) > 0 {
-		return 0, apierr.New(apierr.ValidationFailed).WithDetails(details...)
+		return linkPatch{}, apierr.New(apierr.ValidationFailed).WithDetails(details...)
 	}
-	return lag, nil
+	return patch, nil
 }

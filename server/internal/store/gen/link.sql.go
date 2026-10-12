@@ -14,9 +14,9 @@ import (
 
 const createTicketLink = `-- name: CreateTicketLink :exec
 INSERT INTO ticket_link (
-  id, source_ticket_id, target_ticket_id, link_type, lag_days, origin, created_by
+  id, source_ticket_id, target_ticket_id, link_type, lag_days, lag_seconds, origin, created_by
 ) VALUES (
-  $1, $2, $3, $4, $5, $6, $7
+  $1, $2, $3, $4, $5, $6, $7, $8
 )
 `
 
@@ -26,6 +26,7 @@ type CreateTicketLinkParams struct {
 	TargetTicketID string
 	LinkType       string
 	LagDays        int32
+	LagSeconds     int32
 	Origin         string
 	CreatedBy      pgtype.Text
 }
@@ -37,6 +38,7 @@ func (q *Queries) CreateTicketLink(ctx context.Context, arg CreateTicketLinkPara
 		arg.TargetTicketID,
 		arg.LinkType,
 		arg.LagDays,
+		arg.LagSeconds,
 		arg.Origin,
 		arg.CreatedBy,
 	)
@@ -99,6 +101,7 @@ SELECT
   l.id,
   l.link_type,
   l.lag_days,
+  l.lag_seconds,
   l.origin,
   l.created_at,
   CASE WHEN l.source_ticket_id = $1 THEN 'outgoing' ELSE 'incoming' END::text AS direction,
@@ -121,6 +124,7 @@ type GetTicketLinkRow struct {
 	ID          string
 	LinkType    string
 	LagDays     int32
+	LagSeconds  int32
 	Origin      string
 	CreatedAt   time.Time
 	Direction   string
@@ -143,6 +147,7 @@ func (q *Queries) GetTicketLink(ctx context.Context, arg GetTicketLinkParams) (G
 		&i.ID,
 		&i.LinkType,
 		&i.LagDays,
+		&i.LagSeconds,
 		&i.Origin,
 		&i.CreatedAt,
 		&i.Direction,
@@ -159,6 +164,7 @@ SELECT
   t.seq AS target_seq,
   l.link_type,
   l.lag_days,
+  l.lag_seconds,
   l.origin,
   l.created_at
 FROM ticket_link l
@@ -171,13 +177,14 @@ ORDER BY s.seq, t.seq, l.link_type
 `
 
 type ListLinksAmongTicketsRow struct {
-	ID        string
-	SourceSeq int32
-	TargetSeq int32
-	LinkType  string
-	LagDays   int32
-	Origin    string
-	CreatedAt time.Time
+	ID         string
+	SourceSeq  int32
+	TargetSeq  int32
+	LinkType   string
+	LagDays    int32
+	LagSeconds int32
+	Origin     string
+	CreatedAt  time.Time
 }
 
 // ListLinksAmongTickets はガント（9.2.6）の依存を1本で引く。
@@ -204,6 +211,7 @@ func (q *Queries) ListLinksAmongTickets(ctx context.Context, ticketIds []string)
 			&i.TargetSeq,
 			&i.LinkType,
 			&i.LagDays,
+			&i.LagSeconds,
 			&i.Origin,
 			&i.CreatedAt,
 		); err != nil {
@@ -225,6 +233,7 @@ SELECT
   'outgoing'::text AS direction,
   l.link_type,
   l.lag_days,
+  l.lag_seconds,
   l.origin,
   l.created_at,
   t.seq            AS ticket_seq,
@@ -245,6 +254,7 @@ SELECT
   'incoming'::text AS direction,
   l.link_type,
   l.lag_days,
+  l.lag_seconds,
   l.origin,
   l.created_at,
   t.seq            AS ticket_seq,
@@ -267,6 +277,7 @@ type ListTicketLinksRow struct {
 	Direction            string
 	LinkType             string
 	LagDays              int32
+	LagSeconds           int32
 	Origin               string
 	CreatedAt            time.Time
 	TicketSeq            int32
@@ -317,6 +328,7 @@ func (q *Queries) ListTicketLinks(ctx context.Context, ticketID string) ([]ListT
 			&i.Direction,
 			&i.LinkType,
 			&i.LagDays,
+			&i.LagSeconds,
 			&i.Origin,
 			&i.CreatedAt,
 			&i.TicketSeq,
@@ -383,23 +395,31 @@ func (q *Queries) TicketLinkExists(ctx context.Context, arg TicketLinkExistsPara
 
 const updateTicketLinkLag = `-- name: UpdateTicketLinkLag :execrows
 UPDATE ticket_link
-   SET lag_days = $1
- WHERE id = $2
-   AND (source_ticket_id = $3 OR target_ticket_id = $3)
+   SET lag_days = $1,
+       lag_seconds = $2
+ WHERE id = $3
+   AND (source_ticket_id = $4 OR target_ticket_id = $4)
 `
 
 type UpdateTicketLinkLagParams struct {
-	LagDays  int32
-	ID       string
-	TicketID string
+	LagDays    int32
+	LagSeconds int32
+	ID         string
+	TicketID   string
 }
 
-// UpdateTicketLinkLag は依存のずらし（lag_days）だけを変える（9.10.1 の PATCH。pb-231）。
+// UpdateTicketLinkLag は依存のずらし（lag_days・lag_seconds）だけを変える（9.10.1 の PATCH。pb-231・pb-332）。
+// 送らなかった方は今の値をハンドラが渡す。
 //
 // **このチケットに紐づく行か**を id と合わせて確かめる（source / target のどちらでもよい。
 // DELETE と同じく direction を問わない）。種別の検査はハンドラが GetTicketLink で行う。
 func (q *Queries) UpdateTicketLinkLag(ctx context.Context, arg UpdateTicketLinkLagParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateTicketLinkLag, arg.LagDays, arg.ID, arg.TicketID)
+	result, err := q.db.Exec(ctx, updateTicketLinkLag,
+		arg.LagDays,
+		arg.LagSeconds,
+		arg.ID,
+		arg.TicketID,
+	)
 	if err != nil {
 		return 0, err
 	}
