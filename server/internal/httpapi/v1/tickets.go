@@ -389,7 +389,6 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 
 	// view=gantt（9.2.6）と view=timeline（9.2.7）。依存は返したチケットの ID で1回だけ引く（設計方針3）。
 	links := []ganttLinkItem{}
-	var lastLinked time.Time
 	if len(ticketIDs) > 0 {
 		linkRows, err := h.q.ListLinksAmongTickets(r.Context(), ticketIDs)
 		if err != nil {
@@ -402,12 +401,9 @@ func (h *handler) listTickets(w http.ResponseWriter, r *http.Request) {
 				ID: l.ID, SourceSeq: l.SourceSeq, TargetSeq: l.TargetSeq,
 				LinkType: l.LinkType, LagDays: l.LagDays, LagSeconds: l.LagSeconds, Origin: l.Origin,
 			})
-			if l.CreatedAt.After(lastLinked) {
-				lastLinked = l.CreatedAt
-			}
 		}
 	}
-	etag = ganttETag(etag, len(links), lastLinked)
+	etag = ganttETag(etag, links)
 	if filters.timeline {
 		// タイムラインの links[] は依存の4種だけに絞る（9.2.7）。ETag の④⑤は絞る前の依存で
 		// 作る——材料が多いぶん変わりやすいだけで、変わったのに一致することは無い
@@ -906,14 +902,25 @@ func appendEnumErrors(
 // 指す検証子であり（RFC 9110 8.8.1）、並び順やページが違えば本文も違う。
 // 9.2.5 の「フィルタ条件」を条件節だけに読むと、2ページ目と1ページ目が
 // 同じ ETag になる。
-// ganttETag は view=gantt の ETag（9.2.5）。一覧の ETag に、同梱した依存の件数と
-// MAX(created_at) を足す。**依存の増減はどちらのチケットの updated_at も動かさない**
-// （9.10.1）ので、チケットの材料だけでは線を足しても ETag が変わらない。
+// ganttETag は view=gantt / view=timeline の ETag（9.2.5）。一覧の ETag に、同梱した依存の件数と
+// 中身のハッシュを足す。**依存の増減もずらしの変更も、どちらのチケットの updated_at も動かさない**
+// （9.10.1）ので、チケットの材料だけでは線やずらしを変えても ETag が変わらない。
+//
+// **中身（id・両端・種別・ずらし・origin）を混ぜる**（pb-335）。以前は件数と MAX(created_at) で、
+// PATCH でずらしを変えても ETag が動かず、他の人の画面が 304 を受け続けて線の札が古いまま残った。
+// 依存は読み込み済みなので、列（updated_at）を足さずに済む。1本ごとのハッシュを足し合わせるのは、
+// 並びに依らない値にするため。
 //
 // 一覧の ETag の閉じ引用符の内側に足す。弱い検証子（W/"…"）の形を崩さない。
-func ganttETag(ticketsETag string, linkCount int, lastLinked time.Time) string {
+func ganttETag(ticketsETag string, links []ganttLinkItem) string {
+	var sum uint64
+	for _, l := range links {
+		h := fnv.New64a()
+		fmt.Fprintf(h, "%s|%d|%d|%s|%d|%d|%s", l.ID, l.SourceSeq, l.TargetSeq, l.LinkType, l.LagDays, l.LagSeconds, l.Origin)
+		sum += h.Sum64()
+	}
 	body := strings.TrimSuffix(ticketsETag, `"`)
-	return fmt.Sprintf(`%s-lnk-%d-%d"`, body, linkCount, etagStamp(lastLinked))
+	return fmt.Sprintf(`%s-lnk-%d-%016x"`, body, len(links), sum)
 }
 
 func ticketsETag(normalized string, page Page, total int64, lastUpdated time.Time) string {

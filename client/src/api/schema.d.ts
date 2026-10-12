@@ -12644,8 +12644,8 @@ export interface operations {
                 headers: {
                     /**
                      * @description 弱い検証子（`W/"tkt-<ハッシュ>-<件数>-<最終更新>"`。ApiDesign.md 9.2.5）。
-                     *     `view=gantt` のときは依存の件数と最新の作成日時を足す
-                     *     （`W/"tkt-…-lnk-<依存の件数>-<最新の作成>"`）。
+                     *     `view=gantt` / `view=timeline` のときは依存の件数と中身のハッシュを足す
+                     *     （`W/"tkt-…-lnk-<依存の件数>-<依存の中身のハッシュ>"`。ずらしの変更でも変わる）。
                      * @example W/"tkt-a3f19c2b-48-1723372992000000000"
                      */
                     ETag?: string;

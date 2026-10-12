@@ -180,11 +180,20 @@ func TestListTicketsGanttETagFollowsLinks(t *testing.T) {
 		{ID: "L1", SourceSeq: 31, TargetSeq: 31, LinkType: "FS", CreatedAt: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)},
 	}
 	one := etag()
-	q.ticket.ganttLinks[0].CreatedAt = time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
-	later := etag()
+	// ずらしの変更（pb-335）。PATCH はどちらのチケットの updated_at も、依存の created_at も動かさない
+	q.ticket.ganttLinks[0].LagSeconds = 600
+	lagged := etag()
+	// 消して作り直すと、件数も created_at の最大も同じになりうるが、id が変わる
+	q.ticket.ganttLinks[0].ID = "L2"
+	recreated := etag()
 
-	if none == one || one == later {
-		t.Errorf("依存が変わっても ETag が変わらない: %s / %s / %s", none, one, later)
+	if none == one || one == lagged || lagged == recreated {
+		t.Errorf("依存が変わっても ETag が変わらない: %s / %s / %s / %s", none, one, lagged, recreated)
+	}
+	// 中身が同じなら同じ ETag（並びに依らない）
+	q.ticket.ganttLinks[0].ID, q.ticket.ganttLinks[0].LagSeconds = "L1", 0
+	if again := etag(); again != one {
+		t.Errorf("同じ依存で ETag が変わった: %s / %s", one, again)
 	}
 	if !strings.HasPrefix(one, `W/"tkt-`) || !strings.HasSuffix(one, `"`) || strings.Count(one, `"`) != 2 {
 		t.Errorf("弱い検証子の形が崩れた: %s", one)

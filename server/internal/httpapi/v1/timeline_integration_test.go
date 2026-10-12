@@ -334,6 +334,38 @@ func TestTimelineIntegration(t *testing.T) {
 		t.Fatalf("別の view の ETag で 304 になった: %d", rec.Code)
 	}
 
+	// ずらしを変えると、view=timeline と view=gantt の ETag が変わる（9.2.5。pb-335）。依存の PATCH は
+	// どちらのチケットの updated_at も動かさないので、件数と MAX(created_at) だけでは 304 が返り続けた
+	first := etag
+	ganttTag := f.do(http.MethodGet, f.base+"/tickets?view=gantt", f.session, "").Header().Get("ETag")
+	linkPath := fmt.Sprintf("%s/tickets/%d/links/%s", f.base, a, tl.Links[0].ID)
+	for _, lag := range []string{`{"lag_seconds":600}`, `{"lag_days":1}`} {
+		if rec := f.do(http.MethodPatch, linkPath, f.session, lag); rec.Code != http.StatusOK {
+			t.Fatalf("ずらし %s の status = %d（%s）", lag, rec.Code, rec.Body.String())
+		}
+		rec := f.do(http.MethodGet, f.base+"/tickets?view=timeline", f.session, "", "If-None-Match", etag)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("ずらし %s の後の view=timeline が %d（200 のはず）", lag, rec.Code)
+		}
+		var moved tlResp
+		if err := json.Unmarshal(rec.Body.Bytes(), &moved); err != nil || len(moved.Links) != 1 || moved.Links[0].LagSeconds != 600 {
+			t.Fatalf("ずらし %s の後の links = %+v（%v）", lag, moved.Links, err)
+		}
+		etag = rec.Header().Get("ETag")
+		if rec := f.do(http.MethodGet, f.base+"/tickets?view=gantt", f.session, "", "If-None-Match", ganttTag); rec.Code != http.StatusOK {
+			t.Fatalf("ずらし %s の後の view=gantt が %d（200 のはず）", lag, rec.Code)
+		} else {
+			ganttTag = rec.Header().Get("ETag")
+		}
+	}
+	// 戻すと、中身が同じなので ETag も最初と同じになる（後ろの連鎖の検証のため、ずらし無しに戻す）
+	if rec := f.do(http.MethodPatch, linkPath, f.session, `{"lag_days":0,"lag_seconds":0}`); rec.Code != http.StatusOK {
+		t.Fatalf("ずらしを戻せない: %d", rec.Code)
+	}
+	if _, back := f.timeline(t); back != first {
+		t.Fatalf("ずらしを戻した ETag = %s, want %s（最初と同じ）", back, first)
+	}
+
 	// 着手すると started_at が載り、ETag が変わる
 	if rec := f.do(http.MethodPost, fmt.Sprintf("%s/tickets/%d/transition", f.base, prep), f.session, `{"to":"in_progress"}`); rec.Code != http.StatusOK {
 		t.Fatalf("着手の status = %d（%s）", rec.Code, rec.Body.String())
