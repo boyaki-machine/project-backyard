@@ -2173,6 +2173,78 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
+	// **不合格の成果の評価を、main が MCP だけで観点ごとの本文まで読める**（pb-302）。
+	// パックが判定の1行しか載せず、main が指摘を読めずに止まった。委任・報告・評価は
+	// 直接 INSERT する——ここで見るのは、評価の行がパックまで運ばれるかである。
+	// **末尾に置く**：委任の木は書き込みを絞るので、前の場面を巻き込まない。
+	t.Run("pb_get_context が不合格の成果の評価を観点ごとの本文まで載せる", func(t *testing.T) {
+		const rootSeq = 9302
+		evaluatorID := ulidgen.New()
+		delegationID := ulidgen.New()
+		t.Cleanup(func() {
+			bg := context.Background()
+			// **委任を先に消す**——委任と評価が評価役を ON DELETE RESTRICT で参照する。
+			if _, err := pool.Exec(bg, `DELETE FROM delegation WHERE id = $1`, delegationID); err != nil {
+				t.Errorf("委任の後始末に失敗した: %v", err)
+			}
+			if _, err := pool.Exec(bg, `DELETE FROM actor WHERE id = $1`, evaluatorID); err != nil {
+				t.Errorf("評価役の後始末に失敗した: %v", err)
+			}
+		})
+		if err := q.CreateAgentActor(ctx, gen.CreateAgentActorParams{
+			ID: evaluatorID, DisplayName: "MCPテスト（評価役）",
+		}); err != nil {
+			t.Fatalf("評価役の actor を作れない: %v", err)
+		}
+		if err := q.CreateAgent(ctx, gen.CreateAgentParams{
+			ActorID: evaluatorID, OwnerActorID: ownerID,
+			ProjectID: pgtype.Text{String: projectID, Valid: true}, ClientKind: "codex",
+		}); err != nil {
+			t.Fatalf("評価役の agent を作れない: %v", err)
+		}
+
+		rootID, runID, reportID := ulidgen.New(), ulidgen.New(), ulidgen.New()
+		const note = "画面の文言が設計書の5.5と食い違う。設計書の文言に合わせれば合格。"
+		findings := fmt.Sprintf(`[{"aspect":"goal","verdict":"fail","note_md":%q},{"aspect":"values","verdict":"pass","note_md":"利用者の負担は増えない。"}]`, note)
+		for _, s := range []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO ticket (id, project_id, seq, type, title, status_key, assignee_id, execution_mode)
+				VALUES ($1, $2, $3, 'task', '委任の根', 'in_progress', $4, 'delegated')`,
+				[]any{rootID, projectID, rootSeq, ownerID}},
+			{`INSERT INTO delegation (id, project_id, root_ticket_id, main_actor_id, evaluator_actor_id, status, scope, scope_version, created_by)
+				VALUES ($1, $2, $3, $4, $5, 'approved', '{"goal":"成果を出す"}', 1, $6)`,
+				[]any{delegationID, projectID, rootID, agentID, evaluatorID, ownerID}},
+			{`INSERT INTO agent_run (id, ticket_id, actor_id, status) VALUES ($1, $2, $3, 'completed')`,
+				[]any{runID, rootID, agentID}},
+			{`INSERT INTO agent_report (id, agent_run_id, ticket_id, status, report) VALUES ($1, $2, $3, 'completed', '{}')`,
+				[]any{reportID, runID, rootID}},
+			{`INSERT INTO evaluation (id, delegation_id, target_kind, agent_report_id, round, verdict, findings, evaluator_actor_id)
+				VALUES ($1, $2, 'deliverable', $3, 1, 'fail', $4, $5)`,
+				[]any{ulidgen.New(), delegationID, reportID, findings, evaluatorID}},
+		} {
+			if _, err := pool.Exec(ctx, s.sql, s.args...); err != nil {
+				t.Fatalf("材料を作れない（%s）: %v", strings.Fields(s.sql)[2], err)
+			}
+		}
+
+		// fullToken は agentID＝main のトークンである。
+		text, isErr := tool(t, fullToken, "pb_get_context", fmt.Sprintf(`{"seq":%d}`, rootSeq))
+		if isErr {
+			t.Fatalf("pb_get_context が失敗した: %s", text)
+		}
+		for _, want := range []string{
+			"**役割**：main",
+			"**直近の評価**：deliverable 対象 round 1、判定 `fail`",
+			note,
+			`"aspect": "values"`,
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("パックに %q が無い:\n%s", want, text)
+			}
+		}
+	})
 }
 
 // readBackTicket は、書き込み系ツールの応答（要点だけ。Design.md 8.5.1）から seq を取り、

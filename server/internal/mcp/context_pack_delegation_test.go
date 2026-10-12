@@ -120,6 +120,60 @@ func TestGetContextIncludesPlanForEvaluation(t *testing.T) {
 	}
 }
 
+// 不合格の成果の評価を、main がパックだけで観点ごとの本文まで読める（pb-302）。
+// 判定の1行しか載らず、main が指摘を読めずに止まった。
+func TestGetContextShowsFailedDeliverableFindings(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "delegated", `null`)},
+		{status: http.StatusOK, body: `{"in_delegation":true,"role":"main","root_seq":31,"status":"approved",
+			"latest_plan":{"version":1,"status":"approved",
+			"evaluation":{"round":1,"verdict":"pass","findings":[{"aspect":"goal","verdict":"pass","note_md":"計画は目的に沿う。"}]}},
+			"latest_evaluation":{"target_kind":"deliverable","round":1,"verdict":"fail",
+			"findings":[{"aspect":"goal","verdict":"fail","note_md":"画面の文言が設計と食い違う。"}]},
+			"next_move":"評価の指摘を直して出し直す"}`},
+		{status: http.StatusOK, body: `{"items":[]}`},
+		{status: http.StatusOK, body: `{"body_md":"役割の指示。"}`},
+		{status: http.StatusOK, body: `{"body_md":"共通の指示。"}`},
+	}}
+	out := callTool1(t, New(rest, "v0"), toolCallBody("pb_get_context", `{"seq":31}`))
+	if out.IsError {
+		t.Fatalf("パックを取得できない: %s", out.Content[0].Text)
+	}
+	text := out.Content[0].Text
+	for _, want := range []string{
+		"**直近の評価**：deliverable 対象 round 1、判定 `fail`",
+		`"verdict": "fail"`,
+		"画面の文言が設計と食い違う。",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("パックに %q が無い:\n%s", want, text)
+		}
+	}
+}
+
+// 直近の評価が計画の欄の「この版への評価」と同じなら、指摘を二重に載せない。
+func TestGetContextDoesNotRepeatPlanFindings(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "delegated", `null`)},
+		{status: http.StatusOK, body: `{"in_delegation":true,"role":"main","root_seq":31,"status":"planning",
+			"latest_plan":{"version":2,"status":"rejected",
+			"evaluation":{"round":2,"verdict":"fail","findings":[{"aspect":"values","verdict":"fail","note_md":"利用者の負担が増える。"}]}},
+			"latest_evaluation":{"target_kind":"plan","round":2,"verdict":"fail",
+			"findings":[{"aspect":"values","verdict":"fail","note_md":"利用者の負担が増える。"}]},
+			"next_move":"計画を直して出し直す"}`},
+		{status: http.StatusOK, body: `{"items":[]}`},
+		{status: http.StatusOK, body: `{"body_md":"役割の指示。"}`},
+		{status: http.StatusOK, body: `{"body_md":"共通の指示。"}`},
+	}}
+	text := callTool1(t, New(rest, "v0"), toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+	if got := strings.Count(text, "利用者の負担が増える。"); got != 1 {
+		t.Errorf("計画の指摘が %d 回載った, want 1:\n%s", got, text)
+	}
+	if !strings.Contains(text, "**直近の評価**：plan 対象 round 2、判定 `fail`") {
+		t.Errorf("直近の評価の行が無い:\n%s", text)
+	}
+}
+
 func TestGetContextDelegationSectionShowsOpenConfirmation(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
 		{status: http.StatusOK, body: ticketJSON(`{}`, "delegated", `null`)},

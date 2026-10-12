@@ -588,9 +588,28 @@ func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packD
 	if ds.LatestEvaluation != nil && ds.LatestEvaluation.Verdict != "pass" {
 		fmt.Fprintf(&b, "**直近の評価**：%s 対象 round %d、判定 `%s`\n\n",
 			ds.LatestEvaluation.TargetKind, ds.LatestEvaluation.Round, ds.LatestEvaluation.Verdict)
+		// **開いている評価の指摘を本文まで載せる**（9.1「節の中身」。pb-302）。
+		// 判定の1行だけでは、不合格の成果を main が直せない。
+		if !planEvaluationShown(ds) {
+			writeDelegationJSON(&b, "観点ごとの判定", ds.LatestEvaluation.Findings)
+		}
 	}
 
 	return b.String(), nil
+}
+
+// planEvaluationShown は、直近の評価が「この版への評価」として計画の欄に
+// 既に載っているかを返す。載っていれば同じ指摘を二重に載せない。
+func planEvaluationShown(ds packDelegationStatus) bool {
+	ev := ds.LatestEvaluation
+	if ev == nil || ev.TargetKind != "plan" {
+		return false
+	}
+	if ds.Role != "main" && ds.Role != "evaluator" {
+		return false
+	}
+	return ds.LatestPlan != nil && ds.LatestPlan.Evaluation != nil &&
+		ds.LatestPlan.Evaluation.Round == ev.Round
 }
 
 // writeDelegationJSON は REST が返した範囲・評価の内容を欠落させずに載せる。
