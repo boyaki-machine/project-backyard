@@ -54,10 +54,10 @@ test.describe('状態の見え方', () => {
 })
 
 test.describe('レーンの割り当て', () => {
-  test('本番は 0、裏は重なる分だけ 1 から足す', () => {
+  test('メインは 0、サブは重なる分だけ 1 から足す', () => {
     const { lane, lanes } = assignLanes([
       bar(1, T(10), T(11), true),
-      bar(2, T(10, 30), T(11, 30), true), // 本番どうしは重なっても 0（衝突として描く）
+      bar(2, T(10, 30), T(11, 30), true), // メインどうしは重なっても 0（衝突として描く）
       bar(3, T(9), T(10), false),
       bar(4, T(9, 30), T(10, 30), false),
       bar(5, T(10), T(11), false), // 3 が空いたレーン 1 に入る
@@ -72,7 +72,7 @@ test.describe('レーンの割り当て', () => {
     expect(lanes).toBe(4)
   })
 
-  test('裏が無ければ1レーン。消えたものは別のキーで同じ番号と並ぶ', () => {
+  test('サブが無ければ1レーン。消えたものは別のキーで同じ番号と並ぶ', () => {
     expect(assignLanes([bar(1, T(10), T(11), true)]).lanes).toBe(1)
     const g = { ...bar(1, T(10), T(11), false), gone: true }
     const { lane, lanes } = assignLanes([bar(1, T(10), T(11), true), g])
@@ -189,7 +189,7 @@ test.describe('設定の読み書き', () => {
     expect(readSnapSeconds({ timeline_snap_seconds: 300 })).toBe(300)
   })
 
-  test('載せるエピック：配列でなければ空。保存はいま在るものに詰め直す', () => {
+  test('タイムライン対象エピック：配列でなければ空。保存はいま在るものに詰め直す', () => {
     expect(readTimelineEpics({ timeline_epics: 'x' })).toEqual([])
     expect(readTimelineEpics({ timeline_epics: [3, 'a', 3, 1.5, 2] })).toEqual([3, 2])
     expect(mergeTimelineEpics({ repositories: [1], timeline_epics: [9] }, [5, 3, 99], [3, 5, 7])).toEqual({
@@ -277,7 +277,7 @@ test.describe('保留した一覧と、版の行', () => {
   })
 })
 
-test.describe('表示する行の規則（版・載せるエピック・parent の組み合わせ）', () => {
+test.describe('表示する行の規則（版・タイムライン対象エピック・parent の組み合わせ）', () => {
   // 実在するエピック 301・302・303（並びもこの順）。309 は消した。310 は終日の行しか無い
   const known = [
     { seq: 301, title: '体育館', sort_key: '0|a' },
@@ -290,7 +290,7 @@ test.describe('表示する行の規則（版・載せるエピック・parent �
     V2: [item(301, '体育館'), item(303, '本部')],
     VE: [],
   }
-  /** サーバの `epics[]`：載せるエピック ∩ parent ∩ 実在（ApiDesign 9.2.7） */
+  /** サーバの `epics[]`：タイムライン対象エピック ∩ parent ∩ 実在（ApiDesign 9.2.7） */
   const server = (target: number[], parent: number[]): TlEpic[] =>
     known
       .filter((k) => target.includes(k.seq) && (parent.length === 0 || parent.includes(k.seq)))

@@ -401,7 +401,7 @@ func (h *handler) createScheduleBaseline(w http.ResponseWriter, r *http.Request)
 func scheduleBaselineTooMany(n int64) *apierr.Error {
 	return apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
 		Field: "timeline_epics", Code: "too_many",
-		Message: fmt.Sprintf("タイムラインのチケットが %d件あり、版に保存できる上限（%d件）を超えています。載せるエピックを減らしてください",
+		Message: fmt.Sprintf("タイムラインのチケットが %d件あり、版に保存できる上限（%d件）を超えています。タイムライン対象エピックを減らしてください",
 			n, scheduleBaselineMaxItems),
 	})
 }

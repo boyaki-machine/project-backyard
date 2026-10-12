@@ -2,9 +2,9 @@
 /**
  * プロジェクト設定「表示するビュー」のタイムラインの欄（`GuiDesign.md` 5.9.1）。
  *
- * 吸着の単位（`timeline_snap_seconds`）と載せるエピック（`timeline_epics`）。
+ * 吸着の単位（`timeline_snap_seconds`）とタイムライン対象エピック（`timeline_epics`）。
  * **チェックを入れているあいだだけ**本体の設定画面が出す（登録表の `settings.panel`）。
- * 保存は一般タブの `[保存]` 1つ——ここは差し替えた `settings` を `update` で返すだけ。
+ * 保存は本体がその場で行う（pb-319）——ここは差し替えた `settings` を `update` で返すだけ。
  */
 import { computed, onMounted, watch } from 'vue'
 
@@ -53,7 +53,7 @@ function setEpics(seqs: number[]): void {
       </select>
     </label>
     <div class="tl-vs-row top">
-      <span class="tl-vs-label">{{ $ui('載せるエピック') }}</span>
+      <span class="tl-vs-label">{{ $ui('タイムライン対象エピック') }}</span>
       <EpicChecklist :choices="epics.choices.value" :selected="selected" :sleeve="epics.sleeve.value" :disabled="disabled" @update="setEpics" />
     </div>
   </div>
@@ -68,7 +68,8 @@ function setEpics(seqs: number[]): void {
 
 .tl-vs-row {
   display: grid;
-  grid-template-columns: 8em minmax(0, 1fr);
+  /* 見出しの最長「タイムライン対象エピック」（12字。pb-328）を1行に収める */
+  grid-template-columns: 12.5em minmax(0, 1fr);
   align-items: center;
   gap: var(--pb-space-2);
   font-size: 13px;
@@ -84,5 +85,13 @@ function setEpics(seqs: number[]): void {
 
 .tl-vs-label {
   color: var(--pb-text-muted);
+}
+
+/* 狭い画面では見出しを上に積み、候補の幅を空ける */
+@media (max-width: 640px) {
+  .tl-vs-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
 }
 </style>

@@ -202,7 +202,7 @@ const canPlan = computed(
 )
 /** `新しいチケット` と、行の空いた所のドラッグで作る（5.15「チケットを作る」） */
 const canCreate = computed(() => auth.canInProject(projectKey.value, 'ticket.create'))
-/** `現在のタイムラインを記録`・`載せるエピック…`・版を消す */
+/** `現在のタイムラインを記録`・`タイムライン対象エピック…`・版を消す */
 const canProjectEdit = computed(() => auth.canInProject(projectKey.value, 'project.edit'))
 
 const settings = computed(() => projectStore.current?.settings)
@@ -433,7 +433,7 @@ function itemsOf(id: string | null): Map<number, BaselineItem> | null {
   return b ? new Map(b.items.map((i) => [i.ticket_seq, i])) : null
 }
 
-// 版を送る（5.15「当初計画の版」）。古い順に1つずつ、最後は「いま」
+// タイムライン変更推移（5.15「当初計画の版」）。古い順に1つずつ、最後は「いま」
 const step = ref<number | null>(null)
 const versionsAsc = computed(() => [...baselineList.value].reverse())
 
@@ -513,13 +513,13 @@ async function confirmDelete(): Promise<void> {
   }
 }
 
-// ── 載せるエピック ─────────────────────────────────────────
+// ── タイムライン対象エピック ─────────────────────────────────────────
 
 const epicDraft = ref<number[]>([])
 const epicSaving = ref(false)
 const epicError = ref('')
 
-/** 載せるエピックはダイアログで選ぶ（5.15「ヘッダとメニュー」。pb-324） */
+/** タイムライン対象エピックはダイアログで選ぶ（5.15「ヘッダとメニュー」。pb-324） */
 const epicOpen = ref(false)
 
 function openEpicPicker(): void {
@@ -613,7 +613,7 @@ async function saveCreate(body: CreateTicketRequest): Promise<void> {
 /** 行の空いた所のドラッグ（範囲は吸着した瞬間で持つ） */
 const newDrag = shallowRef<{ row: number; a: number; b: number } | null>(null)
 
-/** 空いた所から作れるか。版を送っているあいだ・試算の確認中・版にだけある行では作らない */
+/** 空いた所から作れるか。タイムライン変更推移を見ているあいだ・試算の確認中・版にだけある行では作らない */
 function canCreateIn(rowSeq: number): boolean {
   return canCreate.value && display.value.mode !== 'step' && trial.value === null && !rowSet.value.kinds.has(rowSeq)
 }
@@ -664,20 +664,20 @@ function toggleMenu(m: 'rows' | 'filter' | 'baseline'): void {
 
 // ── メニュー `[⋯]`（5.15「ヘッダとメニュー」。pb-322・pb-324）──────────────
 //
-// 見る範囲を変えない操作（版の比較・記録・載せるエピック）はヘッダに並べず、ここにまとめる。
+// 見る範囲を変えない操作（版の比較・記録・タイムライン対象エピック）はヘッダに並べず、ここにまとめる。
 
 const moreItems = computed<ActionItem[]>(() => {
   const items: ActionItem[] = []
   if (canCreate.value) items.push({ key: 'create', label: uiText('新しいチケット') })
   items.push(
-    { key: 'baseline', label: uiText('重ねる計画を選ぶ…'), separated: items.length > 0 },
+    { key: 'baseline', label: uiText('タイムラインを比較する…'), separated: items.length > 0 },
     step.value === null
-      ? { key: 'step', label: uiText('版を送る'), disabled: baselineList.value.length === 0, reason: uiText('保存した版がありません') }
-      : { key: 'step', label: uiText('版を送るのを終える') },
+      ? { key: 'step', label: uiText('タイムライン変更推移'), disabled: baselineList.value.length === 0, reason: uiText('保存した版がありません') }
+      : { key: 'step', label: uiText('タイムライン変更推移を終える') },
   )
   if (canProjectEdit.value) {
     items.push({ key: 'save', label: uiText('現在のタイムラインを記録') })
-    items.push({ key: 'epics', label: uiText('載せるエピック…'), separated: true })
+    items.push({ key: 'epics', label: uiText('タイムライン対象エピック…'), separated: true })
   }
   return items
 })
@@ -697,7 +697,7 @@ function onDocumentPointerDown(e: PointerEvent): void {
   openMenu.value = null
 }
 
-/** 行の候補：載せるエピック（`sort_key` の順） */
+/** 行の候補：タイムライン対象エピック（`sort_key` の順） */
 const rowChoices = computed(() => {
   const chosen = new Set(timelineEpics.value)
   return epicChoices.choices.value.filter((c) => chosen.has(c.seq))
@@ -730,7 +730,7 @@ const bodyW = ref(800)
 const liveBars = computed<Bar[]>(() => tickets.value.map((t) => barOf(t, now.value)).filter((b): b is Bar => b !== null))
 
 /**
- * 版の表示で読む行（`model.ts` の `baselineRows`）。重ねる版、版を送るときはその版と前の版。
+ * 版の表示で読む行（`model.ts` の `baselineRows`）。重ねる版、タイムライン変更推移を見るときはその版と前の版。
  * **対象から外したエピック・消したエピックも、版に保存した行の情報で出す。**
  */
 const rowItems = computed<BaselineItem[]>(() =>
@@ -754,7 +754,7 @@ const rowsReady = computed(
 )
 const rowSet = computed(() => baselineRows(epics.value, rowsReady.value ? rowItems.value : [], timelineEpics.value, rowFilter.value, epicChoices.all.value))
 
-/** 表示する中身。当日（いまの予定）か、版を送っているあいだはその版 */
+/** 表示する中身。当日（いまの予定）か、タイムライン変更推移を見ているあいだはその版 */
 const display = computed<{ mode: 'day' | 'step'; bars: Bar[]; base: Map<number, BaselineItem> | null; gone: Bar[] }>(() => {
   if (step.value !== null) {
     const vs = versionsAsc.value
@@ -1066,8 +1066,6 @@ interface RowView {
   fs: { key: string; joined: boolean; x: number; w: number; y: number; title: string }[]
   lateExt: { key: string; x: number; w: number; y: number; title: string }[]
   ghosts: GhostView[]
-  nChk: number
-  nFree: number
 }
 
 interface GhostView {
@@ -1134,8 +1132,6 @@ const rowViews = computed<RowView[]>(() =>
       fs,
       lateExt,
       ghosts: ghostsFor(r),
-      nChk: r.bars.filter((b) => b.chk).length,
-      nFree: r.bars.filter((b) => !b.chk).length,
     }
   }),
 )
@@ -1780,7 +1776,7 @@ watch(projectKey, (key, prev) => {
               </div>
               <div class="pf">
                 <button type="button" class="secondary small" :disabled="baselineList.length === 0" @click="startStep">
-                  {{ $ui('版を順に送る（最初の版 → いま）') }}
+                  {{ $ui('タイムライン変更推移を見る（最初の版 → いま）') }}
                 </button>
               </div>
             </div>
@@ -1810,7 +1806,7 @@ watch(projectKey, (key, prev) => {
         <button type="button" class="secondary small" :disabled="committing" @click="cancelTrial">{{ $ui('取り消す') }}</button>
       </template>
       <template v-else-if="step !== null">
-        <span class="lbl">{{ $ui('版を送る {value0}/{value1}', { value0: step + 1, value1: versionsAsc.length + 1 }) }}</span>
+        <span class="lbl">{{ $ui('タイムライン変更推移 {value0}/{value1}', { value0: step + 1, value1: versionsAsc.length + 1 }) }}</span>
         <button type="button" class="secondary small sq" :disabled="step <= 0" :aria-label="$ui('前の版')" @click="moveStep(-1)">◀</button>
         <button type="button" class="secondary small sq" :disabled="step >= versionsAsc.length" :aria-label="$ui('次の版')" @click="moveStep(1)">▶</button>
         <span class="msg">
@@ -1846,18 +1842,18 @@ watch(projectKey, (key, prev) => {
 
     <EmptyState
       v-else-if="noEpics"
-      :title="$ui('タイムラインに載せるエピックを選んでください')"
+      :title="$ui('タイムライン対象エピックを選んでください')"
       :description="canProjectEdit ? undefined : $ui('プロジェクト管理者に依頼してください')"
     >
       <template v-if="canProjectEdit" #action>
-        <button type="button" class="primary" @click="openEpicPicker">{{ $ui('載せるエピックを選ぶ') }}</button>
+        <button type="button" class="primary" @click="openEpicPicker">{{ $ui('タイムライン対象エピックを選ぶ') }}</button>
       </template>
     </EmptyState>
 
     <p v-if="!error && emptyState === 'band'" class="tl-select-band" role="status">
-      <span>{{ $ui('タイムラインに載せるエピックを選んでください') }}</span>
+      <span>{{ $ui('タイムライン対象エピックを選んでください') }}</span>
       <span class="muted">{{ $ui('保存した版の計画だけを出しています') }}</span>
-      <button v-if="canProjectEdit" type="button" class="secondary small" @click="openEpicPicker">{{ $ui('載せるエピックを選ぶ') }}</button>
+      <button v-if="canProjectEdit" type="button" class="secondary small" @click="openEpicPicker">{{ $ui('タイムライン対象エピックを選ぶ') }}</button>
       <span v-else class="muted">{{ $ui('プロジェクト管理者に依頼してください') }}</span>
     </p>
 
@@ -1890,10 +1886,10 @@ watch(projectKey, (key, prev) => {
             <div class="tl-rlabel" :style="{ width: `${LW}px`, height: `${rv.row.height}px` }">
               <span class="sleeve" :style="sleeveStyle(rv.row.epic.seq)" aria-hidden="true"></span>
               <div class="rn" :title="rv.row.epic.title">{{ rv.row.epic.title }}</div>
-              <div class="rm"><span v-if="rowSet.kinds.get(rv.row.epic.seq) === 'outside'" class="tl-outside" :title="$ui('載せるエピックに入っていない行です。保存した版の計画だけを出しています')">{{ $ui('対象外') }}</span><span v-else-if="rowSet.kinds.get(rv.row.epic.seq) === 'missing'" class="tl-outside" :title="$ui('このエピックはもうありません。保存した版の計画だけを出しています')">{{ $ui('無いエピック') }}</span>pb-{{ rv.row.epic.seq }} · {{ $ui('本番 {value0}', { value0: rv.nChk }) }}<template v-if="rv.nFree"> · {{ $ui('裏 {value0}', { value0: rv.nFree }) }}</template></div>
+              <div class="rm"><span v-if="rowSet.kinds.get(rv.row.epic.seq) === 'outside'" class="tl-outside" :title="$ui('タイムライン対象エピックに入っていない行です。保存した版の計画だけを出しています')">{{ $ui('対象外') }}</span><span v-else-if="rowSet.kinds.get(rv.row.epic.seq) === 'missing'" class="tl-outside" :title="$ui('このエピックはもうありません。保存した版の計画だけを出しています')">{{ $ui('無いエピック') }}</span><span v-if="rowSet.kinds.get(rv.row.epic.seq) === 'missing'">pb-{{ rv.row.epic.seq }}</span><button v-else type="button" class="tl-seq" :class="{ sel: detailSeq === rv.row.epic.seq }" :title="$ui('エピックの詳細を開く')" @click="openDetail(rv.row.epic.seq, $event)">pb-{{ rv.row.epic.seq }}</button></div>
               <template v-if="rv.row.lanes > 1">
-                <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H / 2 - 5}px` }">{{ $ui('本番') }}</span>
-                <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H * 1.5 - 5}px` }">{{ $ui('裏') }}{{ rv.row.lanes > 2 ? `×${rv.row.lanes - 1}` : '' }}</span>
+                <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H / 2 - 5}px` }">{{ $ui('メイン') }}</span>
+                <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H * 1.5 - 5}px` }">{{ $ui('サブ') }}{{ rv.row.lanes > 2 ? `×${rv.row.lanes - 1}` : '' }}</span>
               </template>
             </div>
             <div
@@ -2026,8 +2022,8 @@ watch(projectKey, (key, prev) => {
       @save="saveCreate"
     />
 
-    <!-- 載せるエピック（5.15「載せるエピック」。pb-324 でメニューからダイアログに） -->
-    <Modal v-if="epicOpen" :title="$ui('載せるエピック')" @close="epicOpen = false">
+    <!-- タイムライン対象エピック（5.15「タイムライン対象エピック」。pb-324 でメニューからダイアログに） -->
+    <Modal v-if="epicOpen" :title="$ui('タイムライン対象エピック')" @close="epicOpen = false">
       <p class="tl-hint">{{ $ui('タイムラインの行にするエピック（プロジェクトの設定）') }}</p>
       <EpicChecklist :choices="epicChoices.choices.value" :selected="epicDraft" :sleeve="sleeveOf" :disabled="epicSaving" @update="epicDraft = $event" />
       <p v-if="epicError" class="tl-err" role="alert">{{ epicError }}</p>
@@ -2039,7 +2035,7 @@ watch(projectKey, (key, prev) => {
 
     <Modal v-if="saveOpen" :title="$ui('現在のタイムラインを記録')" @close="saveOpen = false">
       <form class="tl-save" @submit.prevent="saveBaseline">
-        <p class="tl-hint">{{ $ui('行を絞っていても、載せるエピックの全体を保存します。版の名前は保存した日時で決まります。') }}</p>
+        <p class="tl-hint">{{ $ui('行を絞っていても、タイムライン対象エピックの全体を保存します。版の名前は保存した日時で決まります。') }}</p>
         <label class="field">
           <span class="label">{{ $ui('添え書き（任意）') }}</span>
           <input v-model="saveLabel" type="text" maxlength="100" :placeholder="$ui('例：リハーサル後')" :disabled="saving" />
@@ -2598,6 +2594,23 @@ watch(projectKey, (key, prev) => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 見出しの番号からエピックの詳細を開く（pb-326）。地の文に溶かし、触れたときだけリンクに見せる */
+.tl-rlabel .tl-seq {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tl-rlabel .tl-seq:hover,
+.tl-rlabel .tl-seq:focus-visible,
+.tl-rlabel .tl-seq.sel {
+  color: var(--pb-text);
+  text-decoration: underline;
 }
 
 .tl-select-band {
