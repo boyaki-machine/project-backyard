@@ -433,6 +433,27 @@ func TestClaudeSettingsAndCodexShareTheList(t *testing.T) {
 	}
 }
 
+// TestAutoApprovedToolsAreReadOnly は、自動承認の一覧が読み取りツールだけで、
+// 待ち受けを含むことを確かめる（Requirements.md 10.3 の表・457行の read / write の分離。pb-313）。
+//
+// **一覧から期待値を作る他の試験では、ツールを外しても書き込みを足しても落ちない。**
+// 分類の正本（Requirements.md の表）と突き合わせる。
+func TestAutoApprovedToolsAreReadOnly(t *testing.T) {
+	raw, err := os.ReadFile("../../../docs/design/Requirements.md")
+	if err != nil {
+		t.Fatalf("Requirements.md を読めない: %v", err)
+	}
+	for _, tool := range autoApprovedTools {
+		if !strings.Contains(string(raw), "| `"+tool+"` | read |") {
+			t.Errorf("%s が Requirements.md の表で read に分類されていない（書き込みは自動承認しない）", tool)
+		}
+	}
+	// 自律実行では何十回も呼ぶ（Delegation.md 10章）。外すと、呼ぶたびに承認を求める。
+	if !slices.Contains(autoApprovedTools, "pb_wait") {
+		t.Error("autoApprovedTools に pb_wait が無い")
+	}
+}
+
 // TestRenderConnectWithoutTemplate は配置ファイルを持たない種別を確かめる
 // （ApiDesign.md 4.5.8.3）。
 //
