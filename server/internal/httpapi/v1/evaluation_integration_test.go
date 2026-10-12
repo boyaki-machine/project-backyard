@@ -274,10 +274,59 @@ func TestEvaluationIntegration(t *testing.T) {
 			t.Fatalf("成果の評価 status = %d（body=%s）", rec.Code, rec.Body.String())
 		}
 
-		// 合格したので、PM は根を完了にできる。
+		// **停止中は、合格していても受け入れられない**（検証9。Delegation.md 4.3「受け入れ」）。
+		delegPath := fmt.Sprintf("%s/tickets/%d/delegation", base, rootSeq)
+		if rec = postWithCookie(r, delegPath+"/pause", session, `{}`); rec.Code != http.StatusOK {
+			t.Fatalf("停止 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		rec = postWithCookie(r, transitionPath, session, `{"to":"done"}`)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), rootNotAcceptableReason) ||
+			!strings.Contains(rec.Body.String(), "delegation_stage") {
+			t.Fatalf("done への遷移（停止中） status = %d, want 403 と検証9 の文言（body=%s）", rec.Code, rec.Body.String())
+		}
+		// 9.7 も同じ関数を通り、押せない「完了」に理由が付く。
+		rec = getWithCookie(r, transitionPath+"s", session)
+		if !strings.Contains(rec.Body.String(), rootNotAcceptableReason) {
+			t.Errorf("遷移先の一覧に検証9 の理由が無い（body=%s）", rec.Body.String())
+		}
+		if rec = postWithCookie(r, delegPath+"/resume", session, `{}`); rec.Code != http.StatusOK {
+			t.Fatalf("再開 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+
+		// 合格したので、PM は根を完了にできる。**これが受け入れである。**
 		rec = postWithCookie(r, transitionPath, session, `{"to":"done"}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("done への遷移（合格後） status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+		}
+
+		// 委任は ended、根の execution_mode は delegated のまま（取り下げとの違い）。
+		var delegStatus, mode string
+		if err := pool.QueryRow(ctx, `
+			SELECT d.status, t.execution_mode FROM delegation d JOIN ticket t ON t.id = d.root_ticket_id
+			JOIN project p ON p.id = t.project_id WHERE p.key = $1 AND t.seq = $2`, key, rootSeq,
+		).Scan(&delegStatus, &mode); err != nil {
+			t.Fatalf("委任を読めない: %v", err)
+		}
+		if delegStatus != "ended" || mode != "delegated" {
+			t.Errorf("受け入れ後 delegation.status = %q, execution_mode = %q, want ended / delegated", delegStatus, mode)
+		}
+
+		// main は「終了」を読んで止まれる（pb_wait とパックが読む口）。
+		v := viewOf(t, bearerGet(r, fmt.Sprintf("%s/tickets/%d/delegation-status", base, rootSeq), mainToken.Token))
+		if v["in_delegation"] != false || v["status"] != "ended" {
+			t.Errorf("受け入れ後の delegation-status = %v, want in_delegation=false / status=ended", v)
+		}
+
+		// 根に判断のコメントが残る（pb_wait が変化として返す）。
+		var n int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM comment c JOIN ticket t ON t.id = c.ticket_id JOIN project p ON p.id = t.project_id
+			WHERE p.key = $1 AND t.seq = $2 AND c.kind = 'decision' AND c.body_md LIKE '%自律実行を受け入れた%'`,
+			key, rootSeq).Scan(&n); err != nil {
+			t.Fatalf("コメントを数えられない: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("受け入れのコメント = %d 件, want 1", n)
 		}
 	})
 }
