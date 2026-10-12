@@ -1298,6 +1298,9 @@ type Querier interface {
 	// 終了していない委任の木（根と子孫）を根から辿り、渡したチケットのぶんだけ返す。
 	// **委任が無いプロジェクトでは再帰の起点が0行**なので、一覧の重さはほぼ変わらない。
 	// open_confirmations はヒアリングも数える（どれも PM の回答を待っている）。
+	// reported は、根ではない子で最新の完了レポートが completed なのに完了していないこと
+	// （Delegation.md 5章 D2）。レビュー相当の状態が無いワークフローでも、PM が
+	// まとめて完了にする子を見分けられるようにする。
 	ListDelegationMarks(ctx context.Context, arg ListDelegationMarksParams) ([]ListDelegationMarksRow, error)
 	// ListDelegationMetricValues は指標の値を古い順に返す（要約・画面）。
 	ListDelegationMetricValues(ctx context.Context, delegationID string) ([]ListDelegationMetricValuesRow, error)

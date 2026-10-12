@@ -8045,6 +8045,11 @@ export interface components {
                 status: "planning" | "approved" | "paused";
                 /** @description 回答していないユーザ確認待ちの数（ヒアリングを含む）。 */
                 open_confirmations: number;
+                /**
+                 * @description 根ではない子で、最新の完了レポートが `completed` なのに
+                 *     完了していないとき `true`（Delegation.md 5章 D2）。
+                 */
+                reported: boolean;
             };
             /**
              * Format: int64

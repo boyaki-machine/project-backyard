@@ -457,4 +457,6 @@ type delegationMark struct {
 	IsRoot            bool   `json:"is_root"`
 	Status            string `json:"status"`
 	OpenConfirmations int64  `json:"open_confirmations"`
+	// Reported は完了レポートを出したのに完了していない子（Delegation.md 5章 D2）。
+	Reported bool `json:"reported"`
 }
