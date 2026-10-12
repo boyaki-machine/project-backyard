@@ -110,7 +110,8 @@ type packTicket struct {
 			TimeSource          string `json:"time_source"`
 			RequireRegistration bool   `json:"require_registration"`
 		} `json:"policy"`
-		OpenWorkID *string `json:"open_work_id"`
+		OpenWorkID  *string `json:"open_work_id"`
+		OpenWorkSeq *int32  `json:"open_work_seq"`
 	} `json:"work_context"`
 
 	Seq          int32      `json:"seq"`
@@ -1254,6 +1255,15 @@ func writeWorkInstructions(b *strings.Builder, t packTicket) {
 	p := t.WorkContext.Policy
 	fmt.Fprintf(b, "算出契約：%s、版 `%s`、運営ノート版 %d、時間の選択 `%s`、登録必須 %t。開始時に契約を固定する。設定不足・変更量欠測はPoint未算出となる。変更量はチケット全体の累積値をchange_metricsで報告し、取得元を添える。\n\n", p.Status, p.Version, p.DocumentVersion, p.TimeSource, p.RequireRegistration)
 	if t.WorkContext.OpenWorkID != nil {
-		fmt.Fprintf(b, "自身の未終了作業：`%s`。pb_list_workで開始元を確認して継続するか、理由付きaction=abandonで未確認時間を加算せず終了する。新しいタイマーを重複開始しない。\n\n", *t.WorkContext.OpenWorkID)
+		// **どのチケットの記録かを出す**（pb-306）。ID だけだと、別のチケットで開いた記録を
+		// 今のチケットの計時と取り違える。
+		where := ""
+		if s := t.WorkContext.OpenWorkSeq; s != nil {
+			where = fmt.Sprintf("#%d の記録", *s)
+			if *s != t.Seq {
+				where += "（このチケットのものではない）"
+			}
+		}
+		fmt.Fprintf(b, "自身の未終了作業：%s`%s`。pb_list_workで開始元を確認して継続するか、理由付きaction=abandonで未確認時間を加算せず終了する。新しいタイマーを重複開始しない。\n\n", where, *t.WorkContext.OpenWorkID)
 	}
 }

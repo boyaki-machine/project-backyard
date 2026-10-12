@@ -138,10 +138,13 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [policy, open_work_id, document_path, section]
+                required: [policy, open_work_id, open_work_seq, document_path, section]
                 properties:
                   policy: {$ref: '#/components/schemas/WorkPolicy'}
                   open_work_id: {type: [string, 'null']}
+                  open_work_seq:
+                    type: [integer, 'null']
+                    description: 開いている記録の開始元のチケット番号。
                   document_path: {type: string}
                   section: {type: string}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -12437,10 +12440,13 @@ components:
             work_context:
               type: object
               description: GET詳細の共通計測案内。状態遷移では計測を開始しない。
-              required: [policy, open_work_id]
+              required: [policy, open_work_id, open_work_seq]
               properties:
                 policy: {$ref: '#/components/schemas/WorkPolicy'}
                 open_work_id: {type: [string, 'null']}
+                open_work_seq:
+                  type: [integer, 'null']
+                  description: 開いている記録の開始元のチケット番号。
             body_md:
               type: string
               nullable: true

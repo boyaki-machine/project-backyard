@@ -3531,6 +3531,9 @@ func (q *fakeQuerier) HasTicketOpenWork(context.Context, gen.HasTicketOpenWorkPa
 func (q *fakeQuerier) GetOpenWorkSession(context.Context, gen.GetOpenWorkSessionParams) (string, error) {
 	return "", pgx.ErrNoRows
 }
+func (q *fakeQuerier) GetOpenWorkSessionTicket(context.Context, gen.GetOpenWorkSessionTicketParams) (gen.GetOpenWorkSessionTicketRow, error) {
+	return gen.GetOpenWorkSessionTicketRow{}, pgx.ErrNoRows
+}
 
 func (q *fakeQuerier) WorkRequiresRegistration(context.Context, gen.WorkRequiresRegistrationParams) (bool, error) {
 	return false, nil

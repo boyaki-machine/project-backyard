@@ -79,6 +79,8 @@ export interface paths {
                         "application/json": {
                             policy: components["schemas"]["WorkPolicy"];
                             open_work_id: string | null;
+                            /** @description 開いている記録の開始元のチケット番号。 */
+                            open_work_seq: number | null;
                             document_path: string;
                             section: string;
                         };
@@ -8308,6 +8310,8 @@ export interface components {
             work_context?: {
                 policy: components["schemas"]["WorkPolicy"];
                 open_work_id: string | null;
+                /** @description 開いている記録の開始元のチケット番号。 */
+                open_work_seq: number | null;
             };
             /** @description 本文（Markdown ソース）。 */
             body_md: string | null;

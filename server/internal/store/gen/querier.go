@@ -925,6 +925,9 @@ type Querier interface {
 	GetLatestScheduleBaseline(ctx context.Context, projectID string) (GetLatestScheduleBaselineRow, error)
 	GetLiveWorkPointInputs(ctx context.Context, ticketID string) ([]GetLiveWorkPointInputsRow, error)
 	GetOpenWorkSession(ctx context.Context, arg GetOpenWorkSessionParams) (string, error)
+	// GetOpenWorkSessionTicket は開いている記録と、その開始元のチケット番号を返す。
+	// 案内に ID だけを出すと、別のチケットで開いた記録を今のチケットの計時と取り違える（pb-306）。
+	GetOpenWorkSessionTicket(ctx context.Context, arg GetOpenWorkSessionTicketParams) (GetOpenWorkSessionTicketRow, error)
 	// GetParentForCascade は「子が動いたら親を進行中にする」で祖先をたどる1段ぶん
 	// （9.6）。子の id を渡すと、その親の seq とステータスのカテゴリが返る。
 	//

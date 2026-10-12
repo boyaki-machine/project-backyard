@@ -331,6 +331,30 @@ func (q *Queries) GetOpenWorkSession(ctx context.Context, arg GetOpenWorkSession
 	return id, err
 }
 
+const getOpenWorkSessionTicket = `-- name: GetOpenWorkSessionTicket :one
+SELECT ws.id, t.seq FROM work_session ws JOIN ticket t ON t.id = ws.ticket_id
+WHERE ws.project_id= $1 AND ws.actor_id= $2 AND ws.state <> 'finished'
+`
+
+type GetOpenWorkSessionTicketParams struct {
+	ProjectID string
+	ActorID   string
+}
+
+type GetOpenWorkSessionTicketRow struct {
+	ID  string
+	Seq int32
+}
+
+// GetOpenWorkSessionTicket は開いている記録と、その開始元のチケット番号を返す。
+// 案内に ID だけを出すと、別のチケットで開いた記録を今のチケットの計時と取り違える（pb-306）。
+func (q *Queries) GetOpenWorkSessionTicket(ctx context.Context, arg GetOpenWorkSessionTicketParams) (GetOpenWorkSessionTicketRow, error) {
+	row := q.db.QueryRow(ctx, getOpenWorkSessionTicket, arg.ProjectID, arg.ActorID)
+	var i GetOpenWorkSessionTicketRow
+	err := row.Scan(&i.ID, &i.Seq)
+	return i, err
+}
+
 const getTicketEffort = `-- name: GetTicketEffort :one
 SELECT t.actual_hours,t.actual_point,t.actual_point_version,
 COALESCE(e.manual_hours,t.actual_hours IS NOT NULL)::boolean AS manual_hours,

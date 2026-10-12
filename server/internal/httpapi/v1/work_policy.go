@@ -86,9 +86,10 @@ func (h *handler) getWorkPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var openID *string
-	id, e := h.q.GetOpenWorkSession(ctx, gen.GetOpenWorkSessionParams{ProjectID: scope.projectID, ActorID: auth.PrincipalFromContext(ctx).ActorID})
+	var openSeq *int32
+	open, e := h.q.GetOpenWorkSessionTicket(ctx, gen.GetOpenWorkSessionTicketParams{ProjectID: scope.projectID, ActorID: auth.PrincipalFromContext(ctx).ActorID})
 	if e == nil {
-		openID = &id
+		openID, openSeq = &open.ID, &open.Seq
 	} else if !errors.Is(e, pgx.ErrNoRows) {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(e))
 		return
@@ -96,9 +97,10 @@ func (h *handler) getWorkPolicy(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, 200, struct {
 		Policy       workPolicy `json:"policy"`
 		OpenWorkID   *string    `json:"open_work_id"`
+		OpenWorkSeq  *int32     `json:"open_work_seq"`
 		DocumentPath string     `json:"document_path"`
 		Section      string     `json:"section"`
-	}{p, openID, "project-management-note", "実績"})
+	}{p, openID, openSeq, "project-management-note", "実績"})
 }
 
 type changeMetrics struct {
@@ -323,6 +325,8 @@ func workMeasurementPermission(ctx context.Context, q gen.Querier, r *http.Reque
 type workContextView struct {
 	Policy     workPolicy `json:"policy"`
 	OpenWorkID *string    `json:"open_work_id"`
+	// OpenWorkSeq は開いている記録の開始元のチケット番号（pb-306）。
+	OpenWorkSeq *int32 `json:"open_work_seq"`
 }
 
 func getWorkContext(ctx context.Context, q gen.Querier, projectID, actorID string) (*workContextView, error) {
@@ -331,9 +335,9 @@ func getWorkContext(ctx context.Context, q gen.Querier, projectID, actorID strin
 		return nil, e
 	}
 	out := &workContextView{Policy: p}
-	id, e := q.GetOpenWorkSession(ctx, gen.GetOpenWorkSessionParams{ProjectID: projectID, ActorID: actorID})
+	open, e := q.GetOpenWorkSessionTicket(ctx, gen.GetOpenWorkSessionTicketParams{ProjectID: projectID, ActorID: actorID})
 	if e == nil {
-		out.OpenWorkID = &id
+		out.OpenWorkID, out.OpenWorkSeq = &open.ID, &open.Seq
 	} else if !errors.Is(e, pgx.ErrNoRows) {
 		return nil, e
 	}
