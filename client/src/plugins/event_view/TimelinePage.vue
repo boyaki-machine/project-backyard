@@ -19,14 +19,18 @@ import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import Modal from '../../components/Modal.vue'
 import PageHeader from '../../components/PageHeader.vue'
+import NewTicketModal from '../../components/NewTicketModal.vue'
+import type { NewTicketDefaults } from '../../components/NewTicketModal.vue'
 import TicketDetailPane from '../../components/TicketDetailPane.vue'
 import UserActionsMenu from '../../components/UserActionsMenu.vue'
+import type { ActionItem } from '../../components/UserActionsMenu.vue'
 import { ApiError } from '../../api/client'
 import * as projectsApi from '../../api/projects'
 import * as tagsApi from '../../api/tags'
 import type { Tag } from '../../api/tags'
 import { statusCategoryLabels, statusCategoryOrder } from '../../api/tickets'
-import type { TicketDetail } from '../../api/tickets'
+import * as ticketsApi from '../../api/tickets'
+import type { CreateTicketRequest, TicketDetail } from '../../api/tickets'
 import { statusLabel } from '../../lib/catalogLabels'
 import { currentTimezone } from '../../lib/datetime'
 import { sleeveBackground } from '../../lib/epicSleeve'
@@ -196,7 +200,9 @@ const fetchKey = computed(() => JSON.stringify(fetchQuery.value))
 const canPlan = computed(
   () => auth.canInProject(projectKey.value, 'ticket.edit') || auth.canInProject(projectKey.value, 'ticket.plan.edit'),
 )
-/** `[計画を保存]`・`[載せるエピック ▾]`・版を消す */
+/** `新しいチケット` と、行の空いた所のドラッグで作る（5.15「チケットを作る」） */
+const canCreate = computed(() => auth.canInProject(projectKey.value, 'ticket.create'))
+/** `現在のタイムラインを記録`・`載せるエピック…`・版を消す */
 const canProjectEdit = computed(() => auth.canInProject(projectKey.value, 'project.edit'))
 
 const settings = computed(() => projectStore.current?.settings)
@@ -292,7 +298,7 @@ function apply(data: TlList, detect: boolean): void {
 
 /** 操作中か（ドラッグ中・試算の確認中・確定の応答待ち） */
 function isBusy(): boolean {
-  return drag.value !== null || trial.value !== null || committing.value
+  return drag.value !== null || newDrag.value !== null || trial.value !== null || committing.value
 }
 
 function flushDeferred(): void {
@@ -513,10 +519,14 @@ const epicDraft = ref<number[]>([])
 const epicSaving = ref(false)
 const epicError = ref('')
 
+/** 載せるエピックはダイアログで選ぶ（5.15「ヘッダとメニュー」。pb-324） */
+const epicOpen = ref(false)
+
 function openEpicPicker(): void {
   epicDraft.value = [...timelineEpics.value]
   epicError.value = ''
-  openMenu.value = 'epics'
+  openMenu.value = null
+  epicOpen.value = true
 }
 
 async function saveEpics(): Promise<void> {
@@ -528,7 +538,7 @@ async function saveEpics(): Promise<void> {
     const next = mergeTimelineEpics(p.settings, epicDraft.value, epicChoices.all.value.map((t) => t.seq))
     const res = await projectsApi.updateProject(p.key, p.version, { settings: next })
     projectStore.setCurrent(res)
-    openMenu.value = null
+    epicOpen.value = false
     await load(true)
   } catch (e) {
     epicError.value = toApiError(e).message
@@ -537,17 +547,147 @@ async function saveEpics(): Promise<void> {
   }
 }
 
+// ── チケットを作る（5.15「チケットを作る」。pb-321）──────────────────
+//
+// **時刻付きで、見ている行のエピックの配下に作る。** 作成のダイアログは新規チケット（5.4.3）を使い、
+// 終日を外した状態で開く。時間重複チェックは付けない（利用者の判断。付けるのは詳細ペインで）。
+
+/** メニューから作るときの長さ */
+const NEW_LEN = 30 * 60 * SEC
+
+const creating = ref<NewTicketDefaults | null>(null)
+const createBusy = ref(false)
+const createErrors = ref<Record<string, string>>({})
+
+function openCreate(d: NewTicketDefaults): void {
+  createErrors.value = {}
+  openMenu.value = null
+  creating.value = { all_day: false, ...d }
+}
+
+/** メニューの `新しいチケット`。「いま」を吸着の単位に切り上げた時刻から30分。行を1つに絞っていればそのエピック */
+function createFromMenu(): void {
+  const unit = snapSec.value * SEC
+  const s = Math.ceil(Date.now() / unit) * unit
+  const only = rowFilter.value.length === 1 ? { epic_seq: rowFilter.value[0] } : {}
+  openCreate({ start_at: s, due_at: s + NEW_LEN, ...only })
+}
+
+/** 作ったチケットがバーとして出ないときの理由（通知の行に添える） */
+function hiddenReason(t: TicketDetail): string {
+  if (t.all_day) return uiText('終日の予定はタイムラインに描きません')
+  if (t.start_at === null && t.due_at === null) return uiText('予定の無いチケットはタイムラインに描きません')
+  if (t.parent_seq === null || !timelineEpics.value.includes(t.parent_seq)) return uiText('タイムラインに載せていないエピックの配下です')
+  return uiText('いまの絞り込みでは表示されません')
+}
+
+async function saveCreate(body: CreateTicketRequest): Promise<void> {
+  createBusy.value = true
+  createErrors.value = {}
+  try {
+    const t = await ticketsApi.createTicket(projectKey.value, body)
+    creating.value = null
+    // 自分で作ったものは「他の人の変更」として光らせない
+    myVersions.set(t.seq, t.version)
+    await load(false)
+    const id = `${projectKey.value}-${t.seq}`
+    const shown = tickets.value.some((x) => x.seq === t.seq)
+    setResult('ok', shown
+      ? uiText('{value0} を作りました', { value0: id })
+      : uiText('{value0} を作りました。{value1}', { value0: id, value1: hiddenReason(t) }))
+  } catch (e) {
+    const err = toApiError(e)
+    if (err.status === 422) {
+      const fields: Record<string, string> = {}
+      for (const d of err.details) fields[d.field] = d.message
+      createErrors.value = fields
+    } else {
+      creating.value = null
+      setResult('error', err.message)
+    }
+  } finally {
+    createBusy.value = false
+  }
+}
+
+/** 行の空いた所のドラッグ（範囲は吸着した瞬間で持つ） */
+const newDrag = shallowRef<{ row: number; a: number; b: number } | null>(null)
+
+/** 空いた所から作れるか。版を送っているあいだ・試算の確認中・版にだけある行では作らない */
+function canCreateIn(rowSeq: number): boolean {
+  return canCreate.value && display.value.mode !== 'step' && trial.value === null && !rowSet.value.kinds.has(rowSeq)
+}
+
+function onTrackDown(ev: PointerEvent, rowSeq: number): void {
+  if (ev.button !== 0 || !canCreateIn(rowSeq)) return
+  // バー・取っ手・札の上は、それぞれの操作に任せる
+  if ((ev.target as HTMLElement).closest('.bar, .who, .gonelbl')) return
+  const el = ev.currentTarget as HTMLElement
+  const left = el.getBoundingClientRect().left
+  const tAt = (clientX: number, alt: boolean) => snapTo(range.value.t0 + ((clientX - left) / pps.value) * SEC, alt ? 1 : snapSec.value)
+  ev.preventDefault()
+  el.setPointerCapture(ev.pointerId)
+  const a = tAt(ev.clientX, ev.altKey)
+  newDrag.value = { row: rowSeq, a, b: a }
+  const move = (m: PointerEvent) => {
+    const d = newDrag.value
+    if (!d) return
+    const b = tAt(m.clientX, m.altKey)
+    if (b !== d.b) newDrag.value = { ...d, b }
+  }
+  const end = (commit: boolean) => {
+    el.removeEventListener('pointermove', move)
+    el.removeEventListener('pointerup', up)
+    el.removeEventListener('pointercancel', cancel)
+    const d = newDrag.value
+    newDrag.value = null
+    flushDeferred()
+    // 吸着の単位より短いものは、押しただけとみなして作らない（2端が同じ瞬間に寄る）
+    if (!commit || !d || d.a === d.b) return
+    openCreate({ start_at: Math.min(d.a, d.b), due_at: Math.max(d.a, d.b), epic_seq: d.row })
+  }
+  const up = () => end(true)
+  const cancel = () => end(false)
+  el.addEventListener('pointermove', move)
+  el.addEventListener('pointerup', up)
+  el.addEventListener('pointercancel', cancel)
+}
+
 // ── 見出しの道具（開いているパネルは1つだけ）──────────────────
 
-const openMenu = ref<'rows' | 'filter' | 'baseline' | 'epics' | null>(null)
+const openMenu = ref<'rows' | 'filter' | 'baseline' | null>(null)
 const toolsEl = useTemplateRef<HTMLElement>('toolsEl')
 
-function toggleMenu(m: 'rows' | 'filter' | 'baseline' | 'epics'): void {
-  if (m === 'epics' && openMenu.value !== 'epics') {
-    openEpicPicker()
-    return
-  }
+function toggleMenu(m: 'rows' | 'filter' | 'baseline'): void {
   openMenu.value = openMenu.value === m ? null : m
+}
+
+// ── メニュー `[⋯]`（5.15「ヘッダとメニュー」。pb-322・pb-324）──────────────
+//
+// 見る範囲を変えない操作（版の比較・記録・載せるエピック）はヘッダに並べず、ここにまとめる。
+
+const moreItems = computed<ActionItem[]>(() => {
+  const items: ActionItem[] = []
+  if (canCreate.value) items.push({ key: 'create', label: uiText('新しいチケット') })
+  items.push(
+    { key: 'baseline', label: uiText('重ねる計画を選ぶ…'), separated: items.length > 0 },
+    step.value === null
+      ? { key: 'step', label: uiText('版を送る'), disabled: baselineList.value.length === 0, reason: uiText('保存した版がありません') }
+      : { key: 'step', label: uiText('版を送るのを終える') },
+  )
+  if (canProjectEdit.value) {
+    items.push({ key: 'save', label: uiText('現在のタイムラインを記録') })
+    items.push({ key: 'epics', label: uiText('載せるエピック…'), separated: true })
+  }
+  return items
+})
+
+function onMore(key: string): void {
+  if (key === 'create') createFromMenu()
+  else if (key === 'baseline') openMenu.value = 'baseline'
+  else if (key === 'step') (step.value === null ? startStep() : endStep())
+  else if (key === 'save') openSave()
+  else if (key === 'epics') openEpicPicker()
 }
 
 function onDocumentPointerDown(e: PointerEvent): void {
@@ -1534,7 +1674,7 @@ watch(projectKey, (key, prev) => {
           <!-- 行（見る人ごとの絞り込み。URL の parent） -->
           <div class="tl-dd">
             <button type="button" class="tl-chip" :class="{ on: rowFiltered }" :aria-expanded="openMenu === 'rows'" @click="toggleMenu('rows')">
-              <span class="k">{{ $ui('行') }}</span> {{ rowSelected.length }}/{{ rowChoices.length }} ▾
+              <span class="k">{{ $ui('表示するエピック') }}</span> {{ rowSelected.length }}/{{ rowChoices.length }} ▾
             </button>
             <div v-if="openMenu === 'rows'" class="tl-panel">
               <p class="ph">{{ $ui('見る行（エピック）を選ぶ。URL に残ります') }}</p>
@@ -1604,10 +1744,14 @@ watch(projectKey, (key, prev) => {
           <button type="button" class="secondary small" @click="toNow">{{ $ui('いま') }}</button>
           <span class="tl-vsep" aria-hidden="true"></span>
 
-          <div class="tl-dd">
-            <button type="button" class="tl-chip" :class="{ on: selectedBaseline !== null }" :title="baselineChip" :aria-expanded="openMenu === 'baseline'" @click="toggleMenu('baseline')">
-              <span class="k">{{ $ui('当初計画') }}</span> {{ baselineChip }} ▾
-            </button>
+          <!-- 重ねている版の札（押せない表示。pb-322）。重ねていなければ出さない -->
+          <span v-if="selectedBaseline !== null" class="tl-chip tl-chip-static on" :title="baselineChip">
+            <span class="k">{{ $ui('当初計画') }}</span> {{ baselineChip }}
+          </span>
+          <span class="tl-poll mono" :class="{ warn: pollWarn }" :title="$ui('5秒ごとに取り直します')">{{ pollAge }}</span>
+          <!-- メニュー（5.15「ヘッダとメニュー」）。版の一覧はこの下に開く -->
+          <div class="tl-dd tl-more">
+            <UserActionsMenu :items="moreItems" :label="$ui('タイムラインのメニュー')" @select="onMore" />
             <div v-if="openMenu === 'baseline'" class="tl-panel right tl-versions">
               <p class="ph">{{ $ui('重ねる版（保存した日時の新しい順）') }}</p>
               <label class="tl-check">
@@ -1641,29 +1785,6 @@ watch(projectKey, (key, prev) => {
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            class="secondary small"
-            :aria-pressed="step !== null"
-            :disabled="baselineList.length === 0"
-            @click="step === null ? startStep() : endStep()"
-          >
-            {{ $ui('版を送る') }}
-          </button>
-          <button v-if="canProjectEdit" type="button" class="secondary small" @click="openSave">{{ $ui('計画を保存') }}</button>
-          <div v-if="canProjectEdit" class="tl-dd">
-            <button type="button" class="tl-chip" :aria-expanded="openMenu === 'epics'" @click="toggleMenu('epics')">{{ $ui('載せるエピック') }} ▾</button>
-            <div v-if="openMenu === 'epics'" class="tl-panel right tl-epic-panel">
-              <p class="ph">{{ $ui('タイムラインの行にするエピック（プロジェクトの設定）') }}</p>
-              <EpicChecklist :choices="epicChoices.choices.value" :selected="epicDraft" :sleeve="sleeveOf" :disabled="epicSaving" @update="epicDraft = $event" />
-              <p v-if="epicError" class="tl-err" role="alert">{{ epicError }}</p>
-              <div class="pf">
-                <button type="button" class="primary small" :disabled="epicSaving" @click="saveEpics">{{ epicSaving ? $ui('保存中…') : $ui('保存') }}</button>
-                <button type="button" class="secondary small" :disabled="epicSaving" @click="openMenu = null">{{ $ui('キャンセル') }}</button>
-              </div>
-            </div>
-          </div>
-          <span class="tl-poll mono" :class="{ warn: pollWarn }" :title="$ui('5秒ごとに取り直します')">{{ pollAge }}</span>
         </div>
       </template>
     </PageHeader>
@@ -1775,7 +1896,18 @@ watch(projectKey, (key, prev) => {
                 <span class="lanetag" :style="{ top: `${ROW_PAD + LANE_H * 1.5 - 5}px` }">{{ $ui('裏') }}{{ rv.row.lanes > 2 ? `×${rv.row.lanes - 1}` : '' }}</span>
               </template>
             </div>
-            <div class="tl-track" :style="{ width: `${trackW}px`, height: `${rv.row.height}px` }">
+            <div
+              class="tl-track"
+              :class="{ 'can-create': canCreateIn(rv.row.epic.seq) }"
+              :style="{ width: `${trackW}px`, height: `${rv.row.height}px` }"
+              @pointerdown="onTrackDown($event, rv.row.epic.seq)"
+            >
+              <!-- 作る範囲（ドラッグの間だけ。5.15「チケットを作る」） -->
+              <div
+                v-if="newDrag && newDrag.row === rv.row.epic.seq"
+                class="tl-newrange"
+                :style="{ left: `${X(Math.min(newDrag.a, newDrag.b))}px`, width: `${Math.abs(X(newDrag.b) - X(newDrag.a))}px`, top: `${ROW_PAD}px`, height: `${rv.row.height - ROW_PAD * 2}px` }"
+              ></div>
               <div v-if="rv.row.lanes > 1" class="subzone" :style="{ top: `${ROW_PAD + LANE_H}px`, height: `${(rv.row.lanes - 1) * LANE_H}px` }"></div>
               <div
                 v-for="f in rv.frames"
@@ -1879,7 +2011,33 @@ watch(projectKey, (key, prev) => {
       <span class="r mono">{{ zoomText }}</span>
     </div>
 
-    <Modal v-if="saveOpen" :title="$ui('計画を保存')" @close="saveOpen = false">
+    <!-- チケットを作る（5.15「チケットを作る」）。親チケットの候補は持たない（エピック欄だけ） -->
+    <NewTicketModal
+      v-if="creating"
+      :project-key="projectKey"
+      :members="members"
+      :tags="tags"
+      :candidates="[]"
+      :epics="epicChoices.all.value"
+      :defaults="creating"
+      :busy="createBusy"
+      :field-errors="createErrors"
+      @close="creating = null"
+      @save="saveCreate"
+    />
+
+    <!-- 載せるエピック（5.15「載せるエピック」。pb-324 でメニューからダイアログに） -->
+    <Modal v-if="epicOpen" :title="$ui('載せるエピック')" @close="epicOpen = false">
+      <p class="tl-hint">{{ $ui('タイムラインの行にするエピック（プロジェクトの設定）') }}</p>
+      <EpicChecklist :choices="epicChoices.choices.value" :selected="epicDraft" :sleeve="sleeveOf" :disabled="epicSaving" @update="epicDraft = $event" />
+      <p v-if="epicError" class="tl-err" role="alert">{{ epicError }}</p>
+      <template #footer>
+        <button type="button" class="secondary" :disabled="epicSaving" @click="epicOpen = false">{{ $ui('キャンセル') }}</button>
+        <button type="button" class="primary" :disabled="epicSaving" @click="saveEpics">{{ epicSaving ? $ui('保存中…') : $ui('保存') }}</button>
+      </template>
+    </Modal>
+
+    <Modal v-if="saveOpen" :title="$ui('現在のタイムラインを記録')" @close="saveOpen = false">
       <form class="tl-save" @submit.prevent="saveBaseline">
         <p class="tl-hint">{{ $ui('行を絞っていても、載せるエピックの全体を保存します。版の名前は保存した日時で決まります。') }}</p>
         <label class="field">
@@ -1890,7 +2048,7 @@ watch(projectKey, (key, prev) => {
       </form>
       <template #footer>
         <button type="button" class="secondary" :disabled="saving" @click="saveOpen = false">{{ $ui('キャンセル') }}</button>
-        <button type="button" class="primary" :disabled="saving" @click="saveBaseline">{{ saving ? $ui('保存中…') : $ui('保存') }}</button>
+        <button type="button" class="primary" :disabled="saving" @click="saveBaseline">{{ saving ? $ui('記録中…') : $ui('記録') }}</button>
       </template>
     </Modal>
 
@@ -1974,6 +2132,16 @@ watch(projectKey, (key, prev) => {
 
 .tl-chip .k {
   color: var(--pb-text-muted);
+}
+
+/* 重ねている版の札（押せない表示。pb-322）。ボタンに見せないよう地と枠を消し、破線で「計画」を示す */
+.tl-chip-static,
+.tl-chip-static:hover {
+  display: inline-block;
+  cursor: default;
+  background: none;
+  border-style: dashed;
+  box-shadow: none;
 }
 
 .tl-tools :deep(button.small),
@@ -2469,6 +2637,23 @@ watch(projectKey, (key, prev) => {
 .tl-track {
   position: relative;
   flex: none;
+}
+
+/* 空いた所のドラッグで作れる（5.15「チケットを作る」）。作れない人にはカーソルも変えない */
+.tl-track.can-create {
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* 作る範囲：試算の影と同じ青の破線（ドラッグの間だけ） */
+.tl-newrange {
+  position: absolute;
+  z-index: 4;
+  box-sizing: border-box;
+  border: 2px dashed var(--pb-10);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--pb-9) 20%, transparent);
+  pointer-events: none;
 }
 
 .subzone {

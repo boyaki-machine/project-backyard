@@ -15,6 +15,13 @@ export interface NewTicketDefaults {
   epic_seq?: number
   tag_ids?: string[]
   assignee_id?: string
+  /**
+   * 「終日」の初期値。省くと終日（5.4.3）。タイムラインから開くときは `false`（5.15「チケットを作る」）
+   */
+  all_day?: boolean
+  /** 予定の初期値（エポックミリ秒）。タイムラインのドラッグで作るときに渡す */
+  start_at?: number
+  due_at?: number
 }
 </script>
 
@@ -49,7 +56,7 @@ import {
 } from '../api/tickets'
 import type { CreateTicketRequest, Ticket, TicketPriority, TicketType } from '../api/tickets'
 import type { ProjectMember } from '../api/projects'
-import { planInstant } from '../lib/datetime'
+import { instantOfLocalInput, localInputOf, planDate, planInstant } from '../lib/datetime'
 import { useProjectStore } from '../stores/project'
 
 const props = defineProps<{
@@ -120,8 +127,41 @@ const parentSeq = ref(props.defaults?.parent_seq !== undefined ? String(props.de
 const epicSeq = ref(props.defaults?.epic_seq !== undefined ? String(props.defaults.epic_seq) : '')
 const tagIds = ref<string[]>([...(props.defaults?.tag_ids ?? [])])
 const estimatePoint = ref('')
-const startDate = ref('')
-const dueDate = ref('')
+
+// ── 予定（5.4.3「終日」、7.5「予定日時の出し方」）──────────────────────
+//
+// **終日は基準タイムゾーンの日付、時刻付きは見る人の日時**で入力する（詳細ペインと同じ）。
+// 入力欄の文字列で持ち、送るときと切り替えるときに瞬間へ直す。
+const planTz = useProjectStore().planTimezone
+const allDay = ref(props.defaults?.all_day ?? true)
+
+/** 瞬間を、いまの「終日」に合った入力欄の文字列にする */
+function inputOf(ms: number | undefined, isEnd: boolean): string {
+  if (ms === undefined) return ''
+  return allDay.value ? planDate(ms, planTz, isEnd) : localInputOf(ms)
+}
+
+/** 入力欄の文字列を瞬間へ戻す（`inputOf` の逆）。空なら null */
+function instantOf(raw: string, isEnd: boolean): number | null {
+  if (raw === '') return null
+  return allDay.value ? planInstant(raw, planTz, isEnd) : instantOfLocalInput(raw)
+}
+
+const startDate = ref(inputOf(props.defaults?.start_at, false))
+const dueDate = ref(inputOf(props.defaults?.due_at, true))
+
+/**
+ * 「終日」の切り替え。**入力済みの値は保つ**——終日→時刻付きは日の境界の時刻（0時）に、
+ * 時刻付き→終日はその瞬間を含む日付にする（詳細ペインの `toggleAllDay` と同じ向き）。
+ */
+function setAllDay(next: boolean): void {
+  if (allDay.value === next) return
+  const s = instantOf(startDate.value, false)
+  const e = instantOf(dueDate.value, true)
+  allDay.value = next
+  startDate.value = inputOf(s ?? undefined, false)
+  dueDate.value = inputOf(e ?? undefined, true)
+}
 
 /** 入力済みかどうか。触る前から赤く出さない */
 const touched = ref(false)
@@ -143,8 +183,13 @@ const titleError = computed(() => {
  * するためであって、こちらを正本にするためではない。
  */
 const dateError = computed(() => {
-  if (startDate.value === '' || dueDate.value === '') return null
-  if (startDate.value > dueDate.value) return uiText("期限は開始日以降の日付を指定してください")
+  const s = instantOf(startDate.value, false)
+  const e = instantOf(dueDate.value, true)
+  if (s === null || e === null) return null
+  // 終日は半開区間の終わり（翌日の0時）なので同じ日は通る。時刻付きは同時刻を許さない（9.3.1）
+  if (allDay.value ? s > e : s >= e) {
+    return allDay.value ? uiText("期限は開始日以降の日付を指定してください") : uiText("終了は開始より後の日時を指定してください")
+  }
   return null
 })
 
@@ -221,12 +266,13 @@ function submit(): void {
   }
   if (tagIds.value.length > 0) body.tag_ids = [...tagIds.value]
   if (estimatePoint.value !== '') body.estimate_point = Number(estimatePoint.value)
-  // 予定は終日で送る（基準タイムゾーンの0時。期限は締切日の翌日の0時。pb-217）。
-  // 時刻付きの入力はチケット詳細だけが持つ（`GuiDesign.md` 5.5）
-  const tz = useProjectStore().planTimezone
-  if (startDate.value !== '') body.start_at = planInstant(startDate.value, tz, false)
-  if (dueDate.value !== '') body.due_at = planInstant(dueDate.value, tz, true)
-  if (body.start_at != null || body.due_at != null) body.all_day = true
+  // 終日は基準タイムゾーンの0時（期限は締切日の翌日の0時）、時刻付きは見る人の日時（pb-217・pb-327）
+  const s = instantOf(startDate.value, false)
+  const e = instantOf(dueDate.value, true)
+  if (s !== null) body.start_at = s
+  if (e !== null) body.due_at = e
+  // 予定が無くても「終日を外した」は送る。後から時刻を入れたとき時刻付きのままにする
+  if (s !== null || e !== null || !allDay.value) body.all_day = allDay.value
 
   emit('save', body)
 }
@@ -346,14 +392,23 @@ function submit(): void {
           <span v-if="estimateError" class="detail">✕ {{ estimateError }}</span>
         </label>
 
+        <!-- 終日の切り替え（5.4.3）。外すと開始・期限が日時の入力欄になる（pb-327） -->
+        <label class="all-day">
+          <input type="checkbox" :checked="allDay" @change="setAllDay(($event.target as HTMLInputElement).checked)" />
+          {{ $ui('終日') }}
+        </label>
+      </div>
+
+      <div class="row">
         <label class="field grow">
-          <span class="label">{{ $ui('開始日') }}</span>
-          <input v-model="startDate" type="date" />
+          <span class="label">{{ allDay ? $ui('開始日') : $ui('開始') }}</span>
+          <!-- 種類ごとに作り直す（key）。同じ要素の type を変えると、値が先に入って古い type で捨てられる -->
+          <input :key="allDay ? 'date' : 'time'" v-model="startDate" :type="allDay ? 'date' : 'datetime-local'" />
         </label>
 
         <label class="field grow">
-          <span class="label">{{ $ui('期限') }}</span>
-          <input v-model="dueDate" type="date" :aria-invalid="dateError !== null" />
+          <span class="label">{{ allDay ? $ui('期限') : $ui('終了') }}</span>
+          <input :key="allDay ? 'date' : 'time'" v-model="dueDate" :type="allDay ? 'date' : 'datetime-local'" :aria-invalid="dateError !== null" />
         </label>
       </div>
       <span v-if="dateError" class="detail">✕ {{ dateError }}</span>
@@ -403,10 +458,20 @@ function submit(): void {
   flex: 0 0 150px;
 }
 
-/* 見積・開始日・期限は1行に収める。基準値を 160px のままにすると3つ目が
-   折り返し、期限だけが幅いっぱいで下に残る（パネルは 520px） */
+/* 見積と「終日」を1行に、開始・期限を次の行に並べる。日時の入力欄は日付より
+   幅を取るので、見積と同じ行に3つ並べると折り返す（パネルは 520px） */
 .estimate {
   flex: 0 0 130px;
+}
+
+.all-day {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-end;
+  gap: var(--pb-space-1);
+  height: 36px;
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .label {
@@ -422,6 +487,7 @@ function submit(): void {
 input[type='text'],
 input[type='number'],
 input[type='date'],
+input[type='datetime-local'],
 select {
   width: 100%;
   height: 36px;
