@@ -993,7 +993,7 @@ export const uiMessages: Record<string, string> = {
   "チケットの消化状況・残存チケットの傾向": "Ticket resolution status and remaining ticket trends",
   "バックログ・カンバン・ガントが「いま何があるか」を見せるのに対し、この画面だけが「どう進んでいるか」を集計で答える": "While Backlog, Kanban, and Gantt charts show 'what is there,' this screen alone answers 'how it's progressing' with aggregated data.",
   "プロジェクトヒストリー・要約": "Project History and Summary",
-  "年表形式の履歴": "History in a timeline format",
+  "年表形式の履歴": "History as a chronology",
   "期間を絞った PDF／Markdown エクスポート": "PDF / Markdown Export with period filtering",
   "認証プロバイダ（OIDC/SAML）": "Authentication Provider (OIDC/SAML)",
   "OIDC/SAML の設定": "OIDC/SAML Settings",
