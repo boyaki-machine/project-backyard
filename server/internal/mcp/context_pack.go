@@ -262,6 +262,11 @@ type packDelegationStatus struct {
 			Findings json.RawMessage `json:"findings"`
 		} `json:"evaluation"`
 	} `json:"latest_plan"`
+	// LatestReport は根の最新の完了レポート（pb-305）。評価役は agent_report_id に渡す。
+	LatestReport *struct {
+		ID        string `json:"id"`
+		Evaluated bool   `json:"evaluated"`
+	} `json:"latest_report"`
 	LatestEvaluation *struct {
 		TargetKind string          `json:"target_kind"`
 		Round      int32           `json:"round"`
@@ -589,6 +594,16 @@ func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packD
 	b.WriteString(renderBudgetLines(ds.Budget))
 	b.WriteString(renderStopConditions(ds.Scope.StopConditions))
 	b.WriteString(renderMetrics(ds))
+
+	// **最新の完了レポートの ID を載せる**（7.2。pb-305）。評価待ちの間も main は出し直せるので、
+	// 評価役はこの ID を agent_report_id で名指しし、古い報告への判定が新しい報告に付くのを防ぐ。
+	if rep := ds.LatestReport; rep != nil && (ds.Role == "main" || ds.Role == "evaluator") {
+		state := "評価待ち"
+		if rep.Evaluated {
+			state = "評価済み"
+		}
+		fmt.Fprintf(&b, "**最新の完了レポート**：`%s`（%s）。成果を評価するときは、この ID を `agent_report_id` に渡す\n\n", rep.ID, state)
+	}
 
 	if ds.LatestEvaluation != nil && ds.LatestEvaluation.Verdict != "pass" {
 		fmt.Fprintf(&b, "**直近の評価**：%s 対象 round %d、判定 `%s`\n\n",

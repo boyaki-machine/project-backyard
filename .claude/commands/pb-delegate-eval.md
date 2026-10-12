@@ -51,6 +51,8 @@ argument-hint: <自律実行のチケット番号>
 `pb_submit_evaluation(seq=$1, …)` で書く。
 
 - `target_kind`：`plan`（`plan_version` も渡す）か `deliverable`
+- `agent_report_id`：`deliverable` のとき、**読んだ完了レポートの ID**（パックの「最新の完了レポート」）。
+  評価を待つ間も main は出し直せるので、**`409`（`stale_report`）で拒まれたら、新しい報告を読み直して評価する**
 - `verdict`：`pass` / `fail` / `unable`
 - `findings`：観点ごとに `{aspect, verdict, note_md}`。**不合格の観点には指摘を必ず書く**——「何が足りないか」と「どうなれば合格か」。
   価値観は機械的に照合できないので、**どの記述にどう沿う（外れる）か**を書く

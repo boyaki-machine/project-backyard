@@ -255,6 +255,7 @@ func TestEvaluationIntegration(t *testing.T) {
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("完了レポートの提出 status = %d（body=%s）", rec.Code, rec.Body.String())
 		}
+		firstReport, _ := viewOf(t, rec)["id"].(string)
 
 		// 完了レポートはあるが、まだ評価されていない（評価待ち）。
 		rec = postWithCookie(r, transitionPath, session, `{"to":"done"}`)
@@ -262,16 +263,37 @@ func TestEvaluationIntegration(t *testing.T) {
 			t.Fatalf("done への遷移（評価待ち中） status = %d, want 403（body=%s）", rec.Code, rec.Body.String())
 		}
 
-		// main の出し直しは評価待ちのあいだ拒まれる。
+		// **main は評価待ちのあいだも出し直せる**（7.2。pb-305）。評価中の注意に応えた修正を
+		// 正式な報告に載せるため。以前は 403 だった（pb-248）。
 		rec = bearerPost(r, reportsPath, mainToken.Token, `{"effort_unavailable":{"target":"both","reason":"fixture work has no measured timing"},"status":"completed"}`)
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("完了レポートの出し直し（評価待ち中） status = %d, want 403（body=%s）", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("完了レポートの出し直し（評価待ち中） status = %d, want 201（body=%s）", rec.Code, rec.Body.String())
+		}
+		secondReport, _ := viewOf(t, rec)["id"].(string)
+		if firstReport == "" || secondReport == "" || firstReport == secondReport {
+			t.Fatalf("完了レポートの ID = %q / %q, want 別々の値", firstReport, secondReport)
+		}
+
+		// 評価役は delegation-status で最新の報告を知る。
+		st := viewOf(t, bearerGet(r, fmt.Sprintf("%s/tickets/%d/delegation-status", base, rootSeq), evaluatorToken.Token))
+		if lr, _ := st["latest_report"].(map[string]any); lr == nil || lr["id"] != secondReport || lr["evaluated"] != false {
+			t.Errorf("latest_report = %v, want id=%s・evaluated=false", st["latest_report"], secondReport)
+		}
+
+		// 古い報告を名指しした評価は、取り違えを防ぐため 409 で拒む。
+		rec = bearerPost(r, evalPath, evaluatorToken.Token,
+			fmt.Sprintf(`{"target_kind":"deliverable","agent_report_id":%q,"verdict":"pass","findings":%s}`, firstReport, passFindings))
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "stale_report") {
+			t.Fatalf("古い報告への評価 status = %d, want 409 stale_report（body=%s）", rec.Code, rec.Body.String())
 		}
 
 		rec = bearerPost(r, evalPath, evaluatorToken.Token,
-			fmt.Sprintf(`{"target_kind":"deliverable","verdict":"pass","findings":%s}`, passFindings))
+			fmt.Sprintf(`{"target_kind":"deliverable","agent_report_id":%q,"verdict":"pass","findings":%s}`, secondReport, passFindings))
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("成果の評価 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		if got, _ := viewOf(t, rec)["agent_report_id"].(string); got != secondReport {
+			t.Errorf("評価の対象 = %q, want %q（最新の報告）", got, secondReport)
 		}
 
 		// **停止中は、合格していても受け入れられない**（検証9。Delegation.md 4.3「受け入れ」）。

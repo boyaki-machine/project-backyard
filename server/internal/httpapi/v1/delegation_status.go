@@ -46,6 +46,13 @@ type delegationStatusPlanEval struct {
 	Findings any    `json:"findings"`
 }
 
+// delegationStatusReportView は根の最新の完了レポート（pb-305）。
+type delegationStatusReportView struct {
+	ID          string `json:"id"`
+	SubmittedAt Time   `json:"submitted_at"`
+	Evaluated   bool   `json:"evaluated"`
+}
+
 // delegationStatusEvaluationView はパック向けの評価の要約。
 type delegationStatusEvaluationView struct {
 	TargetKind string `json:"target_kind"`
@@ -77,6 +84,7 @@ type delegationStatusView struct {
 	Main              *actorRef                       `json:"main,omitempty"`
 	Evaluator         *actorRef                       `json:"evaluator,omitempty"`
 	LatestPlan        *delegationStatusPlanView       `json:"latest_plan,omitempty"`
+	LatestReport      *delegationStatusReportView     `json:"latest_report,omitempty"`
 	LatestEvaluation  *delegationStatusEvaluationView `json:"latest_evaluation,omitempty"`
 	OpenConfirmations []confirmationView              `json:"open_confirmations,omitempty"`
 	LatestHandoff     *handoffView                    `json:"latest_handoff,omitempty"`
@@ -166,6 +174,14 @@ func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(perr))
 		return
 	}
+
+	// 評価役が agent_report_id に渡す、根の最新の完了レポート（pb-305）。
+	rep, rerr := latestRootReport(ctx, h.q, d.RootTicketID)
+	if rerr != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(rerr))
+		return
+	}
+	view.LatestReport = rep
 
 	if ev, everr := h.q.GetLatestEvaluationForDelegation(ctx, deleg.ID); everr == nil {
 		var findings any

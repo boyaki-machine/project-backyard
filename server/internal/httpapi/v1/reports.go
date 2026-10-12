@@ -192,20 +192,10 @@ func (h *handler) submitTicketReport(w http.ResponseWriter, r *http.Request) {
 					WithDetails(apierr.Detail{Field: "status", Code: "delegation_stage"})
 				return errTicketReference
 			}
-			// **根だけ、さらに「評価待ち」を見る**（5章「main：成果の提出
-			// （根の完了レポート）」。差し戻し＝fail なら出し直せる。子の
-			// 完了レポート（D2 の案a）は評価を挟まないので、ここは根に限る
-			// （pb-248）。
-			if d.RootTicketID == ticketID {
-				if pending, perr := rootReportEvaluationPending(ctx, q, ticketID); perr != nil {
-					return fmt.Errorf("評価待ちかを確認できない: %w", perr)
-				} else if pending {
-					forbidden = apierr.New(apierr.Forbidden).
-						WithMessage("評価の結果を待っているため、完了レポートは受け付けません").
-						WithDetails(apierr.Detail{Field: "status", Code: "delegation_stage"})
-					return errTicketReference
-				}
-			}
+			// **根の完了レポートは、評価待ちの間も出し直せる**（5章・7.2。pb-305）。
+			// 評価中の注意に応えた修正を、正式な報告に載せるため。評価されていない
+			// 古い報告は取り下げ扱いで、評価は agent_report_id で対象を名指しして
+			// 取り違えを防ぐ（evaluation.go）。
 			// **期日を過ぎていたら受け付けず、委任を停止する**（12.1・8.2。pb-253）。
 			// 停止をコミットするため nil を返す（tickets_create.go と同じ）。
 			root, rerr := q.GetDelegationByRootTicket(ctx, d.RootTicketID)

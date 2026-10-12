@@ -972,7 +972,9 @@ func writeTools() []tool {
 			Name: "pb_submit_evaluation",
 			Description: "自律実行（Delegated）の評価エージェントが、計画の版または根の完了レポートを評価する" +
 				"（Delegation.md 7章）。**呼び出し元がその委任の評価エージェントでなければ拒まれる。** " +
-				"target_kind=plan のときは plan_version も指定する。findings には少なくとも " +
+				"target_kind=plan のときは plan_version も指定する。**target_kind=deliverable のときは、評価した完了レポートの ID を " +
+				"agent_report_id に渡す**（パックの「最新の完了レポート」）。評価待ちの間も main は出し直せるので、最新でなければ " +
+				"409（stale_report）で拒まれる。そのときは新しい報告を読み直して評価する。findings には少なくとも " +
 				"purpose_and_dod（目的・完了条件）と values（価値観・世界観）の2観点を、それぞれ " +
 				"{aspect, verdict, note_md} で入れる。verdict=fail のときは、不合格にした観点の " +
 				"note_md に指摘を必ず書く。unable のときは、PB が確認待ち（evaluation_unable）を自動で立てる。" +
@@ -981,8 +983,10 @@ func writeTools() []tool {
 				Type: "object",
 				Properties: map[string]property{
 					"seq": {Type: "integer", Description: "委任の根となるチケットの番号（seq）", Minimum: intPtr(1)},
-					"target_kind": {Type: "string", Description: "評価の対象。plan=計画の版、deliverable=根の最新の完了レポート（暗黙に最新を指す）",
+					"target_kind": {Type: "string", Description: "評価の対象。plan=計画の版、deliverable=根の最新の完了レポート",
 						Enum: []string{"plan", "deliverable"}},
+					"agent_report_id": {Type: "string", Description: "target_kind=deliverable のとき、評価した完了レポートの ID（パックの「最新の完了レポート」）。" +
+						"最新でなければ 409。省くと最新を指すが、取り違えを防ぐため必ず渡す"},
 					"plan_version": {Type: "integer", Description: "target_kind=plan のとき必須。評価する計画の版番号", Minimum: intPtr(1)},
 					"verdict":      {Type: "string", Description: "合否", Enum: []string{"pass", "fail", "unable"}},
 					"findings": objectItems("観点ごとの判定の配列。aspect は少なくとも purpose_and_dod と values を含む",
@@ -1584,13 +1588,15 @@ func callSubmitPlan(h *Handler, r *http.Request, key string, args json.RawMessag
 // **findings は json.RawMessage で受ける。** 検証（観点の値域・不合格の指摘）は
 // REST 層が行う——MCP 層に同じ規則を重ねない（Design.md 8.1）。
 type submitEvaluationArgs struct {
-	Seq         flexInt         `json:"seq"`
-	TargetKind  string          `json:"target_kind"`
-	PlanVersion *int            `json:"plan_version"`
-	Verdict     string          `json:"verdict"`
-	Findings    json.RawMessage `json:"findings"`
-	ClassCheck  string          `json:"class_check"`
-	TokensUsed  *int64          `json:"tokens_used"`
+	Seq         flexInt `json:"seq"`
+	TargetKind  string  `json:"target_kind"`
+	PlanVersion *int    `json:"plan_version"`
+	// AgentReportID は deliverable で評価した完了レポートの ID（pb-305）。
+	AgentReportID string          `json:"agent_report_id"`
+	Verdict       string          `json:"verdict"`
+	Findings      json.RawMessage `json:"findings"`
+	ClassCheck    string          `json:"class_check"`
+	TokensUsed    *int64          `json:"tokens_used"`
 }
 
 func callSubmitEvaluation(h *Handler, r *http.Request, key string, args json.RawMessage) (toolResult, *rpcError) {
@@ -1619,6 +1625,9 @@ func callSubmitEvaluation(h *Handler, r *http.Request, key string, args json.Raw
 	}
 	if in.PlanVersion != nil {
 		body["plan_version"] = *in.PlanVersion
+	}
+	if id := strings.TrimSpace(in.AgentReportID); id != "" {
+		body["agent_report_id"] = id
 	}
 	if in.ClassCheck != "" {
 		body["class_check"] = in.ClassCheck
