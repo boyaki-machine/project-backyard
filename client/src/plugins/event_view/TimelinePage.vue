@@ -887,6 +887,19 @@ const spanChip = computed(() => {
 })
 /** 開始日時の入力（見る人のタイムゾーンの壁時計） */
 const atInput = computed(() => (atMs.value === null ? '' : toLocalInput(viewTz.value, atMs.value)))
+/**
+ * 入力中の開始日時。**入力欄は URL の値ではなくこれを表示する**——画面は「⟳ ○秒前」で毎秒描き直され、
+ * Vue は描き直しのたびに `value` を書き戻すので、URL の値で束ねるとカレンダーが確定前に入れた値が消える。
+ * URL の値が変わったとき・パネルを開いたときだけ合わせ直す
+ */
+const atDraft = ref('')
+watch(
+  [atInput, () => openMenu.value === 'span'],
+  ([v]) => {
+    atDraft.value = v
+  },
+  { immediate: true },
+)
 
 /** URL の表示期間を当てる。期間があればその幅に収め、開始日時（無ければ「いま」を 30%）を左に置く */
 async function applySpan(): Promise<void> {
@@ -2087,7 +2100,14 @@ watch(projectKey, (key, prev) => {
             <div v-if="openMenu === 'span'" class="tl-panel tl-span" role="group" :aria-label="$ui('表示期間')">
               <label class="filter">
                 <span class="filter-label">{{ $ui('開始日時') }}</span>
-                <input type="datetime-local" class="tl-at" :value="atInput" :title="$ui('開始日時（空なら「いま」）')" @change="pickAt(($event.target as HTMLInputElement).value)" />
+                <input
+                  type="datetime-local"
+                  class="tl-at"
+                  :value="atDraft"
+                  :title="$ui('開始日時（空なら「いま」）')"
+                  @input="atDraft = ($event.target as HTMLInputElement).value"
+                  @change="pickAt(($event.target as HTMLInputElement).value)"
+                />
               </label>
               <label class="filter">
                 <span class="filter-label">{{ $ui('期間') }}</span>
