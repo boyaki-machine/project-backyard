@@ -416,6 +416,20 @@ func Mount(r chi.Router, deps Deps) {
 			Patch("/projects/{key}/tickets/{seq}", h.updateTicket)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.delete")).
 			Delete("/projects/{key}/tickets/{seq}", h.deleteTicket)
+		// タイムライン（ApiDesign.md 9.17。pb-296）。**連鎖のずらしは PATCH と同じ OR**（予定だけを
+		// 変える口なので ticket.plan.edit だけの人も通る）。エージェントの委任範囲はハンドラが動かす
+		// 全行で見る。版の読みは ticket.view、保存と削除はプロジェクト管理者（project.edit）。
+		r.With(middleware.RequireAnyProjectPermission(deps.Queries,
+			"ticket.edit", "ticket.self_edit", "ticket.plan.edit")).
+			Post("/projects/{key}/tickets/{seq}/reschedule", h.rescheduleTicket)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/schedule-baselines", h.listScheduleBaselines)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Post("/projects/{key}/schedule-baselines", h.createScheduleBaseline)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
+			Get("/projects/{key}/schedule-baselines/{id}", h.getScheduleBaseline)
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).
+			Delete("/projects/{key}/schedule-baselines/{id}", h.deleteScheduleBaseline)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).
 			Post("/projects/{key}/tickets/{seq}/transition", h.transitionTicket)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).

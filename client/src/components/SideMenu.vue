@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
 import ProjectSwitcher from './ProjectSwitcher.vue'
 import SideMenuToggle from './SideMenuToggle.vue'
 import UserMenu from './UserMenu.vue'
+import { readViewEnabled } from '../api/projects'
+import { uiText } from '../locales/ui'
+import { viewPlugins } from '../plugins/registry'
 import { useAuthStore } from '../stores/auth'
+import { useProjectStore } from '../stores/project'
 import { useUiStore } from '../stores/ui'
 
 /**
@@ -35,6 +39,7 @@ import { useUiStore } from '../stores/ui'
  */
 const auth = useAuthStore()
 const ui = useUiStore()
+const projectStore = useProjectStore()
 const route = useRoute()
 const { t } = useI18n()
 
@@ -47,6 +52,29 @@ const projectKey = computed(() => {
 /** プロジェクト領域全体：プロジェクト選択中、かつ project.view（4.3） */
 const showProject = computed(
   () => projectKey.value !== null && auth.canInProject(projectKey.value, 'project.view'),
+)
+
+/**
+ * ビューの表示設定（`settings.views`。4.3・5.9.1）。**メニューが `:key` の変化で自分で取る**
+ * （7.1）——各画面の `current` は離れるときに捨てられるので、別の欄に保つ。
+ */
+watch(
+  projectKey,
+  (key) => {
+    if (key !== null && auth.canInProject(key, 'project.view')) void projectStore.loadViewSettings(key)
+  },
+  { immediate: true },
+)
+const viewSettings = computed(() => (projectKey.value === null ? undefined : projectStore.viewSettingsOf(projectKey.value)))
+
+/** ガント：`views.gantt` が `false` でなければ出す（既定は出す） */
+const showGantt = computed(() => readViewEnabled(viewSettings.value, 'gantt', true))
+
+/** プラグインのビュー（登録表）。`views.<key>` で出す（既定は登録表が決める） */
+const pluginItems = computed(() =>
+  viewPlugins
+    .filter((p) => readViewEnabled(viewSettings.value, p.menu.settingKey, p.menu.defaultVisible))
+    .map((p) => ({ id: p.id, segment: p.route.segment, permission: p.route.permission, icon: p.menu.icon, label: uiText(p.menu.label) })),
 )
 
 /** 管理セクション：user.manage / auditlog.view のいずれかを持つ場合に見出しごと（4.3） */
@@ -94,7 +122,7 @@ const showAdmin = computed(
         <!-- ガント（4.1 / 5.14）。**バックログの次に置く**——4.1 の図は間にカンバンを
              挟むが、まだ出していない。必要権限は同じ `ticket.view`（4.3） -->
         <RouterLink
-          v-if="auth.canInProject(projectKey, 'ticket.view')"
+          v-if="showGantt && auth.canInProject(projectKey, 'ticket.view')"
           class="item"
           :to="`/p/${projectKey}/gantt`"
           :title="t('menu.main.gantt')"
@@ -102,6 +130,19 @@ const showAdmin = computed(
           <span class="icon" aria-hidden="true">▦</span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.gantt') }}</span>
         </RouterLink>
+        <!-- プラグインのビュー（登録表。5.15「プラグインの境界」）。ガントの次に置く。
+             出すかはプロジェクトの `settings.views` で決まる（4.3） -->
+        <template v-for="p in pluginItems" :key="p.id">
+          <RouterLink
+            v-if="auth.canInProject(projectKey, p.permission)"
+            class="item"
+            :to="`/p/${projectKey}/${p.segment}`"
+            :title="p.label"
+          >
+            <span class="icon" aria-hidden="true">{{ p.icon }}</span>
+            <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ p.label }}</span>
+          </RouterLink>
+        </template>
         <!-- チケット検索（4.1 / 5.13）。必要権限は同じ `ticket.view`（4.3） -->
         <RouterLink
           v-if="auth.canInProject(projectKey, 'ticket.view')"

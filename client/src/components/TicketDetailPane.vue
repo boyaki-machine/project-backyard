@@ -159,6 +159,12 @@ const props = defineProps<{
    * 描かれない**ので、関連チケットの行に「日付なし・線は描かない」を添える
    */
   undatedSeqs?: number[]
+  /**
+   * タイムラインの欄（時間重複チェック・開始／終了のアンカー）を出すか（`GuiDesign.md` 5.5
+   * 「タイムラインの欄」）。**タイムラインから開いた詳細（`from=timeline`）だけが渡す**——
+   * バックログ・チケット検索・ガントから開いた詳細は今のまま出さない
+   */
+  timelineFields?: boolean
 }>()
 
 /** 詳細の中のリンクの行き先。`linkQuery` があれば載せる */
@@ -183,6 +189,10 @@ const emit = defineEmits<{
 const auth = useAuthStore()
 
 const canEdit = computed(() => auth.canInProject(props.projectKey, 'ticket.edit'))
+/** タイムラインの欄を変えられるか（`ticket.edit` か `ticket.plan.edit`。5.5「タイムラインの欄」） */
+const canEditTimeline = computed(
+  () => canEdit.value || auth.canInProject(props.projectKey, 'ticket.plan.edit'),
+)
 const canEditActualPoint = computed(() => auth.canInProject(props.projectKey, 'ticket.actual_point.edit'))
 const canAssign = computed(() => auth.canInProject(props.projectKey, 'ticket.assign'))
 const canTransition = computed(() => auth.canInProject(props.projectKey, 'ticket.transition'))
@@ -2161,6 +2171,41 @@ defineExpose({
               </p>
             </dd>
           </div>
+
+          <!-- タイムラインの欄（5.5）。タイムラインから開いたときだけ。チェックで即時保存 -->
+          <div v-if="timelineFields" class="meta-item wide timeline-fields">
+            <label class="tl-flag">
+              <input
+                type="checkbox"
+                :checked="ticket.no_overlap"
+                :disabled="!canEditTimeline || busy"
+                @change="selectField({ no_overlap: ($event.target as HTMLInputElement).checked }, 'no_overlap')"
+              />
+              {{ $ui('重複チェック') }}
+            </label>
+            <span class="tl-flag-head">{{ $ui('アンカー') }}</span>
+            <label class="tl-flag">
+              <input
+                type="checkbox"
+                :checked="ticket.start_pinned"
+                :disabled="!canEditTimeline || busy"
+                @change="selectField({ start_pinned: ($event.target as HTMLInputElement).checked }, 'start_pinned')"
+              />
+              {{ $ui('開始') }}
+            </label>
+            <label class="tl-flag">
+              <input
+                type="checkbox"
+                :checked="ticket.due_pinned"
+                :disabled="!canEditTimeline || busy"
+                @change="selectField({ due_pinned: ($event.target as HTMLInputElement).checked }, 'due_pinned')"
+              />
+              {{ $ui('終了') }}
+            </label>
+            <p v-if="errorFor('no_overlap') || errorFor('start_pinned') || errorFor('due_pinned')" class="field-error" role="alert">
+              {{ errorFor('no_overlap') || errorFor('start_pinned') || errorFor('due_pinned') }}
+            </p>
+          </div>
         </dl>
         <TicketWork :project-key="projectKey" :seq="ticket.seq" :version="ticket.version" :can-correct="canEdit && canEditActualPoint" :can-finish="canEdit && canTransition && auth.canInProject(projectKey, 'agent.run')" @updated="load" />
         <!-- 「終日」の切り替え（5.5。時刻付きの入力はこの画面だけが持つ。pb-217）。
@@ -2803,6 +2848,24 @@ defineExpose({
 /* タグは行いっぱいを使う。数が読めないので1列に押し込むと折り返しが荒れる */
 .meta-item.wide {
   grid-column: 1 / -1;
+}
+
+/* タイムラインの欄（5.5）：1行に並べる */
+.timeline-fields {
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 13px;
+}
+
+.tl-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tl-flag-head {
+  margin-left: var(--pb-space-3);
+  color: var(--pb-text-muted);
 }
 
 /* 自律実行の中の子：人の対応が要るときだけ黄の文字にする（pb-276） */

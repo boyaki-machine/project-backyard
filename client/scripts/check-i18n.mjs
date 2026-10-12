@@ -13,8 +13,15 @@ const ignored = new Set([
 const errors = []
 const usedKeys = new Set()
 
-const englishSource = fs.readFileSync(path.join(sourceRoot, 'locales', 'en', 'ui.ts'), 'utf8')
-const englishAst = ts.createSourceFile('ui.ts', englishSource, ts.ScriptTarget.Latest, true)
+// プラグインの英訳（`src/plugins/<id>/locales/en.ts`。文言はプラグインの中に持つ。GuiDesign 5.15）
+const pluginsRoot = path.join(sourceRoot, 'plugins')
+const pluginEnglishFiles = fs.existsSync(pluginsRoot)
+  ? fs.readdirSync(pluginsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(pluginsRoot, entry.name, 'locales', 'en.ts'))
+      .filter((file) => fs.existsSync(file))
+  : []
+for (const file of pluginEnglishFiles) ignored.add(file)
 const englishKeys = new Set()
 const englishErrors = []
 const placeholders = (value) => [...value.matchAll(/\{([^}]+)\}/gu)].map((match) => match[1]).sort().join(',')
@@ -32,7 +39,10 @@ function collectEnglishKeys(node) {
   }
   ts.forEachChild(node, collectEnglishKeys)
 }
-collectEnglishKeys(englishAst)
+for (const file of [path.join(sourceRoot, 'locales', 'en', 'ui.ts'), ...pluginEnglishFiles]) {
+  const englishSource = fs.readFileSync(file, 'utf8')
+  collectEnglishKeys(ts.createSourceFile('ui.ts', englishSource, ts.ScriptTarget.Latest, true))
+}
 
 function filesBelow(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {

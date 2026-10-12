@@ -74,11 +74,11 @@ const createTicket = `-- name: CreateTicket :exec
 INSERT INTO ticket (
   id, project_id, seq, parent_id, type, title, body_md, status_key, priority,
   assignee_id, reporter_id, estimate_point, estimate_hours,
-  start_at, due_at, all_day, sort_key
+  start_at, due_at, all_day, no_overlap, start_pinned, due_pinned, sort_key
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7, $8, $9,
   $10, $11, $12, $13,
-  $14, $15, $16, $17
+  $14, $15, $16, $17, $18, $19, $20
 )
 `
 
@@ -99,6 +99,9 @@ type CreateTicketParams struct {
 	StartAt       *time.Time
 	DueAt         *time.Time
 	AllDay        bool
+	NoOverlap     bool
+	StartPinned   bool
+	DuePinned     bool
 	SortKey       pgtype.Text
 }
 
@@ -122,6 +125,9 @@ func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) erro
 		arg.StartAt,
 		arg.DueAt,
 		arg.AllDay,
+		arg.NoOverlap,
+		arg.StartPinned,
+		arg.DuePinned,
 		arg.SortKey,
 	)
 	return err
@@ -347,6 +353,9 @@ SELECT
   t.start_at,
   t.due_at,
   t.all_day,
+  t.no_overlap,
+  t.start_pinned,
+  t.due_pinned,
   t.closed_at,
   t.version,
   t.created_at,
@@ -406,6 +415,9 @@ type GetTicketBySeqRow struct {
 	StartAt            *time.Time
 	DueAt              *time.Time
 	AllDay             bool
+	NoOverlap          bool
+	StartPinned        bool
+	DuePinned          bool
 	ClosedAt           *time.Time
 	Version            int32
 	CreatedAt          time.Time
@@ -455,6 +467,9 @@ func (q *Queries) GetTicketBySeq(ctx context.Context, arg GetTicketBySeqParams) 
 		&i.StartAt,
 		&i.DueAt,
 		&i.AllDay,
+		&i.NoOverlap,
+		&i.StartPinned,
+		&i.DuePinned,
 		&i.ClosedAt,
 		&i.Version,
 		&i.CreatedAt,
@@ -477,7 +492,7 @@ WITH RECURSIVE up AS (
     FROM ticket p JOIN up ON p.id = up.parent_id
    WHERE up.depth < 32
 )
-SELECT t.seq, t.title, t.type, t.status_key,
+SELECT t.id, t.seq, t.title, t.type, t.status_key,
        ws.name AS status_name, ws.category AS status_category
   FROM up
   JOIN ticket t ON t.id = up.parent_id
@@ -489,6 +504,7 @@ SELECT t.seq, t.title, t.type, t.status_key,
 `
 
 type GetTicketEpicAncestorRow struct {
+	ID             string
 	Seq            int32
 	Title          string
 	Type           string
@@ -507,6 +523,7 @@ func (q *Queries) GetTicketEpicAncestor(ctx context.Context, ticketID string) (G
 	row := q.db.QueryRow(ctx, getTicketEpicAncestor, ticketID)
 	var i GetTicketEpicAncestorRow
 	err := row.Scan(
+		&i.ID,
 		&i.Seq,
 		&i.Title,
 		&i.Type,
@@ -822,6 +839,15 @@ staged_tree AS (
   SELECT c.id FROM ticket c JOIN staged_tree s ON c.parent_id = s.id
    WHERE c.type <> 'epic'
 ),
+timeline_members AS (
+  SELECT e.id, e.seq AS epic_seq FROM ticket e
+   WHERE e.project_id = $5::pg_catalog.bpchar
+     AND e.type = 'epic'
+     AND e.seq = ANY($7::int[])
+  UNION
+  SELECT c.id, m.epic_seq FROM ticket c JOIN timeline_members m ON c.parent_id = m.id
+   WHERE c.type <> 'epic'
+),
 filtered AS (
   SELECT
     t.id,
@@ -856,10 +882,16 @@ filtered AS (
     t.start_at,
     t.due_at,
     t.all_day,
+    -- 時間重複チェックとアンカー（0066。DbDesign.md 6.6.2）。一覧のすべての view に載せる（9.2.2）
+    t.no_overlap,
+    t.start_pinned,
+    t.due_pinned,
     t.closed_at,
     t.version,
     t.created_at,
-    t.updated_at
+    t.updated_at,
+    -- 所属するエピックの番号（view=timeline の epic_seq。9.2.7）。選んだエピックの配下でなければ NULL
+    tm.epic_seq AS timeline_epic_seq
   FROM ticket t
   JOIN project p ON p.id = t.project_id
   LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
@@ -868,54 +900,61 @@ filtered AS (
   LEFT JOIN actor  wa ON wa.id = t.working_agent_id
   LEFT JOIN ticket pt ON pt.id = t.parent_id
   LEFT JOIN sprint sp ON sp.id = t.sprint_id
+  LEFT JOIN timeline_members tm ON tm.id = t.id AND t.type <> 'epic'
   WHERE t.project_id = $5::pg_catalog.bpchar
-    AND (cardinality($7::text[]) = 0
-         OR t.status_key = ANY($7::text[]))
-    AND (cardinality($8::text[]) = 0
-         OR ws.category = ANY($8::text[]))
+    -- view=timeline（9.2.7）。選んだエピックの配下で、時刻付きで、開始か終了の少なくとも一方を
+    -- 持つもの。エピック自身は返さない（行の見出しになる）
+    AND (NOT $8::boolean
+         OR (tm.epic_seq IS NOT NULL
+             AND NOT t.all_day
+             AND (t.start_at IS NOT NULL OR t.due_at IS NOT NULL)))
     AND (cardinality($9::text[]) = 0
-         OR t.type = ANY($9::text[]))
+         OR t.status_key = ANY($9::text[]))
     AND (cardinality($10::text[]) = 0
-         OR t.priority = ANY($10::text[]))
-    AND (
-      (cardinality($11::pg_catalog.bpchar[]) = 0 AND NOT $12::boolean)
-      OR t.assignee_id = ANY($11::pg_catalog.bpchar[])
-      OR ($12::boolean AND t.assignee_id IS NULL)
-    )
+         OR ws.category = ANY($10::text[]))
+    AND (cardinality($11::text[]) = 0
+         OR t.type = ANY($11::text[]))
+    AND (cardinality($12::text[]) = 0
+         OR t.priority = ANY($12::text[]))
     AND (
       (cardinality($13::pg_catalog.bpchar[]) = 0 AND NOT $14::boolean)
+      OR t.assignee_id = ANY($13::pg_catalog.bpchar[])
+      OR ($14::boolean AND t.assignee_id IS NULL)
+    )
+    AND (
+      (cardinality($15::pg_catalog.bpchar[]) = 0 AND NOT $16::boolean)
       OR EXISTS (SELECT 1 FROM ticket_tag tt
-                  WHERE tt.ticket_id = t.id AND tt.tag_id = ANY($13::pg_catalog.bpchar[]))
-      OR ($14::boolean
+                  WHERE tt.ticket_id = t.id AND tt.tag_id = ANY($15::pg_catalog.bpchar[]))
+      OR ($16::boolean
           AND NOT EXISTS (SELECT 1 FROM ticket_tag tt2 WHERE tt2.ticket_id = t.id))
     )
     AND (
-      (cardinality($15::pg_catalog.bpchar[]) = 0 AND NOT $16::boolean
-       AND NOT $17::boolean)
-      OR t.sprint_id = ANY($15::pg_catalog.bpchar[])
-      OR ($16::boolean AND t.sprint_id IS NULL)
+      (cardinality($17::pg_catalog.bpchar[]) = 0 AND NOT $18::boolean
+       AND NOT $19::boolean)
+      OR t.sprint_id = ANY($17::pg_catalog.bpchar[])
+      OR ($18::boolean AND t.sprint_id IS NULL)
       -- sprint=active（9.2.1）。**進行中のスプリントを問い合わせのたびに引く**——画面が
       -- ULID を探して送ると、開始・終了の直後に手持ちの ULID が古くなる。無ければ何にも当たらない。
-      OR ($17::boolean AND t.sprint_id IN (
+      OR ($19::boolean AND t.sprint_id IN (
             SELECT sp.id FROM sprint sp
              WHERE sp.project_id = $5::pg_catalog.bpchar AND sp.status = 'active'))
     )
     -- open（9.2.1）。true で未完了のみ、false で完了のみ。
-    AND ($18::text = 'all'
-         OR ($18::text = 'open'   AND t.closed_at IS NULL)
-         OR ($18::text = 'closed' AND t.closed_at IS NOT NULL))
+    AND ($20::text = 'all'
+         OR ($20::text = 'open'   AND t.closed_at IS NULL)
+         OR ($20::text = 'closed' AND t.closed_at IS NOT NULL))
     -- due_within（9.2.1）。**期限超過を含む**ので下限を置かない。
     -- due_at が NULL のものは除外する。境界（基準タイムゾーンで N 日後の日の終わり
     -- ＝翌日の0時）は**ハンドラが計算して瞬間で渡す**（pb-217）。SQL で
     -- timezone() の入れ子に引数を置くと sqlc の書き換えが位置を誤り、文字が欠ける。
-    AND ($19::timestamptz IS NULL
+    AND ($21::timestamptz IS NULL
          OR (t.due_at IS NOT NULL
-             AND t.due_at < $19::timestamptz))
+             AND t.due_at < $21::timestamptz))
     -- overdue（9.2.1。手順19b）。**stats.sql の overdue と同じ条件**にしてある
     -- ——ダッシュボードが出した件数と、押した先の一覧の件数が一致する必要がある
     -- （GuiDesign.md 5.3）。due_within=0d は「今日の終わりまで」でまだ過ぎていない
     -- 今日締切を含むため、代用するとずれる。**瞬間の比較なので「今日」に依らない**（pb-217）。
-    AND (NOT $20::boolean
+    AND (NOT $22::boolean
          OR (t.closed_at IS NULL
              AND t.due_at IS NOT NULL
              AND t.due_at <= now()))
@@ -923,18 +962,18 @@ filtered AS (
     -- 片方だけのチケットは長さ 1ms の点として扱う。期限だけのものは期限の直前の瞬間に
     -- 置くので、終日の「9/30締切」（due_at は 10/1 の0時）は 9/30 に当たる。両方 NULL は
     -- COALESCE も NULL になるため、期間を指定したときに外れる。
-    AND (($21::timestamptz IS NULL
-          AND $22::timestamptz IS NULL)
+    AND (($23::timestamptz IS NULL
+          AND $24::timestamptz IS NULL)
          OR (COALESCE(t.start_at, t.due_at) IS NOT NULL
-             AND ($22::timestamptz IS NULL
-                  OR COALESCE(t.start_at, t.due_at - interval '1 millisecond') < $22::timestamptz)
-             AND ($21::timestamptz IS NULL
-                  OR COALESCE(t.due_at, t.start_at + interval '1 millisecond') > $21::timestamptz)))
+             AND ($24::timestamptz IS NULL
+                  OR COALESCE(t.start_at, t.due_at - interval '1 millisecond') < $24::timestamptz)
+             AND ($23::timestamptz IS NULL
+                  OR COALESCE(t.due_at, t.start_at + interval '1 millisecond') > $23::timestamptz)))
     -- stale（9.2.1。手順19b）。**stats.sql の stale と同じ条件**。
     -- 日数を引数に取るのは、閾値の正本がサーバ側の定数だからである（9.13.1）。
-    AND ($23::int < 0
+    AND ($25::int < 0
          OR (t.closed_at IS NULL
-             AND t.updated_at < now() - make_interval(days => $23::int)))
+             AND t.updated_at < now() - make_interval(days => $25::int)))
     -- retired（9.2.1）。**スプリントを終えて棚に戻ったものを
     -- 既定で外す。** 3つすべてを満たす行が対象である。
     --
@@ -953,7 +992,7 @@ filtered AS (
     -- **t.sprint_id を読む**（ticket_sprint を並べ直さない）。sprint_id は
     -- 「いま属しているスプリント」を指す非正規化された写しであり
     -- （DbDesign.md 6.9.1）、最後の1件を引く結合と同じ答えになる。
-    AND ($24::boolean
+    AND ($26::boolean
          OR NOT (
            t.closed_at IS NOT NULL
            AND EXISTS (SELECT 1 FROM sprint rs
@@ -961,27 +1000,27 @@ filtered AS (
            AND NOT EXISTS (SELECT 1 FROM open_desc od WHERE od.id = t.id)
          ))
     AND (cardinality($6::int[]) = 0 OR t.id IN (SELECT id FROM subtree))
-    AND (NOT $25::boolean OR t.id IN (SELECT id FROM staged_tree))
+    AND (NOT $27::boolean OR t.id IN (SELECT id FROM staged_tree))
     -- ── 検索の条件（ApiDesign.md 9.2.1「検索の条件」）──────────
     --
     -- キーワードの一致は store/search（queries/search.sql）が済ませ、**一致した ID
     -- だけを受け取る**（Design.md 4.6 の隔離）。keyword_set が偽なら絞らない——
     -- 「語が無い」と「語はあったが0件に一致」を区別するためのフラグである。
-    AND (NOT $26::boolean OR $27::boolean OR t.id = ANY($28::pg_catalog.bpchar[]))
+    AND (NOT $28::boolean OR $29::boolean OR t.id = ANY($30::pg_catalog.bpchar[]))
     -- 番号の範囲は両端を含む。0 は指定なし（seq は1から始まる）。
-    AND ($29::int <= 0 OR t.seq >= $29::int)
-    AND ($30::int <= 0 OR t.seq <= $30::int)
+    AND ($31::int <= 0 OR t.seq >= $31::int)
+    AND ($32::int <= 0 OR t.seq <= $32::int)
     -- 完了日時は since 以上・before 未満。**指定すると未完了は外れる**（NULL との比較は偽）。
-    AND ($31::timestamptz IS NULL
-         OR t.closed_at >= $31::timestamptz)
-    AND ($32::timestamptz IS NULL
-         OR t.closed_at < $32::timestamptz)
+    AND ($33::timestamptz IS NULL
+         OR t.closed_at >= $33::timestamptz)
+    AND ($34::timestamptz IS NULL
+         OR t.closed_at < $34::timestamptz)
     -- 着手日時（9.2.1「着手日時を導く」）。**状態が todo 区分から初めて出た遷移**の
     -- occurred_at で、列を持たず activity から導く。完了を取り消して着手し直しても
     -- min を採るので、最初の着手になる。区分はいまのワークフローで引くので、
     -- いまのワークフローに無いキーの遷移は結合で落ちる。
-    AND (($33::timestamptz IS NULL
-          AND $34::timestamptz IS NULL)
+    AND (($35::timestamptz IS NULL
+          AND $36::timestamptz IS NULL)
          OR EXISTS (
            SELECT 1
              FROM (SELECT min(a.occurred_at) AS started_at
@@ -997,25 +1036,25 @@ filtered AS (
                       AND os.category = 'todo'
                       AND ns.category <> 'todo') st
             WHERE st.started_at IS NOT NULL
-              AND ($33::timestamptz IS NULL
-                   OR st.started_at >= $33::timestamptz)
-              AND ($34::timestamptz IS NULL
-                   OR st.started_at < $34::timestamptz)
+              AND ($35::timestamptz IS NULL
+                   OR st.started_at >= $35::timestamptz)
+              AND ($36::timestamptz IS NULL
+                   OR st.started_at < $36::timestamptz)
          ))
 ),
 backlog_matches AS (
   SELECT t.id, t.parent_id FROM ticket t JOIN filtered f ON f.id = t.id
-   WHERE $27::boolean AND t.id = ANY($28::pg_catalog.bpchar[])
+   WHERE $29::boolean AND t.id = ANY($30::pg_catalog.bpchar[])
   UNION
   SELECT p.id, p.parent_id FROM ticket p JOIN backlog_matches m ON p.id = m.parent_id
    WHERE p.project_id = $5::pg_catalog.bpchar
 ),
 search_filtered AS (
-  SELECT f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.actual_point, f.actual_point_version, f.start_at, f.due_at, f.all_day, f.closed_at, f.version, f.created_at, f.updated_at FROM filtered f
-   WHERE NOT $27::boolean OR f.id IN (SELECT id FROM backlog_matches)
+  SELECT f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.actual_point, f.actual_point_version, f.start_at, f.due_at, f.all_day, f.no_overlap, f.start_pinned, f.due_pinned, f.closed_at, f.version, f.created_at, f.updated_at, f.timeline_epic_seq FROM filtered f
+   WHERE NOT $29::boolean OR f.id IN (SELECT id FROM backlog_matches)
 )
 SELECT
-  f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.actual_point, f.actual_point_version, f.start_at, f.due_at, f.all_day, f.closed_at, f.version, f.created_at, f.updated_at,
+  f.id, f.seq, f.type, f.title, f.status_key, f.status_name, f.status_category, f.status_sort_order, f.priority, f.assignee_id, f.assignee_kind, f.assignee_name, f.reporter_id, f.reporter_kind, f.reporter_name, f.working_agent_id, f.working_agent_kind, f.working_agent_name, f.parent_seq, f.has_children, f.sort_key, f.staged_at, f.sprint_id, f.sprint_name, f.estimate_point, f.estimate_hours, f.actual_hours, f.actual_point, f.actual_point_version, f.start_at, f.due_at, f.all_day, f.no_overlap, f.start_pinned, f.due_pinned, f.closed_at, f.version, f.created_at, f.updated_at, f.timeline_epic_seq,
   count(*) OVER ()                        AS total,
   (max(f.updated_at) OVER ())::timestamptz AS last_updated_at
 FROM search_filtered f
@@ -1063,6 +1102,8 @@ type ListTicketsParams struct {
 	PageLimit        int32
 	ProjectID        string
 	ParentSeqs       []int32
+	TimelineEpicSeqs []int32
+	TimelineOnly     bool
 	StatusKeys       []string
 	StatusCategories []string
 	Types            []string
@@ -1126,10 +1167,14 @@ type ListTicketsRow struct {
 	StartAt            *time.Time
 	DueAt              *time.Time
 	AllDay             bool
+	NoOverlap          bool
+	StartPinned        bool
+	DuePinned          bool
 	ClosedAt           *time.Time
 	Version            int32
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	TimelineEpicSeq    pgtype.Int4
 	Total              int64
 	LastUpdatedAt      time.Time
 }
@@ -1201,6 +1246,10 @@ type ListTicketsRow struct {
 //
 // **棚に戻ったものはここでは外さない。** 下の retired の条件がそのまま効くので、
 // 既定では外れ、retired=true を一緒に送れば含まれる（条件は種類ごとに独立）。
+// view=timeline（ApiDesign.md 9.2.7。pb-296）。**settings.timeline_epics で選んだエピックの配下**を、
+// 所属するエピックの番号と一緒に引く。所属は 9.5.1 の epic と同じ求め方（祖先をたどって最初に
+// 見つかるエピック）なので、**入れ子のエピックの手前で降りるのを止める**——その下は入れ子のエピックに
+// 属する（選ばれていなければタイムラインに出ない）。選ばれたエピックが無ければ起点が無いので空になる。
 // 一致した子の祖先を、他のフィルタを適用した後で補完する。
 // 検索に当たっても他の条件から外れた子を起点にしない。UNION で重複・循環を防ぐ。
 func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error) {
@@ -1211,6 +1260,8 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 		arg.PageLimit,
 		arg.ProjectID,
 		arg.ParentSeqs,
+		arg.TimelineEpicSeqs,
+		arg.TimelineOnly,
 		arg.StatusKeys,
 		arg.StatusCategories,
 		arg.Types,
@@ -1280,10 +1331,14 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 			&i.StartAt,
 			&i.DueAt,
 			&i.AllDay,
+			&i.NoOverlap,
+			&i.StartPinned,
+			&i.DuePinned,
 			&i.ClosedAt,
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TimelineEpicSeq,
 			&i.Total,
 			&i.LastUpdatedAt,
 		); err != nil {
@@ -1638,15 +1693,19 @@ UPDATE ticket SET
   start_at       = CASE WHEN $23::boolean       THEN $24       ELSE start_at END,
   due_at         = CASE WHEN $25::boolean         THEN $26         ELSE due_at END,
   all_day        = COALESCE($27, all_day),
+  -- 時間重複チェックとアンカー（0066。pb-296）。NOT NULL なので COALESCE で足りる
+  no_overlap     = COALESCE($28, no_overlap),
+  start_pinned   = COALESCE($29, start_pinned),
+  due_pinned     = COALESCE($30, due_pinned),
   -- 9.5.2 で開けた4項目（手順27）。**execution_mode と scope は NOT NULL** なので
   -- COALESCE で足りる（null を送れば 422 で先に落ちる）。readiness と
   -- readiness_note は null が「未判定へ戻す」を表すので _set の形が要る。
-  execution_mode = COALESCE($28, execution_mode),
-  readiness      = CASE WHEN $29::boolean      THEN $30      ELSE readiness END,
-  readiness_note = CASE WHEN $31::boolean THEN $32 ELSE readiness_note END,
-  scope          = COALESCE($33, scope),
+  execution_mode = COALESCE($31, execution_mode),
+  readiness      = CASE WHEN $32::boolean      THEN $33      ELSE readiness END,
+  readiness_note = CASE WHEN $34::boolean THEN $35 ELSE readiness_note END,
+  scope          = COALESCE($36, scope),
   version        = version + 1
-WHERE project_id = $34 AND seq = $35 AND version = $36
+WHERE project_id = $37 AND seq = $38 AND version = $39
 `
 
 type UpdateTicketParams struct {
@@ -1677,6 +1736,9 @@ type UpdateTicketParams struct {
 	DueAtSet              bool
 	DueAt                 *time.Time
 	AllDay                pgtype.Bool
+	NoOverlap             pgtype.Bool
+	StartPinned           pgtype.Bool
+	DuePinned             pgtype.Bool
 	ExecutionMode         pgtype.Text
 	ReadinessSet          bool
 	Readiness             pgtype.Text
@@ -1739,6 +1801,9 @@ func (q *Queries) UpdateTicket(ctx context.Context, arg UpdateTicketParams) (int
 		arg.DueAtSet,
 		arg.DueAt,
 		arg.AllDay,
+		arg.NoOverlap,
+		arg.StartPinned,
+		arg.DuePinned,
 		arg.ExecutionMode,
 		arg.ReadinessSet,
 		arg.Readiness,

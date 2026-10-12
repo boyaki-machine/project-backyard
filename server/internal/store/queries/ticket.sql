@@ -100,6 +100,19 @@ staged_tree AS (
   SELECT c.id FROM ticket c JOIN staged_tree s ON c.parent_id = s.id
    WHERE c.type <> 'epic'
 ),
+-- view=timeline（ApiDesign.md 9.2.7。pb-296）。**settings.timeline_epics で選んだエピックの配下**を、
+-- 所属するエピックの番号と一緒に引く。所属は 9.5.1 の epic と同じ求め方（祖先をたどって最初に
+-- 見つかるエピック）なので、**入れ子のエピックの手前で降りるのを止める**——その下は入れ子のエピックに
+-- 属する（選ばれていなければタイムラインに出ない）。選ばれたエピックが無ければ起点が無いので空になる。
+timeline_members AS (
+  SELECT e.id, e.seq AS epic_seq FROM ticket e
+   WHERE e.project_id = @project_id::pg_catalog.bpchar
+     AND e.type = 'epic'
+     AND e.seq = ANY(@timeline_epic_seqs::int[])
+  UNION
+  SELECT c.id, m.epic_seq FROM ticket c JOIN timeline_members m ON c.parent_id = m.id
+   WHERE c.type <> 'epic'
+),
 filtered AS (
   SELECT
     t.id,
@@ -134,10 +147,16 @@ filtered AS (
     t.start_at,
     t.due_at,
     t.all_day,
+    -- 時間重複チェックとアンカー（0066。DbDesign.md 6.6.2）。一覧のすべての view に載せる（9.2.2）
+    t.no_overlap,
+    t.start_pinned,
+    t.due_pinned,
     t.closed_at,
     t.version,
     t.created_at,
-    t.updated_at
+    t.updated_at,
+    -- 所属するエピックの番号（view=timeline の epic_seq。9.2.7）。選んだエピックの配下でなければ NULL
+    tm.epic_seq AS timeline_epic_seq
   FROM ticket t
   JOIN project p ON p.id = t.project_id
   LEFT JOIN workflow_status ws ON ws.workflow_id = p.workflow_id AND ws.key = t.status_key
@@ -146,7 +165,14 @@ filtered AS (
   LEFT JOIN actor  wa ON wa.id = t.working_agent_id
   LEFT JOIN ticket pt ON pt.id = t.parent_id
   LEFT JOIN sprint sp ON sp.id = t.sprint_id
+  LEFT JOIN timeline_members tm ON tm.id = t.id AND t.type <> 'epic'
   WHERE t.project_id = @project_id::pg_catalog.bpchar
+    -- view=timeline（9.2.7）。選んだエピックの配下で、時刻付きで、開始か終了の少なくとも一方を
+    -- 持つもの。エピック自身は返さない（行の見出しになる）
+    AND (NOT @timeline_only::boolean
+         OR (tm.epic_seq IS NOT NULL
+             AND NOT t.all_day
+             AND (t.start_at IS NOT NULL OR t.due_at IS NOT NULL)))
     AND (cardinality(@status_keys::text[]) = 0
          OR t.status_key = ANY(@status_keys::text[]))
     AND (cardinality(@status_categories::text[]) = 0
@@ -385,6 +411,9 @@ SELECT
   t.start_at,
   t.due_at,
   t.all_day,
+  t.no_overlap,
+  t.start_pinned,
+  t.due_pinned,
   t.closed_at,
   t.version,
   t.created_at,
@@ -430,7 +459,7 @@ WITH RECURSIVE up AS (
     FROM ticket p JOIN up ON p.id = up.parent_id
    WHERE up.depth < 32
 )
-SELECT t.seq, t.title, t.type, t.status_key,
+SELECT t.id, t.seq, t.title, t.type, t.status_key,
        ws.name AS status_name, ws.category AS status_category
   FROM up
   JOIN ticket t ON t.id = up.parent_id
@@ -485,11 +514,11 @@ SELECT ws.key
 INSERT INTO ticket (
   id, project_id, seq, parent_id, type, title, body_md, status_key, priority,
   assignee_id, reporter_id, estimate_point, estimate_hours,
-  start_at, due_at, all_day, sort_key
+  start_at, due_at, all_day, no_overlap, start_pinned, due_pinned, sort_key
 ) VALUES (
   @id, @project_id, @seq, @parent_id, @type, @title, @body_md, @status_key, @priority,
   @assignee_id, @reporter_id, @estimate_point, @estimate_hours,
-  @start_at, @due_at, @all_day, @sort_key
+  @start_at, @due_at, @all_day, @no_overlap, @start_pinned, @due_pinned, @sort_key
 );
 
 -- name: AttachTicketTag :exec
@@ -673,6 +702,10 @@ UPDATE ticket SET
   start_at       = CASE WHEN @start_at_set::boolean       THEN sqlc.narg('start_at')       ELSE start_at END,
   due_at         = CASE WHEN @due_at_set::boolean         THEN sqlc.narg('due_at')         ELSE due_at END,
   all_day        = COALESCE(sqlc.narg('all_day'), all_day),
+  -- 時間重複チェックとアンカー（0066。pb-296）。NOT NULL なので COALESCE で足りる
+  no_overlap     = COALESCE(sqlc.narg('no_overlap'), no_overlap),
+  start_pinned   = COALESCE(sqlc.narg('start_pinned'), start_pinned),
+  due_pinned     = COALESCE(sqlc.narg('due_pinned'), due_pinned),
   -- 9.5.2 で開けた4項目（手順27）。**execution_mode と scope は NOT NULL** なので
   -- COALESCE で足りる（null を送れば 422 で先に落ちる）。readiness と
   -- readiness_note は null が「未判定へ戻す」を表すので _set の形が要る。

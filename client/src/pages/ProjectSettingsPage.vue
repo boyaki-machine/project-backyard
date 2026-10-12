@@ -16,7 +16,7 @@ import { uiText } from '../locales/ui'
  * **操作の結果はトーストではなく、操作した場所に出す**（6.4）。タグとスプリントは
  * それぞれのタブの見出しの下に1つ欄を持ち、追加・改名・削除の結果を使い回す。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ConfirmDialog from '../components/ConfirmDialog.vue'
@@ -43,6 +43,7 @@ import { isWebUrl } from '../lib/url'
 import { useRolesStore } from '../stores/roles'
 import { useAuthStore } from '../stores/auth'
 import { useProjectStore } from '../stores/project'
+import { viewPlugins } from '../plugins/registry'
 
 /** 入力の上限（`ApiDesign.md` 5.3 の検証表と `GuiDesign.md` 5.9.1）。正本はサーバ側 */
 const MAX_NAME = 100
@@ -67,6 +68,12 @@ const projectKey = computed(() => {
 const name = ref('')
 const description = ref('')
 const repositories = ref<ProjectRepository[]>([])
+/**
+ * 「表示するビュー」の下書き（5.9.1）。取得した `settings` の写しで、`views` と
+ * プラグインの欄（`timeline_snap_seconds`・`timeline_epics` など）だけを差し替える。
+ * 保存は一般タブの `[保存]` 1つ
+ */
+const viewDraft = ref<ProjectDetail['settings']>({})
 
 const saving = ref(false)
 const saveError = ref<ApiError | null>(null)
@@ -80,6 +87,7 @@ function resetForm(p: ProjectDetail): void {
   name.value = p.name
   description.value = p.description ?? ''
   repositories.value = projectsApi.readRepositories(p.settings)
+  viewDraft.value = { ...p.settings }
 }
 
 /** 想定外の例外も 2.5 の形に揃える。画面は `ApiError` だけを扱えばよくなる */
@@ -571,8 +579,43 @@ const repositoriesChanged = computed(() => {
   return JSON.stringify(next) !== JSON.stringify(projectsApi.readRepositories(p.settings))
 })
 
+// ── 表示するビュー（5.9.1。pb-296）────────────────────────────
+//
+// 候補は本体のガントと、プラグインの登録表から作る（5.15「プラグインの境界」）。
+
+/** `repositories` を除いた `settings` の比較（表示するビューの欄が変わったか） */
+function withoutRepositories(v: ProjectDetail['settings']): string {
+  const rest: Record<string, unknown> = { ...v }
+  delete rest['repositories']
+  return JSON.stringify(Object.keys(rest).sort().map((k) => [k, rest[k]]))
+}
+
+const viewsChanged = computed(() => {
+  const p = current.value
+  return p !== null && withoutRepositories(viewDraft.value) !== withoutRepositories(p.settings)
+})
+
+const viewChoices = computed(() => [
+  { key: 'gantt', label: uiText('ガント'), description: uiText('時間軸に置いて、期日と依存関係を見る'), fallback: true, panel: null },
+  ...viewPlugins.map((pl) => ({
+    key: pl.menu.settingKey,
+    label: uiText(pl.menu.label),
+    description: uiText(pl.settings.description),
+    fallback: pl.menu.defaultVisible,
+    panel: pl.settings.panel ? defineAsyncComponent(pl.settings.panel) : null,
+  })),
+])
+
+function viewOn(key: string, fallback: boolean): boolean {
+  return projectsApi.readViewEnabled(viewDraft.value, key, fallback)
+}
+
+function setViewOn(key: string, on: boolean): void {
+  viewDraft.value = projectsApi.mergeViews(viewDraft.value, { [key]: on })
+}
+
 const dirty = computed(
-  () => nameChanged.value || descriptionChanged.value || repositoriesChanged.value,
+  () => nameChanged.value || descriptionChanged.value || repositoriesChanged.value || viewsChanged.value,
 )
 
 /** 入力し直したら前回の結果表示を消す。古い `✓ 保存しました` を残さない */
@@ -633,10 +676,10 @@ async function save(): Promise<void> {
     const v = description.value.trim()
     body.description = v === '' ? null : v
   }
-  if (repositoriesChanged.value) {
-    // settings は丸ごと置き換わる。取得した値を土台にして
-    // 画面が知らないキーを落とさない（5.5）
-    body.settings = projectsApi.mergeRepositories(p.settings, repositories.value)
+  if (repositoriesChanged.value || viewsChanged.value) {
+    // settings は丸ごと置き換わる。取得した値（表示するビューの下書きはその写し）を
+    // 土台にして、画面が知らないキーを落とさない（5.5）
+    body.settings = projectsApi.mergeRepositories(viewDraft.value, repositories.value)
   }
 
   try {
@@ -975,6 +1018,33 @@ function roleLabel(role: string): string {
               </button>
             </div>
           </form>
+
+          <!-- 表示するビュー（5.9.1）。保存は上の［保存］1つに集約する -->
+          <section class="block views-block">
+            <h2 class="block-title">{{ $ui('表示するビュー') }}</h2>
+            <div v-for="v in viewChoices" :key="v.key" class="view-choice">
+              <label class="view-line">
+                <input
+                  type="checkbox"
+                  :checked="viewOn(v.key, v.fallback)"
+                  :disabled="saving || !canEditProject"
+                  @change="setViewOn(v.key, ($event.target as HTMLInputElement).checked)"
+                />
+                <span class="view-name">{{ v.label }}</span>
+                <span class="hint view-desc">{{ v.description }}</span>
+              </label>
+              <component
+                :is="v.panel"
+                v-if="v.panel && viewOn(v.key, v.fallback)"
+                :project-key="projectKey"
+                :settings="viewDraft"
+                :disabled="saving || !canEditProject"
+                @update="viewDraft = $event"
+              />
+            </div>
+            <p class="hint">{{ $ui('ⓘ バックログとチケット検索はいつも出ます。隠したビューも URL で開けます') }}</p>
+            <p v-if="viewsChanged" class="hint">{{ $ui('変更は上の［保存］で保存します') }}</p>
+          </section>
 
           <!-- ワークフロー（参照のみ。5.9.1。拡充か削除かは実物を見て決める） -->
           <section class="block">
@@ -1514,6 +1584,27 @@ textarea:disabled {
 .detail {
   color: var(--pb-danger-text);
   font-size: 13px;
+}
+
+.views-block .view-choice {
+  display: grid;
+  gap: var(--pb-space-2);
+  padding: var(--pb-space-1) 0;
+}
+
+.view-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pb-space-2);
+}
+
+.view-name {
+  min-width: 8em;
+  font-weight: 600;
+}
+
+.view-desc {
+  margin: 0;
 }
 
 .hint {

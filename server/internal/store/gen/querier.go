@@ -134,6 +134,9 @@ type Querier interface {
 	// **検証より先に呼ぶ。** consumed_at IS NULL を条件にしてあるので、
 	// 同じ応答を並行して2回送られても、通るのは1回だけになる。
 	ConsumeWebauthnChallenge(ctx context.Context, id string) (int64, error)
+	// CopyTimelineToBaseline は版の行を写す（DbDesign.md 6.32「写すチケット」「写す値」）。
+	// 写すのはバーを描くのに要る値だけ。所属エピックの題名も写す（エピックが消えても見出しを出せる）。
+	CopyTimelineToBaseline(ctx context.Context, arg CopyTimelineToBaselineParams) (int64, error)
 	// CountActiveAdministrators は「最後のアドミニストレータ」の判定に使う
 	// （ApiDesign.md 6.4 / 6.5 の last_administrator）。
 	//
@@ -224,6 +227,10 @@ type Querier interface {
 	// CountProjectTagsByIDs は tag_ids がすべて当該プロジェクトのものかを数える（9.3）。
 	// 渡した件数と一致しなければ、他プロジェクトのタグか存在しない ID が混ざっている。
 	CountProjectTagsByIDs(ctx context.Context, arg CountProjectTagsByIDsParams) (int64, error)
+	// CountScheduleBaselines と GetLatestScheduleBaseline は view=timeline の baselines（9.2.7）。
+	// 件数と最後に保存した版。版はチケットの updated_at を動かさないので、ETag の⑦にもなる（9.2.5）。
+	// 最新の版が無ければ GetLatestScheduleBaseline は0行。
+	CountScheduleBaselines(ctx context.Context, projectID string) (int32, error)
 	// CountTicketComments は 9.5.1 の comment_count。
 	//
 	// **手順17 から実数を返す**（それまでは 0 固定だった）。9.6 の遷移がコメントを
@@ -236,6 +243,10 @@ type Querier interface {
 	//
 	// **ticket.sql の subtree と同じ再帰パターンを使い回す。**
 	CountTicketsInDelegationTreeSince(ctx context.Context, arg CountTicketsInDelegationTreeSinceParams) (int64, error)
+	// ── 当初計画の版（ApiDesign.md 9.17.3、DbDesign.md 6.32）──────────
+	// CountTimelineTickets は版に写すチケットの件数。5,000件を超えれば保存を拒む（9.17.3）。
+	// 条件は ListTickets の view=timeline（絞り込みなし）と同じ。
+	CountTimelineTickets(ctx context.Context, arg CountTimelineTicketsParams) (int32, error)
 	// ── リカバリコード ──────────────────────────────────────
 	// CountUnusedRecoveryCodes は残数（ApiDesign.md 4.6.1）。
 	CountUnusedRecoveryCodes(ctx context.Context, userID string) (int64, error)
@@ -379,6 +390,8 @@ type Querier interface {
 	CreateProjectWorkflow(ctx context.Context, arg CreateProjectWorkflowParams) error
 	// CreateRecoveryCode は1本を保存する（平文は保存しない）。
 	CreateRecoveryCode(ctx context.Context, arg CreateRecoveryCodeParams) error
+	// CreateScheduleBaseline は版の見出しを1行積む。
+	CreateScheduleBaseline(ctx context.Context, arg CreateScheduleBaselineParams) (time.Time, error)
 	CreateSprint(ctx context.Context, arg CreateSprintParams) error
 	// CreateSystemActor はシステムアクターを1件作る。
 	//
@@ -501,6 +514,8 @@ type Querier interface {
 	DeleteProjectMember(ctx context.Context, arg DeleteProjectMemberParams) (int64, error)
 	// DeleteRecoveryCodes は全部消す（作り直し・最後の認証器の削除・管理者の解除）。
 	DeleteRecoveryCodes(ctx context.Context, userID string) (int64, error)
+	// DeleteScheduleBaseline は版を物理削除する。行は ON DELETE CASCADE で消える（6.32）。
+	DeleteScheduleBaseline(ctx context.Context, arg DeleteScheduleBaselineParams) (int64, error)
 	// ticket.sprint_id は fk_ticket_sprint の ON DELETE SET NULL で外れる
 	// （DbDesign.md 6.9）。チケットは消えず、スプリント未設定に戻る。
 	DeleteSprint(ctx context.Context, arg DeleteSprintParams) (int64, error)
@@ -907,6 +922,7 @@ type Querier interface {
 	// その版への直近の評価を読む（delegation-status。pb-252）。評価が無ければ
 	// eval_verdict は空文字、eval_findings は NULL。
 	GetLatestPlanForStatus(ctx context.Context, delegationID string) (GetLatestPlanForStatusRow, error)
+	GetLatestScheduleBaseline(ctx context.Context, projectID string) (GetLatestScheduleBaselineRow, error)
 	GetLiveWorkPointInputs(ctx context.Context, ticketID string) ([]GetLiveWorkPointInputsRow, error)
 	GetOpenWorkSession(ctx context.Context, arg GetOpenWorkSessionParams) (string, error)
 	// GetParentForCascade は「子が動いたら親を進行中にする」で祖先をたどる1段ぶん
@@ -992,6 +1008,17 @@ type Querier interface {
 	GetProjectTicketStats(ctx context.Context, arg GetProjectTicketStatsParams) (GetProjectTicketStatsRow, error)
 	// Reconstructed daily status for currently existing tickets (ApiDesign.md 9.13.3).
 	GetProjectTicketTrends(ctx context.Context, arg GetProjectTicketTrendsParams) ([]GetProjectTicketTrendsRow, error)
+	// タイムラインのクエリ（ApiDesign.md 9.2.7・9.17、DbDesign.md 6.6.2・6.32。pb-296）。
+	//
+	// **タイムラインの対象は1か所で決める。** 「settings.timeline_epics で選んだエピックの配下
+	// （所属は 9.5.1 の epic と同じ求め方）で、時刻付きで、開始か終了の少なくとも一方を持つもの」
+	// ——一覧（ticket.sql の ListTickets の timeline_members）・版の保存（本ファイル）・連鎖のずらしの行が
+	// 同じ定義を使う。版に写す集合と画面に載る集合が食い違うと、重ねたときに「消えた」と誤って出る
+	// （DbDesign.md 6.32「写すチケット」）。
+	// GetProjectTimelineSettings はタイムラインが要求1回に1度読むプロジェクトの行（9.2.7 の
+	// 「プロジェクト1本」）。settings の timeline_epics・timeline_snap_seconds と、ETag の材料の
+	// version（9.2.5 の⑧）と、基準タイムゾーン。
+	GetProjectTimelineSettings(ctx context.Context, id string) (GetProjectTimelineSettingsRow, error)
 	// GetProjectTimezone はプロジェクトの基準タイムゾーン（DbDesign.md 6.23）を返す。
 	// 予定日時の検証（終日は基準タイムゾーンの0時。ApiDesign.md 9.3.1）と、due_within の
 	// 境界の計算（9.2.1）が使う。
@@ -1003,6 +1030,12 @@ type Querier interface {
 	// **min() に型を明示する。** 付けないと sqlc が interface{} で生成し、
 	// 呼び出し側が時刻として扱えない。
 	GetRecoveryCodeStatus(ctx context.Context, userID string) (GetRecoveryCodeStatusRow, error)
+	// GetRescheduleTicket はきっかけを行のロックを取って読む。状態の区分は暗黙のアンカー
+	// （着手済み・完了）の判定に使う（9.17.1）。
+	GetRescheduleTicket(ctx context.Context, arg GetRescheduleTicketParams) (GetRescheduleTicketRow, error)
+	// GetScheduleBaseline は版の見出しを1件引く。**project_id で閉じる**（他プロジェクトの id を
+	// 投げても行が返らない）。
+	GetScheduleBaseline(ctx context.Context, arg GetScheduleBaselineParams) (GetScheduleBaselineRow, error)
 	// 1件だけ返す形。POST / PATCH の応答（B-2）で使う。
 	GetSprintByID(ctx context.Context, arg GetSprintByIDParams) (GetSprintByIDRow, error)
 	// 1件を引く。削除の前に「存在するか」と「消したら有効なものが残るか」を
@@ -1326,8 +1359,16 @@ type Querier interface {
 	// 置いて同じ親の行を隣り合わせているので、呼び出し側は届いた順に子を積むだけで
 	// 各階層の順序が揃う。NULLS FIRST でトップレベルが先に来る。
 	ListDocumentTree(ctx context.Context, projectID pgtype.Text) ([]ListDocumentTreeRow, error)
+	// ListEpicMembersForUpdate は1つのエピック（行）に属するチケットを、行のロックを取って読む
+	// （9.17.2）。所属は 9.5.1 の epic と同じ求め方（入れ子のエピックの手前で降りるのを止める）。
+	// **列（no_overlap・時刻付き・両端あり）に絞らずに返す**——FS の先行は列の外でもよく、
+	// その終了を読むため。列の判定はアプリが行う（純粋な関数に渡す）。
+	ListEpicMembersForUpdate(ctx context.Context, arg ListEpicMembersForUpdateParams) ([]ListEpicMembersForUpdateRow, error)
 	// 期限が来たものを全部引く。**起動時の点検と、プロセス内のタイマが使う。**
 	ListExpiredPendingSettingChanges(ctx context.Context) ([]ListExpiredPendingSettingChangesRow, error)
+	// ListFSLinksAmongTickets は連鎖が寄せる FS の依存（9.17.1 の手順1）。両端が渡した ID に含まれる
+	// ものだけ。lag_days は暦日。
+	ListFSLinksAmongTickets(ctx context.Context, ticketIds []string) ([]ListFSLinksAmongTicketsRow, error)
 	// ListLinksAmongTickets はガント（9.2.6）の依存を1本で引く。
 	//
 	// **両端が渡したチケットの集合に含まれる行だけを返す。** ガントは絞り込み・打ち切りの
@@ -1532,6 +1573,11 @@ type Querier interface {
 	// 同着のときは key で並べ、応答が呼ぶたびに入れ替わらないようにする。
 	//
 	ListRoles(ctx context.Context, scopeFilter string) ([]Role, error)
+	// ListScheduleBaselineItems は版の行（9.17.3）。exists は「いまのプロジェクトに同じ番号の
+	// チケットが在るか」——番号は使い回さないので、無ければ「版にあったが、いまは無い」。
+	ListScheduleBaselineItems(ctx context.Context, arg ListScheduleBaselineItemsParams) ([]ListScheduleBaselineItemsRow, error)
+	// ListScheduleBaselines は版の一覧（9.17.3）。created_at の新しい順、同じ時刻なら id の降順。
+	ListScheduleBaselines(ctx context.Context, projectID string) ([]ListScheduleBaselinesRow, error)
 	// スプリントに関するクエリ（DbDesign.md 6.9、ApiDesign.md 9.12）。
 	//
 	// 手順16a で追加。プロジェクト設定のスプリントタブ（GuiDesign.md 5.9.5）が
@@ -1760,9 +1806,24 @@ type Querier interface {
 	//
 	// **棚に戻ったものはここでは外さない。** 下の retired の条件がそのまま効くので、
 	// 既定では外れ、retired=true を一緒に送れば含まれる（条件は種類ごとに独立）。
+	// view=timeline（ApiDesign.md 9.2.7。pb-296）。**settings.timeline_epics で選んだエピックの配下**を、
+	// 所属するエピックの番号と一緒に引く。所属は 9.5.1 の epic と同じ求め方（祖先をたどって最初に
+	// 見つかるエピック）なので、**入れ子のエピックの手前で降りるのを止める**——その下は入れ子のエピックに
+	// 属する（選ばれていなければタイムラインに出ない）。選ばれたエピックが無ければ起点が無いので空になる。
 	// 一致した子の祖先を、他のフィルタを適用した後で補完する。
 	// 検索に当たっても他の条件から外れた子を起点にしない。UNION で重複・循環を防ぐ。
 	ListTickets(ctx context.Context, arg ListTicketsParams) ([]ListTicketsRow, error)
+	// ListTimelineActivityFacts は view=timeline の started_at と last_changed_by を1本で引く（9.2.7）。
+	//
+	// **1チケットあたり最大2行**を返す。fact = 'last' は activity の最新の行の実行者（記録時の表示名）、
+	// fact = 'started' は 9.2.1「着手日時を導く」と同じ定義（状態が todo 区分から初めて出た遷移の
+	// occurred_at）。どちらも無ければ行が無い——NULL の時刻を列に載せない形にしてある（LEFT JOIN で
+	// 返すと sqlc が NULL になりうる時刻を非 NULL の型で読む）。**行ごとに引かない**（設計方針3）。
+	ListTimelineActivityFacts(ctx context.Context, ticketIds []string) ([]ListTimelineActivityFactsRow, error)
+	// ListTimelineEpics は view=timeline の epics[]（9.2.7）。**選んだエピックのうち、いま在るもの**。
+	// エピックでない番号・無い番号はここで落ちる（DbDesign.md 6.4「読み飛ばす」）。parent が
+	// あれば、その部分木の内側だけ（見る人ごとの絞り込み）。並びは sort_key の昇順。
+	ListTimelineEpics(ctx context.Context, arg ListTimelineEpicsParams) ([]ListTimelineEpicsRow, error)
 	// ListUserIdentities は 6.3 の identities[] を引く。
 	//
 	// **配列であることが IdP 連携（構想）をそのまま受け入れる**（ApiDesign.md 6.3、
@@ -1816,6 +1877,10 @@ type Querier interface {
 	// するのは、チケットの作成（FK の確認が project に取る KEY SHARE）を待たせない
 	// ため**——FOR UPDATE だと KEY SHARE とぶつかる。
 	LockProjectForDependency(ctx context.Context, projectID string) (string, error)
+	// ── 連鎖のずらし（ApiDesign.md 9.17.1・9.17.2）────────────────────
+	// LockTicketRow は行（エピック）の ticket 行を FOR UPDATE で掴み、同じ行への連鎖を直列にする
+	// （9.17.2「同時更新の扱い」）。エピックに属さなければきっかけ自身を掴む。
+	LockTicketRow(ctx context.Context, id string) (string, error)
 	LockWorkProject(ctx context.Context, projectID string) error
 	LockWorkTickets(ctx context.Context, arg LockWorkTicketsParams) ([]LockWorkTicketsRow, error)
 	// MarkEvaluationObjected は PM の事後の異議を記録する（Delegation.md 6.4・6.5。pb-275）。
@@ -2092,6 +2157,9 @@ type Querier interface {
 	//
 	SetProjectStatus(ctx context.Context, arg SetProjectStatusParams) (int64, error)
 	SetProjectWorkflow(ctx context.Context, arg SetProjectWorkflowParams) error
+	// SetScheduleBaselineItemCount は保存の途中で写した件数が数えた件数と違ったときだけ使う
+	// （同じトランザクションの中で、版を返す前に直す。版の書き換えではない）。
+	SetScheduleBaselineItemCount(ctx context.Context, arg SetScheduleBaselineItemCountParams) error
 	// SetTicketClosedAt は完了済みのデモチケットを作るためだけのもの。
 	//
 	// **本来 closed_at はステータス遷移の副作用としてのみ動く**（DbDesign.md 6.6、
@@ -2109,6 +2177,10 @@ type Querier interface {
 	// 持つ人間だけが通る別経路（本ファイルの createDelegation）であり、
 	// 1列だけを狙って書く。
 	SetTicketExecutionMode(ctx context.Context, arg SetTicketExecutionModeParams) (int64, error)
+	// SetTicketSchedule は連鎖のずらしが動かした行を書く（9.17.2）。**version を進める**——動いた行は
+	// 人が見ていた前提が変わったので、他の画面の If-Match を外す。行は FOR UPDATE で掴んであるので
+	// version の照合は保険である。
+	SetTicketSchedule(ctx context.Context, arg SetTicketScheduleParams) (int32, error)
 	// SetTicketSortKey は振り直しの1行ぶん。
 	//
 	// **version を上げない。** 振り直しはプロジェクトの全行に触るので、上げると

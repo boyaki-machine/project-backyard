@@ -247,6 +247,8 @@ GET /api/v1/projects?page=1&per_page=25
 
 ETag はプロジェクト集合の `MAX(updated_at)` と件数から生成する。ポーリングは実装していないが、**応答ヘッダだけ先に用意しておく**（後から追加すると全エンドポイントの改修になるため）。
 
+**`If-None-Match` を解釈して `304` を返すのは、チケット一覧（9.2.5）と当初計画の1版（9.17.3）である**。タイムライン（9.2.7）が5秒ごとに取り直すために足した。ほかの一覧は今も ETag を出すだけで、`If-None-Match` を送っても `200` で全体を返す。
+
 **弱い検証子の `W/` は引用符の外に置く**（RFC 9110 8.8.3 の `entity-tag = [ weak ] opaque-tag`）。`"W/proj-…"` と内側に書くと、値そのものが `W/proj-…` という文字列の**強い**検証子になり、弱い比較の意味を失う。
 
 ## 2.8 楽観ロック
@@ -1891,7 +1893,7 @@ GET /api/v1/projects/check-key?key=my-app
 
 `timezone` はプロジェクトの基準タイムゾーン（IANA 名。`DbDesign.md` 6.23）。祝日の取得元と日ごとの上書きは 5.8 で読む——**この応答に載せない**（一般タブとメンバータブは暦を使わない。`GuiDesign.md` 5.9）。
 
-`settings` は `project.settings`（jsonb）をそのまま返す。**定義するキーは `repositories` と `gantt_snap_minutes`**（ガントの吸着の単位。pb-221）で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は未実装）。
+`settings` は `project.settings`（jsonb）をそのまま返す。**定義するキーは `repositories`・`gantt_snap_minutes`**（ガントの吸着の単位。pb-221）**・`views`**（メニューに出すビュー）**・`timeline_snap_seconds`**（タイムラインの吸着の単位）**・`timeline_epics`**（タイムラインの行にするエピック）で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は未実装）。
 
 **`my_role` と `my_permissions` は、エージェントのトークンでは所有者のものが出る**（`Design.md` 6.5 の委譲）。エージェントは `project_member` の行を持たないため、自分自身で引くと `my_role` が常に `null` になり、**`my_permissions` からプロジェクトロールの層が丸ごと落ちる**——認可は所有者のロールで通る（6.4.1）ので、「できるのに、できないと応答している」状態になる。`GET /me`（4.1）も同じ規則である。
 
@@ -2601,6 +2603,7 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
 | 新規プロジェクトモーダル | `GET /projects/check-key`（入力時）<br>`POST /projects`（作成） |
 | プロジェクトダッシュボード | `GET /projects/:key/stats`<br>`GET /projects/:key/activity`<br>`GET /projects/:key/tickets?assignee=me&open=true` |
 | バックログ | `GET /projects/:key/tickets`（＋ `GET /projects/:key/tags`）<br>`POST /projects/:key/tickets/:seq/move`（並べ替え） |
+| **タイムライン**（`GuiDesign.md` 5.15） | `GET /projects/:key/tickets?view=timeline`（起動時と5秒ごと。9.2.7）<br>`GET /projects/:key/schedule-baselines`（版の一覧）・`GET .../schedule-baselines/:id`（重ねる版。9.17.3）<br>`POST /projects/:key/tickets/:seq/reschedule`（試算と確定。9.17.2）<br>`POST /projects/:key/schedule-baselines`（`[計画を保存]`）・`DELETE …/schedule-baselines/:id`（版を消す） |
 | 新規チケットモーダル | `POST /projects/:key/tickets` |
 | チケット詳細 | `GET /projects/:key/tickets/:seq`<br>`GET /projects/:key/tickets/:seq/comments`<br>（遷移先はドロップダウンを開いたときに `GET .../transitions`。完了レポートの取得は下記） |
 | チケット詳細の完了レポート（設計済み・未実装） | `GET /projects/:key/tickets/:seq/reports`（初期表示）<br>`GET .../reports/:id`（単件取得） |
@@ -2705,9 +2708,9 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
 | `closed_since` / `closed_before` | — | **完了した日時（`closed_at`）の範囲**。`since` 以上・`before` 未満。エポックミリ秒。**未完了は外れる** |
 | `sort` | `sort_key` | `sort_key` / `seq` / `title` / `status` / `priority` / `due_at` / `created_at` / `updated_at` / `closed_at` |
 | `order` | `asc` | `asc` / `desc` |
-| `page` | `1` | 2.6。**`view=gantt` のときは受けない**（9.2.6） |
-| `per_page` | **`200`** | 2.6。上限は 2.6 と同じ 200。**`view=gantt` のときは受けない**（9.2.6） |
-| `view` | — | **`gantt` だけを受ける**。件数の上限・依存の同梱・棚に戻ったものの既定が変わる（9.2.6）。他の値は `422` |
+| `page` | `1` | 2.6。**`view=gantt` / `view=timeline` のときは受けない**（9.2.6・9.2.7） |
+| `per_page` | **`200`** | 2.6。上限は 2.6 と同じ 200。**`view=gantt` / `view=timeline` のときは受けない**（9.2.6・9.2.7） |
+| `view` | — | **`gantt` と `timeline` を受ける**。件数の上限・依存の同梱・棚に戻ったものの既定が変わる（9.2.6・9.2.7）。他の値は `422` |
 
 **異なる種類の条件どうしは AND、同じ条件の複数指定は OR** とする（`?type=task&priority=high,highest` は「タスク、かつ優先度が高以上」）。
 
@@ -2834,6 +2837,9 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
       "start_at": 1786201200000,
       "due_at": 1786719600000,
       "all_day": true,
+      "no_overlap": false,
+      "start_pinned": false,
+      "due_pinned": false,
       "closed_at": null,
       "version": 3,
       "created_at": 1786237200000,
@@ -2843,6 +2849,8 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
   "page": 1, "per_page": 200, "total": 48, "total_pages": 1
 }
 ```
+
+**`no_overlap` / `start_pinned` / `due_pinned` はタイムラインの時間重複チェックと、開始・終了のアンカーである**（`DbDesign.md` 6.6.2）。**一覧のすべての `view` と詳細（9.5.1）に載せる**——3つの真偽で応答は数十バイトしか増えず、`view` ごとに応答の形を分けるほうが重い。**読んで効かせるのはタイムラインの連鎖のずらし（9.17）だけ**で、ガント・バックログは読まない（`DbDesign.md` 6.6.2）。
 
 **`tags[]` と `parent_seq` / `has_children` を一覧に含めるのが本エンドポイントの要点である。** グループ化（タグ）と階層のインデント表示（親子）を、追加のリクエストなしに描けるようにする（設計方針3）。これらを含めないと、バックログは1画面あたり `1 + タグ数 + 階層の深さ` 回の往復を必要とする。
 
@@ -2874,7 +2882,7 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
 
 `total > per_page` になったとき、画面は件数とともに「フィルタで絞り込んでください」を表示する。**サーバは 200 件で打ち切るだけで、エラーにはしない。**
 
-**全件を返す専用のモード（`per_page=all` 等）は設けない。** 上限を外すと、応答サイズが利用者の入力ではなくデータ量で決まるようになり、性能の予測が立たなくなる。想定する規模で 200 件を超えるプロジェクトは、フィルタを使うか、ビューを分ける（スプリント・タグ）べき段階にある。**例外はガントの `view=gantt`（9.2.6）だけで、あちらも上限（5,000件）を外さない。**
+**全件を返す専用のモード（`per_page=all` 等）は設けない。** 上限を外すと、応答サイズが利用者の入力ではなくデータ量で決まるようになり、性能の予測が立たなくなる。想定する規模で 200 件を超えるプロジェクトは、フィルタを使うか、ビューを分ける（スプリント・タグ）べき段階にある。**例外はガントの `view=gantt`（9.2.6）とタイムラインの `view=timeline`（9.2.7）だけで、どちらも上限（5,000件）を外さない。**
 
 ### 9.2.4 フィルタで親が落ちた子の扱い
 
@@ -2899,6 +2907,10 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000"
 ```
 ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 ```
+
+**`view=timeline` のときは、さらに ⑥行になるエピック（`epics[]`）の件数と `MAX(updated_at)` ⑦当初計画の版の件数と最新の版の `id` ⑧プロジェクトの `version` も混ぜる**（9.2.7）。エピックは `items` に入らないので、題名を変えても④⑤までの材料では ETag が動かない。版はチケットの `updated_at` を動かさない（消したときも件数で変わる）。**載せるエピック（`settings.timeline_epics`）を変えるとプロジェクトの `version` が進む**ので、⑧で拾う。
+
+**`If-None-Match` が今の ETag と一致すれば、本体を作らずに `304 Not Modified` を返す**（弱い比較。2.7）。タイムラインの定期取得（`GuiDesign.md` 5.15「定期取得と他の人の変更」）が、変わっていないときに数百件を送り直さないためである。**`view` を問わず同じに扱う**——ETag の材料は `view` ごとに違うので、別の `view` の ETag が一致することは無い。**一致を見るのは問い合わせを走らせて材料を集めた後である**（SQL は減らず、減るのは転送と JSON の組み立て。`Timeline.md` 5.7）。
 
 ### 9.2.6 ガント向けの取得（`view=gantt`）
 
@@ -2946,6 +2958,56 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 
 **`page` / `per_page` を受けない理由。** 受けると「2ページ目のガント」が作れてしまい、依存の「両端が `items` に含まれる」がページごとに変わる。**黙って無視せず `422` にする**——送った側の誤りが、1ページ目を返されて気づかれないまま残るため。
 
+### 9.2.7 タイムライン向けの取得（`view=timeline`）
+
+**タイムライン（`GuiDesign.md` 5.15）は、同じエンドポイントに `view=timeline` を付けて取る。** 9.2.6 と同じく、取るものはチケットという資源のままで、**パスを分けない**。
+起動時と、**5秒ごとの定期取得**（`If-None-Match` で `304`。9.2.5）に使う。
+
+**必要権限**：`ticket.view`
+
+| 項目 | `view=gantt`（9.2.6） | `view=timeline` |
+|---|---|---|
+| 返すチケット | 条件に合うすべて | **プロジェクトの設定 `timeline_epics`（`DbDesign.md` 6.4）で選んだエピックの配下で、時刻付き（`all_day = false`）で、開始か終了の少なくとも一方を持つもの。** エピック自身は返さない（行の見出しになる。`epics[]`）。所属は 9.5.1 の `epic` と同じ求め方。**選んだエピックが無ければ `items` も `epics` も空**（画面は選ぶ導線を出す。`GuiDesign.md` 5.15「載せるエピック」） |
+| 件数の上限 | 5,000 | **5,000**。`page` / `per_page` は受けない（送ると `422 invalid`） |
+| 棚に戻ったもの | 既定で含む | **既定で含む**（イベントの当日に終わったものも描く）。`retired=false` で外す |
+| 行のフィルタ | — | **`parent=12,30`**（エピックの部分木。9.2.1 そのまま）。**見る人ごとの絞り込みで、`timeline_epics` の内側をさらに絞る**（選ばれていないエピックを `parent` に書いても、そのエピックは出ない）。ほかの絞り込み（担当・状態・タグ）も 9.2.1 と同じ |
+| 足す項目（`items[]`） | — | **`epic_seq`**（所属エピックの番号）・**`started_at`**（実際の着手。9.2.1「着手日時を導く」。着手していなければ `null`）・**`last_changed_by`**（下記） |
+| 同梱するもの | `links[]` | **`epics[]`・`links[]`・`baselines`**（下記） |
+
+```json
+{
+  "items": [
+    { "seq": 413, "title": "ダンス部「Re:Start」", "status": { "key": "in_progress", "name": "進行中", "category": "in_progress" },
+      "start_at": 1792803000000, "due_at": 1792805400000, "all_day": false,
+      "no_overlap": true, "start_pinned": false, "due_pinned": false,
+      "epic_seq": 301, "started_at": 1792803120000,
+      "last_changed_by": { "id": "01K2...", "kind": "user", "display_name": "鈴木" },
+      "version": 4, "...": "9.2.2 のほかの項目" }
+  ],
+  "epics": [
+    { "seq": 301, "title": "体育館ステージ", "status": { "key": "in_progress", "name": "進行中", "category": "in_progress" },
+      "sort_key": "0|hzzzzz:", "closed_at": null }
+  ],
+  "links": [
+    { "id": "01K2...", "source_seq": 413, "target_seq": 414, "link_type": "FS", "lag_days": 0, "origin": "human" }
+  ],
+  "baselines": { "count": 3, "latest_id": "01K9AB...", "latest_created_at": 1792788300000 },
+  "page": 1, "per_page": 5000, "total": 52, "total_pages": 1
+}
+```
+
+| 論点 | 決めたこと |
+|---|---|
+| `epics[]` | **行になるエピック。** `timeline_epics` で選んだエピック（`parent` があればその内側だけ）。**バーが1本も無くても行を出す**——選んだ行が空であることも情報である。並びは `sort_key` の昇順（バックログで人が並べた順）。形は `seq`・`title`・`status`・`sort_key`・`closed_at` |
+| `links[]` | **`FS` だけ、両端が `items` に含まれ、同じエピックに属するもの。** 形は 9.2.6 と同じ。連鎖のずらし（9.17.1）が寄せるのは同じエピックの中の FS だけなので、それ以外は描かない |
+| `baselines` | **当初計画の版の件数と、最後に保存した版の `id` と保存日時だけ**（無ければ `latest_id` も `latest_created_at` も `null`）。 版の中身は 9.17.3 で別に取る——版は書き換わらないので一度取れば足り、5秒ごとの応答に数百件の計画を載せ直さない。誰かが `[計画を保存]` を押すと `latest_id` が変わり、画面は一覧を取り直す |
+| `last_changed_by` | **そのチケットの `activity` の最新の行の実行者**（`actor_id` と記録時の表示名。無ければ `null`）。定期取得で変わったバーに「誰が変えたか」を添えるため（`GuiDesign.md` 5.15「定期取得と他の人の変更」）。`activity` の索引 `idx_activity_entity` で1件ずつ引ける |
+| 問い合わせの数 | プロジェクト1本（`timeline_epics`）・チケット1本・タグ1本・依存1本・エピック1本・版の集計1本・着手と最終変更者は `activity` から1本。**行ごとに引かない**（設計方針3） |
+| 時刻付きに限る理由 | 当日の進行を秒〜時の単位で描く画面で、終日の予定は幅が1日になり行を塞ぐ。**逆に、選んだエピックの配下に入れたままタイムラインから外したいチケットは終日にする**。期間の設定は持たない |
+| MCP | `pb_list_tasks` には出さない。画面のための条件である |
+
+**方式案（`Timeline.md` 5.5）からの変更。** 方式案は応答に版の中身（`baselines[]`）を同梱するとしていたが、**版をプロジェクト全体の1つにまとめた**（`Timeline.md` 7.1）ことで、版は「行ごとに違う版」ではなく「画面全体で1つ選ぶもの」になった。選んだ版は 9.17.3 で1回取れば変わらないので、同梱をやめた。
+
 ## 9.3 `POST /api/v1/projects/:key/tickets`
 
 **必要権限**：`ticket.create`
@@ -2977,6 +3039,9 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 | `tag_ids` | 任意。すべて当該プロジェクトのタグであること |
 | `estimate_point` / `estimate_hours` | 任意。0以上 |
 | `start_at` / `due_at` / `all_day` | 任意。9.3.1 の規則に従う |
+| `no_overlap` / `start_pinned` / `due_pinned` | 任意。真偽。省略時は `false`（`DbDesign.md` 6.6.2）。値の無い端のアンカーも受ける（連鎖のずらしが無視する） |
+
+**タイムラインの上で作るチケットは、`all_day: false` と時刻を明示して送る**（`GuiDesign.md` 5.15）。`all_day` の既定は `true` なので、省くと終日になり、タイムラインに描かれない（9.2.7）。
 
 **サーバが決めるもの（リクエストに含められない）**
 
@@ -3139,13 +3204,15 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 ### 9.5.2 `PATCH`
 
-**必要権限**：`ticket.edit` または `ticket.self_edit`。`ticket.plan.edit` だけを持つ場合は `start_at`・`due_at`・`all_day` のみ変更できる。ただし `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要
+**必要権限**：`ticket.edit` または `ticket.self_edit`。`ticket.plan.edit` だけを持つ場合は `start_at`・`due_at`・`all_day`・`no_overlap`・`start_pinned`・`due_pinned` のみ変更できる（時間重複チェックとアンカーは予定の一部である）。ただし `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要
 
 **`ticket.self_edit` でも通る**（0029）。ただし**開けるのは下の絞り込んだ集合だけ**で、それ以外の項目を送ると `403` になる。**エージェントに渡す権限であり、自分の縛りを緩められては意味がない**（`DbDesign.md` 6.13）。
 
 | `ticket.self_edit` で変えられる | 変えられない |
 |---|---|
-| `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_at` `due_at` `all_day` | **`type`** `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` |
+| `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_at` `due_at` `all_day` | **`type`** `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` **`no_overlap` `start_pinned` `due_pinned`** |
+
+**時間重複チェックとアンカーを `ticket.self_edit` で開けない**。どちらも人が置く連鎖のずらしの縛りで、**エージェントが書き換えると、人の連鎖の結果が変わる**——`scope` を開けないのと同じ理由である。
 
 **`type` は `ticket.edit` を持つ人だけが変えられる**。**種別の切り替えは盤面の見え方を変える**——タスクをエピックへ変えると、その行はバックログから消えてフィルタの選択肢になる（`GuiDesign.md` 5.4）。
 
@@ -3157,7 +3224,13 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 **`actual_point` と `actual_point_version` は対で送り、追加の `ticket.actual_point.edit` 権限が要る。** どちらか一方だけ、または値と null の混在は 422 とする。
 
-変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `estimate_point` `estimate_hours` `actual_hours` `actual_point` `actual_point_version` `start_at` `due_at` `all_day` `execution_mode` `readiness` `readiness_note` `scope`
+変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `estimate_point` `estimate_hours` `actual_hours` `actual_point` `actual_point_version` `start_at` `due_at` `all_day` `no_overlap` `start_pinned` `due_pinned` `execution_mode` `readiness` `readiness_note` `scope`
+
+**`PATCH` は時間重複チェックとアンカーを見ない**（ガント・バックログ・詳細ペイン・MCP の挙動を変えないため）
+
+- **アンカーの付いた端も `PATCH` で動かせる。** 印は残る。ガント・バックログ・詳細ペイン・MCP の `pb_update_ticket` は今までどおりに動き、**ガントで動かしたものは人が意図して動かしたものとして扱う**。印が効くのはタイムラインの連鎖のずらし（9.17）の中だけである
+- **値の無い端にアンカーを立てても拒まない。** 連鎖のずらしが無いものとして扱う（`DbDesign.md` 6.6.2）
+- **`PATCH` は連鎖しない。** 時間重複チェック付きのチケットの予定を変えても、後ろのチケットは動かさない。**重なっても拒まない**（衝突はタイムラインが印で描く）。連鎖は試算を見せてから確定する操作で、詳細ペイン・ガント・MCP には試算を出す場所が無い。連鎖させたいときは 9.17.2 を使う
 
 **含められないフィールド**
 
@@ -4281,6 +4354,17 @@ ETagなし、Cache-Control: no-store。共通エラー形式と401／403／404�
 | `not_stageable` | 表示上のトップレベルでないチケットを `staged: true` で上げようとした（9.4.1）。**オンステージのチケットを、段に置けなくなる `type` / `parent_seq` へ変えようとした場合も同じ**（9.5.2） |
 | `use_transition_endpoint` | `status_key` / `closed_at` を `PATCH` で変えようとした（9.5.2） |
 | `unsupported_type` | まだ受け付けていない値を指定した（DoD の `type` など。9.9） |
+| `pinned` | 連鎖のずらしのきっかけで、アンカーの付いた端を動かそうとした（9.17.2）。**`PATCH` では返さない**（9.5.2） |
+| `not_timed` | 連鎖のずらしのきっかけが終日、または開始と終了の両方を持たない（9.17.2） |
+| `started` | 着手済みのチケットの開始を、連鎖のずらしで動かそうとした（9.17.2） |
+| `closed` | 完了したチケットの予定を、連鎖のずらしで動かそうとした（`[ここで詰める]` を除く。9.17.2） |
+| `nothing_to_compact` | `[ここで詰める]` の相手が完了していない、または予定より吸着の単位以上早く終わっていない（9.17.2） |
+| `too_short` | 連鎖のずらしのきっかけの長さが、最小の長さ（吸着の単位）を割る（9.17.2） |
+| `overlaps_previous` | きっかけの開始を前へ動かし、同じ列の前のチケットに重なる（9.17.2） |
+| `cannot_fit` | 連鎖のずらしが解けない——アンカー・着手済み・完了に当たり、隙間を詰めても足りない（9.17.2） |
+| `too_many` | 当初計画の版に写すチケットが上限（5,000件）を超える（9.17.3） |
+
+**`409 conflict` に `details[].code = "stale_plan"` が付くことがある**（9.17.2）。試算の後に、動かす行の顔ぶれか版が変わった。`error.code` は `conflict` のままで、`details` で `If-Match` の不一致と見分ける。
 
 ## 9.15 完了レポート
 
@@ -4622,6 +4706,221 @@ GET /api/v1/projects/:key/agent-usage/runs
 ### 実行明細
 
 2.6の一覧形式。既定 `page=1`・`per_page=50`、上限200。並びは `submitted_at DESC, run_id DESC` 固定で、sort/orderの指定は422。各行は `run_id`・`seq`・`submitted_at`・`status`（レポートの結果）・`ticket_status_category`（現在のチケット状態）、NULL可能な `client_kind`・`model_name`・`model_version`・`tokens`・`turns`・`wall_clock_min` を持つ。日時はエポックミリ秒。件数とページ情報を保ち、取得したページだけを全件と扱わない。
+
+## 9.17 タイムライン：連鎖のずらしと当初計画
+
+**タイムライン（`GuiDesign.md` 5.15）が書く口である。** 読む口は 9.2.7。方式の比較は `Timeline.md` 5.4〜5.6 にあり、規則の正本は本節である。
+
+| 口 | 必要権限（ルートに宣言する） | 節 |
+|---|---|---|
+| `POST /api/v1/projects/:key/tickets/:seq/reschedule` | `ticket.edit` / `ticket.self_edit` / `ticket.plan.edit` の**いずれか**（`PATCH` 9.5.2 と同じ OR） | 9.17.2 |
+| `GET /api/v1/projects/:key/schedule-baselines` | `ticket.view` | 9.17.3 |
+| `GET /api/v1/projects/:key/schedule-baselines/:id` | `ticket.view` | 9.17.3 |
+| `POST /api/v1/projects/:key/schedule-baselines` | **`project.edit`**（プロジェクト管理者以上） | 9.17.3 |
+| `DELETE /api/v1/projects/:key/schedule-baselines/:id` | **`project.edit`** | 9.17.3 |
+
+### 9.17.1 連鎖のずらしの規則
+
+**サーバが1回の要求・1トランザクションで計算して書く。** 画面で計算して1件ずつ `PATCH` を送ると、途中で競合して一部だけ動いた状態が残る（ガントが後行の自動ずらしを採らなかった理由そのもの。`GuiDesign.md` 5.14「採らなかったもの」）。
+
+| 用語 | 定義 |
+|---|---|
+| 行 | **`timeline_epics`（`DbDesign.md` 6.4）で選んだエピック1つ。** チケットの所属は 9.5.1 の `epic`（祖先をたどって最初のエピック） |
+| **列** | **同じ行の、時間重複チェック（`no_overlap`）付きで、時刻付き（`all_day = false`）で、開始と終了の両方を持つチケット。** 開始の昇順（同じなら終了の昇順、次に `seq`）。**列のどの2つも重ならない**のが目指す状態（半開区間。終わりと始まりが同じ時刻は重ならない） |
+| 最小の長さ m | プロジェクトの `timeline_snap_seconds`（`DbDesign.md` 6.4。既定 60秒） |
+| いま | サーバの時刻 |
+| 開始が固定 | `start_pinned`、または**着手済み**（状態の区分が `todo` でない） |
+| 終了が固定 | `due_pinned`、または**完了**（状態の区分が `done`） |
+| 印の効く範囲 | **3つの印（`no_overlap` / `start_pinned` / `due_pinned`）が効くのは本節の計算の中だけである。** `PATCH` は見ない（9.5.2）。ガントなどで印の付いた端が動かされていても、いまの値をそのまま前提にする |
+
+**列の外は一切動かさない。** 時間重複チェックの無いチケット（準備・片付けなど裏の作業）、選んだエピックの配下にないチケットは、きっかけになっても自分だけが動く。
+
+**後ろの列の決め方。** きっかけ T の新しい終了を「前の終わり」p として、T より後ろの列 X を開始の順に1件ずつ決める。
+
+| 手順 | 内容 |
+|---|---|
+| 1. 望む開始 w | 原則は X のいまの開始。**同じ行の FS の先行があれば、先行の（動いた後の）終了 ＋ `lag_days`（暦日）の最大**（隙間を空けない。前へも後ろへも寄る）。`[ここで詰める]`（9.17.2 の `compact`）のときは、いまの開始 ＋ Δ（前へ寄せる量） |
+| 2. 開始 s | `max(w, p)`——**前の終わりに重なれば押す、隙間があれば吸収する**（隙間は保たない） |
+| 3. 「いま」 | X が未着手で s が X のいまの開始より前なら、**s を「いま」より前に置かない**（`min(いまの開始, max(s, いま))`） |
+| 4a. 開始が固定 | s がいまの開始より後ろなら**解けない**（相手は X、足りない時間は差）。そうでなければ X は動かない |
+| 4b. 終了が固定 | 終了は動かさない。**押されたら開始だけが動き、X が縮む**（その後ろへは波及しない）。前へは寄らない（ただし FS の後続は開始が前へ寄って伸びる）。長さが m を割れば**解けない** |
+| 4c. どちらでもない | 長さを保って s から置く |
+| 5. 次へ | X の終了を p にして次の X へ |
+
+**結果として次のように動く**（`Timeline.md` 7.1）。
+
+| 場面 | 動き |
+|---|---|
+| 延ばした | 後ろの隙間を吸収し、**足りない分だけ後ろを押す** |
+| 縮めた（早く終わった） | **後ろは動かず、隙間が空く**。寄せるのは `[ここで詰める]`（人が押す） |
+| FS の後続 | **先行の終了に隙間なく寄る。** 先行が縮めば前へ寄り（後続の終了にアンカーがあれば期間が伸び、無ければ長さを保って前へ）、延びれば押される。**対象は同じエピックの中の FS だけ** |
+| 着手済み | 開始は動かない。終了はきっかけとしては延ばせる・縮められる |
+| 完了 | 両端とも動かない |
+
+**解けないとき**（`on_block`）。
+
+| 値 | 動き |
+|---|---|
+| `reject`（既定） | 何も書かない。`422 cannot_fit`（相手の `seq` と足りない時間を `message` に） |
+| `shrink`（明示したときだけ） | **詰まった相手の直前から T の直後へ向かって順に**、両端とも固定でない列を最小の長さまで縮め、足りない時間を作ってから計算し直す。同じ相手でまだ足りなければ繰り返し、別の相手で詰まるか縮める余地が尽きれば `422 cannot_fit`。**比例で縮めない**——誰が割を食うかが読めるようにする |
+
+**人の判断なしにチケットを縮めない。** 画面は試算で「縮めれば収まる」案（下記 `alternative`）を見せ、人が押したときだけ `shrink` で送る。
+
+### 9.17.2 `POST /api/v1/projects/:key/tickets/:seq/reschedule`
+
+**きっかけのチケット1件の新しい予定を受け、連鎖を計算して返す（試算）か、書く（確定）。** `If-Match` はきっかけの `version`（省略は `422`。2.8）。
+
+```http
+POST /api/v1/projects/fes/tickets/413/reschedule
+If-Match: "4"
+```
+```json
+{
+  "op": "move",
+  "due_at": 1792807200000,
+  "on_block": "reject",
+  "dry_run": false,
+  "expect": [ { "seq": 414, "version": 2 }, { "seq": 415, "version": 7 } ]
+}
+```
+
+| フィールド | 意味 |
+|---|---|
+| `op` | `move`（既定）——`start_at` / `due_at` で新しい予定を渡す。**`compact`——`[ここで詰める]`**：きっかけは完了したチケットで、終了を完了時刻（`closed_at`）まで縮め（m の単位に丸める）、**後ろの列を同じだけ前へ寄せる**（9.17.1 の手順1）。`start_at` / `due_at` は送らない |
+| `start_at` / `due_at` | `move` のときの新しい予定（エポックミリ秒）。**片方だけでもよい**（送らなかった端は今のまま）。`[いままで延ばす]` は画面が「いま」を m の単位に切り上げた時刻を `due_at` に入れて送る（サーバに専用の `op` を持たない） |
+| `on_block` | 解けないとき。`reject`（既定）／`shrink`（9.17.1） |
+| `dry_run` | `true` なら計算だけして書かない（試算）。**試算では解けなくても `200` を返す**（下記） |
+| `expect` | **試算で動くと示された行（きっかけを除く）の `seq` と `version`。** 確定のときに送る。サーバは計算し直し、動かす行の集合か版が食い違えば `409`（`stale_plan`）。省略すると照合しない（試算を挟まずに確定する呼び出し） |
+
+**きっかけの検証**（`dry_run` でも `422` を返す）
+
+| 状況 | `details[].code` |
+|---|---|
+| 終日、または変えた後に開始と終了の両方がそろわない | `not_timed` |
+| 動かす端にアンカーが付いている（値の無い端のアンカーは無いものとして扱う） | `pinned` |
+| 着手済みのチケットの開始を動かす | `started` |
+| 完了したチケットを `move` で動かす | `closed` |
+| `compact` の相手が完了していない、または `closed_at` が `due_at` より m 以上早くない | `nothing_to_compact` |
+| 新しい長さが m を割る | `too_short` |
+
+**応答（`200`）**
+
+```json
+{
+  "applied": true,
+  "result": "ok",
+  "changes": [
+    { "seq": 413, "reason": "target",
+      "before": { "start_at": 1792803000000, "due_at": 1792805400000 },
+      "after":  { "start_at": 1792803000000, "due_at": 1792807200000 }, "version": 5 },
+    { "seq": 414, "reason": "ripple",
+      "before": { "start_at": 1792805400000, "due_at": 1792808400000 },
+      "after":  { "start_at": 1792807200000, "due_at": 1792810200000 }, "version": 3 }
+  ],
+  "block": null,
+  "alternative": null,
+  "items": [ /* 動いた行。9.2.7 の items と同じ形。確定のときだけ */ ]
+}
+```
+
+| フィールド | 意味 |
+|---|---|
+| `applied` | 書いたか。`dry_run` なら常に `false` |
+| `result` | `ok`（解けた）／`blocked`（解けない。`dry_run` のときだけ現れる） |
+| `changes[]` | 動く（動いた）行。`reason` は `target`（きっかけ）／`ripple`（押された・寄せられた）／`shrink`（終了のアンカーで縮んだ、または `on_block=shrink` で縮めた）。`version` は試算ならいまの版（`expect` に使う）、確定なら書いた後の版。**並びは列の順** |
+| `block` | `blocked` のときの理由。`{ "code": "cannot_fit" \| "overlaps_previous", "seq": 420, "short_ms": 900000, "message": "「閉会式・表彰」の開始のアンカー（15:30）に 15分 足りません" }` |
+| `alternative` | `reject` で解けないとき、**`shrink` なら解ける場合の `changes[]`**（`{ "changes": [...] }`）。解けなければ `null`。画面はこれを「縮めれば収まります」として見せる |
+| `items` | 確定のとき、動いた行を 9.2.7 の形で返す。画面は取り直さずに差し替える |
+
+**試算で解けないときに `422` にしない理由。** 試算は「どうなるか」を見せる問いで、解けないことも答えの1つである——画面は理由と縮める案を同じ面に並べる（`GuiDesign.md` 5.15「連鎖のずらし（試算の影 → 確定）」）。**確定（`dry_run: false`）で解けなければ `422`** で、`details[].code` は `cannot_fit` / `overlaps_previous`、`message` は `block.message` と同じ文言にする。
+
+**エラー**
+
+| 状況 | 応答 |
+|---|---|
+| `If-Match` が無い | `422`（`field = "If-Match"`、`code = "required"`。2.8） |
+| きっかけの版が違う | `409 conflict`（`PATCH` と同じ文言） |
+| `expect` と計算し直した結果が違う（試算の後に誰かが動かした） | `409 conflict`、`details[].code = "stale_plan"`。**本体に `retrial`（同じ要求を `dry_run` で計算し直した応答）を載せる**——画面は確認をもう一度出すだけでよい（任意フィールドを本体に置くのは 2.5 の `retry_after_sec` と同じ扱い） |
+| きっかけの検証（上の表） | `422 validation_failed` |
+| 解けない（確定） | `422`、`cannot_fit` / `overlaps_previous` |
+| `ticket.plan.edit` だけの人 | 通る（予定だけを変える口である） |
+| エージェント | 委任の範囲の判定（`planningWriteProblem`）を**動かす全行の ID** で掛ける。範囲の外の行を1件でも動かすなら `403` |
+
+**同時更新の扱い。** トランザクションの最初に**行（エピック）の `ticket` 行を `SELECT … FOR UPDATE` で掴み**、同じ行への連鎖を直列にする（エピックに属さなければきっかけ自身を掴む）。続いて列の全行を `FOR UPDATE` で読み、計算し、動く行だけ `version = version + 1` で書く。**楽観ロックの版（`If-Match` と `expect`）は「人が見ていた前提が崩れていないか」、行のロックは「計算の途中で他の連鎖が割り込まないこと」を守る**もので、役割が違う。
+
+**変更履歴。** 動いた行ごとに `start_at` / `due_at` を `activity` に記録し（9.5.2 と同じ1項目1行）、**同じ `request_id` を付ける**。詳細の履歴は同じ `request_id` の行から「pb-413 の変更に伴う」を出せる。
+
+**MCP には出さない**（`Timeline.md` 8章で起票を提案）。
+
+### 9.17.3 当初計画の版 `/schedule-baselines`
+
+**`[計画を保存]` を押すたびに、プロジェクトのタイムライン全体を1つの版として積む。** 表は `DbDesign.md` 6.32。版は書き換えない。消すことはできる（下記 `DELETE`）。
+
+**版は `id`（ULID）で指す。番号を持たない。** 画面は保存した日時（基準タイムゾーンで分まで）と `label` で名付ける（`DbDesign.md` 6.32「名前」）。消した版の `id` は二度と現れない。
+
+#### `POST /api/v1/projects/:key/schedule-baselines`
+
+**必要権限**：`project.edit`
+
+```json
+{ "label": "当日朝" }
+```
+
+| フィールド | 検証 |
+|---|---|
+| `label` | 任意。前後の空白を除いて 1〜100文字。空・省略は `null` |
+
+- **写すチケットは `view=timeline`（9.2.7）が絞り込みなしで返す集合と同じ**——`timeline_epics` で選んだエピックの配下の、時刻付きのもの（`DbDesign.md` 6.32「写すチケット」）。見る人の絞り込み（`parent` など）は受けない
+- **`If-Match` を要求しない。** 追加するだけで、上書きして失われるものが無い（2.8 の archive と同じ考え）
+- 写すチケットが 5,000件を超えれば `422`（`details[].code = "too_many"`）。版を切り詰めて保存しない
+- `201 Created`（`Location: /api/v1/projects/fes/schedule-baselines/01K9AB...`）。応答は下の一覧の1行の形
+
+#### `GET /api/v1/projects/:key/schedule-baselines`
+
+**必要権限**：`ticket.view`
+
+```json
+{
+  "items": [
+    { "id": "01K9AB...", "label": "当日朝", "item_count": 52,
+      "created_by": { "id": "01K2...", "display_name": "鈴木" }, "created_at": 1792788300000 }
+  ]
+}
+```
+
+- **`created_at` の新しい順**（同じ時刻なら `id` の降順）。**ページネーションも `ETag` も持たない**（9.11 のタグと同じ扱い）。版を選ぶメニューは全件を並べ、1つのプロジェクトの版は数十に収まる
+- `created_by.id` は保存した人が消えていれば `null`。`display_name` は記録時の名前（`DbDesign.md` 6.32）
+
+#### `GET /api/v1/projects/:key/schedule-baselines/:id`
+
+**必要権限**：`ticket.view`
+
+```json
+{
+  "id": "01K9AB...", "label": "当日朝", "item_count": 52,
+  "created_by": { "id": "01K2...", "display_name": "鈴木" }, "created_at": 1792788300000,
+  "items": [
+    { "ticket_seq": 413, "exists": true, "title": "ダンス部「Re:Start」",
+      "epic_seq": 301, "epic_title": "体育館ステージ",
+      "start_at": 1792803000000, "due_at": 1792805400000, "all_day": false,
+      "no_overlap": true, "start_pinned": false, "due_pinned": false }
+  ]
+}
+```
+
+- `exists` は**いまのプロジェクトに同じ番号のチケットが在るか**。`false` なら「版にあったが、いまは無い」（画面は影だけを描く）
+- **`ETag` を返し、`If-None-Match` で `304`**（版は書き換わらないので、ETag は `id` だけから作る）
+- 版が無ければ `404 not_found`
+
+#### `DELETE /api/v1/projects/:key/schedule-baselines/:id`
+
+**必要権限**：`project.edit`
+
+- **版とその行を物理削除する。** 戻せない。画面は破壊的操作の確認（`GuiDesign.md` 6.3）をはさむ
+- **`If-Match` を要求しない。** 版は書き換わらないので、見ていた版と消す版が食い違うことが無い
+- 消した版を指す URL（`?baseline=<id>`）は `404` になり、画面は最後に保存した版で開き直す
+- `204 No Content`。版が無ければ `404 not_found`
+- `activity` にも監査ログにも記録しない（`DbDesign.md` 6.32。版はチケットの履歴ではない）
 
 # 10. プロジェクト文書API
 

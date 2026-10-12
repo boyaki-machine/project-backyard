@@ -27,7 +27,7 @@ WITH RECURSIVE open_desc AS (
    WHERE c.project_id = $2::pg_catalog.bpchar AND c.type <> 'epic'
 ), eligible AS (
   -- ListTickets と同じ部分木・棚除外。状態で絞る前に全親子関係をたどる。
-  SELECT t.id, t.project_id, t.seq, t.parent_id, t.type, t.title, t.body_md, t.status_key, t.priority, t.assignee_id, t.reporter_id, t.estimate_point, t.estimate_hours, t.actual_hours, t.sprint_id, t.sort_key, t.execution_mode, t.readiness, t.readiness_note, t.scope, t.source, t.is_trusted_source, t.custom_fields, t.closed_at, t.version, t.created_at, t.updated_at, t.staged_at, t.working_agent_id, t.actual_point, t.actual_point_version, t.start_at, t.due_at, t.all_day, ws.category,
+  SELECT t.id, t.project_id, t.seq, t.parent_id, t.type, t.title, t.body_md, t.status_key, t.priority, t.assignee_id, t.reporter_id, t.estimate_point, t.estimate_hours, t.actual_hours, t.sprint_id, t.sort_key, t.execution_mode, t.readiness, t.readiness_note, t.scope, t.source, t.is_trusted_source, t.custom_fields, t.closed_at, t.version, t.created_at, t.updated_at, t.staged_at, t.working_agent_id, t.actual_point, t.actual_point_version, t.start_at, t.due_at, t.all_day, t.no_overlap, t.start_pinned, t.due_pinned, ws.category,
     (t.id IN (SELECT id FROM staged_tree)
      AND NOT (t.closed_at IS NOT NULL
        AND EXISTS (SELECT 1 FROM sprint rs WHERE rs.id = t.sprint_id AND rs.status = 'completed')

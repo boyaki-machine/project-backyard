@@ -67,6 +67,11 @@ type createTicketRequest struct {
 	StartAt json.RawMessage `json:"start_at"`
 	DueAt   json.RawMessage `json:"due_at"`
 	AllDay  *bool           `json:"all_day"`
+	// 時間重複チェックとアンカー（9.3。pb-296）。省略時は false。値の無い端のアンカーも受ける
+	// （連鎖のずらしが無いものとして扱う。DbDesign.md 6.6.2）。
+	NoOverlap   *bool `json:"no_overlap"`
+	StartPinned *bool `json:"start_pinned"`
+	DuePinned   *bool `json:"due_pinned"`
 }
 
 // createTicket はチケットを1件作る。201 + Location + 9.5 形式の本体。
@@ -222,6 +227,9 @@ func (h *handler) createTicket(w http.ResponseWriter, r *http.Request) {
 			StartAt:       sched.start,
 			DueAt:         sched.due,
 			AllDay:        sched.allDay,
+			NoOverlap:     boolOr(req.NoOverlap, false),
+			StartPinned:   boolOr(req.StartPinned, false),
+			DuePinned:     boolOr(req.DuePinned, false),
 			SortKey:       pgtype.Text{String: sortKey, Valid: true},
 		}); err != nil {
 			return fmt.Errorf("チケットを作成できない: %w", err)

@@ -1,6 +1,7 @@
 import { i18n } from '../i18n'
 import { uiMessages as english } from './en/ui'
 import { translate as japanese } from './ja/ui'
+import { pluginEnglishMessages } from '../plugins/registry'
 
 export type UiParams = Record<string, string | number | null | undefined>
 
@@ -11,7 +12,7 @@ function interpolate(message: string, params: UiParams): string {
 /** Translate application-owned UI text. Registered as `$ui` in Vue templates. */
 export function uiText(source: string, params: UiParams = {}): string {
   const locale = i18n.global.locale.value
-  const message = locale === 'en' ? (english[source] ?? source) : japanese(source)
+  const message = locale === 'en' ? (english[source] ?? pluginEnglishMessages[source] ?? source) : japanese(source)
   return interpolate(message, params)
 }
 
