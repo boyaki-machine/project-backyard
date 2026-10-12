@@ -173,7 +173,7 @@ func agentMayWorkOn(p *auth.Principal, assigneeID pgtype.Text) bool {
 // あそこに居るのは、あれが「その人にとってのチケット」を表すためである）。
 func (wf ticketWorkflow) denyTransition(
 	from string, to gen.ListWorkflowStatusesRow, actor transitionActor,
-	hasOpenChildren bool, rootEvaluationPending bool,
+	hasOpenChildren bool, rootEvaluationPending bool, rootNotAcceptable bool,
 ) string {
 	tr := wf.findTransition(from, to.Key)
 
@@ -243,6 +243,15 @@ func (wf ticketWorkflow) denyTransition(
 		return evaluationNotPassedReason
 	}
 
+	// 検証9：根の完了は受け入れであり、委任が承認済で関門の確認待ちが
+	// 無いときだけ通る（Delegation.md 4.3「受け入れ」・5章の表）。
+	//
+	// **検証8 の後に置く。** 評価の合格が先に要る——停止を解いても評価が
+	// 済んでいなければ受け入れられないので、そちらを先に取り除かせたい。
+	if to.Category == statusCategoryDone && rootNotAcceptable {
+		return rootNotAcceptableReason
+	}
+
 	return ""
 }
 
@@ -255,6 +264,9 @@ const childrenNotClosedReason = "未完了の子チケットが残っている�
 
 // evaluationNotPassedReason は検証8 の文言（Delegation.md 5章・7.2。pb-248）。
 const evaluationNotPassedReason = "成果の評価が合格するまで、この根を完了にはできません"
+
+// rootNotAcceptableReason は検証9 の文言（Delegation.md 4.3「受け入れ」）。
+const rootNotAcceptableReason = "自律実行が停止中か、確認待ちに答えていないため、この根を受け入れられません。再開するか、確認待ちに答えてから完了にしてください"
 
 // decodeActorKinds は allowed_actor_kinds（jsonb の配列）を解く。
 //

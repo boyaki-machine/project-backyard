@@ -168,8 +168,20 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 			rootEvaluationPending = pending
 		}
 
-		// 検証2：定義が無ければ 409、検証3〜6 は 403、検証7・8 は 409 / 403。
-		if reason := wf.denyTransition(before.StatusKey, *target, actor, hasOpenChildren, rootEvaluationPending); reason != "" {
+		// 検証9 と受け入れの材料（Delegation.md 4.3「受け入れ」）。終了していない
+		// 委任の根でなければ空で、検証にも受け入れにも効かない。
+		var acceptance rootAcceptance
+		if target.Category == statusCategoryDone {
+			acc, err := readRootAcceptance(ctx, q, before.ID)
+			if err != nil {
+				return fmt.Errorf("チケット %d の委任を確認できない: %w", seq, err)
+			}
+			acceptance = acc
+		}
+
+		// 検証2：定義が無ければ 409、検証3〜6 は 403、検証7 は 409、検証8・9 は 403。
+		if reason := wf.denyTransition(before.StatusKey, *target, actor, hasOpenChildren,
+			rootEvaluationPending, acceptance.notAcceptable); reason != "" {
 			writeErr = transitionDenied(wf, before.StatusKey, req.To, reason)
 			return errTicketReference
 		}
@@ -242,6 +254,19 @@ func (h *handler) transitionTicket(w http.ResponseWriter, r *http.Request) {
 			NewValue:   &newValue,
 		}); err != nil {
 			return err
+		}
+
+		// **根を完了にしたら、委任を受け入れる**（Delegation.md 4.3「受け入れ」）。
+		// 同じトランザクションで行う——根だけ閉じて委任が承認済のまま残ると、
+		// エージェントは待ち受けを続ける。
+		if acceptance.delegationID != "" {
+			origin := originHuman
+			if p.ActorKind == actorKindAgent {
+				origin = originAgent
+			}
+			if err := acceptDelegation(ctx, q, rec, projectID, before.ID, p.ActorID, origin, acceptance); err != nil {
+				return err
+			}
 		}
 
 		// **子が未着手を出たら、祖先を進行中にする**（9.6）。
@@ -453,7 +478,7 @@ func transitionDenied(wf ticketWorkflow, from, to, reason string) *apierr.Error 
 	if reason == childrenNotClosedReason {
 		return apierr.New(apierr.ChildrenNotClosed).WithMessage(reason)
 	}
-	if reason == evaluationNotPassedReason {
+	if reason == evaluationNotPassedReason || reason == rootNotAcceptableReason {
 		return apierr.New(apierr.Forbidden).WithMessage(reason).WithDetails(apierr.Detail{
 			Field: "to", Code: "delegation_stage",
 		})
