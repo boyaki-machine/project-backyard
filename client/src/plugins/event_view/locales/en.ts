@@ -151,4 +151,11 @@ export const messages: Record<string, string> = {
   "依存を作りました（{value0}）。予定は動かしていません": "Dependency created ({value0}). The schedule was not changed",
   "［依存に合わせる］": "[Align to dependency]",
   "依存に合わせて{value0}件が動きます（{value1}）": "{value0} ticket(s) move to follow the dependency ({value1})",
+  "表示期間": "Visible period",
+  "開始日時（空なら「いま」）": "Start (blank for now)",
+  "3時間": "3 hours",
+  "6時間": "6 hours",
+  "12時間": "12 hours",
+  "1日": "1 day",
+  "指定しない": "None",
 }

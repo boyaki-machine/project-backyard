@@ -28,7 +28,7 @@ import {
   widthClass,
 } from '../src/plugins/event_view/model'
 import type { Bar, TlEpic, TlLink } from '../src/plugins/event_view/model'
-import { axisRange, clock, isWallMultiple, tickScale, wallTicks, zoomAt, ZOOMS } from '../src/plugins/event_view/time'
+import { PPS_MAX, PPS_MIN, atOf, clock, fromLocalInput, isWallMultiple, needsRewindow, ppsForSpan, spanOf, tickScale, toLocalInput, wallTicks, windowRange, zoomAt, ZOOMS } from '../src/plugins/event_view/time'
 import { readViewEnabled, mergeViews } from '../src/api/projects'
 import { choiceToLink, formatLagClock, parseLagClock } from '../src/api/links'
 import { lagText } from '../src/lib/lagText'
@@ -246,10 +246,31 @@ test.describe('時間軸', () => {
     expect(clock('Asia/Tokyo', T(11, 42, 5), true)).toBe('11:42:05')
   })
 
-  test('範囲は前後 30分を足し、「いま」を含める', () => {
-    expect(axisRange([T(10), T(12)], T(11))).toEqual({ t0: T(9, 30), t1: T(12, 30) })
-    expect(axisRange([T(10), T(12)], T(15))).toEqual({ t0: T(9, 30), t1: T(15, 30) })
-    expect(axisRange([], T(11))).toEqual({ t0: T(10), t1: T(12) })
+  test('描く範囲は見えている1画面の前後3画面ずつ。端の1画面に入ったら描き直す（pb-320）', () => {
+    const view = 2 * 3600_000
+    const r = windowRange(T(10), view)
+    expect(r).toEqual({ t0: T(4), t1: T(18) })
+    expect(needsRewindow(r, T(10), view)).toBe(false)
+    expect(needsRewindow(r, T(5, 59), view)).toBe(true) // 最初の1画面
+    expect(needsRewindow(r, T(6), view)).toBe(false)
+    expect(needsRewindow(r, T(14, 1), view)).toBe(true) // 右端が最後の1画面
+  })
+
+  test('表示期間：URL の読み取りと、本体の幅に収める倍率。1日まで引ける（pb-320）', () => {
+    expect(spanOf('1d')).toBe('1d')
+    expect(spanOf('2d')).toBeNull()
+    expect(atOf('1792803000000')).toBe(1792803000000)
+    expect(atOf('abc')).toBeNull()
+    // 1日を 800px に収める（下限 1日＝320px より寄っている）
+    expect(ppsForSpan('1d', 800, PPS_MIN, PPS_MAX)).toBeCloseTo(800 / 86400)
+    expect(ppsForSpan('1d', 200, PPS_MIN, PPS_MAX)).toBe(PPS_MIN)
+    expect(ppsForSpan('1h', 1600, PPS_MIN, PPS_MAX)).toBeCloseTo(1600 / 3600)
+    // 引いたときの目盛り：1日＝320px なら小目盛り 3時間・大目盛り 12時間
+    expect(tickScale(PPS_MIN)).toEqual({ minor: 21600, major: 43200, fine: 3600 })
+    // 壁時計の入力と瞬間の行き来
+    expect(toLocalInput('Asia/Tokyo', T(9, 5))).toBe('2026-10-24T09:05')
+    expect(fromLocalInput('Asia/Tokyo', '2026-10-24T09:05')).toBe(T(9, 5))
+    expect(fromLocalInput('Asia/Tokyo', 'x')).toBeNull()
   })
 })
 

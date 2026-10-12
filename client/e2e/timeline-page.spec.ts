@@ -553,7 +553,10 @@ test('行の空いた所を横にドラッグして、その時間帯で作る�
   await page.goto('/p/fes/timeline?zoom=hour')
   const hq = page.locator('.tl-row', { hasText: '本部' }).locator('.tl-track')
   await expect(hq).toHaveClass(/can-create/)
-  const box = (await hq.boundingBox())!
+  const tb = (await hq.boundingBox())!
+  // トラックは描く範囲（前後3画面。pb-320）の幅で左へはみ出すので、見えている左端（行の見出しの右端）から測る
+  const lb = (await page.locator('.tl-row', { hasText: '本部' }).locator('.tl-rlabel').boundingBox())!
+  const box = { x: lb.x + lb.width, y: tb.y, height: tb.height }
   const y = box.y + box.height / 2
 
   // 押しただけ（動かさない）では開かない
@@ -708,4 +711,105 @@ test('タイムラインから開いた詳細の「関連チケットを追加�
     '関連', '重複', '自先行', '自後行',
     'FS 自先行', 'FS 自後行', 'SS 自先行', 'SS 自後行', 'FF 自先行', 'FF 自後行', 'SF 自先行', 'SF 自後行',
   ])
+})
+
+// ── 表示範囲（5.15「時間軸の範囲」「表示期間」。pb-320）────────────────
+
+/** 本体（行の見出しを除いた）の幅と、スクロールの量 */
+async function scrollState(page: Page) {
+  return page.locator('.tl-scroller').evaluate((el) => ({ left: el.scrollLeft, width: el.scrollWidth, client: el.clientWidth, body: el.clientWidth - 210 }))
+}
+
+/** 本体の見えている所に入っているバーの数（範囲の外のバーも DOM には残り、トラックで切られている） */
+async function barsInView(page: Page): Promise<number> {
+  return page.locator('.tl-scroller').evaluate((sc) => {
+    const r = sc.getBoundingClientRect()
+    const left = r.left + 210
+    return [...sc.querySelectorAll('.bar')].filter((b) => {
+      const x = b.getBoundingClientRect()
+      return x.right > left && x.left < r.right
+    }).length
+  })
+}
+
+/** スクロールを端まで送る（描き直しが起きるまで待つ） */
+async function scrollToEdge(page: Page, edge: 'start' | 'end') {
+  const before = await scrollState(page)
+  await page.locator('.tl-scroller').evaluate((el, e) => {
+    el.scrollLeft = e === 'end' ? el.scrollWidth : 0
+  }, edge)
+  // 描き直すと、見えている左端は描いた範囲の真ん中（3画面目）へ戻る
+  await expect.poll(async () => Math.abs((await scrollState(page)).left - before.body * 3)).toBeLessThan(2)
+}
+
+for (const width of [1280, 1920]) {
+  test(`初めて開いたときから、本体の幅の前後3画面ぶんを描く。空白を作らない（${width}px。pb-320）`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    await mockApi(page, { theme: 'light' })
+    await page.goto('/p/fes/timeline?zoom=hour')
+    await expect(page.locator('.bar[data-seq="412"]')).toBeVisible()
+    const st = await scrollState(page)
+    // 描く範囲は7画面ぶん。左に3画面、右に3画面スクロールできる
+    expect(Math.abs(st.width - (210 + 7 * st.body))).toBeLessThan(2)
+    expect(Math.abs(st.left - 3 * st.body)).toBeLessThan(2)
+    // 目盛りは見えている幅の右端まで並ぶ
+    const ticks = await page.locator('.ax-tk').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().left))
+    expect(Math.max(...ticks)).toBeGreaterThan(width - 260)
+    if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-range-${width}.png` })
+  })
+}
+
+test('チケットの無い未来・過去へスクロールだけで動ける。日の変わり目は日付で出す（pb-320）', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline?zoom=hour')
+  await expect(page.locator('.tl-corner b')).toHaveText('10/24')
+  await scrollToEdge(page, 'end')
+  await scrollToEdge(page, 'end')
+  await expect(page.locator('.tl-corner b')).toHaveText('10/25')
+  expect(await barsInView(page)).toBe(0)
+  // 0時の目盛りは日付
+  await scrollToEdge(page, 'start')
+  await expect(page.locator('.ax-maj, .ax-min').filter({ hasText: '10/25' })).not.toHaveCount(0)
+  for (let i = 0; i < 4; i++) await scrollToEdge(page, 'start')
+  await expect(page.locator('.tl-corner b')).toHaveText('10/23')
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-past.png` })
+  // [いま] で戻る
+  await page.getByRole('button', { name: 'いま', exact: true }).click()
+  await expect(page.locator('.tl-corner b')).toHaveText('10/24')
+  await expect(page.locator('.bar[data-seq="412"]')).toBeVisible()
+})
+
+test('表示期間：開始日時と期間で本体の幅にちょうど収める。URL に残し、倍率を変えたら外す（pb-320）', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline')
+  await expect(page.locator('.bar[data-seq="412"]')).toBeVisible()
+  const chip = page.getByRole('button', { name: /表示期間/ })
+  await chip.click()
+  const panel = page.getByRole('group', { name: '表示期間' })
+  await panel.getByRole('combobox', { name: '期間' }).selectOption('1d')
+  await expect(page).toHaveURL(/span=1d/)
+  const st = await scrollState(page)
+  // 1日 ＝ 本体の幅
+  await expect(page.locator('.tl-legend .r, .r.mono').first()).toHaveText(`1時間＝${Math.round((st.body / 24) * 1) }px`)
+  // 開始日時を入れると、その時刻が本体の左端に来る
+  await panel.getByLabel('開始日時').fill('2026-10-25T06:00')
+  await panel.getByLabel('開始日時').dispatchEvent('change')
+  await expect(page).toHaveURL(new RegExp(`at=${Date.UTC(2026, 9, 24, 21)}`))
+  await expect(page.locator('.tl-corner b')).toHaveText('10/25')
+  expect(await barsInView(page)).toBe(0)
+  await expect(page.locator('.tl-dd .tl-chip.on').filter({ hasText: '1日・10/25 06:00' })).toHaveCount(1)
+  if (shotDir) await page.screenshot({ path: `${shotDir}/timeline-span-1d.png` })
+  // 同じ URL を開けば同じ期間
+  await page.reload()
+  await expect(page.locator('.tl-corner b')).toHaveText('10/25')
+  await page.getByRole('button', { name: /1日・10\/25 06:00/ }).click()
+  await expect(panel.getByRole('combobox', { name: '期間' })).toHaveValue('1d')
+  await expect(panel.getByLabel('開始日時')).toHaveValue('2026-10-25T06:00')
+  // 段階のボタンで倍率を変えたら表示期間は外れる
+  await page.getByRole('group', { name: '拡大縮小の段階' }).getByRole('button', { name: '時' }).click()
+  await expect(page).not.toHaveURL(/span=/)
+  await expect(page).not.toHaveURL(/at=/)
+  await expect(page.getByRole('button', { name: /表示期間/ })).toHaveCount(1)
 })

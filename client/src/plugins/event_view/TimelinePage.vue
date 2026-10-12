@@ -100,19 +100,26 @@ import {
   PPS_MAX,
   PPS_MIN,
   SEC,
+  SPAN_ORDER,
   ZOOMS,
   ZOOM_ORDER,
-  axisRange,
+  atOf,
   clock,
+  fromLocalInput,
   isWallMultiple,
   monthDay,
+  needsRewindow,
+  ppsForSpan,
   snapTo,
+  spanOf,
   tickScale,
+  toLocalInput,
   wallTicks,
+  windowRange,
   zoomAt,
   zoomOf,
 } from './time'
-import type { ZoomKey } from './time'
+import type { SpanKey, ZoomKey } from './time'
 
 const route = useRoute()
 const router = useRouter()
@@ -666,10 +673,10 @@ function onTrackDown(ev: PointerEvent, rowSeq: number): void {
 
 // ── 見出しの道具（開いているパネルは1つだけ）──────────────────
 
-const openMenu = ref<'rows' | 'filter' | 'baseline' | null>(null)
+const openMenu = ref<'rows' | 'filter' | 'baseline' | 'span' | null>(null)
 const toolsEl = useTemplateRef<HTMLElement>('toolsEl')
 
-function toggleMenu(m: 'rows' | 'filter' | 'baseline'): void {
+function toggleMenu(m: 'rows' | 'filter' | 'baseline' | 'span'): void {
   openMenu.value = openMenu.value === m ? null : m
 }
 
@@ -790,22 +797,49 @@ const display = computed<{ mode: 'day' | 'step'; bars: Bar[]; base: Map<number, 
   return { mode: 'day', bars: liveBars.value, base, gone }
 })
 
-const range = computed(() => {
-  const times: number[] = []
-  for (const b of [...display.value.bars, ...display.value.gone]) {
-    if (b.s !== null) times.push(b.s)
-    if (b.e !== null) times.push(b.e)
-  }
-  return axisRange(times, now.value)
-})
+/**
+ * 描く範囲（5.15「時間軸の範囲」。pb-320）。**見えている左端 `winLeft` から1画面を真ん中に、前後3画面ずつ。**
+ * チケットの有無で切れない。端へ近づいたら `placeLeft` で描き直す
+ */
+const winLeft = ref(Date.now())
+/** 1画面ぶんの時間（ms） */
+const viewMs = computed(() => (bodyW.value / pps.value) * SEC)
+const range = computed(() => windowRange(winLeft.value, viewMs.value))
+
+/** スクロールの位置の時刻 */
+function timeAtScroll(px = 0): number {
+  return range.value.t0 + ((scrollLeft.value + px) / pps.value) * SEC
+}
+
+/** 見えている左端の時刻。スクロールと描き直しのたびに覚える（幅が変わったときに保つため） */
+let lastLeft = winLeft.value
+
+/** 見えている左端を `left` にして描き直す（見ている時刻を動かさない） */
+async function placeLeft(left: number): Promise<void> {
+  lastLeft = left
+  winLeft.value = left
+  await nextTick()
+  const el = scroller.value
+  if (!el) return
+  el.scrollLeft = X(left)
+  scrollLeft.value = el.scrollLeft
+}
 
 function X(t: number): number {
   return (t - range.value.t0) * (pps.value / SEC)
 }
 const trackW = computed(() => Math.max(0, X(range.value.t1)))
 
+let rewindowing = false
 function onScroll(): void {
   scrollLeft.value = scroller.value?.scrollLeft ?? 0
+  // 端へ近づいたら描き直す（チケットの無い過去・未来へも行ける）
+  if (rewindowing || !placed) return
+  const left = timeAtScroll()
+  lastLeft = left
+  if (!needsRewindow(range.value, left, viewMs.value)) return
+  rewindowing = true
+  void placeLeft(left).finally(() => (rewindowing = false))
 }
 
 /** 1秒の幅を変える。**`anchorPx`（本体の左端からの位置）の下の時刻を動かさない** */
@@ -818,9 +852,7 @@ async function setPps(next: number, anchorPx: number): Promise<void> {
   }
   const t = range.value.t0 + ((el.scrollLeft + anchorPx) / pps.value) * SEC
   pps.value = clamped
-  await nextTick()
-  el.scrollLeft = X(t) - anchorPx
-  onScroll()
+  await placeLeft(t - (anchorPx / clamped) * SEC)
 }
 
 /** 段階のボタンの中心：「いま」が見えていれば「いま」、そうでなければ本体の中央 */
@@ -830,13 +862,56 @@ function levelAnchor(): number {
 }
 
 function pickZoom(k: ZoomKey): void {
-  setQuery({ zoom: k === 'min' ? '' : k })
+  // 倍率を変えたら表示期間は外す（5.15「表示期間」）
+  setQuery({ zoom: k === 'min' ? '' : k, span: '', at: '' })
 }
 
 watch(
   () => route.query.zoom,
-  (z) => void setPps(ZOOMS[zoomOf(z)], levelAnchor()),
+  (z) => {
+    if (spanOf(route.query.span) === null) void setPps(ZOOMS[zoomOf(z)], levelAnchor())
+  },
 )
+
+// ── 表示期間（5.15「表示期間」。pb-320）──────────────────────────
+
+const spanKey = computed<SpanKey | null>(() => spanOf(route.query.span))
+const atMs = computed<number | null>(() => atOf(route.query.at))
+const spanLabelSources: Record<SpanKey, string> = { '1h': '1時間', '3h': '3時間', '6h': '6時間', '12h': '12時間', '1d': '1日' }
+/** ヘッダの札：選んだ期間と開始（`1日・10/25 06:00`）。どちらも無ければ「表示期間」 */
+const spanChip = computed(() => {
+  const parts: string[] = []
+  if (spanKey.value !== null) parts.push(uiText(spanLabelSources[spanKey.value]))
+  if (atMs.value !== null) parts.push(`${monthDay(viewTz.value, atMs.value)} ${clock(viewTz.value, atMs.value)}`)
+  return parts.length > 0 ? parts.join('・') : uiText('表示期間')
+})
+/** 開始日時の入力（見る人のタイムゾーンの壁時計） */
+const atInput = computed(() => (atMs.value === null ? '' : toLocalInput(viewTz.value, atMs.value)))
+
+/** URL の表示期間を当てる。期間があればその幅に収め、開始日時（無ければ「いま」を 30%）を左に置く */
+async function applySpan(): Promise<void> {
+  const k = spanKey.value
+  const at = atMs.value
+  if (k === null) {
+    if (at !== null) await placeLeft(at)
+    return
+  }
+  pps.value = ppsForSpan(k, bodyW.value, PPS_MIN, PPS_MAX)
+  await placeLeft(at ?? now.value - viewMs.value * 0.3)
+}
+
+function pickSpan(raw: string): void {
+  setQuery({ span: spanOf(raw) ?? '' })
+}
+
+function pickAt(raw: string): void {
+  const t = raw === '' ? null : fromLocalInput(viewTz.value, raw)
+  setQuery({ at: t === null ? '' : String(t) })
+}
+
+watch([() => route.query.span, () => route.query.at], () => {
+  if (placed) void applySpan()
+})
 
 const currentZoom = computed(() => zoomAt(pps.value))
 
@@ -846,6 +921,7 @@ function onWheel(e: WheelEvent): void {
   const el = scroller.value
   if (!el) return
   const px = e.clientX - el.getBoundingClientRect().left - LW
+  if (spanKey.value !== null || atMs.value !== null) setQuery({ span: '', at: '' })
   void setPps(pps.value * Math.exp(-e.deltaY * 0.002), Math.max(0, px))
 }
 
@@ -855,10 +931,7 @@ function toNow(): void {
 }
 
 function scrollToTime(t: number): void {
-  const el = scroller.value
-  if (!el) return
-  el.scrollLeft = Math.max(0, X(t) - bodyW.value * 0.3)
-  onScroll()
+  void placeLeft(t - viewMs.value * 0.3)
 }
 
 const zoomText = computed(() => {
@@ -892,13 +965,15 @@ const axisTicks = computed(() => {
     const x = X(t)
     const major = isWallMultiple(viewTz.value, t, sc.major)
     ticks.push({ x, major })
+    // 日の変わり目（0時）は時刻の代わりに日付（5.15「拡大縮小」。pb-320）
+    const midnight = isWallMultiple(viewTz.value, t, 86400)
     if (major) {
-      const text = clock(viewTz.value, t, sc.major < 60)
+      const text = midnight ? monthDay(viewTz.value, t) : clock(viewTz.value, t, sc.major < 60)
       const w = text.length * 7 + 8
       if (!near(x, w)) majors.push({ x, text, left: false })
       else if (!near(x - w - 8, w)) majors.push({ x, text, left: true })
     } else {
-      const text = clock(viewTz.value, t, sc.minor < 60)
+      const text = midnight ? monthDay(viewTz.value, t) : clock(viewTz.value, t, sc.minor < 60)
       if (!near(x, text.length * 6.5 + 6)) minors.push({ x, text })
     }
   }
@@ -914,7 +989,11 @@ const gridLines = computed(() => {
   }))
 })
 
-const cornerDate = computed(() => monthDay(viewTz.value, now.value))
+/** 角の日付は、見えている左端の日（日をまたいで送ったとき、どの日を見ているかが分かる） */
+/** 「いま」が描く範囲にあるか（外なら線と札を描かない。スクロールの幅を広げない） */
+const nowInRange = computed(() => now.value >= range.value.t0 && now.value <= range.value.t1)
+
+const cornerDate = computed(() => monthDay(viewTz.value, timeAtScroll()))
 const cornerZone = computed(() =>
   baseTz.value === viewTz.value
     ? uiText('基準 {value0}', { value0: baseTz.value })
@@ -1032,6 +1111,7 @@ function barView(b: Bar, r: RowLayout): BarView {
     b.ps ? uiText('開始のアンカー') : '',
     b.pe ? uiText('終了のアンカー') : '',
     dev?.title ?? '',
+    editable ? uiText('バーからバーへドラッグ：依存を引く') : '',
   ].filter((p) => p !== '')
   const cls = [
     'bar',
@@ -1896,10 +1976,18 @@ onUnmounted(() => {
 // 最初に取れたら「いま」を `[いま]` と同じ位置に置く
 watch(loaded, async (v) => {
   if (!v || placed) return
-  placed = true
   await nextTick()
   bodyW.value = Math.max(100, (scroller.value?.clientWidth ?? 900) - LW)
-  toNow()
+  if (spanKey.value !== null || atMs.value !== null) await applySpan()
+  else await placeLeft(now.value - viewMs.value * 0.3)
+  placed = true
+})
+
+// 幅が変わったら、見ている左端を保って描き直す。表示期間が付いていれば同じ期間が収まるように合わせ直す
+watch(bodyW, (w, old) => {
+  if (!placed || w === old) return
+  if (spanKey.value !== null) pps.value = ppsForSpan(spanKey.value, w, PPS_MIN, PPS_MAX)
+  void placeLeft(lastLeft)
 })
 
 watch(fetchKey, () => {
@@ -1990,6 +2078,27 @@ watch(projectKey, (key, prev) => {
             </button>
           </div>
           <button type="button" class="secondary small" @click="toNow">{{ $ui('いま') }}</button>
+          <!-- 表示期間（5.15「表示期間」。pb-320）。開始日時と期間で、本体の幅にちょうど収める。
+               ヘッダが詰まるので、選んだ期間の札だけを出し、入力はパネルに畳む -->
+          <div class="tl-dd">
+            <button type="button" class="tl-chip" :class="{ on: spanKey !== null || atMs !== null }" :aria-expanded="openMenu === 'span'" @click="toggleMenu('span')">
+              {{ spanChip }} ▾
+            </button>
+            <div v-if="openMenu === 'span'" class="tl-panel tl-span" role="group" :aria-label="$ui('表示期間')">
+              <label class="filter">
+                <span class="filter-label">{{ $ui('開始日時') }}</span>
+                <input type="datetime-local" class="tl-at" :value="atInput" :title="$ui('開始日時（空なら「いま」）')" @change="pickAt(($event.target as HTMLInputElement).value)" />
+              </label>
+              <label class="filter">
+                <span class="filter-label">{{ $ui('期間') }}</span>
+                <select class="tl-spansel" :value="spanKey ?? ''" @change="pickSpan(($event.target as HTMLSelectElement).value)">
+                  <option value="">{{ $ui('指定しない') }}</option>
+                  <option v-for="k in SPAN_ORDER" :key="k" :value="k">{{ $ui(spanLabelSources[k]) }}</option>
+                </select>
+              </label>
+              <button type="button" class="secondary small" :disabled="spanKey === null && atMs === null" @click="setQuery({ span: '', at: '' })">{{ $ui('解除') }}</button>
+            </div>
+          </div>
           <span class="tl-vsep" aria-hidden="true"></span>
 
           <!-- 重ねている版の札（押せない表示。pb-322）。重ねていなければ出さない -->
@@ -2120,7 +2229,7 @@ watch(projectKey, (key, prev) => {
               <i v-for="(t, i) in axisTicks.ticks" :key="`t${i}`" class="ax-tk" :class="{ M: t.major }" :style="{ left: `${t.x}px` }"></i>
               <span v-for="(t, i) in axisTicks.minors" :key="`n${i}`" class="ax-min" :style="{ left: `${t.x}px` }">{{ t.text }}</span>
               <span v-for="(t, i) in axisTicks.majors" :key="`j${i}`" class="ax-maj" :class="{ lft: t.left }" :style="{ left: `${t.x}px` }">{{ t.text }}</span>
-              <span v-if="step === null" class="nowtag" :style="{ left: `${X(now)}px` }">{{ clock(viewTz, now, withSec) }}</span>
+              <span v-if="step === null && nowInRange" class="nowtag" :style="{ left: `${X(now)}px` }">{{ clock(viewTz, now, withSec) }}</span>
             </div>
           </div>
 
@@ -2251,7 +2360,7 @@ watch(projectKey, (key, prev) => {
           >
 
           <div
-            v-if="step === null"
+            v-if="step === null && nowInRange"
             class="nowline"
             :style="{ left: `${LW + X(now)}px`, top: `${AH}px`, height: `${Math.max(rowsH, 80)}px` }"
             aria-hidden="true"
@@ -2289,7 +2398,6 @@ watch(projectKey, (key, prev) => {
         <span><i class="s"></i>{{ $ui('当初計画') }}</span>
       </span>
       <span v-if="canPlan">{{ $ui('右端をドラッグ：終了を動かす（試算→確定）') }}</span>
-      <span v-if="canPlan">{{ $ui('バーからバーへドラッグ：依存を引く') }}</span>
       <span v-if="canPlan"><kbd>Enter</kbd> {{ $ui('確定') }} <kbd>Esc</kbd> {{ $ui('取り消す') }}</span>
       <span><kbd>⌘/Ctrl</kbd>{{ $ui('＋ホイール 拡大縮小') }}</span>
       <span class="r mono">{{ zoomText }}</span>
@@ -2938,6 +3046,20 @@ watch(projectKey, (key, prev) => {
 .tl-track {
   position: relative;
   flex: none;
+  /* 描く範囲の外のバー・影・線はスクロールの幅を広げない（5.15「時間軸の範囲」。pb-320）。
+     縦は札（.gl・.who）がはみ出すので切らない */
+  overflow-x: clip;
+}
+
+.tl-span {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.tl-at {
+  width: 13em;
 }
 
 /* 空いた所のドラッグで作れる（5.15「チケットを作る」）。作れない人にはカーソルも変えない */
@@ -3306,7 +3428,7 @@ watch(projectKey, (key, prev) => {
 .tl-deps {
   position: absolute;
   z-index: 3;
-  overflow: visible;
+  overflow: hidden;
   pointer-events: none;
 }
 
