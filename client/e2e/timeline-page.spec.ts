@@ -813,3 +813,27 @@ test('表示期間：開始日時と期間で本体の幅にちょうど収め�
   await expect(page).not.toHaveURL(/at=/)
   await expect(page.getByRole('button', { name: /表示期間/ })).toHaveCount(1)
 })
+
+test('表示期間：カレンダーが確定前に入れた開始日時は、毎秒の描き直しで消えない（pb-320）', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await mockApi(page, { theme: 'light' })
+  await page.goto('/p/fes/timeline')
+  await expect(page.locator('.bar[data-seq="412"]')).toBeVisible()
+  await page.getByRole('button', { name: /表示期間/ }).click()
+  const input = page.getByRole('group', { name: '表示期間' }).getByLabel('開始日時')
+  // カレンダーで日を選んだ状態：値は入るが、change（確定）はまだ
+  await input.evaluate((el: HTMLInputElement) => {
+    el.value = '2026-10-25T06:00'
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  // 「⟳ ○秒前」で毎秒描き直される。3秒待っても残る
+  await page.waitForTimeout(3000)
+  await expect(input).toHaveValue('2026-10-25T06:00')
+  await expect(page).not.toHaveURL(/at=/)
+  // 確定すると URL に入る。URL の値が変われば入力も合わせる
+  await input.dispatchEvent('change')
+  await expect(page).toHaveURL(new RegExp(`at=${Date.UTC(2026, 9, 24, 21)}`))
+  await page.getByRole('group', { name: '表示期間' }).getByRole('button', { name: '解除' }).click()
+  await expect(page).not.toHaveURL(/at=/)
+  await expect(input).toHaveValue('')
+})
