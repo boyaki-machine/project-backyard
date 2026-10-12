@@ -232,7 +232,7 @@ ProjectBackyard/
 │   │   ├── ApiDesign.md           ← REST API 設計
 │   │   ├── GuiDesign.md           ← GUI 設計
 │   │   ├── Delegation.md          ← 自律実行の設計（DB・API・画面にまたがる）
-│   │   ├── Timeline.md            ← タイムラインの方式案（pb-294。確定内容は各設計書へ移した）
+│   │   ├── Timeline.md            ← タイムラインの方式案（分析の記録。正本は各設計書）
 │   │   └── openapi.yaml           ← 実装済みAPIの現状（ApiDesign.md 1.3）
 │   ├── Development.md             ← 開発環境の立ち上げ・デバッグ手順
 │   ├── Testing.md                 ← 試験の設計と完了の基準
@@ -307,7 +307,7 @@ ProjectBackyard/
         └── k8s/                   ← TARGET=k8s の雛形（PB 本体の app.yaml・試すための db.yaml・Secret の雛形）
 ```
 
-**ビューのプラグインは `client/src/plugins/` に置く**（pb-296。`GuiDesign.md` 5.15「プラグインの境界」）。いまはタイムライン（`event_view`）だけで、**ガント・バックログは本体のまま**である。
+**ビューのプラグインは `client/src/plugins/` に置く**（`GuiDesign.md` 5.15「プラグインの境界」）。いまはタイムライン（`event_view`）だけで、**ガント・バックログは本体のまま**である。
 
 | 規則 | 内容 |
 |---|---|
@@ -618,7 +618,7 @@ project ──┬── ticket ──┬── comment
 | 作成済み | 履歴 | `activity` `audit_log` | 6.8 |
 | 作成済み | アジャイル | `sprint` `ticket_sprint` | 6.9 |
 | 作成済み | タグ | `tag` `ticket_tag` | 6.10 |
-| 設計済み | タイムラインの当初計画 | `schedule_baseline` `schedule_baseline_item` | 6.32（pb-296） |
+| 作成済み | タイムラインの当初計画 | `schedule_baseline` `schedule_baseline_item` | 6.32 |
 | 作成済み | 完了条件 | `dod_item` | 6.11 |
 | 作成済み | **プロジェクト文書** | `document` `document_revision` | 8.1 |
 | 作成済み | エージェント連携 | `agent` `agent_client_kind` `task_lease` | 8.2 |
@@ -1359,7 +1359,7 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 | ユーザー管理 | `/admin/users` 系 | 確定 |
 | ロール・権限 | `/roles` `/permissions` | 確定 |
 | チケット | `/projects/:key/tickets` 系、`/tags`、`/sprints`、`/stats`、`/activity` | 確定（`ApiDesign.md` 9章） |
-| タイムライン | `/projects/:key/tickets?view=timeline`、`/projects/:key/tickets/:seq/reschedule`、`/projects/:key/schedule-baselines` 系 | 確定（`ApiDesign.md` 9.2.7・9.17。pb-296） |
+| タイムライン | `/projects/:key/tickets?view=timeline`、`/projects/:key/tickets/:seq/reschedule`、`/projects/:key/schedule-baselines` 系 | 確定（`ApiDesign.md` 9.2.7・9.17） |
 
 **本表の「確定」は設計が確定した意味であり、実装済みという意味ではない。** `docs/design/openapi.yaml` に載るのは実装が済んだものだけである（役割と食い違い時の扱いは `ApiDesign.md` 1.3）。
 

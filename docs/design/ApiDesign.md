@@ -247,7 +247,7 @@ GET /api/v1/projects?page=1&per_page=25
 
 ETag はプロジェクト集合の `MAX(updated_at)` と件数から生成する。ポーリングは実装していないが、**応答ヘッダだけ先に用意しておく**（後から追加すると全エンドポイントの改修になるため）。
 
-**`If-None-Match` を解釈して `304` を返すのは、チケット一覧（9.2.5）と当初計画の1版（9.17.3）である**（pb-296）。タイムライン（9.2.7）が5秒ごとに取り直すために足した。ほかの一覧は今も ETag を出すだけで、`If-None-Match` を送っても `200` で全体を返す。
+**`If-None-Match` を解釈して `304` を返すのは、チケット一覧（9.2.5）と当初計画の1版（9.17.3）である**。タイムライン（9.2.7）が5秒ごとに取り直すために足した。ほかの一覧は今も ETag を出すだけで、`If-None-Match` を送っても `200` で全体を返す。
 
 **弱い検証子の `W/` は引用符の外に置く**（RFC 9110 8.8.3 の `entity-tag = [ weak ] opaque-tag`）。`"W/proj-…"` と内側に書くと、値そのものが `W/proj-…` という文字列の**強い**検証子になり、弱い比較の意味を失う。
 
@@ -1893,7 +1893,7 @@ GET /api/v1/projects/check-key?key=my-app
 
 `timezone` はプロジェクトの基準タイムゾーン（IANA 名。`DbDesign.md` 6.23）。祝日の取得元と日ごとの上書きは 5.8 で読む——**この応答に載せない**（一般タブとメンバータブは暦を使わない。`GuiDesign.md` 5.9）。
 
-`settings` は `project.settings`（jsonb）をそのまま返す。**定義するキーは `repositories`・`gantt_snap_minutes`**（ガントの吸着の単位。pb-221）**・`views`**（メニューに出すビュー）**・`timeline_snap_seconds`**（タイムラインの吸着の単位）**・`timeline_epics`**（タイムラインの行にするエピック。後の3つは pb-296）で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は未実装）。
+`settings` は `project.settings`（jsonb）をそのまま返す。**定義するキーは `repositories`・`gantt_snap_minutes`**（ガントの吸着の単位。pb-221）**・`views`**（メニューに出すビュー）**・`timeline_snap_seconds`**（タイムラインの吸着の単位）**・`timeline_epics`**（タイムラインの行にするエピック）で、構造の正本は `DbDesign.md` 6.4 にある（上の例の `max_concurrent_agents` は未実装）。
 
 **`my_role` と `my_permissions` は、エージェントのトークンでは所有者のものが出る**（`Design.md` 6.5 の委譲）。エージェントは `project_member` の行を持たないため、自分自身で引くと `my_role` が常に `null` になり、**`my_permissions` からプロジェクトロールの層が丸ごと落ちる**——認可は所有者のロールで通る（6.4.1）ので、「できるのに、できないと応答している」状態になる。`GET /me`（4.1）も同じ規則である。
 
@@ -2850,7 +2850,7 @@ CSVは同じ絞り込みに一致する**全件**を同じ順序で返す。`pag
 }
 ```
 
-**`no_overlap` / `start_pinned` / `due_pinned` はタイムラインの時間重複チェックと、開始・終了のアンカーである**（pb-296。`DbDesign.md` 6.6.2）。**一覧のすべての `view` と詳細（9.5.1）に載せる**——3つの真偽で応答は数十バイトしか増えず、`view` ごとに応答の形を分けるほうが重い。**読んで効かせるのはタイムラインの連鎖のずらし（9.17）だけ**で、ガント・バックログは読まない（`DbDesign.md` 6.6.2）。
+**`no_overlap` / `start_pinned` / `due_pinned` はタイムラインの時間重複チェックと、開始・終了のアンカーである**（`DbDesign.md` 6.6.2）。**一覧のすべての `view` と詳細（9.5.1）に載せる**——3つの真偽で応答は数十バイトしか増えず、`view` ごとに応答の形を分けるほうが重い。**読んで効かせるのはタイムラインの連鎖のずらし（9.17）だけ**で、ガント・バックログは読まない（`DbDesign.md` 6.6.2）。
 
 **`tags[]` と `parent_seq` / `has_children` を一覧に含めるのが本エンドポイントの要点である。** グループ化（タグ）と階層のインデント表示（親子）を、追加のリクエストなしに描けるようにする（設計方針3）。これらを含めないと、バックログは1画面あたり `1 + タグ数 + 階層の深さ` 回の往復を必要とする。
 
@@ -2910,7 +2910,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 
 **`view=timeline` のときは、さらに ⑥行になるエピック（`epics[]`）の件数と `MAX(updated_at)` ⑦当初計画の版の件数と最新の版の `id` ⑧プロジェクトの `version` も混ぜる**（9.2.7）。エピックは `items` に入らないので、題名を変えても④⑤までの材料では ETag が動かない。版はチケットの `updated_at` を動かさない（消したときも件数で変わる）。**載せるエピック（`settings.timeline_epics`）を変えるとプロジェクトの `version` が進む**ので、⑧で拾う。
 
-**`If-None-Match` が今の ETag と一致すれば、本体を作らずに `304 Not Modified` を返す**（pb-296。弱い比較。2.7）。タイムラインの定期取得（`GuiDesign.md` 5.15「定期取得と他の人の変更」）が、変わっていないときに数百件を送り直さないためである。**`view` を問わず同じに扱う**——ETag の材料は `view` ごとに違うので、別の `view` の ETag が一致することは無い。**一致を見るのは問い合わせを走らせて材料を集めた後である**（SQL は減らず、減るのは転送と JSON の組み立て。`Timeline.md` 5.7）。
+**`If-None-Match` が今の ETag と一致すれば、本体を作らずに `304 Not Modified` を返す**（弱い比較。2.7）。タイムラインの定期取得（`GuiDesign.md` 5.15「定期取得と他の人の変更」）が、変わっていないときに数百件を送り直さないためである。**`view` を問わず同じに扱う**——ETag の材料は `view` ごとに違うので、別の `view` の ETag が一致することは無い。**一致を見るのは問い合わせを走らせて材料を集めた後である**（SQL は減らず、減るのは転送と JSON の組み立て。`Timeline.md` 5.7）。
 
 ### 9.2.6 ガント向けの取得（`view=gantt`）
 
@@ -2960,7 +2960,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 
 ### 9.2.7 タイムライン向けの取得（`view=timeline`）
 
-**タイムライン（`GuiDesign.md` 5.15）は、同じエンドポイントに `view=timeline` を付けて取る。** pb-296。9.2.6 と同じく、取るものはチケットという資源のままで、**パスを分けない**。
+**タイムライン（`GuiDesign.md` 5.15）は、同じエンドポイントに `view=timeline` を付けて取る。** 9.2.6 と同じく、取るものはチケットという資源のままで、**パスを分けない**。
 起動時と、**5秒ごとの定期取得**（`If-None-Match` で `304`。9.2.5）に使う。
 
 **必要権限**：`ticket.view`
@@ -3003,7 +3003,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 | `baselines` | **当初計画の版の件数と、最後に保存した版の `id` と保存日時だけ**（無ければ `latest_id` も `latest_created_at` も `null`）。 版の中身は 9.17.3 で別に取る——版は書き換わらないので一度取れば足り、5秒ごとの応答に数百件の計画を載せ直さない。誰かが `[計画を保存]` を押すと `latest_id` が変わり、画面は一覧を取り直す |
 | `last_changed_by` | **そのチケットの `activity` の最新の行の実行者**（`actor_id` と記録時の表示名。無ければ `null`）。定期取得で変わったバーに「誰が変えたか」を添えるため（`GuiDesign.md` 5.15「定期取得と他の人の変更」）。`activity` の索引 `idx_activity_entity` で1件ずつ引ける |
 | 問い合わせの数 | プロジェクト1本（`timeline_epics`）・チケット1本・タグ1本・依存1本・エピック1本・版の集計1本・着手と最終変更者は `activity` から1本。**行ごとに引かない**（設計方針3） |
-| 時刻付きに限る理由 | 当日の進行を秒〜時の単位で描く画面で、終日の予定は幅が1日になり行を塞ぐ（`Timeline.md` 7章の T14）。**逆に、選んだエピックの配下に入れたままタイムラインから外したいチケットは終日にする**（pb-296 の CP3）。期間の設定は持たない |
+| 時刻付きに限る理由 | 当日の進行を秒〜時の単位で描く画面で、終日の予定は幅が1日になり行を塞ぐ。**逆に、選んだエピックの配下に入れたままタイムラインから外したいチケットは終日にする**。期間の設定は持たない |
 | MCP | `pb_list_tasks` には出さない。画面のための条件である |
 
 **方式案（`Timeline.md` 5.5）からの変更。** 方式案は応答に版の中身（`baselines[]`）を同梱するとしていたが、**版をプロジェクト全体の1つにまとめた**（`Timeline.md` 7.1）ことで、版は「行ごとに違う版」ではなく「画面全体で1つ選ぶもの」になった。選んだ版は 9.17.3 で1回取れば変わらないので、同梱をやめた。
@@ -3039,7 +3039,7 @@ ETag: W/"tkt-a3f19c2b-48-1723372992000000000-lnk-12-1723372990000000000"
 | `tag_ids` | 任意。すべて当該プロジェクトのタグであること |
 | `estimate_point` / `estimate_hours` | 任意。0以上 |
 | `start_at` / `due_at` / `all_day` | 任意。9.3.1 の規則に従う |
-| `no_overlap` / `start_pinned` / `due_pinned` | 任意。真偽。省略時は `false`（pb-296。`DbDesign.md` 6.6.2）。値の無い端のアンカーも受ける（連鎖のずらしが無視する） |
+| `no_overlap` / `start_pinned` / `due_pinned` | 任意。真偽。省略時は `false`（`DbDesign.md` 6.6.2）。値の無い端のアンカーも受ける（連鎖のずらしが無視する） |
 
 **タイムラインの上で作るチケットは、`all_day: false` と時刻を明示して送る**（`GuiDesign.md` 5.15）。`all_day` の既定は `true` なので、省くと終日になり、タイムラインに描かれない（9.2.7）。
 
@@ -3204,7 +3204,7 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 ### 9.5.2 `PATCH`
 
-**必要権限**：`ticket.edit` または `ticket.self_edit`。`ticket.plan.edit` だけを持つ場合は `start_at`・`due_at`・`all_day`・`no_overlap`・`start_pinned`・`due_pinned` のみ変更できる（後の3つは pb-296。時間重複チェックとアンカーは予定の一部である）。ただし `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要
+**必要権限**：`ticket.edit` または `ticket.self_edit`。`ticket.plan.edit` だけを持つ場合は `start_at`・`due_at`・`all_day`・`no_overlap`・`start_pinned`・`due_pinned` のみ変更できる（時間重複チェックとアンカーは予定の一部である）。ただし `assignee_id` / `working_agent_id` を変える場合は `ticket.assign` も必要
 
 **`ticket.self_edit` でも通る**（0029）。ただし**開けるのは下の絞り込んだ集合だけ**で、それ以外の項目を送ると `403` になる。**エージェントに渡す権限であり、自分の縛りを緩められては意味がない**（`DbDesign.md` 6.13）。
 
@@ -3212,7 +3212,7 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 |---|---|
 | `title` `body_md` `priority` `parent_seq` `assignee_id` `tag_ids` `estimate_point` `estimate_hours` `start_at` `due_at` `all_day` | **`type`** `execution_mode` `readiness` `readiness_note` `scope` `working_agent_id` `actual_hours` **`no_overlap` `start_pinned` `due_pinned`** |
 
-**時間重複チェックとアンカーを `ticket.self_edit` で開けない**（pb-296）。どちらも人が置く連鎖のずらしの縛りで、**エージェントが書き換えると、人の連鎖の結果が変わる**——`scope` を開けないのと同じ理由である。
+**時間重複チェックとアンカーを `ticket.self_edit` で開けない**。どちらも人が置く連鎖のずらしの縛りで、**エージェントが書き換えると、人の連鎖の結果が変わる**——`scope` を開けないのと同じ理由である。
 
 **`type` は `ticket.edit` を持つ人だけが変えられる**。**種別の切り替えは盤面の見え方を変える**——タスクをエピックへ変えると、その行はバックログから消えてフィルタの選択肢になる（`GuiDesign.md` 5.4）。
 
@@ -3226,7 +3226,7 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 
 変更可能：`type` `title` `body_md` `priority` `assignee_id` `working_agent_id` `parent_seq` `tag_ids` `estimate_point` `estimate_hours` `actual_hours` `actual_point` `actual_point_version` `start_at` `due_at` `all_day` `no_overlap` `start_pinned` `due_pinned` `execution_mode` `readiness` `readiness_note` `scope`
 
-**`PATCH` は時間重複チェックとアンカーを見ない**（pb-296 の CP3）
+**`PATCH` は時間重複チェックとアンカーを見ない**（ガント・バックログ・詳細ペイン・MCP の挙動を変えないため）
 
 - **アンカーの付いた端も `PATCH` で動かせる。** 印は残る。ガント・バックログ・詳細ペイン・MCP の `pb_update_ticket` は今までどおりに動き、**ガントで動かしたものは人が意図して動かしたものとして扱う**。印が効くのはタイムラインの連鎖のずらし（9.17）の中だけである
 - **値の無い端にアンカーを立てても拒まない。** 連鎖のずらしが無いものとして扱う（`DbDesign.md` 6.6.2）
@@ -4709,7 +4709,7 @@ GET /api/v1/projects/:key/agent-usage/runs
 
 ## 9.17 タイムライン：連鎖のずらしと当初計画
 
-**タイムライン（`GuiDesign.md` 5.15）が書く口である。** pb-296。読む口は 9.2.7。方式の比較は `Timeline.md` 5.4〜5.6、確定は同 7.1。
+**タイムライン（`GuiDesign.md` 5.15）が書く口である。** 読む口は 9.2.7。方式の比較は `Timeline.md` 5.4〜5.6 にあり、規則の正本は本節である。
 
 | 口 | 必要権限（ルートに宣言する） | 節 |
 |---|---|---|

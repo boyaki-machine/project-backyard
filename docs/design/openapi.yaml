@@ -3184,7 +3184,7 @@ paths:
         `ETag` は「フィルタ条件を正規化した文字列のハッシュ・件数・`MAX(updated_at)`」から
         作る（9.2.5）。**`sort` / `order` / `page` / `per_page` も混ぜる**——ETag は応答本文を
         指す検証子であり、並び順やページが違えば本文も違う。
-        **`If-None-Match` が今の ETag と一致すれば 304 を返す**（9.2.5。pb-296）。
+        **`If-None-Match` が今の ETag と一致すれば 304 を返す**（9.2.5）。
         `view=timeline` は ETag にエピックと当初計画の版の材料も混ぜる。
       parameters:
         - name: status
