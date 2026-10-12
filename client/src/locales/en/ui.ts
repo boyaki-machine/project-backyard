@@ -1742,6 +1742,5 @@ export const uiMessages: Record<string, string> = {
   "アンカー": "Anchor",
   "表示するビュー": "Views to show",
   "ⓘ バックログとチケット検索はいつも出ます。隠したビューも URL で開けます": "ⓘ Backlog and ticket search are always shown. Hidden views can still be opened by URL",
-  "変更は上の［保存］で保存します": "Use [Save] above to save the changes",
   "時間軸に置いて、期日と依存関係を見る": "See due dates and dependencies on a time axis",
 }

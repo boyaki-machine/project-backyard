@@ -71,7 +71,7 @@ const repositories = ref<ProjectRepository[]>([])
 /**
  * 「表示するビュー」の下書き（5.9.1）。取得した `settings` の写しで、`views` と
  * プラグインの欄（`timeline_snap_seconds`・`timeline_epics` など）だけを差し替える。
- * 保存は一般タブの `[保存]` 1つ
+ * **変えたその場で保存する**（pb-319）。基本情報の `[保存]` はこの欄を送らない
  */
 const viewDraft = ref<ProjectDetail['settings']>({})
 
@@ -132,6 +132,8 @@ watch(projectKey, () => {
   resetMembers()
   saveError.value = null
   saved.value = false
+  viewError.value = null
+  viewSaved.value = false
   archiveError.value = null
   // **タグとスプリントは持ち越さない。** プロジェクトごとに違う値であり、
   // 取得済みフラグを残すと切替先で前のプロジェクトのタグが出る。
@@ -611,12 +613,62 @@ function viewOn(key: string, fallback: boolean): boolean {
 }
 
 function setViewOn(key: string, on: boolean): void {
-  viewDraft.value = projectsApi.mergeViews(viewDraft.value, { [key]: on })
+  changeViews(projectsApi.mergeViews(viewDraft.value, { [key]: on }))
 }
 
-const dirty = computed(
-  () => nameChanged.value || descriptionChanged.value || repositoriesChanged.value || viewsChanged.value,
-)
+// 変えたその場で保存する（5.9.1「表示するビュー」。pb-319）。基本情報の `[保存]` とは別の口で、
+// ブロックの外のボタンで保存すると思わせない。
+const viewSaving = ref(false)
+const viewSaved = ref(false)
+const viewError = ref<ApiError | null>(null)
+const viewConflict = computed(() => viewError.value?.status === 409)
+
+function changeViews(next: ProjectDetail['settings']): void {
+  viewDraft.value = next
+  viewSaved.value = false
+  void flushViews()
+}
+
+/**
+ * 下書きがサーバの値と違うあいだ送る。**送っている間の変更は、応答の後にまとめて送る**
+ * （順に1本ずつ。並べて送ると、2本目が古い `version` で 409 になる）。
+ * 土台はサーバの `settings`——入力中で未保存のリポジトリは送らない。
+ */
+async function flushViews(): Promise<void> {
+  if (viewSaving.value) return
+  viewSaving.value = true
+  viewError.value = null
+  try {
+    while (current.value !== null && viewsChanged.value) {
+      const p = current.value
+      const sent = viewDraft.value
+      const settings: ProjectDetail['settings'] = { ...sent }
+      delete settings['repositories']
+      if (p.settings['repositories'] !== undefined) settings['repositories'] = p.settings['repositories']
+      const res = await projectsApi.updateProject(p.key, p.version, { settings })
+      // 基本情報の入力中の値は消さない（resetForm を通さない）。version はストアが持つ
+      store.setCurrent(res)
+      if (viewDraft.value === sent) viewDraft.value = { ...res.settings }
+    }
+    viewSaved.value = true
+  } catch (e: unknown) {
+    viewError.value = toApiError(e)
+    // 画面の値をサーバの値に戻す。保存されていない選択を残さない
+    if (current.value) viewDraft.value = { ...current.value.settings }
+  } finally {
+    viewSaving.value = false
+  }
+}
+
+/** 409 のあと、このブロックだけを取り直す。基本情報の入力中の値は残す */
+async function reloadViews(): Promise<void> {
+  viewError.value = null
+  viewSaved.value = false
+  await store.fetchCurrent(projectKey.value)
+  if (store.current) viewDraft.value = { ...store.current.settings }
+}
+
+const dirty = computed(() => nameChanged.value || descriptionChanged.value || repositoriesChanged.value)
 
 /** 入力し直したら前回の結果表示を消す。古い `✓ 保存しました` を残さない */
 watch(dirty, (d) => {
@@ -642,7 +694,7 @@ const valid = computed(
   () => nameError.value === null && description.value.trim().length <= MAX_DESCRIPTION,
 )
 
-const canSave = computed(() => dirty.value && valid.value && !saving.value)
+const canSave = computed(() => dirty.value && valid.value && !saving.value && !viewSaving.value)
 
 // 入力欄に紐づくエラー（2.5 の details）。ログイン画面・作成モーダルと同じ扱い
 const nameDetail = computed(() => saveError.value?.detailFor('name'))
@@ -676,10 +728,10 @@ async function save(): Promise<void> {
     const v = description.value.trim()
     body.description = v === '' ? null : v
   }
-  if (repositoriesChanged.value || viewsChanged.value) {
-    // settings は丸ごと置き換わる。取得した値（表示するビューの下書きはその写し）を
-    // 土台にして、画面が知らないキーを落とさない（5.5）
-    body.settings = projectsApi.mergeRepositories(viewDraft.value, repositories.value)
+  if (repositoriesChanged.value) {
+    // settings は丸ごと置き換わる。取得した値を土台にして、画面が知らないキーを落とさない（5.5）。
+    // 表示するビューはその場で保存済みなので、サーバの値のまま送る（pb-319）
+    body.settings = projectsApi.mergeRepositories(p.settings, repositories.value)
   }
 
   try {
@@ -1019,7 +1071,7 @@ function roleLabel(role: string): string {
             </div>
           </form>
 
-          <!-- 表示するビュー（5.9.1）。保存は上の［保存］1つに集約する -->
+          <!-- 表示するビュー（5.9.1）。変えたその場で保存する（pb-319） -->
           <section class="block views-block">
             <h2 class="block-title">{{ $ui('表示するビュー') }}</h2>
             <div v-for="v in viewChoices" :key="v.key" class="view-choice">
@@ -1039,11 +1091,16 @@ function roleLabel(role: string): string {
                 :project-key="projectKey"
                 :settings="viewDraft"
                 :disabled="saving || !canEditProject"
-                @update="viewDraft = $event"
+                @update="changeViews($event)"
               />
             </div>
             <p class="hint">{{ $ui('ⓘ バックログとチケット検索はいつも出ます。隠したビューも URL で開けます') }}</p>
-            <p v-if="viewsChanged" class="hint">{{ $ui('変更は上の［保存］で保存します') }}</p>
+            <p v-if="viewError" class="alert" role="alert">
+              {{ viewError.message }}
+              <button v-if="viewConflict" type="button" class="link-button" @click="reloadViews"> {{ $ui('最新の内容を取得') }} </button>
+            </p>
+            <p v-else-if="viewSaving" class="hint" role="status">{{ $ui('保存中…') }}</p>
+            <p v-else-if="viewSaved" class="ok" role="status">{{ $ui('✓ 保存しました') }}</p>
           </section>
 
           <!-- ワークフロー（参照のみ。5.9.1。拡充か削除かは実物を見て決める） -->

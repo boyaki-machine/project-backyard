@@ -4,7 +4,7 @@
  *
  * 吸着の単位（`timeline_snap_seconds`）とタイムライン対象エピック（`timeline_epics`）。
  * **チェックを入れているあいだだけ**本体の設定画面が出す（登録表の `settings.panel`）。
- * 保存は一般タブの `[保存]` 1つ——ここは差し替えた `settings` を `update` で返すだけ。
+ * 保存は本体がその場で行う（pb-319）——ここは差し替えた `settings` を `update` で返すだけ。
  */
 import { computed, onMounted, watch } from 'vue'
 
