@@ -55,12 +55,17 @@ a { color: inherit; text-decoration: none; }
 .count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font: 600 11px/1 var(--pb-font-mono); background: var(--c-bg); color: var(--c-fg); }
 .count-inline { margin-right: 12px; }
 .count.dot { position: absolute; top: -6px; right: -9px; box-shadow: 0 0 0 2px var(--pb-surface); }
-.icon .count.dot { top: -4px; right: 8px; }
+.icon .count.dot { top: -9px; right: 1px; transform: scale(.85); }
 .ava .count.dot { top: auto; bottom: -7px; right: -10px; }
 body[data-c="blue"]   { --c-bg: var(--pb-accent);  --c-fg: var(--pb-1); }
 body[data-c="yellow"] { --c-bg: var(--pb-warning); --c-fg: var(--pb-12); }
 body[data-c="red"]    { --c-bg: var(--pb-danger);  --c-fg: #fff; }
 .hide { display: none !important; }
+.ico { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; line-height: 1; }
+.ico svg { display: block; }
+.count-inline .ico { color: inherit; }
+body[data-i="num"] .item .ico { display: none; }
+body[data-i="num"] .icon .count.dot { position: static; box-shadow: none; }
 
 /* スマホ幅の浮遊トグル（2.4） */
 .floating { display: none; position: absolute; top: 8px; left: 8px; width: 32px; height: 32px; border: 1px solid var(--pb-line); border-radius: var(--pb-radius); background: var(--pb-surface); align-items: center; justify-content: center; z-index: 2; }
@@ -96,18 +101,26 @@ body[data-c="red"]    { --c-bg: var(--pb-danger);  --c-fg: #fff; }
 :is(button, .item, .row):focus-visible { outline: 2px solid var(--pb-accent); outline-offset: -2px; }
 </style>
 </head>
-<body data-c="blue">
+<body data-c="red" data-i="line">
 <div class="bar">
-  <h1>通知：未読の印の置き場（3案）と通知一覧</h1>
+  <h1>通知：未読の印の置き場・アイコンと通知一覧</h1>
   <div class="grp">置き場 <div class="seg" id="segPlace">
     <button type="button" data-v="b" aria-pressed="true">案B メニューの行（推奨）</button>
     <button type="button" data-v="a">案A アバターの右下</button>
     <button type="button" data-v="c">案C ブランド行の右端</button>
   </div></div>
   <div class="grp">印の色 <div class="seg" id="segColor">
-    <button type="button" data-v="blue" aria-pressed="true">青（アクセント）</button>
+    <button type="button" data-v="blue">青（アクセント）</button>
     <button type="button" data-v="yellow">黄（warning の面）</button>
-    <button type="button" data-v="red">赤（danger）</button>
+    <button type="button" data-v="red" aria-pressed="true">赤（danger）</button>
+  </div></div>
+  <div class="grp">アイコン <div class="seg" id="segIcon">
+    <button type="button" data-v="line" aria-pressed="true">① ベル（線）</button>
+    <button type="button" data-v="fill">② ベル（塗り）</button>
+    <button type="button" data-v="tray">③ 受信箱（線）</button>
+    <button type="button" data-v="mail">④ ✉︎ 記号</button>
+    <button type="button" data-v="num">⑤ 数字がアイコン</button>
+    <button type="button" data-v="emoji">（前回）🔔</button>
   </div></div>
   <div class="grp">メニュー <div class="seg" id="segMenu">
     <button type="button" data-v="open" aria-pressed="true">展開 240px</button>
@@ -131,10 +144,10 @@ body[data-c="red"]    { --c-bg: var(--pb-danger);  --c-fg: #fff; }
       <div class="brand">
         <span class="tog">☰</span>
         <span class="brand-name">Project Backyard</span>
-        <a class="count count-inline" data-place="c" href="#" title="未読の通知 3件">🔔 3</a>
+        <a class="count count-inline" data-place="c" href="#" title="未読の通知 3件"><span class="ico"></span> 3</a>
       </div>
       <div class="sections">
-        <a class="item on" data-place="b" href="#"><span class="icon">🔔<span class="count dot rail" data-place="b">3</span></span><span class="label">通知</span><span class="count count-inline" data-place="b">3</span></a>
+        <a class="item on" data-place="b" href="#"><span class="icon"><span class="ico"></span><span class="count dot rail" data-place="b">3</span></span><span class="label">通知</span><span class="count count-inline" data-place="b">3</span></a>
         <a class="item" href="#"><span class="icon">⌂</span><span class="label">プロジェクト一覧</span></a>
         <div class="section">─── my-app ─────── ▾</div>
         <a class="item" href="#"><span class="icon">▤</span><span class="label">ダッシュボード</span></a>
@@ -226,6 +239,20 @@ function seg(id, fn) {
   });
 }
 let place = 'b';
+const icons = {
+  line: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"><path d="M4 11V7.2a4 4 0 0 1 8 0V11l1.2 1.5H2.8z"/><path d="M6.6 14.2a1.5 1.5 0 0 0 2.8 0"/></svg>',
+  fill: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 1.6a.9.9 0 0 1 .9.9v.4A4.3 4.3 0 0 1 12.3 7.1V11l1.4 1.7c.3.4 0 .9-.5.9H2.8c-.5 0-.8-.5-.5-.9L3.7 11V7.1a4.3 4.3 0 0 1 3.4-4.2v-.4a.9.9 0 0 1 .9-.9z"/><path d="M6.4 14.4h3.2a1.6 1.6 0 0 1-3.2 0z"/></svg>',
+  tray: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2 9.2 4 3h8l2 6.2V13H2z"/><path d="M2 9.2h3.4l1 1.6h3.2l1-1.6H14"/></svg>',
+  mail: '✉\uFE0E',
+  num: '',
+  emoji: '🔔',
+};
+let icon = 'line';
+function applyIcon() {
+  document.body.dataset.i = icon;
+  document.querySelectorAll('.ico').forEach(el => { el.innerHTML = icons[icon]; });
+  applyPlace();
+}
 function applyPlace() {
   document.querySelectorAll('[data-place]').forEach(el => {
     const p = el.dataset.place;
@@ -236,13 +263,15 @@ function applyPlace() {
   document.querySelector('.item[data-place="b"]').classList.toggle('hide', place !== 'b');
   // 折りたたみの案B：行の右端の数は隠れ、アイコンの右上の数を出す
   const collapsed = frame.classList.contains('collapsed');
-  document.querySelectorAll('.count.rail').forEach(el => el.classList.toggle('hide', place !== 'b' || !collapsed));
+  document.querySelectorAll('.count.rail').forEach(el => el.classList.toggle('hide', place !== 'b' || !(collapsed || icon === 'num')));
+  document.querySelector('.count-inline[data-place="b"]').classList.toggle('hide', place !== 'b' || icon === 'num');
   // 折りたたみの案C：置き場が無い
   document.querySelector('.count-inline[data-place="c"]').classList.toggle('hide', place !== 'c' || collapsed);
   document.getElementById('note').innerHTML = notes[place];
 }
 seg('segPlace', v => { place = v; applyPlace(); });
 seg('segColor', v => { document.body.dataset.c = v; });
+seg('segIcon', v => { icon = v; applyIcon(); });
 seg('segMenu', v => { frame.classList.toggle('collapsed', v === 'collapsed'); applyPlace(); });
 seg('segWidth', v => { frame.classList.toggle('pc', v === 'pc'); frame.classList.toggle('sp', v === 'sp'); });
 seg('segTheme', v => { document.documentElement.dataset.theme = v; });
@@ -250,8 +279,8 @@ seg('segTheme', v => { document.documentElement.dataset.theme = v; });
 const q = new URLSearchParams(location.hash.slice(1));
 const pick = (id, v) => { if (v) document.querySelector(`#${id} button[data-v="${v}"]`)?.click(); };
 pick('segPlace', q.get('place')); pick('segColor', q.get('c')); pick('segMenu', q.get('menu'));
-pick('segWidth', q.get('w')); pick('segTheme', q.get('theme'));
-applyPlace();
+pick('segWidth', q.get('w')); pick('segTheme', q.get('theme')); pick('segIcon', q.get('i'));
+applyIcon();
 </script>
 </body>
 </html>
