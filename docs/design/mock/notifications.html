@@ -120,6 +120,9 @@ body[data-i="num"] .icon .count.dot { position: static; box-shadow: none; }
     <button type="button" data-v="tray">③ 受信箱（線）</button>
     <button type="button" data-v="mail">④ ✉︎ 記号</button>
     <button type="button" data-v="num">⑤ 数字がアイコン</button>
+    <button type="button" data-v="bubble">⑥ 吹き出し（線）</button>
+    <button type="button" data-v="at">⑦ @（自分宛て）</button>
+    <button type="button" data-v="badge">⑧ アプリのバッジ（線）</button>
     <button type="button" data-v="emoji">（前回）🔔</button>
   </div></div>
   <div class="grp">メニュー <div class="seg" id="segMenu">
@@ -245,6 +248,9 @@ const icons = {
   tray: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2 9.2 4 3h8l2 6.2V13H2z"/><path d="M2 9.2h3.4l1 1.6h3.2l1-1.6H14"/></svg>',
   mail: '✉\uFE0E',
   num: '',
+  bubble: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"><path d="M3.2 2.8h9.6a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H7.4L4.6 14v-2.4H3.2a1.4 1.4 0 0 1-1.4-1.4v-6a1.4 1.4 0 0 1 1.4-1.4z"/><path d="M5.2 6.4h5.6M5.2 8.6h3.6"/></svg>',
+  at: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="2.6"/><path d="M10.6 5.6v3.3a1.7 1.7 0 0 0 3.4 0V8a6 6 0 1 0-2.4 4.8"/></svg>',
+  badge: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M9 2.6H4.2a1.6 1.6 0 0 0-1.6 1.6v7.6a1.6 1.6 0 0 0 1.6 1.6h7.6a1.6 1.6 0 0 0 1.6-1.6V7"/><circle cx="12.4" cy="3.6" r="2" fill="currentColor" stroke="none"/></svg>',
   emoji: '🔔',
 };
 let icon = 'line';
