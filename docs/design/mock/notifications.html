@@ -83,7 +83,7 @@ body[data-i="num"] .icon .count.dot { position: static; box-shadow: none; }
 .chip[aria-pressed="true"] { border-color: var(--pb-accent); color: var(--pb-accent); font-weight: 600; }
 .list { flex: 1; overflow: auto; }
 .day { padding: 6px 16px 2px; font-size: 12px; color: var(--pb-text-muted); background: var(--pb-surface); border-bottom: 1px solid var(--pb-line); }
-.row { display: grid; grid-template-columns: 14px 1fr auto; gap: 4px 10px; padding: 8px 16px; border-bottom: 1px solid var(--pb-line); cursor: pointer; align-items: start; }
+.row { display: grid; grid-template-columns: 14px 1fr auto; gap: 4px 10px; padding: 8px 16px; border-bottom: 1px solid var(--pb-line); cursor: default; align-items: start; }
 .row:hover { background: var(--pb-hover); }
 .mark { width: 8px; height: 8px; border-radius: 50%; margin-top: 7px; background: var(--c-bg); }
 .read .mark { background: transparent; box-shadow: inset 0 0 0 1px var(--pb-7); }
@@ -92,7 +92,13 @@ body[data-i="num"] .icon .count.dot { position: static; box-shadow: none; }
 .body { grid-column: 2; color: var(--pb-text-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meta { grid-column: 2; font-size: 12px; color: var(--pb-text-muted); display: flex; gap: 10px; flex-wrap: wrap; }
 .time { font: 12px var(--pb-font-mono); color: var(--pb-text-muted); white-space: nowrap; }
-.act { grid-column: 3; grid-row: 2 / span 2; align-self: center; font-size: 12px; color: var(--pb-accent); white-space: nowrap; opacity: 0; }
+.act { grid-column: 3; grid-row: 2 / span 2; align-self: center; font-size: 12px; white-space: nowrap; opacity: 0; display: flex; gap: 10px; }
+.lnk { border: 0; background: none; padding: 0; cursor: pointer; color: var(--pb-text-muted); font-size: 12px; text-decoration: underline; text-decoration-color: var(--pb-7); }
+.lnk:hover { color: var(--pb-text); }
+.go { color: var(--pb-accent); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.go:hover { color: var(--pb-accent-hover, var(--pb-accent)); text-decoration-thickness: 2px; }
+.read .go { font-weight: 400; }
+.count { white-space: nowrap; }
 .row:hover .act { opacity: 1; }
 .sp .act { opacity: 1; }
 .sp .row { grid-template-columns: 14px 1fr; }
@@ -101,7 +107,7 @@ body[data-i="num"] .icon .count.dot { position: static; box-shadow: none; }
 :is(button, .item, .row):focus-visible { outline: 2px solid var(--pb-accent); outline-offset: -2px; }
 </style>
 </head>
-<body data-c="red" data-i="line">
+<body data-c="red" data-i="bubble">
 <div class="bar">
   <h1>通知：未読の印の置き場・アイコンと通知一覧</h1>
   <div class="grp">置き場 <div class="seg" id="segPlace">
@@ -115,12 +121,12 @@ body[data-i="num"] .icon .count.dot { position: static; box-shadow: none; }
     <button type="button" data-v="red" aria-pressed="true">赤（danger）</button>
   </div></div>
   <div class="grp">アイコン <div class="seg" id="segIcon">
-    <button type="button" data-v="line" aria-pressed="true">① ベル（線）</button>
+    <button type="button" data-v="line">① ベル（線）</button>
     <button type="button" data-v="fill">② ベル（塗り）</button>
     <button type="button" data-v="tray">③ 受信箱（線）</button>
     <button type="button" data-v="mail">④ ✉︎ 記号</button>
     <button type="button" data-v="num">⑤ 数字がアイコン</button>
-    <button type="button" data-v="bubble">⑥ 吹き出し（線）</button>
+    <button type="button" data-v="bubble" aria-pressed="true">⑥ 吹き出し（線）</button>
     <button type="button" data-v="at">⑦ @（自分宛て）</button>
     <button type="button" data-v="badge">⑧ アプリのバッジ（線）</button>
     <button type="button" data-v="emoji">（前回）🔔</button>
@@ -185,24 +191,24 @@ body[data-i="num"] .icon .count.dot { position: static; box-shadow: none; }
           <span class="ttl">ユーザ確認待ち：計画の変更を承認してください</span>
           <span class="time">14:32</span>
           <span class="body">子チケットを2件増やし、CP2 の範囲を広げてよいかを確認したいです。選択肢は3つあります。</span>
-          <span class="meta"><span>my-app-52 文化祭の準備</span><span>通知元：Claude Code（自律実行）</span></span>
-          <span class="act">既読にする</span>
+          <span class="meta"><a class="go" href="#">my-app-52 文化祭の準備 →</a><span>通知元：Claude Code（自律実行）</span></span>
+          <span class="act"><button type="button" class="lnk tog">既読にする</button><button type="button" class="lnk del">削除</button></span>
         </div>
         <div class="row" tabindex="0">
           <span class="mark"></span>
           <span class="ttl">パスワードのリセットを求めています</span>
           <span class="time">11:05</span>
           <span class="body">佐藤 がパスワードを変更できなくなりました。リセットを行ってください。</span>
-          <span class="meta"><span>アカウント / 権限</span><span>通知元：佐藤</span></span>
-          <span class="act">既読にする</span>
+          <span class="meta"><a class="go" href="#">佐藤 のパスワードのリセット →</a><span>通知元：佐藤</span></span>
+          <span class="act"><button type="button" class="lnk tog">既読にする</button><button type="button" class="lnk del">削除</button></span>
         </div>
         <div class="row" tabindex="0">
           <span class="mark"></span>
           <span class="ttl">ユーザ確認待ち：外部への送信を含みます</span>
           <span class="time">09:48</span>
           <span class="body">デモ環境へのデプロイは取り消せません。進めてよいですか。</span>
-          <span class="meta"><span>my-app-61 デモ環境</span><span>通知元：Codex（自律実行）</span></span>
-          <span class="act">既読にする</span>
+          <span class="meta"><a class="go" href="#">my-app-61 デモ環境 →</a><span>通知元：Codex（自律実行）</span></span>
+          <span class="act"><button type="button" class="lnk tog">既読にする</button><button type="button" class="lnk del">削除</button></span>
         </div>
         <div class="day">2026-10-12（月）</div>
         <div class="row read" tabindex="0">
@@ -210,16 +216,16 @@ body[data-i="num"] .icon .count.dot { position: static; box-shadow: none; }
           <span class="ttl">ユーザ確認待ち：評価ができません</span>
           <span class="time">18:20</span>
           <span class="body">評価役が画面を開けないため、合否を出せません。</span>
-          <span class="meta"><span>my-app-48 受付画面</span><span>通知元：Claude Code（自律実行）</span><span>既読 2026-10-12 18:31</span></span>
-          <span class="act">未読に戻す</span>
+          <span class="meta"><a class="go" href="#">my-app-48 受付画面 →</a><span>通知元：Claude Code（自律実行）</span><span>既読 2026-10-12 18:31</span></span>
+          <span class="act"><button type="button" class="lnk tog">未読に戻す</button><button type="button" class="lnk del">削除</button></span>
         </div>
         <div class="row read" tabindex="0">
           <span class="mark"></span>
           <span class="ttl">パスワードのリセットを求めています</span>
           <span class="time">10:02</span>
           <span class="body">鈴木 がパスワードを変更できなくなりました。リセットを行ってください。</span>
-          <span class="meta"><span>アカウント / 権限</span><span>通知元：鈴木</span><span>既読 2026-10-12 10:15</span></span>
-          <span class="act">未読に戻す</span>
+          <span class="meta"><a class="go" href="#">鈴木 のパスワードのリセット →</a><span>通知元：鈴木</span><span>既読 2026-10-12 10:15</span></span>
+          <span class="act"><button type="button" class="lnk tog">未読に戻す</button><button type="button" class="lnk del">削除</button></span>
         </div>
       </div>
     </main>
@@ -253,7 +259,37 @@ const icons = {
   badge: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M9 2.6H4.2a1.6 1.6 0 0 0-1.6 1.6v7.6a1.6 1.6 0 0 0 1.6 1.6h7.6a1.6 1.6 0 0 0 1.6-1.6V7"/><circle cx="12.4" cy="3.6" r="2" fill="currentColor" stroke="none"/></svg>',
   emoji: '🔔',
 };
-let icon = 'line';
+let icon = 'bubble';
+let fixedCount = null;
+function fmt(n) { return n > 999 ? '999+' : String(n); }
+function recount() {
+  const n = fixedCount ?? document.querySelectorAll('.list .row:not(.read)').length;
+  document.querySelectorAll('.count').forEach(el => {
+    const ico = el.querySelector('.ico');
+    if (ico) { el.lastChild.textContent = ' ' + fmt(n); } else { el.textContent = fmt(n); }
+    el.style.visibility = n === 0 ? 'hidden' : '';
+  });
+  document.querySelector('.filters .chip').textContent = '未読 ' + fmt(n);
+}
+document.querySelector('.list').addEventListener('click', e => {
+  const row = e.target.closest('.row'); if (!row) return;
+  if (e.target.closest('.del')) { row.remove(); recount(); return; }
+  if (e.target.closest('.tog')) {
+    const read = !row.classList.contains('read');
+    row.classList.toggle('read', read);
+    row.querySelector('.tog').textContent = read ? '未読に戻す' : '既読にする';
+    recount(); return;
+  }
+  if (e.target.closest('.go')) { e.preventDefault(); alert('遷移先へ移る（同時に既読になる）'); }
+  // リンク以外の場所を押したら既読にする（戻さない）
+  row.classList.add('read');
+  row.querySelector('.tog').textContent = '未読に戻す';
+  recount();
+});
+document.querySelector('.ph .btn').addEventListener('click', () => {
+  document.querySelectorAll('.list .row').forEach(r => { r.classList.add('read'); r.querySelector('.tog').textContent = '未読に戻す'; });
+  recount();
+});
 function applyIcon() {
   document.body.dataset.i = icon;
   document.querySelectorAll('.ico').forEach(el => { el.innerHTML = icons[icon]; });
@@ -286,7 +322,9 @@ const q = new URLSearchParams(location.hash.slice(1));
 const pick = (id, v) => { if (v) document.querySelector(`#${id} button[data-v="${v}"]`)?.click(); };
 pick('segPlace', q.get('place')); pick('segColor', q.get('c')); pick('segMenu', q.get('menu'));
 pick('segWidth', q.get('w')); pick('segTheme', q.get('theme')); pick('segIcon', q.get('i'));
+if (q.get('n')) fixedCount = Number(q.get('n'));
 applyIcon();
+recount();
 </script>
 </body>
 </html>
