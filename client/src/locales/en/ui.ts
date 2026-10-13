@@ -1685,6 +1685,7 @@ export const uiMessages: Record<string, string> = {
   "どう測ったか（任意）": "How it was measured (optional)",
   "入れる": "Enter",
   "自律実行の中": "Inside autonomous run",
+  "トークン 申告なし（{value0}件。対話型のクライアントは消費を返さない）": "Tokens not reported ({value0}; interactive clients do not return their usage)",
   "報告済み": "Reported",
   "の木の中": "tree (inside)",
   "確認待ち {value0}": "{value0} awaiting answer",

@@ -146,8 +146,12 @@ const limitsLine = computed(() => {
 const usageLine = computed(() => {
   const u = props.status?.budget
   if (!u) return ''
-  let tokens = uiText('申告されたトークン {value0}', { value0: uiNumber(u.tokens_total) })
-  if (u.tokens_missing > 0) tokens += uiText('（申告なし {value0}件）', { value0: u.tokens_missing })
+  // **1件も申告が無いときは「0」を出さない**（GuiDesign.md 5.5。pb-311）。対話型のクライアントは
+  // 自分の消費を返せず、合計 0 は「使っていない」と読み違えられる。
+  let tokens = u.tokens_total === 0 && u.tokens_missing > 0
+    ? uiText('トークン 申告なし（{value0}件。対話型のクライアントは消費を返さない）', { value0: u.tokens_missing })
+    : uiText('申告されたトークン {value0}', { value0: uiNumber(u.tokens_total) })
+  if (u.tokens_total > 0 && u.tokens_missing > 0) tokens += uiText('（申告なし {value0}件）', { value0: u.tokens_missing })
   return [
     uiText('子チケット {value0}件', { value0: uiNumber(u.tickets) }),
     uiText('階層 {value0}段', { value0: u.max_depth }),
