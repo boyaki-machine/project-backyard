@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>通知 デザイン案</title>
+<!-- 色と寸法は実物のトークンをそのまま読む（値を写さない） -->
+<link rel="stylesheet" href="../../../client/src/styles/tokens.css">
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--pb-bg); color: var(--pb-text); font: 14px/1.6 var(--pb-font, -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', sans-serif); display: flex; flex-direction: column; }
+button { font: inherit; color: inherit; }
+a { color: inherit; text-decoration: none; }
+
+/* ---- 案を切り替える帯（モック専用。製品には無い） ---- */
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 8px 16px; border-bottom: 1px solid var(--pb-line); background: var(--pb-surface); flex: none; font-size: 12.5px; }
+.bar h1 { font-size: 14px; margin: 0; font-weight: 600; white-space: nowrap; }
+.bar .grp { display: flex; align-items: center; gap: 6px; color: var(--pb-text-muted); }
+.seg { display: inline-flex; border: 1px solid var(--pb-7); border-radius: 6px; overflow: hidden; }
+.seg button { font-size: 12px; background: var(--pb-bg); border: 0; border-left: 1px solid var(--pb-line); padding: 3px 10px; cursor: pointer; color: var(--pb-text); }
+.seg button:first-child { border-left: 0; }
+.seg button[aria-pressed="true"] { background: var(--pb-accent); color: var(--pb-1); }
+.note { flex-basis: 100%; color: var(--pb-text-muted); margin: 0; }
+.note b { color: var(--pb-text); }
+
+/* ---- 実寸の画面 ---- */
+.stage { flex: 1; overflow: auto; padding: 16px; background: var(--pb-3); }
+.frame { margin: 0 auto; height: 640px; border: 1px solid var(--pb-7); background: var(--pb-bg); display: flex; position: relative; overflow: hidden; }
+.frame.pc { width: 1280px; }
+.frame.sp { width: 390px; height: 760px; }
+
+/* メニュー（SideMenu / UserMenu の寸法） */
+.menu { width: var(--pb-menu-w); flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--pb-line); background: var(--pb-surface); }
+.collapsed .menu { width: var(--pb-menu-w-collapsed); }
+.sp .menu { display: none; }
+.brand { height: var(--pb-pageheader-h); display: flex; align-items: center; border-bottom: 1px solid var(--pb-line); flex: none; position: relative; }
+.tog { width: var(--pb-menu-w-collapsed); display: flex; justify-content: center; flex: none; color: var(--pb-text-muted); }
+.brand-name { font-weight: 600; white-space: nowrap; flex: 1; }
+.collapsed .brand-name, .collapsed .label, .collapsed .name, .collapsed .caret, .collapsed .section, .collapsed .count-inline { display: none; }
+.sections { flex: 1; padding: 8px 0; overflow: hidden; }
+.item { display: flex; align-items: center; height: var(--pb-row-h); position: relative; cursor: pointer; }
+.item:hover { background: var(--pb-hover); }
+.item.on { background: var(--pb-active); font-weight: 600; }
+.icon { width: var(--pb-menu-w-collapsed); display: flex; justify-content: center; flex: none; color: var(--pb-text-muted); position: relative; }
+.label { flex: 1; white-space: nowrap; overflow: hidden; }
+.section { padding: 12px 12px 4px; color: var(--pb-text-muted); font-size: 13px; white-space: nowrap; }
+.user { height: var(--pb-row-h); display: flex; align-items: center; gap: 8px; padding: 0 12px; border-top: 1px solid var(--pb-line); flex: none; cursor: pointer; }
+.collapsed .user { justify-content: center; padding: 0; }
+.ava { width: 24px; height: 24px; border-radius: 50%; background: var(--pb-6); display: flex; align-items: center; justify-content: center; font-size: 12px; flex: none; position: relative; }
+.name { flex: 1; }
+.caret { color: var(--pb-text-muted); font-size: 12px; }
+
+/* 未読数の印。色は切り替えで変える */
+.count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font: 600 11px/1 var(--pb-font-mono); background: var(--c-bg); color: var(--c-fg); }
+.count-inline { margin-right: 12px; }
+.count.dot { position: absolute; top: -6px; right: -9px; box-shadow: 0 0 0 2px var(--pb-surface); }
+.icon .count.dot { top: -4px; right: 8px; }
+.ava .count.dot { top: auto; bottom: -7px; right: -10px; }
+body[data-c="blue"]   { --c-bg: var(--pb-accent);  --c-fg: var(--pb-1); }
+body[data-c="yellow"] { --c-bg: var(--pb-warning); --c-fg: var(--pb-12); }
+body[data-c="red"]    { --c-bg: var(--pb-danger);  --c-fg: #fff; }
+.hide { display: none !important; }
+
+/* スマホ幅の浮遊トグル（2.4） */
+.floating { display: none; position: absolute; top: 8px; left: 8px; width: 32px; height: 32px; border: 1px solid var(--pb-line); border-radius: var(--pb-radius); background: var(--pb-surface); align-items: center; justify-content: center; z-index: 2; }
+.sp .floating { display: flex; }
+
+/* コンテンツ：通知一覧 */
+.content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.ph { height: var(--pb-pageheader-h); display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid var(--pb-line); flex: none; }
+.sp .ph { padding-left: 52px; }
+.ph h2 { font-size: 16px; margin: 0; font-weight: 600; flex: 1; white-space: nowrap; }
+.btn { border: 1px solid var(--pb-7); background: var(--pb-bg); border-radius: var(--pb-radius); padding: 3px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.btn:hover { background: var(--pb-hover); }
+.filters { display: flex; gap: 6px; padding: 8px 16px; border-bottom: 1px solid var(--pb-line); flex: none; font-size: 13px; }
+.chip { border: 1px solid var(--pb-line); border-radius: 12px; padding: 1px 10px; cursor: pointer; background: var(--pb-bg); }
+.chip[aria-pressed="true"] { border-color: var(--pb-accent); color: var(--pb-accent); font-weight: 600; }
+.list { flex: 1; overflow: auto; }
+.day { padding: 6px 16px 2px; font-size: 12px; color: var(--pb-text-muted); background: var(--pb-surface); border-bottom: 1px solid var(--pb-line); }
+.row { display: grid; grid-template-columns: 14px 1fr auto; gap: 4px 10px; padding: 8px 16px; border-bottom: 1px solid var(--pb-line); cursor: pointer; align-items: start; }
+.row:hover { background: var(--pb-hover); }
+.mark { width: 8px; height: 8px; border-radius: 50%; margin-top: 7px; background: var(--c-bg); }
+.read .mark { background: transparent; box-shadow: inset 0 0 0 1px var(--pb-7); }
+.ttl { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.read .ttl { font-weight: 400; color: var(--pb-text-muted); }
+.body { grid-column: 2; color: var(--pb-text-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meta { grid-column: 2; font-size: 12px; color: var(--pb-text-muted); display: flex; gap: 10px; flex-wrap: wrap; }
+.time { font: 12px var(--pb-font-mono); color: var(--pb-text-muted); white-space: nowrap; }
+.act { grid-column: 3; grid-row: 2 / span 2; align-self: center; font-size: 12px; color: var(--pb-accent); white-space: nowrap; opacity: 0; }
+.row:hover .act { opacity: 1; }
+.sp .act { opacity: 1; }
+.sp .row { grid-template-columns: 14px 1fr; }
+.sp .time { grid-column: 2; }
+.sp .act { grid-column: 2; grid-row: auto; justify-self: start; }
+:is(button, .item, .row):focus-visible { outline: 2px solid var(--pb-accent); outline-offset: -2px; }
+</style>
+</head>
+<body data-c="blue">
+<div class="bar">
+  <h1>通知：未読の印の置き場（3案）と通知一覧</h1>
+  <div class="grp">置き場 <div class="seg" id="segPlace">
+    <button type="button" data-v="b" aria-pressed="true">案B メニューの行（推奨）</button>
+    <button type="button" data-v="a">案A アバターの右下</button>
+    <button type="button" data-v="c">案C ブランド行の右端</button>
+  </div></div>
+  <div class="grp">印の色 <div class="seg" id="segColor">
+    <button type="button" data-v="blue" aria-pressed="true">青（アクセント）</button>
+    <button type="button" data-v="yellow">黄（warning の面）</button>
+    <button type="button" data-v="red">赤（danger）</button>
+  </div></div>
+  <div class="grp">メニュー <div class="seg" id="segMenu">
+    <button type="button" data-v="open" aria-pressed="true">展開 240px</button>
+    <button type="button" data-v="collapsed">折りたたみ 56px</button>
+  </div></div>
+  <div class="grp">幅 <div class="seg" id="segWidth">
+    <button type="button" data-v="pc" aria-pressed="true">1280px</button>
+    <button type="button" data-v="sp">390px</button>
+  </div></div>
+  <div class="grp">テーマ <div class="seg" id="segTheme">
+    <button type="button" data-v="light" aria-pressed="true">ライト</button>
+    <button type="button" data-v="dark">ダーク</button>
+  </div></div>
+  <p class="note" id="note"></p>
+</div>
+
+<div class="stage">
+  <div class="frame pc" id="frame">
+    <button type="button" class="floating" aria-label="メニュー">☰<span class="count dot" data-place="sp">3</span></button>
+    <nav class="menu">
+      <div class="brand">
+        <span class="tog">☰</span>
+        <span class="brand-name">Project Backyard</span>
+        <a class="count count-inline" data-place="c" href="#" title="未読の通知 3件">🔔 3</a>
+      </div>
+      <div class="sections">
+        <a class="item on" data-place="b" href="#"><span class="icon">🔔<span class="count dot rail" data-place="b">3</span></span><span class="label">通知</span><span class="count count-inline" data-place="b">3</span></a>
+        <a class="item" href="#"><span class="icon">⌂</span><span class="label">プロジェクト一覧</span></a>
+        <div class="section">─── my-app ─────── ▾</div>
+        <a class="item" href="#"><span class="icon">▤</span><span class="label">ダッシュボード</span></a>
+        <a class="item" href="#"><span class="icon">≡</span><span class="label">バックログ</span></a>
+        <a class="item" href="#"><span class="icon">▦</span><span class="label">ガント</span></a>
+        <a class="item" href="#"><span class="icon">⌕</span><span class="label">チケット検索</span></a>
+        <a class="item" href="#"><span class="icon">▣</span><span class="label">Docs</span></a>
+        <a class="item" href="#"><span class="icon">⚙</span><span class="label">プロジェクト設定</span></a>
+        <div class="section">─── 管理 ──────────</div>
+        <a class="item" href="#"><span class="icon">⚇</span><span class="label">アカウント / 権限</span></a>
+      </div>
+      <div class="user">
+        <span class="ava">田<span class="count dot" data-place="a">3</span></span>
+        <span class="name">田中</span>
+        <span class="caret">▴</span>
+      </div>
+    </nav>
+
+    <main class="content">
+      <div class="ph">
+        <h2>通知</h2>
+        <button type="button" class="btn">すべて既読にする</button>
+      </div>
+      <div class="filters">
+        <span class="chip">未読 3</span>
+        <span class="chip" aria-pressed="true">すべて</span>
+      </div>
+      <div class="list">
+        <div class="day">2026-10-13（火）</div>
+        <div class="row" tabindex="0">
+          <span class="mark"></span>
+          <span class="ttl">ユーザ確認待ち：計画の変更を承認してください</span>
+          <span class="time">14:32</span>
+          <span class="body">子チケットを2件増やし、CP2 の範囲を広げてよいかを確認したいです。選択肢は3つあります。</span>
+          <span class="meta"><span>my-app-52 文化祭の準備</span><span>通知元：Claude Code（自律実行）</span></span>
+          <span class="act">既読にする</span>
+        </div>
+        <div class="row" tabindex="0">
+          <span class="mark"></span>
+          <span class="ttl">パスワードのリセットを求めています</span>
+          <span class="time">11:05</span>
+          <span class="body">佐藤 がパスワードを変更できなくなりました。リセットを行ってください。</span>
+          <span class="meta"><span>アカウント / 権限</span><span>通知元：佐藤</span></span>
+          <span class="act">既読にする</span>
+        </div>
+        <div class="row" tabindex="0">
+          <span class="mark"></span>
+          <span class="ttl">ユーザ確認待ち：外部への送信を含みます</span>
+          <span class="time">09:48</span>
+          <span class="body">デモ環境へのデプロイは取り消せません。進めてよいですか。</span>
+          <span class="meta"><span>my-app-61 デモ環境</span><span>通知元：Codex（自律実行）</span></span>
+          <span class="act">既読にする</span>
+        </div>
+        <div class="day">2026-10-12（月）</div>
+        <div class="row read" tabindex="0">
+          <span class="mark"></span>
+          <span class="ttl">ユーザ確認待ち：評価ができません</span>
+          <span class="time">18:20</span>
+          <span class="body">評価役が画面を開けないため、合否を出せません。</span>
+          <span class="meta"><span>my-app-48 受付画面</span><span>通知元：Claude Code（自律実行）</span><span>既読 2026-10-12 18:31</span></span>
+          <span class="act">未読に戻す</span>
+        </div>
+        <div class="row read" tabindex="0">
+          <span class="mark"></span>
+          <span class="ttl">パスワードのリセットを求めています</span>
+          <span class="time">10:02</span>
+          <span class="body">鈴木 がパスワードを変更できなくなりました。リセットを行ってください。</span>
+          <span class="meta"><span>アカウント / 権限</span><span>通知元：鈴木</span><span>既読 2026-10-12 10:15</span></span>
+          <span class="act">未読に戻す</span>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+const notes = {
+  b: '<b>案B（推奨）</b>：グローバルの先頭に「通知」の行を足し、右端に未読数。<b>押せば1回で一覧へ</b>。折りたたみではアイコンの右上に小さく重ねる（2.3 の図の「バッジは小さく右上に重ねる」と同じ型）。メニューの縦を40px使うが、コンテンツの縦は削らない（原則1）。',
+  a: '<b>案A</b>：アバターの右下に未読数。チケットの当初の案。<b>アバターはユーザーメニューを開く場所なので、一覧へは2回</b>（アバター → メニューの「通知」）。目に入りやすさは画面の左下で最も弱い。',
+  c: '<b>案C</b>：ブランド行（☰ と Project Backyard の行）の右端に 🔔 と未読数。左上で目に入りやすい。<b>折りたたみ（56px）ではブランド行に ☰ しか入らず、置き場が無い</b>ので、その間は別の場所が要る。',
+};
+const frame = document.getElementById('frame');
+function seg(id, fn) {
+  const el = document.getElementById(id);
+  el.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    el.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
+    fn(b.dataset.v);
+  });
+}
+let place = 'b';
+function applyPlace() {
+  document.querySelectorAll('[data-place]').forEach(el => {
+    const p = el.dataset.place;
+    if (p === 'sp') return;
+    el.classList.toggle('hide', p !== place);
+  });
+  // 案B 以外では「通知」の行そのものを出さない
+  document.querySelector('.item[data-place="b"]').classList.toggle('hide', place !== 'b');
+  // 折りたたみの案B：行の右端の数は隠れ、アイコンの右上の数を出す
+  const collapsed = frame.classList.contains('collapsed');
+  document.querySelectorAll('.count.rail').forEach(el => el.classList.toggle('hide', place !== 'b' || !collapsed));
+  // 折りたたみの案C：置き場が無い
+  document.querySelector('.count-inline[data-place="c"]').classList.toggle('hide', place !== 'c' || collapsed);
+  document.getElementById('note').innerHTML = notes[place];
+}
+seg('segPlace', v => { place = v; applyPlace(); });
+seg('segColor', v => { document.body.dataset.c = v; });
+seg('segMenu', v => { frame.classList.toggle('collapsed', v === 'collapsed'); applyPlace(); });
+seg('segWidth', v => { frame.classList.toggle('pc', v === 'pc'); frame.classList.toggle('sp', v === 'sp'); });
+seg('segTheme', v => { document.documentElement.dataset.theme = v; });
+// URL の # で初期状態を選べる（例 #place=a&menu=collapsed&w=sp&c=red&theme=dark）
+const q = new URLSearchParams(location.hash.slice(1));
+const pick = (id, v) => { if (v) document.querySelector(`#${id} button[data-v="${v}"]`)?.click(); };
+pick('segPlace', q.get('place')); pick('segColor', q.get('c')); pick('segMenu', q.get('menu'));
+pick('segWidth', q.get('w')); pick('segTheme', q.get('theme'));
+applyPlace();
+</script>
+</body>
+</html>
