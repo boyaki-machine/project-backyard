@@ -207,6 +207,10 @@ type Querier interface {
 	// 実行すると、同時に2本 POST されたときに上限を超える。
 	//
 	CountMyAPITokens(ctx context.Context, actorID string) (int64, error)
+	// CountMyNotifications は一覧の総件数（2.6）。
+	CountMyNotifications(ctx context.Context, arg CountMyNotificationsParams) (int64, error)
+	// CountMyUnreadNotifications は未読の数（4.8.2）。部分索引で数える。
+	CountMyUnreadNotifications(ctx context.Context, recipientID string) (int64, error)
 	// ── 親子の連動（ApiDesign.md 9.6 の検証7 と「子が動いたら親を進行中に」）──
 	// CountOpenChildren は検証7 の材料（9.6）。**直下の子だけを数える。**
 	//
@@ -371,6 +375,12 @@ type Querier interface {
 	// ── ログインの挑戦 ──────────────────────────────────────
 	// CreateMfaLoginChallenge は中途状態を1件作る（Design.md 6.7.4 の手順3）。
 	CreateMfaLoginChallenge(ctx context.Context, arg CreateMfaLoginChallengeParams) error
+	// 通知のクエリ（DbDesign.md 6.33、ApiDesign.md 4.8）。
+	//
+	// **本人の口のクエリは、すべて recipient_id を条件に含める。** 他人の通知の id では
+	// 行が返らず、ハンドラが 404 にする（4.8）。
+	// CreateNotification は使い手の処理から通知を1件作る（DbDesign.md 6.33.1）。
+	CreateNotification(ctx context.Context, arg CreateNotificationParams) error
 	// CreatePasskey は検証の済んだパスキーを1件保存する（ApiDesign.md 4.7.3）。
 	//
 	// created_at を返すのは、201 の応答に DB の値をそのまま載せるためである。
@@ -459,6 +469,9 @@ type Querier interface {
 	// DELETE は物理削除で、部分木ごと消える（parent_id の CASCADE。10.4 / 8.1.1）。
 	// document_revision も CASCADE で一緒に消える。
 	DeleteDocument(ctx context.Context, id string) (int64, error)
+	// DeleteExpiredNotifications は既読から保持期間を過ぎた通知を消す（DbDesign.md 6.33）。
+	// **未読は消さない。** read_at の部分索引で引く。
+	DeleteExpiredNotifications(ctx context.Context, readBefore time.Time) (int64, error)
 	// DeleteExpiredWebauthnChallenges は期限切れの挑戦を全部消す。
 	//
 	// **挑戦を作るたびに呼ぶ。** 専用のバッチを持たない（DbDesign.md 6.19）。
@@ -486,6 +499,12 @@ type Querier interface {
 	// （DeleteActorByID が kind='user' に限っているのと対である）。
 	//
 	DeleteMyAgentActor(ctx context.Context, arg DeleteMyAgentActorParams) (int64, error)
+	// DeleteMyNotification は受けた人か出した人が消す（4.8.5）。
+	//
+	// **宛先と種類を返す**のは、受けた人以外が消したときの監査（4.8.7）に使うためである。
+	DeleteMyNotification(ctx context.Context, arg DeleteMyNotificationParams) (DeleteMyNotificationRow, error)
+	// DeleteNotificationByAdmin は管理者が誰宛てでも消す（4.8.6）。
+	DeleteNotificationByAdmin(ctx context.Context, id string) (DeleteNotificationByAdminRow, error)
 	// プロジェクトが所有する取り込みの暦のうち、keep_id 以外を消す。
 	// Google の暦へ切り替えた・暦を外したときに、参照されない所有物を残さない（6.23）。
 	DeleteOwnedHolidaySources(ctx context.Context, arg DeleteOwnedHolidaySourcesParams) error
@@ -927,6 +946,8 @@ type Querier interface {
 	GetLatestPlanForStatus(ctx context.Context, delegationID string) (GetLatestPlanForStatusRow, error)
 	GetLatestScheduleBaseline(ctx context.Context, projectID string) (GetLatestScheduleBaselineRow, error)
 	GetLiveWorkPointInputs(ctx context.Context, ticketID string) ([]GetLiveWorkPointInputsRow, error)
+	// GetMyNotification は1件を返す（4.8.3 の応答）。
+	GetMyNotification(ctx context.Context, arg GetMyNotificationParams) (GetMyNotificationRow, error)
 	GetOpenWorkSession(ctx context.Context, arg GetOpenWorkSessionParams) (string, error)
 	// GetParentForCascade は「子が動いたら親を進行中にする」で祖先をたどる1段ぶん
 	// （9.6）。子の id を渡すと、その親の seq とステータスのカテゴリが返る。
@@ -1419,6 +1440,8 @@ type Querier interface {
 	// 気づく必要がある）。
 	//
 	ListMyAgents(ctx context.Context, ownerActorID string) ([]ListMyAgentsRow, error)
+	// ListMyNotifications は自分宛ての通知を新しい順に返す（4.8.1）。
+	ListMyNotifications(ctx context.Context, arg ListMyNotificationsParams) ([]ListMyNotificationsRow, error)
 	// オンステージ段に出ているチケットの id をすべて返す（ApiDesign.md 9.12.1）。
 	//
 	// **staged_at だけで決めてはならない**（GuiDesign.md 5.4、ApiDesign.md 9.4.1）。
@@ -1896,6 +1919,8 @@ type Querier interface {
 	LockProjectForDependency(ctx context.Context, projectID string) (string, error)
 	LockWorkProject(ctx context.Context, projectID string) error
 	LockWorkTickets(ctx context.Context, arg LockWorkTicketsParams) ([]LockWorkTicketsRow, error)
+	// MarkAllMyNotificationsRead は自分宛ての未読をすべて既読にする（4.8.4）。
+	MarkAllMyNotificationsRead(ctx context.Context, recipientID string) (int64, error)
 	// MarkEvaluationObjected は PM の事後の異議を記録する（Delegation.md 6.4・6.5。pb-275）。
 	// 一度だけ立てる（2回目は 0 行。呼び出し側が 409 にする）。#254 の集計の材料になる。
 	MarkEvaluationObjected(ctx context.Context, id string) (int64, error)
@@ -2157,6 +2182,11 @@ type Querier interface {
 	// SetDelegationStatus は委任の主状態を変える（4.3）。pb-247 では、範囲の変更が
 	// 提出されたときに承認済から計画中へ戻すのに使う。
 	SetDelegationStatus(ctx context.Context, arg SetDelegationStatusParams) (int64, error)
+	// SetMyNotificationRead は既読にする・未読に戻す（4.8.3）。
+	//
+	// **既に同じ状態なら read_at を書き換えない。** 既読の時刻は最初に読んだ時刻のまま残す。
+	// 行が無ければ（他人の通知）0行で、ハンドラが 404 にする。
+	SetMyNotificationRead(ctx context.Context, arg SetMyNotificationReadParams) (int64, error)
 	SetProjectHolidaySource(ctx context.Context, arg SetProjectHolidaySourceParams) error
 	// SetProjectStatus は archive / unarchive を1文で行う（5.6）。
 	//
@@ -2540,6 +2570,8 @@ type Querier interface {
 	// 6.3 の project_memberships[].joined_at が意味を失う。
 	//
 	UpsertProjectMember(ctx context.Context, arg UpsertProjectMemberParams) error
+	// WithdrawNotifications は同じ対象の通知をまとめて取り下げる（物理削除）。
+	WithdrawNotifications(ctx context.Context, subjectKey string) (int64, error)
 	// WithdrawOpenConfirmations は委任の取り下げで、開いている確認待ちを畳む
 	// （Delegation.md 4.3「取り下げ」。pb-281）。答える人がいない問いを画面に残さない。
 	WithdrawOpenConfirmations(ctx context.Context, delegationID string) (int64, error)

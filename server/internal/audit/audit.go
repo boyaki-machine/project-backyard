@@ -94,6 +94,10 @@ const (
 	// LoginPasskeyFailure はパスキーでのログインの失敗。**login.failure と分けてある**
 	// ——挑戦が誰にも結び付いていないため、アカウントを特定できないことが多い。
 	LoginPasskeyFailure Action = "login.passkey_failure"
+
+	// NotificationDelete は**受けた人以外が**通知を消したとき（ApiDesign.md 4.8.7）。
+	// target_type は "notification"。**題名と本文を detail に入れない。**
+	NotificationDelete Action = "notification.delete"
 )
 
 // actions は ApiDesign.md 2.10 の操作一覧。
@@ -113,6 +117,7 @@ var actions = map[Action]bool{
 	LoginPasskeyFailure: true,
 	DatabaseBackup:      true,
 	DatabaseRestore:     true,
+	NotificationDelete:  true,
 }
 
 // Result は audit_log.result（DbDesign.md 6.8 の CHECK 制約）。

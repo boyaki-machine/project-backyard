@@ -893,6 +893,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 自分宛ての通知
+         * @description 自分宛ての通知の一覧（ApiDesign.md 4.8.1）。必要権限は「本人」。
+         *     **並びは `created_at` の降順で固定**で、`sort` と `order` を受けない（渡せば 422）。
+         */
+        get: operations["listMyNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/notifications/unread-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 自分宛ての未読の数
+         * @description ApiDesign.md 4.8.2。**画面がどの画面にいても30秒ごとに引く口である。** 上限で丸めない。
+         */
+        get: operations["unreadMyNotificationCount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/notifications/read-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 自分宛ての未読をすべて既読にする
+         * @description ApiDesign.md 4.8.4。本文を受けない。
+         */
+        post: operations["readAllMyNotifications"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/notifications/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["NotificationID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 通知を削除する（受けた人・出した人）
+         * @description ApiDesign.md 4.8.5。受けた人と、出した人（`source.id` が自分）が消せる。
+         *     **受けた人以外が消したときだけ**監査に `notification.delete` を残す。
+         */
+        delete: operations["deleteMyNotification"];
+        options?: never;
+        head?: never;
+        /**
+         * 通知を既読にする・未読に戻す
+         * @description ApiDesign.md 4.8.3。**既に同じ状態なら何もしない**（既読の時刻を書き換えない）。
+         *     `If-Match` を要求しない。他人の通知は 404。
+         */
+        patch: operations["patchMyNotification"];
+        trace?: never;
+    };
+    "/api/v1/admin/notifications/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["NotificationID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 通知を削除する（管理者）
+         * @description ApiDesign.md 4.8.6。必要権限は `system.settings`。誰宛ての通知でも消せる。
+         */
+        delete: operations["deleteNotificationByAdmin"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent-client-kinds": {
         parameters: {
             query?: never;
@@ -5885,6 +6004,68 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** @description ApiDesign.md 4.8.1。ページネーションは 2.6 に従う。ETag は持たない。 */
+        NotificationList: {
+            /** @description `created_at` の降順。 */
+            items: components["schemas"]["Notification"][];
+            page: number;
+            per_page: number;
+            total: number;
+            total_pages: number;
+        };
+        /** @description 自分宛ての通知1件（ApiDesign.md 4.8.1、DbDesign.md 6.33）。 */
+        Notification: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /**
+             * @description 使い手が名乗る種類（`<領域>.<出来事>`）。
+             * @example delegation.confirmation
+             */
+            kind: string;
+            title: string;
+            /** @description プレーンテキスト。空のことがある。 */
+            body: string;
+            /**
+             * @description 遷移先。**PB の画面のパス**（`/` から始まる）。
+             * @example /p/my-app/tickets/52
+             */
+            link: string;
+            /**
+             * @description 一覧で遷移のリンクとして出す文字列。
+             * @example my-app-52 文化祭の準備
+             */
+            link_label: string;
+            /** @description プロジェクトの外の出来事なら `null`。 */
+            project: null | {
+                key: string;
+                name: string;
+            };
+            source: {
+                /** @description PB 自身が出した通知は `null`。 */
+                id: string | null;
+                /** @description 記録時の表示名。PB 自身なら `PB`。 */
+                name: string;
+            };
+            /** Format: int64 */
+            created_at: number;
+            /**
+             * Format: int64
+             * @description 未読なら `null`。
+             */
+            read_at: number | null;
+        };
+        /** @description ApiDesign.md 4.8.2。 */
+        NotificationUnreadCount: {
+            count: number;
+        };
+        /** @description ApiDesign.md 4.8.3。 */
+        NotificationPatch: {
+            read: boolean;
+        };
+        /** @description ApiDesign.md 4.8.4。 */
+        NotificationReadAll: {
+            updated: number;
+        };
         /** @description ApiDesign.md 4.7.1。ページネーションも ETag も持たない（上限5件）。 */
         PasskeyList: {
             /** @description `created_at` の昇順。 */
@@ -9771,6 +9952,11 @@ export interface components {
          */
         MfaCredentialID: string;
         /**
+         * @description 通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+         *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+         */
+        NotificationID: string;
+        /**
          * @description パスキーの ULID（`user_passkey.id`。ApiDesign.md 4.7）。
          *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
          */
@@ -10768,6 +10954,223 @@ export interface operations {
                 };
             };
             /** @description 存在しない、または他人のパスキー（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listMyNotifications: {
+        parameters: {
+            query?: {
+                filter?: "all" | "unread";
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 新しい順の1ページ分。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    unreadMyNotificationCount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 未読の数。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationUnreadCount"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    readAllMyNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 既読にした件数。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationReadAll"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteMyNotification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["NotificationID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除した。本文を持たない。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 受けた通知にも出した通知にも無い（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    patchMyNotification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["NotificationID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPatch"];
+            };
+        };
+        responses: {
+            /** @description 変えた後の通知。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notification"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 自分宛ての通知に無い（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteNotificationByAdmin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["NotificationID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除した。本文を持たない。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description 通知が無い（`not_found`）。 */
             404: {
                 headers: {
                     [name: string]: unknown;
