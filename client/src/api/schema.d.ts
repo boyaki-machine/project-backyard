@@ -3348,9 +3348,11 @@ export interface paths {
          *     MCP では `pb_submit_evaluation`。
          *
          *     `target_kind=plan` のときは `plan_version` も指定する。
-         *     `target_kind=deliverable` のときは根の最新の完了レポートが暗黙の
-         *     対象になる（1つの完了レポートに評価は1件まで。出し直しは main が
-         *     新しい完了レポートを提出してから）。
+         *     `target_kind=deliverable` のときは根の最新の完了レポートが対象に
+         *     なる（1つの完了レポートに評価は1件まで）。**評価待ちの間も main は
+         *     出し直せる**ので、評価役は読んだ報告の ID を `agent_report_id` で
+         *     名指しする。最新でなければ `409`（`details[].code = "stale_report"`）
+         *     で拒む——評価役は新しい報告を読み直す。省くと最新を指す。
          *
          *     **findings には少なくとも2観点**（`purpose_and_dod` と `values`）
          *     を入れる。**不合格（`fail`）には指摘を必ず書く**——不合格にした
@@ -7208,10 +7210,15 @@ export interface components {
         /** @description 評価の提出（Delegation.md 7章、pb-248）。 */
         SubmitEvaluationRequest: {
             /**
-             * @description 評価の対象。plan=計画の版、deliverable=根の最新の完了レポート（暗黙に最新を指す）。
+             * @description 評価の対象。plan=計画の版、deliverable=根の最新の完了レポート。
              * @enum {string}
              */
             target_kind: "plan" | "deliverable";
+            /**
+             * @description target_kind=deliverable のとき、評価した完了レポートの ID（delegation-status の
+             *     `latest_report.id`）。最新でなければ 409。省くと最新を指す。plan では指定しない。
+             */
+            agent_report_id?: string;
             /** @description target_kind=plan のとき必須。評価する計画の版番号。deliverable では指定しない。 */
             plan_version?: number;
             /** @enum {string} */
@@ -7397,6 +7404,16 @@ export interface components {
                         [key: string]: unknown;
                     }[];
                 } | null;
+            } | null;
+            /**
+             * @description 根の最新の完了レポート（pb-305）。評価役は成果を評価するとき、この `id` を
+             *     `agent_report_id` に渡す。`evaluated` はこの報告に評価が付いているか。
+             */
+            latest_report?: {
+                id?: string;
+                /** Format: int64 */
+                submitted_at?: number;
+                evaluated?: boolean;
             } | null;
             latest_evaluation?: {
                 /** @enum {string} */
@@ -14158,6 +14175,13 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["TicketNotFound"];
+            /** @description 名指しした完了レポートが最新ではない（`stale_report`）。新しい報告を読み直して評価する。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];

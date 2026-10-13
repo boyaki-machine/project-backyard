@@ -37,7 +37,8 @@ main の説明を鵜呑みにせず、計画・ファイル・チケット・実
 `pb_submit_evaluation` に次を渡す。実際に公開されたツールスキーマの型を確認してから送る。
 
 - `seq`：根の番号
-- `target_kind`：`plan`（`plan_version` も必須）または `deliverable`（暗黙に最新の根の報告）
+- `target_kind`：`plan`（`plan_version` も必須）または `deliverable`（根の最新の報告）
+- `agent_report_id`：`deliverable` のとき、読んだ完了レポートの ID（パックの「最新の完了レポート」）。評価を待つ間も main は出し直せるので、409（`stale_report`）で拒まれたら新しい報告を読み直して評価する
 - `verdict`：`pass` / `fail` / `unable`
 - `findings`：少なくとも `purpose_and_dod` と `values`。各要素は `{aspect, verdict, note_md}` のオブジェクトで、観点の `verdict` は `pass` / `fail`。判断不能は全体の `verdict="unable"` とし、判断できない観点を `fail` にして不足する材料を `note_md` に書く。ツールの型がこの契約と食い違う場合は、文字列に変換して通そうとせず、実際の MCP の定義とサーバの契約を確認する。解消できなければ提出せず利用者へ伝える
 - `class_check`：計画の変更を評価したときの分類の妥当性（`agree` / `stricter` / `looser`）

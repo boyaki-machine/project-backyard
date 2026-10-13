@@ -151,6 +151,24 @@ func TestGetContextShowsFailedDeliverableFindings(t *testing.T) {
 	}
 }
 
+// 評価役が agent_report_id に渡す、最新の完了レポートの ID を載せる（pb-305）。
+func TestGetContextShowsLatestReportForEvaluator(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "delegated", `null`)},
+		{status: http.StatusOK, body: `{"in_delegation":true,"role":"evaluator","root_seq":31,"status":"approved",
+			"latest_report":{"id":"01K2REPORT0000000000002","submitted_at":1,"evaluated":false},
+			"next_move":"成果を評価する"}`},
+		{status: http.StatusOK, body: `{"items":[]}`},
+		{status: http.StatusOK, body: `{"body_md":"役割の指示。"}`},
+		{status: http.StatusOK, body: `{"body_md":"共通の指示。"}`},
+	}}
+	text := callTool1(t, New(rest, "v0"), toolCallBody("pb_get_context", `{"seq":31}`)).Content[0].Text
+	want := "**最新の完了レポート**：`01K2REPORT0000000000002`（評価待ち）。成果を評価するときは、この ID を `agent_report_id` に渡す"
+	if !strings.Contains(text, want) {
+		t.Errorf("パックに %q が無い:\n%s", want, text)
+	}
+}
+
 // 直近の評価が計画の欄の「この版への評価」と同じなら、指摘を二重に載せない。
 func TestGetContextDoesNotRepeatPlanFindings(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{
