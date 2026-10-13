@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -95,6 +96,9 @@ type delegationStatusView struct {
 	// 画面の「エージェントステイタス」に出す——PM が開くと役割は読むだけになり、
 	// next_move は「次の一手が無い」になるため。
 	MainNextMove string `json:"main_next_move,omitempty"`
+	// MainLastSeenAt / MainStopped は main が止まったかの判定（10.4。pb-310）。
+	MainLastSeenAt *Time `json:"main_last_seen_at"`
+	MainStopped    bool  `json:"main_stopped"`
 }
 
 func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +260,17 @@ func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	} else {
 		view.MainNextMove = mm
+	}
+
+	// **main が止まったか**（10.4。pb-310）。評価役の待ち受けがこれを見て、来ない成果を待ち続けない。
+	seen, serr := h.q.GetActorLastSeenAt(ctx, deleg.MainActorID)
+	if serr != nil && serr != pgx.ErrNoRows {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(serr))
+		return
+	}
+	if seen != nil {
+		view.MainLastSeenAt = apiTime(seen)
+		view.MainStopped = mainStopped(deleg.Status, deleg.Scope, seen, time.Now())
 	}
 
 	WriteJSON(w, http.StatusOK, view)

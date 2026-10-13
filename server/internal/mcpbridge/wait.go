@@ -31,27 +31,40 @@ type WaitOptions struct {
 
 // waitOutcome は pb_wait の応答のうち、繰り返しの判断に使う部分。
 type waitOutcome struct {
-	Changed bool   `json:"changed"`
-	Cursor  string `json:"cursor"`
+	Changed     bool   `json:"changed"`
+	MainStopped bool   `json:"main_stopped"`
+	Cursor      string `json:"cursor"`
 }
 
-// Wait は変化があるか Max が過ぎるまで pb_wait を繰り返す。最後の pb_wait の応答（JSON）を
-// out へ書き、変化があったかを返す。
-func Wait(ctx context.Context, out io.Writer, cfg Config, opt WaitOptions) (bool, error) {
+// WaitResult は待ち受けが何で終わったか。
+type WaitResult int
+
+const (
+	// WaitChanged は変化があった。
+	WaitChanged WaitResult = iota
+	// WaitTimedOut は Max まで変化が無かった。
+	WaitTimedOut
+	// WaitMainStopped は、評価役が待つ間に main が止まっていた（Delegation.md 10.4。pb-310）。
+	WaitMainStopped
+)
+
+// Wait は変化があるか、main が止まっているか、Max が過ぎるまで pb_wait を繰り返す。
+// 最後の pb_wait の応答（JSON）を out へ書き、何で終わったかを返す。
+func Wait(ctx context.Context, out io.Writer, cfg Config, opt WaitOptions) (WaitResult, error) {
 	endpoint, err := validate(cfg)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if opt.Seq < 1 {
-		return false, errors.New("--seq に委任の根のチケット番号を指定してください")
+		return 0, errors.New("--seq に委任の根のチケット番号を指定してください")
 	}
 	token := os.Getenv(cfg.TokenEnvName)
 	if token == "" {
-		return false, fmt.Errorf("環境変数 %s にPBトークンがありません", cfg.TokenEnvName)
+		return 0, fmt.Errorf("環境変数 %s にPBトークンがありません", cfg.TokenEnvName)
 	}
 	client, err := newClient(cfg.CAFile)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 
 	deadline := time.Now().Add(opt.Max)
@@ -59,23 +72,30 @@ func Wait(ctx context.Context, out io.Writer, cfg Config, opt WaitOptions) (bool
 	for id := 1; ; id++ {
 		text, err := callWaitOnce(ctx, client, endpoint.String(), token, id, opt.Seq, cursor)
 		if err != nil {
-			return false, err
+			return 0, err
 		}
 		var got waitOutcome
 		if err := json.Unmarshal([]byte(text), &got); err != nil {
-			return false, fmt.Errorf("pb_wait の応答を解釈できない: %w", err)
+			return 0, fmt.Errorf("pb_wait の応答を解釈できない: %w", err)
 		}
 		if got.Cursor != "" {
 			cursor = got.Cursor
 		}
-		if got.Changed || !time.Now().Before(deadline) {
+		result := WaitTimedOut
+		switch {
+		case got.Changed:
+			result = WaitChanged
+		case got.MainStopped:
+			result = WaitMainStopped
+		}
+		if result != WaitTimedOut || !time.Now().Before(deadline) {
 			if _, err := io.WriteString(out, text+"\n"); err != nil {
-				return false, fmt.Errorf("結果を書けない: %w", err)
+				return 0, fmt.Errorf("結果を書けない: %w", err)
 			}
-			return got.Changed, nil
+			return result, nil
 		}
 		if err := ctx.Err(); err != nil {
-			return false, err
+			return 0, err
 		}
 	}
 }

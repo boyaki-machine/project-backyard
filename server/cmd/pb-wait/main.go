@@ -3,7 +3,8 @@
 // エージェントの MCP の接続とは別に動く。Claude Code はバックグラウンドで走らせ、終わったときに
 // モデルが起こされるので、待つ間にトークンを使わない。
 //
-// 終了コード：0 = 変化があった、2 = --max まで変化が無かった（最後の cursor を書く）、1 = 失敗。
+// 終了コード：0 = 変化があった、2 = --max まで変化が無かった（最後の cursor を書く）、
+// 3 = 評価役が待つ間に main が止まっていた（Delegation.md 10.4）、1 = 失敗。
 package main
 
 import (
@@ -26,12 +27,15 @@ func main() {
 	flag.StringVar(&opt.Since, "since", "", "前回の pb_wait / pb-wait が返した cursor")
 	flag.DurationVar(&opt.Max, "max", time.Hour, "待つ上限（例：60m、3h）")
 	flag.Parse()
-	changed, err := mcpbridge.Wait(context.Background(), os.Stdout, cfg, opt)
+	result, err := mcpbridge.Wait(context.Background(), os.Stdout, cfg, opt)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pb-wait:", err)
 		os.Exit(1)
 	}
-	if !changed {
+	switch result {
+	case mcpbridge.WaitTimedOut:
 		os.Exit(2)
+	case mcpbridge.WaitMainStopped:
+		os.Exit(3)
 	}
 }

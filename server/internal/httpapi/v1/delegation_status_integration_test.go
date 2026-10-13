@@ -156,4 +156,27 @@ func TestDelegationStatusIntegration(t *testing.T) {
 			}
 		}
 	})
+
+	// **main が止まったかを返す**（Delegation.md 10.4。pb-310）。main のトークンが最後に使われた時刻から、
+	// 既定の30分を過ぎたら止まっているとみなす。**読むのは PM のセッション**——main のトークンで読むと、
+	// その要求で最終利用の時刻が今に戻る。
+	t.Run("main のトークンが30分使われていなければ main_stopped を返す", func(t *testing.T) {
+		path := fmt.Sprintf("%s/tickets/%d/delegation-status", base, rootSeq)
+		v := viewOf(t, getWithCookie(r, path, session))
+		if v["main_stopped"] != false || v["main_last_seen_at"] == nil {
+			t.Fatalf("直後の main_stopped / main_last_seen_at = %v / %v, want false / 時刻", v["main_stopped"], v["main_last_seen_at"])
+		}
+		if _, err := pool.Exec(ctx, `UPDATE access_token SET last_used_at = now() - interval '45 minutes' WHERE actor_id = $1`, main.ID); err != nil {
+			t.Fatalf("最終利用の時刻を戻せない: %v", err)
+		}
+		v = viewOf(t, getWithCookie(r, path, session))
+		if v["main_stopped"] != true {
+			t.Errorf("45分後の main_stopped = %v, want true", v["main_stopped"])
+		}
+		// main が動けば（要求が届けば）、止まっているとはみなさない。
+		bearerGet(r, path, mainToken.Token)
+		if v = viewOf(t, getWithCookie(r, path, session)); v["main_stopped"] != false {
+			t.Errorf("main の要求の後の main_stopped = %v, want false", v["main_stopped"])
+		}
+	})
 }

@@ -1908,7 +1908,7 @@ PB が持てる。**
 
 | ツール | 引数 | 叩く REST | 応答 |
 |---|---|---|---|
-| `pb_wait` | `seq`, `since?` | `GET /projects/:key/tickets/:seq`（在ることを確かめる）→ `GET /projects/:key/activity?entity=ticket:<seq>&per_page=20` を**3秒ごと** → 変化にコメントがあれば `GET /projects/:key/tickets/:seq/comments?order=desc&per_page=20` | `changed` / `cursor` / `changes[]` / `comments[]` / `waited_seconds` / `next`（変化が無ければ `changed:false` と `cursor` と `next`） |
+| `pb_wait` | `seq`, `since?` | `GET /projects/:key/tickets/:seq`（在ることを確かめる）→ `GET /projects/:key/activity?entity=ticket:<seq>&per_page=20` を**3秒ごと** → 変化にコメントがあれば `GET /projects/:key/tickets/:seq/comments?order=desc&per_page=20` | `changed` / `cursor` / `changes[]` / `comments[]` / `waited_seconds` / `next`（変化が無ければ `changed:false` と `cursor` と `next`）。**委任の評価役が待ち受けたとき main が止まっていれば、待たずに `main_stopped: true` と止まる指示の `next` を返す**（`Delegation.md` 10.4） |
 
 **状態の変化をエージェントに知らせる口である**（`Delegation.md` 10章）。MCP の通知は、確かめた4つのクライアントのどれでもモデルを起こさなかった（同 10.2）。
 **評価エージェントが評価をコメントで書けば、待っている main の呼び出しが返る。** エージェント同士の会話も、同じチケットへのコメントと待ち受けで成り立つ。

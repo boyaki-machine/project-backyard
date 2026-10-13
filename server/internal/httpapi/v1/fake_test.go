@@ -3531,6 +3531,10 @@ func (q *fakeQuerier) HasTicketOpenWork(context.Context, gen.HasTicketOpenWorkPa
 func (q *fakeQuerier) GetOpenWorkSession(context.Context, gen.GetOpenWorkSessionParams) (string, error) {
 	return "", pgx.ErrNoRows
 }
+func (q *fakeQuerier) GetActorLastSeenAt(context.Context, string) (*time.Time, error) {
+	return nil, pgx.ErrNoRows
+}
+
 func (q *fakeQuerier) ListOpenWorkSessionTickets(context.Context, gen.ListOpenWorkSessionTicketsParams) ([]gen.ListOpenWorkSessionTicketsRow, error) {
 	return nil, nil
 }
