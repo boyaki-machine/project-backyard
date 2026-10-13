@@ -7,6 +7,8 @@ import SideMenu from './SideMenu.vue'
 import SideMenuToggle from './SideMenuToggle.vue'
 import { isTicketViewPath, ticketViewOf } from '../lib/ticketViews'
 import { usePendingStore } from '../stores/pending'
+import { useNotificationStore } from '../stores/notifications'
+import UnreadCount from './UnreadCount.vue'
 import { useUiStore } from '../stores/ui'
 
 /**
@@ -26,6 +28,8 @@ const ui = useUiStore()
  * 置くと、そこを離れた瞬間に見えなくなる**。
  */
 const pendingStore = usePendingStore()
+// 未読の通知の数（GuiDesign.md 5.16）。**どの画面にいても30秒ごとに引き直す**
+const notificationStore = useNotificationStore()
 
 function isTyping(el: EventTarget | null): boolean {
   const t = el as HTMLElement | null
@@ -176,6 +180,7 @@ onMounted(() => {
   document.addEventListener('pointermove', onDocumentPointerMove)
   document.documentElement.addEventListener('mouseleave', onDocumentLeave)
   pendingStore.start()
+  notificationStore.start()
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
@@ -184,6 +189,7 @@ onUnmounted(() => {
   clearDwell()
   clearLeave()
   pendingStore.stop()
+  notificationStore.stop()
 })
 </script>
 
@@ -193,6 +199,8 @@ onUnmounted(() => {
          この幅でのみ浮遊ボタンを置く（GuiDesign.md 2.4） -->
     <div v-if="ui.narrow && !ui.overlayOpen" class="floating">
       <SideMenuToggle />
+      <!-- メニューが隠れているので、未読の通知の数を ☰ に重ねる（2.4・5.16） -->
+      <span class="floating-count"><UnreadCount :count="notificationStore.unread" narrow /></span>
     </div>
 
     <SideMenu v-if="(!ui.narrow || ui.overlayOpen) && !ui.focusMode" class="pane" />
@@ -288,6 +296,15 @@ onUnmounted(() => {
   z-index: 20;
   top: 0;
   left: 0;
+}
+
+.floating-count {
+  position: absolute;
+  top: 2px;
+  left: 30px;
+  pointer-events: none;
+  transform: scale(0.85);
+  transform-origin: left top;
 }
 
 .scrim {
