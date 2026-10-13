@@ -443,6 +443,22 @@ type MfaRecoveryCode struct {
 	CreatedAt time.Time
 }
 
+type Notification struct {
+	ID          string
+	RecipientID string
+	Kind        string
+	Title       string
+	Body        string
+	Link        string
+	LinkLabel   string
+	SubjectKey  pgtype.Text
+	ProjectID   pgtype.Text
+	SourceID    pgtype.Text
+	SourceName  string
+	CreatedAt   time.Time
+	ReadAt      *time.Time
+}
+
 // 未確認の設定変更。期限内に確認されなければ previous へ戻す
 type PendingSettingChange struct {
 	ID        string

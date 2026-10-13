@@ -179,6 +179,14 @@ func Mount(r chi.Router, deps Deps) {
 		self.Post("/me/passkeys/options", h.startMyPasskeyRegistration)
 		self.Post("/me/passkeys", h.registerMyPasskey)
 		self.Delete("/me/passkeys/{id}", h.deleteMyPasskey)
+		// 自分宛ての通知（ApiDesign.md 4.8）。「本人」であり、触れる範囲は
+		// クエリが recipient_id（削除は source_id も）で閉じている。
+		// **/unread-count と /read-all は /{id} より先に一致する**（静的なセグメント）。
+		self.Get("/me/notifications", h.listMyNotifications)
+		self.Get("/me/notifications/unread-count", h.unreadMyNotificationCount)
+		self.Post("/me/notifications/read-all", h.readAllMyNotifications)
+		self.Patch("/me/notifications/{id}", h.patchMyNotification)
+		self.Delete("/me/notifications/{id}", h.deleteMyNotification)
 
 		self.Get("/me/tokens", h.listMyTokens)
 		self.Post("/me/tokens", h.createMyToken)
@@ -726,6 +734,13 @@ func Mount(r chi.Router, deps Deps) {
 		// 引いて、**どの画面にいても確認ボタンを出す。**
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Get("/admin/settings/pending", h.getPendingSettings)
+
+		// ── 通知の管理者による削除（ApiDesign.md 4.8.6）──────────
+		//
+		// **本人の口（DELETE /me/notifications/{id}）と分けてある。** 権限を
+		// ルートに宣言するためで、本人の口の中で管理者かどうかを判定しない。
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Delete("/admin/notifications/{id}", h.deleteNotificationByAdmin)
 
 		// ── TLS 証明書（ApiDesign.md 11.4〜11.6）──────────────
 		//

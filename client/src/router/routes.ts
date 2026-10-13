@@ -13,6 +13,7 @@ import PlaceholderPage from '../pages/PlaceholderPage.vue'
 import MySettingsPage from '../pages/MySettingsPage.vue'
 import MyAgentsPage from '../pages/MyAgentsPage.vue'
 import MyTokensPage from '../pages/MyTokensPage.vue'
+import NotificationsPage from '../pages/NotificationsPage.vue'
 import ProjectSettingsPage from '../pages/ProjectSettingsPage.vue'
 import ProjectsPage from '../pages/ProjectsPage.vue'
 import TicketViewsPage from '../pages/TicketViewsPage.vue'
@@ -229,6 +230,13 @@ const routeSources: RouteRecordRaw[] = [
   {
     path: '/me/agents',
     component: MyAgentsPage,
+  },
+
+  // 通知（GuiDesign.md 5.16）。**プロジェクトの外**にあり、メニューの先頭の行から開く。
+  // **meta.permission を持たない。** 必要権限は「本人」である（3.2、ApiDesign.md 4.8）。
+  {
+    path: '/notifications',
+    component: NotificationsPage,
   },
 
   // ── チケットで駆動する視点（GuiDesign.md 3.2 / 10章）──────────

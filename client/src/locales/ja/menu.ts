@@ -2,6 +2,8 @@ export default {
   main: {
     label: 'メインメニュー',
     toggle: 'メインメニューの表示を切り替える',
+    notifications: '通知',
+    notificationsUnread: '通知（未読 {count}件）',
     projects: 'プロジェクト一覧',
     dashboard: 'ダッシュボード',
     backlog: 'バックログ',

@@ -6,6 +6,9 @@ import { useRoute } from 'vue-router'
 import ProjectSwitcher from './ProjectSwitcher.vue'
 import SideMenuToggle from './SideMenuToggle.vue'
 import UserMenu from './UserMenu.vue'
+import NotificationIcon from './NotificationIcon.vue'
+import UnreadCount from './UnreadCount.vue'
+import { useNotificationStore } from '../stores/notifications'
 import { readViewEnabled } from '../api/projects'
 import { uiText } from '../locales/ui'
 import { viewPlugins } from '../plugins/registry'
@@ -39,6 +42,7 @@ import { useUiStore } from '../stores/ui'
  */
 const auth = useAuthStore()
 const ui = useUiStore()
+const notifications = useNotificationStore()
 const projectStore = useProjectStore()
 const route = useRoute()
 const { t } = useI18n()
@@ -97,6 +101,25 @@ const showAdmin = computed(
     </div>
 
     <div class="sections">
+      <!-- 通知（GuiDesign.md 5.16）。**グローバルの先頭**に置き、どの画面からも1回で開く。
+           未読数は行の右端、折りたたみではアイコンの右上に重ねる（2.3） -->
+      <RouterLink
+        class="item"
+        to="/notifications"
+        :title="t('menu.main.notifications')"
+        :aria-label="notifications.unread > 0
+          ? t('menu.main.notificationsUnread', { count: notifications.unread })
+          : t('menu.main.notifications')"
+      >
+        <span class="icon" aria-hidden="true">
+          <span class="icon-box">
+            <NotificationIcon />
+            <UnreadCount v-if="!ui.narrow && ui.menuCollapsed" :count="notifications.unread" narrow overlay />
+          </span>
+        </span>
+        <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.notifications') }}</span>
+        <UnreadCount v-if="ui.narrow || !ui.menuCollapsed" class="count" :count="notifications.unread" />
+      </RouterLink>
       <RouterLink class="item" to="/projects" :title="t('menu.main.projects')">
         <span class="icon" aria-hidden="true">⌂</span>
         <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.projects') }}</span>
@@ -280,7 +303,17 @@ const showAdmin = computed(
   color: var(--pb-text-muted);
 }
 
+.icon-box {
+  position: relative;
+  display: inline-flex;
+}
+
+.count {
+  margin-right: var(--pb-space-3);
+}
+
 .label {
+  flex: 1;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;

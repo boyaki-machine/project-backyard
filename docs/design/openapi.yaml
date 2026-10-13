@@ -1208,6 +1208,154 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/me/notifications:
+    get:
+      tags: [me]
+      summary: 自分宛ての通知
+      operationId: listMyNotifications
+      description: |
+        自分宛ての通知の一覧（ApiDesign.md 4.8.1）。必要権限は「本人」。
+        **並びは `created_at` の降順で固定**で、`sort` と `order` を受けない（渡せば 422）。
+      parameters:
+        - name: filter
+          in: query
+          schema: { type: string, enum: [all, unread], default: all }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: per_page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 25 }
+      responses:
+        '200':
+          description: 新しい順の1ページ分。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/me/notifications/unread-count:
+    get:
+      tags: [me]
+      summary: 自分宛ての未読の数
+      operationId: unreadMyNotificationCount
+      description: |
+        ApiDesign.md 4.8.2。**画面がどの画面にいても30秒ごとに引く口である。** 上限で丸めない。
+      responses:
+        '200':
+          description: 未読の数。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationUnreadCount' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/me/notifications/read-all:
+    post:
+      tags: [me]
+      summary: 自分宛ての未読をすべて既読にする
+      operationId: readAllMyNotifications
+      description: ApiDesign.md 4.8.4。本文を受けない。
+      responses:
+        '200':
+          description: 既読にした件数。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationReadAll' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403':
+          description: CSRF トークンの不一致（`csrf_failed`）。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/me/notifications/{id}:
+    parameters:
+      - $ref: '#/components/parameters/NotificationID'
+    patch:
+      tags: [me]
+      summary: 通知を既読にする・未読に戻す
+      operationId: patchMyNotification
+      description: |
+        ApiDesign.md 4.8.3。**既に同じ状態なら何もしない**（既読の時刻を書き換えない）。
+        `If-Match` を要求しない。他人の通知は 404。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NotificationPatch' }
+      responses:
+        '200':
+          description: 変えた後の通知。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Notification' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403':
+          description: CSRF トークンの不一致（`csrf_failed`）。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: 自分宛ての通知に無い（`not_found`）。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [me]
+      summary: 通知を削除する（受けた人・出した人）
+      operationId: deleteMyNotification
+      description: |
+        ApiDesign.md 4.8.5。受けた人と、出した人（`source.id` が自分）が消せる。
+        **受けた人以外が消したときだけ**監査に `notification.delete` を残す。
+      responses:
+        '204':
+          description: 削除した。本文を持たない。
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403':
+          description: CSRF トークンの不一致（`csrf_failed`）。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: 受けた通知にも出した通知にも無い（`not_found`）。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/admin/notifications/{id}:
+    parameters:
+      - $ref: '#/components/parameters/NotificationID'
+    delete:
+      tags: [admin]
+      summary: 通知を削除する（管理者）
+      operationId: deleteNotificationByAdmin
+      description: |
+        ApiDesign.md 4.8.6。必要権限は `system.settings`。誰宛ての通知でも消せる。
+      responses:
+        '204':
+          description: 削除した。本文を持たない。
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: 通知が無い（`not_found`）。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
   /api/v1/agent-client-kinds:
     get:
       tags: [agents]
@@ -7682,6 +7830,15 @@ components:
       examples:
         demo:
           value: 01K2F8QW3H7YRJ4M5N6P7Q8R9S
+    NotificationID:
+      name: id
+      in: path
+      required: true
+      description: |
+        通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+        **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+      schema:
+        type: string
     PasskeyID:
       name: id
       in: path
@@ -9019,6 +9176,86 @@ components:
             `RegistrationResponseJSON`）。
           type: object
           additionalProperties: true
+
+    NotificationList:
+      description: ApiDesign.md 4.8.1。ページネーションは 2.6 に従う。ETag は持たない。
+      type: object
+      required: [items, page, per_page, total, total_pages]
+      properties:
+        items:
+          description: '`created_at` の降順。'
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer }
+        total_pages: { type: integer }
+
+    Notification:
+      description: 自分宛ての通知1件（ApiDesign.md 4.8.1、DbDesign.md 6.33）。
+      type: object
+      required: [id, kind, title, body, link, link_label, project, source, created_at, read_at]
+      properties:
+        id: { type: string, examples: ['01K2F8QW3H7YRJ4M5N6P7Q8R9S'] }
+        kind:
+          description: 使い手が名乗る種類（`<領域>.<出来事>`）。
+          type: string
+          examples: ['delegation.confirmation']
+        title: { type: string }
+        body: { type: string, description: プレーンテキスト。空のことがある。 }
+        link:
+          description: 遷移先。**PB の画面のパス**（`/` から始まる）。
+          type: string
+          examples: ['/p/my-app/tickets/52']
+        link_label:
+          description: 一覧で遷移のリンクとして出す文字列。
+          type: string
+          examples: ['my-app-52 文化祭の準備']
+        project:
+          description: プロジェクトの外の出来事なら `null`。
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [key, name]
+              properties:
+                key: { type: string }
+                name: { type: string }
+        source:
+          type: object
+          required: [id, name]
+          properties:
+            id:
+              description: PB 自身が出した通知は `null`。
+              type: [string, 'null']
+            name:
+              description: 記録時の表示名。PB 自身なら `PB`。
+              type: string
+        created_at: { type: integer, format: int64 }
+        read_at:
+          description: 未読なら `null`。
+          type: [integer, 'null']
+          format: int64
+
+    NotificationUnreadCount:
+      description: ApiDesign.md 4.8.2。
+      type: object
+      required: [count]
+      properties:
+        count: { type: integer, minimum: 0 }
+
+    NotificationPatch:
+      description: ApiDesign.md 4.8.3。
+      type: object
+      required: [read]
+      properties:
+        read: { type: boolean }
+
+    NotificationReadAll:
+      description: ApiDesign.md 4.8.4。
+      type: object
+      required: [updated]
+      properties:
+        updated: { type: integer, minimum: 0 }
 
     PasskeyList:
       description: ApiDesign.md 4.7.1。ページネーションも ETag も持たない（上限5件）。
