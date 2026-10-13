@@ -63,6 +63,15 @@ SET last_used_at = now()
 WHERE id = @id
   AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute');
 
+-- GetActorLastSeenAt はアクターのトークンが最後に使われた時刻を返す（Delegation.md 10.4。pb-310）。
+-- 委任の main が止まったかの判定に使う。1度も使われていなければ NULL。
+-- name: GetActorLastSeenAt :one
+SELECT last_used_at
+FROM access_token
+WHERE actor_id = @actor_id AND last_used_at IS NOT NULL
+ORDER BY last_used_at DESC
+LIMIT 1;
+
 -- ── ローカル ID/PW ログイン（Design.md 6.2.1、手順5） ────────────────
 
 -- FindLocalLoginByEmail は Design.md 6.2.1 の手順2〜3を1文で行う。

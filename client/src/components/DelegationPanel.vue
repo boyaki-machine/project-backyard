@@ -83,6 +83,8 @@ const mainID = ref('')
 const evaluatorID = ref('')
 const constraints = ref<DelegationConstraints>({ budget: {}, stop_conditions: [''] })
 const metricsDraft = ref<MetricsDraft>({ metrics: [], report_every_days: '' })
+/** main が止まったとみなす時間（分。Delegation.md 4.2・10.4。pb-310）。空なら既定の30分 */
+const mainIdleMinutes = ref('')
 const busy = ref(false)
 const actionError = ref<string | null>(null)
 
@@ -114,6 +116,7 @@ async function start(): Promise<void> {
     if (String(metricsDraft.value.report_every_days).trim() !== '') {
       scope.report_every_days = Number(metricsDraft.value.report_every_days)
     }
+    if (String(mainIdleMinutes.value).trim() !== '') scope.main_idle_minutes = Number(mainIdleMinutes.value)
     await createDelegation(props.projectKey, props.seq, {
       main_actor_id: mainID.value,
       evaluator_actor_id: evaluatorID.value,
@@ -180,6 +183,19 @@ const agentStatus = computed(() => {
     if (p.evaluation.verdict === 'pass') return uiText('あなたの計画の承認を待っています（下のユーザ確認待ち）')
   }
   return s.main_next_move ?? ''
+})
+
+/**
+ * main が止まっているとみなされているか（GuiDesign.md 5.5、Delegation.md 10.4。pb-310）。
+ * 評価役は待ち受けをやめて止まるので、PM が呼び直せるように黄で知らせる。
+ */
+const mainStoppedLine = computed(() => {
+  const s = props.status
+  if (!s?.main_stopped) return ''
+  const minutes = s.main_last_seen_at ? Math.floor((Date.now() - s.main_last_seen_at) / 60000) : null
+  return minutes === null
+    ? uiText('main が動いていません（利用枠の上限などで止まっている可能性）')
+    : uiText('main が {value0} 分動いていません（利用枠の上限などで止まっている可能性）', { value0: minutes })
 })
 
 const showCall = ref(false)
@@ -299,6 +315,11 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
     <p v-if="agentsError" class="field-error" role="alert">{{ agentsError }}</p>
     <DelegationConstraintsEditor v-model="constraints" :disabled="busy" />
     <DelegationMetricsEditor v-model="metricsDraft" :disabled="busy" />
+    <label class="idle">
+      <span class="name">{{ $ui('main の停止') }}</span>
+      <input v-model="mainIdleMinutes" type="number" min="0" max="1440" step="1" placeholder="30" :disabled="busy" />
+      <span class="hint">{{ $ui('分 PB に何もしなければ、止まったとみなして評価役も止める（空なら30分、0 で判定しない）') }}</span>
+    </label>
     <p v-if="actionError" class="field-error" role="alert">{{ actionError }}</p>
     <div class="actions">
       <button type="button" class="secondary" :disabled="busy" @click="emit('cancelSetup')">{{ $ui('取りやめる') }}</button>
@@ -345,7 +366,10 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
         </div>
         <div class="item">
           <dt>{{ $ui('エージェントステイタス') }}</dt>
-          <dd>{{ agentStatus }}</dd>
+          <dd class="stack">
+            <span>{{ agentStatus }}</span>
+            <span v-if="mainStoppedLine" class="main-stopped">{{ mainStoppedLine }}</span>
+          </dd>
         </div>
         <div v-if="usageLine" class="item">
           <dt>{{ $ui('参考') }}</dt>
@@ -614,5 +638,20 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
     flex-direction: column;
     gap: 0;
   }
+}
+
+.idle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.idle input {
+  width: 72px;
+}
+
+.main-stopped {
+  color: var(--pb-warning-text);
 }
 </style>

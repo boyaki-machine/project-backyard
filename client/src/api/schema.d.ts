@@ -7429,6 +7429,18 @@ export interface components {
             latest_handoff?: components["schemas"]["DelegationHandoff"] | null;
             next_move?: string;
             /**
+             * Format: int64
+             * @description main のトークンが PB へ最後に要求を送った時刻（Delegation.md 10.4）。
+             *     1度も使われていなければ null。
+             */
+            main_last_seen_at?: number | null;
+            /**
+             * @description main が止まっているとみなすか（Delegation.md 10.4）。委任が承認済か計画中で、
+             *     main_last_seen_at から scope.main_idle_minutes（省略で30、0 で判定しない）を
+             *     過ぎたとき true。評価役の pb_wait はこのとき待たずに返る。
+             */
+            main_stopped?: boolean;
+            /**
              * @description 呼び出し元の役割によらない、main の次の一手（pb-252）。画面の
              *     「エージェントステイタス」に出す。PM が読むと役割は `readonly` になり、
              *     `next_move` は「次の一手が無い」になるため。

@@ -65,13 +65,13 @@ func TestWaitRepeatsUntilChanged(t *testing.T) {
 	})
 	t.Setenv("PB_WAIT_TEST_TOKEN", "test-token")
 	var out bytes.Buffer
-	changed, err := Wait(context.Background(), &out, Config{URL: server.URL, TokenEnvName: "PB_WAIT_TEST_TOKEN", CAFile: caFile},
+	result, err := Wait(context.Background(), &out, Config{URL: server.URL, TokenEnvName: "PB_WAIT_TEST_TOKEN", CAFile: caFile},
 		WaitOptions{Seq: 226, Since: "c0", Max: time.Hour})
 	if err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if !changed {
-		t.Error("changed = false, want true")
+	if result != WaitChanged {
+		t.Errorf("result = %v, want WaitChanged", result)
 	}
 	if got := strings.Join(*sinces, ","); got != "c0,c1,c2" {
 		t.Errorf("since の並び = %s, want c0,c1,c2（前の cursor を引き継ぐ）", got)
@@ -86,13 +86,13 @@ func TestWaitStopsAtMax(t *testing.T) {
 	server, sinces, caFile := fakeWaitServer(t, []string{`{"changed":false,"cursor":"c9"}`})
 	t.Setenv("PB_WAIT_TEST_TOKEN", "test-token")
 	var out bytes.Buffer
-	changed, err := Wait(context.Background(), &out, Config{URL: server.URL, TokenEnvName: "PB_WAIT_TEST_TOKEN", CAFile: caFile},
+	result, err := Wait(context.Background(), &out, Config{URL: server.URL, TokenEnvName: "PB_WAIT_TEST_TOKEN", CAFile: caFile},
 		WaitOptions{Seq: 226, Max: 0})
 	if err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if changed {
-		t.Error("changed = true, want false")
+	if result != WaitTimedOut {
+		t.Errorf("result = %v, want WaitTimedOut", result)
 	}
 	if len(*sinces) != 1 || (*sinces)[0] != "" {
 		t.Errorf("since = %v, want 1回だけ・省略", *sinces)
@@ -128,5 +128,26 @@ func TestWaitRequiresSeq(t *testing.T) {
 		WaitOptions{Max: time.Minute})
 	if err == nil || !strings.Contains(err.Error(), "--seq") {
 		t.Errorf("err = %v, want --seq の指定を求める", err)
+	}
+}
+
+// 評価役が待つ間に main が止まっていれば、繰り返さずに終わる（Delegation.md 10.4。pb-310）。
+func TestWaitStopsWhenMainStopped(t *testing.T) {
+	server, sinces, caFile := fakeWaitServer(t, []string{
+		`{"changed":false,"cursor":"c1"}`,
+		`{"changed":false,"main_stopped":true,"cursor":"c1","next":"main が止まっている"}`,
+	})
+	t.Setenv("PB_WAIT_TEST_TOKEN", "test-token")
+	var out bytes.Buffer
+	result, err := Wait(context.Background(), &out, Config{URL: server.URL, TokenEnvName: "PB_WAIT_TEST_TOKEN", CAFile: caFile},
+		WaitOptions{Seq: 226, Max: time.Hour})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if result != WaitMainStopped {
+		t.Errorf("result = %v, want WaitMainStopped", result)
+	}
+	if len(*sinces) != 2 || !strings.Contains(out.String(), "main が止まっている") {
+		t.Errorf("呼び出し = %d 回・出力 = %s, want 2回で止まり、止まる指示を書く", len(*sinces), out.String())
 	}
 }

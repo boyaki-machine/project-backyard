@@ -151,6 +151,25 @@ func TestGetContextShowsFailedDeliverableFindings(t *testing.T) {
 	}
 }
 
+// main が止まっているとみなされていれば、パックで知らせる（pb-310）。
+func TestGetContextShowsMainStopped(t *testing.T) {
+	rest := &fakeREST{steps: []fakeStep{
+		{status: http.StatusOK, body: ticketJSON(`{}`, "delegated", `null`)},
+		{status: http.StatusOK, body: `{"in_delegation":true,"role":"evaluator","root_seq":31,"status":"approved",
+			"main_stopped":true,"main_last_seen_at":1791800000000,"next_move":"成果を評価する"}`},
+		{status: http.StatusOK, body: `{"items":[]}`},
+		{status: http.StatusOK, body: `{"body_md":"役割の指示。"}`},
+		{status: http.StatusOK, body: `{"body_md":"共通の指示。"}`},
+	}}
+	out := callTool1(t, New(rest, "v0"), toolCallBody("pb_get_context", `{"seq":31}`))
+	if out.IsError {
+		t.Fatalf("パックを取得できない: %s", out.Content[0].Text)
+	}
+	if want := "**main が止まっている**（最後の要求："; !strings.Contains(out.Content[0].Text, want) {
+		t.Errorf("パックに %q が無い:\n%s", want, out.Content[0].Text)
+	}
+}
+
 // 評価役が agent_report_id に渡す、最新の完了レポートの ID を載せる（pb-305）。
 func TestGetContextShowsLatestReportForEvaluator(t *testing.T) {
 	rest := &fakeREST{steps: []fakeStep{

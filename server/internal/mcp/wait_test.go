@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -179,5 +180,52 @@ func TestWaitSendsProgressWhenTokenGiven(t *testing.T) {
 	}
 	if !strings.Contains(raw, `\"changed\":false`) {
 		t.Errorf("最後に時間切れの結果が返っていない:\n%s", raw)
+	}
+}
+
+// 評価役が根で待つとき、main が止まっていれば待たずに返す（Delegation.md 10.4。pb-310）。
+func TestWaitReturnsMainStoppedToEvaluator(t *testing.T) {
+	shortWait(t)
+	lastSeen := time.Now().Add(-45 * time.Minute).UnixMilli()
+	rest := &fakeREST{steps: []fakeStep{
+		{body: `{"seq":7,"title":"文化祭モード","execution_mode":"delegated"}`},
+		{body: act1},
+		{body: `{"in_delegation":true,"role":"evaluator","root_seq":7,"status":"approved","main_stopped":true,"main_last_seen_at":` +
+			strconv.FormatInt(lastSeen, 10) + `}`},
+	}}
+	out := callTool1(t, New(rest, "v0"), toolCallBody("pb_wait", `{"seq":7}`))
+	var w struct {
+		waitOut
+		MainStopped bool `json:"main_stopped"`
+	}
+	if err := json.Unmarshal([]byte(out.Content[0].Text), &w); err != nil {
+		t.Fatalf("pb_wait の結果が JSON ではない: %v", err)
+	}
+	if !w.MainStopped || w.Changed {
+		t.Fatalf("main_stopped / changed = %v / %v, want true / false（paths=%v）", w.MainStopped, w.Changed, rest.gotPaths)
+	}
+	if !strings.Contains(w.Next, "main が止まっている（最後の要求から 45 分）") || !strings.Contains(w.Next, "止まる") {
+		t.Errorf("next = %q, want 止まる指示", w.Next)
+	}
+	if w.Cursor != "01K0000000000000000000000A" {
+		t.Errorf("cursor = %q, want 再開に使う最新の行", w.Cursor)
+	}
+	if rest.calls != 3 {
+		t.Errorf("REST の呼び出し = %d 回, want 3（待たずに返る）", rest.calls)
+	}
+}
+
+// main 自身が待つときは、main が止まっていても（自分のこと）ふだんどおり待つ。
+func TestWaitIgnoresMainStoppedForMain(t *testing.T) {
+	shortWait(t)
+	rest := &fakeREST{steps: []fakeStep{
+		{body: `{"seq":7,"title":"文化祭モード","execution_mode":"delegated"}`},
+		{body: act1},
+		{body: `{"in_delegation":true,"role":"main","root_seq":7,"status":"approved","main_stopped":true}`},
+		{body: act1},
+	}}
+	w := decodeWait(t, callTool1(t, New(rest, "v0"), toolCallBody("pb_wait", `{"seq":7}`)))
+	if w.Changed || !strings.Contains(w.Next, "もう一度 pb_wait") {
+		t.Errorf("changed / next = %v / %q, want 時間切れ", w.Changed, w.Next)
 	}
 }

@@ -11154,6 +11154,19 @@ components:
           nullable: true
         next_move:
           type: string
+        main_last_seen_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            main のトークンが PB へ最後に要求を送った時刻（Delegation.md 10.4）。
+            1度も使われていなければ null。
+        main_stopped:
+          type: boolean
+          description: |
+            main が止まっているとみなすか（Delegation.md 10.4）。委任が承認済か計画中で、
+            main_last_seen_at から scope.main_idle_minutes（省略で30、0 で判定しない）を
+            過ぎたとき true。評価役の pb_wait はこのとき待たずに返る。
         main_next_move:
           type: string
           description: |

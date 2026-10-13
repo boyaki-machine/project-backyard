@@ -780,6 +780,9 @@ type Querier interface {
 	// 2行返ると失敗するので、いちばん新しい1件に倒す。
 	GetActiveSprint(ctx context.Context, projectID string) (GetActiveSprintRow, error)
 	GetActorAvatar(ctx context.Context, actorID string) (GetActorAvatarRow, error)
+	// GetActorLastSeenAt はアクターのトークンが最後に使われた時刻を返す（Delegation.md 10.4。pb-310）。
+	// 委任の main が止まったかの判定に使う。1度も使われていなければ NULL。
+	GetActorLastSeenAt(ctx context.Context, actorID string) (*time.Time, error)
 	// GetActorProfile は GET /me（ApiDesign.md 4.1）が返す actor 部分を引く。
 	//
 	// 認証ミドルウェアが載せる Principal（Design.md 6.2.2）には locale / timezone /
