@@ -261,12 +261,13 @@ const icons = {
 };
 let icon = 'bubble';
 let fixedCount = null;
-function fmt(n) { return n > 999 ? '999+' : String(n); }
+function fmt(n, cap = 999) { return n > cap ? cap + '+' : String(n); }
 function recount() {
   const n = fixedCount ?? document.querySelectorAll('.list .row:not(.read)').length;
   document.querySelectorAll('.count').forEach(el => {
     const ico = el.querySelector('.ico');
-    if (ico) { el.lastChild.textContent = ' ' + fmt(n); } else { el.textContent = fmt(n); }
+    // 折りたたみのレールとスマホの ☰ は幅が狭いので 99+ で止める
+    if (ico) { el.lastChild.textContent = ' ' + fmt(n); } else { el.textContent = fmt(n, el.classList.contains('dot') ? 99 : 999); }
     el.style.visibility = n === 0 ? 'hidden' : '';
   });
   document.querySelector('.filters .chip').textContent = '未読 ' + fmt(n);

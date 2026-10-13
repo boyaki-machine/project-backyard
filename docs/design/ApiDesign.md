@@ -17,7 +17,7 @@
 | 1 | 本書の範囲と方針 | 確定 |
 | 2 | 共通仕様 | 確定 |
 | **3** | **認証・セッションAPI** | **確定** |
-| **4** | **自分自身に関するAPI（/me・トークン・エージェント・第2要素・パスキー）** | **確定** |
+| **4** | **自分自身に関するAPI（/me・トークン・エージェント・第2要素・パスキー・通知）** | **確定** |
 | **5** | **プロジェクトAPI** | **確定** |
 | **6** | **ユーザー管理API** | **確定** |
 | **7** | **ロール・権限API** | **確定** |
@@ -298,7 +298,7 @@ MCP の層はツールの実行中に受けた応答にこのヘッダがあれ�
 `tls.certificate.upload` / `tls.certificate.delete` / `mfa.register` / `mfa.unregister` /
 `mfa.recovery_codes.regenerate` / `mfa.reset` / `login.mfa_failure` /
 `passkey.register` / `passkey.unregister` / `passkey.reset` / `login.passkey_failure` /
-`database.backup` / `database.restore`
+`database.backup` / `database.restore` / `notification.delete`
 
 **`agent.` の3件**（4.5.6）。エージェントの登録・変更・削除は
 アカウントの作成・変更・削除と同じ重みを持つ操作であり、`user.create` / `user.update` /
@@ -330,6 +330,8 @@ MCP の層はツールの実行中に受けた応答にこのヘッダがあれ�
 **`login.passkey_failure` も `login.failure` と分けてある。** パスキーの失敗は、挑戦が誰にも結び付いて
 いないため**アカウントを特定できないことが多い**（`Design.md` 6.8.1）。メールアドレスごとに失敗を数える
 `login.failure` の読み方と混ぜない。
+
+**`notification.delete`**（4.8.7）。**受けた人以外が通知を消したときだけ**記録する。受けた人が自分の通知を片付けるのは記録しない。
 
 ## 2.11 ヘルスチェック
 
@@ -1771,6 +1773,109 @@ Codex では `transport=direct` と `transport=bridge` で手引きも分ける�
 | `login.success` | 3.6 の成功（既存の action。`detail.method = "passkey"`） |
 
 **公開鍵・`credential_id`・`clientDataJSON` を `detail` に入れない**（2.10）。
+
+## 4.8 `/api/v1/me/notifications` — 自分宛ての通知
+
+**必要権限**：本人（4.6 と同じ。権限キーを要求しない）。管理者の削除（4.8.6）だけ `system.settings`
+
+**表は `DbDesign.md` 6.33、画面は `GuiDesign.md` 5.16。**
+
+| メソッド | パス | 用途 |
+|---|---|---|
+| `GET` | `/me/notifications` | 自分宛ての通知の一覧 |
+| `GET` | `/me/notifications/unread-count` | 未読の数（画面が定期的に引く） |
+| `PATCH` | `/me/notifications/:id` | 既読にする・未読に戻す |
+| `POST` | `/me/notifications/read-all` | すべて既読にする |
+| `DELETE` | `/me/notifications/:id` | 削除する（受けた人・出した人） |
+| `DELETE` | `/admin/notifications/:id` | 管理者が削除する |
+
+**通知を作る口は持たない**（`DbDesign.md` 6.33）。通知はサーバ内の使い手の処理だけが作り、取り下げる。
+
+**他人の通知は 404 `not_found` で返す。** 存在することも明かさない。「他人」とは、4.8.1〜4.8.4 では受けた人以外、
+4.8.5 では受けた人でも出した人でもない人である。
+
+### 4.8.1 `GET /api/v1/me/notifications`
+
+```
+GET /api/v1/me/notifications?filter=unread&page=1&per_page=25
+```
+
+```json
+{
+  "items": [
+    { "id": "01K2F8QW3H7YRJ4M5N6P7Q8R9S", "kind": "delegation.confirmation",
+      "title": "ユーザ確認待ち：計画の変更を承認してください",
+      "body": "子チケットを2件増やしてよいかを確認したいです。",
+      "link": "/p/my-app/tickets/52", "link_label": "my-app-52 文化祭の準備",
+      "project": { "key": "my-app", "name": "マイアプリ" },
+      "source": { "id": "01K2F8QW3H7YRJ4M5N6P7Q8R9T", "name": "Claude Code" },
+      "created_at": 1789265500000, "read_at": null }
+  ],
+  "page": 1, "per_page": 25, "total": 3, "total_pages": 1
+}
+```
+
+| 項目 | 内容 |
+|---|---|
+| `filter` | `unread`（未読だけ）か `all`（既定）。それ以外は 422 |
+| 並び | **`created_at` の降順で固定。** `sort` と `order` を受けない（渡せば 422） |
+| `project` | プロジェクトの外の出来事なら `null` |
+| `source` | PB 自身が出した通知は `id` が `null`、`name` が `PB`。通知元の actor が消えても `name` は残る |
+| `read_at` | 未読なら `null` |
+
+**ページネーションは 2.6 に従う。** **`ETag` は持たない。**
+
+### 4.8.2 `GET /api/v1/me/notifications/unread-count`
+
+```json
+{ "count": 3 }
+```
+
+**画面がどの画面にいても30秒ごとに引く口である**（`GuiDesign.md` 5.16）。部分索引（`DbDesign.md` 6.33）で数える。
+**上限で丸めない。** 「99+」「999+」の丸めは画面が行う。
+
+### 4.8.3 `PATCH /api/v1/me/notifications/:id`
+
+```json
+{ "read": true }
+```
+
+`read` が `true` なら `read_at` に今の時刻を入れ、`false` なら空にする。**既に同じ状態なら何もしない**
+（`read_at` を書き換えない）。応答は 4.8.1 の `items[]` と同じ形の1件。
+
+**`If-Match` を要求しない**（2.8 の楽観ロックの対象にしない）。変わる値が既読かどうかの1つだけで、
+後から送った操作が勝てば足りる。
+
+### 4.8.4 `POST /api/v1/me/notifications/read-all`
+
+**本文を受けない。** 自分宛ての未読をすべて既読にする。
+
+```json
+{ "updated": 3 }
+```
+
+### 4.8.5 `DELETE /api/v1/me/notifications/:id`
+
+**受けた人と、出した人（`source_id` が自分）が消せる。** 応答は 204。
+
+**出した人が消せる**のは、申請を取り消すなど、出した側の事情で通知が要らなくなる場合のためである。
+出した人がその通知の ID を知る画面は、使い手の側で作る（`DbDesign.md` 6.33.1）。
+
+### 4.8.6 `DELETE /api/v1/admin/notifications/:id`
+
+**必要権限**：`system.settings`
+
+**誰宛ての通知でも消せる。** 応答は 204。**本人の口（4.8.5）と分けてある**のは、権限をルートに宣言するためである
+（`Design.md` 6.4.4）。本人の口の中で管理者かどうかを判定しない。
+
+### 4.8.7 監査（2.10）
+
+| action | 記録する操作 |
+|---|---|
+| `notification.delete` | **受けた人以外が消したとき**（4.8.5 の出した人、4.8.6）。`detail` に `kind` と宛先の actor の ID |
+
+**受けた人が自分の通知を既読にする・消すのは記録しない。** 自分のものの片付けであり、監査の対象ではない。
+**題名と本文を `detail` に入れない**——長期保存される記録に通知の文面を複製しない。
 
 ---
 

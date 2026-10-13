@@ -2420,6 +2420,72 @@ CREATE TABLE schedule_baseline_item (
 
 **バックアップの往復のテスト（9.1.1）に2表を含める。** 表の一覧はカタログから引くので書き出しには自動で載るが、**往復で版の行が欠けないことはテストで確かめる**（9.1.1「代償を隠さない」）。
 
+## 6.33 通知（0069）
+
+**人に対応や確認を求める出来事を、宛先の利用者に届ける。** 仕組みは使い手を知らない。
+使い手（自律実行の確認待ち、パスワードリセットの申請など）は、**サーバ内の関数**で通知を作り、取り下げる。
+**通知を作る REST の口は持たない**——宛先と文面を決めるのは常に使い手の処理であり、外から任意の人へ通知を送れないようにする。
+API は `ApiDesign.md` 4.8、画面は `GuiDesign.md` 5.16。
+
+```sql
+-- 0069_notification.sql
+-- +goose Up
+CREATE TABLE notification (
+  id           char(26) COLLATE "C" PRIMARY KEY,
+  recipient_id char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE CASCADE,
+  kind         text NOT NULL CHECK (length(kind) <= 64
+                 AND kind ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$'),   -- 例 delegation.confirmation
+  title        text NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
+  body         text NOT NULL DEFAULT '' CHECK (length(body) <= 2000),
+  link         text NOT NULL CHECK (length(link) <= 500
+                 AND link ~ '^/[^/\\]'),                                -- PB の画面のパスだけ
+  link_label   text NOT NULL CHECK (length(link_label) BETWEEN 1 AND 100), -- 例 my-app-52 文化祭の準備
+  subject_key  text CHECK (subject_key IS NULL OR length(subject_key) BETWEEN 1 AND 200),
+  project_id   char(26) COLLATE "C" REFERENCES project(id) ON DELETE CASCADE,
+  source_id    char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  source_name  text NOT NULL CHECK (length(source_name) BETWEEN 1 AND 100),  -- 記録時の表示名
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  read_at      timestamptz
+);
+CREATE INDEX idx_notification_recipient ON notification (recipient_id, created_at DESC);
+CREATE INDEX idx_notification_unread    ON notification (recipient_id) WHERE read_at IS NULL;
+CREATE INDEX idx_notification_subject   ON notification (subject_key)  WHERE subject_key IS NOT NULL;
+CREATE INDEX idx_notification_read_at   ON notification (read_at)      WHERE read_at IS NOT NULL;
+```
+
+| 論点 | 決めたこと |
+|---|---|
+| 宛先 | **actor 1人につき1行。** 複数の人へ届けるときは、使い手が人数分の行を作る。宛先の actor を消すと通知も消える |
+| 種類（`kind`） | **使い手が名乗る文字列**（`<領域>.<出来事>`）。CHECK は形だけを見て、値を列挙しない——使い手を足すたびにマイグレーションが要らないようにする。使っている値は 6.33.1 の表に書く |
+| 題名と本文 | **プレーンテキスト。** 一覧では題名と本文の1行目を出す（`GuiDesign.md` 5.16）。Markdown にしない |
+| 遷移先（`link`） | **PB の画面のパス**（`/p/my-app/tickets/52` など）。画面は使い手の種類を知らずに、このパスへ移る。**外の URL を持たせない**——CHECK で `/` から始まり、`//` と `/\` から始まらないことを確かめる（別のホストへ飛ばす口にしない） |
+| 遷移先の名前（`link_label`） | **一覧で遷移のリンクとして出す文字列**（`GuiDesign.md` 5.16）。遷移先の画面が何かを、押す前に読めるようにする。チケットなら `<キー>-<番号> <題名>` |
+| 対象のキー（`subject_key`） | **取り下げの単位。** 同じ出来事について複数の宛先へ出した通知を、まとめて取り下げるのに使う。形は `<種類>:<対象の ID>` にする（例 `password_reset:<利用者の ID>`）。取り下げないなら空でよい |
+| プロジェクト（`project_id`） | プロジェクトの中の出来事なら持つ。**プロジェクトを消すと、その通知も消える**——遷移先の画面が無くなるためである。プロジェクトの外の出来事（パスワードの申請など）は空 |
+| 通知元 | `source_id` と、記録時の表示名 `source_name`。**PB 自身が出すときは `source_id` が空で、`source_name` は `PB`**。通知元の actor を消しても、誰からの通知かは読める |
+| 既読 | `read_at`。**未読に戻すと空にする。** 一覧に出ただけでは既読にしない（`GuiDesign.md` 5.16） |
+| 同じ対象への通知 | **仕組みはまとめない。** 重ねるか出し直すかは使い手が決める（取り下げてから作り直せば、出し直しになる） |
+| 保持 | **既読から30日で物理削除する。未読は消さない。** サーバの定期処理（1時間ごと）が `read_at` の索引で消す。期間と間隔は設定にしない（`Design.md` 10.3）。**通知を作る・一覧を引く処理では消さない**——通知が来ない宛先の古い行が残り続けるためである |
+| 削除 | **物理削除。** 人が消せるのは、受けた人・出した人（`source_id`）・`system.settings` を持つ人（`ApiDesign.md` 4.8.5・4.8.6）。使い手の取り下げも物理削除である |
+| 監査 | **受けた人が自分の通知を消す・既読にするのは記録しない。** 受けた人以外が消したときだけ `audit_log` に `notification.delete` を残す（`ApiDesign.md` 2.10） |
+| `activity` | **記録しない。** チケットの履歴ではない |
+
+**バックアップの往復のテスト（9.1.1）に表を含める。**
+
+### 6.33.1 使い手の足し方
+
+**使い手は、次の5つを決めてから通知を作る。** 決めた内容は、使い手の設計文書と下の表に書く。
+
+1. **種類**（`kind`）。`<領域>.<出来事>` の形で、下の表に足す
+2. **宛先。** 仕組みは宛先を選ばない。「権限 X を持つ全員」「委任の PM」など、使い手が actor を決める
+3. **遷移先のパスと、その名前**（`link_label`）。画面のルートは `GuiDesign.md` 3.2 にある
+4. **取り下げ。** 対象が片付いたら（回答した、処理した）同じ `subject_key` の通知を取り下げる。取り下げないなら、その理由
+5. **作る・取り下げるのは、使い手の処理と同じトランザクションで行う。** 出来事だけが確定して通知が無い、またはその逆を作らない
+
+| 種類（`kind`） | 使い手 | 宛先 | 遷移先 | 取り下げ |
+|---|---|---|---|---|
+| （まだ無い） | | | | |
+
 # 7. 初期データ（0010）
 
 ## 7.1 認証プロバイダ
