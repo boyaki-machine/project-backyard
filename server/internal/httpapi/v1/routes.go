@@ -138,6 +138,7 @@ func Mount(r chi.Router, deps Deps) {
 		r.Use(middleware.RateLimit(actorRateLimit, actorRateWindow, middleware.ActorKey))
 		r.Use(middleware.RequireCSRF)
 		r.Use(h.agentMonitorMiddleware)
+		r.Use(h.delegationPausedHeader)
 
 		r.Post("/auth/logout", h.logout)
 

@@ -170,7 +170,8 @@ const usageLine = computed(() => {
 const agentStatus = computed(() => {
   const s = props.status
   if (!s) return ''
-  if (s.status === 'paused') return uiText('一時停止中です。再開を待っています')
+  // **PC を止めるなら、エージェントのセッションは閉じてよい**（Delegation.md 8.4・11.4。pb-309）
+  if (s.status === 'paused') return uiText('一時停止中です。再開を待っています。エージェントのセッションは閉じて構いません（再開後、同じ一言で続きから始まります）')
   if (s.status === 'ended') return uiText('終了しました')
   if ((s.open_confirmations ?? []).some((c) => c.reason !== 'hearing')) {
     return uiText('あなたの回答を待っています（下のユーザ確認待ち）')
@@ -439,7 +440,7 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
   <DelegationTextModal
     v-if="pauseOpen"
     :title="$ui('自律実行を一時停止しますか？')"
-    :lead="$ui('止めているあいだ、エージェントはこのチケットの木に書き込めません。再開はあなたが行います')"
+    :lead="$ui('止めているあいだ、エージェントはこのチケットの木に書き込めません。待ち受け中のエージェントにはすぐ伝わり、作業中のものは次に PB に触れたときに止まります。チャットで伝える必要はありません。再開はあなたが行います')"
     :label="$ui('理由（任意）')"
     :submit-label="$ui('一時停止する')"
     :busy="busy"

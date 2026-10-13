@@ -236,6 +236,31 @@ func (q *Queries) GetDelegationByRootTicket(ctx context.Context, rootTicketID st
 	return i, err
 }
 
+const getPausedDelegationRootForActor = `-- name: GetPausedDelegationRootForActor :one
+SELECT t.seq
+FROM delegation d
+JOIN ticket t ON t.id = d.root_ticket_id
+WHERE d.project_id = $1 AND d.status = 'paused'
+  AND (d.main_actor_id = $2 OR d.evaluator_actor_id = $2)
+ORDER BY d.created_at DESC, d.id DESC
+LIMIT 1
+`
+
+type GetPausedDelegationRootForActorParams struct {
+	ProjectID string
+	ActorID   string
+}
+
+// GetPausedDelegationRootForActor は、アクターが main か評価である一時停止中の委任の根の番号を返す
+// （ApiDesign.md 2.9.1・Delegation.md 8.4。pb-309）。エージェントの要求への応答ヘッダに使う。
+// 無ければ行が無い。
+func (q *Queries) GetPausedDelegationRootForActor(ctx context.Context, arg GetPausedDelegationRootForActorParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getPausedDelegationRootForActor, arg.ProjectID, arg.ActorID)
+	var seq int32
+	err := row.Scan(&seq)
+	return seq, err
+}
+
 const getTicketForDelegation = `-- name: GetTicketForDelegation :one
 SELECT parent_id, execution_mode FROM ticket WHERE id = $1
 `

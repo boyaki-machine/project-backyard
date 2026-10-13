@@ -2245,6 +2245,75 @@ func TestMCPIntegration(t *testing.T) {
 			}
 		}
 	})
+	// **委任が一時停止中なら、main のツールの結果に注記が足される**（ApiDesign.md 2.9.1・Delegation.md 8.4。pb-309）。
+	// 作業中のエージェントが、書き込みで拒まれるより先に、読み取りで気づけるようにする。
+	t.Run("一時停止中の委任の main には、読み取りのツールの結果にも注記が付く", func(t *testing.T) {
+		const rootSeq = 9309
+		evaluatorID := ulidgen.New()
+		delegationID := ulidgen.New()
+		t.Cleanup(func() {
+			bg := context.Background()
+			if _, err := pool.Exec(bg, `DELETE FROM delegation WHERE id = $1`, delegationID); err != nil {
+				t.Errorf("委任の後始末に失敗した: %v", err)
+			}
+			if _, err := pool.Exec(bg, `DELETE FROM actor WHERE id = $1`, evaluatorID); err != nil {
+				t.Errorf("評価役の後始末に失敗した: %v", err)
+			}
+		})
+		if err := q.CreateAgentActor(ctx, gen.CreateAgentActorParams{ID: evaluatorID, DisplayName: "MCPテスト（評価役2）"}); err != nil {
+			t.Fatalf("評価役の actor を作れない: %v", err)
+		}
+		if err := q.CreateAgent(ctx, gen.CreateAgentParams{ActorID: evaluatorID, OwnerActorID: ownerID,
+			ProjectID: pgtype.Text{String: projectID, Valid: true}, ClientKind: "codex"}); err != nil {
+			t.Fatalf("評価役の agent を作れない: %v", err)
+		}
+		rootID := ulidgen.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO ticket (id, project_id, seq, type, title, status_key, assignee_id, execution_mode)
+			VALUES ($1, $2, $3, 'task', '一時停止した根', 'in_progress', $4, 'delegated')`, rootID, projectID, rootSeq, ownerID); err != nil {
+			t.Fatalf("根を作れない: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO delegation (id, project_id, root_ticket_id, main_actor_id, evaluator_actor_id, status, scope, scope_version, created_by)
+			VALUES ($1, $2, $3, $4, $5, 'paused', '{}', 1, $6)`, delegationID, projectID, rootID, agentID, evaluatorID, ownerID); err != nil {
+			t.Fatalf("委任を作れない: %v", err)
+		}
+
+		contents := func(t *testing.T) []string {
+			t.Helper()
+			// 委任の外のチケット（#1）を読む。**委任と関係ない読み取りでも届く**ことを見る。
+			w := call(fullToken, projectKey, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"pb_get_task","arguments":{"seq":1}}}`)
+			var res struct {
+				Result struct {
+					Content []struct {
+						Text string `json:"text"`
+					} `json:"content"`
+				} `json:"result"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+				t.Fatalf("応答を読めない: %v（%s）", err, w.Body.String())
+			}
+			var out []string
+			for _, c := range res.Result.Content {
+				out = append(out, c.Text)
+			}
+			return out
+		}
+
+		got := contents(t)
+		if len(got) != 2 || !strings.Contains(got[1], "自律実行（#9309）は一時停止中") {
+			t.Fatalf("content = %q, want 本体と一時停止の注記の2件", got)
+		}
+		if !strings.Contains(got[0], `"seq":1`) {
+			t.Errorf("先頭の項目 = %s, want ツールの本来の結果（JSON）", got[0])
+		}
+
+		// 再開すれば注記は消える。
+		if _, err := pool.Exec(ctx, `UPDATE delegation SET status = 'approved' WHERE id = $1`, delegationID); err != nil {
+			t.Fatalf("委任を再開できない: %v", err)
+		}
+		if got := contents(t); len(got) != 1 {
+			t.Errorf("再開後の content = %q, want 本体の1件だけ", got)
+		}
+	})
 }
 
 // readBackTicket は、書き込み系ツールの応答（要点だけ。Design.md 8.5.1）から seq を取り、

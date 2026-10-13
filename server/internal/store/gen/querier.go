@@ -937,6 +937,10 @@ type Querier interface {
 	// **seq を返すのは、SetTicketStatus が project_id と seq で更新するためである。**
 	// id で更新する口を別に作ると、同じ更新が2通りになる。
 	GetParentForCascade(ctx context.Context, childID string) (GetParentForCascadeRow, error)
+	// GetPausedDelegationRootForActor は、アクターが main か評価である一時停止中の委任の根の番号を返す
+	// （ApiDesign.md 2.9.1・Delegation.md 8.4。pb-309）。エージェントの要求への応答ヘッダに使う。
+	// 無ければ行が無い。
+	GetPausedDelegationRootForActor(ctx context.Context, arg GetPausedDelegationRootForActorParams) (int32, error)
 	// 未確認を引く。**画面が残り時間と「誰が変えたか」を出すために使う。**
 	//
 	// **変えた人の表示名も返す**。画面は「あなたが変えました」と
