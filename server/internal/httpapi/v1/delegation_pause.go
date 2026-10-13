@@ -25,14 +25,18 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/activity"
+	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/ulidgen"
@@ -358,4 +362,29 @@ func delegationScreenLabel(status string) string {
 	default:
 		return status
 	}
+}
+
+// delegationPausedHeaderName はエージェントへ一時停止を知らせる応答ヘッダ（ApiDesign.md 2.9.1）。
+const delegationPausedHeaderName = "PB-Delegation-Paused"
+
+// delegationPausedHeader は、エージェントが main か評価である委任が一時停止中なら、
+// 応答に PB-Delegation-Paused: <根の番号> を付ける（Delegation.md 8.4。pb-309）。
+//
+// **読み取りにも付ける。** 作業中のエージェントは、書き込みで拒まれるまで止まったことを
+// 知らない。MCP の層がこのヘッダを見てツールの結果に注記を足すので、読み取りでも気づける。
+// 判定に失敗しても要求は通す（知らせられないだけで、書き込みは委任の段階で別に拒まれる）。
+func (h *handler) delegationPausedHeader(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := auth.PrincipalFromContext(r.Context())
+		if p != nil && p.IsAgent() && p.ProjectID != "" {
+			if seq, err := h.q.GetPausedDelegationRootForActor(r.Context(), gen.GetPausedDelegationRootForActorParams{
+				ProjectID: p.ProjectID, ActorID: p.ActorID,
+			}); err == nil {
+				w.Header().Set(delegationPausedHeaderName, strconv.Itoa(int(seq)))
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				slog.WarnContext(r.Context(), "一時停止の判定に失敗した", slog.String("error", err.Error()))
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }

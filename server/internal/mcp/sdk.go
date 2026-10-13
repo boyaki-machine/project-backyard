@@ -80,16 +80,19 @@ func (h *Handler) serverFor(r *http.Request) *sdk.Server {
 				}
 				var res toolResult
 				var rpcErr *rpcError
+				// ツールの実行中に受けた REST の応答の一時停止のヘッダを、ここで受け取る（pb-309）。
+				note := &pausedNote{}
+				rr := r.WithContext(context.WithValue(r.Context(), pausedNoteKey{}, note))
 				if t.long != nil {
-					res, rpcErr = t.long(ctx, h, r, key, req.Params.Arguments, progressOf(ctx, req))
+					res, rpcErr = t.long(ctx, h, rr, key, req.Params.Arguments, progressOf(ctx, req))
 				} else {
-					res, rpcErr = t.call(h, r, key, req.Params.Arguments)
+					res, rpcErr = t.call(h, rr, key, req.Params.Arguments)
 				}
 				if rpcErr != nil {
 					// 引数の誤りなどは今までどおり JSON-RPC のエラーで返す（8.4 の表）。
 					return nil, &sdkjsonrpc.Error{Code: int64(rpcErr.Code), Message: rpcErr.Message}
 				}
-				return toSDKResult(res), nil
+				return toSDKResult(note.attach(res)), nil
 			})
 	}
 	return s

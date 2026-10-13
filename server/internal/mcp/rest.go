@@ -93,6 +93,11 @@ func (h *Handler) callREST(r *http.Request, method, path string, query url.Value
 
 	rec := &recorder{header: make(http.Header)}
 	h.rest.ServeHTTP(rec, req)
+	if seq := rec.header.Get(delegationPausedHeader); seq != "" {
+		if n, ok := r.Context().Value(pausedNoteKey{}).(*pausedNote); ok {
+			n.rootSeq = seq
+		}
+	}
 
 	return restResult{status: rec.statusCode(), body: isoTimes(rec.body.Bytes())}, nil
 }
@@ -224,4 +229,28 @@ func (r *recorder) statusCode() int {
 		return http.StatusOK
 	}
 	return r.code
+}
+
+// ── 一時停止の注記（ApiDesign.md 2.9.1・Delegation.md 8.4。pb-309）────────────
+
+// delegationPausedHeader は、REST がエージェントへ一時停止を知らせる応答ヘッダ。
+const delegationPausedHeader = "PB-Delegation-Paused"
+
+// pausedNoteKey は、1回のツールの実行で受けた一時停止のヘッダを置くコンテキストのキー。
+type pausedNoteKey struct{}
+
+// pausedNote は、ツールの実行中に REST が「委任が一時停止中」と返したかを覚える。
+type pausedNote struct {
+	rootSeq string
+}
+
+// attach は、一時停止中なら結果に注記の項目を足す。**先頭の項目には触れない**——JSON を
+// 置くツールがあり（pb_wait など）、pb-wait はそれを JSON として読む。モデルはすべての項目を読む。
+func (n *pausedNote) attach(res toolResult) toolResult {
+	if n == nil || n.rootSeq == "" {
+		return res
+	}
+	res.Content = append(res.Content, contentBlock{Type: "text", Text: "⚠ 自律実行（#" + n.rootSeq +
+		"）は一時停止中である。作業を区切り、ローカルの引き継ぎファイルと PB の引き継ぎノートを書いて止まる。再開は PM が行う。"})
+	return res
 }

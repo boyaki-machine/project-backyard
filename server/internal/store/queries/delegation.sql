@@ -149,3 +149,15 @@ JOIN delegation d ON d.id = tree.delegation_id
 JOIN ticket rt ON rt.id = d.root_ticket_id
 JOIN ticket t ON t.id = tree.ticket_id
 WHERE tree.ticket_id = ANY(@ticket_ids::text[]);
+
+-- GetPausedDelegationRootForActor は、アクターが main か評価である一時停止中の委任の根の番号を返す
+-- （ApiDesign.md 2.9.1・Delegation.md 8.4。pb-309）。エージェントの要求への応答ヘッダに使う。
+-- 無ければ行が無い。
+-- name: GetPausedDelegationRootForActor :one
+SELECT t.seq
+FROM delegation d
+JOIN ticket t ON t.id = d.root_ticket_id
+WHERE d.project_id = @project_id AND d.status = 'paused'
+  AND (d.main_actor_id = @actor_id OR d.evaluator_actor_id = @actor_id)
+ORDER BY d.created_at DESC, d.id DESC
+LIMIT 1;
