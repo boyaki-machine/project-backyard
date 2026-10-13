@@ -10,7 +10,7 @@
 #
 #   out/
 #   ├── pb                   client を embed した単一バイナリ
-#   ├── bridges/             接続ZIP用の5種類の pb-mcp-bridge
+#   ├── bridges/             接続ZIP用の5種類の pb-mcp-bridge と pb-wait（待ち受けの道具。pb-303）
 #   ├── pb.env               動作を規定する設定（deploy/stg/pb.env の写し）
 #   ├── run.sh               pb.env を読んで pb serve を起動する
 #   ├── secrets/

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build every client-side bridge supported by the release matrix. The PB
+# Build every client-side helper supported by the release matrix: the stdio
+# bridge (pb-mcp-bridge) and the out-of-model waiter (pb-wait, pb-303). The PB
 # server's own OS and CPU do not determine the platform of a downloading agent.
 set -euo pipefail
 
@@ -17,10 +18,12 @@ for target in darwin-arm64 windows-amd64 windows-arm64 linux-amd64 linux-arm64; 
 	arch=${target#*-}
 	dir="${out_dir}/${target}"
 	mkdir -p "${dir}"
-	name=pb-mcp-bridge
-	if [ "${os_name}" = windows ]; then name=pb-mcp-bridge.exe; fi
-	echo "==> ${os_name}/${arch} の ${name} を作る"
-	CGO_ENABLED=0 GOOS="${os_name}" GOARCH="${arch}" go -C "${repo_root}/server" build \
-		-trimpath -ldflags "-s -w" -o "${dir}/${name}" ./cmd/pb-mcp-bridge
-	if [ "${os_name}" != windows ]; then chmod +x "${dir}/${name}"; fi
+	for tool in pb-mcp-bridge pb-wait; do
+		name=${tool}
+		if [ "${os_name}" = windows ]; then name=${tool}.exe; fi
+		echo "==> ${os_name}/${arch} の ${name} を作る"
+		CGO_ENABLED=0 GOOS="${os_name}" GOARCH="${arch}" go -C "${repo_root}/server" build \
+			-trimpath -ldflags "-s -w" -o "${dir}/${name}" "./cmd/${tool}"
+		if [ "${os_name}" != windows ]; then chmod +x "${dir}/${name}"; fi
+	done
 done

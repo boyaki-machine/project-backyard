@@ -129,6 +129,7 @@
       "Bash(lsof:*)",
       "Bash(sha256sum:*)",
       "Bash(shasum:*)",
+      "Bash(pb-wait:*)",
       "mcp__pb__pb_get_project",
       "mcp__pb__pb_list_docs",
       "mcp__pb__pb_get_doc",
