@@ -73,6 +73,25 @@ onMounted(async () => {
   }
 })
 
+/**
+ * 選んだエージェントのいまの仕事（ApiDesign.md 4.5.1 の open_works・delegations。pb-343）。
+ * 作業中・兼務中なら注意を出すが、始めるのは止めない（意図して兼ねることもある）。
+ */
+function busyNotes(actorID: string): string[] {
+  const a = agents.value.find((x) => x.id === actorID)
+  if (!a) return []
+  const notes = (a.open_works ?? []).map((w) =>
+    uiText('#{value0} で作業中です（作業記録が開いています）', { value0: w.ticket_seq }))
+  for (const d of a.delegations ?? []) {
+    notes.push(d.role === 'main'
+      ? uiText('#{value0} の自律実行で main を務めています', { value0: d.root_seq })
+      : uiText('#{value0} の自律実行で評価を務めています', { value0: d.root_seq }))
+  }
+  return notes
+}
+const mainNotes = computed(() => busyNotes(mainID.value))
+const evaluatorNotes = computed(() => busyNotes(evaluatorID.value))
+
 function clientKindOf(actorID: string | undefined): string {
   return agents.value.find((a) => a.id === actorID)?.client_kind ?? ''
 }
@@ -310,6 +329,8 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
         </select>
       </label>
     </div>
+    <p v-for="n in mainNotes" :key="'m' + n" class="busy" data-role="main">⚠ {{ $ui('mainエージェント') }}：{{ n }}</p>
+    <p v-for="n in evaluatorNotes" :key="'e' + n" class="busy" data-role="evaluator">⚠ {{ $ui('評価エージェント') }}：{{ n }}</p>
     <p class="hint">
       {{ $ui('選べるのは、あなたが登録したエージェントです。評価エージェントのトークンには、発行のときに評価の権限（delegation.evaluate）を足してください') }}
     </p>
@@ -654,5 +675,12 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
 
 .main-stopped {
   color: var(--pb-warning-text);
+}
+
+/* 選んだエージェントが作業中・兼務中のときの注意（5.5「自律実行」。pb-343）。止めはしない */
+.busy {
+  margin: 0;
+  color: var(--pb-warning-text);
+  font-size: 12px;
 }
 </style>

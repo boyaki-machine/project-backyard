@@ -5652,6 +5652,25 @@ export interface components {
             created_at: number;
             /** @description 有効なトークン1本。無ければ `null`。 */
             token: components["schemas"]["AgentToken"] | null;
+            /**
+             * @description **`GET /me/agents` だけが返す**（4.5.1）。開いている作業記録の開始元のチケット（開始の古い順）。
+             *     無ければ空の配列。自律実行を始める画面が、作業中のエージェントを選んだときの注意に使う。
+             */
+            open_works?: {
+                ticket_seq: number;
+                ticket_title: string;
+            }[];
+            /**
+             * @description **`GET /me/agents` だけが返す**（4.5.1）。main・評価を務める、終了していない委任（作成の古い順）。
+             *     無ければ空の配列。
+             */
+            delegations?: {
+                root_seq: number;
+                /** @enum {string} */
+                role: "main" | "evaluator";
+                /** @enum {string} */
+                status: "planning" | "approved" | "paused";
+            }[];
         };
         /** @description プロジェクトの最小の参照（ApiDesign.md 4.5.1）。 */
         ProjectRef: {
