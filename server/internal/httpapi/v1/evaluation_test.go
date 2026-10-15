@@ -302,6 +302,19 @@ func TestRootHasUnpassedEvaluationNoReportYet(t *testing.T) {
 	}
 }
 
+// 取り下げた（ended の）根は、成果の評価が無くても完了できる（Delegation.md 4.3「取り下げ」）。
+func TestRootHasUnpassedEvaluationEndedDelegation(t *testing.T) {
+	q := ticketFake()
+	withMainDelegation(q, "ended")
+	pending, err := rootHasUnpassedEvaluation(context.Background(), q, testTicketID)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if pending {
+		t.Error("終了した委任の根が pending=true を返している")
+	}
+}
+
 func TestRootHasUnpassedEvaluationPassed(t *testing.T) {
 	q := ticketFake()
 	withMainDelegation(q, "approved")

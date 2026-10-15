@@ -448,12 +448,20 @@ func roundLimitConfirmationQuestion(targetKind string, round int32) string {
 // **根であっても、まだ完了レポートが1件も無ければ true（合格していない）。**
 // 「成果が無い」は「合格した成果がある」の否定として扱う——根の受け入れは
 // 成果の評価を前提とするので、評価の対象が無い状態を素通りさせない。
+//
+// **最新の委任が終了（ended）していれば false。** 取り下げた木は委任でなくなり、
+// 従来の実行モードのとおりに完了できる（Delegation.md 4.3「取り下げ」）。受け入れた根は
+// 合格した後に終わっているので、開き直して閉じ直しても結果は変わらない。
 func rootHasUnpassedEvaluation(ctx context.Context, q gen.Querier, ticketID string) (bool, error) {
-	if _, err := q.GetDelegationByRootTicket(ctx, ticketID); err != nil {
+	deleg, err := q.GetDelegationByRootTicket(ctx, ticketID)
+	if err != nil {
 		if err == pgx.ErrNoRows {
 			return false, nil
 		}
 		return false, fmt.Errorf("委任を読めない: %w", err)
+	}
+	if deleg.Status == "ended" {
+		return false, nil
 	}
 
 	report, err := q.GetLatestAgentReportForTicket(ctx, ticketID)
