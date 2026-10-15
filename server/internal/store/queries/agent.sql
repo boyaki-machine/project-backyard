@@ -62,6 +62,29 @@ LEFT JOIN LATERAL (
 WHERE ag.owner_actor_id = @owner_actor_id
 ORDER BY ag.created_at DESC;
 
+-- ListMyAgentsOpenWorks は本人のエージェントが開いている作業記録と、その開始元の
+-- チケットを返す（ApiDesign.md 4.5.1 の open_works）。自律実行を始める画面が、
+-- 作業中のエージェントを main・評価に選んだときの注意に使う（GuiDesign.md 5.5）。
+-- name: ListMyAgentsOpenWorks :many
+SELECT ws.actor_id, t.seq AS ticket_seq, t.title AS ticket_title
+FROM work_session ws
+JOIN agent ag ON ag.actor_id = ws.actor_id
+JOIN ticket t ON t.id = ws.ticket_id
+WHERE ag.owner_actor_id = @owner_actor_id AND ws.state <> 'finished'
+ORDER BY ws.started_at, ws.id;
+
+-- ListMyAgentsDelegations は本人のエージェントが main・評価を務める、終了していない
+-- 委任を返す（ApiDesign.md 4.5.1 の delegations）。1つの委任で両方を務めることは
+-- ck_delegation_independent が禁じるので、役割は1行に1つである。
+-- name: ListMyAgentsDelegations :many
+SELECT ag.actor_id, rt.seq AS root_seq, d.status,
+  (CASE WHEN d.main_actor_id = ag.actor_id THEN 'main' ELSE 'evaluator' END)::text AS role
+FROM delegation d
+JOIN agent ag ON ag.actor_id IN (d.main_actor_id, d.evaluator_actor_id)
+JOIN ticket rt ON rt.id = d.root_ticket_id
+WHERE ag.owner_actor_id = @owner_actor_id AND d.status <> 'ended'
+ORDER BY d.created_at, d.id;
+
 -- FindMyAgent は1件を引く（PATCH と トークン発行の対象）。
 --
 -- **actor.is_active も返す。** 4.5.3 が無効化されたエージェントへの発行を

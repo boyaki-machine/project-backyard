@@ -628,6 +628,89 @@ func (q *Queries) ListMyAgents(ctx context.Context, ownerActorID string) ([]List
 	return items, nil
 }
 
+const listMyAgentsDelegations = `-- name: ListMyAgentsDelegations :many
+SELECT ag.actor_id, rt.seq AS root_seq, d.status,
+  (CASE WHEN d.main_actor_id = ag.actor_id THEN 'main' ELSE 'evaluator' END)::text AS role
+FROM delegation d
+JOIN agent ag ON ag.actor_id IN (d.main_actor_id, d.evaluator_actor_id)
+JOIN ticket rt ON rt.id = d.root_ticket_id
+WHERE ag.owner_actor_id = $1 AND d.status <> 'ended'
+ORDER BY d.created_at, d.id
+`
+
+type ListMyAgentsDelegationsRow struct {
+	ActorID string
+	RootSeq int32
+	Status  string
+	Role    string
+}
+
+// ListMyAgentsDelegations は本人のエージェントが main・評価を務める、終了していない
+// 委任を返す（ApiDesign.md 4.5.1 の delegations）。1つの委任で両方を務めることは
+// ck_delegation_independent が禁じるので、役割は1行に1つである。
+func (q *Queries) ListMyAgentsDelegations(ctx context.Context, ownerActorID string) ([]ListMyAgentsDelegationsRow, error) {
+	rows, err := q.db.Query(ctx, listMyAgentsDelegations, ownerActorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMyAgentsDelegationsRow{}
+	for rows.Next() {
+		var i ListMyAgentsDelegationsRow
+		if err := rows.Scan(
+			&i.ActorID,
+			&i.RootSeq,
+			&i.Status,
+			&i.Role,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMyAgentsOpenWorks = `-- name: ListMyAgentsOpenWorks :many
+SELECT ws.actor_id, t.seq AS ticket_seq, t.title AS ticket_title
+FROM work_session ws
+JOIN agent ag ON ag.actor_id = ws.actor_id
+JOIN ticket t ON t.id = ws.ticket_id
+WHERE ag.owner_actor_id = $1 AND ws.state <> 'finished'
+ORDER BY ws.started_at, ws.id
+`
+
+type ListMyAgentsOpenWorksRow struct {
+	ActorID     string
+	TicketSeq   int32
+	TicketTitle string
+}
+
+// ListMyAgentsOpenWorks は本人のエージェントが開いている作業記録と、その開始元の
+// チケットを返す（ApiDesign.md 4.5.1 の open_works）。自律実行を始める画面が、
+// 作業中のエージェントを main・評価に選んだときの注意に使う（GuiDesign.md 5.5）。
+func (q *Queries) ListMyAgentsOpenWorks(ctx context.Context, ownerActorID string) ([]ListMyAgentsOpenWorksRow, error) {
+	rows, err := q.db.Query(ctx, listMyAgentsOpenWorks, ownerActorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMyAgentsOpenWorksRow{}
+	for rows.Next() {
+		var i ListMyAgentsOpenWorksRow
+		if err := rows.Scan(&i.ActorID, &i.TicketSeq, &i.TicketTitle); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOwnedAgentActorIDs = `-- name: ListOwnedAgentActorIDs :many
 SELECT actor_id FROM agent WHERE owner_actor_id = $1 ORDER BY actor_id
 `

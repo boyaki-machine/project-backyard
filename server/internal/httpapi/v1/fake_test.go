@@ -317,6 +317,8 @@ type fakeQuerier struct {
 
 	// 自分のエージェント（ApiDesign.md 4.5、手順24a）。
 	agentRows      []gen.ListMyAgentsRow
+	agentOpenWorks []gen.ListMyAgentsOpenWorksRow
+	agentDelegs    []gen.ListMyAgentsDelegationsRow
 	agentListErr   error
 	agentRow       gen.FindMyAgentRow
 	agentFindErr   error
@@ -3084,6 +3086,14 @@ func (q *fakeQuerier) ListMyAgents(_ context.Context, _ string) ([]gen.ListMyAge
 		return nil, q.agentListErr
 	}
 	return q.agentRows, nil
+}
+
+func (q *fakeQuerier) ListMyAgentsOpenWorks(context.Context, string) ([]gen.ListMyAgentsOpenWorksRow, error) {
+	return q.agentOpenWorks, nil
+}
+
+func (q *fakeQuerier) ListMyAgentsDelegations(context.Context, string) ([]gen.ListMyAgentsDelegationsRow, error) {
+	return q.agentDelegs, nil
 }
 
 func (q *fakeQuerier) FindMyAgent(_ context.Context, _ gen.FindMyAgentParams) (gen.FindMyAgentRow, error) {
