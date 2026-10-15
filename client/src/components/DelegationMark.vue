@@ -8,6 +8,7 @@
  * 縮小中（詳細を開いている）は、対応が要るときの記号だけを出す。
  * 完了レポートを出したのに完了していない子は「報告済み」を足す（pb-307）。PM がチェックポイントで
  * まとめて完了にする対象で、急ぎではないので灰のまま。急ぎの対応が重なるときと縮小中は出さない。
+ * 幅が足りないときは、前置き（「自律実行」「自律実行の中」）から「…」に縮め、後ろの状態は切らない（pb-342）。
  */
 import { computed } from 'vue'
 
@@ -23,16 +24,21 @@ const props = defineProps<{
 const paused = computed(() => props.mark.status === 'paused')
 const attention = computed(() => paused.value || props.mark.open_confirmations > 0)
 
-const text = computed(() => {
-  const parts = [props.mark.is_root ? uiText('自律実行') : uiText('自律実行の中')]
+const lead = computed(() => (props.mark.is_root ? uiText('自律実行') : uiText('自律実行の中')))
+
+/** 前置きの後ろに続く状態（一時停止・確認待ち・報告済み） */
+const states = computed(() => {
+  const parts: string[] = []
   if (paused.value) parts.push(uiText('一時停止'))
   if (props.mark.open_confirmations > 0) {
     parts.push(uiText('確認待ち {value0}', { value0: props.mark.open_confirmations }))
   }
   // 急ぎの対応が重なるときは出さない。そちらを先に片付けてもらい、狭い幅で印を切らせない
   if (props.mark.reported && !attention.value) parts.push(uiText('報告済み'))
-  return parts.join(' · ')
+  return parts
 })
+
+const text = computed(() => [lead.value, ...states.value].join(' · '))
 
 const title = computed(() =>
   props.mark.is_root
@@ -51,15 +57,29 @@ const title = computed(() =>
     class="mark"
     :class="{ attention, root: mark.is_root }"
     :title="title"
-  >{{ text }}</span>
+  ><span class="mark-lead">{{ lead }}</span><span v-if="states.length" class="mark-rest">{{ ' · ' + states.join(' · ') }}</span></span>
 </template>
 
 <style scoped>
+/* 縮むのは前置きだけ（.mark-lead）。状態（.mark-rest）は縮めない */
 .mark {
-  flex: none;
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--pb-text-muted);
   font-size: 11px;
   white-space: nowrap;
+}
+
+.mark-lead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mark-rest {
+  flex: none;
+  white-space: pre;
 }
 
 .mark.root {
