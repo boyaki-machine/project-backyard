@@ -63,7 +63,8 @@ export type AgentConnect = components['schemas']['AgentConnect']
  */
 function connectQuery(transport: string, os: string, arch: string): string {
   const params = new URLSearchParams({ transport })
-  if (transport === 'bridge') {
+  // ブリッジでは必須、直接接続では任意（指定すると zip に pb-wait が入る。4.5.8.1c）
+  if (transport === 'bridge' || (os !== '' && arch !== '')) {
     params.set('os', os)
     params.set('arch', arch)
   }

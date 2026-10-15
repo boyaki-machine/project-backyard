@@ -9960,9 +9960,13 @@ export interface components {
         AgentID: string;
         /** @description Codex の接続方式。既定は direct。 */
         ConnectTransport: "direct" | "bridge";
-        /** @description transport=bridge のとき必須。direct では指定しない。macOS は arm64 のみ対応。 */
+        /**
+         * @description 利用者の端末の OS（ApiDesign.md 4.5.8.1a・4.5.8.1c）。transport=bridge のとき必須。
+         *     direct では Claude Code・Codex だけが任意で指定でき、指定すると zip に pb-wait が入る（他の種別は 422）。
+         *     arch と組で指定する。macOS は arm64 のみ対応。
+         */
         BridgeOS: "darwin" | "windows" | "linux";
-        /** @description transport=bridge のとき必須。direct では指定しない。 */
+        /** @description 利用者の端末の CPU。os と組で指定する（ApiDesign.md 4.5.8.1c）。transport=bridge のとき必須。 */
         BridgeArch: "amd64" | "arm64";
         /** @description エージェント用トークンの ULID（`access_token.id`。ApiDesign.md 4.5.5）。 */
         AgentTokenID: string;
@@ -11495,9 +11499,13 @@ export interface operations {
             query?: {
                 /** @description Codex の接続方式。既定は direct。 */
                 transport?: components["parameters"]["ConnectTransport"];
-                /** @description transport=bridge のとき必須。direct では指定しない。macOS は arm64 のみ対応。 */
+                /**
+                 * @description 利用者の端末の OS（ApiDesign.md 4.5.8.1a・4.5.8.1c）。transport=bridge のとき必須。
+                 *     direct では Claude Code・Codex だけが任意で指定でき、指定すると zip に pb-wait が入る（他の種別は 422）。
+                 *     arch と組で指定する。macOS は arm64 のみ対応。
+                 */
                 os?: components["parameters"]["BridgeOS"];
-                /** @description transport=bridge のとき必須。direct では指定しない。 */
+                /** @description 利用者の端末の CPU。os と組で指定する（ApiDesign.md 4.5.8.1c）。transport=bridge のとき必須。 */
                 arch?: components["parameters"]["BridgeArch"];
             };
             header?: never;
@@ -11544,9 +11552,13 @@ export interface operations {
             query?: {
                 /** @description Codex の接続方式。既定は direct。 */
                 transport?: components["parameters"]["ConnectTransport"];
-                /** @description transport=bridge のとき必須。direct では指定しない。macOS は arm64 のみ対応。 */
+                /**
+                 * @description 利用者の端末の OS（ApiDesign.md 4.5.8.1a・4.5.8.1c）。transport=bridge のとき必須。
+                 *     direct では Claude Code・Codex だけが任意で指定でき、指定すると zip に pb-wait が入る（他の種別は 422）。
+                 *     arch と組で指定する。macOS は arm64 のみ対応。
+                 */
                 os?: components["parameters"]["BridgeOS"];
-                /** @description transport=bridge のとき必須。direct では指定しない。 */
+                /** @description 利用者の端末の CPU。os と組で指定する（ApiDesign.md 4.5.8.1c）。transport=bridge のとき必須。 */
                 arch?: components["parameters"]["BridgeArch"];
             };
             header?: never;

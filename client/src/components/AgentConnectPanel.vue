@@ -65,6 +65,11 @@ const isDesktop = computed(
   () => setup.value?.agent.client_kind === CLIENT_KIND_CLAUDE_DESKTOP,
 )
 const isCodex = computed(() => setup.value?.agent.client_kind === 'codex')
+/** 待ち受けの道具 pb-wait を zip に同梱できる種別（`ApiDesign.md` 4.5.8.1c。pb-348） */
+const WAIT_KINDS = ['claude_code', 'codex']
+const canBundleWait = computed(() => WAIT_KINDS.includes(setup.value?.agent.client_kind ?? ''))
+/** OS・CPU の選択を出すか。ブリッジでは必須、直接接続では pb-wait の同梱のために任意 */
+const showPlatform = computed(() => transport.value === 'bridge' || canBundleWait.value)
 
 const bridgeArchOptions = computed(() => {
   if (bridgeOS.value === 'darwin') return [{ value: 'arm64', label: 'Apple Silicon (ARM64)' }]
@@ -73,7 +78,9 @@ const bridgeArchOptions = computed(() => {
   }
   return []
 })
-const readyForSetup = computed(() => transport.value !== 'bridge' || bridgeArchOptions.value.some((option) => option.value === bridgeArch.value))
+/** OS と CPU の両方を選んだか（直接接続では、選んだときだけ送る） */
+const platformChosen = computed(() => bridgeArchOptions.value.some((option) => option.value === bridgeArch.value))
+const readyForSetup = computed(() => transport.value !== 'bridge' || platformChosen.value)
 const zipHref = computed(() => setupApi.agentConnectZipURL(props.agentId, transport.value, bridgeOS.value, bridgeArch.value))
 
 /**
@@ -184,7 +191,19 @@ function preview(content: string): string {
           <label><input v-model="transport" type="radio" value="direct" /> {{ $ui('HTTPS へ直接接続（公開 CA）') }}</label>
           <label><input v-model="transport" type="radio" value="bridge" /> {{ $ui('ローカル stdio ブリッジを使う（自己署名・社内 CA）') }}</label>
         </fieldset>
-        <div v-if="transport === 'bridge'" class="bridge-platform">
+        <p v-if="transport === 'bridge'" class="warn-note"> {{ $ui('ⓘ ローカル CA・社内 CA・自己署名の証明書を使うローカル PB では、この方式を使います。ブリッジも TLS 検証を行うので、証明書を OS の信頼ストアへ登録するか、') }}<code>PB_MCP_CA_FILE</code> {{ $ui('で発行元 CA を指定します。 配置・証明書登録または CA 指定・設定・後始末の詳細は、この zip の') }} <code>PB-README.md</code> {{ $ui('にあります。') }} </p>
+        <!-- **直接接続の断定を弱めた**（pb-202）。自己署名で受け付けなかったのは観測だが、
+             ローカル CA と CODEX_CA_CERTIFICATE での直接接続は誰も確かめていない -->
+        <p v-else class="hint"> {{ $ui('公開 CA の証明書では直接接続できます。ローカル CA・社内 CA・自己署名の証明書では、ローカル stdio ブリッジを選びます（自己署名の証明書は、OS の信頼ストアへ登録しても直接接続では受け付けられませんでした。ローカル CA での直接接続は実機で確かめていません）。詳しい手順は、この zip の') }} <code>PB-README.md</code> {{ $ui('にあります。') }} </p>
+      </template>
+
+      <!-- 端末の OS・CPU。ブリッジでは必須、Claude Code・Codex の直接接続では任意で、
+           選ぶと zip に待ち受けの道具 pb-wait が入る（5.8.2・ApiDesign.md 4.5.8.1c。pb-348） -->
+      <template v-if="showPlatform">
+        <p v-if="transport !== 'bridge'" class="hint" data-role="wait-hint">
+          {{ $ui('自律実行の main・評価に使うなら、端末の OS と CPU を選んでください。zip に待ち受けの道具（pb-wait）が入り、待つ間にトークンを使いません。選ばなければ入りません。') }}
+        </p>
+        <div class="bridge-platform">
           <label>{{ $ui('端末のOS') }}
             <select v-model="bridgeOS" :aria-label="$ui('端末のOS')">
               <option value="">{{ $ui('選択してください') }}</option>
@@ -200,10 +219,6 @@ function preview(content: string): string {
             </select>
           </label>
         </div>
-        <p v-if="transport === 'bridge'" class="warn-note"> {{ $ui('ⓘ ローカル CA・社内 CA・自己署名の証明書を使うローカル PB では、この方式を使います。ブリッジも TLS 検証を行うので、証明書を OS の信頼ストアへ登録するか、') }}<code>PB_MCP_CA_FILE</code> {{ $ui('で発行元 CA を指定します。 配置・証明書登録または CA 指定・設定・後始末の詳細は、この zip の') }} <code>PB-README.md</code> {{ $ui('にあります。') }} </p>
-        <!-- **直接接続の断定を弱めた**（pb-202）。自己署名で受け付けなかったのは観測だが、
-             ローカル CA と CODEX_CA_CERTIFICATE での直接接続は誰も確かめていない -->
-        <p v-else class="hint"> {{ $ui('公開 CA の証明書では直接接続できます。ローカル CA・社内 CA・自己署名の証明書では、ローカル stdio ブリッジを選びます（自己署名の証明書は、OS の信頼ストアへ登録しても直接接続では受け付けられませんでした。ローカル CA での直接接続は実機で確かめていません）。詳しい手順は、この zip の') }} <code>PB-README.md</code> {{ $ui('にあります。') }} </p>
       </template>
 
       <template v-if="readyForSetup">
@@ -287,7 +302,7 @@ function preview(content: string): string {
         </div>
         <p v-if="copied.export === 'ok'" class="ok" role="status">{{ $ui('✓ コピーしました') }}</p>
         <p v-else-if="copied.export === 'manual'" class="hint" role="status"> {{ $ui('コピーできませんでした。上の行を選択して ⌘C でコピーしてください。') }} </p>
-        <p v-if="transport === 'bridge' && bridgeOS === 'windows'" class="hint">{{ $ui('PowerShell で値を設定し、同じ PowerShell から Codex を起動します。') }}</p>
+        <p v-if="platformChosen && bridgeOS === 'windows'" class="hint">{{ $ui('PowerShell で値を設定し、同じ PowerShell から {value0} を起動します。', { value0: setup.agent.client_display_name }) }}</p>
         <p v-else class="hint">
           <code>~/.zshrc</code> {{ $ui('か direnv に追記し、値を差し替えます。') }} </p>
         <!-- **平文はここに出せない**（`Requirements.md` 10.10.1）。
