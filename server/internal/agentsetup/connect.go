@@ -71,9 +71,27 @@ type ConnectParams struct {
 	ClientDisplayName string
 	// Transport is "direct" (the Codex HTTP MCP client) or "bridge" (a local
 	// stdio process).  Only Codex supports the latter.
-	Transport  string
+	Transport string
+	// BridgeOS / BridgeArch は利用者の端末の OS と CPU（ApiDesign.md 4.5.8.1a・4.5.8.1c）。
+	// ブリッジでは必須、直接接続では任意で、指定すると ZIP に pb-wait を同梱する
+	// （WaitKinds の種別だけ）。名前は最初の使い手（ブリッジ）のまま残している。
 	BridgeOS   string
 	BridgeArch string
+}
+
+// WaitKinds は ZIP に待ち受けの道具 pb-wait を同梱できる種別（ApiDesign.md 4.5.8.1c）。
+// 自律実行の main・評価を手順書で回す種別で、バックグラウンドでコマンドを走らせられる。
+var WaitKinds = map[string]bool{"claude_code": true, "codex": true}
+
+// WaitBinaryName は pb-wait の ZIP 内の名前。プラットフォームはブリッジと同じ5種類である。
+func WaitBinaryName(osName, arch string) (string, error) {
+	if _, err := BridgeBinaryName(osName, arch); err != nil {
+		return "", err
+	}
+	if osName == "windows" {
+		return "pb-wait.exe", nil
+	}
+	return "pb-wait", nil
 }
 
 const (
@@ -310,7 +328,12 @@ func RenderConnect(kind string, p ConnectParams) (Connect, error) {
 			return Connect{}, err
 		}
 	} else if p.BridgeOS != "" || p.BridgeArch != "" {
-		return Connect{}, fmt.Errorf("OS と CPU は stdio ブリッジでのみ指定できます")
+		if !WaitKinds[kind] {
+			return Connect{}, fmt.Errorf("OS と CPU は、stdio ブリッジと、pb-wait を同梱できる種別（Claude Code・Codex）でのみ指定できます")
+		}
+		if _, err := WaitBinaryName(p.BridgeOS, p.BridgeArch); err != nil {
+			return Connect{}, err
+		}
 	}
 	caTrust, err := renderCATrust(kind, p)
 	if err != nil {
@@ -386,6 +409,8 @@ type readmeParams struct {
 	// **画面の API が返すものと同じ本文である。**
 	CATrust      CATrust
 	CATrustLabel string
+	// WaitBinaryName は同梱する pb-wait の名前。同梱しないときは空（ApiDesign.md 4.5.8.1c）。
+	WaitBinaryName string
 }
 
 // renderReadme は templates/connect/<name> を差し込む。
@@ -406,6 +431,13 @@ func renderReadme(name, kind string, spec connectSpec, p ConnectParams, caTrust 
 		OnboardRef:       "参画の手順",
 		CATrust:          caTrust,
 		CATrustLabel:     caTrust.Verification.label(),
+	}
+	if WaitKinds[kind] && p.BridgeOS != "" {
+		name, err := WaitBinaryName(p.BridgeOS, p.BridgeArch)
+		if err != nil {
+			return "", err
+		}
+		rp.WaitBinaryName = name
 	}
 	if spec.configPath != "" {
 		rp.ZipEntryName = blockName(spec.configPath)

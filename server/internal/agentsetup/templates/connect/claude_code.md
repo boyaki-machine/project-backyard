@@ -32,6 +32,23 @@
 
 **`.envrc` も履歴管理から外します。** 実体が入るためです。
 
+{{if .WaitBinaryName}}
+## 待ち受けの道具（pb-wait）を置く
+
+このZIPには、自律実行の待ち受けをモデルの外で行う **`{{.WaitBinaryName}}`**（**{{.BridgeOS}}/{{.BridgeArch}}** 向け）が入っています。
+main・評価エージェントは、これがあれば PB の変化を待つ間にトークンを使いません。無くても自律実行はできます（MCP の `pb_wait` で待ちます）。
+
+同梱の `{{.WaitBinaryName}}` を作業フォルダ外の安全なローカルディレクトリへ置き、{{if ne .BridgeOS "windows"}}実行可能にして{{end}}PATH へ加えます
+（PATH に置かない場合は、環境変数 `PB_WAIT` にそのファイルの場所を入れます）。エージェントは手順書に従い、次の形で走らせます。
+
+```
+{{.WaitBinaryName}} --url {{.MCPURL}} --token-env {{.TokenEnvName}} --seq <自律実行の根の番号>
+```
+
+自己署名・社内 CA の証明書なら `--ca-file <CA の PEM>` も付けます。**macOS で初回起動が拒否されたとき**は、
+「システム設定 → プライバシーとセキュリティ」の「このまま開く」で、このファイルだけを許可します。
+{{end}}
+
 ## HTTPS の証明書を信頼させる（ローカル CA・社内 CA のとき）
 
 **実機での確認**：{{.CATrustLabel}}
