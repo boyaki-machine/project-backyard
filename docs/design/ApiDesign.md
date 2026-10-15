@@ -1344,6 +1344,21 @@ OS の既定信頼ストアへ追加する。ZIP の `PB-README.md` は、証明
 
 **`ETag` もページネーションも持たない**（4.5.1 と同じ）。
 
+#### 4.5.8.1c 待ち受けの道具 `pb-wait` の同梱
+
+**Claude Code・Codex は、直接接続でも `os`・`arch` を指定でき、指定すると ZIP に `pb-wait` が入る**（`Delegation.md` 10.3）。
+自律実行の main・評価が、PB の変化を待つ間にトークンを使わないための道具である。
+**省けば従来どおり入らない**——自律実行に使わないエージェントに、知らない実行ファイルを配らない。
+
+- **指定できる種別**：Claude Code・Codex（手順書でバックグラウンドのコマンドを走らせる種別）。他の種別で `os`・`arch` を
+  指定すると `422`（直接接続では何も同梱しないため）
+- **値域と置き場はブリッジと同じ**（4.5.8.1a）。5種類を `bridges/<os>-<arch>/pb-wait[.exe]` に持ち、指定された1種類だけを入れる。
+  Windows 向けは `pb-wait.exe`
+- **ブリッジの ZIP には、`pb-mcp-bridge` と並べて `pb-wait` も入る**（同じ端末向けなので、もう一度選ばせない）
+- **`os` を指定すると、直接接続でも `export_line` と手引きが端末に合わせて変わる**（Windows では PowerShell の `$env:`）
+- 手引き（`PB-README.md`）に「待ち受けの道具（pb-wait）を置く」の節が入る。置き場（作業フォルダの外・PATH か `PB_WAIT`）、
+  起動の例（`--url` と `--token-env` は接続設定と同じ値）、自己署名の CA では `--ca-file`、macOS で初回起動を許可する手順
+
 #### 4.5.8.2 `export_line` が `null` になる種別がある
 
 **2種別が環境変数を使わない。同じ `null` でも理由が違う。**
@@ -1395,8 +1410,8 @@ clone 直後には存在せず、**主経路では上書きの相手がいない
 
 **`Content-Type: application/zip`**、
 `Content-Disposition: attachment; filename="pb-connect-<key>-<client_kind>.zip"`。
-Codex のブリッジZIPだけは `pb-connect-<key>-codex-<os>-<arch>.zip` とし、別の端末向けを
-取り直したときにファイル名でも区別できるようにする。
+`os`・`arch` を指定した ZIP（Codex のブリッジ、Claude Code・Codex の `pb-wait` 入り。4.5.8.1c）は
+`pb-connect-<key>-<client_kind>-<os>-<arch>.zip` とし、別の端末向けを取り直したときにファイル名でも区別できるようにする。
 
 **5.7.2 と違い、種別を名前に入れる。** 1人が同じプロジェクトに Claude Code と Copilot の
 2件を持つことがあり（4.5.1）、**同じ名前の zip が2つダウンロードフォルダに並ぶと
@@ -1409,6 +1424,7 @@ Codex のブリッジZIPだけは `pb-connect-<key>-codex-<os>-<arch>.zip` と�
 |---|---|
 | 接続設定（**別名**） | `.mcp.pb-block.json` |
 | **手引き** | `PB-README.md`（4.5.8.1b の `ca_trust` を「HTTPS の証明書を信頼させる」の節として含む） |
+| 実行ファイル（**`os`・`arch` を指定したときだけ**） | `pb-wait`（4.5.8.1c）。Codex のブリッジでは `pb-mcp-bridge` も |
 
 Codex では `transport=direct` と `transport=bridge` で手引きも分ける。直接接続ZIPは公開 CA に使うことと、ローカル CA・社内 CA・自己署名ではブリッジを選び直すことを記す。ブリッジZIPは選択した OS / CPU の `pb-mcp-bridge`（Windows は `.exe`）、OS の信頼ストアへの登録または CA PEM と `PB_MCP_CA_FILE` の指定、導入・削除を記す。Codex の設定は Finder 等で隠れない `_codex/config.pb-block.toml` として入れ、手引きで `.codex/config.toml` への改名を案内する。ブリッジZIPは実行ファイルも同梱する。
 
