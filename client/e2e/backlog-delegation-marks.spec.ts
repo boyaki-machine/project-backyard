@@ -62,17 +62,19 @@ for (const width of [1366, 1024, 768]) {
     expect(await markOf(21).getAttribute('class')).toContain('attention')
     await expect(markOf(11)).toHaveAttribute('title', 'demo-10 が自律実行を回しています（自律実行の中 · 報告済み）')
 
-    // 「報告済み」を足した印も、セルの外へはみ出さない。確認待ち・一時停止が重なる子の行は、
-    // 狭い幅で既にはみ出す（既存。#342）ので、ここでは数えない
-    const own = page.locator('tr.row')
-      .filter({ has: page.locator('.title-text', { hasText: /^検証チケット1[0-2]$/ }) }).locator('.mark')
-    await expect(own).toHaveCount(3)
-    const inside = await own.evaluateAll((els) => els.every((el) => {
+    // すべての印がセルの外へはみ出さない。確認待ち・一時停止が重なる子の行は、狭い幅では
+    // 「自律実行の中」から縮め、一時停止・確認待ちは言葉のまま残す（5.4「自律実行の印」）
+    const all = page.locator('tr.row .mark')
+    await expect(all).toHaveCount(5)
+    const outside = await all.evaluateAll((els) => els.flatMap((el) => {
       const c = el.closest('td')!.getBoundingClientRect()
       const b = el.getBoundingClientRect()
-      return b.right <= c.right + 1 && b.left >= c.left - 1
+      return b.right <= c.right + 1 && b.left >= c.left - 1 ? [] : [`${el.textContent}: ${Math.round(b.right)} > ${Math.round(c.right)}`]
     }))
-    expect(inside).toBe(true)
+    expect(outside).toEqual([])
+    // 縮めても、急ぎの対応の言葉は切らない
+    const rest = markOf(21).locator('.mark-rest')
+    expect(await rest.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
 
     await page.screenshot({ path: info.outputPath(`delegation-marks-${width}.png`), fullPage: true })
   })
