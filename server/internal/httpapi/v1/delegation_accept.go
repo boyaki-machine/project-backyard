@@ -72,10 +72,13 @@ func acceptDelegation(
 	if err != nil {
 		return fmt.Errorf("確認待ちを取り下げられない: %w", err)
 	}
+	if err := withdrawConfirmationNotifications(ctx, q, withdrawn...); err != nil {
+		return err
+	}
 	body := "**自律実行を受け入れた**（根を完了にした）。実行モードは「自律実行」のまま残る。" +
 		"エージェントは書き込まずに止まること。"
-	if withdrawn > 0 {
-		body += fmt.Sprintf("\n\n回答していない確認待ち %d 件を取り下げた。", withdrawn)
+	if len(withdrawn) > 0 {
+		body += fmt.Sprintf("\n\n回答していない確認待ち %d 件を取り下げた。", len(withdrawn))
 	}
 	if err := q.CreateComment(ctx, gen.CreateCommentParams{
 		ID: ulidgen.New(), TicketID: ticketID, AuthorID: actorID,

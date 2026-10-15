@@ -125,6 +125,54 @@ func (q *Queries) GetConfirmationByID(ctx context.Context, id string) (GetConfir
 	return i, err
 }
 
+const getConfirmationNotice = `-- name: GetConfirmationNotice :one
+SELECT
+  c.id, c.reason, c.question_md,
+  d.created_by AS recipient_id, d.project_id, p.key AS project_key,
+  rt.seq AS root_seq, rt.title AS root_title,
+  ra.id AS raised_by_id, ra.display_name AS raised_by_name
+FROM confirmation c
+JOIN delegation d ON d.id = c.delegation_id
+JOIN project p ON p.id = d.project_id
+JOIN ticket rt ON rt.id = d.root_ticket_id
+JOIN actor ra ON ra.id = c.raised_by
+WHERE c.id = $1
+`
+
+type GetConfirmationNoticeRow struct {
+	ID           string
+	Reason       string
+	QuestionMd   string
+	RecipientID  string
+	ProjectID    string
+	ProjectKey   string
+	RootSeq      int32
+	RootTitle    string
+	RaisedByID   string
+	RaisedByName string
+}
+
+// GetConfirmationNotice は確認待ちの通知を組み立てる材料を返す（Delegation.md 8.2）。
+// **宛先は委任を作った人**（`delegation.created_by`）。遷移先は委任の根である——
+// ユーザ確認待ちの欄は根の詳細に出る（GuiDesign.md 5.5）。
+func (q *Queries) GetConfirmationNotice(ctx context.Context, id string) (GetConfirmationNoticeRow, error) {
+	row := q.db.QueryRow(ctx, getConfirmationNotice, id)
+	var i GetConfirmationNoticeRow
+	err := row.Scan(
+		&i.ID,
+		&i.Reason,
+		&i.QuestionMd,
+		&i.RecipientID,
+		&i.ProjectID,
+		&i.ProjectKey,
+		&i.RootSeq,
+		&i.RootTitle,
+		&i.RaisedByID,
+		&i.RaisedByName,
+	)
+	return i, err
+}
+
 const hasOpenConfirmation = `-- name: HasOpenConfirmation :one
 SELECT EXISTS (
   SELECT 1 FROM confirmation
@@ -249,17 +297,33 @@ func (q *Queries) ListRecentAnsweredConfirmations(ctx context.Context, arg ListR
 	return items, nil
 }
 
-const withdrawOpenConfirmations = `-- name: WithdrawOpenConfirmations :execrows
+const withdrawOpenConfirmations = `-- name: WithdrawOpenConfirmations :many
 UPDATE confirmation SET status = 'withdrawn'
 WHERE delegation_id = $1 AND status = 'open'
+RETURNING id
 `
 
 // WithdrawOpenConfirmations は委任の取り下げで、開いている確認待ちを畳む
 // （Delegation.md 4.3「取り下げ」。pb-281）。答える人がいない問いを画面に残さない。
-func (q *Queries) WithdrawOpenConfirmations(ctx context.Context, delegationID string) (int64, error) {
-	result, err := q.db.Exec(ctx, withdrawOpenConfirmations, delegationID)
+//
+// **畳んだ確認待ちの ID を返す。** 使い手は、それぞれの通知を同じトランザクションで
+// 取り下げる（Delegation.md 8.2、DbDesign.md 6.33.1）。
+func (q *Queries) WithdrawOpenConfirmations(ctx context.Context, delegationID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, withdrawOpenConfirmations, delegationID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

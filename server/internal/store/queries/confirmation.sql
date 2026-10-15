@@ -61,6 +61,26 @@ LIMIT @max_rows;
 
 -- WithdrawOpenConfirmations は委任の取り下げで、開いている確認待ちを畳む
 -- （Delegation.md 4.3「取り下げ」。pb-281）。答える人がいない問いを画面に残さない。
--- name: WithdrawOpenConfirmations :execrows
+--
+-- **畳んだ確認待ちの ID を返す。** 使い手は、それぞれの通知を同じトランザクションで
+-- 取り下げる（Delegation.md 8.2、DbDesign.md 6.33.1）。
+-- name: WithdrawOpenConfirmations :many
 UPDATE confirmation SET status = 'withdrawn'
-WHERE delegation_id = @delegation_id AND status = 'open';
+WHERE delegation_id = @delegation_id AND status = 'open'
+RETURNING id;
+
+-- GetConfirmationNotice は確認待ちの通知を組み立てる材料を返す（Delegation.md 8.2）。
+-- **宛先は委任を作った人**（`delegation.created_by`）。遷移先は委任の根である——
+-- ユーザ確認待ちの欄は根の詳細に出る（GuiDesign.md 5.5）。
+-- name: GetConfirmationNotice :one
+SELECT
+  c.id, c.reason, c.question_md,
+  d.created_by AS recipient_id, d.project_id, p.key AS project_key,
+  rt.seq AS root_seq, rt.title AS root_title,
+  ra.id AS raised_by_id, ra.display_name AS raised_by_name
+FROM confirmation c
+JOIN delegation d ON d.id = c.delegation_id
+JOIN project p ON p.id = d.project_id
+JOIN ticket rt ON rt.id = d.root_ticket_id
+JOIN actor ra ON ra.id = c.raised_by
+WHERE c.id = @id;
