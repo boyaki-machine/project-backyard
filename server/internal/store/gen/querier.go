@@ -1444,6 +1444,14 @@ type Querier interface {
 	// 気づく必要がある）。
 	//
 	ListMyAgents(ctx context.Context, ownerActorID string) ([]ListMyAgentsRow, error)
+	// ListMyAgentsDelegations は本人のエージェントが main・評価を務める、終了していない
+	// 委任を返す（ApiDesign.md 4.5.1 の delegations）。1つの委任で両方を務めることは
+	// ck_delegation_independent が禁じるので、役割は1行に1つである。
+	ListMyAgentsDelegations(ctx context.Context, ownerActorID string) ([]ListMyAgentsDelegationsRow, error)
+	// ListMyAgentsOpenWorks は本人のエージェントが開いている作業記録と、その開始元の
+	// チケットを返す（ApiDesign.md 4.5.1 の open_works）。自律実行を始める画面が、
+	// 作業中のエージェントを main・評価に選んだときの注意に使う（GuiDesign.md 5.5）。
+	ListMyAgentsOpenWorks(ctx context.Context, ownerActorID string) ([]ListMyAgentsOpenWorksRow, error)
 	// ListMyNotifications は自分宛ての通知を新しい順に返す（4.8.1）。
 	ListMyNotifications(ctx context.Context, arg ListMyNotificationsParams) ([]ListMyNotificationsRow, error)
 	// オンステージ段に出ているチケットの id をすべて返す（ApiDesign.md 9.12.1）。

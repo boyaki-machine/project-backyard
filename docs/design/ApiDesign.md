@@ -910,7 +910,9 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
       "token": { "id": "01K3...", "token_prefix": "pb_agt_7",
                  "issued_at": 1788080592000,
                  "last_used_at": 1788086460000,
-                 "expires_at": 1795856592000, "status": "active" } }
+                 "expires_at": 1795856592000, "status": "active" },
+      "open_works": [ { "ticket_seq": 52, "ticket_title": "受付画面" } ],
+      "delegations": [ { "root_seq": 226, "role": "main", "status": "approved" } ] }
   ]
 }
 ```
@@ -926,6 +928,12 @@ GET           /api/v1/agent-client-kinds        （カタログ。必要権限�
 | `is_active` | `false` は無効化されたエージェント。行は残る |
 | `token_env_suffix` | **接続設定ファイルが読む環境変数の接尾**（`DbDesign.md` 8.2.1）。本人が決める。**未設定なら `null`** |
 | `token_env_name` | 上に `PB_TOKEN_` を付けた**実際の変数名**。**`token_env_suffix` が `null` のときは `PB_TOKEN_<エージェントの id>`** |
+| `open_works` | **開いている作業記録の開始元のチケット**（開始の古い順）。無ければ空の配列。委任の main は木の中で複数開ける（`Design.md` 8.5.7） |
+| `delegations` | **main・評価を務める、終了していない委任**（作成の古い順）。`role` は `main` / `evaluator`、`status` は委任の主状態。無ければ空の配列 |
+
+**`open_works` と `delegations` は、自律実行を始める画面の注意に使う**（`GuiDesign.md` 5.5「自律実行」）。作業中・兼務中の
+エージェントを main・評価に選ぶと、作業記録が重なったり、待ち受けが別の委任の変化を拾ったりする。**止めはしない**——
+意図して兼ねることもあるので、判断は人に任せる。**この2項目は一覧だけが返し、登録・変更の応答（4.5.2・4.5.4）には載らない。**
 
 **`token_env_name` を返すのは、フォールバックの規則をサーバに1つだけ置くためである**。
 接尾が未設定のとき何になるかを画面と生成器が各々計算すると、**`.mcp.json` に書いた名前と

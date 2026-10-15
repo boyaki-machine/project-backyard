@@ -1,6 +1,9 @@
 /** English translations keyed by the Japanese source text used by the UI. */
 export const uiMessages: Record<string, string> = {
  "評価と実行監視":"Evaluation and execution monitoring",
+ "#{value0} で作業中です（作業記録が開いています）":"Working on #{value0} (a work record is open)",
+ "#{value0} の自律実行で main を務めています":"Serving as main in the autonomous run of #{value0}",
+ "#{value0} の自律実行で評価を務めています":"Serving as evaluator in the autonomous run of #{value0}",
  "信頼度":"Trust level",
  "能力ラベル（カンマ区切り）":"Capabilities (comma separated)",
  "評価属性によって権限は自動で増えません。":"Evaluation attributes do not automatically increase permissions.",
