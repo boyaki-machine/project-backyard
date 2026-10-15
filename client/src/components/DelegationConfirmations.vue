@@ -30,6 +30,7 @@ import {
 import { delegationErrorText } from '../composables/useDelegationStatus'
 import { renderMarkdown } from '../lib/markdown'
 import { uiText } from '../locales/ui'
+import DelegationAcceptCard from './DelegationAcceptCard.vue'
 import DelegationTextModal from './DelegationTextModal.vue'
 
 const props = defineProps<{
@@ -37,6 +38,9 @@ const props = defineProps<{
   seq: number
   status: DelegationStatus | null
   canManage: boolean
+  /** 直下の子（受け入れのカードが、まとめて完了にする対象。pb-340） */
+  children?: { seq: number; title: string; status: { category: string } }[]
+  canTransition?: boolean
 }>()
 
 const emit = defineEmits<{ changed: [] }>()
@@ -55,7 +59,10 @@ type Finding = { aspect?: string; verdict?: string; note_md?: string }
 const findings = computed<Finding[]>(() => (plan.value?.evaluation?.findings ?? []) as Finding[])
 
 const confirmations = computed<OpenConfirmation[]>(() => props.status?.open_confirmations ?? [])
-const count = computed(() => (plan.value ? 1 : 0) + confirmations.value.length)
+/** 成果の評価に合格した根では、受け入れのカードを先頭に出す（GuiDesign.md 5.5。pb-340） */
+const accepting = computed(() => props.canManage && props.status?.deliverable_passed === true &&
+  props.status.status !== 'ended' && props.status.root_seq === props.seq)
+const count = computed(() => (plan.value ? 1 : 0) + (accepting.value ? 1 : 0) + confirmations.value.length)
 
 // 通知から来たとき（#confirmations）だけ、チケットごとに一度だけ寄せる。答えた後の
 // 読み直しで、また引き戻さないようにする。
@@ -122,6 +129,16 @@ function reasonLabel(reason: string | undefined): string {
 <template>
   <section v-if="count > 0" id="confirmations" ref="section" class="block confirmations">
     <h3 class="block-title">{{ $ui('ユーザ確認待ち（{value0}）', { value0: count }) }}</h3>
+
+    <DelegationAcceptCard
+      v-if="accepting && status"
+      :project-key="projectKey"
+      :seq="seq"
+      :status="status"
+      :children="children ?? []"
+      :can-transition="canTransition ?? false"
+      @changed="emit('changed')"
+    />
 
     <article v-if="plan" class="card">
       <header class="card-head">

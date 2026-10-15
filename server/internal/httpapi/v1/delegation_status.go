@@ -16,10 +16,12 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi/apierr"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
@@ -99,6 +101,9 @@ type delegationStatusView struct {
 	// MainLastSeenAt / MainStopped は main が止まったかの判定（10.4。pb-310）。
 	MainLastSeenAt *Time `json:"main_last_seen_at"`
 	MainStopped    bool  `json:"main_stopped"`
+	// DeliverablePassed は根の最新の完了レポートが成果の評価に合格しているか（7.2）。
+	// 検証8 と同じ材料で、画面は「成果の受け入れ」を出す合図に使う（GuiDesign.md 5.5。pb-340）。
+	DeliverablePassed bool `json:"deliverable_passed"`
 }
 
 func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
@@ -186,6 +191,14 @@ func (h *handler) getDelegationStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view.LatestReport = rep
+	if rep != nil && rep.Evaluated {
+		verdict, verr := h.q.GetEvaluationVerdictForReport(ctx, pgtype.Text{String: rep.ID, Valid: true})
+		if verr != nil {
+			apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(fmt.Errorf("評価を読めない: %w", verr)))
+			return
+		}
+		view.DeliverablePassed = verdict == evaluationVerdictPass
+	}
 
 	if ev, everr := h.q.GetLatestEvaluationForDelegation(ctx, deleg.ID); everr == nil {
 		var findings any

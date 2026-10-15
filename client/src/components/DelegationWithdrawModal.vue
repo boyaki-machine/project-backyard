@@ -13,6 +13,8 @@ import Modal from './Modal.vue'
 defineProps<{
   busy?: boolean
   error?: string | null
+  /** 成果の評価に合格しているか。合格後は「やめる」と「受け入れる」の違いを添える（pb-340） */
+  deliverablePassed?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -36,6 +38,9 @@ function submit(): void {
   <Modal :title="$ui('自律実行をやめますか？')" @close="emit('close')">
     <form id="delegation-withdraw-form" class="form" @submit.prevent="submit">
       <p class="lead">{{ $ui('子チケットは残ります。回答していないユーザ確認待ちは取り下げます') }}</p>
+      <p v-if="deliverablePassed" class="lead accept-hint" data-role="accept-hint">
+        {{ $ui('成果は評価に合格しています。成果を受け入れるなら、やめずに「ユーザ確認待ち」の「受け入れる」から根を完了にしてください。やめると取り下げとして記録されます') }}
+      </p>
       <fieldset class="modes">
         <legend class="label">{{ $ui('戻す先の実行モード') }}</legend>
         <label v-for="m in modes" :key="m" class="mode">
@@ -68,6 +73,10 @@ function submit(): void {
 .lead {
   margin: 0;
   font-size: 13px;
+}
+
+.accept-hint {
+  color: var(--pb-warning-text);
 }
 
 .modes {

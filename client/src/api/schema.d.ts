@@ -7641,6 +7641,12 @@ export interface components {
              */
             main_stopped?: boolean;
             /**
+             * @description 根の最新の完了レポートが成果の評価に合格しているか（Delegation.md 7.2）。根を完了にする
+             *     検証8（ApiDesign.md 9.6）と同じ材料である。画面はこれが true のとき「成果の受け入れ」を出す
+             *     （GuiDesign.md 5.5「自律実行」）。完了レポートが無い・評価がまだ・不合格なら false。
+             */
+            deliverable_passed?: boolean;
+            /**
              * @description 呼び出し元の役割によらない、main の次の一手（pb-252）。画面の
              *     「エージェントステイタス」に出す。PM が読むと役割は `readonly` になり、
              *     `next_move` は「次の一手が無い」になるため。

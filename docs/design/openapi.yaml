@@ -11427,6 +11427,12 @@ components:
             main が止まっているとみなすか（Delegation.md 10.4）。委任が承認済か計画中で、
             main_last_seen_at から scope.main_idle_minutes（省略で30、0 で判定しない）を
             過ぎたとき true。評価役の pb_wait はこのとき待たずに返る。
+        deliverable_passed:
+          type: boolean
+          description: |
+            根の最新の完了レポートが成果の評価に合格しているか（Delegation.md 7.2）。根を完了にする
+            検証8（ApiDesign.md 9.6）と同じ材料である。画面はこれが true のとき「成果の受け入れ」を出す
+            （GuiDesign.md 5.5「自律実行」）。完了レポートが無い・評価がまだ・不合格なら false。
         main_next_move:
           type: string
           description: |

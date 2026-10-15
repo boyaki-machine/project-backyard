@@ -490,6 +490,7 @@ async function resume(body: Parameters<typeof resumeDelegation>[2]): Promise<voi
     v-if="withdrawOpen"
     :busy="busy"
     :error="actionError"
+    :deliverable-passed="status?.deliverable_passed === true"
     @close="withdrawOpen = false"
     @submit="withdraw"
   />
