@@ -150,3 +150,44 @@ func TestGetDelegationStatusIncludesRecentAnswers(t *testing.T) {
 		t.Errorf("recent_answers[0] = %v", a)
 	}
 }
+
+// deliverable_passed は根の最新の完了レポートが合格しているときだけ true（7.2。pb-340）。
+func TestGetDelegationStatusDeliverablePassed(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		verdict string // 空なら評価なし
+		want    bool
+	}{
+		{"合格", "pass", true},
+		{"不合格", "fail", false},
+		{"評価なし", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := ticketFake()
+			q.ticket.idBySeq[31] = testTicketID
+			q.delegationList = []gen.ListActiveDelegationsForProjectRow{
+				{ID: testDelegationID, RootTicketID: testTicketID, Status: "approved"},
+			}
+			q.ticket.descendant = true
+			q.delegationByIDRow = gen.GetDelegationByIDRow{
+				ID: testDelegationID, Status: "approved", Scope: []byte(`{}`),
+				RootSeq: 31, MainActorID: testMainActorID, EvaluatorActorID: testEvaluatorActorID,
+			}
+			q.latestDelegationPlanErr = pgx.ErrNoRows
+			q.latestAgentReport = gen.GetLatestAgentReportForTicketRow{ID: "01K2REPORT0000000000001"}
+			if tc.verdict != "" {
+				q.evaluationVerdictByReport = map[string]string{"01K2REPORT0000000000001": tc.verdict}
+			}
+
+			h, _ := ticketHandler(q)
+			rec := httptest.NewRecorder()
+			h.getDelegationStatus(rec, ticketReq(http.MethodGet, "/delegation-status", "", "31"))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+			}
+			if got := viewOf(t, rec)["deliverable_passed"]; got != tc.want {
+				t.Errorf("deliverable_passed = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
