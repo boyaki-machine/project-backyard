@@ -2289,8 +2289,8 @@ CREATE TABLE delegation_handoff (
 示すことがある。次の一手は PB の推奨であり main の判断を縛らないため
 （9.1「指示は強制の代わりではない」）、実害は小さいと判断した。
 
-**パック（pb-251）・待ち受け・通知（D6 未決）への配線はまだ無い。**
-`POST .../handoff` の応答に `next_move` を載せるところまでが pb-250 の範囲。
+**`next_move` は `POST .../handoff` の応答・`delegation-status`・パック（`Delegation.md` 9.1）に載る。通知には載せない**——
+PM への通知は確認待ちが立ったときだけ作る（`Delegation.md` 8.2）。
 
 ## 6.29 委任の予算（テーブルなし）
 
@@ -2484,7 +2484,7 @@ CREATE INDEX idx_notification_read_at   ON notification (read_at)      WHERE rea
 
 | 種類（`kind`） | 使い手 | 宛先 | 遷移先 | 取り下げ |
 |---|---|---|---|---|
-| （まだ無い） | | | | |
+| `delegation.confirmation` | 自律実行の確認待ち（`Delegation.md` 8.2。checkpoint の要約を含む） | 委任を作った人（`delegation.created_by`） | 委任の根のユーザ確認待ち `/p/<キー>/tickets/<番号>#confirmations` | 回答・委任の取り下げ・受け入れで取り下げる。`subject_key` は `delegation_confirmation:<確認待ちの ID>` |
 
 # 7. 初期データ（0010）
 
