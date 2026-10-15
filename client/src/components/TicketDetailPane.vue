@@ -2250,6 +2250,8 @@ defineExpose({
           :seq="seq"
           :status="delegation.status.value"
           :can-manage="canManageDelegation"
+          :children="ticket.children"
+          :can-transition="canTransition"
           @changed="onDelegationChanged"
         />
 
