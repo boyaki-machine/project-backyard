@@ -8736,6 +8736,29 @@ components:
             - $ref: '#/components/schemas/AgentToken'
           nullable: true
           description: 有効なトークン1本。無ければ `null`。
+        open_works:
+          type: array
+          description: |
+            **`GET /me/agents` だけが返す**（4.5.1）。開いている作業記録の開始元のチケット（開始の古い順）。
+            無ければ空の配列。自律実行を始める画面が、作業中のエージェントを選んだときの注意に使う。
+          items:
+            type: object
+            required: [ticket_seq, ticket_title]
+            properties:
+              ticket_seq: {type: integer}
+              ticket_title: {type: string}
+        delegations:
+          type: array
+          description: |
+            **`GET /me/agents` だけが返す**（4.5.1）。main・評価を務める、終了していない委任（作成の古い順）。
+            無ければ空の配列。
+          items:
+            type: object
+            required: [root_seq, role, status]
+            properties:
+              root_seq: {type: integer}
+              role: {type: string, enum: [main, evaluator]}
+              status: {type: string, enum: [planning, approved, paused]}
 
     ProjectRef:
       description: プロジェクトの最小の参照（ApiDesign.md 4.5.1）。
