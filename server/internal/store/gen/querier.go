@@ -859,6 +859,10 @@ type Querier interface {
 	GetCheckpointBase(ctx context.Context, delegationID string) (time.Time, error)
 	// GetConfirmationByID は応答の組み立てと、回答の対象確認に使う。
 	GetConfirmationByID(ctx context.Context, id string) (GetConfirmationByIDRow, error)
+	// GetConfirmationNotice は確認待ちの通知を組み立てる材料を返す（Delegation.md 8.2）。
+	// **宛先は委任を作った人**（`delegation.created_by`）。遷移先は委任の根である——
+	// ユーザ確認待ちの欄は根の詳細に出る（GuiDesign.md 5.5）。
+	GetConfirmationNotice(ctx context.Context, id string) (GetConfirmationNoticeRow, error)
 	// 委任の予算（Delegation.md 4.2・12.1）。pb-253。
 	//
 	// **予算の値は delegation.scope の budget に持ち、消費は既存の行から測る。**
@@ -2574,7 +2578,10 @@ type Querier interface {
 	WithdrawNotifications(ctx context.Context, subjectKey string) (int64, error)
 	// WithdrawOpenConfirmations は委任の取り下げで、開いている確認待ちを畳む
 	// （Delegation.md 4.3「取り下げ」。pb-281）。答える人がいない問いを画面に残さない。
-	WithdrawOpenConfirmations(ctx context.Context, delegationID string) (int64, error)
+	//
+	// **畳んだ確認待ちの ID を返す。** 使い手は、それぞれの通知を同じトランザクションで
+	// 取り下げる（Delegation.md 8.2、DbDesign.md 6.33.1）。
+	WithdrawOpenConfirmations(ctx context.Context, delegationID string) ([]string, error)
 	WorkRequiresRegistration(ctx context.Context, arg WorkRequiresRegistrationParams) (bool, error)
 }
 

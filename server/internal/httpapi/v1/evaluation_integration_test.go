@@ -315,10 +315,32 @@ func TestEvaluationIntegration(t *testing.T) {
 			t.Fatalf("再開 status = %d（body=%s）", rec.Code, rec.Body.String())
 		}
 
+		// 関門に数えないヒアリングは、開いたまま受け入れられる。その通知は受け入れで取り下がる
+		// （Delegation.md 8.2）。
+		rec = bearerPost(r, fmt.Sprintf("%s/tickets/%d/confirmation", base, rootSeq), mainToken.Token,
+			`{"reason":"hearing","question_md":"ほかに気になる点はありますか"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("ヒアリングの提出 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		hearingKey := "delegation_confirmation:" + viewOf(t, rec)["id"].(string)
+		countNotices := func() int {
+			var n int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM notification WHERE subject_key = $1`, hearingKey).Scan(&n); err != nil {
+				t.Fatalf("通知を数えられない: %v", err)
+			}
+			return n
+		}
+		if n := countNotices(); n != 1 {
+			t.Fatalf("ヒアリングの通知 = %d 件, want 1", n)
+		}
+
 		// 合格したので、PM は根を完了にできる。**これが受け入れである。**
 		rec = postWithCookie(r, transitionPath, session, `{"to":"done"}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("done への遷移（合格後） status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+		}
+		if n := countNotices(); n != 0 {
+			t.Errorf("受け入れ後のヒアリングの通知 = %d 件, want 0（取り下げる）", n)
 		}
 
 		// 委任は ended、根の execution_mode は delegated のまま（取り下げとの違い）。

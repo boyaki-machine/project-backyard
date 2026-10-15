@@ -162,6 +162,9 @@ func (h *handler) raiseConfirmation(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			return fmt.Errorf("確認待ちを作成できない: %w", err)
 		}
+		if err := notifyConfirmation(ctx, q, id, false); err != nil {
+			return err
+		}
 
 		row, err := q.GetConfirmationByID(ctx, id)
 		if err != nil {
@@ -296,6 +299,9 @@ func (h *handler) answerConfirmation(w http.ResponseWriter, r *http.Request) {
 			})
 			return errTicketReference
 		}
+		if err := withdrawConfirmationNotifications(ctx, q, confirmationID); err != nil {
+			return err
+		}
 
 		row, err := q.GetConfirmationByID(ctx, confirmationID)
 		if err != nil {
@@ -365,15 +371,17 @@ func truncateForActivity(s string) string {
 // PB 自身の判定にはその確認は要らない（当てはまらない）。
 //
 // **evaluation.go の往復の上限超過から呼ぶ**（pb-248 の代替処理を置き換える）。
+// PM への通知は、通知元を PB として作る（confirmation_notify.go）。
 func raiseSystemConfirmation(
 	ctx context.Context, q gen.Querier, delegationID, ticketID, reason, questionMd string, raisedBy string,
 ) error {
+	id := ulidgen.New()
 	if err := q.CreateConfirmation(ctx, gen.CreateConfirmationParams{
-		ID: ulidgen.New(), DelegationID: delegationID, TicketID: ticketID,
+		ID: id, DelegationID: delegationID, TicketID: ticketID,
 		Reason: reason, QuestionMd: questionMd, Options: json.RawMessage(`[]`),
 		RaisedBy: raisedBy,
 	}); err != nil {
 		return fmt.Errorf("確認待ちを作成できない: %w", err)
 	}
-	return nil
+	return notifyConfirmation(ctx, q, id, true)
 }

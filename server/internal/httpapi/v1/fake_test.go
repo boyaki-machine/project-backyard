@@ -439,6 +439,8 @@ type fakeQuerier struct {
 	answerConfirmationRows      int64 // 0 なら「対象なし」（既に答えられた等）。未設定時は1件として扱う
 	answerConfirmationSet       bool
 	answeredConfirmationReasons map[string]bool // key: reason。HasAnsweredConfirmation が見る
+	createdNotifications        []gen.CreateNotificationParams
+	withdrawnNotificationKeys   []string
 
 	// 引き継ぎノート（Delegation.md 9.3・11章。pb-250）。
 	nextHandoffVersion      int32 // 0 なら 1 を返す
@@ -2813,6 +2815,28 @@ func (q *fakeQuerier) GetConfirmationByID(context.Context, string) (gen.GetConfi
 		return gen.GetConfirmationByIDRow{}, q.confirmationByIDErr
 	}
 	return q.confirmationByIDRow, nil
+}
+
+// GetConfirmationNotice は通知の材料を、委任を作った人＝testActorID として返す。
+func (q *fakeQuerier) GetConfirmationNotice(_ context.Context, id string) (gen.GetConfirmationNoticeRow, error) {
+	q.opLog = append(q.opLog, "GetConfirmationNotice")
+	return gen.GetConfirmationNoticeRow{
+		ID: id, Reason: "hearing", QuestionMd: "問い",
+		RecipientID: testActorID, ProjectID: "01K2F8QW3H7YRJ4M5N6P7Q8R9P", ProjectKey: "demo",
+		RootSeq: 31, RootTitle: "根", RaisedByID: testMainActorID, RaisedByName: "main",
+	}, nil
+}
+
+func (q *fakeQuerier) CreateNotification(_ context.Context, arg gen.CreateNotificationParams) error {
+	q.opLog = append(q.opLog, "CreateNotification")
+	q.createdNotifications = append(q.createdNotifications, arg)
+	return nil
+}
+
+func (q *fakeQuerier) WithdrawNotifications(_ context.Context, subjectKey string) (int64, error) {
+	q.opLog = append(q.opLog, "WithdrawNotifications")
+	q.withdrawnNotificationKeys = append(q.withdrawnNotificationKeys, subjectKey)
+	return 1, nil
 }
 
 func (q *fakeQuerier) ListOpenConfirmations(context.Context, string) ([]gen.ListOpenConfirmationsRow, error) {
