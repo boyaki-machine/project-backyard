@@ -10,8 +10,12 @@
  *   却下は評価を待たずにできる
  * - **確認への回答**：開いている確認待ち（ヒアリングを含む）。制約の超過などで
  *   一時停止したものは、答えた後に「再開…」で再開する（答えるだけでは再開しない。8.2）
+ *
+ * **URL が `#confirmations` で終わるときは、開いたときに一度だけこのセクションまで
+ * スクロールする**（確認待ちの通知の遷移先。Delegation.md 8.2）。
  */
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 import {
   answerConfirmation,
@@ -52,6 +56,22 @@ const findings = computed<Finding[]>(() => (plan.value?.evaluation?.findings ?? 
 
 const confirmations = computed<OpenConfirmation[]>(() => props.status?.open_confirmations ?? [])
 const count = computed(() => (plan.value ? 1 : 0) + confirmations.value.length)
+
+// 通知から来たとき（#confirmations）だけ、チケットごとに一度だけ寄せる。答えた後の
+// 読み直しで、また引き戻さないようにする。
+const route = useRoute()
+const section = ref<HTMLElement | null>(null)
+let scrolledSeq: number | null = null
+watch(
+  [count, () => props.seq],
+  async ([n, seq]) => {
+    if (n === 0 || scrolledSeq === seq || route.hash !== '#confirmations') return
+    scrolledSeq = seq
+    await nextTick()
+    section.value?.scrollIntoView({ block: 'start' })
+  },
+  { immediate: true },
+)
 
 const busy = ref(false)
 const error = ref<string | null>(null)
@@ -100,7 +120,7 @@ function reasonLabel(reason: string | undefined): string {
 </script>
 
 <template>
-  <section v-if="count > 0" class="block confirmations">
+  <section v-if="count > 0" id="confirmations" ref="section" class="block confirmations">
     <h3 class="block-title">{{ $ui('ユーザ確認待ち（{value0}）', { value0: count }) }}</h3>
 
     <article v-if="plan" class="card">
