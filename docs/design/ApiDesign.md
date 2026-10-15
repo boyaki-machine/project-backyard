@@ -3469,7 +3469,7 @@ readinessスコア」を挙げ、`Requirements.md` 10.8.6 の `/pb-implement` �
 | 5 | `required_permission` を呼び出し元が持つか | `403 forbidden` |
 | 6 | **呼び出し元がエージェントのとき、`assignee_id` が自分の所有者か** | `403 forbidden` |
 | 7 | **遷移先が完了カテゴリのとき、未完了の子チケットが残っていないか** | `409 children_not_closed` |
-| 8 | **遷移先が完了カテゴリで、委任の根のとき、成果の評価が合格しているか**（`Delegation.md` 7.2） | `403 forbidden`（`details[].code = "delegation_stage"`） |
+| 8 | **遷移先が完了カテゴリで、委任の根のとき、成果の評価が合格しているか**（`Delegation.md` 7.2）。最新の委任が終了（`ended`）していれば見ない（`Delegation.md` 4.3「取り下げ」） | `403 forbidden`（`details[].code = "delegation_stage"`） |
 | 9 | **遷移先が完了カテゴリで、終了していない委任の根のとき、委任が承認済で、関門の確認待ちが開いていないか**（`Delegation.md` 4.3「受け入れ」） | `403 forbidden`（`details[].code = "delegation_stage"`） |
 
 3〜6 が `Requirements.md` 10.10.4「承認ゲートをAPIレベルで強制する」の実体である。**画面側の制御に依存しない。**

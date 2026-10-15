@@ -241,4 +241,23 @@ func TestDelegationWithdrawIntegration(t *testing.T) {
 			t.Errorf("終了した委任 = %d 件, want 2（前の委任も履歴として残る）", n)
 		}
 	})
+
+	// 検証8 は終了した委任の根に掛からない（Delegation.md 4.3「取り下げ」）。この根には完了レポートも
+	// 成果の評価も無い。子を先に閉じるのは検証7（開いた子）を外すためである。
+	t.Run("取り下げた根は、成果の評価の合格なしに完了にできる", func(t *testing.T) {
+		// 根は委任の承認で進行中になっている。
+		steps := []struct {
+			path string
+			to   []string
+		}{{childPath, []string{"in_progress", "review", "done"}}, {ticketPath, []string{"review", "done"}}}
+		for _, st := range steps {
+			path := st.path
+			for _, to := range st.to {
+				rec := postWithCookie(r, path+"/transition", session, fmt.Sprintf(`{"to":%q}`, to))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("%s を %s へ status = %d, want 200（body=%s）", path, to, rec.Code, rec.Body.String())
+				}
+			}
+		}
+	})
 }
