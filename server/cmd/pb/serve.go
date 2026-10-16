@@ -272,6 +272,35 @@ func serve(ctx context.Context) error {
 		}
 	}()
 
+	// **作業記録の浮きを閉じる**（Design.md 8.5.7、ApiDesign.md 11.14）。起動時に1回、
+	// その後は v1.WorkSweepInterval ごと。閾値（work_stale_hours）が0なら何もしない。
+	// **PB は単一プロセス前提**（DbDesign.md 3.5）。複数で走っても、記録ごとに
+	// 作業記録のロックの下で判定し直すので、同じ記録を2度閉じない。
+	go func() {
+		sweeper := v1.WorkSweeper{Tx: txRunner, Q: gen.New(pool), Settings: live}
+		sweep := func() {
+			n, err := sweeper.RunDaily(context.WithoutCancel(ctx))
+			if err != nil {
+				slog.Error("作業記録の浮きを閉じられない", slog.String("error", err.Error()))
+				return
+			}
+			if n > 0 {
+				slog.Info("作業記録の浮きを閉じた", slog.Int("count", n))
+			}
+		}
+		sweep()
+		t := time.NewTicker(v1.WorkSweepInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				sweep()
+			}
+		}
+	}()
+
 	select {
 	case err := <-server.Err():
 		if err != nil {

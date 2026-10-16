@@ -1,0 +1,35 @@
+-- 作業記録の浮きの片付け（Design.md 8.5.7、ApiDesign.md 11.14）。
+
+-- ListOpenWorkForSweep は全プロジェクトの開いた記録と、浮きの判定の材料を返す。
+-- 判定（閾値との比較）は呼び出し側が時計を持って行う。only_id を渡すとその1件だけを返す
+-- （閉じる直前の判定し直し）。
+-- all_closed は配分先がすべて完了しているか。配分の無い記録は偽にする。
+-- token_last_used_at はその実行者のトークンの最終使用（一度も使っていなければ記録の最終変更）。
+-- サブエージェントは main のトークンで動く。
+-- name: ListOpenWorkForSweep :many
+SELECT ws.id, ws.project_id, p.key AS project_key, p.name AS project_name,
+       t.seq AS ticket_seq, t.title AS ticket_title,
+       ws.actor_id, a.display_name AS actor_name, a.kind AS actor_kind,
+       ws.state, ws.started_at, ws.changed_at,
+       coalesce((SELECT max(tk.last_used_at) FROM access_token tk WHERE tk.actor_id = ws.actor_id), ws.changed_at)::timestamptz AS token_last_used_at,
+       (EXISTS (SELECT 1 FROM work_allocation wa WHERE wa.session_id = ws.id)
+        AND NOT EXISTS (SELECT 1 FROM work_allocation wa JOIN ticket x ON x.id = wa.ticket_id
+                        WHERE wa.session_id = ws.id AND x.closed_at IS NULL))::boolean AS all_closed
+FROM work_session ws
+JOIN project p ON p.id = ws.project_id
+JOIN ticket t ON t.id = ws.ticket_id
+JOIN actor a ON a.id = ws.actor_id
+WHERE ws.state <> 'finished'
+  AND (sqlc.narg(only_id)::text IS NULL OR ws.id = sqlc.narg(only_id)::text)
+ORDER BY ws.started_at, ws.id;
+
+-- GetWorkSessionByID は記録を ID だけで引く（全プロジェクトを見る管理の口）。
+-- name: GetWorkSessionByID :one
+SELECT * FROM work_session WHERE id = @id FOR UPDATE;
+
+-- GetLatestAuditByAction は監査ログの直近の1行を返す。片付けの最後の実行を画面に出す。
+-- name: GetLatestAuditByAction :one
+SELECT occurred_at, actor_label, detail FROM audit_log
+WHERE action = @action
+ORDER BY occurred_at DESC, id DESC
+LIMIT 1;

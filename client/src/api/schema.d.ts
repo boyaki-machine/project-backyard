@@ -4993,6 +4993,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/work-sweep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 作業記録の浮きを数える
+         * @description 閉じられないまま残った作業記録（浮き）を全プロジェクトから数える（ApiDesign.md 11.14、GuiDesign.md 5.12.3）。
+         *     **必要権限は `system.settings`。** 何も変えない。
+         */
+        get: operations["getWorkSweep"];
+        put?: never;
+        /**
+         * 作業記録の浮きを閉じる
+         * @description 渡された記録のうち、**閉じる直前に判定し直して**まだ浮きに当たるものだけを、
+         *     `abandon` と同じ扱いで閉じる（ApiDesign.md 11.14）。監査ログ `work.sweep` を1行残す。
+         */
+        post: operations["runWorkSweep"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/backup.tar.gz": {
         parameters: {
             query?: never;
@@ -8020,6 +8046,47 @@ export interface components {
              * @enum {string}
              */
             secret_key_origin: "env" | "generated";
+        };
+        /** @description ApiDesign.md 11.14。 */
+        WorkSweep: {
+            /** @description 設定 `work_stale_hours` の実効値。0 なら時間では判定しない。 */
+            threshold_hours: number;
+            /** Format: int64 */
+            checked_at: number;
+            items: components["schemas"]["WorkSweepItem"][];
+            last_run: {
+                /** Format: int64 */
+                ran_at: number;
+                /** @enum {string} */
+                trigger: "daily" | "manual";
+                actor_label: string | null;
+                closed_count: number;
+            } | null;
+        };
+        WorkSweepItem: {
+            work_id: string;
+            project_key: string;
+            project_name: string;
+            ticket_seq: number;
+            ticket_title: string;
+            actor: {
+                id: string;
+                display_name: string;
+                /** @enum {string} */
+                kind: "user" | "agent" | "system";
+            };
+            /** @enum {string} */
+            state: "running" | "waiting";
+            /** Format: int64 */
+            started_at: number;
+            /** Format: int64 */
+            last_active_at: number;
+            /** @enum {string} */
+            reason: "ticket_closed" | "stale";
+        };
+        WorkSweepResult: components["schemas"]["WorkSweep"] & {
+            closed_ids: string[];
+            skipped_count: number;
         };
         /** @description ApiDesign.md 11.10。**読み取り専用の状態であって、設定ではない。** */
         DatabaseStatus: {
@@ -16623,6 +16690,62 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getWorkSweep: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 浮きの一覧と、直近の片付けの実行。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkSweep"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    runWorkSweep: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description GET で見せた記録の ID。 */
+                    work_ids: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description 閉じた結果と、閉じたあとの浮きの一覧。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkSweepResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

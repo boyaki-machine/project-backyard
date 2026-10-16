@@ -929,6 +929,8 @@ type Querier interface {
 	// **再提出は別の run・別の report になる**（buildAgentRun のコメントと同じ
 	// 理由）ので、「最新」は agent_report.submitted_at の降順1件で読む。実行の終了日時とは分ける。
 	GetLatestAgentReportForTicket(ctx context.Context, ticketID string) (GetLatestAgentReportForTicketRow, error)
+	// GetLatestAuditByAction は監査ログの直近の1行を返す。片付けの最後の実行を画面に出す。
+	GetLatestAuditByAction(ctx context.Context, action string) (GetLatestAuditByActionRow, error)
 	// GetLatestDelegationHandoff は「最新の行が現在のノート」を読む
 	// （4.4 の delegation_handoff のコメント）。
 	GetLatestDelegationHandoff(ctx context.Context, delegationID string) (GetLatestDelegationHandoffRow, error)
@@ -1136,6 +1138,8 @@ type Querier interface {
 	GetWorkPolicyDocument(ctx context.Context, projectID pgtype.Text) (GetWorkPolicyDocumentRow, error)
 	GetWorkReplay(ctx context.Context, arg GetWorkReplayParams) (GetWorkReplayRow, error)
 	GetWorkSession(ctx context.Context, arg GetWorkSessionParams) (WorkSession, error)
+	// GetWorkSessionByID は記録を ID だけで引く（全プロジェクトを見る管理の口）。
+	GetWorkSessionByID(ctx context.Context, id string) (WorkSession, error)
 	GetWorkTotals(ctx context.Context, ticketID string) (GetWorkTotalsRow, error)
 	// HasAnsweredConfirmation は「次の一手」の判定に使う（9.3「ヒアリングに
 	// 答えが付いた」「確認待ちに答えが付いた」）。
@@ -1474,6 +1478,14 @@ type Querier interface {
 	ListOnstageTicketIDs(ctx context.Context, projectID string) ([]string, error)
 	// ListOpenConfirmations はパック（9.1）と画面に出す一覧。
 	ListOpenConfirmations(ctx context.Context, delegationID string) ([]ListOpenConfirmationsRow, error)
+	// 作業記録の浮きの片付け（Design.md 8.5.7、ApiDesign.md 11.14）。
+	// ListOpenWorkForSweep は全プロジェクトの開いた記録と、浮きの判定の材料を返す。
+	// 判定（閾値との比較）は呼び出し側が時計を持って行う。only_id を渡すとその1件だけを返す
+	// （閉じる直前の判定し直し）。
+	// all_closed は配分先がすべて完了しているか。配分の無い記録は偽にする。
+	// token_last_used_at はその実行者のトークンの最終使用（一度も使っていなければ記録の最終変更）。
+	// サブエージェントは main のトークンで動く。
+	ListOpenWorkForSweep(ctx context.Context, onlyID pgtype.Text) ([]ListOpenWorkForSweepRow, error)
 	// ListOpenWorkSessionTickets は自分の開いている記録と、その開始元のチケット番号を返す。
 	// 案内に ID だけを出すと、別のチケットで開いた記録を今のチケットの計時と取り違える（pb-306）。
 	// 委任の main は木の中で複数開ける（Design.md 8.5.7。pb-344）ので、すべてを開始の古い順に返す。
