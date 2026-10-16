@@ -1,6 +1,8 @@
 /** English translations keyed by the Japanese source text used by the UI. */
 export const uiMessages: Record<string, string> = {
  "評価と実行監視":"Evaluation and execution monitoring",
+ "PowerShell で値を設定し、同じ PowerShell から {value0} を起動します。":"Set the value in PowerShell, then start {value0} from the same PowerShell.",
+ "自律実行の main・評価に使うなら、端末の OS と CPU を選んでください。zip に待ち受けの道具（pb-wait）が入り、待つ間にトークンを使いません。選ばなければ入りません。":"If you use this agent as main or evaluator in autonomous runs, choose your OS and CPU. The zip then includes the waiting tool (pb-wait), which waits without spending tokens. If you do not choose, it is not included.",
  "成果の受け入れ":"Accepting the deliverable",
  "評価：合格":"Evaluation: passed",
  "成果を確かめる":"Check the deliverable",
@@ -226,7 +228,6 @@ export const uiMessages: Record<string, string> = {
   "端末のOS": "Device OS",
   "CPUアーキテクチャ": "CPU architecture",
   "選択してください": "Select",
-  "PowerShell で値を設定し、同じ PowerShell から Codex を起動します。": "Set the value in PowerShell and launch Codex from the same PowerShell session.",
   "承認待ち": "Awaiting Approval",
   "オペレータ": "Operator",
   "アドミニストレータ": "Administrator",

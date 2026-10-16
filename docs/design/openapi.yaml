@@ -7785,14 +7785,18 @@ components:
     BridgeOS:
       name: os
       in: query
-      description: transport=bridge のとき必須。direct では指定しない。macOS は arm64 のみ対応。
+      description: |
+        利用者の端末の OS（ApiDesign.md 4.5.8.1a・4.5.8.1c）。transport=bridge のとき必須。
+        direct では Claude Code・Codex だけが任意で指定でき、指定すると zip に pb-wait が入る（他の種別は 422）。
+        arch と組で指定する。macOS は arm64 のみ対応。
       schema:
         type: string
         enum: [darwin, windows, linux]
     BridgeArch:
       name: arch
       in: query
-      description: transport=bridge のとき必須。direct では指定しない。
+      description: |
+        利用者の端末の CPU。os と組で指定する（ApiDesign.md 4.5.8.1c）。transport=bridge のとき必須。
       schema:
         type: string
         enum: [amd64, arm64]

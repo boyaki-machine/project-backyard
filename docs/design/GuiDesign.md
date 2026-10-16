@@ -3502,12 +3502,16 @@ Codex のカードだけは、接続設定の前に「**HTTPS へ直接接続（
 登録または `PB_MCP_CA_FILE` と CA PEM の指定、導入、削除を同梱 ZIP に書く。ブリッジは TLS 検証を
 無効化せず、待受ポートも開かない。選択を変えると設定と ZIP を取り直す。Codex 以外には出さない。
 
-**ブリッジを選んだときだけ OS と CPU をそれぞれ選ぶ。** OS は macOS / Windows / Linux。
+**端末の OS と CPU をそれぞれ選ぶ。** ブリッジでは必須で、Claude Code・Codex の直接接続では任意である
+（選ぶと ZIP に待ち受けの道具 `pb-wait` が入る。`ApiDesign.md` 4.5.8.1c）。OS は macOS / Windows / Linux。
 CPU は macOS なら Apple Silicon（arm64）のみ、Windows / Linux なら x64（amd64）と ARM64（arm64）。
 どちらも未選択の状態から始め、OS を変更したら CPU の選択を解除する。
-両方を選ぶまでは接続設定と ZIP を出さない。
-選択値は `GET /me/agents/:id/setup` と `/setup.zip` の `os`・`arch` に同じ値を渡す。
-ZIP には選択した1種類の実行ファイルだけが入り、選択した OS / CPU は手引きにも書く。
+**ブリッジでは両方を選ぶまで接続設定と ZIP を出さない。** 直接接続では選ばなくても出し、選択の上に「自律実行の main・評価に
+使うなら、端末の OS と CPU を選んでください。zip に待ち受けの道具（pb-wait）が入り、待つ間にトークンを使いません。
+選ばなければ入りません」を添える。**pb-wait を同梱しない種別（Copilot・Claude Desktop など）には選択を出さない。**
+選択値は `GET /me/agents/:id/setup` と `/setup.zip` の `os`・`arch` に同じ値を渡す（直接接続では両方を選んだときだけ）。
+ZIP には選択した1種類の実行ファイルだけが入り、選択した OS / CPU は手引きにも書く。Windows を選ぶと、トークンの節の案内は
+「PowerShell で値を設定し、同じ PowerShell から <種別> を起動します」になる。
 
 **直接接続の案内は断定しない。** 自己署名の証明書を OS の信頼ストアへ登録しても受け付けられなかった
 ことは観測だが、ローカル CA と `CODEX_CA_CERTIFICATE` での直接接続は確かめていない（`ApiDesign.md` 4.5.8.1a）。

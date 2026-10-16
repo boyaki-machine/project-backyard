@@ -45,7 +45,7 @@
 
 | 種類 | すること |
 |---|---|
-| Claude Code | PB の画面から出した `.claude/settings.json` には、`mcp__pb__pb_wait` を含む読み取り系の許可が最初から入っている。それより前に出した設定なら、`allow` に `mcp__pb__pb_wait` を足す。**待ち受けの道具 `pb-wait` を使うなら、`allow` に `Bash(pb-wait:*)` も足す**（待つ間にトークンを使わない。`Delegation.md` 10.3） |
+| Claude Code | PB の画面から出した `.claude/settings.json` には、`mcp__pb__pb_wait` を含む読み取り系の許可が最初から入っている。それより前に出した設定なら、`allow` に `mcp__pb__pb_wait` を足す。**待ち受けの道具 `pb-wait` を使うなら、`allow` に `Bash(pb-wait:*)` も足す**（待つ間にトークンを使わない。`Delegation.md` 10.3）。`pb-wait` は、エージェントの接続の手順で**端末の OS と CPU を選んで落とした zip に入っている** |
 | Codex | PB の画面から出した `.codex/config.toml` には、`[mcp_servers.pb.tools.pb_wait]` の `approval_mode = "auto"` が最初から入っている。それより前に出した設定なら足す。評価が書く `pb_submit_evaluation` / `pb_post_note` は、任せるなら同じ形で足す |
 
 **書き込み系の自動承認は、あなたの判断で行う。** PB は段階ごとの操作を API で拒むので、計画の承認前の起票などは許可しても通らない。

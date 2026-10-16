@@ -695,7 +695,8 @@ PM が範囲を直して承認してもよい（そのときは直した範囲�
   始める
 - **使えないとき**（実行ファイルが無い・失敗した）は、これまでどおり `pb_wait` で待つ
 - **作り方と置き場**：`deploy/build-bridges.sh` が中継と並べて5つの環境向けに作る（`make build` の `bin/bridges/`、stg の
-  `deploy/stg/out/bridges/`）。接続設定の ZIP への同梱は別に定める
+  `deploy/stg/out/bridges/`）。**配り方は接続設定の ZIP**：Claude Code・Codex は、端末の OS と CPU を選ぶと ZIP に入る
+  （`ApiDesign.md` 4.5.8.1c）
 
 ### 10.4 main が止まったら、評価役の待ち受けを止める
 
