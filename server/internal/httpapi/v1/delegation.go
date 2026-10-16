@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -122,6 +123,7 @@ func (h *handler) createDelegation(w http.ResponseWriter, r *http.Request) {
 			EvaluatorActorID: req.EvaluatorActorID,
 			Scope:            req.Scope,
 			CreatedBy:        scope.actorID,
+			CreatedAt:        time.Now().UTC(),
 		}); err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == uqDelegationRootTicket {

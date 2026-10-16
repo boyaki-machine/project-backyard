@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
@@ -111,10 +112,20 @@ func TestDelegationBudgetIntegration(t *testing.T) {
 
 	// 委任を作り、計画 → 評価の合格 → PM の承認で承認済にする（pb-260 の経路）。
 	// 予算：起票2件・深さ2段・トークン1000。
+	beforeCreate := time.Now().Truncate(time.Microsecond)
 	drec := postWithCookie(r, ticketPath+"/delegation", session,
 		fmt.Sprintf(`{"main_actor_id":%q,"evaluator_actor_id":%q,"scope":{"goal":"合格する"}}`, main.ID, evaluator.ID))
 	if drec.Code != http.StatusCreated {
 		t.Fatalf("委任の作成 status = %d（body=%s）", drec.Code, drec.Body.String())
+	}
+	// **委任の作成時刻はサーバの時計で付く。** 予算は agent_run.started_at（サーバの時計）と
+	// 比べて委任より後の実行を選ぶので、DB の時計で付くと時計のずれだけ境目が動く。
+	var delegationCreatedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT d.created_at FROM delegation d JOIN ticket t ON t.id = d.root_ticket_id JOIN project p ON p.id = t.project_id WHERE p.key = $1 AND t.seq = $2`, key, rootSeq).Scan(&delegationCreatedAt); err != nil {
+		t.Fatalf("委任の作成時刻を読めない: %v", err)
+	}
+	if delegationCreatedAt.Before(beforeCreate) || delegationCreatedAt.After(time.Now()) {
+		t.Fatalf("委任の created_at = %s がサーバの時計で付いていない（要求の開始 %s）", delegationCreatedAt, beforeCreate)
 	}
 	if rec := bearerPost(r, ticketPath+"/plan", mainToken.Token,
 		`{"scope":{"goal":"合格する","budget":{"tickets":2,"depth":2,"tokens":1000}},"skeleton":{"branches":[{"name":"演習","budget_share":1.0}]},"body_md":"初版","reason_md":"開始"}`); rec.Code != http.StatusCreated {

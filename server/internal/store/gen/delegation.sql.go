@@ -64,9 +64,9 @@ func (q *Queries) ApproveDelegationScope(ctx context.Context, arg ApproveDelegat
 const createDelegation = `-- name: CreateDelegation :exec
 
 INSERT INTO delegation
-  (id, project_id, root_ticket_id, main_actor_id, evaluator_actor_id, scope, created_by)
+  (id, project_id, root_ticket_id, main_actor_id, evaluator_actor_id, scope, created_by, created_at, updated_at)
 VALUES
-  ($1, $2, $3, $4, $5, $6, $7)
+  ($1, $2, $3, $4, $5, $6, $7, $8, $8)
 `
 
 type CreateDelegationParams struct {
@@ -77,6 +77,7 @@ type CreateDelegationParams struct {
 	EvaluatorActorID string
 	Scope            []byte
 	CreatedBy        string
+	CreatedAt        time.Time
 }
 
 // 委任（delegation）に関するクエリ（DbDesign.md 6.24、Delegation.md 4章・12.2）。
@@ -88,6 +89,9 @@ type CreateDelegationParams struct {
 // （9.5.2 の parent_cycle 検出と同じ再帰）。ここで重ねて同じ CTE を書かない。
 // CreateDelegation は委任を1件作る（Delegation.md 4.4）。
 // **終了していない委任は根ごとに1件**（uq_delegation_root_active。0058）。
+// **created_at はアプリから受け取る。** 予算（GetDelegationBudgetUsage）は
+// agent_run.started_at（アプリの時計）と比べて「委任より後の実行」を選ぶので、
+// DB の now() で付けると2つの時計のずれだけ境目が動く（agent_monitor.sql の解除と同じ）。
 func (q *Queries) CreateDelegation(ctx context.Context, arg CreateDelegationParams) error {
 	_, err := q.db.Exec(ctx, createDelegation,
 		arg.ID,
@@ -97,6 +101,7 @@ func (q *Queries) CreateDelegation(ctx context.Context, arg CreateDelegationPara
 		arg.EvaluatorActorID,
 		arg.Scope,
 		arg.CreatedBy,
+		arg.CreatedAt,
 	)
 	return err
 }
