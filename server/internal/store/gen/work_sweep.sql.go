@@ -34,7 +34,7 @@ func (q *Queries) GetLatestAuditByAction(ctx context.Context, action string) (Ge
 }
 
 const getWorkSessionByID = `-- name: GetWorkSessionByID :one
-SELECT id, project_id, ticket_id, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, policy, time_missing, outcome FROM work_session WHERE id = $1 FOR UPDATE
+SELECT id, project_id, ticket_id, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, policy, time_missing, outcome, hold, hold_ms FROM work_session WHERE id = $1 FOR UPDATE
 `
 
 // GetWorkSessionByID は記録を ID だけで引く（全プロジェクトを見る管理の口）。
@@ -63,6 +63,8 @@ func (q *Queries) GetWorkSessionByID(ctx context.Context, id string) (WorkSessio
 		&i.Policy,
 		&i.TimeMissing,
 		&i.Outcome,
+		&i.Hold,
+		&i.HoldMs,
 	)
 	return i, err
 }

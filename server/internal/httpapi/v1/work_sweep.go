@@ -255,6 +255,14 @@ func abandonStaleWork(ctx context.Context, q gen.Querier, s gen.WorkSession, rea
 	if err := q.SetWorkMissingTime(ctx, gen.SetWorkMissingTimeParams{ID: s.ID, TimeMissing: true}); err != nil {
 		return err
 	}
+	// 承認待ちで止まっていた記録は、保留も解く（DbDesign.md 6.34）。最後の区間は数えないので、
+	// 承認待ちの累計にも足さない。
+	if s.Hold.Valid {
+		s.Hold = usageText("")
+		if err := q.SetWorkHold(ctx, gen.SetWorkHoldParams{ID: s.ID, State: s.State, ChangedAt: s.ChangedAt, ActiveMs: s.ActiveMs, WaitingMs: s.WaitingMs, Hold: s.Hold, HoldMs: s.HoldMs}); err != nil {
+			return err
+		}
+	}
 	if s.ClientKind.Valid {
 		if err := closeAgentAttempt(ctx, q, s, rec); err != nil {
 			return err

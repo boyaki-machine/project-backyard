@@ -1299,7 +1299,7 @@ GET /api/v1/me/agents/:id/setup.zip
 | `os`・`arch` | `transport=bridge` のとき両方必須。許可する組み合わせは `darwin/arm64`、`windows/amd64`、`windows/arm64`、`linux/amd64`、`linux/arm64`。両エンドポイントに同じ値を渡す。不足・未対応の組み合わせ、`direct` との併用は `422 validation_failed` |
 | `base_url` | **リクエストの `Host` から組み立てた暫定値**（5.7.1 と同じ規則。スキームは `PB_COOKIE_SECURE`） |
 | `export_line` | 環境変数へトークンを置く行。**`null` になることがある**（下記） |
-| `files[]` | **5.7.1 の `files[]` と同じ形**（`AgentSetupFile`）。**接続設定の1枚だけ**で、`.gitignore` も手順ファイルも入らない |
+| `files[]` | **5.7.1 の `files[]` と同じ形**（`AgentSetupFile`）。**先頭が接続設定の1枚**で、`.gitignore` も手順ファイルも入らない。Claude Code だけ、2枚目に承認待ちのフック（`.claude/settings.local.json`。4.5.8.1d）が続く |
 | `ca_trust` | 「HTTPS の証明書を信頼させる」手順（4.5.8.1b）。**`null` にしない** |
 
 #### 4.5.8.1a Codex の TLS と stdio ブリッジ
@@ -1363,6 +1363,25 @@ OS の既定信頼ストアへ追加する。ZIP の `PB-README.md` は、証明
 - **`os` を指定すると、直接接続でも `export_line` と手引きが端末に合わせて変わる**（Windows では PowerShell の `$env:`）
 - 手引き（`PB-README.md`）に「待ち受けの道具（pb-wait）を置く」の節が入る。置き場（作業フォルダの外・PATH か `PB_WAIT`）、
   起動の例（`--url` と `--token-env` は接続設定と同じ値）、自己署名の CA では `--ca-file`、macOS で初回起動を許可する手順
+
+#### 4.5.8.1d 承認待ちのフック
+
+**クライアントが人に承認を求めている間、作業記録を止めておくフックを、接続設定に最初から入れる**（`DbDesign.md` 6.34、
+「共通作業タイマー」の `work-hold`）。フックの宛先は `base_url` ＋ `/api/v1/projects/<project_key>/work-hold` で、トークンは
+接続設定と同じ環境変数から取る。
+
+- **Claude Code**：`files[]` の2枚目に `.claude/settings.local.json`（`merge`）を出す。HTTP フックを
+  `PermissionRequest` / `PostToolUse` / `PostToolUseFailure` / `UserPromptSubmit` の4つに置き、`headers` の
+  `Authorization` を `Bearer ${<token_env_name>}`、`allowedEnvVars` をその変数1つにする。**トークンの変数名がエージェント
+  ごとに違うので、コミットする `.claude/settings.json`（5.7.1）ではなく、手元だけのファイルに置く**。
+  **HTTP のフックを知らない古い版は黙って飛ばす**（実機で、2.1.50 では走らず 2.1.173 では走った）。手引きに更新を促す1行を入れる。
+  **`claude -p`（非対話）では、承認を求めずに拒む呼び出しで `PermissionRequest` が走らない**（2.1.173）——非対話では承認待ちが生じないので害は無い
+- **Codex**：HTTP のフックが無いので、**`pb-wait` を同梱したとき（4.5.8.1c）だけ**、`.codex/config.toml` に
+  `pb-wait hook --hold-url <宛先> --token-env <変数名>` を呼ぶコマンドフックを `PermissionRequest` / `PostToolUse` /
+  `UserPromptSubmit` の3つに足す（Codex には `PostToolUseFailure` が無い）。**Codex は人が `/hooks` で信頼するまで走らせない**
+- **`pb-wait hook` は標準入力から `hook_event_name` だけを拾って送る。** ツールの入力や出力を PB へ送らない。
+  標準出力に何も書かず、PB に届かなくても終了コード0で終わる（承認の流れを変えない）。期限は3秒
+- 手引き（`PB-README.md`）に「承認待ちを作業時間から除く（フック）」の節が入る
 
 #### 4.5.8.2 `export_line` が `null` になる種別がある
 
@@ -6177,7 +6196,7 @@ SHA-256 であり `app_secret` に依存しない（`DbDesign.md` 6.2）ので�
 
 ## 共通作業タイマー
 
-GET `/api/v1/projects/:key/tickets/:seq/work-sessions`はticket.viewでページ付き記録と全件集計を返す。POST同パスはagent.runとticket.transitionで開始する。POST同パス`/:work_id/events`はpause/resume/finish/correct/restore_autoを処理する。時刻はRESTのエポックミリ秒で返す。要求のrequest_idは1〜128文字、noteは2000文字以内。再送は同内容なら同じ応答、別内容なら409。開始も200を返す。
+GET `/api/v1/projects/:key/tickets/:seq/work-sessions`はticket.viewでページ付き記録と全件集計を返す。記録は承認待ちの保留`hold`（`approval`またはnull）とその累計`hold_ms`（`waiting_ms`の内訳）を持つ。POST同パスはagent.runとticket.transitionで開始する。POST同パス`/:work_id/events`はpause/resume/finish/correct/restore_autoを処理する。時刻はRESTのエポックミリ秒で返す。要求のrequest_idは1〜128文字、noteは2000文字以内。再送は同内容なら同じ応答、別内容なら409。開始も200を返す。
 
 開始は所有者担当・未完了・委任の範囲/段階を確認する。開いている記録は同じAgentでPJ内1件までだが、**承認済みの委任のmainが委任の木の中で開くときは、開始元のチケットに自分の開いた記録が無ければ開ける**（Design.md 8.5.7。サブエージェントの並行）。allocationsは[{seq,share}]、正数合計1、最大50件、重複なし、開始元必須。複数配分には理由が必要。pauseはrunning、resumeはwaiting、finishは未終了だけから行う。pauseには理由、finishにはcompleted/partial/blockedの結果を指定する。tokensとreported_active_msは任意で非負、後者は経過時間以下とし取得元をnoteへ書く。incompleteは計測漏れの申告である。終了時は配分先の合計から実績時間を保存し、開始時の運営ノート契約と累積変更量によりactual-v0のPointを保存する。これは任意の実績値を書き換えるPATCH権限の委譲ではなく、認可済み作業のサーバ算出結果である。
 
@@ -6186,6 +6205,8 @@ GET `/api/v1/projects/:key/tickets/:seq/work-sessions`はticket.viewでページ
 summaryは終了済みの選択時間・経過・待機・token既知合計/欠測、未終了/不完全件数、自動候補と実績値・手入力状態を返す。GETのitemsは全件ではない。開いた記録は時間候補に加算しない。共通時間・Pointの定義はDesign.md 8.5.7に従う。既存レポートにwork_session_idを付けた場合は、当該チケットに配分された終了済み記録だけ（Agentは自身の記録に限定）を受け付け、実績集計で同じ消費を重ねて数えない。未紐付けレポートの自己申告時間は作業タイマーの代わりにはしない。
 
 過去のレポートは開始・待機の申告がないため自動で作業記録へ変換しない。根拠を確認した人が既存の実績欄に補記し、取得元をコメントに記録する。Agent種別の実績ページは従来の提出・評価コストを集計し、共通作業タイマーの集計とは別に表示する。
+
+**POST `/api/v1/projects/:key/work-hold`はクライアントのフックが叩く**（`DbDesign.md` 6.34、4.5.8.1d）。agent.runが要る。本文はフックのJSONそのままで、`hook_event_name`だけを先頭から拾い読みする（`PostToolUse`はツールの出力を丸ごと含み大きい）。`PermissionRequest`で、そのAgentがそのPJで実行中の記録をすべて`waiting`・`hold=approval`にする——並行するサブエージェントのどれの承認かはフックから分からない。`PostToolUse`・`PostToolUseFailure`・`UserPromptSubmit`で、`hold`を持つ記録だけを`running`へ戻し、止めていた間を`waiting_ms`と`hold_ms`に足す。明示的にpauseした記録は戻さない。それ以外のイベントと人のトークンでは何もしない。**常に204で本文を返さない**——Claude CodeのHTTPフックは2xxのJSON本文を承認の判定として読むため。**保留中の記録にpause/resume/finish/abandonが来たら、先に保留を解いてから適用する**（承認を求めていたのがその操作そのものでありうる）。保留中のresumeは、解いた時点で再開済みとして200を返す。
 
 ### 実績契約・欠測と作業記録の整理
 

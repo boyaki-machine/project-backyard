@@ -823,6 +823,8 @@ type WorkSession struct {
 	Policy           []byte
 	TimeMissing      bool
 	Outcome          pgtype.Text
+	Hold             pgtype.Text
+	HoldMs           int64
 }
 
 type Workflow struct {

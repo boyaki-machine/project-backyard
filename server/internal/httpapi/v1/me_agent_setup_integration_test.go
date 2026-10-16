@@ -143,8 +143,10 @@ func TestMeAgentSetupIntegration(t *testing.T) {
 		if want := v.BaseURL + "/mcp/" + projectKey; v.MCPURL != want {
 			t.Errorf("mcp_url = %q, want %q", v.MCPURL, want)
 		}
-		if len(v.Files) != 1 || v.Files[0].Path != ".mcp.json" {
-			t.Fatalf("files = %+v, want .mcp.json 1枚", v.Files)
+		// 2枚目は承認待ちのフック（4.5.8.1d）。宛先は接続設定と同じ base_url から組み立てる。
+		if len(v.Files) != 2 || v.Files[0].Path != ".mcp.json" || v.Files[1].Path != ".claude/settings.local.json" ||
+			!strings.Contains(v.Files[1].Content, v.BaseURL+"/api/v1/projects/"+projectKey+"/work-hold") {
+			t.Fatalf("files = %+v, want .mcp.json と .claude/settings.local.json", v.Files)
 		}
 		if v.Files[0].Mode != "merge" {
 			t.Errorf("mode = %q, want merge（4.5.8.4）", v.Files[0].Mode)
@@ -234,7 +236,7 @@ func TestMeAgentSetupIntegration(t *testing.T) {
 			names = append(names, f.Name)
 		}
 		// **展開した瞬間に既存を消さない**——接続設定は改名され、手引きは実名で入る。
-		if len(names) != 2 || names[0] != "PB-README.md" || names[1] != ".mcp.pb-block.json" {
+		if len(names) != 3 || names[0] != "PB-README.md" || names[1] != ".mcp.pb-block.json" || names[2] != ".claude/settings.local.pb-block.json" {
 			t.Fatalf("zip の中身 = %v", names)
 		}
 		for _, name := range names {

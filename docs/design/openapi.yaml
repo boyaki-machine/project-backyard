@@ -250,6 +250,30 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '409': {description: 状態またはrequest_idが競合している}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+  /api/v1/projects/{key}/work-hold:
+    parameters:
+      - {name: key, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [tickets]
+      summary: 承認待ちで作業記録を止める・再開する（クライアントのフック）
+      description: |
+        agent.run が必要。エージェントのクライアントのフックが叩く（DbDesign.md 6.34）。本文はフックの JSON そのままで、
+        `hook_event_name` だけを読む。`PermissionRequest` でそのエージェントがこの PJ で実行中の記録をすべて止め、
+        `PostToolUse` / `PostToolUseFailure` / `UserPromptSubmit` でフックが止めた記録だけを再開する。
+        それ以外のイベントと人のトークンでは何もしない。**常に 204 で本文を返さない**——Claude Code の HTTP フックは
+        2xx の JSON 本文を承認の判定として読むため。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hook_event_name: {type: string}
+              additionalProperties: true
+      responses:
+        '204': {description: 受け付けた（何もしなかった場合も含む）}
+        '403': {$ref: '#/components/responses/Forbidden'}
   /api/v1/auth/login:
     post:
       tags: [auth]
@@ -10806,7 +10830,7 @@ components:
               items: {$ref: '#/components/schemas/ChangeMetrics'}
     WorkSession:
       type: object
-      required: [id, ticket_seq, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, allocations, policy, time_missing]
+      required: [id, ticket_seq, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, hold, hold_ms, reported_active_ms, result, tokens, note, incomplete, allocations, policy, time_missing]
       properties:
         outcome: {type: [string, 'null'], enum: [completed, failed, abandoned, null]}
         id: {type: string}
@@ -10831,6 +10855,8 @@ components:
         ended_at: {type: [integer, 'null'], format: int64}
         active_ms: {type: integer, format: int64}
         waiting_ms: {type: integer, format: int64}
+        hold: {type: [string, 'null'], enum: [approval, null], description: クライアントのフックが承認待ちで止めているとき approval（DbDesign.md 6.34）}
+        hold_ms: {type: integer, format: int64, description: 承認待ちの累計。waiting_ms の内訳}
         reported_active_ms: {type: [integer, 'null'], format: int64}
         result: {type: [string, 'null']}
         tokens: {type: [integer, 'null'], format: int64}

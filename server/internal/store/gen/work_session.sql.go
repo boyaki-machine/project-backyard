@@ -442,7 +442,7 @@ func (q *Queries) GetWorkReplay(ctx context.Context, arg GetWorkReplayParams) (G
 }
 
 const getWorkSession = `-- name: GetWorkSession :one
-SELECT id, project_id, ticket_id, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, policy, time_missing, outcome FROM work_session WHERE id= $1 AND project_id= $2
+SELECT id, project_id, ticket_id, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, policy, time_missing, outcome, hold, hold_ms FROM work_session WHERE id= $1 AND project_id= $2
 `
 
 type GetWorkSessionParams struct {
@@ -475,6 +475,8 @@ func (q *Queries) GetWorkSession(ctx context.Context, arg GetWorkSessionParams) 
 		&i.Policy,
 		&i.TimeMissing,
 		&i.Outcome,
+		&i.Hold,
+		&i.HoldMs,
 	)
 	return i, err
 }
@@ -538,6 +540,63 @@ func (q *Queries) HasTicketOpenWork(ctx context.Context, arg HasTicketOpenWorkPa
 	return exists, err
 }
 
+const listHeldWork = `-- name: ListHeldWork :many
+SELECT id, project_id, ticket_id, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, policy, time_missing, outcome, hold, hold_ms FROM work_session
+WHERE project_id = $1 AND actor_id = $2 AND hold IS NOT NULL AND state = 'waiting'
+ORDER BY started_at, id
+FOR UPDATE
+`
+
+type ListHeldWorkParams struct {
+	ProjectID string
+	ActorID   string
+}
+
+// ListHeldWork は、フックが止めた記録を行ロック付きで返す。明示的に止めた記録（hold が NULL）は含めない。
+func (q *Queries) ListHeldWork(ctx context.Context, arg ListHeldWorkParams) ([]WorkSession, error) {
+	rows, err := q.db.Query(ctx, listHeldWork, arg.ProjectID, arg.ActorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkSession{}
+	for rows.Next() {
+		var i WorkSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.TicketID,
+			&i.ActorID,
+			&i.ClientKind,
+			&i.ModelName,
+			&i.ModelVersion,
+			&i.State,
+			&i.StartedAt,
+			&i.ChangedAt,
+			&i.EndedAt,
+			&i.ActiveMs,
+			&i.WaitingMs,
+			&i.ReportedActiveMs,
+			&i.Result,
+			&i.Tokens,
+			&i.Note,
+			&i.Incomplete,
+			&i.Policy,
+			&i.TimeMissing,
+			&i.Outcome,
+			&i.Hold,
+			&i.HoldMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenWorkSessionTickets = `-- name: ListOpenWorkSessionTickets :many
 SELECT ws.id, t.seq FROM work_session ws JOIN ticket t ON t.id = ws.ticket_id
 WHERE ws.project_id= $1 AND ws.actor_id= $2 AND ws.state <> 'finished'
@@ -577,8 +636,66 @@ func (q *Queries) ListOpenWorkSessionTickets(ctx context.Context, arg ListOpenWo
 	return items, nil
 }
 
+const listRunningWorkForHold = `-- name: ListRunningWorkForHold :many
+SELECT id, project_id, ticket_id, actor_id, client_kind, model_name, model_version, state, started_at, changed_at, ended_at, active_ms, waiting_ms, reported_active_ms, result, tokens, note, incomplete, policy, time_missing, outcome, hold, hold_ms FROM work_session
+WHERE project_id = $1 AND actor_id = $2 AND state = 'running'
+ORDER BY started_at, id
+FOR UPDATE
+`
+
+type ListRunningWorkForHoldParams struct {
+	ProjectID string
+	ActorID   string
+}
+
+// 承認待ちの保留（DbDesign.md 6.34）。
+// ListRunningWorkForHold は、フックが止める対象（そのアクターがその PJ で実行中の記録すべて）を行ロック付きで返す。
+func (q *Queries) ListRunningWorkForHold(ctx context.Context, arg ListRunningWorkForHoldParams) ([]WorkSession, error) {
+	rows, err := q.db.Query(ctx, listRunningWorkForHold, arg.ProjectID, arg.ActorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkSession{}
+	for rows.Next() {
+		var i WorkSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.TicketID,
+			&i.ActorID,
+			&i.ClientKind,
+			&i.ModelName,
+			&i.ModelVersion,
+			&i.State,
+			&i.StartedAt,
+			&i.ChangedAt,
+			&i.EndedAt,
+			&i.ActiveMs,
+			&i.WaitingMs,
+			&i.ReportedActiveMs,
+			&i.Result,
+			&i.Tokens,
+			&i.Note,
+			&i.Incomplete,
+			&i.Policy,
+			&i.TimeMissing,
+			&i.Outcome,
+			&i.Hold,
+			&i.HoldMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTicketCleanupWork = `-- name: ListTicketCleanupWork :many
-SELECT s.id, s.project_id, s.ticket_id, s.actor_id, s.client_kind, s.model_name, s.model_version, s.state, s.started_at, s.changed_at, s.ended_at, s.active_ms, s.waiting_ms, s.reported_active_ms, s.result, s.tokens, s.note, s.incomplete, s.policy, s.time_missing, s.outcome FROM work_session s JOIN work_allocation a ON a.session_id=s.id WHERE a.ticket_id= $1 ORDER BY s.id
+SELECT s.id, s.project_id, s.ticket_id, s.actor_id, s.client_kind, s.model_name, s.model_version, s.state, s.started_at, s.changed_at, s.ended_at, s.active_ms, s.waiting_ms, s.reported_active_ms, s.result, s.tokens, s.note, s.incomplete, s.policy, s.time_missing, s.outcome, s.hold, s.hold_ms FROM work_session s JOIN work_allocation a ON a.session_id=s.id WHERE a.ticket_id= $1 ORDER BY s.id
 `
 
 func (q *Queries) ListTicketCleanupWork(ctx context.Context, ticketID string) ([]WorkSession, error) {
@@ -612,6 +729,8 @@ func (q *Queries) ListTicketCleanupWork(ctx context.Context, ticketID string) ([
 			&i.Policy,
 			&i.TimeMissing,
 			&i.Outcome,
+			&i.Hold,
+			&i.HoldMs,
 		); err != nil {
 			return nil, err
 		}
@@ -685,7 +804,7 @@ func (q *Queries) ListWorkDeletionAffectedTickets(ctx context.Context, ticketID 
 }
 
 const listWorkSessions = `-- name: ListWorkSessions :many
-SELECT s.id, s.project_id, s.ticket_id, s.actor_id, s.client_kind, s.model_name, s.model_version, s.state, s.started_at, s.changed_at, s.ended_at, s.active_ms, s.waiting_ms, s.reported_active_ms, s.result, s.tokens, s.note, s.incomplete, s.policy, s.time_missing, s.outcome,a.share FROM work_allocation a JOIN work_session s ON s.id=a.session_id
+SELECT s.id, s.project_id, s.ticket_id, s.actor_id, s.client_kind, s.model_name, s.model_version, s.state, s.started_at, s.changed_at, s.ended_at, s.active_ms, s.waiting_ms, s.reported_active_ms, s.result, s.tokens, s.note, s.incomplete, s.policy, s.time_missing, s.outcome, s.hold, s.hold_ms,a.share FROM work_allocation a JOIN work_session s ON s.id=a.session_id
 WHERE a.ticket_id= $1 ORDER BY s.started_at DESC,s.id DESC LIMIT $3 OFFSET $2
 `
 
@@ -717,6 +836,8 @@ type ListWorkSessionsRow struct {
 	Policy           []byte
 	TimeMissing      bool
 	Outcome          pgtype.Text
+	Hold             pgtype.Text
+	HoldMs           int64
 	Share            float64
 }
 
@@ -751,6 +872,8 @@ func (q *Queries) ListWorkSessions(ctx context.Context, arg ListWorkSessionsPara
 			&i.Policy,
 			&i.TimeMissing,
 			&i.Outcome,
+			&i.Hold,
+			&i.HoldMs,
 			&i.Share,
 		); err != nil {
 			return nil, err
@@ -873,6 +996,36 @@ type SetWorkChangesParams struct {
 
 func (q *Queries) SetWorkChanges(ctx context.Context, arg SetWorkChangesParams) error {
 	_, err := q.db.Exec(ctx, setWorkChanges, arg.ChangeMetrics, arg.SessionID, arg.TicketID)
+	return err
+}
+
+const setWorkHold = `-- name: SetWorkHold :exec
+UPDATE work_session SET state = $1, changed_at = $2, active_ms = $3,
+  waiting_ms = $4, hold = $5, hold_ms = $6
+WHERE id = $7
+`
+
+type SetWorkHoldParams struct {
+	State     string
+	ChangedAt time.Time
+	ActiveMs  int64
+	WaitingMs int64
+	Hold      pgtype.Text
+	HoldMs    int64
+	ID        string
+}
+
+// SetWorkHold は保留の付け外しと、その時点までの経過を保存する。
+func (q *Queries) SetWorkHold(ctx context.Context, arg SetWorkHoldParams) error {
+	_, err := q.db.Exec(ctx, setWorkHold,
+		arg.State,
+		arg.ChangedAt,
+		arg.ActiveMs,
+		arg.WaitingMs,
+		arg.Hold,
+		arg.HoldMs,
+		arg.ID,
+	)
 	return err
 }
 

@@ -96,6 +96,8 @@ func TestWorkSweepIntegration(t *testing.T) {
 	// 30時間前に始まり、それきりトークンも使っていないエージェント → 浮き。
 	exec(`UPDATE work_session SET started_at=$2, changed_at=$2 WHERE id=$1`, staleWork, now.Add(-30*time.Hour))
 	exec(`UPDATE access_token SET last_used_at=$2 WHERE actor_id=$1`, staleAgent, now.Add(-30*time.Hour))
+	// 承認待ちで止まったまま残った記録も浮きであり、閉じるときに保留を解く（DbDesign.md 6.34）。
+	exec(`UPDATE work_session SET state='waiting', hold='approval' WHERE id=$1`, staleWork)
 	// 記録は30時間前のままだが、トークンは1時間前に使った（サブエージェントの記録を開いた main）→ 浮きではない。
 	exec(`UPDATE work_session SET started_at=$2, changed_at=$2 WHERE id=$1`, liveWork, now.Add(-30*time.Hour))
 	exec(`UPDATE access_token SET last_used_at=$2 WHERE actor_id=$1`, liveAgent, now.Add(-time.Hour))
@@ -126,7 +128,7 @@ func TestWorkSweepIntegration(t *testing.T) {
 	if n, err := (WorkSweeper{Tx: sweeper.Tx, Q: q, Settings: off, Now: sweeper.Now}).RunDaily(ctx); err != nil || n != 0 {
 		t.Fatalf("disabled daily: %d %v", n, err)
 	}
-	if s := session(staleWork); s.State != "running" {
+	if s := session(staleWork); s.State == "finished" {
 		t.Fatalf("disabled daily closed: %+v", s)
 	}
 
@@ -145,6 +147,9 @@ func TestWorkSweepIntegration(t *testing.T) {
 	}
 	if s := session(liveWork); s.State != "running" {
 		t.Fatalf("live delegation record was closed: %+v", s)
+	}
+	if n := scalarInt(t, f.pool, `SELECT count(*) FROM work_session WHERE id=$1 AND hold IS NOT NULL`, staleWork); n != 0 {
+		t.Fatal("swept record kept its approval hold")
 	}
 	if n := scalarInt(t, f.pool, `SELECT count(*) FROM agent_run WHERE work_session_id=$1 AND status='abandoned'`, staleWork); n != 1 {
 		t.Fatalf("abandoned run for the agent record: %d", n)

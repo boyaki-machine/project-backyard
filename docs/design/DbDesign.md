@@ -2485,6 +2485,28 @@ CREATE INDEX idx_notification_read_at   ON notification (read_at)      WHERE rea
 | 種類（`kind`） | 使い手 | 宛先 | 遷移先 | 取り下げ |
 |---|---|---|---|---|
 | `delegation.confirmation` | 自律実行の確認待ち（`Delegation.md` 8.2。checkpoint の要約を含む） | 委任を作った人（`delegation.created_by`） | 委任の根のユーザ確認待ち `/p/<キー>/tickets/<番号>#confirmations` | 回答・委任の取り下げ・受け入れで取り下げる。`subject_key` は `delegation_confirmation:<確認待ちの ID>` |
+## 6.34 承認待ちの保留（0070）
+
+**エージェントのクライアントが人に承認を求めている間、作業記録を止めておく**（`Design.md` 8.5.7）。
+クライアントのフックが PB に知らせる（`ApiDesign.md`「共通作業タイマー」の `work-hold`）。
+
+```sql
+-- 0070_work_hold.sql
+-- +goose Up
+ALTER TABLE work_session
+  ADD COLUMN hold text CHECK (hold IN ('approval')),
+  ADD COLUMN hold_ms bigint NOT NULL DEFAULT 0 CHECK (hold_ms >= 0);
+```
+
+- **`hold` はフックが止めた印である。** 止めた記録は `state = 'waiting'` で、`hold = 'approval'` を持つ。
+  人の返答待ちでエージェントが明示的に止めた記録は `hold` を持たず、**フックはそれを再開しない**
+- **`hold_ms` は承認待ちの累計で、`waiting_ms` の内訳である。** 作業時間（`active_ms`）には入らない。
+  作業記録の欄が「うち承認待ち」として出し、除いた区間が後から読めるようにする
+- **保留中の記録に明示的な操作（待機・再開・終了・放棄）が来たら、先に保留を解く。** 承認を求めていたのが
+  その操作そのものである場合があり、保留のまま適用すると「実行中の作業だけ待機できます」で落ちる。
+  解いた時点までを `hold_ms` に数える
+- **状態との組を CHECK にしない。** 終了や片付け（6章「共通作業記録」）が保留を解き忘れても、記録を閉じる操作を
+  拒まない。解き忘れた `hold` は、終了した記録では意味を持たない
 
 # 7. 初期データ（0010）
 
