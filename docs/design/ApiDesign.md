@@ -1368,7 +1368,9 @@ OS の既定信頼ストアへ追加する。ZIP の `PB-README.md` は、証明
 - **Claude Code**：`files[]` の2枚目に `.claude/settings.local.json`（`merge`）を出す。HTTP フックを
   `PermissionRequest` / `PostToolUse` / `PostToolUseFailure` / `UserPromptSubmit` の4つに置き、`headers` の
   `Authorization` を `Bearer ${<token_env_name>}`、`allowedEnvVars` をその変数1つにする。**トークンの変数名がエージェント
-  ごとに違うので、コミットする `.claude/settings.json`（5.7.1）ではなく、手元だけのファイルに置く**
+  ごとに違うので、コミットする `.claude/settings.json`（5.7.1）ではなく、手元だけのファイルに置く**。
+  **HTTP のフックを知らない古い版は黙って飛ばす**（実機で、2.1.50 では走らず 2.1.173 では走った）。手引きに更新を促す1行を入れる。
+  **`claude -p`（非対話）では、承認を求めずに拒む呼び出しで `PermissionRequest` が走らない**（2.1.173）——非対話では承認待ちが生じないので害は無い
 - **Codex**：HTTP のフックが無いので、**`pb-wait` を同梱したとき（4.5.8.1c）だけ**、`.codex/config.toml` に
   `pb-wait hook --hold-url <宛先> --token-env <変数名>` を呼ぶコマンドフックを `PermissionRequest` / `PostToolUse` /
   `UserPromptSubmit` の3つに足す（Codex には `PostToolUseFailure` が無い）。**Codex は人が `/hooks` で信頼するまで走らせない**
