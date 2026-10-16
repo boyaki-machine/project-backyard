@@ -8,11 +8,14 @@
 
 -- CreateDelegation は委任を1件作る（Delegation.md 4.4）。
 -- **終了していない委任は根ごとに1件**（uq_delegation_root_active。0058）。
+-- **created_at はアプリから受け取る。** 予算（GetDelegationBudgetUsage）は
+-- agent_run.started_at（アプリの時計）と比べて「委任より後の実行」を選ぶので、
+-- DB の now() で付けると2つの時計のずれだけ境目が動く（agent_monitor.sql の解除と同じ）。
 -- name: CreateDelegation :exec
 INSERT INTO delegation
-  (id, project_id, root_ticket_id, main_actor_id, evaluator_actor_id, scope, created_by)
+  (id, project_id, root_ticket_id, main_actor_id, evaluator_actor_id, scope, created_by, created_at, updated_at)
 VALUES
-  (@id, @project_id, @root_ticket_id, @main_actor_id, @evaluator_actor_id, @scope, @created_by);
+  (@id, @project_id, @root_ticket_id, @main_actor_id, @evaluator_actor_id, @scope, @created_by, @created_at, @created_at);
 
 -- GetDelegationByID は作成直後の応答の組み立てに使う。
 -- name: GetDelegationByID :one

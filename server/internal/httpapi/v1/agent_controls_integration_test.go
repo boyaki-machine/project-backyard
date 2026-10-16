@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
@@ -156,9 +157,18 @@ func TestAgentMonitorIntegration(t *testing.T) {
 	if rec.Code != 422 {
 		t.Fatalf("empty reset reason: %d", rec.Code)
 	}
+	beforeReset := time.Now().Truncate(time.Microsecond)
 	rec = postWithCookie(f.r, "/api/v1/me/agents/"+a.ID+"/monitor", f.ownerSession, `{"reason":"reviewed failures"}`)
 	if rec.Code != 200 {
 		t.Fatal(rec.Body.String())
+	}
+	// The reset is compared with attempt starts, which carry the server clock, so it must carry that clock too.
+	var resetAt time.Time
+	if e := f.pool.QueryRow(ctx, `SELECT reset_at FROM agent_monitor_reset WHERE actor_id=$1`, a.ID).Scan(&resetAt); e != nil {
+		t.Fatal(e)
+	}
+	if resetAt.Before(beforeReset) || resetAt.After(time.Now()) {
+		t.Fatalf("reset_at=%s is not on the server clock (request started %s)", resetAt, beforeReset)
 	}
 	rec = bearerPost(f.r, path, token.Token, `{"request_id":"after-reset"}`)
 	if rec.Code != 200 {
@@ -234,7 +244,9 @@ func TestAgentMonitorIntegration(t *testing.T) {
 	if rec.Code != 204 {
 		t.Fatalf("manager attributes: %d %s", rec.Code, rec.Body.String())
 	}
-	rec = getWithCookie(f.r, f.base+"/agent-usage?from_date=2026-10-01&to_date=2026-10-31", f.ownerSession)
+	// A day either side covers the project time zone without depending on the month the test runs in.
+	now := time.Now()
+	rec = getWithCookie(f.r, f.base+"/agent-usage?from_date="+now.AddDate(0, 0, -1).Format(time.DateOnly)+"&to_date="+now.AddDate(0, 0, 1).Format(time.DateOnly), f.ownerSession)
 	if rec.Code != 200 {
 		t.Fatalf("usage: %d %s", rec.Code, rec.Body.String())
 	}

@@ -2072,6 +2072,10 @@ ON CONFLICT (key) DO UPDATE
 要る。pb-249）の細分はまだ無い——`planning` / `paused` / `ended` はひとまとめに
 「main は書けない」として扱い、`approved` だけを許す。
 
+**`created_at` はサーバの時計で付ける**（列の `DEFAULT now()` に頼らず、作成時に値を渡す）。
+予算（`Delegation.md` 12.1）は `agent_run.started_at`（サーバの時計）と比べて委任より後の実行を
+数えるので、DB の時計で付けると、2つの時計のずれだけ境目が動く。
+
 ## 6.25 計画の版（0051）
 
 **正本は `Delegation.md` 6章・12.2。** pb-247。D3：骨格（根の直下の枝・予算配分・
@@ -3971,4 +3975,4 @@ agent.manageはプロジェクト所属エージェントの一覧・停止を�
 
 ### 実行の明示状態と失敗監視
 
-共通作業記録work_sessionのoutcomeはcompleted・failed・abandonedまたはNULLを持つ。NULLは未判定であり、partial/blockedや過去の記録を失敗と推測しない。開始ごとにagent_attemptへ監視用の記録を作り、終了結果を保存する。作業明細の整理後も試行履歴は保持する。解除区間はagent_monitor_resetでPJ・エージェントごとに保持し、理由と操作者を監査する。failed/abandonedの終了はagent_runにも明示状態を保存し、時刻・モデル・既知のコストだけを写す。retry_countは提出由来の従来の意味を変えない。
+共通作業記録work_sessionのoutcomeはcompleted・failed・abandonedまたはNULLを持つ。NULLは未判定であり、partial/blockedや過去の記録を失敗と推測しない。開始ごとにagent_attemptへ監視用の記録を作り、終了結果を保存する。作業明細の整理後も試行履歴は保持する。解除区間はagent_monitor_resetでPJ・エージェントごとに保持し、理由と操作者を監査する。解除の時刻reset_atは、比べる相手のagent_attempt.started_atと同じくサーバの時計で付ける（DBのnow()に頼らない。時計のずれだけ解除前の失敗が解除後に数えられるため）。failed/abandonedの終了はagent_runにも明示状態を保存し、時刻・モデル・既知のコストだけを写す。retry_countは提出由来の従来の意味を変えない。

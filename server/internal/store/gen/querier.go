@@ -339,6 +339,9 @@ type Querier interface {
 	// （9.5.2 の parent_cycle 検出と同じ再帰）。ここで重ねて同じ CTE を書かない。
 	// CreateDelegation は委任を1件作る（Delegation.md 4.4）。
 	// **終了していない委任は根ごとに1件**（uq_delegation_root_active。0058）。
+	// **created_at はアプリから受け取る。** 予算（GetDelegationBudgetUsage）は
+	// agent_run.started_at（アプリの時計）と比べて「委任より後の実行」を選ぶので、
+	// DB の now() で付けると2つの時計のずれだけ境目が動く（agent_monitor.sql の解除と同じ）。
 	CreateDelegation(ctx context.Context, arg CreateDelegationParams) error
 	// CreateDelegationHandoff は引き継ぎノートを1件作る（11.1）。
 	CreateDelegationHandoff(ctx context.Context, arg CreateDelegationHandoffParams) error
@@ -2070,6 +2073,9 @@ type Querier interface {
 	// pb-248）。**decided_by は呼び出し元ではなく PB 自身**——AcceptDelegationPlan
 	// と同じ理由で、不合格にしたのは main でも PM でもなく評価の結果である。
 	RejectDelegationPlan(ctx context.Context, id string) (int64, error)
+	// ResetAgentMonitor は解除の時刻をアプリから受け取る。**DB の now() を使わない。**
+	// ListAgentAttempts が比べる agent_attempt.started_at はアプリの時計で付くので、
+	// 解除だけ DB の時計で付けると、2つの時計のずれだけ解除前の失敗が解除後に数えられる。
 	ResetAgentMonitor(ctx context.Context, arg ResetAgentMonitorParams) error
 	// ResetLocalCredential は 6.6 の更新を1文で行う。
 	//

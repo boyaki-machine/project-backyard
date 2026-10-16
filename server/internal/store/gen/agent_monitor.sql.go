@@ -179,18 +179,27 @@ func (q *Queries) ReassignAgentAttempts(ctx context.Context, arg ReassignAgentAt
 }
 
 const resetAgentMonitor = `-- name: ResetAgentMonitor :exec
-INSERT INTO agent_monitor_reset(project_id,actor_id,reason) VALUES($1,$2,$3)
-ON CONFLICT(project_id,actor_id) DO UPDATE SET reset_at=now(),reason=excluded.reason
+INSERT INTO agent_monitor_reset(project_id,actor_id,reason,reset_at) VALUES($1,$2,$3,$4)
+ON CONFLICT(project_id,actor_id) DO UPDATE SET reset_at=excluded.reset_at,reason=excluded.reason
 `
 
 type ResetAgentMonitorParams struct {
 	ProjectID string
 	ActorID   string
 	Reason    string
+	ResetAt   time.Time
 }
 
+// ResetAgentMonitor は解除の時刻をアプリから受け取る。**DB の now() を使わない。**
+// ListAgentAttempts が比べる agent_attempt.started_at はアプリの時計で付くので、
+// 解除だけ DB の時計で付けると、2つの時計のずれだけ解除前の失敗が解除後に数えられる。
 func (q *Queries) ResetAgentMonitor(ctx context.Context, arg ResetAgentMonitorParams) error {
-	_, err := q.db.Exec(ctx, resetAgentMonitor, arg.ProjectID, arg.ActorID, arg.Reason)
+	_, err := q.db.Exec(ctx, resetAgentMonitor,
+		arg.ProjectID,
+		arg.ActorID,
+		arg.Reason,
+		arg.ResetAt,
+	)
 	return err
 }
 
