@@ -7400,6 +7400,67 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/admin/work-sweep:
+    get:
+      tags: [settings]
+      summary: 作業記録の浮きを数える
+      operationId: getWorkSweep
+      description: |
+        閉じられないまま残った作業記録（浮き）を全プロジェクトから数える（ApiDesign.md 11.14、GuiDesign.md 5.12.3）。
+        **必要権限は `system.settings`。** 何も変えない。
+      responses:
+        '200':
+          description: 浮きの一覧と、直近の片付けの実行。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkSweep'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [settings]
+      summary: 作業記録の浮きを閉じる
+      operationId: runWorkSweep
+      description: |
+        渡された記録のうち、**閉じる直前に判定し直して**まだ浮きに当たるものだけを、
+        `abandon` と同じ扱いで閉じる（ApiDesign.md 11.14）。監査ログ `work.sweep` を1行残す。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [work_ids]
+              properties:
+                work_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: {type: string}
+                  description: GET で見せた記録の ID。
+      responses:
+        '200':
+          description: 閉じた結果と、閉じたあとの浮きの一覧。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkSweepResult'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/admin/backup.tar.gz:
     get:
       tags: [settings]
@@ -11877,6 +11938,62 @@ components:
             **鍵そのものは返さない。** 画面が代償を出すために要る——**生成した鍵は DB に
             あるので、`pg_dump` に鍵と暗号文の両方が入る。**
 
+    WorkSweep:
+      type: object
+      required: [threshold_hours, checked_at, items, last_run]
+      description: ApiDesign.md 11.14。
+      properties:
+        threshold_hours:
+          type: integer
+          description: 設定 `work_stale_hours` の実効値。0 なら時間では判定しない。
+        checked_at:
+          type: integer
+          format: int64
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkSweepItem'
+        last_run:
+          type: object
+          nullable: true
+          required: [ran_at, trigger, actor_label, closed_count]
+          properties:
+            ran_at: {type: integer, format: int64}
+            trigger: {type: string, enum: [daily, manual]}
+            actor_label: {type: string, nullable: true}
+            closed_count: {type: integer}
+    WorkSweepItem:
+      type: object
+      required: [work_id, project_key, project_name, ticket_seq, ticket_title, actor, state, started_at, last_active_at, reason]
+      properties:
+        work_id: {type: string}
+        project_key: {type: string}
+        project_name: {type: string}
+        ticket_seq: {type: integer}
+        ticket_title: {type: string}
+        actor:
+          type: object
+          required: [id, display_name, kind]
+          properties:
+            id: {type: string}
+            display_name: {type: string}
+            kind: {type: string, enum: [user, agent, system]}
+        state: {type: string, enum: [running, waiting]}
+        started_at: {type: integer, format: int64}
+        last_active_at: {type: integer, format: int64}
+        reason:
+          type: string
+          enum: [ticket_closed, stale]
+    WorkSweepResult:
+      allOf:
+        - $ref: '#/components/schemas/WorkSweep'
+        - type: object
+          required: [closed_ids, skipped_count]
+          properties:
+            closed_ids:
+              type: array
+              items: {type: string}
+            skipped_count: {type: integer}
     DatabaseStatus:
       type: object
       required:
