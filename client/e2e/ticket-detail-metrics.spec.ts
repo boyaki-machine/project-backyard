@@ -29,7 +29,7 @@ async function mockTicket(page: Page, locale: 'ja' | 'en') {
     if (path === '/api/v1/me') return reply(route, {
       actor: { ...actor, locale }, permissions: [],
       projects: [{ key: 'demo', name: 'Demo', role: 'project_admin', permissions: ['project.view', 'ticket.view', 'ticket.edit', 'ticket.actual_point.edit'] }],
-      expires_at: 4070908800000,
+      features: { delegation: true }, expires_at: 4070908800000,
     })
     if (path === '/api/v1/projects/demo') return reply(route, {
       key: 'demo', name: 'Demo', members: [], workflow: { statuses: [status] },

@@ -23,6 +23,7 @@ import type { AgentConnect } from '../api/agentSetup'
 import { ApiError } from '../api/client'
 import { copySecret, type CopyState } from '../lib/clipboard'
 import { renderMarkdown } from '../lib/markdown'
+import { useAuthStore } from '../stores/auth'
 
 const props = defineProps<{
   /** 対象のエージェント（`ApiDesign.md` 4.5.1 の id） */
@@ -73,8 +74,14 @@ const isCodex = computed(() => setup.value?.agent.client_kind === 'codex')
 /** 待ち受けの道具 pb-wait を zip に同梱できる種別（`ApiDesign.md` 4.5.8.1c。pb-348） */
 const WAIT_KINDS = ['claude_code', 'codex']
 const canBundleWait = computed(() => WAIT_KINDS.includes(setup.value?.agent.client_kind ?? ''))
-/** OS・CPU の選択を出すか。ブリッジでは必須、直接接続では pb-wait の同梱のために任意 */
-const showPlatform = computed(() => transport.value === 'bridge' || canBundleWait.value)
+const auth = useAuthStore()
+/**
+ * OS・CPU の選択を出すか。ブリッジでは必須、直接接続では pb-wait の同梱のために任意。
+ * **直接接続での案内は自律実行のためなので、自律実行が無効なら出さない**（Delegation.md 1.3。pb-353）
+ */
+const showPlatform = computed(
+  () => transport.value === 'bridge' || (canBundleWait.value && auth.delegationEnabled),
+)
 
 const bridgeArchOptions = computed(() => {
   if (bridgeOS.value === 'darwin') return [{ value: 'arm64', label: 'Apple Silicon (ARM64)' }]

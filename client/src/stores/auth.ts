@@ -41,6 +41,13 @@ export const useAuthStore = defineStore('auth', () => {
   const isAdministrator = computed(() => actor.value?.system_role === 'administrator')
 
   /**
+   * 自律実行が有効か（`ApiDesign.md` 4.1 の `features.delegation`。`Delegation.md` 1.3）。
+   * **無効なら、自律実行の入口を出さない**（`GuiDesign.md` 5.5「自律実行」）。
+   * 返らない（古いサーバ）ときは無効とみなす——既定が無効だからである。
+   */
+  const delegationEnabled = computed(() => session.value?.features?.delegation === true)
+
+  /**
    * 要パスワード変更か（`ApiDesign.md` 3.1）。
    *
    * 立っている間はルーターガードが `/me` から出さない（`GuiDesign.md` 5.8）。
@@ -223,6 +230,7 @@ export const useAuthStore = defineStore('auth', () => {
     permissions,
     projects,
     isAdministrator,
+    delegationEnabled,
     mustChangePassword,
     projectByKey,
     can,

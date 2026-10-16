@@ -4,6 +4,13 @@ import { expect, test } from '@playwright/test'
 // 評価エージェントの権限（delegation.evaluate）を、発行モーダルから付けられる（pb-288）。
 // サーバは許可リストに持っていたが、画面に選択肢が無く、評価役を用意できなかった。
 test('token issue dialog grants delegation.evaluate only when checked', async ({ page }) => {
+  // 「自律実行の評価を許す」は自律実行が有効なときだけ出る（Delegation.md 1.3。pb-353）。
+  // サーバの設定を変えずに、GET /me の features だけを有効にして見る
+  await page.route('**/api/v1/me', async (route) => {
+    const response = await route.fetch()
+    const json = await response.json()
+    await route.fulfill({ response, json: { ...json, features: { delegation: true } } })
+  })
   await page.goto('/login')
   await page.locator('input[name="email"]').fill(process.env.PB_E2E_EMAIL!)
   await page.locator('input[name="password"]').fill(process.env.PB_E2E_PASSWORD!)

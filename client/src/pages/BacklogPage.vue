@@ -2595,7 +2595,7 @@ watch(projectKey, (key) => {
                       </RouterLink>
                       <!-- 自律実行の印（5.4「自律実行の印」。pb-276）。タグの前に置く -->
                       <DelegationMark
-                        v-if="row.ticket.delegation"
+                        v-if="auth.delegationEnabled && row.ticket.delegation"
                         :mark="row.ticket.delegation"
                         :project-key="projectKey"
                         :shrunk="shrunk"

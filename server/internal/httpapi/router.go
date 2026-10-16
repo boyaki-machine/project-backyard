@@ -247,7 +247,12 @@ func mountMCP(r chi.Router, q gen.Querier, v1Deps v1.Deps, version string) {
 		v1.Mount(r, v1Deps)
 	})
 
-	h := mcp.New(internal, version).HTTP()
+	// 自律実行が無効なら、そのツールを tools/list に出さない（Delegation.md 1.3）。
+	mh := mcp.New(internal, version)
+	if v1Deps.Settings != nil {
+		mh = mh.WithDelegationGate(v1Deps.Settings.DelegationEnabled)
+	}
+	h := mh.HTTP()
 
 	// **ミドルウェアはこの1本にだけ掛ける**（r.Route で /mcp の木ごと包まない）。
 	// 包むと、/mcp 配下の**未知のパスまで認証を要求して 401 になる**——

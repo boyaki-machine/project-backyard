@@ -61,6 +61,19 @@ func (q *Queries) ApproveDelegationScope(ctx context.Context, arg ApproveDelegat
 	return result.RowsAffected(), nil
 }
 
+const countUnendedDelegations = `-- name: CountUnendedDelegations :one
+SELECT count(*) FROM delegation WHERE status <> 'ended'
+`
+
+// CountUnendedDelegations はサーバ全体で終了していない委任を数える。
+// 自律実行を無効にする前に見る（ApiDesign.md 11.2。Delegation.md 1.3）。
+func (q *Queries) CountUnendedDelegations(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countUnendedDelegations)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDelegation = `-- name: CreateDelegation :exec
 
 INSERT INTO delegation

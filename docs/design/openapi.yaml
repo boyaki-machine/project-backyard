@@ -7202,6 +7202,8 @@ paths:
             その設定はファイルか環境変数で固定されている、または第1層のため
             画面から変更できない（`conflict`）。`message` に環境変数名または
             設定ファイルのキーを含める。
+            また、終了していない委任があるのに `delegation_enabled` を無効にしようとした
+            （`message` に件数を含める。Delegation.md 1.3）。
           content:
             application/json:
               schema:
@@ -8413,7 +8415,7 @@ components:
       description: |
         `POST /auth/login` と `GET /me` が返す共通の本体。**片方だけ形を変えない。**
       type: object
-      required: [actor, permissions, projects, expires_at]
+      required: [actor, permissions, projects, features, expires_at]
       properties:
         actor:
           $ref: '#/components/schemas/Actor'
@@ -8428,6 +8430,17 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SessionProject'
+        features:
+          description: |
+            成熟途上の機能が有効か（ApiDesign.md 4.1。Design.md 10.3）。設定 API は
+            `system.settings` が要るので、画面が入口を出し分ける材料をここに載せる。
+          type: object
+          required: [delegation]
+          properties:
+            delegation:
+              description: 自律実行が有効か（設定 `delegation_enabled` の実効値。Delegation.md 1.3）。
+              type: boolean
+          additionalProperties: false
         expires_at:
           description: 現在のトークンの有効期限。無期限の API トークンでは null。
           type: [integer, 'null']

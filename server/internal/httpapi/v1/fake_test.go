@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
+	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
@@ -79,6 +80,9 @@ type appSettingFakeState struct {
 
 	upserted []gen.UpsertAppSettingParams
 	deleted  []string
+
+	// unendedDelegations は CountUnendedDelegations が返す件数（pb-353）。
+	unendedDelegations int64
 
 	// 未確認の設定変更（ApiDesign.md 11.8）。
 	//
@@ -982,6 +986,12 @@ func newFake(t *testing.T) *fakeQuerier {
 // routerWithDeps は v1.Mount を通した実際のルータを返す。
 // ルート定義（Design.md 6.4.4）ごと検証したいので、ハンドラを直接呼ばない。
 func routerWithDeps(deps Deps) http.Handler {
+	// **設定を渡さないテストでは、自律実行を有効にしておく**（pb-353）。製品の既定は
+	// 無効だが、自律実行の既存のテストは有効を前提に書かれている。無効の振る舞いは
+	// 設定を明示して確かめる（feature_delegation_test.go）。
+	if deps.Settings == nil {
+		deps.Settings = config.LiveWith(config.Row{Key: config.KeyDelegationEnabled, Value: "true"})
+	}
 	r := chi.NewRouter()
 	r.Route("/api/v1", func(r chi.Router) {
 		Mount(r, deps)
@@ -3326,6 +3336,10 @@ func (q *fakeQuerier) GetAgentRuntimeInfo(
 }
 
 // ── アプリケーション設定（ApiDesign.md 11章）──────────────
+
+func (q *fakeQuerier) CountUnendedDelegations(ctx context.Context) (int64, error) {
+	return q.settings.unendedDelegations, nil
+}
 
 func (q *fakeQuerier) ListAppSettings(ctx context.Context) ([]gen.ListAppSettingsRow, error) {
 	if q.settings.err != nil {

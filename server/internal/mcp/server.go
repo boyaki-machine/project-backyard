@@ -23,6 +23,35 @@ type Handler struct {
 	version string
 	// tools はツール定義。**tools/list の並びは SDK が名前の順に並べ替える**（pb-258）。
 	tools []tool
+	// delegationEnabled は自律実行が有効か（Delegation.md 1.3）。nil なら有効とみなす
+	// （設定を持たない単体テストの既定）。
+	delegationEnabled func() bool
+}
+
+// delegationToolNames は自律実行のためだけのツール。**自律実行が無効なら tools/list に
+// 出さない**（Delegation.md 1.3）——無効でも REST が 403 で拒むが、使えない道具を
+// 並べるとエージェントが呼んで空振りする。
+var delegationToolNames = map[string]bool{
+	"pb_submit_plan":        true,
+	"pb_submit_evaluation":  true,
+	"pb_raise_confirmation": true,
+	"pb_update_handoff":     true,
+	"pb_record_metric":      true,
+}
+
+// WithDelegationGate は自律実行が有効かを返す関数を渡す。要求ごとに読むので、
+// 画面から切り替えたら次の接続から効く。
+func (h *Handler) WithDelegationGate(enabled func() bool) *Handler {
+	h.delegationEnabled = enabled
+	return h
+}
+
+// toolVisible はこの要求で tools/list に出すかを返す。
+func (h *Handler) toolVisible(name string) bool {
+	if !delegationToolNames[name] || h.delegationEnabled == nil {
+		return true
+	}
+	return h.delegationEnabled()
 }
 
 // New はハンドラを作る。
