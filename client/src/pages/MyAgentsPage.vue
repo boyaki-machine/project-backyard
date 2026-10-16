@@ -36,6 +36,7 @@ import type { ActionItem } from '../components/UserActionsMenu.vue'
 import { clientKindLabel } from '../lib/agents'
 import type { AgentClientKind, AgentScopes } from '../api/me'
 import { formatDate, formatDateTime } from '../lib/datetime'
+import { useAuthStore } from '../stores/auth'
 
 /** 有効期限の選択肢（`GuiDesign.md` 5.8.1 と同じ3つ。値域は 1〜365） */
 const EXPIRY_CHOICES = [30, 90, 365] as const
@@ -57,6 +58,8 @@ const clientKinds = ref<AgentClientKind[]>([])
  * 既定を失ったトークンが出る——`scopes` は絶対指定である（4.5.3）。
  */
 const agentScopes = ref<AgentScopes | null>(null)
+/** 自律実行が無効なら「自律実行の評価を許す」を出さない（Delegation.md 1.3。pb-353） */
+const auth = useAuthStore()
 
 const items = ref<MyAgent[]>([])
 const loading = ref(false)
@@ -665,7 +668,8 @@ function subtitle(agent: MyAgent): string {
             <input v-model="allowPlanEdit" type="checkbox" :disabled="issuing || !canAllowPlanEdit" />
             <span>{{ $ui('依存・順序・日程の変更を許す') }}</span>
           </label>
-          <label class="check">
+          <!-- 自律実行が無効なら出さない（Delegation.md 1.3。pb-353） -->
+          <label v-if="auth.delegationEnabled" class="check">
             <input v-model="allowEvaluate" type="checkbox" :disabled="issuing || !canAllowEvaluate" />
             <span>{{ $ui('自律実行の評価を許す') }}</span>
           </label>

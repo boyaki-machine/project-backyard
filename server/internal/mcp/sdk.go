@@ -72,6 +72,9 @@ func (h *Handler) serverFor(r *http.Request) *sdk.Server {
 	key := chi.URLParam(r, middleware.ProjectKeyURLParam)
 	for i := range h.tools {
 		t := &h.tools[i]
+		if !h.toolVisible(t.Name) {
+			continue
+		}
 		s.AddTool(&sdk.Tool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema},
 			func(ctx context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
 				if key == "" {

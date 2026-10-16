@@ -25,7 +25,7 @@ async function mockApi(page: Page, kind: string, label: string, setupRequests: s
     const path = url.pathname
     if (path === '/api/v1/me') return reply(route, {
       actor, permissions: [], projects: [{ key: 'demo', name: 'Demo', role: 'project_admin', permissions: ['project.view'] }],
-      expires_at: 4070908800000,
+      features: { delegation: true }, expires_at: 4070908800000,
     })
     if (path === '/api/v1/me/agents') return reply(route, { items: [{
       id: agentID, display_name: `My ${label}`, client_kind: kind, model_name: null,

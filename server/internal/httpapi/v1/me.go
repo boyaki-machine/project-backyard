@@ -60,8 +60,17 @@ type sessionView struct {
 	Permissions []string `json:"permissions"`
 	// Projects は所属プロジェクトと、そこでの実効権限。
 	Projects []projectView `json:"projects"`
+	// Features は成熟途上の機能が有効か（ApiDesign.md 4.1）。設定 API は
+	// system.settings が要るので、画面が入口を出し分ける材料をここに載せる。
+	Features featuresView `json:"features"`
 	// ExpiresAt は現在のトークンの有効期限。無期限のAPIトークンでは null。
 	ExpiresAt *Time `json:"expires_at"`
+}
+
+// featuresView は応答の features（ApiDesign.md 4.1。Design.md 10.3）。
+type featuresView struct {
+	// Delegation は設定 delegation_enabled の実効値（Delegation.md 1.3）。
+	Delegation bool `json:"delegation"`
 }
 
 // profile は sessionView を組み立てるための素材。
@@ -251,6 +260,7 @@ func (h *handler) buildSessionView(
 		},
 		Permissions: systemPerms,
 		Projects:    projects,
+		Features:    featuresView{Delegation: h.settings != nil && h.settings.DelegationEnabled()},
 		ExpiresAt:   apiTime(expiresAt),
 	}, nil
 }

@@ -146,6 +146,31 @@ func TestDelegationIntegration(t *testing.T) {
 		}
 	})
 
+	// **終了していない委任があれば、自律実行の無効化は 409**（ApiDesign.md 11.2。pb-353）。
+	// CountUnendedDelegations（queries/delegation.sql）を実 DB で通す。r の設定は
+	// routerWithDeps が有効にしたもの。拒むので DB の設定は書き換わらない。
+	t.Run("委任が終了していなければ無効化は409", func(t *testing.T) {
+		// dev と同じ DB なので、行の有無ではなく前後で変わらないことを見る。
+		settingRow := func() string {
+			var v string
+			err := pool.QueryRow(ctx,
+				`SELECT coalesce((SELECT value FROM app_setting WHERE key = 'delegation_enabled'), '(なし)')`).Scan(&v)
+			if err != nil {
+				t.Fatalf("app_setting を読めない: %v", err)
+			}
+			return v
+		}
+		before := settingRow()
+		rec := putWithCookie(r, "/api/v1/admin/settings", session,
+			`{"items":[{"key":"delegation_enabled","value":"false"}]}`)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409（body=%s）", rec.Code, rec.Body.String())
+		}
+		if after := settingRow(); after != before {
+			t.Errorf("拒んだのに delegation_enabled が %s → %s に変わった", before, after)
+		}
+	})
+
 	// ── 12.2：main は計画中のあいだ木の中にも起票できない ──────────
 	t.Run("main は計画中のあいだ起票できない", func(t *testing.T) {
 		rec := bearerPost(r, base+"/tickets", mainToken.Token,

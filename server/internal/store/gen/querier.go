@@ -251,6 +251,9 @@ type Querier interface {
 	// CountTimelineTickets は版に写すチケットの件数。5,000件を超えれば保存を拒む（9.17.3）。
 	// 条件は ListTickets の view=timeline（絞り込みなし）と同じ。
 	CountTimelineTickets(ctx context.Context, arg CountTimelineTicketsParams) (int32, error)
+	// CountUnendedDelegations はサーバ全体で終了していない委任を数える。
+	// 自律実行を無効にする前に見る（ApiDesign.md 11.2。Delegation.md 1.3）。
+	CountUnendedDelegations(ctx context.Context) (int64, error)
 	// ── リカバリコード ──────────────────────────────────────
 	// CountUnusedRecoveryCodes は残数（ApiDesign.md 4.6.1）。
 	CountUnusedRecoveryCodes(ctx context.Context, userID string) (int64, error)

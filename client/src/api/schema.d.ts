@@ -5411,6 +5411,14 @@ export interface components {
             /** @description 所属プロジェクトと、そこでの実効権限。`key` の昇順。 */
             projects: components["schemas"]["SessionProject"][];
             /**
+             * @description 成熟途上の機能が有効か（ApiDesign.md 4.1。Design.md 10.3）。設定 API は
+             *     `system.settings` が要るので、画面が入口を出し分ける材料をここに載せる。
+             */
+            features: {
+                /** @description 自律実行が有効か（設定 `delegation_enabled` の実効値。Delegation.md 1.3）。 */
+                delegation: boolean;
+            };
+            /**
              * Format: int64
              * @description 現在のトークンの有効期限。無期限の API トークンでは null。
              */
@@ -16515,6 +16523,8 @@ export interface operations {
              * @description その設定はファイルか環境変数で固定されている、または第1層のため
              *     画面から変更できない（`conflict`）。`message` に環境変数名または
              *     設定ファイルのキーを含める。
+             *     また、終了していない委任があるのに `delegation_enabled` を無効にしようとした
+             *     （`message` に件数を含める。Delegation.md 1.3）。
              */
             409: {
                 headers: {

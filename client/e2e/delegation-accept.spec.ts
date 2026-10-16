@@ -33,7 +33,7 @@ const me = {
   actor: { id: 'user', kind: 'user', display_name: '検証', email: 'test@example.com', system_role: 'administrator', locale: 'ja', timezone: 'Asia/Tokyo', theme: 'light', hue: 'blue', must_change_password: false },
   permissions: [],
   projects: [{ key: 'demo', name: 'Demo', role: 'project_admin', permissions: ['project.view', 'ticket.view', 'ticket.edit', 'ticket.transition', 'ticket.close', 'delegation.manage'] }],
-  expires_at: 4070908800000,
+  features: { delegation: true }, expires_at: 4070908800000,
 }
 
 function delegationStatus(passed: boolean) {

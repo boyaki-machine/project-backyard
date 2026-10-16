@@ -35,7 +35,7 @@ async function mockBacklog(page: Page) {
     let body: unknown = { items: [] }
     if (path === '/api/v1/me') body = {
       actor: { id: 'user', kind: 'user', display_name: '検証', email: 'test@example.com', system_role: 'administrator', locale: 'ja', timezone: 'Asia/Tokyo', theme: 'light', hue: 'blue', must_change_password: false },
-      permissions: [], projects: [{ key: 'demo', name: 'Demo', role: 'project_admin', permissions: ['project.view', 'ticket.view'] }], expires_at: 4070908800000 }
+      permissions: [], projects: [{ key: 'demo', name: 'Demo', role: 'project_admin', permissions: ['project.view', 'ticket.view'] }], features: { delegation: true }, expires_at: 4070908800000 }
     if (path === '/api/v1/projects/demo') body = { key: 'demo', name: 'Demo', timezone: 'Asia/Tokyo', members: [], workflow: { statuses: [status] } }
     if (path.endsWith('/tickets')) body = { items: rows, total: rows.length, page: 1, per_page: 200, total_pages: 1 }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })

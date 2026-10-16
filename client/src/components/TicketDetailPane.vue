@@ -241,6 +241,11 @@ async function load(): Promise<void> {
 
 // ── 自律実行（5.5「自律実行」。pb-252）────────────────────────────
 
+/**
+ * 自律実行が機能として有効か（Delegation.md 1.3。pb-353）。**無効なら、この節のものを
+ * 何も出さず、委任の状態も読まない**（GuiDesign.md 5.5「自律実行」）
+ */
+const delegationOn = computed(() => auth.delegationEnabled)
 /** 実行モードが自律実行（始めた後）か */
 const delegated = computed(() => ticket.value?.execution_mode === 'delegated')
 /**
@@ -261,7 +266,7 @@ const canChooseDelegation = computed(() => canManageDelegation.value && delegati
 const delegation = useDelegationStatus(
   computed(() => props.projectKey),
   computed(() => props.seq),
-  delegated,
+  computed(() => delegationOn.value && delegated.value),
 )
 /**
  * 親を持つチケットが、どこかの自律実行の木の中にあるか（5.5「自律実行の中」。pb-276）。
@@ -270,7 +275,7 @@ const delegation = useDelegationStatus(
 const inTree = useDelegationStatus(
   computed(() => props.projectKey),
   computed(() => props.seq),
-  computed(() => !!ticket.value?.parent && !delegated.value),
+  computed(() => delegationOn.value && !!ticket.value?.parent && !delegated.value),
 )
 const treeInfo = computed(() => {
   const s = inTree.status.value
@@ -1871,7 +1876,7 @@ defineExpose({
                 <option v-for="m in executionModeOptions" :key="m" :value="m">
                   {{ executionModeLabels[m] }}
                 </option>
-                <option value="delegated" :disabled="!canChooseDelegation">
+                <option v-if="delegationOn" value="delegated" :disabled="!canChooseDelegation">
                   {{ executionModeLabels.delegated }}{{
                     canChooseDelegation
                       ? ''
@@ -1899,7 +1904,7 @@ defineExpose({
           </div>
 
           <!-- 自律実行の項目（5.5「自律実行」）。実行モードの下に開く -->
-          <div v-if="delegated || delegationSetupOpen" class="meta-item wide delegation-item">
+          <div v-if="delegationOn && (delegated || delegationSetupOpen)" class="meta-item wide delegation-item">
             <dt class="visually-hidden">{{ $ui('自律実行') }}</dt>
             <dd>
               <DelegationPanel
@@ -2245,7 +2250,7 @@ defineExpose({
 
         <!-- ユーザ確認待ち（5.5「自律実行」）。人の対応が要るものだけ。無ければ出さない -->
         <DelegationConfirmations
-          v-if="delegated"
+          v-if="delegationOn && delegated"
           :project-key="projectKey"
           :seq="seq"
           :status="delegation.status.value"

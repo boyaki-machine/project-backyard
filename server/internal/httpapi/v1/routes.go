@@ -530,25 +530,30 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).
 			Post("/projects/{key}/tickets/{seq}/reports", h.submitTicketReport)
 
+		// **自律実行の書き込みは、機能が有効なときだけ通す**（Delegation.md 1.3。pb-353）。
+		// 権限より先に置く——無効なら、権限の有無にかかわらず同じ文面で拒む。
+		// 読み取り（delegation-status・plans・evaluations・summary）には掛けない。
+		delegationOn := middleware.RequireDelegationEnabled(settings)
+
 		// ── 委任（Delegation.md 4章・12.2）── pb-246 ───────────────
 		//
 		// **{seq} は委任の根**（ticket と1:1。root_ticket_id が UNIQUE）。
 		// PM のみが呼ぶ人間向けの口で、D7（Delegation.md 15章）の新設 MCP
 		// ツール5つにこれは含まれない——エージェントから見える面にしない。
-		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/delegation", h.createDelegation)
 		// 委任範囲の承認・却下（4.3・6.1）。pb-260。作成と同じく PM だけが呼ぶ。
-		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/delegation/approve", h.approveDelegation)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/delegation/reject", h.rejectDelegation)
 		// 停止・再開（4.3・8.2）。pb-253。PM だけが呼ぶ。
-		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/delegation/pause", h.pauseDelegation)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/delegation/resume", h.resumeDelegation)
 		// 取り下げ（4.3「取り下げ」）。pb-281。従来の実行モードへ戻す。PM だけが呼ぶ。
-		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/delegation/withdraw", h.withdrawDelegation)
 
 		// ── 計画の版（Delegation.md 6章・12.2）── pb-247 ───────────
@@ -556,19 +561,19 @@ func Mount(r chi.Router, deps Deps) {
 		// **submit は main が呼ぶ**（ticket.create。木の中に起票するのと同じ
 		// 権限の束——身元の確認はハンドラ内で行う。12.2 と同じ形）。
 		// **revert は PM が呼ぶ**（delegation.manage。createDelegation と同じ）。
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
 			Post("/projects/{key}/tickets/{seq}/plan", h.submitDelegationPlan)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/plan/{version}/revert", h.revertDelegationPlan)
 		// 事後の異議（6.4）。pb-275。差し戻しと同じく PM だけが呼ぶ。
-		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/plan/{version}/object", h.objectDelegationPlan)
 
 		// ── 評価（Delegation.md 7章・12.2）── pb-248 ───────────────
 		//
 		// **呼ぶのは評価エージェントだけ**（delegation.evaluate。身元の確認は
 		// ハンドラ内で行う。plan・delegation と同じ形）。
-		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.evaluate")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "delegation.evaluate")).
 			Post("/projects/{key}/tickets/{seq}/evaluation", h.submitEvaluation)
 
 		// ── 確認待ち（Delegation.md 8章・12.2）── pb-249 ───────────
@@ -576,15 +581,15 @@ func Mount(r chi.Router, deps Deps) {
 		// **立てるのは main だけ**（ticket.create。身元の確認はハンドラ内。
 		// evaluation_unable は評価エージェントが pb_submit_evaluation 経由で
 		// 内部から立てる——ここは通らない）。**答えるのは PM**（delegation.manage）。
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
 			Post("/projects/{key}/tickets/{seq}/confirmation", h.raiseConfirmation)
-		r.With(middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "delegation.manage")).
 			Post("/projects/{key}/tickets/{seq}/confirmation/{id}/answer", h.answerConfirmation)
 
 		// ── 引き継ぎノート（Delegation.md 9.3・11章・12.2）── pb-250 ─
 		//
 		// **main だけが更新する**（ticket.create。身元の確認はハンドラ内）。
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
 			Post("/projects/{key}/tickets/{seq}/handoff", h.updateHandoff)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}/delegation-status", h.getDelegationStatus)
@@ -595,7 +600,7 @@ func Mount(r chi.Router, deps Deps) {
 			Get("/projects/{key}/tickets/{seq}/evaluations", h.listDelegationEvaluations)
 		// 指標の値と周期の要約（Delegation.md 4.2・8.3）。pb-277。値を入れるのは人と main
 		// （ticket.create。身元の確認はハンドラ内——計画の提出と同じ形）。要約は全員が読む。
-		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
+		r.With(delegationOn, middleware.RequireProjectPermission(deps.Queries, "ticket.create")).
 			Post("/projects/{key}/tickets/{seq}/metrics/{metric}/values", h.recordDelegationMetric)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).
 			Get("/projects/{key}/tickets/{seq}/summary", h.getDelegationSummary)

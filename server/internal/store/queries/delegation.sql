@@ -60,6 +60,11 @@ SELECT d.id, d.root_ticket_id, d.status
 FROM delegation d
 WHERE d.project_id = @project_id AND d.status <> 'ended';
 
+-- CountUnendedDelegations はサーバ全体で終了していない委任を数える。
+-- 自律実行を無効にする前に見る（ApiDesign.md 11.2。Delegation.md 1.3）。
+-- name: CountUnendedDelegations :one
+SELECT count(*) FROM delegation WHERE status <> 'ended';
+
 -- GetTicketForDelegation は委任を作る前に、対象が根（親を持たない）かを
 -- 確かめるのに使う。
 -- name: GetTicketForDelegation :one

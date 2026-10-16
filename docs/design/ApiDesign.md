@@ -421,6 +421,7 @@ GET /healthcheck
     { "id": "01K2...", "key": "my-app", "name": "社内タスク管理の刷新",
       "role": "project_admin", "permissions": ["ticket.close", "..."] }
   ],
+  "features": { "delegation": false },
   "expires_at": 1787648592000
 }
 ```
@@ -651,6 +652,8 @@ Set-Cookie: pb_csrf=...; SameSite=Lax; Path=/; Max-Age=1209600
 全画面の起動時に呼ぶ。レスポンスは 3.1 の `200 OK` と同一構造。
 
 フロントは `auth` ストアにこの内容を保持し、`can('ticket.create')` の判定とルーターガードに用いる（`GuiDesign.md` 7.1）。
+
+**`features` は成熟途上の機能が有効かどうか**（`Design.md` 10.3「成熟途上の機能は、設定で有効にしたときだけ出す」）。`delegation` は設定 `delegation_enabled` の実効値で、`false` なら画面は自律実行の入口を出さない。**設定 API（11章）は `system.settings` が要るので、全員が読める口としてここに載せる。**
 
 **`permissions` はシステムロール由来の実効権限**、`projects[].permissions` は当該プロジェクトでの実効権限。`Design.md` 6.4.1 の式に従い、トークンスコープによる縮小を適用済みの値を返す。
 
@@ -5475,6 +5478,7 @@ GET /api/v1/projects/my-app/docs/rules/_revisions/2
 - `value_type` / `allowed` に合わない `value` → `422 validation_failed`
 - `editable` が `false` の `key` → `409 conflict`
 - `items` が空 → `422 validation_failed`
+- `delegation_enabled` を無効にする（`false` または既定へ戻す `null`）とき、終了していない委任（`delegation.status` が `ended` 以外）が1件でもある → `409 conflict`「終了していない自律実行が N 件あります。取り下げるか完了させてから無効にしてください」。**止まったまま画面から見えない委任を作らない**（`Delegation.md` 1.3）
 
 **`value` を `null` にすると行を消し、既定値へ戻す。** 「既定に戻す」ための別のエンドポイントを作らない——**設定を消すことと既定へ戻すことは同じ状態**であり（`DbDesign.md` 6.14「行が無いことが既定値である」）、経路を2本持つと片方だけが監査に残る事故を生む。
 
