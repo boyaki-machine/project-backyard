@@ -318,6 +318,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{key}/work-hold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 承認待ちで作業記録を止める・再開する（クライアントのフック）
+         * @description agent.run が必要。エージェントのクライアントのフックが叩く（DbDesign.md 6.34）。本文はフックの JSON そのままで、
+         *     `hook_event_name` だけを読む。`PermissionRequest` でそのエージェントがこの PJ で実行中の記録をすべて止め、
+         *     `PostToolUse` / `PostToolUseFailure` / `UserPromptSubmit` でフックが止めた記録だけを再開する。
+         *     それ以外のイベントと人のトークンでは何もしない。**常に 204 で本文を返さない**——Claude Code の HTTP フックは
+         *     2xx の JSON 本文を承認の判定として読むため。
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    key: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        hook_event_name?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description 受け付けた（何もしなかった場合も含む） */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -7173,6 +7227,16 @@ export interface components {
             active_ms: number;
             /** Format: int64 */
             waiting_ms: number;
+            /**
+             * @description クライアントのフックが承認待ちで止めているとき approval（DbDesign.md 6.34）
+             * @enum {string|null}
+             */
+            hold: "approval" | null;
+            /**
+             * Format: int64
+             * @description 承認待ちの累計。waiting_ms の内訳
+             */
+            hold_ms: number;
             /** Format: int64 */
             reported_active_ms: number | null;
             result: string | null;

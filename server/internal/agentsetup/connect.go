@@ -77,6 +77,9 @@ type ConnectParams struct {
 	// （WaitKinds の種別だけ）。名前は最初の使い手（ブリッジ）のまま残している。
 	BridgeOS   string
 	BridgeArch string
+	// WorkHoldURL は承認待ちを知らせる口（DbDesign.md 6.34）。クライアントのフックが叩く。
+	// MCPURL と同じく、サーバの1か所で組み立てたものを受け取る。
+	WorkHoldURL string
 }
 
 // WaitKinds は ZIP に待ち受けの道具 pb-wait を同梱できる種別（ApiDesign.md 4.5.8.1c）。
@@ -359,16 +362,26 @@ func RenderConnect(kind string, p ConnectParams) (Connect, error) {
 		return Connect{}, err
 	}
 
+	files := []File{{
+		Path:       spec.configPath,
+		ClientKind: kind,
+		// **常に merge である**（ApiDesign.md 4.5.8.4）。既存の構造へ
+		// 該当キーだけを足すものであり、**zip では別名になる**。
+		Mode:     ModeMerge,
+		Language: spec.language,
+		Content:  content,
+	}}
+	// **Claude Code の承認待ちのフック**（DbDesign.md 6.34）。トークンの変数名がエージェントごとに
+	// 違うので、コミットする .claude/settings.json ではなく、手元だけの settings.local.json に置く。
+	if kind == "claude_code" && p.WorkHoldURL != "" {
+		hooks, err := renderClaudeHoldHooks(p)
+		if err != nil {
+			return Connect{}, err
+		}
+		files = append(files, File{Path: ".claude/settings.local.json", ClientKind: kind, Mode: ModeMerge, Language: "json", Content: hooks})
+	}
 	return Connect{
-		Files: []File{{
-			Path:       spec.configPath,
-			ClientKind: kind,
-			// **常に merge である**（ApiDesign.md 4.5.8.4）。既存の構造へ
-			// 該当キーだけを足すものであり、**zip では別名になる**。
-			Mode:     ModeMerge,
-			Language: spec.language,
-			Content:  content,
-		}},
+		Files:           files,
 		Readme:          readme,
 		UsesTokenEnvVar: spec.usesTokenEnvVar,
 		CATrust:         caTrust,
@@ -643,7 +656,56 @@ func renderCodexConfig(p ConnectParams) (string, error) {
 		fmt.Fprintf(&b, "\n[mcp_servers.%s.tools.%s]\n", mcpServerName, tool)
 		b.WriteString("approval_mode = \"auto\"\n")
 	}
+	// **承認待ちのフック**（DbDesign.md 6.34）。Codex には HTTP のフックが無いので、同梱の
+	// pb-wait に知らせさせる。**pb-wait を同梱したとき（OS・CPU を選んだとき）だけ書く。**
+	// Codex は人が /hooks で信頼するまで、このフックを走らせない。
+	if p.BridgeOS != "" && p.WorkHoldURL != "" {
+		command := fmt.Sprintf("pb-wait hook --hold-url %s --token-env %s", p.WorkHoldURL, p.TokenEnvName)
+		for _, event := range codexHoldEvents {
+			fmt.Fprintf(&b, "\n[[hooks.%s]]\n\n[[hooks.%s.hooks]]\n", event, event)
+			b.WriteString("type = \"command\"\n")
+			fmt.Fprintf(&b, "command = %q\n", command)
+			b.WriteString("timeout = 10\n")
+		}
+	}
 	return b.String(), nil
+}
+
+// codexHoldEvents は Codex で承認待ちを知らせるイベント。Codex には PostToolUseFailure が無い。
+var codexHoldEvents = []string{"PermissionRequest", "PostToolUse", "UserPromptSubmit"}
+
+// claudeHoldEvents は Claude Code で承認待ちを知らせるイベント。PermissionRequest で止め、
+// 残りで再開する（承認が済んだこと自体を知らせるイベントは無い）。
+var claudeHoldEvents = []string{"PermissionRequest", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit"}
+
+// renderClaudeHoldHooks は .claude/settings.local.json の hooks を組み立てる。
+//
+// **HTTP フックにする。** スクリプトも OS ごとの違いも要らない。トークンは .mcp.json と同じ環境変数から
+// 取り、allowedEnvVars に挙げた変数だけが展開される。PB は 204 を返し本文を持たないので、承認の判定には
+// 口を出さない。matcher を書かないので、すべてのツールで走る。
+func renderClaudeHoldHooks(p ConnectParams) (string, error) {
+	type handler struct {
+		Type           string            `json:"type"`
+		URL            string            `json:"url"`
+		Timeout        int               `json:"timeout"`
+		Headers        map[string]string `json:"headers"`
+		AllowedEnvVars []string          `json:"allowedEnvVars"`
+	}
+	type group struct {
+		Hooks []handler `json:"hooks"`
+	}
+	h := handler{
+		Type: "http", URL: p.WorkHoldURL, Timeout: 5,
+		Headers:        map[string]string{"Authorization": fmt.Sprintf("Bearer ${%s}", p.TokenEnvName)},
+		AllowedEnvVars: []string{p.TokenEnvName},
+	}
+	hooks := map[string][]group{}
+	for _, event := range claudeHoldEvents {
+		hooks[event] = []group{{Hooks: []handler{h}}}
+	}
+	return marshalConfig(struct {
+		Hooks map[string][]group `json:"hooks"`
+	}{hooks})
 }
 
 // marshalConfig は設定ファイルを2スペース字下げの JSON にする。

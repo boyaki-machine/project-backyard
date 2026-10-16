@@ -1,5 +1,9 @@
 /** English translations keyed by the Japanese source text used by the UI. */
 export const uiMessages: Record<string, string> = {
+ "（うち承認待ち {value0} h・クライアントのフックで計測）":" (of which awaiting approval {value0} h, measured by client hooks)",
+ "承認を求めている間を作業時間から除くフックです。1 のフォルダの直下に":"These hooks exclude time spent awaiting approval from work time. Place it under the folder from step 1 as",
+ "として置きます（各自の環境で、履歴管理には入れません）":"(it is your own environment; do not commit it)",
+ "がある場合は、丸ごと置き換えないでください。":"already exists, do not replace it wholesale.",
  "評価と実行監視":"Evaluation and execution monitoring",
  "PowerShell で値を設定し、同じ PowerShell から {value0} を起動します。":"Set the value in PowerShell, then start {value0} from the same PowerShell.",
  "自律実行の main・評価に使うなら、端末の OS と CPU を選んでください。zip に待ち受けの道具（pb-wait）が入り、待つ間にトークンを使いません。選ばなければ入りません。":"If you use this agent as main or evaluator in autonomous runs, choose your OS and CPU. The zip then includes the waiting tool (pb-wait), which waits without spending tokens. If you do not choose, it is not included.",

@@ -18,6 +18,21 @@ import (
 )
 
 func main() {
+	// pb-wait hook：Codex のコマンドフックから呼ばれ、承認待ちを PB に知らせる（DbDesign.md 6.34）。
+	// **常に終了コード0で終わり、標準出力に書かない**——承認の流れを変えないため。失敗は標準エラーへ書く。
+	if len(os.Args) > 1 && os.Args[1] == "hook" {
+		var hc mcpbridge.HookConfig
+		fs := flag.NewFlagSet("hook", flag.ContinueOnError)
+		fs.StringVar(&hc.HoldURL, "hold-url", "", "PB の work-hold の URL")
+		fs.StringVar(&hc.TokenEnvName, "token-env", "PB_TOKEN", "PB のトークンを入れた環境変数の名前")
+		fs.StringVar(&hc.CAFile, "ca-file", "", "追加の CA 証明書（PEM）")
+		if err := fs.Parse(os.Args[2:]); err == nil {
+			if err := mcpbridge.Hook(context.Background(), os.Stdin, hc); err != nil {
+				fmt.Fprintln(os.Stderr, "pb-wait hook:", err)
+			}
+		}
+		return
+	}
 	var cfg mcpbridge.Config
 	var opt mcpbridge.WaitOptions
 	flag.StringVar(&cfg.URL, "url", "", "PB MCP HTTPS URL（.mcp.json と同じ）")

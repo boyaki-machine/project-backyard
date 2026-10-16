@@ -266,6 +266,7 @@ func (h *handler) buildAgentConnect(
 		Transport:         transport,
 		BridgeOS:          bridgeOS,
 		BridgeArch:        bridgeArch,
+		WorkHoldURL:       base + "/api/v1/projects/" + ag.ProjectKey.String + "/work-hold",
 	}
 
 	connect, err := agentsetup.RenderConnect(ag.ClientKind, params)

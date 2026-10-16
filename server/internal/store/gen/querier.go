@@ -1399,6 +1399,8 @@ type Querier interface {
 	ListDocumentTree(ctx context.Context, projectID pgtype.Text) ([]ListDocumentTreeRow, error)
 	// 期限が来たものを全部引く。**起動時の点検と、プロセス内のタイマが使う。**
 	ListExpiredPendingSettingChanges(ctx context.Context) ([]ListExpiredPendingSettingChangesRow, error)
+	// ListHeldWork は、フックが止めた記録を行ロック付きで返す。明示的に止めた記録（hold が NULL）は含めない。
+	ListHeldWork(ctx context.Context, arg ListHeldWorkParams) ([]WorkSession, error)
 	// ListLinksAmongTickets はガント（9.2.6）の依存を1本で引く。
 	//
 	// **両端が渡したチケットの集合に含まれる行だけを返す。** ガントは絞り込み・打ち切りの
@@ -1617,6 +1619,9 @@ type Querier interface {
 	// 同着のときは key で並べ、応答が呼ぶたびに入れ替わらないようにする。
 	//
 	ListRoles(ctx context.Context, scopeFilter string) ([]Role, error)
+	// 承認待ちの保留（DbDesign.md 6.34）。
+	// ListRunningWorkForHold は、フックが止める対象（そのアクターがその PJ で実行中の記録すべて）を行ロック付きで返す。
+	ListRunningWorkForHold(ctx context.Context, arg ListRunningWorkForHoldParams) ([]WorkSession, error)
 	// ListScheduleBaselineItems は版の行（9.17.3）。exists は「いまのプロジェクトに同じ番号の
 	// チケットが在るか」——番号は使い回さないので、無ければ「版にあったが、いまは無い」。
 	ListScheduleBaselineItems(ctx context.Context, arg ListScheduleBaselineItemsParams) ([]ListScheduleBaselineItemsRow, error)
@@ -2280,6 +2285,8 @@ type Querier interface {
 	// updated_at は trg_ticket_updated が動かすので、一覧の再取得は効く。
 	SetTicketsSprintID(ctx context.Context, arg SetTicketsSprintIDParams) error
 	SetWorkChanges(ctx context.Context, arg SetWorkChangesParams) error
+	// SetWorkHold は保留の付け外しと、その時点までの経過を保存する。
+	SetWorkHold(ctx context.Context, arg SetWorkHoldParams) error
 	SetWorkMissingTime(ctx context.Context, arg SetWorkMissingTimeParams) error
 	SetWorkPolicy(ctx context.Context, arg SetWorkPolicyParams) error
 	// SoftDeleteComment は論理削除（DbDesign.md 4.6 / 6.7）。

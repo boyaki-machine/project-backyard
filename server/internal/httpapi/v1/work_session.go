@@ -53,6 +53,8 @@ type workView struct {
 	EndedAt          *Time            `json:"ended_at"`
 	ActiveMS         int64            `json:"active_ms"`
 	WaitingMS        int64            `json:"waiting_ms"`
+	Hold             *string          `json:"hold"`
+	HoldMS           int64            `json:"hold_ms"`
 	ReportedActiveMS *int64           `json:"reported_active_ms"`
 	Result           *string          `json:"result"`
 	Tokens           *int64           `json:"tokens"`
@@ -190,6 +192,8 @@ func workViewOf(s gen.WorkSession, allocations []gen.ListWorkAllocationsRow) wor
 	v := workView{ID: s.ID, ActorID: s.ActorID, ClientKind: usageString(s.ClientKind), ModelName: usageString(s.ModelName), ModelVersion: usageString(s.ModelVersion), State: s.State, Outcome: usageString(s.Outcome), StartedAt: Time(s.StartedAt), ChangedAt: Time(s.ChangedAt), ActiveMS: s.ActiveMs, WaitingMS: s.WaitingMs, ReportedActiveMS: usageInt(s.ReportedActiveMs), Result: usageString(s.Result), Tokens: usageInt(s.Tokens), Note: s.Note, Incomplete: s.Incomplete, Allocations: []workAllocation{}}
 	_ = json.Unmarshal(s.Policy, &v.Policy)
 	v.TimeMissing = s.TimeMissing
+	v.Hold = usageString(s.Hold)
+	v.HoldMS = s.HoldMs
 	if s.EndedAt != nil {
 		x := Time(*s.EndedAt)
 		v.EndedAt = &x
@@ -518,6 +522,15 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+			// **フックが止めた記録に明示的な操作が来たら、先に保留を解く**（DbDesign.md 6.34）。
+			// 承認を求めていたのがこの操作そのものである場合があり、保留のままだと待機や終了が落ちる。
+			released := false
+			if s.Hold.Valid && s.State == "waiting" {
+				if err = releaseWorkHold(ctx, q, &s, now); err != nil {
+					return err
+				}
+				released = true
+			}
 			switch req.Action {
 			case "pause":
 				if s.State != "running" {
@@ -528,6 +541,9 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 				s.State = "waiting"
 				s.Note = req.Note
 			case "resume":
+				if released {
+					break
+				}
 				if s.State != "waiting" {
 					problem = workError(apierr.Conflict, "待機中の作業だけ再開できます")
 					return errTicketReference

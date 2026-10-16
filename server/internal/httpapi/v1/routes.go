@@ -289,6 +289,9 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.edit")).Post("/projects/{key}/tickets/{seq}/work-cleanup", h.cleanupWork)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.run"), middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).Post("/projects/{key}/tickets/{seq}/work-sessions", h.changeWorkSession)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.run"), middleware.RequireProjectPermission(deps.Queries, "ticket.transition")).Post("/projects/{key}/tickets/{seq}/work-sessions/{work_id}/events", h.changeWorkSession)
+		// **承認待ちの保留**（DbDesign.md 6.34）。クライアントのフックが叩く。チケットを持たない——
+		// フックの JSON にはどのチケットの作業かが無いので、その PJ で開いている記録をまとめて扱う。
+		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.run")).Post("/projects/{key}/work-hold", h.changeWorkHold)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "ticket.view")).Get("/projects/{key}/agent-usage/runs", h.listAgentRuns)
 
 		r.With(middleware.RequireProjectPermission(deps.Queries, "agent.register")).

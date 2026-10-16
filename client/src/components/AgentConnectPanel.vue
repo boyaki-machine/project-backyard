@@ -46,8 +46,13 @@ const bridgeArch = ref('')
 /** 節ごとのコピー結果（`GuiDesign.md` 6.4。トーストを使わない） */
 const copied = ref<Record<string, CopyState>>({})
 
-/** 接続設定は1枚か0枚（4.5.8.3） */
+/** 接続設定は先頭の1枚（無い種別では0枚。4.5.8.3） */
 const file = computed(() => setup.value?.files?.[0] ?? null)
+/**
+ * 2枚目以降は接続設定に添えるもの。いまは Claude Code の承認待ちのフック
+ * （`.claude/settings.local.json`。`DbDesign.md` 6.34）だけである。
+ */
+const extraFiles = computed(() => setup.value?.files?.slice(1) ?? [])
 
 /**
  * Claude Desktop だけ、置き場も渡し方も他と違う。
@@ -257,6 +262,19 @@ function preview(content: string): string {
         <button type="button" class="secondary more" @click="expanded = !expanded">
           {{ expanded ? $ui("畳む") : $ui("全文を見る") }}
         </button>
+
+        <template v-for="(extra, i) in extraFiles" :key="extra.path">
+          <div class="file-head extra">
+            <code class="path">{{ extra.path }}</code>
+            <span class="mode warn">{{ $ui('⚠ 統合') }}</span>
+            <span class="spacer" />
+            <button type="button" class="secondary" @click="copy(`extra-${i}`, extra.content, `pb-cnx-extra-${i}`)"> {{ $ui('コピー') }} </button>
+          </div>
+          <p class="hint"> {{ $ui('承認を求めている間を作業時間から除くフックです。1 のフォルダの直下に') }} <code>{{ extra.path }}</code> {{ $ui('として置きます（各自の環境で、履歴管理には入れません）') }} </p>
+          <p class="warn-note"> {{ $ui('⚠ 既に') }} <code>{{ extra.path }}</code> {{ $ui('がある場合は、丸ごと置き換えないでください。') }} <code>hooks</code> {{ $ui('の項だけを足します') }} </p>
+          <p v-if="copied[`extra-${i}`] === 'ok'" class="ok" role="status">{{ $ui('✓ コピーしました') }}</p>
+          <pre :id="`pb-cnx-extra-${i}`" class="content">{{ expanded ? extra.content : preview(extra.content) }}</pre>
+        </template>
       </template>
 
       <!-- **配置ファイルを持たない種別**（4.5.8.3）。カードは消さず、
@@ -357,6 +375,9 @@ function preview(content: string): string {
   margin-top: 0;
 }
 
+.file-head.extra {
+  margin-top: var(--pb-space-4);
+}
 .file-head {
   display: flex;
   align-items: center;

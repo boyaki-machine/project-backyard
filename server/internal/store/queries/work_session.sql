@@ -172,3 +172,24 @@ WHERE a.ticket_id= @ticket_id AND s.actor_id= @actor_id AND s.state<>'finished')
 -- name: WorkRequiresRegistration :one
 SELECT EXISTS(SELECT 1 FROM work_session s JOIN work_allocation a ON a.session_id=s.id
 WHERE a.ticket_id= @ticket_id AND s.actor_id= @actor_id AND s.policy->>'require_registration'='true');
+
+-- 承認待ちの保留（DbDesign.md 6.34）。
+-- ListRunningWorkForHold は、フックが止める対象（そのアクターがその PJ で実行中の記録すべて）を行ロック付きで返す。
+-- name: ListRunningWorkForHold :many
+SELECT * FROM work_session
+WHERE project_id = @project_id AND actor_id = @actor_id AND state = 'running'
+ORDER BY started_at, id
+FOR UPDATE;
+
+-- ListHeldWork は、フックが止めた記録を行ロック付きで返す。明示的に止めた記録（hold が NULL）は含めない。
+-- name: ListHeldWork :many
+SELECT * FROM work_session
+WHERE project_id = @project_id AND actor_id = @actor_id AND hold IS NOT NULL AND state = 'waiting'
+ORDER BY started_at, id
+FOR UPDATE;
+
+-- SetWorkHold は保留の付け外しと、その時点までの経過を保存する。
+-- name: SetWorkHold :exec
+UPDATE work_session SET state = @state, changed_at = @changed_at, active_ms = @active_ms,
+  waiting_ms = @waiting_ms, hold = sqlc.narg(hold), hold_ms = @hold_ms
+WHERE id = @id;
