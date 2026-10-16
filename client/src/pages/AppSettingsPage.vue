@@ -27,14 +27,17 @@ import PageHeader from '../components/PageHeader.vue'
 import { formatDateTime } from '../lib/datetime'
 import DatabaseTab from './DatabaseTab.vue'
 import TlsCertificatesTab from './TlsCertificatesTab.vue'
+import WorkSweepTab from './WorkSweepTab.vue'
 
 /**
  * タブ（`GuiDesign.md` 5.12）。**証明書が設定の一覧に収まらないので分けた**
  * ——1件が複数行の情報を持ち、登録と削除という操作を伴う。
  *
  * **DB（5.12.2）は設定ではなく状態である。** 変更の操作を持たない。
+ *
+ * **作業記録（5.12.3）は浮きの片付けと、その閾値の設定を持つ。**
  */
-type Tab = 'general' | 'tls' | 'database'
+type Tab = 'general' | 'tls' | 'database' | 'work'
 const tab = ref<Tab>('general')
 
 const items = ref<Setting[]>([])
@@ -106,7 +109,7 @@ onMounted(load)
  * 設定を変える人が知る必要のある区別ではない（設計原則4）。
  */
 const runtimeItems = computed(() =>
-  items.value.filter((s) => !s.restart_required && !TLS_TAB_KEYS.has(s.key)),
+  items.value.filter((s) => !s.restart_required && !TLS_TAB_KEYS.has(s.key) && !WORK_TAB_KEYS.has(s.key)),
 )
 const bootItems = computed(() =>
   items.value.filter((s) => s.restart_required && !TLS_TAB_KEYS.has(s.key)),
@@ -119,6 +122,9 @@ const bootItems = computed(() =>
  * `secret_key` も TLS のためだけの設定なので、あちらで扱う。
  */
 const TLS_TAB_KEYS = new Set(['tls_enabled', 'secret_key'])
+
+/** **作業記録タブが扱う設定**（5.12.3）。TLS と同じ理由で一般タブに出さない */
+const WORK_TAB_KEYS = new Set(['work_stale_hours'])
 
 /** いまの入力値（未編集なら実効値） */
 function currentValue(s: Setting): string {
@@ -286,12 +292,20 @@ function asApiError(e: unknown): ApiError {
       >
         DB
       </button>
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="tab === 'work'"
+        :class="{ on: tab === 'work' }"
+        @click="tab = 'work'"
+      > {{ $ui('作業記録') }} </button>
     </div>
 
     <div class="page-body">
       <div class="page-inner">
     <TlsCertificatesTab v-if="tab === 'tls'" />
     <DatabaseTab v-else-if="tab === 'database'" />
+    <WorkSweepTab v-else-if="tab === 'work'" />
 
     <template v-else>
     <p v-if="loading" class="muted">{{ $ui('読み込み中…') }}</p>

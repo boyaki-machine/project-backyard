@@ -298,7 +298,7 @@ MCP の層はツールの実行中に受けた応答にこのヘッダがあれ�
 `tls.certificate.upload` / `tls.certificate.delete` / `mfa.register` / `mfa.unregister` /
 `mfa.recovery_codes.regenerate` / `mfa.reset` / `login.mfa_failure` /
 `passkey.register` / `passkey.unregister` / `passkey.reset` / `login.passkey_failure` /
-`database.backup` / `database.restore` / `notification.delete`
+`database.backup` / `database.restore` / `notification.delete` / `work.sweep`
 
 **`agent.` の3件**（4.5.6）。エージェントの登録・変更・削除は
 アカウントの作成・変更・削除と同じ重みを持つ操作であり、`user.create` / `user.update` /
@@ -332,6 +332,11 @@ MCP の層はツールの実行中に受けた応答にこのヘッダがあれ�
 `login.failure` の読み方と混ぜない。
 
 **`notification.delete`**（4.8.7）。**受けた人以外が通知を消したときだけ**記録する。受けた人が自分の通知を片付けるのは記録しない。
+
+**`work.sweep`**（11.14）。作業記録の浮きを閉じた1回が1行である。画面からの片付けは操作した人、
+日次の処理は `actor_id` が NULL・`actor_kind` が `system` になる。`detail` に `trigger`（`manual` / `daily`）、
+`threshold_hours`、`closed_count` と、閉じた記録の `work_id`・`project_key`・`ticket_seq`・`reason` の並びを入れる。
+**日次の処理は閉じた件数が0でも残す**——画面が「最後にいつ走ったか」をこの行から読む。
 
 ## 2.11 ヘルスチェック
 
@@ -6104,6 +6109,43 @@ SHA-256 であり `app_secret` に依存しない（`DbDesign.md` 6.2）ので�
 
 **ステータスは人向けの画面でも `503` にする。** ブラウザはステータスに関わらず本文を描くので
 画面は成立し、**`200` にするとエージェントと監視が成功と読む。**
+
+## 11.14 `GET` / `POST /api/v1/admin/work-sweep`
+
+**必要権限**：`system.settings`
+
+**閉じられないまま残った作業記録（浮き）を、全プロジェクトから数えて閉じる**（`Design.md` 8.5.7、
+`GuiDesign.md` 5.12.3）。`GET` は数えるだけで何も変えない。`POST` が閉じる。
+
+```json
+{
+  "threshold_hours": 24,
+  "checked_at": 1789621392000,
+  "items": [
+    { "work_id": "01M52M77NTTBRGCHVFSS7TH1J9", "project_key": "pb", "project_name": "Project Backyard",
+      "ticket_seq": 345, "ticket_title": "作業記録の浮きを片付ける",
+      "actor": { "id": "01M2322PK4FM6WQNZQPGNZE46R", "display_name": "Claude Code 4", "kind": "agent" },
+      "state": "running", "started_at": 1789500000000, "last_active_at": 1789510000000, "reason": "stale" }
+  ],
+  "last_run": { "ran_at": 1789600000000, "trigger": "daily", "actor_label": null, "closed_count": 2 }
+}
+```
+
+| 項目 | 内容 |
+|---|---|
+| `threshold_hours` | 設定 `work_stale_hours` の実効値。`0` なら時間では判定しない |
+| `items[].reason` | `ticket_closed`＝配分先がすべて完了した。`stale`＝最後の活動から `threshold_hours` を過ぎた。両方に当たるなら `ticket_closed` |
+| `items[].last_active_at` | エージェントは記録の最終変更とトークンの最終使用の遅いほう、人は記録の最終変更 |
+| `last_run` | 直近の `work.sweep` の監査行。まだ無ければ `null` |
+
+並びは `last_active_at` の古い順。
+
+**`POST` の本文は `{"work_ids": [...]}`（1〜500件）である。** 画面が `GET` で見せた記録だけを渡す。
+**閉じる直前に条件を判定し直し**、渡された記録のうち、まだ浮きに当たるものだけを閉じる——見せてから押すまでに
+再開した記録を閉じない。閉じ方は作業記録の `abandon`（「共通作業タイマー」）と同じで、最後の区間を数えずに欠測の印を付け、
+理由（`note`）に「浮きとして閉じた」と最後の活動の時刻を書く。応答は `GET` と同じ形に、
+`closed_ids`（閉じた記録）と `skipped_count`（条件から外れていた件数）を足したものである。
+`work_ids` が空・501件以上・ULID でなければ `422`。
 
 
 # 12. 未解決の検討事項

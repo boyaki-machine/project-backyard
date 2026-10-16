@@ -175,3 +175,24 @@ export function restoreBackup(
   form.append('archive', archive)
   return api.postForm<RestoreResult>('/admin/restore', form)
 }
+
+export type WorkSweep = components['schemas']['WorkSweep']
+export type WorkSweepItem = components['schemas']['WorkSweepItem']
+export type WorkSweepResult = components['schemas']['WorkSweepResult']
+
+/**
+ * 閉じられないまま残った作業記録（浮き）を数える（`ApiDesign.md` 11.14）。何も変えない。
+ *
+ * **必要権限は `system.settings`。** 全プロジェクトを横断する。
+ */
+export function getWorkSweep(): Promise<WorkSweep> {
+  return api.get<WorkSweep>('/admin/work-sweep')
+}
+
+/**
+ * 浮きを閉じる（`ApiDesign.md` 11.14）。**画面が見せた記録の ID だけを渡す。**
+ * サーバが閉じる直前に判定し直し、外れたものは `skipped_count` に数えて閉じない。
+ */
+export function runWorkSweep(workIds: string[]): Promise<WorkSweepResult> {
+  return api.post<WorkSweepResult>('/admin/work-sweep', { work_ids: workIds })
+}

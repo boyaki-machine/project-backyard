@@ -662,42 +662,8 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if s.ClientKind.Valid && (req.Action == "finish" || req.Action == "abandon") {
-			before, e := agentMonitorState(ctx, q, s.ProjectID, s.ActorID, s.TicketID, false)
-			if e != nil {
-				return e
-			}
-			if err = q.FinishAgentAttempt(ctx, gen.FinishAgentAttemptParams{ID: s.ID, EndedAt: s.EndedAt, Outcome: s.Outcome}); err != nil {
+			if err = closeAgentAttempt(ctx, q, s, audit.FromRequest(r)); err != nil {
 				return err
-			}
-			after, e := agentMonitorState(ctx, q, s.ProjectID, s.ActorID, s.TicketID, false)
-			if e != nil {
-				return e
-			}
-			if after.Stopped && !before.Stopped {
-				if e = audit.FromRequest(r).Record(ctx, q, audit.Entry{Action: audit.AgentUpdate, Result: audit.Success, TargetType: "agent", TargetID: s.ActorID, Detail: map[string]any{"monitor_stop_reasons": after.Reasons, "project_id": s.ProjectID, "ticket_id": s.TicketID, "work_session_id": s.ID}}); e != nil {
-					return e
-				}
-			}
-			if s.Outcome.String == "failed" || s.Outcome.String == "abandoned" {
-				principal := &auth.Principal{ActorID: s.ActorID, ActorKind: auth.ActorKindAgent}
-				runID := ulidgen.New()
-				run, e := buildAgentRun(ctx, q, runID, s.TicketID, principal, reportRequest{})
-				if e != nil {
-					return e
-				}
-				run.StartedAt = s.StartedAt
-				run.EndedAt = s.EndedAt
-				run.Status = s.Outcome.String
-				run.ClientKind = s.ClientKind
-				run.ModelName = s.ModelName
-				run.ModelVersion = s.ModelVersion
-				run.TokensUsed = s.Tokens
-				if e = q.CreateAgentRun(ctx, run); e != nil {
-					return e
-				}
-				if e = q.LinkFailedAgentRun(ctx, gen.LinkFailedAgentRunParams{ID: runID, WorkSessionID: usageText(s.ID)}); e != nil {
-					return e
-				}
 			}
 		}
 		ids := []string{}
