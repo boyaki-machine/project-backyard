@@ -84,6 +84,14 @@ func FromRequest(r *http.Request) *Recorder {
 	return rec
 }
 
+// System は HTTP リクエストを持たない経路（日次の処理など）用の Recorder。
+//
+// **actor_id は NULL、actor_kind は 'system' になる。** 監査ログの FromCLI と同じ扱いで、
+// 誰の操作でもないものを特定の actor に帰属させない。label は actor_name に残る。
+func System(label string) *Recorder {
+	return &Recorder{actorKind: auth.ActorKindSystem, actorName: label}
+}
+
 // Record は履歴を1件書き、失敗をそのまま返す。
 //
 // **業務トランザクションの中で呼ぶこと。** q にトランザクションの Queries を

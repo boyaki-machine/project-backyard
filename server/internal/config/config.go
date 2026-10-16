@@ -61,6 +61,7 @@ const (
 	KeyCookieSecure      = "cookie_secure"
 	KeySecretKey         = "secret_key"
 	KeyTLSEnabled        = "tls_enabled"
+	KeyWorkStaleHours    = "work_stale_hours"
 )
 
 // Load は設定を解決して Config を組み立てる。

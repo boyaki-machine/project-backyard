@@ -742,6 +742,14 @@ func Mount(r chi.Router, deps Deps) {
 		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
 			Delete("/admin/notifications/{id}", h.deleteNotificationByAdmin)
 
+		// ── 作業記録の浮き（ApiDesign.md 11.14）──────────────
+		//
+		// **全プロジェクトを横断する**ので、プロジェクトの権限ではなく設定と同じ権限で守る。
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Get("/admin/work-sweep", h.getWorkSweep)
+		r.With(middleware.RequirePermission(deps.Queries, "system.settings")).
+			Post("/admin/work-sweep", h.runWorkSweep)
+
 		// ── TLS 証明書（ApiDesign.md 11.4〜11.6）──────────────
 		//
 		// **設定と同じ system.settings である。** 第3層（Design.md 6.6.1）で、

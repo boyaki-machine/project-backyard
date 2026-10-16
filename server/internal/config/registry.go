@@ -230,6 +230,15 @@ var definitions = []Definition{
 		// （GuiDesign.md 5.12）、ここに書くと同じことを2度言うことになる。
 		Description: "HTTPS で公開する環境では有効にします",
 	},
+	{
+		Key: "work_stale_hours", EnvKey: "PB_WORK_STALE_HOURS",
+		// **列挙にしてある**（GuiDesign.md 5.12.3）。整数の型を足すと API の
+		// type が増え、画面の入力欄も1種類増える。選べる値は時間の目安として足りる。
+		Layer: LayerRuntime, Type: TypeEnum, Allowed: []string{"0", "6", "12", "24", "48", "72", "168"},
+		Default:     "24",
+		DisplayName: "作業記録を浮きとみなす時間",
+		Description: "最後の活動からこの時間（時間単位）を過ぎた開いたままの作業記録を、日次の処理で不完全として閉じます。0 なら時間では判定せず、日次の処理も止めます",
+	},
 }
 
 // Definitions は設定の全件を定義順で返す。
