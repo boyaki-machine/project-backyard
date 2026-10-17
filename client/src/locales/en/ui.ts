@@ -703,7 +703,7 @@ export const uiMessages: Record<string, string> = {
   "未定": "Unspecified",
   "構想": "Concept",
   "プロジェクト名を入力してください": "Enter a project name",
-  "アーカイブを表示": "Show Archive",
+  "アーカイブプロジェクトも表示": "Include archived projects",
   "+ 新規プロジェクト": "+ New Project",
   "タスク": "Task",
   "完了": "Completed",
