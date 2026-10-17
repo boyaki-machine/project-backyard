@@ -1477,7 +1477,18 @@ export interface paths {
         get: operations["getProject"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * プロジェクトの物理削除
+         * @description プロジェクトと、それに属する行をすべて消す（ApiDesign.md 5.6.1）。**取り消せない。**
+         *     必要権限は `project.delete`（`administrator` だけが持つ）。
+         *
+         *     **アーカイブ済みのときだけ消せる**（そうでなければ 409）。本文の `confirm_key` が
+         *     URL のプロジェクトキーと一致しなければ 422（`details[].field` が `confirm_key`）。
+         *
+         *     監査は `project.delete` として、削除と同じトランザクションで記録する。
+         *     **監査ログは消えない。** `If-Match` は要求しない。
+         */
+        delete: operations["deleteProject"];
         options?: never;
         head?: never;
         /**
@@ -6769,6 +6780,14 @@ export interface components {
              */
             workflow_template: "simple" | "with_review" | "with_approval";
         };
+        /** @description 確認のため、消すプロジェクトのキーを書かせる（ApiDesign.md 5.6.1）。 */
+        DeleteProjectRequest: {
+            /**
+             * @description URL のプロジェクトキーと完全に一致させる。
+             * @example my-app
+             */
+            confirm_key: string;
+        };
         /**
          * @description `PATCH /projects/:key` の本文（ApiDesign.md 5.5）。**送られたフィールドだけを
          *     更新する**ため required は無い。`key` は受け付けず、送ると 422
@@ -11885,6 +11904,66 @@ export interface operations {
              *     **両者を区別しない**（Design.md 6.4.5）。
              */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description 削除した。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description プロジェクトが存在しない、または到達できない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description プロジェクトがアーカイブされていない（`conflict`）。 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

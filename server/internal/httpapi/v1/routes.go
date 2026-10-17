@@ -259,6 +259,9 @@ func Mount(r chi.Router, deps Deps) {
 			Post("/projects/{key}/archive", h.archiveProject)
 		r.With(middleware.RequireProjectPermission(deps.Queries, "project.archive")).
 			Post("/projects/{key}/unarchive", h.unarchiveProject)
+		// 物理削除（5.6.1）。project.delete は administrator だけが持つ（DbDesign.md 7.2）
+		r.With(middleware.RequireProjectPermission(deps.Queries, "project.delete")).
+			Delete("/projects/{key}", h.deleteProject)
 
 		// ── ダッシュボード（ApiDesign.md 9.13）── 手順19a ─────────
 		//

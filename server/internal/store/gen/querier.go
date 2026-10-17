@@ -511,6 +511,10 @@ type Querier interface {
 	DeleteMyNotification(ctx context.Context, arg DeleteMyNotificationParams) (DeleteMyNotificationRow, error)
 	// DeleteNotificationByAdmin は管理者が誰宛てでも消す（4.8.6）。
 	DeleteNotificationByAdmin(ctx context.Context, id string) (DeleteNotificationByAdminRow, error)
+	// DeleteOrphanAgentActors は agent 行を失ったエージェントのアクターを消す。
+	// **kind='agent' で agent 行が無いものに限る**——渡した ID が別の用途に使われていても消さない。
+	//
+	DeleteOrphanAgentActors(ctx context.Context, actorIds []string) (int64, error)
 	// プロジェクトが所有する取り込みの暦のうち、keep_id 以外を消す。
 	// Google の暦へ切り替えた・暦を外したときに、参照されない所有物を残さない（6.23）。
 	DeleteOwnedHolidaySources(ctx context.Context, arg DeleteOwnedHolidaySourcesParams) error
@@ -1059,9 +1063,6 @@ type Querier interface {
 	// 「プロジェクト1本」）。settings の timeline_epics・timeline_snap_seconds と、ETag の材料の
 	// version（9.2.5 の⑧）と、基準タイムゾーン。
 	GetProjectTimelineSettings(ctx context.Context, id string) (GetProjectTimelineSettingsRow, error)
-	// GetProjectTimezone はプロジェクトの基準タイムゾーン（DbDesign.md 6.23）を返す。
-	// 予定日時の検証（終日は基準タイムゾーンの0時。ApiDesign.md 9.3.1）と、due_within の
-	// 境界の計算（9.2.1）が使う。
 	GetProjectTimezone(ctx context.Context, id string) (string, error)
 	// GetRecoveryCodeStatus は残数と発行時刻をまとめて返す。
 	//
@@ -1534,6 +1535,10 @@ type Querier interface {
 	//
 	ListPermissions(ctx context.Context) ([]Permission, error)
 	ListPlanningSiblings(ctx context.Context, arg ListPlanningSiblingsParams) ([]ListPlanningSiblingsRow, error)
+	// ListProjectAgentActorIDs はプロジェクトに紐づくエージェントのアクターを返す。
+	// **プロジェクトを消す前に引く。** 消すと agent 行が連鎖で消え、辿れなくなる。
+	//
+	ListProjectAgentActorIDs(ctx context.Context, projectID pgtype.Text) ([]string, error)
 	ListProjectAgents(ctx context.Context, arg ListProjectAgentsParams) ([]ListProjectAgentsRow, error)
 	// 5.8.5 の override。期間は [from, to)。
 	ListProjectCalendarDays(ctx context.Context, arg ListProjectCalendarDaysParams) ([]ListProjectCalendarDaysRow, error)
@@ -1945,6 +1950,15 @@ type Querier interface {
 	// 取得の前に待ち時間を判定するため、行をロックして読む（5.8.3）。
 	LockHolidaySource(ctx context.Context, id string) (LockHolidaySourceRow, error)
 	LockProjectAgent(ctx context.Context, arg LockProjectAgentParams) (LockProjectAgentRow, error)
+	// GetProjectTimezone はプロジェクトの基準タイムゾーン（DbDesign.md 6.23）を返す。
+	// 予定日時の検証（終日は基準タイムゾーンの0時。ApiDesign.md 9.3.1）と、due_within の
+	// 境界の計算（9.2.1）が使う。
+	// ── 物理削除（ApiDesign.md 5.6.1）──────────────────────────
+	// LockProjectForDelete は消す前の確認材料を取り、行を押さえる。
+	// **FOR UPDATE で押さえる**——確かめた後にアーカイブを解除されてから消す、を作らない。
+	// ticket_count は監査の detail に残す（消えた後は数えられない）。
+	//
+	LockProjectForDelete(ctx context.Context, key string) (LockProjectForDeleteRow, error)
 	// LockProjectForDependency は依存の追加をプロジェクト単位で直列化する（9.10.1）。
 	//
 	// 輪の判定と INSERT を同じトランザクションで行うだけでは、並行する2本（A→B と
