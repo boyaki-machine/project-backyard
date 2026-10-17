@@ -31,6 +31,7 @@ SELECT
   'outgoing'::text AS direction,
   l.link_type,
   l.lag_days,
+  l.lag_seconds,
   l.origin,
   l.created_at,
   t.seq            AS ticket_seq,
@@ -51,6 +52,7 @@ SELECT
   'incoming'::text AS direction,
   l.link_type,
   l.lag_days,
+  l.lag_seconds,
   l.origin,
   l.created_at,
   t.seq            AS ticket_seq,
@@ -79,6 +81,7 @@ SELECT
   l.id,
   l.link_type,
   l.lag_days,
+  l.lag_seconds,
   l.origin,
   l.created_at,
   CASE WHEN l.source_ticket_id = @ticket_id THEN 'outgoing' ELSE 'incoming' END::text AS direction,
@@ -93,9 +96,9 @@ WHERE l.id = @id
 
 -- name: CreateTicketLink :exec
 INSERT INTO ticket_link (
-  id, source_ticket_id, target_ticket_id, link_type, lag_days, origin, created_by
+  id, source_ticket_id, target_ticket_id, link_type, lag_days, lag_seconds, origin, created_by
 ) VALUES (
-  @id, @source_ticket_id, @target_ticket_id, @link_type, @lag_days, @origin, @created_by
+  @id, @source_ticket_id, @target_ticket_id, @link_type, @lag_days, @lag_seconds, @origin, @created_by
 );
 
 -- TicketLinkExists は uq_ticket_link（source, target, link_type）の重複を、
@@ -133,6 +136,7 @@ SELECT
   t.seq AS target_seq,
   l.link_type,
   l.lag_days,
+  l.lag_seconds,
   l.origin,
   l.created_at
 FROM ticket_link l
@@ -171,12 +175,14 @@ WITH RECURSIVE reach(id) AS (
 )
 SELECT EXISTS (SELECT 1 FROM reach WHERE id = @to_ticket_id::pg_catalog.bpchar)::boolean;
 
--- UpdateTicketLinkLag は依存のずらし（lag_days）だけを変える（9.10.1 の PATCH。pb-231）。
+-- UpdateTicketLinkLag は依存のずらし（lag_days・lag_seconds）だけを変える（9.10.1 の PATCH。pb-231・pb-332）。
+-- 送らなかった方は今の値をハンドラが渡す。
 --
 -- **このチケットに紐づく行か**を id と合わせて確かめる（source / target のどちらでもよい。
 -- DELETE と同じく direction を問わない）。種別の検査はハンドラが GetTicketLink で行う。
 -- name: UpdateTicketLinkLag :execrows
 UPDATE ticket_link
-   SET lag_days = @lag_days
+   SET lag_days = @lag_days,
+       lag_seconds = @lag_seconds
  WHERE id = @id
    AND (source_ticket_id = @ticket_id OR target_ticket_id = @ticket_id);

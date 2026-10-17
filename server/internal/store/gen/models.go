@@ -443,6 +443,22 @@ type MfaRecoveryCode struct {
 	CreatedAt time.Time
 }
 
+type Notification struct {
+	ID          string
+	RecipientID string
+	Kind        string
+	Title       string
+	Body        string
+	Link        string
+	LinkLabel   string
+	SubjectKey  pgtype.Text
+	ProjectID   pgtype.Text
+	SourceID    pgtype.Text
+	SourceName  string
+	CreatedAt   time.Time
+	ReadAt      *time.Time
+}
+
 // 未確認の設定変更。期限内に確認されなければ previous へ戻す
 type PendingSettingChange struct {
 	ID        string
@@ -509,6 +525,30 @@ type Role struct {
 type RolePermission struct {
 	RoleKey       string
 	PermissionKey string
+}
+
+type ScheduleBaseline struct {
+	ID            string
+	ProjectID     string
+	Label         pgtype.Text
+	ItemCount     int32
+	CreatedBy     pgtype.Text
+	CreatedByName string
+	CreatedAt     time.Time
+}
+
+type ScheduleBaselineItem struct {
+	BaselineID  string
+	TicketSeq   int32
+	Title       string
+	EpicSeq     int32
+	EpicTitle   string
+	StartAt     *time.Time
+	DueAt       *time.Time
+	AllDay      bool
+	NoOverlap   bool
+	StartPinned bool
+	DuePinned   bool
 }
 
 type Sprint struct {
@@ -582,6 +622,9 @@ type Ticket struct {
 	StartAt            *time.Time
 	DueAt              *time.Time
 	AllDay             bool
+	NoOverlap          bool
+	StartPinned        bool
+	DuePinned          bool
 }
 
 type TicketEffort struct {
@@ -600,6 +643,7 @@ type TicketLink struct {
 	Confidence     pgtype.Float8
 	CreatedBy      pgtype.Text
 	CreatedAt      time.Time
+	LagSeconds     int32
 }
 
 type TicketReference struct {
@@ -779,6 +823,8 @@ type WorkSession struct {
 	Policy           []byte
 	TimeMissing      bool
 	Outcome          pgtype.Text
+	Hold             pgtype.Text
+	HoldMs           int64
 }
 
 type Workflow struct {

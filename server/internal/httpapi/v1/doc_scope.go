@@ -98,15 +98,6 @@ func (t *docTree) assignPaths(n *docNode, prefix string) {
 	}
 }
 
-// descendants は n を含まない子孫の数。削除の確認（GuiDesign.md 6.3）で使う。
-func (n *docNode) descendants() int {
-	total := 0
-	for _, c := range n.children {
-		total += 1 + c.descendants()
-	}
-	return total
-}
-
 // docPathRequest はワイルドカードのパスを解いた結果。
 type docPathRequest struct {
 	// slugs は文書を指すパスの各セグメント。空にはならない。

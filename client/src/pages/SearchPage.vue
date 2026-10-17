@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import AssigneePicker from '../components/AssigneePicker.vue'
 import EpicFilter from '../components/EpicFilter.vue'
+import PlannedPeriodFilter from '../components/PlannedPeriodFilter.vue'
 import MultiSelectFilter from '../components/MultiSelectFilter.vue'
 import type { MultiSelectOption } from '../components/MultiSelectFilter.vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -126,6 +127,7 @@ function clearAll(): void {
 const statusKeys = computed(() => queryList('status'))
 const types = computed(() => queryList('type'))
 const assignees = computed(() => queryList('assignee'))
+const tagIds = computed(() => queryList('tag'))
 const epicSeqs = computed(() =>
   queryList('parent')
     .map(Number)
@@ -251,14 +253,22 @@ function beforeDate(name: string): string {
 }
 
 /** 期間の始まりの日付を「その日の0時以上」として載せる（`ApiDesign.md` 9.2.1 の半開区間） */
-function setSince(name: string, date: string): void {
-  setQuery({ [name]: date === '' ? '' : String(startOfDayInstant(date) ?? '') })
+function sinceParam(date: string): string {
+  return date === '' ? '' : String(startOfDayInstant(date) ?? '')
 }
 
 /** 期間の終わりの日付を「翌日の0時未満」として載せる。**その日を含める**ためである */
-function setBefore(name: string, date: string): void {
+function beforeParam(date: string): string {
   const next = date === '' ? null : addDaysPlainDate(date, 1)
-  setQuery({ [name]: next === null ? '' : String(startOfDayInstant(next) ?? '') })
+  return next === null ? '' : String(startOfDayInstant(next) ?? '')
+}
+
+/**
+ * 期間の両端を**1回の `setQuery` で**載せる。端ごとに分けると、先の `replace` が
+ * 反映される前の `route.query` から後の端を作り、先の端が消える。
+ */
+function setPeriod(sinceName: string, beforeName: string, period: { from: string; to: string }): void {
+  setQuery({ [sinceName]: sinceParam(period.from), [beforeName]: beforeParam(period.to) })
 }
 
 // ── 詳細ペイン（2.2.1 / 5.5）─────────────────────────────────
@@ -377,6 +387,7 @@ async function loadTickets(): Promise<void> {
       status: statusKeys.value.join(','),
       type: types.value.join(','),
       assignee: assignees.value.join(','),
+      tag: tagIds.value.join(','),
       // エピックの条件の実体は部分木（`ApiDesign.md` 9.2.1 の `parent`）
       parent: epicSeqs.value.join(','),
       started_since: queryValue('started_since'),
@@ -454,6 +465,12 @@ const typeOptions = computed<MultiSelectOption[]>(() =>
     icon: ticketTypeIcons[t],
   })),
 )
+
+/** タグは「未分類」も選べる（`ApiDesign.md` 9.2.1 の `none`。バックログと同じ） */
+const tagOptions = computed<MultiSelectOption[]>(() => [
+  { value: 'none', label: uiText("未分類") },
+  ...tags.value.map((t) => ({ value: t.id, label: t.name })),
+])
 
 /** 担当は「未割当」も選べる（`ApiDesign.md` 9.2.1 の `none`） */
 const assigneeOptions = computed<MultiSelectOption[]>(() => [
@@ -570,6 +587,59 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
 
         <!-- 検索の条件（5.13）。条件は URL のクエリに載る -->
         <div v-if="!shrunk || conditionsOpen" class="search-conditions">
+          <!-- 2行に収める（5.13）。1行目は選ぶ条件で、エピック・タグを左端に置く（5.4 と同じ順）。
+               2行目は打つ条件と範囲、右端に [解除] -->
+          <div class="search-conditions-row search-conditions-select">
+            <!-- エピックは詳細への導線（↗）を持つので `EpicFilter` のまま使う。
+                 **↗ にも `from=search` を持たせる**——落とすと、押した先がバックログに変わる -->
+            <div class="search-filter">
+              <span class="search-filter-label" aria-hidden="true">{{ $ui('エピック') }}</span>
+              <EpicFilter
+                :epics="epics"
+                :selected="epicSeqs"
+                :project-key="projectKey"
+                :link-query="{ from: 'search' }"
+                @update="setQuery({ parent: $event.join(',') })"
+              />
+            </div>
+            <div class="search-filter">
+              <span class="search-filter-label" aria-hidden="true">{{ $ui('タグ') }}</span>
+              <MultiSelectFilter
+                :label="$ui('タグ')"
+                :options="tagOptions"
+                :selected="tagIds"
+                @update="setQuery({ tag: $event.join(',') })"
+              />
+            </div>
+            <div class="search-filter">
+              <span class="search-filter-label" aria-hidden="true">{{ $ui('状態') }}</span>
+              <MultiSelectFilter
+                :label="$ui('状態')"
+                :options="statusOptions"
+                :selected="statusKeys"
+                @update="setQuery({ status: $event.join(',') })"
+              />
+            </div>
+            <div class="search-filter">
+              <span class="search-filter-label" aria-hidden="true">{{ $ui('種別') }}</span>
+              <MultiSelectFilter
+                :label="$ui('種別')"
+                :options="typeOptions"
+                :selected="types"
+                @update="setQuery({ type: $event.join(',') })"
+              />
+            </div>
+            <div class="search-filter">
+              <span class="search-filter-label" aria-hidden="true">{{ $ui('担当') }}</span>
+              <MultiSelectFilter
+                :label="$ui('担当')"
+                :options="assigneeOptions"
+                :selected="assignees"
+                @update="setQuery({ assignee: $event.join(',') })"
+              />
+            </div>
+          </div>
+
           <div class="search-conditions-row">
             <label class="search-filter search-keyword">
               <span class="search-filter-label">{{ $ui('キーワード') }}</span>
@@ -603,86 +673,23 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
                 />
               </span>
             </div>
-          </div>
-
-          <div class="search-conditions-row">
-            <div class="search-filter">
-              <span class="search-filter-label" aria-hidden="true">{{ $ui('状態') }}</span>
-              <MultiSelectFilter
-                :label="$ui('状態')"
-                :options="statusOptions"
-                :selected="statusKeys"
-                @update="setQuery({ status: $event.join(',') })"
-              />
-            </div>
-            <div class="search-filter">
-              <span class="search-filter-label" aria-hidden="true">{{ $ui('種別') }}</span>
-              <MultiSelectFilter
-                :label="$ui('種別')"
-                :options="typeOptions"
-                :selected="types"
-                @update="setQuery({ type: $event.join(',') })"
-              />
-            </div>
-            <!-- エピックは詳細への導線（↗）を持つので `EpicFilter` のまま使う。
-                 **↗ にも `from=search` を持たせる**——落とすと、押した先がバックログに変わる -->
-            <div class="search-filter">
-              <span class="search-filter-label" aria-hidden="true">{{ $ui('エピック') }}</span>
-              <EpicFilter
-                :epics="epics"
-                :selected="epicSeqs"
-                :project-key="projectKey"
-                :link-query="{ from: 'search' }"
-                @update="setQuery({ parent: $event.join(',') })"
-              />
-            </div>
-            <div class="search-filter">
-              <span class="search-filter-label" aria-hidden="true">{{ $ui('担当') }}</span>
-              <MultiSelectFilter
-                :label="$ui('担当')"
-                :options="assigneeOptions"
-                :selected="assignees"
-                @update="setQuery({ assignee: $event.join(',') })"
-              />
-            </div>
-          </div>
-
-          <div class="search-conditions-row">
-            <div class="search-filter">
+            <div class="search-filter search-period">
               <span class="search-filter-label" aria-hidden="true">{{ $ui('着手日') }}</span>
-              <span class="search-range">
-                <input
-                  type="date"
-                  :aria-label="$ui('着手日の始まり')"
-                  :value="sinceDate('started_since')"
-                  @change="setSince('started_since', ($event.target as HTMLInputElement).value)"
-                />
-                <span aria-hidden="true">〜</span>
-                <input
-                  type="date"
-                  :aria-label="$ui('着手日の終わり')"
-                  :value="beforeDate('started_before')"
-                  @change="setBefore('started_before', ($event.target as HTMLInputElement).value)"
-                />
-              </span>
+              <PlannedPeriodFilter
+                :name="$ui('着手日')"
+                :from="sinceDate('started_since')"
+                :to="beforeDate('started_before')"
+                @update="setPeriod('started_since', 'started_before', $event)"
+              />
             </div>
-            <div class="search-filter">
+            <div class="search-filter search-period">
               <span class="search-filter-label" aria-hidden="true">{{ $ui('完了日') }}</span>
-              <span class="search-range">
-                <input
-                  type="date"
-                  :aria-label="$ui('完了日の始まり')"
-                  :value="sinceDate('closed_since')"
-                  @change="setSince('closed_since', ($event.target as HTMLInputElement).value)"
-                />
-                <span aria-hidden="true">〜</span>
-                <input
-                  type="date"
-                  :aria-label="$ui('完了日の終わり')"
-                  :value="beforeDate('closed_before')"
-                  @change="setBefore('closed_before', ($event.target as HTMLInputElement).value)"
-                />
-              </span>
+              <PlannedPeriodFilter
+                :name="$ui('完了日')"
+                :from="sinceDate('closed_since')"
+                :to="beforeDate('closed_before')"
+                @update="setPeriod('closed_since', 'closed_before', $event)"
+              />
             </div>
             <button
               type="button"
@@ -904,21 +911,33 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
 .search-conditions {
   display: flex;
   flex-direction: column;
-  gap: var(--pb-space-3);
+  gap: var(--pb-space-2);
   margin-bottom: var(--pb-space-4);
 }
 
+/* ラベルは入力の左に置く（5.4 のフィルタ行と同じ）。上に置くと1行が倍の高さになる */
 .search-conditions-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--pb-space-3);
+  align-items: center;
+  gap: var(--pb-space-2) var(--pb-space-3);
 }
 
 .search-filter {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--pb-space-1);
+  min-width: 0;
+}
+
+/* 1行目の5つは等分に伸ばす。選んだ件数で幅が変わらない（`EpicFilter` と同じ） */
+.search-conditions-select .search-filter {
+  flex: 1 1 0;
+}
+
+.search-conditions-select :deep(.trigger),
+.search-conditions-select :deep(.multi-select-trigger) {
+  width: 100%;
   min-width: 0;
 }
 
@@ -939,9 +958,13 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
 }
 
 /* キーワードは最も使う条件なので広く取る。狭い窓では行の幅に収める */
+.search-keyword {
+  flex: 1 1 160px;
+}
+
 .search-keyword input {
-  width: 360px;
-  max-width: 100%;
+  width: 100%;
+  min-width: 0;
 }
 
 .search-range {
@@ -952,11 +975,12 @@ async function assignRow(ticket: Ticket, actorId: string | null): Promise<void> 
 }
 
 .search-range input[type='number'] {
-  width: 88px;
+  width: 64px;
 }
 
-.search-range input[type='date'] {
-  width: 150px;
+/* 期間はバックログの予定期間と同じ部品。幅を揃え、範囲の文字が入る分だけ取る */
+.search-period :deep(.trigger) {
+  width: 170px;
 }
 
 /* `[解除]` は行の右端へ寄せる。狭い窓では折り返して先頭に来る */

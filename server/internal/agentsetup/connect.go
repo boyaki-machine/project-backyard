@@ -44,6 +44,9 @@ var autoApprovedTools = []string{
 	"pb_list_comments",
 	"pb_get_context",
 	"pb_list_transitions",
+	// **待ち受けは読み取りで、自律実行では何十回も呼ぶ**（Delegation.md 10章）。
+	// 呼ぶたびに承認を求めると、人が端末に張り付くことになる（pb-313）。
+	"pb_wait",
 }
 
 // mcpServerName は接続設定に書くサーバ名。
@@ -68,9 +71,30 @@ type ConnectParams struct {
 	ClientDisplayName string
 	// Transport is "direct" (the Codex HTTP MCP client) or "bridge" (a local
 	// stdio process).  Only Codex supports the latter.
-	Transport  string
+	Transport string
+	// BridgeOS / BridgeArch は利用者の端末の OS と CPU（ApiDesign.md 4.5.8.1a・4.5.8.1c）。
+	// ブリッジでは必須、直接接続では任意で、指定すると ZIP に pb-wait を同梱する
+	// （WaitKinds の種別だけ）。名前は最初の使い手（ブリッジ）のまま残している。
 	BridgeOS   string
 	BridgeArch string
+	// WorkHoldURL は承認待ちを知らせる口（DbDesign.md 6.34）。クライアントのフックが叩く。
+	// MCPURL と同じく、サーバの1か所で組み立てたものを受け取る。
+	WorkHoldURL string
+}
+
+// WaitKinds は ZIP に待ち受けの道具 pb-wait を同梱できる種別（ApiDesign.md 4.5.8.1c）。
+// 自律実行の main・評価を手順書で回す種別で、バックグラウンドでコマンドを走らせられる。
+var WaitKinds = map[string]bool{"claude_code": true, "codex": true}
+
+// WaitBinaryName は pb-wait の ZIP 内の名前。プラットフォームはブリッジと同じ5種類である。
+func WaitBinaryName(osName, arch string) (string, error) {
+	if _, err := BridgeBinaryName(osName, arch); err != nil {
+		return "", err
+	}
+	if osName == "windows" {
+		return "pb-wait.exe", nil
+	}
+	return "pb-wait", nil
 }
 
 const (
@@ -307,7 +331,12 @@ func RenderConnect(kind string, p ConnectParams) (Connect, error) {
 			return Connect{}, err
 		}
 	} else if p.BridgeOS != "" || p.BridgeArch != "" {
-		return Connect{}, fmt.Errorf("OS と CPU は stdio ブリッジでのみ指定できます")
+		if !WaitKinds[kind] {
+			return Connect{}, fmt.Errorf("OS と CPU は、stdio ブリッジと、pb-wait を同梱できる種別（Claude Code・Codex）でのみ指定できます")
+		}
+		if _, err := WaitBinaryName(p.BridgeOS, p.BridgeArch); err != nil {
+			return Connect{}, err
+		}
 	}
 	caTrust, err := renderCATrust(kind, p)
 	if err != nil {
@@ -333,16 +362,26 @@ func RenderConnect(kind string, p ConnectParams) (Connect, error) {
 		return Connect{}, err
 	}
 
+	files := []File{{
+		Path:       spec.configPath,
+		ClientKind: kind,
+		// **常に merge である**（ApiDesign.md 4.5.8.4）。既存の構造へ
+		// 該当キーだけを足すものであり、**zip では別名になる**。
+		Mode:     ModeMerge,
+		Language: spec.language,
+		Content:  content,
+	}}
+	// **Claude Code の承認待ちのフック**（DbDesign.md 6.34）。トークンの変数名がエージェントごとに
+	// 違うので、コミットする .claude/settings.json ではなく、手元だけの settings.local.json に置く。
+	if kind == "claude_code" && p.WorkHoldURL != "" {
+		hooks, err := renderClaudeHoldHooks(p)
+		if err != nil {
+			return Connect{}, err
+		}
+		files = append(files, File{Path: ".claude/settings.local.json", ClientKind: kind, Mode: ModeMerge, Language: "json", Content: hooks})
+	}
 	return Connect{
-		Files: []File{{
-			Path:       spec.configPath,
-			ClientKind: kind,
-			// **常に merge である**（ApiDesign.md 4.5.8.4）。既存の構造へ
-			// 該当キーだけを足すものであり、**zip では別名になる**。
-			Mode:     ModeMerge,
-			Language: spec.language,
-			Content:  content,
-		}},
+		Files:           files,
 		Readme:          readme,
 		UsesTokenEnvVar: spec.usesTokenEnvVar,
 		CATrust:         caTrust,
@@ -383,6 +422,8 @@ type readmeParams struct {
 	// **画面の API が返すものと同じ本文である。**
 	CATrust      CATrust
 	CATrustLabel string
+	// WaitBinaryName は同梱する pb-wait の名前。同梱しないときは空（ApiDesign.md 4.5.8.1c）。
+	WaitBinaryName string
 }
 
 // renderReadme は templates/connect/<name> を差し込む。
@@ -403,6 +444,13 @@ func renderReadme(name, kind string, spec connectSpec, p ConnectParams, caTrust 
 		OnboardRef:       "参画の手順",
 		CATrust:          caTrust,
 		CATrustLabel:     caTrust.Verification.label(),
+	}
+	if WaitKinds[kind] && p.BridgeOS != "" {
+		name, err := WaitBinaryName(p.BridgeOS, p.BridgeArch)
+		if err != nil {
+			return "", err
+		}
+		rp.WaitBinaryName = name
 	}
 	if spec.configPath != "" {
 		rp.ZipEntryName = blockName(spec.configPath)
@@ -608,7 +656,56 @@ func renderCodexConfig(p ConnectParams) (string, error) {
 		fmt.Fprintf(&b, "\n[mcp_servers.%s.tools.%s]\n", mcpServerName, tool)
 		b.WriteString("approval_mode = \"auto\"\n")
 	}
+	// **承認待ちのフック**（DbDesign.md 6.34）。Codex には HTTP のフックが無いので、同梱の
+	// pb-wait に知らせさせる。**pb-wait を同梱したとき（OS・CPU を選んだとき）だけ書く。**
+	// Codex は人が /hooks で信頼するまで、このフックを走らせない。
+	if p.BridgeOS != "" && p.WorkHoldURL != "" {
+		command := fmt.Sprintf("pb-wait hook --hold-url %s --token-env %s", p.WorkHoldURL, p.TokenEnvName)
+		for _, event := range codexHoldEvents {
+			fmt.Fprintf(&b, "\n[[hooks.%s]]\n\n[[hooks.%s.hooks]]\n", event, event)
+			b.WriteString("type = \"command\"\n")
+			fmt.Fprintf(&b, "command = %q\n", command)
+			b.WriteString("timeout = 10\n")
+		}
+	}
 	return b.String(), nil
+}
+
+// codexHoldEvents は Codex で承認待ちを知らせるイベント。Codex には PostToolUseFailure が無い。
+var codexHoldEvents = []string{"PermissionRequest", "PostToolUse", "UserPromptSubmit"}
+
+// claudeHoldEvents は Claude Code で承認待ちを知らせるイベント。PermissionRequest で止め、
+// 残りで再開する（承認が済んだこと自体を知らせるイベントは無い）。
+var claudeHoldEvents = []string{"PermissionRequest", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit"}
+
+// renderClaudeHoldHooks は .claude/settings.local.json の hooks を組み立てる。
+//
+// **HTTP フックにする。** スクリプトも OS ごとの違いも要らない。トークンは .mcp.json と同じ環境変数から
+// 取り、allowedEnvVars に挙げた変数だけが展開される。PB は 204 を返し本文を持たないので、承認の判定には
+// 口を出さない。matcher を書かないので、すべてのツールで走る。
+func renderClaudeHoldHooks(p ConnectParams) (string, error) {
+	type handler struct {
+		Type           string            `json:"type"`
+		URL            string            `json:"url"`
+		Timeout        int               `json:"timeout"`
+		Headers        map[string]string `json:"headers"`
+		AllowedEnvVars []string          `json:"allowedEnvVars"`
+	}
+	type group struct {
+		Hooks []handler `json:"hooks"`
+	}
+	h := handler{
+		Type: "http", URL: p.WorkHoldURL, Timeout: 5,
+		Headers:        map[string]string{"Authorization": fmt.Sprintf("Bearer ${%s}", p.TokenEnvName)},
+		AllowedEnvVars: []string{p.TokenEnvName},
+	}
+	hooks := map[string][]group{}
+	for _, event := range claudeHoldEvents {
+		hooks[event] = []group{{Hooks: []handler{h}}}
+	}
+	return marshalConfig(struct {
+		Hooks map[string][]group `json:"hooks"`
+	}{hooks})
 }
 
 // marshalConfig は設定ファイルを2スペース字下げの JSON にする。

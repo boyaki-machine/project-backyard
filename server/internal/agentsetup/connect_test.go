@@ -392,11 +392,50 @@ func TestRenderConnectCodexWindowsBridge(t *testing.T) {
 		{Transport: TransportBridge, BridgeOS: "windows", BridgeArch: "386"},
 		{Transport: TransportBridge, BridgeOS: "darwin", BridgeArch: "amd64"},
 		{Transport: TransportBridge, BridgeOS: "", BridgeArch: "arm64"},
-		{Transport: TransportDirect, BridgeOS: "windows", BridgeArch: "arm64"},
+		// 直接接続でも OS・CPU は指定できる（pb-wait の同梱。4.5.8.1c）が、値域は同じ
+		{Transport: TransportDirect, BridgeOS: "windows", BridgeArch: "386"},
+		{Transport: TransportDirect, BridgeOS: "darwin", BridgeArch: "amd64"},
 	} {
 		if _, err := RenderConnect("codex", p); err == nil {
 			t.Errorf("不正なOS/CPUを拒否しない: %+v", p)
 		}
+	}
+}
+
+// TestRenderConnectWaitBinary は、OS・CPU を指定したときだけ手引きに pb-wait の節が入ることを
+// 確かめる（ApiDesign.md 4.5.8.1c。pb-348）。
+func TestRenderConnectWaitBinary(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, transport, osName, arch string
+		want                                string // 空なら節が無い
+	}{
+		{"Claude Code・Linux", "claude_code", TransportDirect, "linux", "amd64", "pb-wait --url"},
+		{"Claude Code・Windows", "claude_code", TransportDirect, "windows", "amd64", "pb-wait.exe --url"},
+		{"Codex 直接・macOS", "codex", TransportDirect, "darwin", "arm64", "pb-wait --url"},
+		{"Codex ブリッジ", "codex", TransportBridge, "linux", "arm64", "pb-wait --url"},
+		{"Claude Code・指定なし", "claude_code", TransportDirect, "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := testConnectParams()
+			p.Transport, p.BridgeOS, p.BridgeArch = tc.transport, tc.osName, tc.arch
+			c, err := RenderConnect(tc.kind, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			has := strings.Contains(c.Readme, "待ち受けの道具（pb-wait）を置く")
+			if (tc.want != "") != has {
+				t.Fatalf("pb-wait の節の有無 = %v, want %v", has, tc.want != "")
+			}
+			if tc.want != "" && !strings.Contains(c.Readme, tc.want+" "+p.MCPURL+" --token-env "+p.TokenEnvName) {
+				t.Errorf("手引きに %q で始まる起動の例が無い:\n%s", tc.want, c.Readme)
+			}
+		})
+	}
+	// pb-wait を同梱しない種別は、直接接続で OS・CPU を受け付けない
+	p := testConnectParams()
+	p.BridgeOS, p.BridgeArch = "linux", "amd64"
+	if _, err := RenderConnect("copilot", p); err == nil {
+		t.Error("Copilot で OS・CPU を受け付けた")
 	}
 }
 
@@ -430,6 +469,27 @@ func TestClaudeSettingsAndCodexShareTheList(t *testing.T) {
 		if !strings.Contains(c.Files[0].Content, tool) {
 			t.Errorf("Codex 側に %s が無い（一覧がずれている）", tool)
 		}
+	}
+}
+
+// TestAutoApprovedToolsAreReadOnly は、自動承認の一覧が読み取りツールだけで、
+// 待ち受けを含むことを確かめる（Requirements.md 10.3 の表・457行の read / write の分離。pb-313）。
+//
+// **一覧から期待値を作る他の試験では、ツールを外しても書き込みを足しても落ちない。**
+// 分類の正本（Requirements.md の表）と突き合わせる。
+func TestAutoApprovedToolsAreReadOnly(t *testing.T) {
+	raw, err := os.ReadFile("../../../docs/design/Requirements.md")
+	if err != nil {
+		t.Fatalf("Requirements.md を読めない: %v", err)
+	}
+	for _, tool := range autoApprovedTools {
+		if !strings.Contains(string(raw), "| `"+tool+"` | read |") {
+			t.Errorf("%s が Requirements.md の表で read に分類されていない（書き込みは自動承認しない）", tool)
+		}
+	}
+	// 自律実行では何十回も呼ぶ（Delegation.md 10章）。外すと、呼ぶたびに承認を求める。
+	if !slices.Contains(autoApprovedTools, "pb_wait") {
+		t.Error("autoApprovedTools に pb_wait が無い")
 	}
 }
 

@@ -59,7 +59,7 @@ import { statusLabel } from '../lib/catalogLabels'
 import * as dodApi from '../api/dod'
 import type { TicketDoDItem } from '../api/dod'
 import * as linksApi from '../api/links'
-import { LAG_LINK_TYPES, MAX_LAG_DAYS, linkLabel, linkLabelTitle } from '../api/links'
+import { LAG_LINK_TYPES, MAX_LAG_DAYS, choiceToLink, formatLagClock, linkLabel, linkLabelTitle, parseLagClock } from '../api/links'
 import type { LinkChoice, TicketLink } from '../api/links'
 import type { ProjectMember, Workflow } from '../api/projects'
 import * as referencesApi from '../api/references'
@@ -159,6 +159,12 @@ const props = defineProps<{
    * 描かれない**ので、関連チケットの行に「日付なし・線は描かない」を添える
    */
   undatedSeqs?: number[]
+  /**
+   * タイムラインの欄（時間重複チェック・開始／終了のアンカー）を出すか（`GuiDesign.md` 5.5
+   * 「タイムラインの欄」）。**タイムラインから開いた詳細（`from=timeline`）だけが渡す**——
+   * バックログ・チケット検索・ガントから開いた詳細は今のまま出さない
+   */
+  timelineFields?: boolean
 }>()
 
 /** 詳細の中のリンクの行き先。`linkQuery` があれば載せる */
@@ -183,6 +189,10 @@ const emit = defineEmits<{
 const auth = useAuthStore()
 
 const canEdit = computed(() => auth.canInProject(props.projectKey, 'ticket.edit'))
+/** タイムラインの欄を変えられるか（`ticket.edit` か `ticket.plan.edit`。5.5「タイムラインの欄」） */
+const canEditTimeline = computed(
+  () => canEdit.value || auth.canInProject(props.projectKey, 'ticket.plan.edit'),
+)
 const canEditActualPoint = computed(() => auth.canInProject(props.projectKey, 'ticket.actual_point.edit'))
 const canAssign = computed(() => auth.canInProject(props.projectKey, 'ticket.assign'))
 const canTransition = computed(() => auth.canInProject(props.projectKey, 'ticket.transition'))
@@ -231,6 +241,11 @@ async function load(): Promise<void> {
 
 // ── 自律実行（5.5「自律実行」。pb-252）────────────────────────────
 
+/**
+ * 自律実行が機能として有効か（Delegation.md 1.3。pb-353）。**無効なら、この節のものを
+ * 何も出さず、委任の状態も読まない**（GuiDesign.md 5.5「自律実行」）
+ */
+const delegationOn = computed(() => auth.delegationEnabled)
 /** 実行モードが自律実行（始めた後）か */
 const delegated = computed(() => ticket.value?.execution_mode === 'delegated')
 /**
@@ -251,7 +266,7 @@ const canChooseDelegation = computed(() => canManageDelegation.value && delegati
 const delegation = useDelegationStatus(
   computed(() => props.projectKey),
   computed(() => props.seq),
-  delegated,
+  computed(() => delegationOn.value && delegated.value),
 )
 /**
  * 親を持つチケットが、どこかの自律実行の木の中にあるか（5.5「自律実行の中」。pb-276）。
@@ -260,7 +275,7 @@ const delegation = useDelegationStatus(
 const inTree = useDelegationStatus(
   computed(() => props.projectKey),
   computed(() => props.seq),
-  computed(() => !!ticket.value?.parent && !delegated.value),
+  computed(() => delegationOn.value && !!ticket.value?.parent && !delegated.value),
 )
 const treeInfo = computed(() => {
   const s = inTree.status.value
@@ -1048,19 +1063,23 @@ async function saveLink(body: { targetSeq: number; choice: LinkChoice['value'] }
   linkFieldErrors.value = {}
   linkFormError.value = ''
   try {
-    if (body.choice === 'blocks_in') {
+    const { linkType, reverse } = choiceToLink(body.choice)
+    if (reverse) {
       await linksApi.createLink(props.projectKey, body.targetSeq, {
         target_seq: t.seq,
-        link_type: 'blocks',
+        link_type: linkType,
         // 既定と同じ値。**`FS`〜`SF` のときしか意味を持たない**（9.10.1）
         lag_days: 0,
+        lag_seconds: 0,
       })
       await load()
+      emit('updated', ticket.value ?? t)
     } else {
       const created = await linksApi.createLink(props.projectKey, t.seq, {
         target_seq: body.targetSeq,
-        link_type: body.choice === 'blocks_out' ? 'blocks' : body.choice,
+        link_type: linkType,
         lag_days: 0,
+        lag_seconds: 0,
       })
       t.links = [...t.links, created].sort(compareLinks)
       emit('updated', t)
@@ -1093,6 +1112,8 @@ function compareLinks(a: TicketLink, b: TicketLink): number {
 /** ずらしを直している行（リンクの id）。同時に1つだけ */
 const lagEditing = ref<string | null>(null)
 const lagDraft = ref('')
+/** 秒のずらし（`時:分:秒`。`DbDesign.md` 6.6.3。pb-332） */
+const lagClockDraft = ref('')
 
 function canEditLag(l: TicketLink): boolean {
   return canEdit.value && LAG_LINK_TYPES.includes(l.link_type)
@@ -1101,6 +1122,7 @@ function canEditLag(l: TicketLink): boolean {
 function startLag(l: TicketLink): void {
   lagEditing.value = l.id
   lagDraft.value = String(l.lag_days)
+  lagClockDraft.value = formatLagClock(l.lag_seconds)
   linkError.value = ''
 }
 
@@ -1123,14 +1145,23 @@ async function saveLag(l: TicketLink): Promise<void> {
     linkError.value = uiText('ずらしは -{value0}〜{value0} の整数で入れてください', { value0: MAX_LAG_DAYS })
     return
   }
-  if (lag === l.lag_days) {
+  const sec = parseLagClock(lagClockDraft.value)
+  if (sec === null) {
+    linkError.value = uiText('時刻のずらしは 1日未満の 時:分:秒 で入れてください（例：0:10:00、-0:05:00）')
+    return
+  }
+  // **変えた欄だけを送る**（9.10.1。pb-332）
+  const body: { lag_days?: number; lag_seconds?: number } = {}
+  if (lag !== l.lag_days) body.lag_days = lag
+  if (sec !== l.lag_seconds) body.lag_seconds = sec
+  if (Object.keys(body).length === 0) {
     lagEditing.value = null
     return
   }
   busy.value = true
   linkError.value = ''
   try {
-    const next = await linksApi.updateLink(props.projectKey, t.seq, l.id, { lag_days: lag })
+    const next = await linksApi.updateLink(props.projectKey, t.seq, l.id, body)
     t.links = t.links.map((x) => (x.id === next.id ? next : x))
     lagEditing.value = null
     emit('updated', t)
@@ -1168,7 +1199,7 @@ async function runDeleteLink(): Promise<void> {
 const deleteLinkMessage = computed(() => {
   const l = linkToDelete.value
   if (l === null) return ''
-  const label = linkLabel(l.link_type, l.direction, l.lag_days)
+  const label = linkLabel(l.link_type, l.direction, l.lag_days, l.lag_seconds)
   const head = uiText("「{value0}」の関連（{value1}-{value2}「{value3}」）を解除します。", { value0: label, value1: props.projectKey, value2: l.ticket.seq, value3: l.ticket.title })
   return l.direction === 'incoming'
     ? uiText("{value0}\n相手のチケットが起点の関連なので、戻すには {value1}-{value2} を開く必要があります。", { value0: head, value1: props.projectKey, value2: l.ticket.seq })
@@ -1845,7 +1876,7 @@ defineExpose({
                 <option v-for="m in executionModeOptions" :key="m" :value="m">
                   {{ executionModeLabels[m] }}
                 </option>
-                <option value="delegated" :disabled="!canChooseDelegation">
+                <option v-if="delegationOn" value="delegated" :disabled="!canChooseDelegation">
                   {{ executionModeLabels.delegated }}{{
                     canChooseDelegation
                       ? ''
@@ -1873,7 +1904,7 @@ defineExpose({
           </div>
 
           <!-- 自律実行の項目（5.5「自律実行」）。実行モードの下に開く -->
-          <div v-if="delegated || delegationSetupOpen" class="meta-item wide delegation-item">
+          <div v-if="delegationOn && (delegated || delegationSetupOpen)" class="meta-item wide delegation-item">
             <dt class="visually-hidden">{{ $ui('自律実行') }}</dt>
             <dd>
               <DelegationPanel
@@ -2161,30 +2192,71 @@ defineExpose({
               </p>
             </dd>
           </div>
+
+          <!-- 「終日」の切り替え（5.5。pb-217）。**開始・終了のすぐ下に、2列をまたぐ1行で置く**
+               （pb-327。格子の外の下端では見つけられなかった）。「終了」の欄の中に入れると
+               その欄だけ高さが変わり、3行目の見出しが揃わない -->
+          <div class="meta-item wide all-day-row">
+            <label class="all-day">
+              <input
+                type="checkbox"
+                :checked="ticket.all_day"
+                :disabled="!canEdit || busy"
+                @change="toggleAllDay(($event.target as HTMLInputElement).checked)"
+              />
+              {{ $ui('終日') }}
+            </label>
+            <p v-if="errorFor('all_day')" class="field-error" role="alert">
+              {{ errorFor('all_day') }}
+            </p>
+          </div>
+
+          <!-- タイムラインの欄（5.5）。タイムラインから開いたときだけ。チェックで即時保存 -->
+          <div v-if="timelineFields" class="meta-item wide timeline-fields">
+            <label class="tl-flag">
+              <input
+                type="checkbox"
+                :checked="ticket.no_overlap"
+                :disabled="!canEditTimeline || busy"
+                @change="selectField({ no_overlap: ($event.target as HTMLInputElement).checked }, 'no_overlap')"
+              />
+              {{ $ui('重複チェック') }}
+            </label>
+            <span class="tl-flag-head">{{ $ui('アンカー') }}</span>
+            <label class="tl-flag">
+              <input
+                type="checkbox"
+                :checked="ticket.start_pinned"
+                :disabled="!canEditTimeline || busy"
+                @change="selectField({ start_pinned: ($event.target as HTMLInputElement).checked }, 'start_pinned')"
+              />
+              {{ $ui('開始') }}
+            </label>
+            <label class="tl-flag">
+              <input
+                type="checkbox"
+                :checked="ticket.due_pinned"
+                :disabled="!canEditTimeline || busy"
+                @change="selectField({ due_pinned: ($event.target as HTMLInputElement).checked }, 'due_pinned')"
+              />
+              {{ $ui('終了') }}
+            </label>
+            <p v-if="errorFor('no_overlap') || errorFor('start_pinned') || errorFor('due_pinned')" class="field-error" role="alert">
+              {{ errorFor('no_overlap') || errorFor('start_pinned') || errorFor('due_pinned') }}
+            </p>
+          </div>
         </dl>
         <TicketWork :project-key="projectKey" :seq="ticket.seq" :version="ticket.version" :can-correct="canEdit && canEditActualPoint" :can-finish="canEdit && canTransition && auth.canInProject(projectKey, 'agent.run')" @updated="load" />
-        <!-- 「終日」の切り替え（5.5。時刻付きの入力はこの画面だけが持つ。pb-217）。
-             **格子の外に置く**——「終了」の欄だけ高さが変わると、3行目の見出しが揃わない -->
-        <label class="all-day">
-          <input
-            type="checkbox"
-            :checked="ticket.all_day"
-            :disabled="!canEdit || busy"
-            @change="toggleAllDay(($event.target as HTMLInputElement).checked)"
-          />
-          {{ $ui('終日') }}
-        </label>
-        <p v-if="errorFor('all_day')" class="field-error" role="alert">
-          {{ errorFor('all_day') }}
-        </p>
 
         <!-- ユーザ確認待ち（5.5「自律実行」）。人の対応が要るものだけ。無ければ出さない -->
         <DelegationConfirmations
-          v-if="delegated"
+          v-if="delegationOn && delegated"
           :project-key="projectKey"
           :seq="seq"
           :status="delegation.status.value"
           :can-manage="canManageDelegation"
+          :children="ticket.children"
+          :can-transition="canTransition"
           @changed="onDelegationChanged"
         />
 
@@ -2496,6 +2568,17 @@ defineExpose({
                   />
                   {{ $ui('日') }}
                 </label>
+                <input
+                  v-model="lagClockDraft"
+                  type="text"
+                  class="rel-lag-clock"
+                  inputmode="numeric"
+                  placeholder="0:00:00"
+                  :disabled="busy"
+                  :aria-label="$ui('ずらし（時:分:秒）')"
+                  @keydown.enter.prevent="saveLag(l)"
+                  @keydown.esc.prevent="cancelLag"
+                />
                 <button type="button" class="ref-action" :disabled="busy" @click="saveLag(l)">{{ $ui('保存') }}</button>
                 <button type="button" class="ref-action" :disabled="busy" @click="cancelLag">{{ $ui('取消') }}</button>
               </span>
@@ -2506,14 +2589,14 @@ defineExpose({
                 :title="`${linkLabelTitle(l.link_type, l.direction)}\n${$ui('押すとずらしを変えられます')}`"
                 @click="startLag(l)"
               >
-                {{ linkLabel(l.link_type, l.direction, l.lag_days) }}
+                {{ linkLabel(l.link_type, l.direction, l.lag_days, l.lag_seconds) }}
               </button>
               <span
                 v-else
                 class="rel-kind"
                 :title="linkLabelTitle(l.link_type, l.direction)"
               >
-                {{ linkLabel(l.link_type, l.direction, l.lag_days) }}
+                {{ linkLabel(l.link_type, l.direction, l.lag_days, l.lag_seconds) }}
               </span>
               <!-- 行クリックでその相手の詳細を開く（子チケットと同じ） -->
               <RouterLink class="rel-main" :to="ticketTo(l.ticket.seq)">
@@ -2626,6 +2709,7 @@ defineExpose({
       :busy="busy"
       :field-errors="linkFieldErrors"
       :form-error="linkFormError"
+      :with-dependencies="timelineFields"
       @close="showLinkModal = false"
       @save="saveLink"
     />
@@ -2803,6 +2887,24 @@ defineExpose({
 /* タグは行いっぱいを使う。数が読めないので1列に押し込むと折り返しが荒れる */
 .meta-item.wide {
   grid-column: 1 / -1;
+}
+
+/* タイムラインの欄（5.5）：1行に並べる */
+.timeline-fields {
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 13px;
+}
+
+.tl-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tl-flag-head {
+  margin-left: var(--pb-space-3);
+  color: var(--pb-text-muted);
 }
 
 /* 自律実行の中の子：人の対応が要るときだけ黄の文字にする（pb-276） */
@@ -3545,6 +3647,10 @@ defineExpose({
   width: 5em;
 }
 
+.rel-lag-clock {
+  width: 6.5em;
+}
+
 /* 行の本体。**`.child-*` の見た目をそのまま使う**（子チケットと同じ並びなので、
    別々に書くと同じものが2通りに見える） */
 .rel-main {
@@ -3597,11 +3703,16 @@ defineExpose({
 .skeleton:nth-child(odd) {
   width: 70%;
 }
+/* 「終日」は開始・終了の行のすぐ下（pb-327） */
+.all-day-row {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 .all-day {
   display: inline-flex;
   align-items: center;
   gap: var(--pb-space-1);
-  margin-top: var(--pb-space-1);
   color: var(--pb-text-muted);
   font-size: 13px;
 }

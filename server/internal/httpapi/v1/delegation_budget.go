@@ -32,6 +32,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -84,7 +85,44 @@ func validateScopeConstraints(scope []byte, field string) []apierr.Detail {
 	if raw, ok := s["report_every_days"]; ok {
 		details = append(details, validateReportEveryDaysJSON(raw, field+".report_every_days")...)
 	}
+	// main が止まったとみなす時間（10.4。pb-310）。
+	if raw, ok := s["main_idle_minutes"]; ok {
+		var n float64
+		if err := json.Unmarshal(raw, &n); err != nil || n != math.Trunc(n) || n < 0 || n > mainIdleMinutesMax {
+			details = append(details, apierr.Detail{Field: field + ".main_idle_minutes", Code: "invalid",
+				Message: fmt.Sprintf("main が止まったとみなす時間は0〜%d分の整数で指定してください", mainIdleMinutesMax)})
+		}
+	}
 	return details
+}
+
+// mainIdleMinutesMax / mainIdleMinutesDefault は scope.main_idle_minutes の上限と既定（10.4。pb-310）。
+const (
+	mainIdleMinutesMax     = 1440
+	mainIdleMinutesDefault = 30
+)
+
+// mainIdleMinutesOf は scope から main が止まったとみなす時間（分）を読む。
+// 省略は既定の30分、0 は判定しない。
+func mainIdleMinutesOf(scope []byte) int {
+	var s struct {
+		MainIdleMinutes *int `json:"main_idle_minutes"`
+	}
+	_ = json.Unmarshal(scope, &s)
+	if s.MainIdleMinutes == nil {
+		return mainIdleMinutesDefault
+	}
+	return *s.MainIdleMinutes
+}
+
+// mainStopped は main が止まっているとみなすかを返す（10.4）。委任が承認済か計画中で、
+// 最後に要求が届いてから閾値を過ぎたとき真。1度も要求が無ければ判定しない（始めたばかり）。
+func mainStopped(status string, scope []byte, lastSeen *time.Time, now time.Time) bool {
+	minutes := mainIdleMinutesOf(scope)
+	if minutes == 0 || lastSeen == nil || (status != "approved" && status != "planning") {
+		return false
+	}
+	return now.Sub(*lastSeen) >= time.Duration(minutes)*time.Minute
 }
 
 // validateStopConditionsJSON は止まる条件の配列を確かめる。**PB は条件を判定しない**
@@ -109,15 +147,6 @@ func validateStopConditionsJSON(raw json.RawMessage, field string) []apierr.Deta
 		}
 	}
 	return nil
-}
-
-// stopConditionsOf は scope から止まる条件を読む（読めなければ空）。
-func stopConditionsOf(scope []byte) []string {
-	var s struct {
-		StopConditions []string `json:"stop_conditions"`
-	}
-	_ = json.Unmarshal(scope, &s)
-	return s.StopConditions
 }
 
 // validateScopeBudget は scope.budget の形を確かめる。field は detail の名前の

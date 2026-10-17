@@ -121,6 +121,18 @@ export function unarchiveProject(key: string): Promise<ProjectDetail> {
 }
 
 /**
+ * 物理削除（`ApiDesign.md` 5.6.1）。必要権限は `project.delete`（administrator だけ）。
+ *
+ * **アーカイブ済みのときだけ消せる**（そうでなければ 409）。`confirm_key` に
+ * プロジェクトキーを入れて送り、サーバでも照合される（一致しなければ 422）。
+ */
+export function deleteProject(key: string, confirmKey: string): Promise<void> {
+  return api.del<void>(`/projects/${encodeURIComponent(key)}`, undefined, {
+    confirm_key: confirmKey,
+  })
+}
+
+/**
  * `project.settings` の `repositories`（`DbDesign.md` 6.4）。
  *
  * **`settings` に定義する2つのキーの1つ**である（もう1つは `gantt_snap_minutes`）。PBがこのURLを使って
@@ -209,4 +221,36 @@ export function mergeGanttSnap(
   minutes: GanttSnapMinutes,
 ): ProjectDetail['settings'] {
   return { ...settings, gantt_snap_minutes: minutes }
+}
+
+/**
+ * メニューに出すビューの表示・非表示（`project.settings.views`。`DbDesign.md` 6.4、
+ * `GuiDesign.md` 4.3・5.9.1）。
+ *
+ * **知らないビューのキーは読み飛ばし、書いていないキー・真偽でない値は既定で補う。**
+ * 既定はビューごとに違う（ガントは出す、プラグインのビューは登録表が決める）ので、
+ * 呼び出し側が渡す。**権限の境界ではない**——隠したビューも URL で開ける。
+ */
+export function readViewEnabled(
+  settings: ProjectDetail['settings'] | undefined,
+  key: string,
+  fallback: boolean,
+): boolean {
+  const views = settings?.['views']
+  if (typeof views !== 'object' || views === null || Array.isArray(views)) return fallback
+  const v = (views as Record<string, unknown>)[key]
+  return typeof v === 'boolean' ? v : fallback
+}
+
+/**
+ * `views` の一部を差し替えた `settings`。**丸ごと置き換えなので、知らないキーを落とさない**
+ * （`views` の中の知らないビューも残す）。
+ */
+export function mergeViews(
+  settings: ProjectDetail['settings'],
+  patch: Record<string, boolean>,
+): ProjectDetail['settings'] {
+  const raw = settings['views']
+  const base = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+  return { ...settings, views: { ...base, ...patch } }
 }

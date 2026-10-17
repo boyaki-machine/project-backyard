@@ -37,7 +37,8 @@ main の説明を鵜呑みにせず、計画・ファイル・チケット・実
 `pb_submit_evaluation` に次を渡す。実際に公開されたツールスキーマの型を確認してから送る。
 
 - `seq`：根の番号
-- `target_kind`：`plan`（`plan_version` も必須）または `deliverable`（暗黙に最新の根の報告）
+- `target_kind`：`plan`（`plan_version` も必須）または `deliverable`（根の最新の報告）
+- `agent_report_id`：`deliverable` のとき、読んだ完了レポートの ID（パックの「最新の完了レポート」）。評価を待つ間も main は出し直せるので、409（`stale_report`）で拒まれたら新しい報告を読み直して評価する
 - `verdict`：`pass` / `fail` / `unable`
 - `findings`：少なくとも `purpose_and_dod` と `values`。各要素は `{aspect, verdict, note_md}` のオブジェクトで、観点の `verdict` は `pass` / `fail`。判断不能は全体の `verdict="unable"` とし、判断できない観点を `fail` にして不足する材料を `note_md` に書く。ツールの型がこの契約と食い違う場合は、文字列に変換して通そうとせず、実際の MCP の定義とサーバの契約を確認する。解消できなければ提出せず利用者へ伝える
 - `class_check`：計画の変更を評価したときの分類の妥当性（`agree` / `stricter` / `looser`）
@@ -48,10 +49,12 @@ main の説明を鵜呑みにせず、計画・ファイル・チケット・実
 ## 3. 待ち受けと停止
 
 評価対象が無い、提出済み、または PM の回答待ちなら、待つ対象をローカルへ記録して `pb_wait(seq=<根の番号>, since=<保存した cursor>)` を呼ぶ。初回だけは `since` を省ける。**返った `cursor` を毎回保存し、呼び直しも保存した値を `since` に渡す。** 変化が無ければ繰り返し、エラー時も最後に受け取った cursor を保持して再度呼ぶ。
+`pb-wait`（PATH か環境変数 `PB_WAIT`）が使えるなら、待ち受けはそれに任せる（`Delegation.md` 10.3）。前で `pb-wait --url <接続設定の PB の URL> --token-env <接続設定の変数名> --seq <根の番号> --since <保存した cursor> --max 9m` を走らせ、出力（`pb_wait` と同じ JSON）の `next` に従う。終了コード 2 は時間切れで、出力の `cursor` でもう一度走らせる。3 は main が止まっている（`main_stopped`）。1 は失敗で、`pb_wait` に切り替える。シェルのコマンドを何分まで待てるかは実機未確認なので、打ち切られたら `--max` を縮める。
+`pb_wait` が `main_stopped: true` を返したら（`pb-wait` は終了コード 3）、main が止まっている（利用枠の上限など。`Delegation.md` 10.4）。待ち続けず、ローカルに cursor と理由を書いて止まる。再開は利用者が同じ一言で行う。
 
 長い待ち受けは非同期で呼び、進捗を通知しながら応答を待つ。結果の `next` に従い、新しい計画や根の成果が届いたら `pb_get_context` から状況を取り直す。開いている確認待ち（`hearing` を除く）の間は評価を提出しない。
 
-**403 の `delegation_stage` / `delegation_budget` で拒まれた、`pb_wait` が一時停止を返した、または利用者が停止したら、ローカルへ引き継ぎを残して止まる。** 再開は PM が行う。確認待ちへの回答だけで `paused` から再開しない。`ended`（受け入れ・取り下げ）は PB に書き込まず、ローカルの引き継ぎファイルを消して終了する。
+**403 の `delegation_stage` / `delegation_budget` で拒まれた、`pb_wait` が一時停止を返した、PB のツールの結果に一時停止の注記が付いた（`Delegation.md` 8.4）、または利用者が停止したら、ローカルへ引き継ぎを残して止まる。** 再開は PM が行う。確認待ちへの回答だけで `paused` から再開しない。`ended`（受け入れ・取り下げ）は PB に書き込まず、ローカルの引き継ぎファイルを消して終了する。
 
 評価者は `pb_raise_confirmation` を呼ばない（main 専用）。止まる条件や判断不能は、提出可能な段階なら評価・ノートで指摘する。判定不能は `unable` で PB に確認待ちを立てさせる。提出できない段階なら、ローカルに理由を残して利用者へ伝える。
 

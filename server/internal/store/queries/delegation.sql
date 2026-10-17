@@ -8,11 +8,14 @@
 
 -- CreateDelegation は委任を1件作る（Delegation.md 4.4）。
 -- **終了していない委任は根ごとに1件**（uq_delegation_root_active。0058）。
+-- **created_at はアプリから受け取る。** 予算（GetDelegationBudgetUsage）は
+-- agent_run.started_at（アプリの時計）と比べて「委任より後の実行」を選ぶので、
+-- DB の now() で付けると2つの時計のずれだけ境目が動く（agent_monitor.sql の解除と同じ）。
 -- name: CreateDelegation :exec
 INSERT INTO delegation
-  (id, project_id, root_ticket_id, main_actor_id, evaluator_actor_id, scope, created_by)
+  (id, project_id, root_ticket_id, main_actor_id, evaluator_actor_id, scope, created_by, created_at, updated_at)
 VALUES
-  (@id, @project_id, @root_ticket_id, @main_actor_id, @evaluator_actor_id, @scope, @created_by);
+  (@id, @project_id, @root_ticket_id, @main_actor_id, @evaluator_actor_id, @scope, @created_by, @created_at, @created_at);
 
 -- GetDelegationByID は作成直後の応答の組み立てに使う。
 -- name: GetDelegationByID :one
@@ -56,6 +59,11 @@ LIMIT 1;
 SELECT d.id, d.root_ticket_id, d.status
 FROM delegation d
 WHERE d.project_id = @project_id AND d.status <> 'ended';
+
+-- CountUnendedDelegations はサーバ全体で終了していない委任を数える。
+-- 自律実行を無効にする前に見る（ApiDesign.md 11.2。Delegation.md 1.3）。
+-- name: CountUnendedDelegations :one
+SELECT count(*) FROM delegation WHERE status <> 'ended';
 
 -- GetTicketForDelegation は委任を作る前に、対象が根（親を持たない）かを
 -- 確かめるのに使う。
@@ -121,6 +129,9 @@ SELECT EXISTS (
 -- 終了していない委任の木（根と子孫）を根から辿り、渡したチケットのぶんだけ返す。
 -- **委任が無いプロジェクトでは再帰の起点が0行**なので、一覧の重さはほぼ変わらない。
 -- open_confirmations はヒアリングも数える（どれも PM の回答を待っている）。
+-- reported は、根ではない子で最新の完了レポートが completed なのに完了していないこと
+-- （Delegation.md 5章 D2）。レビュー相当の状態が無いワークフローでも、PM が
+-- まとめて完了にする子を見分けられるようにする。
 -- name: ListDelegationMarks :many
 WITH RECURSIVE tree AS (
   SELECT d.id AS delegation_id, d.root_ticket_id AS ticket_id
@@ -136,8 +147,25 @@ SELECT
   (tree.ticket_id = d.root_ticket_id)::boolean AS is_root,
   d.status,
   (SELECT count(*) FROM confirmation c
-   WHERE c.delegation_id = d.id AND c.status = 'open')::bigint AS open_confirmations
+   WHERE c.delegation_id = d.id AND c.status = 'open')::bigint AS open_confirmations,
+  (tree.ticket_id <> d.root_ticket_id AND t.closed_at IS NULL AND COALESCE((
+     SELECT ar.status = 'completed' FROM agent_report ar
+     WHERE ar.ticket_id = tree.ticket_id
+     ORDER BY ar.submitted_at DESC, ar.id DESC LIMIT 1), false))::boolean AS reported
 FROM tree
 JOIN delegation d ON d.id = tree.delegation_id
 JOIN ticket rt ON rt.id = d.root_ticket_id
+JOIN ticket t ON t.id = tree.ticket_id
 WHERE tree.ticket_id = ANY(@ticket_ids::text[]);
+
+-- GetPausedDelegationRootForActor は、アクターが main か評価である一時停止中の委任の根の番号を返す
+-- （ApiDesign.md 2.9.1・Delegation.md 8.4。pb-309）。エージェントの要求への応答ヘッダに使う。
+-- 無ければ行が無い。
+-- name: GetPausedDelegationRootForActor :one
+SELECT t.seq
+FROM delegation d
+JOIN ticket t ON t.id = d.root_ticket_id
+WHERE d.project_id = @project_id AND d.status = 'paused'
+  AND (d.main_actor_id = @actor_id OR d.evaluator_actor_id = @actor_id)
+ORDER BY d.created_at DESC, d.id DESC
+LIMIT 1;

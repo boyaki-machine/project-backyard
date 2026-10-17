@@ -90,6 +90,9 @@ func (l *Live) CookieSecure() bool { return l.Snapshot().Bool(KeyCookieSecure) }
 // HealthShowVersion は GET /healthcheck にバージョンを含めるか。
 func (l *Live) HealthShowVersion() bool { return l.Snapshot().Bool(KeyHealthShowVersion) }
 
+// DelegationEnabled は自律実行を使えるか（Delegation.md 1.3）。
+func (l *Live) DelegationEnabled() bool { return l.Snapshot().Bool(KeyDelegationEnabled) }
+
 // LogLevel と LogFormat はロガーの入れ替えに使う。
 func (l *Live) LogLevel() string  { return l.Snapshot().String(KeyLogLevel) }
 func (l *Live) LogFormat() string { return l.Snapshot().String(KeyLogFormat) }

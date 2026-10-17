@@ -22,6 +22,7 @@ import (
 	"github.com/boyaki-machine/project-backyard/server/internal/httpapi"
 	v1 "github.com/boyaki-machine/project-backyard/server/internal/httpapi/v1"
 	"github.com/boyaki-machine/project-backyard/server/internal/maintenance"
+	"github.com/boyaki-machine/project-backyard/server/internal/notify"
 	"github.com/boyaki-machine/project-backyard/server/internal/store"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/search"
@@ -239,6 +240,63 @@ func serve(ctx context.Context) error {
 				if _, err := guard.RevertExpired(context.WithoutCancel(ctx)); err != nil {
 					slog.Error("期限切れの設定変更を戻せない", slog.String("error", err.Error()))
 				}
+			}
+		}
+	}()
+
+	// **既読から保持期間を過ぎた通知を消す**（DbDesign.md 6.33）。起動時に1回、
+	// その後は notify.SweepInterval ごと。**通知を作る・一覧を引く処理では消さない**
+	// ——通知が来ない宛先の古い行が残り続けるためである。間隔は設定にしない。
+	go func() {
+		q := gen.New(pool)
+		sweep := func() {
+			n, err := notify.Sweep(context.WithoutCancel(ctx), q, time.Now())
+			if err != nil {
+				slog.Error("期限切れの通知を消せない", slog.String("error", err.Error()))
+				return
+			}
+			if n > 0 {
+				slog.Info("期限切れの通知を消した", slog.Int64("count", n))
+			}
+		}
+		sweep()
+		t := time.NewTicker(notify.SweepInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				sweep()
+			}
+		}
+	}()
+
+	// **作業記録の浮きを閉じる**（Design.md 8.5.7、ApiDesign.md 11.14）。起動時に1回、
+	// その後は v1.WorkSweepInterval ごと。閾値（work_stale_hours）が0なら何もしない。
+	// **PB は単一プロセス前提**（DbDesign.md 3.5）。複数で走っても、記録ごとに
+	// 作業記録のロックの下で判定し直すので、同じ記録を2度閉じない。
+	go func() {
+		sweeper := v1.WorkSweeper{Tx: txRunner, Q: gen.New(pool), Settings: live}
+		sweep := func() {
+			n, err := sweeper.RunDaily(context.WithoutCancel(ctx))
+			if err != nil {
+				slog.Error("作業記録の浮きを閉じられない", slog.String("error", err.Error()))
+				return
+			}
+			if n > 0 {
+				slog.Info("作業記録の浮きを閉じた", slog.Int("count", n))
+			}
+		}
+		sweep()
+		t := time.NewTicker(v1.WorkSweepInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				sweep()
 			}
 		}
 	}()

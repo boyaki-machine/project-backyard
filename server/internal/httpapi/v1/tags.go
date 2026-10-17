@@ -39,13 +39,6 @@ import (
 // タグの制約（ApiDesign.md 9.11、DbDesign.md 6.10 の CHECK）。
 const (
 	tagNameMaxLen = 30
-
-	// tagSortOrderStep は sort_order 省略時の刻み幅。
-	//
-	// 並べ替え（9.11.1）がクライアント側で 10, 20, 30… と振り直すため、
-	// 末尾への追加も同じ間隔にしておく。値そのものに意味は無く、
-	// 順序を決めるのは大小関係だけである。
-	tagSortOrderStep = 10
 )
 
 // tagView は 9.11 が返す1行。

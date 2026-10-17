@@ -79,6 +79,14 @@ export interface paths {
                         "application/json": {
                             policy: components["schemas"]["WorkPolicy"];
                             open_work_id: string | null;
+                            /** @description 開いている記録の開始元のチケット番号。 */
+                            open_work_seq: number | null;
+                            /** @description 自分の開いている記録すべて（開始の古い順）。委任のmainは木の中で複数開ける。 */
+                            open_works: {
+                                id: string;
+                                /** @description 開始元のチケット番号 */
+                                seq: number;
+                            }[];
                             document_path: string;
                             section: string;
                         };
@@ -302,6 +310,60 @@ export interface paths {
                     content?: never;
                 };
                 422: components["responses"]["ValidationFailed"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/work-hold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 承認待ちで作業記録を止める・再開する（クライアントのフック）
+         * @description agent.run が必要。エージェントのクライアントのフックが叩く（DbDesign.md 6.34）。本文はフックの JSON そのままで、
+         *     `hook_event_name` だけを読む。`PermissionRequest` でそのエージェントがこの PJ で実行中の記録をすべて止め、
+         *     `PostToolUse` / `PostToolUseFailure` / `UserPromptSubmit` でフックが止めた記録だけを再開する。
+         *     それ以外のイベントと人のトークンでは何もしない。**常に 204 で本文を返さない**——Claude Code の HTTP フックは
+         *     2xx の JSON 本文を承認の判定として読むため。
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    key: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        hook_event_name?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description 受け付けた（何もしなかった場合も含む） */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                403: components["responses"]["Forbidden"];
             };
         };
         delete?: never;
@@ -885,6 +947,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 自分宛ての通知
+         * @description 自分宛ての通知の一覧（ApiDesign.md 4.8.1）。必要権限は「本人」。
+         *     **並びは `created_at` の降順で固定**で、`sort` と `order` を受けない（渡せば 422）。
+         */
+        get: operations["listMyNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/notifications/unread-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 自分宛ての未読の数
+         * @description ApiDesign.md 4.8.2。**画面がどの画面にいても30秒ごとに引く口である。** 上限で丸めない。
+         */
+        get: operations["unreadMyNotificationCount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/notifications/read-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 自分宛ての未読をすべて既読にする
+         * @description ApiDesign.md 4.8.4。本文を受けない。
+         */
+        post: operations["readAllMyNotifications"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/notifications/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["NotificationID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 通知を削除する（受けた人・出した人）
+         * @description ApiDesign.md 4.8.5。受けた人と、出した人（`source.id` が自分）が消せる。
+         *     **受けた人以外が消したときだけ**監査に `notification.delete` を残す。
+         */
+        delete: operations["deleteMyNotification"];
+        options?: never;
+        head?: never;
+        /**
+         * 通知を既読にする・未読に戻す
+         * @description ApiDesign.md 4.8.3。**既に同じ状態なら何もしない**（既読の時刻を書き換えない）。
+         *     `If-Match` を要求しない。他人の通知は 404。
+         */
+        patch: operations["patchMyNotification"];
+        trace?: never;
+    };
+    "/api/v1/admin/notifications/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["NotificationID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 通知を削除する（管理者）
+         * @description ApiDesign.md 4.8.6。必要権限は `system.settings`。誰宛ての通知でも消せる。
+         */
+        delete: operations["deleteNotificationByAdmin"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent-client-kinds": {
         parameters: {
             query?: never;
@@ -1296,7 +1477,18 @@ export interface paths {
         get: operations["getProject"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * プロジェクトの物理削除
+         * @description プロジェクトと、それに属する行をすべて消す（ApiDesign.md 5.6.1）。**取り消せない。**
+         *     必要権限は `project.delete`（`administrator` だけが持つ）。
+         *
+         *     **アーカイブ済みのときだけ消せる**（そうでなければ 409）。本文の `confirm_key` が
+         *     URL のプロジェクトキーと一致しなければ 422（`details[].field` が `confirm_key`）。
+         *
+         *     監査は `project.delete` として、削除と同じトランザクションで記録する。
+         *     **監査ログは消えない。** `If-Match` は要求しない。
+         */
+        delete: operations["deleteProject"];
         options?: never;
         head?: never;
         /**
@@ -1568,6 +1760,70 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/schedule-baselines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 当初計画の版の一覧
+         * @description `created_at` の新しい順（ApiDesign.md 9.17.3）。**必要権限は `ticket.view`**。ページネーションも ETag も持たない。
+         */
+        get: operations["listScheduleBaselines"];
+        put?: never;
+        /**
+         * 当初計画を保存する
+         * @description プロジェクトのタイムライン全体（`timeline_epics` で選んだエピックの配下）を1つの版として積む（ApiDesign.md 9.17.3）。**必要権限は `project.edit`**。
+         *     `If-Match` は要求しない。写すチケットが 5,000件を超えれば 422 `too_many`。
+         */
+        post: operations["createScheduleBaseline"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/schedule-baselines/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /** @description 版の ULID。 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * 当初計画の1版
+         * @description 版の中身（ApiDesign.md 9.17.3）。**必要権限は `ticket.view`**。書き換わらないので `If-None-Match` で 304。
+         */
+        get: operations["getScheduleBaseline"];
+        put?: never;
+        post?: never;
+        /**
+         * 当初計画の版を消す
+         * @description 版とその行を物理削除する（ApiDesign.md 9.17.3）。**必要権限は `project.edit`**。
+         *     `If-Match` は要求しない。
+         */
+        delete: operations["deleteScheduleBaseline"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2080,7 +2336,8 @@ export interface paths {
          *     `ETag` は「フィルタ条件を正規化した文字列のハッシュ・件数・`MAX(updated_at)`」から
          *     作る（9.2.5）。**`sort` / `order` / `page` / `per_page` も混ぜる**——ETag は応答本文を
          *     指す検証子であり、並び順やページが違えば本文も違う。
-         *     **`If-None-Match` は解釈しない**（304 を返さない）。
+         *     **`If-None-Match` が今の ETag と一致すれば 304 を返す**（9.2.5）。
+         *     `view=timeline` は ETag にエピックと当初計画の版の材料も混ぜる。
          */
         get: operations["listTickets"];
         put?: never;
@@ -2828,11 +3085,12 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * 依存のずらし（lag_days）の変更
-         * @description ずらし（`lag_days`）だけを変える（ApiDesign.md 9.10.1。pb-231）。**必要権限は `ticket.edit` または `ticket.plan.edit`**。
+         * 依存のずらし（lag_days・lag_seconds）の変更
+         * @description ずらし（`lag_days`・`lag_seconds`）だけを変える（ApiDesign.md 9.10.1。pb-231・pb-332）。**必要権限は `ticket.edit` または `ticket.plan.edit`**。
          *
-         *     **`FS` / `SS` / `FF` / `SF` のときだけ受ける**（ほかの種別は 422 `invalid`）。範囲は -365〜365。
-         *     **`lag_days` 以外を送ると 422 `immutable_field`**——`link_type` と相手は変えられない。
+         *     **`FS` / `SS` / `FF` / `SF` のときだけ受ける**（ほかの種別は 422 `invalid`）。範囲は日が -365〜365、秒が -86399〜86399。
+         *     **変えるものだけを送る**（送らなかった方は今のまま。どちらも無ければ 422 `required`）。
+         *     **ずらし以外を送ると 422 `immutable_field`**——`link_type` と相手は変えられない。
          *     `direction` を問わない（`incoming` の行も直せる）。変更は `activity` に1行書く。
          */
         patch: operations["updateTicketLink"];
@@ -3274,9 +3532,11 @@ export interface paths {
          *     MCP では `pb_submit_evaluation`。
          *
          *     `target_kind=plan` のときは `plan_version` も指定する。
-         *     `target_kind=deliverable` のときは根の最新の完了レポートが暗黙の
-         *     対象になる（1つの完了レポートに評価は1件まで。出し直しは main が
-         *     新しい完了レポートを提出してから）。
+         *     `target_kind=deliverable` のときは根の最新の完了レポートが対象に
+         *     なる（1つの完了レポートに評価は1件まで）。**評価待ちの間も main は
+         *     出し直せる**ので、評価役は読んだ報告の ID を `agent_report_id` で
+         *     名指しする。最新でなければ `409`（`details[].code = "stale_report"`）
+         *     で拒む——評価役は新しい報告を読み直す。省くと最新を指す。
          *
          *     **findings には少なくとも2観点**（`purpose_and_dod` と `values`）
          *     を入れる。**不合格（`fail`）には指摘を必ず書く**——不合格にした
@@ -3746,6 +4006,43 @@ export interface paths {
         get: operations["listTicketTransitions"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{key}/tickets/{seq}/reschedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 連鎖のずらし（試算と確定）
+         * @description きっかけのチケット1件の新しい予定を受け、時間重複チェック付きの列と依存（FS / SS / FF / SF。
+         *     行をまたいでよい）をたどって連鎖でずらす（ApiDesign.md 9.17。pb-332）。**必要権限は `ticket.edit` / `ticket.self_edit` /
+         *     `ticket.plan.edit` のいずれか**。`If-Match` はきっかけの `version`（省略は 422）。
+         *     `dry_run: true` は試算で、解けなくても 200（`result=blocked`）。確定で解けなければ 422
+         *     （`cannot_fit` / `overlaps_previous` / `order_cycle`）。試算の後に動かす行が変わっていれば 409（`stale_plan`）。
+         */
+        post: operations["rescheduleTicket"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4707,6 +5004,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/work-sweep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 作業記録の浮きを数える
+         * @description 閉じられないまま残った作業記録（浮き）を全プロジェクトから数える（ApiDesign.md 11.14、GuiDesign.md 5.12.3）。
+         *     **必要権限は `system.settings`。** 何も変えない。
+         */
+        get: operations["getWorkSweep"];
+        put?: never;
+        /**
+         * 作業記録の浮きを閉じる
+         * @description 渡された記録のうち、**閉じる直前に判定し直して**まだ浮きに当たるものだけを、
+         *     `abandon` と同じ扱いで閉じる（ApiDesign.md 11.14）。監査ログ `work.sweep` を1行残す。
+         */
+        post: operations["runWorkSweep"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/backup.tar.gz": {
         parameters: {
             query?: never;
@@ -5099,6 +5422,14 @@ export interface components {
             /** @description 所属プロジェクトと、そこでの実効権限。`key` の昇順。 */
             projects: components["schemas"]["SessionProject"][];
             /**
+             * @description 成熟途上の機能が有効か（ApiDesign.md 4.1。Design.md 10.3）。設定 API は
+             *     `system.settings` が要るので、画面が入口を出し分ける材料をここに載せる。
+             */
+            features: {
+                /** @description 自律実行が有効か（設定 `delegation_enabled` の実効値。Delegation.md 1.3）。 */
+                delegation: boolean;
+            };
+            /**
              * Format: int64
              * @description 現在のトークンの有効期限。無期限の API トークンでは null。
              */
@@ -5420,6 +5751,25 @@ export interface components {
             created_at: number;
             /** @description 有効なトークン1本。無ければ `null`。 */
             token: components["schemas"]["AgentToken"] | null;
+            /**
+             * @description **`GET /me/agents` だけが返す**（4.5.1）。開いている作業記録の開始元のチケット（開始の古い順）。
+             *     無ければ空の配列。自律実行を始める画面が、作業中のエージェントを選んだときの注意に使う。
+             */
+            open_works?: {
+                ticket_seq: number;
+                ticket_title: string;
+            }[];
+            /**
+             * @description **`GET /me/agents` だけが返す**（4.5.1）。main・評価を務める、終了していない委任（作成の古い順）。
+             *     無ければ空の配列。
+             */
+            delegations?: {
+                root_seq: number;
+                /** @enum {string} */
+                role: "main" | "evaluator";
+                /** @enum {string} */
+                status: "planning" | "approved" | "paused";
+            }[];
         };
         /** @description プロジェクトの最小の参照（ApiDesign.md 4.5.1）。 */
         ProjectRef: {
@@ -5771,6 +6121,68 @@ export interface components {
             credential: {
                 [key: string]: unknown;
             };
+        };
+        /** @description ApiDesign.md 4.8.1。ページネーションは 2.6 に従う。ETag は持たない。 */
+        NotificationList: {
+            /** @description `created_at` の降順。 */
+            items: components["schemas"]["Notification"][];
+            page: number;
+            per_page: number;
+            total: number;
+            total_pages: number;
+        };
+        /** @description 自分宛ての通知1件（ApiDesign.md 4.8.1、DbDesign.md 6.33）。 */
+        Notification: {
+            /** @example 01K2F8QW3H7YRJ4M5N6P7Q8R9S */
+            id: string;
+            /**
+             * @description 使い手が名乗る種類（`<領域>.<出来事>`）。
+             * @example delegation.confirmation
+             */
+            kind: string;
+            title: string;
+            /** @description プレーンテキスト。空のことがある。 */
+            body: string;
+            /**
+             * @description 遷移先。**PB の画面のパス**（`/` から始まる）。
+             * @example /p/my-app/tickets/52
+             */
+            link: string;
+            /**
+             * @description 一覧で遷移のリンクとして出す文字列。
+             * @example my-app-52 文化祭の準備
+             */
+            link_label: string;
+            /** @description プロジェクトの外の出来事なら `null`。 */
+            project: null | {
+                key: string;
+                name: string;
+            };
+            source: {
+                /** @description PB 自身が出した通知は `null`。 */
+                id: string | null;
+                /** @description 記録時の表示名。PB 自身なら `PB`。 */
+                name: string;
+            };
+            /** Format: int64 */
+            created_at: number;
+            /**
+             * Format: int64
+             * @description 未読なら `null`。
+             */
+            read_at: number | null;
+        };
+        /** @description ApiDesign.md 4.8.2。 */
+        NotificationUnreadCount: {
+            count: number;
+        };
+        /** @description ApiDesign.md 4.8.3。 */
+        NotificationPatch: {
+            read: boolean;
+        };
+        /** @description ApiDesign.md 4.8.4。 */
+        NotificationReadAll: {
+            updated: number;
         };
         /** @description ApiDesign.md 4.7.1。ページネーションも ETag も持たない（上限5件）。 */
         PasskeyList: {
@@ -6368,6 +6780,14 @@ export interface components {
              */
             workflow_template: "simple" | "with_review" | "with_approval";
         };
+        /** @description 確認のため、消すプロジェクトのキーを書かせる（ApiDesign.md 5.6.1）。 */
+        DeleteProjectRequest: {
+            /**
+             * @description URL のプロジェクトキーと完全に一致させる。
+             * @example my-app
+             */
+            confirm_key: string;
+        };
         /**
          * @description `PATCH /projects/:key` の本文（ApiDesign.md 5.5）。**送られたフィールドだけを
          *     更新する**ため required は無い。`key` は受け付けず、送ると 422
@@ -6385,7 +6805,8 @@ export interface components {
              *     取得した値を保持し、変更するキーだけ差し替えて全体を送ること。
              *
              *     サーバは JSON オブジェクトであることしか検証しない。画面が
-             *     使うキーは `repositories` と `gantt_snap_minutes` で、構造の正本は DbDesign.md 6.4 にある。
+             *     使うキーは `repositories`・`gantt_snap_minutes`・`views`・`timeline_snap_seconds`・`timeline_epics` で、
+             *     構造の正本は DbDesign.md 6.4 にある。
              */
             settings?: {
                 [key: string]: unknown;
@@ -6426,7 +6847,8 @@ export interface components {
             my_permissions: string[];
             /**
              * @description `project.settings`（jsonb）をそのまま返す。画面が使うキーは
-             *     `repositories` と `gantt_snap_minutes` で、構造の正本は DbDesign.md 6.4 にある。
+             *     `repositories`・`gantt_snap_minutes`・`views`・`timeline_snap_seconds`・`timeline_epics` で、
+             *     構造の正本は DbDesign.md 6.4 にある。
              */
             settings: {
                 [key: string]: unknown;
@@ -6594,6 +7016,11 @@ export interface components {
                  *     ]
                  */
                 available_sections?: string[];
+                /**
+                 * @description 連鎖のずらしの `409`（`details[].code = "stale_plan"`）にだけ載る、同じ要求を
+                 *     `dry_run` で計算し直した応答（ApiDesign.md 9.17.2）。`retry_after_sec` と同じく本体の任意フィールド。
+                 */
+                retrial?: components["schemas"]["RescheduleResult"];
                 /**
                  * @description `audit_log.request_id`（DbDesign.md 6.8）および構造化ログ
                  *     （Design.md 10.1）と突き合わせられる。
@@ -6853,6 +7280,16 @@ export interface components {
             active_ms: number;
             /** Format: int64 */
             waiting_ms: number;
+            /**
+             * @description クライアントのフックが承認待ちで止めているとき approval（DbDesign.md 6.34）
+             * @enum {string|null}
+             */
+            hold: "approval" | null;
+            /**
+             * Format: int64
+             * @description 承認待ちの累計。waiting_ms の内訳
+             */
+            hold_ms: number;
             /** Format: int64 */
             reported_active_ms: number | null;
             result: string | null;
@@ -7090,10 +7527,15 @@ export interface components {
         /** @description 評価の提出（Delegation.md 7章、pb-248）。 */
         SubmitEvaluationRequest: {
             /**
-             * @description 評価の対象。plan=計画の版、deliverable=根の最新の完了レポート（暗黙に最新を指す）。
+             * @description 評価の対象。plan=計画の版、deliverable=根の最新の完了レポート。
              * @enum {string}
              */
             target_kind: "plan" | "deliverable";
+            /**
+             * @description target_kind=deliverable のとき、評価した完了レポートの ID（delegation-status の
+             *     `latest_report.id`）。最新でなければ 409。省くと最新を指す。plan では指定しない。
+             */
+            agent_report_id?: string;
             /** @description target_kind=plan のとき必須。評価する計画の版番号。deliverable では指定しない。 */
             plan_version?: number;
             /** @enum {string} */
@@ -7280,6 +7722,16 @@ export interface components {
                     }[];
                 } | null;
             } | null;
+            /**
+             * @description 根の最新の完了レポート（pb-305）。評価役は成果を評価するとき、この `id` を
+             *     `agent_report_id` に渡す。`evaluated` はこの報告に評価が付いているか。
+             */
+            latest_report?: {
+                id?: string;
+                /** Format: int64 */
+                submitted_at?: number;
+                evaluated?: boolean;
+            } | null;
             latest_evaluation?: {
                 /** @enum {string} */
                 target_kind?: "plan" | "deliverable";
@@ -7293,6 +7745,24 @@ export interface components {
             open_confirmations?: components["schemas"]["Confirmation"][];
             latest_handoff?: components["schemas"]["DelegationHandoff"] | null;
             next_move?: string;
+            /**
+             * Format: int64
+             * @description main のトークンが PB へ最後に要求を送った時刻（Delegation.md 10.4）。
+             *     1度も使われていなければ null。
+             */
+            main_last_seen_at?: number | null;
+            /**
+             * @description main が止まっているとみなすか（Delegation.md 10.4）。委任が承認済か計画中で、
+             *     main_last_seen_at から scope.main_idle_minutes（省略で30、0 で判定しない）を
+             *     過ぎたとき true。評価役の pb_wait はこのとき待たずに返る。
+             */
+            main_stopped?: boolean;
+            /**
+             * @description 根の最新の完了レポートが成果の評価に合格しているか（Delegation.md 7.2）。根を完了にする
+             *     検証8（ApiDesign.md 9.6）と同じ材料である。画面はこれが true のとき「成果の受け入れ」を出す
+             *     （GuiDesign.md 5.5「自律実行」）。完了レポートが無い・評価がまだ・不合格なら false。
+             */
+            deliverable_passed?: boolean;
             /**
              * @description 呼び出し元の役割によらない、main の次の一手（pb-252）。画面の
              *     「エージェントステイタス」に出す。PM が読むと役割は `readonly` になり、
@@ -7603,6 +8073,47 @@ export interface components {
              * @enum {string}
              */
             secret_key_origin: "env" | "generated";
+        };
+        /** @description ApiDesign.md 11.14。 */
+        WorkSweep: {
+            /** @description 設定 `work_stale_hours` の実効値。0 なら時間では判定しない。 */
+            threshold_hours: number;
+            /** Format: int64 */
+            checked_at: number;
+            items: components["schemas"]["WorkSweepItem"][];
+            last_run: {
+                /** Format: int64 */
+                ran_at: number;
+                /** @enum {string} */
+                trigger: "daily" | "manual";
+                actor_label: string | null;
+                closed_count: number;
+            } | null;
+        };
+        WorkSweepItem: {
+            work_id: string;
+            project_key: string;
+            project_name: string;
+            ticket_seq: number;
+            ticket_title: string;
+            actor: {
+                id: string;
+                display_name: string;
+                /** @enum {string} */
+                kind: "user" | "agent" | "system";
+            };
+            /** @enum {string} */
+            state: "running" | "waiting";
+            /** Format: int64 */
+            started_at: number;
+            /** Format: int64 */
+            last_active_at: number;
+            /** @enum {string} */
+            reason: "ticket_closed" | "stale";
+        };
+        WorkSweepResult: components["schemas"]["WorkSweep"] & {
+            closed_ids: string[];
+            skipped_count: number;
         };
         /** @description ApiDesign.md 11.10。**読み取り専用の状態であって、設定ではない。** */
         DatabaseStatus: {
@@ -7935,6 +8446,11 @@ export interface components {
                 status: "planning" | "approved" | "paused";
                 /** @description 回答していないユーザ確認待ちの数（ヒアリングを含む）。 */
                 open_confirmations: number;
+                /**
+                 * @description 根ではない子で、最新の完了レポートが `completed` なのに
+                 *     完了していないとき `true`（Delegation.md 5章 D2）。
+                 */
+                reported: boolean;
             };
             /**
              * Format: int64
@@ -7973,6 +8489,24 @@ export interface components {
              */
             due_at: number | null;
             all_day: boolean;
+            /** @description 時間重複チェック（DbDesign.md 6.6.2）。同じエピックの中で、チェック付きどうしは重ならない。 */
+            no_overlap: boolean;
+            /** @description 開始のアンカー。効くのは連鎖のずらし（reschedule）の中だけで、`PATCH` は見ない（ApiDesign.md 9.5.2）。 */
+            start_pinned: boolean;
+            /** @description 終了のアンカー。効くのは連鎖のずらしの中だけ。 */
+            due_pinned: boolean;
+            /**
+             * Format: int32
+             * @description **`view=timeline` のときだけ載る**（9.2.7）。所属エピックの番号（9.5.1 の `epic` と同じ求め方）。
+             */
+            epic_seq?: number;
+            /**
+             * Format: int64
+             * @description **`view=timeline` のときだけ載る**。実際の着手（9.2.1「着手日時を導く」）。
+             */
+            started_at?: number | null;
+            /** @description **`view=timeline` のときだけ載る**。そのチケットの `activity` の最新の行の実行者。 */
+            last_changed_by?: components["schemas"]["ActorRef"] | null;
             /**
              * Format: int64
              * @description **ステータス遷移の副作用としてのみ動く**（DbDesign.md 6.6）。直接は更新できない。
@@ -8004,10 +8538,144 @@ export interface components {
              *     打ち切りで落ちた依存は返さない。0件でも空の配列。
              */
             links?: components["schemas"]["TicketGanttLink"][];
+            /** @description **`view=timeline` のときだけ載る**（ApiDesign.md 9.2.7）。行になるエピック。`sort_key` の昇順。 */
+            epics?: components["schemas"]["TimelineEpic"][];
+            /** @description **`view=timeline` のときだけ載る**。当初計画の版の件数と、最後に保存した版の id と保存日時（中身は schedule-baselines で取る）。 */
+            baselines?: {
+                count: number;
+                /** @description ULID。版が無ければ null。 */
+                latest_id: string | null;
+                /** Format: int64 */
+                latest_created_at: number | null;
+            };
             page: number;
             per_page: number;
             total: number;
             total_pages: number;
+        };
+        /** @description タイムラインの行になるエピック（ApiDesign.md 9.2.7 の `epics[]`）。 */
+        TimelineEpic: {
+            /** Format: int32 */
+            seq: number;
+            title: string;
+            status: components["schemas"]["TicketStatus"];
+            sort_key: string | null;
+            /** Format: int64 */
+            closed_at: number | null;
+        };
+        /**
+         * @description 連鎖のずらしの要求（ApiDesign.md 9.17.2）。`op=move` で `start_at` / `due_at` を両方とも送らなければ、
+         *     きっかけは動かさずに、いまの予定のまま後ろを計算し直す（依存を作った直後にそろえる。pb-332）。
+         *     `op=compact` は `[ここで詰める]` で、時刻を送らない。
+         */
+        RescheduleRequest: {
+            /**
+             * @default move
+             * @enum {string}
+             */
+            op: "move" | "compact";
+            /** Format: int64 */
+            start_at?: number;
+            /** Format: int64 */
+            due_at?: number;
+            /**
+             * @default reject
+             * @enum {string}
+             */
+            on_block: "reject" | "shrink";
+            /** @default false */
+            dry_run: boolean;
+            /** @description 試算で動くと示された行（きっかけを除く）の番号と版。食い違えば 409 `stale_plan`。 */
+            expect?: {
+                /** Format: int32 */
+                seq: number;
+                /** Format: int32 */
+                version: number;
+            }[];
+        };
+        RescheduleChange: {
+            /** Format: int32 */
+            seq: number;
+            /** @enum {string} */
+            reason: "target" | "ripple" | "shrink";
+            before: components["schemas"]["ScheduleSpan"];
+            after: components["schemas"]["ScheduleSpan"];
+            /**
+             * Format: int32
+             * @description 試算ならいまの版、確定なら書いた後の版。
+             */
+            version: number;
+        };
+        ScheduleSpan: {
+            /** Format: int64 */
+            start_at: number;
+            /** Format: int64 */
+            due_at: number;
+        };
+        /** @description 連鎖のずらしの結果（ApiDesign.md 9.17.2）。試算では解けなくても 200 で `result=blocked`。 */
+        RescheduleResult: {
+            applied: boolean;
+            /** @enum {string} */
+            result: "ok" | "blocked";
+            changes: components["schemas"]["RescheduleChange"][];
+            block: {
+                /** @enum {string} */
+                code: "cannot_fit" | "overlaps_previous" | "order_cycle";
+                /** Format: int32 */
+                seq: number;
+                /** Format: int64 */
+                short_ms: number;
+                message: string;
+            } | null;
+            /** @description `on_block=shrink` なら解ける場合の変更。 */
+            alternative: {
+                changes: components["schemas"]["RescheduleChange"][];
+            } | null;
+            /** @description 確定のとき、動いた行（`view=timeline` の `items` と同じ形）。 */
+            items?: components["schemas"]["Ticket"][];
+        };
+        /** @description 当初計画の版（ApiDesign.md 9.17.3）。 */
+        ScheduleBaselineSummary: {
+            /**
+             * @description ULID。版はこれで指す（番号を持たない）。画面は `created_at` を基準タイムゾーンで分まで出して名付ける。
+             * @example 01K9ABCDEFGHJKMNPQRSTVWXYZ
+             */
+            id: string;
+            label: string | null;
+            item_count: number;
+            created_by: {
+                id: string | null;
+                display_name: string;
+            };
+            /** Format: int64 */
+            created_at: number;
+        };
+        ScheduleBaselineList: {
+            items: components["schemas"]["ScheduleBaselineSummary"][];
+        };
+        ScheduleBaseline: components["schemas"]["ScheduleBaselineSummary"] & {
+            items: components["schemas"]["ScheduleBaselineItem"][];
+        };
+        ScheduleBaselineItem: {
+            /** Format: int32 */
+            ticket_seq: number;
+            /** @description いまのプロジェクトに同じ番号のチケットが在るか。 */
+            exists: boolean;
+            title: string;
+            /** Format: int32 */
+            epic_seq: number;
+            epic_title: string;
+            /** Format: int64 */
+            start_at: number | null;
+            /** Format: int64 */
+            due_at: number | null;
+            all_day: boolean;
+            no_overlap: boolean;
+            start_pinned: boolean;
+            due_pinned: boolean;
+        };
+        CreateScheduleBaselineRequest: {
+            label?: string | null;
         };
         /** @description チケットの要約（ApiDesign.md 9.5.1 の `parent` と `epic`）。 */
         TicketBrief: {
@@ -8041,6 +8709,14 @@ export interface components {
             work_context?: {
                 policy: components["schemas"]["WorkPolicy"];
                 open_work_id: string | null;
+                /** @description 開いている記録の開始元のチケット番号。 */
+                open_work_seq: number | null;
+                /** @description 自分の開いている記録すべて（開始の古い順）。委任のmainは木の中で複数開ける。 */
+                open_works: {
+                    id: string;
+                    /** @description 開始元のチケット番号 */
+                    seq: number;
+                }[];
             };
             /** @description 本文（Markdown ソース）。 */
             body_md: string | null;
@@ -8465,6 +9141,8 @@ export interface components {
             /** @enum {string} */
             link_type: "FS" | "SS" | "FF" | "SF" | "blocks";
             lag_days: number;
+            /** @description 秒のずらし（1日未満。DbDesign.md 6.6.3。pb-332）。実効のずらしは lag_days（暦日）の後に足す */
+            lag_seconds: number;
             /** @enum {string} */
             origin: "human" | "ai_suggested";
         };
@@ -8493,9 +9171,9 @@ export interface components {
              */
             direction: "outgoing" | "incoming";
             /**
-             * @description **`FS` / `SS` / `FF` / `SF` はガント用の依存**（ガントが線として描く。作る操作は未実装）。
-             *     **画面が出すのは `relates` / `duplicates` / `blocks` の3つだけ**
-             *     である（GuiDesign.md 5.5）が、**API は7種すべて受ける**。
+             * @description **`FS` / `SS` / `FF` / `SF` はガントとタイムライン用の依存**（線として描き、タイムラインの連鎖のずらしが従う）。
+             *     **詳細の追加で出すのは `relates` / `duplicates` / `blocks` の3つだけ**（タイムラインから開いたときは4種も。
+             *     GuiDesign.md 5.5。pb-332）だが、**API は7種すべて受ける**。
              * @enum {string}
              */
             link_type: "FS" | "SS" | "FF" | "SF" | "relates" | "duplicates" | "blocks";
@@ -8505,6 +9183,11 @@ export interface components {
              * @description `FS`〜`SF` のときのみ意味を持つ。ガントが依存線の札に出す（GuiDesign.md 5.14）。
              */
             lag_days: number;
+            /**
+             * Format: int32
+             * @description 秒のずらし（1日未満。DbDesign.md 6.6.3。pb-332）。`FS`〜`SF` のときのみ意味を持つ
+             */
+            lag_seconds: number;
             /**
              * @description **`human` のみ作られる**（AI提案の採用・却下は未実装）。
              *     **`comment.origin` とは値域が違う**——あちらは書き手の種別
@@ -8539,14 +9222,24 @@ export interface components {
              * @default 0
              */
             lag_days: number;
+            /**
+             * Format: int32
+             * @default 0
+             */
+            lag_seconds: number;
         };
-        /** @description 依存のずらしの変更（ApiDesign.md 9.10.1）。**`lag_days` だけを受ける。** */
+        /** @description 依存のずらしの変更（ApiDesign.md 9.10.1）。**`lag_days` と `lag_seconds` だけを受け、変えるものだけを送る。** */
         UpdateTicketLinkRequest: {
             /**
              * Format: int32
              * @description 暦日（24時間 × 日数）。`FS`〜`SF` のときだけ受ける
              */
-            lag_days: number;
+            lag_days?: number;
+            /**
+             * Format: int32
+             * @description 秒（1日未満）。日の後に足す（DbDesign.md 6.6.3。pb-332）
+             */
+            lag_seconds?: number;
         };
         /**
          * @description チケットから PB の外を指す参照（ApiDesign.md 9.10.2、DbDesign.md 6.12）。
@@ -8727,6 +9420,12 @@ export interface components {
              */
             due_at?: number | null;
             all_day?: boolean;
+            /** @description 時間重複チェック。`ticket.self_edit` では変えられない（403）。 */
+            no_overlap?: boolean;
+            /** @description 開始のアンカー。連鎖のずらしでだけ効く。値の無い端に立てても拒まない（連鎖が無視する）。 */
+            start_pinned?: boolean;
+            /** @description 終了のアンカー。 */
+            due_pinned?: boolean;
             /**
              * @description 実行主体属性（Requirements.md 10.5.4）。
              *     **`null` は受け付けない**（列が NOT NULL。422 の `invalid`）。
@@ -8843,6 +9542,12 @@ export interface components {
             due_at?: number | null;
             /** @description 省略時は true（終日）。 */
             all_day?: boolean;
+            /** @description 時間重複チェック。省略時は false。 */
+            no_overlap?: boolean;
+            /** @description 開始のアンカー。省略時は false。 */
+            start_pinned?: boolean;
+            /** @description 終了のアンカー。省略時は false。 */
+            due_pinned?: boolean;
         };
         /**
          * @description 並べ替えの指定（ApiDesign.md 9.4）。
@@ -9413,9 +10118,13 @@ export interface components {
         AgentID: string;
         /** @description Codex の接続方式。既定は direct。 */
         ConnectTransport: "direct" | "bridge";
-        /** @description transport=bridge のとき必須。direct では指定しない。macOS は arm64 のみ対応。 */
+        /**
+         * @description 利用者の端末の OS（ApiDesign.md 4.5.8.1a・4.5.8.1c）。transport=bridge のとき必須。
+         *     direct では Claude Code・Codex だけが任意で指定でき、指定すると zip に pb-wait が入る（他の種別は 422）。
+         *     arch と組で指定する。macOS は arm64 のみ対応。
+         */
         BridgeOS: "darwin" | "windows" | "linux";
-        /** @description transport=bridge のとき必須。direct では指定しない。 */
+        /** @description 利用者の端末の CPU。os と組で指定する（ApiDesign.md 4.5.8.1c）。transport=bridge のとき必須。 */
         BridgeArch: "amd64" | "arm64";
         /** @description エージェント用トークンの ULID（`access_token.id`。ApiDesign.md 4.5.5）。 */
         AgentTokenID: string;
@@ -9429,6 +10138,11 @@ export interface components {
          *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
          */
         MfaCredentialID: string;
+        /**
+         * @description 通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+         *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+         */
+        NotificationID: string;
         /**
          * @description パスキーの ULID（`user_passkey.id`。ApiDesign.md 4.7）。
          *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
@@ -10439,6 +11153,223 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    listMyNotifications: {
+        parameters: {
+            query?: {
+                filter?: "all" | "unread";
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 新しい順の1ページ分。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    unreadMyNotificationCount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 未読の数。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationUnreadCount"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    readAllMyNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 既読にした件数。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationReadAll"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteMyNotification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["NotificationID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除した。本文を持たない。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 受けた通知にも出した通知にも無い（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    patchMyNotification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["NotificationID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPatch"];
+            };
+        };
+        responses: {
+            /** @description 変えた後の通知。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notification"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            /** @description CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 自分宛ての通知に無い（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteNotificationByAdmin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description 通知の ULID（`notification.id`。ApiDesign.md 4.8）。
+                 *     **形式は検証しない**——不正な ID は単に行が見つからず 404 になる。
+                 */
+                id: components["parameters"]["NotificationID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除した。本文を持たない。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description 通知が無い（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listAgentClientKinds: {
         parameters: {
             query?: never;
@@ -10726,9 +11657,13 @@ export interface operations {
             query?: {
                 /** @description Codex の接続方式。既定は direct。 */
                 transport?: components["parameters"]["ConnectTransport"];
-                /** @description transport=bridge のとき必須。direct では指定しない。macOS は arm64 のみ対応。 */
+                /**
+                 * @description 利用者の端末の OS（ApiDesign.md 4.5.8.1a・4.5.8.1c）。transport=bridge のとき必須。
+                 *     direct では Claude Code・Codex だけが任意で指定でき、指定すると zip に pb-wait が入る（他の種別は 422）。
+                 *     arch と組で指定する。macOS は arm64 のみ対応。
+                 */
                 os?: components["parameters"]["BridgeOS"];
-                /** @description transport=bridge のとき必須。direct では指定しない。 */
+                /** @description 利用者の端末の CPU。os と組で指定する（ApiDesign.md 4.5.8.1c）。transport=bridge のとき必須。 */
                 arch?: components["parameters"]["BridgeArch"];
             };
             header?: never;
@@ -10775,9 +11710,13 @@ export interface operations {
             query?: {
                 /** @description Codex の接続方式。既定は direct。 */
                 transport?: components["parameters"]["ConnectTransport"];
-                /** @description transport=bridge のとき必須。direct では指定しない。macOS は arm64 のみ対応。 */
+                /**
+                 * @description 利用者の端末の OS（ApiDesign.md 4.5.8.1a・4.5.8.1c）。transport=bridge のとき必須。
+                 *     direct では Claude Code・Codex だけが任意で指定でき、指定すると zip に pb-wait が入る（他の種別は 422）。
+                 *     arch と組で指定する。macOS は arm64 のみ対応。
+                 */
                 os?: components["parameters"]["BridgeOS"];
-                /** @description transport=bridge のとき必須。direct では指定しない。 */
+                /** @description 利用者の端末の CPU。os と組で指定する（ApiDesign.md 4.5.8.1c）。transport=bridge のとき必須。 */
                 arch?: components["parameters"]["BridgeArch"];
             };
             header?: never;
@@ -10965,6 +11904,66 @@ export interface operations {
              *     **両者を区別しない**（Design.md 6.4.5）。
              */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description 削除した。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description 権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description プロジェクトが存在しない、または到達できない（`not_found`）。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description プロジェクトがアーカイブされていない（`conflict`）。 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11380,6 +12379,164 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["ProjectNotFound"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listScheduleBaselines: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 版の一覧。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleBaselineList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createScheduleBaseline: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CreateScheduleBaselineRequest"];
+            };
+        };
+        responses: {
+            /** @description 保存した版。`Location` に版の URL。 */
+            201: {
+                headers: {
+                    /** @example /api/v1/projects/fes/schedule-baselines/01K9ABCDEFGHJKMNPQRSTVWXYZ */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleBaselineSummary"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ProjectNotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getScheduleBaseline: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /** @description 版の ULID。 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 版と、写したチケット。 */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleBaseline"];
+                };
+            };
+            /** @description `If-None-Match` が一致した（本体なし） */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description プロジェクトか版が無い。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteScheduleBaseline: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /** @description 版の ULID。 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 消した。 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description プロジェクトか版が無い。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };
@@ -12171,11 +13328,12 @@ export interface operations {
                 /** @description `view=gantt` のときは受けない（422。ApiDesign.md 9.2.6）。 */
                 per_page?: number;
                 /**
-                 * @description **`gantt` だけを受ける**（ApiDesign.md 9.2.6）。件数の上限が 5,000件になり、
-                 *     棚に戻ったものを既定で含み（`retired=false` で外す）、`links[]` を同梱する。
+                 * @description **`gantt` と `timeline` を受ける**（ApiDesign.md 9.2.6・9.2.7）。件数の上限が
+                 *     5,000件になり、棚に戻ったものを既定で含み（`retired=false` で外す）、`links[]` を同梱する。
+                 *     `timeline` は `settings.timeline_epics` で選んだエピックの配下の時刻付きのチケットだけを返し、`epics[]`・`baselines` を足す。
                  *     `page` / `per_page` と一緒には送れない。他の値は 422。
                  */
-                view?: "gantt";
+                view?: "gantt" | "timeline";
             };
             header?: never;
             path: {
@@ -12189,13 +13347,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description チケットの一覧。`view=gantt` のときは `links` が載る。 */
+            /** @description チケットの一覧。`view=gantt` のときは `links` が、`view=timeline` のときは `links`・`epics`・`baselines` が載る。 */
             200: {
                 headers: {
                     /**
                      * @description 弱い検証子（`W/"tkt-<ハッシュ>-<件数>-<最終更新>"`。ApiDesign.md 9.2.5）。
-                     *     `view=gantt` のときは依存の件数と最新の作成日時を足す
-                     *     （`W/"tkt-…-lnk-<依存の件数>-<最新の作成>"`）。
+                     *     `view=gantt` / `view=timeline` のときは依存の件数と中身のハッシュを足す
+                     *     （`W/"tkt-…-lnk-<依存の件数>-<依存の中身のハッシュ>"`。ずらしの変更でも変わる）。
                      * @example W/"tkt-a3f19c2b-48-1723372992000000000"
                      */
                     ETag?: string;
@@ -12204,6 +13362,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["TicketList"];
                 };
+            };
+            /** @description `If-None-Match` が今の ETag と一致した（本体なし。ApiDesign.md 9.2.5） */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
@@ -13680,6 +14845,13 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["TicketNotFound"];
+            /** @description 名指しした完了レポートが最新ではない（`stale_report`）。新しい報告を読み直して評価する。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
@@ -14165,6 +15337,62 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["TicketNotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    rescheduleTicket: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @example "4" */
+                "If-Match": string;
+            };
+            path: {
+                /**
+                 * @description プロジェクトキー（ULID ではない。ApiDesign.md 5.4）。URL・チケット番号と
+                 *     一致させ、開発時のデバッグを容易にするため。
+                 */
+                key: components["parameters"]["ProjectKey"];
+                /**
+                 * @description プロジェクト内連番（`ticket.seq`。ApiDesign.md 9.1）。**チケットを指すのは常に
+                 *     `seq` であり ULID ではない**——親もリンク先も同一プロジェクト内に限り、
+                 *     プロジェクトが URL で決まっているため `seq` だけで一意に定まる。
+                 *     MCP 経由でエージェントが扱う識別子も `my-app-31` の形になる。
+                 */
+                seq: components["parameters"]["TicketSeq"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RescheduleRequest"];
+            };
+        };
+        responses: {
+            /** @description 試算または確定の結果。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RescheduleResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["TicketNotFound"];
+            /** @description きっかけの版が違う、または `stale_plan`（本体に `retrial` を載せる）。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };
@@ -15374,6 +16602,8 @@ export interface operations {
              * @description その設定はファイルか環境変数で固定されている、または第1層のため
              *     画面から変更できない（`conflict`）。`message` に環境変数名または
              *     設定ファイルのキーを含める。
+             *     また、終了していない委任があるのに `delegation_enabled` を無効にしようとした
+             *     （`message` に件数を含める。Delegation.md 1.3）。
              */
             409: {
                 headers: {
@@ -15549,6 +16779,62 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getWorkSweep: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 浮きの一覧と、直近の片付けの実行。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkSweep"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    runWorkSweep: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description GET で見せた記録の ID。 */
+                    work_ids: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description 閉じた結果と、閉じたあとの浮きの一覧。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkSweepResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };

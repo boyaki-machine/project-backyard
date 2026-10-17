@@ -71,7 +71,7 @@ const sampleTickets = [
 let linkId = 0
 const ln = (s: number, t: number, type: string, o: { lag?: number; ai?: boolean } = {}) => ({
   id: `01K00000000000000000LNK${String(++linkId).padStart(3, '0')}`, source_seq: s, target_seq: t,
-  link_type: type, lag_days: o.lag ?? 0, origin: o.ai ? 'ai_suggested' : 'human',
+  link_type: type, lag_days: o.lag ?? 0, lag_seconds: 0, origin: o.ai ? 'ai_suggested' : 'human',
 })
 
 const sampleLinks = [

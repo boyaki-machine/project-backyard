@@ -20,6 +20,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ApiError } from '../api/client'
 import * as settingsApi from '../api/settings'
 import { usePendingStore } from '../stores/pending'
+import { useAuthStore } from '../stores/auth'
 import type { Setting, SettingSource } from '../api/settings'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import Avatar from '../components/Avatar.vue'
@@ -27,14 +28,17 @@ import PageHeader from '../components/PageHeader.vue'
 import { formatDateTime } from '../lib/datetime'
 import DatabaseTab from './DatabaseTab.vue'
 import TlsCertificatesTab from './TlsCertificatesTab.vue'
+import WorkSweepTab from './WorkSweepTab.vue'
 
 /**
  * タブ（`GuiDesign.md` 5.12）。**証明書が設定の一覧に収まらないので分けた**
  * ——1件が複数行の情報を持ち、登録と削除という操作を伴う。
  *
  * **DB（5.12.2）は設定ではなく状態である。** 変更の操作を持たない。
+ *
+ * **作業記録（5.12.3）は浮きの片付けと、その閾値の設定を持つ。**
  */
-type Tab = 'general' | 'tls' | 'database'
+type Tab = 'general' | 'tls' | 'database' | 'work'
 const tab = ref<Tab>('general')
 
 const items = ref<Setting[]>([])
@@ -79,6 +83,7 @@ function sourceLabel(source: SettingSource): string {
  * フッターへ知らせる。
  */
 const pendingStore = usePendingStore()
+const auth = useAuthStore()
 
 async function load() {
   loading.value = true
@@ -106,8 +111,17 @@ onMounted(load)
  * 設定を変える人が知る必要のある区別ではない（設計原則4）。
  */
 const runtimeItems = computed(() =>
-  items.value.filter((s) => !s.restart_required && !TLS_TAB_KEYS.has(s.key)),
+  items.value.filter(
+    (s) => !s.restart_required && !TLS_TAB_KEYS.has(s.key) && !WORK_TAB_KEYS.has(s.key) && !FEATURE_KEYS.has(s.key),
+  ),
 )
+
+/**
+ * **「機能」の区切り**（5.12「機能の有効・無効は、区切りを分けてスイッチで出す」。pb-353）。
+ * ログや Cookie と違い「画面に何が出るか」を変える設定なので、運用の設定と混ぜない
+ */
+const FEATURE_KEYS = new Set(['delegation_enabled'])
+const featureItems = computed(() => items.value.filter((s) => FEATURE_KEYS.has(s.key)))
 const bootItems = computed(() =>
   items.value.filter((s) => s.restart_required && !TLS_TAB_KEYS.has(s.key)),
 )
@@ -119,6 +133,9 @@ const bootItems = computed(() =>
  * `secret_key` も TLS のためだけの設定なので、あちらで扱う。
  */
 const TLS_TAB_KEYS = new Set(['tls_enabled', 'secret_key'])
+
+/** **作業記録タブが扱う設定**（5.12.3）。TLS と同じ理由で一般タブに出さない */
+const WORK_TAB_KEYS = new Set(['work_stale_hours'])
 
 /** いまの入力値（未編集なら実効値） */
 function currentValue(s: Setting): string {
@@ -138,6 +155,7 @@ function settingName(s: Setting): string {
     log_level: 'ログレベル',
     health_show_version: 'ヘルスチェックにバージョンを含める',
     cookie_secure: 'Cookie に Secure を付ける',
+    delegation_enabled: '自律実行',
   }
   return settingNameSources[s.key] ? uiText(settingNameSources[s.key]) : s.display_name
 }
@@ -152,6 +170,7 @@ function settingDescription(s: Setting): string {
     log_level: '記録するログの最低レベル。debug では /healthcheck のアクセスログも出ます',
     health_show_version: 'GET /healthcheck の応答にバージョンを入れます。未認証の呼び出し元への情報開示になるため既定は無効です',
     cookie_secure: 'HTTPS で公開する環境では有効にします',
+    delegation_enabled: 'エージェントに計画から完成までを任せる機能。成熟途上のため既定は無効です',
   }
   return settingDescriptionSources[s.key] ? uiText(settingDescriptionSources[s.key]) : s.description
 }
@@ -218,6 +237,9 @@ async function save() {
     items.value = res.items
     configFilePath.value = res.config_file_path
     draft.value = {}
+    // **機能を切り替えたら GET /me を引き直す**（5.12）。自分の画面の入口が、
+    // 再読み込みを待たずに出入りする
+    if (payload.some((p) => FEATURE_KEYS.has(p.key))) void auth.refresh()
     // **確認が要る設定を変えたなら、押さないと戻ることを書く**。
     // 件数だけでは、**期限があることが伝わらない。**
     notice.value = res.pending_confirmation
@@ -226,10 +248,30 @@ async function save() {
         uiText("押さないまま300秒が過ぎると、元の設定へ戻ります。")
       : uiText("{value0}件の設定を保存しました。", { value0: payload.length })
   } catch (e: unknown) {
-    actionError.value = asApiError(e)
+    actionError.value = conflictOnDisablingDelegation(e) ?? asApiError(e)
   } finally {
     saving.value = false
   }
+}
+
+/**
+ * 自律実行を無効にしようとして 409 が返ったときの文面（`ApiDesign.md` 11.2）。
+ *
+ * **サーバの文面（件数入り）は、共通のエラー処理が `conflict` の決まり文句へ差し替えて
+ * しまう**（`api/client.ts`）。「再読み込みしてください」では次の一手を誤るので、
+ * ここで分かっていることだけを書く。
+ */
+function conflictOnDisablingDelegation(e: unknown): ApiError | null {
+  if (!(e instanceof ApiError) || e.status !== 409) return null
+  const disabling = changed.value.some(
+    (s) => s.key === 'delegation_enabled' && (draft.value[s.key] ?? s.default_value) !== 'true',
+  )
+  if (!disabling) return null
+  return new ApiError({
+    status: 409,
+    code: 'conflict',
+    message: uiText('終了していない自律実行があるため、無効にできません。取り下げるか完了させてから無効にしてください'),
+  })
 }
 
 /**
@@ -286,12 +328,20 @@ function asApiError(e: unknown): ApiError {
       >
         DB
       </button>
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="tab === 'work'"
+        :class="{ on: tab === 'work' }"
+        @click="tab = 'work'"
+      > {{ $ui('作業記録') }} </button>
     </div>
 
     <div class="page-body">
       <div class="page-inner">
     <TlsCertificatesTab v-if="tab === 'tls'" />
     <DatabaseTab v-else-if="tab === 'database'" />
+    <WorkSweepTab v-else-if="tab === 'work'" />
 
     <template v-else>
     <p v-if="loading" class="muted">{{ $ui('読み込み中…') }}</p>
@@ -305,6 +355,7 @@ function asApiError(e: unknown): ApiError {
       </p>
 
       <section v-for="group in [
+        { title: $ui('機能'), hint: $ui('有効にした機能だけが、画面とエージェントに出ます'), list: featureItems },
         { title: $ui('実行時の設定'), hint: $ui('変更は次のリクエストから効きます'), list: runtimeItems },
         { title: $ui('起動時の設定'), hint: $ui('変更には再起動が要ります'), list: bootItems },
       ]" :key="group.title" class="group">
@@ -331,8 +382,12 @@ function asApiError(e: unknown): ApiError {
                 <option v-for="a in s.allowed ?? []" :key="a" :value="a">{{ a }}</option>
               </select>
               <span v-else-if="s.value_type === 'bool'" class="bool">
+                <!-- 機能はスイッチで出す（5.12）。押しても保存せず、[変更を保存] でまとめて送る -->
                 <input
                   type="checkbox"
+                  :role="FEATURE_KEYS.has(s.key) ? 'switch' : undefined"
+                  :class="{ switch: FEATURE_KEYS.has(s.key) }"
+                  :aria-label="settingName(s)"
                   :checked="currentValue(s) === 'true'"
                   @change="
                     setValue(s, ($event.target as HTMLInputElement).checked ? 'true' : 'false')
@@ -515,6 +570,42 @@ function asApiError(e: unknown): ApiError {
   display: inline-flex;
   align-items: center;
   gap: var(--pb-space-2);
+}
+/* 機能のスイッチ（5.12）。チェックボックスの見た目だけを替え、操作と読み上げはそのまま */
+.switch {
+  appearance: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  border-radius: 10px;
+  border: 1px solid var(--pb-border);
+  background: var(--pb-hover);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--pb-text-muted);
+  transition: transform 0.15s;
+}
+.switch:checked {
+  background: var(--pb-accent);
+  border-color: var(--pb-accent);
+}
+.switch:checked::after {
+  transform: translateX(16px);
+  background: var(--pb-on-accent);
+}
+.switch:focus-visible {
+  outline: 2px solid var(--pb-focus);
+  outline-offset: 2px;
 }
 .value {
   margin: var(--pb-space-2) 0;

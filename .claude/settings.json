@@ -129,13 +129,16 @@
       "Bash(lsof:*)",
       "Bash(sha256sum:*)",
       "Bash(shasum:*)",
+      "Bash(pb-wait:*)",
       "mcp__pb__pb_get_project",
       "mcp__pb__pb_list_docs",
       "mcp__pb__pb_get_doc",
       "mcp__pb__pb_list_tasks",
       "mcp__pb__pb_get_task",
+      "mcp__pb__pb_list_comments",
       "mcp__pb__pb_get_context",
-      "mcp__pb__pb_list_transitions"
+      "mcp__pb__pb_list_transitions",
+      "mcp__pb__pb_wait"
     ]
   }
 }

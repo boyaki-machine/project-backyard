@@ -296,7 +296,7 @@ func TestToolsListReturnsReadAndWriteTools(t *testing.T) {
 	// である）。
 	want := []string{
 		"pb_get_agent_usage", "pb_list_agent_runs", "pb_start_work", "pb_record_work", "pb_list_work",
-		"pb_get_planning_data", "pb_add_link", "pb_update_link", "pb_delete_link", "pb_move_task",
+		"pb_get_planning_data", "pb_add_link", "pb_update_link", "pb_delete_link", "pb_move_task", "pb_reschedule_task",
 		"pb_get_project", "pb_list_docs", "pb_get_doc", "pb_list_tags",
 		"pb_list_tasks", "pb_get_task", "pb_list_comments", "pb_get_context",
 		"pb_create_ticket", "pb_update_ticket", "pb_put_dod",

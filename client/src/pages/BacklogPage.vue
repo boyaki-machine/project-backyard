@@ -2045,7 +2045,10 @@ watch(queryKey, () => {
   void loadTickets()
 })
 
-// プロジェクトを切り替えたら語彙とプロジェクト詳細も取り直す（4.4）
+// プロジェクトを切り替えたら一覧・語彙・プロジェクト詳細を取り直す（4.4）。
+// **一覧も必ずここで取り直す。** クエリの `watch` に任せると、切替の前後で
+// クエリが同じとき（素の状態どうし）に発火せず、前のプロジェクトの行が
+// 新しいキーの接頭辞で残る（pb-357）。
 watch(projectKey, (key) => {
   selectedStageSeqs.value.clear()
   clearTimeout(keywordTimer)
@@ -2054,6 +2057,10 @@ watch(projectKey, (key) => {
   keyword.value = queryValue('q')
   if (key === '') return
   result.value = ''
+  // 前のプロジェクトの行を新しいキーで見せない（6.2 のエラー時と同じ扱い）
+  tickets.value = []
+  total.value = 0
+  loaded.value = false
   tags.value = []
   sprints.value = []
   epics.value = []
@@ -2061,7 +2068,7 @@ watch(projectKey, (key) => {
   loadTreeCollapsed()
   void projectStore.fetchCurrent(key)
   void loadVocabulary()
-  restoreGroupAxis()
+  if (!restoreGroupAxis()) void loadTickets()
 })
 </script>
 
@@ -2595,7 +2602,7 @@ watch(projectKey, (key) => {
                       </RouterLink>
                       <!-- 自律実行の印（5.4「自律実行の印」。pb-276）。タグの前に置く -->
                       <DelegationMark
-                        v-if="row.ticket.delegation"
+                        v-if="auth.delegationEnabled && row.ticket.delegation"
                         :mark="row.ticket.delegation"
                         :project-key="projectKey"
                         :shrunk="shrunk"
@@ -2820,6 +2827,8 @@ watch(projectKey, (key) => {
 }
 
 /* ── フィルタ行 ─────────────────────────────────────────── */
+/* 通常幅は12列の2行に収める（5.4「入力検索とフィルタの配置」）。**条件を足すときは
+   どちらかの行の幅を割いて入れる**——3行目を作らない（pb-286） */
 .backlog-filters {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -2830,12 +2839,12 @@ watch(projectKey, (key) => {
 .backlog-filter-epic { grid-column: 1 / span 2; grid-row: 1; }
 .backlog-filter-tag { grid-column: 3 / span 2; grid-row: 1; }
 .backlog-filter-assignee { grid-column: 5 / span 2; grid-row: 1; }
-.backlog-filter-scope { grid-column: 1 / span 4; grid-row: 3; }
+.backlog-filter-scope { grid-column: 4 / span 2; grid-row: 2; }
 .backlog-scope-note { color: var(--pb-text-muted); font-size: 0.875rem; }
 .backlog-filter-state { grid-column: 7 / span 2; grid-row: 1; }
 .backlog-filter-type { grid-column: 9 / span 2; grid-row: 1; }
 .backlog-filter-priority { grid-column: 11 / span 2; grid-row: 1; }
-.backlog-filter-primary { grid-column: 1 / span 5; grid-row: 2; min-width: 0; }
+.backlog-filter-primary { grid-column: 1 / span 3; grid-row: 2; min-width: 0; }
 .backlog-filter-options { display: contents; }
 .backlog-filter-planned { grid-column: 6 / span 2; grid-row: 2; }
 .backlog-filter-due { grid-column: 8 / span 2; grid-row: 2; }
@@ -2870,7 +2879,8 @@ watch(projectKey, (key) => {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--pb-space-2);
   }
-  .backlog-always-filters .filter { display: grid; align-content: start; gap: 2px; }
+  /* 広い幅の12列の位置（grid-column）を外す。残すと暗黙の列が増え、3列が等幅にならない */
+  .backlog-always-filters .filter { display: grid; grid-column: auto; grid-row: auto; align-content: start; gap: 2px; }
   .backlog-always-filters select { width: 100%; }
   .backlog-filter-primary { display: flex; gap: var(--pb-space-2); }
   .backlog-keyword { flex: 1; }

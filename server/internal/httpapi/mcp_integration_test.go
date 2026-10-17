@@ -2010,6 +2010,310 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
+	// 連鎖のずらし（ApiDesign.md 9.17.2。pb-314）。A を延ばすと B が押され、終了のアンカーを持つ C は
+	// 開始だけが動いて縮む。試算 → 確定と、試算の後に人が動かしたときの 409 を MCP だけで通す。
+	t.Run("pb_reschedule_task がアンカーを守って試算し、expect で確定する", func(t *testing.T) {
+		create := func(args string) int {
+			t.Helper()
+			text, isErr := tool(t, fullToken, "pb_create_ticket", args)
+			if isErr {
+				t.Fatalf("起票できない: %s", text)
+			}
+			var v struct {
+				Seq int `json:"seq"`
+			}
+			if err := json.Unmarshal([]byte(text), &v); err != nil || v.Seq == 0 {
+				t.Fatalf("起票の応答を読めない: %v（%s）", err, text)
+			}
+			return v.Seq
+		}
+		epic := create(`{"type":"epic","title":"体育館ステージ"}`)
+		slot := func(title, start, due string) int {
+			return create(fmt.Sprintf(`{"type":"task","title":%q,"parent_seq":%d,`+
+				`"start_at":"2030-10-24T%s:00+09:00","due_at":"2030-10-24T%s:00+09:00"}`, title, epic, start, due))
+		}
+		a, b, c := slot("開会", "10:00", "10:30"), slot("吹奏楽", "10:30", "11:00"), slot("閉会", "11:00", "11:30")
+		// 印はエージェントには書けない（9.5.2）ので、人が置いた状態を DB で作る
+		if _, err := pool.Exec(ctx, `UPDATE ticket SET no_overlap = true, due_pinned = (seq = $3)
+			WHERE project_id = $1 AND seq = ANY($2)`, projectID, []int{a, b, c}, c); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE project SET settings = settings || $2::jsonb WHERE id = $1`,
+			projectID, fmt.Sprintf(`{"timeline_epics":[%d]}`, epic)); err != nil {
+			t.Fatal(err)
+		}
+
+		text, isErr := tool(t, fullToken, "pb_get_planning_data", fmt.Sprintf(`{"parent":"%d"}`, epic))
+		var plan struct {
+			Items []struct {
+				Seq       int  `json:"seq"`
+				NoOverlap bool `json:"no_overlap"`
+				DuePinned bool `json:"due_pinned"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(text), &plan); isErr || err != nil {
+			t.Fatalf("計画データを読めない: %v（%s）", err, text)
+		}
+		pinned := map[int]bool{}
+		for _, it := range plan.Items {
+			if it.Seq != epic && !it.NoOverlap {
+				t.Errorf("%d の no_overlap が落ちた: %s", it.Seq, text)
+			}
+			pinned[it.Seq] = it.DuePinned
+		}
+		if !pinned[c] || pinned[a] || pinned[b] {
+			t.Fatalf("計画データのアンカー = %v（%d だけのはず）", pinned, c)
+		}
+
+		move := fmt.Sprintf(`"seq":%d,"due_at":"2030-10-24T10:40:00+09:00"`, a)
+		text, isErr = tool(t, fullToken, "pb_reschedule_task", `{`+move+`,"dry_run":true}`)
+		if isErr {
+			t.Fatalf("試算できない: %s", text)
+		}
+		type change struct {
+			Seq    int    `json:"seq"`
+			Reason string `json:"reason"`
+			After  struct {
+				StartAt string `json:"start_at"`
+				DueAt   string `json:"due_at"`
+			} `json:"after"`
+		}
+		var preview struct {
+			Applied bool            `json:"applied"`
+			Result  string          `json:"result"`
+			Changes []change        `json:"changes"`
+			Expect  json.RawMessage `json:"expect"`
+		}
+		if err := json.Unmarshal([]byte(text), &preview); err != nil {
+			t.Fatalf("試算の応答を読めない: %v（%s）", err, text)
+		}
+		got := map[int]change{}
+		for _, ch := range preview.Changes {
+			got[ch.Seq] = ch
+		}
+		// C は終了のアンカー（11:30）を守り、開始だけが B の新しい終了（11:10）へ寄る
+		if preview.Applied || preview.Result != "ok" || len(preview.Changes) != 3 ||
+			got[b].After.StartAt != "2030-10-24T01:40:00Z" ||
+			got[c].Reason != "shrink" || got[c].After.StartAt != "2030-10-24T02:10:00Z" || got[c].After.DueAt != "2030-10-24T02:30:00Z" {
+			t.Fatalf("試算 = %s", text)
+		}
+
+		text, isErr = tool(t, fullToken, "pb_reschedule_task", `{`+move+`,"dry_run":false,"expect":`+string(preview.Expect)+`}`)
+		if isErr || !strings.Contains(text, `"applied":true`) {
+			t.Fatalf("確定できない: %s", text)
+		}
+		text, _ = tool(t, fullToken, "pb_get_task", fmt.Sprintf(`{"seq":%d}`, c))
+		if !strings.Contains(text, `"start_at":"2030-10-24T02:10:00Z"`) || !strings.Contains(text, `"due_at":"2030-10-24T02:30:00Z"`) {
+			t.Fatalf("確定が書かれていない: %s", text)
+		}
+
+		// 試算の後に人が B を直すと、確定は 409（stale_plan）で、試算からやり直すよう返る
+		move = fmt.Sprintf(`"seq":%d,"due_at":"2030-10-24T10:45:00+09:00"`, a)
+		text, isErr = tool(t, fullToken, "pb_reschedule_task", `{`+move+`,"dry_run":true}`)
+		if isErr {
+			t.Fatalf("2回目の試算ができない: %s", text)
+		}
+		if err := json.Unmarshal([]byte(text), &preview); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE ticket SET title = title || '（改）', version = version + 1
+			WHERE project_id = $1 AND seq = $2`, projectID, b); err != nil {
+			t.Fatal(err)
+		}
+		text, isErr = tool(t, fullToken, "pb_reschedule_task", `{`+move+`,"dry_run":false,"expect":`+string(preview.Expect)+`}`)
+		if !isErr || !strings.Contains(text, "stale_plan") || !strings.Contains(text, "試算し直し") {
+			t.Fatalf("試算後の変更が 409 にならない: %s", text)
+		}
+	})
+
+	// 秒のずらし（DbDesign.md 6.6.3。pb-336）。MCP だけで「転換10分」の FS を作り、秒だけを直す。
+	t.Run("pb_add_link / pb_update_link が秒のずらしを作って直す", func(t *testing.T) {
+		seqOf := func(text string) int {
+			t.Helper()
+			var v struct {
+				Seq int `json:"seq"`
+			}
+			if err := json.Unmarshal([]byte(text), &v); err != nil || v.Seq == 0 {
+				t.Fatalf("起票の応答を読めない: %v（%s）", err, text)
+			}
+			return v.Seq
+		}
+		text, _ := tool(t, fullToken, "pb_create_ticket", `{"type":"task","title":"転換の前"}`)
+		a := seqOf(text)
+		text, _ = tool(t, fullToken, "pb_create_ticket", `{"type":"task","title":"転換の後"}`)
+		b := seqOf(text)
+
+		text, isErr := tool(t, fullToken, "pb_add_link", fmt.Sprintf(`{"seq":%d,"target_seq":%d,"link_type":"FS","lag_seconds":600}`, a, b))
+		if isErr {
+			t.Fatalf("依存を作れない: %s", text)
+		}
+		var link struct {
+			ID         string `json:"id"`
+			LagDays    int    `json:"lag_days"`
+			LagSeconds int    `json:"lag_seconds"`
+		}
+		if err := json.Unmarshal([]byte(text), &link); err != nil || link.ID == "" || link.LagSeconds != 600 {
+			t.Fatalf("作った依存 = %s", text)
+		}
+		// 秒だけを送り、日は今のまま（REST の PATCH と同じ）
+		text, isErr = tool(t, fullToken, "pb_update_link", fmt.Sprintf(`{"seq":%d,"id":%q,"lag_seconds":900}`, a, link.ID))
+		if isErr {
+			t.Fatalf("ずらしを直せない: %s", text)
+		}
+		var days, secs int
+		if err := pool.QueryRow(ctx, `SELECT lag_days, lag_seconds FROM ticket_link WHERE id = $1`, link.ID).Scan(&days, &secs); err != nil {
+			t.Fatal(err)
+		}
+		if days != 0 || secs != 900 {
+			t.Fatalf("lag_days = %d, lag_seconds = %d, want 0 / 900", days, secs)
+		}
+		// 1日以上は lag_days で表す（範囲の外は REST が 422 で拒む）
+		if text, isErr = tool(t, fullToken, "pb_update_link", fmt.Sprintf(`{"seq":%d,"id":%q,"lag_seconds":86400}`, a, link.ID)); !isErr {
+			t.Fatalf("範囲の外が通った: %s", text)
+		}
+	})
+
+	// **不合格の成果の評価を、main が MCP だけで観点ごとの本文まで読める**（pb-302）。
+	// パックが判定の1行しか載せず、main が指摘を読めずに止まった。委任・報告・評価は
+	// 直接 INSERT する——ここで見るのは、評価の行がパックまで運ばれるかである。
+	// **末尾に置く**：委任の木は書き込みを絞るので、前の場面を巻き込まない。
+	t.Run("pb_get_context が不合格の成果の評価を観点ごとの本文まで載せる", func(t *testing.T) {
+		const rootSeq = 9302
+		evaluatorID := ulidgen.New()
+		delegationID := ulidgen.New()
+		t.Cleanup(func() {
+			bg := context.Background()
+			// **委任を先に消す**——委任と評価が評価役を ON DELETE RESTRICT で参照する。
+			if _, err := pool.Exec(bg, `DELETE FROM delegation WHERE id = $1`, delegationID); err != nil {
+				t.Errorf("委任の後始末に失敗した: %v", err)
+			}
+			if _, err := pool.Exec(bg, `DELETE FROM actor WHERE id = $1`, evaluatorID); err != nil {
+				t.Errorf("評価役の後始末に失敗した: %v", err)
+			}
+		})
+		if err := q.CreateAgentActor(ctx, gen.CreateAgentActorParams{
+			ID: evaluatorID, DisplayName: "MCPテスト（評価役）",
+		}); err != nil {
+			t.Fatalf("評価役の actor を作れない: %v", err)
+		}
+		if err := q.CreateAgent(ctx, gen.CreateAgentParams{
+			ActorID: evaluatorID, OwnerActorID: ownerID,
+			ProjectID: pgtype.Text{String: projectID, Valid: true}, ClientKind: "codex",
+		}); err != nil {
+			t.Fatalf("評価役の agent を作れない: %v", err)
+		}
+
+		rootID, runID, reportID := ulidgen.New(), ulidgen.New(), ulidgen.New()
+		const note = "画面の文言が設計書の5.5と食い違う。設計書の文言に合わせれば合格。"
+		findings := fmt.Sprintf(`[{"aspect":"goal","verdict":"fail","note_md":%q},{"aspect":"values","verdict":"pass","note_md":"利用者の負担は増えない。"}]`, note)
+		for _, s := range []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO ticket (id, project_id, seq, type, title, status_key, assignee_id, execution_mode)
+				VALUES ($1, $2, $3, 'task', '委任の根', 'in_progress', $4, 'delegated')`,
+				[]any{rootID, projectID, rootSeq, ownerID}},
+			{`INSERT INTO delegation (id, project_id, root_ticket_id, main_actor_id, evaluator_actor_id, status, scope, scope_version, created_by)
+				VALUES ($1, $2, $3, $4, $5, 'approved', '{"goal":"成果を出す"}', 1, $6)`,
+				[]any{delegationID, projectID, rootID, agentID, evaluatorID, ownerID}},
+			{`INSERT INTO agent_run (id, ticket_id, actor_id, status) VALUES ($1, $2, $3, 'completed')`,
+				[]any{runID, rootID, agentID}},
+			{`INSERT INTO agent_report (id, agent_run_id, ticket_id, status, report) VALUES ($1, $2, $3, 'completed', '{}')`,
+				[]any{reportID, runID, rootID}},
+			{`INSERT INTO evaluation (id, delegation_id, target_kind, agent_report_id, round, verdict, findings, evaluator_actor_id)
+				VALUES ($1, $2, 'deliverable', $3, 1, 'fail', $4, $5)`,
+				[]any{ulidgen.New(), delegationID, reportID, findings, evaluatorID}},
+		} {
+			if _, err := pool.Exec(ctx, s.sql, s.args...); err != nil {
+				t.Fatalf("材料を作れない（%s）: %v", strings.Fields(s.sql)[2], err)
+			}
+		}
+
+		// fullToken は agentID＝main のトークンである。
+		text, isErr := tool(t, fullToken, "pb_get_context", fmt.Sprintf(`{"seq":%d}`, rootSeq))
+		if isErr {
+			t.Fatalf("pb_get_context が失敗した: %s", text)
+		}
+		for _, want := range []string{
+			"**役割**：main",
+			"**直近の評価**：deliverable 対象 round 1、判定 `fail`",
+			note,
+			`"aspect": "values"`,
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("パックに %q が無い:\n%s", want, text)
+			}
+		}
+	})
+	// **委任が一時停止中なら、main のツールの結果に注記が足される**（ApiDesign.md 2.9.1・Delegation.md 8.4。pb-309）。
+	// 作業中のエージェントが、書き込みで拒まれるより先に、読み取りで気づけるようにする。
+	t.Run("一時停止中の委任の main には、読み取りのツールの結果にも注記が付く", func(t *testing.T) {
+		const rootSeq = 9309
+		evaluatorID := ulidgen.New()
+		delegationID := ulidgen.New()
+		t.Cleanup(func() {
+			bg := context.Background()
+			if _, err := pool.Exec(bg, `DELETE FROM delegation WHERE id = $1`, delegationID); err != nil {
+				t.Errorf("委任の後始末に失敗した: %v", err)
+			}
+			if _, err := pool.Exec(bg, `DELETE FROM actor WHERE id = $1`, evaluatorID); err != nil {
+				t.Errorf("評価役の後始末に失敗した: %v", err)
+			}
+		})
+		if err := q.CreateAgentActor(ctx, gen.CreateAgentActorParams{ID: evaluatorID, DisplayName: "MCPテスト（評価役2）"}); err != nil {
+			t.Fatalf("評価役の actor を作れない: %v", err)
+		}
+		if err := q.CreateAgent(ctx, gen.CreateAgentParams{ActorID: evaluatorID, OwnerActorID: ownerID,
+			ProjectID: pgtype.Text{String: projectID, Valid: true}, ClientKind: "codex"}); err != nil {
+			t.Fatalf("評価役の agent を作れない: %v", err)
+		}
+		rootID := ulidgen.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO ticket (id, project_id, seq, type, title, status_key, assignee_id, execution_mode)
+			VALUES ($1, $2, $3, 'task', '一時停止した根', 'in_progress', $4, 'delegated')`, rootID, projectID, rootSeq, ownerID); err != nil {
+			t.Fatalf("根を作れない: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO delegation (id, project_id, root_ticket_id, main_actor_id, evaluator_actor_id, status, scope, scope_version, created_by)
+			VALUES ($1, $2, $3, $4, $5, 'paused', '{}', 1, $6)`, delegationID, projectID, rootID, agentID, evaluatorID, ownerID); err != nil {
+			t.Fatalf("委任を作れない: %v", err)
+		}
+
+		contents := func(t *testing.T) []string {
+			t.Helper()
+			// 委任の外のチケット（#1）を読む。**委任と関係ない読み取りでも届く**ことを見る。
+			w := call(fullToken, projectKey, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"pb_get_task","arguments":{"seq":1}}}`)
+			var res struct {
+				Result struct {
+					Content []struct {
+						Text string `json:"text"`
+					} `json:"content"`
+				} `json:"result"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+				t.Fatalf("応答を読めない: %v（%s）", err, w.Body.String())
+			}
+			var out []string
+			for _, c := range res.Result.Content {
+				out = append(out, c.Text)
+			}
+			return out
+		}
+
+		got := contents(t)
+		if len(got) != 2 || !strings.Contains(got[1], "自律実行（#9309）は一時停止中") {
+			t.Fatalf("content = %q, want 本体と一時停止の注記の2件", got)
+		}
+		if !strings.Contains(got[0], `"seq":1`) {
+			t.Errorf("先頭の項目 = %s, want ツールの本来の結果（JSON）", got[0])
+		}
+
+		// 再開すれば注記は消える。
+		if _, err := pool.Exec(ctx, `UPDATE delegation SET status = 'approved' WHERE id = $1`, delegationID); err != nil {
+			t.Fatalf("委任を再開できない: %v", err)
+		}
+		if got := contents(t); len(got) != 1 {
+			t.Errorf("再開後の content = %q, want 本体の1件だけ", got)
+		}
+	})
 }
 
 // readBackTicket は、書き込み系ツールの応答（要点だけ。Design.md 8.5.1）から seq を取り、

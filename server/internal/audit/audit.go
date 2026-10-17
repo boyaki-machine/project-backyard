@@ -45,6 +45,7 @@ const (
 	ProjectCreate    Action = "project.create"
 	ProjectUpdate    Action = "project.update"
 	ProjectArchive   Action = "project.archive"
+	ProjectDelete    Action = "project.delete" // 物理削除（ApiDesign.md 5.6.1）。消えた後に残る記録はこの1行だけ
 	PermissionDenied Action = "permission.denied"
 	// 以下はエージェントの操作（ApiDesign.md 4.5.6）。
 	// エージェントの登録と更新はアカウントの作成・変更と同じ重みを持つ。
@@ -94,6 +95,14 @@ const (
 	// LoginPasskeyFailure はパスキーでのログインの失敗。**login.failure と分けてある**
 	// ——挑戦が誰にも結び付いていないため、アカウントを特定できないことが多い。
 	LoginPasskeyFailure Action = "login.passkey_failure"
+
+	// NotificationDelete は**受けた人以外が**通知を消したとき（ApiDesign.md 4.8.7）。
+	// target_type は "notification"。**題名と本文を detail に入れない。**
+	NotificationDelete Action = "notification.delete"
+
+	// WorkSweep は作業記録の浮きを閉じた1回（ApiDesign.md 11.14）。画面からの片付けと
+	// 日次の処理の両方が書く。**日次の処理は閉じた件数が0でも書く**——最後の実行を画面が読む。
+	WorkSweep Action = "work.sweep"
 )
 
 // actions は ApiDesign.md 2.10 の操作一覧。
@@ -102,7 +111,7 @@ var actions = map[Action]bool{
 	PasswordChange: true, PasswordReset: true,
 	TokenIssue: true, TokenRevoke: true, SessionRevoke: true,
 	UserCreate: true, UserUpdate: true, UserDelete: true, RoleChange: true,
-	ProjectCreate: true, ProjectUpdate: true, ProjectArchive: true, PermissionDenied: true,
+	ProjectCreate: true, ProjectUpdate: true, ProjectArchive: true, ProjectDelete: true, PermissionDenied: true,
 	AgentRegister: true, AgentUpdate: true, AgentDelete: true,
 	SettingUpdate:        true,
 	TLSCertificateUpload: true, TLSCertificateDelete: true,
@@ -113,6 +122,8 @@ var actions = map[Action]bool{
 	LoginPasskeyFailure: true,
 	DatabaseBackup:      true,
 	DatabaseRestore:     true,
+	NotificationDelete:  true,
+	WorkSweep:           true,
 }
 
 // Result は audit_log.result（DbDesign.md 6.8 の CHECK 制約）。

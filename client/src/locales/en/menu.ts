@@ -2,6 +2,8 @@ export default {
   main: {
     label: 'Main menu',
     toggle: 'Toggle main menu',
+    notifications: 'Notifications',
+    notificationsUnread: 'Notifications ({count} unread)',
     projects: 'Projects',
     dashboard: 'Dashboard',
     backlog: 'Backlog',

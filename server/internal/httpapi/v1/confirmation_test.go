@@ -54,6 +54,16 @@ func TestRaiseConfirmationHappyPath(t *testing.T) {
 	if q.createdConfirmations[0].Reason != "hearing" {
 		t.Errorf("reason = %q, want hearing", q.createdConfirmations[0].Reason)
 	}
+	// 委任を作った人へ、main を通知元として1件（Delegation.md 8.2）。
+	if len(q.createdNotifications) != 1 {
+		t.Fatalf("CreateNotification の回数 = %d, want 1", len(q.createdNotifications))
+	}
+	n := q.createdNotifications[0]
+	if n.RecipientID != testActorID || n.Kind != "delegation.confirmation" ||
+		n.Link != "/p/demo/tickets/31#confirmations" || n.SourceID.String != testMainActorID ||
+		n.SubjectKey.String != "delegation_confirmation:"+q.createdConfirmations[0].ID {
+		t.Errorf("通知 = %+v", n)
+	}
 }
 
 func TestRaiseConfirmationRejectsNonMain(t *testing.T) {
@@ -109,6 +119,10 @@ func TestAnswerConfirmationHappyPath(t *testing.T) {
 	}
 	if len(q.answeredConfirmationIDs) != 1 {
 		t.Fatalf("AnswerConfirmation の回数 = %d", len(q.answeredConfirmationIDs))
+	}
+	// 答えた確認待ちの通知を取り下げる（Delegation.md 8.2）。
+	if got := q.withdrawnNotificationKeys; len(got) != 1 || got[0] != "delegation_confirmation:01K2CONFIRM0000000000001" {
+		t.Errorf("取り下げた通知 = %v", got)
 	}
 }
 

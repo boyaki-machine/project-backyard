@@ -61,12 +61,25 @@ func (q *Queries) ApproveDelegationScope(ctx context.Context, arg ApproveDelegat
 	return result.RowsAffected(), nil
 }
 
+const countUnendedDelegations = `-- name: CountUnendedDelegations :one
+SELECT count(*) FROM delegation WHERE status <> 'ended'
+`
+
+// CountUnendedDelegations はサーバ全体で終了していない委任を数える。
+// 自律実行を無効にする前に見る（ApiDesign.md 11.2。Delegation.md 1.3）。
+func (q *Queries) CountUnendedDelegations(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countUnendedDelegations)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDelegation = `-- name: CreateDelegation :exec
 
 INSERT INTO delegation
-  (id, project_id, root_ticket_id, main_actor_id, evaluator_actor_id, scope, created_by)
+  (id, project_id, root_ticket_id, main_actor_id, evaluator_actor_id, scope, created_by, created_at, updated_at)
 VALUES
-  ($1, $2, $3, $4, $5, $6, $7)
+  ($1, $2, $3, $4, $5, $6, $7, $8, $8)
 `
 
 type CreateDelegationParams struct {
@@ -77,6 +90,7 @@ type CreateDelegationParams struct {
 	EvaluatorActorID string
 	Scope            []byte
 	CreatedBy        string
+	CreatedAt        time.Time
 }
 
 // 委任（delegation）に関するクエリ（DbDesign.md 6.24、Delegation.md 4章・12.2）。
@@ -88,6 +102,9 @@ type CreateDelegationParams struct {
 // （9.5.2 の parent_cycle 検出と同じ再帰）。ここで重ねて同じ CTE を書かない。
 // CreateDelegation は委任を1件作る（Delegation.md 4.4）。
 // **終了していない委任は根ごとに1件**（uq_delegation_root_active。0058）。
+// **created_at はアプリから受け取る。** 予算（GetDelegationBudgetUsage）は
+// agent_run.started_at（アプリの時計）と比べて「委任より後の実行」を選ぶので、
+// DB の now() で付けると2つの時計のずれだけ境目が動く（agent_monitor.sql の解除と同じ）。
 func (q *Queries) CreateDelegation(ctx context.Context, arg CreateDelegationParams) error {
 	_, err := q.db.Exec(ctx, createDelegation,
 		arg.ID,
@@ -97,6 +114,7 @@ func (q *Queries) CreateDelegation(ctx context.Context, arg CreateDelegationPara
 		arg.EvaluatorActorID,
 		arg.Scope,
 		arg.CreatedBy,
+		arg.CreatedAt,
 	)
 	return err
 }
@@ -236,6 +254,31 @@ func (q *Queries) GetDelegationByRootTicket(ctx context.Context, rootTicketID st
 	return i, err
 }
 
+const getPausedDelegationRootForActor = `-- name: GetPausedDelegationRootForActor :one
+SELECT t.seq
+FROM delegation d
+JOIN ticket t ON t.id = d.root_ticket_id
+WHERE d.project_id = $1 AND d.status = 'paused'
+  AND (d.main_actor_id = $2 OR d.evaluator_actor_id = $2)
+ORDER BY d.created_at DESC, d.id DESC
+LIMIT 1
+`
+
+type GetPausedDelegationRootForActorParams struct {
+	ProjectID string
+	ActorID   string
+}
+
+// GetPausedDelegationRootForActor は、アクターが main か評価である一時停止中の委任の根の番号を返す
+// （ApiDesign.md 2.9.1・Delegation.md 8.4。pb-309）。エージェントの要求への応答ヘッダに使う。
+// 無ければ行が無い。
+func (q *Queries) GetPausedDelegationRootForActor(ctx context.Context, arg GetPausedDelegationRootForActorParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getPausedDelegationRootForActor, arg.ProjectID, arg.ActorID)
+	var seq int32
+	err := row.Scan(&seq)
+	return seq, err
+}
+
 const getTicketForDelegation = `-- name: GetTicketForDelegation :one
 SELECT parent_id, execution_mode FROM ticket WHERE id = $1
 `
@@ -322,10 +365,15 @@ SELECT
   (tree.ticket_id = d.root_ticket_id)::boolean AS is_root,
   d.status,
   (SELECT count(*) FROM confirmation c
-   WHERE c.delegation_id = d.id AND c.status = 'open')::bigint AS open_confirmations
+   WHERE c.delegation_id = d.id AND c.status = 'open')::bigint AS open_confirmations,
+  (tree.ticket_id <> d.root_ticket_id AND t.closed_at IS NULL AND COALESCE((
+     SELECT ar.status = 'completed' FROM agent_report ar
+     WHERE ar.ticket_id = tree.ticket_id
+     ORDER BY ar.submitted_at DESC, ar.id DESC LIMIT 1), false))::boolean AS reported
 FROM tree
 JOIN delegation d ON d.id = tree.delegation_id
 JOIN ticket rt ON rt.id = d.root_ticket_id
+JOIN ticket t ON t.id = tree.ticket_id
 WHERE tree.ticket_id = ANY($1::text[])
 `
 
@@ -340,12 +388,16 @@ type ListDelegationMarksRow struct {
 	IsRoot            bool
 	Status            string
 	OpenConfirmations int64
+	Reported          bool
 }
 
 // ListDelegationMarks は一覧の行に出す委任の印を引く（Delegation.md 8.2。pb-276）。
 // 終了していない委任の木（根と子孫）を根から辿り、渡したチケットのぶんだけ返す。
 // **委任が無いプロジェクトでは再帰の起点が0行**なので、一覧の重さはほぼ変わらない。
 // open_confirmations はヒアリングも数える（どれも PM の回答を待っている）。
+// reported は、根ではない子で最新の完了レポートが completed なのに完了していないこと
+// （Delegation.md 5章 D2）。レビュー相当の状態が無いワークフローでも、PM が
+// まとめて完了にする子を見分けられるようにする。
 func (q *Queries) ListDelegationMarks(ctx context.Context, arg ListDelegationMarksParams) ([]ListDelegationMarksRow, error) {
 	rows, err := q.db.Query(ctx, listDelegationMarks, arg.TicketIds, arg.ProjectID)
 	if err != nil {
@@ -361,6 +413,7 @@ func (q *Queries) ListDelegationMarks(ctx context.Context, arg ListDelegationMar
 			&i.IsRoot,
 			&i.Status,
 			&i.OpenConfirmations,
+			&i.Reported,
 		); err != nil {
 			return nil, err
 		}

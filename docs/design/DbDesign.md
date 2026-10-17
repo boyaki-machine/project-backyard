@@ -69,7 +69,7 @@
 
 | 項目 | 値 |
 |---|---|
-| PostgreSQL | **17**（`pgvector/pgvector:pg17` イメージを使用） |
+| PostgreSQL | **17**（PB用DBイメージ。上流は `pgvector/pgvector:pg17`） |
 | エンコーディング | UTF8 |
 | DB既定 collation | **`C`**（比較が高速かつ決定的） |
 | DB既定 ctype | **`C.UTF-8`**（pg_trgm が日本語を語の文字として数えるため。4.5） |
@@ -83,6 +83,18 @@
 | `pg_trgm` | 日本語を含む部分一致検索の高速化（4.5） | 導入済み |
 | `vector` | 埋め込みベクトル（`Requirements.md` 6.5） | 構想 |
 
+DBの起動確認はTCPの `127.0.0.1` に対して行う。[上流の初期化処理](https://github.com/docker-library/postgres/blob/master/docker-entrypoint.sh)の一時サーバはUnixソケットだけで待ち受けるため、ソケットへの `pg_isready` をアプリ起動の条件にしない。composeとKubernetesのプローブは同じ条件にする。
+
+### PB用DBイメージ
+
+`deploy/Dockerfile.db` がPostgreSQL 17とpgvectorを維持したDBイメージを作る。上流のエントリポイント、postgresのUID/GID、初期化用の環境変数、データディレクトリ `/var/lib/postgresql/data` を引き継ぎ、同じメジャー版の既存ボリュームを利用できるようにする。DDLと既存データはイメージのビルド時に変更しない。
+
+ビルド時にDebianの提供する更新を適用する。上流イメージ作成時の鍵取り込みに使うgnupg・gpgと、それだけが要求するSQLite等の依存は実行段から除く。APTの署名検証用gpgv、PostgreSQL・pgvector・初期化スクリプトの依存は残す。上流同梱のgosuは、PBと同じ修正済みGoで固定版のソースから再ビルドする。Goモジュールのチェックサム検証を使い、ライセンスと特許表示を `/usr/share/doc/pb-db/` へ同梱する。リリースではDBの更新段をキャッシュせず、上流イメージも再確認する。
+
+開発用は `project-backyard-db:dev`、配布用は `project-backyard-db:<VERSION>`。compose・Kubernetes向けの一式にDBイメージも含める。外部PostgreSQLを使うnative・docker単体向けには含めない。DBを起動する際に、ソフトウェアだけを更新した空のコンテナへ既存ボリュームを渡す。更新前にはバックアップを取る。
+
+修正版未提供の脆弱性はイメージを再ビルドしても消えない。検査の日時・対象CPU・ダイジェスト・修正版の有無と影響評価を残し、解消済みと扱わない。
+
 ## 3.2 docker-compose（開発端末での既定構成）
 
 ```yaml
@@ -91,7 +103,10 @@ name: project-backyard
 
 services:
   db:
-    image: pgvector/pgvector:pg17
+    image: project-backyard-db:dev
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile.db
     restart: unless-stopped
     environment:
       POSTGRES_DB: pb
@@ -119,7 +134,7 @@ services:
       - -c
       - log_min_duration_statement=200ms
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pb_owner -d pb"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U pb_owner -d pb"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -755,7 +770,7 @@ ALTER TABLE access_token
 
 **`key` の形式検証をDBの `CHECK` にも置く。** アプリ側（`ApiDesign.md` 5.3）と二重になるが、URLとMCPエンドポイントに直結する値であり、不正値が入ると経路そのものが壊れるため。
 
-**`settings` で定義するキーは `repositories` と `gantt_snap_minutes` の2つ**である。
+**`settings` で定義するキーは `repositories`・`gantt_snap_minutes`・`views`・`timeline_snap_seconds`・`timeline_epics` の5つ**である。
 
 ```jsonc
 {
@@ -763,7 +778,10 @@ ALTER TABLE access_token
     { "name": "本体", "url": "https://github.com/org/project-backyard",
       "description": "サーバとフロントの実装。コミットに PB-123 を書く" }
   ],
-  "gantt_snap_minutes": 1440
+  "gantt_snap_minutes": 1440,
+  "views": { "gantt": true, "timeline": true },
+  "timeline_snap_seconds": 60,
+  "timeline_epics": [301, 302, 306]
 }
 ```
 
@@ -777,6 +795,29 @@ ALTER TABLE access_token
 **列にせず `settings` に置くのは、用途がまだ「画面にリンクを出す」「MCP がプロジェクト情報として返す」に限られるためである。** どちらも値を読んで返すだけで、一意制約・並び替え・結合を必要としない。リポジトリ単位のトークン発行や横断検索（`Requirements.md` 10.9）が要件になった時点で、`project_repository` テーブルへ移す。**逆にテーブルを先に作ると、要らなかったときに戻せない。**
 
 **`gantt_snap_minutes` はガント（`GuiDesign.md` 5.14「編集」）のドラッグが吸着する単位（分）である。** 値は `1440`（日）・`60`・`30`・`15` のいずれかで、**無い・知らない値のときは `1440` として扱う**（pb-221）。設定はカレンダータブ（`GuiDesign.md` 5.9.6）から行う。**読むのはガントの画面だけで、SQL からは使わない**——`timezone`（集計の SQL が使うので列にした。6.23）とはここが違い、`repositories` と同じ理由で `settings` に置く。
+
+**`views` はメインメニューに出すビューの表示・非表示である**（`GuiDesign.md` 4.3・5.9.1）。
+
+| キー | 値 | 無い・真偽でないとき |
+|---|---|---|
+| `views.gantt` | ガント（`GuiDesign.md` 5.14）をメニューに出すか | **`true`**（キーが無いプロジェクトは今と同じ見え方） |
+| `views.timeline` | タイムライン（`GuiDesign.md` 5.15）をメニューに出すか | **`false`**（イベント型のプロジェクトだけが使う） |
+
+- **バックログ・チケット検索は対象にしない。** チケットを扱う最小の入口なので消せないようにする
+- **知らないビューのキーは読み飛ばし、書いていないキーは上の既定で補う。** 値を真偽からオブジェクト（`{ "enabled": true, "variant": … }`）へ広げたくなっても、読む関数が両方を受ければ移行の DDL は要らない
+- **権限の境界ではない。** 隠したビューの URL を直接開けば開ける（`ticket.view` で守られている）
+
+**`timeline_snap_seconds` はタイムライン（`GuiDesign.md` 5.15）のドラッグが吸着する単位（秒）である。** 値は `1`・`10`・`30`・`60`・`300`・`900` のいずれかで、**無い・知らない値のときは `60` として扱う**。`gantt_snap_minutes` と分ける——ガントは日が主で、タイムラインは秒から分が主である。
+
+**`timeline_snap_seconds` はサーバも読む。** 連鎖のずらし（`ApiDesign.md` 9.17）の**最小の長さ**と、`[ここで詰める]` の丸めに使う——画面とサーバが別の値を使うと、画面の試算とサーバの判定が食い違う。それでも列にしないのは、読むのが**要求1回に1度、プロジェクトの行から**で、SQL の条件や結合に使わないためである（`gantt_snap_minutes` と同じ判断基準）。**サーバも知らない値は `60` に倒し、保存は拒まない。**
+
+**`timeline_epics` はタイムラインの行にするエピックの番号（`seq`）の配列である**（`GuiDesign.md` 5.15「タイムライン対象エピック」）。**選んだエピックの配下で、時刻付きの予定を持つチケットがタイムラインの対象になる**（`ApiDesign.md` 9.2.7）。エピックの配下に入れたまま外したいチケットは終日にする。
+
+- **無い・配列でないときは空**（どのエピックも載らない）。並びは意味を持たない（行の並びはエピックの `sort_key`）
+- **エピックでない番号・無い番号は読み飛ばす。** エピックを消しても配列から消さない——読むときに捨てる。画面が保存するときに、いま在るエピックだけに詰め直す
+- **サーバも読む**（`view=timeline` の対象・当初計画の版の写す範囲・連鎖のずらしの行。`ApiDesign.md` 9.2.7・9.17）。`timeline_snap_seconds` と同じく、要求1回に1度プロジェクトの行から読むだけで SQL の条件の材料（`= ANY($1)`）にしかしないので、表を作らない
+- **期間は持たない。** どの日のイベントかはチケットの予定が決める
+- 変えられるのは `project.edit`（`PATCH /projects/:key`。`ApiDesign.md` 5.5）。**見る人ごとの行の絞り込み（URL の `parent`）とは別物**——こちらはプロジェクトとして「タイムラインに何を載せるか」を決める
 
 **検証はフロントのみで、サーバは JSON オブジェクトであることしか見ない**（`ApiDesign.md` 5.5）。`settings` は自由形式だからである。
 
@@ -879,6 +920,9 @@ CREATE TABLE ticket (
   start_at       timestamptz,               -- 0047。予定の開始（6.6.1）
   due_at         timestamptz,               -- 0047。予定の終わり（含まない）
   all_day        boolean NOT NULL DEFAULT true, -- 0047。終日か
+  no_overlap     boolean NOT NULL DEFAULT false, -- 0066。時間重複チェック（6.6.2）
+  start_pinned   boolean NOT NULL DEFAULT false, -- 0066。開始のアンカー
+  due_pinned     boolean NOT NULL DEFAULT false, -- 0066。終了のアンカー
   sprint_id      char(26) COLLATE "C",
   sort_key       text,                      -- LexoRank 方式の並び順
   staged_at      timestamptz,               -- 0015 で追加。NULL＝バックログ
@@ -926,6 +970,7 @@ CREATE TABLE ticket_link (
   link_type        text    NOT NULL
                    CHECK (link_type IN ('FS','SS','FF','SF','relates','duplicates','blocks')),
   lag_days         integer NOT NULL DEFAULT 0,
+  lag_seconds      integer NOT NULL DEFAULT 0,  -- 0068。秒のずらし（6.6.3）
   origin           text    NOT NULL DEFAULT 'human'
                    CHECK (origin IN ('human','ai_suggested')),
   confidence       double precision,
@@ -1021,6 +1066,54 @@ UPDATE ticket t SET
   due_at   = ((t.due_date + 1)::timestamp AT TIME ZONE p.timezone)
 FROM project p WHERE p.id = t.project_id;
 ```
+
+### 6.6.2 時間重複チェックとアンカー（0066）
+
+**タイムライン（`GuiDesign.md` 5.15）の連鎖のずらし（`ApiDesign.md` 9.17）が読む3つの印である。**
+
+```sql
+-- 0066_ticket_timeline_flags.sql
+-- +goose Up
+ALTER TABLE ticket
+  ADD COLUMN no_overlap   boolean NOT NULL DEFAULT false,
+  ADD COLUMN start_pinned boolean NOT NULL DEFAULT false,
+  ADD COLUMN due_pinned   boolean NOT NULL DEFAULT false;
+```
+
+| 列 | 画面の名前 | 意味 |
+|---|---|---|
+| `no_overlap` | 時間重複チェック | **同じエピックの中で、チェック付きどうしは時間が重ならない。** 連鎖のずらしの対象（「列」）になる。チェックの無いもの（準備・片付けなど裏の作業）は重なってよく、**列に入らない**（依存の後続としてだけ動く。`ApiDesign.md` 9.17.1。pb-332） |
+| `start_pinned` | 開始のアンカー | 開始の時刻を動かさない。連鎖はここで止まるか、手前で吸収する |
+| `due_pinned` | 終了のアンカー | 終了の時刻を動かさない。連鎖で押されたら開始だけが動き、そのチケットが縮む |
+
+- **列にするのは、行ごとに必ず1つの値で、`PATCH`・変更履歴・`version` の道にそのまま乗るためである**。イベント型でないプロジェクトでも列を持つが、既定は `false` で何も変わらない
+- **3つの印が効くのは、タイムラインの連鎖のずらし（`ApiDesign.md` 9.17）の中だけである**。`PATCH`（ガント・バックログ・詳細ペイン・MCP）は印を一切見ない——アンカーの付いた端もそのまま動かせ、印は残る。**ガントの挙動を変えないため**であり、ガントで動かしたものは人が意図して動かしたものとして扱う
+- **アンカーに CHECK を掛けない。** 「アンカーを立てる端に値がある」を DB で縛ると、ガントや詳細ペインで端の値を消したときに CHECK に当たり、`PATCH` が失敗する（ガントの挙動が変わる）。**値の無い端のアンカーは、連鎖のずらしが無いものとして扱う**
+- **時間重複チェックには CHECK を掛けない。** 予定がそろっていないチケットや終日のチケットに付けてもよく、連鎖の対象から外れるだけである（作りかけを許す。6.6 の「子を持たない `story` を許す」と同じ考え）。**重なりそのものも DB では拒まない**——`PATCH` やエピックの付け替えで重なりうり、画面が衝突として描く（`GuiDesign.md` 5.15「アンカー・依存・衝突」）
+- **着手済み・完了は列にしない。** 「着手済みの開始は動かさない」「完了は両端とも動かさない」は**状態から導く暗黙のアンカー**で、アプリが連鎖のたびに判定する。列に写すと、状態を戻したときに外し忘れる
+- **索引を足さない。** 連鎖が読むのは1つのエピックの部分木（`idx_ticket_parent` で辿る）で、3列を条件に表全体を引く問い合わせは無い
+- **`DEFAULT false` の列追加は既存行を書き換えない**（PostgreSQL 11 以降）。前進のみ（5.3）
+- **変更は `activity` に記録する**（`field` は列名、値は `true` / `false`）。連鎖のずらしで動いた予定も記録する（`ApiDesign.md` 9.17.2「変更履歴」）
+
+### 6.6.3 依存の秒のずらし（0068）
+
+**タイムラインの連鎖のずらし（`ApiDesign.md` 9.17.1）は、依存（`FS` / `SS` / `FF` / `SF`）で結んだ2つを隙間なくそろえる**（pb-332）。`lag_days` は暦日の整数で、当日の進行に要る「転換10分」を表せないため、秒の列を足す。
+
+```sql
+-- 0068_ticket_link_lag_seconds.sql
+-- +goose Up
+ALTER TABLE ticket_link
+  ADD COLUMN lag_seconds integer NOT NULL DEFAULT 0
+    CHECK (lag_seconds BETWEEN -86399 AND 86399);
+```
+
+| 論点 | 決めたこと |
+|---|---|
+| 実効のずらし | **`lag_days`（基準タイムゾーンの暦日）を足してから `lag_seconds` を足す。** 2つを1列に畳まない——ガントは日の単位で読み書きし（`GuiDesign.md` 5.14）、暦日は夏時間の日に24時間と限らない |
+| 範囲 | **1日未満（±86,399秒）。** 1日以上は `lag_days` で表す。同じずらしに2通りの書き方を作らない |
+| `CHECK` を掛ける | 掛ける。`lag_days` の範囲（-365〜365）は API だけで検証しているが、こちらは「1日未満」が2列の分担そのものであり、崩れると実効のずらしが2通りに読める |
+| 種別 | `relates` / `duplicates` / `blocks` では 0 のまま（`lag_days` と同じ。API が弾く） |
+| 既存行 | `DEFAULT 0` の列追加は既存行を書き換えない（PostgreSQL 11 以降）。前進のみ（5.3） |
 
 ## 6.7 コメントと添付（0007）
 
@@ -1994,6 +2087,10 @@ ON CONFLICT (key) DO UPDATE
 要る。pb-249）の細分はまだ無い——`planning` / `paused` / `ended` はひとまとめに
 「main は書けない」として扱い、`approved` だけを許す。
 
+**`created_at` はサーバの時計で付ける**（列の `DEFAULT now()` に頼らず、作成時に値を渡す）。
+予算（`Delegation.md` 12.1）は `agent_run.started_at`（サーバの時計）と比べて委任より後の実行を
+数えるので、DB の時計で付けると、2つの時計のずれだけ境目が動く。
+
 ## 6.25 計画の版（0051）
 
 **正本は `Delegation.md` 6章・12.2。** pb-247。D3：骨格（根の直下の枝・予算配分・
@@ -2211,8 +2308,8 @@ CREATE TABLE delegation_handoff (
 示すことがある。次の一手は PB の推奨であり main の判断を縛らないため
 （9.1「指示は強制の代わりではない」）、実害は小さいと判断した。
 
-**パック（pb-251）・待ち受け・通知（D6 未決）への配線はまだ無い。**
-`POST .../handoff` の応答に `next_move` を載せるところまでが pb-250 の範囲。
+**`next_move` は `POST .../handoff` の応答・`delegation-status`・パック（`Delegation.md` 9.1）に載る。通知には載せない**——
+PM への通知は確認待ちが立ったときだけ作る（`Delegation.md` 8.2）。
 
 ## 6.29 委任の予算（テーブルなし）
 
@@ -2285,6 +2382,151 @@ CREATE UNIQUE INDEX uq_confirmation_open_checkpoint
   同時に読まれても二重に立たないよう DB で守る。起点は直近の checkpoint を立てた時刻、無ければ最初に計画が反映された時刻
   （`GetCheckpointBase`）
 
+## 6.32 当初計画の版（0067）
+
+**タイムライン（`GuiDesign.md` 5.15）の `[計画を保存]` を押すたびに、プロジェクトのタイムライン全体（`timeline_epics` で選んだエピックの配下。6.4）を1つの版として積む。**
+目的は、イベントの後に「**計画と実績の差**」と「**計画がどう遷移したか**」をビューの上で見ることである。
+API は `ApiDesign.md` 9.17.3。
+
+```sql
+-- 0067_schedule_baseline.sql
+-- +goose Up
+CREATE TABLE schedule_baseline (
+  id              char(26) COLLATE "C" PRIMARY KEY,
+  project_id      char(26) COLLATE "C" NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  label           text CHECK (label IS NULL OR length(label) BETWEEN 1 AND 100),
+                                                            -- 「リハーサル後」など。任意
+  item_count      integer NOT NULL CHECK (item_count >= 0),
+  created_by      char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  created_by_name text NOT NULL,                            -- 記録時の表示名（activity.actor_name と同じ）
+  created_at      timestamptz NOT NULL DEFAULT now()   -- 版の名前になる（下の「名前」）
+);
+CREATE INDEX idx_schedule_baseline_project ON schedule_baseline (project_id, created_at DESC);
+
+CREATE TABLE schedule_baseline_item (
+  baseline_id  char(26) COLLATE "C" NOT NULL
+               REFERENCES schedule_baseline(id) ON DELETE CASCADE,
+  ticket_seq   integer NOT NULL,     -- 番号は使い回さない（6.4.1）ので、消えた後も指せる
+  title        text    NOT NULL,
+  epic_seq     integer NOT NULL,     -- 保存した時点の所属エピック（行）
+  epic_title   text    NOT NULL,     -- エピックが消えても行の見出しを出せる
+  start_at     timestamptz,
+  due_at       timestamptz,
+  all_day      boolean NOT NULL,
+  no_overlap   boolean NOT NULL,
+  start_pinned boolean NOT NULL,
+  due_pinned   boolean NOT NULL,
+  PRIMARY KEY (baseline_id, ticket_seq),
+  CONSTRAINT ck_schedule_baseline_item_when CHECK (start_at IS NOT NULL OR due_at IS NOT NULL)
+);
+```
+
+| 論点 | 決めたこと |
+|---|---|
+| 版の単位 | **プロジェクトのタイムライン全体を1版**とする。画面で行を絞っていても（URL の `parent`）全体を写す。エピック単位にしない |
+| 写すチケット | **`timeline_epics`（6.4）で選んだエピックの配下**（所属は祖先をたどって最初に見つかるエピック。`ApiDesign.md` 9.5.1 の `epic`）**で、時刻付き（`all_day = false`）で、開始か終了の少なくとも一方を持つもの。** `view=timeline`（`ApiDesign.md` 9.2.7）が返す集合と同じにする——画面に載っていないものを版に写すと、重ねたときに「消えた」と誤って出る。エピック自身は写さない。時間重複チェックの有無・状態・棚に戻ったかは問わない |
+| 写す値 | **バーを描くのに要る値だけ**——題名・所属エピック・開始・終了・終日か・時間重複チェック・アンカー。状態・担当・本文は写さない（実績は版ではなく、いまのチケットと遷移の履歴が持つ） |
+| 指し方 | **`id`（ULID）で指す。番号を持たない**——利用者は版を「いつの計画か」で見分けるので、名前は保存した日時で決まる。API のパスも URL のクエリ（`?baseline=`）も `id` である。消した版の `id` は二度と現れないので、使い回しの問題が起きない |
+| **名前** | **保存した日時（`created_at`）をプロジェクトの基準タイムゾーン（6.23）で分まで**（例「10/24 08:30 保存」）。`label` があれば併記する。**比べるときに重視されるのは「どの時点の計画か」だから**で、通し番号は意味を運ばない。同じ分に2つあれば秒まで出す（表示の規則。`GuiDesign.md` 5.15「当初計画の版」） |
+| 上限 | **1版 5,000件**（`ApiDesign.md` 9.2.6 と同じ）。超えるプロジェクトは保存を拒む（`ApiDesign.md` 9.17.3）。黙って切ると「全体の版」の約束が崩れる |
+| 書き換え | **しない。** 行の追加と、版ごとの削除だけで、`updated_at` も `version` も持たない |
+| 削除 | **版ごとに物理削除する**（`DELETE …/schedule-baselines/:id`。`project.edit`。`ApiDesign.md` 9.17.3）。行は `ON DELETE CASCADE` で消える。誤って保存した版を消すための口である |
+| 消えたチケット | **`ticket_id` を持たず、`ticket_seq` で指す。** チケットは物理削除（4.6）だが番号は使い回さないので、いまの `ticket` に同じ `seq` が無ければ「版にあったが、いまは無い」と分かる。外部キーを張らないので、チケットを消しても版の行は書き換わらない |
+| 保存した人 | `created_by` は `ON DELETE SET NULL`、表示は `created_by_name`（記録時の表示名）で出す。人を消しても「誰が保存した版か」が読める |
+| 索引 | 一覧（新しい順）と最新の1件は `idx_schedule_baseline_project`、1件の取得は主キー。行は主キーで版ごとに引く |
+
+**`activity` には記録しない。** `activity` はチケットの履歴で、版はチケットではなくプロジェクトの記録である。**版の表そのものが「いつ・誰が・何を」を持つ**ので、別に写さない。
+
+**バックアップの往復のテスト（9.1.1）に2表を含める。** 表の一覧はカタログから引くので書き出しには自動で載るが、**往復で版の行が欠けないことはテストで確かめる**（9.1.1「代償を隠さない」）。
+
+## 6.33 通知（0069）
+
+**人に対応や確認を求める出来事を、宛先の利用者に届ける。** 仕組みは使い手を知らない。
+使い手（自律実行の確認待ち、パスワードリセットの申請など）は、**サーバ内の関数**で通知を作り、取り下げる。
+**通知を作る REST の口は持たない**——宛先と文面を決めるのは常に使い手の処理であり、外から任意の人へ通知を送れないようにする。
+API は `ApiDesign.md` 4.8、画面は `GuiDesign.md` 5.16。
+
+```sql
+-- 0069_notification.sql
+-- +goose Up
+CREATE TABLE notification (
+  id           char(26) COLLATE "C" PRIMARY KEY,
+  recipient_id char(26) COLLATE "C" NOT NULL REFERENCES actor(id) ON DELETE CASCADE,
+  kind         text NOT NULL CHECK (length(kind) <= 64
+                 AND kind ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$'),   -- 例 delegation.confirmation
+  title        text NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
+  body         text NOT NULL DEFAULT '' CHECK (length(body) <= 2000),
+  link         text NOT NULL CHECK (length(link) <= 500
+                 AND link ~ '^/[^/\\]'),                                -- PB の画面のパスだけ
+  link_label   text NOT NULL CHECK (length(link_label) BETWEEN 1 AND 100), -- 例 my-app-52 文化祭の準備
+  subject_key  text CHECK (subject_key IS NULL OR length(subject_key) BETWEEN 1 AND 200),
+  project_id   char(26) COLLATE "C" REFERENCES project(id) ON DELETE CASCADE,
+  source_id    char(26) COLLATE "C" REFERENCES actor(id) ON DELETE SET NULL,
+  source_name  text NOT NULL CHECK (length(source_name) BETWEEN 1 AND 100),  -- 記録時の表示名
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  read_at      timestamptz
+);
+CREATE INDEX idx_notification_recipient ON notification (recipient_id, created_at DESC);
+CREATE INDEX idx_notification_unread    ON notification (recipient_id) WHERE read_at IS NULL;
+CREATE INDEX idx_notification_subject   ON notification (subject_key)  WHERE subject_key IS NOT NULL;
+CREATE INDEX idx_notification_read_at   ON notification (read_at)      WHERE read_at IS NOT NULL;
+```
+
+| 論点 | 決めたこと |
+|---|---|
+| 宛先 | **actor 1人につき1行。** 複数の人へ届けるときは、使い手が人数分の行を作る。宛先の actor を消すと通知も消える |
+| 種類（`kind`） | **使い手が名乗る文字列**（`<領域>.<出来事>`）。CHECK は形だけを見て、値を列挙しない——使い手を足すたびにマイグレーションが要らないようにする。使っている値は 6.33.1 の表に書く |
+| 題名と本文 | **プレーンテキスト。** 一覧では題名と本文の1行目を出す（`GuiDesign.md` 5.16）。Markdown にしない |
+| 遷移先（`link`） | **PB の画面のパス**（`/p/my-app/tickets/52` など）。画面は使い手の種類を知らずに、このパスへ移る。**外の URL を持たせない**——CHECK で `/` から始まり、`//` と `/\` から始まらないことを確かめる（別のホストへ飛ばす口にしない） |
+| 遷移先の名前（`link_label`） | **一覧で遷移のリンクとして出す文字列**（`GuiDesign.md` 5.16）。遷移先の画面が何かを、押す前に読めるようにする。チケットなら `<キー>-<番号> <題名>` |
+| 対象のキー（`subject_key`） | **取り下げの単位。** 同じ出来事について複数の宛先へ出した通知を、まとめて取り下げるのに使う。形は `<種類>:<対象の ID>` にする（例 `password_reset:<利用者の ID>`）。取り下げないなら空でよい |
+| プロジェクト（`project_id`） | プロジェクトの中の出来事なら持つ。**プロジェクトを消すと、その通知も消える**——遷移先の画面が無くなるためである。プロジェクトの外の出来事（パスワードの申請など）は空 |
+| 通知元 | `source_id` と、記録時の表示名 `source_name`。**PB 自身が出すときは `source_id` が空で、`source_name` は `PB`**。通知元の actor を消しても、誰からの通知かは読める |
+| 既読 | `read_at`。**未読に戻すと空にする。** 一覧に出ただけでは既読にしない（`GuiDesign.md` 5.16） |
+| 同じ対象への通知 | **仕組みはまとめない。** 重ねるか出し直すかは使い手が決める（取り下げてから作り直せば、出し直しになる） |
+| 保持 | **既読から30日で物理削除する。未読は消さない。** サーバの定期処理（1時間ごと）が `read_at` の索引で消す。期間と間隔は設定にしない（`Design.md` 10.3）。**通知を作る・一覧を引く処理では消さない**——通知が来ない宛先の古い行が残り続けるためである |
+| 削除 | **物理削除。** 人が消せるのは、受けた人・出した人（`source_id`）・`system.settings` を持つ人（`ApiDesign.md` 4.8.5・4.8.6）。使い手の取り下げも物理削除である |
+| 監査 | **受けた人が自分の通知を消す・既読にするのは記録しない。** 受けた人以外が消したときだけ `audit_log` に `notification.delete` を残す（`ApiDesign.md` 2.10） |
+| `activity` | **記録しない。** チケットの履歴ではない |
+
+**バックアップの往復のテスト（9.1.1）に表を含める。**
+
+### 6.33.1 使い手の足し方
+
+**使い手は、次の5つを決めてから通知を作る。** 決めた内容は、使い手の設計文書と下の表に書く。
+
+1. **種類**（`kind`）。`<領域>.<出来事>` の形で、下の表に足す
+2. **宛先。** 仕組みは宛先を選ばない。「権限 X を持つ全員」「委任の PM」など、使い手が actor を決める
+3. **遷移先のパスと、その名前**（`link_label`）。画面のルートは `GuiDesign.md` 3.2 にある
+4. **取り下げ。** 対象が片付いたら（回答した、処理した）同じ `subject_key` の通知を取り下げる。取り下げないなら、その理由
+5. **作る・取り下げるのは、使い手の処理と同じトランザクションで行う。** 出来事だけが確定して通知が無い、またはその逆を作らない
+
+| 種類（`kind`） | 使い手 | 宛先 | 遷移先 | 取り下げ |
+|---|---|---|---|---|
+| `delegation.confirmation` | 自律実行の確認待ち（`Delegation.md` 8.2。checkpoint の要約を含む） | 委任を作った人（`delegation.created_by`） | 委任の根のユーザ確認待ち `/p/<キー>/tickets/<番号>#confirmations` | 回答・委任の取り下げ・受け入れで取り下げる。`subject_key` は `delegation_confirmation:<確認待ちの ID>` |
+## 6.34 承認待ちの保留（0070）
+
+**エージェントのクライアントが人に承認を求めている間、作業記録を止めておく**（`Design.md` 8.5.7）。
+クライアントのフックが PB に知らせる（`ApiDesign.md`「共通作業タイマー」の `work-hold`）。
+
+```sql
+-- 0070_work_hold.sql
+-- +goose Up
+ALTER TABLE work_session
+  ADD COLUMN hold text CHECK (hold IN ('approval')),
+  ADD COLUMN hold_ms bigint NOT NULL DEFAULT 0 CHECK (hold_ms >= 0);
+```
+
+- **`hold` はフックが止めた印である。** 止めた記録は `state = 'waiting'` で、`hold = 'approval'` を持つ。
+  人の返答待ちでエージェントが明示的に止めた記録は `hold` を持たず、**フックはそれを再開しない**
+- **`hold_ms` は承認待ちの累計で、`waiting_ms` の内訳である。** 作業時間（`active_ms`）には入らない。
+  作業記録の欄が「うち承認待ち」として出し、除いた区間が後から読めるようにする
+- **保留中の記録に明示的な操作（待機・再開・終了・放棄）が来たら、先に保留を解く。** 承認を求めていたのが
+  その操作そのものである場合があり、保留のまま適用すると「実行中の作業だけ待機できます」で落ちる。
+  解いた時点までを `hold_ms` に数える
+- **状態との組を CHECK にしない。** 終了や片付け（6章「共通作業記録」）が保留を解き忘れても、記録を閉じる操作を
+  拒まない。解き忘れた `hold` は、終了した記録では意味を持たない
+
 # 7. 初期データ（0010）
 
 ## 7.1 認証プロバイダ
@@ -2345,6 +2587,8 @@ ON CONFLICT (key) DO UPDATE
 | 0029 | `ticket.self_edit` を新設 | **6.13** |
 
 **`Design.md` 付録A の「`permission` カタログの粒度は28件で確定」は、0010 時点の件数である。** 0017 適用後は30件、0027 適用後は31件、0029 適用後は32件になる。
+
+**`project.delete`（0071）は `administrator` にだけ配る。** プロジェクトの物理削除（`ApiDesign.md` 5.6.1）であり、`project_admin` が持つ `project.archive` と分ける——アーカイブは解除で戻せるが、削除は戻せない。0071 適用後は38件になる。
 
 ## 7.3 ロールと権限の割り当て
 
@@ -3417,7 +3661,7 @@ CREATE TABLE project_event (
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_project_event_timeline ON project_event (project_id, occurred_on DESC)
+CREATE INDEX idx_project_event_occurred ON project_event (project_id, occurred_on DESC)
   WHERE status = 'approved';
 CREATE TRIGGER trg_project_event_updated BEFORE UPDATE ON project_event
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -3748,4 +3992,4 @@ agent.manageはプロジェクト所属エージェントの一覧・停止を�
 
 ### 実行の明示状態と失敗監視
 
-共通作業記録work_sessionのoutcomeはcompleted・failed・abandonedまたはNULLを持つ。NULLは未判定であり、partial/blockedや過去の記録を失敗と推測しない。開始ごとにagent_attemptへ監視用の記録を作り、終了結果を保存する。作業明細の整理後も試行履歴は保持する。解除区間はagent_monitor_resetでPJ・エージェントごとに保持し、理由と操作者を監査する。failed/abandonedの終了はagent_runにも明示状態を保存し、時刻・モデル・既知のコストだけを写す。retry_countは提出由来の従来の意味を変えない。
+共通作業記録work_sessionのoutcomeはcompleted・failed・abandonedまたはNULLを持つ。NULLは未判定であり、partial/blockedや過去の記録を失敗と推測しない。開始ごとにagent_attemptへ監視用の記録を作り、終了結果を保存する。作業明細の整理後も試行履歴は保持する。解除区間はagent_monitor_resetでPJ・エージェントごとに保持し、理由と操作者を監査する。解除の時刻reset_atは、比べる相手のagent_attempt.started_atと同じくサーバの時計で付ける（DBのnow()に頼らない。時計のずれだけ解除前の失敗が解除後に数えられるため）。failed/abandonedの終了はagent_runにも明示状態を保存し、時刻・モデル・既知のコストだけを写す。retry_countは提出由来の従来の意味を変えない。

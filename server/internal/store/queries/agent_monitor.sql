@@ -18,9 +18,12 @@ VALUES(@id,@project_id,@ticket_id,@actor_id,@started_at);
 -- name: FinishAgentAttempt :exec
 UPDATE agent_attempt SET ended_at= @ended_at,outcome=sqlc.narg(outcome) WHERE id= @id AND ended_at IS NULL;
 
+-- ResetAgentMonitor は解除の時刻をアプリから受け取る。**DB の now() を使わない。**
+-- ListAgentAttempts が比べる agent_attempt.started_at はアプリの時計で付くので、
+-- 解除だけ DB の時計で付けると、2つの時計のずれだけ解除前の失敗が解除後に数えられる。
 -- name: ResetAgentMonitor :exec
-INSERT INTO agent_monitor_reset(project_id,actor_id,reason) VALUES(@project_id,@actor_id,@reason)
-ON CONFLICT(project_id,actor_id) DO UPDATE SET reset_at=now(),reason=excluded.reason;
+INSERT INTO agent_monitor_reset(project_id,actor_id,reason,reset_at) VALUES(@project_id,@actor_id,@reason,@reset_at)
+ON CONFLICT(project_id,actor_id) DO UPDATE SET reset_at=excluded.reset_at,reason=excluded.reason;
 
 -- name: UpdateAgentAttributes :exec
 UPDATE agent SET trust_level=COALESCE(sqlc.narg(trust_level),trust_level),capabilities=COALESCE(sqlc.narg(capabilities)::jsonb,capabilities)

@@ -271,7 +271,10 @@ ProjectBackyard/
 │   ├── vite.config.ts             ← /api /mcp を server へプロキシ（開発時）
 │   ├── src/
 │   │   ├── pages/ components/ stores/
-│   │   └── api/                   ← openapi.yaml から生成する型付きクライアント
+│   │   ├── api/                   ← openapi.yaml から生成する型付きクライアント
+│   │   └── plugins/               ← ビューのプラグイン（下記）
+│   │       ├── registry.ts        ← 登録表。本体との接点（ルート・メニュー・設定キー・使う API）を1か所に集める
+│   │       └── event_view/        ← タイムライン（GuiDesign 5.15）。色・文言・時間軸の部品も中に持つ
 │   └── dist/                      ← .gitignore
 │
 ├── tools/                         ← 開発用の道具。製品のバイナリに入らない
@@ -302,6 +305,17 @@ ProjectBackyard/
         ├── compose/               ← TARGET=compose の雛形（compose.yaml と、秘密を作る init.sh）
         └── k8s/                   ← TARGET=k8s の雛形（PB 本体の app.yaml・試すための db.yaml・Secret の雛形）
 ```
+
+**ビューのプラグインは `client/src/plugins/` に置く**（`GuiDesign.md` 5.15「プラグインの境界」）。いまはタイムライン（`event_view`）だけで、**ガント・バックログは本体のまま**である。
+
+| 規則 | 内容 |
+|---|---|
+| 接点は登録表だけ | ルート（`router/routes.ts`）・メニュー（`SideMenu.vue`）・入れ物（`TicketViewsPage.vue`・`lib/ticketViews.ts`・`AppShell.vue`）・プロジェクト設定の「表示するビュー」は、`plugins/registry.ts` を読んでプラグインを足す。プラグインの名前を本体のコードに書かない |
+| 使ってよいもの | 公開された REST（`openapi.yaml` から生成した型）、認証と選択中のプロジェクト、本体の部品（詳細ペインなど）。**本体のストアの中身に手を入れない** |
+| 読み込み | **ビルドに含め、ページは遅延読み込み**（`import()`）。**実行時に外部の JS を読み込む仕組みは作らない**——同じオリジンで読めばセッションと CSRF をそのまま使え、CSP（`script-src 'self'`）が守っていた「自分のコード以外は動かない」が崩れる |
+| 出し分け | メニューに出すかはプロジェクトの `settings.views`（`DbDesign.md` 6.4）。権限の境界ではない |
+
+**将来、別に配布できるよう準備する**のが目的で、登録表の形がその切れ目になる。外部配布の仕組み（版の照合・隔離・署名）は、要望が実際に出てから設計する。
 
 ## 4.2 client と server を分けたまま単一プロセスで動かす
 
@@ -431,7 +445,7 @@ out/
 | `OUT` | 出力先 | 省略すると `dist/pb-v<版>-<TARGET>-<OS>-<ARCH>` |
 | `PUSH` | docker / compose / k8s だけ。イメージを tar に出す代わりに、このレジストリへ送る | — |
 
-**CPU は 64bit の2種だけを受ける**。`386`・`armv7` など 32bit を名指しする値は、理由を出して止まる。DB の公開イメージ（`pgvector/pgvector:pg17`）も amd64 / arm64 しか無い。
+**CPU は 64bit の2種だけを受ける**。`386`・`armv7` など 32bit を名指しする値は、理由を出して止まる。DB用イメージもPostgreSQL17＋pgvectorを維持し、同じ2種類へビルドする（`DbDesign.md` 3.1）。
 
 **PB が動く OS / CPU と、ZIP を受け取るエージェントの端末は別である。** `make build`、stg と
 native の一式、コンテナイメージには `darwin/arm64`、`windows/amd64`、`windows/arm64`、
@@ -479,10 +493,12 @@ native の一式、コンテナイメージには `darwin/arm64`、`windows/amd6
 
 **イメージ**は `deploy/Dockerfile` の3段（client → pb と goose → 実行）で作る。中身は `/pb`（入口。既定の引数は `serve`）・`/goose`（postgres のドライバだけ）・`/bridges`（5種類のブリッジ）・`/migrations`・`/LICENSE`・`/NOTICE`・`/THIRD_PARTY_NOTICES.txt`。実行の段は `gcr.io/distroless/static-debian12:nonroot` で、利用者は uid 65532。
 
+ビルド段のOSには提供済みの更新を適用し、npmは同じ11系の固定版へ更新する。実行段のtzdataは更新したDebian 12のビルド段からデータ・ライセンス・実際のパッケージ情報を一緒に移す。配布ビルドでは上流を再確認し、OS更新を含むビルド段のキャッシュを再利用しない。
+
 | | compose | docker |
 |---|---|---|
-| イメージ | `project-backyard-<版>-linux-<CPU>.tar`（`PUSH` のときは無し） | 同じ |
-| 起動 | `compose.yaml`（db＝公開イメージ `pgvector/pgvector:pg17`・migrate・app） | `run.sh`（`docker run` の例） |
+| イメージ | `project-backyard-<版>-linux-<CPU>.tar` と `project-backyard-db-<版>-linux-<CPU>.tar`（`PUSH` のときは無し） | PB本体のtarのみ |
+| 起動 | `compose.yaml`（PB用DBイメージ・migrate・app） | `run.sh`（`docker run` の例） |
 | スキーマ | compose の migrate サービス（同じイメージの `/goose`。起動のたびに走る） | `migrate.sh`（同じイメージの `/goose`） |
 | 秘密 | `init.sh` が乱数で作る | 見本を複製して手で書く |
 | DB | 同梱の DB サービス。**外部の PostgreSQL へ繋ぐ手順を `compose.yaml` にコメントで併記** | 用意済みの PostgreSQL（`create-roles.sql`） |
@@ -498,13 +514,16 @@ native の一式、コンテナイメージには `darwin/arm64`、`windows/amd6
 | **イメージに `ENV PB_BIND=0.0.0.0:8080` を持たせる** | **PB の既定値は `127.0.0.1:8080` である**。コンテナの中で 127.0.0.1 に閉じると、公開範囲を決めるはずの `-p` や `ports` を通っても外から届かない。**画面の「待受アドレス」は環境変数で固定になる** |
 | **`make up` は db だけのまま** | dev は PB 本体を `make run` でホストから動かす。app のコンテナまで上げると 8080 番でぶつかる（`Development.md` 2.2） |
 
+**DBイメージの更新は `deploy/Dockerfile.db` が担う**（`DbDesign.md` 3.1）。compose・k8sではPBとDBを別々のtarで配る。`PUSH=<レジストリ>/<名前>:<タグ>` を指定した場合、PBは指定どおり、DBは同じ参照に `-db` を付けたタグへ送る（例：`registry.example.com/pb:4.52.299-db`）。両方の参照を雛形へ埋め込む。docker単体とnativeは外部DBを使う。
+
 #### k8s の一式
 
-**イメージは docker / compose と同じもの**で、マニフェストと Secret の雛形を添える。**DB は試すためのサンプルで、運用では CloudNativePG か外部の PostgreSQL を使う**（`DbDesign.md` 3.3）。
+**PB本体とDBのイメージはcomposeと同じもの**で、マニフェストと Secret の雛形を添える。**DB は試すためのサンプルで、運用では CloudNativePG か外部の PostgreSQL を使う**（`DbDesign.md` 3.3）。
 
 ```
 <OUT>/
-├── project-backyard-<版>-linux-<CPU>.tar   イメージ（PUSH のときは無し）
+├── project-backyard-<版>-linux-<CPU>.tar   PBイメージ（PUSH のときは無し）
+├── project-backyard-db-<版>-linux-<CPU>.tar DBイメージ（PUSH のときは無し）
 ├── k8s/
 │   ├── app.yaml          ConfigMap（pb.yaml）・Deployment（initContainer で migrate）・Service
 │   └── db.yaml           試すための DB：ConfigMap（ロール作成）・headless Service・StatefulSet（PVC 付き）
@@ -603,6 +622,7 @@ project ──┬── ticket ──┬── comment
 | 作成済み | 履歴 | `activity` `audit_log` | 6.8 |
 | 作成済み | アジャイル | `sprint` `ticket_sprint` | 6.9 |
 | 作成済み | タグ | `tag` `ticket_tag` | 6.10 |
+| 作成済み | タイムラインの当初計画 | `schedule_baseline` `schedule_baseline_item` | 6.32 |
 | 作成済み | 完了条件 | `dod_item` | 6.11 |
 | 作成済み | **プロジェクト文書** | `document` `document_revision` | 8.1 |
 | 作成済み | エージェント連携 | `agent` `agent_client_kind` `task_lease` | 8.2 |
@@ -751,7 +771,7 @@ type VerifiedIdentity struct {
 
 **非管理者のシステムロールにはプロジェクトの書き込み権限を与えない。** 和集合で計算するため、`operator` に書き込み権限があると `project_viewer` の「閲覧のみ」が成立しない。`administrator` はインスタンス全体を管理する例外として全権限を持つ。現在の `operator` の割り当ては `DbDesign.md` 6.20 のマイグレーションで閲覧権限に絞る。
 
-**スコープの語彙は権限カタログのキーそのものである**（6.4.2。32件。`ApiDesign.md` 4.4.2）。上の積は権限キーどうしの完全一致で取るため、別の語彙を混ぜると、絞ったつもりのトークンが権限0件になるか、解釈できない語彙を通して逆に広がるかのどちらかになる。**空配列は「絞り込みなし」であって「権限0件」ではない。**
+**スコープの語彙は権限カタログのキーそのものである**（6.4.2。38件。`ApiDesign.md` 4.4.2）。上の積は権限キーどうしの完全一致で取るため、別の語彙を混ぜると、絞ったつもりのトークンが権限0件になるか、解釈できない語彙を通して逆に広がるかのどちらかになる。**空配列は「絞り込みなし」であって「権限0件」ではない。**
 
 **エージェントの既定スコープもこの語彙で書く**（6.5）。別の語彙で発行すると、実効権限が0件になる。
 
@@ -759,11 +779,11 @@ type VerifiedIdentity struct {
 
 ### 6.4.2 権限カタログ
 
-権限は36件のカタログとしてデータで定義する（原則5）。用途別の権限キーを以下に示す。登録内容とロールへの割り当ては `DbDesign.md` 7章・8.1.4・6.12.1・6.13・6.24 に従う。
+権限は38件のカタログとしてデータで定義する（原則5）。用途別の権限キーを以下に示す。登録内容とロールへの割り当ては `DbDesign.md` 7章・8.1.4・6.12.1・6.13・6.24 に従う。
 
 | カテゴリ | 権限キー |
 |---|---|
-| project | `project.view` `project.create` `project.edit` `project.archive` |
+| project | `project.view` `project.create` `project.edit` `project.archive` `project.delete` |
 | ticket | `ticket.view` `ticket.create` `ticket.edit` `ticket.transition` `ticket.close` `ticket.assign` `ticket.delete` `ticket.reference.edit` `ticket.self_edit` `ticket.actual_point.edit` `ticket.plan.edit` |
 | comment | `comment.create` `comment.edit_own` `comment.delete_any` |
 | doc | `doc.view` `doc.edit` |
@@ -1343,6 +1363,7 @@ go-webauthn v0.18 も拒否する。**`http://127.0.0.1:8080` で開いた画面
 | ユーザー管理 | `/admin/users` 系 | 確定 |
 | ロール・権限 | `/roles` `/permissions` | 確定 |
 | チケット | `/projects/:key/tickets` 系、`/tags`、`/sprints`、`/stats`、`/activity` | 確定（`ApiDesign.md` 9章） |
+| タイムライン | `/projects/:key/tickets?view=timeline`、`/projects/:key/tickets/:seq/reschedule`、`/projects/:key/schedule-baselines` 系 | 確定（`ApiDesign.md` 9.2.7・9.17） |
 
 **本表の「確定」は設計が確定した意味であり、実装済みという意味ではない。** `docs/design/openapi.yaml` に載るのは実装が済んだものだけである（役割と食い違い時の扱いは `ApiDesign.md` 1.3）。
 
@@ -1763,7 +1784,7 @@ JSON が無い**——パックは複数の応答を組み直したものなの�
 
 **親の設定は子孫の上限になる。** 親が `none` なら子孫も載らず、親が `outline` なら子孫の `full` も目次だけになる。親が `full` のときは子それぞれの設定に従う。掲載しないパスと目次だけのパスを応答に明示し、必要な文書は `pb_get_doc` で読む。目次は 10.2 の `?outline=1` から取り、目次掲載の文書は本文取得を省く。見出しが無い文書も本文を代わりに載せず、全文の引き方を示す。
 
-**`charter_versions` が一致した文書は内容を省く。** ただし、子の実効掲載方法は親の変更でも変わるため、親を持つ文書には版一致による省略を適用しない。
+**`charter_versions` が一致した文書は内容を省く。** ただし、子の実効掲載方法は親の変更でも変わるため、親を持つ文書には版一致による省略を適用しない。**自律実行の節を持つパックの価値観・世界観（`vision`）も、版が一致しても省かない**（`Delegation.md` 9.1）。
 
 **埋め込むとき、本文の見出しを2段下げる。** パックは `#`（表題）→ `##`（節）→
 `###`（文書）を使うので、文書の中の見出しは4段目から始まる。下げないと、本文が `##` で
@@ -1891,7 +1912,7 @@ PB が持てる。**
 
 | ツール | 引数 | 叩く REST | 応答 |
 |---|---|---|---|
-| `pb_wait` | `seq`, `since?` | `GET /projects/:key/tickets/:seq`（在ることを確かめる）→ `GET /projects/:key/activity?entity=ticket:<seq>&per_page=20` を**3秒ごと** → 変化にコメントがあれば `GET /projects/:key/tickets/:seq/comments?order=desc&per_page=20` | `changed` / `cursor` / `changes[]` / `comments[]` / `waited_seconds` / `next`（変化が無ければ `changed:false` と `cursor` と `next`） |
+| `pb_wait` | `seq`, `since?` | `GET /projects/:key/tickets/:seq`（在ることを確かめる）→ `GET /projects/:key/activity?entity=ticket:<seq>&per_page=20` を**3秒ごと** → 変化にコメントがあれば `GET /projects/:key/tickets/:seq/comments?order=desc&per_page=20` | `changed` / `cursor` / `changes[]` / `comments[]` / `waited_seconds` / `next`（変化が無ければ `changed:false` と `cursor` と `next`）。**委任の評価役が待ち受けたとき main が止まっていれば、待たずに `main_stopped: true` と止まる指示の `next` を返す**（`Delegation.md` 10.4） |
 
 **状態の変化をエージェントに知らせる口である**（`Delegation.md` 10章）。MCP の通知は、確かめた4つのクライアントのどれでもモデルを起こさなかった（同 10.2）。
 **評価エージェントが評価をコメントで書けば、待っている main の呼び出しが返る。** エージェント同士の会話も、同じチケットへのコメントと待ち受けで成り立つ。
@@ -1920,10 +1941,25 @@ MCPまたはRESTから宣言し、PBの時刻を使って経過時間と明示�
 実行基盤が計測した稼働時間があれば、取得元を添えて報告できる。計測漏れは不完全と表示する。
 チケットの状態遷移とは独立し、作業開始で盤面の状態を変更しない。
 
-同じAgentはPJ内で1件だけタイマーを開ける。共通作業は開始時に複数チケットへの配分を指定し、
+同じAgentはPJ内で1件だけタイマーを開ける。**ただし承認済みの委任のmainは、委任の木の中のチケットに限り、
+チケットごとに1件ずつ同時に開ける**——サブエージェントはmainのトークンで動くため、並行して子を消化すると
+同じAgentの記録が重なる。子ごとに記録を分けるので、合計の作業時間は壁時計の時間を超えうる（各記録の
+上限は経過時間のまま）。誰が消化したかは記録のnoteに書く。共通作業は開始時に複数チケットへの配分を指定し、
 正の比率の合計を1とする。開始・各操作のrequest_idで再送を重複保存しない。
 終了済み作業の訂正は人が理由を添えて行う。追加作業・再オープン後の作業は新しいタイマーを作る。
 切断だけで終了時刻を推定しない。開いたタイマーは欠測として残り、人が終了・不完全を記録できる。
+**閉じられないまま残った記録（浮き）は、PB が「不完全として終了」と同じ扱いで閉じる。** 浮きは、
+配分先がすべて完了した記録と、実行者の最後の活動から設定 `work_stale_hours` を過ぎた記録である。
+最後の活動は、エージェントならトークンの最終使用、人なら記録の最終変更で測る——サブエージェントは
+mainのトークンで動くので、mainが動いている委任の記録は浮きにならない。終了時刻は推定せず、
+最後の区間を数えずに欠測の印を付ける（推定ではなく、欠測として閉じる）。承認待ちで止まっていた記録は、保留も解いてから閉じる。閉じる口はアプリケーション設定の
+「作業記録」タブ（`ApiDesign.md` 11.14、`GuiDesign.md` 5.12.3）と、起動時と24時間ごとに走る日次の処理で、
+どちらも結果を監査ログ `work.sweep` に残す。`work_stale_hours` が0なら、時間での判定と日次の処理を止める。
+**クライアントが人に承認を求めている間は、クライアントのフックが記録を止める**（`DbDesign.md` 6.34）。承認を求める
+直前（`PermissionRequest`）に止め、次のツール実行の後か利用者の入力の後に再開する——承認が済んだこと自体を知らせる
+イベントは、Claude Code にも Codex にも無い。止めていた間は待機で、内訳を承認待ちとして残す。エージェント自身は
+承認待ちの間に動けないので、pauseを呼べない。**モデルの見積もりや、PB 側の無通信区間からの推定では除かない**——前者は
+時計を持たず、後者は長く考えているだけの区間も削る。拒否された承認の後、次のツール実行までの区間は数えられない。
 
 終了時に配分後の作業時間を合計しactual_hoursへ保存する。Pointは運営ノートの
 「実績」節に置く `pb-effort-policy` のJSONブロックを正本とし、開始時に文書版とともに固定する。
@@ -1953,11 +1989,13 @@ MCPまたはRESTから宣言し、PBの時刻を使って経過時間と明示�
 
 事後試算は予測精度の証拠と区別する。着手前の見積りと同じ版の実績を段数で比較し、10〜15件で±1段に収まる割合を確かめる。時間・トークンへの換算は同じモデルと版の実測が揃った標本で行う。欠測、複数モデル、按分根拠の無い共同作業を混ぜない。
 
-**依存・優先順・日程は別の情報として扱う。** 計画の材料は `pb_get_planning_data`、依存の操作は `pb_add_link` / `pb_update_link` / `pb_delete_link`、順序の操作は `pb_move_task`、日程の更新は `pb_update_ticket` が担う。読み取りは `ticket.view`、依存・順序の更新は `ticket.plan.edit` または `ticket.edit` が必要である。判定はREST側で行う。計画の材料は既存のガント一覧から読み、本文を除く。絞り込みは親・タグ・状態・優先度・担当・段・完了区分・スプリント・予定の重なり・キーワードに対応する。上限5,000件と総件数を保持し、`truncated` で打切りを示す。終日予定には基準タイムゾーンの日付も添える。
+**依存・優先順・日程は別の情報として扱う。** 計画の材料は `pb_get_planning_data`、依存の操作は `pb_add_link` / `pb_update_link` / `pb_delete_link`、順序の操作は `pb_move_task`、日程の更新は `pb_update_ticket`、タイムラインの連鎖のずらしは `pb_reschedule_task` が担う。読み取りは `ticket.view`、依存・順序の更新は `ticket.plan.edit` または `ticket.edit` が必要である。判定はREST側で行う。計画の材料は既存のガント一覧から読み、本文を除く。絞り込みは親・タグ・状態・優先度・担当・段・完了区分・スプリント・予定の重なり・キーワードに対応する。上限5,000件と総件数を保持し、`truncated` で打切りを示す。終日予定には基準タイムゾーンの日付も添える。
 
 **計画専用権限 `ticket.plan.edit` は、依存・順序・開始と終了予定の変更だけを許す。** `administrator` と `project_admin` に配り、エージェントには発行時に明示的に追加する。既定には含めない。実行モードや委任範囲の変更、チケットの作成・完了には使えない。既存の予定更新は `ticket.self_edit` でも行える。
 
-`pb_move_task` は同じ段・同じ親の中で順序だけを変える。段、親、担当、状態、スプリントは変更しない。依存の種類とずらしは `ApiDesign.md` 9.10.1、予定の半開区間は同9.3.1に従う。SS・FF・SFは、チケットを1件ずつ実行する順序ではない。
+`pb_move_task` は同じ段・同じ親の中で順序だけを変える。段、親、担当、状態、スプリントは変更しない。依存の種類とずらしは `ApiDesign.md` 9.10.1、予定の半開区間は同9.3.1に従う。ずらしは `lag_days`（暦日）と `lag_seconds`（1日未満の秒。pb-336）の2つで、実効のずらしは暦日を足してから秒を足したものである。`pb_update_link` は渡したものだけを変える。SS・FF・SFは、チケットを1件ずつ実行する順序ではない。
+
+**`pb_reschedule_task` は、タイムラインの連鎖のずらし（`ApiDesign.md` 9.17.2）を試算と確定に分けて開ける**（pb-314）。`dry_run` を必須とし、まず `true` で試算する。試算の応答には、確定でそのまま渡す `expect`（きっかけを含む各行の `seq` と `version`）を MCP が添える。確定（`false`）は `expect` を必須とし、MCP がきっかけの版を `If-Match` に、残りを REST の `expect` に振り分ける。試算の後に誰かが動かしていれば `409` を isError で返し、試算からやり直させる。解けない試算（`result: blocked`）には `expect` を添えない。アンカーなどの3つの印（`no_overlap` / `start_pinned` / `due_pinned`）は `pb_get_planning_data` が返す。エージェントは印を書けない（`ApiDesign.md` 9.5.2）。
 
 計画には対象、依存の理由、優先順、予定、稼働条件、見積り根拠を添える。稼働条件や実績が不足する場合は仮定と未推定を示し、確定予定へ反映しない。通常の計画は人が承認した差分を適用し、自律実行では承認済みの委任の範囲でmainが適用する（`Delegation.md` 5〜6章）。対象、依存の両端、順序の基準がすべて同じ範囲に含まれる必要がある。承認前・停止中・終了後・確認待ちには適用できない。ヒアリングは適用を止めない。
 
@@ -2064,7 +2102,7 @@ DB に関する運用（バックアップ、ログ、データ量見積り）�
 | 層 | 既定の置き場 | 何を置くか | 画面 |
 |---|---|---|---|
 | **1. 起動前** | `PB_CONFIG_FILE` の YAML / 環境変数 / `<KEY>_FILE` | 接続文字列（`database_url`）、**第3層の暗号鍵（`secret_key`）** | **表示のみ** |
-| **2. 実行時の共有設定** | DB の `app_setting`（`DbDesign.md` 6.14） | ログ形式・ログレベル・ヘルスチェックのバージョン表示・Cookie の `Secure` | 確認と変更 |
+| **2. 実行時の共有設定** | DB の `app_setting`（`DbDesign.md` 6.14） | ログ形式・ログレベル・ヘルスチェックのバージョン表示・Cookie の `Secure`・作業記録を浮きとみなす時間・機能の有効／無効（自律実行） | 確認と変更 |
 | **3. 共有される秘密** | DB（`secret_key` で暗号化） | TLS 証明書と秘密鍵（`DbDesign.md` 6.15） | 確認と変更 |
 
 **「既定の置き場」と書いたのは、第2層もファイルや環境変数で与えられるからである。** 与えた時点でその設定は画面から変更できなくなり、「固定」として表示される（下記の優先順）。**逆に第1層を DB に置くことはできない**——接続文字列は DB の中にあり得ない。
@@ -2174,6 +2212,19 @@ database_url: ${PB_DATABASE_URL}
 | **公開エンドポイント** | **まだ設定として存在しない。** 配置ファイルと接続設定の生成は、リクエストの `Host` ヘッダから組み立てている（`ApiDesign.md` 5.7.1 / 4.5.8）。**着手の条件は「`Host` から導けなくなったとき」**——リバースプロキシの背後に置く、あるいは複数の参加者が別々のアドレスで同じインスタンスを見るようになったとき（`Requirements.md` 10.13） |
 | アクセスを許可・拒否するアクセス元 | 無い。第2層に載る形になる |
 | TLS | **証明書と秘密鍵は第3層**（6.6.1。DB に置き、`secret_key` で暗号化する）。スケールアウトでは全レプリカが同じ証明書を出す必要があり、更新が全台に届かなければならないため、pod ごとのファイル配布を採らない |
+
+### 成熟途上の機能は、設定で有効にしたときだけ出す
+
+**成熟途上の機能は第2層の bool で切り替え、既定は無効にする。** いま対象は自律実行（`delegation_enabled`。`Delegation.md` 1.3）の1件である。
+
+| 状態 | 画面 | REST | MCP |
+|---|---|---|---|
+| 有効 | 入口を出す | 受け付ける | ツールを出す |
+| 無効 | **入口を出さない**（`GET /me` の `features` で判定。`ApiDesign.md` 4.1） | **書き込みを `403 forbidden` で拒む**。読み取りは通す | **その機能のツールを `tools/list` に出さない** |
+
+**画面で隠すだけにしない。** エージェントは画面を通らず MCP から呼ぶので、隠すだけでは無効にならない。
+**使用中のものがあれば、無効化を拒む**（`ApiDesign.md` 11.2）——止まったまま見えない委任を作らない。
+ファイルや環境変数で無効を与えたときは拒めないので、使用中のものは書き込みが止まり、有効に戻すと続きから動く。
 
 ### 締め出されうる設定は、確認しないと元に戻す
 

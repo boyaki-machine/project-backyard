@@ -233,6 +233,23 @@ func (q *Queries) FindLocalLoginByEmail(ctx context.Context, email string) (Find
 	return i, err
 }
 
+const getActorLastSeenAt = `-- name: GetActorLastSeenAt :one
+SELECT last_used_at
+FROM access_token
+WHERE actor_id = $1 AND last_used_at IS NOT NULL
+ORDER BY last_used_at DESC
+LIMIT 1
+`
+
+// GetActorLastSeenAt はアクターのトークンが最後に使われた時刻を返す（Delegation.md 10.4。pb-310）。
+// 委任の main が止まったかの判定に使う。1度も使われていなければ NULL。
+func (q *Queries) GetActorLastSeenAt(ctx context.Context, actorID string) (*time.Time, error) {
+	row := q.db.QueryRow(ctx, getActorLastSeenAt, actorID)
+	var last_used_at *time.Time
+	err := row.Scan(&last_used_at)
+	return last_used_at, err
+}
+
 const getActorProfile = `-- name: GetActorProfile :one
 SELECT
   a.id   AS actor_id,

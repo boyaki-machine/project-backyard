@@ -53,6 +53,8 @@ type workView struct {
 	EndedAt          *Time            `json:"ended_at"`
 	ActiveMS         int64            `json:"active_ms"`
 	WaitingMS        int64            `json:"waiting_ms"`
+	Hold             *string          `json:"hold"`
+	HoldMS           int64            `json:"hold_ms"`
 	ReportedActiveMS *int64           `json:"reported_active_ms"`
 	Result           *string          `json:"result"`
 	Tokens           *int64           `json:"tokens"`
@@ -190,6 +192,8 @@ func workViewOf(s gen.WorkSession, allocations []gen.ListWorkAllocationsRow) wor
 	v := workView{ID: s.ID, ActorID: s.ActorID, ClientKind: usageString(s.ClientKind), ModelName: usageString(s.ModelName), ModelVersion: usageString(s.ModelVersion), State: s.State, Outcome: usageString(s.Outcome), StartedAt: Time(s.StartedAt), ChangedAt: Time(s.ChangedAt), ActiveMS: s.ActiveMs, WaitingMS: s.WaitingMs, ReportedActiveMS: usageInt(s.ReportedActiveMs), Result: usageString(s.Result), Tokens: usageInt(s.Tokens), Note: s.Note, Incomplete: s.Incomplete, Allocations: []workAllocation{}}
 	_ = json.Unmarshal(s.Policy, &v.Policy)
 	v.TimeMissing = s.TimeMissing
+	v.Hold = usageString(s.Hold)
+	v.HoldMS = s.HoldMs
 	if s.EndedAt != nil {
 		x := Time(*s.EndedAt)
 		v.EndedAt = &x
@@ -401,7 +405,25 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 			if _, problem = workPermission(ctx, q, r, scope.projectID, scope.seq, false); problem != nil {
 				return errTicketReference
 			}
-			if _, err := q.GetOpenWorkSession(ctx, gen.GetOpenWorkSessionParams{ProjectID: scope.projectID, ActorID: p.ActorID}); err == nil {
+			// **委任の main は、木の中ならチケットごとに1件ずつ同時に開ける**（Design.md 8.5.7。pb-344）。
+			// サブエージェントは main のトークンで動くので、並行して子を消化すると記録が重なる。
+			// 同じチケットに2件は開かせない（二重計上を防ぐ）。それ以外は PJ 内1件のまま。
+			parallel := false
+			if p.IsAgent() {
+				if parallel, err = parallelWorkAllowed(ctx, q, scope.projectID, p.ActorID, ticketID); err != nil {
+					return err
+				}
+			}
+			if parallel {
+				open, err := q.HasTicketOpenWork(ctx, gen.HasTicketOpenWorkParams{TicketID: ticketID, ActorID: p.ActorID})
+				if err != nil {
+					return err
+				}
+				if open {
+					problem = workError(apierr.Conflict, "このチケットで開いている作業を終了してから開始してください")
+					return errTicketReference
+				}
+			} else if _, err := q.GetOpenWorkSession(ctx, gen.GetOpenWorkSessionParams{ProjectID: scope.projectID, ActorID: p.ActorID}); err == nil {
 				problem = workError(apierr.Conflict, "このPJで開いている作業を終了してから開始してください")
 				return errTicketReference
 			} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -486,14 +508,28 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 					return errTicketReference
 				}
 			}
+			// **自分の記録を閉じるときは、配分先の範囲を検査しない**（ApiDesign.md「共通作業タイマー」。pb-306）。
+			// 閉じる操作は範囲を広げない。委任の外で開いた記録を、委任の main になった後でも閉じられる
+			// ようにする——検査すると 403 で閉じられず、パックの「終了せよ」と食い違う。
+			// 配分を変える要求（req.Allocations）は、下でこれまでどおり検査する。
+			closingOwn := (req.Action == "finish" || req.Action == "abandon") && s.ActorID == p.ActorID
 			for _, a := range old {
 				previousChanges[a.TicketID] = a.ChangeMetrics
 				affected[a.TicketID] = true
-				if req.Action != "restore_auto" && req.Action != "correct" {
+				if req.Action != "restore_auto" && req.Action != "correct" && !closingOwn {
 					if _, problem = workPermission(ctx, q, r, scope.projectID, a.Seq, true); problem != nil {
 						return errTicketReference
 					}
 				}
+			}
+			// **フックが止めた記録に明示的な操作が来たら、先に保留を解く**（DbDesign.md 6.34）。
+			// 承認を求めていたのがこの操作そのものである場合があり、保留のままだと待機や終了が落ちる。
+			released := false
+			if s.Hold.Valid && s.State == "waiting" {
+				if err = releaseWorkHold(ctx, q, &s, now); err != nil {
+					return err
+				}
+				released = true
 			}
 			switch req.Action {
 			case "pause":
@@ -505,6 +541,9 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 				s.State = "waiting"
 				s.Note = req.Note
 			case "resume":
+				if released {
+					break
+				}
 				if s.State != "waiting" {
 					problem = workError(apierr.Conflict, "待機中の作業だけ再開できます")
 					return errTicketReference
@@ -639,42 +678,8 @@ func (h *handler) changeWorkSession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if s.ClientKind.Valid && (req.Action == "finish" || req.Action == "abandon") {
-			before, e := agentMonitorState(ctx, q, s.ProjectID, s.ActorID, s.TicketID, false)
-			if e != nil {
-				return e
-			}
-			if err = q.FinishAgentAttempt(ctx, gen.FinishAgentAttemptParams{ID: s.ID, EndedAt: s.EndedAt, Outcome: s.Outcome}); err != nil {
+			if err = closeAgentAttempt(ctx, q, s, audit.FromRequest(r)); err != nil {
 				return err
-			}
-			after, e := agentMonitorState(ctx, q, s.ProjectID, s.ActorID, s.TicketID, false)
-			if e != nil {
-				return e
-			}
-			if after.Stopped && !before.Stopped {
-				if e = audit.FromRequest(r).Record(ctx, q, audit.Entry{Action: audit.AgentUpdate, Result: audit.Success, TargetType: "agent", TargetID: s.ActorID, Detail: map[string]any{"monitor_stop_reasons": after.Reasons, "project_id": s.ProjectID, "ticket_id": s.TicketID, "work_session_id": s.ID}}); e != nil {
-					return e
-				}
-			}
-			if s.Outcome.String == "failed" || s.Outcome.String == "abandoned" {
-				principal := &auth.Principal{ActorID: s.ActorID, ActorKind: auth.ActorKindAgent}
-				runID := ulidgen.New()
-				run, e := buildAgentRun(ctx, q, runID, s.TicketID, principal, reportRequest{})
-				if e != nil {
-					return e
-				}
-				run.StartedAt = s.StartedAt
-				run.EndedAt = s.EndedAt
-				run.Status = s.Outcome.String
-				run.ClientKind = s.ClientKind
-				run.ModelName = s.ModelName
-				run.ModelVersion = s.ModelVersion
-				run.TokensUsed = s.Tokens
-				if e = q.CreateAgentRun(ctx, run); e != nil {
-					return e
-				}
-				if e = q.LinkFailedAgentRun(ctx, gen.LinkFailedAgentRunParams{ID: runID, WorkSessionID: usageText(s.ID)}); e != nil {
-					return e
-				}
 			}
 		}
 		ids := []string{}

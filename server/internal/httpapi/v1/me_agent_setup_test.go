@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -106,11 +107,16 @@ func TestGetMyAgentSetupClaudeCode(t *testing.T) {
 		t.Errorf("project.key: got %q", v.Project.Key)
 	}
 
-	if len(v.Files) != 1 {
-		t.Fatalf("files は1枚のはず: got %d", len(v.Files))
+	// 先頭が接続設定、2枚目が承認待ちのフック（4.5.8.1d）。
+	if len(v.Files) != 2 {
+		t.Fatalf("files は2枚のはず: got %d", len(v.Files))
 	}
 	if v.Files[0].Path != ".mcp.json" || v.Files[0].Mode != "merge" {
 		t.Errorf("files[0]: got %+v, want .mcp.json / merge（4.5.8.4）", v.Files[0])
+	}
+	if v.Files[1].Path != ".claude/settings.local.json" || v.Files[1].Mode != "merge" ||
+		!strings.Contains(v.Files[1].Content, "/api/v1/projects/demo/work-hold") {
+		t.Errorf("files[1]: got %+v, want .claude/settings.local.json / merge（4.5.8.1d）", v.Files[1])
 	}
 	// **応答の URL と、生成物の中に埋まった URL が同じであること。**
 	// 別々に組み立てると黙ってずれる。
@@ -169,7 +175,9 @@ func TestGetMyAgentSetupBridgePlatform(t *testing.T) {
 		{"path traversal", "bridge", "../windows", "amd64", 422, ""},
 		{"unknown arch", "bridge", "windows", "386", 422, ""},
 		{"unknown transport", "serial", "", "", 422, ""},
-		{"direct with platform", "direct", "windows", "amd64", 422, ""},
+		// 直接接続でも OS・CPU を受け付ける（pb-wait の同梱。4.5.8.1c）
+		{"direct with platform", "direct", "windows", "amd64", 200, `bearer_token_env_var = "PB_TOKEN_MY_LAPTOP"`},
+		{"direct with bad platform", "direct", "darwin", "amd64", 422, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := connectReq()
@@ -205,16 +213,18 @@ func TestBridgeAssetSelectsClientPlatform(t *testing.T) {
 	}
 	for _, platform := range platforms {
 		osName, arch := platform.osName, platform.arch
-		name := "pb-mcp-bridge"
-		if osName == "windows" {
-			name += ".exe"
-		}
 		dir := filepath.Join(base, "bridges", osName+"-"+arch)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(osName+"/"+arch), 0o755); err != nil {
-			t.Fatal(err)
+		for _, tool := range []string{"pb-mcp-bridge", "pb-wait"} {
+			name := tool
+			if osName == "windows" {
+				name += ".exe"
+			}
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(tool+":"+osName+"/"+arch), 0o755); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	for _, platform := range platforms {
@@ -223,8 +233,19 @@ func TestBridgeAssetSelectsClientPlatform(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(a.Content) != osName+"/"+arch {
+		if string(a.Content) != "pb-mcp-bridge:"+osName+"/"+arch {
 			t.Errorf("%s/%s の中身: %q", osName, arch, a.Content)
+		}
+		// pb-wait も同じ場所から、同じプラットフォームのものを読む（4.5.8.1c。pb-348）
+		wa, err := waitAssetFromDir(base, osName, arch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(wa.Content) != "pb-wait:"+osName+"/"+arch {
+			t.Errorf("%s/%s の pb-wait の中身: %q", osName, arch, wa.Content)
+		}
+		if (osName == "windows") != (wa.Path == "pb-wait.exe") {
+			t.Errorf("%s の pb-wait のZIP名: %q", osName, wa.Path)
 		}
 		if osName == "windows" && a.Path != "pb-mcp-bridge.exe" {
 			t.Errorf("Windows のZIP名: %q", a.Path)
@@ -268,6 +289,29 @@ func TestBridgeAssetSelectsClientPlatform(t *testing.T) {
 	}
 	if _, err := bridgeAssetFromDir(base, "linux", "386"); err == nil {
 		t.Error("未対応のCPUを拒否しない")
+	}
+	if _, err := waitAssetFromDir(base, "darwin", "amd64"); err == nil {
+		t.Error("pb-wait で未対応のプラットフォームを拒否しない")
+	}
+}
+
+// TestGetMyAgentSetupPlatformOnlyForWaitKinds は、pb-wait を同梱しない種別では
+// 直接接続の OS・CPU を拒むことを確かめる（4.5.8.1c。pb-348）。
+func TestGetMyAgentSetupPlatformOnlyForWaitKinds(t *testing.T) {
+	for kind, want := range map[string]int{"claude_code": 200, "codex": 200, "copilot": 422, "claude_desktop": 422} {
+		t.Run(kind, func(t *testing.T) {
+			h := &handler{q: connectFake(kind, "MY_LAPTOP")}
+			req := connectReq()
+			q := req.URL.Query()
+			q.Set("os", "linux")
+			q.Set("arch", "amd64")
+			req.URL.RawQuery = q.Encode()
+			rec := httptest.NewRecorder()
+			h.getMyAgentSetup(rec, req)
+			if rec.Code != want {
+				t.Fatalf("status: got %d, want %d (%s)", rec.Code, want, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -403,7 +447,7 @@ func TestGetMyAgentSetupZip(t *testing.T) {
 		names = append(names, f.Name)
 	}
 	// **手引きは実名、接続設定は別名。** 展開した瞬間に既存を消さない。
-	if len(names) != 2 || names[0] != "PB-README.md" || names[1] != ".mcp.pb-block.json" {
+	if len(names) != 3 || names[0] != "PB-README.md" || names[1] != ".mcp.pb-block.json" || names[2] != ".claude/settings.local.pb-block.json" {
 		t.Errorf("zip の中身: got %v", names)
 	}
 }
@@ -449,6 +493,88 @@ func TestGetMyAgentSetupReturnsCATrust(t *testing.T) {
 			}
 			if !bytes.Contains(rec.Body.Bytes(), []byte(`"ca_trust":{"verification":`)) {
 				t.Errorf("応答に ca_trust が無い: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestGetMyAgentSetupZipBundlesPbWait は ZIP の口そのものを通し、OS・CPU を選ぶと pb-wait が、
+// ブリッジならそれに加えて pb-mcp-bridge が入ることを確かめる（4.5.8.1c・4.5.8.5。pb-348）。
+func TestGetMyAgentSetupZipBundlesPbWait(t *testing.T) {
+	base := t.TempDir()
+	for _, platform := range []string{"linux-amd64", "windows-amd64"} {
+		dir := filepath.Join(base, "bridges", platform)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		suffix := ""
+		if strings.HasPrefix(platform, "windows") {
+			suffix = ".exe"
+		}
+		for _, tool := range []string{"pb-mcp-bridge", "pb-wait"} {
+			if err := os.WriteFile(filepath.Join(dir, tool+suffix), []byte(tool+":"+platform), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	orig := shippedDir
+	shippedDir = func() (string, error) { return base, nil }
+	t.Cleanup(func() { shippedDir = orig })
+
+	for _, tc := range []struct {
+		name, kind, transport, osName, arch string
+		wantFile                            string
+		want                                map[string]string // ZIP の中の実行ファイル名 → 中身
+	}{
+		{"Claude Code・Linux", "claude_code", "", "linux", "amd64", "pb-connect-demo-claude_code-linux-amd64.zip",
+			map[string]string{"pb-wait": "pb-wait:linux-amd64"}},
+		{"Codex ブリッジ・Windows", "codex", "bridge", "windows", "amd64", "pb-connect-demo-codex-windows-amd64.zip",
+			map[string]string{"pb-mcp-bridge.exe": "pb-mcp-bridge:windows-amd64", "pb-wait.exe": "pb-wait:windows-amd64"}},
+		{"Claude Code・指定なし", "claude_code", "", "", "", "pb-connect-demo-claude_code.zip", map[string]string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &handler{q: connectFake(tc.kind, "MY_LAPTOP")}
+			req := connectReq()
+			q := req.URL.Query()
+			if tc.transport != "" {
+				q.Set("transport", tc.transport)
+			}
+			if tc.osName != "" {
+				q.Set("os", tc.osName)
+				q.Set("arch", tc.arch)
+			}
+			req.URL.RawQuery = q.Encode()
+			rec := httptest.NewRecorder()
+			h.getMyAgentSetupZip(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+			}
+			if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, `"`+tc.wantFile+`"`) {
+				t.Errorf("ファイル名 = %q, want %q", cd, tc.wantFile)
+			}
+			zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]string{}
+			for _, f := range zr.File {
+				if strings.HasPrefix(f.Name, "pb-wait") || strings.HasPrefix(f.Name, "pb-mcp-bridge") {
+					rc, err := f.Open()
+					if err != nil {
+						t.Fatal(err)
+					}
+					b, _ := io.ReadAll(rc)
+					_ = rc.Close()
+					got[f.Name] = string(b)
+				}
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("ZIP の実行ファイル = %v, want %v", got, tc.want)
+			}
+			for name, content := range tc.want {
+				if got[name] != content {
+					t.Errorf("%s の中身 = %q, want %q", name, got[name], content)
+				}
 			}
 		})
 	}

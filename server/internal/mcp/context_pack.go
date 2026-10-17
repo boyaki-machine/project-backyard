@@ -110,7 +110,12 @@ type packTicket struct {
 			TimeSource          string `json:"time_source"`
 			RequireRegistration bool   `json:"require_registration"`
 		} `json:"policy"`
-		OpenWorkID *string `json:"open_work_id"`
+		OpenWorkID  *string `json:"open_work_id"`
+		OpenWorkSeq *int32  `json:"open_work_seq"`
+		OpenWorks   []struct {
+			ID  string `json:"id"`
+			Seq int32  `json:"seq"`
+		} `json:"open_works"`
 	} `json:"work_context"`
 
 	Seq          int32      `json:"seq"`
@@ -257,6 +262,15 @@ type packDelegationStatus struct {
 			Findings json.RawMessage `json:"findings"`
 		} `json:"evaluation"`
 	} `json:"latest_plan"`
+	// MainStopped / MainLastSeenAt は main が止まったかの判定（10.4。pb-310）。
+	// MCP の層は REST の時刻を ISO8601 の文字列に変えて渡す（rest_times.go）。
+	MainStopped    bool    `json:"main_stopped"`
+	MainLastSeenAt *string `json:"main_last_seen_at"`
+	// LatestReport は根の最新の完了レポート（pb-305）。評価役は agent_report_id に渡す。
+	LatestReport *struct {
+		ID        string `json:"id"`
+		Evaluated bool   `json:"evaluated"`
+	} `json:"latest_report"`
 	LatestEvaluation *struct {
 		TargetKind string          `json:"target_kind"`
 		Round      int32           `json:"round"`
@@ -585,12 +599,51 @@ func (h *Handler) renderDelegationSection(r *http.Request, base string, ds packD
 	b.WriteString(renderStopConditions(ds.Scope.StopConditions))
 	b.WriteString(renderMetrics(ds))
 
+	// **main が止まっているとみなされていれば知らせる**（10.4。pb-310）。評価役は待ち受けをやめて止まる。
+	if ds.MainStopped {
+		since := ""
+		if ds.MainLastSeenAt != nil {
+			since = "（最後の要求：" + *ds.MainLastSeenAt + "）"
+		}
+		b.WriteString("**main が止まっている**" + since + "。利用枠の上限などの可能性がある。評価役は待ち受けをやめ、ローカルのファイルを書いて止まる。" +
+			"再開は利用者が同じ一言で行う\n\n")
+	}
+
+	// **最新の完了レポートの ID を載せる**（7.2。pb-305）。評価待ちの間も main は出し直せるので、
+	// 評価役はこの ID を agent_report_id で名指しし、古い報告への判定が新しい報告に付くのを防ぐ。
+	if rep := ds.LatestReport; rep != nil && (ds.Role == "main" || ds.Role == "evaluator") {
+		state := "評価待ち"
+		if rep.Evaluated {
+			state = "評価済み"
+		}
+		fmt.Fprintf(&b, "**最新の完了レポート**：`%s`（%s）。成果を評価するときは、この ID を `agent_report_id` に渡す\n\n", rep.ID, state)
+	}
+
 	if ds.LatestEvaluation != nil && ds.LatestEvaluation.Verdict != "pass" {
 		fmt.Fprintf(&b, "**直近の評価**：%s 対象 round %d、判定 `%s`\n\n",
 			ds.LatestEvaluation.TargetKind, ds.LatestEvaluation.Round, ds.LatestEvaluation.Verdict)
+		// **開いている評価の指摘を本文まで載せる**（9.1「節の中身」。pb-302）。
+		// 判定の1行だけでは、不合格の成果を main が直せない。
+		if !planEvaluationShown(ds) {
+			writeDelegationJSON(&b, "観点ごとの判定", ds.LatestEvaluation.Findings)
+		}
 	}
 
 	return b.String(), nil
+}
+
+// planEvaluationShown は、直近の評価が「この版への評価」として計画の欄に
+// 既に載っているかを返す。載っていれば同じ指摘を二重に載せない。
+func planEvaluationShown(ds packDelegationStatus) bool {
+	ev := ds.LatestEvaluation
+	if ev == nil || ev.TargetKind != "plan" {
+		return false
+	}
+	if ds.Role != "main" && ds.Role != "evaluator" {
+		return false
+	}
+	return ds.LatestPlan != nil && ds.LatestPlan.Evaluation != nil &&
+		ds.LatestPlan.Evaluation.Round == ev.Round
 }
 
 // writeDelegationJSON は REST が返した範囲・評価の内容を欠落させずに載せる。
@@ -1234,7 +1287,27 @@ func writeWorkInstructions(b *strings.Builder, t packTicket) {
 	}
 	p := t.WorkContext.Policy
 	fmt.Fprintf(b, "算出契約：%s、版 `%s`、運営ノート版 %d、時間の選択 `%s`、登録必須 %t。開始時に契約を固定する。設定不足・変更量欠測はPoint未算出となる。変更量はチケット全体の累積値をchange_metricsで報告し、取得元を添える。\n\n", p.Status, p.Version, p.DocumentVersion, p.TimeSource, p.RequireRegistration)
-	if t.WorkContext.OpenWorkID != nil {
-		fmt.Fprintf(b, "自身の未終了作業：`%s`。pb_list_workで開始元を確認して継続するか、理由付きaction=abandonで未確認時間を加算せず終了する。新しいタイマーを重複開始しない。\n\n", *t.WorkContext.OpenWorkID)
+	// **どのチケットの記録かを出す**（pb-306）。ID だけだと、別のチケットで開いた記録を
+	// 今のチケットの計時と取り違える。委任の main は木の中で複数開ける（pb-344）ので、全部を並べる。
+	var opened []string
+	describe := func(id string, seq *int32) string {
+		if seq == nil {
+			return "`" + id + "`"
+		}
+		s := fmt.Sprintf("#%d の記録", *seq)
+		if *seq != t.Seq {
+			s += "（このチケットのものではない）"
+		}
+		return s + "`" + id + "`"
+	}
+	for _, w := range t.WorkContext.OpenWorks {
+		seq := w.Seq
+		opened = append(opened, describe(w.ID, &seq))
+	}
+	if len(opened) == 0 && t.WorkContext.OpenWorkID != nil {
+		opened = append(opened, describe(*t.WorkContext.OpenWorkID, t.WorkContext.OpenWorkSeq))
+	}
+	if len(opened) > 0 {
+		fmt.Fprintf(b, "自身の未終了作業：%s。pb_list_workで開始元を確認して継続するか、理由付きaction=abandonで未確認時間を加算せず終了する。同じチケットで新しいタイマーを重複開始しない（委任の main は、木の中の別のチケットなら同時に開ける）。\n\n", strings.Join(opened, "、"))
 	}
 }

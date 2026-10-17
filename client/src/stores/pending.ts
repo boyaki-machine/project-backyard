@@ -39,6 +39,8 @@ export const usePendingStore = defineStore('pending', () => {
 
   let poll: ReturnType<typeof setInterval> | undefined
   let tick: ReturnType<typeof setInterval> | undefined
+  let seq = 0
+  let generation = 0
 
   /** 期限までの残り秒。**0 になると元の設定へ戻る。** */
   const remainSeconds = computed(() => {
@@ -59,12 +61,14 @@ export const usePendingStore = defineStore('pending', () => {
   const watchable = computed(() => auth.can('system.settings'))
 
   async function refresh() {
+    const mine = ++seq
     if (!watchable.value) {
       pending.value = null
       return
     }
     try {
       const res = await settingsApi.getPendingSettings()
+      if (mine !== seq || !watchable.value) return
       pending.value = res.pending_confirmation
     } catch {
       // **引けなくても画面を壊さない。** 未確認の監視は付随機能であり、
@@ -74,18 +78,22 @@ export const usePendingStore = defineStore('pending', () => {
 
   /** 「アクセスできました」を押す（11.8） */
   async function confirm() {
+    const mine = generation
     confirming.value = true
     error.value = null
     try {
       await settingsApi.confirmSettings()
+      if (mine !== generation) return
+      seq++ // 確認前の取得結果で未確認の帯を復活させない。
       pending.value = null
     } catch (e: unknown) {
+      if (mine !== generation) return
       // **サーバの文面をそのまま出す。** 確認の条件はキーごとに違い、
       // 画面が組み立て直すと片方が古くなる（11.8）。
       error.value = e instanceof Error ? e.message : uiText('確認できませんでした')
       await refresh()
     } finally {
-      confirming.value = false
+      if (mine === generation) confirming.value = false
     }
   }
 
@@ -102,6 +110,10 @@ export const usePendingStore = defineStore('pending', () => {
   }
 
   function stop() {
+    seq++
+    generation++
+    confirming.value = false
+    error.value = null
     if (poll !== undefined) clearInterval(poll)
     if (tick !== undefined) clearInterval(tick)
     poll = undefined

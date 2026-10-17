@@ -20,7 +20,7 @@ import { uiText } from '../locales/ui'
 import { computed, ref } from 'vue'
 
 import Modal from './Modal.vue'
-import { linkChoices } from '../api/links'
+import { linkChoices, timelineLinkChoices } from '../api/links'
 import type { LinkChoice } from '../api/links'
 import { ticketTypeIcons, ticketTypeLabels } from '../api/tickets'
 import { statusLabel } from '../lib/catalogLabels'
@@ -36,7 +36,14 @@ const props = defineProps<{
   fieldErrors?: Record<string, string>
   /** 欄に紐づかない誤り（409 `already_exists` など）。モーダルの中に留める */
   formError?: string
+  /**
+   * 依存の4種（`FS`〜`SF` の自先行・自後行）も選ばせるか。**タイムラインから開いた詳細だけ**
+   * （`GuiDesign.md` 5.5「追加のモーダル」。pb-332）
+   */
+  withDependencies?: boolean
 }>()
+
+const choices = computed(() => (props.withDependencies ? timelineLinkChoices : linkChoices))
 
 const emit = defineEmits<{
   close: []
@@ -86,7 +93,7 @@ function submit(): void {
         <!-- **ラジオで出す。** 4つしかなく、`hint` の1行を各項目に添えたい
              ——`<option>` に入れると幅で切れる（5.5 の状態ドロップダウンと同じ理由） -->
         <div class="choices">
-          <label v-for="c in linkChoices" :key="c.value" class="choice">
+          <label v-for="c in choices" :key="c.value" class="choice">
             <input v-model="choice" type="radio" name="link-choice" :value="c.value" />
             <span class="choice-body">
               <span class="choice-label">{{ c.label }}</span>

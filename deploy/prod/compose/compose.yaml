@@ -2,7 +2,7 @@
 #
 # 使い方は MANUAL.md の4章。最初の1回は次の順に実行する。
 #
-#   docker load -i project-backyard-<版>-linux-<CPU>.tar   イメージを取り込む（PUSH で作った一式なら不要）
+#   for image in project-backyard-*.tar; do docker load -i "$image"; done  PBとDBを取り込む（PUSH時は不要）
 #   ./init.sh                                            秘密を乱数で作る
 #   docker compose up -d                                 db → migrate → app の順に起動する
 #   docker compose run --rm app admin create             初期管理者を作る
@@ -17,10 +17,10 @@
 name: pb-prod
 
 services:
-  # ── DB（公開イメージ。PB の配布物には含まない）──────────────
+  # ── DB（PB用イメージ。配布物に同梱）──────────────
   # 外部の PostgreSQL へ繋ぐときは、このサービスを丸ごと消す。
   db:
-    image: pgvector/pgvector:pg17
+    image: __PB_DB_IMAGE__
     restart: unless-stopped
     environment:
       POSTGRES_DB: pb
@@ -37,7 +37,7 @@ services:
       # pb_app のロールを作る。**pgdata が空の初回起動でしか走らない。**
       - ./initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pb_owner -d pb"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U pb_owner -d pb"]
       interval: 5s
       timeout: 3s
       retries: 20

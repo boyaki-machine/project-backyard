@@ -13,11 +13,13 @@ import PlaceholderPage from '../pages/PlaceholderPage.vue'
 import MySettingsPage from '../pages/MySettingsPage.vue'
 import MyAgentsPage from '../pages/MyAgentsPage.vue'
 import MyTokensPage from '../pages/MyTokensPage.vue'
+import NotificationsPage from '../pages/NotificationsPage.vue'
 import ProjectSettingsPage from '../pages/ProjectSettingsPage.vue'
 import ProjectsPage from '../pages/ProjectsPage.vue'
 import TicketViewsPage from '../pages/TicketViewsPage.vue'
 import UserDetailPage from '../pages/UserDetailPage.vue'
 import UsersPage from '../pages/UsersPage.vue'
+import { viewPlugins } from '../plugins/registry'
 
 /**
  * プレースホルダページに渡す内容（GuiDesign.md 6.5）。
@@ -230,6 +232,13 @@ const routeSources: RouteRecordRaw[] = [
     component: MyAgentsPage,
   },
 
+  // 通知（GuiDesign.md 5.16）。**プロジェクトの外**にあり、メニューの先頭の行から開く。
+  // **meta.permission を持たない。** 必要権限は「本人」である（3.2、ApiDesign.md 4.8）。
+  {
+    path: '/notifications',
+    component: NotificationsPage,
+  },
+
   // ── チケットで駆動する視点（GuiDesign.md 3.2 / 10章）──────────
   //
   // 状態は「未定」と出す。
@@ -263,6 +272,15 @@ const routeSources: RouteRecordRaw[] = [
     component: TicketViewsPage,
     meta: { permission: 'ticket.view' },
   },
+
+  // プラグインのビュー（`plugins/registry.ts`。`GuiDesign.md` 5.15「プラグインの境界」）。
+  // **登録表から作る**——プラグインの名前をここに書かない。ガントと同じ入れ物に載せる。
+  // メニューに出すかは `settings.views` で決まり、**URL は塞がない**（4.3）。
+  ...viewPlugins.map((p) => ({
+    path: `/p/:key/${p.route.segment}`,
+    component: TicketViewsPage,
+    meta: { permission: p.route.permission },
+  })),
 
   // 実画面（GuiDesign.md 5.13）。
   //

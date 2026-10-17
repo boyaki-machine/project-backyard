@@ -3,9 +3,11 @@ package mcpbridge
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -58,7 +60,12 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, cfg Config) error {
 			return fmt.Errorf("PB MCPの応答を解釈できない: %w", err)
 		}
 		for _, m := range messages {
-			if _, err := out.Write(append(m, '\n')); err != nil {
+			// stdioは1行1メッセージ。SSEの複数data行をまとめたJSONも1行に戻す。
+			var compact bytes.Buffer
+			if err := json.Compact(&compact, m); err != nil {
+				return fmt.Errorf("PB MCPの応答がJSONではない: %w", err)
+			}
+			if _, err := out.Write(append(compact.Bytes(), '\n')); err != nil {
 				return fmt.Errorf("Codexへ応答を書けない: %w", err)
 			}
 		}
@@ -125,7 +132,7 @@ func forward(ctx context.Context, client *http.Client, endpoint, token string, b
 	return res.Header.Get("Content-Type"), body, nil
 }
 
-func bytesTrim(b []byte) []byte { return []byte(strings.TrimSpace(string(b))) }
+func bytesTrim(b []byte) []byte { return bytes.TrimSpace(b) }
 
 // decodeMessages は PB MCP の応答本文から、Codex へそのまま1行ずつ渡す
 // JSON-RPCメッセージを取り出す。
@@ -150,15 +157,17 @@ func decodeMessages(contentType string, body []byte) ([][]byte, error) {
 // `:` で始まる行（コメント）と、data を持たないイベントは読み飛ばす。
 func decodeSSEMessages(body []byte) [][]byte {
 	var messages [][]byte
-	for _, rawEvent := range strings.Split(string(body), "\n\n") {
+	// SSE は CRLF・LF・CR のいずれも改行として扱う（HTML Standard 9.2.5）。
+	normalized := strings.ReplaceAll(string(body), "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	for _, rawEvent := range strings.Split(normalized, "\n\n") {
 		var dataLines []string
 		for _, line := range strings.Split(rawEvent, "\n") {
-			line = strings.TrimRight(line, "\r")
 			if line == "" || strings.HasPrefix(line, ":") {
 				continue
 			}
 			if data, ok := strings.CutPrefix(line, "data:"); ok {
-				dataLines = append(dataLines, strings.TrimSpace(data))
+				dataLines = append(dataLines, strings.TrimPrefix(data, " "))
 			}
 		}
 		if len(dataLines) == 0 {

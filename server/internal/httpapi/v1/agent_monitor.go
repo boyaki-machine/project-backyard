@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type monitorLimits struct {
@@ -243,7 +244,7 @@ func (h *handler) agentMonitor(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		if r.Method == "POST" {
-			if e := q.ResetAgentMonitor(ctx, gen.ResetAgentMonitorParams{ProjectID: projectID, ActorID: id, Reason: req.Reason}); e != nil {
+			if e := q.ResetAgentMonitor(ctx, gen.ResetAgentMonitorParams{ProjectID: projectID, ActorID: id, Reason: req.Reason, ResetAt: time.Now().UTC()}); e != nil {
 				return e
 			}
 			if e := audit.FromRequest(r).Record(ctx, q, audit.Entry{Action: audit.AgentUpdate, Result: audit.Success, TargetType: "agent", TargetID: id, Detail: map[string]any{"monitor_reset_reason": req.Reason, "project_id": projectID}}); e != nil {

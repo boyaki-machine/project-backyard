@@ -82,12 +82,14 @@ type evaluationView struct {
 // ── POST /tickets/{seq}/evaluation ─────────────────────────────
 
 type submitEvaluationRequest struct {
-	TargetKind  string          `json:"target_kind"`
-	PlanVersion *int32          `json:"plan_version"`
-	Verdict     string          `json:"verdict"`
-	Findings    json.RawMessage `json:"findings"`
-	ClassCheck  string          `json:"class_check"`
-	TokensUsed  *int64          `json:"tokens_used"`
+	TargetKind  string `json:"target_kind"`
+	PlanVersion *int32 `json:"plan_version"`
+	// AgentReportID は deliverable で評価した完了レポートの ID（pb-305）。省くと最新を指す。
+	AgentReportID *string         `json:"agent_report_id"`
+	Verdict       string          `json:"verdict"`
+	Findings      json.RawMessage `json:"findings"`
+	ClassCheck    string          `json:"class_check"`
+	TokensUsed    *int64          `json:"tokens_used"`
 }
 
 func (h *handler) submitEvaluation(w http.ResponseWriter, r *http.Request) {
@@ -178,6 +180,14 @@ func (h *handler) submitEvaluation(w http.ResponseWriter, r *http.Request) {
 					return errTicketReference
 				}
 				return fmt.Errorf("完了レポートを読めない: %w", err)
+			}
+			// **読んだ報告が最新でなければ拒む**（7.2。pb-305）。評価待ちの間も main は
+			// 出し直せるので、名指しが無いと、古い報告への判定が新しい報告に付く。
+			if req.AgentReportID != nil && *req.AgentReportID != report.ID {
+				rejected = apierr.New(apierr.Conflict).
+					WithMessage("新しい完了レポートが出ています。読み直してから評価してください").
+					WithDetails(apierr.Detail{Field: "agent_report_id", Code: "stale_report", Message: report.ID})
+				return errTicketReference
 			}
 			if _, err := q.GetEvaluationVerdictForReport(ctx, pgtype.Text{String: report.ID, Valid: true}); err == nil {
 				rejected = apierr.New(apierr.ValidationFailed).WithDetails(apierr.Detail{
@@ -339,6 +349,11 @@ func validateSubmitEvaluation(req submitEvaluationRequest) ([]byte, *apierr.Erro
 			Field: "plan_version", Code: "invalid", Message: "deliverable 対象には plan_version を指定しません",
 		})
 	}
+	if req.TargetKind == evaluationTargetPlan && req.AgentReportID != nil {
+		details = append(details, apierr.Detail{
+			Field: "agent_report_id", Code: "invalid", Message: "plan 対象には agent_report_id を指定しません",
+		})
+	}
 
 	switch req.Verdict {
 	case evaluationVerdictPass, evaluationVerdictFail, evaluationVerdictUnable:
@@ -433,12 +448,20 @@ func roundLimitConfirmationQuestion(targetKind string, round int32) string {
 // **根であっても、まだ完了レポートが1件も無ければ true（合格していない）。**
 // 「成果が無い」は「合格した成果がある」の否定として扱う——根の受け入れは
 // 成果の評価を前提とするので、評価の対象が無い状態を素通りさせない。
+//
+// **最新の委任が終了（ended）していれば false。** 取り下げた木は委任でなくなり、
+// 従来の実行モードのとおりに完了できる（Delegation.md 4.3「取り下げ」）。受け入れた根は
+// 合格した後に終わっているので、開き直して閉じ直しても結果は変わらない。
 func rootHasUnpassedEvaluation(ctx context.Context, q gen.Querier, ticketID string) (bool, error) {
-	if _, err := q.GetDelegationByRootTicket(ctx, ticketID); err != nil {
+	deleg, err := q.GetDelegationByRootTicket(ctx, ticketID)
+	if err != nil {
 		if err == pgx.ErrNoRows {
 			return false, nil
 		}
 		return false, fmt.Errorf("委任を読めない: %w", err)
+	}
+	if deleg.Status == "ended" {
+		return false, nil
 	}
 
 	report, err := q.GetLatestAgentReportForTicket(ctx, ticketID)
@@ -459,28 +482,24 @@ func rootHasUnpassedEvaluation(ctx context.Context, q gen.Querier, ticketID stri
 	return verdict != evaluationVerdictPass, nil
 }
 
-// rootReportEvaluationPending は reports.go の根向けの追加ゲートが使う
-// （Delegation.md 5章「main：成果の提出（根の完了レポート）」）。
-//
-// **「評価待ち」だけを true にする。** 最新の完了レポートにまだ評価が無ければ
-// pending。評価が付いていれば、pass でも fail（差し戻し）でも false——
-// どちらも次の提出が許される側である（fail は出し直し、pass は新しい周期）。
-// 完了レポートが1件も無ければ、これが最初の提出なので false。
-func rootReportEvaluationPending(ctx context.Context, q gen.Querier, ticketID string) (bool, error) {
+// latestRootReport は根の最新の完了レポートと、評価が付いているかを返す（pb-305）。
+// 評価役は、この ID を agent_report_id に渡して対象を名指しする。完了レポートが
+// 1件も無ければ nil。
+func latestRootReport(ctx context.Context, q gen.Querier, ticketID string) (*delegationStatusReportView, error) {
 	report, err := q.GetLatestAgentReportForTicket(ctx, ticketID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return false, nil
+			return nil, nil
 		}
-		return false, fmt.Errorf("完了レポートを読めない: %w", err)
+		return nil, fmt.Errorf("完了レポートを読めない: %w", err)
 	}
-	if _, err := q.GetEvaluationVerdictForReport(ctx, pgtype.Text{String: report.ID, Valid: true}); err != nil {
-		if err == pgx.ErrNoRows {
-			return true, nil
-		}
-		return false, fmt.Errorf("評価を読めない: %w", err)
+	v := &delegationStatusReportView{ID: report.ID, SubmittedAt: Time(report.SubmittedAt)}
+	if _, err := q.GetEvaluationVerdictForReport(ctx, pgtype.Text{String: report.ID, Valid: true}); err == nil {
+		v.Evaluated = true
+	} else if err != pgx.ErrNoRows {
+		return nil, fmt.Errorf("評価を読めない: %w", err)
 	}
-	return false, nil
+	return v, nil
 }
 
 func evaluationViewOf(row gen.GetEvaluationByIDRow) evaluationView {

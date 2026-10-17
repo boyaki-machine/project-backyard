@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -110,9 +111,14 @@ func callWait(ctx context.Context, h *Handler, r *http.Request, key string, args
 
 	// **チケットが在ることを先に確かめる。** activity は存在しない seq に空の一覧を
 	// 200 で返す（9.13.2）ので、そのまま待つと、無いチケットを時間いっぱい待ってしまう。
-	if res, err := h.getREST(r, ticketPath(key, seq), nil); err != nil || !res.ok() {
+	res, err := h.getREST(r, ticketPath(key, seq), nil)
+	if err != nil || !res.ok() {
 		return passThrough(r, res, err)
 	}
+	var ticket struct {
+		ExecutionMode string `json:"execution_mode"`
+	}
+	_ = json.Unmarshal(res.body, &ticket)
 
 	start := time.Now()
 	items, res, err := h.activityOf(r, key, seq)
@@ -124,6 +130,16 @@ func callWait(ctx context.Context, h *Handler, r *http.Request, key string, args
 		cursor = *in.Since
 	} else if len(items) > 0 {
 		cursor = items[0].ID
+	}
+
+	// **評価役が根で待つとき、main が止まっていれば待たずに返す**（Delegation.md 10.4。pb-310）。
+	// 利用枠の上限などで止まった main の成果を、待ち続けて消費しないため。根（自律実行の実行モード）
+	// のときだけ読む。読めなければ、ふだんどおり待つ（待ち受けを判定の失敗で止めない）。
+	if ticket.ExecutionMode == "delegated" {
+		if ds, rpcErr := h.fetchDelegationStatus(r, ticketPath(key, seq)); rpcErr == nil &&
+			ds.Role == "evaluator" && ds.MainStopped {
+			return waitMainStopped(cursor, ds.MainLastSeenAt), nil
+		}
 	}
 
 	limit := waitWithoutProgress
@@ -298,6 +314,26 @@ func waitTimeout(cursor string, start time.Time) toolResult {
 		"cursor":         cursor,
 		"waited_seconds": int(time.Since(start).Seconds()),
 		"next":           "まだ変化は無い。cursor を since に渡して、もう一度 pb_wait を呼ぶ。",
+	})
+	return textResult(string(b))
+}
+
+// waitMainStopped は、main が止まっているときの評価役への応答である（Delegation.md 10.4）。
+// **エラーにしない**——評価役は next に従って、ローカルのファイルを書いて止まる。
+func waitMainStopped(cursor string, lastSeen *string) toolResult {
+	idle := ""
+	if lastSeen != nil {
+		if at, err := time.Parse(time.RFC3339Nano, *lastSeen); err == nil {
+			idle = fmt.Sprintf("（最後の要求から %d 分）", int(time.Since(at).Minutes()))
+		}
+	}
+	b, _ := json.Marshal(map[string]any{
+		"changed":        false,
+		"main_stopped":   true,
+		"cursor":         cursor,
+		"waited_seconds": 0,
+		"next": "main が止まっている" + idle + "。利用枠の上限などの可能性がある。待ち受けをやめ、" +
+			"ローカルのファイルに cursor を書いて止まる。再開は利用者が同じ一言で行う。",
 	})
 	return textResult(string(b))
 }

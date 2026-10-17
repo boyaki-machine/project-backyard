@@ -92,13 +92,24 @@ func (h *handler) getMyAgentSetupZip(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, e)
 		return
 	}
+	osName, arch := r.URL.Query().Get("os"), r.URL.Query().Get("arch")
 	if view.Transport == agentsetup.TransportBridge {
-		asset, err := bridgeAsset(r.URL.Query().Get("os"), r.URL.Query().Get("arch"))
+		asset, err := bridgeAsset(osName, arch)
 		if err != nil {
 			apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 			return
 		}
-		connect.Assets = []agentsetup.Asset{asset}
+		connect.Assets = append(connect.Assets, asset)
+	}
+	// OS・CPU を指定したら、待ち受けの道具 pb-wait も入れる（4.5.8.1c。pb-348）。
+	// 指定できる種別は buildAgentConnect が確かめ済みである。
+	if osName != "" && agentsetup.WaitKinds[view.Agent.ClientKind] {
+		asset, err := waitAsset(osName, arch)
+		if err != nil {
+			apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
+			return
+		}
+		connect.Assets = append(connect.Assets, asset)
 	}
 
 	blob, err := agentsetup.ConnectZip(connect)
@@ -112,9 +123,9 @@ func (h *handler) getMyAgentSetupZip(w http.ResponseWriter, r *http.Request) {
 	// Claude Code と Copilot の2件を持つことがあり、同じ名前の zip が
 	// ダウンロードフォルダに並ぶとどちらがどちらか分からなくなる。
 	name := fmt.Sprintf("pb-connect-%s-%s.zip", view.Project.Key, view.Agent.ClientKind)
-	if view.Transport == agentsetup.TransportBridge {
-		name = fmt.Sprintf("pb-connect-%s-%s-%s-%s.zip", view.Project.Key, view.Agent.ClientKind,
-			r.URL.Query().Get("os"), r.URL.Query().Get("arch"))
+	if osName != "" {
+		// 端末ごとに中身（実行ファイル）が違うので、名前でも区別する（4.5.8.5）
+		name = fmt.Sprintf("pb-connect-%s-%s-%s-%s.zip", view.Project.Key, view.Agent.ClientKind, osName, arch)
 	}
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
@@ -124,14 +135,34 @@ func (h *handler) getMyAgentSetupZip(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(blob)
 }
 
-// bridgeAsset reads the helper shipped next to the currently running PB
-// executable. It never builds code or accepts a client-provided path.
+// bridgeAsset / waitAsset read the helpers shipped next to the currently
+// running PB executable. They never build code or accept a client-provided path.
 func bridgeAsset(osName, arch string) (agentsetup.Asset, error) {
+	baseDir, err := shippedDir()
+	if err != nil {
+		return agentsetup.Asset{}, err
+	}
+	return bridgeAssetFromDir(baseDir, osName, arch)
+}
+
+func waitAsset(osName, arch string) (agentsetup.Asset, error) {
+	baseDir, err := shippedDir()
+	if err != nil {
+		return agentsetup.Asset{}, err
+	}
+	return waitAssetFromDir(baseDir, osName, arch)
+}
+
+// shippedDir は同梱物（bridges/）を探す場所。PB の実行ファイルの隣である。
+// **試験だけが差し替える**——試験の実行ファイルの隣には同梱物が無い。
+var shippedDir = pbExecutableDir
+
+func pbExecutableDir() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return agentsetup.Asset{}, fmt.Errorf("PB 実行ファイルの場所を取得できない: %w", err)
+		return "", fmt.Errorf("PB 実行ファイルの場所を取得できない: %w", err)
 	}
-	return bridgeAssetFromDir(filepath.Dir(exe), osName, arch)
+	return filepath.Dir(exe), nil
 }
 
 func bridgeAssetFromDir(baseDir, osName, arch string) (agentsetup.Asset, error) {
@@ -139,18 +170,29 @@ func bridgeAssetFromDir(baseDir, osName, arch string) (agentsetup.Asset, error) 
 	if err != nil {
 		return agentsetup.Asset{}, err
 	}
-	// Read a fixed shipped path; query values only select a validated platform.
-	relative := map[string]string{
-		"darwin-arm64":  "bridges/darwin-arm64/pb-mcp-bridge",
-		"windows-amd64": "bridges/windows-amd64/pb-mcp-bridge.exe",
-		"windows-arm64": "bridges/windows-arm64/pb-mcp-bridge.exe",
-		"linux-amd64":   "bridges/linux-amd64/pb-mcp-bridge",
-		"linux-arm64":   "bridges/linux-arm64/pb-mcp-bridge",
-	}[osName+"-"+arch]
-	if relative == "" {
-		return agentsetup.Asset{}, fmt.Errorf("同梱ブリッジのプラットフォームが見つかりません")
+	return shippedAssetFromDir(baseDir, osName, arch, name)
+}
+
+func waitAssetFromDir(baseDir, osName, arch string) (agentsetup.Asset, error) {
+	name, err := agentsetup.WaitBinaryName(osName, arch)
+	if err != nil {
+		return agentsetup.Asset{}, err
 	}
-	binary, err := os.ReadFile(filepath.Join(baseDir, relative))
+	return shippedAssetFromDir(baseDir, osName, arch, name)
+}
+
+// shippedAssetFromDir は bridges/<os>-<arch>/<name> を読む（deploy/build-bridges.sh が置く）。
+// name は BridgeBinaryName / WaitBinaryName が検証済みの固定の値で、プラットフォームも
+// 下の5種類に限る——クエリの値はパスの選択にだけ使い、そのまま連結しない。
+func shippedAssetFromDir(baseDir, osName, arch, name string) (agentsetup.Asset, error) {
+	platform := map[string]string{
+		"darwin-arm64": "darwin-arm64", "windows-amd64": "windows-amd64", "windows-arm64": "windows-arm64",
+		"linux-amd64": "linux-amd64", "linux-arm64": "linux-arm64",
+	}[osName+"-"+arch]
+	if platform == "" {
+		return agentsetup.Asset{}, fmt.Errorf("同梱物のプラットフォームが見つかりません")
+	}
+	binary, err := os.ReadFile(filepath.Join(baseDir, "bridges", platform, name))
 	if err != nil {
 		return agentsetup.Asset{}, fmt.Errorf("同梱の %s を読めない: %w", name, err)
 	}
@@ -205,8 +247,14 @@ func (h *handler) buildAgentConnect(
 			return nil, agentsetup.Connect{}, apierr.New(apierr.ValidationFailed).WithMessage(err.Error())
 		}
 	} else if bridgeOS != "" || bridgeArch != "" {
-		return nil, agentsetup.Connect{}, apierr.New(apierr.ValidationFailed).
-			WithMessage("OS と CPU は stdio ブリッジでのみ指定できます")
+		// 直接接続でも、pb-wait を同梱できる種別なら OS・CPU を受け付ける（4.5.8.1c。pb-348）
+		if !agentsetup.WaitKinds[ag.ClientKind] {
+			return nil, agentsetup.Connect{}, apierr.New(apierr.ValidationFailed).
+				WithMessage("OS と CPU は、stdio ブリッジと、pb-wait を同梱できる種別（Claude Code・Codex）でのみ指定できます")
+		}
+		if _, err := agentsetup.WaitBinaryName(bridgeOS, bridgeArch); err != nil {
+			return nil, agentsetup.Connect{}, apierr.New(apierr.ValidationFailed).WithMessage(err.Error())
+		}
 	}
 	params := agentsetup.ConnectParams{
 		ProjectKey:        ag.ProjectKey.String,
@@ -218,6 +266,7 @@ func (h *handler) buildAgentConnect(
 		Transport:         transport,
 		BridgeOS:          bridgeOS,
 		BridgeArch:        bridgeArch,
+		WorkHoldURL:       base + "/api/v1/projects/" + ag.ProjectKey.String + "/work-hold",
 	}
 
 	connect, err := agentsetup.RenderConnect(ag.ClientKind, params)

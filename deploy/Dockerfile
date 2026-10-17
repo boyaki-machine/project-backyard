@@ -17,7 +17,13 @@
 # /healthcheck を叩くコマンドが無く、叩き役も足さない。健全かは外から /healthcheck を見る。
 
 # ── 1. client ─────────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM node:24.14.0-bookworm-slim AS client
+FROM --platform=$BUILDPLATFORM node:24.22.0-bookworm-slim AS client
+# Node同梱npmの脆弱性も更新する。実行イメージにはこの段を含めない。
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install --global npm@11.21.1 \
+    && npm cache clean --force
 WORKDIR /src/client
 # 依存の取得を先に1層にする。package-lock.json が変わらなければ再利用される。
 COPY client/package.json client/package-lock.json ./
@@ -31,6 +37,12 @@ RUN node scripts/npm-licenses.mjs /src/npm-licenses.json
 
 # ── 2. pb と goose ────────────────────────────────────────
 FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm AS server
+# コンパイラ段もOSの提供済み更新を適用する。tzdataはallアーキテクチャのデータ。
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /out \
+    && dpkg-query -s tzdata > /out/tzdata-status
 ARG TARGETOS
 ARG TARGETARCH
 # goose のドライバを postgres だけに絞るタグ。**正本は deploy/prod/build-release.sh** で、
@@ -66,6 +78,11 @@ FROM gcr.io/distroless/static-debian12:nonroot
 ARG VERSION=unknown
 LABEL org.opencontainers.image.title="Project Backyard" \
 	org.opencontainers.image.version="$VERSION"
+# データと実際のdpkg情報を一緒に更新し、スキャナにも正しい版を渡す。
+COPY --from=server /usr/share/zoneinfo/ /usr/share/zoneinfo/
+COPY --from=server /usr/share/doc/tzdata/ /usr/share/doc/tzdata/
+COPY --from=server /out/tzdata-status /var/lib/dpkg/status.d/tzdata
+COPY --from=server /var/lib/dpkg/info/tzdata.md5sums /var/lib/dpkg/status.d/tzdata.md5sums
 COPY --from=server /out/pb /pb
 COPY --from=server /out/goose /goose
 COPY --from=server /out/bridges /bridges

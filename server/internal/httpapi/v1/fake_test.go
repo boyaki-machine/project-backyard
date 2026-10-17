@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/boyaki-machine/project-backyard/server/internal/auth"
+	"github.com/boyaki-machine/project-backyard/server/internal/config"
 	"github.com/boyaki-machine/project-backyard/server/internal/store/gen"
 )
 
@@ -79,6 +80,9 @@ type appSettingFakeState struct {
 
 	upserted []gen.UpsertAppSettingParams
 	deleted  []string
+
+	// unendedDelegations は CountUnendedDelegations が返す件数（pb-353）。
+	unendedDelegations int64
 
 	// 未確認の設定変更（ApiDesign.md 11.8）。
 	//
@@ -317,6 +321,8 @@ type fakeQuerier struct {
 
 	// 自分のエージェント（ApiDesign.md 4.5、手順24a）。
 	agentRows      []gen.ListMyAgentsRow
+	agentOpenWorks []gen.ListMyAgentsOpenWorksRow
+	agentDelegs    []gen.ListMyAgentsDelegationsRow
 	agentListErr   error
 	agentRow       gen.FindMyAgentRow
 	agentFindErr   error
@@ -439,6 +445,8 @@ type fakeQuerier struct {
 	answerConfirmationRows      int64 // 0 なら「対象なし」（既に答えられた等）。未設定時は1件として扱う
 	answerConfirmationSet       bool
 	answeredConfirmationReasons map[string]bool // key: reason。HasAnsweredConfirmation が見る
+	createdNotifications        []gen.CreateNotificationParams
+	withdrawnNotificationKeys   []string
 
 	// 引き継ぎノート（Delegation.md 9.3・11章。pb-250）。
 	nextHandoffVersion      int32 // 0 なら 1 を返す
@@ -978,6 +986,12 @@ func newFake(t *testing.T) *fakeQuerier {
 // routerWithDeps は v1.Mount を通した実際のルータを返す。
 // ルート定義（Design.md 6.4.4）ごと検証したいので、ハンドラを直接呼ばない。
 func routerWithDeps(deps Deps) http.Handler {
+	// **設定を渡さないテストでは、自律実行を有効にしておく**（pb-353）。製品の既定は
+	// 無効だが、自律実行の既存のテストは有効を前提に書かれている。無効の振る舞いは
+	// 設定を明示して確かめる（feature_delegation_test.go）。
+	if deps.Settings == nil {
+		deps.Settings = config.LiveWith(config.Row{Key: config.KeyDelegationEnabled, Value: "true"})
+	}
 	r := chi.NewRouter()
 	r.Route("/api/v1", func(r chi.Router) {
 		Mount(r, deps)
@@ -2485,7 +2499,7 @@ func (q *fakeQuerier) GetTicketLink(
 	}
 	row := q.ticket.linkRows[i]
 	return gen.GetTicketLinkRow{
-		ID: row.ID, LinkType: row.LinkType, LagDays: row.LagDays,
+		ID: row.ID, LinkType: row.LinkType, LagDays: row.LagDays, LagSeconds: row.LagSeconds,
 		Origin: row.Origin, CreatedAt: row.CreatedAt,
 		Direction: row.Direction, TicketSeq: row.TicketSeq, TicketTitle: row.TicketTitle,
 	}, nil
@@ -2518,7 +2532,7 @@ func (q *fakeQuerier) CreateTicketLink(_ context.Context, arg gen.CreateTicketLi
 	// 「作成したリンクを読めない」で落ちる。相手の要約は seq から作る。
 	q.ticket.linkRows = append(q.ticket.linkRows, gen.ListTicketLinksRow{
 		ID: arg.ID, DirectionRank: 0, Direction: "outgoing",
-		LinkType: arg.LinkType, LagDays: arg.LagDays, Origin: arg.Origin,
+		LinkType: arg.LinkType, LagDays: arg.LagDays, LagSeconds: arg.LagSeconds, Origin: arg.Origin,
 		CreatedAt:       ts(fakeNow),
 		TicketSeq:       q.ticket.seqOf(arg.TargetTicketID),
 		TicketTitle:     q.ticket.briefByID[arg.TargetTicketID].Title,
@@ -2537,6 +2551,7 @@ func (q *fakeQuerier) UpdateTicketLinkLag(
 		return 0, nil
 	}
 	q.ticket.linkRows[i].LagDays = arg.LagDays
+	q.ticket.linkRows[i].LagSeconds = arg.LagSeconds
 	return 1, nil
 }
 
@@ -2814,6 +2829,28 @@ func (q *fakeQuerier) GetConfirmationByID(context.Context, string) (gen.GetConfi
 	return q.confirmationByIDRow, nil
 }
 
+// GetConfirmationNotice は通知の材料を、委任を作った人＝testActorID として返す。
+func (q *fakeQuerier) GetConfirmationNotice(_ context.Context, id string) (gen.GetConfirmationNoticeRow, error) {
+	q.opLog = append(q.opLog, "GetConfirmationNotice")
+	return gen.GetConfirmationNoticeRow{
+		ID: id, Reason: "hearing", QuestionMd: "問い",
+		RecipientID: testActorID, ProjectID: "01K2F8QW3H7YRJ4M5N6P7Q8R9P", ProjectKey: "demo",
+		RootSeq: 31, RootTitle: "根", RaisedByID: testMainActorID, RaisedByName: "main",
+	}, nil
+}
+
+func (q *fakeQuerier) CreateNotification(_ context.Context, arg gen.CreateNotificationParams) error {
+	q.opLog = append(q.opLog, "CreateNotification")
+	q.createdNotifications = append(q.createdNotifications, arg)
+	return nil
+}
+
+func (q *fakeQuerier) WithdrawNotifications(_ context.Context, subjectKey string) (int64, error) {
+	q.opLog = append(q.opLog, "WithdrawNotifications")
+	q.withdrawnNotificationKeys = append(q.withdrawnNotificationKeys, subjectKey)
+	return 1, nil
+}
+
 func (q *fakeQuerier) ListOpenConfirmations(context.Context, string) ([]gen.ListOpenConfirmationsRow, error) {
 	q.opLog = append(q.opLog, "ListOpenConfirmations")
 	return nil, nil
@@ -3061,6 +3098,14 @@ func (q *fakeQuerier) ListMyAgents(_ context.Context, _ string) ([]gen.ListMyAge
 	return q.agentRows, nil
 }
 
+func (q *fakeQuerier) ListMyAgentsOpenWorks(context.Context, string) ([]gen.ListMyAgentsOpenWorksRow, error) {
+	return q.agentOpenWorks, nil
+}
+
+func (q *fakeQuerier) ListMyAgentsDelegations(context.Context, string) ([]gen.ListMyAgentsDelegationsRow, error) {
+	return q.agentDelegs, nil
+}
+
 func (q *fakeQuerier) FindMyAgent(_ context.Context, _ gen.FindMyAgentParams) (gen.FindMyAgentRow, error) {
 	if q.agentFindErr != nil {
 		return gen.FindMyAgentRow{}, q.agentFindErr
@@ -3292,6 +3337,10 @@ func (q *fakeQuerier) GetAgentRuntimeInfo(
 
 // ── アプリケーション設定（ApiDesign.md 11章）──────────────
 
+func (q *fakeQuerier) CountUnendedDelegations(ctx context.Context) (int64, error) {
+	return q.settings.unendedDelegations, nil
+}
+
 func (q *fakeQuerier) ListAppSettings(ctx context.Context) ([]gen.ListAppSettingsRow, error) {
 	if q.settings.err != nil {
 		return nil, q.settings.err
@@ -3370,9 +3419,7 @@ func (q *fakeQuerier) ListPendingSettingChanges(
 ) ([]gen.ListPendingSettingChangesRow, error) {
 	out := make([]gen.ListPendingSettingChangesRow, 0, len(q.settings.expiredPending))
 	for _, r := range q.settings.expiredPending {
-		out = append(out, gen.ListPendingSettingChangesRow{
-			ID: r.ID, Previous: r.Previous, ExpiresAt: r.ExpiresAt,
-		})
+		out = append(out, gen.ListPendingSettingChangesRow(r))
 	}
 	return out, nil
 }
@@ -3529,6 +3576,17 @@ func (q *fakeQuerier) HasTicketOpenWork(context.Context, gen.HasTicketOpenWorkPa
 }
 func (q *fakeQuerier) GetOpenWorkSession(context.Context, gen.GetOpenWorkSessionParams) (string, error) {
 	return "", pgx.ErrNoRows
+}
+func (q *fakeQuerier) GetPausedDelegationRootForActor(context.Context, gen.GetPausedDelegationRootForActorParams) (int32, error) {
+	return 0, pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) GetActorLastSeenAt(context.Context, string) (*time.Time, error) {
+	return nil, pgx.ErrNoRows
+}
+
+func (q *fakeQuerier) ListOpenWorkSessionTickets(context.Context, gen.ListOpenWorkSessionTicketsParams) ([]gen.ListOpenWorkSessionTicketsRow, error) {
+	return nil, nil
 }
 
 func (q *fakeQuerier) WorkRequiresRegistration(context.Context, gen.WorkRequiresRegistrationParams) (bool, error) {

@@ -138,6 +138,19 @@ func (h *handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 
 	// **1トランザクションで書き、監査ログも1行にする**（11.2）。
 	err := h.tx.RunInTx(ctx, func(q gen.Querier) error {
+		// **終了していない委任があれば、自律実行の無効化を拒む**（11.2。
+		// Delegation.md 1.3）。止まったまま画面から見えない委任を作らない。
+		if disablesDelegation(changes) {
+			n, err := q.CountUnendedDelegations(ctx)
+			if err != nil {
+				return fmt.Errorf("終了していない委任を数えられない: %w", err)
+			}
+			if n > 0 {
+				return apierr.New(apierr.Conflict).WithMessage(fmt.Sprintf(
+					"終了していない自律実行が %d 件あります。取り下げるか完了させてから無効にしてください", n))
+			}
+		}
+
 		// **締め出されうる設定を含むなら、未確認として記録する**。
 		// 設定を書くのと1つの単位にする——**片方だけ残ると、戻せない変更や
 		// 戻す先の無い記録ができる。**
@@ -235,6 +248,28 @@ type settingChange struct {
 	Key  string  `json:"key"`
 	From *string `json:"from"`
 	To   *string `json:"to"`
+}
+
+// disablesDelegation は変更が自律実行を有効から無効へ倒すかを返す。
+//
+// **changes は実際に変わるものだけ**（validateSettingsUpdate）なので、
+// delegation_enabled が入っていれば値は変わっている。null は既定（無効）へ戻すこと。
+func disablesDelegation(changes []settingChange) bool {
+	for _, c := range changes {
+		if c.Key != config.KeyDelegationEnabled {
+			continue
+		}
+		// いま有効でなければ倒すものが無い（無効から既定へ戻すなど）。
+		if c.From == nil || *c.From != "true" {
+			return false
+		}
+		if c.To == nil {
+			d, _ := config.Lookup(config.KeyDelegationEnabled)
+			return d.Default != "true"
+		}
+		return *c.To != "true"
+	}
+	return false
 }
 
 // validateSettingsUpdate は 11.2 の入力を検証し、実際に変わるものだけを返す。

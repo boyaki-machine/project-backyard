@@ -91,6 +91,12 @@ type ticketPatch struct {
 	DueAt   optional[time.Time]
 	AllDay  optional[bool]
 
+	// 時間重複チェックとアンカー（9.5.2。pb-296）。**PATCH は印を見ない**——アンカーの付いた端も
+	// 動かせ、印は残る。値の無い端にアンカーを立てても拒まない（DbDesign.md 6.6.2）。
+	NoOverlap   optional[bool]
+	StartPinned optional[bool]
+	DuePinned   optional[bool]
+
 	// 手順27 で開けた4つ（9.5.2）。**エージェントの逸脱防止を構造データで行う**
 	// （Requirements.md 10.5.3）以上、その構造データを書く経路が要る。列は 0006 から
 	// 在ったが、本文のリストにも 9.3 の POST にも無く、どの経路からも書けなかった。
@@ -220,7 +226,9 @@ func (h *handler) updateTicket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if patch.StartAt.Set || patch.DueAt.Set || patch.AllDay.Set {
+		// 時間重複チェックとアンカーも予定の一部として委任の範囲を見る（9.5.2。pb-296）
+		if patch.StartAt.Set || patch.DueAt.Set || patch.AllDay.Set ||
+			patch.NoOverlap.Set || patch.StartPinned.Set || patch.DuePinned.Set {
 			if writeErr = planningWriteProblem(ctx, q, r, projectID, before.ID); writeErr != nil {
 				return errTicketReference
 			}
@@ -333,6 +341,16 @@ func (h *handler) resolveTicketPatch(
 	params.DueAtSet, params.DueAt = instantParam(patch.DueAt)
 	if patch.AllDay.Set {
 		params.AllDay = pgtype.Bool{Bool: patch.AllDay.Value, Valid: true}
+	}
+	// 3つの印は**値を書くだけで、予定の検証にも連鎖にも使わない**（9.5.2「PATCH は印を見ない」）
+	if patch.NoOverlap.Set {
+		params.NoOverlap = pgtype.Bool{Bool: patch.NoOverlap.Value, Valid: true}
+	}
+	if patch.StartPinned.Set {
+		params.StartPinned = pgtype.Bool{Bool: patch.StartPinned.Value, Valid: true}
+	}
+	if patch.DuePinned.Set {
+		params.DuePinned = pgtype.Bool{Bool: patch.DuePinned.Value, Valid: true}
 	}
 
 	// 手順27 の4つ（9.5.2）。**execution_mode と scope は COALESCE で足りる**
@@ -621,6 +639,20 @@ func recordTicketFieldChanges(
 			scheduleActivityValue(pick(patch.DueAt, before.DueAt), allDay, true, loc))
 		add("all_day", strPtr(strconv.FormatBool(before.AllDay)), strPtr(strconv.FormatBool(allDay)))
 	}
+	// 時間重複チェックとアンカー（DbDesign.md 6.6.2「変更は activity に記録する」）。値は true / false
+	for _, f := range []struct {
+		field  string
+		before bool
+		patch  optional[bool]
+	}{
+		{"no_overlap", before.NoOverlap, patch.NoOverlap},
+		{"start_pinned", before.StartPinned, patch.StartPinned},
+		{"due_pinned", before.DuePinned, patch.DuePinned},
+	} {
+		if f.patch.Set {
+			add(f.field, strPtr(strconv.FormatBool(f.before)), strPtr(strconv.FormatBool(f.patch.Value)))
+		}
+	}
 
 	// 手順27 の4つ。**scope も old/new を残す**（body_md のように落とさない）
 	// ——「誰が縛りを緩めたか」は履歴として読む価値が本文より高く、値は数行に
@@ -763,6 +795,9 @@ func parseTicketPatch(raw updateTicketRequest) (ticketPatch, *apierr.Error) {
 	patch.StartAt, details = optionalInstantField(raw, "start_at", details)
 	patch.DueAt, details = optionalInstantField(raw, "due_at", details)
 	patch.AllDay, details = optionalBoolField(raw, "all_day", details)
+	patch.NoOverlap, details = optionalBoolField(raw, "no_overlap", details)
+	patch.StartPinned, details = optionalBoolField(raw, "start_pinned", details)
+	patch.DuePinned, details = optionalBoolField(raw, "due_pinned", details)
 
 	// ── 手順27 で開けた4つ（9.5.2）─────────────────────────────
 	//
@@ -1067,9 +1102,10 @@ func denySelfEditFields(r *http.Request, key string, raw updateTicketRequest) *a
 		if !auth.HasPermission(a.Permissions, "ticket.plan.edit") {
 			return apierr.New(apierr.Forbidden)
 		}
+		// 時間重複チェックとアンカーは予定の一部なので開ける（9.5.2。pb-296）
 		for field := range raw {
-			if field != "start_at" && field != "due_at" && field != "all_day" {
-				return apierr.New(apierr.Forbidden).WithMessage("計画専用権限では開始・終了予定だけを変更できます")
+			if !slices.Contains(planEditFields, field) {
+				return apierr.New(apierr.Forbidden).WithMessage("計画専用権限では予定（開始・終了・終日・時間重複チェック・アンカー）だけを変更できます")
 			}
 		}
 		return nil
@@ -1090,6 +1126,9 @@ func denySelfEditFields(r *http.Request, key string, raw updateTicketRequest) *a
 			strings.Join(denied, " / "))).
 		WithCause(fmt.Errorf("ticket.self_edit では書けない項目が来た: %v", denied))
 }
+
+// planEditFields は ticket.plan.edit だけを持つ呼び出し元が送れる項目（9.5.2）。
+var planEditFields = []string{"start_at", "due_at", "all_day", "no_overlap", "start_pinned", "due_pinned"}
 
 // 実績ポイントは PM の専用権限で更新する。ticket.edit だけでは足りない。
 func requireActualPointPermission(r *http.Request, key string) *apierr.Error {

@@ -10,8 +10,12 @@
  *   却下は評価を待たずにできる
  * - **確認への回答**：開いている確認待ち（ヒアリングを含む）。制約の超過などで
  *   一時停止したものは、答えた後に「再開…」で再開する（答えるだけでは再開しない。8.2）
+ *
+ * **URL が `#confirmations` で終わるときは、開いたときに一度だけこのセクションまで
+ * スクロールする**（確認待ちの通知の遷移先。Delegation.md 8.2）。
  */
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 import {
   answerConfirmation,
@@ -26,6 +30,7 @@ import {
 import { delegationErrorText } from '../composables/useDelegationStatus'
 import { renderMarkdown } from '../lib/markdown'
 import { uiText } from '../locales/ui'
+import DelegationAcceptCard from './DelegationAcceptCard.vue'
 import DelegationTextModal from './DelegationTextModal.vue'
 
 const props = defineProps<{
@@ -33,6 +38,9 @@ const props = defineProps<{
   seq: number
   status: DelegationStatus | null
   canManage: boolean
+  /** 直下の子（受け入れのカードが、まとめて完了にする対象。pb-340） */
+  children?: { seq: number; title: string; status: { category: string } }[]
+  canTransition?: boolean
 }>()
 
 const emit = defineEmits<{ changed: [] }>()
@@ -51,7 +59,26 @@ type Finding = { aspect?: string; verdict?: string; note_md?: string }
 const findings = computed<Finding[]>(() => (plan.value?.evaluation?.findings ?? []) as Finding[])
 
 const confirmations = computed<OpenConfirmation[]>(() => props.status?.open_confirmations ?? [])
-const count = computed(() => (plan.value ? 1 : 0) + confirmations.value.length)
+/** 成果の評価に合格した根では、受け入れのカードを先頭に出す（GuiDesign.md 5.5。pb-340） */
+const accepting = computed(() => props.canManage && props.status?.deliverable_passed === true &&
+  props.status.status !== 'ended' && props.status.root_seq === props.seq)
+const count = computed(() => (plan.value ? 1 : 0) + (accepting.value ? 1 : 0) + confirmations.value.length)
+
+// 通知から来たとき（#confirmations）だけ、チケットごとに一度だけ寄せる。答えた後の
+// 読み直しで、また引き戻さないようにする。
+const route = useRoute()
+const section = ref<HTMLElement | null>(null)
+let scrolledSeq: number | null = null
+watch(
+  [count, () => props.seq],
+  async ([n, seq]) => {
+    if (n === 0 || scrolledSeq === seq || route.hash !== '#confirmations') return
+    scrolledSeq = seq
+    await nextTick()
+    section.value?.scrollIntoView({ block: 'start' })
+  },
+  { immediate: true },
+)
 
 const busy = ref(false)
 const error = ref<string | null>(null)
@@ -100,8 +127,18 @@ function reasonLabel(reason: string | undefined): string {
 </script>
 
 <template>
-  <section v-if="count > 0" class="block confirmations">
+  <section v-if="count > 0" id="confirmations" ref="section" class="block confirmations">
     <h3 class="block-title">{{ $ui('ユーザ確認待ち（{value0}）', { value0: count }) }}</h3>
+
+    <DelegationAcceptCard
+      v-if="accepting && status"
+      :project-key="projectKey"
+      :seq="seq"
+      :status="status"
+      :children="children ?? []"
+      :can-transition="canTransition ?? false"
+      @changed="emit('changed')"
+    />
 
     <article v-if="plan" class="card">
       <header class="card-head">

@@ -95,6 +95,9 @@ func (h *handler) withdrawDelegation(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return fmt.Errorf("確認待ちを取り下げられない: %w", err)
 		}
+		if err := withdrawConfirmationNotifications(ctx, q, withdrawn...); err != nil {
+			return err
+		}
 		if err := rec.Record(ctx, q, activity.Entry{
 			ProjectID: scope.projectID, EntityType: activity.EntityTicket,
 			EntityID: ticketID, Action: activity.Update,
@@ -105,8 +108,8 @@ func (h *handler) withdrawDelegation(w http.ResponseWriter, r *http.Request) {
 
 		body := fmt.Sprintf("**自律実行をやめた**（PM）。実行モードを「%s」に戻した。"+
 			"子チケットは残っている。エージェントは書き込まずに止まること。", modeLabel)
-		if withdrawn > 0 {
-			body += fmt.Sprintf("\n\n回答していないユーザ確認待ち %d 件を取り下げた。", withdrawn)
+		if len(withdrawn) > 0 {
+			body += fmt.Sprintf("\n\n回答していないユーザ確認待ち %d 件を取り下げた。", len(withdrawn))
 		}
 		if req.ReasonMd != "" {
 			body += "\n\n" + req.ReasonMd

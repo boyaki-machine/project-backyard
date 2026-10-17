@@ -886,6 +886,44 @@ func TestGetContextOmitsDelegationOutsideTree(t *testing.T) {
 	}
 }
 
+// 開いている記録が別のチケットのものなら、そう出す（pb-306）。ID だけだと、
+// 別のチケットで開いた記録を今のチケットの計時と取り違える。
+func TestWorkInstructionsNameTheOpenWorkTicket(t *testing.T) {
+	for _, tc := range []struct {
+		name, openSeq, want, notWant string
+	}{
+		{"別のチケット", `"open_work_seq":288`, "自身の未終了作業：#288 の記録（このチケットのものではない）`fixture-work-id`", ""},
+		{"このチケット", `"open_work_seq":31`, "自身の未終了作業：#31 の記録`fixture-work-id`", "このチケットのものではない"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var ticket packTicket
+			if err := json.Unmarshal([]byte(`{"seq":31,"title":"fixture","status":{"name":"進行中","category":"in_progress"},"work_context":{"policy":{"status":"unset"},"open_work_id":"fixture-work-id",`+tc.openSeq+`}}`), &ticket); err != nil {
+				t.Fatal(err)
+			}
+			text := renderContextPack("demo", ticket, charter{}, "")
+			if !strings.Contains(text, tc.want) {
+				t.Errorf("パックに %q が無い:\n%s", tc.want, text)
+			}
+			if tc.notWant != "" && strings.Contains(text, tc.notWant) {
+				t.Errorf("パックに %q がある", tc.notWant)
+			}
+		})
+	}
+}
+
+// 委任の main が木の中で複数開いた記録を、すべて並べる（pb-344）。
+func TestWorkInstructionsListAllOpenWorks(t *testing.T) {
+	var ticket packTicket
+	if err := json.Unmarshal([]byte(`{"seq":31,"title":"fixture","status":{"name":"進行中","category":"in_progress"},"work_context":{"policy":{"status":"unset"},"open_work_id":"w-31","open_work_seq":31,"open_works":[{"id":"w-30","seq":30},{"id":"w-31","seq":31},{"id":"w-32","seq":32}]}}`), &ticket); err != nil {
+		t.Fatal(err)
+	}
+	text := renderContextPack("demo", ticket, charter{}, "")
+	want := "自身の未終了作業：#30 の記録（このチケットのものではない）`w-30`、#31 の記録`w-31`、#32 の記録（このチケットのものではない）`w-32`。"
+	if !strings.Contains(text, want) {
+		t.Errorf("パックに %q が無い:\n%s", want, text)
+	}
+}
+
 func TestWorkInstructionsRemainWhenCharterIsFolded(t *testing.T) {
 	var ticket packTicket
 	if err := json.Unmarshal([]byte(`{"seq":31,"title":"fixture","status":{"name":"進行中","category":"in_progress"},"work_context":{"policy":{"version":"actual-v0","status":"ready","document_version":7,"time_source":"reported_or_pb","require_registration":true},"open_work_id":"fixture-work-id"}}`), &ticket); err != nil {

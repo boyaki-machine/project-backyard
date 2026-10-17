@@ -99,10 +99,15 @@ type ticketListItem struct {
 	ActualPointVersion *string  `json:"actual_point_version"`
 
 	// 予定（ApiDesign.md 9.3.1。pb-217）。半開区間 [start_at, due_at) と終日の印。
-	StartAt  *Time `json:"start_at"`
-	DueAt    *Time `json:"due_at"`
-	AllDay   bool  `json:"all_day"`
-	ClosedAt *Time `json:"closed_at"`
+	StartAt *Time `json:"start_at"`
+	DueAt   *Time `json:"due_at"`
+	AllDay  bool  `json:"all_day"`
+	// 時間重複チェックと開始・終了のアンカー（DbDesign.md 6.6.2。pb-296）。**一覧のすべての view と
+	// 詳細に載せる**（9.2.2）。読んで効かせるのはタイムラインの連鎖のずらし（9.17）だけである。
+	NoOverlap   bool  `json:"no_overlap"`
+	StartPinned bool  `json:"start_pinned"`
+	DuePinned   bool  `json:"due_pinned"`
+	ClosedAt    *Time `json:"closed_at"`
 
 	Version   int32 `json:"version"`
 	CreatedAt Time  `json:"created_at"`
@@ -215,6 +220,9 @@ func buildTicketListItem(row gen.ListTicketsRow, tags []ticketTagRef) ticketList
 		StartAt:            apiTime(row.StartAt),
 		DueAt:              apiTime(row.DueAt),
 		AllDay:             row.AllDay,
+		NoOverlap:          row.NoOverlap,
+		StartPinned:        row.StartPinned,
+		DuePinned:          row.DuePinned,
 		ClosedAt:           apiTime(row.ClosedAt),
 		Version:            row.Version,
 		CreatedAt:          Time(row.CreatedAt),
@@ -293,6 +301,9 @@ func buildTicketDetail(
 			StartAt:            apiTime(row.StartAt),
 			DueAt:              apiTime(row.DueAt),
 			AllDay:             row.AllDay,
+			NoOverlap:          row.NoOverlap,
+			StartPinned:        row.StartPinned,
+			DuePinned:          row.DuePinned,
 			ClosedAt:           apiTime(row.ClosedAt),
 			Version:            row.Version,
 			CreatedAt:          Time(row.CreatedAt),
@@ -446,4 +457,6 @@ type delegationMark struct {
 	IsRoot            bool   `json:"is_root"`
 	Status            string `json:"status"`
 	OpenConfirmations int64  `json:"open_confirmations"`
+	// Reported は完了レポートを出したのに完了していない子（Delegation.md 5章 D2）。
+	Reported bool `json:"reported"`
 }

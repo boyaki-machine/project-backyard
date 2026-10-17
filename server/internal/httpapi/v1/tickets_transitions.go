@@ -97,6 +97,15 @@ func (h *handler) listTicketTransitions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// 検証9 の材料（Delegation.md 4.3「受け入れ」）。9.6 と同じ関数を通し、
+	// 押せない「完了」に理由を付ける。
+	acceptance, err := readRootAcceptance(ctx, h.q, row.ID)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("チケット %d の委任を確認できない: %w", seq, err)))
+		return
+	}
+
 	if a := auth.ProjectAuthzFromContext(ctx, key); a != nil {
 		actor.permissions = a.Permissions
 	}
@@ -119,7 +128,8 @@ func (h *handler) listTicketTransitions(w http.ResponseWriter, r *http.Request) 
 		option := transitionOptionView{
 			Key: s.Key, Name: s.Name, Category: s.Category, Allowed: true,
 		}
-		if reason := wf.denyTransition(row.StatusKey, s, actor, openChildren > 0, rootEvaluationPending); reason != "" {
+		if reason := wf.denyTransition(row.StatusKey, s, actor, openChildren > 0,
+			rootEvaluationPending, acceptance.notAcceptable); reason != "" {
 			option.Allowed = false
 			option.Reason = &reason
 		}

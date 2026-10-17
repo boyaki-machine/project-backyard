@@ -23,6 +23,7 @@ import type { GItem, GRow, GanttLink } from './model'
 import { HANDLE_R, handlesOf, isViolated } from './edit'
 import type { End, Plan } from './edit'
 import type { Sleeve } from '../epicSleeve'
+import { lagText } from '../lagText'
 
 /** 行の高さ（5.14。バックログの 40px より詰める） */
 export const RH = 28
@@ -252,7 +253,8 @@ function depSVG(link: GanttLink, a: Pos, b: Pos, hi: boolean, bad: boolean): str
   if (bad) words.push('⚠')
   if (ai) words.push('AI')
   if (ty !== 'FS') words.push(ty)
-  if (link.lag_days) words.push(`${link.lag_days > 0 ? '+' : ''}${link.lag_days}d`)
+  const lag = lagText(link.lag_days, link.lag_seconds)
+  if (lag) words.push(lag)
   let tag = ''
   if (words.length) {
     const s = words.join(' ')

@@ -255,6 +255,7 @@ func TestEvaluationIntegration(t *testing.T) {
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("完了レポートの提出 status = %d（body=%s）", rec.Code, rec.Body.String())
 		}
+		firstReport, _ := viewOf(t, rec)["id"].(string)
 
 		// 完了レポートはあるが、まだ評価されていない（評価待ち）。
 		rec = postWithCookie(r, transitionPath, session, `{"to":"done"}`)
@@ -262,22 +263,114 @@ func TestEvaluationIntegration(t *testing.T) {
 			t.Fatalf("done への遷移（評価待ち中） status = %d, want 403（body=%s）", rec.Code, rec.Body.String())
 		}
 
-		// main の出し直しは評価待ちのあいだ拒まれる。
+		// **main は評価待ちのあいだも出し直せる**（7.2。pb-305）。評価中の注意に応えた修正を
+		// 正式な報告に載せるため。以前は 403 だった（pb-248）。
 		rec = bearerPost(r, reportsPath, mainToken.Token, `{"effort_unavailable":{"target":"both","reason":"fixture work has no measured timing"},"status":"completed"}`)
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("完了レポートの出し直し（評価待ち中） status = %d, want 403（body=%s）", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("完了レポートの出し直し（評価待ち中） status = %d, want 201（body=%s）", rec.Code, rec.Body.String())
+		}
+		secondReport, _ := viewOf(t, rec)["id"].(string)
+		if firstReport == "" || secondReport == "" || firstReport == secondReport {
+			t.Fatalf("完了レポートの ID = %q / %q, want 別々の値", firstReport, secondReport)
+		}
+
+		// 評価役は delegation-status で最新の報告を知る。
+		st := viewOf(t, bearerGet(r, fmt.Sprintf("%s/tickets/%d/delegation-status", base, rootSeq), evaluatorToken.Token))
+		if lr, _ := st["latest_report"].(map[string]any); lr == nil || lr["id"] != secondReport || lr["evaluated"] != false {
+			t.Errorf("latest_report = %v, want id=%s・evaluated=false", st["latest_report"], secondReport)
+		}
+
+		// 古い報告を名指しした評価は、取り違えを防ぐため 409 で拒む。
+		rec = bearerPost(r, evalPath, evaluatorToken.Token,
+			fmt.Sprintf(`{"target_kind":"deliverable","agent_report_id":%q,"verdict":"pass","findings":%s}`, firstReport, passFindings))
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "stale_report") {
+			t.Fatalf("古い報告への評価 status = %d, want 409 stale_report（body=%s）", rec.Code, rec.Body.String())
 		}
 
 		rec = bearerPost(r, evalPath, evaluatorToken.Token,
-			fmt.Sprintf(`{"target_kind":"deliverable","verdict":"pass","findings":%s}`, passFindings))
+			fmt.Sprintf(`{"target_kind":"deliverable","agent_report_id":%q,"verdict":"pass","findings":%s}`, secondReport, passFindings))
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("成果の評価 status = %d（body=%s）", rec.Code, rec.Body.String())
 		}
+		if got, _ := viewOf(t, rec)["agent_report_id"].(string); got != secondReport {
+			t.Errorf("評価の対象 = %q, want %q（最新の報告）", got, secondReport)
+		}
 
-		// 合格したので、PM は根を完了にできる。
+		// **停止中は、合格していても受け入れられない**（検証9。Delegation.md 4.3「受け入れ」）。
+		delegPath := fmt.Sprintf("%s/tickets/%d/delegation", base, rootSeq)
+		if rec = postWithCookie(r, delegPath+"/pause", session, `{}`); rec.Code != http.StatusOK {
+			t.Fatalf("停止 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		rec = postWithCookie(r, transitionPath, session, `{"to":"done"}`)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), rootNotAcceptableReason) ||
+			!strings.Contains(rec.Body.String(), "delegation_stage") {
+			t.Fatalf("done への遷移（停止中） status = %d, want 403 と検証9 の文言（body=%s）", rec.Code, rec.Body.String())
+		}
+		// 9.7 も同じ関数を通り、押せない「完了」に理由が付く。
+		rec = getWithCookie(r, transitionPath+"s", session)
+		if !strings.Contains(rec.Body.String(), rootNotAcceptableReason) {
+			t.Errorf("遷移先の一覧に検証9 の理由が無い（body=%s）", rec.Body.String())
+		}
+		if rec = postWithCookie(r, delegPath+"/resume", session, `{}`); rec.Code != http.StatusOK {
+			t.Fatalf("再開 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+
+		// 関門に数えないヒアリングは、開いたまま受け入れられる。その通知は受け入れで取り下がる
+		// （Delegation.md 8.2）。
+		rec = bearerPost(r, fmt.Sprintf("%s/tickets/%d/confirmation", base, rootSeq), mainToken.Token,
+			`{"reason":"hearing","question_md":"ほかに気になる点はありますか"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("ヒアリングの提出 status = %d（body=%s）", rec.Code, rec.Body.String())
+		}
+		hearingKey := "delegation_confirmation:" + viewOf(t, rec)["id"].(string)
+		countNotices := func() int {
+			var n int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM notification WHERE subject_key = $1`, hearingKey).Scan(&n); err != nil {
+				t.Fatalf("通知を数えられない: %v", err)
+			}
+			return n
+		}
+		if n := countNotices(); n != 1 {
+			t.Fatalf("ヒアリングの通知 = %d 件, want 1", n)
+		}
+
+		// 合格したので、PM は根を完了にできる。**これが受け入れである。**
 		rec = postWithCookie(r, transitionPath, session, `{"to":"done"}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("done への遷移（合格後） status = %d, want 200（body=%s）", rec.Code, rec.Body.String())
+		}
+		if n := countNotices(); n != 0 {
+			t.Errorf("受け入れ後のヒアリングの通知 = %d 件, want 0（取り下げる）", n)
+		}
+
+		// 委任は ended、根の execution_mode は delegated のまま（取り下げとの違い）。
+		var delegStatus, mode string
+		if err := pool.QueryRow(ctx, `
+			SELECT d.status, t.execution_mode FROM delegation d JOIN ticket t ON t.id = d.root_ticket_id
+			JOIN project p ON p.id = t.project_id WHERE p.key = $1 AND t.seq = $2`, key, rootSeq,
+		).Scan(&delegStatus, &mode); err != nil {
+			t.Fatalf("委任を読めない: %v", err)
+		}
+		if delegStatus != "ended" || mode != "delegated" {
+			t.Errorf("受け入れ後 delegation.status = %q, execution_mode = %q, want ended / delegated", delegStatus, mode)
+		}
+
+		// main は「終了」を読んで止まれる（pb_wait とパックが読む口）。
+		v := viewOf(t, bearerGet(r, fmt.Sprintf("%s/tickets/%d/delegation-status", base, rootSeq), mainToken.Token))
+		if v["in_delegation"] != false || v["status"] != "ended" {
+			t.Errorf("受け入れ後の delegation-status = %v, want in_delegation=false / status=ended", v)
+		}
+
+		// 根に判断のコメントが残る（pb_wait が変化として返す）。
+		var n int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM comment c JOIN ticket t ON t.id = c.ticket_id JOIN project p ON p.id = t.project_id
+			WHERE p.key = $1 AND t.seq = $2 AND c.kind = 'decision' AND c.body_md LIKE '%自律実行を受け入れた%'`,
+			key, rootSeq).Scan(&n); err != nil {
+			t.Fatalf("コメントを数えられない: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("受け入れのコメント = %d 件, want 1", n)
 		}
 	})
 }

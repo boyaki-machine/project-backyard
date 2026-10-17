@@ -262,6 +262,24 @@ type myAgentView struct {
 	IsActive     bool            `json:"is_active"`
 	CreatedAt    Time            `json:"created_at"`
 	Token        *agentTokenView `json:"token"`
+	// OpenWorks は開いている作業記録の開始元（開始の古い順）。**一覧（4.5.1）だけが返す**——
+	// 登録・変更の応答（4.5.2・4.5.4）では出さない。一覧では、無ければ空の配列。
+	OpenWorks *[]agentOpenWorkView `json:"open_works,omitempty"`
+	// Delegations は main・評価を務める、終了していない委任（作成の古い順）。OpenWorks と同じ扱い。
+	Delegations *[]agentDelegationView `json:"delegations,omitempty"`
+}
+
+// agentOpenWorkView は 4.5.1 の open_works[] の1件。
+type agentOpenWorkView struct {
+	TicketSeq   int32  `json:"ticket_seq"`
+	TicketTitle string `json:"ticket_title"`
+}
+
+// agentDelegationView は 4.5.1 の delegations[] の1件。
+type agentDelegationView struct {
+	RootSeq int32  `json:"root_seq"`
+	Role    string `json:"role"` // main / evaluator
+	Status  string `json:"status"`
 }
 
 // myAgentListView は 4.5.1 の応答。
@@ -300,6 +318,28 @@ func (h *handler) listMyAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// いまの仕事（4.5.1 の open_works・delegations）。エージェントごとに束ねる。
+	works, err := h.q.ListMyAgentsOpenWorks(r.Context(), p.ActorID)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("エージェントの作業記録を取得できない: %w", err)))
+		return
+	}
+	worksOf := map[string][]agentOpenWorkView{}
+	for _, wk := range works {
+		worksOf[wk.ActorID] = append(worksOf[wk.ActorID], agentOpenWorkView{TicketSeq: wk.TicketSeq, TicketTitle: wk.TicketTitle})
+	}
+	delegs, err := h.q.ListMyAgentsDelegations(r.Context(), p.ActorID)
+	if err != nil {
+		apierr.Write(w, r, apierr.New(apierr.InternalError).
+			WithCause(fmt.Errorf("エージェントの委任を取得できない: %w", err)))
+		return
+	}
+	delegsOf := map[string][]agentDelegationView{}
+	for _, d := range delegs {
+		delegsOf[d.ActorID] = append(delegsOf[d.ActorID], agentDelegationView{RootSeq: d.RootSeq, Role: d.Role, Status: d.Status})
+	}
+
 	now := time.Now()
 	items := make([]myAgentView, 0, len(rows))
 	for _, row := range rows {
@@ -317,6 +357,14 @@ func (h *handler) listMyAgents(w http.ResponseWriter, r *http.Request) {
 			IsActive:  row.IsActive,
 			CreatedAt: Time(row.CreatedAt),
 		}
+		ow, ds := worksOf[row.ActorID], delegsOf[row.ActorID]
+		if ow == nil {
+			ow = []agentOpenWorkView{}
+		}
+		if ds == nil {
+			ds = []agentDelegationView{}
+		}
+		v.OpenWorks, v.Delegations = &ow, &ds
 		if row.ProjectKey.Valid {
 			v.Project = &projectRef{Key: row.ProjectKey.String, Name: row.ProjectName.String}
 		}

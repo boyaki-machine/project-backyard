@@ -11,6 +11,14 @@ VALUES(@project_id,@actor_id,@request_id,@session_id,@digest,@response);
 -- name: GetOpenWorkSession :one
 SELECT id FROM work_session WHERE project_id= @project_id AND actor_id= @actor_id AND state <> 'finished';
 
+-- ListOpenWorkSessionTickets は自分の開いている記録と、その開始元のチケット番号を返す。
+-- 案内に ID だけを出すと、別のチケットで開いた記録を今のチケットの計時と取り違える（pb-306）。
+-- 委任の main は木の中で複数開ける（Design.md 8.5.7。pb-344）ので、すべてを開始の古い順に返す。
+-- name: ListOpenWorkSessionTickets :many
+SELECT ws.id, t.seq FROM work_session ws JOIN ticket t ON t.id = ws.ticket_id
+WHERE ws.project_id= @project_id AND ws.actor_id= @actor_id AND ws.state <> 'finished'
+ORDER BY ws.started_at, ws.id;
+
 -- name: CreateWorkSession :exec
 INSERT INTO work_session(id,project_id,ticket_id,actor_id,client_kind,model_name,model_version,state,started_at,changed_at,note)
 VALUES(@id,@project_id,@ticket_id,@actor_id,sqlc.narg(client_kind),sqlc.narg(model_name),sqlc.narg(model_version),'running',@started_at,@started_at,@note);
@@ -164,3 +172,24 @@ WHERE a.ticket_id= @ticket_id AND s.actor_id= @actor_id AND s.state<>'finished')
 -- name: WorkRequiresRegistration :one
 SELECT EXISTS(SELECT 1 FROM work_session s JOIN work_allocation a ON a.session_id=s.id
 WHERE a.ticket_id= @ticket_id AND s.actor_id= @actor_id AND s.policy->>'require_registration'='true');
+
+-- 承認待ちの保留（DbDesign.md 6.34）。
+-- ListRunningWorkForHold は、フックが止める対象（そのアクターがその PJ で実行中の記録すべて）を行ロック付きで返す。
+-- name: ListRunningWorkForHold :many
+SELECT * FROM work_session
+WHERE project_id = @project_id AND actor_id = @actor_id AND state = 'running'
+ORDER BY started_at, id
+FOR UPDATE;
+
+-- ListHeldWork は、フックが止めた記録を行ロック付きで返す。明示的に止めた記録（hold が NULL）は含めない。
+-- name: ListHeldWork :many
+SELECT * FROM work_session
+WHERE project_id = @project_id AND actor_id = @actor_id AND hold IS NOT NULL AND state = 'waiting'
+ORDER BY started_at, id
+FOR UPDATE;
+
+-- SetWorkHold は保留の付け外しと、その時点までの経過を保存する。
+-- name: SetWorkHold :exec
+UPDATE work_session SET state = @state, changed_at = @changed_at, active_ms = @active_ms,
+  waiting_ms = @waiting_ms, hold = sqlc.narg(hold), hold_ms = @hold_ms
+WHERE id = @id;

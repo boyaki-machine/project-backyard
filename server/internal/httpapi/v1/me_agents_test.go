@@ -51,6 +51,15 @@ type agentJSON struct {
 	IsActive     bool            `json:"is_active"`
 	CreatedAt    int64           `json:"created_at"`
 	Token        *agentTokenJSON `json:"token"`
+	OpenWorks    []struct {
+		TicketSeq   int    `json:"ticket_seq"`
+		TicketTitle string `json:"ticket_title"`
+	} `json:"open_works"`
+	Delegations []struct {
+		RootSeq int    `json:"root_seq"`
+		Role    string `json:"role"`
+		Status  string `json:"status"`
+	} `json:"delegations"`
 }
 
 type projectRefJSON struct {
@@ -208,6 +217,43 @@ func TestListMyAgentsShapesResponse(t *testing.T) {
 	// **平文が混ざっていないこと**（4.5.1 は token を返さない）。
 	if strings.Contains(rec.Body.String(), `"token":"pb_agt_`) {
 		t.Error("一覧に平文トークンが混ざっている")
+	}
+	// いまの仕事が無ければ、null ではなく空の配列（4.5.1）。
+	if !strings.Contains(rec.Body.String(), `"open_works":[]`) || !strings.Contains(rec.Body.String(), `"delegations":[]`) {
+		t.Errorf("open_works / delegations が空の配列でない（本文: %s）", rec.Body.String())
+	}
+}
+
+// TestListMyAgentsBusy は作業記録と委任を、エージェントごとに束ねて返す（4.5.1。pb-343）。
+func TestListMyAgentsBusy(t *testing.T) {
+	q := agentFake(t)
+	q.agentRows = []gen.ListMyAgentsRow{
+		{ActorID: "01AGENT0000000000000000001", DisplayName: "A", IsActive: true, ClientKind: "claude_code"},
+		{ActorID: "01AGENT0000000000000000002", DisplayName: "B", IsActive: true, ClientKind: "codex"},
+	}
+	q.agentOpenWorks = []gen.ListMyAgentsOpenWorksRow{
+		{ActorID: "01AGENT0000000000000000001", TicketSeq: 52, TicketTitle: "受付画面"},
+		{ActorID: "01AGENT0000000000000000001", TicketSeq: 53, TicketTitle: "演習"},
+	}
+	q.agentDelegs = []gen.ListMyAgentsDelegationsRow{
+		{ActorID: "01AGENT0000000000000000002", RootSeq: 226, Role: "evaluator", Status: "approved"},
+	}
+
+	rec := httptest.NewRecorder()
+	agentHandler(q).listMyAgents(rec, agentReq(http.MethodGet, "/me/agents", "", "", "", selfPrincipal()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200（本文: %s）", rec.Code, rec.Body.String())
+	}
+	var got agentListJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("応答を解釈できない: %v", err)
+	}
+	a, b := got.Items[0], got.Items[1]
+	if len(a.OpenWorks) != 2 || a.OpenWorks[0].TicketSeq != 52 || a.OpenWorks[1].TicketTitle != "演習" || len(a.Delegations) != 0 {
+		t.Errorf("A = %+v / %+v, want 作業記録 #52・#53、委任なし", a.OpenWorks, a.Delegations)
+	}
+	if len(b.OpenWorks) != 0 || len(b.Delegations) != 1 || b.Delegations[0].RootSeq != 226 || b.Delegations[0].Role != "evaluator" {
+		t.Errorf("B = %+v / %+v, want 作業記録なし、#226 の評価", b.OpenWorks, b.Delegations)
 	}
 }
 

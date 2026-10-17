@@ -85,20 +85,19 @@ func (h *handler) getWorkPolicy(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(e))
 		return
 	}
-	var openID *string
-	id, e := h.q.GetOpenWorkSession(ctx, gen.GetOpenWorkSessionParams{ProjectID: scope.projectID, ActorID: auth.PrincipalFromContext(ctx).ActorID})
-	if e == nil {
-		openID = &id
-	} else if !errors.Is(e, pgx.ErrNoRows) {
+	works, openID, openSeq, e := openWorksFor(ctx, h.q, scope.projectID, auth.PrincipalFromContext(ctx).ActorID, scope.seq)
+	if e != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(e))
 		return
 	}
 	WriteJSON(w, 200, struct {
 		Policy       workPolicy `json:"policy"`
 		OpenWorkID   *string    `json:"open_work_id"`
+		OpenWorkSeq  *int32     `json:"open_work_seq"`
+		OpenWorks    []openWork `json:"open_works"`
 		DocumentPath string     `json:"document_path"`
 		Section      string     `json:"section"`
-	}{p, openID, "project-management-note", "実績"})
+	}{p, openID, openSeq, works, "project-management-note", "実績"})
 }
 
 type changeMetrics struct {
@@ -323,19 +322,66 @@ func workMeasurementPermission(ctx context.Context, q gen.Querier, r *http.Reque
 type workContextView struct {
 	Policy     workPolicy `json:"policy"`
 	OpenWorkID *string    `json:"open_work_id"`
+	// OpenWorkSeq は開いている記録の開始元のチケット番号（pb-306）。
+	OpenWorkSeq *int32 `json:"open_work_seq"`
+	// OpenWorks は自分の開いている記録すべて（pb-344）。委任の main は木の中で複数開ける。
+	OpenWorks []openWork `json:"open_works"`
 }
 
-func getWorkContext(ctx context.Context, q gen.Querier, projectID, actorID string) (*workContextView, error) {
+// openWork は開いている記録と、その開始元のチケット番号。
+type openWork struct {
+	ID  string `json:"id"`
+	Seq int32  `json:"seq"`
+}
+
+func getWorkContext(ctx context.Context, q gen.Querier, projectID, actorID string, seq int32) (*workContextView, error) {
 	p, e := getWorkPolicy(ctx, q, projectID)
 	if e != nil {
 		return nil, e
 	}
 	out := &workContextView{Policy: p}
-	id, e := q.GetOpenWorkSession(ctx, gen.GetOpenWorkSessionParams{ProjectID: projectID, ActorID: actorID})
-	if e == nil {
-		out.OpenWorkID = &id
-	} else if !errors.Is(e, pgx.ErrNoRows) {
+	out.OpenWorks, out.OpenWorkID, out.OpenWorkSeq, e = openWorksFor(ctx, q, projectID, actorID, seq)
+	if e != nil {
 		return nil, e
 	}
 	return out, nil
+}
+
+// openWorksFor は自分の開いている記録をすべて返し、そのうち1件を代表に選ぶ。
+// 代表は、このチケットが開始元の記録、無ければ最も古い記録である（ApiDesign.md「共通作業タイマー」）。
+func openWorksFor(ctx context.Context, q gen.Querier, projectID, actorID string, seq int32) ([]openWork, *string, *int32, error) {
+	rows, e := q.ListOpenWorkSessionTickets(ctx, gen.ListOpenWorkSessionTicketsParams{ProjectID: projectID, ActorID: actorID})
+	if e != nil {
+		return nil, nil, nil, e
+	}
+	works := make([]openWork, 0, len(rows))
+	for _, r := range rows {
+		works = append(works, openWork{ID: r.ID, Seq: r.Seq})
+	}
+	if len(works) == 0 {
+		return works, nil, nil, nil
+	}
+	pick := works[0]
+	for _, w := range works {
+		if w.Seq == seq {
+			pick = w
+			break
+		}
+	}
+	return works, &pick.ID, &pick.Seq, nil
+}
+
+// parallelWorkAllowed は、承認済みの委任の main が、その木の中のチケットで記録を開こうと
+// しているかを返す（Design.md 8.5.7。pb-344）。真なら、開いている記録の制限は
+// 「PJ内1件」ではなく「開始元のチケットごとに1件」になる。
+func parallelWorkAllowed(ctx context.Context, q gen.Querier, projectID, actorID, ticketID string) (bool, error) {
+	d, in, e := findDelegationContainingTicket(ctx, q, projectID, ticketID)
+	if e != nil || !in {
+		return false, e
+	}
+	full, e := q.GetDelegationByID(ctx, d.ID)
+	if e != nil {
+		return false, e
+	}
+	return full.MainActorID == actorID && delegationGate(full.Status), nil
 }

@@ -36,6 +36,7 @@ import type { ActionItem } from '../components/UserActionsMenu.vue'
 import { clientKindLabel } from '../lib/agents'
 import type { AgentClientKind, AgentScopes } from '../api/me'
 import { formatDate, formatDateTime } from '../lib/datetime'
+import { useAuthStore } from '../stores/auth'
 
 /** 有効期限の選択肢（`GuiDesign.md` 5.8.1 と同じ3つ。値域は 1〜365） */
 const EXPIRY_CHOICES = [30, 90, 365] as const
@@ -57,6 +58,8 @@ const clientKinds = ref<AgentClientKind[]>([])
  * 既定を失ったトークンが出る——`scopes` は絶対指定である（4.5.3）。
  */
 const agentScopes = ref<AgentScopes | null>(null)
+/** 自律実行が無効なら「自律実行の評価を許す」を出さない（Delegation.md 1.3。pb-353） */
+const auth = useAuthStore()
 
 const items = ref<MyAgent[]>([])
 const loading = ref(false)
@@ -202,6 +205,9 @@ const allowDocEdit = ref(false)
 const allowActualPointEdit = ref(false)
 const allowPlanEdit = ref(false)
 const canAllowPlanEdit = computed(() => agentScopes.value?.grantable.includes('ticket.plan.edit') ?? false)
+/** 自律実行の評価（`delegation.evaluate`。`Delegation.md` 15章 D5）。評価エージェントに指定するものだけが持つ */
+const allowEvaluate = ref(false)
+const canAllowEvaluate = computed(() => agentScopes.value?.grantable.includes('delegation.evaluate') ?? false)
 
 /** 「追加の権限」を押せるか。既定が引けていて、足せるものに `doc.edit` があるとき */
 const canAllowDocEdit = computed(
@@ -236,6 +242,7 @@ function openIssue(agent: MyAgent) {
   allowDocEdit.value = false
   allowActualPointEdit.value = false
   allowPlanEdit.value = false
+  allowEvaluate.value = false
   issueError.value = null
 }
 
@@ -251,12 +258,13 @@ async function issueToken() {
     const scopes = agentScopes.value
     const token = await meApi.issueAgentToken(target.id, {
       expires_in_days: newExpiresInDays.value,
-      ...((allowDocEdit.value || allowActualPointEdit.value || allowPlanEdit.value) && scopes ? {
+      ...((allowDocEdit.value || allowActualPointEdit.value || allowPlanEdit.value || allowEvaluate.value) && scopes ? {
         scopes: [
           ...scopes.default,
           ...(allowDocEdit.value ? ['doc.edit'] : []),
           ...(allowActualPointEdit.value ? ['ticket.actual_point.edit'] : []),
           ...(allowPlanEdit.value ? ['ticket.plan.edit'] : []),
+          ...(allowEvaluate.value ? ['delegation.evaluate'] : []),
         ],
       } : {}),
     })
@@ -641,7 +649,7 @@ function subtitle(agent: MyAgent): string {
           <span v-else class="hint">{{ newExpiryDate }} {{ $ui('まで有効です。') }}</span>
         </fieldset>
 
-        <!-- **追加の権限は `doc.edit` と `ticket.actual_point.edit`**（4.5.3 の許可リスト。手順26a）。
+        <!-- **追加の権限は `doc.edit`・`ticket.actual_point.edit`・`ticket.plan.edit`・`delegation.evaluate`**（4.5.3 の許可リスト。手順26a・pb-288）。
              既定は外す——`Design.md` 6.5 が「載せるかはそのエージェントが誰に
              付いているかで決まる」と定めており、押さなければ既定のまま（4.5.9）になる。
              **既定が引けなかったら押せなくする**（`GuiDesign.md` 5.8.2）
@@ -660,7 +668,13 @@ function subtitle(agent: MyAgent): string {
             <input v-model="allowPlanEdit" type="checkbox" :disabled="issuing || !canAllowPlanEdit" />
             <span>{{ $ui('依存・順序・日程の変更を許す') }}</span>
           </label>
+          <!-- 自律実行が無効なら出さない（Delegation.md 1.3。pb-353） -->
+          <label v-if="auth.delegationEnabled" class="check">
+            <input v-model="allowEvaluate" type="checkbox" :disabled="issuing || !canAllowEvaluate" />
+            <span>{{ $ui('自律実行の評価を許す') }}</span>
+          </label>
           <span v-if="allowPlanEdit" class="hint">{{ $ui('承認した計画を反映するエージェントに追加します。') }}</span>
+          <span v-if="allowEvaluate" class="hint">{{ $ui('評価エージェントに指定するエージェントにだけ追加します。') }}</span>
           <span v-if="!canAllowDocEdit" class="detail">{{ $ui('既定の権限を読み込めなかったため、いまは選べません。画面を開き直してください。') }}</span>
           <span v-else-if="allowDocEdit" class="hint">{{ $ui('憲章を書き換えられるようになります。') }}</span>
         </fieldset>

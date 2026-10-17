@@ -15,10 +15,8 @@ package v1
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"strings"
@@ -324,9 +322,8 @@ func (h *handler) importCalendar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req importCalendarRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, calendarImportBodyMax)).Decode(&req); err != nil {
-		apierr.Write(w, r, apierr.New(apierr.BadRequest).
-			WithCause(fmt.Errorf("リクエスト本文を JSON として読めない: %w", err)))
+	if err := decodeBoundedJSON(r, &req, calendarImportBodyMax, false); err != nil {
+		apierr.Write(w, r, err)
 		return
 	}
 	icsDetail := func(code, msg string) {
