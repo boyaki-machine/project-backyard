@@ -240,7 +240,7 @@ func (h *handler) listAgentRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := usageParams(id, p, r.URL.Query())
-	total, err := h.q.CountAgentUsageRuns(r.Context(), gen.CountAgentUsageRunsParams{ProjectID: a.ProjectID, FromAt: a.FromAt, UntilAt: a.UntilAt, ClientKind: a.ClientKind, ModelName: a.ModelName, ModelVersion: a.ModelVersion})
+	total, err := h.q.CountAgentUsageRuns(r.Context(), gen.CountAgentUsageRunsParams(a))
 	if err != nil {
 		apierr.Write(w, r, apierr.New(apierr.InternalError).WithCause(err))
 		return

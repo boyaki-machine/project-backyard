@@ -18,6 +18,7 @@ design/            設計文書
 
 Development.md     開発環境ガイド ── 上記を実際に動かす手順（設計ではない）
 Testing.md         試験の設計と完了の基準（何をどこまで検証したら終わりか）
+Security.md        依存・コンテナ・秘密情報の検査と公開前の確認
 Delegation-Guide.md 自律実行の使い方（PM が画面とエージェントで回す手順）
 
 history/           開発の記録（いつ何を確定したか、何が問題だったか）
@@ -35,6 +36,7 @@ images/            README などに載せる画像
 | [Delegation.md](design/Delegation.md) | **自律実行（Delegated）。** 委任範囲・計画の版・評価エージェント・確認待ち・引き継ぎ。DB・API・画面にまたがる設計を1か所にまとめる |
 | [Development.md](Development.md) | **開発環境の立ち上げ・デバッグ手順。** 設計ではなく、実装済みの範囲を動かす手順 |
 | [Testing.md](Testing.md) | **試験の設計と完了の基準。** 層の使い分け・期待値の作り方・切り分け・あとしまつ |
+| [Security.md](Security.md) | 既知脆弱性、ビルドコンテキスト、Git履歴・配布物の公開前確認 |
 | [Delegation-Guide.md](Delegation-Guide.md) | **自律実行の使い方。** 準備・始め方・エージェントの呼び方・回っている間の対応・終え方。設計は `design/Delegation.md` |
 | [history/chronicle.md](history/chronicle.md) | 開発の記録。いつ何を確定したか、何が問題だったか |
 
@@ -57,7 +59,7 @@ images/            README などに載せる画像
 | **アプリケーション設定（設定の3層）** | **`Design.md` 10.3**、`DbDesign.md` 6.14、`ApiDesign.md` 11.1〜11.3、`GuiDesign.md` 5.12 |
 | **TLS 終端と証明書** | **`Design.md` 6.6.1**、`DbDesign.md` 6.15、`ApiDesign.md` 11.4〜11.6、`GuiDesign.md` 5.12.1 |
 | **バックアップと復元** | **`DbDesign.md` 9.1**、`ApiDesign.md` 11.11〜11.13、`GuiDesign.md` 5.12.2、`Design.md` 10.4（保守モード） |
-| **タイムライン（文化祭モード）** | **`GuiDesign.md` 5.15**、`DbDesign.md` 6.6.2・6.32、`ApiDesign.md` 9.2.7・9.17、`Design.md` 4.1（プラグイン）。方式の経緯は `Timeline.md`（方式案） |
+| **タイムライン（文化祭モード）** | **`GuiDesign.md` 5.15**、`DbDesign.md` 6.6.2・6.32、`ApiDesign.md` 9.2.7・9.17、`Design.md` 4.1（プラグイン） |
 | 画面・UI・配色 | `GuiDesign.md` |
 | 開発の進め方・実装順序 | `Design.md` 11章 |
 | ブランチ運用・バージョン番号 | `Design.md` 11.0〜11.1 |

@@ -3419,9 +3419,7 @@ func (q *fakeQuerier) ListPendingSettingChanges(
 ) ([]gen.ListPendingSettingChangesRow, error) {
 	out := make([]gen.ListPendingSettingChangesRow, 0, len(q.settings.expiredPending))
 	for _, r := range q.settings.expiredPending {
-		out = append(out, gen.ListPendingSettingChangesRow{
-			ID: r.ID, Previous: r.Previous, ExpiresAt: r.ExpiresAt,
-		})
+		out = append(out, gen.ListPendingSettingChangesRow(r))
 	}
 	return out, nil
 }

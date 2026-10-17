@@ -232,7 +232,6 @@ ProjectBackyard/
 │   │   ├── ApiDesign.md           ← REST API 設計
 │   │   ├── GuiDesign.md           ← GUI 設計
 │   │   ├── Delegation.md          ← 自律実行の設計（DB・API・画面にまたがる）
-│   │   ├── Timeline.md            ← タイムラインの方式案（分析の記録。正本は各設計書）
 │   │   └── openapi.yaml           ← 実装済みAPIの現状（ApiDesign.md 1.3）
 │   ├── Development.md             ← 開発環境の立ち上げ・デバッグ手順
 │   ├── Testing.md                 ← 試験の設計と完了の基準
@@ -313,10 +312,10 @@ ProjectBackyard/
 |---|---|
 | 接点は登録表だけ | ルート（`router/routes.ts`）・メニュー（`SideMenu.vue`）・入れ物（`TicketViewsPage.vue`・`lib/ticketViews.ts`・`AppShell.vue`）・プロジェクト設定の「表示するビュー」は、`plugins/registry.ts` を読んでプラグインを足す。プラグインの名前を本体のコードに書かない |
 | 使ってよいもの | 公開された REST（`openapi.yaml` から生成した型）、認証と選択中のプロジェクト、本体の部品（詳細ペインなど）。**本体のストアの中身に手を入れない** |
-| 読み込み | **ビルドに含め、ページは遅延読み込み**（`import()`）。**実行時に外部の JS を読み込む仕組みは作らない**——同じオリジンで読めばセッションと CSRF をそのまま使え、CSP（`script-src 'self'`）が守っていた「自分のコード以外は動かない」が崩れる（`Timeline.md` 5.9 の P3） |
+| 読み込み | **ビルドに含め、ページは遅延読み込み**（`import()`）。**実行時に外部の JS を読み込む仕組みは作らない**——同じオリジンで読めばセッションと CSRF をそのまま使え、CSP（`script-src 'self'`）が守っていた「自分のコード以外は動かない」が崩れる |
 | 出し分け | メニューに出すかはプロジェクトの `settings.views`（`DbDesign.md` 6.4）。権限の境界ではない |
 
-**将来、別に配布できるよう準備する**のが目的で（`Timeline.md` 7.1 の T16）、登録表の形がその切れ目になる。外部配布の仕組み（版の照合・隔離・署名）は、要望が実際に出てから設計する。
+**将来、別に配布できるよう準備する**のが目的で、登録表の形がその切れ目になる。外部配布の仕組み（版の照合・隔離・署名）は、要望が実際に出てから設計する。
 
 ## 4.2 client と server を分けたまま単一プロセスで動かす
 
@@ -446,7 +445,7 @@ out/
 | `OUT` | 出力先 | 省略すると `dist/pb-v<版>-<TARGET>-<OS>-<ARCH>` |
 | `PUSH` | docker / compose / k8s だけ。イメージを tar に出す代わりに、このレジストリへ送る | — |
 
-**CPU は 64bit の2種だけを受ける**。`386`・`armv7` など 32bit を名指しする値は、理由を出して止まる。DB の公開イメージ（`pgvector/pgvector:pg17`）も amd64 / arm64 しか無い。
+**CPU は 64bit の2種だけを受ける**。`386`・`armv7` など 32bit を名指しする値は、理由を出して止まる。DB用イメージもPostgreSQL17＋pgvectorを維持し、同じ2種類へビルドする（`DbDesign.md` 3.1）。
 
 **PB が動く OS / CPU と、ZIP を受け取るエージェントの端末は別である。** `make build`、stg と
 native の一式、コンテナイメージには `darwin/arm64`、`windows/amd64`、`windows/arm64`、
@@ -496,8 +495,8 @@ native の一式、コンテナイメージには `darwin/arm64`、`windows/amd6
 
 | | compose | docker |
 |---|---|---|
-| イメージ | `project-backyard-<版>-linux-<CPU>.tar`（`PUSH` のときは無し） | 同じ |
-| 起動 | `compose.yaml`（db＝公開イメージ `pgvector/pgvector:pg17`・migrate・app） | `run.sh`（`docker run` の例） |
+| イメージ | `project-backyard-<版>-linux-<CPU>.tar` と `project-backyard-db-<版>-linux-<CPU>.tar`（`PUSH` のときは無し） | PB本体のtarのみ |
+| 起動 | `compose.yaml`（PB用DBイメージ・migrate・app） | `run.sh`（`docker run` の例） |
 | スキーマ | compose の migrate サービス（同じイメージの `/goose`。起動のたびに走る） | `migrate.sh`（同じイメージの `/goose`） |
 | 秘密 | `init.sh` が乱数で作る | 見本を複製して手で書く |
 | DB | 同梱の DB サービス。**外部の PostgreSQL へ繋ぐ手順を `compose.yaml` にコメントで併記** | 用意済みの PostgreSQL（`create-roles.sql`） |
@@ -513,13 +512,16 @@ native の一式、コンテナイメージには `darwin/arm64`、`windows/amd6
 | **イメージに `ENV PB_BIND=0.0.0.0:8080` を持たせる** | **PB の既定値は `127.0.0.1:8080` である**。コンテナの中で 127.0.0.1 に閉じると、公開範囲を決めるはずの `-p` や `ports` を通っても外から届かない。**画面の「待受アドレス」は環境変数で固定になる** |
 | **`make up` は db だけのまま** | dev は PB 本体を `make run` でホストから動かす。app のコンテナまで上げると 8080 番でぶつかる（`Development.md` 2.2） |
 
+**DBイメージの更新は `deploy/Dockerfile.db` が担う**（`DbDesign.md` 3.1）。compose・k8sではPBとDBを別々のtarで配る。`PUSH=<レジストリ>/<名前>:<タグ>` を指定した場合、PBは指定どおり、DBは同じ参照に `-db` を付けたタグへ送る（例：`registry.example.com/pb:4.52.299-db`）。両方の参照を雛形へ埋め込む。docker単体とnativeは外部DBを使う。
+
 #### k8s の一式
 
-**イメージは docker / compose と同じもの**で、マニフェストと Secret の雛形を添える。**DB は試すためのサンプルで、運用では CloudNativePG か外部の PostgreSQL を使う**（`DbDesign.md` 3.3）。
+**PB本体とDBのイメージはcomposeと同じもの**で、マニフェストと Secret の雛形を添える。**DB は試すためのサンプルで、運用では CloudNativePG か外部の PostgreSQL を使う**（`DbDesign.md` 3.3）。
 
 ```
 <OUT>/
-├── project-backyard-<版>-linux-<CPU>.tar   イメージ（PUSH のときは無し）
+├── project-backyard-<版>-linux-<CPU>.tar   PBイメージ（PUSH のときは無し）
+├── project-backyard-db-<版>-linux-<CPU>.tar DBイメージ（PUSH のときは無し）
 ├── k8s/
 │   ├── app.yaml          ConfigMap（pb.yaml）・Deployment（initContainer で migrate）・Service
 │   └── db.yaml           試すための DB：ConfigMap（ロール作成）・headless Service・StatefulSet（PVC 付き）

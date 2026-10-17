@@ -82,7 +82,7 @@ func TestRunDecodesServerSentEventResponses(t *testing.T) {
 		// 進捗通知（idなし）に続けて、本来の応答が別イベントで届く。
 		_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}\n\n"))
 		_, _ = w.Write([]byte(": ok\n\n"))
-		_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n\n"))
+		_, _ = w.Write([]byte("event: message\r\ndata: {\r\ndata: \"jsonrpc\":\"2.0\",\"id\":1,\r\ndata: \"result\":{\"ok\":true}}\r\n\r\n"))
 	}))
 	defer server.Close()
 
@@ -128,6 +128,15 @@ func TestDecodeMessages(t *testing.T) {
 		{"SSEはイベントごとに1件", "text/event-stream",
 			"event: message\ndata: {\"a\":1}\n\nevent: message\ndata: {\"b\":2}\n\n",
 			[]string{`{"a":1}`, `{"b":2}`}},
+		{"SSEのCRLFでもイベントを分ける", "text/event-stream",
+			"data: {\"a\":1}\r\n\r\ndata: {\"b\":2}\r\n\r\n",
+			[]string{`{"a":1}`, `{"b":2}`}},
+		{"SSEのCRでもイベントを分ける", "text/event-stream",
+			"data: {\"a\":1}\r\rdata: {\"b\":2}\r\r",
+			[]string{`{"a":1}`, `{"b":2}`}},
+		{"SSEのdataは先頭の空白1つだけを除く", "text/event-stream",
+			"data:   first  \ndata: second\n\n",
+			[]string{"  first  \nsecond"}},
 		{"SSEのコメント行は無視する", "text/event-stream", ": ok\n\nevent: message\ndata: {\"a\":1}\n\n",
 			[]string{`{"a":1}`}},
 		{"本文が空なら0件", "application/json", "", nil},

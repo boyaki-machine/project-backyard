@@ -219,6 +219,7 @@ build_native() {
 # ── docker / compose ・k8s─────────────────
 # build_image はイメージを作り、一式の雛形に埋める参照を image_ref に入れる。
 image_ref=""
+db_image_ref=""
 build_image() {
 	echo "==> コンテナイメージを作る（v${version}、linux/${arch}）"
 	# **ビルドはイメージの中で行う**（deploy/Dockerfile）。この端末に Go と Node は要らない。
@@ -238,16 +239,33 @@ build_image() {
 	fi
 }
 
+# compose/k8sはDBイメージも配る。docker単体は外部DBを使う。
+build_db_image() {
+    echo "==> PB用DBイメージを作る（PostgreSQL17＋pgvector、linux/${arch}）"
+    if [ -n "${push}" ]; then
+        db_image_ref="${push}-db"
+        docker buildx build --platform "linux/${arch}" --pull --no-cache-filter db \
+            -f "${repo_root}/deploy/Dockerfile.db" --build-arg "VERSION=${version}" \
+            --tag "${db_image_ref}" --push "${repo_root}"
+    else
+        db_image_ref="project-backyard-db:${version}"
+        docker buildx build --platform "linux/${arch}" --pull --no-cache-filter db \
+            -f "${repo_root}/deploy/Dockerfile.db" --build-arg "VERSION=${version}" \
+            --output "type=docker,dest=${out}/project-backyard-db-${version}-linux-${arch}.tar,name=${db_image_ref}" \
+            "${repo_root}"
+    fi
+}
+
 # fill_image は雛形の __PB_IMAGE__ をイメージの参照に置き換えて書き出す。
 fill_image() {
-	sed "s|__PB_IMAGE__|${image_ref}|g" "$1" >"$2"
+	sed -e "s|__PB_IMAGE__|${image_ref}|g" -e "s|__PB_DB_IMAGE__|${db_image_ref}|g" "$1" >"$2"
 }
 
 # fill_initdb は db.yaml の __INITDB_ROLES_SH__ の行を、ロール作成のスクリプトで置き換える。
 # **正本は deploy/base/initdb/01_roles.sh**（DbDesign.md 3.4）で、ConfigMap のブロックへ4桁下げて埋める。
 # 空行は字下げしない（YAML のブロックでは、空行の字下げは意味を持たない）。
 fill_initdb() {
-	awk -v script="${repo_root}/deploy/base/initdb/01_roles.sh" '
+	awk -v script="${repo_root}/deploy/base/initdb/01_roles.sh" -v db_image="${db_image_ref}" '
 		/^__INITDB_ROLES_SH__$/ {
 			while ((getline line < script) > 0) {
 				if (line == "") print ""; else print "    " line
@@ -255,12 +273,13 @@ fill_initdb() {
 			close(script)
 			next
 		}
-		{ print }
+		{ gsub(/__PB_DB_IMAGE__/, db_image); print }
 	' "$1" >"$2"
 }
 
 build_container() {
 	build_image
+	case "${target}" in compose | k8s) build_db_image ;; esac
 
 	echo
 	echo "==> 雛形を置く（TARGET=${target}）"

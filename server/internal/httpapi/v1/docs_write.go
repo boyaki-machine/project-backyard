@@ -34,9 +34,6 @@ import (
 const (
 	docTitleMaxLen        = 200
 	docChangeReasonMaxLen = 200
-
-	// docSortOrderStep は sort_order 省略時の刻み幅（10.4 / 8.1.2）。
-	docSortOrderStep = 10
 )
 
 // docSlugPattern は DbDesign.md 8.1.1 の CHECK と同じ式である。

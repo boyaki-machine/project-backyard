@@ -10,10 +10,8 @@
 package v1
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -216,23 +214,6 @@ func (h *handler) revokeUserSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// decodeOptionalJSON は本文を読むが、**空の本文を誤りとしない**。
-//
-// 6.6 は2項目とも既定を持つため（mode=generate / must_change_password=true）、
-// `{}` と本文なしを区別する理由が無い。decodeJSON はどちらも通せない——
-// 本文が無いと Decode が io.EOF を返し、400 になってしまう。
-//
-// **Content-Length では判定しない。** chunked 転送では -1 になり、
-// 「本文が無い」と「長さが分からない」を取り違える。
-func decodeOptionalJSON(r *http.Request, dst any) *apierr.Error {
-	body := io.LimitReader(r.Body, maxRequestBodyBytes)
-	if err := json.NewDecoder(body).Decode(dst); err != nil && !errors.Is(err, io.EOF) {
-		return apierr.New(apierr.BadRequest).
-			WithCause(fmt.Errorf("リクエスト本文を JSON として読めない: %w", err))
-	}
-	return nil
 }
 
 // validatePasswordReset は 6.6 の mode を検証する。

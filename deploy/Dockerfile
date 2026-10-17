@@ -17,7 +17,7 @@
 # /healthcheck を叩くコマンドが無く、叩き役も足さない。健全かは外から /healthcheck を見る。
 
 # ── 1. client ─────────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM node:24.14.0-bookworm-slim AS client
+FROM --platform=$BUILDPLATFORM node:24.22.0-bookworm-slim AS client
 WORKDIR /src/client
 # 依存の取得を先に1層にする。package-lock.json が変わらなければ再利用される。
 COPY client/package.json client/package-lock.json ./

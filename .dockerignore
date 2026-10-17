@@ -10,6 +10,8 @@
 !client/
 !server/
 !deploy/
+# deploy はこのスクリプトだけを送る。親の再包含は子孫にも及ぶため、先に除く。
+deploy/**
 !deploy/build-bridges.sh
 
 # 許したディレクトリの中でも送らないもの（イメージの中で作り直す）
@@ -18,3 +20,15 @@ client/dist/
 server/internal/webui/dist/*
 !server/internal/webui/dist/placeholder.html
 **/.DS_Store
+
+# 許可したソースの下でも、端末の秘密・接続設定は送らない。
+**/.env
+**/.env.*
+**/.envrc
+**/secrets/**
+**/*.pem
+**/*.key
+**/*.p12
+**/.mcp.json
+**/.codex/**
+**/LEARNINGS*.md

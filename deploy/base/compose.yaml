@@ -8,7 +8,10 @@ name: project-backyard
 
 services:
   db:
-    image: pgvector/pgvector:pg17
+    image: project-backyard-db:dev
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile.db
     restart: unless-stopped
     environment:
       POSTGRES_DB: pb

@@ -149,15 +149,6 @@ func validateStopConditionsJSON(raw json.RawMessage, field string) []apierr.Deta
 	return nil
 }
 
-// stopConditionsOf は scope から止まる条件を読む（読めなければ空）。
-func stopConditionsOf(scope []byte) []string {
-	var s struct {
-		StopConditions []string `json:"stop_conditions"`
-	}
-	_ = json.Unmarshal(scope, &s)
-	return s.StopConditions
-}
-
 // validateScopeBudget は scope.budget の形を確かめる。field は detail の名前の
 // 接頭辞（"scope" / "budget"）。budget が無ければ何も言わない。
 func validateScopeBudget(scope []byte, field string) []apierr.Detail {

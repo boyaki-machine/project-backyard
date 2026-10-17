@@ -43,8 +43,6 @@ func (q *tokenQuerier) TouchAccessTokenLastUsed(_ context.Context, id string) er
 	return q.touchErr
 }
 
-func ts(t time.Time) time.Time { return t }
-
 // tsp は NULL 可能な timestamptz 列（*time.Time）に入れる値。
 func tsp(t time.Time) *time.Time { return &t }
 

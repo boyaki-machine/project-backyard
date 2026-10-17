@@ -180,7 +180,9 @@ func TestAccessLogImplicit200(t *testing.T) {
 // サーバ全体の WriteTimeout で切れる。
 func TestAccessLogPassesFlushAndDeadline(t *testing.T) {
 	var flushErr, deadlineErr error
+	done := make(chan struct{})
 	h := AccessLog()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
 		rc := http.NewResponseController(w)
 		_, _ = w.Write([]byte("data: 1\n\n"))
 		flushErr = rc.Flush()
@@ -194,6 +196,7 @@ func TestAccessLogPassesFlushAndDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = res.Body.Close()
+	<-done // Flush後も続くハンドラの結果を、完了してから読む。
 
 	if flushErr != nil {
 		t.Errorf("Flush が包みを通らない: %v", flushErr)

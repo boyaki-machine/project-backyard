@@ -59,7 +59,7 @@ PB は、アジャイル・ウォーターフォールのどちらの進め方�
 | 原則 | 意味 |
 |---|---|
 | **PB はエージェントを起動しない** | PB は情報とルールを渡す側に徹します。エージェントのほうから PB に接続してきます |
-| **リポジトリには手順だけを置く** | チケットの本文・設計情報・履歴は、エージェントが作業するときに MCP で取りに来ます。配った内容が古くなることがありません |
+| **リポジトリには手順だけを置く** | チケットの本文・プロジェクトの規約・判断の記録は、作業時に MCP で取得します。ソフトウェア自体の設計書と開発手順は、このリポジトリで管理します |
 | **AI は提案し、人が確定する** | エージェントの作業結果は、プロジェクトの知識として残す前に人が承認します |
 
 ### AI エージェントとの連携
@@ -77,7 +77,7 @@ PB は、アジャイル・ウォーターフォールのどちらの進め方�
 - **常時接続（WebSocket など）を持ちません。** 画面の更新は、間隔を置いた問い合わせで取ります
 
 ### 開発者より
-本リポジトリはプロジェクトマネジメントを行うツールとして、Web API・WebアプリケーションからなるシステムProject Backyard(PB)を開発しています。PBは、個人から数人で行う小規模プロジェクトをターゲットとして、PC上でも軽量に動作することを目指しています。（開発者はM1 MacBook Pro上で、Rancher Desktopによる動作確認をしています）また、AI Agentを積極的に利用できるよう、様々な機能を試行実装しています。このアプリケーション自体がPBを使い、全てAI Agent（Claude CodeとCodex）によって実装されています。開発者が実際に書いたのはこの文章のみです。自己責任でご利用ください。
+本リポジトリはプロジェクトマネジメントを行うツールとして、Web API・WebアプリケーションからなるシステムProject Backyard(PB)を開発しています。PBは、個人から数人で行う小規模プロジェクトをターゲットとして、PC上でも軽量に動作することを目指しています。また、AI Agentを積極的に利用できるよう、様々な機能を試行実装しています。このアプリケーション自体がPBを使い、全てAI Agent（Claude CodeとCodex）によって実装されています。開発者が実際に書いたのはこの文章のみです。自己責任でご利用ください。
 
 ---
 
@@ -92,7 +92,8 @@ PB は、アジャイル・ウォーターフォールのどちらの進め方�
 | **プロジェクト文書** | 規約・価値観・判断の記録などを Markdown で書き、全員とエージェントで共有する |
 | **AI エージェント** | MCP サーバ、エージェントの登録と資格情報の発行、リポジトリへ置く設定ファイルの生成、コンテキストパック、完了レポート |
 | **認証** | パスワード、多要素認証（認証アプリ）、パスキー、API トークン |
-| **管理** | ユーザー管理、アプリケーション設定、TLS 証明書、DB のバックアップと復元 |
+| **管理** | ユーザー管理、アプリケーション設定、TLS 証明書、DB のバックアップと復元、監査ログとCSV出力 |
+| **通知・自律実行** | 自分宛ての通知、計画・評価・確認待ちを通じたエージェントへの作業委任 |
 | **表示言語** | 日本語・英語（利用者ごとに切り替え） |
 
 ### 準備中の機能
@@ -101,7 +102,6 @@ PB は、アジャイル・ウォーターフォールのどちらの進め方�
 
 - カンバンボード
 - 承認キュー、プロジェクトメモリ、進捗分析、プロジェクトのヒストリー
-- 監査ログ、システム管理
 
 機能ごとの仕様は [docs/design/Requirements.md](docs/design/Requirements.md)（要件）と [docs/design/GuiDesign.md](docs/design/GuiDesign.md)（画面）にあります。
 
@@ -120,7 +120,7 @@ cd ProjectBackyard
 make release TARGET=compose ARCH=arm64
 
 cd dist/pb-v*-compose-linux-arm64
-docker load -i project-backyard-*.tar   # イメージを取り込む
+for image in project-backyard-*.tar; do docker load -i "$image"; done  # PBとDBを取り込む
 ./init.sh                               # DB のパスワードなどを乱数で作る（最初の1回だけ）
 docker compose up -d                    # DB → スキーマ作成 → PB の順に起動する
 docker compose run --rm app admin create   # 初期管理者を作る（最初の1回だけ）
@@ -145,12 +145,12 @@ docker compose run --rm app admin create   # 初期管理者を作る（最初�
 | CPU | 64bit の amd64 または arm64 |
 | OS（native） | macOS / Linux / Windows。**Windows 向けの一式は、まだ実機で動かしていません** |
 | コンテナ | Docker（compose を含む）、または Kubernetes |
-| DB | **PostgreSQL 17**。拡張 `pgcrypto`・`citext`・`pg_trgm` と、**ICU** が使えること。公式イメージ `postgres:17` で動作を確かめています |
+| DB | **PostgreSQL 17**。拡張 `pgcrypto`・`citext`・`pg_trgm` と、**ICU** が使えること。配布構成はPostgreSQL 17＋pgvectorのPB用DBイメージを使います |
 | 一式を作る端末 | native：Go と Node.js（[docs/Development.md](docs/Development.md) 1章）。コンテナ：Docker（buildx）だけ |
 
 ### 運用形態を選ぶ
 
-**どの形でも、PB の配布物に DB は入っていません。** compose と Kubernetes のサンプルは、起動時に公開イメージの PostgreSQL を取りに行きます。
+**compose・Kubernetes向けにはPB用DBイメージも同梱します。** 上流の `pgvector/pgvector:pg17` に提供済みの更新を適用したものです。native・docker単体では、用意済みのPostgreSQLへ接続します。
 
 | 形 | 向いている使い方 | DB | マニュアル |
 |---|---|---|---|
@@ -298,7 +298,7 @@ PB は、次のオープンソースソフトウェアの上に成り立って�
 | [DOMPurify](https://github.com/cure53/DOMPurify) | 表示する HTML の無害化 | MPL-2.0 または Apache-2.0 |
 | [node-qrcode](https://github.com/soldair/node-qrcode) | 多要素認証の QR コード | MIT |
 
-**実行環境**：[PostgreSQL](https://www.postgresql.org/)（PostgreSQL License）。compose と Kubernetes のサンプルは、公開イメージ `pgvector/pgvector:pg17` を使います。
+**実行環境**：[PostgreSQL](https://www.postgresql.org/)（PostgreSQL License）。composeとKubernetes向けのPB用DBイメージは `pgvector/pgvector:pg17` を基に作ります。再ビルドしたgosuとGo依存のライセンス表示は `/usr/share/doc/pb-db/` にあります。
 
 ---
 
@@ -339,3 +339,5 @@ make test
 
 PB 自身の開発も PB で管理しており、実装は AI エージェント（Claude Code と Codex）が行っています。
 [CLAUDE.md](CLAUDE.md) と [AGENTS.md](AGENTS.md) は、そのエージェントが読む取扱説明です。
+
+セキュリティの検査と公開前の確認手順は [docs/Security.md](docs/Security.md) にあります。
