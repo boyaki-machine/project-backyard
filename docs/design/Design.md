@@ -767,7 +767,7 @@ type VerifiedIdentity struct {
 
 **非管理者のシステムロールにはプロジェクトの書き込み権限を与えない。** 和集合で計算するため、`operator` に書き込み権限があると `project_viewer` の「閲覧のみ」が成立しない。`administrator` はインスタンス全体を管理する例外として全権限を持つ。現在の `operator` の割り当ては `DbDesign.md` 6.20 のマイグレーションで閲覧権限に絞る。
 
-**スコープの語彙は権限カタログのキーそのものである**（6.4.2。32件。`ApiDesign.md` 4.4.2）。上の積は権限キーどうしの完全一致で取るため、別の語彙を混ぜると、絞ったつもりのトークンが権限0件になるか、解釈できない語彙を通して逆に広がるかのどちらかになる。**空配列は「絞り込みなし」であって「権限0件」ではない。**
+**スコープの語彙は権限カタログのキーそのものである**（6.4.2。38件。`ApiDesign.md` 4.4.2）。上の積は権限キーどうしの完全一致で取るため、別の語彙を混ぜると、絞ったつもりのトークンが権限0件になるか、解釈できない語彙を通して逆に広がるかのどちらかになる。**空配列は「絞り込みなし」であって「権限0件」ではない。**
 
 **エージェントの既定スコープもこの語彙で書く**（6.5）。別の語彙で発行すると、実効権限が0件になる。
 
@@ -775,11 +775,11 @@ type VerifiedIdentity struct {
 
 ### 6.4.2 権限カタログ
 
-権限は36件のカタログとしてデータで定義する（原則5）。用途別の権限キーを以下に示す。登録内容とロールへの割り当ては `DbDesign.md` 7章・8.1.4・6.12.1・6.13・6.24 に従う。
+権限は38件のカタログとしてデータで定義する（原則5）。用途別の権限キーを以下に示す。登録内容とロールへの割り当ては `DbDesign.md` 7章・8.1.4・6.12.1・6.13・6.24 に従う。
 
 | カテゴリ | 権限キー |
 |---|---|
-| project | `project.view` `project.create` `project.edit` `project.archive` |
+| project | `project.view` `project.create` `project.edit` `project.archive` `project.delete` |
 | ticket | `ticket.view` `ticket.create` `ticket.edit` `ticket.transition` `ticket.close` `ticket.assign` `ticket.delete` `ticket.reference.edit` `ticket.self_edit` `ticket.actual_point.edit` `ticket.plan.edit` |
 | comment | `comment.create` `comment.edit_own` `comment.delete_any` |
 | doc | `doc.view` `doc.edit` |

@@ -293,7 +293,7 @@ MCP の層はツールの実行中に受けた応答にこのヘッダがあれ�
 
 `login.success` / `login.failure` / `logout` / `password.change` / `password.reset` /
 `token.issue` / `token.revoke` / `session.revoke` / `user.create` / `user.update` /
-`user.delete` / `role.change` / `project.create` / `project.update` / `project.archive` / `permission.denied` /
+`user.delete` / `role.change` / `project.create` / `project.update` / `project.archive` / `project.delete` / `permission.denied` /
 `agent.register` / `agent.update` / `agent.delete` / `setting.update` /
 `tls.certificate.upload` / `tls.certificate.delete` / `mfa.register` / `mfa.unregister` /
 `mfa.recovery_codes.regenerate` / `mfa.reset` / `login.mfa_failure` /
@@ -309,6 +309,8 @@ MCP の層はツールの実行中に受けた応答にこのヘッダがあれ�
 収まらないため記録する。
 
 **`project.update`**（5.5）。プロジェクト本体の名前・説明・タイムゾーン・設定JSONが実際に変わったときに1行記録する。`detail.key` にプロジェクトキー、`detail.changed_fields` に変更した項目名を入れる。設定JSONと説明の値は長期保存される監査記録に複製しない。作成とアーカイブは従来どおり `project.create` / `project.archive` とする。
+
+**`project.delete`**（5.6.1）。プロジェクトの物理削除。**消えたプロジェクトの記録はこの1行しか残らない**ので、`detail` にキー・名前・消えたチケットの件数を入れる。
 
 **`tls.certificate.*`**（11.5 / 11.6）。**`detail` には指紋・`common_name`・
 有効期間を入れ、PEM と秘密鍵は入れない**——`audit_log` は長期保存される記録である。
@@ -805,7 +807,7 @@ CLI・スクリプトから API を呼ぶための Bearer トークンを、本�
 
 #### スコープの語彙は権限キーである
 
-**`scopes[]` に入るのは権限カタログのキー**（`ticket.view` / `user.manage` 等。32件。
+**`scopes[]` に入るのは権限カタログのキー**（`ticket.view` / `user.manage` 等。38件。
 `Design.md` 6.4.2、`DbDesign.md` 7.2 のシードが正本）。カタログに無い値は `422`。
 
 `Design.md` 6.4.1 の実効権限は
@@ -2098,7 +2100,7 @@ GET /api/v1/projects/check-key?key=my-app
 
 **必要権限**：`project.archive`
 
-`status` を切り替える。**物理削除のAPIは提供しない。** チケット・コメント・監査記録を巻き込むため、必要になった時点で「削除の確認方法」と併せて設計する。
+`status` を切り替える。**物理削除は 5.6.1 の別の口であり、アーカイブを経てからでないと消せない。**
 
 | | archive | unarchive |
 |---|---|---|
@@ -2114,6 +2116,44 @@ GET /api/v1/projects/check-key?key=my-app
 
 `If-Match` は要求しない（2.8）。**監査ログは archive / unarchive のどちらも `project.archive`
 として記録し**（2.10 のカタログにこの1つしかない）、`detail` に遷移後の `status` を入れて区別する。
+
+### 5.6.1 `DELETE /api/v1/projects/:key`
+
+**必要権限**：`project.delete`（**`administrator` だけが持つ**。`DbDesign.md` 7.2）
+
+プロジェクトを物理削除する。**取り消せない。** チケット・コメント・文書・スプリント・タグ・暦・
+作業記録・通知・委任など、プロジェクトに属する行はすべて消える。
+
+```json
+{ "confirm_key": "my-app" }
+```
+
+| 条件 | 応答 |
+|---|---|
+| 削除できた | `204 No Content` |
+| `confirm_key` が無い、またはプロジェクトキーと一致しない | `422 validation_failed`（`details[].field` は `confirm_key`） |
+| `status` が `archived` でない | `409 conflict`。「アーカイブしてから削除してください」 |
+
+**確認の文字列をサーバでも照合する。** 画面の確認（`GuiDesign.md` 6.3）だけに頼ると、
+誤ったスクリプトや再送が1回の `DELETE` で全部を消せてしまう。**キーを本文に書かせるのは、
+消す相手を呼び出し側に名指しさせるため**である（URL のキーと一致しなければ消さない）。
+
+**アーカイブ済みに限るのは、削除を2段にするため**である。稼働中のプロジェクトを1回の操作で
+消せないようにし、アーカイブしたまま見返す期間（`GuiDesign.md` 5.2「アーカイブプロジェクトも表示」）を
+挟ませる。
+
+**消えるものは `ON DELETE CASCADE` に任せる**（`DbDesign.md` 6.4 ほか。`project_id` を持つ表は
+すべてこの指定である）。**そのプロジェクトに紐づくエージェント**（`agent.project_id`）は
+`agent` 行が連鎖で消えるので、**残る `actor` 行も同じトランザクションで消す**（4.5.4 の
+エージェント削除と同じく、実体の無いアクターを残さない）。**監査ログは残る**——`audit_log` は
+`project` への外部キーを持たない（`DbDesign.md` 6.8）。
+
+**監査は `project.delete` として記録する**（2.10）。`target_id` はプロジェクトの ID、`detail` に
+`key`・`name`・`ticket_count`（消えたチケットの件数）を入れる。**削除と同じトランザクションで書く**——
+記録だけが残って削除が戻る、またはその逆を作らない。
+
+`If-Match` は要求しない（2.8）。**エージェントは呼べない**——`project.delete` はエージェント用トークンの
+許可リスト（4.5.3）に無く、MCP のツールも無い。
 
 ---
 

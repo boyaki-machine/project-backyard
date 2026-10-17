@@ -2103,6 +2103,57 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [projects]
+      summary: プロジェクトの物理削除
+      operationId: deleteProject
+      description: |
+        プロジェクトと、それに属する行をすべて消す（ApiDesign.md 5.6.1）。**取り消せない。**
+        必要権限は `project.delete`（`administrator` だけが持つ）。
+
+        **アーカイブ済みのときだけ消せる**（そうでなければ 409）。本文の `confirm_key` が
+        URL のプロジェクトキーと一致しなければ 422（`details[].field` が `confirm_key`）。
+
+        監査は `project.delete` として、削除と同じトランザクションで記録する。
+        **監査ログは消えない。** `If-Match` は要求しない。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteProjectRequest'
+      responses:
+        '204':
+          description: 削除した。
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            権限不足（`forbidden`）または CSRF トークンの不一致（`csrf_failed`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: プロジェクトが存在しない、または到達できない（`not_found`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: プロジェクトがアーカイブされていない（`conflict`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/v1/projects/{key}/archive:
     parameters:
@@ -10188,6 +10239,16 @@ components:
           enum: [simple, with_review, with_approval]
           default: simple
 
+    DeleteProjectRequest:
+      type: object
+      additionalProperties: false
+      required: [confirm_key]
+      description: 確認のため、消すプロジェクトのキーを書かせる（ApiDesign.md 5.6.1）。
+      properties:
+        confirm_key:
+          type: string
+          description: URL のプロジェクトキーと完全に一致させる。
+          example: my-app
     UpdateProjectRequest:
       description: |
         `PATCH /projects/:key` の本文（ApiDesign.md 5.5）。**送られたフィールドだけを

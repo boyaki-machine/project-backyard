@@ -121,6 +121,18 @@ export function unarchiveProject(key: string): Promise<ProjectDetail> {
 }
 
 /**
+ * 物理削除（`ApiDesign.md` 5.6.1）。必要権限は `project.delete`（administrator だけ）。
+ *
+ * **アーカイブ済みのときだけ消せる**（そうでなければ 409）。`confirm_key` に
+ * プロジェクトキーを入れて送り、サーバでも照合される（一致しなければ 422）。
+ */
+export function deleteProject(key: string, confirmKey: string): Promise<void> {
+  return api.del<void>(`/projects/${encodeURIComponent(key)}`, undefined, {
+    confirm_key: confirmKey,
+  })
+}
+
+/**
  * `project.settings` の `repositories`（`DbDesign.md` 6.4）。
  *
  * **`settings` に定義する2つのキーの1つ**である（もう1つは `gantt_snap_minutes`）。PBがこのURLを使って

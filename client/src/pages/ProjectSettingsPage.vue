@@ -20,6 +20,7 @@ import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } fr
 import { useRoute, useRouter } from 'vue-router'
 
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import DeleteProjectDialog from '../components/DeleteProjectDialog.vue'
 import Modal from '../components/Modal.vue'
 import * as usersApi from '../api/users'
 import Avatar from '../components/Avatar.vue'
@@ -859,6 +860,44 @@ async function runArchiveToggle(): Promise<void> {
   }
 }
 
+// ── 削除（5.9.3 / 6.3。`ApiDesign.md` 5.6.1）──────────────────────
+/** `project.delete` を持つか（administrator だけ。`DbDesign.md` 7.2）。持たなければブロックごと出さない */
+const canDelete = computed(() => current.value?.my_permissions.includes('project.delete') ?? false)
+const deleteOpen = ref(false)
+const deleting = ref(false)
+const deleteError = ref<ApiError | null>(null)
+
+function openDelete(): void {
+  deleteError.value = null
+  deleteOpen.value = true
+}
+
+/**
+ * 消したら一覧へ移る。**`GET /me` を取り直す**——メニューのプロジェクト切替（4.4）から
+ * 消すため。失敗しても移動は続ける（次のリロードで揃う）。
+ */
+async function runDelete(typed: string): Promise<void> {
+  const p = current.value
+  if (p === null) return
+  deleting.value = true
+  deleteError.value = null
+  try {
+    await projectsApi.deleteProject(p.key, typed.trim())
+  } catch (e: unknown) {
+    deleteError.value = toApiError(e)
+    deleting.value = false
+    return
+  }
+  try {
+    await auth.refresh()
+  } catch {
+    // メニューの表示が古くなるだけで、削除そのものは済んでいる
+  }
+  deleting.value = false
+  deleteOpen.value = false
+  await router.replace('/projects')
+}
+
 // ── メンバータブ（5.9.2）─────────────────────────────────────
 //
 // ロールの表示名は `GET /roles?scope=project` から取る（`ApiDesign.md` 7.1）。
@@ -1136,6 +1175,24 @@ function roleLabel(role: string): string {
             </div>
             <p v-if="archiveError" class="alert" role="alert">{{ archiveError.message }}</p>
             <p v-else class="hint"> {{ $ui('アーカイブすると、プロジェクト一覧の既定の表示から外れます。解除もできます。') }} </p>
+          </section>
+
+          <!-- 物理削除（5.9.3）。project.delete を持たなければブロックごと出さない。
+               **アーカイブ済みのときだけ押せる**（サーバも 409 で拒む） -->
+          <section v-if="canDelete" class="block delete-block">
+            <h2 class="block-title">{{ $ui('プロジェクトの削除') }}</h2>
+            <div class="state-line">
+              <p class="static-value">{{ $ui('チケット・コメント・文書ごと消え、戻せません。') }}</p>
+              <button
+                type="button"
+                class="danger"
+                :disabled="!isArchived || deleting"
+                @click="openDelete"
+              > {{ $ui('プロジェクトを削除') }} </button>
+            </div>
+            <p class="hint">
+              {{ isArchived ? $ui('削除しても監査ログは残ります。') : $ui('アーカイブしてから削除できます。') }}
+            </p>
           </section>
         </div>
 
@@ -1442,6 +1499,16 @@ function roleLabel(role: string): string {
       :message="$ui('「{value0}」をこのプロジェクトのメンバーから削除します。ユーザーアカウントは残ります。', { value0: deletingMember.display_name })"
       :confirm-label="$ui('削除する')" :busy="memberBusy" danger
       @confirm="saveMember(deletingMember.actor_id, null)" @cancel="!memberBusy && (deletingMember = null)" />
+
+    <DeleteProjectDialog
+      v-if="deleteOpen && current"
+      :project-key="current.key"
+      :name="current.name"
+      :busy="deleting"
+      :error-message="deleteError?.message ?? null"
+      @confirm="runDelete"
+      @cancel="!deleting && (deleteOpen = false)"
+    />
 
     <ConfirmDialog
       v-if="confirmOpen"

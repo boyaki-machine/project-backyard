@@ -316,9 +316,10 @@ export const api = {
   put: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>('PUT', path, body, options),
   putBlob: <T>(path: string, body: Blob) => request<T>('PUT', path, body),
-  // `delete` は予約語なので名前を変える。呼び出し側は `api.del(...)` と書く
-  del: <T>(path: string, options?: RequestOptions) =>
-    request<T>('DELETE', path, undefined, options),
+  // `delete` は予約語なので名前を変える。呼び出し側は `api.del(...)` と書く。
+  // 本文を取るのはプロジェクトの削除の確認（`ApiDesign.md` 5.6.1）だけである
+  del: <T>(path: string, options?: RequestOptions, body?: unknown) =>
+    request<T>('DELETE', path, body, options),
   /**
    * `multipart/form-data` で送る（`ApiDesign.md` 11.12）。
    *

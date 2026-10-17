@@ -152,6 +152,23 @@ func (q *Queries) CreateWorkflowTransition(ctx context.Context, arg CreateWorkfl
 	return err
 }
 
+const deleteOrphanAgentActors = `-- name: DeleteOrphanAgentActors :execrows
+DELETE FROM actor a
+WHERE a.id = ANY($1::text[])
+  AND a.kind = 'agent'
+  AND NOT EXISTS (SELECT 1 FROM agent g WHERE g.actor_id = a.id)
+`
+
+// DeleteOrphanAgentActors は agent 行を失ったエージェントのアクターを消す。
+// **kind='agent' で agent 行が無いものに限る**——渡した ID が別の用途に使われていても消さない。
+func (q *Queries) DeleteOrphanAgentActors(ctx context.Context, actorIds []string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOrphanAgentActors, actorIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteProjectByKey = `-- name: DeleteProjectByKey :execrows
 DELETE FROM project WHERE key = $1
 `
@@ -264,9 +281,6 @@ const getProjectTimezone = `-- name: GetProjectTimezone :one
 SELECT timezone FROM project WHERE id = $1
 `
 
-// GetProjectTimezone はプロジェクトの基準タイムゾーン（DbDesign.md 6.23）を返す。
-// 予定日時の検証（終日は基準タイムゾーンの0時。ApiDesign.md 9.3.1）と、due_within の
-// 境界の計算（9.2.1）が使う。
 func (q *Queries) GetProjectTimezone(ctx context.Context, id string) (string, error) {
 	row := q.db.QueryRow(ctx, getProjectTimezone, id)
 	var timezone string
@@ -285,6 +299,32 @@ func (q *Queries) IsProjectScopedRole(ctx context.Context, key string) (bool, er
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const listProjectAgentActorIDs = `-- name: ListProjectAgentActorIDs :many
+SELECT actor_id FROM agent WHERE project_id = $1
+`
+
+// ListProjectAgentActorIDs はプロジェクトに紐づくエージェントのアクターを返す。
+// **プロジェクトを消す前に引く。** 消すと agent 行が連鎖で消え、辿れなくなる。
+func (q *Queries) ListProjectAgentActorIDs(ctx context.Context, projectID pgtype.Text) ([]string, error) {
+	rows, err := q.db.Query(ctx, listProjectAgentActorIDs, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var actor_id string
+		if err := rows.Scan(&actor_id); err != nil {
+			return nil, err
+		}
+		items = append(items, actor_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listProjectMembers = `-- name: ListProjectMembers :many
@@ -559,6 +599,41 @@ func (q *Queries) ListWorkflowTransitions(ctx context.Context, workflowID string
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockProjectForDelete = `-- name: LockProjectForDelete :one
+
+SELECT p.id, p.name, p.status,
+       (SELECT count(*) FROM ticket t WHERE t.project_id = p.id)::bigint AS ticket_count
+FROM project p
+WHERE p.key = $1
+FOR UPDATE
+`
+
+type LockProjectForDeleteRow struct {
+	ID          string
+	Name        string
+	Status      string
+	TicketCount int64
+}
+
+// GetProjectTimezone はプロジェクトの基準タイムゾーン（DbDesign.md 6.23）を返す。
+// 予定日時の検証（終日は基準タイムゾーンの0時。ApiDesign.md 9.3.1）と、due_within の
+// 境界の計算（9.2.1）が使う。
+// ── 物理削除（ApiDesign.md 5.6.1）──────────────────────────
+// LockProjectForDelete は消す前の確認材料を取り、行を押さえる。
+// **FOR UPDATE で押さえる**——確かめた後にアーカイブを解除されてから消す、を作らない。
+// ticket_count は監査の detail に残す（消えた後は数えられない）。
+func (q *Queries) LockProjectForDelete(ctx context.Context, key string) (LockProjectForDeleteRow, error) {
+	row := q.db.QueryRow(ctx, lockProjectForDelete, key)
+	var i LockProjectForDeleteRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Status,
+		&i.TicketCount,
+	)
+	return i, err
 }
 
 const projectKeyExists = `-- name: ProjectKeyExists :one

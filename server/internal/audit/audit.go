@@ -45,6 +45,7 @@ const (
 	ProjectCreate    Action = "project.create"
 	ProjectUpdate    Action = "project.update"
 	ProjectArchive   Action = "project.archive"
+	ProjectDelete    Action = "project.delete" // 物理削除（ApiDesign.md 5.6.1）。消えた後に残る記録はこの1行だけ
 	PermissionDenied Action = "permission.denied"
 	// 以下はエージェントの操作（ApiDesign.md 4.5.6）。
 	// エージェントの登録と更新はアカウントの作成・変更と同じ重みを持つ。
@@ -110,7 +111,7 @@ var actions = map[Action]bool{
 	PasswordChange: true, PasswordReset: true,
 	TokenIssue: true, TokenRevoke: true, SessionRevoke: true,
 	UserCreate: true, UserUpdate: true, UserDelete: true, RoleChange: true,
-	ProjectCreate: true, ProjectUpdate: true, ProjectArchive: true, PermissionDenied: true,
+	ProjectCreate: true, ProjectUpdate: true, ProjectArchive: true, ProjectDelete: true, PermissionDenied: true,
 	AgentRegister: true, AgentUpdate: true, AgentDelete: true,
 	SettingUpdate:        true,
 	TLSCertificateUpload: true, TLSCertificateDelete: true,
