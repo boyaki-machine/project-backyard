@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { uiText } from '../locales/ui'
-/** バックログの予定期間フィルタ（GuiDesign.md 5.4）。 */
+/**
+ * 日付の範囲を取るフィルタ。バックログの予定期間（GuiDesign.md 5.4）と、
+ * チケット検索の着手日・完了日（5.13）で使う。`name` は読み上げに使う条件の名前。
+ */
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 
-const props = defineProps<{ from: string; to: string }>()
+const props = defineProps<{ from: string; to: string; name?: string }>()
+
+const name = computed(() => props.name ?? uiText("予定期間"))
 const emit = defineEmits<{ update: [value: { from: string; to: string }] }>()
 
 const open = ref(false)
@@ -120,7 +125,7 @@ const panelStyle = computed(() => ({ top: `${pos.value.top}px`, left: `${pos.val
     type="button"
     class="trigger"
     :title="label"
-    :aria-label="$ui('予定期間：{value0}', { value0: label })"
+    :aria-label="$ui('{value0}：{value1}', { value0: name, value1: label })"
     :aria-expanded="open"
     aria-haspopup="dialog"
     @click="toggle"
@@ -135,10 +140,10 @@ const panelStyle = computed(() => ({ top: `${pos.value.top}px`, left: `${pos.val
       class="planned-panel"
       :style="panelStyle"
       role="dialog"
-      :aria-label="$ui('予定期間を指定')"
+      :aria-label="$ui('{value0}を指定', { value0: name })"
     >
-      <label>{{ $ui('開始日') }}<input v-model="draftFrom" type="date" :aria-label="$ui('予定期間の開始日')" /></label>
-      <label>{{ $ui('終了日') }}<input v-model="draftTo" type="date" :aria-label="$ui('予定期間の終了日')" /></label>
+      <label>{{ $ui('開始日') }}<input v-model="draftFrom" type="date" :aria-label="$ui('{value0}の開始日', { value0: name })" /></label>
+      <label>{{ $ui('終了日') }}<input v-model="draftTo" type="date" :aria-label="$ui('{value0}の終了日', { value0: name })" /></label>
       <p v-if="rangeInvalid" class="error" role="alert">{{ $ui('終了日は開始日以降にしてください') }}</p>
       <div class="actions">
         <button
