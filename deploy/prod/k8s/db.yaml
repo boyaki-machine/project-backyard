@@ -4,8 +4,7 @@
 # 運用では CloudNativePG か外部の PostgreSQL を使う（DbDesign.md 3.3）。
 # 外部の PostgreSQL へ繋ぐときは、このファイルを apply しない（k8s/app.yaml の末尾）。
 #
-# 中身は ConfigMap（ロール作成）・Service・StatefulSet（PVC 付き）の3つ。イメージは公開の
-# pgvector/pgvector:pg17 で、**PB の配布物には含まない**（起動するときに取りに行く）。
+# 中身は ConfigMap（ロール作成）・Service・StatefulSet（PVC 付き）の3つ。PB用DBイメージは配布物に同梱する（PUSH指定時はレジストリへ送る）。
 #
 # **データは PVC「data-pb-db-0」に残る。** StatefulSet を消しても PVC は残り、namespace ごと消すと
 # PVC も消える（その先のデータが消えるかは StorageClass の reclaimPolicy による）。
@@ -69,7 +68,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: postgres
-          image: pgvector/pgvector:pg17
+          image: __PB_DB_IMAGE__
           imagePullPolicy: IfNotPresent
           # 値は deploy/base/compose.yaml と揃える（DbDesign.md 3.2・3.5）。
           args:
@@ -109,7 +108,7 @@ spec:
               containerPort: 5432
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", "pb_owner", "-d", "pb"]
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "pb_owner", "-d", "pb"]
             periodSeconds: 5
             timeoutSeconds: 3
           volumeMounts:

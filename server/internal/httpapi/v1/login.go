@@ -20,10 +20,8 @@ package v1
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/mail"
@@ -367,14 +365,4 @@ func validateLoginRequest(req loginRequest) (string, *apierr.Error) {
 		return "", apierr.New(apierr.ValidationFailed).WithDetails(details...)
 	}
 	return email, nil
-}
-
-// decodeJSON は JSON 本文を読む。形式の誤りは 400 bad_request とする。
-func decodeJSON(r *http.Request, dst any) *apierr.Error {
-	body := io.LimitReader(r.Body, maxRequestBodyBytes)
-	if err := json.NewDecoder(body).Decode(dst); err != nil {
-		return apierr.New(apierr.BadRequest).
-			WithCause(fmt.Errorf("リクエスト本文を JSON として読めない: %w", err))
-	}
-	return nil
 }

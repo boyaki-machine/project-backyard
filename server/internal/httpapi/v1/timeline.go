@@ -5,12 +5,10 @@
 package v1
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"slices"
@@ -402,18 +400,11 @@ func scheduleBaselineTooMany(n int64) *apierr.Error {
 // parseScheduleBaselineLabel は本文の label を読む（9.17.3）。本文は省略できる。
 // 前後の空白を除いて 1〜100文字。空・省略は null。
 func parseScheduleBaselineLabel(r *http.Request) (pgtype.Text, *apierr.Error) {
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(io.LimitReader(r.Body, maxRequestBodyBytes)); err != nil {
-		return pgtype.Text{}, apierr.New(apierr.BadRequest).WithCause(fmt.Errorf("本文を読めない: %w", err))
-	}
-	if len(bytes.TrimSpace(buf.Bytes())) == 0 {
-		return pgtype.Text{}, nil
-	}
 	var req struct {
 		Label json.RawMessage `json:"label"`
 	}
-	if err := json.Unmarshal(buf.Bytes(), &req); err != nil {
-		return pgtype.Text{}, apierr.New(apierr.BadRequest).WithCause(fmt.Errorf("リクエスト本文を JSON として読めない: %w", err))
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		return pgtype.Text{}, err
 	}
 	s, isNull, err := decodeOptionalString(req.Label)
 	if len(req.Label) == 0 || isNull {

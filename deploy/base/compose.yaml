@@ -8,7 +8,10 @@ name: project-backyard
 
 services:
   db:
-    image: pgvector/pgvector:pg17
+    image: project-backyard-db:dev
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile.db
     restart: unless-stopped
     environment:
       POSTGRES_DB: pb
@@ -36,7 +39,7 @@ services:
       - -c
       - log_min_duration_statement=200ms
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pb_owner -d pb"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U pb_owner -d pb"]
       interval: 5s
       timeout: 3s
       retries: 20

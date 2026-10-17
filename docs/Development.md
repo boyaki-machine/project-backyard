@@ -58,8 +58,8 @@ node -v && npm -v
 | | 版 | 導入方法 |
 |---|---|---|
 | コンテナランタイム | Rancher Desktop（`docker` は `~/.rd/bin/docker`） | アプリとして導入 |
-| Go | 1.26.5 | Homebrew |
-| Node / npm | v24.14.0 / 11.9.0 | nvm |
+| Go | 1.26.9（配布ビルド） | Docker。ホストはHomebrew等で導入 |
+| Node / npm | v24.22.0 / 11.21.1（配布ビルド） | Docker。ホストはnvm等で導入 |
 
 `goose`（マイグレーション）と `sqlc`（クエリ生成）は**別途インストールしない**。`server/tools/go.mod` の `tool` ディレクティブでバージョンを固定してあり、`make migrate` / `make sqlc` が `go tool` 経由で呼ぶ（`DbDesign.md` 5.1）。同様に、client の依存は `make build-client` が `npm ci` で入れるので、手で `npm install` する必要はない。
 
@@ -1667,7 +1667,7 @@ client のビルド（`make build` / `make dev-client`）に要る。**サーバ
 node -v && npm -v
 ```
 
-検証環境は nvm で入れた v24.14.0 / npm 11.9.0。公式インストーラでも Homebrew でもよい。
+配布ビルドでは v24.22.0 / npm 11.21.1 を確認している。ホストにも提供済みのセキュリティ更新を適用する。nvm・公式インストーラ・Homebrewなどで導入できる。
 **client の依存を手で入れる必要はない**（`make build-client` が `npm ci` で入れる）。
 
 ## A.4 Google Chrome

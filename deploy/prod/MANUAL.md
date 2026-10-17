@@ -36,8 +36,7 @@
 | `compose` | コンテナイメージと compose 一式 | **DB のコンテナも一緒に立てる**（外部の PostgreSQL へ繋ぐこともできる） | 使える |
 | `k8s` | コンテナイメージとマニフェスト一式 | **試すための DB のサンプル付き**（運用では CloudNativePG か外部の PostgreSQL） | 使える |
 
-**どの形でも、PB の配布物に DB は入っていない。** compose と k8s のサンプルが立てる DB は、公開イメージ
-`pgvector/pgvector:pg17` を起動時に取りに行く。
+**compose・k8sにはPB用DBイメージを同梱する。** PostgreSQL17＋pgvectorを維持し、提供済みのOS更新と再ビルドしたgosuを含む。native・docker単体は用意済みのPostgreSQLを使う。再ビルドしたgosuとGo依存のライセンス表示は `/usr/share/doc/pb-db/` にある。
 
 ---
 
@@ -333,7 +332,8 @@ mv <新しい一式> <今の一式>
 
 ```
 <一式>/
-├── project-backyard-<版>-linux-<CPU>.tar   イメージ（PUSH で作った一式には無い）
+├── project-backyard-<版>-linux-<CPU>.tar   PBイメージ（PUSH で作った一式には無い）
+├── project-backyard-db-<版>-linux-<CPU>.tar DBイメージ（PUSH で作った一式には無い）
 ├── compose.yaml         db・migrate・app の3サービス
 ├── init.sh              秘密を乱数で作る（最初の1回だけ）
 ├── initdb/01_roles.sh   DB の初回起動で pb_app のロールを作る
@@ -365,7 +365,8 @@ mv <新しい一式> <今の一式>
 **tar は `docker load` で取り込める形式である**（buildx の `type=docker` で書き出したもの）。
 
 ```
-docker load -i project-backyard-<版>-linux-<CPU>.tar     # project-backyard:<版> として取り込まれる
+for image in project-backyard-*.tar; do docker load -i "$image"; done
+# compose・k8sではproject-backyard:<版>とproject-backyard-db:<版>を取り込む
 ```
 
 **自分のレジストリへ登録する**には、取り込んだイメージに名前を付けて送る。
@@ -373,6 +374,9 @@ docker load -i project-backyard-<版>-linux-<CPU>.tar     # project-backyard:<�
 ```
 docker tag  project-backyard:<版>  registry.example.com/pb:<版>
 docker push registry.example.com/pb:<版>
+# compose・k8sでDBも使う場合
+docker tag project-backyard-db:<版> registry.example.com/pb:<版>-db
+docker push registry.example.com/pb:<版>-db
 ```
 
 **一式を作るときに、tar を出さずに直接送る**こともできる（`PUSH`）。
@@ -383,7 +387,7 @@ make release TARGET=compose ARCH=amd64 PUSH=registry.example.com/pb:<版>
 
 - **送る先には、先に `docker login` しておく**
 - **`PUSH` で作った一式には tar が入らない。** `compose.yaml`（docker の一式なら `run.sh` と `migrate.sh`）が
-  そのレジストリのイメージを指す。起動するときにそこから取りに行く
+  そのレジストリのイメージを指す。compose・k8sのDBは指定した参照のタグに `-db` を付けたもの（例：`registry.example.com/pb:4.52.299-db`）を使う。起動するときに両方を取得する
 - **CPU ごとに1つずつ送る。** amd64 と arm64 を1つの名前にまとめるには、docker-container ドライバの
   builder で `docker buildx build --platform linux/amd64,linux/arm64 --push` を実行する。**この手順は確かめていない**
 
@@ -407,7 +411,7 @@ make release TARGET=compose ARCH=amd64 PUSH=registry.example.com/pb:<版>
 一式のディレクトリで、最初の1回は次の順に実行する。
 
 ```
-docker load -i project-backyard-<版>-linux-<CPU>.tar   # 4.2（PUSH で作った一式なら不要）
+for image in project-backyard-*.tar; do docker load -i "$image"; done  # 4.2（PUSH時は不要）
 ./init.sh                                            # 秘密を乱数で作る
 docker compose up -d                                 # db → migrate → app の順に起動する
 docker compose run --rm app admin create             # 初期管理者を作る
@@ -484,12 +488,14 @@ chmod 644 secrets/app_database_url secrets/pgpass
 （`pb-prod`）なので、同じデータのボリュームを使う。** migrate は起動のときに走る。
 
 ```
-docker load -i <新しい一式>/project-backyard-<新しい版>-linux-<CPU>.tar
+for image in <新しい一式>/project-backyard-*.tar; do docker load -i "$image"; done
 cp -Rp <今の一式>/secrets <新しい一式>/
 #    compose.yaml を書き換えていたなら（ports・外部の PostgreSQL など）、新しい compose.yaml にも同じ変更を入れる
 docker compose -f <今の一式>/compose.yaml exec db pg_dump -U pb_owner pb > pb-backup.sql   # バックアップ
 cd <新しい一式> && docker compose up -d
 ```
+
+DBイメージを更新しても、PostgreSQLのメジャー版は17のままで、既存の `pgdata` ボリュームを引き継ぐ。**ボリュームを消す `docker compose down -v` は使わない。** 先にバックアップを取り、更新後にDBとPBの起動を確認する。
 
 **docker 単体**：
 
@@ -527,7 +533,8 @@ docker stop pb && docker rm pb
 
 ```
 <一式>/
-├── project-backyard-<版>-linux-<CPU>.tar   イメージ（PUSH で作った一式には無い）
+├── project-backyard-<版>-linux-<CPU>.tar   PBイメージ（PUSH で作った一式には無い）
+├── project-backyard-db-<版>-linux-<CPU>.tar DBイメージ（PUSH で作った一式には無い）
 ├── k8s/
 │   ├── app.yaml         PB 本体：ConfigMap（pb.yaml）・Deployment・Service
 │   └── db.yaml          試すための DB：ConfigMap（ロール作成）・Service・StatefulSet（PVC 付き）
@@ -562,12 +569,12 @@ docker stop pb && docker rm pb
 
 | クラスタ | 届け方 |
 |---|---|
-| **レジストリから引く**（一般のクラスタ） | 4.2 のとおりレジストリへ送り、`k8s/app.yaml` の `image:`（2か所）をその名前に直す。**`PUSH` で作った一式なら、はじめからその名前が入っている** |
-| **Rancher Desktop（コンテナエンジンが dockerd）** | `docker load -i project-backyard-<版>-linux-<CPU>.tar`。**k3s が同じ docker を使うので、取り込んだイメージがそのまま見える** |
-| **Rancher Desktop（コンテナエンジンが containerd）** | `nerdctl -n k8s.io load -i project-backyard-<版>-linux-<CPU>.tar`。**この手順は確かめていない** |
+| **レジストリから引く**（一般のクラスタ） | 4.2 のとおりレジストリへ送り、`k8s/app.yaml` の `image:`（2か所）と、DBサンプルを使う場合は `k8s/db.yaml` のDBイメージもそれぞれ登録した名前に直す。**`PUSH` で作った一式なら、はじめからその名前が入っている** |
+| **Rancher Desktop（コンテナエンジンが dockerd）** | `for image in project-backyard-*.tar; do docker load -i "$image"; done`。**k3s が同じ docker を使うので、取り込んだイメージがそのまま見える** |
+| **Rancher Desktop（コンテナエンジンが containerd）** | 各tarを `nerdctl -n k8s.io load -i <tar>` で取り込む。**この手順は確かめていない** |
 
 - **どのエンジンで動いているか**は `kubectl get nodes -o wide` の `CONTAINER-RUNTIME` 列で分かる（`docker://…` か `containerd://…`）
-- **`imagePullPolicy` は `IfNotPresent`**：ノードに同じ名前のイメージがあれば取りに行かない。**tar で届けたときは、名前（`project-backyard:<版>`）を変えない**
+- **`imagePullPolicy` は `IfNotPresent`**：ノードに同じ名前のイメージがあれば取りに行かない。**tar で届けたときは、名前（`project-backyard:<版>` と `project-backyard-db:<版>`）を変えない**
 - **非公開のレジストリ**から引くなら、docker-registry 型の Secret を作り、`k8s/app.yaml` の `imagePullSecrets` のコメントを外す。
   作り方は Kubernetes の文書「Pull an Image from a Private Registry」にある。**この手順は確かめていない**
 

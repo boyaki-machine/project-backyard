@@ -70,7 +70,7 @@ STG_GOOSE_DBSTRING_OWNER = postgres://pb_owner:$$(cat $(STG_DB_PASSWORD_FILE))@1
 	stg-init stg-up stg-down stg-psql stg-migrate stg-build stg-run stg-stop stg-admin-create \
 	dev-client gen-api build-client sync-webui build clean-webui release \
 	version version-check bump-build bump-minor bump-major release-tag \
-	docs-size docs-emphasis css-tokens fmt-check vuln-check licenses licenses-check
+	docs-size docs-emphasis css-tokens fmt-check vuln-check test-build-context licenses licenses-check
 
 ## DB を起動する
 # **app は起動しない。** dev では PB 本体を make run でホストから動かしており、app の
@@ -189,12 +189,20 @@ fmt-check:
 # 落ちていれば非ゼロで返す（CI を置く日にそのまま関門として使える）。
 vuln-check:
 	@rc=0; \
-	echo "── Go ──"; \
+	echo "── Go（アプリ）──"; \
 	(cd server/tools && go tool govulncheck -C .. ./...) || rc=1; \
+	echo "── Go（開発・配布ツール）──"; \
+	(cd server/tools && go tool govulncheck ./... github.com/pressly/goose/v3/cmd/goose github.com/sqlc-dev/sqlc/cmd/sqlc golang.org/x/vuln/cmd/govulncheck) || rc=1; \
+	echo "── Go（MCPプローブ）──"; \
+	(cd server/tools && go tool govulncheck -C ../../tools/mcp-probe ./...) || rc=1; \
 	echo "── client ──"; \
 	(cd client && npm audit) || rc=1; \
-	if [ $$rc -ne 0 ]; then echo "NG: 未対処の脆弱性がある"; else echo "OK: 既知の脆弱性は無い"; fi; \
+	if [ $$rc -ne 0 ]; then echo "NG: 脆弱性の検出または検査失敗。各結果を確認してください"; else echo "OK: Goの到達可能な脆弱性とnpmの既知脆弱性は検出されなかった"; fi; \
 	exit $$rc
+
+## 実際のDockerビルドで、秘密がビルドコンテキストへ入らないことを検証する（ダミーデータのみ）
+test-build-context:
+	@bash deploy/test-build-context.sh
 
 ## 実DBを使う結合テストを実行する（Development.md 6.1）
 # PB_TEST_DATABASE_URL が無いとテスト側が SKIP するため、通常の make test では

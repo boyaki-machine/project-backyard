@@ -224,7 +224,7 @@ func TestAgentMonitorIntegration(t *testing.T) {
 		t.Fatalf("success did not reset: %+v", state)
 	}
 	// Attributes are human evaluations, never token scopes.
-	req := fmt.Sprintf(`{"trust_level":3,"capabilities":["review","review"," tests "]}`)
+	req := `{"trust_level":3,"capabilities":["review","review"," tests "]}`
 	rec = bodyWithCookie(f.r, http.MethodPatch, "/api/v1/me/agents/"+a.ID, f.ownerSession, req, "")
 	if rec.Code != 200 {
 		t.Fatalf("owner attributes: %d %s", rec.Code, rec.Body.String())

@@ -455,7 +455,7 @@ tk('bc', 'b4', '閉場アナウンス', hm(15, 55), hm(16), 'todo', { ps: true, 
 
 const LINKS = [['g3', 'g4'], ['y4', 'y5'], ['a1', 'a2'], ['a2', 'a3']];   // FS（同じ行の中だけ）
 
-/* 当初計画の版（スナップショット）。残すのはバーを描くのに要る値だけ（Timeline.md 7.1 の T2〜T4） */
+/* 当初計画の版（スナップショット）。残すのはバーを描くのに要る値だけ（DbDesign.md 6.32） */
 function snap(list) { const m = {}; for (const t of list) m[t.id] = { id: t.id, epic: t.epic, title: t.title, s: t.s, e: t.e, chk: t.chk, ps: t.ps, pe: t.pe }; return m; }
 function edit(m, id, s, e) { m[id] = { ...m[id], s, e }; }
 function add(m, id, epic, title, s, e, o = {}) { m[id] = { id, epic, title, s, e, chk: o.chk !== false, ps: !!o.ps, pe: !!o.pe }; }
@@ -496,7 +496,7 @@ const TW = () => (T1 - T0) * S.pps;
 const nowS = () => Math.floor(S.now);
 const ceilSnap = t => Math.ceil(t / S.snap) * S.snap;
 
-/* ── 連鎖のずらし（Timeline.md 5.4 と 7.1。サーバが行う計算を簡易に写したもの） ──
+/* ── 連鎖のずらし（ApiDesign.md 9.17.1。サーバが行う計算を簡易に写したもの） ──
    列＝同じ行の、時間重複チェック付きのチケット（開始の昇順）。チェック無しは動かさない。
    ・延びたら隙間を吸収し、足りない分だけ後ろを押す（隙間は保たない。7.1 T7）
    ・縮んだら後ろは動かさない。ただし同じ行の FS の後続は、先行の終了まで寄せる（7.1 T7 FS）

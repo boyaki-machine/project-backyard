@@ -1,0 +1,37 @@
+# PostgreSQL17＋pgvectorのPB用イメージ（DbDesign.md 3.1）。
+# 上流のエントリポイント・UID/GID・データ配置を保ち、同じ17系のボリュームを引き継ぐ。
+FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm AS gosu
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+ARG TARGETARCH
+WORKDIR /build
+# gosuは上流と同じ1.19を、修正済みGoとx/sysで再ビルドする。
+# go getはGoのモジュールチェックサムDBで取得物を検証する。
+RUN go mod init build.local/pb-db-tools \
+    && go get github.com/tianon/gosu@1.19 github.com/moby/sys/user@v0.4.1 golang.org/x/sys@v0.48.0 \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -trimpath -o /out/gosu github.com/tianon/gosu \
+    && mkdir -p /out/licenses/go \
+    && cp /usr/local/go/LICENSE /usr/local/go/PATENTS /out/licenses/go/ \
+    && go list -m -f '{{if .Dir}}{{.Path}} {{.Dir}}{{end}}' all > /out/modules \
+    && while read -r module dir; do \
+        [ -n "$dir" ] || continue; \
+        mkdir -p "/out/licenses/$module" || exit 1; \
+        for name in LICENSE LICENSE.md NOTICE PATENTS; do \
+            if [ -f "$dir/$name" ]; then cp "$dir/$name" "/out/licenses/$module/$name" || exit 1; fi; \
+        done; \
+    done < /out/modules
+
+FROM pgvector/pgvector:pg17 AS db
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="Project Backyard PostgreSQL" \
+      org.opencontainers.image.version="$VERSION"
+# releaseの--no-cache-filter gosu,dbにより、各段の更新一覧を取り直す。
+# libsqlite3-0は鍵取り込み用GPGツールだけの依存。PostgreSQLの依存とgpgvは残す。
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+    && apt-get purge -y --auto-remove libsqlite3-0 \
+    && test -x /usr/bin/gpgv \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=gosu /out/gosu /usr/local/bin/gosu
+COPY --from=gosu /out/licenses/ /usr/share/doc/pb-db/

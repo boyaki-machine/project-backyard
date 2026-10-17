@@ -30,10 +30,14 @@ export const useNotificationStore = defineStore('notifications', () => {
 
   let poll: ReturnType<typeof setInterval> | undefined
   let started = false
+  let seq = 0
 
   async function refresh() {
+    const mine = ++seq
     try {
-      unread.value = (await unreadNotificationCount()).count
+      const result = await unreadNotificationCount()
+      if (mine !== seq) return
+      unread.value = result.count
     } catch {
       // **引けなくても画面に出さない。** 前の数を出し続ける。通知は付随機能であり、
       // 引けないことで全画面を汚さない（5.16）。
@@ -66,6 +70,7 @@ export const useNotificationStore = defineStore('notifications', () => {
   }
 
   function stop() {
+    seq++ // 停止前の応答で、次の利用者へ古い件数を戻さない。
     if (poll !== undefined) clearInterval(poll)
     poll = undefined
     started = false
