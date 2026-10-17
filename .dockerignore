@@ -32,3 +32,12 @@ server/internal/webui/dist/*
 **/.mcp.json
 **/.codex/**
 **/LEARNINGS*.md
+
+# ソース配下に置かれた取得用・端末用認証情報も送らない
+**/.npmrc
+**/.netrc
+**/.aws/**
+**/.ssh/**
+**/.docker/**
+**/*.pfx
+**/*.jks

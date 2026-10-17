@@ -108,7 +108,7 @@ spec:
               containerPort: 5432
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", "pb_owner", "-d", "pb"]
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "pb_owner", "-d", "pb"]
             periodSeconds: 5
             timeoutSeconds: 3
           volumeMounts:

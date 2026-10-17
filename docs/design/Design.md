@@ -493,6 +493,8 @@ native の一式、コンテナイメージには `darwin/arm64`、`windows/amd6
 
 **イメージ**は `deploy/Dockerfile` の3段（client → pb と goose → 実行）で作る。中身は `/pb`（入口。既定の引数は `serve`）・`/goose`（postgres のドライバだけ）・`/bridges`（5種類のブリッジ）・`/migrations`・`/LICENSE`・`/NOTICE`・`/THIRD_PARTY_NOTICES.txt`。実行の段は `gcr.io/distroless/static-debian12:nonroot` で、利用者は uid 65532。
 
+ビルド段のOSには提供済みの更新を適用し、npmは同じ11系の固定版へ更新する。実行段のtzdataは更新したDebian 12のビルド段からデータ・ライセンス・実際のパッケージ情報を一緒に移す。配布ビルドでは上流を再確認し、OS更新を含むビルド段のキャッシュを再利用しない。
+
 | | compose | docker |
 |---|---|---|
 | イメージ | `project-backyard-<版>-linux-<CPU>.tar` と `project-backyard-db-<版>-linux-<CPU>.tar`（`PUSH` のときは無し） | PB本体のtarのみ |

@@ -37,7 +37,7 @@ services:
       # pb_app のロールを作る。**pgdata が空の初回起動でしか走らない。**
       - ./initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pb_owner -d pb"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U pb_owner -d pb"]
       interval: 5s
       timeout: 3s
       retries: 20

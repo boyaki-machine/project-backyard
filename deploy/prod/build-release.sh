@@ -225,14 +225,14 @@ build_image() {
 	# **ビルドはイメージの中で行う**（deploy/Dockerfile）。この端末に Go と Node は要らない。
 	if [ -n "${push}" ]; then
 		image_ref=${push}
-		docker buildx build --platform "linux/${arch}" -f "${repo_root}/deploy/Dockerfile" \
+		docker buildx build --platform "linux/${arch}" --pull --no-cache-filter client,server -f "${repo_root}/deploy/Dockerfile" \
 			--build-arg "VERSION=${version}" --build-arg "GOOSE_TAGS=${goose_tags}" \
 			--tag "${push}" --push "${repo_root}"
 	else
 		image_ref="project-backyard:${version}"
 		# **type=docker の tar にする**。docker load のほか、
 		# nerdctl や podman も読める。
-		docker buildx build --platform "linux/${arch}" -f "${repo_root}/deploy/Dockerfile" \
+		docker buildx build --platform "linux/${arch}" --pull --no-cache-filter client,server -f "${repo_root}/deploy/Dockerfile" \
 			--build-arg "VERSION=${version}" --build-arg "GOOSE_TAGS=${goose_tags}" \
 			--output "type=docker,dest=${out}/project-backyard-${version}-linux-${arch}.tar,name=${image_ref}" \
 			"${repo_root}"
@@ -244,12 +244,12 @@ build_db_image() {
     echo "==> PB用DBイメージを作る（PostgreSQL17＋pgvector、linux/${arch}）"
     if [ -n "${push}" ]; then
         db_image_ref="${push}-db"
-        docker buildx build --platform "linux/${arch}" --pull --no-cache-filter db \
+        docker buildx build --platform "linux/${arch}" --pull --no-cache-filter gosu,db \
             -f "${repo_root}/deploy/Dockerfile.db" --build-arg "VERSION=${version}" \
             --tag "${db_image_ref}" --push "${repo_root}"
     else
         db_image_ref="project-backyard-db:${version}"
-        docker buildx build --platform "linux/${arch}" --pull --no-cache-filter db \
+        docker buildx build --platform "linux/${arch}" --pull --no-cache-filter gosu,db \
             -f "${repo_root}/deploy/Dockerfile.db" --build-arg "VERSION=${version}" \
             --output "type=docker,dest=${out}/project-backyard-db-${version}-linux-${arch}.tar,name=${db_image_ref}" \
             "${repo_root}"

@@ -1,6 +1,9 @@
 # PostgreSQL17＋pgvectorのPB用イメージ（DbDesign.md 3.1）。
 # 上流のエントリポイント・UID/GID・データ配置を保ち、同じ17系のボリュームを引き継ぐ。
 FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm AS gosu
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 ARG TARGETARCH
 WORKDIR /build
 # gosuは上流と同じ1.19を、修正済みGoとx/sysで再ビルドする。
@@ -23,9 +26,12 @@ FROM pgvector/pgvector:pg17 AS db
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="Project Backyard PostgreSQL" \
       org.opencontainers.image.version="$VERSION"
-# releaseの--no-cache-filter dbにより、同じ上流ダイジェストでも更新一覧を取り直す。
+# releaseの--no-cache-filter gosu,dbにより、各段の更新一覧を取り直す。
+# libsqlite3-0は鍵取り込み用GPGツールだけの依存。PostgreSQLの依存とgpgvは残す。
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+    && apt-get purge -y --auto-remove libsqlite3-0 \
+    && test -x /usr/bin/gpgv \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=gosu /out/gosu /usr/local/bin/gosu
 COPY --from=gosu /out/licenses/ /usr/share/doc/pb-db/

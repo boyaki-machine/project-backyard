@@ -8,7 +8,7 @@ trap 'rm -rf "${fixture}"' EXIT
 mkdir -p "${fixture}/context" "${fixture}/out"
 cp "${repo_root}/.dockerignore" "${fixture}/context/.dockerignore"
 allowed=(VERSION LICENSE NOTICE THIRD_PARTY_NOTICES.txt client/package.json client/src/main.ts server/go.mod server/internal/webui/dist/placeholder.html deploy/build-bridges.sh)
-blocked=(.env .codex/config.toml LEARNINGS_CODEX.md client/.env client/.env.local client/.envrc client/secrets/token client/private.key server/test.pem server/.mcp.json client/node_modules/library.js client/dist/index.html server/internal/webui/dist/index.html deploy/dev/secrets/db_password deploy/stg/pb.env deploy/prod/native/secrets/pgpass)
+blocked=(client/.npmrc client/.netrc server/.aws/credentials client/.ssh/id_ed25519 client/.docker/config.json server/store.pfx client/store.jks .env .codex/config.toml LEARNINGS_CODEX.md client/.env client/.env.local client/.envrc client/secrets/token client/private.key server/test.pem server/.mcp.json client/node_modules/library.js client/dist/index.html server/internal/webui/dist/index.html deploy/dev/secrets/db_password deploy/stg/pb.env deploy/prod/native/secrets/pgpass)
 for name in "${allowed[@]}" "${blocked[@]}"; do
     mkdir -p "$(dirname "${fixture}/context/${name}")"
     printf '%s\n' 'synthetic test fixture' > "${fixture}/context/${name}"

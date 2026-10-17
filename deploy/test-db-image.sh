@@ -56,6 +56,7 @@ SQL
     [ "$result" = "$expected" ] || { printf '%s\n' "$result" >&2; return 1; }
     [ "$(docker exec "$name" gosu postgres id -u)" = "$(docker exec "$name" id -u postgres)" ]
     docker exec "$name" test -s /usr/share/doc/pb-db/github.com/tianon/gosu/LICENSE
+    docker exec "$name" sh -c 'if dpkg-query -s libsqlite3-0 2>/dev/null | grep -q "^Status: install ok installed$"; then echo "DB image still contains SQLite" >&2; exit 1; fi; test -x /usr/bin/gpgv'
 }
 # 上流イメージで作ったデータを、PB用イメージで引き継ぐ。
 start "$base"

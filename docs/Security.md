@@ -26,7 +26,7 @@ make test-build-context
 
 この検査にはDockerが必要である。ダミーファイルだけをビルドし、秘密をビルド先へ転送せず、必要なソースは残ることを確認する。
 
-`.dockerignore` の親ディレクトリを `!deploy/` のように再包含すると、子孫も再包含される。子を限定する場合は、配下をいったん除外してから必要なファイルだけを戻す。ソースの下にある `.env`・秘密鍵・接続設定も除外する。
+`.dockerignore` の親ディレクトリを `!deploy/` のように再包含すると、子孫も再包含される。子を限定する場合は、配下をいったん除外してから必要なファイルだけを戻す。ソースの下にある `.env`・秘密鍵・接続設定も除外する。`.gitignore` もnpm・クラウド・SSH・Docker・エージェントの端末用認証設定を除外する。`client` で `npx playwright test e2e/gitignore-secrets.spec.ts` を実行し、秘密の除外と公開する雛形の保持を確認する。ただし、既に追跡済みのファイルや `git add -f` は別途確認が必要である。
 
 ## コンテナと配布物
 
@@ -41,16 +41,31 @@ trivy image --scanners vuln --format json --output image-vulnerabilities.json <�
 compose・k8sのDBには `deploy/Dockerfile.db` を使う。PostgreSQL17＋pgvectorの上流を保ち、OSの提供済み更新と、修正済みGo・依存で再ビルドしたgosuを含める。配布ビルドではDBの更新段をキャッシュせず、完成したDBイメージをCPUごとに再検査する。
 
 ```sh
-docker buildx build --platform linux/arm64 --pull --no-cache-filter db \
+docker buildx build --platform linux/arm64 --pull --no-cache-filter gosu,db \
   -f deploy/Dockerfile.db -t project-backyard-db:dev --load .
 bash deploy/test-db-image.sh project-backyard-db:dev
+bash deploy/test-db-readiness.sh project-backyard-db:dev
 ```
 
-この回帰検査は、ネットワークもホスト側ポートも持たない専用コンテナとボリュームだけを作る。上流17系のデータ引継ぎと空DBの初期化で、行・拡張・PBロール権限・日本語の文字設定・gosuを確認し、作ったリソースを終了時に消す。既存の開発・運用DBを使わない。配布スクリプトの両イメージの参照と同梱範囲は、`client` で `npx playwright test e2e/release-artifacts.spec.ts` を実行して確認する。
+この回帰検査は、ネットワークもホスト側ポートも持たない専用コンテナとボリュームだけを作る。上流17系のデータ引継ぎと空DBの初期化で、行・拡張・PBロール権限・日本語の文字設定・gosuを確認し、作ったリソースを終了時に消す。既存の開発・運用DBを使わない。readiness検査は初期化を途中で固定し、実際のcompose・Kubernetesのプローブが失敗し、最終サーバの起動後だけ成功することを確認する。配布スクリプトの両イメージの参照と同梱範囲は、`client` で `npx playwright test e2e/release-artifacts.spec.ts` を実行して確認する。
+
+PB本体のビルド段もOSと同梱npmを更新する。実行段のtzdataは更新データ・ライセンス・実際のパッケージ情報を一緒に入れる。完成イメージのnonroot起動と、更新対象地域の時刻ルールは次で確認する（Docker・Python 3.9以降が必要）。
+
+```sh
+bash deploy/test-runtime-image.sh project-backyard:<版>
+```
+
+スキャン時にはSBOMも残すと、後日公開された勧告を同じ配布物に照合できる。PBとDBそれぞれの実イメージから生成し、検査JSON・SBOM・イメージのSHA-256を同じ記録で対応付ける。SBOMは安全性の保証や、検査の代わりにはならない。
+
+```sh
+trivy image --format cyclonedx --output image-sbom.cdx.json <イメージ名またはダイジェスト>
+```
 
 配布物には、必要な実行ファイル・マイグレーション・設定の雛形・ライセンスだけを入れる。開発DB、ログ、バックアップ、実在の資格情報、端末の設定を含めない。配布用の秘密は利用者の環境で生成する。
 
 ## Git履歴と文書・画像
+
+公開先のサービスでも、実際の可視性、公開されるブランチとタグ、Secret scanning・push protection・Dependabotの状態と未対応アラート、Issueやリリース添付の公開範囲を確認する。ローカルGitの検査だけで、ホスティング側の全データを確認したとは扱わない。
 
 現在の追跡ファイルに加え、公開するブランチ・タグから到達できる過去のファイル、コミット本文、作者・コミッター・タグ作成者の情報を確認する。`.gitignore` を追加しても、過去に保存した内容は消えない。
 

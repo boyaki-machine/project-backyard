@@ -40,6 +40,8 @@ if '--output' in args:
         for (const [index, image] of [app, ...(hasDB ? [db] : [])].entries()) {
           const call = builds[index]!
           expect(call[call.indexOf('--platform') + 1]).toBe('linux/arm64')
+          expect(call).toContain('--pull')
+          expect(call[call.indexOf('--no-cache-filter') + 1]).toBe(index === 0 ? 'client,server' : 'gosu,db')
           if (push) {
             expect(call).toContain('--push')
             expect(call[call.indexOf('--tag') + 1]).toBe(image)
@@ -50,7 +52,7 @@ if '--output' in args:
         expect(readdirSync(out).filter(name => name.endsWith('.tar'))).toHaveLength(push ? 0 : hasDB ? 2 : 1)
         if (hasDB) {
           expect(builds[1]).toContain('--pull')
-          expect(builds[1]![builds[1]!.indexOf('--no-cache-filter') + 1]).toBe('db')
+          expect(builds[1]![builds[1]!.indexOf('--no-cache-filter') + 1]).toBe('gosu,db')
         }
         if (target === 'compose') {
           const compose = readFileSync(resolve(out, 'compose.yaml'), 'utf8')

@@ -83,11 +83,13 @@
 | `pg_trgm` | 日本語を含む部分一致検索の高速化（4.5） | 導入済み |
 | `vector` | 埋め込みベクトル（`Requirements.md` 6.5） | 構想 |
 
+DBの起動確認はTCPの `127.0.0.1` に対して行う。[上流の初期化処理](https://github.com/docker-library/postgres/blob/master/docker-entrypoint.sh)の一時サーバはUnixソケットだけで待ち受けるため、ソケットへの `pg_isready` をアプリ起動の条件にしない。composeとKubernetesのプローブは同じ条件にする。
+
 ### PB用DBイメージ
 
 `deploy/Dockerfile.db` がPostgreSQL 17とpgvectorを維持したDBイメージを作る。上流のエントリポイント、postgresのUID/GID、初期化用の環境変数、データディレクトリ `/var/lib/postgresql/data` を引き継ぎ、同じメジャー版の既存ボリュームを利用できるようにする。DDLと既存データはイメージのビルド時に変更しない。
 
-ビルド時にDebianの提供する更新を適用する。上流同梱のgosuは、PBと同じ修正済みGoで固定版のソースから再ビルドする。Goモジュールのチェックサム検証を使い、ライセンスと特許表示を `/usr/share/doc/pb-db/` へ同梱する。リリースではDBの更新段をキャッシュせず、上流イメージも再確認する。
+ビルド時にDebianの提供する更新を適用する。上流イメージ作成時の鍵取り込みに使うgnupg・gpgと、それだけが要求するSQLite等の依存は実行段から除く。APTの署名検証用gpgv、PostgreSQL・pgvector・初期化スクリプトの依存は残す。上流同梱のgosuは、PBと同じ修正済みGoで固定版のソースから再ビルドする。Goモジュールのチェックサム検証を使い、ライセンスと特許表示を `/usr/share/doc/pb-db/` へ同梱する。リリースではDBの更新段をキャッシュせず、上流イメージも再確認する。
 
 開発用は `project-backyard-db:dev`、配布用は `project-backyard-db:<VERSION>`。compose・Kubernetes向けの一式にDBイメージも含める。外部PostgreSQLを使うnative・docker単体向けには含めない。DBを起動する際に、ソフトウェアだけを更新した空のコンテナへ既存ボリュームを渡す。更新前にはバックアップを取る。
 
@@ -132,7 +134,7 @@ services:
       - -c
       - log_min_duration_statement=200ms
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pb_owner -d pb"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U pb_owner -d pb"]
       interval: 5s
       timeout: 3s
       retries: 20
