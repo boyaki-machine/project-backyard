@@ -12,7 +12,9 @@
  *
  * 将来、別に配布できるよう準備するための切れ目で、外部配布の仕組みはまだ作らない。
  */
-import type { Component } from 'vue'
+import { h, type Component } from 'vue'
+
+import MainMenuIcon from '../components/MainMenuIcon.vue'
 
 import { messages as eventViewMessages } from './event_view/locales/en'
 
@@ -37,7 +39,7 @@ export interface ViewPlugin {
   menu: {
     /** 文言（日本語の原文。`uiText` で訳す） */
     label: string
-    icon: string
+    icon: string | Component
     /** 本体のどの項目の次に置くか */
     after: 'gantt'
     /** 表示を決める設定キー（`settings.views.<key>`）と、キーが無いときの既定 */
@@ -77,7 +79,7 @@ const viewPluginSources: readonly ViewPlugin[] = [
     },
     menu: {
       label: 'タイムライン',
-      icon: '≣',
+      icon: () => h(MainMenuIcon, { name: 'clock' }),
       after: 'gantt',
       settingKey: 'timeline',
       defaultVisible: false,

@@ -3,6 +3,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
+import MainMenuIcon from './MainMenuIcon.vue'
 import ProjectSwitcher from './ProjectSwitcher.vue'
 import SideMenuToggle from './SideMenuToggle.vue'
 import UserMenu from './UserMenu.vue'
@@ -120,8 +121,13 @@ const showAdmin = computed(
         <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.notifications') }}</span>
         <UnreadCount v-if="ui.narrow || !ui.menuCollapsed" class="count" :count="notifications.unread" />
       </RouterLink>
-      <RouterLink class="item" to="/projects" :title="t('menu.main.projects')">
-        <span class="icon" aria-hidden="true">⌂</span>
+      <RouterLink
+        class="item"
+        to="/projects"
+        :title="t('menu.main.projects')"
+        :aria-label="t('menu.main.projects')"
+      >
+        <span class="icon" aria-hidden="true"><MainMenuIcon name="projects" /></span>
         <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.projects') }}</span>
       </RouterLink>
 
@@ -129,8 +135,13 @@ const showAdmin = computed(
         <ProjectSwitcher v-if="ui.narrow || !ui.menuCollapsed" :current-key="projectKey" />
         <div v-else class="rail-sep" aria-hidden="true"></div>
 
-        <RouterLink class="item" :to="`/p/${projectKey}`" :title="t('menu.main.dashboard')">
-          <span class="icon" aria-hidden="true">▤</span>
+        <RouterLink
+          class="item"
+          :to="`/p/${projectKey}`"
+          :title="t('menu.main.dashboard')"
+          :aria-label="t('menu.main.dashboard')"
+        >
+          <span class="icon" aria-hidden="true"><MainMenuIcon name="dashboard" /></span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.dashboard') }}</span>
         </RouterLink>
         <RouterLink
@@ -138,8 +149,9 @@ const showAdmin = computed(
           class="item"
           :to="`/p/${projectKey}/backlog`"
           :title="t('menu.main.backlog')"
+          :aria-label="t('menu.main.backlog')"
         >
-          <span class="icon" aria-hidden="true">≡</span>
+          <span class="icon" aria-hidden="true"><MainMenuIcon name="backlog" /></span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.backlog') }}</span>
         </RouterLink>
         <!-- ガント（4.1 / 5.14）。**バックログの次に置く**——4.1 の図は間にカンバンを
@@ -149,8 +161,9 @@ const showAdmin = computed(
           class="item"
           :to="`/p/${projectKey}/gantt`"
           :title="t('menu.main.gantt')"
+          :aria-label="t('menu.main.gantt')"
         >
-          <span class="icon" aria-hidden="true">▦</span>
+          <span class="icon" aria-hidden="true"><MainMenuIcon name="gantt" /></span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.gantt') }}</span>
         </RouterLink>
         <!-- プラグインのビュー（登録表。5.15「プラグインの境界」）。ガントの次に置く。
@@ -161,8 +174,12 @@ const showAdmin = computed(
             class="item"
             :to="`/p/${projectKey}/${p.segment}`"
             :title="p.label"
+            :aria-label="p.label"
           >
-            <span class="icon" aria-hidden="true">{{ p.icon }}</span>
+            <span class="icon" aria-hidden="true">
+              <template v-if="typeof p.icon === 'string'">{{ p.icon }}</template>
+              <component :is="p.icon" v-else />
+            </span>
             <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ p.label }}</span>
           </RouterLink>
         </template>
@@ -172,12 +189,18 @@ const showAdmin = computed(
           class="item"
           :to="`/p/${projectKey}/search`"
           :title="t('menu.main.search')"
+          :aria-label="t('menu.main.search')"
         >
-          <span class="icon" aria-hidden="true">⌕</span>
+          <span class="icon" aria-hidden="true"><MainMenuIcon name="search" /></span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.search') }}</span>
         </RouterLink>
-        <RouterLink class="item" :to="`/p/${projectKey}/insights`" :title="t('menu.main.insights')">
-          <span class="icon" aria-hidden="true">◷</span>
+        <RouterLink
+          class="item"
+          :to="`/p/${projectKey}/insights`"
+          :title="t('menu.main.insights')"
+          :aria-label="t('menu.main.insights')"
+        >
+          <span class="icon" aria-hidden="true"><MainMenuIcon name="insights" /></span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.insights') }}</span>
         </RouterLink>
         <!-- Docs（4.3 の表。手順22b）。**プロジェクト設定より上に置く**——
@@ -187,8 +210,9 @@ const showAdmin = computed(
           class="item"
           :to="`/p/${projectKey}/docs`"
           :title="t('menu.main.docs')"
+          :aria-label="t('menu.main.docs')"
         >
-          <span class="icon" aria-hidden="true">▣</span>
+          <span class="icon" aria-hidden="true"><MainMenuIcon name="docs" /></span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.docs') }}</span>
         </RouterLink>
         <RouterLink
@@ -196,8 +220,9 @@ const showAdmin = computed(
           class="item"
           :to="`/p/${projectKey}/settings`"
           :title="t('menu.main.projectSettings')"
+          :aria-label="t('menu.main.projectSettings')"
         >
-          <span class="icon" aria-hidden="true">⚙</span>
+          <span class="icon" aria-hidden="true"><MainMenuIcon name="project-settings" /></span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.projectSettings') }}</span>
         </RouterLink>
       </template>
@@ -211,8 +236,9 @@ const showAdmin = computed(
           class="item"
           to="/admin/users"
           :title="t('menu.main.accounts')"
+          :aria-label="t('menu.main.accounts')"
         >
-          <span class="icon" aria-hidden="true">⚇</span>
+          <span class="icon" aria-hidden="true"><MainMenuIcon name="accounts" /></span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.accounts') }}</span>
         </RouterLink>
         <RouterLink
@@ -220,8 +246,9 @@ const showAdmin = computed(
           class="item"
           to="/admin/audit"
           :title="t('menu.main.auditLog')"
+          :aria-label="t('menu.main.auditLog')"
         >
-          <span class="icon" aria-hidden="true">⛨</span>
+          <span class="icon" aria-hidden="true"><MainMenuIcon name="audit" /></span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.auditLog') }}</span>
         </RouterLink>
         <RouterLink
@@ -229,8 +256,9 @@ const showAdmin = computed(
           class="item"
           to="/admin/settings"
           :title="t('menu.main.appSettings')"
+          :aria-label="t('menu.main.appSettings')"
         >
-          <span class="icon" aria-hidden="true">⚙</span>
+          <span class="icon" aria-hidden="true"><MainMenuIcon name="app-settings" /></span>
           <span v-if="ui.narrow || !ui.menuCollapsed" class="label">{{ t('menu.main.appSettings') }}</span>
         </RouterLink>
       </template>
