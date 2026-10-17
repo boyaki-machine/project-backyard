@@ -2045,7 +2045,10 @@ watch(queryKey, () => {
   void loadTickets()
 })
 
-// プロジェクトを切り替えたら語彙とプロジェクト詳細も取り直す（4.4）
+// プロジェクトを切り替えたら一覧・語彙・プロジェクト詳細を取り直す（4.4）。
+// **一覧も必ずここで取り直す。** クエリの `watch` に任せると、切替の前後で
+// クエリが同じとき（素の状態どうし）に発火せず、前のプロジェクトの行が
+// 新しいキーの接頭辞で残る（pb-357）。
 watch(projectKey, (key) => {
   selectedStageSeqs.value.clear()
   clearTimeout(keywordTimer)
@@ -2054,6 +2057,10 @@ watch(projectKey, (key) => {
   keyword.value = queryValue('q')
   if (key === '') return
   result.value = ''
+  // 前のプロジェクトの行を新しいキーで見せない（6.2 のエラー時と同じ扱い）
+  tickets.value = []
+  total.value = 0
+  loaded.value = false
   tags.value = []
   sprints.value = []
   epics.value = []
@@ -2061,7 +2068,7 @@ watch(projectKey, (key) => {
   loadTreeCollapsed()
   void projectStore.fetchCurrent(key)
   void loadVocabulary()
-  restoreGroupAxis()
+  if (!restoreGroupAxis()) void loadTickets()
 })
 </script>
 
