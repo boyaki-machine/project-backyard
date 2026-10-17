@@ -951,12 +951,12 @@ function renderNotice() {
       let why = '';
       const b = R.blocker && byId(R.blocker);
       if (R.reason === 'short') why = `最小の長さ（吸着の単位 ${dur(S.snap)}）を割ります`;
-      else if (R.reason === 'prev') why = `前の「${H(short(b.title))}」に ${dur(R.short)} 重なります（前は動かしません）`;
-      else if (R.reason === 'anchor') why = `「${H(short(b.title))}」の${b.ps ? '開始のアンカー' : b.st === 'done' ? '完了' : '着手済みの開始'}（${fmtT(b.s)}）に ${dur(R.short)} 足りません`;
-      else if (R.reason === 'endpin') why = `「${H(short(b.title))}」は終了のアンカー（${fmtT(b.e)}）があり、最小の長さを ${dur(R.short)} 割ります`;
+      else if (R.reason === 'prev') why = `前の「${short(b.title)}」に ${dur(R.short)} 重なります（前は動かしません）`;
+      else if (R.reason === 'anchor') why = `「${short(b.title)}」の${b.ps ? '開始のアンカー' : b.st === 'done' ? '完了' : '着手済みの開始'}（${fmtT(b.s)}）に ${dur(R.short)} 足りません`;
+      else if (R.reason === 'endpin') why = `「${short(b.title)}」は終了のアンカー（${fmtT(b.e)}）があり、最小の長さを ${dur(R.short)} 割ります`;
       let sug = '';
       if (tr.sug) { const ls = Object.entries(tr.sug.lens).map(([id, l]) => `${H(short(byId(id).title, 8))} を ${dur(l)}`).join('、'); sug = `<button type="button" class="btn" data-act="u2" title="試算の影を、縮めた場合に切り替えて見せる">${ls} に縮めて確定</button>`; }
-      n.innerHTML = `<span class="lbl">解けません</span><span class="msg" title="${H(why.replace(/<[^>]+>/g, ''))}">${stale}${head}：${why}。既定では書きません${tr.sug ? '——縮めれば収まります' : ''}。</span>${seekBtn()}${sug}<button type="button" class="btn" data-act="cancel">取り消す</button>${other}`;
+      n.innerHTML = `<span class="lbl">解けません</span><span class="msg" title="${H(why)}">${stale}${head}：${H(why)}。既定では書きません${tr.sug ? '——縮めれば収まります' : ''}。</span>${seekBtn()}${sug}<button type="button" class="btn" data-act="cancel">取り消す</button>${other}`;
     }
     return;
   }
