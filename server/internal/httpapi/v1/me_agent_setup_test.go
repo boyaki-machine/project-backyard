@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -449,6 +451,147 @@ func TestGetMyAgentSetupZip(t *testing.T) {
 	// **手引きは実名、接続設定は別名。** 展開した瞬間に既存を消さない。
 	if len(names) != 3 || names[0] != "PB-README.md" || names[1] != ".mcp.pb-block.json" || names[2] != ".claude/settings.local.pb-block.json" {
 		t.Errorf("zip の中身: got %v", names)
+	}
+}
+
+// Exercise the three query sources reported by CodeQL through the same response
+// writer and security headers as production. Invalid input must not reach ZIP creation.
+func TestGetMyAgentSetupZipRejectsHTMLQueryValues(t *testing.T) {
+	orig := shippedDir
+	shippedDir = func() (string, error) {
+		t.Fatal("invalid query reached asset loading")
+		return "", nil
+	}
+	t.Cleanup(func() { shippedDir = orig })
+	for _, transport := range []string{"direct", "bridge"} {
+		for _, field := range []string{"transport", "os", "arch"} {
+			for i, payload := range []string{
+				`<script>alert(1)</script>`,
+				`"><svg onload=alert(1)>`,
+				"linux\r\nContent-Type: text/html\r\n\r\n<script>alert(1)</script>",
+			} {
+				t.Run(fmt.Sprintf("%s/%s/%d", transport, field, i), func(t *testing.T) {
+					h := &handler{q: connectFake("codex", "TEST")}
+					req := connectReq()
+					q := req.URL.Query()
+					q.Set("transport", transport)
+					q.Set("os", "linux")
+					q.Set("arch", "amd64")
+					q.Set(field, payload)
+					req.URL.RawQuery = q.Encode()
+					rec := httptest.NewRecorder()
+					middleware.SecurityHeaders(middleware.AccessLog()(http.HandlerFunc(h.getMyAgentSetupZip))).ServeHTTP(rec, req)
+					if rec.Code != http.StatusUnprocessableEntity {
+						t.Fatalf("status = %d, want 422: %s", rec.Code, rec.Body.String())
+					}
+					if ct := rec.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
+						t.Errorf("Content-Type = %q", ct)
+					}
+					if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+						t.Error("missing nosniff")
+					}
+					if rec.Header().Get("Content-Disposition") != "" {
+						t.Error("invalid input received a download response")
+					}
+					if !json.Valid(rec.Body.Bytes()) || strings.Contains(rec.Body.String(), payload) {
+						t.Errorf("response is not JSON without reflected input: %s", rec.Body.String())
+					}
+					var response struct {
+						Error struct{ Code, Message string }
+					}
+					if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+						t.Fatal(err)
+					}
+					if response.Error.Code != "validation_failed" || strings.Contains(response.Error.Message, payload) {
+						t.Errorf("decoded error reflects input or has the wrong code: %+v", response.Error)
+					}
+				})
+			}
+		}
+	}
+}
+
+// Successful query values select a ZIP download, never an HTML response. Verify
+// every supported platform and both transports, including the embedded binaries.
+func TestGetMyAgentSetupZipPlatformDownloadHeaders(t *testing.T) {
+	base := t.TempDir()
+	platforms := []struct{ os, arch string }{
+		{"darwin", "arm64"}, {"windows", "amd64"}, {"windows", "arm64"},
+		{"linux", "amd64"}, {"linux", "arm64"},
+	}
+	for _, p := range platforms {
+		dir := filepath.Join(base, "bridges", p.os+"-"+p.arch)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"pb-mcp-bridge", "pb-wait"} {
+			if p.os == "windows" {
+				name += ".exe"
+			}
+			// HTML-like bytes must remain intact in the downloaded binary.
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("<script>"+name+"</script>\x00"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	orig := shippedDir
+	shippedDir = func() (string, error) { return base, nil }
+	t.Cleanup(func() { shippedDir = orig })
+	for _, transport := range []string{"direct", "bridge"} {
+		for _, p := range platforms {
+			t.Run(transport+"/"+p.os+"-"+p.arch, func(t *testing.T) {
+				h := &handler{q: connectFake("codex", "TEST")}
+				req := connectReq()
+				q := req.URL.Query()
+				q.Set("transport", transport)
+				q.Set("os", p.os)
+				q.Set("arch", p.arch)
+				req.URL.RawQuery = q.Encode()
+				rec := httptest.NewRecorder()
+				middleware.SecurityHeaders(middleware.AccessLog()(http.HandlerFunc(h.getMyAgentSetupZip))).ServeHTTP(rec, req)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+				}
+				if ct := rec.Header().Get("Content-Type"); ct != "application/zip" {
+					t.Errorf("Content-Type = %q", ct)
+				}
+				if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+					t.Error("missing nosniff")
+				}
+				media, params, err := mime.ParseMediaType(rec.Header().Get("Content-Disposition"))
+				wantName := "pb-connect-demo-codex-" + p.os + "-" + p.arch + ".zip"
+				if err != nil || media != "attachment" || params["filename"] != wantName {
+					t.Errorf("Content-Disposition = %q (%v)", rec.Header().Get("Content-Disposition"), err)
+				}
+				zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+				if err != nil {
+					t.Fatalf("response is not a ZIP: %v", err)
+				}
+				wantBinaries := 1
+				if transport == "bridge" {
+					wantBinaries++
+				}
+				binaries := 0
+				for _, f := range zr.File {
+					if !strings.HasPrefix(f.Name, "pb-wait") && !strings.HasPrefix(f.Name, "pb-mcp-bridge") {
+						continue
+					}
+					binaries++
+					rc, err := f.Open()
+					if err != nil {
+						t.Fatal(err)
+					}
+					content, err := io.ReadAll(rc)
+					_ = rc.Close()
+					if err != nil || !bytes.Equal(content, []byte("<script>"+f.Name+"</script>\x00")) {
+						t.Errorf("binary %s changed while writing the response: %v", f.Name, err)
+					}
+				}
+				if binaries != wantBinaries {
+					t.Errorf("binaries = %d, want %d", binaries, wantBinaries)
+				}
+			})
+		}
 	}
 }
 
