@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { uiLocaleTag, uiText } from '../locales/ui'
-import { computed, onMounted, onUnmounted, ref, useTemplateRef } from 'vue'
+import { computed, onMounted, onUnmounted, useTemplateRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import EmptyState from '../components/EmptyState.vue'
@@ -26,9 +26,6 @@ const auth = useAuthStore()
 const store = useProjectStore()
 const route = useRoute()
 const router = useRouter()
-
-/** 副次アクションの `⋯`（2.5）。今は「アーカイブを表示」だけが入る */
-const menuOpen = ref(false)
 
 const canCreate = computed(() => auth.can('project.create'))
 
@@ -142,9 +139,8 @@ function onKeydown(e: KeyboardEvent) {
   links[next]?.focus()
 }
 
-function toggleArchived() {
-  store.setIncludeArchived(!store.includeArchived)
-  menuOpen.value = false
+function onIncludeArchivedChange(e: Event) {
+  store.setIncludeArchived((e.target as HTMLInputElement).checked)
 }
 
 onMounted(() => {
@@ -169,26 +165,16 @@ async function retry() {
   <div class="page">
     <PageHeader :title="$ui('プロジェクト')">
       <template #actions>
-        <div class="more" @keydown.esc="menuOpen = false">
-          <button
-            type="button"
-            class="icon-button"
-            :aria-label="$ui('その他の操作')"
-            :aria-expanded="menuOpen"
-            @click="menuOpen = !menuOpen"
-          >
-            ⋯
-          </button>
-          <div v-if="menuOpen" class="dropdown">
-            <button
-              type="button"
-              class="item"
-              :aria-pressed="store.includeArchived"
-              @click="toggleArchived"
-            >
-              <span class="mark" aria-hidden="true">{{ store.includeArchived ? '✓' : '' }}</span> {{ $ui('アーカイブを表示') }} </button>
-          </div>
-        </div>
+        <!-- アーカイブ済みは既定で出さない（5.2）。`⋯` の中に置くと見つからない
+             ので、ヘッダに常に出す（pb-284） -->
+        <label class="include-archived">
+          <input
+            type="checkbox"
+            :checked="store.includeArchived"
+            @change="onIncludeArchivedChange"
+          />
+          {{ $ui('アーカイブプロジェクトも表示') }}
+        </label>
 
         <RouterLink
           v-if="canCreate"
@@ -318,59 +304,14 @@ async function retry() {
 }
 
 /* ── ページヘッダのアクション ───────────────────────────── */
-.more {
-  position: relative;
-}
-
-.icon-button {
-  width: 32px;
-  height: 32px;
-  border: 1px solid transparent;
-  border-radius: var(--pb-radius);
-  background: none;
-  cursor: pointer;
-}
-
-.icon-button:hover {
-  border-color: var(--pb-border);
-  background: var(--pb-hover);
-}
-
-.dropdown {
-  position: absolute;
-  z-index: 10;
-  top: calc(100% + var(--pb-space-1));
-  right: 0;
-  min-width: 200px;
-  padding: var(--pb-space-1);
-  border: 1px solid var(--pb-border);
-  border-radius: var(--pb-radius);
-  background: var(--pb-elevated);
-  box-shadow: var(--pb-shadow-2);
-}
-
-.item {
-  display: flex;
+.include-archived {
+  display: inline-flex;
   align-items: center;
-  gap: var(--pb-space-2);
-  width: 100%;
-  padding: var(--pb-space-1) var(--pb-space-2);
-  border: 0;
-  border-radius: var(--pb-radius);
-  background: none;
-  cursor: pointer;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.item:hover {
-  background: var(--pb-hover);
-}
-
-.mark {
-  flex: none;
-  width: 1em;
+  gap: var(--pb-space-1);
   color: var(--pb-text-muted);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .primary:hover {
