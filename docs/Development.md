@@ -58,7 +58,7 @@ node -v && npm -v
 | | 版 | 導入方法 |
 |---|---|---|
 | コンテナランタイム | Rancher Desktop（`docker` は `~/.rd/bin/docker`） | アプリとして導入 |
-| Go | 1.26.9（配布ビルド） | Docker。ホストはHomebrew等で導入 |
+| Go | 1.26.10（配布ビルド） | Docker。ホストはHomebrew等で導入 |
 | Node / npm | v24.22.0 / 11.21.1（配布ビルド） | Docker。ホストはnvm等で導入 |
 
 `goose`（マイグレーション）と `sqlc`（クエリ生成）は**別途インストールしない**。`server/tools/go.mod` の `tool` ディレクティブでバージョンを固定してあり、`make migrate` / `make sqlc` が `go tool` 経由で呼ぶ（`DbDesign.md` 5.1）。同様に、client の依存は `make build-client` が `npm ci` で入れるので、手で `npm install` する必要はない。
@@ -838,12 +838,12 @@ WebAuthn.clearCredentials {authenticatorId}                    ← やり直す�
 
 | 対象 | 版 | 上げない理由 |
 |---|---|---|
-| goose | **v3.26.0**（`server/tools/go.mod`） | v3.27.3 以降は `go 1.25.7` を要求する |
+| goose | **v3.29.0**（`server/tools/go.mod`。`server/go.mod` も同じ版） | v3.29.0 は `go 1.26.0` を要求する。これより新しい版は、要求する go の版を見てから上げる |
 | sqlc | **v1.30.0**（同上） | v1.31.1 は `go 1.26.0` を要求する（v1.30.0 自体は `go 1.23.0` 要求） |
 | `typescript`（client） | **`^5`** | vue-tsc 3.3.9 が TS 7 の `typescript/lib/tsc` を require できない（症状は9章） |
 
 **`go get` の後は `head -3 server/go.mod` と `head -3 server/tools/go.mod` を見て、
-go ディレクティブが `1.26.0` と `1.24` のままか確認する。**
+go ディレクティブがどちらも `1.26.0` のままか確認する。**
 
 ## 10.2 ツールは server/tools/go.mod に隔離してある
 
@@ -1655,7 +1655,7 @@ go version       # go1.26 以上であること
 macOS なら Homebrew（検証環境もこれ。`brew install go`）。公式配布の pkg でもよい。
 
 **上げるときは注意する。** ライブラリの都合で go ディレクティブが勝手に上がる問題を避けるため、
-`server/go.mod` は `1.26.0`、`server/tools/go.mod` は `1.24` にしてある（10.1）。Go 本体を新しくするのは
+`server/go.mod` と `server/tools/go.mod` はどちらも `1.26.0` にしてある（10.1）。Go 本体を新しくするのは
 構わないが、`go get` の後は `head -3` で両方の値が変わっていないか確認すること。
 
 ## A.3 Node.js / npm
