@@ -36,7 +36,7 @@ RUN npm run build
 RUN node scripts/npm-licenses.mjs /src/npm-licenses.json
 
 # ── 2. pb と goose ────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm AS server
+FROM --platform=$BUILDPLATFORM golang:1.26.10-bookworm AS server
 # コンパイラ段もOSの提供済み更新を適用する。tzdataはallアーキテクチャのデータ。
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \

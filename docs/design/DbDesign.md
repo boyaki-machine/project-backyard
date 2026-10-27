@@ -477,7 +477,7 @@ server/
 ├── sqlc.yaml       ← 生成設定。パスはこのファイルからの相対で解決される
 ├── migrations/
 └── tools/
-    ├── go.mod      ← tool ( goose v3.26.0, sqlc v1.30.0 )
+    ├── go.mod      ← tool ( goose v3.29.0, sqlc v1.30.0 )
     └── go.sum
 ```
 
