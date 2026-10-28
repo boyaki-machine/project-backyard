@@ -1,6 +1,6 @@
 # PostgreSQL17＋pgvectorのPB用イメージ（DbDesign.md 3.1）。
 # 上流のエントリポイント・UID/GID・データ配置を保ち、同じ17系のボリュームを引き継ぐ。
-FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm AS gosu
+FROM --platform=$BUILDPLATFORM golang:1.26.10-bookworm AS gosu
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*

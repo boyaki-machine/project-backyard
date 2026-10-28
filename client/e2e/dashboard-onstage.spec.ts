@@ -1,16 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { expect, test, type Page } from '@playwright/test'
+import { login } from './fixtures/session'
 import type { ProjectStats } from '../src/api/dashboard'
-
-async function login(page: Page) {
-  if (!process.env.PB_E2E_EMAIL || !process.env.PB_E2E_PASSWORD) throw new Error('Development E2E credentials are required')
-  await page.goto('/login')
-  await page.locator('input[name="email"]').fill(process.env.PB_E2E_EMAIL)
-  await page.locator('input[name="password"]').fill(process.env.PB_E2E_PASSWORD)
-  await page.locator('button[type="submit"]').click()
-  await expect(page).toHaveURL(/\/projects$/)
-}
 
 async function showFilters(page: Page) {
   if (!await page.locator('.backlog-filter-scope select').isVisible()) {

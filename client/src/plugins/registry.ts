@@ -12,9 +12,7 @@
  *
  * 将来、別に配布できるよう準備するための切れ目で、外部配布の仕組みはまだ作らない。
  */
-import { h, type Component } from 'vue'
-
-import MainMenuIcon from '../components/MainMenuIcon.vue'
+import { defineAsyncComponent, h, type Component } from 'vue'
 
 import { messages as eventViewMessages } from './event_view/locales/en'
 
@@ -59,6 +57,13 @@ export interface ViewPlugin {
   /** 使う API（`openapi.yaml` の公開された口だけ）。文書のための一覧 */
   api: readonly string[]
 }
+
+/**
+ * メニューのアイコンも遅延読み込みにする。**この表は `locales/ui.ts` が引く**ため、
+ * `.vue` を静的に import すると、文言を使うだけの e2e（`ticket-groups.spec.ts` など）まで
+ * `.vue` を読み込もうとして落ちる（Playwright の変換器は `.vue` を解釈できない）。
+ */
+const MainMenuIcon = defineAsyncComponent(() => import('../components/MainMenuIcon.vue'))
 
 /**
  * 登録したプラグイン。**いまは1件**（タイムライン。pb-296）。

@@ -1,12 +1,9 @@
 import { test, expect } from '@playwright/test'
+import { login } from './fixtures/session'
 
-test('human manages agent stop, attributes and monitoring in both management screens', async ({ page, playwright }, info) => {
+test('human manages agent stop, attributes and monitoring in both management screens', async ({ page, playwright, baseURL }, info) => {
  test.setTimeout(120_000)
- await page.goto('/login')
- await page.locator('input[name="email"]').fill(process.env.PB_E2E_EMAIL!)
- await page.locator('input[name="password"]').fill(process.env.PB_E2E_PASSWORD!)
- await page.locator('button[type="submit"]').click()
- await expect(page).toHaveURL(/\/projects$/)
+ await login(page)
  const csrf=(await page.context().cookies()).find(c=>c.name==='pb_csrf')!.value
  const headers={'X-PB-CSRF':csrf}, key=`ac-${Date.now()}`, base=`/api/v1/projects/${key}`, name=`0000-control-${Date.now()}`
  const project=await page.request.post('/api/v1/projects',{headers,data:{key,name:'Agent control regression',workflow_template:'simple'}})
@@ -21,7 +18,7 @@ test('human manages agent stop, attributes and monitoring in both management scr
   const ticketResponse=await page.request.post(`${base}/tickets`,{headers,data:{type:'task',title:'Explicit execution outcomes'}})
   expect(ticketResponse.status()).toBe(201)
   const ticket=await ticketResponse.json()
-  const agentAPI=await playwright.request.newContext({baseURL:process.env.PB_E2E_BASE_URL,extraHTTPHeaders:{Authorization:`Bearer ${token}`}})
+  const agentAPI=await playwright.request.newContext({baseURL,extraHTTPHeaders:{Authorization:`Bearer ${token}`}})
   try {
    const rpc=await agentAPI.post(`/mcp/${key}`,{headers:{Accept:'application/json, text/event-stream'},data:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'pb_update_ticket',arguments:{seq:ticket.seq,assignee_id:'me'}}}})
    expect(rpc.status()).toBe(200)
@@ -70,7 +67,7 @@ test('human manages agent stop, attributes and monitoring in both management scr
   await controls.getByRole('button',{name:'保存',exact:true}).click()
   await expect(controls.getByRole('status')).toHaveText('評価属性を保存しました')
   await expect(controls.getByText('停止条件に到達',{exact:true})).toBeVisible()
-  const monitoredAPI=await playwright.request.newContext({baseURL:process.env.PB_E2E_BASE_URL,extraHTTPHeaders:{Authorization:`Bearer ${token}`}})
+  const monitoredAPI=await playwright.request.newContext({baseURL,extraHTTPHeaders:{Authorization:`Bearer ${token}`}})
   try{
    const rpc=await monitoredAPI.post(`/mcp/${key}`,{headers:{Accept:'application/json, text/event-stream'},data:{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'pb_update_ticket',arguments:{seq:ticket.seq,title:'Must reject when stopped'}}}})
    const text=await rpc.text();expect(text).toContain('"isError":true');expect(text).toContain('agent_monitor_stopped')
@@ -118,10 +115,13 @@ test('human manages agent stop, attributes and monitoring in both management scr
   const retainedUsage=await (await page.request.get(`${base}/agent-usage`)).json()
   expect(retainedUsage.totals.failed_count).toBe(1);expect(retainedUsage.totals.abandoned_count).toBe(1)
   expect((await (await page.request.get(`${base}/tickets/${ticket.seq}/work-sessions`)).json()).total).toBe(2)
-  const api=await playwright.request.newContext({baseURL:process.env.PB_E2E_BASE_URL,extraHTTPHeaders:{Authorization:`Bearer ${token}`}})
+  const api=await playwright.request.newContext({baseURL,extraHTTPHeaders:{Authorization:`Bearer ${token}`}})
   try {expect((await api.get(base)).status()).toBe(401)}finally{await api.dispose()}
  } finally {
   await page.request.post(`${base}/archive`,{headers})
-  if(agentID)expect((await page.request.delete(`/api/v1/me/agents/${agentID}`,{headers})).status()).toBe(204)
+  const agentRemoved=agentID?(await page.request.delete(`/api/v1/me/agents/${agentID}`,{headers})).status():204
+  // アーカイブだけでは行が残り、同名のプロジェクトが溜まって backlog-project-switch の選択を曖昧にする
+  expect((await page.request.delete(base,{headers,data:{confirm_key:key}})).status()).toBe(204)
+  expect(agentRemoved).toBe(204)
  }
 })

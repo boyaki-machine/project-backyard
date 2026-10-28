@@ -58,7 +58,7 @@ node -v && npm -v
 | | 版 | 導入方法 |
 |---|---|---|
 | コンテナランタイム | Rancher Desktop（`docker` は `~/.rd/bin/docker`） | アプリとして導入 |
-| Go | 1.26.9（配布ビルド） | Docker。ホストはHomebrew等で導入 |
+| Go | 1.26.10（配布ビルド） | Docker。ホストはHomebrew等で導入 |
 | Node / npm | v24.22.0 / 11.21.1（配布ビルド） | Docker。ホストはnvm等で導入 |
 
 `goose`（マイグレーション）と `sqlc`（クエリ生成）は**別途インストールしない**。`server/tools/go.mod` の `tool` ディレクティブでバージョンを固定してあり、`make migrate` / `make sqlc` が `go tool` 経由で呼ぶ（`DbDesign.md` 5.1）。同様に、client の依存は `make build-client` が `npm ci` で入れるので、手で `npm install` する必要はない。
@@ -500,8 +500,8 @@ make release TARGET=k8s ARCH=arm64                                 # イメー�
 
 # 8. 画面の動作確認
 
-Playwright / Puppeteer は入れていない（`Design.md` 3.1 の採用技術表にない）。
-**ヘッドレス Chrome を直接叩く。**
+**手で確かめるときは、ヘッドレス Chrome を直接叩く**（8.1〜8.7）。
+回帰の試験は `client/e2e/` に Playwright（`@playwright/test`）で書いてあり、全件の走らせ方は 8.8。
 
 ## 8.1 描画だけ見る
 
@@ -794,6 +794,39 @@ WebAuthn.clearCredentials {authenticatorId}                    ← やり直す�
   パスキーは画面の削除か `ApiDesign.md` 6.10 の全削除で消す。監査の `passkey.*` と
   `login.passkey_failure` も 8.4 に従って消す
 
+## 8.8 e2e（Playwright）を全件走らせる
+
+`client/e2e/` の spec は2種類ある。**API をモックして画面だけを見るもの**と、**実サーバに繋ぐもの**
+（ログインし、プロジェクトやエージェントを作って最後に消す）。**全件を1回で走らせるなら実サーバに向ける。**
+手元で約3分。
+
+```
+make dev-reset    # 前の検証の残りを消す（8.4）。dev の DB を作り直すので、要らなければ省く
+make build        # 画面を embed する（gantt-excel は本番ビルドのチャンク名を見る）
+make run          # :8080。別の端末で
+cd client && PB_E2E_PASSWORD='<make dev-info の共通パスワード>' npx playwright test --workers=1 --retries=1
+make clean-webui  # 終わったら embed 対象を戻す（7.1）
+```
+
+| 前提 | 理由 |
+|---|---|
+| **接続先は既定の `http://127.0.0.1:8080`。** 変えるなら `PB_E2E_BASE_URL` | spec は Playwright の `baseURL` を使う |
+| **アカウントはデモの admin と pm**（`PB_E2E_EMAIL` / `PB_E2E_PM_EMAIL` で差し替えられる） | プロジェクトを作る spec は admin、demo の参加者が要る spec（エージェントの接続案内・アイコン）は pm |
+| **ログインは `e2e/fixtures/session.ts` を通す** | アカウントごとに1回だけ画面からログインし、Cookie を使い回す。ログインは IP あたり 10回/分で、spec ごとに画面からログインすると 429 で落ちる |
+| **`--workers=1 --retries=1`** | 要求がほぼ admin 1人に集まり、アクターあたり 600回/分（`ApiDesign.md` 2.9）に並列では当たる。直列でも稀に当たるので1回だけ再試行する。**再試行で通ったものは flaky として別に報告される** |
+| **`make psql` が動くこと**（repo の場所は `PB_DEV_ROOT`。既定は `client` の1つ上） | 後始末の一部を SQL で行う spec がある |
+
+**spec を足すときの約束。** どれも、破ると別の spec が落ちるか、黙ってスキップされる。
+
+- 実サーバに繋ぐなら、ログインは `login(page, 'admin' | 'pm')` を使う。画面からのログインを書かない
+- **作ったプロジェクトは最後に消す。** アーカイブだけでは行が残り、プロジェクト切替の選択肢が
+  同名で曖昧になる。`/archive` のあと `DELETE /projects/:key` に `confirm_key` を付ける
+- **既存のデータ（他の spec の残り）を借りない。** 要るものはその spec で作る
+- **日付を固定で書かない。** ガントは今日の前後しか描かないので、日が経つと範囲から外れる。今日から数える
+
+1本だけなら `npx playwright test e2e/<名前>.spec.ts`。モックの spec は `make dev-client`（:5173）に
+`PB_E2E_BASE_URL` を向けても動く。
+
 ---
 
 # 9. つまずいたとき
@@ -838,12 +871,12 @@ WebAuthn.clearCredentials {authenticatorId}                    ← やり直す�
 
 | 対象 | 版 | 上げない理由 |
 |---|---|---|
-| goose | **v3.26.0**（`server/tools/go.mod`） | v3.27.3 以降は `go 1.25.7` を要求する |
+| goose | **v3.29.0**（`server/tools/go.mod`。`server/go.mod` も同じ版） | v3.29.0 は `go 1.26.0` を要求する。これより新しい版は、要求する go の版を見てから上げる |
 | sqlc | **v1.30.0**（同上） | v1.31.1 は `go 1.26.0` を要求する（v1.30.0 自体は `go 1.23.0` 要求） |
 | `typescript`（client） | **`^5`** | vue-tsc 3.3.9 が TS 7 の `typescript/lib/tsc` を require できない（症状は9章） |
 
 **`go get` の後は `head -3 server/go.mod` と `head -3 server/tools/go.mod` を見て、
-go ディレクティブが `1.26.0` と `1.24` のままか確認する。**
+go ディレクティブがどちらも `1.26.0` のままか確認する。**
 
 ## 10.2 ツールは server/tools/go.mod に隔離してある
 
@@ -1655,7 +1688,7 @@ go version       # go1.26 以上であること
 macOS なら Homebrew（検証環境もこれ。`brew install go`）。公式配布の pkg でもよい。
 
 **上げるときは注意する。** ライブラリの都合で go ディレクティブが勝手に上がる問題を避けるため、
-`server/go.mod` は `1.26.0`、`server/tools/go.mod` は `1.24` にしてある（10.1）。Go 本体を新しくするのは
+`server/go.mod` と `server/tools/go.mod` はどちらも `1.26.0` にしてある（10.1）。Go 本体を新しくするのは
 構わないが、`go get` の後は `head -3` で両方の値が変わっていないか確認すること。
 
 ## A.3 Node.js / npm
