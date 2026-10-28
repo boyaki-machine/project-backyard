@@ -1,21 +1,8 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
+import { login } from './fixtures/session'
 
 const MOBILE_WIDTH = 390
 const DESKTOP_BREAKPOINT = 768
-
-async function login(page: Page) {
-  const email = process.env.PB_E2E_EMAIL
-  const password = process.env.PB_E2E_PASSWORD
-  if (!email || !password) {
-    throw new Error('PB_E2E_EMAIL と PB_E2E_PASSWORD を設定してください')
-  }
-
-  await page.goto('/login')
-  await page.locator('input[name="email"]').fill(email)
-  await page.locator('input[name="password"]').fill(password)
-  await page.locator('button[type="submit"]').click()
-  await expect(page).toHaveURL(/\/projects$/)
-}
 
 test('ページ見出しは狭い幅で浮遊メニューボタンと重ならず、768pxでは既存位置を保つ', async ({
   page,

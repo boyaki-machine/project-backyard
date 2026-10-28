@@ -1,13 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { expect, test } from '@playwright/test'
+import { login } from './fixtures/session'
 
-test('agent applies an approved plan through MCP and sees dates and dependencies in gantt', async ({ page, playwright }, info) => {
+test('agent applies an approved plan through MCP and sees dates and dependencies in gantt', async ({ page, playwright, baseURL }, info) => {
   test.setTimeout(90_000)
-  await page.goto('/login')
-  await page.locator('input[name="email"]').fill(process.env.PB_E2E_EMAIL!)
-  await page.locator('input[name="password"]').fill(process.env.PB_E2E_PASSWORD!)
-  await page.locator('button[type="submit"]').click()
-  await expect(page).toHaveURL(/\/projects$/)
+  await login(page)
   const csrf = (await page.context().cookies()).find(c => c.name === 'pb_csrf')!.value
   const headers = { 'X-PB-CSRF': csrf }
   const key = `plan-${Date.now()}`
@@ -44,7 +41,7 @@ test('agent applies an approved plan through MCP and sees dates and dependencies
     expect(issued.scopes).not.toContain('ticket.edit')
     await page.getByRole('dialog', { name: 'エージェント用トークンを発行しました' }).getByRole('button', { name: '閉じる', exact: true }).last().click()
     const auth = { Authorization: `Bearer ${issued.token}`, Accept: 'application/json, text/event-stream' }
-    const agentAPI = await playwright.request.newContext({ baseURL: process.env.PB_E2E_BASE_URL ?? 'http://127.0.0.1:8080', extraHTTPHeaders: auth })
+    const agentAPI = await playwright.request.newContext({ baseURL, extraHTTPHeaders: auth })
     let id = 0
     const mcp = async (name: string, args: object, failure = false) => {
       const response = await agentAPI.post(`/mcp/${key}`, { data: { jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } } })
@@ -57,8 +54,10 @@ test('agent applies an approved plan through MCP and sees dates and dependencies
     }
     const a = await mcp('pb_create_ticket', { type: 'task', title: 'Planning A' })
     const b = await mcp('pb_create_ticket', { type: 'task', title: 'Planning B' })
-    await mcp('pb_update_ticket', { seq: a.seq, start_date: '2026-10-07', due_date: '2026-10-07', estimate_point: 5 })
-    await mcp('pb_update_ticket', { seq: b.seq, start_date: '2026-10-08', due_date: '2026-10-09', estimate_point: 8 })
+    // ガントは今日の前後しか描かないので、日付は今日から数える（固定の日付は日が経つと範囲から外れる）
+    const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+    await mcp('pb_update_ticket', { seq: a.seq, start_date: day(1), due_date: day(1), estimate_point: 5 })
+    await mcp('pb_update_ticket', { seq: b.seq, start_date: day(2), due_date: day(3), estimate_point: 8 })
     const links = []
     for (const link_type of ['FS', 'SS', 'FF', 'SF']) links.push(await mcp('pb_add_link', { seq: a.seq, target_seq: b.seq, link_type, lag_days: 0 }))
     await mcp('pb_update_link', { seq: b.seq, id: links[1].id, lag_days: 1 })
@@ -68,7 +67,7 @@ test('agent applies an approved plan through MCP and sees dates and dependencies
     const plan = await mcp('pb_get_planning_data', {})
     expect(plan.truncated).toBe(false)
     expect(plan.items.map((t: { seq: number }) => t.seq)).toEqual([b.seq, a.seq])
-    expect(plan.items.find((t: { seq: number }) => t.seq === a.seq).due_date).toBe('2026-10-07')
+    expect(plan.items.find((t: { seq: number }) => t.seq === a.seq).due_date).toBe(day(1))
     expect(plan.links).toHaveLength(4)
     expect(plan.items.every((t: object) => !('body_md' in t))).toBe(true)
     // The chart renders only the visible time range; inspect both bars at desktop width.

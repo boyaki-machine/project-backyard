@@ -1,13 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { expect, test } from '@playwright/test'
+import { login } from './fixtures/session'
 
 test('usage keeps missing values, resubmissions and pages visible at desktop and phone widths', async ({ page }, info) => {
   test.setTimeout(90_000)
-  await page.goto('/login')
-  await page.locator('input[name="email"]').fill(process.env.PB_E2E_EMAIL!)
-  await page.locator('input[name="password"]').fill(process.env.PB_E2E_PASSWORD!)
-  await page.locator('button[type="submit"]').click()
-  await expect(page).toHaveURL(/\/projects$/)
+  await login(page)
   const csrf = (await page.context().cookies()).find(c => c.name === 'pb_csrf')!.value
   const headers = { 'X-PB-CSRF': csrf }
   const key = `usage-${Date.now()}`
