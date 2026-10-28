@@ -1,17 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-
-async function login(page: Page) {
-  const email = process.env.PB_E2E_EMAIL
-  const password = process.env.PB_E2E_PASSWORD
-  if (!email || !password) {
-    throw new Error('PB_E2E_EMAIL と PB_E2E_PASSWORD を設定してください')
-  }
-  await page.goto('/login')
-  await page.locator('input[name="email"]').fill(email)
-  await page.locator('input[name="password"]').fill(password)
-  await page.locator('button[type="submit"]').click()
-  await expect(page).toHaveURL(/\/projects$/)
-}
+import { login } from './fixtures/session'
 
 async function box(page: Page, selector: string) {
   const value = await page.locator(selector).boundingBox()

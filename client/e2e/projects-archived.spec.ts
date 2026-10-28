@@ -1,32 +1,24 @@
-import { expect, test, type Page } from '@playwright/test'
-
-async function login(page: Page) {
-  const email = process.env.PB_E2E_EMAIL
-  const password = process.env.PB_E2E_PASSWORD
-  if (!email || !password) {
-    throw new Error('PB_E2E_EMAIL と PB_E2E_PASSWORD を設定してください')
-  }
-  await page.goto('/login')
-  await page.locator('input[name="email"]').fill(email)
-  await page.locator('input[name="password"]').fill(password)
-  await page.locator('button[type="submit"]').click()
-  await expect(page).toHaveURL(/\/projects$/)
-}
+import { expect, test } from '@playwright/test'
+import { login } from './fixtures/session'
 
 // pb-284：アーカイブ済みのプロジェクトを一覧に出し、開いて、設定から解除できる。
-// **既存のアーカイブ済みを1件借り、最後にアーカイブへ戻す**（project.archive を持つ利用者で走らせる）。
+// **アーカイブ済みのプロジェクトをこの試験で作り、最後に消す**（administrator で走らせる）。
+// 既存のものを借りると、他の試験の消し残しに頼ることになる。
 test('チェックボックスでアーカイブ済みを一覧に出し、開いて解除できる', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await login(page)
 
-  const res = await page.request.get('/api/v1/projects?status=archived&per_page=100')
-  expect(res.ok()).toBe(true)
-  const archived = ((await res.json()) as { items: { key: string; name: string; my_role: string | null }[] })
-    .items.filter((p) => p.my_role !== null)
-  test.skip(archived.length === 0, 'メンバーであるアーカイブ済みのプロジェクトが要る')
-  const target = archived[0]
+  const csrf = (await page.context().cookies()).find((c) => c.name === 'pb_csrf')!.value
+  const headers = { 'X-PB-CSRF': csrf }
+  const target = { key: `arch-e2e-${Date.now().toString(36)}` }
+  const created = await page.request.post('/api/v1/projects', {
+    headers, data: { key: target.key, name: 'Archived listing regression', workflow_template: 'simple' },
+  })
+  expect(created.status(), await created.text()).toBe(201)
 
   try {
+    expect((await page.request.post(`/api/v1/projects/${target.key}/archive`, { headers })).ok()).toBe(true)
+    await page.reload()
     const checkbox = page.getByRole('checkbox', { name: 'アーカイブプロジェクトも表示' })
     const row = page.locator('tbody tr', { hasText: target.key })
     await expect(checkbox).not.toBeChecked()
@@ -46,10 +38,9 @@ test('チェックボックスでアーカイブ済みを一覧に出し、開�
     await expect(page.getByText('● 有効')).toBeVisible()
     await expect(page.getByRole('button', { name: 'アーカイブする' })).toBeVisible()
   } finally {
-    const csrf = (await page.context().cookies()).find((c) => c.name === 'pb_csrf')!.value
-    const back = await page.request.post(`/api/v1/projects/${target.key}/archive`, {
-      headers: { 'X-PB-CSRF': csrf },
-    })
-    expect(back.ok()).toBe(true)
+    // 削除はアーカイブ済みにしか効かない。解除のあとなので、アーカイブし直してから消す
+    await page.request.post(`/api/v1/projects/${target.key}/archive`, { headers })
+    const removed = await page.request.delete(`/api/v1/projects/${target.key}`, { headers, data: { confirm_key: target.key } })
+    expect(removed.status()).toBe(204)
   }
 })

@@ -1,16 +1,6 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
+import { login } from './fixtures/session'
 import type { TicketTrends } from '../src/api/dashboard'
-
-async function login(page: Page) {
-  if (!process.env.PB_E2E_EMAIL || !process.env.PB_E2E_PASSWORD) {
-    throw new Error('PB_E2E_EMAIL and PB_E2E_PASSWORD are required')
-  }
-  await page.goto('/login')
-  await page.locator('input[name="email"]').fill(process.env.PB_E2E_EMAIL)
-  await page.locator('input[name="password"]').fill(process.env.PB_E2E_PASSWORD)
-  await page.locator('button[type="submit"]').click()
-  await expect(page).toHaveURL(/\/projects$/)
-}
 
 function sample(period: TicketTrends['period'], zero = false): TicketTrends {
   const days = { '7d': 7, '4w': 28, '3m': 92, '6m': 183 }[period]

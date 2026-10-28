@@ -1,12 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-
-async function login(page: Page, email: string) {
-  await page.goto('/login')
-  await page.locator('input[name="email"]').fill(email)
-  await page.locator('input[name="password"]').fill(process.env.PB_E2E_PASSWORD ?? '')
-  await page.locator('button[type="submit"]').click()
-  await expect(page).toHaveURL(/\/projects$/)
-}
+import { hasPassword, login } from './fixtures/session'
 
 async function csrf(page: Page): Promise<Record<string, string>> {
   const token = (await page.context().cookies()).find((c) => c.name === 'pb_csrf')!.value
@@ -14,12 +7,11 @@ async function csrf(page: Page): Promise<Record<string, string>> {
 }
 
 // pb-285：プロジェクト設定から、アーカイブ済みのプロジェクトを、キーを打ち込んで消す。
-// **administrator（PB_E2E_EMAIL）で走らせる。** 消すプロジェクトはこの試験で作る。
+// **administrator で走らせる。** 消すプロジェクトはこの試験で作る。
 test('アーカイブ済みのプロジェクトだけを、キーを打ち込んで削除できる', async ({ page }) => {
-  const email = process.env.PB_E2E_EMAIL
-  test.skip(!email || !process.env.PB_E2E_PASSWORD, 'PB_E2E_EMAIL と PB_E2E_PASSWORD が要る')
+  test.skip(!hasPassword(), 'PB_E2E_PASSWORD が要る')
   await page.setViewportSize({ width: 1440, height: 900 })
-  await login(page, email!)
+  await login(page)
 
   const key = `del-e2e-${Date.now().toString(36)}`
   const headers = await csrf(page)
@@ -65,9 +57,9 @@ test('アーカイブ済みのプロジェクトだけを、キーを打ち込�
 })
 
 test('project_admin にはプロジェクトの削除が出ない', async ({ page }) => {
-  test.skip(!process.env.PB_E2E_PASSWORD, 'PB_E2E_PASSWORD が要る')
+  test.skip(!hasPassword(), 'PB_E2E_PASSWORD が要る')
   await page.setViewportSize({ width: 1440, height: 900 })
-  await login(page, process.env.PB_E2E_PM_EMAIL ?? 'pm@example.com')
+  await login(page, 'pm')
   await page.goto('/p/demo/settings')
   await expect(page.getByRole('heading', { name: 'プロジェクトの状態' })).toBeVisible()
   await expect(page.locator('.delete-block')).toHaveCount(0)

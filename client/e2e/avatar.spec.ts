@@ -1,12 +1,9 @@
 import { expect, test } from '@playwright/test'
+import { accountEmail, hasPassword, login } from './fixtures/session'
 
 test('crop, register, display and remove a user icon', async ({ page }, testInfo) => {
-  test.skip(!process.env.PB_E2E_EMAIL || !process.env.PB_E2E_PASSWORD, 'Development account is required')
-  await page.goto('/login')
-  await page.locator('input[type=email]').fill(process.env.PB_E2E_EMAIL!)
-  await page.locator('input[type=password]').fill(process.env.PB_E2E_PASSWORD!)
-  await page.getByRole('button', { name: 'ログイン', exact: true }).click()
-  await expect(page).not.toHaveURL(/\/login$/)
+  test.skip(!hasPassword(), 'Development account is required')
+  await login(page)
   await page.goto('/me')
   const icon = page.locator('.avatar-field')
   await expect(icon).toBeVisible()
@@ -129,7 +126,7 @@ test('crop, register, display and remove a user icon', async ({ page }, testInfo
   expect(pixel[1]).toBeGreaterThan(pixel[0]!)
 
   await page.goto('/admin/users')
-  const ownRow = page.getByRole('row').filter({ hasText: process.env.PB_E2E_EMAIL! })
+  const ownRow = page.getByRole('row').filter({ hasText: accountEmail('admin') })
   await expect(ownRow.locator('td.kind img')).toBeVisible()
   await expect(ownRow.locator('td.name-col .pb-avatar')).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('avatar-users.png') })
@@ -145,13 +142,10 @@ test('crop, register, display and remove a user icon', async ({ page }, testInfo
 })
 
 test('registered member icon appears in icon columns and actor choices', async ({ page }, testInfo) => {
-  const email = process.env.PB_E2E_MEMBER_EMAIL
-  test.skip(!email || !process.env.PB_E2E_PASSWORD, 'Development member account is required')
-  await page.goto('/login')
-  await page.locator('input[type=email]').fill(email!)
-  await page.locator('input[type=password]').fill(process.env.PB_E2E_PASSWORD!)
-  await page.getByRole('button', { name: 'ログイン', exact: true }).click()
-  await expect(page).not.toHaveURL(/\/login$/)
+  // プロジェクト設定のメンバー一覧を開き、選択肢の「開発PM」を見るので、pm で走らせる
+  test.skip(!hasPassword(), 'Development PM account is required')
+  const email = accountEmail('pm')
+  await login(page, 'pm')
 
   const png = await page.evaluate(() => {
     const canvas = document.createElement('canvas')

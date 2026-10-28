@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { expect, test } from '@playwright/test'
+import { login } from './fixtures/session'
 
 // 評価エージェントの権限（delegation.evaluate）を、発行モーダルから付けられる（pb-288）。
 // サーバは許可リストに持っていたが、画面に選択肢が無く、評価役を用意できなかった。
@@ -11,11 +12,7 @@ test('token issue dialog grants delegation.evaluate only when checked', async ({
     const json = await response.json()
     await route.fulfill({ response, json: { ...json, features: { delegation: true } } })
   })
-  await page.goto('/login')
-  await page.locator('input[name="email"]').fill(process.env.PB_E2E_EMAIL!)
-  await page.locator('input[name="password"]').fill(process.env.PB_E2E_PASSWORD!)
-  await page.locator('button[type="submit"]').click()
-  await expect(page).toHaveURL(/\/projects$/)
+  await login(page)
   const csrf = (await page.context().cookies()).find(c => c.name === 'pb_csrf')!.value
   const headers = { 'X-PB-CSRF': csrf }
   const key = `eval-${Date.now()}`

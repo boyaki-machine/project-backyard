@@ -1,28 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
+import { login } from './fixtures/session'
 
 /**
  * `/me/agents` の接続パネルで、Codex に接続方式を案内する（pb-160・pb-202）。
  *
- * **実サーバに向け、demo プロジェクトの参加者で走らせる**——準備でエージェントを
- * demo に登録するので、参加していないアカウントは 422 になる。**dev なら
- * `PB_E2E_EMAIL=pm@example.com`**（`admin@example.com` は demo の参加者でない）。
- * パスワードは `make dev-info` で見る。続けて流すとログインの回数制限
- * （IP あたり10回／分）に掛かるので、落ちたら1分待つ。
+ * **実サーバに向け、demo プロジェクトの参加者（pm）で走らせる**——準備でエージェントを
+ * demo に登録するので、参加していないアカウントは 422 になる（`admin@example.com` は
+ * demo の参加者でない）。ログインは `fixtures/session.ts` を通す。
  */
-
-async function login(page: Page) {
-  const email = process.env.PB_E2E_EMAIL
-  const password = process.env.PB_E2E_PASSWORD
-  if (!email || !password) {
-    throw new Error('PB_E2E_EMAIL と PB_E2E_PASSWORD を設定してください')
-  }
-
-  await page.goto('/login')
-  await page.locator('input[name="email"]').fill(email)
-  await page.locator('input[name="password"]').fill(password)
-  await page.locator('button[type="submit"]').click()
-  await expect(page).toHaveURL(/\/projects$/)
-}
 
 async function writeAPI<T>(page: Page, path: string, method: 'POST' | 'DELETE', body?: unknown) {
   return page.evaluate(
@@ -52,7 +37,7 @@ async function writeAPI<T>(page: Page, path: string, method: 'POST' | 'DELETE', 
 
 test('Codexの自己署名証明書にはstdioブリッジを案内する', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await login(page)
+  await login(page, 'pm')
 
   const suffix = String(Date.now())
   const displayName = `PB-160 Codex ${suffix}`

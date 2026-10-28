@@ -88,8 +88,18 @@ test('Codex bridge ZIP uses the selected OS and CPU', async ({ page }, testInfo)
 
   for (const width of [1280, 600]) {
     await page.setViewportSize({ width, height: 900 })
-    const osBox = await page.getByLabel('端末のOS').boundingBox()
-    const archBox = await page.getByLabel('CPUアーキテクチャ').boundingBox()
+    // 幅を変えた直後は描き直しの途中なので、2フレーム待ってから2つの欄を同じ瞬間に測る
+    // （boundingBox を2回呼ぶと、その間の描き直しやスクロールで別の瞬間の値を比べてしまう）
+    const os = await page.getByLabel('端末のOS').elementHandle()
+    const arch = await page.getByLabel('CPUアーキテクチャ').elementHandle()
+    const [osBox, archBox] = await page.evaluate(([a, b]) => new Promise<{ x: number; y: number; width: number }[]>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        resolve([a!, b!].map((el) => {
+          const r = el.getBoundingClientRect()
+          return { x: r.x, y: r.y, width: r.width }
+        }))
+      }))
+    }), [os, arch] as const)
     expect(osBox).not.toBeNull()
     expect(archBox).not.toBeNull()
     expect(osBox!.x + osBox!.width).toBeLessThanOrEqual(width)

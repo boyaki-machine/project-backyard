@@ -1,11 +1,9 @@
 import { execFileSync } from 'node:child_process'
 import { expect, test } from '@playwright/test'
+import { login } from './fixtures/session'
 test('common work saves actuals and shows records and correction at multiple widths', async ({page},info)=>{
  test.setTimeout(90_000)
- await page.goto('/login')
- await page.locator('input[name="email"]').fill(process.env.PB_E2E_EMAIL!)
- await page.locator('input[name="password"]').fill(process.env.PB_E2E_PASSWORD!)
- await page.locator('button[type="submit"]').click(); await expect(page).toHaveURL(/\/projects$/)
+ await login(page)
  const headers={'X-PB-CSRF':(await page.context().cookies()).find(c=>c.name==='pb_csrf')!.value}
  const key=`work-${Date.now()}`;const base=`/api/v1/projects/${key}`
  const created=await page.request.post('/api/v1/projects',{headers,data:{key,name:'Work timer regression',workflow_template:'simple'}})
