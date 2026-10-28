@@ -6,7 +6,7 @@ toolchain go1.26.10
 
 require (
 	github.com/alexedwards/argon2id v1.0.0
-	github.com/go-chi/chi/v5 v5.3.1
+	github.com/go-chi/chi/v5 v5.4.0
 	github.com/go-webauthn/webauthn v0.18.1
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
